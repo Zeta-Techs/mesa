@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mesa 工作台 · 完善设计提案</title>
+<style>
+  :root { color-scheme: dark; --canvas:#111111; --rail:#161616; --surface:#1b1b1b; --raised:#242424; --line:#303030; --field:#494949; --ink:#e5e5e5; --secondary:#c2c2c2; --muted:#a0a0a0; --accent:#72b6ff; --cta:#0169cc; --cta-ink:#ffffff; --tint:#172b3f; --ok:#76c49c; --warn:#efc56e; --bad:#f08d8d; --hover:#ffffff08; --selected:#ffffff0b; }
+  :root[data-theme="light"] { color-scheme:light; --canvas:#ededed; --rail:#e4e4e4; --surface:#f7f7f7; --raised:#ffffff; --line:#d3d3d3; --field:#a0a0a0; --ink:#161616; --secondary:#3a3a3a; --muted:#626262; --accent:#075bad; --cta:#0169cc; --cta-ink:#ffffff; --tint:#dae8f7; --ok:#276346; --warn:#795300; --bad:#a12828; --hover:#00000006; --selected:#0000000a; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--canvas); color:var(--ink); font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif; }
+  button,input,select { font:inherit; }
+  button { cursor:pointer; }
+  button,a,input,select { -webkit-tap-highlight-color:transparent; }
+  button { color:inherit; background:none; border:0; }
+  button:hover { background:var(--hover); }
+  button:disabled { cursor:default; opacity:.5; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  a { color:var(--accent); text-underline-offset:3px; }
+  h1,h2,h3,p { margin:0; }
+  h2 { font-size:14px; font-weight:600; }
+  h3 { font-size:13px; font-weight:600; }
+  svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  .muted { color:var(--muted); }
+  .mono { font-family:ui-monospace,"SF Mono",Consolas,monospace; font-variant-numeric:tabular-nums; }
+  .spacer { flex:1; }
+  .btn { display:inline-flex; min-height:30px; align-items:center; justify-content:center; gap:7px; padding:4px 11px; border:1px solid var(--field); border-radius:8px; background:var(--raised); white-space:nowrap; font-size:12px; }
+  .btn:hover { filter:brightness(1.09); background:var(--raised); }
+  .btn.primary { color:var(--cta-ink); background:var(--cta); border-color:var(--cta); }
+  .btn.ghost { border-color:transparent; background:transparent; color:var(--secondary); }
+  .btn.text { border-color:transparent; background:transparent; color:var(--accent); }
+  .icon-btn { width:30px; height:30px; padding:6px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:none; color:var(--muted); }
+  .icon-btn:hover { color:var(--ink); }
+  .tag { padding:1px 6px; border:1px solid var(--line); border-radius:5px; font-size:11px; font-weight:400; color:var(--muted); white-space:nowrap; }
+  .status { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+  .status.live { color:var(--ok); }
+  .status.wait { color:var(--warn); }
+  .status.fail { color:var(--bad); }
+  .run-caret { width:8px; height:3px; border-radius:1px; background:currentColor; display:inline-block; flex:none; animation:breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 50% { opacity:.4; } }
+  .proposal-bar { padding:14px 22px; display:flex; gap:18px; align-items:center; border-bottom:1px solid var(--line); background:var(--surface); }
+  .proposal-identity { display:flex; gap:10px; align-items:center; flex:none; }
+  .proposal-identity strong { font-size:14px; font-weight:600; }
+  .proposal-identity span { font-size:11px; color:var(--muted); }
+  .proposal-mark { font-size:19px; font-weight:750; letter-spacing:-2px; padding-right:3px; }
+  .proposal-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-left:auto; }
+  .proposal-tools label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  select { min-height:30px; border:1px solid var(--field); border-radius:7px; padding:2px 24px 2px 8px; background:var(--surface); color:var(--ink); }
+  .proposal-tools .btn[aria-pressed="true"] { background:var(--tint); color:var(--accent); border-color:var(--accent); }
+  .canvas-wrap { padding:20px; }
+  .app-shell { margin:0 auto; width:100%; max-width:1512px; height:860px; min-height:620px; border:1px solid var(--line); border-radius:13px; overflow:hidden; display:grid; grid-template-columns:208px minmax(0,1fr); grid-template-rows:48px minmax(0,1fr); background:var(--canvas); position:relative; }
+  .app-shell.compact { max-width:800px; }
+  .app-shell.rail-collapsed { grid-template-columns:62px minmax(0,1fr); }
+  .window-brand { display:flex; align-items:center; padding:0 12px 0 16px; background:var(--rail); gap:13px; }
+  .window-lights { display:flex; gap:7px; }
+  .window-lights i { width:10px; height:10px; border-radius:50%; border:1px solid #ffffff20; background:#696969; }
+  .window-lights i:nth-child(1) { background:#ed6b5f; }
+  .window-lights i:nth-child(2) { background:#e9b64d; }
+  .window-lights i:nth-child(3) { background:#61bc55; }
+  .wordmark { font-weight:700; font-size:14px; letter-spacing:-.3px; }
+  .topbar { display:flex; align-items:center; gap:12px; padding:0 22px; color:var(--muted); font-size:12px; }
+  .topbar .location { color:var(--secondary); display:flex; align-items:center; gap:8px; }
+  .island { border:1px solid var(--line); border-radius:18px; padding:2px 10px; font-size:11px; display:flex; gap:7px; align-items:center; }
+  .sidebar { background:var(--rail); padding:10px 10px 14px; overflow:auto; display:flex; flex-direction:column; gap:3px; }
+  .side-nav { width:100%; display:flex; align-items:center; min-height:34px; padding:5px 10px; gap:10px; text-align:left; border-radius:7px; color:var(--secondary); white-space:nowrap; }
+  .side-nav.active { color:var(--ink); background:var(--selected); position:relative; }
+  .side-nav.active::before { content:""; position:absolute; left:0; height:15px; width:2px; border-radius:2px; background:var(--accent); }
+  .side-nav .shortcut { margin-left:auto; font-size:11px; color:var(--muted); }
+  .side-heading { padding:21px 10px 6px; font-size:11px; color:var(--muted); display:flex; align-items:center; gap:7px; }
+  .side-project { display:flex; align-items:center; gap:8px; padding:6px 9px; color:var(--secondary); font-size:12px; width:100%; text-align:left; border-radius:6px; }
+  .side-project svg { width:13px; height:13px; color:var(--muted); }
+  .side-chat { display:flex; align-items:center; gap:8px; padding:6px 10px 6px 31px; font-size:12px; color:var(--muted); width:100%; text-align:left; border-radius:6px; }
+  .side-chat span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .side-chat .run-caret { margin-left:auto; color:var(--ok); }
+  .side-caption { padding:12px 10px 0; color:var(--muted); font-size:11px; }
+  .rail-collapsed .side-label,.rail-collapsed .shortcut,.rail-collapsed .side-heading,.rail-collapsed .side-chat,.rail-collapsed .side-caption,.rail-collapsed .wordmark { display:none; }
+  .rail-collapsed .window-lights { display:none; }
+  .rail-collapsed .window-brand { justify-content:center; padding:0; }
+  .rail-collapsed .side-nav,.rail-collapsed .side-project { justify-content:center; padding:8px; }
+  .workbench { overflow:auto; padding:18px 30px 32px; min-width:0; container:content / inline-size; scroll-behavior:smooth; }
+  .arrival { display:flex; gap:8px; align-items:center; color:var(--muted); font-size:12px; margin:0 0 23px; }
+  .arrival svg { width:14px; height:14px; }
+  .arrival button { font-size:12px; margin-left:auto; border-radius:5px; padding:3px 6px; color:var(--muted); }
+  .section-head { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:11px; }
+  .section-head > svg { width:15px; height:15px; color:var(--muted); }
+  .section-head .description { font-size:12px; color:var(--muted); }
+  .section-head .count { color:var(--warn); font-size:12px; padding:0 5px; }
+  .queue-section { margin-bottom:26px; }
+  .list-surface { border:1px solid var(--line); border-radius:9px; overflow:hidden; background:var(--surface); }
+  .decision-list { list-style:none; margin:0; padding:0; }
+  .decision { display:grid; grid-template-columns:24px minmax(0,1fr) auto; gap:10px; padding:11px 14px; border-top:1px solid var(--line); align-items:center; position:relative; }
+  .decision:first-child { border-top:0; }
+  .decision[data-selected="true"] { background:var(--selected); }
+  .decision[data-selected="true"]::before { content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--accent); }
+  .decision-symbol { width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:7px; color:var(--warn); }
+  .decision-symbol.fail { color:var(--bad); }
+  .decision-symbol svg { width:14px; height:14px; }
+  .decision-title { font-size:13px; font-weight:500; line-height:1.6; }
+  .decision-meta { display:flex; gap:7px; flex-wrap:wrap; align-items:baseline; margin-top:3px; color:var(--muted); font-size:12px; }
+  .decision-meta .separator { color:var(--muted); }
+  .decision-actions { display:flex; gap:6px; align-items:center; }
+  .queue-more { padding:6px 12px; width:100%; border-top:1px solid var(--line); text-align:left; color:var(--muted); min-height:32px; font-size:12px; }
+  .notices { margin-top:8px; border:1px solid var(--line); border-radius:8px; padding:7px 12px; }
+  .notice-row { display:flex; align-items:center; gap:10px; padding:4px 0; color:var(--muted); font-size:12px; }
+  .notice-row .btn { margin-left:auto; }
+  .filters { display:flex; gap:3px; margin-left:auto; flex-wrap:wrap; }
+  .filter { min-height:28px; padding:3px 10px; color:var(--muted); border-radius:6px; font-size:12px; }
+  .filter[aria-pressed="true"] { background:var(--raised); color:var(--ink); }
+  .projects-section { margin-bottom:27px; }
+  .project-group + .project-group { border-top:1px solid var(--line); }
+  .project-head { display:flex; align-items:center; gap:8px; padding:10px 13px 10px 8px; flex-wrap:wrap; min-height:54px; }
+  .project-name { font-size:14px; font-weight:600; padding:2px 1px; border-radius:4px; text-align:left; }
+  .project-context { color:var(--muted); font-size:12px; }
+  .project-head .continue { margin-left:auto; }
+  .project-head .icon-btn svg { width:14px; height:14px; transition:transform .15s; }
+  .project-head .icon-btn[aria-expanded="false"] svg { transform:rotate(-90deg); }
+  .track { display:flex; gap:3px; align-items:center; margin-left:5px; }
+  .track i { width:17px; height:3px; background:var(--field); border-radius:2px; }
+  .track i.done { background:var(--ok); }
+  .track i.current { background:var(--accent); }
+  .task-list { list-style:none; margin:0; padding:0 0 8px; }
+  .task-row { display:grid; grid-template-columns:minmax(170px,1.05fr) minmax(160px,1fr) 120px 22px; gap:14px; align-items:center; width:100%; padding:10px 18px 10px 47px; text-align:left; position:relative; min-height:56px; }
+  .task-row[data-selected="true"] { background:var(--selected); }
+  .task-row[data-selected="true"]::before { content:""; position:absolute; left:0; width:2px; top:0; bottom:0; background:var(--accent); }
+  .task-identity { min-width:0; display:flex; align-items:center; gap:9px; }
+  .task-identity .kind { width:34px; flex:none; color:var(--muted); font-size:11px; }
+  .task-name { display:block; font-size:13px; overflow-wrap:anywhere; }
+  .task-state { min-width:0; }
+  .task-state .status { display:flex; font-size:12px; }
+  .task-state .detail { color:var(--muted); font-size:11px; margin-top:2px; }
+  .task-time { color:var(--muted); font-size:12px; text-align:right; font-variant-numeric:tabular-nums; }
+  .task-arrow { color:var(--muted); width:13px; height:13px; }
+  .project-footer { padding:0 17px 9px 43px; }
+  .project-footer .btn { font-size:12px; }
+  .goal-form { display:flex; gap:7px; align-items:center; padding-top:5px; flex-wrap:wrap; }
+  .goal-form input { flex:1; min-width:120px; color:var(--ink); border:1px solid var(--field); border-radius:7px; background:var(--canvas); padding:6px 9px; min-height:32px; }
+  .goal-form p { width:100%; font-size:11px; color:var(--muted); }
+  .empty-filter { text-align:center; padding:32px 16px; color:var(--muted); }
+  .timeline { display:flex; align-items:center; gap:14px; margin:0 0 10px; min-height:38px; padding:0 3px; }
+  .timeline-label { color:var(--muted); font-size:11px; white-space:nowrap; }
+  .timeline-line { height:1px; background:var(--line); flex:1; }
+  .time-event { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; padding:3px 7px; border-radius:5px; }
+  .time-event::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--muted); }
+  .schedule-row { display:grid; grid-template-columns:62px minmax(150px,1fr) minmax(125px,1fr) 116px auto; align-items:center; gap:15px; padding:12px 15px; border-top:1px solid var(--line); }
+  .schedule-row:first-child { border-top:0; }
+  .schedule-time { font-size:13px; font-weight:500; color:var(--secondary); }
+  .schedule-name { padding:0; display:block; text-align:left; border-radius:4px; }
+  .schedule-project { font-size:11px; color:var(--muted); margin-top:2px; }
+  .schedule-frequency { font-size:12px; color:var(--muted); }
+  .schedule-row > .btn { justify-self:end; }
+  .keyboard-note { display:flex; align-items:center; gap:5px; margin-top:23px; color:var(--muted); font-size:11px; }
+  kbd { border:1px solid var(--field); border-radius:4px; font:10px/17px ui-monospace,monospace; min-width:18px; text-align:center; padding:0 4px; }
+  .empty-state { padding:90px 20px; text-align:center; }
+  .empty-symbol { display:inline-flex; width:44px; height:44px; border:1px solid var(--line); border-radius:11px; align-items:center; justify-content:center; margin-bottom:18px; color:var(--muted); }
+  .empty-state h2 { font-size:18px; margin-bottom:8px; }
+  .empty-state p { color:var(--muted); margin:0 auto 20px; max-width:340px; }
+  .error-banner { display:flex; gap:12px; padding:13px 15px; align-items:center; border:1px solid var(--field); border-left:3px solid var(--warn); border-radius:8px; margin-bottom:22px; }
+  .error-banner p { color:var(--muted); font-size:12px; margin-top:3px; }
+  .error-banner .btn { margin-left:auto; }
+  .inspector { position:absolute; top:48px; right:0; bottom:0; width:min(400px,100%); background:var(--surface); border-left:1px solid var(--field); z-index:5; display:flex; flex-direction:column; }
+  .inspector-head { padding:17px 18px 14px; border-bottom:1px solid var(--line); flex:none; }
+  .inspector-top { display:flex; gap:8px; align-items:center; color:var(--muted); font-size:12px; margin-bottom:7px; }
+  .inspector-top .icon-btn { margin-left:auto; }
+  .inspector h2 { font-size:17px; font-weight:600; margin-bottom:9px; }
+  .inspector-route { display:flex; gap:8px; flex-wrap:wrap; padding:12px 18px; border-bottom:1px solid var(--line); flex:none; }
+  .inspector-body { overflow:auto; padding:18px; min-height:0; }
+  .inspector-section + .inspector-section { margin-top:23px; }
+  .inspector-section > h3 { margin-bottom:9px; }
+  .inspector-section p { color:var(--secondary); font-size:13px; overflow-wrap:anywhere; }
+  .facts { margin:0; display:grid; grid-template-columns:78px minmax(0,1fr); gap:8px 12px; font-size:12px; }
+  .facts dt { color:var(--muted); }
+  .facts dd { margin:0; overflow-wrap:anywhere; }
+  .code-block { white-space:pre-wrap; overflow-wrap:anywhere; padding:11px; border:1px solid var(--line); background:var(--canvas); border-radius:7px; font:12px/1.7 ui-monospace,"SF Mono",monospace; }
+  .file-list { list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:7px; }
+  .file-list li { padding:9px 10px; display:flex; gap:9px; align-items:center; border-top:1px solid var(--line); color:var(--secondary); font-size:12px; overflow-wrap:anywhere; }
+  .file-list li:first-child { border-top:0; }
+  .file-list svg { width:14px; height:14px; color:var(--muted); }
+  .file-list span { min-width:0; }
+  .file-list small { margin-left:auto; color:var(--muted); flex:none; }
+  .history { list-style:none; margin:0; padding:0; }
+  .history li { display:flex; gap:12px; color:var(--secondary); padding:6px 0; font-size:12px; }
+  .history time { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .inspector-hint { font-size:11px; color:var(--muted); margin-top:19px; }
+  .inspector-backdrop { position:absolute; inset:48px 0 0; z-index:4; background:#00000038; }
+  .toast { position:absolute; left:50%; transform:translateX(-50%); bottom:22px; z-index:9; background:var(--raised); border:1px solid var(--field); border-radius:9px; padding:9px 10px 9px 15px; display:flex; align-items:center; gap:16px; max-width:calc(100% - 28px); }
+  .toast span { min-width:0; font-size:12px; }
+  .toast .btn { color:var(--accent); }
+  dialog { color:var(--ink); background:var(--surface); border:1px solid var(--field); border-radius:12px; padding:0; width:min(670px,calc(100% - 32px)); max-height:85vh; }
+  dialog::backdrop { background:#00000066; }
+  .dialog-head { display:flex; gap:12px; align-items:center; padding:18px 22px; border-bottom:1px solid var(--line); }
+  .dialog-head h2 { font-size:17px; }
+  .dialog-head .icon-btn { margin-left:auto; }
+  .dialog-body { padding:20px 22px 24px; }
+  .dialog-body p { color:var(--secondary); margin-bottom:12px; }
+  .review-item { padding:13px 0; border-top:1px solid var(--line); }
+  .review-item:first-child { border-top:0; padding-top:0; }
+  .review-item h3 { margin-bottom:5px; }
+  .review-item p { font-size:12px; color:var(--muted); margin-bottom:0; }
+  .review-item .tag { margin-right:7px; }
+  .destination-crumb { font-size:12px; color:var(--muted); margin-bottom:18px; }
+  .destination-card { border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .destination-card h3 { font-size:15px; margin-bottom:8px; }
+  .design-footer { max-width:1512px; margin:15px auto 0; color:var(--muted); display:flex; gap:14px; align-items:center; font-size:11px; }
+  .design-footer span:last-child { margin-left:auto; }
+  @container content (max-width:740px) {
+    .project-context { display:none; }
+    .task-row { grid-template-columns:minmax(130px,1fr) minmax(135px,1fr) 21px; gap:12px; padding-left:26px; }
+    .task-time { grid-column:2; grid-row:2; text-align:left; font-size:11px; margin-top:-9px; }
+    .task-arrow { grid-column:3; grid-row:1 / span 2; }
+    .task-identity { grid-row:1 / span 2; }
+    .schedule-row { grid-template-columns:48px minmax(110px,1fr) auto; gap:10px; }
+    .schedule-frequency { grid-column:2; grid-row:2; margin-top:-8px; }
+    .schedule-row > .status { grid-column:2; grid-row:3; }
+    .schedule-row > .btn { grid-column:3; grid-row:1 / span 3; }
+    .section-head .description { display:none; }
+    .decision { grid-template-columns:24px minmax(0,1fr); }
+    .decision-actions { grid-column:2; justify-content:flex-start; flex-wrap:wrap; }
+    .timeline-line { display:none; }
+    .timeline { flex-wrap:wrap; gap:8px; }
+  }
+  @container content (max-width:470px) {
+    .task-row { grid-template-columns:minmax(0,1fr) 20px; padding:10px 12px 10px 25px; gap:5px 9px; }
+    .task-identity { grid-column:1; grid-row:1; }
+    .task-state { grid-column:1; grid-row:2; padding-left:43px; }
+    .task-time { grid-column:1; grid-row:3; padding-left:43px; margin:0; }
+    .task-arrow { grid-column:2; grid-row:1 / span 3; }
+    .track { display:none; }
+    .project-head { gap:6px; }
+    .project-head .continue { width:100%; margin-left:31px; justify-content:flex-start; padding-left:0; }
+    .project-footer { padding-left:24px; }
+    .arrival { align-items:flex-start; }
+    .filters { width:100%; margin-left:0; }
+    .notice-row { flex-wrap:wrap; }
+    .schedule-row { grid-template-columns:43px minmax(0,1fr); }
+    .schedule-row > .btn { grid-column:2; grid-row:4; justify-self:start; }
+    .decision-actions .btn { padding-left:8px; padding-right:8px; }
+    .error-banner { flex-wrap:wrap; }
+  }
+  @media(max-width:850px) {
+    .proposal-bar { align-items:flex-start; flex-wrap:wrap; padding:12px; gap:10px; }
+    .proposal-tools { margin-left:0; gap:6px; }
+    .canvas-wrap { padding:12px; }
+    .workbench { padding:18px 18px 30px; }
+    .topbar { padding:0 16px; }
+    .topbar > .muted,.island { display:none; }
+    .design-footer { align-items:flex-start; flex-wrap:wrap; }
+    .design-footer span:last-child { margin-left:0; }
+  }
+  @media(prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
+  @media(prefers-contrast:more) { :root { --line:var(--muted); --field:var(--ink); } }
+</style>
+</head>
+<body>
+<svg class="sr-only" aria-hidden="true"><defs>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3v-10a9 9 0 0 1 18-1Z"/><path d="M7 9h8M7 13h5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11H3Z"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2M5 3 2 6m17-3 3 3"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="m4 4-2 12v4h20v-4L20 4ZM2 15h6l2 3h4l2-3h6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m12 3 10 18H2Z"/><path d="M12 9v5m0 3h.01"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M4 3h10l6 6v12H4Z"/><path d="M14 3v6h6M8 13h8m-8 4h6"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="var(--rail)"/><circle cx="15" cy="17" r="3" fill="var(--rail)"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4M7 14l-2 2a4 4 0 0 0 6 5l3-3M10 6l3-3a4 4 0 0 1 6 6l-2 2"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3Zm9 2v15"/></symbol>
+</defs></svg>
+
+<header class="proposal-bar">
+  <div class="proposal-identity"><div class="proposal-mark" aria-hidden="true">M<span style="color:var(--accent)">_</span></div><div><strong>工作台 · 完善设计</strong><br><span>2026.10.27 · 交互原型 · 全部为示例数据</span></div></div>
+  <div class="proposal-tools">
+    <label>场景 <select id="scenario" aria-label="切换演示场景"><option value="daily">日常工作</option><option value="busy">待办很多</option><option value="quiet">暂无待办</option><option value="empty">首次使用</option><option value="error">部分加载失败</option></select></label>
+    <button class="btn" id="width-toggle" aria-pressed="false">窄窗预览</button>
+    <button class="btn" id="theme-toggle" aria-pressed="false">浅色预览</button>
+    <button class="btn" data-action="design-notes">设计说明</button>
+  </div>
+</header>
+<div class="canvas-wrap">
+  <div class="app-shell" id="app">
+    <div class="window-brand"><div class="window-lights" aria-hidden="true"><i></i><i></i><i></i></div><span class="wordmark">Mesa<span style="color:var(--accent)">_</span></span><button class="icon-btn" data-action="rail" aria-label="收起侧栏" aria-expanded="true"><svg><use href="#i-sidebar"/></svg></button></div>
+    <div class="topbar"><span class="location"><svg><use href="#i-grid"/></svg>工作台</span><span class="spacer"></span><span class="island"><span class="run-caret" aria-hidden="true"></span>本地工作空间</span><span class="muted">所有项目</span><button class="icon-btn" data-action="shortcuts" aria-label="键盘操作说明" title="键盘操作说明"><span class="mono">⌘</span></button></div>
+    <aside class="sidebar" aria-label="主导航">
+      <button class="side-nav active" aria-label="工作台" aria-current="page" data-action="home"><svg><use href="#i-grid"/></svg><span class="side-label">工作台</span><span class="shortcut">⌘1</span></button>
+      <button class="side-nav" aria-label="新对话" data-destination="新对话"><svg><use href="#i-plus"/></svg><span class="side-label">新对话</span><span class="shortcut">⌘N</span></button>
+      <button class="side-nav" aria-label="对话管理" data-destination="对话管理"><svg><use href="#i-chat"/></svg><span class="side-label">对话管理</span></button>
+      <div class="side-heading">项目<span class="spacer"></span><button class="icon-btn" data-destination="添加项目" aria-label="添加项目"><svg><use href="#i-plus"/></svg></button></div>
+      <div id="side-projects"></div>
+      <div class="side-heading">资源与设置</div>
+      <button class="side-nav" aria-label="连接" data-destination="连接"><svg><use href="#i-link"/></svg><span class="side-label">连接</span></button>
+      <button class="side-nav" aria-label="技能与 MCP" data-destination="技能与 MCP"><svg><use href="#i-book"/></svg><span class="side-label">技能与 MCP</span></button>
+      <div class="spacer"></div>
+      <button class="side-nav" aria-label="设置" data-destination="设置"><svg><use href="#i-settings"/></svg><span class="side-label">设置</span></button>
+      <div class="side-caption">演示侧栏 · 展示当前工作上下文</div>
+    </aside>
+    <main class="workbench" id="workbench" aria-label="工作台" tabindex="-1"><h1 class="sr-only">工作台</h1><div id="main-content"></div></main>
+    <div class="inspector-backdrop" id="inspector-backdrop" hidden></div>
+    <section class="inspector" id="inspector" role="dialog" aria-modal="true" aria-labelledby="inspector-title" hidden></section>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+  <footer class="design-footer"><span>可操作：允许 / 撤销、项目筛选、任务详情、定时任务、记目标、J / K 导航</span><span>保留分组列表与原验收入口 · 建议尚未改变产品行为</span></footer>
+</div>
+<dialog id="modal"><div class="dialog-head"><h2 id="modal-title"></h2><button class="icon-btn" data-action="close-modal" aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div class="dialog-body" id="modal-body"></div></dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icon = (name, cls = '') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const arrow = icon('arrow');
+const state = { scenario:'daily', filter:'active', more:false, notices:false, selected:null, closed:new Set(), pending:new Set(), settled:new Set(), goals:[], approval:'waiting', schedule:'idle', noticeDismissed:false, arrival:true };
+const queueSeed = [
+  {id:'approval',kind:'approval',tier:0,title:'允许运行文献整理脚本',project:'固态电池界面研究',detail:'Codex · 仅允许这一次',tone:'wait',symbol:'alert',action:'查看详情'},
+  {id:'review',kind:'review',tier:1,title:'文献精读已完成，等你验收',project:'固态电池界面研究',detail:'6 份笔记 · 工作副本中的成果',tone:'wait',symbol:'check',action:'去验收'},
+  {id:'radar',kind:'failure',tier:1,title:'文献雷达已暂停，需要处理',project:'固态电池界面研究',detail:'上次连接超时 · 暂停原因待查看',tone:'fail',symbol:'clock',action:'查看原因'},
+  {id:'conflict',kind:'review',tier:0,title:'合并前需要处理文件冲突',project:'Mesa',detail:'2 个文件有冲突 · 工作树仍保留',tone:'wait',symbol:'file',action:'查看冲突'},
+  {id:'office-review',kind:'review',tier:1,title:'阶段报告已完成，等你验收',project:'实验室周报',detail:'报告草稿 · 尚未写入项目',tone:'wait',symbol:'file',action:'去验收'},
+  {id:'dependency',kind:'failure',tier:0,title:'图表任务缺少 Python 依赖',project:'催化数据整理',detail:'查看具体依赖后再继续',tone:'fail',symbol:'alert',action:'去处理'}
+];
+const projects = [
+  {id:'research',name:'固态电池界面研究',mode:'科研',context:'有流程 · 第 2 / 5 步',steps:true,tasks:[
+    {id:'notes',kind:'步骤 2',name:'文献精读',tone:'wait',status:'已结束 · 待验收',detail:'工作副本中的成果尚未写入项目',time:'更新于 8 分钟前',queue:'review'},
+    {id:'analysis',kind:'对话',name:'核对实验数据字段',tone:'live',status:'正在读取 data/schema.csv',detail:'Codex · 当前对话',time:'本轮 4 分钟'}
+  ]},
+  {id:'coding',name:'Mesa',mode:'编程',context:'基准 main · 2 条工作树分支',tasks:[
+    {id:'workbench',kind:'分支',name:'feat/workbench',tone:'live',status:'正在检查界面状态',detail:'Claude Code · 工作树',time:'本轮 12 分钟'},
+    {id:'paths',kind:'分支',name:'fix/path-display',tone:'idle',status:'比 main 多 2 个提交',detail:'等待你决定是否合并',time:'更新于 2 小时前'}
+  ]},
+  {id:'office',name:'实验室周报',mode:'工作',context:'1 个目标',goal:true,tasks:[
+    {id:'weekly',kind:'目标',name:'整理本周实验进展',tone:'idle',status:'已记下 · 尚未开工',detail:'去项目页选 Agent 并开始',time:'更新于昨天'}
+  ]}
+];
+const taskById = (id) => projects.flatMap(p => p.tasks.map(t => ({...t,project:p}))).concat(state.goals.map(t=>({...t,project:projects[2]}))).find(t => t.id === id);
+const projectOf = (id) => projects.find(p=>p.id === id);
+const queueItems = () => {
+  if (['quiet','empty'].includes(state.scenario)) return [];
+  const rows = state.scenario === 'busy' ? queueSeed : queueSeed.slice(0,3);
+  return rows.filter(r=>!state.pending.has(r.id) && !state.settled.has(r.id)).sort((a,b)=>a.tier-b.tier);
+};
+function statusMarkup(tone, text) { return `<span class="status ${tone}">${tone === 'live' ? '<span class="run-caret" aria-hidden="true"></span>' : ''}${esc(text)}</span>`; }
+function renderSidebar() {
+  $('#side-projects').innerHTML = state.scenario === 'empty' ? '' : projects.map(p=>`<button class="side-project" aria-label="打开项目：${esc(p.name)}" data-destination="${esc(p.name)} · 项目">${icon('folder')}<span class="side-label">${esc(p.name)}</span></button>${p.id === 'coding' ? '<button class="side-chat" data-task="workbench"><span>工作台状态检查</span><span class="run-caret" aria-hidden="true"></span></button>' : ''}`).join('');
+}
+function renderQueue() {
+  const rows = queueItems();
+  if (!rows.length) return '';
+  const shown = state.more ? rows : rows.slice(0,3);
+  const stopped = rows.filter(r=>r.tier===0).length;
+  return `<section class="queue-section" aria-labelledby="queue-heading">
+    <div class="section-head">${icon('inbox')}<h2 id="queue-heading">等你拍板 <span class="count">${rows.length}</span></h2><span class="description">${stopped} 项停着等你 · ${rows.length - stopped} 项等你看结果</span><span class="spacer"></span><button class="btn ghost" data-action="notices" aria-expanded="${state.notices}">通知 ${state.noticeDismissed ? '1' : '2'} ${icon('chevron')}</button></div>
+    <div class="list-surface"><ul class="decision-list">${shown.map(r=>`<li class="decision" data-nav="q:${r.id}" data-selected="${state.selected === 'q:'+r.id}" tabindex="-1"><span class="decision-symbol ${r.tone}">${icon(r.symbol)}</span><div><h3 class="decision-title">${esc(r.title)}</h3><div class="decision-meta"><span>${esc(r.project)}</span><span class="separator">·</span><span>${esc(r.detail)}</span></div></div><div class="decision-actions"><button class="btn ghost" data-queue="${r.id}">${esc(r.action)} ${arrow}</button>${r.kind === 'approval' ? `<button class="btn" data-decision="deny">拒绝</button><button class="btn" data-decision="allow">允许一次</button>` : ''}</div></li>`).join('')}</ul>${rows.length > 3 ? `<button class="queue-more" data-action="more" aria-expanded="${state.more}">${state.more ? '收起' : `还有 ${rows.length-3} 项，展开查看`}</button>` : ''}</div>
+    ${state.notices ? `<div class="notices" aria-label="信息通知">${!state.noticeDismissed ? `<div class="notice-row">${icon('book')}文献雷达发现 3 篇候选文献<button class="btn ghost" data-action="dismiss-notice">收起</button></div>` : ''}<div class="notice-row">${icon('inbox')}手机暂存区有 1 个文件<button class="btn ghost" data-destination="从手机添加 · 暂存区">查看 ${arrow}</button></div></div>` : ''}
+  </section>`;
+}
+function getTask(t) {
+  if (t.id === 'notes' && (state.scenario === 'quiet' || state.settled.has('review'))) return {...t,tone:'idle',status:'工作副本开着 · 尚未保存',queue:null};
+  return t;
+}
+function renderTask(t) {
+  t=getTask(t);
+  return `<li><button class="task-row" data-task="${esc(t.id)}" data-nav="t:${esc(t.id)}" data-selected="${state.selected === 't:'+t.id}" aria-haspopup="dialog"><span class="task-identity"><span class="kind">${esc(t.kind)}</span><span class="task-name">${esc(t.name)}</span></span><span class="task-state">${statusMarkup(t.tone,t.status)}<span class="detail">${esc(t.detail)}</span></span><span class="task-time">${esc(t.time)}</span>${icon('arrow','task-arrow')}</button></li>`;
+}
+function renderProjects() {
+  let visible=projects.filter(p=>state.filter === 'all' || state.filter === 'active' && p.id !== 'office' || ({research:'科研',coding:'编程',office:'工作'})[state.filter] === p.mode);
+  if (state.goals.length && state.filter === 'active') visible=projects;
+  return `<section class="projects-section" aria-labelledby="projects-heading"><div class="section-head">${icon('folder')}<h2 id="projects-heading">正在进行</h2><span class="description">2 项正在运行</span><div class="filters" role="group" aria-label="筛选项目">${[['active','有活的'],['all','全部'],['research','科研'],['coding','编程'],['office','工作']].map(([id,label])=>`<button class="filter" data-filter="${id}" aria-pressed="${state.filter === id}">${label}</button>`).join('')}</div></div>
+    <div class="list-surface">${visible.length ? visible.map(p=>`<section class="project-group" aria-label="${esc(p.name)}"><div class="project-head"><button class="icon-btn" data-collapse="${p.id}" aria-label="${state.closed.has(p.id)?'展开':'收起'}${esc(p.name)}" aria-expanded="${!state.closed.has(p.id)}" aria-controls="project-${p.id}">${icon('chevron')}</button><button class="project-name" data-destination="${esc(p.name)} · 项目">${esc(p.name)}</button><span class="tag">${p.mode}</span><span class="project-context">${p.context}</span>${p.steps ? '<span class="track" role="img" aria-label="第 2 步，共 5 步；第 1 步已完成"><i class="done"></i><i class="current"></i><i></i><i></i><i></i></span>' : ''}<button class="btn ghost continue" data-destination="${esc(p.name)} · ${p.id === 'office'?'项目':'上次的对话'}">${p.id === 'office'?'打开项目':'回到对话'} ${arrow}</button></div><div id="project-${p.id}" ${state.closed.has(p.id)?'hidden':''}><ul class="task-list">${p.tasks.map(renderTask).join('')}${p.goal ? state.goals.map(renderTask).join('') : ''}</ul>${p.goal ? `<div class="project-footer"><button class="btn ghost" data-action="goal">${icon('plus')}记下一个目标</button><form class="goal-form" id="goal-form" hidden><input id="goal-input" aria-label="要完成的目标" placeholder="例如：整理下周组会汇报" maxlength="500" required><button class="btn" type="submit">记下</button><button class="btn ghost" type="button" data-action="cancel-goal">取消</button><p>只记下，不会启动 Agent。之后在项目页选择 Agent 并开始。</p></form></div>` : ''}</div></section>`).join('') : '<p class="empty-filter">这一类没有项目。</p>'}</div></section>`;
+}
+function renderSchedules() {
+  const handled = state.settled.has('radar') || state.scenario === 'quiet';
+  return `<section aria-labelledby="schedules-heading"><div class="section-head">${icon('clock')}<h2 id="schedules-heading">定时任务</h2><span class="description">${handled ? '3 个在用' : '2 个在用 · 1 个暂停'}</span><span class="spacer"></span><button class="btn ghost" data-destination="项目 · 定时任务">管理 ${arrow}</button></div><div class="timeline" aria-label="今后 24 小时"><span class="timeline-label">今后 24 小时</span><span class="timeline-line"></span><button class="time-event" data-schedule="daily">16:00 文献动态</button><span class="timeline-line"></span><button class="time-event" data-schedule="summary">明天 09:00 汇总</button><span class="timeline-line"></span></div><div class="list-surface">
+    <div class="schedule-row" data-nav="s:daily" tabindex="-1"><span class="schedule-time mono">16:00</span><div><button class="schedule-name" data-schedule="daily" aria-haspopup="dialog">每日文献动态</button><p class="schedule-project">固态电池界面研究</p></div><span class="schedule-frequency">每天 16:00</span>${statusMarkup(state.schedule === 'running'?'live':'idle',state.schedule === 'running'?'正在检索文献':'等待下次运行')}<button class="btn" data-action="run-schedule">${state.schedule === 'running'?'停止本轮':'现在跑'}</button></div>
+    <div class="schedule-row" data-nav="s:summary" tabindex="-1"><span class="schedule-time mono">09:00</span><div><button class="schedule-name" data-schedule="summary" aria-haspopup="dialog">早间进展汇总</button><p class="schedule-project">固态电池界面研究</p></div><span class="schedule-frequency">每天 09:00</span>${statusMarkup('idle','明天继续运行')}<button class="btn ghost" data-schedule="summary">查看详情 ${arrow}</button></div>
+    <div class="schedule-row" data-nav="s:radar" tabindex="-1"><span class="schedule-time">${handled?'周五':'暂停'}</span><div><button class="schedule-name" data-schedule="radar" aria-haspopup="dialog">每周文献雷达</button><p class="schedule-project">固态电池界面研究</p></div><span class="schedule-frequency">每周五 09:00</span>${statusMarkup(handled?'idle':'fail',handled?'等待下次运行':'上次连接超时')}<button class="btn ghost" ${handled?'data-schedule="radar"':'data-queue="radar"'}>${handled?'查看详情':'到拍板区处理'} ${arrow}</button></div></div></section>`;
+}
+function render() {
+  renderSidebar();
+  const el=$('#main-content');
+  if (state.scenario === 'empty') {
+    el.innerHTML=`<div class="empty-state"><span class="empty-symbol">${icon('folder')}</span><h2>从一个项目开始</h2><p>添加正在做的项目文件夹。对话、目标和需要你拍板的事会在这里汇合。</p><button class="btn primary" data-destination="添加项目">添加项目 ${arrow}</button></div>`;
+    return;
+  }
+  el.innerHTML=`${state.scenario === 'error'?`<div class="error-banner">${icon('alert')}<div><strong>部分项目信息未能更新</strong><p>下面保留上次读到的信息，状态截至 14:26。</p></div><button class="btn" data-action="retry">重新读取</button></div>`:''}${state.arrival?`<div class="arrival">${icon('clock')}<span>${state.scenario==='quiet'?'暂时没有需要你拍板的事，2 项工作正在继续。':'你离开期间：2 项已结束，1 项有结果等你看。'}</span><button data-action="dismiss-arrival">知道了</button></div>`:''}${renderQueue()}${renderProjects()}${renderSchedules()}<div class="keyboard-note"><kbd>J</kbd><kbd>K</kbd> 选择 <span style="margin-left:9px"><kbd>↵</kbd> 查看详情</span><span class="spacer"></span>状态来自本地会话 · 示例</div>`;
+}
+function showModal(title,html) { $('#modal-title').textContent=title; $('#modal-body').innerHTML=html; $('#modal').showModal(); }
+function destination(name) {
+  const isReview=name.includes('验收');
+  showModal('原入口衔接示意',`<div class="destination-crumb">工作台 → ${esc(name)}</div><div class="destination-card"><h3>${esc(name)}</h3><p>${isReview?'进入既有验收页，查看文件改动与产物，再由你决定写入哪些结果。':'点击后进入 Mesa 对应的既有页面，并保留项目或对话上下文。'}</p><p class="muted" style="font-size:12px;margin:0">这里演示导航落点；原型不会访问真实文件或启动 Agent。</p></div><div style="margin-top:18px;display:flex;justify-content:flex-end"><button class="btn" data-action="close-modal">返回工作台</button></div>`);
+}
+let lastTrigger=null;
+function openInspector(title,subtitle,status,actions,body) {
+  lastTrigger=document.activeElement;
+  $('#inspector').innerHTML=`<div class="inspector-head"><div class="inspector-top">${esc(subtitle)}<button class="icon-btn" data-action="close-inspector" aria-label="关闭任务详情">${icon('close')}</button></div><h2 id="inspector-title">${esc(title)}</h2>${status}</div><div class="inspector-route">${actions}</div><div class="inspector-body">${body}</div>`;
+  $('#inspector').hidden=false; $('#inspector-backdrop').hidden=false;
+  $('#workbench').inert=true; $('.sidebar').inert=true; $('.topbar').inert=true; $('.window-brand').inert=true;
+  $('#inspector [data-action="close-inspector"]').focus();
+}
+function closeInspector() {
+  if ($('#inspector').hidden) return;
+  $('#inspector').hidden=true; $('#inspector-backdrop').hidden=true;
+  $('#workbench').inert=false; $('.sidebar').inert=false; $('.topbar').inert=false; $('.window-brand').inert=false;
+  if (lastTrigger?.isConnected) lastTrigger.focus(); else $('#workbench').focus();
+}
+function section(title,html) { return `<section class="inspector-section"><h3>${title}</h3>${html}</section>`; }
+function openTask(id) {
+  const raw=taskById(id); if(!raw) return;
+  const t=getTask(raw); const review=t.id==='notes'; const unstarted=t.kind==='目标' && t.status.startsWith('已记下');
+  state.selected='t:'+id; render();
+  const actions=unstarted?`<button class="btn" data-destination="${esc(t.project.name)} · 项目">打开项目 ${arrow}</button>`:`<button class="btn" data-destination="${esc(t.project.name)} · ${review?'文献精读 · 验收':'上次的对话'}">${review?'去验收':'回到对话'} ${arrow}</button><button class="btn ghost" data-destination="${esc(t.project.name)} · 项目">打开项目</button>`;
+  const location=unstarted?'尚未开工，开始时创建工作副本':t.kind==='对话'?'项目根目录（直接修改）':'工作副本（验收后写入项目）';
+  const history=unstarted?section('下一步','<p>这个目标还未开工。在项目页选择 Agent 并开始，不会因为记下目标就自动运行。</p>'):section('最近过程',`<ol class="history"><li><time>14:24</time><span>${review?'这一轮已结束，成果留在工作副本':'继续上一段对话'}</span></li><li><time>14:12</time><span>使用项目规则与上下文开始工作</span></li></ol>`);
+  const body=section('现在到哪了',`<p>${esc(t.detail)}</p>`)+section('工作上下文',`<dl class="facts"><dt>所属项目</dt><dd>${esc(t.project.name)}</dd><dt>工作方式</dt><dd>${esc(t.project.mode)}</dd><dt>${t.tone==='live'?'本轮时长':'最近活动'}</dt><dd>${esc(t.time.replace('本轮 ','').replace('更新于 ',''))}</dd>${t.tone==='live'?'<dt>对话花费</dt><dd>$0.31（已计价部分 · 示例）</dd>':''}<dt>文件位置</dt><dd>${location}</dd></dl>`)+(review?section('应交的产物',`<ul class="file-list"><li>${icon('file')}<span>notes / 精读笔记 × 6</span><small>待验收</small></li><li>${icon('file')}<span>references.bib</span><small>有改动</small></li></ul>`)+section('怎样算做完','<p>笔记包含方法、主要结果和局限；正文引用键与文献库相互对应。具体文件在原验收页核对。</p>'):'')+history+`<div class="inspector-hint">此处展示上下文并带你回原入口，验收仍由你在项目页完成。</div>`;
+  openInspector(t.name,`${t.project.name} / ${t.kind}`,statusMarkup(t.tone,t.status),actions,body);
+  lastTrigger=document.querySelector(`#workbench [data-task="${id}"]`);
+}
+function openQueue(id) {
+  const r=queueSeed.find(x=>x.id===id); if(!r) return;
+  const node=document.querySelector(`[data-nav="q:${id}"]`);
+  if(node) { state.selected='q:'+id; render(); document.querySelector(`[data-nav="q:${id}"]`)?.scrollIntoView({block:'nearest'}); }
+  let body='',actions='';
+  if(r.kind==='approval') {
+    actions='<button class="btn" data-decision="deny">拒绝</button><button class="btn" data-decision="allow">允许一次</button>';
+    body=section('Agent 请求运行','<div class="code-block">python3 scripts/organize_notes.py --input papers/included.json</div>')+section('这次授权的范围','<p>仅回答当前这一问，不更改这次会话以后的审批方式。更多权限选项在原对话里选择。</p>')+section('所在位置','<dl class="facts"><dt>Agent</dt><dd>Codex</dd><dt>当前目录</dt><dd>文献精读工作副本</dd><dt>请求来源</dt><dd>CLI 审批通道（示例）</dd></dl>')+section('还需要了解','<p>命令内容由 Agent 提供。你可以回到原对话核对上下文，再决定是否允许。</p>')+'<button class="btn ghost" style="margin-top:18px" data-destination="固态电池界面研究 · 原对话">回到对话 '+arrow+'</button>';
+  } else if(r.id==='radar') {
+    actions='<button class="btn" data-destination="固态电池界面研究 · 定时任务 · 文献雷达">去定时任务处理 '+arrow+'</button>';
+    body=section('为什么暂停','<p>上次检索连接超时。需要查看运行记录、确认连接可用，再选择重跑或重新打开定时任务。</p>')+section('最近一次','<dl class="facts"><dt>结果</dt><dd>连接超时</dd><dt>发生于</dt><dd>10 月 23 日 09:02（示例）</dd><dt>下一轮</dt><dd>已暂停，处理前不会自动再跑</dd></dl>')+section('处理入口','<p>继续使用项目里的定时任务页；在这里不会直接重新打开暂停任务。</p>');
+  } else if(r.id==='dependency') {
+    actions='<button class="btn" data-destination="设置 · 诊断">去诊断 '+arrow+'</button>';
+    body=section('需要补齐依赖','<p>原任务报告缺少 Python 依赖。到诊断页查看具体缺项及修复入口，之后回原对话继续。</p>');
+  } else {
+    actions=`<button class="btn" data-destination="${esc(r.project)} · ${r.id==='conflict'?'工作树 · 冲突处理':'验收'}">${r.id==='conflict'?'查看冲突':'去验收'} ${arrow}</button>`;
+    body=section('需要你决定',`<p>${esc(r.detail)}。${r.id==='conflict'?'先逐个核对冲突文件，再决定合并方式。':'先查看成果和改动，再决定是否写入项目。'}</p>`)+section('本次结果','<ul class="file-list"><li>'+icon('file')+'<span>项目内的文稿与笔记</span><small>工作副本</small></li></ul>')+section('写入边界','<p>成果仍在工作副本。查看详情不会合并文件，进入原验收页后由你决定。</p>');
+  }
+  openInspector(r.title,`${r.project} / 等你拍板`,statusMarkup(r.tone,r.kind==='approval'?'等待你的许可':r.kind==='failure'?'暂停中':'等待处理'),actions,body);
+  lastTrigger=document.querySelector(`#workbench [data-queue="${id}"]`);
+}
+function openSchedule(id) {
+  if(id==='radar' && state.scenario!=='quiet') return openQueue('radar');
+  const name=id==='radar'?'每周文献雷达':id==='summary'?'早间进展汇总':'每日文献动态';
+  const running=id==='daily' && state.schedule==='running';
+  openInspector(name,'固态电池界面研究 / 定时任务',statusMarkup(running?'live':'idle',running?'正在检索文献':'已安排'),`<button class="btn" data-destination="固态电池界面研究 · 定时任务">管理定时任务 ${arrow}</button>`,section('下次运行',`<dl class="facts"><dt>时间</dt><dd>${id==='radar'?'周五 09:00':id==='summary'?'明天 09:00':'今天 16:00'}</dd><dt>频率</dt><dd>${id==='radar'?'每周五 09:00':id==='summary'?'每天 09:00':'每天 16:00'}</dd><dt>执行位置</dt><dd>隔离的工作副本</dd></dl>`)+section('运行完成后','<p>需要评审的结果进入「等你拍板」。你查看并采纳后，成果才写入项目。</p>'));
+}
+const pendingTimers=new Map(); let toastTimer;
+function toast(message,undoId=null,undo=null) {
+  clearTimeout(toastTimer);
+  const el=$('#toast'); el.hidden=false; el.innerHTML=`<span>${esc(message)}</span>${undoId?'<button class="btn ghost" id="undo-action">撤销</button>':'<button class="icon-btn" id="close-toast" aria-label="关闭提示">'+icon('close')+'</button>'}`;
+  if(undoId) $('#undo-action').onclick=undo;
+  else { $('#close-toast').onclick=()=>el.hidden=true; toastTimer=setTimeout(()=>el.hidden=true,5500); }
+}
+function deferDecision(decision) {
+  if(state.pending.has('approval') || state.settled.has('approval')) return;
+  closeInspector(); state.pending.add('approval'); render();
+  const label=decision==='allow'?'允许一次':'拒绝';
+  const timer=setTimeout(()=>{state.pending.delete('approval');state.settled.add('approval');state.approval=decision;pendingTimers.delete('approval');render();toast(`已${label}（演示），原对话将收到这次回复。`);},5000);
+  pendingTimers.set('approval',timer);
+  toast(`将在 5 秒后${label}，现在仍可撤销。`,'approval',()=>{clearTimeout(timer);pendingTimers.delete('approval');state.pending.delete('approval');render();toast('已撤销，尚未发送给 Agent。');});
+}
+function designNotes() {
+  showModal('这版完善了什么',`<p>沿用现有分组列表，围绕「知道发生了什么 → 看清影响 → 回到正确入口」完善。以下均为待讨论提案。</p>${[
+    ['P0 · 可读性','辅助文字也要看得清','任务类别、最近活动和定时标签统一使用正文可读的辅助色。普通文字目标至少 4.5:1；状态同时用文字表达。'],
+    ['P0 · 窄窗','列在放不下时有次序地换行','宽窗保持任务横向对齐，窄窗把状态和时间放到任务名下面。项目、任务和处理入口保持可见。'],
+    ['P1 · 拍板','先看范围，再回复当前这一问','审批详情展示原始命令、目录和授权范围；延迟发送时明确写「将在 5 秒后」，撤销不伪装成事后撤回。'],
+    ['P1 · 导航','按钮说清楚会去哪里','回到对话、打开项目、去验收各用自己的名字。任务详情顶部保留下一步入口，长内容不会把操作挤到最下方。'],
+    ['P1 · 定时','时间点能直接对应到任务','用有名称、可聚焦的时间项替代无名小点。同刻多个任务在实现中应聚合展开；暂停项回到拍板区处理。'],
+    ['P2 · 完整状态','空态与读取失败各有解释','首次使用只有添加项目；没有待办时不展示空队列；读取失败时保留旧快照并写明时效。']
+  ].map(([tag,title,body])=>`<div class="review-item"><h3><span class="tag">${tag}</span>${title}</h3><p>${body}</p></div>`).join('')}<p style="font-size:11px;margin:14px 0 0" class="muted">本稿未接入 Mesa 后端；演示侧栏省略部分管理入口，原产品入口仍保留。日常场景里的文献、数量与活动均为虚构示例。</p>`);
+}
+document.addEventListener('click',event=>{
+  const button=event.target.closest('button'); if(!button) return;
+  if(button.dataset.destination) return destination(button.dataset.destination);
+  if(button.dataset.task) return openTask(button.dataset.task);
+  if(button.dataset.queue) return openQueue(button.dataset.queue);
+  if(button.dataset.schedule) return openSchedule(button.dataset.schedule);
+  if(button.dataset.decision) return deferDecision(button.dataset.decision);
+  if(button.dataset.filter) { state.filter=button.dataset.filter; render(); document.querySelector(`[data-filter="${state.filter}"]`)?.focus(); return; }
+  if(button.dataset.collapse) { const id=button.dataset.collapse; state.closed.has(id)?state.closed.delete(id):state.closed.add(id);render();document.querySelector(`[data-collapse="${id}"]`)?.focus();return; }
+  const action=button.dataset.action;
+  if(action==='close-inspector') return closeInspector();
+  if(action==='close-modal') return $('#modal').close();
+  if(action==='design-notes') return designNotes();
+  if(action==='shortcuts') return showModal('键盘操作',`<p><kbd>Tab</kbd> 在控件之间移动，<kbd>Enter</kbd> 激活当前控件。</p><p>焦点在工作区内时，<kbd>J</kbd> / <kbd>K</kbd> 选择任务，<kbd>Enter</kbd> 打开详情。</p><p><kbd>Esc</kbd> 关闭详情。输入目标或打开详情时，列表快捷键会让出焦点。</p>`);
+  if(action==='rail') { const collapsed=$('#app').classList.toggle('rail-collapsed');button.setAttribute('aria-expanded',String(!collapsed));button.setAttribute('aria-label',collapsed?'展开侧栏':'收起侧栏'); }
+  if(action==='notices') {state.notices=!state.notices;render();}
+  if(action==='more') {state.more=!state.more;render();}
+  if(action==='dismiss-arrival') {state.arrival=false;render();}
+  if(action==='home') {closeInspector();$('#workbench').scrollTop=0;}
+  if(action==='retry') {state.scenario='daily';$('#scenario').value='daily';render();toast('已重新读取（演示）。');}
+  if(action==='goal') {$('#goal-form').hidden=false;$('#goal-input').focus();}
+  if(action==='cancel-goal') {$('#goal-form').hidden=true;}
+  if(action==='dismiss-notice') {state.noticeDismissed=true;render();toast('通知已收起（演示）。');}
+  if(action==='run-schedule') {const running=state.schedule==='running';state.schedule=running?'idle':'running';render();toast(running?'已停止本轮（演示），工作副本仍保留。':'已开始这一轮（演示），不改变原来的定时安排。');}
+});
+document.addEventListener('submit',event=>{
+  if(event.target.id!=='goal-form') return;
+  event.preventDefault(); const value=$('#goal-input').value.trim();if(!value) return;
+  state.goals.push({id:'goal-'+state.goals.length,kind:'目标',name:value,tone:'idle',status:'已记下 · 尚未开工',detail:'去项目页选择 Agent 并开始',time:'刚刚记下'});
+  render();toast('已记到「实验室周报」（演示），尚未启动 Agent。');
+});
+$('#scenario').onchange=event=>{
+  closeInspector(); for(const timer of pendingTimers.values())clearTimeout(timer);pendingTimers.clear();clearTimeout(toastTimer);$('#toast').hidden=true;
+  state.scenario=event.target.value;state.filter='active';state.more=false;state.notices=false;state.selected=null;state.pending.clear();state.settled.clear();state.schedule='idle';state.noticeDismissed=false;state.arrival=true;state.goals=[];state.closed.clear();render();$('#workbench').scrollTop=0;
+};
+$('#width-toggle').onclick=event=>{const compact=$('#app').classList.toggle('compact');event.currentTarget.setAttribute('aria-pressed',String(compact));event.currentTarget.textContent=compact?'恢复宽窗':'窄窗预览';};
+$('#theme-toggle').onclick=event=>{const light=document.documentElement.dataset.theme!=='light';document.documentElement.dataset.theme=light?'light':'dark';event.currentTarget.setAttribute('aria-pressed',String(light));event.currentTarget.textContent=light?'深色预览':'浅色预览';};
+$('#inspector-backdrop').onclick=closeInspector;
+document.addEventListener('keydown',event=>{
+  if($('#modal').open)return;
+  if(!$('#inspector').hidden) {
+    if(event.key==='Escape'){event.preventDefault();closeInspector();return;}
+    if(event.key==='Tab') {
+      const buttons=[...$('#inspector').querySelectorAll('button:not(:disabled),a,input')];const first=buttons[0],last=buttons.at(-1);
+      if(event.shiftKey && document.activeElement===first){event.preventDefault();last.focus();}
+      else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first.focus();}
+    }
+    return;
+  }
+  const target=event.target;
+  if(target.closest('input,textarea,select,[contenteditable="true"]')||event.metaKey||event.ctrlKey||event.altKey)return;
+  if(target!==document.body&&!target.closest('#workbench'))return;
+  const items=[...document.querySelectorAll('#workbench [data-nav]')].filter(el=>el.getClientRects().length);
+  if(!items.length)return;
+  let idx=items.findIndex(el=>el.dataset.nav===state.selected);
+  if(['j','k','J','K'].includes(event.key)) {
+    event.preventDefault();idx=idx<0?(event.key.toLowerCase()==='j'?0:items.length-1):(idx+(event.key.toLowerCase()==='j'?1:-1)+items.length)%items.length;
+    document.querySelectorAll('[data-nav]').forEach(el=>el.dataset.selected='false');state.selected=items[idx].dataset.nav;items[idx].dataset.selected='true';items[idx].focus();items[idx].scrollIntoView({block:'nearest'});
+  }
+  if(event.key==='Enter'&&!target.closest('button,a')&&idx>=0) {event.preventDefault();const [kind,id]=state.selected.split(':');if(kind==='q')openQueue(id);if(kind==='t')openTask(id);if(kind==='s')openSchedule(id);}
+});
+render();
+</script>
+</body>
+</html>
