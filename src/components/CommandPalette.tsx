@@ -9,7 +9,6 @@ import {
   Download,
   ExternalLink,
   FolderOpen,
-  FolderPlus,
   FolderClosed,
   Info,
   Megaphone,
@@ -48,7 +47,8 @@ import {
   themeSwatchFor,
   type ThemeSwatch,
 } from "../theme-swatch";
-import { comboLabel, DEFAULT_NEW_CHAT_HOTKEY, PAGE_HOTKEY_DEFS } from "../hotkeys";
+import { comboLabel, DEFAULT_NEW_CHAT_HOTKEY, DEFAULT_NEW_PROJECT_HOTKEY, PAGE_HOTKEY_DEFS } from "../hotkeys";
+import { openAddExistingFolder, openNewProject } from "../project-add";
 import { NAV_ICONS } from "../navigation-icons";
 import { SETTINGS_SEARCH_INDEX } from "../settings-search";
 import { WORK_MODE_LABEL, normalizeWorkMode } from "../work-mode";
@@ -311,6 +311,7 @@ export default function CommandPalette({
   const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
   const chromeCombo = settings?.hotkeyHideChrome ?? "mod+\\";
   const newChatCombo = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
+  const newProjectCombo = settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY;
   const openExternal = (url: string) =>
     openUrl(url).catch(() => toast("浏览器没打开，稍后再试", "warning"));
 
@@ -334,14 +335,11 @@ export default function CommandPalette({
               id: "project:new",
               title: "新建项目…",
               group: "快速操作",
-              keywords: ["new", "project", "新建", "创建", "项目", "xinjian"],
+              hint: newProjectCombo ? comboLabel(newProjectCombo) : undefined,
+              keywords: ["new", "project", "新建", "创建", "项目", "新项目", "xinjian", "xxm"],
             },
-            icon: icon(FolderPlus),
-            run: () => {
-              const s = useAppStore.getState();
-              s.setPage("workspaces");
-              s.setNewProjectOpenReq({ token: Date.now() });
-            },
+            icon: icon(NAV_ICONS.newProject),
+            run: openNewProject,
           },
           {
             cmd: {
@@ -351,11 +349,7 @@ export default function CommandPalette({
               keywords: ["add", "folder", "open", "添加", "打开", "文件夹", "导入", "项目"],
             },
             icon: icon(FolderOpen),
-            run: () => {
-              const s = useAppStore.getState();
-              s.setPage("workspaces");
-              s.setAddProjectOpenReq(Date.now());
-            },
+            run: openAddExistingFolder,
           },
           {
             cmd: {

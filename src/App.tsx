@@ -5,7 +5,6 @@ import {
   BookOpen,
   BookText,
   CheckCheck,
-  ChevronsLeft,
   CircleHelp,
   Compass,
   ExternalLink,
@@ -13,6 +12,7 @@ import {
   Info,
   Megaphone,
   ListTree,
+  PanelLeft,
   ChevronRight,
   RefreshCw,
   ShieldAlert,
@@ -76,6 +76,8 @@ import {
   comboLabel,
   DEFAULT_FOCUS_RAIL_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
+  DEFAULT_NEW_PROJECT_HOTKEY,
+  DEFAULT_RAIL_SEARCH_HOTKEY,
   globalHotkeyAllowed,
   PAGE_HOTKEY_DEFS,
   IS_MAC,
@@ -85,6 +87,9 @@ import { NAV_ICONS } from "./navigation-icons";
 import { NAV_GROUPS, NAV_BOTTOM } from "./navigation";
 import { isLightTheme } from "./themes";
 import ProjectTree, { TitlebarProjectChip } from "./components/ProjectTree";
+import ContextMenu from "./components/ContextMenu";
+import { openNewProject, projectAddMenuItems } from "./project-add";
+import { RAIL_SEARCH_EVENT } from "./rail-search";
 import { RunActivityButton } from "./components/RunActivity";
 import { shellContextPlacement, shellMode } from "./shell-context";
 import RunCaret from "./components/RunCaret";
@@ -346,6 +351,19 @@ const HELP_MENU: {
   },
 ];
 
+/** 「搜索对话和项目」（标题栏放大镜 / 快捷键）：弹层挂在项目树里。侧栏收成图标或隐藏时树不在，
+ *  先把探出层拉出来、等树挂上再发（同 ⌘0 的做法） */
+function openRailSearch() {
+  const st = useAppStore.getState();
+  const fire = () => window.dispatchEvent(new CustomEvent(RAIL_SEARCH_EVENT));
+  if (st.chromeHidden || st.navCollapsed) {
+    st.setRailPeekOpen(true);
+    requestAnimationFrame(fire);
+  } else {
+    fire();
+  }
+}
+
 function App() {
   const page = useAppStore((s) => s.page);
   const setPage = useAppStore((s) => s.setPage);
@@ -355,6 +373,8 @@ function App() {
   const exitChromeHidden = useAppStore((s) => s.exitChromeHidden);
   const toggleChromeHidden = useAppStore((s) => s.toggleChromeHidden);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // 侧栏顶部「新项目」的三项菜单（新建 / 已有文件夹 / 示例课题，project-add.ts）
+  const [newProjectMenu, setNewProjectMenu] = useState<{ x: number; y: number } | null>(null);
   const { fullscreen: macFullscreen, animating: macFullscreenAnimating } =
     useMacFullscreenState(IS_MAC);
   // 收货反馈横幅（成功 8s 自动消失；失败/需注意常驻直到处理）
@@ -644,11 +664,15 @@ function App() {
     const combo =
       id === "new-chat"
         ? (settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY)
-        : settings?.hotkeyPageSwitch === false
+        : id === "new-project"
+          ? (settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY)
+          : id === "rail-search"
+            ? (settings?.hotkeyRailSearch ?? DEFAULT_RAIL_SEARCH_HOTKEY)
+            : settings?.hotkeyPageSwitch === false
           ? ""
           : PAGE_HOTKEY_DEFS.some((p) => p.id === id)
-            ? (settings?.hotkeyPages?.[id] ?? PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ?? "")
-            : ""; // 「运行」没有页面快捷键（2026-10-24），存过的旧覆盖值也不算
+              ? (settings?.hotkeyPages?.[id] ?? PAGE_HOTKEY_DEFS.find((p) => p.id === id)?.combo ?? "")
+              : ""; // 「运行」没有页面快捷键（2026-10-24），存过的旧覆盖值也不算
     return combo ? `（${comboLabel(combo)}）` : "";
   };
   // 侧栏「上手引导」行：引导进行中才有（进度 + 下一步，点开清单浮层）
@@ -757,7 +781,7 @@ function App() {
     setPage("workspaces");
   }, [page, setPage]);
 
-  // 侧栏收展完全由用户手动控制（品牌区点击）；曾有的按页面自动收展被用户否决（v3.43）
+  // 侧栏收展完全由用户手动控制（标题栏红绿灯右边的侧栏钮，2026-10-27 起；之前是品牌区点击）；曾有的按页面自动收展被用户否决（v3.43）
 
   // 全局快捷键（设置页可自定义，存 settings.json）：新对话（默认 ⌘N）、光标移到侧栏（默认 ⌘0）、命令面板（默认 ⌘K）、
   // 隐藏/显示侧栏（默认 ⌘\）、页切逐页绑定（默认 ⌘1–⌘8，hotkeyPages 按页覆盖 + 整组总开关，顺序同展开的侧栏，没有「运行」）。
@@ -815,6 +839,8 @@ function App() {
     const chromeCombo = settings?.hotkeyHideChrome ?? "mod+\\";
     const newChatCombo = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
     const focusRailCombo = settings?.hotkeyFocusRail ?? DEFAULT_FOCUS_RAIL_HOTKEY;
+    const newProjectCombo = settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY;
+    const railSearchCombo = settings?.hotkeyRailSearch ?? DEFAULT_RAIL_SEARCH_HOTKEY;
     const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
     const onKey = (e: KeyboardEvent) => {
       if (e.isComposing) return;
@@ -833,6 +859,19 @@ function App() {
         e.preventDefault();
         setPaletteOpen(false);
         void openQuickChat();
+        return;
+      }
+      // 新项目（默认 ⇧⌘N）：直接开「新建项目」；添加已有文件夹 / 示例课题走按钮菜单。同新对话，输入框里也接
+      if (allowed && eventMatchesCombo(e, newProjectCombo)) {
+        e.preventDefault();
+        setPaletteOpen(false);
+        openNewProject();
+        return;
+      }
+      if (allowed && eventMatchesCombo(e, railSearchCombo)) {
+        e.preventDefault();
+        setPaletteOpen(false);
+        openRailSearch();
         return;
       }
       // 编辑器里 ⌘0 是「字号还原」（FilePreviewEditor 先 preventDefault），这里让给它，同界面缩放
@@ -1492,6 +1531,31 @@ function App() {
                 展开态侧栏已有项目树（在跑的对话行尾有点），这里留空，只做拖拽区；图标态补项目芯片（不在
                 项目页时）与活动芯片；全隐藏时项目芯片常驻（唯一切项目入口），活动挪进灵动岛。 */}
             <div className="ccode-titlebar-side relative flex min-w-0 shrink items-center gap-1.5">
+              {/* 侧栏钮 + 搜索（2026-10-27 用户：去掉 Mesa 品牌行，收展挪到红绿灯右边，搜索不再在侧栏占一行）。
+                  完全隐藏时不出：恢复侧栏由灵动岛管（同一件事每种形态只一处） */}
+              {!chromeHidden && (
+                <>
+                  <button
+                    type="button"
+                    onClick={cycleNavState}
+                    title={collapsed ? "展开侧栏" : "收起为图标"}
+                    aria-label={collapsed ? "展开侧栏" : "收起为图标"}
+                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+                  >
+                    <PanelLeft size={14.5} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openRailSearch}
+                    title={`搜索对话和项目${keyHint("rail-search")}`}
+                    aria-label="搜索对话和项目"
+                    aria-haspopup="dialog"
+                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+                  >
+                    <NAV_ICONS.search size={14.5} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                </>
+              )}
               {shellPlacement.projectChip && (
                 <TitlebarProjectChip
                   name={contextLabel?.project ?? null}
@@ -1792,29 +1856,52 @@ function App() {
                   railDragging ? "" : "transition-[width] duration-150"
                 } ${collapsed ? "w-14" : ""}`}
               >
-                {/* 品牌区 */}
-                <button
-                  type="button"
-                  onClick={cycleNavState}
-                  title={collapsed ? "展开侧栏" : "收起为图标"}
-                  className={`ccode-brand-bar group mx-1.5 mt-1 flex h-[34px] shrink-0 select-none items-center rounded-md text-left transition-colors hover:bg-hover ${
-                    collapsed ? "justify-center" : "px-2"
-                  }`}
-                >
-                  <span className="ccode-brand-mark">
-                    {collapsed ? "M" : "Mesa"}
-                  </span>
-                  {!collapsed && (
-                    <ChevronsLeft
-                      size={13}
-                      strokeWidth={1.8}
-                      className="ml-auto shrink-0 text-l3 opacity-0 transition-opacity group-hover:opacity-100"
-                    />
-                  )}
-                </button>
-
-                {/* 快速入口：贴品牌区（2026-10-16 用户拍板：工作台/新对话在 Mesa 下、项目标签之上；「新对话」原名「快速开聊」，2026-10-18 改） */}
-                <div className="shrink-0 px-1.5 pt-1">
+                {/* 快速入口（2026-10-27 用户拍板：去掉 Mesa 品牌行，两个「新建」放最上面、分量一样，再是工作台 / 对话管理；
+                    「新对话」原名「快速开聊」，2026-10-18 改） */}
+                <div className="shrink-0 px-1.5 pt-1.5">
+                  <RailTooltip label="新对话" collapsed={collapsed}>
+                    <button
+                      type="button"
+                      onClick={() => void openQuickChat()}
+                      aria-label="新对话"
+                      title={`新对话：直接开一段空白对话，默认在随手聊里，可在输入框下换项目${keyHint("new-chat")}`}
+                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
+                        collapsed ? "justify-center" : "px-2.5"
+                      }`}
+                    >
+                      <NAV_ICONS.quickChat
+                        size={16}
+                        strokeWidth={1.8}
+                        className={collapsed ? "" : "mr-2 shrink-0"}
+                        aria-hidden="true"
+                      />
+                      {!collapsed && <span className="truncate">新对话</span>}
+                    </button>
+                  </RailTooltip>
+                  <RailTooltip label="新项目" collapsed={collapsed}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setNewProjectMenu(newProjectMenu ? null : { x: r.left, y: r.bottom + 4 });
+                      }}
+                      aria-label="新项目"
+                      aria-haspopup="menu"
+                      aria-expanded={Boolean(newProjectMenu)}
+                      title={`新项目：新建一个项目文件夹，或把已有文件夹登记成项目${keyHint("new-project")}`}
+                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm transition-colors ${
+                        collapsed ? "justify-center" : "px-2.5"
+                      } ${newProjectMenu ? "bg-hover text-l2" : "text-l3 hover:bg-hover hover:text-l2"}`}
+                    >
+                      <NAV_ICONS.newProject
+                        size={16}
+                        strokeWidth={1.8}
+                        className={collapsed ? "" : "mr-2 shrink-0"}
+                        aria-hidden="true"
+                      />
+                      {!collapsed && <span className="truncate">新项目</span>}
+                    </button>
+                  </RailTooltip>
                   <RailTooltip label="工作台" collapsed={collapsed}>
                     <button
                       type="button"
@@ -1837,25 +1924,6 @@ function App() {
                         aria-hidden="true"
                       />
                       {!collapsed && <span className="truncate">工作台</span>}
-                    </button>
-                  </RailTooltip>
-                  <RailTooltip label="新对话" collapsed={collapsed}>
-                    <button
-                      type="button"
-                      onClick={() => void openQuickChat()}
-                      aria-label="新对话"
-                      title={`新对话：直接开一段空白对话，默认在随手聊里，可在输入框下换项目${keyHint("new-chat")}`}
-                      className={`relative mb-0.5 flex h-8 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
-                        collapsed ? "justify-center" : "px-2.5"
-                      }`}
-                    >
-                      <NAV_ICONS.quickChat
-                        size={16}
-                        strokeWidth={1.8}
-                        className={collapsed ? "" : "mr-2 shrink-0"}
-                        aria-hidden="true"
-                      />
-                      {!collapsed && <span className="truncate">新对话</span>}
                     </button>
                   </RailTooltip>
                   {/* 图标态的「运行」图标 2026-10-24 撤掉（用户定 A+D+E）：回到对话改走探出整栏——悬停下面那段空白或按 ⌘0，
@@ -2242,6 +2310,14 @@ function App() {
             onCheckUpdate={() => setHelpDialog("update")}
           />
           <AskAiModal />
+          {newProjectMenu && (
+            <ContextMenu
+              x={newProjectMenu.x}
+              y={newProjectMenu.y}
+              onClose={() => setNewProjectMenu(null)}
+              items={projectAddMenuItems()}
+            />
+          )}
           {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
           <ConfirmDialogHost />
           {/* 上手引导：首次判定、欢迎页、清单浮层、每做完一步的「下一步」提示 */}

@@ -20,7 +20,6 @@ import {
   PinOff,
   Plus,
   Search,
-  Sparkles,
   SquarePen,
   SquareTerminal,
   Trash2,
@@ -110,7 +109,7 @@ import { startProjectChat } from "./AskAiModal";
 import { imeBlocksEnter } from "../ime-guard";
 import { relTime } from "../rel-time";
 import RailSearchPalette from "./RailSearchPalette";
-import type { RailSearchChat, RailSearchProject } from "../rail-search";
+import { RAIL_SEARCH_EVENT, type RailSearchChat, type RailSearchProject } from "../rail-search";
 import { usePolling } from "../polling";
 import { useClientOpen } from "./ClientOpenDialog";
 import { openButtonLabel } from "../client-open";
@@ -165,8 +164,14 @@ export default function ProjectTree({
   const [repos, setRepos] = useState<
     Pick<WorkspaceDto, "repoPath" | "repoName" | "worktreePath">[]
   >([]);
-  // 固定搜索入口打开「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛
+  // 「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛。
+  // 入口 2026-10-27 挪到标题栏放大镜 / 快捷键，经 RAIL_SEARCH_EVENT 打开（树里不再占一行）
   const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const open = () => setSearchOpen(true);
+    window.addEventListener(RAIL_SEARCH_EVENT, open);
+    return () => window.removeEventListener(RAIL_SEARCH_EVENT, open);
+  }, []);
   // 对话菜单「在 X 客户端打开」：哪家的会话交给哪家自己的 GUI 客户端（预检与确认层同对话页）
   const clientOpen = useClientOpen(true);
   const [menu, setMenu] = useState<{
@@ -316,7 +321,6 @@ export default function ProjectTree({
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
   }
-  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{
     path: string;
     name: string;
@@ -1875,7 +1879,7 @@ export default function ProjectTree({
     );
   }
 
-  /** 项目标签行：计数 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发）。
+  /** 项目标签行：只报计数。添加入口在侧栏顶部「新项目」（2026-10-27 用户：同一件事不放两处）。
    *  放在随手聊下面、课题上面（2026-10-26 用户：置顶的对话和随手聊都不是项目，原先压在「项目 N」下面读不通） */
   function renderProjectsLabel() {
     return (
@@ -1884,20 +1888,6 @@ export default function ProjectTree({
           项目
         </span>
         <span className="text-xs text-l4">{rows.length}</span>
-        <span className="ml-auto flex items-center">
-          <button
-            type="button"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              setAddMenu({ x: rect.right - 176, y: rect.bottom + 4 });
-            }}
-            title="添加项目 / 创建示例课题"
-            aria-label="添加项目 / 创建示例课题"
-            className="flex h-6 w-6 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
-          >
-            <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
-          </button>
-        </span>
       </div>
     );
   }
@@ -1905,17 +1895,6 @@ export default function ProjectTree({
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-rail-search-open={searchOpen || undefined}>
       {clientOpen.dialog}
-      <button
-        type="button"
-        onClick={() => setSearchOpen(true)}
-        aria-label="搜索对话和项目"
-        aria-haspopup="dialog"
-        title="搜索对话和项目"
-        className="mx-1.5 mb-1 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-l3 hover:bg-hover hover:text-l1"
-      >
-        <Search size={14} strokeWidth={1.8} aria-hidden="true" />
-        <span className="text-xs">搜索对话和项目</span>
-      </button>
       {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在上面的导航下面硬切半行，底下的行也不撞上工具栏分隔线；
           底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（置顶 / 其他打开的 / 项目）的左缘对齐上面导航图标的左缘（16px）。
           键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}
@@ -2107,46 +2086,6 @@ export default function ProjectTree({
           />
         );
       })()}
-      {addMenu && (
-        <ContextMenu
-          x={addMenu.x}
-          y={addMenu.y}
-          onClose={() => setAddMenu(null)}
-          items={[
-            {
-              label: "新建项目…",
-              icon: FolderPlus,
-              title: "起个名字建一个新文件夹，定好工作方式后登记为项目",
-              onSelect: () => {
-                const s = useAppStore.getState();
-                s.setPage("workspaces");
-                s.setNewProjectOpenReq({ token: Date.now() });
-              },
-            },
-            {
-              label: "添加已有文件夹…",
-              icon: FolderOpen,
-              title: "把电脑上已有的文件夹登记为项目",
-              onSelect: () => {
-                const s = useAppStore.getState();
-                s.setPage("workspaces");
-                s.setAddProjectOpenReq(Date.now());
-              },
-            },
-            {
-              label: "创建示例课题",
-              icon: Sparkles,
-              hint: "演示",
-              title: "在 文档/Mesa 示例课题 生成带演示数据的完整研究流程项目。以前建在「Ccode 示例课题」里的，再点仍打开那一份",
-              onSelect: () => {
-                const s = useAppStore.getState();
-                s.setPage("workspaces");
-                s.setDemoProjectOpenReq(Date.now());
-              },
-            },
-          ]}
-        />
-      )}
       {renameTarget && (
         <RenameProjectModal
           path={renameTarget.path}

@@ -447,6 +447,8 @@ fn feature_flags() -> Value {
         "hotkeyNewChatEnabled": settings.hotkey_new_chat.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyFocusRailEnabled": settings.hotkey_focus_rail.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyToggleSurfaceEnabled": settings.hotkey_toggle_surface.as_deref().is_some_and(|v| !v.is_empty()),
+        "hotkeyNewProjectEnabled": settings.hotkey_new_project.as_deref().is_some_and(|v| !v.is_empty()),
+        "hotkeyRailSearchEnabled": settings.hotkey_rail_search.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyPageSwitch": settings.hotkey_page_switch,
         "aiDefaultProfileConfigured": settings.ai_profile_id.is_some(),
         "aiFunctionProfilesConfigured": ai_functions,

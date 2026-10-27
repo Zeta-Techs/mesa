@@ -6,6 +6,10 @@ import type { RunCaretState } from "./run-caret";
  * 匹配不分大小写，按空白拆词、每个词都要命中（标题 / 所在文件夹名 / 项目路径任一处）。
  */
 
+/** 打开弹层的窗口事件（2026-10-27 入口挪到标题栏放大镜）：弹层要项目树手上的对话与项目，所以挂在 ProjectTree 里，
+ *  标题栏 / 快捷键发这个事件，当时挂着的那棵树（展开侧栏或探出层）接 */
+export const RAIL_SEARCH_EVENT = "mesa:open-rail-search";
+
 export interface RailSearchChat<T> {
   /** agent + sessionId，去重用 */
   key: string;

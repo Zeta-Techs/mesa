@@ -5,9 +5,11 @@ import {
   Cable,
   Clock3,
   Folder,
+  FolderPlus,
   LayoutDashboard,
   MessageCirclePlus,
   MessagesSquare,
+  Search,
   Settings2,
   Sparkles,
   SquareTerminal,
@@ -25,6 +27,9 @@ export const NAV_ICONS = {
   stats: BarChart3,
   settings: Settings2,
   quickChat: MessageCirclePlus,
+  // 侧栏顶部「新项目」与标题栏「搜索对话和项目」（2026-10-27）
+  newProject: FolderPlus,
+  search: Search,
 } satisfies Record<string, LucideIcon>;
 
 export type NavIconId = keyof typeof NAV_ICONS;

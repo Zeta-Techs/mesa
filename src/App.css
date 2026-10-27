@@ -1137,20 +1137,6 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   top: var(--ccode-titlebar-h);
 }
 
-/* 品牌区与侧栏同底不画线（Codex 式：侧栏只有全高竖分界 + 底部栏一根横线，分区间靠留白）。
-   字标不走按钮 text-*（全站 button { font: inherit } 会吞掉）；四字 Mesa 不用 tracking-wide。 */
-.ccode-brand-bar {
-  transition: background-color 150ms var(--ccode-motion-ease);
-}
-
-.ccode-brand-mark {
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  color: var(--color-l1);
-}
-
 /* 侧栏 nav 不可用 scrollbar-gutter：经典滚动条（系统"始终显示"）下 stable 会在 56px
    收缩态里再占 ~14px，固定宽按钮的 hover/选中衬底被 overflow-x-hidden 裁掉一截 */
 .ccode-app-main {

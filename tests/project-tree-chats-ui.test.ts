@@ -658,10 +658,9 @@ test("「项目 N」标签在置顶的对话和随手聊下面、课题上面：
     assert.ok(before(label, view.button("综述流程测试")), "课题在「项目」下面");
     assert.ok(before(label, view.button("Ccode")), "课题在「项目」下面");
     assert.equal(label.parentElement?.querySelector(".text-l4")?.textContent, "2", "计数只数课题");
-    // 搜索固定在列表外，添加仍在项目行
-    assert.ok(!label.parentElement?.querySelector('[aria-label="搜索对话和项目"]'));
-    assert.equal(view.button("搜索对话和项目").closest(".ccode-rail-scroll"), null);
-    assert.ok(label.parentElement?.querySelector('[aria-label="添加项目 / 创建示例课题"]'));
+    // 2026-10-27：搜索入口挪到标题栏、添加挪到侧栏顶部「新项目」，树里两样都不再有
+    assert.equal(view.host.querySelector('[aria-label="搜索对话和项目"]'), null);
+    assert.equal(label.parentElement?.querySelector("button"), null, "项目标签行只报计数");
   } finally {
     await view.close();
   }
@@ -1041,9 +1040,11 @@ test("侧栏搜索：焦点约束、结果语义、状态筛选、中文输入�
     const doc = view.host.ownerDocument;
     const win = doc.defaultView!;
     Object.defineProperty(win, "matchMedia", { value: () => ({ matches: true }), configurable: true });
-    const trigger = view.button("搜索对话和项目");
+    // 入口在标题栏（App），这里替它发打开事件；焦点先放在一个树外的按钮上，关掉后应回到它
+    const trigger = doc.createElement("button");
+    doc.body.appendChild(trigger);
     trigger.focus();
-    await view.act(async () => trigger.click());
+    await view.act(async () => { win.dispatchEvent(new win.CustomEvent("mesa:open-rail-search")); });
     await view.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const dialog = doc.querySelector('[role="dialog"]')!;
     assert.ok(dialog);

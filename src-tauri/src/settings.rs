@@ -27,6 +27,9 @@ pub const DEFAULT_HOTKEY_NEW_CHAT: &str = "mod+n";
 pub const DEFAULT_HOTKEY_FOCUS_RAIL: &str = "mod+0";
 /// 运行页聊天 / 终端来回切（2026-10-25；光标在终端里也接）
 pub const DEFAULT_HOTKEY_TOGGLE_SURFACE: &str = "mod+shift+t";
+/// 新项目（侧栏顶部「新项目」，2026-10-27）与「搜索对话和项目」（标题栏放大镜）
+pub const DEFAULT_HOTKEY_NEW_PROJECT: &str = "mod+shift+n";
+pub const DEFAULT_HOTKEY_RAIL_SEARCH: &str = "mod+shift+f";
 pub const DEFAULT_HOTKEY_PAGE_SWITCH: bool = true;
 pub const DEFAULT_NAV_CAPSULE_HIDE_DELAY_MS: u32 = 1000;
 /// 侧栏 / 顶栏罩色的透明度系数（百分比，100 = 各主题本来的罩色，越小越透）。
@@ -356,6 +359,8 @@ pub struct AppSettingsDto {
     pub hotkey_new_chat: Option<String>,
     pub hotkey_focus_rail: Option<String>,
     pub hotkey_toggle_surface: Option<String>,
+    pub hotkey_new_project: Option<String>,
+    pub hotkey_rail_search: Option<String>,
     /// ⌘1–⌘9 页切整组总开关（关 = 全部页切绑定不生效）
     pub hotkey_page_switch: Option<bool>,
     /// 页切逐页绑定：键 = 页面 id（前端 hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；
@@ -958,6 +963,12 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         hotkey_toggle_surface: s
             .hotkey_toggle_surface
             .or_else(|| Some(DEFAULT_HOTKEY_TOGGLE_SURFACE.to_string())),
+        hotkey_new_project: s
+            .hotkey_new_project
+            .or_else(|| Some(DEFAULT_HOTKEY_NEW_PROJECT.to_string())),
+        hotkey_rail_search: s
+            .hotkey_rail_search
+            .or_else(|| Some(DEFAULT_HOTKEY_RAIL_SEARCH.to_string())),
         hotkey_page_switch: s.hotkey_page_switch.or(Some(DEFAULT_HOTKEY_PAGE_SWITCH)),
         // 逐页绑定不做默认值填充：键缺失即「跟随默认」（同 ai_profiles 口径）
         hotkey_pages: s.hotkey_pages,
@@ -1136,6 +1147,12 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.hotkey_toggle_surface.is_some() {
         cur.hotkey_toggle_surface = patch.hotkey_toggle_surface;
+    }
+    if patch.hotkey_new_project.is_some() {
+        cur.hotkey_new_project = patch.hotkey_new_project;
+    }
+    if patch.hotkey_rail_search.is_some() {
+        cur.hotkey_rail_search = patch.hotkey_rail_search;
     }
     if patch.hotkey_page_switch.is_some() {
         cur.hotkey_page_switch = patch.hotkey_page_switch;

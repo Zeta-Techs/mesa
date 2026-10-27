@@ -91,8 +91,8 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
                              #   窄于 560px 自动收掉连接名/思考档/token、模型与目录截断，防叠字；
                              #   聊天变体留左右两格 chatMetaRef 给 ChatSurface portal 挂「权限 · 项目 | 模型」，2026-10-23） 等
   App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
-                             #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏纵向间距收紧（2026-10-25 用户：品牌区到导航、导航到「项目」嫌松）：品牌区 h-[34px]、导航区 pt-1、项目区 pt-1.5。侧栏（2026-10-16 定稿）：品牌区下是快速入口
-                             #   （工作台 ⌘1 / 新对话 / 运行（常驻）/ 对话管理），中段项目树（ProjectTree，课题下挂对话），
+                             #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏顶部（2026-10-27 用户拍板）：无品牌行，收展钮与「搜索对话和项目」放大镜在标题栏左组（红绿灯右边，openRailSearch 发 RAIL_SEARCH_EVENT，
+                             #   收着时先拉探出层）；侧栏最上是快速入口（新对话 ⌘N / 新项目 ⇧⌘N（三项菜单 project-add.ts）/ 工作台 ⌘1 / 对话管理），中段项目树（ProjectTree，课题下挂对话），
                              #   底部资源段（连接/技能/MCP/用量/设置：展开态平时连接、设置 + › 记号，悬停这一排抽屉滑出技能 / MCP / 用量（RAIL_MORE_PAGES，`.ccode-rail-drawer`，2026-10-25）、图标态竖排五个）；收起态=图标条（项目树不可用，展开后才有）。
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
@@ -130,8 +130,8 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
-  components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（计数只数课题＋添加入口，2026-10-26 挪进滚动区、排在随手聊下面）与课题；
-                             #   树滚动区外的固定入口开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
+  components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（只报计数、只数课题，2026-10-26 挪进滚动区、排在随手聊下面；添加入口 2026-10-27 挪到侧栏顶部「新项目」）与课题；
+                             #   RAIL_SEARCH_EVENT（标题栏放大镜 / ⇧⌘F 发，2026-10-27 起树里不再占一行）开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），项目标签左缘对齐导航图标；置顶 / 其他打开的标题前置折叠箭头。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
                              #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 13px 加粗 l2 分组标题（2026-10-27 用户：比 Claude 客户端糊，对话同字号 l2 常重） / 对话 pl-2 不缩进（2026-10-25）
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
@@ -139,7 +139,8 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/CoachTip.tsx    # 一次性悬浮气泡（2026-10-27 侧栏多选起用）：只管画（标题 / 正文 kbd / 按钮 / ×、小三角朝左 / 下 / 上）；showFloatingCoach = 挂 body 浮在锚点旁（右边或下面，量过自己再摆、同时只有一个、点外面 / Esc / 指定滚动区滚动 / 窗口变大小收起）；何时出由 coach-tips.ts 管；样式 App.css .ccode-coach
   components/shortcut-nudges.tsx # 用鼠标做了本有快捷键的事时提醒快捷键：关对话到第 2 段 → ⌘W / Ctrl+Shift+W（侧栏 × / ⋯ 与对话头 ⋯ 共用一份计数，确认框开着不出）；对话头 >_ 聊天 ↔ 终端点到第 3 下 → 切换快捷键（tests/shortcut-nudges-ui.test.ts）
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：Modal + body portal 管焦点，combobox/listbox 管结果选择；打开由宿主回调，状态与关键词筛选在 rail-search.ts
-  rail-search.ts             # 搜索弹层纯逻辑：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
+  project-add.ts             # 「新项目」三条路单一出处（2026-10-27）：openNewProject / openAddExistingFolder / openDemoProject（切项目页 + 一次性请求）与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
+  rail-search.ts             # 搜索弹层纯逻辑（另有打开事件名 RAIL_SEARCH_EVENT）：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
                              #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
                              #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；
@@ -164,7 +165,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
 components/ProjectIdentityHeader.tsx  # 项目页身份头（WorkspacesPage 唯一消费者）：注册名/路径（~ 折叠）/工作方式与课题主题就地编辑（写 project.toml）、config 警告行、未注册给「添加到 Mesa」；⋯ 菜单（设置/编辑器/历史/从 Mesa 移除）经 ProjectChromeAction 一次性请求 chromeReq 驱动，动作由页面执行
                              #   侧栏树在主 chunk，静态引入会把整页拖进主包），树右键与页面共用同一份
   navigation.ts              # 导航清单单一出处（九页全量）。侧栏本身不按本表渲染（App.tsx 自排三段），本表供隐藏态导航胶囊
-navigation-icons.ts        # 九页＋新对话/定时任务的 Lucide 图标表 NAV_ICONS（图标单一出处）：侧栏三段（App.tsx）、navigation.ts 导航清单、命令面板、灵动岛/对话切换器、连接页 agent 分组头共用——换图标只改这里（2026-10-27 用户拍板「对话管理」统一 NAV_ICONS.sessions 弃放大镜）
+navigation-icons.ts        # 九页＋新对话/新项目/搜索/定时任务的 Lucide 图标表 NAV_ICONS（图标单一出处）：侧栏三段（App.tsx）、navigation.ts 导航清单、命令面板、灵动岛/对话切换器、连接页 agent 分组头共用——换图标只改这里（2026-10-27 用户拍板「对话管理」统一 NAV_ICONS.sessions 弃放大镜）
 types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文件 import）：Profile/ComboSurfaceDto（逐字段通道表）/Gateway*、会话（SessionMetaDto/瘦身/搜索/导入导出）、工作区（评审冻结/合并/PR/产物）、人工事项、任务卡、用量（含活跃度四列口径）、MCP、定时任务、目标 Run/评审快照等后端 DTO 的 TS 镜像（与 Rust 端 serde camelCase 对齐），另出九家 agent id 清单与 AGENT_PROTOCOLS。纯类型＋常量、不放逻辑；后端 DTO 增删字段先改这里再编译前端
                              #   （TopNavCapsule）、设置页「岛上显示的入口」勾选消费——删页会静默弄坏这两处；顺序与字同图标态侧栏
                              #   （2026-10-24：工作台 · 运行 · 对话管理（10-27 前叫「搜对话」）· 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）；

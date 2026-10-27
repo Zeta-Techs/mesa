@@ -44,6 +44,8 @@ import {
   comboLabel,
   DEFAULT_FOCUS_RAIL_HOTKEY,
   DEFAULT_TOGGLE_SURFACE_HOTKEY,
+  DEFAULT_NEW_PROJECT_HOTKEY,
+  DEFAULT_RAIL_SEARCH_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
   FIXED_HOTKEYS,
   hotkeyClashes,
@@ -1026,6 +1028,8 @@ function HotkeysSection({
   const newChat = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
   const focusRail = settings?.hotkeyFocusRail ?? DEFAULT_FOCUS_RAIL_HOTKEY;
   const toggleSurface = settings?.hotkeyToggleSurface ?? DEFAULT_TOGGLE_SURFACE_HOTKEY;
+  const newProject = settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY;
+  const railSearch = settings?.hotkeyRailSearch ?? DEFAULT_RAIL_SEARCH_HOTKEY;
   const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
   const pageCombo = (id: string) =>
     settings?.hotkeyPages?.[id] ??
@@ -1038,6 +1042,8 @@ function HotkeysSection({
       ? PAGE_HOTKEY_DEFS.map((p) => ({ id: p.id, label: p.label, combo: pageCombo(p.id) }))
       : []),
     { id: "newChat", label: "新对话", combo: newChat },
+    { id: "newProject", label: "新项目", combo: newProject },
+    { id: "railSearch", label: "搜索对话和项目", combo: railSearch },
     { id: "focusRail", label: "在侧栏里选对话", combo: focusRail },
     { id: "toggleSurface", label: "聊天 / 终端", combo: toggleSurface },
     { id: "palette", label: "命令面板", combo: palette },
@@ -1079,6 +1085,8 @@ function HotkeysSection({
                   newChat,
                   focusRail,
                   toggleSurface,
+                  newProject,
+                  railSearch,
                   ...PAGE_HOTKEY_DEFS.filter((x) => x.id !== p.id).map(
                     (x) => pageCombo(x.id),
                   ),
@@ -1113,8 +1121,38 @@ function HotkeysSection({
               value={newChat}
               clashWith={clashes.get("newChat")}
               defaultValue={DEFAULT_NEW_CHAT_HOTKEY}
-              conflictsWith={[palette, chrome, focusRail, toggleSurface, ...pageCombos]}
+              conflictsWith={[palette, chrome, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyNewChat: combo })}
+              capturing={capturing}
+              setCapturing={setCapturing}
+            />
+          </CardRow>
+          <CardRow
+            label="新项目"
+            title="同侧栏「新项目」里的「新建项目…」：起个名字建一个新文件夹；添加已有文件夹在侧栏按钮的菜单里"
+          >
+            <HotkeyCapture
+              id="newProject"
+              value={newProject}
+              clashWith={clashes.get("newProject")}
+              defaultValue={DEFAULT_NEW_PROJECT_HOTKEY}
+              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, railSearch, ...pageCombos]}
+              onSave={(combo) => void patch({ hotkeyNewProject: combo })}
+              capturing={capturing}
+              setCapturing={setCapturing}
+            />
+          </CardRow>
+          <CardRow
+            label="搜索对话和项目"
+            title="同标题栏放大镜：按名字找对话和项目；侧栏收成图标或隐藏时项目树临时探出来"
+          >
+            <HotkeyCapture
+              id="railSearch"
+              value={railSearch}
+              clashWith={clashes.get("railSearch")}
+              defaultValue={DEFAULT_RAIL_SEARCH_HOTKEY}
+              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, newProject, ...pageCombos]}
+              onSave={(combo) => void patch({ hotkeyRailSearch: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
             />
@@ -1128,7 +1166,7 @@ function HotkeysSection({
               value={focusRail}
               clashWith={clashes.get("focusRail")}
               defaultValue={DEFAULT_FOCUS_RAIL_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, toggleSurface, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, toggleSurface, newProject, railSearch, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyFocusRail: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1143,7 +1181,7 @@ function HotkeysSection({
               value={toggleSurface}
               clashWith={clashes.get("toggleSurface")}
               defaultValue={DEFAULT_TOGGLE_SURFACE_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, focusRail, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, focusRail, newProject, railSearch, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyToggleSurface: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1155,7 +1193,7 @@ function HotkeysSection({
               value={palette}
               clashWith={clashes.get("palette")}
               defaultValue="mod+k"
-              conflictsWith={[chrome, newChat, focusRail, toggleSurface, ...pageCombos]}
+              conflictsWith={[chrome, newChat, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyPalette: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1168,7 +1206,7 @@ function HotkeysSection({
               clashWith={clashes.get("chrome")}
               // JSX 属性里的字符串不认反斜杠转义："mod+\\" 会是两个反斜杠，和真绑定对不上（原先「恢复」常亮、点了还会存坏）
               defaultValue={"mod+\\"}
-              conflictsWith={[palette, newChat, focusRail, toggleSurface, ...pageCombos]}
+              conflictsWith={[palette, newChat, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyHideChrome: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
