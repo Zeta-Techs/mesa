@@ -652,12 +652,29 @@ function norm(text: string): string {
 
 /**
  * 读到的这一截是不是还停在上一轮：它所在的回显与发送前屏上最后一条回显是同一行，又不像刚发的这句。
- * before = 发送前的最后一条回显（没有为 null）；sent = 刚发的原文。重复发同一句时认作新的（宁可多显示一会儿旧的）
+ * before = 发送前的最后一条回显（没有为 null）；sent = 刚发的原文。
+ * 重复发同一句时回显分不出新旧，改看回复：字全是发送前屏上就有的（beforeLines）= 还是上一轮的。原先一律认作新的，
+ * 接回会话后再发一句「你好」，上一轮的回复整段挂在「正在回复」里直到新回复出字（2026-10-27 用户截图）。
+ * 新回复碰巧与上一轮一字不差时要等会话文件落盘才出来，比把旧的当新的好
  */
-export function staleEcho(read: LiveReplyRead, before: string | null, sent: string): boolean {
+export function staleEcho(
+  read: LiveReplyRead,
+  before: string | null,
+  sent: string,
+  beforeLines: readonly string[] | null = null,
+): boolean {
   if (before === null || read.echo === undefined || read.echo !== before) return false;
   const head = norm(sent.split("\n")[0] ?? "").slice(0, 12);
-  return !head || !norm(read.echo).includes(head);
+  if (head && norm(read.echo).includes(head)) return linesKnown(read.lines, beforeLines);
+  return true;
+}
+
+/** 读到的每一行有字的都在 before 里（before 为空时不算） */
+function linesKnown(lines: readonly string[], before: readonly string[] | null): boolean {
+  if (!before?.length) return false;
+  const known = new Set(before.map(norm).filter(Boolean));
+  const keys = lines.map(norm).filter(Boolean);
+  return keys.length > 0 && keys.every((k) => known.has(k));
 }
 
 /**
@@ -690,10 +707,8 @@ export function dropAskedEcho(live: readonly string[], asked: string): string[] 
  * 预览把上一轮的后半段当成了这一轮的回复（2026-10-26 用户截图）。before = 发送前屏上读出的那一截（没有为 null）
  */
 export function staleWithoutEcho(read: LiveReplyRead, before: readonly string[] | null): boolean {
-  if (read.echo !== undefined || !before?.length) return false;
-  const known = new Set(before.map(norm).filter(Boolean));
-  const keys = read.lines.map(norm).filter(Boolean);
-  return keys.length > 0 && keys.every((k) => known.has(k));
+  if (read.echo !== undefined) return false;
+  return linesKnown(read.lines, before);
 }
 
 /**

@@ -4,7 +4,9 @@
 
 ## 未发布
 
+- 修好：接回一段旧对话、或连着两次发同一句话时，聊天里「正在回复」先显示上一轮的回复，要等新回复出字才换掉（Claude Code、Codex、Gemini CLI、Qwen Code、Kimi Code、Grok Build）。
 - 修好：Mac 上用 Homebrew 装 Node、再用 npm 装的 Codex、Gemini CLI、CodeBuddy Code，在安装版 Mesa 里一启动对话区就一片空白——它们找不到 Node 起不来。现在能正常启动；以后哪家 Agent 一启动就退出，终端里也会留下它的报错，不再是空白。
+
 ## v0.1.0（首个公开版本）
 
 Mesa 是一个 AI 科研工作台：把 Claude Code、Codex、Gemini CLI 等九个终端 Agent 放进一个桌面应用里统一管理，再在上面搭好读文献、整数据、做图、写论文的研究流程。AI 负责干活，Mesa 负责管环境和验收，你负责拍板。支持 macOS（Apple 芯片与 Intel 芯片）和 Windows。

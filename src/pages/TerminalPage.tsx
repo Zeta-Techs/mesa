@@ -2561,8 +2561,13 @@ const TerminalView = memo(function TerminalView({
   const liveSyncWaitsRef = useRef(0);
   // 实时预览攒的是哪一条回显后面的回复
   const liveEchoRef = useRef<string | null>(null);
+  // 接回会话、这句还没写进终端（等进程起来、回放、输入框就绪）：屏上全是回放的旧对话，不读。
+  // 原先这段空当里读到的上一轮回复被当成这一轮的预览，写进去之后 staleEcho 又一直拦着新读数，旧回复就挂到新回复出字
+  // （2026-10-27 用户截图）。writeChatMessage 记下发送前的屏之后放开
+  const liveHoldRef = useRef(false);
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
+    if (liveHoldRef.current) return;
     // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
     const ch = channelRef.current;
     if (ch && ch.kind !== "hooks" && channelTurnOpen(ch)) return;
@@ -2572,6 +2577,7 @@ const TerminalView = memo(function TerminalView({
   }
   function scanLiveReplyNow() {
     liveScanTimerRef.current = null;
+    if (liveHoldRef.current) return;
     const term = termRef.current;
     if (!term || ptyKindRef.current !== "agent") return;
     // 一帧正画到一半（同步输出 ?2026h 还没收尾，Claude Code 每帧都这样包；一帧常分两块到）：这时读到的是
@@ -2606,7 +2612,7 @@ const TerminalView = memo(function TerminalView({
     // 刚发的这句 CLI 还没画出来：屏上是上一轮的回显和回复，不当这一轮的预览（Qwen 先把上一段回复又显示一遍）
     const sent = sendEchoRef.current;
     if (sent && read.echo !== undefined) {
-      if (staleEcho(read, sent.before, sent.sent)) return;
+      if (staleEcho(read, sent.before, sent.sent, sent.beforeLines)) return;
       sendEchoRef.current = null;
     } else if (sent && staleWithoutEcho(read, sent.beforeLines)) {
       return;
@@ -5703,7 +5709,10 @@ const TerminalView = memo(function TerminalView({
 
   async function writeChatMessage(ptyId: string, text: string): Promise<ChatSendResult> {
     await waitAgentInputReady(ptyId);
-    if (ptyIdRef.current !== ptyId) return { error: "终端已重新启动，这句没有发出，请再发一次" };
+    if (ptyIdRef.current !== ptyId) {
+      liveHoldRef.current = false;
+      return { error: "终端已重新启动，这句没有发出，请再发一次" };
+    }
     // 写之前就记下：正文粘进输入框到按下提交之间（多行要等 0.65 秒），输入框里的编号清单会被扫菜单认成选项，
     // 拿上一句比对排除不掉（2026-10-21 用户 Grok：七步清单在输入框里时出了一张「终端里在等你选一项」）
     lastSentRef.current = text;
@@ -5714,6 +5723,7 @@ const TerminalView = memo(function TerminalView({
       beforeLines: beforeRead?.lines ?? null,
       sent: text,
     };
+    liveHoldRef.current = false;
     try {
       await invoke("pty_write_submit", {
         ptyId,
@@ -5849,6 +5859,7 @@ const TerminalView = memo(function TerminalView({
     // Agent 已回落 shell：聊天框继续沿用最后一个会话，而不是启动新上下文。
     if (!running && shellActive && lastResumeRef.current) {
       const early = showEarlyBubble(message);
+      liveHoldRef.current = true;
       const res = await launch(lastResumeRef.current, { prompt: "" }).finally(endEarlyBubbleLaunch);
       if (!res) {
         early.retract();
@@ -5880,6 +5891,7 @@ const TerminalView = memo(function TerminalView({
       }
       // 摆着的记录在接回途中不清掉：接上之后由会话文件刷新接替，不闪回空态（showEarlyBubble 一并管）
       const early = showEarlyBubble(message);
+      liveHoldRef.current = true;
       const res = await launch(undefined, { prompt: "" }).finally(endEarlyBubbleLaunch);
       if (!res) {
         early.retract();
@@ -5955,7 +5967,10 @@ const TerminalView = memo(function TerminalView({
       reRegister: () => {
         shown.push(showOptimisticUserMessage(text));
       },
-      retract: () => shown.forEach((m) => retractOptimisticUserMessage(m, false)),
+      retract: () => {
+        liveHoldRef.current = false;
+        shown.forEach((m) => retractOptimisticUserMessage(m, false));
+      },
     };
   }
   function endEarlyBubbleLaunch() {

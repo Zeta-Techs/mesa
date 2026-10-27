@@ -840,9 +840,21 @@ test("staleEcho：刚发的这句还没画出来时，读到的是上一轮回�
   // 新回显出来了：这一轮的
   const now = extractLiveReply(["  > 讲个笑话", "", "  ◆ 从前有座山", ...before.slice(3)], "qwen")!;
   assert.equal(staleEcho(now, "  > 你好", "讲个笑话"), false);
-  // 重复发同一句：认作新的；发送前屏上没有回显：不拦
-  assert.equal(staleEcho(read, "  > 你好", "你好"), false);
+  // 发送前屏上没有回显：不拦
   assert.equal(staleEcho(read, null, "讲个笑话"), false);
+});
+
+// 2026-10-27 用户截图：接回会话后再发一句「你好」，回显与上一轮一样，上一轮的回复整段挂在「正在回复」里
+test("staleEcho：重复发同一句时看回复是不是发送前就在屏上的", () => {
+  const box = ["─".repeat(60), ">   打字", "─".repeat(60)];
+  const before = extractLiveReply(["  > 你好", "", "  ◆ 你好！有什么可以帮你？", ...box], "qwen")!;
+  // CLI 还没画出刚发的这句：屏上还是上一轮
+  assert.equal(staleEcho(before, "  > 你好", "你好", before.lines), true);
+  // 新回显画出来、新回复出字了：这一轮的
+  const now = extractLiveReply(["  > 你好", "", "  ◆ 又见面了，接着做什么？", ...box], "qwen")!;
+  assert.equal(staleEcho(now, "  > 你好", "你好", before.lines), false);
+  // 发送前什么也读不出：不拦
+  assert.equal(staleEcho(before, "  > 你好", "你好", null), false);
 });
 
 // 2026-10-26 用户 Windows 截图（Claude Code）：上一轮回复长过一屏、提问卷出去了，刚发的这句还没画出来时，
