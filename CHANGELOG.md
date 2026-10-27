@@ -5,6 +5,7 @@
 ## 未发布
 
 - 修好：接回一段旧对话、或连着两次发同一句话时，聊天里「正在回复」先显示上一轮的回复，要等新回复出字才换掉（Claude Code、Codex、Gemini CLI、Qwen Code、Kimi Code、Grok Build）。
+- 修好：Mac 上安装版 Mesa 里，Agent 在中文名的文件夹里干活时，右侧文件栏报「目录不存在或已移动」、路径变成一串 `\xe7\xbb…`，标签名也成了乱码。现在中文目录正常显示；端口监控按目录认工作区也一并修好。
 - 修好：Mac 上用 Homebrew 装 Node、再用 npm 装的 Codex、Gemini CLI、CodeBuddy Code，在安装版 Mesa 里一启动对话区就一片空白——它们找不到 Node 起不来。现在能正常启动；以后哪家 Agent 一启动就退出，终端里也会留下它的报错，不再是空白。
 
 ## v0.1.0（首个公开版本）

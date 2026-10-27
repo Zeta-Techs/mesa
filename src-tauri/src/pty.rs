@@ -1929,19 +1929,20 @@ fn forget_cwd_file(entry: &mut PtyEntry) {
     }
 }
 
-/// 进程的真实 cwd：macOS 走 lsof，Linux 读 /proc，Windows 见下（读不到返回 None，前端回落启动栏 cwd）
+/// 进程的真实 cwd：macOS 走 proc_pidinfo（经 sysinfo），Linux 读 /proc，Windows 见下（读不到返回 None，前端回落启动栏 cwd）
+/// macOS 不用 lsof：打包版从访达启动没有 LANG，lsof 把中文路径输出成 `\xe7\xbb\xbc…` 转义，文件树打不开（2026-10-27 实证）
 #[cfg(target_os = "macos")]
 fn process_cwd(pid: u32, _cwd_file: Option<&std::path::Path>) -> Option<String> {
-    let out = std::process::Command::new("lsof")
-        .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .find_map(|l| l.strip_prefix('n').map(|s| s.to_string()))
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let pid = Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_cwd(UpdateKind::Always),
+    );
+    let cwd = sys.process(pid)?.cwd()?;
+    Some(cwd.to_string_lossy().into_owned()).filter(|s| !s.is_empty())
 }
 
 #[cfg(target_os = "linux")]
@@ -2036,7 +2037,7 @@ fn trim_dir_backslash(p: String) -> String {
 }
 
 /// 活动 PTY 进程的真实工作目录（文件树/git 面板跟随 shell 内的 cd）
-/// macOS 上取 cwd 要起 lsof（实测 25–50ms）：全局锁里只取 pid，锁外再查；同步命令还会占主线程，所以放后台线程
+/// 全局锁里只取 pid，锁外再查（Windows 读进程内存、Linux 读 /proc 都不该在锁里）；放后台线程不占主线程
 #[tauri::command]
 pub async fn pty_get_cwd(app: AppHandle, pty_id: String) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -2364,6 +2365,30 @@ mod tests {
         let got = process_cwd(std::process::id(), None).expect("应能读取本进程 cwd");
         let expect = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert_eq!(std::path::Path::new(&got).canonicalize().unwrap(), expect);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_cwd_keeps_non_ascii_path() {
+        // 打包版没有 LANG 时 lsof 会把中文目录转义成 \xe7…；核对中文目录原样返回
+        let dir = std::env::temp_dir().join(format!("ccode-cwd-{}", uuid::Uuid::new_v4()));
+        let zh = dir.join("综述流程测试");
+        std::fs::create_dir_all(&zh).unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(&zh)
+            .spawn()
+            .unwrap();
+        let got = process_cwd(child.id(), None);
+        let _ = child.kill();
+        let _ = child.wait();
+        let got = got.expect("应能读取子进程 cwd");
+        assert!(got.ends_with("综述流程测试"), "{got}");
+        assert_eq!(
+            std::path::Path::new(&got).canonicalize().unwrap(),
+            zh.canonicalize().unwrap()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

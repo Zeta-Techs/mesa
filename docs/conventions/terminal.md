@@ -13,7 +13,7 @@
   open / start）、等端口就绪、走回收站、删拷目录树、冻结评审快照的命令，一律 `async fn` + `tauri::async_runtime::spawn_blocking`，
   需要的 State 在闭包里经 `app.state()` 取。已挪出：`pty_spawn` / `shell_spawn` / `pty_spawn_custom` / `pty_kill`、三个外部终端命令、
   `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`、`save_clipboard_image`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）、
-  `run_find`（侧栏点开对话要等它，2026-10-24）、`pty_get_cwd`（macOS 上起 lsof 实测 25–50ms，原先还在 PTY 全局锁里跑，连 `pty_ack` / `pty_write` 一起挡住；现在锁内只取 pid，2026-10-24）、`task_list` / `run_list` / `run_get` / `list_schedules`（页面轮询 / 挂载时调，要开 app.db，2026-10-24；Rust 内部调用走 `run_get_sync` / `run_list_sync`，别回头调 async 版）；
+  `run_find`（侧栏点开对话要等它，2026-10-24）、`pty_get_cwd`（原先在 PTY 全局锁里起 lsof，连 `pty_ack` / `pty_write` 一起挡住；现在锁内只取 pid，2026-10-24）、`task_list` / `run_list` / `run_get` / `list_schedules`（页面轮询 / 挂载时调，要开 app.db，2026-10-24；Rust 内部调用走 `run_get_sync` / `run_list_sync`，别回头调 async 版）；
   2026-10-26 一批收齐写 app.db 或扫目录的：目标与 Run 的增删改查（`task_create` / `task_update` / `task_delete` / `task_unarchive` /
   `task_purge_archived` / `task_set_launch` / `task_get` / `run_events` / `task_goal_events` / `run_open` / `run_open_custom` /
   `run_attach_session` / `run_cancel`）、对话元数据（`set_session_meta` / `unpin_session` / `assign_session_task` /
@@ -665,7 +665,7 @@
   且找不到回显与行首时不预览（两平台同一条）。
 
 - **内置终端 shell 与跟随 cd（2026-10-20）**：普通 shell 标签用设置 `terminal_shell`（自动 / 本机找得到的几种），run 脚本不受影响
-  （Windows 固定 Git Bash）。文件树 / Git 面板跟随 shell 里的 `cd` 靠 `pty_get_cwd`：macOS lsof、Linux /proc；Windows 由 shell 每次出提示符
+  （Windows 固定 Git Bash）。文件树 / Git 面板跟随 shell 里的 `cd` 靠 `pty_get_cwd`：macOS proc_pidinfo（经 sysinfo）、Linux /proc（**取进程 cwd 不用 lsof**：打包版从访达启动没有 LANG，lsof 把中文路径转义成 `\xe7…`，2026-10-27；portwatch 同口径）；Windows 由 shell 每次出提示符
   把当前目录写进 `<config>/ccode/pty-cwd/<uuid>.txt`（PowerShell 包一层 prompt 函数，保留用户 profile 的提示符；Git Bash 用
   PROMPT_COMMAND `pwd -W`），cmd 没有提示符钩子、读进程 PEB。前端往 shell 写 cd 一律走 `pty_cd`（按标签的 shell 方言），不得自己拼
   `cd '…'`——cmd 不认单引号、跨盘还要 `/d`。

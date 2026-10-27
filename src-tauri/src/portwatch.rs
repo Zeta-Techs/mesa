@@ -124,31 +124,6 @@ fn parse_lsof_listeners(text: &str) -> Vec<Listener> {
     out
 }
 
-/// 解析 `lsof -a -p <pids> -d cwd -Fn` 输出：p<pid> / fcwd / n<路径> 字段行
-// 运行路径仅 unix；测试跨平台喂样本文本
-#[cfg_attr(not(any(unix, test)), allow(dead_code))]
-fn parse_lsof_cwd(text: &str) -> Vec<(u32, PathBuf)> {
-    let mut out = Vec::new();
-    let mut cur_pid: Option<u32> = None;
-    let mut expect_cwd_name = false;
-    for line in text.lines() {
-        if let Some(pid_str) = line.strip_prefix('p') {
-            cur_pid = pid_str.parse::<u32>().ok();
-            expect_cwd_name = false;
-        } else if line == "fcwd" {
-            expect_cwd_name = true;
-        } else if let Some(path) = line.strip_prefix('n') {
-            if expect_cwd_name {
-                if let Some(pid) = cur_pid {
-                    out.push((pid, PathBuf::from(path)));
-                }
-            }
-            expect_cwd_name = false;
-        }
-    }
-    out
-}
-
 /// 解析 `netstat -ano -p tcp` / `-p tcpv6`（Windows）：监听行取本地端口与 pid。
 /// 只按列位置判定，不认本地化文字：状态列在德/法等语言版 Windows 上会被翻译（如 ABHÖREN），
 /// 而监听套接字的外部地址端口恒为 0（`0.0.0.0:0` / `[::]:0`），以此作为语言无关的判据。
@@ -269,31 +244,28 @@ fn collect_listeners() -> Result<Vec<Listener>, String> {
     Ok(listeners)
 }
 
+/// 进程 cwd 走 sysinfo（macOS proc_pidinfo、Linux /proc），不用 `lsof -d cwd`：
+/// 打包版从访达启动没有 LANG，lsof 把中文路径转义成 `\xe7…`，归属前缀永远对不上（2026-10-27）
 #[cfg(unix)]
 fn cwd_map(listeners: &[Listener]) -> HashMap<u32, PathBuf> {
-    let mut pids: Vec<u32> = listeners.iter().map(|l| l.pid).collect();
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut pids: Vec<Pid> = listeners.iter().map(|l| Pid::from_u32(l.pid)).collect();
     pids.sort_unstable();
     pids.dedup();
     if pids.is_empty() {
         return HashMap::new();
     }
-    let Some(lsof) = lsof_path() else {
-        return HashMap::new();
-    };
-    let joined = pids
-        .iter()
-        .map(|p| p.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let mut cmd = crate::process::background_command(lsof);
-    cmd.args(["-a", "-p", &joined, "-d", "cwd", "-Fn"]);
-    // 部分 pid 退出会导致 lsof 退出码非 0：忽略成败，解析已到手的部分
-    let Ok((_, out, _)) = run_capture(cmd, Duration::from_secs(15)) else {
-        return HashMap::new();
-    };
-    parse_lsof_cwd(&out)
-        .into_iter()
-        .map(|(pid, p)| (pid, canon(&p)))
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&pids),
+        true,
+        ProcessRefreshKind::nothing().with_cwd(UpdateKind::Always),
+    );
+    pids.iter()
+        .filter_map(|pid| {
+            let cwd = sys.process(*pid)?.cwd()?;
+            (!cwd.as_os_str().is_empty()).then(|| (pid.as_u32(), canon(cwd)))
+        })
         .collect()
 }
 
@@ -541,29 +513,6 @@ bad line here
                     port: 8889,
                     protocol: "TCP".into()
                 },
-            ]
-        );
-    }
-
-    #[test]
-    fn parses_lsof_cwd_fields() {
-        let sample = "\
-p81234
-fcwd
-n/Users/tz/ccode/workspaces/myrepo/lit-notes
-p81299
-fcwd
-n/Users/tz/work/myrepo
-";
-        let got = parse_lsof_cwd(sample);
-        assert_eq!(
-            got,
-            vec![
-                (
-                    81234,
-                    PathBuf::from("/Users/tz/ccode/workspaces/myrepo/lit-notes")
-                ),
-                (81299, PathBuf::from("/Users/tz/work/myrepo")),
             ]
         );
     }
