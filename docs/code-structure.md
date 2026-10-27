@@ -281,6 +281,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
   components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 继续 → / 外开）+ 缩进任务行（固定列：点·类别·名称·状态·时长·花费·待拍板，点开任务面板）+ 组末插槽
+  components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时时间轴 + 一行一个任务（名称 / 项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只写状态
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作只带路不另起流程
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title 可传，工作台任务面板复用）
                              #   （ccode-sheet-right 滑入/退场 + Esc/Tab 焦点圈闭 + role=dialog + 遮罩 mousedown
@@ -418,7 +419,9 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
                              # cardIsActive（有活的：此刻有事，或手上在做且 7 天内动过；只落后基准不算）、filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
-                             # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）（tests/workbench-cards.test.ts）
+                             # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）；
+                             # 任务行 touchedAt（最后一次动它）与 current（流程当前步）；scheduleCardTask / scheduleOverview / scheduleTimeline
+                             # 定时任务总览（项目分组里不再列定时）；orderLikeSidebar 项目先后跟侧栏置顶与拖动顺序（tests/workbench-cards.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、
                              # 未分类恒末）/趋势/直链转换/全文可得性分流（fulltextLinkFor：arxiv abs 与 .pdf 直链=可下载，
                              # DOI/落地页=来源，不再摆禁用下载钮）/已读判定/雷达筛选（entryPassesFilter

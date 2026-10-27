@@ -5,6 +5,9 @@ import {
   buildProjectCard,
   cardIsActive,
   durationLabel,
+  orderLikeSidebar,
+  scheduleOverview,
+  scheduleTimeline,
   filterCards,
   liveActivityLine,
   turnElapsedMs,
@@ -17,7 +20,6 @@ const base = {
   pipelineOptOut: false,
   coding: null,
   goals: [],
-  schedules: [],
   runs: [],
   queueKeys: new Set<string>(),
   now: new Date("2026-10-27T10:00:00"),
@@ -54,7 +56,7 @@ test("科研流程：进度条按步，列当前步与开着工作副本的步�
   assert.deepEqual(card.vitals[0], { label: "进行到", value: "第 2 / 4 步" });
   assert.deepEqual(card.tasks.map((t) => [t.kindLabel, t.name, t.state, t.tone, t.queued]), [
     ["步骤 2", "精读", "等你确认", "wait", true],
-    ["步骤 3", "大纲", "进行中，还没保存进项目", "wait", true],
+    ["步骤 3", "大纲", "提前开了，还没保存", "wait", true],
   ]);
   assert.equal(card.live, true);
 });
@@ -163,28 +165,76 @@ test("对不上任务的活标签单列成对话；别的项目的标签不算",
   assert.deepEqual(card.tasks.map((t) => [t.kind, t.name]), [["chat", "改周报"]]);
 });
 
-test("定时任务：在跑 / 暂停 / 上次失败 / 下次时间；停用且没暂停原因的不列", () => {
-  const sched = (over: object) => ({ id: "s", name: "雷达", projectRoot: "/p", enabled: true, history: [], ...over });
-  const card = buildProjectCard({
-    ...base,
-    project: { path: "/p", name: "x", registered: true, workMode: "research" },
-    schedules: [
+test("定时任务总览：在跑 > 出错 / 暂停 > 按下次时间；停用且没暂停原因的、已删项目的不列；在拍板队列里的不给按钮", () => {
+  const now = new Date("2026-10-27T10:00:00");
+  const sched = (over: object) => ({
+    id: "s", name: "雷达", projectRoot: "/p", enabled: true, frequency: "daily", weekday: null, hour: 9, minute: 0, history: [], ...over,
+  });
+  const rows = scheduleOverview(
+    [
+      sched({ id: "late", name: "晚的", nextRunAt: "2026-10-27T20:00:00" }),
+      sched({ id: "soon", name: "早的", nextRunAt: "2026-10-27T14:00:00", history: [{ at: "2026-10-26T14:00:00", status: "ok", newEntries: 3 }] }),
       sched({ id: "a", name: "在跑", runningRunId: "r" }),
-      sched({ id: "b", name: "暂停", enabled: false, pausedReason: "连续失败" }),
+      sched({ id: "b", name: "暂停", enabled: false, pausedReason: "连续 3 次没跑成" }),
       sched({ id: "c", name: "失败", history: [{ status: "skipped" }, { status: "timeout" }] }),
       sched({ id: "f", name: "报错", history: [{ status: "error", summary: "\n钉住的连接不存在\n细节" }] }),
-      sched({ id: "d", name: "下次", nextRunAt: "2026-10-27T14:00:00" }),
       sched({ id: "e", name: "停用", enabled: false }),
+      sched({ id: "g", name: "别处", projectRoot: "/gone" }),
     ],
-    queueKeys: new Set(["sched:paused:b"]),
-  });
-  assert.deepEqual(card.tasks.map((t) => [t.name, t.state, t.queued]), [
-    ["暂停", "已自动暂停", true],
-    ["在跑", "正在跑", false],
-    ["失败", "上次超时", false],
-    ["报错", "上次失败：钉住的连接不存在", false],
-    ["下次", "下次 今天 14:00", false],
+    [{ path: "/p", name: "课题" }],
+    new Set(["sched:paused:b"]),
+    now,
+  );
+  assert.deepEqual(rows.map((r) => [r.task.name, r.task.state, r.action]), [
+    ["在跑", "正在跑", "cancel"],
+    ["暂停", "已自动暂停：连续 3 次没跑成", null],
+    ["失败", "上次超时", "rerun"],
+    ["报错", "上次失败：钉住的连接不存在", "rerun"],
+    ["早的", "下次 今天 14:00 · 上次新命中 3", "run"],
+    ["晚的", "下次 今天 20:00", "run"],
   ]);
+  assert.equal(rows[0].frequency, "每天 09:00");
+  const line = scheduleTimeline(rows, now.getTime());
+  assert.deepEqual(line.map((p) => [p.name, p.running, Math.round(p.pos * 24)]), [
+    ["在跑", true, 0],
+    ["早的", false, 4],
+    ["晚的", false, 10],
+  ]);
+});
+
+test("orderLikeSidebar：置顶在前按置顶先后，其余按拖动顺序，没排过的保持原顺序", () => {
+  const items = ["/a", "/b", "/c", "/d"].map((path) => ({ path }));
+  assert.deepEqual(
+    orderLikeSidebar(items, ["/c"], ["/d", "/b"]).map((x) => x.path),
+    ["/c", "/d", "/b", "/a"],
+  );
+});
+
+test("步骤措辞：当前这一步与提前开的分开写；目标与分支带最后一次动它的时间", () => {
+  const card = buildProjectCard({
+    ...base,
+    project: { path: "/p", name: "综述", registered: true, workMode: "research" },
+    steps: [
+      { name: "检索", workspaceName: "s1" },
+      { name: "精读", workspaceName: "s2" },
+    ],
+    workspaces: [
+      { id: "w1", repoPath: "/p", name: "s1", worktreePath: "/wt/s1", status: "active", mergedAt: null },
+      { id: "w2", repoPath: "/p", name: "s2", worktreePath: "/wt/s2", status: "active", mergedAt: null },
+    ],
+    touchedAt: (root) => (root === "/wt/s2" ? "2026-10-24T00:00:00Z" : null),
+  });
+  assert.deepEqual(card.tasks.map((t) => [t.name, t.state, t.current, t.touchedAt]), [
+    ["检索", "工作副本开着，还没保存进项目", true, null],
+    ["精读", "提前开了，还没保存", false, "2026-10-24T00:00:00Z"],
+  ]);
+  const office = buildProjectCard({
+    ...base,
+    project: { path: "/p", name: "x", registered: true, workMode: "office" },
+    goals: [{ id: "g", projectRoot: "/p", name: "周报", status: "draft", archivedAt: null, updatedAt: "2026-10-20T00:00:00Z" }],
+  });
+  assert.equal(office.tasks[0].touchedAt, "2026-10-20T00:00:00Z");
+  assert.deepEqual(office.vitals, [{ label: "记下未开工", value: "1" }]);
 });
 
 test("filterCards：有活的按传入顺序，其余筛选把有活的排前", () => {

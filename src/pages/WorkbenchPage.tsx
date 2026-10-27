@@ -81,9 +81,13 @@ import {
   durationLabel,
   filterCards,
   liveActivityLine,
+  orderLikeSidebar,
+  scheduleOverview,
+  type ScheduleOverviewRow,
   turnElapsedMs,
   type CardFilter,
   type CardLiveRun,
+  type CardTask,
   type CardProjectInput,
   type CardRunInput,
 } from "../workbench-cards";
@@ -106,6 +110,8 @@ import {
   type QueueRow,
 } from "../workbench-queue";
 import { pollEvery } from "../polling";
+import { PROJECT_ORDER_KEY, PROJECT_PINS_KEY, parsePins } from "../project-tree";
+import WorkbenchSchedules from "../components/WorkbenchSchedules";
 import { fmtCost } from "../stats-insight";
 
 const iconClass = "shrink-0 text-l4";
@@ -898,14 +904,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     });
   }, [queuePresentSig]);
 
+  /** 键盘选中的那一行（全页导航键：q:<队列键> / t:<项目路径>\n<任务 id> / s:<定时任务行 id>）；null = 还没动过，默认停在第一行 */
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const lastSelectedIndex = useRef(0);
-  const selectedIndex = resolveSelection(queueRows, selectedKey, lastSelectedIndex.current);
-  if (selectedIndex >= 0) lastSelectedIndex.current = selectedIndex;
-  const selectedRow = selectedIndex >= 0 ? queueRows[selectedIndex] : null;
-  // 键盘选到折叠的部分就展开，选中行总在眼前
-  const shownQueueRows =
-    inboxExpanded || selectedIndex >= QUEUE_VISIBLE ? queueRows : queueRows.slice(0, QUEUE_VISIBLE);
   const showTierHeads = new Set(queueRows.map((row) => row.tier)).size > 1;
 
   function hideRow(key: string, hidden: boolean) {
@@ -981,35 +982,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     setPage("workspaces");
   }
 
-  // 键盘：只在工作台可见、焦点不在输入框、没有弹层时接管；当前行做不了的键不吞
-  const queueKeyRef = useRef<(event: KeyboardEvent) => void>(() => {});
-  queueKeyRef.current = (event) => {
-    const target = event.target as HTMLElement | null;
-    // 焦点在侧栏（⌘0 后 ↑↓ 选对话）、顶栏或输入框里时不接管：只认焦点在页面空白处或队列里
-    if (target && target !== document.body && !target.closest("[data-workbench-queue]")) return;
-    if (document.querySelector("[role='dialog'], [aria-modal='true']")) return;
-    // 焦点在别的按钮上时回车留给那个按钮
-    if (event.key === "Enter" && target?.closest("button, a")) return;
-    const action = queueKeyAction(event, selectedRow);
-    if (!action || queueRows.length === 0) return;
-    event.preventDefault();
-    if (action === "next" || action === "prev") {
-      const next = moveSelection(queueRows.length, selectedIndex, action === "next" ? 1 : -1);
-      setSelectedKey(queueRows[next]?.key ?? null);
-      document.getElementById(`wbq-${queueRows[next]?.key}`)?.scrollIntoView({ block: "nearest" });
-      return;
-    }
-    if (!selectedRow) return;
-    if (action === "open") openRow(selectedRow);
-    else if (action === "allow" || action === "deny") answerApproval(selectedRow, action);
-    else if (action === "dismiss") dismissRow(selectedRow);
-  };
-  useEffect(() => {
-    if (!visible) return;
-    const onKey = (event: KeyboardEvent) => queueKeyRef.current(event);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [visible]);
+
+  /** 「现在」：时长、离开摘要、定时任务下次时间都按它算；有活标签时 15 秒一刷，回到工作台时对准 */
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   // ===== 项目分组与任务面板（workbench-cards.ts，第二批）=====
   const cardRuns = useMemo(
@@ -1029,6 +1004,16 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     [terminalRunInputs],
   );
   const queueKeySig = queueRows.map((r) => r.key).join("\n");
+  /** 某个目录里最后一次对话活动（任务行「最后一次动它」）；内部对话不算 */
+  function touchedAtRoot(root: string): string | null {
+    let best: string | null = null;
+    for (const sess of sessions) {
+      if (sess.internal || !sess.updatedAt || !sess.projectPath) continue;
+      if (!pathWithin(sess.projectPath, root, IS_WINDOWS)) continue;
+      if (!best || sess.updatedAt > best) best = sess.updatedAt;
+    }
+    return best;
+  }
   const cards = useMemo(() => {
     const queueKeys = new Set(queueKeySig ? queueKeySig.split("\n") : []);
     const inputs: CardProjectInput[] = [
@@ -1048,13 +1033,14 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         pipelineOptOut: cfg?.pipelineOptOut ?? false,
         coding: coding ?? null,
         goals: userTasks,
-        schedules,
         runs: cardRuns,
         queueKeys,
+        touchedAt: touchedAtRoot,
         isWindows: IS_WINDOWS,
       });
     });
-  }, [projects, nowRows, researchCfg, codingByPath, workspaces, userTasks, schedules, cardRuns, queueKeySig]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, nowRows, researchCfg, codingByPath, workspaces, userTasks, cardRuns, queueKeySig, sessions]);
   /** 项目最后一次活动：项目根与它的工作副本 / 工作树里的对话，加分支最近提交，取最新 */
   const lastActiveByPath = useMemo(() => {
     const out = new Map<string, string>();
@@ -1100,7 +1086,20 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards, nowRows, hero, lastActiveByPath])
   const [cardFilter, setCardFilter] = useState<CardFilter>("active");
-  const shownCards = filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS);
+  // 顺序跟侧栏（置顶 > 拖动排序 > 其余按最近活动），和左边项目树对得上（2026-10-27）
+  const shownCards = (() => {
+    const picked = filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS);
+    const byRecent = [...picked].sort((a, b) => (lastActiveOf(b.path) ?? "").localeCompare(lastActiveOf(a.path) ?? ""));
+    let pins: string[] = [];
+    let order: string[] = [];
+    try {
+      pins = parsePins(localStorage.getItem(PROJECT_PINS_KEY));
+      order = parsePins(localStorage.getItem(PROJECT_ORDER_KEY));
+    } catch {
+      /* 读不到就按最近活动 */
+    }
+    return orderLikeSidebar(byRecent, pins, order, IS_WINDOWS);
+  })();
   const cardFilterOptions: { id: CardFilter; label: string }[] = [
     { id: "active", label: `有活的 ${activeCardPaths.length}` },
     { id: "all", label: "全部" },
@@ -1111,7 +1110,42 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
   const [openTask, setOpenTask] = useState<{ path: string; taskId: string } | null>(null);
   const openCard = openTask ? (cards.find((c) => samePath(c.path, openTask.path, IS_WINDOWS)) ?? null) : null;
-  const openCardTask = openCard?.tasks.find((t) => t.id === openTask?.taskId) ?? null;
+  // ===== 定时任务总览（跨项目；项目分组里不再列定时任务）=====
+  const scheduleRows = useMemo(
+    () => scheduleOverview(schedules, projects, new Set(queueKeySig ? queueKeySig.split("\n") : []), new Date(nowMs), IS_WINDOWS),
+    [schedules, projects, queueKeySig, nowMs],
+  );
+  const scheduleBusy = useRef(new Set<string>());
+  async function runScheduleAction(row: ScheduleOverviewRow) {
+    if (!row.action || row.task.ref.kind !== "schedule") return;
+    const id = row.task.ref.scheduleId;
+    if (scheduleBusy.current.has(id)) return;
+    scheduleBusy.current.add(id);
+    try {
+      if (row.action === "cancel") await invoke("cancel_schedule_run", { id });
+      else if (row.action === "reopen") await invoke("update_schedule", { id, patch: { enabled: true } });
+      else await invoke("run_schedule_now", { id });
+      toast(
+        row.action === "cancel"
+          ? `已停止「${row.task.name}」`
+          : row.action === "reopen"
+            ? `已重新打开「${row.task.name}」`
+            : `「${row.task.name}」开始跑了`,
+        "success",
+      );
+      // 只重读定时任务（整页重拉会把每个编程项目的 git 状态也跑一遍）；跑完的结果另有 scheduler-run-done 事件刷新
+      void invoke<ScheduleDto[]>("list_schedules").then(setSchedules).catch(() => {});
+    } catch (reason) {
+      toast(`「${row.task.name}」没能${row.action === "cancel" ? "停止" : row.action === "reopen" ? "重新打开" : "开始"}：${String(reason)}`, "error");
+    } finally {
+      scheduleBusy.current.delete(id);
+    }
+  }
+  const openCardTask =
+    openCard?.tasks.find((t) => t.id === openTask?.taskId) ??
+    (openTask?.taskId.startsWith("schedule:")
+      ? (scheduleRows.find((r) => r.task.id === openTask.taskId)?.task ?? null)
+      : null);
   const panelData = useMemo(() => {
     const ref = openCardTask?.ref;
     if (!openCard || !ref) return null;
@@ -1185,7 +1219,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     }
   }
   // ===== 第三批：任务行实时状态与花费 =====
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const anyLive = cardRuns.length > 0;
   useEffect(() => {
     if (!visible || !anyLive) return;
@@ -1341,6 +1374,67 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     />
   );
 
+  // ===== 键盘：J/K 从拍板队列一路走到项目分组的任务行、再到定时任务；回车去处理 / 开任务面板 =====
+  type NavItem = { key: string; queue?: (typeof queueRows)[number]; card?: (typeof cards)[number]; task?: CardTask; schedule?: ScheduleOverviewRow };
+  const navItems: NavItem[] = [
+    ...queueRows.map((row) => ({ key: `q:${row.key}`, queue: row })),
+    ...shownCards.flatMap((card) => card.tasks.map((task) => ({ key: `t:${card.path}\n${task.id}`, card, task }))),
+    ...scheduleRows.map((row) => ({ key: `s:${row.task.id}`, schedule: row })),
+  ];
+  const navIndex = resolveSelection(navItems, selectedKey, lastSelectedIndex.current);
+  if (navIndex >= 0) lastSelectedIndex.current = navIndex;
+  // 只有真按过键 / 点过才高亮项目分组与定时任务里的行；默认只高亮队列第一行（同原口径）
+  const navSelected = selectedKey !== null && navIndex >= 0 ? navItems[navIndex] : null;
+  // 队列里的选中行：没动过时默认第一行（同原口径）；选到项目分组 / 定时任务时队列里不亮
+  const selectedRow = selectedKey === null ? (queueRows[0] ?? null) : (navSelected?.queue ?? null);
+  const selectedIndex = selectedRow ? queueRows.indexOf(selectedRow) : -1;
+  // 键盘选到折叠的部分就展开，选中行总在眼前
+  const shownQueueRows =
+    inboxExpanded || selectedIndex >= QUEUE_VISIBLE ? queueRows : queueRows.slice(0, QUEUE_VISIBLE);
+  const queueKeyRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  queueKeyRef.current = (event) => {
+    const target = event.target as HTMLElement | null;
+    // 焦点在侧栏（⌘0 后 ↑↓ 选对话）、顶栏或输入框里时不接管：只认焦点在页面空白处或工作台的列表里
+    if (target && target !== document.body && !target.closest("[data-workbench-queue]")) return;
+    if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (document.querySelector("[role='dialog'], [aria-modal='true']")) return;
+    // 焦点在别的按钮上时回车留给那个按钮
+    if (event.key === "Enter" && target?.closest("button, a")) return;
+    if (navItems.length === 0) return;
+    const current = selectedKey === null ? (navItems[0] ?? null) : navIndex >= 0 ? navItems[navIndex] : null;
+    const action = queueKeyAction(event, current?.queue ?? null);
+    if (!action) {
+      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && current && !current.queue) {
+        event.preventDefault();
+        if (current.task && current.card) setOpenTask({ path: current.card.path, taskId: current.task.id });
+        else if (current.schedule) setOpenTask({ path: current.schedule.projectRoot, taskId: current.schedule.task.id });
+      }
+      return;
+    }
+    event.preventDefault();
+    if (action === "next" || action === "prev") {
+      // 没动过时：队列第一行本来就亮着，从它往下走；队列空着（什么都没亮）第一下停在第一行
+      const from = selectedKey === null ? (queueRows.length ? 0 : -1) : navIndex;
+      const next = navItems[moveSelection(navItems.length, from, action === "next" ? 1 : -1)];
+      if (!next) return;
+      setSelectedKey(next.key);
+      const id = next.queue ? `wbq-${next.queue.key}` : next.task && next.card ? `wbt-${next.card.path}\n${next.task.id}` : `wbs-${next.schedule?.task.id}`;
+      requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "nearest" }));
+      return;
+    }
+    const row = current?.queue;
+    if (!row) return;
+    if (action === "open") openRow(row);
+    else if (action === "allow" || action === "deny") answerApproval(row, action);
+    else if (action === "dismiss") dismissRow(row);
+  };
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (event: KeyboardEvent) => queueKeyRef.current(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible]);
+
   const runningBadge = nowItems.reduce((n, item) => n + item.runningCount, 0)
     || (hero?.runningCount ?? 0);
   /** 这个标签上跑完了没看（chat-unread.ts）：行尾光标换蓝色 */
@@ -1430,7 +1524,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             {shownQueueRows.map((row, index) => {
               const tierHead =
                 showTierHeads && (index === 0 || shownQueueRows[index - 1].tier !== row.tier);
-              const selected = index === selectedIndex;
+              const selected = row === selectedRow;
               const approval = row.kind === "inbox" ? row.approval : null;
               return (
                 <div key={row.key}>
@@ -1446,7 +1540,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                     className={`group relative flex min-h-11 items-center gap-3 px-3.5 py-2 ${
                       tierHead ? "" : "border-t border-hairline first:border-t-0"
                     } ${selected ? "bg-hover" : "hover:bg-hover"}`}
-                    onClick={() => setSelectedKey(row.key)}
+                    onClick={() => setSelectedKey(`q:${row.key}`)}
                   >
                     {selected && (
                       <span className="absolute inset-y-0 left-0 w-0.5 bg-nav-accent" aria-hidden="true" />
@@ -1576,7 +1670,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
           {nowRows.length > 0 ? (
             shownCards.length > 0 ? (
-              <div className="overflow-hidden rounded-lg border border-hairline">
+              <div className="overflow-hidden rounded-lg border border-hairline" data-workbench-queue="">
                 {shownCards.map((card) => {
                   const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
                   const said = lastSaidFor(card.path);
@@ -1586,7 +1680,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                       key={card.path}
                       card={card}
                       openTaskId={openTask && samePath(openTask.path, card.path, IS_WINDOWS) ? openTask.taskId : null}
-                      onOpenTask={(task) => setOpenTask({ path: card.path, taskId: task.id })}
+                      selectedTaskId={navSelected?.card === card ? (navSelected.task?.id ?? null) : null}
+                      onOpenTask={(task) => {
+                        setSelectedKey(`t:${card.path}\n${task.id}`);
+                        setOpenTask({ path: card.path, taskId: task.id });
+                      }}
                       onOpenProject={
                         card.registered
                           ? () => {
@@ -1681,6 +1779,18 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           )}
       </section>
 
+
+      <WorkbenchSchedules
+        rows={scheduleRows}
+        nowMs={nowMs}
+        openTaskId={openTask?.taskId.startsWith("schedule:") ? openTask.taskId : null}
+        selectedTaskId={navSelected?.schedule?.task.id ?? null}
+        onOpen={(row) => {
+          setSelectedKey(`s:${row.task.id}`);
+          setOpenTask({ path: row.projectRoot, taskId: row.task.id });
+        }}
+        onAction={(row) => void runScheduleAction(row)}
+      />
 
       {taskPanel}
       {clientOpen.dialog}

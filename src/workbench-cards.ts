@@ -9,7 +9,7 @@
 import { pathWithin, samePath } from "./path-utils.ts";
 import { goalBucket, GOAL_BUCKET_LABEL } from "./project-tasks.ts";
 import { CODING_KIND_LABEL, deriveCodingKind, type CodingKind } from "./work-mode.ts";
-import { nextRunLabel } from "./schedule-tasks.ts";
+import { frequencyLabel, nextRunLabel, parseLocalSlot } from "./schedule-tasks.ts";
 import { describeActivity, thinkingHeadline } from "./chat-status.ts";
 
 export type CardWorkMode = "research" | "coding" | "office";
@@ -40,6 +40,10 @@ export interface CardTask {
   /** 手上正在做（开着工作副本的步骤、改了没提交的分支、进行中的目标、开着的对话、正在跑的定时）；
    *  只落后 / 领先基准、记下没开工的不算——它们是事实，不是「有活」（2026-10-27 用户截图：三个旧编程项目全被算成有活的） */
   inProgress: boolean;
+  /** 流程里当前这一步（行首点用强调色） */
+  current?: boolean;
+  /** 最后一次动它（没在跑的行，时长那一列写它）：步骤 / 分支看工作副本里的对话与最近提交，目标看更新时间，定时看上次跑 */
+  touchedAt: string | null;
   /** 详情面板与跳转用的原始身份 */
   ref:
     | { kind: "step"; stepIndex: number; workspaceName: string; worktreePath: string | null; workspaceId: string | null }
@@ -99,6 +103,7 @@ export interface CardCodingInput {
     dirty: boolean;
     ahead: number;
     behind: number;
+    lastCommitAt?: string | null;
   }[];
 }
 
@@ -108,6 +113,7 @@ export interface CardGoalInput {
   name: string;
   status: string;
   archivedAt: string | null;
+  updatedAt?: string | null;
 }
 
 export interface CardScheduleInput {
@@ -115,11 +121,16 @@ export interface CardScheduleInput {
   name: string;
   projectRoot: string;
   enabled: boolean;
+  frequency: string;
+  weekday: number | null;
+  hour: number;
+  minute: number;
+  intervalHours?: number | null;
   runningRunId?: string | null;
   pausedReason?: string | null;
   nextRunAt?: string | null;
   /** 新的在前；跳过的不算「上次」 */
-  history: readonly { status: string; summary?: string }[];
+  history: readonly { at?: string; status: string; summary?: string; startedAt?: string | null; newEntries?: number | null }[];
 }
 
 export interface CardRunInput {
@@ -131,6 +142,13 @@ export interface CardRunInput {
   title: string;
   running: boolean;
   attention: "confirm" | "working" | "done" | null;
+}
+
+/** 两个 ISO 时刻取晚的；都没有为 null */
+function latest(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
 }
 
 const TONE_ORDER: Record<CardTone, number> = { wait: 0, live: 1, fail: 2, idle: 3, done: 4 };
@@ -158,9 +176,10 @@ export function buildProjectCard(input: {
   pipelineOptOut: boolean;
   coding: CardCodingInput | null;
   goals: readonly CardGoalInput[];
-  schedules: readonly CardScheduleInput[];
   runs: readonly CardRunInput[];
   queueKeys: ReadonlySet<string>;
+  /** 某个目录里最后一次对话活动（页面按会话现算）；不传就只用提交 / 更新时间 */
+  touchedAt?: (root: string) => string | null;
   now?: Date;
   isWindows?: boolean;
 }): ProjectCard {
@@ -170,6 +189,7 @@ export function buildProjectCard(input: {
   const inQueue = (...keys: (string | undefined | null)[]) => keys.some((k) => !!k && input.queueKeys.has(k));
   const confirmKey = (run: CardRunInput | undefined) => (run ? `confirm:${run.runId ?? run.tabId}` : null);
   const runIn = (root: string) => input.runs.find((r) => !used.has(r.tabId) && pathWithin(r.cwd, root, win));
+  const touched = (root: string | null) => (root && input.touchedAt ? input.touchedAt(root) : null);
   const take = (run: CardRunInput | undefined) => {
     if (run) used.add(run.tabId);
     return run;
@@ -213,11 +233,22 @@ export function buildProjectCard(input: {
         kind: "step",
         kindLabel: `步骤 ${i + 1}`,
         name: s.step.name,
-        state: live ? liveState(live, "进行中") : s.ws ? (s.ws.status === "creating" ? "正在准备工作副本" : "进行中，还没保存进项目") : "还没开始",
+        // 当前这一步写「工作副本开着」；排在它后面、提前开了工作副本的写「提前开了，还没保存」（2026-10-27 用户截图：三行同一句读不出区别）
+        state: live
+          ? liveState(live, "进行中")
+          : !s.ws
+            ? "还没开始"
+            : s.ws.status === "creating"
+              ? "正在准备工作副本"
+              : i === current
+                ? "工作副本开着，还没保存进项目"
+                : "提前开了，还没保存",
         tone: live ? liveTone(live) : queued ? "wait" : "idle",
         live,
         queued,
         inProgress: Boolean(live || s.ws),
+        current: i === current,
+        touchedAt: touched(s.ws?.worktreePath ?? null),
         ref: { kind: "step", stepIndex: i, workspaceName: s.step.workspaceName, worktreePath: s.ws?.worktreePath ?? null, workspaceId: s.ws?.id ?? null },
       });
     });
@@ -252,11 +283,13 @@ export function buildProjectCard(input: {
         live,
         queued,
         inProgress: Boolean(live || bucket === "running"),
+        touchedAt: goal.updatedAt ?? null,
         ref: { kind: "goal", taskId: goal.id, status: goal.status },
       });
     }
-    vitals.push({ label: "进行中", value: String(counts.running) });
-    vitals.push({ label: "待验收", value: String(counts.review) });
+    // 零不写（2026-10-27 用户截图：「进行中 0 · 待验收 0」是噪音）
+    if (counts.running) vitals.push({ label: "进行中", value: String(counts.running) });
+    if (counts.review) vitals.push({ label: "待验收", value: String(counts.review) });
     if (counts.open) vitals.push({ label: "记下未开工", value: String(counts.open) });
   }
 
@@ -287,11 +320,12 @@ export function buildProjectCard(input: {
         live,
         queued,
         inProgress: Boolean(live || kind === "dev"),
+        touchedAt: latest(w.lastCommitAt ?? null, touched(w.path)),
         ref: { kind: "branch", path: w.path, branch: w.branch, codingKind: kind },
       });
     }
     vitals.push({ label: "基准", value: input.coding.baseBranch || "main" });
-    vitals.push({ label: "分支", value: `${lanes.length} 条` });
+    if (lanes.length) vitals.push({ label: "分支", value: `${lanes.length} 条` });
     if (kinds.ready) vitals.push({ label: "等待合并", value: String(kinds.ready) });
     if (kinds.sync) vitals.push({ label: "需同步", value: String(kinds.sync) });
   }
@@ -311,43 +345,9 @@ export function buildProjectCard(input: {
       live,
       queued: inQueue(confirmKey(run)),
       inProgress: true,
+      touchedAt: null,
       ref: { kind: "chat", tabId: run.tabId },
     });
-  }
-
-  const mineSchedules = input.schedules.filter((s) => samePath(s.projectRoot, project.path, win));
-  for (const s of mineSchedules) {
-    if (!s.enabled && !s.pausedReason) continue;
-    const running = Boolean(s.runningRunId);
-    const lastRun = s.history.find((r) => r.status !== "skipped") ?? null;
-    const last = lastRun?.status ?? null;
-    const failed = last === "error" || last === "timeout";
-    // 失败写第一行原因（同原工作台「定时任务」摘要口径）
-    const reason = last === "error" ? (lastRun?.summary ?? "").split("\n").find((l) => l.trim())?.trim().slice(0, 30) : null;
-    const queued = inQueue(`sched:paused:${s.id}`) || [...input.queueKeys].some((k) => k.startsWith(`sched:review:${s.id}:`));
-    tasks.push({
-      id: `schedule:${s.id}`,
-      kind: "schedule",
-      kindLabel: "定时",
-      name: s.name,
-      state: running
-        ? "正在跑"
-        : s.pausedReason
-          ? "已自动暂停"
-          : failed
-            ? last === "timeout"
-              ? "上次超时"
-              : `上次失败：${reason || "没有错误信息"}`
-            : (nextRunLabel(s, input.now) ?? "仅手动"),
-      tone: running ? "live" : s.pausedReason || failed ? "fail" : "idle",
-      inProgress: running,
-      live: null,
-      queued,
-      ref: { kind: "schedule", scheduleId: s.id },
-    });
-  }
-  if (mineSchedules.length && project.workMode !== "coding") {
-    vitals.push({ label: "定时任务", value: `${mineSchedules.filter((s) => s.enabled).length} 个` });
   }
 
   // 流程步骤保持流程顺序排在前面；其余按 等你 > 在跑 > 出错 > 其余 排
@@ -483,4 +483,145 @@ export function awaySummary(input: {
   if (!parts.length) return null;
   if (input.waiting) parts.push(`${input.waiting} 件等你拍板`);
   return { lead: `你离开的 ${durationLabel(input.nowMs - since)}里`, parts };
+}
+
+// ===== 定时任务总览（2026-10-27 用户「除了用量都做」）=====
+// 项目分组里不再列定时任务：同一件事只说一次，跨项目的定时任务统一在这一块看、在这一块点。
+
+/** 行内动作：停止在跑的 / 重跑上次失败的 / 重新打开被暂停的 / 现在跑一次；在拍板队列里的不给（按钮在队列里） */
+export type ScheduleAction = "cancel" | "rerun" | "reopen" | "run";
+
+export interface ScheduleOverviewRow {
+  task: CardTask;
+  projectRoot: string;
+  projectName: string;
+  frequency: string;
+  action: ScheduleAction | null;
+  /** 下一次应跑时刻（毫秒）；停用 / 仅手动 / 没算出来为 null */
+  nextAt: number | null;
+}
+
+/** 一个定时任务折成任务行（总览行与任务面板共用） */
+export function scheduleCardTask(
+  s: CardScheduleInput,
+  queueKeys: ReadonlySet<string>,
+  now?: Date,
+): CardTask {
+  const running = Boolean(s.runningRunId);
+  const lastRun = s.history.find((r) => r.status !== "skipped") ?? null;
+  const last = lastRun?.status ?? null;
+  const failed = last === "error" || last === "timeout";
+  // 失败写第一行原因（同原工作台「定时任务」摘要口径）
+  const reason = last === "error" ? (lastRun?.summary ?? "").split("\n").find((l) => l.trim())?.trim().slice(0, 30) : null;
+  const queued = queueKeys.has(`sched:paused:${s.id}`) || [...queueKeys].some((k) => k.startsWith(`sched:review:${s.id}:`));
+  const next = nextRunLabel(s, now);
+  const hits = last === "ok" && typeof lastRun?.newEntries === "number" ? `上次新命中 ${lastRun.newEntries}` : null;
+  return {
+    id: `schedule:${s.id}`,
+    kind: "schedule",
+    kindLabel: "定时",
+    name: s.name,
+    state: running
+      ? "正在跑"
+      : s.pausedReason
+        ? `已自动暂停：${s.pausedReason}`
+        : failed
+          ? last === "timeout"
+            ? "上次超时"
+            : `上次失败：${reason || "没有错误信息"}`
+          : [next ?? (s.enabled ? "仅手动" : "已停用"), hits].filter(Boolean).join(" · "),
+    tone: running ? "live" : s.pausedReason || failed ? "fail" : "idle",
+    live: null,
+    queued,
+    inProgress: running,
+    touchedAt: lastRun?.at ?? null,
+    ref: { kind: "schedule", scheduleId: s.id },
+  };
+}
+
+/**
+ * 跨项目定时任务总览：在跑 > 出错 / 暂停 > 按下次时间；停用且没有暂停原因的不列（那是人主动关的），已删项目的不列。
+ */
+export function scheduleOverview(
+  schedules: readonly CardScheduleInput[],
+  projects: readonly { path: string; name: string }[],
+  queueKeys: ReadonlySet<string>,
+  now: Date = new Date(),
+  isWindows = false,
+): ScheduleOverviewRow[] {
+  const rows: (ScheduleOverviewRow & { rank: number })[] = [];
+  for (const s of schedules) {
+    const project = projects.find((p) => samePath(p.path, s.projectRoot, isWindows));
+    if (!project) continue;
+    if (!s.enabled && !s.pausedReason && !s.runningRunId) continue;
+    const task = scheduleCardTask(s, queueKeys, now);
+    const next = s.enabled ? (parseLocalSlot(s.nextRunAt)?.getTime() ?? null) : null;
+    const failed = task.tone === "fail" && !s.pausedReason;
+    const action: ScheduleAction | null = task.queued
+      ? null
+      : s.runningRunId
+        ? "cancel"
+        : s.pausedReason
+          ? "reopen"
+          : failed
+            ? "rerun"
+            : "run";
+    rows.push({
+      task,
+      projectRoot: s.projectRoot,
+      projectName: project.name,
+      frequency: frequencyLabel(s.frequency, s.weekday, s.hour, s.minute, s.intervalHours),
+      action,
+      nextAt: next,
+      rank: s.runningRunId ? 0 : task.tone === "fail" ? 1 : 2,
+    });
+  }
+  return rows
+    .sort((a, b) => a.rank - b.rank || cmpNext(a.nextAt, b.nextAt))
+    .map(({ rank: _rank, ...row }) => row);
+}
+
+/** 下次时刻升序，没有的排后（两个都没有算相等，免得 Infinity - Infinity 得 NaN） */
+function cmpNext(a: number | null, b: number | null): number {
+  if (a === b) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return a - b;
+}
+
+/** 时间轴上的点：现在起 windowMs 内要跑的 + 正在跑的（at = 0 表示此刻）；pos 是 0–1 的横向位置 */
+export function scheduleTimeline(
+  rows: readonly ScheduleOverviewRow[],
+  nowMs: number,
+  windowMs = 24 * 3600_000,
+): { id: string; name: string; pos: number; running: boolean; at: number }[] {
+  const out: { id: string; name: string; pos: number; running: boolean; at: number }[] = [];
+  for (const row of rows) {
+    if (row.task.tone === "live") {
+      out.push({ id: row.task.id, name: row.task.name, pos: 0, running: true, at: nowMs });
+      continue;
+    }
+    if (row.nextAt === null) continue;
+    const d = row.nextAt - nowMs;
+    if (d < 0 || d > windowMs) continue;
+    out.push({ id: row.task.id, name: row.task.name, pos: d / windowMs, running: false, at: row.nextAt });
+  }
+  return out;
+}
+
+/** 项目顺序跟侧栏：置顶段（按置顶先后）在前，其余按侧栏拖动排的顺序，没排过的按传入顺序（2026-10-27） */
+export function orderLikeSidebar<T extends { path: string }>(
+  items: readonly T[],
+  pins: readonly string[],
+  order: readonly string[],
+  isWindows = false,
+): T[] {
+  const rank = (list: readonly string[], path: string) => {
+    const i = list.findIndex((p) => samePath(p, path, isWindows));
+    return i < 0 ? Number.POSITIVE_INFINITY : i;
+  };
+  return items
+    .map((item, i) => ({ item, i, pin: rank(pins, item.path), ord: rank(order, item.path) }))
+    .sort((a, b) => (a.pin === b.pin ? (a.ord === b.ord ? a.i - b.i : a.ord - b.ord) : a.pin - b.pin))
+    .map((x) => x.item);
 }

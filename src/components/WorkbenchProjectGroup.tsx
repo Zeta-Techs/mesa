@@ -33,6 +33,7 @@ const TASK_GRID =
 export default function WorkbenchProjectGroup({
   card,
   openTaskId,
+  selectedTaskId,
   onOpenTask,
   onOpenProject,
   onContinue,
@@ -46,6 +47,8 @@ export default function WorkbenchProjectGroup({
   card: ProjectCard;
   /** 右侧任务面板正开着的那一行 */
   openTaskId: string | null;
+  /** 键盘选中的那一行（选到折起来的部分时整组展开） */
+  selectedTaskId: string | null;
   onOpenTask: (task: CardTask) => void;
   onOpenProject: (() => void) | null;
   onContinue: () => void;
@@ -60,7 +63,9 @@ export default function WorkbenchProjectGroup({
   /** 分组末尾一行（记目标的按钮 / 输入框由页面给）；没有就不画 */
   footer: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expandedByClick, setExpanded] = useState(false);
+  const selectedAt = selectedTaskId ? card.tasks.findIndex((t) => t.id === selectedTaskId) : -1;
+  const expanded = expandedByClick || selectedAt >= CARD_VISIBLE_TASKS;
   const shown = expanded ? card.tasks : card.tasks.slice(0, CARD_VISIBLE_TASKS);
   const hidden = card.tasks.length - shown.length;
   // 项目头只写「进行到」以外的几个数：进度由进度条和它下面的「第几步」说
@@ -144,19 +149,26 @@ export default function WorkbenchProjectGroup({
         <ul className="pb-1.5">
           {shown.map((task) => {
             const meta = task.live ? liveMeta(task.live) : null;
+            const selected = selectedTaskId === task.id;
             // 等你确认时照写「等你确认」，不拿正在跑的工具顶掉
             const state = meta?.activity && task.live?.attention !== "confirm" ? meta.activity : task.state;
             return (
               <li key={task.id}>
                 <button
                   type="button"
+                  id={`wbt-${card.path}\n${task.id}`}
                   className={`${TASK_GRID} min-h-8 w-full py-1 pl-6 pr-4 text-left hover:bg-hover ${
-                    openTaskId === task.id ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""
+                    openTaskId === task.id || selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""
                   }`}
                   aria-haspopup="dialog"
                   onClick={() => onOpenTask(task)}
                 >
-                  <span className={`size-1.5 rounded-full ${TONE_DOT[task.queued ? "wait" : task.tone]}`} />
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      task.current && task.tone === "idle" && !task.queued ? "bg-nav-accent" : TONE_DOT[task.queued ? "wait" : task.tone]
+                    }`}
+                    title={task.current ? "流程当前这一步" : undefined}
+                  />
                   <span className="truncate text-micro text-l4">{task.kindLabel}</span>
                   <span className="min-w-0 truncate text-sm text-l1" title={task.name}>
                     {task.name}
@@ -167,9 +179,16 @@ export default function WorkbenchProjectGroup({
                     </span>
                     {task.live && <RunCaret state={caretFor(task.live)} decorative className="text-micro" />}
                   </span>
-                  <span className="truncate text-right font-mono text-micro tabular-nums text-l3" title="这一轮已跑多久">
-                    {meta?.elapsed ?? ""}
-                  </span>
+                  {/* 在跑写这一轮多久；没在跑写最后一次动它（2026-10-27 用户：右边两列大多空着） */}
+                  {meta?.elapsed ? (
+                    <span className="truncate text-right font-mono text-micro tabular-nums text-l3" title="这一轮已跑多久">
+                      {meta.elapsed}
+                    </span>
+                  ) : (
+                    <span className="truncate text-right text-micro text-l4" title={task.touchedAt ? `最后一次动它：${absTime(task.touchedAt)}` : undefined}>
+                      {task.touchedAt ? relTime(task.touchedAt) : ""}
+                    </span>
+                  )}
                   <span className="truncate text-right font-mono text-micro tabular-nums text-l3" title="这段对话的花费">
                     {meta?.cost ?? ""}
                   </span>
