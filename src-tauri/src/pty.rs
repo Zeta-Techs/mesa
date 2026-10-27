@@ -463,6 +463,17 @@ fn flush_backlog(sink: &mut OutputSink, flow: &FlowGate) {
     }
 }
 
+/// 进程结束后等前端把输出取走的上限：pty_spawn 返回到前端接上通道、标可见通常几十毫秒
+const OUTPUT_DELIVERY_GRACE: Duration = Duration::from_secs(5);
+
+/// 轮询 `delivered` 直到它说「已送到」（Some(true)）或「不用等了」（None：entry 已被别处收走），至多 `grace`
+fn wait_output_delivered(grace: Duration, delivered: impl Fn() -> Option<bool>) {
+    let deadline = Instant::now() + grace;
+    while delivered() == Some(false) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// 在子进程输出中扫描 bracketed paste 开启序列（ESC[?2004h）。
 /// tail 保存上一块末尾的 N-1 字节，防止序列恰好跨读取块被漏检。
 /// 返回 true 表示本块（含跨界）出现了开启序列。
@@ -740,6 +751,7 @@ fn spawn_tracked(
         },
     );
 
+    let exit_sink = sink.clone();
     let coalescer = Arc::new(FrameCoalescer::new());
     let signal_event = format!("pty-signal-{pty_id}");
     let exit_event = format!("pty-exit-{pty_id}");
@@ -809,6 +821,16 @@ fn spawn_tracked(
         coalescer.finish();
         // 等发送线程把尾帧发完，再发退出事件，保证输出先于退出到达
         let _ = emitter.join();
+        // 子进程秒退（找不到解释器、参数不认）时前端可能还没挂上退出监听、没接输出通道：这时就移除 entry，
+        // 报错连同退出事件一起丢掉，标签停在空白的「运行中」（2026-10-27 打包版 Codex：`env: node` 找不到）。
+        // 等前端接上并取走 backlog 再收尾；被 pty_kill 先收走、或标签在后台一直不取，最多等 OUTPUT_DELIVERY_GRACE
+        wait_output_delivered(OUTPUT_DELIVERY_GRACE, || {
+            if !entries.lock().unwrap().contains_key(&id) {
+                return None;
+            }
+            let sink = exit_sink.lock().unwrap();
+            Some(sink.channel.is_some() && sink.backlog.is_empty())
+        });
         crate::chat_channel::close_for_pty(&id);
         // 输出流结束视为进程结束；谁先移除 entry 谁负责回收并发退出事件
         let entry = entries.lock().unwrap().remove(&id);
@@ -2212,6 +2234,27 @@ pub async fn pty_kill(app: AppHandle, pty_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_waits_until_frontend_takes_output() {
+        use std::cell::Cell;
+        // 前端第三次看时才接上：一直等到送达，不提前收尾
+        let polls = Cell::new(0);
+        wait_output_delivered(Duration::from_secs(60), || {
+            polls.set(polls.get() + 1);
+            Some(polls.get() >= 3)
+        });
+        assert_eq!(polls.get(), 3);
+        // entry 已被 pty_kill 收走：不等
+        let polls = Cell::new(0);
+        wait_output_delivered(Duration::from_secs(60), || {
+            polls.set(polls.get() + 1);
+            None
+        });
+        assert_eq!(polls.get(), 1);
+        // 一直不取（后台标签）：到上限放行，不挂死
+        wait_output_delivered(Duration::from_millis(50), || Some(false));
+    }
 
     #[test]
     fn waiting_commands_stay_off_main_thread() {

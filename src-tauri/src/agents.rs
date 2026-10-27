@@ -282,6 +282,40 @@ pub fn resolve_binary(name: &str) -> Option<std::path::PathBuf> {
     find_in_dirs(name, &crate::agent_specs::binary_candidate_dirs())
 }
 
+/// 启动时把候选目录里存在的补到本进程 PATH 末尾（只追加、不改原有顺序，已在 PATH 上的不重复），
+/// 之后起的所有子进程都继承这份。resolve_binary 能在候选目录里找到 npm 装的 CLI，但它们多是
+/// `#!/usr/bin/env node` 脚本，子进程沿用 Finder 给的短 PATH 就找不到 node、一起就退出
+/// （2026-10-27 本机：node 在 /opt/homebrew/bin，打包版 Codex / Gemini / CodeBuddy 起不来）；
+/// Agent 里再起的 git / rg / python / MCP 服务器也要同一份。必须在起任何线程之前调（set_var 不是线程安全的）。
+/// Windows 的 GUI 进程本就拿到注册表里的完整 PATH，不动。
+#[cfg(unix)]
+pub fn extend_process_path() {
+    let candidates = crate::agent_specs::binary_candidate_dirs();
+    if let Some(next) = extended_path(std::env::var_os("PATH").as_deref(), &candidates, |d| d.is_dir()) {
+        std::env::set_var("PATH", next);
+    }
+}
+
+/// extend_process_path 的纯逻辑：没有要补的返回 None
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn extended_path(
+    current: Option<&std::ffi::OsStr>,
+    candidates: &[PathBuf],
+    exists: impl Fn(&Path) -> bool,
+) -> Option<std::ffi::OsString> {
+    let mut entries: Vec<PathBuf> = current.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+    let before = entries.len();
+    for dir in candidates {
+        if exists(dir) && !entries.iter().any(|e| e == dir) {
+            entries.push(dir.clone());
+        }
+    }
+    if entries.len() == before {
+        return None;
+    }
+    std::env::join_paths(entries).ok()
+}
+
 /// Git for Windows 自带的 bash（流水线钩子 / run 脚本）。
 /// 不认 `System32\bash.exe`（那是 WSL 启动器，Win32 路径的 bash 脚本会挂）。
 /// macOS/Linux 上就是 `resolve_binary("bash")`，调用方若已有自己的 bash 解析则不必走这里。
@@ -6178,6 +6212,25 @@ api_backend = "responses"
         assert_eq!(find_in_dirs("tool", &[base.join("nope")]), None);
         assert_eq!(find_in_dirs("ghost", &[d1.clone(), d2.clone()]), None);
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn extended_path_appends_existing_candidates_in_order() {
+        let p = |s: &str| PathBuf::from(s);
+        let gui = std::env::join_paths([p("/usr/bin"), p("/bin"), p("/usr/local/bin")]).unwrap();
+        let candidates = [p("/home/u/.local/bin"), p("/nope"), p("/opt/homebrew/bin"), p("/usr/local/bin")];
+        let exists = |d: &Path| d != Path::new("/nope");
+        let next = extended_path(Some(&gui), &candidates, exists).expect("有要补的目录");
+        // 原有顺序不动，存在的候选按候选顺序追加；不存在的、已在 PATH 上的不补
+        assert_eq!(
+            std::env::split_paths(&next).collect::<Vec<_>>(),
+            [p("/usr/bin"), p("/bin"), p("/usr/local/bin"), p("/home/u/.local/bin"), p("/opt/homebrew/bin")]
+        );
+        // 从终端启动（候选都已在 PATH 上）→ 不改
+        assert_eq!(extended_path(Some(&next), &candidates, exists), None);
+        // 没有 PATH 时只剩候选
+        let only = extended_path(None, &candidates[..1], exists).unwrap();
+        assert_eq!(std::env::split_paths(&only).collect::<Vec<_>>(), [p("/home/u/.local/bin")]);
     }
 
     #[cfg(windows)]

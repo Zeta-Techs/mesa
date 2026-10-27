@@ -179,6 +179,9 @@ pub fn run() {
     static ALLOW_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     /// 关窗存盘只拦一次（拦下→通知前端→350ms 后二次 close 放行）
     static FLUSH_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    // 打包版从 Finder 启动时 PATH 很短：先补全，再起任何线程（见 agents::extend_process_path）
+    #[cfg(unix)]
+    agents::extend_process_path();
     diagnostics::start_process_monitor();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
