@@ -10,6 +10,7 @@ import { pathWithin, samePath } from "./path-utils.ts";
 import { goalBucket, GOAL_BUCKET_LABEL } from "./project-tasks.ts";
 import { CODING_KIND_LABEL, deriveCodingKind, type CodingKind } from "./work-mode.ts";
 import { nextRunLabel } from "./schedule-tasks.ts";
+import { describeActivity, thinkingHeadline } from "./chat-status.ts";
 
 export type CardWorkMode = "research" | "coding" | "office";
 export type CardTaskKind = "step" | "goal" | "branch" | "schedule" | "chat";
@@ -370,4 +371,79 @@ export function filterCards(
   }
   const pool = filter === "all" ? [...cards] : cards.filter((c) => c.workMode === filter);
   return pool.sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
+}
+
+// ===== 第三批（2026-10-27）：任务行实时状态与花费、离开期间摘要 =====
+
+/** 旁路快照里够得上「此刻在做什么」的部分（chat-channel.ts ChatChannelSnapshot 的子集） */
+export interface LiveSnapInput {
+  activity: { name: string; input: string } | null;
+  thinking: string | null;
+  statusLine?: string | null;
+  turn: { status: string; startedAt: number } | null;
+}
+
+/** 此刻在做什么：正在跑的工具 > 思考小标题 > CLI 自己报的一句；只认旁路，读不到就 null（行上照写「正在干活」） */
+export function liveActivityLine(
+  snap: LiveSnapInput | null | undefined,
+  cwd: string | null,
+  isWindows: boolean,
+): string | null {
+  if (!snap?.turn || (snap.turn.status !== "running" && snap.turn.status !== "awaiting_approval")) return null;
+  if (snap.activity) {
+    const text = describeActivity(snap.activity, cwd, isWindows);
+    if (text) return text;
+  }
+  const head = thinkingHeadline(snap.thinking);
+  if (head) return `在想：${head}`;
+  return snap.statusLine?.trim() || null;
+}
+
+/** 这一轮跑了多久（毫秒）；没在跑的不算 */
+export function turnElapsedMs(snap: LiveSnapInput | null | undefined, nowMs: number): number | null {
+  const t = snap?.turn;
+  if (!t || (t.status !== "running" && t.status !== "awaiting_approval") || !t.startedAt) return null;
+  return Math.max(0, nowMs - t.startedAt);
+}
+
+/** 时长白话：不到 1 分钟 / 12 分钟 / 1 小时 5 分 / 2 天 */
+export function durationLabel(ms: number): string {
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "不到 1 分钟";
+  if (min < 60) return `${min} 分钟`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return min % 60 ? `${h} 小时 ${min % 60} 分` : `${h} 小时`;
+  return `${Math.floor(h / 24)} 天`;
+}
+
+/** 离开不到这么久不算「离开」，不出摘要 */
+export const AWAY_MIN_MS = 30 * 60_000;
+
+/**
+ * 离开期间一行摘要：只数确有记录的——结束的交互运行（内部的不算）、定时任务跑过的次数（跳过的不算）；
+ * 什么都没发生、或离开不到半小时返回 null。花费不在这里估：用量按天入库，凑不出「离开这几小时」的准数
+ */
+export function awaySummary(input: {
+  sinceMs: number | null;
+  nowMs: number;
+  runs: readonly { internal: boolean; status: string; closedAt: string | null }[];
+  schedules: readonly { history: readonly { at: string; status: string }[] }[];
+  waiting: number;
+}): { lead: string; parts: string[] } | null {
+  const since = input.sinceMs;
+  if (!since || input.nowMs - since < AWAY_MIN_MS) return null;
+  const after = (iso: string | null) => {
+    const t = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(t) && t > since && t <= input.nowMs;
+  };
+  const closed = input.runs.filter((r) => !r.internal && after(r.closedAt));
+  const failedRuns = closed.filter((r) => r.status === "failed").length;
+  const schedRuns = input.schedules.flatMap((s) => s.history).filter((r) => r.status !== "skipped" && after(r.at));
+  const failedSched = schedRuns.filter((r) => r.status === "error" || r.status === "timeout").length;
+  const parts: string[] = [];
+  if (closed.length) parts.push(`结束了 ${closed.length} 次运行${failedRuns ? `（${failedRuns} 次出错退出）` : ""}`);
+  if (schedRuns.length) parts.push(`定时任务跑了 ${schedRuns.length} 次${failedSched ? `（${failedSched} 次失败）` : ""}`);
+  if (!parts.length) return null;
+  if (input.waiting) parts.push(`${input.waiting} 件等你拍板`);
+  return { lead: `你离开的 ${durationLabel(input.nowMs - since)}里`, parts };
 }

@@ -7,6 +7,7 @@ import {
   CheckCheck,
   CircleDot,
   Inbox,
+  Moon,
   Plus,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
@@ -27,6 +28,7 @@ import type {
   RepoDto,
   RunDto,
   ScheduleDto,
+  SessionUsageDto,
   TaskDto,
   WorkspaceDto,
 } from "../types";
@@ -73,9 +75,14 @@ import { unreadKeyOf } from "../chat-unread";
 import WorkbenchProjectCard from "../components/WorkbenchProjectCard";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
 import {
+  awaySummary,
   buildProjectCard,
+  durationLabel,
   filterCards,
+  liveActivityLine,
+  turnElapsedMs,
   type CardFilter,
+  type CardLiveRun,
   type CardProjectInput,
   type CardRunInput,
 } from "../workbench-cards";
@@ -98,6 +105,7 @@ import {
   type QueueRow,
 } from "../workbench-queue";
 import { pollEvery } from "../polling";
+import { fmtCost } from "../stats-insight";
 
 const iconClass = "shrink-0 text-l4";
 
@@ -114,6 +122,8 @@ type LastSaid = {
 };
 const lastSaidCache = new Map<string, LastSaid | null>();
 
+/** 上次看着工作台的时刻（离开期间摘要从这之后数） */
+const WORKBENCH_LAST_SEEN_KEY = "ccode.workbenchLastSeen";
 /** 拍板队列默认列几行，其余折叠 */
 const QUEUE_VISIBLE = 6;
 const QUEUE_KEY_HINT = "J / K 移动 · 回车 去处理 · A 允许 · R 拒绝 · E 收起";
@@ -807,7 +817,15 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     }
     return out;
   }, [inboxItems, terminalRunInputs]);
-  const confirmTabSig = Object.values(confirmTabs).sort().join("\n");
+  // 要看旁路快照的标签：待确认的（行内答审批）+ 开着干活的（项目卡上写此刻在做什么）
+  const confirmTabSig = [
+    ...new Set([
+      ...Object.values(confirmTabs),
+      ...terminalRunInputs.filter((r) => isWorkbenchActiveRun(r)).map((r) => r.tabId),
+    ]),
+  ]
+    .sort()
+    .join("\n");
   const [channelSnaps, setChannelSnaps] = useState<Record<string, ChatChannelSnapshot | null>>({});
   useEffect(() => {
     if (!visible || !confirmTabSig) return;
@@ -1136,6 +1154,145 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       });
     }
   }
+  // ===== 第三批：任务行实时状态与花费 =====
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const anyLive = cardRuns.length > 0;
+  useEffect(() => {
+    if (!visible || !anyLive) return;
+    // 时长按分钟写，15 秒刷一次足够；不在跑就不刷
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15_000);
+    setNowMs(Date.now());
+    return () => window.clearInterval(timer);
+  }, [visible, anyLive]);
+  /** 标签 → 会话：标签自己报的优先，没有就查它那次运行的账 */
+  function sessionOfTab(tabId: string, runId?: string): { agent: string; sessionId: string } | null {
+    const tab = terminalRunInputs.find((r) => r.tabId === tabId);
+    if (tab?.sessionId) return { agent: tab.agentId, sessionId: tab.sessionId };
+    const run = runId ? allRuns.find((r) => r.id === runId) : undefined;
+    return run?.sessionId ? { agent: run.agent, sessionId: run.sessionId } : null;
+  }
+  const usageKey = (agent: string, sessionId: string) => `${agent}\n${sessionId}`;
+  const [usages, setUsages] = useState<Record<string, SessionUsageDto>>({});
+  // 要算花费的会话：卡上开着的每段 + 任务面板里这件事的历次运行
+  const usageWantSig = [
+    ...cardRuns.map((r) => sessionOfTab(r.tabId, r.runId)),
+    ...(panelData?.pastRuns ?? []).map((r) => (r.sessionId ? { agent: r.agent, sessionId: r.sessionId } : null)),
+  ]
+    .filter((x): x is { agent: string; sessionId: string } => !!x)
+    .map((x) => usageKey(x.agent, x.sessionId))
+    .filter((k, i, all) => all.indexOf(k) === i)
+    .sort()
+    .join("\t");
+  useEffect(() => {
+    if (!visible || !usageWantSig) return;
+    let stale = false;
+    const pull = () => {
+      for (const key of usageWantSig.split("\t")) {
+        const [agent, sessionId] = key.split("\n");
+        invoke<SessionUsageDto>("session_usage", { agent, sessionId })
+          .then((u) => {
+            if (!stale) setUsages((cur) => ({ ...cur, [key]: u }));
+          })
+          .catch(() => {
+            /* 花费是附加信息：读不到就不写 */
+          });
+      }
+    };
+    pull();
+    // 与终端状态栏同一节奏：60 秒追一次新
+    const unpoll = pollEvery(pull, 60_000);
+    return () => {
+      stale = true;
+      unpoll();
+    };
+  }, [visible, usageWantSig]);
+  function costText(keys: readonly string[]): string | null {
+    const rows = keys.map((k) => usages[k]).filter((u): u is SessionUsageDto => !!u);
+    if (!rows.length || !rows.some((u) => u.priced)) return null;
+    const total = rows.reduce((n, u) => n + (u.priced ? u.costUsd : 0), 0);
+    return fmtCost(total, "$", 1, rows.some((u) => !u.priced));
+  }
+  function liveMeta(live: CardLiveRun): { activity: string | null; elapsed: string | null; cost: string | null } {
+    const snap = channelSnaps[live.tabId];
+    const tab = terminalRunInputs.find((r) => r.tabId === live.tabId);
+    const ms = turnElapsedMs(snap, nowMs);
+    const session = sessionOfTab(live.tabId, live.runId);
+    return {
+      activity: liveActivityLine(snap, tab?.cwd ?? null, IS_WINDOWS),
+      elapsed: ms === null ? null : durationLabel(ms),
+      cost: session ? costText([usageKey(session.agent, session.sessionId)]) : null,
+    };
+  }
+  const panelLive = (() => {
+    const live = openCardTask?.live;
+    const pastKeys = (panelData?.pastRuns ?? [])
+      .filter((r) => r.sessionId)
+      .map((r) => usageKey(r.agent, r.sessionId!));
+    const total = costText([...new Set(pastKeys)]);
+    const meta = live ? liveMeta(live) : null;
+    if (!meta?.activity && !meta?.elapsed && !total) return null;
+    return (
+      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg ccode-well p-3 text-sm">
+        {meta?.activity && (
+          <>
+            <dt className="text-l3">此刻</dt>
+            <dd className="min-w-0 truncate text-l1" title={meta.activity}>{meta.activity}</dd>
+          </>
+        )}
+        {meta?.elapsed && (
+          <>
+            <dt className="text-l3">这一轮</dt>
+            <dd className="text-l1">已跑 {meta.elapsed}</dd>
+          </>
+        )}
+        {total && (
+          <>
+            <dt className="text-l3">花费</dt>
+            <dd className="text-l1" title="这件事历次对话按模型定价合计；≥ 表示有模型没在定价表里，实际只多不少">
+              {total}
+            </dd>
+          </>
+        )}
+      </dl>
+    );
+  })();
+
+  // ===== 第三批：离开期间摘要 =====
+  const [awaySince, setAwaySince] = useState<number | null>(null);
+  const [awayDismissed, setAwayDismissed] = useState(false);
+  useEffect(() => {
+    if (!visible) return;
+    let prev: number | null = null;
+    try {
+      prev = Number(localStorage.getItem(WORKBENCH_LAST_SEEN_KEY)) || null;
+    } catch {
+      /* 读不到就当第一次来 */
+    }
+    setAwaySince(prev);
+    setAwayDismissed(false);
+    // 页面常驻挂着，回来时先把「现在」对准，摘要和时长才不按上次的钟算
+    setNowMs(Date.now());
+    // 看着工作台的时间都算「在」：进来记一次、每分钟记一次、离开 / 关窗再记一次
+    const mark = () => {
+      try {
+        localStorage.setItem(WORKBENCH_LAST_SEEN_KEY, String(Date.now()));
+      } catch {
+        /* 写不进就只是下次不出摘要 */
+      }
+    };
+    mark();
+    const timer = window.setInterval(mark, 60_000);
+    window.addEventListener("beforeunload", mark);
+    return () => {
+      mark();
+      window.clearInterval(timer);
+      window.removeEventListener("beforeunload", mark);
+    };
+  }, [visible]);
+  const away = awayDismissed
+    ? null
+    : awaySummary({ sinceMs: awaySince, nowMs, runs: allRuns, schedules, waiting: queueRows.length });
+
   const taskPanel = (
     <WorkbenchTaskPanel
       open={!!openCardTask}
@@ -1149,7 +1306,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       schedule={panelData?.schedule ?? null}
       pastRuns={panelData?.pastRuns ?? []}
       agentLabel={agentLabel}
-      live={null}
+      live={panelLive}
       actions={panelActions}
     />
   );
@@ -1183,6 +1340,21 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
       {/* 单栏自上而下：等你拍板 → 正在进行 → 记下目标 → 定时任务（2026-10-27 设计稿第一批：
           拍板队列提到最上面；「继续工作」大卡与最近对话删掉——侧栏点对话就能接着聊，最近对话就是侧栏那一份） */}
+      {away && (
+        <div className="mb-5 flex min-w-0 items-center gap-2 px-1 text-sm text-l3">
+          <Moon size={13} strokeWidth={1.8} className="shrink-0 text-l4" aria-hidden="true" />
+          <span className="min-w-0 truncate">
+            {away.lead}：{away.parts.join(" · ")}
+          </span>
+          <button
+            type="button"
+            className="ml-auto shrink-0 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+            onClick={() => setAwayDismissed(true)}
+          >
+            知道了
+          </button>
+        </div>
+      )}
       {queueRows.length > 0 && (
         <section className="mb-7 min-w-0" data-workbench-queue="">
           <SectionHeading
@@ -1400,6 +1572,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                       }
                       continueTip={said ? `回到上次停下的地方\n上次停在：${said.full}` : "回到上次停下的地方"}
                       lastActive={lastTargetFor(card.path)?.updatedAt ?? null}
+                      liveMeta={liveMeta}
                       caretFor={(live) => withUnread(caretOfAttention(live.attention), runUnread(live.tabId)) ?? "idle"}
                       clientJump={
                         showClientJump

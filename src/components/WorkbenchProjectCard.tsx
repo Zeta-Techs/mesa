@@ -31,6 +31,7 @@ export default function WorkbenchProjectCard({
   continueTip,
   clientJump,
   lastActive,
+  liveMeta,
   caretFor,
   footer,
 }: {
@@ -44,6 +45,8 @@ export default function WorkbenchProjectCard({
   clientJump: { label: string; onClick: () => void } | null;
   /** 这个项目最后一次对话活动（卡头右侧小字）；不知道就不写 */
   lastActive: string | null;
+  /** 开着的那一行：此刻在做什么 / 这一轮跑了多久 / 这段对话花了多少（第三批） */
+  liveMeta: (live: CardLiveRun) => { activity: string | null; elapsed: string | null; cost: string | null };
   /** 行尾光标：注意力 + 跑完没看（蓝） */
   caretFor: (live: CardLiveRun) => RunCaretState;
   /** 卡底动作区（记目标的按钮 / 输入框由页面给） */
@@ -138,7 +141,10 @@ export default function WorkbenchProjectCard({
 
       {shown.length > 0 ? (
         <ul className="border-t border-hairline">
-          {shown.map((task) => (
+          {shown.map((task) => {
+            const meta = task.live ? liveMeta(task.live) : null;
+            const side = [meta?.elapsed, meta?.cost].filter(Boolean).join(" · ");
+            return (
             <li key={task.id} className="border-t border-hairline first:border-t-0">
               <button
                 type="button"
@@ -155,18 +161,27 @@ export default function WorkbenchProjectCard({
                     <span className="min-w-0 truncate text-sm text-l1">{task.name}</span>
                   </span>
                   <span className="mt-px flex min-w-0 items-center gap-1.5 text-micro text-l3">
-                    <span className="min-w-0 truncate">{task.state}</span>
+                    {/* 等你确认时照写「等你确认」，不拿正在跑的工具顶掉 */}
+                    <span className="min-w-0 truncate" title={meta?.activity ?? undefined}>
+                      {meta?.activity && task.live?.attention !== "confirm" ? meta.activity : task.state}
+                    </span>
                     {task.live && (
                       <RunCaret state={caretFor(task.live)} decorative className="text-micro" />
                     )}
                   </span>
                 </span>
+                {side && (
+                  <span className="shrink-0 font-mono text-micro tabular-nums text-l3" title="这一轮已跑多久 · 这段对话的花费">
+                    {side}
+                  </span>
+                )}
                 {task.queued && (
                   <span className="shrink-0 rounded-full bg-warn px-1.5 py-px text-micro text-warn-text">待拍板</span>
                 )}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : (
         <p className="border-t border-hairline px-4 py-2.5 text-micro text-l3">

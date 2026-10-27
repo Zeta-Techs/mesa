@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildProjectCard, filterCards, type CardRunInput } from "../src/workbench-cards.ts";
+import {
+  awaySummary,
+  buildProjectCard,
+  durationLabel,
+  filterCards,
+  liveActivityLine,
+  turnElapsedMs,
+  type CardRunInput,
+} from "../src/workbench-cards.ts";
 
 const base = {
   workspaces: [],
@@ -152,4 +160,47 @@ test("filterCards：有活的按传入顺序，其余筛选把有活的排前", 
   assert.deepEqual(filterCards(cards, ["/c", "/b"], "active").map((c) => c.path), ["/c", "/b"]);
   assert.deepEqual(filterCards(cards, ["/c"], "research").map((c) => c.path), ["/c", "/a"]);
   assert.deepEqual(filterCards(cards, ["/b"], "all").map((c) => c.path), ["/b", "/a", "/c"]);
+});
+
+test("liveActivityLine：工具 > 思考 > CLI 状态；没在跑不说", () => {
+  const turn = { status: "running", startedAt: 1 };
+  assert.equal(
+    liveActivityLine({ activity: { name: "Bash", input: JSON.stringify({ command: "npm test" }) }, thinking: null, turn }, "/p", false),
+    "运行 npm test",
+  );
+  assert.equal(liveActivityLine({ activity: null, thinking: "**核对引用**\n细节", turn }, "/p", false), "在想：核对引用");
+  assert.equal(liveActivityLine({ activity: null, thinking: null, statusLine: "Retrying (1/15)", turn }, "/p", false), "Retrying (1/15)");
+  assert.equal(liveActivityLine({ activity: null, thinking: "x", turn: { status: "completed", startedAt: 1 } }, "/p", false), null);
+  assert.equal(liveActivityLine(null, "/p", false), null);
+});
+
+test("turnElapsedMs / durationLabel", () => {
+  assert.equal(turnElapsedMs({ activity: null, thinking: null, turn: { status: "running", startedAt: 1000 } }, 61_000), 60_000);
+  assert.equal(turnElapsedMs({ activity: null, thinking: null, turn: { status: "completed", startedAt: 1000 } }, 61_000), null);
+  assert.equal(durationLabel(30_000), "不到 1 分钟");
+  assert.equal(durationLabel(12 * 60_000), "12 分钟");
+  assert.equal(durationLabel(65 * 60_000), "1 小时 5 分");
+  assert.equal(durationLabel(9 * 3600_000), "9 小时");
+  assert.equal(durationLabel(50 * 3600_000), "2 天");
+});
+
+test("awaySummary：只数离开后结束的交互运行与定时跑次，没事或不到半小时不出", () => {
+  const now = Date.parse("2026-10-27T10:00:00Z");
+  const since = now - 9 * 3600_000;
+  const iso = (h: number) => new Date(now - h * 3600_000).toISOString();
+  const runs = [
+    { internal: false, status: "completed", closedAt: iso(2) },
+    { internal: false, status: "failed", closedAt: iso(1) },
+    { internal: true, status: "completed", closedAt: iso(1) },
+    { internal: false, status: "completed", closedAt: iso(20) },
+    { internal: false, status: "running", closedAt: null },
+  ];
+  const schedules = [{ history: [{ at: iso(3), status: "ok" }, { at: iso(4), status: "timeout" }, { at: iso(5), status: "skipped" }, { at: iso(30), status: "ok" }] }];
+  assert.deepEqual(awaySummary({ sinceMs: since, nowMs: now, runs, schedules, waiting: 2 }), {
+    lead: "你离开的 9 小时里",
+    parts: ["结束了 2 次运行（1 次出错退出）", "定时任务跑了 2 次（1 次失败）", "2 件等你拍板"],
+  });
+  assert.equal(awaySummary({ sinceMs: now - 10 * 60_000, nowMs: now, runs, schedules, waiting: 0 }), null);
+  assert.equal(awaySummary({ sinceMs: since, nowMs: now, runs: [], schedules: [], waiting: 3 }), null);
+  assert.equal(awaySummary({ sinceMs: null, nowMs: now, runs, schedules, waiting: 0 }), null);
 });

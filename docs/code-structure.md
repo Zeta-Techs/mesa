@@ -417,7 +417,8 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   workbench-cards.ts         # 工作台项目卡（2026-10-27 第二批）：buildProjectCard 卡头几个数 + 科研进度条 + 任务行
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
-                             # filterCards：有活的 / 全部 / 按工作方式（tests/workbench-cards.test.ts）
+                             # filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
+                             # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）（tests/workbench-cards.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、
                              # 未分类恒末）/趋势/直链转换/全文可得性分流（fulltextLinkFor：arxiv abs 与 .pdf 直链=可下载，
                              # DOI/落地页=来源，不再摆禁用下载钮）/已读判定/雷达筛选（entryPassesFilter
