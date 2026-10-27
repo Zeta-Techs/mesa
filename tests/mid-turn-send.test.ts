@@ -63,3 +63,10 @@ test("输入框发送区：下一步就交的家写「下一步交给它」；�
   assert.doesNotMatch(stopTitle(midTurnSpec("kimi", { csiU: true })), /排着/);
   assert.doesNotMatch(stopTitle(midTurnSpec("qwen", { csiU: false })), /排着/);
 });
+
+
+test("OpenCode 停止使用官方接口，说明不再承诺单次 Esc 能停止", () => {
+  const title = stopTitle(midTurnSpec("opencode", { csiU: false }), "opencode");
+  assert.match(title, /请求 OpenCode 停止/);
+  assert.doesNotMatch(title, /发送 Esc/);
+});

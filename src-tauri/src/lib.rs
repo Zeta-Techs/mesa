@@ -956,6 +956,7 @@ pub fn run() {
             chat_channel::chat_channel_settle_from_transcript,
             chat_channel::chat_channel_settle_interrupted,
             chat_channel::chat_channel_reply,
+            chat_channel::chat_channel_interrupt,
             chat_handoff_log::chat_handoff_record,
             chat_handoff_log::chat_handoff_summary,
             chat_handoff_log::chat_handoff_clear,

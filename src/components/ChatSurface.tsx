@@ -1618,7 +1618,7 @@ export default function ChatSurface({
         onDraftChange={onDraftChange}
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
-        stopTitle={stopTitle(midTurn)}
+        stopTitle={stopTitle(midTurn, agentId)}
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

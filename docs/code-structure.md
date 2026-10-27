@@ -1179,7 +1179,7 @@ src-tauri/src/
                              #   快照另带 activity（正在跑的工具，track_activity 按开始 / 结束登记，参数 slim_input 截断脱敏）与 thinking
                              #   （Codex item/reasoning/summaryTextDelta、Qwen thinking_delta、OpenCode reasoning part）；出站 outbound 脱敏实时文字与思考；
                              #   审批 DTO 由 approval_from_tool 统一出（ExitPlanMode 另给 plan 方案原文与方案文件路径，2026-10-26）；
-                             #   chat_channel_reply 经官方通道回审批；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
+                             #   chat_channel_reply 经官方通道回审批；chat_channel_interrupt 核对会话与回合后经 OpenCode 官方接口停止；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop，
                              #   按会话文件里这一轮之后的收尾标记收回合）；chat_channel_settle_interrupted（按了 Esc、屏上确认停了才调：
                              #   还没出字就打断时会话文件也不留收尾）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；

@@ -8803,12 +8803,29 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 聊天层暂停当前生成：往 PTY 写 Esc（不是 Ctrl+C 硬中断——不退出会话，
+  /** 聊天层暂停当前生成：OpenCode 走官方停止接口，其余家往 PTY 写 Esc（不是 Ctrl+C 硬中断——不退出会话，
       Codex/Claude 等生成中按 Esc 是停下当前回合、回到可继续输入的提示符。
       Grok Build 走不到这里：非 prompt 态 Esc 会触发整进程退出确认，
       ChatComposer 按 escInterruptSafe 对 grok 不渲染停止钮） */
+  const interruptBusyRef = useRef(new Set<string>());
   function chatInterrupt() {
-    tabActionsRef.current.get(focusedId)?.writePty("\x1b");
+    const tabId = focusedId;
+    const agent = statuses[tabId]?.agentId ?? tabs.find((t) => t.id === tabId)?.initialAgentId;
+    if (agent === "opencode") {
+      if (interruptBusyRef.current.has(tabId)) return;
+      const snap = sessionByTab[tabId]?.channel;
+      if (!snap || snap.connection !== "connected" || !snap.sessionId || !snap.turn) {
+        toast("实时通道不可用，请切到终端停止这一轮", "error");
+        return;
+      }
+      if (!channelTurnOpen(snap)) return;
+      interruptBusyRef.current.add(tabId);
+      void invoke("chat_channel_interrupt", { tabId, sessionId: snap.sessionId, turnSeq: snap.turn.seq })
+        .catch((e) => toast(`没能停止：${String(e)}，可以在终端里处理`, "error"))
+        .finally(() => interruptBusyRef.current.delete(tabId));
+      return;
+    }
+    tabActionsRef.current.get(tabId)?.writePty("\x1b");
   }
 
   /** 聊天层审批卡片按键：批准 y / 拒绝 n / 取消 Esc（单键热键，各 CLI TUI 通用形态；

@@ -2838,6 +2838,51 @@ pub fn chat_channel_settle_interrupted(tab_id: String) -> bool {
     true
 }
 
+/// OpenCode 的单次 Esc 只进入取消提示；通过官方接口停止已核对的这一轮。
+#[tauri::command]
+pub async fn chat_channel_interrupt(tab_id: String, session_id: String, turn_seq: u32) -> Result<(), String> {
+    interrupt_impl(&tab_id, &session_id, turn_seq).await
+}
+
+async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result<(), String> {
+    let ch = channel_for_tab(tab_id).ok_or("实时通道不可用，请到终端停止")?;
+    {
+        let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
+        if t.snap.kind != "opencode" || t.snap.connection != Some("connected") {
+            return Err("这条实时通道不支持停止，请到终端处理".into());
+        }
+        if t.snap.session_id.as_deref() != Some(session_id)
+            || t.snap.turn.as_ref().map(|t| t.seq) != Some(turn_seq) || !is_open(&t.snap.turn) {
+            return Err("当前回合已经变化，请按最新状态操作".into());
+        }
+    }
+    let (port, password) = {
+        let r = ch.replier.lock().map_err(|_| "实时通道不可用")?;
+        match r.as_ref() {
+            Some(Replier::OpenCode { port, password }) => (*port, password.clone()),
+            _ => return Err("实时通道已断开，请到终端停止".into()),
+        }
+    };
+    let mut url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).map_err(|e| e.to_string())?;
+    url.path_segments_mut().map_err(|_| "无法构造停止请求")?.extend(["session", session_id, "abort"]);
+    let response = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5))
+        .build().map_err(|e| e.to_string())?.post(url)
+        .header("Authorization", basic_auth(&password)).json(&json!({})).send().await
+        .map_err(|e| format!("停止请求失败：{e}"))?;
+    if !response.status().is_success() { return Err(format!("停止请求失败（{}）", response.status())); }
+    // 官方确认后才收回合；响应到达前已切会话 / 开新一轮时，不触碰新状态。
+    if let Ok(mut t) = ch.tracker.lock() {
+        if t.snap.session_id.as_deref() == Some(session_id)
+            && t.snap.turn.as_ref().map(|t| t.seq) == Some(turn_seq)
+            && t.snap.connection == Some("connected") {
+            if t.apply(ChannelEvent::TurnEnd { reason: Some("cancelled".into()) }, now_ms()) {
+                ch.dirty.store(true, Ordering::Release);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 聊天层「等你决定」卡上点了按钮：经这家官方的回复通道送回（decision = allow | allow_always | deny）。
 /// 只送用户点的那一项；终端里已经答过的，CLI 会回「已处理」并丢掉这条，不会出错。
 #[tauri::command]
@@ -4030,9 +4075,22 @@ mod e2e {
             std::thread::sleep(Duration::from_millis(300));
             if let (Some(ms), None) = (interrupt_ms, esc_at) {
                 if started.elapsed() >= Duration::from_millis(ms) {
-                    send(b"\x1b");
-                    esc_at = Some(Instant::now());
-                    println!("{agent}: 按了 Esc");
+                    if agent == "opencode" {
+                        let snap = chat_channel_snapshot("e2e-tab".into()).unwrap_or_default();
+                        if let (Some(sid), Some(turn)) = (&snap.session_id, &snap.turn) {
+                            if is_open(&snap.turn) {
+                                assert!(tauri::async_runtime::block_on(interrupt_impl("e2e-tab", sid, turn.seq + 1)).is_err(), "过期回合不能停止当前任务");
+                                tauri::async_runtime::block_on(interrupt_impl("e2e-tab", sid, turn.seq)).expect("OpenCode 官方停止接口");
+                                esc_at = Some(Instant::now());
+                                interrupt_settled = true;
+                                println!("{agent}: 官方接口已确认停止");
+                            }
+                        }
+                    } else {
+                        send(b"\x1b");
+                        esc_at = Some(Instant::now());
+                        println!("{agent}: 按了 Esc");
+                    }
                 }
             }
             if let Some(at) = esc_at.filter(|_| !interrupt_settled) {

@@ -116,7 +116,8 @@ export function queueSendHint(spec: MidTurnSpec): { label: string; title: string
 }
 
 /** 停止块的悬停说明：按 Esc 的几家，有排着的话时停下就是马上处理那句（实测），写明 */
-export function stopTitle(spec: MidTurnSpec): string {
+export function stopTitle(spec: MidTurnSpec, agentId?: string | null): string {
+  if (agentId === "opencode") return "请求 OpenCode 停止这一轮（会话保留）；实时通道不可用时请到终端处理";
   const base = "暂停当前生成（往终端发送 Esc；会话保留，可继续输入）";
   return spec.sendNow?.keys === "\x1b" ? `${base}。有排着的话时，它会马上处理那句` : base;
 }

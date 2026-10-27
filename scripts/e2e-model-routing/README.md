@@ -158,6 +158,7 @@ MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --l
 #       E2E_DROP_SETTINGS=1（去掉网关的 --settings，模拟官方账号启动；同时去掉拷来的 settings.json 里的 env，只打假网关）、
 #       E2E_ARG_PROMPT=1（Claude / CodeBuddy：首条消息带换行、引号、|、%变量% 放进启动参数，核对原样进会话）、
 #       E2E_DELETE_SETTINGS=1（发消息前删掉网关的 --settings 覆盖文件，看 hooks 还到不到）、
+#       E2E_INTERRUPT_MS=<毫秒>（OpenCode 走 Mesa 官方停止命令并核对过期回合被拒绝；其他家按 Esc）
 #       E2E_RAW=<文件>（终端原始输出按时间逐块记下，聊天层答审批的时刻另记一行；用终端模拟器回放看「答过以后终端里还挂着什么」）、
 #       E2E_REPLY_DELAY_MS=<毫秒>（审批卡出来后等这么久再从聊天层答，像人一样先看一会儿）
 #       E2E_ANSWER=esc（不能从聊天层答的审批 / Claude 提问表单改在终端按 Esc 不答，并像前端那样反复调 chat_channel_settle_from_transcript，
