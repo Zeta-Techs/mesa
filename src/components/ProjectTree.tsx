@@ -1110,7 +1110,6 @@ export default function ProjectTree({
    *  点过展开更多的给「收起」回到按空位列。要看全部、搜、整理，去对话页（节头 ⋯ 里有入口） */
   function renderChats(chats: SessionMetaDto[], project: ProjectDto | null, name: string, folderKey: string) {
     const shown = quotaOf.get(folderKey) ?? Math.min(chats.length, SIDEBAR_CHAT_LIMIT);
-    const more = chats.length > shown;
     const folded = (chatExtra[folderKey] ?? 0) > 0;
     // 「还有 N 段 / 收起」是动作不是对话：比对话行矮、再小一号、最淡（l4），读作挂在最后一段下面的注脚
     // （2026-10-25 用户：原「展开更多」整行和对话一样高，读着像一段对话）
@@ -1119,6 +1118,8 @@ export default function ProjectTree({
     // 正看着的那段排得比较靠后（从对话页点开的旧对话）：也摆出来，不然侧栏里找不到「现在在哪」
     const selIdx = selectedChatKey ? chats.findIndex((s) => chatKey(s) === selectedChatKey) : -1;
     const visible = selIdx >= shown ? [...chats.slice(0, shown), chats[selIdx]] : chats.slice(0, shown);
+    const remaining = chats.length - visible.length;
+    const more = remaining > 0;
     return (
       <div role="group" aria-label={`${name} 的对话`} className="space-y-px pb-1">
         {opened.map((r) => renderOpenRow(r))}
@@ -1135,11 +1136,11 @@ export default function ProjectTree({
                 onClick={() =>
                   setChatExtra((prev) => ({ ...prev, [folderKey]: expandedExtra(shown) }))
                 }
-                title={`还有 ${chats.length - shown} 段，在这里多列 ${Math.min(SIDEBAR_CHAT_STEP, chats.length - shown)} 段`}
+                title={`还有 ${remaining} 段，在这里多列 ${Math.min(SIDEBAR_CHAT_STEP, remaining)} 段`}
                 data-rail-nav
                 className={linkCls}
               >
-                <span className="text-micro">还有 {chats.length - shown} 段</span>
+                <span className="text-micro">还有 {remaining} 段</span>
               </button>
             )}
             {folded && (

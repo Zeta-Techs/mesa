@@ -762,6 +762,22 @@ test("收着的课题一行挨一行（只隔 1px），展开的那节上下留�
   }
 });
 
+test("当前旧对话补进列表后，只计算实际未显示的对话数量", async () => {
+  const view = await renderTree({
+    terminalRunInputs: [{
+      tabId: "t1", title: "", model: "", agentId: "claude-code", cwd: PROJECT.path,
+      running: true, shell: false, attention: "done", sessionId: "r0",
+    }],
+  });
+  try {
+    const group = view.chatGroup(PROJECT.name)!;
+    assert.equal(group.querySelectorAll("[data-chat-key]").length, 6);
+    assert.ok(!group.textContent?.includes("还有"), "六段已全部显示，不再提示还有一段");
+  } finally {
+    await view.close();
+  }
+});
+
 test("多选：⌘ / Ctrl 点只选不开，⇧ 点整段选上，树底一条能一起置顶 / 归档，右键选中的行是同一份，Esc 和普通点清掉（2026-10-27）", async () => {
   const view = await renderTree();
   try {
