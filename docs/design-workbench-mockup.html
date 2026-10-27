@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 工作台：管所有项目与任务 · 现在 vs 建议（2026-10-27）</title>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: #0a0b0e; color: #bdbab4; font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  header, .section { max-width: 1480px; margin: 0 auto; padding: 0 24px; }
+  header { margin-top: 26px; }
+  header h1 { margin: 0; font-size: 19px; color: #e9e6e2; font-weight: 600; }
+  header p { margin: 6px 0 0; color: #95959a; font-size: 13px; max-width: 1120px; }
+  header p b { color: #e9e6e2; font-weight: 500; }
+  h2 { font-size: 14px; color: #e9e6e2; font-weight: 600; margin: 34px 0 4px; }
+  .sub { font-size: 12.5px; color: #95959a; margin: 0 0 12px; max-width: 1120px; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 16px 0 12px; font-size: 12.5px; color: #95959a; }
+  .seg { display: inline-flex; border: 1px solid #2a2c33; border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; color: #95959a; border: 0; padding: 5px 12px; font: inherit; cursor: pointer; }
+  .seg button + button { border-left: 1px solid #2a2c33; }
+  .seg button.on { background: #23252c; color: #e9e6e2; }
+  .btn { background: #23252c; color: #e9e6e2; border: 1px solid #2f323a; border-radius: 8px; padding: 5px 12px; font: inherit; cursor: pointer; }
+
+  /* Mesa 主题令牌（取自 src/App.css 默认深色与 midnight-light） */
+  .dark {
+    --rail: #0c0b09; --canvas: #131210; --strip: #1e1d1b; --inset: #232220; --raised: #2b2a28;
+    --rail-sel: #31302d; --hair: #31302d; --field: #464542; --hover: rgb(255 255 255 / .05);
+    --l1: #e9e6e2; --l2: #bdbab4; --l3: #95959a; --l4: #6b6b72;
+    --cta: #faa8d4; --cta-text: #2a1220; --cta-pill: #3d1f31; --cta-pill-text: #f6a9d6;
+    --ok: #10331f; --ok-text: #4cc38a; --err: #381e24; --err-text: #f07070; --warn: #37300f; --warn-text: #f0c010;
+    --amber: #f5b83d; --edge: #24231f; --pin: #f5b83d; --pin-ink: #1d1608; --shade: rgb(0 0 0 / .35);
+  }
+  .light {
+    --rail: #e5e5dd; --canvas: #edede9; --strip: #f6f6f4; --inset: #fbfbf9; --raised: #ffffff;
+    --rail-sel: #ddd9d1; --hair: #d4d1c8; --field: #b8b4a8; --hover: rgb(0 0 0 / .05);
+    --l1: #1a1814; --l2: #3f3c36; --l3: #6f6b62; --l4: #9a958b;
+    --cta: #c2447f; --cta-text: #ffffff; --cta-pill: #f6d7e6; --cta-pill-text: #a33368;
+    --ok: #dff1e6; --ok-text: #2e7d5f; --err: #f8e1e1; --err-text: #b83838; --warn: #f7edcc; --warn-text: #8a6a00;
+    --amber: #e39a1c; --edge: #dcdbd6; --pin: #e39a1c; --pin-ink: #241a02; --shade: rgb(0 0 0 / .12);
+  }
+
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  @media (max-width: 1180px) { .stage { grid-template-columns: 1fr; } }
+
+  /* 应用窗口 */
+  .win { position: relative; display: grid; grid-template-columns: 236px minmax(0, 1fr); height: 860px; border-radius: 14px; overflow: hidden; border: 1px solid var(--edge); background: var(--canvas); color: var(--l2); font-size: 13px; }
+  @media (max-width: 900px) { .win { grid-template-columns: 0 minmax(0, 1fr); } }
+  .side { background: var(--rail); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow: hidden; }
+  .brand { font-weight: 700; font-size: 17px; color: var(--l1); padding: 2px 8px 12px; }
+  .nav { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--l2); font-size: 13.5px; position: relative; }
+  .nav.sel { background: var(--rail-sel); color: var(--l1); }
+  .nav.sel::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--cta); }
+  .nav .ic { width: 16px; text-align: center; color: var(--l3); font-size: 13px; }
+  .nav .cnt { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; padding: 0 6px; border-radius: 9px; background: var(--warn); color: var(--warn-text); line-height: 17px; }
+  .grp { font-size: 11px; color: var(--l3); padding: 14px 8px 4px; }
+  .chat { height: 27px; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--l3); white-space: nowrap; overflow: hidden; font-size: 12.5px; }
+  .chat span { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .chat .proj { flex: none; font-size: 11px; color: var(--l4); }
+  .chat.folder { color: var(--l2); font-weight: 500; }
+  .caret { flex: none; display: inline-block; width: 9px; height: 2px; border-radius: 1px; background: var(--l3); animation: breath 2.2s ease-in-out infinite; vertical-align: middle; }
+  .caret.wait { background: var(--amber); animation: none; }
+  @keyframes breath { 50% { opacity: .35; } }
+
+  .main { overflow-y: auto; padding: 22px 32px 48px; min-width: 0; position: relative; container-type: inline-size; }
+  .main::-webkit-scrollbar { width: 8px; } .main::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 4px; }
+  .sh { display: flex; align-items: center; gap: 8px; margin: 22px 0 8px; padding: 0 2px; font-size: 12px; color: var(--l3); white-space: nowrap; }
+  .sh b { color: var(--l1); font-weight: 500; font-size: 13px; }
+  .sh .sp { flex: 1; }
+  .kbd { font: 11px/16px ui-monospace, "SF Mono", Menlo, monospace; color: var(--l3); border: 1px solid var(--hair); border-radius: 4px; padding: 0 5px; }
+  .chip { font-size: 11px; padding: 0 7px; line-height: 18px; border-radius: 9px; border: 1px solid var(--hair); color: var(--l3); white-space: nowrap; }
+  .chip.on { background: var(--rail-sel); color: var(--l1); border-color: transparent; }
+  .chip.btn2 { cursor: pointer; }
+  .well { background: var(--inset); border-radius: 10px; }
+  .list { border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; }
+  .dot { flex: none; display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+  .dot.y { background: var(--warn-text); } .dot.g { background: var(--ok-text); } .dot.r { background: var(--err-text); } .dot.n { background: var(--l4); }
+  .m { color: var(--l3); font-size: 12px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+  .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--l3); text-align: right; white-space: nowrap; }
+  .plus { color: var(--ok-text); } .minus { color: var(--err-text); }
+  .b { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 7px; border: 1px solid var(--field); background: transparent; color: var(--l2); cursor: pointer; white-space: nowrap; }
+  .b:hover { background: var(--hover); color: var(--l1); }
+  .b.pri { background: var(--cta); border-color: var(--cta); color: var(--cta-text); }
+  .b.ghost { border-color: transparent; color: var(--l3); }
+  .b.sm { font-size: 11.5px; padding: 1px 8px; }
+
+  /* 现在：大卡 */
+  .hero { padding: 20px; }
+  .hero .t { font-size: 20px; color: var(--l1); font-weight: 500; }
+  .row0 { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 8px; border-radius: 7px; }
+
+  /* 离开期间 */
+  .away { display: flex; gap: 10px; align-items: center; font-size: 12.5px; color: var(--l3); padding: 0 2px; }
+
+  /* 拍板队列 */
+  .q { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 9px 14px; border-top: 1px solid var(--hair); position: relative; }
+  .q:first-child { border-top: 0; }
+  .q.sel { background: var(--hover); }
+  .q.sel::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--cta); }
+  .q .t1 { color: var(--l1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .q .t2 { font-size: 12px; color: var(--l3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .q .acts { display: flex; gap: 6px; }
+  .q.leaving { transition: opacity .18s, transform .18s; opacity: 0; transform: translateX(10px); }
+  .waited { color: var(--warn-text); }
+  .more { padding: 7px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--l3); cursor: pointer; }
+  .more:hover { color: var(--l1); }
+
+  /* 项目卡 */
+  .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+  @container (max-width: 740px) { .pgrid { grid-template-columns: 1fr; } }
+  .pc { border: 1px solid var(--hair); border-radius: 12px; background: var(--inset); overflow: hidden; display: flex; flex-direction: column; }
+  .pc-h { padding: 12px 14px 8px; }
+  .pc-t { display: flex; align-items: center; gap: 8px; }
+  .pc-t .nm { color: var(--l1); font-size: 14.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pc-t .sp { flex: 1; }
+  .vitals { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--l3); }
+  .vitals b { color: var(--l1); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .track { display: flex; gap: 3px; margin-top: 8px; }
+  .track i { flex: 1; height: 4px; border-radius: 2px; background: var(--hair); }
+  .track i.done { background: var(--ok-text); opacity: .65; }
+  .track i.cur { background: var(--cta); }
+  .track-l { display: flex; justify-content: space-between; font-size: 11px; color: var(--l4); margin-top: 3px; }
+  .task { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 14px; border-top: 1px solid var(--hair); cursor: pointer; }
+  .task:hover { background: var(--hover); }
+  .task.open { background: var(--hover); box-shadow: inset 2px 0 0 var(--cta); }
+  .task .n1 { color: var(--l1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  .task .n1 .kind { color: var(--l4); font-size: 11px; margin-right: 6px; }
+  .task .n2 { font-size: 11.5px; color: var(--l3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+  .task .rt { text-align: right; }
+  .pc-f { display: flex; gap: 6px; padding: 8px 14px; border-top: 1px solid var(--hair); margin-top: auto; }
+
+  /* 实验区（后期） */
+  .exp { margin: 4px 14px 10px; padding: 10px 12px; border-radius: 9px; background: var(--strip); }
+  .exp-h { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--l3); }
+  .exp-h b { color: var(--l1); font-weight: 500; }
+  .later { font-size: 10.5px; padding: 0 6px; border-radius: 4px; background: var(--cta-pill); color: var(--cta-pill-text); line-height: 16px; }
+  .finding { margin-top: 8px; display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 12px; align-items: center; }
+  .finding ul { margin: 0; padding-left: 16px; font-size: 12px; color: var(--l2); }
+  .finding li { margin: 2px 0; }
+  .spark text { font: 9.5px ui-monospace, Menlo, monospace; fill: var(--l4); }
+
+  /* 任务面板抽屉 */
+  .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(420px, 92%); background: var(--strip); border-left: 1px solid var(--hair); box-shadow: -12px 0 32px var(--shade); display: flex; flex-direction: column; z-index: 5; transform: translateX(102%); transition: transform .2s ease; }
+  .drawer.on { transform: none; }
+  .dw-h { padding: 16px 18px 10px; border-bottom: 1px solid var(--hair); }
+  .dw-h .x { float: right; border: 0; background: transparent; color: var(--l3); cursor: pointer; font-size: 15px; }
+  .dw-t { color: var(--l1); font-size: 16px; font-weight: 500; }
+  .dw-b { padding: 12px 18px; overflow-y: auto; flex: 1; font-size: 12.5px; }
+  .dw-sec { margin-bottom: 14px; }
+  .dw-sec > div:first-child { font-size: 11px; color: var(--l4); margin-bottom: 4px; }
+  .kv { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 4px 10px; }
+  .kv span:nth-child(odd) { color: var(--l3); }
+  .kv span:nth-child(even) { color: var(--l1); }
+  .log div { display: flex; gap: 8px; padding: 2px 0; color: var(--l2); }
+  .log .tm { color: var(--l4); font-variant-numeric: tabular-nums; width: 38px; flex: none; }
+  .dw-f { padding: 10px 18px; border-top: 1px solid var(--hair); display: flex; gap: 8px; justify-content: flex-end; }
+
+  .toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--raised); border: 1px solid var(--field); color: var(--l1); border-radius: 9px; padding: 7px 8px 7px 14px; font-size: 12.5px; display: flex; gap: 12px; align-items: center; box-shadow: 0 8px 24px var(--shade); z-index: 6; white-space: nowrap; }
+
+  @container (max-width: 600px) { .kbdhint { display: none; } .finding { grid-template-columns: 1fr; } }
+
+  /* 编号钉 */
+  .pin { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; background: var(--pin); color: var(--pin-ink); font: 600 10.5px/1 -apple-system, sans-serif; flex: none; vertical-align: middle; }
+  .pins-off .pin.ann { display: none; }
+
+  /* 右侧说明 */
+  .notes { position: sticky; top: 12px; }
+  .note { display: grid; grid-template-columns: 17px 1fr; gap: 10px; padding: 9px 0; border-top: 1px solid #1f2126; font-size: 12.5px; color: #a9a7a2; }
+  .note:first-of-type { border-top: 0; }
+  .note b { color: #e9e6e2; font-weight: 500; display: block; }
+  .note .pin { background: #f5b83d; color: #1d1608; }
+  .verdict { font-size: 11px; padding: 0 6px; border-radius: 4px; margin-left: 6px; font-weight: 500; white-space: nowrap; }
+  .v-del { background: #381e24; color: #f07070; } .v-keep { background: #10331f; color: #4cc38a; } .v-move { background: #37300f; color: #f0c010; }
+
+  table.tb { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tb th, .tb td { text-align: left; padding: 9px 12px; border-bottom: 1px solid #1f2126; vertical-align: top; }
+  .tb th { color: #95959a; font-weight: 500; font-size: 12px; }
+  .tb td:first-child { color: #e9e6e2; white-space: nowrap; }
+  .tb td .verdict { margin: 0; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .card { border: 1px solid #23252c; border-radius: 12px; padding: 14px 16px; font-size: 13px; color: #a9a7a2; }
+  .card h3 { margin: 0 0 6px; font-size: 13.5px; color: #e9e6e2; font-weight: 600; }
+  .card ul { margin: 0; padding-left: 18px; } .card li { margin: 3px 0; }
+  .card b { color: #e9e6e2; font-weight: 500; }
+  footer { max-width: 1480px; margin: 40px auto 50px; padding: 0 24px; font-size: 12px; color: #6b6b72; }
+</style>
+</head>
+<body>
+<header>
+  <h1>工作台：管所有项目与任务 · 现在 vs 建议</h1>
+  <p>Mesa 不只有对话：科研项目有流程和步骤，编程项目有分支，工作项目有目标，每个任务都有自己的任务面板；以后科研项目还要按实验记录和数据自动分析结果。对话可以从侧栏找，<b>这些项目和任务的状态只有工作台能放在一起看</b>。建议工作台分三层：最上面是等你拍板的事（Mesa 的验收门），中间每个项目一张卡、按项目类型显示它最要紧的状态和任务，点任何一个任务在右侧打开它的任务面板。现在大卡里的「继续工作」、最近对话这些侧栏已有的内容删掉。</p>
+  <div class="controls">
+    <span>视图</span>
+    <div class="seg" id="segView"><button data-v="now">现在</button><button data-v="new" class="on">建议</button></div>
+    <span>主题</span>
+    <div class="seg" id="segTheme"><button data-t="dark" class="on">深色</button><button data-t="light">浅色</button></div>
+    <label style="display:inline-flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="chkPins" checked /> 显示标注</label>
+    <button class="btn" id="btnReset">重置演示</button>
+    <span style="color:#6b6b72">试试：J / K / A / R 处理拍板队列；点项目卡里任意一个任务打开任务面板</span>
+  </div>
+</header>
+
+<div class="section">
+  <div class="stage">
+    <div id="winWrap" class="dark">
+      <!-- 现在 -->
+      <div class="win" id="winNow" hidden>
+        <aside class="side">
+          <div class="brand">Mesa</div>
+          <div class="nav sel"><span class="ic">▣</span>工作台</div>
+          <div class="nav"><span class="ic">⊕</span>新对话</div>
+          <div class="nav"><span class="ic">⌕</span>搜对话</div>
+          <div class="grp">置顶</div>
+          <div class="chat"><span>会话终端快捷关闭入口</span><i class="proj">Ccode</i></div>
+          <div class="chat"><span>教程与产品文档对照核实</span><i class="proj">Ccode</i></div>
+          <div class="grp">随手聊</div>
+          <div class="chat"><span>天空蓝色成因科普文撰写</span></div>
+          <div class="grp">项目 8</div>
+          <div class="chat folder"><span>HER 硼化物综述</span><i class="caret"></i></div>
+          <div class="chat"><span>文献检索筛选任务书</span><i class="caret"></i></div>
+          <div class="chat"><span>综述大纲任务书问答敲定</span></div>
+          <div class="chat folder"><span>二维钉硼催化实验</span></div>
+          <div class="chat folder"><span>测试项目</span><i class="caret wait"></i></div>
+          <div class="chat folder"><span>Ccode</span><i class="caret"></i></div>
+        </aside>
+        <main class="main">
+          <div class="sh" style="margin-top:0"><span style="color:var(--cta)">◉</span><b>正在进行</b><span class="chip">3 个运行中</span></div>
+          <div class="well hero">
+            <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start">
+              <div style="min-width:0">
+                <div style="display:flex;gap:8px;align-items:center"><span class="t">HER 硼化物综述</span><span class="chip">科研</span><span class="pin ann">1</span></div>
+                <div class="m" style="margin-top:3px;font-size:13px">进行到：文献检索与筛选（第 1 / 5 步）</div>
+              </div>
+              <button class="b pri" style="padding:6px 16px;font-size:13px">继续工作</button>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:baseline"><span class="m" style="font-size:11px">上次停在 · 综述大纲</span><span style="flex:1;color:var(--l3)">把第三节拆成机理和性能两块，图先占位</span><span class="m" style="font-size:11px">2 小时前</span></div>
+            <div style="margin-top:14px;border-top:1px solid var(--hair);padding-top:10px;font-size:11px;color:var(--l3);display:flex;gap:8px;align-items:center">运行中 <i class="caret"></i></div>
+          </div>
+          <div style="margin-top:6px">
+            <div class="row0"><span style="color:var(--l1)">测试项目</span><span class="chip">工作</span><span class="m" style="flex:1">整理数据待确认</span><i class="caret wait"></i><span class="m">6 分钟前</span><span class="pin ann">2</span></div>
+            <div class="row0"><span style="color:var(--l1)">Ccode</span><span class="chip">编程</span><span class="m" style="flex:1">fix/plot-legend 运行中</span><i class="caret"></i><span class="m">刚刚</span></div>
+          </div>
+          <div style="margin:8px 2px 0;font-size:12px;color:var(--l3);display:flex;gap:8px;align-items:center">＋ 记下一个目标 <span class="pin ann">3</span></div>
+          <div class="sh"><span class="dot y"></span><b>待你处理</b><span class="chip" style="background:var(--warn);color:var(--warn-text);border-color:transparent">5</span><span class="pin ann">4</span><span class="sp"></span><span>全部已读</span></div>
+          <div class="row0"><span class="dot y"></span><span style="flex:1">整理数据：等你确认一条命令</span><span class="m">测试项目</span><button class="b">去处理</button></div>
+          <div class="row0"><span class="dot y"></span><span style="flex:1">文献检索：需要你下载 2 篇全文</span><span class="m">HER 硼化物综述</span><button class="b">去处理</button></div>
+          <div class="row0"><span class="dot y"></span><span style="flex:1">定时任务「每周雷达」上次失败</span><span class="m">二维钉硼</span><button class="b">去处理</button></div>
+          <div class="sh"><b>待你验收</b></div>
+          <div class="row0"><span style="flex:1">综述大纲</span><span class="m">HER 硼化物综述</span></div>
+          <div class="sh"><b>定时任务</b><span class="pin ann">5</span></div>
+          <div class="row0"><span style="flex:1">每日雷达</span><span class="m">二维钉硼</span><span class="dot g"></span><span class="m">正在跑</span></div>
+          <div class="sh"><b>最近对话</b><span class="pin ann">6</span><span class="sp"></span><span>查看全部</span></div>
+          <div class="row0"><span style="flex:1">文献检索筛选任务书</span><span class="m">HER 硼化物综述 · 刚刚</span></div>
+          <div class="row0"><span style="flex:1">天空蓝色成因科普文撰写</span><span class="m">随手聊 · 1 小时前</span></div>
+        </main>
+      </div>
+
+      <!-- 建议 -->
+      <div class="win" id="winNew">
+        <aside class="side">
+          <div class="brand">Mesa</div>
+          <div class="nav sel"><span class="ic">▣</span>工作台<span class="cnt" id="navCnt">5</span><span class="pin ann" style="margin-left:6px">8</span></div>
+          <div class="nav"><span class="ic">⊕</span>新对话</div>
+          <div class="nav"><span class="ic">⌕</span>搜对话</div>
+          <div class="grp">置顶</div>
+          <div class="chat"><span>会话终端快捷关闭入口</span><i class="proj">Ccode</i></div>
+          <div class="chat"><span>教程与产品文档对照核实</span><i class="proj">Ccode</i></div>
+          <div class="grp">随手聊</div>
+          <div class="chat"><span>天空蓝色成因科普文撰写</span></div>
+          <div class="grp">项目 8</div>
+          <div class="chat folder"><span>HER 硼化物综述</span><i class="caret"></i></div>
+          <div class="chat"><span>文献检索筛选任务书</span><i class="caret"></i></div>
+          <div class="chat"><span>综述大纲任务书问答敲定</span></div>
+          <div class="chat folder"><span>二维钉硼催化实验</span></div>
+          <div class="chat folder"><span>测试项目</span><i class="caret wait"></i></div>
+          <div class="chat folder"><span>Ccode</span><i class="caret"></i></div>
+        </aside>
+        <main class="main" id="newMain">
+          <div class="away"><span>☾</span><span>你离开的 9 小时里：完成 4 次运行 · 定时任务 3 次（1 次失败）· 新实验数据 3 份已自动分析 · 花费 <span class="mono">¥6.80</span></span><span class="pin ann">1</span></div>
+
+          <div class="sh"><span class="dot y"></span><b>等你拍板</b><span id="qCount">5</span><span class="pin ann">2</span><span class="sp"></span>
+            <span class="kbdhint"><span class="kbd">J</span> <span class="kbd">K</span> 上下 <span class="kbd">A</span> 同意 <span class="kbd">R</span> 驳回 <span class="kbd">↵</span> 打开任务面板</span></div>
+          <div class="list" id="queue"></div>
+          <div id="qEmpty" class="list" style="padding:14px;text-align:center;color:var(--l3);font-size:12.5px" hidden>没有等你决定的事。有 Agent 停下来等你、或有结果要验收时，会排在这里。</div>
+
+          <div class="sh"><b>项目</b><span class="pin ann">3</span><span class="sp"></span>
+            <span id="filters" style="display:flex;gap:6px"><span class="chip btn2 on" data-f="all">有活的 4</span><span class="chip btn2" data-f="research">科研</span><span class="chip btn2" data-f="code">编程</span><span class="chip btn2" data-f="work">工作</span></span></div>
+          <div class="pgrid" id="pgrid"></div>
+
+          <div class="drawer" id="drawer">
+            <div class="dw-h"><button class="x" id="dwClose" aria-label="关闭">✕</button><div class="m" id="dwPath"></div><div class="dw-t" id="dwTitle"></div><div id="dwState" style="margin-top:4px;font-size:12px"></div></div>
+            <div class="dw-b" id="dwBody"></div>
+            <div class="dw-f" id="dwFoot"></div>
+          </div>
+          <div id="toast" class="toast" hidden><span id="toastText"></span><button class="b ghost" id="toastUndo">撤销</button></div>
+        </main>
+      </div>
+    </div>
+
+    <aside class="notes">
+      <div id="notesNow" hidden>
+        <div class="note"><span class="pin">1</span><div><b>继续工作大卡 <span class="verdict v-move">换成项目卡</span></b>只能放一个项目，其他项目挤成一行字。建议每个有活的项目都给一张同等大小的卡。</div></div>
+        <div class="note"><span class="pin">2</span><div><b>其余项目行 <span class="verdict v-move">换成项目卡</span></b>只有一句状态，看不到项目里有哪些任务、各到哪了。</div></div>
+        <div class="note"><span class="pin">3</span><div><b>记下一个目标 <span class="verdict v-move">进项目卡</span></b>放到每张项目卡底部，按项目类型变成「＋目标 / ＋分支 / 开下一步」，不用再选一次项目。</div></div>
+        <div class="note"><span class="pin">4</span><div><b>待你处理 <span class="verdict v-keep">留，改成能当场处理</span></b>现在「去处理」要跳到别的页；建议行内同意、驳回、验收，可以用键盘连着处理。</div></div>
+        <div class="note"><span class="pin">5</span><div><b>定时任务 <span class="verdict v-move">进项目卡</span></b>定时任务就是项目里的一种任务，放进它所属项目卡的任务行；失败的进拍板队列。</div></div>
+        <div class="note"><span class="pin">6</span><div><b>最近对话 <span class="verdict v-del">删</span></b>和侧栏对话列表是同一份数据。</div></div>
+      </div>
+      <div id="notesNew">
+        <div class="note"><span class="pin">1</span><div><b>离开期间一行</b>按上次离开的时间算，不做成列表；需要你做的事已经在下面的队列里。</div></div>
+        <div class="note"><span class="pin">2</span><div><b>等你拍板：所有项目一个队列</b>Agent 停着等你的排最前并写等了多久，然后是验收、失败和新的分析结论，通知类排最后。行内处理，有撤销；同意只是把你的回复经 CLI 官方通道送回去，不替你决定。默认显示 4 条，其余折叠。</div></div>
+        <div class="note"><span class="pin">3</span><div><b>项目卡：按类型显示状态</b>科研卡显示流程走到第几步和实验数据，编程卡显示分支和评审，工作卡显示目标。默认只列有活的项目，可以按类型筛选。</div></div>
+        <div class="note"><span class="pin">4</span><div><b>任务行就是任务面板的入口</b>每一行是一个步骤、分支、目标或定时任务。在跑的那一行直接写它此刻在做什么、跑了多久、花了多少，不再单独列「正在跑」。</div></div>
+        <div class="note"><span class="pin">5</span><div><b>实验数据与自动分析（后期）</b>新数据进 <span class="mono" style="font-size:11px">data/raw/</span> 后，按你在项目里设的规则跑分析，结论作为「待你确认」进拍板队列。规则由你设，Mesa 不自己决定分析什么。</div></div>
+        <div class="note"><span class="pin">6</span><div><b>任务面板在右侧打开</b>点任务行在工作台右侧打开它的面板：目标、状态、过程、产物、花费。看完关掉还在工作台，要深入再进对话或项目页。</div></div>
+        <div class="note"><span class="pin">7</span><div><b>卡底下的动作按类型变</b>科研「开下一步」，编程「＋分支」，工作「＋目标」。新对话仍然从侧栏开。</div></div>
+        <div class="note"><span class="pin">8</span><div><b>侧栏入口挂数字</b>数字是等你拍板的条数，没有就不挂。</div></div>
+      </div>
+    </aside>
+  </div>
+
+  <h2>三类项目的卡上放什么</h2>
+  <p class="sub">原则：卡头放「这个项目现在怎么样」，任务行放「里面每件事到哪了」，卡底放「下一步能做什么」。同一件事只出现一次：在拍板队列里的任务，项目卡里那一行只标黄点，不重复给按钮。</p>
+  <table class="tb">
+    <tr><th style="width:110px">类型</th><th>卡头（项目状态）</th><th>任务行（每行一个任务面板）</th><th style="width:170px">卡底动作</th></tr>
+    <tr><td>科研 · 流程</td><td>流程名 + 步骤进度条（第几步 / 共几步）；文献积累数；本周花费</td><td>当前步骤、待验收的步骤、定时雷达</td><td>开下一步 · 跟 AI 商量</td></tr>
+    <tr><td>科研 · 实验（后期）</td><td>实验记录数、最近一批数据、自动分析规则；关键指标的小折线（如每批产率）</td><td>数据清洗、每批自动分析、出图；新结论「待你确认」</td><td>看全部分析 · 改分析规则</td></tr>
+    <tr><td>编程</td><td>基准分支、开着的分支数、待评审数、最近一次测试结果</td><td>每条分支：在跑 / 待评审 / PR 与 CI 状态</td><td>＋分支</td></tr>
+    <tr><td>工作</td><td>进行中 / 待验收 / 记下未开工的目标数</td><td>每个目标：状态、所用 Agent、产物</td><td>＋目标</td></tr>
+  </table>
+
+  <h2>逐块去留</h2>
+  <table class="tb">
+    <tr><th style="width:190px">现在的块</th><th style="width:140px">去向</th><th>说明</th></tr>
+    <tr><td>正在进行 · 继续工作大卡</td><td><span class="verdict v-move">换成项目卡</span></td><td>每个有活的项目一张卡；「继续」变成点任务行打开任务面板，面板里有「回到对话」。</td></tr>
+    <tr><td>其余项目行</td><td><span class="verdict v-move">换成项目卡</span></td><td>同上。</td></tr>
+    <tr><td>＋ 记下一个目标</td><td><span class="verdict v-move">进卡底</span></td><td>按项目类型变成 ＋目标 / ＋分支 / 开下一步。</td></tr>
+    <tr><td>待你处理 + 待你验收</td><td><span class="verdict v-keep">合并成拍板队列</span></td><td>行内处理、键盘、撤销；顶栏「待处理」下拉保留，作为在别的页时的快速入口。</td></tr>
+    <tr><td>定时任务</td><td><span class="verdict v-move">进项目卡</span></td><td>作为所属项目的一条任务行；失败的进拍板队列。</td></tr>
+    <tr><td>最近对话</td><td><span class="verdict v-del">删</span></td><td>侧栏同一份。</td></tr>
+  </table>
+
+  <h2>还要你拍板的</h2>
+  <div class="cards">
+    <div class="card"><h3>1. 项目卡列哪些</h3><ul><li><b>建议：</b>默认只列「有活的」，即有任务在跑、待验收或 7 天内动过的项目；筛选里可看全部。</li><li>备选：全部列出，按最近活动排序。项目多了会很长。</li></ul></div>
+    <div class="card"><h3>2. 自动分析怎么触发</h3><ul><li><b>建议：</b>人在项目里设规则，如「data/raw/ 有新文件就跑 EDA 模板」，机制同定时任务：在隔离副本里跑，结论经你确认才进项目。</li><li>不做 Mesa 自己判断该分析什么：这违反「禁止自动拆任务 / 智能路由」的产品决策。</li></ul></div>
+    <div class="card"><h3>3. 分几批做</h3><ul><li>第一批：拍板队列（行内处理、键盘、撤销），删大卡和最近对话。</li><li>第二批：项目卡 + 任务行 + 右侧任务面板（复用项目页已有的步骤面板与目标详情）。</li><li>第三批：任务行实时状态与花费、离开期间摘要。</li><li>后期：实验区与自动分析规则。</li></ul></div>
+  </div>
+</div>
+
+<footer>Mesa 设计稿 · 2026-10-27 · 数据为示意。配色取自 src/App.css 默认深色与 midnight-light。</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+function fmt(s) { return s >= 3600 ? Math.floor(s / 3600) + " 时 " + Math.floor(s % 3600 / 60) + " 分" : s >= 60 ? Math.floor(s / 60) + " 分钟" : s + " 秒"; }
+
+/* 任务：项目卡任务行与任务面板共用；queue 字段表示它在拍板队列里 */
+const TASKS0 = {
+  her1: { p: "her", kind: "商量", name: "综述大纲任务书", dot: "g", live: true, act: "正在改第 3 节的写作要求", s: 1080, files: 1, cost: 0.40, agent: "Claude Code",
+    goal: "和你一起把下一步「综述大纲」的任务书写清楚，只讨论、不改正式文件。", log: [["14:02", "读完精读笔记索引"], ["14:11", "提出大纲三种组织方式"], ["14:19", "按你的意见拆第 3 节"]], out: ["steps/03-outline/TASK.md"] },
+  her2: { p: "her", kind: "步骤 2", name: "文献精读", dot: "y", state: "待验收 · 12 篇笔记 · 引用存疑 2 处", agent: "Claude Code", cost: 2.10,
+    goal: "逐篇精读纳入的文献，写八段笔记并补 references.bib。", log: [["昨天 21:40", "完成 12 篇笔记"], ["昨天 21:42", "引用核对：2 处存疑"]], out: ["notes/zhang2024.md", "…11 篇笔记", "references.bib"], queue: "q4" },
+  her3: { p: "her", kind: "定时", name: "每周文献雷达", dot: "r", state: "上次失败 · 下次 今天 14:00", agent: "Claude Code", queue: "q5",
+    goal: "按 watchlist 关键词检索新文献，命中写进雷达收件箱。", log: [["上周一 02:00", "新命中 4 篇"]], out: ["notes/inbox.md"] },
+
+  exp1: { p: "exp", kind: "规则", name: "每批数据自动分析", dot: "y", state: "exp-14 ~ 16 已分析 · 结论待你确认", agent: "Codex", cost: 0.62,
+    goal: "data/raw/ 出现新批次时，按 data-eda 规范做分布与对照分析，写结论与图。", log: [["03:12", "检测到 3 份新数据"], ["03:20", "产率均值 +12%（n=3）"], ["03:21", "exp-15 有离群点（>3σ）"]], out: ["output/eda/exp-14-16.md", "figures/yield-by-batch.png"], queue: "q3" },
+  exp2: { p: "exp", kind: "步骤", name: "数据清洗规则", dot: "g", state: "已完成 · rules.md v3", agent: "Claude Code",
+    goal: "定清洗规则并写进 rules.md。", log: [["周五", "规则 v3 验收通过"]], out: ["data/rules.md"] },
+
+  code1: { p: "code", kind: "分支", name: "fix/plot-legend", dot: "y", state: "停下来问你一个问题", agent: "Codex", cost: 0.31,
+    goal: "修图例在浅色主题下看不清。", log: [["13:50", "改 legend 颜色令牌"], ["13:58", "两种摆法都截了图，问你选哪种"]], out: ["src/plot.ts", "output/legend-a.png", "output/legend-b.png"], queue: "q2" },
+  code3: { p: "code", kind: "分支", name: "feat/csv-export", dot: "g", live: true, act: "正在跑 npm test", s: 245, files: 3, cost: 0.52, agent: "Codex",
+    goal: "数据表支持导出 CSV。", log: [["14:15", "实现导出"], ["14:18", "开始跑测试"]], out: ["src/export.ts", "tests/export.test.ts"] },
+  code2: { p: "code", kind: "分支", name: "feat/inbox-keys", dot: "y", state: "待评审 · 7 个文件 · CI 通过", agent: "Claude Code", cost: 1.85,
+    goal: "收件箱支持 J/K/A/R 键盘处理。", log: [["11:30", "实现完成，测试全绿"]], out: ["src/hotkeys.ts", "…6 个文件"] },
+
+  work1: { p: "work", kind: "目标", name: "整理数据", dot: "y", state: "等你确认一条命令", agent: "Codex",
+    goal: "把 2024 年三份原始表合并去重。", log: [["14:12", "发现 3 个重复 CSV"], ["14:13", "请求确认删除"]], out: [], queue: "q1" },
+  work2: { p: "work", kind: "目标", name: "写本周组会周报", dot: "n", state: "记下了，还没开工", agent: "跟随项目默认", goal: "汇总本周实验进度，一页。", log: [], out: [] },
+};
+const PROJECTS = [
+  { id: "her", type: "research", name: "HER 硼化物综述", tag: "科研 · 英文综述", vitals: [["进行到", "第 2 / 5 步"], ["文献积累", "23 篇"], ["本周", "¥4.10"]], steps: 5, cur: 2, stepNames: ["检索筛选", "精读", "大纲", "初稿", "润色"], tasks: ["her1", "her2", "her3"], foot: [["开下一步", true], ["跟 AI 商量"]] },
+  { id: "exp", type: "research", name: "二维钉硼催化实验", tag: "科研 · 实验", vitals: [["实验记录", "16 批"], ["最近数据", "今天 03:12"], ["规则", "1 条"]], exp: true, tasks: ["exp1", "exp2"], foot: [["看全部分析"], ["改分析规则"]] },
+  { id: "code", type: "code", name: "Ccode", tag: "编程", vitals: [["基准", "main"], ["分支", "3 条开着"], ["待评审", "1"], ["测试", "上次通过"]], tasks: ["code3", "code1", "code2"], foot: [["＋分支"]] },
+  { id: "work", type: "work", name: "测试项目", tag: "工作", vitals: [["进行中", "1"], ["记下未开工", "1"], ["待验收", "0"]], tasks: ["work1", "work2"], foot: [["＋目标"]] },
+];
+const PNAME = Object.fromEntries(PROJECTS.map((p) => [p.id, p.name]));
+
+const QUEUE0 = [
+  { id: "q1", task: "work1", tier: 0, dot: "y", t1: "整理数据 · 要删除 3 个重复 CSV", t2: '测试项目 · Codex · <span class="mono">rm data/raw/dup_*.csv</span>', waited: "已等 6 分钟", acts: [["驳回", "r"], ["同意", "a"]] },
+  { id: "q2", task: "code1", tier: 0, dot: "y", t1: "fix/plot-legend · 问你：图例放图内还是图外", t2: "Ccode · Codex · 两种摆法已截图", waited: "已等 22 分钟", acts: [["看截图", "o"], ["放图外", "a"]] },
+  { id: "q3", task: "exp1", tier: 1, dot: "y", t1: "自动分析结论待确认 · exp-14 ~ 16", t2: "二维钉硼催化实验 · 产率 +12%（n=3）· exp-15 离群", acts: [["存疑", "r"], ["确认结论", "a"]] },
+  { id: "q4", task: "her2", tier: 1, dot: "y", t1: "文献精读 · 待验收", t2: 'HER 硼化物综述 · 12 篇笔记 <span class="plus">+1,840</span> <span class="minus">−36</span> · 引用存疑 2 处', acts: [["看改动", "o"], ["验收", "a"]] },
+  { id: "q5", task: "her3", tier: 1, dot: "r", t1: "定时任务「每周文献雷达」上次失败：网络超时", t2: "HER 硼化物综述 · 再失败 2 次会自动暂停", acts: [["查看", "o"], ["重跑", "a"]] },
+];
+
+let tasks, queue, sel, undo, timer, filter, openTask, showAll;
+function reset() {
+  tasks = JSON.parse(JSON.stringify(TASKS0));
+  queue = QUEUE0.map((x) => ({ ...x }));
+  sel = 0; undo = null; filter = "all"; openTask = null; showAll = false;
+  $("toast").hidden = true; renderAll();
+}
+function renderAll() { renderQueue(); renderProjects(); renderDrawer(); }
+
+function renderQueue() {
+  const shown = showAll ? queue : queue.slice(0, 4);
+  $("queue").innerHTML = shown.map((it, i) => `<div class="q ${i === sel ? "sel" : ""}" data-i="${i}">
+      <span class="dot ${it.dot}"></span>
+      <div style="min-width:0"><div class="t1">${esc(it.t1)}</div><div class="t2">${it.t2}${it.waited ? ` · <span class="waited">${it.waited}</span>` : ""}</div></div>
+      <div class="acts">${it.acts.map(([l, k], j) => `<button class="b ${j === it.acts.length - 1 ? "pri" : ""}" data-k="${k}" data-i="${i}">${l}</button>`).join("")}</div>
+    </div>`).join("") + (queue.length > 4 ? `<div class="more" id="qMore">${showAll ? "收起" : `还有 ${queue.length - 4} 条`}</div>` : "");
+  $("queue").hidden = !queue.length; $("qEmpty").hidden = !!queue.length;
+  $("qCount").textContent = queue.length || "";
+  $("navCnt").textContent = queue.length; $("navCnt").hidden = !queue.length;
+}
+
+function spark() {
+  const ys = [61, 63, 60, 64, 66, 65, 68, 71, 70, 73, 72, 74, 76, 85, 54, 84];
+  const W = 150, H = 54, x = (i) => 4 + i * (W - 8) / (ys.length - 1), y = (v) => H - 12 - (v - 50) / 40 * (H - 18);
+  const pts = ys.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="每批产率">
+    <polyline points="${pts}" fill="none" stroke="var(--l3)" stroke-width="1.3"/>
+    ${[13, 15].map((i) => `<circle cx="${x(i)}" cy="${y(ys[i])}" r="2.6" fill="var(--cta)"/>`).join("")}
+    <circle cx="${x(14)}" cy="${y(ys[14])}" r="3" fill="none" stroke="var(--err-text)" stroke-width="1.4"/>
+    <text x="4" y="${H - 1}">批次 1</text><text x="${W - 4}" y="${H - 1}" text-anchor="end">16</text></svg>`;
+}
+
+function taskRow(id, i) {
+  const t = tasks[id];
+  const inQ = t.queue && queue.some((q) => q.id === t.queue);
+  const dot = t.live ? "g" : (t.queue && !inQ) ? "g" : t.dot;
+  const state = t.live ? `<i class="caret"></i>${esc(t.act)}` : (t.queue && !inQ) ? "已处理，等 Agent 接着做" : esc(t.state);
+  const rt = t.live ? `<div class="num" data-el="${id}">${fmt(t.s)}</div><div class="num">${t.files} 个文件 · ¥${t.cost.toFixed(2)}</div>` : (inQ ? `<span class="chip" style="color:var(--warn-text);border-color:transparent;background:var(--warn)">待拍板</span>` : "");
+  const pin = id === "her1" ? '<span class="pin ann" style="margin-left:6px">4</span>' : id === "her2" ? '<span class="pin ann" style="margin-left:6px">6</span>' : "";
+  return `<div class="task ${openTask === id ? "open" : ""}" data-t="${id}"><span class="dot ${dot}"></span>
+    <div style="min-width:0"><div class="n1"><span class="kind">${t.kind}</span>${esc(t.name)}${pin}</div><div class="n2">${state}</div></div>
+    <div class="rt">${rt}</div></div>`;
+}
+
+function renderProjects() {
+  const ps = PROJECTS.filter((p) => filter === "all" || p.type === filter);
+  $("pgrid").innerHTML = ps.map((p) => `<div class="pc">
+    <div class="pc-h">
+      <div class="pc-t"><span class="nm">${esc(p.name)}</span><span class="chip">${p.tag}</span><span class="sp"></span>${p.tasks.some((id) => tasks[id].live) ? '<i class="caret"></i>' : ""}</div>
+      <div class="vitals">${p.vitals.map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join("")}</div>
+      ${p.steps ? `<div class="track">${Array.from({ length: p.steps }, (_, i) => `<i class="${i + 1 < p.cur ? "done" : i + 1 === p.cur ? "cur" : ""}"></i>`).join("")}</div><div class="track-l">${p.stepNames.map((n) => `<span>${n}</span>`).join("")}</div>` : ""}
+    </div>
+    ${p.exp ? `<div class="exp"><div class="exp-h"><b>新数据 3 份</b><span>exp-14 ~ 16 · 已按规则自动分析</span><span class="sp" style="flex:1"></span><span class="later">后期</span><span class="pin ann">5</span></div>
+      <div class="finding"><ul><li>产率均值比上一批高 12%（n = 3）</li><li>exp-15 产率 54%，偏离 3σ 以上，疑似离群</li><li>结论待你确认后才写进实验记录</li></ul>${spark()}</div></div>` : ""}
+    ${p.tasks.map(taskRow).join("")}
+    <div class="pc-f">${p.foot.map(([l, pri], i) => `<button class="b sm ${pri ? "" : "ghost"}">${l}</button>`).join("")}${p.id === "her" ? '<span class="pin ann" style="margin-left:4px">7</span>' : ""}</div>
+  </div>`).join("");
+}
+
+function renderDrawer() {
+  const d = $("drawer");
+  if (!openTask) { d.classList.remove("on"); return; }
+  const t = tasks[openTask];
+  const inQ = t.queue && queue.find((q) => q.id === t.queue);
+  $("dwPath").textContent = `${PNAME[t.p]} · ${t.kind}`;
+  $("dwTitle").textContent = t.name;
+  $("dwState").innerHTML = t.live ? `<span style="display:flex;gap:8px;align-items:center;color:var(--l2)"><i class="caret"></i>${esc(t.act)}</span>` : inQ ? `<span class="waited">待拍板：${esc(inQ.t1)}</span>` : `<span class="m">${esc(t.state || "")}</span>`;
+  $("dwBody").innerHTML = `
+    <div class="dw-sec"><div>要做什么</div><div style="color:var(--l1)">${esc(t.goal)}</div></div>
+    <div class="dw-sec"><div>概况</div><div class="kv"><span>Agent</span><span>${esc(t.agent)}</span>${t.live ? `<span>已跑</span><span>${fmt(t.s)}</span>` : ""}${t.cost != null ? `<span>花费</span><span class="mono">¥${t.cost.toFixed(2)}</span>` : ""}${t.files != null ? `<span>改动</span><span>${t.files} 个文件</span>` : ""}</div></div>
+    ${t.log.length ? `<div class="dw-sec"><div>过程</div><div class="log">${t.log.map(([a, b]) => `<div><span class="tm">${a}</span><span>${esc(b)}</span></div>`).join("")}</div></div>` : ""}
+    ${t.out.length ? `<div class="dw-sec"><div>产物</div>${t.out.map((f) => `<div class="mono" style="color:var(--l2);padding:1px 0">${esc(f)}</div>`).join("")}</div>` : ""}`;
+  const foot = [];
+  if (inQ) inQ.acts.forEach(([l, k], j) => foot.push(`<button class="b ${j === inQ.acts.length - 1 ? "pri" : ""}" data-qa="${k}">${l}</button>`));
+  foot.unshift(`<button class="b ghost">在项目页打开</button>`, `<button class="b">${t.live || t.log.length ? "回到对话" : "开始"}</button>`);
+  $("dwFoot").innerHTML = foot.join("");
+  d.classList.add("on");
+}
+
+function act(i, kind) {
+  const it = queue[i]; if (!it) return;
+  if (kind === "o") { openTask = it.task; sel = i; renderAll(); return; }
+  const verb = it.acts.find((a) => a[1] === kind)[0];
+  const row = document.querySelector(`.q[data-i="${i}"]`); if (row) row.classList.add("leaving");
+  setTimeout(() => {
+    undo = { it, i }; queue.splice(i, 1);
+    if (sel >= queue.length) sel = Math.max(0, queue.length - 1);
+    $("toastText").textContent = `已${verb}：${it.t1.split(" · ")[0]}`; $("toast").hidden = false;
+    clearTimeout(timer); timer = setTimeout(() => { $("toast").hidden = true; undo = null; }, 4000);
+    renderAll();
+  }, 170);
+}
+$("toastUndo").onclick = () => { if (!undo) return; queue.splice(undo.i, 0, undo.it); sel = undo.i; undo = null; $("toast").hidden = true; renderAll(); };
+$("queue").addEventListener("click", (e) => {
+  if (e.target.id === "qMore") { showAll = !showAll; renderQueue(); return; }
+  const b = e.target.closest("button[data-k]"); if (b) { act(+b.dataset.i, b.dataset.k); return; }
+  const r = e.target.closest(".q"); if (r) { sel = +r.dataset.i; renderQueue(); }
+});
+$("pgrid").addEventListener("click", (e) => { const r = e.target.closest(".task"); if (r) { openTask = openTask === r.dataset.t ? null : r.dataset.t; renderProjects(); renderDrawer(); } });
+$("dwClose").onclick = () => { openTask = null; renderProjects(); renderDrawer(); };
+$("dwFoot").addEventListener("click", (e) => { const b = e.target.closest("[data-qa]"); if (!b) return; const i = queue.findIndex((q) => q.id === tasks[openTask].queue); if (i >= 0) act(i, b.dataset.qa); });
+$("filters").addEventListener("click", (e) => { const c = e.target.closest("[data-f]"); if (!c) return; filter = c.dataset.f; [...$("filters").children].forEach((x) => x.classList.toggle("on", x === c)); renderProjects(); });
+document.addEventListener("keydown", (e) => {
+  if ($("winNew").hidden || e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
+  if (e.key === "Escape" && openTask) { openTask = null; renderProjects(); renderDrawer(); return; }
+  if (k === "j" || e.key === "ArrowDown") { sel = Math.min(queue.length - 1, sel + 1); renderQueue(); e.preventDefault(); }
+  else if (k === "k" || e.key === "ArrowUp") { sel = Math.max(0, sel - 1); renderQueue(); e.preventDefault(); }
+  else if (k === "a") act(sel, "a");
+  else if (k === "r") act(sel, "r");
+  else if (e.key === "Enter" && queue[sel]) { openTask = queue[sel].task; renderAll(); }
+});
+setInterval(() => {
+  Object.values(tasks).forEach((t) => t.live && t.s++);
+  document.querySelectorAll("[data-el]").forEach((el) => { el.textContent = fmt(tasks[el.dataset.el].s); });
+}, 1000);
+
+function seg(id, attr, fn) { $(id).addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; [...$(id).children].forEach((x) => x.classList.toggle("on", x === b)); fn(b.dataset[attr]); }); }
+seg("segView", "v", (v) => { $("winNow").hidden = v !== "now"; $("winNew").hidden = v !== "new"; $("notesNow").hidden = v !== "now"; $("notesNew").hidden = v !== "new"; });
+seg("segTheme", "t", (t) => { $("winWrap").className = t; });
+$("chkPins").onchange = (e) => document.body.classList.toggle("pins-off", !e.target.checked);
+$("btnReset").onclick = reset;
+reset();
+</script>
+</body>
+</html>
