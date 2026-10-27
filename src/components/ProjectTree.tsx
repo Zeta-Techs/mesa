@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Check,
@@ -115,7 +115,9 @@ import { usePolling } from "../polling";
 const GROUPS_KEY = "ccode.projectTreeGroups";
 /** 各文件夹（项目 / 随手聊）对话展开与否：人手开关过的才记，没碰过的只展开正在聊的那个（sidebar-chats.ts folderOpen） */
 const CHAT_OPEN_KEY = "ccode.projectTreeChats";
-/** 侧栏里的分节标签（「项目」「置顶」「其他打开的」）：小一号、灰、字距拉开，读作标签，不是能点的一行（2026-10-24 侧栏三层） */
+const COLLAPSED_SECTIONS_KEY = "ccode.railCollapsedSections";
+type RailSection = "pinned" | "other";
+/** 侧栏里的分节标签（「项目」「置顶」「其他打开的」）：小一号、灰、字距拉开；项目是标签，置顶与其他打开的是折叠按钮（2026-10-24 侧栏三层） */
 const RAIL_SECTION_LABEL = "text-xs font-medium tracking-[0.08em] text-l3";
 
 /** 对话行尾的运行状态光标的说明（run-caret.ts：干活 / 闲着 / 等你确认） */
@@ -376,6 +378,28 @@ export default function ProjectTree({
       return {};
     }
   });
+  const sectionId = useId();
+  const [collapsedSections, setCollapsedSections] = useState<RailSection[]>(() => {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem(COLLAPSED_SECTIONS_KEY) ?? "[]");
+      return Array.isArray(value) ? value.filter((key): key is RailSection => key === "pinned" || key === "other") : [];
+    } catch { return []; }
+  });
+  function toggleSection(key: RailSection) {
+    const collapsing = !collapsedSections.includes(key);
+    setCollapsedSections((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      saveList(COLLAPSED_SECTIONS_KEY, next);
+      return next;
+    });
+    // 收起时撤掉这一节的多选，避免对看不见的行执行批量操作。
+    if (collapsing && key === "pinned") {
+      const hidden = new Set(pinnedList.map(chatKey));
+      setPicked((prev) => new Set([...prev].filter((k) => !hidden.has(k))));
+      if (pickAnchor.current && hidden.has(pickAnchor.current)) pickAnchor.current = null;
+      setPickMenu(null);
+    }
+  }
   function toggleFolder(key: string, open: boolean) {
     setChatOpenPrefs((prev) => {
       if (prev[key] === !open) return prev;
@@ -847,10 +871,12 @@ export default function ProjectTree({
     const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
     const headers = sections.length + 1;
     // 「置顶」一节（节头 + 每段一行）也占地方，先扣掉
-    const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + pinnedList.length * (2 * rem + 1) : 0;
+    const pinnedRows = pinnedList.length > 0 ? 2.25 * rem + (collapsedSections.includes("pinned") ? 0 : pinnedList.length * (2 * rem + 1)) : 0;
+    const otherCount = openByFolder.get(null)?.length ?? 0;
+    const otherRows = otherCount > 0 ? 2.25 * rem + (collapsedSections.includes("other") ? 0 : otherCount * (2 * rem + 1)) : 0;
     // 「项目」标签行（mt-2 + h-7，2026-10-26 挪进滚动区）占 2.25rem，紧跟它的第一段省掉 pt-2
     const fixed =
-      headers * (1.75 * rem + 1) + open.length * 3.25 * rem + 1.5 * rem + pinnedRows + 1.75 * rem;
+      headers * (1.75 * rem + 1) + open.length * 3.25 * rem + 1.5 * rem + pinnedRows + otherRows + 1.75 * rem;
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 1 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -858,7 +884,7 @@ export default function ProjectTree({
       slots,
     });
     return new Map(open.map((o, i) => [o.key, shown[i]]));
-  }, [grouped, chatOpenPrefs, currentKey, scratchList, chatsByRoot, listHeight, chatExtra, pinnedList.length]);
+  }, [grouped, chatOpenPrefs, currentKey, scratchList, chatsByRoot, listHeight, chatExtra, pinnedList.length, collapsedSections, openByFolder]);
 
   /** 一段对话（2026-10-23 照 Claude 客户端侧栏）：与所属文件夹的名字左对齐、不再缩进，只写主题（去掉「MMDD|类型|」，
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
@@ -1234,6 +1260,14 @@ export default function ProjectTree({
       return;
     }
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const section = target.dataset.railSection as RailSection | undefined;
+    if (section) {
+      if ((e.key === "ArrowRight") === collapsedSections.includes(section)) {
+        e.preventDefault();
+        toggleSection(section);
+      }
+      return;
+    }
     const folder = target.dataset.railFolder;
     if (folder != null) {
       const open = target.dataset.railOpen === "1";
@@ -1246,7 +1280,7 @@ export default function ProjectTree({
     }
     // 在一段对话上按 ←：回到它所在课题的节头
     if (e.key === "ArrowLeft") {
-      const head = target.closest<HTMLElement>("[data-rail-group]")?.querySelector<HTMLElement>("[data-rail-folder]");
+      const head = target.closest<HTMLElement>("[data-rail-group]")?.querySelector<HTMLElement>("[data-rail-folder],[data-rail-section]");
       if (head && head !== target) {
         e.preventDefault();
         focusRailRow(head);
@@ -1267,6 +1301,8 @@ export default function ProjectTree({
         const rows = railNavRows();
         const pick =
           root?.querySelector<HTMLElement>('[data-rail-nav][aria-current="true"]') ??
+          (pinnedList.some((s) => chatKey(s) === selectedChatKey) ? root?.querySelector<HTMLElement>('[data-rail-section="pinned"]') : null) ??
+          (openByFolder.get(null)?.some((r) => r.tabId === terminalActiveTabId) ? root?.querySelector<HTMLElement>('[data-rail-section="other"]') : null) ??
           (currentKey ? root?.querySelector<HTMLElement>(`[data-rail-folder="${CSS.escape(currentKey)}"]`) : null) ??
           rows[0];
         focusRailRow(pick);
@@ -1805,6 +1841,29 @@ export default function ProjectTree({
     return { chats, projects: projectItems };
   }
 
+  function renderSectionHeader(key: RailSection, label: string, count: number, dot: ChatDot) {
+    const open = !collapsedSections.includes(key);
+    const Chevron = open ? ChevronDown : ChevronRight;
+    return (
+      <button
+        type="button"
+        data-rail-nav
+        data-rail-section={key}
+        aria-label={`${open ? "收起" : "展开"}「${label}」`}
+        aria-expanded={open}
+        aria-controls={`${sectionId}-${key}`}
+        aria-description={`${count} 段${!open && dot ? `，${dotTitle(dot)}` : ""}`}
+        onClick={() => toggleSection(key)}
+        className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-l3 hover:bg-hover hover:text-l1"
+      >
+        <Chevron size={12} aria-hidden="true" className="shrink-0" />
+        <span className={RAIL_SECTION_LABEL}>{label}</span>
+        <span className="text-xs text-l3">{count}</span>
+        {!open && dot && <span className="ml-auto flex h-6 w-6 items-center justify-center"><RunCaret state={dot} /></span>}
+      </button>
+    );
+  }
+
   /** 项目标签行：计数 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发）。
    *  放在随手聊下面、课题上面（2026-10-26 用户：置顶的对话和随手聊都不是项目，原先压在「项目 N」下面读不通） */
   function renderProjectsLabel() {
@@ -1863,23 +1922,24 @@ export default function ProjectTree({
       >
         {/* 置顶的对话（2026-10-24）：跨课题钉在最上面，原课题下不重复列 */}
         {pinnedList.length > 0 && (
-          <div className="pb-2">
-            <div className="flex h-7 items-center px-2.5">
-              <span className={RAIL_SECTION_LABEL}>置顶</span>
-            </div>
-            <div role="group" aria-label="置顶的对话" className="space-y-px">
-              {pinnedList.map((s) => renderChat(s, projectOfChat(s), undefined, originOfChat(s)))}
+          <div className="pb-2" data-rail-group>
+            {renderSectionHeader("pinned", "置顶", pinnedList.length, strongestCaret(pinnedList.map((s) =>
+              withUnread(chatDot(s, terminalRunInputs), chatKey(s) !== highlightChatKey && unreadSet.has(chatKey(s))),
+            )))}
+            <div id={`${sectionId}-pinned`} role="group" aria-label="置顶的对话" hidden={collapsedSections.includes("pinned")} className="space-y-px">
+              {!collapsedSections.includes("pinned") && pinnedList.map((s) => renderChat(s, projectOfChat(s), undefined, originOfChat(s)))}
             </div>
           </div>
         )}
         {/* 开着、但不在任何项目里也不是随手聊的（主目录、别的文件夹里开的终端 / 对话）：单列一节放最上 */}
         {(openByFolder.get(null)?.length ?? 0) > 0 && (
-          <div className="pb-2">
-            <div className="flex h-7 items-center px-2.5">
-              <span className={RAIL_SECTION_LABEL}>其他打开的</span>
-            </div>
-            <div role="group" aria-label="其他打开的" className="space-y-px">
-              {openByFolder.get(null)!.map((r) => renderOpenRow(r))}
+          <div className="pb-2" data-rail-group>
+            {renderSectionHeader("other", "其他打开的", openByFolder.get(null)!.length, strongestCaret(openByFolder.get(null)!.map((r) => {
+              const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
+              return withUnread(r.dot, r.tabId !== terminalActiveTabId && !!run && unreadSet.has(unreadKeyOf(run)));
+            })))}
+            <div id={`${sectionId}-other`} role="group" aria-label="其他打开的" hidden={collapsedSections.includes("other")} className="space-y-px">
+              {!collapsedSections.includes("other") && openByFolder.get(null)!.map((r) => renderOpenRow(r))}
             </div>
           </div>
         )}

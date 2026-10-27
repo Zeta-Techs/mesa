@@ -34,6 +34,8 @@ export function RailPeek({
     const id = requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)));
     return () => cancelAnimationFrame(id);
   }, []);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => { returnFocus.current = document.activeElement as HTMLElement | null; }, []);
   const pointerInside = useRef(false);
   const timer = useRef<number | null>(null);
   const onCloseRef = useRef(onClose);
@@ -93,6 +95,7 @@ export function RailPeek({
       if (e.key === "Escape" && !e.defaultPrevented && !busy()) {
         e.preventDefault();
         onCloseRef.current();
+        returnFocus.current?.focus();
       }
     };
     const onDown = (e: MouseEvent) => {

@@ -12,6 +12,7 @@ import {
   Inbox,
   Info,
   Megaphone,
+  ListTree,
   ChevronRight,
   RefreshCw,
   ShieldAlert,
@@ -1919,7 +1920,7 @@ function App() {
                   )}
                 </div>
 
-                {/* 项目区（展开态）：「项目」标签在搜索框上面，列表/搜索/右键管理都在 ProjectTree；
+                {/* 项目区（展开态）：固定搜索入口和可滚动列表由 ProjectTree 管理；
                     flex 列容器让树拿到受限高度，课题多时在树内滚动而不是被侧栏裁掉 */}
                 {!collapsed && (
                   <div className="flex min-h-0 flex-1 flex-col pt-1.5">
@@ -1934,7 +1935,28 @@ function App() {
                   </div>
                 )}
                 {/* 图标态中段空白 = 探出整栏的触发区（悬停停一下）；探出层画在下面那一行容器里 */}
-                {collapsed && <div {...peekTrigger} className="min-h-0 flex-1" />}
+                {collapsed && (
+                  <div className="flex min-h-0 flex-1 flex-col px-1.5 pt-1.5">
+                    <RailTooltip label="项目与对话" collapsed>
+                      <button
+                        type="button"
+                        data-rail-peek-trigger
+                        aria-label="项目与对话"
+                        aria-expanded={peekVisible}
+                        onClick={(e) => {
+                          setRailPeekOpen(!peekVisible);
+                          if (!peekVisible && e.detail === 0) {
+                            requestAnimationFrame(() => useAppStore.getState().requestFocusRail());
+                          }
+                        }}
+                        className={`flex h-8 w-full items-center justify-center rounded-md ${peekVisible ? "bg-rail-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"}`}
+                      >
+                        <ListTree size={16} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    </RailTooltip>
+                    <div {...peekTrigger} className="min-h-0 flex-1" />
+                  </div>
+                )}
 
                 {/* 上手引导（新装才有，做完 / 收起即消失）：贴在系统段上方，进度环 + 下一步，
                     点开清单浮层向右展开（OnboardingGuide 按 data-onboarding-anchor 定位） */}

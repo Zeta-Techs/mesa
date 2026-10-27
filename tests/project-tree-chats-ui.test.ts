@@ -111,9 +111,10 @@ async function renderTree(
   store: Record<string, unknown> = {},
   /** 换掉 list_workspaces 的返回（第几次调用 → 结果）；不给 = 一直空 */
   workspaces?: (call: number) => unknown[],
-  opts: { liftCurrent?: boolean } = {},
+  opts: { liftCurrent?: boolean; storage?: Record<string, string> } = {},
 ) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
+  for (const [key, value] of Object.entries(opts.storage ?? {})) dom.window.localStorage.setItem(key, value);
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
   for (const [key, value] of Object.entries({
     window: dom.window,
@@ -1078,4 +1079,57 @@ test("侧栏搜索：焦点约束、结果语义、状态筛选、中文输入�
     assert.equal(doc.activeElement, trigger, "关闭后返回原入口");
     assert.equal(doc.body.style.overflow, "");
   } finally { await view.close(); }
+});
+
+
+test("置顶分节：默认展开、方向键开合、保留状态、隐藏行不多选，折叠记忆跨挂载恢复", async () => {
+  const storage: Record<string, string> = { "ccode.sidebarChatPins": JSON.stringify(["claude-code\nr5"]) };
+  const view = await renderTree({}, undefined, { storage });
+  try {
+    const win = view.host.ownerDocument.defaultView!;
+    const chat = view.button("镁硫电池第5篇精读");
+    await view.act(async () => chat.dispatchEvent(new win.MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true })));
+    assert.equal(view.host.querySelectorAll("[data-picked]").length, 1);
+    const header = view.button("收起「置顶」");
+    (win as any).__treeStore.focusRailReq = 1;
+    await view.act(async () => header.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    await view.act(async () => { await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); });
+    assert.equal(view.host.querySelector('[aria-label="置顶的对话"]')?.querySelectorAll("[data-chat-key]").length, 0);
+    assert.equal(view.host.querySelectorAll("[data-picked]").length, 0);
+    assert.equal(Array.from(view.host.querySelectorAll("[data-chat-key]")).filter((el) => el.getAttribute("data-chat-key") === "claude-code\nr5").length, 0, "折起后不在原项目下重复列");
+    assert.equal(view.button("展开「置顶」").getAttribute("aria-expanded"), "false");
+    assert.match(view.button("展开「置顶」").getAttribute("aria-description")!, /等你确认/);
+    assert.equal(view.host.ownerDocument.activeElement, view.button("展开「置顶」"), "定位当前对话时落到折起的节头，不自动展开");
+    storage["ccode.railCollapsedSections"] = localStorage.getItem("ccode.railCollapsedSections")!;
+    await view.act(async () => header.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    assert.equal(view.host.querySelector('[aria-label="置顶的对话"]')?.querySelectorAll("[data-chat-key]").length, 1);
+    assert.equal(Array.from(view.host.querySelectorAll("[data-chat-key]")).filter((el) => el.getAttribute("data-chat-key") === "claude-code\nr5").length, 1);
+  } finally { await view.close(); }
+  const reopened = await renderTree({}, undefined, { storage });
+  try {
+    assert.equal(reopened.button("展开「置顶」").getAttribute("aria-expanded"), "false");
+    assert.equal(reopened.host.querySelector('[aria-label="置顶的对话"]')?.querySelectorAll("[data-chat-key]").length, 0);
+  } finally { await reopened.close(); }
+});
+
+test("其他打开的分节：能收起并恢复，非法偏好不影响打开", async () => {
+  const store = { terminalActiveTabId: "outside", terminalRunInputs: [{
+    tabId: "outside", title: "独立对话", model: "", agentId: "claude-code", cwd: "/outside",
+    running: true, shell: false, attention: "confirm", sessionId: null,
+  }] };
+  const view = await renderTree(store, undefined, { storage: { "ccode.railCollapsedSections": "bad json" } });
+  let saved = "";
+  try {
+    assert.equal(view.host.querySelectorAll("[data-open-tab]").length, 1);
+    await view.act(async () => view.button("收起「其他打开的」").click());
+    assert.equal(view.host.querySelectorAll("[data-open-tab]").length, 0);
+    assert.match(view.button("展开「其他打开的」").getAttribute("aria-description")!, /等你确认/);
+    saved = localStorage.getItem("ccode.railCollapsedSections")!;
+  } finally { await view.close(); }
+  const reopened = await renderTree(store, undefined, { storage: { "ccode.railCollapsedSections": saved } });
+  try {
+    assert.equal(reopened.host.querySelectorAll("[data-open-tab]").length, 0);
+    await reopened.act(async () => reopened.button("展开「其他打开的」").click());
+    assert.equal(reopened.host.querySelectorAll("[data-open-tab]").length, 1);
+  } finally { await reopened.close(); }
 });

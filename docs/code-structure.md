@@ -130,10 +130,10 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
-  components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的 / 随手聊，再是「项目」标签行（计数只数课题＋放大镜＋添加入口，2026-10-26 挪进滚动区、排在随手聊下面）与课题；
-                             #   放大镜开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
-                             #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），分节标签（项目 / 置顶 / 其他打开的）左缘对齐导航图标左缘 16px（2026-10-25）。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
-                             #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 xs l4 分组标题 / 对话 pl-2 不缩进（2026-10-25）
+  components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（计数只数课题＋添加入口，2026-10-26 挪进滚动区、排在随手聊下面）与课题；
+                             #   树滚动区外的固定入口开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
+                             #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），项目标签左缘对齐导航图标；置顶 / 其他打开的标题前置折叠箭头。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
+                             #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 xs l3 分组标题 / 对话 pl-2 不缩进（2026-10-25）
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
                              #   重读后仍认不出的签名不变、不反复读
   components/CoachTip.tsx    # 一次性悬浮气泡（2026-10-27 侧栏多选起用）：只管画（标题 / 正文 kbd / 按钮 / ×、小三角朝左 / 下 / 上）；showFloatingCoach = 挂 body 浮在锚点旁（右边或下面，量过自己再摆、同时只有一个、点外面 / Esc / 指定滚动区滚动 / 窗口变大小收起）；何时出由 coach-tips.ts 管；样式 App.css .ccode-coach
@@ -889,8 +889,8 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
   components/ChatSwitcher.tsx # 灵动岛对话切换器（2026-10-24 A+D+E 的 D）：按钮写正看着那段 / 「打开的对话 N」，点开弹打开的对话（sidebar-chats.paletteOpenChats，
                              #   portal 到 body 同活动面板）+ 对话管理…；活动胶囊管「谁在跑」，这里管「切到哪段」
   components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
-                             #   鼠标离开、Esc、点外面收，去了别处（换页 / 换正看着的标签 / 选项目）时鼠标还在里面不收、不在里面（⌘0 键盘选的）才立刻收（2026-10-25）；开着菜单、搜索或在改名时离开不收；useRailPeekTrigger 管悬停触发
-                             #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点；
+                             #   鼠标离开、Esc、点外面收，去了别处（换页 / 换正看着的标签 / 选项目）时鼠标还在里面不收、不在里面（⌘0 键盘选的）才立刻收（2026-10-25）；开着菜单、搜索或在改名时离开不收；Esc 返回原焦点；useRailPeekTrigger 管悬停触发
+                             #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），图标态「项目与对话」按钮、⌘0 也开。ProjectTree 的 focusRailReq 只认挂载后的新请求，探出层挂上不抢焦点；
                              #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，

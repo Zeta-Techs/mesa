@@ -51,7 +51,7 @@ function makeStore() {
 }
 
 async function mount() {
-  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
+  const dom = new JSDOM('<button id="trigger">项目与对话</button><div id="root"></div>', { url: "http://localhost/" });
   const keep: Array<[string, PropertyDescriptor | undefined]> = [];
   const store = makeStore();
   for (const [key, value] of Object.entries({
@@ -66,6 +66,7 @@ async function mount() {
     keep.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
     Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   }
+  (dom.window.document.getElementById("trigger") as HTMLButtonElement).focus();
   const compiled = { exports: {} as Record<string, any> };
   new Function("require", "module", "exports", bundle.outputFiles[0].text)(
     createRequire(import.meta.url),
@@ -163,5 +164,18 @@ test("搜索弹层打开时，Esc 和弹层外点击不会先卸载探出侧栏"
     marker.remove();
     window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
     assert.equal(v.closes(), 1);
+  } finally { await v.close(); }
+});
+
+
+test("键盘关闭探出侧栏时，焦点返回打开前的入口", async () => {
+  const v = await mount();
+  try {
+    const row = document.createElement("button");
+    document.querySelector('[role="navigation"]')!.append(row);
+    row.focus();
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    assert.equal(v.closes(), 1);
+    assert.equal(document.activeElement, document.getElementById("trigger"));
   } finally { await v.close(); }
 });
