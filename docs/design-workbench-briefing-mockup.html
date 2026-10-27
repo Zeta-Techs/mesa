@@ -1,0 +1,348 @@
+<!doctype html><meta charset="utf-8"><title>工作台改版：从「启动器」到「项目晨会」（2026-10-27 草图）</title><style>
+:root{--rail:#0c0b09;--canvas:#131210;--rail2:#1a1917;--strip:#1e1d1b;--inset:#232220;--raised:#2b2a28;--sel:#31302d;--hair:#31302d;--field:#464542;
+--well:color-mix(in srgb,#131210 65%,#2b2a28);
+--l1:#e9e6e2;--l2:#bdbab4;--l3:#95959a;--l4:#6b6b72;--cta:#faa8d4;--cta-t:#2a1220;
+--ok:#10331f;--ok-t:#4cc38a;--err:#381e24;--err-t:#f07070;--warn:#37300f;--warn-t:#f0c010}
+*{box-sizing:border-box}
+body{margin:0;padding:20px 24px 48px;background:#6f6f6f;font:13px -apple-system,"PingFang SC",sans-serif;color:#111}
+h1{font-size:17px;margin:0 0 6px} .lead{margin:0 0 12px;max-width:1240px;line-height:1.7}
+.seg{display:inline-flex;background:#e2e2e2;border-radius:7px;padding:2px;margin:0 0 12px;gap:2px}
+.seg button{border:0;background:none;padding:4px 12px;border-radius:5px;font:12px -apple-system,"PingFang SC";cursor:pointer;color:#333}
+.seg button.on{background:#fff;color:#000;box-shadow:0 0 0 1px #c9c9c9}
+.wrap{display:grid;grid-template-columns:1080px 360px;gap:16px;align-items:start}
+
+/* ---------- 应用外壳 ---------- */
+.app{display:flex;border-radius:10px;overflow:hidden;background:var(--canvas);color:var(--l2);min-height:960px}
+.side{width:206px;flex-shrink:0;background:var(--rail);padding:12px 8px;font-size:12.5px;display:flex;flex-direction:column;gap:2px}
+.side .logo{color:var(--l1);font-weight:700;padding:2px 8px 12px;letter-spacing:.02em}
+.side .it{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;color:var(--l3)}
+.side .it.on{background:var(--sel);color:var(--l1);box-shadow:inset 2px 0 0 var(--cta)}
+.side .ic{width:13px;height:13px;border-radius:3px;border:1.4px solid currentColor;opacity:.7;flex-shrink:0}
+.side .h{font-size:10.5px;color:var(--l4);padding:14px 8px 4px;letter-spacing:.06em}
+.side .pj{display:flex;align-items:center;gap:7px;height:26px;padding:0 8px;border-radius:6px;color:var(--l2)}
+.side .pj .n{flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.side .pj.sub{padding-left:24px;color:var(--l3);font-size:12px}
+main{flex:1;min-width:0;padding:22px 28px 40px}
+
+/* ---------- 通用 ---------- */
+.sh{display:flex;align-items:center;gap:8px;margin:0 2px 9px;font-size:11px;color:var(--l2);font-weight:500}
+.sh .ico{width:12px;height:12px;border-radius:50%;border:1.6px solid var(--l3)}
+.sh .ico.acc{border-color:var(--cta)}
+.sh .grow{flex:1}
+.cnt{border-radius:99px;background:var(--inset);padding:1px 8px;font-size:11px;color:var(--l3);font-weight:400}
+.cnt.w{background:var(--warn);color:var(--warn-t)}
+.lnk{font-size:11px;color:var(--l3);font-weight:400;cursor:pointer} .lnk:hover{color:var(--l1)}
+.dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--l4)}
+.dot.w{background:var(--warn-t)} .dot.ok{background:var(--ok-t)} .dot.err{background:var(--err-t)} .dot.cta{background:var(--cta)}
+.btn{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 10px;border-radius:6px;font:12px -apple-system,"PingFang SC";cursor:pointer;border:1px solid var(--field);background:transparent;color:var(--l1);white-space:nowrap}
+.btn:hover{background:rgb(255 255 255/.05)}
+.btn.pri{background:var(--cta);border-color:var(--cta);color:var(--cta-t);font-weight:500}
+.btn.gh{border-color:transparent;color:var(--l3)} .btn.gh:hover{color:var(--l1)}
+.btn.sm{height:24px;padding:0 8px;font-size:11.5px}
+.chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--field);border-radius:5px;padding:0 6px;height:18px;font-size:10.5px;color:var(--l3);white-space:nowrap}
+.chip.ext{border-style:dashed}
+.age{font-size:11px;color:var(--l3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.age.old{color:var(--warn-t)}
+.caret{display:inline-block;width:7px;height:2.5px;border-radius:1px;background:var(--l3);vertical-align:middle}
+.caret.w{background:var(--warn-t)} .caret.run{background:var(--ok-t);animation:br 2.4s ease-in-out infinite}
+@keyframes br{50%{opacity:.22}}
+.mark{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:#e8457a;color:#fff;font:700 10px -apple-system;flex-shrink:0;box-shadow:0 0 0 2px #6f6f6f}
+.app .mark{box-shadow:0 0 0 2px var(--canvas)}
+
+/* ---------- ① 简报条 ---------- */
+.brief{display:flex;align-items:center;gap:14px;padding:0 2px 18px;border-bottom:1px solid var(--hair);margin-bottom:22px}
+.brief .t{font-size:18px;color:var(--l1);font-weight:500;letter-spacing:-.01em}
+.brief .s{font-size:12px;color:var(--l3);margin-top:3px}
+.brief .s b{color:var(--l2);font-weight:500}
+.brief .grow{flex:1}
+
+/* ---------- ② 要你拍板 ---------- */
+.rows{display:flex;flex-direction:column;gap:1px}
+.row{display:flex;align-items:center;gap:10px;min-height:38px;padding:5px 10px;border-radius:7px}
+.row:hover{background:rgb(255 255 255/.04)}
+.row .tx{flex:1;min-width:0;font-size:12.5px;color:var(--l2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.row .tx q{color:var(--l1);quotes:"「" "」"}
+.row .kind{font-size:11px;color:var(--l3);width:58px;flex-shrink:0}
+.row .pj{font-size:11px;color:var(--l3);max-width:110px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex-shrink:0}
+.row.mute .tx{color:var(--l3)}
+
+/* ---------- ③ 项目卡 ---------- */
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{background:var(--well);border-radius:10px;padding:14px 16px 12px;display:flex;flex-direction:column;gap:11px;min-width:0}
+.card.wide{grid-column:1/-1}
+.ch{display:flex;align-items:flex-start;gap:8px}
+.ch .nm{font-size:15px;color:var(--l1);font-weight:500;letter-spacing:-.01em}
+.ch .sub{font-size:11.5px;color:var(--l3);margin-top:2px}
+.ch .grow{flex:1}
+.kv{display:grid;grid-template-columns:52px 1fr;gap:6px 10px;font-size:12px;align-items:baseline}
+.kv .k{color:var(--l4);font-size:11px}
+.kv .v{color:var(--l2);min-width:0}
+.who{display:flex;flex-wrap:wrap;gap:5px}
+.stat{font-variant-numeric:tabular-nums}
+.stat .a{color:var(--ok-t)} .stat .d{color:var(--err-t)}
+.files{margin:6px 0 0;padding:0;list-style:none;display:none;flex-direction:column;gap:2px;font:11.5px ui-monospace,Menlo,monospace}
+.files.open{display:flex}
+.files li{display:flex;gap:8px;color:var(--l3)} .files li .p{flex:1;color:var(--l2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.files li .by{font-family:-apple-system,"PingFang SC";font-size:10.5px;color:var(--l4)}
+.sess{display:flex;flex-direction:column;gap:2px}
+.sess .s{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px}
+.sess .s .t{flex:1;min-width:0;color:var(--l2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sess .s .end{font-size:11px;white-space:nowrap}
+.end.ask{color:var(--warn-t)} .end.done{color:var(--ok-t)} .end.err{color:var(--err-t)} .end.stop{color:var(--l3)}
+.gate{display:flex;align-items:center;gap:10px;border:1px solid #5a4a12;background:color-mix(in srgb,var(--warn) 70%,transparent);border-radius:8px;padding:8px 10px}
+.gate .tx{flex:1;min-width:0;font-size:12px;color:var(--l1);line-height:1.5}
+.gate .tx small{display:block;color:var(--l3);font-size:11px}
+.cf{display:flex;align-items:center;gap:6px;border-top:1px solid var(--hair);padding-top:10px}
+.cf .grow{flex:1}
+.ext-ic{width:26px;height:26px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--l3);cursor:pointer}
+.ext-ic:hover{background:rgb(255 255 255/.05);color:var(--l1)}
+.seen{display:none;align-items:center;gap:8px;font-size:12px;color:var(--l3);padding:2px 0}
+.card.done>*:not(.ch):not(.seen){display:none}
+.card.done .seen{display:flex}
+.card.done{padding-bottom:12px}
+.quiet{display:flex;align-items:center;gap:8px;margin-top:8px;padding:8px 10px;font-size:12px;color:var(--l3);border-radius:7px;cursor:pointer}
+.quiet:hover{background:rgb(255 255 255/.04);color:var(--l2)}
+
+/* ---------- ⑤ 交接摘要 ---------- */
+.sum{background:var(--well);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.sum .draft{font-size:12.5px;line-height:1.75;color:var(--l2);border-left:2px solid var(--field);padding-left:10px}
+.sum .draft b{color:var(--l1);font-weight:500}
+.sum .meta{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--l4)}
+.sec{margin-top:26px}
+
+/* ---------- 空闲态 ---------- */
+.idle{display:none}
+.state-idle .busy{display:none} .state-idle .idle{display:block}
+.hero{background:var(--well);border-radius:10px;padding:18px 20px;display:flex;align-items:center;gap:16px}
+.hero .nm{font-size:18px;color:var(--l1);font-weight:500}
+.hero .said{font-size:12px;color:var(--l3);margin-top:6px}
+
+/* ---------- 右侧说明 ---------- */
+.notes{background:#ededed;border-radius:10px;padding:14px 16px;font-size:12px;line-height:1.7;color:#222;position:sticky;top:16px}
+.notes h3{font-size:13px;margin:14px 0 4px;display:flex;align-items:center;gap:7px}
+.notes h3:first-child{margin-top:0}
+.notes p{margin:0 0 4px}
+.notes .ph{display:inline-block;border-radius:4px;padding:0 5px;font-size:10.5px;color:#fff;font-weight:500}
+.ph1{background:#1d6b45} .ph2{background:#2f5aa8} .ph3{background:#7a4aa0}
+.notes .src{color:#555;font-size:11.5px}
+.notes .q{color:#8a3a12}
+.notes hr{border:0;border-top:1px solid #ccc;margin:12px 0}
+</style>
+
+<h1>工作台改版：从「启动器」到「项目晨会」</h1>
+<p class="lead">现在的工作台五块（正在进行 / 待你处理 / 待你验收 / 定时任务 / 最近对话）全是去别处的链接，而且只认识 Mesa 自己发起的活。
+改版后它回答一件事：<b>我上次看过之后，我的项目发生了什么、哪些要我拍板</b>。在 Codex 客户端、Claude 桌面版、外部终端里干的活同样算在内。
+草图只画结构和信息，字号与间距按现有设计系统走；数据是虚构样例。可点：「看改动」展开文件、「看过了」把卡收起、上方切换空闲态。</p>
+
+<div class="seg" id="seg"><button class="on" data-s="busy">有动静的早上</button><button data-s="idle">都看过了</button></div>
+
+<div class="wrap">
+<div class="app" id="app">
+ <aside class="side">
+  <div class="logo">Mesa</div>
+  <div class="it on"><span class="ic"></span>工作台</div>
+  <div class="it"><span class="ic"></span>新对话</div>
+  <div class="it"><span class="ic"></span>对话管理</div>
+  <div class="h">项目</div>
+  <div class="pj"><span class="n">泛函综述</span><span class="caret w"></span></div>
+  <div class="pj sub"><span class="n">补第三节引用</span></div>
+  <div class="pj"><span class="n">Mesa</span><span class="caret run"></span></div>
+  <div class="pj"><span class="n">十月月报</span></div>
+  <div class="pj"><span class="n">催化剂数据</span></div>
+  <div class="pj"><span class="n">组会幻灯片</span></div>
+ </aside>
+
+ <main>
+ <!-- ===================== 有动静 ===================== -->
+ <div class="busy">
+  <div class="brief">
+   <span class="mark">1</span>
+   <div>
+    <div class="t">自你上次查看以来</div>
+    <div class="s">上次查看：昨天 18:42 · <b>3</b> 个项目有动静 · <b>3</b> 件要你拍板 · <b>2</b> 处改动没验收</div>
+   </div>
+   <span class="grow"></span>
+   <button class="btn gh sm" id="allSeen">全部看过了</button>
+  </div>
+
+  <!-- ② 要你拍板 -->
+  <section>
+   <div class="sh"><span class="mark">2</span><span class="ico acc"></span>要你拍板<span class="cnt w">3</span><span class="grow"></span><span class="lnk">还有 2 条通知 ▾</span></div>
+   <div class="rows">
+    <div class="row"><span class="dot w"></span><span class="kind">Agent 在问</span>
+     <span class="tx">Claude Code：<q>第三节要不要把 2019 年以前的综述也纳入对比？</q></span>
+     <span class="pj">泛函综述</span><span class="age">40 分钟</span><button class="btn sm">回复</button></div>
+    <div class="row"><span class="dot w"></span><span class="kind">待验收</span>
+     <span class="tx">目标「综述初稿第 2 稿」交回来了 · 改 3 个文件、产物 1 份</span>
+     <span class="pj">泛函综述</span><span class="age">2 小时</span><button class="btn sm">去验收</button></div>
+    <div class="row"><span class="dot w"></span><span class="kind">合并冲突</span>
+     <span class="tx">feat/chat-cards 合回 main 时冲突 2 处</span>
+     <span class="pj">Mesa</span><span class="age old">1 天</span><button class="btn sm">处理</button></div>
+   </div>
+  </section>
+
+  <!-- ③ 项目卡 -->
+  <section class="sec">
+   <div class="sh"><span class="mark">3</span><span class="ico"></span>各项目发生了什么<span class="grow"></span><span class="lnk">按最近动静排序</span></div>
+   <div class="cards">
+
+    <!-- 科研 -->
+    <div class="card" id="c1">
+     <div class="ch"><div><div class="nm">泛函综述 <span class="chip">科研</span></div><div class="sub">进行到：综述初稿（第 4 / 6 步）</div></div><span class="grow"></span><span class="age">最后动静 40 分钟前</span></div>
+     <div class="kv">
+      <span class="k">谁动过</span><span class="v who"><span class="chip">Claude Code ×2 · Mesa</span><span class="chip ext">Codex ×1 · Codex 客户端</span></span>
+      <span class="k">改了什么</span><span class="v"><span class="stat">5 个文件 <span class="a">+412</span> <span class="d">−37</span></span> · <span class="lnk" data-t="f1">看改动 ▾</span>
+       <ul class="files" id="f1">
+        <li><span class="p">manuscript/review.md</span><span class="stat"><span class="a">+380</span> <span class="d">−30</span></span><span class="by">Claude Code</span></li>
+        <li><span class="p">papers/included.json</span><span class="stat"><span class="a">+28</span></span><span class="by">Codex 客户端</span></li>
+        <li><span class="p">papers/included.md</span><span class="stat"><span class="a">+4</span> <span class="d">−7</span></span><span class="by">Codex 客户端</span></li>
+        <li><span class="p">notes/index.json</span><span class="stat"><span class="a">+0</span> <span class="d">−0</span></span><span class="by">Claude Code</span></li>
+       </ul></span>
+      <span class="k">停在哪</span><span class="v sess">
+       <span class="s"><span class="t">补第三节引用</span><span class="chip">Claude Code</span><span class="end ask">在问你</span></span>
+       <span class="s"><span class="t">整理纳入文献表</span><span class="chip ext">Codex 客户端</span><span class="end done">做完了</span></span>
+       <span class="s"><span class="t">核对 references.bib</span><span class="chip">Claude Code</span><span class="end err">中断 · 网络错误</span></span></span>
+     </div>
+     <div class="gate"><span class="mark">4</span><div class="tx">项目根有 2 个文件是 Codex 客户端直接改的，没经过验收<small>papers/included.json、papers/included.md · 今天 09:12</small></div><button class="btn sm">看改动</button><button class="btn sm">收进项目</button></div>
+     <div class="cf"><button class="btn pri">继续工作</button><span class="ext-ic" title="在 Codex 客户端打开">↗</span><span class="grow"></span><button class="btn gh sm" data-seen="c1">看过了</button></div>
+     <div class="seen">已看过 · 有新动静会重新出现 <span class="lnk" data-unseen="c1">撤销</span></div>
+    </div>
+
+    <!-- 编程 -->
+    <div class="card" id="c2">
+     <div class="ch"><div><div class="nm">Mesa <span class="chip">编程</span></div><div class="sub">main · 1 个 Agent 在跑</div></div><span class="grow"></span><span class="age">最后动静 刚刚</span></div>
+     <div class="kv">
+      <span class="k">谁动过</span><span class="v who"><span class="chip">Claude Code ×4 · Mesa</span><span class="chip ext">Claude Code ×1 · Claude 桌面版</span></span>
+      <span class="k">改了什么</span><span class="v"><span class="stat">3 个新提交 · 未提交 12 个文件 <span class="a">+260</span> <span class="d">−88</span></span> · <span class="lnk" data-t="f2">看改动 ▾</span>
+       <ul class="files" id="f2">
+        <li><span class="p">src/pages/WorkbenchPage.tsx</span><span class="stat"><span class="a">+140</span> <span class="d">−52</span></span><span class="by">Claude 桌面版</span></li>
+        <li><span class="p">src/workbench-hero.ts</span><span class="stat"><span class="a">+61</span> <span class="d">−20</span></span><span class="by">Claude 桌面版</span></li>
+        <li><span class="p">src-tauri/src/pty.rs</span><span class="stat"><span class="a">+18</span> <span class="d">−9</span></span><span class="by">Claude Code</span></li>
+        <li><span class="p">…另 9 个</span><span></span><span></span></li>
+       </ul></span>
+      <span class="k">分支</span><span class="v">feat/chat-cards 领先 5 · 落后 2 <span class="end ask">需同步</span></span>
+      <span class="k">停在哪</span><span class="v sess">
+       <span class="s"><span class="t">修终端闪屏</span><span class="chip">Claude Code</span><span class="end stop"><span class="caret run"></span> 正在干</span></span>
+       <span class="s"><span class="t">工作台简报卡</span><span class="chip ext">Claude 桌面版</span><span class="end done">做完了</span></span></span>
+     </div>
+     <div class="gate"><div class="tx">main 上 12 个文件没提交，最后一次是 Claude 桌面版 2 小时前改的<small>提交前按段过一遍，不要的段放回回收站</small></div><button class="btn sm">逐段验收</button></div>
+     <div class="cf"><button class="btn pri" style="background:transparent;color:var(--l1);border-color:var(--field);font-weight:400">继续工作</button><span class="ext-ic" title="在 Claude 桌面版打开">↗</span><span class="grow"></span><button class="btn gh sm" data-seen="c2">看过了</button></div>
+     <div class="seen">已看过 · 有新动静会重新出现 <span class="lnk" data-unseen="c2">撤销</span></div>
+    </div>
+
+    <!-- 外部未添加 -->
+    <div class="card wide" id="c3">
+     <div class="ch"><div><div class="nm">lab-site <span class="chip ext">未添加</span></div><div class="sub">~/code/lab-site · 只在 Codex 客户端里用过</div></div><span class="grow"></span><span class="age">最后动静 今天 08:30</span></div>
+     <div class="kv">
+      <span class="k">谁动过</span><span class="v who"><span class="chip ext">Codex ×2 · Codex 客户端</span></span>
+      <span class="k">改了什么</span><span class="v"><span class="stat">1 个新提交 <span class="a">+46</span> <span class="d">−12</span></span> · 工作区干净</span>
+      <span class="k">停在哪</span><span class="v sess"><span class="s"><span class="t">首页换成新的课题组照片</span><span class="chip ext">Codex 客户端</span><span class="end done">做完了</span></span></span>
+     </div>
+     <div class="cf"><button class="btn sm">添加为项目</button><span class="ext-ic" title="在 Codex 客户端打开">↗</span><span class="grow"></span><button class="btn gh sm" data-seen="c3">看过了</button></div>
+     <div class="seen">已看过 · 有新动静会重新出现 <span class="lnk" data-unseen="c3">撤销</span></div>
+    </div>
+   </div>
+   <div class="quiet">另有 3 个项目自上次以来没有动静：十月月报、催化剂数据、组会幻灯片 ▾</div>
+  </section>
+
+  <!-- ⑤ 搁着的事 -->
+  <section class="sec">
+   <div class="sh"><span class="mark">5</span><span class="ico"></span>搁着的事<span class="cnt">4</span><span class="grow"></span><span class="lnk">按搁置时间</span></div>
+   <div class="rows">
+    <div class="row"><span class="dot"></span><span class="kind">目标</span><span class="tx">「按公司模板写十月月报」记下后还没开工</span><span class="pj">十月月报</span><span class="age old">9 天</span><button class="btn sm gh">开工</button></div>
+    <div class="row"><span class="dot"></span><span class="kind">分支</span><span class="tx">fix/pdf-preview 领先 3 个提交，一直没合回 main</span><span class="pj">Mesa</span><span class="age old">12 天</span><button class="btn sm gh">去看</button></div>
+    <div class="row"><span class="dot"></span><span class="kind">对话</span><span class="tx">「数据清洗规则」停在 Agent 提问，没人回</span><span class="pj">催化剂数据</span><span class="age">5 天</span><button class="btn sm gh">接着聊</button></div>
+    <div class="row"><span class="dot err"></span><span class="kind">定时任务</span><span class="tx">「每日文献雷达」连续失败 3 次，再失败 2 次会自动暂停</span><span class="pj">泛函综述</span><span class="age">3 天</span><button class="btn sm gh">看记录</button></div>
+   </div>
+  </section>
+
+  <!-- ⑥ 交接摘要 -->
+  <section class="sec">
+   <div class="sh"><span class="mark">6</span><span class="ico"></span>交接摘要<span class="grow"></span></div>
+   <div class="sum">
+    <div class="draft"><b>泛函综述</b>：初稿第三节补了 380 行，引用核对因网络错误中断；Codex 客户端改了纳入文献表，还没验收；Agent 在问要不要纳入 2019 年前的综述。
+    <br><b>Mesa</b>：3 个新提交，main 上 12 个文件待提交；feat/chat-cards 与 main 有 2 处冲突待处理。
+    <br><b>lab-site</b>：首页照片已换，已提交。</div>
+    <div class="meta">草稿 · 由上面的数据和各对话最后几句生成，点一次调用一次模型 · 不写进项目记忆<span style="flex:1"></span><button class="btn sm gh">重新生成</button><button class="btn sm">复制</button></div>
+   </div>
+  </section>
+ </div>
+
+ <!-- ===================== 都看过了 ===================== -->
+ <div class="idle">
+  <div class="brief">
+   <div>
+    <div class="t">都看过了</div>
+    <div class="s">上次查看：刚刚 · 之后没有新动静 · 没有要你拍板的事</div>
+   </div>
+  </div>
+  <div class="sh"><span class="ico acc"></span>接着上次的</div>
+  <div class="hero">
+   <div style="flex:1;min-width:0">
+    <div class="nm">泛函综述 <span class="chip">科研</span></div>
+    <div class="said">上次停在 · 「好，就按你说的纳入，补完第三节再跑一遍引用核对」 · 12 分钟前</div>
+   </div>
+   <span class="ext-ic" title="在 Codex 客户端打开">↗</span>
+   <button class="btn pri">继续工作</button>
+  </div>
+  <section class="sec">
+   <div class="sh"><span class="ico"></span>搁着的事<span class="cnt">2</span></div>
+   <div class="rows">
+    <div class="row"><span class="dot"></span><span class="kind">目标</span><span class="tx">「按公司模板写十月月报」记下后还没开工</span><span class="pj">十月月报</span><span class="age old">9 天</span><button class="btn sm gh">开工</button></div>
+    <div class="row"><span class="dot"></span><span class="kind">分支</span><span class="tx">fix/pdf-preview 领先 3 个提交，一直没合回 main</span><span class="pj">Mesa</span><span class="age old">12 天</span><button class="btn sm gh">去看</button></div>
+   </div>
+  </section>
+  <section class="sec">
+   <div class="sh"><span class="ico"></span>这一周<span class="grow"></span></div>
+   <div class="rows">
+    <div class="row mute"><span class="dot ok"></span><span class="kind">已验收</span><span class="tx">6 次交回、5 次收进项目、1 次退回重做</span></div>
+    <div class="row mute"><span class="dot ok"></span><span class="kind">已提交</span><span class="tx">Mesa 14 个提交 · lab-site 2 个提交</span></div>
+    <div class="row mute"><span class="dot"></span><span class="kind">外部客户端</span><span class="tx">Codex 客户端 9 段对话、Claude 桌面版 3 段，涉及 3 个项目</span></div>
+   </div>
+  </section>
+ </div>
+ </main>
+</div>
+
+<!-- ===================== 说明 ===================== -->
+<aside class="notes">
+ <h3><span class="mark">1</span>简报条 <span class="ph ph1">一期</span></h3>
+ <p>一句话报总数。「上次查看」是 Mesa 自己存的基线（每个项目一份：时间 + HEAD + 未提交改动的指纹），不碰各家 CLI 目录。点「全部看过了」或卡上的「看过了」才挪基线，打开工作台本身不算看过。</p>
+ <p class="src">取代：页头「N 个运行中」。</p>
+
+ <h3><span class="mark">2</span>要你拍板 <span class="ph ph2">二期</span></h3>
+ <p>「待你处理」和「待你验收」并成一个队列，只放<b>非你不可</b>的：Agent 在问、待验收、冲突、需确认。每行带等了多久。信息类通报（文献新命中、可合并）收进「还有 N 条通知」。</p>
+ <p>「Agent 在问」直接摘出那句问题，你不用点进去才知道问的是什么。回复仍然回到那段对话里发，不在工作台代答。</p>
+
+ <h3><span class="mark">3</span>各项目发生了什么 <span class="ph ph1">一期</span></h3>
+ <p>只列基线之后有动静的项目，Mesa 里和外部客户端里的一视同仁；没动静的折成一行。</p>
+ <p><b>谁动过</b>：按 Agent 和客户端分，虚线芯片 = 外部客户端。<br>
+ <b>改了什么</b>：git 项目看新提交 + 未提交改动的行数统计，展开到文件，并标出哪一家改的；非 git 项目按修改时间扫。<br>
+ <b>停在哪</b>：每段对话的结局——在问你 / 做完了 / 中断 / 正在干。</p>
+ <p class="src">数据来源：会话文件（已在扫，只读）＋ git ＋ 基线。新增一个后端汇总命令。</p>
+ <p class="q">待核实：能不能分出「客户端」——Codex 会话的 originator、Claude Code 会话的 entrypoint 要拿真文件看；分不出就只按 Agent 分，不假装。「结局」现有解析是否给得出也要查。</p>
+
+ <h3><span class="mark">4</span>没验收的改动 <span class="ph ph1">一期</span></h3>
+ <p>外部客户端和「＋新对话」是直接写进项目的，绕过了 Mesa 的验收。这里把它点名：哪几个文件、谁改的、什么时候。</p>
+ <p>编程项目走现有的逐段验收再提交；科研项目额外指出「派生产物直写项目根」（现有规则下算未验收产物）。</p>
+
+ <h3><span class="mark">5</span>搁着的事 <span class="ph ph2">二期</span></h3>
+ <p>按搁置天数排，超过 7 天变黄：记下没开工的目标、领先没合的分支、停在提问没人回的对话、连续失败的定时任务。这些现在散在项目页和收件箱里，看不出放了多久。</p>
+
+ <h3><span class="mark">6</span>交接摘要 <span class="ph ph3">三期</span></h3>
+ <p>点按钮才跑，一次性内部调用、不落盘。输入就是上面的结构化数据加各对话最后几句。只给草稿用来复制进日报、组会，不写进项目记忆（现有规则：Agent 结论不自动采纳）。</p>
+
+ <hr>
+ <p><b>撤掉的</b>：「最近对话」区块（侧栏和对话管理页已有，改由项目卡里的「停在哪」承担）。主卡「正在进行」不再单独占一大块，只在都看过了时出现。</p>
+ <p><b>空闲态</b>（上方切换）：没有新动静时回到「接着上次的」大卡，下面是搁着的事和「这一周」的验收、提交统计。</p>
+ <p><b>不做</b>：用量摘要、最近产物（10-26 已否）；自动拆任务、替你选 Agent。</p>
+</aside>
+</div>
+
+<script>
+document.querySelectorAll('[data-t]').forEach(el=>el.onclick=()=>{const f=document.getElementById(el.dataset.t);f.classList.toggle('open');el.textContent=f.classList.contains('open')?'收起 ▴':'看改动 ▾'});
+document.querySelectorAll('[data-seen]').forEach(el=>el.onclick=()=>document.getElementById(el.dataset.seen).classList.add('done'));
+document.querySelectorAll('[data-unseen]').forEach(el=>el.onclick=()=>document.getElementById(el.dataset.unseen).classList.remove('done'));
+document.getElementById('allSeen').onclick=()=>document.querySelector('[data-s=idle]').click();
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('on',x===b));document.getElementById('app').classList.toggle('state-idle',b.dataset.s==='idle')});
+</script>
