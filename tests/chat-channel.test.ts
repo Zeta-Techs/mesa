@@ -6,6 +6,8 @@ import {
   approvalTitle,
   channelAttention,
   channelSourceNote,
+  channelOutcome,
+  isQuestionApproval,
   channelCanAnswer,
   channelLiveLines,
   channelRelink,
@@ -238,4 +240,20 @@ test("旁路断开：旧回合与审批失去优先权，来源说明按本次�
   assert.match(channelSourceNote(null), /未接入/);
   assert.match(channelSourceNote(snap({ connection: "connecting" })), /正在连接/);
   assert.match(channelSourceNote(snap({ kind: "codex", connection: "connected" })), /已接入/);
+});
+
+
+test("回合失败与中断如实说明；提问不当作工具批准", () => {
+  assert.match(channelOutcome(snap({ turn: { ...turn("failed"), error: "quota exceeded" } }))!, /未完成：quota exceeded/);
+  assert.match(channelOutcome(snap({ turn: turn("cancelled") }))!, /已中断/);
+  assert.equal(channelOutcome(snap({ turn: turn("completed") })), null);
+  assert.equal(channelOutcome(snap({ connection: "disconnected", turn: turn("failed") })), null);
+  for (const toolName of ["requestUserInput", "question", "elicitation"]) {
+    const a = approval({ toolName, kind: "other", requestId: "q", replyable: false, detail: "选择哪一种？" });
+    assert.equal(isQuestionApproval(a), true);
+    assert.match(approvalTitle(a, "Codex"), /在等你回答/);
+    assert.deepEqual(approvalChoices(a, "codex"), []);
+    assert.deepEqual(approvalPreview(a), { kind: "text", text: "选择哪一种？" });
+  }
+  assert.equal(isQuestionApproval(approval()), false);
 });

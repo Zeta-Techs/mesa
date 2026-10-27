@@ -23,6 +23,7 @@ export interface ChannelTurn {
   seq: number;
   status: "running" | "awaiting_approval" | "completed" | "failed" | "cancelled";
   stopReason: string | null;
+  error?: string | null;
   startedAt: number;
   endedAt: number | null;
 }
@@ -63,6 +64,7 @@ export interface ChatChannelSnapshot {
   thinking: string | null;
   /** CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉 */
   statusLine?: string | null;
+  retry?: string | null;
 }
 
 export type ChannelReplyDecision = "allow" | "allow_always" | "deny";
@@ -217,6 +219,7 @@ const KIND_TITLE: Record<ChannelApproval["kind"], string> = {
 
 /** 卡片标题：「Codex 要运行一条命令」「Claude Code 要改文件 · a.ts」 */
 export function approvalTitle(a: ChannelApproval, agentLabel: string): string {
+  if (isQuestionApproval(a)) return `${agentLabel} 在等你回答`;
   const name = a.path ? a.path.split(/[\\/]/).pop() : null;
   const base = `${agentLabel} ${KIND_TITLE[a.kind]}`;
   if (a.kind === "edit" && name) return `${base} · ${name}`;
@@ -271,4 +274,16 @@ export function channelSourceNote(snap: ChatChannelSnapshot | null | undefined):
   if (snap.kind === "hooks") return "本次通过 CLI 事件与会话文件更新；确认选项仍以终端菜单为准。";
   if (snap.kind === "program-status") return "本次通过终端程序状态与会话文件更新。";
   return "本次已接入 CLI 实时通道。";
+}
+
+
+export function isQuestionApproval(a: ChannelApproval | null): boolean {
+  return !!a?.toolName && ["requestUserInput", "question", "elicitation"].includes(a.toolName);
+}
+
+export function channelOutcome(snap: ChatChannelSnapshot | null | undefined): string | null {
+  if (snap?.connection === "disconnected") return null;
+  if (snap?.turn?.status === "failed") return `这一轮未完成${snap.turn.error ? `：${snap.turn.error}` : "，可到终端查看原因"}`;
+  if (snap?.turn?.status === "cancelled") return "这一轮已中断，可以继续输入。";
+  return null;
 }

@@ -77,6 +77,8 @@ import type { AskAction } from "../tui-ask";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
   channelSourceNote,
+  channelOutcome,
+  isQuestionApproval,
   approvalChoices,
   approvalPreview,
   approvalTitle,
@@ -881,6 +883,14 @@ export default function ChatSurface({
             onClick: () => onChannelReply?.(channelApproval.requestId!, c.decision),
           })),
         }
+      : isQuestionApproval(channelApproval) && !menuPrompt && !trustPrompt
+      ? {
+          key: `question:${channelApproval?.requestId ?? ""}`,
+          title: `${agentLabel(agentId)} 在等你回答`,
+          hint: "请在终端完成这份提问；回答后会自动继续同步",
+          preview,
+          options: [],
+        }
       : attention === "confirm" && !menuPrompt && !trustPrompt && waitScreen
       ? // 宽限里先不出卡（菜单多半马上认出来），过了还认不出才出通用卡
         confirmAged
@@ -1427,6 +1437,12 @@ export default function ChatSurface({
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>
           )}
+          {running && !connIssue && channel?.retry && (
+            <p role="status" className="mb-2 text-xs text-caution-text">{channel.retry}</p>
+          )}
+          {running && !generating && !connIssue && channelOutcome(channel) && (
+            <p role="status" className="mb-2 text-xs text-caution-text">{channelOutcome(channel)}</p>
+          )}
           {running && channel?.connection === "disconnected" && (
             <p role="status" className="mb-2 text-xs text-caution-text">{channelSourceNote(channel)}</p>
           )}
@@ -1448,7 +1464,7 @@ export default function ChatSurface({
               }
             />
           )}
-          {generating && !decision && livePreview.length === 0 && !thinkingPreview && (
+          {generating && !decision && !channel?.retry && livePreview.length === 0 && !thinkingPreview && (
             // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 后面说这一轮在做的事——
             // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」；
             // 过程里已经有那一行在动时只留光标。2026-10-26 起光标按阶段动（在想呼吸、干活伸缩、等你确认常亮），

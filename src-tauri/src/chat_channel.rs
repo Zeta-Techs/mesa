@@ -59,6 +59,7 @@ pub struct TurnDto {
     /// running | awaiting_approval | completed | failed | cancelled
     pub status: &'static str,
     pub stop_reason: Option<String>,
+    pub error: Option<String>,
     /// 毫秒时间戳
     pub started_at: i64,
     pub ended_at: Option<i64>,
@@ -121,6 +122,7 @@ pub struct ChannelSnapshot {
     pub thinking: Option<String>,
     /// CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉
     pub status_line: Option<String>,
+    pub retry: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -140,6 +142,8 @@ pub struct ActivityDto {
 pub(crate) enum ChannelEvent {
     Connected,
     Disconnected,
+    Retrying(String),
+    ErrorDetail(String),
     Session {
         id: String,
         path: Option<String>,
@@ -235,6 +239,7 @@ impl Tracker {
             seq,
             status: "running",
             stop_reason: None,
+            error: None,
             started_at: now,
             ended_at: None,
         });
@@ -249,6 +254,7 @@ impl Tracker {
         self.snap.activity = None;
         self.snap.thinking = None;
         self.snap.status_line = None;
+        self.snap.retry = None;
     }
 
     /// 带请求 id 的审批（Codex / Qwen / OpenCode）：撤卡只认「已处理」事件、它自己那个工具结束、这一轮结束
@@ -472,6 +478,13 @@ impl Tracker {
 
     fn apply_event(&mut self, ev: ChannelEvent, now: i64) {
         match ev {
+            ChannelEvent::Retrying(message) => {
+                self.ensure_running(now);
+                self.snap.retry = Some(redact_cap(&message));
+            }
+            ChannelEvent::ErrorDetail(message) => {
+                if let Some(t) = self.snap.turn.as_mut() { t.error = Some(redact_cap(&message)); }
+            }
             ChannelEvent::Connected => self.snap.connection = Some("connected"),
             ChannelEvent::Disconnected => {
                 self.snap.connection = Some("disconnected");
@@ -481,6 +494,7 @@ impl Tracker {
                 self.snap.activity = None;
                 self.snap.thinking = None;
                 self.snap.status_line = None;
+                self.snap.retry = None;
                 self.running.clear();
                 self.queued.clear();
                 self.tools.clear();
@@ -503,6 +517,7 @@ impl Tracker {
                     self.snap.thinking = None;
                     self.snap.activity = None;
                     self.snap.status_line = None;
+                    self.snap.retry = None;
                     self.snap.transcript_path = None;
                     self.snap.session_source = None;
                     self.tools.clear();
@@ -529,6 +544,7 @@ impl Tracker {
                 }
             }
             ChannelEvent::TurnStart => {
+                self.snap.retry = None;
                 if !is_open(&self.snap.turn) {
                     self.start_turn(now);
                 }
@@ -539,6 +555,7 @@ impl Tracker {
                 input,
             } => {
                 self.ensure_running(now);
+                self.snap.retry = None;
                 // 等批准时来了下一个工具：上一个已经答过了。只对推断出来的审批（hooks）这样认——带请求 id 的
                 // 审批另有「已处理」事件；同一回复里并行的工具（Codex 跑命令的同时调 MCP）开始了不等于答过，
                 // 原先这里撤了卡，终端菜单还挂着，聊天层改由读屏再出一张英文原文的卡（2026-10-21 用户：先中文后英文两张）
@@ -638,6 +655,7 @@ impl Tracker {
                     return;
                 }
                 self.ensure_running(now);
+                self.snap.retry = None;
                 let live = self.snap.live_text.get_or_insert_with(String::new);
                 if self.pending_break && !live.is_empty() && !live.ends_with("\n\n") {
                     live.push_str(if live.ends_with('\n') { "\n" } else { "\n\n" });
@@ -654,13 +672,16 @@ impl Tracker {
                 self.pending_break = true;
             }
             ChannelEvent::TurnEnd { reason } => {
+                let status = match reason.as_deref() {
+                    Some("failed" | "error" | "error_during_execution") => "failed",
+                    Some("interrupted" | "cancelled" | "aborted") => "cancelled",
+                    _ => "completed",
+                };
+                if self.snap.turn.is_none() && status != "completed" { self.start_turn(now); }
                 if let Some(t) = self.snap.turn.as_mut() {
-                    if t.ended_at.is_none() {
-                        t.status = match reason.as_deref() {
-                            Some("failed" | "error" | "error_during_execution") => "failed",
-                            Some("interrupted" | "cancelled" | "aborted") => "cancelled",
-                            _ => "completed",
-                        };
+                    // idle 可能先到，随后具体的失败 / 中断结果仍要兑现；普通 idle 不能盖掉异常。
+                    if t.ended_at.is_none() || (t.status == "completed" && status != "completed") {
+                        t.status = status;
                         t.stop_reason = reason;
                         t.ended_at = Some(now);
                     }
@@ -669,6 +690,7 @@ impl Tracker {
                 self.approval_call = None;
                 self.queued.clear();
                 self.snap.status_line = None;
+                self.snap.retry = None;
             }
             ChannelEvent::StatusLine(line) => {
                 self.snap.status_line = line.map(|l| cap(l.trim(), STATUS_LINE_CAP));
@@ -799,6 +821,22 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
         ..Default::default()
     };
     let is = |names: &[&str]| names.iter().any(|n| lower == *n);
+    if is(&["requestuserinput", "question", "elicitation"]) {
+        let mut lines = Vec::new();
+        if let Some(message) = input.get("message").and_then(Value::as_str) { lines.push(message.to_string()); }
+        if let Some(questions) = input.get("questions").and_then(Value::as_array) {
+            for q in questions.iter().take(20) {
+                if let Some(text) = q.get("question").and_then(Value::as_str) { lines.push(text.to_string()); }
+                if let Some(options) = q.get("options").and_then(Value::as_array) {
+                    for o in options.iter().take(20) {
+                        if let Some(label) = o.get("label").and_then(Value::as_str) { lines.push(format!("• {label}")); }
+                    }
+                }
+            }
+        }
+        dto.detail = Some(redact_cap(&lines.join("\n")));
+        return dto;
+    }
     // Claude 计划模式出完方案：2.1.308 起参数里只有已弃用的 allowedPrompts，hook 收到的 tool_input 由 CLI 补上
     // plan（方案文件全文）与 planFilePath（2026-10-26 假网关实测）。方案给卡片整篇排，不当参数 JSON 摊开
     if lower == "exitplanmode" {
@@ -1234,6 +1272,12 @@ pub(crate) fn map_opencode(ev: &Value, st: &mut OpenCodeState) -> Vec<ChannelEve
                 .and_then(|s| s.get("type"))
                 .and_then(|x| x.as_str())
             {
+                Some("retry") => {
+                    let status = &p["status"];
+                    let attempt = status.get("attempt").and_then(Value::as_u64).unwrap_or(1);
+                    let message = status.get("message").and_then(Value::as_str).unwrap_or("连接暂时不可用");
+                    out.push(ChannelEvent::Retrying(format!("正在重试（第 {attempt} 次）：{message}")));
+                }
                 Some("busy") => out.push(ChannelEvent::TurnStart),
                 Some("idle") => out.push(ChannelEvent::TurnEnd {
                     reason: Some("end_turn".into()),
@@ -1244,9 +1288,23 @@ pub(crate) fn map_opencode(ev: &Value, st: &mut OpenCodeState) -> Vec<ChannelEve
         "session.idle" => out.push(ChannelEvent::TurnEnd {
             reason: Some("end_turn".into()),
         }),
-        "session.error" => out.push(ChannelEvent::TurnEnd {
-            reason: Some("failed".into()),
+        "session.error" => {
+            let error = &p["error"];
+            let cancelled = error.get("name").and_then(Value::as_str) == Some("MessageAbortedError");
+            out.push(ChannelEvent::TurnEnd { reason: Some(if cancelled { "cancelled" } else { "failed" }.into()) });
+            if let Some(message) = error.pointer("/data/message").or_else(|| error.get("message")).and_then(Value::as_str) {
+                out.push(ChannelEvent::ErrorDetail(message.to_string()));
+            }
+        }
+        "question.asked" => out.push(ChannelEvent::ApprovalAsked {
+            request_id: p.get("id").and_then(Value::as_str).map(String::from),
+            call_id: None, name: Some("question".into()), input: p.clone(), replyable: false, detail: None,
         }),
+        "question.replied" | "question.rejected" => {
+            if let Some(id) = p.get("requestID").and_then(Value::as_str) {
+                out.push(ChannelEvent::ApprovalResolved { request_id: Some(id.into()) });
+            }
+        }
         "message.part.updated" => {
             let part = p.get("part").cloned().unwrap_or(Value::Null);
             let id = part.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -1440,6 +1498,14 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
             let item = params.get("itemId").and_then(|x| x.as_str()).map(String::from);
             let reason = params.get("reason").and_then(|x| x.as_str()).map(String::from);
             match m {
+                "item/tool/requestUserInput" if params.get("isBlocking").and_then(Value::as_bool) != Some(false) => {
+                    out.push(ChannelEvent::ApprovalAsked { request_id: Some(key), call_id: item,
+                        name: Some("requestUserInput".into()), input: params.clone(), replyable: false, detail: None });
+                }
+                "mcpServer/elicitation/request" => {
+                    out.push(ChannelEvent::ApprovalAsked { request_id: Some(key), call_id: item,
+                        name: Some("elicitation".into()), input: params.clone(), replyable: false, detail: None });
+                }
                 "item/commandExecution/requestApproval" => out.push(ChannelEvent::ApprovalAsked {
                     request_id: Some(key),
                     call_id: item,
@@ -1517,6 +1583,15 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
                     _ => {}
                 }
             }
+            "error" => {
+                let message = params.pointer("/error/message").and_then(Value::as_str).unwrap_or("这次请求失败");
+                if params.get("willRetry").and_then(Value::as_bool) == Some(true) {
+                    out.push(ChannelEvent::Retrying(format!("正在重试：{message}")));
+                } else {
+                    out.push(ChannelEvent::TurnEnd { reason: Some("failed".into()) });
+                    out.push(ChannelEvent::ErrorDetail(message.to_string()));
+                }
+            }
             "turn/started" => out.push(ChannelEvent::TurnStart),
             "turn/completed" => {
                 let status = params
@@ -1531,6 +1606,9 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
                         status.to_string()
                     }),
                 });
+                if let Some(message) = params.pointer("/turn/error/message").and_then(Value::as_str) {
+                    out.push(ChannelEvent::ErrorDetail(message.to_string()));
+                }
             }
             "item/agentMessage/delta" => {
                 if let Some(d) = params.get("delta").and_then(|x| x.as_str()) {
@@ -2884,6 +2962,66 @@ mod tests {
                 t.apply(ev, i as i64);
             }
         }
+    }
+
+    #[test]
+    fn final_failure_overrides_early_idle_and_preserves_redacted_error() {
+        let mut st = CodexState::default();
+        st.thread = Some("s".into());
+        let mut t = tracker();
+        t.apply(ChannelEvent::TurnStart, 1);
+        for msg in [
+            json!({"method":"thread/status/changed","params":{"threadId":"s","status":{"type":"idle"}}}),
+            json!({"method":"turn/completed","params":{"threadId":"s","turn":{"status":"failed","error":{"message":"Bearer sk-live-secret-987654"}}}}),
+            json!({"method":"thread/status/changed","params":{"threadId":"s","status":{"type":"idle"}}}),
+        ] { for ev in map_codex(&msg, &mut st).0 { t.apply(ev, 2); } }
+        let turn = t.snap.turn.as_ref().unwrap();
+        assert_eq!(turn.status, "failed");
+        assert!(!turn.error.as_ref().unwrap().contains("sk-live-secret-987654"));
+        t.apply(ChannelEvent::TurnStart, 3);
+        assert!(t.snap.turn.as_ref().unwrap().error.is_none());
+    }
+
+    #[test]
+    fn retry_and_question_events_keep_truthful_waiting_state() {
+        let mut st = OpenCodeState::default();
+        let mut t = tracker();
+        for ev in map_opencode(&json!({"type":"session.status","properties":{"sessionID":"s","status":{"type":"retry","attempt":2,"message":"rate limited"}}}), &mut st) { t.apply(ev, 1); }
+        assert!(t.snap.retry.as_ref().unwrap().contains("第 2 次"));
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "running");
+        for ev in map_opencode(&json!({"type":"question.asked","properties":{"sessionID":"s","id":"q","questions":[{"question":"选择哪种？","options":[{"label":"A"},{"label":"B"}]}]}}), &mut st) { t.apply(ev, 2); }
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "awaiting_approval");
+        let a = t.snap.approval.as_ref().unwrap();
+        assert!(!a.replyable);
+        assert!(a.detail.as_ref().unwrap().contains("选择哪种？"));
+        for ev in map_opencode(&json!({"type":"question.replied","properties":{"sessionID":"s","requestID":"other"}}), &mut st) { t.apply(ev, 3); }
+        assert!(t.snap.approval.is_some());
+        for ev in map_opencode(&json!({"type":"question.replied","properties":{"sessionID":"s","requestID":"q"}}), &mut st) { t.apply(ev, 4); }
+        assert!(t.snap.approval.is_none());
+        for ev in map_opencode(&json!({"type":"session.error","properties":{"sessionID":"s","error":{"name":"APIError","data":{"message":"quota exceeded"}}}}), &mut st) { t.apply(ev, 5); }
+        assert_eq!(t.snap.turn.as_ref().unwrap().error.as_deref(), Some("quota exceeded"));
+        assert!(t.snap.retry.is_none());
+    }
+
+    #[test]
+    fn codex_blocking_input_and_mcp_forms_wait_without_fabricated_approval_choices() {
+        for method in ["item/tool/requestUserInput", "mcpServer/elicitation/request"] {
+            let mut st = CodexState::default();
+            st.thread = Some("s".into());
+            let mut t = tracker();
+            let req = json!({"id":9,"method":method,"params":{"threadId":"s","itemId":"i","isBlocking":true,
+                "message":"请补充信息", "questions":[{"question":"选择哪种？"}]}});
+            for ev in map_codex(&req, &mut st).0 { t.apply(ev, 1); }
+            assert_eq!(t.snap.turn.as_ref().unwrap().status, "awaiting_approval");
+            assert!(!t.snap.approval.as_ref().unwrap().replyable);
+            for ev in map_codex(&json!({"method":"serverRequest/resolved","params":{"threadId":"s","requestId":9}}), &mut st).0 { t.apply(ev, 2); }
+            assert!(t.snap.approval.is_none());
+        }
+        let mut st = CodexState::default();
+        st.thread = Some("s".into());
+        assert!(map_codex(&json!({"id":10,"method":"item/tool/requestUserInput","params":{"threadId":"s","isBlocking":false}}), &mut st).0.is_empty());
+        let events = map_codex(&json!({"method":"error","params":{"threadId":"s","willRetry":true,"error":{"message":"busy"}}}), &mut st).0;
+        assert!(matches!(&events[0], ChannelEvent::Retrying(message) if message.contains("busy")));
     }
 
     #[test]
