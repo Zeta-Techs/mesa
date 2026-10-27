@@ -14,10 +14,13 @@ export function SettingsDrawerShell({
   open,
   onClose,
   subtitle,
+  title = "项目设置",
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  /** 抽屉标题；工作台任务面板借这个外壳时传任务名（2026-10-27） */
+  title?: string;
   /** 头部副题：项目名，让抽屉自己说明服务的是哪个项目（编程 / 工作抽屉没有「基本」分区）。 */
   subtitle?: string;
   children: ReactNode;
@@ -84,9 +87,9 @@ export function SettingsDrawerShell({
         <header className="flex h-12 shrink-0 items-center gap-2 px-5">
           <h2
             id={titleId}
-            className="min-w-0 shrink-0 text-base font-semibold text-l1"
+            className="min-w-0 shrink truncate text-base font-semibold text-l1"
           >
-            项目设置
+            {title}
           </h2>
           <span
             className="min-w-0 flex-1 truncate text-micro text-l4"
@@ -98,7 +101,7 @@ export function SettingsDrawerShell({
             type="button"
             className={inlineActionClass}
             onClick={onClose}
-            aria-label="关闭项目设置"
+            aria-label={`关闭${title}`}
           >
             ✕
           </button>

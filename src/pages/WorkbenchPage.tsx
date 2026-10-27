@@ -4,13 +4,10 @@ import type { LucideIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  AlarmClock,
   CheckCheck,
-  ArrowRight,
   CircleDot,
   Inbox,
   Plus,
-  SquareArrowOutUpRight,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
 import { usePhoneDropStore } from "../phone-drop-store";
@@ -19,7 +16,6 @@ import { bulkReadableItems } from "../inbox";
 import { pathWithin, samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 import { useClientOpen } from "../components/ClientOpenDialog";
-import { absTime, relTime } from "../rel-time";
 import { alertDialog } from "../components/ConfirmDialog";
 import { AGENTS } from "../types";
 import type {
@@ -63,7 +59,6 @@ import {
 import {
   EmptyState,
   LoadingRows,
-  MenuSelect,
   PageFrame,
   fieldClass,
   ghostActionClass,
@@ -73,10 +68,17 @@ import {
   secondaryActionClass,
 } from "../components/PageFrame";
 import { dismissToast, toast } from "../toast";
-import RunCaret from "../components/RunCaret";
-import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
+import { caretOfAttention, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
-import { workbenchScheduleRows } from "../schedule-tasks";
+import WorkbenchProjectCard from "../components/WorkbenchProjectCard";
+import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
+import {
+  buildProjectCard,
+  filterCards,
+  type CardFilter,
+  type CardProjectInput,
+  type CardRunInput,
+} from "../workbench-cards";
 import {
   approvalChoices,
   approvalTitle,
@@ -98,9 +100,6 @@ import {
 import { pollEvery } from "../polling";
 
 const iconClass = "shrink-0 text-l4";
-/** 工作方式标签：描边不铺底（铺 bg-strip 在 well 上看不出边界，像一段错位的字） */
-const modeChipClass =
-  "inline-block shrink-0 rounded-full border border-hairline px-1.5 py-px text-micro leading-tight text-l3";
 
 /** 不参与工作台「需要你」判定的自动登记任务类（见 nowSeeds 里的过滤注释） */
 const WORKBENCH_AUTO_TASK_KINDS = new Set(["pipeline_step", "coding_lane", "watch"]);
@@ -175,6 +174,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setTaskReviewReq = useAppStore((s) => s.setTaskReviewReq);
   const setFocusTabReq = useAppStore((s) => s.setFocusTabReq);
   const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
+  const setWorkspaceReviewRequest = useAppStore((s) => s.setWorkspaceReviewRequest);
 
   function openRun(runId: string, tabId?: string) {
     if (tabId && terminalRunInputs.some((run) => run.tabId === tabId)) {
@@ -729,7 +729,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     clientOpen.projectClients.length === 1
       ? `在 ${clientOpen.projectClients[0].display}打开`
       : "在客户端打开";
-  const clientJumpTitle = `${clientJumpLabel}这个目录（只打开项目，不会定位到某条对话）`;
 
   /** 「继续」统一入口：主卡 / 紧凑行 / 未添加目录都先按 runId 找回原 Run，找不到再回落项目页或真进入。 */
   async function openContinueTarget(target: WorkbenchContinue) {
@@ -771,8 +770,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   /** 「正在进行」列表：有活的项目逐行列；都没活时列最近在做的那一个（原大卡的回落口径，不再单独画大卡） */
   const nowRows = useMemo(() => (nowItems.length ? nowItems : hero ? [hero] : []), [nowItems, hero]);
 
-  // 定时任务摘要：在跑 / 上次失败 / 24 小时内要跑的；暂停与待评审已在「等你拍板」里，不重复
-  const scheduleRows = workbenchScheduleRows(schedules, projects, new Date(), IS_WINDOWS);
   function openProjectSchedules(root: string) {
     setSelectProjectReq(root);
     setProjectFocusReq({ projectRoot: root, focus: "schedule", token: Date.now() });
@@ -1001,16 +998,164 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [visible]);
 
+  // ===== 项目卡与任务面板（workbench-cards.ts，第二批）=====
+  const cardRuns = useMemo(
+    (): CardRunInput[] =>
+      terminalRunInputs
+        .filter((r) => isWorkbenchActiveRun(r))
+        .map((r) => ({
+          tabId: r.tabId,
+          runId: r.runId,
+          taskId: r.taskId,
+          agentId: r.agentId,
+          cwd: r.cwd,
+          title: r.title,
+          running: r.running,
+          attention: r.attention,
+        })),
+    [terminalRunInputs],
+  );
+  const queueKeySig = queueRows.map((r) => r.key).join("\n");
+  const cards = useMemo(() => {
+    const queueKeys = new Set(queueKeySig ? queueKeySig.split("\n") : []);
+    const inputs: CardProjectInput[] = [
+      ...projects.map((p) => ({ path: p.path, name: p.name, registered: true, workMode: normalizeWorkMode(p.workMode) })),
+      // 没添加的目录只在「正在进行」里有活时出卡（只有对话行）
+      ...nowRows
+        .filter((row) => !row.registered)
+        .map((row) => ({ path: row.path, name: row.name, registered: false, workMode: null })),
+    ];
+    return inputs.map((project) => {
+      const cfg = Object.entries(researchCfg).find(([path]) => samePath(path, project.path, IS_WINDOWS))?.[1];
+      const coding = Object.entries(codingByPath).find(([path]) => samePath(path, project.path, IS_WINDOWS))?.[1];
+      return buildProjectCard({
+        project,
+        workspaces,
+        steps: cfg?.steps ?? null,
+        pipelineOptOut: cfg?.pipelineOptOut ?? false,
+        coding: coding ?? null,
+        goals: userTasks,
+        schedules,
+        runs: cardRuns,
+        queueKeys,
+        isWindows: IS_WINDOWS,
+      });
+    });
+  }, [projects, nowRows, researchCfg, codingByPath, workspaces, userTasks, schedules, cardRuns, queueKeySig]);
+  // 有活的 = 「正在进行」原来那几个 ∪ 卡上有任务在跑 / 等你 / 出错的（定时任务失败、等验收的项目也该看见）
+  const activeCardPaths = useMemo(() => {
+    const out = nowRows.map((row) => row.path);
+    for (const card of cards) {
+      if (out.some((p) => samePath(p, card.path, IS_WINDOWS))) continue;
+      if (card.tasks.some((t) => t.queued || t.tone === "live" || t.tone === "wait" || t.tone === "fail")) out.push(card.path);
+    }
+    return out;
+  }, [nowRows, cards]);
+  const [cardFilter, setCardFilter] = useState<CardFilter>("active");
+  const shownCards = filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS);
+  const cardFilterOptions: { id: CardFilter; label: string }[] = [
+    { id: "active", label: `有活的 ${activeCardPaths.length}` },
+    { id: "all", label: "全部" },
+    ...(["research", "coding", "office"] as const)
+      .filter((mode) => cards.some((c) => c.workMode === mode))
+      .map((mode) => ({ id: mode, label: WORK_MODE_LABEL[mode] })),
+  ];
+
+  const [openTask, setOpenTask] = useState<{ path: string; taskId: string } | null>(null);
+  const openCard = openTask ? (cards.find((c) => samePath(c.path, openTask.path, IS_WINDOWS)) ?? null) : null;
+  const openCardTask = openCard?.tasks.find((t) => t.id === openTask?.taskId) ?? null;
+  const panelData = useMemo(() => {
+    const ref = openCardTask?.ref;
+    if (!openCard || !ref) return null;
+    const cfg = Object.entries(researchCfg).find(([path]) => samePath(path, openCard.path, IS_WINDOWS))?.[1];
+    const coding = Object.entries(codingByPath).find(([path]) => samePath(path, openCard.path, IS_WINDOWS))?.[1];
+    const step = ref.kind === "step" ? (cfg?.steps[ref.stepIndex] ?? null) : null;
+    const goal = ref.kind === "goal" ? (userTasks.find((t) => t.id === ref.taskId) ?? null) : null;
+    const branch = ref.kind === "branch" ? (coding?.worktrees.find((w) => samePath(w.path, ref.path, IS_WINDOWS)) ?? null) : null;
+    const schedule = ref.kind === "schedule" ? (schedules.find((x) => x.id === ref.scheduleId) ?? null) : null;
+    const root =
+      ref.kind === "step" ? ref.worktreePath : ref.kind === "branch" ? ref.path : null;
+    const pastRuns = allRuns.filter((run) => {
+      if (run.internal) return false;
+      if (ref.kind === "goal") return run.taskId === ref.taskId;
+      if (ref.kind === "chat") return !!openCardTask?.live?.runId && run.id === openCardTask.live.runId;
+      return !!root && pathWithin(run.isolationPath, root, IS_WINDOWS);
+    });
+    return { step, goal, branch, schedule, pastRuns, baseBranch: coding?.baseBranch ?? null };
+  }, [openCard, openCardTask, researchCfg, codingByPath, userTasks, schedules, allRuns]);
+  function closeTaskPanel() {
+    setOpenTask(null);
+  }
+  const panelActions: TaskPanelAction[] = [];
+  if (openCard && openCardTask && panelData) {
+    const ref = openCardTask.ref;
+    const live = openCardTask.live;
+    const act = (label: string, run: () => void) =>
+      panelActions.push({
+        label,
+        onClick: () => {
+          closeTaskPanel();
+          run();
+        },
+      });
+    if (live) {
+      act("回到对话", () => {
+        if (live.runId) openRun(live.runId, live.tabId);
+        else {
+          setFocusTabReq(live.tabId);
+          setPage("terminal");
+        }
+      });
+    } else if (ref.kind !== "schedule" && panelData.pastRuns[0]) {
+      const last = panelData.pastRuns[0];
+      act("接着上次的对话", () => openRun(last.id));
+    }
+    if (ref.kind === "goal" && ref.status === "pending_review") {
+      act("去验收", () => {
+        setSelectProjectReq(openCard.path);
+        setTaskReviewReq({ projectRoot: openCard.path, taskId: ref.taskId });
+        setPage("workspaces");
+      });
+    }
+    const reviewPath = ref.kind === "step" ? ref.worktreePath : ref.kind === "branch" ? ref.path : null;
+    if (reviewPath) {
+      act("看改动", () => {
+        setWorkspaceReviewRequest({
+          worktreePath: reviewPath,
+          runId: panelData.pastRuns[0]?.id ?? null,
+          requestId: crypto.randomUUID(),
+        });
+        setPage("terminal");
+      });
+    }
+    if (ref.kind === "schedule") act("去定时任务页", () => openProjectSchedules(openCard.path));
+    if (openCard.registered) {
+      act(ref.kind === "goal" && ref.status !== "pending_review" && !live ? "去项目页开始" : "在项目页打开", () => {
+        setSelectProjectReq(openCard.path);
+        setPage("workspaces");
+      });
+    }
+  }
+  const taskPanel = (
+    <WorkbenchTaskPanel
+      open={!!openCardTask}
+      onClose={closeTaskPanel}
+      card={openCard}
+      task={openCardTask}
+      step={panelData?.step ?? null}
+      goal={panelData?.goal ?? null}
+      branch={panelData?.branch ?? null}
+      baseBranch={panelData?.baseBranch ?? null}
+      schedule={panelData?.schedule ?? null}
+      pastRuns={panelData?.pastRuns ?? []}
+      agentLabel={agentLabel}
+      live={null}
+      actions={panelActions}
+    />
+  );
+
   const runningBadge = nowItems.reduce((n, item) => n + item.runningCount, 0)
     || (hero?.runningCount ?? 0);
-  /** 运行状态光标（run-caret.ts，2026-10-24 取代绿点 / 黄点）：等确认 / 在干活照注意力，开着闲着淡灰，没开着不画 */
-  function itemCaret(item: {
-    attention: "confirm" | "working" | "done" | null;
-    runningCount: number;
-  }): RunCaretState | null {
-    if (item.attention === "confirm" || item.attention === "working") return item.attention;
-    return item.runningCount > 0 ? "idle" : null;
-  }
   /** 这个标签上跑完了没看（chat-unread.ts）：行尾光标换蓝色 */
   function runUnread(tabId: string): boolean {
     const run = terminalRunInputs.find((x) => x.tabId === tabId);
@@ -1208,124 +1353,111 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 {runningBadge} 个运行中
               </span>
             )}
+            {cardFilterOptions.length > 2 && (
+              <div className="ml-auto flex items-center gap-1" role="group" aria-label="筛选项目">
+                {cardFilterOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    aria-pressed={cardFilter === opt.id}
+                    className={`rounded-full px-2 py-0.5 ${
+                      cardFilter === opt.id ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+                    }`}
+                    onClick={() => setCardFilter(opt.id)}
+                  >
+                    <span className="text-micro">{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {nowRows.length > 0 ? (
-            <div className="divide-y divide-hairline overflow-hidden rounded-lg ccode-well">
-            {nowRows.map((item) => {
-              const said = lastSaidFor(item.path);
-              const lastAt = lastTargetFor(item.path)?.updatedAt ?? null;
-              return (
-              <div key={item.path}>
-              <div className="group flex min-h-10 w-full items-center gap-3 px-4 py-2 hover:bg-hover">
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                  title={said ? `继续：${item.name}\n上次停在：${said.full}` : `继续：${item.name}`}
-                  onClick={() =>
-                    void openContinueTarget(continueWorkbenchTarget(item))
-                  }
-                >
-                  <span className="min-w-0 flex-1 truncate text-sm text-l2">
-                    {item.name}
-                    {item.workMode ? (
-                      <span className={`ml-2 align-[1px] ${modeChipClass}`}>
-                        {WORK_MODE_LABEL[item.workMode]}
-                      </span>
-                    ) : null}
-                    {item.subtitle ? (
-                      <span className="ml-2 text-l3">{item.subtitle}</span>
-                    ) : null}
-                  </span>
-                  {item.runningCount > 1 ? (
-                    // 运行计数不上语义色：行尾光标已表达「在跑」，文字保持中性
-                    <span className="shrink-0 text-micro text-l3">
-                      {item.runningCount} 个运行中
-                    </span>
-                  ) : item.runs[0]?.taskLabel ? (
-                    <span className="max-w-[9rem] shrink-0 truncate text-micro text-l3">
-                      {item.runs[0].taskLabel}
-                    </span>
-                  ) : item.runningCount > 0 ? (
-                    <span className="shrink-0 text-micro text-l3">
-                      运行中
-                    </span>
-                  ) : null}
-                  {/* 运行状态光标跟在状态字后面、竖着居中（同侧栏口径，没事不画）。不贴在课题名后面：
-                      夹在名字和「科研」之间读成破折号（2026-10-24 光标改居中时看出来的） */}
-                  {itemCaret(item) && <RunCaret state={itemCaret(item)!} decorative className="-ml-2 text-micro" />}
-                  {/* 多久没动：悬停时让位给「继续 →」 */}
-                  {lastAt && (
-                    <span
-                      className="shrink-0 text-micro text-l3 group-hover:hidden group-focus-within:hidden"
-                      title={absTime(lastAt)}
-                    >
-                      {relTime(lastAt)}
-                    </span>
-                  )}
-                  {/* 整行可点即「继续」，悬停时行尾出「继续 →」（单个 › 读作「展开」，2026-10-25 用户） */}
-                  <span
-                    className="hidden shrink-0 items-center gap-1 text-micro text-l3 group-hover:flex group-focus-within:flex"
-                    aria-hidden="true"
-                  >
-                    继续
-                    <ArrowRight size={12} strokeWidth={1.8} />
-                  </span>
-                </button>
-                {showClientJump && (
-                  <button
-                    type="button"
-                    className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 group-hover:flex group-focus-within:flex"
-                    title={clientJumpTitle}
-                    aria-label={clientJumpLabel}
-                    onClick={() => clientOpen.openProject(item.path)}
-                  >
-                    <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                )}
+            shownCards.length > 0 ? (
+              <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(22rem,1fr))]">
+                {shownCards.map((card) => {
+                  const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
+                  const said = lastSaidFor(card.path);
+                  const canGoal = goalTargets.some((t) => samePath(t.path, card.path, IS_WINDOWS));
+                  return (
+                    <WorkbenchProjectCard
+                      key={card.path}
+                      card={card}
+                      openTaskId={openTask && samePath(openTask.path, card.path, IS_WINDOWS) ? openTask.taskId : null}
+                      onOpenTask={(task) => setOpenTask({ path: card.path, taskId: task.id })}
+                      onOpenProject={
+                        card.registered
+                          ? () => {
+                              setSelectProjectReq(card.path);
+                              setPage("workspaces");
+                            }
+                          : null
+                      }
+                      onContinue={() =>
+                        void openContinueTarget(
+                          item ? continueWorkbenchTarget(item) : { kind: "project", path: card.path },
+                        )
+                      }
+                      continueTip={said ? `回到上次停下的地方\n上次停在：${said.full}` : "回到上次停下的地方"}
+                      lastActive={lastTargetFor(card.path)?.updatedAt ?? null}
+                      caretFor={(live) => withUnread(caretOfAttention(live.attention), runUnread(live.tabId)) ?? "idle"}
+                      clientJump={
+                        showClientJump
+                          ? { label: clientJumpLabel, onClick: () => clientOpen.openProject(card.path) }
+                          : null
+                      }
+                      footer={
+                        canGoal && goalOpen && goalTarget && samePath(goalTarget.path, card.path, IS_WINDOWS) ? (
+                          // 想到就记：只记下不开工，落到该项目的目标列表；开工、选 Agent 仍在项目页由人来
+                          <form
+                            className="flex w-full items-center gap-1.5 py-0.5"
+                            onSubmit={(event) => void captureGoal(event)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape" && !goalBusy) setGoalOpen(false);
+                            }}
+                          >
+                            <input
+                              className={`${fieldClass} h-7 min-w-0 flex-1 py-0`}
+                              value={goalDraft}
+                              onChange={(event) => setGoalDraft(event.target.value)}
+                              placeholder={
+                                goalTarget.goalKind === "office_doc"
+                                  ? "要完成什么，例如：按公司模板写本周周报"
+                                  : "要完成什么，例如：根据项目里的文献写一篇综述"
+                              }
+                              aria-label={`给「${card.name}」记下一个目标`}
+                              maxLength={500}
+                              autoFocus
+                            />
+                            <button type="button" className={ghostActionClass} disabled={goalBusy} onClick={() => setGoalOpen(false)}>
+                              取消
+                            </button>
+                            <button type="submit" className={secondaryActionClass} disabled={goalBusy || !goalDraft.trim()}>
+                              {goalBusy ? "记下…" : "记下"}
+                            </button>
+                          </form>
+                        ) : canGoal ? (
+                          <button
+                            type="button"
+                            className={`${ghostActionClass} h-7 gap-1.5 px-2`}
+                            title="只记下不开工：记进这个项目的目标列表，之后在项目页选 Agent 再开始"
+                            onClick={() => {
+                              setGoalProject(card.path);
+                              setGoalOpen(true);
+                            }}
+                          >
+                            <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
+                            <span className="text-micro">记下一个目标</span>
+                          </button>
+                        ) : null
+                      }
+                    />
+                  );
+                })}
               </div>
-              {item.runs.length > 1 && (
-                // 同一项目上的多次运行逐条列出（agent-workbench.md §3.1）：点哪条回哪条
-                <ul className="space-y-0.5 px-3 pb-2">
-                  {item.runs.map((r) => (
-                    <li key={r.runId ?? r.tabId}>
-                      <button
-                        type="button"
-                        className="flex h-7 w-full items-center gap-2 rounded-md px-1 text-left text-sm text-l3 hover:bg-hover hover:text-l2"
-                        onClick={() => {
-                          if (r.runId) openRun(r.runId, r.tabId);
-                          else {
-                            setFocusTabReq(r.tabId);
-                            setPage("terminal");
-                          }
-                        }}
-                      >
-                        <span className="min-w-0 flex-1 truncate">
-                          {r.taskLabel}
-                          {r.agentId ? (
-                            <span className="ml-1.5 text-l3">
-                              {agentLabel(r.agentId)}
-                            </span>
-                          ) : null}
-                        </span>
-                        {r.attention === "confirm" ? (
-                          <span className="shrink-0 text-micro text-warn-text">
-                            待确认
-                          </span>
-                        ) : null}
-                        {/* 已经停了的（live === false）不画；还开着的按注意力 */}
-                        {r.live !== false && (
-                          <RunCaret state={withUnread(caretOfAttention(r.attention), runUnread(r.tabId)) ?? "idle"} className="mr-1" />
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              </div>
-              );
-            })}
-            </div>
+            ) : (
+              <p className="px-1 py-3 text-sm text-l3">这一类没有项目。</p>
+            )
           ) : !projectsLoaded ? (
             <LoadingRows />
           ) : (
@@ -1344,116 +1476,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
               }
             />
           )}
-          {goalTarget &&
-            (goalOpen ? (
-              // 想到就记：只记下不开工，落到该项目的目标列表；开工、选 Agent 仍在项目页由人来
-              <form
-                className="mt-3 flex flex-wrap items-center gap-2"
-                onSubmit={(event) => void captureGoal(event)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && !goalBusy) setGoalOpen(false);
-                }}
-              >
-                <input
-                  className={`${fieldClass} h-8 min-w-[12rem] flex-1 py-0`}
-                  value={goalDraft}
-                  onChange={(event) => setGoalDraft(event.target.value)}
-                  placeholder={
-                    goalTarget.goalKind === "office_doc"
-                      ? "要完成什么，例如：按公司模板写本周周报"
-                      : "要完成什么，例如：根据项目里的文献写一篇综述"
-                  }
-                  aria-label="记下一个目标"
-                  maxLength={500}
-                  autoFocus
-                />
-                {goalTargets.length > 1 ? (
-                  <div className="w-40 shrink-0">
-                    <MenuSelect
-                      value={goalTarget.path}
-                      onChange={setGoalProject}
-                      options={goalTargets.map((t) => ({ value: t.path, label: t.name }))}
-                      aria-label="记到哪个项目"
-                    />
-                  </div>
-                ) : (
-                  <span className="max-w-[11rem] shrink-0 truncate text-micro text-l3" title={goalTarget.path}>
-                    记到「{goalTarget.name}」
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className={ghostActionClass}
-                  disabled={goalBusy}
-                  onClick={() => setGoalOpen(false)}
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className={secondaryActionClass}
-                  disabled={goalBusy || !goalDraft.trim()}
-                >
-                  {goalBusy ? "记下…" : "记下"}
-                </button>
-              </form>
-            ) : (
-              <button
-                type="button"
-                className={`${ghostActionClass} mt-2 gap-1.5`}
-                title="只记下不开工：记进项目的目标列表，之后在项目页选 Agent 再开始"
-                onClick={() => setGoalOpen(true)}
-              >
-                <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
-                记下一个目标
-              </button>
-            ))}
       </section>
 
-        {scheduleRows.length > 0 && (
-        <div className="mt-7 min-w-0">
-        <section className="min-w-0">
-          <SectionHeading icon={AlarmClock} title="定时任务" />
-          <div className="space-y-0.5">
-            {scheduleRows.map((row) => (
-              <button
-                key={row.scheduleId}
-                type="button"
-                className="group flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-hover"
-                title={
-                  row.kind === "failing"
-                    ? `${row.remaining != null ? `再失败 ${row.remaining} 次会自动暂停。` : ""}点进去看历史和过程`
-                    : "去这个项目的定时任务页"
-                }
-                onClick={() => openProjectSchedules(row.projectRoot)}
-              >
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${
-                    row.kind === "running"
-                      ? "bg-ok-text"
-                      : row.kind === "failing"
-                        ? "bg-err-text"
-                        : "bg-transparent"
-                  }`}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm text-l2">{row.name}</span>
-                <span className="max-w-[8rem] shrink-0 truncate text-micro text-l3">
-                  {row.projectName}
-                </span>
-                <span
-                  className={`max-w-[12rem] shrink-0 truncate text-micro ${
-                    row.kind === "failing" ? "text-err-text" : "text-l3"
-                  }`}
-                >
-                  {row.detail}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-        </div>
-        )}
 
+      {taskPanel}
       {clientOpen.dialog}
     </PageFrame>
   );

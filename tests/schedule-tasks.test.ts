@@ -13,7 +13,6 @@ import {
   skipLine,
   slotLabel,
   triggerTag,
-  workbenchScheduleRows,
   reconcileRunningSchedules,
   runDoneNotifyBody,
   runDoneNotifyTitle,
@@ -296,51 +295,5 @@ test("lastRunBrief / lastRunAction：上次结果一句话与入口", () => {
   assert.equal(lastRunAction({ ...base, status: "ok", isolationPath: "/iso", newEntries: 0, agent: "codex", sessionId: "s" }), "process");
   assert.equal(lastRunAction({ ...base, status: "ok", isolationPath: "/iso", adopted: true }), null);
   assert.equal(lastRunAction({ ...base, status: "error", agent: "codex", sessionId: "s" }), "process");
-});
-
-test("workbenchScheduleRows：只放在跑 / 上次失败 / 24 小时内要跑的；暂停、成功、停用、已删项目不上", () => {
-  const now = new Date(2026, 9, 23, 10, 0);
-  const projects = [
-    { path: "/repo/a", name: "课题 A" },
-    { path: "/repo/b", name: "项目 B" },
-  ];
-  const mk = (id: string, patch: Partial<ScheduleDto>): ScheduleDto => ({
-    ...schedule("/repo/a", id),
-    name: `任务${id}`,
-    ...patch,
-  });
-  const rows = workbenchScheduleRows(
-    [
-      mk("run", { runningRunId: "r1" }),
-      mk("fail", {
-        projectRoot: "/repo/b",
-        consecutiveFailures: 1,
-        history: [
-          { at: "t2", status: "skipped", summary: "", skipReason: "unreviewed" },
-          { at: "t1", status: "error", summary: "\n钉住的连接不存在\n细节" },
-        ],
-      }),
-      mk("late", { nextRunAt: "2026-10-23T18:00:00" }),
-      mk("soon", { nextRunAt: "2026-10-23T14:00:00" }),
-      mk("far", { nextRunAt: "2026-10-25T09:00:00" }),
-      mk("paused", { enabled: false, pausedReason: "连续 3 次没跑成", nextRunAt: null }),
-      mk("ok", { nextRunAt: null, history: [{ at: "t", status: "ok", summary: "3 篇" }] }),
-      mk("gone", { projectRoot: "/repo/deleted", runningRunId: "r2" }),
-    ],
-    projects,
-    now,
-  );
-  assert.deepEqual(
-    rows.map((r) => [r.kind, r.scheduleId, r.detail]),
-    [
-      ["running", "run", "正在跑"],
-      ["failing", "fail", "上次失败：钉住的连接不存在"],
-      ["upcoming", "soon", "今天 14:00"],
-      ["upcoming", "late", "今天 18:00"],
-    ],
-  );
-  assert.equal(rows[1].remaining, 2);
-  assert.equal(rows[1].projectName, "项目 B");
-  assert.deepEqual(workbenchScheduleRows([], projects, now), []);
 });
 
