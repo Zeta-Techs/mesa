@@ -1858,7 +1858,8 @@ function App() {
               >
                 {/* 快速入口（2026-10-27 用户拍板：去掉 Mesa 品牌行，两个「新建」放最上面、分量一样，再是工作台 / 对话管理；
                     「新对话」原名「快速开聊」，2026-10-18 改） */}
-                {/* 行距照 Claude 客户端（2026-10-28 用户：太挤）：红绿灯到第一行留 pt-3，行 h-9 + 3px，图标与字隔 mr-3 */}
+                {/* 行距照 Claude 客户端（2026-10-28 用户：太挤）：红绿灯到第一行留 pt-3，行 h-9 + 3px，图标与字隔 mr-3。
+                    字色（2026-10-28 用户）：入口一律 l1，选中只靠底色 + 强调色图标区分，不再靠变亮 */}
                 <div className="shrink-0 px-1.5 pt-3">
                   <RailTooltip label="新对话" collapsed={collapsed}>
                     <button
@@ -1866,7 +1867,7 @@ function App() {
                       onClick={() => void openQuickChat()}
                       aria-label="新对话"
                       title={`新对话：直接开一段空白对话，默认在随手聊里，可在输入框下换项目${keyHint("new-chat")}`}
-                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l2 ${
+                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm text-l1 transition-colors hover:bg-hover ${
                         collapsed ? "justify-center" : "px-3"
                       }`}
                     >
@@ -1892,7 +1893,7 @@ function App() {
                       title={`新项目：新建一个项目文件夹，或把已有文件夹登记成项目${keyHint("new-project")}`}
                       className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm transition-colors ${
                         collapsed ? "justify-center" : "px-3"
-                      } ${newProjectMenu ? "bg-hover text-l2" : "text-l3 hover:bg-hover hover:text-l2"}`}
+                      } ${newProjectMenu ? "bg-hover text-l1" : "text-l1 hover:bg-hover"}`}
                     >
                       <NAV_ICONS.newProject
                         size={16}
@@ -1915,7 +1916,7 @@ function App() {
                       } ${
                         page === "workbench"
                           ? "ccode-rail-active bg-rail-sel text-l1"
-                          : "text-l3 hover:bg-hover hover:text-l2"
+                          : "text-l1 hover:bg-hover"
                       }`}
                     >
                       <NAV_ICONS.workbench
@@ -1943,7 +1944,7 @@ function App() {
                       } ${
                         page === "sessions"
                           ? "ccode-rail-active bg-rail-sel text-l1"
-                          : "text-l3 hover:bg-hover hover:text-l2"
+                          : "text-l1 hover:bg-hover"
                       }`}
                     >
                       {/* 图标同命令面板 / 灵动岛的「对话管理」（NAV_ICONS.sessions，2026-10-27 用户：统一，不再用放大镜） */}
@@ -1975,7 +1976,7 @@ function App() {
                         className={`relative mb-[3px] flex h-9 w-full items-center justify-center rounded-md transition-colors ${
                           page === "workspaces"
                             ? "ccode-rail-active bg-rail-sel text-l1"
-                            : "text-l3 hover:bg-hover hover:text-l2"
+                            : "text-l1 hover:bg-hover"
                         }`}
                       >
                         <NAV_ICONS.workspaces

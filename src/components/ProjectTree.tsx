@@ -120,7 +120,8 @@ const CHAT_OPEN_KEY = "ccode.projectTreeChats";
 const COLLAPSED_SECTIONS_KEY = "ccode.railCollapsedSections";
 type RailSection = "pinned" | "other";
 /** 侧栏里的分节标签（「项目」「置顶」「其他打开的」）：小一号、灰、字距拉开；项目是标签，置顶与其他打开的是折叠按钮（2026-10-24 侧栏三层） */
-const RAIL_SECTION_LABEL = "text-xs font-medium tracking-[0.08em] text-l3";
+// 分节标题（置顶 / 其他打开的 / 项目）：同对话 13px、加粗、l2（2026-10-28 用户：照 Claude 客户端，标题是骨架不是注脚）
+const RAIL_SECTION_LABEL = "ccode-rail-text font-medium text-l2";
 
 /** 对话行尾的运行状态光标的说明（run-caret.ts：干活 / 闲着 / 等你确认） */
 function dotTitle(dot: ChatDot): string | undefined {
@@ -1014,12 +1015,12 @@ export default function ProjectTree({
           aria-current={selected ? "true" : undefined}
           title={`${full}\n${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
-            selected || unread ? "text-l1" : "text-l2 group-hover/chat:text-l1"
+            "text-l1"
           }`}
         >
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 对话管理」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
-              字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
+              字色一律 l1（2026-10-28 用户照 Claude 客户端，推翻 10-24「标题不用全亮着」）：正看着的靠底色，未读靠行尾蓝色光标，不靠变亮 */}
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
           {isPicked && <Check size={13} strokeWidth={2} aria-hidden="true" data-pick-mark className="shrink-0 text-l2" />}
         </button>
@@ -1120,7 +1121,7 @@ export default function ProjectTree({
                 : `${r.label}${rowDot ? ` · ${dotTitle(rowDot)}` : ""}`
           }
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
-            selected || unread ? "text-l1" : "text-l2 group-hover/chat:text-l1"
+            "text-l1"
           }`}
         >
           {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />}
@@ -1603,14 +1604,9 @@ export default function ProjectTree({
             title={row.project ? row.repoPath : `${row.repoPath}\n这个文件夹还没添加到 Mesa`}
             aria-current={selected && active ? "page" : undefined}
             // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端；2026-10-27 用户：比 Claude 客户端看着糊）：13px 加粗、字色 l2，对话同字号 l2 常重，对话 13px 不缩进，靠图标与字重分层
+            // 2026-10-28：课题名与分节标题同一档 l2 加粗，正看着的课题亮到 l1；里面有未读不再变亮（收着时节头行尾的蓝色光标在报）
             className={`flex h-8 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
-              selected && active
-                ? "font-medium text-l1"
-                : selected
-                  ? "font-medium text-l2 group-hover:text-l1"
-                  : unreadInside
-                    ? "text-l1"
-                    : "text-l2 group-hover:text-l1"
+              selected && active ? "text-l1" : "text-l2 group-hover:text-l1"
             }`}
           >
             <span className="ccode-rail-text min-w-0 truncate text-left font-medium">{row.name}</span>
@@ -1664,7 +1660,7 @@ export default function ProjectTree({
             data-rail-folder={SCRATCH_FOLDER_KEY}
             data-rail-open={open ? "1" : "0"}
             title="不挂在项目下的对话（新对话默认开在这里）"
-            className={`flex h-8 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l2 group-hover:text-l1"}`}
+            className="flex h-8 min-w-0 items-center rounded-md pr-0.5 text-l2 group-hover:text-l1"
           >
             <span className="ccode-rail-text min-w-0 truncate text-left font-medium">随手聊</span>
           </button>
@@ -1870,9 +1866,9 @@ export default function ProjectTree({
         aria-controls={`${sectionId}-${key}`}
         aria-description={`${count} 段${!open && dot ? `，${dotTitle(dot)}` : ""}`}
         onClick={() => toggleSection(key)}
-        className="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-l3 hover:bg-hover hover:text-l1"
+        className="group/sec flex h-8 w-full items-center gap-1.5 rounded-md px-2 hover:bg-hover"
       >
-        <Chevron size={12} aria-hidden="true" className="shrink-0" />
+        <Chevron size={12} aria-hidden="true" className="shrink-0 text-l3 group-hover/sec:text-l2" />
         <span className={RAIL_SECTION_LABEL}>{label}</span>
         {!open && dot && <span className="ml-auto flex h-6 w-6 items-center justify-center"><RunCaret state={dot} /></span>}
       </button>

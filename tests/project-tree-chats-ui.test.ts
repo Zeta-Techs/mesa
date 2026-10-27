@@ -527,19 +527,25 @@ test("对话 ⋯ 置顶：挪到最上面「置顶」一节、原课题下不再
   }
 });
 
-test("跑完没看的那段标题亮到 l1、行尾蓝光标、悬停写明；收着的课题（随手聊）名字也亮", async () => {
+test("跑完没看的那段只靠行尾蓝光标报、悬停写明；字色不再变亮，收着的课题（随手聊）节头也挂蓝光标（2026-10-28）", async () => {
   const view = await renderTree({ unreadChats: ["claude-code\nr2", "claude-code\nsc1"] });
   try {
     const row = view.button("镁硫电池第2篇精读");
-    assert.match(row.className, /\btext-l1\b/);
     assert.match(row.title, /做完了，还没看/);
     assert.ok(
       row.parentElement?.querySelector('[data-run-slot] .ccode-run-caret[data-state="unread"]'),
       "行尾状态格是「做完了，还没看」的蓝光标",
     );
     assert.equal(view.button("镁硫电池第1篇精读").parentElement?.querySelector(".ccode-run-caret"), null);
-    assert.doesNotMatch(view.button("镁硫电池第1篇精读").className, /(^|\s)text-l1\b/);
-    assert.match(view.button("随手聊").className, /\btext-l1\b/, "随手聊收着，里面那段没看，名字亮");
+    // 2026-10-28 用户照 Claude 客户端：对话标题一律 l1，未读不靠变亮
+    assert.match(row.className, /\btext-l1\b/);
+    assert.match(view.button("镁硫电池第1篇精读").className, /\btext-l1\b/);
+    const scratch = view.button("随手聊");
+    assert.doesNotMatch(scratch.className, /(^|\s)text-l1\b/, "节头同分节标题 l2，不因未读变亮");
+    assert.ok(
+      scratch.parentElement?.querySelector('.ccode-run-caret[data-state="unread"]'),
+      "随手聊收着、里面那段没看：节头行尾挂蓝光标",
+    );
   } finally {
     await view.close();
   }

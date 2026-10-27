@@ -758,7 +758,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
   coach-tips.ts              # 一次性提醒气泡的登记与规矩（2026-10-27）：各条出过记 localStorage、一次打开 Mesa 最多主动出一条（followUp 不占）；
                              # 该不该出的计数纯函数：noteSingleAct（多选 B）、noteChatOpen（来回点两段 → ⌃Tab）、noteRepeat（鼠标关对话 → ⌘W、>_ 来回切 → 聊天 / 终端切换键）（tests/coach-tips.test.ts）
   chat-unread.ts             # 跑完了没看的对话（2026-10-24）：注意力 working → done 那一刻没在看就记，看到即消；会话键优先、标签键认出会话后挪
-                             # （nextUnread；App 维护 store.unreadChats，ProjectTree 把那一行标题亮到 l1；tests/chat-unread.test.ts）
+                             # （nextUnread；App 维护 store.unreadChats，ProjectTree 在那一行行尾挂蓝色光标（2026-10-28 起标题不再变亮）；tests/chat-unread.test.ts）
   rail-width.ts              # 应用侧栏宽度（2026-10-24）：14–26rem、默认 18rem、窗口小时上限收到窗宽 40%，localStorage 记偏好（tests/rail-width.test.ts）
   start-page.ts              # 「启动时进入」四种去处（2026-10-24）：工作台 / 上次的对话 / 上次的项目 / 新对话，旧存值当工作台；与 settings.rs KNOWN_START_PAGES 同步；上次的项目 = 最后看的那段对话所在的项目（projectOfCwd 取最深的项目根），App 在运行页正看着时写 localStorage ccode.lastProject（tests/start-page.test.ts）
   run-layout.ts              # 运行页两块宽度（2026-10-24，文件树并进右栏后由三块变两块）：对话 ≥ 360、右栏默认 460 / ≥ 360，偏好与实际分开，不够时只压右栏
