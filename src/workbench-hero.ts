@@ -729,12 +729,6 @@ export function firstOpenStepName(
   return steps[steps.length - 1]!.name;
 }
 
-/** 区块标题：有活进程才叫「正在进行」，可恢复但不在跑叫「最近在做」。 */
-export function workbenchNowSectionTitle(runningCount: number): "正在进行" | "最近在做" {
-  // 没在跑时不叫「继续工作」：主卡按钮就是「继续工作」，标题再说一遍是同一事实说两次（2026-10-17）
-  return runningCount > 0 ? "正在进行" : "最近在做";
-}
-
 /** 有实质标题才返回；未命名 / 空标题不列。与项目侧栏同一套清洗。 */
 export function namedSessionTitle(session: {
   customTitle?: string | null;

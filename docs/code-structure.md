@@ -421,7 +421,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   workbench-cards.ts         # 工作台项目分组数据（2026-10-27 第二批）：buildProjectCard 项目头几个数 + 科研进度条 + 任务行
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
-                             # cardIsActive（有活的：此刻有事，或手上在做且 7 天内动过；只落后基准不算）、filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
+                             # cardIsActive（「进行中」筛选：此刻有事，或手上在做且 7 天内动过；只落后基准不算）、filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
                              # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）；
                              # 任务行 touchedAt（最后一次动它）与 current（流程当前步）；scheduleCardTask / scheduleOverview / scheduleTimeline / scheduleTimelineGroups
                              # 定时任务总览（项目分组里不再列定时）；orderLikeSidebar 项目先后跟侧栏置顶与拖动顺序（tests/workbench-cards.test.ts）

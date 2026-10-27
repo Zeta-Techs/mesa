@@ -48,7 +48,6 @@ import {
   pickWorkbenchHero,
   pickWorkbenchNow,
   stepProgressLabel,
-  workbenchNowSectionTitle,
   workbenchNowSubtitle,
   workbenchRecentRows,
   type WorkbenchDestination,
@@ -1124,7 +1123,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     : shownCards.filter((card) => card.tasks.length === 0)
   ).filter((card) => card.registered);
   const cardFilterOptions: { id: CardFilter; label: string }[] = [
-    { id: "active", label: `有活的 ${activeCardPaths.length}` },
+    // 「进行中」：此刻有事或手上在做的项目（2026-10-27 用户：「有活的」看着随意）；区块标题因此改叫「项目」，不写两遍进行中
+    { id: "active", label: `进行中 ${activeCardPaths.length}` },
     { id: "all", label: "全部" },
     ...(["research", "coding", "office"] as const)
       .filter((mode) => cards.some((c) => c.workMode === mode))
@@ -1562,7 +1562,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
 
   return (
-    <PageFrame width="fluid" className="pb-12 pt-6">
+    <PageFrame width="wide" className="pb-12 pt-6">
       <div className="ccode-workbench min-w-0">
       {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
           标题只留给屏幕阅读器，顶上 pt-6 留白免得「最近在做」贴着窗口顶边。其他页的标题照旧。
@@ -1640,7 +1640,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             {/* 三块的标题同一个样子（同 SectionHeading）：原先这里是 micro 灰字，夹在两个 base 粗体标题之间 */}
             <CircleDot size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
             <h2 className="text-base font-semibold text-l1">
-              {workbenchNowSectionTitle(runningBadge)}
+              项目
             </h2>
             {runningBadge > 0 && (
               // 运行计数是数字不是状态：行尾光标已表达「在跑」，计数回落灰底芯片（同技能页计数口径）

@@ -3985,9 +3985,8 @@ select:focus-visible {
    Mac 上比全站大一档、Windows 上 sm 反而小一档；现在不覆写，名称 sm、状态与几个数 xs、时间 micro */
 .ccode-workbench {
   container: workbench / inline-size;
-  /* 限宽（2026-10-27 精修）：列表铺满宽窗时名称在最左、时间在最右，一行要横扫整屏才读完 */
-  max-width: 1040px;
-  margin-inline: auto;
+  /* 宽度由 PageFrame width="wide"（最宽 1440px、居中、两侧 px-6）给，与连接 / 技能 / MCP / 用量 / 设置同一档（2026-10-27 用户拍板）；
+     不再自己另限 1040px */
 }
 .ccode-workbench, .ccode-workbench-detail {
   font-size: var(--text-sm);

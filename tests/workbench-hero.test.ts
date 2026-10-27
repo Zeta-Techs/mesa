@@ -11,7 +11,6 @@ import {
   inboxItemProjectRoot,
   lastUserInstruction,
   latestProjectSession,
-  workbenchNowSectionTitle,
   namedSessionTitle,
   pickWorkbenchHero,
   pickWorkbenchNow,
@@ -295,12 +294,6 @@ test("firstOpenStepName 取第一个未合并步骤，全完成回末步", () =>
     ),
     "文献精读与笔记",
   );
-});
-
-test("区块标题：没在跑不算正在进行", () => {
-  assert.equal(workbenchNowSectionTitle(0), "最近在做");
-  assert.equal(workbenchNowSectionTitle(1), "正在进行");
-  assert.equal(workbenchNowSectionTitle(3), "正在进行");
 });
 
 test("namedSessionTitle 丢掉未命名对话", () => {
