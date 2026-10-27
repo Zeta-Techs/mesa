@@ -5050,6 +5050,14 @@ const TerminalView = memo(function TerminalView({
     // 旁路的审批卡撤了（聊天层答过 / 终端里答过）：终端菜单撤掉前那一下读屏不再认（scanMenuSoon）
     if (prev?.approval && !snap?.approval) channelApprovalGoneAtRef.current = Date.now();
     if (!snap) return;
+    if (snap.connection === "disconnected") {
+      setAttention(null);
+      liveReplyRef.current = null;
+      setLiveReply(null);
+      scanMenuSoon();
+      void fetchConversation(true);
+      return;
+    }
     const ctx = linkCtxRef.current;
     if (ctx && snap.agent === ctx.agentId) {
       const rel = channelRelink(
@@ -5183,7 +5191,7 @@ const TerminalView = memo(function TerminalView({
         return;
       }
       lockLink(hit.filePath, hit.sessionId, hit.title, hit.createdAt);
-    } else if (!channelRef.current?.sessionId) {
+    } else if (!channelRef.current?.sessionId || channelRef.current.connection === "disconnected") {
       // 没有旁路报「换了会话」的家（Gemini / Kimi / Grok 默认）：/clear 后 CLI 另开新文件，按认领规则接着跟
       const next = await invoke<SessionMetaDto | null>("claim_session_successor", { claimId: tabId }).catch(() => null);
       const cur = linkCtxRef.current;

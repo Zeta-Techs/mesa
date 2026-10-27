@@ -48,6 +48,7 @@ export interface ChatChannelSnapshot {
   tabId: string;
   agent: string;
   kind: ChannelKind;
+  connection?: "connecting" | "connected" | "disconnected" | null;
   sessionId: string | null;
   transcriptPath: string | null;
   sessionSeq: number;
@@ -67,12 +68,14 @@ export interface ChatChannelSnapshot {
 export type ChannelReplyDecision = "allow" | "allow_always" | "deny";
 
 export function channelTurnOpen(snap: ChatChannelSnapshot | null): boolean {
+  if (snap?.connection === "disconnected") return false;
   const s = snap?.turn?.status;
   return s === "running" || s === "awaiting_approval";
 }
 
 /** 旁路的回合状态 → 标签注意力（working / confirm / done）；旁路没说过就 null（交回原来的推断） */
 export function channelAttention(snap: ChatChannelSnapshot | null): "working" | "confirm" | "done" | null {
+  if (snap?.connection === "disconnected") return null;
   const t = snap?.turn;
   if (!t) return null;
   if (t.status === "running") return "working";
@@ -108,7 +111,7 @@ export function channelRelink(
   current: { filePath: string | null; hint: string | null; seenSeq: number; sessionId?: string | null },
   isWindows: boolean,
 ): { kind: "none" } | { kind: "lock" | "switch"; path: string; sessionId: string | null } | { kind: "hint"; sessionId: string } {
-  if (!snap) return { kind: "none" };
+  if (!snap || snap.connection === "disconnected") return { kind: "none" };
   if (snap.transcriptPath) {
     if (!current.filePath) return { kind: "lock", path: snap.transcriptPath, sessionId: snap.sessionId };
     if (snap.sessionSeq > current.seenSeq && !samePath(snap.transcriptPath, current.filePath, isWindows)) {
@@ -135,7 +138,7 @@ export function sessionSwitchNote(source: string | null): string {
 
 /** 旁路送来的这一轮实时文字（Qwen / OpenCode / Codex）；回合结束后不再当预览 */
 export function channelLiveLines(snap: ChatChannelSnapshot | null): string[] | null {
-  if (!snap?.liveText || !snap.turn) return null;
+  if (!snap?.liveText || !snap.turn || snap.connection === "disconnected") return null;
   const text = snap.liveText.trim();
   return text ? text.split("\n") : null;
 }
@@ -224,7 +227,7 @@ export function approvalTitle(a: ChannelApproval, agentLabel: string): string {
 
 /** 眼下这一问聊天层卡上就能答（Codex / Qwen / OpenCode 经官方通道）：不必再把终端拉出来 */
 export function channelCanAnswer(snap: ChatChannelSnapshot | null, agent: string | null): boolean {
-  return Boolean(snap?.approval && approvalChoices(snap.approval, agent).length);
+  return Boolean(snap?.connection !== "disconnected" && snap?.approval && approvalChoices(snap.approval, agent).length);
 }
 
 /**
@@ -257,4 +260,15 @@ export function approvalChoices(
     ...(always ? [{ decision: "allow_always" as const, label: a.alwaysLabel ?? always }] : []),
     { decision: "deny", label: "拒绝" },
   ];
+}
+
+
+/** 本次实际取数来源；能力表描述通常支持什么，不能代替连接状态。 */
+export function channelSourceNote(snap: ChatChannelSnapshot | null | undefined): string {
+  if (snap?.connection === "disconnected") return "实时通道已断开，当前按会话文件和终端画面更新；实时状态可能延迟，可切到终端继续。";
+  if (snap?.connection === "connecting") return "正在连接实时通道，当前按会话文件和终端画面更新。";
+  if (!snap) return "本次未接入实时通道，当前按会话文件和终端画面更新。";
+  if (snap.kind === "hooks") return "本次通过 CLI 事件与会话文件更新；确认选项仍以终端菜单为准。";
+  if (snap.kind === "program-status") return "本次通过终端程序状态与会话文件更新。";
+  return "本次已接入 CLI 实时通道。";
 }

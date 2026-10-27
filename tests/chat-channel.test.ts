@@ -5,6 +5,7 @@ import {
   approvalPreview,
   approvalTitle,
   channelAttention,
+  channelSourceNote,
   channelCanAnswer,
   channelLiveLines,
   channelRelink,
@@ -222,4 +223,19 @@ test("只报 ID 的旁路换会话：已绑定文件也跟随，重复快照不�
     assert.deepEqual(channelRelink(next, { ...current, seenSeq: 2 }, false), { kind: "none" });
     assert.deepEqual(channelRelink(next, { ...current, filePath: null, hint: "b" }, false), { kind: "none" });
   }
+});
+
+
+test("旁路断开：旧回合与审批失去优先权，来源说明按本次连接显示", () => {
+  const stale = snap({ connection: "disconnected", turn: turn("awaiting_approval"), liveText: "旧预览",
+    sessionId: "a", transcriptPath: "/old", approval: approval({ requestId: "r", replyable: true }) });
+  assert.equal(channelAttention(stale), null);
+  assert.equal(channelTurnOpen(stale), false);
+  assert.equal(channelLiveLines(stale), null);
+  assert.equal(channelCanAnswer(stale, "codex"), false);
+  assert.deepEqual(channelRelink(stale, { filePath: null, hint: null, seenSeq: 0 }, false), { kind: "none" });
+  assert.match(channelSourceNote(stale), /已断开/);
+  assert.match(channelSourceNote(null), /未接入/);
+  assert.match(channelSourceNote(snap({ connection: "connecting" })), /正在连接/);
+  assert.match(channelSourceNote(snap({ kind: "codex", connection: "connected" })), /已接入/);
 });

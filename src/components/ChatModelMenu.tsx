@@ -1,3 +1,4 @@
+import type { ChatChannelSnapshot } from "../chat-channel";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronLeft, ChevronRight, History, Info } from "lucide-react";
@@ -50,6 +51,8 @@ type LaunchProps = {
 } & SharedProps;
 
 type SharedProps = {
+  channel?: ChatChannelSnapshot | null;
+  live?: boolean;
   /** 输入框里有要模型看的图（plain = 普通图片附件；marks = 接着改的图上画了标注）：看不了图的模型在名单里标出来，
    *  当前模型看不了时经 onImageWarning 告诉输入框。接着改的图没标过不算（只交路径给出图工具，chat-image.ts composerImageKind） */
   imageKind?: "plain" | "marks" | null;
@@ -557,6 +560,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               <div ref={bodyRef} className={scrollBody}>
                 <ChatBetaNotes
                   agentId={agentId || null}
+                  channel={props.channel}
+                  live={props.live}
                   onOpenTerminal={
                     props.onOpenTerminal
                       ? () => {

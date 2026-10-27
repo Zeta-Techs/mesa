@@ -101,6 +101,8 @@ pub struct ChannelSnapshot {
     pub agent: String,
     /// hooks | qwen | opencode | codex | program-status
     pub kind: &'static str,
+    /// 网络旁路的连接状态；文件 / hooks 旁路为 None。断开后本次运行回退到会话文件与读屏。
+    pub connection: Option<&'static str>,
     pub session_id: Option<String>,
     /// 会话文件路径（Claude / CodeBuddy / Codex 直接告诉；Qwen / OpenCode 只给 id）
     pub transcript_path: Option<String>,
@@ -136,6 +138,8 @@ pub struct ActivityDto {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ChannelEvent {
+    Connected,
+    Disconnected,
     Session {
         id: String,
         path: Option<String>,
@@ -218,6 +222,7 @@ impl Tracker {
                 tab_id: tab_id.to_string(),
                 agent: agent.to_string(),
                 kind,
+                connection: matches!(kind, "codex" | "opencode").then_some("connecting"),
                 ..Default::default()
             },
             ..Default::default()
@@ -467,6 +472,21 @@ impl Tracker {
 
     fn apply_event(&mut self, ev: ChannelEvent, now: i64) {
         match ev {
+            ChannelEvent::Connected => self.snap.connection = Some("connected"),
+            ChannelEvent::Disconnected => {
+                self.snap.connection = Some("disconnected");
+                self.snap.turn = None;
+                self.snap.approval = None;
+                self.snap.live_text = None;
+                self.snap.activity = None;
+                self.snap.thinking = None;
+                self.snap.status_line = None;
+                self.running.clear();
+                self.queued.clear();
+                self.tools.clear();
+                self.last_tool = None;
+                self.approval_call = None;
+            }
             ChannelEvent::Session { id, path, source } => {
                 // Codex 在 Windows 上恢复会话时给的是 `\\?\C:\…` 形态，统一成普通路径（其余平台原样）
                 let path = path.map(|p| {
@@ -2345,6 +2365,13 @@ fn feed(ch: &Channel, events: Vec<ChannelEvent>) {
     }
 }
 
+/// 网络流有缺口后不能继续把旧快照当真值；保留会话身份给文件读取，撤掉官方回复入口。
+fn disconnect(ch: &Channel) {
+    if ch.stop.load(Ordering::Acquire) { return; }
+    if let Ok(mut r) = ch.replier.lock() { *r = None; }
+    feed(ch, vec![ChannelEvent::Disconnected]);
+}
+
 /// 追加读文件：只处理完整的行；文件变短（被轮转）就从头读
 fn tail_file(
     ch: &Channel,
@@ -2410,7 +2437,11 @@ async fn opencode_loop(ch: Arc<Channel>) {
             .send()
             .await;
         let Ok(mut resp) = resp else {
-            // TUI 的服务还没起来：开头 60 秒内重试，之后放慢
+            if started.elapsed() >= Duration::from_secs(60) {
+                disconnect(&ch);
+                return;
+            }
+            // TUI 的服务还没起来：开头 60 秒内重试，之后回退
             let wait = if started.elapsed() < Duration::from_secs(60) {
                 300
             } else {
@@ -2420,9 +2451,11 @@ async fn opencode_loop(ch: Arc<Channel>) {
             continue;
         };
         if !resp.status().is_success() {
+            if started.elapsed() >= Duration::from_secs(60) { disconnect(&ch); return; }
             tokio_sleep(1000).await;
             continue;
         }
+        feed(&ch, vec![ChannelEvent::Connected]);
         // 按字节攒、整行再解码：一个汉字可能被切在两块网络数据之间，逐块解码会变成「�」
         let mut buf: Vec<u8> = Vec::new();
         while !ch.stop.load(Ordering::Acquire) {
@@ -2442,7 +2475,9 @@ async fn opencode_loop(ch: Arc<Channel>) {
                 _ => break,
             }
         }
-        tokio_sleep(500).await;
+        // SSE 没有可重放的游标，重连会漏掉断线期间的审批与收尾，不能继续沿用旧状态。
+        disconnect(&ch);
+        return;
     }
 }
 
@@ -2469,8 +2504,8 @@ fn codex_loop(ch: Arc<Channel>, port: u16, token: String) {
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    let Some(stream) = stream else { return };
-    let Ok(writer) = stream.try_clone() else { return };
+    let Some(stream) = stream else { disconnect(&ch); return };
+    let Ok(writer) = stream.try_clone() else { disconnect(&ch); return };
     let writer = Arc::new(Mutex::new(writer));
     if let Ok(mut r) = ch.replier.lock() {
         *r = Some(Replier::Codex {
@@ -2486,9 +2521,11 @@ fn codex_loop(ch: Arc<Channel>, port: u16, token: String) {
         )
     };
     if ws_send(&writer, &init).is_err() {
+        disconnect(&ch);
         return;
     }
     let _ = ws_send(&writer, &json!({ "jsonrpc": "2.0", "method": "initialized" }));
+    feed(&ch, vec![ChannelEvent::Connected]);
     // 恢复的会话不一定广播 thread/started：没加入就隔一会儿问一次已加载的线程
     {
         let ch = ch.clone();
@@ -2542,6 +2579,7 @@ fn codex_loop(ch: Arc<Channel>, port: u16, token: String) {
             _ => break,
         }
     }
+    disconnect(&ch);
 }
 
 /// PTY 读线程读到程序状态报告（只有 program-status 旁路的标签会交来）
@@ -2817,6 +2855,23 @@ mod tests {
                 t.apply(ev, i as i64);
             }
         }
+    }
+
+    #[test]
+    fn disconnect_withdraws_stale_authority_without_finishing_the_turn() {
+        let mut t = Tracker::new("t", "codex", "codex");
+        t.apply(ChannelEvent::Session { id: "s".into(), path: Some("/s".into()), source: None }, 1);
+        t.apply(ChannelEvent::Connected, 2);
+        t.apply(ChannelEvent::ToolStart { call_id: Some("c".into()), name: "shell".into(), input: json!({}) }, 3);
+        t.apply(ChannelEvent::ApprovalAsked { request_id: Some("r".into()), call_id: Some("c".into()), name: Some("shell".into()), input: json!({}), replyable: true, detail: None }, 4);
+        t.apply(ChannelEvent::Disconnected, 5);
+        assert_eq!(t.snap.connection, Some("disconnected"));
+        assert_eq!(t.snap.session_id.as_deref(), Some("s"));
+        assert!(t.snap.turn.is_none());
+        assert!(t.snap.approval.is_none());
+        assert!(t.snap.activity.is_none());
+        assert!(t.snap.live_text.is_none());
+        assert!(t.queued.is_empty());
     }
 
     #[test]

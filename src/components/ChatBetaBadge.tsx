@@ -1,3 +1,4 @@
+import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import { chatFidelity, fidelityBadge, tierLabel, verifiedVersion } from "../chat-fidelity";
@@ -19,9 +20,13 @@ export function useChatBeta(agentId: string | null) {
 
 export function ChatBetaNotes({
   agentId,
+  channel,
+  live = false,
   onOpenTerminal,
 }: {
   agentId: string | null;
+  channel?: ChatChannelSnapshot | null;
+  live?: boolean;
   onOpenTerminal?: () => void;
 }) {
   const installed = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
@@ -32,11 +37,12 @@ export function ChatBetaNotes({
   return (
     <div className="px-2 pb-1 pt-0.5 text-xs leading-5 text-l3">
       <p>聊天是同一个终端会话的另一种看法，以终端为准：聊天里看不到、按不动的，切到终端都在。</p>
+      {live && <p className="mt-2 text-l2">{channelSourceNote(channel)}</p>}
       {fidelity && (
         <>
           <p className="mt-2">
             <span className="text-l2">
-              {label} · {tierLabel(fidelity.tier)}
+              {label} · 通常能力：{tierLabel(fidelity.tier)}
             </span>
             ：{fidelity.source}。
           </p>

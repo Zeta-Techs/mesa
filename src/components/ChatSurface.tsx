@@ -76,6 +76,7 @@ import {
 import type { AskAction } from "../tui-ask";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
+  channelSourceNote,
   approvalChoices,
   approvalPreview,
   approvalTitle,
@@ -1243,6 +1244,8 @@ export default function ChatSurface({
     ) : (running || canResume) && runtime && onTuiCommand ? (
       <ChatModelMenu
         kind="runtime"
+        channel={channel}
+        live={running}
         status={runtime.status}
         profileModels={runtime.profileModels}
         modelSwitch={modelSwitch ?? null}
@@ -1423,6 +1426,9 @@ export default function ChatSurface({
               {livePreviewText}
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
             </div>
+          )}
+          {running && channel?.connection === "disconnected" && (
+            <p role="status" className="mb-2 text-xs text-caution-text">{channelSourceNote(channel)}</p>
           )}
           {firstRunNote && (firstRunNote.theme || firstRunNote.security) && <FirstRunLine note={firstRunNote} agent={agentLabel(agentId)} />}
           {decision && (
