@@ -15,6 +15,8 @@ export function SettingsDrawerShell({
   onClose,
   subtitle,
   title = "项目设置",
+  headerActions,
+  className = "",
   children,
 }: {
   open: boolean;
@@ -23,6 +25,9 @@ export function SettingsDrawerShell({
   title?: string;
   /** 头部副题：项目名，让抽屉自己说明服务的是哪个项目（编程 / 工作抽屉没有「基本」分区）。 */
   subtitle?: string;
+  /** 固定在标题下的操作区；任务 / 审批详情复用，其他设置抽屉不传。 */
+  headerActions?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   const titleId = useId();
@@ -47,11 +52,11 @@ export function SettingsDrawerShell({
         panelRef.current.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
         ),
-      );
+      ).filter((element) => !element.closest("[hidden], [inert]"));
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -82,21 +87,21 @@ export function SettingsDrawerShell({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas outline-none${exiting ? " ccode-exiting" : ""}`}
+        className={`ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas outline-none ${className}${exiting ? " ccode-exiting" : ""}`}
       >
-        <header className="flex h-12 shrink-0 items-center gap-2 px-5">
+        <header className={`flex shrink-0 items-center gap-2 px-5 ${headerActions ? "min-h-12 flex-wrap py-3" : "h-12"}`}>
           <h2
             id={titleId}
-            className="min-w-0 shrink truncate text-base font-semibold text-l1"
+            className={`min-w-0 text-base font-semibold text-l1 ${headerActions ? "line-clamp-2 flex-1 break-words" : "shrink truncate"}`}
+            title={headerActions ? title : undefined}
           >
             {title}
           </h2>
-          <span
-            className="min-w-0 flex-1 truncate text-micro text-l4"
-            title={subtitle}
-          >
-            {subtitle}
-          </span>
+          {!headerActions && (
+            <span className="min-w-0 flex-1 truncate text-micro text-l4" title={subtitle}>
+              {subtitle}
+            </span>
+          )}
           <button
             type="button"
             className={inlineActionClass}
@@ -105,8 +110,10 @@ export function SettingsDrawerShell({
           >
             ✕
           </button>
+          {headerActions && subtitle && <p className="w-full break-words text-xs text-l3">{subtitle}</p>}
         </header>
-        <div className="min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6">
+        {headerActions && <div className="shrink-0 border-b border-hairline px-5 pb-3">{headerActions}</div>}
+        <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions ? "pt-4" : ""}`}>
           {children}
         </div>
       </aside>

@@ -9,6 +9,7 @@ import {
   isRunProcessLive,
   isWorkbenchActiveRun,
   isWorkbenchSurfaceRun,
+  pickRecoverableRun,
 } from "./run-model.ts";
 import { goalBucket } from "./project-tasks.ts";
 import { splitLaunchPrompt } from "./project-context.ts";
@@ -91,6 +92,27 @@ export type WorkbenchContinue =
   | { kind: "terminal"; tabId: string; runId?: string }
   | { kind: "project"; path: string }
   | { kind: "enter-cwd"; path: string };
+
+export type WorkbenchDestination =
+  | { kind: "conversation"; label: "回到对话"; runId?: string; tabId?: string }
+  | { kind: "project"; label: "打开项目"; path: string }
+  | { kind: "directory"; label: "打开目录"; path: string };
+
+/** 文案与执行共用同一个落点；关掉标签仍先按 Run 找回，未添加目录不冒充项目。 */
+export function resolveWorkbenchDestination(
+  target: WorkbenchContinue,
+  runs: Parameters<typeof pickRecoverableRun>[0],
+  isWindows: boolean,
+): WorkbenchDestination {
+  if (target.kind === "terminal") {
+    return { kind: "conversation", label: "回到对话", runId: target.runId, tabId: target.tabId };
+  }
+  const recovered = pickRecoverableRun(runs, target.path, isWindows);
+  if (recovered) return { kind: "conversation", label: "回到对话", runId: recovered.id };
+  return target.kind === "project"
+    ? { kind: "project", label: "打开项目", path: target.path }
+    : { kind: "directory", label: "打开目录", path: target.path };
+}
 
 export interface WorkbenchNowSeed {
   path: string;
@@ -912,16 +934,4 @@ export function goalCaptureTargets<P extends {
     }
   }
   return out;
-}
-
-/** 多个项目同类加载失败合成一条提示（原先一个项目弹一条 toast，项目一多就刷屏）。 */
-export function workbenchLoadFailureMessage(
-  names: readonly string[],
-  what: string,
-): string | null {
-  if (names.length === 0) return null;
-  if (names.length === 1) return `项目「${names[0]}」的${what}没读到，可稍后重试`;
-  const shown = names.slice(0, 3).map((name) => `「${name}」`).join("");
-  const more = names.length > 3 ? `等 ${names.length} 个项目` : "";
-  return `${shown}${more}的${what}没读到，可稍后重试`;
 }

@@ -10,6 +10,7 @@ docs/                        # 架构方案 + 九 CLI 适配参考（规格）
   conventions/               # 主题化约定细则（改动对应领域前必读，见「关键约定」索引）
 src/                         # 前端 React + TS + Tailwind v4（vite 插件接入）
   pages/                     # 侧栏九页：工作台▣ 项目⛁（workspaces，v3.92 起 UI 页名「项目」） 运行⌨（terminal） 对话◔ 连接⇄（profiles） 技能✦ MCP⌗ 用量◫（stats） 设置⛭
+pages/WorkbenchPage.tsx    # 工作台：拍板队列 / 项目分组 / 定时总览的组装、导航与延迟审批；各读取范围记真实成功快照，失败保留旧状态并重试（tests/workbench-ui.test.ts）
 pages/McpPage.tsx          # MCP 页（matrix §10 调研落地）：五列网格清单（名称｜类型｜配置｜分发｜行内操作＋启用开关，列模板 MCP_GRID 表头与数据行共用）＋添加/编辑弹层（stdio 命令/参数与 remote url/headers 两形态、env/headers 键值对编辑、${VAR} 密钥引用不落明文）＋内置预设（MCP_PRESETS，含 Blender 本机探测 applyBlenderMcpProbe 与 setup 步引导不代装）＋行首健康状态点（未检测不渲染；清单沉淀的上次结果带「上次检测」前缀与实时结果区分）＋收编候选（discover_mcp_servers，相对路径命令收编时后端先落绝对路径）。分发只写用户级（项目级有审批闸）；展示纯逻辑全在 mcp-display.ts。唯一挂载 App.tsx page==="mcp"（懒加载）
 pages/ProfilesPage.tsx     # 连接页：按 agent 分组的连接清单（五列：名称｜端点｜模型｜状态｜操作；组折叠记 localStorage ccode.profiles.collapsed，空组默认折叠；状态列/标记胶囊/诊断在组件内）＋添加/编辑连接弹层 ProfileModal（导出供 store.profileModalReq 与上手引导挂载）＋官方账号登录/登出引导（登出走 CLI 自己的 logout、Mesa 不删 auth 文件）＋三层验证 ValidationDialog、启动计划预览 PreviewDialog、「设为全局默认」GlobalWritePreviewDialog（脱敏预览）→ GlobalApplyDialog＋漂移检查 check_global_drift 组头胶囊＋CLI 安装与更新（check_agent_updates、winget 安装帮助、interactiveTui 自更新经 update-routing 开终端）＋导入导出 v2；网关库 GatewayLibrary 与出图模型 ImageGenPanel 唯一挂载在本页（页尾）。行状态纯逻辑在 profile-connection-ui.ts。唯一挂载 App.tsx page==="profiles"（懒加载）
 pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 十一档顺序即导航顺序（基础：外观/终端/通用/快捷键；管理：AI 与 Agent/网络/用量/更新/诊断/数据与存储/关于；id 与 settings-search.ts SettingSectionId 一一对应，搜索命中经 CommandPalette / settingsSectionReq 一次性请求深链定位分区）。版式原子 Section/SubHeading/Card/CardRow/RowGroup（相邻 Row 自动并成分组卡，design-system 设置页规格）；自带终端预览 TerminalPreview、快捷键录制 HotkeyCapture（录制互斥）、外部终端/shell 下拉按平台、一键卸载 UninstallRow（两次确认、第二次输原名）、自定义运行时 CustomRuntimeBlock、AI 功能按功能配置行（键对应 ai.rs FN_*）、应用图标三选一；调色板/聊天排版/罩色等与 settings.rs KNOWN_* 白名单逐表镜像——加选项两头同步，否则静默回落。唯一挂载 App.tsx page==="settings"（懒加载）；「更新」分区是应用更新安装入口（更新提示本体走收件箱 update:）
@@ -280,10 +281,11 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
-  components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 继续 → / 外开）+ 缩进任务行（固定列：点·类别·名称·状态·时长·花费·待拍板，点开任务面板）+ 组末插槽
-  components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时时间轴 + 一行一个任务（名称 / 项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只写状态
-  components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作只带路不另起流程
-  components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title 可传，工作台任务面板复用）
+  components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 实际导航落点 / 外开）+ 缩进任务行（按容器宽度调整名称 / 状态 / 时间，点开任务面板，花费在详情），项目支持收起 + 组末插槽
+  components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时具名时间项（同分钟聚合展开）+ 一行一个任务（名称 / 项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只导航回队列
+  components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
+  components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
+  components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions 可传，工作台任务与审批详情复用）
                              #   （ccode-sheet-right 滑入/退场 + Esc/Tab 焦点圈闭 + role=dialog + 遮罩 mousedown
                              #   靶命中关闭，头带项目名副题）+ SettingsRulesSection「规则与验收」分区（规则/
                              #   验收记录/对话注入，验收账本自取）；默认导出=编程/工作组装（再加项目长期知识）
@@ -402,7 +404,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   workbench-hero.ts          # 工作台主卡纯逻辑：当前工作按运行标签归属（注册名优先；隔离目标副本按
                              # runId/taskId 归属表归回真实项目，不按 cwd 拆卡；同名项目按 contextPath 路径选，名字只作唯一命中回落）、
                              # 步骤取流水线第一个未合并步（openStepProgress / stepProgressLabel 写「进行到：X（第 i / n 步）」）、
-                             #   「继续」有标签则聚焦，否则按 runId 找回原 Run，再回落进项目/真进入；
+                             #   resolveWorkbenchDestination 把导航文案与执行落点一并解析：有标签则聚焦，否则按 runId 找回原 Run，再回落进项目/真进入；
                              # pickWorkbenchNow = 正在进行列表（2026-10-27 起大卡删掉，逐行列；没活时回落 pickWorkbenchHero 一行）；runningCount 只算活进程
                              # （isRunProcessLive，已退出/未启动的保留标签留在 runs 里可继续但不冒充「正在工作」）；
                              # 副行优先待验收/进行中目标；namedSessionTitle 与项目侧栏同一套清洗、未命名为 null；
@@ -410,17 +412,17 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 默认最多 6 条（「最近对话」2026-10-27 随工作台改版删掉）；「上次停在」latestProjectSession + lastUserInstruction
                              # （跳工具结果/系统注入，不按首句切）；待处理行归项目 inboxItemProjectRoot；
                              # 「记下目标」可选项目 goalCaptureTargets（与 ProjectGroup liteResearch / 办公目标视图
-                             # 双端同口径）；加载失败合一条 workbenchLoadFailureMessage（tests/workbench-hero.test.ts）
+                             # 双端同口径）（tests/workbench-hero.test.ts）
   workbench-queue.ts         # 工作台「等你拍板」队列（2026-10-27）：收件箱条目 + 待验收目标分三档稳定排序（停着等你 / 等你看结果 / 通知）、
                              # 行内能做的只有两种——旁路能回复的待确认（Codex / Qwen / OpenCode）允许 / 拒绝、信息类（BULK_READABLE）收起；
                              # 键盘 J/K/回车/A/R/E（queueKeyAction，当前行做不了的键不吞）、按键记选中行；
-                             # createDeferred 撤销窗口（QUEUE_UNDO_MS 5 秒后才送出，挂模块不挂组件）（tests/workbench-queue.test.ts）
+                             # createDeferred 撤销窗口（QUEUE_UNDO_MS 5 秒后才送出，挂模块不挂组件，隐藏按请求 id 区分同一 Run 的下一问）（tests/workbench-queue.test.ts）
   workbench-cards.ts         # 工作台项目分组数据（2026-10-27 第二批）：buildProjectCard 项目头几个数 + 科研进度条 + 任务行
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
                              # cardIsActive（有活的：此刻有事，或手上在做且 7 天内动过；只落后基准不算）、filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
                              # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）；
-                             # 任务行 touchedAt（最后一次动它）与 current（流程当前步）；scheduleCardTask / scheduleOverview / scheduleTimeline
+                             # 任务行 touchedAt（最后一次动它）与 current（流程当前步）；scheduleCardTask / scheduleOverview / scheduleTimeline / scheduleTimelineGroups
                              # 定时任务总览（项目分组里不再列定时）；orderLikeSidebar 项目先后跟侧栏置顶与拖动顺序（tests/workbench-cards.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、
                              # 未分类恒末）/趋势/直链转换/全文可得性分流（fulltextLinkFor：arxiv abs 与 .pdf 直链=可下载，

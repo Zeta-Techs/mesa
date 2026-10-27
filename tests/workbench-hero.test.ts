@@ -3,6 +3,7 @@ import test from "node:test";
 import type { RunOverviewInput } from "../src/run-overview.ts";
 import {
   continueWorkbenchTarget,
+  resolveWorkbenchDestination,
   firstOpenStepName,
   openStepProgress,
   stepProgressLabel,
@@ -10,7 +11,6 @@ import {
   inboxItemProjectRoot,
   lastUserInstruction,
   latestProjectSession,
-  workbenchLoadFailureMessage,
   workbenchNowSectionTitle,
   namedSessionTitle,
   pickWorkbenchHero,
@@ -894,22 +894,6 @@ test("goalCaptureTargets：办公 + 不用流程的科研，编程与有流程�
   );
 });
 
-test("workbenchLoadFailureMessage：多项目失败合成一条", () => {
-  assert.equal(workbenchLoadFailureMessage([], "编程状态"), null);
-  assert.equal(
-    workbenchLoadFailureMessage(["甲"], "编程状态"),
-    "项目「甲」的编程状态没读到，可稍后重试",
-  );
-  assert.equal(
-    workbenchLoadFailureMessage(["甲", "乙", "丙", "丁"], "流程配置"),
-    "「甲」「乙」「丙」等 4 个项目的流程配置没读到，可稍后重试",
-  );
-  assert.equal(
-    workbenchLoadFailureMessage(["甲", "乙"], "编程状态"),
-    "「甲」「乙」的编程状态没读到，可稍后重试",
-  );
-});
-
 test("流程进度：写明进行到第几步，全做完说都已完成；「上次停在」只在别的步骤时标", () => {
   const steps = [
     { name: "文献检索与筛选", workspaceName: "lit-search" },
@@ -936,4 +920,16 @@ test("流程进度：写明进行到第几步，全做完说都已完成；「�
   assert.equal(stepProgressLabel(openStepProgress([steps[0]], [])), "进行到：文献检索与筛选");
   assert.equal(openStepProgress([], []), null);
   assert.equal(stepProgressLabel(null), null);
+});
+
+
+test("项目头文案与执行共用落点：活标签、可恢复 Run、项目与目录", () => {
+  const recovered = { id: "old", internal: false, closedAt: "2026-10-27", taskKind: "office_doc", sessionId: "s", runtime: "cli", capabilities: { canResume: true }, projectRoot: "/p", isolationPath: "/p/.wt" } as const;
+  assert.deepEqual(resolveWorkbenchDestination({ kind: "terminal", tabId: "t", runId: "live" }, [recovered], false), { kind: "conversation", label: "回到对话", tabId: "t", runId: "live" });
+  assert.deepEqual(resolveWorkbenchDestination({ kind: "project", path: "/p" }, [recovered], false), { kind: "conversation", label: "回到对话", runId: "old" });
+  assert.deepEqual(resolveWorkbenchDestination({ kind: "project", path: "/other" }, [recovered], false), { kind: "project", label: "打开项目", path: "/other" });
+  assert.deepEqual(resolveWorkbenchDestination({ kind: "enter-cwd", path: "/other" }, [recovered], false), { kind: "directory", label: "打开目录", path: "/other" });
+  assert.equal(resolveWorkbenchDestination({ kind: "enter-cwd", path: "/p" }, [recovered], false).label, "回到对话");
+  assert.equal(resolveWorkbenchDestination({ kind: "project", path: "/p" }, [{ ...recovered, internal: true }], false).label, "打开项目");
+  assert.equal(resolveWorkbenchDestination({ kind: "project", path: "c:/Work/P" }, [{ ...recovered, projectRoot: "C:\\work\\p" }], true).label, "回到对话");
 });

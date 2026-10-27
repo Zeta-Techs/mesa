@@ -50,7 +50,7 @@ function PathList({ paths }: { paths: readonly string[] }) {
   return (
     <ul className="space-y-0.5">
       {paths.map((p) => (
-        <li key={p} className="truncate font-mono text-micro text-l2" title={p}>
+        <li key={p} className="break-all font-mono text-micro text-l2">
           {p}
         </li>
       ))}
@@ -95,10 +95,25 @@ export default function WorkbenchTaskPanel({
 }) {
   return (
     <SettingsDrawerShell
+      className="ccode-workbench-detail"
       open={open && !!task}
       onClose={onClose}
       title={task?.name ?? "任务"}
       subtitle={task && card ? `${card.name} · ${task.kindLabel}` : undefined}
+      headerActions={actions.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {actions.map((action, index) => (
+            <button
+              key={action.label}
+              type="button"
+              className={index === 0 ? secondaryActionClass : rowActionClass}
+              onClick={action.onClick}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
     >
       {task && (
         <>
@@ -114,7 +129,7 @@ export default function WorkbenchTaskPanel({
           {goal && (
             <Section title="目标">
               {goal.description.trim() && goal.description.trim() !== goal.name.trim() && (
-                <p className="mb-3 whitespace-pre-wrap text-sm text-l1">{goal.description}</p>
+                <p className="mb-3 whitespace-pre-wrap break-words text-sm text-l1">{goal.description}</p>
               )}
               <div>
                 <Rows
@@ -140,7 +155,7 @@ export default function WorkbenchTaskPanel({
 
           {step && (
             <Section title="这一步要做什么">
-              <p className="line-clamp-6 whitespace-pre-wrap text-sm text-l1">{step.brief || step.name}</p>
+              <p className="whitespace-pre-wrap break-words text-sm text-l1">{step.brief || step.name}</p>
             </Section>
           )}
           {step?.expectedArtifacts.length ? (
@@ -159,7 +174,7 @@ export default function WorkbenchTaskPanel({
           ) : null}
           {task.ref.kind === "step" && (
             <Section title="工作副本">
-              <p className="truncate font-mono text-micro text-l2" title={task.ref.worktreePath ?? ""}>
+              <p className="break-all font-mono text-micro text-l2">
                 {task.ref.worktreePath ?? "还没开工，开始这一步时创建"}
               </p>
             </Section>
@@ -232,20 +247,6 @@ export default function WorkbenchTaskPanel({
             </Section>
           )}
 
-          {actions.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-t border-hairline pt-4">
-              {actions.map((a, i) => (
-                <button
-                  key={a.label}
-                  type="button"
-                  className={i === 0 ? secondaryActionClass : rowActionClass}
-                  onClick={a.onClick}
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          )}
         </>
       )}
     </SettingsDrawerShell>

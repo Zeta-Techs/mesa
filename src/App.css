@@ -3979,3 +3979,80 @@ select:focus-visible {
   background: color-mix(in srgb, var(--color-warn-text) 58%, transparent);
   color: var(--color-l1);
 }
+
+/* 工作台按内容宽度排版；窗口侧栏变化也能触发，信息文字不降到 l4。 */
+.ccode-workbench { container: workbench / inline-size; }
+.ccode-workbench, .ccode-workbench-detail {
+  --text-sm: 13px;
+  --text-xs: 12px;
+  font-size: var(--text-sm);
+}
+.ccode-workbench-project-name { flex-basis: 12rem; }
+.ccode-workbench-task {
+  display: grid;
+  grid-template-columns: 6px 3.25rem minmax(0, 1.3fr) minmax(0, 1fr) 9rem 3.5rem;
+  grid-template-areas: "dot kind name state time badge";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+.ccode-workbench-task-dot { grid-area: dot; }
+.ccode-workbench-task-kind { grid-area: kind; }
+.ccode-workbench-task-name { grid-area: name; overflow-wrap: anywhere; }
+.ccode-workbench-task-state { grid-area: state; overflow-wrap: anywhere; }
+.ccode-workbench-task-time { grid-area: time; text-align: right; }
+.ccode-workbench-task-badge { grid-area: badge; }
+.ccode-workbench-schedule {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1.2fr) minmax(0, .8fr) minmax(0, .8fr) minmax(0, 1.4fr) 5.5rem;
+  grid-template-areas: "dot name project frequency state action";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+.ccode-workbench-schedule-dot { grid-area: dot; }
+.ccode-workbench-schedule-name { grid-area: name; overflow-wrap: anywhere; }
+.ccode-workbench-schedule-project { grid-area: project; overflow-wrap: anywhere; }
+.ccode-workbench-schedule-frequency { grid-area: frequency; }
+.ccode-workbench-schedule-state { grid-area: state; overflow-wrap: anywhere; }
+.ccode-workbench-schedule-action { grid-area: action; }
+.ccode-workbench-time-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border: 1px solid var(--color-hairline);
+  border-radius: 8px;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: var(--text-xs);
+}
+.ccode-workbench-time-item:hover { background: var(--color-hover); }
+@container workbench (max-width: 740px) {
+  .ccode-workbench-task {
+    grid-template-columns: 6px 3.25rem minmax(0, 1.2fr) minmax(0, 1fr) 3.5rem;
+    grid-template-areas: "dot kind name state badge" ". . name time badge";
+  }
+  .ccode-workbench-task-time { text-align: left; }
+  .ccode-workbench-vitals { display: none; }
+  .ccode-workbench-project-name { flex-basis: 10rem; }
+  .ccode-workbench-schedule {
+    grid-template-columns: 6px minmax(0, 1.2fr) minmax(0, 1fr) 5.5rem;
+    grid-template-areas: "dot name state action" ". project frequency action";
+  }
+  .ccode-workbench-queue-row { flex-wrap: wrap; }
+  .ccode-workbench-queue-actions { margin-left: auto; }
+}
+@container workbench (max-width: 470px) {
+  .ccode-workbench-task {
+    grid-template-columns: 6px 3.25rem minmax(0, 1fr) 3.5rem;
+    grid-template-areas: "dot kind name badge" ". . state state" ". . time time";
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+  .ccode-workbench-track, .ccode-workbench-updated { display: none; }
+  .ccode-workbench-queue-content { flex-basis: calc(100% - 24px); }
+  .ccode-workbench-schedule {
+    grid-template-columns: 6px minmax(0, 1fr) 5.5rem;
+    grid-template-areas: "dot name action" ". project action" ". frequency action" ". state state";
+  }
+}

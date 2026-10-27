@@ -609,6 +609,19 @@ export function scheduleTimeline(
   return out;
 }
 
+/** 同一可见分钟合成一组；「正在跑」独立成现在，避免同刻任务互相遮住。 */
+export function scheduleTimelineGroups(rows: readonly ScheduleOverviewRow[], nowMs: number) {
+  type Point = ReturnType<typeof scheduleTimeline>[number];
+  const groups = new Map<string, { key: string; at: number; running: boolean; items: Point[] }>();
+  for (const point of scheduleTimeline(rows, nowMs)) {
+    const key = point.running ? "now" : String(Math.floor(point.at / 60_000));
+    const group = groups.get(key) ?? { key, at: point.at, running: point.running, items: [] };
+    group.items.push(point);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => Number(b.running) - Number(a.running) || a.at - b.at);
+}
+
 /** 项目顺序跟侧栏：置顶段（按置顶先后）在前，其余按侧栏拖动排的顺序，没排过的按传入顺序（2026-10-27） */
 export function orderLikeSidebar<T extends { path: string }>(
   items: readonly T[],

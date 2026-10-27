@@ -9,6 +9,7 @@
  * 两种都先等几秒才真的送出，期间可撤销（createDeferred）。
  */
 import { BULK_READABLE, inboxCategoryOf, type InboxCategory } from "./inbox.ts";
+import type { ChannelApproval } from "./chat-channel.ts";
 
 /** blocking = Agent 停着等你或干不下去；decide = 等你看结果；notice = 通知 */
 export type QueueTier = "blocking" | "decide" | "notice";
@@ -36,6 +37,11 @@ export interface QueueApproval {
   title: string;
   /** 命令原文 / 要改的文件，一行；没有就不显示 */
   detail: string | null;
+  /** 旁路已脱敏的请求，详情不再截断或改写命令。 */
+  request: ChannelApproval;
+  agent: string;
+  /** 标签已知的对话目录，不冒充 CLI 本次请求的 cwd。 */
+  conversationCwd: string | null;
   /** 允许 / 拒绝的按钮字（「这次会话都允许」这类不进工作台：要选得细回对话里选） */
   allowLabel: string;
   denyLabel: string;
@@ -79,6 +85,11 @@ export type QueueRow<I extends QueueInboxInput = QueueInboxInput> =
 
 const TIER_ORDER: Record<QueueTier, number> = { blocking: 0, decide: 1, notice: 2 };
 
+/** 收件箱键按 Run 复用；待发送只藏当前这一问，不能把下一问一起藏掉。 */
+export function approvalHiddenKey(key: string, requestId: string): string {
+  return `${key}\0${requestId}`;
+}
+
 /** 合成队列：分档稳定排序（档内保持收件箱原顺序，待验收目标排在本档收件箱条目之后）；hidden 里的键（已处理、等送出的）不出 */
 export function buildDecisionQueue<I extends QueueInboxInput>(input: {
   inbox: readonly I[];
@@ -111,7 +122,13 @@ export function buildDecisionQueue<I extends QueueInboxInput>(input: {
   ];
   return rows
     .map((row, index) => ({ row, index }))
-    .filter(({ row }) => !input.hidden.has(row.key))
+    .filter(({ row }) => {
+      if (input.hidden.has(row.key)) return false;
+      if (row.kind !== "inbox") return true;
+      return row.approval
+        ? !input.hidden.has(approvalHiddenKey(row.key, row.approval.requestId))
+        : ![...input.hidden].some((key) => key.startsWith(`${row.key}\0`));
+    })
     .sort((a, b) => TIER_ORDER[a.row.tier] - TIER_ORDER[b.row.tier] || a.index - b.index)
     .map(({ row }) => row);
 }
@@ -157,7 +174,7 @@ export function moveSelection(count: number, index: number, delta: 1 | -1): numb
 /** 已处理（送出或撤销期间）的键：条目从收件箱消失后就不必再记 */
 export function pruneHidden(hidden: ReadonlySet<string>, present: readonly string[]): Set<string> {
   const keep = new Set(present);
-  return new Set([...hidden].filter((key) => keep.has(key)));
+  return new Set([...hidden].filter((key) => keep.has(key.split("\0")[0])));
 }
 
 /** 撤销窗口：处理后先等这么久才真的送出 */

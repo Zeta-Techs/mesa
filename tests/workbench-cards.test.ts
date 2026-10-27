@@ -8,6 +8,7 @@ import {
   orderLikeSidebar,
   scheduleOverview,
   scheduleTimeline,
+  scheduleTimelineGroups,
   filterCards,
   liveActivityLine,
   turnElapsedMs,
@@ -287,4 +288,21 @@ test("awaySummary：只数离开后结束的交互运行与定时跑次，没事
   assert.equal(awaySummary({ sinceMs: now - 10 * 60_000, nowMs: now, runs, schedules, waiting: 0 }), null);
   assert.equal(awaySummary({ sinceMs: since, nowMs: now, runs: [], schedules: [], waiting: 3 }), null);
   assert.equal(awaySummary({ sinceMs: null, nowMs: now, runs, schedules, waiting: 0 }), null);
+});
+
+
+test("定时时间项按显示分钟归组：同刻不重叠，在跑独立一组，越界与未知时间不列", () => {
+  const now = new Date("2026-10-27T10:00:00").getTime();
+  const row = (id: string, delta: number | null, running = false) => ({
+    task: { id, name: id, tone: running ? "live" : "idle" },
+    nextAt: delta === null ? null : now + delta,
+  }) as Parameters<typeof scheduleTimelineGroups>[0][number];
+  const groups = scheduleTimelineGroups([
+    row("b", 3600_000 + 15_000), row("a", 3600_000), row("later", 7200_000),
+    row("running2", null, true), row("running1", 3600_000, true),
+    row("past", -1), row("tomorrow", 24 * 3600_000 + 1), row("unknown", null),
+  ], now);
+  assert.deepEqual(groups.map((group) => group.items.map((point) => point.id)), [["running2", "running1"], ["b", "a"], ["later"]]);
+  assert.equal(groups[0].running, true);
+  assert.equal(groups[1].running, false);
 });

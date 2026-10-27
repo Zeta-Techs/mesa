@@ -257,7 +257,7 @@
   以上是 Windows（根 16px）的值。**macOS/Linux 根字号 14px**，rem 档按 0.875 缩：sm 12.25、base 14；`text-xs` 若照缩只剩 10.5px、比 micro 还小，
   所以在 `:root:not([data-platform="windows"])` 钉 `--text-xs: 11.5px`（2026-10-22），Mac 阶梯 = micro 11 → xs 11.5 → sm 12.25 → base 14；
   语义分工：micro = badge/时间戳/副注释（11px 是可读下限，不再用 10px），xs = 次级说明，sm = 正文/列表行，base = 页面标题。
-  终端工作台整体提高一档（`.terminal-workbench` 覆写 micro→12、xs→13）。侧栏 xs 提到 12.5px（`.ccode-app-rail .text-xs`，2026-10-23，
+  终端工作台整体提高一档（`.terminal-workbench` 覆写 micro→12、xs→13）；工作台首页与任务 / 审批详情局部覆写 sm→13、xs→12（`.ccode-workbench` / `.ccode-workbench-detail`），不改变其余页面。侧栏 xs 提到 12.5px（`.ccode-app-rail .text-xs`，2026-10-23，
   节头 / 「项目」标签 / 「全部 N 条」，两个平台同值），对话行跟 body 14px。同类信息必须用同一档，禁止同页相邻出现两档灰字。
   **微圆角豁免**：圆角走令牌（`rounded-sm` 5px / `rounded-md` 7px / `rounded-lg` 12px），**禁 `rounded-[Npx]`**——但
   ≤4px 的微标记（步进器 1px 斜块、14px 图标 3px）例外，此处写死值：5px 的最紧令牌会把 6–9px 的标记磨圆到变形。

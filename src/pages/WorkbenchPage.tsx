@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -32,10 +32,11 @@ import type {
   TaskDto,
   WorkspaceDto,
 } from "../types";
-import { pickRecoverableRun, isWorkbenchActiveRun } from "../run-model";
+import { isWorkbenchActiveRun } from "../run-model";
 import { visibleDeclaredTasks } from "../project-tasks";
 import {
   continueWorkbenchTarget,
+  resolveWorkbenchDestination,
   goalCaptureTargets,
   inboxItemProjectRoot,
   lastUserInstruction,
@@ -44,11 +45,10 @@ import {
   pickWorkbenchHero,
   pickWorkbenchNow,
   stepProgressLabel,
-  workbenchLoadFailureMessage,
   workbenchNowSectionTitle,
   workbenchNowSubtitle,
   workbenchRecentRows,
-  type WorkbenchContinue,
+  type WorkbenchDestination,
   type WorkbenchNowSeed,
 } from "../workbench-hero";
 import {
@@ -72,6 +72,7 @@ import {
 import { dismissToast, toast } from "../toast";
 import { caretOfAttention, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
+import WorkbenchApprovalPanel from "../components/WorkbenchApprovalPanel";
 import WorkbenchProjectGroup from "../components/WorkbenchProjectGroup";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
 import {
@@ -101,6 +102,7 @@ import {
   QUEUE_TIER_LABEL,
   QUEUE_UNDO_MS,
   buildDecisionQueue,
+  approvalHiddenKey,
   createDeferred,
   moveSelection,
   pruneHidden,
@@ -155,7 +157,7 @@ function SectionHeading({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-2.5 flex items-center gap-2 px-1">
+    <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
       <Icon size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
       {/* Mac 根字号 14px 下 text-xs 只有 10.5px，比旁边 11px 的「查看全部」还小：标题用 micro，靠字重与字色分层 */}
       <h2 className="text-micro font-medium text-l2">{title}</h2>
@@ -220,7 +222,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const [researchCfg, setResearchCfg] = useState<
     Record<string, { steps: ProjectStepDto[]; pipelineOptOut: boolean }>
   >({});
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reads, setReads] = useState<Record<string, { label: string; lastSuccess: number | null; failed: boolean }>>({});
+  const recordRead = useCallback((key: string, label: string, ok: boolean) => {
+    setReads((current) => ({
+      ...current,
+      [key]: { label, failed: !ok, lastSuccess: ok ? Date.now() : current[key]?.lastSuccess ?? null },
+    }));
+  }, []);
   const [reloadToken, setReloadToken] = useState(0);
   const [allRuns, setAllRuns] = useState<RunDto[]>([]);
   const [taskProjectById, setTaskProjectById] = useState<Record<string, string>>(
@@ -231,6 +239,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const [schedules, setSchedules] = useState<ScheduleDto[]>([]);
   /** 「待你处理」默认只列 5 条，展开后全列出（页内展开，不跳收件箱浮层） */
   const [inboxExpanded, setInboxExpanded] = useState(false);
+  const [noticesExpanded, setNoticesExpanded] = useState(false);
+  const [openApprovalKey, setOpenApprovalKey] = useState<string | null>(null);
   const [lastSaid, setLastSaid] = useState<Record<string, LastSaid | null>>({});
   const [goalDraft, setGoalDraft] = useState("");
   const [goalProject, setGoalProject] = useState("");
@@ -259,27 +269,20 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   // 轻量三件：项目注册表 / 工作区 / Run 账本。随运行启停重拉（都是单次本地查询）
   useEffect(() => {
     if (!visible) return;
-    setLoadError(null);
+    let stale = false;
     invoke<ProjectDto[]>("list_projects")
-      .then(setProjects)
-      .catch(() => {
-        setProjects([]);
-        setLoadError("项目数据加载失败，可重试；其他工作台内容仍可继续使用。");
-      })
-      .finally(() => setProjectsLoaded(true));
+      .then((list) => { if (!stale) { setProjects(list); recordRead("projects", "项目列表", true); } })
+      .catch(() => { if (!stale) recordRead("projects", "项目列表", false); })
+      .finally(() => { if (!stale) setProjectsLoaded(true); });
     invoke<WorkspaceDto[]>("list_workspaces")
-      .then(setWorkspaces)
-      .catch(() => {
-        setWorkspaces([]);
-        setLoadError((current) =>
-          current ?? "工作区状态加载失败，可重试；其他工作台内容仍可继续使用。",
-        );
-      });
-    // 全量 Run（created_at 降序 500 条）：工作台归属（runId→项目）与「继续」按 runId 找回共用
+      .then((list) => { if (!stale) { setWorkspaces(list); recordRead("workspaces", "工作副本状态", true); } })
+      .catch(() => { if (!stale) recordRead("workspaces", "工作副本状态", false); });
+    // 全量 Run：归属与恢复共用；失败保留旧快照，并点名提示受影响范围。
     invoke<RunDto[]>("run_list", { projectRoot: null })
-      .then(setAllRuns)
-      .catch(() => setAllRuns([]));
-  }, [visible, runCwdSig, reloadToken]);
+      .then((list) => { if (!stale) { setAllRuns(list); recordRead("runs", "对话运行记录", true); } })
+      .catch(() => { if (!stale) recordRead("runs", "对话运行记录", false); });
+    return () => { stale = true; };
+  }, [visible, runCwdSig, reloadToken, recordRead]);
 
   // 定时任务摘要：可见时拉一次；拉起 / 跑完 / 采纳时重拉；每分钟刷一次让「接下来」滚动
   useEffect(() => {
@@ -288,10 +291,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const load = () => {
       invoke<ScheduleDto[]>("list_schedules")
         .then((list) => {
-          if (!stale) setSchedules(list);
+          if (!stale) { setSchedules(list); setNowMs(Date.now()); recordRead("schedules", "定时任务", true); }
         })
         .catch(() => {
-          /* 摘要是附加信息：读不到就不显示，下轮再试 */
+          if (!stale) recordRead("schedules", "定时任务", false);
         });
     };
     load();
@@ -310,7 +313,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       unpoll();
       unlisteners.forEach((u) => u());
     };
-  }, [visible, reloadToken]);
+  }, [visible, reloadToken, recordRead]);
 
   // 逐项目的重活（编程项目跑 git、科研项目读档案卡）：只在项目集合变化、有运行跑完、
   // 回到本页或点重试时拉；失败按类合成一条提示，不再一个项目弹一条
@@ -334,14 +337,12 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       ),
     ).then((rows) => {
       if (cancelled) return;
-      const next: Record<string, CodingOverviewDto> = {};
-      for (const row of rows) if (row.ov) next[row.path] = row.ov;
-      setCodingByPath(next);
-      const failed = workbenchLoadFailureMessage(
-        rows.filter((row) => !row.ov).map((row) => row.name),
-        "编程状态",
-      );
-      if (failed) toast(failed, "warning");
+      setCodingByPath((current) => {
+        const next = { ...current };
+        for (const row of rows) if (row.ov) next[row.path] = row.ov;
+        return next;
+      });
+      for (const row of rows) recordRead(`coding:${row.path}`, `${row.name} · 编程状态`, !!row.ov);
     });
     void Promise.all(
       research.map((p) =>
@@ -351,27 +352,22 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       ),
     ).then((rows) => {
       if (cancelled) return;
-      const next: Record<string, { steps: ProjectStepDto[]; pipelineOptOut: boolean }> = {};
-      for (const row of rows) {
-        if (!row.config) continue;
-        next[row.path] = {
-          steps: row.config.steps ?? [],
-          pipelineOptOut: !!row.config.pipelineOptOut,
-        };
-      }
-      setResearchCfg(next);
-      const failed = workbenchLoadFailureMessage(
-        rows.filter((row) => !row.config).map((row) => row.name),
-        "流程配置",
-      );
-      if (failed) toast(failed, "warning");
+      setResearchCfg((current) => {
+        const next = { ...current };
+        for (const row of rows) {
+          if (!row.config) continue;
+          next[row.path] = { steps: row.config.steps ?? [], pipelineOptOut: !!row.config.pipelineOptOut };
+        }
+        return next;
+      });
+      for (const row of rows) recordRead(`research:${row.path}`, `${row.name} · 流程配置`, !!row.config);
     });
     return () => {
       cancelled = true;
     };
     // projects 由 projectsSig 代表：轻量重拉换了数组引用但内容没变时不重跑 git
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, projectsSig, runDoneSig, reloadToken]);
+  }, [visible, projectsSig, runDoneSig, reloadToken, recordRead]);
 
   const nowSeeds = useMemo((): WorkbenchNowSeed[] => {
     // 「活着」只算真有交互活的运行：白名单（登录/定时巡检/无头不算）之上，
@@ -568,9 +564,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     let cancelled = false;
     // 一次取全量再按已添加项目过滤（原先每个项目各查一次）
     invoke<TaskDto[]>("task_list", { projectRoot: null })
-      .catch(() => [] as TaskDto[])
       .then((list) => {
         if (cancelled) return;
+        recordRead("tasks", "目标列表", true);
         const all = list.filter((task) =>
           projects.some((project) =>
             samePath(task.projectRoot ?? "", project.path, IS_WINDOWS),
@@ -585,11 +581,12 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         setUserTasks(
           visibleDeclaredTasks(all, new Set(["office_doc", "free_research"])),
         );
-      });
+      })
+      .catch(() => { if (!cancelled) recordRead("tasks", "目标列表", false); });
     return () => {
       cancelled = true;
     };
-  }, [projects, visible, reloadToken]);
+  }, [projects, visible, reloadToken, recordRead]);
 
   // 「上次停在」：主卡与紧凑行各取本项目最近一次对话的最后一句人话（尾页，Rust 层已脱敏）
   const lastSaidTargets = useMemo(() => {
@@ -741,19 +738,14 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       ? `在 ${clientOpen.projectClients[0].display}打开`
       : "在客户端打开";
 
-  /** 「继续」统一入口：主卡 / 紧凑行 / 未添加目录都先按 runId 找回原 Run，找不到再回落项目页或真进入。 */
-  async function openContinueTarget(target: WorkbenchContinue) {
-    if (target.kind === "terminal") {
+  /** 项目头的文字和点击共用解析后的落点，避免看着「继续」却打开另一类页面。 */
+  async function openContinueTarget(target: WorkbenchDestination) {
+    if (target.kind === "conversation") {
       if (target.runId) openRun(target.runId, target.tabId);
-      else {
+      else if (target.tabId) {
         setFocusTabReq(target.tabId);
         setPage("terminal");
       }
-      return;
-    }
-    const recovered = pickRecoverableRun(allRuns, target.path, IS_WINDOWS);
-    if (recovered) {
-      openRun(recovered.id);
       return;
     }
     if (target.kind === "project") {
@@ -761,9 +753,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       setPage("workspaces");
       return;
     }
-    const repo = recentRepos.find((r) =>
-      samePath(r.path, target.path, IS_WINDOWS),
-    );
+    const repo = recentRepos.find((r) => samePath(r.path, target.path, IS_WINDOWS));
     if (repo) {
       await enterRepo(repo);
       return;
@@ -868,10 +858,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         detail: a.command ? displayCommand(a.command) : a.path,
         allowLabel: allow.label,
         denyLabel: deny.label,
+        request: a,
+        agent: agentLabel(snap.agent) ?? snap.agent,
+        conversationCwd: terminalRunInputs.find((run) => run.tabId === tabId)?.cwd ?? null,
       };
     }
     return out;
-  }, [confirmTabs, channelSnaps]);
+  }, [confirmTabs, channelSnaps, terminalRunInputs]);
 
   /** 已处理的行（撤销窗口内、或已送出还没从收件箱消失）先藏起来 */
   const [queueHidden, setQueueHidden] = useState<Set<string>>(() => new Set());
@@ -907,7 +900,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   /** 键盘选中的那一行（全页导航键：q:<队列键> / t:<项目路径>\n<任务 id> / s:<定时任务行 id>）；null = 还没动过，默认停在第一行 */
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const lastSelectedIndex = useRef(0);
-  const showTierHeads = new Set(queueRows.map((row) => row.tier)).size > 1;
+  const decisionRows = queueRows.filter((row) => row.tier !== "notice");
+  const noticeRows = queueRows.filter((row) => row.tier === "notice");
+  const navigableQueueRows = noticesExpanded ? [...decisionRows, ...noticeRows] : decisionRows;
+  const showTierHeads = new Set(decisionRows.map((row) => row.tier)).size > 1;
 
   function hideRow(key: string, hidden: boolean) {
     setQueueHidden((cur) => {
@@ -948,8 +944,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const approval = row.kind === "inbox" ? row.approval : null;
     if (!approval) return;
     deferRow(
-      row.key,
-      `${decision === "allow" ? "已允许" : "已拒绝"}：${approval.title}`,
+      approvalHiddenKey(row.key, approval.requestId),
+      `将在 5 秒后${decision === "allow" ? "允许一次" : "拒绝"}，仍可撤销：${approval.title}`,
       async () => {
         try {
           await invoke("chat_channel_reply", {
@@ -957,20 +953,28 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             requestId: approval.requestId,
             decision,
           });
+          toast(`已发送${decision === "allow" ? "允许一次" : "拒绝"}：${approval.title}`, "success");
         } catch (reason) {
           toast(`没能送到：${String(reason)}，可以回到对话里回答`, "error");
           throw reason;
         }
       },
     );
+    setOpenApprovalKey(null);
+    focusAfterQueueChange(row.key);
   }
   function dismissRow(row: QueueRow<(typeof inboxItems)[number]>) {
     if (row.kind !== "inbox" || !row.dismissible) return;
     const item = row.item;
     deferRow(row.key, `已收起：${row.text}`, () => useAppStore.getState().dismissInbox(item));
+    focusAfterQueueChange(row.key);
   }
   function openRow(row: QueueRow<(typeof inboxItems)[number]>) {
     if (row.kind === "inbox") {
+      if (row.approval) {
+        setOpenApprovalKey(row.key);
+        return;
+      }
       runInboxAction(row.item);
       return;
     }
@@ -1134,12 +1138,31 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         "success",
       );
       // 只重读定时任务（整页重拉会把每个编程项目的 git 状态也跑一遍）；跑完的结果另有 scheduler-run-done 事件刷新
-      void invoke<ScheduleDto[]>("list_schedules").then(setSchedules).catch(() => {});
+      void invoke<ScheduleDto[]>("list_schedules")
+        .then((list) => { setSchedules(list); setNowMs(Date.now()); recordRead("schedules", "定时任务", true); })
+        .catch(() => recordRead("schedules", "定时任务", false));
     } catch (reason) {
       toast(`「${row.task.name}」没能${row.action === "cancel" ? "停止" : row.action === "reopen" ? "重新打开" : "开始"}：${String(reason)}`, "error");
     } finally {
       scheduleBusy.current.delete(id);
     }
+  }
+  function openScheduleQueue(row: ScheduleOverviewRow) {
+    if (row.task.ref.kind !== "schedule") return;
+    const id = row.task.ref.scheduleId;
+    const queued = queueRows.find((item) => item.key === `sched:paused:${id}` || item.key.startsWith(`sched:review:${id}:`));
+    if (!queued) { openProjectSchedules(row.projectRoot); return; }
+    setSelectedKey(`q:${queued.key}`);
+    requestAnimationFrame(() => {
+      const element = document.getElementById(`wbq-${queued.key}`);
+      element?.focus({ preventScroll: true });
+      element?.scrollIntoView({ block: "nearest" });
+    });
+  }
+  function openScheduleRow(row: ScheduleOverviewRow) {
+    if (row.task.queued) { openScheduleQueue(row); return; }
+    setSelectedKey(`s:${row.task.id}`);
+    setOpenTask({ path: row.projectRoot, taskId: row.task.id });
   }
   const openCardTask =
     openCard?.tasks.find((t) => t.id === openTask?.taskId) ??
@@ -1218,7 +1241,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       });
     }
   }
-  // ===== 第三批：任务行实时状态与花费 =====
+  // ===== 任务行实时状态与详情花费 =====
   const anyLive = cardRuns.length > 0;
   useEffect(() => {
     if (!visible || !anyLive) return;
@@ -1236,9 +1259,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
   const usageKey = (agent: string, sessionId: string) => `${agent}\n${sessionId}`;
   const [usages, setUsages] = useState<Record<string, SessionUsageDto>>({});
-  // 要算花费的会话：卡上开着的每段 + 任务面板里这件事的历次运行
+  // 花费只在详情展示：只拉当前任务的会话与历次运行，按会话去重。
   const usageWantSig = [
-    ...cardRuns.map((r) => sessionOfTab(r.tabId, r.runId)),
+    openCardTask?.live ? sessionOfTab(openCardTask.live.tabId, openCardTask.live.runId) : null,
     ...(panelData?.pastRuns ?? []).map((r) => (r.sessionId ? { agent: r.agent, sessionId: r.sessionId } : null)),
   ]
     .filter((x): x is { agent: string; sessionId: string } => !!x)
@@ -1273,17 +1296,15 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const rows = keys.map((k) => usages[k]).filter((u): u is SessionUsageDto => !!u);
     if (!rows.length || !rows.some((u) => u.priced)) return null;
     const total = rows.reduce((n, u) => n + (u.priced ? u.costUsd : 0), 0);
-    return fmtCost(total, "$", 1, rows.some((u) => !u.priced));
+    return fmtCost(total, "$", 1, rows.length < keys.length || rows.some((u) => !u.priced));
   }
-  function liveMeta(live: CardLiveRun): { activity: string | null; elapsed: string | null; cost: string | null } {
+  function liveMeta(live: CardLiveRun): { activity: string | null; elapsed: string | null } {
     const snap = channelSnaps[live.tabId];
     const tab = terminalRunInputs.find((r) => r.tabId === live.tabId);
     const ms = turnElapsedMs(snap, nowMs);
-    const session = sessionOfTab(live.tabId, live.runId);
     return {
       activity: liveActivityLine(snap, tab?.cwd ?? null, IS_WINDOWS),
       elapsed: ms === null ? null : durationLabel(ms),
-      cost: session ? costText([usageKey(session.agent, session.sessionId)]) : null,
     };
   }
   const panelLive = (() => {
@@ -1291,7 +1312,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const pastKeys = (panelData?.pastRuns ?? [])
       .filter((r) => r.sessionId)
       .map((r) => usageKey(r.agent, r.sessionId!));
-    const total = costText([...new Set(pastKeys)]);
+    const liveSession = live ? sessionOfTab(live.tabId, live.runId) : null;
+    const total = costText([...new Set([...pastKeys, ...(liveSession ? [usageKey(liveSession.agent, liveSession.sessionId)] : [])])]);
     const meta = live ? liveMeta(live) : null;
     if (!meta?.activity && !meta?.elapsed && !total) return null;
     return (
@@ -1311,7 +1333,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         {total && (
           <>
             <dt className="text-l3">花费</dt>
-            <dd className="text-l1" title="这件事历次对话按模型定价合计；≥ 表示有模型没在定价表里，实际只多不少">
+            <dd className="text-l1" title="这件事历次对话按会话去重合计；≥ 表示部分数据未读到或模型未计价，仅列已知花费">
               {total}
             </dd>
           </>
@@ -1377,7 +1399,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   // ===== 键盘：J/K 从拍板队列一路走到项目分组的任务行、再到定时任务；回车去处理 / 开任务面板 =====
   type NavItem = { key: string; queue?: (typeof queueRows)[number]; card?: (typeof cards)[number]; task?: CardTask; schedule?: ScheduleOverviewRow };
   const navItems: NavItem[] = [
-    ...queueRows.map((row) => ({ key: `q:${row.key}`, queue: row })),
+    ...navigableQueueRows.map((row) => ({ key: `q:${row.key}`, queue: row })),
     ...shownCards.flatMap((card) => card.tasks.map((task) => ({ key: `t:${card.path}\n${task.id}`, card, task }))),
     ...scheduleRows.map((row) => ({ key: `s:${row.task.id}`, schedule: row })),
   ];
@@ -1386,40 +1408,56 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   // 只有真按过键 / 点过才高亮项目分组与定时任务里的行；默认只高亮队列第一行（同原口径）
   const navSelected = selectedKey !== null && navIndex >= 0 ? navItems[navIndex] : null;
   // 队列里的选中行：没动过时默认第一行（同原口径）；选到项目分组 / 定时任务时队列里不亮
-  const selectedRow = selectedKey === null ? (queueRows[0] ?? null) : (navSelected?.queue ?? null);
-  const selectedIndex = selectedRow ? queueRows.indexOf(selectedRow) : -1;
+  const selectedRow = selectedKey === null ? (decisionRows[0] ?? null) : (navSelected?.queue ?? null);
+  const selectedIndex = selectedRow ? decisionRows.indexOf(selectedRow) : -1;
   // 键盘选到折叠的部分就展开，选中行总在眼前
   const shownQueueRows =
-    inboxExpanded || selectedIndex >= QUEUE_VISIBLE ? queueRows : queueRows.slice(0, QUEUE_VISIBLE);
+    inboxExpanded || selectedIndex >= QUEUE_VISIBLE ? decisionRows : decisionRows.slice(0, QUEUE_VISIBLE);
+  function focusNavItem(item: NavItem) {
+    setSelectedKey(item.key);
+    const id = item.queue ? `wbq-${item.queue.key}` : item.task && item.card ? `wbt-${item.card.path}\n${item.task.id}` : `wbs-${item.schedule?.task.id}`;
+    requestAnimationFrame(() => {
+      const element = document.getElementById(id);
+      element?.focus({ preventScroll: true });
+      element?.scrollIntoView({ block: "nearest" });
+    });
+  }
+  function focusAfterQueueChange(key: string) {
+    const index = navItems.findIndex((item) => item.key === `q:${key}`);
+    const next = navItems[index + 1] ?? navItems[index - 1];
+    if (next) focusNavItem(next);
+    else requestAnimationFrame(() => document.getElementById("workbench-title")?.focus());
+  }
   const queueKeyRef = useRef<(event: KeyboardEvent) => void>(() => {});
   queueKeyRef.current = (event) => {
     const target = event.target as HTMLElement | null;
+    if (event.defaultPrevented || event.isComposing) return;
     // 焦点在侧栏（⌘0 后 ↑↓ 选对话）、顶栏或输入框里时不接管：只认焦点在页面空白处或工作台的列表里
     if (target && target !== document.body && !target.closest("[data-workbench-queue]")) return;
     if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
     if (document.querySelector("[role='dialog'], [aria-modal='true']")) return;
     // 焦点在别的按钮上时回车留给那个按钮
-    if (event.key === "Enter" && target?.closest("button, a")) return;
+    if (event.key === "Enter" && target?.closest("button, a, summary")) return;
     if (navItems.length === 0) return;
-    const current = selectedKey === null ? (navItems[0] ?? null) : navIndex >= 0 ? navItems[navIndex] : null;
+    const focusKey = target?.closest<HTMLElement>("[data-workbench-nav]")?.dataset.workbenchNav;
+    const focused = navItems.find((item) => item.key === focusKey);
+    const current = focused ?? (selectedKey === null ? (navItems[0] ?? null) : navIndex >= 0 ? navItems[navIndex] : null);
     const action = queueKeyAction(event, current?.queue ?? null);
     if (!action) {
       if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && current && !current.queue) {
         event.preventDefault();
         if (current.task && current.card) setOpenTask({ path: current.card.path, taskId: current.task.id });
-        else if (current.schedule) setOpenTask({ path: current.schedule.projectRoot, taskId: current.schedule.task.id });
+        else if (current.schedule) openScheduleRow(current.schedule);
       }
       return;
     }
     event.preventDefault();
     if (action === "next" || action === "prev") {
       // 没动过时：队列第一行本来就亮着，从它往下走；队列空着（什么都没亮）第一下停在第一行
-      const from = selectedKey === null ? (queueRows.length ? 0 : -1) : navIndex;
+      const from = focused ? navItems.indexOf(focused) : selectedKey === null ? (decisionRows.length ? 0 : -1) : navIndex;
       const next = navItems[moveSelection(navItems.length, from, action === "next" ? 1 : -1)];
       if (!next) return;
-      setSelectedKey(next.key);
-      const id = next.queue ? `wbq-${next.queue.key}` : next.task && next.card ? `wbt-${next.card.path}\n${next.task.id}` : `wbs-${next.schedule?.task.id}`;
-      requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "nearest" }));
+      focusNavItem(next);
       return;
     }
     const row = current?.queue;
@@ -1443,22 +1481,84 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     return run != null && unreadChats.includes(unreadKeyOf(run));
   }
 
+  const openApprovalRow = queueRows.find((row) => row.key === openApprovalKey && row.kind === "inbox" && row.approval) ?? null;
+  const activeReadKeys = new Set([
+    "projects", "workspaces", "runs", "schedules", ...(projects.length ? ["tasks"] : []),
+    ...projects.flatMap((project) => {
+      const mode = normalizeWorkMode(project.workMode);
+      return mode === "coding" ? [`coding:${project.path}`] : mode === "research" ? [`research:${project.path}`] : [];
+    }),
+  ]);
+  const readFailures = Object.entries(reads).filter(([key, read]) => activeReadKeys.has(key) && read.failed);
+
+  function renderQueueList(rows: typeof queueRows, label: string) {
+    return (
+      <ul className="overflow-hidden rounded-lg border border-hairline" aria-label={label}>
+        {rows.map((row, index) => {
+          const tierHead = showTierHeads && row.tier !== "notice" && (index === 0 || rows[index - 1].tier !== row.tier);
+          const selected = row === selectedRow;
+          const approval = row.kind === "inbox" ? row.approval : null;
+          return (
+            <li key={row.key} id={`wbq-${row.key}`} data-workbench-nav={`q:${row.key}`} tabIndex={-1}
+              className={`group relative border-t border-hairline first:border-t-0 ${selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : "hover:bg-hover"}`}
+              onFocusCapture={() => setSelectedKey(`q:${row.key}`)}>
+              {tierHead && <p className="px-3.5 pb-0.5 pt-2 text-micro text-l3">{QUEUE_TIER_LABEL[row.tier]}</p>}
+              <div className="ccode-workbench-queue-row flex min-h-11 items-center gap-3 px-3.5 py-2">
+                <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${row.dot}`} />
+                <button type="button" className="ccode-workbench-queue-content min-w-0 flex-1 text-left" aria-haspopup={approval ? "dialog" : undefined} onClick={() => openRow(row)}>
+                  <span className="block break-words text-sm text-l1">{approval?.title ?? row.text}</span>
+                  {(row.project || approval) && (
+                    <span className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-xs text-l3">
+                      {approval && <span>{row.text}</span>}
+                      {row.project && <span>{approval ? `· ${row.project}` : row.project}</span>}
+                      {approval?.detail && <span className="min-w-0 truncate font-mono" title={approval.detail}>· {approval.detail}</span>}
+                    </span>
+                  )}
+                </button>
+                <span className="ccode-workbench-queue-actions flex shrink-0 flex-wrap items-center gap-1.5">
+                  {approval ? (
+                    <>
+                      <button type="button" className={rowActionClass} title="拒绝这一问（R）：5 秒内可撤销" onClick={() => answerApproval(row, "deny")}>{approval.denyLabel}</button>
+                      <button type="button" className={rowActionClass} title="允许这一次（A）：5 秒内可撤销；更多权限选项在原对话里选择" onClick={() => answerApproval(row, "allow")}>允许一次</button>
+                      <button type="button" className={rowActionClass} aria-haspopup="dialog" onClick={() => setOpenApprovalKey(row.key)}>详情</button>
+                    </>
+                  ) : (
+                    <>
+                      {row.kind === "inbox" && row.dismissible && (
+                        <button type="button" className={`${rowActionClass} ${selected ? "" : hoverRevealClass} text-l3`} title="收起这条通知（E）：5 秒内可撤销；状态一变它还会回来" onClick={() => dismissRow(row)}>收起</button>
+                      )}
+                      <button type="button" className={rowActionClass} onClick={() => openRow(row)}>{row.kind === "inbox" ? row.item.actionLabel : "去验收"}</button>
+                    </>
+                  )}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
   return (
     <PageFrame width="fluid" className="pb-12 pt-6">
+      <div className="ccode-workbench min-w-0">
       {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
           标题只留给屏幕阅读器，顶上 pt-6 留白免得「最近在做」贴着窗口顶边。其他页的标题照旧。
           「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
-      <h1 className="sr-only">工作台</h1>
-      {loadError && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn-text">
-          <span>{loadError}</span>
-          <button
-            type="button"
-            className={secondaryActionClass}
-            onClick={() => setReloadToken((n) => n + 1)}
-          >
-            重试
-          </button>
+      <h1 id="workbench-title" tabIndex={-1} className="sr-only">工作台</h1>
+      {readFailures.length > 0 && (
+        <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn-text">
+          <div>
+            <p>以下内容未能更新，已读到的旧状态会保留。</p>
+            <ul className="mt-1 space-y-0.5">
+              {readFailures.map(([key, read]) => (
+                <li key={key} title={read.lastSuccess ? new Date(read.lastSuccess).toLocaleString("zh-CN", { hour12: false }) : undefined}>
+                  {read.label}：{read.lastSuccess ? `状态截至 ${new Date(read.lastSuccess).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "尚未成功读取"}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button type="button" className={secondaryActionClass} onClick={() => setReloadToken((n) => n + 1)}>重试</button>
         </div>
       )}
 
@@ -1483,162 +1583,38 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         <section className="mb-7 min-w-0" data-workbench-queue="">
           <SectionHeading
             icon={Inbox}
-            title="等你拍板"
+            title={decisionRows.length ? "等你拍板" : "通知"}
             action={
-              <span className="flex items-center gap-2">
-                <span className="hidden text-micro text-l3 lg:inline" aria-hidden="true">
-                  {QUEUE_KEY_HINT}
-                </span>
+              <span className="flex flex-wrap items-center justify-end gap-2">
+                <span className="hidden text-micro text-l3 lg:inline" aria-hidden="true">{QUEUE_KEY_HINT}</span>
+                {noticeRows.length > 0 && (
+                  <button type="button" className={ghostActionClass} aria-expanded={noticesExpanded} aria-controls="workbench-notices" onClick={() => setNoticesExpanded((value) => !value)}>
+                    {decisionRows.length ? "通知" : noticesExpanded ? "收起" : "展开"} {noticeRows.length}
+                  </button>
+                )}
                 {bulkInboxItems.length > 0 && (
-                  <button
-                    type="button"
-                    className="rounded-full p-1 text-l3 hover:bg-hover hover:text-l1"
-                    title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
-                    aria-label="全部已读（仅信息类）"
-                    onClick={() => dismissInboxBulk(bulkInboxItems)}
-                  >
+                  <button type="button" className="rounded-full p-1 text-l3 hover:bg-hover hover:text-l1" title="全部已读：收起信息类通报；冲突、待确认等需要拍板的事不受影响" aria-label="全部已读（仅信息类）" onClick={() => dismissInboxBulk(bulkInboxItems)}>
                     <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 )}
-                {/* 只剩一条时数字和那一行说的是同一件事，不再挂；有要拍板的才用黄底，全是通知用中性色 */}
-                {queueRows.length > 1 && (
-                  <span
-                    className={
-                      queueRows.some((row) => row.tier !== "notice")
-                        ? "rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text"
-                        : "rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
-                    }
-                  >
-                    {queueRows.length}
-                  </span>
-                )}
+                {decisionRows.length > 1 && <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">{decisionRows.length}</span>}
               </span>
             }
           />
-          <div
-            className="overflow-hidden rounded-lg border border-hairline"
-            role="listbox"
-            aria-label="等你拍板"
-            aria-activedescendant={selectedRow ? `wbq-${selectedRow.key}` : undefined}
-          >
-            {shownQueueRows.map((row, index) => {
-              const tierHead =
-                showTierHeads && (index === 0 || shownQueueRows[index - 1].tier !== row.tier);
-              const selected = row === selectedRow;
-              const approval = row.kind === "inbox" ? row.approval : null;
-              return (
-                <div key={row.key}>
-                  {tierHead && (
-                    <div className="border-t border-hairline px-3.5 pb-0.5 pt-2 text-micro text-l3 first:border-t-0">
-                      {QUEUE_TIER_LABEL[row.tier]}
-                    </div>
-                  )}
-                  <div
-                    id={`wbq-${row.key}`}
-                    role="option"
-                    aria-selected={selected}
-                    className={`group relative flex min-h-11 items-center gap-3 px-3.5 py-2 ${
-                      tierHead ? "" : "border-t border-hairline first:border-t-0"
-                    } ${selected ? "bg-hover" : "hover:bg-hover"}`}
-                    onClick={() => setSelectedKey(`q:${row.key}`)}
-                  >
-                    {selected && (
-                      <span className="absolute inset-y-0 left-0 w-0.5 bg-nav-accent" aria-hidden="true" />
-                    )}
-                    <span className={`size-1.5 shrink-0 rounded-full ${row.dot}`} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-l1" title={approval?.title ?? row.text}>
-                        {approval?.title ?? row.text}
-                      </span>
-                      {(row.project || approval) && (
-                        <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-micro text-l3">
-                          {approval && <span className="shrink-0">{row.text}</span>}
-                          {row.project && (
-                            <span className="shrink-0">{approval ? `· ${row.project}` : row.project}</span>
-                          )}
-                          {approval?.detail && (
-                            <span className="min-w-0 truncate font-mono" title={approval.detail}>
-                              · {approval.detail}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1.5">
-                      {approval ? (
-                        <>
-                          <button
-                            type="button"
-                            className={rowActionClass}
-                            title="拒绝这一问（R）：几秒内可撤销"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              answerApproval(row, "deny");
-                            }}
-                          >
-                            {approval.denyLabel}
-                          </button>
-                          <button
-                            type="button"
-                            className={rowActionClass}
-                            title="允许这一次（A）：几秒内可撤销。要选「这次会话都允许」回对话里选"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              answerApproval(row, "allow");
-                            }}
-                          >
-                            {approval.allowLabel}
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {row.kind === "inbox" && row.dismissible && (
-                            <button
-                              type="button"
-                              className={`${rowActionClass} ${selected ? "" : hoverRevealClass} text-l3`}
-                              title="收起这条通知（E）：几秒内可撤销；状态一变它还会回来"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                dismissRow(row);
-                              }}
-                            >
-                              收起
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className={rowActionClass}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openRow(row);
-                            }}
-                          >
-                            {row.kind === "inbox" ? row.item.actionLabel : "去验收"}
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {queueRows.length > QUEUE_VISIBLE && (
-            // 截断必须留出口：展开在页内，不跳到标题栏的收件箱浮层
-            <button
-              type="button"
-              className={`${rowActionClass} mt-1 w-full justify-start px-3.5 text-l3`}
-              aria-expanded={inboxExpanded}
-              onClick={() => setInboxExpanded((v) => !v)}
-            >
-              {inboxExpanded ? "收起" : `还有 ${queueRows.length - QUEUE_VISIBLE} 条`}
+          {shownQueueRows.length > 0 && renderQueueList(shownQueueRows, "等你拍板")}
+          {decisionRows.length > QUEUE_VISIBLE && (
+            <button type="button" className={`${rowActionClass} mt-1 w-full justify-start px-3.5 text-l3`} aria-expanded={inboxExpanded} onClick={() => setInboxExpanded((value) => !value)}>
+              {inboxExpanded ? "收起" : `还有 ${decisionRows.length - QUEUE_VISIBLE} 条`}
             </button>
           )}
+          <div id="workbench-notices" hidden={!noticesExpanded} className="mt-2">
+            {noticesExpanded && renderQueueList(noticeRows, "信息通知")}
+          </div>
         </section>
       )}
 
       <section className="min-w-0">
-          <div className="mb-2.5 flex items-center gap-2 px-1">
+          <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
             <CircleDot size={14} strokeWidth={1.8} className="text-nav-accent" aria-hidden="true" />
             <h2 className="text-micro font-medium text-l2">
               {workbenchNowSectionTitle(runningBadge)}
@@ -1650,7 +1626,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
               </span>
             )}
             {cardFilterOptions.length > 2 && (
-              <div className="ml-auto flex items-center gap-1" role="group" aria-label="筛选项目">
+              <div className="ml-auto flex flex-wrap items-center gap-1" role="group" aria-label="筛选项目">
                 {cardFilterOptions.map((opt) => (
                   <button
                     key={opt.id}
@@ -1674,6 +1650,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 {shownCards.map((card) => {
                   const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
                   const said = lastSaidFor(card.path);
+                  const destination = resolveWorkbenchDestination(
+                    item ? continueWorkbenchTarget(item) : { kind: card.registered ? "project" : "enter-cwd", path: card.path },
+                    allRuns,
+                    IS_WINDOWS,
+                  );
                   const canGoal = goalTargets.some((t) => samePath(t.path, card.path, IS_WINDOWS));
                   return (
                     <WorkbenchProjectGroup
@@ -1693,12 +1674,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                             }
                           : null
                       }
-                      onContinue={() =>
-                        void openContinueTarget(
-                          item ? continueWorkbenchTarget(item) : { kind: "project", path: card.path },
-                        )
-                      }
-                      continueTip={said ? `回到上次停下的地方\n上次停在：${said.full}` : "回到上次停下的地方"}
+                      onContinue={() => void openContinueTarget(destination)}
+                      continueLabel={destination.label}
+                      continueTip={said ? `${destination.label}\n上次停在：${said.full}` : destination.label}
                       lastActive={lastActiveOf(card.path)}
                       liveMeta={liveMeta}
                       caretFor={(live) => withUnread(caretOfAttention(live.attention), runUnread(live.tabId)) ?? "idle"}
@@ -1759,6 +1737,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             ) : (
               <p className="px-1 py-3 text-sm text-l3">这一类没有项目。</p>
             )
+          ) : reads.projects?.failed ? (
+            <p className="px-1 py-3 text-sm text-l3">项目暂时无法读取，请重试。</p>
           ) : !projectsLoaded ? (
             <LoadingRows />
           ) : (
@@ -1785,14 +1765,23 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         nowMs={nowMs}
         openTaskId={openTask?.taskId.startsWith("schedule:") ? openTask.taskId : null}
         selectedTaskId={navSelected?.schedule?.task.id ?? null}
-        onOpen={(row) => {
-          setSelectedKey(`s:${row.task.id}`);
-          setOpenTask({ path: row.projectRoot, taskId: row.task.id });
-        }}
+        onOpen={openScheduleRow}
+        onQueue={openScheduleQueue}
         onAction={(row) => void runScheduleAction(row)}
       />
+      </div>
 
       {taskPanel}
+      <WorkbenchApprovalPanel
+        approval={openApprovalRow?.kind === "inbox" ? openApprovalRow.approval : null}
+        project={openApprovalRow?.project ?? null}
+        onClose={() => setOpenApprovalKey(null)}
+        onAnswer={(decision) => { if (openApprovalRow) answerApproval(openApprovalRow, decision); }}
+        onConversation={() => {
+          if (openApprovalRow?.kind === "inbox") runInboxAction(openApprovalRow.item);
+          setOpenApprovalKey(null);
+        }}
+      />
       {clientOpen.dialog}
     </PageFrame>
   );

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildDecisionQueue,
+  approvalHiddenKey,
   createDeferred,
   moveSelection,
   pruneHidden,
@@ -18,6 +19,9 @@ const approval: QueueApproval = {
   requestId: "r1",
   title: "Codex 要运行一条命令",
   detail: "rm a.csv",
+  request: { requestId: "r1", replyable: true, kind: "execute", command: "rm a.csv", path: null, oldText: null, newText: null, diff: null, detail: null, toolName: "shell", alwaysLabel: null },
+  agent: "Codex",
+  conversationCwd: "/p",
   allowLabel: "允许",
   denyLabel: "拒绝",
 };
@@ -125,4 +129,14 @@ test("createDeferred：到点执行，撤销就不执行，同一 id 重排只�
   for (const h of queue) if (!h.cleared) h.fn();
   assert.deepEqual(ran, ["y2"]);
   assert.equal(deferred.has("y"), false);
+});
+
+
+test("待发送按请求隐藏：同一 Run 的下一问仍出现，短暂没快照时不重现上一问", () => {
+  const input = { inbox: [item("confirm:r")], reviews: [], projectOf: () => null, hidden: new Set([approvalHiddenKey("confirm:r", "one")]) };
+  assert.equal(buildDecisionQueue({ ...input, approvals: { "confirm:r": { ...approval, requestId: "one" } } }).length, 0);
+  assert.equal(buildDecisionQueue({ ...input, approvals: { "confirm:r": { ...approval, requestId: "two" } } }).length, 1);
+  assert.equal(buildDecisionQueue({ ...input, approvals: {} }).length, 0);
+  assert.deepEqual([...pruneHidden(input.hidden, ["confirm:r"])], [...input.hidden]);
+  assert.equal(pruneHidden(input.hidden, ["confirm:rr"]).size, 0);
 });

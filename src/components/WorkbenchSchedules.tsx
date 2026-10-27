@@ -3,7 +3,7 @@ import { rowActionClass } from "./PageFrame";
 import { absTime } from "../rel-time";
 import { hhmm } from "../schedule-tasks";
 import {
-  scheduleTimeline,
+  scheduleTimelineGroups,
   type CardTone,
   type ScheduleAction,
   type ScheduleOverviewRow,
@@ -31,12 +31,9 @@ const ACTION_TIP: Record<ScheduleAction, string> = {
   run: "不等到点，现在跑一次",
 };
 
-const ROW_GRID =
-  "grid grid-cols-[6px_minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,1.4fr)_5.5rem] items-center gap-x-3";
-
 /**
  * 工作台「定时任务」总览（2026-10-27）：跨项目一块看完，顶上一条今后 24 小时的时间轴，行内停止 / 重跑 / 重新打开 / 现在跑。
- * 项目分组里不再列定时任务（同一件事只说一次）；被自动暂停、有产物待评审的在「等你拍板」里，这里只写状态不给按钮
+ * 项目分组里不再列定时任务（同一件事只说一次）；被自动暂停、有产物待评审的在「等你拍板」里，这里只带回拍板队列
  */
 export default function WorkbenchSchedules({
   rows,
@@ -45,6 +42,7 @@ export default function WorkbenchSchedules({
   selectedTaskId,
   onOpen,
   onAction,
+  onQueue,
 }: {
   rows: readonly ScheduleOverviewRow[];
   nowMs: number;
@@ -54,14 +52,15 @@ export default function WorkbenchSchedules({
   selectedTaskId: string | null;
   onOpen: (row: ScheduleOverviewRow) => void;
   onAction: (row: ScheduleOverviewRow) => void;
+  onQueue: (row: ScheduleOverviewRow) => void;
 }) {
   if (rows.length === 0) return null;
-  const points = scheduleTimeline(rows, nowMs);
+  const groups = scheduleTimelineGroups(rows, nowMs);
   const paused = rows.filter((r) => r.task.state.startsWith("已自动暂停")).length;
-  const marks = [0, 6, 12, 18, 24].map((h) => {
-    const d = new Date(nowMs + h * 3600_000);
-    return { h, label: h === 0 ? "现在" : hhmm(d.getHours(), d.getMinutes()) };
-  });
+  const openPoint = (id: string) => {
+    const row = rows.find((item) => item.task.id === id);
+    if (row) row.task.queued ? onQueue(row) : onOpen(row);
+  };
   return (
     <section className="mt-7 min-w-0" aria-label="定时任务" data-workbench-queue="">
       <div className="mb-2.5 flex items-center gap-2 px-1">
@@ -72,31 +71,39 @@ export default function WorkbenchSchedules({
         </span>
       </div>
 
-      {/* 今后 24 小时：哪会儿要跑什么；正在跑的钉在「现在」 */}
-      <div className="relative mx-1 mb-6 mt-1 h-5" aria-label="今后 24 小时要跑的定时任务">
-        <div className="absolute inset-x-0 top-2 h-px bg-hairline" />
-        {marks.map((m) => (
-          <span
-            key={m.h}
-            className="absolute top-4 -translate-x-1/2 text-micro text-l4 first:translate-x-0 last:-translate-x-full"
-            style={{ left: `${(m.h / 24) * 100}%` }}
-          >
-            {m.label}
-          </span>
-        ))}
-        {points.map((p) => (
-          <span
-            key={p.id}
-            className={`absolute top-[5px] size-[7px] -translate-x-1/2 rounded-full ring-2 ring-canvas ${
-              p.running ? "bg-ok-text" : "bg-l3"
-            }`}
-            style={{ left: `${Math.min(Math.max(p.pos, 0.005), 0.995) * 100}%` }}
-            title={`${p.name} · ${p.running ? "正在跑" : absTime(new Date(p.at).toISOString())}`}
-          />
-        ))}
-        {points.length === 0 && (
-          <span className="absolute right-0 -top-0.5 text-micro text-l4">今后 24 小时没有要跑的</span>
-        )}
+      <div className="mb-3 px-1">
+        <p className="mb-2 text-xs text-l3">今后 24 小时</p>
+        <ul className="flex flex-wrap gap-2" aria-label="今后 24 小时要跑的定时任务">
+          {groups.map((group) => {
+            const date = new Date(group.at);
+            const time = group.running ? "正在跑" : `${date.getDate() !== new Date(nowMs).getDate() ? "明天 " : ""}${hhmm(date.getHours(), date.getMinutes())}`;
+            const label = `${time} · ${group.items.length} 项`;
+            return (
+              <li key={group.key} className="min-w-0 max-w-full">
+                {group.items.length === 1 ? (
+                  <button type="button" className="ccode-workbench-time-item" title={absTime(date.toISOString())} onClick={() => openPoint(group.items[0].id)}>
+                    <span className="shrink-0 tabular-nums text-l3">{time}</span>
+                    <span className="min-w-0 break-words text-l2">{group.items[0].name} · {rows.find((row) => row.task.id === group.items[0].id)?.projectName}</span>
+                  </button>
+                ) : (
+                  <details className="rounded-lg border border-hairline text-xs">
+                    <summary className="cursor-pointer rounded-lg px-2.5 py-1.5 text-l2 hover:bg-hover">{label}</summary>
+                    <ul className="space-y-1 px-2 pb-2" aria-label={label}>
+                      {group.items.map((point) => (
+                        <li key={point.id}>
+                          <button type="button" className="w-full break-words rounded-lg px-1.5 py-1 text-left text-l2 hover:bg-hover" onClick={() => openPoint(point.id)}>
+                            {point.name} · {rows.find((row) => row.task.id === point.id)?.projectName}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {groups.length === 0 && <p className="text-xs text-l3">今后 24 小时没有要跑的</p>}
       </div>
 
       <div className="overflow-hidden rounded-lg border border-hairline">
@@ -106,33 +113,37 @@ export default function WorkbenchSchedules({
             <div
               key={row.task.id}
               id={`wbs-${row.task.id}`}
-              className={`${ROW_GRID} min-h-10 border-t border-hairline px-4 py-1.5 first:border-t-0 ${
+              tabIndex={-1}
+              data-workbench-nav={`s:${row.task.id}`}
+              className={`ccode-workbench-schedule min-h-10 border-t border-hairline px-4 py-1.5 first:border-t-0 ${
                 openTaskId === row.task.id || selected ? "bg-hover" : "hover:bg-hover"
               } ${selected ? "shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""}`}
             >
-              <span className={`size-1.5 rounded-full ${TONE_DOT[row.task.queued ? "wait" : row.task.tone]}`} />
+              <span aria-hidden="true" className={`ccode-workbench-schedule-dot size-1.5 rounded-full ${TONE_DOT[row.task.queued ? "wait" : row.task.tone]}`} />
               <button
                 type="button"
-                className="min-w-0 truncate text-left text-sm text-l1 hover:underline"
-                aria-haspopup="dialog"
-                title={`看「${row.task.name}」的详情`}
-                onClick={() => onOpen(row)}
+                className="ccode-workbench-schedule-name min-w-0 break-words text-left text-sm text-l1 hover:underline"
+                aria-haspopup={row.task.queued ? undefined : "dialog"}
+                title={row.task.queued ? `去拍板队列处理「${row.task.name}」` : `看「${row.task.name}」的详情`}
+                onClick={() => row.task.queued ? onQueue(row) : onOpen(row)}
               >
                 {row.task.name}
               </button>
-              <span className="min-w-0 truncate text-micro text-l3" title={row.projectRoot}>
+              <span className="ccode-workbench-schedule-project min-w-0 break-words text-xs text-l3" title={row.projectRoot}>
                 {row.projectName}
               </span>
-              <span className="min-w-0 truncate text-micro text-l3">{row.frequency}</span>
+              <span className="ccode-workbench-schedule-frequency min-w-0 break-words text-xs text-l3">{row.frequency}</span>
               <span
-                className={`min-w-0 truncate text-micro ${row.task.tone === "fail" ? "text-err-text" : "text-l3"}`}
+                className={`ccode-workbench-schedule-state min-w-0 break-words text-xs ${row.task.tone === "fail" ? "text-err-text" : "text-l3"}`}
                 title={row.task.state}
               >
                 {row.task.state}
                 {row.task.queued ? " · 在「等你拍板」里" : ""}
               </span>
-              <span className="text-right">
-                {row.action && (
+              <span className="ccode-workbench-schedule-action text-right">
+                {row.task.queued ? (
+                  <button type="button" className={rowActionClass} onClick={() => onQueue(row)}>去拍板</button>
+                ) : row.action && (
                   <button
                     type="button"
                     className={rowActionClass}
