@@ -11,6 +11,16 @@
 - **管道输出块缓冲**：brew/npm 检测到非 TTY 会块缓冲导致"无输出"假象——安装/更新命令必须在 PTY 里跑（别退回管道）。
 - **Homebrew 7 安装默认问 `[y/n]`**（2026-09-30 实证：诊断页装 tectonic 停在 “Do you want to proceed?”）。应用内 brew 一律设 `HOMEBREW_NO_ASK=1`，等价 `--yes`。pip 安装加 `--no-input`。诊断页那一行没有输入框。若环境变量没盖住、日志里仍出现 `[y/n]`，安装读端再自动写一次 `y`，最多 5 次。Git、Node、Quarto、TeX、字体和 CLI 更新走同一条 brew 管线。PyMuPDF 与 Pillow 走 pip。winget 本来就带 `--disable-interactivity`。
 - **诊断页一键安装**（2026-09-30）：Quarto 走 `brew install --cask quarto` / winget `Posit.Quarto`。TeX 装 tectonic（`brew install tectonic` / winget `TectonicTypesetting.Tectonic`），已有 xelatex 或 pdflatex 不再装。PyMuPDF 与 Pillow 走 `python3 -m pip install`，碰到 externally-managed-environment 再加 `--user`，不使用 `--break-system-packages`。Linux 只给 apt 或官网指引，不代跑 sudo。
+- **从访达打开的 Mesa 读一次登录 shell 的环境**（2026-10-27 用户拍板，照 VS Code `getResolvedShellEnv`）：launchd 只给短 PATH、
+  没有 LANG，`.zshrc` / `.zprofile` 里的 conda、Homebrew、版本管理器都没有（本机实测安装版 python3 落到 Xcode 自带、没有 PyMuPDF，
+  node 是 v26 而终端是 v22）。`lib.rs::run()` 起线程前依次：`process::ensure_utf8_locale` → `shell_env::import_login_shell_env`
+  → `agents::extend_process_path`（兜底，shell PATH 里没有的候选目录补在末尾）。读法：`$SHELL -i -l -c` 打印两个随机标记夹着的
+  `/usr/bin/env -0`，带 `MESA_RESOLVING_ENVIRONMENT=1`，5 秒超时整组收掉并回落；进程已有 `SHLVL`（从终端启动，开发版即此）、
+  Windows、nu / xonsh / pwsh 不读。**凭据类不带**：`_API_KEY` `_KEY` `_TOKEN` `_SECRET` `_PASSWORD` 等后缀、九家 Agent 的变量前缀
+  （`ANTHROPIC_` `OPENAI_` `CLAUDE_` …，单测钉住 agent_specs 的净化表全被拦），shell 自身与 Mesa 自管的键也不带。
+  应用日志记一行用时与个数，不记名字和值。**验收不用打包**：只起 Vite（`npm run dev -- --host 127.0.0.1`）后
+  `launchctl submit -l com.ccode.gui-probe -- <仓库>/src-tauri/target/debug/ccode`，拿到的就是 launchd 环境；`launchctl remove` 收掉
+  （submit 的任务退出会被拉起）。启动 Agent 子进程等新调用点不需另做什么，继承进程环境即可。
 - **GUI 应用 PATH 很短**：打包应用可能找不到 npm 装的 CLI（开发模式不受影响）；统一经 `agents::resolve_binary` 候选目录兜底解析。
   **只找到 CLI 不够**（2026-10-27 本机实证）：npm 装的 Codex / Gemini / CodeBuddy 是 `#!/usr/bin/env node` 脚本，子进程沿用
   Finder 给的 `/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin` 找不到 Homebrew 的 node，一起就退 127，打包版标签一片空白。
@@ -20,8 +30,8 @@
   Mesa 开着时用户新装的程序同理（PATH 只在启动时读一次）：新增依赖要给它的默认安装落点进候选目录，装完不重启也认得——
   如 PowerShell 7（`%ProgramFiles%\PowerShell\7`）、「仅为我安装」的 Git Bash（`%LOCALAPPDATA%\Programs\Git\bin`，`agents::git_bash_default_paths`）（2026-10-21）。
 - **macOS GUI 应用也没有 LANG**（2026-10-27 本机实证：打包版 Mesa 与它起的 Codex 进程环境里只有短 PATH 和 `__CF_USER_TEXT_ENCODING`）。
-  子进程都跑在 C 语言环境：`lsof` 把中文路径转义成 `\xe7…`、`ls` 显示 `????`、zsh 里打中文变 `<e7>`。启动时紧跟 `extend_process_path`
-  调 `process::ensure_utf8_locale`：LANG / LC_ALL / LC_CTYPE 都没有才补 `LANG=<系统地区>.UTF-8`（NSLocale，本机无该 locale 回落 en_US.UTF-8），
+  子进程都跑在 C 语言环境：`lsof` 把中文路径转义成 `\xe7…`、`ls` 显示 `????`、zsh 里打中文变 `<e7>`。启动时最先
+  调 `process::ensure_utf8_locale`（再读 shell 环境，rc 里自己设了 LANG 的以 rc 为准）：LANG / LC_ALL / LC_CTYPE 都没有才补 `LANG=<系统地区>.UTF-8`（NSLocale，本机无该 locale 回落 en_US.UTF-8），
   同「终端」App 的默认做法。此外**解析外部程序输出里的路径时不依赖 locale**：进程 cwd 走 sysinfo（proc_pidinfo / /proc），不起 lsof。
   开发版从终端启动、继承了 LANG，这类问题只在打包版出现，验收要看打包版。
 - **Windows 正式版没有父控制台**：后台 `git/cmd/netstat/tasklist/CLI --version` 等若直接 `Command::new` 会反复创建

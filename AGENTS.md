@@ -188,6 +188,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   `tests/fixtures/model-kinds.json`），不得成为 Agent 对话模型（启动闸 `agents::validate_launch_compatibility`）。出图模型编辑处只在连接页。
   Agent 经随包 `mesa_helper image` 出图，密钥由 helper 自取、不进 Agent env，PTY 只注入 `MESA_IMAGE_TOOL`；找随包 helper 一律走
   `image_gen::find_bundled_helper`。细则 profiles.md / safety.md 同名条。
+- **子进程环境来自登录 shell（2026-10-27）**：从访达打开时 `shell_env::import_login_shell_env` 在起线程前读一次 `$SHELL -i -l -c` 的环境，
+  所有子进程继承；**API 密钥 / 端点类变量不从 shell 带入**（由 Mesa 连接配置注入）。改过滤表或启动顺序前读 environment.md 同名条。
 - **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
   用它，禁直接 `which::which` 或裸名 spawn（平台候选目录清单 = `agent_specs.rs::binary_candidate_dirs`，`agents.rs` 只是调用方）。
   PATH 上第一个可能是占位程序时（Windows 应用商店的 `python`、macOS CLT 没装时的 `/usr/bin/python3`）改用

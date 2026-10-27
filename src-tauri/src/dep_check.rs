@@ -176,7 +176,7 @@ pub(crate) fn probe_quarto() -> DepItemDto {
 /// 指向已不存在路径的 QUARTO_* 环境变量（2026-10-18 本机实证）：conda 版 quarto 的激活脚本
 /// 会导出 QUARTO_SHARE_PATH / QUARTO_DENO 等，卸载后已经在跑的进程（Mesa 自己、开着的终端）
 /// 还带着它们；官方版 quarto 认这些变量，读不到版本、渲染也会失败——装得再对也没用，
-/// 只有从新开的终端重启 Mesa 才清掉。
+/// 只有重启 Mesa 才清掉（从访达打开会重读登录 shell 环境，见 shell_env；从终端启动的要换个新开的终端）。
 fn stale_quarto_env(vars: &[(String, String)], exists: impl Fn(&str) -> bool) -> Vec<String> {
     let mut out: Vec<String> = vars
         .iter()
@@ -200,7 +200,7 @@ fn stale_quarto_env_note(names: &[String]) -> Option<String> {
         String::new()
     };
     Some(format!(
-        "Quarto 本身没问题，是 Mesa 进程里的环境变量 {first}{more}指向已删除的路径（多半是卸载 conda 版 quarto 后留下的）；从新开的终端重启 Mesa 即可"
+        "Quarto 本身没问题，是 Mesa 进程里的环境变量 {first}{more}指向已删除的路径（多半是卸载 conda 版 quarto 后留下的）；重启 Mesa 即可（从终端启动的，先新开一个终端再启动）"
     ))
 }
 

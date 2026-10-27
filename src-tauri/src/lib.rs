@@ -125,6 +125,8 @@ mod session_slim;
 mod session_transfer;
 mod sessions;
 mod settings;
+#[cfg(unix)]
+mod shell_env;
 mod sheet_preview;
 mod skills;
 mod storage;
@@ -179,12 +181,16 @@ pub fn run() {
     static ALLOW_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     /// 关窗存盘只拦一次（拦下→通知前端→350ms 后二次 close 放行）
     static FLUSH_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    // 打包版从 Finder 启动时 PATH 很短：先补全，再起任何线程（见 agents::extend_process_path）
-    #[cfg(unix)]
-    agents::extend_process_path();
-    // 同理补 UTF-8 的 LANG，否则 shell / Agent 里中文文件名乱码（见 process::ensure_utf8_locale）
+    // 从访达 / 程序坞打开时环境是 launchd 给的最小一份，以下三步都必须在起任何线程之前：
+    // 先补 UTF-8 的 LANG（shell 也要看到它，见 process::ensure_utf8_locale），
+    // 再读一次登录 shell 的环境（conda、Homebrew、PATH 顺序与终端一致，凭据不带，见 shell_env），
+    // 最后把 shell PATH 里没有的候选目录补在末尾兜底（见 agents::extend_process_path）
     #[cfg(target_os = "macos")]
     process::ensure_utf8_locale();
+    #[cfg(unix)]
+    shell_env::import_login_shell_env();
+    #[cfg(unix)]
+    agents::extend_process_path();
     diagnostics::start_process_monitor();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
