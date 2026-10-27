@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  AppWindow,
   Archive,
   Check,
   ChevronDown,
@@ -111,6 +112,8 @@ import { relTime } from "../rel-time";
 import RailSearchPalette from "./RailSearchPalette";
 import type { RailSearchChat, RailSearchProject } from "../rail-search";
 import { usePolling } from "../polling";
+import { useClientOpen } from "./ClientOpenDialog";
+import { openButtonLabel } from "../client-open";
 
 const GROUPS_KEY = "ccode.projectTreeGroups";
 /** 各文件夹（项目 / 随手聊）对话展开与否：人手开关过的才记，没碰过的只展开正在聊的那个（sidebar-chats.ts folderOpen） */
@@ -164,6 +167,8 @@ export default function ProjectTree({
   >([]);
   // 固定搜索入口打开「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛
   const [searchOpen, setSearchOpen] = useState(false);
+  // 对话菜单「在 X 客户端打开」：哪家的会话交给哪家自己的 GUI 客户端（预检与确认层同对话页）
+  const clientOpen = useClientOpen(true);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -571,6 +576,12 @@ export default function ProjectTree({
           st.setPage("sessions");
         },
       },
+      ...clientOpen.sessionClients(s.agent).map((c) => ({
+        label: openButtonLabel(c, "session"),
+        icon: AppWindow,
+        title: `交给 ${c.display} 接着聊`,
+        onSelect: () => clientOpen.openSession(s, !!holder?.running, c.clientId),
+      })),
     ];
   }
 
@@ -1893,6 +1904,7 @@ export default function ProjectTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-rail-search-open={searchOpen || undefined}>
+      {clientOpen.dialog}
       <button
         type="button"
         onClick={() => setSearchOpen(true)}
