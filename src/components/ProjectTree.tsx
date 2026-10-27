@@ -966,6 +966,7 @@ export default function ProjectTree({
           }}
           data-chat-key={key}
           data-picked={isPicked ? "1" : undefined}
+          aria-description={picked.size > 0 ? (isPicked ? "已选中，可批量置顶或归档" : "未选中") : undefined}
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
@@ -978,6 +979,7 @@ export default function ProjectTree({
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色同工作入口：平时 l3、悬停 l2，只有正看着的那段亮到 l1（2026-10-24 用户：标题不用全亮着） */}
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
+          {isPicked && <Check size={13} strokeWidth={2} aria-hidden="true" data-pick-mark className="shrink-0 text-l2" />}
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
           {/* 置顶一节跨课题：行尾小字写它属于哪个课题（2026-10-26 用户：置顶的看不出是谁的）。
@@ -1548,7 +1550,7 @@ export default function ProjectTree({
             data-rail-open={open ? "1" : "0"}
             title={row.project ? row.repoPath : `${row.repoPath}\n这个文件夹还没添加到 Mesa`}
             aria-current={selected && active ? "page" : undefined}
-            // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端）：小一号（12px）、淡一档（l4），对话 13px l3 不缩进，靠字号字色分层
+            // 课题名是分组标题（2026-10-25 用户对照 Claude 客户端）：小一号（12px），正文至少 l3 保证可读，对话 13px 不缩进，靠图标与字号分层
             className={`flex h-7 min-w-0 items-center gap-1 rounded-md pr-0.5 ${
               selected && active
                 ? "font-medium text-l1"
@@ -1556,9 +1558,7 @@ export default function ProjectTree({
                   ? "font-medium text-l2 group-hover:text-l1"
                   : unreadInside
                     ? "text-l1"
-                    : row.project
-                      ? "text-l4 group-hover:text-l2"
-                      : "text-l4 opacity-70 group-hover:text-l3 group-hover:opacity-100"
+                    : "text-l3 group-hover:text-l2"
             }`}
           >
             <span className="min-w-0 truncate text-left text-xs">{row.name}</span>
@@ -1612,7 +1612,7 @@ export default function ProjectTree({
             data-rail-folder={SCRATCH_FOLDER_KEY}
             data-rail-open={open ? "1" : "0"}
             title="不挂在项目下的对话（新对话默认开在这里）"
-            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l4 group-hover:text-l2"}`}
+            className={`flex h-7 min-w-0 items-center rounded-md pr-0.5 ${unreadInside ? "text-l1" : "text-l3 group-hover:text-l2"}`}
           >
             <span className="min-w-0 truncate text-left text-xs">随手聊</span>
           </button>
@@ -1926,6 +1926,9 @@ export default function ProjectTree({
         )}
       </div>
 
+      <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {picked.size > 0 ? `已选 ${picked.size} 段对话` : "未选择对话"}
+      </span>
       {/* 选了对话时树底下一条：几段、一起置顶 / 归档、取消（右键选中的行是同一份菜单）。薄雾底，不画横线 */}
       {picked.size > 0 && (() => {
         const keys = pickedSessions().map(chatKey);

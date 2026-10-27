@@ -364,6 +364,7 @@ test("不再按科研 / 编程 / 工作分组：课题平铺成节，没在聊�
     const chatRow = view.button("镁硫电池第5篇精读");
     assert.match(chatRow.className, /\bpl-2\b/, "对话不缩进，左缘对齐课题行图标（2026-10-25）");
     assert.ok(view.button("Ccode").querySelector(".text-xs"), "课题名是 12px 的分组标题");
+    assert.ok(view.button("Ccode").classList.contains("text-l3"), "课题名保持正文可读性，不再用提示文字亮度");
     // 名字右边的空白也能开合（2026-10-24 用户：点那里没反应）；点名字是进项目页
     const blank = head.children[2] as HTMLElement;
     await view.act(async () => blank.click());
@@ -793,6 +794,9 @@ test("多选：⌘ / Ctrl 点只选不开，⇧ 点整段选上，树底一条�
     await click("镁硫电池第2篇精读", { metaKey: true, ctrlKey: true });
     assert.deepEqual(pickedTitles(), ["镁硫电池第4篇精读", "镁硫电池第2篇精读"]);
     assert.equal(opens(), 0, "只选不开");
+    assert.equal(view.host.querySelectorAll("[data-pick-mark]").length, 2);
+    assert.match(view.button("镁硫电池第4篇精读").getAttribute("aria-description")!, /已选中/);
+    assert.equal(view.host.querySelector('[role="status"]')?.textContent, "已选 2 段对话");
     const bar = () => view.host.querySelector('[aria-label="选中的对话"]');
     assert.match(bar()!.textContent!, /已选 2 段/);
     // ⇧ 点：从上回 ⌘ 点的那段整段选到这一段
