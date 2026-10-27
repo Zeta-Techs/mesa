@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { X } from "lucide-react";
 import { useExitRender } from "../exit-animation";
 
@@ -26,6 +26,7 @@ export function Modal({
   contentClassName = "",
   overflow = "auto",
   layer = "base",
+  initialFocusRef,
 }: {
   open: boolean;
   title: ReactNode;
@@ -42,6 +43,7 @@ export function Modal({
   /** 层级：base＝z-40（普通页面上）；overlay＝z-60（压过评审覆盖层这类 z-50 全屏层）。
    *  全局确认框是 z-70，始终在最上，不经这里。 */
   layer?: "base" | "overlay";
+  initialFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -83,18 +85,19 @@ export function Modal({
       }
     };
     document.addEventListener("keydown", onKeyDown);
-    requestAnimationFrame(() => {
+    const focusFrame = requestAnimationFrame(() => {
       const first = panelRef.current?.querySelector<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
       );
-      (first ?? panelRef.current)?.focus();
+      (initialFocusRef?.current ?? first ?? panelRef.current)?.focus();
     });
     return () => {
+      cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
       previous?.focus();
     };
-  }, [open]);
+  }, [open, initialFocusRef]);
 
   if (!render) return null;
   return (

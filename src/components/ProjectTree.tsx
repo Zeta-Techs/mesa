@@ -160,7 +160,7 @@ export default function ProjectTree({
   const [repos, setRepos] = useState<
     Pick<WorkspaceDto, "repoPath" | "repoName" | "worktreePath">[]
   >([]);
-  // 标签行的放大镜打开「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛
+  // 固定搜索入口打开「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛
   const [searchOpen, setSearchOpen] = useState(false);
   const [menu, setMenu] = useState<{
     x: number;
@@ -1783,6 +1783,7 @@ export default function ProjectTree({
         fullTitle,
         folder,
         updatedAt: s.updatedAt,
+        state: withUnread(chatDot(s, terminalRunInputs), chatKey(s) !== highlightChatKey && unreadSet.has(chatKey(s))),
         data: { s, project },
       });
     };
@@ -1804,7 +1805,7 @@ export default function ProjectTree({
     return { chats, projects: projectItems };
   }
 
-  /** 项目标签行：计数 + 搜索 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发）。
+  /** 项目标签行：计数 + 添加菜单（添加流程与示例课题创建都在项目页，经一次性请求触发）。
    *  放在随手聊下面、课题上面（2026-10-26 用户：置顶的对话和随手聊都不是项目，原先压在「项目 N」下面读不通） */
   function renderProjectsLabel() {
     return (
@@ -1814,18 +1815,6 @@ export default function ProjectTree({
         </span>
         <span className="text-xs text-l4">{rows.length}</span>
         <span className="ml-auto flex items-center">
-          <button
-            type="button"
-            onClick={() => setSearchOpen(true)}
-            title="搜索对话和项目"
-            aria-label="搜索对话和项目"
-            aria-haspopup="dialog"
-            className={`flex h-6 w-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
-              searchOpen ? "text-l1" : "text-l3"
-            }`}
-          >
-            <Search size={13} strokeWidth={1.8} aria-hidden="true" />
-          </button>
           <button
             type="button"
             onClick={(e) => {
@@ -1844,7 +1833,18 @@ export default function ProjectTree({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col" data-rail-search-open={searchOpen || undefined}>
+      <button
+        type="button"
+        onClick={() => setSearchOpen(true)}
+        aria-label="搜索对话和项目"
+        aria-haspopup="dialog"
+        title="搜索对话和项目"
+        className="mx-1.5 mb-1 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-l3 hover:bg-hover hover:text-l1"
+      >
+        <Search size={14} strokeWidth={1.8} aria-hidden="true" />
+        <span className="text-xs">搜索对话和项目</span>
+      </button>
       {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在上面的导航下面硬切半行，底下的行也不撞上工具栏分隔线；
           底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（置顶 / 其他打开的 / 项目）的左缘对齐上面导航图标的左缘（16px）。
           键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}

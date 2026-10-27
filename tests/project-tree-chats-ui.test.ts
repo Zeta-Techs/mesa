@@ -121,6 +121,7 @@ async function renderTree(
     navigator: dom.window.navigator,
     localStorage: dom.window.localStorage,
     requestAnimationFrame: (cb: () => void) => setTimeout(cb, 0),
+    cancelAnimationFrame: (id: number) => clearTimeout(id),
     IS_REACT_ACT_ENVIRONMENT: true,
   })) {
     restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
@@ -656,8 +657,9 @@ test("「项目 N」标签在置顶的对话和随手聊下面、课题上面：
     assert.ok(before(label, view.button("综述流程测试")), "课题在「项目」下面");
     assert.ok(before(label, view.button("Ccode")), "课题在「项目」下面");
     assert.equal(label.parentElement?.querySelector(".text-l4")?.textContent, "2", "计数只数课题");
-    // 搜索和添加还在这一行
-    assert.ok(label.parentElement?.querySelector('[aria-label="搜索对话和项目"]'));
+    // 搜索固定在列表外，添加仍在项目行
+    assert.ok(!label.parentElement?.querySelector('[aria-label="搜索对话和项目"]'));
+    assert.equal(view.button("搜索对话和项目").closest(".ccode-rail-scroll"), null);
     assert.ok(label.parentElement?.querySelector('[aria-label="添加项目 / 创建示例课题"]'));
   } finally {
     await view.close();
@@ -1029,4 +1031,51 @@ test("多选键盘：对话上 ⇧↓ 从这一段整段选下去，⇧↑ 收�
   } finally {
     await view.close();
   }
+});
+
+
+test("侧栏搜索：焦点约束、结果语义、状态筛选、中文输入与 Esc 返回入口", async () => {
+  const view = await renderTree();
+  try {
+    const doc = view.host.ownerDocument;
+    const win = doc.defaultView!;
+    Object.defineProperty(win, "matchMedia", { value: () => ({ matches: true }), configurable: true });
+    const trigger = view.button("搜索对话和项目");
+    trigger.focus();
+    await view.act(async () => trigger.click());
+    await view.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const dialog = doc.querySelector('[role="dialog"]')!;
+    assert.ok(dialog);
+    assert.ok(!view.host.contains(dialog), "弹层挂 body，不受探出侧栏变换与裁切影响");
+    const input = dialog.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    assert.equal(doc.activeElement, input);
+    const key = async (el: Element, key: string, extra = {}) => {
+      await view.act(async () => el.dispatchEvent(new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...extra })));
+    };
+    const selected = () => dialog.querySelector('[role="option"][aria-selected="true"]')!;
+    const before = selected().id;
+    await key(input, "ArrowDown");
+    assert.notEqual(selected().id, before);
+    assert.equal(input.getAttribute("aria-activedescendant"), selected().id);
+    await key(input, "Enter", { isComposing: true });
+    assert.equal(view.calls.filter((c) => c[0] === "openConversation").length, 0);
+    const filter = (name: string) => Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent === name)!;
+    await view.act(async () => filter("等确认").click());
+    assert.equal(dialog.querySelectorAll('[role="option"]').length, 1);
+    assert.match(selected().textContent!, /第5篇/);
+    await view.act(async () => filter("运行中").click());
+    assert.equal(dialog.querySelectorAll('[role="option"]').length, 0);
+    assert.equal(input.getAttribute("aria-activedescendant"), null);
+    assert.match(dialog.textContent!, /没有符合当前筛选/);
+    const close = dialog.querySelector<HTMLButtonElement>('[aria-label="关闭"]')!;
+    close.focus();
+    await key(close, "Tab", { shiftKey: true });
+    assert.equal(doc.activeElement, filter("未读"));
+    await key(filter("未读"), "Tab");
+    assert.equal(doc.activeElement, close);
+    await key(close, "Escape");
+    assert.equal(doc.querySelector('[role="dialog"]'), null);
+    assert.equal(doc.activeElement, trigger, "关闭后返回原入口");
+    assert.equal(doc.body.style.overflow, "");
+  } finally { await view.close(); }
 });

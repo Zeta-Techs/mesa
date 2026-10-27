@@ -148,3 +148,20 @@ test("鼠标还在探出层里时点了别处不立刻收，鼠标移开才收�
     await v.close();
   }
 });
+
+
+test("搜索弹层打开时，Esc 和弹层外点击不会先卸载探出侧栏", async () => {
+  const v = await mount();
+  try {
+    const nav = document.querySelector('[role="navigation"]')!;
+    const marker = document.createElement("div");
+    marker.setAttribute("data-rail-search-open", "true");
+    nav.append(marker);
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    document.body.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+    assert.equal(v.closes(), 0);
+    marker.remove();
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    assert.equal(v.closes(), 1);
+  } finally { await v.close(); }
+});

@@ -1,3 +1,5 @@
+import type { RunCaretState } from "./run-caret";
+
 /**
  * 侧栏「搜索对话和项目」弹层的纯逻辑（2026-10-24 照 Claude 客户端）：
  * 不输入时列最近的对话；输入后先列命中的项目、再列命中的对话。
@@ -14,6 +16,7 @@ export interface RailSearchChat<T> {
   /** 所在文件夹：项目名或「随手聊」 */
   folder: string;
   updatedAt: string | null;
+  state?: RunCaretState | null;
   data: T;
 }
 
@@ -23,6 +26,8 @@ export interface RailSearchProject<T> {
   path: string;
   data: T;
 }
+
+export type RailSearchFilter = "all" | "working" | "confirm" | "unread";
 
 export type RailSearchHit<C, P> =
   | { kind: "chat"; item: RailSearchChat<C> }
@@ -49,9 +54,12 @@ export function railSearch<C, P>(
   chats: readonly RailSearchChat<C>[],
   projects: readonly RailSearchProject<P>[],
   query: string,
+  filter: RailSearchFilter = "all",
 ): RailSearchHit<C, P>[] {
   const seen = new Set<string>();
-  const unique = chats.filter((c) => !seen.has(c.key) && (seen.add(c.key), true));
+  const unique = chats.filter((c) =>
+    (filter === "all" || c.state === filter) && !seen.has(c.key) && (seen.add(c.key), true),
+  );
   const tokens = tokensOf(query);
   if (tokens.length === 0) {
     return [...unique]
@@ -59,7 +67,7 @@ export function railSearch<C, P>(
       .slice(0, RAIL_SEARCH_RECENT)
       .map((item) => ({ kind: "chat", item }));
   }
-  const projectHits = projects
+  const projectHits = (filter === "all" ? projects : [])
     .filter((p) => matchesAll([p.name, p.path], tokens))
     // 名字里就命中的排在只有路径命中的前面
     .map((p, i) => ({ p, i, byName: matchesAll([p.name], tokens) ? 0 : 1 }))

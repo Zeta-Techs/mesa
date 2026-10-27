@@ -45,7 +45,7 @@ export function RailPeek({
   };
   /** 正开着右键菜单 / ⋯ 菜单，或光标在树里的输入框（改名）：这时离开是去点菜单、不是不要了 */
   const busy = () => {
-    if (document.querySelector('[role="menu"]')) return true;
+    if (document.querySelector('[role="menu"]') || ref.current?.querySelector("[data-rail-search-open]")) return true;
     const active = document.activeElement;
     return !!(active && ref.current?.contains(active) && /^(INPUT|TEXTAREA)$/.test(active.tagName));
   };
@@ -90,14 +90,14 @@ export function RailPeek({
   // Esc / 点到外面（菜单与触发区除外）收
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector('[role="menu"]')) {
+      if (e.key === "Escape" && !e.defaultPrevented && !busy()) {
         e.preventDefault();
         onCloseRef.current();
       }
     };
     const onDown = (e: MouseEvent) => {
       const t = e.target as Element | null;
-      if (!t || ref.current?.contains(t)) return;
+      if (!t || busy() || ref.current?.contains(t)) return;
       if (t.closest?.('[role="menu"], [data-rail-peek-trigger], [role="dialog"]')) return;
       onCloseRef.current();
     };

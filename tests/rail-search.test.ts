@@ -65,3 +65,16 @@ test("完整标题里的类型也搜得到；项目按路径也能命中", () =>
     ["p2"],
   );
 });
+
+
+test("状态筛选与关键词同时生效；状态筛选不混入项目，未知状态不冒充在跑", () => {
+  const list: RailSearchChat<null>[] = [
+    { ...CHATS[0], state: "working" }, { ...CHATS[1], state: "confirm" },
+    { ...CHATS[2], state: "unread" }, CHATS[3],
+  ];
+  assert.deepEqual(railSearch(list, PROJECTS, "", "working").map((h) => h.item.key), ["a"]);
+  assert.deepEqual(railSearch(list, PROJECTS, "", "confirm").map((h) => h.item.key), ["b"]);
+  assert.deepEqual(railSearch(list, PROJECTS, "ccode", "unread").map((h) => h.item.key), ["c"]);
+  assert.deepEqual(railSearch(list, PROJECTS, "动画", "unread"), []);
+  assert.equal(railSearch(list, PROJECTS, "", "all").length, 4);
+});
