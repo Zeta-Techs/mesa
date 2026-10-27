@@ -184,11 +184,13 @@ export function useVirtualWindow(opts: {
 
   const [win, setWin] = useState<VirtualWindow>(() => initialWindow(count, height, pin));
   const [prevKeys, setPrevKeys] = useState(keys);
+  const [prevPin, setPrevPin] = useState(pin);
   let current = win;
-  if (prevKeys !== keys) {
+  if (prevKeys !== keys || prevPin !== pin) {
     // 渲染期间按新列表挪窗口（React「根据 props 调整 state」写法）
     current = enabled ? remapWindow(prevKeys, keys, win, height, (k) => measured.current.get(k) ?? 0, pin) : win;
     setPrevKeys(keys);
+    setPrevPin(pin);
     setWin(current);
   }
   const winRef = useRef(current);

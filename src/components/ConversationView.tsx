@@ -18,6 +18,7 @@ import {
   MessageCircleQuestion,
   PencilLine,
   Plug,
+  Quote,
   Search,
   SquareTerminal,
   Terminal,
@@ -50,6 +51,7 @@ import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-act
 import { IS_WINDOWS } from "../hotkeys";
 import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
 import { resolveMdPath } from "../reader";
+import { makeChatQuote, type ChatQuote } from "../chat-navigation";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
 const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
@@ -163,20 +165,20 @@ export function DiffView({ lines }: { lines: DiffLine[] }) {
 }
 
 /** 命令与输出 / 工具结果：等宽、可滚动，太长截断并写明 */
-export function OutputView({ command, text }: { command?: string | null; text?: string | null }) {
+export function OutputView({ command, text, full = false, searchHit = false }: { command?: string | null; text?: string | null; full?: boolean; searchHit?: boolean }) {
   const body = text ?? "";
   const lines = body.split("\n");
-  const cut = lines.length > DETAIL_LINES ? lines.slice(0, DETAIL_LINES).join("\n") : body;
+  const cut = !full && lines.length > DETAIL_LINES ? lines.slice(0, DETAIL_LINES).join("\n") : body;
   return (
     <div className="ccode-chat-code max-h-80 overflow-auto rounded-md border border-hairline bg-inset px-2.5 py-2 font-mono">
       {command && <div className="whitespace-pre-wrap break-all text-l2">$ {command}</div>}
       {/* text 不传（审批卡只看命令）就不画结果那一栏 */}
       {text === undefined ? null : body.trim() ? (
-        <div className={`whitespace-pre-wrap break-all text-l3 ${command ? "mt-1.5" : ""}`}>{cut}</div>
+        <div data-search-block={searchHit || undefined} className={`whitespace-pre-wrap break-all text-l3 ${command ? "mt-1.5" : ""}`}>{cut}</div>
       ) : (
         <div className={`text-l4 ${command ? "mt-1.5" : ""}`}>{text === null ? "还没有结果" : "没有输出"}</div>
       )}
-      {lines.length > DETAIL_LINES && (
+      {!full && lines.length > DETAIL_LINES && (
         <div className="mt-1 text-l4">还有 {lines.length - DETAIL_LINES} 行没画出来</div>
       )}
     </div>
@@ -232,7 +234,7 @@ function prettyInput(input: string): string {
 function markFirstKeyword(root: Element, keywords: string[]): HTMLElement | null {
   const terms = keywords
     .map((k) => k.toLowerCase())
-    .filter((k) => k.length >= 2);
+    .filter((k) => k.length > 0);
   if (terms.length === 0) return null;
   const existing = root.querySelector("[data-search-mark='1']");
   if (existing instanceof HTMLElement) return existing;
@@ -271,10 +273,12 @@ export default function ConversationView({
   cwd,
   focusIndex = -1,
   focusKeywords,
+  focusRequest = 0,
   working,
   awaiting,
   onEditResend,
   onForkHere,
+  onQuote,
   queuedNote,
 }: {
   messages: ChatMessageDto[];
@@ -284,6 +288,7 @@ export default function ConversationView({
   focusIndex?: number;
   /** 搜索关键词，用来在命中消息里标出那一句 */
   focusKeywords?: string[];
+  focusRequest?: number;
   /** 最后一轮还在生成（聊天层传）：这一轮的过程铺开、不收起，正文不当回答切出去；还没回结果的那一行带光带 */
   working?: boolean;
   /** 正在等你决定（聊天层有审批 / 确认卡）：还没回结果的那一行写「等你决定」，不再带光带 */
@@ -292,6 +297,7 @@ export default function ConversationView({
   onEditResend?: (text: string) => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开分叉标签（聊天层传；回放页不传 = 不显示） */
   onForkHere?: (text: string) => void;
+  onQuote?: (quote: ChatQuote) => void;
   /** 排队气泡下那一行怎么写（聊天层按这家 CLI 的真实行为传，mid-turn-send.ts）；action 只挂在最后一条排着的气泡上 */
   queuedNote?: {
     text: string;
@@ -306,7 +312,7 @@ export default function ConversationView({
    *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
    *  （父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段）；用户消息的靠气泡右缘
    *  （同日用户：贴在气泡左边「怎么跑到左边去了」） */
-  function messageActions(m: ChatMessageDto, mk: string, align: "left" | "right") {
+  function messageActions(m: ChatMessageDto, mk: string, align: "left" | "right", sources: ChatMessageDto[] = [m]) {
     const text = m.blocks
       .filter((b) => b.kind === "text")
       .map((b) => b.text)
@@ -314,7 +320,7 @@ export default function ConversationView({
       .trim();
     if (!text) return null;
     const btn =
-      "inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-micro text-l4 hover:bg-hover hover:text-l1";
+      "inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs text-l3 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta";
     return (
       <div
         className={`absolute flex gap-0.5 whitespace-nowrap opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 ${
@@ -355,6 +361,16 @@ export default function ConversationView({
             从这里分叉
           </button>
         )}
+        {align === "left" && onQuote && (
+          <button type="button" className={btn} title="引用选中文字，未选择时引用整条回复；不会自动发送"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => {
+              const selection = window.getSelection();
+              const content = event.currentTarget.closest("[data-chat-message]")?.querySelector("[data-chat-answer]");
+              const selected = selection && content?.contains(selection.anchorNode) && content.contains(selection.focusNode) ? selection.toString() : "";
+              onQuote(makeChatQuote(sources, text, selected));
+            }}><Quote size={13} aria-hidden="true" />引用追问</button>
+        )}
       </div>
     );
   }
@@ -367,16 +383,21 @@ export default function ConversationView({
     detailRef.current.querySelector("button")?.focus({ preventScroll: true });
   }, [detailTarget]);
   const hitRef = useRef<HTMLDivElement | null>(null);
-  const didFocusScroll = useRef(false);
+  const didFocusScroll = useRef("");
+  const focusToken = JSON.stringify([focusIndex, focusKeywords, focusRequest]);
+  // 高亮会临时包住 DOM 文本；内容刷新或换命中时重挂这一段，避免影响 React 的流式文本节点。
+  const focusRenderKey = `${focusToken}:${JSON.stringify(messages[focusIndex]?.blocks)}`;
+  const searchTerms = (focusKeywords ?? []).map((term) => term.toLocaleLowerCase()).filter(Boolean);
+  const containsSearch = (text: string | null | undefined) => Boolean(text && searchTerms.some((term) => text.toLocaleLowerCase().includes(term)));
 
   useLayoutEffect(() => {
-    if (focusIndex < 0 || didFocusScroll.current) return;
+    if (focusIndex < 0) { didFocusScroll.current = ""; return; }
     const el = hitRef.current;
     if (!el) return;
-    const marked = markFirstKeyword(el, focusKeywords ?? []);
-    (marked ?? el).scrollIntoView({ block: "center" });
-    didFocusScroll.current = true;
-  }, [focusIndex, focusKeywords]);
+    const marked = markFirstKeyword(el.querySelector("[data-search-block]") ?? el, focusKeywords ?? []);
+    if (didFocusScroll.current !== focusToken) (marked ?? el).scrollIntoView({ block: "center" });
+    didFocusScroll.current = focusToken;
+  });
 
   /** 消息稳定键：角色+时间戳+块数+首段文本特征。前插分页/轮询刷新后数组下标会移位，
    *  展开状态（过程/工具行/长文本）必须跟随内容而非位置 */
@@ -456,7 +477,7 @@ export default function ConversationView({
       return (
         <div key={key} className={`my-1 whitespace-pre-wrap break-all text-l3 font-mono ccode-chat-code`}>
           {b.toolName ? `${b.toolName} ` : ""}
-          {b.text.length > 200 ? `${b.text.slice(0, 200)}…` : b.text}
+          {!forceOpen && b.text.length > 200 ? `${b.text.slice(0, 200)}…` : b.text}
         </div>
       );
     }
@@ -470,7 +491,7 @@ export default function ConversationView({
     ));
     if (isUser) {
       const packKey = `${key}:pack`;
-      const packOpen = expanded.has(packKey);
+      const packOpen = forceOpen || expanded.has(packKey);
       return (
         <div key={key} className="my-1">
           {pack && (
@@ -528,12 +549,14 @@ export default function ConversationView({
       removed?: number | null;
       problem?: string | null;
       failed?: boolean;
+      forceOpen?: boolean;
+      searchHit?: boolean;
       /** 还在跑（进行中的一轮里没回结果的调用） */
       pending?: boolean;
       detail?: () => ReactNode;
     },
   ) {
-    const open = expanded.has(key);
+    const open = expanded.has(key) || Boolean(row.forceOpen);
     const Icon = row.icon;
     // 还没回结果的一行：聊天层在生成时动词和对象一起带一道光带（不再写「进行中…」）；等你决定时写明在等你；
     // 回放里悬着没结果的调用（多半是当时被打断）什么都不标
@@ -574,7 +597,7 @@ export default function ConversationView({
       );
     }
     return (
-      <div key={key} ref={detailTarget?.key === key ? detailRef : undefined}>
+      <div key={key} ref={detailTarget?.key === key ? detailRef : undefined} data-search-block={row.searchHit || undefined}>
         <button
           type="button"
           aria-expanded={open}
@@ -590,7 +613,9 @@ export default function ConversationView({
     );
   }
 
-  function toolRow(key: string, t: ProcessTool, live = false) {
+  function toolRow(key: string, t: ProcessTool, live = false, searching = false) {
+    searching = searching && (t.index === focusIndex || t.resultIndex === focusIndex);
+    const resultHit = searching && t.resultIndex === focusIndex && t.index !== focusIndex;
     const a = t.activity;
     const problem = resultStatusLabel(t.status);
     // 进行中这一轮里还没回结果的调用：正在跑（或等你批准）
@@ -615,17 +640,17 @@ export default function ConversationView({
                 )}
               </div>
             )}
-            {problem && t.result && (
+            {(problem || searching) && t.result && (
               <div className="mt-1">
-                <OutputView text={t.result} />
+                <OutputView text={t.result} full={searching} searchHit={resultHit} />
               </div>
             )}
           </>
         );
       }
       if (a.kind === "run") return <>
-        <OutputView command={a.command} text={t.result} />
-        <details className="mt-1 text-xs text-l3"><summary className="min-h-7 cursor-pointer">调用参数</summary><OutputView text={prettyInput(a.input)} /></details>
+        <OutputView command={a.command} text={t.result} full={searching} searchHit={resultHit} />
+        <details open={searching && containsSearch(a.input)} className="mt-1 text-xs text-l3"><summary className="min-h-7 cursor-pointer">调用参数</summary><OutputView text={prettyInput(a.input)} full={searching} /></details>
         {t.status === "failed" && onEditResend && <button type="button" className="min-h-7 rounded-md px-1 text-xs text-l2 hover:bg-hover"
           onClick={() => onEditResend(`请检查这条失败命令的原因，确认影响后再决定是否重试：\n\n${a.command ?? a.target}\n\n失败输出：\n${(t.result ?? "").slice(0, 4000)}`)}>让它检查后重试</button>}
       </>;
@@ -634,17 +659,17 @@ export default function ConversationView({
           <>
             {a.input.trim() && a.input.trim() !== "{}" && (
               <div className="mb-1">
-                <OutputView text={prettyInput(a.input)} />
+                <OutputView text={prettyInput(a.input)} full={searching} />
               </div>
             )}
-            <OutputView text={t.result} />
+            <OutputView text={t.result} full={searching} searchHit={resultHit} />
           </>
         );
       }
       return (
         <>
           {a.path && <div className="mb-1 truncate text-micro text-l4">{a.path}</div>}
-          <OutputView command={a.command} text={t.result} />
+          <OutputView command={a.command} text={t.result} full={searching} searchHit={resultHit} />
         </>
       );
     };
@@ -660,34 +685,39 @@ export default function ConversationView({
       removed: a.removed,
       problem,
       failed: t.status === "failed",
+      forceOpen: searching && (containsSearch(a.input) || containsSearch(t.result)),
+      searchHit: searching && !resultHit,
       pending,
-      detail,
+      detail: () => <>{detail()}{searching && a.kind !== "run" && a.kind !== "other" && a.kind !== "mcp" && containsSearch(a.input) && <details open><summary>调用参数</summary><OutputView text={prettyInput(a.input)} full /></details>}</>,
     });
   }
 
-  function renderItem(item: ProcessItem, key: string, live = false) {
+  function renderItem(item: ProcessItem, key: string, live = false, searching = false) {
     if (item.kind === "thinking") {
       return processRow(key, {
         icon: Brain,
         verb: "思考",
         note: item.seconds !== null ? formatSeconds(item.seconds) : null,
+        forceOpen: searching && containsSearch(item.text),
+        searchHit: searching && focusIndex >= item.index && focusIndex <= (item.endIndex ?? item.index),
         detail: () =>
           richText(
             `${key}:t`,
             item.text,
             `whitespace-pre-wrap border-l border-hairline pl-3 ${rowText} leading-relaxed text-l3`,
+            searching,
           ),
       });
     }
     if (item.kind === "text") {
       // 过程里的中途说明：这一轮做完后降一级（.ccode-chat-aside），回答才是最醒目的字；还在写时它可能就是回答，不降
       return (
-        <div key={key} className={`my-2 ${live ? "" : "ccode-chat-aside"}`}>
+        <div key={key} data-search-block={searching && item.index === focusIndex || undefined} className={`my-2 ${live ? "" : "ccode-chat-aside"}`}>
           {renderBlock({ kind: "text", text: item.text, toolName: null }, key, false)}
         </div>
       );
     }
-    if (item.kind === "tool") return toolRow(key, item.tool, live);
+    if (item.kind === "tool") return toolRow(key, item.tool, live, searching);
     return processRow(key, {
       icon: Search,
       verb: "查阅",
@@ -695,7 +725,8 @@ export default function ConversationView({
       plain: true,
       problem: problemText(item.tools.map((t) => t.status), "处"),
       pending: live && item.tools.some((t) => t.result === null),
-      detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t, live))}</div>,
+      forceOpen: searching && item.tools.some((t) => containsSearch(t.result) || containsSearch(t.activity.input)),
+      detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t, live, searching))}</div>,
     });
   }
 
@@ -730,11 +761,12 @@ export default function ConversationView({
     const summaryTail = seg.seconds !== null || thoughtOnly ? summary.text : "";
     return (
       <div
-        key={key}
+        key={hit ? `${key}:${focusRenderKey}` : key}
+        data-chat-message="1"
         ref={hit ? hitRef : undefined}
         data-search-hit={hit ? "1" : undefined}
-        // 回答下面留 1.5rem：悬停操作浮在这段留白里（messageActions），也是到下一个问题的间距
-        className={`group/msg relative max-w-full ${seg.live ? "mb-2" : "mb-6"} ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
+        // 回答下面留 2rem：悬停操作浮在这段留白里（messageActions），也是到下一个问题的间距
+        className={`group/msg relative max-w-full ${seg.live ? "mb-2" : "mb-8"} ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
       >
         {!seg.live && (
           <div className="flex flex-wrap items-center gap-x-2">
@@ -763,13 +795,14 @@ export default function ConversationView({
                 `${key}:thought`,
                 seg.items.map((item) => (item.kind === "thinking" ? item.text : "")).join("\n\n"),
                 `whitespace-pre-wrap border-l border-hairline pl-3 ${rowText} leading-relaxed text-l3`,
+                hit,
               )
-            : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live))}
+            : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live, hit))}
         </Collapse>
         {seg.answer && (
           <>
-            {renderBlocks(seg.answer, answerKey, false, hit)}
-            {messageActions(seg.answer, answerKey, "left")}
+            <div data-chat-answer="1" data-search-block={hit && messages[focusIndex]?.blocks.some((block) => seg.answer!.blocks.includes(block)) || undefined}>{renderBlocks(seg.answer, answerKey, false, hit)}</div>
+            {messageActions(seg.answer, answerKey, "left", messages.slice(seg.start, seg.end + 1).filter((message) => message.blocks.some((block) => seg.answer!.blocks.includes(block))))}
           </>
         )}
         {!seg.live && (files.length > 0 || checks.length > 0) && (
@@ -847,7 +880,7 @@ export default function ConversationView({
         if (m.blocks.length > 0 && m.blocks.every(isCommandBlock)) {
           return (
             <div
-              key={mk}
+              key={hit ? `${mk}:${focusRenderKey}` : mk}
               ref={hit ? hitRef : undefined}
               data-search-hit={hit ? "1" : undefined}
               className={`mb-3 flex items-start gap-2 ccode-chat-meta text-l4 ${
@@ -876,11 +909,11 @@ export default function ConversationView({
         return m.role === "user" ? (
           // 用户消息：右对齐圆角气泡（bubble 令牌底，max-w 70%）
           <div
-            key={mk}
+            key={hit ? `${mk}:${focusRenderKey}` : mk}
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
             // 每个新问题前留大空、连着发的几句不拉开（App.css .ccode-chat-user-row）；大圆角气泡（原 6px 像一张卡片）
-            className={"group/msg mb-4 flex flex-col items-end ccode-chat-user-row"}
+            className={"group/msg mb-7 flex flex-col items-end ccode-chat-user-row"}
           >
             <div
               className={`relative max-w-[70%] bg-chat-bubble ccode-chat-user rounded-2xl px-3.5 py-2 ${
@@ -912,12 +945,13 @@ export default function ConversationView({
           </div>
         ) : (
           <div
-            key={mk}
+            key={hit ? `${mk}:${focusRenderKey}` : mk}
+            data-chat-message="1"
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
-            className={`group/msg relative mb-6 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
+            className={`group/msg relative mb-8 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
           >
-            {renderBlocks(m, mk, false, hit)}
+            <div data-chat-answer="1">{renderBlocks(m, mk, false, hit)}</div>
             {messageActions(m, mk, "left")}
           </div>
         );

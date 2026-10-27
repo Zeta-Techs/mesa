@@ -11,6 +11,8 @@ import {
   Smartphone,
   Square,
   TriangleAlert,
+  X,
+  Quote,
 } from "lucide-react";
 import type { McpServerDto, SkillDto } from "../types";
 import type { SearchResultDto } from "./FileTree";
@@ -38,6 +40,7 @@ import { attachmentLines, composerImageKind } from "../chat-image";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { FileTypeGlyph } from "./FileTypeMark";
 import ProjectFilePicker from "./ProjectFilePicker";
+import { quotePayload, type ChatQuote } from "../chat-navigation";
 
 /** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
@@ -48,6 +51,7 @@ export interface ComposerSeed {
   paths: readonly string[];
   /** 点了对话里的图「接着改」（2026-10-25）：这张图成附件后直接展开看图标注台，按改图口径（提示、占位字、发送时附原图） */
   edit?: string;
+  quote?: ChatQuote;
 }
 /** 文件卡左边没有首页预览时的类型图标（同文件列表的线条图标 + 识别色，不铺色块） */
 function FileKindBlock({ path }: { path: string }) {
@@ -112,12 +116,14 @@ function SendBlock({
   busy,
   queued = false,
   queuedTitle,
+  queuedLabel,
   onClick,
 }: {
   disabled: boolean;
   busy: boolean;
   queued?: boolean;
   queuedTitle?: string;
+  queuedLabel?: string;
   onClick: () => void;
 }) {
   return (
@@ -127,7 +133,7 @@ function SendBlock({
       onClick={onClick}
       data-state={disabled ? "empty" : "ready"}
       title={queued ? (queuedTitle ?? "排队：这一轮结束后处理（Enter 也是）") : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
-      aria-label={queued ? "排队发送" : "发送"}
+      aria-label={queued ? (!queuedLabel || queuedLabel === "排队" ? "排队发送" : queuedLabel) : "发送"}
       aria-busy={busy || undefined}
       className="ccode-send-block"
     >
@@ -264,6 +270,8 @@ export default function ChatComposer({
   agentId,
   seedInsert,
   onSeedConsumed,
+  onLocateQuote,
+  focusRequest = 0,
   footer,
   running,
   onInterrupt,
@@ -295,6 +303,8 @@ export default function ChatComposer({
   /** 拖入文件等外部插入：追加到输入框并消费；对象形式（编辑后重发）里的图片还原成附件缩略卡 */
   seedInsert?: string | ComposerSeed | null;
   onSeedConsumed?: () => void;
+  onLocateQuote?: (quote: ChatQuote) => boolean;
+  focusRequest?: number;
   /**
    * 输入框下面那一行（2026-10-23 用户：照 Claude 客户端那样简洁）：权限 · 项目 | 模型 · 思考。
    * 框里只留「+ 正在写的话 发送」；这一行由调用方给，底部状态栏在时调用方改挂进状态栏、这里不传
@@ -336,8 +346,11 @@ export default function ChatComposer({
   suggestion?: string | null;
 }) {
   const [value, setValue] = useState("");
+  const [quote, setQuote] = useState<ChatQuote | null>(null);
+  const [quoteUnavailable, setQuoteUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (focusRequest) ref.current?.focus(); }, [focusRequest]);
   const toneFlashOwn = useToneFlash(tone);
   const toneFlash = toneFlashGiven ?? toneFlashOwn;
   // WKWebView：确认候选的 Enter 在 compositionend 之后、isComposing 已是 false。
@@ -403,7 +416,7 @@ export default function ChatComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageKind]);
   // 有没有没发出去的东西（字或附件）：调用方据此决定切走时能不能把这个标签顺手收掉
-  const hasDraft = value.trim() !== "" || attachments.length > 0;
+  const hasDraft = value.trim() !== "" || attachments.length > 0 || quote !== null;
   useEffect(() => {
     onDraftChange?.(hasDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -652,6 +665,11 @@ export default function ChatComposer({
     if (!seedInsert) return;
     if (typeof seedInsert === "string") insertResourceText(seedInsert);
     else {
+      if (seedInsert.quote) {
+        setQuote(seedInsert.quote);
+        setQuoteUnavailable(false);
+        ref.current?.focus();
+      }
       if (seedInsert.text) insertResourceText(seedInsert.text);
       else requestAnimationFrame(() => ref.current?.focus());
       addPathAttachments(seedInsert.paths);
@@ -732,12 +750,12 @@ export default function ChatComposer({
     requestAnimationFrame(() => ref.current?.focus());
   }
 
-  const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0);
+  const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0 || quote !== null);
 
   const submittingRef = useRef(false);
   async function submit(override?: string) {
     const text = (override ?? value).trim();
-    if ((!text && attachments.length === 0) || disabled || busy || submittingRef.current) return;
+    if ((!text && attachments.length === 0 && !quote) || disabled || busy || submittingRef.current) return;
     setError(null);
     submittingRef.current = true;
     try {
@@ -762,19 +780,22 @@ export default function ChatComposer({
       }
       // 图片附件按绝对路径追加在正文后（一行一个）：路径文本是九家 CLI 通吃的图片输入方式，
       // 会话文件记下这行路径，回放/聊天层据此渲染内嵌图片卡
-      const payload = [text, ...paths].filter(Boolean).join("\n");
+      const payload = [quote ? quotePayload(quote, text) : text, ...paths].filter(Boolean).join("\n");
       // 先清空再发：写进终端要等 CLI 能收键、多行正文粘进去后还要等 0.65 秒才按提交，原先等发完才清空，
       // 字在框里停一下才走（2026-10-25 用户：不够丝滑）。发失败再放回去——人这时已经接着打了字就不覆盖
-      const sent = { value, attachments: attachmentsRef.current };
+      const sent = { value, attachments: attachmentsRef.current, quote };
       setValue("");
+      setQuote(null);
       setSlashDismissed(false);
       setViewing(null);
       setAttachments([]);
-      const err = await onSend(payload);
+      let err: string | null;
+      try { err = await onSend(payload); } catch (reason) { err = String(reason); }
       if (err) {
         setError(err);
         setValue((cur) => (cur === "" ? sent.value : cur));
         setAttachments((cur) => (cur.length === 0 ? sent.attachments : cur));
+        setQuote((cur) => cur ?? sent.quote);
         return;
       }
       markCounterRef.current = 0;
@@ -818,7 +839,7 @@ export default function ChatComposer({
   }
 
   return (
-    <div ref={outerRef} className="ccode-chat-composer relative shrink-0 bg-canvas px-4 pb-2 pt-2.5">
+    <div ref={outerRef} data-has-draft={hasDraft || undefined} className="ccode-chat-composer relative shrink-0 bg-canvas px-4 pb-2 pt-2.5">
       {viewed?.url && (
         <ChatImageStage
           key={viewed.path}
@@ -835,6 +856,17 @@ export default function ChatComposer({
       )}
       {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}
       <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
+        {quote && <div className="mb-2 rounded-md border-l-2 border-cta-bd bg-inset px-3 py-1.5 text-xs text-l2" aria-label="引用草稿">
+          <div className="flex items-center gap-1.5">
+            <Quote size={13} aria-hidden="true" /><span>引用追问</span>
+            {onLocateQuote && <button type="button" className="min-h-7 rounded-md px-1 text-l3 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
+              onClick={() => setQuoteUnavailable(!onLocateQuote(quote))}>定位原文</button>}
+            <button type="button" aria-label="移除引用" title="移除引用，保留输入文字" className="ml-auto flex size-7 items-center justify-center rounded-md hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
+              onClick={() => { setQuote(null); setQuoteUnavailable(false); ref.current?.focus(); }}><X size={14} /></button>
+          </div>
+          <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words">{quote.text}</div>
+          {quoteUnavailable && <p role="status" className="mt-1 text-warn-text">来源暂不可定位，引用文字已保留</p>}
+        </div>}
         <div
           data-tone={tone ?? undefined}
           data-tone-flash={toneFlash || undefined}
@@ -1261,6 +1293,7 @@ export default function ChatComposer({
                         onClick={() => void submit()}
                         queued
                         queuedTitle={queueHint?.title}
+                        queuedLabel={queueHint?.label}
                       />
                     </>
                   )}

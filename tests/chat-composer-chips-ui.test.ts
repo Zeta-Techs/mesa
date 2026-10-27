@@ -14,6 +14,7 @@ const bundle = await build({
       export {default as Decision} from './src/components/ChatDecisionCard';
       export {default as Conversation} from './src/components/ConversationView';
       export {default as Composer} from './src/components/ChatComposer';
+      export {default as ChatSearch} from './src/components/ChatSearch';
       export {default as Picker} from './src/components/ChatProjectPicker';`,
     resolveDir: process.cwd(),
     loader: "tsx",
@@ -65,6 +66,7 @@ async function mount() {
     navigator: dom.window.navigator,
     localStorage: dom.window.localStorage,
     HTMLElement: dom.window.HTMLElement,
+    NodeFilter: dom.window.NodeFilter,
     HTMLButtonElement: dom.window.HTMLButtonElement,
     // 文档 / 文字缩略图把一页纸序列化进 SVG（doc-thumb htmlPageThumb）
     XMLSerializer: dom.window.XMLSerializer,
@@ -141,7 +143,7 @@ async function mount() {
     compiled,
     compiled.exports,
   );
-  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker } = compiled.exports;
+  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch } = compiled.exports;
   const el = dom.window.document.getElementById("root")!;
   const root = createRoot(el);
   const render = (node: unknown) => act(async () => root.render(node));
@@ -152,7 +154,7 @@ async function mount() {
   };
   const click = (text: string) => act(async () => button(text).click());
   return {
-    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker,
+    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch,
     close: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -1554,5 +1556,138 @@ test("异常直接展开原始输出，验证入口不把后续总结当成通�
     assert.equal(drafts.length, 1);
     assert.match(drafts[0], /npm test[\s\S]*missing fixture/);
     assert.match(ui.el.textContent ?? "", /1 步失败/);
+  } finally { await ui.close(); }
+});
+
+test("引用追问只取当前回复选区，保留来源与范围，不自动发送", async () => {
+  const ui = await mount();
+  try {
+    const quotes: any[] = [];
+    await ui.render(ui.h(ui.Conversation, { messages: [{ id: "answer", role: "assistant", timestamp: null, usage: null, blocks: [{kind: "text", text: "前言。重点结论。后记。", toolName: null}] }], onQuote: (quote: unknown) => quotes.push(quote) }));
+    const answer = ui.el.querySelector('[data-chat-answer]')!;
+    const walker = document.createTreeWalker(answer, NodeFilter.SHOW_TEXT);
+    const text = walker.nextNode()!;
+    const range = document.createRange(); range.setStart(text, 3); range.setEnd(text, 8);
+    window.getSelection()!.addRange(range);
+    await ui.click("引用追问");
+    assert.equal(quotes[0].text, "重点结论。");
+    assert.deepEqual(quotes[0].range, {start: 3, end: 8});
+    assert.deepEqual(quotes[0].sourceKeys, ["assistant:id:answer"]);
+  } finally { await ui.close(); }
+});
+
+test("引用条保持原草稿，发送异常恢复引用，移除引用不改正文；来源失效如实提示", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    const props = { onSend: async (text: string) => { sent.push(text); throw new Error("离线"); }, onLocateQuote: () => false };
+    await ui.render(ui.h(ui.Composer, props));
+    await typeInto(ui, "原草稿");
+    await ui.render(ui.h(ui.Composer, { ...props, seedInsert: {text: "", paths: [], quote: {sourceKeys: ["a"], sourceText: "结论", text: "结论", range: {start: 0, end: 2}}} }));
+    assert.equal(ui.el.querySelector("textarea")!.value, "原草稿");
+    assert.ok(ui.el.querySelector('[aria-label="引用草稿"]'));
+    await ui.click("定位原文");
+    assert.match(ui.el.textContent ?? "", /来源暂不可定位/);
+    await key(ui, "Enter");
+    assert.equal(sent[0], "引用之前的回复：\n> 结论\n\n原草稿");
+    assert.equal(ui.el.querySelector("textarea")!.value, "原草稿");
+    assert.ok(ui.el.querySelector('[aria-label="引用草稿"]'));
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('[aria-label="移除引用"]')!.click());
+    assert.equal(ui.el.querySelector("textarea")!.value, "原草稿");
+    assert.equal(ui.el.querySelector('[aria-label="引用草稿"]'), null);
+  } finally { await ui.close(); }
+});
+
+test("聊天搜索切换命中、分页后留在同一消息，说明范围；关闭和加载只触发对应动作", async () => {
+  const ui = await mount();
+  try {
+    const msg = (id: string, text: string) => ({id, role: "assistant", timestamp: null, usage: null, blocks: [{kind: "text", text, toolName: null}]});
+    const focuses: any[] = []; let loads = 0; let closes = 0;
+    const props = { request: 1, hasOlder: true, loadingOlder: false, messages: [msg("a", "第一条 test"), msg("b", "第二条 test")], onFocus: (index: number, query: string) => focuses.push([index, query]), onLoadOlder: () => loads++, onClose: () => closes++ };
+    await ui.render(ui.h(ui.ChatSearch, props));
+    const input = ui.el.querySelector("input")!;
+    await ui.act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "test");
+      input.dispatchEvent(new window.Event("input", {bubbles: true}));
+    });
+    assert.deepEqual(focuses.at(-1), [0, "test"]);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('[aria-label="下一条匹配"]')!.click());
+    assert.deepEqual(focuses.at(-1), [1, "test"]);
+    await ui.render(ui.h(ui.ChatSearch, {...props, messages: [msg("old", "更早的 test"), ...props.messages]}));
+    assert.deepEqual(focuses.at(-1), [2, "test"]);
+    assert.match(ui.el.textContent ?? "", /搜索已加载的 3 条消息/);
+    await ui.click("加载更早消息继续查找"); assert.equal(loads, 1);
+    await ui.act(async () => input.dispatchEvent(new window.KeyboardEvent("keydown", {key: "Escape", bubbles: true})));
+    assert.equal(closes, 1);
+  } finally { await ui.close(); }
+});
+
+test("长对话搜索重新定位已在虚拟窗口外的命中，旧高亮清除，流式更新不重复文字", async () => {
+  const ui = await mount();
+  try {
+    const messages = Array.from({length: 70}, (_, i) => ({id: String(i), role: i % 2 ? "assistant" : "user", timestamp: null, usage: null, blocks: [{kind: "text", text: `消息${i}搜索词`, toolName: null}]}));
+    await ui.render(ui.h(ui.Conversation, {messages}));
+    await ui.render(ui.h(ui.Conversation, {messages, focusIndex: 1, focusKeywords: ["搜索词"]}));
+    assert.match(ui.el.querySelector('[data-search-hit="1"]')?.textContent ?? "", /消息1搜索词/);
+    assert.equal(ui.el.querySelectorAll("mark").length, 1);
+    await ui.render(ui.h(ui.Conversation, {messages, focusIndex: 69, focusKeywords: ["搜索词"]}));
+    assert.match(ui.el.querySelector('[data-search-hit="1"]')?.textContent ?? "", /消息69搜索词/);
+    assert.equal(ui.el.querySelectorAll("mark").length, 1);
+    const updated = messages.map((message, i) => i === 69 ? {...message, blocks: [{kind: "text", text: "消息69搜索词追加", toolName: null}]} : message);
+    await ui.render(ui.h(ui.Conversation, {messages: updated, focusIndex: 69, focusKeywords: ["搜索词"]}));
+    const text = ui.el.querySelector('[data-chat-answer]')?.textContent ?? "";
+    assert.match(ui.el.querySelector('[data-search-hit="1"]')?.textContent ?? "", /消息69搜索词追加/);
+    assert.doesNotMatch(text, /搜索词搜索词/);
+  } finally { await ui.close(); }
+});
+
+test("确认快捷键不抢空搜索框，也不把只有引用的草稿当作空输入批准", async () => {
+  const ui = await mount();
+  try {
+    let approvals = 0;
+    await ui.render(ui.h('div', {'data-chat-host': 'active'},
+      ui.h(ui.Decision, {decision: {key: 'approval', title: '是否继续', options: [{label: '允许', primary: true, onClick: () => approvals++}]}, onOpenTerminal: () => {}}),
+      ui.h('div', {role: 'search'}, ui.h('input', {'aria-label': '搜索'})),
+      ui.h(ui.Composer, {onSend: async () => null, seedInsert: {text: '', paths: [], quote: {sourceKeys: ['a'], sourceText: '引用', text: '引用', range: {start: 0, end: 2}}}}),
+    ));
+    for (const element of [ui.el.querySelector('input')!, ui.el.querySelector('textarea')!]) {
+      element.focus();
+      await ui.act(async () => element.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, bubbles: true})));
+    }
+    assert.equal(approvals, 0);
+  } finally { await ui.close(); }
+});
+
+test("搜索同一轮的多条结果时定位各自输出，并展开截断之外的命中", async () => {
+  const ui = await mount();
+  try {
+    const msg = (id: string, blocks: unknown[]) => ({id, role: 'assistant', timestamp: null, usage: null, blocks});
+    const messages = [
+      {id: 'q', role: 'user', timestamp: null, usage: null, blocks: [{kind: 'text', text: '检查', toolName: null}]},
+      msg('call1', [{kind: 'tool_use', toolName: 'Bash', text: '{"command":"npm test"}', callId: '1'}]),
+      msg('result1', [{kind: 'tool_result', toolName: null, text: '第一份 needle', callId: '1'}]),
+      msg('call2', [{kind: 'tool_use', toolName: 'Bash', text: '{"command":"npm run build"}', callId: '2'}]),
+      msg('result2', [{kind: 'tool_result', toolName: null, text: '普通行\n'.repeat(300)+'第二份 needle', callId: '2'}]),
+      msg('answer', [{kind: 'text', text: '两份 needle 已记录', toolName: null}]),
+    ];
+    for (const [index, prefix] of [[2, '第一份'], [4, '第二份'], [5, '两份']] as const) {
+      await ui.render(ui.h(ui.Conversation, {messages, focusIndex: index, focusKeywords: ['needle']}));
+      const mark = ui.el.querySelector('mark');
+      assert.ok(mark);
+      assert.match(mark.parentElement?.textContent ?? '', new RegExp(prefix));
+    }
+  } finally { await ui.close(); }
+});
+
+test("生成中发送按钮的可访问名称与真实处理时机一致", async () => {
+  const ui = await mount();
+  try {
+    const props = {running: true, onInterrupt: () => {}, onSend: async () => null};
+    await ui.render(ui.h(ui.Composer, {...props, queueHint: {label: '下一步交给它', title: '下一步处理'}}));
+    await typeInto(ui, '补充');
+    assert.ok(ui.el.querySelector('button[aria-label="下一步交给它"]'));
+    await ui.render(ui.h(ui.Composer, {...props, queueHint: {label: '发送', title: '由 AI 决定时机'}}));
+    assert.ok(ui.el.querySelector('button[aria-label="发送"]'));
+    assert.equal(ui.el.querySelector('button[aria-label="排队发送"]'), null);
   } finally { await ui.close(); }
 });

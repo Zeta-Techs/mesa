@@ -742,7 +742,7 @@
 - ⌘K 命令面板（过滤与排序纯逻辑在 `command-palette.ts`；默认列表只放高频入口，设置分区/单个主题/较早项目标 `searchOnly`
   只在搜索时出现——新增命令先想清楚是常驻还是只供搜索，别让默认列表再被一类条目刷屏；面板内 Enter 必须过 `imeBlocksEnter`）、页切（顺序同侧栏；
   清单单一出处 `hotkeys.ts` PAGE_HOTKEY_DEFS，默认 mod+1..8，`hotkeyPages` map 按页覆盖、整组总开关 `hotkeyPageSwitch` 保留）、
-  ⌘\ 执行态隐藏侧栏（`chromeHidden`，session 级）；⌘F 已被终端搜索占用。主题清单单一出处 `src/themes.ts`。绑定可自定义（设置页录制，
+  ⌘\ 执行态隐藏侧栏（`chromeHidden`，session 级）；⌘F 归焦点所在的聊天 / 终端 / 文件阅读区查找。主题清单单一出处 `src/themes.ts`。绑定可自定义（设置页录制，
   `hotkeys.ts` 组合串，空串=禁用，settings.json 四字段；录制冲突判定对全部在用绑定互判）。通知动作 `ccode.attention` → 聚焦窗口 + 聚焦对应终端标签，
   无 extra 回首页收件箱；通知 extra 带 tabId/cwd（v3.60 起通知只有「待确认」一种，原「已回复直达评审覆盖层」链路随 done 通知一并移除）；
   收件箱经 `session_tail_state` 直查外部 live 会话（≤10 条）。

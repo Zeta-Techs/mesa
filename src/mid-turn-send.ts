@@ -99,12 +99,13 @@ export function queuedNote(spec: MidTurnSpec): { text: string; title: string } {
         title: "已经交给 AI，它这一轮说完就接着处理；要撤回请到终端里改掉排着的那条",
       };
     default:
-      return { text: "排队中 · 它空下来就处理", title: "已经交给 AI，由它自己决定什么时候处理" };
+      return { text: "已发送 · 处理时机由 AI 决定", title: "已经交给 AI，由它自己决定什么时候处理" };
   }
 }
 
 /** 生成中输入框里停止块旁那组「排队 + 发送块」的字（2026-10-22 输入框第二版的发送区） */
 export function queueSendHint(spec: MidTurnSpec): { label: string; title: string } {
+  if (spec.delivery === "unknown") return { label: "发送", title: "发送给 AI，由它决定何时处理（Enter 也是）" };
   if (spec.delivery === "next_step") {
     return { label: "下一步交给它", title: "发出去，它做完手头这一步就会看到（Enter 也是）" };
   }
@@ -125,6 +126,8 @@ export function runningPlaceholder(spec: MidTurnSpec, mod: string | null): strin
   const base =
     spec.delivery === "next_step"
       ? "还在回复；现在发的话它下一步就会看到"
+      : spec.delivery === "unknown"
+      ? "还在回复；现在发的话由它决定何时处理"
       : "还在回复；现在发的话会排队，这一轮结束后处理";
   return spec.sendNow && mod ? `${base}，${mod}↩ ${spec.sendNow.hint}` : base;
 }

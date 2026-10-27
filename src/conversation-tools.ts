@@ -25,10 +25,12 @@ export interface ProcessTool {
   activity: ToolActivity;
   result: string | null;
   status: ResultStatus;
+  index: number;
+  resultIndex: number | null;
 }
 
 export type ProcessItem =
-  | { kind: "thinking"; text: string; seconds: number | null; index: number }
+  | { kind: "thinking"; text: string; seconds: number | null; index: number; endIndex?: number }
   | { kind: "text"; text: string; index: number }
   | { kind: "tool"; tool: ProcessTool; index: number }
   /** 连着的读文件 / 搜索 / 看目录并成一行「查阅」 */
@@ -107,13 +109,14 @@ function buildItems(
       const last = items[items.length - 1];
       if (last?.kind === "thinking") {
         last.text = `${last.text}\n\n${block.text}`;
+        last.endIndex = index;
         continue;
       }
       const prev = index > 0 ? messages[index - 1].timestamp : null;
       items.push({ kind: "thinking", text: block.text, seconds: secondsBetween(prev, messages[index].timestamp), index });
     } else if (block.kind === "tool_use") {
       const tools = toolActivities(block.toolName, block.text, cwd, isWindows).map(
-        (activity): ProcessTool => ({ activity, result: null, status: "ok" }),
+        (activity): ProcessTool => ({ activity, result: null, status: "ok", index, resultIndex: null }),
       );
       open.push(tools);
       if (block.callId) byCall.set(block.callId, tools);
@@ -130,9 +133,10 @@ function buildItems(
         for (const t of tools) {
           t.result = block.text;
           t.status = status;
+          t.resultIndex = index;
         }
       } else {
-        items.push({ kind: "tool", tool: { activity: orphanResultActivity(), result: block.text, status }, index });
+        items.push({ kind: "tool", tool: { activity: orphanResultActivity(), result: block.text, status, index, resultIndex: index }, index });
       }
     } else if (block.kind === "text") {
       if (block.text.trim()) items.push({ kind: "text", text: block.text, index });

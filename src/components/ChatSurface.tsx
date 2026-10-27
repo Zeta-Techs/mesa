@@ -4,6 +4,8 @@ import { ArrowDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
+import ChatSearch from "./ChatSearch";
+import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageEditContext } from "./ChatMarkdown";
 import ChatComposer, { useFlashOnSeq, type ComposerSeed } from "./ChatComposer";
 import { splitImagePaths } from "../chat-image";
@@ -88,6 +90,7 @@ export default function ChatSurface({
   syncState,
   loading,
   active = true,
+  searchRequest = 0,
   agentId,
   confirmDetail,
   cwd,
@@ -169,6 +172,7 @@ export default function ChatSurface({
   loading: boolean;
   /** 聊天层当前可见（常驻挂载仅隐藏后，用作输入框聚焦信号） */
   active?: boolean;
+  searchRequest?: number;
   agentId?: string | null;
   confirmDetail?: string | null;
   cwd?: string | null;
@@ -317,15 +321,34 @@ export default function ChatSurface({
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [stuckWaiting, setStuckWaiting] = useState(false);
   const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [composerFocus, setComposerFocus] = useState(0);
+  const [focus, setFocus] = useState<{ identity: string; fromEnd: number; query: string; seq: number } | null>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const focusMessage = useCallback((index: number, query: string) => {
+    const list = messagesRef.current;
+    if (index < 0 || !list[index]) { setFocus(null); return; }
+    followRef.current = false;
+    const identity = messageIdentity(list[index]);
+    const fromEnd = list.slice(index + 1).filter((message) => messageIdentity(message) === identity).length;
+    setFocus((prev) => ({ identity, fromEnd, query, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+  const focusIndex = useMemo(() => {
+    if (!focus) return -1;
+    const matches = messages.flatMap((message, index) => messageIdentity(message) === focus.identity ? [index] : []);
+    return matches[matches.length - 1 - focus.fromEnd] ?? -1;
+  }, [messages, focus]);
+  useEffect(() => {
+    if (searchRequest) { followRef.current = false; setSearchOpen(true); }
+  }, [searchRequest]);
   const editImage = useCallback((absPath: string) => setSeedInsert({ text: "", paths: [], edit: absPath }), []);
   const [homeDir, setHomeDir] = useState("");
   const loadingOlderRef = useRef(false);
   const prevFirstKeyRef = useRef<string | null>(null);
   // 被分页切断的半轮先不显示（它的提问在更早一页里），否则收起行的时长 / 条数会在加载更早一页后变
-  const shownMessages = useMemo(
-    () => messages.slice(firstCompleteTurnIndex(messages, hasOlder)),
-    [messages, hasOlder],
-  );
+  const firstShown = firstCompleteTurnIndex(messages, hasOlder, focusIndex);
+  const shownMessages = useMemo(() => messages.slice(firstShown), [messages, firstShown]);
 
   useEffect(() => {
     void invoke<string>("home_dir")
@@ -1257,6 +1280,10 @@ export default function ChatSurface({
       data-chat-drop="1"
       className="relative flex h-full min-h-0 w-full flex-col bg-canvas"
     >
+      {searchOpen && <ChatSearch messages={messages} request={searchRequest} hasOlder={hasOlder} loadingOlder={loadingOlder}
+        onLoadOlder={onLoadOlder ? () => { followRef.current = false; void loadOlder(); } : undefined}
+        onFocus={focusMessage}
+        onClose={() => { setSearchOpen(false); setFocus(null); setComposerFocus((value) => value + 1); }} />}
       {dropHover && (
         <div className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-lg border-2 border-dashed border-mesa-amber/60 bg-canvas/80">
           <p className="text-sm text-l2">松开，添加到消息里</p>
@@ -1359,6 +1386,9 @@ export default function ChatSurface({
             <ConversationView
               messages={shownMessages}
               cwd={cwd}
+              focusIndex={focusIndex < 0 ? -1 : focusIndex - firstShown}
+              focusKeywords={focus ? [focus.query] : undefined}
+              focusRequest={focus?.seq ?? 0}
               working={generating || settling}
               awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
               // 消息里整行的图片路径还原成附件缩略卡，不当文字塞回输入框
@@ -1367,6 +1397,7 @@ export default function ChatSurface({
                 setSeedInsert({ text: split.text, paths: split.images });
               }}
               onForkHere={onForkFrom}
+              onQuote={(quote) => setSeedInsert({ text: "", paths: [], quote })}
               queuedNote={{
                 ...note,
                 text: sentNowAt ? "已叫它马上处理" : note.text,
@@ -1507,6 +1538,14 @@ export default function ChatSurface({
         focusWhen={active}
         agentId={agentId}
         seedInsert={seedInsert}
+        focusRequest={composerFocus}
+        onLocateQuote={(quote) => {
+          const index = locateChatQuote(messages, quote);
+          if (index < 0) return false;
+          setSearchOpen(false);
+          focusMessage(index, quote.text);
+          return true;
+        }}
         onSeedConsumed={() => setSeedInsert(null)}
         // 占位字不带结尾的「…」（2026-10-25 用户对照 Claude 客户端：系统字体里它画成底线上的三个点，读作「...」）
         placeholder={

@@ -239,6 +239,7 @@ function CardShell({
       const active = document.activeElement;
       if (!active || !scope.contains(active)) return;
       const t = e.target as HTMLElement | null;
+      if (t?.closest('[role="search"], .ccode-chat-composer[data-has-draft="true"]')) return;
       if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT") && (t as HTMLInputElement).value.trim()) return;
       e.preventDefault();
       e.stopPropagation();

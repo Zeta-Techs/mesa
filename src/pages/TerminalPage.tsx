@@ -8170,6 +8170,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [chatInsertByTab, setChatInsertByTab] = useState<
     Record<string, { text: string; send: boolean; token: number }>
   >({});
+  const [chatSearchByTab, setChatSearchByTab] = useState<Record<string, number>>({});
+  const openChatSearch = (id: string) => setChatSearchByTab((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
   const conversationInsert = useCallback(
     (tabId: string, text: string, opts: { send: boolean }) => {
       const mode = surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current;
@@ -10379,10 +10381,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   return (
     <div
       ref={terminalRootRef}
-      className="terminal-workbench @container/chat-head relative flex h-full bg-canvas"
+      className="terminal-workbench relative flex h-full bg-canvas"
+      onKeyDownCapture={(event) => {
+        if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "f") return;
+        const target = event.target as HTMLElement;
+        if (target.closest(".monaco-editor, .md-find-scope, .xterm")) return;
+        const chatId = target.closest<HTMLElement>("[data-chat-host]")?.dataset.chatHost;
+        if (!chatId && focusedSurfaceMode !== "chat") return;
+        event.preventDefault();
+        event.stopPropagation();
+        openChatSearch(chatId ?? focusedId);
+      }}
     >
       {/* 中带：终端标签区。向上盖 1px，挡住顶栏透出的那条窗口黑缝。 */}
-      <div className="relative -mt-px flex min-w-0 flex-1 flex-col bg-canvas">
+      <div className="@container/chat-head relative -mt-px flex min-w-0 flex-1 flex-col bg-canvas">
         {/* 对话头（2026-10-24 侧栏挂对话第二期）：标签条撤掉，侧栏就是对话列表——切换、新开、看谁在跑都在侧栏。
             这里只写正看着的这段：生成中 / 等你确认、标题、终端上报的进度。不放 ×（同日用户问「× 的作用是什么」）：
             对话没有「关」，AI 进程空闲 30 分钟自己收，要立刻停走侧栏对话 ⋯「停下 Agent」 */}
@@ -10537,6 +10549,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               alignRight
               onClose={() => setHeadMenu(null)}
               items={[
+                {
+                  label: "搜索聊天",
+                  icon: Search,
+                  title: "在这段对话的消息、命令和输出里找字",
+                  onSelect: () => { if (focusedSurfaceMode !== "chat") switchSurface("chat"); openChatSearch(focusedId); },
+                },
                 {
                   label: splitActive ? "退出分屏" : "分屏对照",
                   icon: Columns2,
@@ -10819,6 +10837,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       <StableChatSurface
                         // 藏着的标签（没在看、也不在阅读区右栏）：记录照常刷新，不重画，露出来那一下再画
                         frozen={!tabVisible && !inReader}
+                        searchRequest={chatSearchByTab[t.id] ?? 0}
                         metaSlots={chatMetaSlots[t.id] ?? null}
                         messages={sessionByTab[t.id]?.conv ?? []}
                         state={sessionByTab[t.id]?.state ?? "idle"}

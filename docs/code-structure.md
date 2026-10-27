@@ -107,7 +107,7 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
 components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯一挂载）：选 .ccode-sessions.zip → import_sessions_inspect 预览（逐条目标目录预填、按注册项目认 cwd、可逐条 EntryDecision）→ import_sessions_apply；Codex 内联 provider 会话顺带写客户端 provider 定义块（有密钥的绑定预选）；状态文案在 session-transfer.ts
-                             #   展开为动作行（点行看差异 / 命令输出 / 思考），异常可直达输出，回复旁有本轮文件/验证记录；working 由聊天层传（进行中不收起）；
+                             #   展开为动作行（点行看差异 / 命令输出 / 思考），异常可直达输出，回复旁有本轮文件/验证记录；引用追问保留来源，搜索展开过程并钉住虚拟窗口；working 由聊天层传（进行中不收起）；
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
@@ -712,7 +712,7 @@ tab-keys.ts                # 标签栏/分段控件键盘导航三件（tabNavDe
   auto-load-older.ts         # 回放往上翻自动加载更早一页（useAutoLoadOlder：对话页 / 项目对话 / 聊天层共用；只认用户滚动，
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   idle-preload.ts            # 启动后空闲时依次预载大块（preloadInIdle：一次一块、失败静默；App 里列运行页 / 项目页 / 文件预览编辑器 / PDF 阅读）
-  virtual-window.ts          # 长对话只画视野附近（useVirtualWindow：上下两块占位、按字数估高 / 画过记实高、往上接画按锚点从占位扣差额；planWindow / remapWindow 纯逻辑可测）
+  virtual-window.ts          # 长对话只画视野附近（useVirtualWindow：搜索 pin 变更即时换窗，上下两块占位、按字数估高 / 画过记实高、往上接画按锚点从占位扣差额；planWindow / remapWindow 纯逻辑可测）
   stable-props.ts            # memoWithLatestFunctions：父组件每次传新闭包时仍能跳过重画（比较时函数算相等、交出去的是转发到最新闭包的固定函数）；终端页每标签的聊天层 / 状态栏在用
   polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
 session-refresh.ts         # 会话列表刷新协调器 createSessionRefreshCoordinator（store.ts 唯一挂载）：普通刷新复用在途请求不叠轮；强制刷新开新代次，旧请求晚回不覆盖新列表（成功与失败两路同口径，旧请求的失败也不暴露给新调用者，等最新请求返回当前列表）（tests/session-refresh.test.ts）
@@ -849,6 +849,8 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
                              # 不可见分隔符拼 profile id 与模型名；agentLabel 把内部 id 换展示名（tests/ai-profile-choice.test.ts）
   settings-storage.ts        # 设置「本机占用」卡纯逻辑：按归属分组（Mesa 数据 / 工作副本）、组根 ~ 折叠、相对名、
                              #   总计与「≥」下限标记、快照清理确认文案（tests/settings-storage.test.ts）
+  chat-navigation.ts        # 聊天引用与检索纯逻辑：上游 id / 完整内容签名核对引用来源和原文区间，歧义不定位；搜索命中覆盖文本与工具块，向前分页保持命中键（tests 同名）
+  components/ChatSearch.tsx # 活跃聊天搜索条：标明已读取范围、按消息切换命中、按需加载历史，定位交给 ChatSurface / ConversationView
   conversation-tools.ts      # 对话按「轮」整理：助手一轮的过程（思考 / 工具调用+结果配对 / 中途说明）收成 turn 段、过程后的正文切成回答；
                              #   turnToolEntries 保留行位置、isVerificationTool 只筛命令记录不判通过；连着的读/搜并成「查阅」，最后一轮进行中（working 或有没回结果的调用）不切回答；时长、收起摘要（tests 同名）
                              # 2026-10-20：调用与结果按 callId 配对（没有 id 退回先后）；turnPlan / planEntries = 计划卡（各家待办参数收成一份，一轮取最后一次）

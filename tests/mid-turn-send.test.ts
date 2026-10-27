@@ -30,6 +30,9 @@ test("这一轮说完才交的几家：Gemini 按 Esc、Grok 再按回车立即�
 test("没核实过的家不给立即发送；气泡与占位字按真实行为写，不再一律「这一轮结束后处理」", () => {
   const cursor = midTurnSpec("cursor", { csiU: false });
   assert.deepEqual(cursor, { delivery: "unknown", sendNow: null });
+  assert.equal(queuedNote(cursor).text, "已发送 · 处理时机由 AI 决定");
+  assert.equal(queueSendHint(cursor).label, "发送");
+  assert.equal(runningPlaceholder(cursor, null), "还在回复；现在发的话由它决定何时处理");
   assert.equal(queuedNote(midTurnSpec("codex", { csiU: false })).text, "下一步时交给它");
   assert.equal(queuedNote(midTurnSpec("gemini", { csiU: false })).text, "排队中 · 这一轮结束后处理");
   assert.equal(

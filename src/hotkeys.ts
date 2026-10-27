@@ -62,7 +62,7 @@ export const FIXED_HOTKEYS: readonly { label: string; mac: string; other: string
     other: "Ctrl+= / Ctrl+-",
     hint: "整个界面一起放大缩小（80%–150%），恢复 100% 在设置 → 外观「界面大小」；Windows 上光标在终端里时这组键留给终端",
   },
-  { label: "终端里查找", mac: "⌘F", other: "Ctrl+F", hint: "光标在终端里时" },
+  { label: "当前内容查找", mac: "⌘F", other: "Ctrl+F", hint: "搜索焦点所在的聊天或终端；文件阅读器与编辑器用各自的查找" },
   {
     label: "关掉这段对话",
     mac: "⌘W",
