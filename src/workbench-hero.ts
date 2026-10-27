@@ -683,17 +683,6 @@ export function stepProgressLabel(
   return `进行到：${progress.name}（第 ${progress.index} / ${progress.total} 步）`;
 }
 
-/** 「上次停在」那段对话归在别的步骤时，标出是哪一步；同一步或没有归属不标 */
-export function lastSaidStepTag(
-  sessionStep: string | null | undefined,
-  currentStep: string | null | undefined,
-): string | null {
-  const step = sessionStep?.trim();
-  if (!step) return null;
-  if (currentStep && step === currentStep.trim()) return null;
-  return step;
-}
-
 /** 流水线里第一个尚未合并的步骤名；全做完回末步；没有步骤返回 null */
 export function firstOpenStepName(
   steps: readonly {
@@ -724,26 +713,6 @@ export function workbenchNowSectionTitle(runningCount: number): "正在进行" |
   return runningCount > 0 ? "正在进行" : "最近在做";
 }
 
-export function heroStatusLine(opts: {
-  runningCount: number;
-  agentLabel: string | null;
-  attention: "confirm" | "working" | "done" | null;
-}): string {
-  if (opts.runningCount > 0) {
-    const who = opts.agentLabel?.trim() || "Agent";
-    if (opts.runningCount === 1) {
-      if (opts.attention === "confirm") return `${who} 在等你确认`;
-      return `${who} 正在工作`;
-    }
-    if (opts.attention === "confirm") {
-      return `${opts.runningCount} 个 Agent 在跑 · ${who} 在等你确认`;
-    }
-    return `${opts.runningCount} 个 Agent 在跑`;
-  }
-  // 没有 Agent 在跑就没有状态可报：「准备好从上次位置继续」与「继续工作」按钮说的是同一件事（2026-10-22 审查删）
-  return "";
-}
-
 /** 有实质标题才返回；未命名 / 空标题不列。与项目侧栏同一套清洗。 */
 export function namedSessionTitle(session: {
   customTitle?: string | null;
@@ -753,38 +722,6 @@ export function namedSessionTitle(session: {
   const shown = tidySessionTitle(session);
   if (shown.unnamed) return null;
   return shown.title;
-}
-
-/** 工作台「最近对话」：先按可见范围过滤（归档 / 内部无头 / 问 AI / 阅读注入不进，
- *  与 filterProjectSessions 同一口径），再有标题才列，默认最多 10 条
- *  （沿用传入顺序，通常已按 updated_at 降序）。 */
-export function workbenchRecentSessions<T extends {
-  customTitle: string | null;
-  title: string | null;
-  summary?: string | null;
-  archived?: boolean;
-  internal?: boolean;
-  source?: string;
-  projectPath?: string;
-}>(sessions: readonly T[], limit = WORKBENCH_RECENT_LIMIT): T[] {
-  const out: T[] = [];
-  for (const session of sessions) {
-    if (session.archived) continue;
-    if (
-      sessionExcludedFromProjectList({
-        internal: session.internal,
-        source: session.source,
-        projectPath: session.projectPath ?? "",
-        title: session.title,
-        customTitle: session.customTitle,
-      })
-    )
-      continue;
-    if (!namedSessionTitle(session)) continue;
-    out.push(session);
-    if (out.length >= limit) break;
-  }
-  return out;
 }
 
 /** 正在进行副行：与任务页同一句「项目现在」。没有待验收/进行中/没做完才回落步骤名。 */

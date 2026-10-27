@@ -398,17 +398,20 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 展开路径 persist（默认全收起，跟随上次；tests/folder-groups.test.ts）
   workbench-hero.ts          # 工作台主卡纯逻辑：当前工作按运行标签归属（注册名优先；隔离目标副本按
                              # runId/taskId 归属表归回真实项目，不按 cwd 拆卡；同名项目按 contextPath 路径选，名字只作唯一命中回落）、
-                             # 步骤取流水线第一个未合并步（openStepProgress / stepProgressLabel 写「进行到：X（第 i / n 步）」，
-                             #   lastSaidStepTag：「上次停在」那段对话归在别的步骤时标出）、「继续工作」有标签则聚焦，否则按 runId 找回原 Run，再回落进项目/真进入；
-                             # pickWorkbenchNow = 正在进行列表（大卡 + 紧凑行）；runningCount 只算活进程
+                             # 步骤取流水线第一个未合并步（openStepProgress / stepProgressLabel 写「进行到：X（第 i / n 步）」）、
+                             #   「继续」有标签则聚焦，否则按 runId 找回原 Run，再回落进项目/真进入；
+                             # pickWorkbenchNow = 正在进行列表（2026-10-27 起大卡删掉，逐行列；没活时回落 pickWorkbenchHero 一行）；runningCount 只算活进程
                              # （isRunProcessLive，已退出/未启动的保留标签留在 runs 里可继续但不冒充「正在工作」）；
-                             # 副行优先待验收/进行中目标；最近对话先按可见范围过滤（归档/内部无头/问 AI/阅读注入不列，
-                             # 与 filterProjectSessions 同口径）再与项目侧栏同一套清洗，未命名不列；
+                             # 副行优先待验收/进行中目标；namedSessionTitle 与项目侧栏同一套清洗、未命名为 null；
                              # workbenchRecentRows = 已添加项目 ∪ 会话扫仓库（办公/新建无会话也列出），
-                             # 与最近对话默认最多 10 条；「上次停在」latestProjectSession + lastUserInstruction
+                             # 默认最多 6 条（「最近对话」2026-10-27 随工作台改版删掉）；「上次停在」latestProjectSession + lastUserInstruction
                              # （跳工具结果/系统注入，不按首句切）；待处理行归项目 inboxItemProjectRoot；
                              # 「记下目标」可选项目 goalCaptureTargets（与 ProjectGroup liteResearch / 办公目标视图
                              # 双端同口径）；加载失败合一条 workbenchLoadFailureMessage（tests/workbench-hero.test.ts）
+  workbench-queue.ts         # 工作台「等你拍板」队列（2026-10-27）：收件箱条目 + 待验收目标分三档稳定排序（停着等你 / 等你看结果 / 通知）、
+                             # 行内能做的只有两种——旁路能回复的待确认（Codex / Qwen / OpenCode）允许 / 拒绝、信息类（BULK_READABLE）收起；
+                             # 键盘 J/K/回车/A/R/E（queueKeyAction，当前行做不了的键不吞）、按键记选中行；
+                             # createDeferred 撤销窗口（QUEUE_UNDO_MS 5 秒后才送出，挂模块不挂组件）（tests/workbench-queue.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、
                              # 未分类恒末）/趋势/直链转换/全文可得性分流（fulltextLinkFor：arxiv abs 与 .pdf 直链=可下载，
                              # DOI/落地页=来源，不再摆禁用下载钮）/已读判定/雷达筛选（entryPassesFilter

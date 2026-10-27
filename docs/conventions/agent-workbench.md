@@ -210,8 +210,8 @@ runs: {
 
 规则：
 
-- 主卡 / 紧凑行展示 `runs`（待确认在前）；「继续」仍跳优先级最高的那条（confirm > working > 其余）
-- `heroStatusLine`：多次时「2 个 Agent 在跑 · Codex 在等你确认」，单次保持现状
+- 主卡 / 紧凑行展示 `runs`（待确认在前）；「继续」仍跳优先级最高的那条（confirm > working > 其余）。2026-10-27 起主卡删掉，每个项目行下面逐条列 `runs`（多于一条时）
+- ~~`heroStatusLine`：多次时「2 个 Agent 在跑 · Codex 在等你确认」~~（2026-10-27 随主卡删掉；项目行写「N 个运行中」）
 - `tabId/agentId/attention` 三字段保留为「继续」指针，等于 `runs[0]` 的优先条，避免全站改调用
 - 纯逻辑 `src/workbench-hero.ts`，测试先改再接线 `WorkbenchPage.tsx`
 

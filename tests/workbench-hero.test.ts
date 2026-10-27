@@ -4,7 +4,6 @@ import type { RunOverviewInput } from "../src/run-overview.ts";
 import {
   continueWorkbenchTarget,
   firstOpenStepName,
-  lastSaidStepTag,
   openStepProgress,
   stepProgressLabel,
   goalCaptureTargets,
@@ -12,7 +11,6 @@ import {
   lastUserInstruction,
   latestProjectSession,
   workbenchLoadFailureMessage,
-  heroStatusLine,
   workbenchNowSectionTitle,
   namedSessionTitle,
   pickWorkbenchHero,
@@ -20,7 +18,6 @@ import {
   taskLabelForRun,
   workbenchNowSubtitle,
   workbenchRecentRows,
-  workbenchRecentSessions,
   WORKBENCH_RECENT_LIMIT,
   type WorkbenchHero,
   type WorkbenchProject,
@@ -306,49 +303,6 @@ test("区块标题：没在跑不算正在进行", () => {
   assert.equal(workbenchNowSectionTitle(3), "正在进行");
 });
 
-test("heroStatusLine 只描述这张卡上的 Agent，没在跑不报状态", () => {
-  assert.equal(
-    heroStatusLine({
-      runningCount: 1,
-      agentLabel: "Claude Code",
-      attention: "confirm",
-    }),
-    "Claude Code 在等你确认",
-  );
-  assert.equal(
-    heroStatusLine({
-      runningCount: 2,
-      agentLabel: "Codex",
-      attention: "working",
-    }),
-    "2 个 Agent 在跑",
-  );
-  assert.equal(
-    heroStatusLine({
-      runningCount: 2,
-      agentLabel: "Codex",
-      attention: "confirm",
-    }),
-    "2 个 Agent 在跑 · Codex 在等你确认",
-  );
-  assert.equal(
-    heroStatusLine({
-      runningCount: 0,
-      agentLabel: "Claude Code",
-      attention: null,
-    }),
-    "",
-  );
-  assert.equal(
-    heroStatusLine({
-      runningCount: 0,
-      agentLabel: null,
-      attention: null,
-    }),
-    "",
-  );
-});
-
 test("namedSessionTitle 丢掉未命名对话", () => {
   assert.equal(namedSessionTitle({ customTitle: "方向", title: "hi" }), "方向");
   assert.equal(namedSessionTitle({ customTitle: null, title: "  " }), null);
@@ -448,7 +402,7 @@ test("最近项目包含没有会话的已添加项目，新建排在前面", ()
   );
 });
 
-test("最近项目和最近对话默认最多 6 条", () => {
+test("最近项目默认最多 6 条", () => {
   assert.equal(WORKBENCH_RECENT_LIMIT, 6);
   const projects = Array.from({ length: 12 }, (_, i) => ({
     path: `/p/${String(i).padStart(2, "0")}`,
@@ -459,14 +413,6 @@ test("最近项目和最近对话默认最多 6 条", () => {
   assert.equal(rows.length, 6);
   assert.equal(rows[0]?.name, "项目11");
   assert.equal(rows[5]?.name, "项目6");
-
-  const sessions = Array.from({ length: 12 }, (_, i) => ({
-    customTitle: i === 0 ? null : `对话${i}`,
-    title: i === 0 ? "  " : `对话${i}`,
-  }));
-  const listed = workbenchRecentSessions(sessions);
-  assert.equal(listed.length, 6);
-  assert.equal(listed[0]?.customTitle, "对话1");
 });
 
 test("正在进行：确认优先，并行项目都在，安静项目不进", () => {
@@ -839,25 +785,6 @@ test("唯一同名项目仍可按显示名命中上下文", () => {
   assert.equal(hero?.source, "context");
 });
 
-test("最近对话：内部 / 归档 / 无头 / 阅读注入会话不进列表", () => {
-  const listed = workbenchRecentSessions([
-    { customTitle: "正常对话", title: null },
-    { customTitle: "定时巡检", title: null, internal: true },
-    { customTitle: "旧对话", title: null, archived: true },
-    {
-      customTitle: null,
-      title: "你是科研文献快筛助手，请筛选以下文献",
-      projectPath: "/p",
-    },
-    { customTitle: "无头摘要", title: null, source: "ccode-ai" },
-    { customTitle: "阅读注入", title: "【阅读上下文】某篇论文" },
-  ]);
-  assert.deepEqual(
-    listed.map((s) => s.customTitle),
-    ["正常对话"],
-  );
-});
-
 test("lastUserInstruction：取最后一条人说的话，跳过工具结果与系统注入", () => {
   const msg = (role: string, ...blocks: [string, string][]) => ({
     role,
@@ -1009,9 +936,4 @@ test("流程进度：写明进行到第几步，全做完说都已完成；「�
   assert.equal(stepProgressLabel(openStepProgress([steps[0]], [])), "进行到：文献检索与筛选");
   assert.equal(openStepProgress([], []), null);
   assert.equal(stepProgressLabel(null), null);
-  // 上次那段对话在商量后面一步：标出来；同一步、没有归属都不标
-  assert.equal(lastSaidStepTag("综述大纲", "文献检索与筛选"), "综述大纲");
-  assert.equal(lastSaidStepTag("文献检索与筛选", "文献检索与筛选"), null);
-  assert.equal(lastSaidStepTag(null, "文献检索与筛选"), null);
-  assert.equal(lastSaidStepTag("综述大纲", null), "综述大纲");
 });

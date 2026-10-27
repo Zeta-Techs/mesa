@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -7,17 +7,12 @@ import {
   AlarmClock,
   CheckCheck,
   ArrowRight,
-  ChevronRight,
   CircleDot,
-  ClipboardCheck,
   Inbox,
-  MessageSquare,
-  MessagesSquare,
   Plus,
   SquareArrowOutUpRight,
 } from "lucide-react";
 import { useAppStore, runInboxAction, visibleInboxItems } from "../store";
-import { openConversation } from "../quick-chat-launch";
 import { usePhoneDropStore } from "../phone-drop-store";
 import { phonePendingCount } from "../phone-drop";
 import { bulkReadableItems } from "../inbox";
@@ -44,12 +39,9 @@ import { visibleDeclaredTasks } from "../project-tasks";
 import {
   continueWorkbenchTarget,
   goalCaptureTargets,
-  heroStatusLine,
   inboxItemProjectRoot,
-  lastSaidStepTag,
   lastUserInstruction,
   latestProjectSession,
-  namedSessionTitle,
   openStepProgress,
   pickWorkbenchHero,
   pickWorkbenchNow,
@@ -58,7 +50,6 @@ import {
   workbenchNowSectionTitle,
   workbenchNowSubtitle,
   workbenchRecentRows,
-  workbenchRecentSessions,
   type WorkbenchContinue,
   type WorkbenchNowSeed,
 } from "../workbench-hero";
@@ -74,7 +65,6 @@ import {
   LoadingRows,
   MenuSelect,
   PageFrame,
-  RowAction,
   fieldClass,
   ghostActionClass,
   hoverRevealClass,
@@ -82,23 +72,35 @@ import {
   rowActionClass,
   secondaryActionClass,
 } from "../components/PageFrame";
-import { toast } from "../toast";
+import { dismissToast, toast } from "../toast";
 import RunCaret from "../components/RunCaret";
 import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import { workbenchScheduleRows } from "../schedule-tasks";
-import { sidebarChatTitle } from "../sidebar-chats";
-import { isScratchCwd } from "../quick-chat";
+import {
+  approvalChoices,
+  approvalTitle,
+  displayCommand,
+  type ChatChannelSnapshot,
+} from "../chat-channel";
+import {
+  QUEUE_TIER_LABEL,
+  QUEUE_UNDO_MS,
+  buildDecisionQueue,
+  createDeferred,
+  moveSelection,
+  pruneHidden,
+  queueKeyAction,
+  resolveSelection,
+  type QueueApproval,
+  type QueueRow,
+} from "../workbench-queue";
 import { pollEvery } from "../polling";
 
 const iconClass = "shrink-0 text-l4";
 /** 工作方式标签：描边不铺底（铺 bg-strip 在 well 上看不出边界，像一段错位的字） */
 const modeChipClass =
   "inline-block shrink-0 rounded-full border border-hairline px-1.5 py-px text-micro leading-tight text-l3";
-/** 区块标题行的「查看全部」：文字链级别，不能比区块标题还醒目。
- *  字号不能写在按钮上（全站 button { font: inherit } 会吞掉），由内层 sectionLinkTextClass 承担 */
-const sectionLinkClass = `${ghostActionClass} h-6 px-1.5 text-l3 hover:text-l1`;
-const sectionLinkTextClass = "text-micro";
 
 /** 不参与工作台「需要你」判定的自动登记任务类（见 nowSeeds 里的过滤注释） */
 const WORKBENCH_AUTO_TASK_KINDS = new Set(["pipeline_step", "coding_lane", "watch"]);
@@ -112,6 +114,15 @@ type LastSaid = {
   sessionId: string;
 };
 const lastSaidCache = new Map<string, LastSaid | null>();
+
+/** 拍板队列默认列几行，其余折叠 */
+const QUEUE_VISIBLE = 6;
+const QUEUE_KEY_HINT = "J / K 移动 · 回车 去处理 · A 允许 · R 拒绝 · E 收起";
+/** 撤销窗口挂在模块上：点完马上离开工作台，送出照常发生 */
+const queueDeferred = createDeferred({
+  set: (fn, ms) => window.setTimeout(fn, ms),
+  clear: (handle) => window.clearTimeout(handle as number),
+});
 
 function agentLabel(id: string | null): string | null {
   if (!id) return null;
@@ -160,7 +171,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const recentRepos = useAppStore((s) => s.recentRepos);
   const loadRecentRepos = useAppStore((s) => s.loadRecentRepos);
   const setEnterCwdReq = useAppStore((s) => s.setEnterCwdReq);
-  const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setTaskReviewReq = useAppStore((s) => s.setTaskReviewReq);
   const setFocusTabReq = useAppStore((s) => s.setFocusTabReq);
@@ -576,8 +586,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       agent: string;
       sessionId: string;
       filePath: string;
-      /** 那段对话归在哪一步（步骤工作区 / 步骤认领）；「上次停在」后面标出来 */
-      stepName: string | null;
       /** 这个项目最后一次对话活动，紧凑行行尾的时间 */
       updatedAt: string | null;
     }[] = [];
@@ -591,7 +599,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         agent: session.agent,
         sessionId: session.sessionId,
         filePath: session.filePath,
-        stepName: session.stepName ?? null,
         updatedAt: session.updatedAt,
       });
     }
@@ -638,10 +645,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       if (samePath(key, path, IS_WINDOWS)) return value;
     }
     return null;
-  }
-  function openLastSaid(said: LastSaid) {
-    setOpenSessionReq({ agent: said.agent, sessionId: said.sessionId });
-    setPage("sessions");
   }
 
   // 「记下一个目标」：只记不开工，落到项目页目标列表，开工仍由人在项目页点
@@ -765,57 +768,16 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     setPage("terminal");
   }
 
-  async function continueWork() {
-    if (!hero) return;
-    await openContinueTarget(continueWorkbenchTarget(hero));
-  }
+  /** 「正在进行」列表：有活的项目逐行列；都没活时列最近在做的那一个（原大卡的回落口径，不再单独画大卡） */
+  const nowRows = useMemo(() => (nowItems.length ? nowItems : hero ? [hero] : []), [nowItems, hero]);
 
-  /** 主卡项目的流程进度（科研项目才有）：副行写「进行到哪一步」，「上次停在」据它判断要不要标步骤 */
-  const heroProgress = useMemo(() => {
-    if (!hero?.registered) return null;
-    const mine = workspaces.filter(
-      (w) => w.status !== "archived" && samePath(w.repoPath, hero.path, IS_WINDOWS),
-    );
-    const cfg = Object.entries(researchCfg).find(([path]) =>
-      samePath(path, hero.path, IS_WINDOWS),
-    )?.[1];
-    return openStepProgress(cfg?.steps ?? [], mine);
-  }, [hero, researchCfg, workspaces]);
-  const stepName = useMemo(() => {
-    if (nowItems[0]?.subtitle) return nowItems[0].subtitle;
-    return stepProgressLabel(heroProgress);
-  }, [heroProgress, nowItems]);
-
-  const recentSessions = useMemo(() => {
-    return workbenchRecentSessions(sessions).map((session) => ({
-      meta: session,
-      agent: session.agent,
-      sessionId: session.sessionId,
-      // 与侧栏同一写法：自动起名的「MMDD|类型|」前缀省掉，完整标题放悬停
-      fullTitle: namedSessionTitle(session) ?? "",
-      title: sidebarChatTitle(namedSessionTitle(session) ?? ""),
-      updatedAt: session.updatedAt,
-      // 已添加项目写注册名；随手聊写「随手聊」；外部目录不写（行尾不放路径）
-      projectName: session.projectPath
-        ? (projects.find((p) => samePath(p.path, session.projectPath, IS_WINDOWS))?.name ??
-          (isScratchCwd(session.projectPath, IS_WINDOWS) ? "随手聊" : null))
-        : null,
-    }));
-  }, [sessions, projects]);
-
-  const hasInbox = inboxItems.length > 0;
-  const reviewTasks = userTasks.filter((task) => task.status === "pending_review");
-  // 定时任务摘要：在跑 / 上次失败 / 24 小时内要跑的；暂停与待评审已在「待你处理」里，不重复
+  // 定时任务摘要：在跑 / 上次失败 / 24 小时内要跑的；暂停与待评审已在「等你拍板」里，不重复
   const scheduleRows = workbenchScheduleRows(schedules, projects, new Date(), IS_WINDOWS);
-  /** 「等你的事」：待你处理 + 待你验收 + 定时任务，排在「正在进行」下面，一样都没有就整块不出 */
-  const hasSide = hasInbox || reviewTasks.length > 0 || scheduleRows.length > 0;
   function openProjectSchedules(root: string) {
     setSelectProjectReq(root);
     setProjectFocusReq({ projectRoot: root, focus: "schedule", token: Date.now() });
     setPage("workspaces");
   }
-  // 信息类（可一键已读）之外的条目要人拍板：按钮常驻，不靠悬停才现
-  const bulkKeys = new Set(bulkInboxItems.map((item) => item.key));
   const tabCwds = Object.fromEntries(
     terminalRunInputs.map((run) => [run.tabId, run.cwd]),
   );
@@ -835,14 +797,210 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     if (!name || item.text.includes(name)) return null;
     return name;
   }
-  const statusText = hero
-    ? heroStatusLine({
-        runningCount: hero.runningCount,
-        agentLabel: agentLabel(hero.agentId),
-        attention: hero.attention,
-      })
-    : "";
-  const heroCaret = hero ? itemCaret(hero) : null;
+
+  // ===== 等你拍板（workbench-queue.ts）=====
+  // 待确认条目背后的标签：旁路能经 CLI 官方通道回复的（Codex / Qwen / OpenCode），行内给允许 / 拒绝
+  const confirmTabs = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const item of inboxItems) {
+      if (!item.key.startsWith("confirm:") || item.action.type !== "run") continue;
+      const { runId, tabId } = item.action;
+      const tab = tabId ?? terminalRunInputs.find((r) => runId && r.runId === runId)?.tabId;
+      if (tab) out[item.key] = tab;
+    }
+    return out;
+  }, [inboxItems, terminalRunInputs]);
+  const confirmTabSig = Object.values(confirmTabs).sort().join("\n");
+  const [channelSnaps, setChannelSnaps] = useState<Record<string, ChatChannelSnapshot | null>>({});
+  useEffect(() => {
+    if (!visible || !confirmTabSig) return;
+    let stale = false;
+    const unlisteners: Array<() => void> = [];
+    for (const tabId of confirmTabSig.split("\n")) {
+      const put = (snap: ChatChannelSnapshot | null) => {
+        if (!stale) setChannelSnaps((cur) => ({ ...cur, [tabId]: snap }));
+      };
+      void invoke<ChatChannelSnapshot | null>("chat_channel_snapshot", { tabId })
+        .then(put)
+        .catch(() => put(null));
+      listen<ChatChannelSnapshot | null>(`chat-channel-${tabId}`, (e) => put(e.payload))
+        .then((u) => {
+          if (stale) u();
+          else unlisteners.push(u);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      stale = true;
+      unlisteners.forEach((u) => u());
+    };
+  }, [visible, confirmTabSig]);
+  const approvals = useMemo(() => {
+    const out: Record<string, QueueApproval> = {};
+    for (const [key, tabId] of Object.entries(confirmTabs)) {
+      const snap = channelSnaps[tabId];
+      const a = snap?.approval;
+      if (!snap || !a || !a.requestId || snap.turn?.status !== "awaiting_approval") continue;
+      const choices = approvalChoices(a, snap.agent);
+      const allow = choices.find((c) => c.decision === "allow");
+      const deny = choices.find((c) => c.decision === "deny");
+      if (!allow || !deny) continue;
+      out[key] = {
+        tabId,
+        requestId: a.requestId,
+        title: approvalTitle(a, agentLabel(snap.agent) ?? snap.agent),
+        detail: a.command ? displayCommand(a.command) : a.path,
+        allowLabel: allow.label,
+        denyLabel: deny.label,
+      };
+    }
+    return out;
+  }, [confirmTabs, channelSnaps]);
+
+  /** 已处理的行（撤销窗口内、或已送出还没从收件箱消失）先藏起来 */
+  const [queueHidden, setQueueHidden] = useState<Set<string>>(() => new Set());
+  const reviewTasks = userTasks.filter((task) => task.status === "pending_review");
+  const queueRows = useMemo(
+    () =>
+      buildDecisionQueue({
+        inbox: inboxItems,
+        reviews: reviewTasks.map((task) => ({
+          id: task.id,
+          label: task.name,
+          projectName: task.projectRoot
+            ? (projects.find((p) => samePath(p.path, task.projectRoot!, IS_WINDOWS))?.name ?? null)
+            : null,
+        })),
+        projectOf: inboxProjectName,
+        approvals,
+        hidden: queueHidden,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [inboxItems, userTasks, projects, approvals, queueHidden, workspaces, sessions, runAttribution],
+  );
+  // 条目从收件箱消失（送出后 Agent 接着干了）就不必再藏
+  const queuePresentSig = [...inboxItems.map((i) => i.key), ...reviewTasks.map((t) => `review:${t.id}`)].join("\n");
+  useEffect(() => {
+    setQueueHidden((cur) => {
+      if (cur.size === 0) return cur;
+      const next = pruneHidden(cur, queuePresentSig ? queuePresentSig.split("\n") : []);
+      return next.size === cur.size ? cur : next;
+    });
+  }, [queuePresentSig]);
+
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const lastSelectedIndex = useRef(0);
+  const selectedIndex = resolveSelection(queueRows, selectedKey, lastSelectedIndex.current);
+  if (selectedIndex >= 0) lastSelectedIndex.current = selectedIndex;
+  const selectedRow = selectedIndex >= 0 ? queueRows[selectedIndex] : null;
+  // 键盘选到折叠的部分就展开，选中行总在眼前
+  const shownQueueRows =
+    inboxExpanded || selectedIndex >= QUEUE_VISIBLE ? queueRows : queueRows.slice(0, QUEUE_VISIBLE);
+  const showTierHeads = new Set(queueRows.map((row) => row.tier)).size > 1;
+
+  function hideRow(key: string, hidden: boolean) {
+    setQueueHidden((cur) => {
+      const next = new Set(cur);
+      if (hidden) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+  /** 处理一行：先藏起来、提示里给撤销，QUEUE_UNDO_MS 后才真的做 */
+  function deferRow(key: string, message: string, commit: () => Promise<void> | void) {
+    const id = `wbq:${key}`;
+    hideRow(key, true);
+    queueDeferred.schedule(
+      id,
+      () => {
+        dismissToast(id);
+        void Promise.resolve()
+          .then(commit)
+          .catch(() => hideRow(key, false));
+      },
+      QUEUE_UNDO_MS,
+    );
+    toast(message, "info", {
+      key: id,
+      sticky: true,
+      actions: [
+        {
+          label: "撤销",
+          onClick: () => {
+            if (queueDeferred.cancel(id)) hideRow(key, false);
+          },
+        },
+      ],
+    });
+  }
+  function answerApproval(row: QueueRow<(typeof inboxItems)[number]>, decision: "allow" | "deny") {
+    const approval = row.kind === "inbox" ? row.approval : null;
+    if (!approval) return;
+    deferRow(
+      row.key,
+      `${decision === "allow" ? "已允许" : "已拒绝"}：${approval.title}`,
+      async () => {
+        try {
+          await invoke("chat_channel_reply", {
+            tabId: approval.tabId,
+            requestId: approval.requestId,
+            decision,
+          });
+        } catch (reason) {
+          toast(`没能送到：${String(reason)}，可以回到对话里回答`, "error");
+          throw reason;
+        }
+      },
+    );
+  }
+  function dismissRow(row: QueueRow<(typeof inboxItems)[number]>) {
+    if (row.kind !== "inbox" || !row.dismissible) return;
+    const item = row.item;
+    deferRow(row.key, `已收起：${row.text}`, () => useAppStore.getState().dismissInbox(item));
+  }
+  function openRow(row: QueueRow<(typeof inboxItems)[number]>) {
+    if (row.kind === "inbox") {
+      runInboxAction(row.item);
+      return;
+    }
+    const task = userTasks.find((t) => t.id === row.taskId);
+    if (task?.projectRoot) {
+      setSelectProjectReq(task.projectRoot);
+      setTaskReviewReq({ projectRoot: task.projectRoot, taskId: task.id });
+    }
+    setPage("workspaces");
+  }
+
+  // 键盘：只在工作台可见、焦点不在输入框、没有弹层时接管；当前行做不了的键不吞
+  const queueKeyRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  queueKeyRef.current = (event) => {
+    const target = event.target as HTMLElement | null;
+    // 焦点在侧栏（⌘0 后 ↑↓ 选对话）、顶栏或输入框里时不接管：只认焦点在页面空白处或队列里
+    if (target && target !== document.body && !target.closest("[data-workbench-queue]")) return;
+    if (document.querySelector("[role='dialog'], [aria-modal='true']")) return;
+    // 焦点在别的按钮上时回车留给那个按钮
+    if (event.key === "Enter" && target?.closest("button, a")) return;
+    const action = queueKeyAction(event, selectedRow);
+    if (!action || queueRows.length === 0) return;
+    event.preventDefault();
+    if (action === "next" || action === "prev") {
+      const next = moveSelection(queueRows.length, selectedIndex, action === "next" ? 1 : -1);
+      setSelectedKey(queueRows[next]?.key ?? null);
+      document.getElementById(`wbq-${queueRows[next]?.key}`)?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (!selectedRow) return;
+    if (action === "open") openRow(selectedRow);
+    else if (action === "allow" || action === "deny") answerApproval(selectedRow, action);
+    else if (action === "dismiss") dismissRow(selectedRow);
+  };
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (event: KeyboardEvent) => queueKeyRef.current(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible]);
+
   const runningBadge = nowItems.reduce((n, item) => n + item.runningCount, 0)
     || (hero?.runningCount ?? 0);
   /** 运行状态光标（run-caret.ts，2026-10-24 取代绿点 / 黄点）：等确认 / 在干活照注意力，开着闲着淡灰，没开着不画 */
@@ -858,11 +1016,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const run = terminalRunInputs.find((x) => x.tabId === tabId);
     return run != null && unreadChats.includes(unreadKeyOf(run));
   }
-  const heroSaid = hero ? lastSaidFor(hero.path) : null;
-  // 「上次停在」那段对话归在别的步骤（常见：在商量后面一步的任务书）时标出步骤，和副行的「进行到」对得上
-  const heroSaidStep = hero
-    ? lastSaidStepTag(lastTargetFor(hero.path)?.stepName, heroProgress?.name)
-    : null;
 
   return (
     <PageFrame width="fluid" className="pb-12 pt-6">
@@ -883,7 +1036,166 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         </div>
       )}
 
-      {/* 单栏自上而下：正在进行 → 待你处理 → 待你验收 → 定时任务 → 最近对话（2026-10-23 用户：两栏怪异，撤掉右栏） */}
+      {/* 单栏自上而下：等你拍板 → 正在进行 → 记下目标 → 定时任务（2026-10-27 设计稿第一批：
+          拍板队列提到最上面；「继续工作」大卡与最近对话删掉——侧栏点对话就能接着聊，最近对话就是侧栏那一份） */}
+      {queueRows.length > 0 && (
+        <section className="mb-7 min-w-0" data-workbench-queue="">
+          <SectionHeading
+            icon={Inbox}
+            title="等你拍板"
+            action={
+              <span className="flex items-center gap-2">
+                <span className="hidden text-micro text-l3 lg:inline" aria-hidden="true">
+                  {QUEUE_KEY_HINT}
+                </span>
+                {bulkInboxItems.length > 0 && (
+                  <button
+                    type="button"
+                    className="rounded-full p-1 text-l3 hover:bg-hover hover:text-l1"
+                    title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
+                    aria-label="全部已读（仅信息类）"
+                    onClick={() => dismissInboxBulk(bulkInboxItems)}
+                  >
+                    <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
+                {/* 只剩一条时数字和那一行说的是同一件事，不再挂；有要拍板的才用黄底，全是通知用中性色 */}
+                {queueRows.length > 1 && (
+                  <span
+                    className={
+                      queueRows.some((row) => row.tier !== "notice")
+                        ? "rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text"
+                        : "rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
+                    }
+                  >
+                    {queueRows.length}
+                  </span>
+                )}
+              </span>
+            }
+          />
+          <div
+            className="overflow-hidden rounded-lg border border-hairline"
+            role="listbox"
+            aria-label="等你拍板"
+            aria-activedescendant={selectedRow ? `wbq-${selectedRow.key}` : undefined}
+          >
+            {shownQueueRows.map((row, index) => {
+              const tierHead =
+                showTierHeads && (index === 0 || shownQueueRows[index - 1].tier !== row.tier);
+              const selected = index === selectedIndex;
+              const approval = row.kind === "inbox" ? row.approval : null;
+              return (
+                <div key={row.key}>
+                  {tierHead && (
+                    <div className="border-t border-hairline px-3.5 pb-0.5 pt-2 text-micro text-l3 first:border-t-0">
+                      {QUEUE_TIER_LABEL[row.tier]}
+                    </div>
+                  )}
+                  <div
+                    id={`wbq-${row.key}`}
+                    role="option"
+                    aria-selected={selected}
+                    className={`group relative flex min-h-11 items-center gap-3 px-3.5 py-2 ${
+                      tierHead ? "" : "border-t border-hairline first:border-t-0"
+                    } ${selected ? "bg-hover" : "hover:bg-hover"}`}
+                    onClick={() => setSelectedKey(row.key)}
+                  >
+                    {selected && (
+                      <span className="absolute inset-y-0 left-0 w-0.5 bg-nav-accent" aria-hidden="true" />
+                    )}
+                    <span className={`size-1.5 shrink-0 rounded-full ${row.dot}`} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-l1" title={approval?.title ?? row.text}>
+                        {approval?.title ?? row.text}
+                      </span>
+                      {(row.project || approval) && (
+                        <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-micro text-l3">
+                          {approval && <span className="shrink-0">{row.text}</span>}
+                          {row.project && (
+                            <span className="shrink-0">{approval ? `· ${row.project}` : row.project}</span>
+                          )}
+                          {approval?.detail && (
+                            <span className="min-w-0 truncate font-mono" title={approval.detail}>
+                              · {approval.detail}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      {approval ? (
+                        <>
+                          <button
+                            type="button"
+                            className={rowActionClass}
+                            title="拒绝这一问（R）：几秒内可撤销"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              answerApproval(row, "deny");
+                            }}
+                          >
+                            {approval.denyLabel}
+                          </button>
+                          <button
+                            type="button"
+                            className={rowActionClass}
+                            title="允许这一次（A）：几秒内可撤销。要选「这次会话都允许」回对话里选"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              answerApproval(row, "allow");
+                            }}
+                          >
+                            {approval.allowLabel}
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {row.kind === "inbox" && row.dismissible && (
+                            <button
+                              type="button"
+                              className={`${rowActionClass} ${selected ? "" : hoverRevealClass} text-l3`}
+                              title="收起这条通知（E）：几秒内可撤销；状态一变它还会回来"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                dismissRow(row);
+                              }}
+                            >
+                              收起
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={rowActionClass}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openRow(row);
+                            }}
+                          >
+                            {row.kind === "inbox" ? row.item.actionLabel : "去验收"}
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {queueRows.length > QUEUE_VISIBLE && (
+            // 截断必须留出口：展开在页内，不跳到标题栏的收件箱浮层
+            <button
+              type="button"
+              className={`${rowActionClass} mt-1 w-full justify-start px-3.5 text-l3`}
+              aria-expanded={inboxExpanded}
+              onClick={() => setInboxExpanded((v) => !v)}
+            >
+              {inboxExpanded ? "收起" : `还有 ${queueRows.length - QUEUE_VISIBLE} 条`}
+            </button>
+          )}
+        </section>
+      )}
+
       <section className="min-w-0">
           <div className="mb-2.5 flex items-center gap-2 px-1">
             <CircleDot size={14} strokeWidth={1.8} className="text-nav-accent" aria-hidden="true" />
@@ -891,89 +1203,91 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
               {workbenchNowSectionTitle(runningBadge)}
             </h2>
             {runningBadge > 0 && (
-              // 运行计数是数字不是状态：行首绿点已表达「在跑」，计数回落灰底芯片（同技能页计数口径）
+              // 运行计数是数字不是状态：行尾光标已表达「在跑」，计数回落灰底芯片（同技能页计数口径）
               <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
                 {runningBadge} 个运行中
               </span>
             )}
           </div>
 
-          {hero ? (
-            <div className="space-y-2">
-            <div className="rounded-lg ccode-well p-5 shadow-[0_1px_0_rgb(255_255_255_/_.02)]">
-              <div className="flex flex-wrap items-start justify-between gap-5">
-                <div className="min-w-0">
-                  {/* 方式标签与项目名同行、描边：well 上的 bg-strip 几乎看不见，单独一行像错位缩进的字 */}
-                  <div className="flex min-w-0 items-center gap-2">
-                    <p
-                      className="truncate text-xl font-medium tracking-tight text-l1"
-                      title={hero.path}
-                    >
-                      {hero.name}
-                    </p>
-                    {hero.workMode ? (
-                      <span className={modeChipClass}>
-                        {WORK_MODE_LABEL[hero.workMode]}
-                      </span>
-                    ) : null}
-                  </div>
-                  {stepName && (
-                    <p className="mt-1 text-sm text-l3">{stepName}</p>
-                  )}
-                </div>
-                {/* 在客户端打开与继续工作并排：原先单独占主卡底下一整行（还画一条分隔线），空着大半截；
-                    写字的描边钮又和主按钮差不多大、抢了「继续工作」，只留外开图标，悬停说去哪（2026-10-26 用户） */}
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {showClientJump && (
-                    <RowAction
-                      icon={<SquareArrowOutUpRight size={15} strokeWidth={1.8} aria-hidden="true" />}
-                      tip={`${clientJumpLabel}（只打开项目，不定位到某条对话）`}
-                      label={clientJumpLabel}
-                      onClick={() => clientOpen.openProject(hero.path)}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className={primaryActionClass}
-                    onClick={() => void continueWork()}
-                  >
-                    继续工作
-                  </button>
-                </div>
-              </div>
-              {heroSaid && (
-                // 继续之前先知道停在哪：最近一次对话里你说的最后一句，点开看整段对话
+          {nowRows.length > 0 ? (
+            <div className="divide-y divide-hairline overflow-hidden rounded-lg ccode-well">
+            {nowRows.map((item) => {
+              const said = lastSaidFor(item.path);
+              const lastAt = lastTargetFor(item.path)?.updatedAt ?? null;
+              return (
+              <div key={item.path}>
+              <div className="group flex min-h-10 w-full items-center gap-3 px-4 py-2 hover:bg-hover">
                 <button
                   type="button"
-                  className="mt-3 flex w-full min-w-0 items-baseline gap-2 rounded-md text-left text-l3 hover:text-l1"
-                  title={`上次停在：${heroSaid.full}\n点开查看这段对话`}
-                  onClick={() => openLastSaid(heroSaid)}
+                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  title={said ? `继续：${item.name}\n上次停在：${said.full}` : `继续：${item.name}`}
+                  onClick={() =>
+                    void openContinueTarget(continueWorkbenchTarget(item))
+                  }
                 >
-                  <span className="shrink-0 text-micro text-l3">
-                    上次停在
-                    {heroSaidStep ? ` · ${heroSaidStep}` : ""}
+                  <span className="min-w-0 flex-1 truncate text-sm text-l2">
+                    {item.name}
+                    {item.workMode ? (
+                      <span className={`ml-2 align-[1px] ${modeChipClass}`}>
+                        {WORK_MODE_LABEL[item.workMode]}
+                      </span>
+                    ) : null}
+                    {item.subtitle ? (
+                      <span className="ml-2 text-l3">{item.subtitle}</span>
+                    ) : null}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-sm">{heroSaid.text}</span>
-                  {heroSaid.timestamp && (
+                  {item.runningCount > 1 ? (
+                    // 运行计数不上语义色：行尾光标已表达「在跑」，文字保持中性
+                    <span className="shrink-0 text-micro text-l3">
+                      {item.runningCount} 个运行中
+                    </span>
+                  ) : item.runs[0]?.taskLabel ? (
+                    <span className="max-w-[9rem] shrink-0 truncate text-micro text-l3">
+                      {item.runs[0].taskLabel}
+                    </span>
+                  ) : item.runningCount > 0 ? (
+                    <span className="shrink-0 text-micro text-l3">
+                      运行中
+                    </span>
+                  ) : null}
+                  {/* 运行状态光标跟在状态字后面、竖着居中（同侧栏口径，没事不画）。不贴在课题名后面：
+                      夹在名字和「科研」之间读成破折号（2026-10-24 光标改居中时看出来的） */}
+                  {itemCaret(item) && <RunCaret state={itemCaret(item)!} decorative className="-ml-2 text-micro" />}
+                  {/* 多久没动：悬停时让位给「继续 →」 */}
+                  {lastAt && (
                     <span
-                      className="shrink-0 text-micro text-l3"
-                      title={absTime(heroSaid.timestamp)}
+                      className="shrink-0 text-micro text-l3 group-hover:hidden group-focus-within:hidden"
+                      title={absTime(lastAt)}
                     >
-                      {relTime(heroSaid.timestamp)}
+                      {relTime(lastAt)}
                     </span>
                   )}
+                  {/* 整行可点即「继续」，悬停时行尾出「继续 →」（单个 › 读作「展开」，2026-10-25 用户） */}
+                  <span
+                    className="hidden shrink-0 items-center gap-1 text-micro text-l3 group-hover:flex group-focus-within:flex"
+                    aria-hidden="true"
+                  >
+                    继续
+                    <ArrowRight size={12} strokeWidth={1.8} />
+                  </span>
                 </button>
-              )}
-              {/* 有 Agent 在跑 / 等确认才报状态；空闲时整行不出（没事不画点、不画分隔线） */}
-              {statusText && (
-              <div className="mt-4 flex items-center gap-2 border-t border-hairline pt-3 text-micro text-l3">
-                <span className="min-w-0 truncate">{statusText}</span>
-                {heroCaret && <RunCaret state={heroCaret} decorative className="-ml-1.5" />}
+                {showClientJump && (
+                  <button
+                    type="button"
+                    className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 group-hover:flex group-focus-within:flex"
+                    title={clientJumpTitle}
+                    aria-label={clientJumpLabel}
+                    onClick={() => clientOpen.openProject(item.path)}
+                  >
+                    <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
               </div>
-              )}
-              {hero.runs.length > 1 && (
-                <ul className="mt-2 space-y-0.5">
-                  {hero.runs.map((r) => (
+              {item.runs.length > 1 && (
+                // 同一项目上的多次运行逐条列出（agent-workbench.md §3.1）：点哪条回哪条
+                <ul className="space-y-0.5 px-3 pb-2">
+                  {item.runs.map((r) => (
                     <li key={r.runId ?? r.tabId}>
                       <button
                         type="button"
@@ -1008,88 +1322,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   ))}
                 </ul>
               )}
-            </div>
-            {nowItems.length > 1 && (
-            <div className="divide-y divide-hairline overflow-hidden rounded-lg ccode-well">
-            {nowItems.slice(1).map((item) => {
-              const said = lastSaidFor(item.path);
-              const lastAt = lastTargetFor(item.path)?.updatedAt ?? null;
-              return (
-              <div
-                key={item.path}
-                className="group flex min-h-10 w-full items-center gap-3 px-4 py-2 hover:bg-hover"
-              >
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                  title={said ? `继续：${item.name}\n上次停在：${said.full}` : `继续：${item.name}`}
-                  onClick={() =>
-                    void openContinueTarget(continueWorkbenchTarget(item))
-                  }
-                >
-                  <span className="min-w-0 flex-1 truncate text-sm text-l2">
-                    {item.name}
-                    {item.workMode ? (
-                      <span className={`ml-2 align-[1px] ${modeChipClass}`}>
-                        {WORK_MODE_LABEL[item.workMode]}
-                      </span>
-                    ) : null}
-                    {item.subtitle ? (
-                      <span className="ml-2 text-l3">{item.subtitle}</span>
-                    ) : null}
-                  </span>
-                  {item.runningCount > 1 ? (
-                    // 运行计数不上语义色：行首状态点已表达「在跑」，文字保持中性（设计系统「命中计数用 text-l4，不用绿字」同口径）
-                    <span className="shrink-0 text-micro text-l3">
-                      {item.runningCount} 个运行中
-                    </span>
-                  ) : item.runs[0]?.taskLabel ? (
-                    <span className="max-w-[9rem] shrink-0 truncate text-micro text-l3">
-                      {item.runs[0].taskLabel}
-                    </span>
-                  ) : item.runningCount > 0 ? (
-                    <span className="shrink-0 text-micro text-l3">
-                      运行中
-                    </span>
-                  ) : null}
-                  {/* 运行状态光标跟在状态字后面、竖着居中（同侧栏口径，没事不画）。不贴在课题名后面：
-                      夹在名字和「科研」之间读成破折号（2026-10-24 光标改居中时看出来的） */}
-                  {itemCaret(item) && <RunCaret state={itemCaret(item)!} decorative className="-ml-2 text-micro" />}
-                  {/* 多久没动：与下面最近对话、定时任务行尾同一处写时间（2026-10-26 用户）；悬停时让位给「继续 →」 */}
-                  {lastAt && (
-                    <span
-                      className="shrink-0 text-micro text-l3 group-hover:hidden group-focus-within:hidden"
-                      title={absTime(lastAt)}
-                    >
-                      {relTime(lastAt)}
-                    </span>
-                  )}
-                  {/* 整行可点即「继续」，不每行常驻同一个字；悬停时行尾出「继续 →」。
-                      原先是单个 ›，读作「展开」（2026-10-25 用户：「看着像展开」） */}
-                  <span
-                    className="hidden shrink-0 items-center gap-1 text-micro text-l3 group-hover:flex group-focus-within:flex"
-                    aria-hidden="true"
-                  >
-                    继续
-                    <ArrowRight size={12} strokeWidth={1.8} />
-                  </span>
-                </button>
-                {showClientJump && (
-                  <button
-                    type="button"
-                    className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1 group-hover:flex group-focus-within:flex"
-                    title={clientJumpTitle}
-                    aria-label={clientJumpLabel}
-                    onClick={() => clientOpen.openProject(item.path)}
-                  >
-                    <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                )}
               </div>
               );
             })}
-            </div>
-            )}
             </div>
           ) : !projectsLoaded ? (
             <LoadingRows />
@@ -1109,7 +1344,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
               }
             />
           )}
-
           {goalTarget &&
             (goalOpen ? (
               // 想到就记：只记下不开工，落到该项目的目标列表；开工、选 Agent 仍在项目页由人来
@@ -1176,152 +1410,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             ))}
       </section>
 
-        {hasSide && (
-        // 区块间距 28px（2026-10-23 用户：定时任务上下留白太大）：撤掉右栏后单栏里 40px 一段段断开，读着散
-        <div className="mt-7 min-w-0 space-y-7">
-        {hasInbox && (
-        <section className="min-w-0">
-          <SectionHeading
-            icon={Inbox}
-            title="待你处理"
-            action={
-              <span className="flex items-center gap-2">
-                {bulkInboxItems.length > 0 && (
-                  <button
-                    type="button"
-                    className="rounded-full p-1 text-l3 hover:bg-hover hover:text-l1"
-                    title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
-                    aria-label="全部已读（仅信息类）"
-                    onClick={() => dismissInboxBulk(bulkInboxItems)}
-                  >
-                    <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                )}
-                {/* 只剩一条时数字和那一行说的是同一件事，不再挂；
-                    黄芯片只在有黄点（要你拍板）的条目时出，全是绿点通知就用中性色，别替通知喊急（2026-10-26 用户） */}
-                {inboxItems.length > 1 && (
-                  <span
-                    className={
-                      inboxItems.some((item) => item.dot !== "bg-ok-text")
-                        ? "rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text"
-                        : "rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
-                    }
-                  >
-                    {inboxItems.length}
-                  </span>
-                )}
-              </span>
-            }
-          />
-          <div className="space-y-0.5">
-            {(inboxExpanded ? inboxItems : inboxItems.slice(0, 5)).map((item) => {
-              const projectName = inboxProjectName(item);
-              return (
-              <div
-                key={item.key}
-                className="group flex min-h-10 items-center gap-2 rounded-md px-2.5 transition-colors hover:bg-hover"
-              >
-                <span className={`size-1.5 shrink-0 rounded-full ${item.dot}`} />
-                <span className="min-w-0 flex-1 truncate text-sm text-l2" title={item.text}>
-                  {item.text}
-                </span>
-                {projectName && (
-                  <span className="max-w-[8rem] shrink-0 truncate text-micro text-l3">
-                    {projectName}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className={
-                    bulkKeys.has(item.key)
-                      ? `${rowActionClass} ${hoverRevealClass}`
-                      : rowActionClass
-                  }
-                  onClick={() => runInboxAction(item)}
-                >
-                  {item.actionLabel}
-                </button>
-              </div>
-              );
-            })}
-            {inboxItems.length > 5 && (
-              // 截断必须留出口：早先只挂个「6」的数字徽标，用户看不到第 6 条是什么、
-              // 也不知道去哪找。展开控制在页内，不跳到标题栏的收件箱浮层。
-              <button
-                type="button"
-                className={`${rowActionClass} mt-0.5 w-full justify-start px-2.5 text-l3`}
-                aria-expanded={inboxExpanded}
-                onClick={() => setInboxExpanded((v) => !v)}
-              >
-                {inboxExpanded
-                  ? "收起"
-                  : `还有 ${inboxItems.length - 5} 条`}
-              </button>
-            )}
-          </div>
-        </section>
-        )}
-
-        {reviewTasks.length > 0 && (
-        <section className="min-w-0">
-          <SectionHeading
-            icon={ClipboardCheck}
-            title="待你验收"
-            action={
-              // 计数中性：紧迫感由「待你处理」的黄芯片承担，这里不再并排第二个黄块；只有一条时不挂数字
-              reviewTasks.length > 1 ? (
-                <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
-                  {reviewTasks.length}
-                </span>
-              ) : undefined
-            }
-          />
-          <div className="space-y-2">
-            {reviewTasks.map((task) => {
-              const project = task.projectRoot
-                ? projects.find((item) =>
-                    samePath(item.path, task.projectRoot!, IS_WINDOWS),
-                  )
-                : undefined;
-              return (
-                <button
-                  key={task.id}
-                  type="button"
-                  className="flex w-full min-w-0 items-center gap-3 rounded-lg ccode-well px-3 py-2.5 text-left hover:bg-hover"
-                  onClick={() => {
-                    if (task.projectRoot) {
-                      setSelectProjectReq(task.projectRoot);
-                      setTaskReviewReq({
-                        projectRoot: task.projectRoot,
-                        taskId: task.id,
-                      });
-                    }
-                    setPage("workspaces");
-                  }}
-                >
-                  <span className="size-1.5 shrink-0 rounded-full bg-warn-text" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-l1">
-                      {workbenchNowSubtitle({
-                        tasks: [task],
-                        fallback: task.name,
-                      }).subtitle ?? task.name}
-                    </span>
-                    {project?.name ? (
-                      <span className="mt-0.5 block truncate text-micro text-l3">
-                        {project.name}
-                      </span>
-                    ) : null}
-                  </span>
-                  <ChevronRight size={14} className="shrink-0 text-l4" aria-hidden="true" />
-                </button>
-              );
-            })}
-          </div>
-        </section>
-        )}
-
         {scheduleRows.length > 0 && (
+        <div className="mt-7 min-w-0">
         <section className="min-w-0">
           <SectionHeading icon={AlarmClock} title="定时任务" />
           <div className="space-y-0.5">
@@ -1361,56 +1451,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
             ))}
           </div>
         </section>
-        )}
         </div>
         )}
-
-      {/* 「最近项目」栏已删（2026-10-22 审查）：侧栏项目树与上面的「最近在做」已经列了项目，一屏三处重复；
-          它带来的「哪些项目最近在动」改由对话行尾的项目名承担 */}
-      <div className="mt-7">
-        <section className="min-w-0">
-          <SectionHeading
-            icon={MessagesSquare}
-            title="最近对话"
-            action={
-              <button type="button" className={sectionLinkClass} onClick={() => setPage("sessions")}>
-                <span className={sectionLinkTextClass}>查看全部</span>
-              </button>
-            }
-          />
-          {recentSessions.length === 0 ? (
-            <p className="py-5 text-sm text-l3">最近对话会显示在这里。</p>
-          ) : (
-            <div className="space-y-0.5">
-              {recentSessions.map((session) => (
-                <button
-                  key={`${session.agent}:${session.sessionId}`}
-                  type="button"
-                  className="group flex min-h-9 w-full items-center gap-3 rounded-md px-2.5 text-left transition-colors hover:bg-hover"
-                  // 进运行页这段对话、能直接写（发第一句才接回；源文件不在的去对话页看快照）
-                  onClick={() => openConversation(session.meta)}
-                >
-                  <MessageSquare size={15} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate text-sm text-l2" title={session.fullTitle}>
-                    {session.title}
-                  </span>
-                  {session.projectName && (
-                    <span className="max-w-[12rem] shrink-0 truncate text-micro text-l3">
-                      {session.projectName}
-                    </span>
-                  )}
-                  <span
-                    className="shrink-0 text-micro text-l3"
-                    title={absTime(session.updatedAt)}
-                  >
-                    {relTime(session.updatedAt)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
 
       {clientOpen.dialog}
     </PageFrame>

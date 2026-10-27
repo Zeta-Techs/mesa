@@ -34,7 +34,8 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
   const minimumCards: Record<string, number> = {
     // WorkbenchPage 4→3（2026-09-13）：空态的虚线壳卡改为管理页同款裸 EmptyState
     // （「空状态允许保留连续画布」），内容卡只剩 hero / 正在进行行 / 待验收行三处。
-    WorkbenchPage: 3, SkillsPage: 4, McpPage: 6, ProfilesPage: 5,
+    // 3→1（2026-10-27）：hero 大卡删掉、待验收并进「等你拍板」细线列表，只剩正在进行行。
+    WorkbenchPage: 1, SkillsPage: 4, McpPage: 6, ProfilesPage: 5,
     SettingsPage: 6, StatsPage: 2, SessionsPage: 1,
   };
   for (const [page, minimum] of Object.entries(minimumCards)) {
