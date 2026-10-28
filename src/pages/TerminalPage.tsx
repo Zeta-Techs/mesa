@@ -7320,8 +7320,10 @@ const TerminalView = memo(function TerminalView({
             setTermCtxMenu({ x: e.clientX, y: e.clientY });
           }}
         />
-        {/* 连接出问题（conn-issue.ts）：盖在画面顶上（absolute，不改终端行数），按钮与聊天层确认卡同一个动作 */}
-        {connIssue && (
+        {/* 连接出问题（conn-issue.ts）：盖在画面顶上（absolute，不改终端行数），按钮与聊天层确认卡同一个动作。
+            只在整块终端露着时画：聊天层盖着（或终端只在聊天下方窥视）时聊天里已有同一张卡，这条横条 z-30 会浮在聊天层上面，
+            同一件事顶上一条、底下一张（2026-10-28 用户截图） */}
+        {connIssue && fullTerminal && (
           <div
             role="alert"
             className="absolute inset-x-3 top-2 z-30 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-field ccode-float-surface px-2.5 py-1.5 text-xs"

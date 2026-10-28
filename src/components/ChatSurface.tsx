@@ -57,7 +57,7 @@ import {
 import { confirmHandoffReason, decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
 import { chatStatus, settleStatus, statusCaretMotion, type ShownStatus } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
-import ChatDecisionCard, { type ChatDecision } from "./ChatDecisionCard";
+import ChatDecisionCard, { decisionShowsNumbers, type ChatDecision } from "./ChatDecisionCard";
 import { useCliNewer } from "../cli-verified";
 import { connIssueDecision, grokLoginDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
@@ -1052,6 +1052,13 @@ export default function ChatSurface({
       const t = planFeedbackText(text);
       if (!t) return "写下要改哪里";
       revisePlan(t);
+      return null;
+    }
+    // 卡片上的选项带序号时，输入框里只打一个序号 = 选那一项（2026-10-28 用户截图：连接出错卡上想选第 1 项，打了「1」「2」
+    // 却当成消息发给了一条钥匙已被拒的连接）。序号超出范围、或带别的字，照旧当回复发出
+    const picked = decision && decisionShowsNumbers(decision) ? /^\s*([1-9])\s*$/.exec(text) : null;
+    if (picked && decision!.options[Number(picked[1]) - 1]) {
+      decision!.options[Number(picked[1]) - 1].onClick();
       return null;
     }
     const ask = menuPrompt?.ask;

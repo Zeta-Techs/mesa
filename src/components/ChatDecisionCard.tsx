@@ -122,7 +122,7 @@ export default function ChatDecisionCard({
     );
   }
   const primary = decision.options.find((o) => o.primary) ?? null;
-  const asRows = decision.options.length > 3 || decision.options.some((o) => labelWidth(o.label) > 28);
+  const asRows = decisionShowsNumbers(decision);
   return (
     <CardShell
       label={decision.title}
@@ -185,6 +185,12 @@ export default function ChatDecisionCard({
       )}
     </CardShell>
   );
+}
+
+/** 选项多或长时摆成带序号的整行列表（序号同终端菜单）；这时在输入框里只打一个序号就是选那一项（ChatSurface） */
+export function decisionShowsNumbers(decision: ChatDecision): boolean {
+  if (decision.plan || decision.ask || decision.screen) return false;
+  return decision.options.length > 3 || decision.options.some((o) => labelWidth(o.label) > 28);
 }
 
 /** 估一行字有多宽（中日韩字算两格）：决定选项摆成一排按钮还是整行列表 */
