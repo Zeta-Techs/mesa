@@ -1655,6 +1655,19 @@ function OfficialStatusChip({
 }) {
   const anchorRef = useRef<HTMLElement>(null);
   const { tip, show, hide } = useHoverTip(anchorRef);
+  // 勾只在「刚登录成功」那一下亮几秒（2026-10-28 用户：不用一直挂着）：看到的是未登录 → 已登录的那次翻转才亮，
+  // 打开页面时本来就登着的不亮
+  const wasConnected = useRef(st.connected);
+  const [justConnected, setJustConnected] = useState(false);
+  useEffect(() => {
+    if (st.connected && !wasConnected.current) {
+      setJustConnected(true);
+      const t = window.setTimeout(() => setJustConnected(false), 3000);
+      wasConnected.current = true;
+      return () => window.clearTimeout(t);
+    }
+    wasConnected.current = st.connected;
+  }, [st.connected]);
   const hasOutboundProxy = Boolean(
     useAppStore((s) => s.settings?.outboundProxy?.trim()),
   );
@@ -1676,11 +1689,11 @@ function OfficialStatusChip({
         onMouseEnter={show}
         onMouseLeave={hide}
         tabIndex={0}
-        // 已登录：中性小胶囊 + 勾（2026-10-28 用户：绿点「官方」像连通状态，和行里「● 测试通过」撞）；
-        // 与未登录时的「官方登录」按钮同位同高，登录前后原地切换
+        // 已登录：中性小胶囊（2026-10-28 用户：绿点「官方」像连通状态，和行里「● 测试通过」撞）；
+        // 与未登录时的「官方登录」按钮同位同高，登录前后原地切换；勾只在刚登录成功时亮几秒
         className="inline-flex h-5 shrink-0 cursor-default items-center gap-1 rounded-full bg-inset px-2 text-micro text-l2"
       >
-        <Check size={11} strokeWidth={2.4} className="text-ok-text" aria-hidden="true" />
+        {justConnected && <Check size={11} strokeWidth={2.4} className="text-ok-text" aria-hidden="true" />}
         官方已登录
         {lines.length > 0 && <HoverTip tip={tip} text={lines.join("\n")} />}
       </span>
