@@ -71,6 +71,7 @@ import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
+import { officialModelLabel } from "../official-model-names";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import {
   loadAgentGroupOrder,
@@ -4236,13 +4237,23 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               className="flex min-w-0 items-center gap-1.5 overflow-hidden"
                               title={
                                 profile.models.length > 0
-                                  ? profile.models.join(" · ")
+                                  ? profile.models
+                                      .map((m) =>
+                                        profile.accountType === "official" ? officialModelLabel(profile.agent, m).text : m,
+                                      )
+                                      .join(" · ")
                                   : undefined
                               }
                             >
                               {profile.models.length > 0 ? (
                                 <>
-                                  {profile.models.slice(0, 3).map((m, i) => (
+                                  {profile.models.slice(0, 3).map((m, i) => {
+                                    // 官方账号的别名（Claude opus 等）显示成当前对应的完整型号，悬停说明启动传的仍是别名
+                                    const label =
+                                      profile.accountType === "official"
+                                        ? officialModelLabel(profile.agent, m)
+                                        : { text: m, tip: m };
+                                    return (
                                     // 首个模型是启动默认：字色提一档、悬停说明，其余是会话里可切的
                                     // （其余用 l3 不用 l4：l4 在卡底上不到 4.5:1，是装饰档不是阅读档）
                                     <span
@@ -4258,13 +4269,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                         goneModels.includes(m)
                                           ? `${m}：已不在网关的模型目录里，点「编辑」去掉或换一个`
                                           : i === 0
-                                            ? `${m}（启动默认）`
-                                            : m
+                                            ? `${label.tip}（启动默认）`
+                                            : label.tip
                                       }
                                     >
-                                      {m}
+                                      {label.text}
                                     </span>
-                                  ))}
+                                    );
+                                  })}
                                   {profile.models.length > 3 && (
                                     <span className="shrink-0 font-mono text-micro text-l3">
                                       +{profile.models.length - 3}

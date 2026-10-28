@@ -2172,7 +2172,14 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             // （假网关实测分别解析成 claude-opus-5-5 / -opus- / -sonnet- / -haiku-5-5，default = 不传时的默认）；
             // Gemini 0.65 bundle 的 GEMINI_MODEL_ALIAS_*（auto = 默认路由）；Qwen OAuth 只有 coder-model（实测回落提示）。
             // 第一个都是 CLI 自己的默认，选它等于不指定
-            "claude-code" => return ["default", "opus", "sonnet", "haiku"].map(String::from).to_vec(),
+            // Claude 另把账号额外可选的模型缓存在 ~/.claude.json additionalModelOptionsCache（如 claude-fable-5-1[1m]），接在别名后面
+            "claude-code" => {
+                let extra = dirs::home_dir()
+                    .and_then(|h| std::fs::read_to_string(h.join(".claude.json")).ok())
+                    .map(|t| claude_additional_models(&t))
+                    .unwrap_or_default();
+                return claude_official_models(extra);
+            }
             "gemini" => return ["auto", "pro", "flash", "flash-lite"].map(String::from).to_vec(),
             "qwen" => return vec!["coder-model".to_string()],
             _ => return Vec::new(),
@@ -2188,6 +2195,28 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             .map(|t| codex_listed_models(&t))
             .unwrap_or_default()
     }
+}
+
+/// Claude 官方名单：CLI 认的别名（`claude --help` 列 fable / opus / sonnet；default = 不传时的默认）+ 账号额外可选的完整名
+fn claude_official_models(extra: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = ["default", "fable", "opus", "sonnet", "haiku"].map(String::from).to_vec();
+    for m in extra {
+        if !out.contains(&m) {
+            out.push(m);
+        }
+    }
+    out
+}
+
+/// ~/.claude.json 的 additionalModelOptionsCache：[{ value, label, description }]，取 value
+fn claude_additional_models(text: &str) -> Vec<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("additionalModelOptionsCache")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|o| o.get("value")?.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from))
+        .collect()
 }
 
 /// 启动时用的官方名单：Grok 没缓存过（没打开过连接页）时当场问一次 `grok models`（约 3 秒）。
@@ -6419,6 +6448,18 @@ api_backend = "responses"
         tests::TEST_OFFICIAL_MODELS.with(|k| k.borrow_mut().clear());
         assert!(!official_launch_conflicts(&dir, &p).is_empty());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_official_models_append_additional_options() {
+        let text = r#"{"additionalModelOptionsCache":[{"value":"claude-fable-5-1[1m]","label":"Fable"},{"value":"opus"},{"label":"x"}]}"#;
+        let extra = claude_additional_models(text);
+        assert_eq!(extra, vec!["claude-fable-5-1[1m]", "opus"]);
+        assert_eq!(
+            claude_official_models(extra),
+            vec!["default", "fable", "opus", "sonnet", "haiku", "claude-fable-5-1[1m]"]
+        );
+        assert!(claude_additional_models("{}").is_empty());
     }
 
     #[test]
