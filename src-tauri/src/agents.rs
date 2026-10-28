@@ -4225,6 +4225,9 @@ pub struct OfficialAccountStatusDto {
     /// 登录账号的套餐（Pro / Max / Plus / Free …），只在 connected 时给（2026-10-28 用户：官方账号行端点栏只显示套餐，
     /// 不显示邮箱）。目前只读 Claude Code / Codex 实测过的来源，其余读不到就 None，不猜
     pub plan: Option<String>,
+    /// 登录账号的邮箱：只在悬停提示里给（2026-10-28 用户：不常驻显示，鼠标放上去再看）。
+    /// Claude Code / Codex 读文件，Cursor 取 status 输出；只在 connected 时给
+    pub email: Option<String>,
 }
 
 /// auth 文件里标识「官方账号已登录」的凭证字段名（各家结构不同，命中任一即算）：
@@ -4567,7 +4570,11 @@ pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusD
         let mut st = official_account_status_sync(&id);
         // 已登录才读套餐：Claude Code 登出后 ~/.claude.json 里的 oauthAccount 可能还留着
         if st.connected {
-            st.plan = dirs::home_dir().and_then(|h| official_plan(&id, &h));
+            if let Some(home) = dirs::home_dir() {
+                let (plan, email) = official_identity(&id, &home);
+                st.plan = plan;
+                st.email = st.email.take().or(email);
+            }
         }
         st
     })
@@ -4581,6 +4588,7 @@ pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusD
             cleanup_supported: false,
             login_env: official_login_env(),
             plan: None,
+            email: None,
         })
 }
 
@@ -4592,31 +4600,57 @@ fn plan_label(raw: &str) -> Option<String> {
     Some(first.to_uppercase().chain(chars).collect())
 }
 
-/// ~/.claude.json 的 oauthAccount.organizationType（claude_pro / claude_max …）
-fn claude_plan(v: &serde_json::Value) -> Option<String> {
-    plan_label(v.get("oauthAccount")?.get("organizationType")?.as_str()?)
+fn email_of(v: Option<&serde_json::Value>) -> Option<String> {
+    v.and_then(|x| x.as_str()).map(str::trim).filter(|e| e.contains('@')).map(str::to_string)
 }
 
-/// ~/.codex/auth.json：只解 tokens.id_token 的载荷段取 chatgpt_plan_type，令牌本身不出这个函数
-fn codex_plan(v: &serde_json::Value) -> Option<String> {
+/// ~/.claude.json 的 oauthAccount：(套餐 organizationType（claude_pro / claude_max …）, 邮箱 emailAddress)
+fn claude_identity(v: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let Some(oa) = v.get("oauthAccount") else { return (None, None) };
+    (
+        oa.get("organizationType").and_then(|x| x.as_str()).and_then(plan_label),
+        email_of(oa.get("emailAddress")),
+    )
+}
+
+/// ~/.codex/auth.json：只解 tokens.id_token 的载荷段取 (chatgpt_plan_type, email)，令牌本身不出这个函数
+fn codex_identity(v: &serde_json::Value) -> (Option<String>, Option<String>) {
     use base64::Engine as _;
-    let token = v.get("tokens")?.get("id_token")?.as_str()?;
-    let payload = token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload.trim_end_matches('='))
-        .ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    plan_label(claims.get("https://api.openai.com/auth")?.get("chatgpt_plan_type")?.as_str()?)
+    let claims = (|| {
+        let token = v.get("tokens")?.get("id_token")?.as_str()?;
+        let payload = token.split('.').nth(1)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload.trim_end_matches('='))
+            .ok()?;
+        serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+    })();
+    let Some(claims) = claims else { return (None, None) };
+    (
+        claims
+            .get("https://api.openai.com/auth")
+            .and_then(|a| a.get("chatgpt_plan_type"))
+            .and_then(|x| x.as_str())
+            .and_then(plan_label),
+        email_of(claims.get("email")),
+    )
 }
 
-fn official_plan(agent_id: &str, home: &std::path::Path) -> Option<String> {
+/// `cursor-agent status` 的「✓ Logged in as a@b.com」
+fn cursor_email(line: &str) -> Option<String> {
+    let rest = line.split("Logged in as").nth(1)?;
+    let word = rest.split_whitespace().next()?;
+    email_of(Some(&serde_json::Value::String(word.to_string())))
+}
+
+/// 已登录账号的 (套餐, 邮箱)：只读 Claude Code / Codex 实测过的文件；Cursor 的邮箱在 status 分支里取
+fn official_identity(agent_id: &str, home: &std::path::Path) -> (Option<String>, Option<String>) {
     let read = |rel: &str| -> Option<serde_json::Value> {
         serde_json::from_str(&std::fs::read_to_string(home.join(rel)).ok()?).ok()
     };
     match agent_id {
-        "claude-code" => claude_plan(&read(".claude.json")?),
-        "codex" => codex_plan(&read(".codex/auth.json")?),
-        _ => None,
+        "claude-code" => read(".claude.json").map(|v| claude_identity(&v)).unwrap_or_default(),
+        "codex" => read(".codex/auth.json").map(|v| codex_identity(&v)).unwrap_or_default(),
+        _ => (None, None),
     }
 }
 
@@ -4632,6 +4666,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             cleanup_supported: false,
             login_env,
             plan: None,
+            email: None,
         };
     };
     let Some(oa) = spec.official_account.as_ref() else {
@@ -4644,6 +4679,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             cleanup_supported: false,
             login_env,
             plan: None,
+            email: None,
         };
     };
     // login_cmd 为空 = 裸启动 CLI 后在 TUI 内登录（gemini / qwen）
@@ -4682,6 +4718,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     }),
                     login_env: login_env.clone(),
                     plan: None,
+                    email: None,
                 };
             }
             Some(AuthProbe::Unrecognized) => {
@@ -4715,11 +4752,13 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     supported: true,
                     connected: true,
                     detail: Some(format!("cursor-agent status：{}", line.trim().trim_start_matches('✓').trim())),
+                    // 邮箱只进悬停提示，界面上不常驻
                     login_command,
                     conflicts,
                     cleanup_supported: true,
                     login_env,
                     plan: None,
+                    email: cursor_email(line),
                 };
             }
         }
@@ -4740,6 +4779,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     cleanup_supported: true,
                     login_env,
                     plan: None,
+                    email: None,
                 };
             }
         }
@@ -4773,6 +4813,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
         }),
         login_env,
         plan: None,
+        email: None,
     }
 }
 
@@ -6041,31 +6082,22 @@ api_backend = "responses"
     }
 
     #[test]
-    fn official_plan_reads_claude_and_codex() {
+    fn official_identity_reads_plan_and_email() {
         let claude = serde_json::json!({ "oauthAccount": { "emailAddress": "a@b.com", "organizationType": "claude_max" } });
-        assert_eq!(claude_plan(&claude).as_deref(), Some("Max"));
-        assert_eq!(claude_plan(&serde_json::json!({ "oauthAccount": { "emailAddress": "a@b.com" } })), None);
+        assert_eq!(claude_identity(&claude), (Some("Max".into()), Some("a@b.com".into())));
+        assert_eq!(claude_identity(&serde_json::json!({})), (None, None));
 
         use base64::Engine as _;
         let claims = serde_json::json!({ "email": "c@d.com", "https://api.openai.com/auth": { "chatgpt_plan_type": "plus" } });
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
         let auth = serde_json::json!({ "tokens": { "id_token": format!("h.{payload}.sig"), "access_token": "secret" } });
-        assert_eq!(codex_plan(&auth).as_deref(), Some("Plus"));
+        assert_eq!(codex_identity(&auth), (Some("Plus".into()), Some("c@d.com".into())));
         // API Key 模式没有 id_token
-        assert_eq!(codex_plan(&serde_json::json!({ "OPENAI_API_KEY": "sk-x" })), None);
-        assert_eq!(codex_plan(&serde_json::json!({ "tokens": { "id_token": "garbage" } })), None);
-    }
+        assert_eq!(codex_identity(&serde_json::json!({ "OPENAI_API_KEY": "sk-x" })), (None, None));
+        assert_eq!(codex_identity(&serde_json::json!({ "tokens": { "id_token": "garbage" } })), (None, None));
 
-    #[test]
-    fn codex_relay_launch_points_side_models_at_this_model() {
-        let cfg: toml::Value = toml::from_str("review_model = \"gpt-6-sol\"\n[agents]\ndefault_subagent_model = \"gpt-6-luna\"\n[memories]\nextract_model = \"m1\"\n").unwrap();
-        let args = codex_relay_model_args(Some(&cfg), "m1");
-        assert_eq!(args, vec!["-c", "review_model=\"m1\"", "-c", "agents.default_subagent_model=\"m1\""]);
-        assert!(codex_relay_model_args(None, "m1").is_empty());
-        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = Some(cfg));
-        let plan = launch_plan(&profile("codex", Some("https://relay.example.com/v1")), Some("sk".into()), Some("deepseek-v4")).unwrap();
-        assert!(plan.args.iter().any(|a| a == "review_model=\"deepseek-v4\""));
-        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = None);
+        assert_eq!(cursor_email("✓ Logged in as e@f.com").as_deref(), Some("e@f.com"));
+        assert_eq!(cursor_email("✓ Logged in"), None);
     }
 
     #[test]

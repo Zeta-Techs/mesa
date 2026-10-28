@@ -358,6 +358,8 @@ export interface OfficialAccountStatusDto {
   loginEnv: Record<string, string>;
   /** 登录账号的套餐（Pro / Max / Plus / Free …），只在已登录时有；目前 Claude Code / Codex 读得到 */
   plan?: string | null;
+  /** 登录账号的邮箱，只放悬停提示不常驻；Claude Code / Codex / Cursor 读得到 */
+  email?: string | null;
 }
 
 export interface ValidationCheckDto {

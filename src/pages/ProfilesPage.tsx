@@ -4020,10 +4020,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   gateways.find((g) => g.id === profile.gatewayId)?.models,
                                 );
                           const status = profileStatusCell({ ...profile, unsynced: goneModels });
-                          const officialPlan =
+                          const officialSt =
                             profile.accountType === "official" && officialStatus[profile.agent]?.connected
-                              ? (officialStatus[profile.agent]?.plan ?? null)
+                              ? officialStatus[profile.agent]
                               : null;
+                          const officialPlan = officialSt?.plan ?? null;
+                          // 邮箱不常驻，只在悬停时给（2026-10-28 用户）
+                          const officialEmail = officialSt?.email ?? null;
                           const imageOnly =
                             profile.models.length > 0 && profile.models.every((m) => modelKind(m) !== "chat");
                           const imageGenPick = imageOnly ? (profile.models.find(isImageGenModel) ?? null) : null;
@@ -4136,7 +4139,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               className={`min-w-0 truncate text-xs ${profile.baseUrl ? "text-l2" : "text-l3"}`}
                               title={
                                 profile.accountType === "official"
-                                  ? `${officialPlan ? `套餐：${officialPlan}\n` : ""}官方账号登录（CLI 自身认证，不注入端点/密钥）`
+                                  ? `${officialEmail ? `账号：${officialEmail}\n` : ""}${officialPlan ? `套餐：${officialPlan}\n` : ""}官方账号登录（CLI 自身认证，不注入端点/密钥）`
                                   : profile.baseUrl
                                     ? displayHost(profile.baseUrl)
                                     : "使用 CLI 默认端点"
