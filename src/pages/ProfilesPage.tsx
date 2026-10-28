@@ -53,9 +53,11 @@ import { toast } from "../toast";
 import { slotForAgent } from "../gateway-slot";
 import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
 import {
+  CONNECTION_STATUS_CAPTION,
   canProbeProfile,
   duplicateNameIds,
   profileNeedsProbe,
+  unsyncedModels,
   profileStatusCell,
   showCatalogSyncAction,
   suggestConnectionName,
@@ -4014,7 +4016,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               onClick: () => void openDriftView(profile),
                             });
                           }
-                          const status = profileStatusCell(profile);
+                          // 绑定了、但网关目录里已经没有的模型：状态列点名，模型列划掉
+                          const goneModels =
+                            profile.accountType === "official"
+                              ? []
+                              : unsyncedModels(
+                                  profile.models,
+                                  gateways.find((g) => g.id === profile.gatewayId)?.models,
+                                );
+                          const status = profileStatusCell({ ...profile, unsynced: goneModels });
                           const imageOnly =
                             profile.models.length > 0 && profile.models.every((m) => modelKind(m) !== "chat");
                           const imageGenPick = imageOnly ? (profile.models.find(isImageGenModel) ?? null) : null;
@@ -4133,9 +4143,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     : "使用 CLI 默认端点"
                               }
                             >
-                              {/* 官方账号没有端点可言；名称列已标「官方账号」，这里只留占位不重复 */}
+                              {/* 官方账号没有端点可言；名称列、状态列已说「官方账号」，这里留空（2026-10-28 用户：不要横杠） */}
                               {profile.accountType === "official"
-                                ? "—"
+                                ? null
                                 : profile.baseUrl
                                   ? displayHost(profile.baseUrl)
                                   : "默认端点"}
@@ -4157,8 +4167,20 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     // （其余用 l3 不用 l4：l4 在卡底上不到 4.5:1，是装饰档不是阅读档）
                                     <span
                                       key={m}
-                                      className={`shrink-0 font-mono text-micro ${i === 0 ? "text-l2" : "text-l3"}`}
-                                      title={i === 0 ? `${m}（启动默认）` : m}
+                                      className={`shrink-0 font-mono text-micro ${
+                                        goneModels.includes(m)
+                                          ? "text-warn-text line-through"
+                                          : i === 0
+                                            ? "text-l2"
+                                            : "text-l3"
+                                      }`}
+                                      title={
+                                        goneModels.includes(m)
+                                          ? `${m}：已不在网关的模型目录里，点「编辑」去掉或换一个`
+                                          : i === 0
+                                            ? `${m}（启动默认）`
+                                            : m
+                                      }
                                     >
                                       {m}
                                     </span>
@@ -4224,6 +4246,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                       <span className="truncate">{shown.text}</span>
                                     </>
                                   );
+                                  // 模型不在目录：重测清不掉，点一下直接打开编辑去改模型
+                                  if (shown === status && shown.text === CONNECTION_STATUS_CAPTION.model_unsynced[0]) {
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => setModal({ initial: profile })}
+                                        title={shown.tip}
+                                        className={`flex min-w-0 items-center gap-1 rounded-md px-1 -mx-1 hover:bg-hover ${STATUS_TONE[shown.tone].text}`}
+                                      >
+                                        {body}
+                                      </button>
+                                    );
+                                  }
                                   return probeable ? (
                                     <button
                                       type="button"

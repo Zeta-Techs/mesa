@@ -19,7 +19,7 @@ export const CONNECTION_STATUS_CAPTION: Record<
   credential_missing: ["缺密钥", "网关未配置密钥且不是无密钥端点", "warn"],
   probe_failed: ["测试失败", "最近一次连接测试失败，请重新测试", "err"],
   catalog_stale: ["目录过期", "模型目录超过 7 天未刷新", "warn"],
-  model_unsynced: ["模型未同步", "绑定模型与网关目录不同步", "warn"],
+  model_unsynced: ["模型不在目录", "绑定的模型已不在网关的模型目录里", "warn"],
   ready: ["测试通过", "最近一次连接测试通过", "ok"],
 };
 
@@ -33,25 +33,31 @@ export function profileStatusCell(profile: {
   modelSyncNote?: string | null;
   hasKey?: boolean;
   keyHint?: string | null;
+  /** 调用方用 unsyncedModels 算出的那几个模型；给了就点名，悬停说清该怎么办 */
+  unsynced?: readonly string[];
 }): ProfileStatus | null {
   if (profile.accountType === "official") {
     return { text: "官方账号", tip: "官方账号登录，无需 API 密钥", tone: "muted" };
   }
   const status = profile.connectionStatus;
-  if (status === "model_unsynced") {
-    const note = profile.modelSyncNote?.trim();
+  // 绑定模型不在网关目录（2026-10-28 用户看不懂「模型未同步」）：点名是哪个、可能为什么、去哪改。
+  // 刷新目录清不掉，只能在编辑里去掉或换一个，状态列点一下就打开编辑
+  const modelGone =
+    status === "model_unsynced" ||
+    profile.modelSyncStatus === "stale" ||
+    profile.modelSyncStatus === "missing";
+  const lab = status ? CONNECTION_STATUS_CAPTION[status] : undefined;
+  if (lab && status !== "ready" && status !== "model_unsynced") {
+    return { text: lab[0], tip: lab[1], tone: lab[2] };
+  }
+  if (modelGone) {
+    const names = profile.unsynced?.length ? profile.unsynced.join("、") : null;
+    const what = names
+      ? `${names} 已不在网关的模型目录里`
+      : profile.modelSyncNote?.trim() || CONNECTION_STATUS_CAPTION.model_unsynced[1];
     return {
       text: CONNECTION_STATUS_CAPTION.model_unsynced[0],
-      tip: note || CONNECTION_STATUS_CAPTION.model_unsynced[1],
-      tone: "warn",
-    };
-  }
-  const lab = status ? CONNECTION_STATUS_CAPTION[status] : undefined;
-  if (lab && status !== "ready") return { text: lab[0], tip: lab[1], tone: lab[2] };
-  if (profile.modelSyncStatus === "stale" || profile.modelSyncStatus === "missing") {
-    return {
-      text: profile.modelSyncStatus === "missing" ? "绑定模型失效" : "目录模型失效",
-      tip: profile.modelSyncNote ?? "绑定模型与网关目录未同步",
+      tip: `${what}，可能已下架或改了名，用它启动会报错。点这里打开编辑，把它去掉或换一个`,
       tone: "warn",
     };
   }
@@ -64,6 +70,18 @@ export function profileStatusCell(profile: {
     return { text: "未设置密钥", tip: "尚未填写密钥", tone: "warn" };
   }
   return null;
+}
+
+/** 绑定模型里不在网关目录的那几个：目录里没有，或刷新后已标失效（stale）。目录为空（没拉过）时不判 */
+export function unsyncedModels(
+  models: readonly string[],
+  catalog: readonly { id: string; status?: string }[] | null | undefined,
+): string[] {
+  if (!catalog || catalog.length === 0) return [];
+  return models.filter((m) => {
+    const hit = catalog.find((c) => c.id === m);
+    return !hit || hit.status === "stale";
+  });
 }
 
 /** 行上能不能直接测：API 连接、有网关、协议槽支持体检（Gemini / Cursor 槽后端不支持，见 probe_gateway_slot） */

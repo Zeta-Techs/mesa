@@ -6,18 +6,33 @@ import {
   profileNeedsProbe,
   profileStatusCell,
   showCatalogSyncAction,
+  unsyncedModels,
 } from "../src/profile-connection-ui.ts";
 
-test("模型未同步只出一条：短文案进状态列，完整说明进悬停", () => {
-  const cell = profileStatusCell({
+test("模型不在目录只出一条：点名哪个模型、说清去编辑里改", () => {
+  const base = {
     accountType: "api",
     connectionStatus: "model_unsynced",
     modelSyncStatus: "stale",
     modelSyncNote: "网关目录已标记历史失效：deepseek-v4-flash-0731",
-  });
-  assert.equal(cell?.text, "模型未同步");
-  assert.equal(cell?.tip, "网关目录已标记历史失效：deepseek-v4-flash-0731");
+  };
+  const cell = profileStatusCell({ ...base, unsynced: ["deepseek-v4-flash-0731"] });
+  assert.equal(cell?.text, "模型不在目录");
+  assert.match(cell?.tip ?? "", /^deepseek-v4-flash-0731 已不在网关的模型目录里/);
+  assert.match(cell?.tip ?? "", /打开编辑/);
   assert.equal(cell?.tone, "warn");
+  // 调用方没算出名单时退回后端说明
+  assert.match(profileStatusCell(base)?.tip ?? "", /^网关目录已标记历史失效/);
+});
+
+test("不在目录的模型：目录里没有或已标失效；目录没拉过不判", () => {
+  const catalog = [
+    { id: "glm-5.3", status: "available" },
+    { id: "glm-5v-turbo", status: "stale" },
+  ];
+  assert.deepEqual(unsyncedModels(["glm-5.3", "glm-5v-turbo", "glm-x"], catalog), ["glm-5v-turbo", "glm-x"]);
+  assert.deepEqual(unsyncedModels(["glm-x"], []), []);
+  assert.deepEqual(unsyncedModels(["glm-x"], null), []);
 });
 
 test("状态列只说例外：未测试、状态未知、密钥已存都不常驻", () => {
@@ -45,7 +60,7 @@ test("未测试但绑定模型失效：状态列说模型问题", () => {
     connectionStatus: "untested",
     modelSyncStatus: "missing",
   });
-  assert.equal(cell?.text, "绑定模型失效");
+  assert.equal(cell?.text, "模型不在目录");
 });
 
 test("只有未测试、有网关、协议槽能体检的 API 连接给「测试」入口", () => {
