@@ -1095,7 +1095,8 @@ src-tauri/src/
                              #   Claude 查 transcript 文件与连接是否网关）→ client_open_list / client_open_plan / client_open_launch。
                              #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
                              #   读不到就不假装知道（Unknown 不出检查项）；深链模板与客户端规格数据在 agent_specs.rs 的 ClientSpec
-  global_config.rs           # 「设为全局默认」：agent 级事务批次写入（备份/回滚/恢复）；写成功即记
+  global_config.rs           # 「设为全局默认」：agent 级事务批次写入（备份/回滚/恢复）；Codex 一律写共用渠道 custom；
+                             # 官方账号走 plan_official_writes（各家撤 API 键交回登录，整份比对 disk_equals_plans）；写成功即记
                              # settings.active_global_profiles（配置页「全局生效」徽标数据源），恢复后清除；
                              # 恢复分两档——撤销上次写入（UI 名；最近批次，每 tag 轮换留 5 份）与恢复初始状态
                              #   （backups/<agent>/original/ 永久快照，首次 apply 时落、不参与轮换，

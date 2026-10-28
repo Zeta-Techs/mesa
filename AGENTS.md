@@ -166,7 +166,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - **会话文本出站前必须在 Rust 层脱敏**：标题/摘要、结构化回放、AI 摘要、Markdown 导出均不得把已保存密钥或常见密钥前缀
   送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。
 - **gitignored 科研产物最终落点是项目根，但分两类走法**（2026-09-09 口径 C）：文献 PDF 与人工导入属**原始资料**，直写项目根 `papers/`；清洗后数据、实验结果、渲染成品等 **Agent 派生产物**写工作区产物目录或 `output/`（不进 git），评审时经 `workspace_review_deliverables` 冻结非 Git 文件，合并只由 `apply_delivery_review` 带回所审副本（同名冲突点名交人、保护路径跳过；人在评审页逐个勾掉的不带回；有未接收产物不得归档——人勾掉且仍是那一版的除外，见 pipeline.md「逐个勾掉不带回」）。派生产物直写项目根 = 未验收产物。TASK.md 必须给出项目根绝对路径（读提货单、写 papers/）。
-- **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块，认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。
+- **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块，认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json（指 API 密钥；官方账号设为全局写的 ChatGPT 登录块不在此列）。「设为全局」一律写共用渠道名 `custom`（2026-10-28，与 cc-switch 同名，见 profiles.md §12）。
 - **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作：设为全局默认、hooks 精确注意力开关（2026-10-20 起只剩 Gemini / Kimi / Grok；
   其余五家启动时注入，以前写过的启动时收回）、Gemini 认证方式一键设成 API Key（只改这一项、先备份，2026-10-27）、会话删除、工作树文件删除（走系统回收站）、会话导入、内部对话保留期清理（只删 Mesa 自己的后台对话，
   `internal_sessions.rs`）、会话瘦身（仅 Claude Code，写前完整备份，`session_slim.rs`）。每类的备份 / 白名单口径见 safety.md。

@@ -1942,10 +1942,11 @@ function fileActionLabel(action: string): string {
   return action;
 }
 
-/** 官方账号「设为全局」只改几行、走预览确认的 Agent（与 global_config.rs `official_global_is_patch` 双端镜像）；
- *  其余 Agent 的官方账号仍是恢复首次写入前的快照 */
+/** 官方账号能「设为全局」（撤掉 API 键、交回 CLI 登录，走预览确认）的 Agent。
+ *  与 global_config.rs `official_global_is_patch` 双端镜像；OpenCode 没有官方账号，Cursor 不支持设为全局 */
+const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok"]);
 function officialGlobalIsPatch(agent: string): boolean {
-  return agent === "codex";
+  return OFFICIAL_GLOBAL_AGENTS.has(agent);
 }
 
 /** 「设为全局默认」确认前的脱敏预览：文件、字段增删改、此入口带不上的策略、是否要重开。 */
@@ -2752,16 +2753,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       ))
     )
       return;
-    if (p.accountType === "official" && !officialGlobalIsPatch(p.agent)) {
-      if (
-        !(await confirmDialog(
-          `将恢复 ${labelOf(p.agent)} 首次写入前的配置，让官方账号接手外部终端。不会改 Mesa 启动栏预选。已经打开的进程需要新开才会读到。继续？`,
-        ))
-      )
-        return;
-      await runApplyGlobal(p);
-      return;
-    }
     setWritePreview({
       profile: p,
       loading: true,
@@ -3837,19 +3828,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
-                              {canQuickGlobal(profile) && !isGlobal && (
+                              {canQuickGlobal(profile) && (
                                 <button
                                   type="button"
                                   onClick={() => void onApplyGlobal(profile)}
                                   title={
-                                    profile.accountType === "official"
-                                      ? `设为全局默认：把外部 ${labelOf(profile.agent)} 切回官方账号（先预览、确认后写入）`
-                                      : `设为全局默认：把外部 ${labelOf(profile.agent)} 切到这条连接（先预览、确认后写入）`
+                                    isGlobal
+                                      ? `当前全局默认：外部 ${labelOf(profile.agent)} 用的就是这条。点一下按 Mesa 重新写一遍（先预览）`
+                                      : profile.accountType === "official"
+                                        ? `设为全局默认：把外部 ${labelOf(profile.agent)} 切回官方账号（先预览、确认后写入）`
+                                        : `设为全局默认：把外部 ${labelOf(profile.agent)} 切到这条连接（先预览、确认后写入）`
                                   }
-                                  aria-label={`设为全局默认：${profile.name}`}
-                                  className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
+                                  aria-label={`${isGlobal ? "当前全局默认" : "设为全局默认"}：${profile.name}`}
+                                  aria-pressed={isGlobal}
+                                  className={`flex h-7 w-7 items-center justify-center rounded-sm ${
+                                    isGlobal
+                                      ? "bg-cta-pill text-cta-pill-text hover:brightness-110"
+                                      : `text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`
+                                  }`}
                                 >
-                                  <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
+                                  <Globe size={14} strokeWidth={isGlobal ? 2.2 : 1.8} aria-hidden="true" />
                                 </button>
                               )}
                               <button
@@ -4112,20 +4110,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               label:
                 rowMenu.profile.accountType !== "official"
                   ? "写入 CLI 全局默认…"
-                  : officialGlobalIsPatch(rowMenu.profile.agent)
-                    ? "写入 CLI 全局默认（切回官方）…"
-                    : "写入 CLI 全局默认（恢复官方）",
+                  : "写入 CLI 全局默认（切回官方）…",
               disabled:
                 rowMenu.profile.noAuth ||
                 !!rowMenu.profile.slotMissing ||
-                (rowMenu.profile.accountType !== "official" &&
-                  caps[rowMenu.profile.agent] !== undefined &&
-                  !caps[rowMenu.profile.agent].setGlobal.supported),
+                (rowMenu.profile.accountType === "official"
+                  ? !officialGlobalIsPatch(rowMenu.profile.agent)
+                  : caps[rowMenu.profile.agent] !== undefined &&
+                    !caps[rowMenu.profile.agent].setGlobal.supported),
               title:
                 rowMenu.profile.accountType === "official"
                   ? officialGlobalIsPatch(rowMenu.profile.agent)
-                    ? "只撤掉 config.toml 顶层的默认渠道和模型目录，交回官方账号登录；别的配置不动"
-                    : "恢复该 CLI 首次写入前的配置，让官方账号接手外部终端"
+                    ? "只撤掉会盖过官方登录的端点、密钥和中转模型名，交回 CLI 自己的官方登录；别的配置不动（先预览）"
+                    : "这家 CLI 暂不支持从 Mesa 写入全局默认"
                   : rowMenu.profile.slotMissing
                     ? "这个网关还没配该协议的端点"
                   : rowMenu.profile.noAuth

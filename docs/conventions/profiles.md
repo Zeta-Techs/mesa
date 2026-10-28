@@ -311,7 +311,7 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 「写入 CLI 全局默认」是绑定上的动作，复用现事务写入 / 备份 / 原始快照 / 复检弹层。确认前 `preview_profile_global` 给出脱敏变更预览（文件、字段增删改、此入口带不上的策略、已开进程需新开）。成功更新「外部 CLI 上次写入」追踪，**不**改 Mesa 启动默认，也不改项目默认。无密钥网关仍禁止（`plan_writes` 现拒绝 `noAuth`，保持）。
 
-**设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，转连接页确认（见下「托盘挡路转交」）。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」：恢复初始的那些 Agent 不挡；Codex 官方账号要改 config.toml 顶层、与 cc-switch 抢同一行，照样挡（连接页与托盘同口径）。
+**设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，转连接页确认（见下「托盘挡路转交」）。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」也要改 CLI 配置，与 API 绑定同样挡（连接页与托盘同口径）。
 
 **托盘挡路转交（2026-10-23 用户拍板）**：原「托盘一点只发系统通知」作废——通知没授权 / 被专注模式吞掉时点了等于没反应。现口径：
 - 挡路判定在**点击时**现算（`set_global_conflict_message`），建菜单时同口径决定首行；
@@ -320,11 +320,27 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 - 每次被挡记一条 `logbuf`（source `tray`，info），设置 → 诊断可查；
 - 托盘绝不替人过二次确认，也不因挡路把该 Agent 藏掉或整组置灰。
 
-**Codex 官方绑定「设为全局」只改几行（2026-10-28 用户拍板，取代下段对 Codex 的恢复快照口径）**：`plan_writes` 对 Codex 官方出写计划 `patch_codex_config_official`——撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、`model_catalog_json`，`model` 不过 `official_model_allowed` 时一并撤；`[model_providers.*]` 定义块全留（客户端打开旧对话要查得到渠道），MCP / 项目信任 / 思考档等不动。没有 config.toml = 空计划。走与 API 绑定同一套预览、事务备份、`record_active_global`、漂移比对与托盘 dry-run 勾选（补丁幂等，磁盘已是官方即打勾）。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像，目前只有 codex；别家要加先确认它的官方态能用「删几个键」表达。未登录官方账号时前端先确认一次。连接行悬停给「设为全局默认」图标（非全局、能写的才出），与 ⋯ 菜单同一个确认。
+**Codex 全局渠道共用 `custom`（2026-10-28 用户拍板，与 cc-switch 同名）**：「设为全局」不再按网关写 `ccode-<短id>`，一律写 `[model_providers.custom]` 并 `model_provider = "custom"`（`CODEX_GLOBAL_PROVIDER`），整块替换（上一家留下的 `requires_openai_auth` / `supports_websockets` / `env_key` 等残键不带过来）。理由：客户端侧栏只列启动时默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后其余连接的对话全藏起来；用 cc-switch 的同名，两边的对话归在一处。Mesa 自己启动用的 `-c` 内联 `ccode-<短id>` 不变（恢复会话靠它认网关），客户端接力补写的 `ccode-<短id>` 定义块不动，只删旧 `ccode` 块。cc-switch 痕迹判定（`codex_other_switcher_marks`）随之改：`custom` 块 `name = "Mesa"`（Mesa 写的）或 ChatGPT 登录形态不算别家；别的名字、cc-switch 模型目录、指着 `custom` 却没定义块才算。
 
-**生效时机（Codex，2026-10-28 实测）**：预览的 `restart_note` 按 Agent 出（`restart_note`）。Codex 写明「外部终端新开生效；客户端重启」——app-server 新建对话会重读渠道，但客户端自带模型选择与预热对话、模型目录只在启动时读，不能承诺免重启。
+**官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：七家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok；OpenCode 没有官方账号，Cursor 不支持设为全局）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
 
-**官方绑定「设为全局」改语义**（Codex 以外；今日 `plan_writes` 对其余 official 直接报错）：改为 `restore_original_backup`——清掉 Mesa 写入的 API 配置，让 CLI 登录态接手，并 `clear_active_global`。没有原始快照（从未对这个 agent 设过全局）= 无事可恢复，按钮说明「当前全局文件不是 Mesa 写的，无需恢复」。这是切回官方账号的托盘 / 菜单入口，不是新发明（`global_config.rs` `original/` + `restore_original_backup`）。
+| Agent | 撤 / 改 |
+|---|---|
+| Codex | `custom` 块写成 ChatGPT 登录形态（`name = "OpenAI"`、`requires_openai_auth = true`、`supports_websockets = true`、无 base_url，与 cc-switch 统一官方块同形；不写 auth.json，与「禁止 requires_openai_auth + 改 auth.json」不冲突——那条说的是 API 密钥）；撤 `model_catalog_json`，非官方模型名撤 `model` |
+| Claude Code | settings.json env 撤端点 / 两种密钥、四个别名槽及 `_NAME`、第五槽、上下文成对键、旧子 agent 键；`ANTHROPIC_MODEL` 是 claude 模型或别名（opus / sonnet …）时留 |
+| Gemini | `.env` 删 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GEMINI_BASE_URL`，非 gemini 模型删 `GEMINI_MODEL`；settings.json 认证方式改 `oauth-personal` |
+| Qwen | 认证方式改 `qwen-oauth`；env 撤两套协议的密钥 / 端点 / 模型；`model.name` 等于被撤模型名时撤 |
+| CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` |
+| Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`。新旧两个配置目录存在的都改 |
+| Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]` 整段撤（留着官方令牌会发去中转） |
+
+官方计划是删键，**比对磁盘必须整份比**（`disk_equals_plans`）——API 计划用的子集比对对删键永远为真，托盘会两项都打勾、「已是官方」会跳过写入。`plans_match_disk` 按账号类型分派。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像。未登录官方账号时前端先确认一次。
+
+**连接行地球图标（2026-10-28）**：能设为全局的行悬停出地球图标，与 ⋯ 菜单同一个预览确认；当前全局那条常亮高亮（cta-pill 底），点一下按 Mesa 重写一遍。
+
+**生效时机**：预览的 `restart_note` 按 Agent 出。Codex 写明「外部终端新开生效；客户端重启」——app-server 新建对话会重读渠道，但客户端自带模型选择与预热对话、模型目录只在启动时读，不能承诺免重启；其余写「Mesa 不用重启，外部新开的会话生效」。
+
+**旧口径（已被上两段取代，留档）**：官方绑定「设为全局」曾是 `restore_original_backup`——整份恢复首次写入前快照并 `clear_active_global`；问题是会冲掉之后的改动、首次写入前若是 cc-switch 中转则「恢复」回去仍不是官方。「恢复初始状态」菜单仍保留这个动作。
 
 **托盘**（仓库里目前没有，本批新增）：
 

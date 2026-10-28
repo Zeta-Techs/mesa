@@ -640,7 +640,7 @@ fn grok_config_overlay(profile: &Profile, model: Option<&str>) -> Option<serde_j
 }
 
 /// 连接地址是不是 xAI 官方（api.x.ai 及其子域）：只有官方 key 能用 Grok 内置的服务端 web_search
-fn grok_is_xai_endpoint(url: &str) -> bool {
+pub(crate) fn grok_is_xai_endpoint(url: &str) -> bool {
     reqwest::Url::parse(url.trim())
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))

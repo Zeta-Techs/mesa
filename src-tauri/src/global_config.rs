@@ -66,9 +66,7 @@ fn disk_matches_plans(plans: &[PlannedWrite]) -> bool {
 
 /// 托盘选中态：计划产物与磁盘是否一致（子集比对）。None = dry-run 失败，回落「上次写入」。
 pub(crate) fn dry_run_matches(store: &ProfileStore, profile: &Profile) -> Option<bool> {
-    if profile.account_type == crate::profiles::AccountType::Official
-        && !official_global_is_patch(&profile.agent)
-    {
+    if is_official(profile) && !official_global_is_patch(&profile.agent) {
         return None;
     }
     let profile = profile_for_write(store, &profile.id).ok()?;
@@ -77,7 +75,7 @@ pub(crate) fn dry_run_matches(store: &ProfileStore, profile: &Profile) -> Option
         .flatten();
     let home = dirs::home_dir()?;
     let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models).ok()?;
-    Some(disk_matches_plans(&plans))
+    Some(plans_match_disk(&profile, &plans))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -91,7 +89,7 @@ pub struct GlobalApplyResultDto {
 pub const CODEX_SET_GLOBAL_CONFLICT: &str = "\
 这会把 ChatGPT 和外部 Codex 的默认渠道切到此连接。\n\
 \n\
-当前 config.toml 里已有 cc-switch 的配置（custom 渠道或它的模型目录），或本机装着 cc-switch。不要两边同时改默认渠道。\n\
+当前 config.toml 里已有 cc-switch 的配置（custom 渠道或它的模型目录），或本机装着 cc-switch。Mesa 也写在 custom 这个渠道名下（两边的对话在客户端侧栏里归在一处），写入会整块换掉 cc-switch 当前写在那里的连接；不要两边同时改默认渠道。\n\
 \n\
 要在 Codex 客户端里续 Mesa 开的对话，用对话页的「在 Codex 客户端打开」（缺渠道定义时会当场补写），不必设为全局。\n\
 \n\
@@ -114,13 +112,21 @@ pub fn codex_other_switcher_marks(config: &str) -> bool {
     let Ok(doc) = config.parse::<toml_edit::DocumentMut>() else {
         return config.contains("[model_providers.custom]");
     };
-    if doc.get("model_provider").and_then(|i| i.as_str()) == Some("custom") {
-        return true;
-    }
-    doc.get("model_providers")
-        .and_then(|i| i.as_table())
-        .and_then(|t| t.get("custom"))
-        .is_some()
+    // custom 是 Mesa 与 cc-switch 共用的渠道名：Mesa 自己写的（name = "Mesa"）与
+    // ChatGPT 登录形态（官方，谁写的都一样，没有第三方配置可被冲掉）不算别家
+    let Some(blk) = doc
+        .get("model_providers")
+        .and_then(|i| i.as_table_like())
+        .and_then(|t| t.get(CODEX_GLOBAL_PROVIDER))
+    else {
+        // 默认指着 custom 却没有定义块：不是 Mesa 写出来的样子，按别家算
+        return doc.get("model_provider").and_then(|i| i.as_str()) == Some(CODEX_GLOBAL_PROVIDER);
+    };
+    let name = blk.get("name").and_then(|v| v.as_str());
+    let official_shape = name == Some("OpenAI")
+        && blk.get("requires_openai_auth").and_then(|v| v.as_bool()) == Some(true)
+        && blk.get("base_url").is_none();
+    !(name == Some("Mesa") || official_shape)
 }
 
 pub fn cc_switch_dir_present(home: &std::path::Path) -> bool {
@@ -587,31 +593,50 @@ fn sub_table<'a>(
     Ok(table.entry(key).or_insert(toml_edit::table()))
 }
 
+/// Codex「设为全局」统一写进同一个渠道名（2026-10-28 用户拍板，与 cc-switch 同名）：
+/// 客户端侧栏只列当前默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后
+/// 别的连接的对话全藏起来；官方账号也写在这个名字下，官方 / API 来回切历史都在一处。
+/// Mesa 自己启动用的 `ccode-<短id>` 内联渠道不变（恢复会话靠它认网关）。
+pub(crate) const CODEX_GLOBAL_PROVIDER: &str = "custom";
+
+/// 整块换掉共用渠道：上一家（cc-switch 或官方形态）留下的 requires_openai_auth、
+/// supports_websockets、env_key 等残键不能带到新连接上。
+fn replace_codex_global_provider(
+    doc: &mut toml_edit::DocumentMut,
+    table: toml_edit::Table,
+) -> Result<(), String> {
+    let providers = sub_table(doc.as_item_mut(), "model_providers")?;
+    let t = providers
+        .as_table_mut()
+        .ok_or_else(|| "model_providers 不是表，已停止写入".to_string())?;
+    t.insert(CODEX_GLOBAL_PROVIDER, toml_edit::Item::Table(table));
+    doc["model_provider"] = toml_edit::value(CODEX_GLOBAL_PROVIDER);
+    Ok(())
+}
+
 fn patch_codex_config(
     existing: Option<&str>,
     base_url: Option<&str>,
     model: Option<&str>,
     catalog: Option<&std::path::Path>,
-    provider_id: &str,
     effort: Option<&str>,
     key: &str,
 ) -> Result<String, String> {
     use toml_edit::value;
     let mut doc = parse_toml_doc(existing)?;
-    let providers = sub_table(doc.as_item_mut(), "model_providers")?;
-    if provider_id != crate::provider_id::LEGACY {
-        if let Some(t) = providers.as_table_mut() {
-            t.remove(crate::provider_id::LEGACY);
-        }
+    if let Some(t) = sub_table(doc.as_item_mut(), "model_providers")?.as_table_mut() {
+        t.remove(crate::provider_id::LEGACY);
     }
-    let ccode = sub_table(providers, provider_id)?;
-    ccode["name"] = value("Mesa");
+    let mut blk = toml_edit::Table::new();
+    blk["name"] = value("Mesa");
     if let Some(u) = base_url {
-        ccode["base_url"] = value(u);
+        blk["base_url"] = value(u);
     }
-    set_codex_provider_static_auth(ccode, key);
-    ccode["wire_api"] = value("responses");
-    doc["model_provider"] = value(provider_id);
+    blk["wire_api"] = value("responses");
+    // 认证同 set_codex_provider_static_auth：bearer 写块内，不走 auth.json
+    blk["requires_openai_auth"] = value(false);
+    blk["experimental_bearer_token"] = value(key);
+    replace_codex_global_provider(&mut doc, blk)?;
     if let Some(m) = model.filter(|s| !s.is_empty()) {
         doc["model"] = value(m);
     } else {
@@ -631,13 +656,21 @@ fn patch_codex_config(
     Ok(doc.to_string())
 }
 
-/// Codex 官方账号「设为全局」只动顶层几行：撤掉默认渠道（回落内置 openai，认证交给
-/// auth.json 里的 ChatGPT 登录）与模型目录，模型名不是官方模型时一并撤掉。
-/// `[model_providers.*]` 定义块全部保留——客户端打开旧对话要查得到渠道；
-/// 其余配置（MCP、项目信任、思考档）原样不动，不再整份回滚到首次快照。
-fn patch_codex_config_official(existing: &str) -> Result<String, String> {
-    let mut doc = parse_toml_doc(Some(existing))?;
-    doc.remove("model_provider");
+/// Codex 官方账号「设为全局」：共用渠道写成 ChatGPT 登录形态（与 cc-switch 统一官方块同形）——
+/// `requires_openai_auth = true` 认证交给 auth.json 里的 ChatGPT 登录（Mesa 不写 auth.json，
+/// 这与「禁止 requires_openai_auth + 改 auth.json」那条不冲突：那条说的是 API 密钥）；
+/// `name = "OpenAI"` 保住 Codex 按名字开的官方能力（网页搜索、远端压缩）；不写 base_url
+/// 即官方后端。撤掉模型目录，模型名不是官方模型时一并撤掉；思考档、MCP、项目信任、
+/// 其他渠道定义块原样不动。
+fn patch_codex_config_official(existing: Option<&str>) -> Result<String, String> {
+    use toml_edit::value;
+    let mut doc = parse_toml_doc(existing)?;
+    let mut blk = toml_edit::Table::new();
+    blk["name"] = value("OpenAI");
+    blk["requires_openai_auth"] = value(true);
+    blk["supports_websockets"] = value(true);
+    blk["wire_api"] = value("responses");
+    replace_codex_global_provider(&mut doc, blk)?;
     doc.remove("model_catalog_json");
     let foreign = doc
         .get("model")
@@ -647,11 +680,6 @@ fn patch_codex_config_official(existing: &str) -> Result<String, String> {
         doc.remove("model");
     }
     Ok(doc.to_string())
-}
-
-/// 官方账号「设为全局」是否走写计划（只改几行）。其余 Agent 仍是恢复首次快照。
-pub(crate) fn official_global_is_patch(agent: &str) -> bool {
-    agent == "codex"
 }
 
 /// 「注册到 Codex 客户端（不切换默认）」的 config.toml 补丁：只写 provider 定义块，
@@ -1001,6 +1029,317 @@ fn patch_env_file(existing: Option<&str>, pairs: &[(String, String)]) -> Result<
     Ok(out)
 }
 
+// ===== 官方账号「设为全局」：撤掉 Mesa 写的 API 键，交回 CLI 自己的登录 =====
+//
+// 2026-10-28 用户拍板：官方账号与 API 连接一样走写计划（预览、备份、挡路、托盘勾选），
+// 不再整份恢复首次快照（会冲掉之后的 MCP、项目信任等改动）。每家只撤会盖过官方登录的
+// 键；别的配置、别的渠道定义一律不动。OpenCode 没有官方账号，Cursor 不支持设为全局。
+
+/// 有官方账号「设为全局」写计划的 Agent。与前端 `officialGlobalIsPatch` 双端镜像。
+pub(crate) fn official_global_is_patch(agent: &str) -> bool {
+    matches!(
+        agent,
+        "codex" | "claude-code" | "gemini" | "qwen" | "codebuddy" | "kimi" | "grok"
+    )
+}
+
+/// 官方账号能不能接着用这个模型名：中转模型名留给官方账号会直接报模型不存在。
+fn official_model_kept(agent: &str, model: &str) -> bool {
+    let m = model.trim().to_ascii_lowercase();
+    match agent {
+        // Claude Code 的别名（opus / sonnet …）官方账号照样认
+        "claude-code" => {
+            m.starts_with("claude")
+                || matches!(m.as_str(), "opus" | "sonnet" | "haiku" | "fable" | "default" | "best" | "opusplan")
+        }
+        "gemini" => m.starts_with("gemini"),
+        "grok" => m.starts_with("grok"),
+        _ => agents::official_model_allowed(agent, model),
+    }
+}
+
+/// JSON 文件里删一组 env 键；模型键只在不是官方模型时删。
+fn json_env_remove(
+    v: &mut Value,
+    keys: &[&str],
+    model_keys: &[&str],
+    agent: &str,
+) -> Vec<String> {
+    let mut removed_models = Vec::new();
+    if let Some(env) = v.get_mut("env").and_then(|e| e.as_object_mut()) {
+        for k in keys {
+            env.remove(*k);
+        }
+        for k in model_keys {
+            let foreign = env
+                .get(*k)
+                .and_then(|m| m.as_str())
+                .is_some_and(|m| !official_model_kept(agent, m));
+            if foreign {
+                if let Some(Value::String(m)) = env.remove(*k) {
+                    removed_models.push(m);
+                }
+            }
+        }
+    }
+    removed_models
+}
+
+/// Claude Code：settings.json 的 env 里撤端点 / 密钥、Mesa 管的模型槽与上下文键；
+/// ANTHROPIC_MODEL 是官方模型（或别名）时留着，思考档留着。
+fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
+    let mut v = parse_json_doc(Some(existing))?;
+    let mut keys: Vec<String> = [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_CUSTOM_MODEL_OPTION",
+        "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    for slot in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
+        keys.push(format!("ANTHROPIC_DEFAULT_{slot}_MODEL"));
+        keys.push(format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"));
+    }
+    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    json_env_remove(&mut v, &refs, &["ANTHROPIC_MODEL"], "claude-code");
+    to_pretty(&v)
+}
+
+/// CodeBuddy：settings.json 的 env 撤 CODEBUDDY_* 端点 / 密钥，非官方模型名一并撤。
+fn patch_codebuddy_settings_official(existing: &str) -> Result<String, String> {
+    let mut v = parse_json_doc(Some(existing))?;
+    json_env_remove(
+        &mut v,
+        &["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"],
+        &["CODEBUDDY_MODEL"],
+        "codebuddy",
+    );
+    to_pretty(&v)
+}
+
+/// Qwen：认证方式改回 qwen-oauth，撤 env 里两套协议的端点 / 密钥 / 模型；
+/// `model.name` 只在等于被撤的模型名（Mesa 写的）时撤。modelProviders 名单留着。
+fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
+    let mut v = parse_json_doc(Some(existing))?;
+    ensure_obj(&mut v, &["security", "auth"])?.insert("selectedType".into(), json!("qwen-oauth"));
+    let mut removed = Vec::new();
+    if let Some(env) = v.get_mut("env").and_then(|e| e.as_object_mut()) {
+        for k in [
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "OPENAI_MODEL",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_MODEL",
+        ] {
+            if let Some(Value::String(m)) = env.remove(k) {
+                if k.ends_with("_MODEL") {
+                    removed.push(m);
+                }
+            }
+        }
+    }
+    let name = v.pointer("/model/name").and_then(|n| n.as_str()).map(String::from);
+    if name.is_some_and(|n| removed.contains(&n)) {
+        if let Some(model) = v.get_mut("model").and_then(|m| m.as_object_mut()) {
+            model.remove("name");
+        }
+    }
+    to_pretty(&v)
+}
+
+/// Gemini：settings.json 认证方式改回 Google 账号登录（oauth-personal）；模型名单留着。
+fn patch_gemini_settings_official(existing: &str) -> Result<String, String> {
+    let mut v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(existing))
+        .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?;
+    if !v.is_object() {
+        return Err("现有 settings.json 根节点不是对象，已停止写入".into());
+    }
+    ensure_obj(&mut v, &["security", "auth"])?
+        .insert("selectedType".into(), json!("oauth-personal"));
+    to_pretty(&v)
+}
+
+/// .env 里删整行 `KEY=…`；模型键只在不是官方模型时删。
+fn patch_env_file_remove(existing: &str, keys: &[&str], model_keys: &[&str], agent: &str) -> String {
+    let drop = |line: &str| {
+        let Some((k, val)) = line.split_once('=') else {
+            return false;
+        };
+        let k = k.trim().trim_start_matches("export ").trim();
+        keys.contains(&k)
+            || (model_keys.contains(&k)
+                && !official_model_kept(agent, val.trim().trim_matches('"').trim_matches('\'')))
+    };
+    let mut out: Vec<&str> = existing.lines().filter(|l| !drop(l)).collect();
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        let mut s = out.join("\n");
+        s.push('\n');
+        s
+    }
+}
+
+/// Kimi：默认模型改指官方登录（`kimi login`）配好的 `managed:kimi-code` 模型；
+/// 没登录过就撤掉默认模型，kimi 进门会要求 /login。Mesa 写的渠道和模型别名留在选择器里。
+fn patch_kimi_config_official(existing: &str) -> Result<String, String> {
+    let mut doc = parse_toml_doc(Some(existing))?;
+    let managed: Vec<String> = doc
+        .get("models")
+        .and_then(|m| m.as_table_like())
+        .map(|t| {
+            t.iter()
+                .filter(|(_, item)| {
+                    item.get("provider").and_then(|p| p.as_str()) == Some("managed:kimi-code")
+                })
+                .map(|(k, _)| k.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let current = doc.get("default_model").and_then(|v| v.as_str()).map(String::from);
+    match current.filter(|c| managed.contains(c)).or_else(|| managed.first().cloned()) {
+        Some(alias) => doc["default_model"] = toml_edit::value(alias),
+        None => {
+            doc.remove("default_model");
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// Grok：撤顶层 api_key / env_key 与 [endpoints].models_base_url；默认模型不是 grok 模型时撤；
+/// 指向非 x.ai 地址的 [model.<id>] 段整段撤——留着的话官方登录的令牌会被发去中转。
+fn patch_grok_config_official(existing: &str) -> Result<String, String> {
+    let mut doc = parse_toml_doc(Some(existing))?;
+    doc.remove("api_key");
+    doc.remove("env_key");
+    let endpoints_empty = match doc.get_mut("endpoints").and_then(|e| e.as_table_like_mut()) {
+        Some(t) => {
+            t.remove("models_base_url");
+            t.is_empty()
+        }
+        None => false,
+    };
+    if endpoints_empty {
+        doc.remove("endpoints");
+    }
+    if let Some(models) = doc.get_mut("models").and_then(|m| m.as_table_like_mut()) {
+        let foreign = models
+            .get("default")
+            .and_then(|d| d.as_str())
+            .is_some_and(|d| !official_model_kept("grok", d));
+        if foreign {
+            models.remove("default");
+        }
+    }
+    let mut model_empty = false;
+    if let Some(entries) = doc.get_mut("model").and_then(|m| m.as_table_like_mut()) {
+        let relay: Vec<String> = entries
+            .iter()
+            .filter(|(_, item)| {
+                item.get("base_url")
+                    .and_then(|u| u.as_str())
+                    .is_some_and(|u| !crate::agents::grok_is_xai_endpoint(u))
+            })
+            .map(|(k, _)| k.to_string())
+            .collect();
+        for k in relay {
+            entries.remove(&k);
+        }
+        model_empty = entries.is_empty();
+    }
+    if model_empty {
+        doc.remove("model");
+    }
+    Ok(doc.to_string())
+}
+
+/// 官方账号「设为全局」的写计划：文件不存在就不写（不存在 = 本来就没有 API 配置）。
+fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, String> {
+    let mut plans = Vec::new();
+    let mut add = |tag: &'static str, rel: &str, f: &dyn Fn(&str) -> Result<String, String>| {
+        let path = home.join(rel);
+        if let Some(text) = read_existing(&path)? {
+            plans.push(PlannedWrite { tag, content: f(&text)?, path });
+        }
+        Ok::<(), String>(())
+    };
+    match agent {
+        "codex" => add("config.toml", ".codex/config.toml", &|t| patch_codex_config_official(Some(t)))?,
+        "claude-code" => add("settings.json", ".claude/settings.json", &patch_claude_settings_official)?,
+        "codebuddy" => add("settings.json", ".codebuddy/settings.json", &patch_codebuddy_settings_official)?,
+        "qwen" => add("settings.json", ".qwen/settings.json", &patch_qwen_settings_official)?,
+        "gemini" => {
+            add(".env", ".gemini/.env", &|t| {
+                Ok(patch_env_file_remove(
+                    t,
+                    &["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"],
+                    &["GEMINI_MODEL"],
+                    "gemini",
+                ))
+            })?;
+            add("settings.json", ".gemini/settings.json", &patch_gemini_settings_official)?;
+        }
+        "kimi" => {
+            add("config.toml", ".kimi-code/config.toml", &patch_kimi_config_official)?;
+            add("legacy-config.toml", ".kimi/config.toml", &patch_kimi_config_official)?;
+        }
+        "grok" => add("config.toml", ".grok/config.toml", &patch_grok_config_official)?,
+        other => return Err(format!("{other} 的官方账号不支持「设为全局」")),
+    }
+    Ok(plans)
+}
+
+/// 官方计划与磁盘是否「完全一致」。API 计划用子集比对（磁盘多出用户自己的键不算漂移）；
+/// 官方计划是删键，子集比对对删键永远为真，必须整份比对。
+fn disk_equals_plans(plans: &[PlannedWrite]) -> bool {
+    plans.iter().all(|p| {
+        let Ok(live) = fs::read_to_string(&p.path) else {
+            return false;
+        };
+        let live = crate::mcp::strip_bom(&live);
+        let name = p.path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name.ends_with(".json") {
+            match (
+                serde_json::from_str::<Value>(&p.content),
+                serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(live)),
+            ) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => p.content.trim() == live.trim(),
+            }
+        } else if name.ends_with(".toml") {
+            match (toml::from_str::<toml::Value>(&p.content), toml::from_str::<toml::Value>(live)) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => p.content.trim() == live.trim(),
+            }
+        } else {
+            p.content.trim() == live.trim()
+        }
+    })
+}
+
+fn is_official(profile: &Profile) -> bool {
+    profile.account_type == crate::profiles::AccountType::Official
+}
+
+/// 计划与磁盘是否一致：官方整份比、API 子集比。
+fn plans_match_disk(profile: &Profile, plans: &[PlannedWrite]) -> bool {
+    if is_official(profile) {
+        disk_equals_plans(plans)
+    } else {
+        disk_matches_plans(plans)
+    }
+}
+
 // ===== 计划与执行 =====
 
 fn read_existing(path: &Path) -> Result<Option<String>, String> {
@@ -1023,22 +1362,8 @@ fn plan_writes(
     key: Option<&str>,
     models: &[String],
 ) -> Result<Vec<PlannedWrite>, String> {
-    if profile.account_type == crate::profiles::AccountType::Official {
-        if official_global_is_patch(&profile.agent) {
-            // 没有 config.toml = 本来就是官方默认，无事可写
-            let path = home.join(".codex/config.toml");
-            return Ok(match read_existing(&path)? {
-                Some(text) => vec![PlannedWrite {
-                    tag: "config.toml",
-                    content: patch_codex_config_official(&text)?,
-                    path,
-                }],
-                None => Vec::new(),
-            });
-        }
-        return Err(
-            "官方账号不支持「设为全局」；请在 CLI 内登录，Mesa 只在启动时复现账号状态".into(),
-        );
+    if is_official(profile) {
+        return plan_official_writes(home, &profile.agent);
     }
     if profile.no_auth {
         return Err("无密钥连接不支持「设为全局」；请使用启动注入，避免污染 CLI 全局配置".into());
@@ -1102,7 +1427,6 @@ fn plan_writes(
                 base_url,
                 model,
                 catalog.as_deref(),
-                &profile.provider_name(),
                 profile.request_policy.reasoning_effort.as_deref(),
                 key,
             )?;
@@ -1458,9 +1782,9 @@ fn preview_plans(
 /// 的对话）只在启动时定。客户端另自带模型选择与预热对话，故对客户端仍说「重启」。
 fn restart_note(agent: &str) -> &'static str {
     if agent == "codex" {
-        "外部终端新开的 Codex 会话走新配置，已开着的不变。Codex 客户端请重启：不重启时新建对话虽会换渠道，但模型列表和客户端记住的模型还是旧的。客户端侧栏只列当前默认渠道下的对话，别的渠道的对话要用搜索找。"
+        "Mesa 不用重启。外部终端新开的 Codex 会话走新配置，已开着的不变。Codex 客户端请重启：不重启时新建对话虽会换渠道，但模型列表和客户端记住的模型还是旧的。官方账号和各条 API 连接都写在 custom 这一个渠道名下，切换后客户端侧栏里的对话不会被藏起来（在 Mesa 里开的对话归在各自网关下，要用搜索找）。"
     } else {
-        "已经打开的 Mesa 终端和外部 CLI 不会自动重读配置，需要新开才会生效。"
+        "Mesa 不用重启。外部终端里新开的会话读新配置，已经开着的不会自动重读，需要新开才会生效。"
     }
 }
 
@@ -2050,9 +2374,7 @@ pub(crate) fn drift_status(store: &ProfileStore, agent: &str) -> crate::drift::G
         Ok(p) => p,
         Err(e) => return crate::drift::classify(false, Some(e), Vec::new()),
     };
-    if profile.account_type == crate::profiles::AccountType::Official
-        && !official_global_is_patch(&profile.agent)
-    {
+    if is_official(&profile) && !official_global_is_patch(&profile.agent) {
         return crate::drift::classify(true, None, Vec::new());
     }
     let key = crate::profiles::get_key_for_profile(&profile)
@@ -2067,7 +2389,7 @@ pub(crate) fn drift_status(store: &ProfileStore, agent: &str) -> crate::drift::G
     };
     let mut drifted = Vec::new();
     for p in &plans {
-        if !crate::drift::planned_matches_live(&p.path, &p.content) {
+        if !plans_match_disk(&profile, std::slice::from_ref(p)) {
             drifted.push(p.tag.to_string());
         }
     }
@@ -2088,15 +2410,10 @@ pub fn preview_profile_global(
     profile_id: String,
 ) -> Result<GlobalWritePreviewDto, String> {
     let mut profile = store.get_with_model(&profile_id, None)?;
-    if profile.account_type == crate::profiles::AccountType::Official
-        && official_global_is_patch(&profile.agent)
-    {
+    if is_official(&profile) {
         let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
         let plans = plan_writes(&home, &profile, None, &[])?;
         return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new()));
-    }
-    if profile.account_type == crate::profiles::AccountType::Official {
-        return Err("官方账号「设为全局」是恢复初始配置，不是写入这份连接".into());
     }
     let skipped = skipped_policy_notes(&profile);
     let first = profile.models.first().cloned();
@@ -2115,9 +2432,7 @@ pub async fn apply_profile_global(
     profile_id: String,
 ) -> Result<GlobalApplyResultDto, String> {
     let profile = profile_for_write(&store, &profile_id)?;
-    if profile.account_type == crate::profiles::AccountType::Official
-        && official_global_is_patch(&profile.agent)
-    {
+    if is_official(&profile) {
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = GLOBAL_CONFIG_MUTEX
                 .lock()
@@ -2125,34 +2440,14 @@ pub async fn apply_profile_global(
             let _file_guard = crate::storage::config_lock("global-config")?;
             let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
             let plans = plan_writes(&home, &profile, None, &[])?;
-            let files = if plans.is_empty() || disk_matches_plans(&plans) {
+            // 磁盘已经是官方形态：不写、不产生空备份批次
+            let files = if disk_equals_plans(&plans) {
                 Vec::new()
             } else {
                 apply_plans(&backups_root()?.join(&profile.agent), &home, &plans)?
             };
             crate::settings::record_active_global(&profile.agent, &profile.id);
             Ok(official_apply_result(files, "已切回官方账号"))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-        let _ = crate::tray::rebuild_and_wait(app.clone()).await;
-        return result;
-    }
-    if profile.account_type == crate::profiles::AccountType::Official {
-        let agent = profile.agent.clone();
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            let _guard = GLOBAL_CONFIG_MUTEX
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let _file_guard = crate::storage::config_lock("global-config")?;
-            let dir = backups_root()?.join(&agent);
-            if !dir.join("original").join("manifest.json").is_file() {
-                return Err("当前全局文件不是 Mesa 写的，无需恢复".into());
-            }
-            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-            let files = restore_from_original(&dir, &home)?;
-            crate::settings::clear_active_global(&agent);
-            Ok(official_apply_result(files, "已恢复初始状态（官方账号）"))
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -2466,7 +2761,6 @@ mod tests {
             Some("https://r.example.com/v1"),
             None,
             None,
-            "ccode",
             None,
             "sk-secret",
         )
@@ -2475,7 +2769,7 @@ mod tests {
         assert!(doc.get("model").is_none());
         assert!(doc.get("model_catalog_json").is_none());
         assert!(doc.get("model_reasoning_effort").is_none());
-        assert_eq!(doc["model_provider"].as_str(), Some("ccode"));
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
     }
 
     #[test]
@@ -2550,21 +2844,24 @@ mod tests {
 
     #[test]
     fn codex_config_patch_preserves_other_tables() {
-        let existing = "[other]\nkeep = 1\n\n[model_providers.ccode]\nold = \"x\"\nenv_key = \"CODEX_API_KEY\"\nhttp_headers = { Authorization = \"Bearer sk-stale\" }\n";
+        // 共用渠道上一家（cc-switch / 官方形态）留下的残键；旧 ccode 块删、别的网关块留
+        let existing = "[other]\nkeep = 1\n\n[model_providers.custom]\nname = \"OpenAI\"\nold = \"x\"\nrequires_openai_auth = true\nsupports_websockets = true\nenv_key = \"CODEX_API_KEY\"\nhttp_headers = { Authorization = \"Bearer sk-stale\" }\n\n[model_providers.ccode]\nname = \"Mesa\"\n\n[model_providers.ccode-abc]\nname = \"Mesa\"\n";
         let out = patch_codex_config(
             Some(existing),
             Some("https://r.example.com/v1"),
             Some("gpt-5"),
             Some(std::path::Path::new("/cfg/ccode/catalogs/codex-p1.json")),
-            "ccode",
             None,
             "sk-secret",
         )
         .unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
         assert_eq!(doc["other"]["keep"].as_integer(), Some(1));
-        let ccode = &doc["model_providers"]["ccode"];
+        assert!(doc["model_providers"].get("ccode").is_none());
+        assert!(doc["model_providers"].get("ccode-abc").is_some());
+        let ccode = &doc["model_providers"]["custom"];
         assert_eq!(ccode["name"].as_str(), Some("Mesa"));
+        assert!(ccode.get("supports_websockets").is_none());
         assert_eq!(ccode["base_url"].as_str(), Some("https://r.example.com/v1"));
         // 认证走 experimental_bearer_token；旧 env_key / http_headers 清掉，不写 auth.json
         assert!(ccode.get("env_key").is_none());
@@ -2575,9 +2872,9 @@ mod tests {
             Some("sk-secret")
         );
         assert_eq!(ccode["wire_api"].as_str(), Some("responses"));
-        // 表内既有键不被清掉
-        assert_eq!(ccode["old"].as_str(), Some("x"));
-        assert_eq!(doc["model_provider"].as_str(), Some("ccode"));
+        // 共用渠道整块换掉，上一家的键不带过来
+        assert!(ccode.get("old").is_none());
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5"));
         assert_eq!(
             doc["model_catalog_json"].as_str(),
@@ -2586,16 +2883,21 @@ mod tests {
     }
 
     #[test]
-    fn codex_official_patch_only_drops_switch_lines() {
-        let existing = r#"model_provider = "ccode-abc"
+    fn codex_official_writes_shared_channel_in_login_shape() {
+        let existing = r#"model_provider = "custom"
 model = "deepseek-v4"
 model_catalog_json = "/cfg/ccode/catalogs/codex-p1.json"
 model_reasoning_effort = "high"
 
-[model_providers.ccode-abc]
+[model_providers.custom]
 name = "Mesa"
 base_url = "https://relay.example.com/v1"
 experimental_bearer_token = "sk-k"
+requires_openai_auth = false
+
+[model_providers.ccode-abc]
+name = "Mesa"
+base_url = "https://relay.example.com/v1"
 
 [mcp_servers.x]
 command = "y"
@@ -2603,39 +2905,111 @@ command = "y"
 [projects."/w"]
 trust_level = "trusted"
 "#;
-        let out = patch_codex_config_official(existing).unwrap();
+        let out = patch_codex_config_official(Some(existing)).unwrap();
         let doc: toml::Value = toml::from_str(&out).unwrap();
-        assert!(doc.get("model_provider").is_none());
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        let blk = &doc["model_providers"]["custom"];
+        assert_eq!(blk["name"].as_str(), Some("OpenAI"));
+        assert_eq!(blk["requires_openai_auth"].as_bool(), Some(true));
+        assert!(blk.get("base_url").is_none() && blk.get("experimental_bearer_token").is_none());
         assert!(doc.get("model_catalog_json").is_none());
         assert!(doc.get("model").is_none(), "中转模型名不能留给官方账号");
         assert_eq!(doc["model_reasoning_effort"].as_str(), Some("high"));
-        // 渠道定义块留着（客户端打开旧对话要查得到），其余配置原样
-        assert_eq!(doc["model_providers"]["ccode-abc"]["base_url"].as_str(), Some("https://relay.example.com/v1"));
+        // 别的渠道定义块留着（客户端打开旧对话要查得到），其余配置原样
+        assert!(doc["model_providers"].get("ccode-abc").is_some());
         assert_eq!(doc["mcp_servers"]["x"]["command"].as_str(), Some("y"));
         assert_eq!(doc["projects"]["/w"]["trust_level"].as_str(), Some("trusted"));
-        // 官方模型名保留；再跑一次不变（托盘 dry-run 靠它判当前就是官方）
-        let kept = patch_codex_config_official("model_provider = \"custom\"\nmodel = \"gpt-6-astra\"\n").unwrap();
-        assert_eq!(kept.trim(), "model = \"gpt-6-astra\"");
-        assert_eq!(patch_codex_config_official(&kept).unwrap(), kept);
+        // 官方模型名保留；幂等（托盘 dry-run 靠它判当前就是官方）
+        let kept = patch_codex_config_official(Some("model = \"gpt-6-astra\"\n")).unwrap();
+        assert!(kept.contains("model = \"gpt-6-astra\""));
+        assert_eq!(patch_codex_config_official(Some(&kept)).unwrap(), kept);
     }
 
     #[test]
-    fn codex_official_plan_writes_patch_or_nothing() {
-        let home = tmpdir("codex-official");
-        let mut p = profile("codex");
-        p.account_type = crate::profiles::AccountType::Official;
-        p.base_url = None;
-        // 没有 config.toml：本来就是官方默认，无事可写
-        assert!(plan_writes(&home, &p, None, &[]).unwrap().is_empty());
+    fn official_plans_drop_only_api_keys_per_agent() {
+        let home = tmpdir("official-all");
+        let w = |rel: &str, body: &str| {
+            let p = home.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        };
+        let off = |agent: &str| {
+            let mut p = profile(agent);
+            p.account_type = crate::profiles::AccountType::Official;
+            p.base_url = None;
+            plan_writes(&home, &p, None, &[]).unwrap()
+        };
+        // 文件都不存在：无事可写
+        for a in ["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok"] {
+            assert!(off(a).is_empty(), "{a}");
+        }
+        assert!(official_global_is_patch("grok") && !official_global_is_patch("opencode"));
+
+        w(".claude/settings.json", r#"{"theme":"dark","env":{"ANTHROPIC_BASE_URL":"https://r","ANTHROPIC_AUTH_TOKEN":"sk","ANTHROPIC_MODEL":"glm-5","ANTHROPIC_DEFAULT_OPUS_MODEL":"glm-5","CLAUDE_CODE_EFFORT_LEVEL":"high","MY_VAR":"1"}}"#);
+        let v: Value = serde_json::from_str(&off("claude-code")[0].content).unwrap();
+        assert_eq!(v["env"], json!({"CLAUDE_CODE_EFFORT_LEVEL":"high","MY_VAR":"1"}));
+        assert_eq!(v["theme"], "dark");
+        w(".claude/settings.json", r#"{"env":{"ANTHROPIC_MODEL":"opus"}}"#);
+        let v: Value = serde_json::from_str(&off("claude-code")[0].content).unwrap();
+        assert_eq!(v["env"]["ANTHROPIC_MODEL"], "opus");
+
+        w(".codebuddy/settings.json", r#"{"env":{"CODEBUDDY_BASE_URL":"https://r","CODEBUDDY_API_KEY":"sk","CODEBUDDY_MODEL":"deepseek-v4"}}"#);
+        let v: Value = serde_json::from_str(&off("codebuddy")[0].content).unwrap();
+        assert_eq!(v["env"], json!({}));
+
+        w(".qwen/settings.json", r#"{"security":{"auth":{"selectedType":"openai"}},"env":{"OPENAI_API_KEY":"sk","OPENAI_BASE_URL":"https://r","OPENAI_MODEL":"glm-5"},"model":{"name":"glm-5"},"modelProviders":{"openai":{"models":[{"id":"glm-5"}]}}}"#);
+        let v: Value = serde_json::from_str(&off("qwen")[0].content).unwrap();
+        assert_eq!(v["security"]["auth"]["selectedType"], "qwen-oauth");
+        assert_eq!(v["env"], json!({}));
+        assert!(v["model"].get("name").is_none());
+        assert!(v["modelProviders"]["openai"].is_object());
+
+        w(".gemini/.env", "GEMINI_API_KEY=sk\nGOOGLE_GEMINI_BASE_URL=https://r\nGEMINI_MODEL=glm-5\nOTHER=1\n");
+        w(".gemini/settings.json", "{ // jsonc\n \"security\": {\"auth\": {\"selectedType\": \"gemini-api-key\"}}, \"ui\": {\"theme\": \"x\"} }");
+        let plans = off("gemini");
+        assert_eq!(plans[0].content, "OTHER=1\n");
+        let v: Value = serde_json::from_str(&plans[1].content).unwrap();
+        assert_eq!(v["security"]["auth"]["selectedType"], "oauth-personal");
+        assert_eq!(v["ui"]["theme"], "x");
+
+        w(".kimi-code/config.toml", "default_model = \"kimi-k3\"\n[providers.ccode-x]\ntype = \"openai\"\n[models.kimi-k3]\nprovider = \"ccode-x\"\n[models.\"kimi-code/k3\"]\nprovider = \"managed:kimi-code\"\n");
+        let doc: toml::Value = toml::from_str(&off("kimi")[0].content).unwrap();
+        assert_eq!(doc["default_model"].as_str(), Some("kimi-code/k3"));
+        assert!(doc["providers"].get("ccode-x").is_some());
+        w(".kimi-code/config.toml", "default_model = \"kimi-k3\"\n[models.kimi-k3]\nprovider = \"ccode-x\"\n");
+        let doc: toml::Value = toml::from_str(&off("kimi")[0].content).unwrap();
+        assert!(doc.get("default_model").is_none(), "没登录过就撤默认模型");
+
+        w(".grok/config.toml", "api_key = \"sk\"\n[endpoints]\nmodels_base_url = \"https://r/v1\"\n[models]\ndefault = \"glm-5\"\ntemperature = 0.3\n[model.glm-5]\nbase_url = \"https://r/v1\"\n[model.grok-4]\nbase_url = \"https://api.x.ai/v1\"\n[mcp_servers.m]\ncommand = \"c\"\n");
+        let doc: toml::Value = toml::from_str(&off("grok")[0].content).unwrap();
+        assert!(doc.get("api_key").is_none() && doc.get("endpoints").is_none());
+        assert!(doc["models"].get("default").is_none());
+        assert_eq!(doc["models"]["temperature"].as_float(), Some(0.3));
+        assert!(doc["model"].get("glm-5").is_none() && doc["model"].get("grok-4").is_some());
+        assert!(doc["mcp_servers"].get("m").is_some());
+
+        // 每家补丁幂等：写完再算一遍计划，整份比对一致
+        for a in ["claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok"] {
+            let plans = off(a);
+            apply_plans(&home.join("bk").join(a), &home, &plans).unwrap();
+            assert!(disk_equals_plans(&off(a)), "{a}");
+        }
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn official_match_is_exact_not_subset() {
+        // 删键计划用子集比对永远为真（托盘会两项都打勾），官方必须整份比
+        let home = tmpdir("official-exact");
         fs::create_dir_all(home.join(".codex")).unwrap();
         fs::write(home.join(".codex/config.toml"), "model_provider = \"ccode-x\"\n").unwrap();
+        let mut p = profile("codex");
+        p.account_type = crate::profiles::AccountType::Official;
         let plans = plan_writes(&home, &p, None, &[]).unwrap();
-        assert_eq!(plans.len(), 1);
-        assert!(!plans[0].content.contains("model_provider"));
-        // 别家官方账号仍不走写计划
-        let mut c = profile("claude-code");
-        c.account_type = crate::profiles::AccountType::Official;
-        assert!(plan_writes(&home, &c, None, &[]).is_err());
+        assert!(!disk_equals_plans(&plans));
+        apply_plans(&home.join("bk"), &home, &plans).unwrap();
+        assert!(disk_equals_plans(&plan_writes(&home, &p, None, &[]).unwrap()));
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]
@@ -2734,6 +3108,16 @@ trust_level = "trusted"
             "model_provider = \"ccode-abcd\"\n[model_providers.ccode-abcd]\nbase_url = \"https://a\"\n"
         ));
         assert!(!codex_other_switcher_marks("model = \"gpt-5\"\n"));
+        // 共用渠道名：Mesa 写的、ChatGPT 登录形态的都不算别家
+        assert!(!codex_other_switcher_marks(
+            "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Mesa\"\nbase_url = \"https://a\"\n"
+        ));
+        assert!(!codex_other_switcher_marks(
+            "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n"
+        ));
+        assert!(codex_other_switcher_marks(
+            "model_provider = \"custom\"\n[model_providers.custom]\nname = \"NewAPI\"\nbase_url = \"https://a\"\n"
+        ));
     }
 
     #[test]
@@ -2976,7 +3360,6 @@ trust_level = "trusted"
                     p.base_url.as_deref(),
                     p.models.first().map(String::as_str),
                     None,
-                    "ccode-probe",
                     None,
                     "sk-probe",
                 ),
