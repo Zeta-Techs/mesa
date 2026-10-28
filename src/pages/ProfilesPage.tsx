@@ -2413,7 +2413,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         { agentId },
       );
       setOfficialStatus((prev) => ({ ...prev, [agentId]: st }));
-      if (agentId === "claude-code") {
+      if (agentId === "claude-code" || agentId === "gemini") {
         // 实测在后台跑：现在先读一次，稍后再读一次拿刚测出来的
         loadOfficialAliases();
         window.setTimeout(loadOfficialAliases, 20000);

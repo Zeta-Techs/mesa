@@ -7,8 +7,10 @@
 //! `<config>/ccode/official-model-aliases.json`，CLI 升级（版本号变了）才重测一次，后台跑、约十几秒。
 //!
 //! 用处：连接页官方账号的模型列显示完整型号；能力库查询前把别名换成型号（model_registry::chain_field）。
-//! 别名名单本身在 tests/fixtures/claude-model-aliases.json，CLI 金丝雀拿 `claude --help` 核对。
-//! Gemini 的 pro / flash 没接：0.66 用 API Key + GOOGLE_GEMINI_BASE_URL 起不到本机假接口（2026-10-28 实测），保持别名原样。
+//! 别名名单在 tests/fixtures/{claude,gemini}-model-aliases.json，CLI 金丝雀核对。
+//! Gemini（同日补）：`gemini -p hi -m pro` 配 API Key + GOOGLE_GEMINI_BASE_URL 指本机，临时 GEMINI_CLI_HOME 里把认证设成
+//! API Key、加 `--skip-trust`（无头模式不信任工作目录就直接退出）；型号在请求路径 `/v1beta/models/<型号>:…` 里。
+//! 注意这是 API Key 方式下的换算，用 Google 账号登录时 CLI 可能另选（界面悬停如实说）。
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -16,11 +18,17 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const CLAUDE_ALIASES_JSON: &str = include_str!("../../tests/fixtures/claude-model-aliases.json");
+const GEMINI_ALIASES_JSON: &str = include_str!("../../tests/fixtures/gemini-model-aliases.json");
 
 type AliasTable = BTreeMap<String, BTreeMap<String, String>>;
 
-fn fixture() -> serde_json::Value {
-    serde_json::from_str(CLAUDE_ALIASES_JSON).unwrap_or_default()
+fn fixture_of(agent: &str) -> serde_json::Value {
+    let text = match agent {
+        "claude-code" => CLAUDE_ALIASES_JSON,
+        "gemini" => GEMINI_ALIASES_JSON,
+        _ => "{}",
+    };
+    serde_json::from_str(text).unwrap_or_default()
 }
 
 fn str_list(v: &serde_json::Value, key: &str) -> Vec<String> {
@@ -30,15 +38,19 @@ fn str_list(v: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Claude Code 官方账号可选的别名（第一个 default = CLI 自己的默认）
-pub(crate) fn claude_aliases() -> Vec<String> {
-    str_list(&fixture(), "aliases")
+/// 这家官方账号可选的别名（第一个 = CLI 自己的默认：Claude default、Gemini auto）
+pub(crate) fn aliases_of(agent: &str) -> Vec<String> {
+    str_list(&fixture_of(agent), "aliases")
 }
 
-/// 要实测的别名（default 随账号变，不测）
-fn claude_probed_aliases() -> Vec<String> {
-    let skip = str_list(&fixture(), "unprobed");
-    claude_aliases().into_iter().filter(|a| !skip.contains(a)).collect()
+pub(crate) fn claude_aliases() -> Vec<String> {
+    aliases_of("claude-code")
+}
+
+/// 要实测的别名（default / auto 随账号或请求变，不测）
+fn probed_aliases(agent: &str) -> Vec<String> {
+    let skip = str_list(&fixture_of(agent), "unprobed");
+    aliases_of(agent).into_iter().filter(|a| !skip.contains(a)).collect()
 }
 
 fn cache_path() -> Option<PathBuf> {
@@ -102,31 +114,41 @@ pub fn official_model_aliases() -> AliasTable {
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
-/// 查官方账号状态时顺带调用：本机 Claude Code 的版本和上次实测的不一样（或从没测过）就后台重测
-pub(crate) fn refresh_claude_in_background() {
-    if cfg!(test) || RUNNING.swap(true, Ordering::SeqCst) {
+/// 查官方账号状态时顺带调用：本机这家 CLI 的版本和上次实测的不一样（或从没测过）就后台重测。
+/// 只接 Claude Code、Gemini；同一时间只跑一个
+pub(crate) fn refresh_in_background(agent: &str) {
+    if cfg!(test) || !matches!(agent, "claude-code" | "gemini") || RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
-    std::thread::spawn(|| {
-        let _ = refresh_claude();
+    let agent = agent.to_string();
+    std::thread::spawn(move || {
+        let _ = refresh(&agent);
         RUNNING.store(false, Ordering::SeqCst);
     });
 }
 
-fn refresh_claude() -> Option<()> {
-    let bin = crate::agents::resolve_binary("claude")?;
-    let version = crate::agents::cli_version("claude-code").map(|(a, b, c)| format!("{a}.{b}.{c}"))?;
+fn probe(agent: &str, bin: &Path, aliases: &[String]) -> BTreeMap<String, String> {
+    match agent {
+        "claude-code" => probe_claude(bin, aliases),
+        "gemini" => probe_gemini(bin, aliases),
+        _ => BTreeMap::new(),
+    }
+}
+
+fn refresh(agent: &str) -> Option<()> {
+    let bin = crate::agents::resolve_binary(crate::agent_specs::agent_spec(agent)?.binary)?;
+    let version = crate::agents::cli_version(agent).map(|(a, b, c)| format!("{a}.{b}.{c}"))?;
     let cache = read_cache();
-    if cache.get("claude-code").and_then(|e| e.get("version")).and_then(|v| v.as_str()) == Some(version.as_str()) {
+    if cache.get(agent).and_then(|e| e.get("version")).and_then(|v| v.as_str()) == Some(version.as_str()) {
         return Some(());
     }
-    let aliases = probe_claude(&bin, &claude_probed_aliases());
+    let aliases = probe(agent, &bin, &probed_aliases(agent));
     if aliases.is_empty() {
         return None; // 一个都没测出来（CLI 起不来等）：不落盘，下次再试
     }
     let mut root = cache.as_object().cloned().unwrap_or_default();
     root.insert(
-        "claude-code".into(),
+        agent.into(),
         serde_json::json!({ "version": version, "aliases": aliases, "probedAt": crate::sessions::now_iso() }),
     );
     let path = cache_path()?;
@@ -215,7 +237,19 @@ fn read_model(conn: &mut impl Read) -> Option<String> {
             return None;
         }
     };
-    let head = String::from_utf8_lossy(&buf[..header_end]).to_lowercase();
+    let head_raw = String::from_utf8_lossy(&buf[..header_end]).to_string();
+    // Gemini 把型号写在路径里：POST /v1beta/models/gemini-3.1-pro-preview:streamGenerateContent
+    let from_path = head_raw
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|path| path.split("/models/").nth(1))
+        .map(|rest| rest.split([':', '?', '/']).next().unwrap_or("").to_string())
+        .filter(|m| !m.is_empty());
+    if from_path.is_some() {
+        return from_path;
+    }
+    let head = head_raw.to_lowercase();
     let len: usize = head
         .lines()
         .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
@@ -274,28 +308,87 @@ fn probe_claude(bin: &Path, aliases: &[String]) -> BTreeMap<String, String> {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        let Ok(mut child) = cmd.spawn() else { continue };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
-        loop {
-            // 收到第一条请求就够了，不等 CLI 自己退出
-            if !ep.seen.lock().map(|g| g.is_empty()).unwrap_or(true) {
-                break;
-            }
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if std::time::Instant::now() >= deadline => break,
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
-                Err(_) => break,
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        if let Some(model) = ep.take().into_iter().find(|m| !m.trim().is_empty()) {
+        if let Some(model) = run_until_first_request(&ep, &mut cmd) {
             out.insert(alias.clone(), model);
         }
     }
     let _ = std::fs::remove_dir_all(&work);
     out
+}
+
+/// 会让 Gemini 不走假接口、或改写型号的环境变量
+const GEMINI_ENV_STRIP: &[&str] = &[
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_GENAI_USE_GCA",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GEMINI_MODEL",
+];
+
+fn probe_gemini(bin: &Path, aliases: &[String]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Some(ep) = FakeEndpoint::start() else {
+        return out;
+    };
+    let work = std::env::temp_dir().join(format!("ccode-alias-probe-{}", uuid::Uuid::new_v4()));
+    let home = work.join("gemini-home");
+    let dot = home.join(".gemini");
+    // 认证设成 API Key（不碰用户 ~/.gemini 里的 Google 登录）；projects.json 空表免得它去扫目录
+    let ok = std::fs::create_dir_all(&dot).is_ok()
+        && std::fs::write(
+            dot.join("settings.json"),
+            r#"{"security":{"auth":{"selectedType":"gemini-api-key"},"folderTrust":{"enabled":false}}}"#,
+        )
+        .is_ok()
+        && std::fs::write(dot.join("projects.json"), r#"{"projects":{}}"#).is_ok();
+    if !ok {
+        return out;
+    }
+    for alias in aliases {
+        ep.take();
+        let mut cmd = crate::process::background_command(bin);
+        for k in GEMINI_ENV_STRIP {
+            cmd.env_remove(k);
+        }
+        cmd.env("GEMINI_CLI_HOME", &home)
+            .env("GEMINI_API_KEY", "mesa-alias-probe")
+            .env("GOOGLE_GEMINI_BASE_URL", format!("http://127.0.0.1:{}", ep.port))
+            .env("NO_PROXY", "127.0.0.1,localhost")
+            .env("no_proxy", "127.0.0.1,localhost")
+            .current_dir(&work)
+            .args(["-p", "hi", "-m", alias.as_str(), "--skip-trust"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Some(model) = run_until_first_request(&ep, &mut cmd) {
+            out.insert(alias.clone(), model);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    out
+}
+
+/// 起子进程、等到假接口收到第一条请求（或进程退出 / 40 秒），收掉进程，返回那条请求的型号
+fn run_until_first_request(ep: &FakeEndpoint, cmd: &mut crate::process::BackgroundCommand) -> Option<String> {
+    let mut child = cmd.spawn().ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(40);
+    loop {
+        // 收到第一条请求就够了，不等 CLI 自己退出
+        if !ep.seen.lock().map(|g| g.is_empty()).unwrap_or(true) {
+            break;
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() >= deadline => break,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    ep.take().into_iter().find(|m| !m.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -306,7 +399,10 @@ mod tests {
     fn fixture_lists_aliases_and_skips_default() {
         assert_eq!(claude_aliases().first().map(String::as_str), Some("default"));
         assert!(claude_aliases().iter().any(|a| a == "opus"));
-        assert!(!claude_probed_aliases().iter().any(|a| a == "default"));
+        assert!(!probed_aliases("claude-code").iter().any(|a| a == "default"));
+        assert_eq!(aliases_of("gemini").first().map(String::as_str), Some("auto"));
+        assert!(!probed_aliases("gemini").iter().any(|a| a == "auto"));
+        assert!(aliases_of("codex").is_empty());
     }
 
     #[test]
@@ -322,18 +418,30 @@ mod tests {
         let body = r#"{"model":"claude-opus-5-5","max_tokens":1}"#;
         let req = format!("POST /v1/messages HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}", body.len());
         assert_eq!(read_model(&mut req.as_bytes()).as_deref(), Some("claude-opus-5-5"));
+        let req = "POST /v1beta/models/gemini-3.1-pro-preview:streamGenerateContent?alt=sse HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(read_model(&mut req.as_bytes()).as_deref(), Some("gemini-3.1-pro-preview"));
+    }
+
+    fn probe_real(agent: &str, binary: &str) {
+        let bin = crate::agents::resolve_binary(binary).unwrap_or_else(|| panic!("没装 {binary}"));
+        let got = probe(agent, &bin, &probed_aliases(agent));
+        println!("{agent}: {got:?}");
+        // CLI 金丝雀也跑这条：名单里每个要测的别名都得换得出型号
+        for alias in probed_aliases(agent) {
+            assert!(got.contains_key(&alias), "{agent} {alias} 没换出型号：{got:?}");
+        }
     }
 
     /// 本机真跑：cargo test --lib model_aliases_probe_real -- --ignored --nocapture
     #[test]
     #[ignore]
     fn model_aliases_probe_real() {
-        let bin = crate::agents::resolve_binary("claude").expect("没装 claude");
-        let got = probe_claude(&bin, &claude_probed_aliases());
-        println!("{got:?}");
-        // CLI 金丝雀也跑这条：名单里每个要测的别名都得换得出型号
-        for alias in claude_probed_aliases() {
-            assert!(got.contains_key(&alias), "{alias} 没换出型号：{got:?}");
-        }
+        probe_real("claude-code", "claude");
+    }
+
+    #[test]
+    #[ignore]
+    fn model_aliases_probe_real_gemini() {
+        probe_real("gemini", "gemini");
     }
 }

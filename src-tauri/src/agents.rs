@@ -2180,7 +2180,8 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
                     .unwrap_or_default();
                 return claude_official_models(extra);
             }
-            "gemini" => return ["auto", "pro", "flash", "flash-lite"].map(String::from).to_vec(),
+            // 名单在 tests/fixtures/gemini-model-aliases.json（model_aliases.rs 实测对应型号）
+            "gemini" => return crate::model_aliases::aliases_of("gemini"),
             "qwen" => return vec!["coder-model".to_string()],
             _ => return Vec::new(),
         }
@@ -4768,10 +4769,8 @@ fn official_login_env() -> std::collections::BTreeMap<String, String> {
 pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusDto {
     let id = agent_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Claude 别名对应的完整型号：CLI 版本变了才后台重测（model_aliases.rs）
-        if id == "claude-code" {
-            crate::model_aliases::refresh_claude_in_background();
-        }
+        // 官方别名对应的完整型号（Claude、Gemini）：CLI 版本变了才后台重测（model_aliases.rs）
+        crate::model_aliases::refresh_in_background(&id);
         let mut st = official_account_status_sync(&id);
         // 已登录才读套餐：Claude Code 登出后 ~/.claude.json 里的 oauthAccount 可能还留着
         if st.connected {

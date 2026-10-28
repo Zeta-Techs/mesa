@@ -37,6 +37,7 @@
 | 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
 | Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
 | Claude 模型别名 | `claude --help` 举的别名 Mesa 都收了（名单 `tests/fixtures/claude-model-aliases.json`）；每个别名都换得出型号 | `model_aliases_probe_real` |
+| Gemini 模型别名 | `tests/fixtures/gemini-model-aliases.json` 里每个别名都换得出型号（Gemini 帮助不列别名，新增别名靠更新日志） | `model_aliases_probe_real_gemini` |
 
 跑法（仓库根目录，三平台同一个写法；`run.mjs` 会自己找能跑的 Python 3）：
 

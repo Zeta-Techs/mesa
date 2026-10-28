@@ -167,7 +167,9 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
   网关目录把模型标 stale 时从网关实测缓存删掉（`forget_relay_models`）。
 - **官方账号模型别名（2026-10-28）**：Claude 别名名单在 `tests/fixtures/claude-model-aliases.json`（Rust 与金丝雀共读），别名对应的完整型号
   **不写死**，由 `model_aliases.rs` 按本机 CLI 版本实测（本机假接口、临时 `CLAUDE_CONFIG_DIR`、不连厂商不花额度，版本变了才重测），
-  连接页显示与能力库查询都用实测结果；测不出来就显示别名、不猜。`default` 随账号变，不测。Gemini 别名起不到本机假接口，暂不接。
+  连接页显示与能力库查询都用实测结果；测不出来就显示别名、不猜。`default` 随账号变，不测。
+  Gemini 同口径（名单 `tests/fixtures/gemini-model-aliases.json`）：临时 `GEMINI_CLI_HOME` 把认证设成 API Key、带 `--skip-trust`，
+  型号取请求路径 `/v1beta/models/<型号>:…`；`auto` 是按请求路由，不测。这是 API Key 方式下的换算，Google 账号登录时 CLI 可能另选，悬停如实写。
 - Agent 通道：`request_policy_support`（supported / unsupported / unknown）。
 - 用户在该模型上存的策略（稀疏）。
 - `lastProbe`（§8）。

@@ -14,10 +14,15 @@ export function officialModelLabel(
   if (agent === "claude-code" && model === "default") {
     return { text: "CLI 默认", tip: "default：不指定模型，用 Claude Code 按你的账号选的默认模型" };
   }
+  if (agent === "gemini" && model === "auto") {
+    return { text: "CLI 默认", tip: "auto：Gemini CLI 按每次请求自动在 pro 与 flash-lite 之间挑" };
+  }
   const full = aliases[agent]?.[model];
   if (!full) return { text: model, tip: model };
+  // Gemini 是按 API Key 方式实测的，Google 账号登录时 CLI 可能另选
+  const caveat = agent === "gemini" ? "；用 Google 账号登录时 Gemini CLI 可能另选型号" : "";
   return {
     text: full,
-    tip: `${full}（启动时传简称 ${model}，由 CLI 换成当时最新的型号；本机这一版 CLI 实测）`,
+    tip: `${full}（启动时传简称 ${model}，由 CLI 换成当时最新的型号；本机这一版 CLI 实测${caveat}）`,
   };
 }

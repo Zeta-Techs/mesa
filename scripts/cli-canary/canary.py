@@ -359,6 +359,14 @@ def claude_alias_phase(adir):
     }
 
 
+def gemini_alias_phase(adir):
+    """Gemini 官方账号的模型别名（tests/fixtures/gemini-model-aliases.json）每个都换得出型号（model_aliases_probe_real_gemini）"""
+    code, text = run([cargo(), "test", "--lib", "model_aliases_probe_real_gemini", "--", "--ignored", "--nocapture"],
+                     cwd=os.path.join(ROOT, "src-tauri"), timeout=600)
+    open(os.path.join(adir, "model-aliases.log"), "w", encoding="utf-8").write(text)
+    return {"Mesa 收的模型别名都换得出型号": code == 0}
+
+
 def probe_agent(agent, gw, out, skip_screen, deps):
     adir = os.path.join(out, agent)
     os.makedirs(adir, exist_ok=True)
@@ -387,6 +395,9 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     if agent == "claude-code":
         log(f"[{agent}] 核对模型别名…")
         checks.update(claude_alias_phase(adir))
+    if agent == "gemini":
+        log(f"[{agent}] 核对模型别名…")
+        checks.update(gemini_alias_phase(adir))
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)

@@ -1,0 +1,5 @@
+{
+  "_说明": "Gemini CLI 官方账号的模型别名（Rust model_aliases.rs 与 CLI 金丝雀共读）。auto = CLI 按请求自动在 pro / flash-lite 间路由，不实测。CLI 新增 / 去掉别名时改这里",
+  "aliases": ["auto", "pro", "flash", "flash-lite"],
+  "unprobed": ["auto"]
+}

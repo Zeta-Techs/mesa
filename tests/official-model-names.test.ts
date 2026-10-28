@@ -9,6 +9,10 @@ test("实测过的别名显示完整型号，悬停说明启动传简称", () =>
   assert.equal(l.text, "claude-opus-5-5");
   assert.match(l.tip, /简称 opus/);
   assert.equal(officialModelLabel("claude-code", "default", table).text, "CLI 默认");
+  assert.equal(officialModelLabel("gemini", "auto", table).text, "CLI 默认");
+  const g = officialModelLabel("gemini", "pro", { gemini: { pro: "gemini-3.1-pro-preview" } });
+  assert.equal(g.text, "gemini-3.1-pro-preview");
+  assert.match(g.tip, /Google 账号登录时/);
 });
 
 test("没测出来的别名、完整名原样显示", () => {

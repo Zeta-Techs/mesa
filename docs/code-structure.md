@@ -1007,8 +1007,9 @@ src-tauri/src/
                              #   Windows 另拼 codex_windows_patch_note.md（只认整条 bash heredoc 的 apply_patch）
   codex_base_instructions.md # Codex 0.163 默认系统提示词原文（Apache-2.0，THIRD-PARTY 有条目），只在取不到本机原文时兜底
   codex_windows_patch_note.md # Windows 上 apply_patch 的调用口径（Mesa 自写，英文给模型看）
-  model_aliases.rs           # 官方账号模型别名 → 本机 CLI 实测的完整型号：假接口记下 claude -p --model X 请求的 model，按 CLI 版本缓存
-                             # （official-model-aliases.json），版本变了后台重测；别名名单 = tests/fixtures/claude-model-aliases.json（金丝雀共读）
+  model_aliases.rs           # 官方账号模型别名 → 本机 CLI 实测的完整型号（Claude Code、Gemini）：假接口记下 `claude -p --model X` /
+                             # `gemini -p -m X` 请求的型号，按 CLI 版本缓存（official-model-aliases.json），版本变了后台重测；
+                             # 别名名单 = tests/fixtures/{claude,gemini}-model-aliases.json（金丝雀共读）
   model_registry.rs          # 模型能力注册表（查表统一写法 model_key；逐个型号的层只认同一型号、按系列的层最长前缀；
                              # 公共库 = models.dev + LiteLLM 合并、OpenRouter 兜底，随包快照 data/model-db-snapshot.json 补缺）：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
                              # OpenRouter 风格 /models 元数据）> 公共能力库（配置页 ⋯ 下载，models.dev 优先
