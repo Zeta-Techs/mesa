@@ -27,6 +27,7 @@ import {
   Star,
   Trash2,
   Undo2,
+  Check,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { NAV_ICONS } from "../navigation-icons";
@@ -1664,10 +1665,12 @@ function OfficialStatusChip({
         onMouseEnter={show}
         onMouseLeave={hide}
         tabIndex={0}
-        className="flex cursor-default items-center gap-1 px-1 text-micro text-ok-text"
+        // 已登录：中性小胶囊 + 勾（2026-10-28 用户：绿点「官方」像连通状态，和行里「● 测试通过」撞）；
+        // 与未登录时的「官方登录」按钮同位同高，登录前后原地切换
+        className="inline-flex h-5 shrink-0 cursor-default items-center gap-1 rounded-full bg-inset px-2 text-micro text-l2"
       >
-        <span className="h-1.5 w-1.5 rounded-full bg-ok-text" />
-        官方
+        <Check size={11} strokeWidth={2.4} className="text-ok-text" aria-hidden="true" />
+        官方已登录
         {lines.length > 0 && <HoverTip tip={tip} text={lines.join("\n")} />}
       </span>
     );

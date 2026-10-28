@@ -1685,7 +1685,7 @@ Mesa 自己的对话命名（列表里「1017|功能|…」那种标题）和这
 
 **添加**：这家 Agent 还没有官方账号连接时，组头有一个 **＋ 官方账号**，点一下就加好一行「官方账号」，行首是这家的图标（Claude 的 Anthropic、Codex 的 OpenAI、Gemini、Qwen 的阿里云、Kimi、CodeBuddy 的腾讯、Grok 的 xAI）。也可以照旧在 **添加连接** 里把「账号类型」选成 **官方账号**，不用填密钥。
 
-**登录**：组头点 **官方登录**，按终端提示完成（Codex 会给设备码）。组头变成绿点「官方」即成功。Claude Code 和 Cursor 在 Mac 上把登录存在系统钥匙串里，Mesa 会问一次 `claude auth status` / `cursor-agent status`，登过的不会再让你重登；它们说没登录，那就是登录确实过期了，重登一次即可。
+**登录**：组头点 **官方登录**，按终端提示完成（Codex 会给设备码）。组头变成带勾的「官方已登录」即成功。Claude Code 和 Cursor 在 Mac 上把登录存在系统钥匙串里，Mesa 会问一次 `claude auth status` / `cursor-agent status`，登过的不会再让你重登；它们说没登录，那就是登录确实过期了，重登一次即可。
 
 **官方账号的模型**：Codex 列出你这个 ChatGPT 账号能用的模型（Codex 自己从官方拉的那份），Kimi 列出 `kimi login` 配好的模型，Cursor 列出 `cursor-agent models` 给的名单（登录后自动拉，几小时更新一次）；没选时用第一个。其余几家不列，用 CLI 自己的默认。配置文件里中转留下的模型名不会带到官方账号上：Claude 会改用自己的默认模型；Gemini、Grok 会拦下，提示点地球图标切回官方。
 
