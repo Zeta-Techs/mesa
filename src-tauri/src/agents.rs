@@ -1256,6 +1256,9 @@ pub fn launch_plan(
                             plan.env
                                 .push(("KIMI_MODEL_THINKING_EFFORT".into(), effort.to_lowercase()));
                         }
+                        plan.args.extend(kimi_env_model_args(
+                            crate::agent_specs::variant_of(spec),
+                        ));
                     }
                     if let Some(key) = &key {
                         plan.env.push(("KIMI_API_KEY".into(), key.clone()));
@@ -1727,6 +1730,18 @@ fn official_settings_blanks(
         env.insert(name.into(), serde_json::json!(m));
     }
     serde_json::json!({ "env": env }).to_string()
+}
+
+/// Kimi 新版把 KIMI_MODEL_* 合成的模型注册成这个别名，但它只当「新会话」的默认模型：
+/// `-S` 续聊按会话里存的模型别名走（2.3.3 实证：换连接后续聊仍打旧连接的 key，401）。
+/// 显式 `-m` 点名它才盖过，之后再续聊也沿用。旧版 Python CLI 没有这个别名，不加。
+const KIMI_ENV_MODEL_ALIAS: &str = "__kimi_env_model__";
+
+fn kimi_env_model_args(variant: Option<&str>) -> Vec<String> {
+    if variant == Some("legacy") {
+        return vec![];
+    }
+    vec!["-m".into(), KIMI_ENV_MODEL_ALIAS.into()]
 }
 
 /// Kimi 官方账号的模型别名：`kimi login` 在 config.toml 配好的 `managed:kimi-code` 模型（当前默认就是则用它）。
@@ -6251,7 +6266,15 @@ api_backend = "responses"
             .contains(&("KIMI_MODEL_MAX_CONTEXT_SIZE".into(), "131072".into())));
         // kimi 官方协议不注入 CAPABILITIES（CLI 默认 ["image_in","thinking"] 已合理）
         assert!(!plan.env.iter().any(|(k, _)| k == "KIMI_MODEL_CAPABILITIES"));
-        assert!(plan.args.is_empty());
+        assert_eq!(plan.args, kimi_env_model_args(kimi_variant()));
+    }
+
+    #[test]
+    fn kimi_env_channel_names_synthetic_alias_except_legacy() {
+        // 续聊（-S）按会话里存的模型走，换连接要靠 -m 点名合成别名才生效
+        assert_eq!(kimi_env_model_args(Some("new")), vec!["-m", "__kimi_env_model__"]);
+        assert_eq!(kimi_env_model_args(None), vec!["-m", "__kimi_env_model__"]);
+        assert!(kimi_env_model_args(Some("legacy")).is_empty());
     }
 
     #[test]
@@ -6336,6 +6359,8 @@ api_backend = "responses"
         let p = profile("kimi", Some("https://api.moonshot.cn/v1"));
         let plan = launch_plan(&p, Some("sk-secret".into()), None).unwrap();
         assert!(!plan.env.iter().any(|(k, _)| k.starts_with("KIMI_MODEL_")));
+        // 没有合成模型就不能点名它的别名
+        assert!(!plan.args.iter().any(|a| a == KIMI_ENV_MODEL_ALIAS));
         // 旧版组不受模型缺失影响
         assert!(plan
             .env
