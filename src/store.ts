@@ -185,6 +185,8 @@ export interface AppSettings {
   /** 「设为全局」追踪：agent id → 上次由 Mesa 写入该 agent 全局配置的 profile id
       （只代表「上次写入」，Mesa 之外手改配置文件会失真；恢复备份后由后端清除） */
   activeGlobalProfiles?: Record<string, string>;
+  /** cc-switch 提醒已确认过、一键「设为全局」不再提醒的 agent（⋯ 菜单的预览入口仍提醒） */
+  globalConflictAck?: string[];
   /** 对话页「⇗ 外部恢复」的终端应用；auto/undefined = 按优先级探测 */
   externalTerminal?: string;
   /** 精确注意力标记（agent hooks 桥接）：agent id → 开关，键缺失 = 关；

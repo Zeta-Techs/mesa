@@ -1788,6 +1788,21 @@ fn restart_note(agent: &str) -> &'static str {
     }
 }
 
+fn deferred_validation() -> crate::profile_validation::ProfileValidationDto {
+    let skip = |msg: &str| crate::profile_validation::ValidationCheckDto {
+        status: "skipped".into(),
+        message: msg.into(),
+        latency_ms: None,
+    };
+    crate::profile_validation::ProfileValidationDto {
+        ok: true,
+        checked_at: crate::sessions::now_iso(),
+        local: skip("已写入，复检稍后进行"),
+        cli: skip(""),
+        api: skip(""),
+    }
+}
+
 fn official_apply_result(files: Vec<String>, message: &str) -> GlobalApplyResultDto {
     let skip = |msg: &str| crate::profile_validation::ValidationCheckDto {
         status: "skipped".into(),
@@ -2430,7 +2445,10 @@ pub async fn apply_profile_global(
     app: tauri::AppHandle,
     store: tauri::State<'_, ProfileStore>,
     profile_id: String,
+    validate: Option<bool>,
 ) -> Result<GlobalApplyResultDto, String> {
+    // 一键切换（连接行地球图标）传 false：写完立刻返回，复检由前端随后调 validate_global_profile
+    let validate = validate.unwrap_or(true);
     let profile = profile_for_write(&store, &profile_id)?;
     if is_official(&profile) {
         let result = tauri::async_runtime::spawn_blocking(move || {
@@ -2468,8 +2486,11 @@ pub async fn apply_profile_global(
         // 写成功即记录「全局生效」追踪（settings.active_global_profiles）；后面的验证
         // 失败不影响记录——文件已真实写入，验证只是体检报告
         crate::settings::record_active_global(&profile.agent, &profile.id);
-        let validation =
-            crate::profile_validation::validate_after_global_write(&profile, key.as_deref());
+        let validation = if validate {
+            crate::profile_validation::validate_after_global_write(&profile, key.as_deref())
+        } else {
+            deferred_validation()
+        };
         Ok(GlobalApplyResultDto { files, validation })
     })
     .await
@@ -2548,6 +2569,103 @@ pub async fn gemini_use_api_key_auth(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 一键切换写完后的复检（含 CLI 读配置与网络检查，几秒到十几秒），不挡界面。
+#[tauri::command]
+pub async fn validate_global_profile(
+    store: tauri::State<'_, ProfileStore>,
+    profile_id: String,
+) -> Result<crate::profile_validation::ProfileValidationDto, String> {
+    let profile = profile_for_write(&store, &profile_id)?;
+    if is_official(&profile) {
+        return Ok(official_apply_result(Vec::new(), "已切回官方账号").validation);
+    }
+    let key = profiles::get_key_for_profile(&profile)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::profile_validation::validate_after_global_write(&profile, key.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalDriftDetailDto {
+    pub profile_id: String,
+    pub files: Vec<GlobalWriteFilePreviewDto>,
+}
+
+/// 漂移明细内核：before = Mesa 计划，after = 磁盘。API 只报 Mesa 管的键（不报磁盘多出的）。
+fn drift_files(
+    home: &Path,
+    profile: &Profile,
+    key: Option<&str>,
+) -> Result<Vec<GlobalWriteFilePreviewDto>, String> {
+    let plans = plan_writes(home, profile, key, &profile.models)?;
+    let official = is_official(profile);
+    let mut files = Vec::new();
+    for plan in &plans {
+        let live = read_existing(&plan.path)?;
+        let mesa = flatten_content(&plan.path, &plan.content);
+        let disk = live
+            .as_deref()
+            .map(|t| flatten_content(&plan.path, t))
+            .unwrap_or_default();
+        let (mut changes, _) = diff_maps(&mesa, &disk);
+        if !official {
+            changes.retain(|c| c.op != "add");
+        }
+        if changes.is_empty() {
+            continue;
+        }
+        let omitted = changes.len().saturating_sub(PREVIEW_CHANGE_CAP);
+        changes.truncate(PREVIEW_CHANGE_CAP);
+        files.push(GlobalWriteFilePreviewDto {
+            path: display_path(home, &plan.path),
+            tag: plan.tag.to_string(),
+            action: if live.is_none() { "deleted".into() } else { "modify".into() },
+            changes,
+            omitted,
+        });
+    }
+    Ok(files)
+}
+
+/// 「外部 CLI 文件已被改过」点开看：Mesa 上次写的内容（按当前连接重算）对照磁盘现状，脱敏。
+/// API 连接只报 Mesa 管的键被改 / 被删（磁盘多出用户自己的键不算改过，与漂移判定同口径）；
+/// 官方账号整份比，磁盘多出的键（比如又被写回的中转端点）也报。
+#[tauri::command]
+pub async fn global_drift_detail(
+    store: tauri::State<'_, ProfileStore>,
+    agent: String,
+) -> Result<GlobalDriftDetailDto, String> {
+    let pid = crate::settings::read_current()
+        .active_global_profiles
+        .and_then(|m| m.get(&agent).cloned())
+        .ok_or("这个 Agent 还没有由 Mesa 写过全局默认")?;
+    let profile = profile_for_write(&store, &pid)?;
+    let key = profiles::get_key_for_profile(&profile).ok().flatten();
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let files = drift_files(&home, &profile, key.as_deref())?;
+        Ok(GlobalDriftDetailDto {
+            profile_id: profile.id.clone(),
+            files,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 「保留外部改动」：不再把这份配置记成 Mesa 写的全局默认（不碰任何文件）。
+#[tauri::command]
+pub async fn forget_active_global(app: tauri::AppHandle, agent: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::settings::clear_active_global(&agent))
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = crate::tray::rebuild_and_wait(app).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2994,6 +3112,38 @@ trust_level = "trusted"
             apply_plans(&home.join("bk").join(a), &home, &plans).unwrap();
             assert!(disk_equals_plans(&off(a)), "{a}");
         }
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn drift_files_reports_mesa_keys_only_for_api() {
+        let home = tmpdir("drift-detail");
+        let p = profile("codex");
+        let key = Some("sk-secret-abcdef");
+        let plans = plan_writes(&home, &p, key, &p.models).unwrap();
+        apply_plans(&home.join("bk"), &home, &plans).unwrap();
+        assert!(drift_files(&home, &p, key).unwrap().is_empty());
+        // 外部把地址改了、又加了自己的键：只报地址，密钥不出明文
+        let cfg = home.join(".codex/config.toml");
+        let text = fs::read_to_string(&cfg).unwrap()
+            .replace("https://relay.example.com", "https://other.example.com")
+            .replace("experimental_bearer_token = \"sk-secret-abcdef\"", "experimental_bearer_token = \"sk-other-999999\"");
+        fs::write(&cfg, format!("approval_policy = \"never\"\n{text}")).unwrap();
+        let files = drift_files(&home, &p, key).unwrap();
+        let changes = &files.iter().find(|f| f.tag == "config.toml").unwrap().changes;
+        assert!(changes.iter().all(|c| c.op != "add"));
+        assert!(changes.iter().any(|c| c.path.ends_with("base_url") && c.after.as_deref().unwrap_or("").contains("other.example.com")));
+        let json = serde_json::to_string(&files).unwrap();
+        assert!(!json.contains("sk-secret-abcdef") && !json.contains("sk-other-999999"));
+        // 官方：磁盘多出的键（又被写回的中转渠道）也报
+        let mut off = profile("codex");
+        off.account_type = crate::profiles::AccountType::Official;
+        let plans = plan_writes(&home, &off, None, &[]).unwrap();
+        apply_plans(&home.join("bk2"), &home, &plans).unwrap();
+        let text = fs::read_to_string(&cfg).unwrap();
+        fs::write(&cfg, format!("model_catalog_json = \"/x.json\"\n{text}")).unwrap();
+        let files = drift_files(&home, &off, None).unwrap();
+        assert!(files[0].changes.iter().any(|c| c.op == "add" && c.path == "model_catalog_json"));
         fs::remove_dir_all(&home).ok();
     }
 

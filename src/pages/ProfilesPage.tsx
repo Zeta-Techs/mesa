@@ -92,6 +92,7 @@ import type {
   BindingInput,
   ComboSurfaceDto,
   GlobalDriftDto,
+  GlobalDriftDetailDto,
   ImportV2Result,
   GlobalApplyResultDto,
   GlobalWritePreviewDto,
@@ -1569,7 +1570,7 @@ const displayHost = endpointHost;
  *  官方账号行与数据行共用同一模板，保证上下行严格垂直对齐；
  *  操作列 170px 刚好容纳「两枚 hover 图标钮 + 编辑 + ⋯」，再宽会在中等窗口把行撑出横向滚动 */
 const PROFILE_GRID =
-  "grid-cols-[minmax(150px,1.1fr)_minmax(140px,0.9fr)_minmax(150px,1fr)_110px_170px]";
+  "grid-cols-[minmax(150px,1.1fr)_minmax(140px,0.9fr)_minmax(150px,1fr)_110px_220px]";
 
 /** 状态列配色：纯状态 = 中性字 + 语义色小圆点；例外（缺/失败）字也着色，扫一眼就能挑出来 */
 const STATUS_TONE: Record<ProfileStatusTone, { text: string; dot: string | null }> = {
@@ -1949,6 +1950,99 @@ function officialGlobalIsPatch(agent: string): boolean {
   return OFFICIAL_GLOBAL_AGENTS.has(agent);
 }
 
+/** 「外部 CLI 文件已被改过」明细：逐项写 Mesa 写的 → 现在磁盘上的（密钥已脱敏）。
+ *  三个去向：按 Mesa 重写一遍 / 保留外部改动（不再记成 Mesa 的全局默认）/ 关掉 */
+function GlobalDriftDialog({
+  agentLabel,
+  profile,
+  detail,
+  error,
+  busy,
+  onClose,
+  onRewrite,
+  onKeep,
+}: {
+  agentLabel: string;
+  profile: Profile;
+  detail: GlobalDriftDetailDto | null;
+  error: string | null;
+  busy: boolean;
+  onClose: () => void;
+  onRewrite: () => void;
+  onKeep: () => void;
+}) {
+  const opText = (op: string) => (op === "remove" ? "被删掉了" : op === "add" ? "多出来" : "被改了");
+  return (
+    <Modal
+      open
+      title={`外部改过的地方 · ${agentLabel}`}
+      description={`对照 Mesa 上次写入的「${profile.accountType === "official" ? "官方账号" : profile.name}」，看磁盘上现在哪里不一样（密钥已脱敏）。`}
+      onClose={onClose}
+      size="lg"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className={secondaryActionClass}>
+            关闭
+          </button>
+          <button
+            type="button"
+            disabled={busy || !detail}
+            onClick={onKeep}
+            title="文件不动；Mesa 不再把这份配置记成自己写的全局默认，这条提醒也随之消失"
+            className={secondaryActionClass}
+          >
+            保留外部改动
+          </button>
+          <button
+            type="button"
+            disabled={busy || !detail}
+            onClick={onRewrite}
+            className="inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text transition-[filter] hover:brightness-110 disabled:opacity-50"
+          >
+            按 Mesa 重写
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3 px-4 py-3 text-xs leading-5">
+        {!detail && !error && <p className="text-l3">◌ 正在对照磁盘…</p>}
+        {error && <InlineNotice tone="err">{error}</InlineNotice>}
+        {detail && detail.files.length === 0 && (
+          <p className="text-l3">现在和 Mesa 写的一致了，可能刚被改回来。</p>
+        )}
+        {detail?.files.map((file) => (
+          <div key={file.path}>
+            <p className="font-medium text-l2">
+              {file.path}
+              {file.action === "deleted" && <span className="ml-2 text-warn-text">整个文件不见了</span>}
+            </p>
+            <ul className="mt-1 divide-y divide-hairline rounded-md border border-hairline">
+              {file.changes.map((c) => (
+                <li key={`${c.op}:${c.path}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-2.5 py-1.5">
+                  <span className="break-all font-mono text-micro text-l2">{c.path}</span>
+                  <span className="text-micro text-warn-text">{opText(c.op)}</span>
+                  <span className="col-span-2 break-all font-mono text-micro text-l3">
+                    {c.op === "add" ? (
+                      <>现在：{c.after}</>
+                    ) : c.op === "remove" ? (
+                      <>Mesa 写的：{c.before}</>
+                    ) : (
+                      <>
+                        Mesa 写的：{c.before} <span className="text-l4">→</span> 现在：{c.after}
+                      </>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {file.omitted > 0 && <p className="mt-1 text-micro text-l4">另有 {file.omitted} 项未列出</p>}
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 /** 「设为全局默认」确认前的脱敏预览：文件、字段增删改、此入口带不上的策略、是否要重开。 */
 function GlobalWritePreviewDialog({
   profile,
@@ -2171,8 +2265,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     agentId: string;
   } | null>(null);
 
-  // 各 profile 用量（按模型近似归属；模型跨 profile 共享时会重复计入）
+  // 外部 CLI 文件被改过（漂移）：连接变化、全局写入后、回到本页时重查
+  const [driftTick, setDriftTick] = useState(0);
+  const activeGlobalMap = useAppStore((st) => st.settings?.activeGlobalProfiles);
   useEffect(() => {
+    if (!visible) return;
     const agents = [...new Set(profiles.map((p) => p.agent))];
     let cancelled = false;
     Promise.all(
@@ -2192,7 +2289,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [profiles]);
+  }, [profiles, visible, driftTick, activeGlobalMap]);
 
   // 悬浮卡（用量 / 连接冲突）：Escape / 任意滚动即关闭（同 ContextMenu；滚动关闭也避免与锚点脱离）
   useEffect(() => {
@@ -2731,6 +2828,114 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         applied: null,
         error: String(e),
       });
+    }
+  }
+
+  /** 一键「设为全局」（连接行地球图标，2026-10-28 用户：每次写都弹预览和进度两个框太麻烦）：
+   *  不弹预览、不弹进度，写完一条提示带「撤销」；复检在后台跑，没通过再提示。
+   *  cc-switch 提醒每个 Agent 只问一次（globalConflictAck）；要看改什么走 ⋯ 里的「写入 CLI 全局默认…」 */
+  const [globalBusy, setGlobalBusy] = useState<string | null>(null);
+  async function quickApplyGlobal(p: Profile, opts?: { undoOf?: boolean }) {
+    if (globalBusy || applyDialog || writePreview) return;
+    const agent = p.agent;
+    if (
+      !opts?.undoOf &&
+      p.accountType === "official" &&
+      officialStatus[agent]?.supported &&
+      !officialStatus[agent]?.connected &&
+      !(await confirmDialog(
+        `${labelOf(agent)} 还没登录官方账号。切过去后外部终端和客户端会要求先登录。仍要切回官方？`,
+      ))
+    )
+      return;
+    const acked = settings?.globalConflictAck ?? [];
+    if (!acked.includes(agent)) {
+      const conflict = await invoke<string | null>("set_global_conflict", { agent }).catch(() => null);
+      if (conflict) {
+        const ok = await confirmDialog(
+          `${conflict}\n\n确认后，在连接页点地球图标或在托盘里切换 ${labelOf(agent)} 不再问这一句；⋯ 里的「写入 CLI 全局默认…」仍会先给你看要改什么。`,
+          { confirmText: "切换，以后不再问" },
+        );
+        if (!ok) return;
+        await updateSettings({ globalConflictAck: [...new Set([...acked, agent])] });
+      }
+    }
+    const prevId = settings?.activeGlobalProfiles?.[agent] ?? null;
+    const prev = prevId && prevId !== p.id ? (profiles.find((x) => x.id === prevId) ?? null) : null;
+    setGlobalBusy(p.id);
+    try {
+      await invoke<GlobalApplyResultDto>("apply_profile_global", { profileId: p.id, validate: false });
+      await refreshGlobalBackups();
+      await loadSettings();
+      setDriftTick((t) => t + 1);
+      setError(null);
+      const name = p.accountType === "official" ? "官方账号" : `「${p.name}」`;
+      toast(
+        `外部 ${labelOf(agent)} 已切到${name}${agent === "codex" ? "；Codex 客户端重启后生效" : "，新开的会话生效"}`,
+        "success",
+        opts?.undoOf
+          ? undefined
+          : { actions: [{ label: "撤销", onClick: () => void undoQuickGlobal(agent, prev) }] },
+      );
+      void invoke<ProfileValidationDto>("validate_global_profile", { profileId: p.id })
+        .then((v) => {
+          mirrorValidation(p, v);
+          rememberValidation(p.id, v);
+          if (!v.ok)
+            toast(`${name}已写入，但复检没通过`, "warning", {
+              actions: [{ label: "查看", onClick: () => setValidationDialog({ profile: p, result: v, running: false }) }],
+            });
+        })
+        .catch(() => {});
+    } catch (e) {
+      toast(`切换失败：${String(e)}`, "error");
+    } finally {
+      setGlobalBusy(null);
+    }
+  }
+
+  /** 撤销一键切换：之前有 Mesa 写的全局连接就切回它（连「全局使用中」一起回来），没有就撤销上次写入 */
+  async function undoQuickGlobal(agent: string, prev: Profile | null) {
+    if (prev) {
+      await quickApplyGlobal(prev, { undoOf: true });
+      return;
+    }
+    try {
+      await invoke<string[]>("restore_global_backup", { agent });
+      await refreshGlobalBackups();
+      await loadSettings();
+      setDriftTick((t) => t + 1);
+      toast(`已撤销 ${labelOf(agent)} 的全局写入`, "success");
+    } catch (e) {
+      toast(`撤销失败：${String(e)}`, "error");
+    }
+  }
+
+  /** 「外部 CLI 文件已被改过」点开：Mesa 写的 vs 磁盘现在的 */
+  const [driftView, setDriftView] = useState<{
+    agent: string;
+    profile: Profile;
+    detail: GlobalDriftDetailDto | null;
+    error: string | null;
+  } | null>(null);
+  async function openDriftView(p: Profile) {
+    setDriftView({ agent: p.agent, profile: p, detail: null, error: null });
+    try {
+      const detail = await invoke<GlobalDriftDetailDto>("global_drift_detail", { agent: p.agent });
+      setDriftView({ agent: p.agent, profile: p, detail, error: null });
+    } catch (e) {
+      setDriftView({ agent: p.agent, profile: p, detail: null, error: String(e) });
+    }
+  }
+  async function keepExternalChanges(agent: string) {
+    try {
+      await invoke("forget_active_global", { agent });
+      await loadSettings();
+      setDriftTick((t) => t + 1);
+      setDriftView(null);
+      toast(`${labelOf(agent)} 的外部改动已保留，Mesa 不再把它记成全局默认`, "success");
+    } catch (e) {
+      toast(String(e), "error");
     }
   }
 
@@ -3570,22 +3775,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             text: string;
                             tip: string;
                             cls?: string;
+                            onClick?: () => void;
                           }[] = [];
                           if (profile.lastUsedAt)
                             caption.push({
                               text: `上次使用 ${relTime(profile.lastUsedAt)}`,
                               tip: `上次使用 ${absTime(profile.lastUsedAt)}`,
                             });
-                          if (isGlobal) {
-                            const drift = driftByAgent[profile.agent];
-                            const drifted = drift?.status === "drifted";
-                            if (drifted) {
-                              caption.push({
-                                text: "外部 CLI 文件已被改过",
-                                tip: `磁盘与 Mesa 写入不一致：${(drift?.files ?? []).join("、") || "配置文件"}。可用「写入 CLI 全局默认」以 Mesa 为准重写，或「撤销上次写入」。`,
-                                cls: "text-warn-text",
-                              });
-                            }
+                          const drifted = isGlobal && driftByAgent[profile.agent]?.status === "drifted";
+                          if (drifted) {
+                            caption.push({
+                              text: "外部 CLI 文件已被改过 · 查看",
+                              tip: `磁盘与 Mesa 写入不一致：${(driftByAgent[profile.agent]?.files ?? []).join("、") || "配置文件"}。点开看改了哪里，可按 Mesa 重写或保留外部改动`,
+                              cls: "text-warn-text",
+                              onClick: () => void openDriftView(profile),
+                            });
                           }
                           const status = profileStatusCell(profile);
                           const imageOnly =
@@ -3602,7 +3806,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           return (
                           <li
                             key={profile.id}
-                            className={`group grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm transition-colors hover:bg-hover/60`}
+                            className={`group grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm transition-colors ${
+                              // 全局使用中的那条：整行淡强调底 + 左缘强调短条（同侧栏选中口径），照 cc-switch「使用中」
+                              isGlobal
+                                ? "bg-[color-mix(in_oklab,var(--color-cta)_8%,transparent)] shadow-[inset_2px_0_0_var(--color-cta)]"
+                                : "hover:bg-hover/60"
+                            }`}
                           >
                             <span className="flex min-w-0 items-center gap-2">
                               <VendorIcon
@@ -3630,9 +3839,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 {isDefault && (
                                   <StatusPill tone="accent" tip="Mesa 启动栏预选这份连接。只改启动栏，不写外部 CLI 文件。">默认</StatusPill>
                                 )}
-                                {isGlobal && (
-                                  <StatusPill tone="muted" tip="最近一次由 Mesa 写入该 CLI 的全局默认。外部终端会读到这份配置。">全局生效</StatusPill>
-                                )}
                                 {profileIssues[profile.id] ? (
                                   <StatusPill tone="err" tip={profileIssues[profile.id].reason}>配置失效</StatusPill>
                                 ) : hidden ? (
@@ -3643,10 +3849,23 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               {caption.length > 0 && (
                                 <span className="mt-0.5 block break-words text-micro text-l3">
                                   {caption.map((c, i) => (
-                                    <span key={`${c.text}-${i}`} title={c.tip} className={c.cls}>
+                                    <Fragment key={`${c.text}-${i}`}>
                                       {i > 0 ? " · " : ""}
-                                      {c.text}
-                                    </span>
+                                      {c.onClick ? (
+                                        <button
+                                          type="button"
+                                          title={c.tip}
+                                          onClick={c.onClick}
+                                          className={`${c.cls ?? ""} underline-offset-2 hover:underline`}
+                                        >
+                                          {c.text}
+                                        </button>
+                                      ) : (
+                                        <span title={c.tip} className={c.cls}>
+                                          {c.text}
+                                        </span>
+                                      )}
+                                    </Fragment>
                                   ))}
                                 </span>
                               )}
@@ -3828,28 +4047,44 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
-                              {canQuickGlobal(profile) && (
+                              {isGlobal ? (
                                 <button
                                   type="button"
-                                  onClick={() => void onApplyGlobal(profile)}
+                                  onClick={() => (drifted ? void openDriftView(profile) : undefined)}
                                   title={
-                                    isGlobal
-                                      ? `当前全局默认：外部 ${labelOf(profile.agent)} 用的就是这条。点一下按 Mesa 重新写一遍（先预览）`
-                                      : profile.accountType === "official"
-                                        ? `设为全局默认：把外部 ${labelOf(profile.agent)} 切回官方账号（先预览、确认后写入）`
-                                        : `设为全局默认：把外部 ${labelOf(profile.agent)} 切到这条连接（先预览、确认后写入）`
+                                    drifted
+                                      ? "Mesa 写进去之后，外部又改过这份配置。点开看改了哪里"
+                                      : `外部 ${labelOf(profile.agent)}（系统终端${profile.agent === "codex" ? "、Codex 客户端" : ""}）现在用这条。要改回 Mesa 写的样子或撤销，在 ⋯ 里`
                                   }
-                                  aria-label={`${isGlobal ? "当前全局默认" : "设为全局默认"}：${profile.name}`}
-                                  aria-pressed={isGlobal}
-                                  className={`flex h-7 w-7 items-center justify-center rounded-sm ${
-                                    isGlobal
-                                      ? "bg-cta-pill text-cta-pill-text hover:brightness-110"
-                                      : `text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`
+                                  className={`mr-1 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs ${
+                                    drifted ? "text-warn-text hover:bg-hover" : "cursor-default text-l1"
                                   }`}
                                 >
-                                  <Globe size={14} strokeWidth={isGlobal ? 2.2 : 1.8} aria-hidden="true" />
+                                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${drifted ? "bg-warn-text" : "bg-cta"}`} />
+                                  {drifted ? "外部改过" : "全局使用中"}
                                 </button>
-                              )}
+                              ) : canQuickGlobal(profile) ? (
+                                <button
+                                  type="button"
+                                  disabled={globalBusy !== null}
+                                  onClick={() => void quickApplyGlobal(profile)}
+                                  title={
+                                    profile.accountType === "official"
+                                      ? `设为全局：把外部 ${labelOf(profile.agent)} 切回官方账号（直接写，提示里可撤销）`
+                                      : `设为全局：把外部 ${labelOf(profile.agent)} 切到这条连接（直接写，提示里可撤销）`
+                                  }
+                                  aria-label={`设为全局：${profile.name}`}
+                                  className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50 ${
+                                    globalBusy === profile.id ? "" : hoverRevealClass
+                                  }`}
+                                >
+                                  {globalBusy === profile.id ? (
+                                    <RefreshCw size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                                  ) : (
+                                    <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
+                                  )}
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 onClick={() => setModal({ initial: profile })}
@@ -4196,6 +4431,22 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             title: t.reason,
             onSelect: () => void onCopyToAgent(copyMenu.profile, t.id),
           }))}
+        />
+      )}
+      {driftView && (
+        <GlobalDriftDialog
+          agentLabel={labelOf(driftView.agent)}
+          profile={driftView.profile}
+          detail={driftView.detail}
+          error={driftView.error}
+          busy={globalBusy !== null}
+          onClose={() => setDriftView(null)}
+          onKeep={() => void keepExternalChanges(driftView.agent)}
+          onRewrite={() => {
+            const target = profiles.find((x) => x.id === driftView.detail?.profileId) ?? driftView.profile;
+            setDriftView(null);
+            void quickApplyGlobal(target, { undoOf: true });
+          }}
         />
       )}
       {validationDialog && (

@@ -116,7 +116,10 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
             continue;
         }
         let set_global_ok = matches!(spec.set_global, crate::agent_specs::SetGlobalCap::Supported);
-        let conflict = set_global_ok && global_config::set_global_conflict_message(agent).is_some();
+        // 已在连接页确认过「以后不再提醒」的 Agent 托盘直接写，不再挂挡路首行
+        let conflict = set_global_ok
+            && global_config::set_global_conflict_message(agent).is_some()
+            && !crate::settings::global_conflict_acked(agent);
         let recorded = active.get(agent).cloned();
         let drift = global_config::drift_status(&store, agent);
         let drifted = drift.status == "drifted";
@@ -282,6 +285,7 @@ fn handle_menu(app: &AppHandle, id: &str) {
             if (p.account_type != AccountType::Official
                 || global_config::official_global_is_patch(&p.agent))
                 && global_config::set_global_conflict_message(&p.agent).is_some()
+                && !crate::settings::global_conflict_acked(&p.agent)
             {
                 // 托盘不替人过二次确认：不写盘，转到连接页弹确认。
                 // 重绘把 macOS 点击自带的勾选翻转撤回来
@@ -298,7 +302,9 @@ fn handle_menu(app: &AppHandle, id: &str) {
                 return;
             }
         }
-        let result = global_config::apply_profile_global(app.clone(), store, bind_id).await;
+        // 托盘不展示复检结果，写完即返回
+        let result =
+            global_config::apply_profile_global(app.clone(), store, bind_id, Some(false)).await;
         // 成功或失败都重绘：失败时勾选态不能停在错误项上
         let _ = crate::tray::rebuild_and_wait(app.clone()).await;
         if let Err(e) = result {

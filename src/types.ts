@@ -392,6 +392,12 @@ export interface GlobalWriteFilePreviewDto {
   omitted: number;
 }
 
+/** 「外部 CLI 文件已被改过」明细：before = Mesa 写的，after = 磁盘现在的（已脱敏） */
+export interface GlobalDriftDetailDto {
+  profileId: string;
+  files: GlobalWriteFilePreviewDto[];
+}
+
 export interface GlobalWritePreviewDto {
   files: GlobalWriteFilePreviewDto[];
   skippedPolicies: string[];

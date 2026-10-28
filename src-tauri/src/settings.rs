@@ -344,6 +344,9 @@ pub struct AppSettingsDto {
     /// 在 Mesa 之外手改配置文件会失真，UI 文案照此口径（「全局生效」徽标 title 已注明）。
     /// 由 record_active_global/clear_active_global 维护，不走 update_settings patch
     pub active_global_profiles: Option<BTreeMap<String, String>>,
+    /// 「设为全局」的 cc-switch 提醒已确认过、以后一键切换不再提醒的 agent（2026-10-28 用户：每次写都弹太麻烦）。
+    /// 只管一键切换（连接行地球图标、托盘）；⋯ 菜单里的「写入 CLI 全局默认…」仍先预览并照常提醒
+    pub global_conflict_ack: Option<Vec<String>>,
     /// 会话页「⇗ 外部恢复」使用的终端应用（KNOWN_EXTERNAL_TERMINALS）；None/auto = 自动探测
     pub external_terminal: Option<String>,
     /// 精确注意力标记（agent hooks 桥接）：agent id → 开关。键缺失 = 关。
@@ -930,6 +933,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         hidden_profiles: s.hidden_profiles,
         // 后端维护的「设为全局」追踪：原样透传，不做默认值填充
         active_global_profiles: s.active_global_profiles,
+        global_conflict_ack: s.global_conflict_ack,
         external_terminal: Some({
             let v = s.external_terminal.as_deref().unwrap_or("auto");
             if KNOWN_EXTERNAL_TERMINALS.contains(&v) {
@@ -1113,6 +1117,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.hidden_profiles.is_some() {
         cur.hidden_profiles = patch.hidden_profiles;
+    }
+    if patch.global_conflict_ack.is_some() {
+        cur.global_conflict_ack = patch.global_conflict_ack;
     }
     if patch.default_profiles.is_some() {
         cur.default_profiles = patch.default_profiles;
@@ -1306,6 +1313,13 @@ pub(crate) fn rewrite_profile_refs(rewrites: &[(String, String)]) -> Result<(), 
 }
 
 // ===== 「设为全局」追踪（active_global_profiles；见字段注释的口径说明） =====
+
+/// 这个 agent 的 cc-switch 提醒是否已确认过（一键切换不再提醒）
+pub(crate) fn global_conflict_acked(agent: &str) -> bool {
+    read_current()
+        .global_conflict_ack
+        .is_some_and(|list| list.iter().any(|a| a == agent))
+}
 
 /// 记录/清除的共用内核（测试可注入路径）：Some(id) 记录或覆盖，None 清除；空 map 归一 None
 fn set_active_global_at(path: &Path, agent: &str, profile_id: Option<&str>) -> Result<(), String> {
