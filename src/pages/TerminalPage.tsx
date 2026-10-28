@@ -81,9 +81,9 @@ import {
   messageKey,
   pendingAfterTurn,
   placePendingUsers,
+  sentUserRecorded,
   slashCommandRecorded,
   slashSettledLocally,
-  userTextRecorded,
 } from "../chat-handoff";
 import { recordChatHandoff } from "../chat-handoff-log";
 import { useCliNewer } from "../cli-verified";
@@ -4674,17 +4674,9 @@ const TerminalView = memo(function TerminalView({
       const pendingUsers = pendingReplyRef.current
         ? pendingUsersRef.current
         : [];
+      // 包含 + 宽松比对（残留草稿、CLI 吞掉 emoji），只认发送之后落盘的记录（再发一遍说过的话不算已落盘，见 sentUserRecorded）
       const isRecorded = (pu: ChatMessageDto) =>
-        slashCommandRecorded(pu, parsedMessages) ||
-        parsedMessages.some(
-          (message) =>
-            message.role === "user" &&
-            // 包含 + 宽松比对（残留草稿、CLI 吞掉 emoji，见 userTextRecorded）；重复发同一文本时旧记录会先命中，
-            // 清除仍受下方 hasNewAssistantText（必须出现新回复正文）双闸门约束
-            message.blocks.some(
-              (block) => block.kind === "text" && userTextRecorded(pu.blocks[0]?.text ?? "", block.text),
-            ),
-        );
+        slashCommandRecorded(pu, parsedMessages) || sentUserRecorded(pu, parsedMessages);
       // 只画在终端里的斜杠命令（Codex /status…）：本机处理完就留成「命令 + 结果」记录，不再挡着等回复
       if (localRecordsRef.current.file !== ctx.filePath) {
         localRecordsRef.current = { file: ctx.filePath, records: [] };

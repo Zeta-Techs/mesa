@@ -237,6 +237,26 @@ function looseText(text: string): string {
 }
 
 /**
+ * 刚发出的这条（乐观气泡）会话文件记下了没有：只认发送之后落盘的用户记录。原先整页比对，对话里早先说过同一句
+ * （再发一遍「你好」）就当已落盘，气泡下一次刷新就被摘掉，等真记下了才又冒出来（2026-10-28 用户：「第一句话被吞」）。
+ * 宽限 2 秒给按秒取整的时间戳；任一边没有时间戳就照旧整页比对
+ */
+export function sentUserRecorded(
+  sent: ChatMessageDto,
+  parsed: readonly ChatMessageDto[],
+  slackMs = 2000,
+): boolean {
+  const text = sent.blocks[0]?.text ?? "";
+  const sentAt = Date.parse(sent.timestamp ?? "");
+  return parsed.some((message) => {
+    if (message.role !== "user") return false;
+    const at = Date.parse(message.timestamp ?? "");
+    if (Number.isFinite(sentAt) && Number.isFinite(at) && at < sentAt - slackMs) return false;
+    return message.blocks.some((block) => block.kind === "text" && userTextRecorded(text, block.text));
+  });
+}
+
+/**
  * 旁路报来一轮结束：这一轮开始前发出的话 CLI 已经收下（非排队的在开始后 2 秒内发出也算——发送回执可能晚于回合开始事件），
  * 剩下的才接着等。不靠比原文：原文对不上时（见 userTextRecorded）聊天层原先一直等。
  * 排队的（上一轮还在跑时发的）必须早于这一轮开始，否则是等下一轮的

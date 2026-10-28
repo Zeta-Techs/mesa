@@ -19,6 +19,7 @@ import {
   slidOutOfWindow,
   modelSwitchCommand,
   pendingAfterTurn,
+  sentUserRecorded,
   slashCommandRecorded,
   slashSettledLocally,
   slashHandoff,
@@ -244,6 +245,27 @@ test("发出的话落没落盘：残留草稿包含即算；Windows 上 Codex �
   // 整句只有 emoji：去完什么都不剩，只认原文
   assert.equal(userTextRecorded("\u{1F600}", "随便一句"), false);
   assert.equal(userTextRecorded("\u{1F600}", "\u{1F600}"), true);
+});
+
+test("刚发的话只认发送之后的落盘：再发一遍说过的「你好」不算已记下", () => {
+  const user = (text: string, timestamp: string | null): ChatMessageDto => ({
+    role: "user",
+    blocks: [{ kind: "text", text, toolName: null }],
+    timestamp,
+    usage: null,
+  });
+  // 2026-10-28 Codex 实录：05:03:03 说过「你好」，05:03:58 再发一遍，05:03:59 才落盘
+  const sent = user("你好", "2026-10-28T05:03:58.200Z");
+  const earlier = [user("你好", "2026-10-28T05:03:03.953Z"), user("1", "2026-10-28T05:03:08.648Z")];
+  assert.equal(sentUserRecorded(sent, earlier), false);
+  assert.equal(sentUserRecorded(sent, [...earlier, user("你好", "2026-10-28T05:03:59.296Z")]), true);
+  // 按秒取整的时间戳落在发送前一点点：宽限内照样算
+  assert.equal(sentUserRecorded(sent, [user("你好", "2026-10-28T05:03:58Z")]), true);
+  // 没有时间戳的来源照旧整页比对
+  assert.equal(sentUserRecorded(sent, [user("你好", null)]), true);
+  assert.equal(sentUserRecorded({ ...sent, timestamp: null }, earlier), true);
+  // 回复不算
+  assert.equal(sentUserRecorded(sent, [{ ...user("你好", "2026-10-28T05:04:00Z"), role: "assistant" }]), false);
 });
 
 test("旁路回合结束：开始前发出的话算已收下；排队的必须早于这一轮开始", () => {
