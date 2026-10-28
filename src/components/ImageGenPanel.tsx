@@ -246,9 +246,6 @@ export default function ImageGenPanel({
           <FoldMark open={!collapsed} boxed />
         </button>
         <h2 className="text-sm font-medium text-l1">出图模型</h2>
-        <span className="rounded-full bg-inset px-1.5 py-0.5 text-micro text-l3" title="各网关目录里能直接出图的模型">
-          {items.length}
-        </span>
         <span className="min-w-0 truncate text-micro text-l3">Agent 画图用，和上面的对话模型分开配</span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {pendingAgents.length > 0 && skill && (

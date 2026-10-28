@@ -3688,9 +3688,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             const det = agents.find((a) => a.id === agent.id);
             const list = sortedProfilesOf(agent.id).filter(matchProfile);
             const listIds = list.map((p) => p.id);
-            const connectionCount = profiles.filter(
-              (p) => p.agent === agent.id,
-            ).length;
             const isCollapsed = collapsedGroups.has(agent.id);
             const groupDrag = dragSortStyle("groups", agent.id, groupIndex);
             // 分组卡片化（v3.93 用户拍板）：field 细边 + strip 底色卡片给每个 agent 明确边界，
@@ -3751,9 +3748,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   >
                     {agent.label}
                   </h2>
-                  <span className="rounded-full bg-inset px-1.5 py-0.5 text-micro text-l3">
-                    {connectionCount}
-                  </span>
+                  {/* 组头不写连接数（2026-10-28 用户拍板去掉）：展开就看得见，常驻只添噪 */}
                   {/* 连接冲突提升为组头琥珀胶囊（v3.93）：CLI 自读文件里的残留密钥会覆盖官方账号
                       登录并产生计费——藏在大段灰字里会被忽略；点击弹层列出具体文件/变量 */}
                   {(officialStatus[agent.id]?.conflicts.length ?? 0) > 0 &&
