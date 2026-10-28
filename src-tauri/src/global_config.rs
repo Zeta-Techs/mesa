@@ -691,7 +691,47 @@ fn patch_codex_config(
     } else {
         doc.remove("model_reasoning_effort");
     }
+    // 与启动注入同口径（agents::codex_relay_compat_args）：中转不支持官方托管的网页搜索，带着就被拒
+    doc["web_search"] = value("disabled");
+    // /review、子 agent、记忆整理另外点名的模型：设过的改成这次的模型（同启动 codex_relay_model_args）
+    if let Some(m) = model.filter(|s| !s.is_empty()) {
+        for path in agents::CODEX_SIDE_MODEL_KEYS {
+            set_toml_path_if_present(&mut doc, path, m);
+        }
+    }
     Ok(doc.to_string())
+}
+
+/// 键路径上已有字符串值时改成 `value`；没有就不建
+fn set_toml_path_if_present(doc: &mut toml_edit::DocumentMut, path: &[&str], value: &str) {
+    let (last, parents) = path.split_last().expect("非空路径");
+    let mut cur: &mut toml_edit::Item = doc.as_item_mut();
+    for seg in parents {
+        match cur.get_mut(*seg) {
+            Some(next) => cur = next,
+            None => return,
+        }
+    }
+    if cur.get(*last).and_then(|v| v.as_str()).is_some() {
+        cur[*last] = toml_edit::value(value);
+    }
+}
+
+/// 键路径上的字符串值满足条件时删掉
+fn remove_toml_path_if(doc: &mut toml_edit::DocumentMut, path: &[&str], pred: impl Fn(&str) -> bool) {
+    let (last, parents) = path.split_last().expect("非空路径");
+    let mut cur: &mut toml_edit::Item = doc.as_item_mut();
+    for seg in parents {
+        match cur.get_mut(*seg) {
+            Some(next) => cur = next,
+            None => return,
+        }
+    }
+    if cur.get(*last).and_then(|v| v.as_str()).is_some_and(&pred) {
+        if let Some(t) = cur.as_table_like_mut() {
+            t.remove(last);
+        }
+    }
 }
 
 /// Codex 官方账号「设为全局」：撤掉 `model_provider`（回落内置 openai，认证交给 auth.json 的 ChatGPT 登录）、
@@ -703,6 +743,12 @@ fn patch_codex_config_official(existing: Option<&str>) -> Result<String, String>
     let mut doc = parse_toml_doc(existing)?;
     doc.remove("model_provider");
     doc.remove("model_catalog_json");
+    // openai_base_url 会把内置 openai 渠道改道到别的地址；web_search 是中转时 Mesa 关的，官方恢复默认
+    doc.remove("openai_base_url");
+    remove_toml_path_if(&mut doc, &["web_search"], |v| v == "disabled");
+    for path in agents::CODEX_SIDE_MODEL_KEYS {
+        remove_toml_path_if(&mut doc, path, |m| !agents::official_model_allowed("codex", m));
+    }
     let foreign = doc
         .get("model")
         .and_then(|v| v.as_str())
@@ -2946,6 +2992,13 @@ mod tests {
         assert!(doc.get("model_catalog_json").is_none());
         assert!(doc.get("model_reasoning_effort").is_none());
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["web_search"].as_str(), Some("disabled"));
+        // 设过的 /review、子 agent 模型改成这次的模型，没设的不建
+        let out = patch_codex_config(Some("review_model = \"gpt-6-sol\"\n[agents]\nmax_threads = 4\n"), Some("https://r/v1"), Some("m1"), None, None, "sk").unwrap();
+        let d: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(d["review_model"].as_str(), Some("m1"));
+        assert!(d["agents"].get("default_subagent_model").is_none());
+        assert_eq!(d["agents"]["max_threads"].as_integer(), Some(4));
     }
 
     #[test]
@@ -3108,6 +3161,10 @@ trust_level = "trusted"
         let doc: toml::Value = toml::from_str(&out).unwrap();
         // 回落内置 openai；共用渠道块原样留着，中转跑过的老对话照旧走原连接
         assert!(doc.get("model_provider").is_none());
+        let side = patch_codex_config_official(Some("openai_base_url = \"https://x\"\nweb_search = \"disabled\"\nreview_model = \"deepseek-v4\"\n[agents]\ndefault_subagent_model = \"gpt-6-luna\"\n")).unwrap();
+        let sd: toml::Value = toml::from_str(&side).unwrap();
+        assert!(sd.get("openai_base_url").is_none() && sd.get("web_search").is_none() && sd.get("review_model").is_none());
+        assert_eq!(sd["agents"]["default_subagent_model"].as_str(), Some("gpt-6-luna"), "官方模型名留着");
         let blk = &doc["model_providers"]["custom"];
         assert_eq!(blk["name"].as_str(), Some("Mesa"));
         assert_eq!(blk["base_url"].as_str(), Some("https://relay.example.com/v1"));

@@ -1219,6 +1219,9 @@ pub fn launch_plan(
                     if let Some(model) = model {
                         plan.args.push("-m".into());
                         plan.args.push(model.into());
+                        if profile.base_url.is_some() {
+                            plan.args.extend(codex_relay_model_args(codex_user_config_for_launch().as_ref(), model));
+                        }
                         // Override stale user-level Codex context limits for this session.
                         // The catalog and auto-compact threshold must follow the selected
                         // model, not whichever model was last used globally.
@@ -2778,6 +2781,43 @@ fn codex_relay_compat_args() -> Vec<String> {
         r#"plugins.codex-app-tools@openai-bundled.enabled=false"#.into(),
     ]);
     args
+}
+
+/// Codex 里另外点名模型的几处（`/review`、子 agent、记忆整理）：磁盘上常是官方模型名，走中转时照发就报模型不存在
+/// （0.164 二进制里都有这几个键；cc-switch 把它们算作连接键）。全局写入与启动同一张表
+pub(crate) const CODEX_SIDE_MODEL_KEYS: &[&[&str]] = &[
+    &["review_model"],
+    &["agents", "default_subagent_model"],
+    &["memories", "extract_model"],
+    &["memories", "consolidation_model"],
+];
+
+/// 中转启动：磁盘设过上面几处的，本进程改成这次的模型（-c 只盖本进程；没设的不加，让 Codex 自己继承主模型）
+fn codex_relay_model_args(cfg: Option<&toml::Value>, model: &str) -> Vec<String> {
+    let Some(cfg) = cfg else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for path in CODEX_SIDE_MODEL_KEYS {
+        let mut cur = Some(cfg);
+        for seg in *path {
+            cur = cur.and_then(|v| v.get(*seg));
+        }
+        if cur.and_then(|v| v.as_str()).is_some_and(|m| m != model) {
+            out.push("-c".into());
+            out.push(format!(r#"{}="{}""#, path.join("."), model.replace('"', "")));
+        }
+    }
+    out
+}
+
+fn codex_user_config_for_launch() -> Option<toml::Value> {
+    #[cfg(test)]
+    {
+        return tests::TEST_CODEX_CONFIG.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    crate::agent_specs::codex_user_config()
 }
 
 /// Codex 内联 provider 的 -c 定义参数（启动注入与外部恢复命令同一出处）。
@@ -4780,6 +4820,8 @@ mod tests {
     }
 
     thread_local! {
+        pub(super) static TEST_CODEX_CONFIG: std::cell::RefCell<Option<toml::Value>> =
+            const { std::cell::RefCell::new(None) };
         pub(super) static TEST_CLAUDE_TOP_KEYS: std::cell::RefCell<Vec<String>> =
             const { std::cell::RefCell::new(Vec::new()) };
         pub(super) static TEST_CLAUDE_TOP_MODEL: std::cell::RefCell<Option<String>> =
@@ -6012,6 +6054,18 @@ api_backend = "responses"
         // API Key 模式没有 id_token
         assert_eq!(codex_plan(&serde_json::json!({ "OPENAI_API_KEY": "sk-x" })), None);
         assert_eq!(codex_plan(&serde_json::json!({ "tokens": { "id_token": "garbage" } })), None);
+    }
+
+    #[test]
+    fn codex_relay_launch_points_side_models_at_this_model() {
+        let cfg: toml::Value = toml::from_str("review_model = \"gpt-6-sol\"\n[agents]\ndefault_subagent_model = \"gpt-6-luna\"\n[memories]\nextract_model = \"m1\"\n").unwrap();
+        let args = codex_relay_model_args(Some(&cfg), "m1");
+        assert_eq!(args, vec!["-c", "review_model=\"m1\"", "-c", "agents.default_subagent_model=\"m1\""]);
+        assert!(codex_relay_model_args(None, "m1").is_empty());
+        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = Some(cfg));
+        let plan = launch_plan(&profile("codex", Some("https://relay.example.com/v1")), Some("sk".into()), Some("deepseek-v4")).unwrap();
+        assert!(plan.args.iter().any(|a| a == "review_model=\"deepseek-v4\""));
+        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = None);
     }
 
     #[test]
