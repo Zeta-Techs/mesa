@@ -4681,17 +4681,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             { separator: true },
             {
               icon: Database,
-              label: modelDbBusy
-                ? "正在下载模型能力库…"
+              // 名字固定、现况放行尾小字（2026-10-28 用户截图：长括号把菜单撑满、日期被截断）
+              label: modelDbBusy ? "正在更新模型能力库…" : "更新模型能力库",
+              hint: modelDbBusy
+                ? undefined
                 : modelDb?.downloaded
-                  ? `更新模型能力库（${modelDb.models} 个${
-                      modelDb.downloadedAt
-                        ? ` · ${modelDb.downloadedAt.slice(0, 10)}`
-                        : ""
-                    }）`
-                  : `更新模型能力库（现用随包 ${modelDb?.bundledModels ?? 0} 个${
-                      modelDb?.bundledAt ? ` · ${modelDb.bundledAt.slice(0, 10)}` : ""
-                    }）`,
+                  ? `${modelDb.models} 个${modelDb.downloadedAt ? ` · ${modelDb.downloadedAt.slice(5, 10)}` : ""}`
+                  : `随包 ${modelDb?.bundledModels ?? 0} 个${
+                      modelDb?.bundledAt ? ` · ${modelDb.bundledAt.slice(5, 10)}` : ""
+                    }`,
               disabled: modelDbBusy,
               title:
                 "各家模型的上下文、输出上限、看图、思考与官方定价的公共数据（models.dev 与 LiteLLM 合并，都连不上才用 OpenRouter；直连不通走设置里的出网代理）。启动时没下过或超过 14 天会自己更新，没下成时用安装包里带的那份。统计页费用估算随之更新（定价优先级：自定义定价 > 本库 > 内置价目）。点「获取模型」时也会沉淀该网关实测数据。",
