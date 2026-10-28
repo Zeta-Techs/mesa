@@ -1672,7 +1672,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
           {nowRows.length > 0 ? (
             groupCards.length > 0 || quietCards.length > 0 ? (
-              <div className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline" data-workbench-queue="">
+              // 每个项目单独一张卡（2026-10-28 用户：「每个项目单独一个卡片 不要挤在一块」）
+              <div className="flex flex-col gap-2.5" data-workbench-queue="">
                 {groupCards.map((card) => {
                   const item = nowRows.find((row) => samePath(row.path, card.path, IS_WINDOWS)) ?? null;
                   const said = lastSaidFor(card.path);
@@ -1762,7 +1763,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 })}
                 {quietCards.length > 0 && (
                   <p
-                    className={`flex flex-wrap items-baseline gap-x-1.5 gap-y-1 px-4 py-2.5 text-xs text-l3 ${groupCards.length ? "border-t border-hairline" : ""}`}
+                    className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 px-4 py-1.5 text-xs text-l3"
                   >
                     <span>
                       {cardFilter === "active" ? "其他" : "另有"} {quietCards.length} 个项目没有进行中的事：

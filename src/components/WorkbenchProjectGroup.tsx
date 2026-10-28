@@ -112,7 +112,7 @@ export default function WorkbenchProjectGroup({
   // 进度写在几个数里（「进行到 第 1 / 5 步」）：项目头不再挂进度条——下面的步骤序号圈已经说了走到哪（2026-10-27 用户：进度条突兀）
   const vitals = card.vitals;
   return (
-    <section className="border-t border-hairline first:border-t-0" aria-label={card.name}>
+    <section className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline" aria-label={card.name}>
       <div className="ccode-workbench-project-head group flex min-w-0 flex-wrap items-center gap-2">
         <button
           type="button"
