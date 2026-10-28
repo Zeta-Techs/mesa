@@ -938,8 +938,6 @@ interface AppState {
   hideSessionsWhileDeleting: (keys: readonly string[]) => () => void;
   saveProfile: (id: string | null, input: ProfileInput) => Promise<void>;
   removeProfile: (id: string) => Promise<void>;
-  /** 连接页「设为默认」：只换启动默认模型（set_profile_default_model），刷新连接列表 */
-  setProfileDefaultModel: (id: string, model: string) => Promise<void>;
   duplicateProfile: (id: string) => Promise<void>;
   loadGateways: () => Promise<void>;
   /** 保存网关，返回保存后的网关（含 id），供「保存后立即绑定」链路使用 */
@@ -1438,13 +1436,6 @@ export const useAppStore = create<AppState>((set, get) => {
     } else {
       await invoke("create_profile", { input });
     }
-    const profiles = await invoke<Profile[]>("list_profiles");
-    set({ profiles });
-    invoke("rebuild_tray").catch(() => {});
-  },
-
-  setProfileDefaultModel: async (id, model) => {
-    await invoke("set_profile_default_model", { id, model });
     const profiles = await invoke<Profile[]>("list_profiles");
     set({ profiles });
     invoke("rebuild_tray").catch(() => {});

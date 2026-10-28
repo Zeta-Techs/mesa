@@ -5266,7 +5266,6 @@ mod gateway_usage_tests {
             role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
-            default_model: None,
         }
     }
 

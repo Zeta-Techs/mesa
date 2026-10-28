@@ -28,7 +28,6 @@ import {
   Trash2,
   Undo2,
   Check,
-  ChevronDown,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { NAV_ICONS } from "../navigation-icons";
@@ -72,7 +71,6 @@ import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
-import ProfileModelPanel from "../components/ProfileModelPanel";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import {
@@ -2399,23 +2397,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     setConflictPop(null);
   }
 
-  // 连接行模型列表展开（「+N ▾」）与「设为默认」进行中
-  const [modelsOpen, setModelsOpen] = useState<Set<string>>(() => new Set());
-  const [settingDefault, setSettingDefault] = useState<{ id: string; model: string } | null>(null);
-  const setProfileDefaultModel = useAppStore((s) => s.setProfileDefaultModel);
-  async function setDefaultModel(profile: Profile, model: string) {
-    if (settingDefault) return;
-    setSettingDefault({ id: profile.id, model });
-    try {
-      await setProfileDefaultModel(profile.id, model);
-      toast(`「${profile.name}」新开对话默认用 ${model}`, "success");
-    } catch (e) {
-      toast(`没设成：${String(e)}`, "warning");
-    } finally {
-      setSettingDefault(null);
-    }
-  }
-
   // 官方账号别名 → 本机 CLI 实测的完整型号（后端查 Claude 状态时按版本后台重测，十几秒内落盘）
   const [officialAliases, setOfficialAliases] = useState<OfficialAliasTable>({});
   function loadOfficialAliases() {
@@ -4163,7 +4144,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             style={rowDrag.style}
                             // 组内排序：行上空白处按住上下拖（按钮、链接照常点）；键盘走行尾 ⋯ 的上移 / 下移
                             onPointerDown={(e) => {
-                              if ((e.target as HTMLElement).closest("button, a, input, select, textarea, [data-no-row-drag]")) return;
+                              if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
                               startDragSort(e, agent.id, profile.id, "[data-profile-list]", "data-profile-row", (from, to) =>
                                 commitProfileMove(agent.id, listIds, from, to),
                               );
@@ -4270,58 +4251,56 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   ? displayHost(profile.baseUrl)
                                   : "默认端点"}
                             </span>
-                            {/* 模型列（2026-10-28 用户拍板）：只写启动用的那个，其余折成「+N ▾」点开在行下展开列表
-                                （看能力、换启动默认）；添加 / 删除 / 排序统一去编辑。原先平铺前 3 个，列窄时从字中间截断 */}
-                            <span className="flex min-w-0 items-center gap-1.5">
+                            {/* 模型列轻量化：mono micro 纯文字（不套底色块），前 3 个平铺，其余折叠为 +N；
+                                列宽装不下时 overflow 裁切，悬浮 title 始终给全文 */}
+                            <span
+                              className="flex min-w-0 items-center gap-1.5 overflow-hidden"
+                              title={
+                                profile.models.length > 0
+                                  ? profile.models
+                                      .map((m) =>
+                                        profile.accountType === "official" ? officialModelLabel(profile.agent, m, officialAliases).text : m,
+                                      )
+                                      .join(" · ")
+                                  : undefined
+                              }
+                            >
                               {profile.models.length > 0 ? (
                                 <>
-                                  {(() => {
-                                    const m = profile.models[0];
+                                  {profile.models.slice(0, 3).map((m, i) => {
                                     // 官方账号的别名（Claude opus 等）显示成当前对应的完整型号，悬停说明启动传的仍是别名
                                     const label =
                                       profile.accountType === "official"
                                         ? officialModelLabel(profile.agent, m, officialAliases)
                                         : { text: m, tip: m };
                                     return (
-                                      <span
-                                        className={`min-w-0 truncate font-mono text-micro ${
-                                          goneModels.includes(m) ? "text-warn-text line-through" : "text-l2"
-                                        }`}
-                                        title={
-                                          goneModels.includes(m)
-                                            ? `${m}：已不在网关的模型目录里，点「编辑」去掉或换一个`
-                                            : `${label.tip}（启动默认）`
-                                        }
-                                      >
-                                        {label.text}
-                                      </span>
-                                    );
-                                  })()}
-                                  {profile.models.length > 1 && (
-                                    <button
-                                      type="button"
-                                      aria-expanded={modelsOpen.has(profile.id)}
-                                      onClick={() =>
-                                        setModelsOpen((cur) => {
-                                          const next = new Set(cur);
-                                          if (next.has(profile.id)) next.delete(profile.id);
-                                          else next.add(profile.id);
-                                          return next;
-                                        })
-                                      }
-                                      title={`还有 ${profile.models.length - 1} 个模型，点开看全部、换启动默认`}
-                                      className={`flex shrink-0 items-center gap-0.5 rounded-md px-1 font-mono text-micro hover:bg-hover hover:text-l1 ${
-                                        goneModels.some((g) => g !== profile.models[0]) ? "text-warn-text" : "text-l3"
+                                    // 首个模型是启动默认：字色提一档、悬停说明，其余是会话里可切的
+                                    // （其余用 l3 不用 l4：l4 在卡底上不到 4.5:1，是装饰档不是阅读档）
+                                    <span
+                                      key={m}
+                                      className={`shrink-0 font-mono text-micro ${
+                                        goneModels.includes(m)
+                                          ? "text-warn-text line-through"
+                                          : i === 0
+                                            ? "text-l2"
+                                            : "text-l3"
                                       }`}
+                                      title={
+                                        goneModels.includes(m)
+                                          ? `${m}：已不在网关的模型目录里，点「编辑」去掉或换一个`
+                                          : i === 0
+                                            ? `${label.tip}（启动默认）`
+                                            : label.tip
+                                      }
                                     >
-                                      +{profile.models.length - 1}
-                                      <ChevronDown
-                                        size={11}
-                                        strokeWidth={2}
-                                        aria-hidden="true"
-                                        className={`transition-transform ${modelsOpen.has(profile.id) ? "rotate-180" : ""}`}
-                                      />
-                                    </button>
+                                      {label.text}
+                                    </span>
+                                    );
+                                  })}
+                                  {profile.models.length > 3 && (
+                                    <span className="shrink-0 font-mono text-micro text-l3">
+                                      +{profile.models.length - 3}
+                                    </span>
                                   )}
                                 </>
                               ) : (
@@ -4330,10 +4309,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   title={
                                     profile.accountType === "official"
                                       ? "这家 CLI 没有可读的官方模型名单，启动时用它自己的默认模型；要换在 CLI 里用 /model"
-                                      : "没指定模型，启动时用 CLI 自己的默认模型"
+                                      : undefined
                                   }
                                 >
-                                  {profile.accountType === "official" ? "CLI 默认模型" : "默认模型"}
+                                  {profile.accountType === "official" ? "CLI 默认模型" : "未指定模型"}
                                 </span>
                               )}
                             </span>
@@ -4553,19 +4532,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 ⋯
                               </button>
                             </span>
-                            {modelsOpen.has(profile.id) && profile.models.length > 1 && (
-                              <ProfileModelPanel
-                                agent={profile.agent}
-                                official={profile.accountType === "official"}
-                                models={profile.models}
-                                gatewayId={profile.gatewayId ?? null}
-                                gone={goneModels}
-                                aliases={officialAliases}
-                                busy={settingDefault?.id === profile.id ? settingDefault.model : null}
-                                onSetDefault={(m) => void setDefaultModel(profile, m)}
-                                onEdit={() => setModal({ initial: profile })}
-                              />
-                            )}
                           </li>
                           );
                         })}
