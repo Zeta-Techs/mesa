@@ -5249,6 +5249,7 @@ mod gateway_usage_tests {
             last_probe: vec![],
             slot_probes: vec![],
             revision: String::new(),
+            compat: Default::default(),
         }
     }
 

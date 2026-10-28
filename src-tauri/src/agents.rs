@@ -895,8 +895,21 @@ fn claude_settings_override(
             env.insert("ANTHROPIC_AUTH_TOKEN".into(), serde_json::json!(secret));
         }
     }
-    for (k, v) in claude_model_env(profile, model, &claude_user_settings_env_keys(profile)) {
+    let user_keys = claude_user_settings_env_keys(profile);
+    for (k, v) in claude_model_env(profile, model, &user_keys) {
         env.insert(k, serde_json::json!(v));
+    }
+    // 网关兼容选项：开着的写进覆盖层（磁盘 settings 盖过进程 env）；没开、磁盘却留着别家的开关时写空串
+    for (k, v) in claude_compat_env(&profile.request_policy.compat) {
+        match v {
+            Some(v) => {
+                env.insert(k.into(), serde_json::json!(v));
+            }
+            None if user_keys.iter().any(|u| u == k) && k != "API_TIMEOUT_MS" => {
+                env.insert(k.into(), serde_json::json!(""));
+            }
+            None => {}
+        }
     }
     let body = serde_json::json!({ "env": env }).to_string();
     write_settings_overlay_file("claude-settings", &body)
@@ -1001,6 +1014,15 @@ fn finalize_settings_overlay(plan: &mut LaunchPlan, profile: &Profile) -> Result
         _ => {}
     }
     Ok(())
+}
+
+/// 网关兼容选项 → Claude Code 的 env：(键, 开着时的值)。超时没设时不动用户自己的（它也可能是用户的全局偏好）
+pub(crate) fn claude_compat_env(c: &crate::profiles::GatewayCompat) -> [(&'static str, Option<String>); 3] {
+    [
+        ("API_TIMEOUT_MS", c.timeout_secs.map(|s| (u64::from(s) * 1000).to_string())),
+        ("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", c.no_experimental_betas.then(|| "1".to_string())),
+        ("CLAUDE_CODE_DISABLE_THINKING", c.no_thinking.then(|| "1".to_string())),
+    ]
 }
 
 /// `--settings` 覆盖文件：含密钥载体，必须 0600 落盘（与 write_external_wrapper 同口径），用完定时清掉
@@ -1233,6 +1255,14 @@ pub fn launch_plan(
                     if let Some(url) = &profile.base_url {
                         plan.args
                             .extend(codex_inline_provider_args(url, key_env, &pid));
+                        // 网关兼容选项：请求超时 → 渠道的 stream_idle_timeout_ms（0.164 二进制里有）
+                        if let Some(secs) = profile.request_policy.compat.timeout_secs {
+                            plan.args.push("-c".into());
+                            plan.args.push(format!(
+                                "model_providers.{pid}.stream_idle_timeout_ms={}",
+                                u64::from(secs) * 1000
+                            ));
+                        }
                         // 中转不支持 ChatGPT 订阅档和官方 hosted 网页搜索；-c 只盖本进程
                         plan.args.extend(codex_relay_compat_args());
                     }
@@ -6267,6 +6297,40 @@ api_backend = "responses"
         let cache = serde_json::json!({ "payload": payload.to_string() });
         assert_eq!(grok_plan(&cache).as_deref(), Some("SuperGrok"));
         assert_eq!(grok_plan(&serde_json::json!({ "payload": "{}" })), None);
+    }
+
+    #[test]
+    fn codex_relay_launch_points_side_models_at_this_model() {
+        let cfg: toml::Value = toml::from_str("review_model = \"gpt-6-sol\"\n[agents]\ndefault_subagent_model = \"gpt-6-luna\"\n[memories]\nextract_model = \"m1\"\n").unwrap();
+        let args = codex_relay_model_args(Some(&cfg), "m1");
+        assert_eq!(args, vec!["-c", "review_model=\"m1\"", "-c", "agents.default_subagent_model=\"m1\""]);
+        assert!(codex_relay_model_args(None, "m1").is_empty());
+        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = Some(cfg));
+        let plan = launch_plan(&profile("codex", Some("https://relay.example.com/v1")), Some("sk".into()), Some("deepseek-v4")).unwrap();
+        assert!(plan.args.iter().any(|a| a == "review_model=\"deepseek-v4\""));
+        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = None);
+    }
+
+    #[test]
+    fn gateway_compat_reaches_claude_overlay_and_codex_provider() {
+        let mut p = profile("claude-code", Some("https://gw.example.com"));
+        p.request_policy.compat = crate::profiles::GatewayCompat {
+            timeout_secs: Some(600),
+            no_experimental_betas: true,
+            no_thinking: false,
+        };
+        tests::TEST_CLAUDE_USER_KEYS.with(|k| *k.borrow_mut() = vec!["CLAUDE_CODE_DISABLE_THINKING".into()]);
+        let plan = launch_plan(&p, Some("sk".into()), Some("m1")).unwrap();
+        let path = &plan.args[plan.args.iter().position(|a| a == "--settings").unwrap() + 1];
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(v["env"]["API_TIMEOUT_MS"], "600000");
+        assert_eq!(v["env"]["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
+        assert_eq!(v["env"]["CLAUDE_CODE_DISABLE_THINKING"], "", "上一家留下的开关写空");
+        tests::TEST_CLAUDE_USER_KEYS.with(|k| k.borrow_mut().clear());
+        let mut c = profile("codex", Some("https://relay.example.com/v1"));
+        c.request_policy.compat.timeout_secs = Some(300);
+        let plan = launch_plan(&c, Some("sk".into()), Some("m1")).unwrap();
+        assert!(plan.args.iter().any(|a| a.ends_with(".stream_idle_timeout_ms=300000")));
     }
 
     #[test]

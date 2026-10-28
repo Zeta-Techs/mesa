@@ -527,6 +527,7 @@ mod tests {
             } else {
                 vec![]
             },
+            compat: Default::default(),
         }
     }
 

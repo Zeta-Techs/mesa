@@ -340,6 +340,36 @@ fn patch_claude_settings(
     to_pretty(&v)
 }
 
+/// 网关兼容选项写进 Claude settings.json：开着的写；没开的两个开关撤掉（属于上一家中转），超时没设不动
+fn patch_claude_compat(content: &str, compat: &crate::profiles::GatewayCompat) -> Result<String, String> {
+    let mut v = parse_json_doc(Some(content))?;
+    let env = ensure_obj(&mut v, &["env"])?;
+    for (k, val) in agents::claude_compat_env(compat) {
+        match val {
+            Some(val) => {
+                env.insert(k.into(), json!(val));
+            }
+            None if k != "API_TIMEOUT_MS" => {
+                env.remove(k);
+            }
+            None => {}
+        }
+    }
+    to_pretty(&v)
+}
+
+/// 网关兼容选项写进 Codex 共用渠道块：请求超时 → stream_idle_timeout_ms（块是整块重建的，没设就没有）
+fn patch_codex_compat(content: &str, compat: &crate::profiles::GatewayCompat) -> Result<String, String> {
+    let Some(secs) = compat.timeout_secs else {
+        return Ok(content.to_string());
+    };
+    let mut doc = parse_toml_doc(Some(content))?;
+    let providers = sub_table(doc.as_item_mut(), "model_providers")?;
+    let blk = sub_table(providers, CODEX_GLOBAL_PROVIDER)?;
+    blk["stream_idle_timeout_ms"] = toml_edit::value(i64::from(secs) * 1000);
+    Ok(doc.to_string())
+}
+
 /// patch_claude_settings 自己管的 env 键（写或按需清）：其余连接键属于别家
 fn mesa_claude_env_keys() -> std::collections::HashSet<String> {
     let mut keys: std::collections::HashSet<String> = [
@@ -1517,6 +1547,7 @@ fn plan_writes(
                 profile.gateway_id.as_deref(),
                 profile.request_policy.reasoning_effort.as_deref(),
             )?;
+            let content = patch_claude_compat(&content, &profile.request_policy.compat)?;
             push("settings.json", path, content);
         }
         "codex" => {
@@ -1545,6 +1576,7 @@ fn plan_writes(
                 profile.request_policy.reasoning_effort.as_deref(),
                 key,
             )?;
+            let content = patch_codex_compat(&content, &profile.request_policy.compat)?;
             push("config.toml", path, content);
             // 密钥在 provider 块内 experimental_bearer_token；不写 auth.json，
             // 也不写 http_headers（ChatGPT 自带 Codex 不认这个字段）
@@ -3120,6 +3152,21 @@ mod tests {
             doc["model_catalog_json"].as_str(),
             Some("/cfg/ccode/catalogs/codex-p1.json")
         );
+    }
+
+    #[test]
+    fn gateway_compat_written_on_global_and_cleared_when_off() {
+        let on = crate::profiles::GatewayCompat { timeout_secs: Some(600), no_experimental_betas: true, no_thinking: true };
+        let v: Value = serde_json::from_str(&patch_claude_compat(r#"{"env":{"API_TIMEOUT_MS":"1"}}"#, &on).unwrap()).unwrap();
+        assert_eq!(v["env"]["API_TIMEOUT_MS"], "600000");
+        assert_eq!(v["env"]["CLAUDE_CODE_DISABLE_THINKING"], "1");
+        let off = crate::profiles::GatewayCompat::default();
+        let v: Value = serde_json::from_str(&patch_claude_compat(&v.to_string(), &off).unwrap()).unwrap();
+        assert!(v["env"].get("CLAUDE_CODE_DISABLE_THINKING").is_none() && v["env"].get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS").is_none());
+        assert_eq!(v["env"]["API_TIMEOUT_MS"], "600000", "超时没设不动");
+        let out = patch_codex_compat("model_provider = \"custom\"\n[model_providers.custom]\nname = \"Mesa\"\n", &on).unwrap();
+        let d: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(d["model_providers"]["custom"]["stream_idle_timeout_ms"].as_integer(), Some(600000));
     }
 
     #[test]

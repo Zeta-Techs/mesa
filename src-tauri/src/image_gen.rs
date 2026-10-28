@@ -1286,6 +1286,7 @@ mod tests {
             revision: String::new(),
             wallet_user_id: None,
             wallet_key_hint: None,
+            compat: Default::default(),
         }
     }
 

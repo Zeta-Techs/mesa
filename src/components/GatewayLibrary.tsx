@@ -291,6 +291,10 @@ export default function GatewayLibrary({
   const [walletToken, setWalletToken] = useState("");
   const [walletUserId, setWalletUserId] = useState("");
   const [headerText, setHeaderText] = useState("");
+  // 兼容选项（2026-10-28）：超时文本框留字符串，保存时再转数字
+  const [compatTimeout, setCompatTimeout] = useState("");
+  const [compatNoBetas, setCompatNoBetas] = useState(false);
+  const [compatNoThinking, setCompatNoThinking] = useState(false);
   const [models, setModels] = useState<GatewayModel[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [comboByModel, setComboByModel] = useState<Record<string, ComboSurfaceDto>>({});
@@ -383,6 +387,9 @@ export default function GatewayLibrary({
       setWalletToken("");
       setWalletUserId("");
       setHeaderText("");
+      setCompatTimeout("");
+      setCompatNoBetas(false);
+      setCompatNoThinking(false);
       setModels([]);
       setShowSlots(false);
       return;
@@ -414,6 +421,9 @@ export default function GatewayLibrary({
         .map(([k, v]) => `${k}=${v}`)
         .join("\n"),
     );
+    setCompatTimeout(g.compat?.timeoutSecs ? String(g.compat.timeoutSecs) : "");
+    setCompatNoBetas(!!g.compat?.noExperimentalBetas);
+    setCompatNoThinking(!!g.compat?.noThinking);
     setModels(g.models.map((m) => ({ ...m })));
   }
 
@@ -606,6 +616,14 @@ export default function GatewayLibrary({
         cursor: effectiveSlotUrl(slots, "cursor", masterUrl) || null,
       },
       headerEnv,
+      compat: {
+        timeoutSecs: (() => {
+          const n = Math.round(Number(compatTimeout.trim()));
+          return Number.isFinite(n) && n > 0 ? Math.min(n, 3600) : null;
+        })(),
+        noExperimentalBetas: compatNoBetas,
+        noThinking: compatNoThinking,
+      },
       models,
       apiKey: apiKey.trim() || null,
       clearKey: editing !== "new" && editing !== null && noAuth && !apiKey.trim(),
@@ -1253,17 +1271,47 @@ export default function GatewayLibrary({
                 onClick={() => setShowAdvanced((v) => !v)}
               >
                 <FoldMark open={showAdvanced} />
-                <span className="flex-1">Header</span>
+                <span className="flex-1">Header 与兼容选项</span>
+                {(compatTimeout.trim() || compatNoBetas || compatNoThinking) && !showAdvanced && (
+                  <span className="text-micro text-l4">已开兼容选项</span>
+                )}
               </button>
               {showAdvanced && (
-                <label className="block pt-1 text-sm text-l2">
-                  名=环境变量名，每行一条
-                  <textarea
-                    className={`${fieldClass} mt-1 h-20 w-full font-mono text-xs`}
-                    value={headerText}
-                    onChange={(e) => setHeaderText(e.target.value)}
-                  />
-                </label>
+                <div className="space-y-2 pt-1 text-sm text-l2">
+                  <label className="block">
+                    Header：名=环境变量名，每行一条
+                    <textarea
+                      className={`${fieldClass} mt-1 h-20 w-full font-mono text-xs`}
+                      value={headerText}
+                      onChange={(e) => setHeaderText(e.target.value)}
+                    />
+                  </label>
+                  {/* 兼容选项：这家中转的毛病跟着网关走，绑到它的 Agent 启动和「设为全局」都会带上 */}
+                  <p className="text-micro text-l3">兼容选项：这家中转有下面的毛病时再开，绑到它的连接启动和设为全局都会带上</p>
+                  <label className="flex items-center gap-2">
+                    <span className="w-28 shrink-0">请求超时</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={3600}
+                      placeholder="默认"
+                      className={`${fieldClass} w-24`}
+                      value={compatTimeout}
+                      onChange={(e) => setCompatTimeout(e.target.value)}
+                    />
+                    <span className="text-micro text-l3">秒。中转慢、长思考常超时时调大（Claude Code、Codex）</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={compatNoBetas} onChange={(e) => setCompatNoBetas(e.target.checked)} />
+                    <span>不发实验性请求头</span>
+                    <span className="text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={compatNoThinking} onChange={(e) => setCompatNoThinking(e.target.checked)} />
+                    <span>不发思考参数</span>
+                    <span className="text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
+                  </label>
+                </div>
               )}
             </div>
             {editing !== "new" && (

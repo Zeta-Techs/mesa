@@ -1166,6 +1166,7 @@ pub async fn probe_gateway_slot(
             wallet_key_hint: None,
             slots: crate::profiles::ProtocolSlots::default(),
             header_env: Default::default(),
+            compat: Default::default(),
             models: Vec::new(),
             catalog_fetched_at: None,
             catalog_from_slot: None,
@@ -1955,6 +1956,7 @@ mod tests {
                 ..Default::default()
             },
             header_env: Default::default(),
+            compat: Default::default(),
             models: Vec::new(),
             catalog_fetched_at: None,
             catalog_from_slot: None,

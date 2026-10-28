@@ -166,11 +166,12 @@ pub fn gateway_content_revision(gateway: &Gateway) -> String {
         .collect();
     models.sort();
     let raw = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}",
         gateway.name,
         gateway.no_auth,
         serde_json::to_string(&gateway.slots).unwrap_or_default(),
         serde_json::to_string(&gateway.header_env).unwrap_or_default(),
+        serde_json::to_string(&gateway.compat).unwrap_or_default(),
         gateway.key_hint.as_deref().unwrap_or(""),
         models.join(";"),
         gateway.wallet_user_id.as_deref().unwrap_or(""),
@@ -437,6 +438,11 @@ pub fn materialize(
     selected_model: Option<&str>,
 ) -> Profile {
     let official = binding.kind == BindingKind::Official;
+    let compat = if official {
+        Default::default()
+    } else {
+        gateway.map(|g| g.compat.clone()).unwrap_or_default()
+    };
     let (name, no_auth, key_hint, has_key, header_env, slot_url, slot_missing, models_policy) =
         if official {
             (
@@ -498,6 +504,7 @@ pub fn materialize(
 
     let mut request_policy = RequestPolicy {
         header_env,
+        compat,
         ..Default::default()
     };
     if let Some(m) = models_policy {
@@ -904,6 +911,7 @@ pub fn migrate_from_profiles(
                 last_probe: Vec::new(),
                 slot_probes: Vec::new(),
                 revision: String::new(),
+                compat: Default::default(),
             });
         }
     }
@@ -1025,6 +1033,7 @@ mod tests {
             last_probe: Vec::new(),
             slot_probes: Vec::new(),
             revision: String::new(),
+            compat: Default::default(),
         };
         apply_fetched_catalog(&mut gw, "anthropic", &["an-2".into()], "t");
         let by_id: HashMap<_, _> = gw
@@ -1268,6 +1277,7 @@ mod tests {
             last_probe: vec![],
             slot_probes: vec![],
             revision: String::new(),
+            compat: Default::default(),
         }];
         let mut bindings = vec![Binding {
             id: "new".into(),
@@ -1327,6 +1337,7 @@ mod tests {
             last_probe: vec![],
             slot_probes: vec![],
             revision: String::new(),
+            compat: Default::default(),
         }];
         let mut bindings = vec![Binding {
             id: "work".into(),
@@ -1396,6 +1407,7 @@ mod tests {
             last_probe: Vec::new(),
             slot_probes: Vec::new(),
             revision: String::new(),
+            compat: Default::default(),
         };
         let b = Binding {
             id: "b".into(),
@@ -1450,6 +1462,7 @@ mod tests {
             last_probe: Vec::new(),
             slot_probes: Vec::new(),
             revision: String::new(),
+            compat: Default::default(),
         };
         let mk = |agent: &str| Binding {
             id: format!("b-{agent}"),
@@ -1522,6 +1535,7 @@ mod tests {
             last_probe: Vec::new(),
             slot_probes: Vec::new(),
             revision: String::new(),
+            compat: Default::default(),
         };
         let b = Binding {
             id: "b".into(),
@@ -1652,6 +1666,7 @@ mod tests {
             ],
             slot_probes: vec![],
             revision: String::new(),
+            compat: Default::default(),
         };
         assert_eq!(
             probe_field_status(&gw, Slot::Anthropic, "effort", Some("model-a")),
@@ -1724,6 +1739,7 @@ mod tests {
             }],
             slot_probes: vec![],
             revision: String::new(),
+            compat: Default::default(),
         };
         let binding = |model: &str| crate::profiles::Binding {
             id: "b".into(),

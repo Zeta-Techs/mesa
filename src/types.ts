@@ -134,6 +134,18 @@ export interface Gateway {
   walletUserId?: string | null;
   /** 系统访问令牌尾号；本体不进前端 */
   walletKeyHint?: string | null;
+  /** 兼容选项（没设的字段不出现） */
+  compat?: GatewayCompat;
+}
+
+/** 网关兼容选项：绑到这个网关的 Agent 启动 / 设为全局时按各自通道注入（gateway_store / agents.rs claude_compat_env） */
+export interface GatewayCompat {
+  /** 请求超时（秒）：Claude API_TIMEOUT_MS、Codex 渠道 stream_idle_timeout_ms */
+  timeoutSecs?: number | null;
+  /** 不发实验性请求头：Claude CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS */
+  noExperimentalBetas?: boolean;
+  /** 不发思考参数：Claude CLAUDE_CODE_DISABLE_THINKING */
+  noThinking?: boolean;
 }
 
 export interface GlobalDriftDto {
@@ -165,6 +177,7 @@ export interface GatewayInput {
   noAuth: boolean;
   slots: ProtocolSlots;
   headerEnv: Record<string, string>;
+  compat?: GatewayCompat;
   models: GatewayModel[];
   apiKey: string | null;
   expectedRevision?: string | null;

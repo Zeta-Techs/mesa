@@ -25,6 +25,9 @@ pub struct RequestPolicy {
     pub max_output_tokens: Option<u64>,
     pub reasoning_effort: Option<String>,
     pub header_env: BTreeMap<String, String>,
+    /// 所属网关的兼容选项（materialize 从网关带过来；绑定本身不存）
+    #[serde(skip_serializing_if = "GatewayCompat::is_empty")]
+    pub compat: GatewayCompat,
 }
 
 /// 绑定的「模型分工」（2026-10-17 用户：补齐槽位、子 agent 的规则要在连接里看得见、能自定义）。
@@ -263,6 +266,31 @@ pub struct Gateway {
     /// 系统访问令牌尾号；本体在 keys.json 键 `{id}#wallet`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet_key_hint: Option<String>,
+    /// 这家中转的兼容选项（2026-10-28）：跟着网关走，所有绑到它的 Agent 启动时按各自通道注入
+    #[serde(default, skip_serializing_if = "GatewayCompat::is_empty")]
+    pub compat: GatewayCompat,
+}
+
+/// 网关兼容选项：只收各家 CLI 二进制里实证存在、对中转常见毛病有用的几项（2026-10-28，参照 cc-switch 预设里的
+/// 「供应商独有字段」）。值跟着网关，启动注入与「设为全局」同口径；没设的不注入
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GatewayCompat {
+    /// 请求超时（秒）：慢中转 / 长思考模型。Claude `API_TIMEOUT_MS`、Codex 渠道 `stream_idle_timeout_ms`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u32>,
+    /// 不发实验性请求头（anthropic-beta）：部分中转见到就鉴权失败或 400。Claude `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_experimental_betas: bool,
+    /// 不发思考参数：不收 thinking 字段的中转。Claude `CLAUDE_CODE_DISABLE_THINKING=1`
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_thinking: bool,
+}
+
+impl GatewayCompat {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +329,9 @@ pub struct GatewayInput {
     pub slots: ProtocolSlots,
     #[serde(default)]
     pub header_env: BTreeMap<String, String>,
+    /// 兼容选项；None = 不改（只有网关编辑表单会带，别处的保存不能把它清掉）
+    #[serde(default)]
+    pub compat: Option<GatewayCompat>,
     #[serde(default)]
     pub models: Vec<GatewayModel>,
     pub api_key: Option<String>,
@@ -748,6 +779,7 @@ impl ProfileStore {
             last_probe: Vec::new(),
             slot_probes: Vec::new(),
             revision: String::new(),
+            compat: Default::default(),
         };
         let slot = crate::gateway_store::slot_for_agent(&input.agent, input.protocol.as_deref());
         crate::gateway_store::set_slot_url(
@@ -1104,6 +1136,9 @@ impl ProfileStore {
             gateways[idx].no_auth = input.no_auth;
             gateways[idx].slots = input.slots;
             gateways[idx].header_env = input.header_env;
+            if let Some(c) = input.compat {
+                gateways[idx].compat = c;
+            }
             // 按 id 合并：保留目录同步字段（status/last_seen_at/catalog_slot），
             // 用 input 的策略字段（temperature/top_p 等）覆盖；input 没有的条目保留原有记录。
             {
@@ -1225,6 +1260,7 @@ impl ProfileStore {
                 wallet_key_hint: None,
                 slots: input.slots,
                 header_env: input.header_env,
+                compat: input.compat.unwrap_or_default(),
                 models: input.models,
                 catalog_fetched_at: input.catalog_fetched_at,
                 catalog_from_slot: input.catalog_from_slot,
@@ -2041,6 +2077,8 @@ struct GatewayExportV2 {
     no_auth: bool,
     slots: ProtocolSlots,
     header_env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "GatewayCompat::is_empty")]
+    compat: GatewayCompat,
     models: Vec<GatewayModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
@@ -2111,6 +2149,7 @@ fn build_export_v2(
             no_auth: g.no_auth,
             slots: g.slots.clone(),
             header_env: g.header_env.clone(),
+            compat: g.compat.clone(),
             models: g.models.clone(),
             api_key: None,
             wallet_access_token: None,
@@ -2262,6 +2301,7 @@ fn apply_import_v2(
                 wallet_key_hint: None,
                 slots: incoming.slots.clone(),
                 header_env: incoming.header_env.clone(),
+                compat: incoming.compat.clone(),
                 models: incoming.models.clone(),
                 catalog_fetched_at: None,
                 catalog_from_slot: None,
@@ -2434,6 +2474,9 @@ fn merge_incoming_slots(gw: &mut Gateway, incoming: &GatewayExportV2, skipped: &
         &gw.name,
         skipped,
     );
+    if gw.compat.is_empty() {
+        gw.compat = incoming.compat.clone();
+    }
     for m in &incoming.models {
         if !gw.models.iter().any(|x| x.id == m.id) {
             gw.models.push(m.clone());
@@ -3047,6 +3090,7 @@ mod tests {
             last_probe: vec![],
             slot_probes: vec![],
             revision: String::new(),
+            compat: Default::default(),
         }
     }
 
@@ -3267,6 +3311,7 @@ mod tests {
         let incoming = ConfigExportV2 {
             version: 2,
             gateways: vec![GatewayExportV2 {
+                compat: Default::default(),
                 name: "中转 A".into(),
                 no_auth: false,
                 slots: gw.slots.clone(),
@@ -3327,6 +3372,7 @@ mod tests {
         let incoming = ConfigExportV2 {
             version: 2,
             gateways: vec![GatewayExportV2 {
+                compat: Default::default(),
                 name: "中转 A".into(),
                 no_auth: false,
                 slots: gw.slots.clone(),
@@ -3360,6 +3406,7 @@ mod tests {
         let incoming = ConfigExportV2 {
             version: 2,
             gateways: vec![GatewayExportV2 {
+                compat: Default::default(),
                 name: "中转 A".into(),
                 no_auth: false,
                 slots,
@@ -3451,6 +3498,7 @@ mod tests {
                 cursor: None,
             },
             header_env: Default::default(),
+            compat: Default::default(),
             models: vec![],
             api_key: None,
             expected_revision: None,
