@@ -553,6 +553,7 @@ pub fn run() {
             profiles::list_profiles,
             profiles::create_profile,
             profiles::update_profile,
+            profiles::set_profile_default_model,
             profiles::delete_profile,
             profiles::profile_usage_refs,
             profiles::clear_profile_key,

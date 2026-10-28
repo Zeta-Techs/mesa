@@ -424,6 +424,7 @@ pub fn restore_merged_bindings(
             role_models: Default::default(),
             extra_env: e.extra_env.clone(),
             last_used_at: None,
+            default_model: None,
         });
         restored += 1;
     }
@@ -431,6 +432,15 @@ pub fn restore_merged_bindings(
 }
 
 // ===== 物化 =====
+
+/// 官方名单按人选的启动默认重排：它在名单里就挪到第一位，不在（CLI 换了名单）就原样
+pub(crate) fn official_models_with_default(mut list: Vec<String>, default: Option<&str>) -> Vec<String> {
+    if let Some(i) = default.and_then(|d| list.iter().position(|m| m == d)) {
+        let m = list.remove(i);
+        list.insert(0, m);
+    }
+    list
+}
 
 pub fn materialize(
     binding: &Binding,
@@ -535,7 +545,10 @@ pub fn materialize(
         base_url: slot_url,
         // 官方账号没在 Mesa 里列模型：用 CLI 自己缓存的官方名单（目前 Codex），模型选择器与启动 -m 都有得选
         models: if official && binding.models.is_empty() {
-            crate::agents::official_models_for(&binding.agent)
+            official_models_with_default(
+                crate::agents::official_models_for(&binding.agent),
+                binding.default_model.as_deref(),
+            )
         } else {
             binding.models.clone()
         },
@@ -760,6 +773,7 @@ pub fn migrate_from_profiles(
                 role_models: p.role_models,
                 extra_env: p.extra_env,
                 last_used_at: p.last_used_at,
+                default_model: None,
             });
         } else {
             api.push(p);
@@ -893,6 +907,7 @@ pub fn migrate_from_profiles(
                     role_models: kept.role_models.clone(),
                     extra_env: kept.extra_env.clone(),
                     last_used_at: kept.last_used_at.clone(),
+                    default_model: None,
                 });
             }
 
@@ -1291,6 +1306,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            default_model: None,
         }];
         let (n, copies) = restore_merged_bindings(&journal, &mut gateways, &mut bindings);
         assert_eq!(n, 1);
@@ -1351,6 +1367,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            default_model: None,
         }];
         let (n, copies) = restore_merged_bindings(&journal, &mut gateways, &mut bindings);
         assert_eq!(n, 1);
@@ -1362,6 +1379,15 @@ mod tests {
         let restored = bindings.iter().find(|b| b.id == "cheap").unwrap();
         assert_eq!(restored.gateway_id.as_deref(), Some(new_gw.id.as_str()));
         assert_eq!(restored.models, vec!["m-cheap"]);
+    }
+
+    #[test]
+    fn official_models_follow_chosen_default() {
+        let list = || vec!["default".to_string(), "opus".to_string(), "sonnet".to_string()];
+        assert_eq!(official_models_with_default(list(), Some("sonnet")), vec!["sonnet", "default", "opus"]);
+        // CLI 换了名单、选过的不在了：原样
+        assert_eq!(official_models_with_default(list(), Some("gone")), list());
+        assert_eq!(official_models_with_default(list(), None), list());
     }
 
     #[test]
@@ -1421,6 +1447,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            default_model: None,
         };
         let first = materialize(&b, Some(&gw), None);
         assert_eq!(first.name, "test");
@@ -1476,6 +1503,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            default_model: None,
         };
         assert_eq!(
             materialize(&mk("gemini"), Some(&gw), None).base_url.as_deref(),
@@ -1549,6 +1577,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            default_model: None,
         };
         let profile = materialize(&b, Some(&gw), None);
         assert!(profile.request_policy.reasoning_effort.is_none());
@@ -1753,6 +1782,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
+            default_model: None,
         };
         assert_eq!(
             connection_state(&binding("model-a"), Some(&gw), false, true, false).0,

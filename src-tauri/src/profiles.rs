@@ -318,6 +318,10 @@ pub struct Binding {
     pub extra_env: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub last_used_at: Option<String>,
+    /// 官方账号没在 Mesa 里列模型时（models 为空，名单来自 CLI）人选的启动默认（2026-10-28 连接页「设为默认」）：
+    /// 名单里有它就排到第一位；CLI 换了名单、它不在了就不生效。API 连接的默认就是 models 第一个，不用这个字段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -743,6 +747,7 @@ impl ProfileStore {
                 role_models: input.role_models.clone().unwrap_or_default().normalized(),
                 extra_env: input.extra_env,
                 last_used_at: None,
+                default_model: None,
             };
             let profile = crate::gateway_store::materialize(&binding, None, None);
             crate::profile_validation::validate_profile_fields(&profile)?;
@@ -803,6 +808,7 @@ impl ProfileStore {
             role_models: input.role_models.clone().unwrap_or_default().normalized(),
             extra_env: input.extra_env.clone(),
             last_used_at: None,
+            default_model: None,
         };
         let mut profile = crate::gateway_store::materialize(&binding, Some(&gateway), None);
         profile.has_key = gateway.key_hint.is_some();
@@ -873,6 +879,7 @@ impl ProfileStore {
             role_models: Default::default(),
             extra_env: src.extra_env.clone(),
             last_used_at: None,
+            default_model: None,
         };
         let mut copy = crate::gateway_store::materialize(&binding, Some(&gw), None);
         copy.has_key = pending_key.is_some();
@@ -939,6 +946,7 @@ impl ProfileStore {
             role_models: src.role_models.clone(),
             extra_env: src.extra_env.clone(),
             last_used_at: None,
+            default_model: None,
         };
         if has_duplicate_binding(&bindings, None, &binding) {
             return Err("该 Agent 已经有相同模型选择的绑定".into());
@@ -1078,6 +1086,37 @@ impl ProfileStore {
             return Err(error);
         }
         Ok(())
+    }
+
+    /// 连接页展开模型列表里的「设为默认」（2026-10-28）：只换启动默认，不动别的。
+    /// API 连接把它挪到 models 第一位（第一个就是启动默认）；官方账号没列模型（名单来自 CLI）时记进 default_model
+    pub fn set_default_model(&self, id: &str, model: &str) -> Result<Profile, String> {
+        let model = model.trim();
+        if model.is_empty() {
+            return Err("模型名为空".into());
+        }
+        {
+            let _g = store_lock()?;
+            self.ensure_split_locked()?;
+            let mut bindings = crate::gateway_store::load_bindings()?;
+            let b = bindings.iter_mut().find(|b| b.id == id).ok_or("连接不存在")?;
+            if b.models.is_empty() && b.kind == BindingKind::Official {
+                b.default_model = Some(model.to_string());
+            } else {
+                let i = b
+                    .models
+                    .iter()
+                    .position(|m| m == model)
+                    .ok_or_else(|| format!("{model} 不在这条连接的模型里"))?;
+                let m = b.models.remove(i);
+                b.models.insert(0, m);
+            }
+            crate::gateway_store::save_bindings(&bindings)?;
+        }
+        self.list()?
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| "连接不存在".to_string())
     }
 
     /// 每次用于启动即刷新 last_used_at（§6.12 E）；失败静默，不影响启动
@@ -1359,6 +1398,7 @@ impl ProfileStore {
             role_models: input.role_models.clone().normalized(),
             extra_env: input.extra_env.clone(),
             last_used_at: None,
+            default_model: None,
         };
         let mut bindings = crate::gateway_store::load_bindings()?;
         if has_duplicate_binding(&bindings, None, &binding) {
@@ -1913,6 +1953,15 @@ pub fn create_profile(
 }
 
 #[tauri::command]
+pub fn set_profile_default_model(
+    store: tauri::State<'_, ProfileStore>,
+    id: String,
+    model: String,
+) -> Result<Profile, String> {
+    store.set_default_model(&id, &model)
+}
+
+#[tauri::command]
 pub fn update_profile(
     store: tauri::State<'_, ProfileStore>,
     id: String,
@@ -2376,6 +2425,7 @@ fn apply_import_v2(
             role_models: b.role_models.clone().normalized(),
             extra_env: b.extra_env.clone(),
             last_used_at: None,
+            default_model: None,
         };
         if has_duplicate_binding(bindings, None, &binding) {
             skipped.push(format!(
@@ -3115,6 +3165,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
+            default_model: None,
         }
     }
 
