@@ -3522,10 +3522,18 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         fnKey: null,
         prompt: "这是连接测试，请只回复两个字：收到",
       });
-      setRowProbe((cur) => ({
-        ...cur,
-        [profile.id]: { running: false, ok: true, message: reply.trim().slice(0, 40) },
-      }));
+      const passed = { running: false as const, ok: true, message: reply.trim().slice(0, 40) };
+      setRowProbe((cur) => ({ ...cur, [profile.id]: passed }));
+      // 通过只亮一会儿，再回到「官方账号」（2026-10-28 用户）；失败一直留着等人处理。
+      // 只撤这一次的结果：期间又点了重测（换成新对象）就不动
+      window.setTimeout(() => {
+        setRowProbe((cur) => {
+          if (cur[profile.id] !== passed) return cur;
+          const next = { ...cur };
+          delete next[profile.id];
+          return next;
+        });
+      }, 4000);
     } catch (e) {
       setRowProbe((cur) => ({
         ...cur,
