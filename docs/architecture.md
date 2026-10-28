@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-28 · 官方账号逐家补齐：登录检测问 CLI、中转模型名不带到官方、能查到的官方名单列出来
+
+用户追问其余几家官方账号是否完善。逐家本机核对后定下：登录凭证在钥匙串的（Claude、Cursor）文件查不到就问 CLI 自己的状态命令；中转留下的模型名一律不带到官方账号——进程级能盖的盖（Claude 顶层 model 写空串），盖不过的启动前拦（Gemini .env、Grok 默认模型）；官方模型名单只用可靠来源（Codex 缓存、Kimi config、Cursor `cursor-agent models` 缓存 6 小时），其余不猜。细则 profiles.md「官方账号在 Mesa 里启动」「官方账号的模型名单」「Claude / Cursor 官方登录检测」。
+
 ### 2026-10-28 · Codex 官方账号不进共用渠道 custom；官方账号列出账号可用的模型
 
 用户实测：Codex 官方账号在 Mesa 里发消息报「deepseek-… model is not supported when using Codex with a ChatGPT account」，官方账号也没有模型可选；外部切到官方后客户端里接着聊老对话报 `input[13].content: array too long`。

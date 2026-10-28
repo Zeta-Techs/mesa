@@ -1037,7 +1037,7 @@ pub(crate) fn official_global_is_patch(agent: &str) -> bool {
 }
 
 /// 官方账号能不能接着用这个模型名：中转模型名留给官方账号会直接报模型不存在。
-fn official_model_kept(agent: &str, model: &str) -> bool {
+pub(crate) fn official_model_kept(agent: &str, model: &str) -> bool {
     let m = model.trim().to_ascii_lowercase();
     match agent {
         // Claude Code 的别名（opus / sonnet …）官方账号照样认
@@ -1101,6 +1101,16 @@ fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
     }
     let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
     json_env_remove(&mut v, &refs, &["ANTHROPIC_MODEL"], "claude-code");
+    // 顶层 model（不在 env 里）同理：中转写的 glm 之类撤掉，Claude 用自己的默认
+    let foreign_top = v
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(|m| !official_model_kept("claude-code", m));
+    if foreign_top {
+        if let Some(o) = v.as_object_mut() {
+            o.remove("model");
+        }
+    }
     to_pretty(&v)
 }
 
@@ -3063,6 +3073,9 @@ trust_level = "trusted"
         w(".claude/settings.json", r#"{"env":{"ANTHROPIC_MODEL":"opus"}}"#);
         let v: Value = serde_json::from_str(&off("claude-code")[0].content).unwrap();
         assert_eq!(v["env"]["ANTHROPIC_MODEL"], "opus");
+        w(".claude/settings.json", r#"{"model":"glm-5.3[1m]","env":{}}"#);
+        let v: Value = serde_json::from_str(&off("claude-code")[0].content).unwrap();
+        assert!(v.get("model").is_none(), "顶层中转模型也撤");
 
         w(".codebuddy/settings.json", r#"{"env":{"CODEBUDDY_BASE_URL":"https://r","CODEBUDDY_API_KEY":"sk","CODEBUDDY_MODEL":"deepseek-v4"}}"#);
         let v: Value = serde_json::from_str(&off("codebuddy")[0].content).unwrap();

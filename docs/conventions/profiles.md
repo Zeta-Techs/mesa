@@ -301,11 +301,12 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 - Codex：沿用 `-c model_provider="openai"`。
 - Kimi：没选模型时 `-m` 用 config.toml 里 `managed:kimi-code` 的模型（`kimi_official_alias`，当前默认是官方的就用它）；一个都没有 = 没 `kimi login`，拦。
 - Gemini：认证方式只认 settings 的 selectedType，系统设置层要 root 才生效，进程级盖不过——selectedType 不是 `oauth-personal` 就拦；没设时照旧按 .env 探测。Grok：config.toml 顶层 `api_key` 进程级盖不过，照旧按探测拦。
+- **中转留下的模型名**（2026-10-28 逐家补）：Claude 顶层 `model`（不在 env 里）是中转模型且这次没选模型时，覆盖层写 `"model": ""`（= CLI 默认；`null` 不顶用，2.1.308 实测），选了模型走 `--model`；官方「设为全局」同样撤顶层中转 `model`。Gemini 进程里写空 `GEMINI_MODEL` 压不住 `.env`（0.65 实测），`.env` 里是中转模型名就拦。Grok `[models].default` 不是 grok 模型就拦。Qwen 自己会回落 coder-model（实测提示）。CodeBuddy 顶层 `model` 无从判断是不是官方可用（没有可查的官方名单），不动。
 拦下的文案改指「在官方账号那行点地球图标切回官方」。前端冲突弹层按 `MESA_OVERRIDES_OFFICIAL`（与 `official_launch_conflicts` 放行的三家一致）区分「只影响外部」与「Mesa 里也拦」。
 
-**官方账号的模型名单（2026-10-28）**：官方账号连接没在 Mesa 里列模型时，`materialize` 用 `agents::official_models_for` 补上——目前只有 Codex：读 `models_cache.json`（Codex 自己从 ChatGPT 后端拉的目录）里 `visibility = "list"` 的，按 priority 排（与 app-server `model/list` 结果一致，同日真账号核对）。Codex 官方启动没选到模型（或选的中转模型被 `official_model_allowed` 滤掉）时 `-m` 取名单第一个，不让磁盘 config.toml 里中转留下的 `model` 顶上（否则 ChatGPT 账号 400「model is not supported」）。名单是派生的，不写回绑定。
+**官方账号的模型名单（2026-10-28）**：官方账号连接没在 Mesa 里列模型时，`materialize` 用 `agents::official_models_for` 补上——目前只有 Codex：读 `models_cache.json`（Codex 自己从 ChatGPT 后端拉的目录）里 `visibility = "list"` 的，按 priority 排（与 app-server `model/list` 结果一致，同日真账号核对）。Codex 官方启动没选到模型（或选的中转模型被 `official_model_allowed` 滤掉）时 `-m` 取名单第一个，不让磁盘 config.toml 里中转留下的 `model` 顶上（否则 ChatGPT 账号 400「model is not supported」）。名单是派生的，不写回绑定。其余来源：Kimi = config.toml 里 `managed:kimi-code` 的模型（默认排第一）；Cursor = `cursor-agent models`（要联网，查登录状态确认已登录时顺手拉，缓存到 Mesa 配置目录 `official-models/cursor.json`，6 小时内不重拉）。Claude / Gemini / Qwen / CodeBuddy / Grok 没有可靠的本地来源，不列，启动用 CLI 自己的默认。
 
-**Claude 官方登录检测（2026-10-28）**：macOS 凭证在钥匙串、不落 `.credentials.json`，只看文件会把已登录显示成未登录（用户以为要重登）。文件查不到时问 `claude auth status --json`（8 秒超时，看 `loggedIn` / `authMethod`）；`official_account_status` 因此改 async + spawn_blocking。
+**Claude / Cursor 官方登录检测（2026-10-28）**：macOS 凭证在钥匙串、不落文件，只看文件会把已登录显示成未登录（用户以为要重登）。文件查不到时问 CLI：Claude `claude auth status --json`（`loggedIn` / `authMethod`，说未登录时详情直说「已过期或已登出」），Cursor `cursor-agent status`（含「Logged in」）；`official_account_status` 因此改 async + spawn_blocking。
 
 **官方账号一键添加与图标（2026-10-28）**：组头在「这家支持官方账号、已安装、还没有官方账号连接」时给 **＋ 官方账号**，直接 `create_profile`（名字后端固定「官方账号」）。官方账号行按 Agent 配厂商图标 `vendorForOfficialAgent`（claude-code→anthropic、codex→openai、gemini→gemini、qwen→alibaba、kimi、codebuddy→tencent、grok→xai；Cursor 无图标首字占位）；新增 Gemini 图标（lobe-icons 经 cc-switch，同时认 `generativelanguage.googleapis.com`）。
 

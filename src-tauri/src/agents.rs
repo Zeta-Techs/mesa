@@ -702,6 +702,32 @@ fn read_claude_user_settings_env_keys(profile: &Profile) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 用户 ~/.claude/settings.json 顶层的 `model`（只读）。中转常把它设成 glm 之类，官方账号认不得；单测不读本机
+fn claude_user_top_model(profile: &Profile) -> Option<String> {
+    #[cfg(test)]
+    {
+        let _ = profile;
+        return tests::TEST_CLAUDE_TOP_MODEL.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    {
+        let dir = profile
+            .extra_env
+            .get("CLAUDE_CONFIG_DIR")
+            .cloned()
+            .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))?;
+        let text = std::fs::read_to_string(dir.join("settings.json")).ok()?;
+        serde_json::from_str::<serde_json::Value>(&text)
+            .ok()?
+            .get("model")?
+            .as_str()
+            .map(str::to_string)
+    }
+}
+
 /// Claude Code 的「谁用哪个模型」整套 env（--settings 覆盖层与进程 env 共用这一份，2026-10-17 端到端核对后重写）。
 ///
 /// 假网关实测（Claude 2.1.292）：Mesa 原先只按绑定名单填前几个槽位，用户全局 settings.json 里的
@@ -1747,10 +1773,10 @@ fn kimi_env_model_args(variant: Option<&str>) -> Vec<String> {
 /// Kimi 官方账号的模型别名：`kimi login` 在 config.toml 配好的 `managed:kimi-code` 模型（当前默认就是则用它）。
 /// 新版目录（KIMI_CODE_HOME 或 ~/.kimi-code）优先，再看旧版 ~/.kimi；单测不读本机（TEST_KIMI_CONFIG 注入）
 fn kimi_official_alias(profile: &Profile) -> Option<String> {
-    kimi_managed_alias(&kimi_config_text(profile)?)
+    kimi_managed_alias(&kimi_config_text(Some(profile))?)
 }
 
-fn kimi_config_text(profile: &Profile) -> Option<String> {
+fn kimi_config_text(profile: Option<&Profile>) -> Option<String> {
     #[cfg(test)]
     {
         let _ = profile;
@@ -1760,9 +1786,7 @@ fn kimi_config_text(profile: &Profile) -> Option<String> {
     {
         let home = dirs::home_dir()?;
         let new_dir = profile
-            .extra_env
-            .get("KIMI_CODE_HOME")
-            .cloned()
+            .and_then(|p| p.extra_env.get("KIMI_CODE_HOME").cloned())
             .or_else(|| std::env::var("KIMI_CODE_HOME").ok())
             .filter(|d| !d.trim().is_empty())
             .map(PathBuf::from)
@@ -1771,6 +1795,77 @@ fn kimi_config_text(profile: &Profile) -> Option<String> {
             .iter()
             .find_map(|p| std::fs::read_to_string(p).ok())
     }
+}
+
+/// config.toml 里官方登录配的全部模型别名，默认模型排第一
+fn kimi_managed_aliases(text: &str) -> Vec<String> {
+    let Some(first) = kimi_managed_alias(text) else {
+        return Vec::new();
+    };
+    let Ok(doc) = toml::from_str::<toml::Value>(text) else {
+        return vec![first];
+    };
+    let mut out = vec![first.clone()];
+    if let Some(models) = doc.get("models").and_then(|m| m.as_table()) {
+        for (k, m) in models {
+            if k != &first
+                && m.get("provider").and_then(|p| p.as_str()) == Some("managed:kimi-code")
+            {
+                out.push(k.clone());
+            }
+        }
+    }
+    out
+}
+
+/// 要联网才拿得到的官方模型名单，缓存在 Mesa 配置目录 `official-models/<agent>.json`（6 小时内不重拉）
+#[cfg_attr(test, allow(dead_code))]
+fn official_models_cache_path(agent: &str) -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("ccode").join("official-models").join(format!("{agent}.json")))
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn read_official_models_cache(agent: &str) -> Vec<String> {
+    official_models_cache_path(agent)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn refresh_official_models_cache(agent: &str, fetch: impl FnOnce() -> Vec<String>) {
+    let Some(path) = official_models_cache_path(agent) else {
+        return;
+    };
+    let fresh = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(6 * 3600));
+    if fresh {
+        return;
+    }
+    let models = fetch();
+    if models.is_empty() {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(text) = serde_json::to_string(&models) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+/// `cursor-agent models` 的输出：「slug - 显示名」逐行，第一行标题（2026-10-28 本机实证）
+fn parse_cursor_models(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let (slug, _) = l.trim().split_once(" - ")?;
+            let slug = slug.trim();
+            (!slug.is_empty() && !slug.contains(' ')).then(|| slug.to_string())
+        })
+        .collect()
 }
 
 /// config.toml 文本里官方登录配的模型别名；没登录过（没有 managed:kimi-code 模型）返回 None
@@ -1803,8 +1898,15 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
     }
     #[cfg(not(test))]
     {
-        if agent != "codex" {
-            return Vec::new();
+        match agent {
+            "codex" => {}
+            // kimi login 配好的 managed:kimi-code 模型（默认那个排前面）
+            "kimi" => {
+                return kimi_config_text(None).map(|t| kimi_managed_aliases(&t)).unwrap_or_default();
+            }
+            // `cursor-agent models` 要联网，查登录状态时顺手缓存（official_models_cache_*）
+            "cursor" => return read_official_models_cache("cursor"),
+            _ => return Vec::new(),
         }
         let Some(home) = dirs::home_dir() else {
             return Vec::new();
@@ -1914,12 +2016,25 @@ fn apply_official_inject(
                 }
                 // 磁盘 settings.json 的 env 盖过进程 env：留着的中转端点 / 密钥会让「官方账号」实际走 API。
                 // --settings 覆盖层里写成空串就等于没设，Claude 回到自己的登录（2026-10-28 隔离 HOME 实测）
-                let overlay = official_settings_blanks(
+                let mut overlay = official_settings_blanks(
                     CLAUDE_OFFICIAL_BLANK_ALWAYS,
                     CLAUDE_OFFICIAL_BLANK_IF_SET,
                     &claude_user_settings_env_keys(profile),
                     env.model.zip(model),
                 );
+                // 顶层 "model" 不在 env 里：中转写的 glm 之类会让官方账号报模型不存在。
+                // 覆盖层写空串 = 用 Claude 自己的默认（null 不顶用，2.1.308 实测）；选了模型时走 --model
+                if let Some(m) = model {
+                    plan.args.push("--model".into());
+                    plan.args.push(m.into());
+                } else if claude_user_top_model(profile)
+                    .is_some_and(|m| !crate::global_config::official_model_kept("claude-code", &m))
+                {
+                    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&overlay) {
+                        v["model"] = serde_json::json!("");
+                        overlay = v.to_string();
+                    }
+                }
                 plan.args.push("--settings".into());
                 plan.args.push(overlay);
             }
@@ -2688,7 +2803,11 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
         "claude-code" | "codebuddy" | "qwen" => Vec::new(),
         // Gemini 的认证方式只认 settings 的 selectedType，进程级盖不过（见 gemini_auth_blocker 注释）
         "gemini" => match gemini_selected_auth_type(profile) {
-            Some(t) if t == "oauth-personal" => Vec::new(),
+            // 进程里写空 GEMINI_MODEL 压不住 .env（0.65 实测），中转模型名只能拦
+            Some(t) if t == "oauth-personal" => dotenv_value(&home.join(".gemini/.env"), "GEMINI_MODEL")
+                .filter(|m| !crate::global_config::official_model_kept("gemini", m))
+                .map(|m| vec![format!("~/.gemini/.env 里的 GEMINI_MODEL 是中转模型 {m}")])
+                .unwrap_or_default(),
             Some(t) => vec![format!("~/.gemini/settings.json 里认证方式是 {t}，不是 Google 账号登录")],
             None => probe_conflicts(home, oa),
         },
@@ -2700,8 +2819,29 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
                 Vec::new()
             }
         }
+        // Grok：api_key 照旧按探测拦；默认模型是中转模型（glm 之类）时官方账号也用不了
+        "grok" => {
+            let mut out = probe_conflicts(home, oa);
+            let default = std::fs::read_to_string(home.join(".grok/config.toml"))
+                .ok()
+                .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+                .and_then(|v| v.get("models")?.get("default")?.as_str().map(str::to_string));
+            if let Some(m) = default.filter(|m| !crate::global_config::official_model_kept("grok", m)) {
+                out.push(format!("~/.grok/config.toml 的默认模型是中转模型 {m}"));
+            }
+            out
+        }
         _ => probe_conflicts(home, oa),
     }
+}
+
+/// .env 里某个键的值（只用于模型名这类非密钥；引号去掉）
+fn dotenv_value(path: &std::path::Path, key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().find_map(|l| {
+        let (k, v) = l.trim().trim_start_matches("export ").split_once('=')?;
+        (k.trim() == key).then(|| v.trim().trim_matches('"').trim_matches('\'').to_string())
+    })
 }
 
 fn valid_env_name(name: &str) -> bool {
@@ -4334,8 +4474,33 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             None => {}
         }
     }
+    if agent_id == "cursor" {
+        if let Some(path) = resolve_binary("cursor-agent") {
+            let status = cli_output_with_timeout(&path, &["status"], std::time::Duration::from_secs(8));
+            if let Some(line) = status.as_deref().and_then(|t| t.lines().find(|l| l.contains("Logged in"))) {
+                refresh_official_models_cache("cursor", || {
+                    cli_output_with_timeout(&path, &["models"], std::time::Duration::from_secs(20))
+                        .map(|t| parse_cursor_models(&t))
+                        .unwrap_or_default()
+                });
+                return OfficialAccountStatusDto {
+                    supported: true,
+                    connected: true,
+                    detail: Some(format!("cursor-agent status：{}", line.trim().trim_start_matches('✓').trim())),
+                    login_command,
+                    conflicts,
+                    cleanup_supported: true,
+                    login_env,
+                };
+            }
+        }
+    }
+    let mut cli_says_logged_out: Option<&str> = None;
     if agent_id == "claude-code" {
         if let Some((logged_in, method)) = claude_auth_status() {
+            if !logged_in {
+                cli_says_logged_out = Some("claude auth status 显示未登录（登录已过期或已登出），点「官方登录」重登");
+            }
             if logged_in {
                 return OfficialAccountStatusDto {
                     supported: true,
@@ -4349,7 +4514,9 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             }
         }
     }
-    let detail = if let Some(rel) = corrupt {
+    let detail = if let Some(msg) = cli_says_logged_out {
+        msg.to_string()
+    } else if let Some(rel) = corrupt {
         format!("~/{rel} 存在但无法解析（文件可能损坏）")
     } else if let Some(rel) = api_key_mode {
         // API Key 模式不是官方账号：官方 --api-key 与第三方中转（如 cc-switch）写出的
@@ -4422,6 +4589,8 @@ mod tests {
     }
 
     thread_local! {
+        pub(super) static TEST_CLAUDE_TOP_MODEL: std::cell::RefCell<Option<String>> =
+            const { std::cell::RefCell::new(None) };
         pub(super) static TEST_OFFICIAL_MODELS: std::cell::RefCell<Vec<String>> =
             const { std::cell::RefCell::new(Vec::new()) };
         pub(super) static TEST_KIMI_CONFIG: std::cell::RefCell<Option<String>> =
@@ -5596,6 +5765,53 @@ api_backend = "responses"
         let i = plan.args.iter().position(|a| a == "-m").unwrap();
         assert_eq!(plan.args[i + 1], "gpt-6-luna");
         tests::TEST_OFFICIAL_MODELS.with(|k| k.borrow_mut().clear());
+    }
+
+    #[test]
+    fn official_claude_blanks_relay_top_model_and_other_agents_gate_relay_models() {
+        let p = official_profile("claude-code");
+        tests::TEST_CLAUDE_TOP_MODEL.with(|k| *k.borrow_mut() = Some("glm-5.3[1m]".into()));
+        let plan = launch_plan(&p, None, None).unwrap();
+        let ov = &plan.args[plan.args.iter().position(|a| a == "--settings").unwrap() + 1];
+        let v: serde_json::Value = serde_json::from_str(ov).unwrap();
+        assert_eq!(v["model"], "", "空串 = Claude 自己的默认");
+        // 用户顶层设的是官方别名：不动
+        tests::TEST_CLAUDE_TOP_MODEL.with(|k| *k.borrow_mut() = Some("opus".into()));
+        let plan = launch_plan(&p, None, None).unwrap();
+        let ov = &plan.args[plan.args.iter().position(|a| a == "--settings").unwrap() + 1];
+        assert!(serde_json::from_str::<serde_json::Value>(ov).unwrap().get("model").is_none());
+        // 选了模型走 --model
+        let plan = launch_plan(&p, None, Some("claude-opus-5")).unwrap();
+        let i = plan.args.iter().position(|a| a == "--model").unwrap();
+        assert_eq!(plan.args[i + 1], "claude-opus-5");
+        tests::TEST_CLAUDE_TOP_MODEL.with(|k| *k.borrow_mut() = None);
+
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".grok")).unwrap();
+        std::fs::create_dir_all(dir.join(".gemini")).unwrap();
+        std::fs::write(dir.join(".grok/config.toml"), "[models]\ndefault = \"glm-5.3-flash\"\n").unwrap();
+        let mut grok = official_profile("grok");
+        grok.base_url = None;
+        assert!(official_launch_conflicts(&dir, &grok)[0].contains("glm-5.3-flash"));
+        std::fs::write(dir.join(".grok/config.toml"), "[models]\ndefault = \"grok-4.5\"\n").unwrap();
+        assert!(official_launch_conflicts(&dir, &grok).is_empty());
+        std::fs::write(dir.join(".gemini/.env"), "GEMINI_MODEL=\"relay-glm\"\n").unwrap();
+        let gemini = official_profile("gemini");
+        tests::TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("oauth-personal".into()));
+        assert!(official_launch_conflicts(&dir, &gemini)[0].contains("relay-glm"));
+        std::fs::write(dir.join(".gemini/.env"), "GEMINI_MODEL=gemini-3.5-pro\n").unwrap();
+        assert!(official_launch_conflicts(&dir, &gemini).is_empty());
+        tests::TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("gemini-api-key".into()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn official_model_lists_parse_cursor_and_kimi() {
+        let out = "Available models\n\nauto - Auto (current, default)\ngpt-5.3-codex - Codex 5.3\nclaude-opus-5-thinking-high - Claude Opus 5 1M Thinking\n";
+        assert_eq!(parse_cursor_models(out), vec!["auto", "gpt-5.3-codex", "claude-opus-5-thinking-high"]);
+        let cfg = "default_model = \"kimi-code/k3\"\n[models.\"kimi-code/k2\"]\nprovider = \"managed:kimi-code\"\n[models.\"kimi-code/k3\"]\nprovider = \"managed:kimi-code\"\n[models.relay]\nprovider = \"ccode-x\"\n";
+        assert_eq!(kimi_managed_aliases(cfg), vec!["kimi-code/k3", "kimi-code/k2"]);
+        assert!(kimi_managed_aliases("[models.relay]\nprovider = \"x\"\n").is_empty());
     }
 
     #[test]
