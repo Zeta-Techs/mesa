@@ -64,12 +64,13 @@ test("连接行：自己的地址优先，认不出再看所属网关", () => {
   assert.equal(vendorForProfile("https://relay.example.com/v1", undefined), null);
 });
 
-test("官方账号按 Agent 认厂商，Cursor 与 OpenCode 没有", () => {
+test("官方账号按 Agent 认厂商，OpenCode 没有", () => {
   assert.equal(vendorForOfficialAgent("claude-code"), "anthropic");
   assert.equal(vendorForOfficialAgent("codex"), "openai");
   assert.equal(vendorForOfficialAgent("gemini"), "gemini");
   assert.equal(vendorForOfficialAgent("grok"), "xai");
-  assert.equal(vendorForOfficialAgent("cursor"), null);
+  assert.equal(vendorForOfficialAgent("cursor"), "cursor");
+  assert.equal(isMonoVendor("cursor"), true);
   assert.equal(vendorForOfficialAgent("opencode"), null);
   assert.equal(vendorForUrl("https://generativelanguage.googleapis.com/v1beta"), "gemini");
 });

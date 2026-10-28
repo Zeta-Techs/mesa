@@ -458,6 +458,12 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-28 · Codex 官方账号不进共用渠道 custom；官方账号列出账号可用的模型
+
+用户实测：Codex 官方账号在 Mesa 里发消息报「deepseek-… model is not supported when using Codex with a ChatGPT account」，官方账号也没有模型可选；外部切到官方后客户端里接着聊老对话报 `input[13].content: array too long`。
+原因：官方启动没带 -m 时 Codex 用磁盘里中转留下的 model；官方写进共用 custom 后，同渠道名下中转跑过的老对话被接到官方，历史条目官方接口不收。
+定下的规则（否决同日「官方也写进 custom」）：官方账号设为全局改回撤 `model_provider` 回内置 openai，custom 块原样留着；官方与中转在客户端侧栏互相藏对话，是两者不能共用渠道的代价。官方账号没列模型时从 CLI 缓存补名单（Codex `models_cache.json`），启动没选到模型用名单第一个。另补 Cursor 图标（lobe-icons npm 包）。细则 profiles.md §12「官方账号的模型名单」与 Codex 行。
+
 ### 2026-10-28 · 官方账号：在 Mesa 里进程级盖过磁盘残留，一键添加，按 Agent 配图标
 
 用户问官方账号能不能在 Mesa 里直接启动（印象里要重新登录），要求加官方图标、看清怎么添加和切换。查明：原口径是磁盘有 API 残留就拒绝官方账号启动；Claude 在 Mac 上凭证在钥匙串，Mesa 只看文件，已登录也显示「未登录」。

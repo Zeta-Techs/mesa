@@ -1776,6 +1776,58 @@ fn kimi_managed_alias(text: &str) -> Option<String> {
         .or_else(|| models.keys().find(|k| managed(k)).cloned())
 }
 
+/// 官方账号连接没在 Mesa 里列模型时，从 CLI 自己的缓存给出这个账号能用的模型。
+/// 目前只有 Codex：它从 ChatGPT 后端拉来的模型目录缓存在 `models_cache.json`，取 `visibility = "list"` 的、按 priority 排
+/// （2026-10-28：官方账号连接以前「未指定模型」，启动不带 -m，Codex 就用磁盘里中转留下的模型名，
+/// 报 model is not supported when using Codex with a ChatGPT account）。
+pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
+    #[cfg(test)]
+    {
+        let _ = agent;
+        return tests::TEST_OFFICIAL_MODELS.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    {
+        if agent != "codex" {
+            return Vec::new();
+        }
+        let Some(home) = dirs::home_dir() else {
+            return Vec::new();
+        };
+        let base = std::env::var_os("CODEX_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".codex"));
+        std::fs::read_to_string(base.join("models_cache.json"))
+            .map(|t| codex_listed_models(&t))
+            .unwrap_or_default()
+    }
+}
+
+/// models_cache.json 里列给人选的模型（visibility = list），按 priority 升序
+fn codex_listed_models(text: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<(i64, String)> = v
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|m| m.get("visibility").and_then(|x| x.as_str()) == Some("list"))
+                .filter_map(|m| {
+                    let slug = m.get("slug")?.as_str()?.trim();
+                    (!slug.is_empty()).then(|| {
+                        (m.get("priority").and_then(|p| p.as_i64()).unwrap_or(i64::MAX), slug.to_string())
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort();
+    rows.into_iter().map(|(_, s)| s).collect()
+}
+
 /// 官方账号模式的注入：purge 残留密钥 env（规格 env_purge_list），模型非空才注入模型 env/参数。
 /// 凭证与 base URL 一律不注入——认证完全交给 CLI 自己的账号登录。
 /// Codex 例外：必须 `-c model_provider="openai"` 盖过磁盘默认渠道（见该臂注释）。
@@ -1857,7 +1909,14 @@ fn apply_official_inject(
                 plan.args.push(overlay);
             }
             SpecialLaunch::CodexInlineProvider { sandbox_args, .. } => {
-                if let Some(m) = model {
+                // 没选到模型（或选的是中转模型被滤掉）时不能不带 -m：Codex 会用磁盘 config.toml 里
+                // 中转留下的 model，ChatGPT 账号直接 400。用官方名单第一个
+                let fallback = if model.is_none() {
+                    official_models_for(&profile.agent).into_iter().next()
+                } else {
+                    None
+                };
+                if let Some(m) = model.or(fallback.as_deref()) {
                     plan.args.push("-m".into());
                     plan.args.push(m.into());
                 }
@@ -4348,6 +4407,8 @@ mod tests {
     }
 
     thread_local! {
+        pub(super) static TEST_OFFICIAL_MODELS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
         pub(super) static TEST_KIMI_CONFIG: std::cell::RefCell<Option<String>> =
             const { std::cell::RefCell::new(None) };
         pub(super) static TEST_CLAUDE_USER_KEYS: std::cell::RefCell<Vec<String>> =
@@ -5505,6 +5566,21 @@ api_backend = "responses"
         std::fs::write(dir.join(".codebuddy/settings.json"), r#"{"env":{"CODEBUDDY_API_KEY":"sk"}}"#).unwrap();
         assert!(official_launch_conflicts(&dir, &official_profile("codebuddy")).is_empty());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn codex_official_lists_cached_models_and_never_launches_without_model() {
+        let cache = r#"{"models":[{"slug":"gpt-reserve","visibility":"hide","priority":4},{"slug":"gpt-5.6-terra","visibility":"list","priority":8},{"slug":"gpt-6-luna","visibility":"list","priority":5}]}"#;
+        assert_eq!(codex_listed_models(cache), vec!["gpt-6-luna", "gpt-5.6-terra"]);
+        assert!(codex_listed_models("not json").is_empty());
+        let mut p = official_profile("codex");
+        p.models.clear();
+        tests::TEST_OFFICIAL_MODELS.with(|k| *k.borrow_mut() = vec!["gpt-6-luna".into()]);
+        // 选的是中转模型（被滤掉）：仍带官方第一个，不让磁盘里的 deepseek 顶上
+        let plan = launch_plan(&p, None, Some("deepseek-v4-flash-0731")).unwrap();
+        let i = plan.args.iter().position(|a| a == "-m").unwrap();
+        assert_eq!(plan.args[i + 1], "gpt-6-luna");
+        tests::TEST_OFFICIAL_MODELS.with(|k| k.borrow_mut().clear());
     }
 
     #[test]

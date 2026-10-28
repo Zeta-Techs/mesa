@@ -526,7 +526,12 @@ pub fn materialize(
         protocol: binding.protocol.clone(),
         api_backend: binding.api_backend.clone(),
         base_url: slot_url,
-        models: binding.models.clone(),
+        // 官方账号没在 Mesa 里列模型：用 CLI 自己缓存的官方名单（目前 Codex），模型选择器与启动 -m 都有得选
+        models: if official && binding.models.is_empty() {
+            crate::agents::official_models_for(&binding.agent)
+        } else {
+            binding.models.clone()
+        },
         role_models: binding.role_models.clone(),
         extra_env: binding.extra_env.clone(),
         request_policy,

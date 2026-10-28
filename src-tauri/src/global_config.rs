@@ -595,7 +595,7 @@ fn sub_table<'a>(
 
 /// Codex「设为全局」统一写进同一个渠道名（2026-10-28 用户拍板，与 cc-switch 同名）：
 /// 客户端侧栏只列当前默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后
-/// 别的连接的对话全藏起来；官方账号也写在这个名字下，官方 / API 来回切历史都在一处。
+/// 别的连接的对话全藏起来。官方账号不进这个名字（见 patch_codex_config_official：中转历史接不到官方）。
 /// Mesa 自己启动用的 `ccode-<短id>` 内联渠道不变（恢复会话靠它认网关）。
 pub(crate) const CODEX_GLOBAL_PROVIDER: &str = "custom";
 
@@ -656,21 +656,14 @@ fn patch_codex_config(
     Ok(doc.to_string())
 }
 
-/// Codex 官方账号「设为全局」：共用渠道写成 ChatGPT 登录形态（与 cc-switch 统一官方块同形）——
-/// `requires_openai_auth = true` 认证交给 auth.json 里的 ChatGPT 登录（Mesa 不写 auth.json，
-/// 这与「禁止 requires_openai_auth + 改 auth.json」那条不冲突：那条说的是 API 密钥）；
-/// `name = "OpenAI"` 保住 Codex 按名字开的官方能力（网页搜索、远端压缩）；不写 base_url
-/// 即官方后端。撤掉模型目录，模型名不是官方模型时一并撤掉；思考档、MCP、项目信任、
-/// 其他渠道定义块原样不动。
+/// Codex 官方账号「设为全局」：撤掉 `model_provider`（回落内置 openai，认证交给 auth.json 的 ChatGPT 登录）、
+/// 模型目录与非官方模型名。**共用渠道 `custom` 块原样留着**（2026-10-28 用户实测改回）：曾把官方也写进
+/// custom（cc-switch 统一官方块同形），结果客户端里中转跑过的老对话被接到官方，历史里中转留下的条目
+/// 官方接口不收（`input[n].content: array too long`），整段对话续不上。官方对话归内置 openai，
+/// 中转老对话留在 custom 照旧走原连接；思考档、MCP、项目信任、其他渠道定义块不动。
 fn patch_codex_config_official(existing: Option<&str>) -> Result<String, String> {
-    use toml_edit::value;
     let mut doc = parse_toml_doc(existing)?;
-    let mut blk = toml_edit::Table::new();
-    blk["name"] = value("OpenAI");
-    blk["requires_openai_auth"] = value(true);
-    blk["supports_websockets"] = value(true);
-    blk["wire_api"] = value("responses");
-    replace_codex_global_provider(&mut doc, blk)?;
+    doc.remove("model_provider");
     doc.remove("model_catalog_json");
     let foreign = doc
         .get("model")
@@ -1782,7 +1775,7 @@ fn preview_plans(
 /// 的对话）只在启动时定。客户端另自带模型选择与预热对话，故对客户端仍说「重启」。
 fn restart_note(agent: &str) -> &'static str {
     if agent == "codex" {
-        "Mesa 不用重启。外部终端新开的 Codex 会话走新配置，已开着的不变。Codex 客户端请重启：不重启时新建对话虽会换渠道，但模型列表和客户端记住的模型还是旧的。官方账号和各条 API 连接都写在 custom 这一个渠道名下，切换后客户端侧栏里的对话不会被藏起来（在 Mesa 里开的对话归在各自网关下，要用搜索找）。"
+        "Mesa 不用重启。外部终端新开的 Codex 会话走新配置，已开着的不变。Codex 客户端请重启：不重启时新建对话虽会换渠道，但模型列表和客户端记住的模型还是旧的。各条 API 连接共用 custom 这一个渠道名，在它们之间切换，客户端侧栏里的对话不会被藏起来；官方账号的对话单独归在 ChatGPT 自己的渠道下，中转连接上跑过的老对话要接着聊，先切回那条连接（中转留下的历史官方接口不收）。"
     } else {
         "Mesa 不用重启。外部终端里新开的会话读新配置，已经开着的不会自动重读，需要新开才会生效。"
     }
@@ -3001,7 +2994,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_official_writes_shared_channel_in_login_shape() {
+    fn codex_official_falls_back_to_builtin_openai_and_keeps_custom() {
         let existing = r#"model_provider = "custom"
 model = "deepseek-v4"
 model_catalog_json = "/cfg/ccode/catalogs/codex-p1.json"
@@ -3025,11 +3018,11 @@ trust_level = "trusted"
 "#;
         let out = patch_codex_config_official(Some(existing)).unwrap();
         let doc: toml::Value = toml::from_str(&out).unwrap();
-        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        // 回落内置 openai；共用渠道块原样留着，中转跑过的老对话照旧走原连接
+        assert!(doc.get("model_provider").is_none());
         let blk = &doc["model_providers"]["custom"];
-        assert_eq!(blk["name"].as_str(), Some("OpenAI"));
-        assert_eq!(blk["requires_openai_auth"].as_bool(), Some(true));
-        assert!(blk.get("base_url").is_none() && blk.get("experimental_bearer_token").is_none());
+        assert_eq!(blk["name"].as_str(), Some("Mesa"));
+        assert_eq!(blk["base_url"].as_str(), Some("https://relay.example.com/v1"));
         assert!(doc.get("model_catalog_json").is_none());
         assert!(doc.get("model").is_none(), "中转模型名不能留给官方账号");
         assert_eq!(doc["model_reasoning_effort"].as_str(), Some("high"));

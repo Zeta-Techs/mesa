@@ -15,7 +15,7 @@
 ## 预设与服务商图标
 
 - **商业中转预设不进开源默认表**（ZetaTechs 预设已移除，恢复 architecture §10 2026-09-20 口径，`tests/presets.test.ts` 钉住）。
-- 服务商小图标（`src/assets/vendor-icons/` 13 个，2026-10-28 加 Gemini（官方账号行用），2026-10-20 扩到网关库与连接行，2026-10-21 加 New API 平台标）按 lobe-icons（MIT）
+- 服务商小图标（`src/assets/vendor-icons/` 14 个，2026-10-28 加 Gemini、Cursor（官方账号行用；Cursor 取自 lobe-icons npm 包 `@lobehub/icons-static-svg`），2026-10-20 扩到网关库与连接行，2026-10-21 加 New API 平台标）按 lobe-icons（MIT）
   + cc-switch（MIT）署名，并附两份 MIT 全文进 `docs/licenses/THIRD-PARTY.md`。
   - **增删图标同步该节与 `npm run gen:notices`**。
   - **只给官方域名配厂商图标**（`vendor-icon.ts` 后缀表）。

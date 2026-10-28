@@ -16,7 +16,8 @@ export type VendorId =
   | "xai"
   | "ollama"
   | "newapi"
-  | "gemini";
+  | "gemini"
+  | "cursor";
 
 /** 域名后缀 → 厂商；只认官方域名，商业中转站不在此表（不给第三方运营方做图标位） */
 const SUFFIX_RULES: [string, VendorId][] = [
@@ -36,10 +37,12 @@ const SUFFIX_RULES: [string, VendorId][] = [
   ["openrouter.ai", "openrouter"],
   ["x.ai", "xai"],
   ["generativelanguage.googleapis.com", "gemini"],
+  ["cursor.com", "cursor"],
+  ["cursor.sh", "cursor"],
 ];
 
 /** 图标是 currentColor 单色：要按文字色渲染（mask），不能当 <img>，否则深色主题里是黑的 */
-const MONO: ReadonlySet<VendorId> = new Set(["anthropic", "openai", "kimi", "openrouter", "xai", "ollama"]);
+const MONO: ReadonlySet<VendorId> = new Set(["anthropic", "openai", "kimi", "openrouter", "xai", "ollama", "cursor"]);
 
 export function isMonoVendor(v: VendorId): boolean {
   return MONO.has(v);
@@ -92,7 +95,7 @@ export function vendorForProfile(
   return vendorForUrl(baseUrl) ?? (gateway ? vendorForGateway(gateway) : null);
 }
 
-/** 官方账号连接没有端点：按 Agent 认厂商（Cursor 没有图标，首字占位） */
+/** 官方账号连接没有端点：按 Agent 认厂商 */
 const OFFICIAL_VENDOR: Record<string, VendorId> = {
   "claude-code": "anthropic",
   codex: "openai",
@@ -101,6 +104,7 @@ const OFFICIAL_VENDOR: Record<string, VendorId> = {
   kimi: "kimi",
   codebuddy: "tencent",
   grok: "xai",
+  cursor: "cursor",
 };
 
 export function vendorForOfficialAgent(agent: string): VendorId | null {

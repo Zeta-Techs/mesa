@@ -121,16 +121,16 @@ DEALINGS IN THE FONT SOFTWARE.
 
 - 用途：连接页网关库与连接列表标明端点所属服务商、用量页标明订阅套餐所属平台
   （`src/assets/vendor-icons/` 下 anthropic / openai / deepseek / zhipu / kimi / minimax / alibaba /
-  tencent / openrouter / xai / ollama / newapi / gemini 共 13 个 .svg），指示性使用（nominative use），
+  tencent / openrouter / xai / ollama / newapi / gemini / cursor 共 14 个 .svg），指示性使用（nominative use），
   不构成对该平台的关联或背书；只给官方域名的端点配厂商图标；New API 图标标的是中转站所用的平台软件（网关命中已知钱包站或配了钱包才标），
   不是某家中转站的品牌，其余第三方中转站与自建网关不配
 - 来源链条：[lobe-icons](https://github.com/lobehub/lobe-icons)（MIT，Copyright (c) 2023 LobeHub）
   → [cc-switch](https://github.com/farion1231/cc-switch)（MIT，Copyright (c) 2025 Jason Young）
-  `src/icons/extracted/` → 本仓库逐字节引入（13 个文件均为 lobe-icons 导出格式；gemini 为 2026-10-28 自 cc-switch 引入；2026-10-20 核对：
+  `src/icons/extracted/` → 本仓库逐字节引入（14 个文件均为 lobe-icons 导出格式；gemini 为 2026-10-28 自 cc-switch 引入；cursor 为同日自 lobe-icons 的 npm 包 @lobehub/icons-static-svg 1.101.0（MIT）逐字节引入；2026-10-20 核对：
   anthropic / zhipu / xai / ollama / deepseek / alibaba / tencent 与 lobe-icons 当前版本逐字节相同，
   openai / kimi / minimax / openrouter / newapi 是 cc-switch 引入时的版本，上游之后有修订）
 - 许可：MIT——再分发需随附版权声明与许可全文，两份原文如下
-- 商标：各 logo 本身归对应公司所有（Anthropic、OpenAI、DeepSeek、智谱、Moonshot AI、MiniMax、阿里巴巴、腾讯、OpenRouter、xAI、Ollama、QuantumNous / New API、Google）
+- 商标：各 logo 本身归对应公司所有（Anthropic、OpenAI、DeepSeek、智谱、Moonshot AI、MiniMax、阿里巴巴、腾讯、OpenRouter、xAI、Ollama、QuantumNous / New API、Google、Anysphere / Cursor）
 
 lobe-icons 的许可原文（取自其仓库 LICENSE）：
 

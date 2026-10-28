@@ -303,6 +303,8 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 - Gemini：认证方式只认 settings 的 selectedType，系统设置层要 root 才生效，进程级盖不过——selectedType 不是 `oauth-personal` 就拦；没设时照旧按 .env 探测。Grok：config.toml 顶层 `api_key` 进程级盖不过，照旧按探测拦。
 拦下的文案改指「在官方账号那行点地球图标切回官方」。前端冲突弹层按 `MESA_OVERRIDES_OFFICIAL`（与 `official_launch_conflicts` 放行的三家一致）区分「只影响外部」与「Mesa 里也拦」。
 
+**官方账号的模型名单（2026-10-28）**：官方账号连接没在 Mesa 里列模型时，`materialize` 用 `agents::official_models_for` 补上——目前只有 Codex：读 `models_cache.json`（Codex 自己从 ChatGPT 后端拉的目录）里 `visibility = "list"` 的，按 priority 排（与 app-server `model/list` 结果一致，同日真账号核对）。Codex 官方启动没选到模型（或选的中转模型被 `official_model_allowed` 滤掉）时 `-m` 取名单第一个，不让磁盘 config.toml 里中转留下的 `model` 顶上（否则 ChatGPT 账号 400「model is not supported」）。名单是派生的，不写回绑定。
+
 **Claude 官方登录检测（2026-10-28）**：macOS 凭证在钥匙串、不落 `.credentials.json`，只看文件会把已登录显示成未登录（用户以为要重登）。文件查不到时问 `claude auth status --json`（8 秒超时，看 `loggedIn` / `authMethod`）；`official_account_status` 因此改 async + spawn_blocking。
 
 **官方账号一键添加与图标（2026-10-28）**：组头在「这家支持官方账号、已安装、还没有官方账号连接」时给 **＋ 官方账号**，直接 `create_profile`（名字后端固定「官方账号」）。官方账号行按 Agent 配厂商图标 `vendorForOfficialAgent`（claude-code→anthropic、codex→openai、gemini→gemini、qwen→alibaba、kimi、codebuddy→tencent、grok→xai；Cursor 无图标首字占位）；新增 Gemini 图标（lobe-icons 经 cc-switch，同时认 `generativelanguage.googleapis.com`）。
@@ -332,13 +334,13 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 - 每次被挡记一条 `logbuf`（source `tray`，info），设置 → 诊断可查；
 - 托盘绝不替人过二次确认，也不因挡路把该 Agent 藏掉或整组置灰。
 
-**Codex 全局渠道共用 `custom`（2026-10-28 用户拍板，与 cc-switch 同名）**：「设为全局」不再按网关写 `ccode-<短id>`，一律写 `[model_providers.custom]` 并 `model_provider = "custom"`（`CODEX_GLOBAL_PROVIDER`），整块替换（上一家留下的 `requires_openai_auth` / `supports_websockets` / `env_key` 等残键不带过来）。理由：客户端侧栏只列启动时默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后其余连接的对话全藏起来；用 cc-switch 的同名，两边的对话归在一处。Mesa 自己启动用的 `-c` 内联 `ccode-<短id>` 不变（恢复会话靠它认网关），客户端接力补写的 `ccode-<短id>` 定义块不动，只删旧 `ccode` 块。cc-switch 痕迹判定（`codex_other_switcher_marks`）随之改：`custom` 块 `name = "Mesa"`（Mesa 写的）或 ChatGPT 登录形态不算别家；别的名字、cc-switch 模型目录、指着 `custom` 却没定义块才算。
+**Codex 全局渠道共用 `custom`（2026-10-28 用户拍板，与 cc-switch 同名）**：「设为全局」不再按网关写 `ccode-<短id>`，一律写 `[model_providers.custom]` 并 `model_provider = "custom"`（`CODEX_GLOBAL_PROVIDER`），整块替换（上一家留下的 `requires_openai_auth` / `supports_websockets` / `env_key` 等残键不带过来）。理由：客户端侧栏只列启动时默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后其余连接的对话全藏起来；用 cc-switch 的同名，两边的对话归在一处。**官方账号不进 `custom`**（同日用户实测否决「官方也写进 custom」）：同一渠道名下的老对话会被接到新连接上，中转跑过的对话接到官方时，历史里中转留下的条目官方接口不收（客户端报 `input[n].content: array too long`，整段续不上）；中转之间互切没见到这类问题。Mesa 自己启动用的 `-c` 内联 `ccode-<短id>` 不变（恢复会话靠它认网关），客户端接力补写的 `ccode-<短id>` 定义块不动，只删旧 `ccode` 块。cc-switch 痕迹判定（`codex_other_switcher_marks`）随之改：`custom` 块 `name = "Mesa"`（Mesa 写的）或 ChatGPT 登录形态不算别家；别的名字、cc-switch 模型目录、指着 `custom` 却没定义块才算。
 
 **官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：七家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok；OpenCode 没有官方账号，Cursor 不支持设为全局）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
 
 | Agent | 撤 / 改 |
 |---|---|
-| Codex | `custom` 块写成 ChatGPT 登录形态（`name = "OpenAI"`、`requires_openai_auth = true`、`supports_websockets = true`、无 base_url，与 cc-switch 统一官方块同形；不写 auth.json，与「禁止 requires_openai_auth + 改 auth.json」不冲突——那条说的是 API 密钥）；撤 `model_catalog_json`，非官方模型名撤 `model` |
+| Codex | 撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、`model_catalog_json`，非官方模型名撤 `model`；**`custom` 块原样留着**，中转老对话照旧走原连接（曾写成 cc-switch 统一官方块同形，用户实测续不上中转老对话，已改回）。客户端侧栏在官方与中转之间切换时会互相藏对话，这是两者不能共用渠道的代价 |
 | Claude Code | settings.json env 撤端点 / 两种密钥、四个别名槽及 `_NAME`、第五槽、上下文成对键、旧子 agent 键；`ANTHROPIC_MODEL` 是 claude 模型或别名（opus / sonnet …）时留 |
 | Gemini | `.env` 删 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GEMINI_BASE_URL`，非 gemini 模型删 `GEMINI_MODEL`；settings.json 认证方式改 `oauth-personal` |
 | Qwen | 认证方式改 `qwen-oauth`；env 撤两套协议的密钥 / 端点 / 模型；`model.name` 等于被撤模型名时撤 |
