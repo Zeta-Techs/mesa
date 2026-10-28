@@ -311,7 +311,7 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 「写入 CLI 全局默认」是绑定上的动作，复用现事务写入 / 备份 / 原始快照 / 复检弹层。确认前 `preview_profile_global` 给出脱敏变更预览（文件、字段增删改、此入口带不上的策略、已开进程需新开）。成功更新「外部 CLI 上次写入」追踪，**不**改 Mesa 启动默认，也不改项目默认。无密钥网关仍禁止（`plan_writes` 现拒绝 `noAuth`，保持）。
 
-**设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，转连接页确认（见下「托盘挡路转交」）。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」（恢复初始）不挡。
+**设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，转连接页确认（见下「托盘挡路转交」）。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」：恢复初始的那些 Agent 不挡；Codex 官方账号要改 config.toml 顶层、与 cc-switch 抢同一行，照样挡（连接页与托盘同口径）。
 
 **托盘挡路转交（2026-10-23 用户拍板）**：原「托盘一点只发系统通知」作废——通知没授权 / 被专注模式吞掉时点了等于没反应。现口径：
 - 挡路判定在**点击时**现算（`set_global_conflict_message`），建菜单时同口径决定首行；
@@ -320,7 +320,11 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 - 每次被挡记一条 `logbuf`（source `tray`，info），设置 → 诊断可查；
 - 托盘绝不替人过二次确认，也不因挡路把该 Agent 藏掉或整组置灰。
 
-**官方绑定「设为全局」改语义**（今日 `plan_writes` 对 official 直接报错）：改为 `restore_original_backup`——清掉 Mesa 写入的 API 配置，让 CLI 登录态接手，并 `clear_active_global`。没有原始快照（从未对这个 agent 设过全局）= 无事可恢复，按钮说明「当前全局文件不是 Mesa 写的，无需恢复」。这是切回官方账号的托盘 / 菜单入口，不是新发明（`global_config.rs` `original/` + `restore_original_backup`）。
+**Codex 官方绑定「设为全局」只改几行（2026-10-28 用户拍板，取代下段对 Codex 的恢复快照口径）**：`plan_writes` 对 Codex 官方出写计划 `patch_codex_config_official`——撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、`model_catalog_json`，`model` 不过 `official_model_allowed` 时一并撤；`[model_providers.*]` 定义块全留（客户端打开旧对话要查得到渠道），MCP / 项目信任 / 思考档等不动。没有 config.toml = 空计划。走与 API 绑定同一套预览、事务备份、`record_active_global`、漂移比对与托盘 dry-run 勾选（补丁幂等，磁盘已是官方即打勾）。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像，目前只有 codex；别家要加先确认它的官方态能用「删几个键」表达。未登录官方账号时前端先确认一次。连接行悬停给「设为全局默认」图标（非全局、能写的才出），与 ⋯ 菜单同一个确认。
+
+**生效时机（Codex，2026-10-28 实测）**：预览的 `restart_note` 按 Agent 出（`restart_note`）。Codex 写明「外部终端新开生效；客户端重启」——app-server 新建对话会重读渠道，但客户端自带模型选择与预热对话、模型目录只在启动时读，不能承诺免重启。
+
+**官方绑定「设为全局」改语义**（Codex 以外；今日 `plan_writes` 对其余 official 直接报错）：改为 `restore_original_backup`——清掉 Mesa 写入的 API 配置，让 CLI 登录态接手，并 `clear_active_global`。没有原始快照（从未对这个 agent 设过全局）= 无事可恢复，按钮说明「当前全局文件不是 Mesa 写的，无需恢复」。这是切回官方账号的托盘 / 菜单入口，不是新发明（`global_config.rs` `original/` + `restore_original_backup`）。
 
 **托盘**（仓库里目前没有，本批新增）：
 

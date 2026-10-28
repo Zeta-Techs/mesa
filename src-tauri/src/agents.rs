@@ -1635,7 +1635,7 @@ pub fn permission_launch_args(agent_id: &str, base_args: &[String], mode: &str) 
 /// 官方账号禁止把中转/国产网关模型名跟着注入。
 /// 与前端 `officialModelAllowed` 双端镜像：否则 Codex `-m deepseek` 还会带上
 /// ChatGPT 订阅的 `service_tier=priority`，CLI 报模型不支持该档。
-fn official_model_allowed(agent: &str, model: &str) -> bool {
+pub(crate) fn official_model_allowed(agent: &str, model: &str) -> bool {
     let m = model.trim().to_ascii_lowercase();
     if m.is_empty() {
         return false;

@@ -124,7 +124,8 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
         let mut dry_failed = false;
         let mut checks = Vec::new();
         for p in &list {
-            let matched = if set_global_ok && p.account_type != AccountType::Official {
+            // 官方账号能 dry-run 的（Codex：只改几行）同样按磁盘比对出勾选
+            let matched = if set_global_ok {
                 global_config::dry_run_matches(&store, p)
             } else {
                 None
@@ -277,7 +278,9 @@ fn handle_menu(app: &AppHandle, id: &str) {
     tauri::async_runtime::spawn(async move {
         let store = app.state::<ProfileStore>();
         if let Ok(p) = store.get(&bind_id) {
-            if p.account_type != AccountType::Official
+            // Codex 官方账号也要改 config.toml 顶层，与 cc-switch 抢同一行，一样挡
+            if (p.account_type != AccountType::Official
+                || global_config::official_global_is_patch(&p.agent))
                 && global_config::set_global_conflict_message(&p.agent).is_some()
             {
                 // 托盘不替人过二次确认：不写盘，转到连接页弹确认。

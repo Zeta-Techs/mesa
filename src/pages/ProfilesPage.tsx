@@ -1942,6 +1942,12 @@ function fileActionLabel(action: string): string {
   return action;
 }
 
+/** 官方账号「设为全局」只改几行、走预览确认的 Agent（与 global_config.rs `official_global_is_patch` 双端镜像）；
+ *  其余 Agent 的官方账号仍是恢复首次写入前的快照 */
+function officialGlobalIsPatch(agent: string): boolean {
+  return agent === "codex";
+}
+
 /** 「设为全局默认」确认前的脱敏预览：文件、字段增删改、此入口带不上的策略、是否要重开。 */
 function GlobalWritePreviewDialog({
   profile,
@@ -2727,9 +2733,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
+  /** 行内「设为全局」：能直接写的才给（官方账号只有能只改几行的 Agent 给，其余官方仍走 ⋯ 里的恢复初始） */
+  function canQuickGlobal(p: Profile): boolean {
+    if (p.noAuth || p.slotMissing) return false;
+    if (p.accountType === "official") return officialGlobalIsPatch(p.agent);
+    return caps[p.agent]?.setGlobal.supported === true;
+  }
+
   async function onApplyGlobal(p: Profile) {
     if (applyDialog || writePreview) return;
-    if (p.accountType === "official") {
+    if (
+      p.accountType === "official" &&
+      officialGlobalIsPatch(p.agent) &&
+      officialStatus[p.agent]?.supported &&
+      !officialStatus[p.agent]?.connected &&
+      !(await confirmDialog(
+        `${labelOf(p.agent)} 还没登录官方账号。切过去后外部终端和客户端会要求先登录。仍要切回官方？`,
+      ))
+    )
+      return;
+    if (p.accountType === "official" && !officialGlobalIsPatch(p.agent)) {
       if (
         !(await confirmDialog(
           `将恢复 ${labelOf(p.agent)} 首次写入前的配置，让官方账号接手外部终端。不会改 Mesa 启动栏预选。已经打开的进程需要新开才会读到。继续？`,
@@ -3814,6 +3837,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
+                              {canQuickGlobal(profile) && !isGlobal && (
+                                <button
+                                  type="button"
+                                  onClick={() => void onApplyGlobal(profile)}
+                                  title={
+                                    profile.accountType === "official"
+                                      ? `设为全局默认：把外部 ${labelOf(profile.agent)} 切回官方账号（先预览、确认后写入）`
+                                      : `设为全局默认：把外部 ${labelOf(profile.agent)} 切到这条连接（先预览、确认后写入）`
+                                  }
+                                  aria-label={`设为全局默认：${profile.name}`}
+                                  className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
+                                >
+                                  <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => setModal({ initial: profile })}
@@ -4071,7 +4109,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             { separator: true },
             {
               icon: Globe,
-              label: rowMenu.profile.accountType === "official" ? "写入 CLI 全局默认（恢复官方）" : "写入 CLI 全局默认…",
+              label:
+                rowMenu.profile.accountType !== "official"
+                  ? "写入 CLI 全局默认…"
+                  : officialGlobalIsPatch(rowMenu.profile.agent)
+                    ? "写入 CLI 全局默认（切回官方）…"
+                    : "写入 CLI 全局默认（恢复官方）",
               disabled:
                 rowMenu.profile.noAuth ||
                 !!rowMenu.profile.slotMissing ||
@@ -4080,7 +4123,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   !caps[rowMenu.profile.agent].setGlobal.supported),
               title:
                 rowMenu.profile.accountType === "official"
-                  ? "恢复该 CLI 首次写入前的配置，让官方账号接手外部终端"
+                  ? officialGlobalIsPatch(rowMenu.profile.agent)
+                    ? "只撤掉 config.toml 顶层的默认渠道和模型目录，交回官方账号登录；别的配置不动"
+                    : "恢复该 CLI 首次写入前的配置，让官方账号接手外部终端"
                   : rowMenu.profile.slotMissing
                     ? "这个网关还没配该协议的端点"
                   : rowMenu.profile.noAuth

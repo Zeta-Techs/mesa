@@ -66,7 +66,9 @@ fn disk_matches_plans(plans: &[PlannedWrite]) -> bool {
 
 /// 托盘选中态：计划产物与磁盘是否一致（子集比对）。None = dry-run 失败，回落「上次写入」。
 pub(crate) fn dry_run_matches(store: &ProfileStore, profile: &Profile) -> Option<bool> {
-    if profile.account_type == crate::profiles::AccountType::Official {
+    if profile.account_type == crate::profiles::AccountType::Official
+        && !official_global_is_patch(&profile.agent)
+    {
         return None;
     }
     let profile = profile_for_write(store, &profile.id).ok()?;
@@ -629,6 +631,29 @@ fn patch_codex_config(
     Ok(doc.to_string())
 }
 
+/// Codex 官方账号「设为全局」只动顶层几行：撤掉默认渠道（回落内置 openai，认证交给
+/// auth.json 里的 ChatGPT 登录）与模型目录，模型名不是官方模型时一并撤掉。
+/// `[model_providers.*]` 定义块全部保留——客户端打开旧对话要查得到渠道；
+/// 其余配置（MCP、项目信任、思考档）原样不动，不再整份回滚到首次快照。
+fn patch_codex_config_official(existing: &str) -> Result<String, String> {
+    let mut doc = parse_toml_doc(Some(existing))?;
+    doc.remove("model_provider");
+    doc.remove("model_catalog_json");
+    let foreign = doc
+        .get("model")
+        .and_then(|v| v.as_str())
+        .is_some_and(|m| !agents::official_model_allowed("codex", m));
+    if foreign {
+        doc.remove("model");
+    }
+    Ok(doc.to_string())
+}
+
+/// 官方账号「设为全局」是否走写计划（只改几行）。其余 Agent 仍是恢复首次快照。
+pub(crate) fn official_global_is_patch(agent: &str) -> bool {
+    agent == "codex"
+}
+
 /// 「注册到 Codex 客户端（不切换默认）」的 config.toml 补丁：只写 provider 定义块，
 /// 顶层 model_provider/model 一律不动——matrix §2：[model_providers.x] 只有显式设为
 /// 默认才接管请求；客户端续聊会话只需要定义可查（查不到才报「Model provider not found」）
@@ -999,6 +1024,18 @@ fn plan_writes(
     models: &[String],
 ) -> Result<Vec<PlannedWrite>, String> {
     if profile.account_type == crate::profiles::AccountType::Official {
+        if official_global_is_patch(&profile.agent) {
+            // 没有 config.toml = 本来就是官方默认，无事可写
+            let path = home.join(".codex/config.toml");
+            return Ok(match read_existing(&path)? {
+                Some(text) => vec![PlannedWrite {
+                    tag: "config.toml",
+                    content: patch_codex_config_official(&text)?,
+                    path,
+                }],
+                None => Vec::new(),
+            });
+        }
         return Err(
             "官方账号不支持「设为全局」；请在 CLI 内登录，Mesa 只在启动时复现账号状态".into(),
         );
@@ -1376,6 +1413,7 @@ fn diff_maps(
 
 fn preview_plans(
     home: &Path,
+    agent: &str,
     plans: &[PlannedWrite],
     skipped_policies: Vec<String>,
 ) -> GlobalWritePreviewDto {
@@ -1409,9 +1447,42 @@ fn preview_plans(
     GlobalWritePreviewDto {
         files,
         skipped_policies,
-        restart_note: "已经打开的 Mesa 终端和外部 CLI 不会自动重读配置，需要新开才会生效。".into(),
+        restart_note: restart_note(agent).into(),
         scope_note: "只改外部 CLI 的配置文件。不会改 Mesa 启动栏预选，也不会改某个项目的默认配置。"
             .into(),
+    }
+}
+
+/// 写入后什么时候生效。Codex 一句按 2026-10-28 隔离 CODEX_HOME 实测（客户端同款 app-server 0.164）：
+/// 新建对话每次重读 config.toml 的渠道；已开对话沿用旧渠道；模型目录与侧栏历史（只列启动时默认渠道
+/// 的对话）只在启动时定。客户端另自带模型选择与预热对话，故对客户端仍说「重启」。
+fn restart_note(agent: &str) -> &'static str {
+    if agent == "codex" {
+        "外部终端新开的 Codex 会话走新配置，已开着的不变。Codex 客户端请重启：不重启时新建对话虽会换渠道，但模型列表和客户端记住的模型还是旧的。客户端侧栏只列当前默认渠道下的对话，别的渠道的对话要用搜索找。"
+    } else {
+        "已经打开的 Mesa 终端和外部 CLI 不会自动重读配置，需要新开才会生效。"
+    }
+}
+
+fn official_apply_result(files: Vec<String>, message: &str) -> GlobalApplyResultDto {
+    let skip = |msg: &str| crate::profile_validation::ValidationCheckDto {
+        status: "skipped".into(),
+        message: msg.into(),
+        latency_ms: None,
+    };
+    GlobalApplyResultDto {
+        files,
+        validation: crate::profile_validation::ProfileValidationDto {
+            ok: true,
+            checked_at: crate::sessions::now_iso(),
+            local: crate::profile_validation::ValidationCheckDto {
+                status: "passed".into(),
+                message: message.into(),
+                latency_ms: None,
+            },
+            cli: skip("官方账号不跑 CLI 复检"),
+            api: skip(""),
+        },
     }
 }
 
@@ -1979,7 +2050,9 @@ pub(crate) fn drift_status(store: &ProfileStore, agent: &str) -> crate::drift::G
         Ok(p) => p,
         Err(e) => return crate::drift::classify(false, Some(e), Vec::new()),
     };
-    if profile.account_type == crate::profiles::AccountType::Official {
+    if profile.account_type == crate::profiles::AccountType::Official
+        && !official_global_is_patch(&profile.agent)
+    {
         return crate::drift::classify(true, None, Vec::new());
     }
     let key = crate::profiles::get_key_for_profile(&profile)
@@ -2015,6 +2088,13 @@ pub fn preview_profile_global(
     profile_id: String,
 ) -> Result<GlobalWritePreviewDto, String> {
     let mut profile = store.get_with_model(&profile_id, None)?;
+    if profile.account_type == crate::profiles::AccountType::Official
+        && official_global_is_patch(&profile.agent)
+    {
+        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let plans = plan_writes(&home, &profile, None, &[])?;
+        return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new()));
+    }
     if profile.account_type == crate::profiles::AccountType::Official {
         return Err("官方账号「设为全局」是恢复初始配置，不是写入这份连接".into());
     }
@@ -2025,7 +2105,7 @@ pub fn preview_profile_global(
     crate::agents::ensure_launch_credentials(&profile, key.as_deref())?;
     let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
     let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
-    Ok(preview_plans(&home, &plans, skipped))
+    Ok(preview_plans(&home, &profile.agent, &plans, skipped))
 }
 
 #[tauri::command]
@@ -2035,6 +2115,29 @@ pub async fn apply_profile_global(
     profile_id: String,
 ) -> Result<GlobalApplyResultDto, String> {
     let profile = profile_for_write(&store, &profile_id)?;
+    if profile.account_type == crate::profiles::AccountType::Official
+        && official_global_is_patch(&profile.agent)
+    {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let _guard = GLOBAL_CONFIG_MUTEX
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let _file_guard = crate::storage::config_lock("global-config")?;
+            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+            let plans = plan_writes(&home, &profile, None, &[])?;
+            let files = if plans.is_empty() || disk_matches_plans(&plans) {
+                Vec::new()
+            } else {
+                apply_plans(&backups_root()?.join(&profile.agent), &home, &plans)?
+            };
+            crate::settings::record_active_global(&profile.agent, &profile.id);
+            Ok(official_apply_result(files, "已切回官方账号"))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        let _ = crate::tray::rebuild_and_wait(app.clone()).await;
+        return result;
+    }
     if profile.account_type == crate::profiles::AccountType::Official {
         let agent = profile.agent.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
@@ -2049,25 +2152,7 @@ pub async fn apply_profile_global(
             let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
             let files = restore_from_original(&dir, &home)?;
             crate::settings::clear_active_global(&agent);
-            let skip = |msg: &str| crate::profile_validation::ValidationCheckDto {
-                status: "skipped".into(),
-                message: msg.into(),
-                latency_ms: None,
-            };
-            Ok(GlobalApplyResultDto {
-                files,
-                validation: crate::profile_validation::ProfileValidationDto {
-                    ok: true,
-                    checked_at: crate::sessions::now_iso(),
-                    local: crate::profile_validation::ValidationCheckDto {
-                        status: "passed".into(),
-                        message: "已恢复初始状态（官方账号）".into(),
-                        latency_ms: None,
-                    },
-                    cli: skip("官方账号不跑 CLI 复检"),
-                    api: skip(""),
-                },
-            })
+            Ok(official_apply_result(files, "已恢复初始状态（官方账号）"))
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -2498,6 +2583,59 @@ mod tests {
             doc["model_catalog_json"].as_str(),
             Some("/cfg/ccode/catalogs/codex-p1.json")
         );
+    }
+
+    #[test]
+    fn codex_official_patch_only_drops_switch_lines() {
+        let existing = r#"model_provider = "ccode-abc"
+model = "deepseek-v4"
+model_catalog_json = "/cfg/ccode/catalogs/codex-p1.json"
+model_reasoning_effort = "high"
+
+[model_providers.ccode-abc]
+name = "Mesa"
+base_url = "https://relay.example.com/v1"
+experimental_bearer_token = "sk-k"
+
+[mcp_servers.x]
+command = "y"
+
+[projects."/w"]
+trust_level = "trusted"
+"#;
+        let out = patch_codex_config_official(existing).unwrap();
+        let doc: toml::Value = toml::from_str(&out).unwrap();
+        assert!(doc.get("model_provider").is_none());
+        assert!(doc.get("model_catalog_json").is_none());
+        assert!(doc.get("model").is_none(), "中转模型名不能留给官方账号");
+        assert_eq!(doc["model_reasoning_effort"].as_str(), Some("high"));
+        // 渠道定义块留着（客户端打开旧对话要查得到），其余配置原样
+        assert_eq!(doc["model_providers"]["ccode-abc"]["base_url"].as_str(), Some("https://relay.example.com/v1"));
+        assert_eq!(doc["mcp_servers"]["x"]["command"].as_str(), Some("y"));
+        assert_eq!(doc["projects"]["/w"]["trust_level"].as_str(), Some("trusted"));
+        // 官方模型名保留；再跑一次不变（托盘 dry-run 靠它判当前就是官方）
+        let kept = patch_codex_config_official("model_provider = \"custom\"\nmodel = \"gpt-6-astra\"\n").unwrap();
+        assert_eq!(kept.trim(), "model = \"gpt-6-astra\"");
+        assert_eq!(patch_codex_config_official(&kept).unwrap(), kept);
+    }
+
+    #[test]
+    fn codex_official_plan_writes_patch_or_nothing() {
+        let home = tmpdir("codex-official");
+        let mut p = profile("codex");
+        p.account_type = crate::profiles::AccountType::Official;
+        p.base_url = None;
+        // 没有 config.toml：本来就是官方默认，无事可写
+        assert!(plan_writes(&home, &p, None, &[]).unwrap().is_empty());
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model_provider = \"ccode-x\"\n").unwrap();
+        let plans = plan_writes(&home, &p, None, &[]).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert!(!plans[0].content.contains("model_provider"));
+        // 别家官方账号仍不走写计划
+        let mut c = profile("claude-code");
+        c.account_type = crate::profiles::AccountType::Official;
+        assert!(plan_writes(&home, &c, None, &[]).is_err());
     }
 
     #[test]
@@ -3522,6 +3660,7 @@ supports_reasoning_effort = false
         .unwrap();
         let preview = preview_plans(
             &dir,
+            "claude-code",
             &[PlannedWrite {
                 tag: "settings.json",
                 path: path.clone(),
