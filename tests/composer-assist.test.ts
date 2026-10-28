@@ -6,6 +6,8 @@ import {
   filterMesaCommands,
   lastUserText,
   mentionQueryAt,
+  typedMentionAt,
+  armedMentionAt,
 } from "../src/composer-assist.ts";
 
 test("@ 引用：只认行首或空白后的 @，查询不含空白", () => {
@@ -13,6 +15,27 @@ test("@ 引用：只认行首或空白后的 @，查询不含空白", () => {
   assert.deepEqual(mentionQueryAt("@", 1), { start: 0, query: "" });
   assert.equal(mentionQueryAt("邮箱 a@b.com", 10), null, "邮箱里的 @ 不算");
   assert.equal(mentionQueryAt("@src 再说", 7), null, "查询后有空白就结束了");
+  assert.deepEqual(mentionQueryAt("看 ＠ma", 5), { start: 2, query: "ma" }, "全角＠也认");
+});
+
+test("@ 面板只为亲手刚打的 @ 弹：粘贴、邮箱、挪光标回旧 @ 都不弹", () => {
+  assert.equal(typedMentionAt("看看 ", "看看 @", 4), 3);
+  assert.equal(typedMentionAt("", "@", 1), 0);
+  assert.equal(typedMentionAt("看看", "看看＠", 3), null, "紧贴文字的 @ 不算");
+  assert.equal(typedMentionAt("a", "a@", 2), null, "邮箱写法不算");
+  assert.equal(typedMentionAt("", "看看 @src", 7), null, "一次进来多个字符是粘贴，不算");
+  assert.equal(typedMentionAt("看看 @s", "看看 @sr", 6), null, "接着打的字母不算新 @");
+  assert.equal(typedMentionAt("x y", "x @y", 3), 2, "在中间插入也算");
+});
+
+test("刚打的 @：继续打字跟着搜，打空格 / 删掉 @ / 光标离开就收起", () => {
+  assert.deepEqual(armedMentionAt("看看 @ma", 6, 3), { start: 3, query: "ma" });
+  assert.deepEqual(armedMentionAt("看看 @", 4, 3), { start: 3, query: "" });
+  assert.equal(armedMentionAt("看看 @张三 好", 9, 3), null, "打了空格就是普通 @");
+  assert.equal(armedMentionAt("看看 ", 3, 3), null, "@ 删掉了");
+  assert.equal(armedMentionAt("看看 @ma", 2, 3), null, "光标挪到 @ 前面");
+  assert.equal(armedMentionAt("看看 @ma", 6, null), null, "没打过 @（比如粘贴进来的）");
+  assert.equal(armedMentionAt("@a @b", 5, 0), null, "后面又有一个 @，跟的是新的那个");
 });
 
 test("选中文件：@查询换成 @相对路径，带空格的路径加引号", () => {

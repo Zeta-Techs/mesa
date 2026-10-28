@@ -18,8 +18,9 @@ import type { McpServerDto, SkillDto } from "../types";
 import type { SearchResultDto } from "./FileTree";
 import {
   applyMention,
+  armedMentionAt,
   filterMesaCommands,
-  mentionQueryAt,
+  typedMentionAt,
   type MesaCommand,
 } from "../composer-assist";
 import { firstImageItem, imageExtFromMime } from "../terminal-input";
@@ -608,42 +609,55 @@ export default function ChatComposer({
   }
 
   // ---- @ 引用项目文件 ----
+  // 面板只为亲手刚打的 @ 弹（2026-10-28）：打 @ 立刻列最近改过的文件，接着打字就地搜；
+  // 打空格、Esc、删掉 @、光标离开即收起；搜不到就不露面板、不拦 Enter——「@张三」「@所有人」照常发
   const [caret, setCaret] = useState(0);
-  const [mentionDismissed, setMentionDismissed] = useState(false);
-  const mention = cwd && !mentionDismissed ? mentionQueryAt(value, caret) : null;
-  const [mentionHits, setMentionHits] = useState<SearchResultDto[]>([]);
+  const [mentionArmed, setMentionArmed] = useState<number | null>(null);
+  const mention = cwd ? armedMentionAt(value, caret, mentionArmed) : null;
+  const mentionGone = mention === null;
+  useEffect(() => {
+    if (mentionGone && mentionArmed !== null) setMentionArmed(null);
+  }, [mentionGone, mentionArmed]);
+  type MentionHit = { path: string; name: string; rel: string; isDir: boolean };
+  // 结果记着答的是哪个查询：输入法一次上屏「张三」时，旧查询的列表不能被 Enter 选中
+  const [mentionResult, setMentionResult] = useState<{ query: string; hits: MentionHit[] } | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
   const mentionQuery = mention?.query ?? null;
+  const mentionHits = mentionResult && mentionResult.query === mentionQuery ? mentionResult.hits : [];
   useEffect(() => {
     if (mentionQuery === null || !cwd) {
-      setMentionHits([]);
-      return;
-    }
-    if (!mentionQuery) {
-      setMentionHits([]);
+      setMentionResult(null);
       return;
     }
     let stale = false;
+    const settle = (hits: MentionHit[]) => {
+      if (stale) return;
+      setMentionResult({ query: mentionQuery, hits: hits.slice(0, 8) });
+      setMentionIdx(0);
+    };
+    // 只打了 @：列最近改过的文件（同「＋ → 引用项目文件」弹层），不等防抖
+    if (!mentionQuery) {
+      invoke<{ path: string; name: string; rel: string }[]>("list_recent_files", { root: cwd })
+        .then((files) => settle(files.map((f) => ({ ...f, isDir: false }))))
+        .catch(() => settle([]));
+      return () => {
+        stale = true;
+      };
+    }
     const t = window.setTimeout(() => {
       invoke<SearchResultDto[]>("search_files", { root: cwd, query: mentionQuery, showHidden: false })
-        .then((hits) => {
-          if (!stale) {
-            setMentionHits(hits.slice(0, 8));
-            setMentionIdx(0);
-          }
-        })
-        .catch(() => {
-          if (!stale) setMentionHits([]);
-        });
+        .then(settle)
+        .catch(() => settle([]));
     }, 150);
     return () => {
       stale = true;
       window.clearTimeout(t);
     };
   }, [mentionQuery, cwd]);
-  function pickMention(hit: SearchResultDto) {
+  function pickMention(hit: MentionHit) {
     if (!mention) return;
     const next = applyMention(value, caret, mention, hit.rel.replace(/\\/g, "/"));
+    setMentionArmed(null);
     setValue(next.value);
     setCaret(next.caret);
     requestAnimationFrame(() => {
@@ -917,31 +931,31 @@ export default function ChatComposer({
               </p>
             </div>
           )}
-          {/* @ 引用项目文件：光标前是「@查询」时弹出，在工作目录里搜（search_files） */}
-          {mention && (
+          {/* @ 引用项目文件：刚打的 @ 列最近改过的文件，接着打字在工作目录里搜（search_files）；
+              搜不到不露面板，免得「@张三」也弹 */}
+          {mention && mentionHits.length > 0 && (
             <div className="border-b border-hairline px-1.5 py-1.5">
-              {mention.query === "" ? (
-                <p className="px-2 py-1 text-micro text-l4">输入文件名的一部分，在这个文件夹里找</p>
-              ) : mentionHits.length === 0 ? (
-                <p className="px-2 py-1 text-micro text-l4">没找到「{mention.query}」</p>
-              ) : (
-                mentionHits.map((h, i) => (
-                  <button
-                    key={h.path}
-                    type="button"
-                    onMouseEnter={() => setMentionIdx(i)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => pickMention(h)}
-                    className={`flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-xs ${
-                      i === mentionIdx ? "bg-hover text-l1" : "text-l2"
-                    }`}
-                  >
-                    <span className="shrink-0">{h.name}{h.isDir ? "/" : ""}</span>
-                    <span className="min-w-0 truncate font-mono text-micro text-l4">{h.rel}</span>
-                  </button>
-                ))
+              {mention.query === "" && (
+                <p className="px-2 pb-0.5 text-micro text-l4">最近改过的文件 · 接着打字搜整个文件夹</p>
               )}
-              <p className="px-2 pt-1 text-micro text-l4">Enter 选中 · Esc 收起 · 引用的是相对路径，AI 会自己去读</p>
+              {mentionHits.map((h, i) => (
+                <button
+                  key={h.path}
+                  type="button"
+                  onMouseEnter={() => setMentionIdx(i)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickMention(h)}
+                  className={`flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-xs ${
+                    i === mentionIdx ? "bg-hover text-l1" : "text-l2"
+                  }`}
+                >
+                  <span className="shrink-0">{h.name}{h.isDir ? "/" : ""}</span>
+                  <span className="min-w-0 truncate font-mono text-micro text-l4">{h.rel}</span>
+                </button>
+              ))}
+              <p className="px-2 pt-1 text-micro text-l4">
+                Enter 选中 · 空格或 Esc 当普通 @ · 引用的是相对路径，AI 会自己去读
+              </p>
             </div>
           )}
           {/* 从手机添加：弹层收起后接收照常，这一行可展开或停止（30 分钟没新东西自动停） */}
@@ -1087,11 +1101,14 @@ export default function ChatComposer({
               if (file) void addImageAttachment(file);
             }}
             onChange={(e) => {
-              setValue(e.target.value);
-              setCaret(e.target.selectionStart ?? e.target.value.length);
+              const next = e.target.value;
+              const nextCaret = e.target.selectionStart ?? next.length;
+              const typedAt = typedMentionAt(value, next, nextCaret);
+              if (typedAt !== null) setMentionArmed(typedAt);
+              setValue(next);
+              setCaret(nextCaret);
               if (error) setError(null);
               if (slashDismissed) setSlashDismissed(false);
-              if (mentionDismissed) setMentionDismissed(false);
             }}
             onScroll={(e) => {
               const el = e.currentTarget;
@@ -1132,12 +1149,15 @@ export default function ChatComposer({
                 }
               }
               if (mention && e.key === "Escape") {
-                e.preventDefault();
-                setMentionDismissed(true);
-                return;
+                setMentionArmed(null);
+                // 面板没露出来时 Esc 照常往下走，不吞
+                if (mentionHits.length > 0) {
+                  e.preventDefault();
+                  return;
+                }
               }
               // ⇧Tab 轮换权限档（开聊前；面板开着时不抢）：和 Claude Code 终端里同一个手势
-              if (e.key === "Tab" && e.shiftKey && onCyclePermission && slashList.length === 0 && !mention) {
+              if (e.key === "Tab" && e.shiftKey && onCyclePermission && slashList.length === 0 && mentionHits.length === 0) {
                 e.preventDefault();
                 onCyclePermission();
                 return;

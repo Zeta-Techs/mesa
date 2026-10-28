@@ -798,25 +798,45 @@ test("点对话里的图接着改：图进输入框、直接展开看图台，�
   }
 });
 
-test("输入框 @：在工作目录里搜文件，选中换成相对路径，带空格的加引号", async () => {
+test("输入框 @：打 @ 列最近改过的文件，接着打字搜，选中换成相对路径，带空格的加引号", async () => {
   const ui = await mount();
-  try {
-    await ui.render(ui.h(ui.Composer, { onSend: async () => null, cwd: "/proj" }));
-    await typeInto(ui, "看看 @ma");
-    await ui.act(async () => {
+  // 一个字一个字地打：面板只为亲手刚打的 @ 弹
+  const typeChars = async (text: string) => {
+    for (const ch of text) await typeInto(ui, ui.el.querySelector("textarea")!.value + ch);
+  };
+  const settle = () =>
+    ui.act(async () => {
       await new Promise((r) => setTimeout(r, 220));
     });
+  try {
+    await ui.render(ui.h(ui.Composer, { onSend: async () => null, cwd: "/proj" }));
+    await typeChars("看看 @");
+    await settle();
+    assert.match(ui.el.textContent ?? "", /最近改过的文件/, "只打了 @ 就列最近改过的文件");
+    assert.match(ui.el.textContent ?? "", /cover\.png/);
+    await typeChars("ma");
+    await settle();
     assert.deepEqual(ui.host.searches.at(-1), { root: "/proj", query: "ma", showHidden: false });
     await ui.click("main.rs");
     assert.equal(ui.el.querySelector("textarea")!.value, "看看 @src/main.rs ");
 
-    await typeInto(ui, "再看 @my");
-    await ui.act(async () => {
-      await new Promise((r) => setTimeout(r, 220));
-    });
+    await typeInto(ui, "");
+    await typeChars("再看 @my");
+    await settle();
     await key(ui, "ArrowDown");
     await key(ui, "Enter");
     assert.equal(ui.el.querySelector("textarea")!.value, '再看 @"src/my app.ts" ');
+
+    const before = ui.host.searches.length;
+    await typeInto(ui, "粘贴进来的 @ma");
+    await settle();
+    assert.equal(ui.host.searches.length, before, "粘贴进来的 @ 不搜");
+    assert.doesNotMatch(ui.el.textContent ?? "", /main\.rs/, "也不弹面板");
+
+    await typeInto(ui, "");
+    await typeChars("@ma ");
+    await settle();
+    assert.doesNotMatch(ui.el.textContent ?? "", /main\.rs/, "打了空格就当普通 @");
   } finally {
     await ui.close();
   }

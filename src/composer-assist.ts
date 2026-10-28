@@ -7,15 +7,41 @@
  */
 import { splitLaunchPrompt } from "./project-context.ts";
 
-/** 光标前的 `@查询`：@ 前是行首或空白，查询里没有空白；不是则 null */
+const isAt = (ch: string | undefined) => ch === "@" || ch === "＠";
+
+/** 光标前的 `@查询`：@（含全角＠）前是行首或空白，查询里没有空白；不是则 null */
 export function mentionQueryAt(value: string, caret: number): { start: number; query: string } | null {
   const before = value.slice(0, caret);
-  const at = before.lastIndexOf("@");
+  const at = Math.max(before.lastIndexOf("@"), before.lastIndexOf("＠"));
   if (at < 0) return null;
   if (at > 0 && !/\s/.test(before[at - 1])) return null;
   const query = before.slice(at + 1);
   if (/\s/.test(query)) return null;
   return { start: at, query };
+}
+
+/**
+ * 这一下输入是不是「亲手打了一个 @」：比上次只多一个字符、是 @ / ＠、就在光标前、前面是行首或空白。
+ * 是则返回 @ 的位置。粘贴进来的、光标挪回旧 @ 后面的都不算——文件面板只为刚打的 @ 弹（2026-10-28）
+ */
+export function typedMentionAt(prev: string, next: string, caret: number): number | null {
+  if (next.length !== prev.length + 1 || caret < 1) return null;
+  const at = caret - 1;
+  if (!isAt(next[at])) return null;
+  if (next.slice(0, at) + next.slice(caret) !== prev) return null;
+  if (at > 0 && !/\s/.test(next[at - 1])) return null;
+  return at;
+}
+
+/** 刚打的那个 @ 还在起作用时给出 `@查询`：@ 没被删、光标还在它后面、中间没打空白；否则 null（面板收起） */
+export function armedMentionAt(
+  value: string,
+  caret: number,
+  armed: number | null,
+): { start: number; query: string } | null {
+  if (armed === null || !isAt(value[armed])) return null;
+  const m = mentionQueryAt(value, caret);
+  return m && m.start === armed ? m : null;
 }
 
 /** 把 `@查询` 换成 `@相对路径 `，返回新文本与新光标位置；路径里有空格时用引号包起来 */
