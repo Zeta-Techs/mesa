@@ -2163,6 +2163,16 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             // `grok models` 同样要联网，查登录状态时缓存；config.toml 里借官方名字转去中转的 [model.*] 段剔掉
             "grok" => {
                 let hijacked = grok_relay_model_sections();
+                // 还没缓存过（没打开过连接页）：当场问一次，约 3 秒
+                if read_official_models_cache("grok").is_empty() {
+                    if let Some(path) = resolve_binary("grok") {
+                        refresh_official_models_cache("grok", || {
+                            cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
+                                .map(|t| parse_grok_models(&t))
+                                .unwrap_or_default()
+                        });
+                    }
+                }
                 return read_official_models_cache("grok")
                     .into_iter()
                     .filter(|m| !hijacked.contains(m))

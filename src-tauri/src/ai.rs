@@ -181,6 +181,13 @@ fn headless_oneshot_args(agent: &str, prompt: &str) -> Vec<String> {
             "json".into(),
             "--no-session-persistence".into(),
         ],
+        // 一次性调用跑在 Mesa 自建的临时目录里：Cursor 在没信任过的目录 -p 直接退出、要人选（2026-10-28 实测），
+        // 这个目录是 Mesa 建的、用完即删，替它信任
+        "cursor" => {
+            let mut a = headless_args("cursor", prompt);
+            a.push("--trust".into());
+            a
+        }
         "codex" => vec![
             "exec".into(),
             "--skip-git-repo-check".into(),
@@ -390,6 +397,23 @@ pub(crate) fn summarize_headless_error(detail: &str, expected_host: Option<&str>
     {
         return "官方账号登录已失效，请到连接页重新登录。后台调用请在设置里指定一套 API 配置。"
             .into();
+    }
+    // 官方账号没登录 / 登录过期（Claude 的 JSON result「Not logged in · Please run /login」、CodeBuddy「Authentication required」）
+    if low.contains("not logged in")
+        || low.contains("please run /login")
+        || low.contains("authentication required")
+    {
+        return "官方账号还没登录或登录已过期，请到连接页这家 Agent 的组头点「官方登录」。".into();
+    }
+    // Claude 的 JSON 结果里 is_error 为真时 result 就是错误句：取出来，别把整段 JSON 甩给人
+    if let Some(r) = detail
+        .lines()
+        .rev()
+        .find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .filter(|v| v.get("is_error").and_then(|b| b.as_bool()) == Some(true))
+        .and_then(|v| v.get("result").and_then(|r| r.as_str()).map(str::to_string))
+    {
+        return tail_chars(&r, 200);
     }
     // Gemini 个人 Google 账号：Google 已不让个人版 Code Assist 用 Gemini CLI（2026-10-28 实测 IneligibleTierError）
     if low.contains("ineligibletiererror") || low.contains("no longer supported for gemini code assist") {
@@ -2641,6 +2665,15 @@ mod tests {
         assert!(stripped.contains("实际输出文本"), "{stripped}");
         assert_eq!(strip_known_cli_noise("  [claude-code:unrecognized_model] x\nok"), "ok");
         assert_eq!(strip_known_cli_noise("干净输出"), "干净输出");
+    }
+
+    #[test]
+    fn summarize_headless_error_explains_logged_out_and_unwraps_claude_json() {
+        let claude = r#"{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}"#;
+        assert!(summarize_headless_error(claude, None).contains("官方登录"));
+        let other = r#"{"type":"result","is_error":true,"result":"API Error: 529 overloaded"}"#;
+        assert_eq!(summarize_headless_error(other, None), "API Error: 529 overloaded");
+        assert!(headless_oneshot_args("cursor", "hi").contains(&"--trust".to_string()));
     }
 
     #[test]

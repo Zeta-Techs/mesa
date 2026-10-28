@@ -3469,7 +3469,32 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
 
   /** 行上「测试」：就地对这条连接用的协议槽 + 它的启动模型发一次基础请求（与网关库「测试」同一条命令，
    *  结果按槽 / 模型 / 地址密钥指纹存进网关，后端据此算出这条连接的「测试通过 / 测试失败」），不开网关库 */
+  /** 官方账号行的「测试」（2026-10-28）：没有网关可测，就用这条连接无头发一句话（走 CLI 自己的登录），
+   *  回复了算通过；失败的原因由后端 summarize_headless_error 收成一句（登录过期、个人账号被停用等）。
+   *  会用一点官方额度，所以不自动跑，只在点了时测 */
+  async function probeOfficialRow(profile: Profile) {
+    if (rowProbe[profile.id]?.running) return;
+    setRowProbe((cur) => ({ ...cur, [profile.id]: { running: true } }));
+    try {
+      const reply = await invoke<string>("ai_prompt", {
+        profileId: profile.id,
+        fnKey: null,
+        prompt: "这是连接测试，请只回复两个字：收到",
+      });
+      setRowProbe((cur) => ({
+        ...cur,
+        [profile.id]: { running: false, ok: true, message: reply.trim().slice(0, 40) },
+      }));
+    } catch (e) {
+      setRowProbe((cur) => ({
+        ...cur,
+        [profile.id]: { running: false, ok: false, message: String(e) },
+      }));
+    }
+  }
+
   async function probeRow(profile: Profile) {
+    if (profile.accountType === "official") return probeOfficialRow(profile);
     if (!profile.gatewayId || rowProbe[profile.id]?.running) return;
     setRowProbe((cur) => ({ ...cur, [profile.id]: { running: true } }));
     try {
@@ -4220,7 +4245,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   );
                                 }
                                 const local = rowProbe[profile.id];
-                                const probeable = canProbeProfile(profile);
+                                // 官方账号：已登录、这家能无头调用（OpenCode 没有官方账号）才给测
+                                const officialProbeable =
+                                  profile.accountType === "official" && !!officialStatus[profile.agent]?.connected;
+                                const probeable = canProbeProfile(profile) || officialProbeable;
                                 if (local?.running) {
                                   return (
                                     <span className="flex items-center gap-1 text-l3" role="status">
@@ -4281,6 +4309,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     >
                                       {body}
                                     </span>
+                                  );
+                                }
+                                if (officialProbeable) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => void probeRow(profile)}
+                                      title="用这条官方账号发一句话试试（走 CLI 自己的登录，会用一点官方额度），结果写在这里"
+                                      aria-label={`测试官方账号：${labelOf(profile.agent)}`}
+                                      className={`${ghostActionClass} ${hoverRevealClass}`}
+                                    >
+                                      测试
+                                    </button>
                                   );
                                 }
                                 return profileNeedsProbe(profile) ? (
