@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- 改进：侧栏底部「设置」改用齿轮图标、「技能」改用魔杖图标，不带文字时也认得出；命令面板、灵动岛同步换。
 - 改进：其余几家的官方账号也补齐了。Cursor 在 Mac 上登过也显示「未登录」的问题修好（改问 `cursor-agent status`），并列出 Cursor、Kimi 官方账号能用的模型。用官方账号启动 Claude Code 时，配置文件顶层留着的中转模型名（如 glm）不再带上，改用 Claude 自己的默认模型；Gemini 的 .env、Grok 的默认模型是中转模型时，启动前就拦下并说清楚，不会发出去才报错。
 - 修好：Codex 官方账号发消息报「deepseek-… model is not supported when using Codex with a ChatGPT account」：官方账号现在列出这个 ChatGPT 账号能用的模型，没选时用第一个，不再沿用配置文件里中转留下的模型名。
 - 改进：官方账号更好用。连接页组头多一个「＋ 官方账号」，一点就加好；官方账号那行显示这家的图标（新增 Gemini、Cursor 图标）。在 Mesa 里选官方账号启动 Claude Code、CodeBuddy、Qwen 时，会临时盖掉配置文件里留着的中转地址和密钥，不用先把全局切回官方，也不再被拦下；Kimi 没选模型时用 `kimi login` 配好的模型。Gemini、Grok 盖不掉的会拦下并提示点地球图标切回官方。修好：Mac 上 Claude Code 登录存在钥匙串里，Mesa 以前总显示「未登录」、让人以为要重登。

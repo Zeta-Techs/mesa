@@ -18,7 +18,6 @@ import {
   PanelLeftOpen,
   RefreshCw,
   Search,
-  Settings2,
   ShieldAlert,
   Smartphone,
   SquarePen,
@@ -577,7 +576,7 @@ export default function CommandPalette({
               keywords: [s.id, "设置", "settings", ...s.aliases],
               searchOnly: true,
             },
-            icon: icon(Settings2),
+            icon: icon(NAV_ICONS.settings),
             run: () => {
               setSettingsSectionReq(s.id);
               setPage("settings");

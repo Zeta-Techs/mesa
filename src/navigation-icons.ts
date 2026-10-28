@@ -10,9 +10,9 @@ import {
   MessageCirclePlus,
   MessagesSquare,
   Search,
-  Settings2,
-  Sparkles,
+  Settings,
   SquareTerminal,
+  Wand2,
 } from "lucide-react";
 
 export const NAV_ICONS = {
@@ -21,11 +21,12 @@ export const NAV_ICONS = {
   terminal: SquareTerminal,
   sessions: MessagesSquare,
   profiles: Cable,
-  skills: Sparkles,
+  // 技能用魔杖、设置用齿轮（2026-10-28）：星光在 AI 应用里读作「AI 生成」，滑杆易读成筛选
+  skills: Wand2,
   mcp: Blocks,
   schedules: Clock3,
   stats: BarChart3,
-  settings: Settings2,
+  settings: Settings,
   quickChat: MessageCirclePlus,
   // 侧栏顶部「新项目」与标题栏「搜索对话和项目」（2026-10-27）
   newProject: FolderPlus,
