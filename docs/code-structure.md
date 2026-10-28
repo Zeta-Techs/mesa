@@ -628,7 +628,8 @@ terminal-cwd.ts            # 目录读取错误统一人话（FileTree / Termina
                              # 关键帧（主线程重绘，xterm 出字满载时一卡一卡）——8 段虚线按相位差闪 opacity（合成器线程，
                              # 2026-09-15 实测重做）（tests/tab-working.test.ts）
   terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env）
-  tab-drag.ts                # 标签条拖拽排序纯逻辑：位移钳制 + 目标槽位判定（>= 中线守末槽边界）+ 高矮不一的块的让位 / 吸附
+  agent-group-order.ts       # 连接页 Agent 分组顺序：存下的 id 列表合并默认顺序、只在看得见的组之间挪（localStorage）
+  tab-drag.ts                # 标签条拖拽排序纯逻辑（侧栏项目树、连接页分组共用）：位移钳制 + 目标槽位判定（>= 中线守末槽边界）+ 高矮不一的块的让位 / 吸附
                              # （tabDragShift / tabDragSettleDx，侧栏项目树展开对话后用；tests/tab-drag.test.ts）
   tab-surface.ts             # 打开对话先显示聊天还是终端（2026-10-22，tests/tab-surface.test.ts）：设置 openSurface 默认值 +
                              # pendingTerminal 落标签定层（shell 恒终端 / 写死照写 / 复用不动 / 新开跟设置）；进对话的入口禁写死 surface

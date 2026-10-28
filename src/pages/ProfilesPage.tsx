@@ -14,7 +14,10 @@ import {
   Eye,
   EyeOff,
   FileDown,
+  ArrowDown,
+  ArrowUp,
   Globe,
+  GripVertical,
   Import,
   LogIn,
   RefreshCw,
@@ -65,6 +68,19 @@ import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
+import {
+  loadAgentGroupOrder,
+  moveWithinVisible,
+  orderAgentIds,
+  saveAgentGroupOrder,
+} from "../agent-group-order";
+import {
+  clampTabDragDx,
+  rubberbandTabDx,
+  tabDragSettleDx,
+  tabDragShift,
+  tabDragTarget,
+} from "../tab-drag";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
@@ -2485,6 +2501,93 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   >("all");
   const [search, setSearch] = useState("");
   // 组折叠状态：首次默认折叠空组，手动折叠后持久化到 localStorage
+  // 分组顺序（2026-10-28 用户：可拖动排序）：组头按住拖，松手存 localStorage；键盘走组头 ⋯ 的上移 / 下移
+  const [groupOrder, setGroupOrder] = useState<string[] | null>(() => loadAgentGroupOrder());
+  const [groupDrag, setGroupDrag] = useState<{
+    id: string;
+    from: number;
+    target: number;
+    dy: number;
+    slots: { left: number; width: number }[];
+    settling: boolean;
+  } | null>(null);
+  const suppressHeaderClickRef = useRef(false);
+  function commitGroupMove(visibleIds: string[], from: number, to: number) {
+    const full = orderAgentIds(
+      AGENTS.map((a) => a.id),
+      groupOrder,
+    );
+    const next = moveWithinVisible(full, visibleIds, from, to);
+    setGroupOrder(next);
+    saveAgentGroupOrder(next);
+  }
+  /** 组头按住拖：动 6px 才进拖拽态（点按照常折叠），跟手、其余组让位，松手吸附后落位（同侧栏项目树） */
+  function onGroupHeaderPointerDown(e: React.PointerEvent, id: string, visibleIds: string[]) {
+    if (e.button !== 0 || visibleIds.length < 2) return;
+    const startY = e.clientY;
+    const list = (e.currentTarget as HTMLElement).closest("[data-agent-group-list]");
+    let active = false;
+    let slots: { left: number; width: number }[] = [];
+    let from = 0;
+    let lastTarget = 0;
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    const finish = () => {
+      cleanup();
+      if (!active) return;
+      // 组头上的按钮（官方登录 / ⋯ / 新版）跟着组一起移动，松手常还在原按钮上：吞掉紧随的这一次 click
+      suppressHeaderClickRef.current = true;
+      const swallow = (ev: MouseEvent) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+      };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      window.setTimeout(() => {
+        suppressHeaderClickRef.current = false;
+        window.removeEventListener("click", swallow, { capture: true });
+      }, 0);
+      const target = lastTarget;
+      if (target === from) {
+        setGroupDrag(null);
+        return;
+      }
+      setGroupDrag((cur) =>
+        cur ? { ...cur, dy: tabDragSettleDx(cur.slots, from, target), settling: true } : null,
+      );
+      window.setTimeout(() => {
+        commitGroupMove(visibleIds, from, target);
+        setGroupDrag(null);
+      }, 170);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(ev.clientY - startY) <= 6 || !list) return;
+        active = true;
+        const els = Array.from(list.querySelectorAll<HTMLElement>("[data-agent-group]"));
+        slots = els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { left: r.top, width: r.height };
+        });
+        from = Math.max(0, els.findIndex((el) => el.dataset.agentGroup === id));
+        lastTarget = from;
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "grabbing";
+      }
+      const raw = ev.clientY - startY;
+      const target = tabDragTarget(slots, from, clampTabDragDx(slots, from, raw));
+      lastTarget = target;
+      setGroupDrag({ id, from, target, dy: rubberbandTabDx(slots, from, raw), slots, settling: false });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
+
   const [collapsedGroups, setCollapsedGroups] =
     useState<Set<string>>(loadCollapsedGroups);
   useEffect(() => {
@@ -3207,12 +3310,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const matchProfile = (p: Profile) =>
     !q ||
     [p.name, p.baseUrl ?? "", ...p.models].join("\n").toLowerCase().includes(q);
-  const visibleAgents = AGENTS.filter((a) => {
+  const orderedAgents = orderAgentIds(
+    AGENTS.map((a) => a.id),
+    groupOrder,
+  ).map((id) => AGENTS.find((a) => a.id === id)!);
+  const visibleAgents = orderedAgents.filter((a) => {
     const installed = !!agents.find((x) => x.id === a.id)?.binaryPath;
     if (statusFilter === "installed") return installed;
     if (statusFilter === "uninstalled") return !installed;
     return true;
   });
+  // 实际画出来的组（搜索时没命中的组不画）：拖动排序只在这些组之间挪
+  const shownAgents = visibleAgents.filter(
+    (a) => !q || profiles.some((p) => p.agent === a.id && matchProfile(p)),
+  );
+  const shownIds: string[] = shownAgents.map((a) => a.id);
   // 可见分组中存在展开项 → 按钮显示「全部折叠」，否则「全部展开」
   const anyExpanded = visibleAgents.some((a) => !collapsedGroups.has(a.id));
   const dupNameIds = duplicateNameIds(profiles);
@@ -3518,8 +3630,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         )}
 
         {/* agent 分组（可折叠）。列标题行已去掉（2026-10-25 用户拍板），各列内容自明 */}
-        <div>
-          {visibleAgents.map((agent) => {
+        <div data-agent-group-list>
+          {shownAgents.map((agent, groupIndex) => {
             const det = agents.find((a) => a.id === agent.id);
             const list = profiles.filter(
               (p) => p.agent === agent.id && matchProfile(p),
@@ -3527,8 +3639,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             const connectionCount = profiles.filter(
               (p) => p.agent === agent.id,
             ).length;
-            if (q && list.length === 0) return null;
             const isCollapsed = collapsedGroups.has(agent.id);
+            // 拖动排序：源组跟手，夹在中间的组让位（组高矮不一，见 tabDragShift）
+            const dragging = groupDrag?.id === agent.id;
+            const groupShift = groupDrag
+              ? dragging
+                ? groupDrag.dy
+                : tabDragShift(groupDrag.slots, groupDrag.from, groupDrag.target, groupIndex)
+              : 0;
             // 分组卡片化（v3.93 用户拍板）：field 细边 + strip 底色卡片给每个 agent 明确边界，
             // 替代原 hairline + 左侧缩进线手法；未安装的卡片去底色降权（无配置可管，权重最低）。
             // 不用 opacity 降权：opacity<1 会改变 fixed 后代的包含块，悬浮层定位会错乱。
@@ -3536,15 +3654,34 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             return (
               <section
                 key={agent.id}
+                data-agent-group={agent.id}
+                style={groupDrag ? { transform: `translateY(${groupShift}px)` } : undefined}
                 className={`mb-4 overflow-hidden rounded-xl border ${
                   installed
                     ? "border-field ccode-well"
                     : "border-hairline"
+                } ${
+                  dragging
+                    ? `relative z-10 ${groupDrag?.settling ? "transition-transform duration-150 ease-out" : ""}`
+                    : groupDrag
+                      ? "transition-transform duration-150 ease-out"
+                      : ""
                 }`}
               >
-                <div className="group flex h-11 items-center gap-2 px-3">
+                <div
+                  className={`group flex h-11 items-center gap-2 px-3 ${groupDrag ? "" : "cursor-grab"}`}
+                  onPointerDown={(e) => onGroupHeaderPointerDown(e, agent.id, shownIds)}
+                >
+                  <span
+                    aria-hidden
+                    title="按住组头上下拖，调整分组顺序"
+                    className="-ml-1.5 -mr-1 flex w-3 shrink-0 justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    <GripVertical size={14} strokeWidth={1.8} />
+                  </span>
                   <button
                     onClick={() => {
+                      if (suppressHeaderClickRef.current) return;
                       // 更新/安装进行中禁止折叠，避免交互输入行（如 brew [y/n]）被隐藏
                       if (updating[agent.id] && !isCollapsed) return;
                       updateCollapsed((prev) => {
@@ -4429,6 +4566,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           y={groupMenu.y}
           onClose={() => setGroupMenu(null)}
           items={[
+            // 拖动排序的键盘 / 不方便拖时的替代
+            {
+              icon: ArrowUp,
+              label: "上移一位",
+              disabled: shownIds.indexOf(groupMenu.agentId) <= 0,
+              onSelect: () => {
+                const i = shownIds.indexOf(groupMenu.agentId);
+                commitGroupMove(shownIds, i, i - 1);
+              },
+            },
+            {
+              icon: ArrowDown,
+              label: "下移一位",
+              disabled: shownIds.indexOf(groupMenu.agentId) >= shownIds.length - 1,
+              onSelect: () => {
+                const i = shownIds.indexOf(groupMenu.agentId);
+                commitGroupMove(shownIds, i, i + 1);
+              },
+            },
+            { separator: true },
             ...(officialStatus[groupMenu.agentId]?.supported
               ? [
                   {
