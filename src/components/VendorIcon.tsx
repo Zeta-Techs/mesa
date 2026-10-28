@@ -10,6 +10,7 @@ import openrouter from "../assets/vendor-icons/openrouter.svg";
 import xai from "../assets/vendor-icons/xai.svg";
 import ollama from "../assets/vendor-icons/ollama.svg";
 import newapi from "../assets/vendor-icons/newapi.svg";
+import gemini from "../assets/vendor-icons/gemini.svg";
 import { isMonoVendor, type VendorId } from "../vendor-icon";
 
 const SRC: Record<VendorId, string> = {
@@ -25,6 +26,7 @@ const SRC: Record<VendorId, string> = {
   xai,
   ollama,
   newapi,
+  gemini,
 };
 
 /**

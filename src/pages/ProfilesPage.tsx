@@ -64,7 +64,7 @@ import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
-import { vendorForProfile } from "../vendor-icon";
+import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
@@ -1943,6 +1943,10 @@ function fileActionLabel(action: string): string {
   return action;
 }
 
+/** 在 Mesa 里用官方账号启动时，进程级就能盖掉磁盘残留的 Agent（--settings 空串 / --auth-type），
+ *  与 agents.rs `official_launch_conflicts` 放行的三家一致 */
+const MESA_OVERRIDES_OFFICIAL = new Set(["claude-code", "codebuddy", "qwen"]);
+
 /** 官方账号能「设为全局」（撤掉 API 键、交回 CLI 登录，走预览确认）的 Agent。
  *  与 global_config.rs `official_global_is_patch` 双端镜像；OpenCode 没有官方账号，Cursor 不支持设为全局 */
 const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok"]);
@@ -2939,6 +2943,31 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
+  /** 一键添加官方账号连接（名字后端固定「官方账号」，不需要网关、密钥） */
+  async function addOfficialProfile(agent: string) {
+    try {
+      await saveOfficialProfile(null, {
+        agent,
+        name: "官方账号",
+        accountType: "official",
+        noAuth: false,
+        protocol: null,
+        baseUrl: null,
+        models: [],
+        extraEnv: {},
+        apiKey: null,
+      });
+      toast(
+        officialStatus[agent]?.connected
+          ? `已添加 ${labelOf(agent)} 官方账号，点那一行的地球图标就能把外部 ${labelOf(agent)} 切回官方`
+          : `已添加 ${labelOf(agent)} 官方账号；还没登录，先点组头的「官方登录」`,
+        "success",
+      );
+    } catch (e) {
+      toast(`添加失败：${String(e)}`, "error");
+    }
+  }
+
   /** 行内「设为全局」：能直接写的才给（官方账号只有能只改几行的 Agent 给，其余官方仍走 ⋯ 里的恢复初始） */
   function canQuickGlobal(p: Profile): boolean {
     if (p.noAuth || p.slotMissing) return false;
@@ -3206,6 +3235,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   } | null>(null);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const saveOfficialProfile = useAppStore((s) => s.saveProfile);
   const loadSettings = useAppStore((s) => s.loadSettings);
   // 托盘被 cc-switch 挡路后转来的请求：弹该连接的「设为全局」确认（挡路说明在确认框里）。
   // 连接还没加载完就等下一轮；profileId 为空只是跳到本页
@@ -3574,6 +3604,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       onConnect={() => connectOfficial(agent.id)}
                     />
                   )}
+                  {/* 还没有官方账号连接：一键加一条（不用开表单），加了就能在 Mesa 里用官方账号启动、一键切回官方 */}
+                  {officialStatus[agent.id]?.supported &&
+                    det?.binaryPath &&
+                    !profiles.some((p) => p.agent === agent.id && p.accountType === "official") && (
+                      <button
+                        type="button"
+                        onClick={() => void addOfficialProfile(agent.id)}
+                        title={`添加一条「官方账号」连接：在 Mesa 里用 ${agent.label} 自己的登录启动，也能一键把外部 ${agent.label} 切回官方`}
+                        className={ghostActionClass}
+                      >
+                        ＋ 官方账号
+                      </button>
+                    )}
                   <div className="ml-auto flex items-center gap-1">
                     <button
                       type="button"
@@ -3815,10 +3858,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           >
                             <span className="flex min-w-0 items-center gap-2">
                               <VendorIcon
-                                vendor={vendorForProfile(
-                                  profile.baseUrl,
-                                  gateways.find((g) => g.id === profile.gatewayId),
-                                )}
+                                vendor={
+                                  profile.accountType === "official"
+                                    ? vendorForOfficialAgent(profile.agent)
+                                    : vendorForProfile(
+                                        profile.baseUrl,
+                                        gateways.find((g) => g.id === profile.gatewayId),
+                                      )
+                                }
                                 name={profile.name}
                               />
                               <span className="min-w-0 flex-1">
@@ -4170,14 +4217,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   ))}
                 </ul>
                 <p className="mt-2 leading-5 text-l3">
-                  这些文件里残留的密钥会覆盖官方账号登录并产生 API
-                  计费，只在你点「官方登录」改用官方账号时才碍事；平时用上面的 API
-                  连接，Mesa 启动时自带注入，不受影响。
+                  {MESA_OVERRIDES_OFFICIAL.has(conflictPop.agentId)
+                    ? "这些键只影响 Mesa 外直接敲命令：在 Mesa 里用官方账号启动时会临时盖掉它们，不受影响；外部终端会照它们走 API 计费。"
+                    : "这些键会覆盖官方账号登录并产生 API 计费：在 Mesa 里用官方账号启动会被拦下，外部终端也会照它们走 API。平时用 API 连接不受影响。"}
                 </p>
                 <p className="mt-1.5 leading-5 text-l3">
                   <span className="text-l2">只用 API 连接</span>：点「忽略」。
-                  <span className="text-l2">要用官方账号</span>
-                  ：点「备份后清理已识别项」（会去掉这些键，在 Mesa 外直接敲命令也不再走它们；清理前会先备份），
+                  <span className="text-l2">外部也要用官方账号</span>
+                  ：在「官方账号」那行点地球图标切回官方（只撤这几项，提示里可撤销），或点「备份后清理已识别项」，
                   或自行编辑文件后点状态行 ⟳ 重新检测。
                 </p>
                 <div className="mt-2 flex items-center gap-2">

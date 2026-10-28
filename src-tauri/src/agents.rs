@@ -441,6 +441,16 @@ fn version_args_with_timeout(
     args: &[&str],
     timeout: std::time::Duration,
 ) -> Option<String> {
+    let text = cli_output_with_timeout(path, args, timeout)?;
+    Some(text.lines().next().unwrap_or("").to_string())
+}
+
+/// 带超时跑一次 CLI 的只读子命令，取完整 stdout（去首尾空白）；超时或失败杀掉子进程返回 None
+fn cli_output_with_timeout(
+    path: &std::path::Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<String> {
     let mut cmd = crate::process::background_command(path);
     quiet_cli_probe(&mut cmd, path);
     let mut child = cmd
@@ -463,14 +473,22 @@ fn version_args_with_timeout(
             Err(_) => return None,
         }
     }
-    // 进程已退出：输出躺在管道缓冲里，读到 EOF 不会阻塞（--version 输出远小于缓冲）
+    // 进程已退出：输出躺在管道缓冲里，读到 EOF 不会阻塞（--version / auth status 输出远小于缓冲）
     let out = child.wait_with_output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text.lines().next().unwrap_or("").to_string())
-    }
+    (!text.is_empty()).then_some(text)
+}
+
+/// Claude Code 官方登录状态：macOS 上凭证在系统钥匙串、不落 ~/.claude/.credentials.json，
+/// 只看文件会把已登录的人显示成「未登录」、让人以为要重新登录。文件查不到时问 `claude auth status`
+/// （只读，JSON 的 loggedIn / authMethod；2.1.308 实证）。None = 问不到（没装 / 超时 / 输出变了）
+fn claude_auth_status() -> Option<(bool, String)> {
+    let path = resolve_binary("claude")?;
+    let text = cli_output_with_timeout(&path, &["auth", "status", "--json"], std::time::Duration::from_secs(8))?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let logged_in = v.get("loggedIn")?.as_bool()?;
+    let method = v.get("authMethod").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    Some((logged_in, method))
 }
 
 fn detect(spec: &AgentSpec) -> (Option<String>, Option<String>) {
@@ -1664,6 +1682,100 @@ pub(crate) fn official_model_allowed(agent: &str, model: &str) -> bool {
     true
 }
 
+/// 官方账号启动时一律写空的 Claude 键：端点与两种密钥（空串 = 没设）。
+const CLAUDE_OFFICIAL_BLANK_ALWAYS: &[&str] = &["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+/// 用户全局设过才写空的模型类键（中转常把这些槽指到 glm 之类，官方账号认不得）。
+const CLAUDE_OFFICIAL_BLANK_IF_SET: &[&str] = &[
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+];
+const CODEBUDDY_OFFICIAL_BLANK: &[&str] =
+    &["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN", "CODEBUDDY_MODEL"];
+
+/// 官方账号的 `--settings` 内联覆盖层：把会盖过官方登录的 env 键写成空串（内容不含任何密钥，
+/// 故内联不落盘；聊天层的 hooks 照常并进这一份）。选了模型时模型键写这次的模型。
+fn official_settings_blanks(
+    always: &[&str],
+    if_set: &[&str],
+    user_keys: &[String],
+    model: Option<(&str, &str)>,
+) -> String {
+    let mut env = serde_json::Map::new();
+    for k in always {
+        env.insert((*k).into(), serde_json::json!(""));
+    }
+    for k in if_set {
+        if user_keys.iter().any(|u| u == k) {
+            env.insert((*k).into(), serde_json::json!(""));
+        }
+    }
+    if let Some((name, m)) = model {
+        env.insert(name.into(), serde_json::json!(m));
+    }
+    serde_json::json!({ "env": env }).to_string()
+}
+
+/// Kimi 官方账号的模型别名：`kimi login` 在 config.toml 配好的 `managed:kimi-code` 模型（当前默认就是则用它）。
+/// 新版目录（KIMI_CODE_HOME 或 ~/.kimi-code）优先，再看旧版 ~/.kimi；单测不读本机（TEST_KIMI_CONFIG 注入）
+fn kimi_official_alias(profile: &Profile) -> Option<String> {
+    kimi_managed_alias(&kimi_config_text(profile)?)
+}
+
+fn kimi_config_text(profile: &Profile) -> Option<String> {
+    #[cfg(test)]
+    {
+        let _ = profile;
+        return tests::TEST_KIMI_CONFIG.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    {
+        let home = dirs::home_dir()?;
+        let new_dir = profile
+            .extra_env
+            .get("KIMI_CODE_HOME")
+            .cloned()
+            .or_else(|| std::env::var("KIMI_CODE_HOME").ok())
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".kimi-code"));
+        [new_dir.join("config.toml"), home.join(".kimi/config.toml")]
+            .iter()
+            .find_map(|p| std::fs::read_to_string(p).ok())
+    }
+}
+
+/// config.toml 文本里官方登录配的模型别名；没登录过（没有 managed:kimi-code 模型）返回 None
+fn kimi_managed_alias(text: &str) -> Option<String> {
+    let doc: toml::Value = toml::from_str(text).ok()?;
+    let models = doc.get("models")?.as_table()?;
+    let managed = |k: &str| {
+        models
+            .get(k)
+            .and_then(|m| m.get("provider"))
+            .and_then(|p| p.as_str())
+            == Some("managed:kimi-code")
+    };
+    let current = doc.get("default_model").and_then(|v| v.as_str());
+    current
+        .filter(|c| managed(c))
+        .map(str::to_string)
+        .or_else(|| models.keys().find(|k| managed(k)).cloned())
+}
+
 /// 官方账号模式的注入：purge 残留密钥 env（规格 env_purge_list），模型非空才注入模型 env/参数。
 /// 凭证与 base URL 一律不注入——认证完全交给 CLI 自己的账号登录。
 /// Codex 例外：必须 `-c model_provider="openai"` 盖过磁盘默认渠道（见该臂注释）。
@@ -1694,6 +1806,17 @@ fn apply_official_inject(
             if let (Some(name), Some(m)) = (env.model, model) {
                 plan.env.push((name.into(), m.into()));
             }
+            // CodeBuddy 同 Claude：settings.json env 盖过进程 env，--settings 覆盖层写空串（2026-10-28 实测）
+            if profile.agent == "codebuddy" {
+                let overlay = official_settings_blanks(
+                    CODEBUDDY_OFFICIAL_BLANK,
+                    &[],
+                    &[],
+                    env.model.zip(model),
+                );
+                plan.args.push("--settings".into());
+                plan.args.push(overlay);
+            }
         }
         LaunchSpec::ByProtocol(entries) => {
             // 与 api 模式同一缺省规则取协议条目，但只注入模型 env；
@@ -1709,6 +1832,12 @@ fn apply_official_inject(
                     plan.env.push((name.into(), m.into()));
                 }
             }
+            // Qwen：认证方式缺省读 settings 的 selectedType（设过 API 就走 API）。命令行参数优先级最高，
+            // 显式指定账号登录，磁盘 .env / settings 里的密钥都不再起作用（2026-10-28 实测）
+            if profile.agent == "qwen" {
+                plan.args.push("--auth-type".into());
+                plan.args.push("qwen-oauth".into());
+            }
         }
         LaunchSpec::Special(special) => match special {
             // 模型槽位注册（ANTHROPIC_DEFAULT_*）只在 api 模式做：官方账号的可用模型由订阅决定
@@ -1716,6 +1845,16 @@ fn apply_official_inject(
                 if let (Some(name), Some(m)) = (env.model, model) {
                     plan.env.push((name.into(), m.into()));
                 }
+                // 磁盘 settings.json 的 env 盖过进程 env：留着的中转端点 / 密钥会让「官方账号」实际走 API。
+                // --settings 覆盖层里写成空串就等于没设，Claude 回到自己的登录（2026-10-28 隔离 HOME 实测）
+                let overlay = official_settings_blanks(
+                    CLAUDE_OFFICIAL_BLANK_ALWAYS,
+                    CLAUDE_OFFICIAL_BLANK_IF_SET,
+                    &claude_user_settings_env_keys(profile),
+                    env.model.zip(model),
+                );
+                plan.args.push("--settings".into());
+                plan.args.push(overlay);
             }
             SpecialLaunch::CodexInlineProvider { sandbox_args, .. } => {
                 if let Some(m) = model {
@@ -1748,7 +1887,10 @@ fn apply_official_inject(
             // kimi 官方账号：KIMI_MODEL_* env 合成通道会抢 OAuth 登录态（已被 purge 清单移除），
             // 模型只能走 -m flag（新版 CLI --help 实证，与认证方式无关）
             SpecialLaunch::KimiDualChannel => {
-                if let Some(m) = model {
+                // 没选模型时 kimi 用 config.toml 的 default_model，那常是 API 连接的别名：
+                // 改用 `kimi login` 配好的 managed:kimi-code 模型
+                let fallback = if model.is_none() { kimi_official_alias(profile) } else { None };
+                if let Some(m) = model.or(fallback.as_deref()) {
                     plan.args.push("-m".into());
                     plan.args.push(m.into());
                 }
@@ -2440,7 +2582,7 @@ pub(crate) fn ensure_launch_credentials(
             let conflicts = official_launch_conflicts(&home, profile);
             if !conflicts.is_empty() {
                 return Err(format!(
-                    "无法按官方账号启动：{}。请到连接页该 Agent 状态行的冲突警告（!）里点「备份后清理已识别项」，或手动编辑对应文件删除这些键后重试",
+                    "无法按官方账号启动：{}。到连接页在这家 Agent 的「官方账号」那行点地球图标切回官方（只撤这几项，提示里可撤销）后再启动",
                     conflicts.join("；")
                 ));
             }
@@ -2467,7 +2609,25 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
     let Some(oa) = &spec.official_account else {
         return Vec::new();
     };
-    probe_conflicts(home, oa)
+    match profile.agent.as_str() {
+        // 启动时进程级盖过（--settings 空串 / --auth-type），磁盘残留不再挡官方账号
+        "claude-code" | "codebuddy" | "qwen" => Vec::new(),
+        // Gemini 的认证方式只认 settings 的 selectedType，进程级盖不过（见 gemini_auth_blocker 注释）
+        "gemini" => match gemini_selected_auth_type(profile) {
+            Some(t) if t == "oauth-personal" => Vec::new(),
+            Some(t) => vec![format!("~/.gemini/settings.json 里认证方式是 {t}，不是 Google 账号登录")],
+            None => probe_conflicts(home, oa),
+        },
+        // Kimi 没选模型时用 kimi login 配好的模型；一个都没有就是还没登录官方账号
+        "kimi" => {
+            if profile.models.is_empty() && kimi_official_alias(profile).is_none() {
+                vec!["Kimi 的 config.toml 里还没有官方账号的模型（还没用 kimi login 登录）".into()]
+            } else {
+                Vec::new()
+            }
+        }
+        _ => probe_conflicts(home, oa),
+    }
 }
 
 fn valid_env_name(name: &str) -> bool {
@@ -4004,8 +4164,24 @@ fn official_login_env() -> std::collections::BTreeMap<String, String> {
         .collect()
 }
 
+/// 会跑 `claude auth status`（最多几秒）：不占主线程
 #[tauri::command]
-pub fn official_account_status(agent_id: &str) -> OfficialAccountStatusDto {
+pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusDto {
+    let id = agent_id.clone();
+    tauri::async_runtime::spawn_blocking(move || official_account_status_sync(&id))
+        .await
+        .unwrap_or_else(|e| OfficialAccountStatusDto {
+            supported: false,
+            connected: false,
+            detail: Some(format!("检测官方账号状态失败: {e}")),
+            login_command: None,
+            conflicts: Vec::new(),
+            cleanup_supported: false,
+            login_env: official_login_env(),
+        })
+}
+
+fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     let login_env = official_login_env();
     let Some(spec) = agent_spec(agent_id) else {
         return OfficialAccountStatusDto {
@@ -4084,6 +4260,21 @@ pub fn official_account_status(agent_id: &str) -> OfficialAccountStatusDto {
             None => {}
         }
     }
+    if agent_id == "claude-code" {
+        if let Some((logged_in, method)) = claude_auth_status() {
+            if logged_in {
+                return OfficialAccountStatusDto {
+                    supported: true,
+                    connected: true,
+                    detail: Some(format!("claude auth status 显示已登录（{method}）")),
+                    login_command,
+                    conflicts,
+                    cleanup_supported: true,
+                    login_env,
+                };
+            }
+        }
+    }
     let detail = if let Some(rel) = corrupt {
         format!("~/{rel} 存在但无法解析（文件可能损坏）")
     } else if let Some(rel) = api_key_mode {
@@ -4157,6 +4348,8 @@ mod tests {
     }
 
     thread_local! {
+        pub(super) static TEST_KIMI_CONFIG: std::cell::RefCell<Option<String>> =
+            const { std::cell::RefCell::new(None) };
         pub(super) static TEST_CLAUDE_USER_KEYS: std::cell::RefCell<Vec<String>> =
             const { std::cell::RefCell::new(Vec::new()) };
         // 默认当作已选 API Key（其余 gemini 单测测的是注入本身）
@@ -5276,11 +5469,60 @@ api_backend = "responses"
         let plan = launch_plan(&p, Some("sk-secret".into()), None).unwrap();
         // 密钥/base_url 一律不注入，模型为空也不注入模型 env
         assert!(plan.env.is_empty());
-        assert!(plan.args.is_empty());
         assert!(!plan.env.iter().any(|(_, v)| v.contains("sk-secret")));
         assert!(plan.env_remove.contains(&"ANTHROPIC_AUTH_TOKEN".into()));
         assert!(plan.env_remove.contains(&"ANTHROPIC_API_KEY".into()));
         assert!(plan.env_remove.contains(&"ANTHROPIC_BASE_URL".into()));
+        // 磁盘 settings.json env 盖过进程 env：--settings 内联把端点 / 密钥写成空串，不含任何密钥
+        assert_eq!(plan.args[0], "--settings");
+        let v: serde_json::Value = serde_json::from_str(&plan.args[1]).unwrap();
+        for k in ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+            assert_eq!(v["env"][k], "", "{k}");
+        }
+        assert!(!plan.args[1].contains("sk-secret"));
+        // 用户全局设过的模型槽也写空；选了模型时模型键写这次的模型
+        tests::TEST_CLAUDE_USER_KEYS.with(|k| *k.borrow_mut() = vec!["ANTHROPIC_DEFAULT_OPUS_MODEL".into(), "ANTHROPIC_MODEL".into()]);
+        let plan = launch_plan(&p, None, Some("claude-opus-5")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&plan.args[plan.args.iter().position(|a| a == "--settings").unwrap() + 1]).unwrap();
+        assert_eq!(v["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "");
+        assert_eq!(v["env"]["ANTHROPIC_MODEL"], "claude-opus-5");
+        tests::TEST_CLAUDE_USER_KEYS.with(|k| k.borrow_mut().clear());
+    }
+
+    #[test]
+    fn codebuddy_and_qwen_official_override_disk_auth() {
+        let plan = launch_plan(&official_profile("codebuddy"), None, None).unwrap();
+        assert_eq!(plan.args[0], "--settings");
+        let v: serde_json::Value = serde_json::from_str(&plan.args[1]).unwrap();
+        assert_eq!(v["env"]["CODEBUDDY_BASE_URL"], "");
+        assert_eq!(v["env"]["CODEBUDDY_API_KEY"], "");
+        let plan = launch_plan(&official_profile("qwen"), None, None).unwrap();
+        let i = plan.args.iter().position(|a| a == "--auth-type").unwrap();
+        assert_eq!(plan.args[i + 1], "qwen-oauth");
+        // 这三家的磁盘残留不再挡启动
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".codebuddy")).unwrap();
+        std::fs::write(dir.join(".codebuddy/settings.json"), r#"{"env":{"CODEBUDDY_API_KEY":"sk"}}"#).unwrap();
+        assert!(official_launch_conflicts(&dir, &official_profile("codebuddy")).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn kimi_official_without_model_uses_login_alias() {
+        let cfg = "default_model = \"relay-k3\"\n[models.relay-k3]\nprovider = \"ccode-x\"\n[models.\"kimi-code/k3\"]\nprovider = \"managed:kimi-code\"\n";
+        assert_eq!(kimi_managed_alias(cfg).as_deref(), Some("kimi-code/k3"));
+        assert_eq!(kimi_managed_alias("default_model = \"a\"\n[models.a]\nprovider = \"x\"\n"), None);
+        let mut p = official_profile("kimi");
+        p.models.clear();
+        tests::TEST_KIMI_CONFIG.with(|k| *k.borrow_mut() = Some(cfg.into()));
+        let plan = launch_plan(&p, None, None).unwrap();
+        let i = plan.args.iter().position(|a| a == "-m").unwrap();
+        assert_eq!(plan.args[i + 1], "kimi-code/k3");
+        assert!(official_launch_conflicts(std::path::Path::new("/nonexistent"), &p).is_empty());
+        // 没登录过：拦下并说清楚
+        tests::TEST_KIMI_CONFIG.with(|k| *k.borrow_mut() = Some("default_model = \"a\"\n".into()));
+        assert!(official_launch_conflicts(std::path::Path::new("/nonexistent"), &p)[0].contains("kimi login"));
+        tests::TEST_KIMI_CONFIG.with(|k| *k.borrow_mut() = None);
     }
 
     #[test]
@@ -5681,31 +5923,39 @@ api_backend = "responses"
 
     #[test]
     fn official_launch_conflicts_block_settings_env_residuals() {
-        // 官方账号启动防线：settings.json env 块覆盖 shell env（matrix §1），
-        // 残留 ANTHROPIC_* 时官方账号会话会实际走 API 计费——必须拦在启动前
+        // 官方账号启动防线：进程级盖不过的磁盘残留（Grok config.toml 的 api_key）必须拦在启动前，
+        // 否则「官方账号」会话实际走 API 计费；Claude 的 settings.json env 改由 --settings 空串盖过，不再拦
         let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        std::fs::create_dir_all(dir.join(".grok")).unwrap();
         std::fs::write(
             dir.join(".claude/settings.json"),
             r#"{"env": {"ANTHROPIC_BASE_URL": "https://gw.example.com", "ANTHROPIC_AUTH_TOKEN": "sk-disk-secret"}}"#,
         )
         .unwrap();
-        let mut official = profile("claude-code", None);
-        official.account_type = crate::profiles::AccountType::Official;
-        let conflicts = official_launch_conflicts(&dir, &official);
-        assert_eq!(conflicts.len(), 2);
-        let joined = conflicts.join("；");
-        assert!(joined.contains("~/.claude/settings.json"));
-        assert!(joined.contains("ANTHROPIC_BASE_URL"));
-        assert!(joined.contains("ANTHROPIC_AUTH_TOKEN"));
+        std::fs::write(dir.join(".grok/config.toml"), "api_key = \"sk-disk-secret\"\n").unwrap();
+        let mut claude = profile("claude-code", None);
+        claude.account_type = crate::profiles::AccountType::Official;
+        assert!(official_launch_conflicts(&dir, &claude).is_empty());
+        let mut grok = profile("grok", None);
+        grok.account_type = crate::profiles::AccountType::Official;
+        let joined = official_launch_conflicts(&dir, &grok).join("；");
+        assert!(joined.contains("~/.grok/config.toml") && joined.contains("api_key"));
         assert!(!joined.contains("sk-disk-secret"), "只报变量名不读值");
         // API 连接不触发该防线（API 模式本来就注入这些变量）
-        let api = profile("claude-code", Some("https://gw.example.com"));
+        let api = profile("grok", Some("https://gw.example.com"));
         assert!(official_launch_conflicts(&dir, &api).is_empty());
-        // codex 官方账号无探测项（TOML 顶层键无法按变量名探测，见注册表注释）
+        // codex 官方账号无探测项（启动用 -c model_provider 盖过）
         let mut codex = profile("codex", None);
         codex.account_type = crate::profiles::AccountType::Official;
         assert!(official_launch_conflicts(&dir, &codex).is_empty());
+        // Gemini：认证方式不是 Google 账号登录就拦
+        let mut gemini = profile("gemini", None);
+        gemini.account_type = crate::profiles::AccountType::Official;
+        assert!(official_launch_conflicts(&dir, &gemini)[0].contains("gemini-api-key"));
+        tests::TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("oauth-personal".into()));
+        assert!(official_launch_conflicts(&dir, &gemini).is_empty());
+        tests::TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("gemini-api-key".into()));
         std::fs::remove_dir_all(&dir).ok();
     }
 

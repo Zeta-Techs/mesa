@@ -14,7 +14,7 @@
 |---|---|
 | 二进制 / 检测 | `claude`；`claude --version`；`claude auth status`（JSON，exit 0=已登录，适合预检） |
 | 注入 env | `ANTHROPIC_BASE_URL`（中转端点；**CLI 自己拼 `/v1/messages`，base 不得带版本段**——2026-10-19 探针实测带 `/v1` 会请求 `/v1/v1/messages?beta=true`，Mesa 物化 Profile 时剥掉槽位末尾版本段）、`ANTHROPIC_AUTH_TOKEN`（Bearer，网关场景首选）、`ANTHROPIC_API_KEY`（X-Api-Key；交互模式首次使用会弹一次性确认）、`ANTHROPIC_MODEL` |
-| 全局配置 | `~/.claude/settings.json`：`{"env": {...}, "model": "..."}`。**注意：settings 的 env 块会覆盖 shell env**；也可用 `--settings <file-or-json>` 注入不落地 |
+| 全局配置 | `~/.claude/settings.json`：`{"env": {...}, "model": "..."}`。**注意：settings 的 env 块会覆盖 shell env**；也可用 `--settings <file-or-json>` 注入不落地。`--settings` 里把键写成空串等于没设：磁盘 env 留着中转端点 / 令牌时，覆盖层写空串后请求不再去中转、回到账号登录（2.1.308 隔离 HOME 实测；CodeBuddy 2.177.0 的 `CODEBUDDY_*` 同理）。macOS 登录凭证在钥匙串，`claude auth status --json` 给 `loggedIn` / `authMethod`（只读） |
 | 会话存储 | `~/.claude/projects/<sanitize(cwd)>/<session-uuid>.jsonl`；目录名 = 路径中所有非字母数字字符替换为 `-` |
 | 会话格式 | JSONL。envelope：`uuid/parentUuid/timestamp/sessionId/cwd/gitBranch/version/isSidechain/type`；`type=user/assistant`，assistant 的 `message` 是原始 API 响应（content blocks + usage）；另有 `ai-title`（会话标题）、`summary`、`file-history-snapshot` 等类型，未知 type 必须跳过。**多行粘贴包装**（2026-10-19 实测，2.1.29x）：Mesa 聊天层发多行提问等于一次终端粘贴，Claude 把它记成 `"\n\n<pasted_content id=\"79fb\">\n…\n</pasted_content id=\"79fb\">"`（user 行 content 为字符串，收尾标签也带 id）；单行提问不包。回放与标题只要里面的话（`sessions.rs unwrap_pasted_content`，仅用户消息）。**易漂移** |
 | 关键启动参数 | `--model`、`-p`（非交互）、`-c/-r`（续会话）、`--session-id`（固定会话 ID=文件名）、`--settings` |

@@ -295,6 +295,18 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 官方绑定：不注 API、`env_remove` 残留密钥变量（现口径）。`extraEnv` 仍最后注入。
 
+**官方账号在 Mesa 里启动：进程级盖过磁盘残留，盖不过才拦（2026-10-28，取代「磁盘有残留一律拒绝启动」）**：用户问在 Mesa 里能不能直接用官方账号。各家实测（隔离 HOME + 假网关 + 死代理挡真网络，只看请求是否还去中转）：
+- Claude Code / CodeBuddy：settings.json env 盖过进程 env，`env_remove` 管不到；`--settings` **内联** JSON 把端点 / 密钥键写成空串即等于没设，回到 CLI 自己的登录（Claude 2.1.308、CodeBuddy 2.177.0 实证）。Claude 一律写空 `ANTHROPIC_BASE_URL` / `_AUTH_TOKEN` / `_API_KEY`，用户全局设过的模型槽 / 子 agent / 上下文键也写空，选了模型时 `ANTHROPIC_MODEL` 写这次的模型（`official_settings_blanks`）。覆盖层不含密钥，故内联不落盘，聊天层 hooks 照常并进。
+- Qwen：`--auth-type qwen-oauth`（命令行参数优先级最高，磁盘 .env / settings 的密钥不再起作用；0.x 实证，并提示 OAuth 免费额度已停）。
+- Codex：沿用 `-c model_provider="openai"`。
+- Kimi：没选模型时 `-m` 用 config.toml 里 `managed:kimi-code` 的模型（`kimi_official_alias`，当前默认是官方的就用它）；一个都没有 = 没 `kimi login`，拦。
+- Gemini：认证方式只认 settings 的 selectedType，系统设置层要 root 才生效，进程级盖不过——selectedType 不是 `oauth-personal` 就拦；没设时照旧按 .env 探测。Grok：config.toml 顶层 `api_key` 进程级盖不过，照旧按探测拦。
+拦下的文案改指「在官方账号那行点地球图标切回官方」。前端冲突弹层按 `MESA_OVERRIDES_OFFICIAL`（与 `official_launch_conflicts` 放行的三家一致）区分「只影响外部」与「Mesa 里也拦」。
+
+**Claude 官方登录检测（2026-10-28）**：macOS 凭证在钥匙串、不落 `.credentials.json`，只看文件会把已登录显示成未登录（用户以为要重登）。文件查不到时问 `claude auth status --json`（8 秒超时，看 `loggedIn` / `authMethod`）；`official_account_status` 因此改 async + spawn_blocking。
+
+**官方账号一键添加与图标（2026-10-28）**：组头在「这家支持官方账号、已安装、还没有官方账号连接」时给 **＋ 官方账号**，直接 `create_profile`（名字后端固定「官方账号」）。官方账号行按 Agent 配厂商图标 `vendorForOfficialAgent`（claude-code→anthropic、codex→openai、gemini→gemini、qwen→alibaba、kimi、codebuddy→tencent、grok→xai；Cursor 无图标首字占位）；新增 Gemini 图标（lobe-icons 经 cc-switch，同时认 `generativelanguage.googleapis.com`）。
+
 **Codex 官方绑定额外注入** `-c model_provider="openai"`：磁盘 `config.toml` 的 `model_provider` 指向自定义网关时会盖过 ChatGPT 登录（选官方账号仍走网关计费）。`-c` 优先级最高，只影响本进程，不改用户文件、不写 `[model_providers.*]`。登录走 `codex login --device-auth`（设备码印在内嵌终端；不在 Mesa 内自建 OAuth）。未选模型时磁盘 `model` 仍会生效。`chatgpt.com` 401 / `token_revoked` 是 ChatGPT 登录态本身失效，不是官方/API 凭证串台。
 
 **Codex 恢复不得串台（v3.223）**：rollout 的 `model_provider` 分三条——`ccode`/`ccode-<短id>` = Mesa 网关；`openai` = ChatGPT 官方；其他名字（磁盘 `custom` 等）= 客户端/全局配置渠道。自动恢复时客户端渠道只挑带 Base URL 的网关，绝不落到官方账号（否则强制 `api.openai.com` 且 `env_remove` 密钥，报 401 Missing bearer，同一会话在客户端却能继续）。官方未登录时 `openai` 会话也改挑网关；启动栏未登录的官方账号不自动预选，硬启动先确认。纯逻辑 `src/resume-profile.ts`。
