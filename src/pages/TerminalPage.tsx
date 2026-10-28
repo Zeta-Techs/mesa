@@ -5301,8 +5301,12 @@ const TerminalView = memo(function TerminalView({
     // 先启动再发的那一句：「等回复」留着，launch 回来重新登记气泡。原先这里一收，生成中那一行
     // 先出、消失（启动那几百毫秒）、再出——新对话发第一句闪一下（2026-10-26 用户）
     if (!earlyLaunchRef.current) setPendingReply(false);
-    pendingUsersRef.current = [];
-    pendingAssistantKeysRef.current = new Set();
+    // 那一句也留在待确认里：resetLink 到 launch 回来之间，接回的会话文件可能已经锁定并刷新一次，待确认清空了气泡就被冲掉，
+    // 等 reRegister 再冒出来——发出去先消失一下才显示（2026-10-28 用户：「终端没起来时发送消息会被吞一下」）
+    if (!earlyLaunchRef.current) {
+      pendingUsersRef.current = [];
+      pendingAssistantKeysRef.current = new Set();
+    }
     ptyWorkingArmedRef.current = false;
     hadPtyWorkingOutputRef.current = false;
     setAttention(null);
@@ -6177,6 +6181,8 @@ const TerminalView = memo(function TerminalView({
     earlyLaunchRef.current = true;
     return {
       reRegister: () => {
+        // 还在待确认里（resetLink 留下了）就不再加一遍
+        if (shown.some((m) => pendingUsersRef.current.includes(m))) return;
         shown.push(showOptimisticUserMessage(text));
       },
       retract: () => {
