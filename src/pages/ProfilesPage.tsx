@@ -3033,12 +3033,43 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       setDriftTick((t) => t + 1);
       setError(null);
       const name = p.accountType === "official" ? "官方账号" : `「${p.name}」`;
+      // Codex 客户端要重启才读新的模型目录：装了客户端就在提示里给「重启客户端」
+      const codexClient =
+        agent === "codex"
+          ? await invoke<{ clientId: string; installed: boolean }[]>("client_open_list")
+              .then((l) => l.find((c) => c.clientId === "codex-desktop" && c.installed))
+              .catch(() => undefined)
+          : undefined;
+      const actions = [
+        ...(opts?.undoOf ? [] : [{ label: "撤销", onClick: () => void undoQuickGlobal(agent, prev) }]),
+        ...(codexClient
+          ? [
+              {
+                label: "重启 Codex 客户端",
+                onClick: () =>
+                  void (async () => {
+                    if (
+                      !(await confirmDialog(
+                        "将退出 ChatGPT（含 Codex 客户端）再重新打开。客户端里正在跑的任务会中断。继续？",
+                        { confirmText: "重启" },
+                      ))
+                    )
+                      return;
+                    try {
+                      await invoke("client_restart", { clientId: "codex-desktop" });
+                      toast("Codex 客户端已重新打开，新建的对话走新连接", "success");
+                    } catch (e) {
+                      toast(String(e), "warning");
+                    }
+                  })(),
+              },
+            ]
+          : []),
+      ];
       toast(
         `外部 ${labelOf(agent)} 已切到${name}${agent === "codex" ? "；Codex 客户端重启后生效" : "，新开的会话生效"}`,
         "success",
-        opts?.undoOf
-          ? undefined
-          : { actions: [{ label: "撤销", onClick: () => void undoQuickGlobal(agent, prev) }] },
+        actions.length ? { actions } : undefined,
       );
       void invoke<ProfileValidationDto>("validate_global_profile", { profileId: p.id })
         .then((v) => {

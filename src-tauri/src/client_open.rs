@@ -791,6 +791,61 @@ pub async fn client_open_list() -> Vec<ClientInfoDto> {
     .unwrap_or_default()
 }
 
+/// 重启客户端（2026-10-28：Codex「设为全局」后客户端要重启才读新的模型目录）。用户点了才调，前端先确认过。
+/// macOS：按 bundle id 让它正常退出（会走它自己的退出确认，不强杀），等它退干净再按 bundle id 打开；
+/// 没在运行就只打开。Windows：怎么正常退出客户端（进程名、包名）还没在真机核实，如实报错让人手动重开，不猜进程名强杀
+#[tauri::command]
+pub async fn client_restart(client_id: String) -> Result<(), String> {
+    let (_, spec) = find_client(&client_id).ok_or("未知的客户端")?;
+    tauri::async_runtime::spawn_blocking(move || restart_client(spec))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "macos")]
+fn restart_client(spec: &ClientSpec) -> Result<(), String> {
+    let Some(id) = spec.mac_bundle_ids.first() else {
+        return Err(format!("不知道怎么重启 {}", spec.display));
+    };
+    let running = || {
+        crate::process::background_command("/usr/bin/osascript")
+            .args(["-e", &format!("application id \"{id}\" is running")])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+            .unwrap_or(false)
+    };
+    if running() {
+        let _ = crate::process::background_command("/usr/bin/osascript")
+            .args(["-e", &format!("tell application id \"{id}\" to quit")])
+            .output();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while running() {
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "{} 没有退出，可能正在问你是否确认退出。处理完后手动重新打开它",
+                    spec.display
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+    let ok = crate::process::background_command("/usr/bin/open")
+        .args(["-b", id])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("{} 已退出，但没能重新打开，请手动打开", spec.display))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_client(spec: &ClientSpec) -> Result<(), String> {
+    Err(format!("这个系统上还不能替你重启 {}，请手动关掉它再打开", spec.display))
+}
+
 /// 只读预检：能不能打开、要不要先修、有哪些要让用户知道的事
 #[tauri::command]
 pub async fn client_open_plan(

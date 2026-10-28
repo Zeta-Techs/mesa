@@ -320,6 +320,8 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 **官方账号的模型名单（2026-10-28）**：官方账号连接没在 Mesa 里列模型时，`materialize` 用 `agents::official_models_for` 补上——目前只有 Codex：读 `models_cache.json`（Codex 自己从 ChatGPT 后端拉的目录）里 `visibility = "list"` 的，按 priority 排（与 app-server `model/list` 结果一致，同日真账号核对）。Codex 官方启动没选到模型（或选的中转模型被 `official_model_allowed` 滤掉）时 `-m` 取名单第一个，不让磁盘 config.toml 里中转留下的 `model` 顶上（否则 ChatGPT 账号 400「model is not supported」）。名单是派生的，不写回绑定。其余来源：Kimi = config.toml 里 `managed:kimi-code` 的模型（默认排第一）；Cursor = `cursor-agent models`（要联网，查登录状态确认已登录时顺手拉，缓存到 Mesa 配置目录 `official-models/cursor.json`，6 小时内不重拉）。Claude / Gemini / Qwen / CodeBuddy / Grok 没有可靠的本地来源，不列，启动用 CLI 自己的默认。
 
+**重启 Codex 客户端（2026-10-28）**：一键切换 Codex 后，装了客户端时提示条加「重启 Codex 客户端」，确认后调 `client_open::client_restart`：macOS 按 bundle id `tell application id … to quit`（走客户端自己的退出确认，不强杀），最多等 20 秒退干净再 `open -b`；Windows 正常退出的进程 / 包名没在真机核实，如实报错让人手动重开，不猜进程名强杀。
+
 **官方账号行「测试」（2026-10-28）**：官方账号没有网关可测，已登录时行上给「测试」，点了经 `ai_prompt`（无头一次性调用，走 CLI 自己的登录）发一句固定话，回复即通过；会用一点官方额度，不自动跑。2026-10-28 本机逐家实跑查出并修掉：Claude 未登录时报错是整段 JSON（`summarize_headless_error` 改为认「Not logged in / Please run /login / Authentication required」并取 JSON 的 `result`）；Cursor 在没信任过的目录 `-p` 直接退出要人选（一次性调用跑在 Mesa 自建的临时目录，`headless_oneshot_args` 给 Cursor 加 `--trust`，实测回复正常）；Grok 官方名单没缓存过时启动被拦（`official_models_for("grok")` 缓存空时当场问一次）。注意 `cfg(test)` 下官方名单、Gemini 认证方式等走测试桩，拿单测跑真 CLI 的结论不可信，要用 dev 窗口或直接跑 CLI 核对。
 
 **Claude / Cursor 官方登录检测（2026-10-28）**：macOS 凭证在钥匙串、不落文件，只看文件会把已登录显示成未登录（用户以为要重登）。文件查不到时问 CLI：Claude `claude auth status --json`（`loggedIn` / `authMethod`，说未登录时详情直说「已过期或已登出」），Cursor `cursor-agent status`（含「Logged in」）；`official_account_status` 因此改 async + spawn_blocking。

@@ -605,6 +605,7 @@ pub fn run() {
             client_open::client_open_list,
             client_open::client_open_plan,
             client_open::client_open_launch,
+            client_open::client_restart,
             global_config::restore_global_backup,
             global_config::gemini_use_api_key_auth,
             global_config::has_global_backup,
