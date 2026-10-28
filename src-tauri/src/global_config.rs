@@ -924,6 +924,14 @@ fn patch_grok_config(
     if let Some(m) = model {
         models_tbl["default"] = value(m);
     }
+    // 会话标题 / 摘要与输入框下一句提示的模型：没设时 Grok 用内置 grok-* 却发到默认模型的地址，中转不认、
+    // 标题生成失败；设着的常是上一家的模型。与启动覆盖层（agents::grok_config_overlay）同口径：
+    // 钉成连接「模型分工」的后台小模型，没指定用主模型。xAI 官方地址不动
+    let relay = base_url.is_some_and(|u| !agents::grok_is_xai_endpoint(u));
+    if let Some(m) = profile.role_models.small.as_deref().or(model).filter(|_| relay) {
+        models_tbl["session_summary"] = value(m);
+        models_tbl["prompt_suggestion"] = value(m);
+    }
     if let Some(v) = policy.temperature {
         models_tbl["temperature"] = value(v);
     }
@@ -1337,12 +1345,15 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
         doc.remove("endpoints");
     }
     if let Some(models) = doc.get_mut("models").and_then(|m| m.as_table_like_mut()) {
-        let foreign = models
-            .get("default")
-            .and_then(|d| d.as_str())
-            .is_some_and(|d| !official_model_kept("grok", d));
-        if foreign {
-            models.remove("default");
+        // 默认模型与标题 / 提示用的模型：不是 grok 模型的撤掉（官方账号用不了）
+        for key in ["default", "session_summary", "prompt_suggestion"] {
+            let foreign = models
+                .get(key)
+                .and_then(|d| d.as_str())
+                .is_some_and(|d| !official_model_kept("grok", d));
+            if foreign {
+                models.remove(key);
+            }
         }
     }
     let mut model_empty = false;
@@ -3983,6 +3994,24 @@ trust_level = "trusted"
         let out = patch_grok_config(Some(existing), Some("xai-secret"), &p).unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
         assert!(doc["models"].get("default_reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn grok_relay_write_points_title_model_at_this_connection() {
+        let mut p = profile("grok");
+        p.base_url = Some("https://relay.example.com/v1".into());
+        p.models = vec!["glm-5".into(), "glm-5-flash".into()];
+        let out = patch_grok_config(Some("[models]\nsession_summary = \"other-relay-claude\"\n"), Some("sk"), &p).unwrap();
+        let d: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(d["models"]["session_summary"].as_str(), Some("glm-5"));
+        assert_eq!(d["models"]["prompt_suggestion"].as_str(), Some("glm-5"));
+        p.role_models.small = Some("glm-5-flash".into());
+        let d: toml::Value = toml::from_str(&patch_grok_config(None, Some("sk"), &p).unwrap()).unwrap();
+        assert_eq!(d["models"]["session_summary"].as_str(), Some("glm-5-flash"));
+        // xAI 官方地址不动
+        p.base_url = Some("https://api.x.ai/v1".into());
+        let d: toml::Value = toml::from_str(&patch_grok_config(Some("[models]\nsession_summary = \"grok-4.6\"\n"), Some("sk"), &p).unwrap()).unwrap();
+        assert_eq!(d["models"]["session_summary"].as_str(), Some("grok-4.6"));
     }
 
     #[test]

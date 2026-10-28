@@ -301,6 +301,8 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 **Codex 的另外几处模型与网页搜索（2026-10-28）**：`review_model`、`agents.default_subagent_model`、`memories.extract_model` / `consolidation_model` 另外点名模型（`agents::CODEX_SIDE_MODEL_KEYS`，0.164 都认 `-c`，隔离 CODEX_HOME 的 `config/read` 核对）。走中转启动时磁盘设过的经 `-c` 改成这次的模型（`codex_relay_model_args`，没设的不加，让 Codex 自己继承）；API 设为全局同样把设过的改成这次的模型，并写 `web_search = "disabled"`（与启动的 `codex_relay_compat_args` 同口径——之前只在启动里关，外部 Codex 走中转仍带网页搜索被拒）。官方设为全局撤 `openai_base_url`（会把内置 openai 改道）、值为 `disabled` 的 `web_search`，以及上面几处里不是官方模型的。
 
+**Grok 标题 / 提示用的模型（2026-10-28）**：`[models].session_summary` / `prompt_suggestion` 没设时 Grok 用内置 grok-* 却发到默认模型的地址（中转不认，标题生成失败），设着的常是上一家的模型。API 设为全局（地址不是 x.ai 时）与启动覆盖层同口径：钉成连接「模型分工」的后台小模型，没指定用主模型。官方设为全局撤掉这两项里不是 grok 模型的。
+
 **官方账号在 Mesa 里启动：进程级盖过磁盘残留，盖不过才拦（2026-10-28，取代「磁盘有残留一律拒绝启动」）**：用户问在 Mesa 里能不能直接用官方账号。各家实测（隔离 HOME + 假网关 + 死代理挡真网络，只看请求是否还去中转）：
 - Claude Code / CodeBuddy：settings.json env 盖过进程 env，`env_remove` 管不到；`--settings` **内联** JSON 把端点 / 密钥键写成空串即等于没设，回到 CLI 自己的登录（Claude 2.1.308、CodeBuddy 2.177.0 实证）。Claude 一律写空 `ANTHROPIC_BASE_URL` / `_AUTH_TOKEN` / `_API_KEY`，用户全局设过的模型槽 / 子 agent / 上下文键也写空，选了模型时 `ANTHROPIC_MODEL` 写这次的模型（`official_settings_blanks`）。覆盖层不含密钥，故内联不落盘，聊天层 hooks 照常并进。
 - Qwen：`--auth-type qwen-oauth`（命令行参数优先级最高，磁盘 .env / settings 的密钥不再起作用；0.x 实证，并提示 OAuth 免费额度已停）。
