@@ -4048,6 +4048,9 @@ pub struct OfficialAccountStatusDto {
     pub cleanup_supported: bool,
     /// 组头登录标签要注入的环境（出网代理；连接 extra_env 由前端再覆盖）
     pub login_env: std::collections::BTreeMap<String, String>,
+    /// 登录账号的套餐（Pro / Max / Plus / Free …），只在 connected 时给（2026-10-28 用户：官方账号行端点栏只显示套餐，
+    /// 不显示邮箱）。目前只读 Claude Code / Codex 实测过的来源，其余读不到就 None，不猜
+    pub plan: Option<String>,
 }
 
 /// auth 文件里标识「官方账号已登录」的凭证字段名（各家结构不同，命中任一即算）：
@@ -4382,7 +4385,14 @@ fn official_login_env() -> std::collections::BTreeMap<String, String> {
 #[tauri::command]
 pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusDto {
     let id = agent_id.clone();
-    tauri::async_runtime::spawn_blocking(move || official_account_status_sync(&id))
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut st = official_account_status_sync(&id);
+        // 已登录才读套餐：Claude Code 登出后 ~/.claude.json 里的 oauthAccount 可能还留着
+        if st.connected {
+            st.plan = dirs::home_dir().and_then(|h| official_plan(&id, &h));
+        }
+        st
+    })
         .await
         .unwrap_or_else(|e| OfficialAccountStatusDto {
             supported: false,
@@ -4392,7 +4402,44 @@ pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusD
             conflicts: Vec::new(),
             cleanup_supported: false,
             login_env: official_login_env(),
+            plan: None,
         })
+}
+
+/// 套餐代号转人看的：claude_pro → Pro、plus → Plus；空串 None
+fn plan_label(raw: &str) -> Option<String> {
+    let s = raw.trim().trim_start_matches("claude_").replace('_', " ");
+    let mut chars = s.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().chain(chars).collect())
+}
+
+/// ~/.claude.json 的 oauthAccount.organizationType（claude_pro / claude_max …）
+fn claude_plan(v: &serde_json::Value) -> Option<String> {
+    plan_label(v.get("oauthAccount")?.get("organizationType")?.as_str()?)
+}
+
+/// ~/.codex/auth.json：只解 tokens.id_token 的载荷段取 chatgpt_plan_type，令牌本身不出这个函数
+fn codex_plan(v: &serde_json::Value) -> Option<String> {
+    use base64::Engine as _;
+    let token = v.get("tokens")?.get("id_token")?.as_str()?;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    plan_label(claims.get("https://api.openai.com/auth")?.get("chatgpt_plan_type")?.as_str()?)
+}
+
+fn official_plan(agent_id: &str, home: &std::path::Path) -> Option<String> {
+    let read = |rel: &str| -> Option<serde_json::Value> {
+        serde_json::from_str(&std::fs::read_to_string(home.join(rel)).ok()?).ok()
+    };
+    match agent_id {
+        "claude-code" => claude_plan(&read(".claude.json")?),
+        "codex" => codex_plan(&read(".codex/auth.json")?),
+        _ => None,
+    }
 }
 
 fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
@@ -4406,6 +4453,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             conflicts: Vec::new(),
             cleanup_supported: false,
             login_env,
+            plan: None,
         };
     };
     let Some(oa) = spec.official_account.as_ref() else {
@@ -4417,6 +4465,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             conflicts: Vec::new(),
             cleanup_supported: false,
             login_env,
+            plan: None,
         };
     };
     // login_cmd 为空 = 裸启动 CLI 后在 TUI 内登录（gemini / qwen）
@@ -4454,6 +4503,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                             || probe.file.ends_with(".toml")
                     }),
                     login_env: login_env.clone(),
+                    plan: None,
                 };
             }
             Some(AuthProbe::Unrecognized) => {
@@ -4491,6 +4541,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     conflicts,
                     cleanup_supported: true,
                     login_env,
+                    plan: None,
                 };
             }
         }
@@ -4510,6 +4561,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     conflicts,
                     cleanup_supported: true,
                     login_env,
+                    plan: None,
                 };
             }
         }
@@ -4542,6 +4594,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                 || probe.file.ends_with(".toml")
         }),
         login_env,
+        plan: None,
     }
 }
 
@@ -5803,6 +5856,22 @@ api_backend = "responses"
         assert!(official_launch_conflicts(&dir, &gemini).is_empty());
         tests::TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("gemini-api-key".into()));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn official_plan_reads_claude_and_codex() {
+        let claude = serde_json::json!({ "oauthAccount": { "emailAddress": "a@b.com", "organizationType": "claude_max" } });
+        assert_eq!(claude_plan(&claude).as_deref(), Some("Max"));
+        assert_eq!(claude_plan(&serde_json::json!({ "oauthAccount": { "emailAddress": "a@b.com" } })), None);
+
+        use base64::Engine as _;
+        let claims = serde_json::json!({ "email": "c@d.com", "https://api.openai.com/auth": { "chatgpt_plan_type": "plus" } });
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+        let auth = serde_json::json!({ "tokens": { "id_token": format!("h.{payload}.sig"), "access_token": "secret" } });
+        assert_eq!(codex_plan(&auth).as_deref(), Some("Plus"));
+        // API Key 模式没有 id_token
+        assert_eq!(codex_plan(&serde_json::json!({ "OPENAI_API_KEY": "sk-x" })), None);
+        assert_eq!(codex_plan(&serde_json::json!({ "tokens": { "id_token": "garbage" } })), None);
     }
 
     #[test]

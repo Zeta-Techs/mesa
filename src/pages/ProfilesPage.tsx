@@ -4025,6 +4025,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   gateways.find((g) => g.id === profile.gatewayId)?.models,
                                 );
                           const status = profileStatusCell({ ...profile, unsynced: goneModels });
+                          const officialPlan =
+                            profile.accountType === "official" && officialStatus[profile.agent]?.connected
+                              ? (officialStatus[profile.agent]?.plan ?? null)
+                              : null;
                           const imageOnly =
                             profile.models.length > 0 && profile.models.every((m) => modelKind(m) !== "chat");
                           const imageGenPick = imageOnly ? (profile.models.find(isImageGenModel) ?? null) : null;
@@ -4137,15 +4141,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               className={`min-w-0 truncate text-xs ${profile.baseUrl ? "text-l2" : "text-l3"}`}
                               title={
                                 profile.accountType === "official"
-                                  ? "官方账号登录（CLI 自身认证，不注入端点/密钥）"
+                                  ? `${officialPlan ? `套餐：${officialPlan}\n` : ""}官方账号登录（CLI 自身认证，不注入端点/密钥）`
                                   : profile.baseUrl
                                     ? displayHost(profile.baseUrl)
                                     : "使用 CLI 默认端点"
                               }
                             >
-                              {/* 官方账号没有端点可言；名称列、状态列已说「官方账号」，这里留空（2026-10-28 用户：不要横杠） */}
+                              {/* 官方账号没有端点可言：这一格写登录账号的套餐（2026-10-28 用户：只显示套餐，不显示邮箱）；
+                                  读不到（未登录 / 这家还没接）就留空，不放横杠 */}
                               {profile.accountType === "official"
-                                ? null
+                                ? officialPlan
                                 : profile.baseUrl
                                   ? displayHost(profile.baseUrl)
                                   : "默认端点"}

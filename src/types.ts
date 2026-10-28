@@ -356,6 +356,8 @@ export interface OfficialAccountStatusDto {
   cleanupSupported: boolean;
   /** 组头登录标签要注入的环境（出网代理；连接 extraEnv 再覆盖） */
   loginEnv: Record<string, string>;
+  /** 登录账号的套餐（Pro / Max / Plus / Free …），只在已登录时有；目前 Claude Code / Codex 读得到 */
+  plan?: string | null;
 }
 
 export interface ValidationCheckDto {
