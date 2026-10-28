@@ -1,4 +1,5 @@
 import type { ChatChannelSnapshot } from "../chat-channel";
+import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronLeft, ChevronRight, History, Info } from "lucide-react";
@@ -201,6 +202,12 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   }
   // 能力灰字菜单打开才查；输入框里有图时也查（要知道当前模型能不能看图）
   const caps = useModelCaps(open || props.imageKind ? models : [], profile?.gatewayId ?? null);
+  // 官方账号的别名（opus、pro…）显示成本机 CLI 实测的完整型号，别名退到第二行（2026-10-28 用户：菜单里看不出型号）
+  const officialAliases = useOfficialAliases(profile?.accountType === "official");
+  const nameOf = (m: string) =>
+    profile?.accountType === "official"
+      ? officialModelLabel(agentId, m, officialAliases)
+      : { text: m, tip: m };
   const hasImages = Boolean(props.imageKind);
   // 和当前选择一模一样的那套不列（列了也是点了没变化）
   const shownCombos = (launch?.combos ?? []).filter(
@@ -336,16 +343,20 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               data-selected={m === currentModel}
               disabled={Boolean(blocked) || (relaunchWaiting && rt.modelByRelaunch)}
               className={`${twoLine(m === currentModel)} disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent`}
-              title={blocked ? `${m}\n${blocked}` : m}
+              title={blocked ? `${m}\n${blocked}` : nameOf(m).tip}
               onClick={() => pickModel(m)}
             >
               <span className="min-w-0 flex-1">
-                <span className="block truncate leading-[18px]">{m}</span>
-                {/* 能力灰字（200K · 思考 · 看图）放在名字下面一行，名字长也不挤 */}
+                <span className="block truncate leading-[18px]">{nameOf(m).text}</span>
+                {/* 能力灰字（200K · 思考 · 看图）放在名字下面一行，名字长也不挤；显示成型号的官方别名，别名写在灰字最前 */}
                 {blocked ? (
                   <span className="block truncate text-xs leading-[18px] text-l4">{blocked.split("，")[0]}，不能对话</span>
                 ) : (
-                  caps.labels[m] && <span className="block truncate text-xs leading-[18px] text-l4">{caps.labels[m]}</span>
+                  (caps.labels[m] || nameOf(m).text !== m) && (
+                    <span className="block truncate text-xs leading-[18px] text-l4">
+                      {[nameOf(m).text !== m ? m : "", caps.labels[m] ?? ""].filter(Boolean).join(" · ")}
+                    </span>
+                  )
                 )}
               </span>
               {/* 输入框里有图、这个模型确知看不了：当场标出来（不知道的不标） */}
@@ -377,7 +388,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           onClick={() => openPicker(runtime.modelSwitch!.command)}
           title="这家 CLI 的模型只能在它自己的选择器里选；点了会在下方露出终端，在那里选"
         >
-          <span className="min-w-0 truncate">{currentModel || "当前模型"}</span>
+          <span className="min-w-0 truncate">{currentModel ? nameOf(currentModel).text : "当前模型"}</span>
           <span className="ml-auto shrink-0 text-xs text-l4">在终端里换…</span>
         </button>
       );
@@ -385,7 +396,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     return (
       <>
         <div className={`${item(true)} cursor-default hover:bg-transparent`}>
-          <span className="min-w-0 flex-1 truncate">{currentModel || "当前模型"}</span>
+          <span className="min-w-0 flex-1 truncate">{currentModel ? nameOf(currentModel).text : "当前模型"}</span>
           {mark(true)}
         </div>
         <p className={note}>{agentLabel} 中途不能换模型；新开一段对话时在这里选。</p>
@@ -833,6 +844,25 @@ function AgentMark({ agentId }: { agentId: string }) {
 }
 
 /** 菜单里每个模型后面那行灰字（200K · 思考 · 看图）与能不能看图：能力库按网关逐字段查 */
+/** 官方账号别名 → 本机 CLI 实测的完整型号（后端 official_model_aliases，连接页查官方状态时按 CLI 版本重测）。
+ *  官方账号时读一次（输入框上的按钮也要显示型号），几百字节的小表 */
+function useOfficialAliases(enabled: boolean): OfficialAliasTable {
+  const [table, setTable] = useState<OfficialAliasTable>({});
+  useEffect(() => {
+    if (!enabled) return;
+    let stale = false;
+    invoke<OfficialAliasTable>("official_model_aliases")
+      .then((t) => {
+        if (!stale) setTable(t);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [enabled]);
+  return table;
+}
+
 function useModelCaps(
   models: string[],
   gatewayId: string | null,

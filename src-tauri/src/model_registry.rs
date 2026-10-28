@@ -1126,6 +1126,11 @@ fn normalize(model: &str) -> String {
 pub(crate) fn model_key(model: &str) -> String {
     let m = normalize(model);
     let m = m.split(':').next().unwrap_or(&m);
+    // Claude Code 的长上下文写法 claude-fable-5-1[1m]：方括号是 CLI 的开关，不是型号的一部分
+    let m = match m.find('[') {
+        Some(i) if m.ends_with(']') => &m[..i],
+        _ => m,
+    };
     m.trim().replace('.', "-")
 }
 
@@ -1859,6 +1864,7 @@ mod tests {
         assert_eq!(model_key("anthropic/claude-opus-5.5"), "claude-opus-5-5");
         assert_eq!(model_key("claude-opus-5.5:batch"), "claude-opus-5-5");
         assert_eq!(model_key("Claude-Opus-5-5"), "claude-opus-5-5");
+        assert_eq!(model_key("claude-fable-5-1[1m]"), "claude-fable-5-1");
         assert_eq!(snapshot_base("claude-opus-4-1-20250805"), "claude-opus-4-1");
         assert_eq!(snapshot_base("gpt-4o-2024-08-06"), "gpt-4o");
         assert_eq!(snapshot_base("deepseek-v4-flash-latest"), "deepseek-v4-flash");
