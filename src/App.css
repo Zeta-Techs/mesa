@@ -2969,13 +2969,11 @@ select:focus-visible {
 }
 /* 聊天字号阶梯（2026-10-21 聊天层排版）：聊天里的字一律按正文字号取比例——回答与用户气泡 = 1、
    过程行 / 计划 / 过程里的说明 = 0.94、过程里的命令输出与差异 = 0.86。设置 → 外观「聊天字号」写的
-   --ccode-chat-fs（壳上变量，见 chat-style.ts）一改全跟着走；没调过时 Mac 13.5px、Windows 14px。
+   --ccode-chat-fs（壳上变量，见 chat-style.ts）一改全跟着走；没调过时 14px（2026-10-28 用户同屏对照 Claude
+   客户端嫌聊天字发暗：Mac 由 13.5px 提到 14px，与 Windows 同）。
    原先 Mac 根字号 14px 下 text-sm 只有 12.25px：用户气泡 12.25、回答 13.5、过程行 12.25、代码 10.5，
    同屏几种字号，调大字号也只有回答变大。对话回放（对话页）与聊天层同一套；项目里的窄预览（compact）不走这里 */
 :root {
-  --chat-base: 13.5px;
-}
-[data-platform="windows"] {
   --chat-base: 14px;
 }
 
@@ -2985,7 +2983,8 @@ select:focus-visible {
   color: var(--color-chat-text);
   font-size: var(--ccode-chat-fs, var(--chat-base));
   font-family: var(--ccode-chat-ff, inherit);
-  line-height: 1.75;
+  /* 2026-10-28 同屏对照 Claude 客户端（约 1.43）：1.75 行间空得多、整块字发灰，回答 / 实时预览 / 用户气泡都收到 1.5 */
+  line-height: 1.5;
 }
 /* Windows 的 .md-body 块把字号写死 14px、字体写死 Segoe（选择器更具体）：聊天这里压回聊天设置，
    否则 Windows 上「聊天字号 / 聊天字体」都选了没反应 */
@@ -2997,13 +2996,13 @@ select:focus-visible {
 .ccode-chat-user {
   font-size: var(--ccode-chat-fs, var(--chat-base));
   font-family: var(--ccode-chat-ff, inherit);
-  line-height: 1.65;
+  line-height: 1.5;
 }
 /* 还没落盘的正文（实时预览）：与落盘后的回答同字号同行高，落盘那一下不跳 */
 .ccode-chat-body {
   font-size: var(--ccode-chat-fs, var(--chat-base));
   font-family: var(--ccode-chat-ff, inherit);
-  line-height: 1.75;
+  line-height: 1.5;
 }
 .ccode-chat-meta {
   font-size: calc(var(--ccode-chat-fs, var(--chat-base)) * 0.94);

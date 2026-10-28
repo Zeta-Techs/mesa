@@ -39,7 +39,7 @@ export const normalizeChatAccent = (v: unknown) =>
 export const normalizeChatScrollbar = (v: unknown) =>
   pick(CHAT_SCROLLBARS, v, DEFAULT_CHAT_SCROLLBAR);
 
-/** 字号档 → 正文像素。标准档返回 null = 不写变量，沿用各平台原有字号（mac 13.5 / Windows 14） */
+/** 字号档 → 正文像素。标准档返回 null = 不写变量，沿用 --chat-base（14px，2026-10-28 起 Mac 与 Windows 同） */
 export function chatFontSizePx(v: unknown): number | null {
   switch (normalizeChatFontSize(v)) {
     case "small":
