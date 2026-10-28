@@ -132,6 +132,8 @@ export function useReadingAnchor(
     };
     const ro = new ResizeObserver(restore);
     ro.observe(content);
+    // 视口自己变高变矮（输入框长高、状态栏出现、窗口拉伸）内容不变，只看内容根时不会触发：跟底时也要贴回底部
+    ro.observe(scroller);
     scroller.addEventListener("scroll", capture, { passive: true });
     scroller.addEventListener("pointerdown", onInput, { passive: true });
     scroller.addEventListener("keydown", onInput);

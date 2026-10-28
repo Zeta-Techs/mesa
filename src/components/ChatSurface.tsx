@@ -432,9 +432,11 @@ export default function ChatSurface({
     prevFirstKeyRef.current = shownMessages[0] ? chatMessageKey(shownMessages[0]) : null;
     // 头部真的多了更早一页：位置由 useReadingAnchor 在绘制前挪回，这次不算「有新消息」。
     // 等更早一页的途中最新窗口刷新了（只在尾部追加）不算前插，标记留给真前插那次
+    // 跟着底部时前插也照样贴底：不满一屏自动补页（接回旧对话时最新一页常被一条大附件挤得只剩两三条）接上来，
+    // 原先在这里直接返回，停在最上面（2026-10-28 用户：发第一条之后画面跳到上面去了）
     if (loadingOlderRef.current && prepended) {
       loadingOlderRef.current = false;
-      return;
+      if (!followRef.current) return;
     }
     // 贴底当帧就贴（不等下一帧）：切到一段刚摆出来的对话时，先画一帧停在最上面、再跳到底，看着是一跳。
     // 下一帧再补一次，接住这一帧之后才排好版的内容
@@ -1065,6 +1067,10 @@ export default function ChatSurface({
     }
     const event = slashHandoff(text, modelSwitch?.kind ?? null);
     if (event === "picker_model") openPicker();
+    // 自己发一句 = 要看接下来的回复：不管刚才翻到哪里都回到底部、接着跟（同各家聊天应用；2026-10-28 用户：
+    // 发第一条之后画面停在上面，还得手拖下来看回复）
+    followRef.current = true;
+    scrollBottom();
     return onSend(text);
   }
 
