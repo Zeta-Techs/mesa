@@ -308,6 +308,8 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 - Qwen：`--auth-type qwen-oauth`（命令行参数优先级最高，磁盘 .env / settings 的密钥不再起作用；0.x 实证，并提示 OAuth 免费额度已停）。
 - Codex：沿用 `-c model_provider="openai"`。
 - Kimi：没选模型时 `-m` 用 config.toml 里 `managed:kimi-code` 的模型（`kimi_official_alias`，当前默认是官方的就用它）；一个都没有 = 没 `kimi login`，拦。
+- Grok（2026-10-28 用户登录后实测）：config.toml 的 `[models].default` / `session_summary` / `prompt_suggestion` 常是中转留下的，甚至有借官方名字（`[model."grok-4.5"]`）转去中转的段。官方启动经 GROK_CONFIG 覆盖层把三项钉成这次的官方模型（没选用 `grok models` 的默认），借名段从官方名单剔掉（`grok_relay_model_sections`）。名单缓存 `official-models/grok.json`：查登录状态时（auth.json 在）带出网代理跑 `grok models`，6 小时一次。实测 `grok -p` 带覆盖层回复正常。能定出官方模型时磁盘默认是中转模型也不拦。
+- Gemini 个人 Google 账号（2026-10-28 实测）：登录成功、凭证文件在，但请求报 `IneligibleTierError: … no longer supported for Gemini Code Assist for individuals`（Google 改推 Antigravity），Workspace / 企业版 Code Assist 不在此列。凭证文件看不出账号类型，故不拦：已连接详情接一句提醒（`official_connected_caveat`），后台报错映射成中文（`ai::summarize_headless_error`）。
 - Gemini：认证方式只认 settings 的 selectedType，系统设置层要 root 才生效，进程级盖不过——selectedType 不是 `oauth-personal` 就拦；没设时照旧按 .env 探测。Grok：config.toml 顶层 `api_key` 进程级盖不过，照旧按探测拦。
 - **中转留下的模型名**（2026-10-28 逐家补）：Claude 顶层 `model`（不在 env 里）是中转模型且这次没选模型时，覆盖层写 `"model": ""`（= CLI 默认；`null` 不顶用，2.1.308 实测），选了模型走 `--model`；官方「设为全局」同样撤顶层中转 `model`。Gemini 进程里写空 `GEMINI_MODEL` 压不住 `.env`（0.65 实测），`.env` 里是中转模型名就拦。Grok `[models].default` 不是 grok 模型就拦。Qwen 自己会回落 coder-model（实测提示）。CodeBuddy 顶层 `model` 无从判断是不是官方可用（没有可查的官方名单），不动。
 拦下的文案改指「在官方账号那行点地球图标切回官方」。前端冲突弹层按 `MESA_OVERRIDES_OFFICIAL`（与 `official_launch_conflicts` 放行的三家一致）区分「只影响外部」与「Mesa 里也拦」。

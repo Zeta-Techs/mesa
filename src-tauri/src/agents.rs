@@ -489,6 +489,16 @@ fn cli_output_with_env(
     (!text.is_empty()).then_some(text)
 }
 
+/// 已登录但不一定能用的已知情形，接在「已检测到登录凭证」后面（凭证文件看不出来，只能提前说）
+fn official_connected_caveat(agent_id: &str) -> &'static str {
+    match agent_id {
+        // 2026-10-28 本机实测：个人 Google 账号登录后 Gemini CLI 报 IneligibleTierError（UNSUPPORTED_CLIENT），
+        // Google 已不让个人版 Code Assist 用这个客户端，改推 Antigravity；Workspace / 付费 Code Assist 账号不在此列
+        "gemini" => "；注意：个人 Google 账号已不能用 Gemini CLI（Google 改推 Antigravity），只有 Workspace / 企业版 Code Assist 账号还能用，个人用户请改用 API 连接",
+        _ => "",
+    }
+}
+
 /// Claude Code 官方登录状态：macOS 上凭证在系统钥匙串、不落 ~/.claude/.credentials.json，
 /// 只看文件会把已登录的人显示成「未登录」、让人以为要重新登录。文件查不到时问 `claude auth status`
 /// （只读，JSON 的 loggedIn / authMethod；2.1.308 实证）。None = 问不到（没装 / 超时 / 输出变了）
@@ -4790,6 +4800,20 @@ fn official_identity(agent_id: &str, home: &std::path::Path) -> (Option<String>,
 }
 
 fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
+    // 登录凭证在文件里、下面的凭证检查会提前返回：先顺手缓存官方模型名单（单测不跑真 CLI、不写本机缓存）
+    if agent_id == "grok" && !cfg!(test) {
+        if let Some(path) = resolve_binary("grok") {
+            let has_login = dirs::home_dir().is_some_and(|h| h.join(".grok/auth.json").is_file());
+            if has_login {
+                // 要连 x.ai：带上设置里的出网代理（与官方启动同口径）
+                refresh_official_models_cache("grok", || {
+                    cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
+                        .map(|t| parse_grok_models(&t))
+                        .unwrap_or_default()
+                });
+            }
+        }
+    }
     let login_env = official_login_env();
     let Some(spec) = agent_spec(agent_id) else {
         return OfficialAccountStatusDto {
@@ -4843,7 +4867,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                 return OfficialAccountStatusDto {
                     supported: true,
                     connected: true,
-                    detail: Some(format!("已检测到登录凭证（~/{rel}）")),
+                    detail: Some(format!("已检测到登录凭证（~/{rel}）{}", official_connected_caveat(agent_id))),
                     login_command,
                     conflicts,
                     cleanup_supported: oa.conflict_probes.iter().all(|probe| {
@@ -4872,19 +4896,6 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                 }
             }
             None => {}
-        }
-    }
-    if agent_id == "grok" {
-        if let Some(path) = resolve_binary("grok") {
-            let has_login = dirs::home_dir().is_some_and(|h| h.join(".grok/auth.json").is_file());
-            if has_login {
-                // 要连 x.ai：带上设置里的出网代理（与官方启动同口径）
-                refresh_official_models_cache("grok", || {
-                    cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
-                        .map(|t| parse_grok_models(&t))
-                        .unwrap_or_default()
-                });
-            }
         }
     }
     if agent_id == "cursor" {
@@ -7954,17 +7965,5 @@ api_backend = "responses"
         let tinytex = std::path::Path::new("TinyTeX").join("bin");
         assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("windows"))));
         assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("win32"))));
-    }
-}
-#[cfg(test)]
-mod zz_tmp_real {
-    #[test]
-    #[ignore]
-    fn zz_tmp_real_official() {
-        let path = super::resolve_binary("grok").unwrap();
-        println!("RAW: {:?}", super::cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20)));
-        let st = super::official_account_status_sync("grok");
-        println!("GROK: connected={} detail={:?}", st.connected, st.detail);
-        println!("CACHE: {:?} {:?}", super::official_models_cache_path("grok"), super::read_official_models_cache("grok"));
     }
 }

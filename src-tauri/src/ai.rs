@@ -391,6 +391,10 @@ pub(crate) fn summarize_headless_error(detail: &str, expected_host: Option<&str>
         return "官方账号登录已失效，请到连接页重新登录。后台调用请在设置里指定一套 API 配置。"
             .into();
     }
+    // Gemini 个人 Google 账号：Google 已不让个人版 Code Assist 用 Gemini CLI（2026-10-28 实测 IneligibleTierError）
+    if low.contains("ineligibletiererror") || low.contains("no longer supported for gemini code assist") {
+        return "Google 已不让个人 Google 账号使用 Gemini CLI（改推 Antigravity）。请改用 API 连接，或用 Workspace / 企业版账号登录。".into();
+    }
     // 密钥被 401 拒绝：按报错 URL 与期望端点的关系区分「发错端点」和「密钥本身被拒」
     if low.contains("invalid_api_key") || low.contains("incorrect api key") {
         let gateway = expected_host.filter(|h| !h.ends_with("openai.com"));
@@ -2637,6 +2641,13 @@ mod tests {
         assert!(stripped.contains("实际输出文本"), "{stripped}");
         assert_eq!(strip_known_cli_noise("  [claude-code:unrecognized_model] x\nok"), "ok");
         assert_eq!(strip_known_cli_noise("干净输出"), "干净输出");
+    }
+
+    #[test]
+    fn summarize_headless_error_explains_gemini_individual_tier() {
+        let dump = "Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products";
+        let msg = summarize_headless_error(dump, None);
+        assert!(msg.contains("个人 Google 账号") && msg.contains("API 连接"), "{msg}");
     }
 
     #[test]
