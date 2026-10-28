@@ -317,6 +317,11 @@ export default function ChatSurface({
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
+  // 程序贴底之后一小段（STICK_GRACE_MS）里，人没动手、位置却往上退：是 WKWebView 把刚设的位置退了回去
+  //（2026-10-28 本机实录：点「回到最新」后十几毫秒就被拉回原处），不算人往上翻，再贴一次；有限次数，防止跟浏览器来回拉锯
+  const scrollInputAtRef = useRef(Number.NEGATIVE_INFINITY);
+  const stuckAtRef = useRef(Number.NEGATIVE_INFINITY);
+  const restickRef = useRef(0);
   const lastScrollTopRef = useRef(0);
   const [hasNew, setHasNew] = useState(false);
   // 往上翻了一段：底部正中浮一枚「回到最新」（2026-10-26 用户）。离底一点就冒出来太吵（同日用户：「不要离底立马就显现，
@@ -407,6 +412,8 @@ export default function ChatSurface({
     const el = scrollRef.current;
     if (!el) return;
     followRef.current = true;
+    if (performance.now() - stuckAtRef.current > STICK_GRACE_MS) restickRef.current = 0;
+    stuckAtRef.current = performance.now();
     setHasNew(false);
     setAwayFromBottom(false);
     setAtEnd(true);
@@ -415,6 +422,8 @@ export default function ChatSurface({
 
   // 阅读位置：上面多了更早一页、图片晚到撑高时把正看着的那行留在原处，跟着底部时贴底（reading-anchor.ts）。
   // 人刚点开了什么（过程、长文）而内容变高：先锚住，再按现在离底多远重算跟不跟
+  // 跟着底部时长对话的画面范围钉在末尾（ConversationView → virtual-window.ts tailWindow）；固定函数，不让对话列表白白重画
+  const stickToBottom = useCallback(() => followRef.current, []);
   useReadingAnchor(scrollRef, {
     stickToBottom: () => followRef.current,
     onUserShift: () => {
@@ -1332,9 +1341,19 @@ export default function ChatSurface({
 
       <div
         ref={scrollRef}
+        onWheel={() => (scrollInputAtRef.current = performance.now())}
+        onTouchStart={() => (scrollInputAtRef.current = performance.now())}
+        onKeyDown={() => (scrollInputAtRef.current = performance.now())}
+        onPointerDown={(e) => {
+          // 「回到最新」浮钮本身不算翻动
+          if (!(e.target as HTMLElement).closest?.("[data-scroll-control]")) scrollInputAtRef.current = performance.now();
+        }}
         onScroll={() => {
           const el = scrollRef.current;
           if (!el) return;
+          // 切到终端层 / 别的标签时整层 display:none，WebKit 把滚动位置清成 0 并发一次 scroll：这不是人翻的，
+          // 跟底与否、「回到最新」都不动（切回来由 useReadingAnchor 放回原处）
+          if (el.clientHeight === 0) return;
           // 滚动条「闲置淡出」：滚动期间打标，停 0.9s 摘掉（样式见 App.css .ccode-chat-scroll）
           el.dataset.scrolling = "1";
           if (scrollFadeTimer.current) clearTimeout(scrollFadeTimer.current);
@@ -1344,7 +1363,21 @@ export default function ChatSurface({
           const atBottom = nearBottom(el);
           // 跟着底时只有往上挪了才算人要离开：贴底之后内容又在上方长高（整段记录接上、窗口换段）也会发一次滚动事件，
           // 那时离底远了但位置没往上走，照旧跟底——原先这一下就断了跟底，画面停在中间一帧再跳回底（2026-10-26 实测）
-          followRef.current = atBottom || (followRef.current && el.scrollTop >= lastScrollTopRef.current - 1);
+          const now = performance.now();
+          const pulledBack =
+            followRef.current &&
+            !atBottom &&
+            now - stuckAtRef.current < STICK_GRACE_MS &&
+            scrollInputAtRef.current < stuckAtRef.current;
+          if (pulledBack && restickRef.current < MAX_RESTICK) {
+            restickRef.current += 1;
+            requestAnimationFrame(() => {
+              const cur = scrollRef.current;
+              if (cur && followRef.current) cur.scrollTop = cur.scrollHeight;
+            });
+          } else {
+            followRef.current = atBottom || (followRef.current && el.scrollTop >= lastScrollTopRef.current - 1);
+          }
           lastScrollTopRef.current = el.scrollTop;
           setAwayFromBottom(farFromBottom(el));
           setAtEnd(el.scrollHeight - el.scrollTop - el.clientHeight < 2);
@@ -1419,6 +1452,7 @@ export default function ChatSurface({
             <ChatImageEditContext.Provider value={editImage}>
             <ConversationView
               messages={shownMessages}
+              stickToBottom={stickToBottom}
               cwd={cwd}
               focusIndex={focusIndex < 0 ? -1 : focusIndex - firstShown}
               focusKeywords={focus ? [focus.query] : undefined}
@@ -1544,7 +1578,7 @@ export default function ChatSurface({
           // 三种样子：生成中 = 三枚琥珀光标随机变换队形并呼吸，鼠标移上去 / 键盘聚焦换成 ↓；
           // 不在生成、有新消息 = 「↓ 有新消息」小胶囊；只是翻上去了 = 只有 ↓ 的圆钮。
           // 生成中不写「有新消息」：一直在出字，那句话没有信息量
-          <div className="pointer-events-none sticky bottom-3 z-10 h-0">
+          <div data-scroll-control className="pointer-events-none sticky bottom-3 z-10 h-0">
             <div className="absolute inset-x-0 bottom-0 flex justify-center">
               <button
                 type="button"
@@ -1690,6 +1724,11 @@ export default function ChatSurface({
 const QUIET_HINT_MS = 10_000;
 
 /** 离底不到 56px 算贴着底部：跟着新消息走 */
+/** 程序贴底后多久之内，没人动手的往上退算浏览器退回（见 stuckAtRef） */
+const STICK_GRACE_MS = 1500;
+/** 这段时间里最多再贴几次：贴不住就算了，交给下一次内容变化 */
+const MAX_RESTICK = 6;
+
 function nearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 56;
 }

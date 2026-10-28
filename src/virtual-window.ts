@@ -89,6 +89,21 @@ export function planWindow(p: {
   return { start: a, end: b, topPad: a === 0 ? 0 : Math.max(0, y[a]) };
 }
 
+/**
+ * 跟着底部时的窗口：只画末尾、往上画够 `cover`（px），上方整段用占位。
+ * 跟底时视野总在最底下，按视野挪窗口反而会来回换：刚贴到底就换成末尾几段，估高和实高一差，
+ * 内容总高一变、位置被夹回中间，又换回中间那段……（2026-10-28 本机实录：点「回到最新」、发出一句都停在半中间）
+ */
+export function tailWindow(count: number, height: (i: number) => number, cover: number): VirtualWindow {
+  if (count === 0) return { start: 0, end: 0, topPad: 0 };
+  let start = count;
+  let px = 0;
+  while (start > 0 && px < cover) px += height(--start);
+  let topPad = 0;
+  for (let i = 0; i < start; i++) topPad += height(i);
+  return { start, end: count, topPad };
+}
+
 /** 现有窗口还盖得住视野上下各半个余量：不换（防抖） */
 export function windowCovers(p: {
   count: number;
@@ -159,6 +174,8 @@ export function useVirtualWindow(opts: {
   estimate: (i: number) => number;
   /** 必须画出来的那一段（搜索命中），-1 没有 */
   pin: number;
+  /** 正跟着底部：窗口钉在末尾（tailWindow），不按视野挪 */
+  stickToTail?: () => boolean;
 }): {
   enabled: boolean;
   start: number;
@@ -199,9 +216,15 @@ export function useVirtualWindow(opts: {
   const recompute = useCallback(() => {
     const sc = scrollerRef.current;
     const top = topRef.current;
-    if (!sc || !top || !optsRef.current.keys.length) return;
+    // 藏起来时（切到终端层 / 别的标签，display:none）量出来全是 0：不按它挪窗口，否则会换到最上面那几段
+    if (!sc || !top || !optsRef.current.keys.length || sc.clientHeight === 0) return;
     const k = optsRef.current.keys;
     const w = winRef.current;
+    if (optsRef.current.pin < 0 && optsRef.current.stickToTail?.()) {
+      const next = tailWindow(k.length, height, Math.max(800, sc.clientHeight * 2.5));
+      if (next.start !== w.start || next.end !== w.end || Math.abs(next.topPad - w.topPad) >= 0.5) setWin(next);
+      return;
+    }
     const scTop = sc.getBoundingClientRect().top;
     const topY = top.getBoundingClientRect().top;
     const viewTop = scTop - topY;
@@ -242,6 +265,8 @@ export function useVirtualWindow(opts: {
     const top = topRef.current;
     if (!top) return;
     if (!scrollerRef.current) scrollerRef.current = scrollParent(top);
+    // 藏起来时量不出实高（全是 0）：不记，免得把估高冲成 0
+    if (scrollerRef.current && scrollerRef.current.clientHeight === 0) return;
     const k = optsRef.current.keys;
     const w = winRef.current;
     const els = renderedElements(top, bottomRef.current);

@@ -94,12 +94,17 @@ export function useReadingAnchor(
     if (!scroller || !content) return;
 
     let anchor: { el: Element; top: number } | null = null;
+    // 藏起来之前最后一次看得见时的位置：切到终端层 / 别的标签时整层 display:none，WebKit 把 scrollTop 清成 0，
+    // 切回来要放回原处（跟着底部的贴底）——2026-10-28 用户：「从终端页面切回来，聊天的画面又回到上面去了」
+    let lastTop = 0;
+    let hidden = false;
     let hint = 0;
     let lastInputAt = Number.NEGATIVE_INFINITY;
     const viewTop = () => scroller.getBoundingClientRect().top + scroller.clientTop;
     const capture = () => {
       // 藏起来的标签量不出位置：留着上次的锚
       if (scroller.clientHeight === 0) return;
+      lastTop = scroller.scrollTop;
       const top = viewTop();
       const picked = pickAnchor(content, top, hint);
       if (!picked) {
@@ -110,8 +115,20 @@ export function useReadingAnchor(
       anchor = { el: picked.el, top: picked.el.getBoundingClientRect().top - top };
     };
     const restore = () => {
-      if (scroller.clientHeight === 0) return;
+      if (scroller.clientHeight === 0) {
+        hidden = true;
+        return;
+      }
       const { stickToBottom, onUserShift } = optsRef.current;
+      if (hidden) {
+        hidden = false;
+        if (stickToBottom?.()) {
+          scroller.scrollTop = scroller.scrollHeight;
+          capture();
+          return;
+        }
+        scroller.scrollTop = lastTop;
+      }
       const userShift = performance.now() - lastInputAt < USER_SHIFT_MS;
       if (stickToBottom?.() && !userShift) {
         scroller.scrollTop = scroller.scrollHeight;
@@ -127,7 +144,9 @@ export function useReadingAnchor(
       capture();
       if (userShift) onUserShift?.();
     };
-    const onInput = () => {
+    const onInput = (e: Event) => {
+      // 滚动区里的「回到最新」这类控件（data-scroll-control）不算人在看内容：点它是要贴底
+      if ((e.target as Element | null)?.closest?.("[data-scroll-control]")) return;
       lastInputAt = performance.now();
     };
     const ro = new ResizeObserver(restore);

@@ -268,6 +268,7 @@ function markFirstKeyword(root: Element, keywords: string[]): HTMLElement | null
  */
 export default function ConversationView({
   messages,
+  stickToBottom,
   cwd,
   focusIndex = -1,
   focusKeywords,
@@ -280,6 +281,8 @@ export default function ConversationView({
   queuedNote,
 }: {
   messages: ChatMessageDto[];
+  /** 正跟着底部（聊天层的贴底状态）：长对话只画视野附近时把那一段钉在末尾（virtual-window.ts tailWindow） */
+  stickToBottom?: () => boolean;
   /** 会话工作目录：AI 正文里相对图片/链接的解析基准（ChatMarkdown 用），也是过程行里文件写相对路径的基准 */
   cwd?: string | null;
   /** 搜索命中的消息下标；≥0 时高亮并滚进视野 */
@@ -835,6 +838,7 @@ export default function ConversationView({
     keys: segmentKeys,
     estimate: (i) => estimateSegmentHeight(segments[i]),
     pin: pinSegment,
+    stickToTail: stickToBottom,
   });
 
   return (

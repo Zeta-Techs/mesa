@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  tailWindow,
   estimateSegmentHeight,
   initialWindow,
   planWindow,
@@ -73,4 +74,13 @@ test("换了一页（搜索跳到别处）：要钉住的那一段不在窗口�
   const newKeys = Array.from({ length: 100 }, (_, i) => `b${i}`);
   const next = remapWindow(oldKeys, newKeys, { start: 70, end: 100, topPad: 7000 }, h100, () => 100, 20);
   assert.ok(next.start <= 20 && next.end > 20);
+});
+
+test("跟着底部：窗口钉在末尾，往上画够要求的高度，上方全是占位", () => {
+  const h = (i: number) => (i % 2 ? 100 : 300);
+  // 末尾往上：99(100) 98(300) 97(100) 96(300) = 800 够了
+  assert.deepEqual(tailWindow(100, h, 800), { start: 96, end: 100, topPad: 48 * 400 });
+  // 不够一屏的对话整段画
+  assert.deepEqual(tailWindow(3, h, 5000), { start: 0, end: 3, topPad: 0 });
+  assert.deepEqual(tailWindow(0, h, 800), { start: 0, end: 0, topPad: 0 });
 });
