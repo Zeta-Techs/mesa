@@ -6022,7 +6022,9 @@ const TerminalView = memo(function TerminalView({
       const last = current[current.length - 1];
       const lastText = last?.blocks.map((block) => block.text).join("");
       if (last?.role === "user" && lastText === text) return current;
-      return [...current, message].slice(-50);
+      // 不截短：原先截成最后 50 条（2026-08 还没有分页时的上限），长对话一发出就从几百条缩成 50 条、
+      // 会话文件刷新再并回来，画面一缩一胀跳到半中间（2026-10-28 本机实录）
+      return [...current, message];
     });
     setPendingReply(true);
     return message;
