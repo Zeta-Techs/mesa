@@ -56,6 +56,7 @@ import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-dr
 import {
   CONNECTION_STATUS_CAPTION,
   canProbeProfile,
+  secretLikeEnvKeys,
   duplicateNameIds,
   profileNeedsProbe,
   unsyncedModels,
@@ -1507,6 +1508,15 @@ export function ProfileModal({
                 }
               />
             </label>
+            {(() => {
+              const secret = secretLikeEnvKeys(form.extraEnvText);
+              return secret.length > 0 ? (
+                <p className="mt-1 text-micro text-warn-text">
+                  {secret.join("、")} 看起来是密钥。附加环境变量是明文存的，导出连接时也会被剔掉；
+                  {form.accountType === "official" ? "官方账号不需要密钥" : "密钥请填在网关的「API Key」里（只存在本机的密钥文件）"}。
+                </p>
+              ) : null;
+            })()}
             {form.agent === "kimi" && (
               <p className="mt-1 text-micro text-l4">
                 Kimi 窄通道（不自动注入，按需在此声明）：KIMI_MODEL_ADAPTIVE_THINKING=true/false（Anthropic 通道思考形态）、KIMI_MODEL_REASONING_KEY=reasoning_content/reasoning_details/reasoning（OpenAI 通道思考字段方言，中转异常时 pin）

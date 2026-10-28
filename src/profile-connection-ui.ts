@@ -154,3 +154,19 @@ export function suggestConnectionName(input: {
   const model = input.firstModel?.trim();
   return model ? `${base} · ${model}` : base;
 }
+
+/** 附加环境变量里像密钥的键（与 profiles.rs sensitive_env_name 的子串启发式同口径）：值非空才算。
+ *  附加环境变量明文存在 profiles.json，不像连接密钥那样只进 0600 密钥文件，填了密钥要提醒挪到密钥栏 */
+export function secretLikeEnvKeys(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    const i = t.indexOf("=");
+    if (!t || t.startsWith("#") || i <= 0) continue;
+    const key = t.slice(0, i).trim();
+    const val = t.slice(i + 1).trim();
+    if (!val) continue;
+    if (/KEY|TOKEN|SECRET|PASSWORD|AUTH/.test(key.toUpperCase())) out.push(key);
+  }
+  return out;
+}

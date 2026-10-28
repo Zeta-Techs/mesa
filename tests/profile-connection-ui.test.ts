@@ -123,3 +123,11 @@ test("自动起名：底名没被占用就用底名，占用了补首个模型",
   assert.equal(suggestConnectionName({ base: "Test", firstModel: null, takenNames: ["Test"] }), "Test");
   assert.equal(suggestConnectionName({ base: "  ", takenNames: [] }), "");
 });
+
+test("附加环境变量里像密钥的键：值非空才算，注释和空行跳过", async () => {
+  const { secretLikeEnvKeys } = await import("../src/profile-connection-ui.ts");
+  assert.deepEqual(
+    secretLikeEnvKeys("HTTPS_PROXY=http://x\nOPENAI_API_KEY=sk-1\n# MY_TOKEN=x\nEMPTY_SECRET=\nX_AUTH_HEADER=abc"),
+    ["OPENAI_API_KEY", "X_AUTH_HEADER"],
+  );
+});
