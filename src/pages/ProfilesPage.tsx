@@ -70,9 +70,11 @@ import VendorIcon from "../components/VendorIcon";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import {
   loadAgentGroupOrder,
+  loadProfileOrder,
   moveWithinVisible,
   orderAgentIds,
   saveAgentGroupOrder,
+  saveProfileOrder,
 } from "../agent-group-order";
 import {
   clampTabDragDx,
@@ -2503,7 +2505,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   // 组折叠状态：首次默认折叠空组，手动折叠后持久化到 localStorage
   // 分组顺序（2026-10-28 用户：可拖动排序）：组头按住拖，松手存 localStorage；键盘走组头 ⋯ 的上移 / 下移
   const [groupOrder, setGroupOrder] = useState<string[] | null>(() => loadAgentGroupOrder());
-  const [groupDrag, setGroupDrag] = useState<{
+  // 组内连接顺序（同日用户：每个连接也可自定义排序）：按 Agent 分存，行按住拖或 ⋯ 上移 / 下移
+  const [profileOrder, setProfileOrder] = useState<Record<string, string[]>>(() => loadProfileOrder());
+  /** 拖动中的那一项：scope = "groups"（拖组）或某个 agent id（拖该组里的连接行） */
+  const [dragSort, setDragSort] = useState<{
+    scope: string;
     id: string;
     from: number;
     target: number;
@@ -2521,11 +2527,39 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     setGroupOrder(next);
     saveAgentGroupOrder(next);
   }
-  /** 组头按住拖：动 6px 才进拖拽态（点按照常折叠），跟手、其余组让位，松手吸附后落位（同侧栏项目树） */
-  function onGroupHeaderPointerDown(e: React.PointerEvent, id: string, visibleIds: string[]) {
-    if (e.button !== 0 || visibleIds.length < 2) return;
+  function commitProfileMove(agentId: string, visibleIds: string[], from: number, to: number) {
+    setProfileOrder((cur) => {
+      const full = orderAgentIds(
+        profiles.filter((p) => p.agent === agentId).map((p) => p.id),
+        cur[agentId],
+      );
+      const next = { ...cur, [agentId]: moveWithinVisible(full, visibleIds, from, to) };
+      saveProfileOrder(next);
+      return next;
+    });
+  }
+  /** 某个 Agent 的全部连接，按用户排过的顺序（没排过的、新加的接在后面，保持原顺序） */
+  function sortedProfilesOf(agentId: string) {
+    const own = profiles.filter((p) => p.agent === agentId);
+    const order = orderAgentIds(
+      own.map((p) => p.id),
+      profileOrder[agentId],
+    );
+    return order.map((id) => own.find((p) => p.id === id)!);
+  }
+  /** 按住拖排序：动 6px 才进拖拽态（点按照常生效），跟手、其余项让位，松手吸附后落位（同侧栏项目树）。
+   *  组和组内连接行共用：listSelector 找容器、itemAttr 标出参与排序的项 */
+  function startDragSort(
+    e: React.PointerEvent,
+    scope: string,
+    id: string,
+    listSelector: string,
+    itemAttr: string,
+    onCommit: (from: number, to: number) => void,
+  ) {
+    if (e.button !== 0) return;
     const startY = e.clientY;
-    const list = (e.currentTarget as HTMLElement).closest("[data-agent-group-list]");
+    const list = (e.currentTarget as HTMLElement).closest(listSelector);
     let active = false;
     let slots: { left: number; width: number }[] = [];
     let from = 0;
@@ -2540,7 +2574,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     const finish = () => {
       cleanup();
       if (!active) return;
-      // 组头上的按钮（官方登录 / ⋯ / 新版）跟着组一起移动，松手常还在原按钮上：吞掉紧随的这一次 click
+      // 项上的按钮（官方登录 / ⋯ / 新版 / 编辑）跟着一起移动，松手常还在原按钮上：吞掉紧随的这一次 click
       suppressHeaderClickRef.current = true;
       const swallow = (ev: MouseEvent) => {
         ev.stopPropagation();
@@ -2553,39 +2587,56 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       }, 0);
       const target = lastTarget;
       if (target === from) {
-        setGroupDrag(null);
+        setDragSort(null);
         return;
       }
-      setGroupDrag((cur) =>
+      setDragSort((cur) =>
         cur ? { ...cur, dy: tabDragSettleDx(cur.slots, from, target), settling: true } : null,
       );
       window.setTimeout(() => {
-        commitGroupMove(visibleIds, from, target);
-        setGroupDrag(null);
+        onCommit(from, target);
+        setDragSort(null);
       }, 170);
     };
     const onMove = (ev: PointerEvent) => {
       if (!active) {
         if (Math.abs(ev.clientY - startY) <= 6 || !list) return;
+        const els = Array.from(list.querySelectorAll<HTMLElement>(`[${itemAttr}]`));
+        if (els.length < 2) return;
         active = true;
-        const els = Array.from(list.querySelectorAll<HTMLElement>("[data-agent-group]"));
         slots = els.map((el) => {
           const r = el.getBoundingClientRect();
           return { left: r.top, width: r.height };
         });
-        from = Math.max(0, els.findIndex((el) => el.dataset.agentGroup === id));
+        from = Math.max(0, els.findIndex((el) => el.getAttribute(itemAttr) === id));
         lastTarget = from;
+        window.getSelection()?.removeAllRanges();
         document.body.style.userSelect = "none";
         document.body.style.cursor = "grabbing";
       }
       const raw = ev.clientY - startY;
       const target = tabDragTarget(slots, from, clampTabDragDx(slots, from, raw));
       lastTarget = target;
-      setGroupDrag({ id, from, target, dy: rubberbandTabDx(slots, from, raw), slots, settling: false });
+      setDragSort({ scope, id, from, target, dy: rubberbandTabDx(slots, from, raw), slots, settling: false });
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
+  }
+  /** 拖动中某一项的位移与动效类：源项跟手，夹在中间的让位（高矮不一，见 tabDragShift） */
+  function dragSortStyle(scope: string, id: string, index: number) {
+    if (!dragSort || dragSort.scope !== scope) return { style: undefined, cls: "", dragging: false };
+    const dragging = dragSort.id === id;
+    const shift = dragging
+      ? dragSort.dy
+      : tabDragShift(dragSort.slots, dragSort.from, dragSort.target, index);
+    return {
+      style: { transform: `translateY(${shift}px)` },
+      cls: dragging
+        ? `relative z-10 ${dragSort.settling ? "transition-transform duration-150 ease-out" : ""}`
+        : "transition-transform duration-150 ease-out",
+      dragging,
+    };
   }
 
   const [collapsedGroups, setCollapsedGroups] =
@@ -3633,20 +3684,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         <div data-agent-group-list>
           {shownAgents.map((agent, groupIndex) => {
             const det = agents.find((a) => a.id === agent.id);
-            const list = profiles.filter(
-              (p) => p.agent === agent.id && matchProfile(p),
-            );
+            const list = sortedProfilesOf(agent.id).filter(matchProfile);
+            const listIds = list.map((p) => p.id);
             const connectionCount = profiles.filter(
               (p) => p.agent === agent.id,
             ).length;
             const isCollapsed = collapsedGroups.has(agent.id);
-            // 拖动排序：源组跟手，夹在中间的组让位（组高矮不一，见 tabDragShift）
-            const dragging = groupDrag?.id === agent.id;
-            const groupShift = groupDrag
-              ? dragging
-                ? groupDrag.dy
-                : tabDragShift(groupDrag.slots, groupDrag.from, groupDrag.target, groupIndex)
-              : 0;
+            const groupDrag = dragSortStyle("groups", agent.id, groupIndex);
             // 分组卡片化（v3.93 用户拍板）：field 细边 + strip 底色卡片给每个 agent 明确边界，
             // 替代原 hairline + 左侧缩进线手法；未安装的卡片去底色降权（无配置可管，权重最低）。
             // 不用 opacity 降权：opacity<1 会改变 fixed 后代的包含块，悬浮层定位会错乱。
@@ -3655,27 +3699,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               <section
                 key={agent.id}
                 data-agent-group={agent.id}
-                style={groupDrag ? { transform: `translateY(${groupShift}px)` } : undefined}
+                style={groupDrag.style}
                 className={`mb-4 overflow-hidden rounded-xl border ${
                   installed
                     ? "border-field ccode-well"
                     : "border-hairline"
-                } ${
-                  dragging
-                    ? `relative z-10 ${groupDrag?.settling ? "transition-transform duration-150 ease-out" : ""}`
-                    : groupDrag
-                      ? "transition-transform duration-150 ease-out"
-                      : ""
-                }`}
+                } ${groupDrag.cls}`}
               >
                 <div
-                  className={`group flex h-11 items-center gap-2 px-3 ${groupDrag ? "" : "cursor-grab"}`}
-                  onPointerDown={(e) => onGroupHeaderPointerDown(e, agent.id, shownIds)}
+                  className={`group relative flex h-11 items-center gap-2 px-3 ${dragSort ? "" : "cursor-grab"}`}
+                  onPointerDown={(e) =>
+                    startDragSort(e, "groups", agent.id, "[data-agent-group-list]", "data-agent-group", (from, to) =>
+                      commitGroupMove(shownIds, from, to),
+                    )
+                  }
                 >
+                  {/* 握把浮在左内边距里、不占布局：展开按钮与下方「出图模型」等组头左缘对齐 */}
                   <span
                     aria-hidden
                     title="按住组头上下拖，调整分组顺序"
-                    className="-ml-1.5 -mr-1 flex w-3 shrink-0 justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
+                    className="pointer-events-none absolute inset-y-0 left-0 flex w-3 items-center justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
                   >
                     <GripVertical size={14} strokeWidth={1.8} />
                   </span>
@@ -3939,8 +3982,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       <p className="px-4 py-3 text-xs text-l3">还没有连接</p>
                     ) : (
                       // 行间极细分割线（hairline）替代卡片间距：整列垂直严格对齐，视觉节奏与官方账号行一致
-                      <ul className="divide-y divide-hairline overflow-x-auto">
-                        {list.map((profile) => {
+                      <ul data-profile-list className="divide-y divide-hairline overflow-x-auto">
+                        {list.map((profile, rowIndex) => {
                           const hidden = (
                             settings?.hiddenProfiles ?? []
                           ).includes(profile.id);
@@ -3983,16 +4026,41 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             dupNameIds.has(profile.id) && profile.models[0]
                               ? profile.models[0]
                               : null;
+                          const rowDrag = dragSortStyle(agent.id, profile.id, rowIndex);
                           return (
                           <li
                             key={profile.id}
-                            className={`group grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm transition-colors ${
-                              // 全局使用中的那条：整行淡强调底 + 左缘强调短条（同侧栏选中口径），照 cc-switch「使用中」
-                              isGlobal
-                                ? "bg-[color-mix(in_oklab,var(--color-cta)_8%,transparent)] shadow-[inset_2px_0_0_var(--color-cta)]"
-                                : "hover:bg-hover/60"
-                            }`}
+                            data-profile-row={profile.id}
+                            style={rowDrag.style}
+                            // 组内排序：行上空白处按住上下拖（按钮、链接照常点）；键盘走行尾 ⋯ 的上移 / 下移
+                            onPointerDown={(e) => {
+                              if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+                              startDragSort(e, agent.id, profile.id, "[data-profile-list]", "data-profile-row", (from, to) =>
+                                commitProfileMove(agent.id, listIds, from, to),
+                              );
+                            }}
+                            className={`group relative grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm ${
+                              rowDrag.dragging ? "" : "transition-colors"
+                            } ${
+                              // 拖着走的那行：实底浮起，免得透出底下让位的行
+                              rowDrag.dragging
+                                ? "bg-raised shadow-md"
+                                : // 全局使用中的那条：整行淡强调底 + 左缘强调短条（同侧栏选中口径），照 cc-switch「使用中」
+                                  isGlobal
+                                  ? "bg-[color-mix(in_oklab,var(--color-cta)_8%,transparent)] shadow-[inset_2px_0_0_var(--color-cta)]"
+                                  : "hover:bg-hover/60"
+                            } ${rowDrag.cls}`}
                           >
+                            {/* 握把浮在左内边距里、不占布局，悬停才露出 */}
+                            {list.length > 1 && (
+                              <span
+                                aria-hidden
+                                title="按住行上空白处上下拖，调整连接顺序"
+                                className="pointer-events-none absolute inset-y-0 left-0.5 flex w-3 items-center justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
+                              >
+                                <GripVertical size={14} strokeWidth={1.8} />
+                              </span>
+                            )}
                             <span className="flex min-w-0 items-center gap-2">
                               <VendorIcon
                                 vendor={
@@ -4465,6 +4533,29 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           y={rowMenu.y}
           onClose={() => setRowMenu(null)}
           items={[
+            // 组内排序：拖动的键盘 / 不方便拖时的替代
+            ...(() => {
+              const ids = sortedProfilesOf(rowMenu.profile.agent)
+                .filter(matchProfile)
+                .map((p) => p.id);
+              const i = ids.indexOf(rowMenu.profile.id);
+              if (ids.length < 2) return [];
+              return [
+                {
+                  icon: ArrowUp,
+                  label: "上移一位",
+                  disabled: i <= 0,
+                  onSelect: () => commitProfileMove(rowMenu.profile.agent, ids, i, i - 1),
+                },
+                {
+                  icon: ArrowDown,
+                  label: "下移一位",
+                  disabled: i >= ids.length - 1,
+                  onSelect: () => commitProfileMove(rowMenu.profile.agent, ids, i, i + 1),
+                },
+                { separator: true as const },
+              ];
+            })(),
             {
               label: "验证",
               icon: ShieldCheck,
