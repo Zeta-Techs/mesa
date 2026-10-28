@@ -36,6 +36,7 @@
 | 会话 | 会话文件的记录类型与字段；Mesa 解析器读出用户这句、工具调用 / 结果、回复 | 同上留下的 `transcript.jsonl` / `parsed.json` |
 | 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
 | Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
+| Claude 模型别名 | `claude --help` 举的别名 Mesa 都收了（名单 `tests/fixtures/claude-model-aliases.json`）；每个别名都换得出型号 | `model_aliases_probe_real` |
 
 跑法（仓库根目录，三平台同一个写法；`run.mjs` 会自己找能跑的 Python 3）：
 

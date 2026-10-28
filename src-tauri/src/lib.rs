@@ -91,6 +91,7 @@ mod logbuf;
 mod mac_fullscreen;
 mod mcp;
 mod mcp_blender;
+mod model_aliases;
 mod model_registry;
 mod models;
 mod paths;
@@ -222,6 +223,8 @@ pub fn run() {
             scheduler::start_scheduler(app.handle().clone());
             // 内部对话保留期清理：开机两分钟后起，每天至多一次（设置页可关 / 改天数）
             internal_sessions::spawn_auto_cleanup();
+            // 公共模型能力库：没下过或超过 14 天就后台下一次（失败不打扰，连接页 ⋯ 照旧能手动下）
+            model_registry::spawn_auto_refresh();
             // 收货监听：启动即恢复（盘上登记在重启前留下的也要有人接）
             download_inbox::ensure_watcher_at_startup(app.handle());
             // 浏览器桥自愈：清单写死的是安装当时的 helper 绝对路径，应用被移动
@@ -594,6 +597,7 @@ pub fn run() {
             image_gen::image_gen_test,
             model_registry::model_db_status,
             model_registry::download_model_db,
+            model_aliases::official_model_aliases,
             model_registry::model_capability_brief,
             global_config::check_global_drift,
             global_config::preview_profile_global,

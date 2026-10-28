@@ -155,6 +155,16 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
 消费：
 
 - 模型能力：`model_registry` 五层链（thinking / context / output / vision）。relay 层按 §6 带网关维度。给界面的能力 DTO 逐字段三态：链上显式 false 原样出线，只有查不到才 None（2026-10-23：vision 曾把 false 折成 None，带图提醒失效）。
+- **能力库与价目怎么认模型（2026-10-28）**：查表前一律走 `model_registry::model_key`（剥 provider 前缀、去 `:batch` / `:free` 变体、**点号当横杠**），
+  OpenRouter 的 `claude-opus-5.5` 与 Claude Code 的 `claude-opus-5-5` 才对得上。**逐个型号的层（网关实测、公共库）只认同一型号**
+  （统一写法后相等，或去掉 8 位日期 / YYYY-MM-DD / latest 快照后缀后相等；四位数是版本号不剥），**不按前缀退到别的型号**；
+  按系列写的层（用户覆盖、内置表、内置价目）照旧最长前缀。usage.rs 价目链同口径（`match_in` + `KeyMatch`）。
+  反例：曾按前缀把 Opus 5.5 退到 `claude-opus-5`，价格多算约 25%；中转自起名模型拿到别的型号的上下文。
+  公共库：models.dev 同一型号原厂（`MODELS_DEV_VENDORS`）优先、先到先得；变体不收；启动时没下过或超过 14 天后台重下；每个源先直连、
+  连不上再经设置里的出网代理。网关目录把模型标 stale 时从网关实测缓存删掉（`forget_relay_models`）。
+- **官方账号模型别名（2026-10-28）**：Claude 别名名单在 `tests/fixtures/claude-model-aliases.json`（Rust 与金丝雀共读），别名对应的完整型号
+  **不写死**，由 `model_aliases.rs` 按本机 CLI 版本实测（本机假接口、临时 `CLAUDE_CONFIG_DIR`、不连厂商不花额度，版本变了才重测），
+  连接页显示与能力库查询都用实测结果；测不出来就显示别名、不猜。`default` 随账号变，不测。Gemini 别名起不到本机假接口，暂不接。
 - Agent 通道：`request_policy_support`（supported / unsupported / unknown）。
 - 用户在该模型上存的策略（稀疏）。
 - `lastProbe`（§8）。

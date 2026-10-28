@@ -3907,13 +3907,18 @@ trust_level = "trusted"
         // 每个模型一个 [models.<alias>] 表；非法字符清洗为 _
         assert_eq!(doc["models"]["kimi-k3"]["provider"].as_str(), Some("ccode"));
         assert_eq!(doc["models"]["kimi-k3"]["model"].as_str(), Some("kimi-k3"));
-        // 0.31+ 必填 max_context_size：k3 = 1M，未知模型 = 128K 保守默认
+        // 0.31+ 必填 max_context_size：k3 = 1M；「kimi.k2.5 turbo」统一写法后认作 k2.5 系（256K，2026-10-28 能力库点号当横杠），
+        // 真不认识的（deepseek-chat 内置表没给上下文）= 128K 保守默认
         assert_eq!(
             doc["models"]["kimi-k3"]["max_context_size"].as_integer(),
             Some(1_048_576)
         );
         assert_eq!(
             doc["models"]["kimi_k2_5_turbo"]["max_context_size"].as_integer(),
+            Some(262_144)
+        );
+        assert_eq!(
+            doc["models"]["deepseek-chat"]["max_context_size"].as_integer(),
             Some(131_072)
         );
         assert_eq!(

@@ -1637,25 +1637,25 @@ fn load_pricing(override_path: Option<&Path>) -> PriceChain {
             }
         }
     }
-    [builtin, db, user]
+    // 统一写法（点当横杠、去 :batch 变体）：claude-opus-5.5 与 claude-opus-5-5 才对得上（model_registry::model_key）
+    [
+        crate::model_registry::keyed(builtin),
+        db,
+        crate::model_registry::keyed(user),
+    ]
 }
 
-/// 单层内最长前缀命中
-fn longest_price_in(table: &[(String, (f64, f64))], model: &str) -> Option<(f64, f64)> {
-    table
-        .iter()
-        .filter(|(prefix, _)| model.starts_with(prefix.as_str()))
-        .max_by_key(|(prefix, _)| prefix.len())
-        .map(|(_, price)| *price)
-}
 
 fn price_of(model: &str, chain: &PriceChain) -> Option<(f64, f64)> {
-    // 中转/聚合的 provider 前缀（accounts/fireworks/models/x、zetatechs/x）剥掉，按末段模型名匹配
-    let model = model.rsplit('/').next().unwrap_or(model).to_lowercase();
-    // 高层先问：用户覆盖 > 公共库 > 内置
-    for layer in chain.iter().rev() {
-        if let Some(p) = longest_price_in(layer, &model) {
-            return Some(p);
+    use crate::model_registry::{match_in, model_key, KeyMatch};
+    // 中转/聚合的 provider 前缀（accounts/fireworks/models/x、zetatechs/x）剥掉、统一写法，按末段模型名匹配
+    let key = model_key(model);
+    // 高层先问：用户覆盖 > 公共库 > 内置。公共库是逐个型号的完整名，只认同一型号——
+    // 按前缀退到上一代会算错价（2026-10-28：Opus 5.5 被按 Opus 5 计）；用户覆盖与内置表是前缀
+    let how = [KeyMatch::Prefix, KeyMatch::Exact, KeyMatch::Prefix];
+    for (layer, how) in chain.iter().zip(how).rev() {
+        if let Some(p) = match_in(layer, &key, how) {
+            return Some(*p);
         }
     }
     None

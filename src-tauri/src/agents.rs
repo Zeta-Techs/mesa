@@ -2197,9 +2197,10 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
     }
 }
 
-/// Claude 官方名单：CLI 认的别名（`claude --help` 列 fable / opus / sonnet；default = 不传时的默认）+ 账号额外可选的完整名
+/// Claude 官方名单：CLI 认的别名（名单在 tests/fixtures/claude-model-aliases.json，金丝雀拿 `claude --help` 核对；
+/// default = 不传时的默认）+ 账号额外可选的完整名
 fn claude_official_models(extra: Vec<String>) -> Vec<String> {
-    let mut out: Vec<String> = ["default", "fable", "opus", "sonnet", "haiku"].map(String::from).to_vec();
+    let mut out: Vec<String> = crate::model_aliases::claude_aliases();
     for m in extra {
         if !out.contains(&m) {
             out.push(m);
@@ -4767,6 +4768,10 @@ fn official_login_env() -> std::collections::BTreeMap<String, String> {
 pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusDto {
     let id = agent_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Claude 别名对应的完整型号：CLI 版本变了才后台重测（model_aliases.rs）
+        if id == "claude-code" {
+            crate::model_aliases::refresh_claude_in_background();
+        }
         let mut st = official_account_status_sync(&id);
         // 已登录才读套餐：Claude Code 登出后 ~/.claude.json 里的 oauthAccount 可能还留着
         if st.connected {

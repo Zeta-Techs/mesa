@@ -628,7 +628,7 @@ terminal-cwd.ts            # 目录读取错误统一人话（FileTree / Termina
                              # 关键帧（主线程重绘，xterm 出字满载时一卡一卡）——8 段虚线按相位差闪 opacity（合成器线程，
                              # 2026-09-15 实测重做）（tests/tab-working.test.ts）
   terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env）
-  official-model-names.ts    # 官方账号模型别名 → 当前完整型号（只用于显示，启动仍传别名；随 CLI 升级重测）
+  official-model-names.ts    # 官方账号模型别名的显示：用后端 official_model_aliases 实测表把别名显示成完整型号，测不出原样（启动仍传别名）
   agent-group-order.ts       # 连接页 Agent 分组顺序与组内连接顺序：存下的 id 列表合并默认顺序、只在看得见的项之间挪（localStorage）
   tab-drag.ts                # 标签条拖拽排序纯逻辑（侧栏项目树、连接页分组共用）：位移钳制 + 目标槽位判定（>= 中线守末槽边界）+ 高矮不一的块的让位 / 吸附
                              # （tabDragShift / tabDragSettleDx，侧栏项目树展开对话后用；tests/tab-drag.test.ts）
@@ -1007,7 +1007,9 @@ src-tauri/src/
                              #   Windows 另拼 codex_windows_patch_note.md（只认整条 bash heredoc 的 apply_patch）
   codex_base_instructions.md # Codex 0.163 默认系统提示词原文（Apache-2.0，THIRD-PARTY 有条目），只在取不到本机原文时兜底
   codex_windows_patch_note.md # Windows 上 apply_patch 的调用口径（Mesa 自写，英文给模型看）
-  model_registry.rs          # 模型能力注册表：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
+  model_aliases.rs           # 官方账号模型别名 → 本机 CLI 实测的完整型号：假接口记下 claude -p --model X 请求的 model，按 CLI 版本缓存
+                             # （official-model-aliases.json），版本变了后台重测；别名名单 = tests/fixtures/claude-model-aliases.json（金丝雀共读）
+  model_registry.rs          # 模型能力注册表（查表统一写法 model_key；逐个型号的层只认同一型号、按系列的层最长前缀）：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
                              # OpenRouter 风格 /models 元数据）> 公共能力库（配置页 ⋯ 下载，models.dev 优先
                              # OpenRouter 回落，download_model_db/model_db_status）> 内置前缀表 > 关键词兜底；
                              # 字段 thinking/context/output/vision 全 Option（这层不知道就继续向下找，

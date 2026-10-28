@@ -1424,6 +1424,14 @@ impl ProfileStore {
         let mut saved = gw.clone();
         saved.slot_probes = crate::gateway_store::slot_probe_summaries(&saved.last_probe);
         crate::gateway_store::save_gateways(&gateways)?;
+        // 下架的模型不再留在网关实测能力缓存里
+        let stale: Vec<String> = saved
+            .models
+            .iter()
+            .filter(|m| m.status == "stale")
+            .map(|m| m.id.clone())
+            .collect();
+        crate::model_registry::forget_relay_models(gateway_id, &stale);
         Ok(saved)
     }
 

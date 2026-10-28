@@ -340,6 +340,25 @@ def codex_instructions_phase(adir):
     return code == 0
 
 
+def claude_alias_phase(adir):
+    """Claude 官方账号的模型别名（2026-10-28）：Mesa 的名单在 tests/fixtures/claude-model-aliases.json。
+    ① `claude --help` 里 --model 举的别名 Mesa 都收了（新增别名时报红，如当初漏了 fable）；
+    ② Mesa 的实测（model_aliases_probe_real：本机假接口记下 claude -p --model X 请求的型号）每个别名都换得出型号"""
+    fixture = json.load(open(os.path.join(ROOT, "tests", "fixtures", "claude-model-aliases.json"), encoding="utf-8"))
+    known = set(fixture.get("aliases") or [])
+    code, help_text = run([bin_path("claude-code"), "--help"], timeout=60)
+    m = re.search(r"--model <model>(.*?)(?:\n\s*-{1,2}[a-z]|\Z)", help_text or "", re.S)
+    listed = set(re.findall(r"'([a-z][a-z0-9-]*)'", m.group(1))) if m else set()
+    code2, text = run([cargo(), "test", "--lib", "model_aliases_probe_real", "--", "--ignored", "--nocapture"],
+                      cwd=os.path.join(ROOT, "src-tauri"), timeout=600)
+    open(os.path.join(adir, "model-aliases.log"), "w", encoding="utf-8").write(
+        f"help 里的别名：{sorted(listed)}\nMesa 名单：{sorted(known)}\n\n{text}")
+    return {
+        "帮助里的模型别名 Mesa 都收了": bool(listed) and listed <= known,
+        "Mesa 收的模型别名都换得出型号": code2 == 0,
+    }
+
+
 def probe_agent(agent, gw, out, skip_screen, deps):
     adir = os.path.join(out, agent)
     os.makedirs(adir, exist_ok=True)
@@ -365,6 +384,9 @@ def probe_agent(agent, gw, out, skip_screen, deps):
         # 没有旁路的家：请求形状取抓屏那一趟假网关收到的（抓屏会发「跑命令」那一句）
         fp["request"] = None
         fp["channel"] = None
+    if agent == "claude-code":
+        log(f"[{agent}] 核对模型别名…")
+        checks.update(claude_alias_phase(adir))
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)

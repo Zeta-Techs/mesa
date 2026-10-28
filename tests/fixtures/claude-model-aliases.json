@@ -1,0 +1,5 @@
+{
+  "_说明": "Claude Code 官方账号的模型别名（Rust model_aliases.rs 与 CLI 金丝雀共读）。default = 不传模型、由 CLI 按账号挑，不实测。CLI 新增 / 去掉别名时改这里，金丝雀会对 claude --help 报红",
+  "aliases": ["default", "fable", "opus", "sonnet", "haiku"],
+  "unprobed": ["default"]
+}

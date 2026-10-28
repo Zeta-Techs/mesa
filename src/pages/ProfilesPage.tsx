@@ -71,7 +71,7 @@ import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
-import { officialModelLabel } from "../official-model-names";
+import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import {
   loadAgentGroupOrder,
@@ -2397,6 +2397,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     setConflictPop(null);
   }
 
+  // 官方账号别名 → 本机 CLI 实测的完整型号（后端查 Claude 状态时按版本后台重测，十几秒内落盘）
+  const [officialAliases, setOfficialAliases] = useState<OfficialAliasTable>({});
+  function loadOfficialAliases() {
+    invoke<OfficialAliasTable>("official_model_aliases")
+      .then(setOfficialAliases)
+      .catch(() => {});
+  }
+
   /** 重新检测某个 agent 的官方账号连接状态（只读 auth 文件，失败不影响页面） */
   async function refreshOfficial(agentId: string) {
     try {
@@ -2405,6 +2413,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         { agentId },
       );
       setOfficialStatus((prev) => ({ ...prev, [agentId]: st }));
+      if (agentId === "claude-code") {
+        // 实测在后台跑：现在先读一次，稍后再读一次拿刚测出来的
+        loadOfficialAliases();
+        window.setTimeout(loadOfficialAliases, 20000);
+      }
     } catch {
       toast(`无法读取 ${labelOf(agentId)} 官方账号状态`, "warning");
     }
@@ -4239,7 +4252,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 profile.models.length > 0
                                   ? profile.models
                                       .map((m) =>
-                                        profile.accountType === "official" ? officialModelLabel(profile.agent, m).text : m,
+                                        profile.accountType === "official" ? officialModelLabel(profile.agent, m, officialAliases).text : m,
                                       )
                                       .join(" · ")
                                   : undefined
@@ -4251,7 +4264,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     // 官方账号的别名（Claude opus 等）显示成当前对应的完整型号，悬停说明启动传的仍是别名
                                     const label =
                                       profile.accountType === "official"
-                                        ? officialModelLabel(profile.agent, m)
+                                        ? officialModelLabel(profile.agent, m, officialAliases)
                                         : { text: m, tip: m };
                                     return (
                                     // 首个模型是启动默认：字色提一档、悬停说明，其余是会话里可切的

@@ -76,6 +76,8 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
     ("kimi-k2", caps(false, Some(131_072))),
     ("kimi-k1.5", caps(true, Some(131_072))),
     // DeepSeek（reasoner = r1 推理版；chat/v3 非思考）
+    // v4 起全系思考（2026-10 官方 / 公共库同口径）
+    ("deepseek-v4", caps(true, None)),
     ("deepseek-reasoner", caps(true, None)),
     ("deepseek-r1", caps(true, None)),
     ("deepseek-chat", caps(false, None)),
@@ -87,13 +89,18 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
     ("o4-mini", caps(true, None)),
     ("gpt-4o", capsv(false, None, true)),
     ("gpt-4.1", caps(false, None)),
-    // Anthropic（3.7 起全系 extended thinking；3.5 及更早不支持）
+    // Anthropic（3.7 起全系 extended thinking；3.5 及更早不支持；5 代与 Fable 全系思考 + 看图，2026-10-28 补）
+    ("claude-fable", capsv(true, None, true)),
+    ("claude-opus-5", capsv(true, None, true)),
+    ("claude-sonnet-5", capsv(true, None, true)),
+    ("claude-haiku-5", capsv(true, None, true)),
     ("claude-opus-4", capsv(true, None, true)),
     ("claude-sonnet-4", caps(true, None)),
     ("claude-haiku-4", caps(true, None)),
     ("claude-3-7-sonnet", caps(true, None)),
     ("claude-3-5", caps(false, None)),
     // Google（2.5 起全系 thinking）
+    ("gemini-4", capsv(true, None, true)),
     ("gemini-3", capsv(true, None, true)),
     ("gemini-2.5", capsv(true, None, true)),
     // 智谱（4.5 起 hybrid thinking 可开关；z1 = 推理专版）
@@ -379,6 +386,38 @@ pub(crate) fn purge_relay_for_gateway(gateway_id: &str) {
     }
 }
 
+/// 网关目录里已下架（标了 stale）的模型，从网关实测缓存里删掉（2026-10-28：原先只增不删，下架的一直留着）
+pub(crate) fn forget_relay_models(gateway_id: &str, ids: &[String]) {
+    if ids.is_empty() || cfg!(test) {
+        return;
+    }
+    if let Some(path) = relay_cache_path() {
+        forget_relay_models_at(&path, gateway_id, ids);
+    }
+}
+
+fn forget_relay_models_at(path: &Path, gateway_id: &str, ids: &[String]) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let Some(obj) = v.as_object_mut() else { return };
+    let gone: std::collections::HashSet<String> = ids
+        .iter()
+        .map(|id| format!("{gateway_id}|{}", normalize(id)))
+        .collect();
+    let before = obj.len();
+    obj.retain(|k, _| !gone.contains(k));
+    if obj.len() == before {
+        return;
+    }
+    if let Ok(out) = serde_json::to_string_pretty(&v) {
+        let _ = crate::profiles::atomic_write(path, &out);
+    }
+}
+
 static DB_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, ModelCaps)>>>> =
     std::sync::OnceLock::new();
 static DB_PRICE_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, (f64, f64))>>>> =
@@ -392,14 +431,28 @@ fn load_db() -> Vec<(String, ModelCaps)> {
     if let Some(cached) = cache.read().ok().and_then(|g| g.clone()) {
         return cached;
     }
-    let parsed = db_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| parse_caps_map(&t))
-        .unwrap_or_default();
+    // 旧快照的键还是原写法（claude-opus-5.5、带 :batch 的变体）：统一写法后同名的取第一条，变体不进表
+    let parsed = dedup_keys(keyed(
+        db_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|t| {
+                parse_caps_map(&t)
+                    .into_iter()
+                    .filter(|(k, _)| !k.contains(':'))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    ));
     if let Ok(mut g) = cache.write() {
         *g = Some(parsed.clone());
     }
     parsed
+}
+
+/// 统一写法后同名的只留第一条
+fn dedup_keys<T>(table: Vec<(String, T)>) -> Vec<(String, T)> {
+    let mut seen = std::collections::HashSet::new();
+    table.into_iter().filter(|(k, _)| seen.insert(k.clone())).collect()
 }
 
 /// 公共能力库的定价层（usage.rs 定价链消费：内置表 < 公共库 < 用户 pricing.json）。
@@ -412,10 +465,17 @@ pub(crate) fn db_price_table() -> Vec<(String, (f64, f64))> {
     if let Some(cached) = cache.read().ok().and_then(|g| g.clone()) {
         return cached;
     }
-    let parsed = db_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| parse_price_map(&t))
-        .unwrap_or_default();
+    let parsed = dedup_keys(keyed(
+        db_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|t| {
+                parse_price_map(&t)
+                    .into_iter()
+                    .filter(|(k, _)| !k.contains(':'))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    ));
     if let Ok(mut g) = cache.write() {
         *g = Some(parsed.clone());
     }
@@ -509,17 +569,39 @@ pub(crate) fn parse_openrouter_models(v: &serde_json::Value) -> Vec<(String, Mod
     out
 }
 
-/// models.dev 的 api.json（{provider: {models: {id: {...}}}}）→ 同一能力表形状
+/// models.dev 里的原厂（2026-10-28）：同一型号常被十几家服务商各列一次（各家的上下文、价格可能被裁剪或加价），
+/// 原厂先读、先到先得；其余按名字顺序，结果稳定
+const MODELS_DEV_VENDORS: &[&str] = &[
+    "anthropic", "openai", "google", "xai", "deepseek", "moonshotai", "zhipuai", "alibaba", "mistral",
+];
+
+/// models.dev 的服务商按「原厂在前」排好，供两个解析函数共用
+fn models_dev_providers(v: &serde_json::Value) -> Vec<(&String, &serde_json::Value)> {
+    let Some(providers) = v.as_object() else {
+        return Vec::new();
+    };
+    let mut list: Vec<(&String, &serde_json::Value)> = providers.iter().collect();
+    list.sort_by_key(|(name, _)| {
+        (
+            MODELS_DEV_VENDORS.iter().position(|v| v == name).unwrap_or(usize::MAX),
+            name.to_string(),
+        )
+    });
+    list
+}
+
+/// models.dev 的 api.json（{provider: {models: {id: {...}}}}）→ 同一能力表形状。
+/// 键用统一写法、同一型号只留一条（原厂优先），`:batch` 这类变体不收
 fn parse_models_dev(v: &serde_json::Value) -> Vec<(String, ModelCaps)> {
     let mut out = Vec::new();
-    let Some(providers) = v.as_object() else {
-        return out;
-    };
-    for (_provider, pv) in providers {
+    for (_provider, pv) in models_dev_providers(v) {
         let Some(models) = pv.get("models").and_then(|m| m.as_object()) else {
             continue;
         };
         for (id, mv) in models {
+            if id.contains(':') {
+                continue;
+            }
             let context = mv
                 .get("limit")
                 .and_then(|l| l.get("context"))
@@ -540,7 +622,7 @@ fn parse_models_dev(v: &serde_json::Value) -> Vec<(String, ModelCaps)> {
                 continue;
             }
             out.push((
-                normalize(id),
+                model_key(id),
                 ModelCaps {
                     thinking,
                     context,
@@ -551,7 +633,7 @@ fn parse_models_dev(v: &serde_json::Value) -> Vec<(String, ModelCaps)> {
             ));
         }
     }
-    out
+    dedup_keys(out)
 }
 
 // ===== 定价提取（2026-08-31）：同一份公共库响应顺带落 cost，usage.rs 定价链消费 =====
@@ -559,14 +641,14 @@ fn parse_models_dev(v: &serde_json::Value) -> Vec<(String, ModelCaps)> {
 /// models.dev 条目的 cost.{input,output}（美元/每百万 token）→ (id, (输入价, 输出价))
 fn parse_models_dev_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
     let mut out = Vec::new();
-    let Some(providers) = v.as_object() else {
-        return out;
-    };
-    for (_provider, pv) in providers {
+    for (_provider, pv) in models_dev_providers(v) {
         let Some(models) = pv.get("models").and_then(|m| m.as_object()) else {
             continue;
         };
         for (id, mv) in models {
+            if id.contains(':') {
+                continue;
+            }
             let Some(cost) = mv.get("cost") else { continue };
             let pair = match (
                 cost.get("input").and_then(|n| n.as_f64()),
@@ -577,10 +659,10 @@ fn parse_models_dev_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
                 }
                 _ => continue,
             };
-            out.push((normalize(id), pair));
+            out.push((model_key(id), pair));
         }
     }
-    out
+    dedup_keys(out)
 }
 
 /// OpenRouter 风格条目的 pricing.{prompt,completion}（每 token 美元，字符串）→
@@ -745,27 +827,76 @@ fn model_db_status_sync() -> ModelDbStatusDto {
 const MODELS_DEV_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 const OPENROUTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// 设置里填了、且格式有效的出网代理（国内网络直连 models.dev 基本连不上，2026-10-28 起下载能力库也走它）
+fn outbound_proxy() -> Option<String> {
+    let s = crate::settings::read_current();
+    s.outbound_proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && crate::settings::validate_outbound_proxy(p).is_ok())
+        .map(str::to_string)
+}
+
+/// 公共库多久算旧：超过就在启动时后台重下（2026-10-28：原先只能手动下载，没下过的用户这一层是空的）
+const DB_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 3600);
+
+/// 启动时调用：公共库没下过或超过 14 天，后台下一次；失败不打扰（连接页 ⋯ 里照旧能手动下）
+pub fn spawn_auto_refresh() {
+    if cfg!(test) {
+        return;
+    }
+    let stale = db_path()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .is_none_or(|age| age > DB_MAX_AGE);
+    if stale {
+        tauri::async_runtime::spawn(async {
+            let _ = download_model_db().await;
+        });
+    }
+}
+
 /// 下载公共模型能力库：models.dev 优先（社区中立库），不可达回落 OpenRouter /models
-/// （两家解析进同一形状；本机实测 models.dev 直连超时、OpenRouter 可达）。
+/// （两家解析进同一形状；本机实测 models.dev 直连超时、OpenRouter 可达）。每家先直连，
+/// 连不上且设置了出网代理再经代理试一次。
 /// 能力之外顺带提取定价（cost），统计页费用估算与能力声明共用同一份快照
 #[tauri::command]
 pub async fn download_model_db() -> Result<ModelDbStatusDto, String> {
     let mut last_err = String::new();
     #[allow(clippy::type_complexity)]
     let mut parsed: Option<(Vec<(String, ModelCaps)>, Vec<(String, (f64, f64))>)> = None;
+    let proxy = outbound_proxy();
+    let mut attempts: Vec<(&str, bool, Option<&str>)> = Vec::new();
     for (url, is_models_dev) in [
         ("https://models.dev/api.json", true),
         ("https://openrouter.ai/api/v1/models", false),
     ] {
+        attempts.push((url, is_models_dev, None));
+        if let Some(p) = proxy.as_deref() {
+            attempts.push((url, is_models_dev, Some(p)));
+        }
+    }
+    for (url, is_models_dev, via) in attempts {
         let timeout = if is_models_dev {
             MODELS_DEV_TIMEOUT
         } else {
             OPENROUTER_TIMEOUT
         };
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
+        let mut builder = reqwest::Client::builder().timeout(timeout);
+        if let Some(p) = via {
+            match reqwest::Proxy::all(p) {
+                Ok(px) => builder = builder.proxy(px),
+                Err(e) => {
+                    last_err = format!("出网代理不可用：{e}");
+                    continue;
+                }
+            }
+        }
+        let client = builder
             .build()
             .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+        let how = if via.is_some() { "（经出网代理）" } else { "" };
         match client.get(url).send().await {
             Ok(resp) if resp.status().is_success() => {
                 match crate::storage::response_bytes(resp, 32 * 1024 * 1024)
@@ -775,29 +906,40 @@ pub async fn download_model_db() -> Result<ModelDbStatusDto, String> {
                             .map_err(|e| e.to_string())
                     }) {
                     Ok(v) => {
+                        // OpenRouter 的 `x:free` / `x:extended` 是同一型号的变体（价格、上下文不同），公共库不收
                         let entries = if is_models_dev {
                             parse_models_dev(&v)
                         } else {
-                            parse_openrouter_models(&v)
+                            dedup_keys(keyed(
+                                parse_openrouter_models(&v)
+                                    .into_iter()
+                                    .filter(|(k, _)| !k.contains(':'))
+                                    .collect(),
+                            ))
                         };
                         if entries.is_empty() {
-                            last_err = format!("{url} 响应解析为空");
+                            last_err = format!("{url}{how} 响应解析为空");
                             continue;
                         }
                         // 定价提取失败不判死：能力库仍是主用途，cost 缺失 = 那层不知道
                         let prices = if is_models_dev {
                             parse_models_dev_prices(&v)
                         } else {
-                            parse_openrouter_prices(&v)
+                            dedup_keys(keyed(
+                                parse_openrouter_prices(&v)
+                                    .into_iter()
+                                    .filter(|(k, _)| !k.contains(':'))
+                                    .collect(),
+                            ))
                         };
                         parsed = Some((entries, prices));
                         break;
                     }
-                    Err(e) => last_err = format!("{url} 解析失败: {e}"),
+                    Err(e) => last_err = format!("{url}{how} 解析失败: {e}"),
                 }
             }
-            Ok(resp) => last_err = format!("{url} 返回 HTTP {}", resp.status()),
-            Err(e) => last_err = format!("{url} 请求失败: {e}"),
+            Ok(resp) => last_err = format!("{url}{how} 返回 HTTP {}", resp.status()),
+            Err(e) => last_err = format!("{url}{how} 请求失败: {e}"),
         }
     }
     let (entries, prices) = parsed.ok_or_else(|| format!("模型能力库下载失败：{last_err}"))?;
@@ -838,30 +980,90 @@ pub async fn download_model_db() -> Result<ModelDbStatusDto, String> {
 }
 
 /// 剥中转/聚合的 provider 前缀（zetatechs/kimi-k3、openai/gpt-5），按末段模型名匹配
-/// （同 usage.rs price_of 口径）
+/// （同 usage.rs price_of 口径）。关键词推断用这个（保留原样的点号）；查表用 [`model_key`]
 fn normalize(model: &str) -> String {
     model.rsplit('/').next().unwrap_or(model).to_lowercase()
 }
 
-/// 前缀表查询：表内取最长命中的前缀
-fn longest_match<'a>(table: &'a [(String, ModelCaps)], model: &str) -> Option<&'a ModelCaps> {
-    table
-        .iter()
-        .filter(|(p, _)| model.starts_with(p.as_str()))
-        .max_by_key(|(p, _)| p.len())
-        .map(|(_, c)| c)
+/// 查表用的统一写法（2026-10-28）：在 normalize 之上去掉 `:batch` / `:free` 这类变体后缀、点号当横杠。
+/// OpenRouter 写 `claude-opus-5.5`，Anthropic / Claude Code 写 `claude-opus-5-5`；不统一时完整名对不上，
+/// 按前缀退到 `claude-opus-5`（上一代），价格跟着错（Opus 5.5 被按 Opus 5 计）
+pub(crate) fn model_key(model: &str) -> String {
+    let m = normalize(model);
+    let m = m.split(':').next().unwrap_or(&m);
+    m.trim().replace('.', "-")
 }
 
-/// 逐字段链式查询内核（测试可注入表）：每层取最长前缀命中，命中但字段为 None
-/// （这层不知道）时继续向下——不是整条命中即返回
+/// 快照日期 / latest 后缀去掉后的「同一型号」：claude-opus-4-1-20250805、deepseek-v4-flash-latest。
+/// 只认 8 位日期、YYYY-MM-DD 与 latest；四位数（qwen3-…-2507、gpt-4-0613）是版本号不是快照，不剥
+fn snapshot_base(key: &str) -> &str {
+    if let Some(rest) = key.strip_suffix("-latest") {
+        return rest;
+    }
+    let bytes = key.as_bytes();
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if let Some((head, tail)) = key.rsplit_once('-') {
+        if tail.len() == 8 && digits(tail) {
+            return head;
+        }
+    }
+    // YYYY-MM-DD：末尾 11 个字符是 -dddd-dd-dd
+    if bytes.len() > 11 {
+        let tail = &key[key.len() - 11..];
+        let parts: Vec<&str> = tail[1..].split('-').collect();
+        if tail.starts_with('-')
+            && parts.len() == 3
+            && parts[0].len() == 4
+            && parts[1].len() == 2
+            && parts[2].len() == 2
+            && parts.iter().all(|p| digits(p))
+        {
+            return &key[..key.len() - 11];
+        }
+    }
+    key
+}
+
+/// 一层表怎么认模型：用户覆盖与内置表写的是「前缀」（一个系列一条），按最长前缀；
+/// 网关实测与公共库是逐个型号的完整名，只认同一型号（统一写法后相等，或去掉快照后缀后相等）——
+/// 按前缀退到别的型号会张冠李戴（2026-10-28：中转自起名的模型拿到另一个型号的上下文和价格）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyMatch {
+    Prefix,
+    Exact,
+}
+
+/// 把表的键换成统一写法（加载时做一次）
+pub(crate) fn keyed<T>(table: Vec<(String, T)>) -> Vec<(String, T)> {
+    table.into_iter().map(|(k, v)| (model_key(&k), v)).collect()
+}
+
+/// 单层查询：键须已是 [`model_key`] 写法，`key` 同
+pub(crate) fn match_in<'a, T>(table: &'a [(String, T)], key: &str, how: KeyMatch) -> Option<&'a T> {
+    match how {
+        KeyMatch::Prefix => table
+            .iter()
+            .filter(|(p, _)| key.starts_with(p.as_str()))
+            .max_by_key(|(p, _)| p.len())
+            .map(|(_, c)| c),
+        KeyMatch::Exact => table.iter().find(|(k, _)| k == key).map(|(_, c)| c).or_else(|| {
+            let base = snapshot_base(key);
+            table.iter().find(|(k, _)| snapshot_base(k) == base).map(|(_, c)| c)
+        }),
+    }
+}
+
+/// 逐字段链式查询内核（测试可注入表）：每层按该层的认法命中，命中但字段为 None
+/// （这层不知道）时继续向下——不是整条命中即返回。官方账号的模型别名（opus、sonnet…）先换成实测的完整型号
 fn chain_field<T>(
-    tables: &[Vec<(String, ModelCaps)>],
+    tables: &[(Vec<(String, ModelCaps)>, KeyMatch)],
     model: &str,
     f: impl Fn(&ModelCaps) -> Option<T>,
 ) -> Option<T> {
-    let m = normalize(model);
-    for table in tables {
-        if let Some(c) = longest_match(table, &m) {
+    let resolved = crate::model_aliases::resolve(model);
+    let key = model_key(&resolved);
+    for (table, how) in tables {
+        if let Some(c) = match_in(table, &key, *how) {
             if let Some(v) = f(c) {
                 return Some(v);
             }
@@ -870,20 +1072,26 @@ fn chain_field<T>(
     None
 }
 
+fn builtin_table() -> Vec<(String, ModelCaps)> {
+    keyed(
+        BUILTIN_CAPS
+            .iter()
+            .map(|(p, c)| (p.to_string(), c.clone()))
+            .collect(),
+    )
+}
+
 /// 逐字段查询链：用户覆盖 > 网关实测缓存（需 gateway_id）> 公共能力库 > 内置表。
 fn lookup_field_for<T>(
     model: &str,
     gateway_id: Option<&str>,
     f: impl Fn(&ModelCaps) -> Option<T>,
 ) -> Option<T> {
-    let tables: [Vec<(String, ModelCaps)>; 4] = [
-        load_override(),
-        load_relay_for(gateway_id),
-        load_db(),
-        BUILTIN_CAPS
-            .iter()
-            .map(|(p, c)| (p.to_string(), c.clone()))
-            .collect(),
+    let tables = [
+        (keyed(load_override()), KeyMatch::Prefix),
+        (keyed(load_relay_for(gateway_id)), KeyMatch::Exact),
+        (load_db(), KeyMatch::Exact),
+        (builtin_table(), KeyMatch::Prefix),
     ];
     chain_field(&tables, model, f)
 }
@@ -896,7 +1104,10 @@ pub(crate) fn model_context_size_authoritative_for(
     model: &str,
     gateway_id: Option<&str>,
 ) -> Option<i64> {
-    let tables = [load_override(), load_relay_for(gateway_id)];
+    let tables = [
+        (keyed(load_override()), KeyMatch::Prefix),
+        (keyed(load_relay_for(gateway_id)), KeyMatch::Exact),
+    ];
     chain_field(&tables, model, |c| c.context)
 }
 
@@ -904,14 +1115,21 @@ pub(crate) fn model_context_size_authoritative_for(
 /// User overrides and gateway metadata win; the public database is used only
 /// when it has an explicit value, never the generic fallback estimate.
 pub(crate) fn model_context_size_for_config(model: &str, gateway_id: Option<&str>) -> Option<i64> {
-    let tables = [load_override(), load_relay_for(gateway_id), load_db()];
+    let tables = [
+        (keyed(load_override()), KeyMatch::Prefix),
+        (keyed(load_relay_for(gateway_id)), KeyMatch::Exact),
+        (load_db(), KeyMatch::Exact),
+    ];
     chain_field(&tables, model, |c| c.context)
 }
 
 /// Grok 目录声明的 apiBackend（仅权威层：用户覆盖/网关实测缓存）。
 /// 供预览说实话（「目录已声明 responses」）与设为全局参考
 pub(crate) fn model_api_backend_for(model: &str, gateway_id: Option<&str>) -> Option<String> {
-    let tables = [load_override(), load_relay_for(gateway_id)];
+    let tables = [
+        (keyed(load_override()), KeyMatch::Prefix),
+        (keyed(load_relay_for(gateway_id)), KeyMatch::Exact),
+    ];
     chain_field(&tables, model, |c| c.api_backend.clone())
 }
 
@@ -1138,7 +1356,8 @@ mod tests {
         assert!(model_capability("kimi-k3").thinking);
         // 视觉三态：确知能看 Some(true)，查不到 None（不冒充「不能看」）；显式 false 原样透传
         assert_eq!(model_capability("kimi-k3").vision, Some(true));
-        assert_eq!(model_capability("gemini-4-argon").vision, None);
+        assert_eq!(model_capability("gemini-4-argon").vision, Some(true));
+        assert_eq!(model_capability("mystery-model-x").vision, None);
     }
 
     #[test]
@@ -1382,7 +1601,7 @@ mod tests {
                 api_backend: None,
             },
         )];
-        let tables = [relay, db];
+        let tables = [(relay, KeyMatch::Exact), (db, KeyMatch::Exact)];
         assert_eq!(chain_field(&tables, "model-x", |c| c.context), Some(99999));
         assert_eq!(chain_field(&tables, "model-x", |c| c.thinking), Some(true));
         assert_eq!(chain_field(&tables, "model-x", |c| c.output), Some(4096));
@@ -1477,7 +1696,7 @@ mod tests {
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("\"api_backend\": \"responses\""));
         let loaded = parse_caps_map(&raw);
-        let c = longest_match(&loaded, "gw1|custom-model-x").unwrap();
+        let c = match_in(&loaded, "gw1|custom-model-x", KeyMatch::Exact).unwrap();
         assert!(
             c.thinking == Some(true)
                 && c.vision == Some(true)
@@ -1498,6 +1717,79 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn model_key_unifies_dots_variants_and_provider() {
+        assert_eq!(model_key("anthropic/claude-opus-5.5"), "claude-opus-5-5");
+        assert_eq!(model_key("claude-opus-5.5:batch"), "claude-opus-5-5");
+        assert_eq!(model_key("Claude-Opus-5-5"), "claude-opus-5-5");
+        assert_eq!(snapshot_base("claude-opus-4-1-20250805"), "claude-opus-4-1");
+        assert_eq!(snapshot_base("gpt-4o-2024-08-06"), "gpt-4o");
+        assert_eq!(snapshot_base("deepseek-v4-flash-latest"), "deepseek-v4-flash");
+        // 四位数是版本号不是快照
+        assert_eq!(snapshot_base("qwen3-235b-a22b-2507"), "qwen3-235b-a22b-2507");
+    }
+
+    #[test]
+    fn exact_layers_do_not_fall_back_to_another_model() {
+        // 2026-10-28 实例：公共库写 claude-opus-5.5，Claude Code 报 claude-opus-5-5；
+        // 不统一写法时按前缀退到 claude-opus-5（上一代）
+        let db = keyed(vec![
+            ("claude-opus-5".to_string(), caps(true, Some(1))),
+            ("claude-opus-5.5".to_string(), caps(true, Some(2))),
+            ("glm-4".to_string(), caps(false, Some(3))),
+        ]);
+        assert_eq!(match_in(&db, &model_key("claude-opus-5-5"), KeyMatch::Exact).and_then(|c| c.context), Some(2));
+        assert_eq!(
+            match_in(&db, &model_key("claude-opus-5-5-20261001"), KeyMatch::Exact).and_then(|c| c.context),
+            Some(2)
+        );
+        // 库里没有这个型号：完整名层不拿别的型号顶
+        assert!(match_in(&db, &model_key("glm-4.7-flash"), KeyMatch::Exact).is_none());
+        // 前缀层照旧按系列
+        assert_eq!(match_in(&db, &model_key("glm-4.7-flash"), KeyMatch::Prefix).and_then(|c| c.context), Some(3));
+    }
+
+    #[test]
+    fn models_dev_prefers_vendor_and_skips_variants() {
+        let v = serde_json::json!({
+            "github-copilot": {"models": {"claude-opus-5.5": {"limit": {"context": 128000}}}},
+            "anthropic": {"models": {
+                "claude-opus-5-5": {"limit": {"context": 1000000}, "cost": {"input": 4, "output": 20}},
+                "claude-opus-5-5:batch": {"limit": {"context": 1}, "cost": {"input": 2, "output": 10}}
+            }},
+        });
+        let caps = parse_models_dev(&v);
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].0, "claude-opus-5-5");
+        assert_eq!(caps[0].1.context, Some(1_000_000));
+        assert_eq!(parse_models_dev_prices(&v), vec![("claude-opus-5-5".to_string(), (4.0, 20.0))]);
+    }
+
+    #[test]
+    fn forget_relay_models_drops_delisted_for_that_gateway_only() {
+        let dir = std::env::temp_dir().join(format!("ccode-mr-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("relay.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"gw1|old-model":{"context":1},"gw1|keep":{"context":2},"gw2|old-model":{"context":3}}"#,
+        )
+        .unwrap();
+        forget_relay_models_at(&path, "gw1", &["relay/old-model".to_string()]);
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+        assert_eq!(keys, vec!["gw1|keep", "gw2|old-model"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn builtin_covers_claude_5_family() {
+        assert!(model_thinking("claude-opus-5-5"));
+        assert!(model_thinking("claude-fable-5-1"));
+        assert!(model_supports_vision("claude-sonnet-5-5"));
+        assert!(model_thinking("deepseek-v4.1-flash"));
     }
 
     #[test]
