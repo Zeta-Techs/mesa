@@ -4264,8 +4264,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   )}
                                 </>
                               ) : (
-                                <span className="text-xs text-l3">
-                                  未指定模型
+                                <span
+                                  className="text-xs text-l3"
+                                  title={
+                                    profile.accountType === "official"
+                                      ? "这家 CLI 没有可读的官方模型名单，启动时用它自己的默认模型；要换在 CLI 里用 /model"
+                                      : undefined
+                                  }
+                                >
+                                  {profile.accountType === "official" ? "CLI 默认模型" : "未指定模型"}
                                 </span>
                               )}
                             </span>
@@ -4299,13 +4306,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   );
                                 }
                                 // 后端算出结论优先；后端还认不出这次结果（比如被目录过期压住以外的情形）时用就地结果兜底
+                                const localShown: ProfileStatus | null = local
+                                  ? local.ok
+                                    ? { text: "测试通过", tip: "刚才的连接测试通过", tone: "ok" }
+                                    : { text: "测试失败", tip: "刚才的连接测试没通过", tone: "err" }
+                                  : null;
+                                // 官方账号的后端状态只是固定的「官方账号」：测过就以这次结果为准，否则它会把结果盖住
                                 const shown: ProfileStatus | null =
-                                  status ??
-                                  (local
-                                    ? local.ok
-                                      ? { text: "测试通过", tip: "刚才的连接测试通过", tone: "ok" }
-                                      : { text: "测试失败", tip: "刚才的连接测试没通过", tone: "err" }
-                                    : null);
+                                  profile.accountType === "official" ? (localShown ?? status) : (status ?? localShown);
                                 if (shown) {
                                   const why =
                                     local && !local.running && !local.ok && local.message
@@ -4338,7 +4346,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     <button
                                       type="button"
                                       onClick={() => void probeRow(profile)}
-                                      title={`${shown.tip}${why}\n点击重新测试`}
+                                      title={`${shown.tip}${why}\n${shown === localShown ? "点击重新测试" : "点击测试：用这个账号发一句话（会用一点额度）"}`}
                                       className={`flex min-w-0 items-center gap-1 rounded-md px-1 -mx-1 hover:bg-hover ${STATUS_TONE[shown.tone].text}`}
                                     >
                                       {body}

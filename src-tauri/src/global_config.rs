@@ -1170,7 +1170,8 @@ pub(crate) fn official_model_kept(agent: &str, model: &str) -> bool {
             m.starts_with("claude")
                 || matches!(m.as_str(), "opus" | "sonnet" | "haiku" | "fable" | "default" | "best" | "opusplan")
         }
-        "gemini" => m.starts_with("gemini"),
+        // gemini-* 与 CLI 自带别名（auto / pro / flash / flash-lite）
+        "gemini" => m.starts_with("gemini") || matches!(m.as_str(), "auto" | "pro" | "flash" | "flash-lite"),
         "grok" => m.starts_with("grok"),
         _ => agents::official_model_allowed(agent, model),
     }

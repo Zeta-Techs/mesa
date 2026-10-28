@@ -2163,21 +2163,18 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             // `grok models` 同样要联网，查登录状态时缓存；config.toml 里借官方名字转去中转的 [model.*] 段剔掉
             "grok" => {
                 let hijacked = grok_relay_model_sections();
-                // 还没缓存过（没打开过连接页）：当场问一次，约 3 秒
-                if read_official_models_cache("grok").is_empty() {
-                    if let Some(path) = resolve_binary("grok") {
-                        refresh_official_models_cache("grok", || {
-                            cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
-                                .map(|t| parse_grok_models(&t))
-                                .unwrap_or_default()
-                        });
-                    }
-                }
                 return read_official_models_cache("grok")
                     .into_iter()
                     .filter(|m| !hijacked.contains(m))
                     .collect();
             }
+            // 没有本地名单、但 CLI 认固定别名的几家（2026-10-28 核对）：Claude `--model default/opus/sonnet/haiku`
+            // （假网关实测分别解析成 claude-opus-5-5 / -opus- / -sonnet- / -haiku-5-5，default = 不传时的默认）；
+            // Gemini 0.65 bundle 的 GEMINI_MODEL_ALIAS_*（auto = 默认路由）；Qwen OAuth 只有 coder-model（实测回落提示）。
+            // 第一个都是 CLI 自己的默认，选它等于不指定
+            "claude-code" => return ["default", "opus", "sonnet", "haiku"].map(String::from).to_vec(),
+            "gemini" => return ["auto", "pro", "flash", "flash-lite"].map(String::from).to_vec(),
+            "qwen" => return vec!["coder-model".to_string()],
             _ => return Vec::new(),
         }
         let Some(home) = dirs::home_dir() else {
@@ -2191,6 +2188,22 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             .map(|t| codex_listed_models(&t))
             .unwrap_or_default()
     }
+}
+
+/// 启动时用的官方名单：Grok 没缓存过（没打开过连接页）时当场问一次 `grok models`（约 3 秒）。
+/// 连接列表（materialize）只读缓存，不在这里等网络
+pub(crate) fn official_models_for_launch(agent: &str) -> Vec<String> {
+    #[cfg(not(test))]
+    if agent == "grok" && read_official_models_cache("grok").is_empty() {
+        if let Some(path) = resolve_binary("grok") {
+            refresh_official_models_cache("grok", || {
+                cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
+                    .map(|t| parse_grok_models(&t))
+                    .unwrap_or_default()
+            });
+        }
+    }
+    official_models_for(agent)
 }
 
 /// models_cache.json 里列给人选的模型（visibility = list），按 priority 升序
@@ -2263,7 +2276,7 @@ fn apply_official_inject(
             // GROK_CONFIG 覆盖层的 [models] 在白名单内，三项都钉成这次的官方模型；没选模型用 `grok models` 的默认
             if profile.agent == "grok" {
                 let fallback = if model.is_none() {
-                    official_models_for("grok").into_iter().next()
+                    official_models_for_launch("grok").into_iter().next()
                 } else {
                     None
                 };
@@ -3157,7 +3170,7 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
                 .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
                 .and_then(|v| v.get("models")?.get("default")?.as_str().map(str::to_string));
             // 启动时 GROK_CONFIG 覆盖层把默认模型钉成官方模型（apply_official_inject）；定不出官方模型时才拦
-            let can_pin = !profile.models.is_empty() || !official_models_for("grok").is_empty();
+            let can_pin = !profile.models.is_empty() || !official_models_for_launch("grok").is_empty();
             if let Some(m) = default.filter(|m| !can_pin && !crate::global_config::official_model_kept("grok", m)) {
                 out.push(format!("~/.grok/config.toml 的默认模型是中转模型 {m}"));
             }
