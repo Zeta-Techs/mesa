@@ -451,7 +451,17 @@ fn cli_output_with_timeout(
     args: &[&str],
     timeout: std::time::Duration,
 ) -> Option<String> {
+    cli_output_with_env(path, args, &[], timeout)
+}
+
+fn cli_output_with_env(
+    path: &std::path::Path,
+    args: &[&str],
+    envs: &[(String, String)],
+    timeout: std::time::Duration,
+) -> Option<String> {
     let mut cmd = crate::process::background_command(path);
+    cmd.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     quiet_cli_probe(&mut cmd, path);
     let mut child = cmd
         .args(args)
@@ -1994,6 +2004,59 @@ fn refresh_official_models_cache(agent: &str, fetch: impl FnOnce() -> Vec<String
     }
 }
 
+/// ~/.grok/config.toml 里 base_url 不是 x.ai 的 [model.<名>] 段：这个名字在官方账号下也会被转去中转
+#[cfg_attr(test, allow(dead_code))]
+fn grok_relay_model_sections() -> Vec<String> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let base = std::env::var_os("GROK_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".grok"));
+    std::fs::read_to_string(base.join("config.toml"))
+        .ok()
+        .map(|t| grok_relay_sections_in(&t))
+        .unwrap_or_default()
+}
+
+fn grok_relay_sections_in(text: &str) -> Vec<String> {
+    let Ok(v) = toml::from_str::<toml::Value>(text) else {
+        return Vec::new();
+    };
+    v.get("model")
+        .and_then(|m| m.as_table())
+        .map(|t| {
+            t.iter()
+                .filter(|(_, sec)| {
+                    sec.get("base_url")
+                        .and_then(|u| u.as_str())
+                        .is_some_and(|u| !grok_is_xai_endpoint(u))
+                })
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `grok models` 的输出（1.0.70 实证）：「  * grok-4.7 (default)」「  - grok-4.5」，默认那个排第一
+fn parse_grok_models(text: &str) -> Vec<String> {
+    let mut out: Vec<(bool, String)> = text
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let (mark, rest) = l.split_at(l.find(' ')?);
+            if mark != "*" && mark != "-" {
+                return None;
+            }
+            let slug = rest.split_whitespace().next()?.to_string();
+            Some((mark == "*" || rest.contains("(default)"), slug))
+        })
+        .collect();
+    out.sort_by_key(|(default, _)| !*default);
+    out.into_iter().map(|(_, s)| s).collect()
+}
+
 /// `cursor-agent models` 的输出：「slug - 显示名」逐行，第一行标题（2026-10-28 本机实证）
 fn parse_cursor_models(text: &str) -> Vec<String> {
     text.lines()
@@ -2043,6 +2106,14 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             }
             // `cursor-agent models` 要联网，查登录状态时顺手缓存（official_models_cache_*）
             "cursor" => return read_official_models_cache("cursor"),
+            // `grok models` 同样要联网，查登录状态时缓存；config.toml 里借官方名字转去中转的 [model.*] 段剔掉
+            "grok" => {
+                let hijacked = grok_relay_model_sections();
+                return read_official_models_cache("grok")
+                    .into_iter()
+                    .filter(|m| !hijacked.contains(m))
+                    .collect();
+            }
             _ => return Vec::new(),
         }
         let Some(home) = dirs::home_dir() else {
@@ -2122,6 +2193,27 @@ fn apply_official_inject(
                 );
                 plan.args.push("--settings".into());
                 plan.args.push(overlay);
+            }
+            // Grok：config.toml 的 [models].default / session_summary / prompt_suggestion 常是中转留下的
+            // （本机实例：default = glm-5.3-flash，session_summary 指向一个借官方名字 grok-4.5、实际转去中转的 [model.*] 段）。
+            // GROK_CONFIG 覆盖层的 [models] 在白名单内，三项都钉成这次的官方模型；没选模型用 `grok models` 的默认
+            if profile.agent == "grok" {
+                let fallback = if model.is_none() {
+                    official_models_for("grok").into_iter().next()
+                } else {
+                    None
+                };
+                if let Some(m) = model.or(fallback.as_deref()) {
+                    if model.is_none() {
+                        if let Some(name) = env.model {
+                            plan.env.push((name.into(), m.into()));
+                        }
+                    }
+                    let overlay = serde_json::json!({ "models": {
+                        "default": m, "session_summary": m, "prompt_suggestion": m,
+                    }});
+                    plan.env.push(("GROK_CONFIG".into(), overlay.to_string()));
+                }
             }
         }
         LaunchSpec::ByProtocol(entries) => {
@@ -3000,7 +3092,9 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
                 .ok()
                 .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
                 .and_then(|v| v.get("models")?.get("default")?.as_str().map(str::to_string));
-            if let Some(m) = default.filter(|m| !crate::global_config::official_model_kept("grok", m)) {
+            // 启动时 GROK_CONFIG 覆盖层把默认模型钉成官方模型（apply_official_inject）；定不出官方模型时才拦
+            let can_pin = !profile.models.is_empty() || !official_models_for("grok").is_empty();
+            if let Some(m) = default.filter(|m| !can_pin && !crate::global_config::official_model_kept("grok", m)) {
                 out.push(format!("~/.grok/config.toml 的默认模型是中转模型 {m}"));
             }
             out
@@ -4642,7 +4736,36 @@ fn cursor_email(line: &str) -> Option<String> {
     email_of(Some(&serde_json::Value::String(word.to_string())))
 }
 
-/// 已登录账号的 (套餐, 邮箱)：只读 Claude Code / Codex 实测过的文件；Cursor 的邮箱在 status 分支里取
+/// `cursor-agent about` 的「Subscription Tier   Free」「User Email   a@b.com」
+fn cursor_about_identity(text: &str) -> (Option<String>, Option<String>) {
+    let field = |name: &str| {
+        text.lines()
+            .find_map(|l| l.trim().strip_prefix(name).map(|v| v.trim().to_string()))
+            .filter(|v| !v.is_empty())
+    };
+    (
+        field("Subscription Tier").as_deref().and_then(plan_label),
+        email_of(field("User Email").map(serde_json::Value::String).as_ref()),
+    )
+}
+
+/// ~/.grok/auth.json 是「issuer::id → 账号」的表，取第一个带 email 的账号
+fn grok_email(v: &serde_json::Value) -> Option<String> {
+    v.as_object()?.values().find_map(|acc| email_of(acc.get("email")))
+}
+
+/// ~/.grok/settings_cache.json 的 payload（JSON 字符串）里 settings.subscription_tier_display（缺了退 subscription_tier）
+fn grok_plan(v: &serde_json::Value) -> Option<String> {
+    let payload: serde_json::Value = serde_json::from_str(v.get("payload")?.as_str()?).ok()?;
+    let st = payload.get("settings")?;
+    ["subscription_tier_display", "subscription_tier"]
+        .iter()
+        .find_map(|k| st.get(*k).and_then(|x| x.as_str()))
+        .and_then(plan_label)
+}
+
+/// 已登录账号的 (套餐, 邮箱)：各家实测过的来源（2026-10-28 本机核对）；读不到的就 None，不猜。
+/// Gemini 本地只存当前账号邮箱，套餐（Code Assist 档位）要联网问，不取
 fn official_identity(agent_id: &str, home: &std::path::Path) -> (Option<String>, Option<String>) {
     let read = |rel: &str| -> Option<serde_json::Value> {
         serde_json::from_str(&std::fs::read_to_string(home.join(rel)).ok()?).ok()
@@ -4650,6 +4773,18 @@ fn official_identity(agent_id: &str, home: &std::path::Path) -> (Option<String>,
     match agent_id {
         "claude-code" => read(".claude.json").map(|v| claude_identity(&v)).unwrap_or_default(),
         "codex" => read(".codex/auth.json").map(|v| codex_identity(&v)).unwrap_or_default(),
+        "grok" => (
+            read(".grok/settings_cache.json").and_then(|v| grok_plan(&v)),
+            read(".grok/auth.json").and_then(|v| grok_email(&v)),
+        ),
+        "gemini" => (
+            None,
+            read(".gemini/google_accounts.json").and_then(|v| email_of(v.get("active"))),
+        ),
+        "cursor" => resolve_binary("cursor-agent")
+            .and_then(|p| cli_output_with_timeout(&p, &["about"], std::time::Duration::from_secs(10)))
+            .map(|t| cursor_about_identity(&t))
+            .unwrap_or_default(),
         _ => (None, None),
     }
 }
@@ -4737,6 +4872,19 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                 }
             }
             None => {}
+        }
+    }
+    if agent_id == "grok" {
+        if let Some(path) = resolve_binary("grok") {
+            let has_login = dirs::home_dir().is_some_and(|h| h.join(".grok/auth.json").is_file());
+            if has_login {
+                // 要连 x.ai：带上设置里的出网代理（与官方启动同口径）
+                refresh_official_models_cache("grok", || {
+                    cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
+                        .map(|t| parse_grok_models(&t))
+                        .unwrap_or_default()
+                });
+            }
         }
     }
     if agent_id == "cursor" {
@@ -6098,6 +6246,41 @@ api_backend = "responses"
 
         assert_eq!(cursor_email("✓ Logged in as e@f.com").as_deref(), Some("e@f.com"));
         assert_eq!(cursor_email("✓ Logged in"), None);
+
+        let about = "About Cursor CLI\n\nCLI Version         2026.10.22\nSubscription Tier   Pro\nUser Email          e@f.com\n";
+        assert_eq!(cursor_about_identity(about), (Some("Pro".into()), Some("e@f.com".into())));
+
+        let grok_auth = serde_json::json!({ "https://auth.x.ai::u1": { "auth_mode": "oidc", "email": "g@h.com", "key": "secret" } });
+        assert_eq!(grok_email(&grok_auth).as_deref(), Some("g@h.com"));
+        let payload = serde_json::json!({ "settings": { "subscription_tier": null, "subscription_tier_display": "SuperGrok" } });
+        let cache = serde_json::json!({ "payload": payload.to_string() });
+        assert_eq!(grok_plan(&cache).as_deref(), Some("SuperGrok"));
+        assert_eq!(grok_plan(&serde_json::json!({ "payload": "{}" })), None);
+    }
+
+    #[test]
+    fn grok_official_pins_models_and_skips_relay_sections() {
+        let out = "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  - grok-4.5\n  * grok-4.7 (default)\n";
+        assert_eq!(parse_grok_models(out), vec!["grok-4.7", "grok-4.5"]);
+        let cfg = "[model.\"grok-4.5\"]\nbase_url = \"https://relay.example.com/v1\"\n[model.grok-4.7]\nbase_url = \"https://api.x.ai/v1\"\n";
+        assert_eq!(grok_relay_sections_in(cfg), vec!["grok-4.5"]);
+        let mut p = official_profile("grok");
+        p.models.clear();
+        tests::TEST_OFFICIAL_MODELS.with(|k| *k.borrow_mut() = vec!["grok-4.7".into()]);
+        let plan = launch_plan(&p, None, None).unwrap();
+        let overlay = plan.env.iter().find(|(k, _)| k == "GROK_CONFIG").map(|(_, v)| v.clone()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&overlay).unwrap();
+        assert_eq!(v["models"]["default"], "grok-4.7");
+        assert_eq!(v["models"]["session_summary"], "grok-4.7");
+        assert!(plan.env.iter().any(|(k, v)| k == "GROK_DEFAULT_MODEL" && v == "grok-4.7"));
+        // 能定出官方模型：磁盘默认是中转模型也不拦
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".grok")).unwrap();
+        std::fs::write(dir.join(".grok/config.toml"), "[models]\ndefault = \"glm-5.3-flash\"\n").unwrap();
+        assert!(official_launch_conflicts(&dir, &p).is_empty());
+        tests::TEST_OFFICIAL_MODELS.with(|k| k.borrow_mut().clear());
+        assert!(!official_launch_conflicts(&dir, &p).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -7771,5 +7954,17 @@ api_backend = "responses"
         let tinytex = std::path::Path::new("TinyTeX").join("bin");
         assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("windows"))));
         assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("win32"))));
+    }
+}
+#[cfg(test)]
+mod zz_tmp_real {
+    #[test]
+    #[ignore]
+    fn zz_tmp_real_official() {
+        let path = super::resolve_binary("grok").unwrap();
+        println!("RAW: {:?}", super::cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20)));
+        let st = super::official_account_status_sync("grok");
+        println!("GROK: connected={} detail={:?}", st.connected, st.detail);
+        println!("CACHE: {:?} {:?}", super::official_models_cache_path("grok"), super::read_official_models_cache("grok"));
     }
 }
