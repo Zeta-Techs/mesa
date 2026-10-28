@@ -702,6 +702,34 @@ fn read_claude_user_settings_env_keys(profile: &Profile) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 用户 ~/.claude/settings.json 顶层出现的键名（只读，不取值）；单测不读本机
+fn claude_user_top_keys(profile: &Profile) -> Vec<String> {
+    #[cfg(test)]
+    {
+        let _ = profile;
+        return tests::TEST_CLAUDE_TOP_KEYS.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    {
+        let Some(dir) = profile
+            .extra_env
+            .get("CLAUDE_CONFIG_DIR")
+            .cloned()
+            .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
+        else {
+            return Vec::new();
+        };
+        std::fs::read_to_string(dir.join("settings.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect()))
+            .unwrap_or_default()
+    }
+}
+
 /// 用户 ~/.claude/settings.json 顶层的 `model`（只读）。中转常把它设成 glm 之类，官方账号认不得；单测不读本机
 fn claude_user_top_model(profile: &Profile) -> Option<String> {
     #[cfg(test)]
@@ -851,9 +879,114 @@ fn claude_settings_override(
         env.insert(k, serde_json::json!(v));
     }
     let body = serde_json::json!({ "env": env }).to_string();
-    // 覆盖层含密钥载体：必须 0600 落盘（与 write_external_wrapper 同口径）
+    write_settings_overlay_file("claude-settings", &body)
+}
+
+/// Claude Code 用户 settings.json env 里，属于「连接」的键（请求发到哪、凭什么鉴权、用哪个模型、走哪种协议）。
+/// 这些键磁盘层盖过进程 env：别家留下的不写空，就会跟着 Mesa 这次的连接一起发出去（2026-10-28 假网关实测：
+/// 别家的 `ANTHROPIC_API_KEY` 作 x-api-key、别家的 `ANTHROPIC_CUSTOM_HEADERS` 原样发到 Mesa 选的网关；
+/// `CLAUDE_CODE_USE_BEDROCK=1` 时请求根本不去网关）。AWS / Vertex 区域等不在内：协议开关写空后它们不起作用，
+/// 而它们可能是用户给 Claude 里跑的命令准备的
+pub(crate) fn claude_connection_env_key(key: &str) -> bool {
+    key.starts_with("ANTHROPIC_")
+        || matches!(
+            key,
+            "CLAUDE_CODE_USE_BEDROCK"
+                | "CLAUDE_CODE_USE_VERTEX"
+                | "CLAUDE_CODE_USE_FOUNDRY"
+                | "CLAUDE_CODE_USE_GATEWAY"
+                | "CLAUDE_CODE_USE_MANTLE"
+                | "CLAUDE_CODE_USE_ANTHROPIC_AWS"
+                | "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD"
+                | "CLAUDE_CODE_OAUTH_TOKEN"
+                | "CLAUDE_CODE_OAUTH_REFRESH_TOKEN"
+                | "CLAUDE_CODE_OAUTH_SCOPES"
+        )
+}
+
+/// 顶层（不在 env 里）属于连接的键：apiKeyHelper 的输出会作 x-api-key 一起发出（实测），fallbackModel 是别家的模型名
+const CLAUDE_CONNECTION_TOP_KEYS: &[&str] = &["apiKeyHelper", "fallbackModel"];
+
+/// CodeBuddy 的连接键：同 Claude，settings.json env 盖过进程 env（2.177.0 实测：磁盘的地址和密钥压过 Mesa 注入的，
+/// 请求带着磁盘那家的密钥打到磁盘那家），只能放进 `--settings`
+const CODEBUDDY_CONNECTION_KEYS: &[&str] = &[
+    "CODEBUDDY_BASE_URL",
+    "CODEBUDDY_API_KEY",
+    "CODEBUDDY_AUTH_TOKEN",
+    "CODEBUDDY_MODEL",
+    "CODEBUDDY_CUSTOM_HEADERS",
+];
+
+/// 进程 env 里某键最后一次的值（extra_env 排在最后，同名后者生效）
+fn last_env(plan: &LaunchPlan, key: &str) -> Option<String> {
+    plan.env.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+}
+
+/// API 连接启动的最后一步：把磁盘配置层会盖过 Mesa 的连接键放进 `--settings` 覆盖层。
+/// Claude：在已有覆盖文件里补——用户全局设过、覆盖层还没写的连接键，进程 env 里有值就用它（如请求头），
+/// 没有就写空串（= 没设，2.1.308 实测）；顶层 apiKeyHelper / fallbackModel 同理写空。
+/// CodeBuddy：新建覆盖文件，五个连接键一律写进去（没有的写空串）
+fn finalize_settings_overlay(plan: &mut LaunchPlan, profile: &Profile) -> Result<(), String> {
+    match profile.agent.as_str() {
+        "claude-code" => {
+            let Some(i) = plan.args.iter().position(|a| a == "--settings") else {
+                return Ok(());
+            };
+            let Some(path) = plan.args.get(i + 1).cloned() else {
+                return Ok(());
+            };
+            let user_keys = claude_user_settings_env_keys(profile);
+            let user_top = claude_user_top_keys(profile);
+            let pending: Vec<&String> = user_keys
+                .iter()
+                .filter(|k| claude_connection_env_key(k))
+                .collect();
+            let top: Vec<&str> = CLAUDE_CONNECTION_TOP_KEYS
+                .iter()
+                .copied()
+                .filter(|k| user_top.iter().any(|u| u == k))
+                .collect();
+            if pending.is_empty() && top.is_empty() {
+                return Ok(());
+            }
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("读取 Claude Code 设置覆盖文件失败: {e}"))?;
+            let mut v: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| format!("Claude Code 设置覆盖文件损坏: {e}"))?;
+            if let Some(env) = v.get_mut("env").and_then(|e| e.as_object_mut()) {
+                for k in pending {
+                    if !env.contains_key(k.as_str()) {
+                        env.insert(k.clone(), serde_json::json!(last_env(plan, k).unwrap_or_default()));
+                    }
+                }
+            }
+            if let Some(obj) = v.as_object_mut() {
+                for k in top {
+                    obj.insert(k.into(), serde_json::json!(""));
+                }
+            }
+            std::fs::write(&path, v.to_string())
+                .map_err(|e| format!("写入 Claude Code 设置覆盖文件失败: {e}"))?;
+        }
+        "codebuddy" if profile.account_type == crate::profiles::AccountType::Api => {
+            let mut env = serde_json::Map::new();
+            for k in CODEBUDDY_CONNECTION_KEYS {
+                env.insert((*k).into(), serde_json::json!(last_env(plan, k).unwrap_or_default()));
+            }
+            let body = serde_json::json!({ "env": env }).to_string();
+            let path = write_settings_overlay_file("codebuddy-settings", &body)?;
+            plan.args.insert(0, path);
+            plan.args.insert(0, "--settings".into());
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// `--settings` 覆盖文件：含密钥载体，必须 0600 落盘（与 write_external_wrapper 同口径），用完定时清掉
+fn write_settings_overlay_file(prefix: &str, body: &str) -> Result<String, String> {
     let dir = external_wrapper_dir()?;
-    let path = dir.join(format!("claude-settings-{}.json", uuid::Uuid::new_v4()));
+    let path = dir.join(format!("{prefix}-{}.json", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -1383,6 +1516,7 @@ pub fn launch_plan(
     for (k, v) in &profile.extra_env {
         plan.env.push((k.clone(), v.clone()));
     }
+    finalize_settings_overlay(&mut plan, profile)?;
     if profile.no_auth {
         for key in [
             "ANTHROPIC_API_KEY",
@@ -4200,6 +4334,10 @@ fn probe_conflict_hits(
 /// `--settings` 层压过磁盘，多数情况已经自愈。这条提醒留给覆盖层管不到的键
 ///（例如与 `ANTHROPIC_AUTH_TOKEN` 并存的 `ANTHROPIC_API_KEY`）。
 fn api_launch_conflict_notes(home: &std::path::Path, profile: &Profile) -> Vec<String> {
+    // Claude Code / CodeBuddy 的连接键已由 --settings 覆盖层盖过（finalize_settings_overlay），不再提醒
+    if matches!(profile.agent.as_str(), "claude-code" | "codebuddy") {
+        return Vec::new();
+    }
     let Some(spec) = agent_spec(&profile.agent) else {
         return Vec::new();
     };
@@ -4642,6 +4780,8 @@ mod tests {
     }
 
     thread_local! {
+        pub(super) static TEST_CLAUDE_TOP_KEYS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
         pub(super) static TEST_CLAUDE_TOP_MODEL: std::cell::RefCell<Option<String>> =
             const { std::cell::RefCell::new(None) };
         pub(super) static TEST_OFFICIAL_MODELS: std::cell::RefCell<Vec<String>> =
@@ -6353,24 +6493,60 @@ api_backend = "responses"
         // API 连接的提醒：磁盘残留会盖过本次注入——只提示，不进 ensure_launch_credentials 的
         // Err 路径（那种连接今天本来就能用，硬拦会打断既有工作流）
         let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".gemini")).unwrap();
         std::fs::create_dir_all(dir.join(".claude")).unwrap();
-        std::fs::write(
-            dir.join(".claude/settings.json"),
-            r#"{"env": {"ANTHROPIC_AUTH_TOKEN": "sk-disk-secret"}}"#,
-        )
-        .unwrap();
-        let api = profile("claude-code", Some("https://open.bigmodel.cn/api/anthropic"));
+        std::fs::write(dir.join(".gemini/.env"), "GEMINI_API_KEY=sk-disk-secret\n").unwrap();
+        let api = profile("gemini", Some("https://relay.example.com"));
         let notes = api_launch_conflict_notes(&dir, &api);
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].contains("~/.claude/settings.json"));
-        assert!(notes[0].contains("ANTHROPIC_AUTH_TOKEN"));
+        assert!(notes[0].contains("~/.gemini/.env"));
+        assert!(notes[0].contains("GEMINI_API_KEY"));
         assert!(!notes[0].contains("sk-disk-secret"), "只报变量名不读值");
         // 提醒归提醒，凭证检查对带密钥的 API 连接照常放行
         assert!(ensure_launch_credentials(&api, Some("sk-secret")).is_ok());
-        // 干净配置不产生噪音
-        std::fs::write(dir.join(".claude/settings.json"), r#"{"model": "opus"}"#).unwrap();
-        assert!(api_launch_conflict_notes(&dir, &api).is_empty());
+        // Claude / CodeBuddy 的连接键由 --settings 覆盖层盖过，不再提醒
+        std::fs::write(dir.join(".claude/settings.json"), r#"{"env": {"ANTHROPIC_AUTH_TOKEN": "sk"}}"#).unwrap();
+        let claude = profile("claude-code", Some("https://open.bigmodel.cn/api/anthropic"));
+        assert!(api_launch_conflict_notes(&dir, &claude).is_empty());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn api_overlay_blanks_other_providers_connection_keys() {
+        let p = profile("claude-code", Some("https://gw.example.com"));
+        tests::TEST_CLAUDE_USER_KEYS.with(|k| {
+            *k.borrow_mut() = vec![
+                "ANTHROPIC_API_KEY".into(),
+                "ANTHROPIC_CUSTOM_HEADERS".into(),
+                "CLAUDE_CODE_USE_BEDROCK".into(),
+                "AWS_PROFILE".into(),
+                "DISABLE_TELEMETRY".into(),
+            ]
+        });
+        tests::TEST_CLAUDE_TOP_KEYS.with(|k| *k.borrow_mut() = vec!["apiKeyHelper".into(), "hooks".into()]);
+        let plan = launch_plan(&p, Some("sk-mesa".into()), Some("m1")).unwrap();
+        let path = &plan.args[plan.args.iter().position(|a| a == "--settings").unwrap() + 1];
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(v["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-mesa");
+        assert_eq!(v["env"]["ANTHROPIC_API_KEY"], "");
+        assert_eq!(v["env"]["ANTHROPIC_CUSTOM_HEADERS"], "");
+        assert_eq!(v["env"]["CLAUDE_CODE_USE_BEDROCK"], "");
+        assert!(v["env"].get("AWS_PROFILE").is_none() && v["env"].get("DISABLE_TELEMETRY").is_none());
+        assert_eq!(v["apiKeyHelper"], "");
+        assert!(v.get("hooks").is_none());
+        tests::TEST_CLAUDE_USER_KEYS.with(|k| k.borrow_mut().clear());
+        tests::TEST_CLAUDE_TOP_KEYS.with(|k| k.borrow_mut().clear());
+
+        // CodeBuddy：五个连接键都进覆盖文件，磁盘那家的盖不过来
+        let p = profile("codebuddy", Some("https://gw.example.com/v1"));
+        let plan = launch_plan(&p, Some("sk-mesa".into()), Some("m1")).unwrap();
+        let path = &plan.args[plan.args.iter().position(|a| a == "--settings").unwrap() + 1];
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(v["env"]["CODEBUDDY_BASE_URL"], "https://gw.example.com/v1");
+        assert_eq!(v["env"]["CODEBUDDY_API_KEY"], "sk-mesa");
+        assert_eq!(v["env"]["CODEBUDDY_MODEL"], "m1");
+        assert_eq!(v["env"]["CODEBUDDY_AUTH_TOKEN"], "");
+        assert!(!plan.args.iter().any(|a| a.contains("sk-mesa")), "密钥不进命令行");
     }
 
     #[test]

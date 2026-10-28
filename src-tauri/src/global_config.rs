@@ -315,10 +315,48 @@ fn patch_claude_settings(
     }
     // Remove the legacy Mesa subagent override when updating a global profile.
     env.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+    // 别家留下的连接键（另一把 ANTHROPIC_API_KEY、请求头、Bedrock 等协议开关……）撤掉：留着会和这次写的
+    // 地址、令牌一起生效（2026-10-28 假网关实测两把密钥同时发出）。长期登录令牌 CLAUDE_CODE_OAUTH_TOKEN 不动——
+    // 它是官方账号的登录方式，API 令牌在时它不起作用
+    let mesa_keys = mesa_claude_env_keys();
+    let stale: Vec<String> = env
+        .keys()
+        .filter(|k| {
+            agents::claude_connection_env_key(k)
+                && !k.starts_with("CLAUDE_CODE_OAUTH_")
+                && !mesa_keys.contains(k.as_str())
+        })
+        .cloned()
+        .collect();
+    for k in stale {
+        env.remove(&k);
+    }
+    if let Some(o) = v.as_object_mut() {
+        o.remove("apiKeyHelper");
+    }
     // 不写 CLAUDE_CODE_SUBAGENT_MODEL：Claude Code 默认让 Task 子 agent 继承主模型，
     // 同时保留 Task 参数/frontmatter 的原生覆盖能力。写入该环境变量会压过这些选择，
     // 使子 agent 被错误固定到绑定列表中的某个模型。
     to_pretty(&v)
+}
+
+/// patch_claude_settings 自己管的 env 键（写或按需清）：其余连接键属于别家
+fn mesa_claude_env_keys() -> std::collections::HashSet<String> {
+    let mut keys: std::collections::HashSet<String> = [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_CUSTOM_MODEL_OPTION",
+        "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    for slot in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
+        keys.insert(format!("ANTHROPIC_DEFAULT_{slot}_MODEL"));
+        keys.insert(format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"));
+    }
+    keys
 }
 
 fn patch_qwen_settings(
@@ -999,6 +1037,9 @@ fn patch_codebuddy_settings(
     if let Some(m) = model {
         env.insert("CODEBUDDY_MODEL".into(), json!(m));
     }
+    // 别家留下的另一种令牌与请求头会跟着这次的地址一起发出
+    env.remove("CODEBUDDY_AUTH_TOKEN");
+    env.remove("CODEBUDDY_CUSTOM_HEADERS");
     to_pretty(&v)
 }
 
@@ -1099,8 +1140,22 @@ fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
         keys.push(format!("ANTHROPIC_DEFAULT_{slot}_MODEL"));
         keys.push(format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"));
     }
+    // 其余连接键（请求头、别的 ANTHROPIC_*、Bedrock / Vertex 协议开关）同样会盖过官方登录
+    if let Some(env) = v.get("env").and_then(|e| e.as_object()) {
+        for k in env.keys() {
+            if agents::claude_connection_env_key(k)
+                && k != "ANTHROPIC_MODEL"
+                && !k.starts_with("CLAUDE_CODE_OAUTH_")
+            {
+                keys.push(k.clone());
+            }
+        }
+    }
     let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
     json_env_remove(&mut v, &refs, &["ANTHROPIC_MODEL"], "claude-code");
+    if let Some(o) = v.as_object_mut() {
+        o.remove("apiKeyHelper");
+    }
     // 顶层 model（不在 env 里）同理：中转写的 glm 之类撤掉，Claude 用自己的默认
     let foreign_top = v
         .get("model")
@@ -1119,7 +1174,7 @@ fn patch_codebuddy_settings_official(existing: &str) -> Result<String, String> {
     let mut v = parse_json_doc(Some(existing))?;
     json_env_remove(
         &mut v,
-        &["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"],
+        &["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN", "CODEBUDDY_CUSTOM_HEADERS"],
         &["CODEBUDDY_MODEL"],
         "codebuddy",
     );
@@ -3001,6 +3056,29 @@ mod tests {
             doc["model_catalog_json"].as_str(),
             Some("/cfg/ccode/catalogs/codex-p1.json")
         );
+    }
+
+    #[test]
+    fn claude_global_write_drops_other_providers_connection_keys() {
+        let existing = r#"{"apiKeyHelper":"echo sk","hooks":{"Stop":[]},"env":{"ANTHROPIC_API_KEY":"sk-other","ANTHROPIC_CUSTOM_HEADERS":"X: y","CLAUDE_CODE_USE_BEDROCK":"1","CLAUDE_CODE_OAUTH_TOKEN":"oat","DISABLE_TELEMETRY":"1","AWS_PROFILE":"work"}}"#;
+        let out = patch_claude_settings(Some(existing), Some("https://gw"), Some("sk-mesa"), &["m1".into()], None, None).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let env = &v["env"];
+        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-mesa");
+        assert_eq!(env["ANTHROPIC_DEFAULT_SONNET_MODEL"], "m1");
+        for k in ["ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_USE_BEDROCK"] {
+            assert!(env.get(k).is_none(), "{k}");
+        }
+        for k in ["CLAUDE_CODE_OAUTH_TOKEN", "DISABLE_TELEMETRY", "AWS_PROFILE"] {
+            assert!(env.get(k).is_some(), "{k} 留着");
+        }
+        assert!(v.get("apiKeyHelper").is_none());
+        assert!(v.get("hooks").is_some());
+        // 官方：别家的请求头、协议开关也撤
+        let off: Value = serde_json::from_str(&patch_claude_settings_official(existing).unwrap()).unwrap();
+        assert!(off["env"].get("ANTHROPIC_CUSTOM_HEADERS").is_none() && off["env"].get("CLAUDE_CODE_USE_BEDROCK").is_none());
+        assert_eq!(off["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "oat");
+        assert!(off.get("apiKeyHelper").is_none());
     }
 
     #[test]

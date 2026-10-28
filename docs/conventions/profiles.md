@@ -295,6 +295,10 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 官方绑定：不注 API、`env_remove` 残留密钥变量（现口径）。`extraEnv` 仍最后注入。
 
+**别家留下的连接键（2026-10-28，对照 cc-switch「关键字段」口径，假网关实测）**：「连接键」= 请求发到哪、凭什么鉴权、用哪个模型、走哪种协议。Claude 是全部 `ANTHROPIC_*`、`CLAUDE_CODE_USE_{BEDROCK,VERTEX,FOUNDRY,GATEWAY,MANTLE,ANTHROPIC_AWS,ANTHROPIC_GOOGLE_CLOUD}`、`CLAUDE_CODE_OAUTH_*`（`agents::claude_connection_env_key`）与顶层 `apiKeyHelper` / `fallbackModel`；CodeBuddy 是 `CODEBUDDY_{BASE_URL,API_KEY,AUTH_TOKEN,MODEL,CUSTOM_HEADERS}`。
+- **在 Mesa 里用 API 连接启动**：磁盘 settings.json 的 env 盖过进程 env，别家的键会跟着这次连接一起发出（实测：别家 `ANTHROPIC_API_KEY` 作 x-api-key、别家请求头原样发到 Mesa 的网关；`CLAUDE_CODE_USE_BEDROCK=1` 时请求不去网关；`apiKeyHelper` 的输出也作 x-api-key 发出；CodeBuddy 磁盘的地址和密钥压过 Mesa 注入的，请求整个去了磁盘那家）。`finalize_settings_overlay` 在启动计划最后补进 `--settings`：Claude 在已有 0600 覆盖文件里给用户设过、覆盖层没写的连接键填进程 env 里的值（如请求头）或空串，顶层两键写空；CodeBuddy 新建 0600 覆盖文件，五个连接键一律写（没有的写空串）。AWS / Vertex 区域不写空（协议开关空了它们不起作用，可能是给 Claude 里跑的命令用的）。这两家因此不再出「磁盘残留会盖过本次注入」的启动提醒。
+- **设为全局（API）**：Claude 写完 Mesa 自己的键后，撤掉 env 里其余连接键与顶层 `apiKeyHelper`；`CLAUDE_CODE_OAUTH_*` 不动（官方账号的长期登录令牌，API 令牌在时它不起作用）。CodeBuddy 撤 `CODEBUDDY_AUTH_TOKEN` / `CODEBUDDY_CUSTOM_HEADERS`。官方「设为全局」同样撤其余连接键与 `apiKeyHelper`。
+
 **官方账号在 Mesa 里启动：进程级盖过磁盘残留，盖不过才拦（2026-10-28，取代「磁盘有残留一律拒绝启动」）**：用户问在 Mesa 里能不能直接用官方账号。各家实测（隔离 HOME + 假网关 + 死代理挡真网络，只看请求是否还去中转）：
 - Claude Code / CodeBuddy：settings.json env 盖过进程 env，`env_remove` 管不到；`--settings` **内联** JSON 把端点 / 密钥键写成空串即等于没设，回到 CLI 自己的登录（Claude 2.1.308、CodeBuddy 2.177.0 实证）。Claude 一律写空 `ANTHROPIC_BASE_URL` / `_AUTH_TOKEN` / `_API_KEY`，用户全局设过的模型槽 / 子 agent / 上下文键也写空，选了模型时 `ANTHROPIC_MODEL` 写这次的模型（`official_settings_blanks`）。覆盖层不含密钥，故内联不落盘，聊天层 hooks 照常并进。
 - Qwen：`--auth-type qwen-oauth`（命令行参数优先级最高，磁盘 .env / settings 的密钥不再起作用；0.x 实证，并提示 OAuth 免费额度已停）。
