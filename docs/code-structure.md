@@ -1009,7 +1009,8 @@ src-tauri/src/
   codex_windows_patch_note.md # Windows 上 apply_patch 的调用口径（Mesa 自写，英文给模型看）
   model_aliases.rs           # 官方账号模型别名 → 本机 CLI 实测的完整型号：假接口记下 claude -p --model X 请求的 model，按 CLI 版本缓存
                              # （official-model-aliases.json），版本变了后台重测；别名名单 = tests/fixtures/claude-model-aliases.json（金丝雀共读）
-  model_registry.rs          # 模型能力注册表（查表统一写法 model_key；逐个型号的层只认同一型号、按系列的层最长前缀）：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
+  model_registry.rs          # 模型能力注册表（查表统一写法 model_key；逐个型号的层只认同一型号、按系列的层最长前缀；
+                             # 公共库 = models.dev + LiteLLM 合并、OpenRouter 兜底，随包快照 data/model-db-snapshot.json 补缺）：逐字段查询链 = 用户覆盖 > 网关实测缓存（fetch_models 顺带沉淀
                              # OpenRouter 风格 /models 元数据）> 公共能力库（配置页 ⋯ 下载，models.dev 优先
                              # OpenRouter 回落，download_model_db/model_db_status）> 内置前缀表 > 关键词兜底；
                              # 字段 thinking/context/output/vision 全 Option（这层不知道就继续向下找，

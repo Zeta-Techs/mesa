@@ -136,8 +136,8 @@ fn parse_caps_map(text: &str) -> Vec<(String, ModelCaps)> {
     };
     if let Some(obj) = v.as_object() {
         for (prefix, caps_v) in obj {
-            // 空前缀会匹配一切模型名，视为配置错误直接忽略（同 pricing 口径）
-            if prefix.trim().is_empty() {
+            // 空前缀会匹配一切模型名，视为配置错误直接忽略（同 pricing 口径）；`_meta` 等下划线键是说明不是模型
+            if prefix.trim().is_empty() || prefix.starts_with('_') {
                 continue;
             }
             let Some(c) = caps_v.as_object() else {
@@ -418,6 +418,17 @@ fn forget_relay_models_at(path: &Path, gateway_id: &str, ids: &[String]) {
     }
 }
 
+/// 随包快照（2026-10-28）：发版前 `npm run gen:model-db` 用同一套下载合并逻辑生成；新装、没联网、
+/// 下载失败的用户也有公共库这一层。本机下载的同名条目优先
+const BUNDLED_DB: &str = include_str!("../data/model-db-snapshot.json");
+
+/// 快照的生成时间与条目数（连接页 ⋯ 菜单显示）
+fn bundled_meta() -> (usize, Option<String>) {
+    let v: serde_json::Value = serde_json::from_str(BUNDLED_DB).unwrap_or_default();
+    let at = v.get("_meta").and_then(|m| m.get("generatedAt")).and_then(|t| t.as_str()).map(String::from);
+    (parse_caps_map(BUNDLED_DB).len(), at)
+}
+
 static DB_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, ModelCaps)>>>> =
     std::sync::OnceLock::new();
 static DB_PRICE_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, (f64, f64))>>>> =
@@ -431,8 +442,9 @@ fn load_db() -> Vec<(String, ModelCaps)> {
     if let Some(cached) = cache.read().ok().and_then(|g| g.clone()) {
         return cached;
     }
-    // 旧快照的键还是原写法（claude-opus-5.5、带 :batch 的变体）：统一写法后同名的取第一条，变体不进表
-    let parsed = dedup_keys(keyed(
+    // 旧快照的键还是原写法（claude-opus-5.5、带 :batch 的变体）：统一写法后同名的取第一条，变体不进表。
+    // 本机下载的在前，随包快照补它没有的（没下过、下载失败的用户也有这一层）
+    let mut parsed = dedup_keys(keyed(
         db_path()
             .and_then(|p| std::fs::read_to_string(p).ok())
             .map(|t| {
@@ -443,6 +455,7 @@ fn load_db() -> Vec<(String, ModelCaps)> {
             })
             .unwrap_or_default(),
     ));
+    merge_tables(&mut parsed, dedup_keys(keyed(parse_caps_map(BUNDLED_DB))));
     if let Ok(mut g) = cache.write() {
         *g = Some(parsed.clone());
     }
@@ -465,7 +478,7 @@ pub(crate) fn db_price_table() -> Vec<(String, (f64, f64))> {
     if let Some(cached) = cache.read().ok().and_then(|g| g.clone()) {
         return cached;
     }
-    let parsed = dedup_keys(keyed(
+    let mut parsed = dedup_keys(keyed(
         db_path()
             .and_then(|p| std::fs::read_to_string(p).ok())
             .map(|t| {
@@ -476,6 +489,7 @@ pub(crate) fn db_price_table() -> Vec<(String, (f64, f64))> {
             })
             .unwrap_or_default(),
     ));
+    merge_tables(&mut parsed, dedup_keys(keyed(parse_price_map(BUNDLED_DB))));
     if let Ok(mut g) = cache.write() {
         *g = Some(parsed.clone());
     }
@@ -701,8 +715,8 @@ fn parse_price_map(text: &str) -> Vec<(String, (f64, f64))> {
     };
     if let Some(obj) = v.as_object() {
         for (prefix, entry) in obj {
-            // 空前缀会匹配一切模型名，视为配置错误直接忽略（同 caps 口径）
-            if prefix.trim().is_empty() {
+            // 空前缀会匹配一切模型名，视为配置错误直接忽略（同 caps 口径）；下划线键是说明
+            if prefix.trim().is_empty() || prefix.starts_with('_') {
                 continue;
             }
             let Some(pair) = entry.get("cost").and_then(|c| c.as_array()) else {
@@ -782,6 +796,9 @@ pub struct ModelDbStatusDto {
     pub priced_models: usize,
     /// 下载时间（本地文件 mtime，RFC3339）
     pub downloaded_at: Option<String>,
+    /// 随包快照的条目数与生成时间（没下载过时这一层在用）
+    pub bundled_models: usize,
+    pub bundled_at: Option<String>,
 }
 
 /// 公共能力库状态（设置/配置页展示用）
@@ -798,6 +815,8 @@ fn model_db_status_sync() -> ModelDbStatusDto {
             models: 0,
             priced_models: 0,
             downloaded_at: None,
+            bundled_models: bundled_meta().0,
+            bundled_at: bundled_meta().1,
         };
     };
     let Ok(meta) = std::fs::metadata(&path) else {
@@ -806,6 +825,8 @@ fn model_db_status_sync() -> ModelDbStatusDto {
             models: 0,
             priced_models: 0,
             downloaded_at: None,
+            bundled_models: bundled_meta().0,
+            bundled_at: bundled_meta().1,
         };
     };
     let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -815,20 +836,22 @@ fn model_db_status_sync() -> ModelDbStatusDto {
         let secs = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
         chrono::DateTime::from_timestamp(secs, 0).map(|d| d.to_rfc3339())
     });
+    let (bundled_models, bundled_at) = bundled_meta();
     ModelDbStatusDto {
         downloaded: true,
         models,
         priced_models,
         downloaded_at,
+        bundled_models,
+        bundled_at,
     }
 }
 
-/// models.dev 本机常超时；先 8s 再换 OpenRouter，避免空等 60s。
-const MODELS_DEV_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
-const OPENROUTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-
 /// 设置里填了、且格式有效的出网代理（国内网络直连 models.dev 基本连不上，2026-10-28 起下载能力库也走它）
 fn outbound_proxy() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
     let s = crate::settings::read_current();
     s.outbound_proxy
         .as_deref()
@@ -840,7 +863,7 @@ fn outbound_proxy() -> Option<String> {
 /// 公共库多久算旧：超过就在启动时后台重下（2026-10-28：原先只能手动下载，没下过的用户这一层是空的）
 const DB_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 3600);
 
-/// 启动时调用：公共库没下过或超过 14 天，后台下一次；失败不打扰（连接页 ⋯ 里照旧能手动下）
+/// 启动时调用：公共库没下过或超过 14 天，后台下一次；失败不打扰（随包快照兜底，连接页 ⋯ 里照旧能手动下）
 pub fn spawn_auto_refresh() {
     if cfg!(test) {
         return;
@@ -857,117 +880,229 @@ pub fn spawn_auto_refresh() {
     }
 }
 
-/// 下载公共模型能力库：models.dev 优先（社区中立库），不可达回落 OpenRouter /models
-/// （两家解析进同一形状；本机实测 models.dev 直连超时、OpenRouter 可达）。每家先直连，
-/// 连不上且设置了出网代理再经代理试一次。
+// ===== 公共库数据源（2026-10-28 改）=====
+//
+// models.dev（社区中立库，233 家服务商、按原厂写法）+ LiteLLM 的模型表（jsDelivr 镜像，国内直连通常可达，
+// 原厂写法）两家都下、按型号合并（models.dev 先到先得，LiteLLM 补它没有的）；两家都不通才退 OpenRouter
+// （它只列自己转售的模型、写法带点号）。每家先直连，连不上且设了出网代理再经代理试一次。
+// 发版时还把合并结果存成随包快照（data/model-db-snapshot.json），新装、没联网的用户也有这一层。
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DbSource {
+    ModelsDev,
+    LiteLlm,
+    OpenRouter,
+}
+
+impl DbSource {
+    fn url(self) -> &'static str {
+        match self {
+            DbSource::ModelsDev => "https://models.dev/api.json",
+            DbSource::LiteLlm => {
+                "https://cdn.jsdelivr.net/gh/BerriAI/litellm@main/model_prices_and_context_window.json"
+            }
+            DbSource::OpenRouter => "https://openrouter.ai/api/v1/models",
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            DbSource::ModelsDev => "models.dev",
+            DbSource::LiteLlm => "LiteLLM",
+            DbSource::OpenRouter => "OpenRouter",
+        }
+    }
+    /// models.dev 本机常超时：短超时先放弃、换代理或下一家，避免空等
+    fn timeout(self) -> std::time::Duration {
+        std::time::Duration::from_secs(match self {
+            DbSource::ModelsDev => 10,
+            DbSource::LiteLlm => 25,
+            DbSource::OpenRouter => 20,
+        })
+    }
+    fn parse(self, v: &serde_json::Value) -> (CapsTable, PriceTable) {
+        match self {
+            DbSource::ModelsDev => (parse_models_dev(v), parse_models_dev_prices(v)),
+            DbSource::LiteLlm => parse_litellm(v),
+            // OpenRouter 的 `x:free` / `x:extended` 是同一型号的变体（价格、上下文不同），公共库不收
+            DbSource::OpenRouter => (
+                dedup_keys(keyed(
+                    parse_openrouter_models(v).into_iter().filter(|(k, _)| !k.contains(':')).collect(),
+                )),
+                dedup_keys(keyed(
+                    parse_openrouter_prices(v).into_iter().filter(|(k, _)| !k.contains(':')).collect(),
+                )),
+            ),
+        }
+    }
+}
+
+type CapsTable = Vec<(String, ModelCaps)>;
+type PriceTable = Vec<(String, (f64, f64))>;
+
+/// LiteLLM 里的原厂：同一型号还以 bedrock/vertex/openrouter 等前缀各列一次，原厂、不带前缀的先收
+const LITELLM_VENDORS: &[&str] = &[
+    "anthropic", "openai", "gemini", "xai", "deepseek", "moonshot", "zai", "dashscope", "mistral",
+];
+
+/// LiteLLM model_prices_and_context_window.json → 同一能力表 / 价目形状。只收对话模型（chat / responses），
+/// 出图、向量等不收；sample_spec 是格式说明不是模型
+fn parse_litellm(v: &serde_json::Value) -> (CapsTable, PriceTable) {
+    let Some(obj) = v.as_object() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut items: Vec<(&String, &serde_json::Value)> = obj
+        .iter()
+        .filter(|(k, e)| {
+            k.as_str() != "sample_spec"
+                && matches!(e.get("mode").and_then(|m| m.as_str()), Some("chat") | Some("responses"))
+        })
+        .collect();
+    let rank = |k: &str, e: &serde_json::Value| {
+        let vendor = e.get("litellm_provider").and_then(|p| p.as_str()).unwrap_or("");
+        let native = !k.contains('/') && LITELLM_VENDORS.contains(&vendor);
+        (if native { 0 } else { 1 }, k.to_string())
+    };
+    items.sort_by_key(|(k, e)| rank(k, e));
+    let mut caps = Vec::new();
+    let mut prices = Vec::new();
+    for (id, e) in items {
+        let int = |key: &str| e.get(key).and_then(|n| n.as_i64()).filter(|n| *n > 0);
+        let context = int("max_input_tokens").or_else(|| int("max_tokens"));
+        let output = int("max_output_tokens");
+        let vision = e.get("supports_vision").and_then(|b| b.as_bool());
+        let thinking = e.get("supports_reasoning").and_then(|b| b.as_bool());
+        let key = model_key(id);
+        if context.is_some() || output.is_some() || vision.is_some() || thinking.is_some() {
+            caps.push((key.clone(), ModelCaps { thinking, context, output, vision, api_backend: None }));
+        }
+        let per_million = |k: &str| {
+            e.get(k).and_then(|n| n.as_f64()).filter(|n| n.is_finite() && *n >= 0.0).map(|n| n * 1_000_000.0)
+        };
+        if let (Some(i), Some(o)) = (per_million("input_cost_per_token"), per_million("output_cost_per_token")) {
+            prices.push((key, (i, o)));
+        }
+    }
+    (dedup_keys(caps), dedup_keys(prices))
+}
+
+async fn fetch_json(url: &str, timeout: std::time::Duration, via: Option<&str>) -> Result<serde_json::Value, String> {
+    let mut builder = reqwest::Client::builder().timeout(timeout);
+    if let Some(p) = via {
+        builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| format!("出网代理不可用：{e}"))?);
+    }
+    let client = builder.build().map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let resp = client.get(url).send().await.map_err(|e| format!("请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("返回 HTTP {}", resp.status()));
+    }
+    let bytes = crate::storage::response_bytes(resp, 48 * 1024 * 1024).await?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("解析失败: {e}"))
+}
+
+/// 一家数据源：先直连，不通且设了出网代理再经代理
+async fn fetch_source(src: DbSource, proxy: Option<&str>) -> Result<(CapsTable, PriceTable), String> {
+    let mut errs = Vec::new();
+    for via in std::iter::once(None).chain(proxy.map(Some)) {
+        match fetch_json(src.url(), src.timeout(), via).await {
+            Ok(v) => {
+                let (caps, prices) = src.parse(&v);
+                if !caps.is_empty() {
+                    return Ok((caps, prices));
+                }
+                errs.push("响应解析为空".to_string());
+            }
+            Err(e) => errs.push(format!("{}{e}", if via.is_some() { "经出网代理" } else { "" })),
+        }
+    }
+    Err(format!("{}：{}", src.name(), errs.join("；")))
+}
+
+/// 按型号合并：先到的那家先占，后面的只补它没有的
+fn merge_tables<T>(into: &mut Vec<(String, T)>, more: Vec<(String, T)>) {
+    let seen: std::collections::HashSet<String> = into.iter().map(|(k, _)| k.clone()).collect();
+    into.extend(more.into_iter().filter(|(k, _)| !seen.contains(k)));
+}
+
+/// 下载并合并公共库；返回 (能力表, 价目表, 用到的数据源)
+async fn fetch_db() -> Result<(CapsTable, PriceTable, Vec<&'static str>), String> {
+    let proxy = outbound_proxy();
+    let (mut caps, mut prices, mut used, mut errs) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // 两家并发下（各自先直连、再经代理）
+    let (pa, pb) = (proxy.clone(), proxy.clone());
+    let ha = tauri::async_runtime::spawn(async move { fetch_source(DbSource::ModelsDev, pa.as_deref()).await });
+    let hb = tauri::async_runtime::spawn(async move { fetch_source(DbSource::LiteLlm, pb.as_deref()).await });
+    let a = ha.await.map_err(|e| e.to_string()).and_then(|r| r);
+    let b = hb.await.map_err(|e| e.to_string()).and_then(|r| r);
+    for (src, got) in [(DbSource::ModelsDev, a), (DbSource::LiteLlm, b)] {
+        match got {
+            Ok((c, p)) => {
+                merge_tables(&mut caps, c);
+                merge_tables(&mut prices, p);
+                used.push(src.name());
+            }
+            Err(e) => errs.push(e),
+        }
+    }
+    if used.is_empty() {
+        match fetch_source(DbSource::OpenRouter, proxy.as_deref()).await {
+            Ok((c, p)) => {
+                caps = c;
+                prices = p;
+                used.push(DbSource::OpenRouter.name());
+            }
+            Err(e) => errs.push(e),
+        }
+    }
+    if used.is_empty() {
+        return Err(format!("模型能力库下载失败：{}", errs.join("；")));
+    }
+    Ok((caps, prices, used))
+}
+
+/// 落盘形状（下载结果与随包快照同一份）：{型号: {thinking, context, output, vision, cost: [输入价, 输出价]}}，
+/// 键已是统一写法；`_meta` 记来源与时间（解析时跳过 `_` 开头的键）
+fn db_json(caps: &CapsTable, prices: &PriceTable, sources: &[&str]) -> Result<String, String> {
+    let price_of_id: std::collections::HashMap<&str, (f64, f64)> =
+        prices.iter().map(|(id, p)| (id.as_str(), *p)).collect();
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "_meta".into(),
+        serde_json::json!({ "sources": sources, "generatedAt": chrono::Utc::now().to_rfc3339() }),
+    );
+    for (id, c) in caps {
+        let mut entry = serde_json::Map::new();
+        for (k, v) in [
+            ("thinking", serde_json::json!(c.thinking)),
+            ("context", serde_json::json!(c.context)),
+            ("output", serde_json::json!(c.output)),
+            ("vision", serde_json::json!(c.vision)),
+        ] {
+            if !v.is_null() {
+                entry.insert(k.into(), v);
+            }
+        }
+        if let Some((i, o)) = price_of_id.get(id.as_str()) {
+            entry.insert("cost".into(), serde_json::json!([i, o]));
+        }
+        map.insert(id.clone(), serde_json::Value::Object(entry));
+    }
+    // 只有定价、没有能力字段的条目也保留（费用估算不需要能力声明）
+    for (id, p) in prices {
+        if !map.contains_key(id) {
+            map.insert(id.clone(), serde_json::json!({ "cost": [p.0, p.1] }));
+        }
+    }
+    serde_json::to_string(&serde_json::Value::Object(map)).map_err(|e| e.to_string())
+}
+
+/// 下载公共模型能力库（连接页 ⋯「更新模型能力库」与启动时自动更新共用）。
 /// 能力之外顺带提取定价（cost），统计页费用估算与能力声明共用同一份快照
 #[tauri::command]
 pub async fn download_model_db() -> Result<ModelDbStatusDto, String> {
-    let mut last_err = String::new();
-    #[allow(clippy::type_complexity)]
-    let mut parsed: Option<(Vec<(String, ModelCaps)>, Vec<(String, (f64, f64))>)> = None;
-    let proxy = outbound_proxy();
-    let mut attempts: Vec<(&str, bool, Option<&str>)> = Vec::new();
-    for (url, is_models_dev) in [
-        ("https://models.dev/api.json", true),
-        ("https://openrouter.ai/api/v1/models", false),
-    ] {
-        attempts.push((url, is_models_dev, None));
-        if let Some(p) = proxy.as_deref() {
-            attempts.push((url, is_models_dev, Some(p)));
-        }
-    }
-    for (url, is_models_dev, via) in attempts {
-        let timeout = if is_models_dev {
-            MODELS_DEV_TIMEOUT
-        } else {
-            OPENROUTER_TIMEOUT
-        };
-        let mut builder = reqwest::Client::builder().timeout(timeout);
-        if let Some(p) = via {
-            match reqwest::Proxy::all(p) {
-                Ok(px) => builder = builder.proxy(px),
-                Err(e) => {
-                    last_err = format!("出网代理不可用：{e}");
-                    continue;
-                }
-            }
-        }
-        let client = builder
-            .build()
-            .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-        let how = if via.is_some() { "（经出网代理）" } else { "" };
-        match client.get(url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match crate::storage::response_bytes(resp, 32 * 1024 * 1024)
-                    .await
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<serde_json::Value>(&bytes)
-                            .map_err(|e| e.to_string())
-                    }) {
-                    Ok(v) => {
-                        // OpenRouter 的 `x:free` / `x:extended` 是同一型号的变体（价格、上下文不同），公共库不收
-                        let entries = if is_models_dev {
-                            parse_models_dev(&v)
-                        } else {
-                            dedup_keys(keyed(
-                                parse_openrouter_models(&v)
-                                    .into_iter()
-                                    .filter(|(k, _)| !k.contains(':'))
-                                    .collect(),
-                            ))
-                        };
-                        if entries.is_empty() {
-                            last_err = format!("{url}{how} 响应解析为空");
-                            continue;
-                        }
-                        // 定价提取失败不判死：能力库仍是主用途，cost 缺失 = 那层不知道
-                        let prices = if is_models_dev {
-                            parse_models_dev_prices(&v)
-                        } else {
-                            dedup_keys(keyed(
-                                parse_openrouter_prices(&v)
-                                    .into_iter()
-                                    .filter(|(k, _)| !k.contains(':'))
-                                    .collect(),
-                            ))
-                        };
-                        parsed = Some((entries, prices));
-                        break;
-                    }
-                    Err(e) => last_err = format!("{url}{how} 解析失败: {e}"),
-                }
-            }
-            Ok(resp) => last_err = format!("{url}{how} 返回 HTTP {}", resp.status()),
-            Err(e) => last_err = format!("{url}{how} 请求失败: {e}"),
-        }
-    }
-    let (entries, prices) = parsed.ok_or_else(|| format!("模型能力库下载失败：{last_err}"))?;
+    let (caps, prices, used) = fetch_db().await?;
     tauri::async_runtime::spawn_blocking(move || {
         let path = db_path().ok_or("无法确定平台配置目录")?;
-        let price_of_id: std::collections::HashMap<&str, (f64, f64)> =
-            prices.iter().map(|(id, p)| (id.as_str(), *p)).collect();
-        let mut map = serde_json::Map::new();
-        for (id, c) in &entries {
-            let mut entry = serde_json::json!({
-                "thinking": c.thinking,
-                "context": c.context,
-                "output": c.output,
-                "vision": c.vision,
-            });
-            if let Some((i, o)) = price_of_id.get(id.as_str()) {
-                entry["cost"] = serde_json::json!([i, o]);
-            }
-            map.insert(id.clone(), entry);
-        }
-        // 只有定价、没有能力字段的条目也保留（费用估算不需要能力声明）
-        for (id, p) in &prices {
-            if !map.contains_key(id) {
-                map.insert(id.clone(), serde_json::json!({"cost": [p.0, p.1]}));
-            }
-        }
-        let text = serde_json::to_string_pretty(&serde_json::Value::Object(map))
-            .map_err(|e| e.to_string())?;
+        let text = db_json(&caps, &prices, &used)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
@@ -1790,6 +1925,56 @@ mod tests {
         assert!(model_thinking("claude-fable-5-1"));
         assert!(model_supports_vision("claude-sonnet-5-5"));
         assert!(model_thinking("deepseek-v4.1-flash"));
+    }
+
+    #[test]
+    fn litellm_prefers_native_vendor_and_skips_non_chat() {
+        let v = serde_json::json!({
+            "sample_spec": {"mode": "chat", "max_input_tokens": 1},
+            "openrouter/anthropic/claude-opus-5.5": {"mode": "chat", "litellm_provider": "openrouter", "max_input_tokens": 200000,
+                "input_cost_per_token": 0.00001, "output_cost_per_token": 0.00005},
+            "claude-opus-5-5": {"mode": "chat", "litellm_provider": "anthropic", "max_input_tokens": 1000000, "max_output_tokens": 128000,
+                "supports_vision": true, "supports_reasoning": true, "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002},
+            "gpt-image-2": {"mode": "image_generation", "litellm_provider": "openai"}
+        });
+        let (caps, prices) = parse_litellm(&v);
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].1.context, Some(1_000_000));
+        assert_eq!(caps[0].1.thinking, Some(true));
+        assert_eq!(prices.len(), 1);
+        assert!((prices[0].1 .0 - 4.0).abs() < 1e-9 && (prices[0].1 .1 - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn db_json_roundtrips_and_skips_meta() {
+        let caps = vec![("m-1".to_string(), caps(true, Some(5)))];
+        let prices = vec![("m-1".to_string(), (1.0, 2.0)), ("m-2".to_string(), (3.0, 4.0))];
+        let text = db_json(&caps, &prices, &["models.dev"]).unwrap();
+        let back = parse_caps_map(&text);
+        assert_eq!(back.len(), 2); // m-2 只有价格也留着
+        assert!(back.iter().all(|(k, _)| !k.starts_with('_')));
+        assert_eq!(parse_price_map(&text).len(), 2);
+        let mut a = vec![("x".to_string(), 1)];
+        merge_tables(&mut a, vec![("x".to_string(), 2), ("y".to_string(), 3)]);
+        assert_eq!(a, vec![("x".to_string(), 1), ("y".to_string(), 3)]);
+    }
+
+    #[test]
+    fn bundled_snapshot_parses() {
+        let v: serde_json::Value = serde_json::from_str(BUNDLED_DB).expect("随包快照不是合法 JSON");
+        assert!(v.is_object());
+    }
+
+    /// 发版前刷新随包快照：npm run gen:model-db（= cargo test --lib gen_model_db_snapshot -- --ignored --nocapture）。
+    /// 走同一套下载合并逻辑，连不上 models.dev 时设 HTTPS_PROXY
+    #[test]
+    #[ignore]
+    fn gen_model_db_snapshot() {
+        let (caps, prices, used) = tauri::async_runtime::block_on(fetch_db()).expect("下载失败");
+        let text = db_json(&caps, &prices, &used).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data").join("model-db-snapshot.json");
+        std::fs::write(&path, text).unwrap();
+        println!("{} 个型号、{} 个带价（{}）→ {}", caps.len(), prices.len(), used.join(" + "), path.display());
     }
 
     #[test]

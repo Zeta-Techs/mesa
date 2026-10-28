@@ -210,6 +210,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   `latest.json`，不认 git tag / architecture 决策号；不 bump 则已安装用户永远看不到「可更新」。内部决策记录
   （v3.x）不是应用版本。有可用更新时提示走收件箱 `update:`（不造顶部横幅、侧栏不挂徽标），设置页「更新」分区
   是安装入口。
+- **发版前刷新随包模型能力库（2026-10-28）**：`npm run gen:model-db`（连不上 models.dev 时带 `HTTPS_PROXY`），把 `src-tauri/data/model-db-snapshot.json` 随版本提交；细则 profiles.md「能力库与价目怎么认模型」。
 - **更新说明来自 CHANGELOG（2026-10-19）**：用户在应用里看到的「更新说明」是 `latest.json` 的 `notes`，打包时由 CI 取自 `CHANGELOG.md`
   （`scripts/release-notes.mjs`，优先 `## v<版本>` 段、其次 `## 未发布` 段，都空则 CI 失败）。**发版前必须先把本版本的用户可见改动写进
   CHANGELOG 对应段**；事后改 GitHub Release 草稿正文不会同步进 `latest.json`，用户仍看不到。

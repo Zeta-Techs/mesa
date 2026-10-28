@@ -2704,12 +2704,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [originalBackups, setOriginalBackups] = useState<Record<string, boolean>>(
     {},
   );
-  // 公共模型能力库（models.dev/OpenRouter 下载）状态：顶部 ⋯ 菜单的下载/更新入口
+  // 公共模型能力库（models.dev + LiteLLM，都不通退 OpenRouter）状态：顶部 ⋯ 菜单的更新入口。
+  // 启动时没下过或超过 14 天会自己下；没下成时用随包快照
   const [modelDb, setModelDb] = useState<{
     downloaded: boolean;
     models: number;
     pricedModels?: number;
     downloadedAt?: string | null;
+    bundledModels?: number;
+    bundledAt?: string | null;
   } | null>(null);
   const [modelDbBusy, setModelDbBusy] = useState(false);
   useEffect(() => {
@@ -2718,6 +2721,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       models: number;
       pricedModels?: number;
       downloadedAt?: string | null;
+      bundledModels?: number;
+      bundledAt?: string | null;
     }>("model_db_status")
       .then(setModelDb)
       .catch(() => toast("模型能力库状态读取失败", "warning"));
@@ -2734,6 +2739,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         models: number;
         pricedModels?: number;
         downloadedAt?: string | null;
+        bundledModels?: number;
+        bundledAt?: string | null;
       }>("download_model_db");
       setModelDb(s);
       setNotice(
@@ -4682,10 +4689,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         ? ` · ${modelDb.downloadedAt.slice(0, 10)}`
                         : ""
                     }）`
-                  : "下载模型能力库（models.dev）",
+                  : `更新模型能力库（现用随包 ${modelDb?.bundledModels ?? 0} 个${
+                      modelDb?.bundledAt ? ` · ${modelDb.bundledAt.slice(0, 10)}` : ""
+                    }）`,
               disabled: modelDbBusy,
               title:
-                "第三方模型的能力声明（上下文/输出上限/视觉/推理）与官方定价的公共数据源：下载后统计页费用估算随之更新（定价优先级：自定义定价 > 本库 > 内置价目）。models.dev 不可达时自动换 OpenRouter。点「获取模型」时也会沉淀该网关实测数据。",
+                "各家模型的上下文、输出上限、看图、思考与官方定价的公共数据（models.dev 与 LiteLLM 合并，都连不上才用 OpenRouter；直连不通走设置里的出网代理）。启动时没下过或超过 14 天会自己更新，没下成时用安装包里带的那份。统计页费用估算随之更新（定价优先级：自定义定价 > 本库 > 内置价目）。点「获取模型」时也会沉淀该网关实测数据。",
               onSelect: () => void onModelDbDownload(),
             },
           ]}

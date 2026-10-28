@@ -160,8 +160,11 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
   （统一写法后相等，或去掉 8 位日期 / YYYY-MM-DD / latest 快照后缀后相等；四位数是版本号不剥），**不按前缀退到别的型号**；
   按系列写的层（用户覆盖、内置表、内置价目）照旧最长前缀。usage.rs 价目链同口径（`match_in` + `KeyMatch`）。
   反例：曾按前缀把 Opus 5.5 退到 `claude-opus-5`，价格多算约 25%；中转自起名模型拿到别的型号的上下文。
-  公共库：models.dev 同一型号原厂（`MODELS_DEV_VENDORS`）优先、先到先得；变体不收；启动时没下过或超过 14 天后台重下；每个源先直连、
-  连不上再经设置里的出网代理。网关目录把模型标 stale 时从网关实测缓存删掉（`forget_relay_models`）。
+  公共库：models.dev 与 LiteLLM（jsDelivr 镜像，国内直连通常可达）**两家都下、按型号合并**（models.dev 先占，LiteLLM 补缺），
+  两家都不通才退 OpenRouter；每家里同一型号原厂优先（`MODELS_DEV_VENDORS` / `LITELLM_VENDORS`）、先到先得，变体不收，LiteLLM 只收 chat / responses。
+  启动时没下过或超过 14 天后台重下；每个源先直连、连不上再经设置里的出网代理。**随包快照** `src-tauri/data/model-db-snapshot.json`
+  （同一套逻辑生成，`npm run gen:model-db`，发版前刷新）在本机下载那份之后补缺，新装 / 没联网的用户也有这一层。
+  网关目录把模型标 stale 时从网关实测缓存删掉（`forget_relay_models`）。
 - **官方账号模型别名（2026-10-28）**：Claude 别名名单在 `tests/fixtures/claude-model-aliases.json`（Rust 与金丝雀共读），别名对应的完整型号
   **不写死**，由 `model_aliases.rs` 按本机 CLI 版本实测（本机假接口、临时 `CLAUDE_CONFIG_DIR`、不连厂商不花额度，版本变了才重测），
   连接页显示与能力库查询都用实测结果；测不出来就显示别名、不猜。`default` 随账号变，不测。Gemini 别名起不到本机假接口，暂不接。
