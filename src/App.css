@@ -94,14 +94,15 @@
   --color-composer: color-mix(in oklab, var(--color-canvas), var(--color-l1) 7%);
   --color-composer-edge: color-mix(in oklab, var(--color-canvas), var(--color-l1) 13%);
   /* 聊天里的字（2026-10-22 用户：有的主题在聊天层不适合长时间聊）：回答正文 = 正文色；
-     （2026-10-25/26 现行口径见同文件 chat-text 段与 design-system 同日段：正文 l1 八成五、加粗满格 l1，
+     （2026-10-25/26 现行口径见同文件 chat-text 段与 design-system 同日段：正文满格 l1（2026-10-28）、加粗同色只靠字重，
       旧「加粗只往 l1 走六成」已作废——回答里加粗多，当年满格 l1 在 10:1 左右的正文里一粒粒跳出来，长读刺眼。）
      正文偏离 8.5–11.5:1 或带色偏的主题（极简灰蓝太亮、暮紫偏蓝、暮紫·浅与琥珀·浅偏淡）在各自块里覆写，
      tests/theme-contrast.test.ts 钉范围。只管聊天回答（.md-chat），其余页面的层级不动。
      2026-10-25 用户在 A/B/C 对照里选 C：聊天区改细字（.ccode-chat-scroll / .ccode-chat-composer 灰度抗锯齿），
      笔画变细后正文提亮补回实感；同日用户「正文有点太亮了」：从满格 l1 退到 l1 与 l2 五五混，又「有点暗了」：
-     落在 l1 七成，仍「还是有点暗」：再提到八成五（对画布约 11.5–15:1），加粗走满格 l1——细笔画下 l1 不再「一粒粒跳出来」 */
-  --color-chat-text: color-mix(in oklab, var(--color-l1) 85%, var(--color-l2));
+     落在 l1 七成，仍「还是有点暗」：再提到八成五（对画布约 11.5–15:1），加粗走满格 l1——细笔画下 l1 不再「一粒粒跳出来」；
+     2026-10-28 用户「正文有点暗」：提到九成三，又「可以再亮一点」：满格 l1，与 Windows 同口径，加粗只靠字重 */
+  --color-chat-text: var(--color-l1);
   --color-chat-strong: var(--color-l1);
 
   /* diff 增删 */
