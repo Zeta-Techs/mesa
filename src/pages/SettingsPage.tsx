@@ -1703,6 +1703,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [scrollback, setScrollback] = useState("");
   const [rate, setRate] = useState("");
   const [outboundProxy, setOutboundProxy] = useState("");
+  const [sharedEnvText, setSharedEnvText] = useState("");
   const [customDraft, setCustomDraft] = useState<CustomThemeSeeds | null>(null);
   const customPatchTimer = useRef<number | null>(null);
   const [savingCard, setSavingCard] = useState(false);
@@ -1965,6 +1966,12 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       if (!dirty.has("rate")) setRate(String(settings.rateUsdCny));
       if (!dirty.has("outboundProxy"))
         setOutboundProxy(settings.outboundProxy ?? "");
+      if (!dirty.has("sharedEnv"))
+        setSharedEnvText(
+          Object.entries(settings.sharedEnv ?? {})
+            .map(([k, v]) => `${k}=${v}`)
+            .join("\n"),
+        );
       if (!dirty.has("outboundNoProxy"))
         setOutboundNoProxy(settings.outboundNoProxy ?? "");
       if (!dirty.has("institutionalPrefix"))
@@ -3794,6 +3801,41 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           >
             去连接页设置
           </button>
+        </Row>
+
+        <SubHeading title="共用环境变量" hint="Mesa 启动每家 Agent 时都带上，不用每条连接各填一遍" />
+        <Row
+          label="环境变量"
+          align="start"
+          hint="每行一条，名=值"
+          labelTitle="和连接无关的设置放这里，比如关遥测 DISABLE_TELEMETRY=1。官方账号启动也带。某条连接的「附加环境变量」里有同名的，以连接的为准。密钥、地址、模型、代理不能放这里：密钥和地址在连接里填，代理在「网络 → 出网代理」"
+        >
+          <div className="flex max-w-[34rem] flex-col gap-1">
+            <textarea
+              className={`${fieldFixed} h-24 w-full font-mono text-xs`}
+              placeholder={"DISABLE_TELEMETRY=1"}
+              value={sharedEnvText}
+              onChange={(e) => {
+                draftDirty.current.add("sharedEnv");
+                setSharedEnvText(e.target.value);
+              }}
+              onBlur={() => {
+                const map: Record<string, string> = {};
+                for (const line of sharedEnvText.split("\n")) {
+                  const t = line.trim();
+                  if (!t || t.startsWith("#")) continue;
+                  const i = t.indexOf("=");
+                  if (i <= 0) continue;
+                  map[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+                }
+                // 被拒（像密钥、是地址等）时留住输入，提示里写清是哪一条、为什么
+                void updateSettings({ sharedEnv: map })
+                  .then(() => draftDirty.current.delete("sharedEnv"))
+                  .catch((e) => toast(String(e), "error"));
+              }}
+            />
+            <p className="text-micro text-l4">改完点别处就保存；新开的会话生效</p>
+          </div>
         </Row>
 
         <SubHeading title="对 Agent 的标记" hint="Mesa 拉起各家 CLI 时额外加的标记" />

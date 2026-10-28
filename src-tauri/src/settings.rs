@@ -390,6 +390,10 @@ pub struct AppSettingsDto {
     /// 空/缺省 = 不注入。网关 API 启动不走这条（国内中转被全局代理绕路常挂）。
     /// 连接 extra_env 同名键排在后面覆盖。
     pub outbound_proxy: Option<String>,
+    /// 所有连接共用的环境变量（2026-10-28）：Mesa 启动每家 Agent 时都带上（官方账号也带），连接自己的附加环境变量
+    /// 同名时覆盖它。只放和连接无关的设置（关遥测、调日志之类）；密钥、地址、模型、代理、终端相关的键拒收
+    /// （`shared_env_rejection`）——设置文件不是 0600 的密钥库
+    pub shared_env: Option<BTreeMap<String, String>>,
     /// NO_PROXY；出网代理有值且此项空时默认 localhost,127.0.0.1,::1
     pub outbound_no_proxy: Option<String>,
     /// 机构访问前缀（EZproxy/OpenAthens 式，如 https://proxy.xxx.edu.cn/login?url=）：
@@ -934,6 +938,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         // 后端维护的「设为全局」追踪：原样透传，不做默认值填充
         active_global_profiles: s.active_global_profiles,
         global_conflict_ack: s.global_conflict_ack,
+        shared_env: s.shared_env,
         external_terminal: Some({
             let v = s.external_terminal.as_deref().unwrap_or("auto");
             if KNOWN_EXTERNAL_TERMINALS.contains(&v) {
@@ -1183,6 +1188,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     if patch.outbound_proxy.is_some() {
         cur.outbound_proxy = patch.outbound_proxy.filter(|v| !v.trim().is_empty());
     }
+    if patch.shared_env.is_some() {
+        cur.shared_env = patch.shared_env.filter(|m| !m.is_empty());
+    }
     if patch.outbound_no_proxy.is_some() {
         cur.outbound_no_proxy = patch.outbound_no_proxy.filter(|v| !v.trim().is_empty());
     }
@@ -1313,6 +1321,38 @@ pub(crate) fn rewrite_profile_refs(rewrites: &[(String, String)]) -> Result<(), 
 }
 
 // ===== 「设为全局」追踪（active_global_profiles；见字段注释的口径说明） =====
+
+/// 共用环境变量拒收的键，返回原因。密钥、地址、模型归连接管；代理归「出网代理」；终端与路径归 Mesa
+pub fn shared_env_rejection(key: &str) -> Option<&'static str> {
+    let valid = {
+        let mut chars = key.chars();
+        matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+            && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+    };
+    if !valid {
+        return Some("名字只能用字母、数字和下划线，且不以数字开头");
+    }
+    let up = key.to_ascii_uppercase();
+    if ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "AUTH", "COOKIE", "CREDENTIAL", "_PAT"]
+        .iter()
+        .any(|w| up.contains(w))
+    {
+        return Some("像密钥，密钥请填在连接里（只存在本机加密的密钥文件里）");
+    }
+    if up.ends_with("_BASE_URL") || up.ends_with("_MODEL") || up.contains("_MODEL_") || up.ends_with("_ENDPOINT") {
+        return Some("这是连接用的地址或模型，请在连接里设");
+    }
+    if matches!(up.as_str(), "HTTPS_PROXY" | "HTTP_PROXY" | "ALL_PROXY" | "NO_PROXY") {
+        return Some("代理请在「网络 → 出网代理」里设");
+    }
+    if matches!(
+        up.as_str(),
+        "PATH" | "HOME" | "PWD" | "SHELL" | "TERM" | "COLORTERM" | "TERM_PROGRAM" | "NO_COLOR" | "LANG" | "LC_ALL"
+    ) {
+        return Some("这是终端与路径相关的变量，由 Mesa 管");
+    }
+    None
+}
 
 /// 这个 agent 的 cc-switch 提醒是否已确认过（一键切换不再提醒）
 pub(crate) fn global_conflict_acked(agent: &str) -> bool {
@@ -1496,6 +1536,16 @@ pub async fn update_settings(
         let path = settings_path()?;
         if let Some(ref proxy) = patch.outbound_proxy {
             validate_outbound_proxy(proxy)?;
+        }
+        if let Some(ref env) = patch.shared_env {
+            for (k, v) in env {
+                if let Some(why) = shared_env_rejection(k) {
+                    return Err(format!("共用环境变量 {k} 不能放：{why}"));
+                }
+                if v.contains('\n') || v.contains('\r') {
+                    return Err(format!("共用环境变量 {k} 的值不能换行"));
+                }
+            }
         }
         // 直发配置入 settings 前过一遍校验（merge 只搬运不校验）
         if let Some(ref smtp) = patch.feedback_smtp {

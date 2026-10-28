@@ -217,6 +217,8 @@ export interface AppSettings {
   terminalColorReport?: boolean;
   /** 出网代理（官方账号启动与登录注入 HTTPS_PROXY 等）；空 = 不注入。网关启动不走 */
   outboundProxy?: string | null;
+  /** 所有连接共用的环境变量：Mesa 启动每家 Agent 时都带上，连接的附加环境变量同名时覆盖 */
+  sharedEnv?: Record<string, string> | null;
   /** NO_PROXY；出网代理有值且此项空时默认 localhost,127.0.0.1,::1 */
   outboundNoProxy?: string | null;
   /** 机构访问前缀（EZproxy/OpenAthens 式）；空 = 未配置。会话 Cookie 另存后端 0600 文件 */

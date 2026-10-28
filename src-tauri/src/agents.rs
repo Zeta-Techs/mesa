@@ -1016,6 +1016,17 @@ fn finalize_settings_overlay(plan: &mut LaunchPlan, profile: &Profile) -> Result
     Ok(())
 }
 
+/// 设置里的共用环境变量（读时再过一遍拒收规则，手改设置文件塞进来的也不放行）；单测不读本机
+fn shared_env() -> Vec<(String, String)> {
+    #[cfg(test)]
+    let map = tests::TEST_SHARED_ENV.with(|k| k.borrow().clone());
+    #[cfg(not(test))]
+    let map = crate::settings::read_current().shared_env.unwrap_or_default();
+    map.into_iter()
+        .filter(|(k, _)| crate::settings::shared_env_rejection(k).is_none())
+        .collect()
+}
+
 /// 网关兼容选项 → Claude Code 的 env：(键, 开着时的值)。超时没设时不动用户自己的（它也可能是用户的全局偏好）
 pub(crate) fn claude_compat_env(c: &crate::profiles::GatewayCompat) -> [(&'static str, Option<String>); 3] {
     [
@@ -1155,6 +1166,7 @@ pub fn launch_plan(
         for (k, v) in crate::settings::official_outbound_env() {
             plan.env.push((k, v));
         }
+        plan.env.extend(shared_env());
         // extra_env 依旧最后注入（用户显式覆盖的逃生口，与 api 模式一致）
         for (k, v) in &profile.extra_env {
             plan.env.push((k.clone(), v.clone()));
@@ -1565,6 +1577,8 @@ pub fn launch_plan(
     {
         plan.env.push(("OPENTUI_NOTIFICATION_PROTOCOL".into(), "osc777".into()));
     }
+    // 共用环境变量（设置里）在前，连接自己的附加环境变量在后覆盖
+    plan.env.extend(shared_env());
     // 附加环境变量放在最后：CommandBuilder 重复 env 后者生效，用户可借此覆盖 adapter 内置值
     for (k, v) in &profile.extra_env {
         plan.env.push((k.clone(), v.clone()));
@@ -5050,6 +5064,8 @@ mod tests {
     }
 
     thread_local! {
+        pub(super) static TEST_SHARED_ENV: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
+            const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
         pub(super) static TEST_CODEX_CONFIG: std::cell::RefCell<Option<toml::Value>> =
             const { std::cell::RefCell::new(None) };
         pub(super) static TEST_CLAUDE_TOP_KEYS: std::cell::RefCell<Vec<String>> =
@@ -6331,6 +6347,30 @@ api_backend = "responses"
         c.request_policy.compat.timeout_secs = Some(300);
         let plan = launch_plan(&c, Some("sk".into()), Some("m1")).unwrap();
         assert!(plan.args.iter().any(|a| a.ends_with(".stream_idle_timeout_ms=300000")));
+    }
+
+    #[test]
+    fn shared_env_goes_in_before_connection_extra_env() {
+        tests::TEST_SHARED_ENV.with(|k| {
+            *k.borrow_mut() = [("DISABLE_TELEMETRY", "1"), ("MY_FLAG", "shared"), ("OPENAI_API_KEY", "sk-sneak")]
+                .into_iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect()
+        });
+        let mut p = profile("codex", Some("https://relay.example.com/v1"));
+        p.extra_env.insert("MY_FLAG".into(), "conn".into());
+        let plan = launch_plan(&p, Some("sk".into()), Some("m1")).unwrap();
+        let last = |k: &str| plan.env.iter().rev().find(|(x, _)| x == k).map(|(_, v)| v.clone());
+        assert_eq!(last("DISABLE_TELEMETRY").as_deref(), Some("1"));
+        assert_eq!(last("MY_FLAG").as_deref(), Some("conn"), "连接的附加环境变量覆盖共用的");
+        assert!(!plan.env.iter().any(|(_, v)| v == "sk-sneak"), "像密钥的键读时也拦");
+        let off = launch_plan(&official_profile("codex"), None, None).unwrap();
+        assert!(off.env.iter().any(|(k, _)| k == "DISABLE_TELEMETRY"), "官方账号也带");
+        tests::TEST_SHARED_ENV.with(|k| k.borrow_mut().clear());
+        assert!(crate::settings::shared_env_rejection("GEMINI_SANDBOX").is_none());
+        for bad in ["ANTHROPIC_AUTH_TOKEN", "OPENAI_BASE_URL", "GEMINI_MODEL", "HTTPS_PROXY", "PATH", "1BAD", "A-B"] {
+            assert!(crate::settings::shared_env_rejection(bad).is_some(), "{bad}");
+        }
     }
 
     #[test]
