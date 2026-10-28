@@ -526,6 +526,10 @@ export default function ChatSurface({
   // 开聊前选择（Agent·模型 / 权限）：可改、没起进程、还没有对话
   const launchPickOpen = Boolean(launchPick?.editable && !running && messages.length === 0);
   dropPickDirRef.current = launchPickOpen && onPickDir ? onPickDir : null;
+  // 首句已发出、进程还在起的那一两秒（乐观气泡在了、running 还没翻）：「权限」徽标与「模型」芯片
+  // 原先随版式翻转先消失、等 running 翻真再从底部状态栏冒出来（2026-10-28 用户：底部抖一下）——
+  // 这段空窗照旧给开聊前那份（editable 那时仍真），只是挂的位置跟着版式进了状态栏
+  const launching = Boolean(launchPick?.editable && !running && !canResume && messages.length > 0);
 
   // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）。
   // 只看没接的对话还在读记录时不进空态，免得问候语闪一下；标签刚开、这段对话的状态还没报上来时同样不进
@@ -1192,7 +1196,7 @@ export default function ChatSurface({
     <>
       {/* 权限：开聊前可选，开聊后换 = 重开接回；只读分叉另有「只读分叉」标签，不重复。
           平时灰字，切到完全访问时与输入框上沿细线同一下亮 caution（flash） */}
-      {launchPick && !readOnly && (launchPickOpen || resumePickOpen || running || canResume) && (
+      {launchPick && !readOnly && (launchPickOpen || resumePickOpen || launching || running || canResume) && (
         <ChatPermissionBadge
           agentLabel={launchAgentLabel}
           agentId={launchPick.agentId}
@@ -1265,7 +1269,7 @@ export default function ChatSurface({
   };
   // 「模型 · 思考」菜单：开聊前、运行中、停了可接着聊同一个菜单（ChatModelMenu）
   const metaRight =
-    (launchPickOpen || resumePickOpen) && onPickLaunch ? (
+    (launchPickOpen || resumePickOpen || launching) && onPickLaunch ? (
       <>
         {/* 刚选的项目设了对话默认，Agent 跟着换了：说一声（几秒后自己消失） */}
         {launchPick?.autoNote && (

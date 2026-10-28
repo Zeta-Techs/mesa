@@ -2405,7 +2405,8 @@ select:focus-visible {
 }
 
 /* 发送钮 = M▁ 那块光标（2026-10-22 用户：圆形按钮做成图标里的小方块）：横向圆角块。
-   empty 灰块；ready 琥珀 + 一点余辉（浅色底不加，发脏）；stop 琥珀描边 + 实心方块，不闪 */
+   empty 灰块；ready 琥珀 + 一点余辉（浅色底不加，发脏）；stop 琥珀描边 + 实心方块，不闪；
+   sending（发出后还在交，2026-10-28）琥珀实心方块暗一档——发送全程不脱琥珀色，不闪一段灰 */
 .ccode-send-block {
   display: inline-flex;
   flex-shrink: 0;
@@ -2418,7 +2419,8 @@ select:focus-visible {
   transition:
     background-color 120ms var(--ccode-motion-ease),
     box-shadow 120ms var(--ccode-motion-ease),
-    color 120ms var(--ccode-motion-ease);
+    color 120ms var(--ccode-motion-ease),
+    opacity 120ms var(--ccode-motion-ease);
 }
 /* 没字时只留一个很淡的箭头，不铺灰块（2026-10-25 用户对照 Claude 客户端：空着的发送块像一个按不了的按钮杵在那） */
 .ccode-send-block[data-state="empty"] {
@@ -2426,6 +2428,12 @@ select:focus-visible {
   color: var(--color-l4);
   opacity: 0.55;
   cursor: not-allowed;
+}
+.ccode-send-block[data-state="sending"] {
+  background: var(--color-mesa-amber);
+  color: var(--color-mesa-amber-ink);
+  opacity: 0.55;
+  cursor: progress;
 }
 .ccode-send-block[data-state="ready"] {
   background: var(--color-mesa-amber);
@@ -2444,7 +2452,8 @@ select:focus-visible {
 .ccode-send-block[data-state="stop"]:hover {
   background: color-mix(in srgb, var(--color-mesa-amber) 12%, transparent);
 }
-[data-theme$="-light"] .ccode-send-block[data-state="ready"] {
+[data-theme$="-light"] .ccode-send-block[data-state="ready"],
+[data-theme$="-light"] .ccode-send-block[data-state="sending"] {
   box-shadow: none;
 }
 [data-theme$="-light"] .ccode-send-block[data-state="stop"] {

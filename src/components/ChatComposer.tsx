@@ -132,13 +132,19 @@ function SendBlock({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      data-state={disabled ? "empty" : "ready"}
+      // 发出后还在交（写进终端 / 起进程）的那段：半透明琥珀 + 实心方块（sending），与停止块同一副样子，
+      // 只暗一档——不在这段落回灰块再等 running 翻真换琥珀，发送钮全程不脱琥珀色（2026-10-28 用户）
+      data-state={disabled ? (busy ? "sending" : "empty") : "ready"}
       title={queued ? (queuedTitle ?? "排队：这一轮结束后处理（Enter 也是）") : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
       aria-label={queued ? (!queuedLabel || queuedLabel === "排队" ? "排队发送" : queuedLabel) : "发送"}
       aria-busy={busy || undefined}
       className="ccode-send-block"
     >
-      <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" />
+      {busy ? (
+        <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+      ) : (
+        <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" />
+      )}
     </button>
   );
 }
@@ -531,6 +537,37 @@ export default function ChatComposer({
     ro.observe(parent);
     return () => ro.disconnect();
   }, [viewing]);
+  // 开聊那一帧输入框从居中空态沉到底部：FLIP——空态时记下自己的纵向位置，切出空态的提交先按差值
+  // 整体拉回原位、再过渡回 0，位置变化走 260ms 滑动而不是整块瞬移（2026-10-28 用户：开聊过程要流畅）。
+  // 反方向（收起看图标注台回到空态）保持瞬切：那时注意力在图上，不在框的位置
+  const emptyTopRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    if (narrow) {
+      emptyTopRef.current = el.getBoundingClientRect().top;
+      return;
+    }
+    const from = emptyTopRef.current;
+    emptyTopRef.current = null;
+    const dy = from == null ? 0 : from - el.getBoundingClientRect().top;
+    if (dy < 8 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    el.style.transform = `translateY(${dy}px)`;
+    el.style.transition = "none";
+    const settle = () => {
+      el.style.transition = "";
+      el.style.transform = "";
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.style.transition = "transform 260ms var(--ccode-motion-ease)";
+        el.style.transform = "";
+      });
+    });
+    el.addEventListener("transitionend", settle, { once: true });
+    // 兜底：transitionend 不来（动画中途被打断、标签切走）也要清掉内联样式
+    window.setTimeout(settle, 420);
+  });
   const viewed = viewing ? attachments.find((a) => a.path === viewing && a.url) : undefined;
   const stageOpen = Boolean(viewed);
   useEffect(() => {
