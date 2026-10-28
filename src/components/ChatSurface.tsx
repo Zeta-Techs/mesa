@@ -322,6 +322,9 @@ export default function ChatSurface({
   // 往上翻了一段：底部正中浮一枚「回到最新」（2026-10-26 用户）。离底一点就冒出来太吵（同日用户：「不要离底立马就显现，
   // 用户可能需要的时候再显示」），一屏又太晚（同日二改）：离底超过三分之一屏（至少 160px）才出；底下来了新内容另由 hasNew 叫出来
   const [awayFromBottom, setAwayFromBottom] = useState(false);
+  // 正停在最底（离底不到 2px）：底部渐隐只盖内容栏的 pb-6 留白；一往上翻就换成高的那段，
+  // 字在 48px 里慢慢淡掉，不再在输入框上方剩半截字（2026-10-28 用户：「输入框上面有一条缝」）
+  const [atEnd, setAtEnd] = useState(true);
   const [stuckWaiting, setStuckWaiting] = useState(false);
   const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -406,6 +409,7 @@ export default function ChatSurface({
     followRef.current = true;
     setHasNew(false);
     setAwayFromBottom(false);
+    setAtEnd(true);
     el.scrollTop = el.scrollHeight;
   }
 
@@ -1337,6 +1341,7 @@ export default function ChatSurface({
           followRef.current = atBottom || (followRef.current && el.scrollTop >= lastScrollTopRef.current - 1);
           lastScrollTopRef.current = el.scrollTop;
           setAwayFromBottom(farFromBottom(el));
+          setAtEnd(el.scrollHeight - el.scrollTop - el.clientHeight < 2);
           if (atBottom) setHasNew(false);
         }}
         // 浏览器自带的滚动锚定关掉，由 useReadingAnchor 一家做（两家叠着会补两遍）
@@ -1518,7 +1523,12 @@ export default function ChatSurface({
           // 往上翻时贴边这一段淡得明显（同日用户：「渐隐更突出一点，思考中只底部一点点」；曲线见 App.css .ccode-chat-fade）。
           // 高度与内容栏 pb-6 相同（2026-10-27 用户：「思考中」遮得太多、底部每次都发糊，贴着输入框还漏一条半透明的字）：
           // 停在底部时只盖留白、不碰最后一行；往上翻时字在这 24px 里收尽，贴着输入框那一截已是实底，不再透出一条字
-          <div aria-hidden="true" className="ccode-chat-fade pointer-events-none sticky bottom-0 -mt-6 h-6" />
+          // 往上翻着时换成 48px 的长渐隐（atEnd）：24px 只够盖住半行，翻上去时贴着输入框总剩一条半截的字（2026-10-28 用户「一条缝」）
+          <div
+            aria-hidden="true"
+            data-tall={atEnd ? undefined : ""}
+            className={`ccode-chat-fade pointer-events-none sticky bottom-0 ${atEnd ? "-mt-6 h-6" : "-mt-12 h-12"}`}
+          />
         )}
         {!emptyLayout && (awayFromBottom || hasNew) && (
           // 回到最新（2026-10-26 用户：往上翻找内容时要有个悬浮按钮回到最新）：离底超过三分之一屏，或底下来了新内容才出现。

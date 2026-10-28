@@ -2265,6 +2265,18 @@ select:focus-visible {
     var(--color-canvas) 100%
   );
 }
+/* 往上翻着（data-tall，48px）：一行字（约 30px）整个落在渐隐里慢慢淡掉，不是 24px 里只透出半截字的一条缝（2026-10-28 用户） */
+.ccode-chat-fade[data-tall] {
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in srgb, var(--color-canvas) 30%, transparent) 25%,
+    color-mix(in srgb, var(--color-canvas) 70%, transparent) 50%,
+    color-mix(in srgb, var(--color-canvas) 92%, transparent) 72%,
+    var(--color-canvas) 88%,
+    var(--color-canvas) 100%
+  );
+}
 /* 输入框浮起靠顶部 1px 内高光（同 .ccode-float-surface 的 edge highlight，零阴影）；浅色白底上白高光看不见，改底边极淡内暗线。
    聚焦只把边框换成 l4（ChatComposer 上的 focus-within:border-l4）；2026-10-23 试过双圈柔环，用户要求恢复，勿再改 */
 .ccode-composer-box {
