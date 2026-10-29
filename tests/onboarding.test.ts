@@ -8,6 +8,7 @@ import {
   doneStepIds,
   isStepDone,
   newlyDone,
+  officialShortcutLabel,
   onboardingProgress,
   parseOnboarding,
   serializeOnboarding,
@@ -159,4 +160,27 @@ test("三段分组按顺序覆盖全部七步、不重不漏", () => {
     ONBOARDING_PHASES.flatMap((p) => p.steps),
     ONBOARDING_STEPS.map((s) => s.id),
   );
+});
+
+test("官方账号已登录：安装完成后的下一步提示指向一键接入，不再让人建网关", () => {
+  const n = completionNotice("install", "gateway", {
+    installedLabel: "Claude Code",
+    officialLabel: "Claude Code",
+  });
+  assert.ok(n.text.startsWith("Claude Code 装好了\n"));
+  assert.ok(n.text.includes(officialShortcutLabel("Claude Code")));
+  assert.ok(!n.text.includes("新建网关"));
+  assert.ok(completionNotice("install", "gateway", { installedLabel: "Codex" }).text.includes("新建网关"));
+});
+
+test("一键接入后有了连接：网关、连接两步按数据自动打勾，直接到开聊", () => {
+  const facts: OnboardingFacts = {
+    ...blank,
+    installedAgents: ["claude-code"],
+    profileCount: 1,
+    officialReady: ["claude-code"],
+  };
+  const p = onboardingProgress(facts, active);
+  assert.deepEqual(doneStepIds(p), ["install", "gateway", "connection"]);
+  assert.equal(p.current, "chat");
 });

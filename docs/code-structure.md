@@ -267,6 +267,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              #   useOnboardingRail / OnboardingRing（App 侧栏行用）+ OnboardingPageStrip（连接页页头下方当前步引导条）+
                              #   openOnboardingGuide（帮助菜单 / ⌘K）。各步动作走既有一次性请求（gatewayLibraryReq / profileModalReq /
                              #   newProjectOpenReq / settingsSectionReq / openQuickChat），不自己开弹窗
+                             #   官方账号一键接入（2026-10-29）：Host 在引导进行中且没有连接时对已装 Agent 只读探测 official_account_status，
+                             #   已登录的记进 store.onboardingOfficialReady（facts.officialReady），网关步主按钮变「用 X 官方账号」直接建官方连接
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
                              # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/

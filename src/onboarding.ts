@@ -26,6 +26,8 @@ export type OnboardingFacts = {
   userSessionCount: number;
   /** 已添加（登记）的项目数 */
   projectCount: number;
+  /** 已装好且官方账号已登录的 agent id（只在还没有连接时探测）：有就能一键接入，不必建网关 */
+  officialReady?: readonly string[];
 };
 
 /** unset = 还没判定过；active = 引导进行中；dismissed = 用户收起或老用户；done = 全部完成 */
@@ -205,6 +207,11 @@ export function newlyDone(
   );
 }
 
+/** 一键接入官方账号的按钮文案（清单、欢迎页、连接页引导条共用） */
+export function officialShortcutLabel(agentLabel: string): string {
+  return `用 ${agentLabel} 官方账号`;
+}
+
 /**
  * 首次判定（只在 status 为 unset 时做一次，之后不再按数据回头改）：
  * 已有连接的是老用户，引导直接收起（不弹欢迎页、不占侧栏，帮助菜单可再打开）；
@@ -236,13 +243,15 @@ function doneHeadline(
 /** 「下一步」那一句；官方账号跳过网关时，添加连接要选「官方账号」 */
 function nextLine(
   next: OnboardingStepId,
-  ctx: { officialPath?: boolean },
+  ctx: { officialPath?: boolean; officialLabel?: string | null },
 ): string {
   switch (next) {
     case "install":
       return "下一步：到连接页装一个 Agent，任选一家点「安装」。";
     case "gateway":
-      return "下一步：新建网关。打开网关库，选服务商、贴密钥，测试通过后保存。";
+      return ctx.officialLabel
+        ? `你已经登录了 ${ctx.officialLabel} 官方账号，点下面「用 ${ctx.officialLabel} 官方账号」就接好了，不用建网关。要用服务商的密钥，再打开网关库新建。`
+        : "下一步：新建网关。打开网关库，选服务商、贴密钥，测试通过后保存。";
     case "connection":
       return ctx.officialPath
         ? "下一步：添加连接。在连接页点「+ 添加连接」，账号类型选「官方账号」，再按提示登录。"
@@ -265,7 +274,11 @@ function nextLine(
 export function completionNotice(
   completed: OnboardingStepId,
   next: OnboardingStepId | null,
-  ctx: { installedLabel?: string | null; officialPath?: boolean } = {},
+  ctx: {
+    installedLabel?: string | null;
+    officialPath?: boolean;
+    officialLabel?: string | null;
+  } = {},
 ): { text: string; tone: "success" | "info" } {
   if (next === null) {
     return {

@@ -1,16 +1,18 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Check, ChevronRight, X } from "lucide-react";
 import { useAppStore } from "../store";
 import { openQuickChat } from "../quick-chat-launch";
 import { dismissToast, toast, type ToastAction } from "../toast";
-import { AGENTS } from "../types";
+import { AGENTS, type OfficialAccountStatusDto } from "../types";
 import {
   completionNotice,
   decideInitialStatus,
   doneStepIds,
   newlyDone,
   ONBOARDING_PHASES,
+  officialShortcutLabel,
   onboardingProgress,
   phaseOf,
   stepById,
@@ -49,6 +51,7 @@ export function useOnboardingFacts(): OnboardingFacts | null {
   // 取引用、在 memo 里数：选择器里现数会在每次 store 更新时把整份会话表扫一遍
   const sessions = useAppStore((s) => s.sessions);
   const projectCount = useAppStore((s) => s.projectPaths.length);
+  const officialReady = useAppStore((s) => s.onboardingOfficialReady);
   return useMemo(() => {
     if (agents.length === 0) return null;
     const installed = new Set(agents.filter((a) => a.binaryPath).map((a) => a.id));
@@ -58,8 +61,9 @@ export function useOnboardingFacts(): OnboardingFacts | null {
       profileCount,
       userSessionCount: sessions.filter((session) => !session.internal).length,
       projectCount,
+      officialReady,
     };
-  }, [agents, gatewayCount, profileCount, sessions, projectCount]);
+  }, [agents, gatewayCount, profileCount, sessions, projectCount, officialReady]);
 }
 
 /** 帮助菜单 / 命令面板「上手引导」：收起过的重新打开，然后弹出清单 */
@@ -73,6 +77,26 @@ export function openOnboardingGuide() {
 
 function ack(id: OnboardingStepId) {
   useAppStore.getState().ackOnboarding(id);
+}
+
+/** 一键接入：加一条「官方账号」连接（同连接页组头「＋ 官方账号」，名字后端固定、不要网关和密钥）；
+ *  有了连接，网关、连接两步按数据自动打勾 */
+async function connectOfficialAccount(agent: string) {
+  try {
+    await useAppStore.getState().saveProfile(null, {
+      agent,
+      name: "官方账号",
+      accountType: "official",
+      noAuth: false,
+      protocol: null,
+      baseUrl: null,
+      models: [],
+      extraEnv: {},
+      apiKey: null,
+    });
+  } catch (e) {
+    toast(`接入失败：${String(e)}`, "error");
+  }
 }
 
 type StepAction = {
@@ -102,9 +126,16 @@ function stepActions(id: OnboardingStepId, facts: OnboardingFacts): StepAction[]
       ];
     case "gateway":
       return [
+        ...(facts.profileCount === 0
+          ? (facts.officialReady ?? []).slice(0, 2).map((agent, i) => ({
+              label: officialShortcutLabel(labelOf(agent) ?? agent),
+              primary: i === 0,
+              run: () => void connectOfficialAccount(agent),
+            }))
+          : []),
         {
           label: "打开网关库",
-          primary: true,
+          primary: !facts.officialReady?.length || facts.profileCount > 0,
           run: () => {
             s().setPage("profiles");
             s().setGatewayLibraryReq({ token: Date.now(), create: facts.gatewayCount === 0 });
@@ -321,6 +352,36 @@ export function OnboardingHost({ ready }: { ready: boolean }) {
     updateOnboarding({ status, welcomed: status !== "active" });
   }, [ready, facts, state.status, updateOnboarding]);
 
+  // 引导进行中、还没有连接时，看已装的 Agent 里谁已登录官方账号（只读 auth 文件）；已有连接就不再探测
+  const probeKey =
+    ready && facts && state.status === "active" && facts.profileCount === 0
+      ? facts.installedAgents.join(",")
+      : null;
+  useEffect(() => {
+    const setReady = useAppStore.getState().setOnboardingOfficialReady;
+    if (probeKey === null) {
+      setReady([]);
+      return;
+    }
+    if (!probeKey) return;
+    let cancelled = false;
+    void Promise.all(
+      probeKey.split(",").map(async (id) => {
+        try {
+          const st = await invoke<OfficialAccountStatusDto>("official_account_status", { agentId: id });
+          return st.supported && st.connected ? id : null;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((ids) => {
+      if (!cancelled) setReady(ids.filter((id): id is string => !!id));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [probeKey]);
+
   const prevDone = useRef<OnboardingStepId[] | null>(null);
   useEffect(() => {
     if (!ready || !facts) return;
@@ -336,6 +397,7 @@ export function OnboardingHost({ ready }: { ready: boolean }) {
     const notice = completionNotice(fresh[fresh.length - 1]!, progress.current, {
       installedLabel: labelOf(facts.installedAgents[0]),
       officialPath,
+      officialLabel: labelOf(facts.officialReady?.[0]),
     });
     if (progress.current === null) {
       dismissToast(TOAST_KEY);
@@ -373,9 +435,11 @@ function OnboardingWelcome({ facts }: { facts: OnboardingFacts }) {
   const progress = onboardingProgress(facts, state);
   const current = progress.current;
   const close = () => updateOnboarding({ welcomed: true });
+  const primary = current ? stepActions(current, facts).find((a) => a.primary) : undefined;
+  const oneClickOfficial = current === "gateway" && !!facts.officialReady?.length && facts.profileCount === 0;
   const start = () => {
     close();
-    if (current) stepActions(current, facts).find((a) => a.primary)?.run();
+    primary?.run();
   };
   return (
     <Modal
@@ -396,12 +460,21 @@ function OnboardingWelcome({ facts }: { facts: OnboardingFacts }) {
             先自己看看
           </button>
           <button type="button" className={primaryActionClass} onClick={start}>
-            {current ? `开始：${stepById(current).title}` : "开始使用"}
+            {oneClickOfficial && primary
+              ? primary.label
+              : current
+                ? `开始：${stepById(current).title}`
+                : "开始使用"}
           </button>
         </>
       }
     >
       <p className="text-sm leading-6 text-l2">第一次用，先花几分钟把 AI 接上。分三段，照着走就行：</p>
+      {oneClickOfficial && (
+        <p className="mt-2 rounded-md ccode-well px-3 py-2 text-xs leading-5 text-l2">
+          检测到你已经登录了 {labelOf(facts.officialReady![0])} 官方账号：点右下角「{primary?.label}」，一步接好，不用建网关，直接去聊天。
+        </p>
+      )}
       <div className="mt-4 space-y-4">
         {phasedSteps(progress).map((phase) => (
           <section key={phase.label}>
@@ -619,11 +692,17 @@ function OnboardingPanel({ facts }: { facts: OnboardingFacts }) {
 }
 
 /** 连接页引导条在每一步写什么（只覆盖在连接页上做的几步） */
-function stripText(id: OnboardingStepId, officialPath: boolean): string | null {
+function stripText(
+  id: OnboardingStepId,
+  officialPath: boolean,
+  officialLabel: string | null,
+): string | null {
   switch (id) {
     case "install":
       return "在下面任选一家点「安装」，没有偏好就从 Claude Code 或 Codex 开始。安装要联网下载，在国内网络慢或失败时，先填出网代理再装。";
     case "gateway":
+      if (officialLabel)
+        return `你已经登录了 ${officialLabel} 官方账号，点下面「${officialShortcutLabel(officialLabel)}」就接好了，不用建网关。要用服务商的密钥，再点右上「网关库」→「+ 新建网关」。`;
       return "点右上「网关库」→「+ 新建网关」：选服务商、贴密钥，测试通过后保存。用官方订阅账号登录的，可以跳过这一步。";
     case "connection":
       return officialPath
@@ -647,7 +726,7 @@ export function OnboardingPageStrip() {
   const current = progress.current;
   if (!current || current === hiddenStep) return null;
   const officialPath = isOfficialPath(facts, state.acks);
-  const text = stripText(current, officialPath);
+  const text = stripText(current, officialPath, labelOf(facts.officialReady?.[0]));
   if (!text) return null;
   const index = progress.steps.findIndex((s) => s.step.id === current) + 1;
   const actions = stepActions(current, facts).filter((a) => !a.toProfiles);
