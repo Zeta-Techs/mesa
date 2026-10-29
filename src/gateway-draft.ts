@@ -9,6 +9,7 @@ import {
   agentForSlot,
   firstFilledCatalogSlot,
   PROBEABLE_GATEWAY_SLOTS,
+  slotForAgent,
   type GatewaySlotName,
 } from "./gateway-slot.ts";
 
@@ -124,6 +125,26 @@ export function primaryProbeSlot(
   const catalog = catalogFetchSlot(slots, masterUrl, prefer);
   if (catalog && PROBEABLE_GATEWAY_SLOTS.includes(catalog)) return catalog;
   return firstProbeableSlot(slots, masterUrl);
+}
+
+/** 网关库「测试」用哪个模型：先用这条网关上同协议槽的连接真在用的启动模型（测的就是会被拉起的那个），
+ * 没有再取目录里同槽未过期的、任一未过期的。聚合站（New API 一类）目录里常列着后台没有可用渠道的模型，
+ * 拿目录第一个去测会把能用的网关误报成失败（2026-10-29 实证：HTTP 500 No available channel for model）。 */
+export function gatewayProbeModel(
+  models: GatewayModel[],
+  slot: GatewaySlotName,
+  bound: { agent: string; protocol?: string | null; models: string[] }[],
+): string | null {
+  for (const b of bound) {
+    if (slotForAgent(b.agent, b.protocol) !== slot) continue;
+    const m = b.models.find((id) => id.trim());
+    if (m) return m;
+  }
+  return (
+    models.find((m) => m.status !== "stale" && m.catalogSlot === slot)?.id ??
+    models.find((m) => m.status !== "stale")?.id ??
+    null
+  );
 }
 
 export function parseHeaderEnv(text: string): Record<string, string> {

@@ -30,6 +30,7 @@ import {
   catalogSlotWalkOrder,
   effectiveSlotUrl,
   fetchModelsInvokeArgs,
+  gatewayProbeModel,
   primaryProbeSlot,
   parseHeaderEnv,
   probeDtoToSummary,
@@ -849,6 +850,11 @@ export default function GatewayLibrary({
     }
   }
 
+  function probeModelFor(slot: GatewaySlotName): string | null {
+    const id = editing !== null && editing !== "new" ? editing.id : null;
+    return gatewayProbeModel(models, slot, id ? profiles.filter((p) => p.gatewayId === id) : []);
+  }
+
   async function probeOne(slot: GatewaySlotName, basicOnly: boolean) {
     if (slot === "cursor" || slot === "gemini") {
       setError(slot === "cursor" ? "Cursor 为专有协议，不支持网关体检" : "Gemini 协议暂不支持网关体检");
@@ -865,10 +871,7 @@ export default function GatewayLibrary({
       const dto = await invoke<GatewayProbeDto>("probe_gateway_slot", {
         gatewayId: editing !== null && editing !== "new" ? editing.id : null,
         slot,
-        model:
-          models.find((m) => m.status !== "stale" && m.catalogSlot === slot)?.id ??
-          models.find((m) => m.status !== "stale")?.id ??
-          null,
+        model: probeModelFor(slot),
         basicOnly,
         baseUrl,
         apiKey: noAuth ? null : apiKey.trim() || null,
@@ -916,10 +919,7 @@ export default function GatewayLibrary({
           const dto = await invoke<GatewayProbeDto>("probe_gateway_slot", {
             gatewayId: editing !== null && editing !== "new" ? editing.id : null,
             slot,
-            model:
-              models.find((m) => m.status !== "stale" && m.catalogSlot === slot)?.id ??
-              models.find((m) => m.status !== "stale")?.id ??
-              null,
+            model: probeModelFor(slot),
             basicOnly: true,
             baseUrl: effectiveSlotUrl(slots, slot, masterUrl),
             apiKey: noAuth ? null : apiKey.trim() || null,
