@@ -1489,19 +1489,32 @@ export default function ChatSurface({
             />
             </ChatImageEditContext.Provider>
           )}
-          {(livePreview.length > 0 || thinkingPreview) && (
+          {livePreview.length > 0 && (
             // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。
             // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
             // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳。
-            // 显示的是终端里的思考（Grok 思考框、Kimi「thinking…」下的两行）时换成别家思考展开后的样子（ConversationView 过程「思考」行的正文）：
-            // 过程行那一档字号（.ccode-chat-meta）、左边一条细线，与正文分开（2026-10-26 用户：思考和正文区分不开）
-            <div
-              className={`mb-2 whitespace-pre-wrap break-words text-l3 ${
-                livePreview.length > 0 ? "ccode-chat-body" : "ccode-chat-meta border-l border-hairline pl-3 leading-relaxed"
-              }`}
-            >
+            <div className="ccode-chat-body mb-2 whitespace-pre-wrap break-words text-l3">
               {livePreviewText}
               {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
+            </div>
+          )}
+          {livePreview.length === 0 && thinkingPreview && (
+            // 终端里的思考（Grok 思考框、Kimi「thinking…」下的两行）：上面固定一行「M▁ 思考中」，原文在下面，
+            // 换成别家思考展开后的样子（ConversationView 过程「思考」行的正文：过程行那一档字号 .ccode-chat-meta、左边一条细线，
+            // 与正文分开，2026-10-26 用户）。Kimi 的思考原文读屏时有时无，原先在这一块与「M▁ 思考中」那一行之间整块换样子；
+            // 现在表头不动，只有下面的原文出没（2026-10-29 用户）
+            <div className="mb-2">
+              <div className="mb-1 flex min-w-0 items-center gap-2 text-xs text-l3">
+                <MesaStatusLead text="思考中" motion="breathe" sweep={!trustPrompt} />
+                {genElapsed >= 10 && (
+                  <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
+                    {fmtElapsed(genElapsed)}
+                  </span>
+                )}
+              </div>
+              <div className="ccode-chat-meta whitespace-pre-wrap break-words border-l border-hairline pl-3 leading-relaxed text-l3">
+                {livePreviewText}
+              </div>
             </div>
           )}
           {running && !connIssue && channel?.retry && (
