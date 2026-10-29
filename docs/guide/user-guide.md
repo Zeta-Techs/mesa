@@ -1666,6 +1666,7 @@ Mesa 自己的对话命名（列表里「1017|功能|…」那种标题）和这
 |---|---|
 | 一运行就 404 | 地址末尾的 `/v1` Mesa 会按各家要求自动处理：Claude 和 Gemini 的地址**会自动剥掉**末尾的 `/v1`（这两家的 CLI 自己会补 `/v1` 一段，带了就重复），CodeBuddy 用网关的 **OpenAI 地址**（它会在地址后面直接接 `/chat/completions`，地址本身要不要带 `/v1` 照网关的 OpenAI 说明填）；Codex / Kimi / Qwen 一般**要**带 `/v1` |
 | Gemini 报「Model … was not found or is invalid」 | 这个模型在中转的 **Gemini 协议端点**上不存在（同一模型走别的协议可能能用）。换网关目录里有的模型，或去网关库确认 gemini 槽地址 |
+| 网关库 **测试** 报 `HTTP 500 … No available channel for model …` | 网关目录里列着这个模型，但网关后台没有能接通它的线路（New API 一类聚合站常见），不代表整个网关不能用。**测试** 优先测这个网关上已绑连接在用的模型，还没绑连接时才拿目录里的模型；先在 **Agent 配置** 里选一个你确定能用的模型绑上，再点 **测试** |
 | 智谱还要给 Codex 用 | 普通槽 `paas/v4`，Responses 槽 `api/v1`；勾「同时绑到 Codex」预设会自动补 |
 | 智谱：Claude、Codex 能用，Grok / Qwen / OpenCode 报「余额不足或无可用资源包」 | 你买的是 **Coding Plan 套餐**，但 OpenAI 槽填的是按量计费地址 `https://open.bigmodel.cn/api/paas/v4`——这个地址只扣账户余额，不抵扣套餐。到网关库把 OpenAI 槽改成 `https://open.bigmodel.cn/api/coding/paas/v4`（国际站 `api.z.ai` 同理）。新建时直接选预设「智谱 GLM Coding Plan（套餐）」就是这个地址；填错时地址下方会出黄色提示。「测试」和「获取模型」在两个地址上都能通过，看不出这个问题 |
 | Cursor | 没有通用预设。`CURSOR_API_KEY` 只能是 cursor.com 的用户 API Key，填 GLM 这类网关的钥匙会报 API key is invalid。要用 Cursor，选 **官方账号**，终端里执行 `cursor-agent login` |

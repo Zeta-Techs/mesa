@@ -10,6 +10,7 @@ import {
   fetchedIdsToModels,
   fetchModelsInvokeArgs,
   firstProbeableSlot,
+  gatewayProbeModel,
   parseHeaderEnv,
   primaryProbeSlot,
   probeDtoToSummary,
@@ -18,6 +19,7 @@ import {
   slotsFollowMaster,
 } from "../src/gateway-draft.ts";
 import { agentForSlot } from "../src/gateway-slot.ts";
+import type { GatewayModel } from "../src/types.ts";
 
 const same = {
   anthropic: "https://ent.example.com/v1",
@@ -81,6 +83,25 @@ test("primaryProbeSlot 同址时用上次成功的槽，不误打 Anthropic", ()
   };
   assert.equal(primaryProbeSlot(all, "https://ent.example.com/v1", "responses"), "responses");
   assert.equal(primaryProbeSlot(all, "https://ent.example.com/v1"), "anthropic");
+});
+
+test("gatewayProbeModel：先测同槽连接在用的模型，不拿目录第一个误报失败", () => {
+  const catalog = [
+    { id: "gpt-5.5-search", status: "available", catalogSlot: "anthropic" },
+    { id: "old", status: "stale", catalogSlot: "responses" },
+    { id: "gpt-6-luna", status: "available", catalogSlot: "anthropic" },
+  ] as GatewayModel[];
+  const bound = [
+    { agent: "gemini", models: ["gemini-4-argon"] },
+    { agent: "codex", protocol: null, models: ["", "gpt-6-sol"] },
+    { agent: "claude-code", models: ["gpt-6-luna"] },
+  ];
+  assert.equal(gatewayProbeModel(catalog, "anthropic", bound), "gpt-6-luna");
+  assert.equal(gatewayProbeModel(catalog, "responses", bound), "gpt-6-sol");
+  // 没有同槽连接：目录同槽未过期 → 任一未过期
+  assert.equal(gatewayProbeModel(catalog, "openai", bound), "gpt-5.5-search");
+  assert.equal(gatewayProbeModel(catalog, "anthropic", []), "gpt-5.5-search");
+  assert.equal(gatewayProbeModel([], "responses", []), null);
 });
 
 test("catalogFetchSlot 用有效地址（含主输入）挑槽", () => {
