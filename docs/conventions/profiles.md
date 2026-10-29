@@ -353,6 +353,12 @@ Grok 还须同时写 `[models].default` = 本次启动模型（2026-09-20 1.0.34
 
 **Codex 网关绑定额外注入** `-c web_search="disabled"` 与 `-c service_tier="auto"`：ChatGPT 登录/磁盘默认会把官方 hosted 网页搜索和订阅优先档带进本进程；catalog 的 `supports_search_tool: false` 挡不住请求。DeepSeek 等中转会拒 `web_search`（有的网关转成 Anthropic `web_search_20250305`）。只盖本进程，官方账号启动不注。**按 codex 版本分（2026-10-19，本机 0.163 实测）**：0.163 起 CLI 自己丢掉模型目录 / 兜底元数据没声明的档位（配置里的 priority 不会带到中转），再塞 `service_tier="auto"` 只会每次报「not advertised」warning，故只给旧版与查不到版本时塞；交互式启动（内嵌 / 外部终端，经 `prepare_launch`）在 0.163 起加 `--no-daemon`——Mesa 一律 -c 注入，只能不走共享后台服务，明说才不报「Running without the shared background server」。**`exec` 不认 `--no-daemon`，不得加进 `launch_plan`**（无头调用共用）。版本取检测缓存，缺了现查 `--version`；查不到按旧版参数，保证起得来。
 
+**Codex 交互式启动关掉它自己的更新提示（2026-10-29 用户拍板）**：`prepare_launch` 对所有版本、官方与网关都加 `-c check_for_update_on_startup=false`。
+Codex 的「Update available」在对话中途跑 `brew upgrade` / npm 更新、跑完就退出；打包版 v0.1.0 子进程 PATH 短，点了直接报 `os error 2` 退出码 1。
+CLI 更新统一走连接页组头「新版 / 更新」（`updater.rs`，brew 装的走 `brew upgrade`、npm 装的用同目录 npm）。只加在本次命令行，不写 `config.toml`；
+`exec` 本来不检查更新，不进 `launch_plan`。**聊天层旁路下这个 `-c` 必须留给 TUI**（`chat_channel::split_codex_args` 的 TUI 配置键表）：远程 TUI 按本地配置弹提示，
+只给 app-server 关不掉。本机 0.143 / 0.165 PTY 实测（含 `--remote` 新开与恢复）。
+
 **出网代理**（设置 `outbound_proxy`）：只注入官方启动与组头登录（`HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY`）。网关 API 启动不走。连接 `extraEnv` 同名键最后覆盖。不建本地反代理，官方失败不回落中转。
 
 ## 12. 设为全局与托盘

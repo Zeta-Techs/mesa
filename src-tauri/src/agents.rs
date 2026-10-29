@@ -2910,6 +2910,10 @@ pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
         if codex_modern() {
             args.push("--no-daemon".into());
         }
+        // 不弹 Codex 自己的更新提示（2026-10-29 用户：打包版里点它的「更新」跑 `brew upgrade --cask codex`，
+        // 找不到 brew 报 os error 2、Codex 退出码 1）：它在对话中途跑 brew / npm、跑完就退出，更新统一走连接页
+        //「新版 / 更新」。只加在本次命令行上，不写 config.toml；本机 0.143 / 0.165 PTY 实测这个键能关掉提示
+        args.extend(["-c".into(), "check_for_update_on_startup=false".into()]);
     }
     Ok(args)
 }
@@ -6212,6 +6216,28 @@ api_backend = "responses"
         // 别家不受影响
         set(Some((0, 163, 0)));
         assert!(!prepare_launch(&profile("claude-code", Some("https://x"))).unwrap().contains(&"--no-daemon".to_string()));
+        set(None);
+    }
+
+    #[test]
+    fn codex_interactive_launch_turns_off_its_own_update_prompt() {
+        // 新旧版本都带（本机 0.143 / 0.165 都认这个键）；只在交互式启动的命令行上，exec 用的 launch_plan 不带
+        let p = profile("codex", Some("https://relay.example.com/v1"));
+        let set = |v| CODEX_VERSION_FOR_TEST.with(|c| c.set(v));
+        for v in [Some((0, 165, 0)), Some((0, 143, 0)), None] {
+            set(v);
+            let args = prepare_launch(&p).unwrap();
+            assert!(
+                args.windows(2).any(|w| w[0] == "-c" && w[1] == "check_for_update_on_startup=false"),
+                "{v:?}: {args:?}"
+            );
+            let joined = launch_plan(&p, Some("sk".into()), Some("glm-5.3")).unwrap().args.join(" ");
+            assert!(!joined.contains("check_for_update_on_startup"));
+        }
+        assert!(!prepare_launch(&profile("claude-code", Some("https://x")))
+            .unwrap()
+            .iter()
+            .any(|a| a.contains("check_for_update_on_startup")));
         set(None);
     }
 

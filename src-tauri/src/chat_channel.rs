@@ -1987,13 +1987,28 @@ pub(crate) fn merge_settings_key(args: &mut Vec<String>, key: &str, value: Value
 }
 
 /// Codex 参数拆两半：`-c` / `--enable` / `--disable` 配置给 app-server，其余给 TUI；
-/// TUI 加 `--remote` 连私有服务（`resume <id>` 子命令之后）
+/// TUI 加 `--remote` 连私有服务（`resume <id>` 子命令之后）。
+/// 例外：TUI 自己读的配置（更新提示）留给 TUI——远程 TUI 照样按本地配置弹「Update available」，
+/// 只给 app-server 关不掉（2026-10-29 本机 0.165 远程模式 PTY 实测）
 pub(crate) fn split_codex_args(args: &[String], port: u16) -> (Vec<String>, Vec<String>) {
+    const TUI_CONFIG_KEYS: &[&str] = &["check_for_update_on_startup"];
     let mut server = Vec::new();
     let mut tui = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
+        if matches!(a.as_str(), "-c" | "--config")
+            && args.get(i + 1).is_some_and(|v| {
+                TUI_CONFIG_KEYS
+                    .iter()
+                    .any(|k| v.split('=').next().map(str::trim) == Some(k))
+            })
+        {
+            tui.push(a.clone());
+            tui.push(args[i + 1].clone());
+            i += 2;
+            continue;
+        }
         if matches!(a.as_str(), "-c" | "--config" | "--enable" | "--disable") && i + 1 < args.len()
         {
             server.push(a.clone());
@@ -3618,6 +3633,24 @@ mod tests {
         assert_eq!(server, vec!["-c", "approval_policy=\"never\"", "-c", "sandbox_mode=\"danger-full-access\""]);
         let (_, tui) = split_codex_args(&["-m".to_string(), "x".to_string()], 1);
         assert_eq!(tui[0], "--remote");
+    }
+
+    #[test]
+    fn split_codex_args_keeps_update_prompt_switch_on_tui() {
+        // 远程 TUI 按本地配置弹更新提示：开关只给 app-server 关不掉，新开与恢复都得留在 TUI 上
+        for head in [&[][..], &["resume", "abc"][..]] {
+            let args: Vec<String> = head
+                .iter()
+                .chain(["-c", "model_provider=\"ccode\"", "-c", "check_for_update_on_startup=false", "-m", "gpt"].iter())
+                .map(|s| s.to_string())
+                .collect();
+            let (server, tui) = split_codex_args(&args, 1);
+            assert_eq!(server, vec!["-c", "model_provider=\"ccode\""], "{head:?}");
+            assert!(
+                tui.windows(2).any(|w| w[0] == "-c" && w[1] == "check_for_update_on_startup=false"),
+                "{head:?}: {tui:?}"
+            );
+        }
     }
 
     #[test]
