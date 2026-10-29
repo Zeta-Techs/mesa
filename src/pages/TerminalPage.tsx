@@ -2211,6 +2211,11 @@ const TerminalView = memo(function TerminalView({
         });
         if (!cancelled && real) {
           setCwd((cur) => (cur === real ? cur : real));
+          // Agent 自己的真实目录就是这条 Run 的目录（启动栏写的可能是软链 / ~ 写法，后端按 canonical 记）：
+          // 跟着改绑定身份，免得下次启动把同一处目录认成换了、丢掉原会话。回落 shell 里 cd 走才算换目录
+          if (running && !shellActive && boundIdentityRef.current) {
+            boundIdentityRef.current = { ...boundIdentityRef.current, cwd: real };
+          }
         }
       } catch {
         /* PTY 已退出 / 平台不支持（Windows 返回 null 走不到这）：静默 */

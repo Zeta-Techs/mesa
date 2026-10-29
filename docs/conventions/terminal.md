@@ -221,6 +221,8 @@
   `run-model.ts compareRunIdentity` 比标签手上 Run 的绑定身份（本次挂载里启动成功时记下，恢复出的标签取挂载时的值）和这次的
   Agent / 目录 / 权限：只换权限 = 另开 Run、接回原会话；换了 Agent 或目录 = 另开 Run、开新会话（不接原会话、清 `lastResumeRef`）；
   换了目录还放下原目标归属（不带 `taskId`、不带任务类复用键——工作区键在主仓写盘会被判成步骤拒掉）。连接 / 模型 / 思考档不算身份。
+  标签 `cwd` 在进程活着时每 4 秒被真实目录（`pty_get_cwd`）覆盖：Agent 在跑时的真实目录同步进绑定身份（软链 / `~` 写法与后端 canonical
+  记的是同一处，不能认成换目录丢原会话）；回落 shell 里 `cd` 走才算换目录。
   后端身份校验不放宽：带 id 来就必须是同一件事。另：**轮询 / 旁路回调里读 Run 一律用 `runIdRef`**——
   闭包是 launch 那一轮捕获的，读 state 是旧值，`lockLink` 曾因此从不给 Gemini / Kimi / OpenCode 的交互 Run 登记会话；
   存量没登记的 Run 由 `open_at` 在首次带会话恢复时认下（同「首次登记为准」）。
