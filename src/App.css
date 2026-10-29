@@ -1217,7 +1217,9 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 }
 
 /* 分段控件（SegTabs variant="boxed"，2026-10-29 管理页借鉴 Claude 设置页）：浅底外框 + 选中格浮起带细边。
-   选中格深色用 inset、浅色用 raised（浅色主题 inset 近白，浮不起来）。 */
+   选中格深色用 seg-sel（inset 与外框底只差一点，选中只靠描边撑）、浅色用 raised（浅色 seg-sel 是压暗的灰，白格才是浮起）。
+   字号写在这里而不是按钮的 text-xs 上：全站 button { font: inherit } 不在 Tailwind 层里，会把工具类字号吞掉，
+   按钮跟着外层变成 16px、比行标题还抢眼。常规档 14px 与设置行说明同档，紧凑档 12px。 */
 .ccode-seg-boxed {
   gap: 2px;
   padding: 3px;
@@ -1230,13 +1232,15 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   padding-inline: 0.75rem;
   border: 1px solid transparent;
   border-radius: 7px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
   color: var(--color-l3);
 }
 .ccode-seg-boxed-item:hover {
   color: var(--color-l1);
 }
 .ccode-seg-boxed-item:is([aria-selected="true"], [aria-pressed="true"]) {
-  background: var(--color-inset);
+  background: var(--color-seg-sel);
   border-color: var(--color-field);
   color: var(--color-l1);
 }
@@ -1251,6 +1255,8 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   height: 1.5rem;
   padding-inline: 0.55rem;
   border-radius: 6px;
+  font-size: 0.75rem;
+  line-height: 1rem;
 }
 
 /* 工具栏不再包边成盒：与页头共用 hairline 与留白节奏，保持连续工作台观感。 */
