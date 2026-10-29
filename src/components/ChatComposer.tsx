@@ -551,12 +551,20 @@ export default function ChatComposer({
     const from = emptyTopRef.current;
     emptyTopRef.current = null;
     const dy = from == null ? 0 : from - el.getBoundingClientRect().top;
-    if (dy < 8 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // 沉底时 dy 为负（先拉回上方再滑下来），所以取绝对值判断
+    if (Math.abs(dy) < 8 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     el.style.transform = `translateY(${dy}px)`;
     el.style.transition = "none";
+    let timer = 0;
     const settle = () => {
+      window.clearTimeout(timer);
+      el.removeEventListener("transitionend", onEnd);
       el.style.transition = "";
       el.style.transform = "";
+    };
+    // transitionend 会从子元素（发送钮的 120ms 过渡）冒泡上来，只认自己的 transform
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target === el && e.propertyName === "transform") settle();
     };
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -564,9 +572,9 @@ export default function ChatComposer({
         el.style.transform = "";
       });
     });
-    el.addEventListener("transitionend", settle, { once: true });
+    el.addEventListener("transitionend", onEnd);
     // 兜底：transitionend 不来（动画中途被打断、标签切走）也要清掉内联样式
-    window.setTimeout(settle, 420);
+    timer = window.setTimeout(settle, 420);
   });
   const viewed = viewing ? attachments.find((a) => a.path === viewing && a.url) : undefined;
   const stageOpen = Boolean(viewed);
@@ -906,7 +914,7 @@ export default function ChatComposer({
         />
       )}
       {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}
-      <div className={`mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
+      <div className={`ccode-composer-col mx-auto w-full ${narrow ? "max-w-[45rem]" : "ccode-chat-column"}`}>
         {quote && <div className="mb-2 rounded-md border-l-2 border-cta-bd bg-inset px-3 py-1.5 text-xs text-l2" aria-label="引用草稿">
           <div className="flex items-center gap-1.5">
             <Quote size={13} aria-hidden="true" /><span>引用追问</span>

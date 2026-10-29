@@ -3042,6 +3042,15 @@ select:focus-visible {
 .ccode-chat-column {
   max-width: calc(var(--ccode-chat-fs, var(--chat-base)) * 52 + 1rem);
 }
+/* 输入框空态（45rem）与开聊后（栏宽）宽度不同：开聊沉底滑动时宽度跟着过渡，别在滑动起点瞬间变宽（像"放大"） */
+.ccode-composer-col {
+  transition: max-width 260ms var(--ccode-motion-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-composer-col {
+    transition: none;
+  }
+}
 /* 中文排版：中文与英文、数字之间自动留约四分之一字宽（text-autospace；原文已有空格不再加）、
    段末不留孤字（text-wrap: pretty）、句读不落行首（line-break: strict）。macOS 的 WKWebView（本机实测）
    与 Windows 的 WebView2 都认前两项，不认的系统忽略这几行照旧显示。代码里不加间距 */
