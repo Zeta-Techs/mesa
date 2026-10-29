@@ -23,7 +23,7 @@ import {
 import { useAppStore } from "../store";
 import { toast } from "../toast";
 import { AGENTS, type DetectResult, type SkillDto } from "../types";
-import { vendorForGateway } from "../vendor-icon";
+import { vendorForModel } from "../vendor-icon";
 
 type ImageGenGateway = { gatewayId: string; gatewayName: string; models: string[] };
 type ImageGenTest = { dataUrl: string; protocol: string; elapsedMs: number; note?: string | null };
@@ -266,9 +266,10 @@ export default function ImageGenPanel({
         <>
           <div className={`group grid min-h-14 ${gridClass} items-center gap-3 overflow-x-auto border-b border-hairline px-3 text-sm`}>
             <span className="flex min-w-0 items-center gap-2">
-              {/* 还没选网关时给中性的图片图标，不拿「出图」二字的首字当厂商占位（2026-10-27 用户：那个「出」看不懂） */}
-              {gw ? (
-                <VendorIcon vendor={vendorForGateway(gw)} name={gatewayName ?? gw.name} />
+              {/* 图标代表所选模型的厂商（2026-10-29 用户「用所选的模型代表的图标」，与连接页左栏同一个）；
+                  没选或认不出给中性的图片图标，不拿「出图」二字的首字当占位（2026-10-27 用户：那个「出」看不懂） */}
+              {vendorForModel(model) ? (
+                <VendorIcon vendor={vendorForModel(model)} name={model} />
               ) : (
                 <ImageIcon size={16} strokeWidth={1.6} className="shrink-0 text-l4" aria-hidden="true" />
               )}

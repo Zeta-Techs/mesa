@@ -74,3 +74,20 @@ test("官方账号按 Agent 认厂商，OpenCode 没有", () => {
   assert.equal(vendorForOfficialAgent("opencode"), null);
   assert.equal(vendorForUrl("https://generativelanguage.googleapis.com/v1beta"), "gemini");
 });
+
+test("vendorForModel：按模型家族认厂商，认不出给 null", async () => {
+  const { vendorForModel } = await import("../src/vendor-icon.ts");
+  assert.equal(vendorForModel("gpt-image-1"), "openai");
+  assert.equal(vendorForModel("openai/dall-e-3"), "openai");
+  assert.equal(vendorForModel("gemini-2.5-flash-image"), "gemini");
+  assert.equal(vendorForModel("imagen-4.0-generate"), "gemini");
+  assert.equal(vendorForModel("grok-2-image"), "xai");
+  assert.equal(vendorForModel("cogview-4"), "zhipu");
+  assert.equal(vendorForModel("wanx2.1-t2i-turbo"), "alibaba");
+  assert.equal(vendorForModel("qwen-image"), "alibaba");
+  assert.equal(vendorForModel("hunyuan-image"), "tencent");
+  assert.equal(vendorForModel("doubao-seedream-4-0"), null);
+  assert.equal(vendorForModel("flux-1.1-pro"), null);
+  assert.equal(vendorForModel(""), null);
+  assert.equal(vendorForModel(null), null);
+});

@@ -124,3 +124,25 @@ export function vendorForSlots(slots: ProtocolSlots): VendorId | null {
 export function vendorForPlanProvider(provider: string): VendorId | null {
   return provider === "zhipu" || provider === "kimi" || provider === "minimax" ? provider : null;
 }
+
+/** 模型名 → 出这个模型的厂商（出图模型的图标用：2026-10-29 用户「用所选的模型代表的图标」）。
+ *  只认模型家族名，不认中转站；认不出（豆包 Seedream、Flux 等没有图标素材的）返回 null，调用方给中性图标 */
+const MODEL_RULES: [RegExp, VendorId][] = [
+  [/claude|anthropic/, "anthropic"],
+  [/gpt|dall-?e|sora|chatgpt|openai|(^|\/)o[134](-|$)/, "openai"],
+  [/gemini|imagen|veo|nano-?banana|google/, "gemini"],
+  [/grok|aurora|x-?ai\//, "xai"],
+  [/cogview|cogvideo|glm|zhipu/, "zhipu"],
+  [/wanx|wan2|qwen|tongyi|dashscope|alibaba/, "alibaba"],
+  [/hunyuan|tencent/, "tencent"],
+  [/kimi|moonshot/, "kimi"],
+  [/minimax|hailuo|abab/, "minimax"],
+  [/deepseek/, "deepseek"],
+];
+
+export function vendorForModel(model: string | null | undefined): VendorId | null {
+  const m = model?.trim().toLowerCase();
+  if (!m) return null;
+  for (const [re, id] of MODEL_RULES) if (re.test(m)) return id;
+  return null;
+}

@@ -74,7 +74,7 @@ import VendorIcon from "../components/VendorIcon";
 import AgentIcon from "../components/AgentIcon";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
-import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
+import { vendorForModel, vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import {
   loadAgentGroupOrder,
   loadProfileOrder,
@@ -3517,6 +3517,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   // 连接行「改作出图模型」：把这条连接里的出图模型设成出图模型，切到左栏「出图模型」
   const imageGenRef = useRef<HTMLElement | null>(null);
   const imageGenSetting = useAppStore((s) => `${s.settings?.imageGenGatewayId ?? ""}\u0001${s.settings?.imageGenModel ?? ""}`);
+  const imageGenModelName = useAppStore((s) => s.settings?.imageGenModel ?? "");
+  const imageGenVendor = vendorForModel(imageGenModelName);
   async function convertToImageGen(gatewayId: string, model: string) {
     try {
       await setImageGenModel(gatewayId, model);
@@ -3797,8 +3799,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             </div>
             <PaneNavGroup label="其他" />
             <PaneNavItem
-              icon={<ImageIcon size={15} strokeWidth={1.8} aria-hidden="true" />}
+              icon={
+                // 选了出图模型就用这个模型厂商的图标（gpt-image → OpenAI…），没选或认不出给中性图片图标
+                imageGenVendor ? (
+                  <VendorIcon vendor={imageGenVendor} name={imageGenModelName} />
+                ) : (
+                  <ImageIcon size={15} strokeWidth={1.8} aria-hidden="true" />
+                )
+              }
               label="出图模型"
+              title={imageGenModelName ? `出图模型：${imageGenModelName}` : "还没选出图模型"}
               selected={activePane === "image"}
               onClick={() => selectPane("image")}
             />
