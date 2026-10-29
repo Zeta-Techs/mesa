@@ -50,8 +50,9 @@ import {
   ONBOARDING_STORAGE_KEY,
   parseOnboarding,
   serializeOnboarding,
+  type OnboardingAckId,
+  type OnboardingOfficialProbe,
   type OnboardingState,
-  type OnboardingStepId,
 } from "./onboarding";
 import type { ProjectSurfaceTab } from "./project-surface";
 import type {
@@ -729,17 +730,17 @@ interface AppState {
   settingsSectionReq: string | null;
   setSettingsSectionReq: (section: string | null) => void;
   /** 上手引导状态（onboarding.ts；localStorage ccode.onboarding 持久化）。完成与否由数据现算，这里只存
-   *  判定结果、欢迎页看过没有、两步人工确认 */
+   *  判定结果、向导弹过没有、小提示是否讲过 */
   onboarding: OnboardingState;
   updateOnboarding: (patch: Partial<OnboardingState>) => void;
-  /** 记一步人工确认（已记过不重写）；运行页真切到终端时也调它 */
-  ackOnboarding: (id: OnboardingStepId) => void;
-  /** 上手清单浮层开关（侧栏「上手引导」行 / 帮助菜单 / 命令面板共用） */
-  onboardingPanelOpen: boolean;
-  setOnboardingPanelOpen: (open: boolean) => void;
-  /** 已装好且官方账号已登录的 agent（上手引导探测，只读 auth 文件）；有就给一键接入 */
-  onboardingOfficialReady: readonly string[];
-  setOnboardingOfficialReady: (ids: readonly string[]) => void;
+  /** 记一条小提示已知晓（已记过不重写）；运行页真切到终端时也调它 */
+  ackOnboarding: (id: OnboardingAckId) => void;
+  /** 全屏上手向导开关（侧栏「上手引导」行 / 帮助菜单 / 命令面板共用） */
+  onboardingWizardOpen: boolean;
+  setOnboardingWizardOpen: (open: boolean) => void;
+  /** 已装的 Agent 里支持官方账号的探测结果（上手引导，只读 auth 文件）：ready = 已登录可一键接入，login = 还没登录 */
+  onboardingOfficial: OnboardingOfficialProbe;
+  setOnboardingOfficial: (probe: OnboardingOfficialProbe) => void;
   /** 一次性「打开网关库」请求（连接页消费并清空）；create = 打开即进新建表单 */
   gatewayLibraryReq: { token: number; create: boolean } | null;
   setGatewayLibraryReq: (req: { token: number; create: boolean } | null) => void;
@@ -1115,10 +1116,10 @@ export const useAppStore = create<AppState>((set, get) => {
     if (onboarding.acks[id]) return;
     updateOnboarding({ acks: { ...onboarding.acks, [id]: true } });
   },
-  onboardingPanelOpen: false,
-  setOnboardingPanelOpen: (open) => set({ onboardingPanelOpen: open }),
-  onboardingOfficialReady: [],
-  setOnboardingOfficialReady: (ids) => set({ onboardingOfficialReady: ids }),
+  onboardingWizardOpen: false,
+  setOnboardingWizardOpen: (open) => set({ onboardingWizardOpen: open }),
+  onboardingOfficial: {},
+  setOnboardingOfficial: (probe) => set({ onboardingOfficial: probe }),
   gatewayLibraryReq: null,
   setGatewayLibraryReq: (req) => set({ gatewayLibraryReq: req }),
   profileModalReq: null,

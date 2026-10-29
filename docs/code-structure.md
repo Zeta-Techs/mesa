@@ -98,7 +98,7 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
-                             #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，data-onboarding-anchor 供清单定位）
+                             #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，点开全屏向导）
   components/ImageGenPanel.tsx # 出图模型一块（连接页最下方，唯一编辑处；设置页只显示现状跳过来）：组头 + 一行与连接行同列模板
                              #   （gridClass 由连接页传入）；更换走 ImageModelPicker；「试出与对比」自写描述、1–4 个模型并行出图、
                              #   估算进度条、「用这个」；最近用过 / 各模型耗时存 localStorage；setImageGenModel 供连接行「改作出图模型」
@@ -258,17 +258,12 @@ components/ResourceListSection.tsx  # 项目卡资源面板（ProjectGroup，默
   toast.ts                   # 右下角浮动提示总线：toast(msg, tone, { actions, sticky, key }) / dismissToast(key)；带动作按钮、
 exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感批 2026-10-12，约束 design-system「动效口径」）：useExitRender（open→false 后保持挂载 150ms 播 ccode-exiting 逆向退场、退场中重开取消卸载、closeNow 给 commit 路径选中即散）、useAnimatedDismiss（父级控制挂载的弹层把纯 dismiss 推迟成先退场再 onClose）、PageFrame Collapse 五阶段（0fr/1fr 行轨、open 停稳不裁切焦点环）；reduced-motion 时长取 0 立即卸载不留静态残影（Modal/命令面板/右键菜单/抽屉/灵动岛组件等共用；tests/exit-animation.test.ts）
                              #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
-  onboarding.ts              # 上手引导纯逻辑（2026-10-20）：七步步骤表与文案、完成判定（全由数据现算，只有「切到终端看看」
-                             #   「认识对话标题」「官方账号跳过网关」靠确认——终端那步运行页真切过一次也记，store.ackOnboarding）、进度/当前步、新完成集合、首次判定（有连接=老用户收起）、
-                             #   「结果 + 下一步」提示文案、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
-  components/OnboardingGuide.tsx # 上手引导界面：OnboardingHost（App 根部；首屏数据齐后首次判定、步骤完成跃迁弹 sticky 「下一步」
+  onboarding.ts              # 上手引导纯逻辑（2026-10-20；2026-10-29 改三步）：三步表（connect / chat / project）与文案、完成判定（全由数据现算）、connectStage（接上 AI 一屏的子阶段）、
+                             #   进度/当前步、新完成集合、首次判定（有连接=老用户收起）、完成提示与「两个小提示」（终端 + 标题，acks 记已讲过，旧存档的终端 / 标题确认沿用）、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
+  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 已接通」
+  connect-official.ts        # 向导的官方账号接入：probeOfficial（只读 official_account_status，ready / login / none）、connectOfficialAccount（一键加官方连接）、startOfficialLogin（开终端登录标签）
+  components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、官方账号探测（窗口回前台再探）、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
 components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染
-                             #   toast、欢迎页 Modal、清单浮层——贴侧栏 data-onboarding-anchor 行向右展开，侧栏全隐藏时挂帮助下方）+
-                             #   useOnboardingRail / OnboardingRing（App 侧栏行用）+ OnboardingPageStrip（连接页页头下方当前步引导条）+
-                             #   openOnboardingGuide（帮助菜单 / ⌘K）。各步动作走既有一次性请求（gatewayLibraryReq / profileModalReq /
-                             #   newProjectOpenReq / settingsSectionReq / openQuickChat），不自己开弹窗
-                             #   官方账号一键接入（2026-10-29）：Host 在引导进行中且没有连接时对已装 Agent 只读探测 official_account_status，
-                             #   已登录的记进 store.onboardingOfficialReady（facts.officialReady），网关步主按钮变「用 X 官方账号」直接建官方连接
   agent-install.ts           # Agent 安装共用件：AgentCmdResult、diagnose / installToolHelp（isWindows 显式传参，连接页与向导共用）+ useAgentInstall（上手向导就地安装：install_method_preview 先亮命令、事件监听、装完 loadAll；连接页自己的安装 / 更新流程仍在 ProfilesPage）
   components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：presetsForAgent 选预设 → probe_gateway_slot 测试 → saveGateway → bindGateway；自定义端点 / 多槽位去网关库
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）

@@ -69,7 +69,6 @@ import {
 import { addConnectionDefaults, endpointHost, gatewayPickerRows } from "../gateway-option";
 import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
-import { OnboardingPageStrip } from "../components/OnboardingGuide";
 import VendorIcon from "../components/VendorIcon";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
@@ -3653,9 +3652,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             </>
           }
         />
-
-        {/* 上手引导走到安装 / 网关 / 连接 / 第一段对话时，这一步在本页怎么做 */}
-        <OnboardingPageStrip />
 
         {/* 过滤条：状态筛选胶囊（选中=实心 seg-sel）+ 右侧折叠开关与搜索框。
             「全部折叠」是动作不是筛选条件，不跟筛选胶囊挨着摆成第四个选项 */}

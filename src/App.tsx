@@ -306,7 +306,7 @@ const HELP_MENU: {
     feedback?: boolean;
     /** 应用内弹窗（HelpDialogs）：诊断与日志 / 检查更新 / 关于 */
     dialog?: HelpDialogKind;
-    /** 上手引导清单（OnboardingGuide；收起过的会重新打开） */
+    /** 上手引导全屏向导（OnboardingWizard；收起过的会重新打开） */
     guide?: boolean;
   }[];
 }[] = [
@@ -663,9 +663,9 @@ function App() {
               : ""; // 「运行」没有页面快捷键（2026-10-24），存过的旧覆盖值也不算
     return combo ? `（${comboLabel(combo)}）` : "";
   };
-  // 侧栏「上手引导」行：引导进行中才有（进度 + 下一步，点开清单浮层）
+  // 侧栏「上手引导」行：引导进行中才有（进度 + 下一步，点开全屏向导）
   const onboardingRail = useOnboardingRail();
-  const setOnboardingPanelOpen = useAppStore((s) => s.setOnboardingPanelOpen);
+  const setOnboardingWizardOpen = useAppStore((s) => s.setOnboardingWizardOpen);
   const dismissHelpRequest = useAppStore((s) => s.dismissHelpRequest);
   const dismissInbox = useAppStore((s) => s.dismissInbox);
   const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
@@ -2016,21 +2016,18 @@ function App() {
                   </div>
                 )}
 
-                {/* 上手引导（新装才有，做完 / 收起即消失）：贴在系统段上方，进度环 + 下一步，
-                    点开清单浮层向右展开（OnboardingGuide 按 data-onboarding-anchor 定位） */}
+                {/* 上手引导（新装才有，做完 / 收起即消失）：贴在系统段上方，进度环 + 下一步，点开全屏向导 */}
                 {onboardingRail && (
                   <div className="shrink-0 px-1.5 pb-1.5">
                     <RailTooltip
                       label={`上手引导 ${onboardingRail.done}/${onboardingRail.total}${
-                        onboardingRail.next ? ` · 下一步：${onboardingRail.phase} · ${onboardingRail.next}` : ""
+                        onboardingRail.next ? ` · 下一步：${onboardingRail.next}` : ""
                       }`}
                       collapsed={collapsed}
                     >
                       <button
                         type="button"
-                        data-onboarding-anchor
-                        onClick={() => setOnboardingPanelOpen(!onboardingRail.open)}
-                        aria-expanded={onboardingRail.open}
+                        onClick={() => setOnboardingWizardOpen(true)}
                         aria-label="上手引导"
                         className={`relative flex w-full items-center rounded-md text-left transition-colors ${
                           collapsed ? "h-8 justify-center" : "gap-2 px-2.5 py-1.5"
@@ -2310,7 +2307,7 @@ function App() {
           )}
           {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
           <ConfirmDialogHost />
-          {/* 上手引导：首次判定、欢迎页、清单浮层、每做完一步的「下一步」提示 */}
+          {/* 上手引导：首次判定、全屏向导、每做完一步的提示 */}
           <OnboardingHost ready={bootDataReady} />
           <ToastHost />
           {/* 待确认跳转提醒条：通知正文点击无回调（桌面插件限制）的补位——
