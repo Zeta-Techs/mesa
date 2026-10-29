@@ -330,6 +330,62 @@ export default function GatewayLibrary({
   const modelSurfaceGen = useRef(0);
   // 「Agent 配置」区：新建网关保存后滚到这里接着绑
   const bindSectionRef = useRef<HTMLDivElement>(null);
+  // 遮罩点击只认「按下也在遮罩上」：输入框里拖选文字松手落到遮罩外，click 会冒到遮罩上
+  const downOnBackdrop = useRef(false);
+
+  // 未保存判定：打开表单（或保存成功）那一刻的快照 vs 当前填写。逐模型能力声明各自有保存钮、不算在内
+  const formSnapshot = useMemo(
+    () =>
+      JSON.stringify([
+        name,
+        noAuth,
+        slots,
+        masterUrl,
+        apiKey,
+        walletToken,
+        walletUserId,
+        headerText,
+        compatTimeout,
+        compatNoBetas,
+        compatNoThinking,
+        models,
+      ]),
+    [
+      name,
+      noAuth,
+      slots,
+      masterUrl,
+      apiKey,
+      walletToken,
+      walletUserId,
+      headerText,
+      compatTimeout,
+      compatNoBetas,
+      compatNoThinking,
+      models,
+    ],
+  );
+  const [baseline, setBaseline] = useState<string | null>(null);
+  // openEdit 一批 setState 落定后的首个渲染才是表单初值，在这里取基线
+  useEffect(() => {
+    if (editing !== null && baseline === null) setBaseline(formSnapshot);
+  }, [editing, baseline, formSnapshot]);
+  const dirty = editing !== null && baseline !== null && baseline !== formSnapshot;
+
+  /** 离开编辑表单前：没改动直接放行，有改动问一句，默认焦点落在「取消」上 */
+  async function confirmDiscard(): Promise<boolean> {
+    if (!dirty) return true;
+    const label = editing === "new" ? "新网关" : `网关「${editing?.name ?? ""}」`;
+    return confirmDialog(`放弃没保存的修改？\n\n${label}里填写的内容还没保存，离开后就没了。`, {
+      danger: true,
+      confirmText: "放弃修改",
+      focusCancel: true,
+    });
+  }
+
+  async function closeLibrary() {
+    if (await confirmDiscard()) onClose();
+  }
 
   useEffect(() => {
     void loadGateways().catch((e) => {
@@ -360,6 +416,7 @@ export default function GatewayLibrary({
 
   function openEdit(g: Gateway | "new") {
     modelSurfaceGen.current += 1;
+    setBaseline(null);
     setError(null);
     setNotice(null);
     setExpanded(null);
@@ -603,6 +660,7 @@ export default function GatewayLibrary({
   }
 
   async function save() {
+    const savedSnapshot = formSnapshot;
     setSaving(true);
     setError(null);
     const headerEnv = parseHeaderEnv(headerText);
@@ -640,6 +698,7 @@ export default function GatewayLibrary({
         .getState()
         .gateways.find((g) => g.id === saved.id);
       if (fresh) setEditing(fresh);
+      setBaseline(savedSnapshot);
       // 新建即绑：保存后直接展开 Agent 配置区（此时 editing 已切到保存后的网关），
       // 消除「保存 → 重新找入口 → 展开折叠 → 选 Agent」的往返。保存钮在表单最底下，
       // 结果提示在吸顶的头部里（原先在表单顶上，点完保存看不见），绑定区滚进视野
@@ -1028,7 +1087,21 @@ export default function GatewayLibrary({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6" onClick={onClose}>
+    // 填到一半时点遮罩不关：误触就丢掉整张表单代价太大，在头部提示怎么离开
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6"
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (!downOnBackdrop.current || e.target !== e.currentTarget) return;
+        if (dirty) {
+          setNotice("还有没保存的修改：点「保存网关」保存，或点「关闭」放弃。");
+          return;
+        }
+        onClose();
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -1053,10 +1126,16 @@ export default function GatewayLibrary({
             >
               拆开自动合并的连接
             </button>
-            <button type="button" className={primaryActionClass} onClick={() => openEdit("new")}>
+            <button
+              type="button"
+              className={primaryActionClass}
+              onClick={async () => {
+                if (await confirmDiscard()) openEdit("new");
+              }}
+            >
               + 新建网关
             </button>
-            <button type="button" className={secondaryActionClass} onClick={onClose}>
+            <button type="button" className={secondaryActionClass} onClick={() => void closeLibrary()}>
               关闭
             </button>
           </div>
@@ -1702,7 +1781,13 @@ export default function GatewayLibrary({
               <button type="button" className={primaryActionClass} disabled={saving} onClick={() => void save()}>
                 保存网关
               </button>
-              <button type="button" className={secondaryActionClass} onClick={() => setEditing(null)}>
+              <button
+                type="button"
+                className={secondaryActionClass}
+                onClick={async () => {
+                  if (await confirmDiscard()) setEditing(null);
+                }}
+              >
                 取消
               </button>
             </div>
