@@ -229,6 +229,9 @@ export function launchFailureHint(lines: readonly string[], code: number): strin
   if (code === 127 || /command not found|No such file or directory/i.test(text))
     return "找不到要运行的程序：可能没装好或被移走了。到「连接」页重新检测这家 Agent。";
   if (/EACCES|permission denied/i.test(text)) return "没有权限运行这个程序。";
+  // Codex 官方账号启动先联网查一次工作区路由，连不上 OpenAI 就超时退出（0.165 实测：account/read failed … timed out，code -32603）
+  if (/workspace routing discovery timed out|account\/read failed/i.test(text))
+    return "连不上 OpenAI：Codex 官方账号启动时要先联网确认账号，这台电脑现在访问不到。检查网络，或到「设置 → 网络」填出网代理（官方账号启动会走它）后重新启动。";
   return null;
 }
 

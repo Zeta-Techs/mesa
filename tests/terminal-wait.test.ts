@@ -122,6 +122,11 @@ test("启动失败：最后几行与原因", () => {
   assert.match(launchFailureHint(exitTail(raw), 127)!, /找不到 Node/);
   assert.match(launchFailureHint(["zsh: command not found: codex"], 127)!, /找不到要运行的程序/);
   assert.equal(launchFailureHint(["Error: invalid config"], 1), null);
+  // Codex 官方账号连不上 OpenAI（2026-10-29 实录）
+  assert.match(
+    launchFailureHint(["Error: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery timed out (code -32603)"], 1)!,
+    /连不上 OpenAI.*出网代理/,
+  );
   assert.equal(exitTail(Array.from({ length: 20 }, (_, i) => `line ${i}`)).length, 8);
 });
 

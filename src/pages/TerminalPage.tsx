@@ -199,6 +199,7 @@ import {
   claudeThemeTarget,
   exitTail,
   launchBlockOf,
+  launchFailureHint,
   specialScreenOf,
   waitKeyBytes,
   waitScreenOf,
@@ -4498,9 +4499,12 @@ const TerminalView = memo(function TerminalView({
       //（2026-10-11 复核实证）。死因横幅随回放持久（借鉴 VS Code）。
       const clause = exitCodeClause(code);
       if (code > 0) {
+        // 屏上认得出原因就在横幅下面补一句白话（比如 Codex 官方账号连不上 OpenAI）
+        const hint = launchFailureHint(exitTail(screenLines()), code);
         termRef.current?.write(
           `\r\n\x1b[91m── agent 异常退出（代码 ${code}）${clause ? `：${clause}` : ""} ──\x1b[0m\r\n` +
-            `\x1b[90m退出画面已存进回放；从启动栏重新启动可接回上一次会话\x1b[0m\r\n`,
+            `\x1b[90m退出画面已存进回放；从启动栏重新启动可接回上一次会话\x1b[0m\r\n` +
+            (hint ? `\x1b[93m提示：${hint}\x1b[0m\r\n` : ""),
         );
       }
       const fallbackBanner = `\r\n\x1b[90m── agent 已结束（会话已保存，可一键恢复）── 当前为 shell ──${
