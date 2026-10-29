@@ -92,6 +92,9 @@ import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { collapseCarriageReturns } from "../stream-text";
+import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install";
+
+const IS_WINDOWS_UA = /Windows/i.test(navigator.userAgent);
 import {
   PageFrame,
   NoticeBar,
@@ -1554,14 +1557,6 @@ function loadCollapsedGroups(): Set<string> {
   }
 }
 
-interface AgentCmdResult {
-  ok: boolean;
-  output: string;
-  method: string;
-  versionBefore: string | null;
-  versionAfter: string | null;
-}
-
 /** 最新版检查结果（check_agent_updates）；latest 为 null 表示该渠道查不到 */
 interface AgentUpdateInfo {
   id: string;
@@ -1714,53 +1709,6 @@ function OfficialStatusChip({
       {lines.length > 0 && <HoverTip tip={tip} text={lines.join("\n")} />}
     </span>
   );
-}
-
-/** 失败诊断：按输出/方式文本给一条下一步建议，无匹配则不提示（纯函数，可单测） */
-function diagnose(output: string, method: string): string | null {
-  const lower = output.toLowerCase();
-  if (
-    method.includes("brew") &&
-    (output.includes("formulae.brew.sh") || output.includes("Downloading"))
-  ) {
-    return "brew 元数据下载异常：先在系统终端跑 `brew doctor` 检查 brew 状态，或重试（会走 TUNA 镜像）";
-  }
-  if (
-    lower.includes("timed out") ||
-    lower.includes("timeout") ||
-    output.includes("Could not resolve") ||
-    output.includes("Failed to connect")
-  ) {
-    return "网络连接问题：检查代理设置；如在国内网络，brew 已自动走国内镜像（元数据 TUNA、包体南大 ghcr 代理），npm 可配置 registry.npmmirror.com 镜像";
-  }
-  if (output.includes("EACCES") || lower.includes("permission denied")) {
-    if (/Windows/i.test(navigator.userAgent)) {
-      return "Windows 权限不足：请先安装 Node.js LTS 并重新打开 Mesa；若 Node.js 已安装，请确认 npm 全局目录可写，再重试。";
-    }
-    return "权限不足：该命令需要写入全局目录，检查安装目录权限";
-  }
-  if (output.includes("命令超时")) {
-    return method.includes("npm")
-      ? "npm 安装超过 15 分钟仍未完成，已自动终止：请检查 registry/代理设置后重试"
-      : "命令超过 15 分钟未完成，已自动终止：通常是下载过慢，重试或检查网络";
-  }
-  return null;
-}
-
-/** Windows 上有官方 winget 包的 agent（与 agent_specs.rs 的 winget 字段同源，新增时同步） */
-const WINGET_AGENTS = new Set(["claude-code", "codex", "opencode", "kimi", "grok"]);
-
-function installToolHelp(agentId: string): string {
-  if (/Windows/i.test(navigator.userAgent)) {
-    if (agentId === "cursor") {
-      return "Cursor CLI 在 Windows 上用官方的 PowerShell 安装器，但这台电脑找不到 PowerShell。也可以在 PowerShell 里手动运行：irm 'https://cursor.com/install?win32=true' | iex，装好后重新打开 Mesa。";
-    }
-    if (WINGET_AGENTS.has(agentId)) {
-      return "未找到可用的安装工具：winget 与 Node.js 都不可用。该 agent 在 Windows 上有两条路——① 系统自带 winget：若被卸载，请在 Microsoft Store 安装「应用安装程序」；② 安装 Node.js LTS 走 npm 渠道（下载：https://nodejs.org/en/download）。完成后完全退出并重新打开 Mesa。";
-    }
-    return "未找到可用的安装工具：该 agent 在 Windows 上只能走 npm 渠道。请先安装 Node.js LTS（自带 npm），安装完成后完全退出并重新打开 Mesa 再重试。下载：https://nodejs.org/en/download";
-  }
-  return "未找到可用的安装工具。请先安装 Node.js（会同时提供 npm），然后完全退出并重新打开 Mesa 再重试。";
 }
 
 function validationTone(status: ValidationCheckDto["status"]): string {
@@ -2934,7 +2882,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         agentId,
       });
       if (!method) {
-        setError(installToolHelp(agentId));
+        setError(installToolHelp(agentId, IS_WINDOWS_UA));
         // 文案之外给出口：渠道允许时错误旁追加「一键安装 Node.js」；尚未体检先探测一次
         if (!useAppStore.getState().depCheck) void refreshDepCheck();
         setNodeInstallFor(agentId);
@@ -4075,7 +4023,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           const r = updateResults[agent.id];
                           const hint = r.ok
                             ? null
-                            : diagnose(r.output, r.method);
+                            : diagnose(r.output, r.method, IS_WINDOWS_UA);
                           return hint ? (
                             <p className="mt-1 text-xs text-l3">
                               ⓘ 建议：{hint}

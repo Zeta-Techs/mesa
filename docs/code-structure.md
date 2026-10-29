@@ -269,6 +269,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              #   newProjectOpenReq / settingsSectionReq / openQuickChat），不自己开弹窗
                              #   官方账号一键接入（2026-10-29）：Host 在引导进行中且没有连接时对已装 Agent 只读探测 official_account_status，
                              #   已登录的记进 store.onboardingOfficialReady（facts.officialReady），网关步主按钮变「用 X 官方账号」直接建官方连接
+  agent-install.ts           # Agent 安装共用件：AgentCmdResult、diagnose / installToolHelp（isWindows 显式传参，连接页与向导共用）+ useAgentInstall（上手向导就地安装：install_method_preview 先亮命令、事件监听、装完 loadAll；连接页自己的安装 / 更新流程仍在 ProfilesPage）
+  components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：presetsForAgent 选预设 → probe_gateway_slot 测试 → saveGateway → bindGateway；自定义端点 / 多槽位去网关库
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
                              # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/
