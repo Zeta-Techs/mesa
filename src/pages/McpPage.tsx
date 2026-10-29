@@ -20,6 +20,7 @@ import type {
   McpEnvPair,
   McpEnvSecretHintDto,
   McpHealthDto,
+  McpOauthAgentDto,
   McpServerDto,
 } from "../types";
 import { confirmDialog } from "../components/ConfirmDialog";
@@ -35,6 +36,7 @@ import {
   mcpDistBadge,
   mcpHealthNeedsLogin,
   mcpHealthText,
+  mcpOauthSummary,
   mcpOriginLabel,
   mcpPathResolveNote,
   missingEnvSignature,
@@ -77,19 +79,22 @@ import {
 function HealthDot({
   health,
   at,
+  oauth,
   onCheck,
 }: {
   health: McpHealthView | "checking" | undefined;
   at?: string | null;
+  /** OAuth 条目各 Agent 的登录汇总：都登上了点就是绿的（401 是 Mesa 探测不带令牌） */
+  oauth?: "all" | "some" | "none" | null;
   onCheck: () => void;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   const { tip, show, hide } = useHoverTip(ref);
-  const text = mcpHealthText(health, at);
+  const text = mcpHealthText(health, at, oauth);
   if (!health || !text) return null;
   const checking = health === "checking";
-  const ok = !checking && health.ok;
   const needsLogin = !checking && mcpHealthNeedsLogin(health);
+  const ok = !checking && (health.ok || (needsLogin && oauth === "all"));
   return (
     <button
       ref={ref}
@@ -101,7 +106,15 @@ function HealthDot({
       onMouseEnter={show}
       onMouseLeave={hide}
       aria-label={
-        checking ? "正在检测" : ok ? "连通正常" : needsLogin ? "需 OAuth 登录" : "未连通"
+        checking
+          ? "正在检测"
+          : ok
+            ? needsLogin
+              ? "已登录"
+              : "连通正常"
+            : needsLogin
+              ? "需 OAuth 登录"
+              : "未连通"
       }
       className="flex h-7 w-4 shrink-0 items-center justify-center"
     >
@@ -624,6 +637,66 @@ export default function McpPage({ visible }: { visible: boolean }) {
   const [health, setHealth] = useState<Record<string, McpHealthDto | "checking">>(
     {},
   );
+  /** 实时结果优先；没测过实时就回落清单里沉淀的上次结果 */
+  const shownHealthOf = (s: McpServerDto): McpHealthView | "checking" | undefined =>
+    health[s.id] ??
+    (s.lastCheck
+      ? {
+          ok: s.lastCheck.ok,
+          latencyMs: s.lastCheck.latencyMs,
+          error: s.lastCheck.error,
+          detail: null,
+        }
+      : undefined);
+
+  // OAuth 登录态（server id → 各已分发 Agent 的登录态）：令牌在各 CLI 手里，Mesa 探测永远 401，
+  // 登没登上只能问 CLI。只查体检判为「要登录」的条目；回到本页整体作废（多半刚去终端登过）
+  const [oauth, setOauth] = useState<Record<string, McpOauthAgentDto[] | "checking">>({});
+  const oauthInflight = useRef(new Set<string>());
+  const checkOauth = useCallback(async (s: McpServerDto) => {
+    const agents = AGENTS.filter((a) => s.apps[a.id]).map((a) => a.id);
+    if (oauthInflight.current.has(s.id)) return;
+    oauthInflight.current.add(s.id);
+    setOauth((prev) => ({ ...prev, [s.id]: "checking" }));
+    try {
+      const rows = await invoke<McpOauthAgentDto[]>("mcp_oauth_status", {
+        name: s.name,
+        agents,
+      });
+      setOauth((prev) => ({ ...prev, [s.id]: rows }));
+    } catch {
+      // 记空表而不是删键：删了 effect 会立刻重查，查不动的机器上原地打转
+      setOauth((prev) => ({ ...prev, [s.id]: [] }));
+    } finally {
+      oauthInflight.current.delete(s.id);
+    }
+  }, []);
+  useEffect(() => {
+    if (visible) setOauth({});
+  }, [visible]);
+  useEffect(() => {
+    if (!visible) return;
+    for (const s of servers) {
+      if (!s.enabled || s.kind !== "remote" || oauth[s.id]) continue;
+      if (!mcpHealthNeedsLogin(shownHealthOf(s))) continue;
+      void checkOauth(s);
+    }
+  }, [visible, servers, health, oauth, checkOauth]);
+
+  /** 「登录」：开一个 shell 标签执行这家的登录命令（同连接页「官方登录」），回到本页自动重查 */
+  function startOauthLogin(s: McpServerDto, agentId: string, command: string) {
+    const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
+    const store = useAppStore.getState();
+    store.setPendingTerminal({
+      cwd: "~",
+      extraEnv: {},
+      title: `登录 ${s.name}（${label}）`,
+      prefillCommand: command,
+      shellOnly: true,
+      reuseKey: `mcp-login:${s.name}:${agentId}`,
+    });
+    store.setPage("terminal");
+  }
 
   /** 现场连通性检测：stdio = 拉起进程握手 initialize；remote = POST 探活（8s 上限） */
   async function checkHealth(s: McpServerDto) {
@@ -1095,18 +1168,12 @@ export default function McpPage({ visible }: { visible: boolean }) {
           {servers.map((s) => {
             const onCount = Object.values(s.apps).filter(Boolean).length;
             const open = expanded === s.id;
-            // 实时结果优先；没测过实时就回落清单里沉淀的上次结果（带时间前缀）
-            const shownHealth =
-              health[s.id] ??
-              (s.lastCheck
-                ? {
-                    ok: s.lastCheck.ok,
-                    latencyMs: s.lastCheck.latencyMs,
-                    error: s.lastCheck.error,
-                    detail: null,
-                  }
-                : undefined);
-            const healthLabel = mcpHealthLabel(shownHealth);
+            const shownHealth = shownHealthOf(s);
+            const oauthRows = oauth[s.id];
+            const oauthAgents = Array.isArray(oauthRows) ? oauthRows : undefined;
+            const oauthSum = mcpOauthSummary(oauthAgents);
+            const needsLogin = mcpHealthNeedsLogin(shownHealth);
+            const healthLabel = mcpHealthLabel(shownHealth, oauthSum);
             const toggleOpen = () => {
               // 展开前作废该条目的五态缓存，保证看到的是磁盘最新事实
               if (!open)
@@ -1148,6 +1215,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     <HealthDot
                       health={shownHealth}
                       at={health[s.id] ? null : (s.lastCheck?.at ?? null)}
+                      oauth={oauthSum}
                       onCheck={() => void checkHealth(s)}
                     />
                   </span>
@@ -1166,8 +1234,13 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     {healthLabel && (
                       <span
                         className={`shrink-0 text-xs ${
-                          healthLabel.tone === "warn" ? "text-caution-text" : "text-err-text"
+                          healthLabel.tone === "ok"
+                            ? "text-ok-text"
+                            : healthLabel.tone === "warn"
+                              ? "text-caution-text"
+                              : "text-err-text"
                         }`}
+                        title={needsLogin && !open ? "点击展开，看各 Agent 的登录状态" : undefined}
                       >
                         {healthLabel.text}
                       </span>
@@ -1326,6 +1399,65 @@ export default function McpPage({ visible }: { visible: boolean }) {
                             {mcpSecretFieldLabel(name)}未填
                           </div>
                         ),
+                      )}
+                      {/* OAuth 登录：令牌在各 CLI 手里，逐家登录、逐家看结果（Mesa 探测的 401 不算数） */}
+                      {s.kind === "remote" && needsLogin && s.enabled && onCount > 0 && (
+                        <div className="mt-2.5">
+                          <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                            <span className="text-l2">登录</span>
+                            <span className="text-l4">
+                              要用账号登录，每个 Agent 各登一次；登录后新开的对话才用得上
+                            </span>
+                            <button
+                              type="button"
+                              className="text-micro text-l4 hover:text-l1 disabled:opacity-50"
+                              disabled={oauthRows === "checking"}
+                              onClick={() => void checkOauth(s)}
+                            >
+                              {oauthRows === "checking" ? "查询中…" : "重新查询"}
+                            </button>
+                          </div>
+                          {oauthRows === "checking" && !oauthAgents ? (
+                            <p className="mt-1 text-xs text-l4">正在问各 Agent 登录了没有…</p>
+                          ) : (
+                            <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-x-6">
+                              {(oauthAgents ?? []).map((row) => {
+                                const label =
+                                  AGENTS.find((a) => a.id === row.agentId)?.label ?? row.agentId;
+                                return (
+                                  <div
+                                    key={row.agentId}
+                                    className="flex h-8 items-center justify-between gap-2 text-xs"
+                                  >
+                                    <span className="shrink-0 text-l3">{label}</span>
+                                    {row.state === "logged_in" ? (
+                                      <span className="shrink-0 text-ok-text">已登录</span>
+                                    ) : row.loginCommand ? (
+                                      <button
+                                        type="button"
+                                        className={paneOutlineButtonClass}
+                                        title={`${row.state === "unknown" ? "查不到登录状态。" : ""}在终端执行 ${row.loginCommand}，${row.how}；登完回到这里会自动重新查询`}
+                                        onClick={() =>
+                                          startOauthLogin(s, row.agentId, row.loginCommand!)
+                                        }
+                                      >
+                                        登录
+                                      </button>
+                                    ) : (
+                                      <span
+                                        className={`min-w-0 truncate ${row.state === "logged_out" ? "text-caution-text" : "text-l4"}`}
+                                        title={`${row.state === "logged_out" ? "未登录。" : "查不到登录状态。"}${row.how}`}
+                                      >
+                                        {row.state === "logged_out" ? "未登录 · " : ""}
+                                        {row.how}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       )}
                       {/* 各 Agent 分发开关：无底的几列（原九宫格小卡去底） */}
                       <div className="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-x-6">

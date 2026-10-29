@@ -9,6 +9,7 @@ import {
   mcpHealthLabel,
   mcpHealthNeedsLogin,
   mcpHealthText,
+  mcpOauthSummary,
   mcpOriginLabel,
   mcpPathResolveNote,
   missingEnvSignature,
@@ -73,6 +74,25 @@ test("行内异常短语：需登录 / 连不上，正常与未检测不写", ()
     mcpHealthLabel({ ...base, ok: false, error: "连接超时" }),
     { text: "连不上", tone: "err" },
   );
+  // OAuth 条目登没登上看各 CLI：401 不变，标签随登录汇总走
+  const needsLogin = { ...base, ok: false, error: "需要 OAuth 登录（HTTP 401）", status: "auth" as const };
+  assert.deepEqual(mcpHealthLabel(needsLogin, "all"), { text: "已登录", tone: "ok" });
+  assert.deepEqual(mcpHealthLabel(needsLogin, "some"), { text: "部分已登录", tone: "warn" });
+  assert.deepEqual(mcpHealthLabel(needsLogin, "none"), { text: "需登录", tone: "warn" });
+  // 连不上不被登录态盖掉
+  assert.deepEqual(mcpHealthLabel({ ...base, ok: false, error: "连接超时" }, "all"), {
+    text: "连不上",
+    tone: "err",
+  });
+});
+
+test("OAuth 登录汇总：查不到的家不拉低「都已登录」，一家没登上就是 none", () => {
+  assert.equal(mcpOauthSummary(undefined), null);
+  assert.equal(mcpOauthSummary([]), null);
+  assert.equal(mcpOauthSummary([{ state: "logged_in" }, { state: "unknown" }]), "all");
+  assert.equal(mcpOauthSummary([{ state: "logged_in" }, { state: "logged_out" }]), "some");
+  assert.equal(mcpOauthSummary([{ state: "logged_out" }, { state: "unknown" }]), "none");
+  assert.equal(mcpOauthSummary([{ state: "unknown" }]), "none");
 });
 
 const AGENTS_FIXTURE = [
@@ -189,7 +209,19 @@ test("体检行文案：检测中 / 正常带耗时与 detail / 失败给原因 
     }),
     true,
   );
-  assert.match(oauth ?? "", /不会代登/);
+  assert.match(oauth ?? "", /展开这一行/);
+  const oauthAll = mcpHealthText(
+    {
+      ok: false,
+      latencyMs: 40,
+      error: "需要 OAuth 登录（HTTP 401 Unauthorized）",
+      detail: null,
+      status: "auth",
+    },
+    null,
+    "all",
+  );
+  assert.match(oauthAll ?? "", /都已登录/);
   assert.equal(
     mcpHealthNeedsLogin({
       ok: false,

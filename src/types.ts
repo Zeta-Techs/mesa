@@ -1750,6 +1750,16 @@ export interface McpHealthDto {
   status: "handshake" | "reachable" | "auth" | "not_found" | "error";
 }
 
+/** 远程 MCP 的 OAuth 登录态（逐 Agent，mcp_oauth_status）：令牌在各 CLI 手里，只能问 CLI */
+export interface McpOauthAgentDto {
+  agentId: string;
+  /** unknown = 这家查不到登录态 */
+  state: "logged_in" | "logged_out" | "unknown";
+  /** 终端执行即可登录；null = 只能在这家的对话里登录，看 how */
+  loginCommand: string | null;
+  how: string;
+}
+
 // ===== 能力表（src-tauri/src/agent_specs.rs agent_capabilities） =====
 
 export interface CapabilityFlagDto {

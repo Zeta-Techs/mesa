@@ -4494,6 +4494,86 @@ fn oauth_logged_in(name: &str) -> bool {
     codex_keychain_has_oauth(name)
 }
 
+/// MCP 页 OAuth 登录态（逐 Agent）：令牌在各 CLI 手里，Mesa 体检永远 401，
+/// 「登没登上」只能问 CLI。只报状态与登录做法，不读令牌。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpOauthAgentDto {
+    pub agent_id: String,
+    /// logged_in / logged_out / unknown（这家查不到登录态）
+    pub state: String,
+    /// 在终端执行即可登录的命令；None = 这家只能在对话里登录，看 how
+    pub login_command: Option<String>,
+    /// 一句话做法（悬浮 / 无命令时直接显示）
+    pub how: String,
+}
+
+/// 各家远程 MCP 的 OAuth 登录做法（本机 CLI 帮助核实）。name 已过 [A-Za-z0-9-] 校验，拼进命令安全。
+fn mcp_oauth_login_guide(agent: &str, name: &str) -> (Option<String>, String) {
+    match agent {
+        "codex" => (
+            Some(format!("codex mcp login {name}")),
+            "终端执行后浏览器授权".into(),
+        ),
+        _ => (None, "在这家的对话里输入 /mcp，选中它登录".into()),
+    }
+}
+
+fn mcp_oauth_state(agent: &str, name: &str) -> &'static str {
+    match agent {
+        "codex" => match codex_auth_status(name) {
+            Some(status) if codex_auth_is_logged_in(&status) => "logged_in",
+            _ if codex_keychain_has_oauth(name) => "logged_in",
+            Some(_) => "logged_out",
+            None => "unknown",
+        },
+        "claude-code" => match claude_mcp_logged_in(name) {
+            Some(true) => "logged_in",
+            Some(false) => "logged_out",
+            None => "unknown",
+        },
+        _ => "unknown",
+    }
+}
+
+/// 逐 Agent 查同名远程 MCP 的登录态（各家并行，单家 8 秒上限）
+#[tauri::command]
+pub async fn mcp_oauth_status(
+    name: String,
+    agents: Vec<String>,
+) -> Result<Vec<McpOauthAgentDto>, String> {
+    // 名字要拼进登录命令：收编条目可能带下划线，这里只放行 shell 安全字符
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("MCP 名称含特殊字符，无法查询登录状态".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        // 各家 CLI 查询自带 8 秒超时杀进程树，这里并行跑、正常 join
+        let handles: Vec<_> = agents
+            .into_iter()
+            .map(|agent| {
+                let name = name.clone();
+                std::thread::spawn(move || {
+                    let state = mcp_oauth_state(&agent, &name).to_string();
+                    let (login_command, how) = mcp_oauth_login_guide(&agent, &name);
+                    McpOauthAgentDto {
+                        agent_id: agent,
+                        state,
+                        login_command,
+                        how,
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 fn academic_mcp_login_from(
     servers: &[McpServerDto],
     secrets: &HashSet<String>,

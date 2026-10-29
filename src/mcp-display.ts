@@ -7,7 +7,7 @@
  *  文字色向主题主文本色 var(--color-l1) 混 30%——浅色主题压深、深色主题提亮，
  *  对比度自适应（2026-08-25 设计评审：原色在米白底上偏淡）。 */
 
-import type { McpHealthDto } from "./types";
+import type { McpHealthDto, McpOauthAgentDto } from "./types";
 
 
 /** 单个 token 的路径缩略：家目录前缀折成 ~，段数 >3 且折后仍 >28 字符才砍中段留首尾
@@ -178,20 +178,36 @@ export function mcpHealthNeedsLogin(
   return /OAuth|mcp login/i.test(health.error ?? "");
 }
 
+/** 远程 OAuth 条目各 Agent 的登录汇总（只传已分发的 Agent）：没查过 / 空 → null；
+ *  all = 查得到的都登上了；some = 有登上有没登；none = 一家都没登上 */
+export function mcpOauthSummary(
+  rows: ReadonlyArray<Pick<McpOauthAgentDto, "state">> | undefined,
+): "all" | "some" | "none" | null {
+  if (!rows || rows.length === 0) return null;
+  const known = rows.filter((r) => r.state !== "unknown");
+  const inCount = known.filter((r) => r.state === "logged_in").length;
+  if (inCount === 0) return "none";
+  return inCount === known.length ? "all" : "some";
+}
+
 /** 行内常显的异常短语：状态点只靠颜色分不出黄绿，不正常时名字后面直接写出来（2026-10-23 审查）。
- *  没检测 / 检测中 / 正常返回 null（正常只留一个点） */
+ *  没检测 / 检测中 / 正常返回 null（正常只留一个点）。
+ *  OAuth 条目的 401 是 Mesa 探测不带令牌，登没登上以各 CLI 的登录态为准（oauth 汇总） */
 export function mcpHealthLabel(
   health: McpHealthView | "checking" | undefined,
-): { text: string; tone: "warn" | "err" } | null {
+  oauth?: "all" | "some" | "none" | null,
+): { text: string; tone: "ok" | "warn" | "err" } | null {
   if (!health || health === "checking" || health.ok) return null;
-  return mcpHealthNeedsLogin(health)
-    ? { text: "需登录", tone: "warn" }
-    : { text: "连不上", tone: "err" };
+  if (!mcpHealthNeedsLogin(health)) return { text: "连不上", tone: "err" };
+  if (oauth === "all") return { text: "已登录", tone: "ok" };
+  if (oauth === "some") return { text: "部分已登录", tone: "warn" };
+  return { text: "需登录", tone: "warn" };
 }
 
 export function mcpHealthText(
   health: McpHealthView | "checking" | undefined,
   checkedAt?: string | null,
+  oauth?: "all" | "some" | "none" | null,
 ): string | null {
   if (!health) return null;
   if (health === "checking") return "正在检测连通性…";
@@ -201,7 +217,9 @@ export function mcpHealthText(
       ? `地址可达，握手未确认${health.detail ? ` · ${health.detail}` : ""} · ${health.latencyMs}ms`
       : `连通正常${health.detail ? ` · ${health.detail}` : ""} · ${health.latencyMs}ms`
     : mcpHealthNeedsLogin(health)
-      ? `${health.error ?? "需要 OAuth 登录"}。Mesa 不会代登，在对应 CLI 登录后新开会话即可用`
+      ? oauth === "all"
+        ? "服务在线，用到它的 Agent 都已登录。Mesa 检测时不带各 Agent 的登录凭证，所以这里仍显示要登录，不影响使用"
+        : "服务在线，要用账号登录（OAuth），每个 Agent 各登一次。展开这一行看哪家还没登录，点「登录」"
       : (health.error ?? "检测失败");
   return `${prefix}${body}\n点击重新检测`;
 }
