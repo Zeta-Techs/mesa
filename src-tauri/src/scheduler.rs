@@ -308,7 +308,7 @@ struct RunDonePayload {
 // ===== 存储 =====
 
 fn schedules_path() -> Result<PathBuf, String> {
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;

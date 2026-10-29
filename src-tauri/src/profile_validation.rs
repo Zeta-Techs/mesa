@@ -1700,7 +1700,7 @@ pub(crate) fn validate_after_global_write(
     profile: &Profile,
     key: Option<&str>,
 ) -> ProfileValidationDto {
-    let local = match dirs::home_dir() {
+    let local = match crate::dirs::home_dir() {
         Some(home) => local_check_at(&home, profile),
         None => check("failed", "无法确定用户主目录", None),
     };
@@ -1721,7 +1721,7 @@ pub async fn validate_profile(
     let profile = store.get(&profile_id)?;
     let key = profiles::get_key_for_profile(&profile)?;
     let local_profile = profile.clone();
-    let local = tauri::async_runtime::spawn_blocking(move || match dirs::home_dir() {
+    let local = tauri::async_runtime::spawn_blocking(move || match crate::dirs::home_dir() {
         Some(home) => local_check_at(&home, &local_profile),
         None => check("failed", "无法确定用户主目录", None),
     })

@@ -506,7 +506,7 @@ fn read_info_plist(app: &Path) -> Option<(Vec<String>, Option<String>)> {
 #[cfg(target_os = "macos")]
 fn probe_client_fresh(spec: &ClientSpec) -> ClientProbe {
     let mut apps: Vec<PathBuf> = Vec::new();
-    let home = dirs::home_dir();
+    let home = crate::dirs::home_dir();
     for name in spec.mac_app_names {
         apps.push(PathBuf::from(format!("/Applications/{name}.app")));
         if let Some(h) = &home {
@@ -632,7 +632,7 @@ fn codex_home() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
+        .or_else(|| crate::dirs::home_dir().map(|h| h.join(".codex")))
 }
 
 /// 客户端自己的会话注册表：`state_<N>.sqlite`，取版本号最大的一份（Codex 升 schema 时文件名会变）

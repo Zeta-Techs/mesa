@@ -360,7 +360,7 @@ pub(crate) fn rotate_log_if_large(path: &Path) {
 /// 并关掉开关——设置页已不再给这几家开关，不收回就再也没有入口关。只删含状态日志路径的条目，写前备份。
 pub(crate) fn migrate_launch_injected() {
     let settings = crate::settings::read_current();
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return;
     };
     let Ok(backups) = backups_dir() else {
@@ -385,7 +385,7 @@ pub(crate) fn migrate_launch_injected() {
 /// 脚本和状态目录一起移进回收站，条目留着的话 Windows 上每触发一次就报错，其它平台的 hook 命令
 /// 会把 Mesa 的数据目录重新建出来、一直往里追加。返回没能收回的项
 pub(crate) fn retract_all_for_uninstall() -> Vec<String> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return vec!["无法确定用户主目录，各家 CLI 配置里的 hooks 没有检查".into()];
     };
     let backups = match backups_dir() {
@@ -424,7 +424,7 @@ pub(crate) fn refresh_gemini_hook_name() {
     if !crate::settings::hooks_attention_enabled(&settings, "gemini") {
         return;
     }
-    let (Some(home), Ok(backups), Some(spec)) = (dirs::home_dir(), backups_dir(), spec_for("gemini")) else {
+    let (Some(home), Ok(backups), Some(spec)) = (crate::dirs::home_dir(), backups_dir(), spec_for("gemini")) else {
         return;
     };
     let Ok(text) = fs::read_to_string(home.join(spec.config_rel)) else {
@@ -900,7 +900,7 @@ pub(crate) fn migrate_legacy_windows_hooks() {
             let _ = ensure_win_hook_script(&any_log);
         }
     }
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return;
     };
     let Ok(backups) = backups_dir() else {
@@ -1343,7 +1343,7 @@ pub async fn set_hooks_attention(
     if enabled && launch_injected(&agent) {
         return Err(format!("{agent} 在 Mesa 里启动时已自动带上，不需要写全局配置"));
     }
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
     let log = hooks_log_path(spec)?;
     let backups = backups_dir()?;
     {
@@ -2423,7 +2423,7 @@ mod tests {
     #[test]
     #[ignore]
     fn real_data_dry_run_migrate() {
-        let home = dirs::home_dir().unwrap();
+        let home = crate::dirs::home_dir().unwrap();
         let tmp = tmpdir("dryrun");
         for spec in BRIDGE_SPECS {
             if !launch_injected(spec.agent) {
@@ -2471,7 +2471,7 @@ mod tests {
     #[test]
     #[ignore]
     fn real_data_dry_run_gemini_name() {
-        let home = dirs::home_dir().unwrap();
+        let home = crate::dirs::home_dir().unwrap();
         let spec = spec_for("gemini").unwrap();
         let real = home.join(spec.config_rel);
         let Ok(Some(before)) = read_existing(&real) else { return };

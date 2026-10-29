@@ -73,7 +73,7 @@ fn default_true() -> bool {
 }
 
 fn session_path() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("inst-session.json"))
@@ -1739,7 +1739,7 @@ pub(crate) struct StagedRelay {
 }
 
 pub(crate) fn stage_relayed_pdf(bytes: &[u8]) -> Result<StagedRelay, String> {
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode/tmp");
     ensure_private_dir(&dir)?;
@@ -2332,7 +2332,7 @@ fn spawn_notice_replay(app: tauri::AppHandle) {
 /// 下载暂存目录（下载在途文件；入库或失败即删，超时残留由 sweep 清理）。
 /// 0700 创建——里面是付费墙全文，Linux 多用户机器上别的本地用户不该能读
 fn download_staging_dir() -> Result<PathBuf, String> {
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("tmp")
@@ -2648,7 +2648,7 @@ fn sweep_stale_staging() {
     }
     // 多槽中继暂存的滞留清理（正常路径 inst_save_relayed_pdf 已删；这里兜
     // 「入队后前端没来取/应用重启」的孤儿）
-    if let Some(tmp) = dirs::config_dir().map(|d| d.join("ccode").join("tmp")) {
+    if let Some(tmp) = crate::dirs::config_dir().map(|d| d.join("ccode").join("tmp")) {
         let in_slot: Vec<PathBuf> = RELAY_SLOT
             .lock()
             .map(|q| q.iter().map(|e| e.path.clone()).collect())

@@ -105,7 +105,7 @@ fn note_at(home: &Path, agent: &str) -> Option<CliPermissionNote> {
 
 #[tauri::command]
 pub fn cli_default_permission(agent: String) -> Option<CliPermissionNote> {
-    note_at(&dirs::home_dir()?, &agent)
+    note_at(&crate::dirs::home_dir()?, &agent)
 }
 
 #[cfg(test)]

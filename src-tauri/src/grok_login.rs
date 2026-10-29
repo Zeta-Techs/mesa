@@ -34,7 +34,7 @@ fn grok_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("GROK_HOME")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".grok")))
+        .or_else(|| crate::dirs::home_dir().map(|h| h.join(".grok")))
 }
 
 fn auth_path(dir: &Path) -> std::path::PathBuf {

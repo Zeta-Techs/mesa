@@ -1452,7 +1452,7 @@ pub async fn import_sessions_inspect(
 ) -> Result<ImportPreviewDto, String> {
     let bindings = list_codex_bindings(&store);
     tauri::async_runtime::spawn_blocking(move || {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         inspect_at(Path::new(&zip_path), &home, &bindings)
     })
     .await
@@ -2179,7 +2179,7 @@ pub async fn import_sessions_apply(
         let zip_path = zip_path.clone();
         let decisions = decisions.clone();
         move || {
-            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+            let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
             apply_at(Path::new(&zip_path), &home, &decisions)
         }
     })

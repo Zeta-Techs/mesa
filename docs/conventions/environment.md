@@ -203,3 +203,15 @@
   用来走「第一次打开」（上手引导、CLI 首次启动画面）；工具链变量（CARGO_HOME / RUSTUP_HOME / npm 缓存）指回真实家目录，
   `CARGO_TARGET_DIR` 独立在 `~/.ccode-sandbox/target`（共用主 target 会因嵌入配置不同来回重编、抢构建锁），首次构建要几分钟。
   不隔离：系统里已装的 Agent（PATH 照旧）、沙盒里点「安装」装的系统级 CLI、API 请求计费。清理 = `rm -rf ~/.ccode-sandbox`。
+  **Windows 同一脚本（2026-10-29，在 Git Bash 里跑）**：Windows 上 Mesa 找目录走系统已知文件夹、不看 HOME，脚本另设 `MESA_SANDBOX_HOME`
+  （`src-tauri/src/dirs.rs`：家目录、AppData、文稿、下载、桌面全换到它下面；**生产构建同样认**，点验的就是打出来的包）并把
+  `USERPROFILE` / `APPDATA` / `LOCALAPPDATA` 指进沙盒给各家 CLI 用（npm 全局目录随 APPDATA 进沙盒）。为此系统目录一律走 `crate::dirs`，
+  Cargo 里 `dirs` 改名 `os_dirs`，直接写 `dirs::` 编译不过。`--app <程序>` 不起开发版、直接在沙盒里跑打好的程序，WebView2 数据目录经
+  `WEBVIEW2_USER_DATA_FOLDER` 挪进沙盒（打包版按 bundle id 放在真实 LOCALAPPDATA，与已装的 Mesa 同一处）；`--debug-port` 开 WebView2 远程调试。
+- **打包版自动点验（Windows，2026-10-29）**：先 `npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'`（本机没有更新签名私钥），
+  再 `scripts/win-package-smoke/run.sh`：按安装后的布局摆好 `target/release` 的程序（不跑安装包——它会改写已装 Mesa 的卸载登记与快捷方式）、
+  清空沙盒、生成各类型样例项目、在沙盒里起程序，经 WebView2 远程调试走首次打开 → 侧栏各页 → 逐个打开文件 → 各套主题，
+  收页面异常、console.error、CSP 拦截、「界面渲染出错」与「无法预览」，逐步截图，结果在 `~/.ccode-sandbox/smoke-out/report.json`。
+  只点不改：不发消息、不装东西；只关沙盒里那一份程序。改了打包配置（CSP、资源、sidecar）或编辑器 / 预览后发版前跑一遍。
+  首轮实证：安装版打开代码文件没有语法色、行号错位（Tauri 给 style-src 注入 nonce 使 `'unsafe-inline'` 失效，见 safety.md CSP 条），
+  开发版一切正常——这类问题只在打包版出现，验收看打包版。

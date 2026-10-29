@@ -122,7 +122,7 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
 /// 格式：{"模型前缀": {"thinking": true, "context": 262144, "output": 8192, "vision": true}}（四个字段都可选）
 fn override_path() -> Option<PathBuf> {
     Some(
-        dirs::config_dir()?
+        crate::dirs::config_dir()?
             .join("ccode")
             .join("model-capabilities.json"),
     )
@@ -334,7 +334,7 @@ pub fn clear_model_capability_override(
 
 fn relay_cache_path() -> Option<PathBuf> {
     Some(
-        dirs::config_dir()?
+        crate::dirs::config_dir()?
             .join("ccode")
             .join("model-capabilities-relay.json"),
     )
@@ -342,7 +342,7 @@ fn relay_cache_path() -> Option<PathBuf> {
 
 fn db_path() -> Option<PathBuf> {
     Some(
-        dirs::config_dir()?
+        crate::dirs::config_dir()?
             .join("ccode")
             .join("model-capabilities-db.json"),
     )

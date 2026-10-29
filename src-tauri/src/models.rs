@@ -52,7 +52,7 @@ static MODEL_LIST_CACHE: std::sync::RwLock<Option<ModelListCache>> = std::sync::
 
 fn model_list_cache_path() -> Option<std::path::PathBuf> {
     Some(
-        dirs::config_dir()?
+        crate::dirs::config_dir()?
             .join("ccode")
             .join("model-list-cache.json"),
     )

@@ -3359,7 +3359,7 @@ fn leases() -> &'static std::sync::Mutex<std::collections::HashMap<String, fs::F
 }
 
 fn lease_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定配置目录")?
         .join("ccode/run-leases"))
 }

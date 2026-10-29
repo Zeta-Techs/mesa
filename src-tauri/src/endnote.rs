@@ -417,7 +417,7 @@ fn scan_endnote_install_dirs() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         roots.push(PathBuf::from("/Applications"));
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::dirs::home_dir() {
             roots.push(home.join("Applications"));
         }
     }
@@ -493,7 +493,7 @@ fn is_endnote_bundle(path: &Path) -> bool {
 }
 
 fn copy_to_downloads(src: &Path, name: &str) -> Option<PathBuf> {
-    let dest = dirs::download_dir()?.join(name);
+    let dest = crate::dirs::download_dir()?.join(name);
     std::fs::copy(src, &dest).ok()?;
     Some(dest)
 }
@@ -655,7 +655,7 @@ pub async fn endnote_library_legacy(path: String) -> Result<bool, String> {
 pub async fn endnote_library_choices() -> Result<Vec<EndnoteLibraryChoice>, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let mut dirs_to_look = Vec::new();
-        for base in [dirs::document_dir(), dirs::desktop_dir()].into_iter().flatten() {
+        for base in [crate::dirs::document_dir(), crate::dirs::desktop_dir()].into_iter().flatten() {
             dirs_to_look.push(base.join("EndNote"));
             dirs_to_look.push(base);
         }
@@ -764,7 +764,7 @@ fn recent_library_paths() -> (Vec<String>, Vec<String>) {
 /// 废纸篓和 ~/Library 里的不列；Spotlight 关着或超时就只剩文稿 / 桌面
 #[cfg(target_os = "macos")]
 fn recent_library_paths() -> (Vec<String>, Vec<String>) {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return (Vec::new(), Vec::new());
     };
     let mut cmd = crate::process::background_command("mdfind");

@@ -4419,7 +4419,7 @@ mod e2e {
         .unwrap();
         let agent = std::env::var("E2E_AGENT").expect("E2E_AGENT");
         let plan = &plans[&agent];
-        let real_home = dirs::home_dir().unwrap();
+        let real_home = crate::dirs::home_dir().unwrap();
         let home = std::env::temp_dir().join(format!("mesa-e2e-{}", uuid::Uuid::new_v4().simple()));
         let work = home.join("work");
         std::fs::create_dir_all(&work).unwrap();
@@ -4535,7 +4535,7 @@ mod e2e {
             std::fs::create_dir_all(keep).unwrap();
             // 程序状态旁路（Grok）不报会话文件：临时 HOME 里只有这一段对话，扫一遍取这家最新的那份
             let path = first.last.transcript_path.clone().or_else(|| {
-                // Windows 上 dirs::home_dir 不认 HOME / USERPROFILE，Mesa 的扫描看的是本机真实 HOME，
+                // Windows 上 crate::dirs::home_dir 不认 HOME / USERPROFILE，Mesa 的扫描看的是本机真实 HOME，
                 // 会拿到用户自己最近的一段旧对话（2026-10-25 实测 Qwen / OpenCode）：直接在临时 HOME 里按会话 id 找
                 if cfg!(windows) {
                     return temp_home_transcript(&agent, &home, first.last.session_id.as_deref());

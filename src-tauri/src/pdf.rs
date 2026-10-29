@@ -85,7 +85,7 @@ fn collect_whitelist(cwd_hint: Option<&str>) -> (Vec<PathBuf>, Vec<PathBuf>) {
     resources.extend(project_resources.iter().filter_map(|p| canon(p)));
     // Ccode 自管的剪贴板图片目录（clipboard.rs paste-*：写入侧已有扩展名白名单 +
     // 50MB 上限 + 7 天清理）——终端/聊天里引用的粘贴图片要走同一读取通道
-    if let Some(c) = dirs::config_dir()
+    if let Some(c) = crate::dirs::config_dir()
         .map(|d| d.join("ccode").join("tmp"))
         .and_then(|p| canon(&p))
     {

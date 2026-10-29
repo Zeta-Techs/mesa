@@ -94,7 +94,7 @@ pub fn export_app_log() -> Result<String, String> {
         .map(|l| format!("{} [{}] {}: {}", l.ts, l.level, l.source, l.message))
         .collect::<Vec<_>>()
         .join("\n");
-    let dir = dirs::download_dir()
+    let dir = crate::dirs::download_dir()
         .ok_or("无法确定下载目录")?
         .join("ccode-exports");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;

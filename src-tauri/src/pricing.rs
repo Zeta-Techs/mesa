@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 fn pricing_path() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("pricing.json"))

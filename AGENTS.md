@@ -222,7 +222,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   `src/path-utils.ts`。新建/重命名文件（夹）名走 `paths::validate_fs_name`（报错），自动生成走 `sanitize_fs_name`
   （清洗）——全平台同一套规则，护跨机同步。纯逻辑模块的平台分支（如 escapeShellPath/pickQuickChatSessions）必须
   `isWindows` 显式传参，禁模块内隐式读平台（否则单测随宿主机器变）。
-- 三平台兼容：禁写平台特定路径，用 `dirs`/`keyring`/`portable-pty` 的抽象；unix 专属函数加
+- 三平台兼容：禁写平台特定路径，用 `crate::dirs`（系统目录唯一入口，Windows 新用户沙盒靠它换目录）/`keyring`/`portable-pty` 的抽象；unix 专属函数加
   `#[cfg_attr(not(any(unix, test)), allow(dead_code))]` 或 cfg 门控（Windows 编译不过就是漏了）；起子进程统一
   `process::background_command`（后台）/ `process::pty_command`（PTY），超时终止用 `kill_process_tree` +
   `join_with_timeout`，禁裸 kill + 无限 join。子进程不继承 Mesa 自己的 `PWD`（后台删掉、PTY 设成工作目录；

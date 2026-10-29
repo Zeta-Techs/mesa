@@ -1,6 +1,7 @@
 use tauri::{Emitter, Manager};
 
 mod about;
+pub mod dirs;
 mod attach_grants;
 mod agent_specs;
 mod client_open;

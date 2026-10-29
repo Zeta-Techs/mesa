@@ -165,7 +165,7 @@ pub fn pending_dir() -> Result<PathBuf, String> {
     #[cfg(test)]
     let dir = std::env::temp_dir().join(format!("ccode-pending-tests-{}", std::process::id()));
     #[cfg(not(test))]
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定配置目录")?
         .join("ccode")
         .join("pending-admission");

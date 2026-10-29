@@ -103,7 +103,7 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![Box::new(show)];
     let costs = month_costs();
     let rate = settings.rate_usd_cny.filter(|r| *r > 0.0).unwrap_or(7.2);
-    let cc_switch = dirs::home_dir().is_some_and(|h| global_config::cc_switch_dir_present(&h));
+    let cc_switch = crate::dirs::home_dir().is_some_and(|h| global_config::cc_switch_dir_present(&h));
 
     for spec in agent_specs::all_agent_specs() {
         let agent = spec.id;

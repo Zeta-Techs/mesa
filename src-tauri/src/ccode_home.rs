@@ -25,7 +25,7 @@ struct Cfg {
 static CACHE: RwLock<Option<Cfg>> = RwLock::new(None);
 
 fn default_home() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(DIR))
+    crate::dirs::home_dir().map(|h| h.join(DIR))
 }
 
 fn load() -> Cfg {
@@ -136,7 +136,7 @@ pub(crate) fn validate_base(raw: &str) -> Result<PathBuf, String> {
     if let Some(d) = default_home() {
         owned.push(d);
     }
-    if let Some(c) = dirs::config_dir() {
+    if let Some(c) = crate::dirs::config_dir() {
         owned.push(c.join(DIR));
     }
     if owned.iter().any(|o| crate::paths::path_within_path(&canon, o)) {
@@ -206,9 +206,9 @@ mod tests {
     fn validate_rejects_relative_root_and_owned_dirs() {
         assert!(validate_base("").is_err());
         assert!(validate_base("relative/dir").is_err());
-        let inside = dirs::home_dir().unwrap().join("ccode").join("workspaces");
+        let inside = crate::dirs::home_dir().unwrap().join("ccode").join("workspaces");
         assert!(validate_base(&inside.to_string_lossy()).is_err());
-        let cfg_inside = dirs::config_dir().unwrap().join("ccode").join("x");
+        let cfg_inside = crate::dirs::config_dir().unwrap().join("ccode").join("x");
         assert!(validate_base(&cfg_inside.to_string_lossy()).is_err());
     }
 

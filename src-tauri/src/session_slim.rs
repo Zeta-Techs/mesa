@@ -521,11 +521,11 @@ fn inspect_at(agent: &str, file_path: &str, home: &Path) -> SlimInspectDto {
 }
 
 fn inspect_impl(agent: &str, file_path: &str) -> SlimInspectDto {
-    dirs::home_dir().map_or_else(unsupported, |home| inspect_at(agent, file_path, &home))
+    crate::dirs::home_dir().map_or_else(unsupported, |home| inspect_at(agent, file_path, &home))
 }
 
 fn apply_impl(agent: &str, file_path: &str, keep: Option<usize>) -> Result<SlimApplyDto, String> {
-    let home = dirs::home_dir().ok_or("无法确定用户目录")?;
+    let home = crate::dirs::home_dir().ok_or("无法确定用户目录")?;
     let path = resolve_target(agent, file_path, &home)
         .ok_or("只支持 ~/.claude/projects 下的 Claude Code 会话文件")?;
     let result = apply_file(

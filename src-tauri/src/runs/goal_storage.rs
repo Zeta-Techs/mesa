@@ -60,9 +60,9 @@ pub(super) fn ensure_schema(conn: &Connection) -> Result<(), String> {
 }
 
 pub(crate) fn root() -> Result<PathBuf, String> {
-    Ok(dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .or_else(dirs::config_dir)
+    Ok(crate::dirs::data_local_dir()
+        .or_else(crate::dirs::data_dir)
+        .or_else(crate::dirs::config_dir)
         .ok_or("无法确定 Mesa 数据目录")?
         .join("ccode/task-runs"))
 }

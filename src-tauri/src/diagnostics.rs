@@ -560,7 +560,7 @@ pub(crate) const BUNDLE_FILE_PREFIX: &str = "ccode-diagnostics-";
 
 /// 诊断包导出目录（下载/ccode-exports）；反馈附件闸门与导出共用同一出处
 pub(crate) fn bundle_dir() -> Result<std::path::PathBuf, String> {
-    Ok(dirs::download_dir()
+    Ok(crate::dirs::download_dir()
         .ok_or("无法确定下载目录")?
         .join("ccode-exports"))
 }

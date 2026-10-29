@@ -167,7 +167,7 @@ pub(crate) fn merged_settings(repo: &Path) -> MergedSettings {
 
 /// 同 merged_settings，附带每个生效键的来源层标注（config_dump 自省快照用）
 pub(crate) fn merged_settings_traced(repo: &Path) -> (MergedSettings, WsTraceDto) {
-    let user = dirs::config_dir().map(|d| d.join("ccode").join("settings.toml"));
+    let user = crate::dirs::config_dir().map(|d| d.join("ccode").join("settings.toml"));
     merged_settings_traced_with_user(repo, user.as_deref())
 }
 

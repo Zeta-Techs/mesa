@@ -356,7 +356,7 @@ fn find_soffice() -> Option<PathBuf> {
         PathBuf::from("/usr/lib/libreoffice/program/soffice"),
         PathBuf::from("/opt/libreoffice/program/soffice"),
     ];
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         cands.push(home.join("Applications/LibreOffice.app/Contents/MacOS/soffice"));
     }
     for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
@@ -389,7 +389,7 @@ pub async fn office_converter() -> Result<OfficeConverterDto, String> {
 
 fn convert_dir_for(src: &Path) -> Result<PathBuf, String> {
     use sha2::{Digest, Sha256};
-    let base = dirs::config_dir()
+    let base = crate::dirs::config_dir()
         .ok_or("找不到配置目录")?
         .join("ccode")
         .join("tmp")

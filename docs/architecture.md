@@ -458,6 +458,14 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-29 · Windows 新用户沙盒与打包版自动点验
+
+用户要求「给 Windows 加一个能换配置目录的新用户沙盒实例，再用它对本机打的安装包做一遍自动点验」。Windows 上 Mesa 找目录走系统已知文件夹、
+改 HOME 无效，原沙盒只能用于 macOS / Linux。定下：系统目录一律经 `crate::dirs`（`dirs` crate 改名 `os_dirs`，直接用编译不过），
+设了 `MESA_SANDBOX_HOME` 就全换到它下面，**生产构建同样认**（点验的就是打出来的包；变量只有手动设才生效）；`scripts/dev-sandbox.sh` 兼容 Windows 并加
+`--app` / `--debug-port`；`scripts/win-package-smoke/` 经 WebView2 远程调试自动点验。不跑安装包本身（会改写已装 Mesa 的卸载登记与快捷方式），
+按安装布局摆好 `target/release` 的程序。细则 environment.md「新用户沙盒实例」「打包版自动点验」。
+
 ### 2026-10-29 · 打包版 style-src 不让 Tauri 注入 nonce
 
 首轮自动点验实证：安装版打开代码文件没有语法色、行号错位，开一个文件就有几十条 CSP 拦截——Tauri 打包时给 style-src 注入 nonce，

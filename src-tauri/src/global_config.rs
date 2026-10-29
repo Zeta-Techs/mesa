@@ -73,7 +73,7 @@ pub(crate) fn dry_run_matches(store: &ProfileStore, profile: &Profile) -> Option
     let key = crate::profiles::get_key_for_profile(&profile)
         .ok()
         .flatten();
-    let home = dirs::home_dir()?;
+    let home = crate::dirs::home_dir()?;
     let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models).ok()?;
     Some(plans_match_disk(&profile, &plans))
 }
@@ -151,7 +151,7 @@ pub fn set_global_conflict_reason(
 
 /// 连接页 / 托盘共用：有冲突返回挡路文案。
 pub fn set_global_conflict_message(agent: &str) -> Option<String> {
-    let home = dirs::home_dir()?;
+    let home = crate::dirs::home_dir()?;
     let cc = cc_switch_dir_present(&home);
     let live = if agent == "codex" {
         fs::read_to_string(home.join(".codex/config.toml")).ok()
@@ -2016,7 +2016,7 @@ fn skipped_policy_notes(profile: &Profile) -> Vec<String> {
 }
 
 fn backups_root() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("backups"))
@@ -2543,7 +2543,7 @@ pub(crate) fn drift_status(store: &ProfileStore, agent: &str) -> crate::drift::G
     let key = crate::profiles::get_key_for_profile(&profile)
         .ok()
         .flatten();
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return crate::drift::classify(false, Some("无法确定用户主目录".into()), Vec::new());
     };
     let plans = match plan_writes(&home, &profile, key.as_deref(), &profile.models) {
@@ -2574,7 +2574,7 @@ pub fn preview_profile_global(
 ) -> Result<GlobalWritePreviewDto, String> {
     let mut profile = store.get_with_model(&profile_id, None)?;
     if is_official(&profile) {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let plans = plan_writes(&home, &profile, None, &[])?;
         return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new()));
     }
@@ -2583,7 +2583,7 @@ pub fn preview_profile_global(
     crate::combo::apply_to_profile(&mut profile, first.as_deref());
     let key = profiles::get_key_for_profile(&profile)?;
     crate::agents::ensure_launch_credentials(&profile, key.as_deref())?;
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
     let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
     Ok(preview_plans(&home, &profile.agent, &plans, skipped))
 }
@@ -2604,7 +2604,7 @@ pub async fn apply_profile_global(
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             let _file_guard = crate::storage::config_lock("global-config")?;
-            let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+            let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
             let plans = plan_writes(&home, &profile, None, &[])?;
             // 磁盘已经是官方形态：不写、不产生空备份批次
             let files = if disk_equals_plans(&plans) {
@@ -2627,7 +2627,7 @@ pub async fn apply_profile_global(
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _file_guard = crate::storage::config_lock("global-config")?;
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
         let backups_dir = backups_root()?.join(&profile.agent);
         let files = apply_plans(&backups_dir, &home, &plans)?;
@@ -2671,7 +2671,7 @@ pub(crate) fn register_codex_client_provider_named(
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let _file_guard = crate::storage::config_lock("global-config")?;
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
     let cfg_path = home.join(".codex/config.toml");
     // 只写 config.toml：认证在 provider 块内 experimental_bearer_token，auth.json 完全不碰
     // （单槽 OPENAI_API_KEY 是客户端自身 API-Key 登录态的凭证，写它会顶掉登录）
@@ -2795,7 +2795,7 @@ pub async fn global_drift_detail(
     let profile = profile_for_write(&store, &pid)?;
     let key = profiles::get_key_for_profile(&profile).ok().flatten();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let files = drift_files(&home, &profile, key.as_deref())?;
         Ok(GlobalDriftDetailDto {
             profile_id: profile.id.clone(),
@@ -2826,7 +2826,7 @@ pub async fn restore_global_backup(
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _file_guard = crate::storage::config_lock("global-config")?;
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let dir = backups_root()?.join(&agent);
         let restored = restore_from(&dir, &home, &agent)?;
         // 恢复后全局内容不再是任何 profile 的快照，清除「全局生效」追踪
@@ -2865,7 +2865,7 @@ pub async fn restore_original_backup(
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _file_guard = crate::storage::config_lock("global-config")?;
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let dir = backups_root()?.join(&agent);
         let restored = restore_from_original(&dir, &home)?;
         // 恢复初始状态后同样清除「全局生效」追踪

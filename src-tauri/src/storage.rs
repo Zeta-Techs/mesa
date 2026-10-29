@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 /// `cargo test` 就往真实 `gateways.json` 里塞 4 条 `api.example.com` 假网关（实测累计 68 条），
 /// 而且 `ensure_split_locked` 的密钥认领分支还可能改写真实 `keys.json`。
 pub(crate) fn config_root() -> Option<PathBuf> {
-    test_config_root().or_else(|| dirs::config_dir().map(|dir| dir.join("ccode")))
+    test_config_root().or_else(|| crate::dirs::config_dir().map(|dir| dir.join("ccode")))
 }
 
 #[cfg(test)]

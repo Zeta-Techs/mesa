@@ -771,7 +771,7 @@ fn detect_outbound_proxy_inner() -> Result<Vec<OutboundProxyCandidateDto>, Strin
 }
 
 fn settings_path() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("settings.json"))
@@ -2577,7 +2577,7 @@ fn dir_size(path: &std::path::Path, budget: &mut u32) -> u64 {
 #[tauri::command]
 pub async fn app_storage_usage() -> Result<Vec<StorageEntryDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let root = dirs::config_dir()
+        let root = crate::dirs::config_dir()
             .ok_or("无法确定平台配置目录")?
             .join("ccode");
         // (展示名, 相对名, 可清理)
@@ -2659,7 +2659,7 @@ pub async fn clear_storage_entry(id: String) -> Result<(), String> {
         if !CLEARABLE_STORAGE.contains(&id.as_str()) {
             return Err(format!("这一项不能在这里清理：{id}"));
         }
-        let path = dirs::config_dir()
+        let path = crate::dirs::config_dir()
             .ok_or("无法确定平台配置目录")?
             .join("ccode")
             .join(&id);

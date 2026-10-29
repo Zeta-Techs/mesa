@@ -1240,7 +1240,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cursor_launcher_resolves_to_bundled_node() {
-        let Some(local) = dirs::data_local_dir() else { return };
+        let Some(local) = crate::dirs::data_local_dir() else { return };
         let launcher = local.join("cursor-agent").join("cursor-agent.cmd");
         if !launcher.is_file() {
             return;

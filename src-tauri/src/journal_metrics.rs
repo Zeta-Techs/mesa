@@ -1,9 +1,9 @@
 //! 期刊指标表（IF / 中科院分区 / TOP）：供文献雷达命中条目显示期刊徽章。
 //!
 //! 数据源是用户本机两份 CSV（从 github.com/hitfyd/ShowJCR 下载，不随应用分发）：
-//! - `dirs::config_dir()/ccode/journal-metrics/JCR2025-UTF8.csv`：JCR 影响因子
+//! - `crate::dirs::config_dir()/ccode/journal-metrics/JCR2025-UTF8.csv`：JCR 影响因子
 //!   （表头 `Journal,ISSN,...,IF(2025),Category_1,...`，字段可能带引号逗号，必须正经 CSV 解析）
-//! - `dirs::config_dir()/ccode/journal-metrics/FQBJCR2025-UTF8.csv`：中科院分区表
+//! - `crate::dirs::config_dir()/ccode/journal-metrics/FQBJCR2025-UTF8.csv`：中科院分区表
 //!   （表头含 `大类分区`（形如 `3 [168/495]`，取开头数字）与 `Top`（是/否））
 //!
 //! 两表按「期刊名规范化」（复用 lit_watch::normalize_title：去非字母数字 + 小写）合并成一张
@@ -76,7 +76,7 @@ pub struct JournalMetricsUpdateDto {
 // ===== 加载与缓存 =====
 
 fn metrics_dir() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("ccode").join("journal-metrics"))
+    Some(crate::dirs::config_dir()?.join("ccode").join("journal-metrics"))
 }
 
 /// 表缓存：RwLock<Option<Arc<..>>> 而非 OnceLock——下载完成后要 invalidate 重建
