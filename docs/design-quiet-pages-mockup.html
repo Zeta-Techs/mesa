@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mesa 管理页视觉统一到对话页：MCP 页试点 · 现在 vs 建议（2026-10-29）</title>
+<title>Mesa 管理页视觉统一到对话页 · 七页设计稿（2026-10-29）</title>
 <style>
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   body { margin: 0; background: #08090b; color: #bdbab4; font: 14px/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
-  header, .section { max-width: 1560px; margin: 0 auto; padding: 0 24px; }
+  header, .section { max-width: 1600px; margin: 0 auto; padding: 0 24px; }
   header { margin-top: 26px; }
   header h1 { margin: 0; font-size: 19px; color: #e9e6e2; font-weight: 600; }
-  header p { margin: 6px 0 0; color: #95959a; font-size: 13px; max-width: 1120px; }
+  header p { margin: 6px 0 0; color: #95959a; font-size: 13px; max-width: 1180px; }
   header p b { color: #e9e6e2; font-weight: 500; }
   header code { font: 12px ui-monospace, Menlo, monospace; color: #c8c8cc; }
   .controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 16px 0 14px; font-size: 12.5px; color: #95959a; }
@@ -19,14 +19,15 @@
   .seg button { background: transparent; color: #95959a; border: 0; padding: 5px 12px; font: inherit; cursor: pointer; }
   .seg button + button { border-left: 1px solid #2a2c33; }
   .seg button.on { background: #23252c; color: #e9e6e2; }
+  .seg button:disabled { opacity: .35; cursor: not-allowed; }
   .controls label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
-  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px; align-items: start; padding-bottom: 60px; }
-  @media (max-width: 1240px) { .stage { grid-template-columns: 1fr; } }
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 22px; align-items: start; padding-bottom: 60px; }
+  @media (max-width: 1280px) { .stage { grid-template-columns: 1fr; } }
   .wins { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
   .cap { font-size: 12px; color: #95959a; margin: 0 0 6px 2px; }
 
-  /* ── Mesa 默认主题令牌：极简灰蓝深色 / 极简灰蓝 · 浅（取自 src/App.css [data-theme="neutral"] 与 neutral-light） ── */
+  /* ── Mesa 默认主题令牌：极简灰蓝深色 / 极简灰蓝 · 浅（src/App.css [data-theme="neutral"] 与 neutral-light） ── */
   .dark {
     --rail: #0d0d0d; --rail2: #161616; --rail-sel: #262626; --strip: #1c1c1c; --canvas: #111111;
     --inset: #212121; --raised: #272727; --hair: #2c2c2c; --field: #383838; --hover: rgb(255 255 255 / .05);
@@ -49,13 +50,14 @@
   }
 
   /* ── 应用窗口外壳 ── */
-  .win { position: relative; display: grid; grid-template-columns: 224px minmax(0, 1fr); height: 760px; border-radius: 12px; overflow: hidden; border: 1px solid var(--edge); background: var(--canvas); color: var(--l2); font-size: 13px; }
+  .win { position: relative; display: grid; grid-template-columns: 224px minmax(0, 1fr); height: 800px; border-radius: 12px; overflow: hidden; border: 1px solid var(--edge); background: var(--canvas); color: var(--l2); font-size: 13px; }
   @media (max-width: 860px) { .win { grid-template-columns: 0 minmax(0, 1fr); } }
   .side { background: var(--rail); padding: 10px; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
   .lights { display: flex; gap: 8px; padding: 4px 6px 16px; }
   .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
   .lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
-  .nav { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--l2); font-size: 13px; white-space: nowrap; }
+  .nav { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--l2); font-size: 13px; white-space: nowrap; cursor: pointer; }
+  .nav:hover { background: var(--hover); }
   .nav svg { flex: none; color: var(--l3); }
   .nav.sel { background: var(--rail-sel); color: var(--l1); }
   .nav.sel svg { color: var(--cta); }
@@ -65,33 +67,64 @@
 
   .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
   .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px; }
-  .scroll::-webkit-scrollbar { width: 8px; } .scroll::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 4px; }
+  .scroll::-webkit-scrollbar, .sl::-webkit-scrollbar { width: 8px; } .scroll::-webkit-scrollbar-thumb, .sl::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 4px; }
 
-  /* ── 建议：标题栏 = 对话头（40px，左标题右操作） ── */
-  .tbar { flex: none; height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 16px; position: relative; }
-  .tbar .t { color: var(--l1); font-size: 13px; font-weight: 500; }
-  .tbar .c { color: var(--l4); font-size: 11px; margin-left: 6px; }
+  /* ── 共用：标题栏 = 对话头（40px，左标题右操作） ── */
+  .tbar { flex: none; height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px 0 16px; position: relative; min-width: 0; }
+  .tbar .t { color: var(--l1); font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tbar .c { color: var(--l4); font-size: 11px; margin-left: 6px; white-space: nowrap; }
   .tbar .sp { flex: 1; }
-  .ib { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; border: 0; background: transparent; color: var(--l3); cursor: pointer; position: relative; font: inherit; }
+  .ib { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; border: 0; background: transparent; color: var(--l3); cursor: pointer; position: relative; font: inherit; flex: none; }
   .ib:hover { background: var(--hover); color: var(--l1); }
-  .tb { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px; border-radius: 6px; border: 0; background: transparent; color: var(--l3); font: inherit; font-size: 12px; cursor: pointer; }
+  .tb { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px; border-radius: 6px; border: 0; background: transparent; color: var(--l3); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; flex: none; }
   .tb:hover, .tb.on { background: var(--hover); color: var(--l1); }
+  .tb.strong { color: var(--l1); background: var(--bubble); }
+  .tb.strong:hover { background: var(--inset); }
   [data-tip] { position: relative; }
-  [data-tip]:hover::after { content: attr(data-tip); position: absolute; top: 32px; right: 0; white-space: nowrap; font-size: 11px; line-height: 15px; padding: 5px 8px; border-radius: 6px; background: var(--raised); color: var(--l2); border: 1px solid var(--field); z-index: 5; font-weight: 400; }
+  [data-tip]:hover::after { content: attr(data-tip); position: absolute; top: 32px; right: 0; white-space: nowrap; font-size: 11px; line-height: 15px; padding: 5px 8px; border-radius: 6px; background: var(--raised); color: var(--l2); border: 1px solid var(--field); z-index: 9; font-weight: 400; }
 
-  /* ── 建议：内容 = 对话栏宽度的单列，不画卡片 ── */
+  /* ── 共用：对话栏宽度的单列 + 字级 ── */
   .col { max-width: 742px; margin: 0 auto; padding: 14px 0 28px; } /* = ccode-chat-column：14px × 52 + 1rem */
+  .sh { display: flex; align-items: center; gap: 6px; margin: 24px 4px 6px; font-size: 12px; color: var(--l3); font-weight: 500; }
+  .sh:first-child { margin-top: 6px; }
+  .sh .n { color: var(--l4); font-weight: 400; }
+  .sh .sp { flex: 1; }
+  .sh .tb { font-weight: 400; height: 24px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+  .l1 { color: var(--l1); } .l2 { color: var(--l2); } .l3 { color: var(--l3); } .l4 { color: var(--l4); }
+  .w { color: var(--caution); } .e { color: var(--err); } .g { color: var(--ok); } .a { color: var(--cta); }
+  .tools { display: flex; align-items: center; gap: 6px; margin: 0 4px 8px; flex-wrap: wrap; }
+  .tools .sp { flex: 1; }
+  .chip { height: 26px; padding: 0 10px; border-radius: 13px; border: 0; background: transparent; color: var(--l3); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .chip:hover { background: var(--hover); color: var(--l1); }
+  .chip.on { background: var(--bubble); color: var(--l1); }
+  .search { height: 28px; width: 200px; border: 1px solid var(--hair); border-radius: 8px; background: transparent; color: var(--l1); font: inherit; font-size: 12px; padding: 0 10px; outline: 0; }
+  .search:focus { border-color: var(--field); }
+  .search::placeholder { color: var(--l4); }
+  .toggle { width: 28px; height: 16px; border-radius: 8px; background: var(--cta); position: relative; border: 0; padding: 0; cursor: pointer; flex: none; }
+  .toggle::after { content: ""; position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .toggle.off { background: var(--field); } .toggle.off::after { left: 2px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--err); } .dot.none { border: 1px solid var(--l4); }
+  .dot.busy { background: var(--l3); animation: breath 1s ease-in-out infinite; }
+  @keyframes breath { 50% { opacity: .3; } }
+  .ghost { border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--l3); padding: 2px 8px; height: 26px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .ghost:hover { background: var(--hover); color: var(--l1); }
+  .sec { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--field); background: var(--strip); color: var(--l2); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .sec:hover { background: var(--inset); color: var(--l1); }
+  .hov { display: flex; opacity: 0; transition: opacity .12s; }
+  .hrow:hover .hov, .hov:focus-within, .row.open .hov { opacity: 1; }
+  .sample { font-size: 11px; color: var(--l4); margin-left: 6px; font-weight: 400; }
+
+  /* ── MCP ── */
   .row { border-radius: 10px; }
   .row + .row { margin-top: 2px; }
-  .row.open { background: var(--bubble); } /* 唯一的底色：当前展开的那条，同用户气泡 */
+  .row.open { background: var(--bubble); }
   .rh { display: grid; grid-template-columns: 14px 14px minmax(0, 1fr) auto auto 30px; align-items: center; column-gap: 8px; padding: 9px 10px 9px 8px; border-radius: 10px; cursor: pointer; }
   .row:not(.open) .rh:hover { background: var(--hover); }
   .fold { color: var(--l4); display: flex; transition: transform .18s; }
   .row.open .fold { transform: rotate(90deg); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; justify-self: center; }
-  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--err); } .dot.none { border: 1px solid var(--l4); }
-  .dot.busy { background: var(--l3); animation: breath 1s ease-in-out infinite; }
-  @keyframes breath { 50% { opacity: .3; } }
+  .rh .dot { justify-self: center; }
   .nm { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .nm .n { color: var(--l1); font-size: 14px; font-weight: 500; white-space: nowrap; }
   .row.off .nm .n { color: var(--l4); font-weight: 400; }
@@ -99,42 +132,157 @@
   .st.warn { color: var(--caution); } .st.err { color: var(--err); } .st.mute { color: var(--l4); }
   .sub { grid-column: 3 / 5; grid-row: 2; font-size: 12px; color: var(--l4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
   .sub .k { color: var(--l3); }
-  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
   .use { grid-row: 1; grid-column: 4; font-size: 12px; color: var(--l3); white-space: nowrap; padding: 2px 6px; border-radius: 5px; border: 0; background: transparent; font-family: inherit; cursor: pointer; }
   .use:hover { background: var(--hover); color: var(--l1); }
-  .use .w { color: var(--caution); }
-  .hov { grid-row: 1; grid-column: 5; display: flex; opacity: 0; transition: opacity .12s; }
-  .rh:hover .hov, .row.open .hov, .hov:focus-within { opacity: 1; }
+  .rh .hov { grid-row: 1; grid-column: 5; }
+  .rh:hover .hov { opacity: 1; }
   .tg { grid-row: 1; grid-column: 6; justify-self: end; display: flex; }
-
-  .toggle { width: 28px; height: 16px; border-radius: 8px; background: var(--cta); position: relative; border: 0; padding: 0; cursor: pointer; flex: none; }
-  .toggle::after { content: ""; position: absolute; top: 2px; left: 14px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left .15s; }
-  .toggle.off { background: var(--field); } .toggle.off::after { left: 2px; }
-
-  /* 展开 = 对话「已思考 ›」展开的写法：左细线缩进，不铺卡底 */
   .det { margin: 0 12px 0 30px; padding: 2px 0 12px 12px; border-left: 1px solid var(--hair); font-size: 12.5px; color: var(--l3); }
   .det .line { margin: 6px 0; }
   .det .mono { color: var(--l2); word-break: break-all; }
-  .det .m4 { color: var(--l4); }
-  .det .w { color: var(--caution); } .det .e { color: var(--err); }
-  .sec { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--field); background: var(--strip); color: var(--l2); font: inherit; font-size: 12px; cursor: pointer; margin-left: 8px; }
-  .sec:hover { background: var(--inset); color: var(--l1); }
+  .det .sec { margin-left: 8px; }
   .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 18px; margin-top: 10px; }
   .ag { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 30px; color: var(--l3); font-size: 12px; }
   .ag .l { display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .ag .l span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ag.dim .l { color: var(--l4); }
   .ag .sd { width: 6px; height: 6px; border-radius: 50%; flex: none; }
-  .ag .ro { color: var(--l4); cursor: help; }
-  .pill { font-size: 11px; padding: 0 5px; border-radius: 4px; border: 0; font-family: inherit; cursor: pointer; }
-
-  .menu { position: absolute; top: 38px; right: 12px; width: 236px; padding: 5px; border-radius: 10px; background: var(--raised); border: 1px solid var(--field); z-index: 6; font-size: 13px; }
+  .pill { font-size: 11px; padding: 0 5px; border-radius: 4px; border: 0; font-family: inherit; cursor: pointer; background: var(--hover); }
+  .menu { position: absolute; top: 38px; right: 12px; width: 236px; padding: 5px; border-radius: 10px; background: var(--raised); border: 1px solid var(--field); z-index: 8; font-size: 13px; }
   .menu .mh { font-size: 11px; color: var(--l4); padding: 6px 8px 2px; }
   .menu .mi { padding: 6px 8px; border-radius: 6px; color: var(--l2); cursor: pointer; }
   .menu .mi:hover { background: var(--hover); color: var(--l1); }
-  .toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 12px; color: var(--l2); background: var(--raised); border: 1px solid var(--field); border-radius: 8px; padding: 6px 12px; white-space: nowrap; }
+  .toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 12px; color: var(--l2); background: var(--raised); border: 1px solid var(--field); border-radius: 8px; padding: 6px 12px; white-space: nowrap; z-index: 9; }
 
-  /* ── 现在：PageHeader + 整表卡 ── */
+  /* ── 通用列表行（工作台 / 连接 / 技能 / 定时任务） ── */
+  .lr { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto auto; align-items: center; column-gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; min-height: 40px; }
+  .lr:hover { background: var(--hover); }
+  .lr .ic { display: flex; align-items: center; justify-content: center; color: var(--l3); }
+  .lr .main1 { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .lr .nm1 { color: var(--l1); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lr .nm1.b { font-weight: 500; }
+  .lr .s1 { font-size: 12px; color: var(--l3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .lr .s2 { grid-column: 2 / 4; font-size: 12px; color: var(--l4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .lr .tm { font-size: 11px; color: var(--l4); white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+  .lr.sel { background: var(--bubble); }
+
+  /* ── 工作台 ── */
+  .need { background: var(--bubble); border-radius: 12px; padding: 4px; }
+  .need .lr:hover { background: var(--hover); }
+  .need .acts { display: flex; gap: 2px; }
+  .proj { border-radius: 12px; background: var(--bubble); padding: 4px; }
+  .proj + .proj { margin-top: 10px; }
+  .ph { display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px; min-width: 0; }
+  .ph .pn { color: var(--l1); font-size: 14px; font-weight: 600; white-space: nowrap; }
+  .ph .pv { font-size: 12px; color: var(--l3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .ph .sp { flex: 1; }
+  .ph .reveal { opacity: 0; transition: opacity .12s; }
+  .proj:hover .reveal { opacity: 1; }
+  .ph .tm { font-size: 11px; color: var(--l4); white-space: nowrap; padding-right: 2px; }
+  .badge-n { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--l4); color: var(--l3); font-size: 10px; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+  .badge-n.cur { background: var(--cta); border-color: var(--cta); color: var(--cta-text); }
+  .badge-n.err { border-color: var(--err); color: var(--err); }
+  .add { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 40px; color: var(--l4); font-size: 12px; cursor: pointer; border-radius: 8px; }
+  .add:hover { color: var(--l1); background: var(--hover); }
+  .quiet { font-size: 12px; color: var(--l3); padding: 10px 14px 0; }
+  .quiet a { color: var(--l2); text-decoration: none; cursor: pointer; } .quiet a:hover { color: var(--l1); text-decoration: underline; }
+  .sched { display: grid; grid-template-columns: 74px minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+  .sched:hover { background: var(--hover); }
+
+  /* ── 对话管理 ── */
+  .split { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr); }
+  .slist { display: flex; flex-direction: column; min-height: 0; background: var(--rail2); }
+  .slist .tbar { padding-left: 14px; }
+  .sl { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 16px; }
+  .sl .sh { margin: 16px 6px 4px; font-size: 11px; }
+  .srow { padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .srow:hover { background: var(--hover); }
+  .srow.sel { background: var(--rail-sel); }
+  .srow .tt { color: var(--l1); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+  .srow .mm { font-size: 11px; color: var(--l4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rep { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .meta2 { display: flex; align-items: center; gap: 8px; padding: 0 16px 0 16px; font-size: 11px; color: var(--l4); height: 24px; }
+  .meta2 .sp { flex: 1; }
+  .msg-u { display: flex; justify-content: flex-end; margin: 22px 0; }
+  .msg-u span { background: var(--bubble); color: var(--l1); padding: 9px 14px; border-radius: 14px; font-size: 14px; max-width: 80%; }
+  .msg-a { color: var(--l1); font-size: 14px; line-height: 1.6; margin: 10px 0 22px; }
+  .msg-a p { margin: 0 0 10px; } .msg-a ul { margin: 0 0 10px; padding-left: 22px; } .msg-a li { margin: 3px 0; }
+  .think { font-size: 12px; color: var(--l4); display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+
+  /* ── 连接 ── */
+  .ag-h { display: flex; align-items: center; gap: 8px; margin: 22px 4px 4px; }
+  .ag-h:first-of-type { margin-top: 4px; }
+  .ag-h .an { color: var(--l1); font-size: 14px; font-weight: 600; }
+  .ag-h .n { color: var(--l4); font-size: 12px; }
+  .ag-h .sp { flex: 1; }
+  .ag-h .hov { opacity: 0; }
+  .ag-h:hover .hov { opacity: 1; }
+  .av { width: 20px; height: 20px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: var(--l2); background: var(--inset); }
+  .tag { font-size: 11px; color: var(--l4); white-space: nowrap; }
+  .tag.a { color: var(--cta); } .tag.e { color: var(--err); }
+
+  /* ── 技能抽屉（沿用右侧抽屉，只换写法） ── */
+  .drawer { position: absolute; top: 40px; right: 0; bottom: 0; width: 380px; background: var(--canvas); border-left: 1px solid var(--hair); padding: 6px 20px 20px; overflow-y: auto; z-index: 7; font-size: 13px; }
+  .drawer h3 { margin: 6px 0 2px; font-size: 15px; color: var(--l1); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .drawer h3 .sp { flex: 1; }
+  .drawer .d { color: var(--l2); font-size: 13px; line-height: 1.65; margin: 8px 0 0; }
+  .drawer pre { margin: 6px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--bubble); color: var(--l2); font: 11.5px/1.6 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+
+  /* ── 用量 ── */
+  .kpi { display: flex; gap: 40px; align-items: flex-end; margin: 4px 4px 0; }
+  .kpi .k { font-size: 12px; color: var(--l3); }
+  .kpi .v { font-size: 30px; font-weight: 600; color: var(--l1); letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi .v small { font-size: 13px; color: var(--l4); font-weight: 400; margin-left: 4px; letter-spacing: 0; }
+  .dl { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 10px 4px 0; font-size: 12px; color: var(--l3); }
+  .dl b { color: var(--l1); font-weight: 500; font-variant-numeric: tabular-nums; margin-left: 4px; }
+  .trend { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; align-items: end; height: 120px; margin: 14px 4px 0; }
+  .trend .b { display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+  .trend .bar { width: 100%; max-width: 46px; border-radius: 5px 5px 2px 2px; background: color-mix(in srgb, var(--l3) 40%, transparent); }
+  .trend .bar.top { background: var(--cta); }
+  .trend .x { font-size: 11px; color: var(--l4); font-variant-numeric: tabular-nums; }
+  .heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 11px); grid-auto-columns: 11px; gap: 2px; margin: 8px 4px 0; }
+  .heat i { border-radius: 2px; background: color-mix(in srgb, var(--l4) 14%, transparent); }
+  .heat i.h1 { background: color-mix(in srgb, var(--cta) 28%, var(--canvas)); }
+  .heat i.h2 { background: color-mix(in srgb, var(--cta) 50%, var(--canvas)); }
+  .heat i.h3 { background: color-mix(in srgb, var(--cta) 74%, var(--canvas)); }
+  .heat i.h4 { background: var(--cta); }
+  .hl { display: flex; gap: 16px; font-size: 11px; color: var(--l4); margin: 6px 4px 0; }
+  .dist { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr) 84px 76px; align-items: center; column-gap: 12px; padding: 7px 10px; border-radius: 8px; font-size: 13px; }
+  .dist:hover { background: var(--hover); }
+  .dist .nm { color: var(--l1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+  .dist .tr { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--l4) 16%, transparent); overflow: hidden; }
+  .dist .tr i { display: block; height: 100%; border-radius: 3px; background: color-mix(in srgb, var(--cta) 70%, var(--canvas)); }
+  .dist .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--l2); }
+  .dist .t { text-align: right; font-variant-numeric: tabular-nums; color: var(--l4); font-size: 12px; }
+
+  /* ── 设置 ── */
+  .setw { flex: 1; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr); }
+  .snav { padding: 6px 10px 16px 16px; overflow-y: auto; }
+  .snav .search { width: 100%; margin-bottom: 4px; }
+  .snav .gl { font-size: 11px; color: var(--l4); padding: 14px 8px 3px; }
+  .snav .it { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--l2); font-size: 13px; cursor: pointer; }
+  .snav .it svg { color: var(--l3); flex: none; }
+  .snav .it:hover { background: var(--hover); }
+  .snav .it.sel { background: var(--rail-sel); color: var(--l1); }
+  .snav .it.sel svg { color: var(--cta); }
+  .sbody { overflow-y: auto; padding: 0 16px; }
+  .sbody .col { max-width: 742px; }
+  .stitle { font-size: 16px; color: var(--l1); font-weight: 600; margin: 8px 4px 2px; }
+  .sdesc { font-size: 12.5px; color: var(--l4); margin: 0 4px 4px; }
+  .srw { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 20px; padding: 10px 4px; min-height: 48px; }
+  .srw .lb { color: var(--l1); font-size: 13.5px; }
+  .srw .hn { color: var(--l4); font-size: 12px; margin-top: 1px; }
+  .segq { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: color-mix(in oklab, var(--canvas), var(--l1) 3%); }
+  .segq button { height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--l3); font: inherit; font-size: 12px; cursor: pointer; }
+  .segq button.on { background: var(--inset); color: var(--l1); }
+  .swatches { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; padding: 6px 4px 10px; }
+  .sw { border-radius: 9px; padding: 4px; border: 1.5px solid transparent; cursor: pointer; }
+  .sw.on { border-color: var(--cta); }
+  .sw .pv { height: 40px; border-radius: 6px; display: grid; grid-template-columns: 30% 1fr; overflow: hidden; }
+  .sw .pv i:last-child { position: relative; }
+  .sw .pv i:last-child::after { content: ""; position: absolute; left: 8px; bottom: 8px; width: 14px; height: 6px; border-radius: 3px; background: var(--acc); }
+  .sw .nmm { font-size: 11px; color: var(--l3); text-align: center; margin-top: 4px; white-space: nowrap; }
+
+  /* ── 现在（只做 MCP） ── */
   .old { padding: 4px 24px 24px; }
   .oh { height: 48px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
   .oh h1 { margin: 0; font-size: 22px; font-weight: 600; color: var(--l1); letter-spacing: -.01em; display: flex; align-items: baseline; gap: 10px; }
@@ -156,6 +304,7 @@
   aside ol, aside ul { margin: 0; padding-left: 18px; }
   aside li { margin: 3px 0; }
   aside b { color: #e9e6e2; font-weight: 500; }
+  aside code { font: 11.5px ui-monospace, Menlo, monospace; color: #c8c8cc; }
   aside table { border-collapse: collapse; width: 100%; font-size: 12px; }
   aside td { padding: 4px 6px 4px 0; vertical-align: top; border-top: 1px solid #222327; }
   aside td:first-child { color: #e9e6e2; white-space: nowrap; }
@@ -165,263 +314,554 @@
 </head>
 <body>
 <header>
-  <h1>管理页视觉统一到对话页 · MCP 页试点（现在 vs 建议）</h1>
-  <p><b>只换观感，不改功能</b>：条目顺序、每行的信息、启用开关、悬停的检测 / 编辑 / 删除、展开后的完整配置与各 Agent 分发开关、「添加 MCP」菜单、「全部检测」都和现在一样，
-    只是按对话页的样子重画——40px 标题栏、对话栏宽度的单列、不画卡片和表头、靠字色分层、展开用左侧细线。
-    前三条是本机 <code>mcp-servers.json</code> 截至 10-29 的真实条目；勾「状态样例」会多三条<b>标了「样例」的假数据</b>，展示相对路径命令、分发被外部改、已停用。</p>
+  <h1>管理页视觉统一到对话页 · 七页设计稿</h1>
+  <p><b>只换观感，不改功能</b>：每页的信息、顺序、按钮与开关、菜单、弹窗都和现在一样，只按对话页的样子重画——
+    <b>40px 标题栏</b>（页名 + 计数在左，操作在右，用中性小按钮）、<b>对话栏宽度的单列</b>（742px 居中）、<b>不画卡片和表头</b>、
+    <b>分组标题用 12px 灰字</b>、<b>行字号对齐对话正文</b>（名称 14px、说明 12px 灰）、<b>展开用左侧细线</b>、<b>只有选中 / 展开 / 要你处理的才铺对话气泡色</b>。
+    数据取自本机（MCP 清单、连接与网关、技能库、用量库、项目与任务、对话标题、设置）；勾「状态样例」会补上本机眼下没有、但需要看样子的状态（标「样例」）。
+    「现在」对照只做了 MCP；其余页面的现状就是应用里看到的样子。</p>
   <div class="controls">
+    <span>页面</span>
+    <div class="seg" id="pageSeg">
+      <button data-p="workbench" class="on">工作台</button><button data-p="sessions">对话管理</button><button data-p="profiles">连接</button><button data-p="skills">技能</button><button data-p="mcp">MCP</button><button data-p="stats">用量</button><button data-p="settings">设置</button>
+    </div>
     <span>看哪版</span>
-    <div class="seg" id="viewSeg"><button data-v="new" class="on">建议</button><button data-v="old">现在</button></div>
+    <div class="seg" id="viewSeg"><button data-v="new" class="on">建议</button><button data-v="old" disabled>现在</button></div>
     <span>主题</span>
     <div class="seg" id="themeSeg"><button data-t="both" class="on">深浅都看</button><button data-t="dark">只看深色</button><button data-t="light">只看浅色</button></div>
     <label><input type="checkbox" id="samples" /> 状态样例</label>
-    <span style="color:#6e6e72">每个窗口可独立操作：点行展开、拨开关、悬停看行内操作、点右上角。</span>
   </div>
 </header>
 
 <div class="section">
   <div class="stage">
     <div class="wins" id="wins"></div>
-    <aside>
-      <h3>对话页的样子 → MCP 页怎么套</h3>
-      <table>
-        <tr><td>标题栏</td><td>2xl 大标题 + 蓝色主按钮 → 40px 栏，左「MCP 3 个」，右「全部检测」「添加 MCP」两个中性小按钮（同对话头右侧按钮）</td></tr>
-        <tr><td>宽度</td><td>1440px 铺满 → 742px 居中，等于对话栏</td></tr>
-        <tr><td>分层</td><td>卡片底 + 表头 + 行间横线 → 不画框，名称 l1、类型·命令 l4 两行，靠留白隔开</td></tr>
-        <tr><td>底色</td><td>只有展开着的那条铺对话气泡色，其余只有悬停反馈</td></tr>
-        <tr><td>展开区</td><td>卡底 + 九宫格小卡 → 左侧细线缩进（同「已思考 ›」展开），各 Agent 开关排成无底的两到四列</td></tr>
-        <tr><td>徽章</td><td>stdio / remote 灰底徽章、告警色块 → 纯文字，告警用字色</td></tr>
-      </table>
-      <h3>保持不变</h3>
-      <ul>
-        <li>条目顺序、每行信息（健康点、名称、需登录 / 连不上、类型、命令、用于 N 个 Agent、N 处异常、启用开关）。</li>
-        <li>悬停才出现的检测 / 编辑 / 删除；点「N 个 Agent」也能展开。</li>
-        <li>展开区内容：完整命令、相对路径修复、环境变量 / 请求头、密钥已填 / 未填、分发五态、未安装、Grok 只读。</li>
-        <li>「添加 MCP」菜单原样，编辑 / 删除 / 收编 / 粘贴的弹窗不动。</li>
-      </ul>
-      <h3>要你拍板</h3>
-      <div class="ask"><ol>
-        <li>列宽 742px 居中：改的是 2026-10-13「资源五页 wide 1440」的口径（MCP 先试，其余页后跟）。</li>
-        <li>页头去掉 2xl 大标题和蓝色主按钮，换成 40px 标题栏 + 中性小按钮。</li>
-        <li>去掉表头，类型和命令并成名称下一行灰字。</li>
-      </ol></div>
-    </aside>
+    <aside id="notes"></aside>
   </div>
 </div>
 
 <script>
+/* ═════════════ 共用 ═════════════ */
 const AGENTS = [
   ["claude-code", "Claude Code"], ["codex", "Codex"], ["gemini", "Gemini CLI"], ["qwen", "Qwen Code"],
   ["opencode", "OpenCode"], ["kimi", "Kimi Code"], ["codebuddy", "CodeBuddy"], ["cursor", "Cursor"], ["grok", "Grok Build"],
 ];
+const label = id => AGENTS.find(a => a[0] === id)[1];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const svg = (d, s = 14, w = 1.8) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const I = {
+  chev: svg('<path d="m9 6 6 6-6 6"/>', 13),
+  down: svg('<path d="m6 9 6 6 6-6"/>', 12),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  zap: svg('<path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="m2 22 3-3M7.5 13.5 10 11M10.5 16.5 13 14M12 6l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/><path d="m18 2-3 3M22 6l-3 3"/>'),
+  pen: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+  trash: svg('<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>'),
+  more: svg('<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', 15, 2.4),
+  wand: svg('<path d="m15 4 5 5M4 20 15 9M17 3l.5 1.5L19 5l-1.5.5L17 7l-.5-1.5L15 5l1.5-.5ZM6 4l.4 1.1L7.5 5.5l-1.1.4L6 7l-.4-1.1L4.5 5.5l1.1-.4Z"/>'),
+  msg: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/>'),
+  term: svg('<path d="m4 17 6-6-6-6M12 19h8"/>'),
+  ext: svg('<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>', 13),
+  target: svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
+  branch: svg('<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10a6 6 0 0 1-6 6H8"/>'),
+  flask: svg('<path d="M9 3h6M10 3v6L4.5 18.5A1.6 1.6 0 0 0 6 21h12a1.6 1.6 0 0 0 1.5-2.5L14 9V3"/>'),
+  code: svg('<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>'),
+  inbox: svg('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1Z"/>'),
+  clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  copy: svg('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>', 13),
+  folds: svg('<path d="m7 20 5-5 5 5M7 4l5 5 5-5"/>'),
+  check: svg('<path d="M3 12l5 5L21 4"/>', 13),
+  // 侧栏
+  chat: svg('<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>', 16, 1.7),
+  folder: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v5M9.5 13.5h5"/>', 16, 1.7),
+  grid: svg('<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>', 16, 1.7),
+  msgs: svg('<path d="M14 9a2 2 0 0 1-2 2H6l-3 3V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2Z"/><path d="M18 9h1a2 2 0 0 1 2 2v9l-3-3h-6a2 2 0 0 1-2-2v-1"/>', 16, 1.7),
+  key: svg('<path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/>', 16, 1.7),
+  book: svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5Z"/>', 16, 1.7),
+  plug: svg('<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8Z"/>', 16, 1.7),
+  bar: svg('<path d="M5 20V10M12 20V4M19 20v-7"/>', 16, 1.7),
+  gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3Z"/>', 16, 1.7),
+};
+const tbar = (title, count, right = "") => `<div class="tbar"><span class="t">${esc(title)}</span>${count ? `<span class="c">${count}</span>` : ""}<span class="sp"></span>${right}</div>`;
+const tb = (text, act, extra = "") => `<button class="tb" data-note="（设计稿）${esc(act)}" ${extra}>${text}</button>`;
+
+/* ═════════════ MCP（本机 mcp-servers.json，10-29；时间换算成本地 +8） ═════════════ */
 const EIGHT = AGENTS.slice(0, 8).map(a => a[0]);
-// 本机真实条目（~/Library/Application Support/ccode/mcp-servers.json，10-29）；时间换算成本地 +8
-const REAL = [
+const MCP_REAL = [
   { id: "blender", name: "blender", kind: "stdio", full: "uv --directory ~/blender_mcp/mcp run --with mcp<2 blender-mcp", short: "uv … blender_mcp/mcp run",
     enabled: true, apps: EIGHT, health: { s: "ok", tip: "正常 · 握手 5.2 秒 · 上次检测 10-17 14:31" } },
   { id: "consensus", name: "consensus", kind: "remote", full: "https://mcp.consensus.app/mcp", short: "https://mcp.consensus.app/mcp",
     enabled: true, apps: EIGHT, health: { s: "ok", tip: "正常 · 0.4 秒 · 上次检测 10-17 14:15" },
     headers: "Authorization=Bearer ${CONSENSUS_API_KEY}", secret: "Consensus API 密钥已填（尾号略）" },
   { id: "undermind", name: "undermind", kind: "remote", full: "https://mcp.undermind.ai/mcp", short: "https://mcp.undermind.ai/mcp",
-    enabled: true, apps: EIGHT, health: { s: "login", tip: "上次检测 10-29 17:40：需要 OAuth 登录（HTTP 401 Unauthorized）：在对应 CLI 执行 mcp login（Codex：codex mcp login <名>）。Mesa 体检不会代登，登录后请新开会话" } },
+    enabled: true, apps: EIGHT, health: { s: "login", tip: "上次检测 10-29 17:40：需要 OAuth 登录（HTTP 401 Unauthorized）" } },
 ];
-// 状态样例：不是本机数据
-const SAMPLES = [
+const MCP_SAMPLES = [
   { id: "zotero", sample: true, name: "zotero", kind: "stdio", full: "node ./zotero-mcp/build/index.js", short: "node ./zotero-mcp/build/index.js",
     enabled: true, apps: ["claude-code", "codex"], health: null, path: "relative" },
   { id: "filesystem", sample: true, name: "filesystem", kind: "stdio", full: "npx -y @modelcontextprotocol/server-filesystem ~/Documents", short: "npx … server-filesystem ~/Documents",
-    enabled: true, apps: ["claude-code", "codex", "gemini"], health: { s: "ok", tip: "正常 · 握手 1.8 秒 · 上次检测 10-28 09:12" }, dist: { codex: "modified", gemini: "missing" } },
+    enabled: true, apps: ["claude-code", "codex", "gemini"], health: { s: "ok", tip: "正常 · 上次检测 10-28 09:12" }, dist: { codex: "modified", gemini: "missing" } },
   { id: "github", sample: true, name: "github", kind: "remote", full: "https://api.githubcopilot.com/mcp/", short: "https://api.githubcopilot.com/mcp/",
     enabled: false, apps: ["claude-code", "codex"], health: { s: "ok", tip: "正常 · 上次检测 10-02 11:05" } },
 ];
-const NOT_INSTALLED = new Set(["kimi"]); // 样例：本机没装 Kimi Code 时的写法
-const PRESETS = ["Consensus（学术搜索）", "Undermind（文献语义搜索）", "Blender（3D 场景）"];
-const DIST = { modified: ["外部已修改", "warn"], missing: ["外部已删除", "err"], disabled_externally: ["外部已禁用", "mute"] };
-
-const I = {
-  chev: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>',
-  down: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
-  plus: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  zap: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/><path d="m2 22 3-3M7.5 13.5 10 11M10.5 16.5 13 14M12 6l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/><path d="m18 2-3 3M22 6l-3 3"/></svg>',
-  pen: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
-  trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
-  chat: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
-  folder: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v5M9.5 13.5h5"/></svg>',
-  grid: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>',
-  msgs: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-3 3V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2Z"/><path d="M18 9h1a2 2 0 0 1 2 2v9l-3-3h-6a2 2 0 0 1-2-2v-1"/></svg>',
-  key: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/></svg>',
-  book: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5Z"/></svg>',
-  plug: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8Z"/></svg>',
-  bar: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>',
-  gear: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3Z"/></svg>',
-};
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const label = id => AGENTS.find(a => a[0] === id)[1];
-
-function list(st) { return REAL.concat(st.samples ? SAMPLES : []).map(s => ({ ...s, enabled: st.enabled[s.id] ?? s.enabled, apps: st.apps[s.id] ?? s.apps })); }
-// 与现有 mcpHealthLabel 同口径：不正常才在名字后写字
-function healthLabel(s) {
-  if (!s.health) return null;
-  if (s.health.s === "login") return { t: "需登录", tone: "warn" };
-  if (s.health.s === "down") return { t: "连不上", tone: "err" };
-  return null;
-}
-function dotClass(s, st) {
-  if (st.checking && s.enabled) return "busy";
-  if (!s.health) return "none";
-  return s.health.s === "ok" ? "ok" : s.health.s === "login" ? "warn" : "err";
-}
-const issues = s => s.enabled ? Object.entries(s.dist || {}).filter(([a]) => s.apps.includes(a)) : [];
-
-function detail(s) {
-  let h = `<div class="det">`;
-  h += `<div class="line mono">${esc(s.full)}</div>`;
-  if (s.path === "relative") h += `<div class="line"><span class="w">相对路径命令：换个工作目录启动就找不到</span><button class="sec" data-note="（设计稿）调用现有「修复为绝对路径」">修复为绝对路径</button></div>`;
-  if (s.headers) h += `<div class="line mono m4" style="color:var(--l4)">请求头：${esc(s.headers)}</div>`;
+const DIST = { modified: ["外部已修改", "warn"], missing: ["外部已删除", "err"] };
+function mcpList(st) { return MCP_REAL.concat(G.samples ? MCP_SAMPLES : []).map(s => ({ ...s, enabled: st.enabled[s.id] ?? s.enabled, apps: st.apps[s.id] ?? s.apps })); }
+const mcpHL = s => s.health && s.health.s === "login" ? { t: "需登录", tone: "warn" } : null;
+const mcpDot = (s, st) => st.checking && s.enabled ? "busy" : !s.health ? "none" : s.health.s === "ok" ? "ok" : "warn";
+const mcpIssues = s => s.enabled ? Object.entries(s.dist || {}).filter(([a]) => s.apps.includes(a)) : [];
+function mcpDetail(s) {
+  let h = `<div class="det"><div class="line mono">${esc(s.full)}</div>`;
+  if (s.path === "relative") h += `<div class="line"><span class="w">相对路径命令：换个工作目录启动就找不到</span><button class="sec" data-note="（设计稿）现有「修复为绝对路径」">修复为绝对路径</button></div>`;
+  if (s.headers) h += `<div class="line mono" style="color:var(--l4)">请求头：${esc(s.headers)}</div>`;
   if (s.secret) h += `<div class="line">${esc(s.secret)}</div>`;
   h += `<div class="agents">`;
   for (const [id, lb] of AGENTS) {
     const on = s.apps.includes(id);
-    const ni = NOT_INSTALLED.has(id) && !on;
     let left = "";
     if (on && s.enabled && id !== "grok") {
       const d = s.dist && s.dist[id];
-      left += `<span class="sd" style="background:var(--${d === "modified" ? "warn" : d === "missing" ? "err" : "ok"})" title="${d ? DIST[d][0] : "已写入该 agent 的用户级配置"}"></span>`;
-      if (d && d !== "modified") left += `<button class="pill" style="color:var(--${DIST[d][1] === "err" ? "err" : "l3"});background:var(--hover)" data-note="（设计稿）按 Mesa 清单重新写入 ${lb}">${DIST[d][0]} · 重写</button>`;
+      left += `<span class="sd" style="background:var(--${d === "modified" ? "warn" : d === "missing" ? "err" : "ok"})"></span>`;
+      if (d === "missing") left += `<button class="pill e" data-note="（设计稿）按 Mesa 清单重新写入 ${lb}">外部已删除 · 重写</button>`;
     }
-    left += `<span>${lb}</span>${ni ? '<span class="m4" style="font-size:11px">未安装</span>' : ""}`;
-    const right = id === "grok"
-      ? `<span class="ro" title="该 CLI 的 MCP 配置只读，暂不支持分发">只读</span>`
-      : `<button class="toggle ${on ? "" : "off"}" data-act="app" data-id="${s.id}" data-a="${id}" aria-label="${lb}"></button>`;
-    h += `<div class="ag ${ni || id === "grok" ? "dim" : ""}"><span class="l">${left}</span>${right}</div>`;
+    left += `<span>${lb}</span>`;
+    const right = id === "grok" ? `<span class="l4" title="该 CLI 的 MCP 配置只读，暂不支持分发">只读</span>`
+      : `<button class="toggle ${on ? "" : "off"}" data-act="mcp-app" data-id="${s.id}" data-a="${id}" aria-label="${lb}"></button>`;
+    h += `<div class="ag ${id === "grok" ? "dim" : ""}"><span class="l">${left}</span>${right}</div>`;
   }
   return h + `</div></div>`;
 }
-
-function row(s, st) {
-  const open = st.open === s.id, hl = healthLabel(s), iss = issues(s);
-  const pathWarn = s.path === "relative" ? `<span class="w" style="color:var(--caution)">相对路径命令</span> · ` : "";
+function mcpRow(s, st) {
+  const open = st.open === s.id, hl = mcpHL(s), iss = mcpIssues(s);
   return `<div class="row ${open ? "open" : ""} ${s.enabled ? "" : "off"}">
-    <div class="rh" data-act="open" data-id="${s.id}">
+    <div class="rh" data-act="mcp-open" data-id="${s.id}">
       <span class="fold">${I.chev}</span>
-      <span class="dot ${dotClass(s, st)}" title="${esc(s.health ? s.health.tip : "还没检测过")}"></span>
+      <span class="dot ${mcpDot(s, st)}" title="${esc(s.health ? s.health.tip : "还没检测过")}"></span>
       <div class="nm"><span class="n">${esc(s.name)}</span>${hl ? `<span class="st ${hl.tone}">${hl.t}</span>` : ""}${s.enabled ? "" : '<span class="st mute">已停用</span>'}${s.sample ? '<span class="st mute">样例</span>' : ""}</div>
-      <button class="use" data-act="open" data-id="${s.id}" title="点击展开分发管理">${s.apps.length ? `${s.apps.length} 个 Agent` : "未用"}${iss.length ? ` <span class="w">· ${iss.length} 处异常</span>` : ""}</button>
-      <span class="hov">
-        <button class="ib" data-act="check" data-tip="测试连通性" aria-label="测试连通性">${I.zap}</button>
-        <button class="ib" data-note="（设计稿）打开现有的编辑弹窗" aria-label="编辑">${I.pen}</button>
-        <button class="ib" data-note="（设计稿）打开现有的删除确认" aria-label="删除">${I.trash}</button>
-      </span>
-      <span class="tg"><button class="toggle ${s.enabled ? "" : "off"}" data-act="toggle" data-id="${s.id}" aria-label="${esc(s.name)} 启用开关" title="${s.enabled ? "停用：从各 agent 移除条目，分发映射保留" : "启用：按分发映射重新写入各 agent"}"></button></span>
-      <div class="sub">${pathWarn}<span class="k">${s.kind}</span> · <span class="mono">${esc(s.short)}</span></div>
-    </div>
-    ${open ? detail(s) : ""}
-  </div>`;
+      <button class="use" data-act="mcp-open" data-id="${s.id}">${s.apps.length} 个 Agent${iss.length ? ` <span class="w">· ${iss.length} 处异常</span>` : ""}</button>
+      <span class="hov"><button class="ib" data-act="check" data-tip="测试连通性">${I.zap}</button><button class="ib" data-note="（设计稿）现有编辑弹窗">${I.pen}</button><button class="ib" data-note="（设计稿）现有删除确认">${I.trash}</button></span>
+      <span class="tg"><button class="toggle ${s.enabled ? "" : "off"}" data-act="mcp-toggle" data-id="${s.id}" aria-label="${esc(s.name)} 启用开关"></button></span>
+      <div class="sub">${s.path === "relative" ? '<span class="w">相对路径命令</span> · ' : ""}<span class="k">${s.kind}</span> · <span class="mono">${esc(s.short)}</span></div>
+    </div>${open ? mcpDetail(s) : ""}</div>`;
 }
-
-function oldBody(st) {
-  const all = list(st);
-  let h = `<div class="old"><div class="oh"><h1>MCP <small>${all.length} 个</small></h1>
-    <div style="display:flex;gap:4px"><button class="pri">+ 添加 MCP ⌄</button><button class="sec" style="height:32px;margin:0">全部检测</button></div></div>
+function mcpOld(st) {
+  const all = mcpList(st);
+  let h = `<div style="height:28px"></div><div class="scroll"><div class="old"><div class="oh"><h1>MCP <small>${all.length} 个</small></h1>
+    <div style="display:flex;gap:4px"><button class="pri">+ 添加 MCP ⌄</button><button class="sec" style="height:32px">全部检测</button></div></div>
     <div class="card"><div class="og h"><span>名称</span><span>类型</span><span>配置</span><span>用于</span><span style="text-align:right">启用</span></div>`;
   for (const s of all) {
-    const hl = healthLabel(s), iss = issues(s);
-    h += `<div class="og"><span style="display:flex;align-items:center;gap:8px;min-width:0">
-        <span style="color:var(--l4);font-size:10px">▸</span><span class="dot ${dotClass(s, st)}"></span>
-        <span style="color:${s.enabled ? "var(--l1)" : "var(--l4)"};font-size:13px">${esc(s.name)}</span>
-        ${hl ? `<span class="st ${hl.tone}" style="font-size:11px">${hl.t}</span>` : ""}${s.enabled ? "" : '<span class="badge" style="font-family:inherit">已停用</span>'}</span>
+    const hl = mcpHL(s), iss = mcpIssues(s);
+    h += `<div class="og"><span style="display:flex;align-items:center;gap:8px;min-width:0"><span class="l4" style="font-size:10px">▸</span><span class="dot ${mcpDot(s, st)}"></span>
+      <span style="color:${s.enabled ? "var(--l1)" : "var(--l4)"};font-size:13px">${esc(s.name)}</span>${hl ? `<span class="st ${hl.tone}" style="font-size:11px">${hl.t}</span>` : ""}${s.enabled ? "" : '<span class="badge" style="font-family:inherit">已停用</span>'}</span>
       <span><span class="badge">${s.kind}</span></span>
-      <span class="mono">${s.path === "relative" ? '<span style="font:11px -apple-system;color:var(--caution);background:color-mix(in srgb,#d9930d 10%,transparent);padding:1px 4px;border-radius:3px">相对路径命令</span> ' : ""}${esc(s.short)}</span>
-      <span style="font-size:12px;color:var(--l3)">${s.apps.length} 个 Agent${iss.length ? ` <span style="color:var(--caution)">· ${iss.length} 处异常</span>` : ""}</span>
+      <span class="mono">${s.path === "relative" ? '<span class="w" style="font:11px -apple-system;background:color-mix(in srgb,#d9930d 10%,transparent);padding:1px 4px;border-radius:3px">相对路径命令</span> ' : ""}${esc(s.short)}</span>
+      <span style="font-size:12px;color:var(--l3)">${s.apps.length} 个 Agent${iss.length ? ` <span class="w">· ${iss.length} 处异常</span>` : ""}</span>
       <span class="toggle ${s.enabled ? "" : "off"}"></span></div>`;
   }
-  return h + `</div></div>`;
+  return h + `</div></div></div>`;
 }
+const PAGE_MCP = {
+  nav: "MCP",
+  render(st) {
+    if (G.view === "old") return mcpOld(st);
+    const all = mcpList(st);
+    const menu = st.menu ? `<div class="menu"><div class="mi" data-note="（设计稿）现有「添加 MCP」表单">自己填写…</div><div class="mh">预设</div>
+      ${["Consensus（学术搜索）", "Undermind（文献语义搜索）", "Blender（3D 场景）"].map(l => `<div class="mi" data-note="（设计稿）打开预设「${l}」">${l}</div>`).join("")}
+      <div class="mh">从别处导入</div><div class="mi" data-note="（设计稿）收编现有配置">收编现有配置</div><div class="mi" data-note="（设计稿）粘贴导入">粘贴导入</div></div>` : "";
+    return tbar("MCP", `${all.length} 个`, `<button class="tb" data-act="check" data-tip="对清单里所有已启用的 MCP 逐条检测连通性（每波最多 4 个）">${I.zap}${st.checking ? "检测中…" : "全部检测"}</button>
+        <button class="tb ${st.menu ? "on" : ""}" data-act="menu">${I.plus}添加 MCP${I.down}</button>${menu}`)
+      + `<div class="scroll"><div class="col">${all.map(s => mcpRow(s, st)).join("")}</div></div>`;
+  },
+  notes: `<h3>对话页的样子 → MCP 页</h3><table>
+    <tr><td>标题栏</td><td>2xl 大标题 + 蓝色主按钮 → 40px 栏，「全部检测」「添加 MCP」中性小按钮</td></tr>
+    <tr><td>列表</td><td>卡片底 + 表头 + 行间横线 → 不画框；名称一行、类型 · 命令一行灰字</td></tr>
+    <tr><td>展开</td><td>卡底 + 九宫格小卡 → 左细线缩进，各 Agent 开关排成无底的几列；展开着的那条铺气泡色</td></tr></table>
+    <h3>不变</h3><ul><li>顺序、健康点、需登录、N 个 Agent、N 处异常、启用开关、悬停的检测 / 编辑 / 删除、展开内容、添加菜单。</li></ul>
+    <p style="margin-top:10px">顶部可切「现在」对照。</p>`,
+};
 
-function shell(st) {
-  const isNew = st.view === "new";
-  const all = list(st);
+/* ═════════════ 工作台（项目 / 任务 / 定时任务取自 app.db 与 schedules.json） ═════════════ */
+const WB_PROJECTS = [
+  { name: "综述流程测试", mode: "flask", vit: "科研 · 进行到 第 5 / 5 步", time: "昨天", go: "回到对话", tasks: [
+    { n: 5, name: "润色", state: "上次失败，需要处理", tone: "e", time: "昨天", cur: true },
+    { n: 3, name: "综述大纲", state: "提前开了，还没保存", tone: "l3", time: "10月10日" },
+  ], goal: false },
+  { name: "测试项目", mode: "flask", vit: "科研 · 进行到 第 3 / 5 步 · 1 个定时任务（停用）", time: "2 天前", go: "回到对话", tasks: [
+    { n: 3, name: "综述大纲", state: "工作副本开着，还没保存进项目", tone: "l3", time: "2 天前", cur: true },
+    { n: 2, name: "文献精读", state: "提前开了，还没保存", tone: "l3", time: "4 天前" },
+    { n: 1, name: "文献检索", state: "上次失败，需要处理", tone: "e", time: "5 天前" },
+  ] },
+  { name: "Ccode", mode: "code", vit: "编程 · 基准 main · 分支 1 条", time: "4 天前", go: "打开项目", tasks: [
+    { icon: "branch", name: "windows/feat/1025", state: "比 main 多出提交，等待合并", tone: "l3", time: "4 天前" },
+  ] },
+];
+const WB_QUEUE = [
+  { icon: "inbox", tone: "warn", name: "Codex 想运行 npm run build", sub: "Ccode · 等你确认", act: "approve" },
+  { icon: "inbox", tone: "warn", name: "文献雷达：3 篇新文献待评审", sub: "综述流程测试 · 等你看结果", act: "go" },
+];
+const PAGE_WB = {
+  nav: "工作台",
+  render(st) {
+    let b = `<div class="col">`;
+    if (G.samples) {
+      b += `<div class="sh">等你拍板 <span class="n">${WB_QUEUE.length}</span><span class="sp"></span><span class="l4" style="font-weight:400;font-size:11px">J/K 移动 · 回车 去处理 · A 允许 · R 拒绝 · E 收起</span></div><div class="need">`;
+      for (const q of WB_QUEUE) {
+        b += `<div class="lr hrow"><span class="ic"><span class="dot warn"></span></span><span class="main1"><span class="nm1">${esc(q.name)}</span><span class="sample">样例</span></span>
+          <span class="acts">${q.act === "approve" ? `<button class="ghost" data-note="（设计稿）拒绝这一问，5 秒内可撤销">拒绝</button><button class="ghost l1" data-note="（设计稿）允许一次，5 秒内可撤销">允许一次</button>` : `<button class="ghost" data-note="（设计稿）去评审">去处理</button>`}</span><span></span>
+          <span class="s2">${esc(q.sub)}</span></div>`;
+      }
+      b += `</div>`;
+    }
+    const chips = ["进行中", "全部", "科研", "编程", "工作"].map((c, i) => `<button class="chip ${(st.filter ?? 0) === i ? "on" : ""}" data-act="wb-filter" data-i="${i}">${c}</button>`).join("");
+    b += `<div class="sh">项目<span class="sp"></span>${chips}</div>`;
+    for (const p of WB_PROJECTS) {
+      b += `<div class="proj"><div class="ph"><span class="l3" style="display:flex">${I[p.mode]}</span><span class="pn">${esc(p.name)}</span><span class="pv">${esc(p.vit)}</span><span class="sp"></span>
+        <button class="ib reveal" data-tip="在 Claude 桌面版打开">${I.ext}</button><button class="tb reveal" data-note="（设计稿）${p.go}">${p.go}</button><span class="tm">${p.time}</span></div>`;
+      for (const t of p.tasks) {
+        const ic = t.icon ? `<span class="l3" style="display:flex">${I[t.icon]}</span>` : `<span class="badge-n ${t.cur ? "cur" : t.tone === "e" ? "err" : ""}">${t.n}</span>`;
+        b += `<div class="lr" data-note="（设计稿）打开任务面板（右侧抽屉，内容不变）"><span class="ic">${ic}</span><span class="main1"><span class="nm1">${esc(t.name)}</span><span class="s1 ${t.tone}">${esc(t.state)}</span></span><span></span><span class="tm">${t.time}</span></div>`;
+      }
+      if (p.goal !== false && p.mode !== "code") b += `<div class="add" data-note="（设计稿）就地出现「要完成什么」输入框">${I.plus}记下一个目标</div>`;
+      b += `</div>`;
+    }
+    b += `<p class="quiet">另有 5 个项目没有进行中的事：<a>Blender</a> · <a>后端管理</a> · <a>网页设计</a> · <a>AI应用教程</a> · <a>AI模型</a></p>`;
+    b += `<div class="sh">定时任务 <span class="n">1</span></div>
+      <div class="sched" data-note="（设计稿）打开定时任务详情"><span class="l1" style="font-size:13px;font-variant-numeric:tabular-nums">明天 09:00</span>
+        <span style="min-width:0"><span class="l1" style="font-size:14px">文献雷达</span><span class="l4" style="font-size:12px;display:block">综述流程测试 · 每天</span></span>
+        <span class="l3" style="font-size:12px">今天 09:09 跑完</span><button class="ghost" data-note="（设计稿）现在跑">现在跑</button></div></div>`;
+    return tbar("工作台", "", "") + `<div class="scroll">${b}</div>`;
+  },
+  notes: `<h3>对话页的样子 → 工作台</h3><table>
+    <tr><td>标题栏</td><td>现在没有标题（只给读屏）→ 补一条 40px 小标题栏「工作台」，和其他页同高</td></tr>
+    <tr><td>区块标题</td><td>16px 粗体 + 图标 → 12px 灰字（同对话「已思考」那一档）</td></tr>
+    <tr><td>项目</td><td>细线边框卡 → 每个项目仍是单独一块，改成无边框的气泡色底</td></tr>
+    <tr><td>任务行</td><td>名称 14px，状态 12px 灰（红 = 要处理、强调色 = 当前步），时间 11px 右对齐</td></tr>
+    <tr><td>拍板队列</td><td>同样一块气泡色底；允许一次 / 拒绝 / 去处理为中性小按钮</td></tr></table>
+    <h3>不变</h3><ul><li>三块的先后、筛选胶囊、键盘提示、去处更按钮悬停才出现、记下一个目标、「另有 N 个项目」、定时任务的列。</li>
+    <li>任务面板、审批详情仍是右侧抽屉。</li></ul>
+    <h3>数据</h3><ul><li>项目、任务状态取自 app.db（tasks 表），文字按工作台口径套写；步骤序号按综述模板推断。</li><li>拍板队列本机眼下是空的，勾「状态样例」才出现。</li></ul>
+    <h3>要你拍板</h3><div class="ask"><ol><li>补 40px 小标题栏：10-24 拍板去掉的是大标题，这条小栏和其他页对齐。</li><li>项目块从细线框改成气泡色底（仍每项目一块，守 10-28「单独一个卡片」）。</li><li>宽度 742px：改 10-27 定的 wide 1440。</li></ol></div>`,
+};
+
+/* ═════════════ 对话管理（标题取自 session_meta；回放取自截图那段随手聊） ═════════════ */
+const SESS = [
+  ["随手聊", [["雨天海边图片生成", "功能 · Claude Code · 刚刚", true], ["出图工具生成夏天下雪图", "功能 · Claude Code · 1 小时前"], ["用户仅要求回复ok", "探索 · Claude Code · 昨天"]]],
+  ["Ccode", [["MCP页深浅双主题设计稿", "设计 · Claude Code · 刚刚", false, "live"], ["Codex里Undermind登录提示排查", "探索 · Claude Code · 1 小时前"], ["Claude客户端继续存量对话排查", "探索 · Claude Code · 2 小时前"],
+    ["CLI启动禁用打断对话的更新提示", "功能 · Claude Code · 3 小时前"], ["上手引导支持手动永久关闭", "功能 · Claude Code · 4 小时前"], ["Windows打包版问题排查", "探索 · Claude Code · 5 小时前"],
+    ["聊天层输入框沉降动画丝滑", "优化 · Claude Code · 今天"], ["思考原文上方固定思考中表头", "设计 · Claude Code · 今天"], ["聊天层正文提亮对标Claude", "设计 · Claude Code · 昨天"]]],
+  ["后端管理", [["模型参数按新表纠正", "修复 · Codex · 3 天前"], ["管理页头像展示方案", "设计 · Codex · 4 天前"]]],
+];
+const PAGE_SESS = {
+  nav: "对话管理",
+  render(st) {
+    const chips = ["进行中", "保留", "今天", "近 7 天"].map((c, i) => `<button class="chip ${st.qf === i ? "on" : ""}" data-act="sess-qf" data-i="${i}" style="height:24px;padding:0 8px">${c}</button>`).join("") + `<button class="chip" style="height:24px;padding:0 6px" data-note="（设计稿）更多快筛">${I.more}</button>`;
+    let l = `<div class="slist">${tbar("对话管理", "1,284 段", `<button class="tb" data-note="（设计稿）多选">多选</button><button class="ib" data-tip="从另一台机器导入会话包" data-note="（设计稿）导入">${I.plus}</button>`)}
+      <div style="padding:0 12px 4px"><input class="search" style="width:100%" placeholder="搜索对话标题和正文" /></div><div style="display:flex;gap:2px;padding:4px 10px 0;flex-wrap:wrap">${chips}</div><div class="sl">`;
+    for (const [g, rows] of SESS) {
+      l += `<div class="sh">${g} <span class="n">${rows.length}</span></div>`;
+      for (const [t, m, sel, live] of rows) l += `<div class="srow ${sel ? "sel" : ""}" data-note="（设计稿）右边换成这段对话"><div class="tt">${live ? '<span class="dot ok" title="进行中"></span>' : ""}${esc(t)}</div><div class="mm">${esc(m)}</div></div>`;
+    }
+    l += `</div></div>`;
+    const r = `<div class="rep">${tbar("雨天海边图片生成", "", `<button class="tb strong" data-note="（设计稿）继续">继续</button><button class="tb" data-tip="提炼成紧凑简报，供新会话继续" data-note="（设计稿）提炼简报">提炼简报</button><button class="tb" data-note="（设计稿）导出">导出</button><button class="ib" data-note="（设计稿）更多对话操作">${I.more}</button>`)}
+      <div class="meta2"><span class="l3">Claude Code</span>·<span>随手聊</span>·<span>刚刚</span><span class="sp"></span><button class="chip on" style="height:22px;padding:0 8px;font-size:11px">对话</button><button class="chip" style="height:22px;padding:0 8px;font-size:11px">改动</button></div>
+      <div class="scroll"><div class="col" style="padding-top:4px">
+        <div class="msg-u"><span>你好</span></div>
+        <div class="think">已思考 14 秒 ${I.chev}</div>
+        <div class="msg-a"><p>你好！我们刚聊到：你想「在原图上改」+「再出一张别的图」，但具体怎么改、画什么还没定。</p><p>不想选的话，直接一句话告诉我也行，比如：</p><ul><li>「原图加个撑伞的人，另一张画只猫」</li><li>或者其他任何想法</li></ul></div>
+        <div class="msg-u"><span>今天天气如何</span></div>
+        <div class="think">已工作 48 秒 · 运行 2 条命令 ${I.chev}</div>
+        <div class="msg-a"><p>今天杭州的天气（按 IP 定位）：</p><ul><li><b>天气</b>：烟霾（Smoky haze），天空灰蒙蒙的</li><li><b>气温</b>：当前 15°C（体感 14°C），今天 13~20°C</li><li><b>湿度</b>：70%，风很小（约 4 km/h）</li></ul><p>想查其他城市的话告诉我城市名就行。</p></div>
+      </div></div></div>`;
+    return `<div class="split">${l}${r}</div>`;
+  },
+  notes: `<h3>对话页的样子 → 对话管理</h3><table>
+    <tr><td>左栏</td><td>375px 列表 + 细线分隔 → 300px，行写法同侧栏对话行（标题 13px、类型 · Agent · 时间 11px 灰），选中用侧栏选中色</td></tr>
+    <tr><td>右栏头</td><td>strip 底的回放头 → 40px 标题栏；「继续」由蓝色实心改成气泡色中性按钮，提炼简报 / 导出 / ⋯ 同排</td></tr>
+    <tr><td>元信息</td><td>品牌色 Agent 徽章、灰底小块 → 一行灰字；对话 / 改动页签在这行右端</td></tr>
+    <tr><td>回放</td><td>直接用对话页的消息写法：用户气泡、「已思考 ›」、正文 14px、对话栏宽度</td></tr></table>
+    <h3>不变</h3><ul><li>双栏结构、搜索、快筛、按项目分组、多选、导入、继续 / 提炼简报 / 导出 / ⋯ 菜单、对话 / 改动页签。</li></ul>
+    <h3>数据</h3><ul><li>对话标题取自本机自动起名（去掉「MMDD|类型|」前缀，类型放到灰字里）；回放内容是截图里那段随手聊；总数为示意。</li></ul>`,
+};
+
+/* ═════════════ 连接（profiles 来自 bindings.json + gateways.json，不含密钥） ═════════════ */
+const GW = { "Zeta-22": "ent.zetatechs.com", Test: "ent.zetatechs.com", GLM: "open.bigmodel.cn" };
+const BIND = [
+  ["claude-code", "GLM", "GLM", ["glm-5.3", "glm-5.3-flashx"]], ["claude-code", "GLM-flash", "GLM", ["glm-5.3-flash", "glm-5.2"]], ["claude-code", "Test", "Test", ["deepseek-v4.1-flash"]], ["claude-code", "官方账号", null, []],
+  ["codex", "Codex-Deepseek", "Zeta-22", ["gpt-6.1-sol", "gpt-6-astra"]], ["codex", "Test", "Test", ["deepseek-v4-flash-0731"]], ["codex", "GLM", "GLM", ["glm-5.3-flash"]], ["codex", "Test", "Test", ["deepseek-v4.1-flash"]], ["codex", "官方账号", null, []],
+  ["gemini", "Test", "Test", ["gemini-4-argon"]], ["gemini", "Test", "Test", ["deepseek-v4.1-flash"]], ["gemini", "官方账号", null, []],
+  ["qwen", "GLM", "GLM", ["glm-5.3", "glm-5.3-flashx"]], ["qwen", "Test", "Test", ["gpt-6-luna"]], ["qwen", "官方账号", null, []],
+  ["opencode", "GLM", "GLM", []], ["opencode", "Test", "Test", ["deepseek-v4.1-flash"]],
+  ["kimi", "GLM", "GLM", ["glm-5.3", "glm-5.3-flashx"]], ["kimi", "Test", "Test", ["gpt-6-luna"]], ["kimi", "Test", "Test", ["deepseek-v4.1-flash"]], ["kimi", "官方账号", null, []],
+  ["codebuddy", "GLM", "GLM", ["glm-5.3", "glm-5.3-flashx"]], ["codebuddy", "官方账号", null, []],
+  ["cursor", "GLM", "GLM", ["glm-5.3"]], ["cursor", "官方账号", null, []],
+  ["grok", "GLM", "GLM", ["glm-5.3", "glm-5.3-flash"]], ["grok", "Test", "Test", ["deepseek-v4-flash-0731"]], ["grok", "GPT-6 Sol", "Test", ["gpt-6-sol"]], ["grok", "官方账号", null, []],
+];
+const PAGE_PROF = {
+  nav: "连接",
+  render(st) {
+    const tools = `<div class="tools">${["全部", "已安装", "未安装"].map((c, i) => `<button class="chip ${(st.pf ?? 0) === i ? "on" : ""}" data-act="prof-f" data-i="${i}">${c}</button>`).join("")}<span class="sp"></span>
+      <button class="ib" data-tip="全部折叠" data-note="（设计稿）全部折叠">${I.folds}</button><input class="search" placeholder="搜索连接 / 端点 / 模型" /></div>`;
+    let b = `<div class="col">${tools}`;
+    for (const [id, lb] of AGENTS) {
+      const rows = BIND.filter(r => r[0] === id);
+      b += `<div class="ag-h"><span class="an">${lb}</span><span class="n">${rows.length}</span><span class="sp"></span><span class="hov"><button class="tb" data-note="（设计稿）给 ${lb} 添加连接">${I.plus}添加</button><button class="ib" data-note="（设计稿）组菜单">${I.more}</button></span></div>`;
+      rows.forEach(([, name, gw, models], i) => {
+        const official = !gw;
+        // 同名连接补首个模型区分（同现有 nameSuffix）
+        const dup = rows.filter(r => r[1] === name).length > 1;
+        const tags = (G.samples && id === "claude-code" && i === 0 ? '<span class="tag a">默认</span><span class="sample">样例</span>' : "")
+          + (G.samples && id === "codex" && i === 1 ? '<span class="tag e">配置失效</span><span class="sample">样例</span>' : "");
+        b += `<div class="lr hrow"><span class="ic"><span class="av">${official ? lb[0] : gw[0]}</span></span>
+          <span class="main1"><span class="nm1 b">${esc(name)}${dup ? `<span class="l3" style="font-weight:400"> · ${esc(models[0])}</span>` : ""}</span>${tags}</span>
+          <span class="hov"><button class="ib" data-tip="测试" data-note="（设计稿）测试这条连接">${I.zap}</button><button class="ib" data-tip="新对话" data-note="（设计稿）用它开新对话">${I.msg}</button><button class="ib" data-tip="外部终端" data-note="（设计稿）外部终端">${I.term}</button><button class="ib" data-note="（设计稿）更多：编辑 / 设为默认 / 设为全局 / 停用 / 删除">${I.more}</button></span>
+          <span></span>
+          <span class="s2">${official ? "官方账号登录" : esc(GW[gw])}${models.length ? ` · <span class="mono">${models.slice(0, 3).map(esc).join(" · ")}</span>` : official ? "" : ' · <span class="l4">没选模型</span>'}</span></div>`;
+      });
+    }
+    b += `</div>`;
+    return tbar("连接", `${BIND.length} 个连接`, `<button class="tb" data-note="（设计稿）网关库">网关库</button><button class="tb" data-note="（设计稿）现有添加连接流程">${I.plus}添加连接</button><button class="ib" data-note="（设计稿）更多连接操作">${I.more}</button>`) + `<div class="scroll">${b}</div>`;
+  },
+  notes: `<h3>对话页的样子 → 连接</h3><table>
+    <tr><td>标题栏</td><td>大标题 + 长 meta + 网关库 / 蓝色添加 / ⋯ → 40px 栏，三个中性小按钮</td></tr>
+    <tr><td>筛选条</td><td>分段控件 + 描边搜索框 → 无底文字胶囊 + 细边搜索框，挪进内容列顶部</td></tr>
+    <tr><td>Agent 组</td><td>每组一张卡、h-11 组头 → 无卡，组名 14px 粗 + 数量灰字，组操作悬停才出</td></tr>
+    <tr><td>连接行</td><td>名称 · 端点 · 模型三列 → 名称一行，端点 · 模型并成一行灰字（模型仍 mono、前 3 个）</td></tr>
+    <tr><td>徽章</td><td>默认 / 配置失效 / 已停用的色块 pill → 纯文字（强调色 / 红 / 灰）</td></tr></table>
+    <h3>不变</h3><ul><li>Agent 顺序、组可拖动与折叠、行内测试 / 新对话 / 外部终端 / ⋯、同名补首模型、官方账号行、未安装组降权。</li></ul>
+    <h3>数据</h3><ul><li>29 条连接与网关地址取自本机；没写「上次使用 / 测试结果」灰字（本机读不到可靠值，不编）。</li></ul>`,
+};
+
+/* ═════════════ 技能（skills.json，24 个） ═════════════ */
+const SKILLS = [
+  ["lit-notes", "文献精读笔记规范。当用户要求逐篇精读文献清单、整理学术笔记、或维护 references.bib 引文库时使用。", 6, "Mesa 内置"],
+  ["hatch-pet", "Create, repair, validate, visually QA, and package pets.", 7], ["find-skills", "Helps users discover and install agent skills.", 2],
+  ["netlify-deploy", "Deploy web projects to Netlify using the Netlify CLI.", 6], ["lit-search", "文献检索与筛选规范。围绕课题检索学术文献、制定纳入 / 排除标准、筛成最终清单。", 9],
+  ["review-writing", "英文综述写作规范。基于文献笔记与引文库撰写学术综述（大纲、初稿、润色定稿）。", 9], ["data-clean", "数据清洗规范。清洗 / 整理数据集、制定清洗规则、产出清洗报告。", 6],
+  ["data-eda", "探索性数据分析与绘图规范。分布 / 相关 / 异常分析与可复现图表。", 6], ["quarto-render", "Quarto 稿件渲染规范。把 manuscript/ 下的稿件渲染为 PDF / docx / html。", 7],
+  ["review-framework", "综述框架构造规范。设计综述 / 论文的章节框架。", 6], ["lit-watch", "文献监控规范。跟踪课题最新文献、订阅关键词、做定期巡检。", 6],
+  ["bib-check", "引用完整性校验规范。检查引用是否闭环、bib 条目是否齐全。", 7], ["rebuttal-crafter", "审稿意见回复规范。逐条回复审稿人、产出修改对照表。", 6],
+  ["stats-check", "统计审查与实验设计自查规范。", 6], ["figure-forge", "投稿级图表生产规范。按期刊规格出图。", 6],
+  ["slides-deck", "学术汇报幻灯片规范。组会、答辩、会议 talk。", 6], ["proposal-writer", "开题报告与研究方案写作规范。", 6],
+  ["research-writing", "Write and revise empirical research papers from an outline, study design and analysis outputs.", 9], ["endnote-bridge", "EndNote 格式桥接规范。", 9],
+  ["origin-plot", "用 Origin（OriginLab）驱动出图的规范。", 9], ["zotero-sync", "Zotero 文献库同步规范。", 9],
+  ["blender-research", "科研结构、装置或机制三维示意用 Blender。", 9], ["review-figures", "综述文献图拼板。从论文 PDF 裁源图、组 panel。", 9],
+  ["image-gen", "用 Mesa 连接页里配好的出图模型生成图片或在已有图上改。", 9],
+];
+const PAGE_SKILLS = {
+  nav: "技能",
+  render(st) {
+    const groups = [["Mesa 内置", SKILLS.filter(s => s[3])], ["未分类", SKILLS.filter(s => !s[3])]];
+    let b = `<div class="col"><div class="tools"><input class="search" style="width:280px" placeholder="搜索名称、说明、分类、来源" /><span class="sp"></span></div>`;
+    if (G.samples) b += `<div class="need" style="padding:10px 14px;font-size:12.5px;color:var(--l2);margin:0 0 6px">内置技能有新版：lit-search、bib-check（共 2 个）<span class="sample">样例</span><button class="ghost" style="margin-left:8px" data-note="（设计稿）本机与新版对照">看改了什么</button></div>`;
+    for (const [g, rows] of groups) {
+      const closed = st.closed && st.closed[g];
+      b += `<div class="sh" style="cursor:pointer" data-act="sk-fold" data-g="${g}"><span style="display:flex;transform:rotate(${closed ? 0 : 90}deg);transition:transform .18s">${I.chev}</span>${g} <span class="n">${rows.length}</span>${g === "未分类" ? '<span class="sp"></span><span class="l4" style="font-weight:400;font-size:11px">行内 ⋯ → 设置分类</span>' : ""}</div>`;
+      if (closed) continue;
+      for (const [n, d, k] of rows) {
+        b += `<div class="lr hrow ${st.open === n ? "sel" : ""}" data-act="sk-open" data-n="${n}"><span class="ic l3">${I.book}</span>
+          <span class="main1"><span class="nm1 b">${esc(n)}</span></span>
+          <span class="hov"><button class="ib" data-tip="编辑内容" data-note="（设计稿）编辑内容">${I.pen}</button><button class="ib" data-tip="优化：开终端让 Agent 按你的意见改写" data-note="（设计稿）优化">${I.wand}</button><button class="ib" data-note="（设计稿）更多操作">${I.more}</button></span>
+          <span class="tm" title="已应用 / 全部 CLI" style="font-size:12px;color:${k === 9 ? "var(--l3)" : "var(--l4)"}">${k} / 9</span>
+          <span class="s2">${esc(d)}</span></div>`;
+      }
+    }
+    b += `</div>`;
+    let drawer = "";
+    if (st.open) {
+      const s = SKILLS.find(x => x[0] === st.open);
+      drawer = `<div class="drawer"><h3>${esc(s[0])}<span class="sp"></span><button class="ib" data-act="sk-close" aria-label="关闭预览">✕</button></h3>
+        <p class="d">${esc(s[1])}</p>
+        <div class="sh" style="margin-left:0">已应用到 <span class="n">${s[2]} / 9</span></div>
+        <div class="agents" style="margin-top:0">${AGENTS.map(([id, lb], i) => `<div class="ag"><span class="l"><span>${lb}</span></span><button class="toggle ${i < s[2] ? "" : "off"}" data-note="（设计稿）应用到 / 移出 ${lb}"></button></div>`).join("")}</div>
+        <div class="sh" style="margin-left:0">SKILL.md</div><pre>---\nname: ${esc(s[0])}\ndescription: ${esc(s[1].slice(0, 60))}…\n---</pre>
+        <div style="display:flex;gap:6px;margin-top:14px"><button class="sec" data-note="（设计稿）挂进研究流程">挂进流程</button><button class="sec" data-note="（设计稿）同步副本">同步副本</button></div></div>`;
+    }
+    return tbar("技能", `${SKILLS.length} 个 · 已应用 ${SKILLS.length}`, `<button class="tb" data-note="（设计稿）现有创建技能">${I.plus}创建技能</button><button class="ib" data-note="（设计稿）导入 / 发现未纳管技能">${I.more}</button>`)
+      + `<div class="scroll">${b}</div>${drawer}`;
+  },
+  notes: `<h3>对话页的样子 → 技能</h3><table>
+    <tr><td>标题栏</td><td>大标题 + 蓝色「创建技能」 → 40px 栏，中性小按钮</td></tr>
+    <tr><td>分类组</td><td>每组一张折叠卡、组头 h-10 → 12px 灰字组标题，前面一个折叠箭头</td></tr>
+    <tr><td>技能行</td><td>名称 + 说明 + 已应用列 → 名称 14px，说明一行灰字，「6 / 9」右对齐</td></tr>
+    <tr><td>提示条</td><td>「内置技能有新版」well 卡 → 气泡色底一行</td></tr>
+    <tr><td>预览抽屉</td><td>仍从右边出；去掉卡片分区，用 12px 灰字小标题分段，选中的行铺气泡色</td></tr></table>
+    <h3>不变</h3><ul><li>分组顺序（未分类沉底）、搜索、行内编辑 / 优化 / ⋯、设置分类与标签、抽屉里的应用 / 同步 / 挂进流程。</li></ul>
+    <h3>数据</h3><ul><li>24 个技能与应用数取自本机 skills.json；抽屉里的开关按应用数示意。</li></ul>`,
+};
+
+/* ═════════════ 用量（usage_daily，近 7 天，非内部；花费为设计稿按公开价粗算） ═════════════ */
+const DAYS = [["10-23", 717.5, 1.15], ["10-24", 1414.05, 2.69], ["10-25", 394.84, 0.69], ["10-26", 1241.22, 2.05], ["10-27", 805.92, 1.29], ["10-28", 642.25, 1.03], ["10-29", 272.85, 0.52]];
+const DISTS = {
+  Agent: [["Claude Code", 5319.88, "9.31B"], ["Codex", 168.52, "115M"], ["Gemini CLI", 0.21, "104K"], ["Grok Build", 0.03, "984K"], ["Kimi Code", 0, "364K"]],
+  项目: [["Ccode", 5467.6, "9.37B"], ["Ccode · 工作树 eloquent-khayyam", 11.06, "12.8M"], ["Claude 随手聊目录", 4.78, "9.9M"], ["省自然（未添加）", 2.47, "—"], ["z（未添加）", 1.7, "—"]],
+  模型: [["claude-opus-5-5", 5191.69, "8.84B"], ["gpt-6-astra", 168.26, "71.8M"], ["claude-sonnet-5-5", 128.18, "339M"], ["deepseek-v4-flash-0731", 0.28, "—"], ["gemini-4-argon", 0.21, "—"]],
+};
+const HEAT = "06-10:0,06-11:0,06-12:16,06-15:27,06-16:61,06-17:11,06-25:1,06-26:2,06-29:10,06-30:0,07-01:0,07-02:2,07-03:10,07-06:2,07-07:0,07-08:0,07-09:0,07-10:5,07-13:35,07-14:27,07-15:0,07-16:1,07-17:26,07-20:28,07-21:35,07-22:74,07-23:118,07-24:17,07-27:136,07-28:193,07-29:728,07-30:207,07-31:407,08-01:1255,08-02:208,08-03:176,08-04:251,08-05:36,08-06:157,08-07:75,08-08:436,08-09:14,08-10:149,08-11:170,08-12:96,08-13:213,08-14:104,08-15:0,08-16:62,08-17:291,08-18:165,08-19:315,08-20:157,08-21:311,08-22:582,08-24:107,08-25:183,08-26:75,08-29:8,08-30:206,08-31:93,09-01:216,09-02:192,09-03:299,09-04:300,09-05:294,09-06:387,09-07:283,09-08:269,09-09:372,09-10:262,09-11:331,09-12:39,09-13:93,09-14:158,09-15:130,09-16:26,09-17:408,09-18:173,09-19:350,09-20:220,09-21:154,09-22:572,09-23:855,09-24:370,09-25:386,09-26:448,09-27:115,09-28:606,09-29:635,09-30:426,10-01:84,10-02:26,10-03:124,10-04:19,10-08:143,10-09:171,10-10:568,10-11:922,10-12:1018,10-13:791,10-14:887,10-15:868,10-16:1019,10-17:2448,10-18:1813,10-19:785,10-20:926,10-21:728,10-22:1935,10-23:1150,10-24:2689,10-25:689,10-26:2050,10-27:1290,10-28:1034,10-29:522";
+function heatmap() {
+  const m = Object.fromEntries(HEAT.split(",").map(x => x.split(":")).map(([d, v]) => [d, +v]));
+  const end = new Date(2026, 9, 29), start = new Date(end); start.setDate(end.getDate() - 52 * 7 - end.getDay());
+  let h = "";
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const k = `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const v = d.getFullYear() === 2026 ? (m[k] ?? -1) : -1;
+    const lv = v <= 0 ? "" : v < 100 ? "h1" : v < 400 ? "h2" : v < 1000 ? "h3" : "h4";
+    h += `<i class="${lv}" title="${d.getFullYear()}-${k}${v > 0 ? `：${v}M tokens` : ""}"></i>`;
+  }
+  return h;
+}
+const money = v => v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`;
+const PAGE_STATS = {
+  nav: "用量",
+  render(st) {
+    const ranges = ["今日", "近 7 天", "近 30 天", "全部"].map((c, i) => `<button class="chip ${(st.rg ?? 1) === i ? "on" : ""}" data-act="st-rg" data-i="${i}">${c}</button>`).join("");
+    const tools = `<div class="tools">${ranges}<span class="sp"></span><label class="l3" style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" /> 显示内部活动</label>
+      <span class="segq"><button class="${st.cur === "¥" ? "" : "on"}" data-act="st-cur" data-c="$">$</button><button class="${st.cur === "¥" ? "on" : ""}" data-act="st-cur" data-c="¥">¥</button></span><button class="ghost" data-note="（设计稿）重新索引">刷新</button></div>`;
+    const mx = Math.max(...DAYS.map(d => d[1]));
+    const k = st.cur === "¥" ? 7.1 : 1, cur = v => st.cur === "¥" ? `¥${Math.round(v * k).toLocaleString()}` : money(v);
+    const tab = st.dt || "Agent";
+    const rows = DISTS[tab], top = Math.max(...rows.map(r => r[1]));
+    let b = `<div class="col">${tools}
+      ${G.samples ? `<div class="sh">订阅余量 <span class="sample">样例</span></div><div class="lr" style="cursor:default"><span class="ic"><span class="av">Z</span></span><span class="main1"><span class="nm1">Zeta-22 钱包</span><span class="s1">余额 $182.40 · 本月已用 $517.60</span></span><span></span><button class="ghost" data-note="（设计稿）打开钱包页">${I.ext}</button></div>` : ""}
+      <div class="kpi" style="margin-top:12px"><div><div class="k">花费</div><div class="v">≈ ${cur(5488.63)}</div></div><div><div class="k">tokens</div><div class="v">9.43B<small>其中缓存 9.38B</small></div></div></div>
+      <div class="dl"><span>对话<b>154 次</b></span><span>输入<b>21.7M</b></span><span>输出<b>23.5M</b></span><span>未计价<b>13.7M tokens</b></span></div>
+      <div class="sh">每天花费<span class="sp"></span><span class="segq"><button class="on">花费</button><button>tokens</button></span></div>
+      <div class="trend">${DAYS.map(([d, v]) => `<div class="b" title="${d}：${cur(v)}"><span class="l4" style="font-size:11px;font-variant-numeric:tabular-nums">${v === mx ? cur(v) : ""}</span><div class="bar ${v === mx ? "top" : ""}" style="height:${Math.max(3, v / mx * 86)}%"></div><span class="x">${d}</span></div>`).join("")}</div>
+      <div class="sh">活跃度 <span class="n">117 天有用量 · 连续 21 天</span></div><div class="heat">${heatmap()}</div>
+      <div class="hl"><span>近 52 周</span><span style="margin-left:auto">少</span><span style="display:flex;gap:2px;align-items:center"><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--l4) 14%,transparent)"></i><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--cta) 28%,var(--canvas))"></i><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--cta) 50%,var(--canvas))"></i><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--cta) 74%,var(--canvas))"></i><i style="width:9px;height:9px;border-radius:2px;background:var(--cta)"></i></span><span>多</span></div>
+      <div class="sh">分布<span class="sp"></span>${["最贵", "Agent", "项目", "网关", "任务", "模型"].map(t => `<button class="chip ${tab === t ? "on" : ""}" data-act="st-dt" data-t="${t}" style="height:24px;padding:0 8px">${t}</button>`).join("")}<button class="ib" data-tip="复制当前页签为表格" data-note="（设计稿）已复制为表格">${I.copy}</button></div>`;
+    if (rows) for (const [n, v, t] of rows) b += `<div class="dist"><span class="nm">${esc(n)}</span><span class="tr"><i style="width:${Math.max(1, v / top * 100)}%"></i></span><span class="v">${cur(v)}</span><span class="t">${t}</span></div>`;
+    else b += `<p class="l4" style="font-size:12px;margin:8px 4px">（设计稿只画了 Agent / 项目 / 模型三个页签）</p>`;
+    b += `</div>`;
+    return tbar("用量", "只计经 Mesa 记下归属的会话 · 费用按公开价估算", "") + `<div class="scroll">${b}</div>`;
+  },
+  notes: `<h3>对话页的样子 → 用量</h3><table>
+    <tr><td>标题栏</td><td>大标题 + 一长句 meta → 40px 栏，meta 跟在页名后面的灰字</td></tr>
+    <tr><td>工具条</td><td>分段控件 + 灰底币种切换 → 无底文字胶囊；币种 / 刷新留在右边</td></tr>
+    <tr><td>主数字</td><td>KPI 卡 → 不要卡底，两个大数字直接放在列里，下面一行灰字明细</td></tr>
+    <tr><td>趋势 / 热力图 / 分布</td><td>三张卡 → 12px 灰字小标题分段；热力图格子 16px → 11px（列宽 742 装得下 53 周）</td></tr>
+    <tr><td>分布行</td><td>名称 · 细条 · 花费 · tokens，悬停铺浅底</td></tr></table>
+    <h3>不变</h3><ul><li>四个时间范围、显示内部活动、$/¥、刷新、订阅余量、趋势花费 / tokens 切换、六个分布页签、复制表格。</li></ul>
+    <h3>数据</h3><ul><li>tokens、天数、各 Agent / 项目 / 模型排序取自本机 usage_daily（近 7 天、非内部）。</li><li><b>花费是设计稿按公开价粗算</b>（缓存读 0.1×、写 1.25×），和应用里的数会有出入。连续天数为示意；订阅余量勾「状态样例」才出现，金额是假的。</li></ul>
+    <h3>要你拍板</h3><div class="ask"><ol><li>热力图格子 16px → 11px，换来和其他页同宽的 742px 列（10-13 定的「热力图 16px 顶格」口径要改）。</li></ol></div>`,
+};
+
+/* ═════════════ 设置（settings.json：极简灰蓝、不跟随系统、界面 100%、聊天字号标准…） ═════════════ */
+const SNAV = [["常用", [["外观", "Palette"], ["终端", "T"], ["通用", "S"], ["快捷键", "K"]]], ["管理", [["AI 与 Agent", "A"], ["网络", "N"], ["用量", "U"], ["更新", "D"], ["诊断", "X"], ["数据与存储", "H"], ["关于", "I"]]]];
+const THEMES = [["沉浸黑", "#0c0b09", "#131210", "#faa8d4"], ["陶土", "#0f0f0e", "#181816", "#cc7d5e"], ["琥珀", "#0d0b08", "#15130f", "#f5b83d"], ["暮紫", "#19191c", "#1f1f23", "#cba6f7"], ["极简灰蓝", "#0d0d0d", "#111111", "#0169cc"], ["哥特", "#202024", "#2a2b2f", "#ff79c6"], ["灰蓝正红", "#0e1014", "#12141a", "#ff5c5c"]];
+const THEMES_L = [["沉浸黑 · 浅", "#e5e5dd", "#edede9", "#c2447f"], ["陶土 · 浅", "#ebe3db", "#f2ece7", "#b25a3c"], ["琥珀 · 浅", "#e7e2db", "#f2eee5", "#e39a1c"], ["暮紫 · 浅", "#e2e0e6", "#edecf0", "#8839ef"], ["极简灰蓝 · 浅", "#e4e4e4", "#ededed", "#0169cc"], ["哥特 · 浅", "#e7e2ef", "#efecf5", "#d6336c"], ["灰蓝正红 · 浅", "#dde3ee", "#e8ecf3", "#dc2626"]];
+const PAGE_SET = {
+  nav: "设置",
+  render(st, theme) {
+    const sel = st.sec || "外观";
+    let n = `<div class="snav"><input class="search" placeholder="找设置…" />`;
+    for (const [g, items] of SNAV) {
+      n += `<div class="gl">${g}</div>`;
+      for (const [it] of items) n += `<div class="it ${sel === it ? "sel" : ""}" data-act="set-sec" data-s="${it}">${it === "外观" ? svg('<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2a10 10 0 0 0 0 20c.9 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.7-1.7h2a5.6 5.6 0 0 0 5.5-5.5C22 6 17.5 2 12 2Z"/>', 15) : svg('<circle cx="12" cy="12" r="3"/>', 15)}${it}</div>`;
+    }
+    n += `</div>`;
+    let c = `<div class="sbody"><div class="col">`;
+    if (sel !== "外观") c += `<div class="stitle">${sel}</div><p class="sdesc">（设计稿只画了「外观」分区；其余分区同一套写法：12px 灰字小标题 + 左标签右控件的行。）</p>`;
+    else {
+      const sw = (theme === "light" ? THEMES_L : THEMES).map(([nm, r, cv, acc]) => `<div class="sw ${nm.startsWith("极简灰蓝") ? "on" : ""}" data-note="（设计稿）切到「${nm}」"><div class="pv" style="--acc:${acc}"><i style="background:${r}"></i><i style="background:${cv}"></i></div><div class="nmm">${nm}</div></div>`).join("");
+      const row = (lb, hn, ctl) => `<div class="srw"><div><div class="lb">${lb}</div>${hn ? `<div class="hn">${hn}</div>` : ""}</div><div>${ctl}</div></div>`;
+      const seg = (opts, on) => `<span class="segq">${opts.map(o => `<button class="${o === on ? "on" : ""}">${o}</button>`).join("")}</span>`;
+      c += `<div class="stitle">外观</div><p class="sdesc">主题、透明度与应用图标</p>
+        <div class="sh">主题</div>
+        ${row("深浅", "", seg(["跟随系统", "深色", "浅色"], theme === "light" ? "浅色" : "深色"))}
+        ${row("主题跟随系统深浅", "开着时按系统深浅切同一套主题的深 / 浅版", `<button class="toggle off"></button>`)}
+        <div class="swatches">${sw}</div>
+        <div style="padding:0 4px 6px"><button class="ghost" style="margin-left:-8px" data-note="（设计稿）从当前主题的三个颜色出发配一套">${I.plus} 自定义配色</button></div>
+        <div class="sh">窗口</div>
+        ${row("侧栏 / 顶栏透明度", "百分数是罩色浓度，立即生效；壁纸越花越往「原样」调", seg(["原样", "25%", "50%", "75%"], "原样"))}
+        ${row("界面大小", "", seg(["90%", "100%", "110%", "125%"], "100%"))}
+        ${row("应用图标", "", seg(["浅色", "深色"], "浅色"))}
+        <div class="sh">聊天</div>
+        ${row("聊天字号", "立即生效；标准 = 原有大小", seg(["小", "标准", "大"], "标准"))}
+        ${row("聊天字体", "系统 = 跟随界面字体", seg(["系统", "衬线", "等宽"], "系统"))}
+        ${row("行内代码颜色", "文件名、命令、变量名这类反引号包着的字", seg(["暖色", "冷色", "不着色"], "暖色"))}
+        ${row("聊天滚动条", "闲置淡出：鼠标进入或滚动时才显现", seg(["闲置淡出", "常显"], "闲置淡出"))}
+        ${row("打开对话时先显示", "问 AI、开始、商量、继续、精读都按这个；之后每段对话还能自己切", seg(["聊天", "终端"], "聊天"))}`;
+    }
+    c += `</div></div>`;
+    return tbar("设置", "外观、终端、AI 与应用管理", "") + `<div class="setw">${n}${c}</div>`;
+  },
+  notes: `<h3>对话页的样子 → 设置</h3><table>
+    <tr><td>标题栏</td><td>大标题 → 40px 栏，副标题跟在后面的灰字</td></tr>
+    <tr><td>分区导航</td><td>11rem 列 + 灰底搜索框 + seg-sel 选中 → 写法同侧栏（13px、选中用侧栏选中色、图标变强调色），搜索框换细边</td></tr>
+    <tr><td>分区头</td><td>xl 标题 → 16px 粗 + 一行灰字说明</td></tr>
+    <tr><td>分组</td><td>每组一张 well 卡 + 卡标题 → 12px 灰字小标题，行间只靠留白</td></tr>
+    <tr><td>行</td><td>左：名称 13.5px + 说明 12px 灰；右：控件（分段选择用浅底，开关不变）</td></tr></table>
+    <h3>不变</h3><ul><li>常用 / 管理两组、十一个分区、找设置、每个设置项与说明文字、主题色卡与自定义配色。</li></ul>
+    <h3>数据</h3><ul><li>选中值取自本机 settings.json（极简灰蓝、不跟随系统、界面 100%、聊天字号标准、系统字体、暖色行内代码、浅色图标）；分段里的其余选项名为示意，以现有控件为准。</li></ul>`,
+};
+
+/* ═════════════ 外壳与交互 ═════════════ */
+const PAGES = { workbench: PAGE_WB, sessions: PAGE_SESS, profiles: PAGE_PROF, skills: PAGE_SKILLS, mcp: PAGE_MCP, stats: PAGE_STATS, settings: PAGE_SET };
+const G = { page: "workbench", view: "new", theme: "both", samples: false };
+const wins = [];
+
+function shell(w) {
+  const p = PAGES[G.page], st = w.st[G.page] ||= { enabled: {}, apps: {} };
+  const nav = (key, icon, text) => `<div class="nav ${G.page === key ? "sel" : ""}" data-act="goto" data-p="${key}">${I[icon]}${text}</div>`;
   return `<aside class="side">
       <div class="lights"><i></i><i></i><i></i></div>
-      <div class="nav">${I.chat}新对话</div>
-      <div class="nav">${I.folder}新项目</div>
-      <div class="nav">${I.grid}工作台</div>
-      <div class="nav">${I.msgs}对话管理</div>
-      <div class="grp">随手聊</div>
-      <div class="chat">出图工具生成夏天下雪图</div>
-      <div class="chat">雨天海边图片生成</div>
-      <div class="grp">项目</div>
-      <div class="chat">测试项目</div>
-      <div class="chat">Ccode</div>
-      <div class="chat">后端管理</div>
+      <div class="nav">${I.chat}新对话</div><div class="nav">${I.folder}新项目</div>
+      ${nav("workbench", "grid", "工作台")}${nav("sessions", "msgs", "对话管理")}
+      <div class="grp">随手聊</div><div class="chat">出图工具生成夏天下雪图</div><div class="chat">雨天海边图片生成</div>
+      <div class="grp">项目</div><div class="chat">测试项目</div><div class="chat">Ccode</div><div class="chat">后端管理</div>
       <div class="sp"></div>
       <div class="grp">资源（示意）</div>
-      <div class="nav">${I.key}连接</div>
-      <div class="nav">${I.book}技能</div>
-      <div class="nav sel">${I.plug}MCP</div>
-      <div class="nav">${I.bar}用量</div>
-      <div class="nav">${I.gear}设置</div>
+      ${nav("profiles", "key", "连接")}${nav("skills", "book", "技能")}${nav("mcp", "plug", "MCP")}${nav("stats", "bar", "用量")}${nav("settings", "gear", "设置")}
     </aside>
-    <section class="main">
-      ${isNew ? `<div class="tbar"><span class="t">MCP</span><span class="c">${all.length} 个</span><span class="sp"></span>
-        <button class="tb" data-act="checkall" data-tip="对清单里所有已启用的 MCP 逐条检测连通性（每波最多 4 个）">${I.zap}${st.checking ? "检测中…" : "全部检测"}</button>
-        <button class="tb ${st.menu ? "on" : ""}" data-act="menu">${I.plus}添加 MCP${I.down}</button>
-        ${st.menu ? menu() : ""}</div>` : `<div style="height:28px"></div>`}
-      <div class="scroll" data-scroll>${isNew ? `<div class="col">${all.map(s => row(s, st)).join("")}</div>` : oldBody(st)}</div>
-      ${st.note ? `<div class="toast">${esc(st.note)}</div>` : ""}
-    </section>`;
+    <section class="main">${p.render(st, w.theme)}${w.note ? `<div class="toast">${esc(w.note)}</div>` : ""}</section>`;
 }
-
-function menu() {
-  return `<div class="menu">
-    <div class="mi" data-note="（设计稿）打开现有的「添加 MCP」表单">自己填写…</div>
-    <div class="mh">预设</div>
-    ${PRESETS.map(l => `<div class="mi" data-note="（设计稿）打开预设「${l}」">${l}</div>`).join("")}
-    <div class="mh">从别处导入</div>
-    <div class="mi" data-note="（设计稿）打开「收编现有配置」">收编现有配置</div>
-    <div class="mi" data-note="（设计稿）打开「粘贴导入」">粘贴导入</div>
-  </div>`;
-}
-
-const G = { view: "new", theme: "both", samples: false };
-const wins = [];
 function render(w) {
-  Object.assign(w.st, { view: G.view, samples: G.samples });
-  const sc = w.el.querySelector("[data-scroll]");
-  const top = sc ? sc.scrollTop : 0;
-  w.el.innerHTML = shell(w.st);
-  const nsc = w.el.querySelector("[data-scroll]");
-  if (nsc) nsc.scrollTop = top;
+  const keep = [...w.el.querySelectorAll(".scroll,.sl,.sbody")].map(x => x.scrollTop);
+  w.el.innerHTML = shell(w);
+  [...w.el.querySelectorAll(".scroll,.sl,.sbody")].forEach((x, i) => { if (keep[i] != null) x.scrollTop = keep[i]; });
+}
+function renderAll() {
+  wins.forEach(render);
+  document.getElementById("notes").innerHTML = PAGES[G.page].notes;
+  const vs = document.querySelector('#viewSeg [data-v="old"]');
+  vs.disabled = G.page !== "mcp";
+  if (G.page !== "mcp" && G.view === "old") setView("new");
+}
+function setView(v) {
+  G.view = v;
+  for (const x of document.getElementById("viewSeg").children) x.classList.toggle("on", x.dataset.v === v);
 }
 function flash(w, text) {
-  w.st.note = text; w.st.menu = false; render(w);
-  clearTimeout(w.t); w.t = setTimeout(() => { w.st.note = ""; render(w); }, 2400);
+  w.note = text; const st = w.st[G.page]; if (st) st.menu = false; render(w);
+  clearTimeout(w.t); w.t = setTimeout(() => { w.note = ""; render(w); }, 2400);
 }
 function bind(w) {
   w.el.addEventListener("click", e => {
-    const st = w.st;
+    const st = w.st[G.page];
     const n = e.target.closest("[data-note]");
     if (n) { e.stopPropagation(); flash(w, n.dataset.note); return; }
     const a = e.target.closest("[data-act]");
-    if (!a) { if (st.menu && !e.target.closest(".menu")) { st.menu = false; render(w); } return; }
-    const id = a.dataset.id, s = id && list(st).find(x => x.id === id);
-    switch (a.dataset.act) {
-      case "open": st.open = st.open === id ? null : id; st.menu = false; break;
+    if (!a) { if (st && st.menu && !e.target.closest(".menu")) { st.menu = false; render(w); } return; }
+    const d = a.dataset;
+    switch (d.act) {
+      case "goto": G.page = d.p; for (const x of document.getElementById("pageSeg").children) x.classList.toggle("on", x.dataset.p === d.p); renderAll(); return;
+      case "mcp-open": st.open = st.open === d.id ? null : d.id; st.menu = false; break;
       case "menu": st.menu = !st.menu; break;
-      case "toggle": st.enabled[id] = !s.enabled; flash(w, s.enabled ? `已停用「${s.name}」` : `已启用「${s.name}」`); return;
-      case "app": {
-        const on = s.apps.includes(a.dataset.a);
-        st.apps[id] = on ? s.apps.filter(x => x !== a.dataset.a) : s.apps.concat(a.dataset.a);
-        flash(w, on ? `已从 ${label(a.dataset.a)} 移除` : `已分发到 ${label(a.dataset.a)}`); return;
-      }
-      case "check": case "checkall":
-        st.checking = true; st.menu = false; render(w);
-        setTimeout(() => { st.checking = false; flash(w, "检测完成（设计稿不真连，结果同上次）"); }, 1200);
-        return;
+      case "mcp-toggle": { const s = mcpList(st).find(x => x.id === d.id); st.enabled[d.id] = !s.enabled; flash(w, s.enabled ? `已停用「${s.name}」` : `已启用「${s.name}」`); return; }
+      case "mcp-app": { const s = mcpList(st).find(x => x.id === d.id); const on = s.apps.includes(d.a); st.apps[d.id] = on ? s.apps.filter(x => x !== d.a) : s.apps.concat(d.a); flash(w, on ? `已从 ${label(d.a)} 移除` : `已分发到 ${label(d.a)}`); return; }
+      case "check": st.checking = true; st.menu = false; render(w); setTimeout(() => { st.checking = false; flash(w, "检测完成（设计稿不真连）"); }, 1200); return;
+      case "wb-filter": st.filter = +d.i; break;
+      case "sess-qf": st.qf = st.qf === +d.i ? null : +d.i; break;
+      case "prof-f": st.pf = +d.i; break;
+      case "sk-open": st.open = st.open === d.n ? null : d.n; break;
+      case "sk-close": st.open = null; break;
+      case "sk-fold": st.closed = { ...(st.closed || {}), [d.g]: !(st.closed && st.closed[d.g]) }; break;
+      case "st-rg": st.rg = +d.i; break;
+      case "st-cur": st.cur = d.c; break;
+      case "st-dt": st.dt = d.t; break;
+      case "set-sec": st.sec = d.s; break;
     }
     render(w);
   });
-  w.el.addEventListener("keydown", e => { if (e.key === "Escape" && w.st.menu) { w.st.menu = false; render(w); } });
+  w.el.addEventListener("keydown", e => { const st = w.st[G.page]; if (e.key === "Escape" && st && st.menu) { st.menu = false; render(w); } });
 }
 function build() {
   const box = document.getElementById("wins");
@@ -433,27 +873,38 @@ function build() {
     const el = document.createElement("div");
     el.className = `win ${t}`;
     box.append(cap, el);
-    const w = { el, st: { open: null, menu: false, note: "", checking: false, enabled: {}, apps: {} } };
-    wins.push(w); bind(w); render(w);
+    const w = { el, theme: t, st: {} };
+    // 进来就能看到展开写法：MCP 深色展开 consensus，浅色展开 blender
+    w.st.mcp = { enabled: {}, apps: {}, open: t === "dark" ? "consensus" : "blender" };
+    wins.push(w); bind(w);
   }
-  // 进来就能看到展开写法：深色展开 consensus（带请求头和密钥），浅色展开 blender
-  if (wins[0]) { wins[0].st.open = "consensus"; render(wins[0]); }
-  if (wins[1]) { wins[1].st.open = "blender"; render(wins[1]); }
+  renderAll();
 }
-function seg(id, key, attr) {
-  document.getElementById(id).addEventListener("click", e => {
-    const b = e.target.closest("button"); if (!b) return;
-    G[key] = b.dataset[attr];
-    for (const x of e.currentTarget.children) x.classList.toggle("on", x === b);
-    key === "theme" ? build() : wins.forEach(render);
-  });
+document.getElementById("pageSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  G.page = b.dataset.p;
+  for (const x of e.currentTarget.children) x.classList.toggle("on", x === b);
+  renderAll();
+});
+document.getElementById("viewSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b || b.disabled) return;
+  setView(b.dataset.v); renderAll();
+});
+document.getElementById("themeSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  G.theme = b.dataset.t;
+  for (const x of e.currentTarget.children) x.classList.toggle("on", x === b);
+  build();
+});
+document.getElementById("samples").addEventListener("change", e => { G.samples = e.target.checked; renderAll(); });
+// 地址可带 #页面名 / #samples / #old，直接打开对应状态（方便截图对照），如 #stats-samples
+{
+  const h = location.hash.slice(1);
+  const p = Object.keys(PAGES).find(k => h.includes(k));
+  if (p) { G.page = p; for (const x of document.getElementById("pageSeg").children) x.classList.toggle("on", x.dataset.p === p); }
+  if (h.includes("samples")) { G.samples = true; document.getElementById("samples").checked = true; }
+  if (h.includes("old") && G.page === "mcp") setView("old");
 }
-seg("viewSeg", "view", "v");
-seg("themeSeg", "theme", "t");
-document.getElementById("samples").addEventListener("change", e => { G.samples = e.target.checked; wins.forEach(render); });
-// 地址带 #samples / #old 直接打开对应状态（方便截图对照）
-if (location.hash.includes("samples")) { G.samples = true; document.getElementById("samples").checked = true; }
-if (location.hash.includes("old")) document.querySelector('#viewSeg [data-v="old"]').click();
 build();
 </script>
 </body>
