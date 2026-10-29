@@ -70,6 +70,9 @@ test("CSS：每个强调色深浅各一套，且气泡与正文都读同一组�
     assert.ok(css.includes(`--chat-code-light-${a}`), `缺浅色 ${a}`);
     assert.ok(css.includes(`data-chat-accent="${a}"`), `缺选择器 ${a}`);
   }
+  // 颜色只上字、底一律中性（2026-10-30）：不得回到同色薄底
+  assert.match(css, /\.md-chat :not\(pre\) > code \{\s*color: var\(--chat-code, var\(--color-l1\)\);\s*background: color-mix\(in srgb, var\(--color-l1\) 9%, transparent\);/);
+  assert.ok(!/color-mix\(in srgb, var\(--chat-code/.test(css), "行内代码底又跟着字染色了");
   assert.ok(css.includes(".ccode-chat-user"));
   assert.ok(css.includes("var(--ccode-chat-fs"));
   assert.ok(css.includes(".ccode-chat-scroll"));

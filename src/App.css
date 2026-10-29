@@ -3256,8 +3256,8 @@ select:focus-visible {
 .md-chat a:hover {
   text-decoration-color: currentColor;
 }
-/* 行内代码强调色（设置 → 外观 → 行内代码颜色）：字色 + 同色 14% 薄底，深浅各一套保证可读；
-   off = 不匹配任何一条，保留上面的中性灰白。围栏代码块不动。
+/* 行内代码强调色（设置 → 外观 → 行内代码颜色）：只给字色，底是中性薄灰（见下），深浅各一套保证可读；
+   off（墨色）= 不匹配任何一条字色，用正文最亮色。围栏代码块不动。
    深色四色按青绿的观感对齐（2026-10-22 用户：除了青绿，陶红 / 琥珀 / 紫都发浅）：同样亮度下青绿已接近色域上限、
    看着饱满，另三色当初只用了色域的六七成、显得粉。改为各自色域的九成以上饱和度、亮度略降，
    在最亮的深色底（陶土 / 哥特 / 自定义深色，inset ≈ #333–#3a）上对比仍约 3.8–4.9:1，与改前差不到 0.3 */
@@ -3279,9 +3279,16 @@ select:focus-visible {
 [data-theme$="-light"] .ccode-app-shell[data-chat-accent="amber"] .md-chat { --chat-code: var(--chat-code-light-amber); }
 [data-theme$="-light"] .ccode-app-shell[data-chat-accent="teal"] .md-chat { --chat-code: var(--chat-code-light-teal); }
 [data-theme$="-light"] .ccode-app-shell[data-chat-accent="violet"] .md-chat { --chat-code: var(--chat-code-light-violet); }
+/* 底一律中性（2026-10-30 用户：几种颜色「用起来一般」）：原先字色 + 同色 14% 薄底，颜色上了两遍，
+   一句里三四个反引号就成一排彩色标签、正文被切碎。现在颜色只在字上，底是正文色 9% 的薄灰——
+   用前景色混透明而不是混 canvas，落在气泡、卡片、旁注上都跟着所在底色走。
+   off（界面叫「墨色」）不上色：正文最亮色 + 字重 500，只靠等宽字和薄灰底与正文分开。 */
 .md-chat :not(pre) > code {
   color: var(--chat-code, var(--color-l1));
-  background: color-mix(in srgb, var(--chat-code, transparent) 14%, var(--color-inset));
+  background: color-mix(in srgb, var(--color-l1) 9%, transparent);
+}
+.ccode-app-shell[data-chat-accent="off"] .md-chat :not(pre) > code {
+  font-weight: 500;
 }
 /* 引用只留左线：不要整块 inset 底，警告/摘录才不会占半屏。 */
 .md-chat blockquote {

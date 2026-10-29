@@ -92,7 +92,7 @@ export const CHAT_FONT_FAMILY_LABEL: Record<ChatFontFamily, string> = {
   mono: "等宽",
 };
 export const CHAT_ACCENT_LABEL: Record<ChatAccent, string> = {
-  off: "关闭",
+  off: "墨色",
   warm: "陶红",
   amber: "琥珀",
   teal: "青绿",

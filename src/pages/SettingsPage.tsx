@@ -2976,7 +2976,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="行内代码颜色"
           hint="文件名、命令、变量名这类反引号包着的字"
-          labelTitle="给对话里的行内代码一个淡强调色（字色加同色薄底），和正文、链接一眼分开；深浅主题各有一套保证看得清。关闭 = 灰白。代码块不受影响"
+          labelTitle="给对话里的行内代码上一个字色，底是一层淡灰，和正文、链接一眼分开；深浅主题各有一套保证看得清。墨色 = 不上色，只用正文最亮的颜色稍加粗。代码块不受影响"
         >
           <SegTabs
             variant="boxed"
