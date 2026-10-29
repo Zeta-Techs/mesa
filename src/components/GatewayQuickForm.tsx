@@ -191,7 +191,7 @@ export function GatewayQuickForm({
             className={`${fieldClass} mt-1 w-full`}
             list="onboarding-model-options"
             value={modelDraft ?? presetModels[0] ?? ""}
-            placeholder="模型名，如 deepseek-v4-flash"
+            placeholder={presetModels.length ? "从列表选，或填服务商文档里的模型名" : "填服务商文档里的模型名"}
             onChange={(e) => {
               setModelDraft(e.target.value);
               setTested(false);

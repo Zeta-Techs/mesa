@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ArrowLeft, ArrowRight, Check, ChevronDown, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Terminal,
+  ArrowLeft, ArrowRight, Check, ChevronDown, Copy, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Terminal,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { useExitRender } from "../exit-animation";
@@ -154,13 +154,13 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
       </div>
 
       <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[42rem] px-6 pb-8 pt-[clamp(1rem,5vh,3rem)]">
-          <div className="mb-4 flex items-center justify-between text-xs text-l3">
-            <span>上手引导</span>
+        <div className="mx-auto w-full max-w-[42rem] px-6 pb-8 pt-[clamp(1rem,10vh,6rem)]">
+          <div className="mb-3 flex items-center justify-between text-xs text-l3">
+            <span>欢迎使用 Mesa · 三步上手</span>
             <span role="status">已完成 {progress.doneCount} / {progress.total}</span>
           </div>
           <Progress current={view} steps={progress.steps} onPick={setView} disabled={busy} />
-          <h1 id="onboarding-title" ref={headingRef} tabIndex={-1} className="mt-8 text-2xl font-semibold tracking-tight text-l1 outline-none">{step.headline}</h1>
+          <h1 id="onboarding-title" ref={headingRef} tabIndex={-1} className="mt-10 text-2xl font-semibold tracking-tight text-l1 outline-none">{step.headline}</h1>
           <p id="onboarding-summary" className="mt-2 text-sm leading-6 text-l3">{step.summary}</p>
           <div key={view} data-wizard-content aria-busy={busy} className="ccode-fade mt-6">
             {view === "connect" && <ConnectScreen facts={facts} onBusyChange={setBusy} />}
@@ -170,10 +170,10 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
         </div>
       </main>
 
-      <footer className="mx-auto w-full max-w-[42rem] shrink-0 px-6 pb-5 pt-3 text-xs">
-        <p className="mb-3 text-l3" role="status">{busy ? "正在处理，请稍候…" : "随时可从「帮助 → 上手引导」回来。"}</p>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-1">
+      {/* 发丝线贯通整窗：内容滚到底栏下面时有个边，不像被截断 */}
+      <footer className="shrink-0 border-t border-hairline text-xs">
+        <div className="mx-auto flex w-full max-w-[42rem] flex-wrap items-center gap-x-3 gap-y-2 px-6 py-3">
+          <div className="-ml-3 flex items-center gap-1">
             <button type="button" className={quietActionClass} disabled={busy} onClick={close}>
               稍后再说
             </button>
@@ -190,7 +190,8 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
               不再显示
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-l4" role="status">{busy ? "正在处理，请稍候…" : "随时可从「帮助 → 上手引导」回来"}</p>
+          <div className="ml-auto flex items-center gap-2">
             {index > 0 && (
               <button type="button" className={`${secondaryActionClass} gap-1.5`} disabled={busy} onClick={() => setView(ONBOARDING_STEPS[index - 1]!.id)}>
                 <ArrowLeft size={13} aria-hidden="true" />
@@ -230,22 +231,29 @@ function Progress({
   onPick: (id: OnboardingStepId) => void;
   disabled: boolean;
 }) {
+  // 一行横向步进：圆点 + 名字，步与步之间一条细线（前一步做完线着成功色），三步全在一眼之内
   return (
-    <ol className="grid grid-cols-3 gap-2 text-xs" aria-label="上手步骤">
+    <ol className="-ml-1 -mr-3 flex items-center" aria-label="上手步骤">
       {steps.map(({ step, done }, i) => {
         const isCurrent = step.id === current;
         return (
-          <li key={step.id} className="min-w-0">
+          <li key={step.id} className={`flex min-w-0 items-center ${i > 0 ? "flex-1" : "shrink-0"}`}>
+            {i > 0 && (
+              <span
+                aria-hidden="true"
+                className={`mx-2 h-px min-w-4 flex-1 transition-colors ${steps[i - 1]!.done ? "bg-ok-text/50" : "bg-hairline"}`}
+              />
+            )}
             <button
               type="button"
               onClick={() => onPick(step.id)}
               aria-current={isCurrent ? "step" : undefined}
               aria-label={`${step.title}，${done ? "已完成" : isCurrent ? "当前步骤" : "未完成"}`}
               disabled={disabled}
-              className={`group flex min-h-20 w-full flex-col items-start gap-2 rounded-xl p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${isCurrent ? "ccode-well" : "hover:bg-hover"}`}
+              className="group flex shrink-0 items-center gap-2 rounded-full py-1 pl-1 pr-3 transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full tabular-nums transition-colors ${
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs tabular-nums transition-colors ${
                   isCurrent
                     ? "bg-cta font-medium text-cta-text"
                     : done
@@ -253,9 +261,9 @@ function Progress({
                       : "bg-field text-l3"
                 }`}
               >
-                {done ? <Check size={14} strokeWidth={2.4} aria-hidden="true" /> : i + 1}
+                {done ? <Check size={13} strokeWidth={2.4} aria-hidden="true" /> : i + 1}
               </span>
-              <span className={`text-xs ${isCurrent ? "font-medium text-l1" : "text-l3 group-hover:text-l2"}`}>
+              <span className={`whitespace-nowrap text-xs ${isCurrent ? "font-medium text-l1" : done ? "text-l2 group-hover:text-l1" : "text-l3 group-hover:text-l2"}`}>
                 {step.title}
               </span>
             </button>
@@ -417,10 +425,10 @@ function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void 
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 text-xs">
       <p className="text-xs leading-5 text-l3">先选一个安装，之后可以添加其他 Agent。</p>
       {RECOMMENDED.map((id) => row(id, true))}
-      <button type="button" className={`${quietActionClass} gap-1.5`} aria-expanded={showOthers} aria-controls="onboarding-other-agents" onClick={() => setShowOthers((v) => !v)}>
+      <button type="button" className={`${quietActionClass} -ml-3 gap-1.5`} aria-expanded={showOthers} aria-controls="onboarding-other-agents" onClick={() => setShowOthers((v) => !v)}>
         {showOthers ? "收起其他 Agent" : "其他 Agent…"}
         <ChevronDown size={13} className={showOthers ? "rotate-180" : ""} aria-hidden="true" />
       </button>
@@ -463,9 +471,10 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
 
   return (
     <div className="space-y-4">
-      {installed.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-l3">用哪家：</span>
+      {/* 只装了一家就直说装好了；装了几家给一排选择（按钮上的字号写在容器上：全站 button 的 font: inherit 会吞掉按钮自己的 text-*） */}
+      {installed.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="mr-1 text-l3">已装好，选一个：</span>
           {installed.map((id) => (
             <button
               key={id}
@@ -476,40 +485,54 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
                 setPicked(id);
                 setMethod(null);
               }}
-              className={`h-7 rounded-md border px-2.5 text-xs transition-colors ${
-                id === agent ? "border-cta bg-field text-l1" : "border-hairline text-l3 hover:bg-hover hover:text-l1"
+              className={`flex h-7 items-center gap-1 rounded-full border px-2.5 transition-colors ${
+                id === agent ? "border-cta bg-cta/10 font-medium text-l1" : "border-hairline text-l3 hover:bg-hover hover:text-l1"
               }`}
             >
+              {id === agent && <Check size={12} strokeWidth={2.4} className="text-cta" aria-hidden="true" />}
               {labelOf(id)}
             </button>
           ))}
         </div>
+      ) : (
+        <p className="flex items-center gap-2 text-sm text-l2"><Check size={14} className="text-ok-text" aria-hidden="true" />{labelOf(agent)} 已装好</p>
       )}
-      <p className="flex items-center gap-2 text-sm text-l2"><Check size={14} className="text-ok-text" aria-hidden="true" />{labelOf(agent)} 已装好</p>
 
       {probe === undefined && (
         <Card><p role="status" className="text-sm text-l3">正在检查官方账号登录状态…</p></Card>
       )}
 
       {(probe === "ready" || probe === "login") && (
-        <div className="flex gap-1 rounded-md bg-field p-0.5 text-xs">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="group" aria-label="接入方式">
           {(
             [
-              ["official", "官方账号"],
-              ["key", "服务商 API Key"],
+              ["official", "官方账号", `登录 ${labelOf(agent)} 自家账号`],
+              ["key", "服务商 API Key", "用服务商的密钥，按量计费"],
             ] as const
-          ).map(([id, label]) => (
+          ).map(([id, label, hint]) => (
             <button
               key={id}
               type="button"
               disabled={busy}
               aria-pressed={active === id}
+              aria-label={label}
               onClick={() => setMethod(id)}
-              className={`h-7 flex-1 rounded transition-colors ${
-                active === id ? "bg-raised font-medium text-l1" : "text-l3 hover:text-l1"
+              className={`flex items-start gap-2.5 rounded-xl border p-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                active === id ? "border-cta bg-cta/10" : "border-hairline hover:bg-hover"
               }`}
             >
-              {label}
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                  active === id ? "border-cta bg-cta" : "border-l4"
+                }`}
+              >
+                {active === id && <span className="h-1.5 w-1.5 rounded-full bg-cta-text" />}
+              </span>
+              <span className="min-w-0">
+                <span className={`block text-sm ${active === id ? "font-medium text-l1" : "text-l2"}`}>{label}</span>
+                <span className="mt-0.5 block text-xs leading-5 text-l3">{hint}</span>
+              </span>
             </button>
           ))}
         </div>
@@ -548,15 +571,15 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
           </button>
         </Card>
       )}
-      {active === "key" && probe !== undefined && (
-        <Card>
-          <GatewayQuickForm key={agent} agent={agent} onConnected={() => {}} onMore={openGatewayLibrary} onBusyChange={setBusy} />
-        </Card>
-      )}
       {probe === "none" && (
         <p className="text-xs leading-5 text-l3">
           {labelOf(agent)} 没有官方账号登录方式，用服务商给你的 API Key 接入。
         </p>
+      )}
+      {active === "key" && probe !== undefined && (
+        <Card>
+          <GatewayQuickForm key={agent} agent={agent} onConnected={() => {}} onMore={openGatewayLibrary} onBusyChange={setBusy} />
+        </Card>
       )}
     </div>
   );
@@ -564,7 +587,10 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
 
 /* ---------- 第二屏：聊第一句 ---------- */
 
+const SAMPLE_PROMPT = "用三句话介绍你能帮我做什么。";
+
 function ChatScreen({ done, connected, onConnect, close }: { done: boolean; connected: boolean; onConnect: () => void; close: () => void }) {
+  const [copied, setCopied] = useState(false);
   if (done) return <SuccessCard title="已经聊过了" detail="第一段对话在侧栏「随手聊」里。接下来可以建项目。" />;
   if (!connected) return (
     <Card className="space-y-3">
@@ -577,8 +603,20 @@ function ChatScreen({ done, connected, onConnect, close }: { done: boolean; conn
     <div className="space-y-4">
       <Card className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium text-l1"><MessageSquare size={16} aria-hidden="true" />试着问 AI</div>
-        <p className="rounded-lg bg-field p-4 text-sm leading-6 text-l2">用三句话介绍你能帮我做什么。</p>
-        <p className="text-xs leading-5 text-l3">打开对话后输入这句话，有回复就说明接通了。</p>
+        <div className="flex items-center gap-3 rounded-lg bg-field py-3 pl-4 pr-2 text-xs">
+          <p className="min-w-0 flex-1 text-sm leading-6 text-l2">{SAMPLE_PROMPT}</p>
+          <button
+            type="button"
+            className={`${quietActionClass} shrink-0 gap-1.5`}
+            onClick={() => {
+              void navigator.clipboard.writeText(SAMPLE_PROMPT).then(() => setCopied(true), () => {});
+            }}
+          >
+            {copied ? <Check size={13} className="text-ok-text" aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
+        <p className="text-xs leading-5 text-l3">打开对话后粘贴这句话发出去，有回复就说明接通了。</p>
         <button
           type="button"
           className={primaryActionClass}
