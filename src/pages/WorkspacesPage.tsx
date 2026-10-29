@@ -2,11 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { sendSystemNotification } from "../system-notification";
 import {
   Archive,
   ArchiveRestore,
@@ -152,13 +148,10 @@ function pathBaseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/** 人工请求新来源的系统通知：macOS 首次发送前必须显式申请权限（系统级弹窗，仅首次）；
-    被拒则静默跳过。复用「长任务 OS 通知」设置开关，不新增设置项。 */
-async function fireHelpNotification(sourceCount: number) {
-  let granted = await isPermissionGranted();
-  if (!granted) granted = (await requestPermission()) === "granted";
-  if (!granted) return;
-  sendNotification({
+/** 人工请求新来源的系统通知（权限申请与提示音在 system-notification.ts）。
+    复用「长任务 OS 通知」设置开关，不新增设置项。 */
+function fireHelpNotification(sourceCount: number) {
+  return sendSystemNotification({
     title: "人工请求",
     body: `${sourceCount} 个来源有人工请求`,
   });

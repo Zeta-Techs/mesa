@@ -16,11 +16,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open as openDirectoryDialog } from "@tauri-apps/plugin-dialog";
 import { exit } from "@tauri-apps/plugin-process";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -39,6 +34,7 @@ import {
   eventMatchesCombo,
 } from "../hotkeys";
 import { monoFallbackStack, terminalFontStack } from "../terminal-font";
+import { sendSystemNotification } from "../system-notification";
 import { installDomScrollRowReuse } from "../terminal-row-reuse";
 import { installTrackpadWheelCoalescing } from "../terminal-wheel-scroll";
 import {
@@ -715,18 +711,15 @@ const SHELL_ENTER = IS_WINDOWS ? "\r" : "\n";
  *  攒着不发的部分要低于后端恢复读取的下限，否则停读后永远等不到恢复 */
 const OUTPUT_ACK_CHUNK = 5000;
 
-/** 发系统通知：macOS 首次发送前必须显式申请权限（系统级弹窗，仅首次）；被拒则静默跳过。
+/** 待确认的系统通知（权限申请与提示音在 system-notification.ts）：
  *  带「去处理」动作按钮（ccode.attention，App.tsx 注册）；extra 携带 tabId/cwd，
  *  onAction 路由：聚焦对应标签（只有待确认一种通知）。 */
-async function fireAttentionNotification(
+function fireAttentionNotification(
   title: string,
   body: string,
   extra: { tabId: string; cwd: string },
 ) {
-  let granted = await isPermissionGranted();
-  if (!granted) granted = (await requestPermission()) === "granted";
-  if (!granted) return;
-  sendNotification({ title, body, actionTypeId: "ccode.attention", extra });
+  return sendSystemNotification({ title, body, actionTypeId: "ccode.attention", extra });
 }
 
 /** 七套深色 + 七套浅色主题对应的 xterm 底色/前景。

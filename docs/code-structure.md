@@ -592,6 +592,10 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              # ＋ hitCellRange 把字符下标换算成单元格列号（逐格自算，宽字符不错位）（tests/terminal-links.test.ts）
   terminal-notify.ts         # OSC 9 / 777 通知标题（777 三段式取标题）与 OSC 9;4 进度解析
                              # （parseOsc9Progress → 标签条徽章），从画面文字里抽走（tests/terminal-notify.test.ts）
+  system-notification.ts     # 系统通知唯一出口：权限申请（macOS 首次弹窗、被拒静默）+ 一律带平台提示音；
+                             # 等确认 / 雷达完成 / 人工请求 / 手机投递四类都从这里走，别处禁直接 sendNotification
+  notification-sound.ts      # 平台 → 通知声音名纯函数（Mac Hero / Windows Default / Linux XDG）：三家桌面后端
+                             # 不指定就静音、名字认不得也静音（tests/notification-sound.test.ts 锁名单与「src/ 无旁路」）
   terminal-replay.ts         # 重启回放取缓冲尾部纯文本（tests/terminal-replay.test.ts）
 exit-code.ts               # pty-exit-<id> 退出码白话（TerminalPage 唯一消费）：0/126/127 与 128+信号惯例（130=Ctrl-C、137=SIGKILL…）→ label/short/tone；-1 是后端「原因未知」哨兵（pty_kill/回收/wait 超时都发它），文案中性不染红、code 给 null 不显示假数字；回落 shell 提示的括号子句 exitCodeClause 只在非正常退出给（tests/exit-code.test.ts）
   terminal-protocols.ts      # 内嵌终端协议：Kitty 键盘查询识别与剥离（应答由后端 term_query.rs 写回；只宣布 flags 5；无修饰功能键保持传统

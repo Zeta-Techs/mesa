@@ -21,13 +21,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  isPermissionGranted,
-  onAction,
-  registerActionTypes,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
+import { onAction, registerActionTypes } from "@tauri-apps/plugin-notification";
+import { sendSystemNotification } from "./system-notification";
 import { LIT_WATCH_SLOT } from "./skill-slots.ts";
 import ErrorBoundary from "./components/ErrorBoundary";
 import CommandPalette from "./components/CommandPalette";
@@ -188,17 +183,14 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/** 定时雷达运行完成的系统通知：复用通知权限申请模式（首次系统级弹窗，被拒静默跳过）。
+/** 定时雷达运行完成的系统通知（权限申请与提示音在 system-notification.ts）。
  *  遵守「长任务 OS 通知」设置开关（notificationsEnabled），不新增设置项。 */
-async function fireScheduleNotification(
+function fireScheduleNotification(
   title: string,
   body: string,
   extra: Record<string, unknown>,
 ) {
-  let granted = await isPermissionGranted();
-  if (!granted) granted = (await requestPermission()) === "granted";
-  if (!granted) return;
-  sendNotification({ title, body, actionTypeId: "ccode.schedule", extra });
+  return sendSystemNotification({ title, body, actionTypeId: "ccode.schedule", extra });
 }
 
 /** 收货反馈横幅（2026-09-17 审计）：收货成功/失败/需注意的应用内通道——OS 通知
@@ -577,11 +569,7 @@ function App() {
     // 手机直接发来（不在往输入框送）：弹窗已弹出；窗口不在前台时再发一条系统通知，同「长任务 OS 通知」开关
     if (document.hasFocus()) return;
     if (!(useAppStore.getState().settings?.notificationsEnabled ?? true)) return;
-    void (async () => {
-      let granted = await isPermissionGranted();
-      if (!granted) granted = (await requestPermission()) === "granted";
-      if (granted) sendNotification({ title: "手机发来了东西", body: item.name });
-    })();
+    void sendSystemNotification({ title: "手机发来了东西", body: item.name });
   });
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const inboxItems = visibleInboxItems(

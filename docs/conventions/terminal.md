@@ -816,7 +816,11 @@
   （state 1 带百分比、2 错误显 !、3/4 显 …、0 清除；进程退出/重启即清）；OSC 777 只认 `notify;title;body`
   三段式（currentdirectory 等其他子命令静默）；claude-code 的通知通道是 **BEL**（不发 OSC 9/777），
   `term.onBell` 只对 agent PTY 转 notice。通知走与注意力通知同一套门：设置开关、前台当前标签不打扰、
-  按标签限频；序列断帧走与贴图/OSC 52 同一条 pending 管线（半截判定锚定帧尾——帧尾**完整**的短序列
+  按标签限频；**发送只经 `src/system-notification.ts` 一个出口、一律带提示音**（2026-10-29）：三家桌面
+  后端不指定声音就是静音、名字认不得也静音（Windows toast 库直接写 `<audio silent>`），声音名按平台在
+  `notification-sound.ts`（Mac 取系统音里实测最响的 Hero / Windows Default / Linux XDG 名），
+  src/ 里别处不得直接调 sendNotification（tests/notification-sound.test.ts 锁定）；不另设声音开关，
+  「系统通知」一个开关管横幅和声音。序列断帧走与贴图/OSC 52 同一条 pending 管线（半截判定锚定帧尾——帧尾**完整**的短序列
   不得扣住，kimi 的 8 字符进度帧曾因此卡死终点）。**后台标签**：正文进 backlog，但含 OSC 9/777/BEL
   的帧由 Rust `gated_emit` 带外照发 `pty-signal-<id>`，前端只喂通知/进度解析不写画面——通知与进度
   徽章的主场景就是后台标签，等切回补发就废了；补发重复由限频/幂等消化。

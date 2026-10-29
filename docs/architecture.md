@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-29 · 系统通知必须带提示音，发送只走一个出口
+
+用户反馈通知「大声点」，查实是 Mesa 从没给系统通知指定声音，而 macOS（`soundName` 为空）与 Windows（toast 库写 `<audio silent>`）都是不指定即静音、名字认不得也静音——等确认、雷达完成、人工请求、手机投递四类通知一直无声。规则：所有系统通知经 `src/system-notification.ts` 一个出口发，声音名按平台取自 `src/notification-sound.ts`（Mac 取系统音里实测最响的 Hero，Windows 取系统默认通知音，Linux 给 XDG 音名），`tests/notification-sound.test.ts` 锁名字合法与「src/ 无旁路 sendNotification」。不另加声音开关：「系统通知」一个开关管横幅和声音，只想静音横幅去系统设置关该应用的通知声音。细则 terminal.md「OSC 9 / 777 抽出标题发系统通知」段。
+
 ### 2026-10-28 · 公共能力库：随包快照 + models.dev / LiteLLM 合并
 
 用户问公共库有没有更好的办法，拍板先做两条：安装包带一份快照（发版前 `npm run gen:model-db` 刷新），联网更新加 LiteLLM（jsDelivr 镜像，国内直连可达）并与 models.dev 按型号合并，OpenRouter 只作两家都不通时的兜底。理由：models.dev 国内常连不上，退到 OpenRouter 后写法与原厂不一致、只列它转售的模型；新装用户此前这一层为空。细则 profiles.md「能力库与价目怎么认模型」，发版步骤见 AGENTS.md 与 §12「发布前检查项」。
