@@ -74,16 +74,14 @@ import {
 import VendorIcon from "../components/VendorIcon";
 import { vendorForPlanProvider } from "../vendor-icon";
 import {
-  Checkbox,
   EmptyState,
   LoadingRows,
-  PageFrame,
-  PageHeader,
-  PageToolbar,
+  PaneHead,
+  paneOutlineButtonClass,
   compactPrimaryActionClass,
   ghostActionClass,
-  rowActionClass,
   SegTabs,
+  Toggle,
   NoticeBar,
   InlineNotice,
 } from "../components/PageFrame";
@@ -515,10 +513,11 @@ function KpiStat({
   value: string;
   title?: string;
 }) {
+  // 2026-10-29 起是概览里的一格（与费用、tokens 同排，格间竖细线）
   return (
-    <div className="flex items-baseline gap-1.5" title={title}>
-      <dt className="text-l3">{label}</dt>
-      <dd className="font-medium tabular-nums text-l1">{value}</dd>
+    <div className="border-l border-hairline px-5 py-4" title={title}>
+      <div className="text-sm text-l3">{label}</div>
+      <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">{value}</div>
     </div>
   );
 }
@@ -1141,32 +1140,41 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     localStorage.setItem("ccode.statsCurrency", next);
   }
 
+  // 2026-10-29 借鉴 Claude 设置页：页头同对话头；工具条全用分段控件 / 开关 / 细边按钮；
+  // 下面按节排（余量 / 概览 / 趋势 / 活跃度 / 分布），节标题粗体、不再套卡
   return (
-    <PageFrame width="wide">
-      <PageHeader
+    <div className="min-h-full bg-canvas">
+      <PaneHead
         title="用量"
         meta="只计经 Mesa 记下归属的会话。费用按公开价估算，≥ 含未计价，~ 无价格。"
       />
-      <PageToolbar>
-        <SegTabs items={RANGES} value={range} onChange={setRange} />
-        <div className="flex items-center gap-1">
-          <Checkbox
-            checked={showInternal}
-            onChange={(checked) => {
-              setShowInternal(checked);
-              localStorage.setItem(
-                "ccode.stats.showInternal",
-                checked ? "1" : "0",
-              );
-            }}
-            label="显示内部活动"
-            className="rounded-sm px-2 py-0.5 text-xs text-l3 hover:bg-hover"
-          />
+      <div className="mx-auto w-full max-w-6xl px-9 pb-12 pt-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 py-1.5">
+        <SegTabs variant="boxed" items={RANGES} value={range} onChange={setRange} />
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          {/* 切换范围时保留旧数据，仅局部提示加载，骨架只用于首载 */}
+          {loading && stats !== null && (
+            <span className="text-xs text-l4">加载中…</span>
+          )}
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-l3">
+            显示内部活动
+            <Toggle
+              label="显示内部活动"
+              checked={showInternal}
+              onChange={(checked) => {
+                setShowInternal(checked);
+                localStorage.setItem(
+                  "ccode.stats.showInternal",
+                  checked ? "1" : "0",
+                );
+              }}
+            />
+          </label>
           {/* 币种：两格分段切换（原先一颗裸「¥」，不悬停看不出能点；2026-10-23 审查） */}
           <div
             role="group"
             aria-label="货币"
-            className="inline-flex items-center rounded-md bg-inset p-0.5 text-xs"
+            className="ccode-seg-boxed is-sm inline-flex items-center"
           >
             {(["$", "¥"] as const).map((c) => (
               <button
@@ -1177,9 +1185,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 onClick={() => {
                   if (currency !== c) toggleCurrency();
                 }}
-                className={`h-6 w-7 rounded-sm tabular-nums ${
-                  currency === c ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                }`}
+                className="ccode-seg-boxed-item flex items-center text-xs tabular-nums"
               >
                 {c}
               </button>
@@ -1189,16 +1195,12 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             type="button"
             onClick={() => void onRebuild()}
             disabled={rebuilding}
-            className={rowActionClass}
+            className={paneOutlineButtonClass}
           >
             {rebuilding ? "索引中…" : "刷新"}
           </button>
-          {/* 切换范围时保留旧数据，仅局部提示加载，骨架只用于首载 */}
-          {loading && stats !== null && (
-            <span className="px-1 text-xs text-l4">加载中…</span>
-          )}
         </div>
-      </PageToolbar>
+      </div>
       {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {partialError && (
         <InlineNotice tone="warn" className="mb-3">{partialError}</InlineNotice>
@@ -1209,11 +1211,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
 
       {(planRows.length > 0 || (planLoading && hasPlanGateway)) && (
-        <div className="mb-6 ccode-well ccode-card p-4">
+        <section className="mt-8">
           {planRows.length === 0 ? (
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium tracking-wider text-l3">订阅余量</span>
+              <div className="flex min-h-9 items-center gap-2 border-b border-hairline pb-2">
+                <h2 className="text-lg font-semibold text-l1">订阅余量</h2>
                 <button
                   type="button"
                   className="ml-auto flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
@@ -1246,8 +1248,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             const windows = planWindowsByTightness(row.windows);
             return (
               <>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium tracking-wider text-l3">订阅余量</span>
+                <div className="flex min-h-9 flex-wrap items-center gap-2 border-b border-hairline pb-2">
+                  <h2 className="text-lg font-semibold text-l1">订阅余量</h2>
                   {planGatewayNameVisible(row.gatewayName, row.provider) && (
                     <span className="text-xs text-l2">{row.gatewayName}</span>
                   )}
@@ -1291,8 +1293,10 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
                 )}
                 {planRows.length > 1 && (
-                  <div className="mt-2">
+                  <div className="mt-3">
                     <SegTabs
+                      variant="boxed"
+                      size="sm"
                       items={planRows.map((r) => ({
                         id: r.gatewayId,
                         label: planTabLabel(r, providerCounts[r.provider] ?? 1),
@@ -1414,16 +1418,16 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             );
             })()
           )}
-        </div>
+        </section>
       )}
 
       {hasWalletGateway &&
         (walletRowsShown.length > 0 || walletLoading) && (
-        <div className="mb-6 ccode-well ccode-card p-4">
+        <section className="mt-8">
           {walletGroups.length === 0 ? (
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium tracking-wider text-l3">网关余额</span>
+              <div className="flex min-h-9 items-center gap-2 border-b border-hairline pb-2">
+                <h2 className="text-lg font-semibold text-l1">网关余额</h2>
                 <div className="ml-auto flex items-center">
                   <button
                     type="button"
@@ -1487,8 +1491,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 gateways.find((g) => g.id === id)?.keyHint ?? null;
               return (
                 <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium tracking-wider text-l3">网关余额</span>
+                  <div className="flex min-h-9 flex-wrap items-center gap-2 border-b border-hairline pb-2">
+                    <h2 className="text-lg font-semibold text-l1">网关余额</h2>
                     {walletGroups.length === 1 && (
                       <span className="text-xs text-l2" title={walletKindLabel(row.kind)}>
                         {walletAccountTitle(group)}
@@ -1541,8 +1545,10 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
                   )}
                   {walletGroups.length > 1 && (
-                    <div className="mt-2">
+                    <div className="mt-3">
                       <SegTabs
+                        variant="boxed"
+                        size="sm"
                         items={walletGroups.map((g) => ({
                           id: g.key,
                           label: walletAccountTitle(g, true),
@@ -1682,7 +1688,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               );
             })()
           )}
-        </div>
+        </section>
       )}
 
       {!stats ? (
@@ -1693,10 +1699,12 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           detail="跑几个 agent 会话后，这里会按天汇总 token 和费用。"
         />
       ) : (
-        <div className="mb-6 ccode-well ccode-card p-4">
-            <div className="flex flex-wrap items-start gap-x-8 gap-y-3">
-              <div>
-                <div className="text-xs font-medium tracking-wider text-l3">
+        <>
+          <section className="mt-8">
+            <h2 className="mb-2 flex min-h-9 items-center text-lg font-semibold text-l1">概览</h2>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] border-y border-hairline">
+              <div className="py-4 pr-5">
+                <div className="text-sm text-l3">
                   费用
                 </div>
                 <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">
@@ -1721,22 +1729,20 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   </div>
                 )}
               </div>
-              <div>
-                <div className="text-xs font-medium tracking-wider text-l3">
+              <div className="border-l border-hairline px-5 py-4">
+                <div className="text-sm text-l3">
                   tokens
                 </div>
                 <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">
                   {compact(totalTokens)}
                 </div>
-                <div className="mt-1 text-micro text-l4">
+                <div className="mt-1 text-xs text-l4">
                   输入 {inShare}% · 输出 {100 - inShare}%
                 </div>
               </div>
-            </div>
-            {/* 次要指标只留两样（2026-10-23 用户「没用的不要」）：对话次数给费用一个量级参照；不计费说明 tokens 为何比费用对应的多。
-                场均（费用÷次数，自己能算）、缓存命中（Agent 长对话恒在 99% 上下，看了也做不了什么）、缓存省下（假设性的数，比实际花费还大好几倍，
-                只会让人困惑）都去掉了 */}
-            <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs">
+              {/* 次要指标只留两样（2026-10-23 用户「没用的不要」）：对话次数给费用一个量级参照；不计费说明 tokens 为何比费用对应的多。
+                  场均（费用÷次数，自己能算）、缓存命中（Agent 长对话恒在 99% 上下，看了也做不了什么）、缓存省下（假设性的数，比实际花费还大好几倍，
+                  只会让人困惑）都去掉了。2026-10-29 起与费用、tokens 同排成格 */}
               <KpiStat label="对话" value={`${stats.cards.sessions} 次`} />
               {(stats.cards.officialTokens > 0 || stats.cards.internalTokens > 0) && (
                 <KpiStat
@@ -1752,12 +1758,28 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   title="官方账号订阅与 Mesa 内部 AI 的 tokens：统计在内，但不算进费用"
                 />
               )}
-            </dl>
+            </div>
+          </section>
             {chartPts.length > 1 && (
-              <div className="mt-4">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  {canCost && canTokens ? (
+              <section className="mt-8">
+                <div className="mb-2 flex min-h-9 flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-lg font-semibold text-l1">
+                    {metric === "cost" ? `${rangeLabel}花费` : `${rangeLabel} tokens`}
+                  </h2>
+                  <div className="flex items-center gap-3">
+                  {/* 右上写峰值（与图里那根虚线对应） */}
+                  {(() => {
+                    const top = chartPts.reduce((a, b) => (b.value > a.value ? b : a), chartPts[0]);
+                    return top.value > 0 ? (
+                      <span className="text-xs tabular-nums text-l3" title={`${top.day} 最高`}>
+                        最高 {top.short} · {top.day.slice(5)}
+                      </span>
+                    ) : null;
+                  })()}
+                  {canCost && canTokens && (
                     <SegTabs
+                      variant="boxed"
+                      size="sm"
                       items={CHART_METRICS}
                       value={metric}
                       onChange={(id) => {
@@ -1765,22 +1787,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                         localStorage.setItem("ccode.stats.chartMetric", id);
                       }}
                     />
-                  ) : (
-                    <span className="text-xs text-l3">
-                      {metric === "cost"
-                        ? `${rangeLabel}花费`
-                        : `${rangeLabel} tokens`}
-                    </span>
                   )}
-                  {/* 右上写峰值（与图里那根虚线对应）；区间名上面的区间切换已经写着，不再重复 */}
-                  {(() => {
-                    const top = chartPts.reduce((a, b) => (b.value > a.value ? b : a), chartPts[0]);
-                    return top.value > 0 ? (
-                      <span className="text-micro tabular-nums text-l3" title={`${top.day} 最高`}>
-                        最高 {top.short} · {top.day.slice(5)}
-                      </span>
-                    ) : null;
-                  })()}
+                  </div>
                 </div>
                 <UsageChart
                   pts={chartPts}
@@ -1790,9 +1798,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                       : `${rangeLabel}用量折线`
                   }
                 />
-              </div>
+              </section>
             )}
-          </div>
+        </>
       )}
 
       {/* 活跃度区块挂在 empty 三元之外：页面空态是 range 口径，历史有数据的用户
@@ -1806,10 +1814,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       />
 
       {stats && !empty && distItems.length > 0 && (
-        <div className="mb-6 ccode-well ccode-card p-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <SegTabs items={distItems} value={dist} onChange={setView} />
-            <div className="ml-auto flex items-center gap-1">
+        <section className="mt-8">
+          <div className="mb-2 flex min-h-9 flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold text-l1">分布</h2>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+            <SegTabs variant="boxed" size="sm" items={distItems} value={dist} onChange={setView} />
               {dist === "gateway" && focusGateway && (
                 <button
                   type="button"
@@ -1830,6 +1839,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               </button>
             </div>
           </div>
+          <div className="border-t border-hairline pt-2">
           <DistList
             rows={distRows}
             expanded={distExpanded === dist}
@@ -1838,8 +1848,10 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             }
             shareLabel={dist === "sessions" ? "占花费" : "占用量"}
           />
-        </div>
+          </div>
+        </section>
       )}
-    </PageFrame>
+      </div>
+    </div>
   );
 }

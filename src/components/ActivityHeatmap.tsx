@@ -505,16 +505,16 @@ export default function ActivityHeatmap({
   if (!dto) {
     if (error) {
       return (
-        <section className="mb-6 rounded-lg ccode-well p-4" aria-label="活跃度">
-          <span className="text-xs font-medium tracking-wider text-l4">活跃度</span>
+        <section className="mt-8" aria-label="活跃度">
+          <h2 className="flex min-h-9 items-center border-b border-hairline pb-2 text-lg font-semibold text-l1">活跃度</h2>
           <p className="mt-2 text-xs text-warn-text">活跃度加载失败：{error}</p>
         </section>
       );
     }
     if (loading) {
       return (
-        <section className="mb-6 rounded-lg ccode-well p-4" aria-label="活跃度">
-          <span className="text-xs font-medium tracking-wider text-l4">活跃度</span>
+        <section className="mt-8" aria-label="活跃度">
+          <h2 className="flex min-h-9 items-center border-b border-hairline pb-2 text-lg font-semibold text-l1">活跃度</h2>
           <div
             className="mt-3 h-28 w-full animate-pulse rounded-md bg-inset"
             role="status"
@@ -589,31 +589,32 @@ export default function ActivityHeatmap({
   const hug = cellPx >= HEAT_CELL_MAX_PX;
 
   return (
-    <div className="mb-6">
+    // 2026-10-29 用量页借鉴 Claude 设置页：节标题粗体、标题行下一根细线，不再套卡
+    <div className="mt-8">
     <div
       ref={measureRef}
       className="h-0 w-full overflow-hidden"
       aria-hidden="true"
     />
     <section
-      className={`rounded-lg ccode-well p-4${hug ? " ccode-heat-hug" : ""}`}
+      className={hug ? "ccode-heat-hug" : undefined}
       aria-label="活跃度"
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline pb-2">
         <div className="flex shrink-0 items-baseline gap-2">
-          <span
-            className="text-xs font-medium tracking-wider text-l4"
+          <h2
+            className="text-lg font-semibold text-l1"
             title="从去年同一个月的 1 日铺到今天（本机时区归日），最右边是今天。格子与四个数含订阅用量、不含 Mesa 内部活动；页顶「显示内部活动」只在悬浮和当日明细里追加注记，不改变格子颜色和统计。着色量为输入+输出+缓存读写四类合计，与页首 tokens 卡（只计输入+输出）口径不同。"
           >
             活跃度
-          </span>
+          </h2>
           {dto.stale && (
             <span className="text-micro text-warn-text">索引刷新失败，显示上次统计</span>
           )}
         </div>
         {chips.length > 0 && (
           <div
-            className="ccode-heat-agents"
+            className="ccode-heat-agents ccode-seg-boxed is-sm"
             role="group"
             aria-label="按 agent 筛选"
           >
@@ -633,9 +634,7 @@ export default function ActivityHeatmap({
                       ? `${chip.label}（该 agent 的用量字段尚未完全实证，数据可能偏薄）`
                       : chip.label
                   }
-                  className={`flex h-7 items-center gap-1.5 rounded-full px-3 text-xs ${
-                    active ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-                  }`}
+                  className="ccode-seg-boxed-item flex items-center gap-1.5 text-xs"
                 >
                   {chip.id && (
                     <span
