@@ -46,6 +46,8 @@ const PREVIEW_CAP: usize = 6_000;
 const PLAN_CAP: usize = 40_000;
 /// 往前端推快照的最短间隔（实时文字一字一个事件，合并着推）
 const EMIT_INTERVAL: Duration = Duration::from_millis(150);
+/// 回合收尾后多久内到的文字 / 思考增量算晚到的尾巴（毫秒）
+const STRAGGLER_MS: i64 = 1000;
 /// Codex app-server 起来的等待上限（实测 0.1 秒左右）
 const CODEX_READY_TIMEOUT: Duration = Duration::from_secs(4);
 
@@ -279,6 +281,16 @@ impl Tracker {
         if !is_open(&self.snap.turn) {
             self.start_turn(now);
         }
+    }
+
+    /// 回合刚收尾（1 秒内）才到的文字 / 思考增量是晚到的尾巴：不能拿它重开一轮——重开的这一轮没有人再收尾，转圈不灭。
+    /// 真正的新一轮都有自己的开始事件（TurnStart / 提问）
+    fn straggler(&self, now: i64) -> bool {
+        self.snap
+            .turn
+            .as_ref()
+            .and_then(|t| t.ended_at)
+            .is_some_and(|ended| (0..STRAGGLER_MS).contains(&(now - ended)))
     }
 
     fn set_status(&mut self, status: &'static str) {
@@ -651,7 +663,7 @@ impl Tracker {
                 }
             }
             ChannelEvent::TextDelta(text) => {
-                if text.is_empty() {
+                if text.is_empty() || self.straggler(now) {
                     return;
                 }
                 self.ensure_running(now);
@@ -700,7 +712,7 @@ impl Tracker {
                 self.snap.notice = Some(NoticeDto { seq, text });
             }
             ChannelEvent::ThinkingDelta(text) => {
-                if !text.is_empty() {
+                if !text.is_empty() && !self.straggler(now) {
                     self.ensure_running(now);
                 }
             }
@@ -1155,8 +1167,11 @@ pub(crate) fn map_qwen(v: &Value) -> Vec<ChannelEvent> {
                     });
                 }
             }
-            // 一次模型回复里没有工具调用 = 这一轮的最后一条（交互态不发 result，实测 0.25.2）
-            if tools == 0 && !content.is_empty() {
+            // 一次模型回复里没有工具调用 = 这一轮的最后一条（交互态不发 result，实测 0.25.2）。
+            // 内容为空的回复（模型什么都没说）只在明确给了非 tool_use 的 stop_reason 时才算收尾，
+            // 免得把没写完的空快照当成结束
+            let stop = v.get("message").and_then(|m| m.get("stop_reason")).and_then(|x| x.as_str());
+            if tools == 0 && (!content.is_empty() || stop.is_some_and(|s| s != "tool_use")) {
                 let reason = v
                     .get("message")
                     .and_then(|m| m.get("stop_reason"))
@@ -3315,6 +3330,44 @@ mod tests {
         assert!(map_hook(&r).is_empty());
         let r = rec(r#"1 tab-1 {"sessionId":"s","hookEventName":"stop","reason":"end_turn"}"#);
         assert_eq!(map_hook(&r).len(), 1);
+    }
+
+    #[test]
+    fn late_deltas_after_turn_end_do_not_reopen_a_turn() {
+        let mut t = Tracker::new("tab-q", "qwen", "qwen");
+        t.apply(ChannelEvent::TurnStart, 1_000);
+        t.apply(ChannelEvent::TurnEnd { reason: Some("end_turn".into()) }, 2_000);
+        let ended = t.snap.turn.as_ref().unwrap().ended_at;
+        // 1 秒内晚到的尾巴：不开新回合
+        t.apply(ChannelEvent::ThinkingDelta("想".into()), 2_300);
+        t.apply(ChannelEvent::TextDelta("尾".into()), 2_400);
+        assert_eq!(t.snap.turn.as_ref().unwrap().ended_at, ended);
+        assert!(t.snap.live_text.is_none());
+        // 之后（或有自己的开始事件）照常开新一轮
+        t.apply(ChannelEvent::TextDelta("新".into()), 4_000);
+        assert!(t.snap.turn.as_ref().unwrap().ended_at.is_none());
+    }
+
+    #[test]
+    fn qwen_empty_reply_ends_the_turn_only_with_an_explicit_stop() {
+        let mut t = Tracker::new("tab-q", "qwen", "qwen");
+        for (i, e) in [
+            json!({"type":"user","message":{"role":"user","content":"hi"}}),
+            // 没有 stop_reason 的空快照：不当结束
+            json!({"type":"assistant","message":{"content":[]}}),
+        ]
+        .iter()
+        .enumerate()
+        {
+            for ev in map_qwen(e) {
+                t.apply(ev, i as i64);
+            }
+        }
+        assert!(t.snap.turn.as_ref().unwrap().ended_at.is_none());
+        for ev in map_qwen(&json!({"type":"assistant","message":{"stop_reason":"end_turn","content":[]}})) {
+            t.apply(ev, 5);
+        }
+        assert!(t.snap.turn.as_ref().unwrap().ended_at.is_some());
     }
 
     #[test]
