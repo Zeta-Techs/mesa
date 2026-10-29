@@ -3520,9 +3520,61 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
 fn grok_history_messages(path: &Path) -> Option<Vec<ChatMessageDto>> {
     let history = grok_history_path(path)?;
     let bytes = read_session_bytes(&history)?;
-    Some(parse_grok_history(&to_lines(&String::from_utf8_lossy(
+    let mut messages = parse_grok_history(&to_lines(&String::from_utf8_lossy(
         &bytes,
-    ))))
+    )));
+    // chat_history.jsonl 不带时间，回合起止时间取自同目录的事件流（读不到就不标，只是少一个「已工作 X 秒」）
+    if let Some(updates) = read_session_bytes(path) {
+        let spans = grok_turn_spans(&to_lines(&String::from_utf8_lossy(&updates)));
+        stamp_grok_history(&mut messages, &spans);
+    }
+    Some(messages)
+}
+
+/// 事件流里每个回合的（开始, 结束）时间：一段连续的 user_message_chunk 开一个回合，之后任何事件都把结束往后推
+fn grok_turn_spans(lines: &[String]) -> Vec<(String, String)> {
+    let mut spans: Vec<(String, String)> = Vec::new();
+    let mut prev_user = false;
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(update) = v.get("params").and_then(|p| p.get("update")) else {
+            continue;
+        };
+        let Some(ts) = grok_time(&v) else {
+            continue;
+        };
+        let is_user = get_str(update, "sessionUpdate") == Some("user_message_chunk");
+        match spans.last_mut() {
+            Some(last) if !(is_user && !prev_user) => last.1 = ts,
+            _ if is_user => spans.push((ts.clone(), ts)),
+            _ => {}
+        }
+        prev_user = is_user;
+    }
+    spans
+}
+
+/// 用户提问盖回合开始时间、每个回合最后一条助手消息盖结束时间（对话页「已工作 X」只看这两头）。
+/// 事件流有窗口（compact 后旧回合不在里面），所以从尾部往前对齐
+fn stamp_grok_history(messages: &mut [ChatMessageDto], spans: &[(String, String)]) {
+    let users: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == "user")
+        .map(|(i, _)| i)
+        .collect();
+    let n = users.len().min(spans.len());
+    for k in 0..n {
+        let (start, end) = &spans[spans.len() - n + k];
+        let ui = users[users.len() - n + k];
+        let next = users.get(users.len() - n + k + 1).copied().unwrap_or(messages.len());
+        messages[ui].timestamp = Some(start.clone());
+        if let Some(last) = (ui + 1..next).rev().find(|i| messages[*i].role == "assistant") {
+            messages[last].timestamp = Some(end.clone());
+        }
+    }
 }
 
 /// grok 尾部状态：从后往前找最近的已知事件。
@@ -9119,6 +9171,37 @@ mod tests {
         assert_eq!(messages[3].blocks[0].text, "完成。");
         assert_eq!(messages[3].blocks[1].tool_name.as_deref(), Some("run_terminal_command"));
         assert!(messages[3].blocks[1].text.contains("Remove-Item"));
+    }
+
+    /// chat_history 不带时间：回合起止取自事件流，从尾部对齐（事件流窗口可能丢了更早的回合）
+    #[test]
+    fn grok_history_gets_turn_times_from_updates() {
+        let updates = s(&[
+            r#"{"timestamp":1000,"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"窗口外残留"}}}}"#,
+            r#"{"timestamp":1100,"method":"session/update","params":{"update":{"sessionUpdate":"user_message_chunk","content":{"text":"第二问"}}}}"#,
+            r#"{"timestamp":1101,"method":"session/update","params":{"update":{"sessionUpdate":"user_message_chunk","content":{"text":"续"}}}}"#,
+            r#"{"timestamp":1110,"method":"session/update","params":{"update":{"sessionUpdate":"tool_call"}}}"#,
+            r#"{"timestamp":1190,"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"text":"答"}}}}"#,
+        ]);
+        let spans = grok_turn_spans(&updates);
+        assert_eq!(spans.len(), 1, "没有提问开头的残留事件不算回合");
+        assert_eq!(spans[0].0, iso_from_unix(1100));
+        assert_eq!(spans[0].1, iso_from_unix(1190));
+        let lines = s(&[
+            r#"{"type":"user","prompt_index":0,"content":"第一问"}"#,
+            r#"{"type":"assistant","content":"第一答"}"#,
+            r#"{"type":"user","prompt_index":1,"content":"第二问"}"#,
+            r#"{"type":"assistant","content":"","tool_calls":[{"id":"c1","name":"read","arguments":"{}"}]}"#,
+            r#"{"type":"tool_result","tool_call_id":"c1","content":"x"}"#,
+            r#"{"type":"assistant","content":"第二答"}"#,
+        ]);
+        let mut messages = parse_grok_history(&lines);
+        stamp_grok_history(&mut messages, &spans);
+        assert_eq!(messages[0].timestamp, None, "事件流窗口外的旧回合不标");
+        assert_eq!(messages[1].timestamp, None);
+        assert_eq!(messages[2].timestamp.as_deref(), Some(iso_from_unix(1100).as_str()));
+        assert_eq!(messages[3].timestamp, None, "回合中间的助手消息不标");
+        assert_eq!(messages[4].timestamp.as_deref(), Some(iso_from_unix(1190).as_str()));
     }
 
     #[test]
