@@ -544,6 +544,46 @@ export default function ChatSurface({
   const [imageStageOpen, setImageStageOpen] = useState(false);
   const emptyLayout = emptyStart && !imageStageOpen;
 
+  // 开聊那一帧问候语和起手提示是被整块卸掉的：空态时记下它们的位置和一份克隆，切出空态时把克隆
+  // 垫在原位上淡出 150ms，让位而不是闪没（2026-10-29 用户）。克隆是纯展示，不挂事件、不吃点击
+  const greetRef = useRef<HTMLDivElement>(null);
+  const startRef = useRef<HTMLDivElement>(null);
+  const emptyGhostRef = useRef<{ el: HTMLElement; top: number; left: number; width: number; height: number }[]>([]);
+  const wasEmptyLayoutRef = useRef(false);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (root && emptyLayout) {
+      const rr = root.getBoundingClientRect();
+      emptyGhostRef.current = [greetRef.current, startRef.current].flatMap((node) => {
+        if (!node) return [];
+        const r = node.getBoundingClientRect();
+        if (r.width === 0) return [];
+        return [{ el: node.cloneNode(true) as HTMLElement, top: r.top - rr.top, left: r.left - rr.left, width: r.width, height: r.height }];
+      });
+    } else if (root && wasEmptyLayoutRef.current && !emptyStart && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      for (const g of emptyGhostRef.current) {
+        if (typeof g.el.animate !== "function") continue;
+        Object.assign(g.el.style, {
+          position: "absolute",
+          margin: "0",
+          top: `${g.top}px`,
+          left: `${g.left}px`,
+          width: `${g.width}px`,
+          height: `${g.height}px`,
+          pointerEvents: "none",
+          overflow: "hidden",
+        });
+        g.el.setAttribute("aria-hidden", "true");
+        // 垫在最底层：滑动中的输入框（positioned、在后）盖在它上面
+        root.insertBefore(g.el, root.firstChild);
+        g.el
+          .animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, easing: "ease-out", fill: "forwards" })
+          .addEventListener("finish", () => g.el.remove());
+      }
+    }
+    if (!emptyLayout) emptyGhostRef.current = [];
+    wasEmptyLayoutRef.current = emptyLayout;
+  });
   async function loadOlder(settle?: () => Promise<void>) {
     if (!onLoadOlder) return;
     // 人往上翻到顶附近才算不跟底了；还贴着底（刚打开、最新一页不满三屏就自动接更早的）时接上来仍贴底——
@@ -1410,7 +1450,7 @@ export default function ChatSurface({
             // 只是问候：不重复「问一个问题…」，不写 Agent 身份（v3.214 否决的是居中引导语）。
             // 标志用去掉底板的字标（2026-10-18 用户：方块图标像摆了个 App 图标）：M 随主题字色、
             // 光标琥珀，坐在问候的基线上读作「M▁ 夜深了」，出现时光标闪三下
-            <div className="mx-auto mt-auto flex w-full max-w-[45rem] items-baseline gap-3 px-1 pb-4 text-xl font-medium tracking-tight text-l1">
+            <div ref={greetRef} className="mx-auto mt-auto flex w-full max-w-[45rem] items-baseline gap-3 px-1 pb-4 text-xl font-medium tracking-tight text-l1">
               <MesaMark
                 light={isLightTheme(theme)}
                 blink
@@ -1709,7 +1749,7 @@ export default function ChatSurface({
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div ref={startRef} className="min-h-0 flex-1 overflow-auto">
           <div className="mx-auto w-full max-w-[45rem] px-4">
             <ChatEmptyStart
               cwd={cwd}

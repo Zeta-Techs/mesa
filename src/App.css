@@ -2415,6 +2415,7 @@ select:focus-visible {
   /* 2026-10-22 用户：整体看着有点大、光晕减弱——由 2.5×1.75rem 收到 2.125×1.5rem，与芯片（h-6）齐高 */
   width: 2.125rem;
   height: 1.5rem;
+  position: relative;
   border-radius: var(--ccode-radius-control);
   transition:
     background-color 120ms var(--ccode-motion-ease),
@@ -2443,11 +2444,12 @@ select:focus-visible {
 .ccode-send-block[data-state="ready"]:hover {
   filter: brightness(1.06);
 }
+/* 外发光排在前、内描边在后：与 ready 的单层外发光同位同类，box-shadow 才能逐层过渡（inset 与非 inset 错位会整条瞬切） */
 .ccode-send-block[data-state="stop"] {
   color: var(--color-mesa-amber);
   box-shadow:
-    inset 0 0 0 1.5px color-mix(in srgb, var(--color-mesa-amber) 70%, transparent),
-    0 0 5px color-mix(in srgb, var(--color-mesa-amber) 10%, transparent);
+    0 0 5px color-mix(in srgb, var(--color-mesa-amber) 10%, transparent),
+    inset 0 0 0 1.5px color-mix(in srgb, var(--color-mesa-amber) 70%, transparent);
 }
 .ccode-send-block[data-state="stop"]:hover {
   background: color-mix(in srgb, var(--color-mesa-amber) 12%, transparent);
@@ -2458,6 +2460,35 @@ select:focus-visible {
 }
 [data-theme$="-light"] .ccode-send-block[data-state="stop"] {
   box-shadow: inset 0 0 0 1.5px var(--color-mesa-amber);
+}
+/* 箭头与停止方块叠在同一格里交叉淡入淡出：ready → sending → stop 是同一个按钮连续变，不是换一个 */
+.ccode-send-arrow,
+.ccode-send-stop {
+  position: absolute;
+  transition:
+    opacity 120ms var(--ccode-motion-ease),
+    transform 120ms var(--ccode-motion-ease);
+}
+.ccode-send-stop {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.ccode-send-block[data-state="sending"] .ccode-send-arrow,
+.ccode-send-block[data-state="stop"] .ccode-send-arrow {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.ccode-send-block[data-state="sending"] .ccode-send-stop,
+.ccode-send-block[data-state="stop"] .ccode-send-stop {
+  opacity: 1;
+  transform: scale(1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-send-block,
+  .ccode-send-arrow,
+  .ccode-send-stop {
+    transition: none;
+  }
 }
 /* 聊天项目弹层的搜索框：边界由那条 inset 底条提供，不再套全局焦点环 */
 .ccode-picker-search:focus,

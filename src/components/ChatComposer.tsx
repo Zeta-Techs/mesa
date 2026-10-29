@@ -118,6 +118,7 @@ function SendBlock({
   queued = false,
   queuedTitle,
   queuedLabel,
+  stop,
   onClick,
 }: {
   disabled: boolean;
@@ -125,26 +126,34 @@ function SendBlock({
   queued?: boolean;
   queuedTitle?: string;
   queuedLabel?: string;
+  /** 正在生成：同一个按钮变停止钮（不换节点，才有 ready → sending → stop 的连续过渡） */
+  stop?: { title?: string | null };
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
-      disabled={disabled}
+      disabled={stop ? false : disabled}
       onClick={onClick}
       // 发出后还在交（写进终端 / 起进程）的那段：半透明琥珀 + 实心方块（sending），与停止块同一副样子，
       // 只暗一档——不在这段落回灰块再等 running 翻真换琥珀，发送钮全程不脱琥珀色（2026-10-28 用户）
-      data-state={disabled ? (busy ? "sending" : "empty") : "ready"}
-      title={queued ? (queuedTitle ?? "排队：这一轮结束后处理（Enter 也是）") : busy ? "正在发送…" : "Enter 发送 · Shift+Enter 换行"}
-      aria-label={queued ? (!queuedLabel || queuedLabel === "排队" ? "排队发送" : queuedLabel) : "发送"}
-      aria-busy={busy || undefined}
+      data-state={stop ? "stop" : disabled ? (busy ? "sending" : "empty") : "ready"}
+      title={
+        stop
+          ? (stop.title ?? "暂停当前生成（往终端发送 Esc；会话保留，可继续输入）")
+          : queued
+            ? (queuedTitle ?? "排队：这一轮结束后处理（Enter 也是）")
+            : busy
+              ? "正在发送…"
+              : "Enter 发送 · Shift+Enter 换行"
+      }
+      aria-label={stop ? "暂停当前生成" : queued ? (!queuedLabel || queuedLabel === "排队" ? "排队发送" : queuedLabel) : "发送"}
+      aria-busy={(!stop && busy) || undefined}
       className="ccode-send-block"
     >
-      {busy ? (
-        <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" />
-      ) : (
-        <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" />
-      )}
+      {/* 两个图标叠着，随 data-state 交叉淡入淡出（App.css .ccode-send-arrow / .ccode-send-stop） */}
+      <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" className="ccode-send-arrow" />
+      <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" className="ccode-send-stop" />
     </button>
   );
 }
@@ -810,6 +819,7 @@ export default function ChatComposer({
   }
 
   const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0 || quote !== null);
+  const showStop = Boolean(running && onInterrupt && !busy && (agentId == null || escInterruptSafe(agentId)));
 
   const submittingRef = useRef(false);
   async function submit(override?: string) {
@@ -1326,45 +1336,33 @@ export default function ChatComposer({
           )}
           </div>
             <div data-slot="send" className="flex h-[34px] shrink-0 items-center gap-1.5">
-              {running &&
-              onInterrupt &&
-              !busy &&
-              (agentId == null || escInterruptSafe(agentId)) ? (
-                /* 正在生成：发送钮让位给停止钮（琥珀描边 + 实心方块，不闪），点击 = 往终端发 Esc 暂停。
-                   这时又打了字：停止钮旁写「排队」并亮出发送钮——Enter / 点它都是排队，这一轮结束后处理。
-                   Grok 无停止钮：非 prompt 态 Esc 会退出整进程。 */
+              {/* 发送钮 / 停止钮是同一个节点：正在生成时变停止钮（琥珀描边 + 实心方块，不闪），点击 = 往终端发 Esc 暂停。
+                  这时又打了字：停止钮旁写「排队」并亮出发送钮——Enter / 点它都是排队，这一轮结束后处理。
+                  Grok 无停止钮：非 prompt 态 Esc 会退出整进程。 */}
+              <SendBlock
+                disabled={!canSubmit}
+                busy={Boolean(busy)}
+                stop={showStop ? { title: stopTitle } : undefined}
+                onClick={() => {
+                  if (!showStop) return void submit();
+                  onInterrupt?.();
+                  // 停止后焦点回输入框：「这一轮停下、可以接着打下一句」
+                  ref.current?.focus();
+                }}
+              />
+              {showStop && canSubmit && (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onInterrupt();
-                      // 停止后焦点回输入框：「这一轮停下、可以接着打下一句」
-                      ref.current?.focus();
-                    }}
-                    title={stopTitle ?? "暂停当前生成（往终端发送 Esc；会话保留，可继续输入）"}
-                    aria-label="暂停当前生成"
-                    data-state="stop"
-                    className="ccode-send-block"
-                  >
-                    <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" />
-                  </button>
-                  {canSubmit && (
-                    <>
-                      {/* 写法按这家 CLI 的真实行为：Claude / Codex 等是「下一步交给它」，不是排到这一轮之后 */}
-                      <span className="shrink-0 text-micro text-l4">{queueHint?.label ?? "排队"}</span>
-                      <SendBlock
-                        disabled={false}
-                        busy={false}
-                        onClick={() => void submit()}
-                        queued
-                        queuedTitle={queueHint?.title}
-                        queuedLabel={queueHint?.label}
-                      />
-                    </>
-                  )}
+                  {/* 写法按这家 CLI 的真实行为：Claude / Codex 等是「下一步交给它」，不是排到这一轮之后 */}
+                  <span className="shrink-0 text-micro text-l4">{queueHint?.label ?? "排队"}</span>
+                  <SendBlock
+                    disabled={false}
+                    busy={false}
+                    onClick={() => void submit()}
+                    queued
+                    queuedTitle={queueHint?.title}
+                    queuedLabel={queueHint?.label}
+                  />
                 </>
-              ) : (
-                <SendBlock disabled={!canSubmit} busy={Boolean(busy)} onClick={() => void submit()} />
               )}
             </div>
           </div>
