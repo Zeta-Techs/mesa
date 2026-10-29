@@ -1559,10 +1559,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
 
   return (
-    <PageFrame width="wide" className="pb-12 pt-6">
+    <PageFrame width="wide" className="pb-12 pt-2">
       <div className="ccode-workbench min-w-0">
       {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
-          标题只留给屏幕阅读器，顶上 pt-6 留白免得第一块贴着窗口顶边。2026-10-29 试过各页同款小页头 + 对话栏宽度单列，
+          标题只留给屏幕阅读器；顶上 pt-2 让第一块的「项目」标题与其余管理页页名同一高度、同一字号（2026-10-29 用户：页头统一用这一档）。2026-10-29 试过各页同款小页头 + 对话栏宽度单列，
           用户否掉（「这些页面不需要同样的小页头」「宽度用之前的宽度」），回到这里。
           「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
       <h1 id="workbench-title" tabIndex={-1} className="sr-only">工作台</h1>

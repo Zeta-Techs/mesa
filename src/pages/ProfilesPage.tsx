@@ -3921,9 +3921,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     <FoldMark open={!isCollapsed} />
                   </button>
                   )}
-                  <AgentIcon agent={agent.id} label={agent.label} size={allView ? 18 : 20} />
+                  <AgentIcon agent={agent.id} label={agent.label} size={18} />
                   <h2
-                    className={`${allView ? "text-lg" : "text-xl"} font-semibold text-l1`}
+                    className="text-lg font-semibold text-l1"
                     title={
                       det?.binaryPath
                         ? `${agent.binary} ${det.version ?? ""}`.trim()

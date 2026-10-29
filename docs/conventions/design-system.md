@@ -472,7 +472,7 @@
   否掉的：课题首字图块（课题多放不下、首字撞、和展开态两套长相）；单个「对话」切换图标（等于把「运行」换样子留着）。
   ④切换的键盘入口 ⌃Tab / ⌃⇧Tab（最近看过的上一段 / 最早一段）；⌘W 2026-10-26 起关正看着的这段（Mac 关窗口挪到 ⇧⌘W，见 terminal.md「关掉一段对话」）。⑤分屏从对话 ⋯「在右侧分屏打开」进（`pendingTerminal.split`，
   正看着的留左）。⑥空闲进程自动收、重启只回到上次那段，见 terminal.md 同日条。
-- **工作台首页不放页面大标题（2026-10-24 用户）**：侧栏「工作台」已高亮，`PageHeader` 的大字只重复一遍、还占掉最显眼的一行；首页惯例（Claude / Codex 客户端）也不放。留 `sr-only` 的 h1 给屏幕阅读器，内容顶上 `pt-6` 留白。**只限工作台**——连接、技能、MCP、用量、设置等管理页标题照留（落脚点 + 挂操作，侧栏收成图标时更需要）。
+- **工作台首页不放页面大标题（2026-10-24 用户）**：侧栏「工作台」已高亮，`PageHeader` 的大字只重复一遍、还占掉最显眼的一行；首页惯例（Claude / Codex 客户端）也不放。留 `sr-only` 的 h1 给屏幕阅读器，内容顶上留白（2026-10-29 起 `pt-2`，第一块「项目」标题与各页页名同高）。**只限工作台**——连接、技能、MCP、用量、设置等管理页标题照留（落脚点 + 挂操作，侧栏收成图标时更需要）。
 - **工作台按审查收口（2026-10-22，HIG 审查后用户「全部修」）**：①Mac 根字号 14px 下 `text-xs` = 10.5px，比 `text-micro`（固定 11px）还小——
   工作台区块标题改 `text-micro` + 中粗 + l2（与「查看全部」同字号，靠字重字色分层），列表行 / 待你处理行 / 运行行用 `text-sm`，工作台不再用
   `text-xs`（同日全站已把 Mac 的 xs 钉到 11.5px，见「字号阶梯令牌化」）。②「最近项目」栏删除：侧栏项目树 + 「最近在做」已列项目，
@@ -925,7 +925,7 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   `ccode-well ccode-card p-4`，卡头标题 `l1`；`CardRow` 圆角 `lg`。④控件胶囊化：按钮统一 `settingsPillClass`（PageFrame：32px 高、`rounded-lg`、
   `bg-raised` + hairline 边，行内操作与卡头动作不再分 ghost/描边两种）；下拉/输入 `fieldFixed` 36px 高 `rounded-lg` `bg-strip`；主 CTA 同圆角。
   ⑤「数据与存储 → 本机占用」顶部加**占用条形图**（`storageSegments`：按大小取前 5 项，余下并「其他」，色取主题令牌 cta/ok/link/warn/err，图例=圆点+短名+大小，
-  `role="img"` 带文字替代）。**同日全站外溢（用户拍板：全站一致，但「锦上添花」不动原有布局观感）**：①**控件圆角全站 6px→8px**（`PageFrame` 的 primary/danger/secondary/row/quiet/ghost/inline/compactPrimary 按钮与 field/compactField/searchField/图标钮由 `rounded-md` 改 `rounded-lg`）——只动半径，高度/内边距/底色/描边一律不变，所以任何页面布局不位移；设置页的「胶囊」（`settingsPillClass`：32px、抬底）是设置页自己的行内手感，不外溢；②**页标题**：`PageHeader`（工作台/连接/技能/MCP/用量/设置）全站 `text-2xl`，项目详情页名 `ProjectIdentityHeader` `text-xl`（页头高度不变）；设置页分区标题 `text-xl`，层级 页标题 > 分区标题 > 小节标题；对话页左栏的「对话」是面板标题（挤在 min-h-7 的列头里），不是页标题，不动；③**页级内容卡**：设置页与用量/MCP/技能/连接换 `ccode-well ccode-card`（14px + 发丝边；连接页分组卡 `rounded-xl` 并保留 `border-field ccode-well` 字面量供 content-surfaces 断言），内边距沿用各自原值；工作台/运行/对话/会话的卡片暂保持原样，要同步时走同一手法（只换外框、不动内边距）。弹窗里的小内嵌块（`rounded-sm ccode-well`）不动。借鉴的是层级与手感，不是配色——强调色仍随 Mesa 主题。验收口径：深/浅各至少一套主题 + 窄窗（~760px）截图。
+  `role="img"` 带文字替代）。**同日全站外溢（用户拍板：全站一致，但「锦上添花」不动原有布局观感）**：①**控件圆角全站 6px→8px**（`PageFrame` 的 primary/danger/secondary/row/quiet/ghost/inline/compactPrimary 按钮与 field/compactField/searchField/图标钮由 `rounded-md` 改 `rounded-lg`）——只动半径，高度/内边距/底色/描边一律不变，所以任何页面布局不位移；设置页的「胶囊」（`settingsPillClass`：32px、抬底）是设置页自己的行内手感，不外溢；②**页标题**：~~`PageHeader`（工作台/连接/技能/MCP/用量/设置）全站 `text-2xl`~~（2026-10-29 改为 `text-lg` 粗体，与工作台「项目」节标题、对话管理栏头同一档，见 codex-style-ui §3.4），项目详情页名 `ProjectIdentityHeader` `text-xl`（页头高度不变）；设置页分区标题 `text-xl`，层级 页标题 > 分区标题 > 小节标题；对话页左栏的「对话」是面板标题（挤在 min-h-7 的列头里），不是页标题，不动；③**页级内容卡**：设置页与用量/MCP/技能/连接换 `ccode-well ccode-card`（14px + 发丝边；连接页分组卡 `rounded-xl` 并保留 `border-field ccode-well` 字面量供 content-surfaces 断言），内边距沿用各自原值；工作台/运行/对话/会话的卡片暂保持原样，要同步时走同一手法（只换外框、不动内边距）。弹窗里的小内嵌块（`rounded-sm ccode-well`）不动。借鉴的是层级与手感，不是配色——强调色仍随 Mesa 主题。验收口径：深/浅各至少一套主题 + 窄窗（~760px）截图。
 - **设置页细节口径（2026-10-17 逐分区细化，用户「全部都做」）**：分区标题 `text-base font-semibold`，高卡头/行标签一档。
   下拉只留三档宽 `selectSm/Md/Lg`（w-40/64/80 + `max-w-full`），禁宽度跟最长选项走（AI 专用配置曾顶出卡片）。右侧控件
   高于一行（按钮 + 折叠、候选列表、图标块、色条带名）时 `Row align="start"`，左标签不得掉到控件中段。卡内行的条件动作

@@ -1625,7 +1625,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         maxWidth={560}
         className={`ccode-sessions-rail ${mobileRailOpen ? "ccode-mobile-rail-open" : ""}`}
       >
-        <div className="shrink-0 px-3 pb-2.5 pt-3">
+        <div className="shrink-0 px-3 pb-2.5 pt-1">
           <button
             type="button"
             className="mb-2 ml-auto flex h-7 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
@@ -1635,7 +1635,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           </button>
           {selecting ? (
             <div className="flex flex-col gap-1.5">
-              <div className="flex min-h-7 items-center justify-between gap-2">
+              <div className="flex min-h-12 items-center justify-between gap-2">
                 <span className="whitespace-nowrap text-xs text-l3">已选 {checkedInView} 项</span>
                 <div className="flex items-center gap-1">
                   <button
@@ -1708,10 +1708,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               </div>
             </div>
           ) : (
-            // 栏头：页面标题（粗体）+ 计数，右边中性小按钮（2026-10-29 试过与对话头同款小字标题，用户否掉）
-            <div className="flex min-h-8 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <h1 className="shrink-0 text-base font-semibold text-l1">对话</h1>
+            // 栏头：与其余管理页 PageHeader 同高同字（h-12、text-lg 粗体 = 工作台「项目」那一档，2026-10-29 用户「页头好像不一样大」）+ 计数，右边中性小按钮
+            <div className="flex h-12 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-baseline gap-2.5">
+                <h1 className="shrink-0 text-lg font-semibold text-l1">对话</h1>
                 {/* 计数副题：与既有口径一致，搜索时透出命中数 */}
                 <span className="truncate text-micro text-l4">
                   当前 {sessionList.length}

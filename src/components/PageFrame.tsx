@@ -104,7 +104,8 @@ export function PageHeader({
       <div className="flex min-w-0 items-center gap-2.5">
         {leading}
         <div className="flex min-w-0 items-baseline gap-2.5">
-          <h1 className="shrink-0 text-2xl font-semibold tracking-tight text-l1">
+          {/* 页名与工作台「项目」等节标题同一档（text-lg 粗体，2026-10-29 用户「用工作台那个项目页头大小就行了」） */}
+          <h1 className="shrink-0 text-lg font-semibold text-l1">
             {title}
           </h1>
           {meta && <span className="truncate text-micro text-l4">{meta}</span>}
