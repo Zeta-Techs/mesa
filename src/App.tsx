@@ -1411,11 +1411,18 @@ function App() {
         r instanceof Error ? (r.stack ?? r.message) : String(r),
       );
     };
+    // 内容安全策略拦下的加载 / 脚本：生产 CSP 比开发版严（没有 unsafe-inline 和本地 ws），
+    // 只在安装版出的「什么都没发生」靠这条留痕（没有开发者工具可看）
+    const onCsp = (e: SecurityPolicyViolationEvent) => {
+      report("csp", `${e.effectiveDirective} 拦下 ${e.blockedURI || "内联内容"} @ ${e.sourceFile}:${e.lineNumber}`);
+    };
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onRejection);
+    document.addEventListener("securitypolicyviolation", onCsp);
     return () => {
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
+      document.removeEventListener("securitypolicyviolation", onCsp);
     };
   }, []);
 
