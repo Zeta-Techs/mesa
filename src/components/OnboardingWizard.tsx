@@ -288,6 +288,12 @@ function InstallStage() {
     // Node 装好后接着走刚才那家的安装；先刷新命令预览再装
     if (pending) void install.loadPreviews([pending]).then(() => install.install(pending));
   });
+  const openProxySettings = () => {
+    const s = useAppStore.getState();
+    s.setOnboardingWizardOpen(false);
+    s.setSettingsSectionReq("network");
+    s.setPage("settings");
+  };
   const others = useMemo(() => AGENTS.filter((a) => !(RECOMMENDED as readonly string[]).includes(a.id)), []);
   const ids = useMemo(() => AGENTS.map((a) => a.id as string), []);
   useEffect(() => {
@@ -363,6 +369,13 @@ function InstallStage() {
               {entry.result.output.trim().slice(-1200)}
             </pre>
             {hint && <p className="text-xs leading-5 text-l3">{hint}</p>}
+            <p className="text-xs leading-5 text-l3">
+              下载慢或连不上，多半是网络问题：
+              <button type="button" className="ml-1 text-cta hover:underline" onClick={openProxySettings}>
+                去设置出网代理
+              </button>
+              ，填好再点「重试」。
+            </p>
           </div>
         )}
       </Card>
@@ -372,7 +385,10 @@ function InstallStage() {
   return (
     <div className="space-y-3">
       <p className="text-xs leading-5 text-l3">
-        没有偏好就从 Claude Code 或 Codex 开始。安装要联网下载；国内网络慢或失败，先到 设置 → 网络 填出网代理。
+        没有偏好就从 Claude Code 或 Codex 开始。安装要联网下载；国内网络慢或失败，先到 设置 → 网络 填出网代理（如 http://127.0.0.1:7890）。
+        <button type="button" className="ml-1 text-cta hover:underline" onClick={openProxySettings}>
+          去设置出网代理
+        </button>
       </p>
       {RECOMMENDED.map((id) => row(id, true))}
       <button type="button" className="text-xs text-l3 hover:text-l1" onClick={() => setShowOthers((v) => !v)}>
@@ -507,7 +523,15 @@ function ChatScreen({ done, close }: { done: boolean; close: () => void }) {
   return (
     <Card className="space-y-3">
       <p className="text-sm leading-6 text-l2">点下面开一段新对话，写一句话发出去，比如「用三句话介绍你能帮我做什么」。</p>
-      <p className="text-xs leading-5 text-l3">报错时按提示回连接页改地址、密钥或模型；向导会留在侧栏「上手引导」里，随时回来。</p>
+      <ul className="space-y-1.5 text-xs leading-5 text-l3">
+        <li>
+          · 聊天底下跑的就是这家 Agent 的命令行（CLI）：运行页右上角的 {">_"} 图标能切到同一段对话的终端，看 AI 实际运行的命令，不会另开对话。
+        </li>
+        <li>
+          · 对话标题由 AI 自动起（会用掉少量 token）；想自己改就右键重命名，不想自动起名，到 设置 → AI 与 Agent 关掉「会话自动命名」。
+        </li>
+        <li>· 报错时按提示回连接页改地址、密钥或模型；向导会留在侧栏「上手引导」里，随时回来。</li>
+      </ul>
       <button
         type="button"
         className={primaryActionClass}

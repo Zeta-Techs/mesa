@@ -90,7 +90,8 @@ test("一键接入官方账号的按钮文案", () => {
 test("小提示：终端与标题合成一条，讲过的不再讲，都讲过就不弹", () => {
   const both = tipsNotice({});
   assert.ok(both?.startsWith("两个小提示\n"));
-  assert.ok(both?.includes("终端") && both?.includes("标题"));
+  assert.ok(both?.includes("终端") && both?.includes("命令行") && both?.includes("标题"));
+  assert.ok(both?.includes("AI 自动起") && both?.includes("会话自动命名"));
   const onlyNaming = tipsNotice({ terminal: true });
   assert.ok(onlyNaming && !onlyNaming.includes(">_") && onlyNaming.includes("标题"));
   assert.equal(tipsNotice({ terminal: true, naming: true }), null);

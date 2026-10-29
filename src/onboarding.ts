@@ -200,12 +200,12 @@ export function tipsNotice(acks: OnboardingState["acks"]): string | null {
   const lines: string[] = [];
   if (!acks.terminal) {
     lines.push(
-      "聊天和终端是同一段对话的两种画面：点运行页右上角的 >_ 图标，能看到 AI 实际运行的命令和完整输出，再点一次回到聊天，不会打断 AI。",
+      "聊天底下跑的就是这家 Agent 的命令行（CLI），聊天和终端是同一段对话的两种画面：点运行页右上角的 >_ 图标看终端里 AI 实际运行的命令和完整输出，再点一次回到聊天，不会另开对话，也不会打断 AI。",
     );
   }
   if (!acks.naming) {
     lines.push(
-      "对话会自动起标题，整理成「月日|类型|主题」。想自己改：在侧栏右键这段对话选「重命名」，手改过的不会再被覆盖。",
+      "对话标题由 AI 自动起，整理成「月日|类型|主题」，会用掉少量 token。想自己改：在侧栏右键这段对话选「重命名」，手改过的不会再被覆盖；不想自动起名：设置 → AI 与 Agent 里关掉「会话自动命名」。",
     );
   }
   return lines.length ? `两个小提示\n${lines.join("\n")}` : null;
