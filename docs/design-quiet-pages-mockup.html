@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Mesa 管理页视觉统一到对话页 · 七页设计稿（2026-10-29）</title>
+<title>Mesa 管理页视觉统一 · 第二轮（2026-10-29）</title>
 <style>
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -85,9 +85,9 @@
 
   /* ── 共用：对话栏宽度的单列 + 字级 ── */
   .col { max-width: 742px; margin: 0 auto; padding: 14px 0 28px; } /* = ccode-chat-column：14px × 52 + 1rem */
-  .sh { display: flex; align-items: center; gap: 6px; margin: 24px 4px 6px; font-size: 12px; color: var(--l3); font-weight: 500; }
-  .sh:first-child { margin-top: 6px; }
-  .sh .n { color: var(--l4); font-weight: 400; }
+  .sh { display: flex; align-items: center; gap: 8px; margin: 30px 4px 8px; font-size: 15px; color: var(--l1); font-weight: 600; }
+  .sh:first-child { margin-top: 10px; }
+  .sh .n { color: var(--l4); font-weight: 400; font-size: 12px; }
   .sh .sp { flex: 1; }
   .sh .tb { font-weight: 400; height: 24px; }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
@@ -164,6 +164,8 @@
   .lr .s2 { grid-column: 2 / 4; font-size: 12px; color: var(--l4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
   .lr .tm { font-size: 11px; color: var(--l4); white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
   .lr.sel { background: var(--bubble); }
+  .lr.noic { grid-template-columns: minmax(0, 1fr) auto auto; padding-left: 12px; }
+  .lr.noic .s2 { grid-column: 1 / 3; }
 
   /* ── 工作台 ── */
   .need { background: var(--bubble); border-radius: 12px; padding: 4px; }
@@ -282,6 +284,92 @@
   .sw .pv i:last-child::after { content: ""; position: absolute; left: 8px; bottom: 8px; width: 14px; height: 6px; border-radius: 3px; background: var(--acc); }
   .sw .nmm { font-size: 11px; color: var(--l3); text-align: center; margin-top: 4px; white-space: nowrap; }
 
+  /* ── Claude 设置页式写法（对话管理 / 连接 / 用量 / 设置） ── */
+  .cs-wrap { flex: 1; min-height: 0; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
+  .cs-nav { background: color-mix(in oklab, var(--canvas), var(--rail) 50%); border-right: 1px solid var(--hair); padding: 6px 10px 16px; overflow-y: auto; }
+  .cs-search { display: flex; align-items: center; gap: 8px; height: 34px; border: 1px solid var(--field); border-radius: 9px; padding: 0 10px; color: var(--l4); background: transparent; }
+  .cs-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--l1); font: inherit; font-size: 13px; }
+  .cs-search input::placeholder { color: var(--l4); }
+  .cs-gl { display: flex; align-items: center; font-size: 12px; color: var(--l4); padding: 18px 10px 6px; }
+  .cs-gl .cnt { margin-left: auto; }
+  .cs-it { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 14px; color: var(--l2); cursor: pointer; white-space: nowrap; }
+  .cs-it svg { color: var(--l3); flex: none; }
+  .cs-it:hover { background: var(--hover); }
+  .cs-it.sel { background: var(--rail-sel); color: var(--l1); }
+  .cs-it.sel svg { color: var(--l1); }
+  .cs-it .cnt { margin-left: auto; font-size: 12px; color: var(--l4); }
+  .bd { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+  .cs-body { overflow-y: auto; padding: 4px 36px 40px; min-width: 0; }
+  .cs-h { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: var(--l1); margin: 34px 0 8px; }
+  .cs-h.first, .cs-body > .cs-h:first-child, .cs-bar + .cs-h { margin-top: 18px; }
+  .cs-h.big { font-size: 18px; margin-top: 18px; }
+  .cs-h .n { font-size: 12px; font-weight: 400; color: var(--l4); }
+  .cs-h .sp { flex: 1; }
+  .cs-sub { font-size: 13px; color: var(--l3); margin: -2px 0 10px; }
+  .cs-list { border-top: 1px solid var(--hair); }
+  .cs-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--hair); min-height: 60px; }
+  .cs-row .lft { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .cs-row .t { font-size: 14px; color: var(--l1); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .cs-row .d { font-size: 13px; color: var(--l3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
+  .cs-row .rt { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
+  .cs-row .hov { opacity: 0; }
+  .cs-row:hover .hov { opacity: 1; }
+  .cs-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: color-mix(in oklab, var(--canvas), var(--l1) 3.5%); border: 1px solid var(--hair); }
+  .cs-seg button { height: 28px; padding: 0 12px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--l3); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .cs-seg button:hover { color: var(--l1); }
+  .cs-seg button.on { background: var(--inset); border-color: var(--field); color: var(--l1); }
+  .light .cs-seg button.on { background: var(--raised); }
+  .cs-seg.sm { padding: 2px; border-radius: 8px; }
+  .cs-seg.sm button { height: 24px; padding: 0 9px; font-size: 12px; border-radius: 6px; }
+  .cs-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; height: 32px; min-width: 168px; padding: 0 10px 0 12px; border: 1px solid var(--field); border-radius: 9px; color: var(--l1); font-size: 13px; cursor: pointer; }
+  .cs-select svg { color: var(--l3); }
+  .cs-btn { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 12px; border: 1px solid var(--field); border-radius: 8px; background: transparent; color: var(--l1); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; flex: none; }
+  .cs-btn:hover { background: var(--hover); }
+  .cs-btn.pri { background: var(--l1); color: var(--canvas); border-color: transparent; }
+  .cs-btn.pri:hover { filter: brightness(1.1); }
+  .tbar .cs-btn { height: 28px; font-size: 12px; padding: 0 10px; margin-left: 4px; }
+  .cs-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0 4px; }
+  .cs-bar .sp { flex: 1; }
+  .brand { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 500; white-space: nowrap; flex: none; }
+  .cs-sess { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+  .cs-sess:hover { background: var(--hover); }
+  .cs-sess.sel { background: var(--rail-sel); }
+  .cs-sess .tt { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--l1); min-width: 0; }
+  .cs-sess .tt span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cs-sess .mm { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--l4); white-space: nowrap; overflow: hidden; }
+  .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+  .kpis > div { padding: 14px 18px; }
+  .kpis > div + div { border-left: 1px solid var(--hair); }
+  .kpis > div:first-child { padding-left: 0; }
+  .kpis .k { font-size: 13px; color: var(--l3); }
+  .kpis .v { font-size: 26px; font-weight: 600; color: var(--l1); letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.3; }
+  .kpis .s { font-size: 12px; color: var(--l4); }
+  .heat.big { grid-template-rows: repeat(7, 13px); grid-auto-columns: 13px; gap: 3px; margin: 8px 0 0; }
+  .heat.big i { border-radius: 3px; }
+  .lg { width: 10px; height: 10px; border-radius: 2px; display: inline-block; background: color-mix(in srgb, var(--l4) 14%, transparent); }
+  .lg.h1 { background: color-mix(in srgb, var(--cta) 28%, var(--canvas)); } .lg.h2 { background: color-mix(in srgb, var(--cta) 50%, var(--canvas)); } .lg.h3 { background: color-mix(in srgb, var(--cta) 74%, var(--canvas)); } .lg.h4 { background: var(--cta); }
+  .cs-body .trend { margin: 10px 0 0; height: 150px; }
+  .cs-body .hl { margin: 8px 0 0; }
+  .cs-list .dist { border-bottom: 1px solid var(--hair); border-radius: 0; padding: 12px 4px; grid-template-columns: minmax(0, 240px) minmax(0, 1fr) 90px 80px; }
+  .cs-list .dist .nm { display: flex; align-items: center; gap: 8px; }
+  .prev2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 4px 0 18px; }
+  .prev2 .pl { font-size: 13px; color: var(--l3); margin-bottom: 6px; }
+  .mini { height: 120px; border-radius: 10px; border: 1px solid; display: grid; grid-template-columns: 26% 1fr; overflow: hidden; }
+  .mini .mr { padding: 12px 10px; display: flex; flex-direction: column; gap: 7px; }
+  .mini .mr i { height: 6px; border-radius: 3px; display: block; }
+  .mini .mr i.s { width: 60%; margin-top: auto; }
+  .mini .mc { padding: 14px 16px; display: flex; flex-direction: column; gap: 7px; position: relative; }
+  .mini .mc i { height: 6px; border-radius: 3px; display: block; }
+  .mini .mu { align-self: flex-end; width: 34%; height: 16px; border-radius: 8px; margin-bottom: 4px; }
+  .mini .mbtn { position: absolute; right: 14px; bottom: 12px; width: 28px; height: 12px; border-radius: 6px; }
+  .sw-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; padding: 4px 0 16px; border-bottom: 1px solid var(--hair); }
+  .sw2 { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--l3); font: inherit; font-size: 12px; cursor: pointer; padding: 4px; border-radius: 9px; }
+  .sw2 span { width: 100%; height: 30px; border-radius: 7px; position: relative; border: 1px solid var(--hair); }
+  .sw2 span i { position: absolute; right: 6px; bottom: 6px; width: 10px; height: 10px; border-radius: 50%; }
+  .sw2.on { color: var(--l1); }
+  .sw2.on span { outline: 2px solid var(--cta); outline-offset: 1px; }
+  .meta2 .cs-seg { margin-left: auto; }
+
   /* ── 现在（只做 MCP） ── */
   .old { padding: 4px 24px 24px; }
   .oh { height: 48px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
@@ -314,12 +402,11 @@
 </head>
 <body>
 <header>
-  <h1>管理页视觉统一到对话页 · 七页设计稿</h1>
-  <p><b>只换观感，不改功能</b>：每页的信息、顺序、按钮与开关、菜单、弹窗都和现在一样，只按对话页的样子重画——
-    <b>40px 标题栏</b>（页名 + 计数在左，操作在右，用中性小按钮）、<b>对话栏宽度的单列</b>（742px 居中）、<b>不画卡片和表头</b>、
-    <b>分组标题用 12px 灰字</b>、<b>行字号对齐对话正文</b>（名称 14px、说明 12px 灰）、<b>展开用左侧细线</b>、<b>只有选中 / 展开 / 要你处理的才铺对话气泡色</b>。
-    数据取自本机（MCP 清单、连接与网关、技能库、用量库、项目与任务、对话标题、设置）；勾「状态样例」会补上本机眼下没有、但需要看样子的状态（标「样例」）。
-    「现在」对照只做了 MCP；其余页面的现状就是应用里看到的样子。</p>
+  <h1>管理页视觉统一 · 第二轮（2026-10-29）</h1>
+  <p><b>工作台 / 技能 / MCP</b>：上一轮方向保留，只做小优化——节标题统一成 15px 粗体（和下面四页一致）、工作台筛选与技能搜索换成新控件、技能行去掉每行重复的图标。
+    <b>对话管理 / 连接 / 用量 / 设置</b>：重新设计，借鉴 Claude 设置页——左侧带搜索和分组的二级导航、节标题粗体、「左标题说明 · 右控件」的行、行间细线、分段控件外框 + 选中格浮起、细边下拉与按钮。
+    对话管理<b>保留 Agent 品牌色胶囊</b>；连接、用量里的 Agent 也用同一套品牌色点。
+    数据取自本机；勾「状态样例」补上本机眼下没有的状态（标「样例」）。「现在」对照只做了 MCP。</p>
   <div class="controls">
     <span>页面</span>
     <div class="seg" id="pageSeg">
@@ -382,6 +469,11 @@ const I = {
   gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3Z"/>', 16, 1.7),
 };
 const tbar = (title, count, right = "") => `<div class="tbar"><span class="t">${esc(title)}</span>${count ? `<span class="c">${count}</span>` : ""}<span class="sp"></span>${right}</div>`;
+const BRAND = { "claude-code": "#D97757", kimi: "#0D9488", codex: "#8B7EC8", gemini: "#527EC3", qwen: "#7450C8", opencode: "#7A8699", codebuddy: "#C45959", cursor: "#A87F2A", grok: "#C4506A" }; // = src/agent-colors.ts AGENT_BRAND
+const brand = (id, text = label(id)) => `<span class="brand" style="color:${BRAND[id]};background:color-mix(in srgb, ${BRAND[id]} 12%, transparent)">${esc(text)}</span>`;
+// Claude 设置页式分段控件：外框 + 选中格浮起
+const csSeg = (opts, on, act = "", size = "") => `<span class="cs-seg ${size}">${opts.map((o, i) => `<button class="${(typeof on === "number" ? i === on : o === on) ? "on" : ""}" ${act ? `data-act="${act}" data-i="${i}" data-v="${o}"` : ""}>${o}</button>`).join("")}</span>`;
+const csSearch = ph => `<div class="cs-search">${svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>', 15)}<input placeholder="${ph}" /></div>`;
 const tb = (text, act, extra = "") => `<button class="tb" data-note="（设计稿）${esc(act)}" ${extra}>${text}</button>`;
 
 /* ═════════════ MCP（本机 mcp-servers.json，10-29；时间换算成本地 +8） ═════════════ */
@@ -470,7 +562,8 @@ const PAGE_MCP = {
         <button class="tb ${st.menu ? "on" : ""}" data-act="menu">${I.plus}添加 MCP${I.down}</button>${menu}`)
       + `<div class="scroll"><div class="col">${all.map(s => mcpRow(s, st)).join("")}</div></div>`;
   },
-  notes: `<h3>对话页的样子 → MCP 页</h3><table>
+  notes: `<h3>第二轮</h3><ul><li>MCP 页没有分组标题，这一轮不动。</li></ul>
+    <h3>对话页的样子 → MCP 页</h3><table>
     <tr><td>标题栏</td><td>2xl 大标题 + 蓝色主按钮 → 40px 栏，「全部检测」「添加 MCP」中性小按钮</td></tr>
     <tr><td>列表</td><td>卡片底 + 表头 + 行间横线 → 不画框；名称一行、类型 · 命令一行灰字</td></tr>
     <tr><td>展开</td><td>卡底 + 九宫格小卡 → 左细线缩进，各 Agent 开关排成无底的几列；展开着的那条铺气泡色</td></tr></table>
@@ -510,7 +603,7 @@ const PAGE_WB = {
       }
       b += `</div>`;
     }
-    const chips = ["进行中", "全部", "科研", "编程", "工作"].map((c, i) => `<button class="chip ${(st.filter ?? 0) === i ? "on" : ""}" data-act="wb-filter" data-i="${i}">${c}</button>`).join("");
+    const chips = csSeg(["进行中", "全部", "科研", "编程", "工作"], st.filter ?? 0, "wb-filter", "sm");
     b += `<div class="sh">项目<span class="sp"></span>${chips}</div>`;
     for (const p of WB_PROJECTS) {
       b += `<div class="proj"><div class="ph"><span class="l3" style="display:flex">${I[p.mode]}</span><span class="pn">${esc(p.name)}</span><span class="pv">${esc(p.vit)}</span><span class="sp"></span>
@@ -529,9 +622,10 @@ const PAGE_WB = {
         <span class="l3" style="font-size:12px">今天 09:09 跑完</span><button class="ghost" data-note="（设计稿）现在跑">现在跑</button></div></div>`;
     return tbar("工作台", "", "") + `<div class="scroll">${b}</div>`;
   },
-  notes: `<h3>对话页的样子 → 工作台</h3><table>
+  notes: `<h3>第二轮小优化</h3><ul><li>节标题「等你拍板 / 项目 / 定时任务」12px 灰字 → 15px 粗体，和设置、用量等页一致。</li><li>项目筛选胶囊 → 分段控件。</li></ul>
+    <h3>对话页的样子 → 工作台</h3><table>
     <tr><td>标题栏</td><td>现在没有标题（只给读屏）→ 补一条 40px 小标题栏「工作台」，和其他页同高</td></tr>
-    <tr><td>区块标题</td><td>16px 粗体 + 图标 → 12px 灰字（同对话「已思考」那一档）</td></tr>
+    <tr><td>区块标题</td><td>16px 粗体 + 图标 → 15px 粗体、不带图标</td></tr>
     <tr><td>项目</td><td>细线边框卡 → 每个项目仍是单独一块，改成无边框的气泡色底</td></tr>
     <tr><td>任务行</td><td>名称 14px，状态 12px 灰（红 = 要处理、强调色 = 当前步），时间 11px 右对齐</td></tr>
     <tr><td>拍板队列</td><td>同样一块气泡色底；允许一次 / 拒绝 / 去处理为中性小按钮</td></tr></table>
@@ -543,25 +637,25 @@ const PAGE_WB = {
 
 /* ═════════════ 对话管理（标题取自 session_meta；回放取自截图那段随手聊） ═════════════ */
 const SESS = [
-  ["随手聊", [["雨天海边图片生成", "功能 · Claude Code · 刚刚", true], ["出图工具生成夏天下雪图", "功能 · Claude Code · 1 小时前"], ["用户仅要求回复ok", "探索 · Claude Code · 昨天"]]],
-  ["Ccode", [["MCP页深浅双主题设计稿", "设计 · Claude Code · 刚刚", false, "live"], ["Codex里Undermind登录提示排查", "探索 · Claude Code · 1 小时前"], ["Claude客户端继续存量对话排查", "探索 · Claude Code · 2 小时前"],
-    ["CLI启动禁用打断对话的更新提示", "功能 · Claude Code · 3 小时前"], ["上手引导支持手动永久关闭", "功能 · Claude Code · 4 小时前"], ["Windows打包版问题排查", "探索 · Claude Code · 5 小时前"],
-    ["聊天层输入框沉降动画丝滑", "优化 · Claude Code · 今天"], ["思考原文上方固定思考中表头", "设计 · Claude Code · 今天"], ["聊天层正文提亮对标Claude", "设计 · Claude Code · 昨天"]]],
-  ["后端管理", [["模型参数按新表纠正", "修复 · Codex · 3 天前"], ["管理页头像展示方案", "设计 · Codex · 4 天前"]]],
+  ["随手聊", [["雨天海边图片生成", "功能", "claude-code", "刚刚", true], ["出图工具生成夏天下雪图", "功能", "claude-code", "1 小时前"], ["用户仅要求回复ok", "探索", "claude-code", "昨天"]]],
+  ["Ccode", [["MCP页深浅双主题设计稿", "设计", "claude-code", "刚刚", false, true], ["Codex里Undermind登录提示排查", "探索", "claude-code", "1 小时前"], ["外部事件唤起Codex应用列表页", "探索", "codex", "昨天"],
+    ["CLI启动禁用打断对话的更新提示", "功能", "claude-code", "3 小时前"], ["上手引导支持手动永久关闭", "功能", "claude-code", "4 小时前"], ["Windows打包版问题排查", "探索", "claude-code", "5 小时前"],
+    ["聊天层输入框沉降动画丝滑", "优化", "claude-code", "今天"], ["思考原文上方固定思考中表头", "设计", "claude-code", "今天"]]],
+  ["后端管理", [["模型参数按新表纠正", "修复", "codex", "3 天前"], ["管理页头像展示方案", "设计", "codex", "4 天前"]]],
 ];
 const PAGE_SESS = {
   nav: "对话管理",
   render(st) {
-    const chips = ["进行中", "保留", "今天", "近 7 天"].map((c, i) => `<button class="chip ${st.qf === i ? "on" : ""}" data-act="sess-qf" data-i="${i}" style="height:24px;padding:0 8px">${c}</button>`).join("") + `<button class="chip" style="height:24px;padding:0 6px" data-note="（设计稿）更多快筛">${I.more}</button>`;
     let l = `<div class="slist">${tbar("对话管理", "1,284 段", `<button class="tb" data-note="（设计稿）多选">多选</button><button class="ib" data-tip="从另一台机器导入会话包" data-note="（设计稿）导入">${I.plus}</button>`)}
-      <div style="padding:0 12px 4px"><input class="search" style="width:100%" placeholder="搜索对话标题和正文" /></div><div style="display:flex;gap:2px;padding:4px 10px 0;flex-wrap:wrap">${chips}</div><div class="sl">`;
+      <div style="padding:2px 12px 0">${csSearch("搜索对话标题和正文")}
+      <div style="display:flex;align-items:center;gap:4px;margin-top:10px">${csSeg(["进行中", "保留", "今天", "近 7 天"], st.qf ?? -1, "sess-qf", "sm")}<button class="ib" data-note="（设计稿）更多快筛：近 30 天 / 已归档 / 内部">${I.more}</button></div></div><div class="sl">`;
     for (const [g, rows] of SESS) {
-      l += `<div class="sh">${g} <span class="n">${rows.length}</span></div>`;
-      for (const [t, m, sel, live] of rows) l += `<div class="srow ${sel ? "sel" : ""}" data-note="（设计稿）右边换成这段对话"><div class="tt">${live ? '<span class="dot ok" title="进行中"></span>' : ""}${esc(t)}</div><div class="mm">${esc(m)}</div></div>`;
+      l += `<div class="cs-gl">${g}<span class="cnt">${rows.length}</span></div>`;
+      for (const [t, k, ag, tm, sel, live] of rows) l += `<div class="cs-sess ${sel ? "sel" : ""}" data-note="（设计稿）右边换成这段对话"><div class="tt">${live ? '<span class="dot ok" title="进行中"></span>' : ""}<span>${esc(t)}</span></div><div class="mm">${brand(ag)}<span>${k} · ${tm}</span></div></div>`;
     }
     l += `</div></div>`;
-    const r = `<div class="rep">${tbar("雨天海边图片生成", "", `<button class="tb strong" data-note="（设计稿）继续">继续</button><button class="tb" data-tip="提炼成紧凑简报，供新会话继续" data-note="（设计稿）提炼简报">提炼简报</button><button class="tb" data-note="（设计稿）导出">导出</button><button class="ib" data-note="（设计稿）更多对话操作">${I.more}</button>`)}
-      <div class="meta2"><span class="l3">Claude Code</span>·<span>随手聊</span>·<span>刚刚</span><span class="sp"></span><button class="chip on" style="height:22px;padding:0 8px;font-size:11px">对话</button><button class="chip" style="height:22px;padding:0 8px;font-size:11px">改动</button></div>
+    const r = `<div class="rep">${tbar("雨天海边图片生成", "", `<button class="cs-btn pri" data-note="（设计稿）继续">继续</button><button class="cs-btn" data-tip="提炼成紧凑简报，供新会话继续" data-note="（设计稿）提炼简报">提炼简报</button><button class="cs-btn" data-note="（设计稿）导出">导出</button><button class="ib" data-note="（设计稿）更多对话操作">${I.more}</button>`)}
+      <div class="meta2">${brand("claude-code")}<span>随手聊</span><span>·</span><span>刚刚</span><span class="sp"></span>${csSeg(["对话", "改动"], st.rt ?? 0, "sess-rt", "sm")}</div>
       <div class="scroll"><div class="col" style="padding-top:4px">
         <div class="msg-u"><span>你好</span></div>
         <div class="think">已思考 14 秒 ${I.chev}</div>
@@ -572,13 +666,15 @@ const PAGE_SESS = {
       </div></div></div>`;
     return `<div class="split">${l}${r}</div>`;
   },
-  notes: `<h3>对话页的样子 → 对话管理</h3><table>
-    <tr><td>左栏</td><td>375px 列表 + 细线分隔 → 300px，行写法同侧栏对话行（标题 13px、类型 · Agent · 时间 11px 灰），选中用侧栏选中色</td></tr>
-    <tr><td>右栏头</td><td>strip 底的回放头 → 40px 标题栏；「继续」由蓝色实心改成气泡色中性按钮，提炼简报 / 导出 / ⋯ 同排</td></tr>
-    <tr><td>元信息</td><td>品牌色 Agent 徽章、灰底小块 → 一行灰字；对话 / 改动页签在这行右端</td></tr>
-    <tr><td>回放</td><td>直接用对话页的消息写法：用户气泡、「已思考 ›」、正文 14px、对话栏宽度</td></tr></table>
-    <h3>不变</h3><ul><li>双栏结构、搜索、快筛、按项目分组、多选、导入、继续 / 提炼简报 / 导出 / ⋯ 菜单、对话 / 改动页签。</li></ul>
-    <h3>数据</h3><ul><li>对话标题取自本机自动起名（去掉「MMDD|类型|」前缀，类型放到灰字里）；回放内容是截图里那段随手聊；总数为示意。</li></ul>`,
+  notes: `<h3>借鉴 Claude 设置页 → 对话管理</h3><table>
+    <tr><td>左栏</td><td>写法同 Claude 设置的左栏：带图标的细边搜索框、分组小标题（随手聊 / 项目名）+ 数量、选中行整块浅底</td></tr>
+    <tr><td>快筛</td><td>文字胶囊 → 分段控件（外框 + 选中格浮起），再点一次取消</td></tr>
+    <tr><td>对话行</td><td>标题一行；第二行<b>保留 Agent 品牌色胶囊</b>，后面灰字「类型 · 时间」</td></tr>
+    <tr><td>右栏头</td><td>40px 标题栏：「继续」反色实心（全页唯一实心钮），提炼简报 / 导出为细边按钮，⋯</td></tr>
+    <tr><td>元信息</td><td>品牌色胶囊 + 项目 + 时间；对话 / 改动为分段控件</td></tr>
+    <tr><td>回放</td><td>直接用对话页的消息写法</td></tr></table>
+    <h3>不变</h3><ul><li>双栏、搜索、快筛与更多快筛、按项目分组、多选、导入、继续 / 提炼简报 / 导出 / ⋯ 菜单、对话 / 改动。</li></ul>
+    <h3>数据</h3><ul><li>标题取自本机自动起名（去掉「MMDD|类型|」前缀）；回放是截图里那段随手聊；总数为示意。</li></ul>`,
 };
 
 /* ═════════════ 连接（profiles 来自 bindings.json + gateways.json，不含密钥） ═════════════ */
@@ -594,39 +690,49 @@ const BIND = [
   ["cursor", "GLM", "GLM", ["glm-5.3"]], ["cursor", "官方账号", null, []],
   ["grok", "GLM", "GLM", ["glm-5.3", "glm-5.3-flash"]], ["grok", "Test", "Test", ["deepseek-v4-flash-0731"]], ["grok", "GPT-6 Sol", "Test", ["gpt-6-sol"]], ["grok", "官方账号", null, []],
 ];
+function profRows(id) {
+  const rows = BIND.filter(r => r[0] === id);
+  return rows.map(([, name, gw, models], i) => {
+    const official = !gw, dup = rows.filter(r => r[1] === name).length > 1;
+    const tags = (G.samples && id === "claude-code" && i === 0 ? '<span class="tag a">默认</span><span class="sample">样例</span>' : "")
+      + (G.samples && id === "codex" && i === 1 ? '<span class="tag e">配置失效</span><span class="sample">样例</span>' : "");
+    const desc = official ? "官方账号登录" : `${esc(GW[gw])}${models.length ? ` · <span class="mono">${models.slice(0, 3).map(esc).join(" · ")}</span>` : " · 没选模型"}`;
+    return `<div class="cs-row hrow"><div class="lft"><span class="av">${official ? label(id)[0] : gw[0]}</span><div style="min-width:0">
+        <div class="t">${esc(name)}${dup ? `<span class="l3"> · ${esc(models[0])}</span>` : ""}${tags}</div><div class="d">${desc}</div></div></div>
+      <div class="rt"><span class="hov"><button class="ib" data-tip="用这个连接开一段新对话" data-note="（设计稿）新对话">${I.msg}</button><button class="ib" data-tip="外部终端" data-note="（设计稿）外部终端">${I.term}</button></span>
+        <button class="cs-btn" data-note="（设计稿）用它的启动模型发一次请求，结果写在这一行">测试</button><button class="ib" data-note="（设计稿）编辑 / 设为默认 / 设为全局 / 停用 / 删除">${I.more}</button></div></div>`;
+  }).join("");
+}
 const PAGE_PROF = {
   nav: "连接",
   render(st) {
-    const tools = `<div class="tools">${["全部", "已安装", "未安装"].map((c, i) => `<button class="chip ${(st.pf ?? 0) === i ? "on" : ""}" data-act="prof-f" data-i="${i}">${c}</button>`).join("")}<span class="sp"></span>
-      <button class="ib" data-tip="全部折叠" data-note="（设计稿）全部折叠">${I.folds}</button><input class="search" placeholder="搜索连接 / 端点 / 模型" /></div>`;
-    let b = `<div class="col">${tools}`;
+    const sel = st.ag || "claude-code";
+    let n = `<div class="cs-nav">${csSearch("搜索连接 / 端点 / 模型")}
+      <div class="cs-it ${sel === "all" ? "sel" : ""}" data-act="prof-ag" data-a="all">${svg('<path d="M4 6h16M4 12h16M4 18h16"/>', 16)}全部<span class="cnt">${BIND.length}</span></div>
+      <div class="cs-gl">已安装</div>`;
+    for (const [id, lb] of AGENTS) n += `<div class="cs-it ${sel === id ? "sel" : ""}" data-act="prof-ag" data-a="${id}"><span class="bd" style="background:${BRAND[id]}"></span>${lb}<span class="cnt">${BIND.filter(r => r[0] === id).length}</span></div>`;
+    if (G.samples) n += `<div class="cs-gl">未安装</div><div class="cs-it" style="color:var(--l4)"><span class="bd" style="background:var(--l4)"></span>某个 Agent<span class="cnt">样例</span></div>`;
+    n += `</div>`;
+    let b = `<div class="cs-body">`;
     for (const [id, lb] of AGENTS) {
-      const rows = BIND.filter(r => r[0] === id);
-      b += `<div class="ag-h"><span class="an">${lb}</span><span class="n">${rows.length}</span><span class="sp"></span><span class="hov"><button class="tb" data-note="（设计稿）给 ${lb} 添加连接">${I.plus}添加</button><button class="ib" data-note="（设计稿）组菜单">${I.more}</button></span></div>`;
-      rows.forEach(([, name, gw, models], i) => {
-        const official = !gw;
-        // 同名连接补首个模型区分（同现有 nameSuffix）
-        const dup = rows.filter(r => r[1] === name).length > 1;
-        const tags = (G.samples && id === "claude-code" && i === 0 ? '<span class="tag a">默认</span><span class="sample">样例</span>' : "")
-          + (G.samples && id === "codex" && i === 1 ? '<span class="tag e">配置失效</span><span class="sample">样例</span>' : "");
-        b += `<div class="lr hrow"><span class="ic"><span class="av">${official ? lb[0] : gw[0]}</span></span>
-          <span class="main1"><span class="nm1 b">${esc(name)}${dup ? `<span class="l3" style="font-weight:400"> · ${esc(models[0])}</span>` : ""}</span>${tags}</span>
-          <span class="hov"><button class="ib" data-tip="测试" data-note="（设计稿）测试这条连接">${I.zap}</button><button class="ib" data-tip="新对话" data-note="（设计稿）用它开新对话">${I.msg}</button><button class="ib" data-tip="外部终端" data-note="（设计稿）外部终端">${I.term}</button><button class="ib" data-note="（设计稿）更多：编辑 / 设为默认 / 设为全局 / 停用 / 删除">${I.more}</button></span>
-          <span></span>
-          <span class="s2">${official ? "官方账号登录" : esc(GW[gw])}${models.length ? ` · <span class="mono">${models.slice(0, 3).map(esc).join(" · ")}</span>` : official ? "" : ' · <span class="l4">没选模型</span>'}</span></div>`;
-      });
+      if (sel !== "all" && sel !== id) continue;
+      const cnt = BIND.filter(r => r[0] === id).length;
+      b += `<div class="cs-h ${sel === "all" ? "" : "big"}"><span class="bd" style="background:${BRAND[id]}"></span>${lb}<span class="n">${cnt} 个连接</span><span class="sp"></span><button class="cs-btn" data-note="（设计稿）给 ${lb} 添加连接">${I.plus}添加连接</button><button class="ib" data-note="（设计稿）组菜单：导入 / 恢复全局配置备份">${I.more}</button></div>`;
+      if (sel !== "all") b += `<p class="cs-sub">每条连接 = 一个网关 + 选好的模型；在 Mesa 里启动时注入，不改 ${lb} 自己的配置文件。</p>`;
+      b += `<div class="cs-list">${profRows(id)}</div>`;
     }
     b += `</div>`;
-    return tbar("连接", `${BIND.length} 个连接`, `<button class="tb" data-note="（设计稿）网关库">网关库</button><button class="tb" data-note="（设计稿）现有添加连接流程">${I.plus}添加连接</button><button class="ib" data-note="（设计稿）更多连接操作">${I.more}</button>`) + `<div class="scroll">${b}</div>`;
+    return tbar("连接", `${BIND.length} 个连接`, `<button class="tb" data-note="（设计稿）网关库">网关库</button><button class="ib" data-note="（设计稿）更多连接操作">${I.more}</button>`) + `<div class="cs-wrap">${n}${b}</div>`;
   },
-  notes: `<h3>对话页的样子 → 连接</h3><table>
-    <tr><td>标题栏</td><td>大标题 + 长 meta + 网关库 / 蓝色添加 / ⋯ → 40px 栏，三个中性小按钮</td></tr>
-    <tr><td>筛选条</td><td>分段控件 + 描边搜索框 → 无底文字胶囊 + 细边搜索框，挪进内容列顶部</td></tr>
-    <tr><td>Agent 组</td><td>每组一张卡、h-11 组头 → 无卡，组名 14px 粗 + 数量灰字，组操作悬停才出</td></tr>
-    <tr><td>连接行</td><td>名称 · 端点 · 模型三列 → 名称一行，端点 · 模型并成一行灰字（模型仍 mono、前 3 个）</td></tr>
-    <tr><td>徽章</td><td>默认 / 配置失效 / 已停用的色块 pill → 纯文字（强调色 / 红 / 灰）</td></tr></table>
-    <h3>不变</h3><ul><li>Agent 顺序、组可拖动与折叠、行内测试 / 新对话 / 外部终端 / ⋯、同名补首模型、官方账号行、未安装组降权。</li></ul>
-    <h3>数据</h3><ul><li>29 条连接与网关地址取自本机；没写「上次使用 / 测试结果」灰字（本机读不到可靠值，不编）。</li></ul>`,
+  notes: `<h3>借鉴 Claude 设置页 → 连接</h3><table>
+    <tr><td>左栏</td><td>按 Agent 分组的长列表 → 左边 Agent 导航（品牌色点 + 连接数），右边只看选中的那家；顶上「全部」看九家连排</td></tr>
+    <tr><td>筛选</td><td>全部 / 已安装 / 未安装分段 → 左栏分组小标题；搜索框挪到左栏顶</td></tr>
+    <tr><td>Agent 头</td><td>品牌色点 + 名称 + 数量，「添加连接」细边按钮放在这家旁边；下面一句灰字说明</td></tr>
+    <tr><td>连接行</td><td>Claude 设置的行写法：名称在上、端点 · 模型灰字在下，操作在右；行间细线</td></tr>
+    <tr><td>行操作</td><td>「测试」常显（细边钮）；新对话 / 外部终端悬停出现；⋯ 收其余</td></tr></table>
+    <h3>不变</h3><ul><li>九家顺序、每条连接的信息、默认 / 配置失效 / 已停用标记、同名补首模型、官方账号行、网关库、各行与组的菜单内容。</li></ul>
+    <h3>变了的交互（要你看）</h3><ul><li>按 Agent 分组的长列表变成「左选 Agent、右看连接」；「全部折叠」不再需要。</li></ul>
+    <h3>数据</h3><ul><li>29 条连接与网关地址取自本机；左栏「未安装」组只有勾「状态样例」才出现。</li></ul>`,
 };
 
 /* ═════════════ 技能（skills.json，24 个） ═════════════ */
@@ -649,14 +755,14 @@ const PAGE_SKILLS = {
   nav: "技能",
   render(st) {
     const groups = [["Mesa 内置", SKILLS.filter(s => s[3])], ["未分类", SKILLS.filter(s => !s[3])]];
-    let b = `<div class="col"><div class="tools"><input class="search" style="width:280px" placeholder="搜索名称、说明、分类、来源" /><span class="sp"></span></div>`;
+    let b = `<div class="col"><div class="tools"><div style="width:320px">${csSearch("搜索名称、说明、分类、来源")}</div><span class="sp"></span></div>`;
     if (G.samples) b += `<div class="need" style="padding:10px 14px;font-size:12.5px;color:var(--l2);margin:0 0 6px">内置技能有新版：lit-search、bib-check（共 2 个）<span class="sample">样例</span><button class="ghost" style="margin-left:8px" data-note="（设计稿）本机与新版对照">看改了什么</button></div>`;
     for (const [g, rows] of groups) {
       const closed = st.closed && st.closed[g];
       b += `<div class="sh" style="cursor:pointer" data-act="sk-fold" data-g="${g}"><span style="display:flex;transform:rotate(${closed ? 0 : 90}deg);transition:transform .18s">${I.chev}</span>${g} <span class="n">${rows.length}</span>${g === "未分类" ? '<span class="sp"></span><span class="l4" style="font-weight:400;font-size:11px">行内 ⋯ → 设置分类</span>' : ""}</div>`;
       if (closed) continue;
       for (const [n, d, k] of rows) {
-        b += `<div class="lr hrow ${st.open === n ? "sel" : ""}" data-act="sk-open" data-n="${n}"><span class="ic l3">${I.book}</span>
+        b += `<div class="lr noic hrow ${st.open === n ? "sel" : ""}" data-act="sk-open" data-n="${n}">
           <span class="main1"><span class="nm1 b">${esc(n)}</span></span>
           <span class="hov"><button class="ib" data-tip="编辑内容" data-note="（设计稿）编辑内容">${I.pen}</button><button class="ib" data-tip="优化：开终端让 Agent 按你的意见改写" data-note="（设计稿）优化">${I.wand}</button><button class="ib" data-note="（设计稿）更多操作">${I.more}</button></span>
           <span class="tm" title="已应用 / 全部 CLI" style="font-size:12px;color:${k === 9 ? "var(--l3)" : "var(--l4)"}">${k} / 9</span>
@@ -677,7 +783,8 @@ const PAGE_SKILLS = {
     return tbar("技能", `${SKILLS.length} 个 · 已应用 ${SKILLS.length}`, `<button class="tb" data-note="（设计稿）现有创建技能">${I.plus}创建技能</button><button class="ib" data-note="（设计稿）导入 / 发现未纳管技能">${I.more}</button>`)
       + `<div class="scroll">${b}</div>${drawer}`;
   },
-  notes: `<h3>对话页的样子 → 技能</h3><table>
+  notes: `<h3>第二轮小优化</h3><ul><li>分类组标题 → 15px 粗体（保留折叠箭头）。</li><li>搜索框换成带放大镜的细边框。</li><li>去掉每行同一个书本图标，行首直接是技能名。</li></ul>
+    <h3>对话页的样子 → 技能</h3><table>
     <tr><td>标题栏</td><td>大标题 + 蓝色「创建技能」 → 40px 栏，中性小按钮</td></tr>
     <tr><td>分类组</td><td>每组一张折叠卡、组头 h-10 → 12px 灰字组标题，前面一个折叠箭头</td></tr>
     <tr><td>技能行</td><td>名称 + 说明 + 已应用列 → 名称 14px，说明一行灰字，「6 / 9」右对齐</td></tr>
@@ -690,7 +797,7 @@ const PAGE_SKILLS = {
 /* ═════════════ 用量（usage_daily，近 7 天，非内部；花费为设计稿按公开价粗算） ═════════════ */
 const DAYS = [["10-23", 717.5, 1.15], ["10-24", 1414.05, 2.69], ["10-25", 394.84, 0.69], ["10-26", 1241.22, 2.05], ["10-27", 805.92, 1.29], ["10-28", 642.25, 1.03], ["10-29", 272.85, 0.52]];
 const DISTS = {
-  Agent: [["Claude Code", 5319.88, "9.31B"], ["Codex", 168.52, "115M"], ["Gemini CLI", 0.21, "104K"], ["Grok Build", 0.03, "984K"], ["Kimi Code", 0, "364K"]],
+  Agent: [["Claude Code", 5319.88, "9.31B", "claude-code"], ["Codex", 168.52, "115M", "codex"], ["Gemini CLI", 0.21, "104K", "gemini"], ["Grok Build", 0.03, "984K", "grok"], ["Kimi Code", 0, "364K", "kimi"]],
   项目: [["Ccode", 5467.6, "9.37B"], ["Ccode · 工作树 eloquent-khayyam", 11.06, "12.8M"], ["Claude 随手聊目录", 4.78, "9.9M"], ["省自然（未添加）", 2.47, "—"], ["z（未添加）", 1.7, "—"]],
   模型: [["claude-opus-5-5", 5191.69, "8.84B"], ["gpt-6-astra", 168.26, "71.8M"], ["claude-sonnet-5-5", 128.18, "339M"], ["deepseek-v4-flash-0731", 0.28, "—"], ["gemini-4-argon", 0.21, "—"]],
 };
@@ -711,86 +818,121 @@ const money = v => v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFix
 const PAGE_STATS = {
   nav: "用量",
   render(st) {
-    const ranges = ["今日", "近 7 天", "近 30 天", "全部"].map((c, i) => `<button class="chip ${(st.rg ?? 1) === i ? "on" : ""}" data-act="st-rg" data-i="${i}">${c}</button>`).join("");
-    const tools = `<div class="tools">${ranges}<span class="sp"></span><label class="l3" style="font-size:12px;display:flex;align-items:center;gap:5px"><input type="checkbox" /> 显示内部活动</label>
-      <span class="segq"><button class="${st.cur === "¥" ? "" : "on"}" data-act="st-cur" data-c="$">$</button><button class="${st.cur === "¥" ? "on" : ""}" data-act="st-cur" data-c="¥">¥</button></span><button class="ghost" data-note="（设计稿）重新索引">刷新</button></div>`;
+    const yuan = st.cur === "¥", cur = v => yuan ? `¥${Math.round(v * 7.1).toLocaleString()}` : money(v);
     const mx = Math.max(...DAYS.map(d => d[1]));
-    const k = st.cur === "¥" ? 7.1 : 1, cur = v => st.cur === "¥" ? `¥${Math.round(v * k).toLocaleString()}` : money(v);
-    const tab = st.dt || "Agent";
-    const rows = DISTS[tab], top = Math.max(...rows.map(r => r[1]));
-    let b = `<div class="col">${tools}
-      ${G.samples ? `<div class="sh">订阅余量 <span class="sample">样例</span></div><div class="lr" style="cursor:default"><span class="ic"><span class="av">Z</span></span><span class="main1"><span class="nm1">Zeta-22 钱包</span><span class="s1">余额 $182.40 · 本月已用 $517.60</span></span><span></span><button class="ghost" data-note="（设计稿）打开钱包页">${I.ext}</button></div>` : ""}
-      <div class="kpi" style="margin-top:12px"><div><div class="k">花费</div><div class="v">≈ ${cur(5488.63)}</div></div><div><div class="k">tokens</div><div class="v">9.43B<small>其中缓存 9.38B</small></div></div></div>
-      <div class="dl"><span>对话<b>154 次</b></span><span>输入<b>21.7M</b></span><span>输出<b>23.5M</b></span><span>未计价<b>13.7M tokens</b></span></div>
-      <div class="sh">每天花费<span class="sp"></span><span class="segq"><button class="on">花费</button><button>tokens</button></span></div>
+    const tab = st.dt || "Agent", rows = DISTS[tab];
+    let b = `<div class="cs-body"><div class="cs-bar">${csSeg(["今日", "近 7 天", "近 30 天", "全部"], st.rg ?? 1, "st-rg")}<span class="sp"></span>
+      <span class="l3" style="font-size:13px">显示内部活动</span><button class="toggle off" data-note="（设计稿）显示 Mesa 内部 AI 的用量（不改色、不改统计）"></button>
+      ${csSeg(["$", "¥"], yuan ? 1 : 0, "st-cur")}<button class="cs-btn" data-note="（设计稿）重新索引">刷新</button></div>`;
+    if (G.samples) b += `<div class="cs-h">订阅余量</div><div class="cs-list"><div class="cs-row"><div class="lft"><span class="av">Z</span><div><div class="t">Zeta-22 钱包<span class="sample">样例</span></div><div class="d">余额 $182.40 · 本月已用 $517.60</div></div></div><div class="rt"><button class="cs-btn" data-note="（设计稿）打开钱包页">钱包页 ${I.ext}</button></div></div></div>`;
+    b += `<div class="cs-h">概览</div><div class="kpis">
+        <div><div class="k">花费</div><div class="v">≈ ${cur(5488.63)}</div><div class="s">按公开价估算</div></div>
+        <div><div class="k">tokens</div><div class="v">9.43B</div><div class="s">其中缓存 9.38B</div></div>
+        <div><div class="k">对话</div><div class="v">154</div><div class="s">输入 21.7M · 输出 23.5M</div></div>
+        <div><div class="k">未计价</div><div class="v">13.7M</div><div class="s">tokens，模型没有公开价</div></div></div>
+      <div class="cs-h">每天花费<span class="sp"></span>${csSeg(["花费", "tokens"], 0, "", "sm")}</div>
       <div class="trend">${DAYS.map(([d, v]) => `<div class="b" title="${d}：${cur(v)}"><span class="l4" style="font-size:11px;font-variant-numeric:tabular-nums">${v === mx ? cur(v) : ""}</span><div class="bar ${v === mx ? "top" : ""}" style="height:${Math.max(3, v / mx * 86)}%"></div><span class="x">${d}</span></div>`).join("")}</div>
-      <div class="sh">活跃度 <span class="n">117 天有用量 · 连续 21 天</span></div><div class="heat">${heatmap()}</div>
-      <div class="hl"><span>近 52 周</span><span style="margin-left:auto">少</span><span style="display:flex;gap:2px;align-items:center"><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--l4) 14%,transparent)"></i><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--cta) 28%,var(--canvas))"></i><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--cta) 50%,var(--canvas))"></i><i style="width:9px;height:9px;border-radius:2px;background:color-mix(in srgb,var(--cta) 74%,var(--canvas))"></i><i style="width:9px;height:9px;border-radius:2px;background:var(--cta)"></i></span><span>多</span></div>
-      <div class="sh">分布<span class="sp"></span>${["最贵", "Agent", "项目", "网关", "任务", "模型"].map(t => `<button class="chip ${tab === t ? "on" : ""}" data-act="st-dt" data-t="${t}" style="height:24px;padding:0 8px">${t}</button>`).join("")}<button class="ib" data-tip="复制当前页签为表格" data-note="（设计稿）已复制为表格">${I.copy}</button></div>`;
-    if (rows) for (const [n, v, t] of rows) b += `<div class="dist"><span class="nm">${esc(n)}</span><span class="tr"><i style="width:${Math.max(1, v / top * 100)}%"></i></span><span class="v">${cur(v)}</span><span class="t">${t}</span></div>`;
-    else b += `<p class="l4" style="font-size:12px;margin:8px 4px">（设计稿只画了 Agent / 项目 / 模型三个页签）</p>`;
-    b += `</div>`;
-    return tbar("用量", "只计经 Mesa 记下归属的会话 · 费用按公开价估算", "") + `<div class="scroll">${b}</div>`;
+      <div class="cs-h">活跃度<span class="n">117 天有用量</span></div><div class="heat big">${heatmap()}</div>
+      <div class="hl"><span>近 52 周</span><span style="margin-left:auto">少</span><span style="display:flex;gap:2px;align-items:center"><i class="lg"></i><i class="lg h1"></i><i class="lg h2"></i><i class="lg h3"></i><i class="lg h4"></i></span><span>多</span></div>
+      <div class="cs-h">分布<span class="sp"></span>${csSeg(["最贵", "Agent", "项目", "网关", "任务", "模型"], tab, "st-dt", "sm")}<button class="ib" data-tip="复制当前页签为表格" data-note="（设计稿）已复制为表格">${I.copy}</button></div><div class="cs-list">`;
+    if (rows) {
+      const top = Math.max(...rows.map(r => r[1]));
+      for (const [n, v, t, ag] of rows) b += `<div class="dist">${ag ? `<span class="nm"><span class="bd" style="background:${BRAND[ag]}"></span>${esc(n)}</span>` : `<span class="nm">${esc(n)}</span>`}<span class="tr"><i style="width:${Math.max(1, v / top * 100)}%;${ag ? `background:${BRAND[ag]}` : ""}"></i></span><span class="v">${cur(v)}</span><span class="t">${t}</span></div>`;
+    } else b += `<p class="l4" style="font-size:12px;margin:12px 0">（设计稿只画了 Agent / 项目 / 模型三个页签）</p>`;
+    b += `</div></div>`;
+    return tbar("用量", "只计经 Mesa 记下归属的会话 · 费用按公开价估算", "") + `<div class="scroll" style="padding:0">${b}</div>`;
   },
-  notes: `<h3>对话页的样子 → 用量</h3><table>
-    <tr><td>标题栏</td><td>大标题 + 一长句 meta → 40px 栏，meta 跟在页名后面的灰字</td></tr>
-    <tr><td>工具条</td><td>分段控件 + 灰底币种切换 → 无底文字胶囊；币种 / 刷新留在右边</td></tr>
-    <tr><td>主数字</td><td>KPI 卡 → 不要卡底，两个大数字直接放在列里，下面一行灰字明细</td></tr>
-    <tr><td>趋势 / 热力图 / 分布</td><td>三张卡 → 12px 灰字小标题分段；热力图格子 16px → 11px（列宽 742 装得下 53 周）</td></tr>
-    <tr><td>分布行</td><td>名称 · 细条 · 花费 · tokens，悬停铺浅底</td></tr></table>
-    <h3>不变</h3><ul><li>四个时间范围、显示内部活动、$/¥、刷新、订阅余量、趋势花费 / tokens 切换、六个分布页签、复制表格。</li></ul>
-    <h3>数据</h3><ul><li>tokens、天数、各 Agent / 项目 / 模型排序取自本机 usage_daily（近 7 天、非内部）。</li><li><b>花费是设计稿按公开价粗算</b>（缓存读 0.1×、写 1.25×），和应用里的数会有出入。连续天数为示意；订阅余量勾「状态样例」才出现，金额是假的。</li></ul>
-    <h3>要你拍板</h3><div class="ask"><ol><li>热力图格子 16px → 11px，换来和其他页同宽的 742px 列（10-13 定的「热力图 16px 顶格」口径要改）。</li></ol></div>`,
+  notes: `<h3>借鉴 Claude 设置页 → 用量</h3><table>
+    <tr><td>工具条</td><td>时间范围、$/¥ 都改成分段控件；「显示内部活动」改成开关；刷新是细边按钮</td></tr>
+    <tr><td>分节</td><td>概览 / 每天花费 / 活跃度 / 分布四节，节标题 15px 粗体（同 Claude 的 Appearance、Sessions），不再套卡片</td></tr>
+    <tr><td>概览</td><td>KPI 卡 → 四格数字一排，格间竖细线；花费、tokens、对话、未计价同级</td></tr>
+    <tr><td>热力图</td><td>内容区放开到主区宽度，格子 13px（设计稿窗口较窄；实际按主区宽度可回到 16px）</td></tr>
+    <tr><td>分布</td><td>页签改分段控件；行间细线；Agent 页签用品牌色点与品牌色细条（同现有进度条口径）</td></tr></table>
+    <h3>不变</h3><ul><li>四个时间范围、显示内部活动、币种、刷新、订阅余量、趋势花费 / tokens、六个分布页签、复制表格。</li></ul>
+    <h3>数据</h3><ul><li>tokens、天数、排序取自本机 usage_daily（近 7 天、非内部）。<b>花费是设计稿按公开价粗算</b>，和应用里的数会有出入；订阅余量勾「状态样例」才出现，金额是假的。</li></ul>`,
 };
 
 /* ═════════════ 设置（settings.json：极简灰蓝、不跟随系统、界面 100%、聊天字号标准…） ═════════════ */
-const SNAV = [["常用", [["外观", "Palette"], ["终端", "T"], ["通用", "S"], ["快捷键", "K"]]], ["管理", [["AI 与 Agent", "A"], ["网络", "N"], ["用量", "U"], ["更新", "D"], ["诊断", "X"], ["数据与存储", "H"], ["关于", "I"]]]];
-const THEMES = [["沉浸黑", "#0c0b09", "#131210", "#faa8d4"], ["陶土", "#0f0f0e", "#181816", "#cc7d5e"], ["琥珀", "#0d0b08", "#15130f", "#f5b83d"], ["暮紫", "#19191c", "#1f1f23", "#cba6f7"], ["极简灰蓝", "#0d0d0d", "#111111", "#0169cc"], ["哥特", "#202024", "#2a2b2f", "#ff79c6"], ["灰蓝正红", "#0e1014", "#12141a", "#ff5c5c"]];
-const THEMES_L = [["沉浸黑 · 浅", "#e5e5dd", "#edede9", "#c2447f"], ["陶土 · 浅", "#ebe3db", "#f2ece7", "#b25a3c"], ["琥珀 · 浅", "#e7e2db", "#f2eee5", "#e39a1c"], ["暮紫 · 浅", "#e2e0e6", "#edecf0", "#8839ef"], ["极简灰蓝 · 浅", "#e4e4e4", "#ededed", "#0169cc"], ["哥特 · 浅", "#e7e2ef", "#efecf5", "#d6336c"], ["灰蓝正红 · 浅", "#dde3ee", "#e8ecf3", "#dc2626"]];
+const SICON = {
+  外观: '<circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2a10 10 0 0 0 0 20c.9 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.7-1.7h2a5.6 5.6 0 0 0 5.5-5.5C22 6 17.5 2 12 2Z"/>',
+  终端: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
+  通用: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  快捷键: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+  "AI 与 Agent": '<path d="m12 3 1.9 5.8L20 10l-6.1 1.2L12 17l-1.9-5.8L4 10l6.1-1.2Z"/>',
+  网络: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  用量: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  更新: '<path d="M12 4v12M7 11l5 5 5-5M5 20h14"/>',
+  诊断: '<path d="M4 4v5a4 4 0 0 0 8 0V4M8 13v2a5 5 0 0 0 10 0v-2"/><circle cx="18" cy="11" r="2"/>',
+  数据与存储: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 13h18M7 16h.01"/>',
+  关于: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+};
+const SNAV = [["常用", ["外观", "终端", "通用", "快捷键"]], ["管理", ["AI 与 Agent", "网络", "用量", "更新", "诊断", "数据与存储", "关于"]]];
+const SDESC = { 外观: "主题、透明度与应用图标", 终端: "内嵌终端的显示、外部终端与自定义运行时", 通用: "启动页面、导航形态与系统通知", 快捷键: "点绑定钮后按下新组合即保存，Esc 取消", "AI 与 Agent": "内置 AI 功能用哪份配置，以及 Mesa 对各家 Agent 的约束", 网络: "出网代理、下载镜像与学校图书馆", 用量: "用量页折算费用用的汇率与价目", 更新: "检查并安装 Mesa 新版本", 诊断: "排障用的诊断包、依赖体检与应用日志", 数据与存储: "Mesa 在本机占用的目录，以及卸载", 关于: "版本、许可、隐私与反馈" };
+const THEMES = [["沉浸黑", "#0c0b09", "#131210", "#faa8d4", "#e5e5dd", "#edede9", "#c2447f"], ["陶土", "#0f0f0e", "#181816", "#cc7d5e", "#ebe3db", "#f2ece7", "#b25a3c"], ["琥珀", "#0d0b08", "#15130f", "#f5b83d", "#e7e2db", "#f2eee5", "#e39a1c"],
+  ["暮紫", "#19191c", "#1f1f23", "#cba6f7", "#e2e0e6", "#edecf0", "#8839ef"], ["极简灰蓝", "#0d0d0d", "#111111", "#0169cc", "#e4e4e4", "#ededed", "#0169cc"], ["哥特", "#202024", "#2a2b2f", "#ff79c6", "#e7e2ef", "#efecf5", "#d6336c"], ["灰蓝正红", "#0e1014", "#12141a", "#ff5c5c", "#dde3ee", "#e8ecf3", "#dc2626"]];
+function miniPreview(rail, canvas, acc, dark) {
+  const ink = dark ? "255 255 255" : "0 0 0";
+  return `<div class="mini" style="background:${canvas};border-color:rgb(${ink} / .12)"><div class="mr" style="background:${rail}"><i style="background:rgb(${ink} / .28)"></i><i style="background:rgb(${ink} / .16)"></i><i style="background:rgb(${ink} / .16)"></i><i class="s" style="background:${acc}"></i></div>
+    <div class="mc"><span class="mu" style="background:color-mix(in oklab, ${canvas}, rgb(${ink}) 7%)"></span><i style="background:rgb(${ink} / .55);width:78%"></i><i style="background:rgb(${ink} / .35);width:62%"></i><i style="background:rgb(${ink} / .35);width:70%"></i>
+    <span class="mbtn" style="background:${acc}"></span></div></div>`;
+}
 const PAGE_SET = {
   nav: "设置",
   render(st, theme) {
-    const sel = st.sec || "外观";
-    let n = `<div class="snav"><input class="search" placeholder="找设置…" />`;
+    const sel = st.sec || "外观", fam = st.fam || "极简灰蓝";
+    let n = `<div class="cs-nav">${csSearch("找设置…")}`;
     for (const [g, items] of SNAV) {
-      n += `<div class="gl">${g}</div>`;
-      for (const [it] of items) n += `<div class="it ${sel === it ? "sel" : ""}" data-act="set-sec" data-s="${it}">${it === "外观" ? svg('<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2a10 10 0 0 0 0 20c.9 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.6 1.6 0 0 1 1.7-1.7h2a5.6 5.6 0 0 0 5.5-5.5C22 6 17.5 2 12 2Z"/>', 15) : svg('<circle cx="12" cy="12" r="3"/>', 15)}${it}</div>`;
+      n += `<div class="cs-gl">${g}</div>`;
+      for (const it of items) n += `<div class="cs-it ${sel === it ? "sel" : ""}" data-act="set-sec" data-s="${it}">${svg(SICON[it], 16)}${it}</div>`;
     }
     n += `</div>`;
-    let c = `<div class="sbody"><div class="col">`;
-    if (sel !== "外观") c += `<div class="stitle">${sel}</div><p class="sdesc">（设计稿只画了「外观」分区；其余分区同一套写法：12px 灰字小标题 + 左标签右控件的行。）</p>`;
-    else {
-      const sw = (theme === "light" ? THEMES_L : THEMES).map(([nm, r, cv, acc]) => `<div class="sw ${nm.startsWith("极简灰蓝") ? "on" : ""}" data-note="（设计稿）切到「${nm}」"><div class="pv" style="--acc:${acc}"><i style="background:${r}"></i><i style="background:${cv}"></i></div><div class="nmm">${nm}</div></div>`).join("");
-      const row = (lb, hn, ctl) => `<div class="srw"><div><div class="lb">${lb}</div>${hn ? `<div class="hn">${hn}</div>` : ""}</div><div>${ctl}</div></div>`;
-      const seg = (opts, on) => `<span class="segq">${opts.map(o => `<button class="${o === on ? "on" : ""}">${o}</button>`).join("")}</span>`;
-      c += `<div class="stitle">外观</div><p class="sdesc">主题、透明度与应用图标</p>
-        <div class="sh">主题</div>
-        ${row("深浅", "", seg(["跟随系统", "深色", "浅色"], theme === "light" ? "浅色" : "深色"))}
-        ${row("主题跟随系统深浅", "开着时按系统深浅切同一套主题的深 / 浅版", `<button class="toggle off"></button>`)}
-        <div class="swatches">${sw}</div>
-        <div style="padding:0 4px 6px"><button class="ghost" style="margin-left:-8px" data-note="（设计稿）从当前主题的三个颜色出发配一套">${I.plus} 自定义配色</button></div>
-        <div class="sh">窗口</div>
-        ${row("侧栏 / 顶栏透明度", "百分数是罩色浓度，立即生效；壁纸越花越往「原样」调", seg(["原样", "25%", "50%", "75%"], "原样"))}
-        ${row("界面大小", "", seg(["90%", "100%", "110%", "125%"], "100%"))}
-        ${row("应用图标", "", seg(["浅色", "深色"], "浅色"))}
-        <div class="sh">聊天</div>
-        ${row("聊天字号", "立即生效；标准 = 原有大小", seg(["小", "标准", "大"], "标准"))}
-        ${row("聊天字体", "系统 = 跟随界面字体", seg(["系统", "衬线", "等宽"], "系统"))}
-        ${row("行内代码颜色", "文件名、命令、变量名这类反引号包着的字", seg(["暖色", "冷色", "不着色"], "暖色"))}
-        ${row("聊天滚动条", "闲置淡出：鼠标进入或滚动时才显现", seg(["闲置淡出", "常显"], "闲置淡出"))}
-        ${row("打开对话时先显示", "问 AI、开始、商量、继续、精读都按这个；之后每段对话还能自己切", seg(["聊天", "终端"], "聊天"))}`;
+    const row = (t, d, ctl) => `<div class="cs-row"><div><div class="t">${t}</div>${d ? `<div class="d">${d}</div>` : ""}</div><div class="rt">${ctl}</div></div>`;
+    const sel1 = v => `<span class="cs-select">${v}${I.down}</span>`;
+    let c = `<div class="cs-body">`;
+    if (sel === "外观") {
+      const T = THEMES.find(t => t[0] === fam);
+      c += `<div class="cs-h first">主题</div>
+        <div class="prev2"><div><div class="pl">深色</div>${miniPreview(T[1], T[2], T[3], true)}</div><div><div class="pl">浅色</div>${miniPreview(T[4], T[5], T[6], false)}</div></div>
+        <div class="cs-list">
+        ${row("配色", "七套配色各带深浅两版；也可以从当前配色出发调一套自己的", `<button class="cs-btn" data-note="（设计稿）从当前主题的三个颜色出发配一套">${I.plus}自定义配色</button>`)}
+        <div class="sw-row">${THEMES.map(t => `<button class="sw2 ${t[0] === fam ? "on" : ""}" data-act="set-fam" data-f="${t[0]}"><span style="background:linear-gradient(135deg, ${theme === "light" ? t[5] : t[2]} 50%, ${theme === "light" ? t[4] : t[1]} 50%)"><i style="background:${theme === "light" ? t[6] : t[3]}"></i></span>${t[0]}</button>`).join("")}</div>
+        ${row("深浅", "跟随系统时按系统深浅在上面两版之间切换", csSeg(["跟随系统", "深色", "浅色"], theme === "light" ? 2 : 1))}
+        </div>
+        <div class="cs-h">窗口</div><div class="cs-list">
+        ${row("侧栏 / 顶栏透明度", "百分数是罩色浓度，立即生效；壁纸越花越往「原样」调", csSeg(["原样", "25%", "50%", "75%"], 0))}
+        ${row("界面大小", "", sel1("100%"))}
+        ${row("应用图标", "", csSeg(["浅色", "深色"], 0))}</div>
+        <div class="cs-h">聊天</div><div class="cs-list">
+        ${row("聊天字号", "立即生效；标准 = 原有大小", csSeg(["小", "标准", "大"], 1))}
+        ${row("聊天字体", "系统 = 跟随界面字体", sel1("系统"))}
+        ${row("行内代码颜色", "文件名、命令、变量名这类反引号包着的字", sel1("暖色"))}
+        ${row("聊天滚动条", "闲置淡出：鼠标进入或滚动时才显现", csSeg(["闲置淡出", "常显"], 0))}
+        ${row("打开对话时先显示", "问 AI、开始、商量、继续、精读都按这个；之后每段对话还能自己切", csSeg(["聊天", "终端"], 0))}</div>`;
+    } else if (sel === "通用") {
+      c += `<div class="cs-h first">启动</div><div class="cs-list">
+        ${row("启动时进入", "打开 Mesa 先看到的页面", sel1("工作台"))}
+        ${row("默认导航形态", "下次启动生效；运行中可临时切换", sel1("展开侧栏"))}</div>
+        <div class="cs-h">通知</div><div class="cs-list">
+        ${row("系统通知", "Mesa 在后台、Agent 停下等你确认时弹系统通知", `<button class="toggle"></button>`)}
+        ${row("自动给对话起名", "格式「MMDD|类型|主题」，只写 Mesa 侧标题，不改 CLI 文件", `<button class="toggle"></button>`)}</div>
+        <div class="cs-h">顶部灵动岛</div><div class="cs-list">
+        ${row("自动收起", "鼠标移开后多久收起展开的岛", sel1("1 秒"))}
+        ${row("跑完播报", "Agent 跑完或断开时在岛上报一句，4 秒消失", `<button class="toggle off"></button>`)}
+        ${row("展开内容", "岛展开后的导航显示符号、文字还是两者；立即生效", csSeg(["符号 + 文字", "仅符号", "仅文字"], 0))}</div>`;
+    } else {
+      c += `<div class="cs-h first">${sel}</div><p class="cs-sub">${SDESC[sel]}</p><p class="cs-sub">（设计稿画了「外观」和「通用」两个分区；其余分区同一套写法：节标题 + 左标题说明、右控件的行，行间细线。）</p>`;
     }
-    c += `</div></div>`;
-    return tbar("设置", "外观、终端、AI 与应用管理", "") + `<div class="setw">${n}${c}</div>`;
+    c += `</div>`;
+    return tbar("设置", SDESC[sel], "") + `<div class="cs-wrap">${n}${c}</div>`;
   },
-  notes: `<h3>对话页的样子 → 设置</h3><table>
-    <tr><td>标题栏</td><td>大标题 → 40px 栏，副标题跟在后面的灰字</td></tr>
-    <tr><td>分区导航</td><td>11rem 列 + 灰底搜索框 + seg-sel 选中 → 写法同侧栏（13px、选中用侧栏选中色、图标变强调色），搜索框换细边</td></tr>
-    <tr><td>分区头</td><td>xl 标题 → 16px 粗 + 一行灰字说明</td></tr>
-    <tr><td>分组</td><td>每组一张 well 卡 + 卡标题 → 12px 灰字小标题，行间只靠留白</td></tr>
-    <tr><td>行</td><td>左：名称 13.5px + 说明 12px 灰；右：控件（分段选择用浅底，开关不变）</td></tr></table>
-    <h3>不变</h3><ul><li>常用 / 管理两组、十一个分区、找设置、每个设置项与说明文字、主题色卡与自定义配色。</li></ul>
-    <h3>数据</h3><ul><li>选中值取自本机 settings.json（极简灰蓝、不跟随系统、界面 100%、聊天字号标准、系统字体、暖色行内代码、浅色图标）；分段里的其余选项名为示意，以现有控件为准。</li></ul>`,
+  notes: `<h3>借鉴 Claude 设置页 → 设置</h3><table>
+    <tr><td>分区导航</td><td>同 Claude：细边搜索框、分组小标题、图标 + 14px 名称、选中整块浅底</td></tr>
+    <tr><td>节标题</td><td>每张 well 卡的卡标题 → 15px 粗体节标题，节与节之间大留白</td></tr>
+    <tr><td>行</td><td>左：名称 14px + 说明 13px 灰（可折行）；右：控件；行间一根细线</td></tr>
+    <tr><td>控件</td><td>分段控件 = 外框 + 选中格浮起；下拉 = 细边框 + 箭头；开关不变</td></tr>
+    <tr><td>主题</td><td>照 Claude 的代码外观：上面深浅两张预览并排，下面配色色卡；点色卡两张预览跟着换</td></tr></table>
+    <h3>不变</h3><ul><li>常用 / 管理两组、十一个分区、找设置、每个设置项与说明文字、色卡与自定义配色。</li></ul>
+    <h3>数据</h3><ul><li>选中值取自本机 settings.json；「外观」「通用」的设置项名称与说明照抄现有代码，分段里的选项名以现有控件为准。</li></ul>`,
 };
 
 /* ═════════════ 外壳与交互 ═════════════ */
@@ -850,13 +992,15 @@ function bind(w) {
       case "check": st.checking = true; st.menu = false; render(w); setTimeout(() => { st.checking = false; flash(w, "检测完成（设计稿不真连）"); }, 1200); return;
       case "wb-filter": st.filter = +d.i; break;
       case "sess-qf": st.qf = st.qf === +d.i ? null : +d.i; break;
-      case "prof-f": st.pf = +d.i; break;
+      case "sess-rt": st.rt = +d.i; break;
+      case "prof-ag": st.ag = d.a; break;
+      case "set-fam": st.fam = d.f; break;
       case "sk-open": st.open = st.open === d.n ? null : d.n; break;
       case "sk-close": st.open = null; break;
       case "sk-fold": st.closed = { ...(st.closed || {}), [d.g]: !(st.closed && st.closed[d.g]) }; break;
       case "st-rg": st.rg = +d.i; break;
-      case "st-cur": st.cur = d.c; break;
-      case "st-dt": st.dt = d.t; break;
+      case "st-cur": st.cur = d.v; break;
+      case "st-dt": st.dt = d.v; break;
       case "set-sec": st.sec = d.s; break;
     }
     render(w);
