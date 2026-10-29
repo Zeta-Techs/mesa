@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ArrowLeft, ArrowRight, Check, ChevronDown, Copy, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Terminal,
+  ArrowLeft, ArrowRight, Check, ChevronDown, Copy, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Plus, Terminal,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { useExitRender } from "../exit-animation";
@@ -53,6 +53,8 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
   const open = useAppStore((s) => s.onboardingWizardOpen);
   const setOpen = useAppStore((s) => s.setOnboardingWizardOpen);
   const updateOnboarding = useAppStore((s) => s.updateOnboarding);
+  // 引导已完成或点过「不再显示」：只是从帮助菜单回来看，底栏不再给「稍后再说 / 不再显示」
+  const retired = useAppStore((s) => s.onboarding.status !== "active");
   const light = isLightTheme(useAppStore((s) => s.settings?.theme));
   const macFullscreen = useMacFullscreen(IS_MAC);
   const { render, exiting } = useExitRender(open);
@@ -173,7 +175,7 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
       {/* 发丝线贯通整窗：内容滚到底栏下面时有个边，不像被截断 */}
       <footer className="shrink-0 border-t border-hairline text-xs">
         <div className="mx-auto flex w-full max-w-[42rem] flex-wrap items-center gap-x-3 gap-y-2 px-6 py-3">
-          <div className="-ml-3 flex items-center gap-1">
+          {!retired && <div className="-ml-3 flex items-center gap-1">
             <button type="button" className={quietActionClass} disabled={busy} onClick={close}>
               稍后再说
             </button>
@@ -181,7 +183,7 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
               type="button"
               className={quietActionClass}
               disabled={busy}
-              title="侧栏的上手引导行一并收起；想再看，到顶栏「帮助 → 上手引导」"
+              title="永久收起：不再自动弹出，侧栏那一行和右下角提示一并去掉；想再看，到顶栏「帮助 → 上手引导」"
               onClick={() => {
                 updateOnboarding({ status: "dismissed" });
                 close();
@@ -189,8 +191,10 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
             >
               不再显示
             </button>
-          </div>
-          <p className="min-w-0 flex-1 truncate text-l4" role="status">{busy ? "正在处理，请稍候…" : "随时可从「帮助 → 上手引导」回来"}</p>
+          </div>}
+          <p className="min-w-0 flex-1 truncate text-l4" role="status">
+            {busy ? "正在处理，请稍候…" : retired ? "引导已收起，只在「帮助 → 上手引导」里" : "随时可从「帮助 → 上手引导」回来"}
+          </p>
           <div className="ml-auto flex items-center gap-2">
             {index > 0 && (
               <button type="button" className={`${secondaryActionClass} gap-1.5`} disabled={busy} onClick={() => setView(ONBOARDING_STEPS[index - 1]!.id)}>
@@ -200,7 +204,7 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
             )}
             {last ? (
               <button type="button" className={primaryActionClass} onClick={close}>
-                {progress.doneCount === progress.total ? "完成" : "先去体验"}
+                {progress.doneCount === progress.total ? "完成" : retired ? "关闭" : "先去体验"}
               </button>
             ) : (
               <button
@@ -297,13 +301,32 @@ function SuccessCard({ title, detail }: { title: string; detail?: string }) {
 function ConnectScreen({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyChange: (busy: boolean) => void }) {
   const stage = connectStage(facts);
   const profiles = useAppStore((s) => s.profiles);
+  // 做完了回来看：结果在上，原来的接入流程收在「再接一个」里，点开还能照样走一遍
+  const [again, setAgain] = useState(false);
   if (stage === "done") {
-    const first = profiles[0];
+    const names = profiles.map((p) => `${labelOf(p.agent)} · ${p.name}`);
     return (
-      <SuccessCard
-        title={first ? `${labelOf(first.agent)} 连接已添加` : "连接已添加"}
-        detail="下一步发一句话，确认 AI 能正常回复。"
-      />
+      <div className="space-y-4">
+        <SuccessCard
+          title={profiles.length > 1 ? `已添加 ${profiles.length} 条连接` : `${labelOf(profiles[0]?.agent ?? "")} 连接已添加`}
+          detail={`${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}。下一步发一句话，确认 AI 能正常回复。`}
+        />
+        {again ? (
+          facts.installedAgents.length ? (
+            <ChooseStage facts={facts} onBusyChange={onBusyChange} onDone={() => setAgain(false)} />
+          ) : (
+            <InstallStage onBusyChange={onBusyChange} />
+          )
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <button type="button" className={`${secondaryActionClass} gap-1.5`} onClick={() => setAgain(true)}>
+              <Plus size={13} aria-hidden="true" />
+              再接一个
+            </button>
+            <span className="text-l3">换一家 Agent、另一个服务商，或改用官方账号</span>
+          </div>
+        )}
+      </div>
     );
   }
   return stage === "install" ? <InstallStage onBusyChange={onBusyChange} /> : <ChooseStage facts={facts} onBusyChange={onBusyChange} />;
@@ -446,7 +469,16 @@ function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void 
   );
 }
 
-function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyChange: (busy: boolean) => void }) {
+function ChooseStage({
+  facts,
+  onBusyChange,
+  onDone = () => {},
+}: {
+  facts: OnboardingFacts;
+  onBusyChange: (busy: boolean) => void;
+  /** 接好一条（「再接一个」时收起流程用） */
+  onDone?: () => void;
+}) {
   const setOpen = useAppStore((s) => s.setOnboardingWizardOpen);
   const official = useAppStore((s) => s.onboardingOfficial);
   const installed = facts.installedAgents;
@@ -548,7 +580,11 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
             disabled={busy}
             onClick={() => {
               setBusy(true);
-              void connectOfficialAccount(agent).finally(() => setBusy(false));
+              void connectOfficialAccount(agent)
+                .then((ok) => {
+                  if (ok) onDone();
+                })
+                .finally(() => setBusy(false));
             }}
           >
             {busy ? "接入中…" : officialShortcutLabel(labelOf(agent))}
@@ -578,7 +614,7 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
       )}
       {active === "key" && probe !== undefined && (
         <Card>
-          <GatewayQuickForm key={agent} agent={agent} onConnected={() => {}} onMore={openGatewayLibrary} onBusyChange={setBusy} />
+          <GatewayQuickForm key={agent} agent={agent} onConnected={onDone} onMore={openGatewayLibrary} onBusyChange={setBusy} />
         </Card>
       )}
     </div>
@@ -591,7 +627,6 @@ const SAMPLE_PROMPT = "用三句话介绍你能帮我做什么。";
 
 function ChatScreen({ done, connected, onConnect, close }: { done: boolean; connected: boolean; onConnect: () => void; close: () => void }) {
   const [copied, setCopied] = useState(false);
-  if (done) return <SuccessCard title="已经聊过了" detail="第一段对话在侧栏「随手聊」里。接下来可以建项目。" />;
   if (!connected) return (
     <Card className="space-y-3">
       <p className="text-sm font-medium text-l1">先添加一条 AI 连接</p>
@@ -601,6 +636,7 @@ function ChatScreen({ done, connected, onConnect, close }: { done: boolean; conn
   );
   return (
     <div className="space-y-4">
+      {done && <SuccessCard title="已经聊过了" detail="第一段对话在侧栏「随手聊」里。想再试一次，照下面再开一段。" />}
       <Card className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium text-l1"><MessageSquare size={16} aria-hidden="true" />试着问 AI</div>
         <div className="flex items-center gap-3 rounded-lg bg-field py-3 pl-4 pr-2 text-xs">
@@ -625,7 +661,7 @@ function ChatScreen({ done, connected, onConnect, close }: { done: boolean; conn
             void openQuickChat();
           }}
         >
-          开始第一段对话
+          {done ? "再开一段对话" : "开始第一段对话"}
         </button>
       </Card>
       <details className="rounded-lg px-1 text-xs text-l3">
@@ -648,7 +684,6 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
     s.setPage("workspaces");
     run(s);
   };
-  if (done) return <SuccessCard title="项目建好了" detail="在侧栏「项目」下面点它，就能开始做课题；在它下面开的对话也列在它名下。" />;
   const actions = [
     { label: "新建项目", hint: "从空文件夹开始，选择工作方式", icon: FolderPlus, run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }) },
     { label: "添加已有文件夹", hint: "把已有课题或代码文件夹加进来", icon: FolderOpen, run: (s: ReturnType<typeof useAppStore.getState>) => s.setAddProjectOpenReq(Date.now()) },
@@ -656,6 +691,7 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
   ];
   return (
     <div className="space-y-3">
+      {done && <SuccessCard title="项目建好了" detail="在侧栏「项目」下面点它，就能开始做课题；在它下面开的对话也列在它名下。还想再建，照下面选。" />}
       {actions.map((action) => (
         <button key={action.label} type="button" onClick={() => go(action.run)} className="ccode-well group flex w-full items-center gap-4 rounded-xl p-5 text-left transition-colors hover:bg-hover" aria-label={action.label}>
           <action.icon size={20} className="shrink-0 text-l3" aria-hidden="true" />
@@ -666,7 +702,7 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
           <ArrowRight size={16} className="shrink-0 text-l3 group-hover:text-l1" aria-hidden="true" />
         </button>
       ))}
-      <p className="text-xs leading-5 text-l3">也可以稍后从侧栏「新项目」创建。</p>
+      {!done && <p className="text-xs leading-5 text-l3">也可以稍后从侧栏「新项目」创建。</p>}
     </div>
   );
 }

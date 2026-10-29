@@ -50,10 +50,11 @@ export function useOnboardingFacts(): OnboardingFacts | null {
   }, [agents, gatewayCount, profileCount, sessions, projectCount, official]);
 }
 
-/** 帮助菜单 / 命令面板「上手引导」：收起过的重新打开，然后弹出向导 */
+/** 帮助菜单 / 命令面板「上手引导」：弹出向导。点过「不再显示」的只是回来看看，不把侧栏那一行和右下角提示
+ *  重新招回来（2026-10-29 用户：引导没用了要能手动永远关掉）；还没判定过的照常进入引导 */
 export function openOnboardingGuide() {
   const s = useAppStore.getState();
-  if (s.onboarding.status === "dismissed" || s.onboarding.status === "unset") {
+  if (s.onboarding.status === "unset") {
     s.updateOnboarding({ status: "active", welcomed: true });
   }
   s.setOnboardingWizardOpen(true);
@@ -136,10 +137,10 @@ export function OnboardingHost({ ready }: { ready: boolean }) {
     useAppStore.getState().setOnboardingWizardOpen(true);
   }, [ready, state.status, state.welcomed, updateOnboarding]);
 
-  // 引导进行中、还没有连接时，探测已装 Agent 的官方账号登录状态（只读 auth 文件）；
-  // 窗口回前台再探一次，在终端里登录完回来就能认出来
+  // 引导进行中、还没有连接时，探测已装 Agent 的官方账号登录状态（只读 auth 文件）；向导开着也探
+  // （接好之后回来点「再接一个」要用）。窗口回前台再探一次，在终端里登录完回来就能认出来
   const probeKey =
-    ready && facts && state.status === "active" && facts.profileCount === 0
+    ready && facts && (wizardOpen || (state.status === "active" && facts.profileCount === 0))
       ? facts.installedAgents.join(",")
       : null;
   useEffect(() => {

@@ -59,7 +59,8 @@ async function mount(facts: OnboardingFacts = blank, formOnly = false) {
   const requests: string[] = [];
   const data = {
     state: {
-      onboardingWizardOpen: true, settings: { theme: "midnight" }, profiles: [] as { agent: string }[],
+      onboardingWizardOpen: true, settings: { theme: "midnight" }, profiles: [] as { agent: string; name?: string }[],
+      onboarding: { status: "active" } as { status: string },
       onboardingOfficial: {} as Record<string, string>, depCheck: null,
       setOnboardingWizardOpen: (open: boolean) => patch({ onboardingWizardOpen: open }),
       updateOnboarding: () => {}, refreshDepCheck: async () => {},
@@ -287,5 +288,33 @@ test("API Key 表单：填好 Key 离开输入框自动拉模型目录，下拉�
     await ui.act(async () => ui.host.querySelector("form")!.requestSubmit());
     assert.equal(probedModel, "claude-relay");
     assert.deepEqual(ui.requests, ["save", "bind", "connected"]);
+  } finally { await ui.close(); }
+});
+
+test("做完的步骤回来还能看过程：接上 AI 可「再接一个」照原流程再走，聊天与项目入口仍在", async () => {
+  const facts = { ...blank, installedAgents: ["claude-code"], profileCount: 1, userSessionCount: 1, projectCount: 1 };
+  const ui = await mount(facts);
+  try {
+    await ui.act(async () => ui.patch({ profiles: [{ agent: "claude-code", name: "智谱" }], onboardingOfficial: { "claude-code": "ready" } }));
+    await ui.click("接上 AI，已完成");
+    assert.match(ui.host.textContent!, /连接已添加/);
+    await ui.click("再接一个");
+    assert.ok(ui.button("用 Claude Code 官方账号"), "原来的接入方式照样出现");
+    await ui.click("用 Claude Code 官方账号");
+    assert.ok(ui.button("再接一个"), "接好后收回结果视图");
+    await ui.click("聊第一句，已完成");
+    assert.ok(ui.button("再开一段对话"));
+    await ui.click("建第一个项目，已完成");
+    assert.ok(ui.button("新建项目"));
+  } finally { await ui.close(); }
+});
+
+test("引导已收起或完成时从帮助回来看：底栏不再给「稍后再说 / 不再显示」", async () => {
+  const ui = await mount();
+  try {
+    assert.ok(ui.button("不再显示"));
+    await ui.act(async () => ui.patch({ onboarding: { status: "dismissed" } }));
+    assert.equal(Array.from(ui.host.querySelectorAll("button")).some((b) => b.textContent?.trim() === "不再显示"), false);
+    assert.match(ui.host.querySelector("footer")!.textContent!, /引导已收起/);
   } finally { await ui.close(); }
 });
