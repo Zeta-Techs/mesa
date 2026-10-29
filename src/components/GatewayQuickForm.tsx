@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { NO_PRESET_REASON, presetsForAgent } from "../presets";
-import { slotForAgent } from "../gateway-slot";
-import type { BindingInput, GatewayInput, GatewayModel, GatewayProbeDto } from "../types";
+import { slotForAgent, type GatewaySlotName } from "../gateway-slot";
+import { AGENT_PROTOCOLS, type BindingInput, type GatewayInput, type GatewayModel, type GatewayProbeDto } from "../types";
 import { fieldClass, primaryActionClass, quietActionClass } from "./PageFrame";
 
 /**
  * 上手向导里的精简「服务商 + API Key」接入：选预设服务商、贴密钥、测试、保存并绑定到这家 Agent，
- * 三步合一。只覆盖预设里有的服务商；自定义端点、多协议槽、请求头等仍去网关库（onMore）。
+ * 三步合一。下拉最后一项「其他服务商 / 中转」自填一个地址（只填这家 Agent 用的那个协议槽）；
+ * 多协议槽、请求头、模型目录等仍去网关库（onMore）。
  * 保存路径与网关库同源：probe_gateway_slot → saveGateway → bindGateway。
  */
 export function GatewayQuickForm({
@@ -24,7 +25,10 @@ export function GatewayQuickForm({
 }) {
   const presets = useMemo(() => presetsForAgent(agent), [agent]);
   const [index, setIndex] = useState(0);
-  const preset = presets[index];
+  // 下拉最后一项（index === presets.length）= 自填地址
+  const custom = index >= presets.length;
+  const preset = custom ? undefined : presets[index];
+  const [customUrl, setCustomUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [modelDraft, setModelDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState<"" | "test" | "save">("");
@@ -36,7 +40,8 @@ export function GatewayQuickForm({
     return () => onBusyChange(false);
   }, [busy, onBusyChange]);
 
-  if (!preset) {
+  // Cursor 是自家协议、第三方端点接不通；Gemini 官方不需要填地址——这两家仍只给说明和网关库入口
+  if (!presets.length) {
     return (
       <div className="text-sm leading-6 text-l3">
         {NO_PRESET_REASON[agent] ?? "这家 Agent 没有内置的服务商预设。"}
@@ -49,9 +54,13 @@ export function GatewayQuickForm({
     );
   }
 
-  const presetModels = preset.provider.models ?? [];
+  const presetModels = preset?.provider.models ?? [];
   const model = (modelDraft ?? presetModels[0] ?? "").trim();
-  const slot = slotForAgent(agent, preset.protocol);
+  // 自填地址：qwen / kimi 的中转一般是 OpenAI 兼容，按 openai 协议接
+  const protocol = custom ? (AGENT_PROTOCOLS[agent] ? "openai" : undefined) : preset!.protocol;
+  const slot = slotForAgent(agent, protocol);
+  const baseUrl = custom ? customUrl.trim() : preset!.baseUrl;
+  const urlOk = /^https?:\/\/\S+$/i.test(baseUrl);
 
   async function test(): Promise<boolean> {
     setBusy("test");
@@ -62,7 +71,7 @@ export function GatewayQuickForm({
         slot,
         model: model || null,
         basicOnly: true,
-        baseUrl: preset!.baseUrl,
+        baseUrl,
         apiKey: apiKey.trim() || null,
         noAuth: false,
       });
@@ -85,6 +94,10 @@ export function GatewayQuickForm({
 
   async function save() {
     if (saveInFlight.current) return;
+    if (!urlOk) {
+      setError("填服务商给的 API 地址，以 http:// 或 https:// 开头");
+      return;
+    }
     if (!apiKey.trim()) {
       setError("先贴上 API Key");
       return;
@@ -99,7 +112,7 @@ export function GatewayQuickForm({
       setBusy("save");
       setError(null);
       const s = useAppStore.getState();
-      const slots = preset!.provider.slots;
+      const slots: Partial<Record<GatewaySlotName, string>> = custom ? { [slot]: baseUrl } : preset!.provider.slots;
       const models: GatewayModel[] = [model, ...presetModels.filter((m) => m !== model)].map((id) => ({
         id,
         source: "user",
@@ -112,7 +125,7 @@ export function GatewayQuickForm({
         reasoningEffort: null,
       }));
       const input: GatewayInput = {
-        name: preset!.name,
+        name: custom ? customGatewayName(baseUrl) : preset!.name,
         noAuth: false,
         slots: {
           anthropic: slots.anthropic ?? null,
@@ -131,7 +144,7 @@ export function GatewayQuickForm({
         name: `${saved.name} · ${agent}`,
         gatewayId: saved.id,
         kind: "api",
-        protocol: preset!.protocol ?? null,
+        protocol: protocol ?? null,
         models: [model],
         extraEnv: {},
       };
@@ -156,6 +169,7 @@ export function GatewayQuickForm({
             value={index}
             onChange={(e) => {
               setIndex(Number(e.target.value));
+              setCustomUrl("");
               setModelDraft(null);
               setTested(false);
               setError(null);
@@ -166,9 +180,29 @@ export function GatewayQuickForm({
                 {p.name}
               </option>
             ))}
+            <option value={presets.length}>其他服务商 / 中转（自填地址）</option>
           </select>
-          {preset.note && <span className="mt-1 block text-xs leading-5 text-l4">{preset.note}</span>}
+          {preset?.note && <span className="mt-1 block text-xs leading-5 text-l4">{preset.note}</span>}
         </label>
+        {custom && (
+          <label className="block">
+            <span className="text-xs text-l3">API 地址</span>
+            <input
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              className={`${fieldClass} mt-1 w-full`}
+              value={customUrl}
+              placeholder="https://…"
+              onChange={(e) => {
+                setCustomUrl(e.target.value);
+                setTested(false);
+                setError(null);
+              }}
+            />
+            <span className="mt-1 block text-xs leading-5 text-l4">{SLOT_HINT[slot]}</span>
+          </label>
+        )}
         <label className="block">
           <span className="text-xs text-l3">API Key</span>
           <input
@@ -207,7 +241,7 @@ export function GatewayQuickForm({
         {error && <p role="alert" className="text-xs leading-5 text-err-text">{error}</p>}
         {tested && !error && <p role="status" className="text-xs leading-5 text-ok-text">测试通过，可以保存</p>}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button type="submit" className={primaryActionClass} disabled={!!busy || !apiKey.trim() || !model}>
+          <button type="submit" className={primaryActionClass} disabled={!!busy || !urlOk || !apiKey.trim() || !model}>
             {busy === "save" ? "保存中…" : busy === "test" ? "测试中…" : "测试并保存"}
           </button>
           <button type="button" className={quietActionClass} onClick={onMore}>
@@ -217,4 +251,22 @@ export function GatewayQuickForm({
       </fieldset>
     </form>
   );
+}
+
+/** 自填地址时说清这家 Agent 要哪种接口的地址（服务商文档里一般按协议分开给） */
+const SLOT_HINT: Record<GatewaySlotName, string> = {
+  anthropic: "填 Anthropic 兼容（Claude 格式）的地址，服务商文档里常写作 Claude Code 接入地址",
+  responses: "填 OpenAI Responses 接口的地址（Codex 用这个），通常以 /v1 结尾",
+  openai: "填 OpenAI 兼容（chat/completions）的地址，通常以 /v1 结尾",
+  gemini: "填 Gemini 兼容的地址",
+  cursor: "",
+};
+
+/** 自填地址的网关名取域名，网关库里一眼认得出 */
+function customGatewayName(url: string): string {
+  try {
+    return new URL(url).host || "自定义服务商";
+  } catch {
+    return "自定义服务商";
+  }
 }

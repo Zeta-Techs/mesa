@@ -507,7 +507,7 @@ function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyCh
           {(
             [
               ["official", "官方账号", `登录 ${labelOf(agent)} 自家账号`],
-              ["key", "服务商 API Key", "用服务商的密钥，按量计费"],
+              ["key", "服务商 API Key", "服务商或中转站的地址和密钥，按量计费"],
             ] as const
           ).map(([id, label, hint]) => (
             <button

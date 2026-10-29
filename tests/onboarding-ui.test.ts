@@ -222,3 +222,37 @@ test("API Key 表单：提交先测试再保存；失败保留输入并可重试
     assert.deepEqual(ui.requests, ["save", "bind", "connected"]);
   } finally { await ui.close(); }
 });
+
+test("API Key 表单：选「其他服务商 / 中转」自填地址，地址不对不放行，保存只填这家 Agent 的协议槽", async () => {
+  const ui = await mount(blank, true);
+  try {
+    const set = async (el: HTMLInputElement | HTMLSelectElement, value: string, event: string) => {
+      const proto = el instanceof ui.dom.window.HTMLSelectElement ? ui.dom.window.HTMLSelectElement.prototype : ui.dom.window.HTMLInputElement.prototype;
+      await ui.act(async () => {
+        Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+        el.dispatchEvent(new ui.dom.window.Event(event, { bubbles: true }));
+      });
+    };
+    const select = ui.host.querySelector("select")!;
+    const customOption = Array.from(select.options).find((o) => o.textContent?.includes("自填地址"))!;
+    assert.ok(customOption, "下拉里要有自填地址一项");
+    await set(select, customOption.value, "change");
+    const url = ui.host.querySelector<HTMLInputElement>('input[type="url"]')!;
+    assert.ok(url, "选中后出现 API 地址输入框");
+    await set(ui.host.querySelector<HTMLInputElement>('input[type="password"]')!, "relay-key", "input");
+    await set(ui.host.querySelector<HTMLInputElement>("input[list]")!, "claude-relay", "input");
+    await set(url, "relay.example.com", "input");
+    assert.equal(ui.button("测试并保存").disabled, true);
+    await set(url, "https://relay.example.com/api", "input");
+    assert.equal(ui.button("测试并保存").disabled, false);
+    let saved: { name: string; slots: Record<string, string | null> } | null = null;
+    let probedUrl = "";
+    ui.data.invoke = async (_cmd: string, args: { baseUrl: string }) => { probedUrl = args.baseUrl; return { ok: true, checks: [] }; };
+    await ui.act(async () => ui.patch({ saveGateway: async (_id: null, input: { name: string; slots: Record<string, string | null> }) => { saved = input; return { id: "gateway", name: input.name }; } } as never));
+    await ui.act(async () => ui.host.querySelector("form")!.requestSubmit());
+    assert.equal(probedUrl, "https://relay.example.com/api");
+    assert.equal(saved!.name, "relay.example.com");
+    assert.deepEqual(saved!.slots, { anthropic: "https://relay.example.com/api", openai: null, responses: null, gemini: null, cursor: null });
+    assert.deepEqual(ui.requests, ["bind", "connected"]);
+  } finally { await ui.close(); }
+});
