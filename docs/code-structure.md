@@ -846,6 +846,8 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
                              #   禁止临时切 data-theme 再 getComputedStyle（tests/theme-swatch.test.ts）
   custom-theme.ts            # 自定义主题：三色种子派生全套令牌 + 另存色卡列表
                              # （tests/custom-theme.test.ts）
+  monaco-theme.ts            # Monaco 编辑器面色取自 --color-editor-*，一律规范成 #rrggbb（打包版 CSS 压缩出的 #111 / #fff
+                             #   会让 Monaco 抛错整页崩；tests/monaco-theme.test.ts）
   profile-copy.ts            # profile 跨 agent 复制纯逻辑
   resume-profile.ts          # 恢复会话的 profile 挑选纯逻辑：codex 内联 provider 会话（rollout 记
                              # model_provider="ccode" 或派生名 ccode-<网关短id>）按网关挑绑定；
