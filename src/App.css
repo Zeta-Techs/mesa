@@ -2118,7 +2118,8 @@ button.ccode-nav-island-announce:hover {
 }
 
 @media (max-width: 960px) {
-  .ccode-sessions-rail { width: min(375px, 42vw); }
+  /* 对话列表栏 2026-10-29 起可拖宽（PaneNav 写内联宽度）：窄窗口的封顶要压过内联宽度 */
+  .ccode-sessions-rail { width: min(375px, 42vw) !important; }
   .ccode-review-rail { width: min(292px, 30vw); }
 }
 
@@ -2220,6 +2221,7 @@ button.ccode-nav-island-announce:hover {
     overflow: hidden;
     border-width: 0;
   }
+  .ccode-sessions-rail { width: 0 !important; }
   .ccode-review-rail.ccode-review-rail-open {
     display: flex;
     width: min(292px, 88vw);
@@ -2236,7 +2238,7 @@ button.ccode-nav-island-announce:hover {
     position: absolute;
     inset: 0 auto 0 0;
     z-index: 30;
-    width: min(375px, 88vw);
+    width: min(375px, 88vw) !important;
     min-width: min(375px, 88vw);
     overflow: auto;
     border-right-width: 1px;

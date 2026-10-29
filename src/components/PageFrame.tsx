@@ -819,6 +819,8 @@ export function PaneSearch({
   label,
   className = "",
   onKeyDown,
+  inputRef,
+  title,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -826,6 +828,10 @@ export function PaneSearch({
   label: string;
   className?: string;
   onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+  /** 需要从外面聚焦时（⌘F 之类）传 ref */
+  inputRef?: RefObject<HTMLInputElement | null>;
+  /** 悬停说明（如搜索语法） */
+  title?: string;
 }) {
   return (
     <label
@@ -833,7 +839,9 @@ export function PaneSearch({
     >
       <Search size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
       <input
+        ref={inputRef}
         value={value}
+        title={title}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
         placeholder={placeholder}

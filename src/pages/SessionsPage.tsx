@@ -97,8 +97,12 @@ import {
   FoldMark,
   ghostActionClass,
   LoadingRows,
+  PaneNav,
+  PaneSearch,
+  paneHeadButtonClass,
+  paneOutlineButtonClass,
+  paneSolidButtonClass,
   rowActionClass,
-  searchFieldClass,
   InlineNotice,
 } from "../components/PageFrame";
 import type {
@@ -1612,9 +1616,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
 
   return (
     <div className="relative flex h-full bg-canvas">
-      {/* 会话列表栏（P1a：375px 固定宽，rail2 底）：标题/计数 + 次按钮 + 搜索 + 折叠分类树 + 会话行 */}
-      <div className={`ccode-sessions-rail flex w-[375px] shrink-0 flex-col border-r border-hairline bg-rail2 ${mobileRailOpen ? "ccode-mobile-rail-open" : ""}`}>
-        <div className="shrink-0 px-3 pb-2.5 pt-3">
+      {/* 会话列表栏（rail2 底；2026-10-29 起可拖宽、宽度记住，借鉴 Claude 设置页左栏）：
+          标题/计数 + 次按钮 + 搜索 + 快筛 + 范围 + 会话行 */}
+      <PaneNav
+        storageKey="ccode.sessions.railWidth"
+        label="调整对话列表宽度"
+        defaultWidth={340}
+        minWidth={260}
+        maxWidth={560}
+        className={`ccode-sessions-rail ${mobileRailOpen ? "ccode-mobile-rail-open" : ""}`}
+      >
+        <div className="shrink-0 px-3 pb-2.5">
           <button
             type="button"
             className="mb-2 ml-auto flex h-7 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
@@ -1623,7 +1635,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             关闭列表
           </button>
           {selecting ? (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 pt-2">
               <div className="flex min-h-7 items-center justify-between gap-2">
                 <span className="whitespace-nowrap text-xs text-l3">已选 {checkedInView} 项</span>
                 <div className="flex items-center gap-1">
@@ -1697,9 +1709,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <h1 className="shrink-0 text-base font-semibold text-l1">对话</h1>
+            // 栏头与对话头同高同字（h-9、标题 xs l2 不加粗），右边中性小按钮
+            <div className="-mx-1 flex h-9 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-baseline gap-2 px-1.5 text-xs">
+                <h1 className="shrink-0 font-normal text-l2">对话</h1>
                 {/* 计数副题：与既有口径一致，搜索时透出命中数 */}
                 <span className="truncate text-micro text-l4">
                   当前 {sessionList.length}
@@ -1707,12 +1720,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   {sessions.length}
                 </span>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="flex shrink-0 items-center gap-0.5">
                 {/* 「显示已归档」已并入快筛 chip（toggleQuick 单控点，v3.92），页头不再重复 */}
                 <button
                   type="button"
                   onClick={() => setImportOpen(true)}
-                  className={`${rowActionClass} gap-1`}
+                  className={paneHeadButtonClass}
                   title="从另一台机器导入会话包"
                 >
                   <Download size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -1721,21 +1734,22 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 <button
                   type="button"
                   onClick={() => setSelecting(true)}
-                  className={rowActionClass}
+                  className={paneHeadButtonClass}
                 >
                   批量管理
                 </button>
               </div>
             </div>
           )}
-          {/* 搜索框：inset 底色分层（无描边），共享 searchFieldClass */}
-          <input
-            ref={searchInputRef}
-            className={`mt-2 w-full ${searchFieldClass}`}
+          {/* 搜索框：细边 + 放大镜（2026-10-29 借鉴 Claude 设置页，原 inset 底无描边） */}
+          <PaneSearch
+            inputRef={searchInputRef}
+            className="mt-2"
             placeholder="搜索标题、标签，或对话里说过的话"
+            label="搜索对话"
             title={SEARCH_SYNTAX_HINT}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={setQuery}
           />
           {/* 搜索建议（v3.88）：输入即给出结构化维度，点一下落成可叠加 chip——
               取代「展开手风琴 → 找 agent → 展开 → 找项目」的三次点击钻取 */}
@@ -1822,6 +1836,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           <div className="flex flex-wrap items-center gap-1">
             {!selecting && (
               <>
+                {/* 快筛（可叠加的开关）写成分段控件样子：外框 + 打开的格浮起（2026-10-29） */}
+                <span className="ccode-seg-boxed is-sm inline-flex flex-wrap items-center">
                 {QUICK_FILTERS.filter(
                   (f) => PRIMARY_QUICK.has(f.id) || quick.has(f.id),
                 ).map((f) => {
@@ -1833,11 +1849,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       aria-pressed={on}
                       title={f.title}
                       onClick={() => toggleQuick(f.id)}
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-micro ${
-                        on
-                          ? "bg-seg-sel text-l1"
-                          : "text-l3 hover:bg-hover hover:text-l1"
-                      }`}
+                      className="ccode-seg-boxed-item inline-flex items-center gap-1 whitespace-nowrap text-xs"
                     >
                       {/* 行内操作与快筛统一用 Lucide 线框（同侧栏）；保留 = 旗子，与行首已保留标记同形 */}
                       {f.id === "pinned" && <Flag size={11} strokeWidth={1.8} aria-hidden="true" />}
@@ -1845,13 +1857,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     </button>
                   );
                 })}
+                </span>
                 <span className="relative">
                   <button
                     type="button"
                     onClick={() => setMoreFiltersOpen((v) => !v)}
                     aria-expanded={moreFiltersOpen}
                     title="更多快筛（近 7 天 / 已归档）"
-                    className="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                    className="inline-flex h-7 items-center gap-0.5 rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
                   >
                     更多
                     <ChevronDown size={11} strokeWidth={1.8} aria-hidden="true" />
@@ -1902,9 +1915,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             onClick={() => setTreeOpen((v) => !v)}
             aria-expanded={treeOpen}
             title="按 Agent / 项目筛选"
-            className={`mt-1.5 flex h-7 w-full items-center gap-1 rounded-md px-2 text-xs ${
+            className={`mt-2 flex h-8 w-full items-center gap-1.5 rounded-lg border border-field px-2.5 text-xs transition-colors ${
               filterChipLabel || treeOpen
-                ? "bg-seg-sel text-l1"
+                ? "bg-hover text-l1"
                 : "text-l3 hover:bg-hover hover:text-l1"
             }`}
           >
@@ -2173,7 +2186,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 return (
                   <Fragment key={skey(s)}>
                     {header && (
-                      <div className="flex items-center justify-between gap-2 border-b border-hairline bg-strip px-4 pb-1 pt-2 text-xs text-l3">
+                      <div className="flex items-center justify-between gap-2 px-4 pb-1 pt-4 text-xs text-l4">
                         <span>{header === "未归置" ? header : `▤ ${header}`}</span>
                         {header === "未归置" && projectHasCards && (
                           <span className="text-micro text-l4">
@@ -2228,8 +2241,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 selected?.sessionId === s.sessionId;
               return (
                 <Fragment key={skey(s)}>
+                  {/* 分组小标题（2026-10-29 借鉴 Claude 设置页左栏：小灰字，不铺底不画线） */}
                   {header && (
-                    <div className="flex items-center justify-between gap-2 border-b border-hairline bg-strip px-3 pb-1 pt-2 text-xs text-l3">
+                    <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-4 text-xs text-l4">
                       <span>
                         {header === "未归置" || header === SEARCH_ARCHIVED_HEADER
                           ? header
@@ -2258,7 +2272,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       session: s,
                     });
                   }}
-                  className={`group border-b border-hairline px-3 py-1.5 text-sm ${
+                  className={`group mx-1.5 rounded-lg px-2.5 py-1.5 text-sm ${
                     selecting || clickable
                       ? "cursor-pointer hover:bg-hover"
                       : "opacity-60"
@@ -2553,7 +2567,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             )}
         </div>
         )}
-      </div>
+      </PaneNav>
 
       {/* 回放区（canvas 底）：与列表栏并列常驻，未选中显示空态 */}
       <div className="flex min-w-0 flex-1 flex-col bg-canvas">
@@ -2561,8 +2575,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           <div className="flex min-h-0 flex-1 flex-col">
             {/* 回放头部两行：上行「这是哪条对话 + 能做什么」，下行「谁、在哪个项目、多久前」+ 页签。
                 原先一行 flex-wrap，页签被挤到第二行最左、agent 名在头部和底栏各写一遍 */}
-            <div className="bg-strip px-4 pb-1.5 pt-2">
-              <div className="flex min-w-0 items-center gap-2">
+            {/* 2026-10-29：头部第一行与对话头同高同字（h-9、标题 xs l2），去 strip 底；「继续」反色实心，提炼简报 / 导出细边 */}
+            <div className="px-3 pb-2">
+              <div className="flex h-9 min-w-0 items-center gap-2">
                 <button
                   type="button"
                   className="flex h-7 shrink-0 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
@@ -2572,7 +2587,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   ☰ 列表
                 </button>
                 <span
-                  className="min-w-0 truncate text-sm font-medium text-l1"
+                  className="min-w-0 truncate px-1 text-xs text-l2"
                   title={sessionTitle(selected)}
                 >
                   {sessionTitle(selected)}
@@ -2602,14 +2617,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   <button
                     onClick={() => resumeInTerminal(selected)}
                     disabled={!selected.alive && !selected.pinned}
-                    className="inline-flex h-7 items-center justify-center rounded-md bg-cta px-2.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
+                    className={`${paneSolidButtonClass} h-7 px-2.5`}
                   >
                     继续
                   </button>
                   <button
                     onClick={() => setDigestFor(selected)}
                     disabled={!selected.alive && !selected.pinned}
-                    className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                    className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
                     title="提炼成紧凑简报，供新会话继续"
                   >
                     ◈ 提炼简报
@@ -2617,7 +2632,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   <button
                     onClick={() => void onExport()}
                     disabled={exporting || (!selected.alive && !selected.pinned)}
-                    className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                    className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
                   >
                     {exporting ? "导出中…" : "导出"}
                   </button>
@@ -2625,7 +2640,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     <button
                       type="button"
                       onClick={() => void openExported()}
-                      className="ml-1 inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover"
+                      className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
                       title={exportPath}
                     >
                       打开
@@ -2731,16 +2746,13 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   {relTime(selected.updatedAt)}
                 </span>
                 {/* 对话 / 当前项目改动 页签：固定在第二行右端 */}
-                <div className="ml-auto flex shrink-0 gap-1">
+                <div className="ccode-seg-boxed is-sm ml-auto inline-flex shrink-0 items-center">
                   {(["chat", "diff"] as const).map((k) => (
                     <button
                       key={k}
                       onClick={() => setReplayTab(k)}
-                      className={`inline-flex h-6 items-center justify-center rounded-md px-2 text-xs ${
-                        replayTab === k
-                          ? "bg-seg-sel text-l1"
-                          : "text-l3 hover:text-l1"
-                      }`}
+                      aria-pressed={replayTab === k}
+                      className="ccode-seg-boxed-item inline-flex items-center justify-center text-xs"
                     >
                       {k === "chat" ? "对话" : "当前项目改动"}
                     </button>
