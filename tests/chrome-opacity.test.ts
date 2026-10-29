@@ -66,10 +66,11 @@ test("两端单独措辞：它们不是某一档，是两种观感", () => {
 /* 基数是 CSS 变量、由壳上的系数相乘，JS 不持有 42/78/28 这些数。
    这条守住那个分工：规则本体一旦写死数字，改主题基数就要在 App.css 和 TS 两处对账。 */
 test("App.css 收紧到基数 × 系数，规则本体不再写死百分比", () => {
-  // 深色：侧栏、顶栏、四周缝同一块玻璃（2026-10-23）——罩色只在壳上一层 48%，侧栏基数 0、不再分展开 / 图标态
+  // 侧栏、顶栏、四周缝同一块玻璃：深色 2026-10-23 起、浅色 10-30 起罩色只在壳上一层，侧栏基数 0、不再分展开 / 图标态。
+  // 10-30 用户嫌玻璃看不出来：深色 48% → 28%，浅色壳 + 侧栏各 78%（侧栏合成约 95%）→ 壳一层 60%
   assert.match(css, /--ccode-rail-base:\s*0%/);
-  assert.match(css, /--ccode-shell-base:\s*48%/);
-  assert.match(css, /data-chrome="light"\]\s*\{[^}]*--ccode-rail-base:\s*78%/);
+  assert.match(css, /--ccode-shell-base:\s*28%/);
+  assert.match(css, /data-chrome="light"\]\s*\{[^}]*--ccode-rail-base:\s*0%[^}]*--ccode-shell-base:\s*60%/);
   assert.ok(!/data-nav="icons"\]\s*\{[^}]*--ccode-rail-base/.test(css), "图标态不再另设基数");
 
   const rail = /\.ccode-app-rail\s*\{[^}]*\}/.exec(css);
@@ -111,13 +112,24 @@ test("浅色选中行仍是 rail-sel 同乘系数，88% 只作为基数出现", 
   assert.ok(css.indexOf(sel[0]) > css.search(/\n\.ccode-app-rail \.bg-rail-sel\s*\{/), "浅色选中行规则要排在深色之后");
 });
 
-/* 顶栏自己不铺：深浅两套都靠壳那层罩（深色 48%、浅色 78%）。
+/* 顶栏自己不铺：深浅两套都靠壳那层罩（深色 28%、浅色 60%）。
    这一条钉住「顶栏那条规则没有藏着 percentage」，否则会与壳叠成两层。 */
 test("顶栏不自己铺罩色：颜色由壳那层代表", () => {
   const titlebar = /\.ccode-titlebar\s*\{[^}]*\}/.exec(css);
   assert.ok(titlebar, "找不到 .ccode-titlebar 规则");
   assert.match(titlebar[0], /background:\s*transparent/);
   assert.ok(!titlebar[0].includes("color-mix"), "顶栏不该有 color-mix：会和壳那层叠起来");
+});
+
+/* 玻璃上的字（2026-10-30）：主题 l3 / l4 按实心画布配，压在磨砂上 l4 只剩 2.4–3.3:1。
+   侧栏里两档上提；原值必须先在壳上存一份再混——自己引用自己是循环、整条作废，侧栏会退回未提亮的灰字。 */
+test("侧栏玻璃上的 l3 / l4 上提一档，且不自引用", () => {
+  assert.match(css, /\.ccode-app-shell\s*\{\s*--ccode-ink-l3:\s*var\(--color-l3\);\s*--ccode-ink-l4:\s*var\(--color-l4\);/);
+  const ink = /\.ccode-app-rail\s*\{\s*--color-l3:[^}]*\}/.exec(css);
+  assert.ok(ink, "找不到侧栏字档规则");
+  assert.match(ink[0], /--color-l3:\s*color-mix\(in srgb, var\(--color-l2\) 60%, var\(--ccode-ink-l3\)\)/);
+  assert.match(ink[0], /--color-l4:\s*color-mix\(in srgb, var\(--ccode-ink-l3\) 70%, var\(--ccode-ink-l4\)\)/);
+  assert.ok(!/var\(--color-l[34]\)/.test(ink[0]), "侧栏字档自己引用了 --color-l3 / l4：循环引用整条作废");
 });
 
 test("分段短标签：两端用词、中间只写数", () => {
