@@ -43,7 +43,7 @@
   开发版从终端启动、继承了 LANG，这类问题只在打包版出现，验收要看打包版。
 - **Windows 正式版没有父控制台**：后台 `git/cmd/netstat/tasklist/CLI --version` 等若直接 `Command::new` 会反复创建
   `conhost.exe` 闪窗；所有不需要独立可见窗口的命令必须走 `process::background_command`，统一加 `CREATE_NO_WINDOW`
-  并在 spawn/wait 边界登记脱敏参数与生命周期。该包装和 250ms 进程扫描只在 Windows 生效；macOS/Linux 直接返回标准
+  并在 spawn/wait 边界登记脱敏参数与生命周期。该包装和进程扫描（2 秒一次；2026-10-29 由 250ms 放宽——每次枚举全系统要 8–15ms，250ms 常驻约占一个核的 3%）只在 Windows 生效；macOS/Linux 直接返回标准
   `Command`、不启动诊断监控线程。只有用户明确打开的外部终端允许保留可见窗口。
   Windows 外部终端由设置页二选一：`cmd`（默认）走 `start cmd.exe /K <binary> <args>`，密钥在父进程
   环境块经 start 继承，不经 PowerShell；`powershell` 走 `start powershell.exe -NoExit -File wrapper`。

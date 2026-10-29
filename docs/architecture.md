@@ -388,7 +388,7 @@ run 脚本在终端页以按钮呈现（在工作区上下文时），run_mode=n
 - `logbuf` 最近 500 条应用日志；
 - 自 Ccode 启动后的进程生命周期：程序、脱敏参数、PID/父 PID、开始/结束/最后观察时间、CPU/内存、类别、采集方式与时间是否估算。
 
-直接经 `process::background_command` 启动的后台命令在 spawn/wait 边界精确登记程序、参数、PID、父 PID 与退出码；250ms
+直接经 `process::background_command` 启动的后台命令在 spawn/wait 边界精确登记程序、参数、PID、父 PID 与退出码；2 秒一次的
 进程扫描补齐 WebView2、conhost、命令包装器的子孙进程和 CPU/内存，扫描拿不到创建时间时明确标记为估算。记录采用内存环形缓冲
 （上限 2000），只覆盖 Ccode 子孙进程；系统级例外仅观察
 `ctfmon.exe` / `TextInputHost.exe`，避免采集无关应用命令行。诊断包不读取任何子进程环境变量，命令参数和日志写入 ZIP 前必须经过
@@ -457,6 +457,13 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 | Windows 上 Gemini/Qwen/Kimi 依赖 Node 或 Git Bash 环境 | detect 结果里给出缺失依赖提示，不静默失败 |
 
 ## 10. 决策记录
+
+### 2026-10-29 · Windows 诊断进程扫描由 250ms 放宽到 2 秒
+
+排查 Windows 打包版时实测：打包版开 4.5 小时累计 1306 秒 CPU，其中一个常驻线程约占一个核的 3%；单独测同一调用，每次枚举全系统进程要 8–15ms
+（换 Toolhelp 快照、精简刷新项都降不下来）。用户拍板「按你推荐修」：扫描间隔改 2 秒（`diagnostics::PROCESS_POLL_MS`）。取舍：Mesa 自己起的后台命令
+仍由 spawn-hook 在 spawn/wait 边界精确登记，不受影响；两秒内起落的孙进程（CLI 再起的 git / conhost）扫描可能漏记，诊断包里少这部分。
+以后加常驻轮询线程先在打包版量一下占用。细则 environment.md「Windows 正式版没有父控制台」条。
 
 ### 2026-10-29 · 上手引导做完的步骤可回看；「不再显示」即永久收起
 
