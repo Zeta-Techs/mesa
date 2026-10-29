@@ -2452,8 +2452,19 @@ fn spawn_flusher(sink: Sink, ch: Arc<Channel>) {
             }
             std::thread::sleep(EMIT_INTERVAL);
         }
-        sink(None);
+        // 重启接回时旧旁路晚一拍退出：同一标签已有新旁路在发快照，这个 None 会把新的盖掉（快照只在变化时才再发）
+        if !superseded(&ch) {
+            sink(None);
+        }
     });
+}
+
+/// 同一标签已经登记了另一条旁路（这条是被它顶替掉的旧的）
+fn superseded(ch: &Arc<Channel>) -> bool {
+    registry()
+        .lock()
+        .map(|reg| reg.values().any(|c| c.tab_id == ch.tab_id && !Arc::ptr_eq(c, ch)))
+        .unwrap_or(false)
 }
 
 fn feed(ch: &Channel, events: Vec<ChannelEvent>) {
@@ -3101,6 +3112,34 @@ mod tests {
         assert!(t.snap.turn.is_none());
         assert!(t.snap.live_text.is_none());
         assert_eq!(t.snap.session_seq, 1);
+    }
+
+    fn test_channel(tab: &str) -> Arc<Channel> {
+        Arc::new(Channel {
+            tab_id: tab.into(),
+            stop: AtomicBool::new(false),
+            tracker: Mutex::new(Tracker::new(tab, "codex", "codex")),
+            dirty: AtomicBool::new(false),
+            replier: Mutex::new(None),
+            codex: Mutex::new(CodexState::default()),
+            sidecar_pid: Mutex::new(None),
+            dir: None,
+        })
+    }
+
+    /// 重启接回：旧旁路晚一拍退出，不能在新旁路已登记时再向同一标签发 None 盖掉新快照
+    #[test]
+    fn replaced_channel_must_not_clear_the_new_snapshot() {
+        let (old, new, other_tab) = (test_channel("sup-tab"), test_channel("sup-tab"), test_channel("sup-other"));
+        let key = |s: &str| format!("sup-pty-{s}");
+        assert!(!superseded(&old), "没有新旁路：正常关闭照发 None");
+        registry().lock().unwrap().insert(key("new"), new.clone());
+        registry().lock().unwrap().insert(key("other"), other_tab.clone());
+        assert!(superseded(&old), "同一标签已有新旁路");
+        assert!(!superseded(&new), "新旁路自己不算被顶替");
+        assert!(!superseded(&other_tab), "别的标签不相干");
+        registry().lock().unwrap().remove(&key("new"));
+        registry().lock().unwrap().remove(&key("other"));
     }
 
     #[test]
