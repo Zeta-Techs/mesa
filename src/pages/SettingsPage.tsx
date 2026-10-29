@@ -32,6 +32,7 @@ import {
   PageFrame,
   PageHeader,
   PaneNav,
+  PaneSplit,
   PaneSearch,
   paneOutlineButtonClass,
   primaryActionClass,
@@ -662,25 +663,21 @@ function NoticesOverlay({ text, onClose }: { text: string; onClose: () => void }
 function Section({
   id,
   active,
-  badge,
   children,
 }: {
   id: SettingSectionId;
   active: string;
-  badge?: React.ReactNode;
   children: React.ReactNode;
 }) {
   if (id !== active) return null;
   const nav = SETTING_NAV.find((n) => n.id === id);
   return (
     <section>
-      <header className="mb-6">
-        {/* 分区标题 + 一行灰说明（2026-10-29 借鉴 Claude 设置页：节标题粗体、行间细线，不再套卡片） */}
-        <h2 className="flex min-h-9 flex-wrap items-center gap-2 text-lg font-semibold text-l1">
-          {nav?.label}
-          {badge}
-        </h2>
-        {nav?.description && <p className="mt-0.5 text-sm leading-5 text-l3">{nav.description}</p>}
+      {/* 分区名不再画大标题（2026-10-29：页头「设置」+ 左栏选中项已说清在哪，Claude 设置页也没有这一层）；
+          h2 留给读屏，看得见的只剩一行灰说明，回答「这里管什么」 */}
+      <header className="mb-5">
+        <h2 className="sr-only">{nav?.label}</h2>
+        {nav?.description && <p className="pt-1.5 text-sm leading-5 text-l3">{nav.description}</p>}
       </header>
       <div>{groupRows(children)}</div>
     </section>
@@ -1797,7 +1794,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     }
   }
   useEffect(() => {
-    if (visible) contentRef.current?.scrollIntoView({ block: "start", inline: "nearest" });
+    if (!visible) return;
+    // 只在内容顶已滚到吸顶页头底下时才拉回（64px = scroll-mt-16）：窄宽度下分区栏在内容上方，
+    // 无条件拉回会一打开就把分区栏滚出视口
+    const el = contentRef.current;
+    if (el && el.getBoundingClientRect().top < 64) el.scrollIntoView({ block: "start", inline: "nearest" });
   }, [activeSection, visible]);
 
   // 应用数据占用：选中「数据与存储」时读一次（递归求目录大小，不适合常驻轮询）
@@ -2620,7 +2621,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   return (
     <PageFrame width="wide">
       <PageHeader title="设置" meta="外观、终端、AI 与应用管理" />
-      <div className="flex min-w-0 items-start gap-8">
+      <PaneSplit>
         <PaneNav inline storageKey="ccode.settings.navWidth" label="调整设置分区栏宽度" defaultWidth={200} minWidth={168} maxWidth={320}>
           <nav aria-label="设置分区" className="pb-4">
             <PaneSearch
@@ -2628,9 +2629,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               onChange={setSectionQuery}
               placeholder="找设置…"
               label="搜索设置"
-              className="mb-1"
+              className="mb-1 @max-[48rem]/pane:max-w-80"
             />
-            <div className="flex flex-col">
+            {/* 内容区窄于 48rem 时分区栏收到内容上方，分组与按钮改横排折行（同改版前的窄宽口径） */}
+            <div className="flex flex-wrap gap-x-6 @min-[48rem]/pane:flex-col">
               {([
                 { id: "basic", label: "常用" },
                 { id: "management", label: "管理" },
@@ -2643,10 +2645,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 if (items.length === 0) return null;
                 return (
                 <div key={group.id} className="min-w-0">
-                  <p id={`settings-group-${group.id}`} className="px-2.5 pb-1.5 pt-4 text-xs text-l4">
+                  <p id={`settings-group-${group.id}`} className="px-2.5 pb-1.5 pt-3 text-xs text-l4 @min-[48rem]/pane:pt-4">
                     {group.label}
                   </p>
-                  <ul aria-labelledby={`settings-group-${group.id}`} className="flex flex-col gap-0.5">
+                  <ul aria-labelledby={`settings-group-${group.id}`} className="flex flex-wrap gap-0.5 @min-[48rem]/pane:flex-col">
                     {items.map(({ id, label, icon: Icon }) => (
                       <li key={id} className="min-w-0">
                         <button
@@ -2655,7 +2657,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                           aria-current={activeSection === id ? "page" : undefined}
                           aria-controls="settings-content"
                           onClick={() => setActiveSection(id)}
-                          className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors ${
+                          className={`flex h-9 min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors @min-[48rem]/pane:w-full ${
                             activeSection === id
                               ? "bg-rail-sel text-l1"
                               : "text-l2 hover:bg-hover hover:text-l1"
@@ -4184,14 +4186,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       <Section
         id="update"
         active={activeSection}
-        badge={
-          appUpdate ? (
-            <span className="ml-1 inline-flex items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs font-normal text-l3">
-              <span className="size-2 rounded-full bg-ok-text" />
-              v{appUpdate.version} 可更新
-            </span>
-          ) : undefined
-        }
       >
         {appUpdate ? (
           <Card
@@ -4726,7 +4720,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       </Section>
           </div>
         </div>
-      </div>
+      </PaneSplit>
       {noticesOpen && noticesText !== null && (
         <NoticesOverlay
           text={noticesText}

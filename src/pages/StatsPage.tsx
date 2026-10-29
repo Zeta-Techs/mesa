@@ -521,13 +521,41 @@ function QuotaFold({ open, onToggle, label }: { open: boolean; onToggle: () => v
   );
 }
 
-/** 余量 / 余额卡收起时的一行：只给最要紧的几个数（订阅：5 小时 / 本周已用；网关：当前余额），点一下展开 */
+type QuotaTone = "warn" | "err" | null;
+
+/** 收起态的小圆环：订阅画已用比例，网关余额画剩余比例（与展开后的余额条同向，满圈 = 钱还多）；颜色走告警档 */
+function QuotaRing({ pct, tone, label }: { pct: number; tone: QuotaTone; label: string }) {
+  const r = 14;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(100, Math.max(0, pct));
+  return (
+    <svg viewBox="0 0 36 36" role="img" aria-label={label} className="size-9 shrink-0 -rotate-90">
+      <circle cx="18" cy="18" r={r} fill="none" strokeWidth="4" stroke="currentColor" className="text-l1/10" />
+      {/* 0% 不画弧：圆头描边在长度 0 时也会点出一个点 */}
+      {p > 0 && (
+        <circle
+          cx="18"
+          cy="18"
+          r={r}
+          fill="none"
+          strokeWidth="4"
+          strokeLinecap="round"
+          stroke="currentColor"
+          strokeDasharray={`${(c * p) / 100} ${c}`}
+          className={tone === "err" ? "text-err-text" : tone === "warn" ? "text-warn-text" : "text-cta"}
+        />
+      )}
+    </svg>
+  );
+}
+
+/** 余量 / 余额卡收起时的一行：只给最要紧的几个数（订阅：5 小时 / 本周已用；网关：当前余额），各带一个小圆环，点一下展开 */
 function QuotaSummary({
   items,
   empty,
   onOpen,
 }: {
-  items: { label: string; value: string; tone: "warn" | "err" | null }[];
+  items: { label: string; value: string; tone: QuotaTone; ring: { pct: number; tone: QuotaTone; label: string } | null }[];
   empty: string;
   onOpen: () => void;
 }) {
@@ -535,21 +563,24 @@ function QuotaSummary({
     <button
       type="button"
       onClick={onOpen}
-      className="mt-2 flex w-full flex-wrap items-baseline gap-x-6 gap-y-1 rounded-md text-left"
+      className="mt-3 flex w-full flex-wrap items-center gap-x-8 gap-y-3 rounded-md text-left"
       title="展开看详情"
     >
       {items.length === 0 ? (
         <span className="text-sm text-l3">{empty}</span>
       ) : (
         items.map((it) => (
-          <span key={it.label} className="flex items-baseline gap-2">
-            <span className="text-sm text-l3">{it.label}</span>
-            <span
-              className={`text-xl font-semibold tabular-nums ${
-                it.tone === "err" ? "text-err-text" : it.tone === "warn" ? "text-warn-text" : "text-l1"
-              }`}
-            >
-              {it.value}
+          <span key={it.label} className="flex min-w-0 items-center gap-2.5">
+            {it.ring && <QuotaRing {...it.ring} />}
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-xs text-l3">{it.label}</span>
+              <span
+                className={`text-lg font-semibold leading-6 tabular-nums ${
+                  it.tone === "err" ? "text-err-text" : it.tone === "warn" ? "text-warn-text" : "text-l1"
+                }`}
+              >
+                {it.value}
+              </span>
             </span>
           </span>
         ))
@@ -1365,11 +1396,16 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 {/* 收起时只看各窗已用（5 小时 / 本周…），展开才有大数字、进度条、重置卡、多家切换 */}
                 {!planOpen ? (
                   <QuotaSummary
-                    items={row.windows.map((w) => ({
-                      label: `${planWindowLabel(w.window)}已用`,
-                      value: `${Math.round(w.usedPercent)}%`,
-                      tone: w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null,
-                    }))}
+                    items={row.windows.map((w) => {
+                      const tone: QuotaTone = w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null;
+                      const label = `${planWindowLabel(w.window)}已用`;
+                      return {
+                        label,
+                        value: `${Math.round(w.usedPercent)}%`,
+                        tone,
+                        ring: { pct: w.usedPercent, tone, label: `${label} ${Math.round(w.usedPercent)}%` },
+                      };
+                    })}
                     empty={row.error && !row.ok ? row.error : "暂无数据"}
                     onOpen={togglePlanOpen}
                   />
@@ -1633,17 +1669,30 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   {/* 收起时只看当前余额（同一站多个账户各一行），展开才有进度条、密钥额度、多账户切换 */}
                   {!walletOpen ? (
                     <QuotaSummary
-                      items={walletGroups.map((g) => ({
-                        label: walletGroups.length > 1 ? walletAccountTitle(g, true) : walletAmountCaption(g.head.source),
-                        value: hideQuota
-                          ? formatBalanceAmountMasked(g.head.currency)
-                          : g.head.remaining != null || g.head.total != null
-                            ? formatBalanceAmount(g.head.remaining ?? g.head.total ?? NaN, g.head.currency)
-                            : g.head.tokenUnlimited || g.head.unlimited
-                              ? "不限"
-                              : "—",
-                        tone: null,
-                      }))}
+                      items={walletGroups.map((g) => {
+                        // 圆环画剩余比例；没有总量（不限额度 / 缺数据）就不画，不拿空圈冒充
+                        const usedPct = walletUsedPercent(g.head.used, g.head.total);
+                        const label = walletGroups.length > 1 ? walletAccountTitle(g, true) : walletAmountCaption(g.head.source);
+                        return {
+                          label,
+                          ring:
+                            usedPct == null
+                              ? null
+                              : {
+                                  pct: 100 - usedPct,
+                                  tone: (usedPct >= 90 ? "err" : usedPct >= 80 ? "warn" : null) as QuotaTone,
+                                  label: `${label}：剩余 ${Math.round(100 - usedPct)}%`,
+                                },
+                          value: hideQuota
+                            ? formatBalanceAmountMasked(g.head.currency)
+                            : g.head.remaining != null || g.head.total != null
+                              ? formatBalanceAmount(g.head.remaining ?? g.head.total ?? NaN, g.head.currency)
+                              : g.head.tokenUnlimited || g.head.unlimited
+                                ? "不限"
+                                : "—",
+                          tone: null,
+                        };
+                      })}
                       empty="暂无数据"
                       onOpen={toggleWalletOpen}
                     />
@@ -1812,7 +1861,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           {/* 概览两张卡（参考 Claude 客户端用量页）：大数字一行，下面左名右值的明细行，脚注一句口径。
               次要指标只留对话次数与不计费（2026-10-23 用户「没用的不要」）；tokens 明细给全数（不缩写），方便对账 */}
           <div className="mb-4 grid gap-4 md:grid-cols-2">
-            <section className="ccode-well ccode-card p-4" aria-label="花费">
+            <section className="ccode-well ccode-card flex flex-col p-4" aria-label="花费">
               <h2 className="text-base font-medium text-l1">花费</h2>
               <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
@@ -1836,11 +1885,12 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   <StatLine label="Mesa 内部（不计费）" value={`${compact(stats.cards.internalTokens)} tokens`} />
                 )}
               </dl>
-              <p className="mt-3 text-xs text-l4">
+              {/* 脚注贴卡底：两张卡明细行数不一样，脚注对齐成一条线 */}
+              <p className="mt-auto pt-3 text-xs text-l4">
                 官方订阅与 Mesa 内部 AI 的 tokens 统计在内，但不算进费用；≥ 表示含未计价模型。
               </p>
             </section>
-            <section className="ccode-well ccode-card p-4" aria-label="tokens">
+            <section className="ccode-well ccode-card flex flex-col p-4" aria-label="tokens">
               <h2 className="text-base font-medium text-l1">tokens</h2>
               <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
@@ -1854,7 +1904,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 <StatLine label="缓存读" value={stats.cards.cacheRead.toLocaleString("en-US")} />
                 <StatLine label="缓存写" value={stats.cards.cacheWrite.toLocaleString("en-US")} />
               </dl>
-              <p className="mt-3 text-xs text-l4">
+              <p className="mt-auto pt-3 text-xs text-l4">
                 输入 {inShare}% · 输出 {100 - inShare}%；缓存读写不计入上面的大数字。
               </p>
             </section>

@@ -104,6 +104,7 @@ import {
   PaneNav,
   PaneNavGroup,
   PaneNavItem,
+  PaneSplit,
   PaneSearch,
   SegTabs,
   Checkbox,
@@ -3723,8 +3724,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             </>
           }
         />
-      <div className="flex min-w-0 items-start gap-8">
-        <PaneNav inline storageKey="ccode.profiles.navWidth" label="调整 Agent 栏宽度" defaultWidth={216} minWidth={176} maxWidth={340}>
+      <PaneSplit>
+        <PaneNav inline narrow="hide" storageKey="ccode.profiles.navWidth" label="调整 Agent 栏宽度" defaultWidth={216} minWidth={176} maxWidth={340}>
           <div className="pb-4">
             <div className="flex flex-col gap-0.5">
               <PaneNavItem
@@ -3804,15 +3805,23 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           </div>
         </PaneNav>
         <div className="min-w-0 flex-1">
-        {/* 注入模式的核心规则：配置只在**启动那一刻**注入子进程，改了对已在跑的标签无效。
-            这条以前只写在用户手册里，用户改完配置回终端发现没变化，界面上没有任何解释
-            （「有时候配置了无法切换模型」的第二个来源）。保存后有标签在跑才提示，平时不啰嗦。 */}
-        {savedNote && (
-          <NoticeBar tone="warn" className="mt-2" onDismiss={() => setSavedNote(null)}>
-            {savedNote}
-          </NoticeBar>
-        )}
-
+        {/* 内容区窄于 48rem 时左栏藏起，换成这个下拉（拖动排序只在宽的时候有；「全部」里的节标题照旧能拖） */}
+        <div className="max-w-72 @min-[48rem]/pane:hidden">
+          <MenuSelect
+            aria-label="选择 Agent"
+            value={activePane}
+            onChange={selectPane}
+            options={[
+              { value: "all", label: `全部 · ${profiles.filter(matchProfile).length}` },
+              ...shownAgents.map((agent) => {
+                const installed = !!agents.find((x) => x.id === agent.id)?.binaryPath;
+                const count = profiles.filter((p) => p.agent === agent.id && matchProfile(p)).length;
+                return { value: agent.id, label: `${agent.label} · ${installed ? count : "未安装"}` };
+              }),
+              { value: "image", label: "出图模型" },
+            ]}
+          />
+        </div>
         {error && <NoticeBar tone="err" className="mt-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         {/* npm 渠道不可用（无 Node.js）时的一键安装出口：渠道由依赖体检判定，
             渠道不允许（无 brew/winget）时保持纯文案不画按钮 */}
@@ -4154,7 +4163,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       <p className="border-b border-hairline px-1 py-4 text-sm text-l3">还没有连接</p>
                     ) : (
                       // 行间极细分割线（hairline）替代卡片间距：整列垂直严格对齐，视觉节奏与官方账号行一致
-                      <ul data-profile-list className="divide-y divide-hairline border-b border-hairline">
+                      // 列表宽于 60rem 时「端点 · 模型」挪成名字右边的一列（宽屏不再左右两头空一大截），窄了折回名字下面
+                      <ul data-profile-list className="@container/rows divide-y divide-hairline border-b border-hairline">
                         {list.map((profile, rowIndex) => {
                           const hidden = (
                             settings?.hiddenProfiles ?? []
@@ -4226,7 +4236,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 commitProfileMove(agent.id, listIds, from, to),
                               );
                             }}
-                            className={`group relative grid min-h-16 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 px-3 py-2.5 text-sm ${
+                            className={`group relative grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto_auto] content-center items-center gap-x-3 px-3 py-2.5 text-sm @min-[60rem]/rows:grid-cols-[auto_minmax(0,18rem)_minmax(0,1fr)_auto_auto] @min-[60rem]/rows:gap-x-4 ${
                               rowDrag.dragging ? "" : "transition-colors"
                             } ${
                               // 拖着走的那行：实底浮起，免得透出底下让位的行
@@ -4248,7 +4258,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 <GripVertical size={14} strokeWidth={1.8} />
                               </span>
                             )}
-                            <span className="flex min-w-0 items-center gap-3">
+                            {/* 格子摆放：窄 = 图标 | 名称 / 端点 · 模型 / 说明（三行） | 状态 | 操作；宽 = 图标 | 名称 / 说明 | 端点 · 模型 | 状态 | 操作 */}
+                            <span className="col-start-1 row-span-3 row-start-1 flex self-center">
                               <VendorIcon
                                 vendor={
                                   profile.accountType === "official"
@@ -4260,8 +4271,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 }
                                 name={profile.name}
                               />
-                              <span className="min-w-0 flex-1">
-                              <span className="flex min-w-0 items-center gap-1.5">
+                            </span>
+                              <span className="col-start-2 row-start-1 flex min-w-0 items-center gap-1.5">
                                 <span
                                   className="truncate text-base font-medium text-l1"
                                   title={
@@ -4285,7 +4296,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 ) : null}
                               </span>
                               {/* 第二行（2026-10-29 起，原端点 / 模型两列）：端点 · 模型灰字，前 3 个模型平铺、其余 +N */}
-                              <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs">
+                              <span className="col-start-2 row-start-2 mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs @min-[60rem]/rows:col-start-3 @min-[60rem]/rows:row-span-2 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:mt-0 @min-[60rem]/rows:self-center">
                                   {(profile.accountType !== "official" || officialPlan) && (
                                   <span
                                     className={`min-w-0 max-w-[45%] shrink-0 truncate ${profile.baseUrl ? "text-l3" : "text-l4"}`}
@@ -4377,7 +4388,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               </span>
                               {/* caption 行：micro 档灰字，相对时间主显、悬浮给绝对时间（白话双层） */}
                               {caption.length > 0 && (
-                                <span className="mt-0.5 block break-words text-micro text-l3">
+                                <span className="col-start-2 row-start-3 mt-0.5 block break-words text-micro text-l3 @min-[60rem]/rows:row-start-2">
                                   {caption.map((c, i) => (
                                     <Fragment key={`${c.text}-${i}`}>
                                       {i > 0 ? " · " : ""}
@@ -4399,11 +4410,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   ))}
                                 </span>
                               )}
-                              </span>
-                            </span>
                             {/* 状态列：只说例外与「测试通过」。未测试不常驻，悬停出「测试」，点了就地测，
                                 结果写在原位；测过的结论也能点一下重测 */}
-                            <span className="flex min-w-0 items-center text-xs">
+                            <span className="col-start-3 row-span-3 row-start-1 flex min-w-0 items-center self-center text-xs @min-[60rem]/rows:col-start-4">
                               {(() => {
                                 // 名单里全是出图 / 视频等模型：这条连接对话不了（启动闸会拒），状态列直说
                                 if (imageOnly) {
@@ -4511,7 +4520,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 ) : null;
                               })()}
                             </span>
-                            <span className="flex items-center justify-end gap-1 whitespace-nowrap">
+                            <span className="col-start-4 row-span-3 row-start-1 flex items-center justify-end gap-1 self-center whitespace-nowrap @min-[60rem]/rows:col-start-5">
                               {/* 「新对话」（2026-10-19 取代 v3.88 的「在终端使用」）：建完连接立刻验证它能不能用——
                                   跳到新对话页、输入框里已选好这条连接，发一句话看有没有回复。
                                   低频入口 = hover 才现的 28px 图标 ghost 钮（常驻位只留「编辑」），
@@ -4634,7 +4643,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           <ImageGenPanel gridClass={PROFILE_GRID} sectionRef={imageGenRef} />
         )}
         </div>
-      </div>
+      </PaneSplit>
       </PageFrame>
       {/* 连接冲突弹层：组头琥珀胶囊点出，列出具体文件/变量；只含文件名与变量名，密钥值不出后端 */}
       {conflictPop &&

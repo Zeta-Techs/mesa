@@ -1,4 +1,4 @@
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, CircleCheck, CircleX, Info, Search, TriangleAlert, X } from "lucide-react";
@@ -746,53 +746,13 @@ export function RoleBadge({ role }: { role?: string }) {
   );
 }
 
-/* ───────────── 管理页「对话页 / Claude 设置页」写法（2026-10-29，设计稿 docs/design-quiet-pages-mockup.html） ─────────────
- * 页头 = 对话头：36px 一条，左边页名（小字 l2，不加粗）+ 灰字说明，右边中性小按钮；内容用对话栏宽度单列（PaneColumn），
- * 或「左二级栏 + 右内容」（PaneNav + PaneBody）。二级栏可拖宽、宽度按页记住。 */
+/* ───────────── 管理页借鉴 Claude 设置页的写法（2026-10-29） ─────────────
+ * 页头与宽度各页照旧（PageHeader + PageFrame wide）；只统一列表 / 节标题 / 控件写法。
+ * 两栏页 =「左二级栏 + 右内容」（PaneSplit + PaneNav inline），二级栏可拖宽、宽度按页记住，窄了收到内容上方。 */
 
-/** 页头：与对话头同高同字（TerminalPage 对话头 h-9 / text-xs / text-l2），吸顶 + 玻璃底，滚动后底边一根细线 */
-export function PaneHead({
-  title,
-  meta,
-  actions,
-  sticky = true,
-  className = "",
-  titleId,
-}: {
-  title: ReactNode;
-  meta?: ReactNode;
-  actions?: ReactNode;
-  /** 给标题挂 id（可编程聚焦，tabIndex=-1） */
-  titleId?: string;
-  /** 页面自己整体滚动时吸顶；两栏页（内容各自滚动）传 false */
-  sticky?: boolean;
-  className?: string;
-}) {
-  const ref = useRef<HTMLElement>(null);
-  useStuckEdge(ref);
-  return (
-    <header
-      ref={ref}
-      className={`ccode-page-header ${sticky ? "sticky top-0" : "relative"} z-20 flex h-9 shrink-0 items-center gap-1 px-2 ${className}`}
-    >
-      <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-1.5 text-xs">
-        <h1 id={titleId} tabIndex={titleId ? -1 : undefined} className="shrink-0 font-normal text-l2 outline-none">
-          {title}
-        </h1>
-        {meta && <span className="min-w-0 truncate text-micro text-l4">{meta}</span>}
-      </div>
-      {actions && <div className="flex shrink-0 items-center gap-0.5">{actions}</div>}
-    </header>
-  );
-}
-
-/** 页头里的文字按钮（图标 + 字，中性色）：对话头右侧按钮同一档 */
+/** 对话管理列表栏头里的文字按钮（图标 + 字，中性色）：对话头右侧按钮同一档 */
 export const paneHeadButtonClass =
   "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 aria-expanded:bg-hover aria-expanded:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
-
-/** 页头里的纯图标按钮 */
-export const paneHeadIconClass =
-  "flex size-8 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 aria-expanded:bg-hover aria-expanded:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 细边按钮（Claude 设置页按钮口径）：行内「测试」、节标题旁「添加」等 */
 export const paneOutlineButtonClass =
@@ -801,15 +761,6 @@ export const paneOutlineButtonClass =
 /** 反色实心按钮：一屏唯一的主动作（对话管理「继续」），同对话输入框的发送钮配色 */
 export const paneSolidButtonClass =
   "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg bg-l1 px-3 text-xs font-medium text-canvas transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
-
-/** 对话栏宽度的单列（ccode-chat-column：随聊天字号走），左右留 16px */
-export function PaneColumn({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <div className="px-4">
-      <div className={`ccode-chat-column mx-auto w-full pb-8 pt-3 ${className}`}>{children}</div>
-    </div>
-  );
-}
 
 /** 搜索框：细边框 + 放大镜（Claude 设置页口径），有字时出清除钮 */
 export function PaneSearch({
@@ -870,6 +821,17 @@ export function PaneSearch({
 
 const clampNav = (width: number, min: number, max: number) => Math.min(max, Math.max(min, width));
 
+/** 「左二级栏 + 右内容」的外壳：内容区宽于 48rem 左右并排；更窄时二级栏收到内容上方（PaneNav inline 的 narrow 决定怎么收） */
+export function PaneSplit({ children }: { children: ReactNode }) {
+  return (
+    <div className="@container/pane min-w-0">
+      <div className="flex min-w-0 flex-col gap-4 @min-[48rem]/pane:flex-row @min-[48rem]/pane:items-start @min-[48rem]/pane:gap-8">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /** 二级栏（连接页的 Agent、设置页的分区、对话管理的列表）：右边缘可拖宽，双击恢复默认，←/→ 键微调；宽度按 storageKey 记住 */
 export function PaneNav({
   storageKey,
@@ -879,6 +841,7 @@ export function PaneNav({
   maxWidth = 420,
   className = "",
   inline = false,
+  narrow = "stack",
   children,
 }: {
   storageKey: string;
@@ -888,8 +851,11 @@ export function PaneNav({
   minWidth?: number;
   maxWidth?: number;
   className?: string;
-  /** 页内嵌入（2026-10-29 二改）：放在 PageFrame 里的左列，不铺底不画边、吸顶跟着页面滚；否则是贴边的整高栏 */
+  /** 页内嵌入（2026-10-29 二改）：放在 PaneSplit 里的左列，不铺底不画边、吸顶跟着页面滚；否则是贴边的整高栏 */
   inline?: boolean;
+  /** inline 时内容区变窄（PaneSplit 不足 48rem）怎么收：stack = 整宽放到内容上方（里面的列表自己改成横排），
+   *  hide = 藏起来（页面自己在内容上方给一个下拉） */
+  narrow?: "stack" | "hide";
   children: ReactNode;
 }) {
   const [width, setWidth] = useState(() => {
@@ -908,9 +874,11 @@ export function PaneNav({
   };
   return (
     <div
-      style={{ width }}
-      className={`relative flex shrink-0 flex-col ${
-        inline ? "sticky top-16 self-start" : "min-h-0 border-r border-hairline bg-rail2"
+      style={{ "--pane-nav-w": `${width}px` } as CSSProperties}
+      className={`relative shrink-0 flex-col ${
+        inline
+          ? `${narrow === "hide" ? "hidden" : "flex w-full"} @min-[48rem]/pane:sticky @min-[48rem]/pane:top-16 @min-[48rem]/pane:flex @min-[48rem]/pane:w-(--pane-nav-w) @min-[48rem]/pane:self-start`
+          : "flex min-h-0 w-(--pane-nav-w) border-r border-hairline bg-rail2"
       } ${className}`}
     >
       {children}
@@ -954,7 +922,9 @@ export function PaneNav({
           setWidth(next);
           save(next);
         }}
-        className="group absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize outline-none"
+        className={`group absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize outline-none ${
+          inline ? "hidden @min-[48rem]/pane:block" : ""
+        }`}
       >
         {/* 平时透明，悬停 / 拖动 / 键盘聚焦才显色（同运行页右栏把手） */}
         <span className="absolute inset-y-0 left-[3px] w-0.5 bg-transparent transition-colors group-hover:bg-cta group-focus-visible:bg-cta group-active:bg-cta" />
@@ -1009,72 +979,5 @@ export function PaneNavItem({
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {count != null && <span className="shrink-0 pl-2 text-xs tabular-nums text-l4">{count}</span>}
     </button>
-  );
-}
-
-/** 节：粗体节标题 + 可选灰字 + 右侧动作，节与节大留白（Claude 设置页的 Appearance / Sessions 那一档） */
-export function PaneSection({
-  title,
-  meta,
-  actions,
-  children,
-  className = "",
-  id,
-}: {
-  title: ReactNode;
-  meta?: ReactNode;
-  actions?: ReactNode;
-  children?: ReactNode;
-  className?: string;
-  id?: string;
-}) {
-  return (
-    <section id={id} className={`mt-9 first:mt-4 ${className}`}>
-      <div className="mb-2 flex min-h-8 flex-wrap items-center gap-x-2.5 gap-y-1">
-        <h2 className="text-lg font-semibold text-l1">{title}</h2>
-        {meta && <span className="text-xs text-l4">{meta}</span>}
-        {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/** 行组：上下各一根细线，行与行之间细线（PaneRow 自带底线） */
-export function PaneRows({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`border-t border-hairline ${className}`}>{children}</div>;
-}
-
-/** 一行：左标题 + 灰字说明（可折行），右控件；leading 放图标 */
-export function PaneRow({
-  title,
-  description,
-  control,
-  leading,
-  className = "",
-  children,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  control?: ReactNode;
-  leading?: ReactNode;
-  className?: string;
-  /** 行下方整宽的附加内容（如色卡） */
-  children?: ReactNode;
-}) {
-  return (
-    <div className={`group border-b border-hairline py-3.5 ${className}`}>
-      <div className="flex min-h-8 items-center gap-6">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          {leading}
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-base text-l1">{title}</div>
-            {description && <div className="mt-0.5 text-sm leading-relaxed text-l3">{description}</div>}
-          </div>
-        </div>
-        {control && <div className="flex shrink-0 items-center justify-end gap-1">{control}</div>}
-      </div>
-      {children}
-    </div>
   );
 }

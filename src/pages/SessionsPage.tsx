@@ -2613,11 +2613,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   )
                 )}
                 <span className="ml-auto flex shrink-0 items-center">
-                  {/* 继续：浅底细边，比旁边两个细边钮重一档即可（反色实心太亮，2026-10-29 用户） */}
+                  {/* 继续：浅底细边，比旁边两个细边钮重一档即可（反色实心太亮，2026-10-29 用户）；
+                      底色取正文色 8% 混进去而不是 inset——浅色主题的 inset 接近白，看不出重一档 */}
                   <button
                     onClick={() => resumeInTerminal(selected)}
                     disabled={!selected.alive && !selected.pinned}
-                    className={`${paneOutlineButtonClass} h-7 bg-inset px-2.5 font-medium hover:bg-seg-sel`}
+                    className={`${paneOutlineButtonClass} h-7 bg-[color-mix(in_oklab,var(--color-l1)_8%,transparent)] px-2.5 font-medium hover:bg-[color-mix(in_oklab,var(--color-l1)_13%,transparent)]`}
                   >
                     继续
                   </button>

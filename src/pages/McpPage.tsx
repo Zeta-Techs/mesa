@@ -1090,7 +1090,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
           }
         />
       ) : (
-          <ul className="flex flex-col gap-0.5">
+          // 列表宽于 60rem 时「类型 · 命令」挪成名字右边的一列（宽屏不再左右两头空一大截），窄了折回名字下面
+          <ul className="@container/rows flex flex-col gap-0.5">
           {servers.map((s) => {
             const onCount = Object.values(s.apps).filter(Boolean).length;
             const open = expanded === s.id;
@@ -1128,7 +1129,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 className={`group rounded-lg transition-colors ${open ? "bg-chat-bubble" : ""}`}
               >
                 <div
-                  className={`grid grid-cols-[14px_16px_minmax(0,1fr)_auto_auto_auto] items-center gap-x-2 rounded-lg px-2 py-1.5 ${
+                  className={`grid grid-cols-[14px_16px_minmax(0,1fr)_auto_auto_auto] items-center gap-x-2 rounded-lg px-2 py-1.5 @min-[60rem]/rows:grid-cols-[14px_16px_minmax(0,18rem)_minmax(0,1fr)_auto_auto_auto] @min-[60rem]/rows:gap-x-3 ${
                     open ? "" : "hover:bg-hover"
                   }`}
                 >
@@ -1238,8 +1239,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       }
                     />
                   </span>
-                  {/* 第二行：类型 · 命令（智能缩略，悬浮给全文）；相对路径 / 路径不存在时在前面写出来 */}
-                  <span className="col-span-2 col-start-3 row-start-2 flex min-w-0 items-baseline gap-1.5 pb-0.5 text-xs text-l4">
+                  {/* 第二行（宽屏是第四列）：类型 · 命令（智能缩略，悬浮给全文）；相对路径 / 路径不存在时在前面写出来 */}
+                  <span className="col-span-2 col-start-3 row-start-2 flex min-w-0 items-baseline gap-1.5 pb-0.5 text-xs text-l4 @min-[60rem]/rows:col-span-1 @min-[60rem]/rows:col-start-4 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:pb-0">
                     {pathBadge && (
                       <span
                         className={`shrink-0 ${cmdPathStatus[s.id] === "missing" ? "text-err-text" : "text-caution-text"}`}

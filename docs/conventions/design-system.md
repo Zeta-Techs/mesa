@@ -909,7 +909,9 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   不再拆成「版本」「版权」两行。诊断/存储仅在对应分区可见时读取，更新提示与收件箱直达保留。
 - **设置页借鉴 Claude 设置页（2026-10-29，取代下面 10-18「分组卡」的②③④）**：`PageFrame wide` + `PageHeader`「设置」照旧；左分区栏 `PaneNav inline`
   （吸顶、可拖宽 168–320px，`ccode.settings.navWidth`；细边搜索 `PaneSearch`、组名 `<p>` 小灰字、项 h-9 text-sm、选中 `bg-rail-sel` + 图标强调色）+ 右内容
-  随页面滚动（`#settings-content` 仍是切分区时 scrollIntoView 的锚）。分区标题 `text-lg font-semibold` + `text-sm l3` 说明；
+  随页面滚动（`#settings-content` 仍是切分区时 scrollIntoView 的锚，只在内容顶已滚到吸顶页头底下时才拉回）；内容区窄于 48rem（`PaneSplit` 容器查询）时
+  分区栏整宽放到内容上方、分组与分区横排折行。分区名不画可见标题（`h2.sr-only`，同日二改：页头 + 左栏选中项已说清，Claude 设置页也没有这一层），
+  只留 `text-sm l3` 一行说明；「更新」分区标题旁的「可更新」胶囊随之去掉（左栏与分区内卡片都已写）；
   `SubHeading` / `Card` 头 `text-base font-semibold` + `text-xs l3`；**`RowGroup` 与 `Card` 不再套 `ccode-well` 卡**：上下细线 + 行间 `divide-hairline`，
   Row 去左右内边距，标题 `text-base` 常规字重、说明 `text-sm l3`；`CardRow` 每行底线；按钮统一 `paneOutlineButtonClass`（细边），下拉 / 输入
   `fieldFixed` 改透明底 32px；分段控件 `SegTabs variant="boxed"`；主题区不套卡（标题 + 跟随开关 + 色卡网格）；「关于」身份块为 chat-bubble 色底。
