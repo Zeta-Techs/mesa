@@ -80,6 +80,7 @@ import {
   matchLanguageByPath,
 } from "../editor-languages";
 import { monacoEditorColors } from "../monaco-theme";
+import { disableWorkerLanguageFeatures } from "../monaco-services";
 
 const MermaidDiagrams = lazy(() => import("./MermaidDiagrams"));
 
@@ -109,6 +110,7 @@ monaco.languages.register({
   extensions: [...LATEX_EXTENSIONS],
 });
 monaco.languages.setMonarchTokensProvider(LATEX_LANGUAGE_ID, latexMonarch);
+disableWorkerLanguageFeatures(monaco);
 
 /** 按文件扩展名/文件名推断 Monaco 语言（无匹配则 plaintext） */
 function languageFor(path: string): string | undefined {

@@ -68,7 +68,12 @@ revealLineInCenter(l){globalThis.__mdJump.reveal.push(l)},setPosition(p){globalT
 export const editor={defineTheme(){},setTheme(){},create(){return ed}};
 export const KeyMod={CtrlCmd:2048,Shift:1024,WinCtrl:256};
 export const KeyCode={Enter:3,KeyB:32,KeyC:33,KeyI:39,KeyX:54};
-export const languages={register(){},setMonarchTokensProvider(){},getLanguages(){return[]}};`
+export const languages={register(){},setMonarchTokensProvider(){},getLanguages(){return[]}};
+const lsd={setModeConfiguration(){}};
+export const css={cssDefaults:lsd,scssDefaults:lsd,lessDefaults:lsd};
+export const html={htmlDefaults:lsd,handlebarDefaults:lsd,razorDefaults:lsd};
+export const json={jsonDefaults:lsd};
+export const typescript={typescriptDefaults:lsd,javascriptDefaults:lsd};`
                   : "export default function Stub(){return null;}",
           }));
         },

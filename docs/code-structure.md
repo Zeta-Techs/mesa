@@ -848,6 +848,8 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
                              # （tests/custom-theme.test.ts）
   monaco-theme.ts            # Monaco 编辑器面色取自 --color-editor-*，一律规范成 #rrggbb（打包版 CSS 压缩出的 #111 / #fff
                              #   会让 Monaco 抛错整页崩；tests/monaco-theme.test.ts）
+  monaco-services.ts         # 关掉 JSON / CSS / HTML / TS 要语言服务 worker 的功能、只留着色（只配了基础 editor worker，
+                             #   不关则一开这几类文件就是「Missing requestHandler」未捕获异常；tests/monaco-services.test.ts）
   profile-copy.ts            # profile 跨 agent 复制纯逻辑
   resume-profile.ts          # 恢复会话的 profile 挑选纯逻辑：codex 内联 provider 会话（rollout 记
                              # model_provider="ccode" 或派生名 ccode-<网关短id>）按网关挑绑定；

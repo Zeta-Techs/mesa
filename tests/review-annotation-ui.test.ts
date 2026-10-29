@@ -54,7 +54,12 @@ const ed={dispose(){},updateOptions(){},layout(){},focus(){},hasTextFocus(){retu
 export const editor={defineTheme(){},setTheme(){},create(){return ed}};
 export const KeyMod={CtrlCmd:2048,Shift:1024,WinCtrl:2048};
 export const KeyCode={Enter:3,KeyB:41,KeyC:42,KeyI:53,KeyX:56};
-export const languages={register(){},setMonarchTokensProvider(){},getLanguages(){return[]}};`
+export const languages={register(){},setMonarchTokensProvider(){},getLanguages(){return[]}};
+const lsd={setModeConfiguration(){}};
+export const css={cssDefaults:lsd,scssDefaults:lsd,lessDefaults:lsd};
+export const html={htmlDefaults:lsd,handlebarDefaults:lsd,razorDefaults:lsd};
+export const json={jsonDefaults:lsd};
+export const typescript={typescriptDefaults:lsd,javascriptDefaults:lsd};`
                   : "export default function Stub(){return null;}",
           }));
         },

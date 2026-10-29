@@ -5,6 +5,7 @@
 ## 未发布
 
 - 修好：安装版里打开代码、配置、文本文件，编辑器没有语法颜色、行号错位（开发版正常）。
+- 修好：打开 JSON、CSS、HTML、TypeScript / JavaScript 文件时后台不断报「Missing requestHandler」错误；这几类文件的补全、悬停提示、折叠等编辑辅助本来就用不了，现在直接关掉，只保留语法着色。
 - 修好：安装版在文件树里打开文件，整个界面变成「界面渲染出错 / Illegal value for token color」——用纯黑或任一套浅色主题时都会这样（开发版不出现）。
 - 修好：Windows 上在 Mesa 里一键装好 Git、Node.js 之后，不用重启 Mesa，新开的 Agent 对话和内置终端就能用 `git`、`node`、`npx`（以前要重启 Mesa 才认得，Agent 里一律报找不到命令）。
 - 改进：Windows 上 Mesa 空闲时更省电——诊断用的后台进程记录由每 0.25 秒扫一遍全系统改为每 2 秒一次，原先开着就一直占约 3% 的一个 CPU 核。
