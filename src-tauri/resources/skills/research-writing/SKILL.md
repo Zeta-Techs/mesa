@@ -1,6 +1,6 @@
 ---
 name: research-writing
-description: Write and revise empirical research papers from an outline, study design, analysis outputs, figures, and an existing BibTeX library. Use for IMRaD manuscripts and evidence reports; do not use for literature-only reviews or rebuttal letters.
+description: Write and revise empirical research papers from an outline, study design, analysis outputs, figures, and an existing BibTeX library. Use for IMRaD manuscripts and evidence reports; do not use for literature-only reviews or rebuttal letters. In a plain chat with no TASK.md, when the user pastes a passage to polish or revise, return the revised text in the chat and do not create manuscript files.
 outputs: [manuscript/]
 provides: [research-writing]
 ---
@@ -10,6 +10,16 @@ provides: [research-writing]
 ## 适用范围
 
 用于有研究问题、方法、结果和讨论的实证论文或分析报告。先读任务书、研究设计、结果表和现有文献笔记，再写作；不要把综述写作方式套到实验结果上。
+
+## 对话里改一段（轻量模式）
+
+本技能装在 CLI 的技能目录里，用户在普通对话里贴一段 Introduction 说「帮我改改」也会用到。那不是写作步，下面「写作流程」第 1 步要读的任务书、设计和结果表不是前提。
+
+**怎么判断**：当前目录没有 `TASK.md`，用户给的是对话里的一段文字（或点名一个文件里的某段），要的是润色、改写、缩写或翻译——走轻量模式。
+
+- 改好的文字直接回在对话里；用户点名了文件、明说「改到文件里」，才改那个文件的那一段。不新建 `manuscript/` 下的文件。
+- 「核心约束」照旧：不编数据、样本、显著性和文献；数字和结论方向不动；原文里的 `[@键]` 原样保留。
+- 原文里看着站不住的论断，不替用户改成别的事实——在改好的文字后单独列出来，说明为什么存疑。
 
 ## 核心约束
 
@@ -47,4 +57,4 @@ provides: [research-writing]
 
 ## 验收入口
 
-有 TASK.md 时沿用其中的验收摘要/质量状态合同，不重复建表；独立使用时，在本报告开头写：回答、关键证据入口、未验证、影响结论的问题、待人决定。状态为待审/有条件接受/证据通过（限定范围）/阻塞；推荐不等于人工批准。
+有 TASK.md 时沿用其中的验收摘要/质量状态合同，不重复建表；轻量模式不写这一段；不在流水线里但按写作流程成稿时，在本报告开头写：回答、关键证据入口、未验证、影响结论的问题、待人决定。状态为待审/有条件接受/证据通过（限定范围）/阻塞；推荐不等于人工批准。
