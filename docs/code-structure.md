@@ -667,6 +667,10 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
   （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；
    .github/workflows/mirror-release.yml 在 Release 发布时调用，build.yml 打包时按仓库变量 UPDATE_MIRROR_BASE 把镜像加到 updater 地址最前；
    开通步骤 docs/release.md）
+  （scripts/app-sandbox.sh + scripts/app-smoke/：打包版新用户沙盒与自动点验（只在 Mac）——app-sandbox.sh 用空家目录（--home 可换）、
+   访达双击同款环境另起一个装好的 Mesa.app；smoke.sh 在沙盒里经无障碍接口（ax.swift，按控件文字 AXPress，不动鼠标键盘）
+   走第一次打开 → 各页 → 示例课题 → 各类文件预览（深浅主题各一遍）→ 诊断页，查整页报错与应用日志 error，出报告和截图；
+   开发版的新用户沙盒是 scripts/dev-sandbox.sh）
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）

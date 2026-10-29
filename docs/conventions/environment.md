@@ -192,3 +192,13 @@
   用来走「第一次打开」（上手引导、CLI 首次启动画面）；工具链变量（CARGO_HOME / RUSTUP_HOME / npm 缓存）指回真实家目录，
   `CARGO_TARGET_DIR` 独立在 `~/.ccode-sandbox/target`（共用主 target 会因嵌入配置不同来回重编、抢构建锁），首次构建要几分钟。
   不隔离：系统里已装的 Agent（PATH 照旧）、沙盒里点「安装」装的系统级 CLI、API 请求计费。清理 = `rm -rf ~/.ccode-sandbox`。
+  **打包版新用户沙盒与自动点验（2026-10-29，只在 Mac）**：开发版复现不了的问题（压缩后的 CSS、生产 CSP、随包 helper、
+  访达启动的短环境）只能拿打包产物验。`scripts/app-sandbox.sh [--app <Mesa.app>] [--home <目录>] [--reset]` 用空家目录另起一个
+  装好的应用，和正在用的 Mesa 并存（同 identifier 也行：`CFFIXED_USER_HOME` 实测能把网页存储挪进沙盒）；
+  `scripts/app-smoke/smoke.sh [--app …]` 在沙盒里自动点一遍并出报告（`<家目录>/../smoke-report/report.md` + 截图），
+  验刚打的包用 `npm run tauri -- build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'`（本机没有 updater 私钥）。
+  踩过的坑：① `open` 会把调用方整份环境变量带给新进程，必须先 `env -i` 清成 launchd 给的几项，否则测到的是终端环境；
+  ② 网页内容的无障碍树要窗口**激活过一次**才建，之前只看得到空的 AXGroup（smoke.sh 开头 raise 一次）；
+  ③ **锁屏时**拿不到窗口内容（AXWindows 回一个 AXApplication），先解锁再跑；④ 点击走 AXPress 按控件文字，不发鼠标键盘事件，
+  不会点进别的应用（区别于 System Events 按坐标点）。不隔离：钥匙串里的登录、Finder 移入的回收站（进真实 `~/.Trash`）、
+  TCC 授权（按应用签名记，与家目录无关；沙盒里的下载 / 文稿文件夹不是系统保护的那几个，授权弹窗在沙盒里测不到）。
