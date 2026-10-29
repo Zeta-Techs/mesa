@@ -95,6 +95,7 @@ ClientSpec {
 **Claude（A 档）**
 - 会话：`claude://resume?session=<uuid>`；项目：`claude://code/new?folder=<abs>`。
 - 桌面版导入失败只会在它自己界面弹 toast（类别：auth_expired / network / transcript_missing / other），所以 Mesa 只能预检 transcript 存在与否。
+- 不是 Mesa 开的老对话（2026-10-29）：没有渠道定义要补，transcript 在就能开；认不出连接时读会话文件末尾 512KB 里最后一条助手消息的模型名，名字不含 `claude` 就给「会换账号」的 note（`client_open.rs claude_last_model`）。含 `claude` 的中转对话认不出，不假装知道。
 - 导入后桌面版是「接管」还是「另起一份」会决定双写是否有风险，**实施前必须实测**（见 §8）。
 
 **Kimi / OpenCode（B 档）**

@@ -144,6 +144,8 @@ pub(crate) struct PlanEnv {
     pub codex_header_providers: Vec<String>,
     pub codex_thread: ThreadState,
     pub session_file_exists: Option<bool>,
+    /// Claude 会话记录里最后用的模型名（认不出连接时据此提示会换账号）
+    pub session_model: Option<String>,
     pub profiles: Vec<ProfileLite>,
 }
 
@@ -552,7 +554,43 @@ fn plan_own_account_session(
                 ),
             ));
         }
+        return;
     }
+    // 不是 Mesa 开的（装 Mesa 之前的老对话、外部终端里跑的）：认不出连接，只能看记录里的模型名。
+    // 名字里没有 claude 的多半走过中转；带 claude 的也可能是中转，那种认不出就不说
+    if let Some(m) = env.session_model.as_deref().filter(|m| !m.to_ascii_lowercase().contains("claude")) {
+        checks.push(check(
+            "channel_changes",
+            "note",
+            format!(
+                "这条对话记录里用的模型是「{m}」，不是 Anthropic 的模型，多半是经中转跑的。{}会用它自己登录的账号和 Claude 模型接着聊，不会走原来的中转。",
+                spec.display
+            ),
+        ));
+    }
+}
+
+/// Claude 会话文件里最后一条助手消息的模型名（只读文件末尾一段）。
+/// `<synthetic>` 是 CLI 自己补的报错占位，不算
+fn claude_last_model(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL: u64 = 512 * 1024;
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).ok()?;
+    let mut buf = Vec::new();
+    f.take(TAIL).read_to_end(&mut buf).ok()?;
+    String::from_utf8_lossy(&buf).lines().rev().find_map(|line| {
+        if !line.contains("\"assistant\"") {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        if v.get("type")?.as_str()? != "assistant" {
+            return None;
+        }
+        let m = v.get("message")?.get("model")?.as_str()?.trim();
+        (!m.is_empty() && m != "<synthetic>").then(|| m.to_string())
+    })
 }
 
 // ===== 探测 =====
@@ -805,6 +843,7 @@ fn gather_env(
         codex_header_providers: Vec::new(),
         codex_thread: ThreadState::Unknown,
         session_file_exists: None,
+        session_model: None,
         profiles,
     };
     match target {
@@ -825,10 +864,9 @@ fn gather_env(
                 }
             }
             ChannelPolicy::OwnAccount => {
-                env.session_file_exists = file_path
-                    .as_deref()
-                    .filter(|f| !f.is_empty())
-                    .map(|f| Path::new(f).exists());
+                let file = file_path.as_deref().filter(|f| !f.is_empty()).map(Path::new);
+                env.session_file_exists = file.map(Path::exists);
+                env.session_model = file.and_then(claude_last_model);
             }
         },
     }
@@ -1058,6 +1096,7 @@ mod tests {
             codex_header_providers: vec![],
             codex_thread: ThreadState::Present { archived: false },
             session_file_exists: Some(true),
+            session_model: None,
             profiles: vec![],
         }
     }
@@ -1363,6 +1402,42 @@ mod tests {
         assert!(note.text.contains("连接gw"));
         let plan = build_plan("claude-code", claude(), &mk("off"), &env);
         assert!(plan.checks.is_empty());
+    }
+
+    #[test]
+    fn claude_session_outside_mesa_notes_channel_change_by_model_name() {
+        // 装 Mesa 前的老对话：没有连接可认，按记录里的模型名判断是不是走过中转
+        let mut env = env_ok();
+        let t = session("claude-code", SID);
+        env.session_model = Some("glm-5.1".into());
+        let plan = build_plan("claude-code", claude(), &t, &env);
+        assert_eq!(plan.verdict, "ready");
+        let note = plan.checks.iter().find(|c| c.id == "channel_changes").unwrap();
+        assert!(note.text.contains("glm-5.1"), "{}", note.text);
+        env.session_model = Some("claude-opus-4-1-20250805".into());
+        assert!(build_plan("claude-code", claude(), &t, &env).checks.is_empty());
+        env.session_model = None;
+        assert!(build_plan("claude-code", claude(), &t, &env).checks.is_empty());
+    }
+
+    #[test]
+    fn claude_last_model_reads_tail_and_skips_synthetic() {
+        let dir = std::env::temp_dir().join(format!("ccode-claude-model-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        std::fs::write(
+            &f,
+            concat!(
+                r#"{"type":"assistant","message":{"model":"claude-sonnet-4-5"}}"#, "\n",
+                r#"{"type":"user","message":{"content":"assistant"}}"#, "\n",
+                r#"{"type":"assistant","message":{"model":"glm-5.1"}}"#, "\n",
+                r#"{"type":"assistant","message":{"model":"<synthetic>"}}"#, "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(claude_last_model(&f).as_deref(), Some("glm-5.1"));
+        assert_eq!(claude_last_model(&dir.join("none.jsonl")), None);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
