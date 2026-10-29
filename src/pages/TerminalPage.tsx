@@ -99,6 +99,7 @@ import {
 } from "../chat-channel";
 import { resolveCustomRuntimeCwd } from "../custom-runtime";
 import { normSep, pathWithin as pathWithinDialect, samePath, stripVerbatim } from "../path-utils";
+import { compareRunIdentity, isTaskReuseKey, type RunIdentity } from "../run-model";
 import { composeLaunchPrompt } from "../project-context";
 import { loadProjectContextPack } from "../project-context-load";
 import { cwdIsCodingWorktree } from "../coding-git";
@@ -2277,6 +2278,13 @@ const TerminalView = memo(function TerminalView({
   // 全都没登记会话）。闭包里一律读这个 ref
   const runIdRef = useRef<string | null>(runId);
   runIdRef.current = runId;
+  // 手上那条 Run 绑定时的身份：本次挂载里启动成功时记下；恢复出的标签（带 initialRunId、还没启动过）取挂载时的值。
+  // launch 拿它和这次启动比，换了目录 / Agent / 权限就另开 Run（compareRunIdentity）
+  const boundIdentityRef = useRef<RunIdentity | null>(
+    initialRunId
+      ? { agentId, cwd, permission: permission ?? (readonly ? "discuss" : "write_tree") }
+      : null,
+  );
   const [attention, setAttention] = useState<TabStatus["attention"]>(null);
   // PTY 输出静默计时：working 标由输出事件打起，静默后按 onPtyWorkingSilence 熄灭
   const lastOutputAtRef = useRef(0);
@@ -5464,7 +5472,18 @@ const TerminalView = memo(function TerminalView({
       return null;
     }
     const launchPrompt = (options?.prompt ?? promptText).trim();
-    const isResume = Boolean(resumeId ?? resumeSessionId);
+    // 手上的 Run 和这次启动对不上（停下后换了目录 / Agent / 权限）：另开 Run，不带旧 id 去撞 open_at 的身份校验。
+    // 换了目录或 Agent 时原会话也接不回（别家 CLI / 别的目录），开新会话；离开原目录时目标归属一并放下
+    const launchPermission = permission ?? (options?.readonly ?? readonly ? "discuss" : "write_tree");
+    const launchIdentity: RunIdentity = { agentId, cwd, permission: launchPermission };
+    const identityChange = (runId ?? initialRunId ?? "").trim()
+      ? compareRunIdentity(boundIdentityRef.current, launchIdentity, homeDir, IS_WINDOWS)
+      : "same";
+    const freshRun = Boolean(options?.freshRun) || identityChange !== "same";
+    const sessionMoved = identityChange === "agent" || identityChange === "cwd";
+    const leftTaskDir = identityChange === "cwd";
+    const resumeFrom = sessionMoved ? undefined : (resumeId ?? resumeSessionId);
+    const isResume = Boolean(resumeFrom);
     const chrome = launchChromeBeforeMeasure({
       resume: isResume,
       prompt: launchPrompt,
@@ -5474,7 +5493,7 @@ const TerminalView = memo(function TerminalView({
       bar: barExpandedRef.current,
       advanced: advancedLaunchOpenRef.current,
     };
-    const probeRun = options?.freshRun ? "" : (runId ?? initialRunId ?? "").trim();
+    const probeRun = freshRun ? "" : (runId ?? initialRunId ?? "").trim();
     let existingPty: string | null = null;
     if (probeRun) {
       existingPty = await invoke<string | null>("pty_id_for_run", {
@@ -5486,7 +5505,7 @@ const TerminalView = memo(function TerminalView({
       // 接回活进程也要先立关联上下文：标签重新挂载后 linkCtxRef 是空的，linkTick 见空直接返回，
       // 聊天层永远停在「正在连接当前会话…」、20 秒超时也不触发（2026-10-23 用户点随手聊会话实测）。
       // 会话 id 依次取：这次要接的会话 > 这个 Run 已登记的会话；都没有才走按标签认领
-      const runSessionId = (resumeId ?? resumeSessionId)
+      const runSessionId = resumeFrom
         ? null
         : await invoke<RunDto | null>("run_get", { id: probeRun })
             .then((r) => r?.sessionId ?? null)
@@ -5497,7 +5516,7 @@ const TerminalView = memo(function TerminalView({
         linkCtxRef.current = {
           agentId,
           cwd,
-          hint: resumeId ?? resumeSessionId ?? runSessionId,
+          hint: resumeFrom ?? runSessionId,
           filePath: null,
           sessionId: null,
           createdAt: null,
@@ -5534,7 +5553,7 @@ const TerminalView = memo(function TerminalView({
     // 步骤认领（「跟 AI 商量一下」）：spawn 前以最终 agent/cwd 登记——此刻的值才是用户
     // 在启动栏确认后的真实选择；会话归属由列表扫描命中后固化进 session_meta.step_name。
     // 同标签重复启动（重启 agent 接着聊任务书）重新登记，新会话仍归该步骤
-    if (stepClaimName && !resumeId && !resumeSessionId) {
+    if (stepClaimName && !resumeFrom) {
       invoke("claim_next_session_for_step", {
         agent: agentId,
         cwd,
@@ -5543,7 +5562,7 @@ const TerminalView = memo(function TerminalView({
         // 登记失败静默降级：会话不归步骤，仍可在对话页全部列表里看到
       });
     }
-    const lockKey = (options?.freshRun ? "" : (runId ?? initialRunId ?? "").trim()) || `tab:${tabId}`;
+    const lockKey = (freshRun ? "" : (runId ?? initialRunId ?? "").trim()) || `tab:${tabId}`;
     if (interactiveLaunchLocks.has(lockKey)) {
       return null;
     }
@@ -5582,27 +5601,23 @@ const TerminalView = memo(function TerminalView({
         })(),
         // 工作区交接的附加 env（端口段），与 profile env 叠加
         extraEnv: initialExtraEnv ?? null,
-        // 会话恢复（无则全新会话）
-        resumeSessionId: resumeId ?? resumeSessionId ?? null,
-        resumeProvider: resumeProvider ?? null,
+        // 会话恢复（无则全新会话）；换了目录 / Agent 不再接原会话
+        resumeSessionId: resumeFrom ?? null,
+        resumeProvider: sessionMoved ? null : (resumeProvider ?? null),
         // 一键开步的首条指令（恢复会话由后端忽略注入）
         initialPrompt: (options?.prompt ?? promptText).trim() || null,
         linkClaimId: tabId,
         // 「聊想法」只读模式：后端按注册表注入只读/计划模式参数（不支持的 CLI 只有 prompt 软约束）
         readonly: options?.readonly ?? readonly ?? null,
-        permission:
-          permission ??
-          (options?.readonly ?? readonly ? "discuss" : "write_tree"),
+        permission: launchPermission,
         // 开工弹层的本次思考档覆盖（空 = 绑定逐模型策略）；后端在读绑定策略处用本值优先
         effortOverride: effortOverride?.trim() || null,
         // 聊天权限徽标选的原生权限档（只讨论时不传；null = 按本机设置）
-        permissionMode:
-          (permission ?? (options?.readonly ?? readonly ? "discuss" : "write_tree")) === "discuss"
-            ? null
-            : permissionMode,
-        reuseKey: reuseKey ?? null,
-        runId: options?.freshRun ? null : (runId ?? initialRunId ?? null),
-        taskId: taskId ?? null,
+        permissionMode: launchPermission === "discuss" ? null : permissionMode,
+        // 离开了原目标的目录：不再按那个目标的复用键 / Task 登记（工作区键会被判成步骤、在主仓里写盘被拒）
+        reuseKey: leftTaskDir && isTaskReuseKey(reuseKey) ? null : (reuseKey ?? null),
+        runId: freshRun ? null : (runId ?? initialRunId ?? null),
+        taskId: leftTaskDir ? null : (taskId ?? null),
         cols: size.cols,
         rows: size.rows,
       });
@@ -5611,6 +5626,9 @@ const TerminalView = memo(function TerminalView({
         runIdRef.current = res.runId;
         setRunId(res.runId);
       }
+      boundIdentityRef.current = launchIdentity;
+      // 原会话属于换走之前的 Agent / 目录：回落 shell 后发消息不再拿它去接
+      if (sessionMoved) lastResumeRef.current = null;
       // 要接的那段对话从没落盘（上次启动没聊就退出 / 启动即崩），后端已改开新会话：说一句，
       // 免得用户以为接上了上次的上下文
       if (res.resumeUnwritten) {
@@ -5682,7 +5700,7 @@ const TerminalView = memo(function TerminalView({
       const launchedPrompt = (options?.prompt ?? promptText).trim();
       const armWorking = shouldArmWorkingOnLaunch({
         prompt: launchedPrompt,
-        isResume: Boolean(resumeId ?? resumeSessionId) && !res.resumeUnwritten,
+        isResume: isResume && !res.resumeUnwritten,
       });
       if (armWorking) {
         armPtyWorking();

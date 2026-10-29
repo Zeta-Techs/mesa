@@ -215,7 +215,13 @@
   permissionMode，下一拍调标签动作 `restartWithPermission`：停下 Agent，回落 shell 后 effect 用最新 props
   `launch(lastResume)` 按原会话恢复，对话不丢；**接回期间置 `keepPreviewConvRef`**，`launch` 开头的 `resetLink` 不清聊天，接上后会话文件刷新整份替换（换模型 / 换连接同口径；原先先清空再出现，用户看着像整页刷新，2026-10-25）。权限徽标确认框写明「会重开」，正在生成时只显示不可点。
   **重开另开一条 Run（`freshRun`，2026-10-21）**：旧 Run 刚被 pty_kill 关掉，权限（只讨论 ↔ 可改文件）又是 Run 身份的一部分，
-  沿用旧 Run 会被 `open_at` 拒（「此 Run 不支持恢复」「Run 身份与启动目标不一致」）。另：**轮询 / 旁路回调里读 Run 一律用 `runIdRef`**——
+  沿用旧 Run 会被 `open_at` 拒（「此 Run 不支持恢复」「Run 身份与启动目标不一致」）。
+  **身份变了的启动一律另开（2026-10-29，用户报打包版停下后换模型 / 目录再启动报「Run 身份与启动目标不一致」）**：标签的 `runId`
+  启动后不清，停下后在聊天层换目录（`pickDir`）、换 Agent（模型菜单 / 最近搭配）再启动，原先带旧 id 撞身份校验。`launch` 启动前用
+  `run-model.ts compareRunIdentity` 比标签手上 Run 的绑定身份（本次挂载里启动成功时记下，恢复出的标签取挂载时的值）和这次的
+  Agent / 目录 / 权限：只换权限 = 另开 Run、接回原会话；换了 Agent 或目录 = 另开 Run、开新会话（不接原会话、清 `lastResumeRef`）；
+  换了目录还放下原目标归属（不带 `taskId`、不带任务类复用键——工作区键在主仓写盘会被判成步骤拒掉）。连接 / 模型 / 思考档不算身份。
+  后端身份校验不放宽：带 id 来就必须是同一件事。另：**轮询 / 旁路回调里读 Run 一律用 `runIdRef`**——
   闭包是 launch 那一轮捕获的，读 state 是旧值，`lockLink` 曾因此从不给 Gemini / Kimi / OpenCode 的交互 Run 登记会话；
   存量没登记的 Run 由 `open_at` 在首次带会话恢复时认下（同「首次登记为准」）。
 - **屏上读回模型（2026-10-17；2026-10-18 补 Gemini「Model set to X」、Codex 底栏「<模型> <档位> · <目录>」，CodeBuddy 中途换不了不再读）**：

@@ -75,6 +75,45 @@ export function isDiscussPermission(
   return Boolean(readonly);
 }
 
+/** 标签手上那条 Run 的身份里会随人操作变的三样（runs.rs open_at 身份校验的子集）。
+ *  连接、模型、思考档不算身份：换了照旧沿用原 Run、接回原会话。 */
+export interface RunIdentity {
+  agentId: string;
+  cwd: string;
+  permission: RunPermission;
+}
+
+export type RunIdentityChange = "same" | "permission" | "agent" | "cwd";
+
+/**
+ * 这次启动还能不能沿用标签手上的 Run（2026-10-29）：Agent 停下后在聊天层换了目录 / Agent 再启动，
+ * 带旧 id 会被 open_at 拒（「Run 身份与启动目标不一致」）。
+ * - same：沿用原 Run，按原会话接回
+ * - permission：只换了权限，另开 Run、接回原会话（同换权限重开）
+ * - agent / cwd：换了 Agent 或目录（两样都换报 cwd），另开 Run、开新会话——原会话属于别家 CLI / 别的目录，接不回；
+ *   cwd 还意味着离开了原来那个目标的目录，调用方不再把新 Run 挂到原目标上
+ * 目录先展开 `~` 再按 samePath 比；bound 为空（还没绑过 Run）一律 same。
+ */
+export function compareRunIdentity(
+  bound: RunIdentity | null,
+  next: RunIdentity,
+  home: string,
+  isWindows = false,
+): RunIdentityChange {
+  if (!bound) return "same";
+  const expand = (p: string) => {
+    const t = p.trim();
+    if (!home) return t;
+    if (t === "~") return home;
+    if (t.startsWith("~/") || t.startsWith("~\\")) return `${home}${t.slice(1)}`;
+    return t;
+  };
+  if (!samePath(expand(bound.cwd), expand(next.cwd), isWindows)) return "cwd";
+  if (bound.agentId !== next.agentId) return "agent";
+  if (bound.permission !== next.permission) return "permission";
+  return "same";
+}
+
 /** 关标签后仍可从会话恢复的交互 Run：有 session、非 internal、非巡检。
  *  阅读 Run 排除在外：阅读标签只在还开着时算「正在进行」，关掉后不当项目任务留着。 */
 export function pickRecoverableRun(

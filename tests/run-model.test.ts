@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canonicalizeReuseKey,
+  compareRunIdentity,
   inferTaskKind,
   isDiscussPermission,
   isRunProcessLive,
@@ -165,4 +166,43 @@ test("isRunProcessLive：进程活着才算运行中，保留标签不算", () =
   assert.equal(isRunProcessLive({ running: false, attention: "done" }), true);
   assert.equal(isRunProcessLive({ running: false, attention: null }), false);
   assert.equal(isRunProcessLive({}), false);
+});
+
+test("compareRunIdentity：只有 Agent / 目录 / 权限算身份", () => {
+  const bound = { agentId: "codex", cwd: "~", permission: "write_tree" as const };
+  const home = "/Users/a";
+  assert.equal(compareRunIdentity(null, bound, home), "same");
+  assert.equal(compareRunIdentity(bound, { ...bound }, home), "same");
+  // ~ 与展开后的主目录、尾斜杠都是同一处
+  assert.equal(compareRunIdentity(bound, { ...bound, cwd: "/Users/a/" }, home), "same");
+  assert.equal(
+    compareRunIdentity(
+      { ...bound, cwd: "~/Documents/p" },
+      { ...bound, cwd: "/Users/a/Documents/p" },
+      home,
+    ),
+    "same",
+  );
+  // 截图场景：上次在 ~ 跑，停下后换到项目目录
+  assert.equal(
+    compareRunIdentity(bound, { ...bound, cwd: "/Users/a/Documents/zeta首页界面设计" }, home),
+    "cwd",
+  );
+  assert.equal(compareRunIdentity(bound, { ...bound, agentId: "claude-code" }, home), "agent");
+  // 几样一起变按目录算（会话换、目标归属也放下）
+  assert.equal(
+    compareRunIdentity(bound, { agentId: "claude-code", cwd: "/tmp/x", permission: "discuss" }, home),
+    "cwd",
+  );
+  assert.equal(compareRunIdentity(bound, { ...bound, permission: "discuss" }, home), "permission");
+  // Windows 大小写与分隔符
+  assert.equal(
+    compareRunIdentity(
+      { ...bound, cwd: "C:\\Users\\A\\proj" },
+      { ...bound, cwd: "c:/users/a/proj" },
+      "C:\\Users\\A",
+      true,
+    ),
+    "same",
+  );
 });
