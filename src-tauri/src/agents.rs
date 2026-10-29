@@ -1676,6 +1676,9 @@ pub fn launch_plan_with_prompt(
     initial_prompt: Option<&str>,
 ) -> Result<LaunchPlan, String> {
     let mut plan = launch_plan(profile, key, model)?;
+    if let Some((k, v)) = update_prompt_off_env(&profile.agent) {
+        plan.env.push((k.into(), v.into()));
+    }
     let Some(prompt) = initial_prompt.map(str::trim).filter(|p| !p.is_empty()) else {
         return Ok(plan);
     };
@@ -1693,6 +1696,18 @@ pub fn launch_plan_with_prompt(
         }
     }
     Ok(plan)
+}
+
+/// 交互启动时关掉会弹进对话的更新提示（2026-10-29 用户拍板：只关会打断对话或弹提示的，后台静默更新的保持原样）。
+/// Codex 走 `prepare_launch` 的 `-c`；这里是只能用环境变量关的家：
+/// - Qwen：启动 3 秒后查更新，brew 装的在对话里冒「update available … brew upgrade」，npm 装的在后台更新后要求退出重启。
+///   `QWEN_CODE_SKIP_UPDATE_CHECK_ONCE=true` 整个跳过检查（0.26.1 源码 startPostRenderPrefetches；本机 PTY 实测：不设出提示、设了不出）。
+///   变量名是它更新后自我重启用的内部开关，不在官方文档里：升级 Qwen 适配时核对这个名字还在
+fn update_prompt_off_env(agent: &str) -> Option<(&'static str, &'static str)> {
+    match agent {
+        "qwen" => Some(("QWEN_CODE_SKIP_UPDATE_CHECK_ONCE", "true")),
+        _ => None,
+    }
 }
 
 /// Check whether the selected profile can be represented by a CLI launch plan.
@@ -3477,10 +3492,8 @@ fn external_launch_args(
     prompt: Option<&str>,
 ) -> Result<(Vec<String>, Vec<(String, String)>, Vec<String>), String> {
     validate_launch_compatibility(profile, model)?;
-    let plan = match prompt {
-        Some(prompt) => launch_plan_with_prompt(profile, key, model, Some(prompt))?,
-        None => launch_plan(profile, key, model)?,
-    };
+    // 没带首条指令也走 launch_plan_with_prompt：交互启动的环境（关更新提示）只在那里加
+    let plan = launch_plan_with_prompt(profile, key, model, prompt)?;
     if prompt.is_some() && plan.prompt_dropped {
         return Err(format!(
             "{agent_id} 不支持启动注入参数，简报指令需启动后手动发送"
@@ -7202,6 +7215,26 @@ api_backend = "responses"
             .contains(&("ANTHROPIC_MODEL".into(), "claude-sonnet-4".into())));
         assert!(!plan.env.iter().any(|(k, _)| k.starts_with("OPENAI_")));
         assert_eq!(plan.args, vec!["--auth-type", "anthropic"]);
+    }
+
+    #[test]
+    fn qwen_interactive_launch_skips_update_check_others_untouched() {
+        let skip = ("QWEN_CODE_SKIP_UPDATE_CHECK_ONCE".to_string(), "true".to_string());
+        // 交互启动带不带首条指令都关（内嵌终端 / 外部终端都经 launch_plan_with_prompt）；官方账号同样
+        for p in [profile("qwen", Some("https://relay.example.com")), official_profile("qwen")] {
+            for prompt in [None, Some("开工")] {
+                let plan = launch_plan_with_prompt(&p, Some("sk".into()), Some("qwen3-coder"), prompt).unwrap();
+                assert!(plan.env.contains(&skip), "{prompt:?}");
+            }
+        }
+        // 后台静默更新的家保持原样（用户拍板只关会弹进对话的）
+        for agent in ["claude-code", "gemini", "kimi", "codebuddy", "cursor", "grok"] {
+            let plan = launch_plan_with_prompt(&official_profile(agent), None, None, None).unwrap();
+            assert!(
+                !plan.env.iter().any(|(k, _)| k.contains("AUTOUPDATE") || k.contains("AUTO_UPDATE") || k.contains("SKIP_UPDATE")),
+                "{agent}"
+            );
+        }
     }
 
     #[test]

@@ -359,6 +359,13 @@ CLI 更新统一走连接页组头「新版 / 更新」（`updater.rs`，brew �
 `exec` 本来不检查更新，不进 `launch_plan`。**聊天层旁路下这个 `-c` 必须留给 TUI**（`chat_channel::split_codex_args` 的 TUI 配置键表）：远程 TUI 按本地配置弹提示，
 只给 app-server 关不掉。本机 0.143 / 0.165 PTY 实测（含 `--remote` 新开与恢复）。
 
+**其余家只关会弹进对话的更新（2026-10-29 用户拍板）**：Qwen 启动 3 秒后查更新，brew 装的在对话里冒「update available … brew upgrade」，
+npm 装的后台更新后要求退出重启——`launch_plan_with_prompt`（内嵌 / 外部终端的交互启动都经它）注入 `QWEN_CODE_SKIP_UPDATE_CHECK_ONCE=true`
+（`agents::update_prompt_off_env`；它自我重启用的内部开关，不在官方文档，升级适配时核对；0.26.1 本机 PTY 实测不设出提示、设了不出）。
+**后台静默更新、不打断对话的保持原样**：Claude Code / CodeBuddy（`DISABLE_AUTOUPDATER`）、Kimi（`KIMI_CODE_NO_AUTO_UPDATE`）、
+Grok（`GROK_DISABLE_AUTOUPDATER`）、Cursor（隐藏参数 `--disable-auto-update`）都有开关但不设；Gemini 只有设置文件开关（系统层要 root），本来也关不了。
+OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉检测到的二进制），照旧。
+
 **出网代理**（设置 `outbound_proxy`）：只注入官方启动与组头登录（`HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY`）。网关 API 启动不走。连接 `extraEnv` 同名键最后覆盖。不建本地反代理，官方失败不回落中转。
 
 ## 12. 设为全局与托盘

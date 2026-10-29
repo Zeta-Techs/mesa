@@ -3918,6 +3918,7 @@ Claude Code 用量无法恢复。
 | 2026-10-27 | **「对话管理」图标统一（用户：「换成别的图标，命令面板里的那个就行，统一」）**。侧栏入口与对话切换器末行原写死放大镜（`Search`），命令面板与灵动岛用 `NAV_ICONS.sessions`（MessagesSquare）——同一个入口两套图标。统一改用 `NAV_ICONS.sessions`，入口图标只从 navigation-icons 取、不在调用点写死；放大镜只留给真正的搜索框。已知：随手聊节头也是 MessagesSquare。 |
 | 2026-10-27 | **随手聊节头换圆气泡（用户：「别和对话管理撞」）**。「对话管理」统一用 MessagesSquare 后，随手聊节头也是它，两处挨着。改用 MessageCircle：输入框项目按钮里的随手聊本来就是它，和「新对话」MessageCirclePlus 同一家；随手聊在各处同一个图标。 |
 | 2026-10-29 | **Mesa 里启动的 Codex 关掉它自己的更新提示，CLI 更新统一走连接页（用户报打包版里点 Codex 的更新报 `os error 2`，拍板「只加在启动参数上、不改配置文件，先核实开关存在」）**。原因是 v0.1.0 打包版子进程 PATH 短，Codex 的更新动作 `brew upgrade --cask codex` 找不到 brew（main 上 PATH 已修，见 10-27 两条）；但它本身就不该在 Mesa 里跑：在对话中途更新、跑完 Codex 退出。定案：交互式启动加 `-c check_for_update_on_startup=false`，所有版本、官方与网关都加；聊天层旁路下这个键留给远程 TUI（只给 app-server 关不掉）。本机 0.143 / 0.165 PTY 实测（含 `--remote` 新开与恢复）。被否：写 `config.toml`（CLI 配置只读）。细则 profiles.md 搜「关掉它自己的更新提示」。 |
+| 2026-10-29 | **其余 Agent 只关会弹进对话的更新（用户问「其他 agent 的更新呢」，看过九家盘点后拍板「只关会打断对话或弹提示的，后台静默更新的保持原样」）**。盘点（本机安装包源码 / 二进制）：Claude Code、CodeBuddy、Kimi、Grok、Cursor 都在后台自己更新、不打断对话，各有环境变量或隐藏参数能关；Gemini 只有设置文件开关；Qwen 启动 3 秒后查更新，brew 装的在对话里冒「brew upgrade」提示、npm 装的后台更新后要求退出重启。定案只关 Qwen：交互启动注入 `QWEN_CODE_SKIP_UPDATE_CHECK_ONCE=true`（0.26.1 PTY 实测有效；内部开关名，升级适配时核对）。被否：全关（只在 Mesa 里用 CLI 的人从此收不到更新，Mesa 又不主动提醒）。细则 profiles.md 搜「只关会弹进对话的更新」。 |
 
 ### 从 AGENTS.md 迁入的拍板记录（2026-09-06 ~ 09-08，2026-09-22 归档）
 

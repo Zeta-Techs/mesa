@@ -8,6 +8,7 @@
 - 改进：装 Mesa 之前在 Codex 里聊的老对话，现在也能「在 Codex 客户端打开」。以前这类对话用的渠道（如自己写在 `config.toml` 里的 `zetatechs`）后来被换掉了，按钮直接被拦下、提示「不是 Mesa 创建的，Mesa 无法代写」；现在弹层给 **写入并打开**，选一个同家服务的连接（地址里带渠道名的排最前、默认选中），Mesa 按原来的渠道名补写定义，默认渠道不变。定义还在但带 `http_headers`、客户端加载不了的，也能这样改写。
 - 改进：装 Mesa 之前（或在外部终端里）用中转跑的 Claude Code 老对话，点「在 Claude 桌面版打开」时也会先提示「桌面版会用它自己登录的账号和 Claude 模型接着聊，不会走原来的中转」。以前认不出这类对话用的是哪条连接，就不提示直接打开。按对话记录里的模型名判断（如 `glm-5.1`），名字里带 claude 的中转对话仍认不出。
 
+- 改进：在 Mesa 里打开的 Qwen 不再在对话里冒「Qwen Code update available! … Please update with "brew upgrade"」这类更新提示（npm 装的也不再在后台更新后要你退出重启）。Qwen 的更新同样到「连接」页 Qwen 组头点 **新版**。其余几家（Claude Code、Gemini、Kimi、CodeBuddy、Cursor、Grok）在后台自己更新、不打断对话，保持原样。
 - 改进：在 Mesa 里打开的 Codex 不再弹它自己的「Update available」更新提示。那个更新在对话中途运行、更新完 Codex 就退出，安装版里还会因为找不到 brew 报「No such file or directory (os error 2)」退出；Codex 的更新统一到「连接」页 Codex 组头点 **新版**。只作用于 Mesa 启动的这次，不改 Codex 自己的配置文件，系统终端里直接运行 `codex` 照旧提示。
 - 修好：「LaTeX 论文」模板的编译脚本以前只认 tectonic 和 latexmk，装了 TeX 却没有能用的 latexmk 时（MiKTeX 没装 Perl、只装了精简版 TeX 等），依赖体检显示 TeX 已装好，编译却报「未检测到 LaTeX 编译环境」。现在两样都没有时直接用 xelatex / pdflatex 编译（中文稿用 xelatex），参考文献按 biblatex 或 natbib 自动跑 biber / bibtex 再编译两遍。「安装 LaTeX 编译环境」这条人工事项改为先指 设置 → 诊断 → 依赖体检 的一键安装。
 - 修好：对话里 AI 停下后，在聊天层换了目录或换了一家 Agent 再发消息 / 点「现在运行」，报「Run 身份与启动目标不一致，不能改写已有 Run」、启动不起来。现在换了目录或 Agent 会在新目录 / 新 Agent 下开一段新对话（原来那段对话不受影响）；离开某个目标的工作目录后，新对话不再算进那个目标。只换连接、模型、思考档时照旧接回原来那段对话。
