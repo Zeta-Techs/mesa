@@ -9,7 +9,6 @@ import {
   Link,
   MoreHorizontal,
   Pencil,
-  Plus,
   RefreshCw,
   Tag,
   Trash2,
@@ -44,10 +43,8 @@ import {
   fieldClass,
   FoldMark,
   LoadingRows,
-  PaneColumn,
-  PaneHead,
-  paneHeadButtonClass,
-  paneHeadIconClass,
+  PageFrame,
+  PageHeader,
   PaneSearch,
   primaryActionClass,
   RowAction,
@@ -1841,10 +1838,11 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     : skills;
 
   return (
-    <div className="flex h-full bg-canvas">
-      {/* 2026-10-29 管理页视觉统一：页头同对话头、对话栏宽度单列；分类组去卡片，组标题改粗体节标题 */}
+    <div className="flex h-full">
+      {/* 2026-10-29：分类组去卡片，组标题改粗体节标题，技能行去掉重复图标；页头与宽度维持原样（同日试过对话头式小页头 + 对话栏宽度，用户否掉） */}
       <div className="min-w-0 flex-1 overflow-auto">
-          <PaneHead
+        <PageFrame width="wide">
+          <PageHeader
             title="技能"
             meta={`${skills.length} 个 · 已应用 ${appliedCount}`}
             actions={
@@ -1852,10 +1850,9 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                 <button
                   type="button"
                   onClick={() => setEditor({ mode: "create" })}
-                  className={paneHeadButtonClass}
+                  className={primaryActionClass}
                 >
-                  <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
-                  创建技能
+                  + 创建技能
                 </button>
                 <button
                   type="button"
@@ -1865,15 +1862,13 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   }}
                   title="更多技能操作"
                   aria-label="更多技能操作"
-                  aria-expanded={!!topMenu}
-                  className={paneHeadIconClass}
+                  className="flex h-8 w-8 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1"
                 >
-                  <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
+                  ⋯
                 </button>
               </>
             }
           />
-          <PaneColumn>
           {builtinPreview && (
             <section
               className="mb-3 rounded-md ccode-well p-3 text-xs"
@@ -2297,7 +2292,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </div>
             </div>
           )}
-          </PaneColumn>
+        </PageFrame>
       </div>
 
       {/* SKILL.md 预览面板 */}

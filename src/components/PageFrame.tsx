@@ -821,6 +821,7 @@ export function PaneSearch({
   onKeyDown,
   inputRef,
   title,
+  onBlur,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -832,6 +833,7 @@ export function PaneSearch({
   inputRef?: RefObject<HTMLInputElement | null>;
   /** 悬停说明（如搜索语法） */
   title?: string;
+  onBlur?: () => void;
 }) {
   return (
     <label
@@ -842,6 +844,7 @@ export function PaneSearch({
         ref={inputRef}
         value={value}
         title={title}
+        onBlur={onBlur}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
@@ -875,6 +878,7 @@ export function PaneNav({
   minWidth = 184,
   maxWidth = 420,
   className = "",
+  inline = false,
   children,
 }: {
   storageKey: string;
@@ -884,6 +888,8 @@ export function PaneNav({
   minWidth?: number;
   maxWidth?: number;
   className?: string;
+  /** 页内嵌入（2026-10-29 二改）：放在 PageFrame 里的左列，不铺底不画边、吸顶跟着页面滚；否则是贴边的整高栏 */
+  inline?: boolean;
   children: ReactNode;
 }) {
   const [width, setWidth] = useState(() => {
@@ -903,7 +909,9 @@ export function PaneNav({
   return (
     <div
       style={{ width }}
-      className={`relative flex min-h-0 shrink-0 flex-col border-r border-hairline bg-rail2 ${className}`}
+      className={`relative flex shrink-0 flex-col ${
+        inline ? "sticky top-16 self-start" : "min-h-0 border-r border-hairline bg-rail2"
+      } ${className}`}
     >
       {children}
       <div

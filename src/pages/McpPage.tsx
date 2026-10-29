@@ -4,7 +4,6 @@ import {
   LoaderCircle,
   PackagePlus,
   Pencil,
-  Plus,
   PlugZap,
   SquarePen,
   Trash2,
@@ -48,11 +47,11 @@ import {
   EmptyState,
   FoldMark,
   LoadingRows,
-  PaneColumn,
-  PaneHead,
-  paneHeadButtonClass,
+  PageFrame,
+  PageHeader,
   paneOutlineButtonClass,
   primaryActionClass,
+  secondaryActionClass,
   ghostActionClass,
   fieldClass,
   RowAction,
@@ -1035,33 +1034,18 @@ export default function McpPage({ visible }: { visible: boolean }) {
       setFixing(false);
     }
   }
-  // 2026-10-29 管理页视觉统一（设计稿 docs/design-quiet-pages-mockup.html）：页头同对话头，内容用对话栏宽度单列；
-  // 去掉整表卡与表头，名称一行、类型 · 命令一行灰字；展开用左细线缩进（同对话「已思考 ›」），展开着的那条铺气泡色。
-  // 只换呈现：顺序、健康点、启用开关、悬停的检测 / 编辑 / 删除、展开内容、添加菜单都不变。
+  // 资源页外壳随主区变宽（PageFrame wide）。2026-10-29 列表改「对话页写法」：去整表卡与表头，名称一行、类型 · 命令一行灰字，
+  // 展开用左细线缩进、展开着的那条铺气泡色；页头与宽度维持原样（同日试过对话头式小页头 + 对话栏宽度，用户否掉）。
   return (
-    <div className="min-h-full bg-canvas">
-      <PaneHead
+    <PageFrame width="wide">
+      <PageHeader
         title="MCP"
         meta={`${servers.length} 个`}
         actions={
           <>
             <button
               type="button"
-              title="对清单里所有已启用的 MCP 逐条检测连通性（分波并发，每波最多 4 个）"
-              className={paneHeadButtonClass}
-              disabled={checkingAll || servers.length === 0}
-              onClick={() => void checkAllHealth()}
-            >
-              {checkingAll ? (
-                <LoaderCircle size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-              ) : (
-                <PlugZap size={14} strokeWidth={1.8} aria-hidden="true" />
-              )}
-              {checkingAll ? "检测中…" : "全部检测"}
-            </button>
-            <button
-              type="button"
-              className={paneHeadButtonClass}
+              className={`${primaryActionClass} inline-flex items-center gap-1`}
               aria-haspopup="menu"
               aria-expanded={!!addMenu}
               onClick={(event) => {
@@ -1069,14 +1053,24 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 setAddMenu({ x: rect.right, y: rect.bottom + 4 });
               }}
             >
-              <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
-              添加 MCP
+              + 添加 MCP
               <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              title="对清单里所有已启用的 MCP 逐条检测连通性（分波并发，每波最多 4 个）"
+              className={`${secondaryActionClass} inline-flex items-center gap-1`}
+              disabled={checkingAll || servers.length === 0}
+              onClick={() => void checkAllHealth()}
+            >
+              {checkingAll && (
+                <LoaderCircle size={13} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+              )}
+              {checkingAll ? "检测中…" : "全部检测"}
             </button>
           </>
         }
       />
-      <PaneColumn>
       {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
       {loading ? (
@@ -1438,7 +1432,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
           })}
           </ul>
       )}
-      </PaneColumn>
 
       {modal && (
         <Modal
@@ -1966,6 +1959,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
             </div>
         </Modal>
       )}
-    </div>
+    </PageFrame>
   );
 }

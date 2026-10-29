@@ -29,7 +29,8 @@ import {
   compactPrimaryActionClass,
   fieldClass,
   hoverRevealClass,
-  PaneHead,
+  PageFrame,
+  PageHeader,
   PaneNav,
   PaneSearch,
   paneOutlineButtonClass,
@@ -2615,13 +2616,13 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     </div>
   );
 
-  // 2026-10-29 借鉴 Claude 设置页：页头同对话头；左边分区二级栏（可拖宽）+ 右边内容各自滚动，内容不套卡、行间细线
+  // 2026-10-29 借鉴 Claude 设置页：左边分区栏（可拖宽、吸顶）+ 右边内容不套卡、行间细线；页头与宽度维持原样（PageFrame wide）
   return (
-    <div className="flex h-full min-h-0 flex-col bg-canvas">
-      <PaneHead title="设置" meta="外观、终端、AI 与应用管理" sticky={false} />
-      <div className="flex min-h-0 flex-1">
-        <PaneNav storageKey="ccode.settings.navWidth" label="调整设置分区栏宽度" defaultWidth={220} maxWidth={360}>
-          <nav aria-label="设置分区" className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-1">
+    <PageFrame width="wide">
+      <PageHeader title="设置" meta="外观、终端、AI 与应用管理" />
+      <div className="flex min-w-0 items-start gap-8">
+        <PaneNav inline storageKey="ccode.settings.navWidth" label="调整设置分区栏宽度" defaultWidth={200} minWidth={168} maxWidth={320}>
+          <nav aria-label="设置分区" className="pb-4">
             <PaneSearch
               value={sectionQuery}
               onChange={setSectionQuery}
@@ -2689,13 +2690,13 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             )}
           </nav>
         </PaneNav>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-9 pb-12 pt-3">
+        <div className="min-w-0 flex-1">
           <div
             ref={contentRef}
             id="settings-content"
             role="region"
             aria-labelledby={`settings-nav-${activeSection}`}
-            className="@container/settings mx-auto min-w-0 max-w-4xl"
+            className="@container/settings min-w-0 scroll-mt-16"
           >
             {banners}
 
@@ -4733,6 +4734,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         />
       )}
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-    </div>
+    </PageFrame>
   );
 }

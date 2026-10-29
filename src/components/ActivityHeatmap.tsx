@@ -505,16 +505,16 @@ export default function ActivityHeatmap({
   if (!dto) {
     if (error) {
       return (
-        <section className="mt-8" aria-label="活跃度">
-          <h2 className="flex min-h-9 items-center border-b border-hairline pb-2 text-lg font-semibold text-l1">活跃度</h2>
+        <section className="mb-4 ccode-well ccode-card p-4" aria-label="活跃度">
+          <h2 className="text-base font-medium text-l1">活跃度</h2>
           <p className="mt-2 text-xs text-warn-text">活跃度加载失败：{error}</p>
         </section>
       );
     }
     if (loading) {
       return (
-        <section className="mt-8" aria-label="活跃度">
-          <h2 className="flex min-h-9 items-center border-b border-hairline pb-2 text-lg font-semibold text-l1">活跃度</h2>
+        <section className="mb-4 ccode-well ccode-card p-4" aria-label="活跃度">
+          <h2 className="text-base font-medium text-l1">活跃度</h2>
           <div
             className="mt-3 h-28 w-full animate-pulse rounded-md bg-inset"
             role="status"
@@ -589,21 +589,21 @@ export default function ActivityHeatmap({
   const hug = cellPx >= HEAT_CELL_MAX_PX;
 
   return (
-    // 2026-10-29 用量页借鉴 Claude 设置页：节标题粗体、标题行下一根细线，不再套卡
-    <div className="mt-8">
+    // 用量页一律卡片（2026-10-29 参考 Claude 客户端用量页）：卡头标题 + Agent 筛选分段 + 起止月份
+    <div className="mb-4">
     <div
       ref={measureRef}
       className="h-0 w-full overflow-hidden"
       aria-hidden="true"
     />
     <section
-      className={hug ? "ccode-heat-hug" : undefined}
+      className={`ccode-well ccode-card p-4${hug ? " ccode-heat-hug" : ""}`}
       aria-label="活跃度"
     >
-      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline pb-2">
+      <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-2">
         <div className="flex shrink-0 items-baseline gap-2">
           <h2
-            className="text-lg font-semibold text-l1"
+            className="text-base font-medium text-l1"
             title="从去年同一个月的 1 日铺到今天（本机时区归日），最右边是今天。格子与四个数含订阅用量、不含 Mesa 内部活动；页顶「显示内部活动」只在悬浮和当日明细里追加注记，不改变格子颜色和统计。着色量为输入+输出+缓存读写四类合计，与页首 tokens 卡（只计输入+输出）口径不同。"
           >
             活跃度

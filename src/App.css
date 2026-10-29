@@ -4081,7 +4081,8 @@ select:focus-visible {
    Mac 上比全站大一档、Windows 上 sm 反而小一档；现在不覆写，名称 sm、状态与几个数 xs、时间 micro */
 .ccode-workbench {
   container: workbench / inline-size;
-  /* 宽度由 PaneColumn（对话栏宽度单列，随聊天字号走）给，与 MCP / 技能同一档（2026-10-29 管理页视觉统一，取代 10-27 的 wide 1440） */
+  /* 宽度由 PageFrame width="wide"（最宽 1440px、居中、两侧 px-6）给，与连接 / 技能 / MCP / 用量 / 设置同一档（2026-10-27 用户拍板；
+     2026-10-29 试过对话栏宽度单列，用户否掉，回到 wide） */
 }
 .ccode-workbench, .ccode-workbench-detail {
   font-size: var(--text-sm);

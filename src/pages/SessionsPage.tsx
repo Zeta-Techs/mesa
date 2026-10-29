@@ -101,7 +101,6 @@ import {
   PaneSearch,
   paneHeadButtonClass,
   paneOutlineButtonClass,
-  paneSolidButtonClass,
   rowActionClass,
   InlineNotice,
 } from "../components/PageFrame";
@@ -1621,12 +1620,12 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       <PaneNav
         storageKey="ccode.sessions.railWidth"
         label="调整对话列表宽度"
-        defaultWidth={340}
+        defaultWidth={375}
         minWidth={260}
         maxWidth={560}
         className={`ccode-sessions-rail ${mobileRailOpen ? "ccode-mobile-rail-open" : ""}`}
       >
-        <div className="shrink-0 px-3 pb-2.5">
+        <div className="shrink-0 px-3 pb-2.5 pt-3">
           <button
             type="button"
             className="mb-2 ml-auto flex h-7 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
@@ -1635,7 +1634,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             关闭列表
           </button>
           {selecting ? (
-            <div className="flex flex-col gap-1.5 pt-2">
+            <div className="flex flex-col gap-1.5">
               <div className="flex min-h-7 items-center justify-between gap-2">
                 <span className="whitespace-nowrap text-xs text-l3">已选 {checkedInView} 项</span>
                 <div className="flex items-center gap-1">
@@ -1709,10 +1708,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               </div>
             </div>
           ) : (
-            // 栏头与对话头同高同字（h-9、标题 xs l2 不加粗），右边中性小按钮
-            <div className="-mx-1 flex h-9 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-baseline gap-2 px-1.5 text-xs">
-                <h1 className="shrink-0 font-normal text-l2">对话</h1>
+            // 栏头：页面标题（粗体）+ 计数，右边中性小按钮（2026-10-29 试过与对话头同款小字标题，用户否掉）
+            <div className="flex min-h-8 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <h1 className="shrink-0 text-base font-semibold text-l1">对话</h1>
                 {/* 计数副题：与既有口径一致，搜索时透出命中数 */}
                 <span className="truncate text-micro text-l4">
                   当前 {sessionList.length}
@@ -2575,7 +2574,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           <div className="flex min-h-0 flex-1 flex-col">
             {/* 回放头部两行：上行「这是哪条对话 + 能做什么」，下行「谁、在哪个项目、多久前」+ 页签。
                 原先一行 flex-wrap，页签被挤到第二行最左、agent 名在头部和底栏各写一遍 */}
-            {/* 2026-10-29：头部第一行与对话头同高同字（h-9、标题 xs l2），去 strip 底；「继续」反色实心，提炼简报 / 导出细边 */}
+            {/* 2026-10-29：头部第一行与对话头同高同字（h-9、标题 xs l2），去 strip 底；「继续」浅底细边，提炼简报 / 导出细边 */}
             <div className="px-3 pb-2">
               <div className="flex h-9 min-w-0 items-center gap-2">
                 <button
@@ -2614,10 +2613,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   )
                 )}
                 <span className="ml-auto flex shrink-0 items-center">
+                  {/* 继续：浅底细边，比旁边两个细边钮重一档即可（反色实心太亮，2026-10-29 用户） */}
                   <button
                     onClick={() => resumeInTerminal(selected)}
                     disabled={!selected.alive && !selected.pinned}
-                    className={`${paneSolidButtonClass} h-7 px-2.5`}
+                    className={`${paneOutlineButtonClass} h-7 bg-inset px-2.5 font-medium hover:bg-seg-sel`}
                   >
                     继续
                   </button>

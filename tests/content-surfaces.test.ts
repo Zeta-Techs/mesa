@@ -40,10 +40,10 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
     // 列表不再套卡；MCP 6→3（只剩弹窗里的卡），技能 4 不变（分类卡少一张、内置技能对照区仍在）。
     // 设置页 6→2（同日第二批，借鉴 Claude 设置页）：分组卡 / 成组编辑卡 / 主题卡 / 卸载与本机占用卡改成
     // 节标题 + 上下细线的行组，只剩提示条两处与诊断里的代码块。
-    // 用量页 2→0（同日）：余量 / 余额 / 概览 / 分布、活跃度都改节标题 + 细线，不再套卡。
+    // 用量页同日二改为一律卡片（参考 Claude 客户端用量页）：余量、余额、花费、tokens、走势、分布六张，2→6。
     // 连接页 5→4（同日）：Agent 组卡去掉，剩表单 / 更新结果 / 冲突弹层里的小块。
     WorkbenchPage: 0, SkillsPage: 4, McpPage: 3, ProfilesPage: 4,
-    SettingsPage: 2, StatsPage: 0, SessionsPage: 1,
+    SettingsPage: 2, StatsPage: 6, SessionsPage: 1,
   };
   for (const [page, minimum] of Object.entries(minimumCards)) {
     const cards = classes(`pages/${page}.tsx`).filter((item) => item.text.includes("ccode-well"));

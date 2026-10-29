@@ -60,8 +60,7 @@ import {
 } from "../work-mode";
 import {
   LoadingRows,
-  PaneColumn,
-  PaneHead,
+  PageFrame,
   fieldClass,
   ghostActionClass,
   hoverRevealClass,
@@ -1560,13 +1559,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
 
   return (
-    <div className="min-h-full bg-canvas">
-      {/* 首页不放页面大标题（2026-10-24 用户）；2026-10-29 管理页视觉统一补一条与对话头同高的小页头，
-          和其他页对齐（小字 l2，不是大标题）。内容用对话栏宽度单列。
-          「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
-      <PaneHead title="工作台" titleId="workbench-title" />
-      <PaneColumn>
+    <PageFrame width="wide" className="pb-12 pt-6">
       <div className="ccode-workbench min-w-0">
+      {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
+          标题只留给屏幕阅读器，顶上 pt-6 留白免得第一块贴着窗口顶边。2026-10-29 试过各页同款小页头 + 对话栏宽度单列，
+          用户否掉（「这些页面不需要同样的小页头」「宽度用之前的宽度」），回到这里。
+          「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
+      <h1 id="workbench-title" tabIndex={-1} className="sr-only">工作台</h1>
       {readFailures.length > 0 && (
         <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn-text">
           <div>
@@ -1845,7 +1844,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       />
       </div>
 
-      </PaneColumn>
       {taskPanel}
       <WorkbenchApprovalPanel
         approval={openApprovalRow?.kind === "inbox" ? openApprovalRow.approval : null}
@@ -1858,7 +1856,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         }}
       />
       {clientOpen.dialog}
-    </div>
+    </PageFrame>
   );
 }
 

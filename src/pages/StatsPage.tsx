@@ -75,8 +75,11 @@ import VendorIcon from "../components/VendorIcon";
 import { vendorForPlanProvider } from "../vendor-icon";
 import {
   EmptyState,
+  FoldMark,
   LoadingRows,
-  PaneHead,
+  PageFrame,
+  PageHeader,
+  PageToolbar,
   paneOutlineButtonClass,
   compactPrimaryActionClass,
   ghostActionClass,
@@ -503,21 +506,72 @@ function UsageChart({ pts, aria }: { pts: ChartPt[]; aria: string }) {
   );
 }
 
-/** 总览卡下方的小指标：标签 l3、数值 l1 等宽数字 */
-function KpiStat({
+/** 余量 / 余额卡的收起钮（默认收起，记在本机） */
+function QuotaFold({ open, onToggle, label }: { open: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={open ? `收起${label}` : `展开${label}`}
+      className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1"
+    >
+      <FoldMark open={open} />
+    </button>
+  );
+}
+
+/** 余量 / 余额卡收起时的一行：只给最要紧的几个数（订阅：5 小时 / 本周已用；网关：当前余额），点一下展开 */
+function QuotaSummary({
+  items,
+  empty,
+  onOpen,
+}: {
+  items: { label: string; value: string; tone: "warn" | "err" | null }[];
+  empty: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="mt-2 flex w-full flex-wrap items-baseline gap-x-6 gap-y-1 rounded-md text-left"
+      title="展开看详情"
+    >
+      {items.length === 0 ? (
+        <span className="text-sm text-l3">{empty}</span>
+      ) : (
+        items.map((it) => (
+          <span key={it.label} className="flex items-baseline gap-2">
+            <span className="text-sm text-l3">{it.label}</span>
+            <span
+              className={`text-xl font-semibold tabular-nums ${
+                it.tone === "err" ? "text-err-text" : it.tone === "warn" ? "text-warn-text" : "text-l1"
+              }`}
+            >
+              {it.value}
+            </span>
+          </span>
+        ))
+      )}
+    </button>
+  );
+}
+
+function StatLine({
   label,
   value,
-  title,
+  valueClass,
 }: {
   label: string;
   value: string;
-  title?: string;
+  valueClass?: string;
 }) {
-  // 2026-10-29 起是概览里的一格（与费用、tokens 同排，格间竖细线）
+  // 概览卡的一行明细：左名右值（2026-10-29 参考 Claude 客户端用量页）
   return (
-    <div className="border-l border-hairline px-5 py-4" title={title}>
-      <div className="text-sm text-l3">{label}</div>
-      <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">{value}</div>
+    <div className="flex items-baseline justify-between gap-4">
+      <dt className="text-l2">{label}</dt>
+      <dd className={`tabular-nums ${valueClass ?? "text-l1"}`}>{value}</dd>
     </div>
   );
 }
@@ -695,6 +749,19 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   const [walletActive, setWalletActive] = useState<string | null>(null);
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+  // 余量 / 余额卡默认收起（2026-10-29 用户：信息太多），各自记在本机
+  const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
+  const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
+  const togglePlanOpen = () =>
+    setPlanOpen((v) => {
+      localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
+      return !v;
+    });
+  const toggleWalletOpen = () =>
+    setWalletOpen((v) => {
+      localStorage.setItem("ccode.stats.walletOpen", v ? "0" : "1");
+      return !v;
+    });
   const [hideQuota, setHideQuota] = useState(
     () => localStorage.getItem("ccode.stats.hideQuota") === "1",
   );
@@ -1140,16 +1207,15 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     localStorage.setItem("ccode.statsCurrency", next);
   }
 
-  // 2026-10-29 借鉴 Claude 设置页：页头同对话头；工具条全用分段控件 / 开关 / 细边按钮；
-  // 下面按节排（余量 / 概览 / 趋势 / 活跃度 / 分布），节标题粗体、不再套卡
+  // 2026-10-29：页头与宽度维持原样（PageFrame wide）；工具条用分段控件 / 开关 / 细边按钮；
+  // 下面一律卡片（参考 Claude 客户端用量页）：余量 / 余额两张可收起的卡并排，概览两张卡（花费、tokens）并排，再是趋势、活跃度、分布三张卡
   return (
-    <div className="min-h-full bg-canvas">
-      <PaneHead
+    <PageFrame width="wide">
+      <PageHeader
         title="用量"
         meta="只计经 Mesa 记下归属的会话。费用按公开价估算，≥ 含未计价，~ 无价格。"
       />
-      <div className="mx-auto w-full max-w-6xl px-9 pb-12 pt-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 py-1.5">
+      <PageToolbar>
         <SegTabs variant="boxed" items={RANGES} value={range} onChange={setRange} />
         <div className="ml-auto flex flex-wrap items-center gap-3">
           {/* 切换范围时保留旧数据，仅局部提示加载，骨架只用于首载 */}
@@ -1200,7 +1266,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             {rebuilding ? "索引中…" : "刷新"}
           </button>
         </div>
-      </div>
+      </PageToolbar>
       {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {partialError && (
         <InlineNotice tone="warn" className="mb-3">{partialError}</InlineNotice>
@@ -1210,12 +1276,15 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       )}
       {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
 
+      {((planRows.length > 0 || (planLoading && hasPlanGateway)) ||
+        (hasWalletGateway && (walletRowsShown.length > 0 || walletLoading))) && (
+      <div className="mb-4 grid items-start gap-4 lg:grid-cols-2">
       {(planRows.length > 0 || (planLoading && hasPlanGateway)) && (
-        <section className="mt-8">
+        <section className="ccode-well ccode-card p-4" aria-label="订阅余量">
           {planRows.length === 0 ? (
             <>
-              <div className="flex min-h-9 items-center gap-2 border-b border-hairline pb-2">
-                <h2 className="text-lg font-semibold text-l1">订阅余量</h2>
+              <div className="flex min-h-8 items-center gap-2">
+                <h2 className="text-base font-medium text-l1">订阅余量</h2>
                 <button
                   type="button"
                   className="ml-auto flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
@@ -1248,8 +1317,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             const windows = planWindowsByTightness(row.windows);
             return (
               <>
-                <div className="flex min-h-9 flex-wrap items-center gap-2 border-b border-hairline pb-2">
-                  <h2 className="text-lg font-semibold text-l1">订阅余量</h2>
+                <div className="flex min-h-8 flex-wrap items-center gap-2">
+                  <QuotaFold open={planOpen} onToggle={togglePlanOpen} label="订阅余量" />
+                  <h2 className="text-base font-medium text-l1">订阅余量</h2>
                   {planGatewayNameVisible(row.gatewayName, row.provider) && (
                     <span className="text-xs text-l2">{row.gatewayName}</span>
                   )}
@@ -1292,6 +1362,19 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 {planError && (
                   <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
                 )}
+                {/* 收起时只看各窗已用（5 小时 / 本周…），展开才有大数字、进度条、重置卡、多家切换 */}
+                {!planOpen ? (
+                  <QuotaSummary
+                    items={row.windows.map((w) => ({
+                      label: `${planWindowLabel(w.window)}已用`,
+                      value: `${Math.round(w.usedPercent)}%`,
+                      tone: w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null,
+                    }))}
+                    empty={row.error && !row.ok ? row.error : "暂无数据"}
+                    onOpen={togglePlanOpen}
+                  />
+                ) : (
+                <>
                 {planRows.length > 1 && (
                   <div className="mt-3">
                     <SegTabs
@@ -1414,6 +1497,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     </p>
                   )}
                 </div>
+                </>
+                )}
               </>
             );
             })()
@@ -1423,11 +1508,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
 
       {hasWalletGateway &&
         (walletRowsShown.length > 0 || walletLoading) && (
-        <section className="mt-8">
+        <section className="ccode-well ccode-card p-4" aria-label="网关余额">
           {walletGroups.length === 0 ? (
             <>
-              <div className="flex min-h-9 items-center gap-2 border-b border-hairline pb-2">
-                <h2 className="text-lg font-semibold text-l1">网关余额</h2>
+              <div className="flex min-h-8 items-center gap-2">
+                <h2 className="text-base font-medium text-l1">网关余额</h2>
                 <div className="ml-auto flex items-center">
                   <button
                     type="button"
@@ -1491,8 +1576,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 gateways.find((g) => g.id === id)?.keyHint ?? null;
               return (
                 <>
-                  <div className="flex min-h-9 flex-wrap items-center gap-2 border-b border-hairline pb-2">
-                    <h2 className="text-lg font-semibold text-l1">网关余额</h2>
+                  <div className="flex min-h-8 flex-wrap items-center gap-2">
+                    <QuotaFold open={walletOpen} onToggle={toggleWalletOpen} label="网关余额" />
+                    <h2 className="text-base font-medium text-l1">网关余额</h2>
                     {walletGroups.length === 1 && (
                       <span className="text-xs text-l2" title={walletKindLabel(row.kind)}>
                         {walletAccountTitle(group)}
@@ -1544,6 +1630,25 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   {walletError && (
                     <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
                   )}
+                  {/* 收起时只看当前余额（同一站多个账户各一行），展开才有进度条、密钥额度、多账户切换 */}
+                  {!walletOpen ? (
+                    <QuotaSummary
+                      items={walletGroups.map((g) => ({
+                        label: walletGroups.length > 1 ? walletAccountTitle(g, true) : walletAmountCaption(g.head.source),
+                        value: hideQuota
+                          ? formatBalanceAmountMasked(g.head.currency)
+                          : g.head.remaining != null || g.head.total != null
+                            ? formatBalanceAmount(g.head.remaining ?? g.head.total ?? NaN, g.head.currency)
+                            : g.head.tokenUnlimited || g.head.unlimited
+                              ? "不限"
+                              : "—",
+                        tone: null,
+                      }))}
+                      empty="暂无数据"
+                      onOpen={toggleWalletOpen}
+                    />
+                  ) : (
+                  <>
                   {walletGroups.length > 1 && (
                     <div className="mt-3">
                       <SegTabs
@@ -1684,11 +1789,15 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                       </p>
                     )}
                   </div>
+                  </>
+                  )}
                 </>
               );
             })()
           )}
         </section>
+      )}
+      </div>
       )}
 
       {!stats ? (
@@ -1700,72 +1809,65 @@ export default function StatsPage({ visible }: { visible: boolean }) {
         />
       ) : (
         <>
-          <section className="mt-8">
-            <h2 className="mb-2 flex min-h-9 items-center text-lg font-semibold text-l1">概览</h2>
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] border-y border-hairline">
-              <div className="py-4 pr-5">
-                <div className="text-sm text-l3">
-                  费用
-                </div>
-                <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">
-                  {fmtCost(
-                    stats.cards.costUsd,
-                    currency,
-                    rate,
-                    stats.cards.costPartial,
-                  )}
-                </div>
+          {/* 概览两张卡（参考 Claude 客户端用量页）：大数字一行，下面左名右值的明细行，脚注一句口径。
+              次要指标只留对话次数与不计费（2026-10-23 用户「没用的不要」）；tokens 明细给全数（不缩写），方便对账 */}
+          <div className="mb-4 grid gap-4 md:grid-cols-2">
+            <section className="ccode-well ccode-card p-4" aria-label="花费">
+              <h2 className="text-base font-medium text-l1">花费</h2>
+              <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
+                <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
+                  {fmtCost(stats.cards.costUsd, currency, rate, stats.cards.costPartial)}
+                </span>
+                <span className="text-sm text-l3">按公开价估算</span>
+              </div>
+              <dl className="mt-3 space-y-1 text-sm">
                 {badge && (
-                  <div
-                    className={`mt-1 text-xs tabular-nums ${
-                      badge.tone === "up"
-                        ? "text-warn-text"
-                        : badge.tone === "down"
-                          ? "text-ok-text"
-                          : "text-l3"
-                    }`}
-                  >
-                    {badge.text}
-                  </div>
+                  <StatLine
+                    label="周环比"
+                    value={badge.text}
+                    valueClass={badge.tone === "up" ? "text-warn-text" : badge.tone === "down" ? "text-ok-text" : undefined}
+                  />
                 )}
-              </div>
-              <div className="border-l border-hairline px-5 py-4">
-                <div className="text-sm text-l3">
-                  tokens
-                </div>
-                <div className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums text-l1">
+                <StatLine label="对话" value={`${stats.cards.sessions.toLocaleString("en-US")} 次`} />
+                {stats.cards.officialTokens > 0 && (
+                  <StatLine label="订阅（不计费）" value={`${compact(stats.cards.officialTokens)} tokens`} />
+                )}
+                {stats.cards.internalTokens > 0 && (
+                  <StatLine label="Mesa 内部（不计费）" value={`${compact(stats.cards.internalTokens)} tokens`} />
+                )}
+              </dl>
+              <p className="mt-3 text-xs text-l4">
+                官方订阅与 Mesa 内部 AI 的 tokens 统计在内，但不算进费用；≥ 表示含未计价模型。
+              </p>
+            </section>
+            <section className="ccode-well ccode-card p-4" aria-label="tokens">
+              <h2 className="text-base font-medium text-l1">tokens</h2>
+              <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
+                <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
                   {compact(totalTokens)}
-                </div>
-                <div className="mt-1 text-xs text-l4">
-                  输入 {inShare}% · 输出 {100 - inShare}%
-                </div>
+                </span>
+                <span className="text-sm text-l3">输入 + 输出</span>
               </div>
-              {/* 次要指标只留两样（2026-10-23 用户「没用的不要」）：对话次数给费用一个量级参照；不计费说明 tokens 为何比费用对应的多。
-                  场均（费用÷次数，自己能算）、缓存命中（Agent 长对话恒在 99% 上下，看了也做不了什么）、缓存省下（假设性的数，比实际花费还大好几倍，
-                  只会让人困惑）都去掉了。2026-10-29 起与费用、tokens 同排成格 */}
-              <KpiStat label="对话" value={`${stats.cards.sessions} 次`} />
-              {(stats.cards.officialTokens > 0 || stats.cards.internalTokens > 0) && (
-                <KpiStat
-                  label="不计费"
-                  value={[
-                    stats.cards.officialTokens > 0 &&
-                      `订阅 ${compact(stats.cards.officialTokens)}`,
-                    stats.cards.internalTokens > 0 &&
-                      `内部 ${compact(stats.cards.internalTokens)}`,
-                  ]
-                    .filter(Boolean)
-                    .join(" / ")}
-                  title="官方账号订阅与 Mesa 内部 AI 的 tokens：统计在内，但不算进费用"
-                />
-              )}
-            </div>
-          </section>
+              <dl className="mt-3 space-y-1 text-sm">
+                <StatLine label="输入" value={stats.cards.input.toLocaleString("en-US")} />
+                <StatLine label="输出" value={stats.cards.output.toLocaleString("en-US")} />
+                <StatLine label="缓存读" value={stats.cards.cacheRead.toLocaleString("en-US")} />
+                <StatLine label="缓存写" value={stats.cards.cacheWrite.toLocaleString("en-US")} />
+              </dl>
+              <p className="mt-3 text-xs text-l4">
+                输入 {inShare}% · 输出 {100 - inShare}%；缓存读写不计入上面的大数字。
+              </p>
+            </section>
+          </div>
             {chartPts.length > 1 && (
-              <section className="mt-8">
-                <div className="mb-2 flex min-h-9 flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-lg font-semibold text-l1">
-                    {metric === "cost" ? `${rangeLabel}花费` : `${rangeLabel} tokens`}
-                  </h2>
+              <section className="mb-4 ccode-well ccode-card p-4" aria-label="走势">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h2 className="text-base font-medium text-l1">
+                      {metric === "cost" ? "每天花费" : "每天 tokens"}
+                    </h2>
+                    <p className="mt-0.5 text-sm text-l3">{rangeLabel}，按天合计</p>
+                  </div>
                   <div className="flex items-center gap-3">
                   {/* 右上写峰值（与图里那根虚线对应） */}
                   {(() => {
@@ -1814,9 +1916,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       />
 
       {stats && !empty && distItems.length > 0 && (
-        <section className="mt-8">
-          <div className="mb-2 flex min-h-9 flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold text-l1">分布</h2>
+        <section className="mb-4 ccode-well ccode-card p-4" aria-label="分布">
+          <div className="mb-2 flex min-h-8 flex-wrap items-center gap-2">
+            <h2 className="text-base font-medium text-l1">分布</h2>
             <div className="ml-auto flex flex-wrap items-center gap-2">
             <SegTabs variant="boxed" size="sm" items={distItems} value={dist} onChange={setView} />
               {dist === "gateway" && focusGateway && (
@@ -1851,7 +1953,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           </div>
         </section>
       )}
-      </div>
-    </div>
+    </PageFrame>
   );
 }

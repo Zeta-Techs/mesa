@@ -20,9 +20,8 @@ import {
   Import,
   LayoutList,
   LogIn,
-  MoreHorizontal,
-  Plus,
   RefreshCw,
+  Search,
   RotateCcw,
   ShieldCheck,
   SquareArrowOutUpRight,
@@ -100,9 +99,8 @@ import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install
 const IS_WINDOWS_UA = /Windows/i.test(navigator.userAgent);
 import {
   NoticeBar,
-  PaneHead,
-  paneHeadButtonClass,
-  paneHeadIconClass,
+  PageFrame,
+  PageHeader,
   PaneNav,
   PaneNavGroup,
   PaneNavItem,
@@ -2497,8 +2495,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [rowProbe, setRowProbe] = useState<
     Record<string, { running: true } | { running: false; ok: boolean; message: string }>
   >({});
-  // 左栏搜索：按名称/端点/模型过滤配置行（2026-10-29 起安装状态过滤并进左栏：未安装的 Agent 灰显标「未安装」）
+  // 搜索：按名称/端点/模型过滤配置行（2026-10-29 起收成页头放大镜，点开才是输入框；安装状态过滤并进左栏：未安装的 Agent 灰显标「未安装」）
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   // 左栏选中项（2026-10-29 借鉴 Claude 设置页「左选右看」）：all = 九家连排，image = 出图模型，其余是 agent id；记住上次看的
   const [pane, setPaneState] = useState<string>(() => {
     try {
@@ -3641,59 +3641,92 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   );
 
   return (
-    // 2026-10-29 借鉴 Claude 设置页（连接页重做）：页头同对话头；左边 Agent 二级栏（官方图标 + 连接数，可拖宽、可拖动排序），
-    // 右边只看选中的那家（或「全部」九家连排、「出图模型」）；Agent 节不套卡，节标题粗体 + 细线，连接行名称在上、端点 · 模型灰字在下
-    <div className="flex h-full min-h-0 flex-col bg-canvas">
-      <PaneHead
-        title="连接"
-        meta={`每个 Agent 绑哪个网关、用哪些模型 · ${profiles.length} 个连接`}
-        sticky={false}
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                setGwNew(false);
-                setGwLib(true);
-              }}
-              className={paneHeadButtonClass}
-            >
-              网关库
-            </button>
-            <button
-              type="button"
-              onClick={() => setModal({ initial: null })}
-              className={paneHeadButtonClass}
-            >
-              <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
-              添加连接
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setTopMenu({ x: rect.right - 176, y: rect.bottom + 4 });
-              }}
-              title="更多连接操作"
-              aria-label="更多连接操作"
-              aria-expanded={!!topMenu}
-              className={paneHeadIconClass}
-            >
-              <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          </>
-        }
-      />
-      <div className="flex min-h-0 flex-1">
-        <PaneNav storageKey="ccode.profiles.navWidth" label="调整 Agent 栏宽度" defaultWidth={232}>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-1">
-            <PaneSearch
-              value={search}
-              onChange={setSearch}
-              placeholder="搜索连接 / 端点 / 模型"
-              label="搜索连接"
-            />
-            <div className="mt-2 flex flex-col gap-0.5">
+    // 2026-10-29 借鉴 Claude 设置页（连接页重做）：左边 Agent 栏（官方图标 + 连接数，可拖宽、可拖动排序、吸顶），右边只看选中的那家
+    // （或「全部」九家连排、「出图模型」）；Agent 节不套卡，节标题粗体 + 细线，连接行名称在上、端点 · 模型灰字在下。
+    // 页头与宽度维持原样（PageFrame wide）；搜索收成页头里的放大镜，点开才是输入框
+    <div className="min-h-full bg-canvas">
+      <PageFrame width="wide">
+        {/* 注入模式的核心规则：配置只在**启动那一刻**注入子进程，改了对已在跑的标签无效。
+            这条以前只写在用户手册里，用户改完配置回终端发现没变化，界面上没有任何解释
+            （「有时候配置了无法切换模型」的第二个来源）。保存后有标签在跑才提示，平时不啰嗦。 */}
+        {savedNote && (
+          <NoticeBar tone="warn" onDismiss={() => setSavedNote(null)}>
+            {savedNote}
+          </NoticeBar>
+        )}
+        <PageHeader
+          title="连接"
+          meta={`每个 Agent 绑哪个网关、用哪些模型 · ${profiles.length} 个连接`}
+          actions={
+            <>
+              {searchOpen || search ? (
+                <PaneSearch
+                  inputRef={searchRef}
+                  className="w-56"
+                  value={search}
+                  onChange={setSearch}
+                  placeholder="搜索连接 / 端点 / 模型"
+                  label="搜索连接"
+                  onBlur={() => {
+                    if (!search.trim()) setSearchOpen(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setSearch("");
+                      setSearchOpen(false);
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchOpen(true);
+                    requestAnimationFrame(() => searchRef.current?.focus());
+                  }}
+                  title="搜索连接 / 端点 / 模型"
+                  aria-label="搜索连接"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-l3 hover:bg-hover hover:text-l1"
+                >
+                  <Search size={15} strokeWidth={1.8} aria-hidden="true" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setGwNew(false);
+                  setGwLib(true);
+                }}
+                className={secondaryActionClass}
+              >
+                网关库
+              </button>
+              <button
+                type="button"
+                onClick={() => setModal({ initial: null })}
+                className={primaryActionClass}
+              >
+                + 添加连接
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setTopMenu({ x: rect.right - 176, y: rect.bottom + 4 });
+                }}
+                title="更多连接操作"
+                aria-label="更多连接操作"
+                className="flex h-8 w-8 items-center justify-center rounded-sm text-sm text-l2 hover:bg-hover hover:text-l1"
+              >
+                ⋯
+              </button>
+            </>
+          }
+        />
+      <div className="flex min-w-0 items-start gap-8">
+        <PaneNav inline storageKey="ccode.profiles.navWidth" label="调整 Agent 栏宽度" defaultWidth={216} minWidth={176} maxWidth={340}>
+          <div className="pb-4">
+            <div className="flex flex-col gap-0.5">
               <PaneNavItem
                 icon={<LayoutList size={15} strokeWidth={1.8} aria-hidden="true" />}
                 label="全部"
@@ -3770,8 +3803,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             />
           </div>
         </PaneNav>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-8 pb-12 pt-2">
-        <div className="mx-auto w-full max-w-5xl">
+        <div className="min-w-0 flex-1">
         {/* 注入模式的核心规则：配置只在**启动那一刻**注入子进程，改了对已在跑的标签无效。
             这条以前只写在用户手册里，用户改完配置回终端发现没变化，界面上没有任何解释
             （「有时候配置了无法切换模型」的第二个来源）。保存后有标签在跑才提示，平时不啰嗦。 */}
@@ -4602,8 +4634,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           <ImageGenPanel gridClass={PROFILE_GRID} sectionRef={imageGenRef} />
         )}
         </div>
-        </div>
       </div>
+      </PageFrame>
       {/* 连接冲突弹层：组头琥珀胶囊点出，列出具体文件/变量；只含文件名与变量名，密钥值不出后端 */}
       {conflictPop &&
         (() => {
