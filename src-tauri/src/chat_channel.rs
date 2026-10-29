@@ -1192,12 +1192,14 @@ pub(crate) fn map_qwen(v: &Value) -> Vec<ChannelEvent> {
             }
         }
         "control_response" => {
-            let id = v
+            // 缺请求 id 的回执认不出是哪张卡的：ApprovalResolved{None} 会撤掉当前任意一张，宁可不撤（真答过了有 ToolEnd 等兜底）
+            if let Some(id) = v
                 .get("response")
                 .and_then(|r| r.get("request_id"))
                 .and_then(|x| x.as_str())
-                .map(String::from);
-            out.push(ChannelEvent::ApprovalResolved { request_id: id });
+            {
+                out.push(ChannelEvent::ApprovalResolved { request_id: Some(id.to_string()) });
+            }
         }
         "result" => out.push(ChannelEvent::TurnEnd {
             reason: v.get("subtype").and_then(|x| x.as_str()).map(|s| {
@@ -3313,6 +3315,30 @@ mod tests {
         assert!(map_hook(&r).is_empty());
         let r = rec(r#"1 tab-1 {"sessionId":"s","hookEventName":"stop","reason":"end_turn"}"#);
         assert_eq!(map_hook(&r).len(), 1);
+    }
+
+    #[test]
+    fn qwen_control_response_without_request_id_keeps_the_card() {
+        let ask = json!({"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"run_shell_command","tool_use_id":"c1","input":{"command":"ls"}}});
+        let mut t = Tracker::new("tab-q", "qwen", "qwen");
+        for ev in map_qwen(&ask) {
+            t.apply(ev, 1);
+        }
+        assert!(t.snap.approval.is_some());
+        // 缺号 / 别的请求的回执不撤这张卡
+        for e in [
+            json!({"type":"control_response","response":{"subtype":"success","response":{}}}),
+            json!({"type":"control_response","response":{"subtype":"success","request_id":"other"}}),
+        ] {
+            for ev in map_qwen(&e) {
+                t.apply(ev, 2);
+            }
+        }
+        assert_eq!(t.snap.approval.as_ref().and_then(|a| a.request_id.as_deref()), Some("r1"));
+        for ev in map_qwen(&json!({"type":"control_response","response":{"subtype":"success","request_id":"r1"}})) {
+            t.apply(ev, 3);
+        }
+        assert!(t.snap.approval.is_none());
     }
 
     #[test]
