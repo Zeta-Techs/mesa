@@ -128,6 +128,17 @@ DEALINGS IN THE FONT SOFTWARE.
 - 许可：MIT——再分发需随附版权声明与许可全文，两份原文如下
 - 商标：各 logo 本身归对应公司所有（Anthropic、OpenAI、DeepSeek、智谱、Moonshot AI、MiniMax、阿里巴巴、腾讯、OpenRouter、xAI、Ollama、QuantumNous / New API、Google、Anysphere / Cursor）
 
+### Agent 产品标识 SVG（9 个命令行 AI 工具图标）
+
+- 用途：连接页左栏与各 Agent 节标题标明是哪家命令行 AI 工具（`src/assets/agent-icons/` 下 claude-code / codex / gemini / qwen /
+  opencode / kimi / codebuddy / cursor / grok 共 9 个 .svg，2026-10-29 加），指示性使用（nominative use），不构成对该产品的关联或背书
+- 来源：[lobe-icons](https://github.com/lobehub/lobe-icons) 的 npm 包 @lobehub/icons-static-svg 1.101.0（MIT，Copyright (c) 2023 LobeHub），
+  逐字节引入并按 agent id 改文件名（claudecode-color → claude-code、codex-color → codex、geminicli-color → gemini、qwen-color → qwen、
+  opencode → opencode、kimi-color → kimi、codebuddy-color → codebuddy、cursor → cursor、grok → grok）；渲染时把文件内渐变 id 的
+  `lobe-icons-` 前缀按实例改写，图形本身不改
+- 许可：MIT，原文同上一节（lobe-icons LICENSE）
+- 商标：各 logo 本身归对应公司所有（Anthropic、OpenAI、Google、阿里巴巴、SST / OpenCode、Moonshot AI、腾讯、Anysphere / Cursor、xAI）
+
 lobe-icons 的许可原文（取自其仓库 LICENSE）：
 
 ```text

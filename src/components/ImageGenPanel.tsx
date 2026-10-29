@@ -1,4 +1,4 @@
-// 出图模型（连接页最下方一块；2026-10-23 首版，2026-10-24 挪到连接页并按用户意见重做）。
+// 出图模型（连接页左栏「出图模型」，选「全部」时排在最后；2026-10-23 首版，2026-10-24 挪到连接页并按用户意见重做）。
 // 长相跟连接页的 Agent 分组一致：组头 + 一行「名称｜端点｜模型｜状态｜操作」（列模板由连接页传入，列对齐）。
 // - 更换：搜索 + 最近用过 + 各家最新在前的选择器（ImageModelPicker），不再是几十项的原生下拉
 // - 试出与对比：自己写描述，选 1–4 个模型同时出图，结果并排，挑中的点「用这个」
@@ -235,18 +235,19 @@ export default function ImageGenPanel({
   const currentRun = currentKey ? runs[currentKey] : undefined;
 
   return (
-    <section ref={sectionRef} className="mb-4 overflow-hidden rounded-xl border border-field ccode-well">
-      <div className="group flex h-11 items-center gap-2 px-3">
+    // 连接页 2026-10-29 起不套卡（借鉴 Claude 设置页）：节标题粗体 + 标题行下一根细线；左栏「出图模型」单独看，「全部」里排在最后
+    <section ref={sectionRef} className="mt-6 first:mt-3">
+      <div className="group flex min-h-11 items-center gap-2.5 border-b border-hairline pb-2">
         <button
           type="button"
           onClick={toggleCollapsed}
           aria-label={collapsed ? "展开" : "收起"}
-          className="flex shrink-0 items-center justify-center rounded-md hover:brightness-110"
+          className="flex shrink-0 items-center justify-center rounded-md text-l4 hover:text-l1"
         >
-          <FoldMark open={!collapsed} boxed />
+          <FoldMark open={!collapsed} />
         </button>
-        <h2 className="text-sm font-medium text-l1">出图模型</h2>
-        <span className="min-w-0 truncate text-micro text-l3">Agent 画图用，和上面的对话模型分开配</span>
+        <h2 className="text-lg font-semibold text-l1">出图模型</h2>
+        <span className="min-w-0 truncate text-xs text-l3">Agent 画图用，和对话用的连接分开配</span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {pendingAgents.length > 0 && skill && (
             <button
@@ -263,7 +264,7 @@ export default function ImageGenPanel({
       </div>
       {!collapsed && (
         <>
-          <div className={`group grid min-h-14 ${gridClass} items-center gap-3 border-t border-hairline px-4 text-sm`}>
+          <div className={`group grid min-h-14 ${gridClass} items-center gap-3 overflow-x-auto border-b border-hairline px-3 text-sm`}>
             <span className="flex min-w-0 items-center gap-2">
               {/* 还没选网关时给中性的图片图标，不拿「出图」二字的首字当厂商占位（2026-10-27 用户：那个「出」看不懂） */}
               {gw ? (

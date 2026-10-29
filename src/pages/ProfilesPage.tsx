@@ -7,8 +7,6 @@ import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impa
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
-  ChevronsDownUp,
-  ChevronsUpDown,
   CopyPlus,
   Database,
   Eye,
@@ -18,8 +16,12 @@ import {
   ArrowUp,
   Globe,
   GripVertical,
+  Image as ImageIcon,
   Import,
+  LayoutList,
   LogIn,
+  MoreHorizontal,
+  Plus,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -70,6 +72,8 @@ import { addConnectionDefaults, endpointHost, gatewayPickerRows } from "../gatew
 import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import VendorIcon from "../components/VendorIcon";
+import AgentIcon from "../components/AgentIcon";
+import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
 import {
@@ -95,10 +99,14 @@ import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install
 
 const IS_WINDOWS_UA = /Windows/i.test(navigator.userAgent);
 import {
-  PageFrame,
   NoticeBar,
-  PageHeader,
-  PageToolbar,
+  PaneHead,
+  paneHeadButtonClass,
+  paneHeadIconClass,
+  PaneNav,
+  PaneNavGroup,
+  PaneNavItem,
+  PaneSearch,
   SegTabs,
   Checkbox,
   fieldClass,
@@ -1046,7 +1054,7 @@ export function ProfileModal({
                   className="mb-1 px-2 text-micro text-l4"
                   title={pickerHidden.join("\n")}
                 >
-                  已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型在连接页最下方「出图模型」里配
+                  已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型在连接页左栏「出图模型」里配
                 </p>
               )}
               {(() => {
@@ -1535,6 +1543,9 @@ export function ProfileModal({
 
 /** 分组折叠状态持久化的 localStorage key：值为折叠中的 agent id 数组 */
 const COLLAPSED_KEY = "ccode.profiles.collapsed";
+/** 连接页左栏选中项（all / image / agent id） */
+const PANE_KEY = "ccode.profiles.pane";
+
 
 /** 读取已持久化的折叠分组；无记录时默认折叠「还没有连接」的组，避免空组淹没已有连接 */
 function loadCollapsedGroups(): Set<string> {
@@ -2486,11 +2497,37 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [rowProbe, setRowProbe] = useState<
     Record<string, { running: true } | { running: false; ok: boolean; message: string }>
   >({});
-  // 过滤条：按安装状态过滤 agent 组；按名称/端点/模型过滤配置行
-  const [statusFilter, setStatusFilter] = useState<
-    "all" | "installed" | "uninstalled"
-  >("all");
+  // 左栏搜索：按名称/端点/模型过滤配置行（2026-10-29 起安装状态过滤并进左栏：未安装的 Agent 灰显标「未安装」）
   const [search, setSearch] = useState("");
+  // 左栏选中项（2026-10-29 借鉴 Claude 设置页「左选右看」）：all = 九家连排，image = 出图模型，其余是 agent id；记住上次看的
+  const [pane, setPaneState] = useState<string>(() => {
+    try {
+      return localStorage.getItem(PANE_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  function selectPane(next: string) {
+    setPaneState(next);
+    try {
+      localStorage.setItem(PANE_KEY, next);
+    } catch {
+      // 存不下就只在本次生效
+    }
+  }
+  // 别的页要打开某一项（设置页「去连接页设置」→ 出图模型）：本页可见时读走请求
+  useEffect(() => {
+    if (!visible) return;
+    try {
+      const req = localStorage.getItem(PROFILES_PANE_REQ_KEY);
+      if (!req) return;
+      localStorage.removeItem(PROFILES_PANE_REQ_KEY);
+      selectPane(req);
+    } catch {
+      // 读不到就停在原来那一项
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
   // 组折叠状态：首次默认折叠空组，手动折叠后持久化到 localStorage
   // 分组顺序（2026-10-28 用户：可拖动排序）：组头按住拖，松手存 localStorage；键盘走组头 ⋯ 的上移 / 下移
   const [groupOrder, setGroupOrder] = useState<string[] | null>(() => loadAgentGroupOrder());
@@ -3392,19 +3429,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     AGENTS.map((a) => a.id),
     groupOrder,
   ).map((id) => AGENTS.find((a) => a.id === id)!);
-  const visibleAgents = orderedAgents.filter((a) => {
-    const installed = !!agents.find((x) => x.id === a.id)?.binaryPath;
-    if (statusFilter === "installed") return installed;
-    if (statusFilter === "uninstalled") return !installed;
-    return true;
-  });
   // 实际画出来的组（搜索时没命中的组不画）：拖动排序只在这些组之间挪
-  const shownAgents = visibleAgents.filter(
+  const shownAgents = orderedAgents.filter(
     (a) => !q || profiles.some((p) => p.agent === a.id && matchProfile(p)),
   );
   const shownIds: string[] = shownAgents.map((a) => a.id);
-  // 可见分组中存在展开项 → 按钮显示「全部折叠」，否则「全部展开」
-  const anyExpanded = visibleAgents.some((a) => !collapsedGroups.has(a.id));
+  // 右边实际看的：存下的选中项还在就用它；搜索把它筛掉了 / 第一次打开时，落到第一个有连接的 Agent
+  const activePane =
+    pane === "all" || pane === "image" || shownIds.includes(pane)
+      ? pane
+      : (shownAgents.find((a) => profiles.some((p) => p.agent === a.id && matchProfile(p)))?.id ??
+        shownIds[0] ??
+        "all");
+  const paneAgents = activePane === "all" ? shownAgents : shownAgents.filter((a) => a.id === activePane);
   const dupNameIds = duplicateNameIds(profiles);
   // 保存后的「要重启标签才生效」提示（仅当该 agent 确有标签在跑）
   const [savedNote, setSavedNote] = useState<string | null>(null);
@@ -3476,14 +3513,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 连接行「改作出图模型」：把这条连接里的出图模型设成出图模型，滚到本页最下方那块
+  // 连接行「改作出图模型」：把这条连接里的出图模型设成出图模型，切到左栏「出图模型」
   const imageGenRef = useRef<HTMLElement | null>(null);
   const imageGenSetting = useAppStore((s) => `${s.settings?.imageGenGatewayId ?? ""}\u0001${s.settings?.imageGenModel ?? ""}`);
   async function convertToImageGen(gatewayId: string, model: string) {
     try {
       await setImageGenModel(gatewayId, model);
-      setNotice(`已把 ${model} 设为出图模型（本页最下方）。这条连接里没有能对话的模型，用不上了可以在 ⋯ 里删除`);
-      imageGenRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setNotice(`已把 ${model} 设为出图模型（左栏「出图模型」）。这条连接里没有能对话的模型，用不上了可以在 ⋯ 里删除`);
+      selectPane("image");
     } catch (e) {
       setError(String(e));
     }
@@ -3604,102 +3641,145 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   );
 
   return (
-    <div className="min-h-full bg-canvas">
-      <PageFrame width="wide">
+    // 2026-10-29 借鉴 Claude 设置页（连接页重做）：页头同对话头；左边 Agent 二级栏（官方图标 + 连接数，可拖宽、可拖动排序），
+    // 右边只看选中的那家（或「全部」九家连排、「出图模型」）；Agent 节不套卡，节标题粗体 + 细线，连接行名称在上、端点 · 模型灰字在下
+    <div className="flex h-full min-h-0 flex-col bg-canvas">
+      <PaneHead
+        title="连接"
+        meta={`每个 Agent 绑哪个网关、用哪些模型 · ${profiles.length} 个连接`}
+        sticky={false}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setGwNew(false);
+                setGwLib(true);
+              }}
+              className={paneHeadButtonClass}
+            >
+              网关库
+            </button>
+            <button
+              type="button"
+              onClick={() => setModal({ initial: null })}
+              className={paneHeadButtonClass}
+            >
+              <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+              添加连接
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setTopMenu({ x: rect.right - 176, y: rect.bottom + 4 });
+              }}
+              title="更多连接操作"
+              aria-label="更多连接操作"
+              aria-expanded={!!topMenu}
+              className={paneHeadIconClass}
+            >
+              <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          </>
+        }
+      />
+      <div className="flex min-h-0 flex-1">
+        <PaneNav storageKey="ccode.profiles.navWidth" label="调整 Agent 栏宽度" defaultWidth={232}>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-1">
+            <PaneSearch
+              value={search}
+              onChange={setSearch}
+              placeholder="搜索连接 / 端点 / 模型"
+              label="搜索连接"
+            />
+            <div className="mt-2 flex flex-col gap-0.5">
+              <PaneNavItem
+                icon={<LayoutList size={15} strokeWidth={1.8} aria-hidden="true" />}
+                label="全部"
+                count={profiles.filter(matchProfile).length}
+                selected={activePane === "all"}
+                onClick={() => selectPane("all")}
+              />
+            </div>
+            <PaneNavGroup label="Agent" />
+            {/* 按住上下拖调整 Agent 顺序（与原来拖组头同一份顺序）；没装的灰显、右边写「未安装」 */}
+            <div data-agent-group-list className="flex flex-col gap-0.5">
+              {shownAgents.map((agent, navIndex) => {
+                const installed = !!agents.find((x) => x.id === agent.id)?.binaryPath;
+                const count = profiles.filter((p) => p.agent === agent.id && matchProfile(p)).length;
+                const conflicted =
+                  (officialStatus[agent.id]?.conflicts.length ?? 0) > 0 &&
+                  conflictDismissed[agent.id] !== [...officialStatus[agent.id].conflicts].sort().join("\n");
+                const outdated = installed && !!updateInfo[agent.id]?.outdated && !updating[agent.id];
+                const navDrag = dragSortStyle("navgroups", agent.id, navIndex);
+                return (
+                  <div
+                    key={agent.id}
+                    data-agent-group={agent.id}
+                    style={navDrag.style}
+                    className={navDrag.cls}
+                    onPointerDown={(e) =>
+                      startDragSort(e, "navgroups", agent.id, "[data-agent-group-list]", "data-agent-group", (from, to) =>
+                        commitGroupMove(shownIds, from, to),
+                      )
+                    }
+                  >
+                    <PaneNavItem
+                      icon={<AgentIcon agent={agent.id} label={agent.label} size={16} />}
+                      label={
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate">{agent.label}</span>
+                          {conflicted && (
+                            <span
+                              className="size-1.5 shrink-0 rounded-full bg-warn-text"
+                              title="有连接冲突：本地配置里的残留密钥会覆盖官方账号登录"
+                            />
+                          )}
+                        </span>
+                      }
+                      count={
+                        !installed ? (
+                          "未安装"
+                        ) : outdated ? (
+                          <span className="text-cta" title={`有新版本 ${updateInfo[agent.id]?.latest ?? ""}`}>
+                            新版 · {count}
+                          </span>
+                        ) : (
+                          count
+                        )
+                      }
+                      muted={!installed}
+                      selected={activePane === agent.id}
+                      title={installed ? `${agent.label}：${count} 个连接；按住上下拖可调整顺序` : `${agent.label}（本机未安装）`}
+                      onClick={() => {
+                        if (suppressHeaderClickRef.current) return;
+                        selectPane(agent.id);
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <PaneNavGroup label="其他" />
+            <PaneNavItem
+              icon={<ImageIcon size={15} strokeWidth={1.8} aria-hidden="true" />}
+              label="出图模型"
+              selected={activePane === "image"}
+              onClick={() => selectPane("image")}
+            />
+          </div>
+        </PaneNav>
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-8 pb-12 pt-2">
+        <div className="mx-auto w-full max-w-5xl">
         {/* 注入模式的核心规则：配置只在**启动那一刻**注入子进程，改了对已在跑的标签无效。
             这条以前只写在用户手册里，用户改完配置回终端发现没变化，界面上没有任何解释
             （「有时候配置了无法切换模型」的第二个来源）。保存后有标签在跑才提示，平时不啰嗦。 */}
         {savedNote && (
-          <NoticeBar tone="warn" onDismiss={() => setSavedNote(null)}>
+          <NoticeBar tone="warn" className="mt-2" onDismiss={() => setSavedNote(null)}>
             {savedNote}
           </NoticeBar>
         )}
-        {/* 命令栏：标题 + 元信息，右侧动作 */}
-        <PageHeader
-          title="连接"
-          meta={`每个 Agent 绑哪个网关、用哪些模型 · ${profiles.length} 个连接`}
-          actions={
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setGwNew(false);
-                  setGwLib(true);
-                }}
-                className={secondaryActionClass}
-              >
-                网关库
-              </button>
-              <button
-                type="button"
-                onClick={() => setModal({ initial: null })}
-                className={primaryActionClass}
-              >
-                + 添加连接
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setTopMenu({ x: rect.right - 176, y: rect.bottom + 4 });
-                }}
-                title="更多连接操作"
-                aria-label="更多连接操作"
-                className="flex h-8 w-8 items-center justify-center rounded-sm text-sm text-l2 hover:bg-hover hover:text-l1"
-              >
-                ⋯
-              </button>
-            </>
-          }
-        />
-
-        {/* 过滤条：状态筛选胶囊（选中=实心 seg-sel）+ 右侧折叠开关与搜索框。
-            「全部折叠」是动作不是筛选条件，不跟筛选胶囊挨着摆成第四个选项 */}
-        <PageToolbar>
-          <SegTabs
-            items={(
-              [
-                ["all", "全部"],
-                ["installed", "已安装"],
-                ["uninstalled", "未安装"],
-              ] as const
-            ).map(([id, label]) => ({ id, label }))}
-            value={statusFilter}
-            onChange={setStatusFilter}
-          />
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() =>
-                updateCollapsed((prev) => {
-                  const next = new Set(prev);
-                  if (anyExpanded) {
-                    for (const a of visibleAgents) next.add(a.id);
-                  } else {
-                    for (const a of visibleAgents) next.delete(a.id);
-                  }
-                  return next;
-                })
-              }
-              title={anyExpanded ? "全部折叠" : "全部展开"}
-              aria-label={anyExpanded ? "全部折叠" : "全部展开"}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-l3 hover:bg-hover hover:text-l1"
-            >
-              {anyExpanded ? (
-                <ChevronsDownUp size={16} strokeWidth={1.8} aria-hidden="true" />
-              ) : (
-                <ChevronsUpDown size={16} strokeWidth={1.8} aria-hidden="true" />
-              )}
-            </button>
-            {/* 搜索框：inset 底 + hairline 细边（同对话页手法） */}
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索连接 / 端点 / 模型"
-              className={`${searchFieldClass} w-56`}
-            />
-          </div>
-        </PageToolbar>
 
         {error && <NoticeBar tone="err" className="mt-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         {/* npm 渠道不可用（无 Node.js）时的一键安装出口：渠道由依赖体检判定，
@@ -3737,45 +3817,51 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           </NoticeBar>
         )}
 
-        {/* agent 分组（可折叠）。列标题行已去掉（2026-10-25 用户拍板），各列内容自明 */}
+        {/* agent 分组：左栏选一家只画这一家；选「全部」九家连排（可折叠、可拖组头排序）。列标题行已去掉（2026-10-25 用户拍板） */}
+        {activePane !== "image" && paneAgents.length === 0 && (
+          <p className="py-10 text-center text-sm text-l3">{q ? `没有匹配「${search.trim()}」的连接` : "还没有连接"}</p>
+        )}
         <div data-agent-group-list>
-          {shownAgents.map((agent, groupIndex) => {
+          {paneAgents.map((agent) => {
+            const groupIndex = shownIds.indexOf(agent.id);
             const det = agents.find((a) => a.id === agent.id);
             const list = sortedProfilesOf(agent.id).filter(matchProfile);
             const listIds = list.map((p) => p.id);
-            const isCollapsed = collapsedGroups.has(agent.id);
+            const allView = activePane === "all";
+            // 只看一家时没有折叠（左栏就是切换）；「全部」里照旧能折叠
+            const isCollapsed = allView && collapsedGroups.has(agent.id);
             const groupDrag = dragSortStyle("groups", agent.id, groupIndex);
-            // 分组卡片化（v3.93 用户拍板）：field 细边 + strip 底色卡片给每个 agent 明确边界，
-            // 替代原 hairline + 左侧缩进线手法；未安装的卡片去底色降权（无配置可管，权重最低）。
-            // 不用 opacity 降权：opacity<1 会改变 fixed 后代的包含块，悬浮层定位会错乱。
-            const installed = !!det?.binaryPath;
+            // 2026-10-29 起不套卡（借鉴 Claude 设置页）：节标题粗体 + 标题行下一根细线，节与节大留白；
+            // 未安装的不降透明度（opacity<1 会改变 fixed 后代的包含块，悬浮层定位会错乱），节标题旁写「未安装」
             return (
               <section
                 key={agent.id}
                 data-agent-group={agent.id}
                 style={groupDrag.style}
-                className={`mb-4 overflow-hidden rounded-xl border ${
-                  installed
-                    ? "border-field ccode-well"
-                    : "border-hairline"
-                } ${groupDrag.cls}`}
+                className={`mt-6 first:mt-3 ${allView ? "mb-6" : ""} ${groupDrag.cls}`}
               >
                 <div
-                  className={`group relative flex h-11 items-center gap-2 px-3 ${dragSort ? "" : "cursor-grab"}`}
-                  onPointerDown={(e) =>
+                  className={`group relative flex min-h-11 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-hairline pb-2 ${
+                    allView && !dragSort ? "cursor-grab" : ""
+                  }`}
+                  onPointerDown={(e) => {
+                    if (!allView) return;
                     startDragSort(e, "groups", agent.id, "[data-agent-group-list]", "data-agent-group", (from, to) =>
                       commitGroupMove(shownIds, from, to),
-                    )
-                  }
+                    );
+                  }}
                 >
-                  {/* 握把浮在左内边距里、不占布局：展开按钮与下方「出图模型」等组头左缘对齐 */}
-                  <span
-                    aria-hidden
-                    title="按住组头上下拖，调整分组顺序"
-                    className="pointer-events-none absolute inset-y-0 left-0 flex w-3 items-center justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
-                  >
-                    <GripVertical size={14} strokeWidth={1.8} />
-                  </span>
+                  {/* 握把浮在左外侧、不占布局（只在「全部」里能拖组头） */}
+                  {allView && (
+                    <span
+                      aria-hidden
+                      title="按住组头上下拖，调整分组顺序"
+                      className="pointer-events-none absolute inset-y-0 -left-4 flex w-3 items-center justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
+                    >
+                      <GripVertical size={14} strokeWidth={1.8} />
+                    </span>
+                  )}
+                  {allView && (
                   <button
                     onClick={() => {
                       if (suppressHeaderClickRef.current) return;
@@ -3789,12 +3875,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       });
                     }}
                     aria-label={isCollapsed ? "展开" : "收起"}
-                    className="flex shrink-0 items-center justify-center rounded-md hover:brightness-110"
+                    className="flex shrink-0 items-center justify-center rounded-md text-l4 hover:text-l1"
                   >
-                    <FoldMark open={!isCollapsed} boxed />
+                    <FoldMark open={!isCollapsed} />
                   </button>
+                  )}
+                  <AgentIcon agent={agent.id} label={agent.label} size={allView ? 18 : 20} />
                   <h2
-                    className="text-sm font-medium text-l1"
+                    className={`${allView ? "text-lg" : "text-xl"} font-semibold text-l1`}
                     title={
                       det?.binaryPath
                         ? `${agent.binary} ${det.version ?? ""}`.trim()
@@ -3937,7 +4025,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 </div>
 
                 {!isCollapsed && (
-                  <div className="border-t border-hairline">
+                  <div>
                     {/* 安装/更新实时输出（全宽，行为不变） */}
                     {updating[agent.id] && (
                       <div className="mx-3 mt-2">
@@ -4031,10 +4119,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
 
                     {list.length === 0 ? (
                       // 只说状态不说教：页头已有「+ 添加连接」主按钮，入口不必每组复述一遍
-                      <p className="px-4 py-3 text-xs text-l3">还没有连接</p>
+                      <p className="border-b border-hairline px-1 py-4 text-sm text-l3">还没有连接</p>
                     ) : (
                       // 行间极细分割线（hairline）替代卡片间距：整列垂直严格对齐，视觉节奏与官方账号行一致
-                      <ul data-profile-list className="divide-y divide-hairline overflow-x-auto">
+                      <ul data-profile-list className="divide-y divide-hairline border-b border-hairline">
                         {list.map((profile, rowIndex) => {
                           const hidden = (
                             settings?.hiddenProfiles ?? []
@@ -4106,7 +4194,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 commitProfileMove(agent.id, listIds, from, to),
                               );
                             }}
-                            className={`group relative grid min-h-14 ${PROFILE_GRID} items-center gap-3 px-4 text-sm ${
+                            className={`group relative grid min-h-16 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 px-3 py-2.5 text-sm ${
                               rowDrag.dragging ? "" : "transition-colors"
                             } ${
                               // 拖着走的那行：实底浮起，免得透出底下让位的行
@@ -4128,7 +4216,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 <GripVertical size={14} strokeWidth={1.8} />
                               </span>
                             )}
-                            <span className="flex min-w-0 items-center gap-2">
+                            <span className="flex min-w-0 items-center gap-3">
                               <VendorIcon
                                 vendor={
                                   profile.accountType === "official"
@@ -4143,7 +4231,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               <span className="min-w-0 flex-1">
                               <span className="flex min-w-0 items-center gap-1.5">
                                 <span
-                                  className="truncate font-medium text-l1"
+                                  className="truncate text-base font-medium text-l1"
                                   title={
                                     nameSuffix
                                       ? `${profile.name}（同一 Agent 下有同名连接，这里补上首个模型 ${nameSuffix} 区分；可在「编辑」里改名）`
@@ -4163,6 +4251,97 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 ) : hidden ? (
                                   <StatusPill tone="muted" tip="已停用：不会被恢复会话和 AI 功能自动挑中；启动栏下拉里沉到「已停用」分组，仍可手选">已停用</StatusPill>
                                 ) : null}
+                              </span>
+                              {/* 第二行（2026-10-29 起，原端点 / 模型两列）：端点 · 模型灰字，前 3 个模型平铺、其余 +N */}
+                              <span className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs">
+                                  {(profile.accountType !== "official" || officialPlan) && (
+                                  <span
+                                    className={`min-w-0 max-w-[45%] shrink-0 truncate ${profile.baseUrl ? "text-l3" : "text-l4"}`}
+                                    title={
+                                      profile.accountType === "official"
+                                        ? `${officialEmail ? `账号：${officialEmail}\n` : ""}${officialPlan ? `套餐：${officialPlan}\n` : ""}官方账号登录（CLI 自身认证，不注入端点/密钥）`
+                                        : profile.baseUrl
+                                          ? displayHost(profile.baseUrl)
+                                          : "使用 CLI 默认端点"
+                                    }
+                                  >
+                                    {/* 官方账号没有端点可言：这一格写登录账号的套餐（2026-10-28 用户：只显示套餐，不显示邮箱）；
+                                        读不到（未登录 / 这家还没接）就留空，不放横杠 */}
+                                    {profile.accountType === "official"
+                                      ? officialPlan
+                                      : profile.baseUrl
+                                        ? displayHost(profile.baseUrl)
+                                        : "默认端点"}
+                                  </span>
+                                  )}
+                                  {(profile.accountType !== "official" || officialPlan) && (
+                                    <span className="shrink-0 text-l4" aria-hidden="true">·</span>
+                                  )}
+                                  {/* 模型列轻量化：mono micro 纯文字（不套底色块），前 3 个平铺，其余折叠为 +N；
+                                      列宽装不下时 overflow 裁切，悬浮 title 始终给全文 */}
+                                  <span
+                                    className="flex min-w-0 items-baseline gap-1.5 overflow-hidden"
+                                    title={
+                                      profile.models.length > 0
+                                        ? profile.models
+                                            .map((m) =>
+                                              profile.accountType === "official" ? officialModelLabel(profile.agent, m, officialAliases).text : m,
+                                            )
+                                            .join(" · ")
+                                        : undefined
+                                    }
+                                  >
+                                    {profile.models.length > 0 ? (
+                                      <>
+                                        {profile.models.slice(0, 3).map((m, i) => {
+                                          // 官方账号的别名（Claude opus 等）显示成当前对应的完整型号，悬停说明启动传的仍是别名
+                                          const label =
+                                            profile.accountType === "official"
+                                              ? officialModelLabel(profile.agent, m, officialAliases)
+                                              : { text: m, tip: m };
+                                          return (
+                                          // 首个模型是启动默认：字色提一档、悬停说明，其余是会话里可切的
+                                          // （其余用 l3 不用 l4：l4 在卡底上不到 4.5:1，是装饰档不是阅读档）
+                                          <span
+                                            key={m}
+                                            className={`shrink-0 font-mono text-micro ${
+                                              goneModels.includes(m)
+                                                ? "text-warn-text line-through"
+                                                : i === 0
+                                                  ? "text-l2"
+                                                  : "text-l3"
+                                            }`}
+                                            title={
+                                              goneModels.includes(m)
+                                                ? `${m}：已不在网关的模型目录里，点「编辑」去掉或换一个`
+                                                : i === 0
+                                                  ? `${label.tip}（启动默认）`
+                                                  : label.tip
+                                            }
+                                          >
+                                            {label.text}
+                                          </span>
+                                          );
+                                        })}
+                                        {profile.models.length > 3 && (
+                                          <span className="shrink-0 font-mono text-micro text-l3">
+                                            +{profile.models.length - 3}
+                                          </span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <span
+                                        className="text-xs text-l3"
+                                        title={
+                                          profile.accountType === "official"
+                                            ? "这家 CLI 没有可读的官方模型名单，启动时用它自己的默认模型；要换在 CLI 里用 /model"
+                                            : undefined
+                                        }
+                                      >
+                                        {profile.accountType === "official" ? "CLI 默认模型" : "未指定模型"}
+                                      </span>
+                                    )}
+                                  </span>
                               </span>
                               {/* caption 行：micro 档灰字，相对时间主显、悬浮给绝对时间（白话双层） */}
                               {caption.length > 0 && (
@@ -4190,89 +4369,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               )}
                               </span>
                             </span>
-                            <span
-                              className={`min-w-0 truncate text-xs ${profile.baseUrl ? "text-l2" : "text-l3"}`}
-                              title={
-                                profile.accountType === "official"
-                                  ? `${officialEmail ? `账号：${officialEmail}\n` : ""}${officialPlan ? `套餐：${officialPlan}\n` : ""}官方账号登录（CLI 自身认证，不注入端点/密钥）`
-                                  : profile.baseUrl
-                                    ? displayHost(profile.baseUrl)
-                                    : "使用 CLI 默认端点"
-                              }
-                            >
-                              {/* 官方账号没有端点可言：这一格写登录账号的套餐（2026-10-28 用户：只显示套餐，不显示邮箱）；
-                                  读不到（未登录 / 这家还没接）就留空，不放横杠 */}
-                              {profile.accountType === "official"
-                                ? officialPlan
-                                : profile.baseUrl
-                                  ? displayHost(profile.baseUrl)
-                                  : "默认端点"}
-                            </span>
-                            {/* 模型列轻量化：mono micro 纯文字（不套底色块），前 3 个平铺，其余折叠为 +N；
-                                列宽装不下时 overflow 裁切，悬浮 title 始终给全文 */}
-                            <span
-                              className="flex min-w-0 items-center gap-1.5 overflow-hidden"
-                              title={
-                                profile.models.length > 0
-                                  ? profile.models
-                                      .map((m) =>
-                                        profile.accountType === "official" ? officialModelLabel(profile.agent, m, officialAliases).text : m,
-                                      )
-                                      .join(" · ")
-                                  : undefined
-                              }
-                            >
-                              {profile.models.length > 0 ? (
-                                <>
-                                  {profile.models.slice(0, 3).map((m, i) => {
-                                    // 官方账号的别名（Claude opus 等）显示成当前对应的完整型号，悬停说明启动传的仍是别名
-                                    const label =
-                                      profile.accountType === "official"
-                                        ? officialModelLabel(profile.agent, m, officialAliases)
-                                        : { text: m, tip: m };
-                                    return (
-                                    // 首个模型是启动默认：字色提一档、悬停说明，其余是会话里可切的
-                                    // （其余用 l3 不用 l4：l4 在卡底上不到 4.5:1，是装饰档不是阅读档）
-                                    <span
-                                      key={m}
-                                      className={`shrink-0 font-mono text-micro ${
-                                        goneModels.includes(m)
-                                          ? "text-warn-text line-through"
-                                          : i === 0
-                                            ? "text-l2"
-                                            : "text-l3"
-                                      }`}
-                                      title={
-                                        goneModels.includes(m)
-                                          ? `${m}：已不在网关的模型目录里，点「编辑」去掉或换一个`
-                                          : i === 0
-                                            ? `${label.tip}（启动默认）`
-                                            : label.tip
-                                      }
-                                    >
-                                      {label.text}
-                                    </span>
-                                    );
-                                  })}
-                                  {profile.models.length > 3 && (
-                                    <span className="shrink-0 font-mono text-micro text-l3">
-                                      +{profile.models.length - 3}
-                                    </span>
-                                  )}
-                                </>
-                              ) : (
-                                <span
-                                  className="text-xs text-l3"
-                                  title={
-                                    profile.accountType === "official"
-                                      ? "这家 CLI 没有可读的官方模型名单，启动时用它自己的默认模型；要换在 CLI 里用 /model"
-                                      : undefined
-                                  }
-                                >
-                                  {profile.accountType === "official" ? "CLI 默认模型" : "未指定模型"}
-                                </span>
-                              )}
-                            </span>
                             {/* 状态列：只说例外与「测试通过」。未测试不常驻，悬停出「测试」，点了就地测，
                                 结果写在原位；测过的结论也能点一下重测 */}
                             <span className="flex min-w-0 items-center text-xs">
@@ -4282,7 +4378,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   return (
                                     <span
                                       className="flex min-w-0 items-center gap-1 text-warn-text"
-                                      title={`${profile.models.join("、")} 不能用来和 Agent 对话。出图模型在本页最下方「出图模型」里配；点「改作出图模型」一步转过去`}
+                                      title={`${profile.models.join("、")} 不能用来和 Agent 对话。出图模型在左栏「出图模型」里配；点「改作出图模型」一步转过去`}
                                     >
                                       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-text" />
                                       <span className="truncate">{imageGenDone ? "已作出图模型" : "只有出图模型"}</span>
@@ -4410,7 +4506,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 <button
                                   type="button"
                                   className={`${rowActionClass} text-warn-text`}
-                                  title={`把 ${imageGenPick} 设为出图模型（本页最下方），Agent 画图时用它；这条连接本身不动，用不上了可在 ⋯ 里删除`}
+                                  title={`把 ${imageGenPick} 设为出图模型（左栏「出图模型」），Agent 画图时用它；这条连接本身不动，用不上了可在 ⋯ 里删除`}
                                   onClick={() => void convertToImageGen(profile.gatewayId!, imageGenPick)}
                                 >
                                   改作出图模型
@@ -4502,8 +4598,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         </div>
         {/* 出图模型（2026-10-24 用户「连接这里配置生图模型」）：不属于哪个 Agent 的对话连接，单独一块；
             长相与 Agent 分组一致、行与连接行同一列模板。编辑处只此一处，设置页只显示现状并跳过来 */}
-        {!q && <ImageGenPanel gridClass={PROFILE_GRID} sectionRef={imageGenRef} />}
-      </PageFrame>
+        {(activePane === "image" || (activePane === "all" && !q)) && (
+          <ImageGenPanel gridClass={PROFILE_GRID} sectionRef={imageGenRef} />
+        )}
+        </div>
+        </div>
+      </div>
       {/* 连接冲突弹层：组头琥珀胶囊点出，列出具体文件/变量；只含文件名与变量名，密钥值不出后端 */}
       {conflictPop &&
         (() => {

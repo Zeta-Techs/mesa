@@ -41,7 +41,8 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
     // 设置页 6→2（同日第二批，借鉴 Claude 设置页）：分组卡 / 成组编辑卡 / 主题卡 / 卸载与本机占用卡改成
     // 节标题 + 上下细线的行组，只剩提示条两处与诊断里的代码块。
     // 用量页 2→0（同日）：余量 / 余额 / 概览 / 分布、活跃度都改节标题 + 细线，不再套卡。
-    WorkbenchPage: 0, SkillsPage: 4, McpPage: 3, ProfilesPage: 5,
+    // 连接页 5→4（同日）：Agent 组卡去掉，剩表单 / 更新结果 / 冲突弹层里的小块。
+    WorkbenchPage: 0, SkillsPage: 4, McpPage: 3, ProfilesPage: 4,
     SettingsPage: 2, StatsPage: 0, SessionsPage: 1,
   };
   for (const [page, minimum] of Object.entries(minimumCards)) {
@@ -52,7 +53,8 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
     }
   }
   assert.doesNotMatch(source("pages/WorkbenchPage.tsx"), /bg-raised\/(?:40|55)/);
-  assert.match(source("pages/ProfilesPage.tsx"), /installed\s*\? "border-field ccode-well"\s*: "border-hairline"/);
+  // 连接页 2026-10-29 起左选右看：Agent 节不套卡（节标题 + 细线），未安装不再靠去卡底降权
+  assert.doesNotMatch(source("pages/ProfilesPage.tsx"), /"border-field ccode-well"/);
   assert.match(source("components/ProjectAgentsView.tsx"), /row.isProjectDefault \? "bg-seg-sel" : "ccode-well"/);
 });
 

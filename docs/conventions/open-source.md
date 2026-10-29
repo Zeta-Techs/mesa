@@ -18,6 +18,8 @@
 - 服务商小图标（`src/assets/vendor-icons/` 14 个，2026-10-28 加 Gemini、Cursor（官方账号行用；Cursor 取自 lobe-icons npm 包 `@lobehub/icons-static-svg`），2026-10-20 扩到网关库与连接行，2026-10-21 加 New API 平台标）按 lobe-icons（MIT）
   + cc-switch（MIT）署名，并附两份 MIT 全文进 `docs/licenses/THIRD-PARTY.md`。
   - **增删图标同步该节与 `npm run gen:notices`**。
+  - Agent 产品图标（`src/assets/agent-icons/` 9 个，2026-10-29 连接页左栏用，lobe-icons npm 包逐字节引入）同样记在 THIRD-PARTY.md
+    「Agent 产品标识 SVG」，组件 `AgentIcon.tsx` 内联渲染（currentColor 跟主题）；认不出的 Agent 首字占位。
   - **只给官方域名配厂商图标**（`vendor-icon.ts` 后缀表）。
   - New API 标只标「平台软件」（命中 `WALLET_HOSTS` 或配了钱包），不给任何中转站品牌做图标；其余第三方中转站 / 自建网关一律首字占位。
 

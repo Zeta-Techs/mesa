@@ -19,6 +19,7 @@ import {
 import appIconDark from "../assets/app-icon/dark.png";
 import appIconLight from "../assets/app-icon/light.png";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
+import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
@@ -3785,12 +3786,19 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               ? `Agent 画图用 ${settings.imageGenModel}`
               : "还没选：Agent 不能画图"
           }
-          labelTitle="插图、示意图、封面这类按描述画的图用它；在连接页最下方「出图模型」里选、试出与对比、给 Agent 打开技能"
+          labelTitle="插图、示意图、封面这类按描述画的图用它；在连接页左栏「出图模型」里选、试出与对比、给 Agent 打开技能"
         >
           <button
             type="button"
             className={ghostActionClass}
-            onClick={() => useAppStore.getState().setPage("profiles")}
+            onClick={() => {
+              try {
+                localStorage.setItem(PROFILES_PANE_REQ_KEY, "image");
+              } catch {
+                // 存不下就只跳到连接页
+              }
+              useAppStore.getState().setPage("profiles");
+            }}
           >
             去连接页设置
           </button>

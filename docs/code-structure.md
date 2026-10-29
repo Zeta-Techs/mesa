@@ -99,6 +99,7 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，点开全屏向导）
+  components/AgentIcon.tsx   # 九家 Agent 产品图标（src/assets/agent-icons/，lobe-icons MIT）：内联 SVG（currentColor 跟主题）、渐变 id 按实例改前缀、认不出首字占位；连接页左栏与 Agent 节标题用
   components/PageFrame.tsx   # 页面公共件：PageFrame/PageHeader（旧管理页外壳）、按钮类、SegTabs（pill / boxed 分段控件）、Toggle、NoticeBar…；
                              # 2026-10-29 起加管理页对话化写法：PaneHead（与对话头同高的吸顶小页头）、PaneColumn（对话栏宽度单列）、PaneSearch、
                              # PaneNav（可拖宽二级栏，宽度按 storageKey 记 localStorage）、PaneNavGroup/Item、PaneSection、PaneRows/PaneRow
@@ -189,6 +190,7 @@ components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（Settings
   components/MesaThinkingDots.tsx # 聊天「回到最新」浮钮生成中的三枚琥珀光标：每 3.2s 随机换队形（jump-formations.ts），位置走 CSS translate 过渡，呼吸在 App.css .ccode-jump-dots；减弱动态效果时不换队
   components/CommandPalette.tsx # ⌘K 面板：默认列表 快速操作/最近项目（list_projects 前 5）/页面（快捷键跟随设置）/外观/帮助；设置分区（SETTINGS_SEARCH_INDEX）、单个主题、较早项目、外链只在搜索时出现；「切换主题…」进主题网格（与设置页主题卡同长相、7 列深浅上下对齐、方向键四向移动、当前打勾；色样懒加载 App.css?raw；跟随系统只列与系统同深浅的一排并走 followedTheme）；输入法组词 Enter 不执行、↑↓ 循环、键盘移动跟随滚动；帮助类动作经 onHelp 交 App 的同一批弹窗（「上手引导」直接调 openOnboardingGuide）
 settings-search.ts         # 设置页搜索索引单一出处（SettingSectionId 与 SettingsPage SETTING_NAV 一一对应）：每档带别名——写用户会打的词不写字段名（搜「代理」落「网络」、「卡顿」落「终端」）；searchSettings 四档排序＝档名命中 > 别名全等 > 别名包含 > 复合词拆半两半都命中（「依赖体检」这类连打词）；只搜到档不做逐行高亮——开关类设置高亮一半控件比多看一个分区更费解（CommandPalette 设置分区消费；tests/settings-search.test.ts）
+  profiles-pane.ts           # 连接页左栏「打开某一项」请求的 localStorage 键（设置页「去连接页设置」→ 出图模型）；单独成文件，免得设置页静态引用整个连接页
   money-format.ts            # 金额千分位两位小数 groupedMoney（用量页费用、网关余额共用；币种与 ≥ ~ 前缀由调用方拼）
 rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N 小时前/N 天前，超 30 天回落日期）＋悬浮绝对时间 absTime：白话双层（相对为主、绝对降为悬浮 title），定时任务行/雷达卡/验收账/内部对话卡/侧栏搜索等列表行共用（tests/rel-time.test.ts）
                              # shortWhen：列表统一的「什么时候」（7 天内相对、更早「9月10日」、跨年带年份；nowMs 显式传，工作台用）
