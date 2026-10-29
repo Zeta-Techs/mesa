@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { InlineNotice, MenuSelect, Toggle, settingsPillClass } from "./PageFrame";
+import { InlineNotice, MenuSelect, Toggle, paneOutlineButtonClass } from "./PageFrame";
 import { confirmDialog } from "./ConfirmDialog";
 import { toast } from "../toast";
 import { absTime, relTime } from "../rel-time";
@@ -75,12 +75,13 @@ export default function InternalSessionsCard({
   // 最早一条的时间与超期细节进悬浮，不占版面
   const canClean = !!stats && stats.eligible > 0 && !cleaning;
   return (
-    <div className="mt-3 ccode-well ccode-card p-4">
+    // 设置页 2026-10-29 起不套卡：接在「本机占用」那组下面（上边线由那组的底线给），只画底线
+    <div className="border-b border-hairline py-3.5">
       <div className="mb-1 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-l1">Mesa 内部对话</div>
+          <div className="text-base text-l1">Mesa 内部对话</div>
           <p
-            className="mt-0.5 text-micro leading-4 text-l3"
+            className="mt-0.5 text-sm leading-relaxed text-l3"
             title="起标题、提交信息、摘要、雷达解读这类后台调用在各家 CLI 目录里留下的对话。只清 Mesa 自己产生的，你项目里的对话、你保留过的对话一条不碰；花费记录永久保留在用量页"
           >
             后台起名、摘要等调用留下的对话
@@ -93,7 +94,7 @@ export default function InternalSessionsCard({
         </div>
         <button
           type="button"
-          className={`${settingsPillClass} shrink-0`}
+          className={`${paneOutlineButtonClass} shrink-0`}
           disabled={!canClean}
           title={
             stats && stats.eligible === 0
@@ -112,8 +113,8 @@ export default function InternalSessionsCard({
       {error && <InlineNotice className="mb-2">{error}</InlineNotice>}
       <div className="mt-3 flex min-h-10 items-center justify-between gap-3 border-t border-hairline pt-3">
         <div className="min-w-0">
-          <div className="text-sm text-l1">自动清理</div>
-          <p className="mt-0.5 truncate text-micro leading-4 text-l3">
+          <div className="text-base text-l1">自动清理</div>
+          <p className="mt-0.5 truncate text-sm leading-relaxed text-l3">
             {autoClean
               ? `每天至多一次，删掉超过保留期的${stats?.lastCleanAt ? `；上次 ${relTime(stats.lastCleanAt)}` : ""}`
               : "已关：内部对话一直留着；右上角手动清理同样只删超过保留期的"}

@@ -9,7 +9,6 @@ import {
   Info,
   Keyboard,
   Palette,
-  Search,
   SlidersHorizontal,
   Sparkles,
   SquareTerminal,
@@ -29,14 +28,15 @@ import {
   compactPrimaryActionClass,
   fieldClass,
   hoverRevealClass,
-  PageFrame,
-  PageHeader,
+  PaneHead,
+  PaneNav,
+  PaneSearch,
+  paneOutlineButtonClass,
   primaryActionClass,
   Checkbox,
   FoldMark,
   SegTabs,
   Toggle,
-  settingsPillClass,
   InlineNotice,
 } from "../components/PageFrame";
 import {
@@ -351,17 +351,17 @@ function TerminalPreview({
 
 // fieldClass 自带 w-full：本页 Row 右列是收缩到内容的 auto 列，定宽控件（w-20/w-24/w-40）
 // 追加的宽度类在 Tailwind 排序中会被 w-full 覆盖，故用去掉 w-full 的本页变体保持原宽度
-// 2026-10-18 起设置页控件整体换「胶囊」手感：圆角放大、高度 36px、底色抬一档（借鉴 Codex 设置页）
+// 2026-10-29 起设置页借鉴 Claude 设置页：输入 / 下拉为细边框、透明底、32px（原 10-18 的抬底胶囊 36px）
 const fieldFixed = fieldClass
   .replace("w-full ", "")
   .replace("rounded-md", "rounded-lg")
-  .replace("bg-canvas", "bg-strip")
-  .replace("py-1.5", "h-9");
+  .replace("bg-canvas", "bg-transparent")
+  .replace("py-1.5", "h-8");
 
-/** 设置页按钮：抬底胶囊，行内操作与卡头动作统一一档（原 28px 无框 ghost / 描边次按钮并为一种） */
-const ghostActionClass = settingsPillClass;
-const secondaryActionClass = settingsPillClass;
-const rowActionClass = settingsPillClass;
+/** 设置页按钮：细边按钮（同 Claude 设置页），行内操作与节标题动作统一一档 */
+const ghostActionClass = paneOutlineButtonClass;
+const secondaryActionClass = paneOutlineButtonClass;
+const rowActionClass = paneOutlineButtonClass;
 
 /** 下拉宽度只留三档（2026-10-17）：原先跟最长选项走，终端页三个下拉宽度差一倍多，
  *  AI 专用配置更是顶出卡片右缘。短枚举 sm、一般 md、带配置名/字体说明的长选项 lg */
@@ -672,31 +672,30 @@ function Section({
   const nav = SETTING_NAV.find((n) => n.id === id);
   return (
     <section>
-      <header className="mb-5">
-        {/* 分区标题是页内最大的字（2026-10-18 借鉴 Codex 设置页：大标题 + 一行灰说明，
-            其下才是成组卡片）；原 text-base 与卡头只差一档，层级发闷 */}
-        <h2 className="flex min-h-9 flex-wrap items-center gap-2 text-xl font-semibold leading-9 tracking-tight text-l1">
+      <header className="mb-6">
+        {/* 分区标题 + 一行灰说明（2026-10-29 借鉴 Claude 设置页：节标题粗体、行间细线，不再套卡片） */}
+        <h2 className="flex min-h-9 flex-wrap items-center gap-2 text-lg font-semibold text-l1">
           {nav?.label}
           {badge}
         </h2>
-        {nav?.description && <p className="mt-1 text-sm leading-5 text-l3">{nav.description}</p>}
+        {nav?.description && <p className="mt-0.5 text-sm leading-5 text-l3">{nav.description}</p>}
       </header>
       <div>{groupRows(children)}</div>
     </section>
   );
 }
 
-/** 分区内的小节标题：只用留白和字重分组，不画线、不铺底（design-system 设置页口径） */
+/** 分区内的小节标题：只用留白和字重分组（Claude 设置页的 Appearance / Sessions 那一档） */
 function SubHeading({ title, hint }: { title: string; hint?: string }) {
   return (
-    <div className="mt-8 mb-1 first:mt-0">
+    <div className="mb-1 mt-9 first:mt-0">
       <h3 className="text-base font-semibold text-l1">{title}</h3>
-      {hint && <p className="mt-0.5 text-micro leading-4 text-l3">{hint}</p>}
+      {hint && <p className="mt-0.5 text-xs leading-5 text-l3">{hint}</p>}
     </div>
   );
 }
 
-/** 成组编辑器的统一内容卡：卡头 = 标题 + 一句说明 + 右侧动作，卡内放 CardRow 或自定义内容 */
+/** 成组编辑器：头 = 标题 + 一句说明 + 右侧动作，下面放 CardRow 或自定义内容（2026-10-29 起不套卡，上下细线收边） */
 function Card({
   title,
   hint,
@@ -709,17 +708,17 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mt-3 ccode-well ccode-card p-4">
+    <div className="mt-7 first:mt-0">
       {(title || action) && (
-        <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="mb-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            {title && <div className="text-sm font-medium text-l1">{title}</div>}
-            {hint && <p className="mt-0.5 text-micro leading-4 text-l3">{hint}</p>}
+            {title && <div className="text-base font-semibold text-l1">{title}</div>}
+            {hint && <p className="mt-0.5 text-xs leading-5 text-l3">{hint}</p>}
           </div>
           {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
         </div>
       )}
-      {children}
+      <div className="border-t border-hairline pt-1">{children}</div>
     </div>
   );
 }
@@ -737,10 +736,10 @@ function CardRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="group flex min-h-11 items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 hover:bg-hover">
+    <div className="group flex min-h-12 items-center justify-between gap-3 border-b border-hairline py-2">
       <div className="min-w-0" title={title}>
         <div className="truncate text-sm text-l1">{label}</div>
-        {hint && <p className="mt-0.5 truncate text-micro leading-4 text-l3">{hint}</p>}
+        {hint && <p className="mt-0.5 truncate text-xs leading-4 text-l3">{hint}</p>}
       </div>
       <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
@@ -774,12 +773,12 @@ function Row({
   return (
     <div
       aria-disabled={disabled || undefined}
-      className={`flex flex-wrap gap-x-6 gap-y-2.5 px-4 py-3.5 ${
+      className={`flex flex-wrap gap-x-6 gap-y-2.5 py-3.5 ${
         align === "center" ? "items-center" : "items-start"
       } ${disabled ? "pointer-events-none opacity-50" : ""}`}
     >
       <div className={`min-w-[12rem] flex-1 ${align === "start" ? "pt-1.5" : ""}`}>
-        <div className="flex items-center gap-1.5 text-sm font-medium text-l1">
+        <div className="flex items-center gap-1.5 text-base text-l1">
           <span>{label}</span>
           {/* 悬浮说明原先只挂在标签文字上，没有任何视觉提示，等于藏起来了；
               补一个可聚焦的 ⓘ，键盘与读屏也拿得到全文 */}
@@ -795,7 +794,7 @@ function Row({
             </span>
           )}
         </div>
-        {hint && <p className="mt-0.5 max-w-lg text-micro leading-4 text-l3">{hint}</p>}
+        {hint && <p className="mt-0.5 max-w-2xl text-sm leading-relaxed text-l3">{hint}</p>}
       </div>
       <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
       {extra && <div className="basis-full">{extra}</div>}
@@ -803,10 +802,10 @@ function Row({
   );
 }
 
-/** 连续的 Row 收成一张分组卡：外框 + 行间发丝线。Section 对直接子元素自动套用，
+/** 连续的 Row 收成一组：上下细线 + 行间细线（2026-10-29 起不套卡）。Section 对直接子元素自动套用，
  *  页面代码照旧只写 <Row>，不必手包 */
 function RowGroup({ children }: { children: React.ReactNode }) {
-  return <div className="mt-3 ccode-well ccode-card divide-y divide-hairline overflow-hidden">{children}</div>;
+  return <div className="mt-2 divide-y divide-hairline border-y border-hairline">{children}</div>;
 }
 
 /** Section 的直接子元素里，相邻的 Row 合成一个 RowGroup；其余（SubHeading / Card / 自定义块）原样。
@@ -1324,11 +1323,11 @@ function UninstallRow() {
     }
   }
   return (
-    <div className="mt-3 ccode-well ccode-card px-4 py-3.5">
+    <div className="mt-2 border-y border-hairline py-3.5">
       <div className="flex items-center gap-3">
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-l1">卸载 Mesa</span>
-          <span className="mt-0.5 block text-micro leading-4 text-l3">
+          <span className="block text-base text-l1">卸载 Mesa</span>
+          <span className="mt-0.5 block text-sm leading-relaxed text-l3">
             本机数据移入回收站。课题文件夹保留。完成后应用退出。
           </span>
         </span>
@@ -2615,37 +2614,21 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     </div>
   );
 
+  // 2026-10-29 借鉴 Claude 设置页：页头同对话头；左边分区二级栏（可拖宽）+ 右边内容各自滚动，内容不套卡、行间细线
   return (
-    <PageFrame width="wide">
-      <PageHeader title="设置" meta="外观、终端、AI 与应用管理" />
-
-      <div className="@container">
-        <div className="grid min-w-0 gap-5 @min-[48rem]:grid-cols-[11rem_minmax(0,1fr)] @min-[48rem]:gap-7">
-          <nav aria-label="设置分区" className="self-start @min-[48rem]:sticky @min-[48rem]:top-16">
-            {/* 搜索框无描边口径（与 searchFieldClass 同配方）：inset 底、聚焦加深；
-                带图标/清除钮，聚焦态挂在容器 focus-within 上；ccode-search-shell
-                豁免内部 input 的全局 focus 环（未入层规则压过 outline-none，会出直角方框） */}
-            <div className="ccode-search-shell mb-3 flex h-8 items-center gap-2 rounded-md bg-inset px-2.5 transition-colors focus-within:bg-raised">
-              <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-l4" />
-              <input
-                value={sectionQuery}
-                onChange={(event) => setSectionQuery(event.target.value)}
-                placeholder="找设置…"
-                aria-label="搜索设置"
-                className="min-w-0 flex-1 bg-transparent text-xs text-l2 outline-none placeholder:text-l4"
-              />
-              {sectionQuery && (
-                <button
-                  type="button"
-                  aria-label="清除搜索"
-                  onClick={() => setSectionQuery("")}
-                  className="shrink-0 text-l4 hover:text-l1"
-                >
-                  <X aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-x-6 gap-y-4 @min-[48rem]:flex-col @min-[48rem]:gap-5">
+    <div className="flex h-full min-h-0 flex-col bg-canvas">
+      <PaneHead title="设置" meta="外观、终端、AI 与应用管理" sticky={false} />
+      <div className="flex min-h-0 flex-1">
+        <PaneNav storageKey="ccode.settings.navWidth" label="调整设置分区栏宽度" defaultWidth={220} maxWidth={360}>
+          <nav aria-label="设置分区" className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-1">
+            <PaneSearch
+              value={sectionQuery}
+              onChange={setSectionQuery}
+              placeholder="找设置…"
+              label="搜索设置"
+              className="mb-1"
+            />
+            <div className="flex flex-col">
               {([
                 { id: "basic", label: "常用" },
                 { id: "management", label: "管理" },
@@ -2658,10 +2641,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 if (items.length === 0) return null;
                 return (
                 <div key={group.id} className="min-w-0">
-                  <p id={`settings-group-${group.id}`} className="mb-1.5 px-2.5 text-micro font-medium text-l3">
+                  <p id={`settings-group-${group.id}`} className="px-2.5 pb-1.5 pt-4 text-xs text-l4">
                     {group.label}
                   </p>
-                  <ul aria-labelledby={`settings-group-${group.id}`} className="flex flex-wrap gap-1 @min-[48rem]:flex-col">
+                  <ul aria-labelledby={`settings-group-${group.id}`} className="flex flex-col gap-0.5">
                     {items.map(({ id, label, icon: Icon }) => (
                       <li key={id} className="min-w-0">
                         <button
@@ -2670,18 +2653,19 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                           aria-current={activeSection === id ? "page" : undefined}
                           aria-controls="settings-content"
                           onClick={() => setActiveSection(id)}
-                          className={`flex min-h-8 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+                          className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors ${
                             activeSection === id
-                              ? "bg-seg-sel font-medium text-l1"
-                              : "text-l3 hover:bg-hover hover:text-l1"
+                              ? "bg-rail-sel text-l1"
+                              : "text-l2 hover:bg-hover hover:text-l1"
                           }`}
                         >
                           {/* 图标随选中态变色（同侧栏）：扫一眼就能认出分区，不用逐字读 */}
                           <Icon
                             aria-hidden="true"
-                            className={`h-3.5 w-3.5 shrink-0 ${activeSection === id ? "text-nav-accent" : "text-l4"}`}
+                            strokeWidth={1.8}
+                            className={`h-4 w-4 shrink-0 ${activeSection === id ? "text-nav-accent" : "text-l3"}`}
                           />
-                          {label}
+                          <span className="min-w-0 truncate">{label}</span>
                           {id === "update" && appUpdate && (
                             <span className="inline-flex shrink-0 items-center gap-1 text-micro text-ok-text">
                               <span aria-hidden="true" className="size-2 rounded-full bg-ok-text" />
@@ -2698,17 +2682,19 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </div>
             {sectionQuery.trim() && matchedSections.length === 0 && (
               // 空结果要说一句：没这句，用户只看到左栏空了，会以为设置页坏了
-              <p role="status" className="px-2.5 text-xs text-l4">
+              <span role="status" className="block px-2.5 pt-3 text-xs text-l4">
                 没有匹配的设置
-              </p>
+              </span>
             )}
           </nav>
+        </PaneNav>
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-9 pb-12 pt-3">
           <div
             ref={contentRef}
             id="settings-content"
             role="region"
             aria-labelledby={`settings-nav-${activeSection}`}
-            className="@container/settings min-w-0 scroll-mt-16"
+            className="@container/settings mx-auto min-w-0 max-w-4xl"
           >
             {banners}
 
@@ -2716,11 +2702,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {/* 主题卡（2026-10-17 细化）：内置十四套七列深浅成对 →「我的配色」同一网格（另存色卡 +
             自定义入口）→ 选中自定义或某张色卡时才展开调色条。取色块改成输入框形态，
             不再与主题小窗同形，免得被看成又一排主题；没在用自定义时不占版面。 */}
-        <div className="mb-3 ccode-well ccode-card p-4">
-          <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="mb-2">
+          <div className="mb-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm text-l2">主题</div>
-              <p className="mt-0.5 text-micro leading-4 text-l4">
+              <h3 className="text-base font-semibold text-l1">主题</h3>
+              <p className="mt-0.5 text-xs leading-5 text-l3">
                 {followSystem
                   ? isCustomThemeId(settings?.theme)
                     ? "自定义配色没有成对的另一套，不随系统切换；选内置主题后才跟随"
@@ -2728,7 +2714,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   : "上排深色，下排同名浅色"}
               </p>
             </div>
-            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-l3">
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-l2">
               跟随系统深浅
               <Toggle
                 label="主题跟随系统深浅"
@@ -2757,7 +2743,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             ))}
           </div>
 
-          <div className="mb-1.5 mt-4 text-micro font-medium text-l3">我的配色</div>
+          <div className="mb-1.5 mt-4 text-xs font-medium text-l3">我的配色</div>
           <div className="grid grid-cols-[repeat(7,minmax(4.5rem,1fr))] gap-2 overflow-x-auto">
             {customCards.map((card) => {
               const derived = deriveThemeTokens(card);
@@ -2918,6 +2904,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="原样（100%）是各主题本来的样子，越小越透出桌面磨砂，全透（0%）完全不铺罩色、文字直接压在壁纸上。侧栏选中行的底色也跟着一起变淡，最透时选中只剩文字和图标变色。深色主题下侧栏、顶栏和四周缝是同一层，一起变；深浅主题各有自己的底色，同一个百分数看起来的浓淡会不同。Mac 全屏时一律不透明，不受这一档影响"
         >
           <SegTabs
+            variant="boxed"
             items={CHROME_OPACITIES.map((pct) => ({
               id: String(pct),
               label: (
@@ -2940,6 +2927,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="文字、按钮、终端、PDF 一起变大变小，放大后照样清楚（按新的像素重画，不是把图片拉大）。窗口能拖到的最小尺寸也跟着变，放大后窗口太小时会被撑开一些。只想调聊天正文用下面的「聊天字号」，只调终端用「终端」里的字号"
         >
           <SegTabs
+            variant="boxed"
             items={UI_ZOOM_STEPS.map((z) => ({ id: String(z), label: formatUiZoom(z) }))}
             value={String(normalizeUiZoom(settings?.uiZoom))}
             onChange={(id) => void patch({ uiZoom: Number(id) })}
@@ -2953,6 +2941,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="管聊天层和对话回放里的正文（你的提问与 AI 回复）。标题、行内代码跟着按比例变；终端字号在「终端」里单独调"
         >
           <SegTabs
+            variant="boxed"
             items={CHAT_FONT_SIZES.map((id) => ({
               id,
               label: CHAT_FONT_SIZE_LABEL[id],
@@ -2968,6 +2957,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="衬线用宋体系（macOS 宋体-简、Windows 宋体 / 思源宋体），适合长文阅读；等宽用 JetBrains Mono，中文回退系统字体。代码块一直是等宽，不受影响"
         >
           <SegTabs
+            variant="boxed"
             items={CHAT_FONT_FAMILIES.map((id) => ({
               id,
               label: CHAT_FONT_FAMILY_LABEL[id],
@@ -2985,6 +2975,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="给对话里的行内代码一个淡强调色（字色加同色薄底），和正文、链接一眼分开；深浅主题各有一套保证看得清。关闭 = 灰白。代码块不受影响"
         >
           <SegTabs
+            variant="boxed"
             items={CHAT_ACCENTS.map((id) => ({
               id,
               label: CHAT_ACCENT_LABEL[id],
@@ -3000,6 +2991,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="两种都比以前更宽、更好抓，悬停到滚动条上还会再粗一点。选「常显」则一直显示"
         >
           <SegTabs
+            variant="boxed"
             items={CHAT_SCROLLBARS.map((id) => ({
               id,
               label: CHAT_SCROLLBAR_LABEL[id],
@@ -3047,6 +3039,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           labelTitle="「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
         >
           <SegTabs
+            variant="boxed"
             items={[
               { id: "chat", label: "聊天" },
               { id: "terminal", label: "终端" },
@@ -4505,7 +4498,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 title="本机占用"
                 hint="Mesa 在本机的目录与大小；配置、索引和备份别手动删"
               />
-              <div className="mt-3 ccode-well ccode-card p-4">
+              <div className="mt-2 border-y border-hairline py-3.5">
                 {storageError ? (
                   <p className="py-2 text-xs text-err-text">{storageError}</p>
                 ) : summary === null ? (
@@ -4628,7 +4621,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {/* 关于页二次收拢（2026-10-17 用户「看着有点乱」）：只回答两件事——我装的是什么（身份卡）、
             出了事找谁（反馈）。GitHub 主页与开源许可降为身份卡右侧两个轻链接；致谢与数据来源是
             「用了谁的东西」，与第三方许可同一类，并进许可浮层；隐私压成页脚一句，全文挂悬浮 */}
-        <div className="mt-1 flex flex-wrap items-center gap-4 ccode-well ccode-card p-4">
+        <div className="mt-1 flex flex-wrap items-center gap-4 rounded-xl bg-chat-bubble p-4">
           <img
             src={settings?.appIconStyle === "light" ? appIconLight : appIconDark}
             alt=""
@@ -4732,6 +4725,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         />
       )}
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-    </PageFrame>
+    </div>
   );
 }

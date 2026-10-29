@@ -38,8 +38,10 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
     // 同日第二批：正在进行改成项目分组列表（细线框，不用 ccode-well 卡）。
     // 2026-10-29 管理页视觉统一（对话页写法）：MCP 整表卡与展开区卡、技能分类卡去掉，
     // 列表不再套卡；MCP 6→3（只剩弹窗里的卡），技能 4 不变（分类卡少一张、内置技能对照区仍在）。
+    // 设置页 6→2（同日第二批，借鉴 Claude 设置页）：分组卡 / 成组编辑卡 / 主题卡 / 卸载与本机占用卡改成
+    // 节标题 + 上下细线的行组，只剩提示条两处与诊断里的代码块。
     WorkbenchPage: 0, SkillsPage: 4, McpPage: 3, ProfilesPage: 5,
-    SettingsPage: 6, StatsPage: 2, SessionsPage: 1,
+    SettingsPage: 2, StatsPage: 2, SessionsPage: 1,
   };
   for (const [page, minimum] of Object.entries(minimumCards)) {
     const cards = classes(`pages/${page}.tsx`).filter((item) => item.text.includes("ccode-well"));

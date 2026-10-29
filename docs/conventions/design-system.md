@@ -906,7 +906,14 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   提前抹掉）。主题色卡七列、深浅成列对齐：每张是该主题的小窗（左栏竖条 + 画布 + 强调点），名称写在画布上用该主题自己的
   标题色；选中用 ring，列轨 `minmax(4.5rem,1fr)` 窄时横向滚动而不是压扁。「关于」顶部是身份卡（图标 + 名称 + 版本构建 + 版权），
   不再拆成「版本」「版权」两行。诊断/存储仅在对应分区可见时读取，更新提示与收件箱直达保留。
-- **设置页分组卡（2026-10-18，用户给 Codex 设置页截图「做成这种风格，不需要完全一样」）**：骨架（左分类 + 右分区）不变，右侧改成
+- **设置页借鉴 Claude 设置页（2026-10-29，取代下面 10-18「分组卡」的②③④）**：页头 `PaneHead`「设置」+ 左分区二级栏 `PaneNav`
+  （可拖宽 184–360px，`ccode.settings.navWidth`；细边搜索 `PaneSearch`、组名 `<p>` 小灰字、项 h-9 text-sm、选中 `bg-rail-sel` + 图标强调色）+ 右内容
+  独立滚动（`max-w-4xl` 居中，`#settings-content` 仍是切分区时 scrollIntoView 的锚）。分区标题 `text-lg font-semibold` + `text-sm l3` 说明；
+  `SubHeading` / `Card` 头 `text-base font-semibold` + `text-xs l3`；**`RowGroup` 与 `Card` 不再套 `ccode-well` 卡**：上下细线 + 行间 `divide-hairline`，
+  Row 去左右内边距，标题 `text-base` 常规字重、说明 `text-sm l3`；`CardRow` 每行底线；按钮统一 `paneOutlineButtonClass`（细边），下拉 / 输入
+  `fieldFixed` 改透明底 32px；分段控件 `SegTabs variant="boxed"`；主题区不套卡（标题 + 跟随开关 + 色卡网格）；「关于」身份块为 chat-bubble 色底。
+  `tests/content-surfaces.test.ts` SettingsPage 最低卡数 6→2。
+- **设置页分组卡（2026-10-18，用户给 Codex 设置页截图「做成这种风格，不需要完全一样」；②③④已被上一条取代）**：骨架（左分类 + 右分区）不变，右侧改成
   「大标题 + 一行灰说明 + 成组圆角卡」。①分区标题 `text-[1.625rem] font-semibold`，说明 `text-sm text-l3`；小节 `SubHeading` 升为
   `text-base font-semibold` + `text-micro text-l3` 说明。②**相邻的 `<Row>` 由 `Section` 自动收成一张 `RowGroup`**（`groupRows`，只认 Section 的
   直接子元素；包在 Fragment/div 里的 Row 不会合并，别这么写）：外框 `ccode-well ccode-card`（well 底 + 14px 圆角 + 1px `hairline` 边，`App.css`；tests/content-surfaces 按 `ccode-well` 计卡，别单用 ccode-card），
