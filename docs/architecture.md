@@ -458,6 +458,12 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-29 · 打包版 style-src 不让 Tauri 注入 nonce
+
+首轮自动点验实证：安装版打开代码文件没有语法色、行号错位，开一个文件就有几十条 CSP 拦截——Tauri 打包时给 style-src 注入 nonce，
+`'unsafe-inline'` 随之失效，Monaco 运行时插的样式全被拦；开发版不注入。取舍：只对 style-src 关掉注入（`dangerousDisableAssetCspModification: ["style-src"]`），
+内联样式本来就是 CSP 有意放开的；script-src 的 nonce / hash 保护不动，否决整体关闭（`true`）。细则 safety.md「审计收口规则」条。
+
 ### 2026-10-29 · Windows 诊断进程扫描由 250ms 放宽到 2 秒
 
 排查 Windows 打包版时实测：打包版开 4.5 小时累计 1306 秒 CPU，其中一个常驻线程约占一个核的 3%；单独测同一调用，每次枚举全系统进程要 8–15ms

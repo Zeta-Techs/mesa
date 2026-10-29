@@ -3,6 +3,10 @@
 > 适用范围：密钥、会话/配置读写、文件与仓库的删除/提交、诊断包、CLI 安装更新。从 AGENTS.md 迁入（原文照录，未做语义改动）。
 
 - **审计收口规则（2026-09-08）**：生产 CSP 禁止内联脚本、JS eval、frame/object、base 和表单提交；只开放本地脚本、IPC、图片、字体与 worker 所需来源，开发策略仅额外允许热更新脚本和本机 WebSocket。DOMPurify 仍是内容清洗边界，CSP 不能替代它。Vite dev/build/preview 必须显式 `--config vite.config.ts`，不能被历史生成的 JS 配置遮蔽。
+  **内联样式（2026-10-29）**：style-src 本来就带 `'unsafe-inline'`（Monaco、KaTeX、Mermaid 运行时插样式），但 Tauri 打包时默认给 style-src
+  注入 nonce，浏览器见 nonce 就忽略 `'unsafe-inline'`，安装版这些样式全被拦（代码文件没有语法色、行号错位；开发版不注入，看不出来）。
+  `tauri.conf.json` 设 `dangerousDisableAssetCspModification: ["style-src"]` 只关 style-src 的注入，script-src 照旧由 Tauri 注入 nonce / hash；
+  不得改成 `true`（那会连脚本一起放开）。`tests/audit-security.test.ts` 钉住。
 - **配置持久化（2026-09-08）**：profiles/keys/settings、schedules 和全局 CLI 配置分别在读改写全程持进程内锁与 OS 文件锁；取锁失败报错，不无锁继续。唯一同目录临时文件创建即 0600（Unix），通用写入保留原文件 mode，私有写入强制 0600；替换失败不得先删原件。Windows 只读属性仅临时放开，失败恢复属性。官方账号绑定不得嵌套获取同一把 profiles 锁。
 - **迁移与损坏（2026-09-08）**：拆层迁移先存 `gateway-split.pending.json`（私有恢复日志），所有文件和引用更新成功才删除；任何阶段可重放，保持日志中的 ID 不变。旧版半迁移只按仍有 key_hint 的网关与保留 binding ID 恢复密钥引用，不猜端点、不覆盖已有新密钥。损坏 keys/settings 保留原件并拒绝写入，不以默认值覆盖；密钥脱敏读取没有改名副作用，暂时失败沿用上次成功快照。
 - **权限诚实性（2026-09-08）**：新建与恢复都执行 discuss 参数约束；无只读/计划模式参数的 Agent 拒绝 discuss，不仅靠提示词。不把 CLI 计划模式称作 OS 级沙箱。定时任务显式连接失效时停下报错，不在无人确认时更换供应商；无头缺密钥拒绝启动。
