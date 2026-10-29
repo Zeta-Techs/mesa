@@ -15,6 +15,7 @@ import {
   normalizeCustomTheme,
   normalizeCustomThemeCards,
   normalizeHex,
+  monacoEditorColors,
   parseHex,
   relLum,
   removeCustomThemeCard,
@@ -37,6 +38,21 @@ test("parseHex / normalizeHex：#rgb、#rrggbb、rgb()、非法", () => {
   assert.equal(normalizeHex("nope"), null);
   assert.equal(normalizeHex(""), null);
   assert.equal(formatHex({ r: 250, g: 168, b: 212 }), "#faa8d4");
+});
+
+test("Monaco 面色一律给 #rrggbb：打包压缩成 #fff/#111 的令牌也要展开，认不出用兜底", () => {
+  const tokens: Record<string, string> = {
+    "--color-editor-bg": " #fff",
+    "--color-editor-fg": "#111",
+    "--color-editor-line": "var(--x)",
+  };
+  const colors = monacoEditorColors((name) => tokens[name] ?? "");
+  assert.deepEqual(colors, {
+    "editor.background": "#ffffff",
+    "editor.foreground": "#111111",
+    "editorLineNumber.foreground": "#525a6b",
+  });
+  for (const v of Object.values(colors)) assert.match(v, /^#[0-9a-f]{6}$/);
 });
 
 test("normalizeCustomTheme：三色齐且合法才过", () => {

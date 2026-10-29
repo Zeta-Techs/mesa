@@ -73,6 +73,7 @@ import SlidesPreview from "./SlidesPreview";
 import MediaPreview from "./MediaPreview";
 import NotebookPreview from "./NotebookPreview";
 import { projectFilePreviewKind } from "../project-files";
+import { monacoEditorColors } from "../custom-theme";
 import {
   LATEX_EXTENSIONS,
   LATEX_LANGUAGE_ID,
@@ -92,17 +93,11 @@ self.MonacoEnvironment = {
 // 主题切换由 MutationObserver 监听 data-theme 触发重新 define + setTheme（见组件内 effect）。
 function syncMonacoTheme() {
   const cs = getComputedStyle(document.documentElement);
-  const read = (name: string, fallback: string) =>
-    cs.getPropertyValue(name).trim() || fallback;
   monaco.editor.defineTheme("ccode-dark", {
     base: "vs-dark",
     inherit: true,
     rules: [],
-    colors: {
-      "editor.background": read("--color-editor-bg", "#11131a"),
-      "editor.foreground": read("--color-editor-fg", "#aeb6c6"),
-      "editorLineNumber.foreground": read("--color-editor-line", "#525a6b"),
-    },
+    colors: monacoEditorColors((name) => cs.getPropertyValue(name)),
   });
 }
 syncMonacoTheme();
