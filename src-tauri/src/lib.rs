@@ -105,6 +105,7 @@ mod profile_validation;
 mod profiles;
 mod project_memory;
 mod projects;
+mod prompts;
 mod provider_id;
 mod pty;
 mod pty_input;
@@ -1063,6 +1064,10 @@ pub fn run() {
             feedback::clear_feedback_smtp_secret,
             feedback::send_feedback_smtp,
             settings::clear_feedback_smtp_config,
+            prompts::list_prompts,
+            prompts::save_prompt,
+            prompts::delete_prompt,
+            prompts::reorder_prompts,
             phone_drop::phone_drop_start,
             phone_drop::phone_drop_stop,
             phone_drop::phone_drop_status,

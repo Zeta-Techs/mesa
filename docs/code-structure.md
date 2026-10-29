@@ -207,6 +207,10 @@ rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N �
                              #   没有目标输入框时收到东西自动弹窗（onArrive 交 App 发系统通知）
   components/ProjectFilePicker.tsx # 聊天输入框「＋ → 引用项目文件」弹层：list_recent_files 最近改过的在前、search_files 搜整个项目（只留文件）、
                              #   每次打开是列表（可换网格）、滚到看得见才画缩略图（file-thumb.ts）、点行多选、双击直接添加；添加 = ChatComposer addPathAttachments（同「文件或图片」）
+  prompts.ts                 # 常用提示词纯逻辑（2026-10-30）：promptLabel（没名称拿正文首行）/ promptPreview / filterPrompts（名称前缀优先，/ 面板用）/
+                             #   applyPrompt（/ 时整段替换，「+」时空框直填、有字另起一行）/ moveId；tests/prompts.test.ts
+  prompt-store.ts            # 常用提示词界面状态（独立 zustand，全应用一份）：首次用到才 list_prompts、增删改排走后端再替换；管理弹窗开关 + 带输入框原文的 draft
+  components/PromptManager.tsx # 常用提示词管理弹窗（App 全局一处；入口：聊天输入框「+」组头「管理」/「把输入框存成提示词」）：列表 ↑↓/编辑/删除，编辑就地换表单
   components/PhoneDropDialog.tsx # 从手机添加弹层（App 全局一处；入口：聊天输入框「+」/ ⌘K / 收件箱「手机」）：二维码（后端 SVG，
                              #   data: URL 进 img）+ 地址复制 + 换地址（电脑名 / 各网卡 IP）+ 「扫了打不开？」；有已配对手机时顶上是状态卡、
                              #   二维码收进「配对新手机」、已配对的手机折叠（移除）；收到的列表带 96px 缩略图（读一次画小图只留小图，
@@ -1648,6 +1652,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   attach_grants.rs           # 用户亲手交来的文件（拖进窗口的原生事件 / pick_attachment_files 选择器）进程内登记，供读取白名单按精确路径放行；
                              #   拖进来的文件夹另登记一张表，user_supplied 供「拖进文件页 = 复制」判定；
                              #   前端传来的路径不登记（红线）
+  prompts.rs                 # 常用提示词（2026-10-30）：配置根 prompts.json 的增删改排（storage::atomic_write + config_lock("prompts")）；正文只去首尾空行、
+                             #   上限 20000 字 / 名称 60 字 / 500 条；不写任何 CLI 配置目录
   phone_drop.rs              # 从手机添加（2026-10-20，docs/design-phone-drop.md；安全口径 safety.md 同名条）：人点了才在各张局域网
                              #   网卡的私网 IPv4 上同端口起 tiny_http 收件服务（单线程轮询；令牌在路径、Host 校验、错令牌/未知路径同一个 404、只收不出），
                              #   2026-10-21 记住这台手机：/p/<配对令牌>/ 扫码即配对（pair）→ /d/<设备令牌>/ 主屏网页；配对簿

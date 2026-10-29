@@ -131,6 +131,9 @@ async function mount() {
           host.imageReads.push((args as { path: string }).path);
           return { mime: "image/png", data: "iVBORw0KGgo=" };
         }
+        if (command === "list_prompts") {
+          return [{ id: "p1", title: "审稿回复", body: "逐条回复审稿意见，先列原意见再写修改", updatedAt: 0 }];
+        }
         if (command === "combo_surface") {
           return { showNativeEffort: true, effortLevels: [], launchEffort: "high", thinking: true, mixedModelsNote: null, injectEffortAllowed: true };
         }
@@ -887,6 +890,48 @@ test("斜杠面板：上半组 Mesa 操作由 Mesa 执行、不写进终端；�
     assert.equal(ui.el.querySelector("textarea")!.value, "上一句问题");
     await key(ui, "ArrowDown");
     assert.equal(ui.el.querySelector("textarea")!.value, "");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("常用提示词：「+」里点名字填进输入框、/ 搜得到且回车只填不发；有字时能存成提示词", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    await ui.render(
+      ui.h(ui.Composer, {
+        onSend: async (t: string) => (sent.push(t), null),
+        agentId: "claude-code",
+      }),
+    );
+    const add = () => ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+    await add();
+    await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    assert.equal(ui.button("把输入框存成提示词").disabled, true, "输入框空着不能存");
+    await ui.click("审稿回复");
+    const box = ui.el.querySelector("textarea")!;
+    assert.equal(box.value, "逐条回复审稿意见，先列原意见再写修改");
+    assert.deepEqual(sent, [], "只填进输入框，不发");
+
+    await typeInto(ui, "先说一句");
+    await add();
+    await ui.click("审稿回复");
+    assert.equal(box.value, "先说一句\n逐条回复审稿意见，先列原意见再写修改", "有字时另起一行接上");
+    await add();
+    assert.equal(ui.button("把输入框存成提示词").disabled, false);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+
+    await typeInto(ui, "/审稿");
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /提示词（填进输入框，不直接发）/);
+    await key(ui, "Enter");
+    assert.equal(box.value, "逐条回复审稿意见，先列原意见再写修改", "/ 那段整个换成正文");
+    assert.deepEqual(sent, [], "回车选提示词不发送");
+
+    await typeInto(ui, "/");
+    const all = ui.el.textContent ?? "";
+    assert.ok(all.indexOf("/compact") < all.indexOf("审稿回复"), "提示词排在命令后面，不改原来回车选中谁");
   } finally {
     await ui.close();
   }

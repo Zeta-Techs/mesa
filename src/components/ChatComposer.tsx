@@ -4,8 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUp,
   AtSign,
+  BookmarkPlus,
   Maximize2,
   Minimize2,
+  MessageSquareText,
   Paperclip,
   Plus,
   Smartphone,
@@ -42,6 +44,8 @@ import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { FileTypeGlyph } from "./FileTypeMark";
 import ProjectFilePicker from "./ProjectFilePicker";
 import { quotePayload, type ChatQuote } from "../chat-navigation";
+import { applyPrompt, filterPrompts, promptLabel, promptPreview, type PromptItem } from "../prompts";
+import { usePromptStore } from "../prompt-store";
 
 /** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
@@ -171,6 +175,10 @@ function AddMenu({
   onPickFiles,
   onMention,
   onPhone,
+  prompts,
+  onPrompt,
+  onManagePrompts,
+  canSavePrompt,
 }: {
   skills: SkillDto[];
   mcps: McpServerDto[];
@@ -182,8 +190,17 @@ function AddMenu({
   onMention: () => void;
   /** 「从手机添加」：扫码传照片 / 文件 / 一句话，收到的直接附到这个输入框 */
   onPhone: () => void;
+  /** 常用提示词（2026-10-30）：点名字填进输入框；canSavePrompt = 输入框里有字，可「存成提示词」 */
+  prompts: readonly PromptItem[];
+  onPrompt: (p: PromptItem) => void;
+  onManagePrompts: (saveCurrent: boolean) => void;
+  canSavePrompt: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // 菜单开着时提示词首次读盘（之后全应用共用一份）
+  useEffect(() => {
+    if (open) void usePromptStore.getState().ensureLoaded();
+  }, [open]);
   const row =
     "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -196,7 +213,7 @@ function AddMenu({
         className={`inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-40 ${
           open ? "bg-hover text-l1" : "text-l3"
         }`}
-        title="添加文件、引用项目文件、技能或 MCP"
+        title="添加文件、引用项目文件、提示词、技能或 MCP"
         aria-label="添加"
       >
         <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
@@ -252,6 +269,58 @@ function AddMenu({
                 <AtSign size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
                 引用项目文件
                 <span className="ml-auto font-mono text-micro text-l4">@</span>
+              </button>
+            </li>
+            <li className="mx-1 my-1 h-px bg-hairline" aria-hidden="true" />
+            {/* 常用提示词：点名字把正文填进输入框（不自动发送），最多列 8 条，多了在输入框打 / 搜 */}
+            <li className="flex items-center px-2 pb-0.5 pt-1.5 text-micro text-l4">
+              <span>提示词</span>
+              <button
+                type="button"
+                className="ml-auto rounded-sm px-1 text-micro text-l4 hover:bg-hover hover:text-l2"
+                onClick={() => {
+                  setOpen(false);
+                  onManagePrompts(false);
+                }}
+              >
+                管理
+              </button>
+            </li>
+            {prompts.slice(0, 8).map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className="flex w-full flex-col gap-0.5 rounded-sm px-2 py-1.5 text-left hover:bg-hover"
+                  title={p.body}
+                  onClick={() => {
+                    setOpen(false);
+                    onPrompt(p);
+                  }}
+                >
+                  <span className="flex items-center gap-2 text-xs text-l1">
+                    <MessageSquareText size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                    <span className="truncate">{promptLabel(p)}</span>
+                  </span>
+                  {promptPreview(p) && <span className="truncate pl-[21px] text-micro text-l4">{promptPreview(p)}</span>}
+                </button>
+              </li>
+            ))}
+            {prompts.length > 8 && (
+              <li className="px-2 py-1 text-micro text-l4">还有 {prompts.length - 8} 条，在输入框打 / 加名字搜</li>
+            )}
+            <li>
+              <button
+                type="button"
+                className={row}
+                disabled={!canSavePrompt}
+                title={canSavePrompt ? "把输入框里现在这段存起来，下次直接选" : "先在输入框里写好要存的那段"}
+                onClick={() => {
+                  setOpen(false);
+                  onManagePrompts(true);
+                }}
+              >
+                <BookmarkPlus size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                把输入框存成提示词
               </button>
             </li>
             <li className="mx-1 my-1 h-px bg-hairline" aria-hidden="true" />
@@ -884,15 +953,41 @@ export default function ChatComposer({
     slashQuery === null
       ? []
       : filterSlashCommands(slashCommandsFor(agentId), slashQuery);
-  const slashList: { cmd: string; hint: string; mesa?: MesaCommand }[] = [
+  // 提示词组：/ 后面打名字或正文里的字就能搜到；排在最后，不改变「/clear 回车」这类命令原来选中谁
+  const prompts = usePromptStore((s) => s.items);
+  const slashOpen = slashQuery !== null;
+  useEffect(() => {
+    if (slashOpen) void usePromptStore.getState().ensureLoaded();
+  }, [slashOpen]);
+  const promptList = slashQuery === null ? [] : filterPrompts(prompts, slashQuery);
+  const slashList: { cmd: string; hint: string; mesa?: MesaCommand; prompt?: PromptItem }[] = [
     ...mesaList.map((m) => ({ cmd: m.cmd, hint: m.label, mesa: m })),
     ...cliList,
+    ...promptList.map((p) => ({ cmd: `prompt:${p.id}`, hint: promptLabel(p), prompt: p })),
   ];
   const slashActive = Math.min(slashIdx, Math.max(0, slashList.length - 1));
 
+  /** 提示词进输入框：只填不发，光标停在末尾，人改完再发 */
+  function insertPrompt(p: PromptItem, fromSlash: boolean) {
+    setError(null);
+    const next = applyPrompt(fromSlash ? "" : value, p.body, fromSlash);
+    setValue(next);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.length, next.length);
+    });
+  }
+
   function pickSlash(cmd: string, send: boolean) {
     setSlashDismissed(true);
-    const mesa = slashList.find((c) => c.cmd === cmd)?.mesa;
+    const hit = slashList.find((c) => c.cmd === cmd);
+    if (hit?.prompt) {
+      insertPrompt(hit.prompt, true);
+      return;
+    }
+    const mesa = hit?.mesa;
     if (mesa) {
       // Mesa 操作不进输入框也不写终端：清掉「/xx」再执行
       setValue("");
@@ -958,15 +1053,31 @@ export default function ChatComposer({
                       {agentId ? "命令（写进终端）" : "命令"}
                     </div>
                   )}
+                  {i === mesaList.length + cliList.length && promptList.length > 0 && (
+                    <div
+                      className={`px-2 pb-0.5 pt-1 text-micro text-l4 ${
+                        mesaList.length + cliList.length > 0 ? "mt-1 border-t border-hairline" : ""
+                      }`}
+                    >
+                      提示词（填进输入框，不直接发）
+                    </div>
+                  )}
                   <button
                     type="button"
                     onMouseEnter={() => setSlashIdx(i)}
                     onClick={() => pickSlash(c.cmd, Boolean(c.mesa))}
+                    title={c.prompt?.body}
                     className={`flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-xs ${
                       i === slashActive ? "bg-hover text-l1" : "text-l2"
                     }`}
                   >
-                    {c.mesa ? (
+                    {c.prompt ? (
+                      <>
+                        <MessageSquareText size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 self-center text-l3" />
+                        <span className="shrink-0">{promptLabel(c.prompt)}</span>
+                        <span className="min-w-0 truncate text-l4">{promptPreview(c.prompt)}</span>
+                      </>
+                    ) : c.mesa ? (
                       <>
                         <span className="shrink-0">{c.mesa.label}</span>
                         <span className="min-w-0 truncate text-l4">{c.mesa.hint}</span>
@@ -982,7 +1093,7 @@ export default function ChatComposer({
                 </div>
               ))}
               <p className="px-2 pt-1 text-micro text-l4">
-                Enter 发送选中命令 · Tab 只补全不发送 · Esc 收起
+                Enter 发送选中命令（提示词只填进输入框）· Tab 只补全不发送 · Esc 收起
               </p>
             </div>
           )}
@@ -1137,6 +1248,10 @@ export default function ChatComposer({
               onPickFiles={() => void pickFiles()}
               onMention={() => setProjectPickOpen(true)}
               onPhone={openPhoneDrop}
+              prompts={prompts}
+              onPrompt={(p) => insertPrompt(p, false)}
+              onManagePrompts={(saveCurrent) => usePromptStore.getState().openManage(saveCurrent ? value : null)}
+              canSavePrompt={Boolean(value.trim())}
             />
           </span>
           <div data-slot="text" className="relative min-w-0">
