@@ -4,6 +4,7 @@ import {
   LoaderCircle,
   PackagePlus,
   Pencil,
+  Plus,
   PlugZap,
   SquarePen,
   Trash2,
@@ -47,10 +48,11 @@ import {
   EmptyState,
   FoldMark,
   LoadingRows,
-  PageFrame,
-  PageHeader,
+  PaneColumn,
+  PaneHead,
+  paneHeadButtonClass,
+  paneOutlineButtonClass,
   primaryActionClass,
-  secondaryActionClass,
   ghostActionClass,
   fieldClass,
   RowAction,
@@ -69,12 +71,6 @@ import {
   type McpPreset,
   type ResolvedMcpSetup,
 } from "../mcp-presets";
-
-/** MCP 列表五列网格模板（表头与数据行共用，保证列严格对齐）：
- *  名称 | 类型 | 配置 | 分发 | 行内操作+启用开关（2026-08-25 设计评审：宽屏下左右信息不再跨整页） */
-const MCP_GRID =
-  // 「用于」列 96→148px：要放下「8 个 Agent · 2 处异常」一行（96px 时折成两行、状态点被挤扁）
-  "grid-cols-[minmax(150px,1.1fr)_64px_minmax(200px,1.4fr)_148px_140px]";
 
 /** 行首健康状态点（v3.93）：未检测不渲染（无状态不渲染状态点）；检测过 = 绿/红点 + 延迟，
  *  悬浮看 detail/error 全文，点击重新检测。↯ 行内测试与这里是同一触发。
@@ -1039,18 +1035,33 @@ export default function McpPage({ visible }: { visible: boolean }) {
       setFixing(false);
     }
   }
-  // 与连接/技能同属资源页：外壳随主区变宽。五列网格把多出来的宽度分给名称和配置，
-  // 启用开关留在末列，不再出现「名称在左、开关在窗口最右」的空档。
+  // 2026-10-29 管理页视觉统一（设计稿 docs/design-quiet-pages-mockup.html）：页头同对话头，内容用对话栏宽度单列；
+  // 去掉整表卡与表头，名称一行、类型 · 命令一行灰字；展开用左细线缩进（同对话「已思考 ›」），展开着的那条铺气泡色。
+  // 只换呈现：顺序、健康点、启用开关、悬停的检测 / 编辑 / 删除、展开内容、添加菜单都不变。
   return (
-    <PageFrame width="wide">
-      <PageHeader
+    <div className="min-h-full bg-canvas">
+      <PaneHead
         title="MCP"
         meta={`${servers.length} 个`}
         actions={
           <>
             <button
               type="button"
-              className={`${primaryActionClass} inline-flex items-center gap-1`}
+              title="对清单里所有已启用的 MCP 逐条检测连通性（分波并发，每波最多 4 个）"
+              className={paneHeadButtonClass}
+              disabled={checkingAll || servers.length === 0}
+              onClick={() => void checkAllHealth()}
+            >
+              {checkingAll ? (
+                <LoaderCircle size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <PlugZap size={14} strokeWidth={1.8} aria-hidden="true" />
+              )}
+              {checkingAll ? "检测中…" : "全部检测"}
+            </button>
+            <button
+              type="button"
+              className={paneHeadButtonClass}
               aria-haspopup="menu"
               aria-expanded={!!addMenu}
               onClick={(event) => {
@@ -1058,24 +1069,14 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 setAddMenu({ x: rect.right, y: rect.bottom + 4 });
               }}
             >
-              + 添加 MCP
+              <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+              添加 MCP
               <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              title="对清单里所有已启用的 MCP 逐条检测连通性（分波并发，每波最多 4 个）"
-              className={`${secondaryActionClass} inline-flex items-center gap-1`}
-              disabled={checkingAll || servers.length === 0}
-              onClick={() => void checkAllHealth()}
-            >
-              {checkingAll && (
-                <LoaderCircle size={13} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-              )}
-              {checkingAll ? "检测中…" : "全部检测"}
             </button>
           </>
         }
       />
+      <PaneColumn>
       {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
       {loading ? (
@@ -1083,7 +1084,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       ) : servers.length === 0 ? (
         <EmptyState
           title="还没有 MCP"
-          detail="这里会显示可供 Agent 使用的工具服务；点右上「+ 添加 MCP」创建。"
+          detail="这里会显示可供 Agent 使用的工具服务；点右上「添加 MCP」创建。"
           action={
             <button
               type="button"
@@ -1095,19 +1096,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
           }
         />
       ) : (
-        // 整表收进单张卡片容器（field 细边 + strip 底）+ 轻量表头：数据再少也有闭合边界，
-        // 行间 hairline 分割；表头与数据行共用 MCP_GRID 保证列严格对齐
-        <div className="mt-1 overflow-hidden ccode-well ccode-card">
-          <div
-            className={`grid ${MCP_GRID} items-center gap-3 border-b border-hairline px-3 py-2 text-micro tracking-wider text-l4`}
-          >
-            <span>名称</span>
-            <span>类型</span>
-            <span>配置</span>
-            <span>用于</span>
-            <span className="text-right">启用</span>
-          </div>
-          <ul className="divide-y divide-hairline">
+          <ul className="flex flex-col gap-0.5">
           {servers.map((s) => {
             const onCount = Object.values(s.apps).filter(Boolean).length;
             const open = expanded === s.id;
@@ -1123,80 +1112,152 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   }
                 : undefined);
             const healthLabel = mcpHealthLabel(shownHealth);
+            const toggleOpen = () => {
+              // 展开前作废该条目的五态缓存，保证看到的是磁盘最新事实
+              if (!open)
+                setDistStatus((prev) => {
+                  const next = { ...prev };
+                  delete next[s.id];
+                  return next;
+                });
+              setExpanded(open ? null : s.id);
+            };
+            const pathBadge = mcpCmdPathBadge(cmdPathStatus[s.id]);
+            const issues = s.enabled
+              ? AGENTS.filter(
+                  (a) => s.apps[a.id] && mcpDistBadge(distStatus[s.id]?.[a.id]) !== null,
+                )
+              : [];
             return (
               <li
                 key={s.id}
-                className="group transition-colors hover:bg-hover/60"
+                className={`group rounded-lg transition-colors ${open ? "bg-chat-bubble" : ""}`}
               >
-                <div className={`grid ${MCP_GRID} items-center gap-3 px-3 py-2`}>
+                <div
+                  className={`grid grid-cols-[14px_16px_minmax(0,1fr)_auto_auto_auto] items-center gap-x-2 rounded-lg px-2 py-1.5 ${
+                    open ? "" : "hover:bg-hover"
+                  }`}
+                >
                   <button
                     type="button"
-                    className="flex min-w-0 items-center gap-2 text-left"
+                    className="flex h-7 items-center justify-center text-l4"
                     title={open ? "收起" : "展开完整配置与分发管理"}
-                    onClick={() => {
-                      // 展开前作废该条目的五态缓存，保证看到的是磁盘最新事实
-                      if (!open)
-                        setDistStatus((prev) => {
-                          const next = { ...prev };
-                          delete next[s.id];
-                          return next;
-                        });
-                      setExpanded(open ? null : s.id);
-                    }}
+                    aria-label={open ? `收起 ${s.name}` : `展开 ${s.name}`}
+                    aria-expanded={open}
+                    onClick={toggleOpen}
                   >
                     <FoldMark open={open} />
+                  </button>
+                  {/* 未检测不画点（无状态不渲染状态点），留同宽空位让名字对齐 */}
+                  <span className="flex justify-center">
                     <HealthDot
                       health={shownHealth}
                       at={health[s.id] ? null : (s.lastCheck?.at ?? null)}
                       onCheck={() => void checkHealth(s)}
                     />
+                  </span>
+                  <button
+                    type="button"
+                    className="flex min-w-0 items-baseline gap-2 text-left"
+                    title={open ? "收起" : "展开完整配置与分发管理"}
+                    onClick={toggleOpen}
+                  >
                     <span
-                      className={`truncate text-sm ${s.enabled ? "text-l1" : "text-l4"}`}
+                      className={`truncate text-base ${s.enabled ? "font-medium text-l1" : "text-l4"}`}
                     >
                       {s.name}
                     </span>
                     {/* 状态点只靠颜色分不出黄绿：不正常时名字后面写出来，正常只留点 */}
                     {healthLabel && (
                       <span
-                        className={`shrink-0 text-micro ${
-                          healthLabel.tone === "warn" ? "text-warn-text" : "text-err-text"
+                        className={`shrink-0 text-xs ${
+                          healthLabel.tone === "warn" ? "text-caution-text" : "text-err-text"
                         }`}
                       >
                         {healthLabel.text}
                       </span>
                     )}
-                    {!s.enabled && (
-                      <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l4">
-                        已停用
+                    {!s.enabled && <span className="shrink-0 text-xs text-l4">已停用</span>}
+                  </button>
+                  {/* 用于：点击展开 / 收起分发管理（勾选在展开区）；全部正常不画点，有异常才写「N 处异常」 */}
+                  <button
+                    type="button"
+                    onClick={toggleOpen}
+                    title={
+                      onCount > 0
+                        ? `已分发到：${AGENTS.filter((a) => s.apps[a.id]).map((a) => a.label).join("、")}\n点击展开分发管理`
+                        : "还没分发给任何 Agent；点击展开分发管理"
+                    }
+                    className="flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-xs text-l3 hover:bg-hover hover:text-l1"
+                  >
+                    {issues.length > 0 && (
+                      <span className="size-1.5 shrink-0 rounded-full bg-warn-text" />
+                    )}
+                    {onCount > 0 ? `${onCount} 个 Agent` : "未用"}
+                    {issues.length > 0 && (
+                      <span
+                        className="text-caution-text"
+                        title={`${issues.map((a) => `${a.label}：${mcpDistBadge(distStatus[s.id]?.[a.id])?.label}`).join("\n")}\n点击展开处理`}
+                      >
+                        · {issues.length} 处异常
                       </span>
                     )}
                   </button>
-                  {/* 协议徽章中性灰：原 stdio 紫 / remote 蓝只表达类型，蓝又和选中、主按钮撞色（2026-10-23） */}
-                  <span>
-                    <span className="inline-block rounded-sm bg-inset px-1.5 py-0.5 font-mono text-micro text-l3">
-                      {s.kind}
-                    </span>
+                  {/* 行内悬浮操作（v3.93）：测试连通 / 编辑 / 删除，裸图标钮 hover 淡入；展开着的那条常显 */}
+                  <span
+                    className={`flex items-center ${open ? "" : hoverRevealClass} focus-within:opacity-100`}
+                  >
+                    <RowAction
+                      icon={<PlugZap size={14} strokeWidth={1.8} aria-hidden="true" />}
+                      tip="测试连通性（stdio 拉起握手 / remote 探活）"
+                      label={`测试 ${s.name} 连通性`}
+                      onClick={() => void checkHealth(s)}
+                    />
+                    <RowAction
+                      icon={<Pencil size={14} strokeWidth={1.8} aria-hidden="true" />}
+                      tip="编辑"
+                      label={`编辑 ${s.name}`}
+                      onClick={() => setModal({ id: s.id, form: formFrom(s) })}
+                    />
+                    <RowAction
+                      icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
+                      tip="删除（收编条目默认仅从清单移除，不动 agent 配置）"
+                      label={`删除 ${s.name}`}
+                      onClick={() => void onDelete(s)}
+                    />
                   </span>
-                  {/* 命令智能缩略（~/…/尾段），完整命令悬浮给全文、展开面板也给全文；
-                      相对路径/路径不存在时在命令前压告警徽标（mcp_command_path_status） */}
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {(() => {
-                      const badge = mcpCmdPathBadge(cmdPathStatus[s.id]);
-                      return badge ? (
-                        <span
-                          className="shrink-0 rounded-sm px-1 py-px text-micro"
-                          style={{
-                            color: badge.color,
-                            background: badge.background,
-                          }}
-                          title={badge.tip}
-                        >
-                          {badge.label}
-                        </span>
-                      ) : null;
-                    })()}
+                  {/* 全局启用开关：停用不删配置，分发映射保留 */}
+                  <span
+                    className="flex pl-1"
+                    title={
+                      s.enabled
+                        ? "停用：从各 agent 移除条目，分发映射保留"
+                        : "启用：按分发映射重新写入各 agent"
+                    }
+                  >
+                    <Toggle
+                      label={`${s.name} 启用开关`}
+                      checked={s.enabled}
+                      onChange={(v) =>
+                        !applying[`${s.id}:__global__`] &&
+                        void setEnabled(s, v)
+                      }
+                    />
+                  </span>
+                  {/* 第二行：类型 · 命令（智能缩略，悬浮给全文）；相对路径 / 路径不存在时在前面写出来 */}
+                  <span className="col-span-2 col-start-3 row-start-2 flex min-w-0 items-baseline gap-1.5 pb-0.5 text-xs text-l4">
+                    {pathBadge && (
+                      <span
+                        className={`shrink-0 ${cmdPathStatus[s.id] === "missing" ? "text-err-text" : "text-caution-text"}`}
+                        title={pathBadge.tip}
+                      >
+                        {pathBadge.label} ·
+                      </span>
+                    )}
+                    <span className="shrink-0 text-l3">{s.kind}</span>
+                    <span className="shrink-0">·</span>
                     <span
-                      className="min-w-0 truncate font-mono text-xs text-l3"
+                      className="min-w-0 truncate font-mono"
                       title={
                         s.kind === "stdio"
                           ? `${s.command} ${s.args.join(" ")}`.trim()
@@ -1208,103 +1269,11 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         : s.url}
                     </span>
                   </span>
-                  {/* 用于列可点：点击展开/收起分发网格（勾选在展开区） */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // 展开前作废该条目的五态缓存，保证看到的是磁盘最新事实
-                      if (!open)
-                        setDistStatus((prev) => {
-                          const next = { ...prev };
-                          delete next[s.id];
-                          return next;
-                        });
-                      setExpanded(open ? null : s.id);
-                    }}
-                    title={
-                      onCount > 0
-                        ? `已分发到：${AGENTS.filter((a) => s.apps[a.id]).map((a) => a.label).join("、")}\n点击展开分发管理`
-                        : "还没分发给任何 Agent；点击展开分发管理"
-                    }
-                    className="flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover"
-                  >
-                    {(() => {
-                      const issues = s.enabled
-                        ? AGENTS.filter(
-                            (a) =>
-                              s.apps[a.id] &&
-                              mcpDistBadge(distStatus[s.id]?.[a.id]) !== null,
-                          )
-                        : [];
-                      return (
-                        <>
-                          {/* 全部正常不画点（每行一样的绿点等于没说），有异常才画琥珀点；同技能页 */}
-                          {issues.length > 0 && (
-                            <span className="size-1.5 shrink-0 rounded-full bg-warn-text" />
-                          )}
-                          {onCount > 0 ? `${onCount} 个 Agent` : "未用"}
-                          {issues.length > 0 && (
-                            <span
-                              className="text-warn-text"
-                              title={`${issues.map((a) => `${a.label}：${mcpDistBadge(distStatus[s.id]?.[a.id])?.label}`).join("\n")}\n点击展开处理`}
-                            >
-                              · {issues.length} 处异常
-                            </span>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </button>
-                  <span className="flex items-center justify-end gap-1">
-                    {/* 行内悬浮操作（v3.93）：↯ 测试连通 / ✎ 编辑 / ✕ 删除。
-                        裸图标钮 hover 淡入，不套胶囊容器——实体栏压在列表行上层级脱节 */}
-                    <span
-                      className={`flex items-center ${hoverRevealClass} focus-within:opacity-100`}
-                    >
-                      <RowAction
-                        icon={<PlugZap size={14} strokeWidth={1.8} aria-hidden="true" />}
-                        tip="测试连通性（stdio 拉起握手 / remote 探活）"
-                        label={`测试 ${s.name} 连通性`}
-                        onClick={() => void checkHealth(s)}
-                      />
-                      <RowAction
-                        icon={<Pencil size={14} strokeWidth={1.8} aria-hidden="true" />}
-                        tip="编辑"
-                        label={`编辑 ${s.name}`}
-                        onClick={() => setModal({ id: s.id, form: formFrom(s) })}
-                      />
-                      <RowAction
-                        icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
-                        tip="删除（收编条目默认仅从清单移除，不动 agent 配置）"
-                        label={`删除 ${s.name}`}
-                        onClick={() => void onDelete(s)}
-                      />
-                    </span>
-                    {/* 全局启用开关：停用不删配置，分发映射保留 */}
-                    <span
-                      title={
-                        s.enabled
-                          ? "停用：从各 agent 移除条目，分发映射保留"
-                          : "启用：按分发映射重新写入各 agent"
-                      }
-                    >
-                      <Toggle
-                        label={`${s.name} 启用开关`}
-                        checked={s.enabled}
-                        onChange={(v) =>
-                          !applying[`${s.id}:__global__`] &&
-                          void setEnabled(s, v)
-                        }
-                      />
-                    </span>
-                  </span>
                 </div>
                 {open && (
-                  // 展开面板：浅底 + 细边 + 圆角的深层区，给嵌套内容（完整配置/变量/分发网格）
-                  // 一个明确的空间落点，不再直接摊在行下方
-                  <div className="px-3 pb-3">
-                    <div className="ccode-well ccode-card p-2.5">
-                      <div className="break-all font-mono text-xs leading-5 text-l3">
+                  // 展开区：左边一条细线缩进（同对话「已思考 ›」展开），不铺卡底
+                  <div className="mb-3 ml-[30px] mr-3 border-l border-hairline pb-1 pl-3 pt-0.5 text-sm text-l3">
+                      <div className="break-all font-mono text-xs leading-5 text-l2">
                         {s.kind === "stdio"
                           ? `${s.command} ${s.args.join(" ")}`.trim()
                           : s.url}
@@ -1312,13 +1281,13 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       {/* 命令路径告警的展开区处理：relative 给一键修复（后端 resolver 出候选），
                           missing 只告警指路编辑（路径失效没有可自动解析的基准） */}
                       {cmdPathStatus[s.id] === "relative" && (
-                        <div className="mt-1.5 flex items-center gap-2">
-                          <span className="text-micro text-warn-text">
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-caution-text">
                             相对路径命令：换个工作目录启动就找不到
                           </span>
                           <button
                             type="button"
-                            className={secondaryActionClass}
+                            className={paneOutlineButtonClass}
                             disabled={fixing}
                             onClick={() => void onFixCommand(s)}
                           >
@@ -1327,14 +1296,14 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         </div>
                       )}
                       {cmdPathStatus[s.id] === "missing" && (
-                        <p className="mt-1.5 text-micro text-err-text">
+                        <p className="mt-2 text-xs text-err-text">
                           命令路径在磁盘上不存在（应用卸载或版本升级后路径失效），请点
-                          ✎ 编辑修正
+                          编辑修正
                         </p>
                       )}
                       {s.env.length > 0 && (
                         <div
-                          className="mt-1 truncate font-mono text-micro text-l4"
+                          className="mt-1.5 truncate font-mono text-micro text-l4"
                           title={s.env
                             .map((p) => `${p.key}=${p.value}`)
                             .join("\n")}
@@ -1344,7 +1313,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       )}
                       {s.headers.length > 0 && (
                         <div
-                          className="mt-1 truncate font-mono text-micro text-l4"
+                          className="mt-1.5 truncate font-mono text-micro text-l4"
                           title={s.headers
                             .map((p) => `${p.key}=${p.value}`)
                             .join("\n")}
@@ -1354,16 +1323,17 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       )}
                       {mcpEnvRefNames([...s.env, ...s.headers]).map((name) =>
                         secretHints[name] ? (
-                          <div key={name} className="mt-1 text-micro text-l3">
+                          <div key={name} className="mt-1.5 text-xs text-l3">
                             {mcpSecretFieldLabel(name)}已填 {secretHints[name]}
                           </div>
                         ) : (
-                          <div key={name} className="mt-1 text-micro text-warn-text">
+                          <div key={name} className="mt-1.5 text-xs text-caution-text">
                             {mcpSecretFieldLabel(name)}未填
                           </div>
                         ),
                       )}
-                      <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                      {/* 各 Agent 分发开关：无底的几列（原九宫格小卡去底） */}
+                      <div className="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-x-6">
                         {AGENTS.map((agent) => {
                           const on = !!s.apps[agent.id];
                           const key = `${s.id}:${agent.id}`;
@@ -1373,7 +1343,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                           return (
                             <div
                               key={agent.id}
-                              className="flex items-center justify-between gap-2 rounded-sm ccode-well px-2 py-1.5"
+                              className="flex h-8 items-center justify-between gap-2"
                               title={
                                 notInstalled
                                   ? `本机未安装 ${agent.label}：分发会写进它的配置目录，但现在没有 CLI 读取`
@@ -1381,7 +1351,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                               }
                             >
                               <span
-                                className={`flex min-w-0 items-center gap-1 text-xs ${
+                                className={`flex min-w-0 items-center gap-1.5 text-xs ${
                                   notInstalled && !on ? "text-l4" : "text-l3"
                                 }`}
                               >
@@ -1389,13 +1359,12 @@ export default function McpPage({ visible }: { visible: boolean }) {
                                     （apps 映射），点/徽标表达磁盘事实（mcp_distribution_status
                                     只读探测）。全局停用时条目是 Mesa 自己移除的，
                                     不标「外部已删除」误导 */}
-                                {on &&
-                                  s.enabled &&
-                                  (() => {
-                                    const state = distStatus[s.id]?.[agent.id];
-                                    const badge = mcpDistBadge(state);
-                                    return (
-                                      <>
+                                {(() => {
+                                  const state = on && s.enabled ? distStatus[s.id]?.[agent.id] : undefined;
+                                  const badge = mcpDistBadge(state);
+                                  return (
+                                    <>
+                                      {on && s.enabled && (
                                         <span
                                           className={`size-1.5 shrink-0 rounded-full ${
                                             state === "modified"
@@ -1411,29 +1380,30 @@ export default function McpPage({ visible }: { visible: boolean }) {
                                             "已写入该 agent 的用户级配置"
                                           }
                                         />
-                                        {/* modified 沿用原三态点提示；missing/disabled 是
-                                            新增异常态，补文字徽标避免只靠颜色传达 */}
-                                        {badge && state !== "modified" && (
-                                          // 开关已经是开着的，原提示「拨开开关重新写入」得先关再开才行——
-                                          // 徽标本身做成重写按钮，一步到位
-                                          <button
-                                            type="button"
-                                            className="shrink-0 rounded-sm px-1 py-px text-micro hover:brightness-110 disabled:opacity-50"
-                                            style={{
-                                              color: badge.color,
-                                              background: badge.background,
-                                            }}
-                                            title={`${badge.tip}\n点击按 Mesa 清单重新写入 ${agent.label}`}
-                                            disabled={!!applying[key]}
-                                            onClick={() => void toggleApp(s, agent.id, true, true)}
-                                          >
-                                            {badge.label} · 重写
-                                          </button>
-                                        )}
-                                      </>
-                                    );
-                                  })()}
-                                <span className="truncate">{agent.label}</span>
+                                      )}
+                                      <span className="shrink-0">{agent.label}</span>
+                                      {/* modified 沿用原三态点提示；missing/disabled 是
+                                          新增异常态，补文字徽标避免只靠颜色传达。
+                                          开关已经是开着的，原提示「拨开开关重新写入」得先关再开才行——
+                                          徽标本身做成重写按钮，一步到位；放在名称后面，窄了只截徽标 */}
+                                      {badge && state !== "modified" && (
+                                        <button
+                                          type="button"
+                                          className="min-w-0 truncate rounded-sm px-1 py-px text-micro hover:brightness-110 disabled:opacity-50"
+                                          style={{
+                                            color: badge.color,
+                                            background: badge.background,
+                                          }}
+                                          title={`${badge.tip}\n点击按 Mesa 清单重新写入 ${agent.label}`}
+                                          disabled={!!applying[key]}
+                                          onClick={() => void toggleApp(s, agent.id, true, true)}
+                                        >
+                                          {badge.label} · 重写
+                                        </button>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                                 {notInstalled && (
                                   <span className="shrink-0 text-micro text-l4">未安装</span>
                                 )}
@@ -1461,15 +1431,14 @@ export default function McpPage({ visible }: { visible: boolean }) {
                           );
                         })}
                       </div>
-                    </div>
                   </div>
                 )}
               </li>
             );
           })}
           </ul>
-        </div>
       )}
+      </PaneColumn>
 
       {modal && (
         <Modal
@@ -1997,6 +1966,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
             </div>
         </Modal>
       )}
-    </PageFrame>
+    </div>
   );
 }

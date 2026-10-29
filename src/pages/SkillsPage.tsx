@@ -9,6 +9,7 @@ import {
   Link,
   MoreHorizontal,
   Pencil,
+  Plus,
   RefreshCw,
   Tag,
   Trash2,
@@ -43,13 +44,15 @@ import {
   fieldClass,
   FoldMark,
   LoadingRows,
-  PageFrame,
-  PageHeader,
+  PaneColumn,
+  PaneHead,
+  paneHeadButtonClass,
+  paneHeadIconClass,
+  PaneSearch,
   primaryActionClass,
   RowAction,
   rowActionClass,
   secondaryActionClass,
-  searchFieldClass,
   hoverRevealClass,
   dangerActionClass,
   NoticeBar,
@@ -127,7 +130,7 @@ function AppliedCell({
       }}
       onMouseEnter={has ? show : undefined}
       onMouseLeave={hide}
-      className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-seg-sel"
+      className="flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-left text-xs hover:bg-hover"
     >
       {/* 写「N 个 Agent」不写「N 处」；只有部分应用画琥珀点，全装上 / 未用都不画（2026-10-23 审查） */}
       {has && missingNames.length > 0 && (
@@ -1838,10 +1841,10 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     : skills;
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full bg-canvas">
+      {/* 2026-10-29 管理页视觉统一：页头同对话头、对话栏宽度单列；分类组去卡片，组标题改粗体节标题 */}
       <div className="min-w-0 flex-1 overflow-auto">
-        <PageFrame width="wide">
-          <PageHeader
+          <PaneHead
             title="技能"
             meta={`${skills.length} 个 · 已应用 ${appliedCount}`}
             actions={
@@ -1849,9 +1852,10 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                 <button
                   type="button"
                   onClick={() => setEditor({ mode: "create" })}
-                  className={primaryActionClass}
+                  className={paneHeadButtonClass}
                 >
-                  + 创建技能
+                  <Plus size={14} strokeWidth={1.8} aria-hidden="true" />
+                  创建技能
                 </button>
                 <button
                   type="button"
@@ -1861,13 +1865,15 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   }}
                   title="更多技能操作"
                   aria-label="更多技能操作"
-                  className="flex h-8 w-8 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1"
+                  aria-expanded={!!topMenu}
+                  className={paneHeadIconClass}
                 >
-                  ⋯
+                  <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               </>
             }
           />
+          <PaneColumn>
           {builtinPreview && (
             <section
               className="mb-3 rounded-md ccode-well p-3 text-xs"
@@ -1961,7 +1967,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
             </section>
           )}
           {builtinUpdates.length > 0 && (
-            <div className="mb-3 rounded-md ccode-well px-3 py-2 text-xs text-l3">
+            <div className="mb-3 rounded-lg bg-chat-bubble px-3.5 py-2.5 text-xs text-l3">
               <p>
                 内置技能有新版：{builtinUpdates.join("、")}（共{" "}
                 {builtinUpdates.length}{" "}
@@ -2018,15 +2024,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               }
             />
           ) : (
-            <div className="mt-4">
-              <div className="mb-2 flex items-center gap-2">
-                <input
-                  // 不给宽度时 input 按默认 20 字符宽，占位字后半截「/ 来源）」被截掉
-                  className={`w-full max-w-md ${searchFieldClass}`}
+            <div>
+              <div className="mb-1 flex items-center gap-2 px-1">
+                <PaneSearch
+                  className="w-full max-w-sm"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={setQuery}
                   placeholder="搜索技能（名称 / 描述 / 分类 / 来源）"
-                  aria-label="搜索技能"
+                  label="搜索技能"
                 />
                 {q && (
                   <span className="shrink-0 text-micro text-l4">
@@ -2039,9 +2044,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   没有匹配「{query}」的技能
                 </p>
               )}
-              {/* 分组卡片化（2026-08-25 设计评审）：同组技能裹进 field 细边 + strip 底卡片，
-                  组内行收窄 hover 不再通栏、不再重复来源列；列表不再伪装成贯穿整页的表格，
-                  列对齐只在卡片内部成立（名称 | 应用 | 操作） */}
+              {/* 分组（2026-10-29 去卡片）：组标题是可折叠的粗体节标题，组内行不画框，靠留白分隔 */}
               <div>
                 {[
                   // 分组顺序 = 技能数组首现顺序；未分类固定沉底（不挡已归组的内容）
@@ -2063,23 +2066,22 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                       ? distinctSources[0]
                       : null;
                   return (
-                    <section
-                      key={category}
-                      className="mb-3 overflow-hidden ccode-well ccode-card"
-                    >
+                    <section key={category} className="mt-6 first:mt-3">
                       <button
                         type="button"
                         onClick={() => toggleCat(category)}
                         aria-label={
-                          catCollapsed.has(category) ? "展开" : "收起"
+                          catCollapsed.has(category) ? `展开 ${category}` : `收起 ${category}`
                         }
-                        className="flex h-10 w-full items-center gap-1.5 px-3 text-sm transition-colors hover:bg-hover/60"
+                        aria-expanded={!catCollapsed.has(category)}
+                        className="flex min-h-9 w-full items-center gap-2 rounded-lg px-1 text-left"
                       >
-                        <FoldMark open={!catCollapsed.has(category)} boxed />
-                        {/* 分组标题加深到 l1（原 l3 太淡层级不清）；计数改微型胶囊 */}
-                        <span className="font-medium text-l1">{category}</span>
-                        <span className="rounded-full bg-inset px-1.5 py-0.5 text-micro text-l4">
-                          {categorySkills.length} 个技能
+                        <span className="text-l4">
+                          <FoldMark open={!catCollapsed.has(category)} />
+                        </span>
+                        <span className="text-lg font-semibold text-l1">{category}</span>
+                        <span className="text-xs text-l4">
+                          {categorySkills.length} 个
                         </span>
                         {/* 单来源组的来源标注（替代原行级来源列）；嵌在折叠按钮内只能纯展示，
                             仓库链接在预览面板 */}
@@ -2093,14 +2095,13 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                         )}
                         {/* 未分类组挂归类引导（实际入口是行内 ⋯ → 设置分类，无拖拽归类） */}
                         {category === "未分类" && (
-                          <span className="ml-1 text-micro text-l4">
-                            — 行内 ⋯ →「设置分类」即可归档
+                          <span className="ml-auto text-micro text-l4">
+                            行内 ⋯ →「设置分类」即可归档
                           </span>
                         )}
                       </button>
                       {!catCollapsed.has(category) && (
-                        // 卡片体内留白：行 hover 带收进内边距与圆角内，不通栏切断分组边界
-                        <div className="border-t border-hairline px-2 pb-2 pt-1">
+                        <div className="pt-1">
                         <ul className="space-y-0.5">
                           {categorySkills.map((skill) => {
                             const stale = (skill.staleCopies ?? []).length > 0;
@@ -2109,15 +2110,15 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                               <li
                                 key={skill.id}
                                 onClick={() => void onView(skill)}
-                                className={`group grid min-h-10 cursor-pointer grid-cols-[minmax(0,1fr)_120px_92px] items-center gap-3 rounded-md border border-transparent py-1.5 pl-5 pr-2 transition-colors hover:bg-hover ${
+                                className={`group grid min-h-12 cursor-pointer grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg py-2 pl-3 pr-2 transition-colors ${
                                   preview?.skill.id === skill.id
-                                    ? "border-hairline bg-inset"
-                                    : ""
+                                    ? "bg-chat-bubble"
+                                    : "hover:bg-hover"
                                 }`}
                               >
                                 <div className="min-w-0">
                                   <div className="flex min-w-0 items-center gap-1.5">
-                                    <span className="min-w-0 truncate text-sm font-medium text-l1">
+                                    <span className="min-w-0 truncate text-base font-medium text-l1">
                                       {skill.name}
                                     </span>
                                     {/* 类型标签（v3.93）：有后端数据支撑的只有 MCP 提及
@@ -2177,7 +2178,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                       skill.description,
                                     );
                                     return desc ? (
-                                      <div className="mt-0.5 truncate text-xs text-l3">
+                                      <div className="mt-0.5 truncate text-xs text-l4">
                                         {desc}
                                       </div>
                                     ) : null;
@@ -2296,14 +2297,14 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </div>
             </div>
           )}
-        </PageFrame>
+          </PaneColumn>
       </div>
 
       {/* SKILL.md 预览面板 */}
       {preview && (
         <div className="ccode-skill-preview flex w-[clamp(360px,34vw,460px)] shrink-0 flex-col border-l border-hairline bg-canvas">
-          <div className="flex h-11 shrink-0 items-center gap-2 bg-strip px-3">
-            <span className="truncate text-sm font-semibold text-l1">
+          <div className="flex h-9 shrink-0 items-center gap-2 px-3">
+            <span className="truncate text-sm font-medium text-l1">
               {preview.skill.name}
             </span>
             <button

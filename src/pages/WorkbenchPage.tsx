@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   CheckCheck,
-  CircleDot,
   AlarmClock,
   Files,
   Inbox,
@@ -62,7 +60,8 @@ import {
 } from "../work-mode";
 import {
   LoadingRows,
-  PageFrame,
+  PaneColumn,
+  PaneHead,
   fieldClass,
   ghostActionClass,
   hoverRevealClass,
@@ -121,8 +120,6 @@ import { PROJECT_ORDER_KEY, PROJECT_PINS_KEY, parsePins } from "../project-tree"
 import WorkbenchSchedules from "../components/WorkbenchSchedules";
 import { fmtCost } from "../stats-insight";
 
-const iconClass = "shrink-0 text-l4";
-
 /** 不参与工作台「需要你」判定的自动登记任务类（见 nowSeeds 里的过滤注释） */
 const WORKBENCH_AUTO_TASK_KINDS = new Set(["pipeline_step", "coding_lane", "watch"]);
 
@@ -152,19 +149,17 @@ function agentLabel(id: string | null): string | null {
   return AGENTS.find((a) => a.id === id)?.label ?? id;
 }
 
+/** 区块标题（2026-10-29 管理页视觉统一）：粗体节标题、不带图标，与设置 / 用量等页同一档 */
 function SectionHeading({
-  icon: Icon,
   title,
   action,
 }: {
-  icon: LucideIcon;
   title: string;
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
-      <Icon size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-      <h2 className="text-base font-semibold text-l1">{title}</h2>
+    <div className="mb-2.5 flex min-h-8 flex-wrap items-center gap-2 px-1">
+      <h2 className="text-lg font-semibold text-l1">{title}</h2>
       {action && <div className="ml-auto">{action}</div>}
     </div>
   );
@@ -1515,7 +1510,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
   function renderQueueList(rows: typeof queueRows, label: string) {
     return (
-      <ul className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline" aria-label={label}>
+      <ul className="ccode-workbench-list overflow-hidden rounded-xl" aria-label={label}>
         {rows.map((row, index) => {
           const tierHead = showTierHeads && row.tier !== "notice" && (index === 0 || rows[index - 1].tier !== row.tier);
           const selected = row === selectedRow;
@@ -1525,7 +1520,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           const symbolColor = row.dot === "bg-err-text" ? "text-err-text" : row.dot === "bg-ok-text" ? "text-ok-text" : row.tier === "notice" ? "text-l3" : "text-warn-text";
           return (
             <li key={row.key} id={`wbq-${row.key}`} data-workbench-nav={`q:${row.key}`} tabIndex={-1}
-              className={`group relative border-t border-hairline first:border-t-0 ${selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : "hover:bg-hover"}`}
+              className={`group relative ${selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : "hover:bg-hover"}`}
               onFocusCapture={() => setSelectedKey(`q:${row.key}`)}>
               {tierHead && <p className="px-3.5 pb-0.5 pt-2 text-micro text-l3">{QUEUE_TIER_LABEL[row.tier]}</p>}
               <div className="ccode-workbench-queue-row">
@@ -1565,12 +1560,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
 
   return (
-    <PageFrame width="wide" className="pb-12 pt-6">
-      <div className="ccode-workbench min-w-0">
-      {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
-          标题只留给屏幕阅读器，顶上 pt-6 留白免得「最近在做」贴着窗口顶边。其他页的标题照旧。
+    <div className="min-h-full bg-canvas">
+      {/* 首页不放页面大标题（2026-10-24 用户）；2026-10-29 管理页视觉统一补一条与对话头同高的小页头，
+          和其他页对齐（小字 l2，不是大标题）。内容用对话栏宽度单列。
           「新对话」不在这里放（2026-10-23 侧栏挂对话第一期）：侧栏「新对话」就在左边，两个按钮一模一样 */}
-      <h1 id="workbench-title" tabIndex={-1} className="sr-only">工作台</h1>
+      <PaneHead title="工作台" titleId="workbench-title" />
+      <PaneColumn>
+      <div className="ccode-workbench min-w-0">
       {readFailures.length > 0 && (
         <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn-text">
           <div>
@@ -1607,7 +1603,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       {queueRows.length > 0 && (
         <section className="mb-7 min-w-0" data-workbench-queue="">
           <SectionHeading
-            icon={Inbox}
             title={decisionRows.length ? "等你拍板" : "通知"}
             action={
               <span className="flex flex-wrap items-center justify-end gap-2">
@@ -1640,9 +1635,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
       <section className="min-w-0">
           <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
-            {/* 三块的标题同一个样子（同 SectionHeading）：原先这里是 micro 灰字，夹在两个 base 粗体标题之间 */}
-            <CircleDot size={14} strokeWidth={1.8} className={iconClass} aria-hidden="true" />
-            <h2 className="text-base font-semibold text-l1">
+            {/* 三块的标题同一个样子（同 SectionHeading） */}
+            <h2 className="text-lg font-semibold text-l1">
               项目
             </h2>
             {runningBadge > 0 && (
@@ -1652,18 +1646,17 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
               </span>
             )}
             {cardFilterOptions.length > 2 && (
-              <div className="ml-auto flex flex-wrap items-center gap-1" role="group" aria-label="筛选项目">
+              // 分段控件写法（2026-10-29，同设置 / 用量页）；仍是一组 aria-pressed 按钮
+              <div className="ccode-seg-boxed is-sm ml-auto inline-flex items-center" role="group" aria-label="筛选项目">
                 {cardFilterOptions.map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
                     aria-pressed={cardFilter === opt.id}
-                    className={`rounded-full px-2 py-0.5 ${
-                      cardFilter === opt.id ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
-                    }`}
+                    className="ccode-seg-boxed-item flex items-center whitespace-nowrap text-xs"
                     onClick={() => setCardFilter(opt.id)}
                   >
-                    <span className="text-micro">{opt.label}</span>
+                    {opt.label}
                   </button>
                 ))}
               </div>
@@ -1797,7 +1790,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           ) : (
             // 新用户第一次打开（2026-10-27 用户：「新用户看到的工作台什么样，设计了吗」）：说清这一页以后会放什么，
             // 给三个起步入口；不放示例数据冒充项目
-            <div className="rounded-lg border border-hairline px-6 py-7">
+            <div className="rounded-xl bg-chat-bubble px-6 py-7">
               <h3 className="text-base font-semibold text-l1">从一个项目开始</h3>
               <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-l2">
                 工作台会把所有项目里等你决定的事、手上在做的事和定时任务排在一处。先有一个项目——一个放资料和成果的文件夹。
@@ -1852,6 +1845,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       />
       </div>
 
+      </PaneColumn>
       {taskPanel}
       <WorkbenchApprovalPanel
         approval={openApprovalRow?.kind === "inbox" ? openApprovalRow.approval : null}
@@ -1864,7 +1858,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         }}
       />
       {clientOpen.dialog}
-    </PageFrame>
+    </div>
   );
 }
 

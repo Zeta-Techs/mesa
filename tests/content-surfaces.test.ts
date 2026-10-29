@@ -36,7 +36,9 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
     // （「空状态允许保留连续画布」），内容卡只剩 hero / 正在进行行 / 待验收行三处。
     // 3→1（2026-10-27）：hero 大卡删掉、待验收并进「等你拍板」细线列表，只剩正在进行行。
     // 同日第二批：正在进行改成项目分组列表（细线框，不用 ccode-well 卡）。
-    WorkbenchPage: 0, SkillsPage: 4, McpPage: 6, ProfilesPage: 5,
+    // 2026-10-29 管理页视觉统一（对话页写法）：MCP 整表卡与展开区卡、技能分类卡去掉，
+    // 列表不再套卡；MCP 6→3（只剩弹窗里的卡），技能 4 不变（分类卡少一张、内置技能对照区仍在）。
+    WorkbenchPage: 0, SkillsPage: 4, McpPage: 3, ProfilesPage: 5,
     SettingsPage: 6, StatsPage: 2, SessionsPage: 1,
   };
   for (const [page, minimum] of Object.entries(minimumCards)) {

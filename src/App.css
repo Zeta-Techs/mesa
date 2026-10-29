@@ -1216,6 +1216,43 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   opacity: 1;
 }
 
+/* 分段控件（SegTabs variant="boxed"，2026-10-29 管理页借鉴 Claude 设置页）：浅底外框 + 选中格浮起带细边。
+   选中格深色用 inset、浅色用 raised（浅色主题 inset 近白，浮不起来）。 */
+.ccode-seg-boxed {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid var(--color-hairline);
+  background: color-mix(in oklab, var(--ccode-surface-base, var(--color-canvas)), var(--color-l1) 3.5%);
+}
+.ccode-seg-boxed-item {
+  height: 1.75rem;
+  padding-inline: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--color-l3);
+}
+.ccode-seg-boxed-item:hover {
+  color: var(--color-l1);
+}
+.ccode-seg-boxed-item:is([aria-selected="true"], [aria-pressed="true"]) {
+  background: var(--color-inset);
+  border-color: var(--color-field);
+  color: var(--color-l1);
+}
+[data-theme$="-light"] .ccode-seg-boxed-item:is([aria-selected="true"], [aria-pressed="true"]) {
+  background: var(--color-raised);
+}
+.ccode-seg-boxed.is-sm {
+  padding: 2px;
+  border-radius: 8px;
+}
+.ccode-seg-boxed.is-sm .ccode-seg-boxed-item {
+  height: 1.5rem;
+  padding-inline: 0.55rem;
+  border-radius: 6px;
+}
+
 /* 工具栏不再包边成盒：与页头共用 hairline 与留白节奏，保持连续工作台观感。 */
 
 .ccode-action-primary,
@@ -4042,8 +4079,7 @@ select:focus-visible {
    Mac 上比全站大一档、Windows 上 sm 反而小一档；现在不覆写，名称 sm、状态与几个数 xs、时间 micro */
 .ccode-workbench {
   container: workbench / inline-size;
-  /* 宽度由 PageFrame width="wide"（最宽 1440px、居中、两侧 px-6）给，与连接 / 技能 / MCP / 用量 / 设置同一档（2026-10-27 用户拍板）；
-     不再自己另限 1040px */
+  /* 宽度由 PaneColumn（对话栏宽度单列，随聊天字号走）给，与 MCP / 技能同一档（2026-10-29 管理页视觉统一，取代 10-27 的 wide 1440） */
 }
 .ccode-workbench, .ccode-workbench-detail {
   font-size: var(--text-sm);
@@ -4055,7 +4091,8 @@ select:focus-visible {
   border-left: 1px solid var(--color-field);
   background: var(--color-strip);
 }
-.ccode-workbench-list { background: var(--color-strip); }
+/* 拍板队列、项目分组、定时任务：无边框气泡色底块（2026-10-29，原 strip 底 + 细线框） */
+.ccode-workbench-list { background: var(--color-chat-bubble); }
 .ccode-workbench-project-head {
   min-height: 42px;
   padding: 7px 14px 3px 6px;

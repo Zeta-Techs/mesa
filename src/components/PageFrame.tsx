@@ -1,7 +1,7 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleX, Info, Search, TriangleAlert, X } from "lucide-react";
 import { splitNoticeText } from "../notice-text";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
@@ -59,6 +59,29 @@ export function PageFrame({
   );
 }
 
+/** 内容滚到页头下面时，页头底边出一根细线：玻璃页头只靠磨砂，滚动后卡片顶像被切掉一截（2026-10-23 审查）。
+ *  往上找最近的滚动容器，滚动距离 > 0 时给页头写 data-stuck（.ccode-page-header::after 画线）。 */
+function useStuckEdge(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const header = ref.current;
+    // 经 defaultView 取：组件测试（JSDOM）不把 getComputedStyle 挂成全局
+    const view = header?.ownerDocument.defaultView;
+    if (!header || !view) return;
+    let scroller: HTMLElement | null = header.parentElement;
+    while (scroller) {
+      const oy = view.getComputedStyle(scroller).overflowY;
+      if (oy === "auto" || oy === "scroll") break;
+      scroller = scroller.parentElement;
+    }
+    if (!scroller) return;
+    const target = scroller;
+    const sync = () => header.toggleAttribute("data-stuck", target.scrollTop > 0);
+    sync();
+    target.addEventListener("scroll", sync, { passive: true });
+    return () => target.removeEventListener("scroll", sync);
+  }, [ref]);
+}
+
 export function PageHeader({
   title,
   meta,
@@ -71,23 +94,8 @@ export function PageHeader({
   /** 页面级标题前的轻量入口（例如工作区页收起后的项目列表恢复按钮）。 */
   leading?: ReactNode;
 }) {
-  // 内容滚到页头下面时，页头底边出一根细线：玻璃页头只靠磨砂，滚动后卡片顶像被切掉一截（2026-10-23 审查）
   const ref = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const header = ref.current;
-    let scroller: HTMLElement | null = header?.parentElement ?? null;
-    while (scroller) {
-      const oy = getComputedStyle(scroller).overflowY;
-      if (oy === "auto" || oy === "scroll") break;
-      scroller = scroller.parentElement;
-    }
-    if (!header || !scroller) return;
-    const target = scroller;
-    const sync = () => header.toggleAttribute("data-stuck", target.scrollTop > 0);
-    sync();
-    target.addEventListener("scroll", sync, { passive: true });
-    return () => target.removeEventListener("scroll", sync);
-  }, []);
+  useStuckEdge(ref);
   return (
     <header
       ref={ref}
@@ -334,16 +342,25 @@ export function SegTabs<T extends string>({
   value,
   onChange,
   className = "",
+  variant = "pill",
+  size = "md",
 }: {
   items: readonly { id: T; label: ReactNode }[];
   value: T;
   onChange: (id: T) => void;
   className?: string;
+  /** boxed = 分段控件（2026-10-29 管理页借鉴 Claude 设置页）：外框 + 选中格浮起；pill = 原胶囊行 */
+  variant?: "pill" | "boxed";
+  /** boxed 的紧凑档：二级栏、表头右侧这类窄处用 */
+  size?: "md" | "sm";
 }) {
   const selectedIndex = items.findIndex((item) => item.id === value);
+  const boxed = variant === "boxed";
   return (
     <div
-      className={`flex items-center gap-1 ${className}`}
+      className={`${
+        boxed ? `ccode-seg-boxed inline-flex items-center ${size === "sm" ? "is-sm" : ""}` : "flex items-center gap-1"
+      } ${className}`}
       role="tablist"
       onKeyDown={(event) => {
         if (!items.length) return;
@@ -364,9 +381,13 @@ export function SegTabs<T extends string>({
           onFocus={() => {
             if (value !== item.id) onChange(item.id);
           }}
-          className={`flex h-7 items-center rounded-full px-3 text-xs transition-colors ${
-            value === item.id ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
-          }`}
+          className={
+            boxed
+              ? "ccode-seg-boxed-item flex items-center whitespace-nowrap text-xs transition-colors"
+              : `flex h-7 items-center rounded-full px-3 text-xs transition-colors ${
+                  value === item.id ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+                }`
+          }
         >
           {item.label}
         </button>
@@ -722,5 +743,322 @@ export function RoleBadge({ role }: { role?: string }) {
     >
       {meta.text}
     </span>
+  );
+}
+
+/* ───────────── 管理页「对话页 / Claude 设置页」写法（2026-10-29，设计稿 docs/design-quiet-pages-mockup.html） ─────────────
+ * 页头 = 对话头：36px 一条，左边页名（小字 l2，不加粗）+ 灰字说明，右边中性小按钮；内容用对话栏宽度单列（PaneColumn），
+ * 或「左二级栏 + 右内容」（PaneNav + PaneBody）。二级栏可拖宽、宽度按页记住。 */
+
+/** 页头：与对话头同高同字（TerminalPage 对话头 h-9 / text-xs / text-l2），吸顶 + 玻璃底，滚动后底边一根细线 */
+export function PaneHead({
+  title,
+  meta,
+  actions,
+  sticky = true,
+  className = "",
+  titleId,
+}: {
+  title: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
+  /** 给标题挂 id（可编程聚焦，tabIndex=-1） */
+  titleId?: string;
+  /** 页面自己整体滚动时吸顶；两栏页（内容各自滚动）传 false */
+  sticky?: boolean;
+  className?: string;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  useStuckEdge(ref);
+  return (
+    <header
+      ref={ref}
+      className={`ccode-page-header ${sticky ? "sticky top-0" : "relative"} z-20 flex h-9 shrink-0 items-center gap-1 px-2 ${className}`}
+    >
+      <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-1.5 text-xs">
+        <h1 id={titleId} tabIndex={titleId ? -1 : undefined} className="shrink-0 font-normal text-l2 outline-none">
+          {title}
+        </h1>
+        {meta && <span className="min-w-0 truncate text-micro text-l4">{meta}</span>}
+      </div>
+      {actions && <div className="flex shrink-0 items-center gap-0.5">{actions}</div>}
+    </header>
+  );
+}
+
+/** 页头里的文字按钮（图标 + 字，中性色）：对话头右侧按钮同一档 */
+export const paneHeadButtonClass =
+  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 aria-expanded:bg-hover aria-expanded:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 页头里的纯图标按钮 */
+export const paneHeadIconClass =
+  "flex size-8 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 aria-expanded:bg-hover aria-expanded:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 细边按钮（Claude 设置页按钮口径）：行内「测试」、节标题旁「添加」等 */
+export const paneOutlineButtonClass =
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-field px-3 text-xs text-l1 transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 反色实心按钮：一屏唯一的主动作（对话管理「继续」），同对话输入框的发送钮配色 */
+export const paneSolidButtonClass =
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg bg-l1 px-3 text-xs font-medium text-canvas transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+
+/** 对话栏宽度的单列（ccode-chat-column：随聊天字号走），左右留 16px */
+export function PaneColumn({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <div className="px-4">
+      <div className={`ccode-chat-column mx-auto w-full pb-8 pt-3 ${className}`}>{children}</div>
+    </div>
+  );
+}
+
+/** 搜索框：细边框 + 放大镜（Claude 设置页口径），有字时出清除钮 */
+export function PaneSearch({
+  value,
+  onChange,
+  placeholder,
+  label,
+  className = "",
+  onKeyDown,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  label: string;
+  className?: string;
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <label
+      className={`ccode-search-shell flex h-8 min-w-0 items-center gap-2 rounded-lg border border-field px-2.5 text-l4 transition-colors focus-within:border-l4 ${className}`}
+    >
+      <Search size={14} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        aria-label={label}
+        className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l3"
+      />
+      {value && (
+        <button
+          type="button"
+          aria-label="清除搜索"
+          onClick={(event) => {
+            event.preventDefault();
+            onChange("");
+          }}
+          className="flex size-5 shrink-0 items-center justify-center rounded-sm text-l4 hover:text-l1"
+        >
+          <X size={13} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+      )}
+    </label>
+  );
+}
+
+const clampNav = (width: number, min: number, max: number) => Math.min(max, Math.max(min, width));
+
+/** 二级栏（连接页的 Agent、设置页的分区、对话管理的列表）：右边缘可拖宽，双击恢复默认，←/→ 键微调；宽度按 storageKey 记住 */
+export function PaneNav({
+  storageKey,
+  label,
+  defaultWidth = 232,
+  minWidth = 184,
+  maxWidth = 420,
+  className = "",
+  children,
+}: {
+  storageKey: string;
+  /** 拖拽把手的读屏名，如「调整连接列表宽度」 */
+  label: string;
+  defaultWidth?: number;
+  minWidth?: number;
+  maxWidth?: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [width, setWidth] = useState(() => {
+    const saved = Number(typeof localStorage === "undefined" ? NaN : localStorage.getItem(storageKey));
+    return Number.isFinite(saved) && saved > 0 ? clampNav(saved, minWidth, maxWidth) : defaultWidth;
+  });
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const save = (next: number) => {
+    try {
+      localStorage.setItem(storageKey, String(Math.round(next)));
+    } catch {
+      // 存不下就只在本次生效
+    }
+  };
+  return (
+    <div
+      style={{ width }}
+      className={`relative flex min-h-0 shrink-0 flex-col border-r border-hairline bg-rail2 ${className}`}
+    >
+      {children}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={label}
+        aria-valuenow={Math.round(width)}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxWidth}
+        tabIndex={0}
+        title="拖动调整宽度；双击恢复默认宽度"
+        onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          drag.current = { x: event.clientX, width: widthRef.current };
+        }}
+        onPointerMove={(event) => {
+          const start = drag.current;
+          if (!start) return;
+          setWidth(clampNav(start.width + event.clientX - start.x, minWidth, maxWidth));
+        }}
+        onPointerUp={(event) => {
+          if (!drag.current) return;
+          drag.current = null;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+          save(widthRef.current);
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
+        }}
+        onDoubleClick={() => {
+          setWidth(defaultWidth);
+          save(defaultWidth);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          event.preventDefault();
+          const next = clampNav(widthRef.current + (event.key === "ArrowRight" ? 16 : -16), minWidth, maxWidth);
+          setWidth(next);
+          save(next);
+        }}
+        className="group absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize outline-none"
+      >
+        {/* 平时透明，悬停 / 拖动 / 键盘聚焦才显色（同运行页右栏把手） */}
+        <span className="absolute inset-y-0 left-[3px] w-0.5 bg-transparent transition-colors group-hover:bg-cta group-focus-visible:bg-cta group-active:bg-cta" />
+      </div>
+    </div>
+  );
+}
+
+/** 二级栏分组小标题（可带数量） */
+export function PaneNavGroup({ label, count }: { label: ReactNode; count?: ReactNode }) {
+  return (
+    <div className="flex items-center px-2.5 pb-1.5 pt-4 text-xs text-l4">
+      <span className="min-w-0 truncate">{label}</span>
+      {count != null && <span className="ml-auto pl-2 tabular-nums">{count}</span>}
+    </div>
+  );
+}
+
+/** 二级栏的一项：图标 + 名称 + 右端数量，选中整块浅底（同侧栏选中色） */
+export function PaneNavItem({
+  icon,
+  label,
+  count,
+  selected,
+  onClick,
+  title,
+  muted = false,
+}: {
+  icon?: ReactNode;
+  label: ReactNode;
+  count?: ReactNode;
+  selected: boolean;
+  onClick: () => void;
+  title?: string;
+  muted?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "page" : undefined}
+      title={title}
+      onClick={onClick}
+      className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors ${
+        selected ? "bg-rail-sel text-l1" : `${muted ? "text-l4" : "text-l2"} hover:bg-hover hover:text-l1`
+      }`}
+    >
+      {icon && (
+        <span className={`flex size-4 shrink-0 items-center justify-center ${selected ? "text-l1" : "text-l3"}`}>
+          {icon}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count != null && <span className="shrink-0 pl-2 text-xs tabular-nums text-l4">{count}</span>}
+    </button>
+  );
+}
+
+/** 节：粗体节标题 + 可选灰字 + 右侧动作，节与节大留白（Claude 设置页的 Appearance / Sessions 那一档） */
+export function PaneSection({
+  title,
+  meta,
+  actions,
+  children,
+  className = "",
+  id,
+}: {
+  title: ReactNode;
+  meta?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  id?: string;
+}) {
+  return (
+    <section id={id} className={`mt-9 first:mt-4 ${className}`}>
+      <div className="mb-2 flex min-h-8 flex-wrap items-center gap-x-2.5 gap-y-1">
+        <h2 className="text-lg font-semibold text-l1">{title}</h2>
+        {meta && <span className="text-xs text-l4">{meta}</span>}
+        {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** 行组：上下各一根细线，行与行之间细线（PaneRow 自带底线） */
+export function PaneRows({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <div className={`border-t border-hairline ${className}`}>{children}</div>;
+}
+
+/** 一行：左标题 + 灰字说明（可折行），右控件；leading 放图标 */
+export function PaneRow({
+  title,
+  description,
+  control,
+  leading,
+  className = "",
+  children,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  control?: ReactNode;
+  leading?: ReactNode;
+  className?: string;
+  /** 行下方整宽的附加内容（如色卡） */
+  children?: ReactNode;
+}) {
+  return (
+    <div className={`group border-b border-hairline py-3.5 ${className}`}>
+      <div className="flex min-h-8 items-center gap-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {leading}
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-base text-l1">{title}</div>
+            {description && <div className="mt-0.5 text-sm leading-relaxed text-l3">{description}</div>}
+          </div>
+        </div>
+        {control && <div className="flex shrink-0 items-center justify-end gap-1">{control}</div>}
+      </div>
+      {children}
+    </div>
   );
 }

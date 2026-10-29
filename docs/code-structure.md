@@ -99,6 +99,9 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，点开全屏向导）
+  components/PageFrame.tsx   # 页面公共件：PageFrame/PageHeader（旧管理页外壳）、按钮类、SegTabs（pill / boxed 分段控件）、Toggle、NoticeBar…；
+                             # 2026-10-29 起加管理页对话化写法：PaneHead（与对话头同高的吸顶小页头）、PaneColumn（对话栏宽度单列）、PaneSearch、
+                             # PaneNav（可拖宽二级栏，宽度按 storageKey 记 localStorage）、PaneNavGroup/Item、PaneSection、PaneRows/PaneRow
   components/ImageGenPanel.tsx # 出图模型一块（连接页最下方，唯一编辑处；设置页只显示现状跳过来）：组头 + 一行与连接行同列模板
                              #   （gridClass 由连接页传入）；更换走 ImageModelPicker；「试出与对比」自写描述、1–4 个模型并行出图、
                              #   估算进度条、「用这个」；最近用过 / 各模型耗时存 localStorage；setImageGenModel 供连接行「改作出图模型」

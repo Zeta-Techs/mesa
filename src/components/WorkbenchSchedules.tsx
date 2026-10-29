@@ -1,4 +1,3 @@
-import { AlarmClock } from "lucide-react";
 import { rowActionClass } from "./PageFrame";
 import { absTime } from "../rel-time";
 import { hhmm } from "../schedule-tasks";
@@ -83,9 +82,8 @@ export default function WorkbenchSchedules({
   };
   return (
     <section className="mt-7 min-w-0" aria-label="定时任务" data-workbench-queue="">
-      <div className="mb-2.5 flex items-center gap-2 px-1">
-        <AlarmClock size={14} strokeWidth={1.8} className="shrink-0 text-l4" aria-hidden="true" />
-        <h2 className="text-base font-semibold text-l1">定时任务</h2>
+      <div className="mb-2.5 flex min-h-8 items-center gap-2 px-1">
+        <h2 className="text-lg font-semibold text-l1">定时任务</h2>
         <span className="text-micro text-l3">
           {rows.length - paused} 个在用{paused ? ` · ${paused} 个暂停` : ""}
         </span>
@@ -127,7 +125,7 @@ export default function WorkbenchSchedules({
       </div>
       )}
 
-      <div className="ccode-workbench-list overflow-hidden rounded-lg border border-hairline">
+      <div className="ccode-workbench-list overflow-hidden rounded-xl">
         {rows.map((row) => {
           const selected = selectedTaskId === row.task.id;
           const next = row.nextAt === null ? null : new Date(row.nextAt);
@@ -139,7 +137,7 @@ export default function WorkbenchSchedules({
               id={`wbs-${row.task.id}`}
               tabIndex={-1}
               data-workbench-nav={`s:${row.task.id}`}
-              className={`ccode-workbench-schedule border-t border-hairline first:border-t-0 ${
+              className={`ccode-workbench-schedule ${
                 openTaskId === row.task.id || selected ? "bg-hover" : "hover:bg-hover"
               } ${selected ? "shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""}`}
             >
