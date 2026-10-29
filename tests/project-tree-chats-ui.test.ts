@@ -169,6 +169,13 @@ async function renderTree(
       setOpenSessionReq: (r: unknown) => {
         reqs.openSession = r;
       },
+      // 标题栏放大镜 / 快捷键留下的「搜索对话和项目」待办（App 的 openRailSearch 置位），树领走即清
+      railSearchReq: false,
+      takeRailSearch(this: { railSearchReq: boolean }) {
+        if (!this.railSearchReq) return false;
+        this.railSearchReq = false;
+        return true;
+      },
       ...store,
     },
     __TAURI_INTERNALS__: {
@@ -196,9 +203,12 @@ async function renderTree(
   const { createElement: h, act, createRoot, Tree } = compiled.exports;
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
-  await act(async () => {
-    root.render(h(Tree, { selectedRoot: null, active: false, liftCurrent: opts.liftCurrent, onSelect: (p: string) => pages.push(`project:${p}`) }));
-  });
+  // 桩 store 不订阅：改了桩里的值后 rerender 一遍，组件才读到新值
+  const rerender = () =>
+    act(async () => {
+      root.render(h(Tree, { selectedRoot: null, active: false, liftCurrent: opts.liftCurrent, onSelect: (p: string) => pages.push(`project:${p}`) }));
+    });
+  await rerender();
   // 等 list_projects 回来再渲一遍
   await act(async () => {
     await new Promise((r) => setTimeout(r, 0));
@@ -219,6 +229,7 @@ async function renderTree(
     reqs,
     button,
     chatGroup,
+    rerender,
     wsCalls: () => wsCalls,
     close: async () => {
       await act(async () => root.unmount());
@@ -1048,12 +1059,15 @@ test("侧栏搜索：焦点约束、结果语义、状态筛选、中文输入�
     const doc = view.host.ownerDocument;
     const win = doc.defaultView!;
     Object.defineProperty(win, "matchMedia", { value: () => ({ matches: true }), configurable: true });
-    // 入口在标题栏（App），这里替它发打开事件；焦点先放在一个树外的按钮上，关掉后应回到它
+    // 入口在标题栏（App），这里替它在 store 留打开请求；焦点先放在一个树外的按钮上，关掉后应回到它
     const trigger = doc.createElement("button");
     doc.body.appendChild(trigger);
     trigger.focus();
-    await view.act(async () => { win.dispatchEvent(new win.CustomEvent("mesa:open-rail-search")); });
+    const treeStore = (win as unknown as { __treeStore: { railSearchReq: boolean } }).__treeStore;
+    treeStore.railSearchReq = true;
+    await view.rerender();
     await view.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    assert.equal(treeStore.railSearchReq, false, "树领走请求即清，下次挂载不再自己弹出");
     const dialog = doc.querySelector('[role="dialog"]')!;
     assert.ok(dialog);
     assert.ok(!view.host.contains(dialog), "弹层挂 body，不受探出侧栏变换与裁切影响");
@@ -1090,6 +1104,16 @@ test("侧栏搜索：焦点约束、结果语义、状态筛选、中文输入�
   } finally { await view.close(); }
 });
 
+
+test("侧栏收着时点放大镜：请求比探出层的树先到，树一挂上就打开搜索，不用再点一次（2026-10-30）", async () => {
+  const view = await renderTree({ railSearchReq: true });
+  try {
+    const doc = view.host.ownerDocument;
+    const win = doc.defaultView!;
+    assert.ok(doc.querySelector('[role="dialog"]'), "挂载时就领到请求、打开弹层");
+    assert.equal((win as unknown as { __treeStore: { railSearchReq: boolean } }).__treeStore.railSearchReq, false);
+  } finally { await view.close(); }
+});
 
 test("置顶分节：默认展开、方向键开合、保留状态、隐藏行不多选，折叠记忆跨挂载恢复", async () => {
   const storage: Record<string, string> = { "ccode.sidebarChatPins": JSON.stringify(["claude-code\nr5"]) };

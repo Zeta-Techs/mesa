@@ -91,7 +91,7 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
                              #   窄于 560px 自动收掉连接名/思考档/token、模型与目录截断，防叠字；
                              #   聊天变体留左右两格 chatMetaRef 给 ChatSurface portal 挂「权限 · 项目 | 模型」，2026-10-23） 等
   App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
-                             #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏顶部（2026-10-27 用户拍板）：无品牌行，收展钮与「搜索对话和项目」放大镜在标题栏左组（红绿灯右边，openRailSearch 发 RAIL_SEARCH_EVENT，
+                             #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏顶部（2026-10-27 用户拍板）：无品牌行，收展钮与「搜索对话和项目」放大镜在标题栏左组（红绿灯右边，openRailSearch 置 store 的 railSearchReq，
                              #   收着时先拉探出层）；侧栏最上是快速入口（新对话 ⌘N / 新项目 ⇧⌘N（三项菜单 project-add.ts）/ 工作台 ⌘1 / 对话管理），中段项目树（ProjectTree，课题下挂对话），
                              #   底部资源段（连接/技能/MCP/用量/设置：展开态平时连接、设置 + › 记号，悬停这一排抽屉滑出技能 / MCP / 用量（RAIL_MORE_PAGES，`.ccode-rail-drawer`，2026-10-25）、图标态竖排五个）；收起态=图标条（项目树不可用，展开后才有）。
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
@@ -135,7 +135,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
   components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（只报计数、只数课题，2026-10-26 挪进滚动区、排在随手聊下面；添加入口 2026-10-27 挪到侧栏顶部「新项目」）与课题；
-                             #   RAIL_SEARCH_EVENT（标题栏放大镜 / ⇧⌘F 发，2026-10-27 起树里不再占一行）开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
+                             #   store 的 railSearchReq（标题栏放大镜 / ⇧⌘F 置位，挂载时也领——探出层的树比请求晚挂；2026-10-27 起树里不再占一行）开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），项目标签左缘对齐导航图标；置顶 / 其他打开的标题前置折叠箭头。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
                              #   renderFolderToggle（文件夹图标，悬停换箭头，点它开合）+ 课题名 13px 加粗 l2 分组标题（2026-10-27 用户：比 Claude 客户端糊，对话同字号 l2 常重） / 对话 pl-2 不缩进（2026-10-25）
                              #   工作区清单（课题的工作副本）在开着的对话出现认不出归属的目录时重读一次（reposTick；开步刚建的副本），
@@ -144,7 +144,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/shortcut-nudges.tsx # 用鼠标做了本有快捷键的事时提醒快捷键：关对话到第 2 段 → ⌘W / Ctrl+Shift+W（侧栏 × / ⋯ 与对话头 ⋯ 共用一份计数，确认框开着不出）；对话头 >_ 聊天 ↔ 终端点到第 3 下 → 切换快捷键（tests/shortcut-nudges-ui.test.ts）
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：Modal + body portal 管焦点，combobox/listbox 管结果选择；打开由宿主回调，状态与关键词筛选在 rail-search.ts
   project-add.ts             # 「新项目」三条路单一出处（2026-10-27）：openNewProject / openAddExistingFolder / openDemoProject（切项目页 + 一次性请求）与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
-  rail-search.ts             # 搜索弹层纯逻辑（另有打开事件名 RAIL_SEARCH_EVENT）：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
+  rail-search.ts             # 搜索弹层纯逻辑（打开请求走 store 的 railSearchReq，不在这里）：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
                              #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
                              #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；

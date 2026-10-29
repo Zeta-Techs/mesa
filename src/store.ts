@@ -820,6 +820,11 @@ interface AppState {
   /** 把光标移到侧栏里正看着的那段对话（快捷键默认 mod+0；ProjectTree 消费，之后 ↑↓ 选、回车打开） */
   focusRailReq: number;
   requestFocusRail: () => void;
+  /** 「搜索对话和项目」待打开（标题栏放大镜 / 快捷键发）：弹层挂在 ProjectTree 里，侧栏收着时树要等探出层挂上才有，
+   *  所以留成待办，挂着的或刚挂上的那棵树 takeRailSearch 领走即清（一次性窗口事件在树挂上前发出会丢，2026-10-30 要点两次才开） */
+  railSearchReq: boolean;
+  requestRailSearch: () => void;
+  takeRailSearch: () => boolean;
   /** 探出整栏（2026-10-24 用户定 A+D+E）：侧栏收成图标 / 完全隐藏时，项目树临时盖在内容上滑出来，选完收回；
       侧栏本身的形态不变。App 管开合（悬停图标栏空白处 / 贴窗口左边缘 / ⌘0），RailPeek 画 */
   railPeekOpen: boolean;
@@ -1179,6 +1184,13 @@ export const useAppStore = create<AppState>((set, get) => {
     set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),
   focusRailReq: 0,
   requestFocusRail: () => set((s) => ({ focusRailReq: s.focusRailReq + 1 })),
+  railSearchReq: false,
+  requestRailSearch: () => set({ railSearchReq: true }),
+  takeRailSearch: () => {
+    if (!get().railSearchReq) return false;
+    set({ railSearchReq: false });
+    return true;
+  },
   railPeekOpen: false,
   setRailPeekOpen: (open) => set({ railPeekOpen: open }),
   setOpenSessionReq: (r) => set({ openSessionReq: r }),

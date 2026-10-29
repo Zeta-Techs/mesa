@@ -109,7 +109,7 @@ import { startProjectChat } from "./AskAiModal";
 import { imeBlocksEnter } from "../ime-guard";
 import { relTime } from "../rel-time";
 import RailSearchPalette from "./RailSearchPalette";
-import { RAIL_SEARCH_EVENT, type RailSearchChat, type RailSearchProject } from "../rail-search";
+import type { RailSearchChat, RailSearchProject } from "../rail-search";
 import { usePolling } from "../polling";
 import { useClientOpen } from "./ClientOpenDialog";
 import { openButtonLabel } from "../client-open";
@@ -166,13 +166,13 @@ export default function ProjectTree({
     Pick<WorkspaceDto, "repoPath" | "repoName" | "worktreePath">[]
   >([]);
   // 「搜索对话和项目」弹层（RailSearchPalette，2026-10-24 照 Claude 客户端），树本身不再就地筛。
-  // 入口 2026-10-27 挪到标题栏放大镜 / 快捷键，经 RAIL_SEARCH_EVENT 打开（树里不再占一行）
+  // 入口 2026-10-27 挪到标题栏放大镜 / 快捷键，经 store 的 railSearchReq 打开（树里不再占一行）。
+  // 挂载时也要看：侧栏收着时这棵树是点放大镜才探出来新挂的，请求比树先到
   const [searchOpen, setSearchOpen] = useState(false);
+  const railSearchReq = useAppStore((s) => s.railSearchReq);
   useEffect(() => {
-    const open = () => setSearchOpen(true);
-    window.addEventListener(RAIL_SEARCH_EVENT, open);
-    return () => window.removeEventListener(RAIL_SEARCH_EVENT, open);
-  }, []);
+    if (railSearchReq && useAppStore.getState().takeRailSearch()) setSearchOpen(true);
+  }, [railSearchReq]);
   // 对话菜单「在 X 客户端打开」：哪家的会话交给哪家自己的 GUI 客户端（预检与确认层同对话页）
   const clientOpen = useClientOpen(true);
   const [menu, setMenu] = useState<{

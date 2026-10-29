@@ -84,7 +84,6 @@ import { isLightTheme } from "./themes";
 import ProjectTree, { TitlebarProjectChip } from "./components/ProjectTree";
 import ContextMenu from "./components/ContextMenu";
 import { openNewProject, projectAddMenuItems } from "./project-add";
-import { RAIL_SEARCH_EVENT } from "./rail-search";
 import { RunActivityButton } from "./components/RunActivity";
 import { shellContextPlacement, shellMode } from "./shell-context";
 import RunCaret from "./components/RunCaret";
@@ -345,16 +344,11 @@ const HELP_MENU: {
 ];
 
 /** 「搜索对话和项目」（标题栏放大镜 / 快捷键）：弹层挂在项目树里。侧栏收成图标或隐藏时树不在，
- *  先把探出层拉出来、等树挂上再发（同 ⌘0 的做法） */
+ *  先把探出层拉出来；请求留在 store 里，树挂上自己领（不猜等几帧，一次点击就开） */
 function openRailSearch() {
   const st = useAppStore.getState();
-  const fire = () => window.dispatchEvent(new CustomEvent(RAIL_SEARCH_EVENT));
-  if (st.chromeHidden || st.navCollapsed) {
-    st.setRailPeekOpen(true);
-    requestAnimationFrame(fire);
-  } else {
-    fire();
-  }
+  if (st.chromeHidden || st.navCollapsed) st.setRailPeekOpen(true);
+  st.requestRailSearch();
 }
 
 function App() {
