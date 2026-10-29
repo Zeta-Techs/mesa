@@ -10,14 +10,15 @@ import {
   sortChecks,
   type ClientInfoDto,
   type ClientOpenTarget,
+  type HandoffFixDto,
   type HandoffPlanDto,
 } from "../client-open";
+import { Info, ShieldCheck } from "lucide-react";
 import type { SessionMetaDto } from "../types";
 import { toast } from "../toast";
 import { Modal } from "./Modal";
 import {
   InlineNotice,
-  fieldClass,
   ghostActionClass,
   primaryActionClass,
   rowActionClass,
@@ -269,46 +270,101 @@ function ClientOpenDialog({
         </>
       }
     >
-      <div className="flex flex-col gap-2.5">
-        {sortChecks(plan.checks).map((c) => (
-          <InlineNotice key={c.id} tone={TONE[c.status]}>
-            {c.text}
-          </InlineNotice>
-        ))}
-        {plan.fix && plan.fix.candidates.length > 1 && (
-          <label className="flex flex-col gap-1 text-xs text-l3">
-            用哪个连接写入渠道定义
-            <select
-              className={fieldClass}
-              value={fixProfileId ?? ""}
-              disabled={busy}
-              onChange={(e) => onFixProfile(e.target.value)}
-            >
-              {plan.fix.candidates.map((c) => (
-                <option key={c.profileId} value={c.profileId}>
-                  {c.name}
-                  {c.keyHint ? `（${c.keyHint}）` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {plan.fix && plan.fix.candidates.length === 1 && (
-          <p className="text-xs text-l4">
-            将使用连接「{plan.fix.candidates[0].name}」
-            {plan.fix.candidates[0].keyHint
-              ? `（${plan.fix.candidates[0].keyHint}）`
-              : ""}
-            写入渠道定义「{plan.fix.blockName}」。
-          </p>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          {sortChecks(plan.checks).map((c) => (
+            <InlineNotice key={c.id} tone={TONE[c.status]}>
+              {c.text}
+            </InlineNotice>
+          ))}
+        </div>
+        {plan.fix && (
+          <FixPlan
+            fix={plan.fix}
+            display={plan.display}
+            level={plan.level}
+            picked={fixProfileId}
+            busy={busy}
+            onPick={onFixProfile}
+          />
         )}
         {error && <InlineNotice tone="err">{error}</InlineNotice>}
         {!blocked && (
-          <p className="text-micro leading-4 text-l4">
+          <p className="flex items-start gap-1.5 border-t border-hairline pt-3 text-micro leading-4 text-l4">
+            <Info size={11} className="mt-0.5 shrink-0" aria-hidden="true" />
             {afterOpenHint(plan.display)}
           </p>
         )}
       </div>
     </Modal>
+  );
+}
+
+/** 要补写渠道定义时，先把「点了会发生什么」按顺序摆出来，再让人挑用哪个连接；写盘细节（明文、备份、撤销）收成一行小字 */
+function FixPlan({
+  fix,
+  display,
+  level,
+  picked,
+  busy,
+  onPick,
+}: {
+  fix: HandoffFixDto;
+  display: string;
+  level: "session" | "project";
+  picked: string | null;
+  busy: boolean;
+  onPick: (profileId: string) => void;
+}) {
+  const chosen = fix.candidates.find((c) => c.profileId === picked) ?? fix.candidates[0];
+  const many = fix.candidates.length > 1;
+  return (
+    <div className="ccode-well flex flex-col gap-3 rounded-xl p-4 text-xs">
+      {many && (
+        <fieldset className="flex flex-col gap-1.5" disabled={busy}>
+          <legend className="mb-1.5 font-medium text-l2">用哪个连接补写</legend>
+          {fix.candidates.map((c) => {
+            const on = c.profileId === picked;
+            return (
+              <label
+                key={c.profileId}
+                className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors ${
+                  on ? "border-cta bg-cta/10" : "border-hairline hover:bg-hover"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="client-open-fix"
+                  className="accent-[var(--color-cta)]"
+                  checked={on}
+                  onChange={() => onPick(c.profileId)}
+                />
+                <span className={`min-w-0 flex-1 truncate ${on ? "text-l1" : "text-l2"}`}>{c.name}</span>
+                {c.keyHint && <span className="shrink-0 font-mono text-micro text-l4">{c.keyHint}</span>}
+              </label>
+            );
+          })}
+        </fieldset>
+      )}
+      <p className={`font-medium text-l2${many ? " mt-1" : ""}`}>点「写入并打开」后 Mesa 会：</p>
+      <ol className="flex flex-col gap-2 text-l2">
+        <li className="flex gap-2.5">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-field text-micro tabular-nums text-l3">1</span>
+          <span className="leading-5">
+            把连接{chosen ? `「${chosen.name}」` : ""}的地址和密钥写进{" "}
+            <code className="rounded bg-field px-1 font-mono text-micro text-l2">~/.codex/config.toml</code>
+            ，渠道名「{fix.blockName}」；你的默认渠道不变
+          </span>
+        </li>
+        <li className="flex gap-2.5">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-field text-micro tabular-nums text-l3">2</span>
+          <span className="leading-5">在 {display}打开{level === "session" ? "这条对话" : "这个项目"}</span>
+        </li>
+      </ol>
+      <p className="flex items-start gap-1.5 text-micro leading-4 text-l4">
+        <ShieldCheck size={11} className="mt-0.5 shrink-0" aria-hidden="true" />
+        密钥以明文写入这个文件；写前自动备份，想还原到连接页 Codex 组的「⋯ → 撤销上次写入」。
+      </p>
+    </div>
   );
 }

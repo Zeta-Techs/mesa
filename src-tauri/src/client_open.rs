@@ -484,7 +484,7 @@ fn plan_codex_session(
                         "provider_unregistered",
                         "fix",
                         format!(
-                            "{why}，直接打开会报「Model provider not found」。选一个和这条对话原来同一家服务的连接，Mesa 把它的端点和密钥写成名为「{name}」的定义块，默认渠道不变（密钥明文，写前自动备份，可在连接页用「撤销上次写入」还原）。"
+                            "{why}，直接打开会报「Model provider not found」。要选一个和这条对话原来同一家服务的连接来补写。"
                         ),
                     ));
                     *fix = Some(FixDto {
@@ -510,10 +510,11 @@ fn plan_codex_session(
                         "找不到这条对话原来用的连接（可能已删除，或没有保存密钥），无法给客户端补渠道定义。可以用「继续」在 Mesa 里接着聊。",
                     ));
                 } else {
+                    // 写什么、写到哪、怎么还原由前端弹层按 fix 统一列出，这里只讲为什么要写
                     checks.push(check(
                         "provider_unregistered",
                         "fix",
-                        "Codex 客户端不认识这条对话的渠道，直接打开会报「Model provider not found」。需要把这个连接的端点和密钥写进 ~/.codex/config.toml（密钥明文，写前自动备份，可在连接页用「撤销上次写入」还原）。",
+                        "Codex 客户端还不认识这条对话用的渠道，直接打开会报「Model provider not found」。",
                     ));
                     *fix = Some(FixDto {
                         kind: "codexRegister".into(),
