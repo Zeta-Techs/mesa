@@ -128,7 +128,8 @@ const LAYOUTS: Record<string, Layout> = {
     // 失败的命令写成「• Failed (exit 6) curl …」；审批结果「✔ You approved codex to run … / this time」不带 • 也不是回复，
     // 当工具行连同续行一起跳过（2026-10-19 用户截图：这两种行混进预览，预览从它们起整段重贴）
     tool: new RegExp(`^•\\s+(?:${TOOL_VERB}|Failed)\\b|^[✔✓✗✘■]\\s+You\\s`),
-    skip: /^•\s+Working\b|esc to interrupt|^\s*(?:─+\s*)?Worked for\b|^\s*└/,
+    // 「• Starting MCP servers (2/6): …（1s • esc to interrupt）」是启动状态行，窗口窄时折成两行、首行不带 esc to interrupt
+    skip: /^•\s+(?:Working|Starting MCP)\b|esc to interrupt|^\s*(?:─+\s*)?Worked for\b|^\s*└/,
     indent: 2,
     pinnedEcho: true,
     // 0.164 tui/src/transcript_view/composer_gap.rs 的几种写法：「↓ Back to bottom · esc」「↓ Bottom」「New activity · ↓ …」

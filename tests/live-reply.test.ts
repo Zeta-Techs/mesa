@@ -177,6 +177,21 @@ test("Codex 0.163：› 回显 / • 正文 / 没有边框的输入行", () => {
   assert.deepEqual(extractLiveReply(withTool, "codex")?.lines, ["目录里只有 a.txt。"]);
 });
 
+test("Codex：启动状态行「Starting MCP servers」折行后首行也不进预览", () => {
+  const screen = [
+    "› 你好",
+    "",
+    "• Starting MCP servers (2/6): undermind, zotero, filesystem, github",
+    "  (2s • esc to interrupt)",
+    "",
+    "› Ask Codex to do anything",
+  ];
+  assert.equal(extractLiveReply(screen, "codex"), null);
+  // 正文出来后照常读到正文
+  const after = [...screen.slice(0, 4), "", "• 你好，有什么可以帮你？", "", "› Ask Codex to do anything"];
+  assert.deepEqual(extractLiveReply(after, "codex")?.lines, ["你好，有什么可以帮你？"]);
+});
+
 test("Qwen Code 0.25：  > 回显 / ◆ 正文 / 横线框住的输入框", () => {
   const screen = [
     "  > 讲一段",
