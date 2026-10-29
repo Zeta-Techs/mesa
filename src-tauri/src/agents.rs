@@ -504,11 +504,69 @@ fn official_connected_caveat(agent_id: &str) -> &'static str {
 /// （只读，JSON 的 loggedIn / authMethod；2.1.308 实证）。None = 问不到（没装 / 超时 / 输出变了）
 fn claude_auth_status() -> Option<(bool, String)> {
     let path = resolve_binary("claude")?;
-    let text = cli_output_with_timeout(&path, &["auth", "status", "--json"], std::time::Duration::from_secs(8))?;
+    let args = ["auth", "status", "--json"];
+    let timeout = std::time::Duration::from_secs(8);
+    // 磁盘 settings.json（「设为全局默认」写的中转）或进程环境里有 ANTHROPIC_AUTH_TOKEN / API_KEY 时，
+    // claude auth status 会把它当成登录（authMethod=oauth_token）说「已登录」，而 Mesa 启动官方账号时这些键都被盖空，
+    // 实际是未登录（2026-10-29 用户：连接页显示官方已登录，发消息却是 Not logged in）。这种情形换一个看不到令牌的环境再问一次
+    let text = if claude_token_shadowed() {
+        cli_output_neutral_claude(&path, &args, timeout)?
+    } else {
+        cli_output_with_timeout(&path, &args, timeout)?
+    };
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let logged_in = v.get("loggedIn")?.as_bool()?;
     let method = v.get("authMethod").and_then(|m| m.as_str()).unwrap_or("").to_string();
     Some((logged_in, method))
+}
+
+const CLAUDE_SHADOW_KEYS: &[&str] = &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+
+/// settings.json 的 env 里有会顶替官方登录的令牌键
+fn settings_text_shadows_login(text: &str) -> bool {
+    !settings_env_conflict_keys(text, CLAUDE_SHADOW_KEYS).is_empty()
+}
+
+fn claude_token_shadowed() -> bool {
+    #[cfg(test)]
+    {
+        return false;
+    }
+    #[cfg(not(test))]
+    {
+        if CLAUDE_SHADOW_KEYS.iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty())) {
+            return true;
+        }
+        let dir = std::env::var("CLAUDE_CONFIG_DIR")
+            .ok()
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+        dir.and_then(|d| std::fs::read_to_string(d.join("settings.json")).ok())
+            .is_some_and(|t| settings_text_shadows_login(&t))
+    }
+}
+
+/// 在看不到令牌的环境里跑 claude 子命令：令牌类变量置空；macOS 凭证在钥匙串（与 HOME 无关），
+/// 再把 HOME 指到空临时目录，磁盘 settings.json 的 env 就读不到。CLAUDE_CONFIG_DIR 自定义时钥匙串项名随目录变，不动 HOME
+fn cli_output_neutral_claude(path: &std::path::Path, args: &[&str], timeout: std::time::Duration) -> Option<String> {
+    let mut envs: Vec<(String, String)> = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]
+        .iter()
+        .map(|k| ((*k).to_string(), String::new()))
+        .collect();
+    let mut tmp: Option<PathBuf> = None;
+    if cfg!(target_os = "macos") && std::env::var_os("CLAUDE_CONFIG_DIR").is_none_or(|v| v.is_empty()) {
+        let dir = std::env::temp_dir().join(format!("mesa-claude-probe-{}", uuid::Uuid::new_v4().simple()));
+        if std::fs::create_dir_all(&dir).is_ok() {
+            envs.push(("HOME".into(), dir.to_string_lossy().into_owned()));
+            tmp = Some(dir);
+        }
+    }
+    let out = cli_output_with_env(path, args, &envs, timeout);
+    if let Some(dir) = tmp {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    out
 }
 
 fn detect(spec: &AgentSpec) -> (Option<String>, Option<String>) {
@@ -6925,6 +6983,16 @@ api_backend = "responses"
         assert!(official_launch_conflicts(&dir, &gemini).is_empty());
         tests::TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = Some("gemini-api-key".into()));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 全局 settings.json 里留着中转令牌时，claude auth status 会误报已登录：识别出来才换环境重问
+    #[test]
+    fn settings_relay_token_shadows_claude_login_detection() {
+        assert!(settings_text_shadows_login(r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"x","ANTHROPIC_BASE_URL":"https://r"}}"#));
+        assert!(settings_text_shadows_login(r#"{"env":{"ANTHROPIC_API_KEY":"x"}}"#));
+        assert!(!settings_text_shadows_login(r#"{"env":{"ANTHROPIC_BASE_URL":"https://r"},"model":"m"}"#));
+        assert!(!settings_text_shadows_login(r#"{"permissions":{}}"#));
+        assert!(!settings_text_shadows_login("not json"));
     }
 
     #[test]
