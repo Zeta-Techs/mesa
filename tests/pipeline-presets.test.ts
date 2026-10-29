@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   PIPELINE_TEMPLATES,
@@ -209,6 +212,68 @@ test("run 声明的 Quarto/LaTeX 正式输出均进入 expectedArtifacts", () =>
       }
     }
   }
+});
+
+/** 在桩 PATH 下跑 render-pdf 的 bash 写法：bin 里只放给定的桩命令，tectonic/latexmk 都没有 */
+function runRenderPdf(texSource: string, stubs: Record<string, string>) {
+  const render = PIPELINE_TEMPLATES.flatMap((t) => t.steps)
+    .flatMap((s) => s.run)
+    .find((r) => r.name === "render-pdf")!;
+  const root = mkdtempSync(join(tmpdir(), "mesa-render-pdf-"));
+  const bin = join(root, "bin");
+  const proj = join(root, "proj");
+  mkdirSync(bin);
+  mkdirSync(join(proj, "manuscript"), { recursive: true });
+  const log = join(root, "calls.log");
+  writeFileSync(log, "");
+  for (const [name, body] of Object.entries(stubs)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\necho "${name} $* openout_any=$openout_any" >> "${log}"\n${body}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  writeFileSync(join(proj, "manuscript", "main.tex"), texSource);
+  const r = spawnSync("/bin/sh", ["-c", render.command], {
+    cwd: proj,
+    env: { PATH: `${bin}:/usr/bin:/bin` },
+    encoding: "utf8",
+  });
+  const calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+  rmSync(root, { recursive: true, force: true });
+  return { status: r.status, out: r.stdout + r.stderr, calls };
+}
+
+const unixOnly = { skip: process.platform === "win32" };
+
+test("render-pdf 只有 pdflatex 时直编：natbib 跑 bibtex（放开 openout_any 才能写进 ../output），再编两遍", unixOnly, () => {
+  const { status, out, calls } = runRenderPdf("\\documentclass{article}\n", {
+    pdflatex: "printf '\\\\bibdata{../references}\\n' > ../output/main.aux",
+    bibtex: "",
+  });
+  assert.equal(status, 0, out);
+  assert.match(out, /用 pdflatex 直接编译/);
+  assert.equal(calls.length, 4, calls.join("\n"));
+  assert.match(calls[0], /^pdflatex .*-output-directory=\.\.\/output main\.tex/);
+  assert.equal(calls[1], "bibtex ../output/main openout_any=a");
+  assert.match(calls[3], /^pdflatex /);
+});
+
+test("render-pdf 直编：中文稿用 xelatex；biblatex 缺 biber 时失败并给出 tlmgr 提示", unixOnly, () => {
+  const { status, out, calls } = runRenderPdf("\\documentclass{ctexart}\n", {
+    pdflatex: "",
+    xelatex: ": > ../output/main.aux; : > ../output/main.bcf",
+  });
+  assert.notEqual(status, 0);
+  assert.match(out, /tlmgr install biber/);
+  assert.equal(calls.length, 1, calls.join("\n"));
+  assert.match(calls[0], /^xelatex /);
+});
+
+test("render-pdf 直编：没有参考文献时不跑 bibtex/biber，编译出错立即停", unixOnly, () => {
+  const ok = runRenderPdf("\\documentclass{article}\n", { pdflatex: ": > ../output/main.aux", bibtex: "" });
+  assert.equal(ok.status, 0, ok.out);
+  assert.deepEqual(ok.calls.map((c) => c.split(" ")[0]), ["pdflatex", "pdflatex", "pdflatex"]);
+  const bad = runRenderPdf("\\documentclass{article}\n", { pdflatex: "exit 1" });
+  assert.notEqual(bad.status, 0);
+  assert.equal(bad.calls.length, 1);
 });
 
 test("同一份稿同时渲 docx 和 pdf 时，docx 排在 pdf 前面", () => {

@@ -7,6 +7,7 @@
 
 - **网络：访问 GitHub/raw/formulae.brew.sh 很慢**。必须用镜像：crates → rsproxy（已配）；rustup → TUNA；brew 元数据 → `HOMEBREW_API_DOMAIN` 指 TUNA（仍有效）；brew bottle → **平铺镜像已死**（TUNA/中科大/腾讯/阿里 2026-09-19 实测 403/404，`HOMEBREW_BOTTLE_DOMAIN` 形同虚设），改 `HOMEBREW_ARTIFACT_DOMAIN=https://ghcr.nju.edu.cn`（南大 ghcr 代理，bottle 实测 6.7MB/s vs ghcr 直连 73KB/s；非 ghcr URL 代理 404 后 brew 自动回落原地址，已在 updater.rs 内置）；npm 如变慢 → `registry.npmmirror.com`。ghcr/GitHub Release 直连仅 ~73KB/s，tap/cask 大包（如 opencode 46MB）直连仍要十几分钟——注意：**CLI 子进程（curl/brew/npm）不读 macOS 系统代理，只认环境变量**，Mesa 下载侧已按设置页「出网代理」注入（`download_proxy_env`），镜像主机进 NO_PROXY 直连；更新超时改「10 分钟无输出闲置判死 + 30 分钟硬上限」（PTY 实测慢下载时 curl 进度条持续出字，不会误杀活下载）。
 - **brew 异常先 `brew doctor`**，别先怀疑应用代码。
+- **TinyTeX 补宏包（`tlmgr install`）走默认源会失败**：本机 2026-10-29 实测默认源 `tlnet.yihui.org` 拉 `texlive.tlpdb` 报 checksum digest disagree。改带 `--repository https://mirrors.tuna.tsinghua.edu.cn/CTAN/systems/texlive/tlnet`；镜像版本比本机 tlmgr 新时先同源 `tlmgr update --self` 再装。Quarto 装的 TinyTeX 自带 latexmk、biber、bibtex，不带 ctex（中文稿要补装）。
 - **macOS 钥匙串对未签名开发构建会因 cdhash 失配丢条目**——密钥存储弃用钥匙串，改 0600 `keys.json`（勿改回）。
 - **管道输出块缓冲**：brew/npm 检测到非 TTY 会块缓冲导致"无输出"假象——安装/更新命令必须在 PTY 里跑（别退回管道）。
 - **Homebrew 7 安装默认问 `[y/n]`**（2026-09-30 实证：诊断页装 tectonic 停在 “Do you want to proceed?”）。应用内 brew 一律设 `HOMEBREW_NO_ASK=1`，等价 `--yes`。pip 安装加 `--no-input`。诊断页那一行没有输入框。若环境变量没盖住、日志里仍出现 `[y/n]`，安装读端再自动写一次 `y`，最多 5 次。Git、Node、Quarto、TeX、字体和 CLI 更新走同一条 brew 管线。PyMuPDF 与 Pillow 走 pip。winget 本来就带 `--disable-interactivity`。

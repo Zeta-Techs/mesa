@@ -1541,13 +1541,23 @@ export function pipelineStepsForTemplate(
 }
 
 /** LaTeX 论文（latex-paper）：搭建骨架 → 章节写作 → 编译与排错 → 定稿导出（批次 E）。
- *  编译脚本 render-pdf 四步共用：优先 tectonic（轻量、自动下载宏包），缺则 latexmk，
- *  都没有则非零退出并打印安装引导——应用内不做安装器，检测引导就放在脚本里 */
+ *  编译脚本 render-pdf 四步共用：优先 tectonic（轻量、自动下载宏包），缺则 latexmk（MiKTeX 的 latexmk
+ *  要系统 Perl，没有就跳过；TeX Live / TinyTeX 自带 Perl），再缺就 xelatex/pdflatex 直编。直编按
+ *  编译 → biber/bibtex → 编译两遍；bibtex 把结果写进 ../output 会被 TeX Live 的 openout_any=p 拦下，
+ *  只对它放开。都没有则非零退出并打印安装引导（2026-10-29 本机 TinyTeX 三种稿件实测） */
 const LATEX_RENDER_PDF_CMD =
   'mkdir -p output && (cd manuscript && if command -v tectonic >/dev/null 2>&1; then tectonic --keep-logs --outdir ../output main.tex; ' +
-  'elif command -v latexmk >/dev/null 2>&1; then engine=-pdf; if grep -Eq "ctex|xeCJK|fontspec" main.tex; then engine=-xelatex; fi; ' +
+  'elif command -v latexmk >/dev/null 2>&1 && { command -v perl >/dev/null 2>&1 || ! command -v initexmf >/dev/null 2>&1; }; then engine=-pdf; if grep -Eq "ctex|xeCJK|fontspec" main.tex; then engine=-xelatex; fi; ' +
   'latexmk "$engine" -interaction=nonstopmode -outdir=../output -auxdir=../output main.tex; ' +
-  'else echo "未检测到 LaTeX 编译环境：安装 tectonic 或 TeX Live/MiKTeX 获得 latexmk"; exit 1; fi) > output/compile.log 2>&1; status=$?; cat output/compile.log; (exit "$status")';
+  'elif command -v xelatex >/dev/null 2>&1 || command -v pdflatex >/dev/null 2>&1; then tex=pdflatex; ' +
+  'if grep -Eq "ctex|xeCJK|fontspec" main.tex || ! command -v pdflatex >/dev/null 2>&1; then tex=xelatex; fi; ' +
+  'if ! command -v "$tex" >/dev/null 2>&1; then echo "正文用了 ctex/xeCJK/fontspec，要 xelatex 才能编译"; exit 1; fi; ' +
+  'echo "没有可用的 tectonic/latexmk，用 $tex 直接编译"; rm -f ../output/main.aux ../output/main.bcf; ' +
+  'tx() { "$tex" -interaction=nonstopmode -halt-on-error -file-line-error -output-directory=../output main.tex; }; ' +
+  'tx && if [ -f ../output/main.bcf ]; then if command -v biber >/dev/null 2>&1; then biber --input-directory ../output --output-directory ../output main; ' +
+  'else echo "用了 biblatex 但本机没有 biber：TinyTeX 运行 tlmgr install biber"; false; fi; ' +
+  'elif grep -q bibdata ../output/main.aux; then openout_any=a bibtex ../output/main; fi && tx && tx; ' +
+  'else echo "未检测到 LaTeX 编译环境：在 设置 → 诊断 → 依赖体检 一键安装 TeX，或自己装 tectonic / TeX Live"; exit 1; fi) > output/compile.log 2>&1; status=$?; cat output/compile.log; (exit "$status")';
 
 /** 同一脚本的 PowerShell 写法（5.1 与 7 都能跑）：命令工具是 PowerShell 的 Agent（Codex 等）在 Windows 上照这份跑，
  *  人点「运行脚本」仍走 Git Bash + 上面的 bash 写法。编译器经 `cmd /c` 跑并在 cmd 里重定向：日志按原字节落盘，
@@ -1555,9 +1565,19 @@ const LATEX_RENDER_PDF_CMD =
 const LATEX_RENDER_PDF_CMD_WINDOWS =
   "New-Item -ItemType Directory -Force output | Out-Null; $rpExit = 1; " +
   'if (Get-Command tectonic -ErrorAction SilentlyContinue) { cmd /d /c "cd manuscript && tectonic --keep-logs --outdir ..\\output main.tex > ..\\output\\compile.log 2>&1"; $rpExit = $LASTEXITCODE } ' +
-  "elseif (Get-Command latexmk -ErrorAction SilentlyContinue) { $rpEngine = '-pdf'; if (Select-String -Path manuscript/main.tex -Pattern 'ctex|xeCJK|fontspec' -Quiet) { $rpEngine = '-xelatex' }; " +
+  "elseif ((Get-Command latexmk -ErrorAction SilentlyContinue) -and ((Get-Command perl -ErrorAction SilentlyContinue) -or -not (Get-Command initexmf -ErrorAction SilentlyContinue))) { $rpEngine = '-pdf'; if (Select-String -Path manuscript/main.tex -Pattern 'ctex|xeCJK|fontspec' -Quiet) { $rpEngine = '-xelatex' }; " +
   'cmd /d /c "cd manuscript && latexmk $rpEngine -interaction=nonstopmode -outdir=..\\output -auxdir=..\\output main.tex > ..\\output\\compile.log 2>&1"; $rpExit = $LASTEXITCODE } ' +
-  "else { Set-Content -Path output/compile.log -Encoding UTF8 -Value '未检测到 LaTeX 编译环境：安装 tectonic 或 TeX Live/MiKTeX 获得 latexmk' }; " +
+  "elseif ((Get-Command xelatex -ErrorAction SilentlyContinue) -or (Get-Command pdflatex -ErrorAction SilentlyContinue)) { $rpTex = 'pdflatex'; " +
+  "if ((Select-String -Path manuscript/main.tex -Pattern 'ctex|xeCJK|fontspec' -Quiet) -or -not (Get-Command pdflatex -ErrorAction SilentlyContinue)) { $rpTex = 'xelatex' }; " +
+  "Remove-Item -Force -ErrorAction SilentlyContinue output/main.aux, output/main.bcf; " +
+  "if (-not (Get-Command $rpTex -ErrorAction SilentlyContinue)) { Set-Content -Path output/compile.log -Encoding UTF8 -Value '正文用了 ctex/xeCJK/fontspec，要 xelatex 才能编译' } else { " +
+  '$rpTx = "cd manuscript && $rpTex -interaction=nonstopmode -halt-on-error -file-line-error -output-directory=..\\output main.tex >> ..\\output\\compile.log 2>&1"; ' +
+  'Set-Content -Path output/compile.log -Encoding UTF8 -Value "没有可用的 tectonic/latexmk，用 $rpTex 直接编译"; cmd /d /c $rpTx; $rpExit = $LASTEXITCODE; ' +
+  'if ($rpExit -eq 0) { if (Test-Path output/main.bcf) { if (Get-Command biber -ErrorAction SilentlyContinue) { cmd /d /c "cd manuscript && biber --input-directory ..\\output --output-directory ..\\output main >> ..\\output\\compile.log 2>&1"; $rpExit = $LASTEXITCODE } ' +
+  "else { Add-Content -Path output/compile.log -Encoding UTF8 -Value '用了 biblatex 但本机没有 biber：TinyTeX 运行 tlmgr install biber'; $rpExit = 1 } } " +
+  'elseif (Select-String -Path output/main.aux -Pattern bibdata -Quiet) { cmd /d /c "cd manuscript && set openout_any=a&& bibtex ..\\output\\main >> ..\\output\\compile.log 2>&1"; $rpExit = $LASTEXITCODE } } ' +
+  "foreach ($rpPass in 1..2) { if ($rpExit -eq 0) { cmd /d /c $rpTx; $rpExit = $LASTEXITCODE } } } } " +
+  "else { Set-Content -Path output/compile.log -Encoding UTF8 -Value '未检测到 LaTeX 编译环境：在 设置 → 诊断 → 依赖体检 一键安装 TeX，或自己装 tectonic / TeX Live' }; " +
   'Get-Content -Encoding UTF8 output/compile.log; if ($rpExit -ne 0) { Write-Host "render-pdf 失败（退出码 $rpExit）"; cmd /d /c exit $rpExit }';
 
 /** LaTeX 四步共用的 run 脚本条目 */
@@ -1646,9 +1666,9 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
     workspaceName: "latex-compile",
     brief:
       "输入：manuscript/ 全文（已随 main 合并在本工作区内）。\n" +
-      "1. 用本步骤 run 脚本 render-pdf 编译：脚本优先 tectonic（缺则 latexmk），两个都没有会打印安装提示并以非零退出；本机缺环境时把提示原样写进 .ccode/help-wanted.md 转给用户，不要自己下载安装编译器；\n" +
+      "1. 用本步骤 run 脚本 render-pdf 编译：脚本自动选 tectonic、latexmk 或 xelatex/pdflatex，一样都没有会打印安装提示并以非零退出；本机缺环境时把提示原样写进 .ccode/help-wanted.md 转给用户，不要自己下载安装编译器；\n" +
       "2. 编译报错先读 output/compile.log 与 output/main.log 定位（缺宏包/未闭合环境/引用未解析），对症改源码，禁止绕路——不删报错的命令、不换文档类、不把整段注释掉；\n" +
-      "3. 缺宏包：tectonic 会自动下载；latexmk 依赖本机 TeXLive 完整安装，遇到缺失包错误优先换用 TeXLive 自带的等价宏包，换不了的在 compile-notes.md 说明；\n" +
+      "3. 缺宏包：tectonic 会自动下载；TinyTeX 用 tlmgr install 包名 补装（默认源失败时加 --repository 清华 CTAN 镜像），完整 TeX Live 优先换用自带的等价宏包，换不了的在 compile-notes.md 说明；\n" +
       "4. 警告分级处理：Citation/Reference undefined（PDF 里的 ??）必须清零；明显超版的 Overfull \\hbox 逐处调整；其余警告记录进 manuscript/compile-notes.md，不逐个纠缠；\n" +
       "5. 产出 output/main.pdf 与 manuscript/compile-notes.md（编译口径、清零项、遗留警告清单）。\n" +
       "完成标准：render-pdf 退出码为 0，main.pdf 页数与结构符合骨架；Citation/Reference undefined 为零。\n" +
@@ -1662,7 +1682,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
       {
         title: "安装 LaTeX 编译环境",
         guidance:
-          "macOS：brew install tectonic（轻量，编译时自动下载宏包），或安装 MacTeX/TeXLive。Windows：安装 MiKTeX 或 TeX Live，并确保 tectonic 或 latexmk 在 PATH 里。已装过就跳过，run 脚本会自动识别",
+          "最省事：在 设置 → 诊断 → 依赖体检 的 TeX 一行点「一键安装」（Mac 有 Homebrew 时装 Tectonic，没有时和 Windows 一样由 Quarto 装 TinyTeX，先装好 Quarto），装完退出 Mesa 再打开。也可以自己装 MacTeX / TeX Live。用了 biblatex 而 TinyTeX 报缺 biber 时，在终端运行 tlmgr install biber。已装过就跳过，run 脚本会自动识别 tectonic、latexmk 或 xelatex/pdflatex",
         target: "",
         timing: "before",
         optional: true,
