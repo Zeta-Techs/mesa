@@ -2,6 +2,7 @@ import {
   CUSTOM_LIGHT_THEME_ID,
   CUSTOM_THEME_ID,
   isCustomThemeId,
+  monacoEditorColors,
 } from "./custom-theme.ts";
 
 export { CUSTOM_LIGHT_THEME_ID, CUSTOM_THEME_ID, isCustomThemeId };
@@ -39,4 +40,18 @@ export function isLightTheme(id: string | undefined): boolean {
   if (id === CUSTOM_LIGHT_THEME_ID) return true;
   if (id === CUSTOM_THEME_ID) return false;
   return THEMES.some((t) => t.id === id && "light" in t && t.light);
+}
+
+/** Monaco 编辑器主题（文件预览与合并冲突共用，名为 MONACO_THEME）：底子跟 Mesa 主题深浅走——
+ *  语法着色、当前行框、选区这些没逐项覆盖的颜色都继承底子，浅色主题配 vs-dark 会字色发淡、
+ *  当前行套一圈深色框（2026-10-29 打包版点验截图）。面色仍从 CSS 令牌读 */
+export const MONACO_THEME = "ccode";
+export function monacoThemeData(themeId: string | undefined, get: (name: string) => string) {
+  const light = isLightTheme(themeId);
+  return {
+    base: light ? ("vs" as const) : ("vs-dark" as const),
+    inherit: true,
+    rules: [],
+    colors: monacoEditorColors(get, light),
+  };
 }

@@ -126,13 +126,13 @@ export function normalizeHex(input: string | null | undefined): string | null {
 /** Monaco 编辑器面色：从 CSS 令牌读（get = 按变量名取 getPropertyValue），一律规范成 #rrggbb。
  *  Monaco 只认 6/8 位十六进制，见到别的写法在 defineTheme 里直接抛错；打包版 CSS 压缩会把
  *  #ffffff / #111111 缩成 #fff / #111（2026-10-29 打包版打开文件整页「界面渲染出错」实证）。
- *  读不到或认不出时用深色兜底 */
-export function monacoEditorColors(get: (name: string) => string): Record<string, string> {
+ *  读不到或认不出时按深浅兜底 */
+export function monacoEditorColors(get: (name: string) => string, light = false): Record<string, string> {
   const read = (name: string, fallback: string) => normalizeHex(get(name)) ?? fallback;
   return {
-    "editor.background": read("--color-editor-bg", "#11131a"),
-    "editor.foreground": read("--color-editor-fg", "#aeb6c6"),
-    "editorLineNumber.foreground": read("--color-editor-line", "#525a6b"),
+    "editor.background": read("--color-editor-bg", light ? "#ffffff" : "#11131a"),
+    "editor.foreground": read("--color-editor-fg", light ? "#2a2620" : "#aeb6c6"),
+    "editorLineNumber.foreground": read("--color-editor-line", light ? "#a39e93" : "#525a6b"),
   };
 }
 

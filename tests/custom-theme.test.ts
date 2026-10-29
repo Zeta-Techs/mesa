@@ -23,6 +23,7 @@ import {
   resolveCustomThemeCardId,
   sanitizeCardName,
 } from "../src/custom-theme.ts";
+import { CUSTOM_LIGHT_THEME_ID, CUSTOM_THEME_ID, monacoThemeData } from "../src/themes.ts";
 
 function rgb(hex: string) {
   const c = parseHex(hex);
@@ -53,6 +54,16 @@ test("Monaco 面色一律给 #rrggbb：打包压缩成 #fff/#111 的令牌也要
     "editorLineNumber.foreground": "#525a6b",
   });
   for (const v of Object.values(colors)) assert.match(v, /^#[0-9a-f]{6}$/);
+});
+
+test("Monaco 主题底子跟 Mesa 主题深浅走：浅色配 vs（深色底子会字色发淡、当前行带深色框），认不出的令牌按深浅兜底", () => {
+  const none = () => "";
+  assert.equal(monacoThemeData("neutral", none).base, "vs-dark");
+  assert.equal(monacoThemeData("neutral-light", none).base, "vs");
+  assert.equal(monacoThemeData(CUSTOM_LIGHT_THEME_ID, none).base, "vs");
+  assert.equal(monacoThemeData(CUSTOM_THEME_ID, none).base, "vs-dark");
+  assert.equal(monacoThemeData("neutral-light", none).colors["editor.background"], "#ffffff");
+  assert.equal(monacoThemeData("neutral", none).colors["editor.background"], "#11131a");
 });
 
 test("normalizeCustomTheme：三色齐且合法才过", () => {

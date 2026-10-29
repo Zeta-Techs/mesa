@@ -73,7 +73,7 @@ import SlidesPreview from "./SlidesPreview";
 import MediaPreview from "./MediaPreview";
 import NotebookPreview from "./NotebookPreview";
 import { projectFilePreviewKind } from "../project-files";
-import { monacoEditorColors } from "../custom-theme";
+import { MONACO_THEME, monacoThemeData } from "../themes";
 import {
   LATEX_EXTENSIONS,
   LATEX_LANGUAGE_ID,
@@ -108,16 +108,15 @@ for (const defaults of [
 }
 
 // Monaco 主题跟随 App.css 令牌：编辑器面色从当前主题的 --color-editor-* 读取
-// （只读正在显示的主题，不切 data-theme）；base vs-dark 继承语法高亮。
+// （只读正在显示的主题，不切 data-theme）；底子按当前主题深浅取 vs / vs-dark，继承语法高亮。
 // 主题切换由 MutationObserver 监听 data-theme 触发重新 define + setTheme（见组件内 effect）。
 function syncMonacoTheme() {
-  const cs = getComputedStyle(document.documentElement);
-  monaco.editor.defineTheme("ccode-dark", {
-    base: "vs-dark",
-    inherit: true,
-    rules: [],
-    colors: monacoEditorColors((name) => cs.getPropertyValue(name)),
-  });
+  const root = document.documentElement;
+  const cs = getComputedStyle(root);
+  monaco.editor.defineTheme(
+    MONACO_THEME,
+    monacoThemeData(root.dataset.theme, (name) => cs.getPropertyValue(name)),
+  );
 }
 syncMonacoTheme();
 
@@ -1181,7 +1180,7 @@ function TextFilePreviewEditor({
     const ed = monaco.editor.create(hostElRef.current!, {
       value: text!,
       language: languageFor(path),
-      theme: "ccode-dark",
+      theme: MONACO_THEME,
       readOnly: truncated || readOnlyReason !== null,
       // md 开折行（2026-10-14 拍板）：笔记栏窄栏 + reflowBlockText 接成的中文单行长段，
       // 不折行时源码态要横向滚动盲找位置；其他语言保持默认不折行
@@ -1492,7 +1491,7 @@ function TextFilePreviewEditor({
   useEffect(() => {
     const obs = new MutationObserver(() => {
       syncMonacoTheme();
-      monaco.editor.setTheme("ccode-dark");
+      monaco.editor.setTheme(MONACO_THEME);
     });
     obs.observe(document.documentElement, {
       attributes: true,

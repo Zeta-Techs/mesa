@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as monaco from "monaco-editor";
+import { MONACO_THEME } from "../themes";
 
 /**
  * 保存撞车时的对比合并（2026-10-26：原先只报一句「请先保留本次编辑，再重新打开文件对比合并」，界面上却没有对比的地方）。
@@ -47,7 +48,7 @@ export default function MergeConflictView({
     originalRef.current = original;
     modifiedRef.current = modified;
     const diff = monaco.editor.createDiffEditor(host, {
-      theme: "ccode-dark",
+      theme: MONACO_THEME,
       automaticLayout: true,
       renderSideBySide: true,
       originalEditable: false,
