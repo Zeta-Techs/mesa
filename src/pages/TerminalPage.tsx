@@ -2865,6 +2865,7 @@ const TerminalView = memo(function TerminalView({
     setRawConnIssue(null);
   }
   const hiddenProfileKey = (settings?.hiddenProfiles ?? []).join("\n");
+  const isOfficialProfile = selectedProfile?.accountType === "official";
   const connIssue = useMemo<ConnIssueState | null>(() => {
     if (!rawConnIssue) return null;
     const hidden = hiddenProfileKey ? hiddenProfileKey.split("\n") : [];
@@ -2874,18 +2875,20 @@ const TerminalView = memo(function TerminalView({
     const detail = `${rawConnIssue.status ? `${rawConnIssue.status} · ` : ""}${rawConnIssue.message}${
       rawConnIssue.retrying ? "（它还在自动重试）" : ""
     }`;
+    // 「连不上服务器」只对官方账号启动有意义（出网代理只管官方启动）；中转连接照旧按服务出错 / 超时处理
+    const kind = rawConnIssue.kind === "network" && !isOfficialProfile ? "timeout" : rawConnIssue.kind;
     return {
-      kind: rawConnIssue.kind,
+      kind,
       status: rawConnIssue.status,
       message: rawConnIssue.message,
       retrying: rawConnIssue.retrying,
       sig: rawConnIssue.sig,
       profileName: rawConnIssue.profileName,
-      text: connIssueText(rawConnIssue.kind, rawConnIssue.profileName),
+      text: connIssueText(kind, rawConnIssue.profileName),
       detail,
       alternatives,
     };
-  }, [rawConnIssue, profiles, agentId, profileId, hiddenProfileKey]);
+  }, [rawConnIssue, profiles, agentId, profileId, hiddenProfileKey, isOfficialProfile]);
   const [connPick, setConnPick] = useState("");
   // Grok 卡在续期官方登录上（2026-10-26，grok_login.rs）：用 API 连接启动的 Grok 也会先续期本地存着的 xAI 官方登录，
   // 连不上 auth.x.ai 时每条消息卡半分钟以上、屏上没有任何报错。启动时探一次登录服务器，运行中每 8 秒看一眼 Grok 日志

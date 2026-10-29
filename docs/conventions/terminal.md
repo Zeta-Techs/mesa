@@ -888,6 +888,11 @@
   （含 text / detail / alternatives），终端画面顶上 absolute 提示条（不改行数），聊天层画成对话末尾确认卡；动作
   `switchConnection(profileId)`：先换标签连接与模型（新连接名单有原模型就留），再停 Agent，回落 shell 后按原会话接回；
   Codex 跨连接（provider 名不同）接回已用假网关实测可行。Qwen 重试期静默，认不出。
+  **网络不通（2026-10-29，kind=`network`）**：只认抓屏实录过的行（Claude Code「Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED) · Retrying in Ns · attempt k/10」、
+  Cursor「Reconnecting to <host> (attempt k, Ns)」、Grok「Connection failed | Retrying (attempt k)…」、CodeBuddy「└ 502 连接被拒绝…」；重试类第 2 次起才算，第 1 次多半是抖一下；
+  Gemini / Qwen / Kimi 没有官方账号实录，不认）。**只对官方账号启动给「去设置出网代理」**（出网代理只管官方启动，TerminalPage 里非官方 profile 把 network 改回 timeout 照旧处理）；
+  卡片主按钮是去 设置 → 网络，同家别的连接作备选、不抢主按钮，没有别的连接时不出「去添加连接」。Codex 官方账号启动超时（`workspace routing discovery timed out`）一启动就退出，
+  走退出横幅 / 启动失败卡的 `launchFailureHint`，不走这条。
   **代答菜单的回车**：Kimi 开 kitty 后只认 CSI-u 回车，`answerTrust` / `answerMenu` 的 `\r` 按 `submitCsiU` 换成 `KIMI_CSI_U_ENTER`。
   **Shift+标点丢字**：xterm 的 keydown 只发送 `keyCode ≥ 48` 的单个字符。WKWebView 上 Shift+`/`
   实测报 **229**（不是 191），这一下 xterm 走 composition 的 `setTimeout(…, 0)` 分支、读到的

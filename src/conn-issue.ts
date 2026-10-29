@@ -11,10 +11,16 @@
  * - Kimi：「Retrying (5/10) · APIProviderRateLimitError · in 5s」下一行「429 · <原文>」；「Error: [provider.auth_error] 401 <原文>」
  * - OpenCode：「<原文> [retrying in 1s attempt #2]」
  * - Grok：「Retry failed: rate_limit_error: <原文>」「Authentication required: …」
+ * 网络不通（2026-10-29 本机把出网代理指到不通的端口，PTY 抓屏实录；只有官方账号启动才给「去填出网代理」，见 chat-decision）：
+ * - Claude Code：「✻ Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED) · Retrying in 1s · attempt 1/10」
+ * - Cursor：「⠘⠤ Reconnecting to agentn.global.api5.cursor.sh (attempt 2, 1s)」（第一次只有「Reconnecting (attempt 1, 0s)」）
+ * - Grok：「⠸ Connection failed | Retrying (attempt 2)... 0.3s」
+ * - CodeBuddy：「└ 502 连接被拒绝：可能是代理未启动或端口被拦截，请检查网络代理设置（connect ECONNREFUSED …）」
+ * 重试第一次就报太容易是网络抖一下，重试类只认第 2 次起。Gemini / Qwen / Kimi 没有官方账号的实录，不认。
  * 认不出的：Qwen 重试期间屏上只有转圈（实测 90 秒仍在静默重试）；OpenCode 的 401 只画网关原文、没有状态码。
  */
 
-export type ConnIssueKind = "quota" | "rate_limit" | "auth" | "timeout" | "model_missing" | "other";
+export type ConnIssueKind = "quota" | "rate_limit" | "auth" | "timeout" | "network" | "model_missing" | "other";
 
 export interface DetectedConnIssue {
   kind: ConnIssueKind;
@@ -46,10 +52,18 @@ export function classifyConnIssue(status: number | null, text: string): ConnIssu
   return "other";
 }
 
+/** Node 的网络错误码 / CLI 自己写的「防火墙或代理」：连不上服务器，不是服务器回了错 */
+const NETWORK = /\b(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)\b|firewall or proxy|连接被拒绝/i;
+
 function issue(status: number | null, label: string, message: string, retrying: boolean): DetectedConnIssue {
   const msg = message.trim();
-  const kind = classifyConnIssue(status, `${label} ${msg}`);
+  let kind = classifyConnIssue(status, `${label} ${msg}`);
+  if ((kind === "timeout" || kind === "other") && NETWORK.test(msg)) kind = "network";
   return { kind, status, message: msg, retrying, sig: `${kind}|${status ?? ""}|${msg}` };
+}
+
+function netIssue(message: string): DetectedConnIssue {
+  return { kind: "network", status: null, message, retrying: true, sig: `network||${message}` };
 }
 
 /** 屏上所有认得出的连接错误，自上而下（同一个错误出现几次就列几次，调用方按次数判新旧） */
@@ -67,6 +81,15 @@ export function detectConnIssues(lines: readonly string[], agentId: string): Det
       }
       if ((m = /\bAPI Error:?\s*\(?([45]\d\d)\)?\s*(.*)$/.exec(t))) {
         out.push(issue(Number(m[1]), "", m[2], false));
+        continue;
+      }
+      // 没有状态码的连接错误：「✻ Connection refused — … (ECONNREFUSED) · Retrying in 1s · attempt 3/10」
+      if (
+        (m = /^\S\s+(.+?)\s+·\s+Retrying in\b.*?\battempt\s+(\d+)\/\d+/.exec(t)) &&
+        Number(m[2]) >= 2 &&
+        NETWORK.test(m[1])
+      ) {
+        out.push(issue(null, "", m[1], true));
         continue;
       }
       if (agentId === "codebuddy" && (m = /^└\s+([45]\d\d)\s+(.+)$/.exec(t))) {
@@ -87,6 +110,10 @@ export function detectConnIssues(lines: readonly string[], agentId: string): Det
         out.push(issue(Number(m[1]), "", m[2], false));
         continue;
       }
+    }
+    if (agentId === "cursor" && (m = /Reconnecting(?: to (\S+))? \(attempt (\d+),/.exec(t)) && Number(m[2]) >= 2) {
+      out.push(netIssue(m[1] ? `Reconnecting to ${m[1]}` : "Reconnecting"));
+      continue;
     }
     if (agentId === "kimi") {
       if ((m = /Retrying \(\d+\/\d+\)\s*·\s*(\w+)\s*·/.exec(t))) {
@@ -111,6 +138,10 @@ export function detectConnIssues(lines: readonly string[], agentId: string): Det
       }
       if ((m = /^Authentication required:\s*(.+)$/.exec(t))) {
         out.push(issue(401, "auth", m[1], false));
+        continue;
+      }
+      if ((m = /Connection failed\s*\|\s*Retrying \(attempt (\d+)\)/.exec(t)) && Number(m[1]) >= 2) {
+        out.push(netIssue("Connection failed"));
         continue;
       }
     }
@@ -158,6 +189,8 @@ export function connIssueText(kind: ConnIssueKind, profileName: string): string 
       return `${name}的钥匙被拒绝了`;
     case "timeout":
       return `${name}的服务出错或超时了`;
+    case "network":
+      return `${name}连不上服务器`;
     case "model_missing":
       return `${name}里没有这个模型`;
     default:

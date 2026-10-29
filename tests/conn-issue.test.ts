@@ -79,3 +79,33 @@ test("给人看的一句话", () => {
   assert.equal(connIssueText("quota", "GLM"), "「GLM」连接的额度用完了");
   assert.equal(connIssueText("auth", ""), "当前连接的钥匙被拒绝了");
 });
+
+// 2026-10-29 本机出网代理指到不通的端口，PTY 抓屏实录（各家官方账号 / 直连官方时的网络不通）
+test("网络不通：Claude / Cursor / Grok / CodeBuddy 认得出，重试类第 2 次起才算", () => {
+  const CLAUDE = (n: number) => `✻ Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED) · Retrying in 3s · attempt ${n}/10`;
+  assert.equal(detectConnIssues([CLAUDE(1)], "claude-code").length, 0, "第 1 次可能只是抖一下");
+  const f = detectConnIssues(["❯ hi", CLAUDE(2)], "claude-code");
+  assert.equal(f.length, 1);
+  assert.equal(f[0].kind, "network");
+  assert.equal(f[0].retrying, true);
+  // 倒计时与次数变化不换签名
+  assert.equal(detectConnIssues([CLAUDE(5)], "claude-code")[0].sig, f[0].sig);
+  // 没有网络错误码的重试行不算网络问题（其他原因另说）
+  assert.equal(detectConnIssues(["✻ Overloaded · Retrying in 3s · attempt 4/10"], "claude-code").length, 0);
+
+  const cursor = detectConnIssues([" ⠀⠞ Reconnecting (attempt 1, 0s)", " ⠘⠤ Reconnecting to agentn.global.api5.cursor.sh (attempt 2, 1s)"], "cursor");
+  assert.equal(cursor.length, 1, "第 1 次不算");
+  assert.equal(cursor[0].kind, "network");
+  assert.equal(cursor[0].message, "Reconnecting to agentn.global.api5.cursor.sh");
+
+  assert.equal(detectConnIssues(["    ⠸ Connection failed | Retrying (attempt 1)... 0.0s    21s ⇣1.34k [stop]"], "grok").length, 0);
+  const grok = detectConnIssues(["    ⠴ Connection failed | Retrying (attempt 2)... 0.0s    21s ⇣1.34k [stop]"], "grok");
+  assert.equal(grok[0].kind, "network");
+
+  const bud = detectConnIssues(["  └ 502 连接被拒绝：可能是代理未启动或端口被拦截，请检查网络代理设置（connect ECONNREFUSED 127.0.0.1:9）"], "codebuddy");
+  assert.equal(bud[0].kind, "network");
+  assert.equal(bud[0].status, 502);
+  // 网关自己回的 502 不是网络不通
+  assert.equal(detectConnIssues(["  └ 502 Bad Gateway"], "codebuddy")[0].kind, "timeout");
+  assert.equal(connIssueText("network", ""), "当前连接连不上服务器");
+});

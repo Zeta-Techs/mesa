@@ -714,7 +714,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、
                              # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）
   runtime-model-effort.ts    # 运行中切模型 / 思考档的共用 hook（useRuntimeModelEffort）：终端底栏与聊天「模型 · 思考」芯片同用一份；切过的模型名按 ptyId 存模块级表，两处实例同步
-  conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
+  conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 网络不通 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
                              # （extractLiveReply）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply，不要求尾巴逐字相同）+ 剔掉会话文件已有的行（unsyncedTail）+ 剔掉开头被读成回复的分段提问回显（dropAskedEcho）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）+ Claude 这一轮还在跑（claudeTurnActiveOnScreen，「esc to interrupt」）+ 正在想的那一框（extractLiveThinking，现只有 Grok，去掉竖线与 Thinking 头后在正文出来前显示在实时预览的位置）；

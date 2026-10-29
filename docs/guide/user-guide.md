@@ -1540,6 +1540,8 @@ AI 用的连接额度用完、被限流、钥匙被拒、服务出错或超时�
 
 这家 AI 没有别的连接时，提示里是 **去连接页添加一条**。不想换就点 ✕；同一个错误不会再提示，再出新的错误照常提示。
 
+用官方账号（不是中转连接）时，如果 AI 连不上服务器（Claude Code 报「Connection refused」、Cursor 一直「Reconnecting」、Grok 报「Connection failed」、CodeBuddy 报连接被拒绝，连着重试两次以上才提示），提示是「连不上服务器」，主按钮是 **去设置出网代理**：官方账号要直接联网，国内常连不上，到 设置 → 网络 填好本机代理后，重新启动这个标签；同一家 AI 有别的连接时，也可以换过去接着聊。用中转连接时不出这条。
+
 认得出的有 Claude Code、Codex、Kimi、OpenCode、Grok Build、CodeBuddy 六家。Qwen Code 出错时会在后台安静地重试很久，屏幕上看不出来，要等它最终报错。
 
 **Grok Build 发消息没反应：卡在官方登录上**

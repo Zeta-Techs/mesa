@@ -1014,6 +1014,11 @@ export default function ChatSurface({
               onSwitch: (id) => onSwitchConnection?.(id),
               onDismiss: () => onDismissConnIssue?.(),
               onOpenProfiles,
+              onOpenNetwork: () => {
+                const st = useAppStore.getState();
+                st.setSettingsSectionReq("network");
+                st.setPage("settings");
+              },
             })
         : grokLoginStuck
           ? grokLoginDecision({

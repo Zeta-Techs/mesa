@@ -83,3 +83,23 @@ test("Grok 卡在续期官方登录上：推荐退出官方登录接着聊，另
   d.options.forEach((o) => o.onClick());
   assert.deepEqual(picked, ["logout", "dismiss"]);
 });
+
+test("网络不通（官方账号）：先给「去设置出网代理」，同家别的连接是备选、不再抢主按钮", () => {
+  const log: string[] = [];
+  const d = connIssueDecision(
+    issue({ kind: "network", status: null, message: "Reconnecting to x", retrying: true, text: "当前连接连不上服务器", alternatives: [{ profileId: "zeta", label: "Zeta" }] }),
+    "Cursor",
+    { onSwitch: (id) => log.push(`switch:${id}`), onDismiss: () => {}, onOpenNetwork: () => log.push("network") },
+  );
+  assert.match(d.hint ?? "", /设置 → 网络.*出网代理/);
+  assert.deepEqual(d.options.map((o) => [o.label, Boolean(o.primary)]), [
+    ["去设置出网代理", true],
+    ["换到 Zeta，接着这段对话", false],
+    ["先不换", false],
+  ]);
+  d.options[0].onClick();
+  assert.deepEqual(log, ["network"]);
+  // 没有别的连接时不再出「去添加连接」（换连接帮不上网络问题）
+  const bare = connIssueDecision(issue({ kind: "network" }), "Cursor", { onSwitch: () => {}, onDismiss: () => {}, onOpenProfiles: () => {}, onOpenNetwork: () => {} });
+  assert.deepEqual(bare.options.map((o) => o.label), ["去设置出网代理", "先不换"]);
+});
