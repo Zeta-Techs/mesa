@@ -34,6 +34,7 @@ import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
 import {
   exploreLabel,
+  detailTargets,
   formatSeconds,
   groupConversationSegments,
   problemText,
@@ -611,7 +612,7 @@ export default function ConversationView({
         >
           {line}
         </button>
-        <Collapse key={detailTarget?.key.startsWith(key) ? detailTarget.seq : "toggle"} open={open} className="mb-2 mt-1 pl-6">
+        <Collapse key={detailTarget && detailTargets(detailTarget.key, key) ? detailTarget.seq : "toggle"} open={open} className="mb-2 mt-1 pl-6">
           {row.detail()}
         </Collapse>
       </div>

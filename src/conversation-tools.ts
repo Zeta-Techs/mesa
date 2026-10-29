@@ -242,6 +242,11 @@ function allTools(items: readonly ProcessItem[]): ProcessTool[] {
 }
 
 /** 保留过程行位置，异常入口直接展开同一份记录，不另建状态。 */
+/** 定位目标是不是这一行本身或它里面的子行：行键 `…:3` 不能认 `…:31`（前缀相同但是另一行） */
+export function detailTargets(target: string, rowKey: string): boolean {
+  return target === rowKey || target.startsWith(`${rowKey}:`);
+}
+
 export function turnToolEntries(items: readonly ProcessItem[]) {
   return items.flatMap((item, index) =>
     item.kind === "tool"

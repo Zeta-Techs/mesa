@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  detailTargets,
   exploreLabel,
   firstCompleteTurnIndex,
   formatSeconds,
@@ -278,4 +279,12 @@ test("查阅合并行中的失败保留可展开的位置；失败写入只叫�
   assert.deepEqual(records.map(r => [r.row, r.parent]), [["0:0", "0"], ["0:1", "0"], ["1", null]]);
   assert.equal(records[1].tool.status, "failed");
   assert.equal(turnSummary(t.items).text, "1 个文件操作");
+});
+
+test("detailTargets：行键 3 不认 31，但认自己和里面的子行", () => {
+  const turn = "turn:assistant:#4";
+  assert.equal(detailTargets(`${turn}:31`, `${turn}:3`), false);
+  assert.equal(detailTargets(`${turn}:3`, `${turn}:3`), true);
+  assert.equal(detailTargets(`${turn}:3:0`, `${turn}:3`), true);
+  assert.equal(detailTargets(`${turn}:1`, `${turn}:10`), false);
 });
