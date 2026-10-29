@@ -133,12 +133,15 @@ pub(crate) struct ProfileLite {
     /// 能被「注册到 Codex 客户端」写出（API 连接、有端点、有已存密钥）
     pub registrable: bool,
     pub key_hint: Option<String>,
+    pub base_url: Option<String>,
 }
 
 pub(crate) struct PlanEnv {
     pub probe: ClientProbe,
     pub dir_exists: bool,
     pub codex_providers: Vec<String>,
+    /// config.toml 里有定义、但带 http_headers 客户端加载不了的渠道名
+    pub codex_header_providers: Vec<String>,
     pub codex_thread: ThreadState,
     pub session_file_exists: Option<bool>,
     pub profiles: Vec<ProfileLite>,
@@ -170,6 +173,18 @@ pub(crate) fn valid_session_id(id: &str) -> bool {
 pub(crate) fn valid_block_name(name: &str) -> bool {
     crate::provider_id::is_ccode_provider(name)
         && name.len() <= 40
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// 用户自己起名的渠道（如装 Mesa 前用过的 `zetatechs`）缺定义时，允许用 Mesa 连接按原名补写：
+/// 只放行 TOML 裸键字符集；Codex 内置的本地渠道名不代写（客户端自带，写了也盖不过）
+fn valid_disk_block_name(name: &str) -> bool {
+    const BUILTIN: [&str; 4] = [crate::provider_id::CODEX_CHATGPT, "ollama", "lmstudio", "oss"];
+    !name.is_empty()
+        && name.len() <= 64
+        && !BUILTIN.contains(&name)
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -222,6 +237,38 @@ fn codex_provider_kind(provider: Option<&str>) -> CodexProviderKind {
     }
 }
 
+/// 候选连接累加器：同一网关下的多个绑定写出的定义块完全一样（端点与密钥都挂在网关上），只留第一个
+#[derive(Default)]
+struct Candidates {
+    out: Vec<CandidateDto>,
+    seen_gateways: Vec<String>,
+}
+
+impl Candidates {
+    fn push(&mut self, p: &ProfileLite) {
+        if self.out.iter().any(|c| c.profile_id == p.id) {
+            return;
+        }
+        if let Some(g) = &p.gateway_id {
+            if self.seen_gateways.contains(g) {
+                return;
+            }
+            self.seen_gateways.push(g.clone());
+        }
+        self.out.push(CandidateDto {
+            profile_id: p.id.clone(),
+            name: p.name.clone(),
+            key_hint: p.key_hint.clone(),
+        });
+    }
+}
+
+fn registrable_codex(profiles: &[ProfileLite]) -> impl Iterator<Item = &ProfileLite> {
+    profiles
+        .iter()
+        .filter(|p| p.agent == "codex" && p.registrable)
+}
+
 /// 候选连接：先 profile_id 精确命中，再按网关短 id 对上 provider 名；
 /// 旧版统一名 `ccode` 对不上任何网关，退而列出全部可注册连接由用户挑
 fn codex_register_candidates(
@@ -230,48 +277,55 @@ fn codex_register_candidates(
     profiles: &[ProfileLite],
 ) -> Vec<CandidateDto> {
     let legacy = provider == crate::provider_id::LEGACY;
-    let mut out: Vec<CandidateDto> = Vec::new();
-    // 同一网关下的多个绑定写出的定义块完全一样（端点与密钥都挂在网关上），只留第一个
-    let mut seen_gateways: Vec<String> = Vec::new();
-    let mut push = |p: &ProfileLite| {
-        if out.iter().any(|c| c.profile_id == p.id) {
-            return;
-        }
-        if let Some(g) = &p.gateway_id {
-            if seen_gateways.contains(g) {
-                return;
-            }
-            seen_gateways.push(g.clone());
-        }
-        out.push(CandidateDto {
-            profile_id: p.id.clone(),
-            name: p.name.clone(),
-            key_hint: p.key_hint.clone(),
-        });
-    };
-    let usable = || {
-        profiles
-            .iter()
-            .filter(|p| p.agent == "codex" && p.registrable)
-    };
+    let mut c = Candidates::default();
     if let Some(pid) = profile_id {
-        for p in usable().filter(|p| p.id == pid) {
-            push(p);
+        for p in registrable_codex(profiles).filter(|p| p.id == pid) {
+            c.push(p);
         }
     }
-    for p in usable().filter(|p| {
+    for p in registrable_codex(profiles).filter(|p| {
         p.gateway_id
             .as_deref()
             .is_some_and(|g| crate::provider_id::gateway_matches_provider(g, provider))
     }) {
-        push(p);
+        c.push(p);
     }
     if legacy {
-        for p in usable() {
-            push(p);
+        for p in registrable_codex(profiles) {
+            c.push(p);
         }
     }
-    out
+    c.out
+}
+
+/// 只留小写字母数字，用来拿渠道名去比端点域名 / 连接名（`zetatechs` ↔ `ent.zetatechs.com`）
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// 用户自己起名的渠道没有网关短 id 可对，列出全部可注册的 Codex 连接由用户挑；
+/// 端点域名或连接名里含渠道名的排在前面（默认选中的就是它）
+fn codex_disk_candidates(provider: &str, profiles: &[ProfileLite]) -> Vec<CandidateDto> {
+    let key = squash(provider);
+    let named = |p: &ProfileLite| {
+        key.len() >= 3
+            && (squash(&p.name).contains(&key)
+                || p.base_url.as_deref().is_some_and(|u| {
+                    let host = u.split("://").nth(1).unwrap_or(u);
+                    squash(host.split('/').next().unwrap_or(host)).contains(&key)
+                }))
+    };
+    let mut c = Candidates::default();
+    for p in registrable_codex(profiles).filter(|p| named(p)) {
+        c.push(p);
+    }
+    for p in registrable_codex(profiles) {
+        c.push(p);
+    }
+    c.out
 }
 
 pub(crate) fn build_plan(
@@ -399,14 +453,44 @@ fn plan_codex_session(
             let name = provider.unwrap_or_default().trim();
             if env.codex_providers.iter().any(|p| p == name) {
                 checks.push(check("provider_ok", "ok", format!("渠道「{name}」客户端已认识。")));
-            } else {
+            } else if !valid_disk_block_name(name) {
                 checks.push(check(
                     "provider_missing_disk",
                     "block",
                     format!(
-                        "这条对话的渠道「{name}」在客户端的 config.toml 里没有定义，也不是 Mesa 创建的，Mesa 无法代写。可以用「继续」在 Mesa 里接着聊。"
+                        "这条对话的渠道「{name}」在客户端的 config.toml 里没有可用的定义，Mesa 不能用这个名字代写。可以用「继续」在 Mesa 里接着聊。"
                     ),
                 ));
+            } else {
+                let broken = env.codex_header_providers.iter().any(|p| p == name);
+                let candidates = codex_disk_candidates(name, &env.profiles);
+                if candidates.is_empty() {
+                    checks.push(check(
+                        "provider_no_profile",
+                        "block",
+                        format!(
+                            "Codex 客户端加载不到这条对话的渠道「{name}」，Mesa 里也没有能用来补写的 Codex API 连接（要有端点和已保存的密钥）。先在连接页添加这家服务的连接，或用「继续」在 Mesa 里接着聊。"
+                        ),
+                    ));
+                } else {
+                    let why = if broken {
+                        format!("客户端 config.toml 里渠道「{name}」的定义带了 http_headers，Codex 客户端加载不了它")
+                    } else {
+                        format!("客户端 config.toml 里已经没有渠道「{name}」的定义（多半是装 Mesa 之前用过、后来被换掉的渠道）")
+                    };
+                    checks.push(check(
+                        "provider_unregistered",
+                        "fix",
+                        format!(
+                            "{why}，直接打开会报「Model provider not found」。选一个和这条对话原来同一家服务的连接，Mesa 把它的端点和密钥写成名为「{name}」的定义块，默认渠道不变（密钥明文，写前自动备份，可在连接页用「撤销上次写入」还原）。"
+                        ),
+                    ));
+                    *fix = Some(FixDto {
+                        kind: "codexRegister".into(),
+                        block_name: name.to_string(),
+                        candidates,
+                    });
+                }
             }
         }
         CodexProviderKind::Mesa => {
@@ -698,6 +782,7 @@ fn profiles_lite(store: &ProfileStore) -> Vec<ProfileLite> {
             agent: p.agent,
             name: p.name,
             key_hint: p.key_hint,
+            base_url: p.base_url,
         })
         .collect()
 }
@@ -717,6 +802,7 @@ fn gather_env(
         probe,
         dir_exists: true,
         codex_providers: Vec::new(),
+        codex_header_providers: Vec::new(),
         codex_thread: ThreadState::Unknown,
         session_file_exists: None,
         profiles,
@@ -732,7 +818,8 @@ fn gather_env(
             ..
         } => match spec.channel {
             ChannelPolicy::RegisteredProvider => {
-                env.codex_providers = crate::agents::codex_client_config_providers();
+                (env.codex_providers, env.codex_header_providers) =
+                    crate::agents::codex_client_config_providers();
                 if valid_session_id(session_id) {
                     env.codex_thread = codex_thread_state(session_id);
                 }
@@ -955,6 +1042,7 @@ mod tests {
             gateway_id: gateway.map(str::to_string),
             registrable,
             key_hint: Some("···abc1".into()),
+            base_url: Some("https://api.example.com/v1".into()),
         }
     }
 
@@ -967,6 +1055,7 @@ mod tests {
             },
             dir_exists: true,
             codex_providers: vec![],
+            codex_header_providers: vec![],
             codex_thread: ThreadState::Present { archived: false },
             session_file_exists: Some(true),
             profiles: vec![],
@@ -1161,6 +1250,43 @@ mod tests {
         assert_eq!(build_plan("codex", codex(), &t, &env).verdict, "blocked");
         env.codex_providers = vec!["custom".into()];
         assert_eq!(build_plan("codex", codex(), &t, &env).verdict, "ready");
+    }
+
+    #[test]
+    fn codex_disk_provider_gone_offers_fix_under_original_name() {
+        // 装 Mesa 前用自己起名的渠道开的对话：定义块被换掉了，按原名补写
+        let mut env = env_ok();
+        let mut zeta = lite("zeta", Some("aaaaaaaa-1"), true);
+        zeta.base_url = Some("https://ent.zetatechs.com/v1".into());
+        env.profiles = vec![lite("other", Some("bbbbbbbb-1"), true), zeta, lite("nokey", None, false)];
+        let plan = build_plan("codex", codex(), &with_provider("zetatechs", None), &env);
+        assert_eq!(plan.verdict, "needsFix");
+        let check = plan.checks.iter().find(|c| c.id == "provider_unregistered").unwrap();
+        assert!(check.text.contains("已经没有渠道「zetatechs」"), "{}", check.text);
+        let fix = plan.fix.unwrap();
+        assert_eq!(fix.block_name, "zetatechs");
+        let ids: Vec<_> = fix.candidates.iter().map(|c| c.profile_id.as_str()).collect();
+        assert_eq!(ids, ["zeta", "other"], "端点域名含渠道名的排第一，没存密钥的不列");
+
+        // 定义还在但带 http_headers：客户端加载不了，提示改写
+        env.codex_header_providers = vec!["zetatechs".into()];
+        let plan = build_plan("codex", codex(), &with_provider("zetatechs", None), &env);
+        let check = plan.checks.iter().find(|c| c.id == "provider_unregistered").unwrap();
+        assert!(check.text.contains("http_headers"), "{}", check.text);
+    }
+
+    #[test]
+    fn codex_disk_provider_without_candidates_or_with_builtin_name_blocks() {
+        let mut env = env_ok();
+        let plan = build_plan("codex", codex(), &with_provider("zetatechs", None), &env);
+        assert_eq!(plan.verdict, "blocked");
+        assert!(plan.checks.iter().any(|c| c.id == "provider_no_profile"));
+        env.profiles = vec![lite("a", None, true)];
+        for name in ["ollama", "lmstudio", "a\"]\n[evil"] {
+            let plan = build_plan("codex", codex(), &with_provider(name, None), &env);
+            assert_eq!(plan.verdict, "blocked", "{name}");
+            assert!(plan.fix.is_none());
+        }
     }
 
     #[test]

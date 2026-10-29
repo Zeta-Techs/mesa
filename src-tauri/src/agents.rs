@@ -3694,21 +3694,28 @@ pub fn resume_command_line(agent_id: &str, session_id: &str, cwd: &str) -> Resul
 /// model_provider 在 config.toml 里找定义，缺失即报「Model provider `X` not found」
 /// 拒绝继续（2026-08-31 实测）。内置 "openai" 恒可用、不在表内；
 /// 文件缺失/损坏返回空表（client_open 预检据此判断渠道是否需要补写）。
-pub fn codex_client_config_providers() -> Vec<String> {
+/// 返回（客户端能用的名字，写了 http_headers、客户端加载不了的名字）。
+pub fn codex_client_config_providers() -> (Vec<String>, Vec<String>) {
     let Some(home) = dirs::home_dir() else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let base = std::env::var_os("CODEX_HOME")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| home.join(".codex"));
     let Ok(text) = std::fs::read_to_string(base.join("config.toml")) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    codex_config_provider_names(&text)
+    (
+        codex_config_provider_names(&text, false),
+        codex_config_provider_names(&text, true),
+    )
 }
 
-fn codex_config_provider_names(text: &str) -> Vec<String> {
+/// `with_headers = false` 列客户端能用的定义块；`true` 只列带 http_headers 的。
+/// ChatGPT 自带 Codex 不认 provider 上的 http_headers（MCP 字段），整段加载失败后查找即报
+/// not found，所以这类块不算已定义，预检据此提示改写。
+fn codex_config_provider_names(text: &str, with_headers: bool) -> Vec<String> {
     let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
         return Vec::new();
     };
@@ -3717,10 +3724,10 @@ fn codex_config_provider_names(text: &str) -> Vec<String> {
         .map(|t| {
             t.iter()
                 .filter(|(_, item)| {
-                    // ChatGPT 自带 Codex 不认 provider 上的 http_headers（MCP 字段），
-                    // 整段加载失败后查找即报 not found。不当成已注册，菜单才能再点「注册」迁走。
-                    item.as_table()
-                        .is_none_or(|tbl| tbl.get("http_headers").is_none())
+                    let has_headers = item
+                        .as_table()
+                        .is_some_and(|tbl| tbl.get("http_headers").is_some());
+                    has_headers == with_headers
                 })
                 .map(|(k, _)| k.to_string())
                 .collect()
@@ -5145,13 +5152,15 @@ mod tests {
     #[test]
     fn codex_config_provider_names_parses_table() {
         let text = "model = \"gpt-5\"\n\n[model_providers.custom]\nbase_url = \"https://a\"\n\n[model_providers.ccode]\nrequires_openai_auth = true\n";
-        assert_eq!(codex_config_provider_names(text), vec!["custom", "ccode"]);
-        assert!(codex_config_provider_names("").is_empty());
-        assert!(codex_config_provider_names("not toml [[[").is_empty());
-        assert!(codex_config_provider_names("model = \"gpt-5\"\n").is_empty());
-        // provider 上的 http_headers 客户端加载失败，不当成已注册
+        assert_eq!(codex_config_provider_names(text, false), vec!["custom", "ccode"]);
+        assert!(codex_config_provider_names("", false).is_empty());
+        assert!(codex_config_provider_names("not toml [[[", false).is_empty());
+        assert!(codex_config_provider_names("model = \"gpt-5\"\n", false).is_empty());
+        // provider 上的 http_headers 客户端加载失败，不当成已注册，单独列出
         let stale = "[model_providers.ccode-x]\nbase_url = \"https://a\"\n\n[model_providers.ccode-x.http_headers]\nAuthorization = \"Bearer sk\"\n";
-        assert!(codex_config_provider_names(stale).is_empty());
+        assert!(codex_config_provider_names(stale, false).is_empty());
+        assert_eq!(codex_config_provider_names(stale, true), vec!["ccode-x"]);
+        assert!(codex_config_provider_names(text, true).is_empty());
     }
 
     fn profile(agent: &str, base_url: Option<&str>) -> Profile {

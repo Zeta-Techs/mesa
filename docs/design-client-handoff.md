@@ -66,7 +66,7 @@ ClientSpec {
 | 客户端已装、scheme 已注册、版本够新 | block + 下载入口 | ✓ | ✓ | ✓（≥1.1.0） | ✓（版本待测） |
 | 目录存在 | block | ✓ | ✓ | ✓ | ✓ |
 | 对话在客户端侧可找到 | block / warn | threads 表只读查询，缺失 warn | transcript 文件存在，缺失 block（对应桌面版 `transcript_missing`） | — | — |
-| 渠道客户端认得 | fix / note | **provider 定义块不在 config.toml → fix「写入并打开」**；残留 `http_headers` → fix「迁移」 | **note：桌面版用自己的账号继续，不是这条对话原来的网关**；首次需用户勾选知悉 | note：只认写盘的全局配置 | 同左 |
+| 渠道客户端认得 | fix / note | **provider 定义块不在 config.toml → fix「写入并打开」**；残留 `http_headers` → fix「改写」；**用户自起名的渠道（装 Mesa 前的 `zetatechs` 一类）缺定义同样 fix，按原名补写**（2026-10-29，见下） | **note：桌面版用自己的账号继续，不是这条对话原来的网关**；首次需用户勾选知悉 | note：只认写盘的全局配置 | 同左 |
 | 对话正在 Mesa 终端里活跃 | warn：两边同时写同一份记录 | ✓ | ✓ | ✓ | ✓ |
 | 登录态 / 工作区信任 | note（不可读，不拦） | — | 登录过期、工作区未信任由桌面版自己弹 | — | — |
 
@@ -88,6 +88,7 @@ ClientSpec {
 
 **Codex（A 档，先做，修现有痛点）**
 - 沿用 `register_codex_client_provider_named` 写渠道定义块，触发点从连接页搬进预检浮层。**2026-10-19 连接页的「注册到 / 移除 Codex 客户端注册」两项已删**（未发版，没有存量注册记录）；撤销走连接页 Codex 组头「撤销上次写入」。
+- **用户自起名的渠道（2026-10-29 用户问「装 Mesa 之前已有的 Codex 对话能不能在客户端继续」）**：原先 `ccode` 系以外、`openai` 以外的渠道名缺定义一律拦下（「不是 Mesa 创建的，无法代写」）。改为与 Mesa 渠道同一个修复：没有网关短 id 可对，候选列全部可写的 Codex API 连接，端点域名或连接名里含渠道名的排前、默认选中，按**原渠道名**写定义块（不切默认渠道）；定义还在但带 `http_headers` 的提示「改写」（`patch_codex_config_register` 会去掉 `http_headers`、换上 `experimental_bearer_token`）。名字只放行 TOML 裸键字符集，Codex 内置的 `ollama` / `lmstudio` / `oss` 不代写；没有可写连接时拦下并指去连接页添加（`client_open.rs valid_disk_block_name` / `codex_disk_candidates`）。
 - 查 `state_5.sqlite` 的 `threads` 表（只读）确认对话在客户端注册表里。本机现状：1811 条 thread，其中 1395 条活跃对话的原文已被压成 `.zst`，所以**不能用「rollout 文件在不在」判断**，必须查表。
 - 可选后续（**未实测**）：本机 Codex 0.163 的 provider 支持 `command` 取令牌（字段 `command / timeout_ms / refresh_interval_ms / cwd`）。若 ChatGPT 内嵌客户端认它，可让密钥不再明文落 `config.toml`。需单独起一个验证小任务，不进首批。
 
