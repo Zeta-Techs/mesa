@@ -154,6 +154,12 @@
   现在 `src-tauri/build.rs` 在 MSVC 下改由链接器把同一份 manifest（`src-tauri/windows-app-manifest.xml`，与 tauri-build 默认那份相同）
   嵌进所有链接产物，资源里不再放；应用 exe 的 manifest 与原来一致（mt.exe 核对过），`/MANIFESTUAC:NO` 免得链接器多补 trustInfo。
   **不要退回 `tauri_build::build()`**；要改应用 manifest 就改那份 xml。
+- **本机内嵌终端用的是 WezTerm 的 ConPTY，别人电脑不是**（2026-10-29 排查打包版）：portable-pty 先按 DLL 搜索顺序找 `conpty.dll`，
+  找到就用它和同目录的 `OpenConsole.exe`，找不到才用系统自带的。本机系统 PATH 里有 `C:\Program Files\WezTerm`，开发版和打包版都走 WezTerm 那套
+  （进程树里能看到 `WezTerm\OpenConsole.exe`）；没装 WezTerm 的用户走 Windows 自带的。要按别人电脑的样子测，把 WezTerm 从 PATH 里拿掉再起
+  （`e2e_channel` 同理）。当日在 Windows 11（26200）上用 `e2e_channel` 对比两套：Claude Code / Codex / Qwen / CodeBuddy / OpenCode 的旁路状态、
+  审批菜单、信任菜单、输入框与实时预览读屏结果一致，输出的模式开关、OSC 0 / 7501、24 位色也一致（系统自带那套退出时多发 `?1004l` `?9001l`）。
+  **Windows 10 自带的 ConPTY 版本老得多，没测过**。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light
