@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mesa</title>
     <style>
-      /* 首帧底色：跟随应用主题（localStorage.ccodeBootTheme，App 持久化；没存过值
-         回落系统外观）。先不透明——WKWebView 加载期自铺的不透明白底层（lib.rs
-         400ms 二次清底针对的就是它）只能被实心底罩住；400ms 后白底层已清，底色
-         淡出成纯毛玻璃（窗口材质 + 桌面磨砂直接透出）。ready-to-show 隐藏亮窗
-         方案试过被用户退回：无窗静默期读起来像卡死。减弱动态效果时不淡出
-         （保持实心底整段过渡，宁实不白）。 */
+      /* 首帧底色：macOS 一开始就透明，窗口一出来就是毛玻璃（data-boot-glass，见下）。
+         2026-10-30 实测（tauri 2.11 / wry 0.55，录屏逐帧）：wry 在 WKWebView 创建前就关了
+         drawsBackground，加载期间（拖慢到 1.7s 也一样）始终透出窗口材质，没有白底层；原先这层
+         实心底反而是在已经出现的毛玻璃上盖一块深蓝 / 浅灰，约 0.4s 后才淡回玻璃。
+         其他平台仍走主题色实心底：跟随应用主题（localStorage.ccodeBootTheme，App 持久化；
+         没存过值回落系统外观），400ms 后淡出成磨砂，减弱动态效果时不淡出（宁实不白）。
+         ready-to-show 隐藏亮窗方案试过被用户退回：无窗静默期读起来像卡死。 */
       html,
       body,
       #root {
@@ -33,6 +34,10 @@
         html {
           animation: none;
         }
+      }
+      html[data-boot-glass] {
+        background: transparent;
+        animation: none;
       }
       /* React 挂上后交给 App.css：壳层透明，桌面磨砂从侧栏透出。
          这里的启动底不能盖过已挂载的页面。 */
@@ -133,6 +138,8 @@
     </style>
     <script>
       // 首帧前同步定启动底色（浅/深）。localStorage 不可用（隐私模式等）回落系统外观。
+      // macOS 不铺实心底，窗口材质直接透出（见上方样式注释）；字标颜色仍按 data-boot 分深浅。
+      if (/Macintosh/.test(navigator.userAgent)) document.documentElement.dataset.bootGlass = "";
       try {
         var boot = localStorage.getItem("ccodeBootTheme");
         if (boot !== "light" && boot !== "dark") {
