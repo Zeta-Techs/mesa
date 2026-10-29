@@ -88,6 +88,25 @@ self.MonacoEnvironment = {
   getWorker: () => new editorWorker(),
 };
 
+// 语言服务（JSON / CSS / HTML / TS·JS 的折叠、符号、链接、取色、诊断……）各要自己的 worker，
+// 交给上面的基础 worker 会报「Missing requestHandler or method: getFoldingRanges」一类错，
+// 每开一个这类文件进一串应用日志（2026-10-29 打包版点验实证）。语言服务整个关掉，着色不受影响：
+// CSS / HTML / TS 着色是主线程的 Monarch，JSON 着色走自己的 tokens 开关，要显式留着。
+// 可选链：UI 组件测试里 monaco 是桩，没有这几个命名空间
+monaco.json?.jsonDefaults.setModeConfiguration({ tokens: true });
+for (const defaults of [
+  monaco.css?.cssDefaults,
+  monaco.css?.scssDefaults,
+  monaco.css?.lessDefaults,
+  monaco.html?.htmlDefaults,
+  monaco.html?.handlebarDefaults,
+  monaco.html?.razorDefaults,
+  monaco.typescript?.typescriptDefaults,
+  monaco.typescript?.javascriptDefaults,
+]) {
+  defaults?.setModeConfiguration({});
+}
+
 // Monaco 主题跟随 App.css 令牌：编辑器面色从当前主题的 --color-editor-* 读取
 // （只读正在显示的主题，不切 data-theme）；base vs-dark 继承语法高亮。
 // 主题切换由 MutationObserver 监听 data-theme 触发重新 define + setTheme（见组件内 effect）。
