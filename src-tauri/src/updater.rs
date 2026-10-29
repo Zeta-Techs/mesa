@@ -501,7 +501,12 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
     // 目录排到子进程 PATH 最前，npm 安装后脚本里的 `node`（如 opencode-ai 的 postinstall）
     // 才找得到。裸名（没解析到）不动
     if let Some(dir) = program_path.parent().filter(|d| d.is_absolute()) {
-        cmd.env("PATH", prepend_path(std::env::var_os("PATH").as_deref(), dir));
+        // Windows 上以注册表新 PATH 为底（pty_command 已设），再把程序目录排最前
+        #[cfg(windows)]
+        let base = crate::process::child_path().or_else(|| std::env::var_os("PATH"));
+        #[cfg(not(windows))]
+        let base = std::env::var_os("PATH");
+        cmd.env("PATH", prepend_path(base.as_deref(), dir));
     }
     let mirror = crate::settings::brew_mirror_enabled();
     let mut extra_no_proxy: Vec<&str> = Vec::new();

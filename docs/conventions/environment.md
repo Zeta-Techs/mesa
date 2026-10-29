@@ -32,6 +32,10 @@
   `/usr/local/bin`，所以别人的机器没事、Apple 芯片 + Homebrew 的机器才出事——验收这类问题要在 Homebrew node 的机器上看打包版。
   Mesa 开着时用户新装的程序同理（PATH 只在启动时读一次）：新增依赖要给它的默认安装落点进候选目录，装完不重启也认得——
   如 PowerShell 7（`%ProgramFiles%\PowerShell\7`）、「仅为我安装」的 Git Bash（`%LOCALAPPDATA%\Programs\Git\bin`，`agents::git_bash_default_paths`）（2026-10-21）。
+  **子进程那一侧在 Windows 上同样要补**（2026-10-29 排查打包版）：Windows 进程的 PATH 只在启动时从注册表拼一次，一键补齐装的 Git / Node.js
+  写进了注册表，Mesa 起的 Agent、内置终端、MCP 服务器继承的仍是旧 PATH，Agent 里 `git` `node` `npx` 全都找不到、重启 Mesa 才好
+  （开发机看不出来：工具早就装好了）。`process::child_path` 读注册表（系统 + 用户）PATH，把新出现的目录补在子进程 PATH 末尾，
+  `background_command`、`pty_command`、内置终端 shell、安装命令统一走它；新增绕开这几个入口直接 `CommandBuilder::new` 起长期子进程的地方也要接上。
 - **macOS GUI 应用也没有 LANG**（2026-10-27 本机实证：打包版 Mesa 与它起的 Codex 进程环境里只有短 PATH 和 `__CF_USER_TEXT_ENCODING`）。
   子进程都跑在 C 语言环境：`lsof` 把中文路径转义成 `\xe7…`、`ls` 显示 `????`、zsh 里打中文变 `<e7>`。启动时最先
   调 `process::ensure_utf8_locale`（再读 shell 环境，rc 里自己设了 LANG 的以 rc 为准）：LANG / LC_ALL / LC_CTYPE 都没有才补 `LANG=<系统地区>.UTF-8`（NSLocale，本机无该 locale 回落 en_US.UTF-8），

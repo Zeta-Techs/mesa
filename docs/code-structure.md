@@ -1694,7 +1694,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
                              #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）
   process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
-                             #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录）+
+                             #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录；
+                             #   Windows 子进程 PATH 走 child_path：注册表里新出现的目录补在末尾，Mesa 开着时装的 Git / Node 认得）+
                              # pty_command（Windows .cmd/.bat shim 深化：npm 系 CLI 解析出 JS 入口改 node 直启，
                              #   npm.cmd 走固定布局 special case；指向原生 exe 的 shim（npm 装的 Claude Code / OpenCode）
                              #   exe_from_cmd_shim 直启、无扩展名 node 脚本（CodeBuddy）认 shebang 后 node 直启——
