@@ -17,7 +17,8 @@ export type VendorId =
   | "ollama"
   | "newapi"
   | "gemini"
-  | "cursor";
+  | "cursor"
+  | "doubao";
 
 /** 域名后缀 → 厂商；只认官方域名，商业中转站不在此表（不给第三方运营方做图标位） */
 const SUFFIX_RULES: [string, VendorId][] = [
@@ -126,7 +127,7 @@ export function vendorForPlanProvider(provider: string): VendorId | null {
 }
 
 /** 模型名 → 出这个模型的厂商（出图模型的图标用：2026-10-29 用户「用所选的模型代表的图标」）。
- *  只认模型家族名，不认中转站；认不出（豆包 Seedream、Flux 等没有图标素材的）返回 null，调用方给中性图标 */
+ *  只认模型家族名，不认中转站；认不出（Flux 等没有图标素材的）返回 null，调用方给中性图标 */
 const MODEL_RULES: [RegExp, VendorId][] = [
   [/claude|anthropic/, "anthropic"],
   [/gpt|dall-?e|sora|chatgpt|openai|(^|\/)o[134](-|$)/, "openai"],
@@ -138,6 +139,7 @@ const MODEL_RULES: [RegExp, VendorId][] = [
   [/kimi|moonshot/, "kimi"],
   [/minimax|hailuo|abab/, "minimax"],
   [/deepseek/, "deepseek"],
+  [/doubao|seedream|seededit|seedance|bytedance/, "doubao"],
 ];
 
 export function vendorForModel(model: string | null | undefined): VendorId | null {

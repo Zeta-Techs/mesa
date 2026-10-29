@@ -12,6 +12,7 @@ import ollama from "../assets/vendor-icons/ollama.svg";
 import newapi from "../assets/vendor-icons/newapi.svg";
 import gemini from "../assets/vendor-icons/gemini.svg";
 import cursor from "../assets/vendor-icons/cursor.svg";
+import doubao from "../assets/vendor-icons/doubao.svg";
 import { isMonoVendor, type VendorId } from "../vendor-icon";
 
 const SRC: Record<VendorId, string> = {
@@ -29,6 +30,7 @@ const SRC: Record<VendorId, string> = {
   newapi,
   gemini,
   cursor,
+  doubao,
 };
 
 /**

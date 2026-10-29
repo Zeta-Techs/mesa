@@ -514,7 +514,7 @@ Codex                                      [添加连接]
 左边页内栏 `PaneNav inline`（吸顶、可拖宽，`ccode.profiles.navWidth`）：「全部 N」→ 组「Agent」九家
 （`AgentIcon` 各家品牌标识：Claude 星芒、OpenAI、Gemini 星、Qwen、OpenCode、Kimi、CodeBuddy、Cursor、Grok——不用 app 方块图标 + 名称 + 连接数；没装的灰显写「未安装」；有新版写「新版 · N」强调色；有连接冲突名字后琥珀点；**按住上下拖排序**，与原组头拖动同一份顺序）
 → 组「其他」「出图模型」（图标 = 所选出图模型的厂商标识，`vendorForModel` 按模型名认，gpt-image → OpenAI、gemini-*-image → Gemini 等；
-没选或认不出（豆包 Seedream、Flux）用中性图片图标；出图块那一行同一个图标）。选中项记 `ccode.profiles.pane`，设置页经 `profiles-pane.ts` 请求打开出图模型。右边：选一家只画这一家（无折叠、组头不能拖），
+没选或认不出（如 Flux）用中性图片图标；出图块那一行同一个图标）。选中项记 `ccode.profiles.pane`，设置页经 `profiles-pane.ts` 请求打开出图模型。右边：选一家只画这一家（无折叠、组头不能拖），
 选「全部」九家连排（每家可折叠、组头可拖）+ 末尾出图模型；Agent 节不套卡：图标 + 粗体名称（单家 text-xl / 全部 text-lg）+ 原组头的冲突胶囊 / 官方登录 /
 ＋ 官方账号 / ⋯ / 新版或安装，标题行下一根细线。连接行改两行：左上名称 + 默认 / 配置失效 / 已停用，左下灰字「端点 · 模型」（官方账号写套餐），
 上次使用 / 外部改过写第三行；右边状态与操作不变；行间细线。原「全部 / 已安装 / 未安装」分段与「全部折叠」去掉（并进左栏）。

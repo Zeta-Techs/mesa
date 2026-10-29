@@ -86,7 +86,8 @@ test("vendorForModel：按模型家族认厂商，认不出给 null", async () =
   assert.equal(vendorForModel("wanx2.1-t2i-turbo"), "alibaba");
   assert.equal(vendorForModel("qwen-image"), "alibaba");
   assert.equal(vendorForModel("hunyuan-image"), "tencent");
-  assert.equal(vendorForModel("doubao-seedream-4-0"), null);
+  assert.equal(vendorForModel("doubao-seedream-4-0-250828"), "doubao");
+  assert.equal(vendorForModel("seedream-3.0"), "doubao");
   assert.equal(vendorForModel("flux-1.1-pro"), null);
   assert.equal(vendorForModel(""), null);
   assert.equal(vendorForModel(null), null);
