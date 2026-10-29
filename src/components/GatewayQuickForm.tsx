@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { NO_PRESET_REASON, presetsForAgent } from "../presets";
@@ -15,10 +15,12 @@ export function GatewayQuickForm({
   agent,
   onConnected,
   onMore,
+  onBusyChange,
 }: {
   agent: string;
   onConnected: () => void;
   onMore: () => void;
+  onBusyChange: (busy: boolean) => void;
 }) {
   const presets = useMemo(() => presetsForAgent(agent), [agent]);
   const [index, setIndex] = useState(0);
@@ -28,6 +30,11 @@ export function GatewayQuickForm({
   const [busy, setBusy] = useState<"" | "test" | "save">("");
   const [error, setError] = useState<string | null>(null);
   const [tested, setTested] = useState(false);
+  const saveInFlight = useRef(false);
+  useEffect(() => {
+    onBusyChange(!!busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
 
   if (!preset) {
     return (
@@ -77,6 +84,7 @@ export function GatewayQuickForm({
   }
 
   async function save() {
+    if (saveInFlight.current) return;
     if (!apiKey.trim()) {
       setError("先贴上 API Key");
       return;
@@ -85,10 +93,11 @@ export function GatewayQuickForm({
       setError("填一个要用的模型名");
       return;
     }
-    if (!tested && !(await test())) return;
-    setBusy("save");
-    setError(null);
+    saveInFlight.current = true;
     try {
+      if (!tested && !(await test())) return;
+      setBusy("save");
+      setError(null);
       const s = useAppStore.getState();
       const slots = preset!.provider.slots;
       const models: GatewayModel[] = [model, ...presetModels.filter((m) => m !== model)].map((id) => ({
@@ -132,75 +141,80 @@ export function GatewayQuickForm({
     } catch (e) {
       setError(String(e));
     } finally {
+      saveInFlight.current = false;
       setBusy("");
     }
   }
 
   return (
-    <div className="space-y-3">
-      <label className="block">
-        <span className="text-xs text-l3">服务商</span>
-        <select
-          className={`${fieldClass} mt-1 w-full`}
-          value={index}
-          onChange={(e) => {
-            setIndex(Number(e.target.value));
-            setModelDraft(null);
-            setTested(false);
-            setError(null);
-          }}
-        >
-          {presets.map((p, i) => (
-            <option key={p.name} value={i}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        {preset.note && <span className="mt-1 block text-xs leading-5 text-l4">{preset.note}</span>}
-      </label>
-      <label className="block">
-        <span className="text-xs text-l3">API Key</span>
-        <input
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          className={`${fieldClass} mt-1 w-full`}
-          value={apiKey}
-          placeholder="粘贴服务商给你的密钥"
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            setTested(false);
-          }}
-        />
-      </label>
-      <label className="block">
-        <span className="text-xs text-l3">默认模型</span>
-        <input
-          className={`${fieldClass} mt-1 w-full`}
-          list="onboarding-model-options"
-          value={modelDraft ?? presetModels[0] ?? ""}
-          placeholder="模型名，如 deepseek-v4-flash"
-          onChange={(e) => {
-            setModelDraft(e.target.value);
-            setTested(false);
-          }}
-        />
-        <datalist id="onboarding-model-options">
-          {presetModels.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      </label>
-      {error && <p className="text-xs leading-5 text-err-text">{error}</p>}
-      {tested && !error && <p className="text-xs leading-5 text-ok-text">测试通过，可以保存</p>}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <button type="button" className={primaryActionClass} disabled={!!busy} onClick={() => void save()}>
-          {busy === "save" ? "保存中…" : busy === "test" ? "测试中…" : "测试并保存"}
-        </button>
-        <button type="button" className={quietActionClass} onClick={onMore}>
-          更多设置（网关库）
-        </button>
-      </div>
-    </div>
+    <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <fieldset disabled={!!busy} className="min-w-0 space-y-4">
+        <label className="block">
+          <span className="text-xs text-l3">服务商</span>
+          <select
+            className={`${fieldClass} mt-1 w-full`}
+            value={index}
+            onChange={(e) => {
+              setIndex(Number(e.target.value));
+              setModelDraft(null);
+              setTested(false);
+              setError(null);
+            }}
+          >
+            {presets.map((p, i) => (
+              <option key={p.name} value={i}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          {preset.note && <span className="mt-1 block text-xs leading-5 text-l4">{preset.note}</span>}
+        </label>
+        <label className="block">
+          <span className="text-xs text-l3">API Key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            className={`${fieldClass} mt-1 w-full`}
+            value={apiKey}
+            placeholder="粘贴服务商给你的密钥"
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              setTested(false);
+              setError(null);
+            }}
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-l3">默认模型</span>
+          <input
+            className={`${fieldClass} mt-1 w-full`}
+            list="onboarding-model-options"
+            value={modelDraft ?? presetModels[0] ?? ""}
+            placeholder="模型名，如 deepseek-v4-flash"
+            onChange={(e) => {
+              setModelDraft(e.target.value);
+              setTested(false);
+              setError(null);
+            }}
+          />
+          <datalist id="onboarding-model-options">
+            {presetModels.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        </label>
+        {error && <p role="alert" className="text-xs leading-5 text-err-text">{error}</p>}
+        {tested && !error && <p role="status" className="text-xs leading-5 text-ok-text">测试通过，可以保存</p>}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button type="submit" className={primaryActionClass} disabled={!!busy || !apiKey.trim() || !model}>
+            {busy === "save" ? "保存中…" : busy === "test" ? "测试中…" : "测试并保存"}
+          </button>
+          <button type="button" className={quietActionClass} onClick={onMore}>
+            更多设置（网关库）
+          </button>
+        </div>
+      </fieldset>
+    </form>
   );
 }

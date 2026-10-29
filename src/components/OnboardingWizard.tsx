@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Check } from "lucide-react";
+import {
+  ArrowLeft, ArrowRight, Check, ChevronDown, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Terminal,
+} from "lucide-react";
 import { useAppStore } from "../store";
 import { useExitRender } from "../exit-animation";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
@@ -45,7 +47,7 @@ const BLURB: Record<string, string> = {
 };
 const labelOf = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 const FOCUSABLE =
-  'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+  'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])';
 
 export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
   const open = useAppStore((s) => s.onboardingWizardOpen);
@@ -56,7 +58,12 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
   const { render, exiting } = useExitRender(open);
   const progress = onboardingProgress(facts);
   const [view, setView] = useState<OnboardingStepId>("connect");
+  const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   // 每次打开落在第一个没做完的一屏
   useEffect(() => {
@@ -64,7 +71,9 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const close = () => setOpen(false);
+  const close = () => {
+    if (!busy) setOpen(false);
+  };
   const index = ONBOARDING_STEPS.findIndex((s) => s.id === view);
   const last = index === ONBOARDING_STEPS.length - 1;
   const viewDone = progress.steps[index]?.done ?? false;
@@ -75,7 +84,8 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.isComposing) {
         event.preventDefault();
-        setOpen(false);
+        event.stopPropagation();
+        if (!busyRef.current) setOpen(false);
         return;
       }
       if (event.key !== "Tab" || !rootRef.current) return;
@@ -83,24 +93,30 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
       if (!focusable.length) return;
       const first = focusable[0]!;
       const lastEl = focusable[focusable.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
+      const outside = !rootRef.current.contains(document.activeElement);
+      if (event.shiftKey && (document.activeElement === first || outside || document.activeElement === headingRef.current)) {
         event.preventDefault();
         lastEl.focus();
-      } else if (!event.shiftKey && document.activeElement === lastEl) {
+      } else if (!event.shiftKey && (document.activeElement === lastEl || outside)) {
         event.preventDefault();
         first.focus();
       }
     };
-    document.addEventListener("keydown", onKeyDown);
-    const frame = requestAnimationFrame(() => {
-      rootRef.current?.querySelector("[data-wizard-content]")?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-    });
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", onKeyDown);
-      previous?.focus();
+      document.removeEventListener("keydown", onKeyDown, true);
+      if (previous?.isConnected) previous.focus();
     };
   }, [open, setOpen]);
+
+  useEffect(() => {
+    if (!open || !render) return;
+    const frame = requestAnimationFrame(() => {
+      if (mainRef.current) mainRef.current.scrollTop = 0;
+      headingRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, render, view]);
 
   if (!render) return null;
   const step = stepById(view);
@@ -109,7 +125,9 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
       ref={rootRef}
       role="dialog"
       aria-modal="true"
-      aria-label="上手引导"
+      aria-labelledby="onboarding-title"
+      aria-describedby="onboarding-summary"
+      data-surface="canvas"
       className={`ccode-covers-titlebar fixed inset-0 z-40 flex flex-col bg-canvas ccode-fade${exiting ? " ccode-exiting" : ""}`}
     >
       <div
@@ -135,101 +153,112 @@ export function OnboardingWizard({ facts }: { facts: OnboardingFacts }) {
         {IS_WINDOWS && <WindowControls className="ml-1" />}
       </div>
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-[34rem] flex-col px-6 pb-8 pt-[7vh]">
-          <Progress current={view} steps={progress.steps} onPick={setView} />
-          <h1 className="mt-9 text-2xl font-semibold text-l1">{step.headline}</h1>
-          <p className="mt-2 text-sm leading-6 text-l3">{step.summary}</p>
-          <div key={view} data-wizard-content className="ccode-fade mt-7">
-            {view === "connect" && <ConnectScreen facts={facts} />}
-            {view === "chat" && <ChatScreen done={viewDone} close={close} />}
+      <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[42rem] px-6 pb-8 pt-[clamp(1rem,5vh,3rem)]">
+          <div className="mb-4 flex items-center justify-between text-xs text-l3">
+            <span>上手引导</span>
+            <span role="status">已完成 {progress.doneCount} / {progress.total}</span>
+          </div>
+          <Progress current={view} steps={progress.steps} onPick={setView} disabled={busy} />
+          <h1 id="onboarding-title" ref={headingRef} tabIndex={-1} className="mt-8 text-2xl font-semibold tracking-tight text-l1 outline-none">{step.headline}</h1>
+          <p id="onboarding-summary" className="mt-2 text-sm leading-6 text-l3">{step.summary}</p>
+          <div key={view} data-wizard-content aria-busy={busy} className="ccode-fade mt-6">
+            {view === "connect" && <ConnectScreen facts={facts} onBusyChange={setBusy} />}
+            {view === "chat" && <ChatScreen done={viewDone} connected={facts.profileCount > 0} onConnect={() => setView("connect")} close={close} />}
             {view === "project" && <ProjectScreen done={viewDone} close={close} />}
           </div>
         </div>
       </main>
 
-      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-hairline px-6 py-3">
-        <div className="flex items-center gap-1">
-          <button type="button" className={quietActionClass} onClick={close}>
-            稍后再说
-          </button>
-          <button
-            type="button"
-            className="h-8 rounded-md px-2 text-xs text-l4 transition-colors hover:text-l2"
-            title="侧栏的上手引导行一并收起；想再看，到顶栏「帮助 → 上手引导」"
-            onClick={() => {
-              updateOnboarding({ status: "dismissed" });
-              close();
-            }}
-          >
-            不再显示
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          {index > 0 && (
-            <button type="button" className={secondaryActionClass} onClick={() => setView(ONBOARDING_STEPS[index - 1]!.id)}>
-              上一步
+      <footer className="mx-auto w-full max-w-[42rem] shrink-0 px-6 pb-5 pt-3 text-xs">
+        <p className="mb-3 text-l3" role="status">{busy ? "正在处理，请稍候…" : "随时可从「帮助 → 上手引导」回来。"}</p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-1">
+            <button type="button" className={quietActionClass} disabled={busy} onClick={close}>
+              稍后再说
             </button>
-          )}
-          {last ? (
-            <button type="button" className={primaryActionClass} onClick={close}>
-              完成
-            </button>
-          ) : (
             <button
               type="button"
-              className={viewDone ? primaryActionClass : secondaryActionClass}
-              onClick={() => setView(ONBOARDING_STEPS[index + 1]!.id)}
+              className={quietActionClass}
+              disabled={busy}
+              title="侧栏的上手引导行一并收起；想再看，到顶栏「帮助 → 上手引导」"
+              onClick={() => {
+                updateOnboarding({ status: "dismissed" });
+                close();
+              }}
             >
-              {viewDone ? "下一步" : "跳过这步"}
+              不再显示
             </button>
-          )}
+          </div>
+          <div className="flex items-center gap-2">
+            {index > 0 && (
+              <button type="button" className={`${secondaryActionClass} gap-1.5`} disabled={busy} onClick={() => setView(ONBOARDING_STEPS[index - 1]!.id)}>
+                <ArrowLeft size={13} aria-hidden="true" />
+                上一步
+              </button>
+            )}
+            {last ? (
+              <button type="button" className={primaryActionClass} onClick={close}>
+                {progress.doneCount === progress.total ? "完成" : "先去体验"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`${viewDone ? primaryActionClass : quietActionClass} gap-1.5`}
+                disabled={busy}
+                onClick={() => setView(ONBOARDING_STEPS[index + 1]!.id)}
+              >
+                {viewDone ? "下一步" : "跳过这步"}
+                <ArrowRight size={13} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       </footer>
     </div>
   );
 }
 
-/** 顶部进度：三个圈用线串起来；做完 = 勾，当前 = 琥珀实心，其余发丝描边；可点着回看 */
 function Progress({
   current,
   steps,
   onPick,
+  disabled,
 }: {
   current: OnboardingStepId;
   steps: { step: { id: OnboardingStepId; title: string }; done: boolean }[];
   onPick: (id: OnboardingStepId) => void;
+  disabled: boolean;
 }) {
   return (
-    <ol className="flex items-center">
+    <ol className="grid grid-cols-3 gap-2 text-xs" aria-label="上手步骤">
       {steps.map(({ step, done }, i) => {
         const isCurrent = step.id === current;
         return (
-          <li key={step.id} className="flex flex-1 items-center last:flex-none">
+          <li key={step.id} className="min-w-0">
             <button
               type="button"
               onClick={() => onPick(step.id)}
               aria-current={isCurrent ? "step" : undefined}
-              className="group flex items-center gap-2 rounded-md py-1 text-left"
+              aria-label={`${step.title}，${done ? "已完成" : isCurrent ? "当前步骤" : "未完成"}`}
+              disabled={disabled}
+              className={`group flex min-h-20 w-full flex-col items-start gap-2 rounded-xl p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${isCurrent ? "ccode-well" : "hover:bg-hover"}`}
             >
               <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-micro tabular-nums transition-colors ${
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full tabular-nums transition-colors ${
                   isCurrent
                     ? "bg-cta font-medium text-cta-text"
                     : done
                       ? "bg-field text-ok-text"
-                      : "border border-hairline text-l4"
+                      : "bg-field text-l3"
                 }`}
               >
-                {done && !isCurrent ? <Check size={12} strokeWidth={2.4} aria-hidden="true" /> : i + 1}
+                {done ? <Check size={14} strokeWidth={2.4} aria-hidden="true" /> : i + 1}
               </span>
               <span className={`text-xs ${isCurrent ? "font-medium text-l1" : "text-l3 group-hover:text-l2"}`}>
                 {step.title}
               </span>
             </button>
-            {i < steps.length - 1 && (
-              <span className={`mx-3 h-px flex-1 ${done ? "bg-ok-text/40" : "bg-hairline"}`} aria-hidden="true" />
-            )}
           </li>
         );
       })}
@@ -238,7 +267,7 @@ function Progress({
 }
 
 function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`ccode-card rounded-lg border border-hairline p-4 ${className}`}>{children}</div>;
+  return <div className={`ccode-well rounded-xl p-5 text-xs ${className}`}>{children}</div>;
 }
 
 function SuccessCard({ title, detail }: { title: string; detail?: string }) {
@@ -247,7 +276,7 @@ function SuccessCard({ title, detail }: { title: string; detail?: string }) {
       <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-field text-ok-text">
         <Check size={12} strokeWidth={2.4} aria-hidden="true" />
       </span>
-      <div>
+      <div role="status">
         <p className="text-sm font-medium text-l1">{title}</p>
         {detail && <p className="mt-0.5 text-xs leading-5 text-l3">{detail}</p>}
       </div>
@@ -257,22 +286,22 @@ function SuccessCard({ title, detail }: { title: string; detail?: string }) {
 
 /* ---------- 第一屏：接上 AI ---------- */
 
-function ConnectScreen({ facts }: { facts: OnboardingFacts }) {
+function ConnectScreen({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyChange: (busy: boolean) => void }) {
   const stage = connectStage(facts);
   const profiles = useAppStore((s) => s.profiles);
   if (stage === "done") {
     const first = profiles[0];
     return (
       <SuccessCard
-        title={first ? `${labelOf(first.agent)} 已接通` : "已接通"}
-        detail="连接已经加好。下一步发一句话，确认真的能用。"
+        title={first ? `${labelOf(first.agent)} 连接已添加` : "连接已添加"}
+        detail="下一步发一句话，确认 AI 能正常回复。"
       />
     );
   }
-  return stage === "install" ? <InstallStage /> : <ChooseStage facts={facts} />;
+  return stage === "install" ? <InstallStage onBusyChange={onBusyChange} /> : <ChooseStage facts={facts} onBusyChange={onBusyChange} />;
 }
 
-function InstallStage() {
+function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void }) {
   const install = useAgentInstall();
   const depCheck = useAppStore((s) => s.depCheck);
   const refreshDepCheck = useAppStore((s) => s.refreshDepCheck);
@@ -288,6 +317,11 @@ function InstallStage() {
     // Node 装好后接着走刚才那家的安装；先刷新命令预览再装
     if (pending) void install.loadPreviews([pending]).then(() => install.install(pending));
   });
+  const installing = Object.values(install.entries).some((entry) => entry.running) || depInstall.entries.node.running;
+  useEffect(() => {
+    onBusyChange(installing);
+    return () => onBusyChange(false);
+  }, [installing, onBusyChange]);
   const openProxySettings = () => {
     const s = useAppStore.getState();
     s.setOnboardingWizardOpen(false);
@@ -316,8 +350,8 @@ function InstallStage() {
           </div>
           <button
             type="button"
-            className={recommended ? primaryActionClass : secondaryActionClass}
-            disabled={entry?.running || method === undefined}
+            className={secondaryActionClass}
+            disabled={installing || method === undefined}
             onClick={() => {
               if (noTool) {
                 setNodeFor(id);
@@ -326,11 +360,11 @@ function InstallStage() {
               void install.install(id);
             }}
           >
-            {entry?.running ? "安装中…" : noTool ? "安装" : entry?.result && !entry.result.ok ? "重试" : "安装"}
+            {entry?.running ? "安装中…" : method === undefined ? "检查中…" : entry?.result && !entry.result.ok ? "重试" : "安装"}
           </button>
         </div>
         {method && !entry?.running && !entry?.result && (
-          <p className="break-all font-mono text-micro leading-4 text-l4">将执行：{method}</p>
+          <p className="break-all rounded-md bg-field px-2.5 py-2 font-mono text-micro leading-5 text-l3">将执行：{method}</p>
         )}
         {noTool && nodeFor !== id && <p className="text-xs leading-5 text-l3">这台电脑缺少安装工具，点「安装」看怎么补。</p>}
         {noTool && nodeFor === id && (
@@ -371,7 +405,7 @@ function InstallStage() {
             {hint && <p className="text-xs leading-5 text-l3">{hint}</p>}
             <p className="text-xs leading-5 text-l3">
               下载慢或连不上，多半是网络问题：
-              <button type="button" className="ml-1 text-cta hover:underline" onClick={openProxySettings}>
+              <button type="button" className="ml-1 text-cta hover:underline" disabled={installing} onClick={openProxySettings}>
                 去设置出网代理
               </button>
               ，填好再点「重试」。
@@ -384,35 +418,41 @@ function InstallStage() {
 
   return (
     <div className="space-y-3">
+      <p className="text-xs leading-5 text-l3">先选一个安装，之后可以添加其他 Agent。</p>
+      {RECOMMENDED.map((id) => row(id, true))}
+      <button type="button" className={`${quietActionClass} gap-1.5`} aria-expanded={showOthers} aria-controls="onboarding-other-agents" onClick={() => setShowOthers((v) => !v)}>
+        {showOthers ? "收起其他 Agent" : "其他 Agent…"}
+        <ChevronDown size={13} className={showOthers ? "rotate-180" : ""} aria-hidden="true" />
+      </button>
+      {showOthers && <div id="onboarding-other-agents" className="space-y-3">{others.map((a) => row(a.id, false))}</div>}
       <p className="text-xs leading-5 text-l3">
-        没有偏好就从 Claude Code 或 Codex 开始。安装要联网下载；国内网络慢或失败，先到 设置 → 网络 填出网代理（如 http://127.0.0.1:7890）。
-        <button type="button" className="ml-1 text-cta hover:underline" onClick={openProxySettings}>
+        下载慢或连不上？
+        <button type="button" className="ml-1 text-cta hover:underline" disabled={installing} onClick={openProxySettings}>
           去设置出网代理
         </button>
       </p>
-      {RECOMMENDED.map((id) => row(id, true))}
-      <button type="button" className="text-xs text-l3 hover:text-l1" onClick={() => setShowOthers((v) => !v)}>
-        {showOthers ? "收起其他 Agent" : "其他 Agent…"}
-      </button>
-      {showOthers && <div className="space-y-3">{others.map((a) => row(a.id, false))}</div>}
-      <p className="pt-1 text-xs leading-5 text-l4">
+      <p className="pt-1 text-xs leading-5 text-l3">
         已经在终端里装好了？装好后回到这里，向导会自动认出来。
       </p>
     </div>
   );
 }
 
-function ChooseStage({ facts }: { facts: OnboardingFacts }) {
+function ChooseStage({ facts, onBusyChange }: { facts: OnboardingFacts; onBusyChange: (busy: boolean) => void }) {
   const setOpen = useAppStore((s) => s.setOnboardingWizardOpen);
   const official = useAppStore((s) => s.onboardingOfficial);
   const installed = facts.installedAgents;
   const defaultAgent = facts.officialReady?.[0] ?? installed[0]!;
-  const [picked, setPicked] = useState<string | null>(null);
-  const agent = picked && installed.includes(picked) ? picked : defaultAgent;
+  const [picked, setPicked] = useState(defaultAgent);
+  const agent = installed.includes(picked) ? picked : defaultAgent;
   const probe = official[agent];
   const [method, setMethod] = useState<"official" | "key" | null>(null);
   const active = method ?? (probe === "ready" || probe === "login" ? "official" : "key");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    onBusyChange(busy);
+    return () => onBusyChange(false);
+  }, [busy, onBusyChange]);
 
   function openGatewayLibrary() {
     const s = useAppStore.getState();
@@ -430,12 +470,14 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
             <button
               key={id}
               type="button"
+              disabled={busy}
+              aria-pressed={id === agent}
               onClick={() => {
                 setPicked(id);
                 setMethod(null);
               }}
               className={`h-7 rounded-md border px-2.5 text-xs transition-colors ${
-                id === agent ? "border-cta text-l1" : "border-hairline text-l3 hover:text-l1"
+                id === agent ? "border-cta bg-field text-l1" : "border-hairline text-l3 hover:bg-hover hover:text-l1"
               }`}
             >
               {labelOf(id)}
@@ -443,7 +485,11 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
           ))}
         </div>
       )}
-      <p className="text-sm text-l2">{labelOf(agent)} 已装好。怎么连上 AI？</p>
+      <p className="flex items-center gap-2 text-sm text-l2"><Check size={14} className="text-ok-text" aria-hidden="true" />{labelOf(agent)} 已装好</p>
+
+      {probe === undefined && (
+        <Card><p role="status" className="text-sm text-l3">正在检查官方账号登录状态…</p></Card>
+      )}
 
       {(probe === "ready" || probe === "login") && (
         <div className="flex gap-1 rounded-md bg-field p-0.5 text-xs">
@@ -456,6 +502,8 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
             <button
               key={id}
               type="button"
+              disabled={busy}
+              aria-pressed={active === id}
               onClick={() => setMethod(id)}
               className={`h-7 flex-1 rounded transition-colors ${
                 active === id ? "bg-raised font-medium text-l1" : "text-l3 hover:text-l1"
@@ -469,9 +517,8 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
 
       {active === "official" && probe === "ready" && (
         <Card className="space-y-3">
-          <p className="text-sm leading-6 text-l2">
-            检测到你已经登录了 {labelOf(agent)} 官方账号，直接接入就行，不用建网关，也不用再登录。
-          </p>
+          <p className="text-sm font-medium text-l1">官方账号已登录</p>
+          <p className="text-xs leading-5 text-l3">直接使用现有账号接入。</p>
           <button
             type="button"
             className={primaryActionClass}
@@ -487,9 +534,8 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
       )}
       {active === "official" && probe === "login" && (
         <Card className="space-y-3">
-          <p className="text-sm leading-6 text-l2">
-            {labelOf(agent)} 官方账号还没登录。点下面打开终端按提示登录（浏览器里点确认就行），登录好回到「上手引导」，一键接入。
-          </p>
+          <p className="text-sm font-medium text-l1">先登录 {labelOf(agent)} 官方账号</p>
+          <p className="text-xs leading-5 text-l3">在终端按提示登录，再回到上手引导接入。</p>
           <button
             type="button"
             className={primaryActionClass}
@@ -504,11 +550,11 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
       )}
       {active === "key" && probe !== undefined && (
         <Card>
-          <GatewayQuickForm key={agent} agent={agent} onConnected={() => {}} onMore={openGatewayLibrary} />
+          <GatewayQuickForm key={agent} agent={agent} onConnected={() => {}} onMore={openGatewayLibrary} onBusyChange={setBusy} />
         </Card>
       )}
       {probe === "none" && (
-        <p className="text-xs leading-5 text-l4">
+        <p className="text-xs leading-5 text-l3">
           {labelOf(agent)} 没有官方账号登录方式，用服务商给你的 API Key 接入。
         </p>
       )}
@@ -518,31 +564,40 @@ function ChooseStage({ facts }: { facts: OnboardingFacts }) {
 
 /* ---------- 第二屏：聊第一句 ---------- */
 
-function ChatScreen({ done, close }: { done: boolean; close: () => void }) {
+function ChatScreen({ done, connected, onConnect, close }: { done: boolean; connected: boolean; onConnect: () => void; close: () => void }) {
   if (done) return <SuccessCard title="已经聊过了" detail="第一段对话在侧栏「随手聊」里。接下来可以建项目。" />;
-  return (
+  if (!connected) return (
     <Card className="space-y-3">
-      <p className="text-sm leading-6 text-l2">点下面开一段新对话，写一句话发出去，比如「用三句话介绍你能帮我做什么」。</p>
-      <ul className="space-y-1.5 text-xs leading-5 text-l3">
-        <li>
-          · 聊天底下跑的就是这家 Agent 的命令行（CLI）：运行页右上角的 {">_"} 图标能切到同一段对话的终端，看 AI 实际运行的命令，不会另开对话。
-        </li>
-        <li>
-          · 对话标题由 AI 自动起（会用掉少量 token）；想自己改就右键重命名，不想自动起名，到 设置 → AI 与 Agent 关掉「会话自动命名」。
-        </li>
-        <li>· 报错时按提示回连接页改地址、密钥或模型；向导会留在侧栏「上手引导」里，随时回来。</li>
-      </ul>
-      <button
-        type="button"
-        className={primaryActionClass}
-        onClick={() => {
-          close();
-          void openQuickChat();
-        }}
-      >
-        开始第一段对话
-      </button>
+      <p className="text-sm font-medium text-l1">先添加一条 AI 连接</p>
+      <p className="text-xs leading-5 text-l3">接好账号或密钥后，就能开始第一段对话。</p>
+      <button type="button" className={primaryActionClass} onClick={onConnect}>去接上 AI</button>
     </Card>
+  );
+  return (
+    <div className="space-y-4">
+      <Card className="space-y-4">
+        <div className="flex items-center gap-2 text-sm font-medium text-l1"><MessageSquare size={16} aria-hidden="true" />试着问 AI</div>
+        <p className="rounded-lg bg-field p-4 text-sm leading-6 text-l2">用三句话介绍你能帮我做什么。</p>
+        <p className="text-xs leading-5 text-l3">打开对话后输入这句话，有回复就说明接通了。</p>
+        <button
+          type="button"
+          className={primaryActionClass}
+          onClick={() => {
+            close();
+            void openQuickChat();
+          }}
+        >
+          开始第一段对话
+        </button>
+      </Card>
+      <details className="rounded-lg px-1 text-xs text-l3">
+        <summary className="cursor-pointer py-2 hover:text-l1">聊天与终端、自动标题</summary>
+        <div className="mt-2 space-y-3 leading-5">
+          <p className="flex items-start gap-2"><Terminal size={14} className="mt-0.5 shrink-0" aria-hidden="true" /><span>运行页右上角的 {">_"} 可切到同一段对话的终端，查看命令与完整输出。</span></p>
+          <p>标题由 AI 自动起，会用少量 token；可右键重命名，或在「设置 → AI 与 Agent」关闭「会话自动命名」。</p>
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -556,25 +611,24 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
     run(s);
   };
   if (done) return <SuccessCard title="项目建好了" detail="在侧栏「项目」下面点它，就能开始做课题；在它下面开的对话也列在它名下。" />;
-  const actions: { label: string; hint: string; primary?: boolean; run: (s: ReturnType<typeof useAppStore.getState>) => void }[] = [
-    { label: "新建项目", hint: "起名、选位置和工作方式（科研 / 编程 / 工作）", primary: true, run: (s) => s.setNewProjectOpenReq({ token: Date.now() }) },
-    { label: "添加已有文件夹", hint: "已经有课题文件夹，登记进来就行", run: (s) => s.setAddProjectOpenReq(Date.now()) },
-    { label: "创建示例课题", hint: "只想先看看科研流程长什么样", run: (s) => s.setDemoProjectOpenReq(Date.now()) },
+  const actions = [
+    { label: "新建项目", hint: "从空文件夹开始，选择工作方式", icon: FolderPlus, run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }) },
+    { label: "添加已有文件夹", hint: "把已有课题或代码文件夹加进来", icon: FolderOpen, run: (s: ReturnType<typeof useAppStore.getState>) => s.setAddProjectOpenReq(Date.now()) },
+    { label: "创建示例课题", hint: "用示例体验科研流程", icon: FlaskConical, run: (s: ReturnType<typeof useAppStore.getState>) => s.setDemoProjectOpenReq(Date.now()) },
   ];
   return (
     <div className="space-y-3">
-      {actions.map((a) => (
-        <Card key={a.label} className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-l1">{a.label}</p>
-            <p className="mt-0.5 text-xs text-l3">{a.hint}</p>
-          </div>
-          <button type="button" className={a.primary ? primaryActionClass : secondaryActionClass} onClick={() => go(a.run)}>
-            {a.label}
-          </button>
-        </Card>
+      {actions.map((action) => (
+        <button key={action.label} type="button" onClick={() => go(action.run)} className="ccode-well group flex w-full items-center gap-4 rounded-xl p-5 text-left transition-colors hover:bg-hover" aria-label={action.label}>
+          <action.icon size={20} className="shrink-0 text-l3" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-l1">{action.label}</span>
+            <span className="mt-1 block text-xs leading-5 text-l3">{action.hint}</span>
+          </span>
+          <ArrowRight size={16} className="shrink-0 text-l3 group-hover:text-l1" aria-hidden="true" />
+        </button>
       ))}
-      <p className="text-xs leading-5 text-l4">不急的话，点右下角「完成」，之后随时在侧栏「项目」旁的 ＋ 里建。</p>
+      <p className="text-xs leading-5 text-l3">也可以稍后从侧栏「新项目」创建。</p>
     </div>
   );
 }

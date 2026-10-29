@@ -260,12 +260,12 @@ exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感�
                              #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
   onboarding.ts              # 上手引导纯逻辑（2026-10-20；2026-10-29 改三步）：三步表（connect / chat / project）与文案、完成判定（全由数据现算）、connectStage（接上 AI 一屏的子阶段）、
                              #   进度/当前步、新完成集合、首次判定（有连接=老用户收起）、完成提示与「两个小提示」（终端 + 标题，acks 记已讲过，旧存档的终端 / 标题确认沿用）、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
-  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 已接通」
+  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 连接已添加」；切步回顶 / 焦点归还 / 在途锁导航，项目整卡入口与按需聊天说明（tests/onboarding-ui.test.ts）
   connect-official.ts        # 向导的官方账号接入：probeOfficial（只读 official_account_status，ready / login / none）、connectOfficialAccount（一键加官方连接）、startOfficialLogin（开终端登录标签）
   components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、官方账号探测（窗口回前台再探）、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
 components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染
   agent-install.ts           # Agent 安装共用件：AgentCmdResult、diagnose / installToolHelp（isWindows 显式传参，连接页与向导共用）+ useAgentInstall（上手向导就地安装：install_method_preview 先亮命令、事件监听、装完 loadAll；连接页自己的安装 / 更新流程仍在 ProfilesPage）
-  components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：presetsForAgent 选预设 → probe_gateway_slot 测试 → saveGateway → bindGateway；自定义端点 / 多槽位去网关库
+  components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：presetsForAgent 选预设 → probe_gateway_slot 测试 → saveGateway → bindGateway；原生回车提交、在途禁编辑 / 重复提交并通知向导锁导航；自定义端点 / 多槽位去网关库（tests/onboarding-ui.test.ts）
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
                              # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/
