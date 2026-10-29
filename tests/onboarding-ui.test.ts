@@ -256,3 +256,36 @@ test("API Key 表单：选「其他服务商 / 中转」自填地址，地址不
     assert.deepEqual(ui.requests, ["bind", "connected"]);
   } finally { await ui.close(); }
 });
+
+test("API Key 表单：填好 Key 离开输入框自动拉模型目录，下拉不预选目录第一个，选中后按它测试与保存", async () => {
+  const ui = await mount(blank, true);
+  try {
+    const calls: string[] = [];
+    let probedModel = "";
+    ui.data.invoke = async (cmd: string, args: { model?: string }) => {
+      calls.push(cmd);
+      if (cmd === "fetch_models") return { models: ["gpt-search-broken", "claude-relay", "claude-relay"], fromCache: false, fetchedAt: "", capabilityMetadataCount: 0 };
+      probedModel = args.model ?? "";
+      return { ok: true, checks: [] };
+    };
+    const key = ui.host.querySelector<HTMLInputElement>('input[type="password"]')!;
+    await ui.act(async () => {
+      Object.getOwnPropertyDescriptor(ui.dom.window.HTMLInputElement.prototype, "value")!.set!.call(key, "relay-key");
+      key.dispatchEvent(new ui.dom.window.Event("input", { bubbles: true }));
+    });
+    await ui.act(async () => { key.dispatchEvent(new ui.dom.window.FocusEvent("focusout", { bubbles: true })); });
+    assert.deepEqual(calls, ["fetch_models"]);
+    const select = ui.host.querySelector<HTMLSelectElement>("#onboarding-model")!;
+    assert.equal(select.tagName, "SELECT");
+    assert.equal(select.value, "", "不替人预选目录第一个");
+    assert.deepEqual(Array.from(select.options).map((o) => o.value), ["", "gpt-search-broken", "claude-relay", "__manual__"]);
+    assert.equal(ui.button("测试并保存").disabled, true);
+    await ui.act(async () => {
+      Object.getOwnPropertyDescriptor(ui.dom.window.HTMLSelectElement.prototype, "value")!.set!.call(select, "claude-relay");
+      select.dispatchEvent(new ui.dom.window.Event("change", { bubbles: true }));
+    });
+    await ui.act(async () => ui.host.querySelector("form")!.requestSubmit());
+    assert.equal(probedModel, "claude-relay");
+    assert.deepEqual(ui.requests, ["save", "bind", "connected"]);
+  } finally { await ui.close(); }
+});
