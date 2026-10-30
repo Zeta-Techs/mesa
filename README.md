@@ -25,6 +25,10 @@
 
 </div>
 
+https://github.com/user-attachments/assets/c9e4a157-bc50-4511-be32-95ad0b2b3ce8
+
+<p align="center"><sub>60 秒看完：从一摞 PDF 到一篇英文综述，每一条引用都查得到</sub></p>
+
 <p align="center"><img src="docs/assets/readme/hero.jpg" width="900" alt="Mesa 运行页：侧栏按项目挂着对话，右边聊天层显示 AI 读文件、出图、检查的过程和生成的总结图" /></p>
 
 ## 为什么用 Mesa

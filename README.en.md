@@ -23,6 +23,10 @@ One desktop app for the connections, chats and terminals of nine coding agents, 
 
 </div>
 
+https://github.com/user-attachments/assets/c9e4a157-bc50-4511-be32-95ad0b2b3ce8
+
+<p align="center"><sub>60 seconds: from a pile of PDFs to an English review, with every citation traceable (on-screen text is in Chinese)</sub></p>
+
 <p align="center"><img src="docs/assets/readme/hero.jpg" width="900" alt="Mesa run page: chats grouped by project in the sidebar; the chat view shows the agent reading files, generating a figure and checking it" /></p>
 
 > The app UI and the full documentation are in Chinese. This page is a short English overview.

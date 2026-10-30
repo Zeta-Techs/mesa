@@ -26,13 +26,8 @@ README.md / README.en.md 里注释掉的图位按这里的文件名取图。素�
 
 ## 视频
 
-`docs/guide/tutorial.md` 里已有 80 秒上手视频（`user-attachments/assets/d1e26c7a-…`），拍在上手向导和管理页改版之前，**不建议直接放首屏**。
+README 首屏（中英两份）放的是宣传片 v4 剪出的 60 秒综述版（`user-attachments/assets/c9e4a157-…`），只讲写综述一条线：开场问题 → 检索 → 精读 → 大纲 → 拼图 → 初稿 → 引用核查 → 你审过才进项目 → 交付 → 换期刊样式 → 结尾标语。
 
-建议重录一段 30～45 秒的首屏视频，无配音、极简配乐或静音：
+换视频的做法：导出 MP4（≤10 MB，GitHub 免费账号的上传上限），在 github.com 编辑 README 或任意 Issue 评论框里拖入，复制生成的 `https://github.com/user-attachments/assets/...` 链接（评论不必提交），替换 README 里那一行。链接必须单独成行、前后空行，GitHub 才渲染成播放器。
 
-1. 打开 Mesa → 上手向导里接上一家 Agent（5 秒）
-2. 新对话，发一句，聊天层流出回答（10 秒）
-3. `⌘⇧T` 切到终端再切回（5 秒）
-4. 示例课题的步骤点「开始」，进评审页看改动、点保存进项目（15 秒）
-
-导出 MP4（≤10 MB），拖进任意一个 GitHub Issue 或 PR 的评论框，拿到 `https://github.com/user-attachments/assets/...` 链接，把链接给我，我把它放进 README 首屏（GitHub 会渲染成可播放的视频）。
+`docs/guide/tutorial.md` 里的教程视频来自 Issue #1、#3、#4、#5 的附件，这几个 Issue 别删。
