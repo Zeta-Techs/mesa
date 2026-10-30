@@ -387,11 +387,15 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 
 **Codex 全局渠道共用 `custom`（2026-10-28 用户拍板，与 cc-switch 同名）**：「设为全局」不再按网关写 `ccode-<短id>`，一律写 `[model_providers.custom]` 并 `model_provider = "custom"`（`CODEX_GLOBAL_PROVIDER`），整块替换（上一家留下的 `requires_openai_auth` / `supports_websockets` / `env_key` 等残键不带过来）。理由：客户端侧栏只列启动时默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后其余连接的对话全藏起来；用 cc-switch 的同名，两边的对话归在一处。**官方账号不进 `custom`**（同日用户实测否决「官方也写进 custom」）：同一渠道名下的老对话会被接到新连接上，中转跑过的对话接到官方时，历史里中转留下的条目官方接口不收（客户端报 `input[n].content: array too long`，整段续不上）；中转之间互切没见到这类问题。Mesa 自己启动用的 `-c` 内联 `ccode-<短id>` 不变（恢复会话靠它认网关），客户端接力补写的 `ccode-<短id>` 定义块不动，只删旧 `ccode` 块。cc-switch 痕迹判定（`codex_other_switcher_marks`）随之改：`custom` 块 `name = "Mesa"`（Mesa 写的）或 ChatGPT 登录形态不算别家；别的名字、cc-switch 模型目录、指着 `custom` 却没定义块才算。
 
+**Codex 全局写入与启动同口径的几项（2026-10-30）**：`patch_codex_relay_extras` 在共用渠道之外再写——顶层 `model_context_window` / `model_auto_compact_token_limit` 按确知窗口改写（压缩点 95%），不知道就撤（上一家的旧窗口会盖过模型目录）；`[plugins."codex-app-tools@openai-bundled"] enabled = false`（同启动 `codex_relay_compat_args`，防失效登录态 401）；自定义请求头写成 `custom` 块的 `env_http_headers`（变量名引用，不落密文）。官方切回撤掉关掉的插件与两项窗口。**删除连接时**，外部 config.toml 的 `model_catalog_json` 还指着这条连接的模型目录就不删那个文件（删了外部 codex 直接起不来，隔离 `CODEX_HOME` 实测）。
+
+**请求头的全局写入口径（2026-10-30）**：Header 的值取自环境变量。能写「变量名引用」的写引用（Codex `env_http_headers`、OpenCode `{env:VAR}`、Grok `$VAR`）；只认明文的（Claude / CodeBuddy / Qwen / Gemini / Kimi）不写，预览 `skipped_policies` 写明「只在 Mesa 启动时带上」。禁止为了全局生效把 Header 明文写进 CLI 配置。
+
 **官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：七家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok；OpenCode 没有官方账号，Cursor 不支持设为全局）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
 
 | Agent | 撤 / 改 |
 |---|---|
-| Codex | 撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、`model_catalog_json`，非官方模型名撤 `model`；**`custom` 块原样留着**，中转老对话照旧走原连接（曾写成 cc-switch 统一官方块同形，用户实测续不上中转老对话，已改回）。客户端侧栏在官方与中转之间切换时会互相藏对话，这是两者不能共用渠道的代价 |
+| Codex | 撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、`model_catalog_json`、`model_context_window` / `model_auto_compact_token_limit`、Mesa 关掉的 `codex-app-tools` 插件，非官方模型名撤 `model`；**`custom` 块原样留着**，中转老对话照旧走原连接（曾写成 cc-switch 统一官方块同形，用户实测续不上中转老对话，已改回）。客户端侧栏在官方与中转之间切换时会互相藏对话，这是两者不能共用渠道的代价 |
 | Claude Code | settings.json env 撤端点 / 两种密钥、四个别名槽及 `_NAME`、第五槽、上下文成对键、旧子 agent 键；`ANTHROPIC_MODEL` 是 claude 模型或别名（opus / sonnet …）时留 |
 | Gemini | `.env` 删 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GEMINI_BASE_URL`，非 gemini 模型删 `GEMINI_MODEL`；settings.json 认证方式改 `oauth-personal` |
 | Qwen | 认证方式改 `qwen-oauth`；env 撤两套协议的密钥 / 端点 / 模型；`model.name` 等于被撤模型名时撤 |

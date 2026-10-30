@@ -548,6 +548,13 @@ pub struct ProfileStore {
     _root_guard: crate::storage::ConfigRootGuard,
 }
 
+/// 用户 Codex 配置的 `model_catalog_json` 是否指着这个文件
+fn codex_config_references(path: &std::path::Path) -> bool {
+    crate::agent_specs::codex_user_config()
+        .and_then(|cfg| cfg.get("model_catalog_json")?.as_str().map(str::to_string))
+        .is_some_and(|p| crate::paths::same_path(&p, &path.to_string_lossy()))
+}
+
 impl ProfileStore {
     pub fn new() -> Result<Self, String> {
         let dir = crate::storage::config_root().ok_or("无法确定平台配置目录")?;
@@ -1042,8 +1049,10 @@ impl ProfileStore {
         let mut bindings = crate::gateway_store::load_bindings()?;
         bindings.retain(|b| b.id != id);
         crate::gateway_store::save_bindings(&bindings)?;
+        // 外部 Codex 的 config.toml 还指着这份模型目录（这条连接曾设为全局）时留着：删了外部 codex 直接起不来
+        //（`failed to load configuration`，2026-10-30 隔离 CODEX_HOME 实测）
         let catalog = crate::agents::codex_catalog_path(id);
-        if let Some(p) = catalog {
+        if let Some(p) = catalog.filter(|p| !codex_config_references(p)) {
             let _ = fs::remove_file(p);
         }
         crate::settings::clear_profile_refs(id);

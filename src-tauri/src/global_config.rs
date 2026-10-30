@@ -751,6 +751,48 @@ fn patch_codex_config(
     Ok(doc.to_string())
 }
 
+/// 与启动注入同口径、全局写入以前漏掉的两处：
+/// - 顶层 `model_context_window` / `model_auto_compact_token_limit` 盖过模型目录里的窗口：确知新模型窗口就改写
+///   （同 agents 启动 `-c`，压缩点取 95%），不知道就撤掉，上一家留下的旧窗口不能接着用；
+/// - ChatGPT 自带的 `codex-app-tools` 插件走官方登录，中转下失效登录态 401（同 codex_relay_compat_args）。
+///   官方切回时 patch_codex_config_official 撤掉这一项。
+/// - 自定义请求头写成渠道的 `env_http_headers`（值是环境变量名，不落密文；外部终端有这个变量就带上）。
+fn patch_codex_relay_extras(
+    content: &str,
+    model: Option<&str>,
+    gateway_id: Option<&str>,
+    header_env: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    use toml_edit::value;
+    let mut doc = parse_toml_doc(Some(content))?;
+    if !header_env.is_empty() {
+        let providers = sub_table(doc.as_item_mut(), "model_providers")?;
+        let blk = sub_table(providers, CODEX_GLOBAL_PROVIDER)?;
+        let mut headers = toml_edit::InlineTable::new();
+        for (h, var) in header_env {
+            headers.insert(h.as_str(), toml_edit::Value::from(var.as_str()));
+        }
+        blk["env_http_headers"] = value(headers);
+    }
+    let ctx = model.and_then(|m| crate::model_registry::model_context_size_declared_for(m, gateway_id));
+    match ctx {
+        Some(c) => {
+            doc["model_context_window"] = value(c);
+            doc["model_auto_compact_token_limit"] = value(c.saturating_mul(95) / 100);
+        }
+        None => {
+            doc.remove("model_context_window");
+            doc.remove("model_auto_compact_token_limit");
+        }
+    }
+    let plugins = sub_table(doc.as_item_mut(), "plugins")?;
+    let entry = sub_table(plugins, CODEX_APP_TOOLS_PLUGIN)?;
+    entry["enabled"] = value(false);
+    Ok(doc.to_string())
+}
+
+const CODEX_APP_TOOLS_PLUGIN: &str = "codex-app-tools@openai-bundled";
+
 /// 键路径上已有字符串值时改成 `value`；没有就不建
 fn set_toml_path_if_present(doc: &mut toml_edit::DocumentMut, path: &[&str], value: &str) {
     let (last, parents) = path.split_last().expect("非空路径");
@@ -795,6 +837,26 @@ fn patch_codex_config_official(existing: Option<&str>) -> Result<String, String>
     // openai_base_url 会把内置 openai 渠道改道到别的地址；web_search 是中转时 Mesa 关的，官方恢复默认
     doc.remove("openai_base_url");
     remove_toml_path_if(&mut doc, &["web_search"], |v| v == "disabled");
+    // 中转时 Mesa 关掉的 ChatGPT 插件与写进去的上下文窗口，官方恢复默认
+    let plugins_empty = match doc.get_mut("plugins").and_then(|p| p.as_table_like_mut()) {
+        Some(plugins) => {
+            let off = plugins
+                .get(CODEX_APP_TOOLS_PLUGIN)
+                .and_then(|e| e.get("enabled"))
+                .and_then(|v| v.as_bool())
+                == Some(false);
+            if off {
+                plugins.remove(CODEX_APP_TOOLS_PLUGIN);
+            }
+            plugins.is_empty()
+        }
+        None => false,
+    };
+    if plugins_empty {
+        doc.remove("plugins");
+    }
+    doc.remove("model_context_window");
+    doc.remove("model_auto_compact_token_limit");
     for path in agents::CODEX_SIDE_MODEL_KEYS {
         remove_toml_path_if(&mut doc, path, |m| !agents::official_model_allowed("codex", m));
     }
@@ -1598,6 +1660,12 @@ fn plan_writes(
                 key,
             )?;
             let content = patch_codex_compat(&content, &profile.request_policy.compat)?;
+            let content = patch_codex_relay_extras(
+                &content,
+                model,
+                profile.gateway_id.as_deref(),
+                &profile.request_policy.header_env,
+            )?;
             push("config.toml", path, content);
             // 密钥在 provider 块内 experimental_bearer_token；不写 auth.json，
             // 也不写 http_headers（ChatGPT 自带 Codex 不认这个字段）
@@ -2031,6 +2099,13 @@ fn skipped_policy_notes(profile: &Profile) -> Vec<String> {
     );
     if !profile.extra_env.is_empty() {
         notes.push("附加环境变量只在 Mesa 启动时注入，不写入 CLI 全局文件".into());
+    }
+    // Header 的值取自环境变量：能写「变量名引用」的几家（Codex env_http_headers、OpenCode {env:}、Grok $VAR）写引用；
+    // 其余只认明文，写进去等于密文落盘，只在 Mesa 启动时带
+    if !profile.request_policy.header_env.is_empty()
+        && !matches!(profile.agent.as_str(), "codex" | "opencode" | "grok")
+    {
+        notes.push("自定义请求头这个 CLI 只认明文，不写进全局配置；只在 Mesa 启动时带上".into());
     }
     notes
 }
@@ -3211,6 +3286,28 @@ mod tests {
         assert!(off["env"].get("ANTHROPIC_CUSTOM_HEADERS").is_none() && off["env"].get("CLAUDE_CODE_USE_BEDROCK").is_none());
         assert_eq!(off["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "oat");
         assert!(off.get("apiKeyHelper").is_none());
+    }
+
+    #[test]
+    fn codex_relay_extras_replace_stale_window_and_disable_app_tools() {
+        // 未知模型：上一家留下的窗口撤掉；app-tools 插件关掉；用户别的插件不动
+        let stale = "model_context_window = 1000000\nmodel_auto_compact_token_limit = 950000\n[plugins.\"other@x\"]\nenabled = true\n";
+        let mut hdr = BTreeMap::new();
+        hdr.insert("X-Region".to_string(), "MODEL_REGION".to_string());
+        let out = patch_codex_relay_extras(stale, Some("relay-unknown-xyz"), None, &hdr).unwrap();
+        let doc: toml::Value = toml::from_str(&out).unwrap();
+        assert!(doc.get("model_context_window").is_none());
+        assert!(doc.get("model_auto_compact_token_limit").is_none());
+        assert_eq!(doc["plugins"]["codex-app-tools@openai-bundled"]["enabled"].as_bool(), Some(false));
+        assert_eq!(doc["plugins"]["other@x"]["enabled"].as_bool(), Some(true));
+        assert_eq!(doc["model_providers"]["custom"]["env_http_headers"]["X-Region"].as_str(), Some("MODEL_REGION"));
+        // 官方切回：关掉的插件、写进去的窗口撤掉，别的插件留着
+        let back = patch_codex_config_official(Some(&out)).unwrap();
+        let doc: toml::Value = toml::from_str(&back).unwrap();
+        assert!(doc["plugins"].get("codex-app-tools@openai-bundled").is_none());
+        assert_eq!(doc["plugins"]["other@x"]["enabled"].as_bool(), Some(true));
+        let only = patch_codex_config_official(Some("model_context_window = 5\n[plugins.\"codex-app-tools@openai-bundled\"]\nenabled = false\n")).unwrap();
+        assert_eq!(only.trim(), "");
     }
 
     #[test]
