@@ -1307,13 +1307,16 @@ export default function ProjectTree({
   // ⌘0（设置里可改，App 发 requestFocusRail）：光标落到正看着的那段；没有就落到它的课题、再没有落第一行。
   // 侧栏刚从收着展开时树还没画出来，等两帧
   const focusRailReq = useAppStore((s) => s.focusRailReq);
-  // 只认挂载之后来的请求：探出整栏每次都新挂一棵树，挂上就照旧值抢焦点的话，鼠标路过图标栏会把光标从输入框里拽走
-  const seenFocusRailReq = useRef(focusRailReq);
+  // 请求是 store 里的待办，领走即清：探出层的树比请求晚挂，挂上时也要领；领过就没了，
+  // 之后鼠标路过图标栏再新挂一棵树不会把光标从输入框里拽走。
+  // 帧号放 ref、只在卸载时取消：领走会把 focusRailReq 翻回 false，按依赖清理会把刚排的两帧掐掉
+  const focusRailRaf = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(focusRailRaf.current), []);
   useEffect(() => {
-    if (!focusRailReq || focusRailReq === seenFocusRailReq.current) return;
-    seenFocusRailReq.current = focusRailReq;
-    let raf = requestAnimationFrame(() => {
-      raf = requestAnimationFrame(() => {
+    if (!focusRailReq || !useAppStore.getState().takeFocusRail()) return;
+    cancelAnimationFrame(focusRailRaf.current);
+    focusRailRaf.current = requestAnimationFrame(() => {
+      focusRailRaf.current = requestAnimationFrame(() => {
         const root = listRef.current;
         const rows = railNavRows();
         const pick =
@@ -1325,7 +1328,6 @@ export default function ProjectTree({
         focusRailRow(pick);
       });
     });
-    return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRailReq]);
 

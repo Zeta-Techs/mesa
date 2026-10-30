@@ -176,6 +176,13 @@ async function renderTree(
         this.railSearchReq = false;
         return true;
       },
+      // ⌘0 的「光标落到侧栏」待办，同上领走即清
+      focusRailReq: false,
+      takeFocusRail(this: { focusRailReq: boolean }) {
+        if (!this.focusRailReq) return false;
+        this.focusRailReq = false;
+        return true;
+      },
       ...store,
     },
     __TAURI_INTERNALS__: {
@@ -1115,6 +1122,17 @@ test("侧栏收着时点放大镜：请求比探出层的树先到，树一挂�
   } finally { await view.close(); }
 });
 
+test("侧栏收着时按 ⌘0：请求比探出层的树先到，树一挂上光标就落进侧栏，请求随即清掉（2026-10-30）", async () => {
+  const view = await renderTree({ focusRailReq: true });
+  try {
+    const doc = view.host.ownerDocument;
+    const win = doc.defaultView!;
+    await view.act(async () => { await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); });
+    assert.ok(doc.activeElement && doc.activeElement !== doc.body && view.host.contains(doc.activeElement), "挂载时就领到请求、光标落在树里的一行");
+    assert.equal((win as unknown as { __treeStore: { focusRailReq: boolean } }).__treeStore.focusRailReq, false);
+  } finally { await view.close(); }
+});
+
 test("置顶分节：默认展开、方向键开合、保留状态、隐藏行不多选，折叠记忆跨挂载恢复", async () => {
   const storage: Record<string, string> = { "ccode.sidebarChatPins": JSON.stringify(["claude-code\nr5"]) };
   const view = await renderTree({}, undefined, { storage });
@@ -1124,7 +1142,7 @@ test("置顶分节：默认展开、方向键开合、保留状态、隐藏行�
     await view.act(async () => chat.dispatchEvent(new win.MouseEvent("click", { bubbles: true, metaKey: true, ctrlKey: true })));
     assert.equal(view.host.querySelectorAll("[data-picked]").length, 1);
     const header = view.button("收起「置顶」");
-    (win as any).__treeStore.focusRailReq = 1;
+    (win as any).__treeStore.focusRailReq = true;
     await view.act(async () => header.dispatchEvent(new win.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
     await view.act(async () => { await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); });
     assert.equal(view.host.querySelector('[aria-label="置顶的对话"]')?.querySelectorAll("[data-chat-key]").length, 0);

@@ -862,14 +862,10 @@ function App() {
         e.preventDefault();
         setPaletteOpen(false);
         // 侧栏收成图标 / 完全隐藏时不改形态，把项目树探出来（2026-10-24 用户定 A+D+E）；
-        // 探出层是新挂的树，等它挂上再要焦点（ProjectTree 只认挂载之后的请求）
+        // 请求留在 store 里，探出层的树挂上自己领（同放大镜）
         const st = useAppStore.getState();
-        if (st.chromeHidden || st.navCollapsed) {
-          st.setRailPeekOpen(true);
-          requestAnimationFrame(() => useAppStore.getState().requestFocusRail());
-        } else {
-          st.requestFocusRail();
-        }
+        if (st.chromeHidden || st.navCollapsed) st.setRailPeekOpen(true);
+        st.requestFocusRail();
         return;
       }
       // 界面缩放（⌘= / ⌘-）：输入框里也生效（同浏览器）。编辑器 / 图表大图自己接了这组键时
@@ -2005,9 +2001,7 @@ function App() {
                         aria-expanded={peekVisible}
                         onClick={(e) => {
                           setRailPeekOpen(!peekVisible);
-                          if (!peekVisible && e.detail === 0) {
-                            requestAnimationFrame(() => useAppStore.getState().requestFocusRail());
-                          }
+                          if (!peekVisible && e.detail === 0) useAppStore.getState().requestFocusRail();
                         }}
                         className={`flex h-8 w-full items-center justify-center rounded-md ${peekVisible ? "bg-rail-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"}`}
                       >

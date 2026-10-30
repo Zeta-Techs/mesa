@@ -817,9 +817,12 @@ interface AppState {
   /** 侧栏「对话管理」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
   sessionsSearchFocusReq: number;
   requestSessionsSearchFocus: () => void;
-  /** 把光标移到侧栏里正看着的那段对话（快捷键默认 mod+0；ProjectTree 消费，之后 ↑↓ 选、回车打开） */
-  focusRailReq: number;
+  /** 把光标移到侧栏里正看着的那段对话（快捷键默认 mod+0；ProjectTree 消费，之后 ↑↓ 选、回车打开）。
+   *  同 railSearchReq：待办标记，挂着的或刚探出挂上的树 takeFocusRail 领走即清（递增令牌 + 只认挂载后的新值时，
+   *  请求比探出层的树先到就丢，2026-10-30） */
+  focusRailReq: boolean;
   requestFocusRail: () => void;
+  takeFocusRail: () => boolean;
   /** 「搜索对话和项目」待打开（标题栏放大镜 / 快捷键发）：弹层挂在 ProjectTree 里，侧栏收着时树要等探出层挂上才有，
    *  所以留成待办，挂着的或刚挂上的那棵树 takeRailSearch 领走即清（一次性窗口事件在树挂上前发出会丢，2026-10-30 要点两次才开） */
   railSearchReq: boolean;
@@ -1182,8 +1185,13 @@ export const useAppStore = create<AppState>((set, get) => {
   sessionsSearchFocusReq: 0,
   requestSessionsSearchFocus: () =>
     set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),
-  focusRailReq: 0,
-  requestFocusRail: () => set((s) => ({ focusRailReq: s.focusRailReq + 1 })),
+  focusRailReq: false,
+  requestFocusRail: () => set({ focusRailReq: true }),
+  takeFocusRail: () => {
+    if (!get().focusRailReq) return false;
+    set({ focusRailReq: false });
+    return true;
+  },
   railSearchReq: false,
   requestRailSearch: () => set({ railSearchReq: true }),
   takeRailSearch: () => {
