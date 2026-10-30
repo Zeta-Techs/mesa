@@ -995,7 +995,9 @@ pub(crate) fn patch_kimi_config(
 }
 
 /// Grok：~/.grok/config.toml（TOML）。写入面与启动注入同口径（matrix §9）：
-/// 顶层 api_key（凭证优先级最高档；官方账号冲突探针本就盯着它，语义自洽）+
+/// 密钥写进每个 `[model.<id>].api_key`（2026-10-30 起）：凭证优先级只有「逐模型 api_key/env_key > 登录令牌 >
+/// XAI_API_KEY」三档，**顶层 `api_key` 1.0.70 不读**（隔离 GROK_HOME + 本地抓包实测：只写顶层报未登录；
+/// 登录过官方账号时中转段没有自己的 key 会把 xAI 令牌发去中转）。以前写的顶层 api_key 顺手撤掉 +
 /// [endpoints].models_base_url（= 注入的 GROK_MODELS_BASE_URL）+
 /// [models].default（首个模型）。请求策略落 [models] 全局默认（键名与 GROK_CONFIG
 /// overlay 一致：temperature/top_p/max_completion_tokens/default_reasoning_effort）；
@@ -1024,9 +1026,8 @@ fn patch_grok_config(
     let model = profile.models.first().map(String::as_str);
     let policy = &profile.request_policy;
     let mut doc = parse_toml_doc(existing)?;
-    if let Some(k) = key {
-        doc["api_key"] = value(k);
-    }
+    // 顶层 api_key 是 Mesa 以前写的（Grok 不读），留着只是明文密钥
+    doc.remove("api_key");
     if let Some(u) = base_url {
         let endpoints = sub_table(doc.as_item_mut(), "endpoints")?;
         endpoints["models_base_url"] = value(u);
@@ -1034,6 +1035,15 @@ fn patch_grok_config(
     let models_tbl = sub_table(doc.as_item_mut(), "models")?;
     if let Some(m) = model {
         models_tbl["default"] = value(m);
+    }
+    // 白名单是用户的选择器过滤，不接管；但默认模型不在名单里 Grok 直接拒绝启动（1.0.34 实证），只把默认模型并进去
+    if let (Some(m), Some(list)) = (
+        model,
+        models_tbl.get_mut("allowed_models").and_then(|v| v.as_array_mut()),
+    ) {
+        if !list.iter().any(|v| v.as_str() == Some(m)) {
+            list.push(m);
+        }
     }
     // 会话标题 / 摘要与输入框下一句提示的模型：没设时 Grok 用内置 grok-* 却发到默认模型的地址，中转不认、
     // 标题生成失败；设着的常是上一家的模型。与启动覆盖层（agents::grok_config_overlay）同口径：
@@ -1076,6 +1086,12 @@ fn patch_grok_config(
         entry["name"] = value(format!("{} · {m}", profile.name));
         if let Some(u) = base_url {
             entry["base_url"] = value(u);
+        }
+        if let Some(k) = key {
+            entry["api_key"] = value(k);
+            if let Some(t) = entry.as_table_mut() {
+                t.remove("env_key");
+            }
         }
         if let Some(b) = api_backend {
             entry["api_backend"] = value(b);
@@ -1441,7 +1457,8 @@ fn patch_kimi_config_official(existing: &str) -> Result<String, String> {
 }
 
 /// Grok：撤顶层 api_key / env_key 与 [endpoints].models_base_url；默认模型不是 grok 模型时撤；
-/// 指向非 x.ai 地址的 [model.<id>] 段整段撤——留着的话官方登录的令牌会被发去中转。
+/// 指向非 x.ai 地址的 [model.<id>] 段：Mesa 写的（名字是「配置名 · 模型」）整段撤，连同明文密钥；
+/// 没有自己密钥的整段撤（留着官方登录的令牌会被发去中转）；用户手写、带自己 api_key / env_key 的留着。
 fn patch_grok_config_official(existing: &str) -> Result<String, String> {
     let mut doc = parse_toml_doc(Some(existing))?;
     doc.remove("api_key");
@@ -1472,10 +1489,17 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
     if let Some(entries) = doc.get_mut("model").and_then(|m| m.as_table_like_mut()) {
         let relay: Vec<String> = entries
             .iter()
-            .filter(|(_, item)| {
-                item.get("base_url")
+            .filter(|(id, item)| {
+                let to_relay = item
+                    .get("base_url")
                     .and_then(|u| u.as_str())
-                    .is_some_and(|u| !crate::agents::grok_is_xai_endpoint(u))
+                    .is_some_and(|u| !crate::agents::grok_is_xai_endpoint(u));
+                let own_key = item.get("api_key").is_some() || item.get("env_key").is_some();
+                let mesa = item
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| n.ends_with(&format!(" · {id}")));
+                to_relay && (mesa || !own_key)
             })
             .map(|(k, _)| k.to_string())
             .collect();
@@ -3415,12 +3439,14 @@ trust_level = "trusted"
         let doc: toml::Value = toml::from_str(&off("kimi")[0].content).unwrap();
         assert!(doc.get("default_model").is_none(), "没登录过就撤默认模型");
 
-        w(".grok/config.toml", "api_key = \"sk\"\n[endpoints]\nmodels_base_url = \"https://r/v1\"\n[models]\ndefault = \"glm-5\"\ntemperature = 0.3\n[model.glm-5]\nbase_url = \"https://r/v1\"\n[model.grok-4]\nbase_url = \"https://api.x.ai/v1\"\n[mcp_servers.m]\ncommand = \"c\"\n");
+        w(".grok/config.toml", "api_key = \"sk\"\n[endpoints]\nmodels_base_url = \"https://r/v1\"\n[models]\ndefault = \"glm-5\"\ntemperature = 0.3\n[model.glm-5]\nbase_url = \"https://r/v1\"\n[model.grok-4]\nbase_url = \"https://api.x.ai/v1\"\n[model.k3]\nname = \"中转 · k3\"\nbase_url = \"https://r/v1\"\napi_key = \"sk\"\n[model.byok]\nname = \"我的\"\nbase_url = \"https://mine/v1\"\nenv_key = \"MINE_KEY\"\n[mcp_servers.m]\ncommand = \"c\"\n");
         let doc: toml::Value = toml::from_str(&off("grok")[0].content).unwrap();
         assert!(doc.get("api_key").is_none() && doc.get("endpoints").is_none());
         assert!(doc["models"].get("default").is_none());
         assert_eq!(doc["models"]["temperature"].as_float(), Some(0.3));
         assert!(doc["model"].get("glm-5").is_none() && doc["model"].get("grok-4").is_some());
+        assert!(doc["model"].get("k3").is_none(), "Mesa 写的中转段连同密钥撤掉");
+        assert!(doc["model"].get("byok").is_some(), "用户手写、带自己密钥的段留着");
         assert!(doc["mcp_servers"].get("m").is_some());
 
         // 每家补丁幂等：写完再算一遍计划，整份比对一致
@@ -4111,9 +4137,9 @@ trust_level = "trusted"
 
     #[test]
     fn grok_config_patch_writes_and_preserves() {
-        // 既有 [mcp_servers] 段与外来键原样保留；写入面 = 顶层 api_key +
-        // [endpoints].models_base_url + [models].default/策略全局默认
-        let existing = "theme = \"dark\"\n\n[mcp_servers.fs]\ncommand = \"npx\"\n\n[models]\nallowed_models = [\"grok-4.5\"]\n";
+        // 既有 [mcp_servers] 段与外来键原样保留；写入面 = 逐模型 api_key（顶层旧 api_key 撤掉）+
+        // [endpoints].models_base_url + [models].default/策略全局默认；白名单并进绑定模型
+        let existing = "api_key = \"old\"\ntheme = \"dark\"\n\n[mcp_servers.fs]\ncommand = \"npx\"\n\n[models]\nallowed_models = [\"grok-4.5\"]\n";
         let mut p = profile("grok");
         p.models = vec!["grok-code-fast-1".into()];
         p.request_policy.temperature = Some(0.7);
@@ -4125,7 +4151,8 @@ trust_level = "trusted"
             .insert("X-Tenant".into(), "TENANT_TOKEN".into());
         let out = patch_grok_config(Some(existing), Some("xai-secret"), &p).unwrap();
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
-        assert_eq!(doc["api_key"].as_str(), Some("xai-secret"));
+        assert!(doc.get("api_key").is_none(), "顶层 api_key Grok 不读，不写");
+        assert_eq!(doc["model"]["grok-code-fast-1"]["api_key"].as_str(), Some("xai-secret"));
         assert_eq!(
             doc["endpoints"]["models_base_url"].as_str(),
             Some("https://relay.example.com")
@@ -4144,11 +4171,9 @@ trust_level = "trusted"
         // 用户既有内容一律不动
         assert_eq!(doc["theme"].as_str(), Some("dark"));
         assert_eq!(doc["mcp_servers"]["fs"]["command"].as_str(), Some("npx"));
-        assert_eq!(
-            models["allowed_models"].as_array().unwrap().len(),
-            1,
-            "allowed_models 属用户选择器过滤，不接管"
-        );
+        // allowed_models 属用户选择器过滤，不接管；只并进默认模型（不在名单里 Grok 拒绝启动）
+        let allowed: Vec<_> = models["allowed_models"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(allowed, ["grok-4.5", "grok-code-fast-1"]);
         // 每个绑定模型都建段并写推理菜单（中转目录不带档位时 /effort 才出得来）
         let entry = &doc["model"]["grok-code-fast-1"];
         assert_eq!(entry["supports_reasoning_effort"].as_bool(), Some(true));
@@ -4294,7 +4319,9 @@ supports_reasoning_effort = false
         let plans = plan_writes(&home, &p, Some("xai-secret"), &["m1".to_string()]).unwrap();
         assert_eq!(plans.len(), 1);
         assert!(plans[0].path.ends_with(".grok/config.toml"));
-        assert!(plans[0].content.contains("api_key"));
+        let doc: toml::Value = toml::from_str(&plans[0].content).unwrap();
+        assert_eq!(doc["model"]["m1"]["api_key"].as_str(), Some("xai-secret"));
+        assert!(doc.get("api_key").is_none());
         assert!(plans[0].content.contains("models_base_url"));
         fs::remove_dir_all(&home).ok();
     }

@@ -401,7 +401,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 | Qwen | 认证方式改 `qwen-oauth`；env 撤两套协议的密钥 / 端点 / 模型；`model.name` 等于被撤模型名时撤 |
 | CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` |
 | Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`。新旧两个配置目录存在的都改 |
-| Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]` 整段撤（留着官方令牌会发去中转） |
+| Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]`：Mesa 写的（`name` 是「配置名 · 模型」）连同密钥整段撤、没有自己密钥的整段撤（留着官方令牌会发去中转），**用户手写、带自己 `api_key` / `env_key` 的留着**（2026-10-30）。官方启动另查「中转段没有自己密钥」并拦下 |
 
 官方计划是删键，**比对磁盘必须整份比**（`disk_equals_plans`）——API 计划用的子集比对对删键永远为真，托盘会两项都打勾、「已是官方」会跳过写入。`plans_match_disk` 按账号类型分派。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像。未登录官方账号时前端先确认一次。
 

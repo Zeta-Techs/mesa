@@ -3275,9 +3275,14 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
         // Grok：api_key 照旧按探测拦；默认模型是中转模型（glm 之类）时官方账号也用不了
         "grok" => {
             let mut out = probe_conflicts(home, oa);
-            let default = std::fs::read_to_string(home.join(".grok/config.toml"))
+            let cfg = std::fs::read_to_string(home.join(".grok/config.toml"))
                 .ok()
-                .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+                .and_then(|t| toml::from_str::<toml::Value>(&t).ok());
+            out.extend(grok_relay_segments_without_key(cfg.as_ref()).into_iter().map(|id| {
+                format!("~/.grok/config.toml 的 [model.{id}] 指向中转地址却没有自己的密钥，官方登录令牌会被发过去")
+            }));
+            let default = cfg
+                .as_ref()
                 .and_then(|v| v.get("models")?.get("default")?.as_str().map(str::to_string));
             // 启动时 GROK_CONFIG 覆盖层把默认模型钉成官方模型（apply_official_inject）；定不出官方模型时才拦
             let can_pin = !profile.models.is_empty() || !official_models_for_launch("grok").is_empty();
@@ -3288,6 +3293,25 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
         }
         _ => probe_conflicts(home, oa),
     }
+}
+
+/// Grok 指向非 x.ai 地址、又没有自己 api_key / env_key 的 `[model.<id>]` 段：凭证按优先级落到登录令牌，
+/// 官方账号登录过时会把 xAI 令牌发去中转（凭证只有「逐模型 > 登录令牌 > XAI_API_KEY」三档，1.0.70）
+fn grok_relay_segments_without_key(cfg: Option<&toml::Value>) -> Vec<String> {
+    let Some(models) = cfg.and_then(|v| v.get("model")).and_then(|m| m.as_table()) else {
+        return Vec::new();
+    };
+    models
+        .iter()
+        .filter(|(_, seg)| {
+            let relay = seg
+                .get("base_url")
+                .and_then(|u| u.as_str())
+                .is_some_and(|u| !grok_is_xai_endpoint(u));
+            relay && seg.get("api_key").is_none() && seg.get("env_key").is_none()
+        })
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 /// .env 里某个键的值（只用于模型名这类非密钥；引号去掉）

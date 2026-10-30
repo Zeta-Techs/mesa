@@ -901,8 +901,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
             login_cmd: &["login"],
             auth_file_paths: &[".grok/auth.json"],
             env_purge_list: &["XAI_API_KEY", "GROK_CODE_XAI_API_KEY"],
-            // config.toml 顶层 api_key/env_key 是凭证优先级最高档，会静默覆盖官方账号登录；
-            // 以 TOML 探测并提供带备份的清理动作
+            // config.toml 顶层 api_key/env_key：1.0.70 已不读（凭证只认逐模型段），旧版写过的残留仍按冲突探测并可清理；
+            // 逐模型段的泄露风险（中转段没有自己的密钥）在 agents::official_launch_conflicts 另查
             conflict_probes: &[ConflictProbe {
                 file: ".grok/config.toml",
                 keys: &["api_key", "env_key"],
