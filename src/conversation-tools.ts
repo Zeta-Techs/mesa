@@ -202,6 +202,7 @@ export function groupConversationSegments(
     const live = isLast && (Boolean(opts.live) || pending);
     const cut = live ? entries.length - 1 : lastProcess;
     const answerBlocks = entries.slice(cut + 1).map((e) => e.block);
+    const answerCwd = answerBlocks.length ? messages[entries[entries.length - 1].index].cwd : undefined;
     const asked = start > 0 ? messages[start - 1] : null;
     out.push({
       kind: "turn",
@@ -209,7 +210,7 @@ export function groupConversationSegments(
       end,
       items: buildItems(messages, entries.slice(0, cut + 1), opts.cwd ?? null, opts.isWindows ?? false),
       answer: answerBlocks.length
-        ? { role: "assistant", blocks: answerBlocks, timestamp: messages[end].timestamp, usage: null }
+        ? { role: "assistant", blocks: answerBlocks, timestamp: messages[end].timestamp, usage: null, ...(answerCwd ? { cwd: answerCwd } : {}) }
         : null,
       seconds: secondsBetween(asked?.timestamp ?? messages[start].timestamp, messages[end].timestamp),
       live,

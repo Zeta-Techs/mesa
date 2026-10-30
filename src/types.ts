@@ -705,6 +705,8 @@ export interface ChatMessageDto {
   usage: TokenUsageDto | null;
   /** 来源给的消息 id（Claude 行 uuid、Codex 条目 id …）：稳定身份，没有就不带 */
   id?: string;
+  /** 写这条回复时 Agent 所在目录（Claude 每行 cwd，它 cd 过就变）：回复里的相对路径按它解析，没有就用会话目录 */
+  cwd?: string;
   /** 仅前端乐观消息：上一轮还在生成时发出、CLI 排队待处理（会话文件记下后由解析结果替换，不再带这个标记） */
   queued?: boolean;
 }

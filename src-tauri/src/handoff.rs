@@ -813,6 +813,7 @@ mod tests {
             timestamp: None,
             usage: None,
             id: None,
+            cwd: None,
         }
     }
 

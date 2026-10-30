@@ -3127,6 +3127,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             timestamp: ts.map(String::from),
             usage: None,
             id: None,
+            cwd: None,
         }
     }
 

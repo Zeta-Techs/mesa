@@ -162,6 +162,10 @@ pub struct ChatMessageDto {
     /// 来源给的消息 id（Claude 的行 uuid、Codex 的条目 id …）：前端拿它当稳定身份
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// 写这条回复时 Agent 所在的目录（Claude 每行的 cwd：它在 shell 里 cd 过就跟着变）：回复里的相对路径以它为基准，
+    /// 不是会话起点目录（2026-10-30 实证：cd 进 out/promo 后写的 [x.mp4](x.mp4) 按项目根解析成「文件不存在」）。来源没有就不带
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -525,6 +529,7 @@ fn push_tool_result(msgs: &mut Vec<ChatMessageDto>, blocks: Vec<BlockDto>, ts: O
         timestamp: ts,
         usage: None,
         id: None,
+        cwd: None,
     });
 }
 
@@ -1215,6 +1220,7 @@ fn push_claude_user_string(
                 timestamp: ts,
                 usage: None,
                 id,
+                cwd: None,
             });
         }
     } else if !s.trim().is_empty() && !is_claude_interrupt_marker(s) {
@@ -1224,6 +1230,7 @@ fn push_claude_user_string(
             timestamp: ts,
             usage: None,
             id,
+            cwd: None,
         });
     }
 }
@@ -1288,6 +1295,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                                 timestamp: ts,
                                 usage: None,
                                 id: get_str(&v, "uuid").map(String::from),
+                                cwd: None,
                             });
                         }
                     }
@@ -1371,6 +1379,7 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: msg.get("usage").map(claude_usage),
                     id: get_str(&v, "uuid").map(String::from),
+                    cwd: get_str(&v, "cwd").map(String::from),
                 });
             }
             _ => {} // summary / ai-title / file-history-snapshot 等非对话类型
@@ -1621,6 +1630,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 timestamp: ts,
                                 usage: None,
                                 id: get_str(p, "id").map(String::from),
+                                cwd: None,
                             });
                         }
                     }
@@ -1639,6 +1649,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                         timestamp: ts,
                         usage: None,
                         id: get_str(p, "id").map(String::from),
+                        cwd: None,
                     }),
                     // 思考：别家的思考都进「思考」过程行，Codex 原先整条丢了（2026-10-26 审查：本机 71 条有正文的推理一条没显示）
                     Some("reasoning") => {
@@ -1655,6 +1666,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 timestamp: ts,
                                 usage: None,
                                 id: get_str(p, "id").map(String::from),
+                                cwd: None,
                             });
                         }
                     }
@@ -1699,6 +1711,7 @@ fn parse_codex(lines: &[String]) -> Vec<ChatMessageDto> {
                                 timestamp: ts,
                                 usage: None,
                                 id: None,
+                                cwd: None,
                             });
                         }
                     }
@@ -2003,6 +2016,7 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: None,
                     id: id.clone(),
+                    cwd: None,
                 });
                 gemini_upsert(&mut msgs, &mut ids, id, msg);
             }
@@ -2038,6 +2052,7 @@ fn parse_gemini(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: v.get("tokens").map(gemini_usage),
                     id: id.clone(),
+                    cwd: None,
                 });
                 gemini_upsert(&mut msgs, &mut ids, id, msg);
             }
@@ -2278,6 +2293,7 @@ fn parse_qwen(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: v.get("usageMetadata").map(qwen_usage),
                     id: get_str(&v, "uuid").map(String::from),
+                    cwd: None,
                 });
             }
             // 独立 tool_result 记录并入上一条 assistant（视觉跟随调用）
@@ -2508,6 +2524,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                         timestamp: ts,
                         usage: None,
                         id: None,
+                        cwd: None,
                     });
                     last_prompt = Some(text);
                 }
@@ -2525,6 +2542,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             timestamp: ts,
                             usage: None,
                             id: None,
+                            cwd: None,
                         });
                         cur = Some(msgs.len() - 1);
                     }
@@ -2616,6 +2634,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             timestamp: ts,
                             usage: None,
                             id: None,
+                            cwd: None,
                         });
                     }
                     Some("assistant") => {
@@ -2631,6 +2650,7 @@ fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
                             timestamp: ts,
                             usage: None,
                             id: None,
+                            cwd: None,
                         });
                     }
                     Some("tool") => {
@@ -2806,6 +2826,7 @@ fn parse_kimi_legacy(lines: &[String]) -> Vec<ChatMessageDto> {
                         timestamp: None,
                         usage: None,
                         id: None,
+                        cwd: None,
                     });
                 }
             }
@@ -2821,6 +2842,7 @@ fn parse_kimi_legacy(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: None,
                     usage: None,
                     id: None,
+                    cwd: None,
                 });
             }
             "tool" => {
@@ -2990,6 +3012,7 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: None,
                     id: get_str(&v, "id").map(String::from),
+                    cwd: None,
                 });
                 continue;
             }
@@ -3027,6 +3050,7 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: None,
                     id: None,
+                    cwd: None,
                 });
             }
             Some("assistant") => {
@@ -3039,6 +3063,7 @@ fn parse_codebuddy(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: None,
                     id: None,
+                    cwd: None,
                 });
             }
             _ => {}
@@ -3199,6 +3224,7 @@ fn parse_cursor(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: None,
                     id: None,
+                    cwd: None,
                 });
             }
             // 助手正文是否带独立 type 未实证，多候选；tool_call 等事件行不渲染成消息
@@ -3212,6 +3238,7 @@ fn parse_cursor(lines: &[String]) -> Vec<ChatMessageDto> {
                     timestamp: ts,
                     usage: None,
                     id: None,
+                    cwd: None,
                 });
             }
             _ => {} // tool_call/tool_result/turn_ended/turn_id/message_id 及未知 type 跳过
@@ -3405,6 +3432,7 @@ fn parse_grok(lines: &[String]) -> Vec<ChatMessageDto> {
                         timestamp: ts,
                         usage: None,
                         id: None,
+                        cwd: None,
                     });
                 }
                 break_run = false;
@@ -3512,6 +3540,7 @@ fn parse_grok_history(lines: &[String]) -> Vec<ChatMessageDto> {
             timestamp: None,
             usage: None,
             id: None,
+            cwd: None,
         });
     }
     messages
@@ -3990,6 +4019,7 @@ fn opencode_message(
                 timestamp: ts,
                 usage: None,
                 id: None,
+                cwd: None,
             })
         }
         Some("assistant") => {
@@ -4023,6 +4053,7 @@ fn opencode_message(
                 timestamp: ts,
                 usage,
                 id: None,
+                cwd: None,
             })
         }
         _ => None,
@@ -8713,6 +8744,19 @@ mod tests {
     }
 
     #[test]
+    fn claude_assistant_carries_line_cwd() {
+        // 2026-10-30 实证：Agent 在 shell 里 cd 进 out/promo 后写 [x.mp4](x.mp4)，相对路径要按这一行的 cwd 解析
+        let lines = s(&[
+            r#"{"type":"user","uuid":"u1","cwd":"/p","message":{"role":"user","content":"做个视频"}}"#,
+            r#"{"type":"assistant","uuid":"a1","cwd":"/p/out/promo","message":{"role":"assistant","content":[{"type":"text","text":"见 [x.mp4](x.mp4)"}]}}"#,
+            r#"{"type":"assistant","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"旧版没有 cwd"}]}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        let cwds: Vec<_> = msgs.iter().map(|m| (m.role.as_str(), m.cwd.as_deref())).collect();
+        assert_eq!(cwds, vec![("user", None), ("assistant", Some("/p/out/promo")), ("assistant", None)]);
+    }
+
+    #[test]
     fn claude_local_command_output_settles_tail() {
         let lines = s(&[
             r#"{"type":"user","message":{"role":"user","content":"<command-name>/effort</command-name><command-args>high</command-args>"}}"#,
@@ -9866,6 +9910,7 @@ mod tests {
                 timestamp: None,
                 usage: None,
                 id: None,
+                cwd: None,
             },
             ChatMessageDto {
                 role: "assistant".into(),
@@ -9876,6 +9921,7 @@ mod tests {
                 timestamp: None,
                 usage: None,
                 id: None,
+                cwd: None,
             },
         ];
         redact_conversation(&mut messages);
@@ -12219,6 +12265,7 @@ mod tests {
             timestamp: ts.map(|t| t.into()),
             usage: None,
             id: None,
+            cwd: None,
         }
     }
 

@@ -59,6 +59,18 @@ test("一轮：过程收成一组（思考、工具、中途说明），最后�
   assert.deepEqual(turnSummary(t.items), { text: "1 个文件操作", problems: 0, problem: null });
 });
 
+// 2026-10-30 用户截图：Agent cd 进 out/promo 后写 [x.mp4](x.mp4)，按会话目录解析成「文件不存在」
+test("回答带上写它时 Agent 所在的目录，相对路径按它解析；没有就不带", () => {
+  const messages: ChatMessageDto[] = [
+    msg("user", [text("做个视频")], at(0)),
+    msg("assistant", [use("Bash", { command: "cd out/promo && ffmpeg …" }), result("ok")], at(3)),
+    { ...msg("assistant", [text("见 [x.mp4](x.mp4)")], at(9)), cwd: "/p/out/promo" },
+  ];
+  assert.equal(turnOf(groupConversationSegments(messages, { cwd: "/p" })).answer?.cwd, "/p/out/promo");
+  const plain = messages.map(({ cwd: _cwd, ...m }) => m);
+  assert.equal("cwd" in (turnOf(groupConversationSegments(plain, { cwd: "/p" })).answer ?? {}), false);
+});
+
 test("没有过程的回答照原样一条一条，不加「已工作」", () => {
   const segs = groupConversationSegments([msg("user", [text("你好")]), msg("assistant", [text("你好！")])]);
   assert.deepEqual(segs.map((s) => s.kind), ["message", "message"]);

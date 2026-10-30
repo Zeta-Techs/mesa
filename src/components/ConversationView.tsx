@@ -506,7 +506,9 @@ export default function ConversationView({
   }
 
   /** 正文块（用户 / 助手）。过程块都在「轮」里画；这里只兜底极少数夹在用户消息里的（如中断时的半截结果） */
-  function renderBlock(b: BlockDto, key: string, isUser: boolean, forceOpen = false) {
+  // at：这条消息自己的目录（Agent 中途 cd 过，回复里的相对路径按它解析），没有就用会话目录
+  function renderBlock(b: BlockDto, key: string, isUser: boolean, forceOpen = false, at?: string | null) {
+    const base = at || cwd;
     if (b.kind === "thinking" || b.kind === "tool_use" || b.kind === "tool_result") {
       return (
         <div key={key} className={`my-1 whitespace-pre-wrap break-all text-l3 font-mono ccode-chat-code`}>
@@ -521,7 +523,7 @@ export default function ConversationView({
     const { pack, said } = isUser ? splitLaunchPrompt(b.text) : { pack: null, said: b.text };
     const { text: bodyText, images } = splitImagePaths(said);
     const imageRow = images.map((p) => (
-      <ChatImageCard key={p} path={p} cwd={cwd} />
+      <ChatImageCard key={p} path={p} cwd={base} />
     ));
     if (isUser) {
       // 输入框发出去的文档附件（整行一个路径）画成文件卡，不当正文
@@ -543,10 +545,10 @@ export default function ConversationView({
               {packOpen && <div className="mt-1 whitespace-pre-wrap break-words text-l3">{pack}</div>}
             </div>
           )}
-          {userText && <UserText text={userText} cwd={cwd} forceOpen={forceOpen} />}
+          {userText && <UserText text={userText} cwd={base} forceOpen={forceOpen} />}
           {imageRow}
           {docs.map((p) => (
-            <ChatFileCard key={p} path={p} cwd={cwd} />
+            <ChatFileCard key={p} path={p} cwd={base} />
           ))}
         </div>
       );
@@ -555,14 +557,14 @@ export default function ConversationView({
     // 纯文本原文，`**`、`#`、表格竖线全露出来，要点「展开全部」才排版（2026-10-21 去掉）
     return (
       <div key={key} className="my-1">
-        {bodyText && <ChatMarkdown text={bodyText} cwd={cwd} />}
+        {bodyText && <ChatMarkdown text={bodyText} cwd={base} />}
         {imageRow}
       </div>
     );
   }
 
   function renderBlocks(m: ChatMessageDto, mkey: string, isUser: boolean, forceOpen = false) {
-    return m.blocks.map((b, bi) => renderBlock(b, `${mkey}:${bi}`, isUser, forceOpen));
+    return m.blocks.map((b, bi) => renderBlock(b, `${mkey}:${bi}`, isUser, forceOpen, m.cwd));
   }
 
   // 过程行、计划、思考正文：聊天字号阶梯里的 0.94 档（App.css .ccode-chat-meta），随「聊天字号」设置走
@@ -752,7 +754,7 @@ export default function ConversationView({
       // 过程里的中途说明：这一轮做完后降一级（.ccode-chat-aside），回答才是最醒目的字；还在写时它可能就是回答，不降
       return (
         <div key={key} data-search-block={searching && item.index === focusIndex || undefined} className={`my-2 ${live ? "" : "ccode-chat-aside"}`}>
-          {renderBlock({ kind: "text", text: item.text, toolName: null }, key, false)}
+          {renderBlock({ kind: "text", text: item.text, toolName: null }, key, false, false, messages[item.index]?.cwd)}
         </div>
       );
     }
