@@ -907,7 +907,13 @@ export default function ProjectTree({
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
   /** 对话不缩进，左缘对齐课题行的图标（2026-10-25 用户对照 Claude 客户端：课题名降成小号灰字的分组标题，
    *  项目和对话靠字号、字色分层，不再靠缩进；原 2026-10-24 缩进到名字起点） */
-  function renderChat(s: SessionMetaDto, project: ProjectDto | null, folderName?: string, origin?: string | null) {
+  function renderChat(
+    s: SessionMetaDto,
+    project: ProjectDto | null,
+    folderName?: string,
+    origin?: string | null,
+    originTag = true,
+  ) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
     // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
@@ -1026,8 +1032,9 @@ export default function ProjectTree({
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
           {/* 置顶一节跨课题：行尾小字写它属于哪个课题（2026-10-26 用户：置顶的看不出是谁的）。
-              悬停 / 聚焦时让位给 ⋯，标题宽度大致不变；课题名长了自己截断，不挤标题 */}
-          {origin && (
+              悬停 / 聚焦时让位给 ⋯，标题宽度大致不变；课题名长了自己截断，不挤标题。
+              置顶的全是同一个课题时不写（2026-10-30 用户：都写同一个名字分不出谁，白挤标题），悬停里照写 */}
+          {origin && originTag && (
             <span
               className="max-w-[6.5rem] truncate pl-1 pr-1.5 text-micro text-l3 group-hover/chat:hidden group-focus-within/chat:hidden"
               data-chat-origin
@@ -1916,7 +1923,11 @@ export default function ProjectTree({
               withUnread(chatDot(s, terminalRunInputs), chatKey(s) !== highlightChatKey && unreadSet.has(chatKey(s))),
             )))}
             <div id={`${sectionId}-pinned`} role="group" aria-label="置顶的对话" hidden={collapsedSections.includes("pinned")} className="space-y-[3px] pt-[3px]">
-              {!collapsedSections.includes("pinned") && pinnedList.map((s) => renderChat(s, projectOfChat(s), undefined, originOfChat(s)))}
+              {!collapsedSections.includes("pinned") && (() => {
+                const origins = pinnedList.map(originOfChat);
+                const mixed = new Set(origins).size > 1;
+                return pinnedList.map((s, i) => renderChat(s, projectOfChat(s), undefined, origins[i], mixed));
+              })()}
             </div>
           </div>
         )}
