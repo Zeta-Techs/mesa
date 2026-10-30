@@ -83,6 +83,8 @@ pub(crate) fn dry_run_matches(store: &ProfileStore, profile: &Profile) -> Option
 pub struct GlobalApplyResultDto {
     pub files: Vec<String>,
     pub validation: crate::profile_validation::ProfileValidationDto,
+    /// 同预览的 override_notes：一键切换不弹预览，写完用提示条说
+    pub override_notes: Vec<String>,
 }
 
 /// Codex「设为全局」挡路：live 被 cc-switch / custom 占用，或本机有 cc-switch。
@@ -2154,6 +2156,8 @@ pub struct GlobalWriteFilePreviewDto {
 pub struct GlobalWritePreviewDto {
     pub files: Vec<GlobalWriteFilePreviewDto>,
     pub skipped_policies: Vec<String>,
+    /// 外部终端里会盖过这次写入的来源（shell 变量、更高优先级的配置文件）
+    pub override_notes: Vec<String>,
     pub restart_note: String,
     pub scope_note: String,
 }
@@ -2346,6 +2350,7 @@ fn preview_plans(
     agent: &str,
     plans: &[PlannedWrite],
     skipped_policies: Vec<String>,
+    override_notes: Vec<String>,
 ) -> GlobalWritePreviewDto {
     let mut files = Vec::new();
     for plan in plans {
@@ -2377,6 +2382,7 @@ fn preview_plans(
     GlobalWritePreviewDto {
         files,
         skipped_policies,
+        override_notes,
         restart_note: restart_note(agent).into(),
         scope_note: "只改外部 CLI 的配置文件。不会改 Mesa 启动栏预选，也不会改某个项目的默认配置。"
             .into(),
@@ -2392,6 +2398,69 @@ fn restart_note(agent: &str) -> &'static str {
     } else {
         "Mesa 不用重启。外部终端里新开的会话读新配置，已经开着的不会自动重读，需要新开才会生效。"
     }
+}
+
+/// 登录 shell 有没有导出这个变量（unix 读导入时记下的名字；Windows 图形程序本来就继承用户环境）
+fn shell_has(name: &str) -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        crate::shell_env::login_shell_has(name)
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::var_os(name).is_some_and(|v| !v.is_empty())
+    }
+}
+
+/// 外部终端里会盖过这次写入的来源（2026-10-30）：shell 变量只报确实导出了的，不猜；项目级配置看不到，
+/// 按家说明一次。`has` 由调用方给：生产读登录 shell，测试传假表
+fn override_notes_with(agent: &str, has: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let shell = |vars: &[&str], what: &str| -> Option<String> {
+        let hit: Vec<&str> = vars.iter().copied().filter(|v| has(v)).collect();
+        (!hit.is_empty()).then(|| format!("你的 shell 导出了 {}，外部终端里会盖过这里写的{what}", hit.join("、")))
+    };
+    let mut notes = Vec::new();
+    match agent {
+        "claude-code" => {
+            let managed: &[&str] = if cfg!(target_os = "macos") {
+                &["/Library/Application Support/ClaudeCode/managed-settings.json"]
+            } else if cfg!(windows) {
+                &[r"C:\Program Files\ClaudeCode\managed-settings.json"]
+            } else {
+                &["/etc/claude-code/managed-settings.json"]
+            };
+            if managed.iter().any(|p| Path::new(p).is_file()) {
+                notes.push("本机有企业托管的 Claude Code 设置（managed-settings.json），里面设了的项会盖过这里写的".into());
+            }
+        }
+        "codex" => notes.push("已信任项目里的 .codex/config.toml 可另设模型与思考档，在那些项目里以它为准".into()),
+        "gemini" => {
+            notes.extend(shell(
+                &["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GEMINI_MODEL", "GOOGLE_GENAI_USE_VERTEXAI"],
+                "密钥、地址或模型",
+            ));
+            notes.push("Gemini 只读当前文件夹往上找到的第一个 .env：项目里有 .env，或文件夹没被信任时，~/.gemini/.env 里的密钥和地址读不到（模型另写在 settings.json）".into());
+        }
+        "qwen" => notes.extend(shell(
+            &["OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL"],
+            "地址或模型",
+        )),
+        "opencode" => {
+            notes.extend(shell(&["OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT"], "配置"));
+            notes.push("项目里的 opencode.json 会盖过全局配置，在那些项目里以它为准".into());
+        }
+        "codebuddy" => notes.push("项目里的 .codebuddy/models.json 会整份盖过这里写的模型名单".into()),
+        "kimi" => notes.extend(shell(
+            &["KIMI_MODEL_NAME", "KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_API_KEY", "KIMI_BASE_URL"],
+            "连接",
+        )),
+        "grok" => notes.extend(shell(&["GROK_MODELS_BASE_URL", "GROK_DEFAULT_MODEL"], "地址或默认模型")),
+        _ => {}
+    }
+    notes
 }
 
 fn deferred_validation() -> crate::profile_validation::ProfileValidationDto {
@@ -2417,6 +2486,7 @@ fn official_apply_result(files: Vec<String>, message: &str) -> GlobalApplyResult
     };
     GlobalApplyResultDto {
         files,
+        override_notes: Vec::new(),
         validation: crate::profile_validation::ProfileValidationDto {
             ok: true,
             checked_at: crate::sessions::now_iso(),
@@ -3026,7 +3096,7 @@ pub fn preview_profile_global(
     if is_official(&profile) {
         let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let plans = plan_writes(&home, &profile, None, &[])?;
-        return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new()));
+        return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new(), Vec::new()));
     }
     let skipped = skipped_policy_notes(&profile);
     let first = profile.models.first().cloned();
@@ -3035,7 +3105,7 @@ pub fn preview_profile_global(
     crate::agents::ensure_launch_credentials(&profile, key.as_deref())?;
     let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
     let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
-    Ok(preview_plans(&home, &profile.agent, &plans, skipped))
+    Ok(preview_plans(&home, &profile.agent, &plans, skipped, override_notes_with(&profile.agent, &shell_has)))
 }
 
 #[tauri::command]
@@ -3089,7 +3159,8 @@ pub async fn apply_profile_global(
         } else {
             deferred_validation()
         };
-        Ok(GlobalApplyResultDto { files, validation })
+        let override_notes = override_notes_with(&profile.agent, &shell_has);
+        Ok(GlobalApplyResultDto { files, validation, override_notes })
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -4458,6 +4529,16 @@ trust_level = "trusted"
     }
 
     #[test]
+    fn override_notes_name_only_exported_shell_vars() {
+        let has = |v: &str| matches!(v, "GEMINI_MODEL" | "GROK_DEFAULT_MODEL");
+        let gemini = override_notes_with("gemini", &has);
+        assert!(gemini[0].contains("GEMINI_MODEL") && !gemini[0].contains("GEMINI_API_KEY"), "{gemini:?}");
+        assert!(gemini.iter().any(|n| n.contains(".env")), "Gemini 的 .env 只读一份要说");
+        assert!(override_notes_with("grok", &has)[0].contains("GROK_DEFAULT_MODEL"));
+        assert!(override_notes_with("kimi", &has).is_empty(), "没导出的不报");
+    }
+
+    #[test]
     fn opencode_plan_uses_key_file_ref_and_jsonc_when_present() {
         let home = tmpdir("opencode-plan");
         let dir = home.join(".config/opencode");
@@ -4477,7 +4558,7 @@ trust_level = "trusted"
         assert_eq!(v["provider"][&pid]["options"]["headers"]["X-Org"], "{env:ORG_TOKEN}");
         assert_eq!(v["theme"], "x");
         // 预览不出密钥值
-        let preview = preview_plans(&home, "opencode", &plans, vec![]);
+        let preview = preview_plans(&home, "opencode", &plans, vec![], vec![]);
         let shown: Vec<_> = preview.files.iter().flat_map(|f| f.changes.iter().filter_map(|c| c.after.clone())).collect();
         assert!(!shown.iter().any(|a| a.contains("sk-plain")), "{shown:?}");
         fs::remove_dir_all(&home).ok();
@@ -5089,6 +5170,7 @@ supports_reasoning_effort = false
                 path: path.clone(),
                 content: planned,
             }],
+            vec![],
             vec![],
         );
         assert_eq!(preview.files.len(), 1);

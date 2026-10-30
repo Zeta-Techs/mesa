@@ -392,6 +392,8 @@ export interface ProfileValidationDto {
 export interface GlobalApplyResultDto {
   files: string[];
   validation: ProfileValidationDto;
+  /** 同预览的 overrideNotes；一键切换写完用提示条说 */
+  overrideNotes: string[];
 }
 
 export interface GlobalWriteChangeDto {
@@ -418,6 +420,8 @@ export interface GlobalDriftDetailDto {
 export interface GlobalWritePreviewDto {
   files: GlobalWriteFilePreviewDto[];
   skippedPolicies: string[];
+  /** 外部终端里会盖过这次写入的来源（shell 变量、项目级 / 托管配置） */
+  overrideNotes: string[];
   restartNote: string;
   scopeNote: string;
 }

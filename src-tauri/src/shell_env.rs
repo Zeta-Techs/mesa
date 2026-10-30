@@ -17,6 +17,16 @@ use std::time::{Duration, Instant};
 /// 读 shell 环境最多等多久：挡着窗口出现，比 VS Code 的 10 秒短；本机实测约 0.36 秒
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 登录 shell 里有、但按凭据口径没带进本进程的变量**名**（不存值）。「设为全局」预览用它提醒：
+/// 外部终端里这些变量会盖过写进 CLI 配置文件的值（global_config::override_notes）
+static SKIPPED_NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// 用户的登录 shell 有没有导出这个变量：本进程有（从终端启动，或导入时带了），或导入时按凭据口径跳过了
+pub fn login_shell_has(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| !v.is_empty())
+        || SKIPPED_NAMES.get().is_some_and(|names| names.iter().any(|n| n == name))
+}
+
 /// 读回来的环境里不带的变量（凭据、shell 自身与会话、Mesa 自管的、launchd 的）
 fn should_import(key: &str) -> bool {
     const SECRET_SUFFIXES: &[&str] = &[
@@ -92,13 +102,19 @@ pub fn import_login_shell_env() {
     let note = match resolve() {
         Ok(env) => {
             let mut count = 0;
+            let mut skipped = Vec::new();
             for (key, value) in env {
                 let Some(name) = key.to_str() else { continue };
-                if should_import(name) && std::env::var_os(&key).as_deref() != Some(&value) {
+                if !should_import(name) {
+                    if !value.is_empty() {
+                        skipped.push(name.to_string());
+                    }
+                } else if std::env::var_os(&key).as_deref() != Some(&value) {
                     std::env::set_var(&key, &value);
                     count += 1;
                 }
             }
+            let _ = SKIPPED_NAMES.set(skipped);
             format!("已读登录 shell 环境：{count} 个变量，用时 {} ms", started.elapsed().as_millis())
         }
         Err(e) => format!("没读到登录 shell 环境（{e}），用时 {} ms", started.elapsed().as_millis()),

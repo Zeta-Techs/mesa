@@ -2146,6 +2146,16 @@ function GlobalWritePreviewDialog({
                 </ul>
               </div>
             )}
+            {preview.overrideNotes.length > 0 && (
+              <div>
+                <p className="font-medium text-l2">外部用时可能被别处盖掉</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-l3">
+                  {preview.overrideNotes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <p className="text-l3">{preview.restartNote}</p>
           </>
         )}
@@ -3056,7 +3066,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     const prev = prevId && prevId !== p.id ? (profiles.find((x) => x.id === prevId) ?? null) : null;
     setGlobalBusy(p.id);
     try {
-      await invoke<GlobalApplyResultDto>("apply_profile_global", { profileId: p.id, validate: false });
+      const applied = await invoke<GlobalApplyResultDto>("apply_profile_global", { profileId: p.id, validate: false });
       await refreshGlobalBackups();
       await loadSettings();
       setDriftTick((t) => t + 1);
@@ -3100,6 +3110,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         "success",
         actions.length ? { actions } : undefined,
       );
+      // 只报 shell 确实导出了的变量（不报每次都一样的项目级说明，那些在「写入 CLI 全局默认…」预览里看）
+      const shellHits = (applied.overrideNotes ?? []).filter((n) => n.startsWith("你的 shell"));
+      if (shellHits.length) toast(shellHits.join("；"), "warning");
       void invoke<ProfileValidationDto>("validate_global_profile", { profileId: p.id })
         .then((v) => {
           mirrorValidation(p, v);
