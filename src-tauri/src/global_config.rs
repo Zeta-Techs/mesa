@@ -203,7 +203,11 @@ fn target_paths(home: &Path, agent: &str) -> Vec<(&'static str, PathBuf)> {
             // settings.json 的 selectedType="gemini-api-key"（cc-switch 同口径，审计实证）
             ("settings.json", dir.join("settings.json")),
         ],
-        "qwen" | "codebuddy" => vec![("settings.json", dir.join("settings.json"))],
+        "qwen" => vec![("settings.json", dir.join("settings.json"))],
+        "codebuddy" => vec![
+            ("settings.json", dir.join("settings.json")),
+            ("models.json", dir.join("models.json")),
+        ],
         "opencode" => vec![("opencode.json", dir.join("opencode.json"))],
         "kimi" => vec![
             ("config.toml", dir.join("config.toml")),
@@ -260,102 +264,115 @@ fn to_pretty(v: &Value) -> Result<String, String> {
     Ok(s)
 }
 
-fn patch_claude_settings(
-    existing: Option<&str>,
-    base_url: Option<&str>,
-    key: Option<&str>,
-    models: &[String],
-    gateway_id: Option<&str>,
-    effort: Option<&str>,
-) -> Result<String, String> {
+/// Claude Code 全局写入（2026-10-30 与启动同源）：「谁用哪个模型」整套走 `agents::claude_model_env`
+/// （四个别名槽缺的用主模型补、后台小模型、子 Agent、确知不思考的 MAX_THINKING_TOKENS=0、窗口、非 Claude 模型的
+/// ToolSearch / 任务清单开关），与 `--settings` 覆盖层同一份。两处与启动不同，因为这里写的是用户自己的默认：
+/// - 主模型写顶层 `model`、思考档写顶层 `effortLevel`（low/medium/high/xhigh；`max` 不收，只能走 env），**不写
+///   `ANTHROPIC_MODEL` / `CLAUDE_CODE_EFFORT_LEVEL`**：env 两项优先级最高，会把用户在外面 `/model`、`/effort` 的选择
+///   每次新会话都改回来（官方 model-config 文档优先级表）；
+/// - 窗口只在确知 >200K 时写，否则两键都撤（上一家的 1M 残留比没有更有害）。
+fn patch_claude_settings(existing: Option<&str>, profile: &Profile, key: Option<&str>) -> Result<String, String> {
     let mut v = parse_json_doc(existing)?;
     let env = ensure_obj(&mut v, &["env"])?;
-    if let Some(u) = base_url {
-        env.insert("ANTHROPIC_BASE_URL".into(), json!(u));
+    match profile.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+        Some(u) => {
+            env.insert("ANTHROPIC_BASE_URL".into(), json!(u));
+        }
+        None => {
+            env.remove("ANTHROPIC_BASE_URL");
+        }
     }
     if let Some(k) = key {
         env.insert("ANTHROPIC_AUTH_TOKEN".into(), json!(k));
     }
-    if let Some(m) = models.first() {
-        env.insert("ANTHROPIC_MODEL".into(), json!(m));
-    } else {
-        env.remove("ANTHROPIC_MODEL");
+    // 上一次 Mesa 写的「值」认得出来的几项先撤，再按这次的连接重算（用户手设的别的值不动）
+    let mesa_value = |k: &str, val: &Value| match k {
+        "MAX_THINKING_TOKENS" => val == "0",
+        "ENABLE_TOOL_SEARCH" => val == "false",
+        "CLAUDE_CODE_ENABLE_TODO_TOOLS" => val == "1",
+        _ => false,
+    };
+    let stale_values: Vec<String> = env.iter().filter(|(k, val)| mesa_value(k, val)).map(|(k, _)| k.clone()).collect();
+    for k in stale_values {
+        env.remove(&k);
     }
-    // 与注入模式一致：模型列表注册进 /model 选择器（前 4 个别名槽 + 第 5 个自定义槽）。
-    // Mesa 管理的槽必须完整替换：名单变短或变空时清掉上一份配置留下的槽。
-    const SLOTS: [&str; 4] = ["SONNET", "OPUS", "HAIKU", "FABLE"];
-    for (i, slot) in SLOTS.iter().enumerate() {
-        if let Some(m) = models.get(i) {
-            env.insert(format!("ANTHROPIC_DEFAULT_{slot}_MODEL"), json!(m));
-            env.insert(format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"), json!(m));
-        } else {
-            env.remove(&format!("ANTHROPIC_DEFAULT_{slot}_MODEL"));
-            env.remove(&format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"));
-        }
+    for k in ["ANTHROPIC_MODEL", "CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"] {
+        env.remove(k);
     }
-    if let Some(fifth) = models.get(4) {
-        env.insert("ANTHROPIC_CUSTOM_MODEL_OPTION".into(), json!(fifth));
-        env.insert("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(), json!(fifth));
-    } else {
-        env.remove("ANTHROPIC_CUSTOM_MODEL_OPTION");
-        env.remove("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME");
-    }
-    // claude 对不认识的第三方模型按 200K 上下文假设；注册表确知更大的（如 kimi-k3 1M）
-    // 必须显式写 CLAUDE_CODE_MAX_CONTEXT_TOKENS，否则长会话提前 compact（cc-switch 同口径）。
-    // AUTO_COMPACT_WINDOW（auto-compact 触发点的窗口基数）与上限同值成对管理——
-    // 只抬上限不抬它，压缩触发点仍留在旧窗口档。不需要时两键都清：随「设为全局」
-    // 归 Mesa 管，留着过期大值比没有更有害。
-    //
-    // 用 declared 视图：门限 >200K 意味着未声明（含 128K 保守默认）本来就走清理分支，
-    // 两视图对现有模型行为完全一致；区别只在语义——不再拿估值冒充「注册表确知」。
-    let max_ctx = models.first().and_then(|m| {
-        crate::model_registry::model_context_size_declared_for(m, gateway_id)
-    });
-    match max_ctx {
-        Some(ctx) if ctx > 200_000 => {
-            env.insert(
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(),
-                json!(ctx.to_string()),
-            );
-            env.insert(
-                "CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(),
-                json!(ctx.to_string()),
-            );
-        }
-        _ => {
-            env.remove("CLAUDE_CODE_MAX_CONTEXT_TOKENS");
-            env.remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW");
-        }
-    }
-    if let Some(e) = effort.filter(|s| !s.is_empty()) {
-        env.insert("CLAUDE_CODE_EFFORT_LEVEL".into(), json!(e));
-    } else {
-        env.remove("CLAUDE_CODE_EFFORT_LEVEL");
-    }
-    // Remove the legacy Mesa subagent override when updating a global profile.
-    env.remove("CLAUDE_CODE_SUBAGENT_MODEL");
-    // 别家留下的连接键（另一把 ANTHROPIC_API_KEY、请求头、Bedrock 等协议开关……）撤掉：留着会和这次写的
-    // 地址、令牌一起生效（2026-10-28 假网关实测两把密钥同时发出）。长期登录令牌 CLAUDE_CODE_OAUTH_TOKEN 不动——
-    // 它是官方账号的登录方式，API 令牌在时它不起作用
-    let mesa_keys = mesa_claude_env_keys();
+    let user_keys: Vec<String> = env.keys().cloned().collect();
+    let main = profile.models.first().map(String::as_str);
+    let model_env = agents::claude_model_env(profile, main, &user_keys);
+    let written: std::collections::HashSet<String> = model_env.iter().map(|(k, _)| k.clone()).collect();
+    // 别家留下的连接键（另一把 ANTHROPIC_API_KEY、请求头、Bedrock 等协议开关、上一份更长名单的槽位……）撤掉：
+    // 留着会和这次写的地址、令牌一起生效（2026-10-28 假网关实测两把密钥同时发出）。长期登录令牌
+    // CLAUDE_CODE_OAUTH_TOKEN 不动——它是官方账号的登录方式，API 令牌在时它不起作用
     let stale: Vec<String> = env
         .keys()
         .filter(|k| {
             agents::claude_connection_env_key(k)
                 && !k.starts_with("CLAUDE_CODE_OAUTH_")
-                && !mesa_keys.contains(k.as_str())
+                && !matches!(k.as_str(), "ANTHROPIC_BASE_URL" | "ANTHROPIC_AUTH_TOKEN")
+                && !written.contains(k.as_str())
         })
         .cloned()
         .collect();
     for k in stale {
         env.remove(&k);
     }
-    if let Some(o) = v.as_object_mut() {
-        o.remove("apiKeyHelper");
+    for (k, val) in model_env {
+        // 窗口在这里按「确知才写」另算（见下），claude_model_env 的「用户设过就写回 200000」是给启动覆盖层的
+        if matches!(k.as_str(), "ANTHROPIC_MODEL" | "CLAUDE_CODE_MAX_CONTEXT_TOKENS" | "CLAUDE_CODE_AUTO_COMPACT_WINDOW") {
+            continue;
+        }
+        env.insert(k, json!(val));
     }
-    // 不写 CLAUDE_CODE_SUBAGENT_MODEL：Claude Code 默认让 Task 子 agent 继承主模型，
-    // 同时保留 Task 参数/frontmatter 的原生覆盖能力。写入该环境变量会压过这些选择，
-    // 使子 agent 被错误固定到绑定列表中的某个模型。
+    // claude 对不认识的第三方模型按 200K 假设；注册表确知更大的（如 kimi-k3 1M）必须显式声明，否则长会话提前
+    // compact（cc-switch 同口径）。AUTO_COMPACT_WINDOW 与上限同值成对管理。用 declared 视图：估值不当声明
+    if let Some(ctx) = main
+        .and_then(|m| crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref()))
+        .filter(|c| *c > 200_000)
+    {
+        env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), json!(ctx.to_string()));
+        env.insert("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), json!(ctx.to_string()));
+    }
+    let effort = profile
+        .request_policy
+        .reasoning_effort
+        .as_deref()
+        .and_then(crate::agent_specs::canonical_reasoning_effort);
+    // settings 的 effortLevel 只收四档；max 只能走 env（随写随清，与旧口径一致）
+    if effort.as_deref() == Some("max") {
+        env.insert("CLAUDE_CODE_EFFORT_LEVEL".into(), json!("max"));
+    }
+    let root = v.as_object_mut().expect("parse_json_doc 保证是对象");
+    // 顶层属于连接的键：apiKeyHelper 的输出会作 x-api-key 一起发出，fallbackModel 是别家的模型名
+    for k in agents::CLAUDE_CONNECTION_TOP_KEYS {
+        root.remove(*k);
+    }
+    match main {
+        Some(m) => {
+            root.insert("model".into(), json!(m));
+        }
+        None => {
+            // 没列模型 = 用 Claude 自己的默认；上一家中转写的模型名留着会打到这次的地址上
+            let foreign = root
+                .get("model")
+                .and_then(|m| m.as_str())
+                .is_some_and(|m| !official_model_kept("claude-code", m));
+            if foreign {
+                root.remove("model");
+            }
+        }
+    }
+    match effort.as_deref().filter(|e| matches!(*e, "low" | "medium" | "high" | "xhigh")) {
+        Some(e) => {
+            root.insert("effortLevel".into(), json!(e));
+        }
+        None if effort.is_some() => {
+            root.remove("effortLevel");
+        }
+        None => {}
+    }
     to_pretty(&v)
 }
 
@@ -387,25 +404,6 @@ fn patch_codex_compat(content: &str, compat: &crate::profiles::GatewayCompat) ->
     let blk = sub_table(providers, CODEX_GLOBAL_PROVIDER)?;
     blk["stream_idle_timeout_ms"] = toml_edit::value(i64::from(secs) * 1000);
     Ok(doc.to_string())
-}
-
-/// patch_claude_settings 自己管的 env 键（写或按需清）：其余连接键属于别家
-fn mesa_claude_env_keys() -> std::collections::HashSet<String> {
-    let mut keys: std::collections::HashSet<String> = [
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_CUSTOM_MODEL_OPTION",
-        "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    for slot in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
-        keys.insert(format!("ANTHROPIC_DEFAULT_{slot}_MODEL"));
-        keys.insert(format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"));
-    }
-    keys
 }
 
 fn patch_qwen_settings(
@@ -1291,28 +1289,86 @@ fn write_grok_reasoning_menu(entry: &mut toml_edit::Table, levels: Option<&[Stri
     entry.insert("reasoning_efforts", Item::ArrayOfTables(tables));
 }
 
-/// CodeBuddy：settings.json 的 env 块写 CODEBUDDY_* 三件套（无模型槽位机制，结构最简单）
+/// CodeBuddy：settings.json 的 env 块写 CODEBUDDY_* 三件套与输出上限。这次没有的值一律撤掉（2026-10-30）：
+/// 以前只在有值时写，上一条连接的地址 / 模型会跟着这次的密钥一起生效
 fn patch_codebuddy_settings(
     existing: Option<&str>,
     base_url: Option<&str>,
     key: Option<&str>,
     model: Option<&str>,
+    max_output_tokens: Option<u64>,
 ) -> Result<String, String> {
     let mut v = parse_json_doc(existing)?;
     let env = ensure_obj(&mut v, &["env"])?;
-    if let Some(u) = base_url {
-        env.insert("CODEBUDDY_BASE_URL".into(), json!(u));
-    }
-    if let Some(k) = key {
-        env.insert("CODEBUDDY_API_KEY".into(), json!(k));
-    }
-    if let Some(m) = model {
-        env.insert("CODEBUDDY_MODEL".into(), json!(m));
+    let max = max_output_tokens.map(|n| n.to_string());
+    for (k, val) in [
+        ("CODEBUDDY_BASE_URL", base_url),
+        ("CODEBUDDY_API_KEY", key),
+        ("CODEBUDDY_MODEL", model),
+        ("CODEBUDDY_CODE_MAX_OUTPUT_TOKENS", max.as_deref()),
+    ] {
+        match val {
+            Some(val) => {
+                env.insert(k.into(), json!(val));
+            }
+            None => {
+                env.remove(k);
+            }
+        }
     }
     // 别家留下的另一种令牌与请求头会跟着这次的地址一起发出
     env.remove("CODEBUDDY_AUTH_TOKEN");
     env.remove("CODEBUDDY_CUSTOM_HEADERS");
     to_pretty(&v)
+}
+
+/// CodeBuddy 的模型名单：`~/.codebuddy/models.json`（官方 docs/cli/models：`models` 数组按 id 覆盖内置、新 id 追加，
+/// 1 秒防抖热加载）。每个绑定模型一条：`url` 是完整的 `<base>/chat/completions`（与 CODEBUDDY_BASE_URL 自拼同形），
+/// `apiKey` 写 `${CODEBUDDY_API_KEY}` 引用 settings.json env 里那一把，不在这里再存明文；确知窗口写 `maxInputTokens`。
+/// Mesa 的条目认 `name` =「配置名 · 模型」：先撤上一份 Mesa 条目再写，用户自己的条目与 `availableModels` 不动。
+fn patch_codebuddy_models(existing: Option<&str>, profile: &Profile) -> Result<String, String> {
+    let mut v = parse_json_doc(existing)?;
+    let root = v.as_object_mut().expect("parse_json_doc 保证是对象");
+    let list = root.entry("models").or_insert_with(|| json!([]));
+    let Some(arr) = list.as_array_mut() else {
+        return Err("models.json 的 models 不是数组，已停止写入".into());
+    };
+    arr.retain(|e| !codebuddy_mesa_entry(e));
+    if let Some(base) = profile.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+        let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+        for m in &profile.models {
+            arr.retain(|e| e.get("id").and_then(|i| i.as_str()) != Some(m.as_str()));
+            let mut e = json!({
+                "id": m,
+                "name": format!("{} · {m}", profile.name),
+                "url": url,
+                "apiKey": "${CODEBUDDY_API_KEY}",
+                "supportsToolCall": true,
+            });
+            let gw = profile.gateway_id.as_deref();
+            if let Some(ctx) = crate::model_registry::model_context_size_declared_for(m, gw) {
+                e["maxInputTokens"] = json!(ctx);
+            }
+            if crate::model_registry::model_supports_vision_declared_for(m, gw) == Some(true) {
+                e["supportsImages"] = json!(true);
+            }
+            if crate::model_registry::model_thinking_declared_for(m, gw) == Some(true) {
+                e["supportsReasoning"] = json!(true);
+            }
+            arr.push(e);
+        }
+    }
+    to_pretty(&v)
+}
+
+/// models.json 里 Mesa 写的条目：显示名是「配置名 · <id>」且引用 settings.json 的密钥
+fn codebuddy_mesa_entry(e: &Value) -> bool {
+    let id = e.get("id").and_then(|i| i.as_str()).unwrap_or("");
+    let named = e
+        .get("name")
+        .and_then(|n| n.as_str())
+        .is_some_and(|n| !id.is_empty() && n.ends_with(&format!(" · {id}")));
+    named && e.get("apiKey").and_then(|k| k.as_str()) == Some("${CODEBUDDY_API_KEY}")
 }
 
 // ===== .env 补丁（gemini） =====
@@ -1424,6 +1480,20 @@ fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
             }
         }
     }
+    // Mesa 按中转模型写的几项（值认得出来）：官方模型用不着
+    if let Some(env) = v.get("env").and_then(|e| e.as_object()) {
+        for (k, val) in env {
+            let mesa = match k.as_str() {
+                "MAX_THINKING_TOKENS" => val == "0",
+                "ENABLE_TOOL_SEARCH" => val == "false",
+                "CLAUDE_CODE_ENABLE_TODO_TOOLS" => val == "1",
+                _ => false,
+            };
+            if mesa {
+                keys.push(k.clone());
+            }
+        }
+    }
     let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
     json_env_remove(&mut v, &refs, &["ANTHROPIC_MODEL"], "claude-code");
     if let Some(o) = v.as_object_mut() {
@@ -1442,7 +1512,7 @@ fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
     to_pretty(&v)
 }
 
-/// CodeBuddy：settings.json 的 env 撤 CODEBUDDY_* 端点 / 密钥，非官方模型名一并撤。
+/// CodeBuddy：settings.json 的 env 撤 CODEBUDDY_* 端点 / 密钥，非官方模型名一并撤（env 与顶层 `model` 都看）。
 fn patch_codebuddy_settings_official(existing: &str) -> Result<String, String> {
     let mut v = parse_json_doc(Some(existing))?;
     json_env_remove(
@@ -1451,6 +1521,24 @@ fn patch_codebuddy_settings_official(existing: &str) -> Result<String, String> {
         &["CODEBUDDY_MODEL"],
         "codebuddy",
     );
+    let foreign_top = v
+        .get("model")
+        .and_then(|m| m.as_str())
+        .is_some_and(|m| !official_model_kept("codebuddy", m));
+    if foreign_top {
+        if let Some(o) = v.as_object_mut() {
+            o.remove("model");
+        }
+    }
+    to_pretty(&v)
+}
+
+/// CodeBuddy models.json：撤 Mesa 写的条目（引用的密钥已撤，留着选了就报错），用户自己的条目留着
+fn patch_codebuddy_models_official(existing: &str) -> Result<String, String> {
+    let mut v = parse_json_doc(Some(existing))?;
+    if let Some(arr) = v.get_mut("models").and_then(|m| m.as_array_mut()) {
+        arr.retain(|e| !codebuddy_mesa_entry(e));
+    }
     to_pretty(&v)
 }
 
@@ -1644,7 +1732,10 @@ fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, S
     match agent {
         "codex" => add("config.toml", dir.join("config.toml"), &|t| patch_codex_config_official(Some(t)))?,
         "claude-code" => add("settings.json", dir.join("settings.json"), &patch_claude_settings_official)?,
-        "codebuddy" => add("settings.json", dir.join("settings.json"), &patch_codebuddy_settings_official)?,
+        "codebuddy" => {
+            add("settings.json", dir.join("settings.json"), &patch_codebuddy_settings_official)?;
+            add("models.json", dir.join("models.json"), &patch_codebuddy_models_official)?;
+        }
         "qwen" => add("settings.json", dir.join("settings.json"), &patch_qwen_settings_official)?,
         "gemini" => {
             add(".env", dir.join(".env"), &|t| {
@@ -1763,14 +1854,7 @@ fn plan_writes(
     match profile.agent.as_str() {
         "claude-code" => {
             let path = dir.join("settings.json");
-            let content = patch_claude_settings(
-                read_existing(&path)?.as_deref(),
-                base_url,
-                key,
-                models,
-                profile.gateway_id.as_deref(),
-                profile.request_policy.reasoning_effort.as_deref(),
-            )?;
+            let content = patch_claude_settings(read_existing(&path)?.as_deref(), profile, key)?;
             let content = patch_claude_compat(&content, &profile.request_policy.compat)?;
             push("settings.json", path, content);
         }
@@ -1857,9 +1941,21 @@ fn plan_writes(
         }
         "codebuddy" => {
             let path = dir.join("settings.json");
-            let content =
-                patch_codebuddy_settings(read_existing(&path)?.as_deref(), base_url, key, model)?;
+            let content = patch_codebuddy_settings(
+                read_existing(&path)?.as_deref(),
+                base_url,
+                key,
+                model,
+                profile.request_policy.max_output_tokens,
+            )?;
             push("settings.json", path, content);
+            let models_path = dir.join("models.json");
+            let existing = read_existing(&models_path)?;
+            // 没有模型名单、文件也不存在时不建空文件
+            if !profile.models.is_empty() || existing.is_some() {
+                let content = patch_codebuddy_models(existing.as_deref(), profile)?;
+                push("models.json", models_path, content);
+            }
         }
         "kimi" => {
             // 两个变体共用 kimi 命令：存在的变体目录都写；都不存在时写到新版目录
@@ -3147,6 +3243,23 @@ mod tests {
         assert!(patch_gemini_auth_only(Some("[1]")).is_err());
     }
 
+    /// 测试用：按旧参数拼一个 Claude 连接再走 patch_claude_settings
+    fn pc(
+        existing: Option<&str>,
+        base_url: Option<&str>,
+        key: Option<&str>,
+        models: &[String],
+        gateway_id: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<String, String> {
+        let mut p = profile("claude-code");
+        p.base_url = base_url.map(String::from);
+        p.models = models.to_vec();
+        p.gateway_id = gateway_id.map(String::from);
+        p.request_policy.reasoning_effort = effort.map(String::from);
+        patch_claude_settings(existing, &p, key)
+    }
+
     fn tmpdir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ccode-gcfg-{name}-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
@@ -3183,7 +3296,7 @@ mod tests {
     #[test]
     fn claude_patch_preserves_unrelated_fields() {
         let existing = r#"{"env": {"OTHER": "1"}, "theme": "dark"}"#;
-        let out = patch_claude_settings(
+        let out = pc(
             Some(existing),
             Some("https://relay.example.com"),
             Some("sk-secret"),
@@ -3195,15 +3308,40 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], "https://relay.example.com");
         assert_eq!(v["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-secret");
-        assert_eq!(v["env"]["ANTHROPIC_MODEL"], "claude-sonnet-4");
-        // 模型列表注册进 /model 选择器的别名槽
+        // 主模型写顶层 model（用户在外面 /model 能改），不写压过一切的 ANTHROPIC_MODEL
+        assert_eq!(v["model"], "claude-sonnet-4");
+        assert!(v["env"].get("ANTHROPIC_MODEL").is_none());
+        // 模型列表注册进 /model 选择器的别名槽（显示名同启动：配置名 · 模型）
         assert_eq!(
             v["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
             "claude-sonnet-4"
         );
-        assert_eq!(v["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], "m2");
+        assert_eq!(v["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"], "测试 · m2");
         assert_eq!(v["env"]["OTHER"], "1");
         assert_eq!(v["theme"], "dark");
+    }
+
+    #[test]
+    fn claude_patch_writes_user_layer_and_clears_previous_connection() {
+        let existing = r#"{"fallbackModel":"glm-old","effortLevel":"low","env":{"ANTHROPIC_BASE_URL":"https://old","CLAUDE_CODE_EFFORT_LEVEL":"high","MAX_THINKING_TOKENS":"0","ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION":"x"}}"#;
+        let out = pc(Some(existing), None, Some("sk"), &["claude-opus-5-5".to_string()], None, Some("xhigh")).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["env"].get("ANTHROPIC_BASE_URL").is_none(), "这条连接没有地址：上一家的地址撤掉");
+        assert!(v.get("fallbackModel").is_none());
+        assert_eq!(v["effortLevel"], "xhigh");
+        assert!(v["env"].get("CLAUDE_CODE_EFFORT_LEVEL").is_none(), "env 的思考档压过用户 /effort，不写");
+        assert!(v["env"].get("MAX_THINKING_TOKENS").is_none(), "上一家写的 0 撤掉");
+        assert!(v["env"].get("ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION").is_none());
+        // max 不进 effortLevel（只收四档），走 env
+        let out = pc(Some(&out), None, None, &["m".to_string()], None, Some("max")).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("effortLevel").is_none());
+        assert_eq!(v["env"]["CLAUDE_CODE_EFFORT_LEVEL"], "max");
+        // 没列模型：上一家的中转模型名撤掉，官方别名留着
+        let v: Value = serde_json::from_str(&pc(Some(r#"{"model":"glm-5"}"#), None, None, &[], None, None).unwrap()).unwrap();
+        assert!(v.get("model").is_none());
+        let v: Value = serde_json::from_str(&pc(Some(r#"{"model":"opus"}"#), None, None, &[], None, None).unwrap()).unwrap();
+        assert_eq!(v["model"], "opus");
     }
 
     #[test]
@@ -3223,7 +3361,7 @@ mod tests {
             "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "m5"
           }
         }"#;
-        let out = patch_claude_settings(
+        let out = pc(
             Some(existing),
             None,
             None,
@@ -3233,12 +3371,15 @@ mod tests {
         )
         .unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["env"]["ANTHROPIC_MODEL"], "only-one");
-        assert_eq!(v["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "only-one");
-        assert!(v["env"].get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none());
-        assert!(v["env"].get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none());
-        assert!(v["env"].get("ANTHROPIC_DEFAULT_FABLE_MODEL").is_none());
+        assert_eq!(v["model"], "only-one");
+        assert!(v["env"].get("ANTHROPIC_MODEL").is_none());
+        // 与启动同口径：名单不够四个，空槽用主模型补（haiku 槽是后台小任务用的，留着官方名会打到中转上失败）
+        for slot in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
+            assert_eq!(v["env"][format!("ANTHROPIC_DEFAULT_{slot}_MODEL")], "only-one", "{slot}");
+        }
+        assert_eq!(v["env"]["ANTHROPIC_SMALL_FAST_MODEL"], "only-one");
         assert!(v["env"].get("ANTHROPIC_CUSTOM_MODEL_OPTION").is_none());
+        assert!(v["env"].get("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME").is_none());
     }
 
     #[test]
@@ -3285,7 +3426,7 @@ mod tests {
         fs::write(&path, "\u{feff}{\"keep\": 1}").unwrap();
         let text = read_existing(&path).unwrap().unwrap();
         assert!(!text.starts_with('\u{feff}'));
-        let out = patch_claude_settings(Some(&text), Some("https://x"), None, &[], None, None)
+        let out = pc(Some(&text), Some("https://x"), None, &[], None, None)
             .unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["keep"], 1);
@@ -3293,7 +3434,7 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
         // 解析函数自身也容忍（调用方没走 read_existing 时）
         let out =
-            patch_claude_settings(Some("\u{feff}{\"keep\": 2}"), None, None, &[], None, None)
+            pc(Some("\u{feff}{\"keep\": 2}"), None, None, &[], None, None)
                 .unwrap();
         assert!(!out.starts_with('\u{feff}'));
         let out = patch_gemini_settings(Some("\u{feff}{\"keep\": 3}"), "n", &[], None).unwrap();
@@ -3305,7 +3446,7 @@ mod tests {
 
     #[test]
     fn claude_patch_from_missing_file_creates_env_only() {
-        let out = patch_claude_settings(None, None, None, &[], None, None).unwrap();
+        let out = pc(None, None, None, &[], None, None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert!(v["env"].is_object());
         assert_eq!(v["env"].as_object().unwrap().len(), 0);
@@ -3316,12 +3457,12 @@ mod tests {
         // 注册表确知 >200K 的模型（kimi-k3 = 1M）：必须显式声明，否则 claude 按 200K 假设提前 compact；
         // AUTO_COMPACT_WINDOW 与上限同值成对写（压缩触发点跟随声明窗口）
         let out =
-            patch_claude_settings(None, None, None, &["kimi-k3".to_string()], None, None).unwrap();
+            pc(None, None, None, &["kimi-k3".to_string()], None, None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1048576");
         assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "1048576");
         // ≤200K 的模型：不写；已有旧值时两键都清掉（防上一个 profile 的 1M 残留误导）
-        let out = patch_claude_settings(
+        let out = pc(
             Some(
                 r#"{"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576"}}"#,
             ),
@@ -3395,7 +3536,7 @@ mod tests {
     #[test]
     fn claude_global_write_drops_other_providers_connection_keys() {
         let existing = r#"{"apiKeyHelper":"echo sk","hooks":{"Stop":[]},"env":{"ANTHROPIC_API_KEY":"sk-other","ANTHROPIC_CUSTOM_HEADERS":"X: y","CLAUDE_CODE_USE_BEDROCK":"1","CLAUDE_CODE_OAUTH_TOKEN":"oat","DISABLE_TELEMETRY":"1","AWS_PROFILE":"work"}}"#;
-        let out = patch_claude_settings(Some(existing), Some("https://gw"), Some("sk-mesa"), &["m1".into()], None, None).unwrap();
+        let out = pc(Some(existing), Some("https://gw"), Some("sk-mesa"), &["m1".into()], None, None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let env = &v["env"];
         assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-mesa");
@@ -3994,7 +4135,7 @@ trust_level = "trusted"
             let key = Some("sk-probe");
             match p.agent.as_str() {
                 "claude-code" => {
-                    patch_claude_settings(None, p.base_url.as_deref(), key, &p.models, None, None)
+                    pc(None, p.base_url.as_deref(), key, &p.models, None, None)
                 }
                 "qwen" => patch_qwen_settings(None, key, p),
                 "gemini" => patch_gemini_settings(None, &p.name, &p.models, None)
@@ -4029,6 +4170,7 @@ trust_level = "trusted"
                     p.base_url.as_deref(),
                     key,
                     p.models.first().map(String::as_str),
+                    p.request_policy.max_output_tokens,
                 ),
                 other => panic!("新增了 agent {other}，请在跨层一致性测试里补一条写盘路径"),
             }
@@ -4161,6 +4303,7 @@ trust_level = "trusted"
             Some("https://api.deepseek.com/anthropic"),
             Some("sk-secret"),
             Some("deepseek-v3-2-volc"),
+            Some(8192),
         )
         .unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
@@ -4170,13 +4313,44 @@ trust_level = "trusted"
         );
         assert_eq!(v["env"]["CODEBUDDY_API_KEY"], "sk-secret");
         assert_eq!(v["env"]["CODEBUDDY_MODEL"], "deepseek-v3-2-volc");
+        assert_eq!(v["env"]["CODEBUDDY_CODE_MAX_OUTPUT_TOKENS"], "8192");
         assert_eq!(v["env"]["OTHER"], "1", "无关 env 必须保留");
         assert_eq!(v["theme"], "dark", "无关字段必须保留");
         // 缺省（文件不存在）：只创建 env 块
-        let out = patch_codebuddy_settings(None, None, Some("sk-secret"), None).unwrap();
+        let out = patch_codebuddy_settings(None, None, Some("sk-secret"), None, None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["env"]["CODEBUDDY_API_KEY"], "sk-secret");
         assert!(v["env"].get("CODEBUDDY_BASE_URL").is_none());
+        // 上一条连接的地址 / 模型 / 输出上限这次没有就撤，不跟着新密钥一起生效
+        let prev = r#"{"env":{"CODEBUDDY_BASE_URL":"https://old","CODEBUDDY_MODEL":"old-m","CODEBUDDY_CODE_MAX_OUTPUT_TOKENS":"1"}}"#;
+        let v: Value = serde_json::from_str(&patch_codebuddy_settings(Some(prev), None, Some("sk"), None, None).unwrap()).unwrap();
+        for k in ["CODEBUDDY_BASE_URL", "CODEBUDDY_MODEL", "CODEBUDDY_CODE_MAX_OUTPUT_TOKENS"] {
+            assert!(v["env"].get(k).is_none(), "{k}");
+        }
+    }
+
+    #[test]
+    fn codebuddy_models_json_owns_only_mesa_entries() {
+        let mut p = profile("codebuddy");
+        p.base_url = Some("https://gw.example/v1/".into());
+        p.models = vec!["glm-5".into(), "kimi-k3".into()];
+        let existing = r#"{"availableModels":["glm-5"],"models":[
+            {"id":"old","name":"旧连接 · old","apiKey":"${CODEBUDDY_API_KEY}","url":"https://old/chat/completions"},
+            {"id":"mine","name":"我的","apiKey":"${MY_KEY}","url":"https://mine/chat/completions"},
+            {"id":"glm-5","name":"手写同名","url":"https://x"}
+        ]}"#;
+        let v: Value = serde_json::from_str(&patch_codebuddy_models(Some(existing), &p).unwrap()).unwrap();
+        let ids: Vec<_> = v["models"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["mine", "glm-5", "kimi-k3"], "上一份 Mesa 条目撤、同 id 由这次接管、用户条目留");
+        let glm = &v["models"][1];
+        assert_eq!(glm["url"], "https://gw.example/v1/chat/completions");
+        assert_eq!(glm["apiKey"], "${CODEBUDDY_API_KEY}");
+        assert_eq!(glm["name"], "测试 · glm-5");
+        assert_eq!(v["availableModels"], json!(["glm-5"]), "用户的下拉过滤不动");
+        // 官方切回：Mesa 条目撤，用户条目留
+        let off: Value = serde_json::from_str(&patch_codebuddy_models_official(&v.to_string()).unwrap()).unwrap();
+        let ids: Vec<_> = off["models"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["mine"]);
     }
 
     #[test]
@@ -4709,7 +4883,7 @@ supports_reasoning_effort = false
         }"#,
         )
         .unwrap();
-        let planned = patch_claude_settings(
+        let planned = pc(
             Some(&fs::read_to_string(&path).unwrap()),
             None,
             Some("sk-secret-abcdef"),
@@ -4733,7 +4907,11 @@ supports_reasoning_effort = false
         assert!(preview.files[0]
             .changes
             .iter()
-            .any(|c| { c.path.contains("ANTHROPIC_DEFAULT_OPUS_MODEL") && c.op == "remove" }));
+            .any(|c| { c.path == "env.ANTHROPIC_MODEL" && c.op == "remove" }));
+        assert!(preview.files[0]
+            .changes
+            .iter()
+            .any(|c| { c.path == "env.ANTHROPIC_DEFAULT_OPUS_MODEL" && c.op == "modify" }));
         let token = preview.files[0]
             .changes
             .iter()

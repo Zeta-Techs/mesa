@@ -844,7 +844,7 @@ fn claude_user_top_model(profile: &Profile) -> Option<String> {
 /// - 四个槽位全填：绑定名单不够四个时，空槽用这次选的模型（没选用名单第一个）补上；ANTHROPIC_SMALL_FAST_MODEL 跟 HAIKU 槽。
 /// - 子 agent 模型只在用户全局设了时才盖（设成这次的模型）：没设时保持 Claude 原生「继承主模型 / 按 frontmatter 选」。
 /// - 上下文窗口：确知 >200K 时声明；用户全局设过而这次不确知时写回 Claude 对未知模型的默认 200000，免得沿用全局的 1M。
-fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]) -> Vec<(String, String)> {
+pub(crate) fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]) -> Vec<(String, String)> {
     let mut env = Vec::new();
     let selected = model.map(str::trim).filter(|m| !m.is_empty());
     let fill = selected.or_else(|| profile.models.iter().map(String::as_str).find(|m| !m.trim().is_empty()));
@@ -998,7 +998,7 @@ pub(crate) fn claude_connection_env_key(key: &str) -> bool {
 }
 
 /// 顶层（不在 env 里）属于连接的键：apiKeyHelper 的输出会作 x-api-key 一起发出（实测），fallbackModel 是别家的模型名
-const CLAUDE_CONNECTION_TOP_KEYS: &[&str] = &["apiKeyHelper", "fallbackModel"];
+pub(crate) const CLAUDE_CONNECTION_TOP_KEYS: &[&str] = &["apiKeyHelper", "fallbackModel"];
 
 /// CodeBuddy 的连接键：同 Claude，settings.json env 盖过进程 env（2.177.0 实测：磁盘的地址和密钥压过 Mesa 注入的，
 /// 请求带着磁盘那家的密钥打到磁盘那家），只能放进 `--settings`

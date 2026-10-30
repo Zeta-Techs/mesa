@@ -391,6 +391,8 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 
 **Qwen / Gemini 全局写入补的落盘通道（2026-10-30）**：通道表 `request_policy_support` 改 `persist`——Qwen 思考档写条目级 `samplingParams.reasoning_effort`、模型条目 `envKey` 用 Mesa 专用 `MESA_QWEN_API_KEY`（防项目 `.env` 的 `OPENAI_API_KEY` 顶掉）、确知窗口写 `generationConfig.contextWindowSize`；Gemini 温度 / top_p / 输出上限写 `modelConfigs.customOverrides`（只管 `match` 恰为 `{model: 本连接模型}` 的条目，先撤再写）并另写 `model.name`（`.env` 常因目录信任 / 项目 `.env` 读不到）。改通道表必须同改写盘函数：`policy_channel_table_agrees_with_patch_functions` 会拦。
 
+**Claude Code / CodeBuddy 全局写入（2026-10-30）**：Claude「谁用哪个模型」整套走 `agents::claude_model_env`（与 `--settings` 覆盖层同一份：四槽缺的用主模型补、后台小模型、子 Agent、确知不思考的 `MAX_THINKING_TOKENS=0`、非 Claude 模型的 ToolSearch / 任务清单开关），**主模型写顶层 `model`、思考档写顶层 `effortLevel`**（`max` 只能走 env），不写 `ANTHROPIC_MODEL` / `CLAUDE_CODE_EFFORT_LEVEL`——env 两项优先级最高，会把用户在外面 `/model`、`/effort` 的选择改回来。这条连接没有的值一律撤（地址、顶层 `fallbackModel` / `apiKeyHelper`、上一份更长名单的槽位与 `_DESCRIPTION`；Mesa 写过、值认得出来的 `MAX_THINKING_TOKENS=0` / `ENABLE_TOOL_SEARCH=false` / `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` 先撤再按这次重算）。CodeBuddy 同样「没有就撤」（地址 / 模型 / `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS`），模型名单写 `models.json`（每模型一条，`apiKey` 写 `${CODEBUDDY_API_KEY}` 引用不重复存明文，Mesa 条目认「配置名 · 模型」名字，用户条目与 `availableModels` 不动）；官方切回撤 Mesa 条目与非官方顶层 `model`。
+
 **请求头的全局写入口径（2026-10-30）**：Header 的值取自环境变量。能写「变量名引用」的写引用（Codex `env_http_headers`、OpenCode `{env:VAR}`、Grok `$VAR`）；只认明文的（Claude / CodeBuddy / Qwen / Gemini / Kimi）不写，预览 `skipped_policies` 写明「只在 Mesa 启动时带上」。禁止为了全局生效把 Header 明文写进 CLI 配置。
 
 **官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：七家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok；OpenCode 没有官方账号，Cursor 不支持设为全局）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
@@ -401,7 +403,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 | Claude Code | settings.json env 撤端点 / 两种密钥、四个别名槽及 `_NAME`、第五槽、上下文成对键、旧子 agent 键；`ANTHROPIC_MODEL` 是 claude 模型或别名（opus / sonnet …）时留 |
 | Gemini | `.env` 删 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GEMINI_BASE_URL`，非 gemini 模型删 `GEMINI_MODEL`；settings.json 认证方式是 Mesa 写的 `gemini-api-key` 就撤掉（**不写死 `oauth-personal`**，2026-10-30：Vertex / 自带 AI Studio 密钥的人会被改掉，个人 Google 账号也常用不了；撤掉后 Gemini 进门让用户选），非 gemini 的 `model.name` 撤 |
 | Qwen | 认证方式是 Mesa 写的协议名（openai / anthropic）就撤掉，**不改成 `qwen-oauth`**（2026-10-30：Qwen OAuth 免费档已停用，切过去用不了；官方账号启动直接拦并说明）；env 撤两套协议的密钥 / 端点 / 模型与 `MESA_QWEN_API_KEY`；`model.name` 等于被撤模型名时撤 |
-| CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` |
+| CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` 与顶层 `model`；`models.json` 撤 Mesa 写的条目 |
 | Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`。新旧两个配置目录存在的都改 |
 | Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]`：Mesa 写的（`name` 是「配置名 · 模型」）连同密钥整段撤、没有自己密钥的整段撤（留着官方令牌会发去中转），**用户手写、带自己 `api_key` / `env_key` 的留着**（2026-10-30）。官方启动另查「中转段没有自己密钥」并拦下 |
 
