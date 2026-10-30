@@ -154,7 +154,7 @@ pub fn set_global_conflict_message(agent: &str) -> Option<String> {
     let home = crate::dirs::home_dir()?;
     let cc = cc_switch_dir_present(&home);
     let live = if agent == "codex" {
-        fs::read_to_string(home.join(".codex/config.toml")).ok()
+        fs::read_to_string(cli_dir(&home, "codex").join("config.toml")).ok()
     } else {
         None
     };
@@ -166,31 +166,50 @@ pub fn set_global_conflict(agent: String) -> Option<String> {
     set_global_conflict_message(&agent)
 }
 
-/// 每个 agent 的全局配置目标文件（tag, 相对 home 路径），restore/has_backup 共用
-fn target_specs(agent: &str) -> Vec<(&'static str, &'static str)> {
+/// 搬迁变量读进程环境；测试只看传入的 home，绝不按本机环境写到真实目录
+fn relocation_env(var: &str) -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// 该 Agent 的用户级配置目录（认 CLI 自己的搬迁变量，与 MCP / 技能同源）
+fn cli_dir(home: &Path, agent: &str) -> PathBuf {
+    crate::agent_specs::agent_config_root_with(agent, home, &relocation_env)
+        .unwrap_or_else(|| home.to_path_buf())
+}
+
+/// 旧版 kimi-cli 的目录（`KIMI_SHARE_DIR` 顶替 `~/.kimi`）
+fn kimi_legacy_dir(home: &Path) -> PathBuf {
+    crate::agent_specs::kimi_legacy_root_with(home, &relocation_env)
+}
+
+/// 每个 agent 的全局配置目标文件（tag, 绝对路径），无清单回落恢复用
+fn target_paths(home: &Path, agent: &str) -> Vec<(&'static str, PathBuf)> {
+    let dir = cli_dir(home, agent);
     match agent {
-        "claude-code" => vec![("settings.json", ".claude/settings.json")],
+        "claude-code" => vec![("settings.json", dir.join("settings.json"))],
         "codex" => vec![
-            ("config.toml", ".codex/config.toml"),
+            ("config.toml", dir.join("config.toml")),
             // 仅给旧批次恢复用：v3.249 起「设为全局」不再写 auth.json。
             // 清单恢复按当时写过的文件走；无清单回落仍可能碰到旧 auth.json 备份。
-            ("auth.json", ".codex/auth.json"),
+            ("auth.json", dir.join("auth.json")),
         ],
         "gemini" => vec![
-            (".env", ".gemini/.env"),
+            (".env", dir.join(".env")),
             // 光有 .env 不够：gemini ≥0.46 在 base URL 存在时把 env 推断为 gateway 认证，
             // validateAuthMethod 不认 → headless 直接报 auth 错起不来；必须落
             // settings.json 的 selectedType="gemini-api-key"（cc-switch 同口径，审计实证）
-            ("settings.json", ".gemini/settings.json"),
+            ("settings.json", dir.join("settings.json")),
         ],
-        "qwen" => vec![("settings.json", ".qwen/settings.json")],
-        "opencode" => vec![("opencode.json", ".config/opencode/opencode.json")],
-        "codebuddy" => vec![("settings.json", ".codebuddy/settings.json")],
+        "qwen" | "codebuddy" => vec![("settings.json", dir.join("settings.json"))],
+        "opencode" => vec![("opencode.json", dir.join("opencode.json"))],
         "kimi" => vec![
-            ("config.toml", ".kimi-code/config.toml"),
-            ("legacy-config.toml", ".kimi/config.toml"),
+            ("config.toml", dir.join("config.toml")),
+            ("legacy-config.toml", kimi_legacy_dir(home).join("config.toml")),
         ],
-        "grok" => vec![("config.toml", ".grok/config.toml")],
+        "grok" => vec![("config.toml", dir.join("config.toml"))],
         _ => vec![],
     }
 }
@@ -1412,20 +1431,20 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
 /// 官方账号「设为全局」的写计划：文件不存在就不写（不存在 = 本来就没有 API 配置）。
 fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, String> {
     let mut plans = Vec::new();
-    let mut add = |tag: &'static str, rel: &str, f: &dyn Fn(&str) -> Result<String, String>| {
-        let path = home.join(rel);
+    let dir = cli_dir(home, agent);
+    let mut add = |tag: &'static str, path: PathBuf, f: &dyn Fn(&str) -> Result<String, String>| {
         if let Some(text) = read_existing(&path)? {
             plans.push(PlannedWrite { tag, content: f(&text)?, path });
         }
         Ok::<(), String>(())
     };
     match agent {
-        "codex" => add("config.toml", ".codex/config.toml", &|t| patch_codex_config_official(Some(t)))?,
-        "claude-code" => add("settings.json", ".claude/settings.json", &patch_claude_settings_official)?,
-        "codebuddy" => add("settings.json", ".codebuddy/settings.json", &patch_codebuddy_settings_official)?,
-        "qwen" => add("settings.json", ".qwen/settings.json", &patch_qwen_settings_official)?,
+        "codex" => add("config.toml", dir.join("config.toml"), &|t| patch_codex_config_official(Some(t)))?,
+        "claude-code" => add("settings.json", dir.join("settings.json"), &patch_claude_settings_official)?,
+        "codebuddy" => add("settings.json", dir.join("settings.json"), &patch_codebuddy_settings_official)?,
+        "qwen" => add("settings.json", dir.join("settings.json"), &patch_qwen_settings_official)?,
         "gemini" => {
-            add(".env", ".gemini/.env", &|t| {
+            add(".env", dir.join(".env"), &|t| {
                 Ok(patch_env_file_remove(
                     t,
                     &["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"],
@@ -1433,13 +1452,13 @@ fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, S
                     "gemini",
                 ))
             })?;
-            add("settings.json", ".gemini/settings.json", &patch_gemini_settings_official)?;
+            add("settings.json", dir.join("settings.json"), &patch_gemini_settings_official)?;
         }
         "kimi" => {
-            add("config.toml", ".kimi-code/config.toml", &patch_kimi_config_official)?;
-            add("legacy-config.toml", ".kimi/config.toml", &patch_kimi_config_official)?;
+            add("config.toml", dir.join("config.toml"), &patch_kimi_config_official)?;
+            add("legacy-config.toml", kimi_legacy_dir(home).join("config.toml"), &patch_kimi_config_official)?;
         }
-        "grok" => add("config.toml", ".grok/config.toml", &patch_grok_config_official)?,
+        "grok" => add("config.toml", dir.join("config.toml"), &patch_grok_config_official)?,
         other => return Err(format!("{other} 的官方账号不支持「设为全局」")),
     }
     Ok(plans)
@@ -1533,13 +1552,14 @@ fn plan_writes(
             ))
         }
     }
+    let dir = cli_dir(home, &profile.agent);
     let mut plans = Vec::new();
     let mut push = |tag: &'static str, path: PathBuf, content: String| {
         plans.push(PlannedWrite { tag, path, content });
     };
     match profile.agent.as_str() {
         "claude-code" => {
-            let path = home.join(".claude/settings.json");
+            let path = dir.join("settings.json");
             let content = patch_claude_settings(
                 read_existing(&path)?.as_deref(),
                 base_url,
@@ -1567,7 +1587,7 @@ fn plan_writes(
                 push("model-catalog.json", path.clone(), content);
                 Some(path)
             };
-            let path = home.join(".codex/config.toml");
+            let path = dir.join("config.toml");
             let key = key.ok_or("该配置没有已保存的密钥")?;
             let content = patch_codex_config(
                 read_existing(&path)?.as_deref(),
@@ -1591,7 +1611,7 @@ fn plan_writes(
             .into_iter()
             .filter_map(|(k, v)| v.map(|v| (k.to_string(), v.to_string())))
             .collect();
-            let path = home.join(".gemini/.env");
+            let path = dir.join(".env");
             // 没有任何可写值且文件不存在时，不创建空文件
             if !pairs.is_empty() || path.exists() {
                 let content = patch_env_file(read_existing(&path)?.as_deref(), &pairs)?;
@@ -1599,7 +1619,7 @@ fn plan_writes(
             }
             // 认证方式落盘（见 patch_gemini_settings 注释：没有它 headless 起不来）；
             // 顺带登记自定义模型进 /model 选择器（experimental 段，重启生效）
-            let path = home.join(".gemini/settings.json");
+            let path = dir.join("settings.json");
             let content = patch_gemini_settings(
                 read_existing(&path)?.as_deref(),
                 &profile.name,
@@ -1609,14 +1629,14 @@ fn plan_writes(
             push("settings.json", path, content);
         }
         "qwen" => {
-            let path = home.join(".qwen/settings.json");
+            let path = dir.join("settings.json");
             let content = patch_qwen_settings(read_existing(&path)?.as_deref(), key, profile)?;
             push("settings.json", path, content);
         }
         "opencode" => {
             let mut provider = agents::opencode_provider_json(profile, key, model);
             overlay_opencode_per_model(&mut provider, profile);
-            let path = home.join(".config/opencode/opencode.json");
+            let path = dir.join("opencode.json");
             let content = patch_opencode_config(
                 read_existing(&path)?.as_deref(),
                 provider,
@@ -1626,7 +1646,7 @@ fn plan_writes(
             push("opencode.json", path, content);
         }
         "codebuddy" => {
-            let path = home.join(".codebuddy/settings.json");
+            let path = dir.join("settings.json");
             let content =
                 patch_codebuddy_settings(read_existing(&path)?.as_deref(), base_url, key, model)?;
             push("settings.json", path, content);
@@ -1634,8 +1654,8 @@ fn plan_writes(
         "kimi" => {
             // 两个变体共用 kimi 命令：存在的变体目录都写；都不存在时写到新版目录
             let provider_type = profile.protocol.as_deref().unwrap_or("kimi");
-            let new_path = home.join(".kimi-code/config.toml");
-            let legacy_path = home.join(".kimi/config.toml");
+            let new_path = dir.join("config.toml");
+            let legacy_path = kimi_legacy_dir(home).join("config.toml");
             let mut targets: Vec<(&'static str, PathBuf)> = Vec::new();
             if new_path.parent().is_some_and(|d| d.exists()) {
                 targets.push(("config.toml", new_path.clone()));
@@ -1663,7 +1683,7 @@ fn plan_writes(
             }
         }
         "grok" => {
-            let path = home.join(".grok/config.toml");
+            let path = dir.join("config.toml");
             let content = patch_grok_config(read_existing(&path)?.as_deref(), key, profile)?;
             push("config.toml", path, content);
         }
@@ -2497,13 +2517,13 @@ fn restore_from(backups_dir: &Path, home: &Path, agent: &str) -> Result<Vec<Stri
             .collect::<Result<Vec<_>, String>>()?
     } else {
         let mut actions = Vec::new();
-        for (tag, rel) in target_specs(agent) {
+        for (tag, path) in target_paths(home, agent) {
             let mut baks = list_backups(backups_dir, tag);
             baks.sort();
             if let Some(newest) = baks.pop() {
                 actions.push(TxAction {
                     tag: tag.to_string(),
-                    path: home.join(rel),
+                    path,
                     content: Some(
                         fs::read(backups_dir.join(newest))
                             .map_err(|e| format!("读取恢复备份失败: {e}"))?,
@@ -2672,7 +2692,7 @@ pub(crate) fn register_codex_client_provider_named(
         .unwrap_or_else(|e| e.into_inner());
     let _file_guard = crate::storage::config_lock("global-config")?;
     let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-    let cfg_path = home.join(".codex/config.toml");
+    let cfg_path = cli_dir(&home, "codex").join("config.toml");
     // 只写 config.toml：认证在 provider 块内 experimental_bearer_token，auth.json 完全不碰
     // （单槽 OPENAI_API_KEY 是客户端自身 API-Key 登录态的凭证，写它会顶掉登录）
     let plans = vec![PlannedWrite {

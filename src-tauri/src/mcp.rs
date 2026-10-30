@@ -1027,27 +1027,24 @@ fn agent_paths(agent: &str) -> Result<(PathBuf, Vec<PathBuf>), String> {
             (p.clone(), vec![p])
         }
         "codex" => {
-            let base = env_home("CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("config.toml");
             (p.clone(), vec![p])
         }
         "gemini" => {
-            let base = env_home("GEMINI_CLI_HOME").unwrap_or_else(|| home.join(".gemini"));
+            // GEMINI_CLI_HOME 顶替的是家目录，配置在其下 .gemini/（见 agent_config_root_with）
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("settings.json");
             (p.clone(), vec![p])
         }
         "qwen" => {
-            let base = env_home("QWEN_HOME").unwrap_or_else(|| home.join(".qwen"));
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("settings.json");
             (p.clone(), vec![p])
         }
         // 全局目录合并加载 config.json → opencode.json → opencode.jsonc：写已存在者，都不存在建 opencode.jsonc
         "opencode" => {
-            let base = std::env::var_os("XDG_CONFIG_HOME")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".config"))
-                .join("opencode");
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let candidates = ["config.json", "opencode.json", "opencode.jsonc"]
                 .iter()
                 .map(|n| base.join(n))
@@ -1060,13 +1057,13 @@ fn agent_paths(agent: &str) -> Result<(PathBuf, Vec<PathBuf>), String> {
             (write, candidates)
         }
         "kimi" => {
-            let base = env_home("KIMI_CODE_HOME").unwrap_or_else(|| home.join(".kimi-code"));
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("mcp.json");
             (p.clone(), vec![p])
         }
         // 回退链 .mcp.json → mcp.json（deprecated）；.codebuddy.json 是共享状态文件不碰，缺失则新建 .mcp.json
         "codebuddy" => {
-            let base = env_home("CODEBUDDY_CONFIG_DIR").unwrap_or_else(|| home.join(".codebuddy"));
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let primary = base.join(".mcp.json");
             let legacy = base.join("mcp.json");
             let write = if primary.exists() || !legacy.exists() {
@@ -1085,7 +1082,7 @@ fn agent_paths(agent: &str) -> Result<(PathBuf, Vec<PathBuf>), String> {
         // GROK_HOME 可整体搬迁。首版只做只读清单（agent_entries 解析 TOML），分发/写入
         // 在 apply_to_agent 明确拒绝（grok 自带 `grok mcp add` CLI，不硬造 TOML 原子写管线）
         "grok" => {
-            let base = env_home("GROK_HOME").unwrap_or_else(|| home.join(".grok"));
+            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("config.toml");
             (p.clone(), vec![p])
         }

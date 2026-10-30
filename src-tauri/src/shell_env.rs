@@ -33,6 +33,15 @@ fn should_import(key: &str) -> bool {
         "COLORTERM", "NO_COLOR", "FORCE_COLOR", "SECURITYSESSIONID", "LaunchInstanceID",
     ];
     const OTHER_PREFIXES: &[&str] = &["PROMPT", "TERM", "CCODE_", "MESA_", "XPC_", "__CF"];
+    // 各家配置目录的搬迁变量不是凭据：要带进来，否则从访达打开时 Mesa 与终端里的 CLI 读的不是同一个目录
+    //（设为全局写错地方、MCP / 技能装错地方；2026-10-30）。清单与 agent_specs::agent_config_root_with 同步
+    const RELOCATION_VARS: &[&str] = &[
+        "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME",
+        "KIMI_SHARE_DIR", "CODEBUDDY_CONFIG_DIR", "GROK_HOME",
+    ];
+    if RELOCATION_VARS.contains(&key) {
+        return true;
+    }
     let upper = key.to_ascii_uppercase();
     !(key.is_empty()
         || SECRET_SUFFIXES.iter().any(|s| upper.ends_with(s))
@@ -189,6 +198,14 @@ mod tests {
                     assert!(!should_import(key), "{} 的 {key} 不该带", spec.id);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn imports_config_dir_relocation_vars() {
+        // 不是凭据：设为全局 / MCP / 技能要和终端里的 CLI 认同一个配置目录
+        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME", "GROK_HOME"] {
+            assert!(should_import(key), "{key} 应该带");
         }
     }
 

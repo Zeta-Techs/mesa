@@ -1484,50 +1484,60 @@ fn env_path(var: &str) -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-/// `CLAUDE_CONFIG_DIR` 整体替换 `~/.claude`（不是替换家目录）：技能在 `$CLAUDE_CONFIG_DIR/skills`
-fn claude_skills_dir(config_dir: Option<std::path::PathBuf>, home: std::path::PathBuf) -> std::path::PathBuf {
-    config_dir.unwrap_or_else(|| home.join(".claude")).join("skills")
+/// 各家 CLI 用户级配置目录（`~/.claude`、`~/.codex`……），认 CLI 自己的搬迁变量。
+/// 设为全局、MCP、技能三处都从这里取，口径不得各写一份（2026-10-30：设为全局写死 `~/.xxx`，
+/// 设过搬迁变量的用户写了不生效）。`env` 由调用方给：生产读进程环境，测试传空表。
+/// - `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `QWEN_HOME` / `KIMI_CODE_HOME` / `CODEBUDDY_CONFIG_DIR` /
+///   `GROK_HOME` 整体顶替该目录；
+/// - `GEMINI_CLI_HOME` 顶替的是**家目录**，配置仍在其下 `.gemini/`（0.66 bundle `homedir()` 实证）；
+/// - OpenCode 是 `$XDG_CONFIG_HOME/opencode`；Cursor 无搬迁变量（只读不写）。
+pub fn agent_config_root_with(
+    agent: &str,
+    home: &std::path::Path,
+    env: &dyn Fn(&str) -> Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    let moved = |var: &str, dflt: &str| env(var).unwrap_or_else(|| home.join(dflt));
+    Some(match agent {
+        "claude-code" => moved("CLAUDE_CONFIG_DIR", ".claude"),
+        "codex" => moved("CODEX_HOME", ".codex"),
+        "gemini" => env("GEMINI_CLI_HOME")
+            .unwrap_or_else(|| home.to_path_buf())
+            .join(".gemini"),
+        "qwen" => moved("QWEN_HOME", ".qwen"),
+        "opencode" => env("XDG_CONFIG_HOME")
+            .unwrap_or_else(|| home.join(".config"))
+            .join("opencode"),
+        "kimi" => moved("KIMI_CODE_HOME", ".kimi-code"),
+        "codebuddy" => moved("CODEBUDDY_CONFIG_DIR", ".codebuddy"),
+        "cursor" => home.join(".cursor"),
+        "grok" => moved("GROK_HOME", ".grok"),
+        _ => return None,
+    })
 }
 
-/// 该 agent 的技能目录：搬迁变量优先，缺省 = home + `skills_dir` 段。
-/// MCP 的 agent_paths 用同一套搬迁变量；两处必须同源，避免 `KIMI_CODE_HOME` 等
-/// 只对 MCP 生效、技能静默落到默认家目录。
+/// 旧版 kimi-cli 的目录（`~/.kimi`，`KIMI_SHARE_DIR` 顶替）；与新版 Kimi Code 共用 `kimi` 命令
+pub fn kimi_legacy_root_with(
+    home: &std::path::Path,
+    env: &dyn Fn(&str) -> Option<std::path::PathBuf>,
+) -> std::path::PathBuf {
+    env("KIMI_SHARE_DIR").unwrap_or_else(|| home.join(".kimi"))
+}
+
+/// 读本进程环境的 `agent_config_root_with`（登录 shell 的搬迁变量已在启动时导入）
+pub fn agent_config_root(agent: &str) -> Option<std::path::PathBuf> {
+    let home = crate::dirs::home_dir()?;
+    agent_config_root_with(agent, &home, &env_path)
+}
+
+/// 该 agent 的技能目录：配置目录下 `skills`（Cursor 是 `skills-cursor`），与 MCP 同源。
 pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
     let home = crate::dirs::home_dir()?;
     match spec.id {
-        "claude-code" => Some(claude_skills_dir(env_path("CLAUDE_CONFIG_DIR"), home)),
-        "codex" => {
-            let base = env_path("CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
-            Some(base.join("skills"))
-        }
-        "gemini" => {
-            let base = env_path("GEMINI_CLI_HOME").unwrap_or_else(|| home.join(".gemini"));
-            Some(base.join("skills"))
-        }
-        "qwen" => {
-            let base = env_path("QWEN_HOME").unwrap_or_else(|| home.join(".qwen"));
-            Some(base.join("skills"))
-        }
-        "opencode" => {
-            let base = env_path("XDG_CONFIG_HOME")
-                .unwrap_or_else(|| home.join(".config"))
-                .join("opencode");
-            Some(base.join("skills"))
-        }
-        "kimi" => {
-            let base = env_path("KIMI_CODE_HOME").unwrap_or_else(|| home.join(".kimi-code"));
-            Some(base.join("skills"))
-        }
-        "codebuddy" => {
-            let base = env_path("CODEBUDDY_CONFIG_DIR").unwrap_or_else(|| home.join(".codebuddy"));
-            Some(base.join("skills"))
-        }
         "cursor" => Some(home.join(".cursor").join("skills-cursor")),
-        "grok" => {
-            let base = env_path("GROK_HOME").unwrap_or_else(|| home.join(".grok"));
-            Some(base.join("skills"))
-        }
-        _ => Some(spec.skills_dir.iter().fold(home, |p, seg| p.join(seg))),
+        id => match agent_config_root_with(id, &home, &env_path) {
+            Some(root) => Some(root.join("skills")),
+            None => Some(spec.skills_dir.iter().fold(home, |p, seg| p.join(seg))),
+        },
     }
 }
 
@@ -1648,14 +1658,35 @@ mod tests {
     }
 
     #[test]
-    fn claude_config_dir_replaces_dot_claude() {
-        let home = std::path::PathBuf::from("home");
+    fn config_root_honors_relocation_vars() {
+        use std::path::PathBuf;
+        let home = PathBuf::from("home");
+        let none = |_: &str| None;
+        assert_eq!(agent_config_root_with("claude-code", &home, &none), Some(home.join(".claude")));
+        assert_eq!(agent_config_root_with("opencode", &home, &none), Some(home.join(".config/opencode")));
+        let env = |v: &str| Some(PathBuf::from(format!("moved-{v}")));
+        // 整体顶替配置目录的几家
+        for (agent, var) in [
+            ("claude-code", "CLAUDE_CONFIG_DIR"),
+            ("codex", "CODEX_HOME"),
+            ("qwen", "QWEN_HOME"),
+            ("kimi", "KIMI_CODE_HOME"),
+            ("codebuddy", "CODEBUDDY_CONFIG_DIR"),
+            ("grok", "GROK_HOME"),
+        ] {
+            assert_eq!(agent_config_root_with(agent, &home, &env), Some(PathBuf::from(format!("moved-{var}"))));
+        }
+        // GEMINI_CLI_HOME 顶替的是家目录
         assert_eq!(
-            claude_skills_dir(None, home.clone()),
-            home.join(".claude").join("skills")
+            agent_config_root_with("gemini", &home, &env),
+            Some(PathBuf::from("moved-GEMINI_CLI_HOME").join(".gemini"))
         );
-        let moved = std::path::PathBuf::from("moved-claude");
-        assert_eq!(claude_skills_dir(Some(moved.clone()), home), moved.join("skills"));
+        assert_eq!(
+            agent_config_root_with("opencode", &home, &env),
+            Some(PathBuf::from("moved-XDG_CONFIG_HOME").join("opencode"))
+        );
+        assert_eq!(kimi_legacy_root_with(&home, &env), PathBuf::from("moved-KIMI_SHARE_DIR"));
+        assert_eq!(kimi_legacy_root_with(&home, &none), home.join(".kimi"));
     }
 
     #[test]

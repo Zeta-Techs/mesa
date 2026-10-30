@@ -984,7 +984,8 @@ src-tauri/
                              #   所有链接产物（含 lib 测试 exe，否则 cargo test 报 0xc0000139），别退回 tauri_build::build()
   windows-app-manifest.xml   # Windows 应用 manifest（Common-Controls 6.0，与 tauri-build 默认相同），build.rs 交给链接器
 src-tauri/src/
-  agent_specs.rs             # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/permission_args 原生权限档（聊天权限徽标，agents::permission_launch_args）/
+  agent_specs.rs             # agent_config_root_with：各家用户级配置目录唯一解析（搬迁变量；GEMINI_CLI_HOME 顶替家目录），设为全局 / MCP / 技能同源；
+                             # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/permission_args 原生权限档（聊天权限徽标，agents::permission_launch_args）/
                              #   model_switch 运行中切模型（claude/gemini/kimi/grok 带参直切；codex/opencode 唤选择器——两家 CLI 无带参直切：
                              #   codex /model 无内联参数（源码 supports_inline_args 不含 Model）、opencode /models run 无参，2026-09-15 实证；
                              #   状态栏 picker 档点芯片即唤选择器、不摆模型假菜单）与
@@ -1129,6 +1130,7 @@ src-tauri/src/
                              #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
                              #   读不到就不假装知道（Unknown 不出检查项）；深链模板与客户端规格数据在 agent_specs.rs 的 ClientSpec
   global_config.rs           # 「设为全局默认」：agent 级事务批次写入（备份/回滚/恢复）；Codex 一律写共用渠道 custom；
+                             # 目标目录一律 cli_dir（= agent_specs::agent_config_root_with，认 CODEX_HOME 等搬迁变量；测试态不读环境）；
                              # 官方账号走 plan_official_writes（各家撤 API 键交回登录，整份比对 disk_equals_plans）；写成功即记
                              # settings.active_global_profiles（配置页「全局生效」徽标数据源），恢复后清除；
                              # 恢复分两档——撤销上次写入（UI 名；最近批次，每 tag 轮换留 5 份）与恢复初始状态
@@ -1719,7 +1721,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # workspaceSettings（传 root 时 ws_settings 三层合并终值 + 每键来源层标注）；
                              # 整份出站前过 sessions::redact_sensitive_text；设置页「诊断」区「生效配置快照」卡片消费
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
-                             #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）
+                             #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）；
+                             #   各家配置目录搬迁变量（CODEX_HOME 等）照带
   process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
                              #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录；
                              #   子进程 PATH 走 child_path：Windows 补注册表里新出现的目录、macOS / Linux 补候选目录里新出现的，

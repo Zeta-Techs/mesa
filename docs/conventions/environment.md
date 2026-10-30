@@ -19,6 +19,8 @@
   `/usr/bin/env -0`，带 `MESA_RESOLVING_ENVIRONMENT=1`，5 秒超时整组收掉并回落；进程已有 `SHLVL`（从终端启动，开发版即此）、
   Windows、nu / xonsh / pwsh 不读。**凭据类不带**：`_API_KEY` `_KEY` `_TOKEN` `_SECRET` `_PASSWORD` 等后缀、九家 Agent 的变量前缀
   （`ANTHROPIC_` `OPENAI_` `CLAUDE_` …，单测钉住 agent_specs 的净化表全被拦），shell 自身与 Mesa 自管的键也不带。
+  **例外：各家配置目录的搬迁变量要带**（`CLAUDE_CONFIG_DIR` `CODEX_HOME` `GEMINI_CLI_HOME` `QWEN_HOME` `KIMI_CODE_HOME`
+  `KIMI_SHARE_DIR` `CODEBUDDY_CONFIG_DIR` `GROK_HOME`，2026-10-30）：不是凭据，不带的话 Mesa 与终端里的 CLI 读的不是同一个目录。
   应用日志记一行用时与个数，不记名字和值。**验收不用打包**：只起 Vite（`npm run dev -- --host 127.0.0.1`）后
   `launchctl submit -l com.ccode.gui-probe -- <仓库>/src-tauri/target/debug/ccode`，拿到的就是 launchd 环境；`launchctl remove` 收掉
   （submit 的任务退出会被拉起）。启动 Agent 子进程等新调用点不需另做什么，继承进程环境即可。
