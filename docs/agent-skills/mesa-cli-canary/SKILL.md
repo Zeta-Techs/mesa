@@ -1,15 +1,19 @@
 ---
 name: mesa-cli-canary
-description: Mesa（ccode）仓库的 CLI 金丝雀日常维护。看每天 cli-canary 工作流的结果，分清是环境故障、Mesa 自身问题还是某家 CLI 变了；CLI 变了就适配 Mesa、更新基线与抓屏语料库，最后用中文报告。用户说「做金丝雀维护」「看看金丝雀」「CLI 更新了聊天层有没有坏」「检查哪家可以摘测试版」时使用。只在 Mesa 仓库根目录里用。
+description: Mesa（ccode）仓库让 Mesa 跟上九家 CLI 的维护。日常看 cli-canary 工作流的结果，分清环境故障、Mesa 自身问题还是某家 CLI 变了（含「设为全局」写进去的配置外部 CLI 还认不认）；CLI 变了就适配 Mesa、更新基线与抓屏语料库。发版前逐家复核官方配置文档，改连接 / 设为全局写法时按九条规则核对并用真 CLI 验证。最后用中文报告。用户说「做金丝雀维护」「看看金丝雀」「CLI 更新了聊天层 / 连接有没有坏」「设为全局外面不认了」「发版前复核各家配置文档」「检查哪家可以摘测试版」时使用。只在 Mesa 仓库根目录里用。
 ---
 
 # Mesa CLI 金丝雀维护
 
-Mesa 的聊天层建在九家 CLI（Claude Code、Codex、Gemini、Qwen Code、OpenCode、Kimi、CodeBuddy、Cursor、Grok）的终端上。
-各家几乎每天发版，金丝雀每天装最新版，把 Mesa 依赖的四层（请求、旁路、会话文件、终端画面）抽成指纹，和 `scripts/cli-canary/baseline/<平台>/<家>.json` 比。
+Mesa 的聊天层建在九家 CLI（Claude Code、Codex、Gemini、Qwen Code、OpenCode、Kimi、CodeBuddy、Cursor、Grok）的终端上，连接页又替用户
+把连接写进各家的配置文件（「设为全局默认」）。各家几乎每天发版，金丝雀每天装最新版，把 Mesa 依赖的四层（请求、旁路、会话文件、终端画面）抽成指纹，
+和 `scripts/cli-canary/baseline/<平台>/<家>.json` 比；另有一层「全局配置」检查：Mesa 写进去的配置，外部直接用 CLI 时还认不认（2026-10-30 起）。
+
+这个技能管三件事，按用户这次要的做：**日常维护**（第一～五步）、**发版前复核官方配置文档**（「发版前」一节）、**改连接 / 设为全局写法时的核对**（「改写法时」一节）。
 基线里的 `version` 会随包进 Mesa：用户的 CLI 比它新时，聊天层不替人自动按键（`src/cli-verified.ts`）。你的工作是让这套东西一直是真的。
 
-开始前读：`AGENTS.md`（仓库硬约束）、`scripts/cli-canary/README.md`、`docs/design-chat-fidelity.md`。
+开始前读：`AGENTS.md`（仓库硬约束）、`scripts/cli-canary/README.md`、`docs/design-chat-fidelity.md`；涉及连接 / 设为全局时再读
+`docs/conventions/profiles.md` §12 开头九条与 `docs/design-connection-agent-forms.md`。
 
 ## 不能做的事
 
@@ -105,6 +109,21 @@ git diff scripts/cli-canary/baseline/
 
 `--accept` 会把这家重跑一遍再记，记下的是重跑的结果，不是你刚看过的那次：提交前看一眼 `git diff`，变化要和你判断过的那处对得上，对不上就别提交、回去查。
 
+### 「全局配置：…」检查没过
+
+这一层（`canary.py global_phase`）用 Mesa 真实的设为全局写计划（`global_config.rs e2e_write_global_config`）把配置写进临时 HOME，
+不经 Mesa 直接起 CLI 的无头命令问一句，看假网关收到的模型是不是 `e2e-global`、密钥末 8 位是不是 `sk-e2e-global` 的。明细在
+`<out>/<家>/global-write.log`（写了哪些文件）与 `global-run.log`（CLI 的输出）。
+
+| 现象 | 多半是 | 怎么查 |
+|---|---|---|
+| 模型对、密钥不对（末 8 位像 `API_KEY}`） | 配置里的变量引用没展开 | 先确认临时 HOME 不在系统临时目录（CodeBuddy 在 `/var/folders/…/T` 下不展开 `${VAR}`，`global_phase` 已建在 `~/.mesa-canary-global/`）；再查这家文档的变量引用写法变了没有 |
+| 一个请求都没到假网关、`exit timeout` | CLI 没走配置里的地址，或被代理挡了 | 看 `global-run.log`：报没登录 = 密钥位置不认了（Grok 1.0.70 不读顶层 `api_key` 的先例）；什么都没有 = 先确认 `NO_PROXY=127.0.0.1,localhost` 在（Grok 带断网代理） |
+| 请求到了但模型是别的 | 配置优先级 / 默认模型字段变了 | 对照这家官方配置文档（「发版前」一节的来源表）找新的默认模型键；Gemini 再看 `~/.gemini/.env` 是否因目录信任没读 |
+| `global-write.log` 里测试失败 | Mesa 写计划本身报错 | 按报错修 `global_config.rs`，不是 CLI 变了 |
+
+修好后照第三步 `--accept`（这层只是检查项、不进指纹，基线不变也要检查全过才算绿）。
+
 ## 第四步：新画面存进抓屏语料库
 
 金丝雀抓到新版本的画面，或你修了一个读屏问题：
@@ -130,6 +149,38 @@ npm run build
 - 只 `git add` 你改的文件。
 - 涉及用户能看到的变化，照 AGENTS.md 同步 `CHANGELOG.md`「未发布」段和 `docs/guide/user-guide.md`。
 
+## 发版前：逐家复核官方配置文档
+
+金丝雀只发现「行为变了」，发现不了「官方新出了更好的写法」（2026-10-30 的先例：CodeBuddy 的 `models.json`、Claude 的 `effortLevel`、
+Qwen 官方登录停用都是读文档才发现的）。每次发版前（architecture §12「发布前检查项」）做一轮，耗时大的话可以三家一组并行交给子任务，但每家结论你自己核。
+
+| 家 | 官方来源（先看更新日志，再看配置页） | Mesa 写法在哪 |
+|---|---|---|
+| Claude Code | code.claude.com/docs/en/settings、model-config、env-vars；CHANGELOG.md | `global_config.rs patch_claude_settings`、`agents.rs claude_model_env` |
+| Codex | github.com/openai/codex `docs/config.md`、learn.chatgpt.com 的 config 文档；Releases | `patch_codex_config` / `patch_codex_relay_extras` |
+| Gemini CLI | github.com/google-gemini/gemini-cli `docs/` 的 configuration、authentication；Releases | `patch_gemini_settings` / `patch_gemini_extras` / `.env` |
+| Qwen Code | qwenlm.github.io/qwen-code-docs 的 configuration / auth；本机 bundle | `patch_qwen_settings` |
+| OpenCode | opencode.ai/docs/config、providers、models | `patch_opencode_config`、`agents.rs opencode_provider_json` |
+| Kimi Code | moonshotai.github.io/kimi-cli 的 configuration；本机二进制 strings | `patch_kimi_config` / `patch_kimi_effort` |
+| CodeBuddy | codebuddy.ai/docs/cli 的 settings、models、env-vars | `patch_codebuddy_settings` / `patch_codebuddy_models` |
+| Grok Build | 本机 `~/.grok/docs/user-guide/`（02-authentication、11-custom-models、26-config-reference） | `patch_grok_config` |
+| Cursor | cursor.com/docs/cli/reference/configuration、authentication | 不支持设为全局（`agent_specs.rs` 理由） |
+
+每家对四件事：① Mesa 写的键名 / 位置还认不认、有没有改名；② 有没有更高优先级的来源会盖过（新的环境变量、项目级 / 托管配置）；
+③ 有没有能落盘的新字段可以补上「启动有、全局漏」的设置；④ 认证 / 官方登录有没有变（停用、换方式）。结论写进 `docs/agent-integration-matrix.md`
+这家那一节（带日期与依据：文档 URL、版本号或实测）。要改写法的，按下一节做。没有变化也在报告里写一句「已复核，无变化」。
+
+## 改写法时：九条规则 + 真 CLI 验证
+
+改任何一家的设为全局写计划、启动注入或连接表单前，逐条对照 `docs/conventions/profiles.md` §12 开头九条（目录同源、与启动同源、只管自己的键先清再写、
+写前说清盖掉来源、写用户层、官方切回只撤自己的、被引用文件不删、能引用不写明文、金丝雀复核）。另外：
+- **新写法上线前用真 CLI + 假网关跑一遍**，静态审查代替不了（AGENTS「动真实数据先干跑」）：`npm run canary -- --agents <家> --skip-screen` 会跑「全局配置」层；
+  只想快速看一家，可按 `scripts/cli-canary/README.md`「全局配置」一行的做法单跑 `e2e_write_global_config` 再手动起 CLI。临时 HOME 建在用户目录下。
+- **双端镜像要同改**：Claude 别名槽（`agents.rs claude_slot_models` ↔ `src/role-models.ts claudeAliasMap`，共读 `tests/fixtures/claude-slots.json`）；
+  通道表 `request_policy_support` 的 `persist` 格子与写盘函数由 `policy_channel_table_agrees_with_patch_functions` 互锁，改一边测试会拦。
+- 连接弹层「看实际会拿到什么」（`EffectPreview`）显示的就是 `preview_launch_plan` / `preview_profile_global` 的结果：改完自己打开看一眼对不对。
+- 用户看得见的变化同步 `CHANGELOG.md` 与 `docs/guide/user-guide.md` 第 9 章。
+
 ## 每两周一次：哪些家可以摘「测试版」
 
 条件（`docs/design-chat-fidelity.md` §4）：这家连续两周金丝雀没报红，且「转到终端」计数里「等确认，聊天卡上认不出菜单」「等确认，这家没有精确状态」基本为 0。
@@ -147,11 +198,13 @@ sqlite3 "<app.db 路径>" "SELECT agent, reason, detail, SUM(count) FROM chat_ha
 ```
 ## 金丝雀维护 · <日期>
 
-| 家 | 版本 | 结果 | 处理 |
-|---|---|---|---|
-| claude-code | 2.1.310 | 绿 | — |
-| qwen | 0.26.0 | 画面变了 | 修了 live-reply 的 xx，新样本已存，基线已接受（darwin） |
+| 家 | 版本 | 结果 | 全局配置 | 处理 |
+|---|---|---|---|---|
+| claude-code | 2.1.310 | 绿 | 认 | — |
+| qwen | 0.26.0 | 画面变了 | 认 | 修了 live-reply 的 xx，新样本已存，基线已接受（darwin） |
 | …
+
+（发版前复核时另加一节「官方配置文档复核」：每家一行，变了什么 / 无变化，依据链接。）
 
 - 环境故障：<有就写，重跑了没有>
 - Mesa 自身问题：<如主线 CI 红、Windows 测试起不来>
