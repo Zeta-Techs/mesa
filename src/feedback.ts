@@ -36,7 +36,7 @@ export const FEEDBACK_TEMPLATES: Partial<Record<FeedbackKind, string>> = {
 
 /** 剔除没填内容的模板行（「预期：」后面没字的整行删掉，填了原样保留） */
 export function stripUnfilledTemplate(text: string): string {
-  const headers = /^(做了什么|预期|实际|想解决的问题|期望的做法)：\s*$/;
+  const headers = /^(做了什么|预期|实际|想解决的问题|期望的做法|哪里对不上|你当时在做什么)：\s*$/;
   return text
     .split("\n")
     .filter((line) => !headers.test(line.trim()))
@@ -83,6 +83,8 @@ export interface FeedbackBodyInput {
   envLine?: string;
   /** 最近错误日志摘录（feedback_error_log 命令；与 envLine 同进退） */
   errorLog?: string | null;
+  /** 「聊天和终端对不上」的两边对照（chat-mismatch.ts 拼、后端 feedback_chat_snapshot 脱敏）；有自己的勾选 */
+  chatSnapshot?: string | null;
 }
 
 /** 「自动附带」段（含分隔标题行）：邮件正文与表单里的发送预览共用，
@@ -90,10 +92,12 @@ export interface FeedbackBodyInput {
 export function feedbackAutoSection(
   envLine?: string,
   errorLog?: string | null,
+  chatSnapshot?: string | null,
 ): string {
   const auto: string[] = [];
   if (envLine) auto.push(envLine);
   if (errorLog) auto.push("", "最近错误日志：", errorLog);
+  if (chatSnapshot) auto.push(...(auto.length ? [""] : []), chatSnapshot);
   if (!auto.length) return "";
   return ["——以下由 Mesa 自动附带——", ...auto].join("\n");
 }
@@ -101,7 +105,7 @@ export function feedbackAutoSection(
 export function feedbackBody(input: FeedbackBodyInput): string {
   const lines: string[] = [stripUnfilledTemplate(input.detail.trim())];
   if (input.contact?.trim()) lines.push("", `联系方式：${input.contact.trim()}`);
-  const auto = feedbackAutoSection(input.envLine, input.errorLog);
+  const auto = feedbackAutoSection(input.envLine, input.errorLog, input.chatSnapshot);
   if (auto) lines.push("", auto);
   return lines.join("\n");
 }
@@ -189,6 +193,7 @@ export interface FeedbackPayload {
   };
   errorLog?: string | null;
   images?: FeedbackImage[];
+  chatSnapshot?: string;
 }
 
 export function feedbackPayload(
@@ -212,6 +217,7 @@ export function feedbackPayload(
     },
     ...(input.errorLog ? { errorLog: input.errorLog } : {}),
     ...(input.images?.length ? { images: input.images } : {}),
+    ...(input.chatSnapshot ? { chatSnapshot: input.chatSnapshot } : {}),
   };
 }
 

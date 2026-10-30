@@ -82,7 +82,16 @@ import {
   slashSettledLocally,
 } from "../chat-handoff";
 import { recordChatHandoff } from "../chat-handoff-log";
-import { useCliNewer } from "../cli-verified";
+import { CANARY_PLATFORM, VERIFIED_VERSIONS, useCliNewer } from "../cli-verified";
+import { chatFidelity, tierLabel, verifiedVersion, versionTrust } from "../chat-fidelity";
+import {
+  MISMATCH_EVENT,
+  MISMATCH_TEMPLATE,
+  mismatchSnapshot,
+  mismatchTitle,
+  type MismatchFrom,
+  type MismatchReport,
+} from "../chat-mismatch";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
   channelAttention,
@@ -90,6 +99,7 @@ import {
   channelInfersApproval,
   channelLiveLines,
   channelRelink,
+  channelSourceNote,
   channelTurnOpen,
   hooksApprovalAnswered,
   menuOutgrowsChannel,
@@ -483,6 +493,8 @@ export interface FocusTabActions {
   restartWritable: () => Promise<ChatSendResult>;
   /** 往当前 PTY 直接写字节（聊天层审批 y/n/Esc、生成中暂停 Esc；无存活 PTY 时静默丢弃） */
   writePty: (data: string) => void;
+  /** 终端最后 maxLines 行的文字（全屏 TUI 时是可视区）：「聊天和终端对不上」反馈附上 */
+  terminalText: (maxLines: number) => string;
   /** 往 PTY 写一条 TUI 命令并提交（模型/思考档直切；picker 由调用方再窥视终端） */
   writeCommand: (cmd: string) => void;
   /** 用户刚提交一轮（聊天发送 / 注入并回车）：允许随后的 PTY 输出点亮「生成中」 */
@@ -3978,11 +3990,10 @@ const TerminalView = memo(function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [everVisible]);
 
-  /** 抓当前终端画面存回放。全屏 TUI 挂在备用屏时普通缓冲往往只有启动前的空屏
-   *  （claude 整场都在 1049），此时改拍备用屏的可视行——回放要的是用户最后看到的画面。 */
-  function saveTerminalReplayNow() {
+  /** 用户最后看到的终端文字：全屏 TUI 在备用屏时拍可视行，否则取普通缓冲最后 limit 行（回放与「对不上」反馈共用） */
+  function bufferTailLines(limit: number): string[] {
     const term = termRef.current;
-    if (!term || !everVisibleRef.current) return;
+    if (!term) return [];
     const lines: string[] = [];
     if (term.buffer.active.type === "alternate") {
       for (let y = 0; y < term.rows; y += 1) {
@@ -3990,12 +4001,18 @@ const TerminalView = memo(function TerminalView({
       }
     } else {
       const normal = term.buffer.normal;
-      const from = Math.max(0, normal.length - 400);
+      const from = Math.max(0, normal.length - limit);
       for (let y = from; y < normal.length; y += 1) {
         lines.push(normal.getLine(y)?.translateToString(true) ?? "");
       }
     }
-    const replay = terminalReplayText(lines, 400);
+    return lines;
+  }
+  /** 抓当前终端画面存回放。全屏 TUI 挂在备用屏时普通缓冲往往只有启动前的空屏
+   *  （claude 整场都在 1049），此时改拍备用屏的可视行——回放要的是用户最后看到的画面。 */
+  function saveTerminalReplayNow() {
+    if (!termRef.current || !everVisibleRef.current) return;
+    const replay = terminalReplayText(bufferTailLines(400), 400);
     if (replay.trim()) {
       invoke("save_terminal_replay", { tabId, text: replay }).catch(() => {});
     }
@@ -6261,6 +6278,7 @@ const TerminalView = memo(function TerminalView({
     sendMessage: async () => ({ error: "终端尚未准备好" }),
     restartWritable: async () => ({ error: "这段对话不是可写分叉" }),
     writePty: () => {},
+    terminalText: () => "",
     writeCommand: () => {},
     noteUserTurn: () => {},
     loadOlderConversation: async () => {},
@@ -6327,6 +6345,7 @@ const TerminalView = memo(function TerminalView({
       const id = ptyIdRef.current;
       if (id) writeInteractivePty(id, data);
     },
+    terminalText: (n) => bufferTailLines(n).join("\n"),
     writeCommand: (cmd) => {
       const id = ptyIdRef.current;
       if (!id) return;
@@ -6377,6 +6396,7 @@ const TerminalView = memo(function TerminalView({
       sendMessage: (text) => actionsRef.current.sendMessage(text),
       restartWritable: () => actionsRef.current.restartWritable(),
       writePty: (data) => actionsRef.current.writePty(data),
+      terminalText: (n) => actionsRef.current.terminalText(n),
       writeCommand: (cmd) => actionsRef.current.writeCommand(cmd),
       noteUserTurn: () => actionsRef.current.noteUserTurn(),
       loadOlderConversation: (settle) => actionsRef.current.loadOlderConversation(settle),
@@ -8969,6 +8989,39 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }
 
   /** untilText：聊天层「从这里分叉」——简报只取到这条助手回复为止（后端按正文认） */
+  /** 「聊天和终端对不上」（chat-mismatch.ts）：收齐这个标签两边当时的内容，后端脱敏截断后交给 App 打开反馈表单 */
+  async function reportChatMismatch(
+    tabId: string,
+    from: MismatchFrom,
+    card: { title: string; options: string[] } | null,
+  ) {
+    const sess = sessionByTab[tabId];
+    const agentId = sess?.agentId ?? statuses[tabId]?.agentId ?? null;
+    const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
+    const installed = agents.find((a) => a.id === agentId)?.version ?? null;
+    const verified = agentId ? verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId) : null;
+    const channel = sess?.channel ?? null;
+    const fidelity = chatFidelity(agentId, IS_WINDOWS);
+    const raw = mismatchSnapshot({
+      from,
+      agentLabel: label,
+      installed,
+      verified,
+      newer: versionTrust(installed, verified) === "newer",
+      platform: IS_WINDOWS ? "Windows" : IS_MAC ? "macOS" : "Linux",
+      capability: fidelity ? `${tierLabel(fidelity.tier)}${fidelity.beta ? "（测试版）" : ""}` : null,
+      sourceNote: channelSourceNote(channel),
+      channel: channel ? { kind: channel.kind, connection: channel.connection ?? null } : null,
+      messages: sess?.conv ?? [],
+      liveReply: sess?.liveReply ?? null,
+      card,
+      terminal: tabActionsRef.current.get(tabId)?.terminalText(120) ?? "",
+    });
+    const snapshot = await invoke<string>("feedback_chat_snapshot", { text: raw }).catch(() => null);
+    if (snapshot === null) toast("没能整理聊天和终端的内容，这次只发文字", "warning");
+    const report: MismatchReport = { title: mismatchTitle(label, from), detail: MISMATCH_TEMPLATE, snapshot };
+    window.dispatchEvent(new CustomEvent(MISMATCH_EVENT, { detail: report }));
+  }
   async function forkChat(fromTabId = focusedId, untilText?: string) {
     const source = sessionByTab[fromTabId];
     const status = statuses[fromTabId];
@@ -11070,6 +11123,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           tabActionsRef.current.get(t.id)?.answerAsk(a);
                         }}
                         onForkFrom={(text) => void forkChat(t.id, text)}
+                        onReportMismatch={(from, card) => void reportChatMismatch(t.id, from, card ?? null)}
                         connIssue={sessionByTab[t.id]?.connIssue ?? null}
                         onSwitchConnection={(id) =>
                           tabActionsRef.current.get(t.id)?.switchConnection(id)

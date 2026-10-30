@@ -545,6 +545,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # settleStatus 状态字最短停留 800ms、statusCaretMotion 光标按阶段动（2026-10-26）；
   chat-fidelity.ts           # 聊天层对九家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）
+  chat-mismatch.ts           # 「聊天和终端对不上」一键对照反馈（2026-10-30，tests/chat-mismatch.test.ts）：入口标签、标题、详情脚手架、聊天侧 / 终端侧摘录与对照全文拼法；只拼不脱敏（出站前经 feedback.rs feedback_chat_snapshot），事件 mesa:report-chat-mismatch 由 App 接、打开 FeedbackModal
   cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表）；useCliNewer 给降级用
 vite-env.d.ts              # Vite client 类型引用一行：import.meta.glob（cli-verified.ts 构建期读金丝雀基线用）与 import.meta.env 的 TS 类型来源
 __conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore 钉死不进仓）：内嵌一段真会话 JSON 按 ?s= 参数切十片挂 ConversationView，供开发用 Vite 17575＋headless Chrome 截对话组件（memory「组件截图 harness」流程）；验完即删，tsc 会扫到它、别提交
@@ -1399,7 +1400,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   cli_permission.rs          # 各家 CLI 本机默认权限的只读探查（cli_default_permission：Claude permissions.defaultMode、Codex approval_policy/sandbox_mode → 白话一句），返回 {tier, short, detail}（tier = 对应权限菜单哪一档；Codex 因 Mesa 强制 workspace-write 只看 approval_policy），聊天权限菜单标「本机设置」用；不改任何 CLI 设置
   app_icon.rs                # 设置 → 外观「应用图标」：跟随系统 / 深色 / 浅色，只换运行中的程序坞（NSApp）、主窗与托盘图标；图像由 scripts/gen-icons.mjs 生成在 icons/runtime/，打包图标不归这里管
   about.rs                   # 「关于」分区后端：read_third_party_notices（include_str! 嵌随包许可清单）+ build_info（平台/架构/渠道）；清单由 scripts/gen-third-party-notices.mjs 生成，改依赖后必须 npm run gen:notices 再提交
-  feedback.rs                # 反馈通道后端：FEEDBACK_ENDPOINT 常量（None=mailto 回落，公司端点上线改这一行）+ submit_feedback（POST JSON，15s 超时，表单+环境行+截图 Base64）+ save_feedback_images（邮件通道截图落盘 Downloads/ccode-exports/mesa-feedback-<时间>/）+ 邮箱直发（send_feedback_smtp：lettre+rustls，截图与诊断包真实附件；授权码经 profiles::set_shared_key 存 keys.json 键 feedback-smtp，0600 持锁；配置存 settings feedbackSmtp）。诊断包附件只收路径、后端经 checked_diagnostics_path 白名单（导出目录 + ccode-diagnostics-*.zip + 非链接 + ≤20MB）自读。端点启用前需验证 8MB 级 JSON 的 IPC 与超时
+  feedback.rs                # 反馈通道后端：FEEDBACK_ENDPOINT 常量（None=mailto 回落，公司端点上线改这一行）+ submit_feedback（POST JSON，15s 超时，表单+环境行+截图 Base64）+ save_feedback_images（邮件通道截图落盘 Downloads/ccode-exports/mesa-feedback-<时间>/）+ 邮箱直发（send_feedback_smtp：lettre+rustls，截图与诊断包真实附件；授权码经 profiles::set_shared_key 存 keys.json 键 feedback-smtp，0600 持锁；配置存 settings feedbackSmtp）。诊断包附件只收路径、后端经 checked_diagnostics_path 白名单（导出目录 + ccode-diagnostics-*.zip + 非链接 + ≤20MB）自读。端点启用前需验证 8MB 级 JSON 的 IPC 与超时。feedback_chat_snapshot：聊天层「对不上」对照材料出站前去控制字符、按已存密钥与常见前缀打码、超长留尾（chat_snapshot_text 纯函数，submit_feedback 的 chatSnapshot 再过一次）
   settings.rs                # 应用设置（settings.json）：字体/scrollback/渲染器（terminal_renderer：auto/dom/webgl，Mac 默认清晰、Windows 默认流畅，读时闭集过滤）/汇率/镜像/主题/OS 通知/精确注意力
                              # （hooks_attention 按 agent map，旧 claude_hooks_attention 仅反序列化兼容迁移）
                              # /会话自动命名开关（auto_title_sessions 默认开，关 = ai.rs 起名/补名命令全停；

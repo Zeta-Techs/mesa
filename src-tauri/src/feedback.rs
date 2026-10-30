@@ -71,6 +71,9 @@ pub struct FeedbackPayloadDto {
     pub images: Option<Vec<FeedbackImageDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<FeedbackFileDto>,
+    /// 「聊天和终端对不上」时附的两边对照（feedback_chat_snapshot 脱敏截断后的原文）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_snapshot: Option<String>,
 }
 
 /// 诊断包附件上限：正常导出几百 KB，20MB 只兜异常大包
@@ -149,6 +152,35 @@ pub(crate) fn format_error_log(logs: Vec<crate::logbuf::LogEntryDto>) -> Option<
         errs
     };
     Some(tail.join("\n"))
+}
+
+/// 「聊天和终端对不上」对照材料的上限：两边各几千字，合起来远小于邮件正文能装的量
+const CHAT_SNAPSHOT_MAX_CHARS: usize = 16_000;
+
+/// 对照材料出站前的整理（纯函数，tests 钉住）：去掉终端控制序列与其余控制字符（保留换行和制表），
+/// 已保存的密钥与常见密钥前缀打码（sessions::redact_sensitive_text_with，与会话 DTO 同一口径），
+/// 超长时留尾部——出问题的多半是最后那一屏
+pub(crate) fn chat_snapshot_text(text: &str, secrets: &[String]) -> String {
+    let plain: String = crate::updater::strip_ansi(text)
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect();
+    let redacted = crate::sessions::redact_sensitive_text_with(&plain, secrets);
+    let count = redacted.chars().count();
+    if count <= CHAT_SNAPSHOT_MAX_CHARS {
+        return redacted;
+    }
+    let tail: String = redacted.chars().skip(count - CHAT_SNAPSHOT_MAX_CHARS).collect();
+    format!("（前面较长，省略 {} 字）\n{tail}", count - CHAT_SNAPSHOT_MAX_CHARS)
+}
+
+/// 反馈表单「聊天和终端对不上」：把前端拼好的对照材料（聊天里显示的 + 终端最后一屏）在 Rust 层脱敏截断，
+/// 表单预览与发出去的是同一份。读 keys.json 取已保存的密钥，放后台线程
+#[tauri::command]
+pub async fn feedback_chat_snapshot(text: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || chat_snapshot_text(&text, &crate::profiles::stored_secrets()))
+        .await
+        .map_err(|e| format!("整理对照材料失败: {e}"))
 }
 
 /// 当前生效的提交通道：Some(url) = 端点直发；None = mailto 回落（前端拼 mailto）
@@ -390,6 +422,7 @@ pub async fn submit_feedback(
     error_log: Option<String>,
     images: Option<Vec<FeedbackImageDto>>,
     diagnostics: Option<String>,
+    chat_snapshot: Option<String>,
 ) -> Result<(), String> {
     let endpoint = FEEDBACK_ENDPOINT.ok_or_else(|| "未配置反馈端点（本版本走邮件通道）".to_string())?;
     let diagnostics = match diagnostics {
@@ -416,6 +449,7 @@ pub async fn submit_feedback(
         error_log,
         images,
         diagnostics,
+        chat_snapshot: chat_snapshot.map(|t| chat_snapshot_text(&t, &crate::profiles::stored_secrets())),
     };
     let client = reqwest::Client::builder()
         .timeout(SUBMIT_TIMEOUT)
@@ -466,6 +500,28 @@ pub async fn save_feedback_images(images: Vec<FeedbackImageDto>) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_snapshot_strips_control_and_redacts() {
+        let secret = "zk-live-abcdefghijklmnop".to_string();
+        let raw = format!("\x1b[31m红字\x1b[0m\r\n用了 {secret}\x07\n另一个 sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV\t末尾");
+        let out = chat_snapshot_text(&raw, &[secret.clone()]);
+        assert!(out.contains("红字"));
+        assert!(!out.contains('\x1b'));
+        assert!(!out.contains('\x07'));
+        assert!(!out.contains('\r'));
+        assert!(!out.contains(&secret));
+        assert!(!out.contains("ABCDEFGHIJKLMNOPQRSTUV"));
+        assert!(out.contains("\t末尾"));
+    }
+
+    #[test]
+    fn chat_snapshot_keeps_tail_when_long() {
+        let raw = format!("{}最后一屏", "前".repeat(CHAT_SNAPSHOT_MAX_CHARS + 10));
+        let out = chat_snapshot_text(&raw, &[]);
+        assert!(out.starts_with("（前面较长，省略 14 字）"));
+        assert!(out.ends_with("最后一屏"));
+    }
 
     fn cfg(from: &str, tls: &str, port: u16) -> FeedbackSmtpConfigDto {
         FeedbackSmtpConfigDto {

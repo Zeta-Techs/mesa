@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronLeft, ChevronRight, CornerDownLeft, PenLine } from "lucide-react";
 import type { DecisionPreview } from "../chat-channel";
 import { IS_MAC } from "../hotkeys";
@@ -84,14 +84,44 @@ const PRIMARY_KEY = IS_MAC ? "⌘↵" : "Ctrl ↵";
  * （浮层表面 + 标题区 + 右上角终端链接 + 底栏），底栏按 Mesa 按钮三档——次按钮在左，主按钮（CTA）在最右并带 ⌘↵；
  * 选项多或长时（Claude 审批菜单「Yes, and don't ask again for …」）改成整行列表，和提问卡的选项行同一种画法。
  */
+/** 卡头「对不上？」（chat-mismatch.ts）：各种卡共用 CardShell，经 context 送下去，不必逐张卡传 */
+const ReportContext = createContext<(() => void) | null>(null);
+
+/** 卡上给人看的按钮原文（「对不上」反馈附上，和终端里的菜单对照） */
+export function decisionOptionLabels(decision: ChatDecision): string[] {
+  if (decision.plan) return [...decision.plan.go, ...decision.plan.others].map((o) => o.label);
+  const form = decision.ask?.form;
+  if (form) return form.kind === "question" ? form.options.map((o) => o.label) : [];
+  return decision.options.map((o) => o.label);
+}
+
 export default function ChatDecisionCard({
+  decision,
+  onOpenTerminal,
+  onPeek,
+  onReportMismatch,
+}: {
+  decision: ChatDecision;
+  onOpenTerminal: () => void;
+  /** 露出下方终端（选项更多 / 按键无效时） */
+  onPeek?: () => void;
+  /** 卡上的按钮和终端里的菜单对不上：带上两边当时的内容去反馈 */
+  onReportMismatch?: () => void;
+}) {
+  return (
+    <ReportContext.Provider value={onReportMismatch ?? null}>
+      <DecisionBody decision={decision} onOpenTerminal={onOpenTerminal} onPeek={onPeek} />
+    </ReportContext.Provider>
+  );
+}
+
+function DecisionBody({
   decision,
   onOpenTerminal,
   onPeek,
 }: {
   decision: ChatDecision;
   onOpenTerminal: () => void;
-  /** 露出下方终端（选项更多 / 按键无效时） */
   onPeek?: () => void;
 }) {
   if (decision.plan) {
@@ -232,6 +262,7 @@ function CardShell({
   children?: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);
+  const onReport = useContext(ReportContext);
   const primaryRef = useRef(onPrimary);
   primaryRef.current = onPrimary;
   useEffect(() => {
@@ -272,6 +303,16 @@ function CardShell({
         {/* 全站 button { font: inherit } 会吞掉按钮自己的 text-*：字号挂在外层 */}
         <div className="-mr-1.5 -mt-0.5 flex shrink-0 items-center gap-0.5 text-xs">
           {meta}
+          {onReport && (
+            <button
+              type="button"
+              onClick={onReport}
+              title="卡上的内容或按钮和终端里的不一样？把两边当时的内容（已去掉密钥）附上去反馈"
+              className="h-7 rounded-md px-2 text-l4 transition-colors hover:bg-hover hover:text-l1"
+            >
+              对不上？
+            </button>
+          )}
           {onPeek && (
             <button
               type="button"

@@ -113,6 +113,7 @@ import { toast } from "./toast";
 import { formatUiZoom, normalizeUiZoom, stepUiZoom, uiZoomKeyDirection, UI_ZOOM_DEFAULT } from "./ui-zoom";
 import { isCancellationRejection } from "./diagnostics";
 import { browserIdleScheduler, preloadInIdle } from "./idle-preload";
+import { MISMATCH_EVENT, type MismatchReport } from "./chat-mismatch";
 
 // 页面懒加载：首屏只拉当前页 chunk，其余页首次访问时才加载
 const ProfilesPage = lazy(() => import("./pages/ProfilesPage"));
@@ -696,6 +697,16 @@ function App() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // 诊断弹窗「附到反馈」带进反馈表单的诊断包路径（表单关闭即清）
   const [feedbackDiag, setFeedbackDiag] = useState<string | null>(null);
+  // 聊天层「和终端对不上」带进反馈表单的标题 / 脚手架 / 两边对照（chat-mismatch.ts；表单关闭即清）
+  const [feedbackMismatch, setFeedbackMismatch] = useState<MismatchReport | null>(null);
+  useEffect(() => {
+    const onReport = (e: Event) => {
+      setFeedbackMismatch((e as CustomEvent<MismatchReport>).detail);
+      setFeedbackOpen(true);
+    };
+    window.addEventListener(MISMATCH_EVENT, onReport);
+    return () => window.removeEventListener(MISMATCH_EVENT, onReport);
+  }, []);
   // 帮助菜单的三个内容弹窗（HelpDialogs）：诊断与日志 / 检查更新 / 关于
   const [helpDialog, setHelpDialog] = useState<HelpDialogKind | null>(null);
   const appUpdateVersion = useAppStore((s) => s.appUpdate?.version ?? null);
@@ -2261,9 +2272,11 @@ function App() {
           <FeedbackModal
             open={feedbackOpen}
             attachDiagnostics={feedbackDiag}
+            mismatch={feedbackMismatch}
             onClose={() => {
               setFeedbackOpen(false);
               setFeedbackDiag(null);
+              setFeedbackMismatch(null);
             }}
           />
           <HelpDiagnosticsDialog

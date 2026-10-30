@@ -57,7 +57,8 @@ import {
 import { confirmHandoffReason, decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
 import { chatStatus, settleStatus, statusCaretMotion, type ShownStatus } from "../chat-status";
 import { confirmChoices } from "../chat-reply";
-import ChatDecisionCard, { decisionShowsNumbers, type ChatDecision } from "./ChatDecisionCard";
+import ChatDecisionCard, { decisionOptionLabels, decisionShowsNumbers, type ChatDecision } from "./ChatDecisionCard";
+import type { MismatchFrom } from "../chat-mismatch";
 import { useCliNewer } from "../cli-verified";
 import { connIssueDecision, grokLoginDecision } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
@@ -153,6 +154,7 @@ export default function ChatSurface({
   onDismissGrokLogin,
   onOpenProfiles,
   onForkFrom,
+  onReportMismatch,
   channel = null,
   onChannelReply,
   onSendNow,
@@ -284,6 +286,8 @@ export default function ChatSurface({
   onOpenProfiles?: () => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开一个分叉标签 */
   onForkFrom?: (text: string) => void;
+  /** 「聊天和终端对不上」反馈（chat-mismatch.ts）：from = 从哪点的；确认卡上点的带上卡的标题和按钮原文 */
+  onReportMismatch?: (from: MismatchFrom, card?: { title: string; options: string[] } | null) => void;
   /** 结构化旁路快照（chat-channel.ts）：审批的结构化内容、能否从聊天层答 */
   channel?: ChatChannelSnapshot | null;
   /** 经 CLI 官方通道回复审批（Qwen / OpenCode / Codex） */
@@ -1356,6 +1360,7 @@ export default function ChatSurface({
         imageKind={imageKind}
         onImageWarning={setImageWarning}
         onOpenTerminal={openTerminalFromBeta}
+        onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
         // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
         next={
           !running && canResume && launchPick && onPickLaunch
@@ -1522,6 +1527,7 @@ export default function ChatSurface({
                 setSeedInsert({ text: docs.text, paths: [...split.images, ...docs.docs] });
               }}
               onForkHere={onForkFrom}
+              onReportMismatch={running && onReportMismatch ? () => onReportMismatch("turn") : undefined}
               onQuote={(quote) => setSeedInsert({ text: "", paths: [], quote })}
               queuedNote={{
                 ...note,
@@ -1585,6 +1591,11 @@ export default function ChatSurface({
                       noteHandoff("user_decision", decisionKind(decision.key));
                       onTogglePeek();
                     }
+                  : undefined
+              }
+              onReportMismatch={
+                onReportMismatch
+                  ? () => onReportMismatch("decision", { title: decision.title, options: decisionOptionLabels(decision) })
                   : undefined
               }
             />

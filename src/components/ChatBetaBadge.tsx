@@ -23,11 +23,14 @@ export function ChatBetaNotes({
   channel,
   live = false,
   onOpenTerminal,
+  onReportMismatch,
 }: {
   agentId: string | null;
   channel?: ChatChannelSnapshot | null;
   live?: boolean;
   onOpenTerminal?: () => void;
+  /** 「对不上？反馈」：带上两边当时的内容打开反馈表单（chat-mismatch.ts） */
+  onReportMismatch?: () => void;
 }) {
   const installed = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
   const fidelity = chatFidelity(agentId, IS_WINDOWS);
@@ -37,6 +40,12 @@ export function ChatBetaNotes({
   return (
     <div className="px-2 pb-1 pt-0.5 text-xs leading-5 text-l3">
       <p>聊天是同一个终端会话的另一种看法，以终端为准：聊天里看不到、按不动的，切到终端都在。</p>
+      <p className="mt-2">
+        聊天里的内容是 Mesa 从终端画面、会话文件和 CLI 提供的接口整理出来的，不是 CLI 直接给的，个别地方可能和终端对不上。
+        {onReportMismatch
+          ? "遇到时请切到终端看一眼，再点「对不上？反馈」：Mesa 会把两边当时的内容（已去掉密钥）附上，你只要写一句哪里不对。"
+          : "遇到时请切到终端看一眼，并告诉我们哪里不对，这能帮我们修好它。"}
+      </p>
       {live && <p className="mt-2 text-l2">{channelSourceNote(channel)}</p>}
       {fidelity && (
         <>
@@ -55,8 +64,19 @@ export function ChatBetaNotes({
           这期间 Mesa 不替你自动按任何一步，按不对就点卡上的「露出终端」自己选。
         </p>
       )}
-      {onOpenTerminal && (
-        <div className="mt-2 flex justify-end">
+      {(onOpenTerminal || onReportMismatch) && (
+        <div className="mt-2 flex justify-end gap-1">
+          {onReportMismatch && (
+            <button
+              type="button"
+              onClick={onReportMismatch}
+              title="把聊天里显示的和终端里的内容（已去掉密钥）附上，打开反馈表单"
+              className="h-7 rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+            >
+              对不上？反馈
+            </button>
+          )}
+          {onOpenTerminal && (
           <button
             type="button"
             onClick={onOpenTerminal}
@@ -64,6 +84,7 @@ export function ChatBetaNotes({
           >
             切到终端
           </button>
+          )}
         </div>
       )}
     </div>

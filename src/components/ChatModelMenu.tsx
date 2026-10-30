@@ -60,6 +60,8 @@ type SharedProps = {
   onImageWarning?: (warning: string | null) => void;
   /** 菜单底部「测试版」那一行点开后的「切到终端」 */
   onOpenTerminal?: () => void;
+  /** 同一处的「和终端对不上？反馈」（chat-mismatch.ts；只有运行中的会话给） */
+  onReportMismatch?: () => void;
 };
 
 type RuntimeProps = {
@@ -578,6 +580,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                       ? () => {
                           setOpen(false);
                           props.onOpenTerminal?.();
+                        }
+                      : undefined
+                  }
+                  onReportMismatch={
+                    props.onReportMismatch
+                      ? () => {
+                          setOpen(false);
+                          props.onReportMismatch?.();
                         }
                       : undefined
                   }

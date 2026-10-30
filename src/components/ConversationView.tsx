@@ -13,6 +13,7 @@ import {
   FileText,
   FolderOpen,
   GitFork,
+  MessageSquareWarning,
   Globe,
   ListTodo,
   MessageCircleQuestion,
@@ -280,6 +281,7 @@ export default function ConversationView({
   awaiting,
   onEditResend,
   onForkHere,
+  onReportMismatch,
   onQuote,
   queuedNote,
 }: {
@@ -301,6 +303,8 @@ export default function ConversationView({
   onEditResend?: (text: string) => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开分叉标签（聊天层传；回放页不传 = 不显示） */
   onForkHere?: (text: string) => void;
+  /** 最新一条回答下面的「和终端对不上」：带上两边当时的内容去反馈（聊天层传，chat-mismatch.ts；回放页不传） */
+  onReportMismatch?: () => void;
   onQuote?: (quote: ChatQuote) => void;
   /** 排队气泡下那一行怎么写（聊天层按这家 CLI 的真实行为传，mid-turn-send.ts）；action 只挂在最后一条排着的气泡上 */
   queuedNote?: {
@@ -317,7 +321,18 @@ export default function ConversationView({
    *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
    *  （父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段）；用户消息的靠气泡右缘
    *  （同日用户：贴在气泡左边「怎么跑到左边去了」） */
-  function messageActions(m: ChatMessageDto, mk: string, align: "left" | "right", sources: ChatMessageDto[] = [m]) {
+  // 最新一条回答（「和终端对不上」只挂在它下面：对照的是此刻的终端，旧回答对不上的画面早已滚走）
+  let lastAnswerIndex = -1;
+  messages.forEach((m, i) => {
+    if (m.role === "assistant" && !m.queued) lastAnswerIndex = i;
+  });
+  function messageActions(
+    m: ChatMessageDto,
+    mk: string,
+    align: "left" | "right",
+    sources: ChatMessageDto[] = [m],
+    latest = false,
+  ) {
     const text = m.blocks
       .filter((b) => b.kind === "text")
       .map((b) => b.text)
@@ -378,6 +393,17 @@ export default function ConversationView({
               const selected = selection && selection.rangeCount > 0 && content?.contains(selection.anchorNode) && content.contains(selection.focusNode) ? rangePlainText(selection.getRangeAt(0)) : "";
               onQuote(makeChatQuote(sources, text, selected));
             }}><Quote size={13} aria-hidden="true" />引用追问</button>
+        )}
+        {align === "left" && latest && onReportMismatch && (
+          <button
+            type="button"
+            className={btn}
+            onClick={onReportMismatch}
+            title="聊天里显示的和终端里的不一样？把两边当时的内容（已去掉密钥）附上去反馈"
+          >
+            <MessageSquareWarning size={12} strokeWidth={1.8} aria-hidden="true" />
+            和终端对不上
+          </button>
         )}
       </div>
     );
@@ -814,7 +840,13 @@ export default function ConversationView({
         {seg.answer && (
           <>
             <div data-chat-answer="1" data-search-block={hit && messages[focusIndex]?.blocks.some((block) => seg.answer!.blocks.includes(block)) || undefined}>{renderBlocks(seg.answer, answerKey, false, hit)}</div>
-            {messageActions(seg.answer, answerKey, "left", messages.slice(seg.start, seg.end + 1).filter((message) => message.blocks.some((block) => seg.answer!.blocks.includes(block))))}
+            {messageActions(
+              seg.answer,
+              answerKey,
+              "left",
+              messages.slice(seg.start, seg.end + 1).filter((message) => message.blocks.some((block) => seg.answer!.blocks.includes(block))),
+              lastAnswerIndex >= seg.start && lastAnswerIndex <= seg.end,
+            )}
           </>
         )}
       </div>
@@ -937,7 +969,7 @@ export default function ConversationView({
             className={`group/msg relative mb-8 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
           >
             <div data-chat-answer="1">{renderBlocks(m, mk, false, hit)}</div>
-            {messageActions(m, mk, "left")}
+            {messageActions(m, mk, "left", [m], mi === lastAnswerIndex)}
           </div>
         );
       })}

@@ -59,6 +59,7 @@ import {
   type FeedbackImage,
   type FeedbackKind,
 } from "../feedback";
+import type { MismatchReport } from "../chat-mismatch";
 
 /**
  * 「反馈与提需求」表单弹层（src/feedback.ts / 后端 feedback.rs）。
@@ -68,7 +69,8 @@ import {
  * 附件：截图（粘贴或选择，≤3 张 ≤2MB）+ 诊断包（表单里现导出，或从「诊断与日志」带进来）。
  * 邮件应用 / 网页邮箱带不了附件——发送前落盘到下载文件夹、正文注明，交接提示里给打开入口。
  * 「邮箱直发设置」是同一弹层的第二视图（授权码存 0600 keys.json，绝不回显）。
- * 入口两处：顶栏帮助菜单「反馈与提需求」（含诊断弹窗「附到反馈」）、设置 → 关于。
+ * 入口两处：顶栏帮助菜单「反馈与提需求」（含诊断弹窗「附到反馈」）、设置 → 关于；
+ * 另有聊天层「和终端对不上」直接带着标题和两边对照打开（mismatch，chat-mismatch.ts）。
  */
 
 /** 常见邮箱预设：QQ/163 等需在网页版开启 SMTP 并生成授权码（不是登录密码） */
@@ -177,11 +179,14 @@ export default function FeedbackModal({
   open,
   onClose,
   attachDiagnostics = null,
+  mismatch = null,
 }: {
   open: boolean;
   onClose: () => void;
   /** 从「诊断与日志」带进来的诊断包路径：打开时挂到附件上 */
   attachDiagnostics?: string | null;
+  /** 聊天层「和终端对不上」带进来的：类型切缺陷、填标题和脚手架，两边对照另起一个勾选 */
+  mismatch?: MismatchReport | null;
 }) {
   const [kind, setKind] = useState<FeedbackKind>("feature");
   const [title, setTitle] = useState("");
@@ -195,6 +200,10 @@ export default function FeedbackModal({
   // 最近错误日志摘录（后端已脱敏、≤5 条；与「附环境」勾选同进退）。
   // 三态：undefined=还在问，null=本次运行确无错误，string=有日志
   const [errorLog, setErrorLog] = useState<string | null | undefined>(undefined);
+  // 「和终端对不上」的两边对照（后端已脱敏）：单独勾选、单独预览，与「附环境」不同进退
+  const [chatSnapshot, setChatSnapshot] = useState<string | null>(null);
+  const [includeSnapshot, setIncludeSnapshot] = useState(true);
+  const [snapshotPreviewOpen, setSnapshotPreviewOpen] = useState(false);
   const [images, setImages] = useState<FeedbackImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // 诊断包附件（导出目录里的文件路径；发送时后端按白名单自读）
@@ -281,6 +290,18 @@ export default function FeedbackModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // 从聊天层「和终端对不上」进来：换成这一份（标题、脚手架、对照都是这次的），草稿里原有的字不留
+  useEffect(() => {
+    if (!open || !mismatch) return;
+    setHandoff(null);
+    setKind("bug");
+    setTitle(mismatch.title);
+    setDetail(mismatch.detail);
+    setChatSnapshot(mismatch.snapshot);
+    setIncludeSnapshot(true);
+    setSnapshotPreviewOpen(false);
+  }, [open, mismatch]);
+
   // 从诊断弹窗「附到反馈」进来：挂上那份诊断包；报的多半是问题，类型顺手切到缺陷
   useEffect(() => {
     if (!open || !attachDiagnostics) return;
@@ -299,6 +320,7 @@ export default function FeedbackModal({
   const envLine = includeEnv ? feedbackEnvLine(env) : "";
   // 勾「附环境」时连最近错误日志一起带上（body/mailto/webmail 共用）
   const attachedErrorLog = includeEnv ? (errorLog ?? null) : null;
+  const attachedSnapshot = includeSnapshot ? chatSnapshot : null;
   // 模板原样未填不算已填：剔除空模板行后判定，出站也用同一份
   const detailFilled = stripUnfilledTemplate(detail.trim());
   const ready = title.trim().length > 0 && detailFilled.length > 0;
@@ -309,6 +331,7 @@ export default function FeedbackModal({
     contact,
     envLine,
     errorLog: attachedErrorLog,
+    chatSnapshot: attachedSnapshot,
   });
   const hasAttachments = images.length > 0 || !!diagPath;
   const busy = sending || smtpSaving || smtpTesting;
@@ -367,6 +390,7 @@ export default function FeedbackModal({
     setImages([]);
     setDiagPath(null);
     setHandoff(null);
+    setChatSnapshot(null);
   };
 
   /** 端点通道：后台直发（截图随 JSON 直传，诊断包由后端按路径读）。
@@ -383,8 +407,13 @@ export default function FeedbackModal({
         env: includeEnv ? env : {},
         errorLog: attachedErrorLog,
         images,
+        chatSnapshot: attachedSnapshot ?? undefined,
       });
-      await invoke("submit_feedback", { ...payload, diagnostics: diagPath });
+      await invoke("submit_feedback", {
+        ...payload,
+        chatSnapshot: payload.chatSnapshot ?? null,
+        diagnostics: diagPath,
+      });
       toast("已发送，谢谢你的反馈");
       resetDraft();
       onClose();
@@ -1006,6 +1035,34 @@ export default function FeedbackModal({
             />
           </label>
 
+          {chatSnapshot && (
+            <div>
+              <div className="flex items-center justify-between gap-2 text-micro">
+                <Checkbox
+                  checked={includeSnapshot}
+                  onChange={setIncludeSnapshot}
+                  label={<span className="text-xs text-l2">附上聊天里显示的和终端里的内容（已去掉密钥）</span>}
+                />
+                <button
+                  type="button"
+                  aria-expanded={snapshotPreviewOpen}
+                  onClick={() => setSnapshotPreviewOpen((v) => !v)}
+                  className="h-6 shrink-0 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                >
+                  {snapshotPreviewOpen ? "收起" : "看看会附什么"}
+                </button>
+              </div>
+              {snapshotPreviewOpen && (
+                <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md ccode-well p-2 font-mono text-micro leading-4 text-l2">
+                  {chatSnapshot}
+                </pre>
+              )}
+              <p className="mt-1 text-micro leading-4 text-l4">
+                两边对照着看，最容易找到聊天哪里认错了。里面可能有你的文件名和对话内容，不想发就取消勾选。
+              </p>
+            </div>
+          )}
+
           <div>
             <div className="flex items-center justify-between gap-2 text-micro">
               <Checkbox
@@ -1024,7 +1081,7 @@ export default function FeedbackModal({
             </div>
             {autoPreviewOpen && (
               <pre className="mt-1.5 max-h-40 overflow-auto rounded-md ccode-well p-2 font-mono text-micro leading-4 text-l2">
-                {feedbackAutoSection(envLine, attachedErrorLog) ||
+                {feedbackAutoSection(envLine, attachedErrorLog, null) ||
                   "（未勾选——不会附加任何版本环境与错误日志）"}
               </pre>
             )}
