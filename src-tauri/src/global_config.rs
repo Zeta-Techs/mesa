@@ -208,7 +208,10 @@ fn target_paths(home: &Path, agent: &str) -> Vec<(&'static str, PathBuf)> {
             ("settings.json", dir.join("settings.json")),
             ("models.json", dir.join("models.json")),
         ],
-        "opencode" => vec![("opencode.json", dir.join("opencode.json"))],
+        "opencode" => vec![
+            ("opencode.json", dir.join("opencode.json")),
+            ("opencode.jsonc", dir.join("opencode.jsonc")),
+        ],
         "kimi" => vec![
             ("config.toml", dir.join("config.toml")),
             ("legacy-config.toml", kimi_legacy_dir(home).join("config.toml")),
@@ -681,24 +684,65 @@ pub(crate) fn patch_gemini_auth_only(existing: Option<&str>) -> Result<String, S
     to_pretty(&v)
 }
 
+/// OpenCode 全局写入（2026-10-30 口径）：
+/// - 只留这一个 Mesa 渠道：别的 `ccode` / `ccode-<短id>` 块（上几次设为全局留下的，各带一把明文密钥）撤掉；
+/// - `model` / `small_model` 指向本渠道；这次没有就撤掉还指着 Mesa 旧渠道的那项（用户自己的不动）；
+/// - 不再写 `autoupdate: false`：那是 Mesa 启动时自己的事（env 关），不该改用户在外面用 OpenCode 的更新行为。
+/// JSONC 注释：读 `opencode.jsonc` 时剥掉注释，写回是严格 JSON（预览与备份照常）。
 fn patch_opencode_config(
     existing: Option<&str>,
     provider: Value,
     model: Option<&str>,
+    small_model: Option<&str>,
     provider_id: &str,
 ) -> Result<String, String> {
-    let mut v = parse_json_doc(existing)?;
+    let mut v = match existing.map(crate::mcp::strip_jsonc) {
+        Some(t) if !t.trim().is_empty() => serde_json::from_str::<Value>(&t)
+            .map_err(|e| format!("现有配置不是合法 JSON，已停止写入以免破坏: {e}"))?,
+        _ => json!({}),
+    };
+    if !v.is_object() {
+        return Err("现有配置根节点不是对象，已停止写入".into());
+    }
     let map = ensure_obj(&mut v, &["provider"])?;
-    if provider_id != crate::provider_id::LEGACY {
-        map.remove(crate::provider_id::LEGACY);
+    let stale: Vec<String> = map
+        .keys()
+        .filter(|k| crate::provider_id::is_ccode_provider(k) && k.as_str() != provider_id)
+        .cloned()
+        .collect();
+    for k in stale {
+        map.remove(&k);
     }
     map.insert(provider_id.into(), provider);
     let root = v.as_object_mut().unwrap();
-    if let Some(m) = model {
-        root.insert("model".into(), json!(format!("{provider_id}/{m}")));
+    let points_to_mesa = |val: Option<&Value>| {
+        val.and_then(|m| m.as_str())
+            .and_then(|m| m.split_once('/'))
+            .is_some_and(|(p, _)| crate::provider_id::is_ccode_provider(p))
+    };
+    for (k, val) in [("model", model), ("small_model", small_model)] {
+        match val {
+            Some(m) => {
+                root.insert(k.into(), json!(format!("{provider_id}/{m}")));
+            }
+            None if points_to_mesa(root.get(k)) => {
+                root.remove(k);
+            }
+            None => {}
+        }
     }
-    root.insert("autoupdate".into(), json!(false));
     to_pretty(&v)
+}
+
+/// OpenCode 密钥落 Mesa 自己的 0600 文件，opencode.json 里写 `{file:<路径>}` 引用（官方 config 文档的变量替换），
+/// 免得明文进 opencode.json（常被同步进 dotfiles）。测试态放在传入的 home 下，不碰本机配置目录
+fn opencode_key_path(home: &Path, provider_id: &str) -> Option<PathBuf> {
+    let dir = if cfg!(test) {
+        home.join("mesa-secrets")
+    } else {
+        crate::dirs::config_dir()?.join("ccode").join("secrets")
+    };
+    Some(dir.join(format!("opencode-{provider_id}.key")))
 }
 
 /// OpenCode 全局写入：每个模型写自己的 options，不再把一份策略套到全部模型。
@@ -1083,6 +1127,47 @@ pub(crate) fn patch_kimi_config(
     Ok(doc.to_string())
 }
 
+/// Kimi 思考档写进各模型段的 `default_effort`（2.4.0 二进制：模型段 support_efforts / default_effort）。与启动的
+/// KIMI_MODEL_THINKING_EFFORT 同口径只给 kimi 协议：别的协议 Kimi 把档位原样发给中转，不认的会报错。没设就撤掉 Mesa 写过的。
+/// **只写 default_effort 不起作用**（2026-10-30 2.4.0 临时 KIMI_CODE_HOME + 假网关：请求 `thinking` 里没有 effort；
+/// 补上 support_efforts 才带 `"effort": "high"`）——段里没声明档位表时，按网关这一行的档位（没有就 low/medium/high）补一份
+fn patch_kimi_effort(content: &str, profile: &Profile, provider_type: &str) -> Result<String, String> {
+    let effort = profile
+        .request_policy
+        .reasoning_effort
+        .as_deref()
+        .and_then(crate::agent_specs::canonical_reasoning_effort)
+        .filter(|_| provider_type == "kimi");
+    let mut doc = parse_toml_doc(Some(content))?;
+    let pid = profile.provider_name();
+    if let Some(models) = doc.get_mut("models").and_then(|m| m.as_table_like_mut()) {
+        for (_, entry) in models.iter_mut() {
+            let Some(t) = entry.as_table_like_mut() else { continue };
+            if t.get("provider").and_then(|p| p.as_str()) != Some(pid.as_str()) {
+                continue;
+            }
+            match effort.as_deref() {
+                Some(e) => {
+                    if t.get("support_efforts").is_none() {
+                        let model = t.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+                        let mut levels = gateway_effort_levels(profile, &model)
+                            .unwrap_or_else(|| ["low", "medium", "high"].map(String::from).to_vec());
+                        if !levels.iter().any(|l| l == e) {
+                            levels.push(e.to_string());
+                        }
+                        t.insert("support_efforts", toml_edit::value(levels.into_iter().collect::<toml_edit::Array>()));
+                    }
+                    t.insert("default_effort", toml_edit::value(e));
+                }
+                None => {
+                    t.remove("default_effort");
+                }
+            }
+        }
+    }
+    Ok(doc.to_string())
+}
+
 /// Grok：~/.grok/config.toml（TOML）。写入面与启动注入同口径（matrix §9）：
 /// 密钥写进每个 `[model.<id>].api_key`（2026-10-30 起）：凭证优先级只有「逐模型 api_key/env_key > 登录令牌 >
 /// XAI_API_KEY」三档，**顶层 `api_key` 1.0.70 不读**（隔离 GROK_HOME + 本地抓包实测：只写顶层报未登录；
@@ -1191,12 +1276,12 @@ fn patch_grok_config(
         let Some(table) = entry.as_table_mut() else {
             return Err(format!("模型 {m} 的配置段不是表，已停止写入"));
         };
-        write_grok_reasoning_menu(table, grok_menu_levels(profile, m).as_deref());
+        write_grok_reasoning_menu(table, gateway_effort_levels(profile, m).as_deref());
     }
     Ok(doc.to_string())
 }
 
-fn grok_menu_levels(profile: &Profile, model: &str) -> Option<Vec<String>> {
+fn gateway_effort_levels(profile: &Profile, model: &str) -> Option<Vec<String>> {
     let raw = profile
         .gateway_id
         .as_deref()
@@ -1636,9 +1721,19 @@ fn patch_env_file_remove(existing: &str, keys: &[&str], model_keys: &[&str], age
 }
 
 /// Kimi：默认模型改指官方登录（`kimi login`）配好的 `managed:kimi-code` 模型；
-/// 没登录过就撤掉默认模型，kimi 进门会要求 /login。Mesa 写的渠道和模型别名留在选择器里。
+/// 没登录过就撤掉默认模型，kimi 进门会要求 /login。Mesa 写的渠道和模型别名留在选择器里（老会话还认得渠道名），
+/// 但渠道里的明文 `api_key` 撤掉（2026-10-30）。
 fn patch_kimi_config_official(existing: &str) -> Result<String, String> {
     let mut doc = parse_toml_doc(Some(existing))?;
+    if let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_table_like_mut()) {
+        for (name, blk) in providers.iter_mut() {
+            if crate::provider_id::is_ccode_provider(&name) {
+                if let Some(t) = blk.as_table_like_mut() {
+                    t.remove("api_key");
+                }
+            }
+        }
+    }
     let managed: Vec<String> = doc
         .get("models")
         .and_then(|m| m.as_table_like())
@@ -1928,16 +2023,44 @@ fn plan_writes(
             push("settings.json", path, content);
         }
         "opencode" => {
-            let mut provider = agents::opencode_provider_json(profile, key, model);
+            let pid = profile.provider_name();
+            // 密钥改写成 {file:…} 引用（文件随同一批事务写，0600）
+            let key_ref = match key {
+                Some(k) => {
+                    let kp = opencode_key_path(home, &pid).ok_or("无法确定平台配置目录")?;
+                    push("opencode-key", kp.clone(), k.to_string());
+                    Some(format!("{{file:{}}}", kp.to_string_lossy()))
+                }
+                None => None,
+            };
+            let mut provider = agents::opencode_provider_json(profile, key_ref.as_deref(), model);
             overlay_opencode_per_model(&mut provider, profile);
-            let path = dir.join("opencode.json");
+            // 请求头写 {env:VAR}：值取外部终端里的同名变量，不落密文
+            if !profile.request_policy.header_env.is_empty() {
+                let headers: serde_json::Map<String, Value> = profile
+                    .request_policy
+                    .header_env
+                    .iter()
+                    .map(|(h, var)| (h.clone(), json!(format!("{{env:{var}}}"))))
+                    .collect();
+                provider["options"]["headers"] = Value::Object(headers);
+            }
+            // 全局目录按 config.json → opencode.json → opencode.jsonc 合并、后者盖前者（OpenCode 自己也优先写 .jsonc）：
+            // 有 .jsonc 就写它，否则写 opencode.json——只写 opencode.json 时 .jsonc 里的 model / provider 会把它盖掉
+            let jsonc = dir.join("opencode.jsonc");
+            let (tag, path) = if jsonc.is_file() {
+                ("opencode.jsonc", jsonc)
+            } else {
+                ("opencode.json", dir.join("opencode.json"))
+            };
             let content = patch_opencode_config(
                 read_existing(&path)?.as_deref(),
                 provider,
                 model,
-                &profile.provider_name(),
+                profile.role_models.small.as_deref(),
+                &pid,
             )?;
-            push("opencode.json", path, content);
+            push(tag, path, content);
         }
         "codebuddy" => {
             let path = dir.join("settings.json");
@@ -1973,7 +2096,8 @@ fn plan_writes(
                 targets.push(("config.toml", new_path));
             }
             for (tag, path) in targets {
-                // 新版 0.31+ 要求 max_context_size；旧版 kimi-cli 不写（未知字段可能报错）
+                // 两版都写 max_context_size：旧版 kimi-cli 官方文档同样列为模型必填（display_name / capabilities 也是合法字段），
+                // 以前按「未知字段可能报错」不写，文档不支持这个顾虑（2026-10-30）
                 let content = patch_kimi_config(
                     read_existing(&path)?.as_deref(),
                     provider_type,
@@ -1981,10 +2105,11 @@ fn plan_writes(
                     base_url,
                     key,
                     &profile.models,
-                    tag == "config.toml",
+                    true,
                     &profile.provider_name(),
                     profile.gateway_id.as_deref(),
                 )?;
+                let content = patch_kimi_effort(&content, profile, provider_type)?;
                 push(tag, path, content);
             }
         }
@@ -2169,6 +2294,13 @@ fn flatten_content(path: &Path, text: &str) -> BTreeMap<String, String> {
             flatten_toml_item(doc.as_item(), "", &mut out);
             return out;
         }
+    }
+    // 密钥文件（OpenCode {file:} 引用的那份）：只说有没有、变没变，绝不出值
+    if name.ends_with(".key") {
+        let mut out = BTreeMap::new();
+        let digest = format!("（已脱敏 · {} 字）", text.trim().chars().count());
+        out.insert("(密钥)".into(), digest);
+        return out;
     }
     if name == ".env" || name.ends_with(".env") {
         return flatten_env(text);
@@ -4151,7 +4283,7 @@ trust_level = "trusted"
                 "opencode" => {
                     let mut provider = crate::agents::opencode_provider_json(p, key, None);
                     overlay_opencode_per_model(&mut provider, p);
-                    patch_opencode_config(None, provider, None, "ccode-probe")
+                    patch_opencode_config(None, provider, None, None, "ccode-probe")
                 }
                 "kimi" => patch_kimi_config(
                     None,
@@ -4282,17 +4414,73 @@ trust_level = "trusted"
 
     #[test]
     fn opencode_patch_preserves_other_providers() {
-        let existing = r#"{"provider": {"other": {"npm": "x"}}, "theme": "dark"}"#;
+        let existing = r#"{
+          // jsonc 注释
+          "provider": {"other": {"npm": "x"}, "ccode-old1": {"options": {"apiKey": "sk-old"}}},
+          "small_model": "ccode-old1/tiny", "theme": "dark",
+        }"#;
         let p = profile("opencode");
         let provider = agents::opencode_provider_json(&p, Some("sk-secret"), Some("m1"));
-        let out = patch_opencode_config(Some(existing), provider, Some("m1"), "ccode").unwrap();
+        let out = patch_opencode_config(Some(existing), provider, Some("m1"), None, "ccode-new2").unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["provider"]["other"]["npm"], "x");
-        assert_eq!(v["provider"]["ccode"]["npm"], "@ai-sdk/openai-compatible");
-        assert_eq!(v["provider"]["ccode"]["options"]["apiKey"], "sk-secret");
-        assert_eq!(v["model"], "ccode/m1");
-        assert_eq!(v["autoupdate"], false);
+        assert!(v["provider"].get("ccode-old1").is_none(), "上一份 Mesa 渠道连同明文密钥撤掉");
+        assert_eq!(v["provider"]["ccode-new2"]["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(v["model"], "ccode-new2/m1");
+        assert!(v.get("small_model").is_none(), "指着 Mesa 旧渠道的小模型撤掉");
+        assert!(v.get("autoupdate").is_none(), "不改用户自己用 OpenCode 时的更新行为");
         assert_eq!(v["theme"], "dark");
+    }
+
+    #[test]
+    fn kimi_writes_effort_for_kimi_protocol_and_clears_key_on_official() {
+        let mut p = profile("kimi");
+        p.protocol = Some("kimi".into());
+        p.models = vec!["kimi-k3".into()];
+        p.request_policy.reasoning_effort = Some("high".into());
+        let pid = p.provider_name();
+        let base = patch_kimi_config(None, "kimi", &p.name, Some("https://k/v1"), Some("sk"), &p.models, true, &pid, None).unwrap();
+        let out = patch_kimi_effort(&base, &p, "kimi").unwrap();
+        let doc: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(doc["models"]["kimi-k3"]["default_effort"].as_str(), Some("high"));
+        // 只写 default_effort 不起作用，要连档位表一起声明
+        let levels: Vec<_> = doc["models"]["kimi-k3"]["support_efforts"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert!(levels.contains(&"high"));
+        // 别的协议不写（Kimi 原样发给中转），写过的撤掉
+        let other = patch_kimi_effort(&out, &p, "openai").unwrap();
+        let doc: toml::Value = toml::from_str(&other).unwrap();
+        assert!(doc["models"]["kimi-k3"].get("default_effort").is_none());
+        // 官方切回：Mesa 渠道里的明文密钥撤掉，渠道和别名留着
+        let off = patch_kimi_config_official(&out).unwrap();
+        let doc: toml::Value = toml::from_str(&off).unwrap();
+        assert!(doc["providers"][&pid].get("api_key").is_none());
+        assert!(doc["models"].get("kimi-k3").is_some());
+    }
+
+    #[test]
+    fn opencode_plan_uses_key_file_ref_and_jsonc_when_present() {
+        let home = tmpdir("opencode-plan");
+        let dir = home.join(".config/opencode");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("opencode.jsonc"), "{ // mine\n \"theme\": \"x\" }").unwrap();
+        let mut p = profile("opencode");
+        p.models = vec!["m1".into()];
+        p.request_policy.header_env.insert("X-Org".into(), "ORG_TOKEN".into());
+        let plans = plan_writes(&home, &p, Some("sk-plain"), &p.models).unwrap();
+        let key = plans.iter().find(|w| w.tag == "opencode-key").unwrap();
+        assert_eq!(key.content, "sk-plain");
+        let cfg = plans.iter().find(|w| w.tag == "opencode.jsonc").expect("有 .jsonc 就写它");
+        assert!(!cfg.content.contains("sk-plain"), "opencode 配置里不出明文密钥");
+        let v: Value = serde_json::from_str(&cfg.content).unwrap();
+        let pid = p.provider_name();
+        assert_eq!(v["provider"][&pid]["options"]["apiKey"], format!("{{file:{}}}", key.path.to_string_lossy()));
+        assert_eq!(v["provider"][&pid]["options"]["headers"]["X-Org"], "{env:ORG_TOKEN}");
+        assert_eq!(v["theme"], "x");
+        // 预览不出密钥值
+        let preview = preview_plans(&home, "opencode", &plans, vec![]);
+        let shown: Vec<_> = preview.files.iter().flat_map(|f| f.changes.iter().filter_map(|c| c.after.clone())).collect();
+        assert!(!shown.iter().any(|a| a.contains("sk-plain")), "{shown:?}");
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]
@@ -4673,6 +4861,7 @@ supports_reasoning_effort = false
         let plans = plan_writes(&home, &p, None, &["m1".to_string()]).unwrap();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].tag, "legacy-config.toml");
+        assert!(plans[0].content.contains("max_context_size"), "旧版官方文档同样要求 max_context_size");
         // 两者都有 → 都写
         fs::create_dir_all(home.join(".kimi-code")).unwrap();
         let plans = plan_writes(&home, &p, None, &["m1".to_string()]).unwrap();

@@ -393,6 +393,8 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 
 **Claude Code / CodeBuddy 全局写入（2026-10-30）**：Claude「谁用哪个模型」整套走 `agents::claude_model_env`（与 `--settings` 覆盖层同一份：四槽缺的用主模型补、后台小模型、子 Agent、确知不思考的 `MAX_THINKING_TOKENS=0`、非 Claude 模型的 ToolSearch / 任务清单开关），**主模型写顶层 `model`、思考档写顶层 `effortLevel`**（`max` 只能走 env），不写 `ANTHROPIC_MODEL` / `CLAUDE_CODE_EFFORT_LEVEL`——env 两项优先级最高，会把用户在外面 `/model`、`/effort` 的选择改回来。这条连接没有的值一律撤（地址、顶层 `fallbackModel` / `apiKeyHelper`、上一份更长名单的槽位与 `_DESCRIPTION`；Mesa 写过、值认得出来的 `MAX_THINKING_TOKENS=0` / `ENABLE_TOOL_SEARCH=false` / `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` 先撤再按这次重算）。CodeBuddy 同样「没有就撤」（地址 / 模型 / `CODEBUDDY_CODE_MAX_OUTPUT_TOKENS`），模型名单写 `models.json`（每模型一条，`apiKey` 写 `${CODEBUDDY_API_KEY}` 引用不重复存明文，Mesa 条目认「配置名 · 模型」名字，用户条目与 `availableModels` 不动）；官方切回撤 Mesa 条目与非官方顶层 `model`。
 
+**OpenCode / Kimi 全局写入（2026-10-30）**：OpenCode 密钥落 Mesa 自己的 0600 文件（`<配置目录>/ccode/secrets/opencode-<渠道>.key`，与配置同一批事务写），`opencode.json` 里写 `{file:<路径>}` 引用；预览 / 漂移明细对 `.key` 文件只报「已脱敏 · N 字」。有 `opencode.jsonc` 就写它（全局目录 config.json → opencode.json → opencode.jsonc 依次合并、后者盖前者；注释剥掉写回严格 JSON），否则写 `opencode.json`。只留当前这一个 Mesa 渠道（别的 `ccode*` 块连同明文密钥撤），`small_model` 跟连接「模型分工」，这次没有就撤还指着 Mesa 旧渠道的 `model` / `small_model`；**不再写 `autoupdate: false`**（那是 Mesa 启动时自己用 env 关的）。真 opencode 1.19 + 假网关验过 `{file:}` 与 `{env:}`。Kimi 两版都写 `max_context_size`（旧版官方文档同样必填）；kimi 协议的思考档写模型段 `default_effort`，**必须连 `support_efforts` 一起写**（2.4.0 假网关实测只写前者请求里没有 effort），段里已有档位表不覆盖；官方切回撤 Mesa 渠道里的明文 `api_key`（渠道与别名照旧留着）。
+
 **请求头的全局写入口径（2026-10-30）**：Header 的值取自环境变量。能写「变量名引用」的写引用（Codex `env_http_headers`、OpenCode `{env:VAR}`、Grok `$VAR`）；只认明文的（Claude / CodeBuddy / Qwen / Gemini / Kimi）不写，预览 `skipped_policies` 写明「只在 Mesa 启动时带上」。禁止为了全局生效把 Header 明文写进 CLI 配置。
 
 **官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：七家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok；OpenCode 没有官方账号，Cursor 不支持设为全局）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
@@ -404,7 +406,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 | Gemini | `.env` 删 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GEMINI_BASE_URL`，非 gemini 模型删 `GEMINI_MODEL`；settings.json 认证方式是 Mesa 写的 `gemini-api-key` 就撤掉（**不写死 `oauth-personal`**，2026-10-30：Vertex / 自带 AI Studio 密钥的人会被改掉，个人 Google 账号也常用不了；撤掉后 Gemini 进门让用户选），非 gemini 的 `model.name` 撤 |
 | Qwen | 认证方式是 Mesa 写的协议名（openai / anthropic）就撤掉，**不改成 `qwen-oauth`**（2026-10-30：Qwen OAuth 免费档已停用，切过去用不了；官方账号启动直接拦并说明）；env 撤两套协议的密钥 / 端点 / 模型与 `MESA_QWEN_API_KEY`；`model.name` 等于被撤模型名时撤 |
 | CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` 与顶层 `model`；`models.json` 撤 Mesa 写的条目 |
-| Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`。新旧两个配置目录存在的都改 |
+| Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`；Mesa 渠道（`ccode*`）里的明文 `api_key` 撤掉，渠道与别名留着。新旧两个配置目录存在的都改 |
 | Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]`：Mesa 写的（`name` 是「配置名 · 模型」）连同密钥整段撤、没有自己密钥的整段撤（留着官方令牌会发去中转），**用户手写、带自己 `api_key` / `env_key` 的留着**（2026-10-30）。官方启动另查「中转段没有自己密钥」并拦下 |
 
 官方计划是删键，**比对磁盘必须整份比**（`disk_equals_plans`）——API 计划用的子集比对对删键永远为真，托盘会两项都打勾、「已是官方」会跳过写入。`plans_match_disk` 按账号类型分派。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像。未登录官方账号时前端先确认一次。
