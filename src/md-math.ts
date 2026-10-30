@@ -210,7 +210,7 @@ export async function renderMathInto(host: HTMLElement): Promise<void> {
       return {
         el,
         display,
-        tex: raw.slice(display ? 2 : 1, raw.length - (display ? 2 : 1)),
+        tex: el.dataset.tex ?? raw.slice(display ? 2 : 1, raw.length - (display ? 2 : 1)),
       };
     },
   );
@@ -219,6 +219,8 @@ export async function renderMathInto(host: HTMLElement): Promise<void> {
   await import("katex/dist/katex.min.css");
   for (const { el, display, tex } of jobs) {
     if (!el.isConnected) continue;
+    // 排版后占位文字就没了：源码记在 data-tex，复制时还原成 $TeX$（chat-copy.ts）
+    el.dataset.tex = tex;
     try {
       katex.render(tex, el, { displayMode: display, throwOnError: true });
     } catch {

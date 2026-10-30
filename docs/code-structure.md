@@ -878,6 +878,8 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
                              #   总计与「≥」下限标记、快照清理确认文案（tests/settings-storage.test.ts）
   chat-navigation.ts        # 聊天引用与检索纯逻辑：上游 id / 完整内容签名核对引用来源和原文区间，歧义不定位；搜索命中覆盖文本与工具块，向前分页保持命中键（tests 同名）
   components/ChatSearch.tsx # 活跃聊天搜索条：标明已读取范围、按消息切换命中、按需加载历史，定位交给 ChatSurface / ConversationView
+  chat-copy.ts              # 聊天正文按渲染后的样子取纯文本：公式还原 $TeX$（renderMathInto 记的 data-tex）、表格制表符分列、代码块保留缩进、按钮 / 代码块头栏 / data-copy-skip 不带；选区扩到整条公式、整表复制、富文本那份清类名（tests 同名）
+  components/ChatSelectionBar.tsx # 选中对话文字时浮在选区上的小条（复制 / 复制 LaTeX / 复制表格 / 引用追问）并接管该对话容器内的 ⌘C；ConversationView 片段末尾挂一个隐形锚认容器（不能夹在虚拟窗口两块占位之间）
   conversation-tools.ts      # 对话按「轮」整理：助手一轮的过程（思考 / 工具调用+结果配对 / 中途说明）收成 turn 段、过程后的正文切成回答；
                              #   turnToolEntries 保留行位置供异常定位；连着的读/搜并成「查阅」，最后一轮进行中（working 或有没回结果的调用）不切回答；时长、收起摘要（tests 同名）
                              # 2026-10-20：调用与结果按 callId 配对（没有 id 退回先后）；turnPlan / planEntries = 计划卡（各家待办参数收成一份，一轮取最后一次）

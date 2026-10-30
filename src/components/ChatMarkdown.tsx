@@ -362,6 +362,16 @@ function MarkdownBody({
   function onBodyClick(e: React.MouseEvent<HTMLDivElement>) {
     if (handleMdCodeCopyClick(e.target)) return;
     const target = e.target as HTMLElement;
+    // 点一下公式 = 整条选中（拖选 KaTeX 排版很难框准），浮出的小条里就有「复制 LaTeX」（ChatSelectionBar）
+    const math = target.closest(".md-math");
+    const selection = window.getSelection();
+    if (math?.querySelector(".katex") && selection?.isCollapsed) {
+      const range = document.createRange();
+      range.selectNode(math);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
     const fileLink = target.closest<HTMLElement>(".md-file-link");
     if (fileLink?.dataset.fileAbs && cwd) {
       const abs = fileLink.dataset.fileAbs;

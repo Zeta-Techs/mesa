@@ -28,6 +28,8 @@ import {
 import type { BlockDto, ChatMessageDto } from "../types";
 import { Collapse, FoldMark } from "./PageFrame";
 import ChatMarkdown, { ChatCodeBlock, ChatFileCard, ChatImageCard } from "./ChatMarkdown";
+import ChatSelectionBar from "./ChatSelectionBar";
+import { rangePlainText } from "../chat-copy";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import { splitLaunchPrompt } from "../project-context";
 import { splitFenced } from "../text-fences";
@@ -309,6 +311,8 @@ export default function ConversationView({
 }) {
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  /** AI 回复的引用来源（键 = 消息根上的 data-chat-key）：选中文字浮出的「引用追问」按它认是哪条 */
+  const quoteSources = useRef(new Map<string, { sources: ChatMessageDto[]; text: string }>());
   /** 悬停在消息上出现的操作（docs/design-chat-layer.md §5）：复制；用户消息另有「编辑后重发」，
    *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
    *  （父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段）；用户消息的靠气泡右缘
@@ -320,10 +324,12 @@ export default function ConversationView({
       .join("\n\n")
       .trim();
     if (!text) return null;
+    if (align === "left") quoteSources.current.set(mk, { sources, text });
     const btn =
       "inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs text-l3 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta";
     return (
       <div
+        data-copy-skip=""
         className={`absolute flex gap-0.5 whitespace-nowrap opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 ${
           align === "right" ? "right-0 top-full mt-0.5 justify-end" : "left-0 top-full mt-0.5"
         }`}
@@ -331,6 +337,7 @@ export default function ConversationView({
         <button
           type="button"
           className={btn}
+          title="复制这条的 Markdown 原文；只要文字就先选中，在浮出的小条里点「复制」"
           onClick={() => {
             void navigator.clipboard.writeText(text).then(() => {
               setCopiedKey(mk);
@@ -368,7 +375,7 @@ export default function ConversationView({
             onClick={(event) => {
               const selection = window.getSelection();
               const content = event.currentTarget.closest("[data-chat-message]")?.querySelector("[data-chat-answer]");
-              const selected = selection && content?.contains(selection.anchorNode) && content.contains(selection.focusNode) ? selection.toString() : "";
+              const selected = selection && selection.rangeCount > 0 && content?.contains(selection.anchorNode) && content.contains(selection.focusNode) ? rangePlainText(selection.getRangeAt(0)) : "";
               onQuote(makeChatQuote(sources, text, selected));
             }}><Quote size={13} aria-hidden="true" />引用追问</button>
         )}
@@ -767,6 +774,7 @@ export default function ConversationView({
       <div
         key={hit ? `${key}:${focusRenderKey}` : key}
         data-chat-message="1"
+        data-chat-key={answerKey}
         ref={hit ? hitRef : undefined}
         data-search-hit={hit ? "1" : undefined}
         // 回答下面留 2rem：悬停操作浮在这段留白里（messageActions），也是到下一个问题的间距
@@ -923,6 +931,7 @@ export default function ConversationView({
           <div
             key={hit ? `${mk}:${focusRenderKey}` : mk}
             data-chat-message="1"
+            data-chat-key={mk}
             ref={hit ? hitRef : undefined}
             data-search-hit={hit ? "1" : undefined}
             className={`group/msg relative mb-8 max-w-full ${hit ? "rounded-md bg-seg-sel px-2 py-1" : ""}`}
@@ -935,6 +944,18 @@ export default function ConversationView({
       {view.enabled && (
         <div ref={view.bottomRef} aria-hidden="true" data-vpad="bottom" style={{ height: view.bottomPad }} />
       )}
+      {/* 放在最后：它的隐形锚不能夹在两块占位之间（virtual-window 把中间的都当段量高） */}
+      <ChatSelectionBar
+        onQuote={
+          onQuote &&
+          ((message, selected) => {
+            const entry = quoteSources.current.get((message as HTMLElement).dataset.chatKey ?? "");
+            if (!entry) return false;
+            onQuote(makeChatQuote(entry.sources, entry.text, selected));
+            return true;
+          })
+        }
+      />
     </>
   );
 }

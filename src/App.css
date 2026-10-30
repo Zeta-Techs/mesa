@@ -3541,6 +3541,10 @@ select:focus-visible {
   overflow-y: hidden;
   padding: 0.2em 0;
 }
+/* 聊天里点一下公式整条选中（ChatMarkdown onBodyClick），给个可点的手势 */
+.md-chat .md-math:has(.katex) {
+  cursor: pointer;
+}
 .md-body .md-math-failed {
   background: var(--color-inset);
   border-radius: 4px;
