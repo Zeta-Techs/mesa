@@ -279,7 +279,14 @@ export function buildProjectCard(input: {
                 ? "上次失败，需要处理"
                 : "上次停了，需要处理"
               : GOAL_BUCKET_LABEL[bucket],
-        tone: live ? liveTone(live) : bucket === "review" ? "wait" : bucket === "stuck" ? "fail" : "idle",
+        // 中途停下只是没跑完、等人接着做，同待验收给琥珀；红只给真失败（2026-10-30 用户截图：停了也一片红）
+        tone: live
+          ? liveTone(live)
+          : bucket === "review" || (bucket === "stuck" && goal.status !== "failed")
+            ? "wait"
+            : bucket === "stuck"
+              ? "fail"
+              : "idle",
         live,
         queued,
         inProgress: Boolean(live || bucket === "running"),

@@ -25,12 +25,12 @@ import { WORK_MODE_LABEL } from "../work-mode";
 /** 工作方式图标：与对话页项目选择器同一套（ChatProjectPicker MODE_ICON）；未添加的目录（随手聊）用对话图标 */
 const MODE_ICON = { research: FlaskConical, coding: Code, office: Briefcase } as const;
 
-/** 图标的颜色（2026-10-27 用户：「乍一看全是文字」——行首改成按类别的图标，颜色仍只给有事的） */
+/** 图标的颜色（2026-10-27 用户：「乍一看全是文字」——行首改成按类别的图标，颜色仍只给有事的）。
+ *  图标只表类别 + 实时信号（在跑 / 等确认 / 排队）；停了、失败、待验收这类静态状态由行内状态字上色，
+ *  图标不再跟着染（2026-10-30 用户截图：红靶心像警报，又和后面的红字重复说一遍） */
 function iconTone(task: CardTask): string {
   if (task.queued) return "text-warn-text";
   if (task.live) return task.live.attention === "confirm" ? "text-warn-text" : task.live.attention === "working" ? "text-ok-text" : "text-l3";
-  if (task.tone === "fail") return "text-err-text";
-  if (task.tone === "wait") return "text-warn-text";
   if (task.current) return "text-nav-accent";
   return "text-l3";
 }
