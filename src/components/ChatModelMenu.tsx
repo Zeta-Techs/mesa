@@ -14,7 +14,7 @@ import { modelCapsLabel } from "../model-caps-label";
 import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
 import ContextRing from "./ContextRing";
 import EffortMark from "./EffortMark";
-import { effortDepth, effortGloss } from "../effort-depth";
+import { effortDepth } from "../effort-depth";
 import { agentBrand } from "../agent-colors";
 import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
@@ -907,7 +907,7 @@ function useModelCaps(
 /**
  * 思考强度滑块（2026-10-17 用户：档位切换做成滑块；2026-10-22 第二版设计稿：融进 Mesa 图标）。滑块就是图标里的「M▁」——
  * 琥珀光标块沿一条基线滑，档位刻度是基线上的短竖线（像尺子）；右上的小 M 中间那道 V 随档位加深（EffortMark），
- * 下面一句白话说这一档意味着什么（effort-depth.ts），档名照 CLI 原名。分段按钮在档多的家放不下（Grok 连「默认」8 档）。
+ * 档名照 CLI 原名（滑块下那句白话 2026-10-30 删了，保持画面干净）。分段按钮在档多的家放不下（Grok 连「默认」8 档）。
  * 隐形原生 range 管拖动、键盘、读屏。拖动中只改预览，松手（或键盘抬起）才提交——运行中提交 = 往终端写一次命令，
  * 不能拖一路写一路。current 为 null = 不知道当前档（运行中 CLI 没报），光标块不出现。
  */
@@ -1024,7 +1024,6 @@ function EffortSlider({
           <span>{choices[last]?.label}</span>
         </div>
       )}
-      {idx >= 0 && <p className="mt-1.5 text-xs leading-[18px] text-l3">{effortGloss(depth)}</p>}
     </div>
   );
 }

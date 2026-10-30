@@ -39,12 +39,10 @@ export function ChatBetaNotes({
   const newer = useCliNewer(agentId);
   return (
     <div className="px-2 pb-1 pt-0.5 text-xs leading-5 text-l3">
-      <p>聊天是同一个终端会话的另一种看法，以终端为准：聊天里看不到、按不动的，切到终端都在。</p>
-      <p className="mt-2">
-        聊天里的内容是 Mesa 从终端画面、会话文件和 CLI 提供的接口整理出来的，不是 CLI 直接给的，个别地方可能和终端对不上。
-        {onReportMismatch
-          ? "遇到时请切到终端看一眼，再点「对不上？反馈」：Mesa 会把两边当时的内容（已去掉密钥）附上，你只要写一句哪里不对。"
-          : "遇到时请切到终端看一眼，并告诉我们哪里不对，这能帮我们修好它。"}
+      {/* 2026-10-30 用户嫌字多：两段并成一句，「对不上？反馈」按钮自己说明会附什么（按钮 title） */}
+      <p>
+        聊天是 Mesa 从终端整理出来的，以终端为准：看不到、按不动的，切到终端都在
+        {onReportMismatch ? "；和终端对不上时，请点下面反馈。" : "。"}
       </p>
       {live && <p className="mt-2 text-l2">{channelSourceNote(channel)}</p>}
       {fidelity && (
