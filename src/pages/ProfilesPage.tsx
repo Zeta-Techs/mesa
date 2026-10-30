@@ -3932,8 +3932,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   </button>
                   )}
                   <AgentIcon agent={agent.id} label={agent.label} size={18} />
+                  {/* 比页名「连接」（text-lg）低一档，同技能页分组名（2026-10-30 用户） */}
                   <h2
-                    className="text-lg font-semibold text-l1"
+                    className="text-base font-semibold text-l1"
                     title={
                       det?.binaryPath
                         ? `${agent.binary} ${det.version ?? ""}`.trim()

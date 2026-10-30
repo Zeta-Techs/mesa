@@ -246,7 +246,7 @@ export default function ImageGenPanel({
         >
           <FoldMark open={!collapsed} />
         </button>
-        <h2 className="text-lg font-semibold text-l1">出图模型</h2>
+        <h2 className="text-base font-semibold text-l1">出图模型</h2>
         <span className="min-w-0 truncate text-xs text-l3">Agent 画图用，和对话用的连接分开配</span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {pendingAgents.length > 0 && skill && (
