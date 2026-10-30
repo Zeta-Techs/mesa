@@ -668,7 +668,8 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
   （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
    .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家：有旁路的六家跑旁路端到端，Gemini / Kimi 只抓屏，
-   Cursor 连不上假网关只记版本；基线 version 随包进应用（src/cli-verified.ts）；见其 README）
+   Cursor 连不上假网关只记版本；基线 version 随包进应用（src/cli-verified.ts）；2026-10-30 加「全局配置」层：global_phase 用
+   global_config 的 e2e_write_global_config 把真写计划写进临时 HOME、不经 Mesa 起 CLI，核对模型与密钥；见其 README）
   （docs/agent-skills/：维护 Mesa 仓库本身的 Agent 技能（不随应用分发）；mesa-cli-canary = 金丝雀日常维护，装法见其 README）
   （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
    tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）

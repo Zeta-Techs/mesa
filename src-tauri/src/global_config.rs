@@ -4528,6 +4528,58 @@ trust_level = "trusted"
         assert!(doc["models"].get("kimi-k3").is_some());
     }
 
+    /// CLI 金丝雀「全局配置」层（scripts/cli-canary）：按 Mesa 真实的设为全局写计划，把某家的配置写进
+    /// E2E_GLOBAL_HOME（临时家目录），之后由脚本不经 Mesa 直接拉起 CLI，看假网关收到的模型和密钥是不是这条连接的。
+    /// 写到家目录外的文件（Codex 模型目录）改放到临时家目录下，引用一并改写；不碰本机任何配置
+    #[test]
+    #[ignore]
+    fn e2e_write_global_config() {
+        let base = std::env::var("E2E_BASE").expect("E2E_BASE");
+        let home = PathBuf::from(std::env::var("E2E_GLOBAL_HOME").expect("E2E_GLOBAL_HOME"));
+        let agent = std::env::var("E2E_AGENT").expect("E2E_AGENT");
+        // base_url 后缀同 agents::e2e_dump_launch_plans：Anthropic 协议不带 /v1，Gemini 由 CLI 拼 /v1beta
+        let (proto, suffix) = match agent.as_str() {
+            "claude-code" | "gemini" => (None, ""),
+            "qwen" | "kimi" => (Some("openai"), "/v1"),
+            _ => (None, "/v1"),
+        };
+        let mut p = profile(&agent);
+        p.id = format!("e2e-global-{agent}");
+        p.name = "E2E".into();
+        p.base_url = Some(format!("{base}/{agent}{suffix}"));
+        p.protocol = proto.map(Into::into);
+        p.models = vec!["e2e-global".into()];
+        let mut plans = plan_writes(&home, &p, Some("sk-e2e-global"), &p.models).expect("写计划");
+        let moved: Vec<(String, PathBuf)> = plans
+            .iter()
+            .filter(|w| !w.path.starts_with(&home))
+            .map(|w| {
+                let to = home.join("mesa-config").join(w.path.file_name().unwrap());
+                (w.path.to_string_lossy().into_owned(), to)
+            })
+            .collect();
+        for w in plans.iter_mut() {
+            for (from, to) in &moved {
+                let to_s = to.to_string_lossy().into_owned();
+                if w.path.to_string_lossy() == from.as_str() {
+                    w.path = to.clone();
+                }
+                w.content = w
+                    .content
+                    // TOML / JSON 里 Windows 路径的反斜杠是转义过的，两种写法都换
+                    .replace(&from.replace('\\', "\\\\"), &to_s.replace('\\', "\\\\"))
+                    .replace(from.as_str(), &to_s);
+            }
+        }
+        let mut written = Vec::new();
+        for w in &plans {
+            fs::create_dir_all(w.path.parent().unwrap()).unwrap();
+            fs::write(&w.path, &w.content).unwrap();
+            written.push(w.path.to_string_lossy().into_owned());
+        }
+        println!("E2E_GLOBAL_WRITTEN {}", serde_json::to_string(&written).unwrap());
+    }
+
     #[test]
     fn override_notes_name_only_exported_shell_vars() {
         let has = |v: &str| matches!(v, "GEMINI_MODEL" | "GROK_DEFAULT_MODEL");

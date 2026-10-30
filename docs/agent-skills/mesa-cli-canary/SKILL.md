@@ -88,6 +88,7 @@ npm run canary -- --agents <家> --out /tmp/canary-local
 | `channel` | 结构化旁路：回合状态、审批形态（`statuses` 是 Mesa 归一后的名字；一闪而过的 `running` 不参与比较，少了 `awaiting_approval` / `completed` 才是真断） | `src-tauri/src/chat_channel.rs`、`src-tauri/src/program_status.rs` |
 | `transcript` / `parsed` | 会话文件格式与 Mesa 解析器读出的对话 | `src-tauri/src/sessions.rs` 里这家的 `parse_*` |
 | `screen` | 读屏：审批菜单、边写边显示 | `src/tui-menu.ts`、`src/live-reply.ts`、`src/trust-prompt.ts` |
+| 检查「全局配置：…」 | 「设为全局」写进去的配置外部 CLI 还认不认（模型 / 密钥没用上 = CLI 改了配置格式或优先级） | `src-tauri/src/global_config.rs` 这家的 `patch_*`，规则见 `docs/conventions/profiles.md` §12 开头九条 |
 
 判断要不要适配：报告底下附了两个版本之间更新日志里沾边的条目，先看它；再用 `fingerprint.json` 和基线文件逐项对比。
 - 画面变化只是同一菜单换了语言（中文 ↔ 英文）：是机器环境不同，不是 CLI 变了。`canary.py` 已用 `QWEN_CODE_LANG=en` 钉住 Qwen；别家也按系统语言走的话，照样找它的语言环境变量钉成英文，再在该平台重新 `--accept`。

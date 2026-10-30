@@ -9,6 +9,7 @@
   会话    会话文件里出现的记录类型与字段；Mesa 解析器读出的对话（用户这句、工具调用与结果、回复都在）
   画面    聊天层读屏：审批菜单认不认得出、实时预览读不读得到
   Codex   本机 Codex 的默认提示词还取不取得到（Mesa 给 Codex 的 base_instructions 来源）
+  全局    Mesa「设为全局」写进临时 HOME 的配置，不经 Mesa 直接拉起 CLI，请求用没用上这条连接的模型和密钥
 
 用法（仓库根目录）：
   python -I -X utf8 scripts/cli-canary/canary.py                 # 九家都跑（没装的跳过），和 baseline/<平台>/ 比
@@ -333,6 +334,62 @@ def screen_phase(agent, gw, out, adir, deps):
     return json.loads(line) if line else None
 
 
+# 「全局配置」层（2026-10-30）：外部终端里直接用 CLI 的无头命令。Cursor 不支持设为全局，不跑
+GLOBAL_PROMPT = "say ok"
+GLOBAL_CMD = {"claude-code": ["-p"], "codex": ["exec", "--skip-git-repo-check"], "gemini": ["-p"], "qwen": ["-p"],
+              "opencode": ["run"], "kimi": ["-p"], "codebuddy": ["-p"], "grok": ["-p"]}
+# 外部终端的环境里不该有的：各家连接 / 密钥 / 配置目录变量（同 shell_env 的凭据口径），免得盖过写进去的配置
+GLOBAL_DROP_PREFIXES = ("ANTHROPIC_", "OPENAI_", "AZURE_OPENAI_", "GEMINI_", "GOOGLE_GEMINI_", "GOOGLE_API_", "CLAUDE_",
+                        "CODEX_", "KIMI_", "MOONSHOT_", "QWEN_", "DASHSCOPE_", "CODEBUDDY_", "CURSOR_", "XAI_", "GROK_",
+                        "OPENCODE_", "XDG_CONFIG_HOME")
+
+
+def global_phase(agent, gw, adir):
+    """Mesa 的真实设为全局写计划写进临时 HOME（e2e_write_global_config），再像用户在外面那样直接起 CLI 问一句：
+    假网关收到的请求要带这条连接的模型 e2e-global 和密钥 sk-e2e-global。这一层抓「写了但 CLI 不读」（2026-10-30
+    审计：Grok 顶层 api_key 不读、OpenCode .jsonc 盖过 .json 一类）"""
+    # 临时 HOME 放在用户目录下、不放系统临时目录：CodeBuddy 的家目录在系统临时目录里时不展开 models.json 的 ${VAR}
+    # （2026-10-30 本机 2.178 实测，真实家目录与 /tmp 都正常），测的应是用户真实环境的行为
+    parent = os.path.join(os.path.expanduser("~"), ".mesa-canary-global")
+    os.makedirs(parent, exist_ok=True)
+    home = tempfile.mkdtemp(prefix=f"{agent}-", dir=parent)
+    work = os.path.join(home, "work")
+    os.makedirs(work)
+    env = dict(os.environ, E2E_BASE=gw.base, E2E_GLOBAL_HOME=home, E2E_AGENT=agent)
+    code, text = run([cargo(), "test", "--lib", "e2e_write_global_config", "--", "--ignored", "--nocapture"],
+                     cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=1800)
+    open(os.path.join(adir, "global-write.log"), "w", encoding="utf-8").write(text)
+    if code != 0:
+        return {"全局配置：Mesa 写得出配置": False}
+    # Gemini 只在受信任的文件夹里读 ~/.gemini/.env（密钥在那里）
+    if agent == "gemini":
+        json.dump({work: "TRUST_FOLDER"}, open(os.path.join(home, ".gemini", "trustedFolders.json"), "w", encoding="utf-8"))
+    cenv = {k: v for k, v in os.environ.items() if not k.upper().startswith(GLOBAL_DROP_PREFIXES)}
+    # 本机假网关不走代理（Grok 的断网代理也不能挡住它；同 e2e-model-routing 各脚本）
+    cenv.update(HOME=home, USERPROFILE=home, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+    # OpenCode 首次要装 provider 包：本机装过就复用缓存，免得每次下载（CI 上没有缓存照常下载）
+    real_cache = os.path.join(os.path.expanduser("~"), ".cache")
+    if agent == "opencode" and os.path.isdir(os.path.join(real_cache, "opencode")):
+        cenv["XDG_CACHE_HOME"] = real_cache
+    if agent in OFFLINE:
+        cenv.update(OFFLINE_ENV)
+    mark = gw.mark()
+    code, text = run([bin_path(agent), *GLOBAL_CMD[agent], GLOBAL_PROMPT], cwd=work, env=cenv, timeout=180)
+    open(os.path.join(adir, "global-run.log"), "w", encoding="utf-8").write(f"exit {code}\n{text}")
+    time.sleep(0.5)
+    reqs = gw.since(mark)
+    model_hit = [r for r in reqs if (r.get("body") or {}).get("model") == "e2e-global" or "/models/e2e-global" in r.get("path", "")]
+    shutil.rmtree(home, ignore_errors=True)
+    try:
+        os.rmdir(parent)
+    except OSError:
+        pass
+    return {
+        "全局配置：外部 CLI 用的是 Mesa 写的模型": bool(model_hit),
+        "全局配置：外部 CLI 带的是 Mesa 写的密钥": any(r.get("authTail") == "sk-e2e-global"[-8:] for r in model_hit),
+    }
+
+
 def codex_instructions_phase(adir):
     code, text = run([cargo(), "test", "--lib", "codex_instructions_extract_real", "--", "--ignored", "--nocapture"],
                      cwd=os.path.join(ROOT, "src-tauri"), timeout=600)
@@ -401,6 +458,9 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)
+    if agent in GLOBAL_CMD and agent not in NO_GATEWAY:
+        log(f"[{agent}] 设为全局后在外面直接用…")
+        checks.update(global_phase(agent, gw, adir))
     if agent in NO_GATEWAY:
         log(f"[{agent}] 连不上假网关，只记版本")
         fp["screen"] = None

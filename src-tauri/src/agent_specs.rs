@@ -844,8 +844,10 @@ static AGENT_SPECS: &[AgentSpec] = &[
         model_switch: ModelSwitch::None,
         effort_levels: None,
         submit_csi_u: false,
+        // 2026-10-30 复核官方 cli-config 文档：cli-config.json 没有密钥 / 端点字段，密钥只认 CURSOR_API_KEY 环境变量或
+        // --api-key，CURSOR_API_ENDPOINT 是 Cursor 自家后端；只写默认模型价值不大且由 CLI 自管、会被覆盖
         set_global: SetGlobalCap::Unsupported(
-            "Cursor 的全局配置写入未适配，首版仅支持启动注入",
+            "Cursor 的配置文件里没有能写密钥和接口地址的地方（密钥只认环境变量或启动参数），只能在 Mesa 里启动时带上",
         ),
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::CopyOnly(

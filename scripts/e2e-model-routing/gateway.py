@@ -198,6 +198,8 @@ class H(BaseHTTPRequestHandler):
         if DUMP:
             DUMP.write(json.dumps({"t": time.time(), "path": self.path.split("?")[0],
                                    "headers": {h: self.headers.get(h) for h in DUMP_HEADERS if self.headers.get(h)},
+                                   # 凭据只记末 8 位（金丝雀「全局配置」层用假密钥核对外部 CLI 带的是不是 Mesa 写进去的那把）
+                                   "authTail": next((v[-8:] for v in (self.headers.get(h) for h in ("authorization", "x-api-key", "x-goog-api-key")) if v), None),
                                    "body": body}, ensure_ascii=False) + "\n")
         model = body.get("model")
         if model is None and "/models/" in self.path:  # gemini: /v1beta/models/<m>:generateContent
