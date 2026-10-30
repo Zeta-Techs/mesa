@@ -388,7 +388,7 @@ run 脚本在终端页以按钮呈现（在工作区上下文时），run_mode=n
 - `logbuf` 最近 500 条应用日志；
 - 自 Ccode 启动后的进程生命周期：程序、脱敏参数、PID/父 PID、开始/结束/最后观察时间、CPU/内存、类别、采集方式与时间是否估算。
 
-直接经 `process::background_command` 启动的后台命令在 spawn/wait 边界精确登记程序、参数、PID、父 PID 与退出码；250ms
+直接经 `process::background_command` 启动的后台命令在 spawn/wait 边界精确登记程序、参数、PID、父 PID 与退出码；2 秒一次的
 进程扫描补齐 WebView2、conhost、命令包装器的子孙进程和 CPU/内存，扫描拿不到创建时间时明确标记为估算。记录采用内存环形缓冲
 （上限 2000），只覆盖 Ccode 子孙进程；系统级例外仅观察
 `ctfmon.exe` / `TextInputHost.exe`，避免采集无关应用命令行。诊断包不读取任何子进程环境变量，命令参数和日志写入 ZIP 前必须经过
@@ -518,6 +518,26 @@ lib.rs 的 400ms 二次清底无害，暂留。
 ### 2026-10-29 · 客户端接力：装 Mesa 前的 Codex 老对话也能补写渠道
 
 用户截图：一条渠道为 `zetatechs` 的老 Codex 对话点「在 Codex 客户端打开」被拦下（「不是 Mesa 创建的，Mesa 无法代写」），问装 Mesa 之后原有的 Codex 对话能不能在客户端继续。定下：用户自起名的渠道缺定义时不再拦，走与 Mesa 渠道同一个「写入并打开」，由用户选一个同家服务的 Mesa 连接，按**原渠道名**补写定义块、不改默认渠道（端点域名含渠道名的连接排前默认选中）；定义带 `http_headers` 的提示改写。Codex 内置渠道名不代写。细则在 design-client-handoff.md §6，说明书 §7.1。
+### 2026-10-29 · Windows 新用户沙盒与打包版自动点验
+
+用户要求「给 Windows 加一个能换配置目录的新用户沙盒实例，再用它对本机打的安装包做一遍自动点验」。Windows 上 Mesa 找目录走系统已知文件夹、
+改 HOME 无效，原沙盒只能用于 macOS / Linux。定下：系统目录一律经 `crate::dirs`（`dirs` crate 改名 `os_dirs`，直接用编译不过），
+设了 `MESA_SANDBOX_HOME` 就全换到它下面，**生产构建同样认**（点验的就是打出来的包；变量只有手动设才生效）；`scripts/dev-sandbox.sh` 兼容 Windows 并加
+`--app` / `--debug-port`；`scripts/win-package-smoke/` 经 WebView2 远程调试自动点验。不跑安装包本身（会改写已装 Mesa 的卸载登记与快捷方式），
+按安装布局摆好 `target/release` 的程序。细则 environment.md「新用户沙盒实例」「打包版自动点验」。
+
+### 2026-10-29 · 打包版 style-src 不让 Tauri 注入 nonce
+
+首轮自动点验实证：安装版打开代码文件没有语法色、行号错位，开一个文件就有几十条 CSP 拦截——Tauri 打包时给 style-src 注入 nonce，
+`'unsafe-inline'` 随之失效，Monaco 运行时插的样式全被拦；开发版不注入。取舍：只对 style-src 关掉注入（`dangerousDisableAssetCspModification: ["style-src"]`），
+内联样式本来就是 CSP 有意放开的；script-src 的 nonce / hash 保护不动，否决整体关闭（`true`）。细则 safety.md「审计收口规则」条。
+
+### 2026-10-29 · Windows 诊断进程扫描由 250ms 放宽到 2 秒
+
+排查 Windows 打包版时实测：打包版开 4.5 小时累计 1306 秒 CPU，其中一个常驻线程约占一个核的 3%；单独测同一调用，每次枚举全系统进程要 8–15ms
+（换 Toolhelp 快照、精简刷新项都降不下来）。用户拍板「按你推荐修」：扫描间隔改 2 秒（`diagnostics::PROCESS_POLL_MS`）。取舍：Mesa 自己起的后台命令
+仍由 spawn-hook 在 spawn/wait 边界精确登记，不受影响；两秒内起落的孙进程（CLI 再起的 git / conhost）扫描可能漏记，诊断包里少这部分。
+以后加常驻轮询线程先在打包版量一下占用。细则 environment.md「Windows 正式版没有父控制台」条。
 
 ### 2026-10-29 · 上手引导做完的步骤可回看；「不再显示」即永久收起
 

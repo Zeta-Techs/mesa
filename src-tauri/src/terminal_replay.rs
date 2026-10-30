@@ -6,7 +6,7 @@ use std::path::PathBuf;
 const MAX_BYTES: usize = 256 * 1024;
 
 fn replay_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("terminal-replay"))

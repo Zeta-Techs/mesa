@@ -141,7 +141,7 @@ struct SkillStore {
 
 impl SkillStore {
     fn default_paths() -> Result<Self, String> {
-        let dir = dirs::config_dir()
+        let dir = crate::dirs::config_dir()
             .ok_or("无法确定平台配置目录")?
             .join("ccode");
         Ok(Self {
@@ -1412,7 +1412,7 @@ fn apply_impl(
 // ===== 删除与备份（保留每个名字最近 5 份） =====
 
 fn backups_root() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("skill-backups"))
@@ -2595,7 +2595,7 @@ pub async fn discover_unmanaged() -> Vec<DiscoveredDto> {
     let skills = store.read();
     let known: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
     let mut roots: Vec<(String, PathBuf)> = agent_dirs().into_iter().collect();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         roots.push(("agents".to_string(), home.join(".agents").join("skills")));
     }
     let mut out = Vec::new();

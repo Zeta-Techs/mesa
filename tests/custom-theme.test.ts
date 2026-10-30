@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   addCustomThemeCard,
   canvasIsLight,
@@ -54,6 +55,21 @@ test("Monaco 面色一律给 #rrggbb：打包压缩成 #fff/#111 的令牌也要
     "editorLineNumber.foreground": "#525a6b",
   });
   for (const v of Object.values(colors)) assert.match(v, /^#[0-9a-f]{6}$/);
+});
+
+test("App.css 里每套主题的编辑器色，原样或压缩成三位后都能给 Monaco 用", () => {
+  const css = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
+  const values = [...css.matchAll(/--color-editor-(?:bg|fg|line):\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.ok(values.length >= 30, `只找到 ${values.length} 个编辑器色`);
+  // 压缩器的写法：#aabbcc → #abc
+  const minify = (v: string) => v.replace(/^#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3$/i, "#$1$2$3");
+  for (const v of values) {
+    for (const form of [v, minify(v)]) {
+      const out = monacoEditorColors(() => form)["editor.background"];
+      assert.match(out, /^#[0-9a-f]{6}$/, `${form} → ${out}`);
+      assert.notEqual(out, "#11131a", `${form} 被当成读不懂、落回默认色`);
+    }
+  }
 });
 
 test("Monaco 主题底子跟 Mesa 主题深浅走：浅色配 vs（深色底子会字色发淡、当前行带深色框），认不出的令牌按深浅兜底", () => {

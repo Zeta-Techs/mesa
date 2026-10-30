@@ -306,7 +306,7 @@ pub struct BootstrapCommitDto {
 // ===== 注册表（app.db projects 表；建表风格同 workspaces::db_at） =====
 
 fn app_db_path() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("app.db"))
@@ -373,7 +373,7 @@ fn db() -> Result<Connection, String> {
 /// （pub(crate)：workspaces.rs 人工事项检测根归属同一口径）
 pub(crate) fn canonical_key(path: &Path) -> String {
     // 剥掉 canonicalize 在 Windows 带出的 `\\?\` 前缀再落库：verbatim 形式与普通形式
-    // （子进程报告的 cwd、dirs::home_dir()、用户手输）按 PathBuf 分量比永不相等，
+    // （子进程报告的 cwd、crate::dirs::home_dir()、用户手输）按 PathBuf 分量比永不相等，
     // 直接进库会让「已注册项目的会话被当成随手聊」「worktree 被误判为仓库候选」
     // 这一串跨方言比较全部失效，界面上还会直接显示 `\\?\C:\Users\...`。
     // 剥完仍是可直接用于文件操作的合法路径；macOS 上是恒等变换。
@@ -882,10 +882,10 @@ fn guard_project_dir(dir: &Path) -> Result<(), String> {
     // dir 也归一是为了兼容直接传普通路径的调用（含单测）。
     let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let dir_c = canon(dir);
-    if dirs::home_dir().is_some_and(|h| dir_c == canon(&h)) {
+    if crate::dirs::home_dir().is_some_and(|h| dir_c == canon(&h)) {
         return Err("不能删除用户主目录".to_string());
     }
-    if dirs::document_dir().is_some_and(|d| dir_c == canon(&d)) {
+    if crate::dirs::document_dir().is_some_and(|d| dir_c == canon(&d)) {
         return Err("不能删除文档目录本身".to_string());
     }
     // 规范化路径的有效段数（去掉根/盘符）少于 2 拒绝，如 /tmp、C:\proj
@@ -4348,7 +4348,7 @@ fn create_demo_at(base: &Path, conn: &Connection) -> Result<ProjectDto, String> 
 #[tauri::command]
 pub async fn create_demo_project() -> Result<ProjectDto, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let base = dirs::document_dir().ok_or_else(|| "无法确定系统文档目录".to_string())?;
+        let base = crate::dirs::document_dir().ok_or_else(|| "无法确定系统文档目录".to_string())?;
         let conn = db()?;
         create_demo_at(&base, &conn)
     })
@@ -4661,7 +4661,7 @@ pub struct PipelineTemplateDto {
 }
 
 fn templates_path() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("pipeline-templates.json"))
@@ -4785,7 +4785,7 @@ pub async fn delete_pipeline_template(id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn ensure_scratch_dir() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = dirs::home_dir()
+        let dir = crate::dirs::home_dir()
             .ok_or("无法确定用户主目录")?
             .join("ccode")
             .join("scratch");
@@ -7533,7 +7533,7 @@ resources = ["ghost.pdf"]
         assert!(err.contains("没有 Mesa 痕迹"), "{err}");
         assert!(plain.join("a.txt").exists());
         // 防护：home 本身拒绝（复用 guard_project_dir 口径）
-        let home = dirs::home_dir().unwrap();
+        let home = crate::dirs::home_dir().unwrap();
         assert!(purge_project_traces_impl(&conn, &home).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -8100,7 +8100,7 @@ any_of_inputs = [["manuscript/paper-final.md", "manuscript/review-final.md"]]
     fn delete_project_dir_rejects_home_and_shallow() {
         let dir = temp_dir("deldir-guard");
         // home 与文档目录本身一律拒绝
-        let home = dirs::home_dir().unwrap();
+        let home = crate::dirs::home_dir().unwrap();
         let err = guard_project_dir(&home).unwrap_err();
         assert!(err.contains("主目录"), "{err}");
         // 回归：Windows 上 canonicalize 带 `\\?\` 前缀，两侧口径不一致会让这道闸静默失效。
@@ -8109,7 +8109,7 @@ any_of_inputs = [["manuscript/paper-final.md", "manuscript/review-final.md"]]
             let err = guard_project_dir(&home_c).unwrap_err();
             assert!(err.contains("主目录"), "canonicalize 形式也必须拦下: {err}");
         }
-        if let Some(docs) = dirs::document_dir() {
+        if let Some(docs) = crate::dirs::document_dir() {
             let err = guard_project_dir(&docs).unwrap_err();
             assert!(err.contains("文档目录"), "{err}");
         }

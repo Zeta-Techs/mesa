@@ -151,7 +151,7 @@ pub async fn dump_effective_config(project_root: Option<String>) -> Result<Strin
 pub async fn export_effective_config(project_root: Option<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let text = build_dump(project_root)?;
-        let dir = dirs::download_dir()
+        let dir = crate::dirs::download_dir()
             .ok_or("无法确定下载目录")?
             .join("ccode-exports");
         std::fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;

@@ -88,13 +88,13 @@ fn write_frame(stdout: &mut impl Write, obj: &serde_json::Value) -> std::io::Res
 }
 
 fn helper_context_path() -> Option<std::path::PathBuf> {
-    dirs::config_dir().map(|d| d.join("ccode").join("helper-context.json"))
+    ccode_lib::dirs::config_dir().map(|d| d.join("ccode").join("helper-context.json"))
 }
 
 /// 收货回执日志（追加式 JSONL，0600）：helper 是独立进程、stderr 被 Chrome 吞掉，
 /// 「点存到 Mesa 没反应」时双方都无据可查——落一条最小回执供报障归因
 fn append_receipt(entry: &serde_json::Value) {
-    let Some(dir) = dirs::config_dir().map(|d| d.join("ccode")) else {
+    let Some(dir) = ccode_lib::dirs::config_dir().map(|d| d.join("ccode")) else {
         return;
     };
     let _ = std::fs::create_dir_all(&dir);
@@ -245,7 +245,7 @@ fn handle_report_download(msg: &serde_json::Value) -> serde_json::Value {
     else {
         return serde_json::json!({"ok": false, "error": "缺 path"});
     };
-    let Some(dir) = dirs::config_dir().map(|d| d.join("ccode")) else {
+    let Some(dir) = ccode_lib::dirs::config_dir().map(|d| d.join("ccode")) else {
         return serde_json::json!({"ok": false, "error": "无法确定配置目录"});
     };
     let _ = std::fs::create_dir_all(&dir);

@@ -109,7 +109,7 @@ fn resolve() -> Result<Vec<(OsString, OsString)>, String> {
         .arg(&script)
         // 用户可在 rc 里据此跳过 tmux 自动挂载之类会卡住的操作（同 VSCODE_RESOLVING_ENVIRONMENT）
         .env("MESA_RESOLVING_ENVIRONMENT", "1")
-        .current_dir(dirs::home_dir().unwrap_or_else(|| "/".into()))
+        .current_dir(crate::dirs::home_dir().unwrap_or_else(|| "/".into()))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

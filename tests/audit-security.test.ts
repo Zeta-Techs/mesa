@@ -14,6 +14,16 @@ test("CSP：生产禁止脚本内联与 eval，保留 IPC、worker 和图片功�
   assert.ok(config.app.security.devCsp.includes("ws://127.0.0.1:*"));
 });
 
+test("CSP：打包时 Tauri 不给 style-src 加 nonce（否则 'unsafe-inline' 失效，Monaco / KaTeX 的内联样式全被拦）", () => {
+  // 2026-10-29 打包版点验实证：Tauri 默认给 style-src 注入 nonce，浏览器见 nonce 即忽略 'unsafe-inline'，
+  // Monaco 运行时插的 <style> 全被拦——安装版代码文件没有语法色、行号错位。开发版不注入，看不出来。
+  // 只放开 style-src；script-src 照旧由 Tauri 注入 nonce / hash
+  const config = JSON.parse(read("src-tauri/tauri.conf.json"));
+  const styles = (config.app.security.csp as string).split(";").find((part) => part.trim().startsWith("style-src"))!;
+  assert.ok(styles.includes("'unsafe-inline'"));
+  assert.deepEqual(config.app.security.dangerousDisableAssetCspModification, ["style-src"]);
+});
+
 test("构建配置以 TS 为显式唯一入口，不受旧生成 JS 遮蔽", () => {
   const pkg = JSON.parse(read("package.json"));
   for (const script of ["dev", "build", "preview"]) assert.ok(pkg.scripts[script].includes("--config vite.config.ts"));

@@ -1317,6 +1317,10 @@ fn shell_spawn_sync(
         (shell, args, Some(kind))
     };
     let mut cmd = CommandBuilder::new(&shell);
+    // Mesa 开着时新装的 Git / Node.js / Quarto：内置终端里也要认得（见 process::child_path）
+    if let Some(path) = crate::process::child_path() {
+        cmd.env("PATH", path);
+    }
     let cwd_file = kind.and_then(|k| attach_cwd_tracking(&mut cmd, &mut shell_args, k));
     // 交互 shell 会自己跑 rc 里的 conda 初始化：继承来的「已激活」状态会让它跳过激活，
     // 而 /etc/zprofile 的 path_helper 已把 PATH 重排，conda 的 bin 就没了（2026-10-27 实测：读回 shell 环境后

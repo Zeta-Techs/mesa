@@ -212,7 +212,7 @@ pub(crate) fn cleanup_impl() -> Result<InternalCleanupResultDto, String> {
             Err(e) => out.failed.push(format!("{}（{e}）", s.session_id)),
         }
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         out.empty_dirs_removed = sweep_empty_claude_dirs(&home);
     }
     crate::sessions::invalidate_scan_cache();

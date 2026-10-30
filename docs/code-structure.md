@@ -680,6 +680,11 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
    访达双击同款环境另起一个装好的 Mesa.app；smoke.sh 在沙盒里经无障碍接口（ax.swift，按控件文字 AXPress，不动鼠标键盘）
    走第一次打开 → 各页 → 示例课题 → 各类文件预览（深浅主题各一遍）→ 诊断页，查整页报错与应用日志 error，出报告和截图；
    开发版的新用户沙盒是 scripts/dev-sandbox.sh）
+  （scripts/dev-sandbox.sh：新用户沙盒——空家目录跑开发版（17577）或 --app 跑打好的程序；Windows 另设 MESA_SANDBOX_HOME（src-tauri/src/dirs.rs）
+   与 USERPROFILE / APPDATA / LOCALAPPDATA，--debug-port 开 WebView2 远程调试）
+  （scripts/win-package-smoke/：Windows 打包版自动点验——run.sh 按安装布局摆好 target/release 的程序、make_samples.py 生成各类型样例项目、
+   在沙盒里起程序，smoke.mjs 经 cdp.mjs（WebView2 远程调试）走首次打开 / 侧栏各页 / 逐个打开文件 / 各套主题，收页面异常、console.error、
+   CSP 拦截与「界面渲染出错」，逐步截图写 report.json；见 environment.md「打包版自动点验」）
   composer-assist.ts         # 聊天输入框的纯逻辑：@ 引用（mentionQueryAt / applyMention，带空格加引号）、斜杠面板 Mesa 组（MesaCommand / filterMesaCommands）、
                              # ↑ 一路往回翻（userTextHistory；lastUserText 保留）、上下文圆环数据（lastContextTokens / contextUsage）；Mesa 组的内容由 TerminalPage mesaCommandsFor 组装，
                              # ↑ 取回跳过项目上下文包（splitLaunchPrompt）（tests/composer-assist.test.ts）
@@ -1671,6 +1676,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   只管新建落点，all_roots()/all_sub() 管「是不是 Mesa 自己的」判定；进程内缓存，
                              #   测试态恒默认；validate_base 校验、next_history 维护曾用根。红线见 architecture §10 2026-10-18
   storage.rs                 # 本机文件持久化原语：跨进程读改写锁、私有临时文件（0600）、安全替换
+  dirs.rs                    # 系统目录唯一入口（家目录 / AppData / 文稿 / 下载 / 桌面），代码一律 crate::dirs::…（Cargo 里 dirs 改名 os_dirs，
+                             #   直接写 dirs:: 编译不过）；Windows 上设了 MESA_SANDBOX_HOME 就全换到它下面（新用户沙盒，生产构建同样认）
   ui_zoom.rs                 # 界面缩放 + 最小窗口尺寸：webview 原生 zoom（改 devicePixelRatio，画布重画才清楚，不用 CSS zoom）；最小尺寸 = 网页 720×480 × 缩放，封顶最小屏可用区 90%；update_settings 带 uiZoom 时与开机 setup 调
   uninstall.rs               # 一键卸载：Mesa 独占目录（配置 ccode/、~/ccode/、本机数据 ccode/、
                              #   com.ccode.dev 的网页数据）移入回收站；浏览器桥清单与 Windows
@@ -1709,7 +1716,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
                              #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）
   process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
-                             #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录）+
+                             #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录；
+                             #   子进程 PATH 走 child_path：Windows 补注册表里新出现的目录、macOS / Linux 补候选目录里新出现的，
+                             #   都追加在末尾，Mesa 开着时装的 Git / Node / Quarto / Python 不用重启就认得）+
                              # pty_command（Windows .cmd/.bat shim 深化：npm 系 CLI 解析出 JS 入口改 node 直启，
                              #   npm.cmd 走固定布局 special case；指向原生 exe 的 shim（npm 装的 Claude Code / OpenCode）
                              #   exe_from_cmd_shim 直启、无扩展名 node 脚本（CodeBuddy）认 shebang 后 node 直启——

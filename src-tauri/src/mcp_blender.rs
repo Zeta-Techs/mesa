@@ -114,7 +114,7 @@ fn blender_config_root() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         return Some(
-            dirs::home_dir()?
+            crate::dirs::home_dir()?
                 .join("Library")
                 .join("Application Support")
                 .join("Blender"),
@@ -122,11 +122,11 @@ fn blender_config_root() -> Option<PathBuf> {
     }
     #[cfg(target_os = "windows")]
     {
-        return Some(dirs::data_dir()?.join("Blender Foundation").join("Blender"));
+        return Some(crate::dirs::data_dir()?.join("Blender Foundation").join("Blender"));
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        Some(dirs::home_dir()?.join(".config").join("blender"))
+        Some(crate::dirs::home_dir()?.join(".config").join("blender"))
     }
 }
 
@@ -192,7 +192,7 @@ fn collect_blender_candidates() -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let mut roots = vec![PathBuf::from("/Applications")];
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             roots.push(h.join("Applications"));
         }
         for root in roots {
@@ -304,7 +304,7 @@ fn probe_uv() -> BlenderMcpProbeItem {
 }
 
 fn probe_repo() -> BlenderMcpProbeItem {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return missing();
     };
     let mcp_dir = home.join("blender_mcp").join("mcp");

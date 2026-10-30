@@ -79,7 +79,7 @@ fn write_manifest(dir: &std::path::Path, body: &str) -> Result<String, String> {
 
 /// 各浏览器 NativeMessagingHosts 清单目录（平台分支单一出处）。卸载走同一份。
 pub(crate) fn native_host_dirs() -> Vec<(&'static str, std::path::PathBuf)> {
-    let Some(base) = dirs::config_dir() else {
+    let Some(base) = crate::dirs::config_dir() else {
         return Vec::new();
     };
     if cfg!(target_os = "macos") {
@@ -152,7 +152,7 @@ pub fn selfheal_bridge_manifests() {
 /// 用户没有仓库，「加载已解压的扩展程序」需要一个本机可点的稳定目录
 /// （2026-09-17 审计：旧指引指向 Mesa 仓库的 extension/，打包用户无法完成）
 pub fn stage_extension_files() -> Result<std::path::PathBuf, String> {
-    let target = dirs::config_dir()
+    let target = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("extension");
@@ -202,7 +202,7 @@ pub fn spawn_receipts_watch(app: tauri::AppHandle) {
         return;
     }
     std::thread::spawn(move || {
-        let path = match dirs::config_dir() {
+        let path = match crate::dirs::config_dir() {
             Some(d) => d.join("ccode").join("helper-receipts.jsonl"),
             None => return,
         };

@@ -32,7 +32,7 @@ pub struct UninstallResultDto {
 /// Mesa 独占的数据根。课题路径不在这里。
 fn owned_roots() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Some(cfg) = dirs::config_dir() {
+    if let Some(cfg) = crate::dirs::config_dir() {
         out.push(cfg.join("ccode"));
     }
     // 默认 ~/ccode 与用户自定义过的家目录（<所选目录>/ccode，名字恒为 ccode）
@@ -41,10 +41,10 @@ fn owned_roots() -> Vec<PathBuf> {
             out.push(root);
         }
     }
-    if let Some(local) = dirs::data_local_dir() {
+    if let Some(local) = crate::dirs::data_local_dir() {
         out.push(local.join("ccode"));
     }
-    if let Some(data) = dirs::data_dir() {
+    if let Some(data) = crate::dirs::data_dir() {
         let path = data.join("ccode");
         if !out.iter().any(|p| p == &path) {
             out.push(path);
@@ -65,7 +65,7 @@ fn owned_roots() -> Vec<PathBuf> {
 /// 这个应用身份的网页数据目录。开发窗口是另一个身份，不在这里。
 fn webview_data_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         if cfg!(target_os = "macos") {
             out.push(home.join("Library/WebKit").join(APP_ID));
             out.push(home.join("Library/Caches").join(APP_ID));
@@ -76,7 +76,7 @@ fn webview_data_dirs() -> Vec<PathBuf> {
         }
     }
     if cfg!(windows) {
-        if let Some(local) = dirs::data_local_dir() {
+        if let Some(local) = crate::dirs::data_local_dir() {
             out.push(local.join(APP_ID).join("EBWebView"));
         }
     }

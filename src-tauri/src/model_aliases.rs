@@ -54,7 +54,7 @@ fn probed_aliases(agent: &str) -> Vec<String> {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("ccode").join("official-model-aliases.json"))
+    Some(crate::dirs::config_dir()?.join("ccode").join("official-model-aliases.json"))
 }
 
 static CACHE: std::sync::OnceLock<std::sync::RwLock<Option<serde_json::Value>>> = std::sync::OnceLock::new();

@@ -224,7 +224,7 @@ pub fn preview_launch_plan(
     }
     // API 连接：磁盘配置文件里的同名键会盖过本次注入。只提示不阻断（见 api_launch_conflict_notes）
     if profile.account_type == crate::profiles::AccountType::Api {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::dirs::home_dir() {
             notes.extend(api_launch_conflict_notes(&home, &profile));
         }
     }
@@ -287,7 +287,8 @@ pub fn resolve_binary(name: &str) -> Option<std::path::PathBuf> {
 /// `#!/usr/bin/env node` 脚本，子进程沿用 Finder 给的短 PATH 就找不到 node、一起就退出
 /// （2026-10-27 本机：node 在 /opt/homebrew/bin，打包版 Codex / Gemini / CodeBuddy 起不来）；
 /// Agent 里再起的 git / rg / python / MCP 服务器也要同一份。必须在起任何线程之前调（set_var 不是线程安全的）。
-/// Windows 的 GUI 进程本就拿到注册表里的完整 PATH，不动。
+/// Windows 的 GUI 进程本就拿到注册表里的完整 PATH，不动。启动后才装出来的目录由 process::child_path
+/// 在起子进程时补（三平台都是）。
 #[cfg(unix)]
 pub fn extend_process_path() {
     let candidates = crate::agent_specs::binary_candidate_dirs();
@@ -296,9 +297,10 @@ pub fn extend_process_path() {
     }
 }
 
-/// extend_process_path 的纯逻辑：没有要补的返回 None
+/// extend_process_path 的纯逻辑：没有要补的返回 None。起子进程时 process::child_path 也用它补
+/// 启动后才出现的目录
 #[cfg_attr(not(any(unix, test)), allow(dead_code))]
-fn extended_path(
+pub(crate) fn extended_path(
     current: Option<&std::ffi::OsStr>,
     candidates: &[PathBuf],
     exists: impl Fn(&Path) -> bool,
@@ -349,7 +351,7 @@ fn git_bash_default_paths() -> Vec<std::path::PathBuf> {
         .iter()
         .filter_map(|k| std::env::var_os(k).map(std::path::PathBuf::from))
         .collect();
-    if let Some(local) = dirs::data_local_dir() {
+    if let Some(local) = crate::dirs::data_local_dir() {
         roots.push(local.join("Programs"));
     }
     roots.into_iter().map(|r| r.join("Git").join("bin").join("bash.exe")).collect()
@@ -541,7 +543,7 @@ fn claude_token_shadowed() -> bool {
             .ok()
             .filter(|d| !d.trim().is_empty())
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+            .or_else(|| crate::dirs::home_dir().map(|h| h.join(".claude")));
         dir.and_then(|d| std::fs::read_to_string(d.join("settings.json")).ok())
             .is_some_and(|t| settings_text_shadows_login(&t))
     }
@@ -770,7 +772,7 @@ fn read_claude_user_settings_env_keys(profile: &Profile) -> Vec<String> {
         .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
         .filter(|d| !d.trim().is_empty())
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
+        .or_else(|| crate::dirs::home_dir().map(|h| h.join(".claude")));
     let Some(text) = dir.and_then(|d| std::fs::read_to_string(d.join("settings.json")).ok()) else {
         return Vec::new();
     };
@@ -796,7 +798,7 @@ fn claude_user_top_keys(profile: &Profile) -> Vec<String> {
             .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
             .filter(|d| !d.trim().is_empty())
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
+            .or_else(|| crate::dirs::home_dir().map(|h| h.join(".claude")))
         else {
             return Vec::new();
         };
@@ -824,7 +826,7 @@ fn claude_user_top_model(profile: &Profile) -> Option<String> {
             .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
             .filter(|d| !d.trim().is_empty())
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))?;
+            .or_else(|| crate::dirs::home_dir().map(|h| h.join(".claude")))?;
         let text = std::fs::read_to_string(dir.join("settings.json")).ok()?;
         serde_json::from_str::<serde_json::Value>(&text)
             .ok()?
@@ -1173,7 +1175,7 @@ pub(crate) fn gemini_home(profile: &Profile) -> Option<PathBuf> {
         .or_else(|| std::env::var("GEMINI_CLI_HOME").ok())
         .filter(|d| !d.trim().is_empty())
         .map(PathBuf::from)
-        .or_else(dirs::home_dir)
+        .or_else(crate::dirs::home_dir)
 }
 
 /// 拦下的话里都带这一句：聊天层认它出「设成 API Key 并启动」卡（src/terminal-wait.ts GEMINI_AUTH_MARK 同字）
@@ -1740,7 +1742,7 @@ pub fn validate_launch_compatibility(
                         .filter(|s| !s.is_empty())
                         .map(PathBuf::from)
                 })
-                .or_else(|| dirs::home_dir().map(|home| home.join(".grok")))
+                .or_else(|| crate::dirs::home_dir().map(|home| home.join(".grok")))
                 .ok_or("无法确定 Grok 配置目录")?;
             let path = home.join("config.toml");
             let text = std::fs::read_to_string(&path).map_err(|_| {
@@ -1776,7 +1778,7 @@ pub(crate) fn grok_model_declares_effort(model: &str) -> bool {
         let home = std::env::var_os("GROK_HOME")
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|h| h.join(".grok")));
+            .or_else(|| crate::dirs::home_dir().map(|h| h.join(".grok")));
         let Some(text) = home.and_then(|h| std::fs::read_to_string(h.join("config.toml")).ok()) else {
             return false;
         };
@@ -2058,7 +2060,7 @@ fn kimi_config_text(profile: Option<&Profile>) -> Option<String> {
     }
     #[cfg(not(test))]
     {
-        let home = dirs::home_dir()?;
+        let home = crate::dirs::home_dir()?;
         let new_dir = profile
             .and_then(|p| p.extra_env.get("KIMI_CODE_HOME").cloned())
             .or_else(|| std::env::var("KIMI_CODE_HOME").ok())
@@ -2095,7 +2097,7 @@ fn kimi_managed_aliases(text: &str) -> Vec<String> {
 /// 要联网才拿得到的官方模型名单，缓存在 Mesa 配置目录 `official-models/<agent>.json`（6 小时内不重拉）
 #[cfg_attr(test, allow(dead_code))]
 fn official_models_cache_path(agent: &str) -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("ccode").join("official-models").join(format!("{agent}.json")))
+    Some(crate::dirs::config_dir()?.join("ccode").join("official-models").join(format!("{agent}.json")))
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -2134,7 +2136,7 @@ fn refresh_official_models_cache(agent: &str, fetch: impl FnOnce() -> Vec<String
 /// ~/.grok/config.toml 里 base_url 不是 x.ai 的 [model.<名>] 段：这个名字在官方账号下也会被转去中转
 #[cfg_attr(test, allow(dead_code))]
 fn grok_relay_model_sections() -> Vec<String> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return Vec::new();
     };
     let base = std::env::var_os("GROK_HOME")
@@ -2247,7 +2249,7 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             // 第一个都是 CLI 自己的默认，选它等于不指定
             // Claude 另把账号额外可选的模型缓存在 ~/.claude.json additionalModelOptionsCache（如 claude-fable-5-1[1m]），接在别名后面
             "claude-code" => {
-                let extra = dirs::home_dir()
+                let extra = crate::dirs::home_dir()
                     .and_then(|h| std::fs::read_to_string(h.join(".claude.json")).ok())
                     .map(|t| claude_additional_models(&t))
                     .unwrap_or_default();
@@ -2258,7 +2260,7 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             "qwen" => return vec!["coder-model".to_string()],
             _ => return Vec::new(),
         }
-        let Some(home) = dirs::home_dir() else {
+        let Some(home) = crate::dirs::home_dir() else {
             return Vec::new();
         };
         let base = std::env::var_os("CODEX_HOME")
@@ -2590,7 +2592,7 @@ pub(crate) fn opencode_provider_json(
 /// catalog 文件路径：<config dir>/ccode/catalogs/codex-<profile_id>.json
 pub fn codex_catalog_path(profile_id: &str) -> Option<std::path::PathBuf> {
     Some(
-        dirs::config_dir()?
+        crate::dirs::config_dir()?
             .join("ccode")
             .join("catalogs")
             .join(format!("codex-{profile_id}.json")),
@@ -3218,7 +3220,7 @@ pub(crate) fn ensure_launch_credentials(
         // 只读检测、命中即拒，不自动改用户配置文件：claude 等的配置文件 env 块会
         // 覆盖 shell env（matrix §1），env_remove 只清进程环境变量管不到磁盘配置——
         // 残留 ANTHROPIC_* 会让「官方账号」会话实际走 API 计费。
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::dirs::home_dir() {
             let conflicts = official_launch_conflicts(&home, profile);
             if !conflicts.is_empty() {
                 return Err(format!(
@@ -3310,7 +3312,7 @@ fn sh_script_quote(value: &str) -> String {
 }
 
 fn external_wrapper_dir() -> Result<PathBuf, String> {
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("external-launch");
@@ -3467,7 +3469,7 @@ fn external_wrapper_command(cwd: &str, wrapper: &Path) -> String {
 /// 外部终端命令交给 shell 前先展开用户输入的家目录缩写。
 /// 不能直接把 `~` 放进单引号，否则 POSIX shell 会按字面目录名处理。
 fn expand_home_path(cwd: &str) -> String {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return cwd.to_string();
     };
     let trimmed = cwd.trim();
@@ -3709,7 +3711,7 @@ pub fn resume_command_line(agent_id: &str, session_id: &str, cwd: &str) -> Resul
 /// 文件缺失/损坏返回空表（client_open 预检据此判断渠道是否需要补写）。
 /// 返回（客户端能用的名字，写了 http_headers、客户端加载不了的名字）。
 pub fn codex_client_config_providers() -> (Vec<String>, Vec<String>) {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return (Vec::new(), Vec::new());
     };
     let base = std::env::var_os("CODEX_HOME")
@@ -3961,7 +3963,7 @@ pub async fn digest_external_terminal(
 #[cfg(target_os = "macos")]
 fn mac_app_installed(bundle: &str) -> bool {
     std::path::Path::new("/Applications").join(bundle).exists()
-        || dirs::home_dir().is_some_and(|h| h.join("Applications").join(bundle).exists())
+        || crate::dirs::home_dir().is_some_and(|h| h.join("Applications").join(bundle).exists())
 }
 
 #[cfg(target_os = "macos")]
@@ -4763,8 +4765,8 @@ pub fn clear_account_conflicts(agent_id: &str) -> Result<Vec<String>, String> {
         .official_account
         .as_ref()
         .ok_or_else(|| "该 agent 没有可清理的官方账号冲突项".to_string())?;
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
-    let backup_dir = dirs::config_dir()
+    let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let backup_dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("conflict-backups");
@@ -4856,7 +4858,7 @@ pub async fn official_account_status(agent_id: String) -> OfficialAccountStatusD
         let mut st = official_account_status_sync(&id);
         // 已登录才读套餐：Claude Code 登出后 ~/.claude.json 里的 oauthAccount 可能还留着
         if st.connected {
-            if let Some(home) = dirs::home_dir() {
+            if let Some(home) = crate::dirs::home_dir() {
                 let (plan, email) = official_identity(&id, &home);
                 st.plan = plan;
                 st.email = st.email.take().or(email);
@@ -4985,7 +4987,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     // 登录凭证在文件里、下面的凭证检查会提前返回：先顺手缓存官方模型名单（单测不跑真 CLI、不写本机缓存）
     if agent_id == "grok" && !cfg!(test) {
         if let Some(path) = resolve_binary("grok") {
-            let has_login = dirs::home_dir().is_some_and(|h| h.join(".grok/auth.json").is_file());
+            let has_login = crate::dirs::home_dir().is_some_and(|h| h.join(".grok/auth.json").is_file());
             if has_login {
                 // 要连 x.ai：带上设置里的出网代理（与官方启动同口径）
                 refresh_official_models_cache("grok", || {
@@ -5030,7 +5032,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             .collect::<Vec<_>>()
             .join(" "),
     );
-    let home = dirs::home_dir();
+    let home = crate::dirs::home_dir();
     // 冲突探测与连接状态无关：未登录时残留的 API 配置同样值得告警
     let conflicts = home
         .as_ref()
@@ -8164,7 +8166,7 @@ api_backend = "responses"
 
     #[test]
     fn expand_home_path_resolves_tilde_before_shell_quoting() {
-        let home = dirs::home_dir().unwrap();
+        let home = crate::dirs::home_dir().unwrap();
         assert_eq!(expand_home_path("~"), home.to_string_lossy());
         assert_eq!(
             expand_home_path("~/Mesa project"),
@@ -8258,7 +8260,7 @@ api_backend = "responses"
     #[test]
     fn git_bash_paths_cover_per_user_install() {
         let paths = git_bash_default_paths();
-        let per_user = dirs::data_local_dir().unwrap().join("Programs").join("Git").join("bin").join("bash.exe");
+        let per_user = crate::dirs::data_local_dir().unwrap().join("Programs").join("Git").join("bin").join("bash.exe");
         assert!(paths.contains(&per_user), "「仅为我安装」的 Git Bash");
         // 全机安装排在前面
         assert!(paths.first().unwrap().ends_with(std::path::Path::new("Git").join("bin").join("bash.exe")));

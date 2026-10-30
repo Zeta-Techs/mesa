@@ -151,7 +151,7 @@ fn emit_attention_with(
 }
 
 fn downloads_dir() -> Result<PathBuf, String> {
-    dirs::download_dir().ok_or_else(|| "无法确定系统下载目录".to_string())
+    crate::dirs::download_dir().ok_or_else(|| "无法确定系统下载目录".to_string())
 }
 
 /// 没装扩展时要盯的目录：系统「下载」加上各浏览器设过的默认下载文件夹。
@@ -175,7 +175,7 @@ fn push_watch_dir(into: &mut Vec<PathBuf>, dir: PathBuf) {
     // 家目录、磁盘根目录不盯：一次事件就会扫到无关文件
     let key_text = key.to_string_lossy();
     if key.parent().is_none()
-        || dirs::home_dir().is_some_and(|home| crate::paths::same_path(&key_text, &home.to_string_lossy()))
+        || crate::dirs::home_dir().is_some_and(|home| crate::paths::same_path(&key_text, &home.to_string_lossy()))
     {
         return;
     }
@@ -188,7 +188,7 @@ fn push_watch_dir(into: &mut Vec<PathBuf>, dir: PathBuf) {
 fn browser_user_data_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     #[cfg(target_os = "macos")]
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         let app = home.join("Library/Application Support");
         for rel in [
             "Google/Chrome",
@@ -201,13 +201,13 @@ fn browser_user_data_dirs() -> Vec<PathBuf> {
         }
     }
     #[cfg(target_os = "windows")]
-    if let Some(local) = dirs::data_local_dir() {
+    if let Some(local) = crate::dirs::data_local_dir() {
         for rel in ["Google/Chrome/User Data", "Microsoft/Edge/User Data", "Chromium/User Data", "BraveSoftware/Brave-Browser/User Data"] {
             out.push(local.join(rel));
         }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
-    if let Some(cfg) = dirs::config_dir() {
+    if let Some(cfg) = crate::dirs::config_dir() {
         for rel in ["google-chrome", "microsoft-edge", "chromium", "BraveSoftware/Brave-Browser"] {
             out.push(cfg.join(rel));
         }
@@ -268,7 +268,7 @@ fn browser_download_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         let profiles = home.join(if cfg!(target_os = "macos") {
             "Library/Application Support/Firefox/Profiles"
         } else if cfg!(target_os = "windows") {
@@ -292,7 +292,7 @@ fn browser_download_dirs() -> Vec<PathBuf> {
 
 /// 收货登记落盘（dev 热重启/应用重启后自动恢复；TTL 清理/命中消费同样同步落盘）
 fn pending_store_path() -> Result<PathBuf, String> {
-    dirs::config_dir()
+    crate::dirs::config_dir()
         .map(|d| d.join("ccode").join("download-pending.json"))
         .ok_or_else(|| "无法确定配置目录".to_string())
 }
@@ -398,7 +398,7 @@ pub(crate) fn pending_for_doi(doi: &str) -> Option<PendingIdent> {
 }
 
 fn helper_context_ident() -> Option<CatchIdent> {
-    let path = dirs::config_dir()?
+    let path = crate::dirs::config_dir()?
         .join("ccode")
         .join("helper-context.json");
     let text = std::fs::read_to_string(path).ok()?;
@@ -737,7 +737,7 @@ pub async fn inst_browser_open(
         .map(str::to_string);
     let ctx_doi = doi.as_deref().and_then(crate::inst_access::doi_from_url);
     if let Some(root) = root.as_ref() {
-        if let Some(cfg) = dirs::config_dir() {
+        if let Some(cfg) = crate::dirs::config_dir() {
             let mut ctx = serde_json::json!({
                 "projectRoot": root,
                 "updatedAt": chrono::Utc::now().to_rfc3339(),
@@ -926,7 +926,7 @@ static PROCESS_STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
     std::sync::LazyLock::new(std::time::SystemTime::now);
 
 fn dl_report_paths() -> Option<(PathBuf, PathBuf)> {
-    dirs::config_dir().map(|d| (d.join("dl-reports.jsonl"), d.join("dl-reports.cursor")))
+    crate::dirs::config_dir().map(|d| (d.join("dl-reports.jsonl"), d.join("dl-reports.cursor")))
 }
 
 /// 近期已处理过的文件（notify 与 dl-report 双通道去重 + 同文件重复上报去重）

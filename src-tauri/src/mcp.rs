@@ -105,7 +105,7 @@ fn store_path() -> Result<PathBuf, String> {
     if let Some(p) = TEST_STORE.with(|c| c.borrow().clone()) {
         return Ok(p);
     }
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("mcp-servers.json"))
@@ -464,14 +464,14 @@ fn backup_once(path: &Path) -> Result<(), String> {
     #[cfg(test)]
     let dir = match TEST_BACKUP.with(|c| c.borrow().clone()) {
         Some(p) => p,
-        None => dirs::config_dir()
+        None => crate::dirs::config_dir()
             .ok_or("无法确定平台配置目录")?
             .join("ccode")
             .join("backups")
             .join("mcp"),
     };
     #[cfg(not(test))]
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("backups")
@@ -1007,7 +1007,7 @@ fn home() -> Result<PathBuf, String> {
     if let Some(p) = TEST_HOME.with(|c| c.borrow().clone()) {
         return Ok(p);
     }
-    dirs::home_dir().ok_or_else(|| "无法确定用户目录".to_string())
+    crate::dirs::home_dir().ok_or_else(|| "无法确定用户目录".to_string())
 }
 
 fn env_home(var: &str) -> Option<PathBuf> {

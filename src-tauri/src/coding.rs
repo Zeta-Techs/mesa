@@ -1622,7 +1622,7 @@ fn macos_desktop_app() -> Option<PathBuf> {
     if sys.is_dir() {
         return Some(sys);
     }
-    dirs::home_dir()
+    crate::dirs::home_dir()
         .map(|h| h.join("Applications").join(NAME))
         .filter(|p| p.is_dir())
 }

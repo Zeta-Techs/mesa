@@ -2025,7 +2025,7 @@ fn query_stats(range: &str) -> Result<UsageStatsDto, String> {
         };
         collected.map_err(|e| e.to_string())?
     };
-    let pricing_path = dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
+    let pricing_path = crate::dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
     let table = load_pricing(pricing_path.as_deref());
     Ok(build_stats(
         rows,
@@ -2544,7 +2544,7 @@ pub async fn usage_unpriced_models() -> Result<Vec<UnpricedModelDto>, String> {
 }
 
 fn pricing_table_and_rate() -> (PriceChain, f64) {
-    let pricing_path = dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
+    let pricing_path = crate::dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
     (
         load_pricing(pricing_path.as_deref()),
         load_rate(pricing_path.as_deref()),
@@ -3983,7 +3983,7 @@ mod tests {
 
     #[test]
     fn watch_worktree_cwd_only_matches_under_mesa_root() {
-        let home = dirs::home_dir().expect("测试机必有 home");
+        let home = crate::dirs::home_dir().expect("测试机必有 home");
         let inside = home.join("ccode/watch-worktrees/测试项目/f4334054-d77e-4c11-ab56-22bb11a2a83f");
         assert!(is_watch_worktree_cwd(&inside.to_string_lossy()));
         // 根目录本身也命中：与 list_repos 的排除口径（== 或前缀 /）一致

@@ -23,7 +23,10 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 use crate::sessions::{now_iso, redact_sensitive_text};
 
 const PROCESS_HISTORY_CAP: usize = 2_000;
-const PROCESS_POLL_MS: u64 = 250;
+/// 进程扫描间隔。每次要枚举全系统进程（Windows 上本身就要 8–15ms，换 Toolhelp 快照也一样），原先 250ms 一次
+/// 让打包版一直占着约 3% 的一个核（2026-10-29 实测：开 4.5 小时累计 8 分钟 CPU）。Mesa 自己起的后台命令由
+/// spawn-hook 精确登记、不靠扫描；扫描只补子孙进程与输入法的 CPU / 内存，2 秒够用，代价是两秒内起落的孙进程可能漏记
+const PROCESS_POLL_MS: u64 = 2_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -557,7 +560,7 @@ pub(crate) const BUNDLE_FILE_PREFIX: &str = "ccode-diagnostics-";
 
 /// 诊断包导出目录（下载/ccode-exports）；反馈附件闸门与导出共用同一出处
 pub(crate) fn bundle_dir() -> Result<std::path::PathBuf, String> {
-    Ok(dirs::download_dir()
+    Ok(crate::dirs::download_dir()
         .ok_or("无法确定下载目录")?
         .join("ccode-exports"))
 }

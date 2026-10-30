@@ -64,6 +64,10 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
     configure_background(&mut command);
     // 不把 Mesa 自己的 PWD 带给子进程（理由见非 Windows 版）
     command.env_remove("PWD");
+    // 刚装的 Git / Node.js 等：子进程拿注册表里的新 PATH（见 child_path）
+    if let Some(path) = child_path() {
+        command.env("PATH", path);
+    }
     BackgroundCommand { inner: command }
 }
 
@@ -74,6 +78,10 @@ pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
 pub fn background_command<S: AsRef<OsStr>>(program: S) -> BackgroundCommand {
     let mut command = Command::new(program);
     command.env_remove("PWD");
+    // 刚装的 Quarto / Python 等：补上启动后才出现的候选目录（见 child_path）
+    if let Some(path) = child_path() {
+        command.env("PATH", path);
+    }
     command
 }
 
@@ -158,6 +166,101 @@ pub fn reg_sz_value(text: &str) -> Option<String> {
     })
 }
 
+/// 子进程用的 PATH。Windows 进程的 PATH 只在启动那一刻从注册表拼一次：Mesa 开着时一键补齐装的
+/// Git / Node.js / Python 已写进注册表 PATH，但 Mesa 起的 Agent、内置终端、MCP 服务器继承的还是旧那份，
+/// Agent 里 `git` `node` `npx` 一律 not recognized，重启 Mesa 才好（新机器走上手向导必经这一步）。
+/// 这里取「本进程 PATH + 注册表（系统、用户）PATH 里新出现的目录（追加在末尾）」，原有顺序不动。
+/// None = 没有新目录，照常继承。
+#[cfg(windows)]
+pub fn child_path() -> Option<std::ffi::OsString> {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let current = current.to_str()?;
+    let registry: Vec<String> = [
+        (HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (HKEY_CURRENT_USER, "Environment"),
+    ]
+    .into_iter()
+    .filter_map(|(root, key)| registry_path_value(root, key))
+    .collect();
+    merged_windows_path(current, &registry).map(Into::into)
+}
+
+/// macOS / Linux 同一问题：启动时 agents::extend_process_path 只补了**当时已存在**的候选目录。
+/// Mesa 开着时一键补齐装出来的新目录（Quarto 的 /Applications/quarto/bin——Apple 芯片机器上 /usr/local/bin
+/// 的链接常建不出来、python.org 的 Python.framework、TinyTeX 等）不在 PATH 上，Agent 里 `quarto` `python3`
+/// 要重启 Mesa 才认得。起子进程时按同一份候选表再补一次，十几次 stat，没有新目录返回 None
+#[cfg(not(windows))]
+pub fn child_path() -> Option<std::ffi::OsString> {
+    crate::agents::extended_path(
+        std::env::var_os("PATH").as_deref(),
+        &crate::agent_specs::binary_candidate_dirs(),
+        |d| d.is_dir(),
+    )
+}
+
+/// 注册表里的 `Path` 值（REG_EXPAND_SZ 由 RegGetValueW 展开 `%SystemRoot%` 一类变量；按 UTF-16 读，中文目录不乱码）
+#[cfg(windows)]
+fn registry_path_value(root: windows_sys::Win32::System::Registry::HKEY, subkey: &str) -> Option<String> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
+    const ERROR_MORE_DATA: u32 = 234;
+    let key: Vec<u16> = subkey.encode_utf16().chain([0]).collect();
+    let name: Vec<u16> = "Path".encode_utf16().chain([0]).collect();
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+    let mut size: u32 = 0;
+    let rc = unsafe {
+        RegGetValueW(root, key.as_ptr(), name.as_ptr(), flags, std::ptr::null_mut(), std::ptr::null_mut(), &mut size)
+    };
+    if rc != 0 || size < 2 {
+        return None;
+    }
+    // 展开后可能比先问到的长度更长：按返回的新长度再取，最多三次
+    for _ in 0..3 {
+        let mut buf = vec![0u16; (size as usize).div_ceil(2)];
+        let rc = unsafe {
+            RegGetValueW(root, key.as_ptr(), name.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size)
+        };
+        match rc {
+            0 => {
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                return String::from_utf16(&buf[..len]).ok();
+            }
+            ERROR_MORE_DATA => continue,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// child_path 的纯逻辑：注册表里有、当前 PATH 里没有的目录追加在末尾（按 Windows 语义比较：
+/// 大小写、正反斜杠、末尾斜杠不计）；没有要补的返回 None
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn merged_windows_path(current: &str, registry: &[String]) -> Option<String> {
+    let mut seen: std::collections::HashSet<String> = current
+        .split(';')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(crate::paths::path_key_folded)
+        .collect();
+    let mut added: Vec<&str> = Vec::new();
+    for entry in registry.iter().flat_map(|value| value.split(';')).map(str::trim) {
+        if !entry.is_empty() && seen.insert(crate::paths::path_key_folded(entry)) {
+            added.push(entry);
+        }
+    }
+    if added.is_empty() {
+        return None;
+    }
+    let mut out = current.trim_end_matches(';').to_string();
+    for entry in added {
+        if !out.is_empty() {
+            out.push(';');
+        }
+        out.push_str(entry);
+    }
+    Some(out)
+}
+
 /// 注册表里登记的打开命令（`"D:\…\EndNote.EXE" "%1"`）里的可执行文件路径
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 pub fn command_line_exe(command: &str) -> Option<std::path::PathBuf> {
@@ -180,6 +283,10 @@ pub fn pty_command(program: &Path, args: &[String]) -> CommandBuilder {
     let mut command = pty_command_base(program, args);
     if let Some((key, value)) = agent_python_io_env() {
         command.env(key, value);
+    }
+    // Mesa 开着时新装的工具：子进程也要认得（见 child_path）
+    if let Some(path) = child_path() {
+        command.env("PATH", path);
     }
     command
 }
@@ -1041,6 +1148,51 @@ mod tests {
         );
     }
 
+    /// Mesa 开着时装的 Git / Node.js：注册表 PATH 里新出现的目录补在末尾，已有的（大小写、末尾斜杠不同也算）不重复
+    #[test]
+    fn registry_path_entries_are_appended_once() {
+        let current = r"C:\WINDOWS\system32;C:\Users\me\AppData\Roaming\npm";
+        let machine = r"C:\Windows\System32;C:\Program Files\Git\cmd;C:\Program Files\nodejs\".to_string();
+        let user = r"C:\Users\me\AppData\Roaming\npm\;;C:\Program Files\Git\cmd".to_string();
+        assert_eq!(
+            merged_windows_path(current, &[machine.clone(), user]).as_deref(),
+            Some(r"C:\WINDOWS\system32;C:\Users\me\AppData\Roaming\npm;C:\Program Files\Git\cmd;C:\Program Files\nodejs\")
+        );
+        // 都已在 PATH 上：不改
+        let full = merged_windows_path(current, &[machine]).unwrap();
+        assert_eq!(merged_windows_path(&full, &[r"c:\program files\git\CMD".into()]), None);
+        // 读不到注册表、原来没有 PATH
+        assert_eq!(merged_windows_path(current, &[]), None);
+        assert_eq!(merged_windows_path("", &[r"C:\Git\cmd".into()]).as_deref(), Some(r"C:\Git\cmd"));
+        // 原 PATH 末尾带分号不产生空段
+        assert_eq!(merged_windows_path(r"C:\a;", &[r"C:\b".into()]).as_deref(), Some(r"C:\a;C:\b"));
+    }
+
+    /// 本机注册表：child_path 补出来的结果里原 PATH 原样在最前；REG_EXPAND_SZ 已展开
+    #[cfg(windows)]
+    #[test]
+    fn child_path_keeps_process_path_first() {
+        let current = std::env::var("PATH").unwrap();
+        if let Some(next) = child_path() {
+            assert!(next.to_str().unwrap().starts_with(current.trim_end_matches(';')));
+        }
+        use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+        let machine =
+            registry_path_value(HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
+                .expect("系统 PATH 应读得到");
+        assert!(!machine.to_lowercase().contains("%systemroot%"), "REG_EXPAND_SZ 应已展开: {machine}");
+        // 后台子进程真拿到了：系统 PATH 的每一段都在子进程的 PATH 里（Mesa 启动时 PATH 再旧也一样）
+        let out = background_command("cmd.exe").args(["/d", "/c", "echo %PATH%"]).output().unwrap();
+        let seen: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .split(';')
+            .map(crate::paths::path_key_folded)
+            .collect();
+        for entry in machine.split(';').map(str::trim).filter(|e| !e.is_empty()) {
+            assert!(seen.contains(&crate::paths::path_key_folded(entry)), "子进程 PATH 缺 {entry}");
+        }
+    }
+
     /// 子进程不继承 Mesa 的 PWD（opencode run 按 PWD 取目录）：环境里显式删掉，三平台同口径
     #[test]
     fn background_command_drops_inherited_pwd() {
@@ -1105,7 +1257,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cursor_launcher_resolves_to_bundled_node() {
-        let Some(local) = dirs::data_local_dir() else { return };
+        let Some(local) = crate::dirs::data_local_dir() else { return };
         let launcher = local.join("cursor-agent").join("cursor-agent.cmd");
         if !launcher.is_file() {
             return;

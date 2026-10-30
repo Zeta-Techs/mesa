@@ -442,7 +442,7 @@ pub async fn save_feedback_images(images: Vec<FeedbackImageDto>) -> Result<Strin
     tauri::async_runtime::spawn_blocking(move || {
         use base64::Engine;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        let dir = dirs::download_dir()
+        let dir = crate::dirs::download_dir()
             .ok_or("无法确定下载目录")?
             .join("ccode-exports")
             .join(format!("mesa-feedback-{stamp}"));

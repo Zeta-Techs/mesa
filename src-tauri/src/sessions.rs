@@ -3617,14 +3617,14 @@ fn opencode_db_candidates() -> Vec<PathBuf> {
     }
     #[cfg(windows)]
     {
-        if let Some(local) = dirs::data_local_dir() {
+        if let Some(local) = crate::dirs::data_local_dir() {
             out.push(local.join("opencode").join("opencode.db"));
         }
-        if let Some(roaming) = dirs::data_dir() {
+        if let Some(roaming) = crate::dirs::data_dir() {
             out.push(roaming.join("opencode").join("opencode.db"));
         }
     }
-    if let Some(h) = dirs::home_dir() {
+    if let Some(h) = crate::dirs::home_dir() {
         out.push(
             h.join(".local")
                 .join("share")
@@ -4193,10 +4193,10 @@ fn opencode_parse_snapshot(v: &Value) -> Vec<ChatMessageDto> {
 fn opencode_legacy_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     #[cfg(windows)]
-    if let Some(local) = dirs::data_local_dir() {
+    if let Some(local) = crate::dirs::data_local_dir() {
         roots.push(local.join("opencode").join("storage"));
     }
-    if let Some(h) = dirs::home_dir() {
+    if let Some(h) = crate::dirs::home_dir() {
         roots.push(
             h.join(".local")
                 .join("share")
@@ -4570,10 +4570,10 @@ pub fn scan_sessions() -> ScanResult {
         grok_summary,
     } = &mut *cache;
     // Gemini 的 slug → 项目路径映射在扫描与快照补全时都要用
-    let gemini_map = dirs::home_dir()
+    let gemini_map = crate::dirs::home_dir()
         .map(|h| gemini_slug_map(&h.join(".gemini").join("tmp")))
         .unwrap_or_default();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         let mut claude_files = Vec::new();
         collect_files(&home.join(".claude").join("projects"), 2, &mut claude_files);
         let claude_metas = cached_claude(claude_files, claude);
@@ -5292,7 +5292,7 @@ fn opencode_snapshot_meta(path: &Path, session_id: &str) -> Option<SessionMetaDt
 // ===== 快照与 app.db =====
 
 fn snapshots_root() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("ccode").join("snapshots"))
+    crate::dirs::config_dir().map(|d| d.join("ccode").join("snapshots"))
 }
 
 /// session_id/agent 来自前端参数，进路径前收敛字符集，防目录穿越
@@ -5357,7 +5357,7 @@ fn find_snapshot(agent: &str, source: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn open_db() -> Result<Connection, String> {
-    let dir = dirs::config_dir()
+    let dir = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode");
     fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -7263,8 +7263,8 @@ fn export_session_markdown_impl(
     }
     let title = redact_sensitive_text(title);
     let md = render_markdown(agent, session_id, &title, &msgs);
-    let downloads = dirs::download_dir()
-        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+    let downloads = crate::dirs::download_dir()
+        .or_else(|| crate::dirs::home_dir().map(|h| h.join("Downloads")))
         .ok_or("无法确定下载目录")?;
     let dir = downloads.join("ccode-exports");
     fs::create_dir_all(&dir).map_err(|e| format!("创建导出目录失败: {e}"))?;
@@ -7854,7 +7854,7 @@ pub(crate) fn assign_session_step_at(
 /// 必须是各 CLI 实际存放会话文件的子目录，而不是 CLI 家目录整根——
 /// 整根放行会让 file_path 指向同根的 auth.json、session_index.jsonl 等非会话文件
 fn session_data_dirs() -> Vec<(PathBuf, bool)> {
-    let mut dirs = dirs::home_dir()
+    let mut dirs = crate::dirs::home_dir()
         .map(|h| session_data_dirs_at(&h))
         .unwrap_or_default();
     if let Some(snap) = snapshots_root() {
@@ -7874,7 +7874,7 @@ pub(crate) fn fixed_id_session_exists(
     session_id: &str,
     env: &[(String, String)],
 ) -> Option<bool> {
-    let home = dirs::home_dir()?;
+    let home = crate::dirs::home_dir()?;
     fixed_id_session_exists_at(&home, agent, session_id, env)
 }
 
@@ -8044,7 +8044,7 @@ pub(crate) fn deletable_session_file(path: &Path, dirs: &[(PathBuf, bool)]) -> b
     // cursor 专属闸：目录级白名单粒度不够（~/.cursor 与 IDE 共享），单独精确判定
     if jsonl {
         if let Some(root) =
-            dirs::home_dir().and_then(|h| h.join(".cursor").join("projects").canonicalize().ok())
+            crate::dirs::home_dir().and_then(|h| h.join(".cursor").join("projects").canonicalize().ok())
         {
             if cursor_deletable(&canon, &root) {
                 return true;
@@ -8126,7 +8126,7 @@ fn delete_opencode_rows_impl(db_path: &Path, session_id: &str) -> Result<(), Str
 /// Codex 链成员文件：rollout-<时间>-<uuid>.jsonl[.zst]，按文件名尾部 uuid 精确匹配
 /// （与 find_snapshot 取尾部 uuid 的约定一致；payload id 与文件名 uuid 不一致的极端情况不覆盖）
 fn grok_member_files(member_ids: &[String]) -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return Vec::new();
     };
     grok_member_files_in(&[home.join(".grok").join("sessions")], member_ids)
@@ -8157,7 +8157,7 @@ fn grok_member_files_in(roots: &[PathBuf], member_ids: &[String]) -> Vec<PathBuf
 }
 
 fn codex_member_files(member_ids: &[String]) -> Vec<PathBuf> {
-    let Some(home) = dirs::home_dir() else {
+    let Some(home) = crate::dirs::home_dir() else {
         return Vec::new();
     };
     let roots = [
@@ -8399,7 +8399,7 @@ pub async fn session_file_sig(file_path: String) -> Option<(u64, u64)> {
         return Some((updated, wal_len));
     }
     let p = if let Some(stripped) = file_path.strip_prefix("~/") {
-        dirs::home_dir()?.join(stripped)
+        crate::dirs::home_dir()?.join(stripped)
     } else {
         std::path::PathBuf::from(&file_path)
     };
@@ -10978,7 +10978,7 @@ mod tests {
         assert!(opencode_db_path().is_some());
         #[cfg(windows)]
         {
-            if let Some(local) = dirs::data_local_dir() {
+            if let Some(local) = crate::dirs::data_local_dir() {
                 let root = local.join("opencode");
                 assert!(
                     cands
@@ -10988,7 +10988,7 @@ mod tests {
                 );
             }
         }
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             assert!(
                 cands.iter().any(|p| p.ends_with(
                     std::path::Path::new(".local")
@@ -11006,7 +11006,7 @@ mod tests {
 
     #[test]
     fn expand_tilde_accepts_forward_and_backslash() {
-        let home = dirs::home_dir().unwrap().to_string_lossy().into_owned();
+        let home = crate::dirs::home_dir().unwrap().to_string_lossy().into_owned();
         assert_eq!(expand_tilde("~"), home);
         assert_eq!(expand_tilde("~/x"), format!("{home}/x"));
         assert_eq!(

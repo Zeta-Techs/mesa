@@ -1288,7 +1288,7 @@ pub(crate) fn codex_user_config() -> Option<toml::Value> {
     let home = std::env::var_os("CODEX_HOME")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))?;
+        .or_else(|| crate::dirs::home_dir().map(|h| h.join(".codex")))?;
     let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
     toml::from_str(crate::mcp::strip_bom(&text)).ok()
 }
@@ -1330,7 +1330,7 @@ pub fn agent_capabilities() -> Vec<AgentCapabilitiesDto> {
 /// 新旧双变体探测（kimi）：按数据目录存在性返回 "new" | "legacy"，都无 → None
 pub(crate) fn variant_of(spec: &AgentSpec) -> Option<&'static str> {
     let variant = spec.packaging.legacy_variant.as_ref()?;
-    let home = dirs::home_dir()?;
+    let home = crate::dirs::home_dir()?;
     if home.join(variant.new_dir).exists() {
         Some("new")
     } else if home.join(variant.legacy_dir).exists() {
@@ -1348,7 +1348,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
     let mut out: Vec<std::path::PathBuf> = Vec::new();
     #[cfg(target_os = "macos")]
     {
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             out.push(h.join(".npm-global/bin"));
             out.push(h.join(".local/bin"));
             out.push(h.join("bin"));
@@ -1371,7 +1371,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
     }
     #[cfg(target_os = "linux")]
     {
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             out.push(h.join(".local/bin"));
             out.push(h.join(".kimi-code/bin")); // Kimi Code 新版官方安装器
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器
@@ -1385,7 +1385,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
     {
         // %LOCALAPPDATA%\Programs、%APPDATA%\npm（npm 全局 bin 目录）、
         // winget portable 包的 shim 目录（Links）与 winget 本体（WindowsApps）
-        if let Some(local) = dirs::data_local_dir() {
+        if let Some(local) = crate::dirs::data_local_dir() {
             out.push(local.join("Programs"));
             out.push(local.join("Microsoft").join("WinGet").join("Links"));
             out.push(local.join("Microsoft").join("WindowsApps"));
@@ -1394,10 +1394,10 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             // Cursor CLI 官方 Windows 安装器（cursor-agent.cmd 启动器，进程直启见 process::cursor_entry_from_launcher）
             out.push(local.join("cursor-agent"));
         }
-        if let Some(roaming) = dirs::data_dir() {
+        if let Some(roaming) = crate::dirs::data_dir() {
             out.push(roaming.join("npm"));
         }
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             out.push(h.join(".kimi-code/bin")); // Kimi Code 新版官方安装器
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器（%USERPROFILE%\.grok\bin\grok.exe）
             out.push(h.join(".local").join("bin")); // 官方 install.sh 在 MINGW 下落点
@@ -1420,7 +1420,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             }
         }
         // 只给当前用户装的 Git（winget 偏好用户范围 / 安装器选「仅为我安装」）
-        if let Some(local) = dirs::data_local_dir() {
+        if let Some(local) = crate::dirs::data_local_dir() {
             out.push(local.join("Programs").join("Git").join("cmd"));
         }
         // PowerShell 7 官方 MSI / winget Microsoft.PowerShell 默认落点：装完写进 PATH，但已在跑的 Mesa 拿不到，
@@ -1451,7 +1451,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         // 一键补齐装完 Python 后，已在跑的 Mesa 进程 PATH 里只有应用商店占位，靠这里找到真身；
         // 新版本排前面
         let mut python_roots: Vec<std::path::PathBuf> = Vec::new();
-        if let Some(local) = dirs::data_local_dir() {
+        if let Some(local) = crate::dirs::data_local_dir() {
             python_roots.push(local.join("Programs").join("Python"));
         }
         for key in ["ProgramW6432", "ProgramFiles"] {
@@ -1493,7 +1493,7 @@ fn claude_skills_dir(config_dir: Option<std::path::PathBuf>, home: std::path::Pa
 /// MCP 的 agent_paths 用同一套搬迁变量；两处必须同源，避免 `KIMI_CODE_HOME` 等
 /// 只对 MCP 生效、技能静默落到默认家目录。
 pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
-    let home = dirs::home_dir()?;
+    let home = crate::dirs::home_dir()?;
     match spec.id {
         "claude-code" => Some(claude_skills_dir(env_path("CLAUDE_CONFIG_DIR"), home)),
         "codex" => {
@@ -1660,7 +1660,7 @@ mod tests {
 
     #[test]
     fn skills_dir_default_matches_spec_segments() {
-        let Some(home) = dirs::home_dir() else {
+        let Some(home) = crate::dirs::home_dir() else {
             return;
         };
         for spec in all_agent_specs() {
@@ -1677,7 +1677,7 @@ mod tests {
     #[test]
     fn windows_candidate_dirs_include_local_bin_and_git() {
         let dirs = binary_candidate_dirs();
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             assert!(
                 dirs.iter().any(|d| d == &h.join(".local").join("bin")),
                 "缺 ~/.local/bin: {dirs:?}"

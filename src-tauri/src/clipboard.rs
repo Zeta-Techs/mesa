@@ -10,7 +10,7 @@ const MAX_IMAGE_BYTES: usize = 50 * 1024 * 1024;
 const PASTE_TTL_SECS: i64 = 7 * 24 * 3600;
 
 fn paste_dir() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("tmp"))

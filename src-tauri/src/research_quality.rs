@@ -215,7 +215,7 @@ pub async fn research_source(
 }
 
 fn reproductions_root() -> Result<PathBuf, String> {
-    Ok(dirs::home_dir()
+    Ok(crate::dirs::home_dir()
         .ok_or("无法确定用户主目录")?
         .join("ccode")
         .join("reproductions"))

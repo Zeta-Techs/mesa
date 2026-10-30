@@ -2598,7 +2598,7 @@ fn backfill_missing_batch(root: &Path) -> Result<(), String> {
 }
 
 fn latest_adopted_watch_day(root: &Path) -> Option<String> {
-    let path = dirs::config_dir()?.join("ccode").join("schedules.json");
+    let path = crate::dirs::config_dir()?.join("ccode").join("schedules.json");
     let text = std::fs::read_to_string(path).ok()?;
     let list: Vec<crate::scheduler::Schedule> = serde_json::from_str(&text).ok()?;
     let root_s = root.to_string_lossy();
@@ -2742,7 +2742,7 @@ pub(crate) fn delete_schedule_subscriptions(project_root: &str, schedule_id: &st
 /// 旧的项目级 papers/watchlist.md 迁进还没有自己清单的文献雷达任务。
 /// 只在第一次读到时搬一次；已经有自己清单的任务不动。搬完旧文件留在原地作备份，不再被读取。
 pub(crate) fn adopt_shared_watchlists() -> Result<(), String> {
-    let path = dirs::config_dir()
+    let path = crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("schedules.json");

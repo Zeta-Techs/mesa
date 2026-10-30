@@ -148,7 +148,7 @@ pub(crate) fn watch_worktrees_root() -> Result<PathBuf, String> {
 }
 
 fn app_db_path() -> Result<PathBuf, String> {
-    Ok(dirs::config_dir()
+    Ok(crate::dirs::config_dir()
         .ok_or("无法确定平台配置目录")?
         .join("ccode")
         .join("app.db"))
@@ -5220,7 +5220,7 @@ pub async fn list_repos() -> Vec<RepoDto> {
         // Windows 上 verbatim 与普通形式混杂且大小写不敏感 —— 全部走 paths::path_key
         // 折成同一口径再比。此前 home 用 canonicalize 对齐过，ws_root 漏了：
         // starts_with 恒假 ⇒ 每个 worktree 都会作为「仓库候选」冒出来。
-        let home = dirs::home_dir().map(|h| crate::paths::path_key(&h.to_string_lossy()));
+        let home = crate::dirs::home_dir().map(|h| crate::paths::path_key(&h.to_string_lossy()));
         // 家目录可被用户换位置：旧位置里的工作副本/隔离树仍在，各根都要排除
         let ws_root_keys: Vec<String> = crate::ccode_home::all_sub("workspaces")
             .iter()

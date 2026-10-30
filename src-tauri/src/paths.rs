@@ -3,7 +3,7 @@
 //! - **verbatim 形式** `\\?\C:\Users\x`：`fs::canonicalize` 在 Windows 的返回值。
 //!   `PathBuf` 按分量比较，`Prefix(VerbatimDisk)` ≠ `Prefix(Disk)`，所以它与普通形式
 //!   **永不相等**；直接显示给用户也很难看。
-//! - **普通形式** `C:\Users\x`：`dirs::home_dir()`、子进程报告的 cwd、用户手输的路径。
+//! - **普通形式** `C:\Users\x`：`crate::dirs::home_dir()`、子进程报告的 cwd、用户手输的路径。
 //!
 //! 落库与显示走 [`strip_verbatim`]（只剥前缀，保留分隔符与大小写，结果仍可直接用于
 //! 文件操作）；任何**跨来源比较**走 [`path_key`]（额外统一分隔符，并在 Windows 上
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 /// 勿再按文件复制本地版本——那正是三份窄一份宽漂移的来源。
 pub(crate) fn expand_tilde(path: &str) -> String {
     if path == "~" || path.starts_with("~/") || path.starts_with("~\\") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::dirs::home_dir() {
             return format!("{}{}", home.to_string_lossy(), &path[1..]);
         }
     }

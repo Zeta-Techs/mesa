@@ -65,7 +65,7 @@ pub struct ZoteroLibraryDto {
 /// 默认库位置（跨平台）：Zotero 7 默认 ~/Zotero
 fn default_data_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::dirs::home_dir() {
         out.push(home.join("Zotero"));
         // Windows 旧版会放在 Documents 下
         out.push(home.join("Documents").join("Zotero"));
@@ -1376,7 +1376,7 @@ pub async fn zotero_install_bbt() -> Result<ZoteroBbtInstallDto, String> {
     let bytes = download_bbt_xpi().await?;
     let _id = bbt_id_from_xpi(&bytes)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = dirs::config_dir()
+        let dir = crate::dirs::config_dir()
             .ok_or("无法定位配置目录")?
             .join("ccode")
             .join("tmp");
@@ -1667,7 +1667,7 @@ fn installed_zotero_version() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         roots.push(PathBuf::from("/Applications/Zotero.app/Contents/Resources"));
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::dirs::home_dir() {
             roots.push(home.join("Applications/Zotero.app/Contents/Resources"));
         }
     }
@@ -1779,7 +1779,7 @@ fn zotero_exe() -> Option<PathBuf> {
         .filter_map(|var| std::env::var_os(var))
         .map(|dir| PathBuf::from(dir).join("Zotero"))
         .collect();
-    if let Some(local) = dirs::data_local_dir() {
+    if let Some(local) = crate::dirs::data_local_dir() {
         dirs.push(local.join("Zotero"));
         dirs.push(local.join("Programs").join("Zotero"));
     }

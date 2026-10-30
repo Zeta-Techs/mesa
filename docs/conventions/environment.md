@@ -33,6 +33,13 @@
   `/usr/local/bin`，所以别人的机器没事、Apple 芯片 + Homebrew 的机器才出事——验收这类问题要在 Homebrew node 的机器上看打包版。
   Mesa 开着时用户新装的程序同理（PATH 只在启动时读一次）：新增依赖要给它的默认安装落点进候选目录，装完不重启也认得——
   如 PowerShell 7（`%ProgramFiles%\PowerShell\7`）、「仅为我安装」的 Git Bash（`%LOCALAPPDATA%\Programs\Git\bin`，`agents::git_bash_default_paths`）（2026-10-21）。
+  **子进程那一侧在 Windows 上同样要补**（2026-10-29 排查打包版）：Windows 进程的 PATH 只在启动时从注册表拼一次，一键补齐装的 Git / Node.js
+  写进了注册表，Mesa 起的 Agent、内置终端、MCP 服务器继承的仍是旧 PATH，Agent 里 `git` `node` `npx` 全都找不到、重启 Mesa 才好
+  （开发机看不出来：工具早就装好了）。`process::child_path` 读注册表（系统 + 用户）PATH，把新出现的目录补在子进程 PATH 末尾，
+  `background_command`、`pty_command`、内置终端 shell、安装命令统一走它；新增绕开这几个入口直接 `CommandBuilder::new` 起长期子进程的地方也要接上。
+  **macOS / Linux 同一入口**（2026-10-30 合入 Windows 修复时补）：启动时 `extend_process_path` 只补**当时已存在**的候选目录，Mesa 开着时
+  一键补齐装出来的新目录（`/Applications/quarto/bin`、`Python.framework`、`~/Library/TinyTeX/bin/…`）不在 PATH 上；`child_path` 在 unix 上
+  按 `binary_candidate_dirs` 再补一次（全是固定路径，十几次 stat）。新增依赖的默认落点进候选目录，两个平台就都不用重启。
 - **macOS GUI 应用也没有 LANG**（2026-10-27 本机实证：打包版 Mesa 与它起的 Codex 进程环境里只有短 PATH 和 `__CF_USER_TEXT_ENCODING`）。
   子进程都跑在 C 语言环境：`lsof` 把中文路径转义成 `\xe7…`、`ls` 显示 `????`、zsh 里打中文变 `<e7>`。启动时最先
   调 `process::ensure_utf8_locale`（再读 shell 环境，rc 里自己设了 LANG 的以 rc 为准）：LANG / LC_ALL / LC_CTYPE 都没有才补 `LANG=<系统地区>.UTF-8`（NSLocale，本机无该 locale 回落 en_US.UTF-8），
@@ -40,7 +47,7 @@
   开发版从终端启动、继承了 LANG，这类问题只在打包版出现，验收要看打包版。
 - **Windows 正式版没有父控制台**：后台 `git/cmd/netstat/tasklist/CLI --version` 等若直接 `Command::new` 会反复创建
   `conhost.exe` 闪窗；所有不需要独立可见窗口的命令必须走 `process::background_command`，统一加 `CREATE_NO_WINDOW`
-  并在 spawn/wait 边界登记脱敏参数与生命周期。该包装和 250ms 进程扫描只在 Windows 生效；macOS/Linux 直接返回标准
+  并在 spawn/wait 边界登记脱敏参数与生命周期。该包装和进程扫描（2 秒一次；2026-10-29 由 250ms 放宽——每次枚举全系统要 8–15ms，250ms 常驻约占一个核的 3%）只在 Windows 生效；macOS/Linux 直接返回标准
   `Command`、不启动诊断监控线程。只有用户明确打开的外部终端允许保留可见窗口。
   Windows 外部终端由设置页二选一：`cmd`（默认）走 `start cmd.exe /K <binary> <args>`，密钥在父进程
   环境块经 start 继承，不经 PowerShell；`powershell` 走 `start powershell.exe -NoExit -File wrapper`。
@@ -151,6 +158,12 @@
   现在 `src-tauri/build.rs` 在 MSVC 下改由链接器把同一份 manifest（`src-tauri/windows-app-manifest.xml`，与 tauri-build 默认那份相同）
   嵌进所有链接产物，资源里不再放；应用 exe 的 manifest 与原来一致（mt.exe 核对过），`/MANIFESTUAC:NO` 免得链接器多补 trustInfo。
   **不要退回 `tauri_build::build()`**；要改应用 manifest 就改那份 xml。
+- **本机内嵌终端用的是 WezTerm 的 ConPTY，别人电脑不是**（2026-10-29 排查打包版）：portable-pty 先按 DLL 搜索顺序找 `conpty.dll`，
+  找到就用它和同目录的 `OpenConsole.exe`，找不到才用系统自带的。本机系统 PATH 里有 `C:\Program Files\WezTerm`，开发版和打包版都走 WezTerm 那套
+  （进程树里能看到 `WezTerm\OpenConsole.exe`）；没装 WezTerm 的用户走 Windows 自带的。要按别人电脑的样子测，把 WezTerm 从 PATH 里拿掉再起
+  （`e2e_channel` 同理）。当日在 Windows 11（26200）上用 `e2e_channel` 对比两套：Claude Code / Codex / Qwen / CodeBuddy / OpenCode 的旁路状态、
+  审批菜单、信任菜单、输入框与实时预览读屏结果一致，输出的模式开关、OSC 0 / 7501、24 位色也一致（系统自带那套退出时多发 `?1004l` `?9001l`）。
+  **Windows 10 自带的 ConPTY 版本老得多，没测过**。
 - **Windows PDF 预览白屏**：WebView2 + 全局 `color-scheme:dark` 下，pdf.js 默认不透明 2d canvas 与
   `.textLayer { color-scheme:only light }` 会合成整页白块；经典滚动条改 clientWidth 再叠加
   `key={renderKey}` 会拆掉 canvas 振荡闪白。渲染前必须先绑 `alpha:true` 上下文，页宿主锁定 light
@@ -176,6 +189,8 @@
   `manualChunks` 新增大 vendor 块时，入口也要用的小件（`vite/preload-helper`、`dompurify` 这类）先单独成块，否则会被收进大块、
   入口为一个小函数静态带上整块（当日实证：入口为 `__vitePreload` 带上 3.9MB monaco、为 dompurify 带上 2.6MB mermaid）。
   挂在 App 上的弹层（如「从手机添加」→ 文件预览弹层）里的预览组件一律懒加载。
+  **打包版 CSS 会压缩颜色值**（2026-10-29 实证）：`#111111` 变 `#111`、`#ffffff` 变 `#fff`，开发版不压缩。用 `getComputedStyle` 读 CSS 变量
+  交给第三方库的颜色要先规范化：Monaco 只认 `#rrggbb`，三位写法直接抛「Illegal value for token color」，打包版在文件树打开文件整页崩（`custom-theme.ts` 的 `monacoEditorColors`）。
   **懒加载 / 预载的第三方 CSS 可能带全局规则**：`pdf_viewer.css` 有 `:root { color-scheme: light dark }`，插在 App.css 之后同权重会盖掉应用的
   配色模式（原生控件改跟系统明暗走）；App.css 用 `:root:root` 钉住（2026-10-26）。新增预载 / 懒加载的库先查它的 CSS 有没有 `:root`、`html`、`body`、`*` 规则。
 - **dev 端口为 17575**（`vite.config.ts` + `tauri.conf.json` devUrl 两处同步；勿改回 1420——Codex 桌面版 NetworkService 占用）。vite 撞已占端口静默退出；**stdin EOF 也自杀**——后台拉起必须 `tail -f /dev/null | npm run tauri:dev`。
@@ -202,3 +217,15 @@
   ③ **锁屏时**拿不到窗口内容（AXWindows 回一个 AXApplication），先解锁再跑；④ 点击走 AXPress 按控件文字，不发鼠标键盘事件，
   不会点进别的应用（区别于 System Events 按坐标点）。不隔离：钥匙串里的登录、Finder 移入的回收站（进真实 `~/.Trash`）、
   TCC 授权（按应用签名记，与家目录无关；沙盒里的下载 / 文稿文件夹不是系统保护的那几个，授权弹窗在沙盒里测不到）。
+  **Windows 同一脚本（2026-10-29，在 Git Bash 里跑）**：Windows 上 Mesa 找目录走系统已知文件夹、不看 HOME，脚本另设 `MESA_SANDBOX_HOME`
+  （`src-tauri/src/dirs.rs`：家目录、AppData、文稿、下载、桌面全换到它下面；**生产构建同样认**，点验的就是打出来的包）并把
+  `USERPROFILE` / `APPDATA` / `LOCALAPPDATA` 指进沙盒给各家 CLI 用（npm 全局目录随 APPDATA 进沙盒）。为此系统目录一律走 `crate::dirs`，
+  Cargo 里 `dirs` 改名 `os_dirs`，直接写 `dirs::` 编译不过。`--app <程序>` 不起开发版、直接在沙盒里跑打好的程序，WebView2 数据目录经
+  `WEBVIEW2_USER_DATA_FOLDER` 挪进沙盒（打包版按 bundle id 放在真实 LOCALAPPDATA，与已装的 Mesa 同一处）；`--debug-port` 开 WebView2 远程调试。
+- **打包版自动点验（Windows，2026-10-29）**：先 `npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'`（本机没有更新签名私钥），
+  再 `scripts/win-package-smoke/run.sh`：按安装后的布局摆好 `target/release` 的程序（不跑安装包——它会改写已装 Mesa 的卸载登记与快捷方式）、
+  清空沙盒、生成各类型样例项目、在沙盒里起程序，经 WebView2 远程调试走首次打开 → 侧栏各页 → 逐个打开文件 → 各套主题，
+  收页面异常、console.error、CSP 拦截、「界面渲染出错」与「无法预览」，逐步截图，结果在 `~/.ccode-sandbox/smoke-out/report.json`。
+  只点不改：不发消息、不装东西；只关沙盒里那一份程序。改了打包配置（CSP、资源、sidecar）或编辑器 / 预览后发版前跑一遍。
+  首轮实证：安装版打开代码文件没有语法色、行号错位（Tauri 给 style-src 注入 nonce 使 `'unsafe-inline'` 失效，见 safety.md CSP 条），
+  开发版一切正常——这类问题只在打包版出现，验收看打包版。

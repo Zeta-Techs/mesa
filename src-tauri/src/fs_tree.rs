@@ -78,7 +78,7 @@ fn is_home_system_dir(parent: &std::path::Path, is_dir: bool, name: &str) -> boo
     if !is_dir || HOME_SYSTEM_DIRS.is_empty() {
         return false;
     }
-    dirs::home_dir().is_some_and(|h| h == parent) && HOME_SYSTEM_DIRS.contains(&name)
+    crate::dirs::home_dir().is_some_and(|h| h == parent) && HOME_SYSTEM_DIRS.contains(&name)
 }
 
 /// unix 秒 → ISO UTC（civil from days，与 sessions.rs 同款算法）
@@ -1923,7 +1923,7 @@ mod search_tests {
         assert!(std::path::Path::new(&out[0].rel).ends_with("src/deep/apple.rs"));
         assert!(out[0].modified.is_some(), "搜索命中应带上最近修改时间");
         // 预览：root 传未展开的 "~" 也应通过词法检查
-        let home_file = dirs::home_dir().unwrap().join("ccode-test-tilde.txt");
+        let home_file = crate::dirs::home_dir().unwrap().join("ccode-test-tilde.txt");
         fs::write(&home_file, "x").unwrap();
         let r = read_file_preview_sync(home_file.to_str().unwrap(), "~");
         assert!(r.is_ok(), "{r:?}");
@@ -2334,7 +2334,7 @@ pub(crate) fn is_protected_path(path: &str) -> bool {
 
 fn is_protected_str(p: &str) -> bool {
     let home = protect_key(
-        &dirs::home_dir()
+        &crate::dirs::home_dir()
             .map(|h| h.to_string_lossy().into_owned())
             .unwrap_or_default(),
     );
@@ -2354,7 +2354,7 @@ fn is_protected_str(p: &str) -> bool {
     .collect();
     // 系统报告的「文档/桌面/下载」：Windows 上常被 OneDrive 或中文目录重定向，不一定是 ~/Documents
     exact.extend(
-        [dirs::document_dir(), dirs::desktop_dir(), dirs::download_dir()]
+        [crate::dirs::document_dir(), crate::dirs::desktop_dir(), crate::dirs::download_dir()]
             .into_iter()
             .flatten()
             .map(|d| protect_key(&d.to_string_lossy())),
@@ -2383,7 +2383,7 @@ fn is_protected_str(p: &str) -> bool {
     .collect();
     // Mesa 自己的数据目录按系统口径取（Windows = %APPDATA%\ccode、%LOCALAPPDATA%\ccode 与
     // 网页数据 %LOCALAPPDATA%\com.ccode.dev；macOS 上这些都已落在 ~/Library 之下，只是重复项）
-    for base in [dirs::config_dir(), dirs::data_local_dir(), dirs::data_dir()]
+    for base in [crate::dirs::config_dir(), crate::dirs::data_local_dir(), crate::dirs::data_dir()]
         .into_iter()
         .flatten()
     {
@@ -2481,7 +2481,7 @@ pub async fn fs_create_dir(root: String, name: String) -> Result<String, String>
 /// 家目录绝对路径（前端项目路径缩略为 ~ 显示用）
 #[tauri::command]
 pub fn home_dir() -> String {
-    dirs::home_dir()
+    crate::dirs::home_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
@@ -2489,8 +2489,8 @@ pub fn home_dir() -> String {
 /// 新建项目的默认父目录：系统「文档」，取不到退回家目录（与示例课题同一落点）
 #[tauri::command]
 pub fn default_project_parent() -> String {
-    dirs::document_dir()
-        .or_else(dirs::home_dir)
+    crate::dirs::document_dir()
+        .or_else(crate::dirs::home_dir)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
@@ -2636,7 +2636,7 @@ mod fsops_tests {
         assert!(delete_path_sync("/tmp", &root).is_err());
         assert!(delete_path_sync(&root, &root).is_err());
         // 保护路径：root 是 home 时系统/关键目录一律拒绝
-        let home = dirs::home_dir().unwrap().to_string_lossy().into_owned();
+        let home = crate::dirs::home_dir().unwrap().to_string_lossy().into_owned();
         assert!(delete_path_sync(&format!("{home}/Library"), &home).is_err());
         assert!(delete_path_sync(&format!("{home}/.ssh"), &home).is_err());
         assert!(delete_path_sync(&format!("{home}/.claude/projects"), &home).is_err());
@@ -2666,7 +2666,7 @@ mod system_dir_tests {
 
     #[test]
     fn home_system_dir_predicate() {
-        let home = dirs::home_dir().unwrap();
+        let home = crate::dirs::home_dir().unwrap();
         // macOS 清单内目录命中；普通目录/文件/非 home 父目录不命中
         #[cfg(target_os = "macos")]
         {
@@ -2692,7 +2692,7 @@ mod system_dir_tests {
     /// 用平台原生分隔符拼 home 下的路径——Windows 上得到 `C:\Users\x\Documents`，
     /// 正是文件树右键删除真正传进来的形式。
     fn under_home(rel: &str) -> String {
-        dirs::home_dir()
+        crate::dirs::home_dir()
             .unwrap()
             .join(rel)
             .to_string_lossy()
@@ -2757,19 +2757,19 @@ mod system_dir_tests {
         for rel in [".grok", ".cursor/auth.json", ".codebuddy", ".config/opencode"] {
             assert!(is_protected_str(&under_home(rel)), "{rel} 必须受保护");
         }
-        for d in [dirs::document_dir(), dirs::desktop_dir()].into_iter().flatten() {
+        for d in [crate::dirs::document_dir(), crate::dirs::desktop_dir()].into_iter().flatten() {
             assert!(is_protected_str(&d.to_string_lossy()), "{}", d.display());
         }
-        if let Some(cfg) = dirs::config_dir() {
+        if let Some(cfg) = crate::dirs::config_dir() {
             let mesa = cfg.join("ccode").join("app.db");
             assert!(is_protected_str(&mesa.to_string_lossy()), "{}", mesa.display());
         }
-        if let Some(local) = dirs::data_local_dir() {
+        if let Some(local) = crate::dirs::data_local_dir() {
             let web = local.join("com.ccode.dev").join("EBWebView");
             assert!(is_protected_str(&web.to_string_lossy()), "{}", web.display());
         }
         // 文档目录本身受保护，但里面的普通项目不受影响（精确匹配，不是前缀）
-        if let Some(doc) = dirs::document_dir() {
+        if let Some(doc) = crate::dirs::document_dir() {
             assert!(!is_protected_str(&doc.join("my-research").to_string_lossy()));
         }
     }

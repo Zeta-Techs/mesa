@@ -66,21 +66,21 @@ fn font_dirs() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     #[cfg(target_os = "macos")]
     {
-        if let Some(h) = dirs::home_dir() {
+        if let Some(h) = crate::dirs::home_dir() {
             out.push(h.join("Library/Fonts"));
         }
         out.push(PathBuf::from("/Library/Fonts"));
     }
     #[cfg(target_os = "linux")]
     {
-        if let Some(d) = dirs::data_local_dir() {
+        if let Some(d) = crate::dirs::data_local_dir() {
             out.push(d.join("fonts")); // ~/.local/share/fonts
         }
         out.push(PathBuf::from("/usr/share/fonts"));
     }
     #[cfg(target_os = "windows")]
     {
-        if let Some(d) = dirs::data_local_dir() {
+        if let Some(d) = crate::dirs::data_local_dir() {
             out.push(d.join("Microsoft/Windows/Fonts")); // %LOCALAPPDATA%\Microsoft\Windows\Fonts
         }
         let windir = std::env::var_os("WINDIR")
