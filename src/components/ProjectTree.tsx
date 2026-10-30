@@ -152,6 +152,7 @@ export default function ProjectTree({
   active,
   liftCurrent = false,
   onSelect,
+  onSearchClosed,
 }: {
   selectedRoot: string | null;
   /** 主区此刻就在项目页：当前课题铺选中底；在别的页时只留「当前课题」弱提示（加粗、不铺底），
@@ -160,6 +161,8 @@ export default function ProjectTree({
   /** 正聊着的项目整块提到最上面（随手聊上面）：只给收起侧栏时弹出的那份用——展开的侧栏点来点去，位置不动 */
   liftCurrent?: boolean;
   onSelect: (repoPath: string) => void;
+  /** 搜索弹层关了（App 托弹层用的那棵看不见的树据此撤掉） */
+  onSearchClosed?: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [repos, setRepos] = useState<
@@ -2160,7 +2163,10 @@ export default function ProjectTree({
           <RailSearchPalette
             chats={chats}
             projects={projectItems}
-            onClose={() => setSearchOpen(false)}
+            onClose={() => {
+              setSearchOpen(false);
+              onSearchClosed?.();
+            }}
             onOpenChat={(c) => openChat(c.data.s, c.data.project)}
             onOpenProject={(p) => {
               // 同点课题行：进项目页并展开它的对话

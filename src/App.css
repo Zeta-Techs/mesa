@@ -2653,20 +2653,25 @@ select:focus-visible {
    选中胶囊用实心 rail-sel（不乘透明度系数），字号、选中左条与侧栏同一套（上面几条并列了 .ccode-rail-peek）。
    浮层外壳的描边与内高光沿用 .ccode-float-surface，但不要它的 pop 关键帧。
 
-   动画（2026-10-24 用户：「弹出和收起的动画丝滑一点」）：用过渡、不用关键帧，滑出一半被叫回能半路改向不跳。
-   藏着 = 往左 16px + 透明；data-shown 时归位。进场位移 260ms 快起慢落（easeOutQuint：一出手就动、轻轻停住；
-   试过 --ccode-motion-spring，起步太慢，前 80ms 只挪 1.5px，看着像顿了一下），透明度 160ms 先到（先看见再落定）；
-   退场是同一条路反着走，但更短、先慢后快（180ms，cubic-bezier(0.4,0,1,1) 加速离开），和 App 里 useExitRender(180) 对齐。
-   transform 只是平移，不缩放——树里的字不会糊 */
+   动画（2026-10-24 用户：「弹出和收起的动画丝滑一点」；2026-10-30 用户：「细腻一点、更跟手」）：用过渡、不用关键帧，
+   滑出一半被叫回能半路改向不跳。读作从图标栏边上拉出来的一张抽屉，不是凭空浮现：
+   - 藏着 = 往左 12px + 右边裁到 0 宽（clip-path 从左往右展开），整块透明；data-shown 时归位、裁切放开。
+   - 进场：展开与位移 280ms easeOutQuint（一出手就动、轻轻停住），透明度 90ms 就到——先看见边缘跟着展开，
+     不是一整块淡进来；以前位移 16px + 透明度 160ms，前半程是半透明的一块在滑，看着发虚、慢半拍。
+   - 退场：同一条路反着收回图标栏边上，170ms 先慢后快（cubic-bezier(0.4,0,1,1)），透明度晚一点才走（delay 50ms），
+     收的过程看得见；和 App 里 useExitRender(180) 对齐。
+   裁切四边留 -1px，浅色主题外描边（0.5px 外阴影）不被裁掉；圆角同 rounded-lg。transform 只平移不缩放——树里的字不会糊 */
 .ccode-rail-peek {
   background-color: var(--color-rail2);
   animation: none;
   opacity: 0;
-  transform: translateX(-16px);
+  transform: translateX(-12px);
+  clip-path: inset(-1px 100% -1px -1px round 0.5rem);
   transition:
-    opacity 140ms cubic-bezier(0.4, 0, 1, 1),
-    transform 180ms cubic-bezier(0.4, 0, 1, 1);
-  will-change: transform, opacity;
+    opacity 120ms linear 50ms,
+    transform 170ms cubic-bezier(0.4, 0, 1, 1),
+    clip-path 170ms cubic-bezier(0.4, 0, 1, 1);
+  will-change: transform, opacity, clip-path;
 }
 /* 还没滑到位、正在收起时不接鼠标：收起途中指针扫过不会把它叫住 */
 .ccode-rail-peek:not([data-shown]) {
@@ -2675,14 +2680,17 @@ select:focus-visible {
 .ccode-rail-peek[data-shown="true"] {
   opacity: 1;
   transform: none;
+  clip-path: inset(-1px -1px -1px -1px round 0.5rem);
   transition:
-    opacity 160ms var(--ccode-motion-ease),
-    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 90ms linear,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    clip-path 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-reduced-motion: reduce) {
   .ccode-rail-peek,
   .ccode-rail-peek[data-shown="true"] {
     transform: none;
+    clip-path: none;
     transition: opacity 100ms linear;
   }
 }

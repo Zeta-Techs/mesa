@@ -916,8 +916,10 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
                              #   展开面＝操作（恢复侧栏居首 + 对话切换器 + 导航 + 可点活动胶囊 + 可点播报）。休眠面控件指针够不着，只放展示；不挂导航角标；
                              #   运行页上休眠面写正看着的对话名（ChatSwitcher.useCurrentChatLabel）；「运行」不上岛（nav-capsule 可见判定拦掉）
   components/ChatSwitcher.tsx # 灵动岛对话切换器（2026-10-24 A+D+E 的 D）：按钮写正看着那段 / 「打开的对话 N」，点开弹打开的对话（sidebar-chats.paletteOpenChats，
-                             #   portal 到 body 同活动面板）+ 对话管理…；活动胶囊管「谁在跑」，这里管「切到哪段」
+                             #   portal 到 body 同活动面板）+ 最近对话（没开着的，sidebar-chats.recentChats，点了走 openConversation；2026-10-30 取代「对话管理…」）；
+                             #   活动胶囊管「谁在跑」，这里管「切到哪段」
   components/RailPeek.tsx    # 探出整栏（2026-10-24 A+E）：图标态 / 完全隐藏时把同一棵 ProjectTree 盖在内容上滑出（App 挂、store.railPeekOpen）；
+                             #   放大镜不探出整栏：App 另挂一棵 display:none 的树只托搜索弹层（store.railSearchHost，弹层关了 onSearchClosed 撤，2026-10-30）；
                              #   鼠标离开、Esc、点外面收，去了别处（换页 / 换正看着的标签 / 选项目）时鼠标还在里面不收、不在里面（⌘0 键盘选的）才立刻收（2026-10-25）；开着菜单、搜索或在改名时离开不收；Esc 返回原焦点；useRailPeekTrigger 管悬停触发
                              #   （图标栏中段空白 0.12 秒、隐藏态左边缘 8px 0.32 秒），图标态「项目与对话」按钮、⌘0 也开。ProjectTree 的 focusRailReq 是 store 待办、领走即清（探出层挂上时也领，领过的不再抢焦点，2026-10-30）；
                              #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿

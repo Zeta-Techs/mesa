@@ -51,6 +51,7 @@ export function RailPeek({
     const active = document.activeElement;
     return !!(active && ref.current?.contains(active) && /^(INPUT|TEXTAREA)$/.test(active.tagName));
   };
+  // 离开后 0.2 秒收（2026-10-30 用户「更跟手」：0.28 → 0.2；够鼠标划出边缘再回来，不至于拖泥带水）
   const closeLater = () => {
     clearTimer();
     timer.current = window.setTimeout(function check() {
@@ -60,7 +61,7 @@ export function RailPeek({
         return;
       }
       onCloseRef.current();
-    }, 280);
+    }, 200);
   };
 
   // 去了别处就收：点对话（换页 / 换了正看着的那段）、点课题名（进项目页或换项目）；鼠标还在探出层里就不收，

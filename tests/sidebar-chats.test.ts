@@ -17,6 +17,7 @@ import {
   pinPicked,
   projectChats,
   railNavIndex,
+  recentChats,
   toggleChatPin,
   SCRATCH_FOLDER_KEY,
   scratchChats,
@@ -360,6 +361,24 @@ test("命令面板「打开的对话」：侧栏列着的也列（侧栏这时�
   const work = rows.find((r) => r.tabId === "work")!;
   assert.equal(work.label, "干活", "同侧栏去掉「MMDD|类型|」");
   assert.equal(work.fullTitle, "1024|研究|干活");
+});
+
+test("灵动岛「最近对话」：只列侧栏能列的、没开着的，新到旧，限条数", () => {
+  const list = [
+    session({ sessionId: "old", updatedAt: "2026-10-01T00:00:00Z" }),
+    session({ sessionId: "new", updatedAt: "2026-10-30T00:00:00Z" }),
+    session({ sessionId: "mid", updatedAt: "2026-10-15T00:00:00Z" }),
+    session({ sessionId: "open", updatedAt: "2026-10-29T00:00:00Z" }),
+    session({ sessionId: "arch", updatedAt: "2026-10-29T00:00:00Z", archived: true }),
+    session({ sessionId: "gone", updatedAt: "2026-10-29T00:00:00Z", alive: false }),
+    session({ sessionId: "same-id", agent: "codex", updatedAt: "2026-10-28T00:00:00Z" }),
+  ];
+  const runs: ChatRunInput[] = [
+    { tabId: "t", agentId: "claude-code", sessionId: "open", cwd: "/repo", running: true, shell: false, attention: null },
+    { tabId: "t2", agentId: "claude-code", sessionId: "same-id", cwd: "/repo", running: true, shell: false, attention: null },
+  ];
+  assert.deepEqual(recentChats(list, runs).map((s) => s.sessionId), ["new", "same-id", "mid", "old"], "同 id 别家的不算开着");
+  assert.deepEqual(recentChats(list, runs, 2).map((s) => s.sessionId), ["new", "same-id"]);
 });
 
 test("多选：⌘ 点加进 / 拿出，⇧ 点从起点到这一行整段换上（上下都行），起点不在眼下列着的里只选这一行", () => {

@@ -388,6 +388,26 @@ export function paletteOpenChats(
   return out.sort((a, b) => rank(a) - rank(b));
 }
 
+/** 灵动岛对话下拉「最近对话」最多列几段 */
+export const RECENT_CHAT_LIMIT = 8;
+
+/**
+ * 灵动岛对话下拉的「最近对话」（2026-10-30 用户：下拉里不该是「对话管理」入口，而是最近对话）：
+ * 侧栏收着时回到没开着的对话。口径同侧栏能列的（listable：未归档、非内部、源文件在），
+ * 已经在「打开的对话」里的不重复，按最后活动新到旧
+ */
+export function recentChats(
+  sessions: readonly SessionMetaDto[],
+  runs: readonly ChatRunInput[],
+  limit = RECENT_CHAT_LIMIT,
+): SessionMetaDto[] {
+  const open = new Set(runs.filter((r) => r.sessionId).map((r) => `${r.agentId}\n${r.sessionId}`));
+  return sessions
+    .filter((s) => listable(s) && !open.has(`${s.agent}\n${s.sessionId}`))
+    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
+    .slice(0, limit);
+}
+
 /**
  * 侧栏里用键盘走（2026-10-24 用户：侧栏「都做」）：↑↓ 一行、Home / End 到头尾，到头不绕回；
  * 光标不在任何一行上时 ↓ 从第一行起、↑ 从最后一行起。别的键返回 null（不归这里管）

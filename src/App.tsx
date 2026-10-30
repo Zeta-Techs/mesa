@@ -344,11 +344,11 @@ const HELP_MENU: {
   },
 ];
 
-/** 「搜索对话和项目」（标题栏放大镜 / 快捷键）：弹层挂在项目树里。侧栏收成图标或隐藏时树不在，
- *  先把探出层拉出来；请求留在 store 里，树挂上自己领（不猜等几帧，一次点击就开） */
+/** 「搜索对话和项目」（标题栏放大镜 / 快捷键）：弹层挂在项目树里。侧栏收成图标或隐藏、探出层也没开时树不在，
+ *  挂一棵看不见的树托住弹层（不把整栏一起探出来，2026-10-30 用户）；请求留在 store 里，树挂上自己领（一次点击就开） */
 function openRailSearch() {
   const st = useAppStore.getState();
-  if (st.chromeHidden || st.navCollapsed) st.setRailPeekOpen(true);
+  if ((st.chromeHidden || st.navCollapsed) && !st.railPeekOpen) st.setRailSearchHost(true);
   st.requestRailSearch();
 }
 
@@ -597,14 +597,23 @@ function App() {
   const railPeekOpen = useAppStore((s) => s.railPeekOpen);
   const setRailPeekOpen = useAppStore((s) => s.setRailPeekOpen);
   const peekVisible = railPeekOpen && (collapsed || chromeHidden);
+  const railSearchHost = useAppStore((s) => s.railSearchHost);
+  const setRailSearchHost = useAppStore((s) => s.setRailSearchHost);
   // 收起也要有动画：关掉后再挂 180ms 播退场（重开会接着从当前位置滑回来，见 RailPeek / App.css .ccode-rail-peek）
   const peekRender = useExitRender(peekVisible, 180);
   // 图标栏中段 0.12 秒（2026-10-24 用户两次「再快一点」：0.32 → 0.2 → 0.12）；完全隐藏时的左边缘留 0.32 秒——鼠标常往窗口左边甩，太快会误弹
   const peekTrigger = useRailPeekTrigger(120);
   const peekEdgeTrigger = useRailPeekTrigger(320);
   useEffect(() => {
-    if (!collapsed && !chromeHidden) setRailPeekOpen(false);
-  }, [collapsed, chromeHidden, setRailPeekOpen]);
+    if (!collapsed && !chromeHidden) {
+      setRailPeekOpen(false);
+      setRailSearchHost(false);
+    }
+  }, [collapsed, chromeHidden, setRailPeekOpen, setRailSearchHost]);
+  // 探出层开了就由它托弹层，托弹层的那棵树撤掉、不等关窗后又挂回来
+  useEffect(() => {
+    if (peekVisible) setRailSearchHost(false);
+  }, [peekVisible, setRailSearchHost]);
   const [railDragging, setRailDragging] = useState(false);
   function startRailResize(e: React.PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
@@ -1822,6 +1831,20 @@ function App() {
             {/* 完全隐藏时窗口左边缘一条看不见的触发带：贴边停一下探出整栏（2026-10-24 用户定 A+D+E） */}
             {chromeHidden && (
               <div {...peekEdgeTrigger} aria-hidden="true" className="absolute bottom-0 left-0 top-0 z-20 w-2" />
+            )}
+            {/* 只为托住搜索弹层的树（弹层 portal 到 body，树本身不显示）；探出层开着时由它托，这里撤掉 */}
+            {railSearchHost && (collapsed || chromeHidden) && !peekRender.render && (
+              <div className="hidden" aria-hidden="true">
+                <ProjectTree
+                  selectedRoot={contextLabel?.projectPath ?? null}
+                  active={page === "workspaces"}
+                  onSearchClosed={() => setRailSearchHost(false)}
+                  onSelect={(repoPath) => {
+                    useAppStore.getState().setSelectProjectReq(repoPath);
+                    setPage("workspaces");
+                  }}
+                />
+              </div>
             )}
             {peekRender.render && (
               <RailPeek

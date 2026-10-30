@@ -828,6 +828,10 @@ interface AppState {
   railSearchReq: boolean;
   requestRailSearch: () => void;
   takeRailSearch: () => boolean;
+  /** 侧栏收成图标 / 完全隐藏时点放大镜：只要搜索弹层、不要探出整栏（2026-10-30 用户：「侧栏隐藏的会话和搜索会一起弹出」）。
+   *  App 这时挂一棵看不见的树只为托住弹层（弹层要树里的对话与课题），弹层关了就撤 */
+  railSearchHost: boolean;
+  setRailSearchHost: (on: boolean) => void;
   /** 探出整栏（2026-10-24 用户定 A+D+E）：侧栏收成图标 / 完全隐藏时，项目树临时盖在内容上滑出来，选完收回；
       侧栏本身的形态不变。App 管开合（悬停图标栏空白处 / 贴窗口左边缘 / ⌘0），RailPeek 画 */
   railPeekOpen: boolean;
@@ -1199,6 +1203,8 @@ export const useAppStore = create<AppState>((set, get) => {
     set({ railSearchReq: false });
     return true;
   },
+  railSearchHost: false,
+  setRailSearchHost: (on) => set({ railSearchHost: on }),
   railPeekOpen: false,
   setRailPeekOpen: (open) => set({ railPeekOpen: open }),
   setOpenSessionReq: (r) => set({ openSessionReq: r }),
