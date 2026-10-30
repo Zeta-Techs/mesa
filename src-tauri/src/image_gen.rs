@@ -519,12 +519,62 @@ fn image_dims(b: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
-/// 要了分辨率而实际长边差得多：说一句，免得 Agent 把 1K 图当 4K 交出去
-fn resolution_shortfall(images: &[GenImage], res: Option<Resolution>) -> Option<String> {
-    let res = res?;
-    let (w, h) = images.iter().filter_map(|i| image_dims(&i.bytes)).next()?;
-    (w.max(h) * 10 < res.long_edge() * 9)
-        .then(|| format!("要的是 {}，模型实际只出了 {w}x{h}（这个模型到不了这档，要更大请换模型）", res.label()))
+/// PNG 里透明（alpha < 250）像素的占比；不是 PNG 或解不开返回 None，没有 alpha 通道返回 0
+fn png_transparent_share(bytes: &[u8]) -> Option<f64> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let samples = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::GrayscaleAlpha => 2,
+        _ => return Some(0.0),
+    };
+    let px = &buf[..info.buffer_size()];
+    let total = px.len() / samples;
+    let clear = px.chunks_exact(samples).filter(|p| p[samples - 1] < 250).count();
+    (total > 0).then(|| clear as f64 / total as f64)
+}
+
+/// 这次实际生效、要核对的出图要求（网关拒收被去掉的选项不在里面）
+struct Wanted<'a> {
+    size: Option<&'a str>,
+    resolution: Option<Resolution>,
+    transparent: bool,
+}
+
+/// 网关接了参数不等于照做（2026-10-30 实测：gpt-image-2 在中转上不论 --size 都出 1254x1254）：
+/// 按实际出的图核对画幅、分辨率、透明底，对不上的写进 note，免得 Agent 把不合要求的图当成品交出去
+fn check_images(images: &[GenImage], want: &Wanted) -> Vec<String> {
+    let mut notes = Vec::new();
+    let Some(first) = images.first() else {
+        return notes;
+    };
+    if let Some((w, h)) = image_dims(&first.bytes) {
+        let (w, h) = (w as f64, h as f64);
+        if let Some((rw, rh)) = want.size.and_then(parse_size) {
+            if ((w / h) / (rw / rh) - 1.0).abs() > 0.08 {
+                notes.push(format!(
+                    "要的画幅是 {}，实际出的是 {w}x{h}：这个模型（或网关）不按 --size 出画幅，要指定画幅请换模型",
+                    want.size.unwrap_or_default().trim()
+                ));
+            }
+        }
+        if let Some(res) = want.resolution {
+            if w.max(h) * 10.0 < res.long_edge() as f64 * 9.0 {
+                notes.push(format!("要的是 {}，模型实际只出了 {w}x{h}（这个模型到不了这档，要更大请换模型）", res.label()));
+            }
+        }
+    }
+    if want.transparent {
+        match png_transparent_share(&first.bytes) {
+            _ if first.ext != "png" => notes.push(format!("透明底没成：模型回的是 {} 图，没有透明通道", first.ext)),
+            Some(share) if share == 0.0 => notes.push("透明底没成：图里没有透明像素".into()),
+            _ => {}
+        }
+    }
+    notes
 }
 
 // ===== 解析配置 =====
@@ -771,7 +821,7 @@ async fn send(
     }
     let resp = req.send().await.map_err(|e| {
         if e.is_timeout() {
-            "等了 5 分钟网关还没出图，已放弃".to_string()
+            "等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）".to_string()
         } else {
             format!("连不上网关：{}", preview(&e.to_string()))
         }
@@ -861,13 +911,16 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
         })?)
     };
     let n = req.n.clamp(1, 4);
+    // 4K 图慢（2026-10-30 实测 gemini-nano-banana-2.1 4K 一张 218 秒），放宽到 10 分钟
+    let wait = if req.resolution == Some(Resolution::K4) { 600 } else { 300 };
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
+        .timeout(Duration::from_secs(wait))
         // 连接阶段单独限时：图片存储直连不通时尽快改走出网代理（download）
         .connect_timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
     let protocol = protocol_for(&target.model);
+    let mut want = Wanted { size: req.size.as_deref(), resolution: req.resolution, transparent: req.transparent };
     match protocol {
         Protocol::OpenAiImages => {
             let base = target
@@ -876,7 +929,9 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                 .ok_or_else(|| format!("网关「{}」没填 OpenAI 地址", target.gateway_name))?;
             let first = openai_options(&target.model, req, true);
             let mut notes = first.notes.clone();
-            let mut resolution = req.resolution;
+            if !first.asked.contains(&"透明背景") {
+                want.transparent = false; // 不支持的已在 note 里说过
+            }
             let v = match openai_request(&client, target, key.as_deref(), req, base, &first).await {
                 Ok(v) => v,
                 Err(e) if !first.asked.is_empty() && rejected_request(&e) => {
@@ -885,7 +940,8 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                         .await
                         .map_err(|e2| format!("带{}：{e}；去掉后：{e2}", first.asked.join("、")))?;
                     notes.push(format!("网关不认{}参数（{e}），已去掉按模型默认出图", first.asked.join("、")));
-                    resolution = None;
+                    want.resolution = None;
+                    want.transparent = false;
                     v
                 }
                 Err(e) => return Err(e),
@@ -894,7 +950,7 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             if images.is_empty() {
                 return Err(format!("网关回话里没有图片：{}", preview(&v.to_string())));
             }
-            notes.extend(resolution_shortfall(&images, resolution));
+            notes.extend(check_images(&images, &want));
             Ok(GenOutcome { images, protocol, note: join_notes(notes) })
         }
         Protocol::Gemini => {
@@ -904,36 +960,52 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             }
             if req.transparent {
                 notes.push(format!("{} 不支持透明背景，出的是普通底色；要透明底请换 gpt-image 系模型", target.model));
+                want.transparent = false;
             }
-            let mut sized = req.resolution.is_some();
-            let mut body = gemini_body(prompt, req, sized);
             let mut images = Vec::new();
             let mut native_err = None;
             if let Some(base) = target.gemini_base.as_deref() {
-                // 原生接口一次一张，要几张调几次；带分辨率被拒时去掉重来（老模型不认 imageSize）
-                let mut done = 0;
-                while done < n {
-                    match post_json(&client, &gemini_url(base, &target.model), target, key.as_deref(), &body, true)
-                        .await
-                    {
-                        Ok(v) => {
-                            images.extend(materialize(&client, parse_gemini(&v)).await?);
-                            done += 1;
+                // 原生接口一次一张：要几张就同时发几次；带分辨率被拒时去掉重发被拒的那几张（老模型不认 imageSize）
+                let url = gemini_url(base, &target.model);
+                let mut sized = req.resolution.is_some();
+                let mut pending = n;
+                loop {
+                    let body = gemini_body(prompt, req, sized);
+                    let results = join_all(
+                        (0..pending)
+                            .map(|_| Box::pin(post_json(&client, &url, target, key.as_deref(), &body, true)) as BoxFut<'_, Result<serde_json::Value, String>>)
+                            .collect(),
+                    )
+                    .await;
+                    let mut rejected = None;
+                    pending = 0;
+                    for r in results {
+                        match r {
+                            Ok(v) => images.extend(materialize(&client, parse_gemini(&v)).await?),
+                            Err(e) if sized && rejected_request(&e) => {
+                                pending += 1;
+                                rejected.get_or_insert(e);
+                            }
+                            Err(e) => {
+                                native_err.get_or_insert(e);
+                            }
                         }
-                        Err(e) if sized && rejected_request(&e) => {
+                    }
+                    match rejected {
+                        Some(e) => {
                             notes.push(format!("网关不认分辨率参数（{e}），已去掉按模型默认出图"));
+                            want.resolution = None;
                             sized = false;
-                            body = gemini_body(prompt, req, false);
                         }
-                        Err(e) => {
-                            native_err = Some(e);
-                            break;
-                        }
+                        None => break,
                     }
                 }
             }
             if !images.is_empty() {
-                notes.extend(resolution_shortfall(&images, req.resolution.filter(|_| sized)));
+                if let (true, Some(e)) = ((images.len() as u32) < n, &native_err) {
+                    notes.push(format!("要 {n} 张只出了 {} 张，其余失败：{e}", images.len()));
+                }
+                notes.extend(check_images(&images, &want));
                 return Ok(GenOutcome { images, protocol, note: join_notes(notes) });
             }
             // 退路：OpenAI 兼容的对话接口（多数中转把 Gemini 出图挂在这里）
@@ -953,26 +1025,64 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                 "model": target.model,
                 "messages": [{ "role": "user", "content": content }],
             });
+            let url = openai_url(base, "chat/completions");
+            let results = join_all(
+                (0..n)
+                    .map(|_| Box::pin(post_json(&client, &url, target, key.as_deref(), &chat, false)) as BoxFut<'_, Result<serde_json::Value, String>>)
+                    .collect(),
+            )
+            .await;
             let mut fallback = Vec::new();
-            for _ in 0..n {
-                let v = post_json(&client, &openai_url(base, "chat/completions"), target, key.as_deref(), &chat, false)
-                    .await
-                    .map_err(|e| match &native_err {
-                        Some(n) => format!("Gemini 原生接口：{n}；对话接口：{e}"),
-                        None => e,
-                    })?;
-                fallback.extend(materialize(&client, parse_chat_images(&v)).await?);
+            let mut chat_err = None;
+            for r in results {
+                match r {
+                    Ok(v) => fallback.extend(materialize(&client, parse_chat_images(&v)).await?),
+                    Err(e) => {
+                        chat_err.get_or_insert(e);
+                    }
+                }
             }
             if fallback.is_empty() {
-                return Err("Gemini 原生接口和对话接口都没回图片（这个模型可能不出图）".into());
+                return Err(match (native_err, chat_err) {
+                    (Some(a), Some(b)) => format!("Gemini 原生接口：{a}；对话接口：{b}"),
+                    (None, Some(b)) => b,
+                    _ => "Gemini 原生接口和对话接口都没回图片（这个模型可能不出图）".into(),
+                });
             }
             notes.insert(0, "Gemini 原生接口不通，改用对话接口取的图".into());
             if req.resolution.is_some() || req.size.is_some() {
                 notes.push("对话接口带不了画幅和分辨率，按模型默认出的".into());
             }
+            if let (true, Some(e)) = ((fallback.len() as u32) < n, &chat_err) {
+                notes.push(format!("要 {n} 张只出了 {} 张，其余失败：{e}", fallback.len()));
+            }
+            want.size = None;
+            want.resolution = None;
+            notes.extend(check_images(&fallback, &want));
             Ok(GenOutcome { images: fallback, protocol, note: join_notes(notes) })
         }
     }
+}
+
+type BoxFut<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// 几个请求同时等，按原顺序交回结果（不另起任务、不借用 futures 依赖的最小 join_all）
+async fn join_all<T>(mut futs: Vec<BoxFut<'_, T>>) -> Vec<T> {
+    let mut out: Vec<Option<T>> = futs.iter().map(|_| None).collect();
+    std::future::poll_fn(|cx| {
+        let mut pending = false;
+        for (fut, slot) in futs.iter_mut().zip(out.iter_mut()) {
+            if slot.is_none() {
+                match fut.as_mut().poll(cx) {
+                    std::task::Poll::Ready(v) => *slot = Some(v),
+                    std::task::Poll::Pending => pending = true,
+                }
+            }
+        }
+        if pending { std::task::Poll::Pending } else { std::task::Poll::Ready(()) }
+    })
+    .await;
+    out.into_iter().flatten().collect()
 }
 
 fn join_notes(notes: Vec<String>) -> Option<String> {
@@ -1306,9 +1416,12 @@ pub fn helper_image_cli(args: &[String]) -> i32 {
             if let Some(note) = outcome.note {
                 println!("note: {note}");
             }
-            for p in paths {
+            for (p, img) in paths.into_iter().zip(&outcome.images) {
                 let abs = std::fs::canonicalize(&p).unwrap_or(p);
                 println!("saved: {}", crate::paths::strip_verbatim(abs).display());
+                if let Some((w, h)) = image_dims(&img.bytes) {
+                    println!("size: {w}x{h}");
+                }
             }
             0
         }
@@ -1378,6 +1491,9 @@ pub struct ImageGenTestDto {
     pub protocol: String,
     pub elapsed_ms: u64,
     pub note: Option<String>,
+    /// 实际出的宽高（读不出时为空），对比时看清各家默认出多大
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 /// 连接页「试出与对比」：按网关 + 模型 + 用户写的描述出一张，图只回前端预览、不落盘（对比时前端并行调多次）
@@ -1403,6 +1519,7 @@ pub async fn image_gen_test(
     let started = Instant::now();
     let outcome = generate(&target, &req).await?;
     let img = outcome.images.first().ok_or("网关没回图片")?;
+    let dims = image_dims(&img.bytes);
     Ok(ImageGenTestDto {
         data_url: format!(
             "data:{};base64,{}",
@@ -1412,6 +1529,8 @@ pub async fn image_gen_test(
         protocol: outcome.protocol.label().into(),
         elapsed_ms: started.elapsed().as_millis() as u64,
         note: outcome.note,
+        width: dims.map(|d| d.0),
+        height: dims.map(|d| d.1),
     })
 }
 
@@ -1698,16 +1817,42 @@ mod tests {
     }
 
     #[test]
-    fn reads_dims_from_headers_and_flags_shortfall() {
+    fn checks_actual_size_aspect_and_transparency() {
         let png = decode_b64(PNG_1PX).unwrap();
         assert_eq!(image_dims(&png), Some((1, 1)));
         // 最小 JPEG 头：SOI + APP0(长 4) + SOF0 高 768 宽 1408
         let jpg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x03, 0x00, 0x05, 0x80, 0x03, 0, 0, 0];
         assert_eq!(image_dims(&jpg), Some((1408, 768)));
         let imgs = [GenImage { bytes: jpg.to_vec(), ext: "jpg" }];
-        assert!(resolution_shortfall(&imgs, Some(Resolution::K2)).unwrap().contains("1408x768"));
-        assert!(resolution_shortfall(&imgs, Some(Resolution::K1)).is_none());
-        assert!(resolution_shortfall(&imgs, None).is_none());
+        let want = |size, resolution, transparent| Wanted { size, resolution, transparent };
+        let notes = check_images(&imgs, &want(None, Some(Resolution::K2), false));
+        assert!(notes.len() == 1 && notes[0].contains("1408x768"));
+        assert!(check_images(&imgs, &want(None, Some(Resolution::K1), false)).is_empty());
+        // 画幅：1408x768 ≈ 16:9，要 16:9 不报、要方图报
+        assert!(check_images(&imgs, &want(Some("1920x1080"), None, false)).is_empty());
+        assert!(check_images(&imgs, &want(Some("1024x1024"), None, false))[0].contains("不按 --size"));
+        assert!(check_images(&imgs, &want(Some("auto"), None, false)).is_empty());
+        // 透明底：JPG 必报；不透明的 PNG 报；有透明像素的 PNG 不报
+        assert!(check_images(&imgs, &want(None, None, true))[0].contains("jpg"));
+        let rgba = |px: &[u8]| {
+            let mut out = Vec::new();
+            let mut enc = png::Encoder::new(&mut out, 2, 1);
+            enc.set_color(png::ColorType::Rgba);
+            enc.write_header().unwrap().write_image_data(px).unwrap();
+            out
+        };
+        let opaque = [GenImage { bytes: rgba(&[1, 1, 1, 255, 9, 9, 9, 255]), ext: "png" }];
+        assert_eq!(png_transparent_share(&opaque[0].bytes), Some(0.0));
+        assert!(check_images(&opaque, &want(None, None, true))[0].contains("没有透明像素"));
+        let clear = rgba(&[0, 0, 0, 0, 9, 9, 9, 255]);
+        assert_eq!(png_transparent_share(&clear), Some(0.5));
+        assert!(check_images(&[GenImage { bytes: clear, ext: "png" }], &want(None, None, true)).is_empty());
+    }
+
+    #[test]
+    fn join_all_keeps_order() {
+        let futs: Vec<BoxFut<'_, u32>> = (0u32..3).map(|i| Box::pin(async move { i * 2 }) as BoxFut<'_, u32>).collect();
+        assert_eq!(tauri::async_runtime::block_on(join_all(futs)), vec![0, 2, 4]);
     }
 
     #[test]
@@ -1715,7 +1860,7 @@ mod tests {
         assert!(rejected_request("HTTP 400：unknown parameter background"));
         assert!(!rejected_request("HTTP 401：invalid key"));
         assert!(!rejected_request("HTTP 429：rate limited"));
-        assert!(!rejected_request("等了 5 分钟网关还没出图，已放弃"));
+        assert!(!rejected_request("等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）"));
     }
 
     #[test]

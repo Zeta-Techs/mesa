@@ -54,6 +54,8 @@ chardetng = "0.1"
 toml_edit = "0.22"
 notify = "6"
 base64 = "0.22"
+# 出图核验：要了透明底时解 PNG 数透明像素（已是 tauri 的传递依赖，不新增下载）
+png = "0.18"
 # 反馈邮箱直发（lettre：SMTP + rustls；附件走 MultiPart，授权码存 keys.json）
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 trash = "5"

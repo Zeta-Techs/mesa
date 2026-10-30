@@ -26,10 +26,10 @@ import { AGENTS, type DetectResult, type SkillDto } from "../types";
 import { vendorForModel } from "../vendor-icon";
 
 type ImageGenGateway = { gatewayId: string; gatewayName: string; models: string[] };
-type ImageGenTest = { dataUrl: string; protocol: string; elapsedMs: number; note?: string | null };
+type ImageGenTest = { dataUrl: string; protocol: string; elapsedMs: number; note?: string | null; width?: number | null; height?: number | null };
 type Run =
   | { status: "running"; startedAt: number; estimate: number }
-  | { status: "done"; dataUrl: string; ms: number; protocol: string; note?: string | null }
+  | { status: "done"; dataUrl: string; ms: number; protocol: string; note?: string | null; size?: string }
   | { status: "error"; error: string; ms: number };
 
 // 选择器缺省值用模块级常量（zustand v5 每次新数组会无限重渲染；store-selector-lint 测试钉住）
@@ -177,7 +177,7 @@ export default function ImageGenPanel({
     setRuns((prev) => ({ ...prev, [key]: { status: "running", startedAt: started, estimate: estimateSeconds(it.model, durations[it.model]) } }));
     try {
       const r = await invoke<ImageGenTest>("image_gen_test", { gatewayId: it.gatewayId, model: it.model, prompt: text });
-      setRuns((prev) => ({ ...prev, [key]: { status: "done", dataUrl: r.dataUrl, ms: r.elapsedMs, protocol: r.protocol, note: r.note } }));
+      setRuns((prev) => ({ ...prev, [key]: { status: "done", dataUrl: r.dataUrl, ms: r.elapsedMs, protocol: r.protocol, note: r.note, size: r.width && r.height ? `${r.width}×${r.height}` : undefined } }));
       setDurations((prev) => {
         const next = recordDuration(prev, it.model, r.elapsedMs);
         writeJson(LS_DURATIONS, next);
@@ -431,7 +431,7 @@ export default function ImageGenPanel({
                         </div>
                         <div className="flex items-center gap-2 px-2.5 py-1.5">
                           <span className="min-w-0 flex-1 truncate text-micro text-l3" title={run.status === "done" ? run.note ?? undefined : undefined}>
-                            {run.status === "done" ? run.protocol : run.status === "error" ? "没出图" : "生成中"}
+                            {run.status === "done" ? [run.size, run.protocol].filter(Boolean).join(" · ") : run.status === "error" ? "没出图" : "生成中"}
                           </span>
                           {k === currentKey ? (
                             <span className="shrink-0 text-micro text-l3">当前出图模型</span>

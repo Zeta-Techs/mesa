@@ -532,6 +532,7 @@ dependencies = [
  "notify",
  "objc2",
  "objc2-foundation",
+ "png 0.18.1",
  "portable-pty",
  "qrcode",
  "reqwest 0.12.28",
