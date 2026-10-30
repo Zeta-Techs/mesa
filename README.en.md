@@ -23,9 +23,7 @@ One desktop app for the connections, chats and terminals of nine coding agents, 
 
 </div>
 
-<!-- Hero image: docs/assets/readme/hero.png, uncomment once available
-<p align="center"><img src="docs/assets/readme/hero.png" width="900" alt="Mesa main window: projects and chats in the sidebar, chat and terminal on the right" /></p>
--->
+<p align="center"><img src="docs/assets/readme/hero.jpg" width="900" alt="Mesa run page: chats grouped by project in the sidebar; the chat view shows the agent reading files, generating a figure and checking it" /></p>
 
 > The app UI and the full documentation are in Chinese. This page is a short English overview.
 
@@ -42,6 +40,17 @@ One desktop app for the connections, chats and terminals of nine coding agents, 
 | Finding old conversations | Dig through each CLI's folder | One search and replay across nine CLIs |
 | AI editing files | Edits land in your project directly | Writing tasks run in an isolated copy, merged after review |
 | Cost | Check each provider's dashboard | Totals by project, model and task, with plan quota and gateway balance |
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/readme/connections.jpg" alt="Connections page" /><br/><sub>Connections: API keys and official accounts for nine agents</sub></td>
+    <td width="50%"><img src="docs/assets/readme/research.jpg" alt="Research pipeline" /><br/><sub>Research pipeline: stepper, current step, review before merge</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/readme/reader.jpg" alt="Reader" /><br/><sub>Reader: notes · PDF · terminal</sub></td>
+    <td><img src="docs/assets/readme/usage.jpg" alt="Usage page" /><br/><sub>Usage: plan quota, gateway balance, cost and activity</sub></td>
+  </tr>
+</table>
 
 ## Features
 

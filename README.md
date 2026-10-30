@@ -25,9 +25,7 @@
 
 </div>
 
-<!-- 首屏主图：docs/assets/readme/hero.png（或演示视频链接），素材到位后取消注释
-<p align="center"><img src="docs/assets/readme/hero.png" width="900" alt="Mesa 主界面：侧栏项目与对话，右边聊天和终端" /></p>
--->
+<p align="center"><img src="docs/assets/readme/hero.jpg" width="900" alt="Mesa 运行页：侧栏按项目挂着对话，右边聊天层显示 AI 读文件、出图、检查的过程和生成的总结图" /></p>
 
 ## 为什么用 Mesa
 
@@ -43,18 +41,20 @@
 | AI 改文件 | 直接改在项目里 | 写盘任务默认进隔离副本，审过才写回 |
 | 费用 | 各家后台分别查 | 按项目 / 模型 / 任务汇总，订阅余量和网关余额一起看 |
 
-<!-- 界面小图：素材到位后取消注释
 <table>
   <tr>
-    <td><img src="docs/assets/readme/onboarding.png" alt="上手向导" /><br/><sub>上手向导：三屏接上 AI、聊第一句、建项目</sub></td>
-    <td><img src="docs/assets/readme/connections.png" alt="连接页" /><br/><sub>连接页：九家 Agent 的 API 连接与官方账号</sub></td>
+    <td width="50%"><img src="docs/assets/readme/onboarding.jpg" alt="上手向导" /><br/><sub>上手向导：三步接上 AI、聊第一句、建项目</sub></td>
+    <td width="50%"><img src="docs/assets/readme/connections.jpg" alt="连接页" /><br/><sub>连接页：九家 Agent 的 API 连接与官方账号，测试通过、全局使用中一眼看清</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/assets/readme/research.png" alt="科研流程" /><br/><sub>科研流程：步骤卡、验收与写回</sub></td>
-    <td><img src="docs/assets/readme/reader.png" alt="沉浸阅读" /><br/><sub>沉浸阅读：笔记 · PDF · 终端三栏</sub></td>
+    <td><img src="docs/assets/readme/research.jpg" alt="科研流程" /><br/><sub>科研任务：步进器、当前步骤卡、待确认篇目与付费墙清单，核对后去评审</sub></td>
+    <td><img src="docs/assets/readme/reader.jpg" alt="沉浸阅读" /><br/><sub>沉浸阅读：笔记 · PDF · 终端三栏，边读边让 AI 改笔记</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/readme/radar.jpg" alt="文献雷达" /><br/><sub>文献雷达：定时巡检新文献，中文摘要、分区与影响因子，采纳前先评审</sub></td>
+    <td><img src="docs/assets/readme/usage.jpg" alt="用量页" /><br/><sub>用量：订阅余量、网关余额、花费与 tokens、活跃度热力图</sub></td>
   </tr>
 </table>
--->
 
 ## 界面
 
