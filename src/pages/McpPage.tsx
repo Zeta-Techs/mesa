@@ -1,12 +1,16 @@
 import {
+  BookOpenText,
+  Box,
   ChevronDown,
   ClipboardPaste,
   LoaderCircle,
   PackagePlus,
   Pencil,
   PlugZap,
+  Search,
   SquarePen,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -145,6 +149,13 @@ interface DiscoveredMcp {
 
 /** MCP 页（matrix §10 调研落地）：统一清单 + 一键分发到各 CLI 的用户级配置。
  *  分发只写用户级（项目级有审批闸），密钥用 $VAR 引用不落明文 */
+
+// 「添加 MCP」菜单里预设也要有图标：菜单只要有一行带图标就给每行留图标位，预设空着一格看着像缩进没对齐
+const PRESET_ICONS: Record<string, LucideIcon> = {
+  consensus: Search,
+  undermind: BookOpenText,
+  blender: Box,
+};
 
 const EMPTY_FORM = {
   name: "",
@@ -1931,6 +1942,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
             },
             { header: "预设" },
             ...MCP_PRESETS.map((p) => ({
+              icon: PRESET_ICONS[p.name] ?? PlugZap,
               label: p.label,
               title: p.note,
               onSelect: () => void openPreset(p),
