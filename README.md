@@ -1,8 +1,12 @@
+<div align="center">
+
+<img src="src-tauri/icons/icon.png" width="96" alt="Mesa icon" />
+
 # Mesa
 
-<p>
-  <img src="src-tauri/icons/icon.png" width="96" alt="Mesa icon" />
-</p>
+**开源 AI 科研工作台：AI 负责干活，Mesa 负责管环境和验收，人负责拍板。**
+
+一个桌面应用管好九家编码 Agent 的连接、对话和终端，再把读文献 → 整数据 → 做图 → 写论文串成有验收门的流程。
 
 <p>
   <a href="https://github.com/Zeta-Techs/mesa/actions/workflows/build.yml"><img src="https://github.com/Zeta-Techs/mesa/actions/workflows/build.yml/badge.svg" alt="Build" /></a>
@@ -11,13 +15,46 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="License: Apache-2.0" /></a>
 </p>
 
-**AI 科研工作台**（桌面应用，Tauri v2 + React/TS + Rust）。底层是九个终端 Agent 的统一控制台（启动器 + 配置中心 + 会话监控台），表面是科研、编程、工作三条流水线：读文献 → 整数据 → 做图 → 写论文。**AI 负责干活，Mesa 负责管环境和验收，人负责拍板。**
+<p>
+  <a href="../../releases/latest"><b>下载</b></a> ·
+  <a href="docs/guide/tutorial.md"><b>使用教程</b></a> ·
+  <a href="docs/guide/user-guide.md"><b>产品说明书</b></a> ·
+  <a href="CHANGELOG.md"><b>更新日志</b></a> ·
+  <a href="README.en.md"><b>English</b></a>
+</p>
 
-为 Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build 管理多套 API 配置（端点 / 密钥 / 模型）与官方账号登录，内嵌终端一键拉起，并解析各 CLI 本地会话文件做可视化浏览。
+</div>
 
-产品对象按 **Project → Task → Run** 管理：Task 是人声明的工作单元，Run 是一次执行，终端标签只是 Run 的视图。需要写盘的任务默认在隔离工作树中运行，完成后由人查看改动并决定是否写回项目。
+<!-- 首屏主图：docs/assets/readme/hero.png（或演示视频链接），素材到位后取消注释
+<p align="center"><img src="docs/assets/readme/hero.png" width="900" alt="Mesa 主界面：侧栏项目与对话，右边聊天和终端" /></p>
+-->
 
-展示名 **Mesa**；内部身份仍是 `ccode`（bundle ID `com.ccode.dev`、项目 `.ccode/`、本机 `~/ccode/`、Codex provider `ccode`）。数据和配置位置不随展示名改动。
+## 为什么用 Mesa
+
+- **一套密钥，九家 Agent 通用。** Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build 的 API 连接和官方账号登录在一页里管。默认只在启动时把配置注入环境变量，不改你电脑上 CLI 自己的配置文件；想让系统终端也用，再点「设为全局默认」（先备份）。
+- **聊天和终端是同一段对话。** 像常见的 AI 客户端那样聊天、切模型和权限，底下仍是真实终端，`⌘⇧T` 随时切过去看 AI 实际跑了什么命令。各家 CLI 以前的本地会话也能搜索、回放、接着聊，或交给 Codex 客户端、Claude 桌面版继续。
+- **科研流程有验收门。** 综述、论文、数据、毕业论文、投稿返修、LaTeX 六套流程模板，每一步 AI 在隔离的工作副本里做，你看过改动点了才写回项目。检索留痕、引用只用引文库里有的条目，不编文献。
+
+| | 直接在终端用 CLI | 用 Mesa |
+|---|---|---|
+| 换服务商 / 换密钥 | 手改各家配置文件或环境变量 | 连接页选一条，启动时注入，九家共用网关 |
+| 看 AI 做了什么 | 翻终端滚动记录 | 聊天层整理好的过程 + 同一会话的终端 |
+| 找以前的对话 | 各家目录各翻各的 | 九家会话统一搜索、回放、导出 |
+| AI 改文件 | 直接改在项目里 | 写盘任务默认进隔离副本，审过才写回 |
+| 费用 | 各家后台分别查 | 按项目 / 模型 / 任务汇总，订阅余量和网关余额一起看 |
+
+<!-- 界面小图：素材到位后取消注释
+<table>
+  <tr>
+    <td><img src="docs/assets/readme/onboarding.png" alt="上手向导" /><br/><sub>上手向导：三屏接上 AI、聊第一句、建项目</sub></td>
+    <td><img src="docs/assets/readme/connections.png" alt="连接页" /><br/><sub>连接页：九家 Agent 的 API 连接与官方账号</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/readme/research.png" alt="科研流程" /><br/><sub>科研流程：步骤卡、验收与写回</sub></td>
+    <td><img src="docs/assets/readme/reader.png" alt="沉浸阅读" /><br/><sub>沉浸阅读：笔记 · PDF · 终端三栏</sub></td>
+  </tr>
+</table>
+-->
 
 ## 界面
 
@@ -99,6 +136,8 @@ npm test               # 前端测试
 cd src-tauri && cargo test
 npm run tauri build    # 打包
 ```
+
+产品对象按 **Project → Task → Run** 管理：Task 是人声明的工作单元，Run 是一次执行，终端标签只是 Run 的视图。展示名 **Mesa**；内部身份仍是 `ccode`（bundle ID `com.ccode.dev`、项目 `.ccode/`、本机 `~/ccode/`、Codex provider `ccode`），数据和配置位置不随展示名改动。
 
 想以「第一次打开」的状态体验或测试（空家目录、独立 bundle ID、端口 17577）：`scripts/dev-sandbox.sh`（`--reset` 清空重来）。
 
