@@ -358,6 +358,8 @@ Codex 的「Update available」在对话中途跑 `brew upgrade` / npm 更新、
 CLI 更新统一走连接页组头「新版 / 更新」（`updater.rs`，brew 装的走 `brew upgrade`、npm 装的用同目录 npm）。只加在本次命令行，不写 `config.toml`；
 `exec` 本来不检查更新，不进 `launch_plan`。**聊天层旁路下这个 `-c` 必须留给 TUI**（`chat_channel::split_codex_args` 的 TUI 配置键表）：远程 TUI 按本地配置弹提示，
 只给 app-server 关不掉。本机 0.143 / 0.165 PTY 实测（含 `--remote` 新开与恢复）。
+**思考档 `model_reasoning_effort` 两边都给**（同函数的两边配置键表，2026-10-30）：只给 app-server 时回合照样按注入档跑（rollout `turn_context` 记的就是它），
+但远程 TUI 底栏画「<模型> default」，读屏优先的 `currentEffort` 把聊天芯片显示成「默认」。以后新增「会画在 TUI 上」的注入配置同样两边给。
 
 **其余家只关会弹进对话的更新（2026-10-29 用户拍板）**：Qwen 启动 3 秒后查更新，brew 装的在对话里冒「update available … brew upgrade」，
 npm 装的后台更新后要求退出重启——`launch_plan_with_prompt`（内嵌 / 外部终端的交互启动都经它）注入 `QWEN_CODE_SKIP_UPDATE_CHECK_ONCE=true`

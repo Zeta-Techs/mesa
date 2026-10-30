@@ -1989,23 +1989,30 @@ pub(crate) fn merge_settings_key(args: &mut Vec<String>, key: &str, value: Value
 /// Codex 参数拆两半：`-c` / `--enable` / `--disable` 配置给 app-server，其余给 TUI；
 /// TUI 加 `--remote` 连私有服务（`resume <id>` 子命令之后）。
 /// 例外：TUI 自己读的配置（更新提示）留给 TUI——远程 TUI 照样按本地配置弹「Update available」，
-/// 只给 app-server 关不掉（2026-10-29 本机 0.165 远程模式 PTY 实测）
+/// 只给 app-server 关不掉（2026-10-29 本机 0.165 远程模式 PTY 实测）。
+/// 思考档两边都给：只给 app-server 时回合确实按注入的档跑（rollout turn_context 记 medium），远程 TUI 却不知道，
+/// 底栏画「<模型> default」，Mesa 读屏把聊天芯片显示成「默认」（2026-10-30 用户：发出前选 medium、发出后变默认）
 pub(crate) fn split_codex_args(args: &[String], port: u16) -> (Vec<String>, Vec<String>) {
     const TUI_CONFIG_KEYS: &[&str] = &["check_for_update_on_startup"];
+    const BOTH_CONFIG_KEYS: &[&str] = &["model_reasoning_effort"];
+    let config_key = |v: &str, keys: &[&str]| keys.iter().any(|k| v.split('=').next().map(str::trim) == Some(*k));
     let mut server = Vec::new();
     let mut tui = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
-        if matches!(a.as_str(), "-c" | "--config")
-            && args.get(i + 1).is_some_and(|v| {
-                TUI_CONFIG_KEYS
-                    .iter()
-                    .any(|k| v.split('=').next().map(str::trim) == Some(k))
-            })
-        {
+        let cfg = matches!(a.as_str(), "-c" | "--config");
+        if cfg && args.get(i + 1).is_some_and(|v| config_key(v, TUI_CONFIG_KEYS)) {
             tui.push(a.clone());
             tui.push(args[i + 1].clone());
+            i += 2;
+            continue;
+        }
+        if cfg && args.get(i + 1).is_some_and(|v| config_key(v, BOTH_CONFIG_KEYS)) {
+            for side in [&mut server, &mut tui] {
+                side.push(a.clone());
+                side.push(args[i + 1].clone());
+            }
             i += 2;
             continue;
         }
@@ -3648,6 +3655,24 @@ mod tests {
             assert_eq!(server, vec!["-c", "model_provider=\"ccode\""], "{head:?}");
             assert!(
                 tui.windows(2).any(|w| w[0] == "-c" && w[1] == "check_for_update_on_startup=false"),
+                "{head:?}: {tui:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn split_codex_args_gives_effort_to_both_sides() {
+        // 远程 TUI 不知道思考档时底栏画 default，聊天芯片跟着显示「默认」：两边都要有
+        for head in [&[][..], &["resume", "abc"][..]] {
+            let args: Vec<String> = head
+                .iter()
+                .chain(["-c", "model_reasoning_effort=\"medium\"", "-m", "glm"].iter())
+                .map(|s| s.to_string())
+                .collect();
+            let (server, tui) = split_codex_args(&args, 1);
+            assert_eq!(server, vec!["-c", "model_reasoning_effort=\"medium\""], "{head:?}");
+            assert!(
+                tui.windows(2).any(|w| w[0] == "-c" && w[1] == "model_reasoning_effort=\"medium\""),
                 "{head:?}: {tui:?}"
             );
         }
