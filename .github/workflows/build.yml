@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write
 
+# vite 构建本机峰值约 3.6 GB；macOS arm64 runner 总内存 7 GB，Node 默认堆上限不够，
+# 2026-10-30 实证 `npm run build` 报 JavaScript heap out of memory（exit 134）。
+# 放在顶层：test job 的 npm run build 与 tauri-action 经 beforeBuildCommand 跑的构建都吃到
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+
 jobs:
   test:
     name: cargo test (${{ matrix.os }})
