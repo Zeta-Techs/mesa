@@ -267,6 +267,12 @@ fn read_capped_sync(
     let truncated = buf.len() > cap;
     if truncated {
         buf.truncate(cap);
+        // 截断点切在多字节字符中间时退回到完整字符，否则整段 UTF-8 被误判成旧编码（如 Windows-1252）而乱码
+        if let Err(e) = std::str::from_utf8(&buf) {
+            if e.error_len().is_none() {
+                buf.truncate(e.valid_up_to());
+            }
+        }
     }
     let legacy = if allow_legacy_encoding && std::str::from_utf8(&buf).is_err() {
         decode_legacy(&buf)
@@ -980,6 +986,13 @@ mod tests {
         let p2 = read_file_preview_sync(small.to_str().unwrap(), dir.to_str().unwrap()).unwrap();
         assert!(!p2.truncated);
         assert_eq!(p2.text, "hello");
+        // 截断点落在汉字中间：仍按 UTF-8 解，不猜成旧编码
+        let zh = dir.join("zh.md");
+        fs::write(&zh, format!("a{}", "中".repeat(PREVIEW_CAP / 3 + 10))).unwrap();
+        let p3 = read_file_preview_sync(zh.to_str().unwrap(), dir.to_str().unwrap()).unwrap();
+        assert!(p3.truncated);
+        assert!(p3.encoding.is_none());
+        assert!(p3.text.ends_with('中') && !p3.text.contains('\u{FFFD}'));
         fs::remove_dir_all(&dir).ok();
     }
 
