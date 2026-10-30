@@ -47,7 +47,9 @@ import { channelLabel } from "../combo-field";
 import { canOneClickInstall } from "../dep-check";
 import { DepInstallLog, useDepInstall } from "../dep-install";
 import { MODEL_SWITCH } from "../model-switch";
-import { claudeAliasMap, normalizeRoleModels, rolesFor } from "../role-models";
+import { explicitClaudeRoles, normalizeRoleModels, rolesFor } from "../role-models";
+import { ClaudeModelMapping } from "../components/ClaudeModelMapping";
+import { EffectPreview } from "../components/EffectPreview";
 import { groupModelsByVendor, vendorOf } from "../model-vendors";
 import { interactiveUpdatePrefill } from "../update-routing";
 import { absTime, relTime } from "../rel-time";
@@ -239,7 +241,6 @@ export function ProfileModal({
     Boolean(opening?.gateway && opening.gateway.models.length > 0),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [aliasOpen, setAliasOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState("");
   const [openVendors, setOpenVendors] = useState<ReadonlySet<string>>(new Set());
   const [testResult, setTestResult] = useState<{
@@ -529,8 +530,14 @@ export function ProfileModal({
       // 槽位化编辑允许空串/重复中间态，保存时归一：去空白、去空、去重（保序）
       models: [...new Set(form.models.map((m) => m.trim()).filter(Boolean))],
       // 模型分工：只留名单里还在的；不支持分工的 Agent 存空（后端也只在支持的家消费）
+      // Claude 存显式映射（旧绑定在这里按名单顺序算一遍写进去，指向不变）
       roleModels: rolesFor(form.agent).length
-        ? normalizeRoleModels(form.roleModels, form.models.map((m) => m.trim()))
+        ? normalizeRoleModels(
+            form.agent === "claude-code" && form.accountType === "api"
+              ? explicitClaudeRoles(form.models, form.roleModels)
+              : form.roleModels,
+            form.models.map((m) => m.trim()),
+          )
         : {},
       extraEnv: parseEnvLines(form.extraEnvText),
       requestPolicy: {
@@ -1227,10 +1234,28 @@ export function ProfileModal({
         {/* 模型分工（2026-10-17）：哪些小任务 / 子 Agent 用哪个模型，原先由 Mesa 暗中补齐，现在摆出来可改。
             名单里有模型才出现（2026-10-23：空名单时只能选「跟主模型」，整块是噪声）；下拉用 MenuSelect，
             与弹层里其余下拉同一套长相（原生 select 是系统样式、字号也对不上） */}
-        {form.accountType === "api" && rolesFor(form.agent).length > 0 && (() => {
+        {form.accountType === "api" && form.agent === "claude-code" && (() => {
           const listed = [...new Set(form.models.map((m) => m.trim()).filter(Boolean))];
           if (listed.length === 0) return null;
-          const aliases = form.agent === "claude-code" ? claudeAliasMap(listed, form.roleModels) : [];
+          return (
+            <ClaudeModelMapping
+              models={listed}
+              roles={form.roleModels}
+              connName={form.name.trim()}
+              gatewayId={catalogGatewayId}
+              onRolesChange={(roleModels) => setForm({ ...form, roleModels })}
+              onSetDefault={(m) => {
+                // 先把映射转成显式，再挪顺序：挪名单不能顺带改掉别名指向
+                const roleModels = explicitClaudeRoles(form.models, form.roleModels);
+                const rest = form.models.filter((x) => x.trim() !== m);
+                setForm({ ...form, roleModels, models: [m, ...rest] });
+              }}
+            />
+          );
+        })()}
+        {form.accountType === "api" && form.agent !== "claude-code" && rolesFor(form.agent).length > 0 && (() => {
+          const listed = [...new Set(form.models.map((m) => m.trim()).filter(Boolean))];
+          if (listed.length === 0) return null;
           // 没在启动时选模型时，主模型 = 名单第一个
           const mainLabel = `跟主模型（${listed[0]}）`;
           return (
@@ -1262,45 +1287,21 @@ export function ProfileModal({
                     </div>
                   ))}
                 </div>
-                {aliases.length > 0 && (
-                  // Claude 四个别名的实际指向：只读，默认收起成一行摘要，点开看全表（2026-10-23 弹层审查）
-                  <details
-                    className="border-t border-hairline px-3 py-2"
-                    onToggle={(e) => setAliasOpen(e.currentTarget.open)}
-                  >
-                    <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 text-xs text-l2 [&::-webkit-details-marker]:hidden">
-                      <FoldMark open={aliasOpen} />
-                      <span className="shrink-0">Claude 别名指向</span>
-                      {!aliasOpen && (
-                        <span className="min-w-0 truncate font-mono text-micro text-l3">
-                          {aliases
-                            .slice(0, 2)
-                            .map((a) => `${a.alias} → ${a.model ?? "主模型"}`)
-                            .join("，")}
-                          {aliases.length > 2 ? ` 等 ${aliases.length} 项` : ""}
-                        </span>
-                      )}
-                    </summary>
-                    <div className="mt-2 grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-1 text-xs">
-                      {aliases.map((a) => (
-                        <Fragment key={a.alias}>
-                          <span className="font-mono text-l3">{a.alias}</span>
-                          <span className={`break-all font-mono ${a.model ? "text-l1" : "text-l3"}`}>
-                            {a.model ?? "跟主模型"}
-                          </span>
-                          <span className="text-micro text-l3">{a.why}</span>
-                        </Fragment>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-micro leading-4 text-l3">
-                      按上面的名单和分工自动算，只读。在 Claude 里用 /model 选 sonnet、opus 这些别名，或它自己派小任务时，用的就是这里的模型；你本机 Claude 设置里的同名配置在 Mesa 启动的会话里会被盖过，不改你的配置文件。
-                    </p>
-                  </details>
-                )}
               </div>
             </div>
           );
         })()}
+        {/* 生效预览（2026-10-30）：已保存的连接才有，九家同一块；内容按这家的启动注入与设为全局写入算 */}
+        {initial?.id && (
+          <EffectPreview
+            profileId={initial.id}
+            setGlobalReason={
+              agentCapabilities && !agentCapabilities.setGlobal.supported
+                ? (agentCapabilities.setGlobal.reason ?? "这家不支持设为全局")
+                : null
+            }
+          />
+        )}
         {/* 同时绑到：换 Agent 不必重走一遍「添加连接 → 选网关 → 挑模型」——
             同一份网关和模型名单一次建多条绑定；协议按各家默认推导，保存后可单独调整 */}
         {showGatewayFields && form.accountType === "api" && (

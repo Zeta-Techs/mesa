@@ -42,18 +42,43 @@ pub struct RoleModels {
     /// 子 Agent 模型（Claude Code Task / Agent 工具派出的子任务）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<String>,
+    /// Claude Code 别名显式指向（2026-10-30 用户拍板「模型映射表」）：键 sonnet / opus / fable → 名单里的模型，
+    /// 缺的键 = 跟默认模型；haiku 由 `small` 管。**None = 旧绑定**，仍按「名单前四个依次占槽」算
+    /// （`agents::claude_slot_models`），在连接弹层里保存一次即转成显式
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<BTreeMap<String, String>>,
+    /// 模型在 CLI 选择器里的显示名（模型 id → 名字）；没设用「连接名 · 模型」。目前 Claude Code 消费
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub display_names: BTreeMap<String, String>,
 }
+
+/// Claude Code 可显式指向的别名槽（haiku 归 RoleModels.small）
+pub const CLAUDE_PINNABLE_SLOTS: [&str; 3] = ["sonnet", "opus", "fable"];
 
 impl RoleModels {
     pub fn is_empty(&self) -> bool {
-        self.small.is_none() && self.subagent.is_none()
+        self.small.is_none() && self.subagent.is_none() && self.slots.is_none() && self.display_names.is_empty()
     }
-    /// 去空白；空串当没设
+    /// 去空白；空串当没设；槽只认 sonnet / opus / fable
     pub fn normalized(self) -> Self {
         let clean = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let slots = self.slots.map(|m| {
+            m.into_iter()
+                .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
+                .filter(|(k, v)| CLAUDE_PINNABLE_SLOTS.contains(&k.as_str()) && !v.is_empty())
+                .collect()
+        });
+        let display_names = self
+            .display_names
+            .into_iter()
+            .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+            .filter(|(k, v)| !k.is_empty() && !v.is_empty())
+            .collect();
         Self {
             small: clean(self.small),
             subagent: clean(self.subagent),
+            slots,
+            display_names,
         }
     }
 }

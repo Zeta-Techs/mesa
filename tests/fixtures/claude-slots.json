@@ -1,0 +1,45 @@
+{
+  "_说明": "Claude Code 别名槽怎么算：agents.rs claude_slot_models / claude_custom_option 与 src/role-models.ts claudeAliasMap / claudeCustomOption 共读本文件。fill = 默认模型（启动时选的，没选用名单第一个）；expect 里 null = 不写这个槽",
+  "cases": [
+    {
+      "name": "旧绑定：名单前四个依次占槽，第 5 个进 /model 另加项",
+      "models": ["m1", "m2", "m3", "m4", "m5"],
+      "roles": {},
+      "fill": "m1",
+      "expect": { "sonnet": "m1", "opus": "m2", "haiku": "m3", "fable": "m4" },
+      "custom": "m5"
+    },
+    {
+      "name": "旧绑定：名单不够四个，空槽跟默认；后台小模型占 haiku",
+      "models": ["m1", "m2"],
+      "roles": { "small": "m2" },
+      "fill": "m1",
+      "expect": { "sonnet": "m1", "opus": "m2", "haiku": "m2", "fable": "m1" },
+      "custom": null
+    },
+    {
+      "name": "显式映射：表里有的用它，没有的跟默认；没被占用的第一个模型进另加项",
+      "models": ["m1", "m2", "m3"],
+      "roles": { "slots": { "opus": "m2" }, "small": "m1" },
+      "fill": "m1",
+      "expect": { "sonnet": "m1", "opus": "m2", "haiku": "m1", "fable": "m1" },
+      "custom": "m3"
+    },
+    {
+      "name": "显式映射：表里的模型已不在名单里当没设",
+      "models": ["m1"],
+      "roles": { "slots": { "sonnet": "gone" } },
+      "fill": "m1",
+      "expect": { "sonnet": "m1", "opus": "m1", "haiku": "m1", "fable": "m1" },
+      "custom": null
+    },
+    {
+      "name": "名单为空：一个槽都不写，沿用 Claude 自己的映射",
+      "models": [],
+      "roles": { "slots": {} },
+      "fill": null,
+      "expect": { "sonnet": null, "opus": null, "haiku": null, "fable": null },
+      "custom": null
+    }
+  ]
+}

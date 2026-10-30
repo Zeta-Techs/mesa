@@ -583,6 +583,14 @@ Codex            → …
   subagent → 显式写 `CLAUDE_CODE_SUBAGENT_MODEL`）、Grok（small → overlay `[models].session_summary` + `prompt_suggestion`，
   未指定时钉成这次的主模型——用户全局常把它们指到别的网关；small 并入 allowed_models）、OpenCode（small → `small_model`）。
   选项只能是名单里的模型；名单删掉的模型对应分工自动作废。不改任何 CLI 配置文件；导出导入随绑定带走。
+- **Claude 显式别名映射（2026-10-30 用户拍板，设计稿 `docs/design-connection-agent-forms.md`）**：`role_models.slots`（sonnet / opus / fable → 名单里的模型，
+  缺的键跟默认；haiku 仍是 `small`）与 `role_models.display_names`（模型 → /model 显示名，没设用「连接名 · 模型」）。`slots` 为 None = 旧绑定，
+  `agents::claude_slot_models` 仍按名单前四个占槽；连接弹层保存时 `explicitClaudeRoles` 按同一规则算好写成显式（haiku 没设时 small 取名单第 3 个），
+  用户看到的指向不变，**不做数据迁移**。「默认」行 = 名单第一个，改它是挪名单顺序（挪前先转显式，挪顺序不能顺带改别名）。/model 另加项
+  （`ANTHROPIC_CUSTOM_MODEL_OPTION`）：旧绑定名单第 5 个，显式时第一个没被占用、也不是默认的模型。前后端双端镜像，共读 `tests/fixtures/claude-slots.json`。
+  表里的「1M」写的是全局能力声明（`set_model_capability_override`，按模型、所有 Agent 共用），能力库确知 ≥1M 的锁着打勾；不做 Claude 专属勾选，免得同一个模型各家声明不一致。
+- **连接弹层生效预览（2026-10-30）**：已保存的连接底部常驻折叠行「看实际会拿到什么」（`EffectPreview`），展开两栏调 `preview_launch_plan` 与
+  `preview_profile_global`，按已保存内容算；不支持设为全局的家右栏写原因。九家同一块。
 - **非 Claude 模型关工具搜索（2026-10-21）**：主模型不是 `claude-*` 时写 `ENABLE_TOOL_SEARCH=false`（用户 settings.json 设过不动）。Claude Code 对第三方网关也开 ToolSearch、把少用的工具藏到它后面；glm-5.3-flash 会拿 ToolSearch 去「搜」本来就在的 Write / Bash，搜不到就断定没工具、整轮不干活（用户会话实证）。假网关核对：关掉后 ToolSearch 与占位工具消失、24 个工具一次发全（多几千 token 输入）。**这是 Claude Code 新版才有的**：同一假网关、什么都不注入时，2.1.305 发 14 个工具（含 ToolSearch 与占位），2.1.292 发全 24 个——旧版机器上（用户的 Mac）不出这个问题，升级后会出。
 - **Codex 计划工具随提示词打开（2026-10-21）**：Mesa 给的 catalog 提示词（Codex 对未登记模型的默认提示词）提到 `update_plan`、Codex ≥ 0.163、用户 config.toml 没有 `[tools.update_plan]` 时，交互启动加 `-c tools.update_plan.enabled=true`（`agents::codex_plan_tool_args`）。0.163 默认不发这个工具，提示词却说有，模型就答「没有计划工具」。`request_user_input` 只在 Plan 模式可用是 Codex 设计，不改。
 - **非 Claude 模型开任务清单工具（2026-10-21）**：主模型不是 `claude-*` 时写 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`（用户设过不动）。Claude Code 2.1.306 的 TaskCreate / TaskUpdate / TaskList / TaskGet 只对 ≤ opus-4-7 / sonnet-4-6 / haiku-4-5 默认发，别的模型名不发，模型就说没有待办工具。假网关核对：glm-5.3 注入前 23 个工具、注入后 27 个。claude-opus-5 等新 Claude 模型官方有意不发，不注入。

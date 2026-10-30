@@ -198,6 +198,10 @@ export interface RoleModels {
   small?: string | null;
   /** 子 Agent 模型（Claude Code） */
   subagent?: string | null;
+  /** Claude 别名显式指向（sonnet / opus / fable → 模型；缺的跟默认）。null / 缺省 = 旧绑定，按名单顺序占槽 */
+  slots?: Record<string, string> | null;
+  /** 模型在 CLI 选择器里的显示名（模型 id → 名字）；没设用「连接名 · 模型」 */
+  displayNames?: Record<string, string>;
 }
 
 export interface BindingInput {

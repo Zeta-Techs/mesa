@@ -283,6 +283,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 官方账号连接按 Agent 认厂商（vendorForOfficialAgent）；
                              # 单色图标集合（currentColor 的要 mask 渲染）；tests/vendor-icon.test.ts
   components/VendorIcon.tsx  # 厂商小图标：单色用 mask 按文字色画、彩色用 img、认不出给首字占位；素材 assets/vendor-icons/（署名见 THIRD-PARTY）
+  components/ClaudeModelMapping.tsx # 连接弹层 Claude Code「怎么用这些模型」映射表（角色 → 模型、/model 显示名、1M 就地写能力声明）
+  components/EffectPreview.tsx # 连接弹层底部「看实际会拿到什么」：preview_launch_plan + preview_profile_global 两栏（按已保存的连接算）
   components/GatewayLibrary.tsx # 连接页网关库：五槽/密钥/获取模型/按槽体检/逐模型策略三态；
                              # 思考档勾多档，开场默认单选（reasoning-effort.ts）
                              # Base URL 主输入（2026-08-31）：空槽与仍等于旧主值的槽跟随主输入、手改即脱离；
@@ -720,7 +722,8 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   effort-depth.ts            # 思考档深度 0..1 与一句白话（effortDepth / effortGloss / effortValleyY）；小 M 画在 components/EffortMark.tsx（tests/effort-depth.test.ts）
   token-format.ts            # 聊天变体状态栏的 token 中文计数（千分位 / 万 / 亿，fmtTokensZh）；终端变体仍用 k / M（tests/token-format.test.ts）
   chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）；Grok 卡在官方登录上 → grokLoginDecision（退出官方登录接着聊 / 先不管）；方案确认卡的认屏与选项在 plan-approval.ts
-  role-models.ts             # 连接的「模型分工」（后台小模型 / 子 Agent）：哪些 Agent 有、各角色说明、保存前归一、Claude 别名指向（与 agents.rs claude_model_env 同规则）
+  role-models.ts             # 连接的「模型分工」（后台小模型 / 子 Agent）与 Claude 别名映射：claudeAliasMap / claudeCustomOption 与 agents.rs claude_slot_models /
+                             #   claude_custom_option 双端镜像（共读 tests/fixtures/claude-slots.json）；explicitClaudeRoles 把旧绑定按名单顺序转成显式映射
   help-links.ts              # 仓库与使用手册外链（REPO_URL / userGuideUrl）；仓库转 org 时与 updater endpoint、README 同步改
   popover-side.ts            # 聊天输入框小弹层往哪边开（pickPopoverSide：下面放得下就往下，贴底时往上）
   client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs

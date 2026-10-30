@@ -71,3 +71,33 @@ export function capsFormFromOverride(entry: {
 export function capsFormIsEmpty(state: CapsOverrideFormState): boolean {
   return !state.context.trim() && state.thinking === "" && state.vision === "";
 }
+
+/** 「声明支持 1M」（连接弹层 Claude 映射表，2026-10-30）：能力库确知 ≥1M 的锁着打勾；用户覆盖层声明的可取消 */
+export const ONE_M_TOKENS = 1_000_000;
+
+export function oneMState(
+  resolvedContext: number | null | undefined,
+  override: { context?: number | null } | undefined,
+): { checked: boolean; locked: boolean } {
+  const fromOverride = (override?.context ?? 0) >= ONE_M_TOKENS;
+  const resolved = (resolvedContext ?? 0) >= ONE_M_TOKENS;
+  return { checked: resolved || fromOverride, locked: resolved && !fromOverride };
+}
+
+/** 勾 / 取消「1M」后要写的覆盖条目：只动 context，别的字段原样带着；全空返回 null（= 清除这条覆盖） */
+export function oneMOverrideEntry(
+  model: string,
+  on: boolean,
+  existing: { thinking?: boolean | null; vision?: boolean | null; output?: number | null; api_backend?: string | null } | undefined,
+): { prefix: string; thinking: boolean | null; context: number | null; vision: boolean | null; output: number | null; api_backend: string | null } | null {
+  const entry = {
+    prefix: model,
+    thinking: existing?.thinking ?? null,
+    context: on ? ONE_M_TOKENS : null,
+    vision: existing?.vision ?? null,
+    output: existing?.output ?? null,
+    api_backend: existing?.api_backend ?? null,
+  };
+  const empty = entry.thinking == null && entry.context == null && entry.vision == null && entry.output == null && entry.api_backend == null;
+  return empty ? null : entry;
+}

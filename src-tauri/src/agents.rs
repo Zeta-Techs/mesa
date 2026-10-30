@@ -836,6 +836,44 @@ fn claude_user_top_model(profile: &Profile) -> Option<String> {
     }
 }
 
+/// Claude Code 四个别名各指向哪个模型（与前端 `src/role-models.ts claudeAliasMap` 双端镜像，`tests/fixtures/claude-slots.json` 共读）：
+/// - haiku：指定了后台小模型用它；
+/// - 显式映射（`role_models.slots` 为 Some，2026-10-30 起）：表里有的用它，没有的跟默认（`fill`）；
+/// - 旧绑定（None）：名单前四个依次占 sonnet / opus / haiku / fable，不够的跟默认。
+/// 名单为空时 `fill` 为 None，没指定的槽不写（沿用 Claude 自己的映射）。表里的模型不在名单里的当没设
+pub(crate) fn claude_slot_models(profile: &Profile, fill: Option<&str>) -> Vec<(&'static str, Option<String>)> {
+    let listed = |m: &String| profile.models.iter().any(|x| x == m);
+    let roles = &profile.role_models;
+    ["sonnet", "opus", "haiku", "fable"]
+        .into_iter()
+        .enumerate()
+        .map(|(i, slot)| {
+            let small = if slot == "haiku" { roles.small.clone().filter(listed) } else { None };
+            let pinned = match &roles.slots {
+                Some(map) => map.get(slot).filter(|m| listed(m)).cloned(),
+                None => profile.models.get(i).cloned(),
+            };
+            (slot, small.or(pinned).or_else(|| fill.map(String::from)))
+        })
+        .collect()
+}
+
+/// /model 菜单里另加的一项（ANTHROPIC_CUSTOM_MODEL_OPTION）：旧绑定是名单第 5 个；显式映射时是名单里第一个
+/// 没被任何别名占用、也不是默认的模型（否则它在 /model 里选不到）
+pub(crate) fn claude_custom_option(profile: &Profile, fill: Option<&str>) -> Option<String> {
+    match &profile.role_models.slots {
+        None => profile.models.get(4).cloned(),
+        Some(_) => {
+            let used: Vec<String> = claude_slot_models(profile, fill).into_iter().filter_map(|(_, m)| m).collect();
+            profile
+                .models
+                .iter()
+                .find(|m| !used.contains(m) && Some(m.as_str()) != fill)
+                .cloned()
+        }
+    }
+}
+
 /// Claude Code 的「谁用哪个模型」整套 env（--settings 覆盖层与进程 env 共用这一份，2026-10-17 端到端核对后重写）。
 ///
 /// 假网关实测（Claude 2.1.292）：Mesa 原先只按绑定名单填前几个槽位，用户全局 settings.json 里的
@@ -853,23 +891,27 @@ pub(crate) fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys
     // 连接里「模型分工」指定的后台小模型 / 子 Agent 模型（RoleModels）：指定了就用，没指定跟主模型
     let small = profile.role_models.small.as_deref();
     let subagent = profile.role_models.subagent.as_deref();
-    const SLOTS: [&str; 4] = ["SONNET", "OPUS", "HAIKU", "FABLE"];
+    let display = |m: &str| {
+        profile
+            .role_models
+            .display_names
+            .get(m)
+            .cloned()
+            .unwrap_or_else(|| format!("{} · {m}", profile.name))
+    };
     let mut haiku = None;
-    for (i, slot) in SLOTS.iter().enumerate() {
-        // haiku 别名就是 Claude 的「后台小模型」：会话标题、网页摘要等小任务用它
-        let pinned = if *slot == "HAIKU" { small } else { None };
-        let Some(m) = pinned.or(profile.models.get(i).map(String::as_str)).or(slot_fill) else {
-            continue;
-        };
-        if *slot == "HAIKU" {
-            haiku = Some(m.to_string());
+    for (slot, m) in claude_slot_models(profile, slot_fill) {
+        let Some(m) = m else { continue };
+        if slot == "haiku" {
+            haiku = Some(m.clone());
         }
-        env.push((format!("ANTHROPIC_DEFAULT_{slot}_MODEL"), m.to_string()));
-        env.push((format!("ANTHROPIC_DEFAULT_{slot}_MODEL_NAME"), format!("{} · {m}", profile.name)));
+        let up = slot.to_ascii_uppercase();
+        env.push((format!("ANTHROPIC_DEFAULT_{up}_MODEL"), m.clone()));
+        env.push((format!("ANTHROPIC_DEFAULT_{up}_MODEL_NAME"), display(&m)));
     }
-    if let Some(fifth) = profile.models.get(4) {
-        env.push(("ANTHROPIC_CUSTOM_MODEL_OPTION".into(), fifth.clone()));
-        env.push(("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(), format!("{} · {fifth}", profile.name)));
+    if let Some(extra) = claude_custom_option(profile, slot_fill) {
+        env.push(("ANTHROPIC_CUSTOM_MODEL_OPTION_NAME".into(), display(&extra)));
+        env.push(("ANTHROPIC_CUSTOM_MODEL_OPTION".into(), extra));
     }
     if let Some(m) = selected {
         env.push(("ANTHROPIC_MODEL".into(), m.to_string()));
@@ -5307,10 +5349,40 @@ mod tests {
     }
 
     #[test]
+    fn claude_slots_match_shared_fixture() {
+        // 与 src/role-models.ts claudeAliasMap / claudeCustomOption 共读同一份样例（tests/role-models.test.ts）
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/claude-slots.json")).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let mut p = profile("claude-code", Some("https://gw"));
+            p.models = serde_json::from_value(case["models"].clone()).unwrap();
+            p.role_models = serde_json::from_value(case["roles"].clone()).unwrap();
+            let fill = case["fill"].as_str();
+            let got: std::collections::BTreeMap<&str, Option<String>> =
+                claude_slot_models(&p, fill).into_iter().collect();
+            for slot in ["sonnet", "opus", "haiku", "fable"] {
+                assert_eq!(got[slot].as_deref(), case["expect"][slot].as_str(), "{name}：{slot}");
+            }
+            assert_eq!(claude_custom_option(&p, fill).as_deref(), case["custom"].as_str(), "{name}：另加项");
+        }
+    }
+
+    #[test]
+    fn claude_display_names_override_picker_labels() {
+        let mut p = profile("claude-code", Some("https://gw"));
+        p.models = vec!["glm-5.3".into()];
+        p.role_models.display_names.insert("glm-5.3".into(), "GLM 5.3".into());
+        let env = claude_model_env(&p, Some("glm-5.3"), &[]);
+        assert!(env.contains(&("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME".into(), "GLM 5.3".into())));
+    }
+
+    #[test]
     fn role_models_route_small_and_subagent_per_agent() {
         let roles = crate::profiles::RoleModels {
             small: Some("cheap".into()),
             subagent: Some("sub".into()),
+            ..Default::default()
         };
         // Claude：haiku 槽 + SMALL_FAST 用后台小模型；子 Agent 显式写
         let mut p = profile("claude-code", Some("https://gw.example/anthropic"));
