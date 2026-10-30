@@ -45,7 +45,10 @@ jobs:
         if: runner.os == 'Windows'
         continue-on-error: true
         shell: pwsh
-        run: irm 'https://cursor.com/install?win32=true' | iex
+        # 安装器装到 %LOCALAPPDATA%\cursor-agent，只改用户 PATH、不进 runner 的 PATH，要手动补（2026-10-30：不补时 Windows 天天报 cursor「没装、跳过」）
+        run: |
+          irm 'https://cursor.com/install?win32=true' | iex
+          "$env:LOCALAPPDATA\cursor-agent" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: 跑金丝雀
         shell: bash
         # --accept-unchanged：只是版本往前走、指纹没变的家，顺手把核对版本前移（随包进 Mesa，决定聊天层降不降级）；
