@@ -20,7 +20,7 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Search } from "lucide-react";
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker.js?worker";
-import SelectionFloatBar, { DistillSkillButton } from "./SelectionFloatBar";
+import SelectionFloatBar, { FloatBarOverflow, useDistillSkill, FLOAT_BTN, FLOAT_BTN_PRIMARY } from "./SelectionFloatBar";
 import { confirmDialog } from "./ConfirmDialog";
 import { useAppStore } from "../store";
 import { useNotePaired } from "../note-pdf-pair";
@@ -172,7 +172,7 @@ const REVIEW_ANNOTATE_COPY: AnnotateCopy = {
  * 样式全部走 App.css 的 .md-body 主题令牌。
  * 选中文字出现浮动按钮「◈ 讨论/改写此段」（与 PDF 问 AI 共用 SelectionFloatBar），
  * 点击把选段 + 出处交给调用方写入活跃终端输入（「↵ 直接发送」立即回车发送）；沉浸阅读覆盖层同款生效。
- * 另有「✦ 沉淀为技能」（DistillSkillButton）：AI 把选段提炼成技能草稿，跳技能页新建表单预填。
+ * ⋯ 里另有「✦ 沉淀为技能…」（useDistillSkill）：AI 把选段提炼成技能草稿，跳技能页新建表单预填。
  * 双击段落切编辑态并定位到对应源码行（映射见 md-block-map；配对失败回落纯切换）。
  * 批次 B2 / v3.161 后处理：渲染前把 img 换成 data-md-src 占位 span（避免 WebView
  * 把相对/绝对本地 png/gif 当成网站地址拉成裂图，也避免无 src 的 img 直接画问号）；
@@ -385,6 +385,7 @@ function MarkdownView({
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     hintTimerRef.current = setTimeout(() => setHint(null), 3000);
   }, []);
+  const distillItem = useDistillSkill(showHint);
   useEffect(
     () => () => {
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
@@ -685,7 +686,8 @@ function MarkdownView({
                   rememberExcerpt();
                 }}
                 onClick={beginAnnotate}
-                className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
+                // 同条有「讨论/改写」时让出唯一的蓝色主钮
+                className={onDiscuss ? FLOAT_BTN : FLOAT_BTN_PRIMARY}
               >
                 {annotateCopy.button}
               </button>
@@ -697,7 +699,7 @@ function MarkdownView({
                   // preventDefault 保住选区，click 时才读文字
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => discuss()}
-                  className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
+                  className={FLOAT_BTN_PRIMARY}
                 >
                   ◈ 讨论/改写此段
                 </button>
@@ -705,11 +707,11 @@ function MarkdownView({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => discuss(true)}
-                  className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+                  className={FLOAT_BTN}
                 >
                   ↵ 直接发送
                 </button>
-                <DistillSkillButton onHint={showHint} />
+                <FloatBarOverflow items={[distillItem]} />
               </>
             )}
           </SelectionFloatBar>

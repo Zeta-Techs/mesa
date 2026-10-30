@@ -120,7 +120,7 @@ components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
   components/OfficePdfView.tsx # Word / 幻灯经 LibreOffice 转出的 PDF 视图（原文件改了重转）
-components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；DistillSkillButton =「✦ 沉淀为技能」（ai_distill_skill 出草稿跳技能页预填新建）
+components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；FloatBarOverflow = 浮动条 ⋯ 溢出菜单（低频动作收这里，主条只留一个蓝色主钮）；useDistillSkill = ⋯ 里的「✦ 沉淀为技能…」项（ai_distill_skill 出草稿跳技能页预填新建）
   components/NotebookPreview.tsx # Jupyter 笔记本按单元预览（Markdown / 高亮代码 / 输出文字图表格报错），「源码」切回编辑器
 components/HtmlPreview.tsx  # 本地 HTML 沙箱预览（FilePreviewEditor 唯一消费者）：消毒后进不透明源 iframe（HTML_IFRAME_SANDBOX），相对 CSS 经 read_file_preview 内联、本地图换 data URL；编辑器只读到 256KB 时另读整份再渲染（自包含报告动辄几 MB，截半排不出来）；拼装纯逻辑在 html-preview.ts
   components/MediaPreview.tsx # 音视频预览：grant_media_url 放行后经 asset 协议流式播放，放不了的编码提示系统打开

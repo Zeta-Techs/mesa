@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
-import SelectionFloatBar from "./SelectionFloatBar";
+import SelectionFloatBar, { FloatBarOverflow, FLOAT_BTN, FLOAT_BTN_PRIMARY } from "./SelectionFloatBar";
 import { HoverTip } from "./HoverTip";
 import { IS_MAC } from "../hotkeys";
 import {
@@ -73,48 +73,6 @@ function SelectionGate({
     return () => document.removeEventListener("selectionchange", onChange);
   }, []);
   return len > 0 && len <= max ? <>{children}</> : null;
-}
-
-/** 浮动条 ⋯ 溢出菜单（↵ 直接发送、批注…收在这里，主条保持紧凑）：
- *  开关状态随浮动条卸载自动复位（选区收起即关，不会在下次选区时残留展开） */
-function FloatBarOverflow({
-  items,
-}: {
-  items: readonly { label: string; run: () => void }[];
-}) {
-  const [open, setOpen] = useState(false);
-  if (items.length === 0) return null;
-  return (
-    <span className="relative">
-      <button
-        type="button"
-        // preventDefault 保住选区，click 时才读文字
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-6 w-6 items-center justify-center rounded-sm text-xs text-l3 hover:bg-hover hover:text-l1"
-      >
-        ⋯
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 flex flex-col rounded-md border border-hairline ccode-float-surface p-1">
-          {items.map((it) => (
-            <button
-              key={it.label}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setOpen(false);
-                it.run();
-              }}
-              className="whitespace-nowrap rounded-sm px-2 py-1 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
-            >
-              {it.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </span>
-  );
 }
 
 /** 未标记页的稳定空表（PdfPageView 是 memo，每次新建空数组会让所有页白重渲） */
@@ -1829,7 +1787,7 @@ function PdfContinuousView({
                   // preventDefault 保住选区，click 时才读文字
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={translateSelection}
-                  className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+                  className={FLOAT_BTN}
                 >
                   译
                 </button>
@@ -1839,7 +1797,7 @@ function PdfContinuousView({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => void annotateSelection()}
-                  className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+                  className={FLOAT_BTN}
                 >
                   高亮
                 </button>
@@ -1849,7 +1807,7 @@ function PdfContinuousView({
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => askAi()}
-                  className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
+                  className={FLOAT_BTN_PRIMARY}
                 >
                   {askAs?.label ?? "◈ 问 AI"}
                 </button>
@@ -1860,7 +1818,7 @@ function PdfContinuousView({
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={openGlossaryCard}
-                    className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+                    className={FLOAT_BTN}
                   >
                     ＋ 生词
                   </button>
@@ -1878,7 +1836,7 @@ function PdfContinuousView({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => void organize()}
                   disabled={organizing}
-                  className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110 disabled:opacity-60"
+                  className={`${FLOAT_BTN_PRIMARY} disabled:opacity-60`}
                 >
                   {organizing ? "整理中…" : "整理为笔记"}
                 </button>

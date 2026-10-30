@@ -6,7 +6,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 // textLayer 的官方样式（选区/定位规则）；随本组件进懒加载 chunk
 import "pdfjs-dist/web/pdf_viewer.css";
-import SelectionFloatBar, { DistillSkillButton } from "./SelectionFloatBar";
+import SelectionFloatBar, { FloatBarOverflow, useDistillSkill, FLOAT_BTN, FLOAT_BTN_PRIMARY } from "./SelectionFloatBar";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { usePdfGestureZoom } from "./use-pdf-zoom";
@@ -669,6 +669,7 @@ function PdfPreview({
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
     hintTimerRef.current = setTimeout(() => setHint(null), 3000);
   }, []);
+  const distillItem = useDistillSkill((msg) => showHint({ msg }));
   useEffect(
     () => () => {
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
@@ -894,7 +895,7 @@ function PdfPreview({
                     // preventDefault 保住选区，click 时才读文字
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => askAi()}
-                    className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
+                    className={FLOAT_BTN_PRIMARY}
                   >
                     ◈ 问 AI
                   </button>
@@ -902,7 +903,7 @@ function PdfPreview({
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => askAi(true)}
-                    className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1"
+                    className={FLOAT_BTN}
                   >
                     ↵ 直接发送
                   </button>
@@ -914,12 +915,12 @@ function PdfPreview({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => void organize()}
                   disabled={organizing}
-                  className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110 disabled:opacity-60"
+                  className={`${FLOAT_BTN_PRIMARY} disabled:opacity-60`}
                 >
                   {organizing ? "整理中…" : "整理为笔记"}
                 </button>
               )}
-              <DistillSkillButton onHint={(m) => showHint({ msg: m })} />
+              <FloatBarOverflow items={[distillItem]} />
             </SelectionFloatBar>
           )}
         </div>

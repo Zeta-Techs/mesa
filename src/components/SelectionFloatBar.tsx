@@ -9,13 +9,9 @@ interface SkillDraftDto {
   content: string;
 }
 
-/** 「✦ 沉淀为技能」：把当前选段交给 AI 提炼成技能草稿 → 跳技能页新建 modal 预填。
- *  与浮动条其余按钮同风格；提炼期间禁用，失败经 onHint 行内提示（调用方各自的 hint 机制）。 */
-export function DistillSkillButton({
-  onHint,
-}: {
-  onHint: (msg: string) => void;
-}) {
+/** 「✦ 沉淀为技能…」：把当前选段交给 AI 提炼成技能草稿 → 跳技能页新建 modal 预填。
+ *  低频动作，只作 ⋯ 菜单项（返回 FloatBarOverflow 的一项），不占浮动条主位；失败经 onHint 行内提示。 */
+export function useDistillSkill(onHint: (msg: string) => void) {
   const setSkillDraftReq = useAppStore((s) => s.setSkillDraftReq);
   const setPage = useAppStore((s) => s.setPage);
   const [distilling, setDistilling] = useState(false);
@@ -39,17 +35,58 @@ export function DistillSkillButton({
     }
   }
 
+  return {
+    label: distilling ? "提炼中…" : "✦ 沉淀为技能…",
+    run: () => void distill(),
+  };
+}
+
+/** 浮动条按钮（与对话选区小条 ChatSelectionBar 同一套：一块浮层里平铺，按钮不再各带边框）。
+ *  一条里只给一个 FLOAT_BTN_PRIMARY（蓝底主钮），其余用 FLOAT_BTN。 */
+export const FLOAT_BTN =
+  "inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1";
+export const FLOAT_BTN_PRIMARY =
+  "inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-md bg-cta px-2.5 text-xs text-cta-text hover:brightness-110";
+
+/** 浮动条 ⋯ 溢出菜单（低频动作收在这里，主条保持紧凑）：
+ *  开关状态随浮动条卸载自动复位（选区收起即关，不会在下次选区时残留展开） */
+export function FloatBarOverflow({
+  items,
+}: {
+  items: readonly { label: string; run: () => void }[];
+}) {
+  const [open, setOpen] = useState(false);
+  if (items.length === 0) return null;
   return (
-    <button
-      type="button"
-      // preventDefault 保住选区，click 时才读文字
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={() => void distill()}
-      disabled={distilling}
-      className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110 disabled:opacity-60"
-    >
-      {distilling ? "提炼中…" : "✦ 沉淀为技能"}
-    </button>
+    <span className="relative">
+      <button
+        type="button"
+        // preventDefault 保住选区，click 时才读文字
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-xs text-l3 hover:bg-hover hover:text-l1"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-40 mt-1.5 flex flex-col rounded-md border border-hairline ccode-float-surface p-1">
+          {items.map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpen(false);
+                it.run();
+              }}
+              className="whitespace-nowrap rounded-sm px-2 py-1 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -117,7 +154,7 @@ export default function SelectionFloatBar({
   return (
     <div
       style={{ left: pos.x, top: pos.y }}
-      className="absolute z-10 flex gap-1"
+      className="ccode-float-surface absolute z-10 flex items-center gap-0.5 rounded-lg border border-hairline p-0.5"
     >
       {children}
     </div>
