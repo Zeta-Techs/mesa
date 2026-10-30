@@ -225,7 +225,9 @@ export default function ContextRing({
                   {line}
                 </div>
               ))}
-              <div className="mt-1 leading-[18px] text-l4">点一下看分类{onCompact ? "，也能在里面压缩" : ""}</div>
+              {/* 只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
+              <div className="mt-1 leading-[18px] text-l4">首轮的用量已包含 {label} 的系统提示、技能清单和工具定义</div>
+              <div className="mt-0.5 leading-[18px] text-l4">点一下看分类{onCompact ? "，也能在里面压缩" : ""}</div>
             </div>
           </div>,
           document.body,
