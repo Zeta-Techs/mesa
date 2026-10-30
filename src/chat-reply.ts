@@ -151,7 +151,8 @@ export function fileRefPath(token: string): string | null {
   let t = token.trim();
   if (!t || /\s/.test(t) || t.includes("://")) return null;
   t = t.replace(/:\d+(?:[:-]\d+)?$/, "").replace(/^\.[\\/]/, "");
-  if (!/^(?:~[\\/]|[\\/]|[A-Za-z]:[\\/])?(?:[\w.@+-]+[\\/])*[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(t)) return null;
+  // 目录名与文件名收任意文字（\p{L}\p{N}）：「Mesa-README-综述.mp4」这种中文名原先认不出、不可点（2026-10-30 用户对照 Claude 客户端）
+  if (!/^(?:~[\\/]|[\\/]|[A-Za-z]:[\\/])?(?:[\p{L}\p{N}_.@+-]+[\\/])*[\p{L}\p{N}_@+-][\p{L}\p{N}_.@+-]*\.[A-Za-z][A-Za-z0-9]{0,7}$/u.test(t)) return null;
   if (AUDIO_EXT.test(t)) return null;
   return t;
 }

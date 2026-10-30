@@ -101,6 +101,12 @@ test("文件路径：相对 / 绝对 / ~/ / 行号都认，网址、无扩展名
   assert.equal(fileRefPath("README.md"), "README.md");
   assert.equal(fileRefPath("~/notes/a.md"), "~/notes/a.md");
   assert.equal(fileRefPath("src\\win\\a.tsx"), "src\\win\\a.tsx");
+  // 中文文件名 / 目录名也认（2026-10-30：`Mesa-README-综述.mp4` 原先不可点）
+  assert.equal(
+    fileRefPath("/Users/me/Ccode/out/promo/build/readme/Mesa-README-综述.mp4"),
+    "/Users/me/Ccode/out/promo/build/readme/Mesa-README-综述.mp4",
+  );
+  assert.equal(fileRefPath("文献/综述大纲.md"), "文献/综述大纲.md");
   for (const no of ["https://a.com/b.md", "src/lib", "and/or", "1/2.5", "v1.2", "voice/a.mp3", "a b.md", ""]) {
     assert.equal(fileRefPath(no), null, no);
   }
