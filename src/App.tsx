@@ -2378,6 +2378,8 @@ function BootMark() {
   return (
     <div
       className="boot-splash"
+      // 顶栏挂载前整块当拖拽区（同 index.html）；换手层不接点击，不影响挂好的应用
+      data-tauri-drag-region="deep"
       style={{ animationDelay: `${BOOT_SHOW_DELAY_MS - now}ms` }}
     >
       <span>

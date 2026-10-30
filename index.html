@@ -157,7 +157,8 @@
 
   <body>
     <div id="root">
-      <div class="boot-splash"><span>Mesa<i class="boot-caret"></i></span></div>
+      <!-- 启动时还没有顶栏：整块字标当拖拽区（deep：点到字上也算），否则 Mac / Windows 无标题栏、拖不动窗口 -->
+      <div class="boot-splash" data-tauri-drag-region="deep"><span>Mesa<i class="boot-caret"></i></span></div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
