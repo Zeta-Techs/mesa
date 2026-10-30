@@ -587,6 +587,16 @@ export default function ProjectTree({
         title: `交给 ${c.display} 接着聊`,
         onSelect: () => clientOpen.openSession(s, !!holder?.running, c.clientId),
       })),
+      {
+        label: "删除…",
+        icon: Trash2,
+        danger: true,
+        disabled: chatRunning(s),
+        title: chatRunning(s)
+          ? "AI 还开着，先关掉这段对话再删"
+          : "源文件移入系统回收站（可找回）；整理数据和快照一并清掉",
+        onSelect: () => void deleteChats([s]),
+      },
     ];
   }
 
@@ -1810,7 +1820,63 @@ export default function ProjectTree({
         onSelect: () => void archivePicked(list),
       },
       { label: "取消选择", icon: X, onSelect: clearPicked },
+      {
+        label: `删除这 ${keys.length} 段…`,
+        icon: Trash2,
+        danger: true,
+        disabled: keys.length === 0,
+        title: "源文件移入系统回收站（可找回）；AI 还开着的不删",
+        onSelect: () => void deleteChats(list),
+      },
     ];
+  }
+  /** AI 还开着的对话不删（CLI 会接着往源文件里写）：先关掉再删 */
+  function chatRunning(s: SessionMetaDto): boolean {
+    return useAppStore
+      .getState()
+      .terminalRunInputs.some((r) => r.agentId === s.agent && r.sessionId === s.sessionId && r.running && !r.shell);
+  }
+  /** 删除（同对话页：源文件进回收站、OpenCode 从库里抹掉，整理数据与快照后端一并清）。
+   *  确认后这几行当场从侧栏拿掉，删在后台逐条做，删失败的随刷新回来并报错 */
+  async function deleteChats(list: SessionMetaDto[]) {
+    const running = list.filter(chatRunning);
+    const targets = list.filter((s) => !chatRunning(s));
+    if (targets.length === 0) {
+      toast("这几段对话的 AI 还开着，先关掉再删", "error");
+      return;
+    }
+    const head = targets
+      .slice(0, 3)
+      .map((s) => `「${sidebarChatTitle(tidySessionTitle(s).title)}」`)
+      .join("、");
+    const one = targets.length === 1;
+    const hasOpencode = targets.some((s) => s.agent === "opencode");
+    const what = one
+      ? `删除对话${head}？`
+      : `删除这 ${targets.length} 段对话？\n\n${head}${targets.length > 3 ? ` 等 ${targets.length} 段` : ""}`;
+    if (
+      !(await confirmDialog(
+        `${what}\n\n` +
+          `源文件移入系统回收站（可找回）${hasOpencode ? "；OpenCode 的对话从它的数据库抹掉，不能进回收站" : ""}。整理数据和保留的快照会一并清掉。` +
+          (running.length > 0 ? `\n\n另有 ${running.length} 段的 AI 还开着，这次不删，关掉后再删。` : ""),
+        { danger: true },
+      ))
+    )
+      return;
+    clearPicked();
+    const release = useAppStore.getState().hideSessionsWhileDeleting(targets.map(chatKey));
+    const failed: string[] = [];
+    for (const s of targets) {
+      try {
+        await invoke("delete_session", { agent: s.agent, sessionId: s.sessionId, filePath: s.filePath });
+      } catch (reason) {
+        failed.push(`${tidySessionTitle(s).title}：${String(reason)}`);
+      }
+    }
+    release();
+    await useAppStore.getState().loadSessions(true).catch(() => {});
+    if (failed.length > 0) toast(`已删除 ${targets.length - failed.length} 段，${failed.length} 段失败：${failed[0]}`, "error");
+    else toast(`已删除 ${targets.length} 段对话`);
   }
   async function archivePicked(list: SessionMetaDto[]) {
     const head = list
@@ -2027,6 +2093,16 @@ export default function ProjectTree({
             >
               <Archive size={13} strokeWidth={1.8} aria-hidden="true" />
               <span className="text-xs">归档</span>
+            </button>
+            <button
+              type="button"
+              disabled={keys.length === 0}
+              aria-label="删除选中的对话"
+              title="删除（源文件移入系统回收站）"
+              onClick={() => void deleteChats(pickedSessions())}
+              className={`${action} hover:text-err-text`}
+            >
+              <Trash2 size={13} strokeWidth={1.8} aria-hidden="true" />
             </button>
             <button
               type="button"
