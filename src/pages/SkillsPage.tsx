@@ -2074,7 +2074,8 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                         <span className="text-l4">
                           <FoldMark open={!catCollapsed.has(category)} />
                         </span>
-                        <span className="text-lg font-semibold text-l1">{category}</span>
+                        {/* 比页名「技能」（text-lg）低一档：同号时组名跟页名抢（2026-10-30 用户） */}
+                        <span className="text-base font-semibold text-l1">{category}</span>
                         <span className="text-xs text-l4">
                           {categorySkills.length} 个
                         </span>
