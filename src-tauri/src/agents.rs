@@ -3253,7 +3253,9 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
     };
     match profile.agent.as_str() {
         // 启动时进程级盖过（--settings 空串 / --auth-type），磁盘残留不再挡官方账号
-        "claude-code" | "codebuddy" | "qwen" => Vec::new(),
+        "claude-code" | "codebuddy" => Vec::new(),
+        // Qwen OAuth 只有免费档，2026-04-15 停用后 0.26.3 显示「No longer available」：起来也用不了，直接说清楚
+        "qwen" => vec![QWEN_OAUTH_DISCONTINUED.into()],
         // Gemini 的认证方式只认 settings 的 selectedType，进程级盖不过（见 gemini_auth_blocker 注释）
         "gemini" => match gemini_selected_auth_type(profile) {
             // 进程里写空 GEMINI_MODEL 压不住 .env（0.65 实测），中转模型名只能拦
@@ -3294,6 +3296,10 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
         _ => probe_conflicts(home, oa),
     }
 }
+
+/// Qwen 官方账号（Qwen OAuth）已停用的说明：启动拦截与连接页同一句
+pub(crate) const QWEN_OAUTH_DISCONTINUED: &str =
+    "Qwen OAuth 免费档已于 2026-04-15 停用，官方账号登录后也用不了。请在连接页添加阿里云 Coding Plan 或 API Key 连接";
 
 /// Grok 指向非 x.ai 地址、又没有自己 api_key / env_key 的 `[model.<id>]` 段：凭证按优先级落到登录令牌，
 /// 官方账号登录过时会把 xAI 令牌发去中转（凭证只有「逐模型 > 登录令牌 > XAI_API_KEY」三档，1.0.70）

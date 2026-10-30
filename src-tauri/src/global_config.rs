@@ -420,6 +420,16 @@ fn patch_qwen_settings(
     let mut v = parse_json_doc(existing)?;
     ensure_obj(&mut v, &["security", "auth"])?.insert("selectedType".into(), json!(protocol));
     let env = ensure_obj(&mut v, &["env"])?;
+    // 模型条目的 envKey 指这个 Mesa 专用名：settings.json 的 env 优先级最低，项目里常见的 .env 只要有
+    // OPENAI_API_KEY 就会把公共名顶掉（0.26.3 bundle：shell > 第一个找到的 .env > settings env）
+    match key {
+        Some(k) => {
+            env.insert(QWEN_MESA_KEY_ENV.into(), json!(k));
+        }
+        None => {
+            env.remove(QWEN_MESA_KEY_ENV);
+        }
+    }
     // gemini/vertex-ai 协议暂不支持，按 openai 处理（与 launch_plan 一致）
     let is_anthropic = protocol == "anthropic";
     let triple: [(&str, Option<&str>); 3] = if is_anthropic {
@@ -446,7 +456,9 @@ fn patch_qwen_settings(
     // TUI /model 对话框列出的就是 modelProviders.<协议>.models 里的条目；
     // 只覆盖本协议的 models 数组，其他协议/字段原样保留
     if !models.is_empty() {
-        let env_key = if is_anthropic {
+        let env_key = if key.is_some() {
+            QWEN_MESA_KEY_ENV
+        } else if is_anthropic {
             "ANTHROPIC_API_KEY"
         } else {
             "OPENAI_API_KEY"
@@ -490,8 +502,23 @@ fn patch_qwen_settings(
                 if let Some(val) = policy.max_output_tokens {
                     sp.insert("max_tokens".into(), json!(val));
                 }
+                // 思考档：0.26.3 从 samplingParams 的扁平 reasoning_effort 读（chunk resolveReasoningForModel）
+                if let Some(raw) = policy.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
+                    let val = crate::agent_specs::canonical_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
+                    sp.insert("reasoning_effort".into(), json!(val));
+                }
+                let mut gc = serde_json::Map::new();
                 if !sp.is_empty() {
-                    e["generationConfig"] = json!({ "samplingParams": Value::Object(sp) });
+                    gc.insert("samplingParams".into(), Value::Object(sp));
+                }
+                // 条目是封闭的，顶层配置不补进来：中转模型的窗口不写就回落 CLI 按名字猜的默认值
+                if let Some(ctx) =
+                    crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref())
+                {
+                    gc.insert("contextWindowSize".into(), json!(ctx));
+                }
+                if !gc.is_empty() {
+                    e["generationConfig"] = Value::Object(gc);
                 }
                 e
             })
@@ -500,6 +527,9 @@ fn patch_qwen_settings(
     }
     to_pretty(&v)
 }
+
+/// Qwen 模型条目 envKey 用的 Mesa 专用变量名（见 patch_qwen_settings）
+const QWEN_MESA_KEY_ENV: &str = "MESA_QWEN_API_KEY";
 
 /// Codex 自定义 provider 的认证：写 `experimental_bearer_token`（ChatGPT 自带
 /// Codex 的 ModelProviderInfo 认这个字段）。不写 auth.json（官方登录单槽），
@@ -572,6 +602,67 @@ pub(crate) fn patch_gemini_settings(
             }
             defs.insert(m.clone(), def);
         }
+    }
+    to_pretty(&v)
+}
+
+/// Gemini 全局写入补两处（2026-10-30）：
+/// - `model.name` 也写首个模型：`~/.gemini/.env` 只在当前目录往上没找到别的 `.env`、且目录被信任时才读，
+///   settings.json 不受这两条影响（shell 的 GEMINI_MODEL 仍压过它，预览另行提醒）；
+/// - 逐模型温度 / top_p / 输出上限写进 `modelConfigs.customOverrides`（`match.model` = 模型 id，
+///   0.66 bundle ModelConfigService：overrides → customOverrides → runtime 依次合并 generateContentConfig）。
+///   Mesa 只管 match 恰为本连接模型的条目：先撤再写，别的条目不动。思考档不写：中转的 thinkingConfig 形状未实证。
+fn patch_gemini_extras(content: &str, profile: &Profile) -> Result<String, String> {
+    let mut v = parse_json_doc(Some(content))?;
+    if let Some(m) = profile.models.first() {
+        ensure_obj(&mut v, &["model"])?.insert("name".into(), json!(m));
+    }
+    let gw = profile
+        .gateway_id
+        .as_deref()
+        .and_then(crate::gateway_store::find_gateway);
+    let mut fresh = Vec::new();
+    for m in &profile.models {
+        let mut tmp = profile.clone();
+        if let Some(gm) = gw.as_ref().and_then(|g| g.models.iter().find(|x| x.id == *m)) {
+            tmp.request_policy.temperature = gm.temperature;
+            tmp.request_policy.top_p = gm.top_p;
+            tmp.request_policy.max_output_tokens = gm.max_output_tokens;
+        }
+        crate::combo::apply_to_profile(&mut tmp, Some(m));
+        let policy = &tmp.request_policy;
+        let mut gcc = serde_json::Map::new();
+        if let Some(t) = policy.temperature {
+            gcc.insert("temperature".into(), json!(t));
+        }
+        if let Some(t) = policy.top_p {
+            gcc.insert("topP".into(), json!(t));
+        }
+        if let Some(t) = policy.max_output_tokens {
+            gcc.insert("maxOutputTokens".into(), json!(t));
+        }
+        if !gcc.is_empty() {
+            fresh.push(json!({
+                "match": { "model": m },
+                "modelConfig": { "generateContentConfig": Value::Object(gcc) },
+            }));
+        }
+    }
+    let ours = |o: &Value| {
+        o.pointer("/match/model")
+            .and_then(|m| m.as_str())
+            .is_some_and(|m| profile.models.iter().any(|x| x == m))
+            && o.get("match").and_then(|x| x.as_object()).is_some_and(|x| x.len() == 1)
+    };
+    let has_list = v.pointer("/modelConfigs/customOverrides").is_some();
+    if has_list || !fresh.is_empty() {
+        let configs = ensure_obj(&mut v, &["modelConfigs"])?;
+        let list = configs.entry("customOverrides").or_insert_with(|| json!([]));
+        let Some(arr) = list.as_array_mut() else {
+            return Err("配置字段 modelConfigs.customOverrides 不是数组，已停止写入".into());
+        };
+        arr.retain(|o| !ours(o));
+        arr.extend(fresh);
     }
     to_pretty(&v)
 }
@@ -1363,13 +1454,24 @@ fn patch_codebuddy_settings_official(existing: &str) -> Result<String, String> {
     to_pretty(&v)
 }
 
-/// Qwen：认证方式改回 qwen-oauth，撤 env 里两套协议的端点 / 密钥 / 模型；
-/// `model.name` 只在等于被撤的模型名（Mesa 写的）时撤。modelProviders 名单留着。
+/// Qwen：撤 env 里两套协议的端点 / 密钥 / 模型（含 Mesa 专用密钥名）；`model.name` 只在等于被撤的模型名
+/// （Mesa 写的）时撤。modelProviders 名单留着。**不再改成 qwen-oauth**（2026-10-30）：0.26.3 里 Qwen OAuth
+/// 免费档 2026-04-15 停用后显示「No longer available」，切过去用不了；认证方式是 Mesa 写的协议名
+///（openai / anthropic）就撤掉，Qwen 进门让用户自己选 Coding Plan 或 API Key。
 fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
     let mut v = parse_json_doc(Some(existing))?;
-    ensure_obj(&mut v, &["security", "auth"])?.insert("selectedType".into(), json!("qwen-oauth"));
+    let mesa_auth = v
+        .pointer("/security/auth/selectedType")
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| matches!(t, "openai" | "anthropic"));
+    if mesa_auth {
+        if let Some(auth) = v.pointer_mut("/security/auth").and_then(|a| a.as_object_mut()) {
+            auth.remove("selectedType");
+        }
+    }
     let mut removed = Vec::new();
     if let Some(env) = v.get_mut("env").and_then(|e| e.as_object_mut()) {
+        env.remove(QWEN_MESA_KEY_ENV);
         for k in [
             "OPENAI_API_KEY",
             "OPENAI_BASE_URL",
@@ -1394,15 +1496,30 @@ fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
     to_pretty(&v)
 }
 
-/// Gemini：settings.json 认证方式改回 Google 账号登录（oauth-personal）；模型名单留着。
+/// Gemini：Mesa 写的认证方式（gemini-api-key）撤掉，非 gemini 的 `model.name` 撤掉；模型名单与按模型参数留着。
+/// 不再写死 oauth-personal（2026-10-30）：用 Vertex / 自己 AI Studio 密钥的人会被改掉，个人 Google 账号
+/// 本身也常用不了（agents gemini 认证提示）。撤掉后 Gemini 进门让用户自己选认证方式。
 fn patch_gemini_settings_official(existing: &str) -> Result<String, String> {
     let mut v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(existing))
         .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?;
     if !v.is_object() {
         return Err("现有 settings.json 根节点不是对象，已停止写入".into());
     }
-    ensure_obj(&mut v, &["security", "auth"])?
-        .insert("selectedType".into(), json!("oauth-personal"));
+    let mesa_auth = v.pointer("/security/auth/selectedType").and_then(|t| t.as_str()) == Some("gemini-api-key");
+    if mesa_auth {
+        if let Some(auth) = v.pointer_mut("/security/auth").and_then(|a| a.as_object_mut()) {
+            auth.remove("selectedType");
+        }
+    }
+    let foreign = v
+        .pointer("/model/name")
+        .and_then(|m| m.as_str())
+        .is_some_and(|m| !official_model_kept("gemini", m));
+    if foreign {
+        if let Some(model) = v.get_mut("model").and_then(|m| m.as_object_mut()) {
+            model.remove("name");
+        }
+    }
     to_pretty(&v)
 }
 
@@ -1718,6 +1835,7 @@ fn plan_writes(
                 &profile.models,
                 profile.gateway_id.as_deref(),
             )?;
+            let content = patch_gemini_extras(&content, profile)?;
             push("settings.json", path, content);
         }
         "qwen" => {
@@ -2101,26 +2219,11 @@ fn skipped_policy_notes(profile: &Profile) -> Vec<String> {
             _ => {}
         }
     };
-    push(
-        surface.channel_effort,
-        profile.request_policy.reasoning_effort.is_some(),
-        "思考档",
-    );
-    push(
-        surface.channel_temperature,
-        profile.request_policy.temperature.is_some(),
-        "温度",
-    );
-    push(
-        surface.channel_top_p,
-        profile.request_policy.top_p.is_some(),
-        "top_p",
-    );
-    push(
-        surface.channel_max_tokens,
-        profile.request_policy.max_output_tokens.is_some(),
-        "输出上限",
-    );
+    let policy = &profile.request_policy;
+    push(surface.channel_effort, policy.reasoning_effort.is_some(), "思考档");
+    push(surface.channel_temperature, policy.temperature.is_some(), "温度");
+    push(surface.channel_top_p, policy.top_p.is_some(), "top_p");
+    push(surface.channel_max_tokens, policy.max_output_tokens.is_some(), "输出上限");
     if !profile.extra_env.is_empty() {
         notes.push("附加环境变量只在 Mesa 启动时注入，不写入 CLI 全局文件".into());
     }
@@ -3313,6 +3416,46 @@ mod tests {
     }
 
     #[test]
+    fn qwen_uses_mesa_key_env_and_writes_effort() {
+        let mut p = profile("qwen");
+        p.models = vec!["glm-5".into()];
+        p.request_policy.reasoning_effort = Some("high".into());
+        let out = patch_qwen_settings(None, Some("sk-q"), &p).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["env"][QWEN_MESA_KEY_ENV], "sk-q");
+        let entry = &v["modelProviders"]["openai"]["models"][0];
+        assert_eq!(entry["envKey"], QWEN_MESA_KEY_ENV, "项目 .env 的 OPENAI_API_KEY 顶不掉");
+        assert_eq!(entry["generationConfig"]["samplingParams"]["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn gemini_extras_write_model_name_and_own_overrides_only() {
+        let mut p = profile("gemini");
+        p.models = vec!["glm-5".into(), "k3".into()];
+        p.request_policy.temperature = Some(0.4);
+        let existing = r#"{"modelConfigs":{"customOverrides":[
+            {"match":{"model":"glm-5"},"modelConfig":{"generateContentConfig":{"temperature":1}}},
+            {"match":{"model":"glm-5","overrideScope":"core"},"modelConfig":{}},
+            {"match":{"model":"gemini-3-pro"},"modelConfig":{}}
+        ]}}"#;
+        let v: Value = serde_json::from_str(&patch_gemini_extras(existing, &p).unwrap()).unwrap();
+        assert_eq!(v["model"]["name"], "glm-5");
+        let arr = v["modelConfigs"]["customOverrides"].as_array().unwrap();
+        // 用户的两条留着，Mesa 的旧条目换成新的（每个模型一条）
+        assert_eq!(arr.len(), 4);
+        assert!(arr.iter().any(|o| o["match"]["model"] == "gemini-3-pro"));
+        assert!(arr.iter().any(|o| o["match"]["overrideScope"] == "core"));
+        let ours: Vec<_> = arr.iter().filter(|o| o["match"].as_object().unwrap().len() == 1 && o["match"]["model"] != "gemini-3-pro").collect();
+        assert_eq!(ours.len(), 2);
+        assert!(ours.iter().all(|o| o["modelConfig"]["generateContentConfig"]["temperature"] == 0.4));
+        // 没有策略时不新建 modelConfigs
+        let mut bare = profile("gemini");
+        bare.models = vec!["glm-5".into()];
+        let v: Value = serde_json::from_str(&patch_gemini_extras("{}", &bare).unwrap()).unwrap();
+        assert!(v.get("modelConfigs").is_none());
+    }
+
+    #[test]
     fn codex_relay_extras_replace_stale_window_and_disable_app_tools() {
         // 未知模型：上一家留下的窗口撤掉；app-tools 插件关掉；用户别的插件不动
         let stale = "model_context_window = 1000000\nmodel_auto_compact_token_limit = 950000\n[plugins.\"other@x\"]\nenabled = true\n";
@@ -3416,19 +3559,26 @@ trust_level = "trusted"
         let v: Value = serde_json::from_str(&off("codebuddy")[0].content).unwrap();
         assert_eq!(v["env"], json!({}));
 
-        w(".qwen/settings.json", r#"{"security":{"auth":{"selectedType":"openai"}},"env":{"OPENAI_API_KEY":"sk","OPENAI_BASE_URL":"https://r","OPENAI_MODEL":"glm-5"},"model":{"name":"glm-5"},"modelProviders":{"openai":{"models":[{"id":"glm-5"}]}}}"#);
+        w(".qwen/settings.json", r#"{"security":{"auth":{"selectedType":"openai"}},"env":{"OPENAI_API_KEY":"sk","MESA_QWEN_API_KEY":"sk","OPENAI_BASE_URL":"https://r","OPENAI_MODEL":"glm-5"},"model":{"name":"glm-5"},"modelProviders":{"openai":{"models":[{"id":"glm-5"}]}}}"#);
         let v: Value = serde_json::from_str(&off("qwen")[0].content).unwrap();
-        assert_eq!(v["security"]["auth"]["selectedType"], "qwen-oauth");
+        assert!(v["security"]["auth"].get("selectedType").is_none(), "Qwen OAuth 已停用：撤掉 Mesa 写的协议名，不改成 qwen-oauth");
         assert_eq!(v["env"], json!({}));
         assert!(v["model"].get("name").is_none());
         assert!(v["modelProviders"]["openai"].is_object());
 
         w(".gemini/.env", "GEMINI_API_KEY=sk\nGOOGLE_GEMINI_BASE_URL=https://r\nGEMINI_MODEL=glm-5\nOTHER=1\n");
-        w(".gemini/settings.json", "{ // jsonc\n \"security\": {\"auth\": {\"selectedType\": \"gemini-api-key\"}}, \"ui\": {\"theme\": \"x\"} }");
+        w(".gemini/settings.json", "{ // jsonc\n \"security\": {\"auth\": {\"selectedType\": \"gemini-api-key\"}}, \"model\": {\"name\": \"glm-5\"}, \"ui\": {\"theme\": \"x\"} }");
         let plans = off("gemini");
         assert_eq!(plans[0].content, "OTHER=1\n");
         let v: Value = serde_json::from_str(&plans[1].content).unwrap();
-        assert_eq!(v["security"]["auth"]["selectedType"], "oauth-personal");
+        assert!(v["security"]["auth"].get("selectedType").is_none(), "撤掉 Mesa 写的 API Key 认证，不写死 Google 登录");
+        assert!(v["model"].get("name").is_none());
+        // 用户自己选的（比如 Vertex）不动
+        w(".gemini/settings.json", r#"{"security":{"auth":{"selectedType":"vertex-ai"}}}"#);
+        let v: Value = serde_json::from_str(&off("gemini")[1].content).unwrap();
+        assert_eq!(v["security"]["auth"]["selectedType"], "vertex-ai");
+        w(".gemini/settings.json", "{ // jsonc\n \"security\": {\"auth\": {\"selectedType\": \"gemini-api-key\"}}, \"ui\": {\"theme\": \"x\"} }");
+        let v: Value = serde_json::from_str(&off("gemini")[1].content).unwrap();
         assert_eq!(v["ui"]["theme"], "x");
 
         w(".kimi-code/config.toml", "default_model = \"kimi-k3\"\n[providers.ccode-x]\ntype = \"openai\"\n[models.kimi-k3]\nprovider = \"ccode-x\"\n[models.\"kimi-code/k3\"]\nprovider = \"managed:kimi-code\"\n");
@@ -3736,7 +3886,7 @@ trust_level = "trusted"
             models[0]["baseUrl"],
             "https://dashscope.aliyuncs.com/compatible-mode/v1"
         );
-        assert_eq!(models[0]["envKey"], "OPENAI_API_KEY");
+        assert_eq!(models[0]["envKey"], QWEN_MESA_KEY_ENV);
         assert_eq!(models[1]["id"], "qwen3-max");
         // 无策略时不写 generationConfig
         assert!(models[0].get("generationConfig").is_none());
@@ -3847,7 +3997,8 @@ trust_level = "trusted"
                     patch_claude_settings(None, p.base_url.as_deref(), key, &p.models, None, None)
                 }
                 "qwen" => patch_qwen_settings(None, key, p),
-                "gemini" => patch_gemini_settings(None, &p.name, &p.models, None),
+                "gemini" => patch_gemini_settings(None, &p.name, &p.models, None)
+                    .and_then(|c| patch_gemini_extras(&c, p)),
                 "codex" => patch_codex_config(
                     None,
                     p.base_url.as_deref(),
@@ -3933,11 +4084,20 @@ trust_level = "trusted"
             failures.join("\n")
         );
 
-        // 表里 persist 的格子目前只有 qwen 的 temperature/top_p。这条防的是「表被悄悄扩了
-        // persist 而没人实现」——真出现了，上面 failures 会先响，这里再说明该去看哪。
+        // 表里 persist 的格子：gemini 三项采样（customOverrides）与 qwen 采样 + 思考档（samplingParams）。
+        // 这条防的是「表被悄悄扩了 persist 而没人实现」——真出现了，上面 failures 会先响，这里再说明该去看哪。
         assert_eq!(
             persist_cells,
-            vec!["qwen.temperature".to_string(), "qwen.top_p".to_string()],
+            [
+                "gemini.temperature",
+                "gemini.top_p",
+                "gemini.max_output_tokens",
+                "qwen.temperature",
+                "qwen.top_p",
+                "qwen.reasoning_effort",
+            ]
+            .map(String::from)
+            .to_vec(),
             "persist 格子变了：确认补丁函数跟上后，同步更新这里"
         );
     }
@@ -4588,7 +4748,8 @@ supports_reasoning_effort = false
 
     #[test]
     fn skipped_policy_notes_cover_tui_and_extra_env() {
-        let mut p = profile("qwen");
+        let mut p = profile("kimi");
+        p.protocol = Some("openai".into());
         p.request_policy.reasoning_effort = Some("high".into());
         p.extra_env
             .insert("HTTPS_PROXY".into(), "http://127.0.0.1:7890".into());

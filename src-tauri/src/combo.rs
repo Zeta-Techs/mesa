@@ -753,7 +753,7 @@ mod tests {
         assert!(!dto.temperature_readonly, "persist 通道的已存值仍可编辑");
         assert_eq!(dto.channel_max_tokens, "inject");
         assert!(dto.inject_max_tokens_allowed);
-        assert_eq!(dto.channel_effort, "tui");
+        assert_eq!(dto.channel_effort, "persist");
     }
 
     #[test]

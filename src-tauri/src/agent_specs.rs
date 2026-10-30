@@ -601,8 +601,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
                 ],
                 note: "该文件中的密钥会覆盖官方账号登录，产生 API 计费",
             }],
-            // matrix §4：Qwen OAuth 免费额度已于 2026-04 停；OAuth 本身仍在（/auth 可选）
-            detection_note: Some("Qwen OAuth 免费额度 2026-04 已停，登录后按量计费；以 TUI 内 /doctor 的 auth 状态为准"),
+            // matrix §4：Qwen OAuth 只有免费档，2026-04-15 停用（0.26.3：Limit: No longer available）
+            detection_note: Some("Qwen OAuth 免费档 2026-04-15 已停用，官方账号登录后也用不了；请改用阿里云 Coding Plan 或 API Key 连接"),
             api_key_fields: &[],
         }),
         model_switch: ModelSwitch::None,
@@ -1121,12 +1121,13 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         // `--effort high` 在线上不出现任何思考 / 档位字段——对网关连接等于没有通道，标 unsupported，
         // 别让开聊前摆出点了没用的档（官方账号走 CodeBuddy 自家模型，不经求交器）
         "codebuddy" => row("unsupported", "unsupported", "inject", "unsupported", "inject"),
-        // gemini settings schema 无 temperature/topP/maxOutputTokens 键（bundle 实证），
-        // generationConfig 仅出现在 API 请求构造路径，非用户配置通道
+        // gemini：启动注入无 temperature/topP/maxOutputTokens 通道；0.66 起 settings 的
+        // modelConfigs.customOverrides（match.model → generateContentConfig）可按模型落盘（bundle
+        // ModelConfigService 实证，2026-10-30）→ persist，由「设为全局」写（global_config::patch_gemini_extras）
         "gemini" => row(
-            "unsupported",
-            "unsupported",
-            "unsupported",
+            "persist",
+            "persist",
+            "persist",
             "unknown",
             "unknown",
         ),
@@ -1151,9 +1152,10 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         // max_tokens 通道 = settings.json 条目级 generationConfig.samplingParams（snake_case
         // 线格式键名；dialog schema 未列该子键但运行时任其生效）——「设为全局」写入可达，
         // 启动 env 只有 QWEN_CODE_MAX_OUTPUT_TOKENS 一条（条目已配 samplingParams 时被跳过）。
-        // effort：无注入/写盘通道，但 0.22.0 有 /effort 直切命令（见 effort_levels 字段）→ tui；
-        // headers：generationConfig.customHeaders 在白名单内但请求注入点未逐键实证 → 保守 unknown
-        "qwen" => row("persist", "persist", "inject", "tui", "unknown"),
+        // effort：0.26.3 条目级 samplingParams 的扁平 reasoning_effort 生效（bundle resolveReasoningForModel
+        // 实证，2026-10-30）→ persist；会话内另有 /effort 直切命令（见 effort_levels 字段）；
+        // headers：generationConfig.customHeaders 只认明文，不写（防密文落盘）→ 保守 unknown
+        "qwen" => row("persist", "persist", "inject", "persist", "unknown"),
         // grok v1.0.5 二进制 + 随附 README 双实证：temperature/top_p/max_completion_tokens
         // （注意键名）/reasoning_effort 与 headers 的通道是 config 不是 env（GROK_* 无此类变量）。
         // Mesa 侧接线（2026-08-31，grok-build main 源码实证）：GROK_CONFIG overlay 白名单
@@ -1974,7 +1976,7 @@ mod tests {
             .find(|c| c.agent == "qwen")
             .unwrap();
         assert_eq!(qwen_dto.request_policy.temperature, "persist");
-        assert_eq!(qwen_dto.request_policy.reasoning_effort, "tui");
+        assert_eq!(qwen_dto.request_policy.reasoning_effort, "persist");
         assert_eq!(qwen_dto.request_policy.max_output_tokens, "inject");
         assert_eq!(qwen_dto.request_policy.custom_headers, "unknown");
         assert_eq!(qwen_dto.effort_options, Vec::<&str>::new());
@@ -2031,11 +2033,12 @@ mod tests {
             .into_iter()
             .find(|c| c.agent == "gemini")
             .unwrap();
-        assert_eq!(gemini_dto.request_policy.temperature, "unsupported");
+        // 启动注入够不到，设为全局写 modelConfigs.customOverrides（2026-10-30）
+        assert_eq!(gemini_dto.request_policy.temperature, "persist");
         assert_eq!(gemini_dto.request_policy.reasoning_effort, "unknown");
         assert_eq!(gemini_dto.request_policy.custom_headers, "unknown");
-        assert_eq!(gemini_dto.request_policy.max_output_tokens, "unsupported");
-        assert_eq!(gemini_dto.request_policy.top_p, "unsupported");
+        assert_eq!(gemini_dto.request_policy.max_output_tokens, "persist");
+        assert_eq!(gemini_dto.request_policy.top_p, "persist");
         let codex_dto = agent_capabilities()
             .into_iter()
             .find(|c| c.agent == "codex")
