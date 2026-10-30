@@ -9,7 +9,6 @@
    "-",
    "running",
    "awaiting_approval",
-   "running",
    "completed"
   ]
  },
@@ -180,6 +179,20 @@
     "version"
    ]
   },
+  "system/memory_catalog_snapshot": {
+   "keys": [
+    "cwd",
+    "message",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "subtype",
+    "timestamp",
+    "type",
+    "uuid",
+    "version"
+   ]
+  },
   "system/ui_telemetry": {
    "keys": [
     "cwd",
@@ -224,5 +237,5 @@
    ]
   }
  },
- "version": "0.26.1"
+ "version": "0.26.4"
 }

@@ -9,7 +9,6 @@
    "-",
    "running",
    "awaiting_approval",
-   "running",
    "completed"
   ]
  },
@@ -51,14 +50,21 @@
    ],
    "contextHeadings": [
     "Asking questions as you work",
+    "Autonomy and persistence",
     "Before recommending from memory",
     "Before saving a memory",
+    "Code References",
+    "Delegating to subagents",
+    "Doing tasks",
+    "Executing actions with care",
     "How to save memories",
     "MEMORY.md",
     "Memory and other forms of persistence",
+    "Output efficiency",
     "PTC / Code Mode",
     "Searching past context",
-    "Tool usage policy",
+    "Task Management",
+    "Tone and style",
     "Types of memory",
     "What NOT to save in memory",
     "When to access memories",
@@ -70,7 +76,6 @@
     "content_policy",
     "description",
     "env",
-    "example",
     "examples",
     "how_to_use",
     "memory",
@@ -201,5 +206,5 @@
    ]
   }
  },
- "version": "2.177.0"
+ "version": "2.178.1"
 }

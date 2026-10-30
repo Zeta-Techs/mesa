@@ -9,11 +9,14 @@
    "-",
    "running",
    "awaiting_approval",
+   "running",
    "completed"
   ]
  },
  "checks": {
+  "Mesa 收的模型别名都换得出型号": true,
   "假网关收到主对话请求": true,
+  "帮助里的模型别名 Mesa 都收了": true,
   "抓屏跑完": true,
   "旁路拿到会话文件": true,
   "旁路端到端通过": true,
@@ -312,6 +315,13 @@
     "version"
    ]
   },
+  "tools-used": {
+   "keys": [
+    "sessionId",
+    "tools",
+    "type"
+   ]
+  },
   "user": {
    "blocks": [
     "tool_result"
@@ -343,5 +353,5 @@
    ]
   }
  },
- "version": "2.1.310"
+ "version": "2.1.314"
 }

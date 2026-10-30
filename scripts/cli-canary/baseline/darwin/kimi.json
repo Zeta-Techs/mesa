@@ -48,7 +48,6 @@
     "CronDelete",
     "CronList",
     "Edit",
-    "EnterPlanMode",
     "ExitPlanMode",
     "FetchURL",
     "GetGoal",
@@ -84,5 +83,5 @@
   },
   "previewReadable": true
  },
- "version": "2.3.3"
+ "version": "2.4.0"
 }
