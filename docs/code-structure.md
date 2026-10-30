@@ -114,7 +114,7 @@ components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯
                              #   展开为动作行（点行看差异 / 命令输出 / 思考），异常可直达输出；引用追问保留来源，搜索展开过程并钉住虚拟窗口；working 由聊天层传（进行中不收起）；
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
   components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
-                             #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、图片卡
+                             #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、视频卡（ChatVideoCard：同 MediaPreview 经 grant_media_url 放行后 asset 流式播放，读不到不出卡）、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
@@ -587,7 +587,7 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              # labeledImageFromLine / attachmentLines（Claude Code 只把单独一行的路径升级成图片附件，带前缀不升级）、
                              # 要不要模型看图 composerImageKind（plain / marks / null，ChatModelMenu 据此出看不了图的提示）
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
-                             # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
+                             # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
                              # 确认按钮是否给出（tests/chat-reply.test.ts）
   mid-turn-send.ts           # 生成中再发一句：各家 CLI 把这句插进这一轮还是排到轮后、「立即发送」按哪个键（Esc / 回车 / Ctrl+S），
                              # 排队气泡与占位字的写法；依据 matrix §14「生成中再发一句」逐家实测（tests/mid-turn-send.test.ts）

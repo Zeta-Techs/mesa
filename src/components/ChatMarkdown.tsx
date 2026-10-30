@@ -1,10 +1,10 @@
-import { isProseCodeSpan, mentionedAudioFiles, mentionedImageFiles, splitReplySections, type ReplySection } from "../chat-reply";
+import { isProseCodeSpan, mentionedAudioFiles, mentionedImageFiles, mentionedVideoFiles, splitReplySections, type ReplySection } from "../chat-reply";
 import { sanitizeDocumentHtml } from "../document-html";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Marked } from "marked";
-import { ChevronRight, ImageOff, Volume2 } from "lucide-react";
+import { ChevronRight, Film, ImageOff, Volume2 } from "lucide-react";
 import { useAppStore } from "../store";
 import { classifyMdHref, resolveMdPath, rewriteMdImageHtml } from "../reader";
 import { cachedImageUrl, loadImageUrl, revalidateImageUrl } from "../image-cache";
@@ -18,6 +18,8 @@ import { Collapse } from "./PageFrame";
 import ChatImageViewer from "./ChatImageViewer";
 import { FileTypeGlyph } from "./FileTypeMark";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
+import { formatBytes } from "../image-view";
+import { useFileVersion } from "../file-watch";
 
 /**
  * 聊天层里点对话中的图 =「接着改这张图」（2026-10-25 用户对照 ChatGPT）：ChatSurface 提供，把图放进输入框并展开看图标注台。
@@ -84,6 +86,7 @@ export default function ChatMarkdown({
 }) {
   const sections = useMemo(() => splitReplySections(text), [text]);
   const audios = useMemo(() => mentionedAudioFiles(text), [text]);
+  const videos = useMemo(() => mentionedVideoFiles(text), [text]);
   // 内嵌的图与正文里提到的路径按会话目录解析后再比：一边写相对路径、一边写绝对路径也认得出是同一张
   const images = useMemo(
     () => mentionedImageFiles(text, (p) => (p.startsWith("~") || !cwd ? p.replace(/\\/g, "/") : resolveMdPath(`${cwd}/_`, p))),
@@ -125,6 +128,7 @@ export default function ChatMarkdown({
           );
         })}
         <MentionedImages paths={images} cwd={cwd} />
+        <MentionedVideos paths={videos} cwd={cwd} />
         <MentionedAudios paths={audios} cwd={cwd} />
       </div>
     );
@@ -133,6 +137,7 @@ export default function ChatMarkdown({
     <div>
       <MarkdownBody text={text} cwd={cwd} />
       <MentionedImages paths={images} cwd={cwd} />
+      <MentionedVideos paths={videos} cwd={cwd} />
       <MentionedAudios paths={audios} cwd={cwd} />
     </div>
   );
@@ -296,6 +301,85 @@ export function ChatAudioCard({ path, cwd }: { path: string; cwd?: string | null
       ) : (
         <span className="text-micro text-l4">音频加载中…</span>
       )}
+    </div>
+  );
+}
+
+function MentionedVideos({ paths, cwd }: { paths: string[]; cwd?: string | null }) {
+  if (paths.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {paths.slice(0, 4).map((path) => (
+        <ChatVideoCard key={path} path={path} cwd={cwd} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 视频播放卡（2026-10-30 用户对照 Claude 客户端）：同右栏 MediaPreview，经 grant_media_url 过读取白名单、只放行这一个文件，
+ * asset 协议流式播放（几百 MB 也不整份读进内存）。读不到（白名单外 / 已删 / 只是提到个文件名）不出卡；
+ * 同名文件重新生成后播放器重新取；网页内核放不了的编码（mkv、avi）提示用系统应用打开
+ */
+export function ChatVideoCard({ path, cwd }: { path: string; cwd?: string | null }) {
+  const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
+  const name = abs.split(/[\\/]/).pop() ?? abs;
+  const [granted, setGranted] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [playErr, setPlayErr] = useState(false);
+  const [size, setSize] = useState<string | null>(null);
+  const version = useFileVersion(granted);
+
+  useEffect(() => {
+    let stale = false;
+    setGranted(null);
+    setFailed(false);
+    setSize(null);
+    invoke<string>("grant_media_url", { path: abs, cwdHint: cwd ?? null })
+      .then((target) => {
+        if (!stale) setGranted(target);
+      })
+      .catch(() => {
+        if (!stale) setFailed(true);
+      });
+    invoke<{ size: number }>("file_stamp", { path: abs, cwdHint: cwd ?? null })
+      .then((s) => {
+        if (!stale) setSize(formatBytes(s.size));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [abs, cwd]);
+
+  useEffect(() => setPlayErr(false), [granted, version]);
+
+  if (failed || !granted) return null;
+  // #t=0.1：让播放器先画出第一帧当封面，不是一块黑
+  const src = `${convertFileSrc(granted)}?v=${version}#t=0.1`;
+  return (
+    <div className="flex w-full max-w-2xl flex-col gap-1" title={abs}>
+      <video
+        key={src}
+        src={src}
+        controls
+        preload="metadata"
+        onError={() => setPlayErr(true)}
+        className="aspect-video w-full rounded-md border border-hairline bg-black object-contain"
+      />
+      <span className="flex min-w-0 items-center gap-1.5 text-micro text-l4">
+        <Film size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+        <span className="truncate">{name}</span>
+        {size && <span className="shrink-0 tabular-nums">{size}</span>}
+        {playErr && <span className="shrink-0 text-warn-text">这种编码在 Mesa 里放不了</span>}
+        <button
+          type="button"
+          onClick={() => void openPath(granted).catch(() => {})}
+          className="ml-auto shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+        >
+          用系统应用打开
+        </button>
+      </span>
     </div>
   );
 }

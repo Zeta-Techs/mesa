@@ -7,6 +7,7 @@ import {
   isProseCodeSpan,
   mentionedAudioFiles,
   mentionedImageFiles,
+  mentionedVideoFiles,
   REPLY_FOLD_MIN_CHARS,
   splitReplySections,
 } from "../src/chat-reply.ts";
@@ -135,6 +136,21 @@ test("回复里提到的本机音频给播放条：相对 / 绝对 / ~/ 都认�
   ]);
   assert.deepEqual(findFileRefs(text).map((h) => h.path), ["notes/demo.md"]);
   assert.deepEqual(mentionedAudioFiles("没有音频的回复。say Mesa"), []);
+});
+
+test("回复里提到的本机视频给播放器：相对 / 绝对 / ~/ / 裸文件名都认，网址不认，大小写扩展名都收", () => {
+  const text = [
+    "README 精简版：`output/readme-short.mp4`，41 秒；原片在 /Users/me/ccode/promo/full.MOV。",
+    "录屏另存 ~/Movies/demo.webm 和 clip.mkv，在线版 https://example.com/demo.mp4",
+    "封面 output/cover.png、配乐 output/bgm.mp3 不算视频。",
+  ].join("\n");
+  assert.deepEqual(mentionedVideoFiles(text), [
+    "output/readme-short.mp4",
+    "/Users/me/ccode/promo/full.MOV",
+    "~/Movies/demo.webm",
+    "clip.mkv",
+  ]);
+  assert.deepEqual(mentionedVideoFiles("没有视频的回复。mp4 格式"), []);
 });
 
 test("回复里提到的本机图片给图片卡：带目录的路径才认，裸文件名、网址、![]() 内嵌的不重复列", () => {

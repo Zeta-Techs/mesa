@@ -85,6 +85,23 @@ export function mentionedAudioFiles(text: string): string[] {
   return [...found];
 }
 
+/** 聊天层给播放器的视频（与 project-files.ts VIDEO_EXTS 同一张表；mkv / avi 网页内核多半放不了，卡上提示系统打开） */
+const VIDEO_EXT = /\.(?:mp4|m4v|mov|webm|ogv|mkv|avi)$/i;
+
+/**
+ * 回复里提到的本机视频（2026-10-30 用户对照 Claude 客户端：生成的视频在聊天里只有一串路径）：切词口径同 mentionedAudioFiles，
+ * 裸文件名也收（多半就在会话目录下）；读不到的由视频卡自己不出卡。网址不收
+ */
+export function mentionedVideoFiles(text: string): string[] {
+  const found = new Set<string>();
+  for (const raw of text.split(/[\s`'"()（）<>[\]，。；：！？、「」]+/)) {
+    const token = raw.replace(/^[*_]+/, "").replace(/[*_.,;:!?]+$/, "");
+    if (!token || token.includes("://") || !VIDEO_EXT.test(token)) continue;
+    found.add(token);
+  }
+  return [...found];
+}
+
 /** 聊天层能内嵌的图片（与 chat-image.ts / reader.rs image_mime_for 同一张表） */
 const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|svg)$/i;
 
