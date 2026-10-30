@@ -1732,7 +1732,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   image_gen.rs               # 出图模型：model_kind 分类（与 src/model-kinds.ts 镜像）+ non_chat_launch_error（启动闸，
                              #   agents::validate_launch_compatibility 调）+ 按模型选接口出图（Gemini 原生→退对话接口 / 其余
                              #   OpenAI 出图接口）+ 改图 --image（Seedream 出图接口带 image / 其余 /images/edits 手拼 multipart，
-                             #   不认再退带 image；Gemini inlineData）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
+                             #   不认再退带 image；Gemini inlineData）+ 出图选项 --quality/--resolution/--transparent 按家族翻译
+                             #   （openai_options / gemini_body；网关 4xx 拒收去掉选项重出一次、实际分辨率不够记 note；Seedream 恒关水印）+ 设置页命令（image_gen_candidates/status/test）+ helper 入口 helper_image_cli；
                              #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
                              #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked；Codex app-server 经 pty_agent_env 同样拿到）；
                              #   find_bundled_helper 是随包 helper 的唯一查找口（同目录 → deps/ → 上一层），hooks 的原生 hook 也走它
