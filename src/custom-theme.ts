@@ -415,26 +415,33 @@ function finishTokens(p: {
     link: p.light ? "#2470d8" : "#60a0f0",
     tabline: formatHex(p.l2),
     btn: formatHex(p.light ? p.field : p.raised),
-    ...heatRamp(p.canvas, cta, p.light),
+    ...heatRamp(p.canvas, p.strip, cta, p.light),
   };
 }
 
 /**
  * 活跃度热力图四档（自定义主题专用）。内置主题的 CSS 梯子是「cta 向黑混」，彩度跟着亮度一起按比例掉——
- * 用户挑的强调色常是浅淡色（粉蓝、樱粉），底两档就成了灰石板色，整图发闷；暗强调色顶档又压不亮。
- * 这里在 OKLCH 里定：色相取强调色恒定；亮度在「画布 +0.15」到顶档之间等距（深色顶档夹在 0.72–0.88，
- * 浅色反向、顶档压到 ≤0.5 保对近白卡底 3:1）；彩度取强调色与 0.12 的较大者按档递增，超出 sRGB 就收彩度不动亮度。
- * 强调色本身近灰（C<0.03）时不补彩度——那是用户要的灰
+ * 浅淡强调色底两档成了灰石板色，暗强调色顶档又压不亮。这里在 OKLCH 里定（2026-10-31 用户三选一定「柔和、
+ * 低档不发灰」）：色相取强调色恒定；深色顶档亮度夹 0.74–0.86（暗强调色抬成柔和亮色，与内置「极简灰蓝」
+ * 同一观感），底档从卡片底（strip）往上 0.14 起、四档等距；彩度收在 0.08–0.11（压住饱和亮蓝、托住浅淡色），
+ * 按 0.7/0.8/0.9/1 递增，超出 sRGB 只收彩度不动亮度。强调色近灰（C<0.03）不补彩度——那是用户要的灰。
+ * 浅色反向：从「画布 L−0.09」到 ≤0.5，保对近白卡底 3:1
  */
-export function heatRamp(canvas: Rgb, accent: Rgb, light: boolean): Record<"heat-1" | "heat-2" | "heat-3" | "heat-4", string> {
+export function heatRamp(
+  canvas: Rgb,
+  surface: Rgb,
+  accent: Rgb,
+  light: boolean,
+): Record<"heat-1" | "heat-2" | "heat-3" | "heat-4", string> {
   const [Lc] = rgbToOklab(canvas);
+  const [Ls0] = rgbToOklab(surface);
   const [La, a, b] = rgbToOklab(accent);
   const Ca = Math.hypot(a, b);
   const h = Math.atan2(b, a);
-  const Ct = Ca < 0.03 ? Ca : Math.max(Ca, 0.12);
-  const top = light ? Math.min(0.5, La) : Math.min(0.88, Math.max(0.72, La));
-  const bottom = light ? Math.min(0.9, Lc - 0.09) : Lc + 0.15;
-  const share = light ? [0.45, 0.7, 0.9, 1] : [0.6, 0.75, 0.9, 1];
+  const Ct = Ca < 0.03 ? Ca : light ? Math.max(Ca, 0.12) : Math.min(0.11, Math.max(0.08, Ca));
+  const top = light ? Math.min(0.5, La) : Math.min(0.86, Math.max(0.74, La));
+  const bottom = light ? Math.min(0.9, Lc - 0.09) : Ls0 + 0.14;
+  const share = light ? [0.45, 0.7, 0.9, 1] : [0.7, 0.8, 0.9, 1];
   const Ls = [0, 1, 2, 3].map((i) => bottom + ((top - bottom) * i) / 3);
   const Cs = Ls.map((L, i) => maxChromaInGamut(L, Ct * share[i], h));
   // 收彩度后低档可能反超高档，自上而下压住，保彩度单调
