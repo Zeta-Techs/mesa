@@ -367,6 +367,10 @@ def global_phase(agent, gw, adir):
     cenv = {k: v for k, v in os.environ.items() if not k.upper().startswith(GLOBAL_DROP_PREFIXES)}
     # 本机假网关不走代理（Grok 的断网代理也不能挡住它；同 e2e-model-routing 各脚本）
     cenv.update(HOME=home, USERPROFILE=home, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+    # Windows 上 Codex 的家目录不看 USERPROFILE（取系统的用户目录）：不钉 CODEX_HOME 会读用户真实的 ~/.codex，
+    # 拿本机渠道真发请求（2026-10-31 Windows 实测）。临时 HOME 下的位置与 Mesa 写计划一致
+    if agent == "codex":
+        cenv["CODEX_HOME"] = os.path.join(home, ".codex")
     # OpenCode 首次要装 provider 包：本机装过就复用缓存，免得每次下载（CI 上没有缓存照常下载）
     real_cache = os.path.join(os.path.expanduser("~"), ".cache")
     if agent == "opencode" and os.path.isdir(os.path.join(real_cache, "opencode")):
