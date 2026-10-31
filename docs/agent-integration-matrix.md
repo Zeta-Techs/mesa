@@ -65,7 +65,7 @@
 |---|---|
 | 二进制 / 检测 | `qwen`（npm `@qwen-code/qwen-code`，Node ≥ 22；或 brew）；`qwen --version` |
 | 注入 env（按协议） | openai 协议：`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL`；anthropic 协议：`ANTHROPIC_*` 三件套；配合 `--auth-type openai|anthropic`。credential 优先级：CLI flags > shell env > .env > settings env。策略 env（0.22.0 bundle 全量扫 `QWEN_CODE_*` 实证）：仅 `QWEN_CODE_MAX_OUTPUT_TOKENS` 与 `QWEN_CODE_API_TIMEOUT_MS` 两条，无 temperature/top_p |
-| 全局配置 | `~/.qwen/settings.json`：`modelProviders.<协议>.models[{id, baseUrl, envKey, generationConfig}]` + `security.auth.selectedType` + `model.name`；`QWEN_HOME` 整体搬迁 |
+| 全局配置 | `~/.qwen/settings.json`：`modelProviders.<协议> = [{id, baseUrl, envKey, generationConfig}]`（**数组**，官方 model-providers 文档）+ `security.auth.selectedType` + `model.name`；`QWEN_HOME` 整体搬迁。包一层的旧写法 `modelProviders.<协议>.models` 只在文件没有 `$version`（或为 5）时被迁移成数组（0.26.3 `V5ToV4Migration`），带 `"$version": 4`（Qwen 自己写过一次就会带）时整段被忽略、退回 env 的 `OPENAI_*`（2026-11-01 假网关实测：旧写法打到 env 地址 / 密钥，数组写法打到条目的）；Mesa 写数组，读到旧写法按数组写回 |
 | 会话存储 | `~/.qwen/projects/<sanitize(cwd)>/chats/<uuid>.jsonl`（sanitize 规则同 Claude）；归档在 `chats/archive/`；目录名可能碰撞，**项目归属以首条记录的 `cwd` 为准**。**续会话按当前默认模型走（0.26.3 假网关实测，2026-10-31）**：`--continue` 续上一段时请求发给 settings.json 现在的 `model.name` 那个条目，不恢复会话当初的模型——切全局后 Qwen 属「跟当前全局走」一类 |
 | 会话格式 | JSONL `ChatRecord {uuid, parentUuid, sessionId, timestamp, type: user/assistant/tool_result/system, subtype, cwd, version, message（genai Content 格式）, usageMetadata, model}`；`custom_title` 系统记录给标题。旧版（约 <0.10，具体版本未核实）是单 JSON 文件。**易漂移** |
 | 关键启动参数 | `-m`、`--auth-type`、`--openai-api-key/--openai-base-url`（仅有的凭证 flags）、`--session-id`、`--continue/--resume` |

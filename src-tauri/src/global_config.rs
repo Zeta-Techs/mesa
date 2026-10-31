@@ -532,20 +532,26 @@ fn patch_qwen_settings(
                 e
             })
             .collect();
-        let slot = ensure_obj(&mut v, &["modelProviders", protocol])?;
-        let kept: Vec<Value> = slot
-            .get("models")
-            .and_then(|m| m.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter(|e| !qwen_mesa_entry(e) && !e.get("id").and_then(|i| i.as_str()).is_some_and(|id| models.iter().any(|m| m == id)))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        slot.insert("models".into(), json!(entries.into_iter().chain(kept).collect::<Vec<_>>()));
+        let providers = ensure_obj(&mut v, &["modelProviders"])?;
+        let kept: Vec<Value> = qwen_provider_entries(providers.get(protocol))?
+            .into_iter()
+            .filter(|e| !qwen_mesa_entry(e) && !e.get("id").and_then(|i| i.as_str()).is_some_and(|id| models.iter().any(|m| m == id)))
+            .collect();
+        providers.insert(protocol.into(), json!(entries.into_iter().chain(kept).collect::<Vec<_>>()));
     }
     to_pretty(&v)
+}
+
+/// `modelProviders.<协议>` 现有的条目。现行格式是数组（官方 model-providers 文档）；旧写法包一层 `{"models": [...]}`
+/// 只在文件没有 `$version` 时被 Qwen 迁移，带 `"$version": 4` 时整段被忽略（0.26.3 V5ToV4Migration，2026-11-01 实测），
+/// 所以读到旧写法就取出条目、按数组写回
+fn qwen_provider_entries(slot: Option<&Value>) -> Result<Vec<Value>, String> {
+    match slot {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(arr)) => Ok(arr.clone()),
+        Some(Value::Object(o)) => Ok(o.get("models").and_then(|m| m.as_array()).cloned().unwrap_or_default()),
+        Some(_) => Err("配置字段 modelProviders 里有无法识别的条目，已停止写入".into()),
+    }
 }
 
 /// Mesa 写的 Qwen 模型条目：envKey 是 Mesa 专用变量名（2026-10-30 起）
@@ -1991,7 +1997,13 @@ fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
     // Mesa 写的模型条目指着刚撤掉的 MESA_QWEN_API_KEY，留着就是 /model 里选了必失败的死条目；用户自己的条目不动
     if let Some(providers) = v.get_mut("modelProviders").and_then(|p| p.as_object_mut()) {
         for slot in providers.values_mut() {
-            if let Some(arr) = slot.get_mut("models").and_then(|m| m.as_array_mut()) {
+            // 现行数组格式，或旧的包一层 {"models": [...]}
+            let arr = match slot {
+                Value::Array(a) => Some(a),
+                Value::Object(o) => o.get_mut("models").and_then(|m| m.as_array_mut()),
+                _ => None,
+            };
+            if let Some(arr) = arr {
                 arr.retain(|e| {
                     if qwen_mesa_entry(e) {
                         if let Some(id) = e.get("id").and_then(|i| i.as_str()) {
@@ -4315,7 +4327,7 @@ mod tests {
         let out = patch_qwen_settings(None, Some("sk-q"), &p).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["env"][QWEN_MESA_KEY_ENV], "sk-q");
-        let entry = &v["modelProviders"]["openai"]["models"][0];
+        let entry = &v["modelProviders"]["openai"][0];
         assert_eq!(entry["envKey"], QWEN_MESA_KEY_ENV, "项目 .env 的 OPENAI_API_KEY 顶不掉");
         assert_eq!(entry["generationConfig"]["samplingParams"]["reasoning_effort"], "high");
     }
@@ -4456,7 +4468,7 @@ trust_level = "trusted"
         assert!(v["security"]["auth"].get("selectedType").is_none(), "Qwen OAuth 已停用：撤掉 Mesa 写的协议名，不改成 qwen-oauth");
         assert_eq!(v["env"], json!({}));
         assert!(v["model"].get("name").is_none());
-        assert!(v["modelProviders"]["openai"].is_object());
+        assert!(v["modelProviders"]["openai"].is_object(), "官方切回不改用户条目的写法");
 
         w(".gemini/.env", "GEMINI_API_KEY=sk\nGOOGLE_GEMINI_BASE_URL=https://r\nGEMINI_MODEL=glm-5\nOTHER=1\n");
         w(".gemini/settings.json", "{ // jsonc\n \"security\": {\"auth\": {\"selectedType\": \"gemini-api-key\"}}, \"model\": {\"name\": \"glm-5\"}, \"ui\": {\"theme\": \"x\"} }");
@@ -4817,8 +4829,8 @@ trust_level = "trusted"
         assert_eq!(v["env"]["OPENAI_MODEL"], "qwen3-coder");
         assert_eq!(v["model"]["name"], "qwen3-coder");
         assert!(v["env"].get("ANTHROPIC_API_KEY").is_none());
-        // modelProviders.openai.models：TUI /model 对话框的数据源
-        let models = v["modelProviders"]["openai"]["models"].as_array().unwrap();
+        // modelProviders.openai（数组）：TUI /model 对话框的数据源
+        let models = v["modelProviders"]["openai"].as_array().unwrap();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0]["id"], "qwen3-coder");
         assert_eq!(models[0]["name"], "qwen3-coder");
@@ -4843,7 +4855,7 @@ trust_level = "trusted"
         p.request_policy.max_output_tokens = Some(8192);
         let out = patch_qwen_settings(None, Some("sk-secret"), &p).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        let models = v["modelProviders"]["openai"]["models"].as_array().unwrap();
+        let models = v["modelProviders"]["openai"].as_array().unwrap();
         let sp = &models[0]["generationConfig"]["samplingParams"];
         assert_eq!(sp["temperature"], 0.6);
         assert_eq!(sp["top_p"], 0.95);
@@ -5060,18 +5072,18 @@ trust_level = "trusted"
 
     #[test]
     fn qwen_patch_model_providers_preserves_other_protocols() {
-        let existing =
-            r#"{"modelProviders": {"gemini": {"models": [{"id": "g1"}]}, "openai": {"extra": 1}}}"#;
+        let existing = r#"{"$version": 4, "modelProviders": {"gemini": [{"id": "g1"}], "openai": [{"id": "mine", "envKey": "K"}]}}"#;
         let mut p = profile("qwen");
         p.base_url = None;
         p.models = vec!["qwen3-coder".into()];
         let out = patch_qwen_settings(Some(existing), None, &p).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        // 其他协议原样保留，本协议的既有字段不清掉
-        assert_eq!(v["modelProviders"]["gemini"]["models"][0]["id"], "g1");
-        assert_eq!(v["modelProviders"]["openai"]["extra"], 1);
-        let models = v["modelProviders"]["openai"]["models"].as_array().unwrap();
-        assert_eq!(models.len(), 1);
+        // 其他协议原样保留；本协议写成数组（带 $version 4 时 Qwen 不认包一层的旧写法），用户条目留在后面
+        assert_eq!(v["$version"], 4);
+        assert_eq!(v["modelProviders"]["gemini"][0]["id"], "g1");
+        let models = v["modelProviders"]["openai"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[1]["id"], "mine");
         assert_eq!(models[0]["id"], "qwen3-coder");
         assert!(
             models[0].get("baseUrl").is_none(),
@@ -5082,6 +5094,7 @@ trust_level = "trusted"
     #[test]
     fn qwen_global_write_keeps_users_own_model_entries() {
         // 规则 3：只管自己写的条目。以前整组换掉，用户自己配的 DashScope 模型被一起删了
+        // 旧版 Mesa 写的是包一层 {"models": [...]}：读出来按数组写回
         let existing = r#"{"modelProviders": {"openai": {"models": [
             {"id": "my-own", "envKey": "DASHSCOPE_API_KEY", "baseUrl": "https://dashscope"},
             {"id": "old-mesa", "envKey": "MESA_QWEN_API_KEY", "baseUrl": "https://old-relay"},
@@ -5090,7 +5103,7 @@ trust_level = "trusted"
         let p = profile("qwen");
         let out = patch_qwen_settings(Some(existing), Some("sk-new"), &p).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
-        let ids: Vec<&str> = v["modelProviders"]["openai"]["models"]
+        let ids: Vec<&str> = v["modelProviders"]["openai"]
             .as_array()
             .unwrap()
             .iter()
@@ -5102,7 +5115,7 @@ trust_level = "trusted"
         doc["model"]["name"] = json!("m1");
         let off = patch_qwen_settings_official(&doc.to_string()).unwrap();
         let v: Value = serde_json::from_str(&off).unwrap();
-        let ids: Vec<&str> = v["modelProviders"]["openai"]["models"]
+        let ids: Vec<&str> = v["modelProviders"]["openai"]
             .as_array()
             .unwrap()
             .iter()
