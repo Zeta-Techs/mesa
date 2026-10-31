@@ -580,6 +580,7 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
     { rail: "#141414", canvas: "#191919", accent: "#82aee7" }, // 浅淡粉蓝 × 中性暗底：旧「向黑混」底两档塌成灰石板（2026-10-31 用户截图）
     { rail: "#0c0c0c", canvas: "#111111", accent: "#0169cc" }, // 暗强调：顶档须抬亮
     { rail: "#f0f0f0", canvas: "#f4f2ee", accent: "#b3554f" },
+    { rail: "#eae4d8", canvas: "#f6f3ec", accent: "#2b7a70" }, // 青绿 × 米白：顶档应就是强调色本身
   ]) {
     const derived = deriveThemeTokens(seeds).tokens;
     check(`custom ${seeds.accent}`, null, derived, lum(derived.canvas) > 200);

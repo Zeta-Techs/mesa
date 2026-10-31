@@ -425,7 +425,8 @@ function finishTokens(p: {
  * 低档不发灰」）：色相取强调色恒定；深色顶档亮度夹 0.74–0.86（暗强调色抬成柔和亮色，与内置「极简灰蓝」
  * 同一观感），底档从卡片底（strip）往上 0.14 起、四档等距；彩度收在 0.08–0.11（压住饱和亮蓝、托住浅淡色），
  * 按 0.7/0.8/0.9/1 递增，超出 sRGB 只收彩度不动亮度。强调色近灰（C<0.03）不补彩度——那是用户要的灰。
- * 浅色反向：从「画布 L−0.09」到 ≤0.5，保对近白卡底 3:1
+ * 浅色同一口径反向：从「画布 L−0.09」到顶档 ≤0.56（中等深的强调色顶档就是它本身，保对近白卡底 3:1），
+ * 彩度同样 0.08–0.11、按 0.6/0.75/0.9/1
  */
 export function heatRamp(
   canvas: Rgb,
@@ -438,10 +439,10 @@ export function heatRamp(
   const [La, a, b] = rgbToOklab(accent);
   const Ca = Math.hypot(a, b);
   const h = Math.atan2(b, a);
-  const Ct = Ca < 0.03 ? Ca : light ? Math.max(Ca, 0.12) : Math.min(0.11, Math.max(0.08, Ca));
-  const top = light ? Math.min(0.5, La) : Math.min(0.86, Math.max(0.74, La));
+  const Ct = Ca < 0.03 ? Ca : Math.min(0.11, Math.max(0.08, Ca));
+  const top = light ? Math.min(0.56, La) : Math.min(0.86, Math.max(0.74, La));
   const bottom = light ? Math.min(0.9, Lc - 0.09) : Ls0 + 0.14;
-  const share = light ? [0.45, 0.7, 0.9, 1] : [0.7, 0.8, 0.9, 1];
+  const share = light ? [0.6, 0.75, 0.9, 1] : [0.7, 0.8, 0.9, 1];
   const Ls = [0, 1, 2, 3].map((i) => bottom + ((top - bottom) * i) / 3);
   const Cs = Ls.map((L, i) => maxChromaInGamut(L, Ct * share[i], h));
   // 收彩度后低档可能反超高档，自上而下压住，保彩度单调
