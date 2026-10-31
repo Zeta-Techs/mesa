@@ -3,6 +3,8 @@
  "channel": null,
  "checks": {
   "假网关收到主对话请求": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
+  "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
   "抓屏跑完": true
  },
  "platform": "darwin",
@@ -83,5 +85,5 @@
   },
   "previewReadable": true
  },
- "version": "2.4.0"
+ "version": "2.4.1"
 }

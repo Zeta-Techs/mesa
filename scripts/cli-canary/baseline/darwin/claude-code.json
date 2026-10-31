@@ -9,13 +9,14 @@
    "-",
    "running",
    "awaiting_approval",
-   "running",
    "completed"
   ]
  },
  "checks": {
   "Mesa 收的模型别名都换得出型号": true,
   "假网关收到主对话请求": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
+  "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
   "帮助里的模型别名 Mesa 都收了": true,
   "抓屏跑完": true,
   "旁路拿到会话文件": true,
@@ -353,5 +354,5 @@
    ]
   }
  },
- "version": "2.1.314"
+ "version": "2.1.316"
 }
