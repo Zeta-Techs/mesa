@@ -1225,8 +1225,15 @@ pub(crate) fn patch_kimi_config(
 ) -> Result<String, String> {
     use toml_edit::value;
     let mut doc = parse_toml_doc(existing)?;
+    // 旧版 `ccode` 渠道：还有模型别名指着它（老会话按别名续）就留着，没人用了才撤
+    let legacy_in_use = doc
+        .get("models")
+        .and_then(|m| m.as_table_like())
+        .is_some_and(|t| {
+            t.iter().any(|(_, item)| item.get("provider").and_then(|p| p.as_str()) == Some(crate::provider_id::LEGACY))
+        });
     let providers = sub_table(doc.as_item_mut(), "providers")?;
-    if provider_id != crate::provider_id::LEGACY {
+    if provider_id != crate::provider_id::LEGACY && !legacy_in_use {
         if let Some(t) = providers.as_table_mut() {
             t.remove(crate::provider_id::LEGACY);
         }
@@ -1294,6 +1301,28 @@ pub(crate) fn patch_kimi_config(
         }
         doc["default_model"] = value(kimi_model_alias(&models[0]));
     }
+    Ok(doc.to_string())
+}
+
+/// Mesa 开的 Kimi 会话存的模型别名是 `__kimi_env_model__`（启动经 KIMI_MODEL_* 合成，agents::KIMI_ENV_MODEL_ALIAS），
+/// 离开 Mesa 用 `kimi -S` 续时别名找不到。新版全局配置里把这个别名指到这次的连接与首个模型：外面续 Mesa 开的会话走
+/// 当前全局连接；Mesa 里启动时 env 合成的同名别名优先（2.4.1 实测），不受影响。只写新版目录（旧版 Python CLI 不用这个别名）
+fn patch_kimi_env_alias(content: &str, profile: &Profile, provider_id: &str) -> Result<String, String> {
+    use toml_edit::value;
+    let Some(m) = profile.models.first() else {
+        return Ok(content.to_string());
+    };
+    let mut doc = parse_toml_doc(Some(content))?;
+    let models_tbl = sub_table(doc.as_item_mut(), "models")?;
+    let mut t = toml_edit::Table::new();
+    t["provider"] = value(provider_id);
+    t["model"] = value(m.as_str());
+    t["max_context_size"] = value(crate::model_registry::model_context_size_for(m, profile.gateway_id.as_deref()));
+    t["display_name"] = value(format!("Mesa 开的对话 · {m}"));
+    models_tbl
+        .as_table_mut()
+        .ok_or_else(|| "models 不是表，已停止写入".to_string())?
+        .insert(agents::KIMI_ENV_MODEL_ALIAS, toml_edit::Item::Table(t));
     Ok(doc.to_string())
 }
 
@@ -1908,19 +1937,11 @@ fn patch_env_file_remove(existing: &str, keys: &[&str], model_keys: &[&str], age
 }
 
 /// Kimi：默认模型改指官方登录（`kimi login`）配好的 `managed:kimi-code` 模型；
-/// 没登录过就撤掉默认模型，kimi 进门会要求 /login。Mesa 写的渠道和模型别名留在选择器里（老会话还认得渠道名），
-/// 但渠道里的明文 `api_key` 撤掉（2026-10-30）。
+/// 没登录过就撤掉默认模型，kimi 进门会要求 /login。Mesa 写的渠道和模型别名连同密钥留着：会话存的是模型别名，
+/// `kimi -S` 续中转老会话还要走原渠道（2026-10-31「切全局只动默认」，取代 10-30「撤掉渠道里的明文 api_key」——
+/// 撤了老会话一续就缺密钥；Kimi 只有明文与 `api_key_env`〔要用户 shell 导出〕两种写法，没有可现取的引用）。
 fn patch_kimi_config_official(existing: &str) -> Result<String, String> {
     let mut doc = parse_toml_doc(Some(existing))?;
-    if let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_table_like_mut()) {
-        for (name, blk) in providers.iter_mut() {
-            if crate::provider_id::is_ccode_provider(&name) {
-                if let Some(t) = blk.as_table_like_mut() {
-                    t.remove("api_key");
-                }
-            }
-        }
-    }
     let managed: Vec<String> = doc
         .get("models")
         .and_then(|m| m.as_table_like())
@@ -1944,8 +1965,9 @@ fn patch_kimi_config_official(existing: &str) -> Result<String, String> {
 }
 
 /// Grok：撤顶层 api_key / env_key 与 [endpoints].models_base_url；默认模型不是 grok 模型时撤；
-/// 指向非 x.ai 地址的 [model.<id>] 段：Mesa 写的（名字是「配置名 · 模型」）整段撤，连同明文密钥；
-/// 没有自己密钥的整段撤（留着官方登录的令牌会被发去中转）；用户手写、带自己 api_key / env_key 的留着。
+/// 指向非 x.ai 地址的 [model.<id>] 段：没有自己密钥的整段撤（留着官方登录的令牌会被发去中转）；
+/// 带自己 api_key / env_key 的留着——用户手写的不动，Mesa 写的也留（2026-10-31「切全局只动默认」，取代 10-30
+/// 「Mesa 写的连同密钥整段撤」：会话记着 current_model_id，撤了 `grok -r` 续中转老会话就找不到模型）。
 fn patch_grok_config_official(existing: &str) -> Result<String, String> {
     let mut doc = parse_toml_doc(Some(existing))?;
     doc.remove("api_key");
@@ -1976,17 +1998,13 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
     if let Some(entries) = doc.get_mut("model").and_then(|m| m.as_table_like_mut()) {
         let relay: Vec<String> = entries
             .iter()
-            .filter(|(id, item)| {
+            .filter(|(_, item)| {
                 let to_relay = item
                     .get("base_url")
                     .and_then(|u| u.as_str())
                     .is_some_and(|u| !crate::agents::grok_is_xai_endpoint(u));
                 let own_key = item.get("api_key").is_some() || item.get("env_key").is_some();
-                let mesa = item
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .is_some_and(|n| n.ends_with(&format!(" · {id}")));
-                to_relay && (mesa || !own_key)
+                to_relay && !own_key
             })
             .map(|(k, _)| k.to_string())
             .collect();
@@ -2448,6 +2466,11 @@ fn plan_writes(
                     profile.gateway_id.as_deref(),
                 )?;
                 let content = patch_kimi_effort(&content, profile, provider_type)?;
+                let content = if tag == "config.toml" {
+                    patch_kimi_env_alias(&content, profile, &profile.provider_name())?
+                } else {
+                    content
+                };
                 push(tag, path, content);
             }
         }
@@ -4295,7 +4318,7 @@ trust_level = "trusted"
         assert!(doc["models"].get("default").is_none());
         assert_eq!(doc["models"]["temperature"].as_float(), Some(0.3));
         assert!(doc["model"].get("glm-5").is_none() && doc["model"].get("grok-4").is_some());
-        assert!(doc["model"].get("k3").is_none(), "Mesa 写的中转段连同密钥撤掉");
+        assert!(doc["model"].get("k3").is_some(), "带自己密钥的中转段留着（Mesa 写的也留，老会话还要续）");
         assert!(doc["model"].get("byok").is_some(), "用户手写、带自己密钥的段留着");
         assert!(doc["mcp_servers"].get("m").is_some());
 
@@ -4941,6 +4964,17 @@ trust_level = "trusted"
     }
 
     #[test]
+    fn grok_official_keeps_relay_sections_with_their_own_key() {
+        // 会话记着 current_model_id：带自己密钥的中转段（Mesa 写的也算）留着，老会话还能续；没密钥的撤（防官方令牌发去中转）
+        let existing = "api_key = \"sk-top\"\n\n[model.relay-a]\nname = \"测试 · relay-a\"\nbase_url = \"https://relay.example.com/v1\"\napi_key = \"sk-a\"\n\n[model.keyless]\nbase_url = \"https://relay.example.com/v1\"\n";
+        let out = patch_grok_config_official(existing).unwrap();
+        let doc: toml::Value = toml::from_str(&out).unwrap();
+        assert!(doc.get("api_key").is_none());
+        assert_eq!(doc["model"]["relay-a"]["api_key"].as_str(), Some("sk-a"));
+        assert!(doc["model"].get("keyless").is_none());
+    }
+
+    #[test]
     fn opencode_keeps_old_mesa_providers_whose_key_file_exists() {
         // 老对话还要用：引用着的密钥文件在就留；文件没了的整份配置会加载失败（1.19.5 实测），撤
         let home = tmpdir("oc-keep");
@@ -4982,11 +5016,20 @@ trust_level = "trusted"
         let other = patch_kimi_effort(&out, &p, "openai").unwrap();
         let doc: toml::Value = toml::from_str(&other).unwrap();
         assert!(doc["models"]["kimi-k3"].get("default_effort").is_none());
-        // 官方切回：Mesa 渠道里的明文密钥撤掉，渠道和别名留着
+        // 官方切回：渠道、别名连同密钥留着（老会话按别名续，撤了密钥一续就失败）
         let off = patch_kimi_config_official(&out).unwrap();
         let doc: toml::Value = toml::from_str(&off).unwrap();
-        assert!(doc["providers"][&pid].get("api_key").is_none());
+        assert_eq!(doc["providers"][&pid]["api_key"].as_str(), Some("sk"));
         assert!(doc["models"].get("kimi-k3").is_some());
+        // Mesa 开的会话存的别名：全局里指到这次的连接
+        let aliased = patch_kimi_env_alias(&out, &p, &pid).unwrap();
+        let doc: toml::Value = toml::from_str(&aliased).unwrap();
+        assert_eq!(doc["models"]["__kimi_env_model__"]["provider"].as_str(), Some(pid.as_str()));
+        assert_eq!(doc["models"]["__kimi_env_model__"]["model"].as_str(), Some("kimi-k3"));
+        // 还有别名指着旧版 ccode 渠道时不撤它
+        let legacy = "[providers.ccode]\ntype = \"openai\"\n[models.old]\nprovider = \"ccode\"\nmodel = \"x\"\n";
+        let kept = patch_kimi_config(Some(legacy), "kimi", &p.name, Some("https://k/v1"), Some("sk"), &p.models, true, &pid, None).unwrap();
+        assert!(kept.contains("[providers.ccode]"));
     }
 
     /// CLI 金丝雀「全局配置」层（scripts/cli-canary）：按 Mesa 真实的设为全局写计划，把某家的配置写进

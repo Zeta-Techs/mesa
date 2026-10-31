@@ -2080,7 +2080,7 @@ fn official_settings_blanks(
 /// Kimi 新版把 KIMI_MODEL_* 合成的模型注册成这个别名，但它只当「新会话」的默认模型：
 /// `-S` 续聊按会话里存的模型别名走（2.3.3 实证：换连接后续聊仍打旧连接的 key，401）。
 /// 显式 `-m` 点名它才盖过，之后再续聊也沿用。旧版 Python CLI 没有这个别名，不加。
-const KIMI_ENV_MODEL_ALIAS: &str = "__kimi_env_model__";
+pub(crate) const KIMI_ENV_MODEL_ALIAS: &str = "__kimi_env_model__";
 
 fn kimi_env_model_args(variant: Option<&str>) -> Vec<String> {
     if variant == Some("legacy") {
