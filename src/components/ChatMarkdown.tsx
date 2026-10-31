@@ -589,6 +589,7 @@ export function ChatImageCard({
         <img
           src={src}
           alt={name}
+          decoding="async"
           className="max-h-64 max-w-full rounded-md border border-hairline object-contain"
         />
       </button>

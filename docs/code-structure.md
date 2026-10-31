@@ -703,7 +703,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   image-view.ts              # 图片预览纯计算：imageFitScale（适应窗口，小图不放大）/ formatBytes（tests/image-view.test.ts）
   file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
-                             # 聊天图片卡与 md 内嵌图共用，切回会话首帧就有图；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）
+                             # 聊天图片卡与 md 内嵌图共用，切回会话首帧就有图；首次读走二进制通道 read_image_raw（不经 base64）、上屏前先 decode；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；
@@ -1612,7 +1612,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # reader_for_note 归属反查版（注册项目根直含 / 工作区 worktree 映射主仓副本，未合并明确报错）+
                              # spot_check_item 抽查核对档一篇（2026-10-23：笔记限 base/notes，base 为本项目工作区即只读——不映射主仓；
                              # PDF 项目根配对优先、再看 included.json pdf 字段；题名/摘要取 included.json，「待补」「待核」不算）+
-                             # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核）+
+                             # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核；read_image_raw 同校验、二进制 IPC 回原始字节）+
                              # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3；写入内核 write_notes_asset
                              #   与 phone_drop 共用）/ append_note_image

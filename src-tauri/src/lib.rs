@@ -1058,6 +1058,7 @@ pub fn run() {
             about::build_info,
             feedback::feedback_endpoint,
             feedback::feedback_error_log,
+            reader::read_image_raw,
             feedback::feedback_chat_snapshot,
             feedback::submit_feedback,
             feedback::test_feedback_smtp,

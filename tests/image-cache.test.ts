@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createImageLru } from "../src/image-cache.ts";
+import { createImageLru, imageMime } from "../src/image-cache.ts";
 
 test("读图缓存：命中刷新新旧次序，超条数淘汰最久没用的并释放地址", () => {
   const revoked: string[] = [];
@@ -50,4 +50,13 @@ test("读图缓存：磁盘换版时单删一条，不释放屏上还在用的�
   assert.deepEqual(revoked, []);
   lru.delete("missing");
   assert.equal(lru.size, 1);
+});
+
+test("二进制读图按扩展名给 mime（svg 不带对类型画不出来）", () => {
+  assert.equal(imageMime("/a/b.PNG"), "image/png");
+  assert.equal(imageMime("C:\\x\\y.jpeg"), "image/jpeg");
+  assert.equal(imageMime("~/z.jpg"), "image/jpeg");
+  assert.equal(imageMime("/fig.svg"), "image/svg+xml");
+  assert.equal(imageMime("/fig.webp"), "image/webp");
+  assert.equal(imageMime("/v1.2/noext"), "application/octet-stream");
 });

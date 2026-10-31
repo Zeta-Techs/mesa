@@ -66,7 +66,7 @@ export function cachedImageUrl(path: string): string | undefined {
   return lru.get(path);
 }
 
-/** 经 read_image_bytes 白名单读图，转成 blob URL 存进缓存；同一路径同时只读一次 */
+/** 经 read_image_raw 白名单读图，转成 blob URL 存进缓存；同一路径同时只读一次 */
 export function loadImageUrl(path: string, cwdHint: string | null | undefined): Promise<string> {
   const hit = lru.get(path);
   if (hit) return Promise.resolve(hit);
@@ -77,22 +77,39 @@ function fetchImage(path: string, cwdHint: string | null | undefined): Promise<s
   const key = `${path}\u0000${cwdHint ?? ""}`;
   const pending = inflight.get(key);
   if (pending) return pending;
+  // 二进制通道直接拿字节（不经 base64 + JSON 在主线程解析），上屏前先在后台解码好：
+  // 原先首次切到带图的会话，解析几 MB 字符串 + 首帧同步解码大图会顿一下（2026-10-31 用户）
   const p = Promise.all([
-    invoke<{ mime: string; data: string }>("read_image_bytes", { path, cwdHint: cwdHint ?? null }),
+    invoke<ArrayBuffer>("read_image_raw", { path, cwdHint: cwdHint ?? null }),
     fileStamp(path, cwdHint),
   ])
-    .then(([dto, stamp]) => {
-      const bin = atob(dto.data);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const url = URL.createObjectURL(new Blob([bytes], { type: dto.mime }));
-      lru.set(path, url, bytes.length);
+    .then(async ([buf, stamp]) => {
+      const url = URL.createObjectURL(new Blob([buf], { type: imageMime(path) }));
+      await predecode(url);
+      lru.set(path, url, buf.byteLength);
       stamps.set(path, stampKey(stamp));
       return url;
     })
     .finally(() => inflight.delete(key));
   inflight.set(key, p);
   return p;
+}
+
+/** 按扩展名给 mime（与后端 image_mime_for 同表；svg 必须带对类型才画得出） */
+export function imageMime(path: string): string {
+  const ext = /\.([^./\\]+)$/.exec(path)?.[1]?.toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "gif" || ext === "webp" || ext === "png") return `image/${ext}`;
+  return "application/octet-stream";
+}
+
+/** 让 WebView 先把图解码进它的图片缓存，<img> 用同一地址上屏时不再同步解码；解不出也照常交地址 */
+async function predecode(url: string): Promise<void> {
+  if (typeof Image === "undefined") return;
+  const img = new Image();
+  img.src = url;
+  await img.decode().catch(() => {});
 }
 
 /**

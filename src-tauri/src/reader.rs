@@ -677,6 +677,15 @@ fn image_magic_ok(mime: &str, bytes: &[u8]) -> bool {
 }
 
 fn read_image_sync(path: &str, cwd_hint: Option<&str>) -> Result<ImageBytesDto, String> {
+    let (mime, bytes) = read_image_checked(path, cwd_hint)?;
+    Ok(ImageBytesDto {
+        mime: mime.into(),
+        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+}
+
+/// 白名单 + 扩展名 + 文件头三道校验后的原始字节
+fn read_image_checked(path: &str, cwd_hint: Option<&str>) -> Result<(&'static str, Vec<u8>), String> {
     let expanded = crate::sessions::expand_tilde(path);
     let mime =
         image_mime_for(Path::new(&expanded)).ok_or("只支持 png/jpg/jpeg/gif/webp/svg 图片")?;
@@ -687,10 +696,7 @@ fn read_image_sync(path: &str, cwd_hint: Option<&str>) -> Result<ImageBytesDto, 
     if !image_magic_ok(mime, &bytes) {
         return Err("文件内容不是有效的图片（扩展名对但内容不是 png/gif/jpg/webp/svg）".into());
     }
-    Ok(ImageBytesDto {
-        mime: mime.into(),
-        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
-    })
+    Ok((mime, bytes))
 }
 
 /// 笔记阅读版式的图片渲染：白名单内图片字节 → data URL 素材
@@ -702,6 +708,21 @@ pub async fn read_image_bytes(
     tauri::async_runtime::spawn_blocking(move || read_image_sync(&path, cwd_hint.as_deref()))
         .await
         .map_err(|e| format!("读取图片失败: {e}"))?
+}
+
+/// 聊天图片卡 / md 内嵌图缓存（image-cache.ts）用：同一白名单，原始字节走二进制 IPC。
+/// 几 MB 的图不再经 base64 + JSON 上前端主线程解析（2026-10-31 用户：首次切到带图的聊天顿一下）；
+/// mime 由前端按扩展名取（与 image_mime_for 同表）
+#[tauri::command]
+pub async fn read_image_raw(
+    path: String,
+    cwd_hint: Option<String>,
+) -> Result<tauri::ipc::Response, String> {
+    let (_mime, bytes) =
+        tauri::async_runtime::spawn_blocking(move || read_image_checked(&path, cwd_hint.as_deref()))
+            .await
+            .map_err(|e| format!("读取图片失败: {e}"))??;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 // ===== 聊天层音频通道（2026-10-19）=====
