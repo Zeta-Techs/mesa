@@ -123,6 +123,8 @@ export function vendorForSlots(slots: ProtocolSlots): VendorId | null {
 
 /** 用量页套餐标识（后端给的 provider 键）→ 厂商 */
 export function vendorForPlanProvider(provider: string): VendorId | null {
+  if (provider === "claude") return "anthropic";
+  if (provider === "codex") return "openai";
   return provider === "zhipu" || provider === "kimi" || provider === "minimax" ? provider : null;
 }
 

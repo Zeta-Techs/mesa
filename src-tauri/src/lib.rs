@@ -134,6 +134,7 @@ mod sheet_preview;
 mod skills;
 mod storage;
 mod subscription_quota;
+mod official_quota;
 mod task_review;
 mod tray;
 mod ui_zoom;
@@ -943,7 +944,6 @@ pub fn run() {
             usage::usage_trend,
             subscription_quota::plan_quota_overview,
             subscription_quota::plan_use_reset_card,
-            subscription_quota::plan_quota_console_url,
             gateway_balance::gateway_balance_overview,
             usage::top_sessions,
             usage::session_usage,

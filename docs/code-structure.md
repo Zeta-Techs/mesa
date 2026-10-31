@@ -1364,7 +1364,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   （高层任意前缀命中即胜、同层最长前缀优先——用户写短前缀即覆盖低层细分代；
                              #   内置表口径 2026-08-31 各官方页，跨代改价给新代加更长前缀、旧价留给老会话归属）
   subscription_quota.rs      # 订阅余量查询（用量页「订阅余量」卡，多供应商一张卡可切换，2026-09-19）：
-                             #   智谱 / Kimi For Coding / MiniMax 三家（火山方舟未接——控制面 OpenAPI 需 IAM AK/SK
+                             #   智谱 / Kimi For Coding（api.kimi.com 国内 / api.kimi.ai 国际）/ MiniMax（minimaxi.com·minimax.cn 国内、
+                             #   minimax.io 国际；国内额度恒查 api.minimaxi.com）三家；官方账号行由 official_quota.rs 并发查、排在网关行后，
+                             #   共用 DTO / 缓存 / settle_fresh 失败回落；「去控制台」地址随行下发（DTO console_url，前端不拼）（火山方舟未接——控制面 OpenAPI 需 IAM AK/SK
                              #   签名，与网关单密钥模型不符，待网关加 AK/SK 字段后单批做）。
                              #   智谱额度 GET /api/monitor/usage/quota/limit（limits[] type∈TOKENS_LIMIT|CREDIT_LIMIT、
                              #   unit 3=5h/6=周锚定禁按重置时间排序、percentage=已用；cc-switch/CodingPlanQuota 口径）+
@@ -1390,6 +1392,11 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   标 fromCache；无后台轮询；不注出网代理；
                              #   复用 reqwest Client（连接池，勿退回每请求新建 Client = 每次重新握手）；
                              #   plan_quota_overview 多网关并发（spawn 全部再按序收），等待 ≈ 最慢一家不是相加
+  official_quota.rs          # 订阅余量卡的官方账号行（2026-10-31）：Claude（钥匙串 Claude Code-credentials 先带账户名再不带查，
+                             #   设 CLAUDE_CONFIG_DIR 时服务名加目录 sha256 前 8 位；非 macOS 读 .credentials.json）→ GET api.anthropic.com/api/oauth/usage
+                             #   （five_hour / seven_day）；Codex（{CODEX_HOME}/auth.json tokens.access_token）→ GET chatgpt.com/backend-api/wham/usage
+                             #   （主 / 副窗按 limit_window_seconds 归 5 小时 / 周 / 月）。只读凭证、**绝不刷新回写**，过期提示用一次 CLI；
+                             #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）；参照 .reference/paseo 两个 usage 插件
   gateway_balance.rs         # 网关余额查询（用量页「网关余额」卡，与订阅余量并列，2026-09-20）：
                              #   New API 兼容预付钱包，出卡零配置（槽 URL 主机命中 zetatechs.com 即出；加站点 = WALLET_HOSTS 加一条）；
                              #   公开 GET {origin}/api/status 取 quota_display_type / quota_per_unit；

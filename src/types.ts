@@ -294,7 +294,7 @@ export interface PlanResetCardsDto {
 export interface PlanQuotaDto {
   gatewayId: string;
   gatewayName: string;
-  /** zhipu | kimi | minimax（显示名前端映射） */
+  /** zhipu | kimi | minimax；官方账号行 claude | codex（gatewayId 为 official:…）。显示名前端映射 */
   provider: string;
   planLevel: string | null;
   ok: boolean;
@@ -306,6 +306,8 @@ export interface PlanQuotaDto {
   /** 本条数据时间（毫秒 epoch） */
   queriedAt: number;
   fromCache: boolean;
+  /** 「去控制台」地址：后端按供应商与站点（国内 / 国际）给，前端不自己拼 */
+  consoleUrl: string;
 }
 
 /** 网关余额（用量页「网关余额」卡）：New API 预付钱包，与订阅余量并列 */

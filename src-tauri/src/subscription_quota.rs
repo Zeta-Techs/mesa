@@ -1,5 +1,6 @@
 //! 订阅余量查询（用量页「订阅余量」卡，多供应商一张卡可切换）：
-//! 智谱 GLM Coding Plan + Kimi For Coding + MiniMax Coding Plan（2026-09-19）。
+//! 智谱 GLM Coding Plan + Kimi For Coding + MiniMax Coding Plan（2026-09-19）；
+//! Claude / Codex 官方账号的行在 `official_quota.rs`（2026-10-31），共用本模块的 DTO 与缓存。
 //! 接口规格 = 四个开源实现交叉实证（cc-switch / OmniRoute / CodingPlanQuota / quotio-desktop）：
 //! - 智谱额度：GET {base}/api/monitor/usage/quota/limit（团队版 ?type=2 + bigmodel-organization/project 头）
 //!   Authorization: Bearer <key>（OmniRoute/quotio 口径；cc-switch 用裸 key 亦通，智谱两种都认）。
@@ -17,13 +18,14 @@
 //!   （2026-09-19 用户拿官网比对实测修正）、api.z.ai 按 UTC（OmniRoute 实证）。信封 fail-closed：
 //!   success==true 且 code ∈ {0,200}；列表要求 fiveHourResets/weekResets 两桶都是数组
 //!   （截断响应不得当作 0 张）；业务码 1001 = 密钥失效。
-//! - Kimi For Coding：GET https://api.kimi.com/coding/v1/usages，Bearer。根级 limits[] 每项
+//! - Kimi For Coding：GET https://{api.kimi.com|api.kimi.ai}/coding/v1/usages（国内 / 国际站），Bearer。根级 limits[] 每项
 //!   detail.limit/remaining 是「5 小时窗配额点数」（多模型各一窗），usage 是周限额；
 //!   used = limit - remaining（下限 0），utilization = used/limit*100；resetTime 字符串/毫秒皆可。
 //!   多个 5h 窗取 utilization 最高（最紧）的一个展示，其余不摊开（cc-switch 原样摊多条同名 tier，
 //!   Mesa 卡片一窗一行，取最紧的不失真）。无重置卡接口。
 //! - MiniMax：GET https://{api.minimaxi.com|api.minimax.io}/v1/api/openplatform/coding_plan/remains，
-//!   Bearer。base_resp.status_code != 0 即业务错；model_remains[] 只取 model_name=="general"，
+//!   Bearer。国内新推理域名 api.minimax.cn 同一账号体系，额度仍查 api.minimaxi.com（该接口只在旧域名有出处，
+//!   cc-switch coding_plan.rs 同口径）。base_resp.status_code != 0 即业务错；model_remains[] 只取 model_name=="general"，
 //!   字段是「剩余百分比」要反转为已用；周桶仅 current_weekly_status==1 才有（3 = 无周限额）。
 //!   无重置卡接口。
 //! - 火山方舟 Coding/Agent Plan 未接：查询走控制面 OpenAPI 需 IAM AK/SK 签名，与网关单密钥
@@ -42,6 +44,7 @@ use std::time::Duration;
 const QUOTA_PATH: &str = "/api/monitor/usage/quota/limit";
 const RESET_CARD_PATH: &str = "/api/biz/customer-package-reset";
 const KIMI_USAGE_URL: &str = "https://api.kimi.com/coding/v1/usages";
+const KIMI_GLOBAL_USAGE_URL: &str = "https://api.kimi.ai/coding/v1/usages";
 const MINIMAX_QUOTA_PATH: &str = "/v1/api/openplatform/coding_plan/remains";
 /// 进程内缓存 TTL：与前端用量页可见期 2 分钟自动轮询对齐（缓存挡的是秒级重复进页，
 /// 不是省轮询）；页面不可见/后台不轮询
@@ -52,8 +55,7 @@ const ZHIPU_CONSOLE_URL: &str = "https://bigmodel.cn/coding-plan/personal/usage"
 
 pub const WINDOW_FIVE_HOUR: &str = "five_hour";
 pub const WINDOW_WEEKLY: &str = "weekly";
-/// 闭集保留位：智谱暂无月窗（火山方舟才有），接入新供应商时复用同一 DTO
-#[allow(dead_code)]
+/// 月窗：目前只有 Codex 免费档（30 天窗，official_quota.rs）
 pub const WINDOW_MONTHLY: &str = "monthly";
 
 // ===== DTO（camelCase 出站；绝无密钥字段） =====
@@ -102,6 +104,8 @@ pub struct PlanQuotaDto {
     pub reset_cards: PlanResetCardsDto,
     pub queried_at: i64,
     pub from_cache: bool,
+    /// 「去控制台」打开的地址：按这一行的供应商和站点（国内 / 国际）给，前端不自己拼
+    pub console_url: String,
 }
 
 // ===== 供应商识别（槽 URL 命中）与上下文 =====
@@ -109,7 +113,7 @@ pub struct PlanQuotaDto {
 #[derive(Debug, Clone, PartialEq)]
 enum PlanProvider {
     Zhipu { region: ZhipuRegion },
-    Kimi,
+    Kimi { global: bool },
     MiniMax { international: bool },
 }
 
@@ -117,23 +121,21 @@ impl PlanProvider {
     fn id(&self) -> &'static str {
         match self {
             PlanProvider::Zhipu { .. } => "zhipu",
-            PlanProvider::Kimi => "kimi",
+            PlanProvider::Kimi { .. } => "kimi",
             PlanProvider::MiniMax { .. } => "minimax",
         }
     }
 
-    /// 控制台深链（智谱是用户给的准确入口；其余为平台首页，按需校准）
+    /// 控制台深链：智谱是用户给的用量页；Kimi 是 Kimi Code 控制台（套餐与按量的 Moonshot 开放平台
+    /// 不是一个后台）；MiniMax 是套餐页（2026-10-31 实测旧路径 user-center/payment/... 跳到 console/plan）
     fn console_url(&self) -> &'static str {
         match self {
-            PlanProvider::Zhipu { .. } => ZHIPU_CONSOLE_URL,
-            PlanProvider::Kimi => "https://platform.moonshot.ai",
-            PlanProvider::MiniMax { international } => {
-                if *international {
-                    "https://platform.minimax.io"
-                } else {
-                    "https://platform.minimaxi.com"
-                }
-            }
+            PlanProvider::Zhipu { region: ZhipuRegion::Cn } => ZHIPU_CONSOLE_URL,
+            PlanProvider::Zhipu { region: ZhipuRegion::International } => "https://z.ai/subscribe",
+            PlanProvider::Kimi { global: false } => "https://www.kimi.com/code/console",
+            PlanProvider::Kimi { global: true } => "https://www.kimi.ai/code/console",
+            PlanProvider::MiniMax { international: true } => "https://platform.minimax.io/console/plan",
+            PlanProvider::MiniMax { international: false } => "https://platform.minimax.cn/console/plan",
         }
     }
 
@@ -142,8 +144,9 @@ impl PlanProvider {
     }
 }
 
-/// 槽 URL 命中订阅套餐网关：智谱 bigmodel.cn / api.z.ai；Kimi For Coding api.kimi.com；
-/// MiniMax minimaxi.com（国内）/ minimax.io（国际）。普通按量付费端点不命中。
+/// 槽 URL 命中订阅套餐网关：智谱 bigmodel.cn / api.z.ai；Kimi For Coding api.kimi.com（国内）/
+/// api.kimi.ai（国际）；MiniMax minimaxi.com·minimax.cn（国内）/ minimax.io（国际）。普通按量付费端点不命中。
+/// 前端 `plan-quota.ts gatewayHasPlanQuota` 同口径。
 fn detect_plan_provider(slots: &ProtocolSlots) -> Option<PlanProvider> {
     let urls = [
         slots.anthropic.as_deref(),
@@ -165,14 +168,17 @@ fn detect_plan_provider(slots: &ProtocolSlots) -> Option<PlanProvider> {
             });
         }
         if u.contains("api.kimi.com") {
-            return Some(PlanProvider::Kimi);
+            return Some(PlanProvider::Kimi { global: false });
+        }
+        if u.contains("api.kimi.ai") {
+            return Some(PlanProvider::Kimi { global: true });
         }
         if u.contains("minimax.io") {
             return Some(PlanProvider::MiniMax {
                 international: true,
             });
         }
-        if u.contains("minimaxi.com") {
+        if u.contains("minimaxi.com") || u.contains("minimax.cn") {
             return Some(PlanProvider::MiniMax {
                 international: false,
             });
@@ -228,7 +234,7 @@ fn team_headers(
     (get("bigmodel-organization"), get("bigmodel-project"))
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -891,6 +897,7 @@ async fn refresh_gateway(gateway: &Gateway, ctx: &PlanCtx) -> PlanQuotaDto {
         reset_cards: PlanResetCardsDto::default(),
         queried_at: now_ms(),
         from_cache: false,
+        console_url: ctx.provider.console_url().into(),
     };
     // 1) 额度（按供应商分派端点与解析器）
     let quota = match &ctx.provider {
@@ -902,8 +909,9 @@ async fn refresh_gateway(gateway: &Gateway, ctx: &PlanCtx) -> PlanQuotaDto {
             }
             fetch_and_parse(&url, ctx, team, |body| parse_zhipu_quota(&body)).await
         }
-        PlanProvider::Kimi => {
-            fetch_and_parse(KIMI_USAGE_URL, ctx, false, |body| {
+        PlanProvider::Kimi { global } => {
+            let url = if *global { KIMI_GLOBAL_USAGE_URL } else { KIMI_USAGE_URL };
+            fetch_and_parse(url, ctx, false, |body| {
                 parse_kimi_quota(&body).map(|w| (None, w))
             })
             .await
@@ -998,7 +1006,7 @@ fn plan_ctx_for(gateway: &Gateway) -> Result<Option<PlanCtx>, String> {
     }))
 }
 
-fn cache_get(gateway_id: &str, now: i64) -> Option<PlanQuotaDto> {
+pub(crate) fn cache_get(gateway_id: &str, now: i64) -> Option<PlanQuotaDto> {
     quota_cache().lock().ok().and_then(|map| {
         map.get(gateway_id)
             .filter(|e| now - e.at <= CACHE_TTL_MS)
@@ -1038,6 +1046,8 @@ fn cache_invalidate(gateway_id: &str) {
 #[tauri::command]
 pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
     let force = force.unwrap_or(false);
+    // 官方账号（Claude / Codex）与网关行并发查，排在网关行后面
+    let official = tauri::async_runtime::spawn(crate::official_quota::official_rows(force));
     let gateways = crate::gateway_store::load_gateways().unwrap_or_default();
     let mut rows: Vec<Option<PlanQuotaDto>> = (0..gateways.len()).map(|_| None).collect();
     let mut jobs: Vec<(usize, Gateway, PlanCtx)> = Vec::new();
@@ -1045,7 +1055,7 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
     for gateway in gateways {
         let idx = cursor;
         cursor += 1;
-        let provider_id = detect_plan_provider(&gateway.slots).map(|p| p.id().to_string());
+        let detected = detect_plan_provider(&gateway.slots);
         let ctx = match plan_ctx_for(&gateway) {
             Ok(Some(ctx)) => ctx,
             Ok(None) => continue,
@@ -1054,15 +1064,16 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
                 rows[idx] = Some(PlanQuotaDto {
                     gateway_id: gateway.id.clone(),
                     gateway_name: gateway.name.clone(),
-                    provider: provider_id.clone().unwrap_or_default(),
+                    provider: detected.as_ref().map(|p| p.id().to_string()).unwrap_or_default(),
                     plan_level: None,
                     ok: false,
                     error: Some(format!("读取密钥失败: {e}")),
                     windows: Vec::new(),
-                    reset_cards_supported: provider_id.as_deref().is_some_and(|id| id == "zhipu"),
+                    reset_cards_supported: detected.as_ref().is_some_and(|p| p.supports_reset_cards()),
                     reset_cards: PlanResetCardsDto::default(),
                     queried_at: now_ms(),
                     from_cache: false,
+                    console_url: detected.as_ref().map(|p| p.console_url().to_string()).unwrap_or_default(),
                 });
                 continue;
             }
@@ -1080,6 +1091,7 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
                 reset_cards: PlanResetCardsDto::default(),
                 queried_at: now_ms(),
                 from_cache: false,
+                console_url: ctx.provider.console_url().into(),
             });
             continue;
         }
@@ -1103,23 +1115,31 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
         .collect();
 
     for handle in handles {
-        let Ok((idx, mut dto)) = handle.await else {
+        let Ok((idx, dto)) = handle.await else {
             continue;
         };
-        if !dto.ok {
-            // 瞬时失败回落上次成功值（标 fromCache），不拿错误行盖掉好数据
-            if let Some(prev) = cache_get_stale(&dto.gateway_id).filter(|p| p.ok) {
-                let queried_at = prev.queried_at;
-                dto = prev;
-                dto.from_cache = true;
-                dto.queried_at = queried_at;
-            }
-        } else {
-            cache_put(&dto);
-        }
-        rows[idx] = Some(dto);
+        rows[idx] = Some(settle_fresh(dto));
     }
-    rows.into_iter().flatten().collect()
+    let mut out: Vec<PlanQuotaDto> = rows.into_iter().flatten().collect();
+    if let Ok(official) = official.await {
+        out.extend(official);
+    }
+    out
+}
+
+/// 刚查回的一行入缓存；失败时回落上次成功值（标 fromCache），不拿错误行盖掉好数据
+pub(crate) fn settle_fresh(mut dto: PlanQuotaDto) -> PlanQuotaDto {
+    if !dto.ok {
+        if let Some(prev) = cache_get_stale(&dto.gateway_id).filter(|p| p.ok) {
+            let queried_at = prev.queried_at;
+            dto = prev;
+            dto.from_cache = true;
+            dto.queried_at = queried_at;
+        }
+    } else {
+        cache_put(&dto);
+    }
+    dto
 }
 
 /// 用一张重置卡（消费性写操作）：显式命令触发，前端必须确认弹窗。
@@ -1202,20 +1222,6 @@ pub async fn plan_use_reset_card(
     Ok(dto)
 }
 
-/// 「去控制台」深链：按供应商返回平台控制台入口（智谱是用户提供的准确入口）
-#[tauri::command]
-pub fn plan_quota_console_url(provider: Option<String>) -> String {
-    match provider.as_deref() {
-        Some("kimi") => PlanProvider::Kimi.console_url().to_string(),
-        Some("minimax") => PlanProvider::MiniMax {
-            international: true,
-        }
-        .console_url()
-        .to_string(),
-        _ => ZHIPU_CONSOLE_URL.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1259,7 +1265,18 @@ mod tests {
         );
         assert_eq!(
             detect_plan_provider(&slots_with(&[("anthropic", "https://api.kimi.com/coding")])),
-            Some(PlanProvider::Kimi)
+            Some(PlanProvider::Kimi { global: false })
+        );
+        assert_eq!(
+            detect_plan_provider(&slots_with(&[("openai", "https://api.kimi.ai/coding/v1")])),
+            Some(PlanProvider::Kimi { global: true })
+        );
+        // MiniMax 国内新推理域名（同一账号体系，额度照旧查 api.minimaxi.com）
+        assert_eq!(
+            detect_plan_provider(&slots_with(&[("anthropic", "https://api.minimax.cn/anthropic")])),
+            Some(PlanProvider::MiniMax {
+                international: false
+            })
         );
         assert_eq!(
             detect_plan_provider(&slots_with(&[(

@@ -878,7 +878,7 @@ AI 写好、要你来填的清单，行上都是 **打开填写** 和 **填好�
 
 ## 13. 用量、外观与设置
 
-- **用量**：今天 / 7 天 / 30 天 / 全部花费；官方订阅显示「订阅」。配了智谱 Coding Plan、Kimi For Coding、MiniMax Coding Plan 时有 **订阅余量**；配了 New API 类预付钱包网关时有 **网关余额**（需在网关库填系统访问令牌）。
+- **用量**：今天 / 7 天 / 30 天 / 全部花费；官方订阅显示「订阅」。配了智谱 Coding Plan、Kimi For Coding、MiniMax Coding Plan，或 Claude Code / Codex 登录了官方账号时有 **订阅余量**；配了 New API 类预付钱包网关时有 **网关余额**（需在网关库填系统访问令牌）。
 
 ![23](23.png)
 

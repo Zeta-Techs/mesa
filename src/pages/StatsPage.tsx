@@ -35,6 +35,7 @@ import {
   planWindowLabel,
   planWindowsByTightness,
   gatewayHasPlanQuota,
+  planSwipeTarget,
   planGatewayNameVisible,
   planLevelLabel,
   quotaTone,
@@ -762,7 +763,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   /** 活跃度区块的独立刷新信号：页级「刷新」重建索引后一并重拉（与 range 无关，不进 load） */
   const [activityRefresh, setActivityRefresh] = useState(0);
 
-  // 订阅余量卡（智谱/Kimi/MiniMax 一张卡切换）：进页查 + 可见期 2 分钟自动轮询，手动刷新才 force
+  // 订阅余量卡（智谱/Kimi/MiniMax 网关 + Claude/Codex 官方账号，一张卡切换）：进页查 + 可见期 2 分钟自动轮询，手动刷新才 force
   const [planRows, setPlanRows] = useState<PlanQuotaDto[]>([]);
   const [planActive, setPlanActive] = useState<string | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
@@ -783,6 +784,47 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   // 余量 / 余额卡默认收起（2026-10-29 用户：信息太多），各自记在本机
   const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
   const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
+  // 收起态左右滑动切换供应商：触控板横向轻扫（wheel deltaX）或按住拖动；滑过之后吞掉随之而来的那次点击（否则会顺手展开）
+  const planSwipe = useRef({ acc: 0, lockUntil: 0, startX: null as number | null, swipedAt: 0 });
+  const planStep = (dir: 1 | -1) => {
+    const next = planSwipeTarget(planRows.map((r) => r.gatewayId), planActive ?? planRows[0]?.gatewayId ?? null, dir);
+    if (next) setPlanActive(next);
+  };
+  const onPlanWheel = (e: React.WheelEvent) => {
+    if (planRows.length < 2 || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    const st = planSwipe.current;
+    const now = performance.now();
+    // 一次轻扫后惯性还会来一串事件：锁住，事件不停就一直顺延，停 250ms 才放开
+    if (now < st.lockUntil) {
+      st.lockUntil = now + 250;
+      return;
+    }
+    st.acc += e.deltaX;
+    if (Math.abs(st.acc) >= 40) {
+      planStep(st.acc > 0 ? 1 : -1);
+      st.acc = 0;
+      st.lockUntil = now + 250;
+      st.swipedAt = now;
+    }
+  };
+  const onPlanPointerDown = (e: React.PointerEvent) => {
+    if (planRows.length < 2 || e.button !== 0) return;
+    planSwipe.current.startX = e.clientX;
+  };
+  const onPlanPointerUp = (e: React.PointerEvent) => {
+    const st = planSwipe.current;
+    if (st.startX == null) return;
+    const dx = e.clientX - st.startX;
+    st.startX = null;
+    if (Math.abs(dx) >= 40) {
+      planStep(dx < 0 ? 1 : -1);
+      st.swipedAt = performance.now();
+    }
+  };
+  const onPlanSummaryOpen = () => {
+    if (performance.now() - planSwipe.current.swipedAt < 300) return;
+    togglePlanOpen();
+  };
   const togglePlanOpen = () =>
     setPlanOpen((v) => {
       localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
@@ -889,10 +931,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  function openPlanConsole(provider: string) {
-    void invoke<string>("plan_quota_console_url", { provider })
-      .then((url) => openUrl(url))
-      .catch(() => setPlanError("无法打开外部链接"));
+  function openPlanConsole(url: string) {
+    void openUrl(url).catch(() => setPlanError("无法打开外部链接"));
   }
 
   // 并发守卫：快速切换范围时旧响应不得覆盖新范围
@@ -1383,7 +1423,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     <button
                       type="button"
                       className={ghostActionClass}
-                      onClick={() => openPlanConsole(row.provider)}
+                      onClick={() => openPlanConsole(row.consoleUrl)}
                       title="在系统浏览器打开这家平台的控制台"
                     >
                       去控制台 ↗
@@ -1393,8 +1433,22 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 {planError && (
                   <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
                 )}
-                {/* 收起时只看各窗已用（5 小时 / 本周…），展开才有大数字、进度条、重置卡、多家切换 */}
+                {/* 收起时只看各窗已用（5 小时 / 本周…），多家时左右滑动切换、不放标签（2026-10-31 用户）；
+                    展开才有大数字、进度条、重置卡、多家切换标签 */}
                 {!planOpen ? (
+                  <div
+                    className="select-none"
+                    onWheel={onPlanWheel}
+                    onPointerDown={onPlanPointerDown}
+                    onPointerUp={onPlanPointerUp}
+                    onPointerCancel={() => (planSwipe.current.startX = null)}
+                    onKeyDown={(e) => {
+                      if (planRows.length < 2) return;
+                      if (e.key === "ArrowRight") planStep(1);
+                      else if (e.key === "ArrowLeft") planStep(-1);
+                    }}
+                    title={planRows.length > 1 ? `左右滑动切换（${planRows.findIndex((r) => r.gatewayId === row.gatewayId) + 1} / ${planRows.length}）` : undefined}
+                  >
                   <QuotaSummary
                     items={row.windows.map((w) => {
                       const tone: QuotaTone = w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null;
@@ -1407,8 +1461,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                       };
                     })}
                     empty={row.error && !row.ok ? row.error : "暂无数据"}
-                    onOpen={togglePlanOpen}
+                    onOpen={onPlanSummaryOpen}
                   />
+                  </div>
                 ) : (
                 <>
                 {planRows.length > 1 && (

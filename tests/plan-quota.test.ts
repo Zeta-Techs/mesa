@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  planSwipeTarget,
   formatPlanTimestamp,
   formatQuotaPoints,
   formatResetCountdown,
@@ -33,6 +34,8 @@ test("供应商显示名与切换标签", () => {
   assert.equal(planProviderLabel("zhipu"), "智谱");
   assert.equal(planProviderLabel("kimi"), "Kimi");
   assert.equal(planProviderLabel("minimax"), "MiniMax");
+  assert.equal(planProviderLabel("claude"), "Claude");
+  assert.equal(planProviderLabel("codex"), "Codex");
   assert.equal(planProviderLabel("other-x"), "other-x");
   // 同供应商单网关：标签只有供应商名；多网关：追加网关名区分
   assert.equal(planTabLabel({ provider: "kimi", gatewayName: "Kimi 主力" }, 1), "Kimi");
@@ -245,6 +248,8 @@ test("骨架占位判定与后端探测同口径", () => {
   assert.ok(gatewayHasPlanQuota(gw("https://api.kimi.com/coding")));
   assert.ok(gatewayHasPlanQuota(gw("https://api.minimaxi.com/api/paas/v4")));
   assert.ok(gatewayHasPlanQuota({ slots: { openai: "https://api.minimax.io/v1" } }));
+  assert.ok(gatewayHasPlanQuota(gw("https://api.minimax.cn/anthropic")));
+  assert.ok(gatewayHasPlanQuota(gw("https://api.kimi.ai/coding/v1")));
   // 普通按量付费端点不命中
   assert.ok(!gatewayHasPlanQuota(gw("https://api.deepseek.com/v1")));
   assert.ok(!gatewayHasPlanQuota(gw("https://api.moonshot.cn/v1")));
@@ -254,4 +259,14 @@ test("骨架占位判定与后端探测同口径", () => {
 test("缓存数据标注", () => {
   assert.equal(planQuotaDataAt(NOW, false), null);
   assert.equal(planQuotaDataAt(NOW - 3600_000, true), "数据截至 11:00");
+});
+
+test("收起态滑动切换：前后各一家，到头不回绕", () => {
+  const ids = ["g1", "official:claude-code", "official:codex"];
+  assert.equal(planSwipeTarget(ids, "g1", 1), "official:claude-code");
+  assert.equal(planSwipeTarget(ids, "official:codex", 1), "official:codex");
+  assert.equal(planSwipeTarget(ids, "g1", -1), "g1");
+  assert.equal(planSwipeTarget(ids, null, 1), "official:claude-code");
+  assert.equal(planSwipeTarget(ids, "gone", 1), "official:claude-code");
+  assert.equal(planSwipeTarget([], null, 1), null);
 });

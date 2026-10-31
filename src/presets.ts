@@ -104,6 +104,43 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: ["kimi-k3", "kimi-k2.5"],
     confidence: "official",
   },
+  // 编程套餐（Kimi For Coding / MiniMax Coding Plan）与同家按量平台不是一套地址和密钥；
+  // 套餐地址填对了，用量页「订阅余量」才认得出来（subscription_quota.rs detect_plan_provider）。
+  // 端点与模型名取自 cc-switch 预设（2026-10-28 版），模型以「验证并获取」的目录为准。
+  {
+    name: "Kimi For Coding（套餐）",
+    slots: {
+      anthropic: "https://api.kimi.com/coding/",
+      openai: "https://api.kimi.com/coding/v1",
+      responses: "https://api.kimi.com/coding/v1",
+    },
+    protocolByAgent: { kimi: "kimi" },
+    models: ["kimi-for-coding"],
+    slotNotes: {
+      openai: "Kimi Code 套餐端点；Moonshot 开放平台的按量密钥用不了，请选「Moonshot 月之暗面」",
+    },
+    confidence: "official",
+  },
+  {
+    name: "MiniMax Coding Plan（套餐·国内）",
+    slots: {
+      anthropic: "https://api.minimax.cn/anthropic",
+      openai: "https://api.minimax.cn/v1",
+      responses: "https://api.minimax.cn/v1",
+    },
+    models: ["MiniMax-M3.1-Flash", "MiniMax-M3"],
+    confidence: "official",
+  },
+  {
+    name: "MiniMax Coding Plan（套餐·国际）",
+    slots: {
+      anthropic: "https://api.minimax.io/anthropic",
+      openai: "https://api.minimax.io/v1",
+      responses: "https://api.minimax.io/v1",
+    },
+    models: ["MiniMax-M3.1-Flash", "MiniMax-M3"],
+    confidence: "official",
+  },
   {
     name: "阿里云百炼（兼容模式）",
     slots: {

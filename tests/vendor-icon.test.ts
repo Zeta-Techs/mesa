@@ -44,6 +44,8 @@ test("单色图标走 mask，彩色走 img；套餐键只认三家", () => {
   for (const v of ["anthropic", "openai", "kimi", "openrouter", "xai", "ollama"] as const) assert.ok(isMonoVendor(v), v);
   for (const v of ["deepseek", "zhipu", "minimax", "alibaba", "tencent", "newapi"] as const) assert.ok(!isMonoVendor(v), v);
   assert.equal(vendorForPlanProvider("zhipu"), "zhipu");
+  assert.equal(vendorForPlanProvider("claude"), "anthropic");
+  assert.equal(vendorForPlanProvider("codex"), "openai");
   assert.equal(vendorForPlanProvider("other"), null);
 });
 

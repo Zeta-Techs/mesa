@@ -5,6 +5,8 @@ export const PROVIDER_LABELS: Record<string, string> = {
   zhipu: "智谱",
   kimi: "Kimi",
   minimax: "MiniMax",
+  claude: "Claude",
+  codex: "Codex",
 };
 
 export function planProviderLabel(provider: string): string {
@@ -29,6 +31,8 @@ const PROVIDER_NAME_KEYWORDS: Record<string, string[]> = {
   zhipu: ["glm", "zhipu", "bigmodel", "智谱"],
   kimi: ["kimi", "moonshot"],
   minimax: ["minimax"],
+  claude: ["claude", "anthropic"],
+  codex: ["codex", "chatgpt", "openai"],
 };
 
 /** 网关名是否还值得显示：只剩供应商同义词（可带数字编号，如 "GLM"、"glm 2"）时与供应商
@@ -54,6 +58,18 @@ export function planTabLabel(
 ): string {
   const label = planProviderLabel(row.provider);
   return sameProviderCount > 1 ? `${label} · ${row.gatewayName}` : label;
+}
+
+/** 收起态左右滑动切换（2026-10-31 用户：收起时不放标签，滑动切）：dir 1 = 下一家、-1 = 上一家；
+ *  到头不回绕（滑到底再滑没反应，比绕回第一家更不容易迷路）。当前不在列表里按第一家算 */
+export function planSwipeTarget(
+  ids: readonly string[],
+  current: string | null,
+  dir: 1 | -1,
+): string | null {
+  if (ids.length === 0) return null;
+  const at = Math.max(0, current == null ? 0 : ids.indexOf(current));
+  return ids[Math.min(ids.length - 1, Math.max(0, at + dir))];
 }
 
 export function planWindowLabel(window: string): string {
@@ -275,7 +291,9 @@ export function gatewayHasPlanQuota(gateway: {
       lower.includes("bigmodel.cn") ||
       lower.includes("api.z.ai") ||
       lower.includes("api.kimi.com") ||
+      lower.includes("api.kimi.ai") ||
       lower.includes("minimaxi.com") ||
+      lower.includes("minimax.cn") ||
       lower.includes("minimax.io")
     );
   });
