@@ -1389,13 +1389,14 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             const windows = planWindowsByTightness(row.windows);
             return (
               <>
-                <div className="flex min-h-8 flex-wrap items-center gap-2">
+                {/* 卡头恒一行，与网关余额卡同口径：网关名可截断，其余不缩 */}
+                <div className="flex min-h-8 items-center gap-2">
                   <QuotaFold open={planOpen} onToggle={togglePlanOpen} label="订阅余量" />
-                  <h2 className="text-base font-medium text-l1">订阅余量</h2>
+                  <h2 className="shrink-0 text-base font-medium text-l1">订阅余量</h2>
                   {planGatewayNameVisible(row.gatewayName, row.provider) && (
-                    <span className="text-xs text-l2">{row.gatewayName}</span>
+                    <span className="min-w-0 truncate text-xs text-l2" title={row.gatewayName}>{row.gatewayName}</span>
                   )}
-                  <span className="flex items-center gap-1.5 text-xs text-l2">
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs text-l2">
                     {vendorForPlanProvider(row.provider) && (
                       <VendorIcon
                         vendor={vendorForPlanProvider(row.provider)}
@@ -1406,12 +1407,12 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     {planProviderLabel(row.provider)}
                   </span>
                   {planLevelLabel(row.planLevel) && (
-                    <span className="flex h-4 items-center justify-center rounded-sm bg-hover px-1 text-micro leading-none text-l2">
+                    <span className="flex h-4 shrink-0 items-center justify-center rounded-sm bg-hover px-1 text-micro leading-none text-l2">
                       <span className="-translate-y-px">{planLevelLabel(row.planLevel)}</span>
                     </span>
                   )}
-                  {dataAt && <span className="text-micro text-l4">{dataAt}</span>}
-                  <div className="ml-auto flex items-center">
+                  {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
+                  <div className="ml-auto flex shrink-0 items-center">
                     <button
                       type="button"
                       className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
@@ -1668,16 +1669,20 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 gateways.find((g) => g.id === id)?.keyHint ?? null;
               return (
                 <>
-                  <div className="flex min-h-8 flex-wrap items-center gap-2">
+                  {/* 卡头恒一行（2026-10-31 用户：窗口一窄按钮掉到第二行、卡片变高）：站点名可截断，其余不缩 */}
+                  <div className="flex min-h-8 items-center gap-2">
                     <QuotaFold open={walletOpen} onToggle={toggleWalletOpen} label="网关余额" />
-                    <h2 className="text-base font-medium text-l1">网关余额</h2>
+                    <h2 className="shrink-0 text-base font-medium text-l1">网关余额</h2>
                     {walletGroups.length === 1 && (
-                      <span className="text-xs text-l2" title={walletKindLabel(row.kind)}>
+                      <span
+                        className="min-w-0 truncate text-xs text-l2"
+                        title={`${walletAccountTitle(group)} · ${walletKindLabel(row.kind)}`}
+                      >
                         {walletAccountTitle(group)}
                       </span>
                     )}
-                    {dataAt && <span className="text-micro text-l4">{dataAt}</span>}
-                    <div className="ml-auto flex items-center">
+                    {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
+                    <div className="ml-auto flex shrink-0 items-center">
                       <button
                         type="button"
                         className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
