@@ -28,9 +28,21 @@ test("保存前缺什么：按表单顺序报第一样", () => {
 test("网关库行状态：缺密钥优先，其次失败、通过、未测", async () => {
   const { gatewayHealth } = await import("../src/connection-form.ts");
   assert.equal(gatewayHealth({ noAuth: false, keyHint: null }).label, "缺密钥");
-  assert.equal(gatewayHealth({ noAuth: true, slotProbes: [{ lastOk: true }, { lastOk: false }] }).label, "测试失败");
-  assert.equal(gatewayHealth({ noAuth: false, keyHint: "…ab", slotProbes: [{ lastOk: true }] }).label, "测试通过");
-  assert.equal(gatewayHealth({ noAuth: false, keyHint: "…ab", slotProbes: [{ lastOk: null }] }).label, "未测");
+  // 按最近一次：主槽刚测通过，别的槽以前失败过 → 通过，悬停说明哪个槽失败过
+  const mixed = gatewayHealth({
+    noAuth: true,
+    slotProbes: [
+      { slot: "anthropic", lastOk: true, lastProbeAt: "2026-10-31T08:00:00Z" },
+      { slot: "responses", lastOk: false, lastProbeAt: "2026-10-20T08:00:00Z" },
+    ],
+  });
+  assert.equal(mixed.label, "测试通过");
+  assert.match(mixed.detail ?? "", /Responses/);
+  assert.equal(
+    gatewayHealth({ noAuth: true, slotProbes: [{ slot: "openai", lastOk: false, lastProbeAt: "2026-10-31T09:00:00Z" }, { slot: "anthropic", lastOk: true, lastProbeAt: "2026-10-30T09:00:00Z" }] }).label,
+    "测试失败",
+  );
+  assert.equal(gatewayHealth({ noAuth: false, keyHint: "…ab", slotProbes: [{ slot: "openai", lastOk: null }] }).label, "未测");
 });
 
 test("手填模型：空、带空格、重复都拦", async () => {

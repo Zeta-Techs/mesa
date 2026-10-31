@@ -52,17 +52,23 @@ export function saveBlocker(input: {
   return null;
 }
 
-/** 网关库列表行的状态点（2026-10-31）：缺密钥 > 上次测试失败 > 测试通过 > 未测。只读已存的体检结果，不发请求 */
+/** 网关库列表行的状态点：缺密钥 > **最近一次**测试的结果 > 未测。只读已存的体检结果，不发请求。
+ *  按最近一次算（2026-10-31 用户截图：行上「测试」只测主协议槽、测过了，点却因为别的槽以前失败过一直是红的）；
+ *  别的槽上次失败写进 detail，悬停能看到 */
 export function gatewayHealth(g: {
   noAuth: boolean;
   keyHint?: string | null;
-  slotProbes?: readonly { lastOk: boolean | null }[];
-}): { tone: "ok" | "err" | "warn" | "idle"; label: string } {
+  slotProbes?: readonly { slot: string; lastOk: boolean | null; lastProbeAt?: string | null }[];
+}): { tone: "ok" | "err" | "warn" | "idle"; label: string; detail?: string } {
   if (!g.noAuth && !g.keyHint) return { tone: "warn", label: "缺密钥" };
   const probes = (g.slotProbes ?? []).filter((p) => p.lastOk != null);
-  if (probes.some((p) => p.lastOk === false)) return { tone: "err", label: "测试失败" };
-  if (probes.length > 0) return { tone: "ok", label: "测试通过" };
-  return { tone: "idle", label: "未测" };
+  if (probes.length === 0) return { tone: "idle", label: "未测" };
+  const latest = [...probes].sort((a, b) => (b.lastProbeAt ?? "").localeCompare(a.lastProbeAt ?? ""))[0];
+  const otherFailed = probes.filter((p) => p !== latest && p.lastOk === false).map((p) => SLOT_LABEL[p.slot as GatewaySlotName] ?? p.slot);
+  const detail = otherFailed.length ? `${otherFailed.join("、")} 上次测试失败` : undefined;
+  return latest.lastOk
+    ? { tone: "ok", label: "测试通过", detail }
+    : { tone: "err", label: "测试失败", detail };
 }
 
 /** 这个模型在网关上设过参数（思考档 / 温度 / top_p / 输出上限）：列表行上标「已设置」、可筛 */

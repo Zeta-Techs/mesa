@@ -800,8 +800,10 @@ export function ProfileModal({
     >
       <form id={formId} onSubmit={submit}>
 
+        {/* 2026-10-31 简化：Agent 与账号类型并成一行（原先各占一段标题 + 控件） */}
         {!initial && (
-        <label className="mb-3 block text-sm">
+        <div className="mb-4 flex items-end gap-3">
+        <label className="block min-w-0 flex-1 text-sm">
           <span className="mb-1 block text-xs text-l3">Agent</span>
           {/* 浮层禁用原生 select（设计系统）：原生下拉在弹层里是系统样式，与其余控件两套长相 */}
           <MenuSelect
@@ -833,6 +835,23 @@ export function ProfileModal({
             }}
           />
         </label>
+        {officialSupported[form.agent] && (
+          <div className="shrink-0 pb-0.5">
+            <SegTabs
+              items={[
+                { id: "api", label: "API 密钥" },
+                { id: "official", label: "官方账号" },
+              ]}
+              value={form.accountType}
+              onChange={(id) => {
+                setForm((f) => ({ ...f, accountType: id, noAuth: false }));
+                // 切到官方账号 = 不建网关，「同时绑到」勾选随之失效
+                setExtraAgents([]);
+              }}
+            />
+          </div>
+        )}
+        </div>
         )}
 
         {/* 编辑时先说清用的是哪个网关（地址、密钥、逐模型参数都在那边改）；有没保存的修改，去之前先问 */}
@@ -857,30 +876,13 @@ export function ProfileModal({
             )}
           </div>
         )}
-        {officialSupported[form.agent] && !initial && (
-          <div className="mb-3">
-            <span className="mb-1 block text-xs text-l3">账号类型</span>
-            <SegTabs
-              items={[
-                { id: "api", label: "API 密钥" },
-                { id: "official", label: "官方账号" },
-              ]}
-              value={form.accountType}
-              onChange={(id) => {
-                setForm((f) => ({ ...f, accountType: id, noAuth: false }));
-                // 切到官方账号 = 不建网关，「同时绑到」勾选随之失效
-                setExtraAgents([]);
-              }}
-            />
-          </div>
-        )}
         {!initial && form.accountType === "api" && (
-          <div className="mb-3">
-            <span className="mb-1 block text-xs text-l3">网关</span>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="text-xs text-l3">网关</span>
             <SegTabs
               items={[
-                { id: "new", label: "新建网关" },
-                { id: "existing", label: "选用已有网关" },
+                { id: "new", label: "新建" },
+                { id: "existing", label: "选用已有" },
               ]}
               value={bindMode}
               onChange={(id) => {
@@ -1072,15 +1074,16 @@ export function ProfileModal({
         <div className="mb-4 text-sm">
           <span className="mb-1 block text-xs text-l3">
             {form.agent === "claude-code" && form.accountType === "api"
-              ? "可用模型（默认和各别名在下面的表里定）"
-              : "模型列表（可选，首个为默认）"}
+              ? "模型"
+              : "模型（第一个是默认）"}
           </span>
           {(() => {
             const sw = MODEL_SWITCH[form.agent];
             if (!sw) return null;
             const filled = form.models.filter((m) => m.trim()).length;
             const over = sw.max != null && filled > sw.max;
-            if (sw.max == null && !over) return null;
+            // 只在快到 / 超过上限时说（原先每次打开都挂一行「最多 5 个」）
+            if (sw.max == null || filled < sw.max) return null;
             return (
               <p
                 title={sw.hint}
@@ -1297,9 +1300,9 @@ export function ProfileModal({
           {/* 行式槽位列表：已有模型一行一个（首个非空 = 默认），尾部只留 1 个空槽手填——
               不按选择器容量铺一排空行（视觉噪音）；超容量仍可经「仍要添加」补充
               （超出的不进 CLI 选择器，但启动栏/手输可用，见 model-switch.ts 语义） */}
-          {form.accountType === "api" && !form.models.some((m) => m.trim()) && (catalogGatewayId || showGatewayFields) && (
+          {form.accountType === "api" && !form.models.some((m) => m.trim()) && pickerModels.length > 0 && (
             <p className="mb-1 text-xs text-warn-text">
-              没选模型：启动时不带模型，用 CLI 自己的默认模型（多半不在这个网关上）。从目录里选一个，或在下面手填。
+              还没选模型：不选就用 CLI 自己的默认模型，多半不在这个网关上。
             </p>
           )}
           {(() => {
@@ -1492,43 +1495,46 @@ export function ProfileModal({
         )}
         {/* 同时绑到：换 Agent 不必重走一遍「添加连接 → 选网关 → 挑模型」——
             同一份网关和模型名单一次建多条绑定；协议按各家默认推导，保存后可单独调整 */}
-        {showGatewayFields && form.accountType === "api" && (
-          <div className="mb-4">
-            <span className="mb-1 block text-xs text-l3">
-              同时绑到（可选，省去逐家重配）
-            </span>
-            <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {extraBindTargets(
-                form.agent,
-                form.protocol,
-                AGENTS.map((a) => a.id),
-              ).map((t) => (
-                <Checkbox
-                  key={t.agent}
-                  className="text-xs"
-                  disabled={!t.ok}
-                  title={t.reason}
-                  checked={extraAgents.includes(t.agent)}
-                  onChange={(checked) =>
-                    setExtraAgents((cur) =>
-                      checked
-                        ? [...cur, t.agent]
-                        : cur.filter((x) => x !== t.agent),
-                    )
-                  }
-                  label={AGENTS.find((a) => a.id === t.agent)?.label ?? t.agent}
-                />
-              ))}
+        {/* 同时绑到（2026-10-31 简化）：只列协议兼容的几家，做成点选小胶囊；说明与不兼容的原因收进悬停 */}
+        {showGatewayFields && form.accountType === "api" && (() => {
+          const targets = extraBindTargets(form.agent, form.protocol, AGENTS.map((a) => a.id));
+          const ok = targets.filter((t) => t.ok);
+          const blocked = targets.filter((t) => !t.ok);
+          if (ok.length === 0) return null;
+          return (
+            <div className="mb-4">
+              <span
+                className="mb-1.5 block text-xs text-l3"
+                title={`保存时用同一份网关和模型名单给选中的 Agent 各建一条连接，协议按各家自动适配。${
+                  blocked.length ? `\n${blocked.map((t) => `${AGENTS.find((a) => a.id === t.agent)?.label ?? t.agent}：${t.reason ?? "协议不兼容"}`).join("\n")}` : ""
+                }`}
+              >
+                顺便给这几家也建一条
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {ok.map((t) => {
+                  const on = extraAgents.includes(t.agent);
+                  return (
+                    <button
+                      key={t.agent}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() =>
+                        setExtraAgents((cur) => (on ? cur.filter((x) => x !== t.agent) : [...cur, t.agent]))
+                      }
+                      className={`flex h-7 items-center gap-1 rounded-full px-2.5 ${
+                        on ? "border border-transparent bg-seg-sel text-l1" : "border border-hairline text-l3 hover:bg-hover hover:text-l1"
+                      }`}
+                    >
+                      {on && <Check aria-hidden="true" className="size-3" />}
+                      <span className="text-xs">{AGENTS.find((a) => a.id === t.agent)?.label ?? t.agent}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <p className="mt-1 text-micro text-l3">
-              保存时用同一份网关和模型名单给勾选的 Agent 各建一条绑定，协议自动按各家适配。
-              {/* 灰掉的原因原先只在悬停里，看上去像坏了 */}
-              {extraBindTargets(form.agent, form.protocol, AGENTS.map((a) => a.id)).some(
-                (t) => !t.ok,
-              ) && " 灰色的几家和这个端点的协议不兼容，勾不了（鼠标停上去看原因）。"}
-            </p>
-          </div>
-        )}
+          );
+        })()}
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">名称</span>
           <input

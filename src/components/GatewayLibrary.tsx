@@ -7,7 +7,8 @@ import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
 import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, fieldClass, FoldMark, ghostActionClass, MenuSelect, primaryActionClass, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Activity, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import { Modal } from "./Modal";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
@@ -40,7 +41,7 @@ import {
   zhipuOpenAiSlotBillingHint,
   slotsFollowMaster,
 } from "../gateway-draft";
-import { gatewayPickerRows } from "../gateway-option";
+import { gatewayHosts, gatewayPickerRows } from "../gateway-option";
 import { gatewayHasWallet } from "../gateway-balance";
 import type {
   ComboSurfaceDto,
@@ -1207,11 +1208,11 @@ export default function GatewayLibrary({
             {/* 少用的恢复动作：降为带说明的文字钮 */}
             <button
               type="button"
-              className={`${ghostActionClass} mr-auto text-l3`}
+              className="mr-auto text-l3 hover:text-l1"
               title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
               onClick={() => void undoMerge()}
             >
-              拆开自动合并的连接
+              <span className="text-xs">拆开自动合并的连接</span>
             </button>
             <button type="button" className={secondaryActionClass} onClick={() => void closeLibrary()}>
               关闭
@@ -1828,9 +1829,11 @@ export default function GatewayLibrary({
             </div>
           </div>
         ) : (
-          <ul className="divide-y divide-hairline">
+          // 2026-10-31 简化：每个网关一张可点的行卡（点了就是编辑），状态点挨着名字；测试 / 获取模型 / 删除悬停才出（图标钮）。
+          // 原先每行一个状态字 + 四颗文字按钮，同一层控件太多
+          <ul className="space-y-0.5">
             {gateways.length === 0 && (
-              <li className="py-6 text-center text-sm text-l3">还没有网关。点右下角「+ 新建网关」，或在添加连接时新建。</li>
+              <li className="py-8 text-center text-sm text-l3">还没有网关。点右下角「+ 新建网关」，或在添加连接时新建。</li>
             )}
             {gatewayPickerRows(gateways).map((row) => {
               const g = gateways.find((item) => item.id === row.id);
@@ -1838,50 +1841,61 @@ export default function GatewayLibrary({
               const n = profiles.filter((p) => p.gatewayId === g.id).length;
               const usage = usageLine(g);
               const health = gatewayHealth(g);
+              const busy = rowProbingId === g.id || listFetchingId === g.id;
               return (
-                <li key={g.id} className="flex items-center gap-3 py-2 text-sm">
+                <li
+                  key={g.id}
+                  className="group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 hover:bg-hover"
+                  onClick={() => openEdit(g)}
+                >
                   <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
                   <span className="min-w-0 flex-1">
-                    <span className="font-medium text-l1">{row.name}</span>
-                    <span className="ml-2 text-l3">{n ? `${n} 个连接在用` : "没有连接在用"}</span>
-                    <span className="mt-0.5 block truncate text-micro text-l3" title={row.detail}>
-                      {row.detail}
-                    </span>
-                    {usage && (
-                      <button type="button" className="mt-0.5 block text-micro text-l3 hover:text-l1" onClick={() => onJumpUsage?.(g.id)}>
-                        {usage}
+                    <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="truncate text-sm font-medium text-l1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEdit(g);
+                        }}
+                      >
+                        {row.name}
                       </button>
-                    )}
+                      <span
+                        className="flex shrink-0 items-center gap-1 text-micro text-l3"
+                        title={[health.label, health.detail].filter(Boolean).join("；")}
+                      >
+                        <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
+                        {/* 通过 / 未测只亮点，出问题才写字 */}
+                        {(health.tone === "err" || health.tone === "warn") && health.label}
+                        {busy && "处理中…"}
+                      </span>
+                    </span>
+                    {/* 第二行只放地址、几个连接、花费；协议与模型数进悬停（原先一行塞不下，后半截总被截掉） */}
+                    <span className="mt-0.5 block truncate text-micro text-l3" title={row.detail}>
+                      {gatewayHosts(g.slots).join(" / ") || "未填端点"}
+                      {/ · 密钥 (\S+)$/.exec(row.detail)?.[1] ? ` · 密钥 ${/ · 密钥 (\S+)$/.exec(row.detail)![1]}` : ""}
+                      {` · ${n ? `${n} 个连接` : "没有连接"}`}
+                      {usage && (
+                        <button
+                          type="button"
+                          className="ml-1 hover:text-l1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onJumpUsage?.(g.id);
+                          }}
+                        >
+                          · {usage}
+                        </button>
+                      )}
+                    </span>
                   </span>
-                  {/* 状态点：只读已存的测试结果；缺密钥最先说 */}
-                  <span className="flex shrink-0 items-center gap-1.5 text-micro text-l3" title={health.label}>
-                    <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
-                    {health.label}
+                  <span className={`flex shrink-0 items-center ${hoverRevealClass}`} onClick={(e) => e.stopPropagation()}>
+                    <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
+                    <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
+                    <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
                   </span>
-                  <button
-                    type="button"
-                    className={ghostActionClass}
-                    disabled={rowProbingId === g.id}
-                    title="用已保存的地址和密钥测一次"
-                    onClick={() => void probeListed(g)}
-                  >
-                    {rowProbingId === g.id ? "测试中…" : "测试"}
-                  </button>
-                  <button
-                    type="button"
-                    className={ghostActionClass}
-                    disabled={listFetchingId === g.id}
-                    title="重新拉取这个网关的模型目录并保存"
-                    onClick={() => void refreshListedCatalog(g)}
-                  >
-                    {listFetchingId === g.id ? "获取中…" : "获取模型"}
-                  </button>
-                  <button type="button" className={secondaryActionClass} onClick={() => openEdit(g)}>
-                    编辑
-                  </button>
-                  <button type="button" className={`${ghostActionClass} hover:text-err-text`} onClick={() => void onDelete(g)}>
-                    删除
-                  </button>
+                  <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-l4" />
                 </li>
               );
             })}
