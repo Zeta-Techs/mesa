@@ -1537,6 +1537,7 @@ pub fn launch_plan(
                         }
                         // 中转不支持 ChatGPT 订阅档和官方 hosted 网页搜索；-c 只盖本进程
                         plan.args.extend(codex_relay_compat_args());
+                        plan.args.extend(codex_login_method_args(codex_user_config_for_launch().as_ref()));
                     }
                     if let Some(model) = model {
                         plan.args.push("-m".into());
@@ -3306,6 +3307,20 @@ fn codex_relay_compat_args() -> Vec<String> {
         r#"plugins.codex-app-tools@openai-bundled.enabled=false"#.into(),
     ]);
     args
+}
+
+/// 用户 config.toml 设了 `forced_login_method`（不是 api）时，本进程改成 api。不改的话，Mesa 用 CODEX_API_KEY 注入的
+/// 连接被当成「不许用的 API key 登录」：报 ChatGPT login is required、退出，还执行 Logging out——把用户的
+/// ~/.codex/auth.json（ChatGPT 登录）删掉（0.166 假网关 + 临时 CODEX_HOME 实测，2026-11-01）。-c 只盖本进程，
+/// auth.json 原样留着；没设或本来就是 api 的不加
+fn codex_login_method_args(cfg: Option<&toml::Value>) -> Vec<String> {
+    let forced = cfg
+        .and_then(|c| c.get("forced_login_method"))
+        .and_then(|v| v.as_str());
+    match forced {
+        Some(m) if m != "api" => vec!["-c".into(), r#"forced_login_method="api""#.into()],
+        _ => Vec::new(),
+    }
 }
 
 /// Codex 里另外点名模型的几处（`/review`、子 agent、记忆整理）：磁盘上常是官方模型名，走中转时照发就报模型不存在
@@ -7579,6 +7594,20 @@ api_backend = "responses"
             .contains(&("OPENAI_MODEL".into(), "qwen3-coder".into())));
         assert!(!plan.env.iter().any(|(k, _)| k.starts_with("ANTHROPIC_")));
         assert_eq!(plan.args, vec!["--auth-type", "openai"]);
+    }
+
+    #[test]
+    fn codex_relay_launch_overrides_forced_chatgpt_login() {
+        // forced_login_method = chatgpt 时不盖：Codex 拒绝注入的 API key 还把 auth.json 删掉（2026-11-01 实测）
+        let cfg: toml::Value = toml::from_str("forced_login_method = \"chatgpt\"").unwrap();
+        assert_eq!(codex_login_method_args(Some(&cfg)), ["-c", r#"forced_login_method="api""#]);
+        let api: toml::Value = toml::from_str("forced_login_method = \"api\"").unwrap();
+        assert!(codex_login_method_args(Some(&api)).is_empty());
+        assert!(codex_login_method_args(None).is_empty());
+        TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = Some(cfg));
+        let plan = launch_plan(&profile("codex", Some("https://relay.example.com/v1")), Some("sk".into()), Some("m")).unwrap();
+        TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = None);
+        assert!(plan.args.windows(2).any(|w| w[0] == "-c" && w[1] == r#"forced_login_method="api""#));
     }
 
     #[test]
