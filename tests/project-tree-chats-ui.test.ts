@@ -250,7 +250,7 @@ async function renderTree(
   };
 }
 
-test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「还有 N 段」，标题去掉日期类型前缀，等确认的那段行尾是琥珀光标", async () => {
+test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「显示更多」（不写段数，2026-10-31），标题去掉日期类型前缀，等确认的那段行尾是琥珀光标", async () => {
   const view = await renderTree();
   try {
     const group = view.chatGroup("综述流程测试");
@@ -265,7 +265,7 @@ test("正在聊的项目默认展开：量不到侧栏高度时列 5 段 + 「�
       "镁硫电池第3篇精读",
       "镁硫电池第2篇精读",
       "镁硫电池第1篇精读",
-      "还有 1 段",
+      "显示更多",
     ]);
     const first = view.button("镁硫电池第5篇精读");
     // 光标在行尾单独那一列，不在标题按钮里（右边这一列不让标题进来）
@@ -301,13 +301,13 @@ test("点一段对话交给 openConversation，项目给这家设的连接一并
   }
 });
 
-test("「还有 N 段」在原地多列、列完了出「收起」；节头 ⋯ 能去对话页看全部；随手聊点开才列，展开记下来", async () => {
+test("「显示更多」在原地多列、列完了出「收起」；节头 ⋯ 能去对话页看全部；随手聊点开才列，展开记下来", async () => {
   const view = await renderTree();
   try {
-    await view.act(async () => view.button("还有 1 段").click());
+    await view.act(async () => view.button("显示更多").click());
     const group = view.chatGroup("综述流程测试")!;
     assert.ok(group.textContent?.includes("镁硫电池第0篇精读"), "第 6 段列出来了");
-    assert.ok(!group.textContent?.includes("还有"), "列完了不再有「还有 N 段」");
+    assert.ok(!group.textContent?.includes("显示更多"), "列完了不再有「显示更多」");
     await view.act(async () => view.button("收起").click());
     assert.ok(!view.chatGroup("综述流程测试")!.textContent?.includes("镁硫电池第0篇精读"));
     await view.act(async () => view.button("综述流程测试 的更多操作").click());
@@ -803,7 +803,7 @@ test("当前旧对话补进列表后，只计算实际未显示的对话数量",
   try {
     const group = view.chatGroup(PROJECT.name)!;
     assert.equal(group.querySelectorAll("[data-chat-key]").length, 6);
-    assert.ok(!group.textContent?.includes("还有"), "六段已全部显示，不再提示还有一段");
+    assert.ok(!group.textContent?.includes("显示更多"), "六段已全部显示，不再提示还有");
   } finally {
     await view.close();
   }

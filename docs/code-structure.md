@@ -151,7 +151,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   行右键=重命名/复制路径/从 Mesa 移除/清除痕迹/删除目录，动作自持（invoke+confirmDialog+toast），
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
-                             #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「还有 N 段 / 收起」，行尾运行状态光标（RunCaret，收着也报）；
+                             #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「显示更多 / 收起」（不写段数，10-31），行尾运行状态光标（RunCaret，收着也报）；
                              #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；置顶一节的对话行尾小字写所属课题（originOfChat，悬停让位给 ⋯）；收着的课题之间只隔 1px、展开的那节上下留 pt-3（10-27）；对话多选（⌘/Ctrl 点、⇧ 点、⇧↑↓，选中铺 .ccode-rail-picked，树底「已选 N 段」条 + 选中行右键同一份批量菜单：置顶 / 归档，10-27；一段段归档 / 置顶到第 2 次贴下一段出 CoachTip 提醒、第一次选上一段时条上面教怎么接着选，各一次）；来回点两段提醒 ⌃Tab（noteSwitch）、⋯ 关对话计入 ⌘W 提醒（shortcut-nudges）；
                              #   对话行尾 ⋯ 与右键：在右侧分屏打开 / 关掉这段对话（Mesa 里开着才有）/ 重命名 / 归档 / 在对话页查看；行尾只一格：悬停时 ⋯ 原地顶替运行光标、不放 ×（10-31）；删除走菜单就地二次确认（10-31）；会话列表自己保鲜（展开拉一次、看得见时每分钟）；拖动按整块（tabDragShift）；
                              #   2026-10-24 第二期（运行页标签条退场）：开着、列表里还没有的挂在文件夹最上面（openTabRows，带 ×，经 store.requestCloseTab 关），
@@ -784,7 +784,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
-                             # 「还有 N 段」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
+                             # 「显示更多」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关；多选一起钉 pinPicked，10-27）、多选（nextPicked：⌘ 点加减、⇧ 点从起点整段换上，10-27）、
                              # 侧栏键盘走（railNavIndex，10-24）、多选提醒贴哪（nudgeAnchor，10-27；何时出在 coach-tips.ts）
                              # （tests/sidebar-chats.test.ts；界面 ProjectTree，tests/project-tree-chats-ui.test.ts）

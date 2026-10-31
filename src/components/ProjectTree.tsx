@@ -900,7 +900,7 @@ export default function ProjectTree({
       if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatsByRoot.get(k)?.length ?? 0 });
     }
     // 行高按 rem 折算（Mac 根 14px、Windows 16px）。2026-10-28 用户嫌挤、照 Claude 客户端放松：对话行 h-8 + 3px 行距；
-    // 节头 h-8，收着的之间隔 3px，展开的上下各留 pt-3；展开的文件夹头下垫 3px，再留一行「还有 N 段」（h-6）与底边距 pb-1；
+    // 节头 h-8，收着的之间隔 3px，展开的上下各留 pt-3；展开的文件夹头下垫 3px，再留一行「显示更多」（h-6）与底边距 pb-1；
     // 三段容器各 pt-2；置顶 / 其他打开的一节 = 节头 h-8 + 底 pb-4
     const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
     const headers = sections.length + 1;
@@ -1159,7 +1159,7 @@ export default function ProjectTree({
   function renderChats(chats: SessionMetaDto[], project: ProjectDto | null, name: string, folderKey: string) {
     const shown = quotaOf.get(folderKey) ?? Math.min(chats.length, SIDEBAR_CHAT_LIMIT);
     const folded = (chatExtra[folderKey] ?? 0) > 0;
-    // 「还有 N 段 / 收起」是动作不是对话：比对话行矮、再小一号、最淡（l4），读作挂在最后一段下面的注脚
+    // 「显示更多 / 收起」是动作不是对话：比对话行矮、再小一号、最淡（l4），读作挂在最后一段下面的注脚
     // （2026-10-25 用户：原「展开更多」整行和对话一样高，读着像一段对话）
     const linkCls = "flex h-6 items-center rounded-md pl-2 pr-2 text-left text-l3 hover:bg-hover hover:text-l1";
     const opened = openByFolder.get(folderKey) ?? [];
@@ -1185,10 +1185,12 @@ export default function ProjectTree({
                   setChatExtra((prev) => ({ ...prev, [folderKey]: expandedExtra(shown) }))
                 }
                 title={`还有 ${remaining} 段，在这里多列 ${Math.min(SIDEBAR_CHAT_STEP, remaining)} 段`}
+                aria-description={`还有 ${remaining} 段`}
                 data-rail-nav
                 className={linkCls}
               >
-                <span className="text-micro">还有 {remaining} 段</span>
+                {/* 不写数字（2026-10-31 用户：每个课题一个数，看着别扭），段数放悬停与读屏 */}
+                <span className="text-micro">显示更多</span>
               </button>
             )}
             {folded && (
