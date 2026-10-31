@@ -1721,18 +1721,11 @@ fn patch_codebuddy_settings(
 }
 
 /// CodeBuddy 的模型名单：`~/.codebuddy/models.json`（官方 docs/cli/models：`models` 数组按 id 覆盖内置、新 id 追加，
-/// 1 秒防抖热加载）。每个绑定模型一条：`url` 是完整的 `<base>/chat/completions`（与 CODEBUDDY_BASE_URL 自拼同形），
-/// `apiKey` 直接写这条连接的密钥（与同目录 settings.json env 里那一把相同），没有密钥才写 `${CODEBUDDY_API_KEY}` 引用：
-/// 2026-10-31 用户拍板——CodeBuddy 在每轮 Agent 运行前才把 settings.json 的 env 灌进进程环境，models.json 加载时就展开
-/// `${VAR}`，两者先后不定，引用时常原样发出（Windows 2.176 本机 7 次 6 次；macOS 临时目录下同样）。确知窗口写 `maxInputTokens`。
-/// Mesa 的条目认 `name` =「配置名 · 模型」+ 密钥是引用或 Mesa 写过的那把（`mesa_keys`）：先撤上一份 Mesa 条目再写，
-/// 用户自己的条目与 `availableModels` 不动。
-fn patch_codebuddy_models(
-    existing: Option<&str>,
-    profile: &Profile,
-    key: Option<&str>,
-    mesa_keys: &[&str],
-) -> Result<String, String> {
+/// 1 秒防抖热加载）。每个绑定模型一条，只写名字、能力（确知窗口 `maxInputTokens`、图片、思考）与 vendor 标记，
+/// **不写 `url` / `apiKey`**（2026-11-01，取代 10-31「apiKey 直接写密钥」）：地址和密钥只在同目录 settings.json env 里。
+/// Mesa 的条目认 vendor = Mesa；更早写的认 `name` =「配置名 · 模型」+ 密钥是引用或 Mesa 写过的那把（`mesa_keys`）。
+/// 先撤上一份 Mesa 条目再写，用户自己的条目与 `availableModels` 不动。
+fn patch_codebuddy_models(existing: Option<&str>, profile: &Profile, mesa_keys: &[&str]) -> Result<String, String> {
     let mut v = parse_json_doc(existing)?;
     let root = v.as_object_mut().expect("parse_json_doc 保证是对象");
     let list = root.entry("models").or_insert_with(|| json!([]));
@@ -1740,16 +1733,16 @@ fn patch_codebuddy_models(
         return Err("models.json 的 models 不是数组，已停止写入".into());
     };
     arr.retain(|e| !codebuddy_mesa_entry(e, mesa_keys));
-    let api_key = key.filter(|k| !k.trim().is_empty()).unwrap_or(CODEBUDDY_KEY_REF);
-    if let Some(base) = profile.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
-        let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    // 条目不写 url / apiKey：请求按 CODEBUDDY_BASE_URL / CODEBUDDY_API_KEY 走（外部终端读同批写的 settings.json env，
+    // Mesa 启动读 --settings 覆盖层）。写了的话，条目自带的地址和密钥压过两者——Mesa 在别的连接下启动同名模型，
+    // 请求被带到这条全局连接、用这把密钥（2.179.0 假网关实测，2026-11-01）；也免了明文密钥与 ${VAR} 展开竞争
+    if profile.base_url.as_deref().is_some_and(|u| !u.trim().is_empty()) {
         for m in &profile.models {
             arr.retain(|e| e.get("id").and_then(|i| i.as_str()) != Some(m.as_str()));
             let mut e = json!({
                 "id": m,
                 "name": format!("{} · {m}", profile.name),
-                "url": url,
-                "apiKey": api_key,
+                "vendor": CODEBUDDY_MESA_VENDOR,
                 "supportsToolCall": true,
             });
             let gw = profile.gateway_id.as_deref();
@@ -1768,11 +1761,18 @@ fn patch_codebuddy_models(
     to_pretty(&v)
 }
 
+/// 旧版 Mesa 条目的密钥引用（2026-10-31 前写的），认旧条目用
 const CODEBUDDY_KEY_REF: &str = "${CODEBUDDY_API_KEY}";
 
-/// models.json 里 Mesa 写的条目：显示名是「配置名 · <id>」，密钥是引用或 Mesa 写过的那把
-/// （models.json 与 settings.json 同批写，旧条目的密钥就是 settings.json env 里的 CODEBUDDY_API_KEY）
+/// Mesa 写的 models.json 条目的 vendor 标记（2026-11-01 起）
+const CODEBUDDY_MESA_VENDOR: &str = "Mesa";
+
+/// models.json 里 Mesa 写的条目：vendor 是 Mesa（2026-11-01 起）；更早的条目认显示名「配置名 · <id>」且密钥是引用
+/// 或 Mesa 写过的那把（models.json 与 settings.json 同批写，旧条目的密钥就是 settings.json env 里的 CODEBUDDY_API_KEY）
 fn codebuddy_mesa_entry(e: &Value, mesa_keys: &[&str]) -> bool {
+    if e.get("vendor").and_then(|v| v.as_str()) == Some(CODEBUDDY_MESA_VENDOR) {
+        return true;
+    }
     let id = e.get("id").and_then(|i| i.as_str()).unwrap_or("");
     let named = e
         .get("name")
@@ -2596,7 +2596,7 @@ fn plan_writes(
             // 没有模型名单、文件也不存在时不建空文件
             if !profile.models.is_empty() || existing.is_some() {
                 let mesa_keys: Vec<&str> = prev_key.as_deref().into_iter().chain(key).collect();
-                let content = patch_codebuddy_models(existing.as_deref(), profile, key, &mesa_keys)?;
+                let content = patch_codebuddy_models(existing.as_deref(), profile, &mesa_keys)?;
                 push("models.json", models_path, content);
             }
         }
@@ -5383,28 +5383,26 @@ trust_level = "trusted"
             {"id":"mine2","name":"自己的 · mine2","apiKey":"sk-user-own","url":"https://mine/chat/completions"},
             {"id":"glm-5","name":"手写同名","url":"https://x"}
         ]}"#;
-        let out = patch_codebuddy_models(Some(existing), &p, Some("sk-new"), &["sk-prev", "sk-new"]).unwrap();
+        let out = patch_codebuddy_models(Some(existing), &p, &["sk-prev", "sk-new"]).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let ids: Vec<_> = v["models"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["mine", "mine2", "glm-5", "kimi-k3"], "上一份 Mesa 条目（引用或旧明文）撤、同 id 由这次接管、用户条目留");
         let glm = &v["models"][2];
-        assert_eq!(glm["url"], "https://gw.example/v1/chat/completions");
-        // 引用不可靠（CodeBuddy 展开 ${VAR} 早于灌入 settings env），直接写这把密钥
-        assert_eq!(glm["apiKey"], "sk-new");
+        // 不写地址和密钥：条目自带的会压过 Mesa 按连接启动注入的（同名模型被带到全局连接）
+        assert!(glm.get("url").is_none());
+        assert!(glm.get("apiKey").is_none());
+        assert!(!out.contains("sk-new"), "models.json 不落密钥");
+        assert_eq!(glm["vendor"], "Mesa");
         assert_eq!(glm["name"], "测试 · glm-5");
         assert_eq!(v["availableModels"], json!(["glm-5"]), "用户的下拉过滤不动");
-        // 再写一次（settings 里已是 sk-new）：自己上次写的条目认得出，不重复
-        let again: Value =
-            serde_json::from_str(&patch_codebuddy_models(Some(&out), &p, Some("sk-new"), &["sk-new"]).unwrap()).unwrap();
+        // 再写一次：自己上次写的条目认得出（vendor），不重复
+        let again: Value = serde_json::from_str(&patch_codebuddy_models(Some(&out), &p, &[]).unwrap()).unwrap();
         assert_eq!(again["models"].as_array().unwrap().len(), 4);
-        // 官方切回：Mesa 条目（连同明文）撤，用户条目留
+        // 官方切回：Mesa 条目撤，用户条目留
         let off: Value =
             serde_json::from_str(&patch_codebuddy_models_official(&v.to_string(), Some("sk-new")).unwrap()).unwrap();
         let ids: Vec<_> = off["models"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["mine", "mine2"]);
-        // 没有密钥的连接仍写引用
-        let nokey: Value = serde_json::from_str(&patch_codebuddy_models(None, &p, None, &[]).unwrap()).unwrap();
-        assert_eq!(nokey["models"][0]["apiKey"], "${CODEBUDDY_API_KEY}");
     }
 
     #[test]
