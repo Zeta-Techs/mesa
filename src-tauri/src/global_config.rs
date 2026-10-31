@@ -1488,6 +1488,47 @@ fn patch_grok_config(
     Ok(doc.to_string())
 }
 
+/// Grok 模型段的密钥改成 `[auth_provider.<名>]`：`command` = Mesa 的 helper、`args` = 取这个网关密钥的子命令，
+/// 段里只写 `auth_provider = "<名>"`（1.0.70 假网关实测：带参数、路径含空格都能现取到）。只换 `api_key` 恰是这把密钥的段
+///（这次写的与以前 Mesa 写的同一网关段），用户自己的段不动
+pub(crate) fn grok_helper_auth(config: &str, helper: &Path, gateway_id: &str, key: &str) -> Result<String, String> {
+    let mut doc = parse_toml_doc(Some(config))?;
+    let name = grok_auth_provider_name(gateway_id);
+    let mut used = false;
+    if let Some(entries) = doc.get_mut("model").and_then(|m| m.as_table_like_mut()) {
+        for (_, item) in entries.iter_mut() {
+            let Some(t) = item.as_table_like_mut() else { continue };
+            if t.get("api_key").and_then(|k| k.as_str()) == Some(key) {
+                t.remove("api_key");
+                t.remove("env_key");
+                t.insert("auth_provider", toml_edit::value(name.as_str()));
+                used = true;
+            }
+        }
+    }
+    if used {
+        let providers = sub_table(doc.as_item_mut(), "auth_provider")?;
+        providers[name.as_str()] = toml_edit::Item::Table(grok_auth_provider_table(helper, gateway_id));
+    }
+    Ok(doc.to_string())
+}
+
+/// 每个网关一个 helper 段名（同一网关的段共用）
+fn grok_auth_provider_name(gateway_id: &str) -> String {
+    let short: String = gateway_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
+    format!("mesa-{short}")
+}
+
+fn grok_auth_provider_table(helper: &Path, gateway_id: &str) -> toml_edit::Table {
+    let mut t = toml_edit::Table::new();
+    t["command"] = toml_edit::value(helper.to_string_lossy().as_ref());
+    let mut args = toml_edit::Array::new();
+    args.push(crate::codex_continuity::TOKEN_SUBCOMMAND);
+    args.push(gateway_id);
+    t["args"] = toml_edit::value(args);
+    t
+}
+
 /// 撤 Mesa 以前写的 `[endpoints].models_base_url`：值等于这次连接的地址，或等于某个 Mesa 模型段（名字「配置名 · 模型」）
 /// 的 base_url 才算 Mesa 的；撤空了连同 `[endpoints]` 表一起撤
 fn remove_mesa_grok_endpoint(doc: &mut toml_edit::DocumentMut, base_url: Option<&str>) {
@@ -1589,6 +1630,8 @@ fn extend_grok_plans(
     };
     let mut doc = parse_toml_doc(Some(&base))?;
     let mut changed = false;
+    // 密钥能引用就不写明文（规则 8），同设为全局
+    let helper = crate::codex_continuity::stable_helper();
     for (model, pid) in refs {
         if current.is_some_and(|c| c.models.contains(&model)) {
             continue;
@@ -1610,7 +1653,16 @@ fn extend_grok_plans(
         if let Some(u) = binding.base_url.as_deref() {
             entry["base_url"] = toml_edit::value(u);
         }
-        entry["api_key"] = toml_edit::value(key);
+        match (helper.as_deref(), binding.gateway_id.as_deref()) {
+            (Some(h), Some(gid)) => {
+                let name = grok_auth_provider_name(gid);
+                entry["auth_provider"] = toml_edit::value(name.as_str());
+                let providers = sub_table(doc.as_item_mut(), "auth_provider")?;
+                providers[name.as_str()] = toml_edit::Item::Table(grok_auth_provider_table(h, gid));
+            }
+            _ => entry["api_key"] = toml_edit::value(key),
+        }
+        let entry = sub_table(sub_table(doc.as_item_mut(), "model")?, &model)?;
         if let Some(b) = binding.api_backend.as_deref().filter(|s| !s.is_empty()) {
             entry["api_backend"] = toml_edit::value(b);
         }
@@ -2175,7 +2227,9 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
                     .get("base_url")
                     .and_then(|u| u.as_str())
                     .is_some_and(|u| !crate::agents::grok_is_xai_endpoint(u));
-                let own_key = item.get("api_key").is_some() || item.get("env_key").is_some();
+                let own_key = item.get("api_key").is_some()
+                    || item.get("env_key").is_some()
+                    || item.get("auth_provider").is_some();
                 to_relay && !own_key
             })
             .map(|(k, _)| k.to_string())
@@ -2672,6 +2726,11 @@ fn plan_writes(
         "grok" => {
             let path = dir.join("config.toml");
             let content = patch_grok_config(read_existing(&path)?.as_deref(), key, profile)?;
+            // 密钥能引用就不写明文（规则 8）：找得到随包 helper、认得出网关，模型段改成用时向 Mesa 现取
+            let content = match (crate::codex_continuity::stable_helper(), profile.gateway_id.as_deref(), key) {
+                (Some(helper), Some(gid), Some(k)) => grok_helper_auth(&content, &helper, gid, k)?,
+                _ => content,
+            };
             push("config.toml", path, content);
         }
         // 防御兜底：能力表标 Supported 但这里漏了 arm（两表漂移），属内部错误
@@ -5725,6 +5784,30 @@ supports_reasoning_effort = false
                 .len(),
             4
         );
+    }
+
+    #[test]
+    fn grok_helper_auth_replaces_plaintext_key() {
+        let mut p = profile("grok");
+        p.models = vec!["m1".into(), "m2".into()];
+        let existing = "[model.mine]\nname = \"我的\"\napi_key = \"sk-user\"\n";
+        let out = patch_grok_config(Some(existing), Some("sk-secret"), &p).unwrap();
+        let helper = Path::new("/Users/x/Library/Application Support/ccode/bin/mesa_helper");
+        let out = grok_helper_auth(&out, helper, "gw-1234abcd-ef", "sk-secret").unwrap();
+        assert!(!out.contains("sk-secret"), "明文密钥不落盘");
+        let doc: toml::Value = toml::from_str(&out).unwrap();
+        for m in ["m1", "m2"] {
+            assert_eq!(doc["model"][m]["auth_provider"].as_str(), Some("mesa-gw1234ab"));
+            assert!(doc["model"][m].get("api_key").is_none());
+        }
+        assert_eq!(doc["model"]["mine"]["api_key"].as_str(), Some("sk-user"), "用户自己的段不动");
+        let ap = &doc["auth_provider"]["mesa-gw1234ab"];
+        assert_eq!(ap["command"].as_str(), Some("/Users/x/Library/Application Support/ccode/bin/mesa_helper"));
+        assert_eq!(ap["args"].as_array().unwrap().len(), 2);
+        assert_eq!(ap["args"][1].as_str(), Some("gw-1234abcd-ef"));
+        // 官方切回：带 auth_provider 的中转段与带自己密钥的一样留着（老会话续聊要用）
+        let off: toml::Value = toml::from_str(&patch_grok_config_official(&out).unwrap()).unwrap();
+        assert!(off["model"].get("m1").is_some());
     }
 
     #[test]

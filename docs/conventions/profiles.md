@@ -387,7 +387,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 5. **用户能改的写在用户层**：不用最高优先级的 env 压住用户在外面 `/model`、`/effort` 的选择（Claude 写顶层 `model` / `effortLevel`）。
 6. **官方切回只撤 Mesa 写过的**：不写死某种登录方式（Gemini 不写 `oauth-personal`、Qwen 不写已停用的 `qwen-oauth`），不删用户自带密钥的配置段。
 7. **被全局配置引用的文件不随连接删除**（Codex 模型目录，`profiles::codex_config_references`）。
-8. **密钥能引用就不写明文**：OpenCode `{file:}`、Codex 续聊补的 `ccode-<短id>` 渠道 `auth.command`（`mesa_helper codex-token`）、请求头只写变量名引用（Codex `env_http_headers` / OpenCode `{env:}` / Grok `$VAR`），只认明文的家不写请求头。**「能引用」以真 CLI 实测可靠为准**（2026-10-31 收窄）：CodeBuddy `models.json` 的 `${CODEBUDDY_API_KEY}` 与 settings.json env 灌入进程环境有先后竞争、常原样发出；2026-11-01 起条目干脆不写 `apiKey` / `url`（条目自带的会压过 Mesa 按连接启动的注入，见 CodeBuddy 段），密钥只在 settings.json env。
+8. **密钥能引用就不写明文**：OpenCode `{file:}`、Codex 续聊补的 `ccode-<短id>` 渠道 `auth.command`（`mesa_helper codex-token`）、Grok 模型段 `auth_provider` → `[auth_provider.mesa-<短id>]`（`command` = helper、`args = ["codex-token", 网关 id]`，2026-11-01，1.0.70 实测带参数与含空格路径都可；设为全局与老会话补段同用，找不到 helper 才写 `api_key`）、请求头只写变量名引用（Codex `env_http_headers` / OpenCode `{env:}` / Grok `$VAR`），只认明文的家不写请求头。**「能引用」以真 CLI 实测可靠为准**（2026-10-31 收窄）：CodeBuddy `models.json` 的 `${CODEBUDDY_API_KEY}` 与 settings.json env 灌入进程环境有先后竞争、常原样发出；2026-11-01 起条目干脆不写 `apiKey` / `url`（条目自带的会压过 Mesa 按连接启动的注入，见 CodeBuddy 段），密钥只在 settings.json env。
 9. **CLI 升级后自动复核**：CLI 金丝雀「全局配置」层（`global_phase` + `e2e_write_global_config`）用真写计划写进临时 HOME、不经 Mesa 起 CLI，核对请求的模型与密钥；新写法上线前同样先用真 CLI + 假网关跑一遍（本条起，静态审查代替不了，见 AGENTS「动真实数据先干跑」）。
 
 「写入 CLI 全局默认」是绑定上的动作（一键入口不预览，见下「一键设为全局」），复用现事务写入 / 备份 / 原始快照 / 复检弹层。确认前 `preview_profile_global` 给出脱敏变更预览（文件、字段增删改、此入口带不上的策略、已开进程需新开）。成功更新「外部 CLI 上次写入」追踪，**不**改 Mesa 启动默认，也不改项目默认。无密钥网关仍禁止（`plan_writes` 现拒绝 `noAuth`，保持）。
