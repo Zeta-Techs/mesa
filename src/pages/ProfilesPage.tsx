@@ -1847,11 +1847,10 @@ const OFFICIAL_LOGOUT_HINT: Record<string, string> = {
 
 const displayHost = endpointHost;
 
-/** 连接列表五列网格模板：名称 | 端点 | 模型 | 状态 | 操作。
- *  官方账号行与数据行共用同一模板，保证上下行严格垂直对齐；
- *  操作列 170px 刚好容纳「两枚 hover 图标钮 + 编辑 + ⋯」，再宽会在中等窗口把行撑出横向滚动 */
-const PROFILE_GRID =
-  "grid-cols-[minmax(150px,1.1fr)_minmax(140px,0.9fr)_minmax(150px,1fr)_110px_220px]";
+/** 连接行网格（2026-10-29 起）：窄 = 图标 | 名称 / 端点 · 模型 / 说明 | 状态 | 操作；
+ *  容器宽 ≥60rem = 图标 | 名称 / 说明 | 端点 · 模型 | 状态 | 操作。出图模型行共用，上下对齐、不出横向滚动 */
+export const PROFILE_ROW_GRID =
+  "grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto_auto] content-center items-center gap-x-3 px-3 py-2.5 text-sm @min-[60rem]/rows:grid-cols-[auto_minmax(0,18rem)_minmax(0,1fr)_auto_auto] @min-[60rem]/rows:gap-x-4";
 
 /** 状态列配色：纯状态 = 中性字 + 语义色小圆点；例外（缺/失败）字也着色，扫一眼就能挑出来 */
 const STATUS_TONE: Record<ProfileStatusTone, { text: string; dot: string | null }> = {
@@ -4508,7 +4507,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 commitProfileMove(agent.id, listIds, from, to),
                               );
                             }}
-                            className={`group relative grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto_auto] content-center items-center gap-x-3 px-3 py-2.5 text-sm @min-[60rem]/rows:grid-cols-[auto_minmax(0,18rem)_minmax(0,1fr)_auto_auto] @min-[60rem]/rows:gap-x-4 ${
+                            className={`group relative ${PROFILE_ROW_GRID} ${
                               rowDrag.dragging ? "" : "transition-colors"
                             } ${
                               // 拖着走的那行：实底浮起，免得透出底下让位的行
@@ -4910,9 +4909,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           })}
         </div>
         {/* 出图模型（2026-10-24 用户「连接这里配置生图模型」）：不属于哪个 Agent 的对话连接，单独一块；
-            长相与 Agent 分组一致、行与连接行同一列模板。编辑处只此一处，设置页只显示现状并跳过来 */}
+            长相与 Agent 分组一致、行与连接行同一网格（PROFILE_ROW_GRID）。编辑处只此一处，设置页只显示现状并跳过来 */}
         {(activePane === "image" || (activePane === "all" && !q)) && (
-          <ImageGenPanel gridClass={PROFILE_GRID} sectionRef={imageGenRef} />
+          <ImageGenPanel gridClass={PROFILE_ROW_GRID} sectionRef={imageGenRef} />
         )}
         </div>
       </PaneSplit>

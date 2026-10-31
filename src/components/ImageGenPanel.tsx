@@ -70,7 +70,7 @@ export default function ImageGenPanel({
   gridClass,
   sectionRef,
 }: {
-  /** 连接页行的列模板（PROFILE_GRID），保证这一行和上面的连接行列对齐 */
+  /** 连接页行网格（PROFILE_ROW_GRID），保证这一行和上面的连接行同一摆法 */
   gridClass: string;
   sectionRef?: Ref<HTMLElement>;
 }) {
@@ -264,29 +264,35 @@ export default function ImageGenPanel({
       </div>
       {!collapsed && (
         <>
-          <div className={`group grid min-h-14 ${gridClass} items-center gap-3 overflow-x-auto border-b border-hairline px-3 text-sm`}>
-            <span className="flex min-w-0 items-center gap-2">
-              {/* 图标代表所选模型的厂商（2026-10-29 用户「用所选的模型代表的图标」，与连接页左栏同一个）；
-                  没选或认不出给中性的图片图标，不拿「出图」二字的首字当占位（2026-10-27 用户：那个「出」看不懂） */}
+          <ul className="@container/rows border-b border-hairline">
+            <li className={`group relative ${gridClass} transition-colors hover:bg-hover/60`}>
+            {/* 图标代表所选模型的厂商（2026-10-29 用户「用所选的模型代表的图标」，与连接页左栏同一个）；
+                没选或认不出给中性的图片图标，不拿「出图」二字的首字当占位（2026-10-27 用户：那个「出」看不懂） */}
+            <span className="col-start-1 row-span-3 row-start-1 flex self-center">
               {vendorForModel(model) ? (
                 <VendorIcon vendor={vendorForModel(model)} name={model} />
               ) : (
                 <ImageIcon size={16} strokeWidth={1.6} className="shrink-0 text-l4" aria-hidden="true" />
               )}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium text-l1">Agent 出图</span>
-                <span className={`mt-0.5 block truncate text-micro ${caption.cls}`} title={"tip" in caption ? caption.tip : undefined}>
-                  {caption.text}
-                </span>
+            </span>
+            <span className="col-start-2 row-start-1 truncate text-base font-medium text-l1">Agent 出图</span>
+            {/* 端点 · 模型：格子摆放同连接行（窄时第二行，宽时独占一列） */}
+            <span className="col-start-2 row-start-2 mt-0.5 flex min-w-0 items-baseline gap-1.5 text-xs @min-[60rem]/rows:col-start-3 @min-[60rem]/rows:row-span-2 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:mt-0 @min-[60rem]/rows:self-center">
+              <span className="min-w-0 max-w-[45%] shrink-0 truncate text-l3" title={gatewayName ? `网关「${gatewayName}」` : undefined}>
+                {gwUrl ? endpointHost(gwUrl) : gatewayName ? gatewayName : "—"}
+              </span>
+              <span className="shrink-0 text-l4" aria-hidden="true">·</span>
+              <span className="min-w-0 truncate font-mono text-micro text-l2" title={model || undefined}>
+                {model || <span className="font-sans text-xs text-l3">还没选</span>}
               </span>
             </span>
-            <span className="min-w-0 truncate text-xs text-l2" title={gatewayName ? `网关「${gatewayName}」` : undefined}>
-              {gwUrl ? endpointHost(gwUrl) : gatewayName ? gatewayName : "—"}
+            <span
+              className={`col-start-2 row-start-3 mt-0.5 block break-words text-micro @min-[60rem]/rows:row-start-2 ${caption.cls}`}
+              title={"tip" in caption ? caption.tip : undefined}
+            >
+              {caption.text}
             </span>
-            <span className="min-w-0 truncate font-mono text-micro text-l2" title={model || undefined}>
-              {model || <span className="font-sans text-xs text-l3">还没选</span>}
-            </span>
-            <span className="flex min-w-0 items-center gap-1 text-xs">
+            <span className="col-start-3 row-span-3 row-start-1 flex min-w-0 items-center self-center text-xs @min-[60rem]/rows:col-start-4">
               {currentRun?.status === "done" && (
                 <span className="flex min-w-0 items-center gap-1 text-l2" title={`${currentRun.protocol} · ${secs(currentRun.ms)}`}>
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok-text" />
@@ -301,7 +307,7 @@ export default function ImageGenPanel({
               )}
               {currentRun?.status === "running" && <span className="truncate text-l3">出图中…</span>}
             </span>
-            <span className="flex items-center justify-end gap-1 whitespace-nowrap">
+            <span className="col-start-4 row-span-3 row-start-1 flex items-center justify-end gap-1 self-center whitespace-nowrap @min-[60rem]/rows:col-start-5">
               <button
                 ref={changeRef}
                 type="button"
@@ -331,14 +337,15 @@ export default function ImageGenPanel({
                 试出与对比
               </button>
             </span>
-          </div>
+            </li>
+          </ul>
           {groups !== null && items.length === 0 && (
-            <p className="border-t border-hairline px-4 py-2.5 text-micro leading-4 text-l3">
+            <p className="border-b border-hairline px-4 py-2.5 text-micro leading-4 text-l3">
               网关目录里还没有出图模型：到「网关库」给网关点一次「获取模型」，或换一个开通了出图模型的网关。
             </p>
           )}
           {lab && (
-            <div className="border-t border-hairline px-4 py-3">
+            <div className="border-b border-hairline px-4 py-3">
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
