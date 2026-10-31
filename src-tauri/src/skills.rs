@@ -133,6 +133,21 @@ pub struct SkillUpdateDto {
 
 // ===== 库与元数据存储 =====
 
+static STORE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+thread_local! {
+    static STORE_LOCK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+struct SkillStoreGuard {
+    _inner: Option<(std::sync::MutexGuard<'static, ()>, fs::File)>,
+}
+
+impl Drop for SkillStoreGuard {
+    fn drop(&mut self) {
+        STORE_LOCK_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SkillStore {
     json_path: PathBuf,
@@ -157,9 +172,39 @@ impl SkillStore {
             .unwrap_or_default()
     }
 
+    /// 写前确认盘上那份能解析：读坏的清单在 read 里是空表，照写会把整个登记冲成「空表＋1 条」
     fn write(&self, skills: &[SkillDto]) -> Result<(), String> {
+        if let Ok(current) = fs::read_to_string(&self.json_path) {
+            if serde_json::from_str::<Vec<SkillDto>>(&current).is_err() {
+                return Err(format!(
+                    "技能清单 {} 无法解析，已停止写入以免覆盖；请修复或移走该文件后重试",
+                    self.json_path.display()
+                ));
+            }
+        }
         let text = serde_json::to_string_pretty(skills).map_err(|e| e.to_string())?;
         crate::profiles::atomic_write(&self.json_path, &text)
+    }
+
+    /// 读改写 skills.json 的整段持锁（进程锁＋OS 文件锁）。同一线程可重入：
+    /// 分发、导入、内置更新层层互调，外层持锁时内层直接放行
+    fn lock(&self) -> Result<SkillStoreGuard, String> {
+        let depth = STORE_LOCK_DEPTH.with(|d| d.get());
+        let inner = if depth == 0 {
+            let process = STORE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let dir = self
+                .json_path
+                .parent()
+                .ok_or("技能清单路径无效")?
+                .join("locks");
+            fs::create_dir_all(&dir).map_err(|e| format!("创建锁目录失败: {e}"))?;
+            let file = crate::storage::lock_at(&dir.join("skills.lock"))?;
+            Some((process, file))
+        } else {
+            None
+        };
+        STORE_LOCK_DEPTH.with(|d| d.set(depth + 1));
+        Ok(SkillStoreGuard { _inner: inner })
     }
 
     fn skill_dir(&self, name: &str) -> PathBuf {
@@ -519,6 +564,7 @@ fn seed_builtin_skills_impl(store: &SkillStore) -> Result<Vec<String>, String> {
     if seeded >= BUILTIN_SEED_VERSION {
         return Ok(Vec::new());
     }
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let mut tombstones = read_builtin_tombstones(store);
     let mut added = Vec::new();
@@ -631,6 +677,7 @@ fn apply_builtin_skill_update_impl(store: &SkillStore, name: &str) -> Result<(),
     if !md.is_file() {
         return Err(format!("库内缺少 {}（重启应用播种后再试）", md.display()));
     }
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let pos = skills
         .iter()
@@ -1362,6 +1409,7 @@ fn apply_impl(
     enabled: bool,
     allow_symlink: bool,
 ) -> Result<(), String> {
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let pos = skills
         .iter()
@@ -1466,6 +1514,7 @@ fn delete_impl(
     backups: &Path,
     id: &str,
 ) -> Result<(), String> {
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let pos = skills
         .iter()
@@ -1788,6 +1837,7 @@ fn resync_impl(
     dirs: &HashMap<String, PathBuf>,
     id: &str,
 ) -> Result<Vec<String>, String> {
+    let _lock = store.lock()?;
     let skills = store.read();
     let skill = skills
         .iter()
@@ -1798,6 +1848,18 @@ fn resync_impl(
         apply_impl(store, dirs, id, agent, true, false)?;
     }
     Ok(stale)
+}
+
+/// 库里的技能内容变了（编辑、改写落盘、导入覆盖、GitHub 更新）就把已分发的复制件跟上：
+/// 符号链接天然同步，复制件（cursor/grok、Windows 无链接权限）不跟就一直是旧版。
+/// best-effort：同步失败时技能卡照旧亮「同步副本」，人可重试
+fn resync_names(store: &SkillStore, dirs: &HashMap<String, PathBuf>, names: &[String]) {
+    let skills = store.read();
+    for name in names {
+        if let Some(skill) = skills.iter().find(|s| &s.name == name) {
+            let _ = resync_impl(store, dirs, &skill.id);
+        }
+    }
 }
 
 // ===== Tauri commands =====
@@ -1820,6 +1882,7 @@ pub async fn count_enabled_skills(agent: String) -> usize {
 pub async fn set_skill_category(id: String, category: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let store = SkillStore::default_paths()?;
+        let _lock = store.lock()?;
         let mut skills = store.read();
         let s = skills
             .iter_mut()
@@ -1837,6 +1900,7 @@ pub async fn set_skill_category(id: String, category: Option<String>) -> Result<
 /// 无分类的 GitHub 技能批量回填仓库名分类（自动分类 #15 落地前的存量导入没有分类）。
 /// 已有分类（含手动设置）一律不动；返回回填条数
 fn backfill_categories_impl(store: &SkillStore) -> Result<usize, String> {
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let mut filled = 0usize;
     for s in &mut skills {
@@ -1890,6 +1954,7 @@ pub async fn set_skill_tags(id: String, tags: Vec<String>) -> Result<(), String>
     tauri::async_runtime::spawn_blocking(move || {
         let tags = validate_skill_tags(&tags)?;
         let store = SkillStore::default_paths()?;
+        let _lock = store.lock()?;
         let mut skills = store.read();
         let s = skills
             .iter_mut()
@@ -2173,6 +2238,7 @@ fn create_skill_from_full_md_at(
         .to_string();
     validate_skill_name(&name)?;
     let desc = parsed.description.clone().unwrap_or_default();
+    let _lock = store.lock()?;
     let mut skills = store.read();
     create_impl(store, &mut skills, &name, &desc, body)?;
     // provides-only 的稿（只声明顶位、无 inputs/outputs）也要过 update 写回声明——
@@ -2230,6 +2296,7 @@ pub async fn import_skills_from_dir(
     }
     let mut found = Vec::new();
     find_skill_dirs(&root, &mut found);
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let mut result = SkillImportResultDto::default();
     for dir in found {
@@ -2244,6 +2311,7 @@ pub async fn import_skills_from_dir(
             &mut result,
         )?;
     }
+    resync_names(&store, &agent_dirs(), &result.updated);
     Ok(result)
 }
 
@@ -2253,8 +2321,9 @@ pub async fn import_skills_from_zip(
     resolutions: Option<HashMap<String, String>>,
 ) -> Result<SkillImportResultDto, String> {
     let store = SkillStore::default_paths()?;
+    let _lock = store.lock()?;
     let mut skills = store.read();
-    import_zip_impl(
+    let result = import_zip_impl(
         &store,
         &mut skills,
         Path::new(&path),
@@ -2263,7 +2332,9 @@ pub async fn import_skills_from_zip(
         None,
         resolutions.as_ref(),
         None,
-    )
+    )?;
+    resync_names(&store, &agent_dirs(), &result.updated);
+    Ok(result)
 }
 
 fn github_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
@@ -2316,6 +2387,7 @@ async fn record_github_revision(
     }
     let client = github_client(30)?;
     let revision = github_latest_revision(&client, repo, branch).await.ok();
+    let _lock = store.lock()?;
     let mut recorded = store.read();
     for skill in &mut recorded {
         if changed.contains(skill.name.as_str()) {
@@ -2350,17 +2422,19 @@ pub async fn import_skills_from_github(
     let tmp = std::env::temp_dir().join(format!("ccode-gh-{}.zip", uuid::Uuid::new_v4()));
     fs::write(&tmp, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
     let store = SkillStore::default_paths()?;
-    let mut skills = store.read();
-    let result = import_zip_impl(
-        &store,
-        &mut skills,
-        &tmp,
-        subdir.as_deref(),
-        "github",
-        Some(repo.clone()),
-        resolutions.as_ref(),
-        None,
-    );
+    let result = store.lock().and_then(|_lock| {
+        let mut skills = store.read();
+        import_zip_impl(
+            &store,
+            &mut skills,
+            &tmp,
+            subdir.as_deref(),
+            "github",
+            Some(repo.clone()),
+            resolutions.as_ref(),
+            None,
+        )
+    });
     let _ = fs::remove_file(&tmp);
     let result = result?;
     let changed: std::collections::HashSet<&str> = result
@@ -2370,6 +2444,7 @@ pub async fn import_skills_from_github(
         .map(String::as_str)
         .collect();
     record_github_revision(&store, &repo, branch.as_deref(), subdir.as_deref(), changed).await?;
+    resync_names(&store, &agent_dirs(), &result.updated);
     Ok(result)
 }
 
@@ -2394,20 +2469,22 @@ pub async fn apply_skill_update(id: String) -> Result<SkillImportResultDto, Stri
     let bytes = download_github_zipball(&client, &repo, branch.as_deref()).await?;
     let tmp = std::env::temp_dir().join(format!("ccode-gh-{}.zip", uuid::Uuid::new_v4()));
     fs::write(&tmp, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    let mut skills = store.read();
     // 既有技能必然同名存在 → overwrite 命中覆盖+备份路径；zip 其余内容被 only 过滤
     let resolutions: HashMap<String, String> =
         HashMap::from([(skill.name.clone(), "overwrite".to_string())]);
-    let result = import_zip_impl(
-        &store,
-        &mut skills,
-        &tmp,
-        subdir.as_deref(),
-        "github",
-        Some(repo.clone()),
-        Some(&resolutions),
-        Some(&skill.name),
-    );
+    let result = store.lock().and_then(|_lock| {
+        let mut skills = store.read();
+        import_zip_impl(
+            &store,
+            &mut skills,
+            &tmp,
+            subdir.as_deref(),
+            "github",
+            Some(repo.clone()),
+            Some(&resolutions),
+            Some(&skill.name),
+        )
+    });
     let _ = fs::remove_file(&tmp);
     let result = result?;
     if !result.updated.iter().any(|n| n == &skill.name) {
@@ -2424,6 +2501,7 @@ pub async fn apply_skill_update(id: String) -> Result<SkillImportResultDto, Stri
         std::collections::HashSet::from([skill.name.as_str()]),
     )
     .await?;
+    resync_names(&store, &agent_dirs(), &result.updated);
     Ok(result)
 }
 
@@ -2625,6 +2703,7 @@ pub async fn discover_unmanaged() -> Vec<DiscoveredDto> {
 #[tauri::command]
 pub async fn import_discovered(paths: Vec<String>) -> Result<SkillImportResultDto, String> {
     let store = SkillStore::default_paths()?;
+    let _lock = store.lock()?;
     let mut skills = store.read();
     let mut result = SkillImportResultDto::default();
     for p in paths {
@@ -2642,6 +2721,7 @@ pub async fn import_discovered(paths: Vec<String>) -> Result<SkillImportResultDt
             )?;
         }
     }
+    resync_names(&store, &agent_dirs(), &result.updated);
     // 同名冲突不静默吞：随结果透出给前端提示
     Ok(result)
 }
@@ -2771,6 +2851,7 @@ pub async fn create_skill(
     content: String,
 ) -> Result<(), String> {
     let store = SkillStore::default_paths()?;
+    let _lock = store.lock()?;
     let mut skills = store.read();
     create_impl(&store, &mut skills, name.trim(), &description, &content)
 }
@@ -2782,6 +2863,7 @@ pub async fn update_skill_content(
     description: Option<String>,
 ) -> Result<(), String> {
     let store = SkillStore::default_paths()?;
+    let _lock = store.lock()?;
     let mut skills = store.read();
     update_content_impl(
         &store,
@@ -2790,7 +2872,9 @@ pub async fn update_skill_content(
         &content,
         description,
         None,
-    )
+    )?;
+    resync_names(&store, &agent_dirs(), &[name.trim().to_string()]);
+    Ok(())
 }
 
 // ===== 「◈ 适配到流水线」（外部技能 → 流水线接口口径；两阶段：AI 出稿 → 人预览确认才落盘） =====
@@ -2998,6 +3082,7 @@ pub async fn adapt_skill_to_pipeline(
 #[tauri::command]
 pub async fn write_skill_md(name: String, full_text: String) -> Result<(), String> {
     let store = SkillStore::default_paths()?;
+    let _lock = store.lock()?;
     let mut skills = store.read();
     // 确认写回的就是预览里那份能解析的稿：前言、围栏先剥掉，缺结构直接拒绝。
     let full_text = usable_adapt_draft(&full_text)?;
@@ -3010,7 +3095,9 @@ pub async fn write_skill_md(name: String, full_text: String) -> Result<(), Strin
         body,
         parsed.description,
         Some((parsed.inputs, parsed.outputs, parsed.provides)),
-    )
+    )?;
+    resync_names(&store, &agent_dirs(), &[name.trim().to_string()]);
+    Ok(())
 }
 
 /// 「AI 优化另存」出稿 prompt（纯函数，可测）：多源合成一份，内置源的流水线落点为骨架、
@@ -4720,6 +4807,55 @@ mod tests {
             fx.agents["codex"].join("pdf").join(MARKER_FILE).exists(),
             "仍保持 copy 形态"
         );
+    }
+
+    #[test]
+    fn edited_content_reaches_copies() {
+        let fx = Fx::new();
+        let skill = fx.add_lib_skill("pdf", "处理 PDF");
+        apply_impl(&fx.store, &fx.agents, &skill.id, "codex", true, false).unwrap();
+        let mut skills = fx.store.read();
+        update_content_impl(&fx.store, &mut skills, "pdf", "body v2\n", None, None).unwrap();
+        resync_names(&fx.store, &fx.agents, &["pdf".to_string()]);
+        let copied = fs::read_to_string(fx.agents["codex"].join("pdf").join("SKILL.md")).unwrap();
+        assert!(copied.contains("body v2"), "编辑后复制件跟上库");
+    }
+
+    #[test]
+    fn corrupt_registry_is_not_overwritten() {
+        let fx = Fx::new();
+        fs::write(&fx.store.json_path, "{broken").unwrap();
+        assert!(fx.store.read().is_empty());
+        let err = fx.store.write(&[]).unwrap_err();
+        assert!(err.contains("无法解析"), "{err}");
+        assert_eq!(fs::read_to_string(&fx.store.json_path).unwrap(), "{broken");
+    }
+
+    #[test]
+    fn store_lock_is_reentrant_and_serializes_writers() {
+        let fx = Fx::new();
+        {
+            let _outer = fx.store.lock().unwrap();
+            let _inner = fx.store.lock().unwrap();
+        }
+        assert_eq!(STORE_LOCK_DEPTH.with(|d| d.get()), 0);
+        let skill = fx.add_lib_skill("pdf", "处理 PDF");
+        let handles: Vec<_> = ["codex", "gemini", "qwen"]
+            .into_iter()
+            .map(|agent| {
+                let (store, agents, id) = (fx.store.clone(), fx.agents.clone(), skill.id.clone());
+                std::thread::spawn(move || {
+                    apply_impl(&store, &agents, &id, agent, true, false).unwrap()
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let saved = fx.store.read().into_iter().find(|s| s.id == skill.id).unwrap();
+        for agent in ["codex", "gemini", "qwen"] {
+            assert!(saved.apps[agent], "并发启用 {agent} 不被别的写入冲掉");
+        }
     }
 
     #[test]

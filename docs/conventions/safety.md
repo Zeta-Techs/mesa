@@ -358,6 +358,10 @@
   走 `create_skill`/`update_skill_content`：重名拒绝并引导改用「编辑内容」；编辑经临时目录走既有覆盖路径（覆盖前备份、
   辅助文件保留、source/repo 不改写）；◈ 优化开终端让 Agent 直改库文件，备份兜底仍靠保存/覆盖路径。**内置技能更新**
   （`apply_builtin_skill_update`）= 先预览 SKILL.md 与随包脚本并绑定目录摘要，再持进程/OS 锁确认摘要未变；全部原件备份后写入，失败恢复本批文件。保留同目录 `.bak-<yyyymmdd>`（重名追加后缀）供人工恢复，辅助文件不能静默漏更新。
+- **技能清单 skills.json 读改写持锁、读坏不覆盖**（2026-10-31）：凡读-改-写 skills.json 的入口整段持 `SkillStore::lock`
+  （进程锁＋`locks/skills.lock` 文件锁，同线程可重入，持锁段内不得跨 await）；`write` 前先确认盘上那份能解析，解析不了就拒写并报出
+  路径——`read` 读坏回空表，照写会把整个登记冲成「空表＋1 条」。**库内容变了复制件当场跟上**：编辑、改写落盘、导入覆盖、
+  GitHub 更新、内置更新成功后都对该技能跑一次 resync（`resync_names`，best-effort，失败时技能卡照旧亮「同步副本」）。
 - **技能删除保护（与 MCP 同思路，语义不同）**：删除 = 删 SSOT 库条目 + 回收各 agent 已分发副本——没有 MCP 那种
   「保留 agent 侧」选项，因为分发出去的本就是 Mesa 管的链接/带标记副本（`remove_ours` 只动这两类，用户自放内容天然不碰）。
   删除确认走应用内弹层（`src/pages/SkillsPage.tsx` DeleteSkillModal，禁原生对话框）：所有技能列影响面
