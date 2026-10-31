@@ -370,10 +370,12 @@ fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Opt
         Head::Official => inp.official.iter().cloned().for_each(|e| push(e, &mut out)),
     }
     let head_len = out.len();
+    // 头部以外的条目都只为老对话：渠道跟着对话走，新对话里选它们照样发给当前默认连接（2026-10-31 用户实测：
+    // 新对话选「ChatGPT · gpt-5.6-terra」走的是中转）。显示名一律标「老对话」，不让人以为换了账号
     // 中转默认下有官方老对话：官方模型整组带上（客户端在官方对话里还能换别的官方模型）
     if !official && inp.refs.iter().any(|r| r.provider == OFFICIAL) {
         for e in &inp.official {
-            push(renamed(e.clone(), "ChatGPT"), &mut out);
+            push(renamed(e.clone(), "官方老对话"), &mut out);
         }
     }
     // 共用渠道 custom 的老对话：中转默认下它们走的就是当前连接，模型以当前目录为准；官方默认下补它们用过的模型
@@ -390,7 +392,7 @@ fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Opt
         if owners.get(model).is_some_and(|o| o.len() > 1) {
             "老对话".to_string()
         } else {
-            name.to_string()
+            format!("{name} 老对话")
         }
     };
     for r in &inp.refs {
@@ -690,7 +692,7 @@ mod tests {
         let out = layer(RELAY_DISK, &Head::Relay(vec![head_entry("ds")]), &inp).unwrap();
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
         assert_eq!(slugs(out.catalog.as_deref().unwrap()), ["ds", "gpt-6-luna", "gpt-5.6-terra"]);
-        assert_eq!(cat["models"][1]["display_name"].as_str(), Some("ChatGPT · GPT-6-LUNA"));
+        assert_eq!(cat["models"][1]["display_name"].as_str(), Some("官方老对话 · GPT-6-LUNA"));
     }
 
     #[test]
@@ -699,7 +701,7 @@ mod tests {
         let out = layer(RELAY_DISK, &Head::Relay(vec![head_entry("ds")]), &inp).unwrap();
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
         assert_eq!(cat["models"][1]["display_name"].as_str(), Some("老对话 · ds-flash"));
-        assert_eq!(cat["models"][2]["display_name"].as_str(), Some("relayB · only-b"));
+        assert_eq!(cat["models"][2]["display_name"].as_str(), Some("relayB 老对话 · only-b"));
     }
 
     #[test]
@@ -734,7 +736,7 @@ mod tests {
         let out = layer(disk, &Head::Official, &inp).unwrap();
         assert_eq!(slugs(out.catalog.as_deref().unwrap()), ["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "glm"]);
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
-        assert!(cat["models"][2]["display_name"].as_str().unwrap().starts_with("relayB · "));
+        assert!(cat["models"][2]["display_name"].as_str().unwrap().starts_with("relayB 老对话 · "));
         assert!(out.config.contains("model_catalog_json"));
         assert!(!out.config.contains("model_provider ="), "官方默认不写 model_provider");
     }

@@ -2072,13 +2072,60 @@ fn is_official(profile: &Profile) -> bool {
     profile.account_type == crate::profiles::AccountType::Official
 }
 
-/// 计划与磁盘是否一致：官方整份比、API 子集比。
+/// 计划与磁盘是否一致：官方整份比、API 子集比（用户层的选择键不比，见 drift_plans）。
 fn plans_match_disk(profile: &Profile, plans: &[PlannedWrite]) -> bool {
     if is_official(profile) {
         disk_equals_plans(plans)
     } else {
-        disk_matches_plans(plans)
+        disk_matches_plans(&drift_plans(profile, plans))
     }
+}
+
+/// 漂移比对用的计划：去掉用户在 CLI 里自己会改的「选择」键（规则 5「用户能改的写用户层」）。
+/// Codex 客户端 / TUI 换模型、换思考档会把顶层 `model` / `model_reasoning_effort` 写回 config.toml
+/// （2026-10-31 实测：在客户端选了 gpt-6-luna，磁盘就成了 gpt-6-luna）；Claude `/model`、`/effort` 同理写 settings.json
+/// 顶层 `model` / `effortLevel`。这是用户的选择，不算「外部改过」，「按 Mesa 重写」也不该把它改回去。
+/// 连接本身（地址、密钥、渠道、模型名单）照旧比。
+fn drift_plans(profile: &Profile, plans: &[PlannedWrite]) -> Vec<PlannedWrite> {
+    let keys: &[&str] = match profile.agent.as_str() {
+        "codex" => &["model", "model_reasoning_effort"],
+        "claude-code" => &["model", "effortLevel"],
+        _ => &[],
+    };
+    plans
+        .iter()
+        .map(|p| {
+            let name = p.path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let content = if keys.is_empty() {
+                p.content.clone()
+            } else if name == "config.toml" {
+                match parse_toml_doc(Some(&p.content)) {
+                    Ok(mut doc) => {
+                        for k in keys {
+                            doc.remove(k);
+                        }
+                        doc.to_string()
+                    }
+                    Err(_) => p.content.clone(),
+                }
+            } else if name == "settings.json" {
+                match serde_json::from_str::<Value>(&p.content) {
+                    Ok(mut v) => {
+                        if let Some(o) = v.as_object_mut() {
+                            for k in keys {
+                                o.remove(*k);
+                            }
+                        }
+                        to_pretty(&v).unwrap_or_else(|_| p.content.clone())
+                    }
+                    Err(_) => p.content.clone(),
+                }
+            } else {
+                p.content.clone()
+            };
+            PlannedWrite { tag: p.tag, path: p.path.clone(), content }
+        })
+        .collect()
 }
 
 // ===== 计划与执行 =====
@@ -3581,6 +3628,7 @@ fn drift_files(
 ) -> Result<Vec<GlobalWriteFilePreviewDto>, String> {
     let plans = plan_writes(home, profile, key, &profile.models)?;
     let official = is_official(profile);
+    let plans = if official { plans } else { drift_plans(profile, &plans) };
     let mut files = Vec::new();
     for plan in &plans {
         let live = read_existing(&plan.path)?;
@@ -4257,6 +4305,26 @@ trust_level = "trusted"
             apply_plans(&home.join("bk").join(a), &home, &plans).unwrap();
             assert!(disk_equals_plans(&off(a)), "{a}");
         }
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn model_picked_in_the_cli_is_the_users_choice_not_drift() {
+        // Codex 客户端里换模型会写回顶层 model；连接本身（地址）被改才算漂移
+        let home = tmpdir("user-choice");
+        let p = profile("codex");
+        let key = Some("sk-secret-abcdef");
+        let plans = plan_writes(&home, &p, key, &p.models).unwrap();
+        apply_plans(&home.join("bk"), &home, &plans).unwrap();
+        let cfg = home.join(".codex/config.toml");
+        let text = fs::read_to_string(&cfg).unwrap().replace("model = \"m1\"", "model = \"gpt-6-luna\"");
+        assert!(text.contains("gpt-6-luna"));
+        fs::write(&cfg, &text).unwrap();
+        assert!(drift_files(&home, &p, key).unwrap().is_empty());
+        let plans = plan_writes(&home, &p, key, &p.models).unwrap();
+        assert!(plans_match_disk(&p, &plans));
+        fs::write(&cfg, text.replace("https://relay.example.com", "https://other.example.com")).unwrap();
+        assert!(!drift_files(&home, &p, key).unwrap().is_empty());
         fs::remove_dir_all(&home).ok();
     }
 
