@@ -867,6 +867,16 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     () => groupWalletAccounts(walletRowsShown),
     [walletRowsShown],
   );
+  // 网关余额卡收起时同样左右滑动切换账户（2026-10-31 用户：「网关余额也把这个滑动加上」）
+  const walletSwipe = useQuotaSwipe({
+    ids: walletGroups.map((g) => g.key),
+    active: walletActive,
+    onChange: setWalletActive,
+  });
+  const onWalletSummaryOpen = () => {
+    if (walletSwipe.swallowClick()) return;
+    toggleWalletOpen();
+  };
 
   async function loadWallets(force: boolean) {
     const seq = ++walletSeq.current;
@@ -1644,7 +1654,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
 
       {hasWalletGateway &&
         (walletRowsShown.length > 0 || walletLoading) && (
-        <section className="ccode-well ccode-card p-4" aria-label="网关余额">
+        <section
+          className="ccode-well ccode-card overflow-hidden p-4"
+          aria-label="网关余额"
+          onWheel={walletOpen ? undefined : walletSwipe.onWheel}
+        >
           {walletGroups.length === 0 ? (
             <>
               <div className="flex min-h-8 items-center gap-2">
@@ -1716,7 +1730,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   <div className="flex min-h-8 items-center gap-2">
                     <QuotaFold open={walletOpen} onToggle={toggleWalletOpen} label="网关余额" />
                     <h2 className="shrink-0 text-base font-medium text-l1">网关余额</h2>
-                    {walletGroups.length === 1 && (
+                    {/* 单账户、或收着（一次只摆一个账户）时写这是哪个站 */}
+                    {(walletGroups.length === 1 || !walletOpen) && (
                       <span
                         className="min-w-0 truncate text-xs text-l2"
                         title={`${walletAccountTitle(group)} · ${walletKindLabel(row.kind)}`}
@@ -1770,13 +1785,19 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   {walletError && (
                     <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
                   )}
-                  {/* 收起时只看当前余额（同一站多个账户各一行），展开才有进度条、密钥额度、多账户切换 */}
+                  {/* 收起时只看当前这个账户的余额，多个账户左右滑动切换（同订阅余量卡）；展开才有进度条、密钥额度、切换标签 */}
                   {!walletOpen ? (
+                    <div
+                      ref={walletSwipe.areaRef}
+                      className="select-none"
+                      {...walletSwipe.areaHandlers}
+                      title={walletGroups.length > 1 ? `左右滑动切换（${walletGroups.findIndex((g) => g.key === group.key) + 1} / ${walletGroups.length}）` : undefined}
+                    >
                     <QuotaSummary
-                      items={walletGroups.map((g) => {
+                      items={[group].map((g) => {
                         // 圆环画剩余比例；没有总量（不限额度 / 缺数据）就不画，不拿空圈冒充
                         const usedPct = walletUsedPercent(g.head.used, g.head.total);
-                        const label = walletGroups.length > 1 ? walletAccountTitle(g, true) : walletAmountCaption(g.head.source);
+                        const label = walletAmountCaption(g.head.source);
                         return {
                           label,
                           ring:
@@ -1798,8 +1819,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                         };
                       })}
                       empty="暂无数据"
-                      onOpen={toggleWalletOpen}
+                      onOpen={onWalletSummaryOpen}
                     />
+                    </div>
                   ) : (
                   <>
                   {walletGroups.length > 1 && (
