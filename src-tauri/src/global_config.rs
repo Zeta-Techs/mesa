@@ -907,6 +907,22 @@ fn patch_codex_config(
     Ok(doc.to_string())
 }
 
+/// 磁盘上的全局目录若以计划里的条目开头（后面是续聊层追加的），返回磁盘原文，否则返回计划
+fn codex_catalog_as_written(path: &Path, planned: String) -> String {
+    let models = |t: &str| {
+        serde_json::from_str::<Value>(t)
+            .ok()
+            .and_then(|v| v.get("models").and_then(|m| m.as_array()).cloned())
+    };
+    let Ok(live) = fs::read_to_string(path) else {
+        return planned;
+    };
+    match (models(&planned), models(&live)) {
+        (Some(p), Some(l)) if l.len() > p.len() && l[..p.len()] == p[..] => live,
+        _ => planned,
+    }
+}
+
 /// 与启动注入同口径、全局写入以前漏掉的两处：
 /// - 顶层 `model_context_window` / `model_auto_compact_token_limit` 盖过模型目录里的窗口：确知新模型窗口就改写
 ///   （同 agents 启动 `-c`，压缩点取 95%），不知道就撤掉，上一家留下的旧窗口不能接着用；
@@ -2124,6 +2140,9 @@ fn plan_writes(
                 ))
                 .map_err(|e| e.to_string())?;
                 content.push('\n');
+                // 续聊层在这份目录尾部追加了老对话的模型（codex_continuity）：磁盘上的目录以这次的条目开头，
+                // 就当作 Mesa 写的样子（漂移比对数组是整组比的，否则一追加就报「外部改过」，按 Mesa 重写也消不掉）
+                let content = codex_catalog_as_written(&path, content);
                 push("model-catalog.json", path.clone(), content);
                 Some(path)
             };
@@ -4118,6 +4137,28 @@ trust_level = "trusted"
             apply_plans(&home.join("bk").join(a), &home, &plans).unwrap();
             assert!(disk_equals_plans(&off(a)), "{a}");
         }
+        fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn codex_catalog_tail_added_by_continuity_layer_is_not_drift() {
+        // 续聊层在全局目录尾部追加老对话的模型：漂移比对数组整组比，不认这条就一直报「外部改过」，按 Mesa 重写也消不掉
+        let home = tmpdir("catalog-tail");
+        let p = profile("codex");
+        let key = Some("sk-secret-abcdef");
+        let plans = plan_writes(&home, &p, key, &p.models).unwrap();
+        apply_plans(&home.join("bk"), &home, &plans).unwrap();
+        let cat = agents::codex_global_catalog_path().unwrap();
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&cat).unwrap()).unwrap();
+        v["models"].as_array_mut().unwrap().push(json!({"slug": "old-thread-model"}));
+        fs::write(&cat, v.to_string()).unwrap();
+        assert!(drift_files(&home, &p, key).unwrap().is_empty());
+        let plans = plan_writes(&home, &p, key, &p.models).unwrap();
+        assert!(disk_matches_plans(&plans));
+        // 开头的条目被改了才算
+        v["models"][0]["display_name"] = json!("别人改的");
+        fs::write(&cat, v.to_string()).unwrap();
+        assert!(!drift_files(&home, &p, key).unwrap().is_empty());
         fs::remove_dir_all(&home).ok();
     }
 

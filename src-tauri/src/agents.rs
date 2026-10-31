@@ -2637,11 +2637,13 @@ pub fn codex_catalog_path(profile_id: &str) -> Option<std::path::PathBuf> {
     Some(catalogs_dir()?.join(format!("codex-{profile_id}.json")))
 }
 
-/// 测试态改到临时目录：写计划的测试会真的落盘，不能写进用户的 catalogs/（全局那份正被 config.toml 指着）
+/// 测试态改到临时目录：写计划的测试会真的落盘，不能写进用户的 catalogs/（全局那份正被 config.toml 指着）；
+/// 按测试线程分开，并行的测试不互相覆盖同一份全局目录
 fn catalogs_dir() -> Option<std::path::PathBuf> {
     #[cfg(test)]
     {
-        return Some(std::env::temp_dir().join("ccode-test-config").join("ccode").join("catalogs"));
+        let thread = format!("{:?}", std::thread::current().id()).replace(|c: char| !c.is_ascii_alphanumeric(), "");
+        return Some(std::env::temp_dir().join(format!("ccode-test-config-{thread}")).join("ccode").join("catalogs"));
     }
     #[cfg(not(test))]
     Some(crate::dirs::config_dir()?.join("ccode").join("catalogs"))
