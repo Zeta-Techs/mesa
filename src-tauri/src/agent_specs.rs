@@ -1388,7 +1388,8 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
         // %LOCALAPPDATA%\Programs、%APPDATA%\npm（npm 全局 bin 目录）、
-        // winget portable 包的 shim 目录（Links）与 winget 本体（WindowsApps）
+        // winget portable 包的 shim 目录（Links）与 winget 本体（WindowsApps）；
+        // 没开开发者模式时 winget 不建 Links 链接、改写 PATH，由 agents::resolve_binary 读注册表 PATH 兜底
         if let Some(local) = crate::dirs::data_local_dir() {
             out.push(local.join("Programs"));
             out.push(local.join("Microsoft").join("WinGet").join("Links"));

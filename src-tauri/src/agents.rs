@@ -280,6 +280,24 @@ pub fn resolve_binary(name: &str) -> Option<std::path::PathBuf> {
         return Some(p);
     }
     find_in_dirs(name, &crate::agent_specs::binary_candidate_dirs())
+        .or_else(|| find_in_dirs(name, &registry_path_dirs()))
+}
+
+/// Windows：Mesa 启动后才写进注册表 PATH 的目录。没开开发者模式的机器上 winget 建不了
+/// Links 里的符号链接，改把 `WinGet\Packages\<包>` 写进用户 PATH（winget PortableInstaller 的回落），
+/// 进程 PATH 和候选目录都没有它——不补这一步，装完显示成功、却仍是「未安装」，重启 Mesa 才认。
+/// 其他只改 PATH 的安装器同理。只在前两步 miss 时读，两次注册表读取
+#[cfg(windows)]
+fn registry_path_dirs() -> Vec<std::path::PathBuf> {
+    crate::process::child_path()
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default()
+}
+
+/// 非 Windows 的 PATH 不存注册表；启动后出现的候选目录已由 binary_candidate_dirs 覆盖
+#[cfg(not(windows))]
+fn registry_path_dirs() -> Vec<std::path::PathBuf> {
+    Vec::new()
 }
 
 /// 启动时把候选目录里存在的补到本进程 PATH 末尾（只追加、不改原有顺序，已在 PATH 上的不重复），
@@ -388,7 +406,9 @@ pub fn resolve_binary_all(name: &str) -> Vec<std::path::PathBuf> {
     let mut out: Vec<std::path::PathBuf> = which::which_all(name)
         .map(|it| it.collect())
         .unwrap_or_default();
-    for p in find_all_in_dirs(name, &crate::agent_specs::binary_candidate_dirs()) {
+    let mut dirs = crate::agent_specs::binary_candidate_dirs();
+    dirs.extend(registry_path_dirs());
+    for p in find_all_in_dirs(name, &dirs) {
         let key = p.to_string_lossy();
         if !out
             .iter()

@@ -1004,7 +1004,7 @@ src-tauri/src/
                              #   只认二进制/配置 schema 实证，调研录 matrix §9 第 8 条；agents.rs
                              #   apply_request_policy_env 按表注入启动 env，未实证一律不注）；
                              #   resolve_binary 兜底候选目录 binary_candidate_dirs 同在本模块（macOS 含 /Library/TeX/texbin、/Applications/quarto/bin；Linux /opt/quarto/bin；Windows Program Files\Quarto\bin）
-  agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底；resolve_binary_all 列全部候选给占位程序场景）+ readonly_launch_args（聊想法只读注入）；
+  agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底；Windows 最后再查注册表 PATH，接住 winget 无开发者模式时只改 PATH 的安装；resolve_binary_all 列全部候选给占位程序场景）+ readonly_launch_args（聊想法只读注入）；
                              # 官方账号 Codex：apply_official_inject 必带 -c model_provider="openai"（内置 ChatGPT 渠道；磁盘
                              #   config.toml 的网关默认会盖过订阅，不得省略；只影响本进程、不写 model_providers 块）；
                              #   login_cmd = login --device-auth（CLI 自带设备码，不抄 cc-switch 的 in-app OAuth）；

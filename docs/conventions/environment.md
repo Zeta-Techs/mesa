@@ -27,6 +27,15 @@
   **内置终端的交互 shell 启动前清掉 conda 激活状态**（`CONDA_SHLVL` / `CONDA_PREFIX[_n]` / `CONDA_DEFAULT_ENV` / `CONDA_PROMPT_MODIFIER`，
   `pty.rs is_conda_activation_var`）：shell 自己会跑 rc 的 conda 初始化，继承的「已激活」让它跳过激活，而 `/etc/zprofile` 的 path_helper
   已把 PATH 重排，终端里 python3 就落到 /usr/bin（2026-10-27 实测）。Agent 与后台命令不经 rc，照旧继承。
+- **Windows 装 Agent 走 winget 的三个坑**（2026-10-31 本机实证 + winget 源码核对）：
+  ①**没开开发者模式就没有 Links 链接**：winget portable 包本该在 `%LOCALAPPDATA%\Microsoft\WinGet\Links` 建符号链接，
+  普通用户（开发者模式关、非管理员，新用户的默认状态）建不了，winget 改把 `WinGet\Packages\<包>_…` 写进用户 PATH
+  （输出「已修改路径环境变量」；`PortableInstaller.cpp` 的回落）。已在跑的 Mesa 进程 PATH 拿不到它，所以 Windows 上
+  `agents::resolve_binary` 在候选目录也 miss 后再读一次注册表 PATH（`process::child_path`）——不要把 `WinGet\Packages\*`
+  逐个塞进候选目录。②**portable 不等于免管理员**：winget 会装清单里的依赖，Codex、Grok 依赖 `Microsoft.VCRedist.2015+`
+  （只有全机安装，弹 UAC），Kimi 依赖 `Git.Git`；依赖变了改 `src/agent-install-notes.ts` 的名单。③**winget 不读
+  `HTTPS_PROXY`**：代理只认系统代理或管理员设的 DefaultProxy，`--proxy` 要管理员先开 ProxyCommandLineOptions，Mesa 的
+  出网代理对它无效，界面提示改说「打开系统代理」。实测装卸后 winget 会把用户 PATH 从 REG_SZ 改成 REG_EXPAND_SZ、末尾多一个分号。
 - **GUI 应用 PATH 很短**：打包应用可能找不到 npm 装的 CLI（开发模式不受影响）；统一经 `agents::resolve_binary` 候选目录兜底解析。
   **只找到 CLI 不够**（2026-10-27 本机实证）：npm 装的 Codex / Gemini / CodeBuddy 是 `#!/usr/bin/env node` 脚本，子进程沿用
   Finder 给的 `/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin` 找不到 Homebrew 的 node，一起就退 127，打包版标签一片空白。
