@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { contextLabel } from "../model-caps-label";
 import { isImageGenModel, modelKind, nonChatReason, splitChatModels } from "../model-kinds";
 import ImageGenPanel, { setImageGenModel } from "../components/ImageGenPanel";
@@ -53,7 +53,7 @@ import { gatewayMissingSlot, probeHint, saveBlocker } from "../connection-form";
 import { EffectPreview } from "../components/EffectPreview";
 import { groupModelsByVendor, vendorOf } from "../model-vendors";
 import { interactiveUpdatePrefill } from "../update-routing";
-import { absTime, relTime } from "../rel-time";
+import { absTime } from "../rel-time";
 import { toast } from "../toast";
 import { slotForAgent } from "../gateway-slot";
 import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
@@ -2753,6 +2753,24 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [rowProbe, setRowProbe] = useState<
     Record<string, { running: true } | { running: false; ok: boolean; message: string }>
   >({});
+  // 行上刚点完「测试」且通过：原位亮 3 秒作回执就收起（2026-10-31 用户：「测试通过」不常驻）；失败留着等人处理
+  useEffect(() => {
+    const done = Object.entries(rowProbe)
+      .filter(([, v]) => !v.running && v.ok)
+      .map(([id]) => id);
+    if (done.length === 0) return;
+    const t = window.setTimeout(() => {
+      setRowProbe((cur) => {
+        const next = { ...cur };
+        for (const id of done) {
+          const v = next[id];
+          if (v && !v.running && v.ok) delete next[id];
+        }
+        return next;
+      });
+    }, 3000);
+    return () => window.clearTimeout(t);
+  }, [rowProbe]);
   // 搜索：按名称/端点/模型过滤配置行（2026-10-29 起收成页头放大镜，点开才是输入框；安装状态过滤并进左栏：未安装的 Agent 灰显标「未安装」）
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -4229,6 +4247,31 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   {!det?.binaryPath && (
                     <span className="text-xs text-l4">未安装</span>
                   )}
+                  {/* 组头只报要处理的条数（2026-10-31）：行上不再写「测试通过」，有问题的得一眼看出有几条 */}
+                  {(() => {
+                    const n = list.filter((p) => {
+                      if (profileIssues[p.id]) return true;
+                      const probe = rowProbe[p.id];
+                      if (probe && !probe.running && !probe.ok) return true;
+                      if (
+                        settings?.activeGlobalProfiles?.[p.agent] === p.id &&
+                        driftByAgent[p.agent]?.status === "drifted"
+                      )
+                        return true;
+                      if (p.models.length > 0 && p.models.every((m) => modelKind(m) !== "chat")) return true;
+                      const gone =
+                        p.accountType === "official"
+                          ? []
+                          : unsyncedModels(p.models, gateways.find((g) => g.id === p.gatewayId)?.models);
+                      const st = profileStatusCell({ ...p, unsynced: gone });
+                      return st?.tone === "err" || st?.tone === "warn";
+                    }).length;
+                    return n > 0 ? (
+                      <span className="shrink-0 text-xs text-warn-text" title="这几条连接有问题要处理，看行尾的黄 / 红字">
+                        {n} 条要处理
+                      </span>
+                    ) : null;
+                  })()}
                   {officialStatus[agent.id]?.supported && det?.binaryPath && (
                     <OfficialStatusChip
                       agentId={agent.id}
@@ -4446,27 +4489,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           const isGlobal =
                             settings?.activeGlobalProfiles?.[profile.agent] ===
                             profile.id;
-                          // caption：上次使用 + 外部文件被改过（默认 / 全局已提到名称旁，连接状态在状态列）
-                          const caption: {
-                            text: string;
-                            tip: string;
-                            cls?: string;
-                            onClick?: () => void;
-                          }[] = [];
-                          if (profile.lastUsedAt)
-                            caption.push({
-                              text: `上次使用 ${relTime(profile.lastUsedAt)}`,
-                              tip: `上次使用 ${absTime(profile.lastUsedAt)}`,
-                            });
+                          // 行上不写时间（2026-10-31 用户）：上次使用只进名字悬停
+                          const lastUsedTip = profile.lastUsedAt ? `上次使用 ${absTime(profile.lastUsedAt)}` : "还没用过";
                           const drifted = isGlobal && driftByAgent[profile.agent]?.status === "drifted";
-                          if (drifted) {
-                            caption.push({
-                              text: "外部 CLI 文件已被改过 · 查看",
-                              tip: `磁盘与 Mesa 写入不一致：${(driftByAgent[profile.agent]?.files ?? []).join("、") || "配置文件"}。点开看改了哪里，可按 Mesa 重写或保留外部改动`,
-                              cls: "text-warn-text",
-                              onClick: () => void openDriftView(profile),
-                            });
-                          }
                           // 绑定了、但网关目录里已经没有的模型：状态列点名，模型列划掉
                           const goneModels =
                             profile.accountType === "official"
@@ -4507,7 +4532,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 commitProfileMove(agent.id, listIds, from, to),
                               );
                             }}
-                            className={`group relative ${PROFILE_ROW_GRID} ${
+                            // 点整行空白处 = 编辑（网关库同口径）；拖过之后的那次点击已被 startDragSort 吞掉，选中文字时不打开
+                            onClick={(e) => {
+                              if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+                              if (window.getSelection()?.toString()) return;
+                              setModal({ initial: profile });
+                            }}
+                            className={`group relative cursor-pointer ${PROFILE_ROW_GRID} ${
                               rowDrag.dragging ? "" : "transition-colors"
                             } ${
                               // 拖着走的那行：实底浮起，免得透出底下让位的行
@@ -4546,11 +4577,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               <span className="col-start-2 row-start-1 flex min-w-0 items-center gap-1.5">
                                 <span
                                   className="truncate text-base font-medium text-l1"
-                                  title={
+                                  title={`${
                                     nameSuffix
                                       ? `${profile.name}（同一 Agent 下有同名连接，这里补上首个模型 ${nameSuffix} 区分；可在「编辑」里改名）`
                                       : profile.name
-                                  }
+                                  }\n${lastUsedTip}`}
                                 >
                                   {profile.name}
                                   {nameSuffix && (
@@ -4559,6 +4590,24 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 </span>
                                 {isDefault && (
                                   <StatusPill tone="accent" tip="Mesa 启动栏预选这份连接。只改启动栏，不写外部 CLI 文件。">默认</StatusPill>
+                                )}
+                                {/* 全局（2026-10-31 由操作列「全局使用中」挪来）：名字旁小签 + 整行淡强调底；外部改过变黄、点开看差异 */}
+                                {isGlobal && (
+                                  <button
+                                    type="button"
+                                    onClick={() => (drifted ? void openDriftView(profile) : undefined)}
+                                    title={
+                                      drifted
+                                        ? `Mesa 写进去之后，外部又改过这份配置（${(driftByAgent[profile.agent]?.files ?? []).join("、") || "配置文件"}）。点开看改了哪里，可按 Mesa 重写或保留外部改动`
+                                        : `外部 ${labelOf(profile.agent)}（系统终端${profile.agent === "codex" ? "、Codex 客户端" : ""}）现在用这条。要改回 Mesa 写的样子或撤销，在 ⋯ 里`
+                                    }
+                                    className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-inset px-1.5 py-px text-micro ${
+                                      drifted ? "text-warn-text hover:brightness-125" : "cursor-default text-l1"
+                                    }`}
+                                  >
+                                    <span className={`size-1.5 shrink-0 rounded-full ${drifted ? "bg-warn-text" : "bg-cta"}`} aria-hidden="true" />
+                                    {drifted ? "外部改过" : "全局"}
+                                  </button>
                                 )}
                                 {profileIssues[profile.id] ? (
                                   <StatusPill tone="err" tip={profileIssues[profile.id].reason}>配置失效</StatusPill>
@@ -4657,32 +4706,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     )}
                                   </span>
                               </span>
-                              {/* caption 行：micro 档灰字，相对时间主显、悬浮给绝对时间（白话双层） */}
-                              {caption.length > 0 && (
-                                <span className="col-start-2 row-start-3 mt-0.5 block break-words text-micro text-l3 @min-[60rem]/rows:row-start-2">
-                                  {caption.map((c, i) => (
-                                    <Fragment key={`${c.text}-${i}`}>
-                                      {i > 0 ? " · " : ""}
-                                      {c.onClick ? (
-                                        <button
-                                          type="button"
-                                          title={c.tip}
-                                          onClick={c.onClick}
-                                          className={`${c.cls ?? ""} underline-offset-2 hover:underline`}
-                                        >
-                                          {c.text}
-                                        </button>
-                                      ) : (
-                                        <span title={c.tip} className={c.cls}>
-                                          {c.text}
-                                        </span>
-                                      )}
-                                    </Fragment>
-                                  ))}
-                                </span>
-                              )}
-                            {/* 状态列：只说例外与「测试通过」。未测试不常驻，悬停出「测试」，点了就地测，
-                                结果写在原位；测过的结论也能点一下重测 */}
+                            {/* 状态列：只说要人处理的例外（2026-10-31）。测试通过 / 未测试不写字，悬停出「测试」，点了就地测，
+                                通过亮 3 秒收起、失败留着，点一下重测 */}
                             <span className="col-start-3 row-span-3 row-start-1 flex min-w-0 items-center self-center text-xs @min-[60rem]/rows:col-start-4">
                               {(() => {
                                 // 名单里全是出图 / 视频等模型：这条连接对话不了（启动闸会拒），状态列直说
@@ -4835,23 +4860,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
-                              {isGlobal ? (
-                                <button
-                                  type="button"
-                                  onClick={() => (drifted ? void openDriftView(profile) : undefined)}
-                                  title={
-                                    drifted
-                                      ? "Mesa 写进去之后，外部又改过这份配置。点开看改了哪里"
-                                      : `外部 ${labelOf(profile.agent)}（系统终端${profile.agent === "codex" ? "、Codex 客户端" : ""}）现在用这条。要改回 Mesa 写的样子或撤销，在 ⋯ 里`
-                                  }
-                                  className={`mr-1 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-xs ${
-                                    drifted ? "text-warn-text hover:bg-hover" : "cursor-default text-l1"
-                                  }`}
-                                >
-                                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${drifted ? "bg-warn-text" : "bg-cta"}`} />
-                                  {drifted ? "外部改过" : "全局使用中"}
-                                </button>
-                              ) : canQuickGlobal(profile) ? (
+                              {!isGlobal && canQuickGlobal(profile) ? (
                                 <button
                                   type="button"
                                   disabled={globalBusy !== null}
@@ -4873,10 +4882,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   )}
                                 </button>
                               ) : null}
+                              {/* 编辑悬停才出（键盘聚焦也出）；点整行空白处同样是编辑 */}
                               <button
                                 type="button"
                                 onClick={() => setModal({ initial: profile })}
-                                className={ghostActionClass}
+                                className={`${ghostActionClass} ${hoverRevealClass}`}
                               >
                                 编辑
                               </button>

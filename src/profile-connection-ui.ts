@@ -23,9 +23,9 @@ export const CONNECTION_STATUS_CAPTION: Record<
   ready: ["测试通过", "最近一次连接测试通过", "ok"],
 };
 
-/** 状态列（2026-10-23 连接页审查）：只说例外和「测过且通过」。
- *  未测试 / 状态未知 / 密钥已存是几乎每行都一样的事实，常驻只会把真正的问题淹掉——返回 null，
- *  未测试由调用方在悬停时给「测试」入口（见 profileNeedsProbe）。 */
+/** 状态列：**只说要人处理的例外**（2026-10-31 用户拍板，取代 10-23「例外 + 测过且通过」）。
+ *  测试通过 / 未测试 / 状态未知 / 官方账号都是几乎每行都一样的事实，常驻只会把真正的问题淹掉——返回 null；
+ *  未测试由调用方在悬停时给「测试」入口（见 profileNeedsProbe），刚点完测试的结果由调用方就地短暂显示。 */
 export function profileStatusCell(profile: {
   accountType?: string;
   connectionStatus?: string;
@@ -36,9 +36,7 @@ export function profileStatusCell(profile: {
   /** 调用方用 unsyncedModels 算出的那几个模型；给了就点名，悬停说清该怎么办 */
   unsynced?: readonly string[];
 }): ProfileStatus | null {
-  if (profile.accountType === "official") {
-    return { text: "官方账号", tip: "官方账号登录，无需 API 密钥", tone: "muted" };
-  }
+  if (profile.accountType === "official") return null;
   const status = profile.connectionStatus;
   // 绑定模型不在网关目录（2026-10-28 用户看不懂「模型未同步」）：点名是哪个、可能为什么、去哪改。
   // 刷新目录清不掉，只能在编辑里去掉或换一个，状态列点一下就打开编辑
@@ -61,10 +59,7 @@ export function profileStatusCell(profile: {
       tone: "warn",
     };
   }
-  if (lab) {
-    const key = profile.keyHint ? `；密钥尾号 ${profile.keyHint}` : "";
-    return { text: lab[0], tip: `${lab[1]}${key}`, tone: lab[2] };
-  }
+  // 走到这里的 lab 只剩 ready（测试通过）：正常不写字
   // 后端没算出状态的旧数据：只兜底「没有密钥」这一种例外
   if (!status && profile.hasKey === false) {
     return { text: "未设置密钥", tip: "尚未填写密钥", tone: "warn" };

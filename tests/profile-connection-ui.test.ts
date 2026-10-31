@@ -44,14 +44,14 @@ test("状态列只说例外：未测试、状态未知、密钥已存都不常�
   }
 });
 
-test("测过且通过才是绿色；失败与缺密钥各自着色", () => {
-  assert.equal(profileStatusCell({ accountType: "api", connectionStatus: "ready" })?.tone, "ok");
+test("测试通过与官方账号不常驻；失败与缺密钥各自着色", () => {
+  assert.equal(profileStatusCell({ accountType: "api", connectionStatus: "ready", keyHint: "ab12" }), null);
   assert.equal(profileStatusCell({ accountType: "api", connectionStatus: "probe_failed" })?.tone, "err");
   assert.equal(
     profileStatusCell({ accountType: "api", connectionStatus: "credential_missing" })?.text,
     "缺密钥",
   );
-  assert.equal(profileStatusCell({ accountType: "official", connectionStatus: "official" })?.tone, "muted");
+  assert.equal(profileStatusCell({ accountType: "official", connectionStatus: "official" }), null);
 });
 
 test("未测试但绑定模型失效：状态列说模型问题", () => {

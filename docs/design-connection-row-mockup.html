@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>连接页 · 连接行状态与信息密度（设计稿）</title>
+<style>
+  :root {
+    --canvas: #141414; --card: #1b1b1b; --hover: rgba(255,255,255,.045); --sel: rgba(47,124,246,.09);
+    --line: rgba(255,255,255,.07); --l1: #ececec; --l2: #b4b4b4; --l3: #8c8c8c; --l4: #5e5e5e;
+    --cta: #2f7cf6; --ok: #3fb950; --warn: #d6a033; --err: #f0614d; --chip: rgba(255,255,255,.07);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--canvas); color: var(--l1); font: 14px/1.5 -apple-system, "PingFang SC", "Segoe UI", sans-serif; padding: 32px 40px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--l3); font-size: 13px; margin-bottom: 28px; max-width: 980px; }
+  .variant { margin-bottom: 44px; }
+  .vhead { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .vhead h2 { font-size: 15px; margin: 0; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--chip); color: var(--l2); }
+  .tag.rec { background: rgba(47,124,246,.18); color: #8fb8ff; }
+  .notes { color: var(--l3); font-size: 12.5px; margin: 0 0 12px; padding-left: 18px; max-width: 980px; }
+  .notes li { margin: 2px 0; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px 8px; max-width: 1100px; }
+  .group { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .group b { font-size: 16px; }
+  .chip { font-size: 11.5px; padding: 1px 7px; border-radius: 5px; background: var(--chip); color: var(--l2); }
+  .group .sum { color: var(--l3); font-size: 12px; }
+  .group .more { margin-left: auto; color: var(--l4); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.row { display: grid; align-items: center; column-gap: 16px; padding: 12px 10px; border-bottom: 1px solid var(--line); position: relative; }
+  li.row:last-child { border-bottom: 0; }
+  li.row.global { background: var(--sel); box-shadow: inset 2px 0 0 var(--cta); }
+  li.row.hov { background: var(--hover); }
+  li.row.global.hov { background: rgba(47,124,246,.13); }
+  .ico { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #fff; position: relative; }
+  .ico.oa { background: #3a3a3a; } .ico.zt { background: conic-gradient(#e0539f, #6c8cff, #3fd1c8, #e0539f); } .ico.glm { background: #3557c9; } .ico.kimi { background: #222; border: 1px solid #555; }
+  .name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .name .model-tail { color: var(--l2); font-weight: 400; }
+  .meta { color: var(--l3); font-size: 12.5px; display: flex; gap: 6px; align-items: baseline; min-width: 0; white-space: nowrap; overflow: hidden; }
+  .meta code { font-family: var(--mono); color: var(--l2); font-size: 12px; }
+  .meta .dim { color: var(--l4); }
+  .cap { color: var(--l4); font-size: 12px; }
+  .st { font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+  .ok .dot, .dot.ok { background: var(--ok); } .warn .dot, .dot.warn { background: var(--warn); } .err .dot, .dot.err { background: var(--err); }
+  .st.warn { color: var(--warn); } .st.err { color: var(--err); } .st.muted { color: var(--l3); }
+  .btn { font-size: 12.5px; color: var(--l3); padding: 3px 8px; border-radius: 6px; }
+  .btn.outline { border: 1px solid var(--line); color: var(--l2); }
+  .gchip { font-size: 11px; padding: 0 6px; border-radius: 4px; background: rgba(47,124,246,.2); color: #9cc2ff; font-weight: 500; line-height: 18px; }
+  .icon-btn { width: 26px; height: 26px; display: inline-grid; place-items: center; color: var(--l4); border-radius: 6px; }
+  .hov .icon-btn, .hov .btn { color: var(--l2); }
+  .reveal { visibility: hidden; } .hov .reveal { visibility: visible; }
+  .hint { font-size: 11px; color: var(--l4); margin: 6px 4px 0; }
+  .callout { position: absolute; right: -230px; top: 50%; transform: translateY(-50%); width: 210px; font-size: 11.5px; color: #8fb8ff; border-left: 1px solid rgba(47,124,246,.5); padding-left: 10px; }
+  /* 现在：三行 + 状态列 + 全局列 + 编辑 */
+  .cur li.row { grid-template-columns: 22px minmax(0,1fr) 120px 120px 64px; }
+  .cur .badge-col { display: flex; justify-content: flex-start; }
+  /* A：两行、状态只说例外、全局成名字旁小签 */
+  .a li.row { grid-template-columns: 22px minmax(0,1fr) auto auto; padding: 10px 10px; }
+  .a .meta .when { margin-left: auto; padding-left: 12px; color: var(--l4); }
+  .a .actions { display: flex; align-items: center; gap: 2px; }
+  /* B：保留状态列但固定宽、通过只剩点 */
+  .b li.row { grid-template-columns: 22px minmax(0,1fr) 110px 110px auto; }
+  .ico .health { position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--card); }
+  .compare { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; max-width: 1100px; margin-top: 8px; }
+  .compare div { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; color: var(--l2); }
+  .compare b { color: var(--l1); display: block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<h1>连接页 · 连接行的状态与信息密度</h1>
+<div class="sub" style="color:#8fb8ff">定稿（2026-10-31）：方案 A，但<b>不要</b>图标右下角健康小点（保留图标完整）、<b>不</b>在行上写时间。</div>
+<div class="sub">
+  问题：「测试通过」在每条测过的连接上常驻，正常状态占了一整列，真正出问题的行反而不显眼；状态列还被「全局使用中」挤得左右错位。
+  下面用同一组连接（截图里的 5 条，再补 3 条<span style="color:var(--warn)">示例</span>异常行，好看出问题行怎么突出）对比现状和两个方案。
+  每版第 3 行画的是<b>鼠标停在上面</b>的样子。
+</div>
+
+<!-- ========== 现在 ========== -->
+<section class="variant cur">
+  <div class="vhead"><h2>现在</h2><span class="tag">对照</span></div>
+  <ul class="notes">
+    <li>每行三行高；「测试通过」常驻，测过的行几乎都一样。</li>
+    <li>全局那行的状态被「全局使用中」挤进别的列，和其他行对不齐（截图里 Test · 0731 的「测试通过」偏左）。</li>
+    <li>官方账号行「官方账号」写了两次；「编辑」每行常驻。</li>
+  </ul>
+  <div class="panel">
+    <div class="group"><span class="ico oa">◎</span><b>Codex</b><span class="chip">官方已登录</span><span class="more">⋯</span></div>
+    <ul>
+      <li class="row"><span class="ico oa">◎</span>
+        <div><div class="name">官方账号</div><div class="meta"><span class="dim">Free</span>·<code>gpt-6-luna gpt-5.6-terra gpt-5.6-luna</code></div><div class="cap">上次使用 1 天前</div></div>
+        <span class="st muted">官方账号</span><span></span><span class="btn">编辑</span></li>
+      <li class="row global"><span class="ico zt"></span>
+        <div><div class="name">Test <span class="model-tail">· deepseek-v4-flash-0731</span></div><div class="meta">ent.zetatechs.com ·<code>deepseek-v4-flash-0731</code></div><div class="cap">上次使用 15 小时前</div></div>
+        <span class="st ok"><i class="dot"></i>测试通过</span><span class="st"><i class="dot" style="background:var(--cta)"></i>全局使用中</span><span class="btn">编辑</span></li>
+      <li class="row hov"><span class="ico glm">✻</span>
+        <div><div class="name">GLM</div><div class="meta">open.bigmodel.cn ·<code>glm-5.3-flash</code></div><div class="cap">上次使用 28 分钟前</div></div>
+        <span></span><span class="st ok"><i class="dot"></i>测试通过</span><span class="btn">编辑</span></li>
+      <li class="row"><span class="ico zt"></span>
+        <div><div class="name">Test <span class="model-tail">· deepseek-v4.1-flash</span></div><div class="meta">ent.zetatechs.com ·<code>deepseek-v4.1-flash</code></div><div class="cap">上次使用 8 天前</div></div>
+        <span></span><span class="st ok"><i class="dot"></i>测试通过</span><span class="btn">编辑</span></li>
+      <li class="row"><span class="ico zt"></span>
+        <div><div class="name">Codex-Deepseek</div><div class="meta">ent.zetatechs.com ·<code>gpt-6.1-sol gpt-6-astra</code></div><div class="cap">上次使用 3 天前</div></div>
+        <span></span><span class="st ok"><i class="dot"></i>测试通过</span><span class="btn">编辑</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ========== 方案 A ========== -->
+<section class="variant a">
+  <div class="vhead"><h2>方案 A · 只说例外，行收成两行</h2><span class="tag rec">推荐</span></div>
+  <ul class="notes">
+    <li><b>正常不写字</b>：测试通过、未测都不占位置；只有测试失败 / 缺密钥 / 模型不在目录这类要你处理的才在行尾写字（和网关库「出问题才写字」同一口径）。</li>
+    <li>想确认测过没有：图标右下角一个小点（绿 = 上次测试通过，没点 = 没测过），悬停名字写「上次测试通过 · 10-30 14:02」；悬停行出「测试」。</li>
+    <li>「全局使用中」改成名字旁的小签「全局」，整行淡蓝底和左缘短条保留；外部改过时小签变黄「外部改过」。</li>
+    <li>「上次使用」并进第二行右端，行高从三行变两行；「编辑」和 ⋯ 悬停才出，点整行空白处也是编辑（网关库同口径）。</li>
+    <li>官方账号行去掉右侧重复的「官方账号」，套餐（Free）留在第二行开头。</li>
+  </ul>
+  <div class="panel">
+    <div class="group"><span class="ico oa">◎</span><b>Codex</b><span class="chip">官方已登录</span><span class="sum">5 条连接 · 1 条要处理</span><span class="more">⋯</span></div>
+    <ul>
+      <li class="row"><span class="ico oa">◎</span>
+        <div><div class="name">官方账号</div><div class="meta"><span class="dim">Free</span>·<code>gpt-6-luna gpt-5.6-terra gpt-5.6-luna</code><span class="when">1 天前</span></div></div>
+        <span></span><span class="actions"><span class="btn reveal">编辑</span><span class="icon-btn reveal">⋯</span></span></li>
+      <li class="row global"><span class="ico zt"><i class="health ok"></i></span>
+        <div><div class="name">Test <span class="model-tail">· deepseek-v4-flash-0731</span><span class="gchip">全局</span></div><div class="meta">ent.zetatechs.com ·<code>deepseek-v4-flash-0731</code><span class="when">15 小时前</span></div></div>
+        <span></span><span class="actions"><span class="btn reveal">编辑</span><span class="icon-btn reveal">⋯</span></span></li>
+      <li class="row hov"><span class="ico glm">✻<i class="health ok"></i></span>
+        <div><div class="name" title="上次测试通过 · 10-31 09:12">GLM</div><div class="meta">open.bigmodel.cn ·<code>glm-5.3-flash</code><span class="when">28 分钟前</span></div></div>
+        <span class="btn reveal">测试</span><span class="actions"><span class="btn reveal">编辑</span><span class="icon-btn reveal">⋯</span></span>
+        <span class="callout">悬停：出「测试 / 编辑 / ⋯」，悬停名字看上次测试时间</span></li>
+      <li class="row"><span class="ico zt"><i class="health ok"></i></span>
+        <div><div class="name">Test <span class="model-tail">· deepseek-v4.1-flash</span></div><div class="meta">ent.zetatechs.com ·<code>deepseek-v4.1-flash</code><span class="when">8 天前</span></div></div>
+        <span></span><span class="actions"><span class="btn reveal">编辑</span><span class="icon-btn reveal">⋯</span></span></li>
+      <li class="row"><span class="ico zt"><i class="health err"></i></span>
+        <div><div class="name">Codex-Deepseek</div><div class="meta">ent.zetatechs.com ·<code>gpt-6.1-sol gpt-6-astra</code><span class="when">3 天前</span></div></div>
+        <span class="st err"><i class="dot"></i>测试失败 · 重测</span><span class="actions"><span class="btn reveal">编辑</span><span class="icon-btn reveal">⋯</span></span>
+        <span class="callout">示例：出问题才写字，点文字就地重测</span></li>
+      <li class="row"><span class="ico kimi">K</span>
+        <div><div class="name">Kimi 备用 <span class="tag">示例</span></div><div class="meta">api.kimi.com ·<code>kimi-for-coding</code><span class="when">没用过</span></div></div>
+        <span class="st warn"><i class="dot"></i>缺密钥</span><span class="actions"><span class="btn reveal">编辑</span><span class="icon-btn reveal">⋯</span></span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ========== 方案 B ========== -->
+<section class="variant b">
+  <div class="vhead"><h2>方案 B · 保留状态列，只改轻重</h2><span class="tag">改动小</span></div>
+  <ul class="notes">
+    <li>状态列和「全局」列各自固定宽度，所有行对齐。</li>
+    <li>「测试通过」去掉文字、只留绿点（悬停写「上次测试通过 · 时间」）；异常照旧写字。</li>
+    <li>三行高不变，「编辑」常驻不变——只解决「常驻太吵」和「对不齐」两件事。</li>
+  </ul>
+  <div class="panel">
+    <div class="group"><span class="ico oa">◎</span><b>Codex</b><span class="chip">官方已登录</span><span class="more">⋯</span></div>
+    <ul>
+      <li class="row"><span class="ico oa">◎</span>
+        <div><div class="name">官方账号</div><div class="meta"><span class="dim">Free</span>·<code>gpt-6-luna gpt-5.6-terra gpt-5.6-luna</code></div><div class="cap">上次使用 1 天前</div></div>
+        <span></span><span></span><span class="btn">编辑</span></li>
+      <li class="row global"><span class="ico zt"></span>
+        <div><div class="name">Test <span class="model-tail">· deepseek-v4-flash-0731</span></div><div class="meta">ent.zetatechs.com ·<code>deepseek-v4-flash-0731</code></div><div class="cap">上次使用 15 小时前</div></div>
+        <span class="st" title="上次测试通过"><i class="dot ok"></i></span><span class="st"><i class="dot" style="background:var(--cta)"></i>全局使用中</span><span class="btn">编辑</span></li>
+      <li class="row hov"><span class="ico glm">✻</span>
+        <div><div class="name">GLM</div><div class="meta">open.bigmodel.cn ·<code>glm-5.3-flash</code></div><div class="cap">上次使用 28 分钟前</div></div>
+        <span class="st muted"><i class="dot ok"></i>上次测试通过</span><span></span><span class="btn">编辑</span>
+        <span class="callout">悬停时点旁边才补出文字</span></li>
+      <li class="row"><span class="ico zt"></span>
+        <div><div class="name">Test <span class="model-tail">· deepseek-v4.1-flash</span></div><div class="meta">ent.zetatechs.com ·<code>deepseek-v4.1-flash</code></div><div class="cap">上次使用 8 天前</div></div>
+        <span class="st"><i class="dot ok"></i></span><span></span><span class="btn">编辑</span></li>
+      <li class="row"><span class="ico zt"></span>
+        <div><div class="name">Codex-Deepseek</div><div class="meta">ent.zetatechs.com ·<code>gpt-6.1-sol gpt-6-astra</code></div><div class="cap">上次使用 3 天前</div></div>
+        <span class="st err"><i class="dot"></i>测试失败</span><span></span><span class="btn">编辑</span></li>
+    </ul>
+  </div>
+</section>
+
+<div class="compare">
+  <div><b>现在</b>每行 3 行高；通过常驻；状态列错位。</div>
+  <div><b>A（推荐）</b>每行 2 行高，一屏多放约 1/3；只有要处理的行有字，组头写「1 条要处理」；全局变名字旁小签；编辑悬停出、点整行也能编辑。</div>
+  <div><b>B</b>改动最小：对齐 + 通过只剩点；行高、编辑按钮不变。</div>
+</div>
+<p class="hint">设计稿只示意结构与轻重，颜色取深色主题近似值；图标为占位色块，不是厂商标识。</p>
+</body>
+</html>
