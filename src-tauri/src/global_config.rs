@@ -5037,7 +5037,8 @@ trust_level = "trusted"
             failures.join("\n")
         );
 
-        // 表里 persist 的格子：gemini 三项采样（customOverrides）与 qwen 采样 + 思考档（samplingParams）。
+        // 表里 persist 的格子：gemini 三项采样（customOverrides）。qwen 采样 + 思考档 2026-11-01 起启动也能注
+        //（系统设置覆盖层），表里是 inject，「设为全局」照写 samplingParams。
         // 这条防的是「表被悄悄扩了 persist 而没人实现」——真出现了，上面 failures 会先响，这里再说明该去看哪。
         assert_eq!(
             persist_cells,
@@ -5045,9 +5046,6 @@ trust_level = "trusted"
                 "gemini.temperature",
                 "gemini.top_p",
                 "gemini.max_output_tokens",
-                "qwen.temperature",
-                "qwen.top_p",
-                "qwen.reasoning_effort",
             ]
             .map(String::from)
             .to_vec(),

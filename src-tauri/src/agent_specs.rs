@@ -1005,8 +1005,6 @@ pub struct AgentCapabilitiesDto {
 /// 逐 agent 的策略通道形态说明（求交 DTO 下发，前端策略编辑区展示；None = 标准形态不用说）
 pub(crate) fn policy_channel_note(agent: &str) -> Option<&'static str> {
     match agent {
-        // 0.22.0 实证：温度/topP 只经设为全局的 generationConfig.samplingParams 生效
-        "qwen" => Some("temperature / topP 只在「设为全局默认」写入后生效；启动注入仅 max output 一条通道"),
         // overlay 白名单只放行 [models] 全局默认；逐模型 api_backend/context_window 走设为全局
         "grok" => Some("策略经 GROK_CONFIG overlay 的 [models] 全局默认注入；api_backend / context_window 需绑定「API 后端」字段 + 设为全局默认写入"),
         _ => None,
@@ -1172,14 +1170,12 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         // 小写归一，无闭集校验；**仅 kimi 协议通道读取**——求交器按绑定 protocol 再门控，
         // 见 combo.rs channel_status_for），anthropic/openai 通道静默忽略
         "kimi" => row("unknown", "unknown", "unknown", "inject", "unknown"),
-        // qwen 0.22.0 bundle 实证（2026-09-01 复核，旧「无通道」结论修正）：temperature/top_p/
-        // max_tokens 通道 = settings.json 条目级 generationConfig.samplingParams（snake_case
-        // 线格式键名；dialog schema 未列该子键但运行时任其生效）——「设为全局」写入可达，
-        // 启动 env 只有 QWEN_CODE_MAX_OUTPUT_TOKENS 一条（条目已配 samplingParams 时被跳过）。
-        // effort：0.26.3 条目级 samplingParams 的扁平 reasoning_effort 生效（bundle resolveReasoningForModel
-        // 实证，2026-10-30）→ persist；会话内另有 /effort 直切命令（见 effort_levels 字段）；
+        // qwen：temperature/top_p/max_tokens/reasoning_effort 的通道是 settings 条目级
+        // generationConfig.samplingParams（snake_case 线格式键；0.26.3 bundle resolveReasoningForModel 读扁平
+        // reasoning_effort）。启动时经系统设置覆盖层（QWEN_CODE_SYSTEM_SETTINGS_PATH，agents::qwen_system_settings_overlay）
+        // 写进本次连接的条目，四项都是 inject（2026-11-01 假网关实测）；会话内另有 /effort 直切命令。
         // headers：generationConfig.customHeaders 只认明文，不写（防密文落盘）→ 保守 unknown
-        "qwen" => row("persist", "persist", "inject", "persist", "unknown"),
+        "qwen" => row("inject", "inject", "inject", "inject", "unknown"),
         // grok v1.0.5 二进制 + 随附 README 双实证：temperature/top_p/max_completion_tokens
         // （注意键名）/reasoning_effort 与 headers 的通道是 config 不是 env（GROK_* 无此类变量）。
         // Mesa 侧接线（2026-08-31，grok-build main 源码实证）：GROK_CONFIG overlay 白名单
@@ -2012,8 +2008,8 @@ mod tests {
             .into_iter()
             .find(|c| c.agent == "qwen")
             .unwrap();
-        assert_eq!(qwen_dto.request_policy.temperature, "persist");
-        assert_eq!(qwen_dto.request_policy.reasoning_effort, "persist");
+        assert_eq!(qwen_dto.request_policy.temperature, "inject");
+        assert_eq!(qwen_dto.request_policy.reasoning_effort, "inject");
         assert_eq!(qwen_dto.request_policy.max_output_tokens, "inject");
         assert_eq!(qwen_dto.request_policy.custom_headers, "unknown");
         assert_eq!(qwen_dto.effort_options, Vec::<&str>::new());

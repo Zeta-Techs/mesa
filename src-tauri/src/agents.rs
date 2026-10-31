@@ -110,6 +110,8 @@ fn env_preview_source(name: &str, profile: &Profile) -> &'static str {
         | "QWEN_CODE_MAX_OUTPUT_TOKENS" => return "请求策略",
         // grok 的模型名单收敛 + 请求策略 [models] 全局默认都装在这个 overlay 里
         "GROK_CONFIG" => return "Grok overlay",
+        // 文件里是本次连接的认证方式 / 模型 / 条目（不含密钥），盖过用户 settings.json
+        "QWEN_CODE_SYSTEM_SETTINGS_PATH" => return "连接覆盖层",
         _ => {}
     }
     if name.starts_with("ANTHROPIC_DEFAULT_") || name.starts_with("ANTHROPIC_CUSTOM_MODEL_OPTION") {
@@ -675,10 +677,8 @@ fn apply_request_policy_env(
             inject_headers(plan, "CODEBUDDY_CUSTOM_HEADERS");
         }
         "qwen" => {
-            // 0.22.0 bundle 实证：temperature/top_p 的通道只有 settings.json 条目级
-            // generationConfig.samplingParams（「设为全局」写入），env 侧够不到；
-            // env 唯一实证的策略通道是 QWEN_CODE_MAX_OUTPUT_TOKENS——注意若全局配置
-            // 条目已带 samplingParams，qwen 会跳过该 env（条目优先）
+            // temperature/top_p/思考档走系统设置覆盖层里本次条目的 samplingParams（qwen_system_settings_overlay）；
+            // env 只有 QWEN_CODE_MAX_OUTPUT_TOKENS 一条，条目带了 max_tokens 时 qwen 跳过它（条目优先），留着兜底
             if let Some(v) = policy.max_output_tokens {
                 plan.env
                     .push(("QWEN_CODE_MAX_OUTPUT_TOKENS".into(), v.to_string()));
@@ -1179,16 +1179,128 @@ fn write_settings_overlay_file(prefix: &str, body: &str) -> Result<String, Strin
     }
     let mut file = options
         .open(&path)
-        .map_err(|e| format!("创建 Claude Code 设置覆盖文件失败: {e}"))?;
+        .map_err(|e| format!("创建设置覆盖文件失败: {e}"))?;
     use std::io::Write;
     file.write_all(body.as_bytes())
         .and_then(|_| file.sync_all())
         .map_err(|e| {
             let _ = std::fs::remove_file(&path);
-            format!("写入 Claude Code 设置覆盖文件失败: {e}")
+            format!("写入设置覆盖文件失败: {e}")
         })?;
     schedule_wrapper_cleanup(path.clone());
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Qwen 的系统设置覆盖层（`QWEN_CODE_SYSTEM_SETTINGS_PATH`，合并时排在用户 settings.json 之后）。
+/// 用户 settings.json 的 `model.name` 盖过 `OPENAI_MODEL`，命中的 `modelProviders` 条目自带的 baseUrl / envKey
+/// 又盖过环境变量：设过全局（或在 Qwen 里 /model 过）之后按连接启动，请求打到全局那条连接——模型不同名时
+/// 换成全局模型，同名时模型对、地址和密钥是全局的（2026-11-01 0.26.3 假网关实测；只加 `--model` 修不了同名）。
+/// 覆盖层钉住认证方式、模型与本次连接的条目，两种情况都回到所选连接；条目 envKey 指本次注入的密钥变量，
+/// 文件里没有密钥。Qwen 不要求这个文件归 root（与 Gemini 不同）。机器上已有的系统设置先读进来再盖这几个键，
+/// 不丢管理员下发的设置
+fn qwen_system_settings_overlay(profile: &Profile, protocol: &str, model: Option<&str>) -> Result<String, String> {
+    let existing = std::env::var_os("QWEN_CODE_SYSTEM_SETTINGS_PATH")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(qwen_default_system_settings_path)
+        .and_then(|p| std::fs::read_to_string(p).ok());
+    let base = existing
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&crate::mcp::strip_jsonc(&t)).ok())
+        .filter(|v| v.is_object());
+    let key_env = if protocol == "anthropic" { "ANTHROPIC_API_KEY" } else { "OPENAI_API_KEY" };
+    let body = qwen_system_settings_body(profile, protocol, model, key_env, base);
+    write_settings_overlay_file("qwen-settings", &body.to_string())
+}
+
+/// Qwen 系统设置的默认位置（0.26.3 getSystemSettingsPath）
+fn qwen_default_system_settings_path() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(if cfg!(target_os = "macos") {
+        "/Library/Application Support/QwenCode/settings.json"
+    } else if cfg!(windows) {
+        r"C:\ProgramData\qwen-code\settings.json"
+    } else {
+        "/etc/qwen-code/settings.json"
+    }))
+}
+
+/// 覆盖层内容（纯函数）：所选模型的条目带本次的请求策略（launch_plan 前 combo 已按所选模型物化），
+/// 绑定里其余模型只带地址，会话里 /model 换过去也走这条连接
+fn qwen_system_settings_body(
+    profile: &Profile,
+    protocol: &str,
+    model: Option<&str>,
+    key_env: &str,
+    base: Option<serde_json::Value>,
+) -> serde_json::Value {
+    use serde_json::json;
+    let mut v = base.unwrap_or_else(|| json!({}));
+    let mut ids: Vec<&str> = profile.models.iter().map(String::as_str).collect();
+    if let Some(m) = model.filter(|m| !m.trim().is_empty()) {
+        if !ids.contains(&m) {
+            ids.insert(0, m);
+        }
+    }
+    let selected = model.or(ids.first().copied());
+    let entries: Vec<serde_json::Value> = ids
+        .iter()
+        .map(|id| {
+            let mut e = json!({ "id": id, "name": id, "envKey": key_env });
+            if let Some(u) = profile.base_url.as_deref() {
+                e["baseUrl"] = json!(u);
+            }
+            let mut gc = serde_json::Map::new();
+            if Some(*id) == selected {
+                let policy = &profile.request_policy;
+                let mut sp = serde_json::Map::new();
+                if let Some(t) = policy.temperature {
+                    sp.insert("temperature".into(), json!(t));
+                }
+                if let Some(t) = policy.top_p {
+                    sp.insert("top_p".into(), json!(t));
+                }
+                if let Some(t) = policy.max_output_tokens {
+                    sp.insert("max_tokens".into(), json!(t));
+                }
+                if let Some(raw) = policy.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
+                    let val = crate::agent_specs::canonical_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
+                    sp.insert("reasoning_effort".into(), json!(val));
+                }
+                if !sp.is_empty() {
+                    gc.insert("samplingParams".into(), serde_json::Value::Object(sp));
+                }
+            }
+            if let Some(ctx) = crate::model_registry::model_context_size_declared_for(id, profile.gateway_id.as_deref()) {
+                gc.insert("contextWindowSize".into(), json!(ctx));
+            }
+            if !gc.is_empty() {
+                e["generationConfig"] = serde_json::Value::Object(gc);
+            }
+            e
+        })
+        .collect();
+    let obj = v.as_object_mut().expect("覆盖层根节点是对象");
+    let security = obj.entry("security").or_insert_with(|| json!({}));
+    if !security.is_object() {
+        *security = json!({});
+    }
+    let auth = security.as_object_mut().unwrap().entry("auth").or_insert_with(|| json!({}));
+    if !auth.is_object() {
+        *auth = json!({});
+    }
+    auth["selectedType"] = json!(protocol);
+    if let Some(m) = selected {
+        let model_obj = obj.entry("model").or_insert_with(|| json!({}));
+        if !model_obj.is_object() {
+            *model_obj = json!({});
+        }
+        model_obj["name"] = json!(m);
+    }
+    let providers = obj.entry("modelProviders").or_insert_with(|| json!({}));
+    if !providers.is_object() {
+        *providers = json!({});
+    }
+    providers[protocol] = json!(entries);
+    v
 }
 
 /// Gemini CLI 的认证方式只看用户 settings 的 `security.auth.selectedType`，环境变量只在它没设时兜底
@@ -1348,6 +1460,10 @@ pub fn launch_plan(
                     apply_env_inject(&mut plan, &entry.env, profile, key.as_deref(), model);
                     for arg in entry.args {
                         plan.args.push((*arg).into());
+                    }
+                    if profile.agent == "qwen" && profile.base_url.is_some() {
+                        let path = qwen_system_settings_overlay(profile, entry.protocol, model)?;
+                        plan.env.push(("QWEN_CODE_SYSTEM_SETTINGS_PATH".into(), path));
                     }
                 }
             }
@@ -7398,6 +7514,55 @@ api_backend = "responses"
             .contains(&("OPENAI_MODEL".into(), "qwen3-coder".into())));
         assert!(!plan.env.iter().any(|(k, _)| k.starts_with("ANTHROPIC_")));
         assert_eq!(plan.args, vec!["--auth-type", "openai"]);
+    }
+
+    #[test]
+    fn qwen_plan_pins_connection_over_user_settings() {
+        // 用户 settings.json 的 model.name / 同名 modelProviders 条目会盖过环境变量（2026-11-01 实测）：
+        // 启动计划经系统设置覆盖层钉住本次连接，文件里只有变量名、没有密钥
+        let mut p = profile("qwen", Some("https://relay.example.com/v1"));
+        p.models = vec!["a".into(), "b".into()];
+        p.request_policy.temperature = Some(0.3);
+        let plan = launch_plan(&p, Some("sk-secret".into()), Some("b")).unwrap();
+        let path = plan
+            .env
+            .iter()
+            .find(|(k, _)| k == "QWEN_CODE_SYSTEM_SETTINGS_PATH")
+            .map(|(_, v)| v.clone())
+            .expect("API 连接必须带覆盖层");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(!text.contains("sk-secret"), "覆盖层不得含密钥");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["security"]["auth"]["selectedType"], "openai");
+        assert_eq!(v["model"]["name"], "b");
+        let entries = v["modelProviders"]["openai"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        let b = entries.iter().find(|e| e["id"] == "b").unwrap();
+        assert_eq!(b["envKey"], "OPENAI_API_KEY");
+        assert_eq!(b["baseUrl"], "https://relay.example.com/v1");
+        assert_eq!(b["generationConfig"]["samplingParams"]["temperature"], 0.3);
+        let a = entries.iter().find(|e| e["id"] == "a").unwrap();
+        assert!(a.get("generationConfig").map_or(true, |g| g.get("samplingParams").is_none()), "策略只给所选模型");
+    }
+
+    #[test]
+    fn qwen_overlay_keeps_existing_system_settings() {
+        let p = profile("qwen", Some("https://relay.example.com"));
+        let base = serde_json::json!({"security": {"folderTrust": {"enabled": true}}, "model": {"name": "x", "maxSessionTurns": 9}, "modelProviders": {"anthropic": [{"id": "k"}]}});
+        let v = qwen_system_settings_body(&p, "anthropic", Some("m"), "ANTHROPIC_API_KEY", Some(base));
+        assert_eq!(v["security"]["folderTrust"]["enabled"], true, "管理员的系统设置留着");
+        assert_eq!(v["security"]["auth"]["selectedType"], "anthropic");
+        assert_eq!(v["model"]["name"], "m");
+        assert_eq!(v["model"]["maxSessionTurns"], 9);
+        assert_eq!(v["modelProviders"]["anthropic"][0]["id"], "m");
+        assert_eq!(v["modelProviders"]["anthropic"][0]["envKey"], "ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn qwen_official_account_has_no_overlay() {
+        let plan = launch_plan(&official_profile("qwen"), None, None).unwrap();
+        assert!(!plan.env.iter().any(|(k, _)| k == "QWEN_CODE_SYSTEM_SETTINGS_PATH"));
     }
 
     #[test]

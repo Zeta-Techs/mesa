@@ -50,7 +50,7 @@ pub struct ComboSurfaceDto {
     pub probe_temperature: &'static str,
     pub probe_headers: &'static str,
     pub probe_note: Option<String>,
-    /// 策略通道形态说明（如 qwen「温度/topP 仅设为全局生效」）；多 agent 求交时去重拼接
+    /// 策略通道形态说明（如 grok「策略经 GROK_CONFIG overlay 注入」）；多 agent 求交时去重拼接
     pub policy_channel_note: Option<String>,
     pub missing_slot: bool,
 }
@@ -296,7 +296,7 @@ pub fn surface_for_agents(
 pub fn apply_to_profile(profile: &mut Profile, model: Option<&str>) {
     let surface = surface_for_profile(profile, model);
     // 剥的是「任何入口都到不了」（无 inject/persist 通道）或「体检明确失败」的存储值；
-    // persist 字段保留——启动不注，但「设为全局」要写（qwen generationConfig 路径）。
+    // persist 字段保留——启动不注，但「设为全局」要写（gemini modelConfigs 路径）。
     //
     // effort 另要求模型会思考，但这里**不能用** surface.thinking：那是 bool，把「确知
     // 不思考」与「不知道」压成同一个 false。本函数做的是删除——未知模型会被当成不思考，
@@ -733,8 +733,29 @@ mod tests {
     }
 
     #[test]
-    fn qwen_sampling_channels_are_persist_only() {
-        // qwen 温度/top_p：仅设为全局通道——启动不注（inject=false）但存储可携带（非只读）
+    fn persist_only_sampling_channels_stay_editable() {
+        // gemini 温度/top_p：仅设为全局通道——启动不注（inject=false）但存储可携带（非只读）
+        let dto = surface_for_agents(
+            &[("gemini", None)],
+            "gemini-3-pro",
+            None,
+            None,
+            false,
+            true,
+            false,
+            false,
+            &["gemini-3-pro".into()],
+            false,
+            &[],
+        );
+        assert!(!dto.inject_temperature_allowed);
+        assert_eq!(dto.channel_temperature, "persist");
+        assert!(!dto.temperature_readonly, "persist 通道的已存值仍可编辑");
+    }
+
+    #[test]
+    fn qwen_sampling_channels_inject_via_system_overlay() {
+        // qwen 温度/top_p/思考档：启动时经系统设置覆盖层注入（2026-11-01 假网关实测四项都到线上）
         let dto = surface_for_agents(
             &[("qwen", None)],
             "qwen3-coder",
@@ -748,12 +769,10 @@ mod tests {
             false,
             &[],
         );
-        assert!(!dto.inject_temperature_allowed);
-        assert_eq!(dto.channel_temperature, "persist");
-        assert!(!dto.temperature_readonly, "persist 通道的已存值仍可编辑");
+        assert!(dto.inject_temperature_allowed);
+        assert_eq!(dto.channel_temperature, "inject");
         assert_eq!(dto.channel_max_tokens, "inject");
-        assert!(dto.inject_max_tokens_allowed);
-        assert_eq!(dto.channel_effort, "persist");
+        assert_eq!(dto.channel_effort, "inject");
     }
 
     #[test]

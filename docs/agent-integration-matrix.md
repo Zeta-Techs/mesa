@@ -64,7 +64,7 @@
 | 项 | 值 |
 |---|---|
 | 二进制 / 检测 | `qwen`（npm `@qwen-code/qwen-code`，Node ≥ 22；或 brew）；`qwen --version` |
-| 注入 env（按协议） | openai 协议：`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL`；anthropic 协议：`ANTHROPIC_*` 三件套；配合 `--auth-type openai|anthropic`。credential 优先级：CLI flags > shell env > .env > settings env。策略 env（0.22.0 bundle 全量扫 `QWEN_CODE_*` 实证）：仅 `QWEN_CODE_MAX_OUTPUT_TOKENS` 与 `QWEN_CODE_API_TIMEOUT_MS` 两条，无 temperature/top_p |
+| 注入 env（按协议） | openai 协议：`OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL`；anthropic 协议：`ANTHROPIC_*` 三件套；配合 `--auth-type openai|anthropic`。credential 优先级：CLI flags > shell env > .env > settings env。策略 env（0.22.0 bundle 全量扫 `QWEN_CODE_*` 实证）：仅 `QWEN_CODE_MAX_OUTPUT_TOKENS` 与 `QWEN_CODE_API_TIMEOUT_MS` 两条，无 temperature/top_p。**环境变量盖不过用户 settings.json（2026-11-01 0.26.3 假网关实测）**：模型取值 `--model` > settings `model.name` > `OPENAI_MODEL`，命中的 `modelProviders` 条目自带 baseUrl / envKey 又排在环境变量前——设过全局后按连接启动，模型不同名时换成全局模型、同名时打到全局地址用全局密钥，只加 `--model` 修不了同名。Mesa 每次 API 连接启动写一份系统设置覆盖层（`QWEN_CODE_SYSTEM_SETTINGS_PATH`，合并时排在用户设置之后、不要求 root 所有，与 Gemini 不同）：`security.auth.selectedType` + `model.name` + 本次连接的条目数组（envKey 指 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`，文件不含密钥；所选模型条目带 samplingParams，温度 / top_p / max_tokens / reasoning_effort 四项实测到线上），已有系统设置先读进来再盖这几个键（`agents::qwen_system_settings_overlay`） |
 | 全局配置 | `~/.qwen/settings.json`：`modelProviders.<协议> = [{id, baseUrl, envKey, generationConfig}]`（**数组**，官方 model-providers 文档）+ `security.auth.selectedType` + `model.name`；`QWEN_HOME` 整体搬迁。包一层的旧写法 `modelProviders.<协议>.models` 只在文件没有 `$version`（或为 5）时被迁移成数组（0.26.3 `V5ToV4Migration`），带 `"$version": 4`（Qwen 自己写过一次就会带）时整段被忽略、退回 env 的 `OPENAI_*`（2026-11-01 假网关实测：旧写法打到 env 地址 / 密钥，数组写法打到条目的）；Mesa 写数组，读到旧写法按数组写回 |
 | 会话存储 | `~/.qwen/projects/<sanitize(cwd)>/chats/<uuid>.jsonl`（sanitize 规则同 Claude）；归档在 `chats/archive/`；目录名可能碰撞，**项目归属以首条记录的 `cwd` 为准**。**续会话按当前默认模型走（0.26.3 假网关实测，2026-10-31）**：`--continue` 续上一段时请求发给 settings.json 现在的 `model.name` 那个条目，不恢复会话当初的模型——切全局后 Qwen 属「跟当前全局走」一类 |
 | 会话格式 | JSONL `ChatRecord {uuid, parentUuid, sessionId, timestamp, type: user/assistant/tool_result/system, subtype, cwd, version, message（genai Content 格式）, usageMetadata, model}`；`custom_title` 系统记录给标题。旧版（约 <0.10，具体版本未核实）是单 JSON 文件。**易漂移** |
@@ -295,7 +295,7 @@
      max_output_tokens 通道 = settings.json **条目级** `generationConfig.samplingParams`
      （snake_case 线格式键名 temperature/top_p/max_tokens；dialog schema 未列该子键——「代码读、
      schema 未写」的半隐藏通道，条目级优先于顶层 model.generationConfig，逐字段合并实证）
-     → persist（「设为全局」写入；启动 env 够不到）。env 侧仅 `QWEN_CODE_MAX_OUTPUT_TOKENS`
+     → persist（「设为全局」写入；启动 env 够不到）。**2026-11-01 起启动也能注**：系统设置覆盖层里本次条目的 samplingParams，通道表改 inject。env 侧仅 `QWEN_CODE_MAX_OUTPUT_TOKENS`
      一条策略通道（条目已配 samplingParams 时被跳过）。注意：条目配了 samplingParams 会跳过
      qwen 的 known-model max_tokens 自动钳制，用户显式值原样下发（超上限 400 风险自控）。
      effort：无注入通道；但 0.22.0 有 `/effort low|medium|high|xhigh|max` 直切命令
