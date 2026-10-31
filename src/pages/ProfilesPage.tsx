@@ -62,7 +62,6 @@ import {
   canProbeProfile,
   secretLikeEnvKeys,
   duplicateNameIds,
-  profileNeedsProbe,
   unsyncedModels,
   profileStatusCell,
   showCatalogSyncAction,
@@ -4866,11 +4865,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     </button>
                                   );
                                 }
-                                return profileNeedsProbe(profile) ? (
+                                // 能测的行悬停都给「测试」（2026-10-31：测试通过不常驻后，测过的行原来靠点「测试通过」重测，入口跟着没了）
+                                return canProbeProfile(profile) ? (
                                   <button
                                     type="button"
                                     onClick={() => void probeRow(profile)}
-                                    title="这条连接还没测过。点一下用它的启动模型发一次请求，结果写在这里"
+                                    title={
+                                      profile.connectionStatus === "ready"
+                                        ? "上次测试通过。点一下再测一次：用它的启动模型发一次请求，结果写在这里"
+                                        : "这条连接还没测过。点一下用它的启动模型发一次请求，结果写在这里"
+                                    }
                                     aria-label={`测试连接：${profile.name}`}
                                     className={`${ghostActionClass} ${hoverRevealClass}`}
                                   >

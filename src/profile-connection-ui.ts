@@ -25,7 +25,7 @@ export const CONNECTION_STATUS_CAPTION: Record<
 
 /** 状态列：**只说要人处理的例外**（2026-10-31 用户拍板，取代 10-23「例外 + 测过且通过」）。
  *  测试通过 / 未测试 / 状态未知 / 官方账号都是几乎每行都一样的事实，常驻只会把真正的问题淹掉——返回 null；
- *  未测试由调用方在悬停时给「测试」入口（见 profileNeedsProbe），刚点完测试的结果由调用方就地短暂显示。 */
+ *  能测的行（canProbeProfile，测过的也算）由调用方在悬停时给「测试」入口，刚点完测试的结果由调用方就地短暂显示。 */
 export function profileStatusCell(profile: {
   accountType?: string;
   connectionStatus?: string;
@@ -89,20 +89,6 @@ export function canProbeProfile(profile: {
   if (profile.accountType === "official" || !profile.gatewayId) return false;
   const slot = slotForAgent(profile.agent, profile.protocol);
   return slot !== "gemini" && slot !== "cursor";
-}
-
-/** 还没测过、且能测的连接：状态列常驻「测试」（点了就地测，结果写在原位） */
-export function profileNeedsProbe(profile: {
-  agent: string;
-  protocol?: string | null;
-  accountType?: string;
-  gatewayId?: string | null;
-  connectionStatus?: string;
-}): boolean {
-  return (
-    canProbeProfile(profile) &&
-    (profile.connectionStatus === "untested" || profile.connectionStatus === "unknown")
-  );
 }
 
 /** 同一 agent 下名字重复的连接 id：列表里给它们补首个模型名，否则启动栏里分不清 */

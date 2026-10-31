@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   canProbeProfile,
   duplicateNameIds,
-  profileNeedsProbe,
   profileStatusCell,
   showCatalogSyncAction,
   unsyncedModels,
@@ -63,14 +62,13 @@ test("未测试但绑定模型失效：状态列说模型问题", () => {
   assert.equal(cell?.text, "模型不在目录");
 });
 
-test("只有未测试、有网关、协议槽能体检的 API 连接给「测试」入口", () => {
+test("有网关、协议槽能体检的 API 连接给「测试」入口（测过的也给，用来重测）", () => {
   const base = { agent: "claude-code", accountType: "api", gatewayId: "g1" };
-  assert.equal(profileNeedsProbe({ ...base, connectionStatus: "untested" }), true);
-  assert.equal(profileNeedsProbe({ ...base, gatewayId: null, connectionStatus: "untested" }), false);
-  assert.equal(profileNeedsProbe({ ...base, connectionStatus: "ready" }), false);
-  assert.equal(profileNeedsProbe({ ...base, accountType: "official", connectionStatus: "untested" }), false);
+  assert.equal(canProbeProfile(base), true);
+  assert.equal(canProbeProfile({ ...base, gatewayId: null }), false);
+  assert.equal(canProbeProfile({ ...base, accountType: "official" }), false);
   // Gemini / Cursor 槽后端不支持体检：行上不给测试，免得点了只报错
-  assert.equal(profileNeedsProbe({ ...base, agent: "gemini", connectionStatus: "untested" }), false);
+  assert.equal(canProbeProfile({ ...base, agent: "gemini" }), false);
   assert.equal(canProbeProfile({ ...base, agent: "cursor" }), false);
   assert.equal(canProbeProfile({ ...base, agent: "kimi", protocol: "anthropic" }), true);
 });

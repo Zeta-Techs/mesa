@@ -661,7 +661,7 @@ update-routing.ts          # CLI 自更新路由 interactiveUpdatePrefill（Prof
   trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null，卡住时聊天层出「终端在等你」卡
   chat-style.ts              # 聊天层阅读体验：字号档 / 字体 / 行内代码强调色 / 滚动条四张表（与 settings.rs KNOWN_CHAT_* 逐表镜像）+ 壳上内联变量 chatStyleVars（标准/系统档不写变量）；
                              # 颜色与滚动条行为都在 App.css（data-chat-accent / data-chat-scrollbar / .ccode-chat-scroll / .ccode-chat-user，tests/chat-style.test.ts）
-  profile-connection-ui.ts   # 连接页行状态列（profileStatusCell：只说例外与测试通过）、未测试给「测试」入口（profileNeedsProbe）、同组重名（duplicateNameIds）、「同步目录」是否出现
+  profile-connection-ui.ts   # 连接页行状态列（profileStatusCell：只说要处理的例外，2026-10-31）、能测的行悬停给「测试」（canProbeProfile，测过的也给，用来重测）、同组重名（duplicateNameIds）、「同步目录」是否出现
   chat-empty-start.ts        # 聊天空态纯逻辑：按目录类型的起手提示表（STARTER_PROMPTS）+ 通用目录的「接着做〈项目〉」（recentProjectStarters）+ 时段问候（chatGreeting）；输入框目录芯片文字在 terminal-welcome.ts cwdChipLabel，UI 在 components/ChatEmptyStart.tsx（不列旧对话：10-23 起挂在侧栏项目树；输入框居中版式在 ChatSurface）；输入框右下「模型 · 思考」菜单在 components/ChatModelMenu.tsx（开聊前 / 运行中 / 接着聊同一个单栏菜单），左下权限四档在 components/ChatPermissionBadge.tsx，对话末尾「等你决定」卡在 components/ChatDecisionCard.tsx（所有弹出卡片一个骨架 CardShell，主按钮 ⌘↵；口径 design-system.md 对话页 ③，设计稿 docs/design-chat-layer.md）
   model-caps-label.ts        # 模型菜单每行右侧的能力灰字（200K · 思考 · 看图），数据来自 model_capabilities
 model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯逻辑（GatewayLibrary 消费，model_registry.rs 用户覆盖层的表单入口）：thinking/vision 三态 ""=未声明（查询链继续向下）/"true"/"false" 显式声明，context 正整数校验与 Rust validate_override 同口径；output/api_backend 不进表单（output 的用户旋钮是策略字段 max output）由调用方往返保留；全空表单＝没有声明，保存降级为清除（tests/model-caps-override.test.ts）
