@@ -1481,6 +1481,113 @@ fn patch_grok_config(
     Ok(doc.to_string())
 }
 
+/// Mesa 开过的 Grok 会话用的（模型 id, 绑定 id）：绑定取 Mesa 自己的 session_meta.profile_id，
+/// 模型取会话目录 summary.json 的 current_model_id（Grok 续聊按它找模型）。只读，最近的在前
+fn grok_session_models(grok_dir: &Path) -> Vec<(String, String)> {
+    let Some(db) = crate::storage::config_root().map(|r| r.join("app.db")).filter(|p| p.is_file()) else {
+        return Vec::new();
+    };
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        &db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(300));
+    let owners: BTreeMap<String, String> = conn
+        .prepare("SELECT session_id, profile_id FROM session_meta WHERE agent = 'grok' AND profile_id IS NOT NULL")
+        .and_then(|mut st| {
+            st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map(|rows| rows.flatten().collect())
+        })
+        .unwrap_or_default();
+    if owners.is_empty() {
+        return Vec::new();
+    }
+    // sessions/<编码后的 cwd>/<会话 id>/summary.json
+    let mut found: Vec<(std::time::SystemTime, String, String)> = Vec::new();
+    for cwd_dir in fs::read_dir(grok_dir.join("sessions")).into_iter().flatten().flatten() {
+        for sess in fs::read_dir(cwd_dir.path()).into_iter().flatten().flatten() {
+            let id = sess.file_name().to_string_lossy().into_owned();
+            let Some(pid) = owners.get(&id) else { continue };
+            let summary = sess.path().join("summary.json");
+            let Some(model) = fs::read_to_string(&summary)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .and_then(|v| v.get("current_model_id").and_then(|m| m.as_str()).map(str::to_string))
+                .filter(|m| !m.is_empty())
+            else {
+                continue;
+            };
+            let at = fs::metadata(&summary).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            found.push((at, model, pid.clone()));
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, m, p)| (m, p)).collect()
+}
+
+/// Grok 续聊层（2026-10-31「老会话要用的只加不删」）：Mesa 开的 Grok 会话，模型只在启动时经 env 注入，
+/// 离开 Mesa 用 `grok -r` 续时全局配置里没有这个模型。按会话当初的连接补一段 `[model.<id>]`（地址 + 自己的密钥，
+/// 与设为全局写的段同形）。已有同名段的不碰；这次连接自己有的模型不补（同名段会把新会话也拉去老连接）。
+/// 只进预览与写入，不进漂移比对（磁盘多出的段子集比对本来不算漂移）
+fn extend_grok_plans(
+    home: &Path,
+    plans: &mut Vec<PlannedWrite>,
+    profiles: &[Profile],
+    current: Option<&Profile>,
+) -> Result<(), String> {
+    let dir = cli_dir(home, "grok");
+    let cfg_path = dir.join("config.toml");
+    let refs = grok_session_models(&dir);
+    if refs.is_empty() {
+        return Ok(());
+    }
+    let base = match plans.iter().find(|p| p.path == cfg_path) {
+        Some(p) => p.content.clone(),
+        None => match read_existing(&cfg_path)? {
+            Some(t) => t,
+            None => return Ok(()),
+        },
+    };
+    let mut doc = parse_toml_doc(Some(&base))?;
+    let mut changed = false;
+    for (model, pid) in refs {
+        if current.is_some_and(|c| c.models.contains(&model)) {
+            continue;
+        }
+        if doc.get("model").and_then(|t| t.get(&model)).is_some() {
+            continue;
+        }
+        let Some(binding) = profiles.iter().find(|p| {
+            p.id == pid && p.agent == "grok" && !is_official(p) && !p.no_auth && p.base_url.is_some()
+        }) else {
+            continue;
+        };
+        let Ok(Some(key)) = crate::profiles::get_key_for_profile(binding) else {
+            continue;
+        };
+        let model_tbl = sub_table(doc.as_item_mut(), "model")?;
+        let entry = sub_table(model_tbl, &model)?;
+        entry["name"] = toml_edit::value(format!("{} · {model}", binding.name));
+        if let Some(u) = binding.base_url.as_deref() {
+            entry["base_url"] = toml_edit::value(u);
+        }
+        entry["api_key"] = toml_edit::value(key);
+        if let Some(b) = binding.api_backend.as_deref().filter(|s| !s.is_empty()) {
+            entry["api_backend"] = toml_edit::value(b);
+        }
+        if let Some(c) = crate::model_registry::model_context_size_for_config(&model, binding.gateway_id.as_deref()) {
+            entry["context_window"] = toml_edit::value(c);
+        }
+        changed = true;
+    }
+    if changed {
+        upsert_plan(plans, "config.toml", cfg_path, doc.to_string());
+    }
+    Ok(())
+}
+
 fn gateway_effort_levels(profile: &Profile, model: &str) -> Option<Vec<String>> {
     let raw = profile
         .gateway_id
@@ -3476,6 +3583,9 @@ pub fn preview_profile_global(
         if profile.agent == "codex" {
             extend_codex_plans(&home, &mut plans, &store.list()?, None)?;
         }
+        if profile.agent == "grok" {
+            extend_grok_plans(&home, &mut plans, &store.list()?, None)?;
+        }
         return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new(), Vec::new()));
     }
     let skipped = skipped_policy_notes(&profile);
@@ -3491,6 +3601,9 @@ pub fn preview_profile_global(
     if profile.agent == "opencode" {
         extend_opencode_plans(&home, &mut plans, &store.list()?, &profile)?;
     }
+    if profile.agent == "grok" {
+        extend_grok_plans(&home, &mut plans, &store.list()?, Some(&profile))?;
+    }
     Ok(preview_plans(&home, &profile.agent, &plans, skipped, override_notes_with(&profile.agent, &shell_has)))
 }
 
@@ -3505,7 +3618,7 @@ pub async fn apply_profile_global(
     let validate = validate.unwrap_or(true);
     let profile = profile_for_write(&store, &profile_id)?;
     // Codex 续聊层要认出老对话的网关（codex_continuity）
-    let all_profiles = if matches!(profile.agent.as_str(), "codex" | "opencode") { store.list()? } else { Vec::new() };
+    let all_profiles = if matches!(profile.agent.as_str(), "codex" | "opencode" | "grok") { store.list()? } else { Vec::new() };
     if is_official(&profile) {
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = GLOBAL_CONFIG_MUTEX
@@ -3516,6 +3629,9 @@ pub async fn apply_profile_global(
             let mut plans = plan_writes(&home, &profile, None, &[])?;
             if profile.agent == "codex" {
                 extend_codex_plans(&home, &mut plans, &all_profiles, None)?;
+            }
+            if profile.agent == "grok" {
+                extend_grok_plans(&home, &mut plans, &all_profiles, None)?;
             }
             // 磁盘已经是官方形态：不写、不产生空备份批次
             let files = if disk_equals_plans(&plans) {
@@ -3545,6 +3661,9 @@ pub async fn apply_profile_global(
         }
         if profile.agent == "opencode" {
             extend_opencode_plans(&home, &mut plans, &all_profiles, &profile)?;
+        }
+        if profile.agent == "grok" {
+            extend_grok_plans(&home, &mut plans, &all_profiles, Some(&profile))?;
         }
         let backups_dir = backups_root()?.join(&profile.agent);
         let files = apply_plans(&backups_dir, &home, &plans)?;
@@ -4979,6 +5098,43 @@ trust_level = "trusted"
         assert!(v.get("small_model").is_none(), "指着 Mesa 旧渠道的小模型撤掉");
         assert!(v.get("autoupdate").is_none(), "不改用户自己用 OpenCode 时的更新行为");
         assert_eq!(v["theme"], "dark");
+    }
+
+    #[test]
+    fn grok_mesa_sessions_get_their_model_section_for_resume_outside_mesa() {
+        let home = tmpdir("grok-cont");
+        let _root = crate::storage::TestConfigRoot::redirect_to(&home.join("mesa"));
+        fs::create_dir_all(home.join("mesa")).unwrap();
+        fs::write(home.join("mesa/keys.json"), r#"{"gw-old": "sk-old"}"#).unwrap();
+        let conn = rusqlite::Connection::open(home.join("mesa/app.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_meta(agent TEXT, session_id TEXT, profile_id TEXT);
+             INSERT INTO session_meta VALUES('grok','s-old','b-old'),('grok','s-new','b-new'),('codex','s-old','b-old');",
+        )
+        .unwrap();
+        for (sid, m) in [("s-old", "old-m"), ("s-new", "new-m")] {
+            let d = home.join(".grok/sessions/%2Fx").join(sid);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("summary.json"), format!(r#"{{"current_model_id":"{m}"}}"#)).unwrap();
+        }
+        fs::write(home.join(".grok/config.toml"), "[models]\ndefault = \"new-m\"\n").unwrap();
+        let mut old = profile("grok");
+        old.id = "b-old".into();
+        old.name = "老连接".into();
+        old.gateway_id = Some("gw-old".into());
+        old.base_url = Some("https://old.example.com/v1".into());
+        let mut cur = profile("grok");
+        cur.id = "b-new".into();
+        cur.models = vec!["new-m".into()];
+        let mut plans = Vec::new();
+        extend_grok_plans(&home, &mut plans, &[old, cur.clone()], Some(&cur)).unwrap();
+        let doc: toml::Value = toml::from_str(&plans[0].content).unwrap();
+        let sec = &doc["model"]["old-m"];
+        assert_eq!(sec["base_url"].as_str(), Some("https://old.example.com/v1"));
+        assert_eq!(sec["api_key"].as_str(), Some("sk-old"));
+        assert_eq!(sec["name"].as_str(), Some("老连接 · old-m"));
+        assert!(doc["model"].get("new-m").is_none(), "这次连接自己的模型不补（会把新会话拉去老连接）");
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]
