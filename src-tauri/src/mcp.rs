@@ -77,8 +77,8 @@ pub struct McpServerDto {
     #[serde(default)]
     pub origin: String,
     /// 慢启动 server 的启动超时声明（毫秒）：收编 codex/grok 的 startup_timeout_sec 自动带入，
-    /// 也可在编辑表单手调；只被体检消费（check_stdio 按 clamp(8s, 30s) 生效），
-    /// 分发映射不写它（matrix §10.2：别家无实证等价字段）
+    /// 也可在编辑表单手调；体检按 clamp(8s, 30s) 生效，分发只写进 codex 的 startup_timeout_sec
+    /// （同一 clamp；别家无实证等价字段，matrix §10.2）
     #[serde(default)]
     pub startup_timeout_ms: Option<u64>,
     /// 最近一次体检沉淀（单条/批量检测都会更新；旧清单无此字段）
@@ -111,6 +111,67 @@ fn store_path() -> Result<PathBuf, String> {
         .join("mcp-servers.json"))
 }
 
+// 清单读改写持锁（进程锁＋OS 文件锁）：体检回写 last_check 与拨开关并发时，后写的不得冲掉先写的。
+// 同一线程可重入：保存、开关、删除内部层层互调，外层持锁时内层直接放行
+static STORE_MUTEX: Mutex<()> = Mutex::new(());
+thread_local! {
+    static STORE_LOCK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+struct McpStoreGuard {
+    _inner: Option<(std::sync::MutexGuard<'static, ()>, Option<std::fs::File>)>,
+}
+
+impl Drop for McpStoreGuard {
+    fn drop(&mut self) {
+        STORE_LOCK_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+fn store_guard() -> Result<McpStoreGuard, String> {
+    let depth = STORE_LOCK_DEPTH.with(|d| d.get());
+    let inner = if depth == 0 {
+        let process = STORE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(test)]
+        let file = if TEST_STORE.with(|c| c.borrow().is_some()) {
+            None
+        } else {
+            Some(crate::storage::config_lock("mcp-servers")?)
+        };
+        #[cfg(not(test))]
+        let file = Some(crate::storage::config_lock("mcp-servers")?);
+        Some((process, file))
+    } else {
+        None
+    };
+    STORE_LOCK_DEPTH.with(|d| d.set(depth + 1));
+    Ok(McpStoreGuard { _inner: inner })
+}
+
+/// 写各家 CLI 配置与「设为全局」同一把锁：两边改的是同一份 config.toml / settings.json
+struct AgentConfigGuard {
+    _process: std::sync::MutexGuard<'static, ()>,
+    _file: Option<std::fs::File>,
+}
+
+fn agent_config_guard() -> Result<AgentConfigGuard, String> {
+    let process = crate::global_config::GLOBAL_CONFIG_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    #[cfg(test)]
+    if TEST_HOME.with(|c| c.borrow().is_some()) {
+        return Ok(AgentConfigGuard {
+            _process: process,
+            _file: None,
+        });
+    }
+    let file = crate::storage::config_lock("global-config")?;
+    Ok(AgentConfigGuard {
+        _process: process,
+        _file: Some(file),
+    })
+}
+
 fn read_store() -> Result<Vec<McpServerDto>, String> {
     let path = store_path()?;
     match std::fs::read_to_string(&path) {
@@ -132,8 +193,7 @@ fn write_store(list: &[McpServerDto]) -> Result<(), String> {
 /// 清单文件 0600 原子写：可能含用户误填的明文密钥，权限与 keys.json 同口径
 ///（先收窄 tmp 权限再 rename，消除 0644 窗口；Windows 无 0600 语义由目录 ACL 控制）
 fn atomic_write_0600(path: &Path, text: &str) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    let _ = std::fs::remove_file(&tmp);
+    let tmp = path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4().simple()));
     std::fs::write(&tmp, text).map_err(|e| format!("写入 {} 失败: {e}", tmp.display()))?;
     #[cfg(unix)]
     {
@@ -141,7 +201,10 @@ fn atomic_write_0600(path: &Path, text: &str) -> Result<(), String> {
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("设置权限失败: {e}"))?;
     }
-    std::fs::rename(&tmp, path).map_err(|e| format!("替换 {} 失败: {e}", path.display()))
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("替换 {} 失败: {e}", path.display())
+    })
 }
 
 // ===== MCP 密钥（mcp-keys.json）：表单填写，清单只留 ${VAR}，启动/体检时注入 =====
@@ -487,7 +550,33 @@ fn backup_once(path: &Path) -> Result<(), String> {
         crate::sessions::now_iso().replace([':', '.'], "-")
     ));
     std::fs::copy(path, &dest).map_err(|e| format!("备份 {} 失败: {e}", path.display()))?;
+    prune_backups(&dir, &name);
     Ok(())
+}
+
+/// 每份配置只留最近 MCP_BACKUP_KEEP 份：~/.claude.json 常有几 MB，每拨一次开关都整份复制
+const MCP_BACKUP_KEEP: usize = 10;
+
+fn prune_backups(dir: &Path, name: &str) {
+    let prefix = format!("{name}.");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut baks: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| {
+            n.strip_prefix(&prefix)
+                .and_then(|rest| rest.strip_suffix(".bak"))
+                // 只认 <时间戳>.bak：名字更长的别家文件（如 settings.json.xxx）不算
+                .is_some_and(|ts| ts.starts_with(|c: char| c.is_ascii_digit()) && !ts.contains('.'))
+        })
+        .collect();
+    baks.sort();
+    let excess = baks.len().saturating_sub(MCP_BACKUP_KEEP);
+    for old in &baks[..excess] {
+        let _ = std::fs::remove_file(dir.join(old));
+    }
 }
 
 // ===== env 引用解析 =====
@@ -597,11 +686,38 @@ fn rewrite_refs(value: &str, opencode_style: bool) -> String {
     if !opencode_style {
         return value.to_string();
     }
-    let mut out = value.to_string();
-    // 只处理整值引用（"Bearer ${X}" 这类内嵌引用 opencode 未核实，保持原样并在文档说明）
-    if let Some(name) = env_ref(value) {
-        out = format!("{{env:{name}}}");
+    // 内嵌引用（"Bearer ${X}"）同样转：OpenCode 读配置时对全文做 /\{env:([^}]+)\}/g 文本替换
+    //（1.x 二进制实证，2026-10-31），不限整值
+    let mut out = String::with_capacity(value.len());
+    let mut last = 0;
+    for (range, name) in scan_env_refs(value) {
+        out.push_str(&value[last..range.start]);
+        out.push_str(&format!("{{env:{name}}}"));
+        last = range.end;
     }
+    out.push_str(&value[last..]);
+    out
+}
+
+/// opencode 的 {env:VAR}（整值或内嵌）转回统一模型的 ${VAR}
+fn unrewrite_opencode_refs(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("{env:") {
+        let after = &rest[start + 5..];
+        match after.find('}') {
+            Some(end) if end > 0 => {
+                out.push_str(&rest[..start]);
+                out.push_str(&format!("${{{}}}", &after[..end]));
+                rest = &after[end + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..start + 5]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
     out
 }
 
@@ -990,12 +1106,13 @@ fn entry_toml(server: &McpServerDto) -> Result<toml_edit::Table, String> {
         if !env_headers.is_empty() {
             t["env_http_headers"] = toml_edit::Item::Table(env_headers);
         }
-        // 远程 HTTP 不要默认写长 startup_timeout_sec：Codex 启动/恢复会等满超时才画 TUI。
-        // Consensus 握手常挂死，20s×两台学术 MCP 就是恢复时黑屏半分钟。只在用户显式声明时写入。
-        if let Some(ms) = server.startup_timeout_ms {
-            let secs = ((ms / 1000) as i64).clamp(8, 30);
-            t["startup_timeout_sec"] = toml_edit::value(secs);
-        }
+    }
+    // 只在用户显式声明时写 startup_timeout_sec（与体检同一 clamp(8s, 30s)）：不写默认长超时——
+    // Codex 启动/恢复会等满超时才画 TUI，Consensus 握手常挂死，20s×两台学术 MCP 就是黑屏半分钟。
+    // stdio 也写：Blender 首次 uv 装依赖十几秒，Codex 默认 10s 起不来
+    if let Some(ms) = server.startup_timeout_ms {
+        let secs = ((ms / 1000) as i64).clamp(8, 30);
+        t["startup_timeout_sec"] = toml_edit::value(secs);
     }
     Ok(t)
 }
@@ -1157,6 +1274,7 @@ fn write_json_entry(
 ) -> Result<(), String> {
     check_managed_guard(agent)?;
     let (path, _) = agent_paths(agent)?;
+    let _lock = agent_config_guard()?;
     let mut root = if path.exists() {
         jsonc_read(&path)?
     } else {
@@ -1210,6 +1328,7 @@ fn write_json_entry(
 /// codex：toml_edit 保格式读-改-写 [mcp_servers.<name>]，其余段不动
 fn write_codex_entry(name: &str, entry: Option<toml_edit::Table>) -> Result<(), String> {
     let (path, _) = agent_paths("codex")?;
+    let _lock = agent_config_guard()?;
     let mut doc = if path.exists() {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
@@ -1405,12 +1524,7 @@ fn reverse_entry(agent: &str, name: &str, v: &serde_json::Value) -> McpServerDto
         pairs
             .into_iter()
             .map(|p| {
-                let value = p
-                    .value
-                    .strip_prefix("{env:")
-                    .and_then(|r| r.strip_suffix('}'))
-                    .map(|n| format!("${{{n}}}"))
-                    .unwrap_or(p.value);
+                let value = unrewrite_opencode_refs(&p.value);
                 McpEnvPair { key: p.key, value }
             })
             .collect()
@@ -1583,7 +1697,16 @@ fn entry_modified_externally(agent: &str, server: &McpServerDto) -> Result<bool,
         return Ok(false); // 已不在 = 没什么可保护的
     };
     let expected = if agent == "codex" {
-        entry_toml(server).map(|t| toml_to_json(&toml_edit::Item::Table(t)))
+        entry_toml(server).map(|t| {
+            let mut e = toml_to_json(&toml_edit::Item::Table(t));
+            // 2026-10-31 前 stdio 条目不写 startup_timeout_sec：盘上缺这一键是 Mesa 旧版写的，不算外部改过
+            if current.get("startup_timeout_sec").is_none() {
+                if let Some(obj) = e.as_object_mut() {
+                    obj.remove("startup_timeout_sec");
+                }
+            }
+            e
+        })
     } else {
         entry_json(server, agent)
     };
@@ -1697,6 +1820,7 @@ fn save_impl_with_secrets(
     if !suspects.is_empty() {
         return Err(plaintext_reject_error(&suspects));
     }
+    let _lock = store_guard()?;
     let mut list = read_store()?;
     let is_new = server.id.is_empty();
     // 重命名检测：编辑路径记下旧名，新名条目重投完成后把旧名条目从各 agent 移除
@@ -1777,6 +1901,7 @@ fn set_app_impl(
     force: bool,
 ) -> Result<Vec<McpServerDto>, String> {
     crate::agent_specs::agent_spec(agent).ok_or_else(|| format!("未知 agent: {agent}"))?;
+    let _lock = store_guard()?;
     let mut list = read_store()?;
     let Some(pos) = list.iter().position(|s| s.id == id) else {
         return Err("该 server 不存在（可能已删除）".into());
@@ -1810,6 +1935,7 @@ pub async fn set_mcp_server_enabled(
 }
 
 fn set_enabled_impl(id: &str, enabled: bool, force: bool) -> Result<Vec<McpServerDto>, String> {
+    let _lock = store_guard()?;
     let mut list = read_store()?;
     let Some(pos) = list.iter().position(|s| s.id == id) else {
         return Err("该 server 不存在（可能已删除）".into());
@@ -1862,6 +1988,7 @@ fn delete_impl(
     force: bool,
     keep_agent_configs: bool,
 ) -> Result<Vec<McpServerDto>, String> {
+    let _lock = store_guard()?;
     let mut list = read_store()?;
     let Some(pos) = list.iter().position(|s| s.id == id) else {
         return Err("该 server 不存在（可能已删除）".into());
@@ -2000,6 +2127,7 @@ pub async fn import_mcp_from_agent(
 
 fn import_from_agent_impl(agent: &str, name: &str) -> Result<McpImportOutcome, String> {
     crate::agent_specs::agent_spec(agent).ok_or_else(|| format!("未知 agent: {agent}"))?;
+    let _lock = store_guard()?;
     let mut list = read_store()?;
     if list.iter().any(|s| s.name == name) {
         return Err(format!("清单里已有同名 server: {name}"));
@@ -2112,6 +2240,7 @@ fn import_json_impl(
     if !suspects.is_empty() {
         return Err(plaintext_reject_error(&suspects));
     }
+    let _lock = store_guard()?;
     let mut list = read_store()?;
     let added: Vec<String> = parsed.iter().map(|s| s.name.clone()).collect();
     list.extend(parsed);
@@ -2289,6 +2418,21 @@ mod tests {
     }
 
     #[test]
+    fn opencode_embedded_refs_round_trip() {
+        assert_eq!(
+            rewrite_refs("Bearer ${CONSENSUS_API_KEY}", true),
+            "Bearer {env:CONSENSUS_API_KEY}"
+        );
+        assert_eq!(rewrite_refs("$A-${B}x", true), "{env:A}-{env:B}x");
+        assert_eq!(rewrite_refs("Bearer ${X}", false), "Bearer ${X}");
+        assert_eq!(
+            unrewrite_opencode_refs("Bearer {env:CONSENSUS_API_KEY}"),
+            "Bearer ${CONSENSUS_API_KEY}"
+        );
+        assert_eq!(unrewrite_opencode_refs("{env:}{env:A"), "{env:}{env:A");
+    }
+
+    #[test]
     fn mapping_gemini_remote_uses_httpurl() {
         let v = entry_json(&remote_server(), "gemini").unwrap();
         assert_eq!(v["httpUrl"], "https://example.com/mcp");
@@ -2348,6 +2492,50 @@ mod tests {
         assert_eq!(rt["bearer_token_env_var"].as_str(), Some("MCP_TOKEN"));
         assert!(rt.get("http_headers").is_none());
         assert!(rt.get("startup_timeout_sec").is_none());
+    }
+
+    #[test]
+    fn codex_stdio_writes_declared_startup_timeout() {
+        let mut s = stdio_server();
+        s.env.clear();
+        assert!(entry_toml(&s).unwrap().get("startup_timeout_sec").is_none());
+        s.startup_timeout_ms = Some(20_000);
+        assert_eq!(entry_toml(&s).unwrap()["startup_timeout_sec"].as_integer(), Some(20));
+        s.startup_timeout_ms = Some(120_000);
+        assert_eq!(entry_toml(&s).unwrap()["startup_timeout_sec"].as_integer(), Some(30));
+    }
+
+    #[test]
+    fn backups_pruned_per_file() {
+        let dir = std::env::temp_dir().join(format!("ccode-mcp-bak-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..(MCP_BACKUP_KEEP + 3) {
+            std::fs::write(dir.join(format!("config.toml.2026-10-{:02}T00-00-00Z.bak", i + 1)), "")
+                .unwrap();
+        }
+        std::fs::write(dir.join("settings.json.2026-01-01T00-00-00Z.bak"), "").unwrap();
+        prune_backups(&dir, "config.toml");
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left.len(), MCP_BACKUP_KEEP + 1, "别的文件的备份不动");
+        assert!(left.contains(&"config.toml.2026-10-13T00-00-00Z.bak".to_string()));
+        assert!(!left.contains(&"config.toml.2026-10-03T00-00-00Z.bak".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_guard_is_reentrant() {
+        let fx = Fixture::new();
+        {
+            let _a = store_guard().unwrap();
+            let _b = store_guard().unwrap();
+            write_store(&[]).unwrap();
+        }
+        assert_eq!(STORE_LOCK_DEPTH.with(|d| d.get()), 0);
+        drop(fx);
     }
 
     #[test]
@@ -4234,6 +4422,7 @@ async fn check_one(server: &McpServerDto) -> McpHealthDto {
 /// 落盘失败静默——检测结果已经拿到，不该被持久化失败拖垮）
 fn record_last_checks(results: &HashMap<String, McpHealthDto>) {
     let _ = (|| -> Result<(), String> {
+        let _lock = store_guard()?;
         let mut list = read_store()?;
         let mut dirty = false;
         for s in list.iter_mut() {

@@ -39,7 +39,8 @@ struct TxAction {
     content: Option<Vec<u8>>,
 }
 
-static GLOBAL_CONFIG_MUTEX: Mutex<()> = Mutex::new(());
+// MCP 分发写同几份 CLI 配置（~/.codex/config.toml 等），借用这把锁（mcp::agent_config_guard）
+pub(crate) static GLOBAL_CONFIG_MUTEX: Mutex<()> = Mutex::new(());
 
 /// 与 apply_profile_global 同一口径：选中模型求交后再 plan。
 pub(crate) fn profile_for_register(

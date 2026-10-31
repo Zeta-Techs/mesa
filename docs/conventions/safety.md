@@ -286,8 +286,10 @@
   基线可能还没合并检索结果，之后正式开工撞「工作区已存在且未合并」）；③候选不再盲取流水线第二步。
 - **MCP 分发（§6.15，规格 = matrix §10）**：Mesa 清单（<config>/ccode/mcp-servers.json）→ 八家用户级配置的映射写入（grok 首版只读不分发）。
   **只写用户级**（项目级各家都有审批闸）；目标文件多是混合状态文件，一律读-改-写一个键/段 + 写前备份 + 原子写 + 读回校验，
-  绝不整文件覆盖；codex 走 toml_edit 保格式、gemini/qwen/opencode/codebuddy 走 JSONC 容错读；密钥一律用 `$VAR`/`${VAR}`
-  引用形式，映射成各家间接引用字段（codex env_vars/bearer_token_env_var、opencode {env:VAR}、kimi bearerTokenEnvVar），
+  绝不整文件覆盖；写各家配置持「设为全局」同一把锁（`GLOBAL_CONFIG_MUTEX` + `global-config` 文件锁），Mesa 清单读改写另持
+  `mcp-servers` 锁（同线程可重入，体检回写 last_check 也在锁内）；写前备份每份配置只留最近 10 份；codex 走 toml_edit 保格式、gemini/qwen/opencode/codebuddy 走 JSONC 容错读；密钥一律用 `$VAR`/`${VAR}`
+  引用形式，映射成各家间接引用字段（codex env_vars/bearer_token_env_var、opencode {env:VAR}（整值与 `Bearer ${X}` 内嵌都转：
+  OpenCode 读配置时对全文做 `{env:…}` 文本替换，2026-10-31 二进制实证）、kimi bearerTokenEnvVar），
   不落明文；server 名取各家交集 [A-Za-z0-9-]（下划线禁：gemini policy 引擎按下划线切分）；claude 的 managed-mcp.json
   存在即拒写；cursor 的配置与 IDE 共享，分发同时影响 IDE。CLI 自带 mcp 命令不用于分发（各家语义不一：gemini 默认
   project scope、codebuddy 默认 local、codex add 命中 OAuth 会弹浏览器、kimi/cursor 没有可脚本化命令）。
@@ -335,7 +337,8 @@
   **连通性体检（check_mcp_server / check_all_mcp_servers，共用 check_one）**：批量分波并发每波 4 个、全部完成一次性
   返回（不走渐进事件）；结果沉淀进清单 `last_check` 字段（读-改-写只动该字段，编辑整结构替换保留旧值，落盘失败静默不拖垮
   检测）；stdio 每次尝试的等待上限 = `startup_timeout_ms` 按 clamp(8s, 30s) 生效（未声明 8s、remote 恒 8s），声明了仍超时的
-  报错点明「已按此等待」。`startup_timeout_ms` 只被体检消费、不进分发映射；来源 = 收编 codex/grok 的 `startup_timeout_sec`
+  报错点明「已按此等待」。`startup_timeout_ms` 分发只写进 codex 的 `startup_timeout_sec`（同一 clamp，stdio / remote 都写，
+  2026-10-31 起；此前 stdio 不写，比对「外部改过」时盘上缺该键不算改过）；来源 = 收编 codex/grok 的 `startup_timeout_sec`
   （matrix §10.2 别家无实证等价字段不读）或编辑表单手调。**体检结果带 status 细分闭集**（McpHealthDto.status：
   handshake = initialize 握手成功 / reachable = 地址可达但握手未确认（remote 3xx·其他 4xx）/ auth = 认证失败
   （401/403）/ not_found = 路径错误（404）/ error = 其余失败——401/403/404 按「连通正常」报是假阳性，必须判失败）。
