@@ -122,8 +122,7 @@ import {
   instBrowserLoginDay,
   instBrowserLoginFresh,
   instLoginOpenUrl,
-  instOtherPanelDefaultOpen,
-  instPrefixPanelDefaultOpen,
+  instMorePanelDefaultOpen,
   instSessionLabel,
   INST_BROWSER_LOGIN_EVENT,
   readInstBrowserLogin,
@@ -522,7 +521,7 @@ const SETTING_NAV: {
   { id: "about", label: "关于", group: "management", icon: Info, description: "版本、许可、隐私与反馈" },
 ];
 
-/** 设置页低频折叠：校外前缀 / 其他方式。默认开闭由调用方按已填内容决定。 */
+/** 设置页低频折叠（学校图书馆「校外访问与登录入口」）。默认开闭由调用方按已填内容决定。 */
 function SettingsFold({
   label,
   open,
@@ -1713,7 +1712,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [institutionalPrefix, setInstitutionalPrefix] = useState("");
   const [institutionalLoginUrl, setInstitutionalLoginUrl] = useState("");
   const [instStatus, setInstStatus] = useState<InstSessionStatus | null>(null);
-  const [instBusy, setInstBusy] = useState<"login" | "capture" | "clear" | "bridge" | null>(null);
+  const [instBusy, setInstBusy] = useState<"login" | "clear" | null>(null);
   // 浏览器登录标记（inst-access）：与付费墙行共用，任一处点「登录好了」两处同步
   const [instBrowserLoginAt, setInstBrowserLoginAt] = useState<number | null>(() => readInstBrowserLogin());
   const [instBrowserOpened, setInstBrowserOpened] = useState(false);
@@ -1723,8 +1722,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     return () => window.removeEventListener(INST_BROWSER_LOGIN_EVENT, sync);
   }, []);
   // null = 跟随默认（已填前缀 / 自定义入口 / 已有内嵌会话则展开）；人手点过之后不再抢
-  const [instPrefixOpen, setInstPrefixOpen] = useState<boolean | null>(null);
-  const [instOtherOpen, setInstOtherOpen] = useState<boolean | null>(null);
+  const [instMoreOpen, setInstMoreOpen] = useState<boolean | null>(null);
   // 出网代理自动检测：候选由后端读系统代理/环境变量/常见端口产出，点选才写入
   const [proxyDetecting, setProxyDetecting] = useState(false);
   const [proxyCandidates, setProxyCandidates] = useState<
@@ -2074,57 +2072,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       setNotice(
         "已打开浏览器。选学校、完成登录后回来点「登录好了」，之后待获取清单点「浏览器」下载，PDF 自动进项目",
       );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setInstBusy(null);
-    }
-  }
-
-  /** 旧通道回落：内嵌登录窗（会话倒回 Mesa，供 fetch_via_channel 无头阶梯用） */
-  async function openInstLoginEmbedded() {
-    const typed = institutionalLoginUrl.trim() || institutionalPrefix.trim();
-    const url = typed || DEFAULT_INST_LOGIN_URL;
-    if (!/^https?:\/\//i.test(url)) {
-      setError("机构登录页须是 http(s):// 开头的完整地址");
-      return;
-    }
-    setInstBusy("login");
-    setError(null);
-    try {
-      if (typed) await patch({ institutionalLoginUrl: typed });
-      await invoke("inst_open_login", { url });
-      setNotice("内嵌登录窗已打开——登录后会话自动增量保存（此通道仅供无头阶梯与调试，日常下载走浏览器）");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setInstBusy(null);
-    }
-  }
-
-  /** 安装浏览器桥（通道 C）：写 NativeMessagingHosts 清单 + 把扩展目录就位到
-   *  配置目录（结果里带实际路径——装 DMG 的用户没有仓库，不能再指仓库目录） */
-  async function installBrowserBridge() {
-    setInstBusy("bridge");
-    setError(null);
-    try {
-      const results = await invoke<string[]>("install_browser_bridge");
-      setNotice(
-        `浏览器桥：${results.join("；")}。只支持 Chrome/Edge 等 Chromium 系浏览器（Safari/Firefox 装不了扩展，用「浏览器打开」+90 秒自动收货即可）`,
-      );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setInstBusy(null);
-    }
-  }
-
-  async function captureInstSession() {
-    setInstBusy("capture");
-    setError(null);
-    try {
-      setInstStatus(await invoke<InstSessionStatus>("inst_capture_session"));
-      setNotice("机构会话已保存，可以在文献清单里逐篇「获取全文」了");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -2558,18 +2505,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const prefixDraftInvalid =
     Boolean(institutionalPrefix.trim()) &&
     !/^https?:\/\//i.test(institutionalPrefix.trim());
-  const prefixOpen =
-    instPrefixOpen ??
-    instPrefixPanelDefaultOpen(
-      institutionalPrefix,
-      instStatus?.prefixInvalid || prefixDraftInvalid,
-    );
-  const otherOpen =
-    instOtherOpen ??
-    instOtherPanelDefaultOpen(
-      institutionalLoginUrl,
-      Boolean(instStatus?.sessionPresent),
-    );
+  const instMorePanelOpen =
+    instMoreOpen ??
+    instMorePanelDefaultOpen({
+      prefix: institutionalPrefix,
+      prefixInvalid: instStatus?.prefixInvalid || prefixDraftInvalid,
+      loginUrl: institutionalLoginUrl,
+      sessionPresent: Boolean(instStatus?.sessionPresent),
+    });
 
   // 结果横幅统一口径：well 底 + ✓/✗ 语义色文字，不铺整块 bg-ok/bg-err。
   // 放进内容列并吸顶：原先挂在页头下方，分区一长、点了底部的按钮，结果出在视野外
@@ -4062,15 +4005,15 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </div>
             <SettingsFold
               label={
-                !prefixOpen && instStatus?.prefixHost
-                  ? `校外打不开全文时 · ${instStatus.prefixHost}`
-                  : "校外打不开全文时"
+                !instMorePanelOpen && instStatus?.prefixHost
+                  ? `校外访问 · ${instStatus.prefixHost}`
+                  : "校外访问与登录入口"
               }
-              open={prefixOpen}
-              onToggle={() => setInstPrefixOpen(!prefixOpen)}
+              open={instMorePanelOpen}
+              onToggle={() => setInstMoreOpen(!instMorePanelOpen)}
             >
               <p className="text-micro text-l4">
-                贴图书馆「校外访问」链接，下载自动走学校代理
+                校外打不开全文时，贴图书馆「校外访问」链接，下载自动走学校代理
               </p>
               <input
                 className={`${fieldFixed} w-full font-mono text-xs`}
@@ -4100,12 +4043,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   scheme（如上例以 https:// 开头）
                 </p>
               )}
-            </SettingsFold>
-            <SettingsFold
-              label="其他方式"
-              open={otherOpen}
-              onToggle={() => setInstOtherOpen(!otherOpen)}
-            >
               <p className="text-micro text-l4">
                 登录入口（空 = CARSI 高校联盟）
               </p>
@@ -4131,43 +4068,16 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   });
                 }}
               />
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <button
-                  type="button"
-                  onClick={() => void openInstLoginEmbedded()}
-                  disabled={instBusy !== null}
-                  className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2 disabled:opacity-50"
-                  title="旧通道：内嵌登录窗，会话倒回 Mesa（无头阶梯/调试用，日常下载走浏览器）"
-                >
-                  内嵌窗登录
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void captureInstSession()}
-                  disabled={instBusy !== null}
-                  className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2 disabled:opacity-50"
-                  title="手动保存在内嵌窗里登录得到的会话（浏览器通道不需要这一步）"
-                >
-                  {instBusy === "capture" ? "保存中…" : "我已登录，保存会话"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void installBrowserBridge()}
-                  disabled={instBusy !== null}
-                  className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2 disabled:opacity-50"
-                  title="实验功能：安装后到 Chrome/Edge 扩展页（开发者模式）「加载已解压的扩展程序」，选安装结果里给出的扩展目录（已自动就位到本机配置目录），文献页即有「存到 Mesa」一键落 papers/。日常用「浏览器打开」自动收货即可，不必依赖此按钮"
-                >
-                  {instBusy === "bridge" ? "安装中…" : "安装浏览器桥"}
-                </button>
-              </div>
-              <p className="flex flex-wrap items-center gap-x-2 text-micro text-l4">
-                <span>
-                  内嵌会话：{instSessionLabel(instStatus)}
-                  {instStatus?.capturedFrom
-                    ? ` · 入口 ${instStatus.capturedFrom}`
-                    : ""}
-                </span>
-                {instStatus?.sessionPresent && (
+              {/* 内嵌窗登录 / 保存会话 / 浏览器桥 2026-10-31 从设置页撤下（后端命令保留）；
+                  存量会话仍给状态和「退出」，不留清不掉的东西 */}
+              {instStatus?.sessionPresent && (
+                <p className="flex flex-wrap items-center gap-x-2 text-micro text-l4">
+                  <span>
+                    内嵌会话：{instSessionLabel(instStatus)}
+                    {instStatus?.capturedFrom
+                      ? ` · 入口 ${instStatus.capturedFrom}`
+                      : ""}
+                  </span>
                   <button
                     type="button"
                     onClick={() => void clearInstSession()}
@@ -4176,8 +4086,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   >
                     {instBusy === "clear" ? "清除中…" : "退出"}
                   </button>
-                )}
-              </p>
+                </p>
+              )}
             </SettingsFold>
           </div>
         </Row>

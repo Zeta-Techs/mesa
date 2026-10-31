@@ -1263,10 +1263,11 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
       重启把内存登记洗掉、用户下完 PDF 无人收。
     - **通道 B（浏览器会话复用）**：设置 → 网络「学校图书馆」→ 「登录学校账号」（同
       `inst_browser_open`，无项目语境，默认 CARSI）；浏览器 profile 一次登录持续有效，Mesa
-      不再倒 Cookie。设置页主路径只留这一颗按钮；EZproxy/OpenAthens 前缀收进「校外打不开全文时」
-      （已填或非法则默认展开），内嵌窗登录 / 保存会话 / 浏览器桥收进「其他方式」
-      （自定义登录入口或已有内嵌会话则默认展开）。内嵌窗登录保留作回落（`inst_open_login`，供无头阶梯
-      fetch_via_channel 与 EZproxy 调试）。
+      不再倒 Cookie。设置页主路径只留这一颗按钮；EZproxy/OpenAthens 前缀与自定义登录入口收进同一个折叠
+      「校外访问与登录入口」（填过前缀 / 前缀非法 / 自定义入口 / 有存量内嵌会话则默认展开）。
+      **内嵌窗登录、保存会话、安装浏览器桥 2026-10-31 从设置页撤下**（用户：这一块太复杂；拍板只藏不删）：
+      后端命令 `inst_open_login` / `inst_capture_session` / `install_browser_bridge` 与无头阶梯
+      fetch_via_channel、桥的启动自愈都保留；存量内嵌会话在折叠里仍显示状态和「退出」。要重新露出先拍板。
     - **通道 C（浏览器扩展 + native messaging，`extension/` + `bin/mesa_helper.rs`
       + `browser_bridge.rs`）**：扩展（MV3，ID 固定 `dmjplopfhbdamkihimfllomdmkfainnn`，manifest
       内置 key）在文献页（有 citation_doi）插「存到 Mesa」——页内 fetch

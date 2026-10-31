@@ -1,6 +1,7 @@
 /** 机构访问（高校/研究所）通道前端纯逻辑：状态镜像、获取按钮可见性、渠道文案。
  *  后端见 src-tauri/src/inst_access.rs（会话 Cookie 0600 不出站，这里只拿到统计态）。
- *  设置页信息架构（2026-09-17）：「学校图书馆」只留登录一条主路径；前缀与内嵌/桥按需折叠。 */
+ *  设置页信息架构（2026-10-31）：「学校图书馆」只留登录一条主路径；校外前缀与登录入口
+ *  收进一个折叠；内嵌窗登录 / 浏览器桥不再在设置页露出（后端保留）。 */
 
 /** 机构登录的默认入口：CARSI 高校联盟（国内绝大多数高校接入）。
  *  设置页主路径不摆地址框，空登录页即走这里。 */
@@ -10,26 +11,26 @@ function normalizeLoginUrl(url: string): string {
   return url.trim().replace(/\/+$/, "").toLowerCase();
 }
 
-/** 填了且不是默认 CARSI → 算自定义入口（「其他方式」默认展开）。空 = 走默认。 */
+/** 填了且不是默认 CARSI → 算自定义入口（折叠默认展开）。空 = 走默认。 */
 export function isCustomInstLoginUrl(url: string): boolean {
   const a = normalizeLoginUrl(url);
   return Boolean(a) && a !== normalizeLoginUrl(DEFAULT_INST_LOGIN_URL);
 }
 
-/** 「校外打不开全文时」默认展开：已填前缀或前缀不合法，进来就能看见。 */
-export function instPrefixPanelDefaultOpen(
-  prefix: string,
-  prefixInvalid?: boolean,
-): boolean {
-  return Boolean(prefix.trim()) || Boolean(prefixInvalid);
-}
-
-/** 「其他方式」默认展开：自定义登录入口或已有内嵌窗会话。 */
-export function instOtherPanelDefaultOpen(
-  loginUrl: string,
-  sessionPresent: boolean,
-): boolean {
-  return isCustomInstLoginUrl(loginUrl) || sessionPresent;
+/** 「校外访问与登录入口」默认展开：已填前缀（或前缀不合法）、自定义登录入口、
+ *  或还有存量内嵌会话（要能看见并退出）。 */
+export function instMorePanelDefaultOpen(opts: {
+  prefix: string;
+  prefixInvalid?: boolean;
+  loginUrl: string;
+  sessionPresent: boolean;
+}): boolean {
+  return (
+    Boolean(opts.prefix.trim()) ||
+    Boolean(opts.prefixInvalid) ||
+    isCustomInstLoginUrl(opts.loginUrl) ||
+    opts.sessionPresent
+  );
 }
 
 /** inst_session_status 的返回（无任何秘密值） */

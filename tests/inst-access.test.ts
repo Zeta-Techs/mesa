@@ -9,8 +9,7 @@ import {
   instLoginOpenUrl,
   INST_BROWSER_LOGIN_TTL_MS,
   instOpenTarget,
-  instOtherPanelDefaultOpen,
-  instPrefixPanelDefaultOpen,
+  instMorePanelDefaultOpen,
   instSessionLabel,
   isCustomInstLoginUrl,
 } from "../src/inst-access.ts";
@@ -161,20 +160,15 @@ test("isCustomInstLoginUrl: 空和 CARSI 不算自定义", () => {
   assert.equal(isCustomInstLoginUrl("https://lib.uni.edu.cn/login"), true);
 });
 
-test("instPrefixPanelDefaultOpen: 已填或非法才默认展开", () => {
-  assert.equal(instPrefixPanelDefaultOpen(""), false);
-  assert.equal(instPrefixPanelDefaultOpen("  "), false);
-  assert.equal(instPrefixPanelDefaultOpen("https://proxy.uni.edu/login?url="), true);
-  assert.equal(instPrefixPanelDefaultOpen("", true), true);
-  assert.equal(instPrefixPanelDefaultOpen("proxy.uni.edu", true), true);
-});
-
-test("instOtherPanelDefaultOpen: 自定义入口或已有内嵌会话才默认展开", () => {
-  assert.equal(instOtherPanelDefaultOpen("", false), false);
-  assert.equal(instOtherPanelDefaultOpen(DEFAULT_INST_LOGIN_URL, false), false);
-  assert.equal(instOtherPanelDefaultOpen("https://lib.uni.edu.cn/", false), true);
-  assert.equal(instOtherPanelDefaultOpen("", true), true);
-  assert.equal(instOtherPanelDefaultOpen(DEFAULT_INST_LOGIN_URL, true), true);
+test("instMorePanelDefaultOpen: 填过前缀/自定义入口/有存量会话才默认展开", () => {
+  const base = { prefix: "", loginUrl: "", sessionPresent: false };
+  assert.equal(instMorePanelDefaultOpen(base), false);
+  assert.equal(instMorePanelDefaultOpen({ ...base, prefix: "  " }), false);
+  assert.equal(instMorePanelDefaultOpen({ ...base, loginUrl: DEFAULT_INST_LOGIN_URL }), false);
+  assert.equal(instMorePanelDefaultOpen({ ...base, prefix: "https://proxy.uni.edu/login?url=" }), true);
+  assert.equal(instMorePanelDefaultOpen({ ...base, prefixInvalid: true }), true);
+  assert.equal(instMorePanelDefaultOpen({ ...base, loginUrl: "https://lib.uni.edu.cn/" }), true);
+  assert.equal(instMorePanelDefaultOpen({ ...base, sessionPresent: true }), true);
 });
 
 test("instLoginOpenUrl: 登录入口 > 前缀 > 默认 CARSI", () => {

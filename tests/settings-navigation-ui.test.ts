@@ -247,12 +247,17 @@ test("设置保存与错误反馈保持原逻辑；网络输入仍按 Enter 提�
       Array.from(view.content().querySelectorAll("button")).some((b) => b.textContent?.trim() === "内嵌窗登录"),
       false,
     );
-    await view.act(async () => view.button("校外打不开全文时", view.content()).click());
+    await view.act(async () => view.button("校外访问与登录入口", view.content()).click());
     assert.ok(view.content().querySelector('input[placeholder="https://proxy.xxx.edu.cn/login?url="]'));
-    await view.act(async () => view.button("其他方式", view.content()).click());
-    assert.ok(
-      Array.from(view.content().querySelectorAll("button")).some((b) => b.textContent?.trim() === "内嵌窗登录"),
-    );
+    assert.ok(view.content().querySelector('input[placeholder="https://www.carsi.edu.cn/"]'));
+    // 内嵌窗登录 / 浏览器桥 2026-10-31 从设置页撤下，展开后也不出现
+    for (const label of ["内嵌窗登录", "我已登录，保存会话", "安装浏览器桥"]) {
+      assert.equal(
+        Array.from(view.content().querySelectorAll("button")).some((b) => b.textContent?.trim() === label),
+        false,
+        label,
+      );
+    }
   } finally { await view.close(); }
   const storage = await renderSettings({ request: "storage", storageError: true });
   try {
