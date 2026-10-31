@@ -209,7 +209,7 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
 
 ### 6.2 Claude 上下文声明成对注入（2026-09-19）
 
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS`（>200K 才注）与 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` **同值成对**注入（启动 env + 设为全局同键同条件、不需要时两键都清）。口径来自 cc-switch 校准：Claude Code 用 AUTO_COMPACT_WINDOW 算 auto-compact 触发点，只抬上限不抬它，压缩触发点留在旧窗口档。勿再单写上限。
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 与 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` **同值成对**注入（启动 env + 设为全局同键同条件、不需要时两键都清，`agents::claude_window_env`）。口径来自 cc-switch 校准：Claude Code 用 AUTO_COMPACT_WINDOW 算 auto-compact 触发点，只抬上限不抬它，压缩触发点留在旧窗口档。勿再单写上限。**确知窗口不是 200K 就声明**（2026-11-01，原「>200K 才注」）：Claude 对不认识的 ID 一律假设 200K，128K 的模型不声明就会没压缩先撞上网关上限；官方 model-config「Correct the window for a gateway or custom model ID」：不以 `claude-` 开头、不带 `[1m]` 的 ID，上限变量直接生效、大小不限。压缩窗口只收 100K–1M，低于 100K 时只写上限（唯一不成对的情况）。
 
 ### 6.3 Codex catalog 不声明 freeform apply_patch（2026-09-19）
 
@@ -594,7 +594,7 @@ Codex            → …
 - Claude Code 启动必须用 `--settings` 覆盖本次连接的 base_url、密钥与模型选择，避免用户级 `settings.json.env` 覆盖 Mesa（三者必须同层配对：只提 base_url 会让磁盘上残留的旧 token 胜出，形成「新端点 + 旧令牌」而报 401）；密钥写 0600 临时文件后以路径传入，不进 argv。**覆盖层与进程 env 共用 `agents::claude_model_env` 一份（2026-10-17 端到端核对后定）**：
   四个别名槽（SONNET / OPUS / HAIKU / FABLE）全填——绑定名单不够四个时空槽用这次选的模型补（名单为空则不补，沿用 Claude 自己的别名映射），
   `ANTHROPIC_SMALL_FAST_MODEL` 跟 HAIKU 槽；`CLAUDE_CODE_SUBAGENT_MODEL(_FORCE)` 默认不写（保留 Task 参数、frontmatter 与主模型继承链），
-  **只在用户级 settings.json env 设了时盖成这次的模型**；上下文窗口确知 >200K 才声明，用户级设过而这次不确知时写回 200000。
+  **只在用户级 settings.json env 设了时盖成这次的模型**；上下文窗口确知且不是 200K 才声明（低于 100K 只写上限），用户级设过而这次不确知时写回 200000。
   依据：假网关实测，用户全局 settings 里的 HAIKU / 子 agent 模型原先会漏进 Mesa 会话（会话标题、子 agent 请求带着全局 glm-5.3 打到所选网关）。
   用户级 env 只读键名（`claude_user_settings_env_keys`），单测经 thread_local 注入、不读本机。
 - **模型分工 RoleModels（2026-10-17 用户：补齐规则要在连接里看得见、能改）**：绑定字段 `role_models { small, subagent }`（None = 跟主模型），

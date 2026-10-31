@@ -118,7 +118,7 @@ fn env_preview_source(name: &str, profile: &Profile) -> &'static str {
         return "模型选择器";
     }
     if name == "CLAUDE_CODE_MAX_CONTEXT_TOKENS" || name == "CLAUDE_CODE_AUTO_COMPACT_WINDOW" {
-        return "能力声明（注册链 >200K 才注入）";
+        return "能力声明（注册链确知窗口不是 200K 才注入）";
     }
     match name {
         "ANTHROPIC_MODEL" | "CODEBUDDY_MODEL" | "KIMI_MODEL_NAME" => "默认模型",
@@ -902,6 +902,21 @@ pub(crate) fn claude_custom_option(profile: &Profile, fill: Option<&str>) -> Opt
     }
 }
 
+/// Claude Code 对不认识的模型 ID 假设的上下文窗口（官方 model-config「Correct the window for a gateway or custom model ID」）
+pub(crate) const CLAUDE_ASSUMED_WINDOW: i64 = 200_000;
+
+/// 声明上下文窗口的两个键：`CLAUDE_CODE_MAX_CONTEXT_TOKENS` 是「这个模型的真实窗口」（不以 claude- 开头、不带 [1m]
+/// 的 ID 直接生效，大小不限），自动压缩窗口与它同值成对（cc-switch 校准口径：只抬上限不抬它，压缩点留在旧档）。
+/// 压缩窗口只收 100K–1M，低于 100K 时会被当成 100K，这时不写它——Claude 按声明的窗口压缩（2026-11-01：
+/// 以前只在确知 >200K 时声明，128K 这类模型被当成 200K，会话没压缩就先撞上网关上限）
+pub(crate) fn claude_window_env(ctx: i64) -> Vec<(String, String)> {
+    let mut env = vec![("CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(), ctx.to_string())];
+    if ctx >= 100_000 {
+        env.push(("CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_string(), ctx.to_string()));
+    }
+    env
+}
+
 /// Claude Code 的「谁用哪个模型」整套 env（--settings 覆盖层与进程 env 共用这一份，2026-10-17 端到端核对后重写）。
 ///
 /// 假网关实测（Claude 2.1.292）：Mesa 原先只按绑定名单填前几个槽位，用户全局 settings.json 里的
@@ -909,7 +924,7 @@ pub(crate) fn claude_custom_option(profile: &Profile, fill: Option<&str>) -> Opt
 /// 全局的 glm-5.3 打到 Mesa 选的网关，换成别家网关就直接失败。所以：
 /// - 四个槽位全填：绑定名单不够四个时，空槽用这次选的模型（没选用名单第一个）补上；ANTHROPIC_SMALL_FAST_MODEL 跟 HAIKU 槽。
 /// - 子 agent 模型只在用户全局设了时才盖（设成这次的模型）：没设时保持 Claude 原生「继承主模型 / 按 frontmatter 选」。
-/// - 上下文窗口：确知 >200K 时声明；用户全局设过而这次不确知时写回 Claude 对未知模型的默认 200000，免得沿用全局的 1M。
+/// - 上下文窗口：确知且不是 200K 时声明（claude_window_env）；用户全局设过而这次不确知时写回 Claude 对未知模型的默认 200000，免得沿用全局的 1M。
 pub(crate) fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]) -> Vec<(String, String)> {
     let mut env = Vec::new();
     let selected = model.map(str::trim).filter(|m| !m.is_empty());
@@ -974,16 +989,14 @@ pub(crate) fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys
         crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref())
     });
     let ctx = match declared {
-        Some(c) if c > 200_000 => Some(c),
+        Some(c) if c != CLAUDE_ASSUMED_WINDOW => Some(c),
         _ if user_has("CLAUDE_CODE_MAX_CONTEXT_TOKENS") || user_has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") => {
-            Some(declared.unwrap_or(200_000))
+            Some(declared.unwrap_or(CLAUDE_ASSUMED_WINDOW))
         }
         _ => None,
     };
     if let Some(c) = ctx {
-        // 自动压缩窗口与上限成对注入、同值（cc-switch 校准口径）
-        env.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), c.to_string()));
-        env.push(("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), c.to_string()));
+        env.extend(claude_window_env(c));
     }
     // 非 Claude 模型关掉工具搜索（ToolSearch）：Claude Code 对第三方网关也开着，内置工具 Bash / Read / Write 照常发，
     // 另把十来个少用的工具藏到 ToolSearch 后面。glm-5.3-flash 会拿 ToolSearch 去「搜」Write / Bash，
@@ -5552,6 +5565,29 @@ mod tests {
         assert_eq!(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "m2");
         assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
         assert_eq!(settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000");
+    }
+
+    #[test]
+    fn claude_declares_windows_smaller_than_assumed() {
+        // 128K 的模型以前不声明，被 Claude 当成 200K：会话没压缩就先撞上网关上限（2026-11-01）
+        assert_eq!(
+            claude_window_env(128_000),
+            vec![
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(), "128000".to_string()),
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_string(), "128000".to_string()),
+            ]
+        );
+        // 压缩窗口只收 100K 起：更小的只声明窗口，Claude 按它压缩
+        assert_eq!(
+            claude_window_env(64_000),
+            vec![("CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(), "64000".to_string())]
+        );
+        let mut p = profile("claude-code", Some("https://gw.example/anthropic"));
+        p.models = vec!["kimi-k2".into()];
+        let plan = launch_plan(&p, Some("sk".into()), Some("kimi-k2")).unwrap();
+        let settings = read_settings_override(&plan);
+        assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "131072", "内置表确知 128K");
+        assert_eq!(settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "131072");
     }
 
     #[test]

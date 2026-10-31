@@ -260,7 +260,7 @@
    kimi = max_context_size（config.toml 必填 / env 可省）+
    capabilities（补集写入：env 通道恒写 `tool_use` + 保留 CLI 缺省里未被声明为假的成员；config.toml 通道仅写声明为真的成员、未确知则整键省略；详见 profiles.md 硬规则）；
    opencode = limit.context/output（条件必填）+ reasoning + modalities（视觉模型 input 加 image；tool_call 缺省即开，实测请求带全量
-   工具）；claude = 显示名槽 + CLAUDE_CODE_MAX_CONTEXT_TOKENS（注册表 >200K 才写，不需要时清旧值）。
+   工具）；claude = 显示名槽 + CLAUDE_CODE_MAX_CONTEXT_TOKENS（注册表确知且不是 200K 才写，2026-11-01 起含小于 200K；不需要时清旧值）。
    注意边界：streaming/function calling/结构化输出是协议层能力（声明补不了）；web search/file search/code interpreter
    等 hosted tools 是第一方服务端能力，第三方中继没有对应物，声明了等于摆死工具——如实不写。
 

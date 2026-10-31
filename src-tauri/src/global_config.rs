@@ -337,14 +337,15 @@ fn patch_claude_settings(existing: Option<&str>, profile: &Profile, key: Option<
         }
         env.insert(k, json!(val));
     }
-    // claude 对不认识的第三方模型按 200K 假设；注册表确知更大的（如 kimi-k3 1M）必须显式声明，否则长会话提前
-    // compact（cc-switch 同口径）。AUTO_COMPACT_WINDOW 与上限同值成对管理。用 declared 视图：估值不当声明
+    // claude 对不认识的第三方模型按 200K 假设；注册表确知不是 200K 的（kimi-k3 1M、128K 的模型）必须显式声明，
+    // 否则长会话提前 compact 或先撞上网关上限（与启动同一份 agents::claude_window_env）。用 declared 视图：估值不当声明
     if let Some(ctx) = main
         .and_then(|m| crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref()))
-        .filter(|c| *c > 200_000)
+        .filter(|c| *c != agents::CLAUDE_ASSUMED_WINDOW)
     {
-        env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), json!(ctx.to_string()));
-        env.insert("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), json!(ctx.to_string()));
+        for (k, val) in agents::claude_window_env(ctx) {
+            env.insert(k, json!(val));
+        }
     }
     let effort = profile
         .request_policy
