@@ -41,7 +41,7 @@ import {
   zhipuOpenAiSlotBillingHint,
   slotsFollowMaster,
 } from "../gateway-draft";
-import { gatewayHosts, gatewayPickerRows } from "../gateway-option";
+import { gatewayHostLine, gatewayPickerRows } from "../gateway-option";
 import { gatewayHasWallet } from "../gateway-balance";
 import type {
   ComboSurfaceDto,
@@ -1873,8 +1873,7 @@ export default function GatewayLibrary({
                     </span>
                     {/* 第二行只放地址、几个连接、花费；协议与模型数进悬停（原先一行塞不下，后半截总被截掉） */}
                     <span className="mt-0.5 block truncate text-micro text-l3" title={row.detail}>
-                      {gatewayHosts(g.slots).join(" / ") || "未填端点"}
-                      {/ · 密钥 (\S+)$/.exec(row.detail)?.[1] ? ` · 密钥 ${/ · 密钥 (\S+)$/.exec(row.detail)![1]}` : ""}
+                      {gatewayHostLine(g, row.detail)}
                       {` · ${n ? `${n} 个连接` : "没有连接"}`}
                       {usage && (
                         <button

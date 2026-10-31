@@ -120,3 +120,10 @@ export function addConnectionDefaults(input: {
   const agent = pool.includes("claude-code") ? "claude-code" : (pool[0] ?? "claude-code");
   return { gatewayId: gateway?.id ?? null, agent };
 }
+
+/** 网关一行的短写法：主机（同址时补密钥尾号，取自 gatewayPickerRows 的 detail）。协议与模型数放悬停，
+ *  免得一行塞不下被截掉（2026-10-31 用户截图：「…427 个模型 · 密钥 ·…」） */
+export function gatewayHostLine(g: Pick<Gateway, "slots">, detail: string): string {
+  const key = / · 密钥 (\S+)$/.exec(detail)?.[1];
+  return `${gatewayHosts(g.slots).join(" / ") || "未填端点"}${key ? ` · 密钥 ${key}` : ""}`;
+}

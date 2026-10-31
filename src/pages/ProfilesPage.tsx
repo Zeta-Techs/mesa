@@ -70,7 +70,7 @@ import {
   type ProfileStatus,
   type ProfileStatusTone,
 } from "../profile-connection-ui";
-import { addConnectionDefaults, endpointHost, gatewayPickerRows } from "../gateway-option";
+import { addConnectionDefaults, endpointHost, gatewayHostLine, gatewayPickerRows } from "../gateway-option";
 import ContextMenu from "../components/ContextMenu";
 import GatewayLibrary from "../components/GatewayLibrary";
 import VendorIcon from "../components/VendorIcon";
@@ -202,6 +202,8 @@ export function ProfileModal({
     opening?.gateway ? "existing" : "new",
   );
   const [bindGatewayId, setBindGatewayId] = useState(opening?.gateway?.id ?? "");
+  // 选中网关后收起列表，只留选中的那一行 +「更换」（2026-10-31 用户：选中的时候自动折叠起来）
+  const [gwListOpen, setGwListOpen] = useState(!opening?.gateway);
   const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
   const [form, setForm] = useState({
     agent: initial?.agent ?? opening?.agent ?? "claude-code",
@@ -232,9 +234,26 @@ export function ProfileModal({
     } as RequestPolicy,
     apiKey: "",
   });
-  // 打开时的表单快照：去网关库前判断有没有没保存的修改
-  const [formSnapshot] = useState(() => JSON.stringify(form));
-  const dirty = JSON.stringify(form) !== formSnapshot;
+  // 打开时的表单快照：去网关库前 / 关弹层前判断有没有没保存的修改。协议不算（选网关时会被自动推导改写，不是人改的）
+  const snapshotOf = (f: typeof form) => JSON.stringify({ ...f, protocol: null });
+  const [formSnapshot] = useState(() => snapshotOf(form));
+  const dirty = snapshotOf(form) !== formSnapshot;
+  // 2026-10-31 用户：添加连接填了一半，点到弹层外面就关了、内容全丢。照网关库：填过东西时点遮罩不关，
+  // Esc / 关闭钮 / 取消先问一句
+  const [openedGateway] = useState(bindGatewayId);
+  const touched = dirty || bindGatewayId !== openedGateway || extraAgents.length > 0;
+  async function guardedClose() {
+    if (
+      touched &&
+      !(await confirmDialog("放弃没保存的内容？\n\n这条连接填写的内容还没保存，关掉后就没了。", {
+        danger: true,
+        confirmText: "放弃",
+        focusCancel: true,
+      }))
+    )
+      return;
+    onClose();
+  }
   async function leaveToGateway(gatewayId: string) {
     if (!onOpenGateway) return;
     if (dirty && !(await confirmDialog("这条连接还有没保存的修改，去网关库会丢掉。仍要去？", { confirmText: "去网关库" }))) return;
@@ -268,6 +287,8 @@ export function ProfileModal({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState("");
   const [openVendors, setOpenVendors] = useState<ReadonlySet<string>>(new Set());
+  // 模型面板当前看哪个厂商胶囊；空 = 自动（常用 > 第一个已选模型那家 > 全部）
+  const [pickerVendor, setPickerVendor] = useState("");
   const [testResult, setTestResult] = useState<{
     ok: boolean;
     text: string;
@@ -768,7 +789,8 @@ export function ProfileModal({
       description={
         initial ? "改这条连接用的模型名单和附加环境变量。" : undefined
       }
-      onClose={onClose}
+      onClose={() => void guardedClose()}
+      dismissOnBackdrop={!touched}
       size="md"
       // 标题与「取消 / 保存」常驻，只有表单滚动（2026-10-23 弹层审查：保存钮原先跟着表单滚出视野）
       overflow="hidden"
@@ -784,7 +806,7 @@ export function ProfileModal({
               {error ?? blocker}
             </span>
           )}
-          <button type="button" onClick={onClose} className={secondaryActionClass}>
+          <button type="button" onClick={() => void guardedClose()} className={secondaryActionClass}>
             取消
           </button>
           <button
@@ -905,7 +927,9 @@ export function ProfileModal({
               </p>
             ) : (
               <ul className="max-h-48 space-y-0.5 overflow-auto" aria-label="已有网关">
-                {gatewayPickerRows(gateways).map((row) => {
+                {gatewayPickerRows(gateways)
+                  .filter((row) => gwListOpen || !bindGatewayId || row.id === bindGatewayId)
+                  .map((row) => {
                   const selected = bindGatewayId === row.id;
                   const gw = gateways.find((g) => g.id === row.id);
                   // 没填这家 Agent 要的协议地址：灰掉并写明缺什么（原先要到保存才报错）
@@ -920,19 +944,34 @@ export function ProfileModal({
                           selected ? "bg-seg-sel text-l1" : "text-l2 hover:bg-hover hover:text-l1"
                         }`}
                         onClick={() => {
+                          // 收起状态下点选中的那行 = 展开重选
+                          if (!gwListOpen && selected) {
+                            setGwListOpen(true);
+                            return;
+                          }
+                          setGwListOpen(false);
+                          if (selected) return;
                           setBindGatewayId(row.id);
                           // 名称不在这里改：没手改过就按所选网关自动起（effectiveName）。
                           // 模型默认选目录里第一个能对话的（同新建网关「验证并获取」）：空名单 = 启动时不注入模型，用 CLI 自己的默认
-                          const first = gw ? splitChatModels(gw.models.map((m) => m.id)).chat[0] : undefined;
+                          const first = gw
+                            ? splitChatModels(gw.models.filter((m) => m.status !== "stale").map((m) => m.id)).chat[0]
+                            : undefined;
                           if (gw) setForm((f) => ({ ...f, models: first ? [first] : [], accountType: "api" }));
                           setPickerOpen(Boolean(gw && gw.models.length > 0));
                           setPickerFilter("");
+                          setPickerVendor("");
                           setOpenVendors(new Set());
                         }}
                       >
-                        <span className="truncate text-sm font-medium">{row.name}</span>
-                        <span className="truncate text-micro text-l3">
-                          {missing ? `缺 ${missing} 地址，${AGENTS.find((a) => a.id === form.agent)?.label ?? form.agent} 用不了 · 去网关库补` : row.detail}
+                        <span className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{row.name}</span>
+                          {selected && !gwListOpen && <span className="shrink-0 text-micro text-l3">更换</span>}
+                        </span>
+                        <span className="truncate text-micro text-l3" title={row.detail}>
+                          {missing
+                            ? `缺 ${missing} 地址，${AGENTS.find((a) => a.id === form.agent)?.label ?? form.agent} 用不了 · 去网关库补`
+                            : `${gw ? gatewayHostLine(gw, row.detail) : row.detail}${gw ? ` · ${gw.models.filter((m) => m.status !== "stale").length} 个模型` : ""}`}
                         </span>
                       </button>
                     </li>
@@ -1207,93 +1246,94 @@ export function ProfileModal({
           )}
           {/* 厂商分组折叠面板：大网关 400+ 模型平铺没法选；筛选时全部强制展开。
               数据源 = pickerModels（新建网关 = 拉取结果；选用已有/编辑绑定 = 网关目录） */}
-          {pickerOpen && pickerModels.length > 0 && (
-            // 限高约十来行、搜索框与已选数固定在面板顶上：原先面板在弹层里自己滚一层，占满一屏把名单和映射表挤下去
-            <div className="mb-2 max-h-56 overflow-y-auto rounded-md ccode-well p-1">
-              <div className="sticky -top-1 z-10 -mx-1 -mt-1 mb-1 flex items-center gap-2 bg-inherit p-1">
-                <input
-                  autoFocus
-                  className={`${searchFieldClass} min-w-0 flex-1`}
-                  placeholder="筛选模型名…"
-                  value={pickerFilter}
-                  onChange={(e) => setPickerFilter(e.target.value)}
-                />
-                <span className="shrink-0 text-micro text-l3">已选 {form.models.filter((m) => m.trim()).length} 个</span>
-              </div>
-              {pickerHidden.length > 0 && (
-                <p
-                  className="mb-1 px-2 text-micro text-l3"
-                  title={pickerHidden.join("\n")}
-                >
-                  已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型在连接页左栏「出图模型」里配
-                </p>
-              )}
-              {(() => {
-                const groups = groupModelsByVendor(pickerModels, pickerFilter);
-                if (groups.length === 0) {
-                  return (
-                    <p className="px-2 py-1 text-xs text-l3">
-                      没有匹配的模型。请先同步模型目录，或清除筛选词。
-                    </p>
-                  );
-                }
-                // 「常用」一组放最前：服务商推荐的 + 别的连接已经在用的（目录里有的才列）；分组不多（≤3）时默认全展开
-                const common = commonPickerModels(
-                  pickerModels,
-                  appliedPreset?.models ?? [],
-                  allProfiles.filter((p) => p.id !== initial?.id).flatMap((p) => p.models),
-                  pickerFilter,
-                );
-                const allGroups = common.length ? [{ vendor: "常用", models: common }, ...groups] : groups;
-                return allGroups.map((g) => {
-                  const open =
-                    pickerFilter.trim() !== "" ||
-                    allGroups.length <= 3 ||
-                    g.vendor === "常用" ||
-                    openVendors.has(g.vendor);
-                  return (
-                    <div key={g.vendor}>
+          {pickerOpen && pickerModels.length > 0 && (() => {
+            // 2026-10-31 用户：几百个模型逐个点开厂商组太累。改成顶上一排厂商胶囊（常用 / 全部 / 各家），点一个平铺列出这家；
+            // 输了筛选词就在全部模型里找。搜索框、胶囊、已选数固定在面板顶上，列表限高约十来行
+            const common = commonPickerModels(
+              pickerModels,
+              appliedPreset?.models ?? [],
+              allProfiles.filter((p) => p.id !== initial?.id).flatMap((p) => p.models),
+              "",
+            );
+            const groups = groupModelsByVendor(pickerModels);
+            const searching = pickerFilter.trim() !== "";
+            // 没点过胶囊时：有常用看常用，没有就看第一个已选模型那家，再没有看全部
+            const firstPicked = form.models.find((m) => m.trim());
+            const autoVendor = common.length ? "常用" : firstPicked && groups.some((g) => g.vendor === vendorOf(firstPicked)) ? vendorOf(firstPicked) : "全部";
+            const active = pickerVendor || autoVendor;
+            const list = searching
+              ? groupModelsByVendor(pickerModels, pickerFilter).flatMap((g) => g.models)
+              : active === "常用"
+                ? common
+                : active === "全部"
+                  ? pickerModels
+                  : (groups.find((g) => g.vendor === active)?.models ?? []);
+            const chips = [
+              ...(common.length ? [{ vendor: "常用", n: common.length }] : []),
+              { vendor: "全部", n: pickerModels.length },
+              ...groups.map((g) => ({ vendor: g.vendor, n: g.models.length })),
+            ];
+            return (
+              <div className="mb-2 rounded-md ccode-well p-1">
+                <div className="flex items-center gap-2 p-1">
+                  <input
+                    autoFocus
+                    className={`${searchFieldClass} min-w-0 flex-1`}
+                    placeholder="筛选模型名…"
+                    value={pickerFilter}
+                    onChange={(e) => setPickerFilter(e.target.value)}
+                  />
+                  <span className="shrink-0 text-micro text-l3">已选 {form.models.filter((m) => m.trim()).length} 个</span>
+                </div>
+                {!searching && chips.length > 2 && (
+                  <div className="flex max-h-[3.75rem] flex-wrap gap-1 overflow-y-auto px-1 pb-1" role="radiogroup" aria-label="按厂商看">
+                    {chips.map((c) => (
                       <button
+                        key={c.vendor}
                         type="button"
-                        onClick={() =>
-                          setOpenVendors((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(g.vendor)) next.delete(g.vendor);
-                            else next.add(g.vendor);
-                            return next;
-                          })
-                        }
-                        className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs font-medium text-l2 hover:bg-hover"
+                        role="radio"
+                        aria-checked={active === c.vendor}
+                        onClick={() => setPickerVendor(c.vendor)}
+                        className={`flex h-6 shrink-0 items-center gap-1 rounded-full px-2 ${
+                          active === c.vendor ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+                        }`}
                       >
-                        <FoldMark open={open} />
-                        {g.vendor}
-                        <span className="text-micro text-l3">
-                          {g.models.length}
-                        </span>
+                        <span className="text-micro">{c.vendor}</span>
+                        <span className="text-micro text-l4">{c.n}</span>
                       </button>
-                      {open &&
-                        g.models.map((m) => {
-                          const added = form.models.some((x) => x.trim() === m);
-                          return (
-                            <button
-                              key={`${g.vendor}:${m}`}
-                              type="button"
-                              aria-pressed={added}
-                              title={added ? "再点一下从名单去掉" : "点一下加进名单"}
-                              onClick={() => toggleModelInList(m)}
-                              className={`flex w-full items-center justify-between gap-2 rounded-sm py-1 pl-7 pr-2 text-left font-mono text-micro hover:bg-hover ${added ? "text-l1" : "text-l2"}`}
-                            >
-                              <span className="truncate">{m}</span>
-                              {added && <Check aria-hidden="true" className="size-3.5 shrink-0 text-cta" />}
-                            </button>
-                          );
-                        })}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          )}
+                    ))}
+                  </div>
+                )}
+                {pickerHidden.length > 0 && (
+                  <p className="px-2 pb-1 text-micro text-l3" title={pickerHidden.join("\n")}>
+                    已隐藏 {pickerHidden.length} 个出图、向量等不能对话的模型
+                  </p>
+                )}
+                <div className="max-h-48 overflow-y-auto">
+                  {list.length === 0 ? (
+                    <p className="px-2 py-1 text-xs text-l3">没有匹配的模型，换个词或清除筛选。</p>
+                  ) : (
+                    list.map((m) => {
+                      const added = form.models.some((x) => x.trim() === m);
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          aria-pressed={added}
+                          title={added ? "再点一下从名单去掉" : "点一下加进名单"}
+                          onClick={() => toggleModelInList(m)}
+                          className={`flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1 text-left font-mono text-micro hover:bg-hover ${added ? "text-l1" : "text-l2"}`}
+                        >
+                          <span className="truncate">{m}</span>
+                          {added && <Check aria-hidden="true" className="size-3.5 shrink-0 text-cta" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })()}
           {/* 空模型是个静默陷阱（pty.rs）：models 为空时**完全不注入**模型环境变量，
               CLI 用自己的默认值——用户看到的现象就是「切了没反应」。API 类配置才提示，
               官方账号本就由 CLI 自己决定模型；空串槽位不算已填 */}
