@@ -10,6 +10,11 @@
 //! - Codex：`{CODEX_HOME|~/.codex}/auth.json` 的 tokens.access_token（+ account_id 头）；API Key 模式无此字段，不出行。
 //!   GET https://chatgpt.com/backend-api/wham/usage：rate_limit.primary_window / secondary_window 的
 //!   used_percent + reset_at（秒）+ limit_window_seconds，按窗长归 5 小时 / 周 / 月（免费档实测只有 30 天窗）。
+//! - Codex 重置卡（2026-10-31）：GET wham/rate-limit-reset-credits 列卡（credits[] 的 id / status / expires_at，
+//!   不信 available_count，只数 status==available 且没过期的；cc-switch 同口径），wham/usage 的
+//!   rate_limit_reset_credits.applicable_available_count 是「此刻能用」的张数——没被限额卡住时恒 0。
+//!   用卡 POST wham/rate-limit-reset-credits/consume，body {credit_id, redeem_request_id}（codex2api / ai-tools-mng 两家实现一致；
+//!   redeem_request_id 是幂等键）。消费性写操作：只经显式命令 + 前端确认触发，挑最早过期的那张；此刻用不了时不发请求。
 //! 纪律：令牌只在本模块内存里经过，不进 DTO / 日志；**绝不刷新、绝不回写**——令牌过期就请用户跑一次 CLI，
 //! 由 CLI 自己续期（刷新会轮换令牌，等于改 CLI 的登录存储）。查询走设置里的出网代理（与官方账号启动同源），
 //! 没配就按系统环境直连。
@@ -24,10 +29,11 @@ const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const CODEX_RESET_CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 
 const CLAUDE_ROW_ID: &str = "official:claude-code";
-const CODEX_ROW_ID: &str = "official:codex";
+pub(crate) const CODEX_ROW_ID: &str = "official:codex";
 const ROW_NAME: &str = "官方账号";
 
 struct ClaudeCreds {
@@ -234,6 +240,45 @@ fn codex_window_kind(seconds: Option<f64>, primary: bool) -> Option<&'static str
 }
 
 /// Codex：rate_limit 的主 / 副两窗；同名窗只留第一个。返回 (套餐, 窗口)
+/// wham/usage 里「此刻能用的重置卡张数」；不报就 None
+fn codex_applicable_cards(body: &serde_json::Value) -> Option<u32> {
+    body.get("rate_limit_reset_credits")?
+        .get("applicable_available_count")?
+        .as_u64()
+        .map(|n| n as u32)
+}
+
+/// wham/rate-limit-reset-credits → 可用卡（id, 过期毫秒），先过期的排前面、不过期的排最后。
+/// 缺 credits 数组算解析失败（截断的响应不当成 0 张）
+fn parse_codex_reset_credits(body: &serde_json::Value, now: i64) -> Result<Vec<(String, Option<i64>)>, String> {
+    let list = body
+        .get("credits")
+        .and_then(|c| c.as_array())
+        .ok_or_else(|| "重置卡列表的返回不完整".to_string())?;
+    let mut cards: Vec<(String, Option<i64>)> = list
+        .iter()
+        .filter(|c| c.get("status").and_then(|s| s.as_str()) == Some("available"))
+        .filter_map(|c| {
+            let id = c.get("id")?.as_str()?.trim().to_string();
+            if id.is_empty() {
+                return None;
+            }
+            let exp = c.get("expires_at").and_then(|v| v.as_str()).map(|raw| {
+                chrono::DateTime::parse_from_rfc3339(raw).ok().map(|d| d.timestamp_millis())
+            });
+            match exp {
+                // 已过期的不算
+                Some(Some(at)) if at <= now => None,
+                // 认不出的到期时间当作不过期：宁可多显示一张也不吞掉
+                Some(at) => Some((id, at)),
+                None => Some((id, None)),
+            }
+        })
+        .collect();
+    cards.sort_by_key(|(_, at)| (at.is_none(), *at));
+    Ok(cards)
+}
+
 fn parse_codex_usage(
     body: &serde_json::Value,
     now: i64,
@@ -354,22 +399,45 @@ async fn query_claude(creds: ClaudeCreds) -> PlanQuotaDto {
     dto
 }
 
-async fn query_codex(creds: CodexCreds) -> PlanQuotaDto {
-    let mut dto = blank_row(CODEX_ROW_ID, "codex", None, "https://chatgpt.com/codex/settings/usage");
+fn codex_request(method: reqwest::Method, url: &str, creds: &CodexCreds) -> reqwest::RequestBuilder {
     let mut req = official_client()
-        .get(CODEX_USAGE_URL)
+        .request(method, url)
         .header("Authorization", format!("Bearer {}", creds.token))
         .header("Accept", "application/json")
         .header("User-Agent", "Mozilla/5.0");
     if let Some(acc) = &creds.account_id {
         req = req.header("ChatGPT-Account-Id", acc);
     }
-    match get_json(req).await {
+    req
+}
+
+/// 查 Codex 重置卡列表；失败只降级重置卡这一栏，不拖垮额度
+async fn query_codex_cards(creds: &CodexCreds) -> Result<Vec<(String, Option<i64>)>, String> {
+    match get_json(codex_request(reqwest::Method::GET, CODEX_RESET_CREDITS_URL, creds)).await {
+        Ok((status, body)) if (200..300).contains(&status) => parse_codex_reset_credits(&body, now_ms()),
+        Ok((status, _)) => Err(format!("重置卡列表返回 HTTP {status}")),
+        Err(e) => Err(e),
+    }
+}
+
+async fn query_codex(creds: CodexCreds) -> PlanQuotaDto {
+    let mut dto = blank_row(CODEX_ROW_ID, "codex", None, "https://chatgpt.com/codex/settings/usage");
+    dto.reset_cards_supported = true;
+    match get_json(codex_request(reqwest::Method::GET, CODEX_USAGE_URL, &creds)).await {
         Ok((status, body)) if (200..300).contains(&status) => match parse_codex_usage(&body, now_ms()) {
             Ok((plan, windows)) => {
                 dto.ok = true;
                 dto.plan_level = plan;
                 dto.windows = windows;
+                dto.reset_cards.general_applicable = codex_applicable_cards(&body);
+                match query_codex_cards(&creds).await {
+                    Ok(cards) => {
+                        dto.reset_cards.ok = true;
+                        dto.reset_cards.general = cards.len() as u32;
+                        dto.reset_cards.general_expires_at = cards.first().and_then(|(_, at)| *at);
+                    }
+                    Err(e) => dto.reset_cards.error = Some(e),
+                }
             }
             Err(e) => dto.error = Some(e),
         },
@@ -381,6 +449,45 @@ async fn query_codex(creds: CodexCreds) -> PlanQuotaDto {
         Err(e) => dto.error = Some(e),
     }
     dto
+}
+
+/// 用一张 Codex 重置卡（消费性写操作，前端已确认）：此刻用不了就不发请求；挑最早过期的一张；成功后作废缓存重查
+pub async fn use_codex_reset_card() -> Result<PlanQuotaDto, String> {
+    let creds = tauri::async_runtime::spawn_blocking(read_codex_creds)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| "读不到 Codex 的登录信息：先用 ChatGPT 账号登录 Codex".to_string())?;
+    // 先重查一遍「此刻能不能用」：界面上的数可能是 2 分钟前的
+    let (status, usage) = get_json(codex_request(reqwest::Method::GET, CODEX_USAGE_URL, &creds)).await?;
+    if !(200..300).contains(&status) {
+        return Err(format!("查 Codex 额度失败（HTTP {status}），没有用卡"));
+    }
+    if codex_applicable_cards(&usage) == Some(0) {
+        return Err("Codex 现在没被限额卡住，重置卡用不了；额度用满被卡住后再来".into());
+    }
+    let cards = query_codex_cards(&creds).await?;
+    let (credit_id, _) = cards.first().cloned().ok_or_else(|| "没有可用的 Codex 重置卡".to_string())?;
+    let payload = serde_json::json!({
+        "credit_id": credit_id,
+        "redeem_request_id": uuid::Uuid::new_v4().to_string(),
+    });
+    let (status, body) = get_json(
+        codex_request(reqwest::Method::POST, &format!("{CODEX_RESET_CREDITS_URL}/consume"), &creds).json(&payload),
+    )
+    .await?;
+    if !(200..300).contains(&status) {
+        let msg = body
+            .get("detail")
+            .or_else(|| body.get("message"))
+            .or_else(|| body.get("error").and_then(|e| e.get("message")))
+            .and_then(|v| v.as_str())
+            .map(|m| format!("：{m}"))
+            .unwrap_or_default();
+        return Err(format!("用卡失败（HTTP {status}）{msg}"));
+    }
+    crate::subscription_quota::cache_invalidate(CODEX_ROW_ID);
+    Ok(settle_fresh(query_codex(creds).await))
 }
 
 /// 两家官方账号的行：哪家本机登录了官方账号才出哪家；没登录不出行（不是错误）
@@ -452,6 +559,29 @@ mod tests {
         assert_eq!(w[1].used_percent, 51.0);
         assert_eq!(w[1].resets_at, Some(1_793_566_800_356));
         assert!(parse_claude_usage(&serde_json::json!({"five_hour": null})).is_err());
+    }
+
+    #[test]
+    fn codex_reset_credits_only_unexpired_available_earliest_first() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-04T00:00:00Z").unwrap().timestamp_millis();
+        let body = serde_json::json!({
+            "available_count": 9,
+            "credits": [
+                {"id": "a", "status": "available", "expires_at": "2026-10-20T00:00:00Z"},
+                {"id": "b", "status": "available", "expires_at": "2026-10-03T00:00:00Z"},
+                {"id": "c", "status": "redeemed", "expires_at": "2026-10-30T00:00:00Z"},
+                {"id": "d", "status": "available", "expires_at": null},
+                {"id": "e", "status": "available", "expires_at": "2026-10-08T12:00:00Z"}
+            ]
+        });
+        let cards = parse_codex_reset_credits(&body, now).unwrap();
+        assert_eq!(cards.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["e", "a", "d"]);
+        assert!(parse_codex_reset_credits(&serde_json::json!({"available_count": 3}), now).is_err());
+        assert_eq!(
+            codex_applicable_cards(&serde_json::json!({"rate_limit_reset_credits": {"available_count": 2, "applicable_available_count": 0}})),
+            Some(0)
+        );
+        assert_eq!(codex_applicable_cards(&serde_json::json!({})), None);
     }
 
     #[test]

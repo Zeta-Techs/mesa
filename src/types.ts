@@ -289,6 +289,11 @@ export interface PlanResetCardsDto {
   lastFiveHourResetAt: string | null;
   lastWeekResetAt: string | null;
   error: string | null;
+  /** 不分窗口的重置卡（Codex：一张卡重置当下卡住你的那个窗口）；智谱恒 0 */
+  general: number;
+  generalExpiresAt: number | null;
+  /** 此刻能用的张数（Codex 只在额度被卡住后才 > 0）；null = 供应商不报 */
+  generalApplicable: number | null;
 }
 
 export interface PlanQuotaDto {

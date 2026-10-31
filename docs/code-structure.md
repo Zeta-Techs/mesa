@@ -1399,7 +1399,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   设 CLAUDE_CONFIG_DIR 时服务名加目录 sha256 前 8 位；非 macOS 读 .credentials.json）→ GET api.anthropic.com/api/oauth/usage
                              #   （five_hour / seven_day）；Codex（{CODEX_HOME}/auth.json tokens.access_token）→ GET chatgpt.com/backend-api/wham/usage
                              #   （主 / 副窗按 limit_window_seconds 归 5 小时 / 周 / 月）。只读凭证、**绝不刷新回写**，过期提示用一次 CLI；
-                             #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）；参照 .reference/paseo 两个 usage 插件
+                             #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）；参照 .reference/paseo 两个 usage 插件；
+                             #   Codex 重置卡：GET wham/rate-limit-reset-credits 列卡（只数 available 且未过期，先过期的排前）、
+                             #   wham/usage 的 applicable_available_count = 此刻能用几张；use_codex_reset_card 先重查能不能用（0 就不发请求）
+                             #   再 POST …/consume {credit_id, redeem_request_id}；DTO 走 PlanResetCardsDto.general*
   gateway_balance.rs         # 网关余额查询（用量页「网关余额」卡，与订阅余量并列，2026-09-20）：
                              #   New API 兼容预付钱包，出卡零配置（槽 URL 主机命中 zetatechs.com 即出；加站点 = WALLET_HOSTS 加一条）；
                              #   公开 GET {origin}/api/status 取 quota_display_type / quota_per_unit；

@@ -86,6 +86,11 @@ pub struct PlanResetCardsDto {
     pub last_five_hour_reset_at: Option<String>,
     pub last_week_reset_at: Option<String>,
     pub error: Option<String>,
+    /// 不分窗口的重置卡（Codex：一张卡重置当下卡住你的那个窗口），智谱恒 0
+    pub general: u32,
+    pub general_expires_at: Option<i64>,
+    /// 此刻能用的张数（Codex 只在额度被卡住后才 > 0）；None = 供应商不报这个数
+    pub general_applicable: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -967,6 +972,7 @@ async fn refresh_gateway(gateway: &Gateway, ctx: &PlanCtx) -> PlanQuotaDto {
                             last_five_hour_reset_at: cards.last_five_hour_reset_at,
                             last_week_reset_at: cards.last_week_reset_at,
                             error: None,
+                            ..PlanResetCardsDto::default()
                         };
                     }
                     Err(e) => {
@@ -1033,7 +1039,7 @@ fn cache_put(dto: &PlanQuotaDto) {
     }
 }
 
-fn cache_invalidate(gateway_id: &str) {
+pub(crate) fn cache_invalidate(gateway_id: &str) {
     if let Ok(mut map) = quota_cache().lock() {
         map.remove(gateway_id);
     }
@@ -1149,6 +1155,9 @@ pub async fn plan_use_reset_card(
     gateway_id: String,
     reset_type: String,
 ) -> Result<PlanQuotaDto, String> {
+    if gateway_id == crate::official_quota::CODEX_ROW_ID {
+        return crate::official_quota::use_codex_reset_card().await;
+    }
     let api_type = match reset_type.as_str() {
         "five_hour" => "FIVE_HOUR",
         "weekly" => "WEEK",

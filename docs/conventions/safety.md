@@ -65,7 +65,8 @@
 - **官方账号余量（2026-10-31，official_quota.rs）**：订阅余量卡读 Claude Code 的钥匙串项 / `.credentials.json` 与 Codex 的
   `auth.json` 取登录令牌，只拿去问官方用量接口（api.anthropic.com/api/oauth/usage、chatgpt.com/backend-api/wham/usage）。
   **只读、绝不刷新、绝不回写**（刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；令牌不进 DTO / 日志 / 诊断包；
-  钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。
+  钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。Codex 重置卡消费（`use_codex_reset_card`）同用卡纪律：显式命令 + 前端确认，
+  先重查「此刻能用几张」，为 0 不发请求；`redeem_request_id` 每次新生成，不自动重试。
 - **机构访问会话罐（2026-09-16，inst_access.rs）**：登录窗 Cookie 存 0600 `inst-session.json`（与 keys.json 同
   纪律：原子写、私有临时文件、值绝不出站——状态 DTO 只给域名/条数/时间，不进诊断包/生效配置快照）；损坏保留
   原件报错，不当空罐继续。**绝不存机构账号密码、绝不做无人值守自动登录**（MFA 过不去；脚本式批量下载会被

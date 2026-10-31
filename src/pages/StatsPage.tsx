@@ -901,7 +901,28 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   }
 
   /** 用一张重置卡：消费性写操作，先确认再触发；成功后整行换成刷新后的余量 */
-  async function useResetCard(row: PlanQuotaDto, type: "five_hour" | "weekly") {
+  async function useResetCard(row: PlanQuotaDto, type: "five_hour" | "weekly" | "general") {
+    if (type === "general") {
+      const exp = row.resetCards.generalExpiresAt;
+      const ok = await confirmDialog(
+        `用一张 ${planProviderLabel(row.provider)} 重置卡，立刻重置现在卡住你的额度？消费后不可撤销。${
+          exp != null ? `将优先使用最早过期的一张（${formatPlanTimestamp(exp, Date.now())} 过期）。` : "将优先使用最早过期的一张。"
+        }`,
+        { danger: true, confirmText: "重置", focusCancel: true },
+      );
+      if (!ok) return;
+      setPlanUsing(row.gatewayId + type);
+      try {
+        const fresh = await invoke<PlanQuotaDto>("plan_use_reset_card", { gatewayId: row.gatewayId, resetType: type });
+        setPlanRows((cur) => cur.map((r) => (r.gatewayId === fresh.gatewayId ? fresh : r)));
+        setPlanError(null);
+      } catch (e) {
+        setPlanError(String(e));
+      } finally {
+        setPlanUsing(null);
+      }
+      return;
+    }
     const label = planWindowLabel(type);
     const expiry =
       type === "five_hour"
@@ -1510,7 +1531,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     ))}
                   </div>
                   {row.resetCardsSupported && row.resetCards.ok && (
-                    row.resetCards.fiveHour + row.resetCards.weekly === 0 ? (
+                    row.resetCards.fiveHour + row.resetCards.weekly + row.resetCards.general === 0 ? (
                       <p className="mt-5 text-xs text-l3">重置卡无可用（已用完或套餐不含）</p>
                     ) : (
                       <div
@@ -1520,30 +1541,44 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                             "repeat(auto-fit, minmax(min(16rem, 100%), 1fr))",
                         }}
                       >
-                        {(
-                          [
-                            {
-                              key: "five_hour" as const,
-                              label: "5 小时重置卡",
-                              count: row.resetCards.fiveHour,
-                              expiresAt: row.resetCards.fiveHourExpiresAt,
-                            },
-                            {
-                              key: "weekly" as const,
-                              label: "周重置卡",
-                              count: row.resetCards.weekly,
-                              expiresAt: row.resetCards.weeklyExpiresAt,
-                            },
-                          ] as const
+                        {(row.resetCards.general > 0
+                          ? [
+                              // Codex：一张卡重置当下卡住你的窗口；只在被限额卡住时能用
+                              {
+                                key: "general" as const,
+                                label: "重置卡",
+                                count: row.resetCards.general,
+                                expiresAt: row.resetCards.generalExpiresAt,
+                              },
+                            ]
+                          : [
+                              {
+                                key: "five_hour" as const,
+                                label: "5 小时重置卡",
+                                count: row.resetCards.fiveHour,
+                                expiresAt: row.resetCards.fiveHourExpiresAt,
+                              },
+                              {
+                                key: "weekly" as const,
+                                label: "周重置卡",
+                                count: row.resetCards.weekly,
+                                expiresAt: row.resetCards.weeklyExpiresAt,
+                              },
+                            ]
                         ).map((c) => {
                           const soon = resetCardExpiryNote(c.expiresAt, now);
-                          const idle = planWindowUnused(row.windows, c.key);
-                          const highlight = planResetCardHighlight(row.windows, c.key);
+                          const general = c.key === "general";
+                          const blocked = general && row.resetCards.generalApplicable === 0;
+                          const idle = !general && planWindowUnused(row.windows, c.key);
+                          const highlight = general
+                            ? (row.resetCards.generalApplicable ?? 0) > 0
+                            : planResetCardHighlight(row.windows, c.key);
                           const cardTitle = [
                             soon?.title,
                             idle
                               ? `${planWindowLabel(c.key)}窗口一点没用（0%），现在用卡不会腾出任何额度`
                               : null,
+                            blocked ? "额度还没被卡住，Codex 现在不让用重置卡；用满被限额后再点" : null,
                           ]
                             .filter(Boolean)
                             .join(" · ");
@@ -1576,12 +1611,14 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                                       ? compactPrimaryActionClass
                                       : `${ghostActionClass} h-7 border border-field px-2 text-l2`
                                   }
-                                  disabled={planUsing != null}
+                                  disabled={planUsing != null || blocked}
                                   onClick={() => void useResetCard(row, c.key)}
                                 >
                                   {planUsing === row.gatewayId + c.key
                                     ? "使用中…"
-                                    : "用一张"}
+                                    : blocked
+                                      ? "卡住后可用"
+                                      : "用一张"}
                                 </button>
                               )}
                             </div>
