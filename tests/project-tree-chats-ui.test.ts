@@ -159,6 +159,7 @@ async function renderTree(
       ],
       profiles: [{ id: "p-codex", agent: "codex", models: [] }],
       loadSessions: async () => [],
+      hideSessionsWhileDeleting: () => () => {},
       setPage: (p: string) => pages.push(p),
       setSessionsProjectPathReq: (p: string) => {
         reqs.projectPath = p;
@@ -188,8 +189,8 @@ async function renderTree(
     __TAURI_INTERNALS__: {
       transformCallback: () => 0,
       invoke: async (command: string, args?: unknown) => {
-        if (command === "set_session_meta") {
-          calls.push(["set_session_meta", args]);
+        if (command === "set_session_meta" || command === "delete_session") {
+          calls.push([command, args]);
           return null;
         }
         if (command === "list_projects") return [PROJECT, { path: "/work/code", name: "Ccode", workMode: "coding" }];
@@ -869,6 +870,40 @@ test("多选：⌘ / Ctrl 点只选不开，⇧ 点整段选上，树底一条�
     });
     assert.equal(bar(), null);
     assert.equal(opens(), 1);
+  } finally {
+    await view.close();
+  }
+});
+
+test("删除就地二次确认：⋯ 里点「删除」原地换成「确认删除？」，再点才删；树底选中条的垃圾桶同样两下，不弹屏幕中央的确认框（2026-10-31）", async () => {
+  const view = await renderTree();
+  try {
+    const deletes = () => view.calls.filter((c) => c[0] === "delete_session").map((c) => (c[1] as { sessionId: string }).sessionId);
+    await view.act(async () => view.button("「镁硫电池第3篇精读」的更多操作").click());
+    await view.act(async () => view.button("删除").click());
+    assert.deepEqual(deletes(), [], "第一下不删");
+    assert.ok(view.host.querySelector('[role="menu"]'), "菜单不关");
+    await view.act(async () => view.button("确认删除？").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.deepEqual(deletes(), ["r3"]);
+    assert.ok(!view.calls.some((c) => c[0] === "confirmDialog"), "不再弹中央确认框");
+
+    const win = view.host.ownerDocument.defaultView!;
+    for (const label of ["镁硫电池第4篇精读", "镁硫电池第2篇精读"]) {
+      await view.act(async () => {
+        view.button(label).dispatchEvent(new win.MouseEvent("click", { bubbles: true, detail: 1, metaKey: true, ctrlKey: true }));
+      });
+    }
+    await view.act(async () => view.button("删除选中的对话").click());
+    assert.deepEqual(deletes(), ["r3"], "第一下不删");
+    await view.act(async () => view.button("确认删除 2 段？").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.deepEqual(deletes(), ["r3", "r4", "r2"]);
+    assert.ok(!view.calls.some((c) => c[0] === "confirmDialog"));
   } finally {
     await view.close();
   }

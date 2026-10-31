@@ -22,6 +22,9 @@ export interface ContextMenuItem {
   mark?: "warn" | "running";
   title?: string;
   separator?: boolean;
+  /** 就地二次确认：第一次点不执行、菜单不关，这一行原地换成确认文字（红底），再点一次才执行 onSelect。
+   *  删除类用它代替屏幕中央的确认弹窗（2026-10-31 用户：确认要在按钮旁边，不用再去点屏幕中间） */
+  confirm?: { label: string; title?: string };
 }
 
 /** 渲染前整理条目：危险项与前面的普通项之间补分隔线（全站删除类动作自动成组，

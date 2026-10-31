@@ -35,12 +35,18 @@ export default function ContextMenu({
   // Esc/点外播退场；滚动关闭和选中项（commit）保持即时卸载
   const { dismiss, exiting } = useAnimatedDismiss(onClose);
   const rows = normalizeMenuItems(items);
+  // 带 confirm 的项第一次点后的「待确认」行号；Esc 先撤待确认，再按才关菜单
+  const [armed, setArmed] = useState<number | null>(null);
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
   // 图标列只在需要时出现：纯文字菜单不再留一列空白缩进
   const withLead = rows.some((it) => it.icon || it.mark);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") dismiss();
+      if (e.key !== "Escape") return;
+      if (armedRef.current != null) setArmed(null);
+      else dismiss();
     };
     // capture 阶段的滚动监听能捕获任意容器的滚动；滚动时面板位置会脱锚，不播退场。
     // 面板自身的滚动（长清单 max-h 内部滚动）不脱锚，放行
@@ -71,7 +77,7 @@ export default function ContextMenu({
       ),
       top: Math.max(4, Math.min(y, window.innerHeight - h - 4)),
     });
-  }, [alignRight, x, y, items.length]);
+  }, [alignRight, x, y, items.length, armed]);
 
   // 打开即聚焦首个可用项（键盘可直接上下选）；preventScroll 防长清单把面板滚走触发关闭
   useEffect(() => {
@@ -149,17 +155,23 @@ export default function ContextMenu({
                 type="button"
                 role="menuitem"
                 disabled={it.disabled}
-                title={it.title}
+                title={armed === i ? it.confirm?.title ?? it.title : it.title}
                 aria-current={it.checked ? "true" : undefined}
                 onClick={() => {
                   if (it.disabled) return;
+                  if (it.confirm && armed !== i) {
+                    setArmed(i);
+                    return;
+                  }
                   onClose();
                   it.onSelect?.();
                 }}
                 className={`ccode-menu-item group flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs ${
                   it.disabled
                     ? "cursor-not-allowed text-l4 opacity-70"
-                    : it.danger
+                    : armed === i
+                      ? "bg-err-text/15 font-medium text-err-text"
+                      : it.danger
                       ? "text-err-text hover:bg-err-text/10 focus-visible:bg-err-text/10"
                       : it.checked
                         ? "bg-hover text-l1"
@@ -194,7 +206,9 @@ export default function ContextMenu({
                   ) : (
                     <span className="size-[13px] shrink-0" aria-hidden="true" />
                   ))}
-                <span className="min-w-0 flex-1 truncate">{it.label}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {armed === i ? it.confirm?.label : it.label}
+                </span>
                 {it.hint && (
                   <span className="shrink-0 pl-2 text-micro text-l3">
                     {it.hint}

@@ -373,6 +373,9 @@ export default function ProjectTree({
   }
   // 多选（2026-10-27）：⌘（Windows 上 Ctrl）点 / ⇧ 点 / ⇧↑↓ 选几段，一起置顶或归档；不点修饰键照旧打开并清掉选择
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  // 选中条删除按钮的「待确认」态；选择一变就撤，免得确认的已不是看见的那几段
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  useEffect(() => setDeleteArmed(false), [picked]);
   const pickAnchor = useRef<string | null>(null);
   const [pickMenu, setPickMenu] = useState<{ x: number; y: number; alignRight?: boolean } | null>(null);
   const pinnedList = useMemo(() => pinnedChats(sessions, chatPins), [sessions, chatPins]);
@@ -591,13 +594,14 @@ export default function ProjectTree({
         onSelect: () => clientOpen.openSession(s, !!holder?.running, c.clientId),
       })),
       {
-        label: "删除…",
+        label: "删除",
         icon: Trash2,
         danger: true,
         disabled: chatRunning(s),
         title: chatRunning(s)
           ? "AI 还开着，先关掉这段对话再删"
           : "源文件移入系统回收站（可找回）；整理数据和快照一并清掉",
+        confirm: deleteConfirm([s]),
         onSelect: () => void deleteChats([s]),
       },
     ];
@@ -1824,11 +1828,12 @@ export default function ProjectTree({
       },
       { label: "取消选择", icon: X, onSelect: clearPicked },
       {
-        label: `删除这 ${keys.length} 段…`,
+        label: `删除这 ${keys.length} 段`,
         icon: Trash2,
         danger: true,
-        disabled: keys.length === 0,
-        title: "源文件移入系统回收站（可找回）；AI 还开着的不删",
+        disabled: keys.length === 0 || list.every(chatRunning),
+        title: list.every(chatRunning) ? "这几段对话的 AI 还开着，先关掉再删" : "源文件移入系统回收站（可找回）；AI 还开着的不删",
+        confirm: deleteConfirm(list),
         onSelect: () => void deleteChats(list),
       },
     ];
@@ -1839,33 +1844,28 @@ export default function ProjectTree({
       .getState()
       .terminalRunInputs.some((r) => r.agentId === s.agent && r.sessionId === s.sessionId && r.running && !r.shell);
   }
+  /** 删除前的就地确认文字（菜单行 / 选中条按钮第一次点后换上，再点一次才删；2026-10-31 用户：
+   *  确认放在删除按钮旁边，不弹屏幕中央的确认框）。说明句进 title */
+  function deleteConfirm(list: SessionMetaDto[]): { label: string; title: string } {
+    const targets = list.filter((s) => !chatRunning(s));
+    const skipped = list.length - targets.length;
+    const hasOpencode = targets.some((s) => s.agent === "opencode");
+    const label =
+      (targets.length === 1 && list.length === 1 ? "确认删除？" : `确认删除 ${targets.length} 段？`) +
+      (skipped > 0 ? `（${skipped} 段开着不删）` : "");
+    const title =
+      `源文件移入系统回收站（可找回）${hasOpencode ? "；OpenCode 的对话从它的数据库抹掉，不能进回收站" : ""}。整理数据和保留的快照会一并清掉。` +
+      (skipped > 0 ? `另有 ${skipped} 段的 AI 还开着，这次不删，关掉后再删。` : "");
+    return { label, title };
+  }
   /** 删除（同对话页：源文件进回收站、OpenCode 从库里抹掉，整理数据与快照后端一并清）。
-   *  确认后这几行当场从侧栏拿掉，删在后台逐条做，删失败的随刷新回来并报错 */
+   *  调用方已就地确认过；这几行当场从侧栏拿掉，删在后台逐条做，删失败的随刷新回来并报错 */
   async function deleteChats(list: SessionMetaDto[]) {
-    const running = list.filter(chatRunning);
     const targets = list.filter((s) => !chatRunning(s));
     if (targets.length === 0) {
       toast("这几段对话的 AI 还开着，先关掉再删", "error");
       return;
     }
-    const head = targets
-      .slice(0, 3)
-      .map((s) => `「${sidebarChatTitle(tidySessionTitle(s).title)}」`)
-      .join("、");
-    const one = targets.length === 1;
-    const hasOpencode = targets.some((s) => s.agent === "opencode");
-    const what = one
-      ? `删除对话${head}？`
-      : `删除这 ${targets.length} 段对话？\n\n${head}${targets.length > 3 ? ` 等 ${targets.length} 段` : ""}`;
-    if (
-      !(await confirmDialog(
-        `${what}\n\n` +
-          `源文件移入系统回收站（可找回）${hasOpencode ? "；OpenCode 的对话从它的数据库抹掉，不能进回收站" : ""}。整理数据和保留的快照会一并清掉。` +
-          (running.length > 0 ? `\n\n另有 ${running.length} 段的 AI 还开着，这次不删，关掉后再删。` : ""),
-        { danger: true },
-      ))
-    )
-      return;
     clearPicked();
     const release = useAppStore.getState().hideSessionsWhileDeleting(targets.map(chatKey));
     const failed: string[] = [];
@@ -2076,37 +2076,64 @@ export default function ProjectTree({
               </CoachTip>
             )}
             <span className="mr-auto text-xs text-l2">已选 {keys.length} 段</span>
-            <button
-              type="button"
-              disabled={keys.length === 0}
-              onClick={() => {
-                pinPickedFor(keys);
-                clearPicked();
-              }}
-              className={action}
-            >
-              {allPinned ? <PinOff size={13} strokeWidth={1.8} aria-hidden="true" /> : <Pin size={13} strokeWidth={1.8} aria-hidden="true" />}
-              <span className="text-xs">{allPinned ? "取消置顶" : "置顶"}</span>
-            </button>
-            <button
-              type="button"
-              disabled={keys.length === 0}
-              onClick={() => void archivePicked(pickedSessions())}
-              className={action}
-            >
-              <Archive size={13} strokeWidth={1.8} aria-hidden="true" />
-              <span className="text-xs">归档</span>
-            </button>
-            <button
-              type="button"
-              disabled={keys.length === 0}
-              aria-label="删除选中的对话"
-              title="删除（源文件移入系统回收站）"
-              onClick={() => void deleteChats(pickedSessions())}
-              className={`${action} hover:text-err-text`}
-            >
-              <Trash2 size={13} strokeWidth={1.8} aria-hidden="true" />
-            </button>
+            {!deleteArmed && (
+              <>
+                <button
+                  type="button"
+                  disabled={keys.length === 0}
+                  onClick={() => {
+                    pinPickedFor(keys);
+                    clearPicked();
+                  }}
+                  className={action}
+                >
+                  {allPinned ? <PinOff size={13} strokeWidth={1.8} aria-hidden="true" /> : <Pin size={13} strokeWidth={1.8} aria-hidden="true" />}
+                  <span className="text-xs">{allPinned ? "取消置顶" : "置顶"}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={keys.length === 0}
+                  onClick={() => void archivePicked(pickedSessions())}
+                  className={action}
+                >
+                  <Archive size={13} strokeWidth={1.8} aria-hidden="true" />
+                  <span className="text-xs">归档</span>
+                </button>
+              </>
+            )}
+            {/* 删除就地二次确认：第一次点按钮原地换成红字确认，再点才删；移开焦点 / Esc / 选择变了即撤 */}
+            {deleteArmed ? (
+              <button
+                type="button"
+                autoFocus
+                title={deleteConfirm(pickedSessions()).title}
+                onClick={() => {
+                  setDeleteArmed(false);
+                  void deleteChats(pickedSessions());
+                }}
+                onBlur={() => setDeleteArmed(false)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Escape") return;
+                  e.stopPropagation();
+                  setDeleteArmed(false);
+                }}
+                className="flex h-6 items-center gap-1 rounded-md bg-err-text/15 px-1.5 text-xs font-medium text-err-text"
+              >
+                <Trash2 size={13} strokeWidth={1.8} aria-hidden="true" />
+                {deleteConfirm(pickedSessions()).label}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={keys.length === 0 || pickedSessions().every(chatRunning)}
+                aria-label="删除选中的对话"
+                title={pickedSessions().every(chatRunning) ? "这几段对话的 AI 还开着，先关掉再删" : "删除（源文件移入系统回收站）"}
+                onClick={() => setDeleteArmed(true)}
+                className={`${action} hover:text-err-text`}
+              >
+                <Trash2 size={13} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               aria-label="取消选择"
