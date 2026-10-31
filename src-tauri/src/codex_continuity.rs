@@ -340,17 +340,6 @@ fn slug(e: &Value) -> Option<&str> {
     e.get("slug").and_then(|s| s.as_str())
 }
 
-fn renamed(mut e: Value, prefix: &str) -> Value {
-    let shown = e
-        .get("display_name")
-        .and_then(|v| v.as_str())
-        .or_else(|| slug(&e))
-        .unwrap_or_default()
-        .to_string();
-    e["display_name"] = Value::from(format!("{prefix} · {shown}"));
-    e
-}
-
 /// 全局目录的条目；None = 不需要 Mesa 接管目录（官方默认且没有要续的中转老对话）
 fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Option<Vec<Value>> {
     let defined = defined_providers(doc);
@@ -371,29 +360,30 @@ fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Opt
     }
     let head_len = out.len();
     // 头部以外的条目都只为老对话：渠道跟着对话走，新对话里选它们照样发给当前默认连接（2026-10-31 用户实测：
-    // 新对话选「ChatGPT · gpt-5.6-terra」走的是中转）。所以都标隐藏（见函数尾），显示名再标「老对话」兜底
+    // 新对话选「ChatGPT · gpt-5.6-terra」走的是中转），所以都标隐藏（见函数尾）。隐藏后它们只在老对话里露面，
+    // 显示名就写这条对话实际走哪：官方模型照官方原名，中转写「连接名 · 模型」（与 Mesa 别处同口径）
     // 中转默认下有官方老对话：官方模型整组带上（客户端在官方对话里还能换别的官方模型）
     if !official && inp.refs.iter().any(|r| r.provider == OFFICIAL) {
         for e in &inp.official {
-            push(renamed(e.clone(), "官方老对话"), &mut out);
+            push(e.clone(), &mut out);
         }
     }
     // 共用渠道 custom 的老对话：中转默认下它们走的就是当前连接，模型以当前目录为准；官方默认下补它们用过的模型
     let shared = crate::global_config::CODEX_GLOBAL_PROVIDER;
     let shared_gw = shared_gateway(doc, inp);
-    // 同一个模型名在几条连接的老对话里都有：目录按模型名只留一条，显示名就不挂某一条连接的名字
+    // 同一个模型名在几条连接的老对话里都有：目录按模型名只留一条，显示名只写模型名，不挂某一条连接的名字
     let mut owners: BTreeMap<&str, HashSet<&str>> = BTreeMap::new();
     for r in &inp.refs {
         if !r.model.is_empty() && r.provider != OFFICIAL {
             owners.entry(r.model.as_str()).or_default().insert(r.provider.as_str());
         }
     }
-    let label = |name: &str, model: &str| -> String {
+    let entry = |name: &str, model: &str, gid: Option<&str>| -> Value {
+        let mut e = crate::agents::codex_catalog_entry_for(name, model, gid);
         if owners.get(model).is_some_and(|o| o.len() > 1) {
-            "老对话".to_string()
-        } else {
-            format!("{name} 老对话")
+            e["display_name"] = Value::from(model);
         }
+        e
     };
     for r in &inp.refs {
         if r.model.is_empty() || !defined.contains(&r.provider) {
@@ -401,14 +391,14 @@ fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Opt
         }
         if provider_id::short_id_from_provider(&r.provider).is_some() {
             if let Some(gw) = inp.gateway_for(&r.provider) {
-                push(crate::agents::codex_catalog_entry_for(&label(&gw.name, &r.model), &r.model, Some(&gw.gateway_id)), &mut out);
+                push(entry(&gw.name, &r.model, Some(&gw.gateway_id)), &mut out);
             }
         } else if r.provider == shared && official {
             let (name, gid) = match shared_gw {
                 Some(gw) => (gw.name.as_str(), Some(gw.gateway_id.as_str())),
                 None => (shared, None),
             };
-            push(crate::agents::codex_catalog_entry_for(&label(name, &r.model), &r.model, gid), &mut out);
+            push(entry(name, &r.model, gid), &mut out);
         }
     }
     if official && out.len() == head_len {
@@ -699,7 +689,7 @@ mod tests {
         let out = layer(RELAY_DISK, &Head::Relay(vec![head_entry("ds")]), &inp).unwrap();
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
         assert_eq!(slugs(out.catalog.as_deref().unwrap()), ["ds", "gpt-6-luna", "gpt-5.6-terra"]);
-        assert_eq!(cat["models"][1]["display_name"].as_str(), Some("官方老对话 · GPT-6-LUNA"));
+        assert_eq!(cat["models"][1]["display_name"].as_str(), Some("GPT-6-LUNA"), "官方模型照官方原名");
         // 当前连接的照常列出，老对话的隐藏：新建对话选不到，老对话照样认得
         assert!(cat["models"][0].get("visibility").is_none());
         assert_eq!(cat["models"][1]["visibility"].as_str(), Some("hide"));
@@ -711,8 +701,8 @@ mod tests {
         let inp = inputs(vec![r("ccode-a1b2c3d4", "ds-flash", 3), r("ccode-bbbbbbbb", "ds-flash", 1), r("ccode-bbbbbbbb", "only-b", 1)]);
         let out = layer(RELAY_DISK, &Head::Relay(vec![head_entry("ds")]), &inp).unwrap();
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
-        assert_eq!(cat["models"][1]["display_name"].as_str(), Some("老对话 · ds-flash"));
-        assert_eq!(cat["models"][2]["display_name"].as_str(), Some("relayB 老对话 · only-b"));
+        assert_eq!(cat["models"][1]["display_name"].as_str(), Some("ds-flash"));
+        assert_eq!(cat["models"][2]["display_name"].as_str(), Some("relayB · only-b"));
     }
 
     #[test]
@@ -747,7 +737,7 @@ mod tests {
         let out = layer(disk, &Head::Official, &inp).unwrap();
         assert_eq!(slugs(out.catalog.as_deref().unwrap()), ["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "glm"]);
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
-        assert!(cat["models"][2]["display_name"].as_str().unwrap().starts_with("relayB 老对话 · "));
+        assert!(cat["models"][2]["display_name"].as_str().unwrap().starts_with("relayB · "));
         // 官方默认：官方模型照原样列出，中转老对话的隐藏
         assert_eq!(cat["models"][0]["visibility"].as_str(), Some("list"));
         assert_eq!(cat["models"][2]["visibility"].as_str(), Some("hide"));
