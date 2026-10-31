@@ -3036,9 +3036,13 @@ fn restore_from(backups_dir: &Path, home: &Path, agent: &str) -> Result<Vec<Stri
     transact(backups_dir, home, &actions, "restore")
 }
 
+/// 家目录下的写 `~/a/b`：分隔符统一 `/`，Windows 上不出 `~/.claude\settings.json` 这种混写
 fn display_path(home: &Path, path: &Path) -> String {
     match path.strip_prefix(home) {
-        Ok(rel) => format!("~/{}", rel.to_string_lossy()),
+        Ok(rel) => {
+            let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+            format!("~/{}", parts.join("/"))
+        }
         Err(_) => path.to_string_lossy().into_owned(),
     }
 }
