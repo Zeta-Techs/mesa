@@ -462,7 +462,7 @@ fn patch_qwen_settings(
         ensure_obj(&mut v, &["model"])?.insert("name".into(), json!(m));
     }
     // TUI /model 对话框列出的就是 modelProviders.<协议>.models 里的条目；
-    // 只覆盖本协议的 models 数组，其他协议/字段原样保留
+    // 只换本协议里 Mesa 的条目（envKey 是 Mesa 专用名，或与这次同名），用户自己的条目、其他协议/字段原样保留
     if !models.is_empty() {
         let env_key = if key.is_some() {
             QWEN_MESA_KEY_ENV
@@ -531,9 +531,25 @@ fn patch_qwen_settings(
                 e
             })
             .collect();
-        ensure_obj(&mut v, &["modelProviders", protocol])?.insert("models".into(), json!(entries));
+        let slot = ensure_obj(&mut v, &["modelProviders", protocol])?;
+        let kept: Vec<Value> = slot
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter(|e| !qwen_mesa_entry(e) && !e.get("id").and_then(|i| i.as_str()).is_some_and(|id| models.iter().any(|m| m == id)))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        slot.insert("models".into(), json!(entries.into_iter().chain(kept).collect::<Vec<_>>()));
     }
     to_pretty(&v)
+}
+
+/// Mesa 写的 Qwen 模型条目：envKey 是 Mesa 专用变量名（2026-10-30 起）
+fn qwen_mesa_entry(e: &Value) -> bool {
+    e.get("envKey").and_then(|k| k.as_str()) == Some(QWEN_MESA_KEY_ENV)
 }
 
 /// Qwen 模型条目 envKey 用的 Mesa 专用变量名（见 patch_qwen_settings）
@@ -1665,6 +1681,23 @@ fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
                 if k.ends_with("_MODEL") {
                     removed.push(m);
                 }
+            }
+        }
+    }
+    // Mesa 写的模型条目指着刚撤掉的 MESA_QWEN_API_KEY，留着就是 /model 里选了必失败的死条目；用户自己的条目不动
+    if let Some(providers) = v.get_mut("modelProviders").and_then(|p| p.as_object_mut()) {
+        for slot in providers.values_mut() {
+            if let Some(arr) = slot.get_mut("models").and_then(|m| m.as_array_mut()) {
+                arr.retain(|e| {
+                    if qwen_mesa_entry(e) {
+                        if let Some(id) = e.get("id").and_then(|i| i.as_str()) {
+                            removed.push(id.to_string());
+                        }
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
         }
     }
@@ -4623,6 +4656,39 @@ trust_level = "trusted"
             models[0].get("baseUrl").is_none(),
             "无 base_url 时不写该字段"
         );
+    }
+
+    #[test]
+    fn qwen_global_write_keeps_users_own_model_entries() {
+        // 规则 3：只管自己写的条目。以前整组换掉，用户自己配的 DashScope 模型被一起删了
+        let existing = r#"{"modelProviders": {"openai": {"models": [
+            {"id": "my-own", "envKey": "DASHSCOPE_API_KEY", "baseUrl": "https://dashscope"},
+            {"id": "old-mesa", "envKey": "MESA_QWEN_API_KEY", "baseUrl": "https://old-relay"},
+            {"id": "m1", "envKey": "OPENAI_API_KEY"}
+        ]}}}"#;
+        let p = profile("qwen");
+        let out = patch_qwen_settings(Some(existing), Some("sk-new"), &p).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let ids: Vec<&str> = v["modelProviders"]["openai"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["m1", "my-own"], "这次的在前；上一份 Mesa 条目撤掉；同名的换成这次的");
+        // 官方切回：Mesa 条目（指着被撤的 MESA_QWEN_API_KEY）撤掉，用户的留着，默认模型若是 Mesa 的一并撤
+        let mut doc: Value = serde_json::from_str(&out).unwrap();
+        doc["model"]["name"] = json!("m1");
+        let off = patch_qwen_settings_official(&doc.to_string()).unwrap();
+        let v: Value = serde_json::from_str(&off).unwrap();
+        let ids: Vec<&str> = v["modelProviders"]["openai"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["my-own"]);
+        assert!(v.pointer("/model/name").is_none());
     }
 
     #[test]
