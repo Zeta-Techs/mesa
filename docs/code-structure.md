@@ -821,7 +821,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
   custom-runtime.ts          # 自定义运行时默认 cwd：仅空目录/scratch 启用（tests/custom-runtime.test.ts）
   unbind-impact.ts           # 解绑/删网关前「会怎样」文案（定时任务/项目/目标；连接页解绑与网关库「解绑并删除」共用，tests/unbind-impact.test.ts）
   gateway-slot.ts            # Agent→协议槽与目录刷新优先槽（与 slot_for_agent 双端镜像，tests/gateway-slot.test.ts）
-  gateway-option.ts          # 网关选择器行（主机/协议槽/模型数，同名同址补尾号）+ addConnectionDefaults（「＋ 添加连接」默认：
+  gateway-option.ts          # 网关选择器行（主机/协议槽/模型数，同址补密钥尾号）+ addConnectionDefaults（「＋ 添加连接」默认：
                              #   没有连接在用的网关取最后建的、预选「选用已有网关」；Agent 挑已装且网关填了其协议槽的，
                              #   有 Claude Code 先选它）（tests/gateway-option.test.ts）
   command-palette.ts         # 命令面板过滤与排序纯逻辑：searchOnly 默认不列、得分（标题全等/开头/「前缀：名字」开头/包含 > 别名 > 散字兜底）、组按最高分排且组内连续、matchedKeyword（tests/command-palette.test.ts）

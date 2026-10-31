@@ -66,18 +66,21 @@ function rowFrom(gateway: Gateway): GatewayPickerRow {
   return { id: gateway.id, name: gateway.name, detail: parts.join(" · ") };
 }
 
-/** 选用已有网关：名称 + 主机/协议槽/模型数。同名同址才补密钥尾号。 */
+/** 选用已有网关：名称 + 主机/协议槽/模型数。**同址**（主机相同，不论名字）就补密钥尾号：同一个中转建了两个网关时，
+ *  名字不同、第二行却一模一样，看不出是不是同一把密钥（2026-10-31 用户截图：Zeta-22 / Test）。 */
 export function gatewayPickerRows(gateways: readonly Gateway[]): GatewayPickerRow[] {
   const rows = gateways.map(rowFrom);
+  const hostKey = (g: Gateway) => gatewayHosts(g.slots).join(" / ");
   const counts = new Map<string, number>();
-  for (const row of rows) {
-    const key = `${row.name}\0${row.detail}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+  for (const g of gateways) {
+    const key = hostKey(g);
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return rows.map((row, index) => {
-    if ((counts.get(`${row.name}\0${row.detail}`) ?? 0) < 2) return row;
-    const hint = gateways[index]?.keyHint?.trim();
-    return hint ? { ...row, detail: `${row.detail} · ${hint}` } : row;
+    const g = gateways[index];
+    if (!g || (counts.get(hostKey(g)) ?? 0) < 2) return row;
+    const hint = g.keyHint?.trim();
+    return hint ? { ...row, detail: `${row.detail} · 密钥 ${hint}` } : row;
   });
 }
 

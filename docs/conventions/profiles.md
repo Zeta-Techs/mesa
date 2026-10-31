@@ -591,6 +591,7 @@ Codex            → …
   `agents::claude_slot_models` 仍按名单前四个占槽；连接弹层保存时 `explicitClaudeRoles` 按同一规则算好写成显式（haiku 没设时 small 取名单第 3 个），
   用户看到的指向不变，**不做数据迁移**。「默认」行 = 名单第一个，改它是挪名单顺序（挪前先转显式，挪顺序不能顺带改别名）。/model 另加项
   （`ANTHROPIC_CUSTOM_MODEL_OPTION`）：旧绑定名单第 5 个，显式时第一个没被占用、也不是默认的模型。前后端双端镜像，共读 `tests/fixtures/claude-slots.json`。
+  2026-10-31 窄弹层排版：表只留三列（角色 / 实际请求模型 / 上下文 · 声明 1M），显示名收进表下「改 /model 里的显示名」折叠行，下拉选项写「跟默认」不带模型名；Claude 连接的模型名单不再标「默认」/「设为默认」（默认在表里定）。
   表里的「1M」写的是全局能力声明（`set_model_capability_override`，按模型、所有 Agent 共用），能力库确知 ≥1M 的锁着打勾；不做 Claude 专属勾选，免得同一个模型各家声明不一致。
 - **连接弹层生效预览（2026-10-30）**：已保存的连接底部常驻折叠行「看实际会拿到什么」（`EffectPreview`），展开两栏调 `preview_launch_plan` 与
   `preview_profile_global`，按已保存内容算；不支持设为全局的家右栏写原因。九家同一块。

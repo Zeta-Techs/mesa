@@ -213,7 +213,12 @@ export function ProfileModal({
       null) as string | null,
     apiBackend: (initial?.apiBackend ?? null) as string | null,
     baseUrl: initial?.baseUrl ?? "",
-    models: initial?.models ?? ([] as string[]),
+    // 打开时已预选网关（网关库「为此网关添加连接」/ 没有连接在用的网关）：同点选网关一样默认带目录第一个能对话的模型
+    models:
+      initial?.models ??
+      (opening?.gateway
+        ? splitChatModels(opening.gateway.models.filter((m) => m.status !== "stale").map((m) => m.id)).chat.slice(0, 1)
+        : ([] as string[])),
     roleModels: (initial?.roleModels ?? {}) as RoleModels,
     extraEnvText: Object.entries(initial?.extraEnv ?? {})
       .map(([k, v]) => `${k}=${v}`)
@@ -303,10 +308,11 @@ export function ProfileModal({
       ?.provider.models?.[0];
     return example ? `模型名，如 ${example}` : "模型名";
   })();
+  // 网关目录里标了失效的旧模型不列（选了也用不了），数字与网关行「N 个模型」同口径（2026-10-31 截图：427 vs 473）
   const gatewayCatalog = catalogGatewayId
-    ? (gateways.find((g) => g.id === catalogGatewayId)?.models ?? []).map(
-        (m) => m.id,
-      )
+    ? (gateways.find((g) => g.id === catalogGatewayId)?.models ?? [])
+        .filter((m) => m.status !== "stale")
+        .map((m) => m.id)
     : null;
   // 出图 / 视频 / 向量等模型不能当 Agent 的对话模型：选择面板里不列，只报隐藏了几个（model-kinds.ts）
   const { chat: pickerModels, hidden: pickerHidden } = splitChatModels(
@@ -1065,7 +1071,9 @@ export function ProfileModal({
         )}
         <div className="mb-4 text-sm">
           <span className="mb-1 block text-xs text-l3">
-            模型列表（可选，首个为默认）
+            {form.agent === "claude-code" && form.accountType === "api"
+              ? "可用模型（默认和各别名在下面的表里定）"
+              : "模型列表（可选，首个为默认）"}
           </span>
           {(() => {
             const sw = MODEL_SWITCH[form.agent];
@@ -1100,7 +1108,7 @@ export function ProfileModal({
                 className={`${fieldClass} flex min-w-0 flex-1 items-center justify-between gap-2 text-left`}
               >
                 <span className="truncate text-l3">
-                  从 {fetchedModels.length} 个模型中选择…
+                  从 {pickerModels.length} 个模型中选择…
                 </span>
                 <FoldMark open={pickerOpen} />
               </button>
@@ -1163,7 +1171,7 @@ export function ProfileModal({
                   className={`${fieldClass} flex min-w-0 flex-1 items-center justify-between gap-2 text-left`}
                 >
                   <span className="truncate text-l3">
-                    从网关目录 {gatewayCatalog.length} 个模型中选择…
+                    从网关目录 {pickerModels.length} 个模型中选择…
                   </span>
                   <FoldMark open={pickerOpen} />
                 </button>
@@ -1197,14 +1205,18 @@ export function ProfileModal({
           {/* 厂商分组折叠面板：大网关 400+ 模型平铺没法选；筛选时全部强制展开。
               数据源 = pickerModels（新建网关 = 拉取结果；选用已有/编辑绑定 = 网关目录） */}
           {pickerOpen && pickerModels.length > 0 && (
-            <div className="mb-2 max-h-64 overflow-y-auto rounded-md ccode-well p-1">
-              <input
-                autoFocus
-                className={`${searchFieldClass} mb-1 w-full`}
-                placeholder="筛选模型名…"
-                value={pickerFilter}
-                onChange={(e) => setPickerFilter(e.target.value)}
-              />
+            // 限高约十来行、搜索框与已选数固定在面板顶上：原先面板在弹层里自己滚一层，占满一屏把名单和映射表挤下去
+            <div className="mb-2 max-h-56 overflow-y-auto rounded-md ccode-well p-1">
+              <div className="sticky -top-1 z-10 -mx-1 -mt-1 mb-1 flex items-center gap-2 bg-inherit p-1">
+                <input
+                  autoFocus
+                  className={`${searchFieldClass} min-w-0 flex-1`}
+                  placeholder="筛选模型名…"
+                  value={pickerFilter}
+                  onChange={(e) => setPickerFilter(e.target.value)}
+                />
+                <span className="shrink-0 text-micro text-l3">已选 {form.models.filter((m) => m.trim()).length} 个</span>
+              </div>
               {pickerHidden.length > 0 && (
                 <p
                   className="mb-1 px-2 text-micro text-l3"
@@ -1297,6 +1309,8 @@ export function ProfileModal({
             if (slots.length === 0 || slots[slots.length - 1].trim() !== "")
               slots.push("");
             const firstFilled = slots.findIndex((m) => m.trim());
+            // Claude Code 的默认和各别名在下面的映射表里定：名单这里不再标「默认」/「设为默认」，免得两处各改一半
+            const claudeMapped = form.agent === "claude-code" && form.accountType === "api";
             return (
               <div className="space-y-0.5">
                 {max != null && filled > max && (
@@ -1364,7 +1378,7 @@ export function ProfileModal({
                         不能对话
                       </span>
                     )}
-                    {i === firstFilled ? (
+                    {claudeMapped ? null : i === firstFilled ? (
                       // 与连接列表名称旁的「默认」同一枚主题色胶囊
                       <span className="shrink-0 rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">
                         默认

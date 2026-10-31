@@ -78,7 +78,7 @@ test("gatewayPickerRows 用主机和槽区分，不用密钥尾号当主识别",
   assert.ok(!rows.some((row) => row.detail.includes("OHLQ")));
 });
 
-test("gatewayPickerRows 同名同址才补密钥尾号", () => {
+test("gatewayPickerRows 同址（不论名字）就补密钥尾号，不同址不补", () => {
   const rows = gatewayPickerRows([
     gw({
       id: "a",
@@ -95,6 +95,14 @@ test("gatewayPickerRows 同名同址才补密钥尾号", () => {
   ]);
   assert.ok(rows[0]?.detail.includes("···AAA"));
   assert.ok(rows[1]?.detail.includes("···BBB"));
+  const named = gatewayPickerRows([
+    gw({ id: "a", name: "Zeta-22", keyHint: "···AAA", slots: { openai: "https://same.example.com/v1" } }),
+    gw({ id: "b", name: "Test", keyHint: "···BBB", slots: { anthropic: "https://same.example.com" } }),
+    gw({ id: "c", name: "GLM", keyHint: "···CCC", slots: { openai: "https://open.bigmodel.cn/v4" } }),
+  ]);
+  assert.match(named[0]?.detail ?? "", /密钥 ···AAA$/);
+  assert.match(named[1]?.detail ?? "", /密钥 ···BBB$/);
+  assert.ok(!named[2]?.detail.includes("CCC"));
 });
 
 test("gatewayPickerRows 协议槽超过 3 种时收成「前两种 等 N 种协议」", () => {
