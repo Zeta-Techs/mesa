@@ -3616,6 +3616,32 @@ done
     }
 
     #[test]
+    fn opencode_auth_list_parser_reads_named_row() {
+        // 本机 opencode 1.19.5 原样输出（含 ANSI 与框线字符）
+        let text = "\u{1b}[0m\n┌  MCP OAuth Status\n│\n●  ✗ consensus \u{1b}[90mnot authenticated\n│      \u{1b}[90mhttps://mcp.consensus.app/mcp\n│\n●  ✓ undermind \u{1b}[90mauthenticated\n│      \u{1b}[90mhttps://mcp.undermind.ai/mcp\n│\n●  ✗ old \u{1b}[90mexpired\n└  3 OAuth-capable server(s)\n";
+        assert_eq!(opencode_auth_logged_in(text, "undermind"), Some(true));
+        assert_eq!(opencode_auth_logged_in(text, "consensus"), Some(false));
+        assert_eq!(opencode_auth_logged_in(text, "old"), Some(false));
+        assert_eq!(opencode_auth_logged_in(text, "missing"), None);
+    }
+
+    #[test]
+    fn oauth_login_guide_gives_terminal_command_where_cli_has_one() {
+        for (agent, cmd) in [
+            ("codex", "codex mcp login undermind"),
+            ("claude-code", "claude mcp login undermind"),
+            ("opencode", "opencode mcp auth undermind"),
+            ("cursor", "cursor-agent mcp login undermind"),
+        ] {
+            assert_eq!(mcp_oauth_login_guide(agent, "undermind").0.as_deref(), Some(cmd));
+        }
+        let (cmd, how) = mcp_oauth_login_guide("gemini", "undermind");
+        assert!(cmd.is_none());
+        assert!(how.contains("/mcp auth undermind"));
+        assert!(mcp_oauth_login_guide("kimi", "undermind").0.is_none());
+    }
+
+    #[test]
     fn remote_auth_error_distinguishes_oauth_from_missing_key() {
         assert!(
             remote_auth_error(
@@ -4505,15 +4531,43 @@ pub struct McpOauthAgentDto {
     pub how: String,
 }
 
-/// 各家远程 MCP 的 OAuth 登录做法（本机 CLI 帮助核实）。name 已过 [A-Za-z0-9-] 校验，拼进命令安全。
+/// 各家远程 MCP 的 OAuth 登录做法（2026-10-31 本机 CLI 帮助核实：codex 0.15x、claude 2.1.308、
+/// opencode 1.19.5、cursor-agent 2026.10.22 有终端登录子命令；gemini / qwen 只有对话内 `/mcp auth`）。
+/// name 已过 [A-Za-z0-9_-] 校验，拼进命令安全。
 fn mcp_oauth_login_guide(agent: &str, name: &str) -> (Option<String>, String) {
+    let browser = "终端执行后浏览器授权".to_string();
     match agent {
-        "codex" => (
-            Some(format!("codex mcp login {name}")),
-            "终端执行后浏览器授权".into(),
-        ),
+        "codex" => (Some(format!("codex mcp login {name}")), browser),
+        "claude-code" => (Some(format!("claude mcp login {name}")), browser),
+        "opencode" => (Some(format!("opencode mcp auth {name}")), browser),
+        "cursor" => (Some(format!("cursor-agent mcp login {name}")), browser),
+        "gemini" | "qwen" => (None, format!("在这家的对话里输入 /mcp auth {name}")),
         _ => (None, "在这家的对话里输入 /mcp，选中它登录".into()),
     }
+}
+
+/// `opencode mcp auth list` 里这一条的登录态：行形如「● ✓ undermind authenticated」
+/// 「● ✗ undermind not authenticated」/「… expired」。找不到这一条 = None。
+fn opencode_auth_logged_in(text: &str, name: &str) -> Option<bool> {
+    let text = crate::updater::strip_ansi(text);
+    text.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        words.find(|w| w.eq_ignore_ascii_case(name))?;
+        let rest = words.collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+        if rest.starts_with("not ") || rest.contains("expired") {
+            Some(false)
+        } else if rest.starts_with("authenticated") {
+            Some(true)
+        } else {
+            None
+        }
+    })
+}
+
+fn opencode_mcp_logged_in(name: &str) -> Option<bool> {
+    let bin = crate::agents::resolve_binary("opencode")?;
+    let text = capture_cli_text(&bin, &["mcp", "auth", "list"])?;
+    opencode_auth_logged_in(&text, name)
 }
 
 fn mcp_oauth_state(agent: &str, name: &str) -> &'static str {
@@ -4529,6 +4583,12 @@ fn mcp_oauth_state(agent: &str, name: &str) -> &'static str {
             Some(false) => "logged_out",
             None => "unknown",
         },
+        "opencode" => match opencode_mcp_logged_in(name) {
+            Some(true) => "logged_in",
+            Some(false) => "logged_out",
+            None => "unknown",
+        },
+        // cursor-agent mcp list 只报「加载 / 连接失败 / 待批准」，分不出登没登，如实报查不到
         _ => "unknown",
     }
 }
