@@ -35,10 +35,6 @@ import {
   planWindowLabel,
   planWindowsByTightness,
   gatewayHasPlanQuota,
-  planSwipeTarget,
-  planWheelStep,
-  PLAN_WHEEL_IDLE,
-  PLAN_SWIPE_THRESHOLD,
   planGatewayNameVisible,
   planLevelLabel,
   quotaTone,
@@ -77,6 +73,9 @@ import {
 } from "../usage-dist";
 import VendorIcon from "../components/VendorIcon";
 import { vendorForPlanProvider } from "../vendor-icon";
+import { useQuotaSwipe } from "../quota-swipe";
+import { canShowCoachTip, markCoachTipSeen, markCoachTipShown } from "../coach-tips";
+import { showFloatingCoach } from "../components/CoachTip";
 import {
   EmptyState,
   FoldMark,
@@ -554,6 +553,15 @@ function QuotaRing({ pct, tone, label }: { pct: number; tone: QuotaTone; label: 
 }
 
 /** 余量 / 余额卡收起时的一行：只给最要紧的几个数（订阅：5 小时 / 本周已用；网关：当前余额），各带一个小圆环，点一下展开 */
+/** 最近的会滚动的祖先（提示气泡随它滚动收起） */
+function scrollParent(el: HTMLElement): Element | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
 function QuotaSummary({
   items,
   empty,
@@ -787,45 +795,46 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   // 余量 / 余额卡默认收起（2026-10-29 用户：信息太多），各自记在本机
   const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
   const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
-  // 收起态左右滑动切换供应商：触控板横向轻扫（wheel，按一次手势判定，见 plan-quota planWheelStep）或按住拖动；
-  // 滑过之后吞掉随之而来的那次点击（否则会顺手展开）
-  const planSwipe = useRef({ wheel: PLAN_WHEEL_IDLE, startX: null as number | null, swipedAt: 0 });
-  const planStep = (dir: 1 | -1) => {
-    const next = planSwipeTarget(planRows.map((r) => r.gatewayId), planActive ?? planRows[0]?.gatewayId ?? null, dir);
-    if (next) setPlanActive(next);
-  };
-  const onPlanWheel = (e: React.WheelEvent) => {
-    if (planRows.length < 2) return;
-    // 行 / 页单位（外接鼠标横滚）折成像素
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
-    const st = planSwipe.current;
-    const r = planWheelStep(st.wheel, e.deltaX * unit, e.deltaY * unit, e.timeStamp);
-    st.wheel = r.state;
-    if (r.step) {
-      planStep(r.step);
-      st.swipedAt = performance.now();
-    }
-  };
-  const onPlanPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (planRows.length < 2 || e.button !== 0) return;
-    planSwipe.current.startX = e.clientX;
-    // 捕获指针：在卡外松手也收得到 pointerup，不留半截状态让下一次点击误切
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onPlanPointerUp = (e: React.PointerEvent) => {
-    const st = planSwipe.current;
-    if (st.startX == null) return;
-    const dx = e.clientX - st.startX;
-    st.startX = null;
-    if (Math.abs(dx) >= PLAN_SWIPE_THRESHOLD) {
-      planStep(dx < 0 ? 1 : -1);
-      st.swipedAt = performance.now();
-    }
-  };
+  // 收起态左右滑动切换供应商（跟手、滑进、弹回都在 quota-swipe.ts）；滑过之后吞掉随之而来的那次点击（否则会顺手展开）
+  const closePlanTip = useRef<(() => void) | null>(null);
+  const planSwipe = useQuotaSwipe({
+    ids: planRows.map((r) => r.gatewayId),
+    active: planActive,
+    onChange: setPlanActive,
+    onSwiped: () => {
+      // 会滑了：提示不用再出，开着的收掉
+      markCoachTipSeen("planSwipe");
+      closePlanTip.current?.();
+    },
+  });
   const onPlanSummaryOpen = () => {
-    if (performance.now() - planSwipe.current.swipedAt < 300) return;
+    if (planSwipe.swallowClick()) return;
     togglePlanOpen();
   };
+  // 第一次出现多家、卡片收着时，挂一个气泡告诉能左右滑（2026-10-31 用户点名要；只出一次，滑过一次也算会了）
+  const planTipKey = planRows.map((r) => r.gatewayId).join("|");
+  useEffect(() => {
+    if (!visible || planOpen || planRows.length < 2 || !canShowCoachTip("planSwipe")) return;
+    const timer = setTimeout(() => {
+      const el = planSwipe.areaRef.current;
+      if (!el || !canShowCoachTip("planSwipe")) return;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.bottom < 0 || r.top > window.innerHeight) return;
+      const names = [...new Set(planRows.map((row) => planProviderLabel(row.provider)))].join("、");
+      markCoachTipShown("planSwipe");
+      closePlanTip.current = showFloatingCoach({
+        anchor: { left: r.left, top: r.top, right: r.left + Math.min(r.width, 160), bottom: r.bottom },
+        place: "below",
+        title: "可以左右滑动",
+        body: `在这张卡上两指左右轻扫（或按住拖），在 ${names} 之间切换；展开后上面也有切换标签。`,
+        actions: [{ label: "知道了", onClick: () => {} }],
+        scrollRoot: scrollParent(el),
+      });
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, planOpen, planTipKey]);
+  useEffect(() => () => closePlanTip.current?.(), []);
   const togglePlanOpen = () =>
     setPlanOpen((v) => {
       localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
@@ -1352,7 +1361,11 @@ export default function StatsPage({ visible }: { visible: boolean }) {
         (hasWalletGateway && (walletRowsShown.length > 0 || walletLoading))) && (
       <div className="mb-4 grid items-start gap-4 lg:grid-cols-2">
       {(planRows.length > 0 || (planLoading && hasPlanGateway)) && (
-        <section className="ccode-well ccode-card p-4" aria-label="订阅余量">
+        <section
+          className="ccode-well ccode-card overflow-hidden p-4"
+          aria-label="订阅余量"
+          onWheel={planOpen ? undefined : planSwipe.onWheel}
+        >
           {planRows.length === 0 ? (
             <>
               <div className="flex min-h-8 items-center gap-2">
@@ -1439,16 +1452,9 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     展开才有大数字、进度条、重置卡、多家切换标签 */}
                 {!planOpen ? (
                   <div
+                    ref={planSwipe.areaRef}
                     className="select-none"
-                    onWheel={onPlanWheel}
-                    onPointerDown={onPlanPointerDown}
-                    onPointerUp={onPlanPointerUp}
-                    onPointerCancel={() => (planSwipe.current.startX = null)}
-                    onKeyDown={(e) => {
-                      if (planRows.length < 2) return;
-                      if (e.key === "ArrowRight") planStep(1);
-                      else if (e.key === "ArrowLeft") planStep(-1);
-                    }}
+                    {...planSwipe.areaHandlers}
                     title={planRows.length > 1 ? `左右滑动切换（${planRows.findIndex((r) => r.gatewayId === row.gatewayId) + 1} / ${planRows.length}）` : undefined}
                   >
                   <QuotaSummary

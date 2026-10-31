@@ -843,6 +843,9 @@ stats-trend.ts             # 用量页「每日用量」折线的自适应日期
                              #   walletUnlimitedLine（不限额度也要把已用说出来）+
                              #   walletUnlimitedFill（开口条：同卡已用的 log1p 比，最长停在 95，已用 ≤ 0 不画）
                              #   （tests/gateway-balance.test.ts；与 gateway_balance.rs WALLET_HOSTS 双端镜像）
+  quota-swipe.ts             # 订阅余量卡收起态左右切换（useQuotaSwipe，2026-10-31）：整卡收触控板横扫、摘要区收拖动与 ← →；
+                             #   手势判定在 plan-quota planWheelStep（一次手势最多切一家、反向即新手势、惯性抖动看平滑幅度）；
+                             #   跟手位移 / 滑进 / 弹回直接写 areaRef 的 style（不进 React 状态，免整页每帧重渲染），减弱动态效果时只切不动
   plan-quota.ts              # 订阅余量卡纯逻辑（用量页，与 gateway-balance.ts 并排的第二张卡）：
                              #   供应商显示名/切换标签/窗口名/重置倒计时/重置卡；
                              #   **双窗同构**（2026-09-21）：最紧的窗口走大数字 + 通栏粗条，另一窗收成一行

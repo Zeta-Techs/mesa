@@ -91,11 +91,13 @@ export interface PlanWheelState {
   lastT: number;
   /** 上一个事件的横向幅度：惯性只会越来越小，衰减过后突然变大 = 手指又扫了一次 */
   lastMag: number;
-  /** 本次手势的峰值幅度：手指还在加速时幅度也在涨，没衰减到峰值一半以下不算「又扫了一次」 */
+  /** 本次手势的峰值幅度：手指还在加速时幅度也在涨，没衰减到峰值 40% 以下不算「又扫了一次」 */
   peak: number;
+  /** 幅度的平滑值：WebKit 的惯性事件忽大忽小（0、3、1、5…），拿单个事件比会把抖动当成又扫了一次 */
+  avg: number;
 }
 
-export const PLAN_WHEEL_IDLE: PlanWheelState = { dir: 0, x: 0, y: 0, fired: false, lastT: -Infinity, lastMag: 0, peak: 0 };
+export const PLAN_WHEEL_IDLE: PlanWheelState = { dir: 0, x: 0, y: 0, fired: false, lastT: -Infinity, lastMag: 0, peak: 0, avg: 0 };
 
 /** 喂一个 wheel 事件（像素、毫秒），返回新状态与要不要切（1 下一家 / -1 上一家 / 0 不切）。纯函数，时间显式传入 */
 export function planWheelStep(
@@ -106,16 +108,20 @@ export function planWheelStep(
 ): { state: PlanWheelState; step: 1 | -1 | 0 } {
   const mag = Math.abs(dx);
   const sign = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  // 横向为 0 的事件（纯竖滚、惯性尾巴里的空帧）只续时间，不改幅度统计
+  if (sign === 0) {
+    return { state: { ...st, lastT: t, y: st.y + Math.abs(dy) }, step: 0 };
+  }
   const fresh =
     st.dir === 0 ||
     t - st.lastT > SWIPE_GAP_MS ||
     // 反方向：手指往回扫了，不等惯性停（这是「反着滑不行」的根因）
-    (sign !== 0 && sign !== st.dir) ||
-    // 同方向、已切过、惯性已衰减过半后幅度明显回升：惯性里又扫了一次
-    (st.fired && mag > 4 && st.lastMag < st.peak * 0.5 && mag > st.lastMag * 1.6);
+    sign !== st.dir ||
+    // 同方向、已切过、惯性已衰减到峰值 40% 以下后幅度明显回升（看平滑值，不看单个事件）：惯性里又扫了一次
+    (st.fired && mag >= 10 && st.avg < st.peak * 0.4 && mag > st.avg * 1.8);
   let next: PlanWheelState = fresh
-    ? { dir: sign, x: 0, y: 0, fired: false, lastT: t, lastMag: mag, peak: mag }
-    : { ...st, lastT: t, lastMag: mag, peak: Math.max(st.peak, mag) };
+    ? { dir: sign, x: 0, y: 0, fired: false, lastT: t, lastMag: mag, peak: mag, avg: mag }
+    : { ...st, lastT: t, lastMag: mag, peak: Math.max(st.peak, mag), avg: (st.avg + mag) / 2 };
   next = { ...next, x: next.x + dx, y: next.y + Math.abs(dy) };
   if (next.fired || next.dir === 0) return { state: next, step: 0 };
   // 横向为主才算（斜着滚页面不误切），按整次手势的累计判，不按单个事件

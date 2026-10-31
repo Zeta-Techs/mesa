@@ -322,3 +322,8 @@ test("没滑够的残量不带进下一次", () => {
 test("竖着滚页面不切", () => {
   assert.deepEqual(feed(PLAN_WHEEL_IDLE, [5, 6, 7, 8, 9, 10], 0, 40).steps, []);
 });
+
+test("惯性尾巴忽大忽小、夹着空帧，不算又扫了一次", () => {
+  const jitter = [8, 16, 22, 15, 9, 6, 3, 0, 4, 1, 6, 2, 5, 0, 3, 1, 4, 2];
+  assert.deepEqual(feed(PLAN_WHEEL_IDLE, jitter, 0).steps, [1]);
+});

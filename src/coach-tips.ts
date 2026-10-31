@@ -15,6 +15,9 @@ export const COACH_TIP_KEYS = {
   closeKey: "ccode.coachCloseKeySeen",
   /** 用右上角 >_ 在聊天和终端之间来回切时提醒快捷键（默认 ⌘⇧T / Ctrl+Shift+T，设置页可改） */
   surfaceKey: "ccode.coachSurfaceKeySeen",
+  /** 用量页订阅余量卡第一次有多家、收着时告诉能左右滑动切换（2026-10-31 用户点名要，例外于「不首次即弹」：
+   *  收起态不放标签，不提示就没人知道能滑） */
+  planSwipe: "ccode.coachPlanSwipeSeen",
 } as const;
 export type CoachTipId = keyof typeof COACH_TIP_KEYS;
 
