@@ -36,6 +36,9 @@ import {
   planWindowsByTightness,
   gatewayHasPlanQuota,
   planSwipeTarget,
+  planWheelStep,
+  PLAN_WHEEL_IDLE,
+  PLAN_SWIPE_THRESHOLD,
   planGatewayNameVisible,
   planLevelLabel,
   quotaTone,
@@ -784,39 +787,37 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   // 余量 / 余额卡默认收起（2026-10-29 用户：信息太多），各自记在本机
   const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
   const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
-  // 收起态左右滑动切换供应商：触控板横向轻扫（wheel deltaX）或按住拖动；滑过之后吞掉随之而来的那次点击（否则会顺手展开）
-  const planSwipe = useRef({ acc: 0, lockUntil: 0, startX: null as number | null, swipedAt: 0 });
+  // 收起态左右滑动切换供应商：触控板横向轻扫（wheel，按一次手势判定，见 plan-quota planWheelStep）或按住拖动；
+  // 滑过之后吞掉随之而来的那次点击（否则会顺手展开）
+  const planSwipe = useRef({ wheel: PLAN_WHEEL_IDLE, startX: null as number | null, swipedAt: 0 });
   const planStep = (dir: 1 | -1) => {
     const next = planSwipeTarget(planRows.map((r) => r.gatewayId), planActive ?? planRows[0]?.gatewayId ?? null, dir);
     if (next) setPlanActive(next);
   };
   const onPlanWheel = (e: React.WheelEvent) => {
-    if (planRows.length < 2 || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    if (planRows.length < 2) return;
+    // 行 / 页单位（外接鼠标横滚）折成像素
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
     const st = planSwipe.current;
-    const now = performance.now();
-    // 一次轻扫后惯性还会来一串事件：锁住，事件不停就一直顺延，停 250ms 才放开
-    if (now < st.lockUntil) {
-      st.lockUntil = now + 250;
-      return;
-    }
-    st.acc += e.deltaX;
-    if (Math.abs(st.acc) >= 40) {
-      planStep(st.acc > 0 ? 1 : -1);
-      st.acc = 0;
-      st.lockUntil = now + 250;
-      st.swipedAt = now;
+    const r = planWheelStep(st.wheel, e.deltaX * unit, e.deltaY * unit, e.timeStamp);
+    st.wheel = r.state;
+    if (r.step) {
+      planStep(r.step);
+      st.swipedAt = performance.now();
     }
   };
-  const onPlanPointerDown = (e: React.PointerEvent) => {
+  const onPlanPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (planRows.length < 2 || e.button !== 0) return;
     planSwipe.current.startX = e.clientX;
+    // 捕获指针：在卡外松手也收得到 pointerup，不留半截状态让下一次点击误切
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onPlanPointerUp = (e: React.PointerEvent) => {
     const st = planSwipe.current;
     if (st.startX == null) return;
     const dx = e.clientX - st.startX;
     st.startX = null;
-    if (Math.abs(dx) >= 40) {
+    if (Math.abs(dx) >= PLAN_SWIPE_THRESHOLD) {
       planStep(dx < 0 ? 1 : -1);
       st.swipedAt = performance.now();
     }

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   planSwipeTarget,
+  planWheelStep,
+  PLAN_WHEEL_IDLE,
+  type PlanWheelState,
   formatPlanTimestamp,
   formatQuotaPoints,
   formatResetCountdown,
@@ -269,4 +272,53 @@ test("收起态滑动切换：前后各一家，到头不回绕", () => {
   assert.equal(planSwipeTarget(ids, null, 1), "official:claude-code");
   assert.equal(planSwipeTarget(ids, "gone", 1), "official:claude-code");
   assert.equal(planSwipeTarget([], null, 1), null);
+});
+
+/** 按 16ms 一帧喂一串横向位移，返回触发序列 */
+function feed(st: PlanWheelState, dxs: number[], t0: number, dy = 0) {
+  const steps: number[] = [];
+  let t = t0;
+  for (const dx of dxs) {
+    const r = planWheelStep(st, dx, dy, t);
+    st = r.state;
+    if (r.step) steps.push(r.step);
+    t += 16;
+  }
+  return { st, steps, t };
+}
+/** 一次轻扫：手指几帧 + 衰减惯性 */
+const flick = (sign: number) => [8, 14, 20, 16, 10, 7, 5, 4, 3, 2, 2, 1, 1, 1].map((v) => v * sign);
+
+test("一次轻扫连惯性只切一家", () => {
+  assert.deepEqual(feed(PLAN_WHEEL_IDLE, flick(1), 0).steps, [1]);
+  assert.deepEqual(feed(PLAN_WHEEL_IDLE, flick(-1), 0).steps, [-1]);
+});
+
+test("快扫时手指还在加速，不算扫了两次", () => {
+  assert.deepEqual(feed(PLAN_WHEEL_IDLE, [15, 25, 41, 60, 45, 30, 18, 10, 6, 3, 1], 0).steps, [1]);
+});
+
+test("惯性没停时反向轻扫立刻生效", () => {
+  const a = feed(PLAN_WHEEL_IDLE, flick(1).slice(0, 8), 0);
+  const b = feed(a.st, flick(-1), a.t);
+  assert.deepEqual([...a.steps, ...b.steps], [1, -1]);
+});
+
+test("惯性里同向再扫一次也算", () => {
+  const a = feed(PLAN_WHEEL_IDLE, flick(1).slice(0, 9), 0);
+  const b = feed(a.st, flick(1), a.t);
+  assert.deepEqual([...a.steps, ...b.steps], [1, 1]);
+});
+
+test("没滑够的残量不带进下一次", () => {
+  const a = feed(PLAN_WHEEL_IDLE, [10, 10], 0);
+  assert.deepEqual(a.steps, []);
+  // 停顿后再来一次同样小的轻扫：不该因为攒着的 20 而触发
+  assert.deepEqual(feed(a.st, [10, 10], a.t + 500).steps, []);
+  // 反向也不用先抵消残量
+  assert.deepEqual(feed(a.st, [-12, -12, -12], a.t + 500).steps, [-1]);
+});
+
+test("竖着滚页面不切", () => {
+  assert.deepEqual(feed(PLAN_WHEEL_IDLE, [5, 6, 7, 8, 9, 10], 0, 40).steps, []);
 });

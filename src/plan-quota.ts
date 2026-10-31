@@ -72,6 +72,59 @@ export function planSwipeTarget(
   return ids[Math.min(ids.length - 1, Math.max(0, at + dir))];
 }
 
+// ===== 收起态横向轻扫：按「一次手势」判定（2026-10-31 用户：时灵时不灵、反着滑有时不行） =====
+// 触控板一次轻扫 = 手指那几十毫秒的事件 + 松手后一长串衰减的惯性事件。旧版用「触发后锁 250ms、事件不停就顺延」
+// 挡惯性，又把小于阈值的位移一直攒着不清：惯性没停时反向轻扫被锁吞掉；上次没滑够的残量会带进下一次，
+// 同向变得过灵、反向要多滑一倍。改成每次手势各算各的，一次手势最多切一家。
+
+/** 一次手势累计横向位移到这个数（像素）才切 */
+export const PLAN_SWIPE_THRESHOLD = 30;
+/** 事件间隔超过它就算新手势（惯性事件约 16ms 一个，不会断这么久） */
+const SWIPE_GAP_MS = 120;
+
+export interface PlanWheelState {
+  /** 本次手势方向（1 / -1），0 = 还没有手势 */
+  dir: number;
+  x: number;
+  y: number;
+  fired: boolean;
+  lastT: number;
+  /** 上一个事件的横向幅度：惯性只会越来越小，衰减过后突然变大 = 手指又扫了一次 */
+  lastMag: number;
+  /** 本次手势的峰值幅度：手指还在加速时幅度也在涨，没衰减到峰值一半以下不算「又扫了一次」 */
+  peak: number;
+}
+
+export const PLAN_WHEEL_IDLE: PlanWheelState = { dir: 0, x: 0, y: 0, fired: false, lastT: -Infinity, lastMag: 0, peak: 0 };
+
+/** 喂一个 wheel 事件（像素、毫秒），返回新状态与要不要切（1 下一家 / -1 上一家 / 0 不切）。纯函数，时间显式传入 */
+export function planWheelStep(
+  st: PlanWheelState,
+  dx: number,
+  dy: number,
+  t: number,
+): { state: PlanWheelState; step: 1 | -1 | 0 } {
+  const mag = Math.abs(dx);
+  const sign = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const fresh =
+    st.dir === 0 ||
+    t - st.lastT > SWIPE_GAP_MS ||
+    // 反方向：手指往回扫了，不等惯性停（这是「反着滑不行」的根因）
+    (sign !== 0 && sign !== st.dir) ||
+    // 同方向、已切过、惯性已衰减过半后幅度明显回升：惯性里又扫了一次
+    (st.fired && mag > 4 && st.lastMag < st.peak * 0.5 && mag > st.lastMag * 1.6);
+  let next: PlanWheelState = fresh
+    ? { dir: sign, x: 0, y: 0, fired: false, lastT: t, lastMag: mag, peak: mag }
+    : { ...st, lastT: t, lastMag: mag, peak: Math.max(st.peak, mag) };
+  next = { ...next, x: next.x + dx, y: next.y + Math.abs(dy) };
+  if (next.fired || next.dir === 0) return { state: next, step: 0 };
+  // 横向为主才算（斜着滚页面不误切），按整次手势的累计判，不按单个事件
+  if (Math.abs(next.x) >= PLAN_SWIPE_THRESHOLD && Math.abs(next.x) > next.y) {
+    return { state: { ...next, fired: true }, step: next.x > 0 ? 1 : -1 };
+  }
+  return { state: next, step: 0 };
+}
+
 export function planWindowLabel(window: string): string {
   if (window === "five_hour") return "5 小时";
   if (window === "weekly") return "本周";
