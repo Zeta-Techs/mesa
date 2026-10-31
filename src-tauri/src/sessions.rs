@@ -3635,14 +3635,17 @@ fn grok_tail_state(lines: &[String]) -> &'static str {
     "unknown"
 }
 
-/// OpenCode 数据目录候选：OPENCODE_DB 优先；Windows 再探 %LOCALAPPDATA%\opencode
-/// 与 %APPDATA%\opencode；最后回落 unix 形态 ~/.local/share/opencode。
+/// OpenCode 数据目录候选：OPENCODE_DB 优先；再是 $XDG_DATA_HOME/opencode（OpenCode 按 XDG 规范取数据目录）；
+/// Windows 再探 %LOCALAPPDATA%\opencode 与 %APPDATA%\opencode；最后回落 unix 形态 ~/.local/share/opencode。
 pub(crate) fn opencode_db_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("OPENCODE_DB") {
         if !p.is_empty() {
             out.push(PathBuf::from(p));
         }
+    }
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        out.push(PathBuf::from(xdg).join("opencode").join("opencode.db"));
     }
     #[cfg(windows)]
     {
