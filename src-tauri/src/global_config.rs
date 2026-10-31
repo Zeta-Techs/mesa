@@ -707,8 +707,10 @@ pub(crate) fn patch_gemini_auth_only(existing: Option<&str>) -> Result<String, S
     to_pretty(&v)
 }
 
-/// OpenCode 全局写入（2026-10-30 口径）：
-/// - 只留这一个 Mesa 渠道：别的 `ccode` / `ccode-<短id>` 块（上几次设为全局留下的，各带一把明文密钥）撤掉；
+/// OpenCode 全局写入（2026-10-30 口径，2026-10-31 改「老对话要用的只加不删」）：
+/// - 别的 `ccode` / `ccode-<短id>` 块：密钥是 `{file:}` 引用且文件还在的留着（老对话还要用）；明文密钥的、
+///   引用的文件已不在的撤掉——后者留着整份配置加载失败（1.19.5 实测 `bad file reference … does not exist`）。
+///   认得出网关的老渠道由 extend_opencode_plans 按 `{file:}` 重写回来；
 /// - `model` / `small_model` 指向本渠道；这次没有就撤掉还指着 Mesa 旧渠道的那项（用户自己的不动）；
 /// - 不再写 `autoupdate: false`：那是 Mesa 启动时自己的事（env 关），不该改用户在外面用 OpenCode 的更新行为。
 /// JSONC 注释：读 `opencode.jsonc` 时剥掉注释，写回是严格 JSON（预览与备份照常）。
@@ -729,9 +731,11 @@ fn patch_opencode_config(
     }
     let map = ensure_obj(&mut v, &["provider"])?;
     let stale: Vec<String> = map
-        .keys()
-        .filter(|k| crate::provider_id::is_ccode_provider(k) && k.as_str() != provider_id)
-        .cloned()
+        .iter()
+        .filter(|(k, blk)| {
+            crate::provider_id::is_ccode_provider(k) && k.as_str() != provider_id && !opencode_key_file_alive(blk)
+        })
+        .map(|(k, _)| k.clone())
         .collect();
     for k in stale {
         map.remove(&k);
@@ -755,6 +759,132 @@ fn patch_opencode_config(
         }
     }
     to_pretty(&v)
+}
+
+/// 渠道块的密钥是 `{file:<路径>}` 引用且那个文件还在
+fn opencode_key_file_alive(blk: &Value) -> bool {
+    blk.pointer("/options/apiKey")
+        .and_then(|k| k.as_str())
+        .and_then(|k| k.strip_prefix("{file:"))
+        .and_then(|k| k.strip_suffix('}'))
+        .is_some_and(|p| Path::new(p).is_file())
+}
+
+/// OpenCode 对话里出现过的 Mesa 渠道与模型（只读 opencode.db 的 assistant 消息）
+fn opencode_thread_refs() -> Vec<(String, String)> {
+    let Some(db) = crate::sessions::opencode_db_candidates().into_iter().find(|p| p.is_file()) else {
+        return Vec::new();
+    };
+    let Ok(conn) = rusqlite::Connection::open_with_flags(
+        &db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(300));
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT DISTINCT json_extract(data, '$.providerID'), json_extract(data, '$.modelID') FROM message \
+         WHERE json_extract(data, '$.role') = 'assistant'",
+    ) else {
+        return Vec::new();
+    };
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)));
+    rows.map(|it| {
+        it.flatten()
+            .filter_map(|(p, m)| Some((p?, m.unwrap_or_default())))
+            .filter(|(p, _)| crate::provider_id::short_id_from_provider(p).is_some())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// 一条 OpenCode 绑定写成渠道块：密钥落 0600 文件、块里写 `{file:}`，按模型的参数与请求头同启动口径
+fn opencode_provider_plan(
+    home: &Path,
+    profile: &Profile,
+    key: Option<&str>,
+) -> Result<(Value, Option<PlannedWrite>), String> {
+    let pid = profile.provider_name();
+    let model = profile.models.first().map(String::as_str);
+    let (key_ref, key_plan) = match key {
+        Some(k) => {
+            let kp = opencode_key_path(home, &pid).ok_or("无法确定平台配置目录")?;
+            let r = format!("{{file:{}}}", kp.to_string_lossy());
+            (Some(r), Some(PlannedWrite { tag: "opencode-key", path: kp, content: k.to_string() }))
+        }
+        None => (None, None),
+    };
+    let mut provider = agents::opencode_provider_json(profile, key_ref.as_deref(), model);
+    overlay_opencode_per_model(&mut provider, profile);
+    // 请求头写 {env:VAR}：值取外部终端里的同名变量，不落密文
+    if !profile.request_policy.header_env.is_empty() {
+        let headers: serde_json::Map<String, Value> = profile
+            .request_policy
+            .header_env
+            .iter()
+            .map(|(h, var)| (h.clone(), json!(format!("{{env:{var}}}"))))
+            .collect();
+        provider["options"]["headers"] = Value::Object(headers);
+    }
+    Ok((provider, key_plan))
+}
+
+/// OpenCode 续聊层（2026-10-31，同 Codex「切全局只动默认」）：对话里出现过、或磁盘上已有的别的 Mesa 渠道，
+/// 认得出网关的按 `{file:}` 重写（明文块因此改成引用，老对话用过、绑定里已没有的模型补回去）。
+/// 只进预览与写入，不进漂移比对（对象按键子集比，多出的渠道块本来就不算漂移）
+fn extend_opencode_plans(
+    home: &Path,
+    plans: &mut Vec<PlannedWrite>,
+    profiles: &[Profile],
+    current: &Profile,
+) -> Result<(), String> {
+    let Some(idx) = plans.iter().position(|p| p.tag == "opencode.json" || p.tag == "opencode.jsonc") else {
+        return Ok(());
+    };
+    let current_pid = current.provider_name();
+    let refs = opencode_thread_refs();
+    let disk: Vec<String> = read_existing(&plans[idx].path)?
+        .and_then(|t| serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(&t)).ok())
+        .and_then(|v| v.get("provider").and_then(|p| p.as_object()).map(|m| m.keys().cloned().collect()))
+        .unwrap_or_default();
+    let mut targets: Vec<String> = refs.iter().map(|(p, _)| p.clone()).chain(disk).collect();
+    targets.sort();
+    targets.dedup();
+    targets.retain(|p| crate::provider_id::short_id_from_provider(p).is_some() && *p != current_pid);
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let mut v: Value = serde_json::from_str(&plans[idx].content).map_err(|e| e.to_string())?;
+    let mut extra = Vec::new();
+    for pid in targets {
+        let Some(binding) = profiles.iter().find(|p| {
+            p.agent == "opencode"
+                && p.account_type != crate::profiles::AccountType::Official
+                && !p.no_auth
+                && p.base_url.is_some()
+                && p.gateway_id.as_deref().is_some_and(|g| crate::provider_id::gateway_matches_provider(g, &pid))
+        }) else {
+            continue;
+        };
+        let Ok(Some(key)) = crate::profiles::get_key_for_profile(binding) else {
+            continue;
+        };
+        let mut b = binding.clone();
+        b.provider_override = Some(pid.clone());
+        for (_, m) in refs.iter().filter(|(p, m)| *p == pid && !m.is_empty()) {
+            if !b.models.contains(m) {
+                b.models.push(m.clone());
+            }
+        }
+        let (provider, key_plan) = opencode_provider_plan(home, &b, Some(&key))?;
+        ensure_obj(&mut v, &["provider"])?.insert(pid, provider);
+        extra.extend(key_plan);
+    }
+    plans[idx].content = to_pretty(&v)?;
+    for p in extra {
+        upsert_plan(plans, p.tag, p.path, p.content);
+    }
+    Ok(())
 }
 
 /// OpenCode 密钥落 Mesa 自己的 0600 文件，opencode.json 里写 `{file:<路径>}` 引用（官方 config 文档的变量替换），
@@ -2202,25 +2332,9 @@ fn plan_writes(
         "opencode" => {
             let pid = profile.provider_name();
             // 密钥改写成 {file:…} 引用（文件随同一批事务写，0600）
-            let key_ref = match key {
-                Some(k) => {
-                    let kp = opencode_key_path(home, &pid).ok_or("无法确定平台配置目录")?;
-                    push("opencode-key", kp.clone(), k.to_string());
-                    Some(format!("{{file:{}}}", kp.to_string_lossy()))
-                }
-                None => None,
-            };
-            let mut provider = agents::opencode_provider_json(profile, key_ref.as_deref(), model);
-            overlay_opencode_per_model(&mut provider, profile);
-            // 请求头写 {env:VAR}：值取外部终端里的同名变量，不落密文
-            if !profile.request_policy.header_env.is_empty() {
-                let headers: serde_json::Map<String, Value> = profile
-                    .request_policy
-                    .header_env
-                    .iter()
-                    .map(|(h, var)| (h.clone(), json!(format!("{{env:{var}}}"))))
-                    .collect();
-                provider["options"]["headers"] = Value::Object(headers);
+            let (provider, key_plan) = opencode_provider_plan(home, profile, key)?;
+            if let Some(kp) = key_plan {
+                push(kp.tag, kp.path, kp.content);
             }
             // 全局目录按 config.json → opencode.json → opencode.jsonc 合并、后者盖前者（OpenCode 自己也优先写 .jsonc）：
             // 有 .jsonc 就写它，否则写 opencode.json——只写 opencode.json 时 .jsonc 里的 model / provider 会把它盖掉
@@ -3286,6 +3400,9 @@ pub fn preview_profile_global(
     if profile.agent == "codex" {
         extend_codex_plans(&home, &mut plans, &store.list()?, Some(&profile))?;
     }
+    if profile.agent == "opencode" {
+        extend_opencode_plans(&home, &mut plans, &store.list()?, &profile)?;
+    }
     Ok(preview_plans(&home, &profile.agent, &plans, skipped, override_notes_with(&profile.agent, &shell_has)))
 }
 
@@ -3300,7 +3417,7 @@ pub async fn apply_profile_global(
     let validate = validate.unwrap_or(true);
     let profile = profile_for_write(&store, &profile_id)?;
     // Codex 续聊层要认出老对话的网关（codex_continuity）
-    let all_profiles = if profile.agent == "codex" { store.list()? } else { Vec::new() };
+    let all_profiles = if matches!(profile.agent.as_str(), "codex" | "opencode") { store.list()? } else { Vec::new() };
     if is_official(&profile) {
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = GLOBAL_CONFIG_MUTEX
@@ -3337,6 +3454,9 @@ pub async fn apply_profile_global(
         let mut plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
         if profile.agent == "codex" {
             extend_codex_plans(&home, &mut plans, &all_profiles, Some(&profile))?;
+        }
+        if profile.agent == "opencode" {
+            extend_opencode_plans(&home, &mut plans, &all_profiles, &profile)?;
         }
         let backups_dir = backups_root()?.join(&profile.agent);
         let files = apply_plans(&backups_dir, &home, &plans)?;
@@ -4750,6 +4870,30 @@ trust_level = "trusted"
         assert!(v.get("small_model").is_none(), "指着 Mesa 旧渠道的小模型撤掉");
         assert!(v.get("autoupdate").is_none(), "不改用户自己用 OpenCode 时的更新行为");
         assert_eq!(v["theme"], "dark");
+    }
+
+    #[test]
+    fn opencode_keeps_old_mesa_providers_whose_key_file_exists() {
+        // 老对话还要用：引用着的密钥文件在就留；文件没了的整份配置会加载失败（1.19.5 实测），撤
+        let home = tmpdir("oc-keep");
+        let alive = home.join("alive.key");
+        fs::write(&alive, "sk-a").unwrap();
+        let existing = json!({
+            "provider": {
+                "ccode-alive": {"options": {"apiKey": format!("{{file:{}}}", alive.to_string_lossy())}},
+                "ccode-gone": {"options": {"apiKey": format!("{{file:{}}}", home.join("gone.key").to_string_lossy())}},
+                "ccode-plain": {"options": {"apiKey": "sk-plain"}}
+            }
+        })
+        .to_string();
+        let p = profile("opencode");
+        let provider = agents::opencode_provider_json(&p, None, Some("m1"));
+        let out = patch_opencode_config(Some(&existing), provider, Some("m1"), None, "ccode-new2").unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let keys: Vec<&String> = v["provider"].as_object().unwrap().keys().collect();
+        assert!(keys.iter().any(|k| *k == "ccode-alive"));
+        assert!(!keys.iter().any(|k| *k == "ccode-gone" || *k == "ccode-plain"));
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]

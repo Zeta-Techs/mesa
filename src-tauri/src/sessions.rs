@@ -3637,7 +3637,7 @@ fn grok_tail_state(lines: &[String]) -> &'static str {
 
 /// OpenCode 数据目录候选：OPENCODE_DB 优先；Windows 再探 %LOCALAPPDATA%\opencode
 /// 与 %APPDATA%\opencode；最后回落 unix 形态 ~/.local/share/opencode。
-fn opencode_db_candidates() -> Vec<PathBuf> {
+pub(crate) fn opencode_db_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("OPENCODE_DB") {
         if !p.is_empty() {
