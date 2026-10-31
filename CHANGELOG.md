@@ -13,7 +13,7 @@
 - 修复：OpenCode 配置目录里有 `opencode.jsonc` 时，「设为全局默认」写的 `opencode.json` 会被它盖掉、等于没切；现在写进 `opencode.jsonc`。密钥不再明文写进 OpenCode 的配置文件，改成引用 Mesa 自己保存的一份（只有你能读）；以前几次设为全局留下的旧渠道和密钥一并清掉，也不再关掉 OpenCode 的自动更新。连接里指定的后台小模型现在也写进去。
 - 修复：Kimi 旧版（`~/.kimi`）设为全局时缺了必填的上下文长度。kimi 协议的连接，思考档现在也写进全局配置。切回官方账号时，Mesa 渠道里留着的明文密钥一并撤掉。
 - 修复：Claude Code「设为全局默认」后，你在外面用 `/model`、`/effort` 换的模型和思考档，下次开新会话又被改回去；现在 Mesa 写的是你自己的默认设置（`model`、`effortLevel`），你在外面改了就以你改的为准。连接里模型不到四个时，后台小任务（会话标题等）也改用这条连接的模型，不再拿官方模型名去请求中转而失败。上一条连接留下的地址、备用模型（`fallbackModel`）一并清掉。
-- 修复：CodeBuddy「设为全局默认」换到没填地址或模型的连接时，上一条连接的地址和模型还留着。现在连接里的模型都会登记进 CodeBuddy 的模型列表（`models.json`），外面 `/model` 能选到；密钥只引用 settings.json 里那一把，不另存一份。
+- 修复：CodeBuddy「设为全局默认」换到没填地址或模型的连接时，上一条连接的地址和模型还留着。现在连接里的模型都会登记进 CodeBuddy 的模型列表（`models.json`），外面 `/model` 能选到；模型列表里的密钥直接写这条连接的那把（与 settings.json 里的同一把），不用变量引用——CodeBuddy 读模型列表时常常还没拿到 settings.json 里的变量，引用会原样当密钥发出去。
 - 修复：Qwen 切回官方账号时 Mesa 以前把认证方式改成 Qwen OAuth，但 Qwen OAuth 免费档 2026-04-15 已停用，切过去用不了；现在只撤掉 Mesa 写的连接，Qwen 进门让你选 Coding Plan 或 API Key。用 Qwen 官方账号启动时，Mesa 直接说明这一点，不再拉起一个用不了的会话。
 - 修复：Qwen「设为全局默认」后，项目文件夹里的 `.env` 只要有 `OPENAI_API_KEY`，就会把 Mesa 写的密钥顶掉、改走别处；现在用 Mesa 专用的变量名。思考档和已知的上下文长度也一起写进去。
 - 修复：Gemini 切回官方账号时不再一律改成「用 Google 账号登录」；用 Vertex 或自己 AI Studio 密钥的不会被改掉。Gemini「设为全局默认」现在也把温度、top_p、输出上限按模型写进去，并把默认模型另写进 settings.json（`.gemini/.env` 在不少文件夹里读不到）。

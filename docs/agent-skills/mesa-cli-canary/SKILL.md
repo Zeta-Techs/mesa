@@ -117,7 +117,8 @@ git diff scripts/cli-canary/baseline/
 
 | 现象 | 多半是 | 怎么查 |
 |---|---|---|
-| 模型对、密钥不对（末 8 位像 `API_KEY}`） | 配置里的变量引用没展开 | 先确认临时 HOME 不在系统临时目录（CodeBuddy 在 `/var/folders/…/T` 下不展开 `${VAR}`，`global_phase` 已建在 `~/.mesa-canary-global/`）；再查这家文档的变量引用写法变了没有 |
+| 模型对、密钥不对（末 8 位像 `API_KEY}`） | 配置里的变量引用没展开 | 引用靠 CLI 内部时序的不可靠（CodeBuddy 的 `${VAR}` 早于 settings env 灌入展开，2026-10-31 起 Mesa 改写明文，见 matrix §7）；连跑几次看是不是时好时坏，时好时坏就别再用引用；稳定不展开再查这家文档的变量引用写法变了没有 |
+| Windows 上 Codex 两项都不过、日志里是本机模型 | 只改 `USERPROFILE` 时 Codex 读真实 `~/.codex` | `global_phase` 给 Codex 钉 `CODEX_HOME`；新增 Rust 写的 CLI 也要钉它自己的搬迁变量 |
 | 一个请求都没到假网关、`exit timeout` | CLI 没走配置里的地址，或被代理挡了 | 看 `global-run.log`：报没登录 = 密钥位置不认了（Grok 1.0.70 不读顶层 `api_key` 的先例）；什么都没有 = 先确认 `NO_PROXY=127.0.0.1,localhost` 在（Grok 带断网代理） |
 | 请求到了但模型是别的 | 配置优先级 / 默认模型字段变了 | 对照这家官方配置文档（「发版前」一节的来源表）找新的默认模型键；Gemini 再看 `~/.gemini/.env` 是否因目录信任没读 |
 | `global-write.log` 里测试失败 | Mesa 写计划本身报错 | 按报错修 `global_config.rs`，不是 CLI 变了 |

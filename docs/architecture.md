@@ -458,6 +458,13 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-10-31 · CodeBuddy 设为全局：models.json 直接写密钥，收窄「能引用不写明文」
+
+Windows 复核九条写入规则时，金丝雀全局层查出 CodeBuddy `models.json` 的 `${CODEBUDDY_API_KEY}` 常原样发出（本机 2.176 七次六次）。
+读 bundle 定性：settings.json 的 `env` 在每轮 Agent 运行前才灌进进程环境，models.json 加载时就展开 `${VAR}`，先后不定，三平台都会
+（10-30 记的「macOS 系统临时目录下不展开」是同一竞争）。用户拍板：`apiKey` 直接写这把密钥（同目录 settings.json 本就存同一把明文，不新增暴露面），
+没密钥的连接仍写引用；第 8 条收窄为「引用经真 CLI 实测可靠才算能引用」。细则 profiles.md §12 第 3、8 条与 CodeBuddy 条，matrix §7。
+
 ### 2026-10-30 · 连接弹层：Claude 显式别名映射表 + 生效预览，不做九个页面
 
 用户贴 cc-switch 的 Claude「模型映射」表，问要不要做成这样、每家连接页要不要单独设计、以后怎么保持每家正确。设计稿 `docs/design-connection-agent-forms.md`，
