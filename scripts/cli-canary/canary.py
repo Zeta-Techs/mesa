@@ -19,7 +19,7 @@
 退出码：0 = 没变化且检查全过；1 = 有变化或检查没过（看 <out>/report.md）；2 = 环境问题没跑起来。
 不用任何真实密钥：请求只到本机假网关；临时 HOME 不拷本机配置（用户的 MCP / 插件会改工具清单，各台机器才可比）。
 """
-import argparse, json, os, re, shutil, socket, subprocess, sys, tempfile, time, urllib.request
+import argparse, json, os, re, shutil, socket, stat, subprocess, sys, tempfile, time, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 E2E = os.path.join(ROOT, "scripts", "e2e-model-routing")
@@ -383,7 +383,15 @@ def global_phase(agent, gw, adir):
     time.sleep(0.5)
     reqs = gw.since(mark)
     model_hit = [r for r in reqs if (r.get("body") or {}).get("model") == "e2e-global" or "/models/e2e-global" in r.get("path", "")]
-    shutil.rmtree(home, ignore_errors=True)
+    # Windows：临时 HOME 里有 git 写的只读对象文件（Codex 插件克隆、OpenCode 快照），rmtree 删不掉只读文件，
+    # 不处理就每跑一次在用户目录里留一份（2026-10-31 本机实测）。删不掉的先去掉只读再删
+    def _force(func, path, _exc):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except OSError:
+            pass  # 仍被占用的留着，不让清理拖垮这一轮核对
+    shutil.rmtree(home, onerror=_force)
     try:
         os.rmdir(parent)
     except OSError:
