@@ -371,7 +371,7 @@ fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Opt
     }
     let head_len = out.len();
     // 头部以外的条目都只为老对话：渠道跟着对话走，新对话里选它们照样发给当前默认连接（2026-10-31 用户实测：
-    // 新对话选「ChatGPT · gpt-5.6-terra」走的是中转）。显示名一律标「老对话」，不让人以为换了账号
+    // 新对话选「ChatGPT · gpt-5.6-terra」走的是中转）。所以都标隐藏（见函数尾），显示名再标「老对话」兜底
     // 中转默认下有官方老对话：官方模型整组带上（客户端在官方对话里还能换别的官方模型）
     if !official && inp.refs.iter().any(|r| r.provider == OFFICIAL) {
         for e in &inp.official {
@@ -416,6 +416,13 @@ fn build_catalog(head: &Head, doc: &toml_edit::DocumentMut, inp: &Inputs) -> Opt
     }
     if out.is_empty() {
         return None;
+    }
+    // 老对话的条目一律隐藏：客户端新建对话的模型列表只列当前默认的（`model/list` 不带 includeHidden 就不给隐藏项），
+    // 老对话照样认得自己的模型（2026-10-31 用户在客户端实测：官方老对话、GLM 老对话都能接着聊）。
+    // 客户端的模型列表全局只有一份、不分对话（app-server 协议 ModelListParams 只有分页与 includeHidden），
+    // 每渠道各配 model_catalog_url 也分不开，隐藏是能把「新对话选到老模型、发去当前连接」挡住的办法
+    for e in out.iter_mut().skip(head_len) {
+        e["visibility"] = Value::from("hide");
     }
     Some(out)
 }
@@ -693,6 +700,10 @@ mod tests {
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
         assert_eq!(slugs(out.catalog.as_deref().unwrap()), ["ds", "gpt-6-luna", "gpt-5.6-terra"]);
         assert_eq!(cat["models"][1]["display_name"].as_str(), Some("官方老对话 · GPT-6-LUNA"));
+        // 当前连接的照常列出，老对话的隐藏：新建对话选不到，老对话照样认得
+        assert!(cat["models"][0].get("visibility").is_none());
+        assert_eq!(cat["models"][1]["visibility"].as_str(), Some("hide"));
+        assert_eq!(cat["models"][2]["visibility"].as_str(), Some("hide"));
     }
 
     #[test]
@@ -737,6 +748,9 @@ mod tests {
         assert_eq!(slugs(out.catalog.as_deref().unwrap()), ["gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "glm"]);
         let cat: Value = serde_json::from_str(out.catalog.as_deref().unwrap()).unwrap();
         assert!(cat["models"][2]["display_name"].as_str().unwrap().starts_with("relayB 老对话 · "));
+        // 官方默认：官方模型照原样列出，中转老对话的隐藏
+        assert_eq!(cat["models"][0]["visibility"].as_str(), Some("list"));
+        assert_eq!(cat["models"][2]["visibility"].as_str(), Some("hide"));
         assert!(out.config.contains("model_catalog_json"));
         assert!(!out.config.contains("model_provider ="), "官方默认不写 model_provider");
     }
