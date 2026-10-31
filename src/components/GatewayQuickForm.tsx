@@ -1,3 +1,4 @@
+import { probeHint } from "../connection-form";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
@@ -379,13 +380,3 @@ function customGatewayName(url: string): string {
 }
 
 const MANUAL = "__manual__";
-
-/** 基础请求失败时补一句下一步：401/403 多是密钥，404 多是地址或模型名，5xx 多是这个模型在服务商那边没有可用线路 */
-function probeHint(message: string): string {
-  const status = /HTTP (\d{3})/.exec(message)?.[1];
-  if (!status) return "";
-  if (status === "401" || status === "403") return "。检查 API Key 是否填对、是否属于这家服务商。";
-  if (status === "404") return "。检查地址和模型名是否和服务商文档一致。";
-  if (status.startsWith("5") || status === "400") return "。可能是这个模型在服务商那边用不了，换一个模型再试。";
-  return "";
-}

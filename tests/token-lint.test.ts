@@ -65,7 +65,6 @@ test("rounded-[Npx] 只允许 ≤4px 的微标记，且仅限 ≤14px 的图标/
   // 14px 的 provider 图标取 3px、16px 勾选框取 4px。判据是尺寸与用途，不是文件位置。
   const allowed = [
     "components/ProjectGroup.tsx", // 步进器 1px 斜块 / 菱形
-    "pages/ProfilesPage.tsx", // 16px 勾选框
   ];
   const found = hits(/rounded-\[\d+(?:\.\d+)?px\]/);
   const extra = found.filter(

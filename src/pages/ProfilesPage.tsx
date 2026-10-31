@@ -49,6 +49,7 @@ import { DepInstallLog, useDepInstall } from "../dep-install";
 import { MODEL_SWITCH } from "../model-switch";
 import { explicitClaudeRoles, normalizeRoleModels, rolesFor } from "../role-models";
 import { ClaudeModelMapping } from "../components/ClaudeModelMapping";
+import { gatewayMissingSlot, probeHint, saveBlocker } from "../connection-form";
 import { EffectPreview } from "../components/EffectPreview";
 import { groupModelsByVendor, vendorOf } from "../model-vendors";
 import { interactiveUpdatePrefill } from "../update-routing";
@@ -185,6 +186,12 @@ export function ProfileModal({
   });
   // 一键接入：选中的 provider 预设（含完整槽位与推荐模型）；null = 手填
   const [appliedPreset, setAppliedPreset] = useState<ProviderPreset | null>(null);
+  // 服务商下拉显示的是哪家（2026-10-31：原先选完回到占位字，看不出套用了谁）；手改地址后清空
+  const [presetName, setPresetName] = useState("");
+  // 「同时绑到」部分失败：网关已建好，再点保存只补绑还没成功的几家，不再新建网关（2026-10-31 审查：原先重试会多建一个）
+  const [retry, setRetry] = useState<{ gatewayId: string; done: string[] } | null>(null);
+  // 换 Agent 时清掉了预设带来的地址：提示一句，免得以为丢了
+  const [agentSwitchNote, setAgentSwitchNote] = useState<string | null>(null);
   // 「同时绑到」勾选的额外 Agent：保存时用同一份网关一次建多条绑定
   const [extraAgents, setExtraAgents] = useState<string[]>([]);
   const [bindMode, setBindMode] = useState<"new" | "existing">(
@@ -216,6 +223,15 @@ export function ProfileModal({
     } as RequestPolicy,
     apiKey: "",
   });
+  // 打开时的表单快照：去网关库前判断有没有没保存的修改
+  const [formSnapshot] = useState(() => JSON.stringify(form));
+  const dirty = JSON.stringify(form) !== formSnapshot;
+  async function leaveToGateway(gatewayId: string) {
+    if (!onOpenGateway) return;
+    if (dirty && !(await confirmDialog("这条连接还有没保存的修改，去网关库会丢掉。仍要去？", { confirmText: "去网关库" }))) return;
+    onOpenGateway(gatewayId);
+    onClose();
+  }
   const [headerEnvText, setHeaderEnvText] = useState(
     Object.entries(initial?.requestPolicy?.headerEnv ?? {})
       .map(([k, v]) => `${k}=${v}`)
@@ -482,13 +498,29 @@ export function ProfileModal({
         text: `✓ 连通 · ${res.models.length} 个模型 · ${Date.now() - started}ms${autoNote}`,
       });
     } catch (e) {
-      setTestResult({ ok: false, text: `✗ ${String(e)}` });
-      setFetchError(String(e));
+      // 只在密钥框下报一次，补「下一步怎么改」（模型区不再重复同一条）
+      setTestResult({ ok: false, text: `✗ ${String(e)}${probeHint(String(e))}` });
+      setFetchError(null);
       setFetchedModels(null);
       setFetchedAt(null);
       setFetchedCapabilityCount(0);
     } finally {
       setFetching(false);
+    }
+  }
+
+  // 网关没给能力字段时就地下载公共能力库（原先要离开弹层去页头 ⋯）
+  const [capDbBusy, setCapDbBusy] = useState(false);
+  async function downloadCapDb() {
+    setCapDbBusy(true);
+    try {
+      await invoke("download_model_db");
+      setFetchedCapabilityCount((n) => n || 1);
+      toast("模型能力库已下载，上下文长度和思考能力按它认", "success");
+    } catch (e) {
+      toast(`能力库下载失败：${String(e)}`, "warning");
+    } finally {
+      setCapDbBusy(false);
     }
   }
 
@@ -550,6 +582,39 @@ export function ProfileModal({
         : null,
     };
     try {
+      if (retry) {
+        // 补绑：网关已在上一次保存时建好，只给还没成功的几家建绑定
+        const targets = [
+          { agent: input.agent, protocol: input.protocol, main: true },
+          ...extraBindTargets(input.agent, input.protocol, extraAgents)
+            .filter((t) => t.ok)
+            .map((t) => ({ agent: t.agent, protocol: t.protocol, main: false })),
+        ].filter((t) => !retry.done.includes(t.agent));
+        const done = [...retry.done];
+        try {
+          for (const t of targets) {
+            await bindGateway({
+              agent: t.agent,
+              name: t.main ? input.name : undefined,
+              gatewayId: retry.gatewayId,
+              kind: "api",
+              protocol: t.protocol,
+              apiBackend: t.main ? input.apiBackend : null,
+              models: input.models,
+              roleModels: t.main ? input.roleModels : undefined,
+              extraEnv: t.main ? input.extraEnv : {},
+            });
+            done.push(t.agent);
+          }
+        } catch (err) {
+          setRetry({ gatewayId: retry.gatewayId, done });
+          setError(`还有绑定没成功：${String(err)}。网关已保存，改好后再点「补绑剩下的」。`);
+          return;
+        }
+        onSaved?.(input.agent, input.name);
+        onClose();
+        return;
+      }
       if (usesExisting) {
         if (!bindGatewayId) throw new Error("请选择网关");
         const bind: BindingInput = {
@@ -601,6 +666,7 @@ export function ProfileModal({
           })),
           apiKey: input.apiKey,
         });
+        const done: string[] = [];
         try {
           await bindGateway({
             agent: input.agent,
@@ -613,6 +679,7 @@ export function ProfileModal({
             roleModels: input.roleModels,
             extraEnv: input.extraEnv,
           });
+          done.push(input.agent);
           for (const t of targets) {
             await bindGateway({
               agent: t.agent,
@@ -622,12 +689,12 @@ export function ProfileModal({
               models: input.models,
               extraEnv: {},
             });
+            done.push(t.agent);
           }
         } catch (err) {
-          // 网关已保存：绑定失败不回滚网关，指路网关库补绑，避免重试再建一个重复网关
-          setError(
-            `部分绑定失败：${String(err)}。网关已保存，失败的 Agent 可在网关库里补绑。`,
-          );
+          // 网关已保存：绑定失败不回滚网关；记下网关与已成功的几家，再点保存只补绑剩下的（不重复建网关）
+          setRetry({ gatewayId: gw.id, done });
+          setError(`部分绑定失败：${String(err)}。网关已保存，改好后点「补绑剩下的」。`);
           return;
         }
         onSaved?.(input.agent, input.name);
@@ -643,6 +710,22 @@ export function ProfileModal({
       setSaving(false);
     }
   }
+
+  // 先选网关、后换 Agent：选中的网关可能没有新 Agent 要的协议地址
+  const pickedMissing =
+    usesExisting && !retry && bindGatewayId
+      ? gatewayMissingSlot(gateways.find((g) => g.id === bindGatewayId)?.slots ?? {}, form.agent)
+      : null;
+  const blocker =
+    saveBlocker({
+      accountType: form.accountType,
+      usesExisting: usesExisting && !retry,
+      gatewayPicked: Boolean(bindGatewayId),
+      newGateway: showGatewayFields && !retry,
+      baseUrl: form.baseUrl,
+      name: effectiveName,
+    }) ?? (pickedMissing ? `选中的网关缺 ${pickedMissing} 地址，换一个网关或去网关库补` : null);
+  const editGateway = initial?.gatewayId ? gateways.find((g) => g.id === initial.gatewayId) : undefined;
 
   return (
     <Modal
@@ -662,17 +745,25 @@ export function ProfileModal({
       contentClassName="flex-1 overflow-y-auto overscroll-contain -mx-1 px-1"
       footer={
         <>
+          {/* 还缺什么 / 保存失败写在按钮左边常驻（原先禁用原因只在悬停里、失败提示在表单最底下常滚出视野） */}
+          {(error || blocker) && (
+            <span
+              className={`mr-auto min-w-0 flex-1 text-xs ${error ? "text-err-text" : "text-l3"} line-clamp-2`}
+              title={error ?? undefined}
+            >
+              {error ?? blocker}
+            </span>
+          )}
           <button type="button" onClick={onClose} className={secondaryActionClass}>
             取消
           </button>
           <button
             type="submit"
             form={formId}
-            disabled={saving || !effectiveName}
-            title={effectiveName ? undefined : "先给这条连接起个名字"}
+            disabled={saving || Boolean(blocker)}
             className={primaryActionClass}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "保存中…" : retry ? "补绑剩下的" : "保存"}
           </button>
         </>
       }
@@ -699,30 +790,42 @@ export function ProfileModal({
               setTestResult(null);
               setFetchError(null);
               setFetchedModels(null);
-              // 换 Agent = 换协议语境：预设与「同时绑到」的勾选都要重选
+              // 换 Agent = 换协议语境：预设与「同时绑到」的勾选都要重选；预设填的地址是给上一家协议的，一并清空
+              if (appliedPreset && agent !== form.agent) {
+                setForm((f) => ({ ...f, baseUrl: "" }));
+                setAgentSwitchNote("换了 Agent，服务商预设填的地址已清空，重新选服务商或填地址");
+              } else {
+                setAgentSwitchNote(null);
+              }
               setAppliedPreset(null);
+              setPresetName("");
               setExtraAgents([]);
             }}
           />
         </label>
         )}
 
+        {/* 编辑时先说清用的是哪个网关（地址、密钥、逐模型参数都在那边改）；有没保存的修改，去之前先问 */}
         {initial?.gatewayId && (
-          <p className="mb-3 text-xs text-l3">
-            端点与密钥在网关库改。
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-hairline px-3 py-2 text-xs">
+            <span className="min-w-0 flex-1">
+              <span className="text-l3">网关 </span>
+              <span className="font-medium text-l1">{editGateway?.name ?? "（已删除）"}</span>
+              {editGateway && (
+                <span className="text-l3">
+                  {" · "}
+                  {gatewayPickerRows([editGateway])[0]?.detail}
+                  {editGateway.keyHint ? ` · 密钥 ${editGateway.keyHint}` : ""}
+                </span>
+              )}
+              <span className="mt-0.5 block text-micro text-l3">地址、密钥和每个模型的思考档 / 温度在网关库改</span>
+            </span>
             {onOpenGateway && (
-              <button
-                type="button"
-                className="ml-1 text-cta hover:underline"
-                onClick={() => {
-                  onOpenGateway(initial.gatewayId!);
-                  onClose();
-                }}
-              >
-                打开网关库
+              <button type="button" className={`${rowActionClass} shrink-0`} onClick={() => void leaveToGateway(initial.gatewayId!)}>
+                在网关库改
               </button>
             )}
-          </p>
+          </div>
         )}
         {officialSupported[form.agent] && !initial && (
           <div className="mb-3">
@@ -772,26 +875,33 @@ export function ProfileModal({
               <ul className="max-h-48 space-y-0.5 overflow-auto" aria-label="已有网关">
                 {gatewayPickerRows(gateways).map((row) => {
                   const selected = bindGatewayId === row.id;
+                  const gw = gateways.find((g) => g.id === row.id);
+                  // 没填这家 Agent 要的协议地址：灰掉并写明缺什么（原先要到保存才报错）
+                  const missing = gw ? gatewayMissingSlot(gw.slots, form.agent) : null;
                   return (
                     <li key={row.id}>
                       <button
                         type="button"
                         aria-pressed={selected}
-                        className={`flex w-full flex-col rounded-md px-2.5 py-1.5 text-left ${
+                        disabled={Boolean(missing)}
+                        className={`flex w-full flex-col rounded-md px-2.5 py-1.5 text-left disabled:cursor-not-allowed disabled:opacity-50 ${
                           selected ? "bg-seg-sel text-l1" : "text-l2 hover:bg-hover hover:text-l1"
                         }`}
                         onClick={() => {
                           setBindGatewayId(row.id);
-                          const gw = gateways.find((g) => g.id === row.id);
-                          // 名称不在这里改：没手改过就按所选网关自动起（effectiveName）
-                          if (gw) setForm((f) => ({ ...f, models: [], accountType: "api" }));
+                          // 名称不在这里改：没手改过就按所选网关自动起（effectiveName）。
+                          // 模型默认选目录里第一个能对话的（同新建网关「验证并获取」）：空名单 = 启动时不注入模型，用 CLI 自己的默认
+                          const first = gw ? splitChatModels(gw.models.map((m) => m.id)).chat[0] : undefined;
+                          if (gw) setForm((f) => ({ ...f, models: first ? [first] : [], accountType: "api" }));
                           setPickerOpen(Boolean(gw && gw.models.length > 0));
                           setPickerFilter("");
                           setOpenVendors(new Set());
                         }}
                       >
                         <span className="truncate text-sm font-medium">{row.name}</span>
-                        <span className="truncate text-micro text-l4">{row.detail}</span>
+                        <span className="truncate text-micro text-l3">
+                          {missing ? `缺 ${missing} 地址，${AGENTS.find((a) => a.id === form.agent)?.label ?? form.agent} 用不了 · 去网关库补` : row.detail}
+                        </span>
                       </button>
                     </li>
                   );
@@ -809,7 +919,7 @@ export function ProfileModal({
           if (agentPresets.length === 0) {
             const reason = NO_PRESET_REASON[form.agent];
             return reason ? (
-              <p className="mb-3 text-xs text-l4">{reason}</p>
+              <p className="mb-3 text-xs text-l3">{reason}</p>
             ) : null;
           }
           return (
@@ -817,8 +927,8 @@ export function ProfileModal({
             <span className="mb-1 block text-xs text-l3">服务商</span>
             <MenuSelect
               aria-label="服务商"
-              value=""
-              placeholder="选一家服务商，自动填地址和推荐模型…"
+              value={presetName}
+              placeholder={form.baseUrl.trim() ? "自定义地址（也可以再选一家服务商）" : "选一家服务商，自动填地址和推荐模型…"}
               options={agentPresets.map((p) => ({
                 value: p.name,
                 label: `${p.name}${p.provider.models?.length ? " · 含推荐模型" : ""}${
@@ -835,6 +945,8 @@ export function ProfileModal({
                 const preset = agentPresets.find((p) => p.name === name);
                 if (preset) {
                   setAppliedPreset(preset.provider);
+                  setPresetName(preset.name);
+                  setAgentSwitchNote(null);
                   setForm({
                     ...form,
                     baseUrl: preset.baseUrl,
@@ -853,6 +965,7 @@ export function ProfileModal({
           </label>
           );
         })()}
+        {agentSwitchNote && <p className="mb-2 text-xs text-warn-text">{agentSwitchNote}</p>}
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">地址</span>
           <input
@@ -861,15 +974,17 @@ export function ProfileModal({
             value={form.baseUrl}
             onChange={(e) => {
               setForm({ ...form, baseUrl: e.target.value });
+              setAgentSwitchNote(null);
               // 手改地址即脱离预设推荐语境，避免「验证并获取」再按旧预设改写名单
               if (appliedPreset) setAppliedPreset(null);
+              setPresetName("");
             }}
           />
         </label>
         {(form.agent === "claude-code" || form.protocol === "anthropic") &&
           form.baseUrl.trim().replace(/\/+$/, "").endsWith("/v1") && (
           <p className="-mt-2 mb-3 text-xs text-warn-text">
-            Anthropic 客户端会自动在地址后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「测试」仍能成功，不代表运行可用）——请去掉末尾的 /v1
+            Anthropic 客户端会自动在地址后拼 /v1/messages，以 /v1 结尾将打成 /v1/v1/messages 报 404（此时「验证并获取」仍能成功，不代表运行可用）——请去掉末尾的 /v1
           </p>
         )}
         {zhipuOpenAiSlotBillingHint(form.baseUrl) && (
@@ -951,22 +1066,24 @@ export function ProfileModal({
                 <span className="truncate text-l3">
                   从 {fetchedModels.length} 个模型中选择…
                 </span>
-                <span className="text-l4">{pickerOpen ? "▴" : "▾"}</span>
+                <FoldMark open={pickerOpen} />
               </button>
             )}
             {/* 每次点都真实请求（不读缓存），连通性与目录一次拿齐；缓存提示不再需要 */}
             {fetchedModels && fetchedModels.length > 0 && (
               <>
                 {fetchedCapabilityCount === 0 && (
-                  <span
-                    className="max-w-[16rem] text-xs text-warn-text"
-                    title="这家网关的 /models 只有模型 ID。思考档、上下文窗口、视觉用连接页 ⋯「下载模型能力库」。"
-                  >
-                    网关未给能力字段，用页头 ⋯ 下载公共能力库
+                  <span className="flex items-center gap-1.5 text-xs text-warn-text">
+                    <span title="这家网关的 /models 只有模型 ID：上下文长度、会不会思考、能不能看图要靠公共能力库认">
+                      网关没给能力字段
+                    </span>
+                    <button type="button" className={rowActionClass} disabled={capDbBusy} onClick={() => void downloadCapDb()}>
+                      {capDbBusy ? "下载中…" : "下载能力库"}
+                    </button>
                   </span>
                 )}
                 {fetchedCapabilityCount > 0 && (
-                  <span className="shrink-0 text-xs text-l4">
+                  <span className="shrink-0 text-xs text-l3">
                     {catalogCapabilityNote(
                       fetchedModels.length,
                       fetchedCapabilityCount,
@@ -976,12 +1093,9 @@ export function ProfileModal({
               </>
             )}
             {fetchedModels && fetchedModels.length === 0 && (
-              <span className="text-xs text-l4">接口返回 0 个模型</span>
+              <span className="text-xs text-l3">接口返回 0 个模型</span>
             )}
           </div>
-          {fetchError && (
-            <InlineNotice tone="err" className="mb-2">{fetchError}</InlineNotice>
-          )}
             </>
           )}
           {/* 选用已有网关 / 编辑绑定：目录在网关；此处可现拉并写入，不改当前勾选 */}
@@ -1015,11 +1129,11 @@ export function ProfileModal({
                   <span className="truncate text-l3">
                     从网关目录 {gatewayCatalog.length} 个模型中选择…
                   </span>
-                  <span className="text-l4">{pickerOpen ? "▴" : "▾"}</span>
+                  <FoldMark open={pickerOpen} />
                 </button>
               )}
               {(!gatewayCatalog || gatewayCatalog.length === 0) && (
-                <span className="text-micro text-l4">
+                <span className="text-micro text-l3">
                   还没有目录，点「获取目录」拉取，或在下方手填。
                 </span>
               )}
@@ -1057,7 +1171,7 @@ export function ProfileModal({
               />
               {pickerHidden.length > 0 && (
                 <p
-                  className="mb-1 px-2 text-micro text-l4"
+                  className="mb-1 px-2 text-micro text-l3"
                   title={pickerHidden.join("\n")}
                 >
                   已隐藏 {pickerHidden.length} 个出图、视频、向量等不能对话的模型；出图模型在连接页左栏「出图模型」里配
@@ -1067,7 +1181,7 @@ export function ProfileModal({
                 const groups = groupModelsByVendor(pickerModels, pickerFilter);
                 if (groups.length === 0) {
                   return (
-                    <p className="px-2 py-1 text-xs text-l4">
+                    <p className="px-2 py-1 text-xs text-l3">
                       没有匹配的模型。请先同步模型目录，或清除筛选词。
                     </p>
                   );
@@ -1127,6 +1241,11 @@ export function ProfileModal({
           {/* 行式槽位列表：已有模型一行一个（首个非空 = 默认），尾部只留 1 个空槽手填——
               不按选择器容量铺一排空行（视觉噪音）；超容量仍可经「仍要添加」补充
               （超出的不进 CLI 选择器，但启动栏/手输可用，见 model-switch.ts 语义） */}
+          {form.accountType === "api" && !form.models.some((m) => m.trim()) && (catalogGatewayId || showGatewayFields) && (
+            <p className="mb-1 text-xs text-warn-text">
+              没选模型：启动时不带模型，用 CLI 自己的默认模型（多半不在这个网关上）。从目录里选一个，或在下面手填。
+            </p>
+          )}
           {(() => {
             const max = MODEL_SWITCH[form.agent]?.max ?? null;
             const filled = form.models.filter((m) => m.trim()).length;
@@ -1186,7 +1305,8 @@ export function ProfileModal({
                       {i + 1}
                     </span>
                     <input
-                      className="min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs text-l2 outline-none placeholder:font-sans placeholder:text-l4"
+                      aria-label={`第 ${i + 1} 个模型`}
+                      className="min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs text-l2 outline-none placeholder:font-sans placeholder:text-l3"
                       placeholder={modelPlaceholder}
                       value={m}
                       onChange={(e) => setModelSlot(i, e.target.value)}
@@ -1332,7 +1452,7 @@ export function ProfileModal({
                 />
               ))}
             </div>
-            <p className="mt-1 text-micro text-l4">
+            <p className="mt-1 text-micro text-l3">
               保存时用同一份网关和模型名单给勾选的 Agent 各建一条绑定，协议自动按各家适配。
               {/* 灰掉的原因原先只在悬停里，看上去像坏了 */}
               {extraBindTargets(form.agent, form.protocol, AGENTS.map((a) => a.id)).some(
@@ -1372,19 +1492,12 @@ export function ProfileModal({
           </summary>
           <div className="mt-3">
             {showGatewayFields && (
-              <label className="mb-3 flex items-center gap-2 text-xs text-l2">
-                <input
-                  type="checkbox"
-                  className="peer sr-only"
-                  checked={form.noAuth}
-                  onChange={(e) => setForm({ ...form, noAuth: e.target.checked })}
-                />
-                <span
-                  aria-hidden="true"
-                  className="flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-field bg-canvas text-micro text-cta-text transition-colors peer-checked:border-cta-bd peer-checked:bg-cta peer-checked:after:content-['✓']"
-                />
-                本地端点无密钥
-              </label>
+              <Checkbox
+                className="mb-3 text-xs text-l2"
+                checked={form.noAuth}
+                onChange={(noAuth) => setForm({ ...form, noAuth })}
+                label="本地端点无密钥"
+              />
             )}
             {AGENT_PROTOCOLS[form.agent] && (
               derivedProtocol ? (
@@ -1433,10 +1546,7 @@ export function ProfileModal({
                   <button
                     type="button"
                     className="ml-1 text-cta hover:underline"
-                    onClick={() => {
-                      onOpenGateway(initial.gatewayId!);
-                      onClose();
-                    }}
+                    onClick={() => void leaveToGateway(initial.gatewayId!)}
                   >
                     打开网关库
                   </button>
@@ -1524,7 +1634,7 @@ export function ProfileModal({
               return secret.length > 0 ? (
                 <p className="mt-1 text-micro text-warn-text">
                   {secret.join("、")} 看起来是密钥。附加环境变量是明文存的，导出连接时也会被剔掉；
-                  {form.accountType === "official" ? "官方账号不需要密钥" : "密钥请填在网关的「API Key」里（只存在本机的密钥文件）"}。
+                  {form.accountType === "official" ? "官方账号不需要密钥" : "密钥请填在网关的「密钥」里（只存在本机的密钥文件）"}。
                 </p>
               ) : null;
             })()}
@@ -1535,7 +1645,6 @@ export function ProfileModal({
             )}
           </div>
         </details>
-        {error && <NoticeBar tone="err" className="mb-1">{error}</NoticeBar>}
       </form>
     </Modal>
   );
