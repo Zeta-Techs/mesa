@@ -1797,6 +1797,11 @@ pub fn validate_launch_compatibility(
             return Err(msg);
         }
     }
+    if profile.agent == "opencode" {
+        if let Some(msg) = opencode_unsupported_version(cli_version("opencode")) {
+            return Err(msg);
+        }
+    }
     if profile.agent == "grok" && profile.account_type == crate::profiles::AccountType::Api {
         let backend = profile.api_backend.as_deref().unwrap_or("chat_completions");
         if backend != "chat_completions" {
@@ -1940,6 +1945,18 @@ pub fn readonly_launch_args(agent_id: &str, base_args: &[String]) -> Option<Vec<
         args.push((*a).into());
     }
     Some(args)
+}
+
+/// OpenCode 2.x 还没适配：主命令不再认 `--model` / `--agent` / `--port` / `--fork`（2.2.5 实测 `Unrecognized flag: --model`），
+/// 配置结构也换了。按 1.x 参数硬启动只会报错，启动前拦下说清。Homebrew 官方源的 `opencode` 已跟 2.x，
+/// Mesa 自己装的 anomalyco tap 与 npm `opencode-ai` 仍是 1.x（2026-11-01）
+fn opencode_unsupported_version(version: Option<(u32, u32, u32)>) -> Option<String> {
+    let (major, minor, patch) = version.filter(|v| v.0 >= 2)?;
+    Some(format!(
+        "本机的 OpenCode 是 {major}.{minor}.{patch}，Mesa 目前只适配 1.x：2.x 改了启动参数，照旧启动会直接报错。\
+         可以先换回 1.x：Homebrew 用 `brew uninstall opencode && brew install anomalyco/tap/opencode`，\
+         npm 用 `npm i -g opencode-ai`（`@opencode/cli` 是 2.x）。"
+    ))
 }
 
 /// 只讨论要看版本的家（2026-10-26 本机实测的版本）：低于它或查不到版本就当没有只讨论，启动时拒绝、徽标置灰。
@@ -6121,6 +6138,14 @@ mod tests {
         let mut p = profile("grok", Some("https://relay.example.com/v1"));
         p.api_backend = Some("responses".into());
         assert!(validate_launch_compatibility(&p, None).is_err());
+    }
+
+    #[test]
+    fn opencode_2x_refused_before_spawn() {
+        assert!(opencode_unsupported_version(Some((1, 19, 5))).is_none());
+        assert!(opencode_unsupported_version(None).is_none(), "查不到版本照常启动");
+        let msg = opencode_unsupported_version(Some((2, 2, 5))).unwrap();
+        assert!(msg.contains("2.2.5") && msg.contains("anomalyco/tap/opencode"));
     }
 
     #[test]
