@@ -770,16 +770,36 @@ fn preview(text: &str) -> String {
     }
 }
 
-/// 网关回的错误：优先取 error.message，再退原文开头（脱敏）
-fn error_text(status: reqwest::StatusCode, body: &str) -> String {
-    let msg = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| {
-        v.pointer("/error/message")
-            .or_else(|| v.get("message"))
-            .or_else(|| v.get("msg"))
-            .and_then(|m| m.as_str())
-            .map(str::to_string)
+/// 内容被模型方的安全审核拦下：认错误码，认不出再看原文里的常见说法
+fn safety_blocked(code: Option<&str>, msg: &str) -> bool {
+    let code_hit = code.is_some_and(|c| {
+        ["moderation_blocked", "content_policy_violation", "content_filter", "safety"]
+            .iter()
+            .any(|k| c.eq_ignore_ascii_case(k) || c.to_ascii_lowercase().contains(k))
     });
-    format!("HTTP {}：{}", status.as_u16(), preview(msg.as_deref().unwrap_or(body)))
+    let m = msg.to_ascii_lowercase();
+    code_hit
+        || ["safety system", "content policy", "moderation", "safety_violations", "content_filter"]
+            .iter()
+            .any(|k| m.contains(k))
+}
+
+/// 网关回的错误：优先取 error.message，再退原文开头（脱敏）。
+/// 安全审核拒绝不以「HTTP 4」开头，免得被当成参数不认去掉参数重发
+fn error_text(status: reqwest::StatusCode, body: &str) -> String {
+    let v = serde_json::from_str::<serde_json::Value>(body).ok();
+    let pick = |ptrs: &[&str]| {
+        v.as_ref()
+            .and_then(|v| ptrs.iter().find_map(|p| v.pointer(p)).and_then(|m| m.as_str()).map(str::to_string))
+    };
+    let msg = pick(&["/error/message", "/message", "/msg"]);
+    let code = pick(&["/error/code", "/code"]);
+    let raw = format!("HTTP {}：{}", status.as_u16(), preview(msg.as_deref().unwrap_or(body)));
+    if status.is_client_error() && safety_blocked(code.as_deref(), msg.as_deref().unwrap_or(body)) {
+        format!("描述没过模型的内容安全审核，被拒了（不是连接或参数问题）。换个说法、去掉可能被误判的词再试。原文：{raw}")
+    } else {
+        raw
+    }
 }
 
 async fn post_json(
@@ -1861,6 +1881,21 @@ mod tests {
         assert!(!rejected_request("HTTP 401：invalid key"));
         assert!(!rejected_request("HTTP 429：rate limited"));
         assert!(!rejected_request("等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）"));
+    }
+
+    #[test]
+    fn safety_rejection_explained_and_not_retried() {
+        let body = r#"{"error":{"message":"Your request was rejected by the safety system. If you believe this is an error, contact us.","type":"image_generation_user_error","code":"moderation_blocked"}}"#;
+        let e = error_text(reqwest::StatusCode::BAD_REQUEST, body);
+        assert!(e.starts_with("描述没过模型的内容安全审核"), "{e}");
+        assert!(e.contains("HTTP 400：Your request was rejected"), "{e}");
+        assert!(!rejected_request(&e));
+        // 只认错误码也行
+        let e = error_text(reqwest::StatusCode::BAD_REQUEST, r#"{"error":{"message":"blocked","code":"content_policy_violation"}}"#);
+        assert!(!rejected_request(&e));
+        // 普通参数错误照旧可重试
+        let e = error_text(reqwest::StatusCode::BAD_REQUEST, r#"{"error":{"message":"Unknown parameter: background"}}"#);
+        assert!(rejected_request(&e));
     }
 
     #[test]
