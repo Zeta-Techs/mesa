@@ -1,6 +1,6 @@
 [package]
 name = "ccode"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified launcher, config center and session monitor for AI coding agents"
 authors = ["泽塔前沿科技（杭州）有限公司"]
 license = "Apache-2.0"
