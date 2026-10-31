@@ -530,7 +530,7 @@ export default function ProjectTree({
         title: "正看着的那段留在左边，这段放右边对照",
         onSelect: () => openChat(s, project, true),
       },
-      // 只在 AI 开着时给（同行尾 ×）：退出了的 Mesa 自己收，没东西可关
+      // 只在 AI 开着时给：退出了的 Mesa 自己收，没东西可关。行上不放 ×，鼠标关对话就走这里
       ...(holder?.running && !holder.shell
         ? [
             {
@@ -936,12 +936,6 @@ export default function ProjectTree({
     // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
     const short = sidebarChatTitle(full, folderName);
     const runDot = chatDot(s, terminalRunInputs);
-    // × 只跟着光标走（2026-10-26 用户定）：Mesa 里开着、AI 在跑的才给。Mesa 外终端在写的只亮光标，关不了；
-    // Agent 已退出、标签还开着的不给，Mesa 切走 / 没人看时自己收（TerminalPage collectExitedTab）。
-    // 看的是运行光标本身，不算叠上去的「做完了没看」
-    const holder = runDot
-      ? terminalRunInputs.find((r) => r.agentId === s.agent && r.sessionId === s.sessionId && r.running && !r.shell)
-      : undefined;
     const selected = key === highlightChatKey;
     // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底）、行尾蓝光标，点开就消
     const unread = !selected && unreadSet.has(key);
@@ -1062,31 +1056,16 @@ export default function ProjectTree({
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
               干活时的呼吸在悬停时停下、常亮（App.css .ccode-run-caret） */}
-          {/* 关掉（2026-10-26 用户定）：Mesa 里开着、AI 在跑的行，悬停时 × 顶替光标那一格，⋯ 固定在最右；行宽不变 */}
+          {/* 行尾只占一格（2026-10-31 用户拍板，取代 10-26「× 顶替光标、⋯ 另加一格」）：平时是光标，悬停 / 聚焦 / 菜单开着时
+              同一格换成 ⋯，标题宽度不变；行上不放 ×，关掉走 ⋯ 菜单「关掉这段对话」或 ⌘W */}
           {dot && (
-            <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
-              <span
-                className={`flex items-center justify-center${
-                  holder ? " group-hover/chat:hidden group-focus-within/chat:hidden" : ""
-                }`}
-              >
-                <RunCaret state={dot} />
-              </span>
-              {holder && (
-                <button
-                  type="button"
-                  aria-label={`关掉「${short}」`}
-                  title={`关掉：停下它，记录还在（在干活的会先问你）\n现在：${dotTitle(dot)}`}
-                  onClick={() => {
-                    const row = rowOf(key);
-                    if (row) noteMouseCloseChat(row.getBoundingClientRect(), "right", listRef.current);
-                    useAppStore.getState().requestCloseTab(holder.tabId);
-                  }}
-                  className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
-                >
-                  <X size={13} strokeWidth={1.8} aria-hidden="true" />
-                </button>
-              )}
+            <span
+              className={`h-6 w-6 items-center justify-center ${
+                menuOpen ? "hidden" : "flex group-hover/chat:hidden group-focus-within/chat:hidden"
+              }`}
+              data-run-slot
+            >
+              <RunCaret state={dot} />
             </span>
           )}
           <button
@@ -1151,10 +1130,10 @@ export default function ProjectTree({
           {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />}
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{r.label}</span>
         </button>
-        {/* 状态列同对话行：有光标才占一格，标题不进来 */}
+        {/* 状态列同对话行：有光标才占一格，标题不进来；悬停时 × 原地顶替光标（这种行没有 ⋯） */}
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
           {rowDot && (
-            <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
+            <span className="flex h-6 w-6 items-center justify-center group-hover/chat:hidden group-focus-within/chat:hidden" data-run-slot>
               <RunCaret state={rowDot} />
             </span>
           )}

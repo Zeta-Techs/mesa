@@ -477,16 +477,16 @@ test("开着、列表里还没有的挂在文件夹最上面（新对话 / 终�
   }
 });
 
-test("对话 ⋯ 里能在右侧分屏打开；开着的能关掉（行尾 × 与菜单同一条路）", async () => {
+test("对话 ⋯ 里能在右侧分屏打开；开着的从 ⋯ 关掉，行上不放 ×，光标那一格悬停时换成 ⋯（2026-10-31）", async () => {
   const closed: string[] = [];
   const view = await renderTree({ requestCloseTab: (id: string) => closed.push(id) });
   try {
-    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
-    assert.deepEqual(closed, ["t1"]);
+    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第5篇精读」"]'), null, "行上不放 ×");
+    const slot = view.button("镁硫电池第5篇精读").parentElement!.querySelector("[data-run-slot]")!;
+    assert.match(slot.className, /group-hover\/chat:hidden/, "悬停时光标让出那一格");
     await view.act(async () => view.button("「镁硫电池第5篇精读」的更多操作").click());
     await view.act(async () => view.button("关掉这段对话").click());
-    assert.deepEqual(closed, ["t1", "t1"]);
-    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null, "没开着的行没有 ×");
+    assert.deepEqual(closed, ["t1"]);
     await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
     assert.ok(
       !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "关掉这段对话"),
@@ -501,7 +501,7 @@ test("对话 ⋯ 里能在右侧分屏打开；开着的能关掉（行尾 × �
   }
 });
 
-test("Agent 已退出、标签还开着的行：没有光标就没有 ×，⋯ 里也不给关（Mesa 自己收）", async () => {
+test("Agent 已退出、标签还开着的行：没有光标，⋯ 里也不给关（Mesa 自己收）", async () => {
   const run = (tabId: string, sessionId: string, running: boolean) => ({
     tabId,
     title: "",
@@ -515,10 +515,9 @@ test("Agent 已退出、标签还开着的行：没有光标就没有 ×，⋯ �
   });
   const view = await renderTree({ terminalRunInputs: [run("t1", "r5", true), run("t2", "r2", false)] });
   try {
-    assert.ok(view.host.querySelector('[aria-label="关掉「镁硫电池第5篇精读」"]'), "在跑的照旧有 ×");
+    assert.ok(view.button("镁硫电池第5篇精读").parentElement?.querySelector("[data-run-slot]"), "在跑的有光标");
     const row = view.button("镁硫电池第2篇精读");
     assert.equal(row.parentElement?.querySelector("[data-run-slot]"), null, "退出了的不留光标那一格");
-    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null);
     await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
     assert.ok(
       !Array.from(view.host.ownerDocument.querySelectorAll("button")).some((b) => b.textContent?.trim() === "关掉这段对话"),
@@ -810,6 +809,12 @@ test("当前旧对话补进列表后，只计算实际未显示的对话数量",
   }
 });
 
+/** 鼠标关对话：行上没有 ×，走 ⋯ 菜单「关掉这段对话」 */
+async function closeViaMenu(view: Awaited<ReturnType<typeof renderTree>>, title: string) {
+  await view.act(async () => view.button(`「${title}」的更多操作`).click());
+  await view.act(async () => view.button("关掉这段对话").click());
+}
+
 test("多选：⌘ / Ctrl 点只选不开，⇧ 点整段选上，树底一条能一起置顶 / 归档，右键选中的行是同一份，Esc 和普通点清掉（2026-10-27）", async () => {
   const view = await renderTree();
   try {
@@ -1022,8 +1027,8 @@ test("来回看两段：侧栏 A → B → A → B 地点时提醒 Ctrl+Tab，�
     assert.equal((last[1] as { sessionId: string }).sessionId, "r5");
     assert.equal((last[2] as { split?: boolean }).split, true);
     // 名额用掉了：接着用鼠标关两段也不出 ⌘W 那条
-    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
-    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await closeViaMenu(view, "镁硫电池第5篇精读");
+    await closeViaMenu(view, "镁硫电池第5篇精读");
     await wait();
     assert.equal(tip(), null);
     assert.equal(localStorage.getItem("ccode.coachCloseKeySeen"), null, "没出的不记");
@@ -1057,12 +1062,12 @@ test("用鼠标关对话：关到第 2 段时在那一行旁边提醒 ⌘W（202
   try {
     const doc = view.host.ownerDocument;
     const tip = () => doc.body.querySelector('[data-coach-tip][role="dialog"]');
-    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await closeViaMenu(view, "镁硫电池第5篇精读");
     await view.act(async () => {
       await new Promise((r) => setTimeout(r, 450));
     });
     assert.equal(tip(), null, "第 1 次不提");
-    await view.act(async () => view.button("关掉「镁硫电池第5篇精读」").click());
+    await closeViaMenu(view, "镁硫电池第5篇精读");
     await view.act(async () => {
       await new Promise((r) => setTimeout(r, 450));
     });
