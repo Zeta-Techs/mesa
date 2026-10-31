@@ -59,6 +59,17 @@ pub fn helper_token_cli(args: &[String]) -> i32 {
 /// 开发版的 helper 在 target/debug/deps/ 下、名字带哈希，换一次构建就不在了；打包版随 .app 挪位置也会断。
 /// 拷贝跟着 Mesa 走（每次用到时比对大小与修改时间，旧了就换）
 pub(crate) fn stable_helper() -> Option<PathBuf> {
+    // 测试态不找、不拷：写计划的测试会走到这里，不能往用户的配置目录里拷 helper
+    if cfg!(test) {
+        return None;
+    }
+    // 漂移比对（托盘重建菜单）也会走到写计划，每次都试跑 helper 太重：一个进程只找一次、拷一次
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHE.get_or_init(locate_and_copy_helper).clone()
+}
+
+fn locate_and_copy_helper() -> Option<PathBuf> {
     let src = crate::image_gen::find_bundled_helper(TOKEN_SUBCOMMAND)?;
     let name = if cfg!(windows) { "mesa_helper.exe" } else { "mesa_helper" };
     let Some(dir) = crate::storage::config_root().map(|r| r.join("bin")) else {
@@ -234,6 +245,35 @@ fn is_mesa_block(item: &toml_edit::Item) -> bool {
     item.get("name").and_then(|v| v.as_str()) == Some("Mesa")
 }
 
+fn auth_table(helper: &Path, gateway_id: &str) -> toml_edit::Table {
+    let mut auth = toml_edit::Table::new();
+    auth["command"] = toml_edit::value(helper.to_string_lossy().as_ref());
+    let mut args = toml_edit::Array::new();
+    args.push(TOKEN_SUBCOMMAND);
+    args.push(gateway_id);
+    auth["args"] = toml_edit::value(args);
+    auth
+}
+
+/// 共用渠道 `custom`（Mesa 写的块）的认证换成 auth.command：去掉 experimental_bearer_token / env_key，补 auth 子表。
+/// 设为全局写计划与「补齐」共用；块不是 Mesa 写的（cc-switch 等）不动
+pub(crate) fn shared_block_command_auth(config: &str, helper: &Path, gateway_id: &str) -> Result<String, String> {
+    let mut doc = crate::global_config::parse_toml_doc(Some(config))?;
+    let shared = crate::global_config::CODEX_GLOBAL_PROVIDER;
+    let Some(blk) = doc
+        .get_mut("model_providers")
+        .and_then(|p| p.get_mut(shared))
+        .filter(|b| is_mesa_block(b))
+        .and_then(|b| b.as_table_mut())
+    else {
+        return Ok(config.to_string());
+    };
+    blk.remove("experimental_bearer_token");
+    blk.remove("env_key");
+    blk.insert("auth", toml_edit::Item::Table(auth_table(helper, gateway_id)));
+    Ok(doc.to_string())
+}
+
 /// 与 Mesa 启动时内联的渠道同形（agents::codex_inline_provider_args），认证换成 auth.command
 fn provider_block(gw: &GwLite, helper: &Path) -> toml_edit::Table {
     use toml_edit::value;
@@ -251,13 +291,7 @@ fn provider_block(gw: &GwLite, helper: &Path) -> toml_edit::Table {
         }
         blk["env_http_headers"] = value(headers);
     }
-    let mut auth = toml_edit::Table::new();
-    auth["command"] = value(helper.to_string_lossy().as_ref());
-    let mut args = toml_edit::Array::new();
-    args.push(TOKEN_SUBCOMMAND);
-    args.push(gw.gateway_id.as_str());
-    auth["args"] = value(args);
-    blk["auth"] = toml_edit::Item::Table(auth);
+    blk["auth"] = toml_edit::Item::Table(auth_table(helper, &gw.gateway_id));
     blk
 }
 
@@ -297,6 +331,16 @@ fn patch_providers(doc: &mut toml_edit::DocumentMut, inp: &Inputs) -> Result<(),
     let Some(helper) = inp.helper.as_deref() else {
         return Ok(());
     };
+    // 共用渠道 custom 里 Mesa 以前写的明文 bearer：认得出是哪条连接（按地址）就改成现取
+    let shared_plain = doc
+        .get("model_providers")
+        .and_then(|p| p.get(crate::global_config::CODEX_GLOBAL_PROVIDER))
+        .is_some_and(|b| is_mesa_block(b) && b.get("experimental_bearer_token").is_some());
+    if shared_plain {
+        if let Some(gid) = shared_gateway(doc, inp).map(|g| g.gateway_id.clone()) {
+            *doc = crate::global_config::parse_toml_doc(Some(&shared_block_command_auth(&doc.to_string(), helper, &gid)?))?;
+        }
+    }
     let targets = provider_targets(doc, inp);
     if targets.is_empty() {
         return Ok(());
@@ -570,14 +614,18 @@ pub(crate) fn check(config: &str, head: &Head, inp: &Inputs) -> Result<Continuit
         }
     }
     if let Some(t) = before.get("model_providers").and_then(|i| i.as_table_like()) {
+        let shared_known = shared_gateway(&before, inp).is_some();
         dto.plaintext_blocks = t
             .iter()
             .filter(|(k, item)| {
-                provider_id::short_id_from_provider(k).is_some()
-                    && is_mesa_block(item)
+                is_mesa_block(item)
                     && item.get("experimental_bearer_token").is_some()
                     && inp.helper.is_some()
-                    && inp.gateway_for(k).is_some()
+                    && if *k == crate::global_config::CODEX_GLOBAL_PROVIDER {
+                        shared_known
+                    } else {
+                        provider_id::short_id_from_provider(k).is_some() && inp.gateway_for(k).is_some()
+                    }
             })
             .count() as u32;
     }
@@ -743,6 +791,21 @@ mod tests {
         assert_eq!(cat["models"][2]["visibility"].as_str(), Some("hide"));
         assert!(out.config.contains("model_catalog_json"));
         assert!(!out.config.contains("model_provider ="), "官方默认不写 model_provider");
+    }
+
+    #[test]
+    fn shared_custom_block_plaintext_becomes_command_auth() {
+        let disk = "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Mesa\"\nbase_url = \"https://relayA.example.com/v1\"\nrequires_openai_auth = false\nexperimental_bearer_token = \"sk-plain\"\n";
+        let inp = inputs(vec![]);
+        assert_eq!(check(disk, &Head::Relay(vec![head_entry("ds")]), &inp).unwrap().plaintext_blocks, 1);
+        let out = layer(disk, &Head::Relay(vec![head_entry("ds")]), &inp).unwrap();
+        assert!(!out.config.contains("sk-plain"));
+        let doc: toml_edit::DocumentMut = out.config.parse().unwrap();
+        let args: Vec<_> = doc["model_providers"]["custom"]["auth"]["args"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(args, ["codex-token", "a1b2c3d4-0000"]);
+        // cc-switch 写的不动
+        let foreign = disk.replace("name = \"Mesa\"", "name = \"cc-switch\"");
+        assert!(shared_block_command_auth(&foreign, Path::new("/h"), "g").unwrap().contains("sk-plain"));
     }
 
     #[test]

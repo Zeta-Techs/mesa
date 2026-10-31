@@ -2122,6 +2122,18 @@ fn drift_plans(profile: &Profile, plans: &[PlannedWrite]) -> Vec<PlannedWrite> {
                         for k in keys {
                             doc.remove(k);
                         }
+                        // 共用渠道的认证形态不比：明文 bearer（旧写法）与 auth.command（现取）是同一把密钥，
+                        // 升级后磁盘还是旧写法时不该报「外部改过」（密钥本身由体检里的明文提示与「补齐」处理）
+                        if profile.agent == "codex" {
+                            if let Some(blk) = doc
+                                .get_mut("model_providers")
+                                .and_then(|p| p.get_mut(CODEX_GLOBAL_PROVIDER))
+                                .and_then(|b| b.as_table_mut())
+                            {
+                                blk.remove("auth");
+                                blk.remove("experimental_bearer_token");
+                            }
+                        }
                         doc.to_string()
                     }
                     Err(_) => p.content.clone(),
@@ -2358,8 +2370,13 @@ fn plan_writes(
                 profile.gateway_id.as_deref(),
                 &profile.request_policy.header_env,
             )?;
+            // 密钥能引用就不写明文（规则 8）：找得到随包 helper、认得出网关，就改成用时向 Mesa 现取
+            let content = match (crate::codex_continuity::stable_helper(), profile.gateway_id.as_deref()) {
+                (Some(helper), Some(gid)) => crate::codex_continuity::shared_block_command_auth(&content, &helper, gid)?,
+                _ => content,
+            };
             push("config.toml", path, content);
-            // 密钥在 provider 块内 experimental_bearer_token；不写 auth.json，
+            // 密钥在 provider 块内（auth.command 现取，找不到 helper 才写 experimental_bearer_token）；不写 auth.json，
             // 也不写 http_headers（ChatGPT 自带 Codex 不认这个字段）
         }
         "gemini" => {
