@@ -846,10 +846,11 @@ body {
     filter: brightness(1.15);
   }
   .ccode-heat-l0 { background-color: var(--heat-0, var(--color-inset)); }
-  .ccode-heat-l1 { background-color: var(--heat-1); }
-  .ccode-heat-l2 { background-color: var(--heat-2); }
-  .ccode-heat-l3 { background-color: var(--heat-3); }
-  .ccode-heat-l4 { background-color: var(--heat-4); }
+  /* --color-heat-N 只有自定义主题写（custom-theme.ts heatRamp 按 OKLCH 算），内置主题落回 --heat-N 梯子 */
+  .ccode-heat-l1 { background-color: var(--color-heat-1, var(--heat-1)); }
+  .ccode-heat-l2 { background-color: var(--color-heat-2, var(--heat-2)); }
+  .ccode-heat-l3 { background-color: var(--color-heat-3, var(--heat-3)); }
+  .ccode-heat-l4 { background-color: var(--color-heat-4, var(--heat-4)); }
   /* 主区（2026-10-16 收成单模：胶囊全在卡头一行，左栏/头部栅格/右挂统计三档整档撤销）。
      格子边长由组件按满宽哨兵写入 --heat-cell（11–28 的整数），不跟行高走。
      到 28px 封顶后主区收成内容宽并整体在卡内居中；卡片保持列宽对齐兄弟卡，

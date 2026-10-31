@@ -871,7 +871,7 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
                              #   外观变化时调用，把 theme 写成生效值；自定义配色不跟随（tests/theme-follow.test.ts）
   theme-swatch.ts            # 设置页主题色卡预览色：从 App.css 源文本抽 rail/canvas/cta/l1，
                              #   禁止临时切 data-theme 再 getComputedStyle（tests/theme-swatch.test.ts）
-  custom-theme.ts            # 自定义主题：三色种子派生全套令牌 + 另存色卡列表
+  custom-theme.ts            # 自定义主题：三色种子派生全套令牌（含热力图四档 OKLCH 梯子）+ 另存色卡列表
                              # （tests/custom-theme.test.ts）
   profile-copy.ts            # profile 跨 agent 复制纯逻辑
   resume-profile.ts          # 恢复会话的 profile 挑选纯逻辑：codex 内联 provider 会话（rollout 记

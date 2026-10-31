@@ -520,8 +520,10 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
   const failures: string[] = [];
   function check(name: string, id: string | null, t: Record<string, string>, isLight: boolean) {
     const bg = wellColor(t, "canvas");
-    const ladder =
-      id === "neutral"
+    // 自定义主题的四档由 custom-theme.ts heatRamp 按 OKLCH 直接算（--color-heat-N），不走 CSS 梯子
+    const ladder = t["heat-1"]
+      ? [1, 2, 3, 4].map((n) => t[`heat-${n}`])
+      : id === "neutral"
           ? (() => {
               const anchor = mixOklab(t.cta, "#ffffff", anchorP);
               return [...neutP.map((p) => mixOklab(anchor, "#000000", p)), anchor];
@@ -575,6 +577,9 @@ test("热力图五档色阶（cta 单极梯子）全主题可辨：方向单调 
     { rail: "#f0f0f0", canvas: "#fcfcfc", accent: "#0169cc" },
     { rail: "#e7e4da", canvas: "#efede6", accent: "#ffcc00" }, // 黄强调 × 浅画布：浅色梯子的压力位
     { rail: "#0b0e14", canvas: "#10141c", accent: "#ffcc00" }, // 黄强调 × 暗画布
+    { rail: "#141414", canvas: "#191919", accent: "#82aee7" }, // 浅淡粉蓝 × 中性暗底：旧「向黑混」底两档塌成灰石板（2026-10-31 用户截图）
+    { rail: "#0c0c0c", canvas: "#111111", accent: "#0169cc" }, // 暗强调：顶档须抬亮
+    { rail: "#f0f0f0", canvas: "#f4f2ee", accent: "#b3554f" },
   ]) {
     const derived = deriveThemeTokens(seeds).tokens;
     check(`custom ${seeds.accent}`, null, derived, lum(derived.canvas) > 200);

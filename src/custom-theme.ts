@@ -43,6 +43,11 @@ export const CUSTOM_TOKEN_KEYS = [
   "link",
   "tabline",
   "btn",
+  // 热力图四档：自定义强调色任意，CSS 的「向黑混」梯子对浅淡强调色会塌成灰彩，这里按 OKLCH 直接算
+  "heat-1",
+  "heat-2",
+  "heat-3",
+  "heat-4",
 ] as const;
 
 export type CustomTokenKey = (typeof CUSTOM_TOKEN_KEYS)[number];
@@ -410,7 +415,85 @@ function finishTokens(p: {
     link: p.light ? "#2470d8" : "#60a0f0",
     tabline: formatHex(p.l2),
     btn: formatHex(p.light ? p.field : p.raised),
+    ...heatRamp(p.canvas, cta, p.light),
   };
+}
+
+/**
+ * 活跃度热力图四档（自定义主题专用）。内置主题的 CSS 梯子是「cta 向黑混」，彩度跟着亮度一起按比例掉——
+ * 用户挑的强调色常是浅淡色（粉蓝、樱粉），底两档就成了灰石板色，整图发闷；暗强调色顶档又压不亮。
+ * 这里在 OKLCH 里定：色相取强调色恒定；亮度在「画布 +0.15」到顶档之间等距（深色顶档夹在 0.72–0.88，
+ * 浅色反向、顶档压到 ≤0.5 保对近白卡底 3:1）；彩度取强调色与 0.12 的较大者按档递增，超出 sRGB 就收彩度不动亮度。
+ * 强调色本身近灰（C<0.03）时不补彩度——那是用户要的灰
+ */
+export function heatRamp(canvas: Rgb, accent: Rgb, light: boolean): Record<"heat-1" | "heat-2" | "heat-3" | "heat-4", string> {
+  const [Lc] = rgbToOklab(canvas);
+  const [La, a, b] = rgbToOklab(accent);
+  const Ca = Math.hypot(a, b);
+  const h = Math.atan2(b, a);
+  const Ct = Ca < 0.03 ? Ca : Math.max(Ca, 0.12);
+  const top = light ? Math.min(0.5, La) : Math.min(0.88, Math.max(0.72, La));
+  const bottom = light ? Math.min(0.9, Lc - 0.09) : Lc + 0.15;
+  const share = light ? [0.45, 0.7, 0.9, 1] : [0.6, 0.75, 0.9, 1];
+  const Ls = [0, 1, 2, 3].map((i) => bottom + ((top - bottom) * i) / 3);
+  const Cs = Ls.map((L, i) => maxChromaInGamut(L, Ct * share[i], h));
+  // 收彩度后低档可能反超高档，自上而下压住，保彩度单调
+  for (let i = 2; i >= 0; i--) Cs[i] = Math.min(Cs[i], Cs[i + 1]);
+  const hexAt = (i: number) => formatHex(oklabToRgb([Ls[i], Cs[i] * Math.cos(h), Cs[i] * Math.sin(h)]));
+  return { "heat-1": hexAt(0), "heat-2": hexAt(1), "heat-3": hexAt(2), "heat-4": hexAt(3) };
+}
+
+function srgbToLinear(v: number): number {
+  const s = v / 255;
+  return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+}
+
+function linearToSrgb(v: number): number {
+  const c = Math.min(1, Math.max(0, v));
+  return (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055) * 255;
+}
+
+function rgbToOklab(c: Rgb): [number, number, number] {
+  const [R, G, B] = [c.r, c.g, c.b].map(srgbToLinear);
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+/** 未截断的线性 sRGB，越界判断用 */
+function oklabToLinear([L, a, b]: [number, number, number]): [number, number, number] {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+}
+
+function oklabToRgb(lab: [number, number, number]): Rgb {
+  const [r, g, b] = oklabToLinear(lab).map(linearToSrgb);
+  return { r: clampByte(r), g: clampByte(g), b: clampByte(b) };
+}
+
+function maxChromaInGamut(L: number, C: number, h: number): number {
+  const fits = (c: number) =>
+    oklabToLinear([L, c * Math.cos(h), c * Math.sin(h)]).every((v) => v >= -1e-4 && v <= 1 + 1e-4);
+  if (fits(C)) return C;
+  let lo = 0;
+  let hi = C;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function clampLum(n: number): number {
