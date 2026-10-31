@@ -1367,8 +1367,9 @@ pub fn launch_plan(
                     // 用 -c 内联定义 provider（名从网关派生；旧 rollout 回落 ccode）
                     let pid = profile.provider_name();
                     if let Some(url) = &profile.base_url {
+                        let disk_auth = codex_disk_provider_has_auth(codex_user_config_for_launch().as_ref(), &pid);
                         plan.args
-                            .extend(codex_inline_provider_args(url, key_env, &pid));
+                            .extend(codex_inline_provider_args(url, key_env, &pid, disk_auth));
                         // 网关兼容选项：请求超时 → 渠道的 stream_idle_timeout_ms（0.164 二进制里有）
                         if let Some(secs) = profile.request_policy.compat.timeout_secs {
                             plan.args.push("-c".into());
@@ -2633,12 +2634,23 @@ pub(crate) fn opencode_provider_json(
 
 /// catalog 文件路径：<config dir>/ccode/catalogs/codex-<profile_id>.json
 pub fn codex_catalog_path(profile_id: &str) -> Option<std::path::PathBuf> {
-    Some(
-        crate::dirs::config_dir()?
-            .join("ccode")
-            .join("catalogs")
-            .join(format!("codex-{profile_id}.json")),
-    )
+    Some(catalogs_dir()?.join(format!("codex-{profile_id}.json")))
+}
+
+/// 测试态改到临时目录：写计划的测试会真的落盘，不能写进用户的 catalogs/（全局那份正被 config.toml 指着）
+fn catalogs_dir() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    {
+        return Some(std::env::temp_dir().join("ccode-test-config").join("ccode").join("catalogs"));
+    }
+    #[cfg(not(test))]
+    Some(crate::dirs::config_dir()?.join("ccode").join("catalogs"))
+}
+
+/// 「设为全局」写进 config.toml 的模型目录：Mesa 专用一份，不与启动用的每连接目录共用
+/// （启动会按绑定重写 `codex-<id>.json`，全局目录还要装老对话的模型，见 codex_continuity）
+pub fn codex_global_catalog_path() -> Option<std::path::PathBuf> {
+    Some(catalogs_dir()?.join("codex-global.json"))
 }
 
 /// Codex 对没登记的模型用的默认系统提示词。catalog 必须填 base_instructions，填了就整段替换 Codex 自己的提示词：
@@ -2823,7 +2835,7 @@ fn plausible_codex_instructions(text: &str) -> bool {
 /// （reasoning levels 使用 Codex 当前完整档位集——cc-switch 的 catalog 同样全量模板
 /// （自家资源 codex_native_responses_template.json），模型不支持时端点忽略 effort，口径稳妥；
 /// display_name 带 profile 名，选择器里不再是裸模型 id）
-fn codex_catalog_entry_for(
+pub(crate) fn codex_catalog_entry_for(
     profile_name: &str,
     model: &str,
     gateway_id: Option<&str>,
@@ -3146,20 +3158,34 @@ fn codex_user_config_for_launch() -> Option<toml::Value> {
 /// 恢复时没有这组定义 codex 报 "Model provider `ccode` not found"。
 /// 只含 base_url 与 env_key 变量名引用，不含密钥
 /// （密钥值由用户 shell 环境里的 CODEX_API_KEY 提供，不进命令行——关键约定不变）
-fn codex_inline_provider_args(base_url: &str, key_env: &str, provider: &str) -> Vec<String> {
+///
+/// `disk_auth`：config.toml 里这个渠道已有 `auth`（客户端续聊补的定义块，mesa_helper 现取密钥，见 codex_continuity）。
+/// Codex 不许 auth 与 env_key 并存（`provider auth cannot be combined with env_key`，0.166 实测整份配置加载失败），
+/// 这时不注 env_key，认证交给那条命令——取的是同一把密钥
+fn codex_inline_provider_args(base_url: &str, key_env: &str, provider: &str, disk_auth: bool) -> Vec<String> {
     let mut out = Vec::new();
-    for kv in [
+    let mut kvs = vec![
         format!(r#"model_providers.{provider}.name="Mesa""#),
         format!(r#"model_providers.{provider}.base_url="{base_url}""#),
-        format!(r#"model_providers.{provider}.env_key="{key_env}""#),
-        format!(r#"model_providers.{provider}.wire_api="responses""#),
-    ] {
+    ];
+    if !disk_auth {
+        kvs.push(format!(r#"model_providers.{provider}.env_key="{key_env}""#));
+    }
+    kvs.push(format!(r#"model_providers.{provider}.wire_api="responses""#));
+    for kv in kvs {
         out.push("-c".into());
         out.push(kv);
     }
     out.push("-c".into());
     out.push(format!(r#"model_provider="{provider}""#));
     out
+}
+
+/// config.toml 里该渠道有没有 `auth`（命令取令牌）
+fn codex_disk_provider_has_auth(cfg: Option<&toml::Value>, provider: &str) -> bool {
+    cfg.and_then(|c| c.get("model_providers"))
+        .and_then(|p| p.get(provider))
+        .is_some_and(|b| b.get("auth").is_some())
 }
 
 /// 复制到用户终端的恢复命令附加参数：仅 codex 且调用方给出 Base URL 时补
@@ -3179,7 +3205,8 @@ fn resume_extra_args(
                         Some(p) if crate::provider_id::is_ccode_provider(p) => p,
                         _ => crate::provider_id::LEGACY,
                     };
-                    let mut args = codex_inline_provider_args(url, key_env, pid);
+                    let disk_auth = codex_disk_provider_has_auth(codex_user_config_for_launch().as_ref(), pid);
+                    let mut args = codex_inline_provider_args(url, key_env, pid, disk_auth);
                     args.extend(codex_relay_compat_args());
                     args
                 }
@@ -7695,6 +7722,21 @@ api_backend = "responses"
         assert_eq!(codex_plan_tool_args(prompt, true, Some(&other)), on);
         // 内嵌的默认提示词确实提到它（本机取不到时用这份）
         assert!(CODEX_BASE_INSTRUCTIONS.contains("update_plan"));
+    }
+
+    #[test]
+    fn codex_launch_skips_env_key_when_disk_block_takes_token_from_command() {
+        // Codex 不许 auth 与 env_key 并存（0.166 实测整份配置加载失败）
+        let cfg: toml::Value = toml::from_str(
+            "[model_providers.ccode-a1b2c3d4.auth]\ncommand = \"/cfg/bin/mesa_helper\"\nargs = [\"codex-token\", \"g\"]\n",
+        )
+        .unwrap();
+        assert!(codex_disk_provider_has_auth(Some(&cfg), "ccode-a1b2c3d4"));
+        assert!(!codex_disk_provider_has_auth(Some(&cfg), "ccode-ffffffff"));
+        let with = codex_inline_provider_args("https://r/v1", "CODEX_API_KEY", "ccode-a1b2c3d4", true).join(" ");
+        assert!(!with.contains("env_key") && with.contains("base_url"));
+        let without = codex_inline_provider_args("https://r/v1", "CODEX_API_KEY", "ccode-a1b2c3d4", false).join(" ");
+        assert!(without.contains(r#"env_key="CODEX_API_KEY""#));
     }
 
     #[test]

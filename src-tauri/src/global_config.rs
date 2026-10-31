@@ -182,6 +182,11 @@ fn cli_dir(home: &Path, agent: &str) -> PathBuf {
         .unwrap_or_else(|| home.to_path_buf())
 }
 
+/// Codex 用户级目录（认 CODEX_HOME）：续聊层读对话表、模型表与 config.toml 用
+pub(crate) fn codex_dir(home: &Path) -> PathBuf {
+    cli_dir(home, "codex")
+}
+
 /// 旧版 kimi-cli 的目录（`KIMI_SHARE_DIR` 顶替 `~/.kimi`）
 fn kimi_legacy_dir(home: &Path) -> PathBuf {
     crate::agent_specs::kimi_legacy_root_with(home, &relocation_env)
@@ -793,14 +798,14 @@ fn overlay_opencode_per_model(provider: &mut Value, profile: &Profile) {
 
 // ===== TOML 补丁（toml_edit 保留文档其余部分） =====
 
-fn parse_toml_doc(existing: Option<&str>) -> Result<toml_edit::DocumentMut, String> {
+pub(crate) fn parse_toml_doc(existing: Option<&str>) -> Result<toml_edit::DocumentMut, String> {
     crate::mcp::strip_bom(existing.unwrap_or(""))
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("现有 TOML 配置解析失败，已停止写入: {e}"))
 }
 
 /// 取子表；已存在但不是表时报错停止，避免覆盖用户数据
-fn sub_table<'a>(
+pub(crate) fn sub_table<'a>(
     item: &'a mut toml_edit::Item,
     key: &str,
 ) -> Result<&'a mut toml_edit::Item, String> {
@@ -968,7 +973,8 @@ fn remove_toml_path_if(doc: &mut toml_edit::DocumentMut, path: &[&str], pred: im
 fn patch_codex_config_official(existing: Option<&str>) -> Result<String, String> {
     let mut doc = parse_toml_doc(existing)?;
     doc.remove("model_provider");
-    doc.remove("model_catalog_json");
+    // Mesa 的全局目录留着：官方默认下还装着中转老对话的模型（续聊层按需重建或撤掉，见 codex_continuity）
+    remove_toml_path_if(&mut doc, &["model_catalog_json"], |p| !crate::codex_continuity::is_global_catalog(p));
     // openai_base_url 会把内置 openai 渠道改道到别的地址；web_search 是中转时 Mesa 关的，官方恢复默认
     doc.remove("openai_base_url");
     remove_toml_path_if(&mut doc, &["web_search"], |v| v == "disabled");
@@ -1898,6 +1904,122 @@ fn plans_match_disk(profile: &Profile, plans: &[PlannedWrite]) -> bool {
 
 // ===== 计划与执行 =====
 
+/// Codex 续聊层（codex_continuity）：在这次写计划上补老对话要用的渠道定义，重建全局模型目录。
+/// 只进预览与写入，不进漂移比对——对话表天天在变，进比对会误报「外部改过」；
+/// 续聊层只加渠道块、只在目录尾部追加，基础计划对磁盘的子集比对照样成立。
+/// `relay` = 这次设为全局的中转绑定；None = 切回官方
+fn extend_codex_plans(
+    home: &Path,
+    plans: &mut Vec<PlannedWrite>,
+    profiles: &[Profile],
+    relay: Option<&Profile>,
+) -> Result<(), String> {
+    use crate::codex_continuity as cc;
+    let dir = codex_dir(home);
+    let cfg_path = dir.join("config.toml");
+    let base = match plans.iter().find(|p| p.path == cfg_path) {
+        Some(p) => p.content.clone(),
+        None => match read_existing(&cfg_path)? {
+            Some(t) => t,
+            None => return Ok(()),
+        },
+    };
+    let inp = cc::Inputs::gather(&dir, profiles)?;
+    let head = match relay {
+        Some(p) => cc::Head::Relay(cc::relay_head_entries(p)),
+        None => cc::Head::Official,
+    };
+    let out = cc::layer(&base, &head, &inp)?;
+    upsert_plan(plans, "config.toml", cfg_path, out.config);
+    match out.catalog {
+        Some(text) => upsert_plan(plans, "model-catalog.json", inp.catalog_path, text),
+        None => plans.retain(|p| p.path != inp.catalog_path),
+    }
+    Ok(())
+}
+
+fn upsert_plan(plans: &mut Vec<PlannedWrite>, tag: &'static str, path: PathBuf, content: String) {
+    match plans.iter_mut().find(|p| p.path == path) {
+        Some(p) => p.content = content,
+        None => plans.push(PlannedWrite { tag, path, content }),
+    }
+}
+
+/// 「补齐」与体检共用的输入：所有绑定，加上当前记着的 Codex 全局中转绑定（官方或没记录为 None）
+fn codex_continuity_inputs(store: &ProfileStore) -> Result<(Vec<Profile>, Option<Profile>), String> {
+    let active = crate::settings::read_current()
+        .active_global_profiles
+        .and_then(|m| m.get("codex").cloned())
+        .and_then(|id| profile_for_write(store, &id).ok())
+        .filter(|p| !is_official(p));
+    Ok((store.list()?, active))
+}
+
+/// 按磁盘现状（谁是默认）算续聊层。返回（config.toml 原文, 续聊层结果, 默认, 输入）
+fn codex_continuity_layer(
+    home: &Path,
+    profiles: &[Profile],
+    active: Option<&Profile>,
+) -> Result<Option<(String, crate::codex_continuity::LayerOut, crate::codex_continuity::Head, crate::codex_continuity::Inputs)>, String> {
+    use crate::codex_continuity as cc;
+    let dir = codex_dir(home);
+    let Some(text) = read_existing(&dir.join("config.toml"))? else {
+        return Ok(None);
+    };
+    let doc = parse_toml_doc(Some(&text))?;
+    let head = cc::disk_head(&doc, || active.map(cc::relay_head_entries));
+    let inp = cc::Inputs::gather(&dir, profiles)?;
+    let out = cc::layer(&text, &head, &inp)?;
+    Ok(Some((text, out, head, inp)))
+}
+
+/// 连接页 Codex 一栏的体检：客户端里有多少对话接不上（渠道没定义 / 模型不在目录里）、几个渠道块还存着明文密钥
+#[tauri::command]
+pub async fn codex_client_continuity(
+    store: tauri::State<'_, ProfileStore>,
+) -> Result<crate::codex_continuity::ContinuityDto, String> {
+    let (profiles, active) = codex_continuity_inputs(&store)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
+        match codex_continuity_layer(&home, &profiles, active.as_ref())? {
+            Some((text, _, head, inp)) => crate::codex_continuity::check(&text, &head, &inp),
+            None => Ok(Default::default()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 「补齐」：只加渠道定义、重建 Mesa 的全局模型目录，不动默认渠道与模型；走全局写入的备份，可「撤销上次写入」
+#[tauri::command]
+pub async fn fix_codex_client_continuity(
+    store: tauri::State<'_, ProfileStore>,
+) -> Result<Vec<String>, String> {
+    let (profiles, active) = codex_continuity_inputs(&store)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let _guard = GLOBAL_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _file_guard = crate::storage::config_lock("global-config")?;
+        let Some((text, out, _, inp)) = codex_continuity_layer(&home, &profiles, active.as_ref())? else {
+            return Ok(Vec::new());
+        };
+        let cfg_path = codex_dir(&home).join("config.toml");
+        let mut plans = Vec::new();
+        if out.config != text {
+            plans.push(PlannedWrite { tag: "config.toml", path: cfg_path, content: out.config });
+        }
+        if let Some(catalog) = out.catalog {
+            plans.push(PlannedWrite { tag: "model-catalog.json", path: inp.catalog_path, content: catalog });
+        }
+        if plans.is_empty() || disk_equals_plans(&plans) {
+            return Ok(Vec::new());
+        }
+        apply_plans(&backups_root()?.join("codex"), &home, &plans)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn read_existing(path: &Path) -> Result<Option<String>, String> {
     match fs::read_to_string(path) {
         // BOM 在读入口统一剥掉：各 patch_* 解析前不必各自处理，写回也不再带 BOM
@@ -1956,11 +2078,12 @@ fn plan_writes(
             push("settings.json", path, content);
         }
         "codex" => {
-            // /model 选择器的模型目录：先写 catalog 文件，再把路径写进 config.toml
+            // /model 选择器的模型目录：先写 catalog 文件，再把路径写进 config.toml。
+            // 写全局专用的一份（启动会按绑定重写每连接那份；全局这份还要由续聊层补老对话的模型）
             let catalog = if profile.models.is_empty() {
                 None
             } else {
-                let path = agents::codex_catalog_path(&profile.id).ok_or("无法确定平台配置目录")?;
+                let path = agents::codex_global_catalog_path().ok_or("无法确定平台配置目录")?;
                 let mut content = serde_json::to_string_pretty(&agents::codex_catalog_json_for(
                     &profile.name,
                     &profile.models,
@@ -3095,7 +3218,10 @@ pub fn preview_profile_global(
     let mut profile = store.get_with_model(&profile_id, None)?;
     if is_official(&profile) {
         let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-        let plans = plan_writes(&home, &profile, None, &[])?;
+        let mut plans = plan_writes(&home, &profile, None, &[])?;
+        if profile.agent == "codex" {
+            extend_codex_plans(&home, &mut plans, &store.list()?, None)?;
+        }
         return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new(), Vec::new()));
     }
     let skipped = skipped_policy_notes(&profile);
@@ -3104,7 +3230,10 @@ pub fn preview_profile_global(
     let key = profiles::get_key_for_profile(&profile)?;
     crate::agents::ensure_launch_credentials(&profile, key.as_deref())?;
     let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-    let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
+    let mut plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
+    if profile.agent == "codex" {
+        extend_codex_plans(&home, &mut plans, &store.list()?, Some(&profile))?;
+    }
     Ok(preview_plans(&home, &profile.agent, &plans, skipped, override_notes_with(&profile.agent, &shell_has)))
 }
 
@@ -3118,6 +3247,8 @@ pub async fn apply_profile_global(
     // 一键切换（连接行地球图标）传 false：写完立刻返回，复检由前端随后调 validate_global_profile
     let validate = validate.unwrap_or(true);
     let profile = profile_for_write(&store, &profile_id)?;
+    // Codex 续聊层要认出老对话的网关（codex_continuity）
+    let all_profiles = if profile.agent == "codex" { store.list()? } else { Vec::new() };
     if is_official(&profile) {
         let result = tauri::async_runtime::spawn_blocking(move || {
             let _guard = GLOBAL_CONFIG_MUTEX
@@ -3125,7 +3256,10 @@ pub async fn apply_profile_global(
                 .unwrap_or_else(|e| e.into_inner());
             let _file_guard = crate::storage::config_lock("global-config")?;
             let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-            let plans = plan_writes(&home, &profile, None, &[])?;
+            let mut plans = plan_writes(&home, &profile, None, &[])?;
+            if profile.agent == "codex" {
+                extend_codex_plans(&home, &mut plans, &all_profiles, None)?;
+            }
             // 磁盘已经是官方形态：不写、不产生空备份批次
             let files = if disk_equals_plans(&plans) {
                 Vec::new()
@@ -3148,7 +3282,10 @@ pub async fn apply_profile_global(
             .unwrap_or_else(|e| e.into_inner());
         let _file_guard = crate::storage::config_lock("global-config")?;
         let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-        let plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
+        let mut plans = plan_writes(&home, &profile, key.as_deref(), &profile.models)?;
+        if profile.agent == "codex" {
+            extend_codex_plans(&home, &mut plans, &all_profiles, Some(&profile))?;
+        }
         let backups_dir = backups_root()?.join(&profile.agent);
         let files = apply_plans(&backups_dir, &home, &plans)?;
         // 写成功即记录「全局生效」追踪（settings.active_global_profiles）；后面的验证
@@ -3170,7 +3307,7 @@ pub async fn apply_profile_global(
 
 /// 把绑定的 base_url + 密钥写成 config.toml 里名为 `block_name` 的 provider 定义块。
 /// 调用方：客户端接力的「写入并打开」（client_open_launch）与会话导入（传入 rollout 记录的原始名，如 A 机 `ccode-<A短id>`）。
-/// 只写 config.toml 的定义块（认证走 experimental_bearer_token，不动 auth.json），与「设为全局」共用备份，可「撤销上次写入」。
+/// 只写 config.toml 的定义块（认证走 auth.command，不动 auth.json），与「设为全局」共用备份，可「撤销上次写入」。
 pub(crate) fn register_codex_client_provider_named(
     profile: Profile,
     key: String,
@@ -3194,18 +3331,17 @@ pub(crate) fn register_codex_client_provider_named(
     let _file_guard = crate::storage::config_lock("global-config")?;
     let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
     let cfg_path = cli_dir(&home, "codex").join("config.toml");
-    // 只写 config.toml：认证在 provider 块内 experimental_bearer_token，auth.json 完全不碰
-    // （单槽 OPENAI_API_KEY 是客户端自身 API-Key 登录态的凭证，写它会顶掉登录）
-    let plans = vec![PlannedWrite {
-        tag: "config.toml",
-        path: cfg_path.clone(),
-        content: patch_codex_config_register(
-            read_existing(&cfg_path)?.as_deref(),
-            profile.base_url.as_deref(),
-            &block_name,
-            &key,
-        )?,
-    }];
+    // 只写 config.toml，auth.json 完全不碰（单槽 OPENAI_API_KEY 是客户端自身 API-Key 登录态的凭证，写它会顶掉登录）
+    let existing = read_existing(&cfg_path)?;
+    // 认证走 auth.command（mesa_helper 现取 keys.json），config.toml 不落明文；
+    // 找不到随包 helper（开发态还没建出来）才退回 experimental_bearer_token
+    let content = match crate::codex_continuity::stable_helper() {
+        Some(helper) if profile.gateway_id.is_some() => {
+            crate::codex_continuity::register_block(existing.as_deref(), &block_name, &profile, &helper)?
+        }
+        _ => patch_codex_config_register(existing.as_deref(), profile.base_url.as_deref(), &block_name, &key)?,
+    };
+    let plans = vec![PlannedWrite { tag: "config.toml", path: cfg_path.clone(), content }];
     let backups_dir = backups_root()?.join("codex");
     apply_plans(&backups_dir, &home, &plans)
 }
@@ -3977,7 +4113,13 @@ trust_level = "trusted"
         off.account_type = crate::profiles::AccountType::Official;
         let plans = plan_writes(&home, &off, None, &[]).unwrap();
         apply_plans(&home.join("bk2"), &home, &plans).unwrap();
-        let text = fs::read_to_string(&cfg).unwrap();
+        // 官方计划留着 Mesa 的全局目录引用（续聊层按需撤），这里换成别人的目录
+        let text: String = fs::read_to_string(&cfg)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.starts_with("model_catalog_json"))
+            .map(|l| format!("{l}\n"))
+            .collect();
         fs::write(&cfg, format!("model_catalog_json = \"/x.json\"\n{text}")).unwrap();
         let files = drift_files(&home, &off, None).unwrap();
         assert!(files[0].changes.iter().any(|c| c.op == "add" && c.path == "model_catalog_json"));

@@ -154,6 +154,19 @@ export interface GlobalDriftDto {
   message: string | null;
 }
 
+/** Codex 客户端续聊体检（codex_client_continuity）：哪些对话在客户端里接不上、补齐能救几条 */
+export interface CodexContinuityDto {
+  /** 渠道没定义（客户端报 Model provider not found）的对话数 */
+  missingProviderThreads: number;
+  /** 模型不在模型目录里（客户端报 This model isn't available）的对话数 */
+  missingModelThreads: number;
+  /** 补不了：连接已删除或旧版 Mesa 的对话 */
+  unfixableThreads: number;
+  /** Mesa 以前写下、还存着明文密钥的渠道定义块 */
+  plaintextBlocks: number;
+  helperMissing: boolean;
+}
+
 export interface GatewayUsageRow {
   gatewayId: string;
   gatewayName: string;

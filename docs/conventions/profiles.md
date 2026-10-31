@@ -387,7 +387,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 5. **用户能改的写在用户层**：不用最高优先级的 env 压住用户在外面 `/model`、`/effort` 的选择（Claude 写顶层 `model` / `effortLevel`）。
 6. **官方切回只撤 Mesa 写过的**：不写死某种登录方式（Gemini 不写 `oauth-personal`、Qwen 不写已停用的 `qwen-oauth`），不删用户自带密钥的配置段。
 7. **被全局配置引用的文件不随连接删除**（Codex 模型目录，`profiles::codex_config_references`）。
-8. **密钥能引用就不写明文**：OpenCode `{file:}`、CodeBuddy `models.json` 的 `${CODEBUDDY_API_KEY}`、请求头只写变量名引用（Codex `env_http_headers` / OpenCode `{env:}` / Grok `$VAR`），只认明文的家不写请求头。
+8. **密钥能引用就不写明文**：OpenCode `{file:}`、CodeBuddy `models.json` 的 `${CODEBUDDY_API_KEY}`、Codex 续聊补的 `ccode-<短id>` 渠道 `auth.command`（`mesa_helper codex-token`）、请求头只写变量名引用（Codex `env_http_headers` / OpenCode `{env:}` / Grok `$VAR`），只认明文的家不写请求头。
 9. **CLI 升级后自动复核**：CLI 金丝雀「全局配置」层（`global_phase` + `e2e_write_global_config`）用真写计划写进临时 HOME、不经 Mesa 起 CLI，核对请求的模型与密钥；新写法上线前同样先用真 CLI + 假网关跑一遍（本条起，静态审查代替不了，见 AGENTS「动真实数据先干跑」）。
 
 「写入 CLI 全局默认」是绑定上的动作（一键入口不预览，见下「一键设为全局」），复用现事务写入 / 备份 / 原始快照 / 复检弹层。确认前 `preview_profile_global` 给出脱敏变更预览（文件、字段增删改、此入口带不上的策略、已开进程需新开）。成功更新「外部 CLI 上次写入」追踪，**不**改 Mesa 启动默认，也不改项目默认。无密钥网关仍禁止（`plan_writes` 现拒绝 `noAuth`，保持）。
@@ -405,6 +405,14 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 
 **Codex 全局渠道共用 `custom`（2026-10-28 用户拍板，与 cc-switch 同名）**：「设为全局」不再按网关写 `ccode-<短id>`，一律写 `[model_providers.custom]` 并 `model_provider = "custom"`（`CODEX_GLOBAL_PROVIDER`），整块替换（上一家留下的 `requires_openai_auth` / `supports_websockets` / `env_key` 等残键不带过来）。理由：客户端侧栏只列启动时默认渠道下的对话（matrix §1 实测），每个网关一个名字会让切换后其余连接的对话全藏起来；用 cc-switch 的同名，两边的对话归在一处。**官方账号不进 `custom`**（同日用户实测否决「官方也写进 custom」）：同一渠道名下的老对话会被接到新连接上，中转跑过的对话接到官方时，历史里中转留下的条目官方接口不收（客户端报 `input[n].content: array too long`，整段续不上）；中转之间互切没见到这类问题。Mesa 自己启动用的 `-c` 内联 `ccode-<短id>` 不变（恢复会话靠它认网关），客户端接力补写的 `ccode-<短id>` 定义块不动，只删旧 `ccode` 块。cc-switch 痕迹判定（`codex_other_switcher_marks`）随之改：`custom` 块 `name = "Mesa"`（Mesa 写的）或 ChatGPT 登录形态不算别家；别的名字、cc-switch 模型目录、指着 `custom` 却没定义块才算。
 
+**Codex 客户端续聊：切全局只动默认，老对话要用的只加不删（2026-10-31 用户拍板，`codex_continuity.rs`）**：Codex 的对话在开对话时定死渠道，渠道定义与模型目录却是全局的，切全局拿掉老对话要用的东西，客户端就报 `Model provider ... not found` / `This model isn't available`（用户两张截图）。规则：
+- **渠道定义只加不删**：设为全局（中转与官方都算）时，对话表（只读 `state_<N>.sqlite`，不含归档）里出现过、Mesa 认得出网关的 `ccode-<短id>` 一并补定义块，与启动内联同形，认证写 `[model_providers.<名>.auth] command = <配置根>/bin/mesa_helper, args = ["codex-token", <网关 id>]`——helper 现取 keys.json（只读文件，不碰钥匙串），config.toml 不落明文；Mesa 以前写的明文块（`name = "Mesa"` + `experimental_bearer_token`）顺带改成这样；用户自己写的同名块、认不出网关的（连接已删、旧版 `ccode`）不碰。客户端接力「写入并打开」同样写 auth 形态（找不到随包 helper 才退回明文）。共用渠道 `custom` 仍写 `experimental_bearer_token`（金丝雀「全局配置」层按它核对，改形态另议）。
+- **auth 与 env_key / bearer 不能并存**（0.166 实测：`provider auth cannot be combined with env_key`，整份 config 加载失败）：Mesa 启动与复制的恢复命令见到磁盘该渠道有 `auth` 就不注 `env_key`（`agents::codex_disk_provider_has_auth`），认证交给那条命令，取的是同一把密钥。命令坏了（Mesa 卸了）只坏那一个渠道，不影响配置加载（同日实测）。
+- **模型目录只追加**：设为全局写 Mesa 专用的 `<配置根>/catalogs/codex-global.json`（不再指每连接那份——启动会按绑定重写它）。中转默认：当前连接的模型在前，再接老对话用过、渠道有定义的模型；有官方老对话且 ChatGPT 登录着，官方模型整组带上（照抄 `models_cache.json` 里 visibility = list 的条目，显示名前缀「ChatGPT · 」；codex 认原样条目，`codex debug models` 核过）。官方默认：没有中转老对话就撤掉 Mesa 目录、回落 Codex 自己的模型表；有就写「官方模型 + 中转老对话的模型」。同一个模型名在几条连接的老对话里都有，显示名写「老对话 · 模型」不挂某条连接。上限 60 条。
+- **只进预览与写入，不进漂移比对**：对话表天天在变，进比对会误报「外部改过」；续聊层只加渠道块、目录只在尾部追加，基础计划的子集比对照样成立。官方基础计划留着指向 `codex-global.json` 的引用（由续聊层决定撤不撤），整份比对才不误报。
+- **体检与补齐**：连接页 Codex 一栏按对话数提示「N 条对话接不上（缺渠道定义 / 模型不在目录里）」与「N 个渠道存着明文密钥」，点「补齐」只加渠道定义、重建目录，不动默认渠道与模型，走同一套备份可「撤销上次写入」。新连接开出的对话不会自动补——写 CLI 配置只在用户点了以后。
+- **启动刷新**：config.toml 正指着 `codex-global.json` 时，Mesa 启动按当前官方模型表重建这个文件（只动 Mesa 自己的文件），顺带把 helper 拷贝换成这一版。测试态目录在临时目录（`agents::catalogs_dir`），写计划的测试不得写进用户的 catalogs/。
+
 **Codex 全局写入与启动同口径的几项（2026-10-30）**：`patch_codex_relay_extras` 在共用渠道之外再写——顶层 `model_context_window` / `model_auto_compact_token_limit` 按确知窗口改写（压缩点 95%），不知道就撤（上一家的旧窗口会盖过模型目录）；`[plugins."codex-app-tools@openai-bundled"] enabled = false`（同启动 `codex_relay_compat_args`，防失效登录态 401）；自定义请求头写成 `custom` 块的 `env_http_headers`（变量名引用，不落密文）。官方切回撤掉关掉的插件与两项窗口。**删除连接时**，外部 config.toml 的 `model_catalog_json` 还指着这条连接的模型目录就不删那个文件（删了外部 codex 直接起不来，隔离 `CODEX_HOME` 实测）。
 
 **Qwen / Gemini 全局写入补的落盘通道（2026-10-30）**：通道表 `request_policy_support` 改 `persist`——Qwen 思考档写条目级 `samplingParams.reasoning_effort`、模型条目 `envKey` 用 Mesa 专用 `MESA_QWEN_API_KEY`（防项目 `.env` 的 `OPENAI_API_KEY` 顶掉）、确知窗口写 `generationConfig.contextWindowSize`；Gemini 温度 / top_p / 输出上限写 `modelConfigs.customOverrides`（只管 `match` 恰为 `{model: 本连接模型}` 的条目，先撤再写）并另写 `model.name`（`.env` 常因目录信任 / 项目 `.env` 读不到）。改通道表必须同改写盘函数：`policy_channel_table_agrees_with_patch_functions` 会拦。
@@ -421,7 +429,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 
 | Agent | 撤 / 改 |
 |---|---|
-| Codex | 撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、`model_catalog_json`、`model_context_window` / `model_auto_compact_token_limit`、Mesa 关掉的 `codex-app-tools` 插件，非官方模型名撤 `model`；**`custom` 块原样留着**，中转老对话照旧走原连接（曾写成 cc-switch 统一官方块同形，用户实测续不上中转老对话，已改回）。客户端侧栏在官方与中转之间切换时会互相藏对话，这是两者不能共用渠道的代价 |
+| Codex | 撤 `model_provider`（回落内置 openai，认证交 auth.json 的 ChatGPT 登录）、别家的 `model_catalog_json`（Mesa 的 `codex-global.json` 交续聊层：有中转老对话就重建成官方模型 + 它们的模型，没有就撤，见上「Codex 客户端续聊」）、`model_context_window` / `model_auto_compact_token_limit`、Mesa 关掉的 `codex-app-tools` 插件，非官方模型名撤 `model`；**`custom` 块原样留着**，中转老对话照旧走原连接（曾写成 cc-switch 统一官方块同形，用户实测续不上中转老对话，已改回）。客户端侧栏在官方与中转之间切换时会互相藏对话，这是两者不能共用渠道的代价 |
 | Claude Code | settings.json env 撤端点 / 两种密钥、四个别名槽及 `_NAME`、第五槽、上下文成对键、旧子 agent 键；`ANTHROPIC_MODEL` 是 claude 模型或别名（opus / sonnet …）时留 |
 | Gemini | `.env` 删 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GEMINI_BASE_URL`，非 gemini 模型删 `GEMINI_MODEL`；settings.json 认证方式是 Mesa 写的 `gemini-api-key` 就撤掉（**不写死 `oauth-personal`**，2026-10-30：Vertex / 自带 AI Studio 密钥的人会被改掉，个人 Google 账号也常用不了；撤掉后 Gemini 进门让用户选），非 gemini 的 `model.name` 撤 |
 | Qwen | 认证方式是 Mesa 写的协议名（openai / anthropic）就撤掉，**不改成 `qwen-oauth`**（2026-10-30：Qwen OAuth 免费档已停用，切过去用不了；官方账号启动直接拦并说明）；env 撤两套协议的密钥 / 端点 / 模型与 `MESA_QWEN_API_KEY`；`model.name` 等于被撤模型名时撤 |

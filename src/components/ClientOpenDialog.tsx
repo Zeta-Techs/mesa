@@ -363,7 +363,7 @@ function FixPlan({
       </ol>
       <p className="flex items-start gap-1.5 text-micro leading-4 text-l4">
         <ShieldCheck size={11} className="mt-0.5 shrink-0" aria-hidden="true" />
-        密钥以明文写入这个文件；写前自动备份，想还原到连接页 Codex 组的「⋯ → 撤销上次写入」。
+        密钥不写进这个文件，客户端用时向 Mesa 现取（所以 Mesa 要留在这台电脑上）；写前自动备份，想还原到连接页 Codex 组的「⋯ → 撤销上次写入」。
       </p>
     </div>
   );

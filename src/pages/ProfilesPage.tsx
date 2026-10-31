@@ -127,6 +127,7 @@ import type {
   BindingInput,
   ComboSurfaceDto,
   GlobalDriftDto,
+  CodexContinuityDto,
   GlobalDriftDetailDto,
   ImportV2Result,
   GlobalApplyResultDto,
@@ -2553,6 +2554,39 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     };
   }, [profiles, visible, driftTick, activeGlobalMap]);
 
+  // Codex 客户端续聊体检：切过全局后，客户端里哪些老对话接不上（渠道没定义 / 模型不在目录里），给「补齐」
+  const [codexContinuity, setCodexContinuity] = useState<CodexContinuityDto | null>(null);
+  const [continuityBusy, setContinuityBusy] = useState(false);
+  useEffect(() => {
+    if (!visible || !profiles.some((p) => p.agent === "codex")) return;
+    let cancelled = false;
+    invoke<CodexContinuityDto>("codex_client_continuity")
+      .then((d) => !cancelled && setCodexContinuity(d))
+      .catch(() => !cancelled && setCodexContinuity(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [profiles, visible, driftTick, activeGlobalMap]);
+  async function fixCodexContinuity() {
+    if (continuityBusy) return;
+    setContinuityBusy(true);
+    try {
+      const files = await invoke<string[]>("fix_codex_client_continuity");
+      await refreshGlobalBackups();
+      setDriftTick((t) => t + 1);
+      toast(
+        files.length > 0
+          ? "已补齐。重启 Codex 客户端后，那些对话就能接着聊；要撤回在 Codex 连接行 ⋯ 里「撤销上次写入」"
+          : "没有要补的",
+        "success",
+      );
+    } catch (e) {
+      toast(`补齐失败：${String(e)}`, "error");
+    } finally {
+      setContinuityBusy(false);
+    }
+  }
+
   // 悬浮卡（用量 / 连接冲突）：Escape / 任意滚动即关闭（同 ContextMenu；滚动关闭也避免与锚点脱离）
   useEffect(() => {
     if (!conflictPop) return;
@@ -4429,6 +4463,35 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         </div>
                       </div>
                     )}
+                    {agent.id === "codex" && codexContinuity && (() => {
+                      const c = codexContinuity;
+                      const broken = c.missingProviderThreads + c.missingModelThreads;
+                      if (broken === 0 && c.plaintextBlocks === 0) return null;
+                      const parts = [
+                        c.missingProviderThreads > 0 ? `${c.missingProviderThreads} 条缺渠道定义` : null,
+                        c.missingModelThreads > 0 ? `${c.missingModelThreads} 条的模型不在模型目录里` : null,
+                      ].filter(Boolean);
+                      const text =
+                        broken > 0
+                          ? `Codex 客户端里有 ${broken} 条对话接不上（${parts.join("、")}）。补齐只加不删、不改默认连接，写前备份；重启客户端后生效。${
+                              c.plaintextBlocks > 0 ? `顺带把 ${c.plaintextBlocks} 个渠道里的明文密钥改成用时从 Mesa 取。` : ""
+                            }`
+                          : `Codex 配置里有 ${c.plaintextBlocks} 个 Mesa 写下的渠道还存着明文密钥。补齐后改成用时从 Mesa 取，配置文件里不再留密钥。`;
+                      return (
+                        <div className="mx-3 mt-2 flex items-start gap-3 rounded-sm ccode-well p-2 text-xs text-l2">
+                          <p className="min-w-0 flex-1">{text}</p>
+                          <button
+                            type="button"
+                            disabled={continuityBusy || c.helperMissing}
+                            title={c.helperMissing ? "找不到 Mesa 随包的取密钥小程序（开发版先完整构建一次）" : undefined}
+                            onClick={() => void fixCodexContinuity()}
+                            className="shrink-0 rounded-sm px-2 py-0.5 text-xs text-cta hover:bg-hover disabled:opacity-50 disabled:hover:bg-transparent"
+                          >
+                            {continuityBusy ? "补齐中…" : "补齐"}
+                          </button>
+                        </div>
+                      );
+                    })()}
                     {updateResults[agent.id] && (
                       <div className="mx-3 mt-2 rounded-sm ccode-well p-2 text-xs text-l2">
                         <span

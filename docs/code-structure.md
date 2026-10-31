@@ -1140,6 +1140,11 @@ src-tauri/src/
                              #   Claude 查 transcript 文件与连接是否网关）→ client_open_list / client_open_plan / client_open_launch。
                              #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
                              #   读不到就不假装知道（Unknown 不出检查项）；深链模板与客户端规格数据在 agent_specs.rs 的 ClientSpec
+  codex_continuity.rs        # Codex 客户端续聊（2026-10-31）：切全局只动默认，老对话要用的只加不删。只读对话表 state_<N>.sqlite，
+                             #   给出现过的 ccode-<短id> 补渠道定义（auth.command = mesa_helper codex-token <网关id>，不落明文；
+                             #   Mesa 旧明文块顺带改写），重建 Mesa 专用全局模型目录 codex-global.json（当前默认 + 老对话的模型，
+                             #   官方模型照抄 models_cache.json）；check 体检 / layer 供设为全局与「补齐」；helper 拷到 <配置根>/bin/；
+                             #   启动只刷目录文件、不碰 config.toml。红线：auth 与 env_key / bearer 不能并存（agents 启动见到 auth 不注 env_key）
   global_config.rs           # 「设为全局默认」：agent 级事务批次写入（备份/回滚/恢复）；Codex 一律写共用渠道 custom；
                              # 目标目录一律 cli_dir（= agent_specs::agent_config_root_with，认 CODEX_HOME 等搬迁变量；测试态不读环境）；
                              # 官方账号走 plan_official_writes（各家撤 API 键交回登录，整份比对 disk_equals_plans）；写成功即记

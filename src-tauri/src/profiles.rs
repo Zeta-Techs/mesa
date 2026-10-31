@@ -1854,6 +1854,11 @@ fn get_key_locked(id: &str) -> Result<Option<String>, String> {
     Ok(Some(key))
 }
 
+/// helper 进程取密钥（Codex 渠道 auth.command）：只读 keys.json，不碰钥匙串——后台被 Codex 调起时弹授权框没人点
+pub(crate) fn read_key_file_only(id: &str) -> Result<Option<String>, String> {
+    Ok(read_keys_at(&keys_path()?)?.get(id).cloned())
+}
+
 /// 读取密钥；keys.json 损坏时返回错误而非谎报「无密钥」
 pub fn get_key(id: &str) -> Result<Option<String>, String> {
     let _g = store_lock()?;

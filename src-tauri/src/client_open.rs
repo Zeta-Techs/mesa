@@ -759,7 +759,7 @@ fn codex_home() -> Option<PathBuf> {
 }
 
 /// 客户端自己的会话注册表：`state_<N>.sqlite`，取版本号最大的一份（Codex 升 schema 时文件名会变）
-fn codex_state_db(base: &Path) -> Option<PathBuf> {
+pub(crate) fn codex_state_db(base: &Path) -> Option<PathBuf> {
     std::fs::read_dir(base)
         .ok()?
         .filter_map(|e| e.ok())

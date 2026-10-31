@@ -174,6 +174,11 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("image") {
         std::process::exit(ccode_lib::helper_image(&args[2..]));
     }
+    // `mesa_helper codex-token <网关 id>`：Codex 渠道定义块的 `auth.command`，现取 keys.json 里的密钥打到 stdout，
+    // config.toml 里不落明文（Codex 客户端续 Mesa 开的对话靠它）
+    if args.get(1).map(String::as_str) == Some("codex-token") {
+        std::process::exit(ccode_lib::helper_codex_token(&args[2..]));
+    }
     let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
     while let Some(frame) = read_frame(&mut stdin) {

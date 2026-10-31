@@ -76,6 +76,12 @@ pub fn helper_pending_for_doi(doi: &str) -> Option<(String, String, String)> {
 pub fn helper_image(args: &[String]) -> i32 {
     image_gen::helper_image_cli(args)
 }
+
+/// helper 取 Codex 渠道密钥（`mesa_helper codex-token <网关 id>`）：Codex 渠道 `auth.command` 调用，返回退出码
+pub fn helper_codex_token(args: &[String]) -> i32 {
+    codex_continuity::helper_token_cli(args)
+}
+mod codex_continuity;
 mod image_gen;
 
 mod browser_bridge;
@@ -254,6 +260,13 @@ pub fn run() {
             });
             #[cfg(not(windows))]
             std::thread::spawn(hooks::refresh_gemini_hook_name);
+            // Codex 全局模型目录（Mesa 自己的文件）跟着本机官方模型表刷新；helper 拷贝换成这一版
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    codex_continuity::refresh_on_startup(&handle.state::<profiles::ProfileStore>());
+                });
+            }
             // macOS 菜单栏：应用子菜单带 About 面板（版权 / 许可入口）。set_menu 会
             // 整体替换默认菜单——编辑子菜单的复制粘贴等预置项必须显式带上，否则
             // 文本框的系统快捷键全失灵。仅 macOS：Windows 无菜单栏惯例。
@@ -615,6 +628,8 @@ pub fn run() {
             client_open::client_restart,
             global_config::restore_global_backup,
             global_config::gemini_use_api_key_auth,
+            global_config::codex_client_continuity,
+            global_config::fix_codex_client_continuity,
             global_config::has_global_backup,
             global_config::has_original_backup,
             global_config::restore_original_backup,

@@ -76,7 +76,7 @@ Mesa 是一个「AI 科研工作台」桌面应用（Tauri v2 + React/TS）—�
 - **定时雷达（2026-10-13）**：雷达文献＝项目内日常积累，不进科研流程——绝不写 `papers/included.md`、`notes/index.json`、`references.bib`；
   雷达台账全 gitignored、不影响合并；**精读接续铁律**：某篇已有笔记时在原笔记上续写，「标注」「译段」「我的想法」与用户手写内容原样保留、
   不另起平行笔记。细则 pipeline.md「评审与采纳口径」「双台账」
-- **设为全局写入规则（2026-10-30）**：写到 CLI 实际读的目录（认 `CODEX_HOME` 等搬迁变量）、与启动注入同源、只管自己写的键且先清再写、
+- **设为全局写入规则（2026-10-30）**：切全局只动「新对话默认」，老对话要用的渠道 / 模型只加不删（2026-10-31，Codex 已落地）；写到 CLI 实际读的目录（认 `CODEX_HOME` 等搬迁变量）、与启动注入同源、只管自己写的键且先清再写、
   写前说清会被什么盖掉、用户能改的写用户层、官方切回只撤 Mesa 写的、被引用的文件不随连接删、密钥能引用就不写明文、金丝雀「全局配置」层每天复核。
   改任一家写计划前读 profiles.md §12 开头九条
 - **从手机添加（2026-10-20）**：手机→桌面**单向**、**Mesa 开着才收**、只走局域网；配对永远要人点开始；收到的先进暂存区，**人点了才进项目**
@@ -169,7 +169,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - **会话文本出站前必须在 Rust 层脱敏**：标题/摘要、结构化回放、AI 摘要、Markdown 导出均不得把已保存密钥或常见密钥前缀
   送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。
 - **gitignored 科研产物最终落点是项目根，但分两类走法**（2026-09-09 口径 C）：文献 PDF 与人工导入属**原始资料**，直写项目根 `papers/`；清洗后数据、实验结果、渲染成品等 **Agent 派生产物**写工作区产物目录或 `output/`（不进 git），评审时经 `workspace_review_deliverables` 冻结非 Git 文件，合并只由 `apply_delivery_review` 带回所审副本（同名冲突点名交人、保护路径跳过；人在评审页逐个勾掉的不带回；有未接收产物不得归档——人勾掉且仍是那一版的除外，见 pipeline.md「逐个勾掉不带回」）。派生产物直写项目根 = 未验收产物。TASK.md 必须给出项目根绝对路径（读提货单、写 papers/）。
-- **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块，认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。API 连接「设为全局」一律写共用渠道名 `custom`（2026-10-28，与 cc-switch 同名）；官方账号不进 `custom`，撤 `model_provider` 回内置 openai（中转历史接不到官方，见 profiles.md §12）。
+- **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块；共用渠道 `custom` 认证用 `experimental_bearer_token`（ChatGPT 自带 Codex 认这个字段），补给老对话的 `ccode-<短id>` 块用 `auth.command`（mesa_helper 现取，不落明文；与 env_key 不能并存，见 profiles.md「Codex 客户端续聊」）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。API 连接「设为全局」一律写共用渠道名 `custom`（2026-10-28，与 cc-switch 同名）；官方账号不进 `custom`，撤 `model_provider` 回内置 openai（中转历史接不到官方，见 profiles.md §12）。
 - **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作：设为全局默认、hooks 精确注意力开关（2026-10-20 起只剩 Gemini / Kimi / Grok；
   其余五家启动时注入，以前写过的启动时收回）、Gemini 认证方式一键设成 API Key（只改这一项、先备份，2026-10-27）、会话删除、工作树文件删除（走系统回收站）、会话导入、内部对话保留期清理（只删 Mesa 自己的后台对话，
   `internal_sessions.rs`）、会话瘦身（仅 Claude Code，写前完整备份，`session_slim.rs`）。每类的备份 / 白名单口径见 safety.md。
