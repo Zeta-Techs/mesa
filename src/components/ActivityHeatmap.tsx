@@ -102,7 +102,7 @@ export default function ActivityHeatmap({
   const agentsSeq = useRef(0);
   const measureRef = useRef<HTMLDivElement>(null);
   /** 布局只跟页面满宽哨兵走（始终 100%，与主区是否 hug 无关）。单模布局
-   *  （2026-10-16 拍板）：胶囊全在卡头一行、主区无左栏，格子 11–28px 正方形
+   *  （2026-10-16 拍板）：胶囊全在卡头一行、主区无左栏，格子 9–28px 正方形
    *  吃满卡宽；28 只是地砖闸，到顶后主区收成内容宽居中、卡片保持列宽对齐兄弟卡。
    *  容器查询在本环境不稳，ResizeObserver 确定性写入 */
   const [cellPx, setCellPx] = useState(11);

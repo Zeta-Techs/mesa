@@ -200,9 +200,13 @@ export function activityDatePhrase(day: string, today: string): string {
 }
 
 /** 热力图布局常量：与 App.css `.ccode-heat*` 同步。改一处必须改另一处。 */
-export const HEAT_LABEL_PX = 20;
+/** 星期列 16px + 两侧 border-spacing 各一档（列数 = 周数 + 1，间距有 周数 + 2 道）。
+ *  旧值 20 漏了 2px，表格实际比算出的宽 2px，格子刚好吃满时多出一条横向滚动条 */
+export const HEAT_LABEL_PX = 22;
 export const HEAT_GAP_PX = 3;
-export const HEAT_CELL_MIN_PX = 11;
+/** 格子下限（2026-10-31 用户拍板 11 → 9）：窗口铺满去年同月 1 日到今天最多 57 周，11px 要约 820px，
+ *  分屏 / 窄窗下卡片放不下就出横向滚动条；9px 仍是圆角正方形，形状、圆角比例、3px 间距都不变 */
+export const HEAT_CELL_MIN_PX = 9;
 /** 格子边长上限（2026-10-16 单模布局拍板：胶囊全上卡头、主区无左栏，格子吃满卡宽，
  *  16 → 28 两轮上调）。当前用量页 1440 限宽下实际最大 ~21–22px；28 只是放开限宽前的
  *  地砖闸，不得再抬。到顶后主区收成内容宽、卡片保持列宽。 */
@@ -210,7 +214,7 @@ export const HEAT_CELL_MAX_PX = 28;
 /** 活跃度卡 `p-4` 左右合计。哨兵量的是卡外满宽，算格子前要扣掉。 */
 export const HEAT_WELL_PAD_PX = 32;
 
-/** 格子边长：可用宽度能放下的最大整数 px，夹在 11–28。 */
+/** 格子边长：可用宽度能放下的最大整数 px，夹在 9–28。 */
 export function heatCellPx(avail: number, weeks: number): number {
   const w = Math.max(1, weeks);
   const raw = Math.floor((avail - HEAT_LABEL_PX) / w) - HEAT_GAP_PX;

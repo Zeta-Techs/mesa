@@ -146,14 +146,22 @@ test("shiftDay 跨月跨年", () => {
   assert.equal(shiftDay("2026-12-31", 1), "2027-01-01");
 });
 
-test("heatCellPx：11–28 夹紧，28 以上不再抬", () => {
+test("heatCellPx：9–28 夹紧，28 以上不再抬", () => {
+  assert.equal(HEAT_CELL_MIN_PX, 9);
   assert.equal(heatCellPx(400, 53), HEAT_CELL_MIN_PX);
-  // 常规卡宽约 918：floor((918-20)/53)-3 = 13，吃满而不是停在更小档
+  // 常规卡宽约 918：floor((918-22)/53)-3 = 13，吃满而不是停在更小档
   assert.equal(heatCellPx(918, 53), 13);
   // 单模布局（2026-10-16）：胶囊全上卡头、主区无左栏，满宽都给格子
-  // ——1440 限宽页卡内约 1360：floor((1360-20)/53)-3 = 22
+  // ——1440 限宽页卡内约 1360：floor((1360-22)/53)-3 = 22
   assert.equal(heatCellPx(1360, 53), 22);
   // 再宽也停在上限，不再长成地砖
   assert.equal(heatCellPx(1720, 53), HEAT_CELL_MAX_PX);
   assert.equal(heatCellPx(4000, 53), HEAT_CELL_MAX_PX);
+  // 2026-10-31 窄卡实测：卡内约 773、57 周——旧下限 11 要 820 出滚动条，现在 10px 放得下
+  assert.equal(heatCellPx(773, 57), 10);
+  // 算出的边长放回表格宽度公式（22 + (cell+3)×周数）不得超出可用宽度
+  for (const avail of [700, 773, 918, 1360]) {
+    const cell = heatCellPx(avail, 57);
+    if (cell > HEAT_CELL_MIN_PX) assert.ok(22 + (cell + 3) * 57 <= avail, `avail ${avail}`);
+  }
 });
