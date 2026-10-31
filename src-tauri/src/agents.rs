@@ -3498,7 +3498,36 @@ pub(crate) fn ensure_launch_credentials(
     {
         return Err("API 连接没有密钥；请回到连接页填写密钥，或明确勾选本地端点无密钥".into());
     }
+    if profile.agent == "grok" {
+        if let Some(root) = crate::agent_specs::agent_config_root("grok") {
+            if let Some(msg) = grok_endpoint_conflict(&root, profile) {
+                return Err(msg);
+            }
+        }
+    }
     Ok(())
+}
+
+/// Grok 的 `[endpoints].models_base_url` 压过 Mesa 注入的 `GROK_MODELS_BASE_URL`（1.0.70 假网关实测，覆盖层也盖不了：
+/// GROK_CONFIG 白名单不放行改网络去向的键）——按这条连接启动，请求会打到那个地址、带着这条连接的密钥。
+/// 地址不同就拦下说清楚（`root` 显式传入便于测试）
+fn grok_endpoint_conflict(root: &std::path::Path, profile: &Profile) -> Option<String> {
+    if profile.account_type != crate::profiles::AccountType::Api {
+        return None;
+    }
+    let base = profile.base_url.as_deref().filter(|u| !u.trim().is_empty())?;
+    let text = std::fs::read_to_string(root.join("config.toml")).ok()?;
+    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let pinned = doc.get("endpoints")?.get("models_base_url")?.as_str()?.trim();
+    if pinned.is_empty() || pinned.trim_end_matches('/') == base.trim().trim_end_matches('/') {
+        return None;
+    }
+    Some(format!(
+        "Grok 配置文件（{}）的 [endpoints] 里 models_base_url 指向 {pinned}：Grok 认它、不认 Mesa 注入的地址，\
+         按这条连接启动会把请求连同这条连接的密钥发到那里。到连接页给 Grok 重新「设为全局」（新版不再写这一行，\
+         会把 Mesa 以前写的撤掉），或手动删掉这一行后再启动",
+        root.join("config.toml").display()
+    ))
 }
 
 /// 官方账号启动前的配置层冲突扫描（只读；home 显式传入便于测试，不随宿主机器漂移）
@@ -7550,6 +7579,21 @@ api_backend = "responses"
             .contains(&("OPENAI_MODEL".into(), "qwen3-coder".into())));
         assert!(!plan.env.iter().any(|(k, _)| k.starts_with("ANTHROPIC_")));
         assert_eq!(plan.args, vec!["--auth-type", "openai"]);
+    }
+
+    #[test]
+    fn grok_launch_blocks_pinned_endpoint_of_another_gateway() {
+        let dir = std::env::temp_dir().join(format!("mesa-grok-ep-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = profile("grok", Some("https://relay.example.com/v1"));
+        assert!(grok_endpoint_conflict(&dir, &p).is_none(), "没有配置文件不拦");
+        std::fs::write(dir.join("config.toml"), "[endpoints]\nmodels_base_url = \"https://relay.example.com/v1/\"\n").unwrap();
+        assert!(grok_endpoint_conflict(&dir, &p).is_none(), "同一地址不拦");
+        std::fs::write(dir.join("config.toml"), "[endpoints]\nmodels_base_url = \"https://other/v1\"\n").unwrap();
+        let msg = grok_endpoint_conflict(&dir, &p).expect("别家地址要拦：会带着这条连接的密钥发过去");
+        assert!(msg.contains("https://other/v1"));
+        assert!(grok_endpoint_conflict(&dir, &official_profile("grok")).is_none(), "官方账号不走这条");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

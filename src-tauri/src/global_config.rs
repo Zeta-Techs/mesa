@@ -1409,10 +1409,10 @@ fn patch_grok_config(
     let mut doc = parse_toml_doc(existing)?;
     // 顶层 api_key 是 Mesa 以前写的（Grok 不读），留着只是明文密钥
     doc.remove("api_key");
-    if let Some(u) = base_url {
-        let endpoints = sub_table(doc.as_item_mut(), "endpoints")?;
-        endpoints["models_base_url"] = value(u);
-    }
+    // 不写 [endpoints].models_base_url（2026-11-01）：它压过 Mesa 启动注入的 GROK_MODELS_BASE_URL，在 Mesa 里用别的连接
+    // 启动任何模型，请求都打到这里、还带着那条连接的密钥（1.0.70 假网关实测）。外部终端靠下面每个模型段自己的
+    // base_url / api_key 走这条连接。以前 Mesa 写下的（等于本连接或 Mesa 模型段的地址）撤掉，用户自己设的不动
+    remove_mesa_grok_endpoint(&mut doc, base_url);
     let models_tbl = sub_table(doc.as_item_mut(), "models")?;
     if let Some(m) = model {
         models_tbl["default"] = value(m);
@@ -1486,6 +1486,36 @@ fn patch_grok_config(
         write_grok_reasoning_menu(table, gateway_effort_levels(profile, m).as_deref());
     }
     Ok(doc.to_string())
+}
+
+/// 撤 Mesa 以前写的 `[endpoints].models_base_url`：值等于这次连接的地址，或等于某个 Mesa 模型段（名字「配置名 · 模型」）
+/// 的 base_url 才算 Mesa 的；撤空了连同 `[endpoints]` 表一起撤
+fn remove_mesa_grok_endpoint(doc: &mut toml_edit::DocumentMut, base_url: Option<&str>) {
+    let mut ours: Vec<String> = base_url.map(|u| u.trim_end_matches('/').to_string()).into_iter().collect();
+    if let Some(entries) = doc.get("model").and_then(|m| m.as_table_like()) {
+        for (id, item) in entries.iter() {
+            let mesa = item.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.ends_with(&format!(" · {id}")));
+            if let Some(u) = item.get("base_url").and_then(|u| u.as_str()).filter(|_| mesa) {
+                ours.push(u.trim_end_matches('/').to_string());
+            }
+        }
+    }
+    let empty = match doc.get_mut("endpoints").and_then(|e| e.as_table_like_mut()) {
+        Some(t) => {
+            let mesa = t
+                .get("models_base_url")
+                .and_then(|u| u.as_str())
+                .is_some_and(|u| ours.iter().any(|o| o == u.trim_end_matches('/')));
+            if mesa {
+                t.remove("models_base_url");
+            }
+            t.is_empty()
+        }
+        None => false,
+    };
+    if empty {
+        doc.remove("endpoints");
+    }
 }
 
 /// Mesa 开过的 Grok 会话用的（模型 id, 绑定 id）：绑定取 Mesa 自己的 session_meta.profile_id，
@@ -5524,8 +5554,8 @@ trust_level = "trusted"
 
     #[test]
     fn grok_config_patch_writes_and_preserves() {
-        // 既有 [mcp_servers] 段与外来键原样保留；写入面 = 逐模型 api_key（顶层旧 api_key 撤掉）+
-        // [endpoints].models_base_url + [models].default/策略全局默认；白名单并进绑定模型
+        // 既有 [mcp_servers] 段与外来键原样保留；写入面 = 逐模型 base_url / api_key（顶层旧 api_key 撤掉）+
+        // [models].default/策略全局默认；白名单并进绑定模型；不写 [endpoints]
         let existing = "api_key = \"old\"\ntheme = \"dark\"\n\n[mcp_servers.fs]\ncommand = \"npx\"\n\n[models]\nallowed_models = [\"grok-4.5\"]\n";
         let mut p = profile("grok");
         p.models = vec!["grok-code-fast-1".into()];
@@ -5540,10 +5570,8 @@ trust_level = "trusted"
         let doc: toml_edit::DocumentMut = out.parse().unwrap();
         assert!(doc.get("api_key").is_none(), "顶层 api_key Grok 不读，不写");
         assert_eq!(doc["model"]["grok-code-fast-1"]["api_key"].as_str(), Some("xai-secret"));
-        assert_eq!(
-            doc["endpoints"]["models_base_url"].as_str(),
-            Some("https://relay.example.com")
-        );
+        assert!(doc.get("endpoints").is_none(), "不写 [endpoints]：它压过 Mesa 启动注入的地址");
+        assert_eq!(doc["model"]["grok-code-fast-1"]["base_url"].as_str(), Some("https://relay.example.com"));
         let models = &doc["models"];
         assert_eq!(models["default"].as_str(), Some("grok-code-fast-1"));
         assert_eq!(models["temperature"].as_float(), Some(0.7));
@@ -5700,6 +5728,23 @@ supports_reasoning_effort = false
     }
 
     #[test]
+    fn grok_patch_removes_only_mesa_written_endpoint() {
+        let mut p = profile("grok");
+        p.models = vec!["m1".into()];
+        // 以前 Mesa 写的（等于这次连接的地址）撤，连同空了的 [endpoints]
+        let old = "[endpoints]\nmodels_base_url = \"https://relay.example.com/\"\n";
+        let doc: toml_edit::DocumentMut = patch_grok_config(Some(old), Some("k"), &p).unwrap().parse().unwrap();
+        assert!(doc.get("endpoints").is_none());
+        // 等于 Mesa 模型段（「配置名 · 模型」）地址的也是 Mesa 的；用户自己设的另一个地址与同表别的键不动
+        let other = "[endpoints]\nmodels_base_url = \"https://old-relay/v1\"\n[model.x]\nname = \"旧连接 · x\"\nbase_url = \"https://old-relay/v1\"\n";
+        let doc: toml_edit::DocumentMut = patch_grok_config(Some(other), Some("k"), &p).unwrap().parse().unwrap();
+        assert!(doc.get("endpoints").is_none());
+        let user = "[endpoints]\nmodels_base_url = \"https://mine/v1\"\nfeedback_base_url = \"https://f\"\n";
+        let doc: toml_edit::DocumentMut = patch_grok_config(Some(user), Some("k"), &p).unwrap().parse().unwrap();
+        assert_eq!(doc["endpoints"]["models_base_url"].as_str(), Some("https://mine/v1"));
+    }
+
+    #[test]
     fn grok_plan_writes_targets_grok_config_toml() {
         let home = tmpdir("grok-plan");
         let p = profile("grok");
@@ -5709,7 +5754,7 @@ supports_reasoning_effort = false
         let doc: toml::Value = toml::from_str(&plans[0].content).unwrap();
         assert_eq!(doc["model"]["m1"]["api_key"].as_str(), Some("xai-secret"));
         assert!(doc.get("api_key").is_none());
-        assert!(plans[0].content.contains("models_base_url"));
+        assert!(!plans[0].content.contains("models_base_url"));
         fs::remove_dir_all(&home).ok();
     }
 
