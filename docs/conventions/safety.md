@@ -149,6 +149,10 @@
   auth.json 形状相同，文件层面无法区分，不得冒充官方账号。
 - **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作：
   1. 「设为全局默认」（写前必须备份）；
+  1a. **连接页「编辑配置文件」**（2026-11-01，`config_editor.rs` → `global_config::write_user_edit`）：清单与设为全局同一份（不含 Codex `auth.json`）；
+     读出时密钥在 Rust 层换成 `«已隐藏密钥 ···末4位 #哈希8位»` 占位，前端拿不到原值、不给「显示密钥」；保存时重读磁盘按哈希还原，认不出的占位拒存；
+     先核版本（读时的磁盘哈希）、再校验格式（JSON 根是对象 / TOML 可解析 / .env 每行 KEY=VALUE），持 `GLOBAL_CONFIG_MUTEX` + `config_lock("global-config")`
+     再核一次版本后走 `transact`（批次备份、原子替换、失败回滚、首次写入落原始快照），「撤销上次写入」「恢复初始状态」可回退；
   2. **精确注意力标记开关**（2026-10-20 起只剩 Gemini / Kimi / Grok 三家给开关：其余五家在 Mesa 里启动时用启动参数 / CLI 自带通道
      注入、不写用户配置，以前写过的由 `hooks::migrate_launch_injected` 启动时收回（同一套「只删 marker 条目 + 写前备份」）；
      开着 Gemini 开关、Mesa 条目还没有 `name` 的，`hooks::refresh_gemini_hook_name` 启动时按当前写法重写一次（同口径写前备份，

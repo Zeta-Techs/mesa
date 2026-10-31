@@ -220,6 +220,8 @@ rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N �
 components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.askAiReq）：选 Agent/连接/模型，可勾「设为默认」（记忆存取在 ask-ai.ts）；beginAskAi = 三处共用入口（ScheduleSection / ProjectGroup / ProjectFilesView），先拼项目上下文包（composeLaunchPrompt），上次的选择仍有效就直连进终端不弹窗；startProjectChat 只委托 quick-chat-launch 的 openProjectChat（侧栏项目行「＋」与项目页「＋ 新对话」共用）
   components/FileTypeMark.tsx # 文件类型线条图标：FileTypeGlyph（Lucide 线条 + 识别色经 --file-glyph 传入，浅色主题由 .ccode-file-glyph 压暗；
                              #   附件卡 / 文件选择窗 / 资源列表 / 改动面板按 size 复用）+ FileTypeMark（14px 槽，与文件夹图标同宽对齐）
+  components/ConfigFileEditorDialog.tsx # 连接页 Agent ⋯「编辑配置文件…」弹层（ProfilesPage 懒加载）：按文件分页签的 Monaco 编辑器，每文件一个 model；
+                             #   没设过 MonacoEnvironment / 主题时自己补（单独打开时文件预览可能还没加载）；保存后只刷新这一页
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
                              #   解析在 confirm-dialog.ts）+ 危险钮 dangerActionClass、按钮动词推断、危险默认焦点给取消
   components/ContextMenu.tsx # 全站右键 / ⋯ 菜单（25 处共用）：fixed 全屏遮罩 + 视口钳制浮层、图标列按需、danger 沉底、
@@ -725,6 +727,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   effort-depth.ts            # 思考档深度 0..1 与一句白话（effortDepth / effortGloss / effortValleyY）；小 M 画在 components/EffortMark.tsx（tests/effort-depth.test.ts）
   token-format.ts            # 聊天变体状态栏的 token 中文计数（千分位 / 万 / 亿，fmtTokensZh）；终端变体仍用 k / M（tests/token-format.test.ts）
   chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）；Grok 卡在官方登录上 → grokLoginDecision（退出官方登录接着聊 / 先不管）；方案确认卡的认屏与选项在 plan-approval.ts
+  config-file-editor.ts      # 「编辑配置文件」弹层的纯逻辑：ConfigFileDto、formatJsonText（只格式化严格 JSON）、fileHint、dirtyTags（tests/config-file-editor.test.ts）
   connection-form.ts         # 添加连接 / 网关库共用的表单纯逻辑：probeHint（失败下一步）、gatewayMissingSlot（网关缺不缺这家 Agent 的协议地址）、saveBlocker（保存前缺什么）、
                              #   gatewayHealth（网关库行状态）、modelHasPolicy、manualModelError（手填模型校验）
   role-models.ts             # 连接的「模型分工」（后台小模型 / 子 Agent）与 Claude 别名映射：claudeAliasMap / claudeCustomOption 与 agents.rs claude_slot_models /
@@ -1157,6 +1160,7 @@ src-tauri/src/
                              # 恢复分两档——撤销上次写入（UI 名；最近批次，每 tag 轮换留 5 份）与恢复初始状态
                              #   （backups/<agent>/original/ 永久快照，首次 apply 时落、不参与轮换，
                              #   has_original_backup/restore_original_backup）；
+                             # editable_config_files / write_user_edit：连接页「编辑配置文件」的清单与写入口（config_editor.rs 调用，同锁同批次）；
                              # codex 渠道定义块补写 register_codex_client_provider_named（客户端接力「写入并打开」与会话导入调用；连接页入口 2026-10-19 已删）：只写 config.toml provider 定义块
                              #   （顶层 model_provider/model 不动、不记 active_global）；认证与「设为全局」
                              #   共用 experimental_bearer_token（ChatGPT 自带 Codex 的 ModelProviderInfo 认这个字段），
@@ -1750,6 +1754,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   logbuf.rs                  # 诊断日志环形缓冲
   mac_fullscreen.rs          # macOS 订阅 NSWindow 将进 / 将出全屏通知，emit window:fullscreen-will-change（只报不改；前端壳底色借此跟系统动画淡变）
   diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出；bundle_dir/BUNDLE_FILE_PREFIX 是反馈附件闸门的同一出处
+  config_editor.rs           # 连接页「编辑配置文件」：config_files_read / config_file_save。密钥换成可还原占位（«已隐藏密钥 ···末4位 #哈希»）才出 Rust，
+                             #   保存时重读磁盘按哈希还原、核版本、按格式校验，写盘只经 global_config::write_user_edit（同锁同批次备份）。
+                             #   红线：不给前端原值、不加「显示密钥」；可编辑清单 = global_config::editable_config_files（不含 Codex auth.json）
   config_dump.rs             # 生效配置自省（只读，不建/不改任何用户配置文件）：dump_effective_config /
                              # export_effective_config（落 ~/Downloads/ccode-exports/ccode-effective-config-<时间戳>.json）——
                              # 快照含 generatedAt/appVersion/appSettings（with_defaults 完整 DTO）/profiles（仅 keyHint 尾号、

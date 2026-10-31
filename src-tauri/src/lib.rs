@@ -18,6 +18,7 @@ mod ccode_home;
 mod coding;
 mod combo;
 mod config_dump;
+mod config_editor;
 mod custom_runtime;
 mod dep_check;
 mod diagnostics;
@@ -616,6 +617,8 @@ pub fn run() {
             client_open::client_open_launch,
             client_open::client_restart,
             global_config::restore_global_backup,
+            config_editor::config_files_read,
+            config_editor::config_file_save,
             global_config::gemini_use_api_key_auth,
             global_config::codex_client_continuity,
             global_config::fix_codex_client_continuity,

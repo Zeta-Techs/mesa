@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { contextLabel } from "../model-caps-label";
 import { isImageGenModel, modelKind, nonChatReason, splitChatModels } from "../model-kinds";
 import ImageGenPanel, { setImageGenModel } from "../components/ImageGenPanel";
@@ -11,6 +11,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  FileCode,
   FileDown,
   ArrowDown,
   ArrowUp,
@@ -96,6 +97,8 @@ import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { Modal } from "../components/Modal";
+// 编辑配置文件弹层带 Monaco，打开时才加载
+const ConfigFileEditorDialog = lazy(() => import("../components/ConfigFileEditorDialog"));
 import { collapseCarriageReturns } from "../stream-text";
 import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install";
 import { installNotes } from "../agent-install-notes";
@@ -2759,6 +2762,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     y: number;
     profile: Profile;
   } | null>(null);
+  // 「编辑配置文件」弹层：哪家 Agent（docs/design-config-file-editor.md）
+  const [configEditor, setConfigEditor] = useState<string | null>(null);
   const [groupMenu, setGroupMenu] = useState<{
     x: number;
     y: number;
@@ -5334,6 +5339,17 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   },
                 ]
               : []),
+            // Cursor 没有可编辑的全局配置（cli-config.json 里没有连接相关的内容，Mesa 不写）
+            ...(groupMenu.agentId !== "cursor"
+              ? [
+                  {
+                    icon: FileCode,
+                    label: "编辑配置文件…",
+                    title: "直接改这家 Agent 读的全局配置文件；密钥显示为占位，保存前自动备份",
+                    onSelect: () => setConfigEditor(groupMenu.agentId),
+                  },
+                ]
+              : []),
             {
               icon: Undo2,
               label: "撤销上次写入",
@@ -5354,6 +5370,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             },
           ]}
         />
+      )}
+      {configEditor && (
+        <Suspense fallback={null}>
+          <ConfigFileEditorDialog
+            agentId={configEditor}
+            agentLabel={labelOf(configEditor)}
+            onClose={() => setConfigEditor(null)}
+          />
+        </Suspense>
       )}
       {copyMenu && (
         <ContextMenu

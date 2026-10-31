@@ -3492,6 +3492,52 @@ fn transact(
         .collect())
 }
 
+/// 连接页「编辑配置文件」能编辑的文件（tag, 绝对路径）：与设为全局同一份清单、同样认搬迁变量。
+/// 不含 Codex auth.json（登录令牌，手改只会改坏；设为全局也从不写它）；OpenCode 两种写法存在哪个列哪个，
+/// 都没有列 opencode.json；旧版 kimi-cli 的 config.toml 存在才列。Cursor 没有（docs/design-config-file-editor.md）
+pub(crate) fn editable_config_files(home: &Path, agent: &str) -> Vec<(&'static str, PathBuf)> {
+    let all = target_paths(home, agent);
+    let mut out: Vec<(&'static str, PathBuf)> = all
+        .into_iter()
+        .filter(|(tag, path)| match (agent, *tag) {
+            ("codex", "auth.json") => false,
+            ("kimi", "legacy-config.toml") | ("opencode", _) => path.is_file(),
+            _ => true,
+        })
+        .collect();
+    if agent == "opencode" && out.is_empty() {
+        out.push(("opencode.json", cli_dir(home, "opencode").join("opencode.json")));
+    }
+    out
+}
+
+/// 「编辑配置文件」的写入：与设为全局同一把锁、同一套批次事务（写前备份、原子替换、失败回滚；首次写入落原始快照），
+/// 所以连接页「撤销上次写入」「恢复初始状态」都能回退。调用方已校验格式、还原密钥占位并核对过版本
+pub(crate) fn write_user_edit(
+    home: &Path,
+    agent: &str,
+    tag: &str,
+    path: &Path,
+    content: &str,
+    expect: impl FnOnce(Option<&[u8]>) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    let _guard = GLOBAL_CONFIG_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let _file_guard = crate::storage::config_lock("global-config")?;
+    // 持锁后再核一次磁盘：读与写之间被别人改了就不写
+    let disk = match fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("读取 {} 失败: {e}", display_path(home, path))),
+    };
+    expect(disk.as_deref())?;
+    let action = TxAction {
+        tag: tag.to_string(),
+        path: path.to_path_buf(),
+        content: Some(content.as_bytes().to_vec()),
+    };
+    transact(&backups_root()?.join(agent), home, &[action], "apply")
+}
+
 fn apply_plans(
     backups_dir: &Path,
     home: &Path,
@@ -3650,7 +3696,7 @@ fn restore_from(backups_dir: &Path, home: &Path, agent: &str) -> Result<Vec<Stri
 }
 
 /// 家目录下的写 `~/a/b`：分隔符统一 `/`，Windows 上不出 `~/.claude\settings.json` 这种混写
-fn display_path(home: &Path, path: &Path) -> String {
+pub(crate) fn display_path(home: &Path, path: &Path) -> String {
     match path.strip_prefix(home) {
         // 家目录下一律写成 `~/a/b`：Windows 上 join 出来的是反斜杠，拼出 `~/.claude\settings.json` 两种分隔符混着
         Ok(rel) => {
