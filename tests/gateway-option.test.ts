@@ -174,3 +174,14 @@ test("addConnectionDefaults：Agent 先挑装好、且网关填了它协议槽�
     "gemini",
   );
 });
+
+test("addConnectionDefaults：网关库「为此网关添加连接」指定的网关优先，Agent 挑能用它的", () => {
+  const gateways = [
+    gw({ id: "a", name: "旧网关", slots: { responses: "https://a.example.com/v1" } }),
+    gw({ id: "b", name: "新网关", slots: { anthropic: "https://b.example.com" } }),
+  ];
+  assert.deepEqual(
+    addConnectionDefaults({ gateways, boundGatewayIds: ["a"], installed: ["claude-code", "codex"], presetGatewayId: "a" }),
+    { gatewayId: "a", agent: "codex" },
+  );
+});

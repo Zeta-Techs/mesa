@@ -149,6 +149,7 @@ import type {
 export function ProfileModal({
   initial,
   presetAgent,
+  presetGatewayId,
   officialSupported,
   onClose,
   onSaved,
@@ -157,6 +158,8 @@ export function ProfileModal({
   initial: Profile | null;
   /** 从某个 agent 组的「+ 添加连接」打开时预选该 agent */
   presetAgent?: string;
+  /** 从网关库「为此网关添加连接」打开时预选该网关（选用已有网关） */
+  presetGatewayId?: string;
   /** 各 agent 是否支持官方账号（来自 official_account_status） */
   officialSupported: Record<string, boolean>;
   onClose: () => void;
@@ -180,6 +183,7 @@ export function ProfileModal({
       boundGatewayIds: s.profiles.map((p) => p.gatewayId),
       installed: AGENTS.map((a) => a.id).filter((id) => installed.has(id)),
       presetAgent,
+      presetGatewayId,
     });
     const gw = pick.gatewayId ? s.gateways.find((g) => g.id === pick.gatewayId) : undefined;
     return { agent: pick.agent, gateway: gw ?? null };
@@ -447,6 +451,26 @@ export function ProfileModal({
 
   function removeModelSlot(i: number) {
     setForm({ ...form, models: form.models.filter((_, j) => j !== i) });
+  }
+
+  /** 目录里点一下：没选就加入、已选就去掉（原先已选的灰掉点不了，只能回名单点 ×） */
+  function toggleModelInList(m: string) {
+    const v = m.trim();
+    if (form.models.some((x) => x.trim() === v)) {
+      setForm({ ...form, models: form.models.filter((x) => x.trim() !== v) });
+      return;
+    }
+    addModelToList(v);
+  }
+
+  /** 名单行「设为默认」：挪到第一个（Claude 先把别名映射转成显式，挪顺序不改别名指向） */
+  function setDefaultModel(m: string) {
+    const v = m.trim();
+    const roleModels =
+      form.agent === "claude-code" && form.accountType === "api"
+        ? explicitClaudeRoles(form.models, form.roleModels)
+        : form.roleModels;
+    setForm({ ...form, roleModels, models: [v, ...form.models.filter((x) => x.trim() !== v)] });
   }
 
   /** 从获取面板添加：优先填进第一个空槽，没有去尾部追加 */
@@ -966,6 +990,18 @@ export function ProfileModal({
           );
         })()}
         {agentSwitchNote && <p className="mb-2 text-xs text-warn-text">{agentSwitchNote}</p>}
+        {/* Qwen / Kimi：协议决定地址填进网关的哪个槽，新建时放在地址上面（原先藏在高级设置里） */}
+        {AGENT_PROTOCOLS[form.agent] && AGENT_PROTOCOLS[form.agent].options.length > 1 && (
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block text-xs text-l3">接口协议（地址按这个协议填）</span>
+            <MenuSelect
+              aria-label="接口协议"
+              value={form.protocol ?? AGENT_PROTOCOLS[form.agent].default}
+              options={AGENT_PROTOCOLS[form.agent].options.map((p) => ({ value: p, label: protocolLabel(p) }))}
+              onChange={(protocol) => setForm({ ...form, protocol })}
+            />
+          </label>
+        )}
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">地址</span>
           <input
@@ -1186,9 +1222,20 @@ export function ProfileModal({
                     </p>
                   );
                 }
-                return groups.map((g) => {
+                // 「常用」一组放最前：服务商推荐的 + 别的连接已经在用的（目录里有的才列）；分组不多（≤3）时默认全展开
+                const common = commonPickerModels(
+                  pickerModels,
+                  appliedPreset?.models ?? [],
+                  allProfiles.filter((p) => p.id !== initial?.id).flatMap((p) => p.models),
+                  pickerFilter,
+                );
+                const allGroups = common.length ? [{ vendor: "常用", models: common }, ...groups] : groups;
+                return allGroups.map((g) => {
                   const open =
-                    pickerFilter.trim() !== "" || openVendors.has(g.vendor);
+                    pickerFilter.trim() !== "" ||
+                    allGroups.length <= 3 ||
+                    g.vendor === "常用" ||
+                    openVendors.has(g.vendor);
                   return (
                     <div key={g.vendor}>
                       <button
@@ -1205,7 +1252,7 @@ export function ProfileModal({
                       >
                         <FoldMark open={open} />
                         {g.vendor}
-                        <span className="text-micro text-l4">
+                        <span className="text-micro text-l3">
                           {g.models.length}
                         </span>
                       </button>
@@ -1214,18 +1261,15 @@ export function ProfileModal({
                           const added = form.models.some((x) => x.trim() === m);
                           return (
                             <button
-                              key={m}
+                              key={`${g.vendor}:${m}`}
                               type="button"
-                              disabled={added}
-                              onClick={() => addModelToList(m)}
-                              className="flex w-full items-center justify-between gap-2 rounded-sm py-1 pl-7 pr-2 text-left font-mono text-micro text-l2 hover:bg-hover disabled:opacity-40"
+                              aria-pressed={added}
+                              title={added ? "再点一下从名单去掉" : "点一下加进名单"}
+                              onClick={() => toggleModelInList(m)}
+                              className={`flex w-full items-center justify-between gap-2 rounded-sm py-1 pl-7 pr-2 text-left font-mono text-micro hover:bg-hover ${added ? "text-l1" : "text-l2"}`}
                             >
                               <span className="truncate">{m}</span>
-                              {added && (
-                                <span className="shrink-0 text-l4">
-                                  已添加
-                                </span>
-                              )}
+                              {added && <Check aria-hidden="true" className="size-3.5 shrink-0 text-cta" />}
                             </button>
                           );
                         })}
@@ -1301,7 +1345,7 @@ export function ProfileModal({
                     })()}
                     className="group flex items-center gap-2 rounded-sm px-2 py-0.5 hover:bg-hover"
                   >
-                    <span className="w-4 shrink-0 text-right text-micro text-l4">
+                    <span className="w-4 shrink-0 text-right text-micro text-l3">
                       {i + 1}
                     </span>
                     <input
@@ -1320,11 +1364,21 @@ export function ProfileModal({
                         不能对话
                       </span>
                     )}
-                    {i === firstFilled && (
+                    {i === firstFilled ? (
                       // 与连接列表名称旁的「默认」同一枚主题色胶囊
                       <span className="shrink-0 rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">
                         默认
                       </span>
+                    ) : (
+                      m.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setDefaultModel(m)}
+                          className={`shrink-0 text-micro text-l3 hover:text-l1 ${hoverRevealClass}`}
+                        >
+                          设为默认
+                        </button>
+                      )
                     )}
                     <button
                       type="button"
@@ -1491,6 +1545,9 @@ export function ProfileModal({
             高级设置
           </summary>
           <div className="mt-3">
+            {(showGatewayFields || (form.accountType === "api" && !(initial && !showGatewayFields))) && (
+              <p className="mb-2 text-micro font-medium text-l2">跟着网关走<span className="ml-1.5 font-normal text-l3">用这个网关的其他连接也一样</span></p>
+            )}
             {showGatewayFields && (
               <Checkbox
                 className="mb-3 text-xs text-l2"
@@ -1499,22 +1556,25 @@ export function ProfileModal({
                 label="本地端点无密钥"
               />
             )}
-            {AGENT_PROTOCOLS[form.agent] && (
+            {(form.accountType === "api" || !initial) && (
+              <p className="mb-2 mt-3 border-t border-hairline pt-3 text-micro font-medium text-l2">只对这条连接</p>
+            )}
+            {AGENT_PROTOCOLS[form.agent] && !showGatewayFields && (
               derivedProtocol ? (
                 <div className="mb-3 text-sm">
-                  <span className="mb-1 block text-xs text-l3">协议</span>
+                  <span className="mb-1 block text-xs text-l3">接口协议</span>
                   <p className="text-xs text-l2">
-                    {derivedProtocol}
-                    <span className="ml-1.5 text-micro text-l4">按网关已填槽位自动确定</span>
+                    {protocolLabel(derivedProtocol)}
+                    <span className="ml-1.5 text-micro text-l3">按网关填了哪个地址自动确定</span>
                   </p>
                 </div>
               ) : (
               <label className="mb-3 block text-sm">
-                <span className="mb-1 block text-xs text-l3">协议</span>
+                <span className="mb-1 block text-xs text-l3">接口协议</span>
                 <MenuSelect
-                  aria-label="协议"
+                  aria-label="接口协议"
                   value={form.protocol ?? AGENT_PROTOCOLS[form.agent].default}
-                  options={AGENT_PROTOCOLS[form.agent].options.map((p) => ({ value: p, label: p }))}
+                  options={AGENT_PROTOCOLS[form.agent].options.map((p) => ({ value: p, label: protocolLabel(p) }))}
                   onChange={(protocol) => setForm({ ...form, protocol })}
                 />
               </label>
@@ -1533,8 +1593,8 @@ export function ProfileModal({
                   ]}
                   onChange={(v) => setForm({ ...form, apiBackend: v || null })}
                 />
-                <span className="mt-1 block text-micro text-l4">
-                  启动注入改不了后端（grok overlay 白名单不放行），此项随「设为全局默认」写入 ~/.grok/config.toml 的 [model.*] 段；中转目录条目带 apiBackend 字段时以目录为准之外的另一渠道
+                <span className="mt-1 block text-micro text-l3">
+                  这家中转用哪种接口和 Grok 对话。一般不用改；中转说明里写了要用 responses 或 messages 才选。只在「设为全局默认」后生效（在 Mesa 里启动带不上），中转自己的模型目录写明了接口时以目录为准。
                 </span>
               </label>
             )}
@@ -1553,10 +1613,10 @@ export function ProfileModal({
                 )}
                 {/* 已存策略「存了但注不进去」的说明照留：这是编辑时唯一需要知道的策略事实 */}
                 {combo?.policyChannelNote && (
-                  <span className="mt-1 block text-micro text-l4">{combo.policyChannelNote}</span>
+                  <span className="mt-1 block text-micro text-l3">{combo.policyChannelNote}</span>
                 )}
                 {combo?.effortReadonly && (
-                  <span className="mt-1 block text-micro text-l4">思考档已保存在网关，当前 CLI 没有注入通道，启动时不会写进去。</span>
+                  <span className="mt-1 block text-micro text-l3">思考档已保存在网关，当前 CLI 没有注入通道，启动时不会写进去。</span>
                 )}
                 {combo?.mixedModelsNote && (
                   <span className="mt-1 block text-micro text-warn-text">{combo.mixedModelsNote}</span>
@@ -1582,14 +1642,14 @@ export function ProfileModal({
                 <>
               <div className="grid grid-cols-3 gap-2">
                 {([[
-                  "temperature", "temperature", "temperature"], ["topP", "top_p", "topP"], ["maxOutputTokens", "max output", "maxOutputTokens"]] as const).map(([key, label, capability]) => {
+                  "temperature", "温度", "temperature"], ["topP", "top_p（采样范围）", "topP"], ["maxOutputTokens", "输出上限", "maxOutputTokens"]] as const).map(([key, label, capability]) => {
                   const support = agentCapabilities?.requestPolicy[capability];
-                  return <label key={key} className="text-xs text-l3">{label}<span className="ml-1 text-micro text-l4">协议{channelLabel(support)}</span><input className={fieldClass} type="number" min={key === "temperature" ? "0" : key === "topP" ? "0" : "1"} max={key === "temperature" ? "2" : key === "topP" ? "1" : undefined} step={key === "temperature" ? "0.1" : key === "topP" ? "0.05" : "1"} placeholder="默认" value={form.requestPolicy[key] ?? ""} onChange={(e) => { const n = parseOptionalNumber(e.target.value); if (n !== undefined) setForm({ ...form, requestPolicy: { ...form.requestPolicy, [key]: n } }); }} /></label>;
+                  return <label key={key} className="text-xs text-l3">{label}<span className="ml-1 text-micro text-l3">{channelLabel(support)}</span><input className={fieldClass} type="number" min={key === "temperature" ? "0" : key === "topP" ? "0" : "1"} max={key === "temperature" ? "2" : key === "topP" ? "1" : undefined} step={key === "temperature" ? "0.1" : key === "topP" ? "0.05" : "1"} placeholder="默认" value={form.requestPolicy[key] ?? ""} onChange={(e) => { const n = parseOptionalNumber(e.target.value); if (n !== undefined) setForm({ ...form, requestPolicy: { ...form.requestPolicy, [key]: n } }); }} /></label>;
                 })}
               </div>
-              <label className="mt-2 block text-xs text-l3">reasoning effort<span className="ml-1 text-micro text-l4">协议{channelLabel(agentCapabilities?.requestPolicy.reasoningEffort)}</span>{agentCapabilities?.effortOptions?.length ? (
+              <label className="mt-2 block text-xs text-l3">思考档<span className="ml-1 text-micro text-l3">{channelLabel(agentCapabilities?.requestPolicy.reasoningEffort)}</span>{agentCapabilities?.effortOptions?.length ? (
                 <MenuSelect
-                  aria-label="reasoning effort"
+                  aria-label="思考档"
                   value={form.requestPolicy.reasoningEffort ?? ""}
                   options={[
                     { value: "", label: "默认" },
@@ -1603,13 +1663,13 @@ export function ProfileModal({
                 </>
               )}
               {initial && (
-                <p className="mb-2 text-micro text-l4">思考档 / 温度 / 输出上限在网关库里按模型编辑，这里改了也不会覆盖已有逐模型策略。</p>
+                <p className="mb-2 text-micro text-l3">思考档 / 温度 / 输出上限在网关库里按模型编辑，这里改了也不会覆盖已有逐模型策略。</p>
               )}
               {showGatewayFields && (
-              <label className="mt-2 block text-xs text-l3">自定义 Header（Header 名=环境变量名）<span className="ml-1 text-micro text-l4">协议{channelLabel(agentCapabilities?.requestPolicy.customHeaders)}</span><textarea className={`${fieldClass} h-16 font-mono text-xs`} placeholder="X-Provider-Region=MODEL_REGION\nX-Trace-Id=TRACE_ID" value={headerEnvText} onChange={(e) => setHeaderEnvText(e.target.value)} /></label>
+              <label className="mt-2 block text-xs text-l3">自定义 Header（Header 名=环境变量名）<span className="ml-1 text-micro text-l3">{channelLabel(agentCapabilities?.requestPolicy.customHeaders)}</span><textarea className={`${fieldClass} h-16 font-mono text-xs`} placeholder="X-Provider-Region=MODEL_REGION\nX-Trace-Id=TRACE_ID" value={headerEnvText} onChange={(e) => setHeaderEnvText(e.target.value)} /></label>
               )}
               {showGatewayFields && (
-                <p className="mt-1 text-micro text-l4">自定义 Header 跟着网关走，思考档和温度跟着每个模型走。Header 的值只写环境变量名，Mesa 不保存明文。</p>
+                <p className="mt-1 text-micro text-l3">思考档、温度这些存到网关里这次选的每个模型上，以后在网关库按模型改。Header 的值只写环境变量名，Mesa 不保存明文。</p>
               )}
             </div>
             )}
@@ -1639,8 +1699,8 @@ export function ProfileModal({
               ) : null;
             })()}
             {form.agent === "kimi" && (
-              <p className="mt-1 text-micro text-l4">
-                Kimi 窄通道（不自动注入，按需在此声明）：KIMI_MODEL_ADAPTIVE_THINKING=true/false（Anthropic 通道思考形态）、KIMI_MODEL_REASONING_KEY=reasoning_content/reasoning_details/reasoning（OpenAI 通道思考字段方言，中转异常时 pin）
+              <p className="mt-1 text-micro text-l3">
+                Kimi 的思考输出在个别中转上显示不出来时，可以在这里加一行试试：用 Anthropic 协议的加 KIMI_MODEL_ADAPTIVE_THINKING=false；用 OpenAI 协议的加 KIMI_MODEL_REASONING_KEY=reasoning_content（或 reasoning_details、reasoning，看中转返回哪个字段）。平时不用填。
               </p>
             )}
           </div>
@@ -1648,6 +1708,21 @@ export function ProfileModal({
       </form>
     </Modal>
   );
+}
+
+/** 接口协议的界面叫法（内部值 anthropic / openai / kimi 不直接给人看） */
+function protocolLabel(p: string): string {
+  if (p === "anthropic") return "Anthropic 兼容";
+  if (p === "openai") return "OpenAI 兼容";
+  if (p === "kimi") return "Kimi 官方协议";
+  return p;
+}
+
+/** 目录面板最前的「常用」：服务商推荐的 + 别的连接已在用的，只列目录里有的，按这个顺序去重 */
+function commonPickerModels(catalog: string[], recommended: string[], inUse: string[], filter: string): string[] {
+  const has = new Set(catalog);
+  const q = filter.trim().toLowerCase();
+  return [...new Set([...recommended, ...inUse])].filter((m) => has.has(m) && (!q || m.toLowerCase().includes(q)));
 }
 
 /** 分组折叠状态持久化的 localStorage key：值为折叠中的 agent id 数组 */
@@ -2556,6 +2631,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [modal, setModal] = useState<{
     initial: Profile | null;
     presetAgent?: string;
+    presetGatewayId?: string;
+    /** 从网关库进来的：关掉后回到网关库的这个网关 */
+    backToGateway?: string;
   } | null>(null);
   const [gwLib, setGwLib] = useState(false);
   const [gwFocus, setGwFocus] = useState<string | null>(null);
@@ -4877,16 +4955,36 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             setGwNew(false);
             setPage("stats");
           }}
+          onAddConnection={(id) => {
+            setGwLib(false);
+            setGwNew(false);
+            setModal({ initial: null, presetGatewayId: id, backToGateway: id });
+          }}
+          onEditProfile={(p) => {
+            setGwLib(false);
+            setGwNew(false);
+            setModal({ initial: p, backToGateway: p.gatewayId ?? undefined });
+          }}
         />
       )}
       {modal && (
         <ProfileModal
           initial={modal.initial}
           presetAgent={modal.presetAgent}
+          presetGatewayId={modal.presetGatewayId}
           officialSupported={Object.fromEntries(
             Object.entries(officialStatus).map(([k, v]) => [k, v.supported]),
           )}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            // 从网关库进来的：回到库里刚才那个网关
+            const back = modal.backToGateway;
+            setModal(null);
+            if (back) {
+              setGwFocus(back);
+              setGwOpenToken((t) => t + 1);
+              setGwLib(true);
+            }
+          }}
           onOpenGateway={(id) => {
             setModal(null);
             setGwFocus(id);

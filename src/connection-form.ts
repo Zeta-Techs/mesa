@@ -51,3 +51,35 @@ export function saveBlocker(input: {
   if (!input.name.trim()) return "先给这条连接起个名字";
   return null;
 }
+
+/** 网关库列表行的状态点（2026-10-31）：缺密钥 > 上次测试失败 > 测试通过 > 未测。只读已存的体检结果，不发请求 */
+export function gatewayHealth(g: {
+  noAuth: boolean;
+  keyHint?: string | null;
+  slotProbes?: readonly { lastOk: boolean | null }[];
+}): { tone: "ok" | "err" | "warn" | "idle"; label: string } {
+  if (!g.noAuth && !g.keyHint) return { tone: "warn", label: "缺密钥" };
+  const probes = (g.slotProbes ?? []).filter((p) => p.lastOk != null);
+  if (probes.some((p) => p.lastOk === false)) return { tone: "err", label: "测试失败" };
+  if (probes.length > 0) return { tone: "ok", label: "测试通过" };
+  return { tone: "idle", label: "未测" };
+}
+
+/** 这个模型在网关上设过参数（思考档 / 温度 / top_p / 输出上限）：列表行上标「已设置」、可筛 */
+export function modelHasPolicy(m: {
+  temperature: number | null;
+  topP: number | null;
+  maxOutputTokens: number | null;
+  reasoningEffort: string | null;
+}): boolean {
+  return m.temperature != null || m.topP != null || m.maxOutputTokens != null || m.reasoningEffort != null;
+}
+
+/** 手填进网关目录的模型名：去空白；空、已在目录里的返回错误文案 */
+export function manualModelError(raw: string, existing: readonly string[]): string | null {
+  const id = raw.trim();
+  if (!id) return "填模型名";
+  if (/\s/.test(id)) return "模型名里不能有空格";
+  if (existing.includes(id)) return "目录里已经有这个模型";
+  return null;
+}

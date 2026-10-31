@@ -73,7 +73,8 @@ test("科研子卡/设置卡/知识条目统一，独立画布不继承项目底
       }
     }
   }
-  for (const name of ["ProjectSettingsDrawer", "PipelineEditor", "HistoryOverlay", "WorkspaceReviewView", "GatewayLibrary"]) {
+  // GatewayLibrary 2026-10-31 改用全站 Modal（浮层面板自带底色），不再是独立画布
+  for (const name of ["ProjectSettingsDrawer", "PipelineEditor", "HistoryOverlay", "WorkspaceReviewView"]) {
     assert.match(source(`components/${name}.tsx`), /data-surface="canvas"/, `${name}: 独立画布需重置卡片基色`);
   }
 });

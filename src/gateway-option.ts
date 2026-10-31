@@ -101,9 +101,14 @@ export function addConnectionDefaults(input: {
   installed: readonly string[];
   /** 从某家 agent 组发起时预选的 agent，优先于一切推断 */
   presetAgent?: string | null;
+  /** 从网关库「为此网关添加连接」发起时指定的网关（2026-10-31），优先于「没有连接在用」的推断 */
+  presetGatewayId?: string | null;
 }): { gatewayId: string | null; agent: string } {
   const bound = new Set(input.boundGatewayIds.filter(Boolean));
-  const gateway = [...input.gateways].reverse().find((g) => !bound.has(g.id)) ?? null;
+  const gateway =
+    (input.presetGatewayId ? input.gateways.find((g) => g.id === input.presetGatewayId) : undefined) ??
+    [...input.gateways].reverse().find((g) => !bound.has(g.id)) ??
+    null;
   if (input.presetAgent) return { gatewayId: gateway?.id ?? null, agent: input.presetAgent };
   const usable = gateway
     ? input.installed.filter((agent) => gatewayServesAgent(gateway.slots, agent))

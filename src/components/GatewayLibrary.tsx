@@ -2,12 +2,14 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { contextLabel } from "../model-caps-label";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
-import { AGENTS, AGENT_PROTOCOLS } from "../types";
+import { AGENTS } from "../types";
 import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
 import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, fieldClass, FoldMark, ghostActionClass, primaryActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Checkbox, fieldClass, FoldMark, ghostActionClass, MenuSelect, primaryActionClass, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Modal } from "./Modal";
+import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
 import { toast } from "../toast";
@@ -41,7 +43,6 @@ import {
 import { gatewayPickerRows } from "../gateway-option";
 import { gatewayHasWallet } from "../gateway-balance";
 import type {
-  BindingInput,
   ComboSurfaceDto,
   FetchGatewayCatalogDto,
   FetchModelsResultDto,
@@ -165,10 +166,11 @@ function VendorModelSections({
 }) {
   const groups = visibleVendorGroups(ids, vendor, filter);
   if (groups.length === 0) {
-    return <p className="px-1 py-1 text-xs text-l4">没有匹配的模型</p>;
+    return <p className="px-1 py-1 text-xs text-l3">没有匹配的模型</p>;
   }
   const searching = filter.trim() !== "";
-  const foldVendors = vendor === "all" && groups.length > 1 && !searching;
+  // 模型不多（≤20）时不折叠厂商组：原先默认全收起，设一个模型的参数要先点开组（2026-10-31）
+  const foldVendors = vendor === "all" && groups.length > 1 && !searching && ids.length > 20;
   return (
     <div>
       {groups.map((group) => {
@@ -234,21 +236,20 @@ function ReasoningEffortPicker({
         ))}
       </div>
       {parsed.levels.length > 1 && (
-        <label className="block text-micro text-l4">
+        <div className="text-micro text-l3">
           开场默认
-          <select
-            className={`${fieldClass} mt-0.5 w-full`}
-            disabled={disabled}
-            value={parsed.launch ?? parsed.levels[0]}
-            onChange={(e) => onChange(reasoningEffortValue(parsed.levels, e.target.value))}
-          >
-            {parsed.levels.map((level) => (
-              <option key={level} value={level}>{level}</option>
-            ))}
-          </select>
-        </label>
+          <span className="mt-0.5 block text-sm">
+            <MenuSelect
+              aria-label="开场默认思考档"
+              disabled={disabled}
+              value={parsed.launch ?? parsed.levels[0]}
+              options={parsed.levels.map((level) => ({ value: level, label: level }))}
+              onChange={(v) => onChange(reasoningEffortValue(parsed.levels, v))}
+            />
+          </span>
+        </div>
       )}
-      <p className="text-micro text-l4">勾选的档位可在会话里切换。开场只用其中一档。</p>
+      <p className="text-micro text-l3">勾选的档位可在会话里切换。开场只用其中一档。</p>
     </div>
   );
 }
@@ -268,19 +269,24 @@ export default function GatewayLibrary({
   onJumpUsage,
   initialId,
   initialNew,
+  onAddConnection,
+  onEditProfile,
 }: {
   onClose: () => void;
   onJumpUsage?: (gatewayId: string) => void;
   initialId?: string | null;
   /** 打开即进「新建网关」表单（上手引导「打开网关库」） */
   initialNew?: boolean;
+  /** 「＋ 为此网关添加连接」：打开预选好这个网关的添加连接弹层（2026-10-31 用户拍板：库内不再另有一套建连接表单） */
+  onAddConnection?: (gatewayId: string) => void;
+  /** 点已绑的连接：打开它的编辑弹层 */
+  onEditProfile?: (profile: Profile) => void;
 }) {
   const gateways = useAppStore((s) => s.gateways);
   const profiles = useAppStore((s) => s.profiles);
   const loadGateways = useAppStore((s) => s.loadGateways);
   const saveGateway = useAppStore((s) => s.saveGateway);
   const removeGateway = useAppStore((s) => s.removeGateway);
-  const bindGateway = useAppStore((s) => s.bindGateway);
   const [editing, setEditing] = useState<Gateway | "new" | null>(null);
   const [name, setName] = useState("");
   const [noAuth, setNoAuth] = useState(false);
@@ -312,9 +318,14 @@ export default function GatewayLibrary({
   const [listFetchingId, setListFetchingId] = useState<string | null>(null);
   const [probingSlot, setProbingSlot] = useState<string | null>(null);
   const [probingAll, setProbingAll] = useState(false);
-  const [bindAgent, setBindAgent] = useState("");
-  const [bindProtocol, setBindProtocol] = useState("");
-  const [bindModels, setBindModels] = useState<string[]>([]);
+  // 服务商下拉显示选中的是哪家（新建表单）
+  const [presetName, setPresetName] = useState("");
+  // 手填进目录的模型名（拉不到 /models 的端点要靠它）
+  const [manualModel, setManualModel] = useState("");
+  // 模型区「只看已设置」
+  const [onlySet, setOnlySet] = useState(false);
+  // 列表行上「测试」进行中的网关
+  const [rowProbingId, setRowProbingId] = useState<string | null>(null);
   const [monthUsage, setMonthUsage] = useState<GatewayUsageRow[]>([]);
   const [draftProbes, setDraftProbes] = useState<Record<string, SlotProbeSummary>>({});
   const [showSlots, setShowSlots] = useState(false);
@@ -324,14 +335,9 @@ export default function GatewayLibrary({
   const [policyFilter, setPolicyFilter] = useState("");
   const [policyVendor, setPolicyVendor] = useState("all");
   const [policyOpenVendors, setPolicyOpenVendors] = useState<ReadonlySet<string>>(new Set());
-  const [bindFilter, setBindFilter] = useState("");
-  const [bindVendor, setBindVendor] = useState("all");
-  const [bindOpenVendors, setBindOpenVendors] = useState<ReadonlySet<string>>(new Set());
   const modelSurfaceGen = useRef(0);
   // 「Agent 配置」区：新建网关保存后滚到这里接着绑
   const bindSectionRef = useRef<HTMLDivElement>(null);
-  // 遮罩点击只认「按下也在遮罩上」：输入框里拖选文字松手落到遮罩外，click 会冒到遮罩上
-  const downOnBackdrop = useRef(false);
 
   // 未保存判定：打开表单（或保存成功）那一刻的快照 vs 当前填写。逐模型能力声明各自有保存钮、不算在内
   const formSnapshot = useMemo(
@@ -370,7 +376,13 @@ export default function GatewayLibrary({
   useEffect(() => {
     if (editing !== null && baseline === null) setBaseline(formSnapshot);
   }, [editing, baseline, formSnapshot]);
-  const dirty = editing !== null && baseline !== null && baseline !== formSnapshot;
+  // 能力声明各自单独保存（不随「保存网关」），但填了没点保存也算没保存的修改，离开前一样要问
+  const capDirty = Object.entries(capForms).some(
+    ([id, f]) =>
+      JSON.stringify(f) !==
+      JSON.stringify(capOverrides[id] ? capsFormFromOverride(capOverrides[id]) : EMPTY_CAPS_FORM),
+  );
+  const dirty = editing !== null && ((baseline !== null && baseline !== formSnapshot) || capDirty);
 
   /** 离开编辑表单前：没改动直接放行，有改动问一句，默认焦点落在「取消」上 */
   async function confirmDiscard(): Promise<boolean> {
@@ -432,9 +444,9 @@ export default function GatewayLibrary({
     setPolicyFilter("");
     setPolicyVendor("all");
     setPolicyOpenVendors(new Set());
-    setBindFilter("");
-    setBindVendor("all");
-    setBindOpenVendors(new Set());
+    setPresetName("");
+    setManualModel("");
+    setOnlySet(false);
     if (g === "new") {
       setEditing("new");
       setName("");
@@ -577,7 +589,12 @@ export default function GatewayLibrary({
     setCapForms((cur) =>
       cur[modelId]
         ? cur
-        : { ...cur, [modelId]: capsFormFromOverride(map[modelId] ?? EMPTY_CAPS_FORM) },
+        : {
+            ...cur,
+            // 没有声明就是空表单：原先把空表单再过一遍 capsFormFromOverride，空串被当成 false，
+            // 思考 / 视觉默认显示「不支持」，只填上下文一保存就把「不支持」一起写进去（2026-10-31 修）
+            [modelId]: map[modelId] ? capsFormFromOverride(map[modelId]) : { ...EMPTY_CAPS_FORM },
+          },
     );
   }
 
@@ -704,9 +721,7 @@ export default function GatewayLibrary({
       // 结果提示在吸顶的头部里（原先在表单顶上，点完保存看不见），绑定区滚进视野
       if (!id) {
         setShowBind(true);
-        setNotice(
-          `网关「${saved.name}」已保存。接着在下方 Agent 配置里选要用的 Agent 和模型。`,
-        );
+        setNotice(`网关「${saved.name}」已保存。接着点下方「＋ 为此网关添加连接」，选 Agent 和模型。`);
         requestAnimationFrame(() =>
           bindSectionRef.current?.scrollIntoView({ block: "nearest" }),
         );
@@ -723,6 +738,7 @@ export default function GatewayLibrary({
   /** 端点预设一键填充（新建表单）：同址只填 Base URL 主输入、槽位跟随；
       分槽供应商（智谱）各槽直填并展开槽位区；推荐模型只在目录为空时播种，不动手填内容 */
   function applyProviderPreset(preset: ProviderPreset) {
+    setPresetName(preset.name);
     setName((cur) => cur.trim() || preset.name);
     setNoAuth(preset.noAuth ?? false);
     const entries = Object.entries(preset.slots) as [
@@ -964,10 +980,10 @@ export default function GatewayLibrary({
         await loadGateways();
       } else {
         const failed = dto.checks.find((c) => c.status === "failed");
-        setError(failed?.message ?? "测试失败");
+        setError(failed ? `${failed.message}${probeHint(failed.message)}` : "测试失败，检查地址和密钥");
       }
     } catch (e) {
-      setError(String(e));
+      setError(`${String(e)}${probeHint(String(e))}`);
     } finally {
       setProbingSlot(null);
     }
@@ -986,7 +1002,9 @@ export default function GatewayLibrary({
     }
     setProbingAll(true);
     setError(null);
-    let anyOk = false;
+    setNotice(null);
+    // 全部槽测完汇总成一条（原先先失败后成功时，红字和「测试通过」会同时挂着）
+    const results: { slot: GatewaySlotName; ok: boolean; why?: string }[] = [];
     try {
       // 同一 URL 也不能跨协议槽复用完整体检结果：OpenAI/Responses/Anthropic
       // 的请求体、鉴权头和默认模型可能不同。只保留「每个支持体检的槽各测一次」，
@@ -1003,16 +1021,16 @@ export default function GatewayLibrary({
             noAuth,
           });
           setDraftProbes((cur) => ({ ...cur, [slot]: probeDtoToSummary(slot, dto) }));
-          if (dto.ok) anyOk = true;
-          else if (!anyOk) {
-            const failed = dto.checks.find((c) => c.status === "failed");
-            setError(failed?.message ?? "测试失败");
-          }
+          const failed = dto.checks.find((c) => c.status === "failed");
+          results.push({ slot, ok: dto.ok, why: failed ? `${failed.message}${probeHint(failed.message)}` : undefined });
         } catch (e) {
-          setError(String(e));
+          results.push({ slot, ok: false, why: `${String(e)}${probeHint(String(e))}` });
         }
       }
-      if (anyOk) setNotice("测试通过，可以保存");
+      const line = results.map((r) => `${SLOT_LABEL[r.slot]} ${r.ok ? "✓" : "✗"}`).join(" / ");
+      const bad = results.filter((r) => !r.ok);
+      if (bad.length === 0) setNotice(`测试通过：${line}`);
+      else setError(`${line}。${bad.map((r) => `${SLOT_LABEL[r.slot]}：${r.why ?? "测试失败"}`).join("；")}`);
       const id = editing !== null && editing !== "new" ? editing.id : null;
       if (id) {
         const list = await invoke<Gateway[]>("list_gateways");
@@ -1027,34 +1045,80 @@ export default function GatewayLibrary({
     }
   }
 
-  async function bindToAgent() {
-    if (editing === null || editing === "new" || !bindAgent) return;
-    const selected = bindModels.filter(Boolean);
-    if (!selected.length) {
-      setError("请勾选这条绑定要使用的模型，并确认第一个为默认");
+  /** 手填一个模型进目录（拉不到 /models 的端点靠它）；随「保存网关」一起存 */
+  function addManualModel() {
+    const err = manualModelError(manualModel, models.map((m) => m.id));
+    if (err) {
+      setError(err);
       return;
     }
-    const proto = AGENT_PROTOCOLS[bindAgent];
-    const input: BindingInput = {
-      agent: bindAgent,
-      name: `${editing.name} · ${AGENTS.find((a) => a.id === bindAgent)?.label ?? bindAgent}`,
-      gatewayId: editing.id,
-      kind: "api",
-      protocol: proto ? (bindProtocol || proto.default) : null,
-      models: selected,
-      extraEnv: {},
-    };
-    try {
-      await bindGateway(input);
-      setNotice(
-        `已添加 ${AGENTS.find((a) => a.id === bindAgent)?.label ?? bindAgent} 配置，默认模型 ${selected[0]}。不改 Mesa 启动预选，也不写 CLI 全局文件。`,
-      );
-      setBindAgent("");
-      setBindProtocol("");
-      await useAppStore.getState().loadAll();
-    } catch (e) {
-      setError(String(e));
+    const id = manualModel.trim();
+    setModels((cur) => [
+      ...cur,
+      {
+        id,
+        source: "user",
+        status: "available",
+        lastSeenAt: null,
+        catalogSlot: null,
+        temperature: null,
+        topP: null,
+        maxOutputTokens: null,
+        reasoningEffort: null,
+      },
+    ]);
+    setManualModel("");
+    setError(null);
+    setNotice(`已加入 ${id}，点「保存网关」后生效`);
+  }
+
+  /** 从目录移除一个模型（多用于「历史失效」的）；已绑连接名单里的不受影响，随「保存网关」一起存 */
+  function removeModel(id: string) {
+    setModels((cur) => cur.filter((m) => m.id !== id));
+    if (expanded === id) setExpanded(null);
+  }
+
+  /** 列表行上直接测一次主协议槽（用已存的地址和密钥），结果写进行状态点 */
+  async function probeListed(g: Gateway) {
+    const slot = primaryProbeSlot(g.slots, "", g.catalogFromSlot);
+    if (!slot) {
+      setError(`「${g.name}」还没有能测试的协议地址`);
+      return;
     }
+    setRowProbingId(g.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const dto = await invoke<GatewayProbeDto>("probe_gateway_slot", {
+        gatewayId: g.id,
+        slot,
+        model: gatewayProbeModel(g.models, slot, profiles.filter((p) => p.gatewayId === g.id)),
+        basicOnly: true,
+        baseUrl: g.slots[slot] ?? null,
+        apiKey: null,
+        noAuth: g.noAuth,
+      });
+      await loadGateways();
+      if (dto.ok) setNotice(`「${g.name}」测试通过`);
+      else {
+        const failed = dto.checks.find((c) => c.status === "failed");
+        setError(`「${g.name}」${failed ? `${failed.message}${probeHint(failed.message)}` : "测试失败"}`);
+      }
+    } catch (e) {
+      setError(`「${g.name}」${String(e)}${probeHint(String(e))}`);
+    } finally {
+      setRowProbingId(null);
+    }
+  }
+
+  /** 离开网关库去连接弹层前：有没保存的修改先问 */
+  async function goAddConnection(id: string) {
+    if (!onAddConnection || !(await confirmDiscard())) return;
+    onAddConnection(id);
+  }
+  async function goEditProfile(p: Profile) {
+    if (!onEditProfile || !(await confirmDiscard())) return;
+    onEditProfile(p);
   }
 
   const boundAgents = useMemo(() => {
@@ -1062,7 +1126,6 @@ export default function GatewayLibrary({
     return profiles.filter((p) => p.gatewayId === editing.id);
   }, [editing, profiles]);
 
-  const catalogModels = models.filter((m) => m.status !== "stale");
   const primarySlot = primaryProbeSlot(
     slots,
     masterUrl,
@@ -1086,121 +1149,155 @@ export default function GatewayLibrary({
     return `近 30 天 ${yen} · ${row.sessionCount} 会话`;
   }
 
+  const healthDot = { ok: "bg-ok-text", err: "bg-err-text", warn: "bg-warn-text", idle: "bg-l4" } as const;
+  const editingName = editing !== null && editing !== "new" ? editing.name : null;
+  const modelIds = models.map((row) => row.id).filter((id) => {
+    if (!onlySet) return true;
+    const m = models.find((row) => row.id === id);
+    return Boolean(m && modelHasPolicy(m));
+  });
+
   return (
-    // 填到一半时点遮罩不关：误触就丢掉整张表单代价太大，在头部提示怎么离开
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-6"
-      onMouseDown={(e) => {
-        downOnBackdrop.current = e.target === e.currentTarget;
-      }}
-      onClick={(e) => {
-        if (!downOnBackdrop.current || e.target !== e.currentTarget) return;
-        if (dirty) {
-          setNotice("还有没保存的修改：点「保存网关」保存，或点「关闭」放弃。");
-          return;
-        }
-        onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="gateway-library-title"
-        tabIndex={-1}
-        data-surface="canvas"
-        className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-lg border border-hairline bg-canvas p-4 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 头部吸顶：标题、关闭与结果提示随时看得见——表单很长、保存钮在最底下，
-            提示原先落在表单顶上，点完保存看不见。负边距抵掉面板内边距，底色盖住滚过去的内容 */}
-        <div className="sticky -top-4 z-10 -mx-4 -mt-4 space-y-3 bg-canvas px-4 pb-3 pt-4">
-        <div className="flex items-center justify-between">
-          <h2 id="gateway-library-title" className="text-base font-medium text-l1">网关库</h2>
-          <div className="flex items-center gap-2">
-            {/* 少用的恢复动作：原先与「新建网关」同级的次按钮、名字又是内部词，降为带说明的文字钮 */}
+    // 统一弹层（2026-10-31）：Esc / 关闭钮走 closeLibrary（有没保存的修改先问）；有修改时点遮罩不关
+    <Modal
+      open
+      size="lg"
+      overflow="hidden"
+      dismissOnBackdrop={!dirty}
+      onClose={() => void closeLibrary()}
+      contentClassName="flex min-h-0 flex-1 flex-col"
+      title={
+        editing ? (
+          <span className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
-              className={`${ghostActionClass} text-l4`}
+              className="shrink-0 text-l3 hover:text-l1"
+              onClick={async () => {
+                if (await confirmDiscard()) setEditing(null);
+              }}
+            >
+              ‹ 网关库
+            </button>
+            <span className="text-l4">/</span>
+            <span className="truncate">{editing === "new" ? "新建网关" : `编辑「${editingName}」`}</span>
+          </span>
+        ) : (
+          "网关库"
+        )
+      }
+      footer={
+        editing ? (
+          <>
+            {dirty && <span className="mr-auto text-xs text-l3">有没保存的修改</span>}
+            <button
+              type="button"
+              className={secondaryActionClass}
+              onClick={async () => {
+                if (await confirmDiscard()) setEditing(null);
+              }}
+            >
+              取消
+            </button>
+            <button type="button" className={primaryActionClass} disabled={saving} onClick={() => void save()}>
+              {saving ? "保存中…" : "保存网关"}
+            </button>
+          </>
+        ) : (
+          <>
+            {/* 少用的恢复动作：降为带说明的文字钮 */}
+            <button
+              type="button"
+              className={`${ghostActionClass} mr-auto text-l3`}
               title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
               onClick={() => void undoMerge()}
             >
               拆开自动合并的连接
             </button>
-            <button
-              type="button"
-              className={primaryActionClass}
-              onClick={async () => {
-                if (await confirmDiscard()) openEdit("new");
-              }}
-            >
-              + 新建网关
-            </button>
             <button type="button" className={secondaryActionClass} onClick={() => void closeLibrary()}>
               关闭
             </button>
-          </div>
+            <button type="button" className={primaryActionClass} onClick={() => openEdit("new")}>
+              + 新建网关
+            </button>
+          </>
+        )
+      }
+    >
+      {/* 结果提示固定在内容顶上（不随表单滚走） */}
+      {(error || notice) && (
+        <div className="mb-2 shrink-0 space-y-2">
+          {error && <NoticeBar tone="err" onDismiss={() => setError(null)}>{error}</NoticeBar>}
+          {notice && <NoticeBar onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
         </div>
-        {error && <NoticeBar tone="err" onDismiss={() => setError(null)}>{error}</NoticeBar>}
-        {notice && <NoticeBar onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
-        </div>
+      )}
+      <div className="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1">
         {editing ? (
           <div className="space-y-2">
             {editing === "new" && (
-              <label className="block text-sm text-l2">
+              <div className="text-sm text-l2">
                 服务商
-                <select
-                  className={`${fieldClass} mt-1 w-full`}
-                  value=""
-                  onChange={(e) => {
-                    const preset = PROVIDER_PRESETS.find(
-                      (p) => p.name === e.target.value,
-                    );
-                    if (preset) applyProviderPreset(preset);
-                  }}
-                >
-                  <option value="" disabled>
-                    选一家供应商，自动填地址、槽位和推荐模型…
-                  </option>
-                  {PROVIDER_PRESETS.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.name}
-                      {p.models?.length ? " · 含推荐模型" : ""}
-                      {p.confidence === "official" ? " · 官方" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <span className="mt-1 block">
+                  <MenuSelect
+                    aria-label="服务商"
+                    value={presetName}
+                    placeholder="选一家服务商，自动填地址、协议槽和推荐模型…"
+                    options={PROVIDER_PRESETS.map((p) => ({
+                      value: p.name,
+                      label: `${p.name}${p.models?.length ? " · 含推荐模型" : ""}${p.confidence === "official" ? " · 官方" : ""}`,
+                    }))}
+                    onChange={(v) => {
+                      const preset = PROVIDER_PRESETS.find((p) => p.name === v);
+                      if (preset) applyProviderPreset(preset);
+                    }}
+                  />
+                </span>
+                {presetName && <span className="mt-1 block text-micro text-l3">已按「{presetName}」填好地址和推荐模型</span>}
+              </div>
             )}
             <label className="block text-sm text-l2">
               名称
               <input className={`${fieldClass} mt-1 w-full`} value={name} onChange={(e) => setName(e.target.value)} />
             </label>
-            <Checkbox
-              className="text-sm text-l2"
-              checked={noAuth}
-              onChange={setNoAuth}
-              label="无密钥（本地端点）"
-            />
             <label className="block text-sm text-l2">
               <span className="flex items-center justify-between gap-2">
                 <span>地址</span>
-                <span className="font-mono text-micro text-l4">
-                  {probeSummaryText(primaryProbe)}
-                </span>
+                <span className="font-mono text-micro text-l3">{probeSummaryText(primaryProbe)}</span>
               </span>
               <input
                 className={`${fieldClass} mt-1 w-full font-mono text-xs`}
                 value={masterUrl}
-                placeholder="https://…（同址时只填这里）"
+                placeholder="https://…（各协议同址时只填这里）"
                 title="空槽与仍等于主输入的槽一起改；某个槽手填即脱离"
-                onChange={(e) => onMasterChange(e.target.value)}
+                onChange={(e) => {
+                  onMasterChange(e.target.value);
+                  setPresetName("");
+                }}
               />
             </label>
-            {responsesUrlWarn && (
-              <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>
-            )}
-            {openaiBillingHint && (
-              <InlineNotice tone="warn" size="micro">{openaiBillingHint}</InlineNotice>
+            {responsesUrlWarn && <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>}
+            {openaiBillingHint && <InlineNotice tone="warn" size="micro">{openaiBillingHint}</InlineNotice>}
+            <Checkbox className="text-sm text-l2" checked={noAuth} onChange={setNoAuth} label="无密钥（本地端点）" />
+            {/* 先填密钥、再测试：原先「测试」排在密钥框前面，从上往下填会先测出 401 */}
+            {noAuth ? (
+              <p className="text-micro text-l3">本地端点不需要密钥，测试和启动都不带密钥。</p>
+            ) : (
+              <>
+                <label className="block text-sm text-l2">
+                  {editing === "new" || !editing.keyHint ? "密钥" : `密钥（留空不改，现存 ${editing.keyHint}）`}
+                  <input
+                    className={`${fieldClass} mt-1 w-full`}
+                    type="password"
+                    autoComplete="new-password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                </label>
+                {editing !== "new" && editing.keyHint && (
+                  <button type="button" className={`${ghostActionClass} text-err-text`} onClick={() => void onClearKey()}>
+                    清除本地密钥
+                  </button>
+                )}
+              </>
             )}
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -1222,39 +1319,19 @@ export default function GatewayLibrary({
                 {fetchingCatalog ? "获取中…" : "获取模型"}
               </button>
               {editing !== "new" && catalogAge(editing.catalogFetchedAt) && (
-                <span className="self-center text-micro text-l4">
+                <span className="text-micro text-l3">
                   {catalogAge(editing.catalogFetchedAt)}
                   {editing.catalogFromSlot ? ` · ${editing.catalogFromSlot}` : ""}
                 </span>
               )}
             </div>
-            <label className="block text-sm text-l2">
-              {editing === "new" || !editing.keyHint ? "密钥" : "密钥（留空不改）"}
-              <input
-                className={`${fieldClass} mt-1 w-full`}
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-            </label>
-            {editing !== "new" && editing.keyHint && (
-              <button
-                type="button"
-                className={`${secondaryActionClass} text-err-text`}
-                onClick={() => void onClearKey()}
-              >
-                清除本地密钥
-              </button>
-            )}
             {showWalletFields && (
               <div className="space-y-2 rounded-md border border-hairline p-2">
                 <p className="text-micro text-l3">
                   查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
                 </p>
                 <label className="block text-sm text-l2">
-                  {editing === "new" || !editing.walletKeyHint
-                    ? "系统访问令牌"
-                    : "系统访问令牌（留空不改）"}
+                  {editing === "new" || !editing.walletKeyHint ? "系统访问令牌" : "系统访问令牌（留空不改）"}
                   <input
                     className={`${fieldClass} mt-1 w-full`}
                     type="password"
@@ -1264,11 +1341,7 @@ export default function GatewayLibrary({
                   />
                 </label>
                 {editing !== "new" && editing.walletKeyHint && (
-                  <button
-                    type="button"
-                    className={`${secondaryActionClass} text-err-text`}
-                    onClick={() => void onClearWalletToken()}
-                  >
+                  <button type="button" className={`${ghostActionClass} text-err-text`} onClick={() => void onClearWalletToken()}>
                     清除系统访问令牌
                   </button>
                 )}
@@ -1291,54 +1364,48 @@ export default function GatewayLibrary({
               >
                 <FoldMark open={showSlots} />
                 <span className="flex-1">协议槽</span>
-                <span className="text-micro text-l4">
-                  {slotsTogether ? "跟随上面的地址" : "有独立地址"}
-                </span>
+                <span className="text-micro text-l3">{slotsTogether ? "跟随上面的地址" : "有独立地址"}</span>
               </button>
               {showSlots && (
                 <div className="space-y-2 pt-1">
                   {SLOT_LABELS.map(({ key, label }) => {
                     const follows = !slots[key]?.trim() && !!masterUrl.trim();
+                    const testable = key !== "cursor" && key !== "gemini";
                     return (
-                      <div key={key} className="space-y-1">
-                        <label className="block text-sm text-l2">
-                          <span className="flex items-center justify-between gap-2">
-                            <span>
-                              {label}
-                              {follows && (
-                                <span className="ml-1.5 text-micro text-l4">跟随上面的地址</span>
-                              )}
-                            </span>
-                            <span className="font-mono text-micro text-l4">{probeSummaryText(slotSum(key))}</span>
+                      <div key={key} className="text-sm text-l2">
+                        <span className="flex items-center justify-between gap-2">
+                          <span>
+                            {label}
+                            {follows && <span className="ml-1.5 text-micro text-l3">跟随上面的地址</span>}
                           </span>
+                          <span className="font-mono text-micro text-l3">{testable ? probeSummaryText(slotSum(key)) : "不支持测试"}</span>
+                        </span>
+                        {/* 测试钮与输入框同一行（原先各占一行，五个槽拉得很长） */}
+                        <span className="mt-1 flex items-center gap-2">
                           <input
-                            className={`${fieldClass} mt-1 w-full font-mono text-xs`}
+                            aria-label={`${label} 地址`}
+                            className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
                             value={slots[key] ?? ""}
                             placeholder={follows ? masterUrl : "https://…"}
                             title={follows ? "留空 = 跟随上面的地址；填入即脱离跟随" : undefined}
-                            onChange={(e) => setSlots((s) => ({ ...s, [key]: e.target.value }))}
+                            onChange={(e) => setSlots((cur) => ({ ...cur, [key]: e.target.value }))}
                           />
-                        </label>
-                        {key !== "cursor" && key !== "gemini" && (
-                          <button
-                            type="button"
-                            className={secondaryActionClass}
-                            disabled={!!probingSlot || !effectiveSlotUrl(slots, key, masterUrl)}
-                            onClick={() => void probeOne(key, false)}
-                          >
-                            {probingSlot === key ? "测试中…" : "测试"}
-                          </button>
-                        )}
+                          {testable && (
+                            <button
+                              type="button"
+                              className={`${rowActionClass} shrink-0`}
+                              disabled={!!probingSlot || !effectiveSlotUrl(slots, key, masterUrl)}
+                              onClick={() => void probeOne(key, false)}
+                            >
+                              {probingSlot === key ? "测试中…" : "测试"}
+                            </button>
+                          )}
+                        </span>
                       </div>
                     );
                   })}
-                  <button
-                    type="button"
-                    className={secondaryActionClass}
-                    disabled={probingAll}
-                    onClick={() => void probeAll()}
-                  >
-                    {probingAll ? "测速中…" : "测速支持槽位"}
+                  <button type="button" className={secondaryActionClass} disabled={probingAll} onClick={() => void probeAll()}>
+                    {probingAll ? "测试中…" : "测试全部槽"}
                   </button>
                 </div>
               )}
@@ -1352,7 +1419,7 @@ export default function GatewayLibrary({
                 <FoldMark open={showAdvanced} />
                 <span className="flex-1">Header 与兼容选项</span>
                 {(compatTimeout.trim() || compatNoBetas || compatNoThinking) && !showAdvanced && (
-                  <span className="text-micro text-l4">已开兼容选项</span>
+                  <span className="text-micro text-l3">已开兼容选项</span>
                 )}
               </button>
               {showAdvanced && (
@@ -1380,146 +1447,127 @@ export default function GatewayLibrary({
                     />
                     <span className="text-micro text-l3">秒。中转慢、长思考常超时时调大（Claude Code、Codex）</span>
                   </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={compatNoBetas} onChange={(e) => setCompatNoBetas(e.target.checked)} />
-                    <span>不发实验性请求头</span>
-                    <span className="text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={compatNoThinking} onChange={(e) => setCompatNoThinking(e.target.checked)} />
-                    <span>不发思考参数</span>
-                    <span className="text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
-                  </label>
+                  <Checkbox
+                    checked={compatNoBetas}
+                    onChange={setCompatNoBetas}
+                    label={
+                      <span>
+                        不发实验性请求头
+                        <span className="ml-2 text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
+                      </span>
+                    }
+                  />
+                  <Checkbox
+                    checked={compatNoThinking}
+                    onChange={setCompatNoThinking}
+                    label={
+                      <span>
+                        不发思考参数
+                        <span className="ml-2 text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
+                      </span>
+                    }
+                  />
                 </div>
               )}
             </div>
+            {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
+                已绑的点一下直接编辑 */}
             {editing !== "new" && (
-              <div ref={bindSectionRef} className="scroll-mt-36">
+              <div ref={bindSectionRef} className="scroll-mt-4">
                 <button
                   type="button"
                   className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
                   onClick={() => setShowBind((v) => !v)}
                 >
                   <FoldMark open={showBind} />
-                  <span className="flex-1">Agent 配置</span>
-                  <span className="text-micro text-l4">
-                    {boundAgents.length ? `${boundAgents.length} 条` : "未绑定"}
-                  </span>
+                  <span className="flex-1">用这个网关的连接</span>
+                  <span className="text-micro text-l3">{boundAgents.length ? `${boundAgents.length} 条` : "还没有"}</span>
                 </button>
                 {showBind && (
-                  <div className="space-y-2 pt-1 text-sm">
-                    <ul className="text-micro text-l3">
-                      {boundAgents.length === 0 && <li>还没有 Agent 配置</li>}
-                      {boundAgents.map((p) => (
-                        <li key={p.id} className="truncate" title={p.name}>
-                          {p.name}
-                        </li>
-                      ))}
-                    </ul>
-                    <select
-                      className={fieldClass}
-                      value={bindAgent}
-                      onChange={(e) => {
-                        const agent = e.target.value;
-                        setBindAgent(agent);
-                        setBindProtocol(AGENT_PROTOCOLS[agent]?.default ?? "");
-                        setBindModels(catalogModels.map((m) => m.id).slice(0, 1));
-                      }}
-                    >
-                      <option value="">选择 Agent…</option>
-                      {AGENTS.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label}
-                          {boundAgents.some((p) => p.agent === a.id) ? "（已有绑定，将再加一条）" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    {bindAgent && AGENT_PROTOCOLS[bindAgent] && (
-                      <select className={fieldClass} value={bindProtocol} onChange={(e) => setBindProtocol(e.target.value)}>
-                        {AGENT_PROTOCOLS[bindAgent].options.map((p) => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
+                  <div className="space-y-1 pt-1 text-sm">
+                    {boundAgents.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        disabled={!onEditProfile}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-hover"
+                        onClick={() => void goEditProfile(p)}
+                      >
+                        <span className="w-24 shrink-0 truncate text-xs text-l3">
+                          {AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-l1">{p.name}</span>
+                        <span className="truncate font-mono text-micro text-l3">{p.models[0] ?? "未选模型"}</span>
+                      </button>
+                    ))}
+                    {onAddConnection && (
+                      <button type="button" className={secondaryActionClass} onClick={() => void goAddConnection(editing.id)}>
+                        ＋ 为此网关添加连接
+                      </button>
                     )}
-                    {bindAgent && (
-                      <div className="max-h-52 space-y-1 overflow-auto">
-                        <ModelClassFilter
-                          ids={catalogModels.map((m) => m.id)}
-                          vendor={bindVendor}
-                          onVendor={setBindVendor}
-                          filter={bindFilter}
-                          onFilter={setBindFilter}
-                        />
-                        <VendorModelSections
-                          ids={catalogModels.map((m) => m.id)}
-                          vendor={bindVendor}
-                          filter={bindFilter}
-                          openVendors={bindOpenVendors}
-                          onToggle={(name) => {
-                            setBindOpenVendors((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(name)) next.delete(name);
-                              else next.add(name);
-                              return next;
-                            });
-                          }}
-                          renderItem={(id) => {
-                            const on = bindModels.includes(id);
-                            return (
-                              <label key={id} className="flex items-center gap-1 py-0.5 text-micro">
-                                <Checkbox checked={on} onChange={(checked) => {
-                                  setBindModels((cur) => checked
-                                    ? (cur.includes(id) ? cur : [...cur, id])
-                                    : cur.filter((item) => item !== id));
-                                }} />
-                                <span>{id}{on && bindModels[0] === id ? "（默认）" : ""}</span>
-                              </label>
-                            );
-                          }}
-                        />
-                      </div>
-                    )}
-                    <button type="button" className={secondaryActionClass} disabled={!bindAgent} onClick={() => void bindToAgent()}>
-                      添加 Agent 配置
-                    </button>
                   </div>
                 )}
               </div>
             )}
-            {models.length > 0 && (
-              <div className="text-sm text-l2">
-                <button
-                  type="button"
-                  className="flex min-h-7 w-full items-center gap-2 text-left"
-                  onClick={() => setShowModels((v) => !v)}
-                >
-                  <FoldMark open={showModels} />
-                  <span className="flex-1">模型策略</span>
-                  <span className="text-micro text-l4">{models.length} 个</span>
-                </button>
-                {showModels && (
+            <div className="text-sm text-l2">
+              <button
+                type="button"
+                className="flex min-h-7 w-full items-center gap-2 text-left"
+                onClick={() => setShowModels((v) => !v)}
+              >
+                <FoldMark open={showModels} />
+                <span className="flex-1">模型</span>
+                <span className="text-micro text-l3">
+                  {models.length} 个
+                  {models.some(modelHasPolicy) ? ` · ${models.filter(modelHasPolicy).length} 个设了参数` : ""}
+                </span>
+              </button>
+              {showModels && (
                 <div className="mt-1 space-y-1">
-                  <ModelClassFilter
-                    ids={models.map((row) => row.id)}
-                    vendor={policyVendor}
-                    onVendor={setPolicyVendor}
-                    filter={policyFilter}
-                    onFilter={setPolicyFilter}
-                  />
-                  <div className="max-h-56 overflow-auto">
-                  <VendorModelSections
-                    ids={models.map((row) => row.id)}
-                    vendor={policyVendor}
-                    filter={policyFilter}
-                    openVendors={policyOpenVendors}
-                    onToggle={(name) => {
-                      setPolicyOpenVendors((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(name)) next.delete(name);
-                        else next.add(name);
-                        return next;
-                      });
-                    }}
+                  {/* 手填：拉不到 /models 的端点（如智谱 api/v1）靠它建目录 */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      aria-label="手填模型名"
+                      className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
+                      placeholder="手填模型名，如 glm-5.3"
+                      value={manualModel}
+                      onChange={(e) => setManualModel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addManualModel();
+                        }
+                      }}
+                    />
+                    <button type="button" className={`${rowActionClass} shrink-0`} onClick={addManualModel}>
+                      ＋ 加入
+                    </button>
+                  </div>
+                  {models.length > 0 && (
+                    <>
+                      <ModelClassFilter
+                        ids={models.map((row) => row.id)}
+                        vendor={policyVendor}
+                        onVendor={setPolicyVendor}
+                        filter={policyFilter}
+                        onFilter={setPolicyFilter}
+                      />
+                      {models.some(modelHasPolicy) && (
+                        <Checkbox className="text-xs text-l3" checked={onlySet} onChange={setOnlySet} label="只看设了参数的" />
+                      )}
+                      <VendorModelSections
+                        ids={modelIds}
+                        vendor={policyVendor}
+                        filter={policyFilter}
+                        openVendors={policyOpenVendors}
+                        onToggle={(name) => {
+                          setPolicyOpenVendors((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(name)) next.delete(name);
+                            else next.add(name);
+                            return next;
+                          });
+                        }}
                     renderItem={(id) => {
                     const m = models.find((row) => row.id === id);
                     if (!m) return null;
@@ -1555,10 +1603,11 @@ export default function GatewayLibrary({
                       stored: m.maxOutputTokens != null,
                     });
                     return (
-                      <div className="border-b border-hairline py-1 last:border-b-0">
+                      <div className="group border-b border-hairline py-1 last:border-b-0">
+                        <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          className="flex w-full items-center gap-2 text-left font-mono text-xs"
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left font-mono text-xs"
                           onClick={() => {
                             setExpanded(open ? null : m.id);
                             if (!open) {
@@ -1571,28 +1620,43 @@ export default function GatewayLibrary({
                           <span className="min-w-0 flex-1 truncate">
                             {m.id}
                             {m.status === "stale" && (
-                              <span className="ml-2 text-micro text-warn-text">历史失效</span>
+                              <span className="ml-2 font-sans text-micro text-warn-text">历史失效</span>
+                            )}
+                            {modelHasPolicy(m) && (
+                              <span className="ml-2 rounded-full bg-cta-pill px-1.5 py-px font-sans text-micro text-cta-pill-text">已设参数</span>
                             )}
                           </span>
-                          <span className="text-micro text-l4">
+                          <span className="font-sans text-micro text-l3">
                             {(cap ?? combo)?.thinking ? "思考" : ""}
                             {(cap ?? combo)?.vision ? " 视觉" : ""}
                             {cap?.context ? ` ${contextLabel(cap.context)}` : ""}
                           </span>
                         </button>
+                        {/* 失效的常驻，其余悬停才出：已绑连接名单里的不受影响 */}
+                        <button
+                          type="button"
+                          aria-label={`从目录移除 ${m.id}`}
+                          title="从这个网关的目录里移除（已绑连接的名单不受影响）；保存网关后生效"
+                          className={`shrink-0 px-1.5 text-micro text-l3 hover:text-err-text ${m.status === "stale" ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+                          onClick={() => removeModel(m.id)}
+                        >
+                          移除
+                        </button>
+                        </div>
                         {open && (
                           <div className="mt-1 space-y-1 pl-5">
                             {combo?.probeNote && (
                               <InlineNotice tone="warn" size="micro">{combo.probeNote}</InlineNotice>
                             )}
                             {combo?.policyChannelNote && (
-                              <p className="text-micro text-l4">{combo.policyChannelNote}</p>
+                              <p className="text-micro text-l3">{combo.policyChannelNote}</p>
                             )}
+                            {/* 思考档里有多个勾选框和一个下拉，外层不能用 label（嵌套 label 非法，读屏关联会乱） */}
                             {effortMode !== "hidden" && (
-                              <label className="block text-micro text-l3">
+                              <div role="group" aria-label="思考档" className="block text-micro text-l3">
                                 思考档
                                 {effortMode === "readonly" && (
-                                  <span className="ml-1 text-l4">{policyFieldHint({
+                                  <span className="ml-1 text-l3">{policyFieldHint({
                                     capable: combo?.thinking ?? cap?.thinking ?? false,
                                     injectAllowed: combo?.injectEffortAllowed ?? false,
                                     channel: combo?.channelEffort,
@@ -1605,13 +1669,13 @@ export default function GatewayLibrary({
                                   disabled={effortMode === "readonly"}
                                   onChange={(next) => patchModel(m.id, { reasoningEffort: next })}
                                 />
-                              </label>
+                              </div>
                             )}
                             {tempMode !== "hidden" && (
                               <label className="block text-micro text-l3">
-                                temperature
+                                温度
                                 {tempMode === "readonly" && (
-                                  <span className="ml-1 text-l4">{policyFieldHint({
+                                  <span className="ml-1 text-l3">{policyFieldHint({
                                     capable: true,
                                     injectAllowed: combo?.injectTemperatureAllowed ?? false,
                                     channel: combo?.channelTemperature,
@@ -1635,9 +1699,9 @@ export default function GatewayLibrary({
                             )}
                             {topPMode !== "hidden" && (
                               <label className="block text-micro text-l3">
-                                top_p
+                                top_p（采样范围）
                                 {topPMode === "readonly" && (
-                                  <span className="ml-1 text-l4">{policyFieldHint({
+                                  <span className="ml-1 text-l3">{policyFieldHint({
                                     capable: true,
                                     injectAllowed: combo?.injectTopPAllowed ?? false,
                                     channel: combo?.channelTopP,
@@ -1659,9 +1723,9 @@ export default function GatewayLibrary({
                             )}
                             {maxMode !== "hidden" && (
                               <label className="block text-micro text-l3">
-                                max output
+                                输出上限（token）
                                 {maxMode === "readonly" && (
-                                  <span className="ml-1 text-l4">{policyFieldHint({
+                                  <span className="ml-1 text-l3">{policyFieldHint({
                                     capable: true,
                                     injectAllowed: combo?.injectMaxTokensAllowed ?? false,
                                     channel: combo?.channelMaxTokens,
@@ -1683,14 +1747,14 @@ export default function GatewayLibrary({
                                 />
                               </label>
                             )}
-                            <div className="mt-2 border-t border-hairline pt-2">
-                              <p className="text-micro text-l3">
+                            {/* 能力声明另存：不随「保存网关」，点下面的钮立刻写、对本机所有 Agent 生效——单独成块并写明，免得以为能被「取消」撤回 */}
+                            <div className="mt-2 rounded-md border border-hairline p-2">
+                              <p className="text-micro text-l2">
                                 能力声明
-                                <span className="ml-1 text-l4">
-                                  中转新模型查不到/报错时手填；对本机所有 Agent 生效（能力来源最高层）
-                                </span>
+                                <span className="ml-1.5 rounded-full bg-warn px-1.5 py-px text-warn-text">单独保存 · 对所有 Agent 生效</span>
                               </p>
-                              <p className="mt-0.5 text-micro text-l4">
+                              <p className="mt-0.5 text-micro text-l3">中转的新模型查不到或认错（上下文、会不会思考、能不能看图）时手填，优先级最高。</p>
+                              <p className="mt-0.5 text-micro text-l3">
                                 当前解析：
                                 {cap
                                   ? `${contextLabel(cap.context) ? `${contextLabel(cap.context)} 上下文` : "上下文未知"}${cap.thinking ? " · 思考" : ""}${cap.vision ? " · 视觉" : ""}`
@@ -1713,38 +1777,23 @@ export default function GatewayLibrary({
                                   />
                                 </label>
                                 <div className="mt-1 grid grid-cols-2 gap-2">
-                                  <label className="block text-micro text-l3">
-                                    思考
-                                    <select
-                                      className={`${fieldClass} mt-0.5 w-full`}
-                                      value={(capForms[m.id] ?? EMPTY_CAPS_FORM).thinking}
-                                      onChange={(e) =>
-                                        patchCapForm(m.id, {
-                                          thinking: e.target.value as TriState,
-                                        })
-                                      }
-                                    >
-                                      <option value="">未声明</option>
-                                      <option value="true">支持</option>
-                                      <option value="false">不支持</option>
-                                    </select>
-                                  </label>
-                                  <label className="block text-micro text-l3">
-                                    视觉
-                                    <select
-                                      className={`${fieldClass} mt-0.5 w-full`}
-                                      value={(capForms[m.id] ?? EMPTY_CAPS_FORM).vision}
-                                      onChange={(e) =>
-                                        patchCapForm(m.id, {
-                                          vision: e.target.value as TriState,
-                                        })
-                                      }
-                                    >
-                                      <option value="">未声明</option>
-                                      <option value="true">支持</option>
-                                      <option value="false">不支持</option>
-                                    </select>
-                                  </label>
+                                  {(["thinking", "vision"] as const).map((field) => (
+                                    <div key={field} className="text-micro text-l3">
+                                      {field === "thinking" ? "思考" : "看图"}
+                                      <span className="mt-0.5 block text-sm">
+                                        <MenuSelect
+                                          aria-label={field === "thinking" ? "思考能力声明" : "看图能力声明"}
+                                          value={(capForms[m.id] ?? EMPTY_CAPS_FORM)[field]}
+                                          options={[
+                                            { value: "", label: "未声明" },
+                                            { value: "true", label: "支持" },
+                                            { value: "false", label: "不支持" },
+                                          ]}
+                                          onChange={(v) => patchCapForm(m.id, { [field]: v as TriState })}
+                                        />
+                                      </span>
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
                               <div className="mt-1">
@@ -1771,55 +1820,53 @@ export default function GatewayLibrary({
                       </div>
                     );
                     }}
-                  />
-                  </div>
+                      />
+                    </>
+                  )}
                 </div>
-                )}
-              </div>
-            )}
-            <div className="flex gap-2 pt-2">
-              <button type="button" className={primaryActionClass} disabled={saving} onClick={() => void save()}>
-                保存网关
-              </button>
-              <button
-                type="button"
-                className={secondaryActionClass}
-                onClick={async () => {
-                  if (await confirmDiscard()) setEditing(null);
-                }}
-              >
-                取消
-              </button>
+              )}
             </div>
           </div>
         ) : (
           <ul className="divide-y divide-hairline">
-            {gateways.length === 0 && <li className="py-6 text-center text-sm text-l3">还没有网关</li>}
+            {gateways.length === 0 && (
+              <li className="py-6 text-center text-sm text-l3">还没有网关。点右下角「+ 新建网关」，或在添加连接时新建。</li>
+            )}
             {gatewayPickerRows(gateways).map((row) => {
               const g = gateways.find((item) => item.id === row.id);
               if (!g) return null;
               const n = profiles.filter((p) => p.gatewayId === g.id).length;
               const usage = usageLine(g);
+              const health = gatewayHealth(g);
               return (
                 <li key={g.id} className="flex items-center gap-3 py-2 text-sm">
                   <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium text-l1">{row.name}</span>
                     <span className="ml-2 text-l3">{n ? `${n} 个连接在用` : "没有连接在用"}</span>
-                    <span className="mt-0.5 block truncate text-micro text-l4" title={row.detail}>
+                    <span className="mt-0.5 block truncate text-micro text-l3" title={row.detail}>
                       {row.detail}
                     </span>
                     {usage && (
-                      <button
-                        type="button"
-                        className="mt-0.5 block text-micro text-l4 hover:text-l2"
-                        onClick={() => onJumpUsage?.(g.id)}
-                      >
+                      <button type="button" className="mt-0.5 block text-micro text-l3 hover:text-l1" onClick={() => onJumpUsage?.(g.id)}>
                         {usage}
                       </button>
                     )}
                   </span>
-                  {/* 按钮分级：编辑是这一行的主动作；获取模型是辅助；删除不与它们同权（原先三颗同款次按钮） */}
+                  {/* 状态点：只读已存的测试结果；缺密钥最先说 */}
+                  <span className="flex shrink-0 items-center gap-1.5 text-micro text-l3" title={health.label}>
+                    <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
+                    {health.label}
+                  </span>
+                  <button
+                    type="button"
+                    className={ghostActionClass}
+                    disabled={rowProbingId === g.id}
+                    title="用已保存的地址和密钥测一次"
+                    onClick={() => void probeListed(g)}
+                  >
+                    {rowProbingId === g.id ? "测试中…" : "测试"}
+                  </button>
                   <button
                     type="button"
                     className={ghostActionClass}
@@ -1832,11 +1879,7 @@ export default function GatewayLibrary({
                   <button type="button" className={secondaryActionClass} onClick={() => openEdit(g)}>
                     编辑
                   </button>
-                  <button
-                    type="button"
-                    className={`${ghostActionClass} hover:text-err-text`}
-                    onClick={() => void onDelete(g)}
-                  >
+                  <button type="button" className={`${ghostActionClass} hover:text-err-text`} onClick={() => void onDelete(g)}>
                     删除
                   </button>
                 </li>
@@ -1845,6 +1888,6 @@ export default function GatewayLibrary({
           </ul>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
