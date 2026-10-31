@@ -274,6 +274,7 @@ exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感�
   components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、官方账号探测（窗口回前台再探）、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
 components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染
   agent-install.ts           # Agent 安装共用件：AgentCmdResult、diagnose / installToolHelp（isWindows 显式传参，连接页与向导共用）+ useAgentInstall（上手向导就地安装：install_method_preview 先亮命令、事件监听、装完 loadAll；连接页自己的安装 / 更新流程仍在 ProfilesPage）
+  agent-install-notes.ts     # 装 Agent 前后的 Windows 提醒（纯函数，tests 同名）：winget 依赖 VC++ 运行库会弹管理员确认的名单、winget 不走出网代理、Claude 缺 Git；winget 失败输出的中英文识别（diagnose 先调它）
   components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：presetsForAgent 选预设 → probe_gateway_slot 测试 → saveGateway → bindGateway；原生回车提交、在途禁编辑 / 重复提交并通知向导锁导航；自定义端点 / 多槽位去网关库（tests/onboarding-ui.test.ts）
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）

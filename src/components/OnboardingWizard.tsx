@@ -14,6 +14,7 @@ import { AGENTS } from "../types";
 import { canOneClickInstall } from "../dep-check";
 import { DepInstallLog, useDepInstall } from "../dep-install";
 import { diagnose, installToolHelp, useAgentInstall } from "../agent-install";
+import { installNotes, isWingetMethod } from "../agent-install-notes";
 import { connectOfficialAccount, startOfficialLogin } from "../connect-official";
 import {
   connectStage,
@@ -335,6 +336,7 @@ function ConnectScreen({ facts, onBusyChange }: { facts: OnboardingFacts; onBusy
 function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void }) {
   const install = useAgentInstall();
   const depCheck = useAppStore((s) => s.depCheck);
+  const outboundProxy = useAppStore((s) => s.settings?.outboundProxy?.trim());
   const refreshDepCheck = useAppStore((s) => s.refreshDepCheck);
   const [showOthers, setShowOthers] = useState(false);
   const [nodeFor, setNodeFor] = useState<string | null>(null);
@@ -397,6 +399,18 @@ function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void 
         {method && !entry?.running && !entry?.result && (
           <p className="break-all rounded-md bg-field px-2.5 py-2 font-mono text-micro leading-5 text-l3">将执行：{method}</p>
         )}
+        {method &&
+          !entry?.running &&
+          !entry?.result &&
+          installNotes(id, method, {
+            isWindows: IS_WINDOWS,
+            proxyConfigured: !!outboundProxy,
+            gitMissing: depCheck?.git.status === "missing",
+          }).map((note) => (
+            <p key={note} className="text-xs leading-5 text-l3">
+              {note}
+            </p>
+          ))}
         {noTool && nodeFor !== id && <p className="text-xs leading-5 text-l3">这台电脑缺少安装工具，点「安装」看怎么补。</p>}
         {noTool && nodeFor === id && (
           <div className="space-y-2">
@@ -434,13 +448,16 @@ function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void 
               {entry.result.output.trim().slice(-1200)}
             </pre>
             {hint && <p className="text-xs leading-5 text-l3">{hint}</p>}
-            <p className="text-xs leading-5 text-l3">
-              下载慢或连不上，多半是网络问题：
-              <button type="button" className="ml-1 text-cta hover:underline" disabled={installing} onClick={openProxySettings}>
-                去设置出网代理
-              </button>
-              ，填好再点「重试」。
-            </p>
+            {/* winget 不走 Mesa 的出网代理，「去设置出网代理」对它没用；它的下一步已在 hint 里 */}
+            {!isWingetMethod(entry.result.method) && (
+              <p className="text-xs leading-5 text-l3">
+                下载慢或连不上，多半是网络问题：
+                <button type="button" className="ml-1 text-cta hover:underline" disabled={installing} onClick={openProxySettings}>
+                  去设置出网代理
+                </button>
+                ，填好再点「重试」。
+              </p>
+            )}
           </div>
         )}
       </Card>

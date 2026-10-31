@@ -97,6 +97,7 @@ import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { collapseCarriageReturns } from "../stream-text";
 import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install";
+import { installNotes } from "../agent-install-notes";
 
 const IS_WINDOWS_UA = /Windows/i.test(navigator.userAgent);
 import {
@@ -2936,9 +2937,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         setNodeInstallFor(agentId);
         return;
       }
+      const st = useAppStore.getState();
+      const notes = installNotes(agentId, method, {
+        isWindows: IS_WINDOWS_UA,
+        proxyConfigured: !!st.settings?.outboundProxy?.trim(),
+        gitMissing: st.depCheck?.git.status === "missing",
+      });
+      const noteText = notes.length ? `\n\n${notes.join("\n\n")}` : "";
       if (
         !(await confirmDialog(
-          `将通过以下命令安装 ${labelOf(agentId)}：\n\n${method}\n\n继续？`,
+          `将通过以下命令安装 ${labelOf(agentId)}：\n\n${method}${noteText}\n\n继续？`,
         ))
       )
         return;
