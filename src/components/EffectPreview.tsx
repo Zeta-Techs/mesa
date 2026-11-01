@@ -26,6 +26,9 @@ export function EffectPreview({ profileId, setGlobalReason }: { profileId: strin
     <details
       className="mb-4 rounded-md border border-hairline px-3 py-2"
       onToggle={(e) => {
+        // 表下「原始参数与文件改动」也是 <details>，它的 toggle 会沿 React 树冒到这里：
+        // 不拦的话外层当成自己展开、重新取数，整张表重挂，里面那层刚展开就被收回（2026-11-01 用户：点了没反应）
+        if (e.target !== e.currentTarget) return;
         const next = e.currentTarget.open;
         setOpen(next);
         if (next) void load();
@@ -134,7 +137,12 @@ function RawDetails({ data }: { data: EffectPreviewDto }) {
   const global = data.global;
   if (!launch && !global) return null;
   return (
-    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
+    <details
+      onToggle={(e) => {
+        e.stopPropagation();
+        setOpen(e.currentTarget.open);
+      }}
+    >
       <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 text-micro text-l3 [&::-webkit-details-marker]:hidden">
         <FoldMark open={open} />
         <span>原始参数与文件改动</span>
