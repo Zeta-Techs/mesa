@@ -242,6 +242,7 @@ components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查�
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES + 用户模板（list_pipeline_templates，命令未注册优雅降级只列内置），投稿与返修模板另选初稿/返修与轮次；选中只抛 steps（TemplatePickItem），写回 project.toml 与覆盖确认归父组件——注册成功后的首选层是另一个 TemplatePickModal
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
+components/ResearchRecordPanel.tsx  # 项目设置「规则与验收」里的研究记录：有记录才出现、展开列最近 30 次运行、三颗导出按钮（research_export），导完点文件名在访达里显示（tests/research-record.test.ts）
 components/CheckList.tsx   # 评审页「基础检查」行展开的核验清单（2026-11-02）：按 拦下 / 待你判断 / 通过 分组，通过默认收起；末尾固定写「通过≠论断被支持」（tests/research-review-ui.test.ts）
 components/ResearchReproductionPanel.tsx  # 复现运行面板（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView）：从报告抽复现约定（parseReproductionContract：MESA_REPRODUCE / reproduce 子命令）+ 项目脚本拼可运行清单，research_run_reproduce 在工作区执行——确认框写明不是只读沙箱、约定输出写 ~/ccode/reproductions/；入口版本变了拒跑要求重新审阅（tests/research-panels.test.ts）
 components/UpstreamResearchAcceptance.tsx  # 开工弹层「上游已确认的结论范围」（KickoffConfirmDialog）：research_upstream_acceptances 列上游验收行（白话 upstreamAcceptanceNote），有效行一键「引用依据，当前仅允许准备」写 prepare 答案并绑当前证据版本——引用既有依据不自动批准本步；上游文件变了标「需重验」
@@ -968,6 +969,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单、pickCrossReviewer（跳过干活那家与停用连接、同家取最近用过）、复核标签键与首条指令（tests/cross-review.test.ts）
+  research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
   research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
@@ -1774,6 +1776,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底
+  research_export.rs         # 研究记录查看与三个导出（2026-11-02）：research_record_read；research_export(kind) 写「下载/ccode-exports」——
+                             # AI 使用声明草稿（中英，按记录统计工具 / 模型 / 用途）、复现包 zip（代码 / 环境 / 登记文件 / 研究记录与核验存档，
+                             # 数据目录只记 SHA-256，文本出包前脱敏）、研究过程报告 HTML（时间线、人的决定计数、核验摘要、人机分工）；不含对话原文
   local_stats.rs             # 本机使用计数（2026-11-02）：只记次数（研究记录、采纳、核验三档、导出），存配置目录 local-stats.json；
                              # 测试态不落盘；只在反馈弹层用户勾选时随反馈发出
   logbuf.rs                  # 诊断日志环形缓冲

@@ -128,6 +128,7 @@ mod context_breakdown;
 mod reader;
 mod research_quality;
 mod research_record;
+mod research_export;
 mod local_stats;
 mod research_tools;
 mod review_contract;
@@ -779,6 +780,8 @@ pub fn run() {
             research_quality::research_get_acceptance,
             research_quality::research_upstream_acceptances,
             research_record::research_checks_read,
+            research_export::research_record_read,
+            research_export::research_export,
             local_stats::local_stats_read,
             fs_tree::save_file_preview,
             fs_tree::watch_dir,

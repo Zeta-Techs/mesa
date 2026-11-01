@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ResearchRecordPanel from "./ResearchRecordPanel";
 import AcceptanceLogList from "./AcceptanceLogList";
 import ProjectInjectionPanel from "./ProjectInjectionPanel";
 import ProjectMemoryPanel from "./ProjectMemoryPanel";
@@ -165,6 +166,7 @@ export function SettingsRulesSection({
           onError={onError}
         />
         <AcceptanceLogList entries={acceptLog} />
+        <ResearchRecordPanel projectPath={projectPath} />
       </div>
       <div className="mt-2 rounded-lg ccode-well p-3">
         <ProjectInjectionPanel
