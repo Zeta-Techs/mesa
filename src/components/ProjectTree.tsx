@@ -1884,8 +1884,9 @@ export default function ProjectTree({
     await archiveChats(stale, "随手聊");
   }
 
-  /** 逐条写归档（不碰 CLI 源文件），先改本地镜像再强刷；what 是 toast 里的量词后缀 */
-  async function archiveChats(list: SessionMetaDto[], what = "对话") {
+  /** 逐条写归档（不碰 CLI 源文件），先改本地镜像再强刷。成功不报：行当场从侧栏消失就是结果；
+   *  announce 给了才报数（「归档 N 天没动的」里有侧栏不列的空对话，看不出归了几段），失败照报 */
+  async function archiveChats(list: SessionMetaDto[], announce?: string) {
     const done = new Set<string>();
     const failed: string[] = [];
     for (const s of list) {
@@ -1907,7 +1908,7 @@ export default function ProjectTree({
     });
     void useAppStore.getState().loadSessions(true);
     if (failed.length > 0) toast(`已归档 ${done.size} 段，${failed.length} 段失败：${failed[0]}`, "error");
-    else toast(`已归档 ${done.size} 段${what}`);
+    else if (announce) toast(`已归档 ${done.size} 段${announce}`);
   }
 
   /** 眼下侧栏里列着的对话，从上到下（⇧ 点整段选用） */
@@ -1988,7 +1989,7 @@ export default function ProjectTree({
     return { label, title };
   }
   /** 删除（同对话页：源文件进回收站、OpenCode 从库里抹掉，整理数据与快照后端一并清）。
-   *  调用方已就地确认过；这几行当场从侧栏拿掉，删在后台逐条做，删失败的随刷新回来并报错 */
+   *  调用方已就地确认过；这几行当场从侧栏拿掉，删在后台逐条做，删失败的随刷新回来并报错（成功不报） */
   async function deleteChats(list: SessionMetaDto[]) {
     const targets = list.filter((s) => !chatRunning(s));
     if (targets.length === 0) {
@@ -2007,8 +2008,8 @@ export default function ProjectTree({
     }
     release();
     await useAppStore.getState().loadSessions(true).catch(() => {});
+    // 成功不报（2026-11-01 用户：多余）：行当场就没了，进回收站又慢，提示晚到一拍只是噪音；失败照报
     if (failed.length > 0) toast(`已删除 ${targets.length - failed.length} 段，${failed.length} 段失败：${failed[0]}`, "error");
-    else toast(`已删除 ${targets.length} 段对话`);
   }
   async function archivePicked(list: SessionMetaDto[]) {
     const head = list
