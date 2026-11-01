@@ -161,3 +161,21 @@ test("fig_check：确定性脚本逐字节一致通过、失败与漏出图拦�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("stat_check / num_check：--files 指定 manuscript/ 之外的报告（数据处理的 analysis-report.md、学位论文 chapters/）", () => {
+  const root = tmp();
+  try {
+    mkdirSync(join(root, "chapters"));
+    writeFileSync(join(root, "analysis-report.md"), "差异显著，t(28) = 2.20, p = .01。\n均值 3.14。\n");
+    writeFileSync(join(root, "chapters/results.md"), "F(1, 28) = 4.84, p < .05。\n");
+    const r = run(skill("stats-check", "stat_check.py"), ["--root", root, "--files", "analysis-report.md", "chapters/*.md"], root);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    const list = items(root, "stat-check.jsonl");
+    assert.deepEqual(list.map((i) => [i.target?.file, i.status]), [["analysis-report.md", "blocked"], ["chapters/results.md", "passed"]]);
+    writeFileSync(join(root, "numbers.json"), JSON.stringify({ numbers: [] }));
+    run(skill("research-writing", "num_check.py"), ["--root", root, "--numbers", "numbers.json", "--coverage", "--files", "analysis-report.md"], root);
+    assert.match(byId(items(root, "num-check.jsonl"), "COV")?.evidence?.detail ?? "", /analysis-report\.md:2 3\.14/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

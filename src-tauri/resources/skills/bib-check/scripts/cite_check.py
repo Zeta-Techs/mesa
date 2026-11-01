@@ -96,15 +96,29 @@ PANDOC_KEY = re.compile(r"(?<![\w@.\\])-?@([A-Za-z0-9_][\w:.#$%&\-+?<>~/]*)")
 LATEX_CITE = re.compile(r"\\[A-Za-z]*cite[A-Za-z]*\*?(?:\[[^\]]*\]){0,2}\{([^}]*)\}")
 
 
+SKIP_DIRS = {"template", "templates", "_extensions", "_freeze", ".quarto", "output", "figures", "assets"}
+
+
 def manuscript_files(root, explicit):
+    """explicit 给了就按它（可带通配：manuscript/chapters/*.tex、submission/formatted.md）；没给就递归 manuscript/
+    下的 md / qmd / tex，跳过模板、输出等目录与过程文件（LaTeX 章节在 chapters/ 里，2026-11-02 起才扫得到）。"""
+    root = Path(root)
     if explicit:
-        return [Path(root) / p for p in explicit]
-    base = Path(root) / "manuscript"
+        files = []
+        for pattern in explicit:
+            hits = sorted(root.glob(pattern)) if any(ch in pattern for ch in "*?[") else [root / pattern]
+            files += [p for p in hits if p.is_file()]
+        return files
+    base = root / "manuscript"
     if not base.is_dir():
         return []
     files = []
-    for ext in ("*.md", "*.qmd", "*.tex"):
-        files += [p for p in base.glob(ext) if not SKIP_MANUSCRIPT.search(p.name)]
+    for p in base.rglob("*"):
+        rel = p.relative_to(base).parts
+        if not p.is_file() or p.suffix.lower() not in (".md", ".qmd", ".tex") or any(x in SKIP_DIRS for x in rel[:-1]):
+            continue
+        if not SKIP_MANUSCRIPT.search(p.name):
+            files.append(p)
     return sorted(files)
 
 
@@ -490,7 +504,7 @@ def cmd_quotes(args):
     if args.coverage:
         quoted = {str(r.get("key", "")).lstrip("@") for r in rows}
         first = {}
-        for key, rel, no in citations(root, manuscript_files(root, None)):
+        for key, rel, no in citations(root, manuscript_files(root, args.manuscript)):
             first.setdefault(key, (rel, no))
         for key, (rel, no) in first.items():
             if key not in quoted:
@@ -508,13 +522,14 @@ def main():
     refs = sub.add_parser("refs", help="引用键、重复键、DOI 指向与撤稿")
     refs.add_argument("--root", default=".", help="工作目录（稿件与 references.bib 所在）")
     refs.add_argument("--bib", default="references.bib")
-    refs.add_argument("--manuscript", nargs="*", help="要查的稿件（相对 --root）；默认 manuscript/ 下的 md/qmd/tex")
+    refs.add_argument("--manuscript", nargs="*", help="要查的稿件（相对 --root，可带通配，如 manuscript/chapters/*.tex）；默认递归 manuscript/ 下的 md/qmd/tex")
     refs.add_argument("--offline", action="store_true", help="不联网，只做本地检查")
     quotes = sub.add_parser("quotes", help="原文摘录逐字核对")
     quotes.add_argument("--root", default=".", help="工作目录（稿件与 evidence.json 所在）")
     quotes.add_argument("--project", help="项目根绝对路径（papers/ 下的 PDF 在这里）")
     quotes.add_argument("--evidence", default="manuscript/evidence.json")
     quotes.add_argument("--coverage", action="store_true", help="另列出稿件里没给摘录的引用")
+    quotes.add_argument("--manuscript", nargs="*", help="--coverage 查哪些稿件（相对 --root，可带通配）；默认递归 manuscript/")
     args = ap.parse_args()
     sys.exit(cmd_refs(args) if args.cmd == "refs" else cmd_quotes(args))
 

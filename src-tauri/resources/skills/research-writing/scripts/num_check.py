@@ -119,11 +119,11 @@ def check_entry(root, n, entry):
                 detail=f"结果文件 {expect}", **base)
 
 
-def coverage(root, entries):
+def coverage(root, entries, files=None):
     registered = {(C.split_location(e.get("location"))[0], str(e.get("value", "")).strip()) for e in entries}
     registered_values = {v for _, v in registered}
     out = []
-    for path in C.manuscript_files(root, SKIP):
+    for path in C.manuscript_files(root, SKIP, files):
         rel = path.relative_to(root).as_posix()
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
@@ -149,6 +149,7 @@ def main():
     ap.add_argument("--root", default=".", help="工作目录（稿件、numbers.json 与结果文件所在）")
     ap.add_argument("--numbers", default="manuscript/numbers.json")
     ap.add_argument("--coverage", action="store_true", help="另列出没登记的小数 / 百分数")
+    ap.add_argument("--files", nargs="*", help="--coverage 查哪些文件（相对 --root，可带通配）；默认递归 manuscript/")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     items = []
@@ -169,7 +170,7 @@ def main():
         raise SystemExit(2)
     items += [check_entry(root, n, e) for n, e in enumerate(entries, 1)]
     if args.coverage:
-        missing = coverage(root, entries)
+        missing = coverage(root, entries, args.files)
         if missing:
             sample = "；".join(f"{f}:{l} {v}" for f, l, v in missing[:30])
             more = f"（另有 {len(missing) - 30} 处）" if len(missing) > 30 else ""

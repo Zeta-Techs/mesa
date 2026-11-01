@@ -167,9 +167,9 @@ def fmt_p(p):
     return "<.001" if p < 0.001 else f"{p:.3f}"
 
 
-def scan(root):
+def scan(root, files=None):
     items = []
-    for path in C.manuscript_files(root, SKIP):
+    for path in C.manuscript_files(root, SKIP, files):
         rel = path.relative_to(root).as_posix()
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
@@ -225,12 +225,13 @@ def main():
     C.utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=".", help="工作目录（manuscript/ 所在）")
+    ap.add_argument("--files", nargs="*", help="要扫的文件（相对 --root，可带通配，如 analysis-report.md、chapters/*.md）；默认递归 manuscript/")
     args = ap.parse_args()
     root = Path(args.root).resolve()
-    items = scan(root)
+    items = scan(root, args.files)
     if not items:
         items.append(C.item(CHECKER, "STAT-NONE", "stat_consistency", "needs_human",
-                            "稿件里没认出 t / F / χ² / r / z 的完整报告（统计量、自由度、p 值）", "manuscript/",
+                            "稿件里没认出 t / F / χ² / r / z 的完整报告（统计量、自由度、p 值）", (args.files or ["manuscript/"])[0],
                             detail="没有统计检验就忽略；有的话请按「t(28) = 2.20, p = .036」的完整格式报告"))
     out = C.write_items(root, "stat-check.jsonl", items)
     raise SystemExit(C.summary(items, out))

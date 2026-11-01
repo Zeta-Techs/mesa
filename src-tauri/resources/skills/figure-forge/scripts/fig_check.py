@@ -82,6 +82,7 @@ def main():
     ap.add_argument("--root", default=".", help="工作目录（figures/ 与出图脚本所在）")
     ap.add_argument("--manifest", default="figures/manifest.json")
     ap.add_argument("--coverage", action="store_true", help="另列出稿件引用了但没登记脚本的图")
+    ap.add_argument("--files", nargs="*", help="--coverage 查哪些稿件（相对 --root，可带通配）；默认递归 manuscript/")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     items = []
@@ -142,7 +143,7 @@ def main():
                                 source=script_rel, detail="PDF / PNG 常带生成时间；请目视对比，确认数据与画面一致"))
     if args.coverage:
         registered = {str(f.get("file", "")).lstrip("./") for f in figures}
-        for path in C.manuscript_files(root):
+        for path in C.manuscript_files(root, None, args.files):
             rel = path.relative_to(root).as_posix()
             try:
                 lines = path.read_text(encoding="utf-8").splitlines()

@@ -67,11 +67,30 @@ def split_location(loc):
     return (file, int(line)) if line.isdigit() and file else (loc, None)
 
 
-def manuscript_files(root, skip_pattern=None):
-    base = Path(root) / "manuscript"
+# manuscript/ 下这些子目录不是正文：学校 / 期刊模板、Quarto 扩展与缓存、渲染输出、图
+SKIP_DIRS = {"template", "templates", "_extensions", "_freeze", ".quarto", "output", "figures", "assets"}
+TEXT_EXT = (".md", ".qmd", ".tex")
+
+
+def manuscript_files(root, skip_pattern=None, explicit=None):
+    """要扫的稿件：explicit 给了就按它（相对 --root，可带通配，如 manuscript/chapters/*.tex、submission/formatted.md）；
+    没给就递归 manuscript/ 下的 md / qmd / tex（LaTeX 的 chapters/ 也在内），跳过模板、输出等目录与 skip_pattern 命中的过程文件。"""
+    root = Path(root)
+    if explicit:
+        files = []
+        for pattern in explicit:
+            hits = sorted(root.glob(pattern)) if any(c in pattern for c in "*?[") else [root / pattern]
+            files += [p for p in hits if p.is_file()]
+        return files
+    base = root / "manuscript"
     if not base.is_dir():
         return []
     files = []
-    for ext in ("*.md", "*.qmd", "*.tex"):
-        files += [p for p in base.glob(ext) if not (skip_pattern and skip_pattern.search(p.name))]
+    for p in base.rglob("*"):
+        rel = p.relative_to(base).parts
+        if not p.is_file() or p.suffix.lower() not in TEXT_EXT or any(part in SKIP_DIRS for part in rel[:-1]):
+            continue
+        if skip_pattern and skip_pattern.search(p.name):
+            continue
+        files.append(p)
     return sorted(files)

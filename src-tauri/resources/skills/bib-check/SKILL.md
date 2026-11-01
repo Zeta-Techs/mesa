@@ -25,6 +25,7 @@ provides: [bib-check]
    精读笔记「可引用点」里已经摘过原句和页码的直接用；只有摘要的文献照样写一条（摘要原句），脚本会标「只有摘要」交人判断。找不到能支撑这处论断的原句时不要硬凑，这处写进报告「建议处理项」（改写为有出处的表述或删去）。
 2. `python3 <技能目录>/scripts/cite_check.py refs --root <工作目录>`：引用键是否都在 `references.bib`、库里有没有重复键；联网时再查 DOI 是否指向这篇、有没有撤稿 / 更正登记。
 3. `python3 <技能目录>/scripts/cite_check.py quotes --root <工作目录> --project <项目根绝对路径> --coverage`：逐条到 PDF 全文里逐字找摘录（PDF 在项目根 `papers/`），另列出没给摘录的引用。
+   两个命令默认递归扫 `manuscript/`（LaTeX 的 `chapters/*.tex` 也在内，模板与输出目录不扫）；被检稿件不在 `manuscript/` 下时（如 `submission/formatted.md`、`revised-r1.md`）给两个命令都加 `--manuscript <文件>`，可带通配。
 4. 两个命令把结果写进 `.ccode/checks/`，Mesa 评审页直接读；终端里打印的「✗ 拦下」「? 待你判断」照抄进本报告对应各节，**拦下的条目（找不到的键、DOI 指向另一篇、已撤稿、原文里找不到的摘录）全部进「建议处理项」**。脚本只证明「原文里确实有这段话」，这段话是否支持论断仍按「与论断支持性核验交接」交人判断。
 
 脚本退出码 2 是环境问题（缺 `references.bib`、本机没装 PyMuPDF 等）：照实写进「验证范围声明」，其余各节照常按下文人工口径做，不得因此跳过检查。

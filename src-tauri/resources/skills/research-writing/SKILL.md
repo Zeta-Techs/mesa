@@ -45,7 +45,7 @@ provides: [research-writing]
 正文成稿（流水线里写结果、定稿的步骤）后，把要核的数字登记进 `manuscript/numbers.json`，再跑技能目录里的 `scripts/num_check.py`（不复制进工作区；`python3` 在 Windows 上换成 `python`）：
 
 - 登记：结果、摘要和讨论里来自分析输出的每个数字各一条：`{"id": "N001", "location": "manuscript/<稿件>.md:<行号>", "value": "<正文里的写法>", "source": "<结果文件>", "path": "<JSON 键路径>"}`；CSV 结果用 `row`（第几行数据）或 `match`（`{"列名": "值"}`）加 `column`；正文写百分数而结果是小数时加 `"scale": 100`。只登记真从结果文件来的数，引用文献的数字、样本量设计值不登记。
-- 运行：`python3 <技能目录>/scripts/num_check.py --root <工作目录> --coverage`。脚本按正文显示的小数位算舍入误差逐条比对，写进 `.ccode/checks/num-check.jsonl`。
+- 运行：`python3 <技能目录>/scripts/num_check.py --root <工作目录> --coverage`。脚本按正文显示的小数位算舍入误差逐条比对，写进 `.ccode/checks/num-check.jsonl`。`--coverage` 默认递归扫 `manuscript/`，正文在别处时加 `--files <文件>`；登记文件不在默认位置时用 `--numbers <路径>`。
 - 处理：拦下的（正文与结果对不上、结果文件取不到值）先回结果文件查原因再改正文，**不得为了过核验改结果文件**；`--coverage` 列出的未登记小数 / 百分数，是结果数就补登记，不是（如引用别人的数）在交付说明里一句带过。
 
 ## 交付自查

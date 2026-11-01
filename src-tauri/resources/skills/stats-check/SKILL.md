@@ -21,7 +21,7 @@ provides: [stats-check]
 
 `p 值与统计量是否对得上`、`估计值是否落在自己的置信区间里` 是算术事实，**一律用技能目录里的 `scripts/stat_check.py`**（不复制进工作区；`python3` 在 Windows 上换成 `python`）：
 
-- `python3 <技能目录>/scripts/stat_check.py --root <工作目录>`：扫 `manuscript/` 下稿件里的 t(df)、F(df1, df2)、χ²(df)、r(df)、z 及紧跟的 p 值，按统计量显示位数重算双侧 p 比对；扫估计值与置信区间。结果写进 `.ccode/checks/stat-check.jsonl`。
+- `python3 <技能目录>/scripts/stat_check.py --root <工作目录>`：扫 `manuscript/` 下稿件里的 t(df)、F(df1, df2)、χ²(df)、r(df)、z 及紧跟的 p 值，按统计量显示位数重算双侧 p 比对；扫估计值与置信区间。结果写进 `.ccode/checks/stat-check.jsonl`。默认递归扫 `manuscript/`；报告不在那里时（数据处理的 `analysis-report.md`、学位论文的 `chapters/*.md`）加 `--files <文件>`，可带通配。
 - 拦下的照抄进本报告「p 值与统计解读」节并进「建议处理项」；脚本说「没认出完整报告」时，检查稿件是不是漏写了统计量或自由度（漏写本身就是要列的问题）。
 - 脚本只管算术；检验选得对不对、分析单元、多重比较等仍按下文人工口径逐节审查，不因脚本没拦就写「无问题」。
 

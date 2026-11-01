@@ -157,3 +157,28 @@ test("quotes：逐字找原句——断词、弯引号、省略号都认；编�
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test("refs：默认递归 manuscript/（LaTeX 章节在 chapters/ 里），模板目录不扫；也可指定文件", () => {
+  const root = fixture();
+  try {
+    mkdirSync(join(root, "manuscript/chapters"), { recursive: true });
+    mkdirSync(join(root, "manuscript/template"), { recursive: true });
+    mkdirSync(join(root, "submission"), { recursive: true });
+    writeFileSync(join(root, "manuscript/main.tex"), "\\input{chapters/intro}\n");
+    writeFileSync(join(root, "manuscript/chapters/intro.tex"), "As shown \\cite{smith2020,inchapter}.\n");
+    writeFileSync(join(root, "manuscript/template/sample.tex"), "\\cite{templatekey}\n");
+    writeFileSync(join(root, "submission/formatted.md"), "Formatted [@onlyformatted].\n");
+    run(["refs", "--root", root], root);
+    let list = items(root, "cite-refs.jsonl");
+    assert.equal(byId(list, "REF-inchapter")?.status, "blocked");
+    assert.equal(byId(list, "REF-inchapter")?.target?.file, "manuscript/chapters/intro.tex");
+    assert.equal(byId(list, "REF-templatekey"), undefined);
+    assert.equal(byId(list, "REF-onlyformatted"), undefined);
+    run(["refs", "--root", root, "--manuscript", "submission/formatted.md"], root);
+    list = items(root, "cite-refs.jsonl");
+    assert.equal(byId(list, "REF-onlyformatted")?.status, "blocked");
+    assert.equal(byId(list, "REF-inchapter"), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
