@@ -1366,9 +1366,9 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       "2. 获取目标期刊官方作者指南（WebFetch 期刊官网 Guide for Authors；获取失败时只做通用草稿并记录无法核验官方要求，不声称期刊格式通过）；\n" +
       "3. 人决定审查报告之后，按指南逐项适配：章节结构、引用与文献列表格式、图表规范、字数与摘要长度；产出 submission/formatted.md，只改格式与表达，不改学术观点与数据。若相对上游成稿改了数字或结论，必须在 submission/format-notes.md 逐条点名位置、旧值、新值和原因；只改格式与措辞的不写入该节；\n" +
       "4. 字数或摘要超限时不得自行删内容：在 formatted.md 原位标注超出量，把可选裁剪方案（砍哪节、砍多少）逐条写进 submission/format-notes.md 由用户定夺；\n" +
-      "5. 引用完整性自查（按 {skill:bib-check} 技能）：报告写入 submission/citation-check.md；并把需要用户处理的摘要同步写入 submission/format-notes.md；\n" +
+      "5. 引用完整性自查（按 {skill:bib-check} 技能，核验脚本加 --manuscript submission/formatted.md）：报告写入 submission/citation-check.md；并把需要用户处理的摘要同步写入 submission/format-notes.md。上游 manuscript/verification-decisions.md 仍有「待裁决」的，列进 format-notes.md 并阻塞，不在这一步代裁；\n" +
       "6. 作者单位/基金号/通讯邮箱等未知信息一律占位「待填」，不编造；所有未决项汇总进 submission/format-notes.md；\n" +
-      "7. 换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），产物写入本工作区 output/formatted.pdf 与 formatted.docx（评审合并后进项目根）。同一次从 submission/formatted.md 重新生成 output/endnote.docx 与 output/zotero.docx。\n" +
+      "7. 换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），产物写入本工作区 output/formatted.pdf 与 formatted.docx（评审合并后进项目根）。正文字体与 Word 模板沿用上游 manuscript/typeface.md 与 manuscript/reference.docx（有就用：formatted.md 的 YAML format.docx 写 reference-doc 一行），不另选、不重问。同一次从 submission/formatted.md 重新生成 output/endnote.docx 与 output/zotero.docx。\n" +
       "完成标准：submission/formatted.md、submission/target-journal.md、submission/citation-check.md 与 submission/format-notes.md 均已提交；format-notes.md 逐项给出处理结论；run 脚本渲染通过。\n" +
       "格式适配只核对期刊要求及记录证据缺口，引用上游有效审查；不重复复算或代替 G5。未解决项交下一步投稿材料统一关闭。\n" + QUALITY_STATUS,
     expectedArtifacts: [
@@ -1386,7 +1386,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
     ],
     acceptanceCriteria: ["machine:contains:submission/review-report.md::严重问题"],
     inputs: ["references.bib"],
-    optionalInputs: ["notes/", "analysis/", "results/", "design.md", "outline.md", "submission/pre-submission-checklist.md"],
+    optionalInputs: ["notes/", "analysis/", "results/", "design.md", "outline.md", "submission/pre-submission-checklist.md", "manuscript/verification-decisions.md", "manuscript/typeface.md", "manuscript/reference.docx"],
     anyOfInputs: [MANUSCRIPT_FINALS],
     skills: ["bib-check", "quarto-render", "endnote-bridge", "zotero-sync"],
     run: [
@@ -1424,16 +1424,17 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
         guidance:
           "报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话，按决定继续改稿。改过数字或结论的，在 format-notes.md 能点到名。",
       },
-      styleChoiceTask(),
-      endnoteSyncTask(),
+      // 内容决定在前、样式其次（步骤面板顺序规则）；落点给 format-notes.md，点开就是要拍板的那几项
       {
         title: "拍板目标期刊、字数裁剪方案并补齐「待填」信息",
         guidance:
           "期刊候选与字数超限裁剪方案（如有）见 submission/target-journal.md 与 format-notes.md；作者单位/基金号/通讯邮箱等占位在 formatted.md 与 format-notes.md 中汇总",
-        target: "",
+        target: "submission/format-notes.md",
         timing: "after",
         completion: "manual",
       },
+      styleChoiceTask(),
+      endnoteSyncTask(),
     ],
     // 「目标期刊怎么选」提到项目层（它是这条流程的前提，不是第 1 步的战术问题）；
     // 「字数超标先砍哪部分」改按需问——得先知道超了多少（见简报）
@@ -1448,9 +1449,10 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       "输入：submission/formatted.md、submission/target-journal.md（已随 main 合并在本工作区内）。\n" +
       "1. 产出 submission/cover-letter.md：编辑称呼占位、研究问题与有证据支持的亮点（不凑数量）、与期刊读者群的契合点、原创性与未一稿多投声明（占位「待填」处不编造）；\n" +
       "2. 产出 submission/highlights.md：按目标期刊要求与实际贡献写 highlights（目标期刊无此要求时在该文件注明并跳过）；\n" +
-      "3. 投稿前自查 formatted.md（模拟审稿人视角逐项过）：摘要与结论自洽、正文数字与表格一致、图表 standalone 可读、方法节可复现、局限有交代；问题按 CRITICAL（不处理大概率被拒，如数据不一致）/ MAJOR（影响评审印象）/ MINOR（措辞格式）三级写入 submission/pre-review.md。每条末尾写「决定：待定」。只有人改成接受、拒绝或修改，该条才算已处理；不得代填决定。CRITICAL/MAJOR 还要有修正证据或经人确认撤回受影响主张；无法解决则阻塞，不以说明理由代替解决，MINOR 列出即可；\n" +
+      "3. 投稿前自查 formatted.md（模拟审稿人视角逐项过）：摘要与结论自洽、正文数字与表格一致、图表 standalone 可读、方法节可复现、局限有交代；问题分三级写入 submission/pre-review.md：## 严重问题（不处理大概率被拒，如数据不一致）/ ## 一般问题（影响评审印象）/ ## 建议（措辞格式），条目编号 R001 起。不预留空的「决定：」行：人在流程线上逐条点接受、拒绝或修改，不得代填决定。严重 / 一般问题还要有修正证据或经人确认撤回受影响主张；无法解决则阻塞，不以说明理由代替解决，建议列出即可；\n" +
       "4. 产出 submission/checklist.md 投稿清单，每项一节「## 小标题」：投稿系统入口（未知标「待填」）、需上传文件清单、作者与单位、利益声明、AI 使用声明、推荐审稿人 2-4 位（只给研究领域与选择理由，具体姓名标「待填」）；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 `.ccode/ai-usage.md`（Mesa 按实际运行统计）为准，那里没有的不添；可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
-      "完成标准：cover-letter.md、highlights.md、pre-review.md、checklist.md 均已提交；pre-review.md 中 CRITICAL/MAJOR 全部有复核证据；未关闭时就绪度为阻塞，不能提交。\n" +
+      "上游有 submission/figure-permissions.md、submission/declarations.md 的，把仍写着「待申请」「待填」的项汇总进 checklist.md 对应节。\n" +
+      "完成标准：cover-letter.md、highlights.md、pre-review.md、checklist.md 均已提交；pre-review.md 的严重 / 一般问题全部有人的决定与复核证据；未关闭时就绪度为阻塞，不能提交。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
       "submission/cover-letter.md",
@@ -1458,11 +1460,13 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       "submission/pre-review.md",
       "submission/checklist.md",
     ],
+    acceptanceCriteria: ["machine:contains:submission/pre-review.md::严重问题"],
     inputs: ["submission/formatted.md", "submission/target-journal.md", "submission/citation-check.md", "submission/format-notes.md"],
-    optionalInputs: ["notes/", "analysis/", "results/", "design.md"],
+    optionalInputs: ["notes/", "analysis/", "results/", "design.md", "submission/figure-permissions.md", "submission/declarations.md"],
     skills: [],
     run: [],
     humanTasks: [
+      reviewDecisionTask("submission/pre-review.md"),
       {
         title: "按 G5 确认无阻塞问题、补齐声明并决定是否提交",
         guidance:
@@ -1499,13 +1503,14 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
       brief:
         `输入：reviews/round-${r}.md 审稿意见全文（用户把编辑来信保存为该文件；缺失时提示用户提供并停止，不得编造审稿意见）；${previousLabel}（上一版成稿）。\n` +
         "全程按 {skill:rebuttal-crafter} 技能执行。只允许在本步骤 TASK.md 明确的上一版稿件上修改，并将每处修改绑定审稿意见编号。若用户撤回授权，则只生成回复信和对照表，不改正文。\n" +
-        `科学改动（数字、因果、样本、结论范围）先写入 rebuttal/review-report-r${r}.md。报告用 ## 严重问题、## 一般问题、## 建议，条目用 S001，避免和审稿意见编号混用。人把每条写成接受、拒绝或修改之前，不得把这些改动写进修订稿。revisions 表把科学改动单列，措辞另列。\n` +
+        `科学改动（数字、因果、样本、结论范围）先写入 rebuttal/review-report-r${r}.md。报告用 ## 严重问题、## 一般问题、## 建议，条目用 S001，避免和审稿意见编号混用。人在流程线上逐条点接受、拒绝或修改之前，不得把这些改动写进修订稿。revisions 表把科学改动单列，措辞另列。\n` +
         ENDNOTE_SYNC +
         "1. 逐条拆分审稿意见并编号（R1.1、R1.2…，多位审稿人分节，编辑意见单列 E.1…），不遗漏任何一条；\n" +
         `2. 产出 rebuttal/response-letter-r${r}.md，逐条回应：意见摘要 → 回应（接受修改 / 部分接受并说明限制 / 礼貌反驳并给依据）→ 稿件修改位置；拿不准的一律标 [待确认]；\n` +
         `3. 审查报告里的科学改动已有人的决定后，才在 ${previousLabel} 基础上修改，产出 manuscript/revised-r${r}.md，并在修改处标注对应意见编号；需要补实验/补数据的只写可执行计划并标 [待补实验]，不开空头支票；\n` +
         `4. 产出 rebuttal/revisions-r${r}.md：每条意见 → 修改点 → revised-r${r}.md 位置，逐条可核对；\n` +
-        `5. 按 {skill:bib-check} 技能核对 revised-r${r}.md 与 references.bib，报告写入 rebuttal/citation-check-r${r}.md；\n` +
+        `5. 按 {skill:bib-check} 技能核对 revised-r${r}.md 与 references.bib（核验脚本加 --manuscript manuscript/revised-r${r}.md），报告写入 rebuttal/citation-check-r${r}.md；补了实验或改了数字的，按 {skill:stats-check} 跑 stat_check（--files manuscript/revised-r${r}.md），统计问题写入 rebuttal/stats-check-r${r}.md，并把改过的数字按 {skill:research-writing}「数字追溯」登记进 manuscript/numbers.json 跑 num_check；\n` +
+        `5b. ${verificationListClause(`response-letter-r${r}.md 与 revised-r${r}.md`, { marker: "[待确认]", checkFile: `rebuttal/citation-check-r${r}.md`, list: `rebuttal/verification-decisions-r${r}.md` })}\n` +
         `6. 产出 submission/resubmission-checklist-r${r}.md：上传文件、回复信/修订稿版本、逐项确认项与未决事项；提交前由人核对，不能把「已生成」当作「已提交」。\n` +
         `换期刊时读该刊作者须知，并从 references.bib 取该刊最近 2–3 篇综述核对实际排法；库里没有就写明，两边不一致就停下来问。用本步骤 run 脚本渲染修订清稿 PDF/docx（按 {skill:quarto-render} 技能：人在流程线「更换引用样式」选定具体形式后再按其重渲），并重新生成 output/endnote.docx 与 output/zotero.docx。改动按 revisions-r${r}.md 核验，期刊要求标改稿时另行按官方格式制作并登记，未制作不写已交付。\n` +
         `完成标准：round-${r} 的回复信、修改对照表、citation-check 报告、修订稿、再投稿清单均存在且一一对应；[待确认]/[待补实验] 在清单末尾汇总。涉及补研究须先回到设计→执行→分析→复算，使用本轮独立产物并更新所有受影响数字与主张；只有计划时维持阻塞，不写已完成。\n` + RELEASE_GATE + QUALITY_STATUS,
@@ -1517,24 +1522,20 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
         `rebuttal/response-letter-r${r}.md`,
         `rebuttal/revisions-r${r}.md`,
         `rebuttal/citation-check-r${r}.md`,
+        `rebuttal/verification-decisions-r${r}.md`,
+        `rebuttal/stats-check-r${r}.md`,
         `manuscript/revised-r${r}.md`,
         `output/revised-r${r}.pdf`,
         `output/revised-r${r}.docx`,
         `submission/resubmission-checklist-r${r}.md`,
       ],
       acceptanceCriteria: [`machine:contains:rebuttal/review-report-r${r}.md::严重问题`],
-      skills: ["rebuttal-crafter", "bib-check", "quarto-render"],
+      skills: ["rebuttal-crafter", "bib-check", "stats-check", "research-writing", "quarto-render"],
       run: [
         { name: `export-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to docx --output-dir ../output`, default: true },
         { name: `render-revised-r${r}`, command: `quarto render manuscript/revised-r${r}.md --to pdf --output-dir ../output`, default: true },
       ],
       humanTasks: [
-        {
-          ...reviewDecisionTask(`rebuttal/review-report-r${r}.md`),
-          guidance: `报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话。没有决定之前，科学改动不会进修订稿。`,
-        },
-        styleChoiceTask(),
-        endnoteSyncTask(),
         {
           title: `保存第${r}轮审稿意见全文`,
           guidance: `把编辑来信/审稿意见保存为 reviews/round-${r}.md；缺该文件 agent 会停止`,
@@ -1542,13 +1543,18 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
           timing: "before",
         },
         {
-          title: "确认 [待确认] 回应口径并安排补实验",
-          guidance:
-            `response-letter-r${r}.md 中标注 [待确认]/[待补实验] 的条目逐条拍板；处理结论写回再投稿清单`,
-          target: "",
-          timing: "after",
-          completion: "manual",
+          ...reviewDecisionTask(`rebuttal/review-report-r${r}.md`),
+          guidance: `报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话。没有决定之前，科学改动不会进修订稿。`,
         },
+        // [待确认] 回应口径与核验拦下项逐条裁决（2026-11-02 由手动勾选改成清单清空才算完成）
+        {
+          ...verificationDecisionTask("并重渲修订稿", `rebuttal/verification-decisions-r${r}.md`),
+          title: "逐条裁决 [待确认] 回应与存疑条目",
+          guidance:
+            `回复信与修订稿里标 [待确认] 的回应口径、引用检查与核验脚本拦下的条目逐条定：接受＝按回复信写的回应；拒绝＝删掉这条回应或改动；修改＝按你写的改。需要补实验的选修改，写「改成补实验计划」。没有就勾上跳过。点完 AI 按裁决改回复信与修订稿并重渲。`,
+        },
+        styleChoiceTask(),
+        endnoteSyncTask(),
         {
           title: `返修第${r}轮定稿后提交`,
           guidance: `用 submission/resubmission-checklist-r${r}.md 逐项核对后，到投稿系统上传修订稿与回复信`,

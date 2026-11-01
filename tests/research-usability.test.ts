@@ -70,8 +70,10 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // （综述、论文、投稿三处投稿声明同涨）。实测 review 29024、论文 37409、学位 35205、投稿 9219。任务书瘦身另起，见 design-research-moat §4.4。
   // 同日对照综述补全论文模板：精读全量读不等核心篇名单、交棒 handoff；结果分析交 results.json 与图登记；初稿禁「待绘制」并登记
   // numbers.json；定稿收尾复核引用与数字。实测 review 29063（定稿产物多列 evidence.json）、论文 38595。
+  // 同日投稿补齐：格式适配点名核 formatted.md、上游待裁决阻塞、沿用字体与 Word 模板；投稿前自审改成三级 + R 编号走流程线决定；
+  // 上游许可与声明待办汇总进清单。实测投稿（首投）9918。
   // 同日 LaTeX 补齐：写作步不再手写 bib 条目、不放「待绘制」占位；定稿加 xelatex 文本层抽检、逐条裁决清单（% TODO 待核实）与投稿声明模板。实测 latex 15064。
-  const before: Record<string, number> = { review: 29200, "research-paper": 38800, "data-processing": 12900, thesis: 35300, "submission-rebuttal": 9300, "latex-paper": 15200 };
+  const before: Record<string, number> = { review: 29200, "research-paper": 38800, "data-processing": 12900, thesis: 35300, "submission-rebuttal": 10100, "latex-paper": 15200 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);
