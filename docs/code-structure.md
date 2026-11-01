@@ -1256,6 +1256,8 @@ src-tauri/src/
                              # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
   sessions.rs                # 会话浏览：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
+                             # 各家会话根目录唯一入口 SessionRoots（配置根经 agent_specs::agent_config_root_with 认搬迁变量，
+                             #   另认 QWEN_RUNTIME_DIR / runtimeOutputDir、CURSOR_DATA_DIR；扫描、删除白名单、导入、瘦身同源，禁写 home.join(".xxx")，2026-11-01）、
 scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_meta_cache）：sessions.rs 六张 meta 缓存表（plain/chained/claude/kimi/snapshot/kimi_snapshot）按「键＋文件指纹」整表落盘，新进程首轮扫描前 load_once 装回——指纹未变的文件一个字节不重读（实测冷扫描 3.2s→约 0.8s）。schema 演进靠 SCAN_CACHE_VER 整表作废（serde 对缺字段静默取默认值，逐行跳过拦不住，对照 usage.rs USAGE_SCHEMA_VERSION 先例；SessionMetaDTO 增删/改派生字段必须 bump）、真坏行逐行跳过自愈、app.db 打不开/写不进静默退回无落盘绝不阻塞扫描主路径；save_once 首轮扫描后落一次、out 为空不落（防把好数据清成空表）。已知局限（当日实测口径）：plain 表「每段整表替换」的既有语义使落盘只对 chained/claude/kimi 完整生效，gemini 等明文段每进程重走 seek 头窗读（亚秒级，改共享热路径不值）；opencode_db/grok_summary 不落盘（外部状态指纹、解析便宜）；消费点仅 sessions.rs 两处（首轮扫描前后）
                              # 会话连接与启动模型 / 思考档记录（set_session_profile，launch_model / launch_effort 列）与接着聊默认配置
                              #   session_resume_config（模型取文件最后一轮、Codex 思考档取 rollout，读不到用启动记录，2026-10-24）、
@@ -1765,7 +1767,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 整份出站前过 sessions::redact_sensitive_text；设置页「诊断」区「生效配置快照」卡片消费
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
                              #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）；
-                             #   各家配置目录搬迁变量（CODEX_HOME 等）照带
+                             #   各家配置目录搬迁变量（CODEX_HOME 等）与会话目录变量（OPENCODE_DB / QWEN_RUNTIME_DIR / CURSOR_DATA_DIR）照带
   process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
                              #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录；
                              #   子进程 PATH 走 child_path：Windows 补注册表里新出现的目录、macOS / Linux 补候选目录里新出现的，

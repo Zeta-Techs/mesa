@@ -4607,12 +4607,14 @@ pub fn scan_sessions() -> ScanResult {
         grok_summary,
     } = &mut *cache;
     // Gemini 的 slug → 项目路径映射在扫描与快照补全时都要用
-    let gemini_map = crate::dirs::home_dir()
-        .map(|h| gemini_slug_map(&h.join(".gemini").join("tmp")))
+    let roots = SessionRoots::current();
+    let gemini_map = roots
+        .as_ref()
+        .map(|r| gemini_slug_map(&r.gemini.join("tmp")))
         .unwrap_or_default();
-    if let Some(home) = crate::dirs::home_dir() {
+    if let Some(roots) = &roots {
         let mut claude_files = Vec::new();
-        collect_files(&home.join(".claude").join("projects"), 2, &mut claude_files);
+        collect_files(&roots.claude_projects(), 2, &mut claude_files);
         let mut claude_metas = cached_claude(claude_files, claude);
         // Mesa 分叉出来的那份不按接续并进原对话（见 SESSION_FORKS_DDL）
         for (m, lin) in claude_metas.iter_mut() {
@@ -4625,14 +4627,11 @@ pub fn scan_sessions() -> ScanResult {
         chain_members.extend(members);
         claude_hidden = hidden;
         // archived_sessions 里的文件是 alive 的归档，不是「已失效」
+        let [codex_active, codex_archived] = roots.codex_dirs();
         let mut active_files = Vec::new();
-        collect_files(&home.join(".codex").join("sessions"), 5, &mut active_files);
+        collect_files(&codex_active, 5, &mut active_files);
         let mut archived_files = Vec::new();
-        collect_files(
-            &home.join(".codex").join("archived_sessions"),
-            5,
-            &mut archived_files,
-        );
+        collect_files(&codex_archived, 5, &mut archived_files);
         active_files.extend(archived_files);
         // archived 标记不进缓存值：目录固定（sessions/ vs archived_sessions/），
         // 按路径直读即可，同一路径不会跨目录漂移
@@ -4653,14 +4652,14 @@ pub fn scan_sessions() -> ScanResult {
         // Gemini：深度 3 恰好到 chats/*.jsonl，chats/<parentId>/ 下的子 agent 会话被排除；
         // 旧版单 JSON .json 文件不匹配 .jsonl 后缀，自然跳过（如需兼容再单开解析器）
         let mut gemini_files = Vec::new();
-        collect_files(&home.join(".gemini").join("tmp"), 3, &mut gemini_files);
+        collect_files(&roots.gemini.join("tmp"), 3, &mut gemini_files);
         let gemini_metas = cached_plain(gemini_files, plain, |f| {
             gemini_file_meta(f, true, &gemini_map)
         });
         out.extend(dedupe_gemini_sessions(gemini_metas));
         // Qwen：深度 4 覆盖 chats/archive/；archive 目录下的是归档（alive 但 archived）
         let mut qwen_files = Vec::new();
-        collect_files(&home.join(".qwen").join("projects"), 4, &mut qwen_files);
+        collect_files(&roots.qwen.join("projects"), 4, &mut qwen_files);
         out.extend(cached_plain(qwen_files, plain, |f| {
             let archived = f
                 .parent()
@@ -4670,7 +4669,7 @@ pub fn scan_sessions() -> ScanResult {
         }));
         // Kimi 新版：session_index.jsonl 是枚举入口（workDir 即项目归属）。
         // sid/wd 参与 meta 但不来自文件本身——键里带上 sid/wd，索引行改写即换键重解析
-        let index = home.join(".kimi-code").join("session_index.jsonl");
+        let index = roots.kimi_index();
         if let Ok(text) = fs::read_to_string(&index) {
             let mut entries = Vec::new();
             for line in to_lines(&text) {
@@ -4734,10 +4733,10 @@ pub fn scan_sessions() -> ScanResult {
             *kimi = next;
         }
         // Kimi 旧版：sessions/<md5(workDir)>/<uuid>/context.jsonl
-        let buckets = kimi_workdir_buckets(&home.join(".kimi").join("kimi.json"));
+        let buckets = kimi_workdir_buckets(&roots.kimi_legacy_json());
         if !buckets.is_empty() {
             let mut kimi_files = Vec::new();
-            collect_files(&home.join(".kimi").join("sessions"), 3, &mut kimi_files);
+            collect_files(&roots.kimi_legacy.join("sessions"), 3, &mut kimi_files);
             let keyed: Vec<(String, PathBuf, String, String)> = kimi_files
                 .into_iter()
                 .filter_map(|f| {
@@ -4830,18 +4829,14 @@ pub fn scan_sessions() -> ScanResult {
         }
         // CodeBuddy：projects/<slug>/<uuid>.jsonl（深度 2 恰好到文件）
         let mut codebuddy_files = Vec::new();
-        collect_files(
-            &home.join(".codebuddy").join("projects"),
-            2,
-            &mut codebuddy_files,
-        );
+        collect_files(&roots.codebuddy.join("projects"), 2, &mut codebuddy_files);
         out.extend(cached_plain(codebuddy_files, plain, |f| {
             codebuddy_file_meta(f, true)
         }));
         // Cursor：projects/<编码cwd>/agent-transcripts/<uuid>/<uuid>.jsonl（深度 4 到文件）；
         // ~/.cursor 与 IDE 共享，只收 agent-transcripts 子树（其他位置的 jsonl 不是会话）
         let mut cursor_files = Vec::new();
-        collect_files(&home.join(".cursor").join("projects"), 4, &mut cursor_files);
+        collect_files(&roots.cursor_projects(), 4, &mut cursor_files);
         cursor_files.retain(|f| f.components().any(|c| c.as_os_str() == "agent-transcripts"));
         out.extend(cached_plain(cursor_files, plain, |f| {
             cursor_file_meta(f, true)
@@ -4854,7 +4849,7 @@ pub fn scan_sessions() -> ScanResult {
         // 指纹须逐文件携带（updates 指纹 → summary 指纹），不折叠成单值——
         // 折叠（如 XOR）在同长改动下会抵消成假命中。
         let mut grok_files = Vec::new();
-        collect_files(&home.join(".grok").join("sessions"), 3, &mut grok_files);
+        collect_files(&roots.grok.join("sessions"), 3, &mut grok_files);
         grok_files.retain(|f| {
             f.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -7984,8 +7979,8 @@ pub(crate) fn assign_session_step_at(
 /// 必须是各 CLI 实际存放会话文件的子目录，而不是 CLI 家目录整根——
 /// 整根放行会让 file_path 指向同根的 auth.json、session_index.jsonl 等非会话文件
 fn session_data_dirs() -> Vec<(PathBuf, bool)> {
-    let mut dirs = crate::dirs::home_dir()
-        .map(|h| session_data_dirs_at(&h))
+    let mut dirs = SessionRoots::current()
+        .map(|r| session_data_dirs_at(&r))
         .unwrap_or_default();
     if let Some(snap) = snapshots_root() {
         // pin 快照：.jsonl/.jsonl.zst，opencode 快照是导出的 .json
@@ -8096,35 +8091,172 @@ mod fixed_id_session_tests {
     }
 }
 
-/// 相对给定 home 的各 CLI 会话数据目录（不含 Mesa pin 快照）。
-/// 导入白名单与删除白名单同源；测试可注入假 home。
-pub(crate) fn session_data_dirs_at(home: &Path) -> Vec<(PathBuf, bool)> {
+/// 各家会话数据的根目录。会话扫描、删除白名单、会话导入只从这里取，不得再写 `home.join(".xxx")`：
+/// 配置根一律经 `agent_specs::agent_config_root_with`（与设为全局 / MCP / 技能同一个函数，认 CLAUDE_CONFIG_DIR、
+/// CODEX_HOME、GEMINI_CLI_HOME、QWEN_HOME、KIMI_CODE_HOME、KIMI_SHARE_DIR、CODEBUDDY_CONFIG_DIR、GROK_HOME），
+/// 2026-11-01 前读侧写死家目录，设了搬迁变量的用户配置写对了地方、会话却看不见。
+/// 会话另有自己搬家变量的两家在这里补：Qwen 的运行时目录、Cursor 的 `CURSOR_DATA_DIR`。
+pub(crate) struct SessionRoots {
+    /// `<root>/projects/<slug>/<uuid>.jsonl`
+    pub claude: PathBuf,
+    /// `<root>/sessions|archived_sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`
+    pub codex: PathBuf,
+    /// `.gemini` 目录本身：`<root>/tmp/<slug>/chats/*.jsonl`、`<root>/projects.json`
+    pub gemini: PathBuf,
+    /// Qwen 运行时目录（不一定是配置根）：`<root>/projects/<slug>/chats/**/*.jsonl`
+    pub qwen: PathBuf,
+    /// Kimi Code（新版）：`<root>/session_index.jsonl` + `<root>/sessions/`
+    pub kimi_code: PathBuf,
+    /// 旧版 kimi-cli：`<root>/kimi.json` + `<root>/sessions/<md5>/<uuid>/context.jsonl`
+    pub kimi_legacy: PathBuf,
+    /// `<root>/projects/<slug>/<uuid>.jsonl`
+    pub codebuddy: PathBuf,
+    /// `<root>/projects/<编码cwd>/agent-transcripts/<uuid>/<uuid>.jsonl`
+    pub cursor: PathBuf,
+    /// `<root>/sessions/<encoded-cwd>/<session-id>/updates.jsonl`
+    pub grok: PathBuf,
+    /// OpenCode 旧版 storage（v1.2+ 的共享 SQLite 另走 `opencode_db_candidates`）
+    pub opencode_legacy: PathBuf,
+}
+
+impl SessionRoots {
+    /// `env` 由调用方给：生产读进程环境（登录 shell 的搬迁变量已在启动时导入），测试传假表
+    pub(crate) fn with(home: &Path, env: &dyn Fn(&str) -> Option<PathBuf>) -> Self {
+        let root = |agent: &str| {
+            crate::agent_specs::agent_config_root_with(agent, home, env)
+                .expect("九家 agent 都有配置根")
+        };
+        let qwen_config = root("qwen");
+        Self {
+            claude: root("claude-code"),
+            codex: root("codex"),
+            gemini: root("gemini"),
+            qwen: qwen_runtime_root(home, &qwen_config, env),
+            kimi_code: root("kimi"),
+            kimi_legacy: crate::agent_specs::kimi_legacy_root_with(home, env),
+            codebuddy: root("codebuddy"),
+            // 配置根仍是 ~/.cursor（mcp.json 等写死在那），会话目录另认 CURSOR_DATA_DIR
+            //（2026.10.22 bundle `cursor-config/dist/paths.js`）
+            cursor: env("CURSOR_DATA_DIR").unwrap_or_else(|| home.join(".cursor")),
+            grok: root("grok"),
+            opencode_legacy: home.join(".local").join("share").join("opencode").join("storage"),
+        }
+    }
+
+    /// 没有搬迁变量时的家目录默认布局（测试与只认家目录的旧调用）
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn at(home: &Path) -> Self {
+        Self::with(home, &|_| None)
+    }
+
+    pub(crate) fn current() -> Option<Self> {
+        let home = crate::dirs::home_dir()?;
+        Some(Self::with(&home, &crate::agent_specs::env_path))
+    }
+
+    pub(crate) fn claude_projects(&self) -> PathBuf {
+        self.claude.join("projects")
+    }
+
+    pub(crate) fn cursor_projects(&self) -> PathBuf {
+        self.cursor.join("projects")
+    }
+
+    pub(crate) fn kimi_index(&self) -> PathBuf {
+        self.kimi_code.join("session_index.jsonl")
+    }
+
+    pub(crate) fn kimi_legacy_json(&self) -> PathBuf {
+        self.kimi_legacy.join("kimi.json")
+    }
+
+    pub(crate) fn codex_dirs(&self) -> [PathBuf; 2] {
+        [
+            self.codex.join("sessions"),
+            self.codex.join("archived_sessions"),
+        ]
+    }
+
+    /// 各根 canonicalize 一遍（macOS /var → /private/var；不存在的保持原样），供落位校验二次比对
+    pub(crate) fn canonicalized(&self) -> Self {
+        let c = |p: &PathBuf| p.canonicalize().unwrap_or_else(|_| p.clone());
+        Self {
+            claude: c(&self.claude),
+            codex: c(&self.codex),
+            gemini: c(&self.gemini),
+            qwen: c(&self.qwen),
+            kimi_code: c(&self.kimi_code),
+            kimi_legacy: c(&self.kimi_legacy),
+            codebuddy: c(&self.codebuddy),
+            cursor: c(&self.cursor),
+            grok: c(&self.grok),
+            opencode_legacy: c(&self.opencode_legacy),
+        }
+    }
+}
+
+/// Qwen 会话所在的运行时目录（0.26.3 `Storage.getRuntimeBaseDir`）：
+/// `QWEN_RUNTIME_DIR` > 用户 settings 的 `advanced.runtimeOutputDir` > 配置根（`QWEN_HOME`）。
+/// 相对路径 Qwen 按它自己的 cwd / 工作区解析，Mesa 无从得知，按配置根处理（看不见好过看错地方）。
+fn qwen_runtime_root(
+    home: &Path,
+    config_root: &Path,
+    env: &dyn Fn(&str) -> Option<PathBuf>,
+) -> PathBuf {
+    let absolute = |raw: &str| -> Option<PathBuf> {
+        let raw = raw.trim();
+        let p = if raw == "~" {
+            home.to_path_buf()
+        } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+            home.join(rest)
+        } else {
+            PathBuf::from(raw)
+        };
+        p.is_absolute().then_some(p)
+    };
+    if let Some(dir) = env("QWEN_RUNTIME_DIR") {
+        return absolute(&dir.to_string_lossy()).unwrap_or_else(|| config_root.to_path_buf());
+    }
+    let configured = fs::read_to_string(config_root.join("settings.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(&t)).ok())
+        .and_then(|v| {
+            v.get("advanced")?
+                .get("runtimeOutputDir")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .filter(|s| !s.trim().is_empty());
+    match configured {
+        Some(dir) => absolute(&dir).unwrap_or_else(|| config_root.to_path_buf()),
+        None => config_root.to_path_buf(),
+    }
+}
+
+/// 各 CLI 会话数据目录（不含 Mesa pin 快照）。
+/// 导入白名单与删除白名单同源；测试传 `SessionRoots::at(假 home)` 或带假搬迁变量的 `with`。
+pub(crate) fn session_data_dirs_at(roots: &SessionRoots) -> Vec<(PathBuf, bool)> {
+    let [codex_sessions, codex_archived] = roots.codex_dirs();
     vec![
         // claude: projects/<dir>/<uuid>.jsonl；codex: sessions|archived_sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]
-        (home.join(".claude").join("projects"), false),
-        (home.join(".codex").join("sessions"), false),
-        (home.join(".codex").join("archived_sessions"), false),
+        (roots.claude_projects(), false),
+        (codex_sessions, false),
+        (codex_archived, false),
         // gemini: tmp/<slug>/chats/*.jsonl；qwen: projects/**/chats/**/*.jsonl
-        (home.join(".gemini").join("tmp"), false),
-        (home.join(".qwen").join("projects"), false),
+        (roots.gemini.join("tmp"), false),
+        (roots.qwen.join("projects"), false),
         // kimi 旧版 sessions/<md5>/<uuid>/context.jsonl（同目录 state.json 不许删 → .json 不放行）
-        (home.join(".kimi").join("sessions"), false),
+        (roots.kimi_legacy.join("sessions"), false),
         // kimi 新版 sessions/<wd_*>/<id>/agents/main/wire.jsonl；
-        // 枚举入口 session_index.jsonl 在 ~/.kimi-code 根上，限定 sessions/ 子目录后自然排除
-        (home.join(".kimi-code").join("sessions"), false),
+        // 枚举入口 session_index.jsonl 在 Kimi Code 根上，限定 sessions/ 子目录后自然排除
+        (roots.kimi_code.join("sessions"), false),
         // OpenCode legacy storage：session/message/part 都是 .json（v1.2+ 的共享 SQLite 走删行，不在这里）
-        (
-            home.join(".local")
-                .join("share")
-                .join("opencode")
-                .join("storage"),
-            true,
-        ),
+        (roots.opencode_legacy.clone(), true),
         // codebuddy: projects/<slug>/<uuid>.jsonl（同根的 .credentials.json 等不许删 → 限定 projects 子目录）
-        (home.join(".codebuddy").join("projects"), false),
+        (roots.codebuddy.join("projects"), false),
         // grok: sessions/<encoded-cwd>/<session-id>/updates.jsonl（同根的 auth.json/config.toml
         // 与 sessions 根的 session_search.sqlite 不许删 → 限定 sessions 子目录）
-        (home.join(".grok").join("sessions"), false),
+        (roots.grok.join("sessions"), false),
         // cursor 不进目录级白名单：~/.cursor 与 IDE 共享，projects 下也有非会话 jsonl，
         // 目录粒度太粗——由 deletable_session_file 里的 cursor_deletable 精确判定
     ]
@@ -8174,7 +8306,7 @@ pub(crate) fn deletable_session_file(path: &Path, dirs: &[(PathBuf, bool)]) -> b
     // cursor 专属闸：目录级白名单粒度不够（~/.cursor 与 IDE 共享），单独精确判定
     if jsonl {
         if let Some(root) =
-            crate::dirs::home_dir().and_then(|h| h.join(".cursor").join("projects").canonicalize().ok())
+            SessionRoots::current().and_then(|r| r.cursor_projects().canonicalize().ok())
         {
             if cursor_deletable(&canon, &root) {
                 return true;
@@ -8256,10 +8388,10 @@ fn delete_opencode_rows_impl(db_path: &Path, session_id: &str) -> Result<(), Str
 /// Codex 链成员文件：rollout-<时间>-<uuid>.jsonl[.zst]，按文件名尾部 uuid 精确匹配
 /// （与 find_snapshot 取尾部 uuid 的约定一致；payload id 与文件名 uuid 不一致的极端情况不覆盖）
 fn grok_member_files(member_ids: &[String]) -> Vec<PathBuf> {
-    let Some(home) = crate::dirs::home_dir() else {
+    let Some(roots) = SessionRoots::current() else {
         return Vec::new();
     };
-    grok_member_files_in(&[home.join(".grok").join("sessions")], member_ids)
+    grok_member_files_in(&[roots.grok.join("sessions")], member_ids)
 }
 
 fn grok_member_files_in(roots: &[PathBuf], member_ids: &[String]) -> Vec<PathBuf> {
@@ -8287,14 +8419,10 @@ fn grok_member_files_in(roots: &[PathBuf], member_ids: &[String]) -> Vec<PathBuf
 }
 
 fn codex_member_files(member_ids: &[String]) -> Vec<PathBuf> {
-    let Some(home) = crate::dirs::home_dir() else {
+    let Some(roots) = SessionRoots::current() else {
         return Vec::new();
     };
-    let roots = [
-        home.join(".codex").join("sessions"),
-        home.join(".codex").join("archived_sessions"),
-    ];
-    codex_member_files_in(&roots, member_ids)
+    codex_member_files_in(&roots.codex_dirs(), member_ids)
 }
 
 fn codex_member_files_in(roots: &[PathBuf], member_ids: &[String]) -> Vec<PathBuf> {
@@ -10981,6 +11109,121 @@ mod tests {
         assert!(!kimi_looks_like_wire(&s(&[
             r#"{"role":"user","content":"x"}"#
         ])));
+    }
+
+    // ===== 会话根目录认搬迁变量 =====
+
+    fn scratch_home() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ccode-roots-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn session_roots_default_to_home_layout() {
+        let home = scratch_home();
+        let r = SessionRoots::at(&home);
+        assert_eq!(r.claude_projects(), home.join(".claude").join("projects"));
+        assert_eq!(r.codex_dirs()[1], home.join(".codex").join("archived_sessions"));
+        assert_eq!(r.gemini, home.join(".gemini"));
+        assert_eq!(r.qwen, home.join(".qwen"));
+        assert_eq!(r.kimi_index(), home.join(".kimi-code").join("session_index.jsonl"));
+        assert_eq!(r.kimi_legacy_json(), home.join(".kimi").join("kimi.json"));
+        assert_eq!(r.codebuddy, home.join(".codebuddy"));
+        assert_eq!(r.cursor_projects(), home.join(".cursor").join("projects"));
+        assert_eq!(r.grok, home.join(".grok"));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn session_roots_follow_relocation_vars() {
+        let home = scratch_home();
+        let moved = |v: &str| home.join("moved").join(v);
+        let env = |v: &str| Some(moved(v));
+        let r = SessionRoots::with(&home, &env);
+        assert_eq!(r.claude, moved("CLAUDE_CONFIG_DIR"));
+        assert_eq!(r.codex, moved("CODEX_HOME"));
+        // GEMINI_CLI_HOME 顶替家目录，会话仍在其下 .gemini/
+        assert_eq!(r.gemini, moved("GEMINI_CLI_HOME").join(".gemini"));
+        assert_eq!(r.qwen, moved("QWEN_RUNTIME_DIR"));
+        assert_eq!(r.kimi_code, moved("KIMI_CODE_HOME"));
+        assert_eq!(r.kimi_legacy, moved("KIMI_SHARE_DIR"));
+        assert_eq!(r.codebuddy, moved("CODEBUDDY_CONFIG_DIR"));
+        assert_eq!(r.cursor, moved("CURSOR_DATA_DIR"));
+        assert_eq!(r.grok, moved("GROK_HOME"));
+        // 删除白名单跟着走：搬走的目录放行，家目录默认位置不再放行
+        let dirs = session_data_dirs_at(&r);
+        let grok_dir = moved("GROK_HOME").join("sessions").join("-tmp-x").join("s1");
+        std::fs::create_dir_all(&grok_dir).unwrap();
+        let grok_file = grok_dir.join("updates.jsonl");
+        std::fs::write(&grok_file, "{}").unwrap();
+        let grok_auth = moved("GROK_HOME").join("auth.json");
+        std::fs::write(&grok_auth, "{}").unwrap();
+        let home_dir = home.join(".grok").join("sessions").join("-tmp-x").join("s2");
+        std::fs::create_dir_all(&home_dir).unwrap();
+        let home_file = home_dir.join("updates.jsonl");
+        std::fs::write(&home_file, "{}").unwrap();
+        assert!(deletable_session_file(&grok_file, &dirs));
+        assert!(!deletable_session_file(&grok_auth, &dirs), "搬走的根上的凭证照样拒绝");
+        assert!(!deletable_session_file(&home_file, &dirs));
+        // 链成员查找按同一组根
+        assert_eq!(
+            grok_member_files_in(&[r.grok.join("sessions")], &["s1".to_string()]),
+            vec![grok_file.clone()]
+        );
+        // Cursor 精确闸认 CURSOR_DATA_DIR 下的 projects
+        let transcript = r
+            .cursor_projects()
+            .join("-tmp-x")
+            .join("agent-transcripts")
+            .join("u1");
+        std::fs::create_dir_all(&transcript).unwrap();
+        let cursor_file = transcript.join("u1.jsonl");
+        std::fs::write(&cursor_file, "{}").unwrap();
+        assert!(cursor_deletable(
+            &cursor_file.canonicalize().unwrap(),
+            &r.cursor_projects().canonicalize().unwrap()
+        ));
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn qwen_runtime_root_reads_env_then_settings() {
+        let home = scratch_home();
+        let qwen_home = home.join("qh");
+        std::fs::create_dir_all(&qwen_home).unwrap();
+        let env_with = |runtime: Option<PathBuf>| {
+            let qwen_home = qwen_home.clone();
+            move |v: &str| match v {
+                "QWEN_HOME" => Some(qwen_home.clone()),
+                "QWEN_RUNTIME_DIR" => runtime.clone(),
+                _ => None,
+            }
+        };
+        // 只有 QWEN_HOME：会话跟配置根走
+        assert_eq!(SessionRoots::with(&home, &env_with(None)).qwen, qwen_home);
+        // settings 的 advanced.runtimeOutputDir（JSONC 注释容错，~ 展开到家目录）
+        std::fs::write(
+            qwen_home.join("settings.json"),
+            "{\n  // 运行时输出\n  \"advanced\": { \"runtimeOutputDir\": \"~/qwen-run\" },\n}\n",
+        )
+        .unwrap();
+        assert_eq!(SessionRoots::with(&home, &env_with(None)).qwen, home.join("qwen-run"));
+        // QWEN_RUNTIME_DIR 优先于 settings
+        let rt = home.join("rt");
+        assert_eq!(SessionRoots::with(&home, &env_with(Some(rt.clone()))).qwen, rt);
+        // 相对路径 Qwen 按自己的 cwd 解析，Mesa 不猜：退回配置根
+        assert_eq!(
+            SessionRoots::with(&home, &env_with(Some(PathBuf::from("rel/dir")))).qwen,
+            qwen_home
+        );
+        std::fs::write(
+            qwen_home.join("settings.json"),
+            r#"{"advanced":{"runtimeOutputDir":".qwen-local"}}"#,
+        )
+        .unwrap();
+        assert_eq!(SessionRoots::with(&home, &env_with(None)).qwen, qwen_home);
+        std::fs::remove_dir_all(&home).ok();
     }
 
     // ===== 删除路径校验 =====

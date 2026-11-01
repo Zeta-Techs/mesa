@@ -1501,7 +1501,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
     out
 }
 
-fn env_path(var: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn env_path(var: &str) -> Option<std::path::PathBuf> {
     std::env::var_os(var)
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)

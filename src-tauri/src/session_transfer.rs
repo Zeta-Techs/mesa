@@ -7,7 +7,7 @@
 use crate::paths::{path_within, same_path};
 use crate::profiles::{self, ProfileStore};
 use crate::provider_id::is_ccode_provider;
-use crate::sessions;
+use crate::sessions::{self, SessionRoots};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -278,10 +278,10 @@ fn gemini_import_slug(target: &str) -> String {
     format!("ccode-{}", &hash[..12])
 }
 
-/// 目标目录若已在 `~/.gemini/projects.json` 登记过（用户在那里跑过 gemini），Gemini 只认登记的 slug 目录，
+/// 目标目录若已在 Gemini 配置目录的 `projects.json` 登记过（用户在那里跑过 gemini），Gemini 只认登记的 slug 目录，
 /// 落到别的 slug 下它看不见；没登记时它会扫 `tmp/*/.project_root` 自行认领，自建 slug 即可。
-fn gemini_registered_slug(home: &Path, target: &str) -> Option<String> {
-    let text = fs::read_to_string(home.join(".gemini").join("projects.json")).ok()?;
+fn gemini_registered_slug(roots: &SessionRoots, target: &str) -> Option<String> {
+    let text = fs::read_to_string(roots.gemini.join("projects.json")).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
     let slug = v
         .get("projects")?
@@ -1248,7 +1248,7 @@ fn walk_jsonl(dir: &Path, max_depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn index_existing_at(home: &Path) -> HashSet<(String, String)> {
+fn index_existing_at(roots: &SessionRoots) -> HashSet<(String, String)> {
     let mut out = HashSet::new();
     let mut push = |agent: &str, path: &Path| {
         if agent == "claude-code" {
@@ -1268,38 +1268,35 @@ fn index_existing_at(home: &Path) -> HashSet<(String, String)> {
         }
     };
     let mut files = Vec::new();
-    walk_jsonl(&home.join(".claude").join("projects"), 2, &mut files);
+    walk_jsonl(&roots.claude_projects(), 2, &mut files);
     for f in files.drain(..) {
         push("claude-code", &f);
     }
-    walk_jsonl(&home.join(".codex").join("sessions"), 5, &mut files);
-    walk_jsonl(
-        &home.join(".codex").join("archived_sessions"),
-        5,
-        &mut files,
-    );
+    for dir in roots.codex_dirs() {
+        walk_jsonl(&dir, 5, &mut files);
+    }
     for f in files.drain(..) {
         push("codex", &f);
     }
-    walk_jsonl(&home.join(".gemini").join("tmp"), 3, &mut files);
+    walk_jsonl(&roots.gemini.join("tmp"), 3, &mut files);
     for f in files.drain(..) {
         push("gemini", &f);
     }
-    walk_jsonl(&home.join(".qwen").join("projects"), 4, &mut files);
+    walk_jsonl(&roots.qwen.join("projects"), 4, &mut files);
     for f in files.drain(..) {
         push("qwen", &f);
     }
-    walk_jsonl(&home.join(".codebuddy").join("projects"), 2, &mut files);
+    walk_jsonl(&roots.codebuddy.join("projects"), 2, &mut files);
     for f in files.drain(..) {
         push("codebuddy", &f);
     }
-    walk_jsonl(&home.join(".cursor").join("projects"), 4, &mut files);
+    walk_jsonl(&roots.cursor_projects(), 4, &mut files);
     for f in files.drain(..) {
         if f.components().any(|c| c.as_os_str() == "agent-transcripts") {
             push("cursor", &f);
         }
     }
-    if let Ok(text) = fs::read_to_string(home.join(".kimi-code").join("session_index.jsonl")) {
+    if let Ok(text) = fs::read_to_string(roots.kimi_index()) {
         for line in text.lines() {
             if let Ok(v) = serde_json::from_str::<Value>(line) {
                 if let Some(id) = v.get("sessionId").and_then(|x| x.as_str()) {
@@ -1309,13 +1306,13 @@ fn index_existing_at(home: &Path) -> HashSet<(String, String)> {
         }
     }
     let mut kimi_files = Vec::new();
-    walk_jsonl(&home.join(".kimi").join("sessions"), 3, &mut kimi_files);
+    walk_jsonl(&roots.kimi_legacy.join("sessions"), 3, &mut kimi_files);
     for f in kimi_files {
         if let Some(id) = f.parent().and_then(|p| p.file_name()) {
             out.insert(("kimi".into(), id.to_string_lossy().into_owned()));
         }
     }
-    let grok_root = home.join(".grok").join("sessions");
+    let grok_root = roots.grok.join("sessions");
     if let Ok(groups) = fs::read_dir(&grok_root) {
         for g in groups.flatten() {
             let gp = g.path();
@@ -1346,11 +1343,11 @@ fn path_exists_dir(p: &str) -> bool {
 
 fn inspect_at(
     zip_path: &Path,
-    home: &Path,
+    roots: &SessionRoots,
     bindings: &[CodexBindingDto],
 ) -> Result<ImportPreviewDto, String> {
     let (manifest, blobs) = read_zip_map(zip_path)?;
-    let existing = index_existing_at(home);
+    let existing = index_existing_at(roots);
     let mut entries = Vec::new();
     for (index, e) in manifest.entries.iter().enumerate() {
         let mut status = "ok".to_string();
@@ -1452,8 +1449,8 @@ pub async fn import_sessions_inspect(
 ) -> Result<ImportPreviewDto, String> {
     let bindings = list_codex_bindings(&store);
     tauri::async_runtime::spawn_blocking(move || {
-        let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-        inspect_at(Path::new(&zip_path), &home, &bindings)
+        let roots = SessionRoots::current().ok_or("无法确定用户主目录")?;
+        inspect_at(Path::new(&zip_path), &roots, &bindings)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1461,21 +1458,21 @@ pub async fn import_sessions_inspect(
 
 // ===== 落位白名单 =====
 
-fn write_allowed(dest: &Path, home: &Path) -> bool {
+fn write_allowed(dest: &Path, roots: &SessionRoots) -> bool {
     let dest_s = dest.to_string_lossy();
-    let kimi_index = home.join(".kimi-code").join("session_index.jsonl");
-    let kimi_json = home.join(".kimi").join("kimi.json");
+    let kimi_index = roots.kimi_index();
+    let kimi_json = roots.kimi_legacy_json();
     if same_path(&dest_s, &kimi_index.to_string_lossy())
         || same_path(&dest_s, &kimi_json.to_string_lossy())
     {
         return true;
     }
-    for (dir, _) in sessions::session_data_dirs_at(home) {
+    for (dir, _) in sessions::session_data_dirs_at(roots) {
         if path_within(&dest_s, &dir.to_string_lossy()) {
             return true;
         }
     }
-    let cursor_root = home.join(".cursor").join("projects");
+    let cursor_root = roots.cursor_projects();
     if path_within(&dest_s, &cursor_root.to_string_lossy()) {
         let name = dest
             .file_name()
@@ -1492,17 +1489,21 @@ fn write_allowed(dest: &Path, home: &Path) -> bool {
     false
 }
 
-fn atomic_write_checked(dest: &Path, bytes: &[u8], home: &Path, mtime: u64) -> Result<(), String> {
-    if !write_allowed(dest, home) {
+fn atomic_write_checked(
+    dest: &Path,
+    bytes: &[u8],
+    roots: &SessionRoots,
+    mtime: u64,
+) -> Result<(), String> {
+    if !write_allowed(dest, roots) {
         return Err(format!("拒绝写入会话数据目录之外：{}", dest.display()));
     }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
-        // canonicalize 后 macOS /var → /private/var，必须用 canonical home 再判一次
+        // canonicalize 后 macOS /var → /private/var，必须用 canonical 根再判一次
         if let (Ok(parent_c), Some(name)) = (parent.canonicalize(), dest.file_name()) {
             let dest_c = parent_c.join(name);
-            let home_c = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
-            if !write_allowed(&dest_c, home) && !write_allowed(&dest_c, &home_c) {
+            if !write_allowed(&dest_c, roots) && !write_allowed(&dest_c, &roots.canonicalized()) {
                 return Err(format!("拒绝写入会话数据目录之外：{}", dest.display()));
             }
         }
@@ -1539,7 +1540,7 @@ fn rewrite_needed(old: &str, target: &str) -> bool {
 }
 
 fn apply_entry(
-    home: &Path,
+    roots: &SessionRoots,
     entry: &ManifestEntry,
     index: usize,
     blobs: &HashMap<String, Vec<u8>>,
@@ -1553,53 +1554,53 @@ fn apply_entry(
     let old = rewrite_old(entry, &files);
     match entry.agent.as_str() {
         "claude-code" => land_single(
-            home,
+            roots,
             &entry.agent,
             &entry.session_id,
             &files,
             index,
             target,
             &old,
-            home.join(".claude")
-                .join("projects")
-                .join(path_slug_non_alnum(target)),
+            roots.claude_projects().join(path_slug_non_alnum(target)),
         ),
         "qwen" => land_single(
-            home,
+            roots,
             &entry.agent,
             &entry.session_id,
             &files,
             index,
             target,
             &old,
-            home.join(".qwen")
+            roots
+                .qwen
                 .join("projects")
                 .join(path_slug_non_alnum(target))
                 .join("chats"),
         ),
         "codebuddy" => land_single(
-            home,
+            roots,
             &entry.agent,
             &entry.session_id,
             &files,
             index,
             target,
             &old,
-            home.join(".codebuddy")
+            roots
+                .codebuddy
                 .join("projects")
                 .join(codebuddy_slug(target)),
         ),
-        "cursor" => land_cursor(home, entry, &files, index, target, &old),
-        "gemini" => land_gemini(home, entry, &files, index, target, &old),
-        "codex" => land_codex(home, entry, &files, index, target, &old),
-        "kimi" => land_kimi(home, entry, &files, index, target, &old),
-        "grok" => land_grok(home, entry, &files, index, target, &old),
+        "cursor" => land_cursor(roots, entry, &files, index, target, &old),
+        "gemini" => land_gemini(roots, entry, &files, index, target, &old),
+        "codex" => land_codex(roots, entry, &files, index, target, &old),
+        "kimi" => land_kimi(roots, entry, &files, index, target, &old),
+        "grok" => land_grok(roots, entry, &files, index, target, &old),
         _ => Err(format!("{} 不支持导入", entry.agent)),
     }
 }
 
 fn land_single(
-    home: &Path,
+    roots: &SessionRoots,
     agent: &str,
     session_id: &str,
     files: &[(&ManifestFile, &[u8])],
@@ -1631,8 +1632,8 @@ fn land_single(
     if agent == "claude-code" {
         body = rewrite_tool_result_paths(&body, session_id, &tool_results_prefix(&dir, session_id));
     }
-    atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
-    land_sidecars(home, agent, session_id, files, f, index, target, old, &dir);
+    atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
+    land_sidecars(roots, agent, session_id, files, f, index, target, old, &dir);
     Ok("imported".into())
 }
 
@@ -1644,7 +1645,7 @@ fn tool_results_prefix(dir: &Path, session_id: &str) -> String {
 /// 主文件旁的附属文件（Claude 的 `<id>/subagents|tool-results|custom-title.json`）。
 /// 尽力而为：主会话已经落好，附属文件任何一个失败都不回头把整条导入判失败；已存在的不覆盖。
 fn land_sidecars(
-    home: &Path,
+    roots: &SessionRoots,
     agent: &str,
     session_id: &str,
     files: &[(&ManifestFile, &[u8])],
@@ -1675,12 +1676,12 @@ fn land_sidecars(
         if rel.ends_with(".jsonl") && agent == "claude-code" {
             body = rewrite_tool_result_paths(&body, session_id, &tool_results_prefix(dir, session_id));
         }
-        let _ = atomic_write_checked(&dest, &body, home, f.mtime_ms);
+        let _ = atomic_write_checked(&dest, &body, roots, f.mtime_ms);
     }
 }
 
 fn land_cursor(
-    home: &Path,
+    roots: &SessionRoots,
     entry: &ManifestEntry,
     files: &[(&ManifestFile, &[u8])],
     index: usize,
@@ -1692,9 +1693,8 @@ fn land_cursor(
         .find(|(f, _)| f.path.ends_with(".jsonl"))
         .copied()
         .ok_or("缺 cursor jsonl")?;
-    let dest = home
-        .join(".cursor")
-        .join("projects")
+    let dest = roots
+        .cursor_projects()
         .join(cursor_slug(target))
         .join("agent-transcripts")
         .join(&entry.session_id)
@@ -1708,12 +1708,12 @@ fn land_cursor(
     } else {
         bytes.to_vec()
     };
-    atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+    atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
     Ok("imported".into())
 }
 
 fn land_gemini(
-    home: &Path,
+    roots: &SessionRoots,
     entry: &ManifestEntry,
     files: &[(&ManifestFile, &[u8])],
     index: usize,
@@ -1725,11 +1725,11 @@ fn land_gemini(
         .find(|(f, _)| f.path.ends_with(".jsonl"))
         .copied()
         .ok_or("缺 gemini jsonl")?;
-    let registered = gemini_registered_slug(home, target);
+    let registered = gemini_registered_slug(roots, target);
     let slug = registered
         .clone()
         .unwrap_or_else(|| gemini_import_slug(target));
-    let slug_dir = home.join(".gemini").join("tmp").join(&slug);
+    let slug_dir = roots.gemini.join("tmp").join(&slug);
     let name = Path::new(&zip_rel(index, &f.path))
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1743,16 +1743,16 @@ fn land_gemini(
     } else {
         bytes.to_vec()
     };
-    atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+    atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
     let marker = slug_dir.join(".project_root");
     if registered.is_none() || !marker.exists() {
-        atomic_write_checked(&marker, format!("{target}\n").as_bytes(), home, 0)?;
+        atomic_write_checked(&marker, format!("{target}\n").as_bytes(), roots, 0)?;
     }
     Ok("imported".into())
 }
 
 fn land_codex(
-    home: &Path,
+    roots: &SessionRoots,
     entry: &ManifestEntry,
     files: &[(&ManifestFile, &[u8])],
     index: usize,
@@ -1784,16 +1784,16 @@ fn land_codex(
     } else {
         bytes.to_vec()
     };
-    let dest = home.join(".codex").join("sessions").join(date).join(name);
+    let dest = roots.codex.join("sessions").join(date).join(name);
     if dest.exists() {
         return Err("目标文件已存在".into());
     }
-    atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+    atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
     Ok("imported".into())
 }
 
 fn land_kimi(
-    home: &Path,
+    roots: &SessionRoots,
     entry: &ManifestEntry,
     files: &[(&ManifestFile, &[u8])],
     index: usize,
@@ -1802,8 +1802,8 @@ fn land_kimi(
 ) -> Result<String, String> {
     let is_new = files.iter().any(|(f, _)| f.path.ends_with("wire.jsonl"));
     if is_new {
-        let dest_dir = home
-            .join(".kimi-code")
+        let dest_dir = roots
+            .kimi_code
             .join("sessions")
             .join(kimi_wd_bucket(target))
             .join(&entry.session_id);
@@ -1830,13 +1830,13 @@ fn land_kimi(
             if f.path.ends_with("wire.jsonl") {
                 body = rewrite_kimi_workspace_id(&body, &kimi_wd_bucket(target));
             }
-            atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+            atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
         }
-        append_kimi_index(home, &entry.session_id, &dest_dir, target)?;
+        append_kimi_index(roots, &entry.session_id, &dest_dir, target)?;
         Ok("imported".into())
     } else {
-        let dest_dir = home
-            .join(".kimi")
+        let dest_dir = roots
+            .kimi_legacy
             .join("sessions")
             .join(kimi_legacy_bucket(target))
             .join(&entry.session_id);
@@ -1855,9 +1855,9 @@ fn land_kimi(
             } else {
                 bytes.to_vec()
             };
-            atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+            atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
         }
-        upsert_kimi_work_dir(home, target)?;
+        upsert_kimi_work_dir(roots, target)?;
         Ok("imported".into())
     }
 }
@@ -1902,12 +1902,12 @@ fn rewrite_kimi_homedir(bytes: &[u8], new_agent_home: &Path) -> Vec<u8> {
 }
 
 fn append_kimi_index(
-    home: &Path,
+    roots: &SessionRoots,
     session_id: &str,
     session_dir: &Path,
     work_dir: &str,
 ) -> Result<(), String> {
-    let path = home.join(".kimi-code").join("session_index.jsonl");
+    let path = roots.kimi_index();
     let mut lines: Vec<String> = if path.exists() {
         fs::read_to_string(&path)
             .unwrap_or_default()
@@ -1937,11 +1937,11 @@ fn append_kimi_index(
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    atomic_write_checked(&path, text.as_bytes(), home, 0)
+    atomic_write_checked(&path, text.as_bytes(), roots, 0)
 }
 
-fn upsert_kimi_work_dir(home: &Path, work_dir: &str) -> Result<(), String> {
-    let path = home.join(".kimi").join("kimi.json");
+fn upsert_kimi_work_dir(roots: &SessionRoots, work_dir: &str) -> Result<(), String> {
+    let path = roots.kimi_legacy_json();
     let mut root = if path.exists() {
         serde_json::from_slice::<Value>(&fs::read(&path).unwrap_or_default())
             .unwrap_or_else(|_| serde_json::json!({}))
@@ -1962,13 +1962,13 @@ fn upsert_kimi_work_dir(home: &Path, work_dir: &str) -> Result<(), String> {
     if !exists {
         list.push(serde_json::json!({ "path": work_dir }));
         let text = serde_json::to_vec_pretty(&root).map_err(|e| e.to_string())?;
-        atomic_write_checked(&path, &text, home, 0)?;
+        atomic_write_checked(&path, &text, roots, 0)?;
     }
     Ok(())
 }
 
 fn land_grok(
-    home: &Path,
+    roots: &SessionRoots,
     entry: &ManifestEntry,
     files: &[(&ManifestFile, &[u8])],
     index: usize,
@@ -1976,8 +1976,8 @@ fn land_grok(
     old: &str,
 ) -> Result<String, String> {
     let (encoded, need_cwd_file) = grok_encode_cwd(target);
-    let dest_dir = home
-        .join(".grok")
+    let dest_dir = roots
+        .grok
         .join("sessions")
         .join(&encoded)
         .join(&entry.session_id);
@@ -1991,13 +1991,13 @@ fn land_grok(
         if f.path.ends_with("summary.json") && rewrite_needed(old, target) {
             body = rewrite_json_object(bytes, old, target, rewrite_keys_for("grok"));
         }
-        atomic_write_checked(&dest, &body, home, f.mtime_ms)?;
+        atomic_write_checked(&dest, &body, roots, f.mtime_ms)?;
     }
     if need_cwd_file {
         atomic_write_checked(
             &dest_dir.parent().unwrap().join(".cwd"),
             target.as_bytes(),
-            home,
+            roots,
             0,
         )?;
     }
@@ -2034,11 +2034,11 @@ fn write_ccode_meta(entry: &ManifestEntry) -> Result<(), String> {
 
 fn apply_at(
     zip_path: &Path,
-    home: &Path,
+    roots: &SessionRoots,
     decisions: &[ImportDecisionDto],
 ) -> Result<(ImportReportDto, Vec<String>), String> {
     let (manifest, blobs) = read_zip_map(zip_path)?;
-    let mut existing = index_existing_at(home);
+    let mut existing = index_existing_at(roots);
     let mut items = Vec::new();
     let mut imported = 0u32;
     let mut skipped = 0u32;
@@ -2100,7 +2100,7 @@ fn apply_at(
             });
             continue;
         }
-        match apply_entry(home, entry, index, &blobs, &target, &existing) {
+        match apply_entry(roots, entry, index, &blobs, &target, &existing) {
             Ok(_) => {
                 let meta_warning = write_ccode_meta(entry)
                     .err()
@@ -2179,8 +2179,8 @@ pub async fn import_sessions_apply(
         let zip_path = zip_path.clone();
         let decisions = decisions.clone();
         move || {
-            let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
-            apply_at(Path::new(&zip_path), &home, &decisions)
+            let roots = SessionRoots::current().ok_or("无法确定用户主目录")?;
+            apply_at(Path::new(&zip_path), &roots, &decisions)
         }
     })
     .await
@@ -2524,7 +2524,7 @@ mod tests {
             skip: false,
             target_dir: Some(target.to_string_lossy().into_owned()),
         }];
-        let (report, _) = apply_at(&zip, &home, &dec).unwrap();
+        let (report, _) = apply_at(&zip, &SessionRoots::at(&home), &dec).unwrap();
         assert_eq!(report.imported, 1, "{:?}", report.items);
 
         let slug_dir = home
@@ -2563,20 +2563,20 @@ mod tests {
         let zp = format!("sessions/0/{own}.jsonl");
         let man = claude_manifest(own, "/Users/alice/proj", &zp, body.as_bytes());
         let zip = write_zip_test(&dir, &man, vec![(zp, body.clone().into_bytes())]);
-        let preview = inspect_at(&zip, &home, &[]).unwrap();
+        let preview = inspect_at(&zip, &SessionRoots::at(&home), &[]).unwrap();
         assert_ne!(preview.entries[0].status, "unsupported", "{:?}", preview.entries[0].reason);
         let dec = vec![ImportDecisionDto {
             index: 0,
             skip: false,
             target_dir: Some(target.to_string_lossy().into_owned()),
         }];
-        let (report, _) = apply_at(&zip, &home, &dec).unwrap();
+        let (report, _) = apply_at(&zip, &SessionRoots::at(&home), &dec).unwrap();
         assert_eq!(report.imported, 1, "{:?}", report.items);
         // 本机已有：按文件名认出同一条；上游那条没导入过，不算已存在
-        let existing = index_existing_at(&home);
+        let existing = index_existing_at(&SessionRoots::at(&home));
         assert!(existing.contains(&("claude-code".into(), own.into())));
         assert!(!existing.contains(&("claude-code".into(), upstream.into())));
-        assert_eq!(inspect_at(&zip, &home, &[]).unwrap().entries[0].status, "conflict");
+        assert_eq!(inspect_at(&zip, &SessionRoots::at(&home), &[]).unwrap().entries[0].status, "conflict");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -2606,14 +2606,14 @@ mod tests {
         let target = dir.join("work");
         fs::create_dir_all(&target).unwrap();
         let t = target.to_string_lossy().into_owned();
-        assert!(gemini_registered_slug(&home, &t).is_none(), "没有 projects.json");
+        assert!(gemini_registered_slug(&SessionRoots::at(&home), &t).is_none(), "没有 projects.json");
         let json = serde_json::json!({
             "projects": { t.clone(): "work", "/elsewhere": "../evil" }
         });
         fs::write(home.join(".gemini").join("projects.json"), json.to_string()).unwrap();
-        assert_eq!(gemini_registered_slug(&home, &t).as_deref(), Some("work"));
-        assert!(gemini_registered_slug(&home, "/elsewhere").is_none(), "slug 含分隔符不采信");
-        assert!(gemini_registered_slug(&home, "/other").is_none());
+        assert_eq!(gemini_registered_slug(&SessionRoots::at(&home), &t).as_deref(), Some("work"));
+        assert!(gemini_registered_slug(&SessionRoots::at(&home), "/elsewhere").is_none(), "slug 含分隔符不采信");
+        assert!(gemini_registered_slug(&SessionRoots::at(&home), "/other").is_none());
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -2679,7 +2679,7 @@ mod tests {
             &man,
             vec![(zip_file.clone(), body.as_bytes().to_vec())],
         );
-        let preview = inspect_at(&zip, &home, &[]).unwrap();
+        let preview = inspect_at(&zip, &SessionRoots::at(&home), &[]).unwrap();
         assert_eq!(preview.entries[0].status, "needs-path");
         assert_eq!(preview.entries[0].cwd.as_deref(), Some("/Users/alice/proj"));
 
@@ -2695,13 +2695,13 @@ mod tests {
         fs::create_dir_all(&proj).unwrap();
         let man2 = claude_manifest(id, proj.to_str().unwrap(), &zip_file, body.as_bytes());
         let zip2 = write_zip_test(&dir, &man2, vec![(zip_file, body.as_bytes().to_vec())]);
-        let preview2 = inspect_at(&zip2, &home, &[]).unwrap();
+        let preview2 = inspect_at(&zip2, &SessionRoots::at(&home), &[]).unwrap();
         assert_eq!(preview2.entries[0].status, "conflict");
 
         let mut bad = man;
         bad.version = 2;
         let zip3 = write_zip_test(&dir, &bad, vec![]);
-        let err = inspect_at(&zip3, &home, &[]).unwrap_err();
+        let err = inspect_at(&zip3, &SessionRoots::at(&home), &[]).unwrap_err();
         assert!(err.contains("版本"), "{err}");
         fs::remove_dir_all(&dir).ok();
     }
@@ -2723,7 +2723,7 @@ mod tests {
             skip: false,
             target_dir: Some(target.to_string_lossy().into_owned()),
         }];
-        let (report, _) = apply_at(&zip, &home, &dec).unwrap();
+        let (report, _) = apply_at(&zip, &SessionRoots::at(&home), &dec).unwrap();
         assert_eq!(report.imported, 1, "{:?}", report.items);
         let dest = home
             .join(".claude")
@@ -2740,7 +2740,7 @@ mod tests {
         );
         assert!(!got.contains("/Users/alice/proj"));
 
-        let (report2, _) = apply_at(&zip, &home, &dec).unwrap();
+        let (report2, _) = apply_at(&zip, &SessionRoots::at(&home), &dec).unwrap();
         assert_eq!(report2.skipped, 1);
         assert_eq!(report2.imported, 0);
         fs::remove_dir_all(&dir).ok();
@@ -2805,7 +2805,7 @@ mod tests {
         let t = target.to_string_lossy().into_owned();
         let (report, _) = apply_at(
             &zip,
-            &home,
+            &SessionRoots::at(&home),
             &[ImportDecisionDto {
                 index: 0,
                 skip: false,
@@ -2849,7 +2849,7 @@ mod tests {
         let t = target.to_string_lossy().into_owned();
         let (report, _) = apply_at(
             &zip,
-            &home,
+            &SessionRoots::at(&home),
             &[ImportDecisionDto {
                 index: 0,
                 skip: false,
@@ -2890,7 +2890,7 @@ mod tests {
             body.as_bytes(),
         );
         let zip = write_zip_test(&dir, &man, vec![(zip_file, body.as_bytes().to_vec())]);
-        let preview = inspect_at(&zip, &home, &[]).unwrap();
+        let preview = inspect_at(&zip, &SessionRoots::at(&home), &[]).unwrap();
         assert_eq!(preview.entries[0].status, "needs-path");
         assert_eq!(preview.entries[0].cwd.as_deref(), Some(wt.as_str()));
         assert_eq!(
@@ -2918,7 +2918,7 @@ mod tests {
             skip: false,
             target_dir: Some(cwd.clone()),
         }];
-        apply_at(&zip, &home, &dec).unwrap();
+        apply_at(&zip, &SessionRoots::at(&home), &dec).unwrap();
         let dest = home
             .join(".claude")
             .join("projects")
@@ -2973,7 +2973,7 @@ mod tests {
             skip: false,
             target_dir: Some(target.to_string_lossy().into_owned()),
         }];
-        let (report, _) = apply_at(&zip, &home, &dec).unwrap();
+        let (report, _) = apply_at(&zip, &SessionRoots::at(&home), &dec).unwrap();
         assert_eq!(report.imported, 1, "{:?}", report.items);
         let dest = home
             .join(".cursor")
@@ -3029,7 +3029,7 @@ mod tests {
         let t = target.to_string_lossy().into_owned();
         let (report, _) = apply_at(
             &zip,
-            &home,
+            &SessionRoots::at(&home),
             &[ImportDecisionDto {
                 index: 0,
                 skip: false,
@@ -3107,7 +3107,7 @@ mod tests {
         let t = target.to_string_lossy().into_owned();
         let (report, _) = apply_at(
             &zip,
-            &home,
+            &SessionRoots::at(&home),
             &[ImportDecisionDto {
                 index: 0,
                 skip: false,
@@ -3156,15 +3156,49 @@ mod tests {
         let dir = tmp();
         let home = dir.join("home");
         fs::create_dir_all(&home).unwrap();
-        assert!(!write_allowed(&dir.join("etc").join("passwd"), &home));
+        let roots = SessionRoots::at(&home);
+        assert!(!write_allowed(&dir.join("etc").join("passwd"), &roots));
         assert!(write_allowed(
             &home
                 .join(".claude")
                 .join("projects")
                 .join("x")
                 .join("a.jsonl"),
-            &home
+            &roots
         ));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 设了搬迁变量：落位与白名单都跟到搬走的目录，家目录默认位置不再放行
+    #[test]
+    fn write_allowed_follows_relocated_roots() {
+        let dir = tmp();
+        let home = dir.join("home");
+        let moved = dir.join("moved");
+        fs::create_dir_all(&home).unwrap();
+        let env = |v: &str| match v {
+            "CLAUDE_CONFIG_DIR" => Some(moved.join("claude")),
+            "KIMI_CODE_HOME" => Some(moved.join("kimi-code")),
+            "CURSOR_DATA_DIR" => Some(moved.join("cursor")),
+            _ => None,
+        };
+        let roots = SessionRoots::with(&home, &env);
+        assert!(write_allowed(&moved.join("claude/projects/x/a.jsonl"), &roots));
+        assert!(!write_allowed(&home.join(".claude/projects/x/a.jsonl"), &roots));
+        assert!(write_allowed(&moved.join("kimi-code/session_index.jsonl"), &roots));
+        assert!(!write_allowed(&home.join(".kimi-code/session_index.jsonl"), &roots));
+        assert!(write_allowed(
+            &moved.join("cursor/projects/-tmp-x/agent-transcripts/s/s.jsonl"),
+            &roots
+        ));
+        assert!(!write_allowed(&moved.join("cursor/mcp.json"), &roots));
+        // 已有会话的查重同样认搬走的目录
+        let proj = moved.join("claude/projects/-tmp-x");
+        fs::create_dir_all(&proj).unwrap();
+        fs::write(proj.join("abc.jsonl"), "{}\n").unwrap();
+        let existing = index_existing_at(&roots);
+        assert!(existing.contains(&("claude-code".to_string(), "abc".to_string())));
+        assert!(index_existing_at(&SessionRoots::at(&home)).is_empty());
         fs::remove_dir_all(&dir).ok();
     }
 }

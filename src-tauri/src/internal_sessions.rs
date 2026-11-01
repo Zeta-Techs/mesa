@@ -117,9 +117,8 @@ pub(crate) fn stats_impl() -> InternalSessionsStatsDto {
 /// Claude Code 给每个临时 cwd 建一个 projects/<编码路径> 目录；对话文件删完（或不落盘调用
 /// 只建了空的 memory/）后剩空壳。只认名字以 `ccode-ai-<uuid>` 结尾、里面没有任何 .jsonl、
 /// 且一天内没动过的目录。
-fn sweep_empty_claude_dirs(home: &Path) -> usize {
-    let root = home.join(".claude").join("projects");
-    let Ok(entries) = fs::read_dir(&root) else {
+fn sweep_empty_claude_dirs(root: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(root) else {
         return 0;
     };
     let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 3600);
@@ -212,8 +211,8 @@ pub(crate) fn cleanup_impl() -> Result<InternalCleanupResultDto, String> {
             Err(e) => out.failed.push(format!("{}（{e}）", s.session_id)),
         }
     }
-    if let Some(home) = crate::dirs::home_dir() {
-        out.empty_dirs_removed = sweep_empty_claude_dirs(&home);
+    if let Some(roots) = crate::sessions::SessionRoots::current() {
+        out.empty_dirs_removed = sweep_empty_claude_dirs(&roots.claude_projects());
     }
     crate::sessions::invalidate_scan_cache();
     crate::usage::kv_set(LAST_CLEAN_KEY, &Utc::now().to_rfc3339());
@@ -310,12 +309,12 @@ mod tests {
         }
         fs::write(with_file.join("a.jsonl"), "{}").unwrap();
         // 刚建的目录一天内不动
-        assert_eq!(sweep_empty_claude_dirs(&home), 0);
+        assert_eq!(sweep_empty_claude_dirs(&root), 0);
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 24 * 3600);
         for d in [&empty, &with_file, &user] {
             fs::File::open(d).unwrap().set_modified(old).unwrap();
         }
-        assert_eq!(sweep_empty_claude_dirs(&home), 1);
+        assert_eq!(sweep_empty_claude_dirs(&root), 1);
         assert!(!empty.exists());
         assert!(with_file.exists() && user.exists());
         let _ = fs::remove_dir_all(&home);

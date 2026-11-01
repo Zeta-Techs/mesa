@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
-use crate::sessions;
+use crate::sessions::{self, SessionRoots};
 use crate::storage;
 
 const AGENT: &str = "claude-code";
@@ -501,33 +501,33 @@ fn inspect_file(path: &Path) -> SlimInspectDto {
     dto
 }
 
-/// 只认 `~/.claude/projects/**.jsonl`：canonicalize 后落在该根内（防符号链接绕过），
+/// 只认 Claude 配置根（认 `CLAUDE_CONFIG_DIR`）下 `projects/**.jsonl`：canonicalize 后落在该根内（防符号链接绕过），
 /// 且同时通过全站会话文件白名单。agent 不是 Claude Code 一律不认。
-fn resolve_target(agent: &str, file_path: &str, home: &Path) -> Option<PathBuf> {
+fn resolve_target(agent: &str, file_path: &str, roots: &SessionRoots) -> Option<PathBuf> {
     if agent != AGENT {
         return None;
     }
     let canon = Path::new(file_path).canonicalize().ok()?;
-    let root = home.join(".claude").join("projects").canonicalize().ok()?;
-    let dirs = sessions::session_data_dirs_at(home);
+    let root = roots.claude_projects().canonicalize().ok()?;
+    let dirs = sessions::session_data_dirs_at(roots);
     (canon.starts_with(&root)
         && canon.extension().is_some_and(|e| e == "jsonl")
         && sessions::deletable_session_file(&canon, &dirs))
     .then_some(canon)
 }
 
-fn inspect_at(agent: &str, file_path: &str, home: &Path) -> SlimInspectDto {
-    resolve_target(agent, file_path, home).map_or_else(unsupported, |p| inspect_file(&p))
+fn inspect_at(agent: &str, file_path: &str, roots: &SessionRoots) -> SlimInspectDto {
+    resolve_target(agent, file_path, roots).map_or_else(unsupported, |p| inspect_file(&p))
 }
 
 fn inspect_impl(agent: &str, file_path: &str) -> SlimInspectDto {
-    crate::dirs::home_dir().map_or_else(unsupported, |home| inspect_at(agent, file_path, &home))
+    SessionRoots::current().map_or_else(unsupported, |roots| inspect_at(agent, file_path, &roots))
 }
 
 fn apply_impl(agent: &str, file_path: &str, keep: Option<usize>) -> Result<SlimApplyDto, String> {
-    let home = crate::dirs::home_dir().ok_or("无法确定用户目录")?;
-    let path = resolve_target(agent, file_path, &home)
-        .ok_or("只支持 ~/.claude/projects 下的 Claude Code 会话文件")?;
+    let roots = SessionRoots::current().ok_or("无法确定用户目录")?;
+    let path = resolve_target(agent, file_path, &roots)
+        .ok_or("只支持 Claude Code 会话目录（projects）下的会话文件")?;
     let result = apply_file(
         &path,
         keep.unwrap_or(DEFAULT_KEEP),
@@ -828,15 +828,15 @@ mod tests {
     fn inspect_skips_scan_for_small_files_and_flags_unsupported_targets() {
         let (home, file) = fake_home();
         fs::write(&file, sample()).unwrap();
-        let small = inspect_at(AGENT, file.to_str().unwrap(), &home);
+        let small = inspect_at(AGENT, file.to_str().unwrap(), &SessionRoots::at(&home));
         assert!(small.supported && !small.scanned);
         assert_eq!(small.level, "ok");
 
-        assert!(!inspect_at("codex", file.to_str().unwrap(), &home).supported);
+        assert!(!inspect_at("codex", file.to_str().unwrap(), &SessionRoots::at(&home)).supported);
         let outside = home.join("elsewhere.jsonl");
         fs::write(&outside, sample()).unwrap();
-        assert!(!inspect_at(AGENT, outside.to_str().unwrap(), &home).supported);
-        assert!(!inspect_at(AGENT, home.join("nope.jsonl").to_str().unwrap(), &home).supported);
+        assert!(!inspect_at(AGENT, outside.to_str().unwrap(), &SessionRoots::at(&home)).supported);
+        assert!(!inspect_at(AGENT, home.join("nope.jsonl").to_str().unwrap(), &SessionRoots::at(&home)).supported);
         let _ = fs::remove_dir_all(&home);
     }
 

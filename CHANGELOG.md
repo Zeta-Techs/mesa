@@ -4,6 +4,8 @@
 
 ## 未发布
 
+- 修复：在 shell 里设过 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`QWEN_HOME`、`GROK_HOME` 这类变量、把 Agent 的配置目录搬到别处的，Mesa「设为全局默认」写对了地方，对话列表却仍去家目录下找，搬走后的对话看不见、也删不掉、导入的对话落错地方。现在列表、删除、导入都去 Agent 实际用的目录；Qwen 的 `QWEN_RUNTIME_DIR` / `runtimeOutputDir`、Cursor 的 `CURSOR_DATA_DIR` 也认。
+
 ## v0.1.1（2026-11-01）
 
 **本版要点**

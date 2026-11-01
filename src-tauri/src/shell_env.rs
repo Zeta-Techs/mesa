@@ -45,10 +45,12 @@ fn should_import(key: &str) -> bool {
     const OTHER_PREFIXES: &[&str] = &["PROMPT", "TERM", "CCODE_", "MESA_", "XPC_", "__CF"];
     // 各家配置目录的搬迁变量不是凭据：要带进来，否则从访达打开时 Mesa 与终端里的 CLI 读的不是同一个目录
     //（设为全局写错地方、MCP / 技能装错地方；2026-10-30）。清单与 agent_specs::agent_config_root_with 同步
-    // OPENCODE_DB 是会话库的位置（sessions::opencode_db_candidates 认它）：不带进来，终端里开的 OpenCode 会话在 Mesa 里看不见
+    // OPENCODE_DB 是会话库的位置（sessions::opencode_db_candidates 认它）：不带进来，终端里开的 OpenCode 会话在 Mesa 里看不见；
+    // QWEN_RUNTIME_DIR / CURSOR_DATA_DIR 同理，是这两家会话目录的位置（sessions::SessionRoots 认它们，2026-11-01）
     const RELOCATION_VARS: &[&str] = &[
         "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME",
-        "KIMI_SHARE_DIR", "CODEBUDDY_CONFIG_DIR", "GROK_HOME", "OPENCODE_DB",
+        "KIMI_SHARE_DIR", "CODEBUDDY_CONFIG_DIR", "GROK_HOME", "OPENCODE_DB", "QWEN_RUNTIME_DIR",
+        "CURSOR_DATA_DIR",
     ];
     if RELOCATION_VARS.contains(&key) {
         return true;
@@ -221,7 +223,7 @@ mod tests {
     #[test]
     fn imports_config_dir_relocation_vars() {
         // 不是凭据：设为全局 / MCP / 技能要和终端里的 CLI 认同一个配置目录
-        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME", "GROK_HOME", "OPENCODE_DB"] {
+        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME", "GROK_HOME", "OPENCODE_DB", "QWEN_RUNTIME_DIR", "CURSOR_DATA_DIR"] {
             assert!(should_import(key), "{key} 应该带");
         }
     }

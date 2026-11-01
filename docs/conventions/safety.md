@@ -166,6 +166,7 @@
      不含 marker 的外来文件拒绝覆盖；开关走 `set_hooks_attention(agent, enabled)` 单命令（先改各家配置，
      成功后才落应用设置 hooks_attention map 逐键），失败回滚，禁前端单独 patch `hooksAttention`）；
   3. 会话删除（delete_session/delete_project_sessions：canonicalize 根校验 + **已知会话数据子目录 + 会话后缀白名单**，
+     各家根目录只经 `sessions::SessionRoots` 取（认搬迁变量，与扫描 / 导入同源；只放行搬走后的根下同样的子目录，家目录默认位置随之不再放行，2026-11-01），
      同根 auth.json/settings.json 等一律拒绝；源文件走系统回收站 `trash::delete`（可从回收站找回），与工作树删除同口径；
      **Cursor 不走目录级白名单**（~/.cursor 与 IDE 共享），由 `cursor_deletable`
      限定 `projects/*/agent-transcripts/**/*.jsonl`；OpenCode 事务删库行且 db 必须是已知候选路径之一
