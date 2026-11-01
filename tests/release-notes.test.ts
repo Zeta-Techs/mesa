@@ -35,3 +35,8 @@ test("没有版本段时回落「未发布」，都没有则为空", () => {
 test("未发布段为空且无版本段时返回空串", () => {
   assert.equal(extractReleaseNotes("## 未发布\n\n## v0.1.0\n- a\n", "0.3.0"), "");
 });
+
+test("段内有「全部改动」时只取前面的要点", () => {
+  const log = "## v0.4.0\n\n**本版要点**\n\n- 要点\n\n**全部改动**\n\n- 细项\n\n## v0.3.0\n- a\n";
+  assert.equal(extractReleaseNotes(log, "0.4.0"), "**本版要点**\n\n- 要点");
+});

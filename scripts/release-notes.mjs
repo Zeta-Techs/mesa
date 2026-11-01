@@ -1,5 +1,6 @@
 // 发版更新说明：从 CHANGELOG.md 取本版本段落，供 CI 写进 Release 正文 / latest.json 的 notes。
 // 优先「## v<版本>」段，其次「## 未发布」段；两者都空则失败（否则用户看到的更新说明是空的）。
+// 段内有「**全部改动**」时只取它前面的要点：应用里的更新说明框只有几行高，逐条清单留在 CHANGELOG。
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -12,7 +13,9 @@ export function extractReleaseNotes(changelog, version) {
     if (start < 0) return "";
     const rest = lines.slice(start + 1);
     const end = rest.findIndex((l) => l.startsWith("## "));
-    return (end < 0 ? rest : rest.slice(0, end)).join("\n").trim();
+    const body = end < 0 ? rest : rest.slice(0, end);
+    const full = body.findIndex((l) => /^\*\*全部改动\*\*\s*$/.test(l));
+    return (full < 0 ? body : body.slice(0, full)).join("\n").trim();
   };
   return (
     section((l) => versioned.test(l)) ||
