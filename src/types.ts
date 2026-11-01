@@ -450,6 +450,29 @@ export interface GlobalWritePreviewDto {
   scopeNote: string;
 }
 
+/** 「看实际会拿到什么」一格：value 为空 = 这一侧不带这一项；via = 落在哪（环境变量 / 参数 / 文件里的键） */
+export interface EffectCellDto {
+  value: string | null;
+  via: string | null;
+}
+
+/** 同一项在 Mesa 里启动与设为全局后的对照（effect_preview.rs）；密钥行只给落点与尾号 */
+export interface EffectRowDto {
+  label: string;
+  launch: EffectCellDto;
+  global: EffectCellDto;
+  differs: boolean;
+}
+
+export interface EffectPreviewDto {
+  rows: EffectRowDto[];
+  launchError: string | null;
+  globalError: string | null;
+  globalUnchanged: boolean;
+  launch: LaunchPlanPreviewDto | null;
+  global: GlobalWritePreviewDto | null;
+}
+
 /** 启动计划预览：只展示环境变量名称与脱敏参数，不返回密钥值。 */
 export interface LaunchPlanPreviewDto {
   agent: string;

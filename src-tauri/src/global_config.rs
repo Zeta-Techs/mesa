@@ -2804,7 +2804,7 @@ fn preview_value(path: &str, raw: &str) -> String {
     }
 }
 
-fn flatten_json(value: &Value, prefix: &str, out: &mut BTreeMap<String, String>) {
+pub(crate) fn flatten_json(value: &Value, prefix: &str, out: &mut BTreeMap<String, String>) {
     match value {
         Value::Object(map) => {
             for (k, v) in map {
@@ -2892,7 +2892,7 @@ fn flatten_env(text: &str) -> BTreeMap<String, String> {
     out
 }
 
-fn flatten_content(path: &Path, text: &str) -> BTreeMap<String, String> {
+pub(crate) fn flatten_content(path: &Path, text: &str) -> BTreeMap<String, String> {
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -3756,7 +3756,27 @@ pub fn preview_profile_global(
     store: tauri::State<'_, ProfileStore>,
     profile_id: String,
 ) -> Result<GlobalWritePreviewDto, String> {
-    let mut profile = store.get_with_model(&profile_id, None)?;
+    let (home, agent, plans, skipped, overrides) = global_preview_inputs(&store, &profile_id)?;
+    Ok(preview_plans(&home, &agent, &plans, skipped, overrides))
+}
+
+/// 「看实际会拿到什么」对照表用：设为全局后各文件的完整内容（按键展开，未脱敏，调用方自己脱敏）+ 改动预览
+pub(crate) fn global_preview_flat(
+    store: &ProfileStore,
+    profile_id: &str,
+) -> Result<(GlobalWritePreviewDto, Vec<(String, BTreeMap<String, String>)>), String> {
+    let (home, agent, plans, skipped, overrides) = global_preview_inputs(store, profile_id)?;
+    let flat = plans
+        .iter()
+        .map(|p| (display_path(&home, &p.path), flatten_content(&p.path, &p.content)))
+        .collect();
+    Ok((preview_plans(&home, &agent, &plans, skipped, overrides), flat))
+}
+
+type GlobalPreviewInputs = (PathBuf, String, Vec<PlannedWrite>, Vec<String>, Vec<String>);
+
+fn global_preview_inputs(store: &ProfileStore, profile_id: &str) -> Result<GlobalPreviewInputs, String> {
+    let mut profile = store.get_with_model(profile_id, None)?;
     if is_official(&profile) {
         let home = crate::dirs::home_dir().ok_or("无法确定用户主目录")?;
         let mut plans = plan_writes(&home, &profile, None, &[])?;
@@ -3766,7 +3786,7 @@ pub fn preview_profile_global(
         if profile.agent == "grok" {
             extend_grok_plans(&home, &mut plans, &store.list()?, None)?;
         }
-        return Ok(preview_plans(&home, &profile.agent, &plans, Vec::new(), Vec::new()));
+        return Ok((home, profile.agent, plans, Vec::new(), Vec::new()));
     }
     let skipped = skipped_policy_notes(&profile);
     let first = profile.models.first().cloned();
@@ -3784,7 +3804,8 @@ pub fn preview_profile_global(
     if profile.agent == "grok" {
         extend_grok_plans(&home, &mut plans, &store.list()?, Some(&profile))?;
     }
-    Ok(preview_plans(&home, &profile.agent, &plans, skipped, override_notes_with(&profile.agent, &shell_has)))
+    let overrides = override_notes_with(&profile.agent, &shell_has);
+    Ok((home, profile.agent, plans, skipped, overrides))
 }
 
 #[tauri::command]

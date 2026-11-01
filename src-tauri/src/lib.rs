@@ -24,6 +24,7 @@ mod custom_runtime;
 mod dep_check;
 mod diagnostics;
 mod drift;
+mod effect_preview;
 mod fonts;
 mod fs_tree;
 mod gateway_store;
@@ -588,6 +589,7 @@ pub fn run() {
             profile_validation::probe_gateway_slot,
             agents::detect_agents,
             agents::preview_launch_plan,
+            effect_preview::preview_effect,
             agents::official_account_status,
             grok_login::grok_login_check,
             grok_login::grok_logout,

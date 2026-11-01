@@ -142,6 +142,23 @@ pub(crate) fn cursor_cloud_endpoint(url: &str) -> bool {
         || host.ends_with(".cursor.com")
 }
 
+/// 预览用的启动计划（含密钥值，只给预览命令内部用，出站前各自脱敏）：返回套好组合的连接、选中的模型、计划
+pub(crate) fn launch_preview_inputs(
+    store: &ProfileStore,
+    profile_id: &str,
+    model: Option<&str>,
+) -> Result<(Profile, Option<String>, LaunchPlan), String> {
+    let mut profile = store.get_with_model(profile_id, model)?;
+    let key = crate::profiles::get_key_for_profile(&profile)?;
+    let selected = model
+        .filter(|m| !m.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| profile.models.first().cloned());
+    crate::combo::apply_to_profile(&mut profile, selected.as_deref());
+    let plan = launch_plan(&profile, key, selected.as_deref())?;
+    Ok((profile, selected, plan))
+}
+
 /// 返回不含密钥值的启动计划，供配置页诊断和跨平台问题排查使用。
 #[tauri::command]
 pub fn preview_launch_plan(
@@ -149,14 +166,15 @@ pub fn preview_launch_plan(
     profile_id: String,
     model: Option<String>,
 ) -> Result<LaunchPlanPreviewDto, String> {
-    let mut profile = store.get_with_model(&profile_id, model.as_deref())?;
-    let key = crate::profiles::get_key_for_profile(&profile)?;
-    let selected = model
-        .clone()
-        .filter(|m| !m.trim().is_empty())
-        .or_else(|| profile.models.first().cloned());
-    crate::combo::apply_to_profile(&mut profile, selected.as_deref());
-    let plan = launch_plan(&profile, key, selected.as_deref())?;
+    launch_plan_preview(&store, &profile_id, model.as_deref())
+}
+
+pub(crate) fn launch_plan_preview(
+    store: &ProfileStore,
+    profile_id: &str,
+    model: Option<&str>,
+) -> Result<LaunchPlanPreviewDto, String> {
+    let (profile, selected, plan) = launch_preview_inputs(store, profile_id, model)?;
     // 配置 overlay 预览白名单：只有值里确定无密文的才展示原文
     //（GROK_CONFIG 的 Header 是 $VAR 引用，grok 进程内展开；CLAUDE_CODE_EXTRA_BODY
     // 只装 temperature/top_p 数值。OPENCODE_CONFIG_CONTENT 等含密钥载体永远不进这里）
