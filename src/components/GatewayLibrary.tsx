@@ -9,7 +9,7 @@ import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
-import PagePanel, { PanelAnchor } from "./PagePanel";
+import PagePanel from "./PagePanel";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
@@ -1172,7 +1172,6 @@ export default function GatewayLibrary({
       subtitle={editing ? "网关库" : undefined}
       backLabel={editing ? "返回网关库" : "返回连接"}
       animate={animate}
-      sections={!!editing}
       onBack={async () => {
         if (!editing) return void closeLibrary();
         if (await confirmDiscard()) setEditing(null);
@@ -1230,7 +1229,6 @@ export default function GatewayLibrary({
       <div>
         {editing ? (
           <div className="space-y-2">
-            <PanelAnchor id="basic" label="基本信息" />
             {editing === "new" && (
               <div className="text-sm text-l2">
                 服务商
@@ -1256,7 +1254,6 @@ export default function GatewayLibrary({
               名称
               <input className={`${fieldClass} mt-1 w-full`} value={name} onChange={(e) => setName(e.target.value)} />
             </label>
-            <PanelAnchor id="address" label="地址与密钥" />
             <label className="block text-sm text-l2">
               <span className="flex items-center justify-between gap-2">
                 <span>地址</span>
@@ -1355,7 +1352,6 @@ export default function GatewayLibrary({
                 </label>
               </div>
             )}
-            <PanelAnchor id="slots" label="各协议地址" />
             <div>
               <button
                 type="button"
@@ -1410,7 +1406,6 @@ export default function GatewayLibrary({
                 </div>
               )}
             </div>
-            <PanelAnchor id="compat" label="兼容与请求头" />
             <div>
               <button
                 type="button"
@@ -1471,7 +1466,6 @@ export default function GatewayLibrary({
                 </div>
               )}
             </div>
-            <PanelAnchor id="bindings" label="用这个网关的连接" />
             {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
                 已绑的点一下直接编辑 */}
             {editing !== "new" && (
@@ -1511,7 +1505,6 @@ export default function GatewayLibrary({
                 )}
               </div>
             )}
-            <PanelAnchor id="models" label="模型目录" />
             <div className="text-sm text-l2">
               <button
                 type="button"

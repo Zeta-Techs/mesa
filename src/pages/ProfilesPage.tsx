@@ -98,7 +98,7 @@ import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { Modal } from "../components/Modal";
-import PagePanel, { PanelAnchor } from "../components/PagePanel";
+import PagePanel from "../components/PagePanel";
 // 编辑配置文件弹层带 Monaco，打开时才加载
 const ConfigFileEditorDialog = lazy(() => import("../components/ConfigFileEditorDialog"));
 // 编辑连接的「配置」视图同理：切过去才加载 Monaco
@@ -876,7 +876,6 @@ export function ProfileModal({
       subtitle={initial ? `${initial.name} · ${agentLabel}` : undefined}
       backLabel={backLabel}
       onBack={() => void guardedClose()}
-      sections={view === "form"}
       actions={
         initial ? (
           <SegTabs
@@ -954,7 +953,6 @@ export function ProfileModal({
         )}
         <div hidden={view === "snippet"}>
 
-        {!initial && <PanelAnchor id="agent" label="Agent" />}
         {/* 2026-10-31 简化：Agent 与账号类型并成一行（原先各占一段标题 + 控件） */}
         {!initial && (
         <div className="mb-4 flex items-end gap-3">
@@ -1009,7 +1007,6 @@ export function ProfileModal({
         </div>
         )}
 
-        <PanelAnchor id="gateway" label="网关" />
         {/* 编辑时先说清用的是哪个网关（地址、密钥、逐模型参数都在那边改）；有没保存的修改，去之前先问 */}
         {initial?.gatewayId && (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-hairline px-3 py-2 text-xs">
@@ -1318,7 +1315,6 @@ export function ProfileModal({
           </div>
             </>
           )}
-          <PanelAnchor id="models" label="模型" />
           {/* 选用已有网关 / 编辑绑定：目录在网关；此处可现拉并写入，不改当前勾选 */}
           {!showGatewayFields && catalogGatewayId && form.accountType === "api" && (
             <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1597,7 +1593,6 @@ export function ProfileModal({
             );
           })()}
         </div>
-        <PanelAnchor id="roles" label="模型分工" />
         {/* 模型分工（2026-10-17）：哪些小任务 / 子 Agent 用哪个模型，原先由 Mesa 暗中补齐，现在摆出来可改。
             名单里有模型才出现（2026-10-23：空名单时只能选「跟主模型」，整块是噪声）；下拉用 MenuSelect，
             与弹层里其余下拉同一套长相（原生 select 是系统样式、字号也对不上） */}
@@ -1658,7 +1653,6 @@ export function ProfileModal({
             </div>
           );
         })()}
-        <PanelAnchor id="effect" label="生效预览" />
         {/* 生效预览（2026-10-30）：已保存的连接才有，九家同一块；内容按这家的启动注入与设为全局写入算 */}
         {initial?.id && (
           <EffectPreview
@@ -1670,7 +1664,6 @@ export function ProfileModal({
             }
           />
         )}
-        <PanelAnchor id="bind" label="同时绑到" />
         {/* 同时绑到：换 Agent 不必重走一遍「添加连接 → 选网关 → 挑模型」——
             同一份网关和模型名单一次建多条绑定；协议按各家默认推导，保存后可单独调整 */}
         {/* 同时绑到（2026-10-31 简化）：只列协议兼容的几家，做成点选小胶囊；说明与不兼容的原因收进悬停 */}
@@ -1713,7 +1706,6 @@ export function ProfileModal({
             </div>
           );
         })()}
-        <PanelAnchor id="name" label="名称" />
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">名称</span>
           <input
@@ -1734,7 +1726,6 @@ export function ProfileModal({
             </span>
           )}
         </label>
-        <PanelAnchor id="advanced" label="高级设置" />
         <details
           className="mb-4 border-t border-hairline pt-3"
           onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}

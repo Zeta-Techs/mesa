@@ -221,7 +221,7 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
   components/FileTypeMark.tsx # 文件类型线条图标：FileTypeGlyph（Lucide 线条 + 识别色经 --file-glyph 传入，浅色主题由 .ccode-file-glyph 压暗；
                              #   附件卡 / 文件选择窗 / 资源列表 / 改动面板按 size 复用）+ FileTypeMark（14px 槽，与文件夹图标同宽对齐）
   components/PagePanel.tsx  # 整页面板外壳（连接页添加 / 编辑连接、网关库）：盖住内容区、fixed 对齐 .ccode-app-main、右侧滑入；‹ 返回 / Esc、
-                             #   底栏常驻、PanelAnchor 锚点生成分区目录；打开时主内容区 inert，hidden 时藏起不卸载（design-system「整页面板」）
+                             #   底栏常驻、内容居中单列；打开时主内容区 inert，hidden 时藏起不卸载（design-system「整页面板」）
   components/MonacoField.tsx # 表单里的受控 Monaco 输入框（编辑连接「配置」视图，ProfilesPage 懒加载）；没设过 MonacoEnvironment / 主题时自己补
   components/ConfigFileEditorDialog.tsx # 连接页 Agent ⋯「编辑配置文件…」弹层（ProfilesPage 懒加载）：按文件分页签的 Monaco 编辑器，每文件一个 model；
                              #   没设过 MonacoEnvironment / 主题时自己补（单独打开时文件预览可能还没加载）；保存后只刷新这一页
