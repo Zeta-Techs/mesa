@@ -991,7 +991,7 @@ async fn fetch_json(url: &str, timeout: std::time::Duration, via: Option<&str>) 
         builder = builder.proxy(reqwest::Proxy::all(p).map_err(|e| format!("出网代理不可用：{e}"))?);
     }
     let client = builder.build().map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-    let resp = client.get(url).send().await.map_err(|e| format!("请求失败: {e}"))?;
+    let resp = client.get(url).send().await.map_err(|e| send_error_text(&e))?;
     if !resp.status().is_success() {
         return Err(format!("返回 HTTP {}", resp.status()));
     }
@@ -999,22 +999,38 @@ async fn fetch_json(url: &str, timeout: std::time::Duration, via: Option<&str>) 
     serde_json::from_slice(&bytes).map_err(|e| format!("解析失败: {e}"))
 }
 
+/// reqwest 的 Display 只有「error sending request for url (...)」，真正原因（握手被断、拒绝连接、DNS）在 source 链末端
+fn send_error_text(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return "超时".into();
+    }
+    let Some(mut root) = std::error::Error::source(e) else {
+        return "请求没发出去".into();
+    };
+    while let Some(next) = root.source() {
+        root = next;
+    }
+    let why = root.to_string();
+    if e.is_connect() { format!("连不上（{why}）") } else { format!("请求没发出去（{why}）") }
+}
+
 /// 一家数据源：先直连，不通且设了出网代理再经代理
 async fn fetch_source(src: DbSource, proxy: Option<&str>) -> Result<(CapsTable, PriceTable), String> {
     let mut errs = Vec::new();
     for via in std::iter::once(None).chain(proxy.map(Some)) {
+        let how = if via.is_some() { "经出网代理" } else { "直连" };
         match fetch_json(src.url(), src.timeout(), via).await {
             Ok(v) => {
                 let (caps, prices) = src.parse(&v);
                 if !caps.is_empty() {
                     return Ok((caps, prices));
                 }
-                errs.push("响应解析为空".to_string());
+                errs.push(format!("{how}响应解析为空"));
             }
-            Err(e) => errs.push(format!("{}{e}", if via.is_some() { "经出网代理" } else { "" })),
+            Err(e) => errs.push(format!("{how}{e}")),
         }
     }
-    Err(format!("{}：{}", src.name(), errs.join("；")))
+    Err(format!("{}：{}", src.name(), errs.join("，")))
 }
 
 /// 按型号合并：先到的那家先占，后面的只补它没有的
@@ -1054,7 +1070,13 @@ async fn fetch_db() -> Result<(CapsTable, PriceTable, Vec<&'static str>), String
         }
     }
     if used.is_empty() {
-        return Err(format!("模型能力库下载失败：{}", errs.join("；")));
+        // 三家全不通几乎总是网络 / 代理节点的事，先说结论，逐家原因放后面
+        // 代理地址可能带账号口令，不写进报错
+        let route = if proxy.is_some() { "直连和出网代理都" } else { "直连" };
+        return Err(format!(
+            "模型能力库下载失败：{route}连不上 models.dev、LiteLLM、OpenRouter，多半是网络或代理节点不通，可在浏览器打开 models.dev 确认；随包的能力表照常可用。逐家原因——{}",
+            errs.join("；")
+        ));
     }
     Ok((caps, prices, used))
 }
@@ -1465,6 +1487,16 @@ pub fn model_capabilities(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fetch_error_names_the_root_cause_not_just_the_url() {
+        // 绑一个端口再放掉，确保没人在听：报错要说「连不上（底层原因）」，不再只剩 reqwest 那句 error sending request
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let url = format!("http://127.0.0.1:{port}/api.json");
+        let err = tauri::async_runtime::block_on(fetch_json(&url, std::time::Duration::from_secs(5), None)).unwrap_err();
+        assert!(err.starts_with("连不上（"), "{err}");
+        assert!(!err.contains("error sending request"), "{err}");
+    }
 
     #[test]
     fn known_context_does_not_pass_off_the_conservative_default() {
