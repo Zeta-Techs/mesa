@@ -178,7 +178,8 @@ export function MenuSelect({
 }: {
   value: string;
   onChange: (value: string) => void;
-  options: { value: string; label: string; disabled?: boolean }[];
+  /** short：选中后框里显示的短名（选项文字带说明时用，免得框里一长串被截断） */
+  options: { value: string; label: string; short?: string; disabled?: boolean }[];
   placeholder?: string;
   disabled?: boolean;
   "aria-label"?: string;
@@ -236,7 +237,7 @@ export function MenuSelect({
         onClick={() => setOpen((next) => !next)}
       >
         <span className="min-w-0 truncate">
-          {current?.label ?? placeholder ?? "请选择"}
+          {current?.short ?? current?.label ?? placeholder ?? "请选择"}
         </span>
         <ChevronDown
           size={14}

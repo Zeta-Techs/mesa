@@ -141,7 +141,10 @@ export default function PagePanel({
         </footer>
       )}
     </section>,
-    document.body,
+    // 挂进 App 外壳（.ccode-app-shell 设了 isolation: isolate、自成层叠上下文）：挂到 body 会整体压在外壳上面，
+    // 外壳里的确认框（z-70）、提示条都被盖在面板底下——2026-11-01 用户：添加连接「返回不了」，就是「放弃没保存的内容？」
+    // 被挡住看不见。挂在外壳里还能继承外壳上的圆角等令牌
+    document.querySelector(".ccode-app-shell") ?? document.body,
   );
 }
 

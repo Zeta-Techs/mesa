@@ -228,7 +228,8 @@ fn key_value(f: &SnippetFields) -> Option<N> {
     if f.account_type != "api" || f.no_auth {
         return None;
     }
-    Some(match f.key_hint.as_deref().and_then(non_empty) {
+    // 网关存的尾号本身带「···」（界面上写「密钥 ···A0N5」），去掉再拼，免得成「······A0N5」
+    Some(match f.key_hint.as_deref().map(|h| h.trim_start_matches(['·', '.', '…', ' '])).and_then(non_empty) {
         Some(hint) => s(format!("{KEY_PLACEHOLDER_HEAD} ···{hint}»")),
         None => s(""),
     })
@@ -786,6 +787,8 @@ mod tests {
             let f = full(agent);
             let dto = render(agent, &f).unwrap();
             assert!(dto.text.contains("«已保存密钥 ···TKsD»"), "{agent}: 密钥是占位\n{}", dto.text);
+            let dotted = render(agent, &SnippetFields { key_hint: Some("···TKsD".into()), ..f.clone() }).unwrap();
+            assert!(dotted.text.contains("«已保存密钥 ···TKsD»"), "{agent}: 尾号自带点不重复\n{}", dotted.text);
             let back = parse(agent, "api", &dto.text).unwrap_or_else(|e| panic!("{agent}: {e}\n{}", dto.text));
             let mut want = f.clone();
             want.key_hint = None;

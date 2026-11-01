@@ -1239,6 +1239,7 @@ export default function GatewayLibrary({
                     placeholder="选一家服务商，自动填地址、协议槽和推荐模型…"
                     options={PROVIDER_PRESETS.map((p) => ({
                       value: p.name,
+                      short: p.name,
                       label: `${p.name}${p.models?.length ? " · 含推荐模型" : ""}${p.confidence === "official" ? " · 官方" : ""}`,
                     }))}
                     onChange={(v) => {

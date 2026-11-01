@@ -924,9 +924,6 @@ export function ProfileModal({
       }
     >
       <form id={formId} onSubmit={submit}>
-        {initial && view === "form" && (
-          <p className="mb-4 text-xs text-l3">改这条连接用的模型名单和附加环境变量。</p>
-        )}
         {view === "snippet" && (
           <div className="space-y-2">
             {snippet && (
@@ -1133,6 +1130,7 @@ export function ProfileModal({
               placeholder={form.baseUrl.trim() ? "自定义地址（也可以再选一家服务商）" : "选一家服务商，自动填地址和推荐模型…"}
               options={agentPresets.map((p) => ({
                 value: p.name,
+                short: p.name,
                 label: `${p.name}${p.provider.models?.length ? " · 含推荐模型" : ""}${
                   p.confidence === "official"
                     ? " · 官方"
