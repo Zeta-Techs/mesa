@@ -16,6 +16,9 @@ type Entry = {
 };
 type Document = { revision: string; legacyText: string; entries: Entry[] };
 
+/** 与后端 research_profile::CATEGORIES 同序（提升时选分类用） */
+const RESEARCH_PROFILE_CATEGORIES = ["研究方向", "常用方法", "数据处理习惯", "写作偏好", "导师意见", "放弃的方向", "其他"];
+
 /** 危险向 ghost：平时与普通行内钮同灰，悬停才转红（作废一类带确认的低频动作）。 */
 const dangerGhostActionClass =
   "inline-flex h-7 items-center rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-err-text disabled:opacity-50";
@@ -32,6 +35,10 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
   const [open, setOpen] = useState(false);
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // 提升到研究档案（2026-11-02）：适用于所有项目的条目复制进用户层档案，分类由人选
+  const [promoting, setPromoting] = useState<string | null>(null);
+  const [promoteCategory, setPromoteCategory] = useState("常用方法");
+  const [promoted, setPromoted] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
     setDoc(null); setError(null); setEditing(null); setText(""); setReason("");
@@ -52,6 +59,26 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
       setError(String(e));
     }
     finally { setBusy(false); }
+  }
+  async function promote(entry: Entry) {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const profile = await invoke<{ doc: { revision: string } }>("research_profile_read");
+      const project = projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;
+      await invoke("research_profile_update", {
+        expectedRevision: profile.doc.revision,
+        id: null,
+        action: "add",
+        category: promoteCategory,
+        text: entry.text,
+        reason: `从项目「${project}」的长期知识提升（原依据：${entry.meta.reason}）`,
+      });
+      setPromoting(null);
+      setPromoted(entry.meta.id);
+    } catch (e) {
+      setError(String(e));
+    } finally { setBusy(false); }
   }
   const activeEntries = doc?.entries.filter((e) => e.meta.state === "active") ?? [];
   const hasHistory = !!doc?.entries.some((e) => e.meta.state !== "active");
@@ -89,7 +116,17 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
             <div className="mt-1.5 flex gap-1">
               <button type="button" className={ghostActionClass} disabled={busy} onClick={() => { setEditing(entry.meta.id); setText(entry.text); setReason(""); }}>修订 / 重新确认</button>
               <button type="button" className={dangerGhostActionClass} disabled={busy} onClick={() => void save("revoke", entry.meta.id)}>作废</button>
+              {promoted === entry.meta.id
+                ? <span className="inline-flex h-7 items-center px-2 text-xs text-l4">已提升到研究档案</span>
+                : <button type="button" className={ghostActionClass} disabled={busy} title="这条适用于你所有项目时，复制进设置里的「研究档案」，以后开新项目 Agent 也会带上" onClick={() => setPromoting(promoting === entry.meta.id ? null : entry.meta.id)}>提升到研究档案</button>}
             </div>
+            {promoting === entry.meta.id && <div className="mt-1 flex items-center gap-1.5 text-xs">
+              <span className="text-l3">放进</span>
+              <select aria-label="研究档案分类" value={promoteCategory} onChange={(e) => setPromoteCategory(e.target.value)} className="rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-xs text-l2">
+                {RESEARCH_PROFILE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+              </select>
+              <button type="button" className={secondaryActionClass} disabled={busy} onClick={() => void promote(entry)}>确认提升</button>
+            </div>}
           </article>)}
           {!!doc?.legacyText && (
             <div className="pt-1">

@@ -18,6 +18,7 @@ export type SettingSectionId =
   | "hotkeys"
   | "stats"
   | "integration"
+  | "profile"
   | "network"
   | "update"
   | "diag"
@@ -101,6 +102,14 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "沙箱", "Windows 沙箱", "Codex 沙箱", "定时任务",
       "出图", "出图模型", "画图", "生图", "图片生成", "gpt-image", "image",
       "integration", "agent",
+    ],
+  },
+  {
+    id: "profile",
+    label: "研究档案",
+    aliases: [
+      "研究档案", "研究背景", "研究方向", "方法偏好", "数据处理习惯", "写作偏好", "导师意见", "放弃的方向",
+      "跨项目", "记忆", "长期记忆", "个人档案", "文献总表", "读过的文献", "profile", "memory",
     ],
   },
   {

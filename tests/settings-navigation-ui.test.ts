@@ -35,7 +35,7 @@ const bundle = await build({
   } }],
 });
 
-const sections = ["外观", "终端", "通用", "快捷键", "AI 与 Agent", "网络", "用量", "更新", "诊断", "数据与存储", "关于"];
+const sections = ["外观", "终端", "通用", "快捷键", "AI 与 Agent", "研究档案", "网络", "用量", "更新", "诊断", "数据与存储", "关于"];
 
 async function renderSettings(options: { request?: string; update?: boolean; visible?: boolean; storageError?: boolean } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
@@ -144,7 +144,7 @@ async function renderSettings(options: { request?: string; update?: boolean; vis
   };
 }
 
-test("设置导航：常用和管理十一项始终可见，无高级总折叠或描边胶囊", async () => {
+test("设置导航：常用和管理十二项始终可见，无高级总折叠或描边胶囊", async () => {
   const view = await renderSettings();
   try {
     assert.deepEqual(Array.from(view.nav().querySelectorAll("button")).map((b) => b.textContent), sections);
@@ -166,7 +166,7 @@ test("设置导航：常用和管理十一项始终可见，无高级总折叠�
   } finally { await view.close(); }
 });
 
-test("十一个分区可直接切换，只显示选中内容，并按需读取诊断与存储", async () => {
+test("十二个分区可直接切换，只显示选中内容，并按需读取诊断与存储", async () => {
   const view = await renderSettings();
   try {
     for (const label of sections) {
@@ -262,7 +262,7 @@ test("设置保存与错误反馈保持原逻辑；网络输入仍按 Enter 提�
   const storage = await renderSettings({ request: "storage", storageError: true });
   try {
     assert.match(storage.content().textContent!, /存储占用统计失败/);
-    assert.equal(storage.nav().querySelectorAll("button").length, 11);
+    assert.equal(storage.nav().querySelectorAll("button").length, 12);
   } finally { await storage.close(); }
 });
 

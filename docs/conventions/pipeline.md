@@ -116,6 +116,9 @@
 - **跨厂商复核**（`src/cross-review.ts`）：只从一等 Agent（Claude Code、Codex、Kimi）里挑、跳过干活的那家与停用连接，同家取最近用过的；
   另开 `cross-review:<工作副本>` 标签（不用 `ws:` 键），只写 `.ccode/checks/cross-review.jsonl`。后端把 `checker` 以 `agent:` 开头的
   `passed` 一律降成 `needs_human`——Agent 的判断永不自动通过。
+- **研究档案**（`research_profile.rs`，用户层，配置目录 `research-profile.md`）：沿用项目长期知识的格式与状态机，`goalName` 当分类（七类固定）；
+  只收人确认的条目、依据必填、revision 乐观锁、改前留历史副本；Agent 不能写。开对话时由 `read_project_memory` 附在项目知识之后，
+  标明「偏好与历史，不是事实依据」，上限约 1500 字，设置可整体关闭。跨项目文献总表只读各注册项目的 included.json / notes/index.json。
 - **AI 使用声明**以 `ai-usage.md` 为事实依据（Mesa 统计，只含在 Mesa 里跑过的），用途措辞与是否补充 Mesa 之外用过的工具由作者核对；不做「降 AI 率」。
 
 ## 工作区生命周期（无损口径）

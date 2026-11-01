@@ -129,6 +129,7 @@ mod reader;
 mod research_quality;
 mod research_record;
 mod research_export;
+mod research_profile;
 mod local_stats;
 mod research_tools;
 mod review_contract;
@@ -782,6 +783,10 @@ pub fn run() {
             research_record::research_checks_read,
             research_export::research_record_read,
             research_export::research_export,
+            research_profile::research_profile_read,
+            research_profile::research_profile_update,
+            research_profile::research_profile_set_inject,
+            research_profile::research_profile_papers,
             local_stats::local_stats_read,
             fs_tree::save_file_preview,
             fs_tree::watch_dir,

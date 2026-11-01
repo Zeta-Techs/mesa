@@ -37,7 +37,7 @@ pub struct MemoryDocument {
     pub entries: Vec<MemoryEntry>,
 }
 
-fn revision(text: &str) -> String {
+pub(crate) fn revision(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
@@ -66,7 +66,7 @@ pub(crate) fn read_raw(root: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "项目知识不是 UTF-8 文本".into())
 }
 
-fn parse(text: &str) -> Result<MemoryDocument, String> {
+pub(crate) fn parse(text: &str) -> Result<MemoryDocument, String> {
     let mut entries = Vec::new();
     let mut legacy = String::new();
     let mut rest = text;
@@ -102,7 +102,7 @@ fn parse(text: &str) -> Result<MemoryDocument, String> {
     })
 }
 
-fn render(doc: &MemoryDocument) -> Result<String, String> {
+pub(crate) fn render(doc: &MemoryDocument) -> Result<String, String> {
     let mut text = doc.legacy_text.trim().to_string();
     for entry in &doc.entries {
         text.push_str(&format!(
@@ -120,7 +120,7 @@ fn render(doc: &MemoryDocument) -> Result<String, String> {
     Ok(text)
 }
 
-fn validate_text(text: &str) -> Result<&str, String> {
+pub(crate) fn validate_text(text: &str) -> Result<&str, String> {
     let text = text.trim();
     if text.is_empty() || text.len() > 32 * 1024 {
         return Err("知识内容不能为空且不得超过 32 KB".into());

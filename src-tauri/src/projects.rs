@@ -740,6 +740,28 @@ pub(crate) fn clear_project_default_profile(profile_id: &str) {
     }
 }
 
+/// 研究档案跨项目文献总表用：注册项目（名字取文件夹名）；测试不读本机注册表
+pub(crate) fn registered_project_roots() -> Vec<(String, PathBuf)> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    let Ok(conn) = db() else {
+        return Vec::new();
+    };
+    list_projects_in(&conn)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| {
+            let root = PathBuf::from(&p.path);
+            let name = root
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.path.clone());
+            (name, root)
+        })
+        .collect()
+}
+
 /// P2a PDF 白名单用（pdf.rs）：全部注册项目根 + 各项目 project.toml 登记资源的绝对路径。
 /// 资源相对路径按项目根解析；读不到配置的项目静默跳过（白名单宁缺勿滥）。
 pub(crate) fn project_roots_and_resources() -> (Vec<PathBuf>, Vec<PathBuf>) {
@@ -2389,11 +2411,18 @@ pub(crate) fn append_project_memory_at(
     crate::project_memory::append_confirmed(root, goal_name, text, run_id)
 }
 
+/// 开对话附带的「长期知识」：项目知识在前，研究档案（跨项目、设置可关）附在末尾
 #[tauri::command]
 pub async fn read_project_memory(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(crate::sessions::expand_tilde(&path));
-        crate::project_memory::context_at(&root)
+        let memory = crate::project_memory::context_at(&root)?;
+        let profile = crate::research_profile::context_text();
+        Ok(match (memory.trim().is_empty(), profile.is_empty()) {
+            (_, true) => memory,
+            (true, false) => profile,
+            (false, false) => format!("{memory}\n\n{profile}"),
+        })
     })
     .await
     .map_err(|e| e.to_string())?
