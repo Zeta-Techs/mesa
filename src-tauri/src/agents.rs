@@ -3410,6 +3410,12 @@ fn resume_extra_args(
     base_url: Option<&str>,
     session_provider: Option<&str>,
 ) -> Vec<String> {
+    // 对话记的不是 Mesa 的 ccode-…（客户端开的 custom、官方 openai、用户自己的渠道）：只指回它，不带这条连接的定义
+    if agent_id == "codex" {
+        if let Some(p) = codex_foreign_thread_provider(session_provider) {
+            return vec!["-c".into(), format!(r#"model_provider="{p}""#)];
+        }
+    }
     match (agent_id, base_url) {
         ("codex", Some(url)) if !url.trim().is_empty() => match agent_spec("codex") {
             Some(spec) => match spec.launch {
@@ -3431,6 +3437,77 @@ fn resume_extra_args(
         },
         _ => vec![],
     }
+}
+
+/// 对话记下的渠道不是 Mesa 的 `ccode` / `ccode-<短id>` 时返回它（只认 TOML 裸键能写的名字，防拼进 `-c` 出错）
+fn codex_foreign_thread_provider(session_provider: Option<&str>) -> Option<&str> {
+    let p = session_provider.map(str::trim).filter(|s| !s.is_empty())?;
+    let bare = p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    (bare && !crate::provider_id::is_ccode_provider(p)).then_some(p)
+}
+
+/// Codex 0.166 起续聊只认对话记下的渠道：与当前渠道（含 `-c` 覆盖）不同就拒绝，报 `modelProviderMismatch`、
+/// 请求都不发（PR openai/codex#57840；2026-11-01 本机 0.166.0 隔离 CODEX_HOME 实测，`-c model_provider=` 指回原渠道才能续）。
+/// 对话记的不是 Mesa 的 `ccode-…`（客户端里开的 `custom`、官方 `openai`、用户自己配的渠道）时，按对话自己的渠道续
+/// （2026-11-01 用户拍板）：`model_provider` 指回它；这条连接自己的模型、上下文、模型目录、旁路模型不带（那是别的渠道的）；
+/// 不注入 `CODEX_API_KEY`——`openai` 要走 ChatGPT 登录，别的渠道认证在 config.toml 里——随之也不加
+/// `forced_login_method` 覆盖。`openai` 另按官方账号撤掉残留密钥变量、不关官方的网页搜索和 apps。返回是否改过
+pub(crate) fn codex_resume_on_thread_provider(
+    plan: &mut LaunchPlan,
+    extra_args: &mut Vec<String>,
+    thread_provider: Option<&str>,
+) -> bool {
+    let Some(p) = codex_foreign_thread_provider(thread_provider) else {
+        return false;
+    };
+    let official = p == crate::provider_id::CODEX_CHATGPT;
+    let mut drop_c: Vec<String> = [
+        "model_provider=",
+        "model_providers.",
+        "model_context_window=",
+        "model_auto_compact_token_limit=",
+        "model_catalog_json=",
+        "forced_login_method=",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    drop_c.extend(CODEX_SIDE_MODEL_KEYS.iter().map(|path| format!("{}=", path.join("."))));
+    if official {
+        drop_c.extend(["web_search=", "service_tier=", "plugins.codex-app-tools"].map(String::from));
+    }
+    let strip = |args: &mut Vec<String>| {
+        let mut out = Vec::with_capacity(args.len());
+        let mut i = 0;
+        while i < args.len() {
+            let next = args.get(i + 1);
+            let pair = match args[i].as_str() {
+                "-m" => true,
+                "-c" => next.is_some_and(|v| drop_c.iter().any(|d| v.starts_with(d.as_str()))),
+                _ => false,
+            };
+            if pair {
+                i += 2;
+            } else {
+                out.push(args[i].clone());
+                i += 1;
+            }
+        }
+        *args = out;
+    };
+    strip(&mut plan.args);
+    strip(extra_args);
+    plan.env.retain(|(k, _)| k != "CODEX_API_KEY" && k != "CCODE_MODEL_DISPLAY_NAME");
+    if official {
+        for var in ["CODEX_API_KEY", "OPENAI_API_KEY"] {
+            if !plan.env_remove.iter().any(|v| v == var) {
+                plan.env_remove.push(var.into());
+            }
+        }
+    }
+    plan.args.push("-c".into());
+    plan.args.push(format!(r#"model_provider="{p}""#));
+    true
 }
 
 /// 外部终端启动的临时包装器：只把明确选中的 profile id/model 这类无敏感元数据从前端传进来，
@@ -8344,6 +8421,62 @@ api_backend = "responses"
         ));
         assert!(derived_cmd.contains(r#"-c 'model_provider="ccode-a1b2c3d4"'"#));
         assert!(!derived_cmd.contains(r#"model_provider="ccode""#));
+        // 客户端里开的（custom）/ 官方（openai）对话：只指回它自己的渠道，不带这条连接的定义（Codex 0.166 渠道校验）
+        for p in ["custom", "openai"] {
+            let extra = resume_extra_args("codex", Some("https://relay.example.com/v1"), Some(p));
+            assert_eq!(extra, vec!["-c".to_string(), format!(r#"model_provider="{p}""#)]);
+        }
+        assert_eq!(resume_extra_args("codex", None, Some("custom")).len(), 2, "没有地址的连接也指回");
+    }
+
+    #[test]
+    fn codex_resume_follows_thread_provider() {
+        let plan_of = || LaunchPlan {
+            env: vec![("CODEX_API_KEY".into(), "sk".into()), ("CCODE_MODEL_DISPLAY_NAME".into(), "x".into())],
+            args: [
+                "-c", r#"model_providers.ccode-a1b2c3d4.base_url="https://r""#,
+                "-c", r#"model_provider="ccode-a1b2c3d4""#,
+                "-c", r#"web_search="disabled""#,
+                "-c", r#"forced_login_method="api""#,
+                "-m", "glm-5",
+                "-c", r#"review_model="glm-5""#,
+                "-c", "model_context_window=128000",
+                "-c", r#"model_reasoning_effort="high""#,
+                "-s", "workspace-write",
+            ]
+            .map(String::from)
+            .to_vec(),
+            env_remove: vec![],
+            prompt_args: vec![],
+            prompt_dropped: false,
+        };
+        let joined = |p: &LaunchPlan| p.args.join(" ");
+        // Mesa 自己的 ccode-… 对话：不动
+        let mut plan = plan_of();
+        let mut extra = vec!["-c".to_string(), "model_catalog_json=/x.json".to_string()];
+        assert!(!codex_resume_on_thread_provider(&mut plan, &mut extra, Some("ccode-a1b2c3d4")));
+        assert!(joined(&plan).contains("-m glm-5") && extra.len() == 2);
+        // 客户端里开的 custom 对话：指回 custom，这条连接的模型 / 上下文 / 目录 / 密钥不带，中转兼容项留着
+        let mut plan = plan_of();
+        let mut extra = vec!["-c".to_string(), "model_catalog_json=/x.json".to_string(), "--no-daemon".to_string()];
+        assert!(codex_resume_on_thread_provider(&mut plan, &mut extra, Some("custom")));
+        let s = joined(&plan);
+        assert!(s.ends_with(r#"-c model_provider="custom""#));
+        assert_eq!(s.matches("model_provider=").count(), 1);
+        for gone in ["-m", "model_providers.", "model_context_window", "review_model", "forced_login_method"] {
+            assert!(!s.contains(gone), "{gone} 不该带");
+        }
+        assert!(s.contains(r#"web_search="disabled""#) && s.contains("model_reasoning_effort") && s.contains("-s workspace-write"));
+        assert_eq!(extra, vec!["--no-daemon".to_string()]);
+        assert!(plan.env.is_empty());
+        // 官方对话：走 ChatGPT 登录，撤残留密钥变量，官方的网页搜索不关
+        let mut plan = plan_of();
+        assert!(codex_resume_on_thread_provider(&mut plan, &mut vec![], Some("openai")));
+        assert!(!joined(&plan).contains("web_search"));
+        assert!(plan.env_remove.contains(&"CODEX_API_KEY".to_string()) && plan.env_remove.contains(&"OPENAI_API_KEY".to_string()));
+        // 记不到渠道、或名字不是裸键：不动
+        assert!(!codex_resume_on_thread_provider(&mut plan_of(), &mut vec![], None));
+        assert!(!codex_resume_on_thread_provider(&mut plan_of(), &mut vec![], Some("a\"b")));
     }
 
     #[test]
