@@ -15,6 +15,8 @@
  },
  "checks": {
   "假网关收到主对话请求": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
+  "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
   "抓屏跑完": true,
   "旁路拿到会话文件": true,
   "旁路端到端通过": true,
@@ -139,6 +141,7 @@
  "transcript": {
   "assistant": {
    "keys": [
+    "contextWindowSize",
     "cwd",
     "message",
     "model",
@@ -174,6 +177,20 @@
     "sessionId",
     "subtype",
     "systemPayload",
+    "timestamp",
+    "type",
+    "uuid",
+    "version"
+   ]
+  },
+  "system/memory_catalog_snapshot": {
+   "keys": [
+    "cwd",
+    "message",
+    "parentUuid",
+    "provenance",
+    "sessionId",
+    "subtype",
     "timestamp",
     "type",
     "uuid",
@@ -224,5 +241,5 @@
    ]
   }
  },
- "version": "0.26.1"
+ "version": "0.26.5"
 }
