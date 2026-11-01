@@ -57,6 +57,7 @@ import { interactiveUpdatePrefill } from "../update-routing";
 import { absTime } from "../rel-time";
 import { toast } from "../toast";
 import { slotForAgent } from "../gateway-slot";
+import { applyFieldsToForm, fieldsFromForm, gatewayOwnedChanges, type SnippetDto, type SnippetFields } from "../connection-snippet";
 import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
 import {
   CONNECTION_STATUS_CAPTION,
@@ -99,6 +100,8 @@ import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { Modal } from "../components/Modal";
 // 编辑配置文件弹层带 Monaco，打开时才加载
 const ConfigFileEditorDialog = lazy(() => import("../components/ConfigFileEditorDialog"));
+// 编辑连接的「配置」视图同理：切过去才加载 Monaco
+const MonacoField = lazy(() => import("../components/MonacoField"));
 import { collapseCarriageReturns } from "../stream-text";
 import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install";
 import { installNotes } from "../agent-install-notes";
@@ -239,6 +242,13 @@ export function ProfileModal({
     } as RequestPolicy,
     apiKey: "",
   });
+  // 编辑已有连接时的「表单 / 配置」切换：配置 = 这家 CLI 自己格式的片段（connection_snippet.rs；docs/design-config-file-editor.md 第二部分）
+  const [view, setView] = useState<"form" | "snippet">("form");
+  const [snippet, setSnippet] = useState<SnippetDto | null>(null);
+  const [snippetText, setSnippetText] = useState("");
+  const [snippetError, setSnippetError] = useState<string | null>(null);
+  // 片段解析成功、写回表单后要接着保存：等表单状态更新完再提交
+  const [submitAfterApply, setSubmitAfterApply] = useState(false);
   // 打开时的表单快照：去网关库前 / 关弹层前判断有没有没保存的修改。协议不算（选网关时会被自动推导改写，不是人改的）
   const snapshotOf = (f: typeof form) => JSON.stringify({ ...f, protocol: null });
   const [formSnapshot] = useState(() => snapshotOf(form));
@@ -246,7 +256,11 @@ export function ProfileModal({
   // 2026-10-31 用户：添加连接填了一半，点到弹层外面就关了、内容全丢。照网关库：填过东西时点遮罩不关，
   // Esc / 关闭钮 / 取消先问一句
   const [openedGateway] = useState(bindGatewayId);
-  const touched = dirty || bindGatewayId !== openedGateway || extraAgents.length > 0;
+  const touched =
+    dirty ||
+    bindGatewayId !== openedGateway ||
+    extraAgents.length > 0 ||
+    (view === "snippet" && !!snippet && snippetText !== snippet.text);
   async function guardedClose() {
     if (
       touched &&
@@ -601,6 +615,70 @@ export function ProfileModal({
     }
   }
 
+  /** 切到「配置」：按当前表单（含没保存的改动）渲染这家 CLI 格式的片段 */
+  async function openSnippet() {
+    setSnippetError(null);
+    try {
+      const dto = await invoke<SnippetDto>("connection_snippet_render", {
+        agent: form.agent,
+        fields: fieldsFromForm({ ...form, name: effectiveName }, headerEnvText, initial?.keyHint ?? null),
+      });
+      setSnippet(dto);
+      setSnippetText(dto.text);
+      setView("snippet");
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  /** 解析片段写回表单；解析不过留在「配置」页报错，返回 false */
+  async function applySnippet(): Promise<boolean> {
+    try {
+      const fields = await invoke<SnippetFields>("connection_snippet_parse", {
+        agent: form.agent,
+        accountType: form.accountType,
+        text: snippetText,
+      });
+      // 编辑已有连接：地址、密钥、请求参数归网关，改了拦下（不悄悄丢）
+      const before = fieldsFromForm({ ...form, name: effectiveName }, headerEnvText, initial?.keyHint ?? null);
+      const owned = initial?.gatewayId ? gatewayOwnedChanges(before, fields) : [];
+      if (owned.length) {
+        setSnippetError(
+          `${owned.join("、")}属于这条连接用的网关，在这里改不了：到页头「网关库」里改这个网关（所有用它的连接一起生效）。`,
+        );
+        return false;
+      }
+      const next = applyFieldsToForm(form, fields);
+      setForm(next.form);
+      setHeaderEnvText(next.headerEnvText);
+      setSnippetError(null);
+      return true;
+    } catch (err) {
+      setSnippetError(String(err));
+      return false;
+    }
+  }
+
+  async function switchView(next: "form" | "snippet") {
+    if (next === view) return;
+    if (next === "snippet") {
+      await openSnippet();
+    } else if (await applySnippet()) {
+      setView("form");
+    }
+  }
+
+  // 「配置」页点保存：片段写回表单后，等这次渲染拿到新表单再提交（submit 读的是表单状态）
+  useEffect(() => {
+    if (!submitAfterApply) return;
+    setSubmitAfterApply(false);
+    setView("form");
+    // 写回后表单还缺东西（如名单空了）：不提交，回到表单看按钮左边的缺项提示
+    if (blocker) return;
+    (document.getElementById(formId) as HTMLFormElement | null)?.requestSubmit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitAfterApply, formId]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -814,18 +892,66 @@ export function ProfileModal({
           <button type="button" onClick={() => void guardedClose()} className={secondaryActionClass}>
             取消
           </button>
-          <button
-            type="submit"
-            form={formId}
-            disabled={saving || Boolean(blocker)}
-            className={primaryActionClass}
-          >
-            {saving ? "保存中…" : retry ? "补绑剩下的" : "保存"}
-          </button>
+          {view === "snippet" ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void applySnippet().then((ok) => ok && setSubmitAfterApply(true))}
+              className={primaryActionClass}
+            >
+              {saving ? "保存中…" : "保存"}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              form={formId}
+              disabled={saving || Boolean(blocker)}
+              className={primaryActionClass}
+            >
+              {saving ? "保存中…" : retry ? "补绑剩下的" : "保存"}
+            </button>
+          )}
         </>
       }
     >
       <form id={formId} onSubmit={submit}>
+        {initial && (
+          <div className="mb-4 flex items-center gap-3">
+            <SegTabs
+              items={[
+                { id: "form", label: "表单" },
+                { id: "snippet", label: "配置" },
+              ]}
+              value={view}
+              onChange={(id) => void switchView(id as "form" | "snippet")}
+            />
+            {view === "snippet" && snippet && (
+              <span className="min-w-0 truncate text-micro text-l3" title={snippet.file}>
+                {snippet.format === "toml" ? "TOML" : "JSON"} · 对应 {snippet.file}
+              </span>
+            )}
+          </div>
+        )}
+        {view === "snippet" && (
+          <div className="space-y-2">
+            <div className="h-[min(56vh,520px)] overflow-hidden rounded-md border border-hairline">
+              <Suspense fallback={<p className="p-3 text-xs text-l3">◌ 正在打开编辑器…</p>}>
+                <MonacoField
+                  value={snippetText}
+                  language={snippet?.language ?? "json"}
+                  onChange={setSnippetText}
+                  ariaLabel="连接配置片段"
+                />
+              </Suspense>
+            </div>
+            {snippetError && <InlineNotice tone="err">{snippetError}</InlineNotice>}
+            <p className="text-micro leading-5 text-l3">
+              这就是「设为全局」会写进这家配置文件的那几项；配置文件里放不下的连接设置在 mesa 小节。地址、密钥、请求头和温度、思考档等请求参数属于网关，这里只显示，要改去「网关库」。
+              这里只收这条连接的设置，别的 CLI 设置到连接页这家 Agent 的 ⋯「编辑配置文件」里改。切回表单或保存时会检查并写回表单。
+            </p>
+          </div>
+        )}
+        <div hidden={view === "snippet"}>
 
         {/* 2026-10-31 简化：Agent 与账号类型并成一行（原先各占一段标题 + 控件） */}
         {!initial && (
@@ -1770,6 +1896,7 @@ export function ProfileModal({
             )}
           </div>
         </details>
+        </div>
       </form>
     </Modal>
   );

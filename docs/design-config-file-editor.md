@@ -56,3 +56,46 @@
 - 不做 cc-switch 那种「隐藏 AI 署名 / 禁用自动升级」快捷勾选（每家键名不同、随版本漂移，先给原文编辑；要做另立一项）。
 - 不按连接存一份配置片段在启动时注入（那是另一个功能：连接级附加配置，需要逐家确认能注入的层）。
 - 不编辑 MCP、技能、hooks 的专属文件（各有专页管理）。
+
+---
+
+# 编辑连接的「配置」视图（2026-11-01 第二部分）
+
+用户随后指着 cc-switch 的「编辑供应商 · 配置 JSON」：要**按连接**编辑，「有的是 json 有的是 toml，每一家都要做」。
+两处拍板：编辑的是**连接本身**（不是 CLI 附加配置）；片段里写了连接之外的 CLI 键 **拦下**，指去「⋯ 编辑配置文件」。
+
+## 界面
+
+编辑**已有**连接的弹层顶部多一对切换：**表单 / 配置**（新建连接仍只有表单：选网关、套预设、同时绑定多家都在表单里）。
+「配置」是一个 Monaco 编辑框，按这家 CLI 自己的格式显示这条连接——就是「设为全局」会写进它配置文件的那几项；
+原生格式放不下的连接字段放在 `mesa` 小节。切回表单或点保存时解析片段、写回表单字段，再走原来的保存。
+解析不过（格式错、写了连接之外的键、默认模型不在名单里）留在「配置」页报错，不保存。
+
+## 九家映射（`connection_snippet.rs`，渲染与解析同一张表）
+
+| Agent | 格式 | 原生键 | 其余进 `mesa` |
+|---|---|---|---|
+| Claude Code | settings.json | `env.ANTHROPIC_BASE_URL` `env.ANTHROPIC_AUTH_TOKEN` `env.CLAUDE_CODE_MAX_OUTPUT_TOKENS` `model` `effortLevel` | 名单、温度、top_p … |
+| CodeBuddy | settings.json | `env.CODEBUDDY_BASE_URL` `env.CODEBUDDY_API_KEY` `env.CODEBUDDY_CODE_MAX_OUTPUT_TOKENS` `model` | 思考档 … |
+| Qwen | settings.json | `security.auth.selectedType`（协议）`env.OPENAI_*` / `env.ANTHROPIC_*`（地址、密钥）`model.name` | |
+| Gemini | settings.json + .env | `model.name`；`env.GOOGLE_GEMINI_BASE_URL` `env.GEMINI_API_KEY`（实际在 .env） | |
+| OpenCode | opencode.json | `model`（`mesa/<默认>`）`provider.mesa.options.baseURL / apiKey` `provider.mesa.models`（名单） | |
+| Cursor | 环境变量 | `env.CURSOR_API_KEY` `env.CURSOR_API_ENDPOINT` `model` | |
+| Codex | config.toml | `model` `model_reasoning_effort` `model_provider` `[model_providers.custom].base_url` | 密钥（Codex 配置里没有放明文的位置） |
+| Kimi | config.toml | `default_model` `[providers.mesa]` `type`（协议）`base_url` `api_key` | |
+| Grok | config.toml | `[models]` `default` `default_reasoning_effort` `temperature` `top_p` `max_completion_tokens`；`[model."<默认>"]` `base_url` `api_key` `api_backend` | |
+
+`mesa` 小节通用键：`name`、`models`（第一个是默认；原生默认模型不在名单里报错，在就挪到第一个）、`temperature`、`top_p`、
+`max_output_tokens`、`reasoning_effort`（这家没有原生键时）、`headers`（请求头 → 环境变量名）、`extra_env`、`no_auth`、`protocol`、
+`role_models`。官方账号的连接不显示地址和密钥。渠道 / provider 名在片段里固定写 `custom` / `mesa`，只是展示用，解析时认任意一个名字。
+
+## 哪些字段在这里能改
+
+编辑已有连接时后端只改连接自己的字段（`ProfileStore::update`：名称、协议、API 后端、模型名单、模型分工、附加环境变量）；
+地址、密钥、无密钥、请求头、温度 / top_p / 输出上限 / 思考档属于网关，只走网关接口。片段里照样显示这些（与 CLI 实际配置一致），
+改了就在解析时拦下，指去页头「网关库」（`connection-snippet.ts gatewayOwnedChanges`），不悄悄丢掉。
+
+## 密钥
+
+前端本来就拿不到已存的密钥。片段里显示 `«已保存密钥 ···末4位»`：保持不动 = 不改；换成别的字符串 = 换新密钥（随保存提交，和表单里填新密钥同一条路）；
+删掉这一行也当不改（不能在片段里清空密钥）。

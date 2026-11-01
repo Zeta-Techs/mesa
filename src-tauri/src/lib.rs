@@ -19,6 +19,7 @@ mod coding;
 mod combo;
 mod config_dump;
 mod config_editor;
+mod connection_snippet;
 mod custom_runtime;
 mod dep_check;
 mod diagnostics;
@@ -619,6 +620,8 @@ pub fn run() {
             global_config::restore_global_backup,
             config_editor::config_files_read,
             config_editor::config_file_save,
+            connection_snippet::connection_snippet_render,
+            connection_snippet::connection_snippet_parse,
             global_config::gemini_use_api_key_auth,
             global_config::codex_client_continuity,
             global_config::fix_codex_client_continuity,
