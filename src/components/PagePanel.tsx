@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { createPortal } from "react-dom";
 import { ChevronLeft } from "lucide-react";
 import { confirmDialogOpen } from "./ConfirmDialog";
+import { iconActionClass } from "./PageFrame";
 
 /**
  * 整页面板（2026-11-01 用户拍板，取代连接页的添加 / 编辑连接与网关库弹层）：
@@ -116,21 +117,25 @@ export default function PagePanel({
       className={`fixed z-30 flex flex-col overflow-hidden bg-canvas outline-none ${animate ? "ccode-sheet-right" : ""}`}
       style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height, borderRadius: rect.radius }}
     >
+      {/* 与 PageHeader 同一套：ccode-page-header 的 0.5px 细线滚动后淡入（data-stuck）、页名 text-lg 粗体、副标题 micro / l4 基线对齐 */}
       <header
-        className={`flex h-12 shrink-0 items-center gap-2 px-3 ${scrolled ? "shadow-[inset_0_-0.5px_0_var(--color-hairline)]" : ""}`}
+        data-stuck={scrolled ? "" : undefined}
+        className="ccode-page-header relative flex h-12 shrink-0 items-center gap-2.5 px-4"
       >
         <button
           type="button"
           onClick={() => onBackRef.current()}
           title={`${backLabel}（Esc）`}
           aria-label={backLabel}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-l2 hover:bg-hover hover:text-l1"
+          className={iconActionClass}
         >
-          <ChevronLeft size={18} strokeWidth={1.8} aria-hidden="true" />
+          <ChevronLeft size={16} strokeWidth={1.8} aria-hidden="true" />
         </button>
-        <h2 className="min-w-0 truncate text-lg font-semibold text-l1">{title}</h2>
-        {subtitle && <span className="min-w-0 shrink truncate text-sm text-l3">{subtitle}</span>}
-        <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>
+        <div className="flex min-w-0 items-baseline gap-2.5">
+          <h2 className="shrink-0 text-lg font-semibold text-l1">{title}</h2>
+          {subtitle && <span className="truncate text-micro text-l4">{subtitle}</span>}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
       </header>
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className={`mx-auto w-full px-8 pb-10 pt-4 ${wide ? "max-w-6xl" : "max-w-3xl"}`}>{children}</div>

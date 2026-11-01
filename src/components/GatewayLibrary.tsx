@@ -7,7 +7,7 @@ import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
 import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, fieldClass, FoldMark, hoverRevealClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, quietActionClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import PagePanel from "./PagePanel";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
@@ -1186,7 +1186,7 @@ export default function GatewayLibrary({
           /* 少用的恢复动作：降为带说明的文字钮 */
           <button
             type="button"
-            className="text-l3 hover:text-l1"
+            className={`${quietActionClass} -ml-3`}
             title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
             onClick={() => void undoMerge()}
           >
@@ -1289,7 +1289,7 @@ export default function GatewayLibrary({
                     {editing === "new" || !editing.keyHint ? "密钥" : `密钥（留空不改，现存 ${editing.keyHint}）`}
                   </label>
                   {editing !== "new" && editing.keyHint && (
-                    <button type="button" className="text-micro text-err-text hover:underline" onClick={() => void onClearKey()}>
+                    <button type="button" className={`${ghostActionClass.replace("text-l3", "text-err-text")} -my-1`} onClick={() => void onClearKey()}>
                       清除本地密钥
                     </button>
                   )}
@@ -1344,7 +1344,7 @@ export default function GatewayLibrary({
                       {editing === "new" || !editing.walletKeyHint ? "系统访问令牌" : "系统访问令牌（留空不改）"}
                     </label>
                     {editing !== "new" && editing.walletKeyHint && (
-                      <button type="button" className="text-micro text-err-text hover:underline" onClick={() => void onClearWalletToken()}>
+                      <button type="button" className={`${ghostActionClass.replace("text-l3", "text-err-text")} -my-1`} onClick={() => void onClearWalletToken()}>
                         清除系统访问令牌
                       </button>
                     )}
