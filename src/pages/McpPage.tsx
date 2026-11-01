@@ -876,11 +876,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
         delete next[server.id];
         return next;
       });
-      toast(
-        on
-          ? `已分发到 ${AGENTS.find((a) => a.id === agent)?.label}`
-          : `已从 ${AGENTS.find((a) => a.id === agent)?.label} 移除`,
-      );
+      // 成功不报：这一家的开关当场翻过去就是结果（2026-11-01 用户：多余的提示删去）
     } catch (e) {
       const msg = String(e);
       // 该 agent 里的条目被外部改过：确认后才强删（保护手调版本）
@@ -906,11 +902,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
               delete next[server.id];
               return next;
             });
-            toast(
-              on
-                ? `已分发到 ${AGENTS.find((a) => a.id === agent)?.label}`
-                : `已从 ${AGENTS.find((a) => a.id === agent)?.label} 移除`,
-            );
           } catch (retry) {
             setError(String(retry));
           }
@@ -961,11 +952,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
         }),
       );
       setDeleteTarget(null);
-      toast(
-        keepAgentConfigs
-          ? "已从清单移除（各 agent 配置中的该条目保留）"
-          : "已删除",
-      );
+      // 整条删掉的不报（行当场没了）；只从清单移除时说一句各家配置还留着
+      if (keepAgentConfigs) toast("已从清单移除（各 agent 配置中的该条目保留）");
     } catch (e) {
       const msg = String(e);
       // keepAgentConfigs=true 后端跳过 EXTMOD 预检，这里只有连同删除路径会命中

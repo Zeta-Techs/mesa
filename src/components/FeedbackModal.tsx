@@ -611,7 +611,6 @@ export default function FeedbackModal({
       useAppStore.setState({ settings: s });
       setSmtpFrom("");
       setSmtpResult(null);
-      toast("已清除邮箱直发配置");
     } catch (e) {
       setSmtpResult({ ok: false, text: `清除失败：${String(e)}` });
     } finally {

@@ -874,7 +874,8 @@ export default function ReaderOverlay({
           quote: a.quote,
         });
         refreshNoteRef.current?.();
-        showToast(removed ? "已删掉这条标注" : "笔记里已经没有这条了");
+        // 删掉了不报（标注当场从笔记里消失）；笔记里早没了才说一声
+        if (!removed) showToast("笔记里已经没有这条了");
         return null;
       } catch (e) {
         const msg = `删除标注失败：${String(e)}`;

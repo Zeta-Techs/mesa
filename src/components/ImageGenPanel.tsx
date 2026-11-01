@@ -154,8 +154,8 @@ export default function ImageGenPanel({
   async function clearImageGenModel() {
     try {
       // 后端口径：网关与模型任一传空串 = 两个一起清空（settings.rs）
+      // 成功不报：面板当场回到没选出图模型的样子
       await useAppStore.getState().updateSettings({ imageGenGatewayId: "", imageGenModel: "" });
-      toast("已移除出图模型");
     } catch (e) {
       toast(`移除失败：${String(e)}`);
     }
@@ -220,7 +220,6 @@ export default function ImageGenPanel({
       for (const agent of pendingAgents) {
         await invoke("apply_skill", { id: skill.id, agent, enabled: true });
       }
-      toast(`已给 ${pendingAgents.map(labelOf).join("、")} 打开出图技能`);
     } catch (e) {
       toast(`打开出图技能失败：${String(e)}`);
     } finally {
@@ -235,8 +234,8 @@ export default function ImageGenPanel({
     const next = !skill.apps[agent];
     setToggling(agent);
     try {
+      // 成功不报：逐家开关当场翻过去就是结果
       await invoke("apply_skill", { id: skill.id, agent, enabled: next });
-      toast(next ? `已给 ${labelOf(agent)} 打开出图技能` : `已从 ${labelOf(agent)} 移除出图技能`);
     } catch (e) {
       toast(`${next ? "打开" : "移除"}失败：${String(e)}`);
     } finally {
