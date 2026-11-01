@@ -782,17 +782,26 @@ export default function ProjectTree({
     () => (pinnedKeys.size ? sessions.filter((s) => !pinnedKeys.has(`${s.agent}\n${s.sessionId}`)) : sessions),
     [sessions, pinnedKeys],
   );
+  // 开着的标签认出的会话：没起出标题也照列进文件夹（listedInFolder）。拼成字符串当依赖，免得每次输出都重算
+  const openChatKeysSig = terminalRunInputs
+    .filter((r) => r.sessionId)
+    .map((r) => `${r.agentId}\n${r.sessionId}`)
+    .join("\t");
+  const openChatKeys = useMemo(
+    () => new Set(openChatKeysSig ? openChatKeysSig.split("\t") : []),
+    [openChatKeysSig],
+  );
   const chatsByRoot = useMemo(() => {
     const m = new Map<string, SessionMetaDto[]>();
     for (const r of rows) {
       const k = pathKey(r.repoPath, IS_WINDOWS);
-      m.set(k, projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS));
+      m.set(k, projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys));
     }
     return m;
-  }, [rows, unpinnedSessions, worktreesOf]);
+  }, [rows, unpinnedSessions, worktreesOf, openChatKeys]);
   const scratchList = useMemo(
-    () => scratchChats(unpinnedSessions, projectPaths, IS_WINDOWS),
-    [unpinnedSessions, projectPaths],
+    () => scratchChats(unpinnedSessions, projectPaths, IS_WINDOWS, openChatKeys),
+    [unpinnedSessions, projectPaths, openChatKeys],
   );
   // 每个文件夹实际列出的行：分叉挂在原对话下面，收起的不列（列几段、「显示更多」都按这份算）
   const chatRowsOf = useMemo(() => {

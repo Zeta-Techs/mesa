@@ -165,6 +165,14 @@ test("没起名也没说过话的空对话不进课题 / 随手聊（对话页�
   assert.deepEqual(pinnedChats(sessions, ["claude-code\ne"]).map((s) => s.sessionId), ["e"]);
 });
 
+test("开着的对话没起出标题（只说了句「你好」）也列进随手聊 / 课题，行上才有 ⋯", () => {
+  const hi = session({ sessionId: "h", projectPath: SCRATCH, title: null, summary: null });
+  const untitled = session({ sessionId: "u", projectPath: "/repo", title: null });
+  const open = new Set(["claude-code\nh", "claude-code\nu"]);
+  assert.deepEqual(scratchChats([hi], [], false, open).map((s) => s.sessionId), ["h"]);
+  assert.deepEqual(projectChats([untitled], "/repo", [], false, open).map((s) => s.sessionId), ["u"]);
+});
+
 test("随手聊多少天没动的：连空对话一起；外面在跑的、开着的、没有时间的、项目里的都不算", () => {
   const now = Date.parse("2026-10-26T12:00:00Z");
   const old = "2026-10-10T00:00:00Z";

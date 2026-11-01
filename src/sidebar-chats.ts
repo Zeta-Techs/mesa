@@ -41,9 +41,10 @@ function listable(s: SessionMetaDto): boolean {
 }
 
 /** 课题 / 随手聊下面列不列：没起名、也没说过一句话的空对话不占侧栏（2026-10-26 用户：随手聊被「未命名对话」占满），
- *  对话页照列；开着的照样挂在文件夹最上面（openTabRows 认「列表里还没有的」）。置顶是人手钉的，不走这条 */
-function listedInFolder(s: SessionMetaDto): boolean {
-  return listable(s) && !tidySessionTitle(s).unnamed;
+ *  对话页照列。正开着的照列（openKeys = `agent\nsessionId`）：只说了句「你好」的新对话起不出标题，
+ *  不列就一直是只有 × 的标签行、没有 ⋯（2026-11-01 用户）。置顶是人手钉的，不走这条 */
+function listedInFolder(s: SessionMetaDto, openKeys: ReadonlySet<string>): boolean {
+  return listable(s) && (!tidySessionTitle(s).unnamed || openKeys.has(`${s.agent}\n${s.sessionId}`));
 }
 
 function byRecent(a: SessionMetaDto, b: SessionMetaDto): number {
@@ -58,12 +59,13 @@ export function projectChats(
   root: string,
   worktrees: readonly string[] = [],
   isWindows = false,
+  openKeys: ReadonlySet<string> = new Set(),
 ): SessionMetaDto[] {
   const key = pathKey(root, isWindows);
   return sessions
     .filter(
       (s) =>
-        listedInFolder(s) &&
+        listedInFolder(s, openKeys) &&
         (pathKey(s.projectPath, isWindows) === key ||
           worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
     )
@@ -138,12 +140,13 @@ export function scratchChats(
   sessions: readonly SessionMetaDto[],
   projectPaths: readonly string[],
   isWindows = false,
+  openKeys: ReadonlySet<string> = new Set(),
 ): SessionMetaDto[] {
   const projects = new Set(projectPaths.filter(Boolean).map((p) => pathKey(p, isWindows)));
   return sessions
     .filter(
       (s) =>
-        listedInFolder(s) &&
+        listedInFolder(s, openKeys) &&
         isScratchCwd(s.projectPath, isWindows) &&
         !projects.has(pathKey(s.projectPath, isWindows)),
     )
