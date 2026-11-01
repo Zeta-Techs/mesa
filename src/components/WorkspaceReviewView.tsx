@@ -86,7 +86,7 @@ import {
   type ChangeTreeNode,
   type DiffLine,
 } from "../diff-view";
-import { useAppStore } from "../store";
+import { selectHiddenProfiles, useAppStore } from "../store";
 import type {
   CitationHealthDto,
   GitCommitResultDto,
@@ -107,6 +107,8 @@ import type {
 import { usePolling } from "../polling";
 import { checkChipText, countChecks, type ChecksDto } from "../research-checks";
 import CheckList from "./CheckList";
+import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer } from "../cross-review";
+import { AGENTS } from "../types";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
 
@@ -1157,6 +1159,10 @@ function LiveWorkspaceReviewView({
   const [staleUpstream, setStaleUpstream] = useState<string | null>(null);
   const setPage = useAppStore((s) => s.setPage);
   const profiles = useAppStore((s) => s.profiles);
+  const hiddenProfiles = useAppStore(selectHiddenProfiles);
+  // 跨厂商复核：干活的是哪家（有 runId 才知道），复核挑另一家一等支持的
+  const [producerAgent, setProducerAgent] = useState<string | null>(null);
+  const [crossBusy, setCrossBusy] = useState(false);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
@@ -1369,6 +1375,13 @@ function LiveWorkspaceReviewView({
         if (!stale) setCitations(value);
       })
       .catch(() => {});
+    if (runId) {
+      invoke<{ agent: string } | null>("run_get", { id: runId })
+        .then((run) => {
+          if (!stale) setProducerAgent(run?.agent ?? null);
+        })
+        .catch(() => {});
+    }
     invoke<ChecksDto>("research_checks_read", { path: worktreePath })
       .then((value) => {
         if (!stale) setChecks(value.items.length > 0 || value.skipped > 0 ? value : null);
@@ -1676,6 +1689,41 @@ function LiveWorkspaceReviewView({
       setError(String(reason));
     } finally {
       setReturnBusy(false);
+    }
+  }
+
+  const crossReviewer = pickCrossReviewer(profiles ?? [], hiddenProfiles, producerAgent);
+  const crossReviewerLabel = crossReviewer
+    ? (AGENTS.find((a) => a.id === crossReviewer.agentId)?.label ?? crossReviewer.agentId)
+    : "";
+
+  /** 请另一家复核：同一工作副本里另开一个标签，用另一家 Agent 只读复核，结果写进核验清单 */
+  async function startCrossReview() {
+    if (!wsRow || !crossReviewer || crossBusy) return;
+    setCrossBusy(true);
+    setError(null);
+    try {
+      const request = await buildWorkspaceTerminalRequest(
+        wsRow,
+        crossReviewPrompt(crossReviewer.agentId, wsRow.repoPath),
+        { autoStart: true, launch: crossReviewer },
+      );
+      setPendingTerminal({
+        ...request,
+        title: `复核：${request.title ?? wsRow.name}`,
+        reuseKey: crossReviewReuseKey(wsRow.worktreePath),
+        focusSession: undefined,
+        agentId: crossReviewer.agentId,
+        profileId: crossReviewer.profileId,
+        model: crossReviewer.model,
+        autoLaunchProfileId: undefined,
+      });
+      setPage("terminal");
+      onClose();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setCrossBusy(false);
     }
   }
 
@@ -2728,6 +2776,17 @@ function LiveWorkspaceReviewView({
                     }`}
                   >
                     {checkChipText(checks.items)}
+                  </button>
+                )}
+                {contentReview && researchContext && crossReviewer && !mergeDone && (
+                  <button
+                    type="button"
+                    disabled={crossBusy || !wsRow}
+                    onClick={() => void startCrossReview()}
+                    title={`换 ${crossReviewerLabel}（${crossReviewer.profileName}）读原文摘录与正文，逐条判断支持与否；结论进核验清单，都标「待你判断」。只读，不改稿件`}
+                    className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                  >
+                    请 {crossReviewerLabel} 复核
                   </button>
                 )}
                 {citations && citations.bibFound && citations.totalRefs > 0 && (

@@ -142,7 +142,7 @@ test("检索步评审先出待确认与筛选决定，不重复摊 included.md",
         loader: "js",
         contents: args.path === "asset" ? "export default \"data:text/javascript,\";"
           : args.path === "confirm" ? "export const confirmDialog=async()=>true;"
-          : args.path === "store" ? "export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});"
+          : args.path === "store" ? "export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});export const selectHiddenProfiles=()=>[];"
           : args.path === "artifacts" ? "export const loadArtifactRows=async()=>[];"
           : "export default function Watch(){return null;}",
       }));

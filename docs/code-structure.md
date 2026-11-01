@@ -967,6 +967,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
                              #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
+  cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单、pickCrossReviewer（跳过干活那家与停用连接、同家取最近用过）、复核标签键与首条指令（tests/cross-review.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
   research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger

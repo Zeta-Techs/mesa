@@ -14,11 +14,11 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     b.onResolve({filter:/^\.\/ConfirmDialog$/},()=>({path:'confirm',namespace:'stub'}));
     // Vite 专属的 ?worker/?url 导入（monaco/pdfjs 的 worker）：Node 测试里按空资产桩掉
     b.onResolve({filter:/\?(worker|url)$/},()=>({path:'asset',namespace:'stub'}));
-    b.onLoad({filter:/.*/,namespace:'stub'},(args)=>({loader:'js',contents:args.path==='asset'?'export default "data:text/javascript,";':args.path==='confirm'?'export const confirmDialog=async()=>true;':args.path==='store'?'export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});':args.path==='artifacts'?'export const loadArtifactRows=async()=>[];':'export default function Watch(){return null;}'}));
+    b.onLoad({filter:/.*/,namespace:'stub'},(args)=>({loader:'js',contents:args.path==='asset'?'export default "data:text/javascript,";':args.path==='confirm'?'export const confirmDialog=async()=>true;':args.path==='store'?'export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});export const selectHiddenProfiles=()=>[];':args.path==='artifacts'?'export const loadArtifactRows=async()=>[];':'export default function Watch(){return null;}'}));
   }}]});
   const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost',pretendToBeVisual:true});
   const restore:Array<[string,PropertyDescriptor|undefined]>=[];
-  for(const[key,value]of Object.entries({window:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,localStorage:dom.window.localStorage,sessionStorage:dom.window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true,DOMMatrix:class{multiplySelf(){return this}preMultiplySelf(){return this}invertSelf(){return this}translateSelf(){return this}scaleSelf(){return this}multiply(){return this}inverse(){return this}},__reviewStore:{setPage(){},setSelectProjectReq(){},setFilePreviewReq(){},setPendingTerminal(){throw new Error('no run expected');},runningScripts:{}}})){
+  for(const[key,value]of Object.entries({window:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,localStorage:dom.window.localStorage,sessionStorage:dom.window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true,DOMMatrix:class{multiplySelf(){return this}preMultiplySelf(){return this}invertSelf(){return this}translateSelf(){return this}scaleSelf(){return this}multiply(){return this}inverse(){return this}},__reviewStore:{setPage(){},setSelectProjectReq(){},setFilePreviewReq(){},setPendingTerminal(){throw new Error('no run expected');},runningScripts:{},profiles:[{id:'cx',agent:'codex',name:'我的 Codex',models:['gpt-5'],lastUsedAt:null}]}})){
     restore.push([key,Object.getOwnPropertyDescriptor(globalThis,key)]);Object.defineProperty(globalThis,key,{value,configurable:true,writable:true});
   }
   let reviewOnly=false;
@@ -66,7 +66,9 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     assert.match(list.textContent!,/拦下（1）.*原文里找不到这段摘录.*manuscript\/draft.md:4.*「编的句子」/s);
     assert.match(list.textContent!,/待你判断（1）/);assert.match(list.textContent!,/通过（1） 展开/);
     assert.doesNotMatch(list.textContent!,/在引文库里/);
-    assert.match(list.textContent!,/另有 1 行核验记录读不懂/);assert.match(list.textContent!,/是否支持论断，仍要你判断/);
+    assert.match(list.textContent!,/另有 1 行核验记录读不懂/);
+    // 跨厂商复核（2026-11-02）：有另一家一等支持的连接就给按钮
+    assert.ok(Array.from(host.querySelectorAll('button')).some(b=>b.textContent==='请 Codex 复核'));assert.match(list.textContent!,/是否支持论断，仍要你判断/);
     // 2026-10-24：清单默认收成一行摘要（附带文件 · 带回 N / M 项），点开才列
     assert.match(host.textContent!,/附带文件/);assert.match(host.textContent!,/带回 1 \/ 1 项/);
     assert.doesNotMatch(host.textContent!,/papers\/result.pdf/);

@@ -110,6 +110,10 @@ fn parse_check_line(line: &str) -> Option<CheckItem> {
     if item.id.trim().is_empty() || item.kind.trim().is_empty() || item.title.trim().is_empty() {
         return None;
     }
+    // Agent 写的检查要读懂内容才能定，永不判通过：写成 passed 的一律按待你判断收
+    if item.checker.starts_with("agent:") && item.status == "passed" {
+        item.status = "needs_human".into();
+    }
     cap(&mut item.title);
     if let Some(ev) = item.evidence.as_mut() {
         cap_opt(&mut ev.source);
@@ -486,6 +490,14 @@ mod tests {
                 needs_human: 0
             }
         );
+    }
+
+    #[test]
+    fn agent_checks_never_pass() {
+        let line = r#"{"id":"X1","kind":"claim_support","status":"passed","title":"t","checker":"agent:codex"}"#;
+        assert_eq!(parse_check_line(line).unwrap().status, "needs_human");
+        let script = r#"{"id":"C1","kind":"citation_resolve","status":"passed","title":"t","checker":"script:cite_check"}"#;
+        assert_eq!(parse_check_line(script).unwrap().status, "passed");
     }
 
     #[test]

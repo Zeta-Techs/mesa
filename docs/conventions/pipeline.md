@@ -113,6 +113,9 @@
   `research-writing/num_check.py`（`manuscript/numbers.json` 数字追溯）、`stats-check/stat_check.py`（p 值与统计量、估计值与 CI）、
   `figure-forge/fig_check.py`（`figures/manifest.json` 逐张重跑）。脚本只拦确定性的不一致；登记文件（evidence / numbers / manifest）
   由干活的 Agent 写，**不得为过核验改结果文件或原文**。拦下的条目进 `verification-decisions.md` 逐条裁决。
+- **跨厂商复核**（`src/cross-review.ts`）：只从一等 Agent（Claude Code、Codex、Kimi）里挑、跳过干活的那家与停用连接，同家取最近用过的；
+  另开 `cross-review:<工作副本>` 标签（不用 `ws:` 键），只写 `.ccode/checks/cross-review.jsonl`。后端把 `checker` 以 `agent:` 开头的
+  `passed` 一律降成 `needs_human`——Agent 的判断永不自动通过。
 - **AI 使用声明**以 `ai-usage.md` 为事实依据（Mesa 统计，只含在 Mesa 里跑过的），用途措辞与是否补充 Mesa 之外用过的工具由作者核对；不做「降 AI 率」。
 
 ## 工作区生命周期（无损口径）
