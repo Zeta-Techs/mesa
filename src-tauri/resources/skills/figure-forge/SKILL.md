@@ -66,6 +66,12 @@ provides: [figure-forge]
 - 输出文件命名与正文引用一一对应（如 `fig2-ablation.pdf`）；临时中间稿可清理；已接受/发布图按版本留存，新版本不静默覆盖旧证据；
 - 输出文件名与 TASK.md/提货单登记的引用名逐一对账，对不上即报。
 
+### 7. 图登记与重建核验（固定脚本，结果进 Mesa 评审页的核验清单）
+
+- 每张数据图在 `figures/manifest.json` 登记一行：`{"file": "figures/fig2-ablation.pdf", "script": "figures/make_figures.py", "args": ["fig2"]}`（脚本按扩展名运行：.py / .R / .jl，在工作目录下执行）。示意图、转载图不登记，在 `figures/README.md` 写明来源。
+- 出完图跑技能目录里的 `scripts/fig_check.py --root <工作目录> --coverage`（不复制进工作区；`python3` 在 Windows 上换成 `python`）：逐张重跑脚本，失败或没生成登记的文件就拦下；重跑后字节不同（PDF / PNG 常带时间戳）交人目视对比。结果写进 `.ccode/checks/fig-check.jsonl`。
+- 拦下的修到能重跑为止；`--coverage` 列出稿件引用了却没登记脚本的图，数据图补登记，示意图在 README 写明来源。
+
 ## 交付前复查（两层）
 
 - **机械层**：脚本自检无文本重叠、不出图框、字号达标（bbox 两两重叠检测可写 10 行内），不通过则修到通过；

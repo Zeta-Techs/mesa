@@ -169,7 +169,7 @@ function declarationsTask(): HumanTaskDto {
  *  三套定稿都会标 [待核实]，原先只有综述把它们列出来，另两套留在稿子里没人管）。 */
 function verificationListClause(finalMd: string): string {
   return (
-    `写 manuscript/verification-decisions.md：把 ${finalMd} 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，bib-check 核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到）也各列一行，` +
+    `写 manuscript/verification-decisions.md：把 ${finalMd} 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到、正文数字与结果对不上、p 值与统计量对不上）也各列一行，` +
     "格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。" +
     "「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。" +
     "清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。"

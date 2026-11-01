@@ -395,6 +395,36 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/journal-abbreviations.csv"),
     ),
     (
+        "research-writing",
+        "scripts/num_check.py",
+        include_str!("../resources/skills/research-writing/scripts/num_check.py"),
+    ),
+    (
+        "research-writing",
+        "scripts/mesa_checks.py",
+        include_str!("../resources/mesa_checks.py"),
+    ),
+    (
+        "stats-check",
+        "scripts/stat_check.py",
+        include_str!("../resources/skills/stats-check/scripts/stat_check.py"),
+    ),
+    (
+        "stats-check",
+        "scripts/mesa_checks.py",
+        include_str!("../resources/mesa_checks.py"),
+    ),
+    (
+        "figure-forge",
+        "scripts/fig_check.py",
+        include_str!("../resources/skills/figure-forge/scripts/fig_check.py"),
+    ),
+    (
+        "figure-forge",
+        "scripts/mesa_checks.py",
+        include_str!("../resources/mesa_checks.py"),
+    ),
+    (
         "bib-check",
         "scripts/cite_check.py",
         include_str!("../resources/skills/bib-check/scripts/cite_check.py"),

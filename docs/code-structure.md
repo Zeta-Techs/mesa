@@ -1620,6 +1620,13 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 认不出的行计 skipped 不猜；runs/ 是存档不读）；record_run_closed 在 Run 关闭后（close_run_with_result /
                              # 崩溃补收）把运行事实追加进项目 .ccode/record.jsonl（runId 去重、record.lock）、核验项存档 checks/runs/<runId>.jsonl、
                              # 整份重写 .ccode/ai-usage.md（AI 使用声明事实底稿）；append_jsonl_line 是项目 JSONL 账本的通用追加（验收账本共用）
+  （核验公共）resources/mesa_checks.py  # 核验项写法（三档 status、整份重写 .ccode/checks/<名>.jsonl、summary 退出码），随包复制进各技能 scripts/
+  （技能脚本）research-writing/scripts/num_check.py  # 数字追溯：manuscript/numbers.json 登记的正文数字到 JSON 键路径 / CSV 行列取值，按显示位数比舍入；
+                             #   --coverage 列未登记小数与百分数（tests/check-scripts.test.ts）
+  （技能脚本）stats-check/scripts/stat_check.py  # 统计自洽：t/F/χ²/r/z 按统计量舍入区间重算双侧 p（纯标准库 Beta / Gamma），估计值在不在自己的 CI；
+                             #   只拦算术不一致，不评方法
+  （技能脚本）figure-forge/scripts/fig_check.py  # 图重建：figures/manifest.json 逐张重跑脚本（.py/.R/.jl，5 分钟上限），逐字节一致才通过，
+                             #   字节不同交人目视；--coverage 列稿件引用了却没登记的图
   （技能脚本）bib-check/scripts/cite_check.py  # 引用核验固定脚本（2026-11-02，tests/cite-check.test.ts）：refs（引用键 / 重复键；联网查 DOI 指向与
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
                              #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py

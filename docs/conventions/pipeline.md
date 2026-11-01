@@ -109,6 +109,10 @@
   这次工作目录里的核验项存档到 `.ccode/checks/runs/<runId>.jsonl`，并按记录整份重写 `.ccode/ai-usage.md`。登录、Mesa 内部后台调用、
   没有项目的 Run 不记。模型取会话用量里已索引的模型，取不到用启动时记下的，都没有写「（未记录）」，不猜。
 - 这几样与 `acceptance-log.jsonl` 同口径：进 `.gitignore`（`LEDGER_IGNORE_PATHS`）、开工 bootstrap 排除、合并闸门双态豁免（`is_accumulation_ledger`）。
+- **核验脚本一览**（都在技能目录里直接调用，不复制进工作区）：`bib-check/cite_check.py`（引用键、DOI、撤稿、原文摘录逐字）、
+  `research-writing/num_check.py`（`manuscript/numbers.json` 数字追溯）、`stats-check/stat_check.py`（p 值与统计量、估计值与 CI）、
+  `figure-forge/fig_check.py`（`figures/manifest.json` 逐张重跑）。脚本只拦确定性的不一致；登记文件（evidence / numbers / manifest）
+  由干活的 Agent 写，**不得为过核验改结果文件或原文**。拦下的条目进 `verification-decisions.md` 逐条裁决。
 - **AI 使用声明**以 `ai-usage.md` 为事实依据（Mesa 统计，只含在 Mesa 里跑过的），用途措辞与是否补充 Mesa 之外用过的工具由作者核对；不做「降 AI 率」。
 
 ## 工作区生命周期（无损口径）
