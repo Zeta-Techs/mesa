@@ -74,6 +74,9 @@ pub struct FeedbackPayloadDto {
     /// 「聊天和终端对不上」时附的两边对照（feedback_chat_snapshot 脱敏截断后的原文）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_snapshot: Option<String>,
+    /// 本机使用计数（local_stats，只有次数）；用户勾选才带，默认不带
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_stats: Option<String>,
 }
 
 /// 诊断包附件上限：正常导出几百 KB，20MB 只兜异常大包
@@ -423,6 +426,7 @@ pub async fn submit_feedback(
     images: Option<Vec<FeedbackImageDto>>,
     diagnostics: Option<String>,
     chat_snapshot: Option<String>,
+    usage_stats: Option<String>,
 ) -> Result<(), String> {
     let endpoint = FEEDBACK_ENDPOINT.ok_or_else(|| "未配置反馈端点（本版本走邮件通道）".to_string())?;
     let diagnostics = match diagnostics {
@@ -450,6 +454,7 @@ pub async fn submit_feedback(
         images,
         diagnostics,
         chat_snapshot: chat_snapshot.map(|t| chat_snapshot_text(&t, &crate::profiles::stored_secrets())),
+        usage_stats,
     };
     let client = reqwest::Client::builder()
         .timeout(SUBMIT_TIMEOUT)

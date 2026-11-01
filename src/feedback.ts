@@ -85,6 +85,8 @@ export interface FeedbackBodyInput {
   errorLog?: string | null;
   /** 「聊天和终端对不上」的两边对照（chat-mismatch.ts 拼、后端 feedback_chat_snapshot 脱敏）；有自己的勾选 */
   chatSnapshot?: string | null;
+  /** 本机使用计数（localStatsText 拼，只有次数）；有自己的勾选，默认不带 */
+  usageStats?: string | null;
 }
 
 /** 「自动附带」段（含分隔标题行）：邮件正文与表单里的发送预览共用，
@@ -93,11 +95,13 @@ export function feedbackAutoSection(
   envLine?: string,
   errorLog?: string | null,
   chatSnapshot?: string | null,
+  usageStats?: string | null,
 ): string {
   const auto: string[] = [];
   if (envLine) auto.push(envLine);
   if (errorLog) auto.push("", "最近错误日志：", errorLog);
   if (chatSnapshot) auto.push(...(auto.length ? [""] : []), chatSnapshot);
+  if (usageStats) auto.push(...(auto.length ? [""] : []), usageStats);
   if (!auto.length) return "";
   return ["——以下由 Mesa 自动附带——", ...auto].join("\n");
 }
@@ -105,7 +109,7 @@ export function feedbackAutoSection(
 export function feedbackBody(input: FeedbackBodyInput): string {
   const lines: string[] = [stripUnfilledTemplate(input.detail.trim())];
   if (input.contact?.trim()) lines.push("", `联系方式：${input.contact.trim()}`);
-  const auto = feedbackAutoSection(input.envLine, input.errorLog, input.chatSnapshot);
+  const auto = feedbackAutoSection(input.envLine, input.errorLog, input.chatSnapshot, input.usageStats);
   if (auto) lines.push("", auto);
   return lines.join("\n");
 }
@@ -194,6 +198,7 @@ export interface FeedbackPayload {
   errorLog?: string | null;
   images?: FeedbackImage[];
   chatSnapshot?: string;
+  usageStats?: string;
 }
 
 export function feedbackPayload(
@@ -218,7 +223,28 @@ export function feedbackPayload(
     ...(input.errorLog ? { errorLog: input.errorLog } : {}),
     ...(input.images?.length ? { images: input.images } : {}),
     ...(input.chatSnapshot ? { chatSnapshot: input.chatSnapshot } : {}),
+    ...(input.usageStats ? { usageStats: input.usageStats } : {}),
   };
+}
+
+/** 本机使用计数（local_stats_read）。只有次数，不含任何文件名、对话或项目内容 */
+export interface LocalStats {
+  since: string;
+  runsRecorded: number;
+  accepted: number;
+  checksPassed: number;
+  checksBlocked: number;
+  checksNeedsHuman: number;
+  exports: number;
+}
+
+/** 反馈里附带的那一行；一次都没记过时返回 null（不附空数） */
+export function localStatsText(stats: LocalStats | null | undefined): string | null {
+  if (!stats?.since) return null;
+  return (
+    `使用计数（自 ${stats.since}，只有次数）：AI 运行记录 ${stats.runsRecorded} 次，保存进项目 ${stats.accepted} 次，` +
+    `核验 通过 ${stats.checksPassed} / 拦下 ${stats.checksBlocked} / 待你判断 ${stats.checksNeedsHuman}，导出 ${stats.exports} 次`
+  );
 }
 
 /** 邮件通道的附件注记：mailto 带不了附件，截图已由后端落盘，

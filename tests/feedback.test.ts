@@ -20,6 +20,8 @@ import {
   feedbackImageSrc,
   initialFeedbackChannel,
   initialWebmailTarget,
+  localStatsText,
+  feedbackAutoSection,
 } from "../src/feedback.ts";
 
 test("类型闭集四档，标签与引导语齐备", () => {
@@ -183,4 +185,22 @@ test("附件能否随信：端点与邮箱直发是真实附件，邮件应用/�
     feedbackImageSrc({ name: "a.png", mime: "image/png", data: "aGk=" }),
     "data:image/png;base64,aGk=",
   );
+});
+
+test("使用计数（2026-11-02）：只有次数；没记过不附；勾了才进自动附带段与负载", () => {
+  assert.equal(localStatsText(null), null);
+  assert.equal(
+    localStatsText({ since: "", runsRecorded: 0, accepted: 0, checksPassed: 0, checksBlocked: 0, checksNeedsHuman: 0, exports: 0 }),
+    null,
+  );
+  const line = localStatsText({ since: "2026-11-02", runsRecorded: 3, accepted: 2, checksPassed: 10, checksBlocked: 1, checksNeedsHuman: 4, exports: 0 })!;
+  assert.equal(
+    line,
+    "使用计数（自 2026-11-02，只有次数）：AI 运行记录 3 次，保存进项目 2 次，核验 通过 10 / 拦下 1 / 待你判断 4，导出 0 次",
+  );
+  assert.match(feedbackAutoSection("", null, null, line), /使用计数/);
+  assert.equal(feedbackAutoSection("", null, null, null), "");
+  const payload = feedbackPayload({ kind: "bug", title: "t", detail: "d", usageStats: line });
+  assert.equal(payload.usageStats, line);
+  assert.equal(feedbackPayload({ kind: "bug", title: "t", detail: "d" }).usageStats, undefined);
 });

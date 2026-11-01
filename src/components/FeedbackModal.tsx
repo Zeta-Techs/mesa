@@ -51,6 +51,7 @@ import {
   feedbackSubject,
   initialFeedbackChannel,
   initialWebmailTarget,
+  localStatsText,
   mailtoTooLong,
   stripUnfilledTemplate,
   webmailBody,
@@ -58,6 +59,7 @@ import {
   type FeedbackEnv,
   type FeedbackImage,
   type FeedbackKind,
+  type LocalStats,
 } from "../feedback";
 import type { MismatchReport } from "../chat-mismatch";
 
@@ -202,6 +204,9 @@ export default function FeedbackModal({
   const [errorLog, setErrorLog] = useState<string | null | undefined>(undefined);
   // 「和终端对不上」的两边对照（后端已脱敏）：单独勾选、单独预览，与「附环境」不同进退
   const [chatSnapshot, setChatSnapshot] = useState<string | null>(null);
+  // 本机使用计数：默认不带，用户勾选才随反馈发出（2026-11-02 拍板）
+  const [usageStats, setUsageStats] = useState<string | null>(null);
+  const [includeStats, setIncludeStats] = useState(false);
   const [includeSnapshot, setIncludeSnapshot] = useState(true);
   const [snapshotPreviewOpen, setSnapshotPreviewOpen] = useState(false);
   const [images, setImages] = useState<FeedbackImage[]>([]);
@@ -287,6 +292,9 @@ export default function FeedbackModal({
     invoke<string | null>("feedback_error_log")
       .then(setErrorLog)
       .catch(() => setErrorLog(null));
+    invoke<LocalStats>("local_stats_read")
+      .then((stats) => setUsageStats(localStatsText(stats)))
+      .catch(() => setUsageStats(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -321,6 +329,7 @@ export default function FeedbackModal({
   // 勾「附环境」时连最近错误日志一起带上（body/mailto/webmail 共用）
   const attachedErrorLog = includeEnv ? (errorLog ?? null) : null;
   const attachedSnapshot = includeSnapshot ? chatSnapshot : null;
+  const attachedStats = includeStats ? usageStats : null;
   // 模板原样未填不算已填：剔除空模板行后判定，出站也用同一份
   const detailFilled = stripUnfilledTemplate(detail.trim());
   const ready = title.trim().length > 0 && detailFilled.length > 0;
@@ -332,6 +341,7 @@ export default function FeedbackModal({
     envLine,
     errorLog: attachedErrorLog,
     chatSnapshot: attachedSnapshot,
+    usageStats: attachedStats,
   });
   const hasAttachments = images.length > 0 || !!diagPath;
   const busy = sending || smtpSaving || smtpTesting;
@@ -408,10 +418,12 @@ export default function FeedbackModal({
         errorLog: attachedErrorLog,
         images,
         chatSnapshot: attachedSnapshot ?? undefined,
+        usageStats: attachedStats ?? undefined,
       });
       await invoke("submit_feedback", {
         ...payload,
         chatSnapshot: payload.chatSnapshot ?? null,
+        usageStats: payload.usageStats ?? null,
         diagnostics: diagPath,
       });
       toast("已发送，谢谢你的反馈");
@@ -1080,9 +1092,18 @@ export default function FeedbackModal({
             </div>
             {autoPreviewOpen && (
               <pre className="mt-1.5 max-h-40 overflow-auto rounded-md ccode-well p-2 font-mono text-micro leading-4 text-l2">
-                {feedbackAutoSection(envLine, attachedErrorLog, null) ||
+                {feedbackAutoSection(envLine, attachedErrorLog, null, attachedStats) ||
                   "（未勾选——不会附加任何版本环境与错误日志）"}
               </pre>
+            )}
+            {usageStats && (
+              <div className="mt-1.5">
+                <Checkbox
+                  checked={includeStats}
+                  onChange={setIncludeStats}
+                  label={<span className="text-xs text-l2">附上使用计数（只有次数，不含文件名和内容，帮我们判断核验是否有用）</span>}
+                />
+              </div>
             )}
           </div>
 
