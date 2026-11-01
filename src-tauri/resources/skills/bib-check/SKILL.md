@@ -36,10 +36,8 @@ provides: [bib-check]
 
 ### 2. 引用键核对
 
-- 从正文提取全部 `[@key]` 形式的引用键；LaTeX 稿件同时提取 `\\cite{key}`、`\\citep{key}`、`\\citet{key}`、`\\parencite{key}`、`\\textcite{key}`、`\\autocite{key}` 等命令中的键，逗号分隔的多键逐个展开。检查范围在报告开头注明（Markdown / LaTeX / 两者）；
-- 每个键必须在 `references.bib` 中存在——缺失的列入报告「未解析引用」节（含出现位置：节+行号）；
+- 引用键能否在 `references.bib` 找到、bib 有没有重复键，以第 0 步 `cite_check.py refs` 的结果为准（它已认 `[@key]` 与 LaTeX 各类 `\\cite` 命令、逐键展开），找不到的照抄进「未解析引用」节（含位置），重复键列为 Critical 进「重复 bib 键」节；检查范围在报告开头注明（Markdown / LaTeX / 两者）。脚本没法读的稿件（如只有 Word）才手工提取；
 - 占位引用扫描：正文中 `[CITATION NEEDED]`、`TODO: 补引用` 等占位标记列入「未解析引用」节（含位置）；
-- bib 重复键：同一键出现多条会静默覆盖前一条，列为 Critical 列入「重复 bib 键」节；
 - 反向核对：bib 中从未被正文引用的条目列入「未引用条目」节（不视为错误，供用户决定去留）。
 
 ### 3. bib 条目字段核对
@@ -55,6 +53,8 @@ provides: [bib-check]
 - 若项目存在 `papers/` 目录：抽查 bib 条目是否有对应 PDF（按「作者年份-短标题」命名口径匹配）；列在 `papers/to-fetch.md` 里、编号后还没有 ✓ 的（付费墙，等人补全文）跳过并在报告中计数说明。
 
 ### 5. 外部元数据核验（可选，联网工具可用时）
+
+DOI 是否存在、是否指向这篇、有没有撤稿 / 更正登记，以第 0 步 `refs` 的结果为准，不再逐条手查；本节补做脚本不查的：作者 / 年份 / 页码等字段冲突、DBLP / arXiv 来源、预印本升级。
 
 - 来源层级（按可信度从高到低取用）：DOI 解析/出版社页 > DBLP（CS 领域优先，`dblp.org/doi/<doi>.bib`）> CrossRef（`https://api.crossref.org/works/<doi>`）> arXiv API > 标题检索兜底；每条核验结论注明依据来源（如 dblp / crossref / 标题检索）；
 - 判定口径二分，两类不得混报：
