@@ -9,7 +9,7 @@ import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
-import { Modal } from "./Modal";
+import PagePanel, { PanelAnchor } from "./PagePanel";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
@@ -272,8 +272,14 @@ export default function GatewayLibrary({
   initialNew,
   onAddConnection,
   onEditProfile,
+  animate = true,
+  hidden = false,
 }: {
   onClose: () => void;
+  /** 从连接返回网关库时重开不再播滑入 */
+  animate?: boolean;
+  /** 连接页切走了：面板藏起来，内容留着 */
+  hidden?: boolean;
   onJumpUsage?: (gatewayId: string) => void;
   initialId?: string | null;
   /** 打开即进「新建网关」表单（上手引导「打开网关库」） */
@@ -1159,37 +1165,36 @@ export default function GatewayLibrary({
   });
 
   return (
-    // 统一弹层（2026-10-31）：Esc / 关闭钮走 closeLibrary（有没保存的修改先问）；有修改时点遮罩不关
-    <Modal
-      open
-      size="lg"
-      overflow="hidden"
-      dismissOnBackdrop={!dirty}
-      onClose={() => void closeLibrary()}
-      contentClassName="flex min-h-0 flex-1 flex-col"
-      title={
+    // 整页面板（2026-11-01，取代 10-31 的统一弹层）：‹ 返回 / Esc 走 closeLibrary 或回列表（有没保存的修改先问）
+    <PagePanel
+      hidden={hidden}
+      title={editing ? (editing === "new" ? "新建网关" : `编辑「${editingName}」`) : "网关库"}
+      subtitle={editing ? "网关库" : undefined}
+      backLabel={editing ? "返回网关库" : "返回连接"}
+      animate={animate}
+      sections={!!editing}
+      onBack={async () => {
+        if (!editing) return void closeLibrary();
+        if (await confirmDiscard()) setEditing(null);
+      }}
+      footerNote={
         editing ? (
-          <span className="flex min-w-0 items-center gap-1.5">
-            <button
-              type="button"
-              className="shrink-0 text-l3 hover:text-l1"
-              onClick={async () => {
-                if (await confirmDiscard()) setEditing(null);
-              }}
-            >
-              ‹ 网关库
-            </button>
-            <span className="text-l4">/</span>
-            <span className="truncate">{editing === "new" ? "新建网关" : `编辑「${editingName}」`}</span>
-          </span>
+          dirty && <span className="text-l3">有没保存的修改</span>
         ) : (
-          "网关库"
+          /* 少用的恢复动作：降为带说明的文字钮 */
+          <button
+            type="button"
+            className="text-l3 hover:text-l1"
+            title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
+            onClick={() => void undoMerge()}
+          >
+            拆开自动合并的连接
+          </button>
         )
       }
       footer={
         editing ? (
           <>
-            {dirty && <span className="mr-auto text-xs text-l3">有没保存的修改</span>}
             <button
               type="button"
               className={secondaryActionClass}
@@ -1205,15 +1210,6 @@ export default function GatewayLibrary({
           </>
         ) : (
           <>
-            {/* 少用的恢复动作：降为带说明的文字钮 */}
-            <button
-              type="button"
-              className="mr-auto text-l3 hover:text-l1"
-              title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
-              onClick={() => void undoMerge()}
-            >
-              <span className="text-xs">拆开自动合并的连接</span>
-            </button>
             <button type="button" className={secondaryActionClass} onClick={() => void closeLibrary()}>
               关闭
             </button>
@@ -1231,9 +1227,10 @@ export default function GatewayLibrary({
           {notice && <NoticeBar onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
         </div>
       )}
-      <div className="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1">
+      <div>
         {editing ? (
           <div className="space-y-2">
+            <PanelAnchor id="basic" label="基本信息" />
             {editing === "new" && (
               <div className="text-sm text-l2">
                 服务商
@@ -1259,6 +1256,7 @@ export default function GatewayLibrary({
               名称
               <input className={`${fieldClass} mt-1 w-full`} value={name} onChange={(e) => setName(e.target.value)} />
             </label>
+            <PanelAnchor id="address" label="地址与密钥" />
             <label className="block text-sm text-l2">
               <span className="flex items-center justify-between gap-2">
                 <span>地址</span>
@@ -1357,6 +1355,7 @@ export default function GatewayLibrary({
                 </label>
               </div>
             )}
+            <PanelAnchor id="slots" label="各协议地址" />
             <div>
               <button
                 type="button"
@@ -1411,6 +1410,7 @@ export default function GatewayLibrary({
                 </div>
               )}
             </div>
+            <PanelAnchor id="compat" label="兼容与请求头" />
             <div>
               <button
                 type="button"
@@ -1471,6 +1471,7 @@ export default function GatewayLibrary({
                 </div>
               )}
             </div>
+            <PanelAnchor id="bindings" label="用这个网关的连接" />
             {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
                 已绑的点一下直接编辑 */}
             {editing !== "new" && (
@@ -1510,6 +1511,7 @@ export default function GatewayLibrary({
                 )}
               </div>
             )}
+            <PanelAnchor id="models" label="模型目录" />
             <div className="text-sm text-l2">
               <button
                 type="button"
@@ -1901,6 +1903,6 @@ export default function GatewayLibrary({
           </ul>
         )}
       </div>
-    </Modal>
+    </PagePanel>
   );
 }

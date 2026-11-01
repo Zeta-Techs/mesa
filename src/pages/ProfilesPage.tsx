@@ -98,6 +98,7 @@ import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { Modal } from "../components/Modal";
+import PagePanel, { PanelAnchor } from "../components/PagePanel";
 // 编辑配置文件弹层带 Monaco，打开时才加载
 const ConfigFileEditorDialog = lazy(() => import("../components/ConfigFileEditorDialog"));
 // 编辑连接的「配置」视图同理：切过去才加载 Monaco
@@ -153,7 +154,7 @@ import type {
   LaunchPlanPreviewDto,
 } from "../types";
 
-/** 添加 / 编辑连接弹层（导出供 UI 测试挂载） */
+/** 添加 / 编辑连接整页面板（PagePanel，2026-11-01 由弹层改来；导出供 UI 测试挂载） */
 export function ProfileModal({
   initial,
   presetAgent,
@@ -162,6 +163,8 @@ export function ProfileModal({
   onClose,
   onSaved,
   onOpenGateway,
+  backLabel = "返回连接",
+  hidden = false,
 }: {
   initial: Profile | null;
   /** 从某个 agent 组的「+ 添加连接」打开时预选该 agent */
@@ -174,6 +177,10 @@ export function ProfileModal({
   /** 保存成功回调：页面据此判断要不要提示「该 agent 有标签在跑，需重开才生效」 */
   onSaved?: (agent: string, name: string) => void;
   onOpenGateway?: (id: string) => void;
+  /** 返回钮文字：从网关库进来时写「返回网关库」 */
+  backLabel?: string;
+  /** 连接页切走了：面板藏起来，填的内容留着 */
+  hidden?: boolean;
 }) {
   const saveProfile = useAppStore((s) => s.saveProfile);
   const bindGateway = useAppStore((s) => s.bindGateway);
@@ -861,34 +868,37 @@ export function ProfileModal({
     }) ?? (pickedMissing ? `选中的网关缺 ${pickedMissing} 地址，换一个网关或去网关库补` : null);
   const editGateway = initial?.gatewayId ? gateways.find((g) => g.id === initial.gatewayId) : undefined;
 
+  const agentLabel = AGENTS.find((a) => a.id === (initial?.agent ?? form.agent))?.label ?? form.agent;
   return (
-    <Modal
-      open
-      title={
-        initial
-          ? `编辑连接 · ${AGENTS.find((a) => a.id === initial.agent)?.label ?? initial.agent}`
-          : "添加连接"
+    <PagePanel
+      hidden={hidden}
+      title={initial ? "编辑连接" : "添加连接"}
+      subtitle={initial ? `${initial.name} · ${agentLabel}` : undefined}
+      backLabel={backLabel}
+      onBack={() => void guardedClose()}
+      sections={view === "form"}
+      actions={
+        initial ? (
+          <SegTabs
+            items={[
+              { id: "form", label: "表单" },
+              { id: "snippet", label: "配置" },
+            ]}
+            value={view}
+            onChange={(id) => void switchView(id as "form" | "snippet")}
+          />
+        ) : undefined
       }
-      description={
-        initial ? "改这条连接用的模型名单和附加环境变量。" : undefined
+      /* 还缺什么 / 保存失败写在按钮左边常驻 */
+      footerNote={
+        (error || blocker) && (
+          <span className={`line-clamp-2 ${error ? "text-err-text" : "text-l3"}`} title={error ?? undefined}>
+            {error ?? blocker}
+          </span>
+        )
       }
-      onClose={() => void guardedClose()}
-      dismissOnBackdrop={!touched}
-      size="md"
-      // 标题与「取消 / 保存」常驻，只有表单滚动（2026-10-23 弹层审查：保存钮原先跟着表单滚出视野）
-      overflow="hidden"
-      contentClassName="flex-1 overflow-y-auto overscroll-contain -mx-1 px-1"
       footer={
         <>
-          {/* 还缺什么 / 保存失败写在按钮左边常驻（原先禁用原因只在悬停里、失败提示在表单最底下常滚出视野） */}
-          {(error || blocker) && (
-            <span
-              className={`mr-auto min-w-0 flex-1 text-xs ${error ? "text-err-text" : "text-l3"} line-clamp-2`}
-              title={error ?? undefined}
-            >
-              {error ?? blocker}
-            </span>
-          )}
           <button type="button" onClick={() => void guardedClose()} className={secondaryActionClass}>
             取消
           </button>
@@ -915,26 +925,17 @@ export function ProfileModal({
       }
     >
       <form id={formId} onSubmit={submit}>
-        {initial && (
-          <div className="mb-4 flex items-center gap-3">
-            <SegTabs
-              items={[
-                { id: "form", label: "表单" },
-                { id: "snippet", label: "配置" },
-              ]}
-              value={view}
-              onChange={(id) => void switchView(id as "form" | "snippet")}
-            />
-            {view === "snippet" && snippet && (
-              <span className="min-w-0 truncate text-micro text-l3" title={snippet.file}>
-                {snippet.format === "toml" ? "TOML" : "JSON"} · 对应 {snippet.file}
-              </span>
-            )}
-          </div>
+        {initial && view === "form" && (
+          <p className="mb-4 text-xs text-l3">改这条连接用的模型名单和附加环境变量。</p>
         )}
         {view === "snippet" && (
           <div className="space-y-2">
-            <div className="h-[min(56vh,520px)] overflow-hidden rounded-md border border-hairline">
+            {snippet && (
+              <p className="text-xs text-l3" title={snippet.file}>
+                {snippet.format === "toml" ? "TOML" : "JSON"} · 对应 {snippet.file}
+              </p>
+            )}
+            <div className="h-[min(68vh,720px)] overflow-hidden rounded-md border border-hairline">
               <Suspense fallback={<p className="p-3 text-xs text-l3">◌ 正在打开编辑器…</p>}>
                 <MonacoField
                   value={snippetText}
@@ -953,6 +954,7 @@ export function ProfileModal({
         )}
         <div hidden={view === "snippet"}>
 
+        {!initial && <PanelAnchor id="agent" label="Agent" />}
         {/* 2026-10-31 简化：Agent 与账号类型并成一行（原先各占一段标题 + 控件） */}
         {!initial && (
         <div className="mb-4 flex items-end gap-3">
@@ -1007,6 +1009,7 @@ export function ProfileModal({
         </div>
         )}
 
+        <PanelAnchor id="gateway" label="网关" />
         {/* 编辑时先说清用的是哪个网关（地址、密钥、逐模型参数都在那边改）；有没保存的修改，去之前先问 */}
         {initial?.gatewayId && (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-hairline px-3 py-2 text-xs">
@@ -1315,6 +1318,7 @@ export function ProfileModal({
           </div>
             </>
           )}
+          <PanelAnchor id="models" label="模型" />
           {/* 选用已有网关 / 编辑绑定：目录在网关；此处可现拉并写入，不改当前勾选 */}
           {!showGatewayFields && catalogGatewayId && form.accountType === "api" && (
             <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1593,6 +1597,7 @@ export function ProfileModal({
             );
           })()}
         </div>
+        <PanelAnchor id="roles" label="模型分工" />
         {/* 模型分工（2026-10-17）：哪些小任务 / 子 Agent 用哪个模型，原先由 Mesa 暗中补齐，现在摆出来可改。
             名单里有模型才出现（2026-10-23：空名单时只能选「跟主模型」，整块是噪声）；下拉用 MenuSelect，
             与弹层里其余下拉同一套长相（原生 select 是系统样式、字号也对不上） */}
@@ -1653,6 +1658,7 @@ export function ProfileModal({
             </div>
           );
         })()}
+        <PanelAnchor id="effect" label="生效预览" />
         {/* 生效预览（2026-10-30）：已保存的连接才有，九家同一块；内容按这家的启动注入与设为全局写入算 */}
         {initial?.id && (
           <EffectPreview
@@ -1664,6 +1670,7 @@ export function ProfileModal({
             }
           />
         )}
+        <PanelAnchor id="bind" label="同时绑到" />
         {/* 同时绑到：换 Agent 不必重走一遍「添加连接 → 选网关 → 挑模型」——
             同一份网关和模型名单一次建多条绑定；协议按各家默认推导，保存后可单独调整 */}
         {/* 同时绑到（2026-10-31 简化）：只列协议兼容的几家，做成点选小胶囊；说明与不兼容的原因收进悬停 */}
@@ -1706,6 +1713,7 @@ export function ProfileModal({
             </div>
           );
         })()}
+        <PanelAnchor id="name" label="名称" />
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">名称</span>
           <input
@@ -1726,6 +1734,7 @@ export function ProfileModal({
             </span>
           )}
         </label>
+        <PanelAnchor id="advanced" label="高级设置" />
         <details
           className="mb-4 border-t border-hairline pt-3"
           onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
@@ -1898,7 +1907,7 @@ export function ProfileModal({
         </details>
         </div>
       </form>
-    </Modal>
+    </PagePanel>
   );
 }
 
@@ -2860,6 +2869,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     backToGateway?: string;
   } | null>(null);
   const [gwLib, setGwLib] = useState(false);
+  // 网关库是从「添加 / 编辑连接」返回时重开的：不再播滑入（整页面板，回到上一层）
+  const [gwBack, setGwBack] = useState(false);
   const [gwFocus, setGwFocus] = useState<string | null>(null);
   // 网关库「打开即新建」（上手引导发起）；gwOpenToken 换 key 让已开着的库按新请求重开
   const [gwNew, setGwNew] = useState(false);
@@ -2873,6 +2884,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     setGwFocus(null);
     setGwNew(gatewayLibraryReq.create);
     setGwOpenToken(gatewayLibraryReq.token);
+    setGwBack(false);
     setGwLib(true);
   }, [gatewayLibraryReq]);
   const profileModalReq = useAppStore((s) => s.profileModalReq);
@@ -4147,6 +4159,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 type="button"
                 onClick={() => {
                   setGwNew(false);
+                  setGwBack(false);
                   setGwLib(true);
                 }}
                 className={secondaryActionClass}
@@ -5213,10 +5226,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       {gwLib && (
         <GatewayLibrary
           key={gwOpenToken}
+          animate={!gwBack}
+          hidden={!visible}
           initialId={gwFocus}
           initialNew={gwNew}
           onClose={() => {
             setGwLib(false);
+            setGwBack(false);
             setGwFocus(null);
             setGwNew(false);
             // 网关可能改过地址 / 密钥 / 重测过：行上就地结果作废，以后端重算为准
@@ -5244,6 +5260,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       {modal && (
         <ProfileModal
           initial={modal.initial}
+          backLabel={modal.backToGateway ? "返回网关库" : "返回连接"}
+          hidden={!visible}
           presetAgent={modal.presetAgent}
           presetGatewayId={modal.presetGatewayId}
           officialSupported={Object.fromEntries(
@@ -5256,11 +5274,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             if (back) {
               setGwFocus(back);
               setGwOpenToken((t) => t + 1);
+              // 回到上一层：不再播滑入
+              setGwBack(true);
               setGwLib(true);
             }
           }}
           onOpenGateway={(id) => {
             setModal(null);
+            setGwBack(false);
             setGwFocus(id);
             setGwNew(false);
             setGwLib(true);
