@@ -1210,8 +1210,8 @@ fn readonly_cap(spec: &AgentSpec) -> CapabilityFlagDto {
 fn headless_write_cap(agent: &str) -> CapabilityFlagDto {
     match agent {
         "qwen" => flag(false, Some("无头写盘未验证，定时任务请换别家")),
-        // grok 定时任务带 --yolo：自动批准全部工具，不限课题目录
-        "grok" => flag(true, Some("会批准全部操作")),
+        // grok 定时任务带 --yolo、claude 带 bypassPermissions：自动批准全部工具，不限课题目录
+        "grok" | "claude-code" => flag(true, Some("会批准全部操作")),
         // codex 定时任务是 -s workspace-write，只写课题目录，不必再附注（Windows 另看沙箱开没开）
         "codex" if cfg!(windows) => codex_windows_headless_cap(
             codex_windows_sandbox_mode().as_deref(),
@@ -2024,6 +2024,8 @@ mod tests {
             .unwrap();
         assert!(grok_caps.headless_write.supported);
         assert!(grok_caps.headless_write.reason.unwrap().contains("会批准全部操作"));
+        let claude_caps = agent_capabilities().into_iter().find(|c| c.agent == "claude-code").unwrap();
+        assert!(claude_caps.headless_write.reason.unwrap().contains("会批准全部操作"), "定时任务带 bypassPermissions");
         assert_eq!(
             agent_spec("qwen")
                 .unwrap()

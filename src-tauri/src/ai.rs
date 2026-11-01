@@ -327,9 +327,17 @@ pub(crate) fn parse_oneshot_output(
 /// workspace-write 沙箱、grok 加 --yolo——定时任务要在项目里写文件（如 lit-watch 的
 /// notes/inbox.md、papers/watch-seen.md），read-only 跑不了；grok headless 默认权限模式
 /// 未确认（若默认交互式问权限，headless 下非白名单请求会被 Cancelled 导致任务失败），
-/// 照 codex `-s workspace-write` 的先例给 grok 加 --yolo（自动批准全部工具，含写文件）
+/// 照 codex `-s workspace-write` 的先例给 grok 加 --yolo（自动批准全部工具，含写文件）。
+/// claude 同理加 `--permission-mode bypassPermissions`（2026-11-01 用户拍板，同 grok）：2.1.302 起 `-p` 在第三方网关上
+/// 不带权限档就是 default 档，写文件、curl、WebFetch 全被拒（2.1.308 假网关实测）；acceptEdits 只放行改文件，
+/// 雷达要 curl 联网照样跑不了；auto 档对外操作要模型判安全，经中转判不出
 pub(crate) fn headless_task_args(agent: &str, prompt: &str) -> Vec<String> {
     match agent {
+        "claude-code" => {
+            let mut args = headless_args(agent, prompt);
+            args.extend(["--permission-mode".into(), "bypassPermissions".into()]);
+            args
+        }
         // workspace-write 默认拦网，lit-watch 巡检必须联网；headless 无人可批，不开网必失败
         "codex" => vec![
             "exec".into(),
@@ -2861,11 +2869,11 @@ ERROR: Your access token could not be refreshed because your refresh token was r
                 "你好"
             ]
         );
+        // claude：不带权限档时第三方网关上什么都写不了，定时任务全部放行（同 grok --yolo）
+        let claude = headless_task_args("claude-code", "你好");
+        assert!(claude.starts_with(&headless_args("claude-code", "你好")));
+        assert!(claude.ends_with(&["--permission-mode".to_string(), "bypassPermissions".to_string()]));
         // 其余 agent 与 headless_args 同形
-        assert_eq!(
-            headless_task_args("claude-code", "你好"),
-            headless_args("claude-code", "你好")
-        );
         assert_eq!(
             headless_task_args("kimi", "你好"),
             headless_args("kimi", "你好")

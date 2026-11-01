@@ -282,7 +282,7 @@ readonly: CapabilityFlagDto;          // readonly_args 非空 = supported
 headlessWrite: CapabilityFlagDto;     // 定时/无头写盘：未实证则 supported:false 或 reason 写「权限未实测」
 ```
 
-前端：想法期开关、定时任务选 Agent 时置灰 + 原因。qwen 无头未验证则禁选；grok 标「会批准全部操作」；其余能跑的标「按该工具默认权限写文件」。Codex 无附注。不默默降级。
+前端：想法期开关、定时任务选 Agent 时置灰 + 原因。qwen 无头未验证则禁选；grok（`--yolo`）、claude-code（`--permission-mode bypassPermissions`，2026-11-01 起：2.1.302 后不带权限档在第三方网关上什么都写不了）标「会批准全部操作」；其余能跑的标「按该工具默认权限写文件」。Codex 无附注。不默默降级。
 
 ### 3.8 当前基线明确不做
 
