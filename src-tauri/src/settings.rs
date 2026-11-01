@@ -628,6 +628,8 @@ fn normalize_proxy_env_value(value: &str) -> String {
 
 /// macOS scutil --proxy 输出解析：HTTPEnable/HTTPProxy/HTTPPort、HTTPS 同款、SOCKS 同款，
 /// 启用（Enable : 1）才产出。纯函数供单测。
+/// 系统设置里的「HTTPS 代理」是「给 HTTPS 流量用的代理」，代理本身照样讲明文 HTTP（CONNECT），
+/// 出 `http://`；写成 `https://` 会先跟代理握 TLS，Clash / v2rayN 这类本机代理一律连不上（2026-11-01 实测）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn parse_scutil_proxy(text: &str) -> Vec<String> {
     let get = |key: &str| -> Option<String> {
@@ -639,7 +641,7 @@ fn parse_scutil_proxy(text: &str) -> Vec<String> {
     };
     let mut out = Vec::new();
     for (enable_key, host_key, port_key, scheme) in [
-        ("HTTPSEnable", "HTTPSProxy", "HTTPSPort", "https"),
+        ("HTTPSEnable", "HTTPSProxy", "HTTPSPort", "http"),
         ("HTTPEnable", "HTTPProxy", "HTTPPort", "http"),
         ("SOCKSEnable", "SOCKSProxy", "SOCKSPort", "socks5"),
     ] {
@@ -683,7 +685,8 @@ fn parse_windows_reg_proxy(text: &str) -> Vec<String> {
         };
         for k in ["https", "http", "socks"] {
             if let Some(v) = seg(k) {
-                let scheme = if k == "socks" { "socks5" } else { k };
+                // https= 段同 macOS：代理本身是 http（见 parse_scutil_proxy）
+                let scheme = if k == "socks" { "socks5" } else { "http" };
                 return vec![format!("{scheme}://{v}")];
             }
         }
@@ -725,7 +728,8 @@ fn gsettings_proxy() -> Vec<String> {
             continue;
         };
         if !host.is_empty() && port.parse::<u16>().is_ok() {
-            out.push(format!("{schema}://{host}:{port}"));
+            // https 那组同样是 http 代理（见 parse_scutil_proxy）
+            out.push(format!("http://{host}:{port}"));
         }
     }
     out
@@ -1766,7 +1770,7 @@ mod tests {
         assert_eq!(
             parse_scutil_proxy(text),
             vec![
-                "https://127.0.0.1:7890".to_string(),
+                "http://127.0.0.1:7890".to_string(),
                 "socks5://127.0.0.1:1080".to_string(),
             ]
         );
@@ -1784,7 +1788,7 @@ mod tests {
         let per_proto = "    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http=127.0.0.1:7890;https=127.0.0.1:7891;socks=127.0.0.1:1080\n";
         assert_eq!(
             parse_windows_reg_proxy(per_proto),
-            vec!["https://127.0.0.1:7891".to_string()]
+            vec!["http://127.0.0.1:7891".to_string()]
         );
         // 未启用：无产出
         let off =
