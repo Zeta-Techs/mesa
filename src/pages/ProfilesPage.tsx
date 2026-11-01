@@ -58,7 +58,7 @@ import { interactiveUpdatePrefill } from "../update-routing";
 import { absTime } from "../rel-time";
 import { toast } from "../toast";
 import { slotForAgent } from "../gateway-slot";
-import { applyFieldsToForm, fieldsFromForm, gatewayOwnedChanges, type SnippetDto, type SnippetFields } from "../connection-snippet";
+import { applyFieldsToForm, fieldsFromForm, gatewayOwnedChanges, snippetFileTag, type SnippetDto, type SnippetFields } from "../connection-snippet";
 import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
 import {
   CONNECTION_STATUS_CAPTION,
@@ -257,6 +257,8 @@ export function ProfileModal({
   const [snippetError, setSnippetError] = useState<string | null>(null);
   // 片段解析成功、写回表单后要接着保存：等表单状态更新完再提交
   const [submitAfterApply, setSubmitAfterApply] = useState(false);
+  // 「配置」视图的「打开文件」：在 Mesa 的编辑配置文件弹层里打开真实文件（密钥占位、写前备份，不走外部编辑器）
+  const [realFileOpen, setRealFileOpen] = useState(false);
   // 打开时的表单快照：去网关库前 / 关弹层前判断有没有没保存的修改。协议不算（选网关时会被自动推导改写，不是人改的）
   const snapshotOf = (f: typeof form) => JSON.stringify({ ...f, protocol: null });
   const [formSnapshot] = useState(() => snapshotOf(form));
@@ -928,9 +930,21 @@ export function ProfileModal({
         {view === "snippet" && (
           <div className="space-y-2">
             {snippet && (
-              <p className="text-xs text-l3" title={snippet.file}>
-                {snippet.format === "toml" ? "TOML" : "JSON"} · 对应 {snippet.file}
-              </p>
+              <div className="flex items-center gap-3">
+                <p className="min-w-0 flex-1 truncate text-xs text-l3" title={snippet.file}>
+                  {snippet.format === "toml" ? "TOML" : "JSON"} · 对应 {snippet.file}
+                </p>
+                {snippetFileTag(form.agent) && (
+                  <button
+                    type="button"
+                    className={`${ghostActionClass} shrink-0`}
+                    title="打开真实的配置文件（里面是现在全局生效的配置，不一定是这条连接）；密钥显示为占位，保存前自动备份"
+                    onClick={() => setRealFileOpen(true)}
+                  >
+                    打开文件
+                  </button>
+                )}
+              </div>
             )}
             <div className="h-[min(68vh,720px)] overflow-hidden rounded-md border border-hairline">
               <Suspense fallback={<p className="p-3 text-xs text-l3">◌ 正在打开编辑器…</p>}>
@@ -1902,6 +1916,16 @@ export function ProfileModal({
         </details>
         </div>
       </form>
+      {realFileOpen && (
+        <Suspense fallback={null}>
+          <ConfigFileEditorDialog
+            agentId={form.agent}
+            agentLabel={agentLabel}
+            initialTag={snippetFileTag(form.agent) ?? undefined}
+            onClose={() => setRealFileOpen(false)}
+          />
+        </Suspense>
+      )}
     </PagePanel>
   );
 }

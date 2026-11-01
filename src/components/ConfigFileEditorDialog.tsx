@@ -28,9 +28,12 @@ function syncTheme() {
 export default function ConfigFileEditorDialog({
   agentId,
   agentLabel,
+  initialTag,
   onClose,
 }: {
   agentId: string;
+  /** 打开即定位到这个文件（编辑连接「配置」视图的「打开文件」入口） */
+  initialTag?: string;
   agentLabel: string;
   onClose: () => void;
 }) {
@@ -49,6 +52,9 @@ export default function ConfigFileEditorDialog({
     invoke<ConfigFileDto[]>("config_files_read", { agent: agentId })
       .then((list) => {
         if (!alive) return;
+        // 先定好页签再放文件：建编辑器时用的就是要定位的那个文件
+        const at = initialTag ? list.findIndex((f) => f.tag === initialTag) : -1;
+        setActive(at >= 0 ? at : 0);
         setFiles(list);
         setValues(Object.fromEntries(list.map((f) => [f.tag, f.content])));
       })
@@ -70,14 +76,14 @@ export default function ConfigFileEditorDialog({
       models.set(f.tag, model);
     }
     const editor = monaco.editor.create(host, {
-      model: models.get(files[0].tag) ?? null,
+      model: models.get(files[active]?.tag ?? files[0].tag) ?? null,
       theme: MONACO_THEME,
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 13,
       tabSize: 2,
       scrollBeyondLastLine: false,
-      readOnly: !!files[0].error,
+      readOnly: !!(files[active] ?? files[0]).error,
       unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false, nonBasicASCII: false },
     });
     editorRef.current = editor;
@@ -161,7 +167,11 @@ export default function ConfigFileEditorDialog({
     <Modal
       open
       title={`编辑配置文件 · ${agentLabel}`}
-      description="这家 Agent 自己读的全局配置；设为全局默认写的也是这几个文件。"
+      description={
+        initialTag
+          ? "这是文件原样，里面是现在全局生效的配置，不一定是你在编辑的那条连接；连接之外的设置在这里改。"
+          : "这家 Agent 自己读的全局配置；设为全局默认写的也是这几个文件。"
+      }
       onClose={() => void close()}
       size="xl"
       overflow="hidden"

@@ -730,7 +730,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   effort-depth.ts            # 思考档深度 0..1 与一句白话（effortDepth / effortGloss / effortValleyY）；小 M 画在 components/EffortMark.tsx（tests/effort-depth.test.ts）
   token-format.ts            # 聊天变体状态栏的 token 中文计数（千分位 / 万 / 亿，fmtTokensZh）；终端变体仍用 k / M（tests/token-format.test.ts）
   chat-decision.ts           # 「等你决定」卡的纯逻辑：连接出问题 → 卡片（connIssueDecision：同家连接最多三个「换到 X」按钮 / 去添加连接 / 先不换，提示按错误种类给另一条路）；Grok 卡在官方登录上 → grokLoginDecision（退出官方登录接着聊 / 先不管）；方案确认卡的认屏与选项在 plan-approval.ts
-  connection-snippet.ts      # 编辑连接「配置」视图的表单 ⇄ 片段字段：fieldsFromForm / applyFieldsToForm、gatewayOwnedChanges（地址、密钥、请求参数归网关，改了拦）（tests/connection-snippet.test.ts）
+  connection-snippet.ts      # 编辑连接「配置」视图的表单 ⇄ 片段字段：fieldsFromForm / applyFieldsToForm、gatewayOwnedChanges（地址、密钥、请求参数归网关，改了拦）、snippetFileTag（「打开文件」定位哪个文件）（tests/connection-snippet.test.ts）
   config-file-editor.ts      # 「编辑配置文件」弹层的纯逻辑：ConfigFileDto、formatJsonText（只格式化严格 JSON）、fileHint、dirtyTags（tests/config-file-editor.test.ts）
   connection-form.ts         # 添加连接 / 网关库共用的表单纯逻辑：probeHint（失败下一步）、gatewayMissingSlot（网关缺不缺这家 Agent 的协议地址）、saveBlocker（保存前缺什么）、
                              #   gatewayHealth（网关库行状态）、modelHasPolicy、manualModelError（手填模型校验）

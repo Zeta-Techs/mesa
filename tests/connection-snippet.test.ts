@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyFieldsToForm, fieldsFromForm, gatewayOwnedChanges, linesToMap, mapToLines, type SnippetFormSlice } from "../src/connection-snippet.ts";
+import { applyFieldsToForm, fieldsFromForm, gatewayOwnedChanges, snippetFileTag, linesToMap, mapToLines, type SnippetFormSlice } from "../src/connection-snippet.ts";
 
 const form = (over: Partial<SnippetFormSlice> = {}): SnippetFormSlice => ({
   name: "Zeta",
@@ -54,4 +54,11 @@ test("网关管的字段改了要拦：地址、密钥、请求参数", () => {
     gatewayOwnedChanges(before, { ...before, baseUrl: "https://x", newKey: "sk-n", temperature: 0.9, reasoningEffort: "low" }),
     ["地址", "密钥", "温度", "思考档"],
   );
+});
+
+test("打开文件定位：各家主配置文件，Cursor 不给入口", () => {
+  assert.equal(snippetFileTag("codex"), "config.toml");
+  assert.equal(snippetFileTag("claude-code"), "settings.json");
+  assert.equal(snippetFileTag("opencode"), "opencode.json");
+  assert.equal(snippetFileTag("cursor"), null);
 });

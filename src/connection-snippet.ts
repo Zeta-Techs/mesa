@@ -135,3 +135,23 @@ export function gatewayOwnedChanges(before: SnippetFields, after: SnippetFields)
   if (!same(after.reasoningEffort, before.reasoningEffort)) out.push("思考档");
   return out;
 }
+
+/** 「配置」视图的「打开文件」定位到哪个文件（与后端 global_config::editable_config_files 的 tag 同名）。
+ *  Cursor 没有可编辑的配置文件，不给入口 */
+export function snippetFileTag(agent: string): string | null {
+  switch (agent) {
+    case "claude-code":
+    case "codebuddy":
+    case "qwen":
+    case "gemini":
+      return "settings.json";
+    case "codex":
+    case "kimi":
+    case "grok":
+      return "config.toml";
+    case "opencode":
+      return "opencode.json";
+    default:
+      return null;
+  }
+}
