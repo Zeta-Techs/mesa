@@ -2475,38 +2475,15 @@ pub(crate) fn append_acceptance_log_at(
     root: &Path,
     entry: &AcceptanceLogEntry,
 ) -> Result<(), String> {
-    use std::io::Write;
-    // 上次进程可能在 JSONL 一行写到一半时退出；保留原字节但必须隔开尾行，不能把新事实接进坏 JSON。
-    let previous = match fs::read(acceptance_log_path(root)) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(format!("读取原接受记录失败，未追加：{e}")),
-    };
     let existed = read_acceptance_log_at(root);
     if fact_already_recorded(&existed, entry) {
         return Ok(());
     }
-    let dir = root.join(".ccode");
-    fs::create_dir_all(&dir).map_err(|e| format!("创建 .ccode 目录失败: {e}"))?;
-    let mut line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
-    line.push('\n');
-    if !previous.is_empty() && !previous.ends_with(b"\n") {
-        line.insert(0, '\n');
-    }
-    let mut options = fs::OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(acceptance_log_path(root))
-        .map_err(|e| format!("打开接受记录失败: {e}"))?;
-    file.write_all(line.as_bytes())
-        .map_err(|e| format!("写入接受记录失败: {e}"))?;
-    file.sync_all()
-        .map_err(|e| format!("落盘接受记录失败: {e}"))?;
+    // 上次进程可能在 JSONL 一行写到一半时退出：通用追加会保留原字节并另起一行
+    let line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
+    crate::research_record::append_jsonl_line(&acceptance_log_path(root), &line)
+        .map_err(|e| format!("写入接受记录失败：{e}"))?;
+    crate::local_stats::record_accept();
     Ok(())
 }
 
@@ -3070,6 +3047,12 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          /.ccode/acceptance-log.lock\n\
          /.ccode/watch/\n\
          \n\
+         # Mesa 研究记录与核验记录（只追加的本机账本，不进 git；2026-11-02）\n\
+         /.ccode/record.jsonl\n\
+         /.ccode/record.lock\n\
+         /.ccode/ai-usage.md\n\
+         /.ccode/checks/\n\
+         \n\
          # 常见数据/产物目录（按需取消注释）\n\
          # /data/\n\
          /output/\n\
@@ -3083,7 +3066,7 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
 pub(crate) const GITIGNORE_LEDGER_MARKER: &str = "# Mesa 雷达与积累台账";
 
 /// gitignore 模板里的台账忽略路径清单（模板钉住测试逐条断言，二者必须同步改）。
-pub(crate) const LEDGER_IGNORE_PATHS: [&str; 9] = [
+pub(crate) const LEDGER_IGNORE_PATHS: [&str; 13] = [
     "/papers/reading-list.md",
     "/notes/inbox.md",
     "/papers/watch-seen.md",
@@ -3093,6 +3076,10 @@ pub(crate) const LEDGER_IGNORE_PATHS: [&str; 9] = [
     "/.ccode/acceptance-log.jsonl",
     "/.ccode/acceptance-log.lock",
     "/.ccode/watch/",
+    "/.ccode/record.jsonl",
+    "/.ccode/record.lock",
+    "/.ccode/ai-usage.md",
+    "/.ccode/checks/",
 ];
 
 fn ensure_git_at(project: &Path) -> Result<EnsureGitDto, String> {
@@ -3183,12 +3170,16 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     // 排除雷达/验收台账缓存（2026-10-13 双台账口径）：老项目 .gitignore 还没有忽略行，
     // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
     // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
-    const BOOTSTRAP_EXCLUDES: [&str; 5] = [
+    const BOOTSTRAP_EXCLUDES: [&str; 9] = [
         ".ccode/watch-explains.json",
         ".ccode/pending-registrations.json",
         ".ccode/acceptance-log.jsonl",
         ".ccode/acceptance-log.lock",
         ".ccode/watch",
+        ".ccode/record.jsonl",
+        ".ccode/record.lock",
+        ".ccode/ai-usage.md",
+        ".ccode/checks",
     ];
     // 已被 .gitignore 忽略的台账不再写 exclude：exclude 点名一个存在且已忽略的文件时，
     // git add 整条报「paths are ignored」退出 1，档案卡一次也提交不上（2026-10-22 实测：

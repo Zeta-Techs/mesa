@@ -6440,6 +6440,19 @@ fn set_session_profile_command_sync(
     set_session_profile(&agent, &session_id, &profile_id, launch)
 }
 
+/// Mesa 启动这段对话时记下的模型（研究记录在用量还没索引到时兜底）
+pub(crate) fn launch_model_of(agent: &str, session_id: &str) -> Option<String> {
+    let conn = open_db().ok()?;
+    conn.query_row(
+        "SELECT launch_model FROM session_meta WHERE agent=?1 AND session_id=?2",
+        params![agent, session_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+    .filter(|m| !m.trim().is_empty())
+}
+
 /// 接着聊一段对话时默认用的模型与思考档（2026-10-24 用户：点开一段对话，输入框底部应是它之前用的配置）
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -127,6 +127,8 @@ mod chat_handoff_log;
 mod context_breakdown;
 mod reader;
 mod research_quality;
+mod research_record;
+mod local_stats;
 mod research_tools;
 mod review_contract;
 mod runs;
@@ -776,6 +778,8 @@ pub fn run() {
             research_quality::research_save_acceptance,
             research_quality::research_get_acceptance,
             research_quality::research_upstream_acceptances,
+            research_record::research_checks_read,
+            local_stats::local_stats_read,
             fs_tree::save_file_preview,
             fs_tree::watch_dir,
             fs_tree::unwatch_dir,

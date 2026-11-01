@@ -2235,6 +2235,21 @@ fn session_usage_from(
     Ok(out)
 }
 
+/// 一个会话用过的模型（研究记录用）：只查已索引的 usage_daily，不触发重建；查不到给空
+pub(crate) fn session_models(agent: &str, session_id: &str) -> Vec<String> {
+    let Ok(conn) = usage_db() else {
+        return Vec::new();
+    };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT DISTINCT model FROM usage_daily WHERE agent = ?1 AND session_id = ?2 AND model <> '' ORDER BY model",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map(rusqlite::params![agent, session_id], |r| r.get::<_, String>(0))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+}
+
 /// 单个会话的累计用量（终端状态栏）：先增量索引（marker 未变的会话直接跳过，运行中
 /// 会话随前端轮询节奏追新）再按 session_id 聚合 usage_daily
 #[tauri::command]

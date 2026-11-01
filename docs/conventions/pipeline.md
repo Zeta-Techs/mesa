@@ -99,6 +99,18 @@
   保存时不能自动把变化后的文件当成人已看过。记录按步骤+来源版本+内容指纹区分；旧格式可读，但不自动成为新版的接受决定。
   运行结束、计算检查与科学接受仍是三件事，Git 合并不替代科学判断；前端可取消错误的复现关联后另作人工决定，不伪造复现通过。
 
+## 核验记录与研究记录（2026-11-02）
+
+- **核验项**一行一条写在 `<工作目录>/.ccode/checks/<检查器>.jsonl`：`{id, kind, status, title, target{file,line}, evidence{source,quote,page,detail}, checker, at}`，
+  键名全是单词。`status` 只有 `passed`（机器能确定的事实）/ `blocked`（机器确定有问题）/ `needs_human`；要读懂内容的检查（论断是否被来源支持、
+  统计方法是否合适）最多 `needs_human`，**永不自动通过**，不汇总成分数。认不出的行计入「读不懂 N 行」，不猜。
+- 检查器每次运行整份重写自己的那一个文件；评审页只读 `.ccode/checks/` 顶层，`runs/` 是存档。
+- **研究记录**：Run 关闭时（含崩溃补收）由 Mesa 把运行事实追加进项目 `.ccode/record.jsonl`（只追加、按 runId 去重、持 `record.lock`），
+  这次工作目录里的核验项存档到 `.ccode/checks/runs/<runId>.jsonl`，并按记录整份重写 `.ccode/ai-usage.md`。登录、Mesa 内部后台调用、
+  没有项目的 Run 不记。模型取会话用量里已索引的模型，取不到用启动时记下的，都没有写「（未记录）」，不猜。
+- 这几样与 `acceptance-log.jsonl` 同口径：进 `.gitignore`（`LEDGER_IGNORE_PATHS`）、开工 bootstrap 排除、合并闸门双态豁免（`is_accumulation_ledger`）。
+- **AI 使用声明**以 `ai-usage.md` 为事实依据（Mesa 统计，只含在 Mesa 里跑过的），用途措辞与是否补充 Mesa 之外用过的工具由作者核对；不做「降 AI 率」。
+
 ## 工作区生命周期（无损口径）
 
 - **非 Git 产物评审绑定（2026-09-11）**：评审通过 `workspace_review_deliverables` 明确冻结 papers/、项目产物目录与 output/ 中

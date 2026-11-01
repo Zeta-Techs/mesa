@@ -3515,6 +3515,9 @@ pub fn close_run_with_result(
         .remove(id);
     crate::coding::clear_lane_current_run(id);
     freeze_task_run_evidence(id);
+    if outcome.is_ok() {
+        crate::research_record::record_run_closed(id);
+    }
     if let Err(error) = &outcome {
         crate::logbuf::record(
             "error",
@@ -3783,6 +3786,10 @@ pub fn reconcile_stale_runs() -> Result<usize, String> {
     drop(stmt);
     let closed = reconcile_ids(&tx, &lease_dir()?, &ids)?;
     tx.commit().map_err(|e| e.to_string())?;
+    // 崩溃后补收的 Run 也进研究记录（仍有人持有、没关上的会在函数里按 closed_at 跳过）
+    for id in &ids {
+        crate::research_record::record_run_closed(id);
+    }
     Ok(closed)
 }
 fn reconcile_ids(conn: &Connection, dir: &Path, ids: &[String]) -> Result<usize, String> {

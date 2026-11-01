@@ -1614,6 +1614,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # journal_metrics_status（含 downloadedAt：两份 CSV 取较新 mtime）+ check_journal_metrics_update
                              # （GitHub commits API 按数据目录查最近 commit，与本地 mtime 比对出 hasUpdate，前端静默失败）
   research_quality.rs        # 科研复现运行记录与验收决定：独立输出 ~/ccode/reproductions/；验收写 .ccode/research-acceptance.json，不替代 Git 合并
+  research_record.rs         # 核验记录与研究记录（2026-11-02）：research_checks_read 读 <工作目录>/.ccode/checks/ 顶层 *.jsonl（三档状态，
+                             # 认不出的行计 skipped 不猜；runs/ 是存档不读）；record_run_closed 在 Run 关闭后（close_run_with_result /
+                             # 崩溃补收）把运行事实追加进项目 .ccode/record.jsonl（runId 去重、record.lock）、核验项存档 checks/runs/<runId>.jsonl、
+                             # 整份重写 .ccode/ai-usage.md（AI 使用声明事实底稿）；append_jsonl_line 是项目 JSONL 账本的通用追加（验收账本共用）
   （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与
@@ -1757,6 +1761,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底
+  local_stats.rs             # 本机使用计数（2026-11-02）：只记次数（研究记录、采纳、核验三档、导出），存配置目录 local-stats.json；
+                             # 测试态不落盘；只在反馈弹层用户勾选时随反馈发出
   logbuf.rs                  # 诊断日志环形缓冲
   mac_fullscreen.rs          # macOS 订阅 NSWindow 将进 / 将出全屏通知，emit window:fullscreen-will-change（只报不改；前端壳底色借此跟系统动画淡变）
   diagnostics.rs             # 诊断包：系统/WebView/GPU/输入法、功能开关、日志、进程生命周期采集与 ZIP 导出；bundle_dir/BUNDLE_FILE_PREFIX 是反馈附件闸门的同一出处
