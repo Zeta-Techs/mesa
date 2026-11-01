@@ -1618,6 +1618,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 认不出的行计 skipped 不猜；runs/ 是存档不读）；record_run_closed 在 Run 关闭后（close_run_with_result /
                              # 崩溃补收）把运行事实追加进项目 .ccode/record.jsonl（runId 去重、record.lock）、核验项存档 checks/runs/<runId>.jsonl、
                              # 整份重写 .ccode/ai-usage.md（AI 使用声明事实底稿）；append_jsonl_line 是项目 JSONL 账本的通用追加（验收账本共用）
+  （技能脚本）bib-check/scripts/cite_check.py  # 引用核验固定脚本（2026-11-02，tests/cite-check.test.ts）：refs（引用键 / 重复键；联网查 DOI 指向与
+                             #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
+                             #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py
   （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与

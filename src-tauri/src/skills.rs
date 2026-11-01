@@ -395,6 +395,16 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/journal-abbreviations.csv"),
     ),
     (
+        "bib-check",
+        "scripts/cite_check.py",
+        include_str!("../resources/skills/bib-check/scripts/cite_check.py"),
+    ),
+    (
+        "bib-check",
+        "scripts/bridge.py",
+        include_str!("../resources/skills/endnote-bridge/scripts/bridge.py"),
+    ),
+    (
         "endnote-bridge",
         "scripts/journal-abbreviations.csv",
         include_str!("../resources/journal-abbreviations.csv"),
