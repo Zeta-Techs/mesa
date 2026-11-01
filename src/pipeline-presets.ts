@@ -169,15 +169,17 @@ function declarationsTask(): HumanTaskDto {
  *  三套定稿都会标 [待核实]，原先只有综述把它们列出来，另两套留在稿子里没人管）。 */
 function verificationListClause(
   finalMd: string,
-  opts: { marker?: string; checkFile?: string; list?: string } = {},
+  opts: { marker?: string; checkFile?: string; list?: string; checkItems?: string; source?: string } = {},
 ): string {
   // marker / checkFile / list：LaTeX 用「% TODO 待核实」与 final-check.md，数据处理写 analysis/ 下（2026-11-02 推广）；缺省即综述原文
   const marker = opts.marker ?? "[待核实]";
   const checkFile = opts.checkFile ?? "citation-check.md";
   const list = opts.list ?? "manuscript/verification-decisions.md";
+  const checkItems = opts.checkItems ?? "「疑似编造/元数据存疑」";
+  const source = opts.source ?? "[@键]";
   return (
-    `写 ${list}：把 ${finalMd} 里每条 ${marker} 与 ${checkFile} 里每条「疑似编造/元数据存疑」各列一行，核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到、正文数字与结果对不上、p 值与统计量对不上）也各列一行，` +
-    "格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。" +
+    `写 ${list}：把 ${finalMd} 里每条 ${marker} 与 ${checkFile} 里每条${checkItems}各列一行，核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到、正文数字与结果对不上、p 值与统计量对不上）也各列一行，` +
+    `格式 \`- V001 | 位置：文件:行 | 原文摘要：…… | 来源：${source} | 建议：…… | 裁决：待裁决 | 依据：\`。` +
     "「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。" +
     `清单里的条数必须与稿子里实际剩余的 ${marker} 处数一致，漏列等于把未决项藏起来。`
   );
@@ -966,7 +968,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "2. 清洗规则逐项写死再动手：缺失值处理（删除/填充及填充值）、去重键、异常值边界、类型转换，写入 cleaning/rules.md，每条规则注明依据，不允许含糊执行规则；未批准的规则标阻塞且不得应用；\n" +
       "3. 清洗脚本放入 cleaning/（可重复执行；输入只读原始数据，不原地修改）；\n" +
       "4. 处理后的数据写入本工作区产物目录（见上方「产物目录」，相对路径），不进 git，评审合并后自动进项目根同名目录；同时产出 cleaning/cleaned-data-manifest.md，记录源文件、字节数/hash、输出文件的项目根相对路径、行列数与生成命令；\n" +
-      "5. 清洗报告 cleaning/cleaning-report.md：每条规则影响的行数、丢弃数据的清单与原因、清洗前后规模对比，[待确认] 规则单列一节。\n" +
+      "5. 清洗报告 cleaning/cleaning-report.md：每条规则影响的行数、丢弃数据的清单与原因、清洗前后规模对比，[待确认] 规则单列一节。[待确认] 规则另列 cleaning/rule-decisions.md 给人逐条定，每条一行 `- V001 | 位置：cleaning/rules.md:行 | 原文摘要：…… | 影响：N 行 | 建议：…… | 裁决：待裁决 | 依据：`，「裁决」「依据」不得代填；人点完回来按裁决改 rules.md 并重跑清洗。\n" +
       "完成标准：rules.md 执行规则明确，关键待确认项未批准则阻塞；同步写 cleaning/fields.json，每个源字段保留 data/fields.json 的 id，记录 name/rule/status，删除或排除也留一条；新增派生字段另列在报告不混入源字段对账；脚本可重复跑通，manifest 与报告数字和产物目录结果一致，原始数据字节级未被改动；清洗入口交付 cleaning/clean.py，支持 --input/--output，manifest 中记录完整运行命令。\n" +
       QUALITY_STATUS,
     expectedArtifacts: [
@@ -975,6 +977,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "cleaning/cleaned-data-manifest.md",
       "cleaning/fields.json",
       "cleaning/clean.py",
+      "cleaning/rule-decisions.md",
     ],
     acceptanceCriteria: [
       "machine:file:cleaning/rules.md",
@@ -988,12 +991,14 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
     skills: ["data-clean"],
     run: [],
     humanTasks: [
+      // 2026-11-02：由「直接改 rules.md」改成流程线上逐条点（decisions_cleared），与审查报告、待核实同一套
       {
-        title: "拍板 [待确认] 清洗规则",
+        title: "逐条裁决 [待确认] 清洗规则",
         guidance:
-          "cleaning/rules.md 与 cleaning-report.md 中标注 [待确认] 的条目（多为粒度/合并与拿不准的填充值）逐条拍板；可直接改 rules.md，agent 会按新口径重跑清洗",
-        target: "",
+          "cleaning/rules.md 里标 [待确认] 的规则（多为粒度、合并与拿不准的填充值）逐条定：接受＝按建议执行；拒绝＝不用这条规则；修改＝按你写的口径改。没有就勾上跳过。点完 AI 按裁决改 rules.md 并重跑清洗。",
+        target: "cleaning/rule-decisions.md",
         timing: "after",
+        completion: "decisions_cleared",
       },
     ],
     decisions: [{ q: "已确认的字段口径、分析单元和敏感数据处理依据（未知项列明不可处理范围）", options: [] }],
@@ -1011,16 +1016,28 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "3. 相关分析：按变量类型和问题选择相关/关联分析，排除 ID、无序类别等不适用字段并说明；报告选择口径、比较范围和多重性，不以固定 |r| 阈值筛选发现；\n" +
       "4. 异常分析：按 rules.md 的口径复查残留异常，新发现的异常标 [待确认] 并给出样例行号；\n" +
       "5. 在 analysis/stats-check-eda.md 记录主要数字从原始输出的复算命令、版本、容差和结果；同数据探索后做检验仍是探索，不因通过 {skill:stats-check} 变确证。\n" +
-      "6. 结论写入 eda-report.md：按证据报告可用于后续决策的发现（允许零条或证据不足，不凑数量），每条附对应图表或统计量；含统计检验/显著性表述的结论先按 {skill:stats-check} 技能口径自查（检验方法与数据匹配、p 值给具体值、附效应量与置信区间）；问题清单写入 analysis/stats-check-eda.md。\n" +
+      "6. 结论写入 eda-report.md：按证据报告可用于后续决策的发现（允许零条或证据不足，不凑数量），每条附对应图表或统计量；含统计检验/显著性表述的结论先按 {skill:stats-check} 技能口径自查（检验方法与数据匹配、p 值给具体值、附效应量与置信区间），并跑 stat_check（--files eda-report.md）；问题清单写入 analysis/stats-check-eda.md。\n" +
+      "7. 报告用到的关键数字另写 analysis/summary-stats.json（指标名 → 数值，从 reproduce.py 的输出取，不手抄），供分析报告做数字追溯。\n" +
       CLAIM_ENTRIES +
       "完成标准：analysis/ 脚本、analysis/stats-check-eda.md、figures/ 与 eda-report.md 均存在，每条发现可回溯到具体图表/数字，无主观臆断。\n" +
       QUALITY_STATUS,
-    expectedArtifacts: ["analysis/stats-check-eda.md", "analysis/reproduce.py", "figures/*", "eda-report.md"],
-    acceptanceCriteria: ["machine:contains:eda-report.md::结论条目"],
+    expectedArtifacts: ["analysis/stats-check-eda.md", "analysis/reproduce.py", "analysis/summary-stats.json", "figures/*", "eda-report.md"],
+    acceptanceCriteria: ["machine:contains:eda-report.md::结论条目", "machine:file:analysis/summary-stats.json"],
     inputs: ["cleaning/rules.md", "cleaning/cleaned-data-manifest.md"],
     optionalInputs: ["artifacts/"],
     skills: ["data-eda", "stats-check"],
     run: [],
+    // 报告只写已认可的结论条目（论文结果分析同款）：没人认可时报告只能全写成待验证
+    humanTasks: [
+      {
+        title: "审阅结论条目再写报告",
+        guidance:
+          "核对 eda-report.md 的结论条目：关键数字能否复算？哪条证据支持或反驳？探索是否冒充确证？把认可的条目状态改成已认可。不合意回到探索性分析。",
+        target: "eda-report.md",
+        timing: "after",
+        completion: "manual",
+      },
+    ],
   },
   {
     name: "分析报告",
@@ -1030,14 +1047,26 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "1. 围绕课题主题（见上方「课题主题」段；未填写时仅给描述性摘要，不从结果倒推事先研究问题）组织结论；\n" +
       "2. 产出 analysis-report.md：背景与数据口径 → 主要发现（引用 eda-report.md 条目）→ 结论 → 可执行建议（每条建议对应一条发现，优先级按确定规则排序：有直接数据支撑的排前，间接推断的排后并注明）；\n" +
       "3. 数字一律引用 eda-report.md 中的值，并引用「## 结论条目」的编号；不重新计算、不引入新数据。状态不是已认可的不得写成确证；证据不足的结论标 [待验证]；\n" +
-      "4. 局限单列一节：数据质量、样本偏差、方法局限，不回避。\n" +
+      "4. 局限单列一节（## 局限）：数据质量、样本偏差、方法局限，不回避。\n" +
+      "5. 核对：报告里来自 analysis/summary-stats.json 的数字按 {skill:research-writing}「数字追溯」登记进 analysis/numbers.json（location 指 analysis-report.md:行），跑 num_check --numbers analysis/numbers.json --coverage --files analysis-report.md；按 {skill:stats-check} 跑 stat_check --files analysis-report.md，统计问题写入 analysis/stats-check-report.md。\n" +
+      "6. " + verificationListClause("analysis-report.md", { marker: "[待验证]", checkFile: "analysis/stats-check-report.md", list: "analysis/verification-decisions.md", checkItems: "未解决的统计问题", source: "结论条目编号或图表" }) + "\n" +
       "完成标准：analysis-report.md 结构完整，建议与发现一一对应且优先级有据；探索发现只作为待验证假设；[待验证] 不因列入局限就升级为结论。清洗步残留的 [待确认] 不在本步清除。\n" +
       QUALITY_STATUS,
-    expectedArtifacts: ["analysis-report.md"],
+    expectedArtifacts: ["analysis-report.md", "analysis/numbers.json", "analysis/stats-check-report.md", "analysis/verification-decisions.md"],
+    acceptanceCriteria: ["machine:contains:analysis-report.md::局限"],
     inputs: ["eda-report.md", "figures/*", "data-dictionary.md", "cleaning/cleaned-data-manifest.md", "cleaning/rules.md", "analysis/stats-check-eda.md", "analysis/reproduce.py"],
-    skills: [],
+    optionalInputs: ["analysis/summary-stats.json"],
+    skills: ["research-writing", "stats-check"],
     run: [],
     decisions: [],
+    humanTasks: [
+      {
+        ...verificationDecisionTask("并更新报告", "analysis/verification-decisions.md"),
+        title: "逐条裁决 [待验证] 结论与存疑条目",
+        guidance:
+          "报告里标 [待验证] 的结论、统计审查与核验脚本拦下的条目逐条定：接受＝你核过数据、这条可以这么写；拒绝＝删掉这条；修改＝按你写的改（例如「降为描述性发现」）。没有就勾上跳过。点完 AI 按裁决改报告。",
+      },
+    ],
   },
 ];
 
