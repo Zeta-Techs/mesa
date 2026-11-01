@@ -918,7 +918,7 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
                              #   前端存原文、显示前对全文展开；依赖安装 / CLI 更新 / 字体安装三处日志共用
   windows-shell.ts           # Windows WebView2 默认行为收口纯判定（刷新/打印/查找/后退快捷键、鼠标侧键、默认右键、
                              #   Win11 判定）；挂载在 main.tsx，仅 Windows
-  gateway-draft.ts           # 网关库槽位纯逻辑：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
+  gateway-draft.ts           # 网关库槽位纯逻辑（gatewayProbeModel / probeCandidateRank 与 profile_validation.rs probe_candidate_rank 双端镜像）：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
 gateway-catalog.ts         # 网关目录刷新合并 mergeGatewayCatalog（GatewayLibrary 消费）：fetch_gateway_catalog 回来的目录只并元数据，逐模型策略（temperature/topP/maxOutputTokens/reasoningEffort）保留未保存的本地值；手工添加的模型（source=user）来源与状态以本地为准不被目录覆盖（tests/gateway-catalog.test.ts）
   goal-review.ts             # 目标验收弹层分组与文案：科研按文献/笔记/数据/论文、工作按文档/表格/幻灯（tests/goal-review.test.ts）
   history-view.ts            # 历史时间线白话翻译层（✓保存进项目/⚙自动保存/◔保存，hash/分支名降为二级）

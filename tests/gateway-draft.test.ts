@@ -98,10 +98,20 @@ test("gatewayProbeModel：先测同槽连接在用的模型，不拿目录第一
   ];
   assert.equal(gatewayProbeModel(catalog, "anthropic", bound), "gpt-6-luna");
   assert.equal(gatewayProbeModel(catalog, "responses", bound), "gpt-6-sol");
-  // 没有同槽连接：目录同槽未过期 → 任一未过期
-  assert.equal(gatewayProbeModel(catalog, "openai", bound), "gpt-5.5-search");
-  assert.equal(gatewayProbeModel(catalog, "anthropic", []), "gpt-5.5-search");
+  // 没有同槽连接：挑最像普通对话模型的，不测 gpt-5.5-search 这类搜索变体（2026-11-01 用户实例：测出 500）
+  assert.equal(gatewayProbeModel(catalog, "openai", bound), "gpt-6-luna");
+  assert.equal(gatewayProbeModel(catalog, "anthropic", []), "gpt-6-luna");
   assert.equal(gatewayProbeModel([], "responses", []), null);
+  const mixed = [
+    { id: "gpt-5.5-search", status: "available" },
+    { id: "gpt-image-2", status: "available" },
+    { id: "gpt-5.4", status: "stale" },
+    { id: "claude-sonnet-5", status: "available" },
+    { id: "gpt-5.5", status: "available" },
+  ] as GatewayModel[];
+  assert.equal(gatewayProbeModel(mixed, "responses", []), "gpt-5.5");
+  assert.equal(gatewayProbeModel(mixed, "anthropic", []), "claude-sonnet-5");
+  assert.equal(gatewayProbeModel(mixed, "openai", []), "claude-sonnet-5", "同样好时取目录靠前的");
 });
 
 test("catalogFetchSlot 用有效地址（含主输入）挑槽", () => {

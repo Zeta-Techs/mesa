@@ -12,6 +12,7 @@ import {
   slotForAgent,
   type GatewaySlotName,
 } from "./gateway-slot.ts";
+import { modelKind } from "./model-kinds.ts";
 
 export function effectiveSlotUrl(
   slots: Partial<Record<GatewaySlotName, string | null | undefined>> | ProtocolSlots,
@@ -140,11 +141,31 @@ export function gatewayProbeModel(
     const m = b.models.find((id) => id.trim());
     if (m) return m;
   }
-  return (
-    models.find((m) => m.status !== "stale" && m.catalogSlot === slot)?.id ??
-    models.find((m) => m.status !== "stale")?.id ??
-    null
-  );
+  // 没有连接在用：从目录挑最像普通对话模型的（同样好的取目录靠前的），与后端 profile_validation.rs
+  // probe_candidate_rank 同口径。不能盲取第一个——2026-11-01 用户实例：目录第一个是 gpt-5.5-search，中转没开渠道，测出 500
+  let best: { id: string; rank: number } | null = null;
+  for (const m of models) {
+    if (!m.id.trim()) continue;
+    const rank = probeCandidateRank(m, slot);
+    if (!best || rank < best.rank) best = { id: m.id, rank };
+  }
+  return best?.id ?? null;
+}
+
+/** 目录模型当测试模型的排序分（越小越好）：非对话模型 > 目录里已消失 > 搜索 / 语音 / 实时 / 深度研究变体 >
+ *  目录标的是别的协议槽 > 型号家族和协议对不上 */
+export function probeCandidateRank(m: GatewayModel, slot: GatewaySlotName): number {
+  const id = m.id.toLowerCase();
+  const toks = (id.split("/").pop() ?? id).split(/[^a-z0-9]+/);
+  const special = toks.some((t) => ["search", "audio", "realtime", "tts", "transcribe", "research", "computer"].includes(t));
+  const familyOff = slot === "anthropic" ? !id.includes("claude") : slot === "responses" ? !id.includes("gpt") : false;
+  let rank = 0;
+  if (modelKind(m.id) !== "chat") rank += 16;
+  if (m.status === "stale") rank += 8;
+  if (special) rank += 4;
+  if (m.catalogSlot && m.catalogSlot !== slot) rank += 2;
+  if (familyOff) rank += 1;
+  return rank;
 }
 
 export function parseHeaderEnv(text: string): Record<string, string> {

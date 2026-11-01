@@ -1253,11 +1253,53 @@ fn default_probe_model(
             }
         }
     }
-    gw.models
+    // 没有连接在用：从目录里挑最像普通对话模型的（同样好的取目录里靠前的）。不能盲取第一个——
+    // 2026-11-01 用户实例：485 个模型的目录第一个是 gpt-5.5-search，中转没开这个渠道，测试报 500 冤枉了网关
+    pick_catalog_probe_model(&gw.models, slot).unwrap_or_default()
+}
+
+fn pick_catalog_probe_model(
+    models: &[crate::profiles::GatewayModel],
+    slot: crate::gateway_store::Slot,
+) -> Option<String> {
+    models
         .iter()
+        .filter(|m| !m.id.trim().is_empty())
+        .min_by_key(|m| probe_candidate_rank(m, slot))
         .map(|m| m.id.clone())
-        .find(|s| !s.is_empty())
-        .unwrap_or_default()
+}
+
+/// 目录模型当测试模型的排序分（越小越好）：非对话模型（出图 / 向量 / 语音…）> 目录里已消失 > 搜索 / 语音 / 实时 /
+/// 深度研究这类特殊变体 > 目录标的是别的协议槽 > 型号家族和协议对不上（Anthropic 槽里的 gpt）
+fn probe_candidate_rank(m: &crate::profiles::GatewayModel, slot: crate::gateway_store::Slot) -> u8 {
+    use crate::gateway_store::Slot;
+    let id = m.id.to_ascii_lowercase();
+    let toks: Vec<&str> = id.rsplit('/').next().unwrap_or(&id).split(|c: char| !c.is_ascii_alphanumeric()).collect();
+    let special = toks
+        .iter()
+        .any(|t| matches!(*t, "search" | "audio" | "realtime" | "tts" | "transcribe" | "research" | "computer"));
+    let family_off = match slot {
+        Slot::Anthropic => !id.contains("claude"),
+        Slot::Responses => !id.contains("gpt"),
+        _ => false,
+    };
+    let mut rank = 0;
+    if crate::image_gen::model_kind(&m.id) != crate::image_gen::ModelKind::Chat {
+        rank += 16;
+    }
+    if m.status == "stale" {
+        rank += 8;
+    }
+    if special {
+        rank += 4;
+    }
+    if m.catalog_slot.as_deref().is_some_and(|s| s != slot.as_str()) {
+        rank += 2;
+    }
+    if family_off {
+        rank += 1;
+    }
+    rank
 }
 
 async fn probe_loaded_profile(
@@ -1745,6 +1787,31 @@ pub async fn validate_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_probe_model_skips_special_and_non_chat_models() {
+        use crate::gateway_store::Slot;
+        let m = |id: &str, status: &str, slot: Option<&str>| -> crate::profiles::GatewayModel {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "source": "catalog", "status": status, "lastSeenAt": null, "catalogSlot": slot
+            }))
+            .unwrap()
+        };
+        // 用户实例：目录第一个是 gpt-5.5-search（中转没开渠道，测出 500）
+        let catalog = vec![
+            m("gpt-5.5-search", "available", None),
+            m("gpt-image-2", "available", None),
+            m("gpt-5.4", "stale", None),
+            m("claude-sonnet-5", "available", None),
+            m("gpt-5.5", "available", None),
+        ];
+        assert_eq!(pick_catalog_probe_model(&catalog, Slot::Responses).as_deref(), Some("gpt-5.5"));
+        assert_eq!(pick_catalog_probe_model(&catalog, Slot::Anthropic).as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(pick_catalog_probe_model(&catalog, Slot::Openai).as_deref(), Some("claude-sonnet-5"), "同样好时取目录靠前的");
+        let only_special = vec![m("gpt-5.5-search", "available", None)];
+        assert_eq!(pick_catalog_probe_model(&only_special, Slot::Openai).as_deref(), Some("gpt-5.5-search"), "只剩它也得测");
+        assert_eq!(pick_catalog_probe_model(&[], Slot::Openai), None);
+    }
     use crate::profiles::ProtocolSlots;
 
     fn profile(agent: &str) -> Profile {
