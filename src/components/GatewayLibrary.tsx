@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { contextLabel } from "../model-caps-label";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
@@ -7,7 +7,7 @@ import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
 import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Checkbox, fieldClass, FoldMark, hoverRevealClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import PagePanel from "./PagePanel";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
@@ -291,6 +291,8 @@ export default function GatewayLibrary({
 }) {
   const gateways = useAppStore((s) => s.gateways);
   const profiles = useAppStore((s) => s.profiles);
+  const keyInputId = useId();
+  const walletInputId = useId();
   const loadGateways = useAppStore((s) => s.loadGateways);
   const saveGateway = useAppStore((s) => s.saveGateway);
   const removeGateway = useAppStore((s) => s.removeGateway);
@@ -1172,6 +1174,7 @@ export default function GatewayLibrary({
       subtitle={editing ? "网关库" : undefined}
       backLabel={editing ? "返回网关库" : "返回连接"}
       animate={animate}
+      wide={!editing}
       onBack={async () => {
         if (!editing) return void closeLibrary();
         if (await confirmDiscard()) setEditing(null);
@@ -1278,25 +1281,30 @@ export default function GatewayLibrary({
             {noAuth ? (
               <p className="text-micro text-l3">本地端点不需要密钥，测试和启动都不带密钥。</p>
             ) : (
-              <>
-                <label className="block text-sm text-l2">
-                  {editing === "new" || !editing.keyHint ? "密钥" : `密钥（留空不改，现存 ${editing.keyHint}）`}
-                  <input
-                    className={`${fieldClass} mt-1 w-full`}
-                    type="password"
-                    autoComplete="new-password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                  />
-                </label>
-                {editing !== "new" && editing.keyHint && (
-                  <button type="button" className={`${ghostActionClass} text-err-text`} onClick={() => void onClearKey()}>
-                    清除本地密钥
-                  </button>
-                )}
-              </>
+              // 「清除」是低频危险动作：收成标签行右侧的红色小字，不再单独占一行像主操作（2026-11-01 打磨）。
+              // 不能放进 <label> 里：label 会把按钮当成它关联的控件，输入框就没了标签
+              <div className="text-sm text-l2">
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor={keyInputId}>
+                    {editing === "new" || !editing.keyHint ? "密钥" : `密钥（留空不改，现存 ${editing.keyHint}）`}
+                  </label>
+                  {editing !== "new" && editing.keyHint && (
+                    <button type="button" className="text-micro text-err-text hover:underline" onClick={() => void onClearKey()}>
+                      清除本地密钥
+                    </button>
+                  )}
+                </div>
+                <input
+                  id={keyInputId}
+                  className={`${fieldClass} mt-1 w-full`}
+                  type="password"
+                  autoComplete="new-password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                />
+              </div>
             )}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 pb-2 pt-1">
               <button
                 type="button"
                 className={secondaryActionClass}
@@ -1323,25 +1331,33 @@ export default function GatewayLibrary({
               )}
             </div>
             {showWalletFields && (
-              <div className="space-y-2 rounded-md border border-hairline p-2">
-                <p className="text-micro text-l3">
-                  查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
-                </p>
-                <label className="block text-sm text-l2">
-                  {editing === "new" || !editing.walletKeyHint ? "系统访问令牌" : "系统访问令牌（留空不改）"}
+              <div className="mb-2 space-y-3 rounded-md border border-hairline p-3">
+                <div>
+                  <p className="text-sm font-medium text-l2">查余额（New API 站点）</p>
+                  <p className="mt-0.5 text-micro text-l3">
+                    查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
+                  </p>
+                </div>
+                <div className="text-sm text-l2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor={walletInputId}>
+                      {editing === "new" || !editing.walletKeyHint ? "系统访问令牌" : "系统访问令牌（留空不改）"}
+                    </label>
+                    {editing !== "new" && editing.walletKeyHint && (
+                      <button type="button" className="text-micro text-err-text hover:underline" onClick={() => void onClearWalletToken()}>
+                        清除系统访问令牌
+                      </button>
+                    )}
+                  </div>
                   <input
+                    id={walletInputId}
                     className={`${fieldClass} mt-1 w-full`}
                     type="password"
                     value={walletToken}
                     onChange={(e) => setWalletToken(e.target.value)}
                     placeholder="不是 sk- 推理密钥"
                   />
-                </label>
-                {editing !== "new" && editing.walletKeyHint && (
-                  <button type="button" className={`${ghostActionClass} text-err-text`} onClick={() => void onClearWalletToken()}>
-                    清除系统访问令牌
-                  </button>
-                )}
+                </div>
                 <label className="block text-sm text-l2">
                   用户 ID（一般不用填）
                   <input
@@ -1827,7 +1843,8 @@ export default function GatewayLibrary({
         ) : (
           // 2026-10-31 简化：每个网关一张可点的行卡（点了就是编辑），状态点挨着名字；测试 / 获取模型 / 删除悬停才出（图标钮）。
           // 原先每行一个状态字 + 四颗文字按钮，同一层控件太多
-          <ul className="space-y-0.5">
+          // 宽的时候（容器 ≥ 56rem）第二行拆成右边对齐的几列：地址与密钥 / 连接数 / 近 30 天花费；窄的时候照旧两行
+          <ul className="@container space-y-0.5">
             {gateways.length === 0 && (
               <li className="py-8 text-center text-sm text-l3">还没有网关。点右下角「+ 新建网关」，或在添加连接时新建。</li>
             )}
@@ -1868,7 +1885,7 @@ export default function GatewayLibrary({
                       </span>
                     </span>
                     {/* 第二行只放地址、几个连接、花费；协议与模型数进悬停（原先一行塞不下，后半截总被截掉） */}
-                    <span className="mt-0.5 block truncate text-micro text-l3" title={row.detail}>
+                    <span className="mt-0.5 block truncate text-micro text-l3 @4xl:hidden" title={row.detail}>
                       {gatewayHostLine(g, row.detail)}
                       {` · ${n ? `${n} 个连接` : "没有连接"}`}
                       {usage && (
@@ -1884,6 +1901,27 @@ export default function GatewayLibrary({
                         </button>
                       )}
                     </span>
+                  </span>
+                  <span className="hidden w-72 shrink-0 truncate text-xs text-l3 @4xl:block" title={row.detail}>
+                    {gatewayHostLine(g, row.detail)}
+                  </span>
+                  <span className="hidden w-20 shrink-0 text-right text-xs text-l3 @4xl:block">{n ? `${n} 个连接` : "没有连接"}</span>
+                  <span className="hidden w-44 shrink-0 text-right text-xs text-l3 @4xl:block">
+                    {usage ? (
+                      <button
+                        type="button"
+                        className="hover:text-l1"
+                        title="去用量页看这个网关"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onJumpUsage?.(g.id);
+                        }}
+                      >
+                        {usage}
+                      </button>
+                    ) : (
+                      "—"
+                    )}
                   </span>
                   <span className={`flex shrink-0 items-center ${hoverRevealClass}`} onClick={(e) => e.stopPropagation()}>
                     <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />

@@ -21,6 +21,7 @@ export default function PagePanel({
   footerNote,
   animate = true,
   hidden = false,
+  wide = false,
   children,
 }: {
   title: ReactNode;
@@ -38,6 +39,8 @@ export default function PagePanel({
   animate?: boolean;
   /** 所在页面切走了（左侧导航还能点）：藏起来但不卸载，填了一半的内容留着 */
   hidden?: boolean;
+  /** 列表页（如网关库列表）放宽到 72rem；表单页保持 48rem 单列好读 */
+  wide?: boolean;
   children: ReactNode;
 }) {
   const rect = useMainRect();
@@ -130,7 +133,7 @@ export default function PagePanel({
         <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>
       </header>
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto w-full max-w-3xl px-8 pb-10 pt-4">{children}</div>
+        <div className={`mx-auto w-full px-8 pb-10 pt-4 ${wide ? "max-w-6xl" : "max-w-3xl"}`}>{children}</div>
       </div>
       {(footer || footerNote) && (
         <footer

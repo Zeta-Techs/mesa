@@ -30,6 +30,7 @@ import {
   Trash2,
   Undo2,
   Check,
+  Plus,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { NAV_ICONS } from "../navigation-icons";
@@ -1529,15 +1530,20 @@ export function ProfileModal({
                       const ctx = contextLabel(c.context);
                       return ctx ? `${flags.join(" · ")} · 上下文 ${ctx}` : flags.join(" · ");
                     })()}
-                    className="group flex items-center gap-2 rounded-sm px-2 py-0.5 hover:bg-hover"
+                    // 末尾空行是输入位：虚线框 + ＋，一眼看得出能填（2026-11-01 用户：原先像一行普通说明文字）
+                    className={`group flex items-center gap-2 rounded-sm px-2 focus-within:bg-hover ${
+                      !m.trim() && i === slots.length - 1
+                        ? "mt-1 border border-dashed border-hairline py-1 hover:border-field focus-within:border-solid focus-within:border-field"
+                        : "py-0.5 hover:bg-hover"
+                    }`}
                   >
                     <span className="w-4 shrink-0 text-right text-micro text-l3">
-                      {i + 1}
+                      {!m.trim() && i === slots.length - 1 ? <Plus aria-hidden="true" className="ml-auto size-3" /> : i + 1}
                     </span>
                     <input
                       aria-label={`第 ${i + 1} 个模型`}
                       className="min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs text-l2 outline-none placeholder:font-sans placeholder:text-l3"
-                      placeholder={modelPlaceholder}
+                      placeholder={!m.trim() && i === slots.length - 1 && filled > 0 ? "再加一个模型" : `添加${modelPlaceholder}`}
                       value={m}
                       onChange={(e) => setModelSlot(i, e.target.value)}
                     />
