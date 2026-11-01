@@ -4992,6 +4992,9 @@ const TerminalView = memo(function TerminalView({
       ...(rec ? { model: rec.model, effort: rec.effort } : {}),
     });
     void startSessionWatcher(filePath, ctx.agentId);
+    // 侧栏要马上把这段收进对话列表：不刷的话它一直画成「开着、列表里还没有」的行，只有 ×、没有 ⋯，
+    // 要等起好标题那次刷新或每分钟的轮询才换过来（2026-11-01 用户：新对话过一会才有 ⋯）
+    void useAppStore.getState().loadSessions(true);
     // 关联成功后降低兜底轮询频率；实时刷新以 watcher 事件为主。
     startLinkPolling(5000);
   }
