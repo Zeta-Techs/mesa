@@ -38,10 +38,11 @@ function fixture() {
   );
   writeFileSync(
     join(root, "manuscript/review-draft.md"),
-    "# Intro\n\nProteins fold [@smith2020; @ghost2021].\n\nSee @fig-one and email a@b.com.\n\n```\n[@incode]\n```\n\nAs @lee2019 showed.\n",
+    "# Intro\n\nProteins fold [@smith2020; @ghost2021].\n\nSee @fig-one and email a@b.com; cycled @500 mA g-1.\n\n```\n[@incode]\n```\n\nAs @lee2019 showed.\n",
   );
   // 这类文件不是正文，里面的引用不算
   writeFileSync(join(root, "manuscript/citation-check.md"), "[@notcounted]\n");
+  writeFileSync(join(root, "manuscript/section-status.md"), "[@notcounted2]\n");
   return root;
 }
 
@@ -57,7 +58,7 @@ test("refs：找不到的键拦下、重复键拦下、交叉引用与代码块�
     assert.deepEqual(ghost?.target, { file: "manuscript/review-draft.md", line: 3 });
     assert.equal(byId(list, "DUP-lee2019")?.status, "blocked");
     assert.equal(byId(list, "REF-lee2019")?.target?.line, 11);
-    for (const absent of ["REF-fig-one", "REF-incode", "REF-notcounted", "REF-b.com"]) assert.equal(byId(list, absent), undefined, absent);
+    for (const absent of ["REF-fig-one", "REF-incode", "REF-notcounted", "REF-notcounted2", "REF-b.com", "REF-500"]) assert.equal(byId(list, absent), undefined, absent);
     assert.equal(byId(list, "ONLINE")?.status, "needs_human");
     assert.ok(list.every((i) => ["passed", "blocked", "needs_human"].includes(i.status)));
     assert.match(r.stdout, /拦下 2/);
@@ -107,12 +108,23 @@ test("quotes：逐字找原句——断词、弯引号、省略号都认；编�
       "p.insert_text((72,72),'We show that the folding ener-'); p.insert_text((72,90),'gy landscape is \"funnel shaped\" in all cases.'); " +
       "p.insert_text((72,108),'Later results confirm the trend for large proteins.'); d.save(sys.argv[1])";
     assert.equal(spawnSync(python, ["-c", make, pdf], { encoding: "utf8" }).status, 0);
-    writeFileSync(join(project, "papers/included.json"), JSON.stringify([{ id: "W1", title: "Deep", pdf: "papers/Smith2020-proteins.pdf" }]));
+    // 早期项目：included.json 没记 pdf、文件用题名命名放在项目根，按题名认（2026-11-02 真实项目干跑）
+    const legacy = join(project, "Graph Methods for Protein Interaction Networks_ A Survey.pdf");
+    const make2 = "import pymupdf,sys; d=pymupdf.open(); p=d.new_page(); p.insert_text((72,72),'Graphs help to model protein interactions.'); d.save(sys.argv[1])";
+    assert.equal(spawnSync(python, ["-c", make2, legacy], { encoding: "utf8" }).status, 0);
+    writeFileSync(
+      join(project, "papers/included.json"),
+      JSON.stringify([
+        { id: "W1", title: "Deep", pdf: "papers/Smith2020-proteins.pdf" },
+        { id: "W3", title: "Graph methods for protein interaction networks: a survey" },
+      ]),
+    );
     writeFileSync(
       join(project, "notes/index.json"),
       JSON.stringify([
         { id: "W1", bibKey: "smith2020", fulltextStatus: "fulltext" },
         { id: "W2", bibKey: "lee2019", fulltextStatus: "abstract-only" },
+        { id: "W3", bibKey: "wu2021", fulltextStatus: "fulltext" },
       ]),
     );
     writeFileSync(
@@ -123,6 +135,7 @@ test("quotes：逐字找原句——断词、弯引号、省略号都认；编�
           { id: "Q002", location: "manuscript/review-draft.md:3", key: "smith2020", quote: "We show that … for large proteins" },
           { id: "Q003", location: "manuscript/review-draft.md:3", key: "smith2020", quote: "folding is always fast" },
           { id: "Q004", location: "manuscript/review-draft.md:11", key: "lee2019", quote: "graphs help" },
+          { id: "Q005", location: "manuscript/review-draft.md:11", key: "wu2021", quote: "Graphs help to model protein interactions" },
         ],
       }),
     );
@@ -135,6 +148,7 @@ test("quotes：逐字找原句——断词、弯引号、省略号都认；编�
     assert.equal(byId(list, "Q-Q002")?.status, "passed");
     assert.equal(byId(list, "Q-Q003")?.status, "blocked");
     assert.equal(byId(list, "Q-Q004")?.status, "needs_human");
+    assert.equal(byId(list, "Q-Q005")?.status, "passed");
     // 稿件里引了但没给摘录的：交人看，不判通过也不拦
     assert.equal(byId(list, "COV-ghost2021")?.status, "needs_human");
     assert.equal(byId(list, "COV-smith2020"), undefined);

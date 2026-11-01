@@ -25,8 +25,10 @@ import unicodedata
 from pathlib import Path
 
 CHECKER = "script:cite_check"
+# 过程文件不是正文：检查报告、审查 / 裁决清单、状态与修改记录（2026-11-02 真实项目干跑：section-status.md 里的「@500 mA」被当成引用）
 SKIP_MANUSCRIPT = re.compile(
-    r"(citation-check|review-report|verification-decisions|declarations|checklist|evidence)", re.I
+    r"(citation-check|citation-style|review-report|verification-decisions|declarations|checklist|evidence|"
+    r"section-status|changelog|numbers)", re.I
 )
 CROSSREF_PREFIXES = ("fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-")
 RETRACT_TYPES = {"retraction", "withdrawal", "removal"}
@@ -128,7 +130,8 @@ def citations(root, files):
                 continue
             for key in PANDOC_KEY.findall(line):
                 key = key.rstrip(".:;,?")
-                if key and not key.lower().startswith(CROSSREF_PREFIXES):
+                # 纯数字（「@500 mA」「@50 °C」）不是引用键
+                if key and not key.isdigit() and not key.lower().startswith(CROSSREF_PREFIXES):
                     out.append((key, rel, no))
     return out
 
@@ -328,9 +331,38 @@ def find_in_pages(pages, segs):
     return page + 1
 
 
+def title_key(text):
+    return "".join(ch for ch in unicodedata.normalize("NFKC", text or "").lower() if ch.isalnum())
+
+
+def pdf_by_title(roots):
+    """项目根与 papers/ 下的 PDF，按文件名（去扩展名）归一：早期项目 included.json 没记 pdf、文件用题名命名
+    （2026-11-02 真实项目干跑：72 篇全在项目根、一篇也没登记路径）。"""
+    out = {}
+    for root in roots:
+        for folder in (root, root / "papers"):
+            if folder.is_dir():
+                for pdf in folder.glob("*.pdf"):
+                    out.setdefault(title_key(pdf.stem), pdf)
+    return out
+
+
+def match_title(title, by_title):
+    """题名与文件名互为前缀（至少 20 个字母数字）即认；文件名里被替换成 _ 的标点在归一时都去掉了。"""
+    key = title_key(title)
+    if len(key) < 20:
+        return None
+    for stem, pdf in by_title.items():
+        if len(stem) >= 20 and (key.startswith(stem) or stem.startswith(key)):
+            return pdf
+    return None
+
+
 def source_map(roots):
-    """bibKey → (PDF 路径 | None, 全文状态)：notes/index.json 认 bibKey → id，papers/included.json 认 id → pdf。"""
+    """bibKey → (PDF 路径 | None, 全文状态)：notes/index.json 认 bibKey → id，papers/included.json 认 id → pdf；
+    没登记 pdf 的按题名认项目里的 PDF 文件。"""
     status, pdf_of_id, key_to_id = {}, {}, {}
+    title_of_id = {}
     for root in roots:
         index = root / "notes" / "index.json"
         if index.is_file():
@@ -350,8 +382,17 @@ def source_map(roots):
                 for row in json.loads(included.read_text(encoding="utf-8")):
                     if row.get("pdf"):
                         pdf_of_id.setdefault(row.get("id"), row["pdf"])
+                    if row.get("title"):
+                        title_of_id.setdefault(row.get("id"), row["title"])
             except (ValueError, AttributeError):
                 pass
+    missing = [i for i in title_of_id if i not in pdf_of_id]
+    if missing:
+        by_title = pdf_by_title(roots)
+        for i in missing:
+            hit = match_title(title_of_id[i], by_title)
+            if hit is not None:
+                pdf_of_id[i] = str(hit)
     return key_to_id, pdf_of_id, status
 
 
