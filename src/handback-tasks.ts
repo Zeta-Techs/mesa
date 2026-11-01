@@ -50,6 +50,16 @@ const DECLARATIONS_LATEX: HandbackTask = {
     "AI 使用声明以我核对后的文字为准。改完用 render-pdf 重编译 main.pdf，连同这份文件一起提交。",
 };
 
+/** 学位论文声明：原创性声明与授权书按学校模板放正文前，AI 使用说明放学校要求处；不改写、不代签 */
+const DECLARATIONS_THESIS: HandbackTask = {
+  panel: "sections",
+  open: "打开填写",
+  handback: "填好了，交给 AI",
+  prompt: (target) =>
+    `${target} 我填好了。独创性 / 原创性声明与使用授权按学校模板放在 thesis-final.md 正文前，AI 使用说明放在学校要求的位置（没规定就放致谢后），都按我写的原文，不改写；` +
+    "签名、日期仍写着「待填」的不要编，在报告里列出来。改完重渲 PDF、Word 和两份域稿，连同这份文件一起提交。",
+};
+
 const PRE_SUBMISSION: HandbackTask = {
   panel: "sections",
   open: "打开填写",
@@ -80,6 +90,7 @@ const DATA_DICTIONARY: HandbackTask = {
 export function handbackTask(title: string): HandbackTask | null {
   if (title.includes("转载许可")) return FIGURE_PERMISSIONS;
   if (title.includes("投稿声明") && title.includes("LaTeX")) return DECLARATIONS_LATEX;
+  if (title.includes("学位论文声明")) return DECLARATIONS_THESIS;
   if (title.includes("投稿声明")) return DECLARATIONS;
   if (title.includes("作者信息与投稿目标")) return PRE_SUBMISSION;
   if (title.includes("补齐声明")) return SUBMISSION_CHECKLIST;

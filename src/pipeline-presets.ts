@@ -1116,14 +1116,14 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "输入：papers/included.md 与 papers/to-fetch.md。全程按 {skill:lit-notes} 技能。已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。\n" +
       LIT_NOTES_WRITE +
       "1. 整理项目根 papers/ 人工补投并更新 to-fetch.md；\n" +
-      "2. **先报清单规模与全文到位率，建议核心精读篇目**，写入 .ccode/help-wanted.md（未回复仅做可逆准备，不含批量生成笔记）；\n" +
-      "3. 用户确认的核心篇有 PDF 的读正文按技能八段写笔记；其余按摘要写短记。全文未得按摘要写并标「仅摘要·待全文」。index pending 只留给待确认或无法按摘要写的篇。\n" +
+      "2. " + NOTES_READ_ALL +
+      "3. " + NOTES_HANDOFF +
       "4. 已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
-      "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法。确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
+      "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法。有 PDF 的还没全部写成精读、或按摘要记的还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf", "notes/", "references.bib"],
-    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md"],
-    acceptanceCriteria: [LIT_NOTES_INDEX_RECORDS, "machine:same-ids:papers/included.json::notes/index.json"],
+    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md", "notes/handoff.md"],
+    acceptanceCriteria: [...NOTES_MACHINE_CHECKS, LIT_NOTES_INDEX_RECORDS, "machine:same-ids:papers/included.json::notes/index.json"],
     skills: ["lit-notes"],
     run: [],
     humanTasks: [notesSpotCheckTask()],
@@ -1137,10 +1137,11 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "输入：notes/、papers/included.md 与 references.bib（已随 main 合并在本工作区内）。\n" +
       "1. 产出 proposal/proposal.md 开题报告（按 {skill:proposal-writer} 技能）：选题依据、研究内容、研究目标与创新点、技术路线、可行性与进度安排，引用只用 references.bib 已有键；\n" +
       APPROVED_QUESTION +
-      "2. 产出 chapters/literature-review.md 综述章节草稿：框架构造按 {skill:review-framework} 技能（空白清单 → 范式卡片 → 融合），只引用 references.bib 中存在的键，不为综述新造引用。\n" +
+      "2. 产出 chapters/literature-review.md 综述章节草稿：先读 notes/handoff.md「写作约束」（仅摘要 / 题录的键不写成已确立，机制分歧并列写）；框架构造按 {skill:review-framework} 技能（空白清单 → 范式卡片 → 融合），只引用 references.bib 中存在的键，不为综述新造引用。\n" +
       "完成标准：proposal.md 五节齐全；literature-review.md 引用键全部可解析，含框架推演或等价取舍说明。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     inputs: ["notes/", "papers/included.md", "papers/included.json", "references.bib"],
+    optionalInputs: ["notes/handoff.md"],
     expectedArtifacts: ["proposal/proposal.md", "chapters/literature-review.md"],
     acceptanceCriteria: ["machine:contains:proposal/proposal.md::已批准问题与范围"],
     skills: ["proposal-writer", "review-framework"],
@@ -1252,16 +1253,28 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "1. 汇总各实验主指标，与基线逐项对比，产出 chapters/results.md：表格（方法 × 指标，同时报告不确定性；最优值不等于重要或显著）+ 关键图表（figures/ 主交付 SVG 或 PNG，投稿用 PDF 副本写本工作区 output/figures/（合并后进项目根），出图按 {skill:figure-forge} 技能）+ 逐项解读；\n" +
       "2. 只用 summary.md 中的数字下结论，推测性内容标 [推测]；失败/离群结果单独说明，不删除不美化；涉及统计显著性的表述按 {skill:stats-check} 技能口径（p 值给具体值、附效应量与置信区间），问题清单写入 analysis/thesis-results-stats-check.md；\n" +
       "3. 对照 proposal/proposal.md 的创新点：哪些被结果支撑、哪些要降级或改口，写进 chapters/results.md 末尾；结果不如预期时，先基于实际异常、补实验成本与 design.md 的停止规则写入 .ccode/help-wanted.md 问用户；不得在看到结果前预设换方向。\n" +
+      "4. 统计表述写完按 {skill:stats-check} 跑 stat_check（--files chapters/results.md）。" + RESULTS_JSON_CLAUSE +
       CLAIM_ENTRIES +
-      "完成标准：chapters/results.md、analysis/thesis-results-stats-check.md、figures/ 已提交，每条结论可追溯到 summary.md 的数字。\n" +
+      "完成标准：chapters/results.md、analysis/thesis-results-stats-check.md、analysis/results.json、figures/（含 manifest.json）已提交，每条结论可追溯到 summary.md 的数字。\n" +
       EVIDENCE_GATE + QUALITY_STATUS,
     inputs: ["experiments/reproduce.py", "results/run-manifest.json", "results/matrix.json", "results/implementation-check.md", "design.md", "results/summary.md", "proposal/proposal.md"],
     optionalInputs: ["artifacts/"],
-    expectedArtifacts: ["chapters/results.md", "analysis/thesis-results-stats-check.md", "figures/*"],
-    acceptanceCriteria: ["machine:contains:chapters/results.md::结论条目"],
+    expectedArtifacts: ["chapters/results.md", "analysis/thesis-results-stats-check.md", "analysis/results.json", "figures/*", "figures/manifest.json"],
+    acceptanceCriteria: ["machine:contains:chapters/results.md::结论条目", "machine:file:analysis/results.json"],
     skills: ["figure-forge", "stats-check"],
     run: [],
     decisions: [],
+    // 初稿只写已认可的结论条目（SECTION_STATUS 允许集）：没人认可时初稿只能全写成待审
+    humanTasks: [
+      {
+        title: "审阅结论条目再开初稿",
+        guidance:
+          "按 G4 核对 chapters/results.md 的结论条目：关键数字能否复算？哪条证据支持或反驳？探索是否冒充确证？把认可的条目状态改成已认可。不合意回结果分析。",
+        target: "chapters/results.md",
+        timing: "after",
+        completion: "manual",
+      },
+    ],
   },
   {
     name: "论文初稿",
@@ -1271,10 +1284,10 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "输入：chapters/ 各章草稿、references.bib、figures/、proposal/proposal.md（已随 main 合并在本工作区内）。\n" +
       `写作范围由你按笔记与各章草稿判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
       SECTION_STATUS +
-      "1. 按学校论文模板结构（封面/摘要/目录/正文各章/参考文献/致谢；项目内无模板文件时用通用学位论文结构、语种默认中文，并在 manuscript/README.md 注明所依据的结构）组装全文初稿 manuscript/thesis-draft.md；学校要求独立讨论章则保留讨论章，不要并进结论；\n" +
+      "1. 按学校论文模板结构（模板放在 manuscript/template/；封面/摘要/目录/正文各章/参考文献/致谢；项目内无模板文件时用通用学位论文结构、语种默认中文，并在 manuscript/README.md 注明所依据的结构）组装全文初稿 manuscript/thesis-draft.md；学校要求独立讨论章则保留讨论章，不要并进结论；\n" +
       "2. 补齐缺失章节：引言（研究背景+问题+贡献，对应开题报告）、结论与展望（对应结果章节）；\n" +
       "3. 统一各章术语、符号与图表编号；引用一律 [@bib键] 且只能引用 references.bib 已有键——严禁编造文献；\n" +
-      "4. 图表引用占位（「图 3-1：…」），数字与 chapters/results.md 一致，不一致处以结果章节为准并在修订记录标注；\n" +
+      "4. 图表只引用 figures/ 已有文件（「图 3-1：…」），缺图写明缺哪项分析并标 [待补实验]，不写「待绘制」占位；数字与 chapters/results.md 一致，不一致处以结果章节为准并在修订记录标注；来自 analysis/results.json 的数字按 {skill:research-writing}「数字追溯」登记进 manuscript/numbers.json 并跑 num_check；先读 notes/handoff.md「写作约束」（有就读）；\n" +
       "5. 产出 manuscript/revision-notes.md：组装过程中的取舍与待确认项；\n" +
       "6. 渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「格式与定稿」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "中文稿的中文用宋体。渲染报错先按技能指引补依赖，不绕路。\n" +
       "完成标准：thesis-draft.md 章节齐全、引用闭环、revision-notes.md 已提交、run 脚本渲染通过。\n" +
@@ -1283,14 +1296,16 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "manuscript/thesis-draft.md",
       "manuscript/section-status.md",
       "manuscript/revision-notes.md",
+      "manuscript/numbers.json",
       "manuscript/typeface.md",
       "manuscript/reference.docx",
       "output/thesis-draft.pdf",
       "output/thesis-draft.docx",
     ],
-    acceptanceCriteria: ["machine:contains:manuscript/section-status.md::要回答", "machine:contains:manuscript/section-status.md::允许集"],
+    acceptanceCriteria: ["machine:contains:manuscript/section-status.md::要回答", "machine:contains:manuscript/section-status.md::允许集", "machine:not-contains:manuscript/thesis-draft.md::待绘制"],
     inputs: ["chapters/", "analysis/thesis-results-stats-check.md", "references.bib", "figures/*", "proposal/proposal.md"],
-    skills: ["quarto-render"],
+    optionalInputs: ["analysis/results.json", "notes/handoff.md", "manuscript/template/"],
+    skills: ["research-writing", "quarto-render"],
     discussionSeeds: [
       "章节权重怎么分：哪几章是答辩老师最看重、要重点打磨的？",
       "学校的字数与章节要求是什么：有没有硬性模板要对齐？",
@@ -1299,8 +1314,8 @@ const THESIS_STEPS: ProjectStepDto[] = [
       {
         title: "放入学校格式规范与论文模板",
         guidance:
-          "学校官网/研究生院下载的格式规范与模板文件，放到项目目录即可；没有时 agent 按通用学位论文规范执行并注明依据。越早放入，初稿结构越少返工。初稿固定按编号制渲，引用格式在「格式与定稿」的「更换引用样式」里定。",
-        target: "",
+          "学校官网/研究生院下载的格式规范与模板文件，放到项目 manuscript/template/ 目录；没有时 agent 按通用学位论文规范执行并注明依据。越早放入，初稿结构越少返工。初稿固定按编号制渲，引用格式在「格式与定稿」的「更换引用样式」里定。",
+        target: "manuscript/template/",
         timing: "before",
       },
     ],
@@ -1328,9 +1343,11 @@ const THESIS_STEPS: ProjectStepDto[] = [
       ENDNOTE_SYNC +
       "审查报告写 manuscript/review-report.md。第一轮只核对，不改正文：格式问题写入 manuscript/format-check.md；引用闭环按 {skill:bib-check} 写入 manuscript/citation-check.md；查重降重建议写入 manuscript/plagiarism-advice.md，只给改写建议，不直接代写。\n" +
       "第二轮才产出 manuscript/thesis-final.md 与 manuscript/changelog.md。语言只改表达；内容性错误标 [待核实]。同时交 output/endnote.docx 与 output/zotero.docx 两份带引用域的 Word。\n" +
+      "收尾再按 {skill:bib-check} 复核 thesis-final.md（含原文摘录 manuscript/evidence.json），结论追加进 citation-check.md；按 {skill:stats-check} 跑 stat_check，统计问题写入 analysis/thesis-final-stats-check.md；定稿行号变了就把 manuscript/numbers.json 改指 thesis-final.md 再跑 num_check。\n" +
       verificationListClause("thesis-final.md") + "\n" +
-      "6. " + STYLE_AT_FINAL + "渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。\n" +
-      "完成标准：format-check.md 与 citation-check.md 问题逐条有处理结论，thesis-final.md 引用闭环，changelog.md 已提交，run 脚本渲染通过。\n" +
+      "写 manuscript/declarations.md 空白模板，三节：独创性 / 原创性声明、学位论文使用授权（照学校模板原文抄进来，签名与日期留「待填」）、AI 使用说明（用过哪些 AI 工具、模型、用在哪一步，以项目根 .ccode/ai-usage.md（Mesa 按实际运行统计）为准，那里没有的不添，标「待作者核对」）。不得代签、不得代填。\n" +
+      STYLE_AT_FINAL + "渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。\n" +
+      "完成标准：format-check.md 与 citation-check.md 问题逐条有处理结论，thesis-final.md 引用闭环，changelog.md 已提交，declarations.md 模板已写、待填栏留给人，run 脚本渲染通过。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
       "manuscript/review-report.md",
@@ -1340,6 +1357,10 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "manuscript/plagiarism-advice.md",
       "manuscript/changelog.md",
       "manuscript/verification-decisions.md",
+      "manuscript/evidence.json",
+      "manuscript/numbers.json",
+      "manuscript/declarations.md",
+      "analysis/thesis-final-stats-check.md",
       "output/thesis-final.pdf",
       "output/thesis-final.docx",
       "output/endnote.docx",
@@ -1349,12 +1370,21 @@ const THESIS_STEPS: ProjectStepDto[] = [
     ],
     acceptanceCriteria: ["machine:contains:manuscript/review-report.md::严重问题"],
     inputs: ["manuscript/thesis-draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "chapters/results.md", "analysis/thesis-results-stats-check.md", "results/run-manifest.json", "notes/", "references.bib"],
-    skills: ["bib-check", "quarto-render", "endnote-bridge", "zotero-sync"],
+    optionalInputs: ["analysis/results.json", "manuscript/template/"],
+    skills: ["bib-check", "stats-check", "research-writing", "quarto-render", "endnote-bridge", "zotero-sync"],
     humanTasks: [
       reviewDecisionTask("manuscript/review-report.md"),
       verificationDecisionTask(),
       styleChoiceTask(),
       endnoteSyncTask(),
+      {
+        title: "填学位论文声明（原创性、授权与 AI 使用）",
+        guidance:
+          "点「打开填写」：独创性声明与使用授权按学校模板核对原文、签名日期由你填（AI 不代签）；AI 使用说明是 AI 按 Mesa 统计的使用记录（.ccode/ai-usage.md）起的草稿，核对用途、补上 Mesa 之外用过的工具后改定。填好点「填好了，交给 AI」，AI 按学校要求的位置并进定稿并重渲。",
+        target: "manuscript/declarations.md",
+        timing: "after",
+        completion: "manual",
+      },
       {
         title: "按 G5 核验证据、送导师审阅并完成学校要求",
         guidance:

@@ -43,3 +43,11 @@ test("LaTeX 定稿的投稿声明交回：作者进 main.tex、声明进 \\secti
   assert.doesNotMatch(prompt, /Word|域稿|YAML/);
   assert.match(handbackTask("填作者、单位与投稿声明")!.prompt("x"), /YAML/);
 });
+
+test("学位论文声明交回：原创性与授权按学校模板放正文前、AI 使用说明放学校要求处，不代签（2026-11-02）", () => {
+  const thesis = handbackTask("填学位论文声明（原创性、授权与 AI 使用）");
+  assert.ok(thesis);
+  const prompt = thesis.prompt("manuscript/declarations.md");
+  assert.match(prompt, /thesis-final\.md 正文前/);
+  assert.match(prompt, /签名、日期仍写着「待填」的不要编/);
+});
