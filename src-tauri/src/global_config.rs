@@ -1514,7 +1514,7 @@ pub(crate) fn grok_helper_auth(config: &str, helper: &Path, gateway_id: &str, ke
 }
 
 /// 每个网关一个 helper 段名（同一网关的段共用）
-fn grok_auth_provider_name(gateway_id: &str) -> String {
+pub(crate) fn grok_auth_provider_name(gateway_id: &str) -> String {
     let short: String = gateway_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect();
     format!("mesa-{short}")
 }

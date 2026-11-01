@@ -1933,6 +1933,14 @@ pub fn validate_launch_compatibility(
         }
     }
     if profile.agent == "grok" && profile.account_type == crate::profiles::AccountType::Api {
+        if let (Some(model), Some(root)) = (
+            selected_model.or_else(|| profile.models.first().map(String::as_str)),
+            crate::agent_specs::agent_config_root("grok"),
+        ) {
+            if let Some(msg) = grok_model_section_conflict(&root, profile, model) {
+                return Err(msg);
+            }
+        }
         let backend = profile.api_backend.as_deref().unwrap_or("chat_completions");
         if backend != "chat_completions" {
             let model = selected_model
@@ -3521,6 +3529,37 @@ pub(crate) fn ensure_launch_credentials(
         }
     }
     Ok(())
+}
+
+/// Grok 配置文件里与这次模型同名的 `[model."<id>"]` 段：段里的 base_url / 密钥压过 Mesa 注入（1.0.70 假网关实测），
+/// GROK_CONFIG 覆盖层与命令行都盖不了。段的地址不是这条连接的（或是 Mesa 给别的网关写的 helper 取钥）就拦下说清楚
+///（2026-11-01 用户拍板「启动前拦下说明」）。段没写地址的不管（走 [endpoints] / xAI，[endpoints] 另由 grok_endpoint_conflict 拦）
+fn grok_model_section_conflict(root: &std::path::Path, profile: &Profile, model: &str) -> Option<String> {
+    if profile.account_type != crate::profiles::AccountType::Api {
+        return None;
+    }
+    let base = profile.base_url.as_deref().map(str::trim).filter(|u| !u.is_empty())?;
+    let path = root.join("config.toml");
+    let doc: toml::Value = toml::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+    let section = doc.get("model")?.get(model)?;
+    let section_url = section.get("base_url")?.as_str()?.trim();
+    let same_url = section_url.trim_end_matches('/') == base.trim_end_matches('/');
+    let other_gateway = section
+        .get("auth_provider")
+        .and_then(|a| a.as_str())
+        .filter(|a| a.starts_with("mesa-"))
+        .zip(profile.gateway_id.as_deref())
+        .is_some_and(|(a, gid)| a != crate::global_config::grok_auth_provider_name(gid));
+    if same_url && !other_gateway {
+        return None;
+    }
+    Some(format!(
+        "Grok 配置文件（{}）里有一段 [model.\"{model}\"]，指向 {section_url}：Grok 用模型 {model} 时认这一段的地址和密钥、\
+         不认 Mesa 注入的，按这条连接启动会把请求发到那里。这一段是「设为全局」写的，或是 Mesa 给以前在那条连接上开的对话补的\
+         （让它们在 Mesa 外也能续聊，删掉后那些老对话在外面接不上）。可以换一个模型；或到连接页把这条连接设为 Grok 的全局默认\
+         （同名段会改成这条连接）；或手动删掉这一段后再启动",
+        path.display()
+    ))
 }
 
 /// Grok 的 `[endpoints].models_base_url` 压过 Mesa 注入的 `GROK_MODELS_BASE_URL`（1.0.70 假网关实测，覆盖层也盖不了：
@@ -7608,6 +7647,32 @@ api_backend = "responses"
         let plan = launch_plan(&profile("codex", Some("https://relay.example.com/v1")), Some("sk".into()), Some("m")).unwrap();
         TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = None);
         assert!(plan.args.windows(2).any(|w| w[0] == "-c" && w[1] == r#"forced_login_method="api""#));
+    }
+
+    #[test]
+    fn grok_launch_blocks_same_name_model_section_of_another_connection() {
+        let dir = std::env::temp_dir().join(format!("mesa-grok-sec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = profile("grok", Some("https://relay.example.com/v1"));
+        p.gateway_id = Some("gw1234abcd".into());
+        std::fs::write(
+            dir.join("config.toml"),
+            "[model.\"glm-5\"]\nbase_url = \"https://other/v1\"\napi_key = \"k\"\n\
+             [model.mine]\nbase_url = \"https://relay.example.com/v1/\"\n\
+             [model.wrong-gw]\nbase_url = \"https://relay.example.com/v1\"\nauth_provider = \"mesa-other123\"\n\
+             [model.ok-gw]\nbase_url = \"https://relay.example.com/v1\"\nauth_provider = \"mesa-gw1234ab\"\n\
+             [model.nourl]\nname = \"x\"\n",
+        )
+        .unwrap();
+        let msg = grok_model_section_conflict(&dir, &p, "glm-5").expect("别家地址的同名段要拦");
+        assert!(msg.contains("https://other/v1"));
+        assert!(grok_model_section_conflict(&dir, &p, "mine").is_none(), "同一地址放行");
+        assert!(grok_model_section_conflict(&dir, &p, "wrong-gw").is_some(), "同地址但取的是别的网关的钥");
+        assert!(grok_model_section_conflict(&dir, &p, "ok-gw").is_none());
+        assert!(grok_model_section_conflict(&dir, &p, "nourl").is_none(), "段没写地址不管");
+        assert!(grok_model_section_conflict(&dir, &p, "absent").is_none());
+        assert!(grok_model_section_conflict(&dir, &official_profile("grok"), "glm-5").is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
