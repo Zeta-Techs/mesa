@@ -39,6 +39,17 @@ const DECLARATIONS: HandbackTask = {
     "AI 使用声明以我核对后的文字为准。改完重渲 PDF、Word 和两份域稿，连同这份文件一起提交。",
 };
 
+/** LaTeX 定稿的投稿声明：作者进 main.tex 作者块、声明进 \section*{Declarations}，重编译（不出 Word 与域稿） */
+const DECLARATIONS_LATEX: HandbackTask = {
+  panel: "sections",
+  open: "打开填写",
+  handback: "填好了，交给 AI",
+  prompt: (target) =>
+    `${target} 我填好了。把 Authors 一节的作者、单位、通讯作者邮箱写进 manuscript/main.tex 的作者块（不要再留「待补」），` +
+    "其余各节按我写的原文并进文末 \\section*{Declarations}，不改写；仍写着「待填」的节不进稿件，在报告里列出来。" +
+    "AI 使用声明以我核对后的文字为准。改完用 render-pdf 重编译 main.pdf，连同这份文件一起提交。",
+};
+
 const PRE_SUBMISSION: HandbackTask = {
   panel: "sections",
   open: "打开填写",
@@ -68,6 +79,7 @@ const DATA_DICTIONARY: HandbackTask = {
 
 export function handbackTask(title: string): HandbackTask | null {
   if (title.includes("转载许可")) return FIGURE_PERMISSIONS;
+  if (title.includes("投稿声明") && title.includes("LaTeX")) return DECLARATIONS_LATEX;
   if (title.includes("投稿声明")) return DECLARATIONS;
   if (title.includes("作者信息与投稿目标")) return PRE_SUBMISSION;
   if (title.includes("补齐声明")) return SUBMISSION_CHECKLIST;

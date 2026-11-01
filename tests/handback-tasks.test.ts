@@ -32,3 +32,14 @@ test("同一套「AI 写、人填、交回」推到各模板：论文投稿前�
   assert.match(handbackTask("按 G5 确认无阻塞问题、补齐声明并决定是否提交")!.prompt("submission/checklist.md"), /不要替我提交/);
   assert.equal(handbackTask("换原图与申请转载许可")!.panel, "permissions");
 });
+
+test("LaTeX 定稿的投稿声明交回：作者进 main.tex、声明进 \\section*{Declarations}、重编译，不提 Word 与域稿（2026-11-02）", () => {
+  const latex = handbackTask("填作者、单位与投稿声明（LaTeX）");
+  assert.ok(latex);
+  const prompt = latex.prompt("submission/declarations.md");
+  assert.match(prompt, /main\.tex 的作者块/);
+  assert.match(prompt, /\\section\*\{Declarations\}/);
+  assert.match(prompt, /重编译 main\.pdf/);
+  assert.doesNotMatch(prompt, /Word|域稿|YAML/);
+  assert.match(handbackTask("填作者、单位与投稿声明")!.prompt("x"), /YAML/);
+});

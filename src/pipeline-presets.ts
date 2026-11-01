@@ -167,21 +167,31 @@ function declarationsTask(): HumanTaskDto {
 
 /** 定稿里剩下的 [待核实] 列成一张清单给人逐条裁决（综述先有；2026-10-24 按 HER 那一轮推到论文、学位论文定稿：
  *  三套定稿都会标 [待核实]，原先只有综述把它们列出来，另两套留在稿子里没人管）。 */
-function verificationListClause(finalMd: string): string {
+function verificationListClause(
+  finalMd: string,
+  opts: { marker?: string; checkFile?: string; list?: string } = {},
+): string {
+  // marker / checkFile / list：LaTeX 用「% TODO 待核实」与 final-check.md，数据处理写 analysis/ 下（2026-11-02 推广）；缺省即综述原文
+  const marker = opts.marker ?? "[待核实]";
+  const checkFile = opts.checkFile ?? "citation-check.md";
+  const list = opts.list ?? "manuscript/verification-decisions.md";
   return (
-    `写 manuscript/verification-decisions.md：把 ${finalMd} 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到、正文数字与结果对不上、p 值与统计量对不上）也各列一行，` +
+    `写 ${list}：把 ${finalMd} 里每条 ${marker} 与 ${checkFile} 里每条「疑似编造/元数据存疑」各列一行，核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到、正文数字与结果对不上、p 值与统计量对不上）也各列一行，` +
     "格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。" +
     "「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。" +
-    "清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。"
+    `清单里的条数必须与稿子里实际剩余的 ${marker} 处数一致，漏列等于把未决项藏起来。`
   );
 }
 
-function verificationDecisionTask(): HumanTaskDto {
+function verificationDecisionTask(
+  redo = "并重渲 PDF、Word 和两份域稿",
+  target = "manuscript/verification-decisions.md",
+): HumanTaskDto {
   return {
     title: "逐条裁决 [待核实] 与存疑条目",
     guidance:
-      "只处理定稿里还标着「待核实」的句子，以及引用检查里疑似编造、元数据存疑的条目，没有就勾上跳过。接受＝你对过原文、这句没问题：保留这句并去掉「待核实」；拒绝＝删掉这句；修改＝按你写的改。暂时核不了的（比如补充材料还没拿到）选修改，写「改成摘要级表述」或「保留待核实」。点完 AI 按裁决改稿，并重渲 PDF、Word 和两份域稿。",
-    target: "manuscript/verification-decisions.md",
+      `只处理定稿里还标着「待核实」的句子，以及引用检查里疑似编造、元数据存疑的条目，没有就勾上跳过。接受＝你对过原文、这句没问题：保留这句并去掉「待核实」；拒绝＝删掉这句；修改＝按你写的改。暂时核不了的（比如补充材料还没拿到）选修改，写「改成摘要级表述」或「保留待核实」。点完 AI 按裁决改稿，${redo}。`,
+    target,
     timing: "after",
     completion: "decisions_cleared",
   };
@@ -1676,8 +1686,8 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
       "若 README 写明从成稿转写：只补全结构、交叉引用与引用纪律，**不改学术观点与数据**。从零写时按实证 IMRaD 用 {skill:research-writing} 技能（综述体裁则按项目层说明改用综述口径）。引用一律 \\cite{bib键}。\n" +
       SECTION_STATUS +
       "1. 按骨架逐章充实或校对内容：每节成文，学术语气，目标篇幅按项目层设定（未设定时每章 800-1500 词）；\n" +
-      "2. 引用键必须存在于 references.bib——严禁编造文献、严禁新造键；确需引用而库里没有的文献，先在 references.bib 补条目（作者/年份/标题/出处/DOI 齐全，缺字段标「待补」）再引用；\n" +
-      "3. 已有 figures/ 用 \\includegraphics 引用；没有的图用 figure 环境占位「（待绘制）」，不虚构数据；\n" +
+      "2. 引用键必须存在于 references.bib——严禁编造文献、严禁新造键。库里没有的文献不手写条目（题录只经 lit-search 的 lit_records.py 出）：该处行尾加 % TODO 待补文献，并写进 .ccode/help-wanted.md 请人补进检索清单；\n" +
+      "3. 已有 figures/ 用 \\includegraphics 引用；没有的图不放占位，改用文字说明并在行尾加 % TODO 待补图，不虚构数据；\n" +
       "4. 没有文献支撑的论断不得下；必须保留的判断在该行行尾加 % TODO 待核实 注释；\n" +
       "5. 每写完一章跑一次本步骤 run 脚本 render-pdf 确认可编译，报错立即读 output/compile.log 与 output/main.log 定位修掉，不攒到最后；按 {skill:bib-check} 技能输出 manuscript/citation-check.md。\n" +
       "完成标准：chapters/ 各章内容成文，全文编译通过，citation-check.md 各节齐全且 \\cite 键全部可在 references.bib 解析。\n" +
@@ -1732,20 +1742,24 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
       "1. 第二轮才通读定稿：语法、用词与段落衔接，只改表达不改学术观点与数据；发现内容性错误在该行行尾加 % TODO 待核实 注释，不自行改写事实；\n" +
       "2. 引用闭环核对按 {skill:bib-check} 技能：全文 \\cite 键逐条对照 references.bib，未解析键与未被引用条目清单写入 manuscript/final-check.md（未使用条目只列出、不删）；\n" +
       "3. 版面终检：图表编号连续、交叉引用无 ??、无残留「（待绘制）」占位；问题一并写入 final-check.md 并逐项处理；\n" +
-      "4. 终编译：跑本步骤 run 脚本 render-pdf 产出定稿 output/main.pdf；\n" +
+      "4. 终编译：跑本步骤 run 脚本 render-pdf 产出定稿 output/main.pdf；用 xelatex 编出来的，再按 {skill:quarto-render}「码位抽检」跑 scripts/check_pdf_text.py output/main.pdf，分号变希腊问号、缺字的写进 final-check.md 并修掉；\n" +
       "5. 产出 manuscript/changelog.md，逐条记录定稿阶段的修改点。\n" +
-      "完成标准：final-check.md 逐项有处理结论，main.pdf 终编译通过，changelog.md 已提交。\n" +
+      "6. " + verificationListClause("manuscript/chapters/*.tex", { marker: "% TODO 待核实", checkFile: "final-check.md" }) + "\n" +
+      "7. 写 submission/declarations.md 空白模板，五节：Authors（作者、单位、通讯作者邮箱）、基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 .ccode/ai-usage.md（Mesa 按实际运行统计）为准，那里没有的不添，标「待作者核对」。不得代填基金号、单位、作者贡献。\n" +
+      "完成标准：final-check.md 逐项有处理结论，main.pdf 终编译通过，changelog.md 已提交；verification-decisions.md 已列全、裁决栏为空等人填；declarations.md 模板已写。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
       "manuscript/review-report.md",
       "output/main.pdf",
       "manuscript/final-check.md",
       "manuscript/changelog.md",
+      "manuscript/verification-decisions.md",
+      "submission/declarations.md",
     ],
     acceptanceCriteria: ["machine:contains:manuscript/review-report.md::严重问题"],
     inputs: ["manuscript/"],
     optionalInputs: ["references.bib", "figures/*", "notes/", "design.md", "analysis/", "results/"],
-    skills: ["bib-check"],
+    skills: ["bib-check", "quarto-render"],
     run: [LATEX_RENDER_PDF_RUN],
     humanTasks: [
       {
@@ -1753,13 +1767,8 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
         guidance:
           "报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话。没有决定之前，不把科学内容写进定稿。",
       },
-      {
-        title: "核对 G5、证据与 % TODO 后决定是否可定稿",
-        guidance:
-          "定稿里的 % TODO 待核实 只有你能对照原始文献确认；逐条处理后再算定稿，导出投稿用最终 PDF",
-        target: "",
-        timing: "after",
-      },
+      verificationDecisionTask("并重编译 main.pdf"),
+      { ...declarationsTask(), title: "填作者、单位与投稿声明（LaTeX）" },
     ],
   },
 ];
