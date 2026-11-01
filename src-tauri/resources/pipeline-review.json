@@ -222,6 +222,7 @@
         "manuscript/changelog.md",
         "manuscript/citation-check.md",
         "manuscript/verification-decisions.md",
+        "manuscript/evidence.json",
         "submission/figure-permissions.md",
         "submission/declarations.md",
         "output/review-final.pdf",

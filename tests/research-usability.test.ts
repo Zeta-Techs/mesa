@@ -68,7 +68,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 本测试按非 Windows 渲染）。综述三步、论文与学位各一步带。实测 review 28860、论文 37245、学位 35112。
   // 2026-11-02 核验接入：待核实清单收进 bib-check 核验脚本拦下的条目；AI 使用声明以 .ccode/ai-usage.md（Mesa 统计）为准
   // （综述、论文、投稿三处投稿声明同涨）。实测 review 29024、论文 37409、学位 35205、投稿 9219。任务书瘦身另起，见 design-research-moat §4.4。
-  const before: Record<string, number> = { review: 29200, "research-paper": 37600, "data-processing": 12900, thesis: 35300, "submission-rebuttal": 9300, "latex-paper": 14000 };
+  // 同日对照综述补全论文模板：精读全量读不等核心篇名单、交棒 handoff；结果分析交 results.json 与图登记；初稿禁「待绘制」并登记
+  // numbers.json；定稿收尾复核引用与数字。实测 review 29063（定稿产物多列 evidence.json）、论文 38595。
+  const before: Record<string, number> = { review: 29200, "research-paper": 38800, "data-processing": 12900, thesis: 35300, "submission-rebuttal": 9300, "latex-paper": 14000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);
