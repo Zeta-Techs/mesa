@@ -39,6 +39,7 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     if(command==='list_workspaces')return [{id:'w',name:'exp-run',status:'active',repoPath:'/project',worktreePath:'/tree',mergedAt:null}];
     if(command==='read_project_config')return {config:{steps:[step],resources:[]}};
     if(command==='check_citation_health')return {bibFound:true,totalRefs:1,resolved:1,missing:[]};
+    if(command==='research_checks_read'){assert.equal(args.path,'/tree');return {items:[{id:'Q-1',kind:'quote_in_source',status:'blocked',title:'[@a] 原文里找不到这段摘录',target:{file:'manuscript/draft.md',line:4},evidence:{quote:'编的句子'}},{id:'REF-a',kind:'citation_resolve',status:'passed',title:'[@a] 在引文库里'},{id:'Q-2',kind:'quote_in_source',status:'needs_human',title:'[@b] 只有摘要'}],files:['cite-quotes.jsonl'],skipped:1};}
     if(command==='workspace_settings')return {run:[],runMode:'nonconcurrent'};
     if(command==='list_human_task_states'||command==='list_dir')return [];
     if(command==='research_get_acceptance')return null;
@@ -56,6 +57,16 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     await act(async()=>root.render(h(Review,{worktreePath:'/tree',onClose(){}})));
     assert.match(host.textContent!,/验收摘要与未决项/);assert.match(host.textContent!,/独立复算待完成/);assert.match(host.textContent!,/基础检查/);
     assert.match(host.textContent!,/复现运行/);assert.match(host.textContent!,/科研验收决定/);
+    // 核验清单（2026-11-02）：基础检查行一颗按钮，点开按拦下 / 待你判断 / 通过分组，通过默认收起
+    const chip=Array.from(host.querySelectorAll('button')).find(b=>/核验 3 项/.test(b.textContent!)) as HTMLButtonElement;
+    assert.equal(chip.textContent,'核验 3 项 · 拦下 1 · 待你判断 1');
+    assert.doesNotMatch(host.textContent!,/编的句子/);
+    await act(async()=>chip.click());
+    const list=host.querySelector('section[aria-label="核验清单"]')!;
+    assert.match(list.textContent!,/拦下（1）.*原文里找不到这段摘录.*manuscript\/draft.md:4.*「编的句子」/s);
+    assert.match(list.textContent!,/待你判断（1）/);assert.match(list.textContent!,/通过（1） 展开/);
+    assert.doesNotMatch(list.textContent!,/在引文库里/);
+    assert.match(list.textContent!,/另有 1 行核验记录读不懂/);assert.match(list.textContent!,/是否支持论断，仍要你判断/);
     // 2026-10-24：清单默认收成一行摘要（附带文件 · 带回 N / M 项），点开才列
     assert.match(host.textContent!,/附带文件/);assert.match(host.textContent!,/带回 1 \/ 1 项/);
     assert.doesNotMatch(host.textContent!,/papers\/result.pdf/);

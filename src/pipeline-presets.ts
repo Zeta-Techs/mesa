@@ -158,7 +158,7 @@ function declarationsTask(): HumanTaskDto {
   return {
     title: "填作者、单位与投稿声明",
     guidance:
-      "点「打开填写」：在 Authors 一节写作者、单位、通讯作者邮箱，再填基金、利益冲突、作者贡献；AI 使用声明是 AI 起的草稿，核对用过的模型和用途后改定。AI 不代填这些。填好点「填好了，交给 AI」，AI 把作者写进稿件开头、声明并进文末，再重渲。",
+      "点「打开填写」：在 Authors 一节写作者、单位、通讯作者邮箱，再填基金、利益冲突、作者贡献；AI 使用声明是 AI 按 Mesa 统计的 AI 使用记录（项目里 .ccode/ai-usage.md）起的草稿，核对用途、补上 Mesa 之外用过的工具后改定。AI 不代填这些。填好点「填好了，交给 AI」，AI 把作者写进稿件开头、声明并进文末，再重渲。",
     target: "submission/declarations.md",
     timing: "after",
     completion: "manual",
@@ -169,7 +169,7 @@ function declarationsTask(): HumanTaskDto {
  *  三套定稿都会标 [待核实]，原先只有综述把它们列出来，另两套留在稿子里没人管）。 */
 function verificationListClause(finalMd: string): string {
   return (
-    `写 manuscript/verification-decisions.md：把 ${finalMd} 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，` +
+    `写 manuscript/verification-decisions.md：把 ${finalMd} 里每条 [待核实] 与 citation-check.md 里每条「疑似编造/元数据存疑」各列一行，bib-check 核验脚本拦下的条目（.ccode/checks/ 里 status 为 blocked 的：原文里找不到的摘录、DOI 指向另一篇、已撤稿、引用键找不到）也各列一行，` +
     "格式 `- V001 | 位置：文件:行 | 原文摘要：…… | 来源：[@键] | 建议：…… | 裁决：待裁决 | 依据：`。" +
     "「建议」写你对过原文后建议的改法（一句，人点「修改」时预填）；**「裁决」与「依据」两栏一律留空或写「待裁决」，不得代填**——只有人能对照原始文献拍板。" +
     "清单里的条数必须与稿子里实际剩余的 [待核实] 处数一致，漏列等于把未决项藏起来。"
@@ -491,7 +491,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "5. " + verificationListClause("review-final.md") + "\n" +
       "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。\n" +
-      "8. 写 submission/declarations.md 空白模板，五节：Authors（作者、单位、通讯作者邮箱）、基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」，模型名说不准就写「（模型名待作者填写）」，不要默认写成自己以为的模型。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
+      "8. 写 submission/declarations.md 空白模板，五节：Authors（作者、单位、通讯作者邮箱）、基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 `.ccode/ai-usage.md`（Mesa 按实际运行统计）为准，那里没有的不添；可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」，模型名说不准就写「（模型名待作者填写）」，不要默认写成自己以为的模型。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
       "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；figure-permissions.md 已列全每块拼图；declarations.md 模板已写、待填栏留给人；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [
@@ -815,7 +815,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "审查报告写 manuscript/review-report.md。第一轮按 {skill:bib-check} 写 manuscript/citation-check.md，并按 {skill:stats-check} 把统计问题写入 analysis/stats-check.md；这三份只列问题，不改稿。核对：每个论断有引用、未用 bib 条目只列出、图表编号连续、数字与 results-table.md 和已认可结论条目一致。\n" +
       "第二轮才改稿：语言只改表达。发现内容性错误标 [待核实]，不得自行改写事实。产出 manuscript/paper-final.md 与 manuscript/changelog.md。\n" +
       verificationListClause("paper-final.md") + "\n" +
-      "投稿前清单写入 submission/pre-submission-checklist.md，每项一节「## 小标题」（人在流程线上一节一框地填）：目标期刊/会议（按主题匹配给出 2-3 个候选及理由）、cover letter 要点、图表源文件清单、代码/数据可用性、作者与单位、利益声明、AI 使用声明；未知信息一律写「待填」，不编造；AI 使用声明可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
+      "投稿前清单写入 submission/pre-submission-checklist.md，每项一节「## 小标题」（人在流程线上一节一框地填）：目标期刊/会议（按主题匹配给出 2-3 个候选及理由）、cover letter 要点、图表源文件清单、代码/数据可用性、作者与单位、利益声明、AI 使用声明；未知信息一律写「待填」，不编造；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 `.ccode/ai-usage.md`（Mesa 按实际运行统计）为准，那里没有的不添；可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
       STYLE_AT_FINAL + "用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "完成标准：paper-final.md 引用闭环；manuscript/citation-check.md 与 analysis/stats-check.md 各节齐全，问题逐条处置；阻塞项未关闭时只交草稿，预清单注明不可投稿；changelog.md 与 submission/pre-submission-checklist.md 已提交；[待补实验] 不得仅删除标记；有证据补齐或经人确认撤回/缩窄对应主张，否则阻塞。\n" +
       RELEASE_GATE + QUALITY_STATUS,
@@ -1407,7 +1407,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       "1. 产出 submission/cover-letter.md：编辑称呼占位、研究问题与有证据支持的亮点（不凑数量）、与期刊读者群的契合点、原创性与未一稿多投声明（占位「待填」处不编造）；\n" +
       "2. 产出 submission/highlights.md：按目标期刊要求与实际贡献写 highlights（目标期刊无此要求时在该文件注明并跳过）；\n" +
       "3. 投稿前自查 formatted.md（模拟审稿人视角逐项过）：摘要与结论自洽、正文数字与表格一致、图表 standalone 可读、方法节可复现、局限有交代；问题按 CRITICAL（不处理大概率被拒，如数据不一致）/ MAJOR（影响评审印象）/ MINOR（措辞格式）三级写入 submission/pre-review.md。每条末尾写「决定：待定」。只有人改成接受、拒绝或修改，该条才算已处理；不得代填决定。CRITICAL/MAJOR 还要有修正证据或经人确认撤回受影响主张；无法解决则阻塞，不以说明理由代替解决，MINOR 列出即可；\n" +
-      "4. 产出 submission/checklist.md 投稿清单，每项一节「## 小标题」：投稿系统入口（未知标「待填」）、需上传文件清单、作者与单位、利益声明、AI 使用声明、推荐审稿人 2-4 位（只给研究领域与选择理由，具体姓名标「待填」）；AI 使用声明可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
+      "4. 产出 submission/checklist.md 投稿清单，每项一节「## 小标题」：投稿系统入口（未知标「待填」）、需上传文件清单、作者与单位、利益声明、AI 使用声明、推荐审稿人 2-4 位（只给研究领域与选择理由，具体姓名标「待填」）；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 `.ccode/ai-usage.md`（Mesa 按实际运行统计）为准，那里没有的不添；可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
       "完成标准：cover-letter.md、highlights.md、pre-review.md、checklist.md 均已提交；pre-review.md 中 CRITICAL/MAJOR 全部有复核证据；未关闭时就绪度为阻塞，不能提交。\n" +
       RELEASE_GATE + QUALITY_STATUS,
     expectedArtifacts: [

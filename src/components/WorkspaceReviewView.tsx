@@ -105,6 +105,8 @@ import type {
   WorkspacePrResultDto,
 } from "../types";
 import { usePolling } from "../polling";
+import { checkChipText, countChecks, type ChecksDto } from "../research-checks";
+import CheckList from "./CheckList";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
 
@@ -1136,6 +1138,9 @@ function LiveWorkspaceReviewView({
   // 引用健康（.md 引用键 vs references.bib）+ 产物核验摘要（复用 ArtifactChecklist 的定位机制）
   const [citations, setCitations] = useState<CitationHealthDto | null>(null);
   const [citeExpanded, setCiteExpanded] = useState(false);
+  // 核验清单（.ccode/checks/，2026-11-02）：没有核验记录时整颗按钮不出现
+  const [checks, setChecks] = useState<ChecksDto | null>(null);
+  const [checksExpanded, setChecksExpanded] = useState(false);
   const [artifacts, setArtifacts] = useState<{
     produced: number;
     total: number;
@@ -1362,6 +1367,11 @@ function LiveWorkspaceReviewView({
     invoke<CitationHealthDto>("check_citation_health", { path: worktreePath })
       .then((value) => {
         if (!stale) setCitations(value);
+      })
+      .catch(() => {});
+    invoke<ChecksDto>("research_checks_read", { path: worktreePath })
+      .then((value) => {
+        if (!stale) setChecks(value.items.length > 0 || value.skipped > 0 ? value : null);
       })
       .catch(() => {});
     void (async () => {
@@ -2688,6 +2698,7 @@ function LiveWorkspaceReviewView({
         {diff &&
           (contentReview ||
             (citations && citations.bibFound && citations.totalRefs > 0) ||
+            checks ||
             (artifacts && artifacts.total > 0) ||
             (humanClosing && humanClosing.length > 0)) && (
             <div className="border-t border-hairline px-3 py-1.5 text-xs">
@@ -2702,6 +2713,23 @@ function LiveWorkspaceReviewView({
                 >
                   基础检查 ⓘ
                 </span>
+                {checks && (
+                  <button
+                    type="button"
+                    aria-expanded={checksExpanded}
+                    onClick={() => setChecksExpanded((v) => !v)}
+                    title="核验脚本查过的每一项：拦下的、要你判断的、机器确认成立的"
+                    className={`shrink-0 rounded-sm px-1 hover:bg-hover ${
+                      countChecks(checks.items).blocked > 0
+                        ? "text-err-text"
+                        : countChecks(checks.items).needsHuman > 0 || checks.skipped > 0
+                          ? "text-warn-text"
+                          : "text-l3"
+                    }`}
+                  >
+                    {checkChipText(checks.items)}
+                  </button>
+                )}
                 {citations && citations.bibFound && citations.totalRefs > 0 && (
                   <button
                     type="button"
@@ -2779,6 +2807,7 @@ function LiveWorkspaceReviewView({
                   </div>
                 )}
               </div>
+              {checksExpanded && checks && <CheckList checks={checks} />}
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
                   缺失引用键：{citations.missing.join("、")}

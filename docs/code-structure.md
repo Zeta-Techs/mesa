@@ -242,6 +242,7 @@ components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查�
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES + 用户模板（list_pipeline_templates，命令未注册优雅降级只列内置），投稿与返修模板另选初稿/返修与轮次；选中只抛 steps（TemplatePickItem），写回 project.toml 与覆盖确认归父组件——注册成功后的首选层是另一个 TemplatePickModal
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
+components/CheckList.tsx   # 评审页「基础检查」行展开的核验清单（2026-11-02）：按 拦下 / 待你判断 / 通过 分组，通过默认收起；末尾固定写「通过≠论断被支持」（tests/research-review-ui.test.ts）
 components/ResearchReproductionPanel.tsx  # 复现运行面板（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView）：从报告抽复现约定（parseReproductionContract：MESA_REPRODUCE / reproduce 子命令）+ 项目脚本拼可运行清单，research_run_reproduce 在工作区执行——确认框写明不是只读沙箱、约定输出写 ~/ccode/reproductions/；入口版本变了拒跑要求重新审阅（tests/research-panels.test.ts）
 components/UpstreamResearchAcceptance.tsx  # 开工弹层「上游已确认的结论范围」（KickoffConfirmDialog）：research_upstream_acceptances 列上游验收行（白话 upstreamAcceptanceNote），有效行一键「引用依据，当前仅允许准备」写 prepare 答案并绑当前证据版本——引用既有依据不自动批准本步；上游文件变了标「需重验」
 components/WatchRunReview.tsx  # 定时雷达单次运行评审（WorkspaceReviewView 里 taskKind=watch 的运行，历史行「去评审」进入）：watch_run_snapshot 只看冻结证据（before/initial/after）、watch_run_entries 只列该次新命中、逐条留下/排除（watch_run_decide）后采纳把留下的并进项目（排除的不写、已收过不重复加）；locked=已采纳只读重开，决定文件坏了 fail-closed 点名（tests/watch-run-review.test.ts）
@@ -966,6 +967,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
                              #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
+  research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
   research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
