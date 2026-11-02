@@ -80,6 +80,10 @@ test("复核指令：只写一个核验文件、结论一律待你判断、不�
   assert.match(prompt, /临时文件放系统临时目录/);
   assert.match(prompt, /每判断完一条就立刻往 \.ccode\/checks\/cross-review\.jsonl 追加一行/);
   assert.match(prompt, /一轮内做完/);
+  // 2026-11-02 Claude Code / Kimi 真跑：两家对「支持」理解不一（摘录本身 vs 原文别处），Kimi 漏写 checker
+  assert.match(prompt, /先看这段摘录本身是否支撑/);
+  assert.match(prompt, /记「摘录不当」并在 detail 写出原文里真正支撑的那句与页码/);
+  assert.match(prompt, /每个字段都要写，checker 照上面原样写/);
   assert.match(prompt, /\/proj\/papers\//);
   assert.equal(crossReviewReuseKey("/wt/a"), "cross-review:/wt/a");
   assert.ok(!crossReviewReuseKey("/wt/a").startsWith("ws:"));

@@ -2426,6 +2426,33 @@ pub async fn ai_conflict_advice(
 
 #[cfg(test)]
 mod tests {
+    /// 跨厂商复核真跑（2026-11-02，用户允许）：走定时任务同一条无头启动——密钥在本进程里从 keys.json 取、只注入子进程，
+    /// 不经过命令行。MESA_RR_AGENT / MESA_RR_CWD（真实项目副本）/ MESA_RR_PROMPT（复核指令文件）；默认不跑。
+    #[test]
+    #[ignore]
+    fn cross_review_real_run() {
+        let (Ok(agent), Ok(cwd), Ok(prompt_file)) = (
+            std::env::var("MESA_RR_AGENT"),
+            std::env::var("MESA_RR_CWD"),
+            std::env::var("MESA_RR_PROMPT"),
+        ) else {
+            return;
+        };
+        let store = crate::profiles::ProfileStore::new().unwrap();
+        let mut list: Vec<Profile> = store.list().unwrap().into_iter().filter(|p| p.agent == agent).collect();
+        if let Ok(id) = std::env::var("MESA_RR_PROFILE") {
+            list.retain(|p| p.id == id);
+        }
+        list.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
+        let profile = list.first().expect("这家没有可用连接");
+        eprintln!("连接：{}；模型：{:?}", profile.name, profile.models.first());
+        let prompt = std::fs::read_to_string(prompt_file).unwrap();
+        match run_agent_task(profile, None, &prompt, std::path::Path::new(&cwd), Duration::from_secs(1500), None, false, None, None) {
+            Ok((text, run)) => eprintln!("run={run}\n{}", tail_chars(&text, 3000)),
+            Err(e) => eprintln!("失败：{}", tail_chars(&e, 3000)),
+        }
+    }
+
     use super::*;
     use crate::profiles::{AccountType, Profile};
 

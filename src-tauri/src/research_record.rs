@@ -101,8 +101,17 @@ fn cap_opt(text: &mut Option<String>) {
     }
 }
 
-/// 一行 → 核验项；状态不在三档内的不收（不猜它算哪档）。
-fn parse_check_line(line: &str) -> Option<CheckItem> {
+/// 核验脚本自己产出的文件（mesa_checks / cite_check 写的固定名）。只有这些文件里允许出现「通过」
+const SCRIPT_CHECK_FILES: [&str; 5] = [
+    "cite-refs.jsonl",
+    "cite-quotes.jsonl",
+    "num-check.jsonl",
+    "stat-check.jsonl",
+    "fig-check.jsonl",
+];
+
+/// 一行 → 核验项；状态不在三档内的不收（不猜它算哪档）。from_script = 出自核验脚本的固定文件。
+fn parse_check_line(line: &str, from_script: bool) -> Option<CheckItem> {
     let mut item: CheckItem = serde_json::from_str(line).ok()?;
     if !matches!(item.status.as_str(), "passed" | "blocked" | "needs_human") {
         return None;
@@ -110,8 +119,12 @@ fn parse_check_line(line: &str) -> Option<CheckItem> {
     if item.id.trim().is_empty() || item.kind.trim().is_empty() || item.title.trim().is_empty() {
         return None;
     }
+    // 脚本文件之外的（跨厂商复核等）一律是 Agent 的判断：没写或冒写检查器的记成 agent（2026-11-02 Kimi 真跑漏写 checker）
+    if !from_script && !item.checker.starts_with("agent:") {
+        item.checker = "agent".into();
+    }
     // Agent 写的检查要读懂内容才能定，永不判通过：写成 passed 的一律按待你判断收
-    if item.checker.starts_with("agent:") && item.status == "passed" {
+    if item.checker.starts_with("agent") && item.status == "passed" {
         item.status = "needs_human".into();
     }
     cap(&mut item.title);
@@ -130,7 +143,7 @@ fn read_capped(path: &Path, limit: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-fn parse_check_text(text: &str, out: &mut ChecksDto) {
+fn parse_check_text(text: &str, out: &mut ChecksDto, from_script: bool) {
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -140,7 +153,7 @@ fn parse_check_text(text: &str, out: &mut ChecksDto) {
             out.skipped += 1;
             continue;
         }
-        match parse_check_line(line) {
+        match parse_check_line(line, from_script) {
             Some(item) => out.items.push(item),
             None => out.skipped += 1,
         }
@@ -169,7 +182,7 @@ pub(crate) fn read_checks_at(root: &Path) -> ChecksDto {
     files.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, path) in files {
         if let Some(text) = read_capped(&path, CHECK_FILE_CAP) {
-            parse_check_text(&text, &mut out);
+            parse_check_text(&text, &mut out, SCRIPT_CHECK_FILES.contains(&name.as_str()));
             out.files.push(name);
         }
     }
@@ -548,20 +561,22 @@ mod tests {
             format!("{}\nnot json\n{}\n", item("C2", "blocked"), item("C3", "weird")),
         )
         .unwrap();
-        fs::write(dir.join("a.jsonl"), item("C1", "passed")).unwrap();
+        fs::write(dir.join("cite-refs.jsonl"), item("C1", "passed")).unwrap();
+        // 脚本文件之外写成「通过」的，按 Agent 判断收成待你判断
+        fs::write(dir.join("cross-review.jsonl"), item("X1", "passed")).unwrap();
         fs::write(dir.join("runs").join("old.jsonl"), item("X", "passed")).unwrap();
         fs::write(dir.join("notes.txt"), item("Y", "passed")).unwrap();
         let dto = read_checks_at(&root);
         let ids: Vec<&str> = dto.items.iter().map(|i| i.id.as_str()).collect();
-        assert_eq!(ids, vec!["C1", "C2"]);
-        assert_eq!(dto.files, vec!["a.jsonl", "b.jsonl"]);
+        assert_eq!(ids, vec!["C2", "C1", "X1"]);
+        assert_eq!(dto.files, vec!["b.jsonl", "cite-refs.jsonl", "cross-review.jsonl"]);
         assert_eq!(dto.skipped, 2);
         assert_eq!(
             count_checks(&dto.items),
             CheckCounts {
                 passed: 1,
                 blocked: 1,
-                needs_human: 0
+                needs_human: 1
             }
         );
     }
@@ -569,9 +584,15 @@ mod tests {
     #[test]
     fn agent_checks_never_pass() {
         let line = r#"{"id":"X1","kind":"claim_support","status":"passed","title":"t","checker":"agent:codex"}"#;
-        assert_eq!(parse_check_line(line).unwrap().status, "needs_human");
+        assert_eq!(parse_check_line(line, true).unwrap().status, "needs_human");
         let script = r#"{"id":"C1","kind":"citation_resolve","status":"passed","title":"t","checker":"script:cite_check"}"#;
-        assert_eq!(parse_check_line(script).unwrap().status, "passed");
+        assert_eq!(parse_check_line(script, true).unwrap().status, "passed");
+        // 脚本文件之外（复核记录）：漏写或冒写 script: 检查器也按 Agent 收，不能通过
+        let missing = r#"{"id":"X2","kind":"claim_support","status":"passed","title":"t"}"#;
+        let got = parse_check_line(missing, false).unwrap();
+        assert_eq!((got.status.as_str(), got.checker.as_str()), ("needs_human", "agent"));
+        let faked = parse_check_line(script, false).unwrap();
+        assert_eq!((faked.status.as_str(), faked.checker.as_str()), ("needs_human", "agent"));
     }
 
     #[test]
@@ -586,7 +607,7 @@ mod tests {
         let line = format!(
             r#"{{"id":"C1","kind":"quote_in_source","status":"needs_human","title":"t","evidence":{{"quote":"{long}"}}}}"#
         );
-        let item = parse_check_line(&line).unwrap();
+        let item = parse_check_line(&line, true).unwrap();
         let quote = item.evidence.unwrap().quote.unwrap();
         assert_eq!(quote.chars().count(), FIELD_CAP + 1);
     }
@@ -719,7 +740,7 @@ mod tests {
     #[test]
     fn archived_checks_are_not_read_as_live_checks() {
         let root = temp_root("archive");
-        let items = vec![parse_check_line(&item("C1", "blocked")).unwrap()];
+        let items = vec![parse_check_line(&item("C1", "blocked"), true).unwrap()];
         archive_checks(&root, "run-1", &items).unwrap();
         assert!(checks_dir(&root).join("runs").join("run-1.jsonl").is_file());
         assert!(read_checks_at(&root).items.is_empty());
