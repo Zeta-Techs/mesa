@@ -296,7 +296,7 @@ test("同一份稿同时渲 docx 和 pdf 时，docx 排在 pdf 前面", () => {
   }
 });
 
-test("quarto render 的产物落点：稿件在一级目录下，--output-dir 必须是 ../output 且不带 --output", () => {
+test("quarto render 的产物落点：--output-dir 按稿件深度指回项目根 output/，且不带 --output", () => {
   // 实测（Windows + Quarto 1.10.19）：没有 _quarto.yml 时 --output-dir 相对稿件所在目录解析。
   // 写 `output` 落进 manuscript/output/ 且后一次渲染清掉前一次；与 --output 同用则成品落到工作区根
   const variants = PIPELINE_TEMPLATES.flatMap((template) =>
@@ -314,8 +314,12 @@ test("quarto render 的产物落点：稿件在一级目录下，--output-dir �
         if (!/quarto render\s+/.test(run.command)) continue;
         seen += 1;
         const source = run.command.match(/quarto render\s+(\S+)/)![1];
-        assert.equal(source.split("/").length, 2, `${step.name}/${run.name} 稿件应在一级目录下：${source}`);
-        assert.match(run.command, /--output-dir \.\.\/output(\s|$)/, `${step.name}/${run.name} --output-dir 应为 ../output`);
+        // 2026-11-02：数据处理报告在项目根，写 output；其余稿件在一级目录（manuscript/、submission/），写 ../output。
+        // 更深的目录不收（实测 quarto 相对稿件目录解析 --output-dir，深层要写 ../../output，容易写错）
+        const depth = source.split("/").length;
+        assert.ok(depth <= 2, `${step.name}/${run.name} 稿件最多在一级目录下：${source}`);
+        const expected = depth === 1 ? "output" : "../output";
+        assert.match(run.command, new RegExp(`--output-dir ${expected.replace(/\./g, "\\.")}(\\s|$)`), `${step.name}/${run.name} --output-dir 应为 ${expected}`);
         assert.doesNotMatch(run.command, /\s--output\s/, `${step.name}/${run.name} 不能带 --output`);
       }
     }
@@ -357,6 +361,8 @@ test("引用格式只在定稿步定：起草步固定编号制，定稿步指�
     for (const steps of variants) {
       for (const step of steps) {
         if (!step.run.some((run) => /quarto render\s+/.test(run.command))) continue;
+        // 数据处理报告（2026-11-02 起渲 Word / PDF）不引文献，没有引用样式这回事
+        if (template.id === "data-processing") continue;
         // 投稿返修的「期刊格式适配」只对特定刊适配，不属起草/定稿两分
         if (template.id === "submission-rebuttal") {
           assert.match(step.brief, /更换引用样式/, step.name);

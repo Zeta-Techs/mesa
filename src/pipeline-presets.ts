@@ -1049,15 +1049,20 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "3. 数字一律引用 eda-report.md 中的值，并引用「## 结论条目」的编号；不重新计算、不引入新数据。状态不是已认可的不得写成确证；证据不足的结论标 [待验证]；\n" +
       "4. 局限单列一节（## 局限）：数据质量、样本偏差、方法局限，不回避。\n" +
       "5. 核对：报告里来自 analysis/summary-stats.json 的数字按 {skill:research-writing}「数字追溯」登记进 analysis/numbers.json（location 指 analysis-report.md:行），跑 num_check --numbers analysis/numbers.json --coverage --files analysis-report.md；按 {skill:stats-check} 跑 stat_check --files analysis-report.md，统计问题写入 analysis/stats-check-report.md。\n" +
-      "6. " + verificationListClause("analysis-report.md", { marker: "[待验证]", checkFile: "analysis/stats-check-report.md", list: "analysis/verification-decisions.md", checkItems: "未解决的统计问题", source: "结论条目编号或图表" }) + "\n" +
+      "6. 用本步骤 run 脚本把 analysis-report.md 渲成 Word 与 PDF 给不看 Markdown 的读者（按 {skill:quarto-render} 技能；产物写本工作区 output/，评审合并后进项目根）；渲染报错先按技能补依赖，不绕路。\n" +
+      "7. " + verificationListClause("analysis-report.md", { marker: "[待验证]", checkFile: "analysis/stats-check-report.md", list: "analysis/verification-decisions.md", checkItems: "未解决的统计问题", source: "结论条目编号或图表" }) + "\n" +
       "完成标准：analysis-report.md 结构完整，建议与发现一一对应且优先级有据；探索发现只作为待验证假设；[待验证] 不因列入局限就升级为结论。清洗步残留的 [待确认] 不在本步清除。\n" +
       QUALITY_STATUS,
-    expectedArtifacts: ["analysis-report.md", "analysis/numbers.json", "analysis/stats-check-report.md", "analysis/verification-decisions.md"],
+    expectedArtifacts: ["analysis-report.md", "analysis/numbers.json", "analysis/stats-check-report.md", "analysis/verification-decisions.md", "output/analysis-report.docx", "output/analysis-report.pdf"],
     acceptanceCriteria: ["machine:contains:analysis-report.md::局限"],
     inputs: ["eda-report.md", "figures/*", "data-dictionary.md", "cleaning/cleaned-data-manifest.md", "cleaning/rules.md", "analysis/stats-check-eda.md", "analysis/reproduce.py"],
     optionalInputs: ["analysis/summary-stats.json"],
-    skills: ["research-writing", "stats-check"],
-    run: [],
+    skills: ["research-writing", "stats-check", "quarto-render"],
+    // 报告在项目根：--output-dir 相对稿件所在目录解析，根目录稿件写 output（一级目录稿件才是 ../output），成品都落项目根 output/
+    run: [
+      { name: "export-docx", command: "quarto render analysis-report.md --to docx --output-dir output", default: true },
+      { name: "render-report", command: "quarto render analysis-report.md --to pdf --output-dir output", default: true },
+    ],
     decisions: [],
     humanTasks: [
       {
