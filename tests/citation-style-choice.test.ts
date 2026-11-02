@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -9,6 +10,7 @@ import {
   journalAsk,
   parseTargetJournal,
   styleFamilyOf,
+  CITATION_STYLE_CHOICES,
   targetJournalDoc,
   topJournals,
 } from "../src/citation-style-choice.ts";
@@ -71,4 +73,14 @@ test("样式族按 csl 正文判定", () => {
   assert.equal(styleFamilyOf("<style/>"), null, "认不出来不猜");
   assert.equal(citationFormFamily("bracket"), "numeric-bracket");
   assert.equal(citationFormFamily("plain"), "author-date");
+});
+
+test("GB/T 7714（2026-11-02）：随包 csl 认作上标编号，选它时指向技能目录里的那份文件", () => {
+  const csl = readFileSync("src-tauri/resources/skills/quarto-render/gbt7714-numeric.csl", "utf8");
+  assert.equal(styleFamilyOf(csl), "numeric-superscript");
+  assert.equal(citationFormFamily("gbt7714"), "numeric-superscript");
+  assert.match(csl, /creativecommons\.org\/licenses\/by-sa\/3\.0/, "第三方 csl 保留许可声明");
+  const form = CITATION_STYLE_CHOICES.flatMap((c) => [...c.forms]).find((f) => f.id === "gbt7714");
+  assert.ok(form);
+  assert.match(form.ask, /gbt7714-numeric\.csl/);
 });

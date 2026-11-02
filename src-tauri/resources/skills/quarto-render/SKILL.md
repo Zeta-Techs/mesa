@@ -40,7 +40,7 @@ quarto render manuscript/<稿件>.md --to pdf --output-dir ../output
 - **不要加 `--output <文件名>`**：和 `--output-dir` 同用时 Quarto 会把成品丢到工作区根（`../review-final.docx`），不进 `output/`。默认文件名就是稿件同名，不需要它。
 - **项目根不要放 `_quarto.yml`**：有它时 `../output` 会越出项目、写到工作区外面。需要项目配置时放在 `manuscript/_quarto.yml`（项目根就是 `manuscript/`，`../output` 仍然对）。
 - **先 docx 后 PDF**：docx 不走 LaTeX，能先交出可审稿。
-- **引用样式按人在流程线上选定的具体形式**。人选定后才换样式重渲：方括号编号 `[1]`、上标编号 `¹`、作者-年 `(Author, Year)` 或 `(Author Year)`，或某一本期刊的作者须知。按这一句改稿子的 csl 再渲。人还没换时，沿用稿子里已经在用的样式（初稿是编号制）照常渲，不因没选样式、也没有 `citation-style.md` 而停渲。只有人确认了目标期刊，才写 `submission/target-journal.md`；沿用编号不要写这份文件，也不要写一份空的去应付交付检查。YAML 写：
+- **引用样式按人在流程线上选定的具体形式**。人选定后才换样式重渲：方括号编号 `[1]`、上标编号 `¹`、GB/T 7714（国内学位论文与中文期刊常用；技能目录里随包 `gbt7714-numeric.csl`，复制成稿件旁的 `citation.csl`）、作者-年 `(Author, Year)` 或 `(Author Year)`，或某一本期刊的作者须知。按这一句改稿子的 csl 再渲。人还没换时，沿用稿子里已经在用的样式（初稿是编号制）照常渲，不因没选样式、也没有 `citation-style.md` 而停渲。只有人确认了目标期刊，才写 `submission/target-journal.md`；沿用编号不要写这份文件，也不要写一份空的去应付交付检查。YAML 写：
   ```yaml
   bibliography: ../references.bib
   csl: citation.csl

@@ -494,6 +494,12 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "author-date.csl",
         include_str!("../resources/skills/quarto-render/author-date.csl"),
     ),
+    // 第三方 CSL（CC BY-SA 3.0，原样随包、保留 rights 标注；署名见 docs/licenses/THIRD-PARTY.md）
+    (
+        "quarto-render",
+        "gbt7714-numeric.csl",
+        include_str!("../resources/skills/quarto-render/gbt7714-numeric.csl"),
+    ),
     (
         "quarto-render",
         "scripts/citation_style.py",

@@ -16,6 +16,12 @@ export const CITATION_STYLE_CHOICES = [
     forms: [
       { id: "bracket", label: "方括号 [1]", ask: "正文引用改成方括号编号，如 [1]、[2,3]，文末按出现顺序排列。" },
       { id: "superscript", label: "上标 ¹", ask: "正文引用改成上标数字，如 ¹、²，不加方括号，文末按出现顺序排列。" },
+      // 国内学位论文与中文期刊（2026-11-02）：随包的 GB/T 7714-2015 顺序编码制 CSL，正文上标方括号
+      {
+        id: "gbt7714",
+        label: "GB/T 7714",
+        ask: "正文引用与文末文献表按国家标准 GB/T 7714-2015 顺序编码制排：把 quarto-render 技能目录里的 gbt7714-numeric.csl 复制成稿件旁的 citation.csl，正文为上标方括号编号如 ^[1]^，文末带 [J]、[M] 等文献类型标识。学校另有细则时以学校规范为准，对不上的停下来问。",
+      },
     ],
   },
   {
@@ -74,7 +80,7 @@ export function targetJournalDoc(name: string, source: "沿用已定" | "本次�
 /** 行内形式的 id → 期望的样式类别。与随包 csl 的判据同一套（styleFamilyOf）。 */
 export function citationFormFamily(formId: string): StyleFamily | null {
   if (formId === "bracket") return "numeric-bracket";
-  if (formId === "superscript") return "numeric-superscript";
+  if (formId === "superscript" || formId === "gbt7714") return "numeric-superscript";
   if (formId === "comma" || formId === "plain") return "author-date";
   return null;
 }

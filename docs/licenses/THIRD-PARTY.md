@@ -195,6 +195,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### GB/T 7714-2015 顺序编码制引用样式（CC BY-SA 3.0）
+
+- 用途：quarto-render 技能随包的 `gbt7714-numeric.csl`，人在流程线「更换引用样式」选「GB/T 7714」时，Agent 把它复制成稿件旁的
+  `citation.csl` 渲染（国内学位论文、中文期刊常用）。
+- 来源：[citation-style-language/styles](https://github.com/citation-style-language/styles) 的
+  `china-national-standard-gb-t-7714-2015-numeric.csl`（2024-01-22 版），作者牛耕田，贡献者 Zeping Lee 等（详见文件 `<info>`）。
+- 许可：[Creative Commons Attribution-ShareAlike 3.0](http://creativecommons.org/licenses/by-sa/3.0/)。原样随包、未作修改，
+  文件内保留 `<rights>` 许可声明；Mesa 自写的 `ieee.csl`、`author-date.csl` 不属此条。
+
 ### Codex CLI 默认系统提示词（Apache-2.0）
 
 - 用途：Mesa 为第三方连接生成的 Codex 模型清单里的 `base_instructions` 的**兜底**
