@@ -20,6 +20,9 @@ import {
   schedulesForProject,
   summaryPreview,
   truncateText,
+  eventRuleLabel,
+  parseExts,
+  triggerOptions,
 } from "../src/schedule-tasks.ts";
 import type { ScheduleDto } from "../src/types.ts";
 
@@ -297,3 +300,20 @@ test("lastRunBrief / lastRunAction：上次结果一句话与入口", () => {
   assert.equal(lastRunAction({ ...base, status: "error", agent: "codex", sessionId: "s" }), "process");
 });
 
+
+test("事件规则：触发选项、扩展名解析、任务行标签与只记录行", () => {
+  assert.deepEqual(triggerOptions(false).map((o) => o.id), ["time", "folder", "phone"]);
+  assert.deepEqual(triggerOptions(true).map((o) => o.id), ["time", "folder", "radar", "phone"]);
+  assert.deepEqual(parseExts(" .CSV, xlsx，csv / a-b  tsv"), ["csv", "xlsx", "tsv"]);
+  assert.equal(
+    eventRuleLabel({ kind: "folder", folder: "data/raw", exts: ["csv"], mode: "record" }),
+    "data/raw/ 有新文件（csv）时 · 只记录",
+  );
+  assert.equal(eventRuleLabel({ kind: "radar", exts: [], mode: "run" }, 2), "文献雷达采纳之后 · 直接跑 · 攒着 2 批");
+  assert.equal(scheduleStatusMark("recorded").label, "只记录");
+  assert.equal(triggerTag({ trigger: "event", scheduledFor: null }), "事件");
+  assert.deepEqual(lastRunBrief({ at: "t", status: "recorded", summary: "只记录：…", noop: true }, false), {
+    text: "只记录：本来会开一单",
+    tone: "muted",
+  });
+});

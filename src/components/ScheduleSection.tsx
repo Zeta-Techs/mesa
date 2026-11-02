@@ -32,6 +32,7 @@ import {
   INTERVAL_HOURS,
   SCHEDULE_FREQUENCIES,
   TIMEOUT_CHOICES,
+  eventRuleLabel,
   frequencyLabel,
   hhmm,
   lastRunAction,
@@ -42,7 +43,9 @@ import {
   schedulesForProject,
   skipHint,
   slotLabel,
+  parseExts,
   summaryPreview,
+  triggerOptions,
   triggerTag,
 } from "../schedule-tasks";
 import { baseName } from "../session-filter";
@@ -423,8 +426,16 @@ function CreateScheduleModal({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // 关键词跟着任务走：新建时还没有任务 id，订阅在建好后从任务行打开。
+  // 事件规则（2026-11-02）：「什么时候跑」可选本机事件；新建默认只记录，看过记录再改成直接跑
+  const [trigger, setTrigger] = useState("time");
+  const [folder, setFolder] = useState("");
+  const [exts, setExts] = useState("");
+  const [eventMode, setEventMode] = useState<"record" | "run">("record");
 
   const isNew = skill === NEW_WATCH;
+  // 新建巡检技能（周期由 AI 建议）与文献雷达（按关键词定时查）只按时间跑
+  const canEvent = !isNew && !isLitWatchSkill(skill);
+  const byEvent = canEvent && trigger !== "time";
   const kindOptions = [
     ...scheduleSkillOptions(skills).filter((o) => research || o.id !== LIT_WATCH_SKILL),
     { id: NEW_WATCH, name: "＋ 新建巡检技能" },
@@ -464,8 +475,10 @@ function CreateScheduleModal({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    // 新建巡检技能的周期由 AI 按描述建议、落盘时再定；这里先按默认（每天 09:00）占位
-    const fields = cadencePayload(isNew ? DEFAULT_CADENCE : cadence);
+    // 新建巡检技能的周期由 AI 按描述建议、落盘时再定；这里先按默认（每天 09:00）占位。事件规则不按时间跑
+    const fields = cadencePayload(
+      isNew ? DEFAULT_CADENCE : byEvent ? { ...DEFAULT_CADENCE, frequency: "manual" } : cadence,
+    );
     if (typeof fields === "string") {
       setError(fields);
       return;
@@ -518,6 +531,14 @@ function CreateScheduleModal({
           profileId: profileId || null,
           model: modelId || null,
           linkedStep: null,
+          event: byEvent
+            ? {
+                kind: trigger,
+                folder: trigger === "folder" ? folder.trim() : null,
+                exts: trigger === "folder" ? parseExts(exts) : [],
+                mode: eventMode,
+              }
+            : null,
         },
       });
       if (!isLitWatchSkill(skill)) {
@@ -550,7 +571,9 @@ function CreateScheduleModal({
             ? "跟 AI 把巡检技能写出来，你确认后才保存并启用定时。"
             : isLitWatchSkill(skill)
               ? "按周期跑文献雷达，新命中追加到 notes/inbox.md。"
-              : "按周期跑所选巡检技能，规范以该技能的 SKILL.md 为准。"}
+              : byEvent
+                ? "有事件时跑所选技能，规范以该技能的 SKILL.md 为准。只开流程外的活，结果要你评审才进项目。"
+                : "按周期跑所选巡检技能，规范以该技能的 SKILL.md 为准。"}
         </p>
         {isLitWatchSkill(skill) && (
           <p className="-mt-2 mb-3 text-xs text-l3">
@@ -592,11 +615,82 @@ function CreateScheduleModal({
             />
           </label>
         )}
+        {canEvent && (
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block text-xs text-l3">什么时候跑</span>
+            <select className={fieldClass} value={trigger} onChange={(e) => setTrigger(e.target.value)}>
+              {triggerOptions(research).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {byEvent && trigger === "folder" && (
+          <div className="mb-3 grid grid-cols-[2fr_1fr] gap-2">
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs text-l3">盯哪个目录</span>
+              <input
+                className={fieldClass}
+                value={folder}
+                required
+                onChange={(e) => setFolder(e.target.value)}
+                placeholder="data/raw"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs text-l3">只认这些扩展名</span>
+              <input
+                className={fieldClass}
+                value={exts}
+                onChange={(e) => setExts(e.target.value)}
+                placeholder="csv, xlsx（留空都认）"
+              />
+            </label>
+            <span className="col-span-2 block text-micro text-l4">
+              建好那一刻已经在目录里的文件不算。新文件连着约一两分钟不再变化才算放好，一次拖进好几个只算一批。Mesa 关着时放进去的，下次打开补上。
+            </span>
+          </div>
+        )}
+        {byEvent && (
+          <fieldset className="mb-3 text-sm">
+            <legend className="mb-1 block text-xs text-l3">事件来了怎么办</legend>
+            <label className="mb-1 flex items-start gap-2">
+              <input
+                type="radio"
+                className="mt-0.5"
+                checked={eventMode === "record"}
+                onChange={() => setEventMode("record")}
+              />
+              <span>
+                <span className="block text-xs text-l2">先只记录（建议）</span>
+                <span className="block text-micro text-l4">
+                  在历史里记一行「本来会开一单、处理哪些文件」，不叫 AI、不花钱。看几次觉得对，再在编辑里改成直接跑。
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2">
+              <input
+                type="radio"
+                className="mt-0.5"
+                checked={eventMode === "run"}
+                onChange={() => setEventMode("run")}
+              />
+              <span>
+                <span className="block text-xs text-l2">直接跑</span>
+                <span className="block text-micro text-l4">
+                  在隔离副本里按技能处理这些文件，结果照样要你评审、采纳才进项目。
+                </span>
+              </span>
+            </label>
+          </fieldset>
+        )}
         {isNew ? (
           <p className="mb-3 text-xs text-l3">
             周期：AI 写技能时按你的描述给个建议（比如「工作日早上」「每 6 小时」），确认落盘时你再定。
           </p>
-        ) : (
+        ) : byEvent ? null : (
           <CadenceFields value={cadence} onChange={setCadence} />
         )}
         <button
@@ -737,7 +831,9 @@ function RunHistoryItem({
           title={
             record.trigger === "catchup"
               ? "到点时 Mesa 没开或电脑在睡眠，打开后补跑了这一次；Agent 知道原定时刻"
-              : "你点「立即运行」跑的这一次"
+              : record.trigger === "event"
+                ? "事件规则触发的这一次"
+                : "你点「立即运行」跑的这一次"
           }
         >
           {tag}
@@ -754,7 +850,18 @@ function RunHistoryItem({
         {open && !skipped ? (
           <span className="block">
             <span>{record.summary || "（无简报）"}</span>
-            {record.noop && <span className="mt-1 block text-l4">这一轮没有新内容，所以没有通知你。</span>}
+            {record.noop && record.status !== "recorded" && (
+              <span className="mt-1 block text-l4">这一轮没有新内容，所以没有通知你。</span>
+            )}
+            {record.origin && (
+              <span className="mt-1 block text-l4">
+                {record.status === "recorded" ? "本来会处理" : "这次处理"}：
+                {record.origin.objects.length > 0
+                  ? `${record.origin.objects.slice(0, 5).join("、")}${record.origin.objects.length > 5 ? " …" : ""}`
+                  : record.origin.summary}
+                （规则版本 {record.origin.ruleVersion}）
+              </span>
+            )}
             {record.note && <span className="mt-1 block text-l4">附言：{record.note}</span>}
             {record.scheduledFor && (
               <span className="mt-1 block text-l4">原定 {slotLabel(record.scheduledFor)}</span>
@@ -845,6 +952,7 @@ function EditScheduleModal({
   const [timeoutMinutes, setTimeoutMinutes] = useState(schedule.timeoutMinutes ?? 30);
   const [profileId, setProfileId] = useState(schedule.profileId ?? "");
   const [modelId, setModelId] = useState(schedule.model ?? "");
+  const [eventMode, setEventMode] = useState(schedule.event?.mode ?? "record");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const caps = useAgentCaps();
@@ -878,7 +986,8 @@ function EditScheduleModal({
         patch: {
           name: name.trim(),
           skill,
-          ...fields,
+          // 事件规则不按时间跑：不改周期，只改模式
+          ...(schedule.event ? { eventMode } : fields),
           skipIfUnreviewed,
           timeoutMinutes,
           // 清空运行配置/模型必须发空串：后端 Option<Option> 语义下显式 null ≡ 缺失 ≡ 不改，
@@ -914,7 +1023,19 @@ function EditScheduleModal({
       <form onSubmit={submit}>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">技能</span><select className={fieldClass} value={skill} onChange={(e) => setSkill(e.target.value)}>{scheduleSkillOptionsForEdit(skills, skill).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">任务名</span><input className={fieldClass} required value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <CadenceFields value={cadence} onChange={setCadence} />
+        {schedule.event ? (
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block text-xs text-l3">
+              事件：{eventRuleLabel({ ...schedule.event, mode: eventMode }).split(" · ")[0]}
+            </span>
+            <select className={fieldClass} value={eventMode} onChange={(e) => setEventMode(e.target.value)}>
+              <option value="record">只记录（不叫 AI、不花钱）</option>
+              <option value="run">直接跑（结果要你评审才进项目）</option>
+            </select>
+          </label>
+        ) : (
+          <CadenceFields value={cadence} onChange={setCadence} />
+        )}
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => { setProfileId(e.target.value); setModelId(""); }}><option value="">跟随项目默认</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">模型</span><select className={fieldClass} value={modelId} disabled={!profileId} onChange={(e) => setModelId(e.target.value)}><option value="">{profileId ? "默认（名单第一个）" : "跟随执行时解析"}</option>{profileId && (profiles.find((p) => p.id === profileId)?.models ?? []).map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
         {profileId && (() => { const p = profiles.find((x) => x.id === profileId); const caution = p ? headlessWriteCaution(caps[p.agent]?.headlessWrite) : null; if (p?.agent === "codex") return <CodexWinSandboxNotice agent={p.agent} fallback={caution} />; return caution ? <InlineNotice tone="warn" className="mb-3">{caution}</InlineNotice> : null; })()}
@@ -1569,8 +1690,14 @@ export default function ScheduleSection({
                       className="shrink-0 text-micro text-l4"
                       title={s.nextRunAt ? `下一次：${slotLabel(s.nextRunAt)}` : undefined}
                     >
-                      {frequencyLabel(s.frequency, s.weekday, s.hour, s.minute, s.intervalHours)}
-                      {nextRunLabel(s) ? ` · ${nextRunLabel(s)}` : ""}
+                      {s.event ? (
+                        eventRuleLabel(s.event, s.pendingEvents ?? 0)
+                      ) : (
+                        <>
+                          {frequencyLabel(s.frequency, s.weekday, s.hour, s.minute, s.intervalHours)}
+                          {nextRunLabel(s) ? ` · ${nextRunLabel(s)}` : ""}
+                        </>
+                      )}
                     </span>
                     {isLitWatchSkill(s.skill) && (
                       <button
@@ -1956,7 +2083,9 @@ export default function ScheduleSection({
                       </span>
                       <span className="min-w-0 truncate text-l3">{o.name}</span>
                       <span className="shrink-0 text-micro text-l4">
-                        {frequencyLabel(o.frequency, o.weekday, o.hour, o.minute, o.intervalHours)}
+                        {o.event
+                          ? eventRuleLabel(o.event, o.pendingEvents ?? 0)
+                          : frequencyLabel(o.frequency, o.weekday, o.hour, o.minute, o.intervalHours)}
                       </span>
                       <span className="ml-auto flex shrink-0 items-center gap-1 text-micro text-l4">
                         {mark && (

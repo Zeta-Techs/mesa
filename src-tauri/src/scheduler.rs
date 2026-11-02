@@ -108,6 +108,54 @@ pub struct RunRecord {
     /// 同一原因连着跳过的次数（合并成一行，防历史被刷屏）
     #[serde(default, alias = "skip_count")]
     pub skip_count: Option<u32>,
+    /// 事件规则触发的这次：凭哪条规则的哪一版、什么事件、涉及哪些文件（2026-11-02）
+    #[serde(default)]
+    pub origin: Option<RunOrigin>,
+}
+
+/// 事件规则（2026-11-02，design-attention-dispatch §5）：有它的任务不按时间跑（frequency 固定 manual），
+/// 由本机事件触发。规则只由人写；新建默认只记录，人看过记录再拨到真跑。存储与前端同为 camelCase（字段都是单词）
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventRule {
+    /// "folder" 目录落新文件 | "radar" 文献雷达采纳一轮 | "phone" 手机发来的文件放进项目
+    pub kind: String,
+    /// folder：项目内相对目录
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// folder：只认这些扩展名（小写、不带点）；空 = 都认
+    #[serde(default)]
+    pub exts: Vec<String>,
+    /// "record" 只记录（不调模型、不花钱）| "run" 真跑
+    #[serde(default)]
+    pub mode: String,
+}
+
+pub(crate) const EVENT_KINDS: [&str; 3] = ["folder", "radar", "phone"];
+/// 攒着没处理的事件最多留这么多条、每条最多这么多文件
+const PENDING_EVENTS_CAP: usize = 20;
+const EVENT_OBJECTS_CAP: usize = 200;
+
+/// 一次还没处理的事件
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventHit {
+    pub at: String,
+    pub kind: String,
+    /// 相对项目根的文件
+    pub objects: Vec<String>,
+    pub summary: String,
+}
+
+/// 运行的依据（DeepSeek 原型的 Mandate）：规则版本 = 规则内容（事件、技能、连接、模型）的哈希，改规则不影响已记的
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOrigin {
+    pub rule_version: String,
+    pub kind: String,
+    pub mode: String,
+    pub objects: Vec<String>,
+    pub summary: String,
 }
 
 /// 存储形态（schedules.json，snake_case）
@@ -158,6 +206,12 @@ pub struct Schedule {
     /// 连续没跑成的次数（失败 / 超时；取消不算，成功清零）
     #[serde(default)]
     pub consecutive_failures: u32,
+    /// 事件规则；None = 按时间跑的定时任务
+    #[serde(default)]
+    pub event: Option<EventRule>,
+    /// 还没处理的事件（只记录档在下一个 tick 记完即清；真跑档在跑起来时取走）
+    #[serde(default)]
+    pub pending_events: Vec<EventHit>,
 }
 
 /// 前端 DTO（camelCase）
@@ -193,6 +247,9 @@ pub struct ScheduleDto {
     pub consecutive_failures: u32,
     /// 下一次应跑时刻（本地时间 ISO，无时区）；停用 / 仅手动为 None。list_schedules 现算
     pub next_run_at: Option<String>,
+    pub event: Option<EventRule>,
+    /// 攒着还没处理的事件条数
+    pub pending_events: u32,
 }
 
 impl From<Schedule> for ScheduleDto {
@@ -221,6 +278,8 @@ impl From<Schedule> for ScheduleDto {
             history: s.history,
             paused_reason: s.paused_reason,
             consecutive_failures: s.consecutive_failures,
+            pending_events: s.pending_events.len() as u32,
+            event: s.event,
         }
     }
 }
@@ -256,6 +315,9 @@ pub struct CreateScheduleInput {
     pub skip_if_unreviewed: Option<bool>,
     #[serde(default)]
     pub timeout_minutes: Option<u32>,
+    /// 事件规则（有它就不按时间跑；frequency 强制 manual）
+    #[serde(default)]
+    pub event: Option<EventRule>,
 }
 
 /// 更新补丁：字段全 Option（None = 不改）；profile_id/linked_step 用 Option<Option<String>>，
@@ -285,6 +347,9 @@ pub struct UpdateSchedulePatch {
     pub skip_if_unreviewed: Option<bool>,
     #[serde(default)]
     pub timeout_minutes: Option<u32>,
+    /// 事件规则：只记录 / 真跑
+    #[serde(default)]
+    pub event_mode: Option<String>,
 }
 
 /// `scheduler-run-done` 事件载荷
@@ -308,9 +373,8 @@ struct RunDonePayload {
 // ===== 存储 =====
 
 fn schedules_path() -> Result<PathBuf, String> {
-    let dir = crate::dirs::config_dir()
-        .ok_or("无法确定平台配置目录")?
-        .join("ccode");
+    // 与 config_dir()/ccode 同一处；走 config_root 是为了测试能重定向，不碰真实的定时任务
+    let dir = crate::storage::config_root().ok_or("无法确定平台配置目录")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     Ok(dir.join("schedules.json"))
 }
@@ -821,8 +885,13 @@ fn cap_summary(text: &str) -> String {
     text.chars().take(SUMMARY_CAP).collect()
 }
 
-fn create_schedule_at(path: &Path, input: CreateScheduleInput) -> Result<Schedule, String> {
+fn create_schedule_at(path: &Path, mut input: CreateScheduleInput) -> Result<Schedule, String> {
     let _g = sched_lock()?;
+    if input.event.is_some() {
+        // 事件规则不按时间跑
+        input.frequency = "manual".into();
+        input.interval_hours = None;
+    }
     let root = validate_fields(
         &input.project_root,
         &input.frequency,
@@ -830,12 +899,17 @@ fn create_schedule_at(path: &Path, input: CreateScheduleInput) -> Result<Schedul
         input.hour,
         input.minute,
     )?;
+    let event = input
+        .event
+        .take()
+        .map(|rule| normalize_event_rule(Path::new(&root), rule))
+        .transpose()?;
     validate_extras(&input.frequency, input.interval_hours, input.timeout_minutes)?;
     let name = input
         .name
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "文献雷达".into());
+        .unwrap_or_else(|| if event.is_some() { "事件规则" } else { "文献雷达" }.into());
     let skill = input
         .skill
         .map(|s| s.trim().to_string())
@@ -860,12 +934,45 @@ fn create_schedule_at(path: &Path, input: CreateScheduleInput) -> Result<Schedul
         enabled: true,
         skip_if_unreviewed: input.skip_if_unreviewed,
         timeout_minutes: input.timeout_minutes,
+        event,
         ..Default::default()
     };
     let mut list = read_schedules_at(path)?;
     list.push(task.clone());
     write_schedules_at(path, &list)?;
+    // 目录规则建好就记底：建规则时已在目录里的文件不算事件
+    if let Some(EventRule { kind, folder: Some(folder), exts, .. }) = &task.event {
+        if kind == "folder" {
+            crate::schedule_events::scan_folder(&task.id, Path::new(&task.project_root), folder, exts)?;
+        }
+    }
     Ok(task)
+}
+
+/// 事件规则写法收口：种类闭集、目录在项目内、扩展名小写去点、模式缺省只记录
+fn normalize_event_rule(root: &Path, mut rule: EventRule) -> Result<EventRule, String> {
+    if !EVENT_KINDS.contains(&rule.kind.as_str()) {
+        return Err(format!("不认识的事件：{}", rule.kind));
+    }
+    rule.mode = match rule.mode.as_str() {
+        "" | "record" => "record".into(),
+        "run" => "run".into(),
+        other => return Err(format!("不认识的模式：{other}")),
+    };
+    if rule.kind == "folder" {
+        let folder = rule.folder.as_deref().ok_or("目录规则要选一个项目里的目录")?;
+        rule.folder = Some(crate::schedule_events::validate_folder(root, folder)?);
+        rule.exts = rule
+            .exts
+            .iter()
+            .map(|e| e.trim().trim_start_matches('.').to_lowercase())
+            .filter(|e| !e.is_empty() && e.chars().all(|c| c.is_ascii_alphanumeric()))
+            .collect();
+    } else {
+        rule.folder = None;
+        rule.exts.clear();
+    }
+    Ok(rule)
 }
 
 fn update_schedule_at(
@@ -957,6 +1064,16 @@ fn update_schedule_at(
     if let Some(minutes) = patch.timeout_minutes {
         // 0 = 回到默认 30 分钟
         task.timeout_minutes = (minutes != 0).then_some(minutes);
+    }
+    if let Some(mode) = patch.event_mode {
+        let rule = task.event.as_mut().ok_or("这条不是事件规则")?;
+        if !matches!(mode.as_str(), "record" | "run") {
+            return Err(format!("不认识的模式：{mode}"));
+        }
+        rule.mode = mode;
+    }
+    if task.event.is_some() && task.frequency != "manual" {
+        return Err("事件规则不按时间跑".into());
     }
     if let Some(enabled) = patch.enabled {
         if enabled && !task.enabled {
@@ -1785,6 +1902,9 @@ fn adopt_watch_run_sync(app: tauri::AppHandle, run_id: String) -> Result<Vec<Str
     mark_run_adopted(&run_id)
         .map_err(|e| format!("文件已采纳，但更新历史标记失败：{e}；重试不会重复覆盖相同内容"))?;
     let _ = app.emit("watch-run-adopted", &run_id);
+    if schedule.skill == "lit-watch" {
+        push_project_event(&project, "radar", copied.clone(), Some(&schedule.id));
+    }
     Ok(copied)
 }
 
@@ -1861,6 +1981,8 @@ struct RunContext {
     missed: u32,
     missed_reason: Option<&'static str>,
     note: Option<String>,
+    /// trigger == "event"：这次是哪条规则、什么事件、哪些文件
+    event: Option<RunOrigin>,
 }
 
 impl RunContext {
@@ -1905,6 +2027,7 @@ fn run_context_prompt(
             human_time(slot),
             human_time(now)
         )),
+        ("event", _) => out.push_str(&format!("这次由事件规则触发，开始于 {}。", human_time(now))),
         _ => out.push_str(&format!("这是用户手动立即跑，开始于 {}。", human_time(now))),
     }
     match last_ok {
@@ -1913,6 +2036,17 @@ fn run_context_prompt(
             human_time(t)
         )),
         None => out.push_str("这是第一次成功运行。"),
+    }
+    if let Some(origin) = ctx.event.as_ref() {
+        out.push_str("\n\n【这次为什么跑】");
+        out.push_str(&origin.summary);
+        if !origin.objects.is_empty() {
+            out.push_str("。这次只处理下面这些文件（相对项目根，已复制进你的工作目录同一位置；别的文件不要动）：");
+            for rel in &origin.objects {
+                out.push_str("\n- ");
+                out.push_str(rel);
+            }
+        }
     }
     if let Some(note) = ctx.note.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         out.push_str("\n\n【这次的附加说明（用户写的）】");
@@ -2046,6 +2180,15 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         }
         Ok(path)
     });
+    // 事件规则：把这次涉及的文件复制进隔离副本同一位置（多是没进 git 的新文件，worktree 里没有）。
+    // 复制在记初始快照之前，Agent 不改它们就不算产物
+    if let (Ok(iso), Some(origin)) = (&scheduled_isolation, ctx.event.as_ref()) {
+        for rel in &origin.objects {
+            if let Err(e) = copy_watch_rel(Path::new(&task.project_root), iso, rel, true) {
+                crate::logbuf::record("warn", "scheduler", &format!("事件文件没复制进隔离副本：{e}"));
+            }
+        }
+    }
     // 「本次改了哪些文件」从播种之后算起：每轮播种都会改写台账与只读种子，不能算成巡检产物
     let artifacts_since = std::time::SystemTime::now();
     // 项目配了雷达筛选时，新增计数只算通过筛选的条目（推送口径 = 用户要看的口径）
@@ -2371,6 +2514,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         scheduled_for: ctx.slot.map(format_slot),
         trigger: Some(ctx.trigger.clone()),
         note: ctx.note.clone(),
+        origin: ctx.event.clone(),
         ..Default::default()
     };
     let force_pause = (connection_missing && status == "error").then(|| {
@@ -2452,7 +2596,10 @@ fn schedule_brief(id: &str) -> Option<(String, String)> {
 /// 排队中 = 到点该跑（enabled 且 due）但当前没有在跑的 Run。等的是并发上限或同项目
 /// 互斥，闸门一过下一 tick 自动接上。list_schedules 出口用，纯函数可测。
 fn queued_for_list(s: &Schedule, now: NaiveDateTime, running: bool) -> bool {
-    s.enabled && !running && due_slot(Cadence::of(s), last_handled(s), now).is_some()
+    s.enabled
+        && !running
+        && (due_slot(Cadence::of(s), last_handled(s), now).is_some()
+            || (s.event.as_ref().is_some_and(|e| e.mode == "run") && !s.pending_events.is_empty()))
 }
 
 /// 本轮该跑的一条：应跑时刻 + 之前还错过几次
@@ -2461,6 +2608,8 @@ struct DuePlan {
     id: String,
     slot: NaiveDateTime,
     missed: u32,
+    /// 事件规则攒着事件（slot 无意义）
+    event: bool,
 }
 
 /// 闸门判定（纯函数）：到点了但不跑的原因。no_keywords 不算处理过（订上关键词下一 tick 就跑），
@@ -2515,6 +2664,16 @@ fn collect_due() -> Vec<DuePlan> {
         if !alive || with_running(|s| s.contains(&t.id)) {
             continue;
         }
+        if let Some(rule) = &t.event {
+            // 真跑档攒着事件才跑；上一轮还没评审就接着攒，评审完一并处理（不记跳过，免得刷屏）
+            if rule.mode == "run"
+                && !t.pending_events.is_empty()
+                && !(effective_skip_if_unreviewed(t) && has_unreviewed(t))
+            {
+                out.push(DuePlan { id: t.id.clone(), slot: now, missed: 0, event: true });
+            }
+            continue;
+        }
         let handled = last_handled(t);
         let Some(slot) = due_slot(Cadence::of(t), handled, now) else {
             continue;
@@ -2529,9 +2688,225 @@ fn collect_due() -> Vec<DuePlan> {
             id: t.id.clone(),
             slot,
             missed: missed_before(Cadence::of(t), slot, handled, now),
+            event: false,
         });
     }
     out
+}
+
+// ===== 事件规则（2026-11-02，design-attention-dispatch §5） =====
+
+/// 规则版本：事件、技能、连接、模型的哈希。改了规则，历史里能看出旧运行按的是哪一版
+fn rule_version(task: &Schedule) -> String {
+    use sha2::Digest;
+    let basis = serde_json::json!({
+        "event": task.event,
+        "skill": task.skill,
+        "profile": task.profile_id,
+        "model": task.model,
+    });
+    format!("{:x}", sha2::Sha256::digest(basis.to_string().as_bytes()))[..8].to_string()
+}
+
+/// 加一条待处理事件：同种事件并进最后一条（文件去重、摘要取新的），条数与文件数有上限
+fn add_pending(task: &mut Schedule, hit: EventHit) {
+    if let Some(last) = task.pending_events.last_mut().filter(|l| l.kind == hit.kind) {
+        for rel in hit.objects {
+            if !last.objects.contains(&rel) && last.objects.len() < EVENT_OBJECTS_CAP {
+                last.objects.push(rel);
+            }
+        }
+        last.at = hit.at;
+        last.summary = hit.summary;
+        return;
+    }
+    task.pending_events.push(hit);
+    if task.pending_events.len() > PENDING_EVENTS_CAP {
+        task.pending_events.remove(0);
+    }
+}
+
+/// 取走全部待处理事件，合成这次运行的依据（纯函数）
+fn origin_from(task: &Schedule, hits: Vec<EventHit>) -> RunOrigin {
+    let mut objects: Vec<String> = Vec::new();
+    for rel in hits.iter().flat_map(|h| h.objects.iter()) {
+        if !objects.contains(rel) && objects.len() < EVENT_OBJECTS_CAP {
+            objects.push(rel.clone());
+        }
+    }
+    let mut kinds: Vec<&str> = hits.iter().map(|h| h.kind.as_str()).collect();
+    kinds.dedup();
+    let base = hits.last().map(|h| h.summary.clone()).unwrap_or_default();
+    let summary = match objects.len() {
+        0 => base,
+        n => {
+            let head: Vec<&str> = objects.iter().take(3).map(String::as_str).collect();
+            format!("{base}（{n} 个文件：{}{}）", head.join("、"), if n > 3 { " 等" } else { "" })
+        }
+    };
+    RunOrigin {
+        rule_version: rule_version(task),
+        kind: kinds.join("+"),
+        mode: task.event.as_ref().map(|e| e.mode.clone()).unwrap_or_default(),
+        objects,
+        summary,
+    }
+}
+
+fn event_summary(kind: &str, folder: Option<&str>) -> String {
+    match kind {
+        "folder" => format!("{}/ 里落了新文件", folder.unwrap_or("")),
+        "radar" => "文献雷达采纳了一轮新命中".into(),
+        "phone" => "手机发来的文件放进了项目".into(),
+        _ => kind.to_string(),
+    }
+}
+
+/// 外部事件入口（雷达采纳、手机投递放进项目）：同项目、开着、种类对得上的事件规则各记一条。
+/// except = 触发方自己（雷达规则不被自己的采纳再叫醒）
+pub(crate) fn push_project_event(project_root: &Path, kind: &str, objects: Vec<String>, except: Option<&str>) {
+    let result = (|| -> Result<(), String> {
+        let _g = sched_lock()?;
+        let path = schedules_path()?;
+        let mut list = read_schedules_at(&path)?;
+        let root = project_root.to_string_lossy();
+        let mut changed = false;
+        for t in list.iter_mut().filter(|t| {
+            t.enabled
+                && Some(t.id.as_str()) != except
+                && crate::paths::same_path(&t.project_root, &root)
+                && t.event.as_ref().is_some_and(|e| e.kind == kind)
+        }) {
+            add_pending(
+                t,
+                EventHit {
+                    at: crate::sessions::now_iso(),
+                    kind: kind.into(),
+                    objects: objects.clone(),
+                    summary: event_summary(kind, None),
+                },
+            );
+            changed = true;
+        }
+        if changed {
+            write_schedules_at(&path, &list)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        crate::logbuf::record("warn", "scheduler", &format!("事件没记上：{e}"));
+    }
+}
+
+/// 每个 tick 对目录规则拍快照比对，落稳的新文件记成事件
+fn scan_event_sources() {
+    let rules: Vec<(String, String, String, Vec<String>)> = {
+        let Ok(_g) = sched_lock() else { return };
+        let Ok(list) = schedules_path().and_then(|p| read_schedules_at(&p)) else { return };
+        list.into_iter()
+            .filter(|t| t.enabled)
+            .filter_map(|t| match t.event {
+                Some(EventRule { kind, folder: Some(folder), exts, .. }) if kind == "folder" => {
+                    Some((t.id, t.project_root, folder, exts))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    for (id, root, folder, exts) in rules {
+        let found = match crate::schedule_events::scan_folder(&id, Path::new(&root), &folder, &exts) {
+            Ok(found) => found,
+            Err(e) => {
+                crate::logbuf::record("warn", "scheduler", &format!("事件规则看不了目录 {folder}：{e}"));
+                continue;
+            }
+        };
+        if found.is_empty() {
+            continue;
+        }
+        let result = (|| -> Result<(), String> {
+            let _g = sched_lock()?;
+            let path = schedules_path()?;
+            let mut list = read_schedules_at(&path)?;
+            if let Some(t) = list.iter_mut().find(|t| t.id == id) {
+                add_pending(
+                    t,
+                    EventHit {
+                        at: crate::sessions::now_iso(),
+                        kind: "folder".into(),
+                        objects: found,
+                        summary: event_summary("folder", Some(&folder)),
+                    },
+                );
+                write_schedules_at(&path, &list)?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            crate::logbuf::record("warn", "scheduler", &format!("事件没记上：{e}"));
+        }
+    }
+}
+
+/// 只记录档：攒着的事件记成一行「本来会开一单」，不调模型、不花钱、不打扰（noop）
+fn apply_record_mode(task: &mut Schedule, now_iso: &str) -> bool {
+    if !task.enabled
+        || task.pending_events.is_empty()
+        || task.event.as_ref().is_none_or(|e| e.mode != "record")
+    {
+        return false;
+    }
+    let hits = std::mem::take(&mut task.pending_events);
+    let origin = origin_from(task, hits);
+    task.history.insert(
+        0,
+        RunRecord {
+            at: now_iso.to_string(),
+            status: "recorded".into(),
+            summary: format!("只记录：本来会用 {} 开一单——{}", task.skill, origin.summary),
+            trigger: Some("event".into()),
+            noop: true,
+            origin: Some(origin),
+            ..Default::default()
+        },
+    );
+    task.history.truncate(HISTORY_CAP);
+    true
+}
+
+fn flush_recorded_events() {
+    let result = (|| -> Result<(), String> {
+        let _g = sched_lock()?;
+        let path = schedules_path()?;
+        let mut list = read_schedules_at(&path)?;
+        let now = crate::sessions::now_iso();
+        let mut changed = false;
+        for t in &mut list {
+            changed |= apply_record_mode(t, &now);
+        }
+        if changed {
+            write_schedules_at(&path, &list)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        crate::logbuf::record("warn", "scheduler", &format!("只记录的事件没记上：{e}"));
+    }
+}
+
+/// 真跑档跑起来时取走攒着的事件
+fn take_pending_events(id: &str) -> Option<RunOrigin> {
+    let _g = sched_lock().ok()?;
+    let path = schedules_path().ok()?;
+    let mut list = read_schedules_at(&path).ok()?;
+    let t = list.iter_mut().find(|t| t.id == id)?;
+    if t.pending_events.is_empty() {
+        return None;
+    }
+    let hits = std::mem::take(&mut t.pending_events);
+    let origin = origin_from(t, hits);
+    write_schedules_at(&path, &list).ok()?;
+    Some(origin)
 }
 
 fn claim_due_after_lock(id: &str, due: &[DuePlan]) -> bool {
@@ -2554,6 +2929,8 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 break;
             }
             let now = Local::now().naive_local();
+            scan_event_sources();
+            flush_recorded_events();
             for plan in collect_due() {
                 // 并发上限：满了本轮不再接新任务（break 而非 continue——后面的也一样接不上）
                 if TICK_INFLIGHT.load(Ordering::SeqCst) >= MAX_CONCURRENT_TICK_RUNS {
@@ -2584,20 +2961,30 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                         continue;
                     }
                 };
-                let (trigger, reason) = classify_trigger(plan.slot, app_started, prev_tick, now);
-                let ctx = RunContext {
-                    trigger: trigger.into(),
-                    slot: Some(plan.slot),
-                    missed: plan.missed,
-                    missed_reason: reason.or((plan.missed > 0).then_some("missed")),
-                    note: None,
+                let ctx = if plan.event {
+                    // 跑起来才取走攒着的事件；被别处取空了就算了
+                    let Some(origin) = take_pending_events(&id) else {
+                        unmark_running(&id);
+                        continue;
+                    };
+                    RunContext { trigger: "event".into(), event: Some(origin), ..Default::default() }
+                } else {
+                    let (trigger, reason) = classify_trigger(plan.slot, app_started, prev_tick, now);
+                    RunContext {
+                        trigger: trigger.into(),
+                        slot: Some(plan.slot),
+                        missed: plan.missed,
+                        missed_reason: reason.or((plan.missed > 0).then_some("missed")),
+                        note: None,
+                        event: None,
+                    }
                 };
                 let started = RunStartedPayload {
                     schedule_id: id.clone(),
                     schedule_name: name,
                     project_root: project,
-                    trigger: trigger.into(),
-                    scheduled_for: Some(format_slot(plan.slot)),
+                    trigger: ctx.trigger.clone(),
+                    scheduled_for: ctx.slot.map(format_slot),
                     missed: plan.missed,
                 };
                 TICK_INFLIGHT.fetch_add(1, Ordering::SeqCst);
@@ -2743,6 +3130,7 @@ fn delete_schedule_sync(id: String) -> Result<(), String> {
 /// 2026-10-13 前只删日程与订阅，运行/快照/任务行/worktree 全留着，攒成「哪都到不了」的孤儿。
 /// worktree 走回收站可反悔；各项独立尽力删，失败记日志不挡日程删除。
 fn purge_schedule_side_effects(task: &Schedule) {
+    crate::schedule_events::reset(&task.id);
     let reviews = match crate::watch_review::review_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -3382,6 +3770,7 @@ fn commit_watch_skill_draft_sync(
             minute: cadence.minute,
             skip_if_unreviewed: None,
             timeout_minutes: None,
+            event: None,
         },
     )?;
     for rel in [watch_draft_rel(&id), watch_schedule_rel(&id)] {
@@ -3753,6 +4142,7 @@ mod tests {
                 interval_hours: None,
                 skip_if_unreviewed: None,
                 timeout_minutes: None,
+                event: None,
                 name: None,
                 model: None,
                 project_root: root.to_string(),
@@ -4064,6 +4454,7 @@ mod tests {
             id: id.to_string(),
             slot: dt(ymd(2026, 10, 23), 9, 0),
             missed: 0,
+            event: false,
         }
     }
 
@@ -4582,6 +4973,7 @@ mod tests {
             missed: 2,
             missed_reason: Some("missed_asleep"),
             note: Some("  这次重点看 MoE 路由  ".into()),
+            event: None,
         };
         let text = run_context_prompt(
             &ctx,
@@ -4685,5 +5077,175 @@ mod tests {
         assert!(memory_rel("../x").is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
-}
 
+    fn event_task(mode: &str) -> Schedule {
+        Schedule {
+            id: "ev".into(),
+            skill: "data-clean".into(),
+            frequency: "manual".into(),
+            enabled: true,
+            event: Some(EventRule { kind: "folder".into(), folder: Some("data/raw".into()), exts: vec![], mode: mode.into() }),
+            ..Default::default()
+        }
+    }
+
+    fn hit(kind: &str, objects: &[&str]) -> EventHit {
+        EventHit {
+            at: "t".into(),
+            kind: kind.into(),
+            objects: objects.iter().map(|o| o.to_string()).collect(),
+            summary: event_summary(kind, Some("data/raw")),
+        }
+    }
+
+    #[test]
+    fn pending_events_merge_same_kind_and_cap() {
+        let mut t = event_task("run");
+        add_pending(&mut t, hit("folder", &["data/raw/a.csv"]));
+        add_pending(&mut t, hit("folder", &["data/raw/a.csv", "data/raw/b.csv"]));
+        assert_eq!(t.pending_events.len(), 1);
+        assert_eq!(t.pending_events[0].objects, ["data/raw/a.csv", "data/raw/b.csv"]);
+        add_pending(&mut t, hit("phone", &["papers/x.pdf"]));
+        assert_eq!(t.pending_events.len(), 2);
+        for i in 0..30 {
+            add_pending(&mut t, hit(if i % 2 == 0 { "radar" } else { "phone" }, &[]));
+        }
+        assert_eq!(t.pending_events.len(), PENDING_EVENTS_CAP);
+    }
+
+    #[test]
+    fn origin_summarizes_files_and_versions_rule() {
+        let t = event_task("run");
+        let origin = origin_from(&t, vec![hit("folder", &["a", "b", "c", "d"]), hit("folder", &["a", "e"])]);
+        assert_eq!(origin.objects, ["a", "b", "c", "d", "e"]);
+        assert_eq!(origin.kind, "folder");
+        assert_eq!(origin.mode, "run");
+        assert_eq!(origin.summary, "data/raw/ 里落了新文件（5 个文件：a、b、c 等）");
+        assert_eq!(origin.rule_version.len(), 8);
+        let mut changed = event_task("run");
+        changed.skill = "data-eda".into();
+        assert_ne!(rule_version(&changed), origin.rule_version);
+        // 依据写进提示词：只处理这些文件
+        let ctx = RunContext { trigger: "event".into(), event: Some(origin), ..Default::default() };
+        let text = run_context_prompt(&ctx, dt(ymd(2026, 11, 2), 9, 0), None);
+        assert!(text.contains("这次由事件规则触发"), "{text}");
+        assert!(text.contains("【这次为什么跑】data/raw/ 里落了新文件"), "{text}");
+        assert!(text.contains("\n- e"), "{text}");
+    }
+
+    #[test]
+    fn record_mode_writes_one_quiet_row_and_run_mode_queues() {
+        let mut rec = event_task("record");
+        assert!(!apply_record_mode(&mut rec, "now"), "没攒事件不记");
+        add_pending(&mut rec, hit("folder", &["data/raw/a.csv"]));
+        assert!(apply_record_mode(&mut rec, "now"));
+        assert!(rec.pending_events.is_empty());
+        let row = &rec.history[0];
+        assert_eq!(row.status, "recorded");
+        assert!(row.noop);
+        assert_eq!(row.trigger.as_deref(), Some("event"));
+        assert!(row.summary.starts_with("只记录：本来会用 data-clean 开一单——data/raw/ 里落了新文件"), "{}", row.summary);
+        assert!(row.origin.is_some());
+        // 只记录的行不算没评审
+        assert!(!has_unreviewed(&rec));
+        let now = dt(ymd(2026, 11, 2), 9, 0);
+        assert!(!queued_for_list(&rec, now, false));
+        let mut run = event_task("run");
+        assert!(!apply_record_mode(&mut run, "now"), "真跑档不在这里记");
+        assert!(!queued_for_list(&run, now, false));
+        add_pending(&mut run, hit("folder", &["x"]));
+        assert!(queued_for_list(&run, now, false));
+        assert!(!queued_for_list(&run, now, true));
+    }
+
+    #[test]
+    fn event_rule_normalizes_and_rejects() {
+        let dir = std::env::temp_dir().join(format!("mesa-rule-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("data/raw")).unwrap();
+        let rule = |kind: &str, folder: Option<&str>, mode: &str| EventRule {
+            kind: kind.into(),
+            folder: folder.map(str::to_string),
+            exts: vec![".CSV".into(), " xlsx ".into(), "a/b".into()],
+            mode: mode.into(),
+        };
+        let ok = normalize_event_rule(&dir, rule("folder", Some("data/raw/"), "")).unwrap();
+        assert_eq!(ok.mode, "record", "缺省只记录");
+        assert_eq!(ok.folder.as_deref(), Some("data/raw"));
+        assert_eq!(ok.exts, ["csv", "xlsx"]);
+        let radar = normalize_event_rule(&dir, rule("radar", Some("x"), "run")).unwrap();
+        assert!(radar.folder.is_none() && radar.exts.is_empty());
+        assert!(normalize_event_rule(&dir, rule("webhook", None, "")).is_err());
+        assert!(normalize_event_rule(&dir, rule("folder", None, "")).is_err());
+        assert!(normalize_event_rule(&dir, rule("folder", Some("../x"), "")).is_err());
+        assert!(normalize_event_rule(&dir, rule("phone", None, "auto")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folder_rule_end_to_end_records_without_calling_model() {
+        let base = std::env::temp_dir().join(format!("mesa-evrule-{}", uuid::Uuid::new_v4()));
+        let _config = crate::storage::redirect_config_root(&base.join("config"));
+        let project = base.join("proj");
+        std::fs::create_dir_all(project.join("data/raw")).unwrap();
+        std::fs::write(project.join("data/raw/old.csv"), "a").unwrap();
+        let created = create_schedule_at(
+            &schedules_path().unwrap(),
+            CreateScheduleInput {
+                name: None,
+                project_root: project.to_string_lossy().into_owned(),
+                skill: Some("data-clean".into()),
+                profile_id: None,
+                model: None,
+                linked_step: None,
+                frequency: "daily".into(),
+                weekday: None,
+                interval_hours: None,
+                hour: 9,
+                minute: 0,
+                skip_if_unreviewed: None,
+                timeout_minutes: None,
+                event: Some(EventRule {
+                    kind: "folder".into(),
+                    folder: Some("data/raw".into()),
+                    exts: vec!["csv".into()],
+                    mode: String::new(),
+                }),
+            },
+        )
+        .unwrap();
+        assert_eq!(created.frequency, "manual", "事件规则不按时间跑");
+        assert_eq!(created.name, "事件规则");
+        assert_eq!(created.event.as_ref().unwrap().mode, "record");
+        // 建规则时已有的不算；新文件要两次 tick 才算落稳
+        std::fs::write(project.join("data/raw/new.csv"), "b").unwrap();
+        std::fs::write(project.join("data/raw/skip.txt"), "c").unwrap();
+        scan_event_sources();
+        flush_recorded_events();
+        let list = read_schedules_at(&schedules_path().unwrap()).unwrap();
+        assert!(list[0].history.is_empty() && list[0].pending_events.is_empty());
+        scan_event_sources();
+        flush_recorded_events();
+        let list = read_schedules_at(&schedules_path().unwrap()).unwrap();
+        let row = &list[0].history[0];
+        assert_eq!(row.status, "recorded");
+        assert_eq!(row.origin.as_ref().unwrap().objects, ["data/raw/new.csv"]);
+        assert!(list[0].pending_events.is_empty());
+        // 雷达 / 手机事件只进种类对得上的规则；改成直接跑后攒着等 tick 取走
+        push_project_event(&project, "phone", vec!["papers/a.pdf".into()], None);
+        let list = read_schedules_at(&schedules_path().unwrap()).unwrap();
+        assert!(list[0].pending_events.is_empty());
+        let mut patch: UpdateSchedulePatch = serde_json::from_str(r#"{"eventMode":"run"}"#).unwrap();
+        patch.name = None;
+        update_schedule_at(&schedules_path().unwrap(), &created.id, patch).unwrap();
+        std::fs::write(project.join("data/raw/third.csv"), "d").unwrap();
+        scan_event_sources();
+        scan_event_sources();
+        flush_recorded_events();
+        let origin = take_pending_events(&created.id).expect("真跑档攒着事件");
+        assert_eq!(origin.objects, ["data/raw/third.csv"]);
+        assert_eq!(origin.mode, "run");
+        assert!(take_pending_events(&created.id).is_none());
+        // 删除走 Run 账本（真实 app.db），不在单测里调；快照清理见 schedule_events 测试
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

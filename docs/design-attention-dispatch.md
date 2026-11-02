@@ -129,8 +129,8 @@ Agent 单件活越来越不用人管，卡住产出的是人的注意力：一�
 其余字段沿用：技能、连接（钉或项目默认）、隔离 worktree、超时、积压闸门、自动暂停。新增：
 
 - `mode`：`off` / `record`（只记录）/ `run`（真跑）。**新建默认 `record`**。
-- `batchWindow`：同一规则多少秒内的事件合成一单，默认 120 秒（一次拖进十个 CSV 是一单，不是十单）。
-- `costCap`：每周花费上限，超了按现有自动暂停收口（`paused_reason`），进收件箱。
+- 合批：落地时不设 `batchWindow` 字段——目录事件要连着两次 tick（约一两分钟）大小与修改时间都不变才算落稳，这段等待本身就把一次拖进的多个文件合成一单；攒着没处理的同种事件也并成一条。
+- `costCap`（每周花费上限）：**本期未做**。现在的运行记录没有逐次花费，要先把会话用量按 Run 汇总回定时任务才能判；直接跑档仍受单次上限、连续失败自动暂停、积压闸门约束。
 
 不做：webhook 入站、GitHub 事件、邮件、IM。它们要么需要公网入口，要么需要常驻进程。
 
@@ -147,7 +147,7 @@ Run 加 `origin`：`{kind:"rule", ruleId, ruleVersion, trigger, objects[], summa
 - 只开流程外的活（巡检类技能、清洗草案、精读草稿），不开步、不改步骤状态、不写流程正典（沿用雷达对 `included.json` 等的硬排除）。
 - 产物照旧冻结、评审、人点采纳才进项目；**不自动采纳**。
 - Mesa 开着才跑。关着期间落的文件：启动后按目录快照差补一次，多个合成一单（同补跑的合并口径），历史记「补收」。
-- 文件稳定检测与重复事件去重照搬 `download_inbox.rs` 口径（大小稳定、同文件短时去重）。
+- 文件稳定检测：不挂常驻文件监听，60 秒一次的 tick 里拍快照比对（`schedule_events.rs`），比照搬 `download_inbox.rs` 的事件流更省事、关着期间的补收也天然成立。
 
 ## 6. 第三期：同对象并回原 Run 与卡住检测
 
@@ -211,6 +211,6 @@ Run 加 `origin`：`{kind:"rule", ruleId, ruleVersion, trigger, objects[], summa
 
 **第二期**
 
-- 后端：`scheduler.rs`（触发闭集、`mode`、`batchWindow`、`costCap`、目录快照补收）、`runs.rs`（`origin` 字段，整结构体 camelCase）、目录监听复用 `fs_tree.rs` / `download_inbox.rs` 的稳定检测。
+- 后端（已落地）：`scheduler.rs`（触发闭集、`mode`、`pending_events`、`RunRecord.origin`）、`schedule_events.rs`（目录快照与补收）。
 - 前端：定时任务弹层加触发种类与模式；历史行显示「本来会开一单」与依据。
 - 验收：只记录档在真实项目里拖入文件后只记一行、不花钱；切真跑后产物进评审、不自动采纳；Mesa 关着时落的文件下次启动补收一单。

@@ -3,7 +3,7 @@
  * 与 DOM/Tauri 解耦，供 node --test 直接测；组件 ScheduleSection 保持薄。
  */
 import { samePath } from "./path-utils.ts";
-import type { RunRecordDto, ScheduleDto } from "./types.ts";
+import type { EventRuleDto, RunRecordDto, ScheduleDto } from "./types.ts";
 
 const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
@@ -132,7 +132,42 @@ export function triggerTag(
     return when ? `补跑 · 原定 ${when}` : "补跑";
   }
   if (record.trigger === "manual") return "手动";
+  if (record.trigger === "event") return "事件";
   return null;
+}
+
+/** 「什么时候跑」：按时间，或本机事件（2026-11-02 事件规则）。雷达采纳只在科研项目里有 */
+export function triggerOptions(research: boolean): { id: string; label: string }[] {
+  return [
+    { id: "time", label: "按时间" },
+    { id: "folder", label: "项目里某个目录有新文件时" },
+    ...(research ? [{ id: "radar", label: "文献雷达采纳一轮之后" }] : []),
+    { id: "phone", label: "手机发来的文件放进项目之后" },
+  ];
+}
+
+/** 扩展名输入（「csv, xlsx」「.CSV/.xlsx」都行）→ 小写、不带点、去重 */
+export function parseExts(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/[\s,，、/;；]+/)) {
+    const ext = raw.trim().replace(/^\.+/, "").toLowerCase();
+    if (ext && /^[a-z0-9]+$/.test(ext) && !out.includes(ext)) out.push(ext);
+  }
+  return out;
+}
+
+/** 任务行上替代周期的一句：盯什么、只记录还是直接跑、攒着几批 */
+export function eventRuleLabel(rule: EventRuleDto, pending = 0): string {
+  const what =
+    rule.kind === "folder"
+      ? `${rule.folder ?? ""}/ 有新文件${rule.exts.length ? `（${rule.exts.join("、")}）` : ""}时`
+      : rule.kind === "radar"
+        ? "文献雷达采纳之后"
+        : rule.kind === "phone"
+          ? "手机文件放进项目之后"
+          : rule.kind;
+  const mode = rule.mode === "run" ? "直接跑" : "只记录";
+  return `${what} · ${mode}${pending > 0 ? ` · 攒着 ${pending} 批` : ""}`;
 }
 
 /** 其他项目的定时任务（项目「定时任务」页底部总览用） */
@@ -292,6 +327,7 @@ export function scheduleStatusMark(status: string | null | undefined): {
 } {
   if (status === "ok") return { glyph: "✓", label: "成功", className: "text-ok-text" };
   if (status === "skipped") return { glyph: "↷", label: "已跳过", className: "text-l4" };
+  if (status === "recorded") return { glyph: "○", label: "只记录", className: "text-l4" };
   if (status === "cancelled") return { glyph: "■", label: "已取消", className: "text-l4" };
   if (status === "timeout") return { glyph: "⏱", label: "超时", className: "text-warn-text" };
   return { glyph: "✗", label: "失败", className: "text-err-text" };
@@ -303,6 +339,7 @@ export function lastRunBrief(
   isLit: boolean,
 ): { text: string; tone: "ok" | "warn" | "err" | "muted" } {
   if (r.status === "skipped") return { text: skipLine(r), tone: "muted" };
+  if (r.status === "recorded") return { text: "只记录：本来会开一单", tone: "muted" };
   if (r.status === "timeout") return { text: "超时", tone: "warn" };
   if (r.status === "cancelled") return { text: "已取消", tone: "muted" };
   if (r.status !== "ok") {

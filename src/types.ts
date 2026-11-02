@@ -2084,6 +2084,28 @@ export interface RunRecordDto {
   skipReason?: string | null;
   /** 同一原因连着跳过的次数 */
   skipCount?: number | null;
+  /** 事件规则触发的这次：凭哪条规则的哪一版、什么事件、哪些文件（status="recorded" 是只记录档） */
+  origin?: RunOriginDto | null;
+}
+
+/** 事件规则（scheduler.rs EventRule，2026-11-02） */
+export interface EventRuleDto {
+  /** "folder" | "radar" | "phone" */
+  kind: string;
+  folder?: string | null;
+  /** 小写、不带点；空 = 都认 */
+  exts: string[];
+  /** "record" 只记录 | "run" 直接跑 */
+  mode: string;
+}
+
+/** 运行依据 */
+export interface RunOriginDto {
+  ruleVersion: string;
+  kind: string;
+  mode: string;
+  objects: string[];
+  summary: string;
 }
 
   /** 定时任务（serde camelCase）；默认 lit-watch，也可运行技能库中的其它技能 */
@@ -2124,6 +2146,10 @@ export interface ScheduleDto {
   linkedStep?: string | null;
   /** 最近 20 条，新的在前 */
   history: RunRecordDto[];
+  /** 事件规则；空 = 按时间跑 */
+  event?: EventRuleDto | null;
+  /** 攒着还没处理的事件批数 */
+  pendingEvents?: number;
 }
 
 export interface CreateScheduleInput {
@@ -2142,6 +2168,8 @@ export interface CreateScheduleInput {
   timeoutMinutes?: number | null;
   /** 固定不传。旧客户端若还带着，后端仍能收下，界面不再提供。 */
   linkedStep?: string | null;
+  /** 事件规则（有它就不按时间跑） */
+  event?: EventRuleDto | null;
 }
 
 /** 更新补丁：字段全可选（不传 = 不改）。profileId 清掉必须传**空串**——后端 Option<Option>
@@ -2161,6 +2189,8 @@ export interface UpdateSchedulePatch {
   timeoutMinutes?: number;
   /** 传 null 清掉旧的关联步骤。 */
   linkedStep?: string | null;
+  /** 事件规则：「record」只记录 /「run」直接跑 */
+  eventMode?: string;
 }
 
 /** 新建巡检技能：确认落盘前的草稿（.ccode/drafts/watch-*.meta.json） */

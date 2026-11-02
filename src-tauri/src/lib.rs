@@ -160,6 +160,7 @@ mod win_snap;
 mod window_close;
 mod workspaces;
 mod help_requests;
+mod schedule_events;
 mod internal_sessions;
 mod ws_settings;
 mod zotero;

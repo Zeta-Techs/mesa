@@ -1823,7 +1823,12 @@ pub async fn phone_drop_place(id: String, project_root: String) -> Result<PhoneP
             &crate::sessions::expand_tilde(&project_root),
         ))?;
         let dir = ensure_stage_dir()?;
-        place_into(&root, &dir, &id)
+        let placed = place_into(&root, &dir, &id)?;
+        // 事件规则「手机发来的文件放进项目」（2026-11-02）：人点了放进项目才算，文字摘录不算文件
+        if placed.rel_path != "notes/clips.md" {
+            crate::scheduler::push_project_event(&root, "phone", vec![placed.rel_path.clone()], None);
+        }
+        Ok(placed)
     })
     .await
     .map_err(|e| format!("放进项目失败: {e}"))?

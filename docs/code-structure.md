@@ -1579,7 +1579,11 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 会话自动命名（ai_auto_title_session early/final + ai_retitle_all_sessions 补名去重）：
                              #   settings::auto_title_sessions_enabled 关 = 两命令入口直接跳过（最终闸门在此，前端跳过只为省白跑），
                              #   补名批循环逐轮复查闸门（中途关掉即停）；retitle impl 闸门收进参数是关停语义的单测锚点
+  schedule_events.rs         # 事件规则的目录事件源：validate_folder（项目内相对目录、不碰 .git/.ccode）、list_files（跳点开头与符号链接，5000 个 / 6 层上限）、
+                             # diff（连着两次 tick 大小+修改时间不变才算落稳）、scan_folder（快照存配置目录 schedule-events/<id>.json，首次只记底）、reset
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
+                             # 2026-11-02 事件规则：Schedule.event（folder/radar/phone × record/run）+ pending_events；tick 先 scan_event_sources、flush_recorded_events，
+                             #   直接跑档进 collect_due，跑起来 take_pending_events；push_project_event 给雷达采纳与手机投递用；RunRecord.origin 记规则版本与文件；
                              # 2026-10-20：Windows 上 Codex 用非提权沙箱时任务说明追加「读写文件用绝对路径」（codex_win_unelevated_note）；
                              #   沙箱覆盖参数本身由 ai.rs codex_win_sandbox_for_run 加（用户确认过、自己没配才加），判定在 agent_specs.rs
                              # schedules.json（每日/每周+时分，本地时区）、60s tick + 启动补跑
