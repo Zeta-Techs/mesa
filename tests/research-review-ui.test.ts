@@ -67,8 +67,8 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     assert.match(list.textContent!,/待你判断（1）/);assert.match(list.textContent!,/通过（1） 展开/);
     assert.doesNotMatch(list.textContent!,/在引文库里/);
     assert.match(list.textContent!,/另有 1 行核验记录读不懂/);
-    // 跨厂商复核（2026-11-02）：有另一家一等支持的连接就给按钮
-    assert.ok(Array.from(host.querySelectorAll('button')).some(b=>b.textContent==='请 Codex 复核'));assert.match(list.textContent!,/是否支持论断，仍要你判断/);
+    // 跨厂商复核（2026-11-02）：只挂在写带引用正文的步骤上；实验运行步不写稿件，不给按钮（正例见 cross-review.test.ts stepHasClaims）
+    assert.ok(!Array.from(host.querySelectorAll('button')).some(b=>b.textContent==='请 Codex 复核'));assert.match(list.textContent!,/是否支持论断，仍要你判断/);
     // 2026-10-24：清单默认收成一行摘要（附带文件 · 带回 N / M 项），点开才列
     assert.match(host.textContent!,/附带文件/);assert.match(host.textContent!,/带回 1 \/ 1 项/);
     assert.doesNotMatch(host.textContent!,/papers\/result.pdf/);

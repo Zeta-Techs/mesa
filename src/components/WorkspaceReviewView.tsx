@@ -107,7 +107,7 @@ import type {
 import { usePolling } from "../polling";
 import { checkChipText, countChecks, type ChecksDto } from "../research-checks";
 import CheckList from "./CheckList";
-import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer } from "../cross-review";
+import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer, stepHasClaims } from "../cross-review";
 import { AGENTS } from "../types";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
@@ -2778,7 +2778,7 @@ function LiveWorkspaceReviewView({
                     {checkChipText(checks.items)}
                   </button>
                 )}
-                {contentReview && researchContext && crossReviewer && !mergeDone && (
+                {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && crossReviewer && !mergeDone && (
                   <button
                     type="button"
                     disabled={crossBusy || !wsRow}

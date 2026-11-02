@@ -43,6 +43,14 @@ export function pickCrossReviewer(
   return null;
 }
 
+/** 这一步写不写「带引用的正文」：稿件 / 开题 / 章节 / 报告才有论断可核；文献检索、精读、数据步没有，
+ *  在那里复核 Agent 找不到稿件只能空转（2026-11-02 体验审查：文献检索步也挂了复核按钮） */
+export function stepHasClaims(expectedArtifacts: readonly string[] | null | undefined): boolean {
+  return (expectedArtifacts ?? []).some(
+    (path) => /^(manuscript|proposal|chapters)\/.+\.(md|qmd|tex)$/.test(path) || /(^|\/)[^/]*report\.md$/.test(path),
+  );
+}
+
 /** 复核标签与干活的标签分开，不复用同一个（不用 ws: 前缀：那是工作区标签的持久化键） */
 export function crossReviewReuseKey(worktreePath: string): string {
   return `cross-review:${worktreePath}`;

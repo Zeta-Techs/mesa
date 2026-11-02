@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer, type ReviewerProfile } from "../src/cross-review.ts";
+import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer, stepHasClaims, type ReviewerProfile } from "../src/cross-review.ts";
 
 const p = (id: string, agent: string, lastUsedAt: string | null, models: string[] = ["m-" + id]): ReviewerProfile => ({
   id,
@@ -56,4 +56,15 @@ test("一等 Agent 名单与后端能力表同一份（AGENTS.md「CLI 支持分
   const m = rust.match(/TIER1_AGENTS: \[&str; \d+\] = \[([^\]]+)\]/);
   assert.ok(m, "agent_specs.rs 里找不到 TIER1_AGENTS");
   assert.deepEqual(m[1].split(",").map((s) => s.trim().replace(/"/g, "")).filter(Boolean), [...TIER1_AGENTS]);
+});
+
+test("复核按钮只挂在写带引用正文的步骤上：稿件、开题、章节、报告算，检索、精读、数据步不算", () => {
+  assert.equal(stepHasClaims(["manuscript/review-final.md", "output/review-final.pdf"]), true);
+  assert.equal(stepHasClaims(["manuscript/chapters/*.tex"]), true);
+  assert.equal(stepHasClaims(["proposal/proposal.md"]), true);
+  assert.equal(stepHasClaims(["analysis-report.md", "analysis/numbers.json"]), true);
+  assert.equal(stepHasClaims(["papers/screening.md", "papers/included.md", "papers/included.json"]), false);
+  assert.equal(stepHasClaims(["notes/*.md", "notes/index.json", "references.bib"]), false);
+  assert.equal(stepHasClaims(["data-dictionary.md", "data/fields.json"]), false);
+  assert.equal(stepHasClaims(undefined), false);
 });
