@@ -4,7 +4,9 @@ import { Checkbox, FoldMark } from "./PageFrame";
 import {
   activeProfileGroups,
   filterProfilePapers,
+  suggestionReason,
   type ProfilePaper,
+  type ProfileSuggestion,
   type ResearchProfileDto,
 } from "../research-profile";
 
@@ -21,6 +23,8 @@ export default function ResearchProfileSection() {
   const [papersOpen, setPapersOpen] = useState(false);
   const [papers, setPapers] = useState<ProfilePaper[] | null>(null);
   const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<ProfileSuggestion[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
 
   const load = () =>
     invoke<ResearchProfileDto>("research_profile_read")
@@ -29,8 +33,13 @@ export default function ResearchProfileSection() {
         setError(null);
       })
       .catch((e) => setError(String(e)));
+  const loadSuggestions = () =>
+    invoke<ProfileSuggestion[]>("research_profile_suggestions")
+      .then(setSuggestions)
+      .catch(() => setSuggestions([]));
   useEffect(() => {
     void load();
+    void loadSuggestions();
   }, []);
   useEffect(() => {
     if (!papersOpen || papers) return;
@@ -56,6 +65,7 @@ export default function ResearchProfileSection() {
         reason: why,
       });
       await load();
+      void loadSuggestions();
       setText("");
       setReason("");
       setEditing(null);
@@ -180,6 +190,63 @@ export default function ResearchProfileSection() {
               </ul>
             </div>
           ))}
+        </div>
+      )}
+
+      {suggestions.length > 0 && (
+        <div>
+          <button
+            type="button"
+            aria-expanded={suggestOpen}
+            onClick={() => setSuggestOpen((v) => !v)}
+            className="flex items-center gap-1.5 font-medium text-l3 hover:text-l1"
+          >
+            <FoldMark open={suggestOpen} />
+            建议记下
+            <span className="font-normal text-l4">{suggestions.length}</span>
+          </button>
+          {suggestOpen && (
+            <p className="mt-1 text-micro text-l4">在你几个项目里反复出现的意见。只是建议：点「记下」会填进下面的新增栏，你改好、写好依据再记。</p>
+          )}
+          {suggestOpen && (
+            <ul aria-label="建议记下" className="mt-1.5 space-y-1">
+              {suggestions.map((s) => (
+                <li key={s.id} className="rounded-md px-1.5 py-1 hover:bg-hover">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className="min-w-0 flex-1 text-l2">{s.text}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-micro text-l3 hover:text-l1"
+                      onClick={() => {
+                        setEditing(null);
+                        setRevoking(null);
+                        setCategory(profile.categories.includes(s.category) ? s.category : "其他");
+                        setText(s.text);
+                        setReason(suggestionReason(s));
+                      }}
+                    >
+                      记下
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 text-micro text-l4 hover:text-l1"
+                      onClick={async () => {
+                        try {
+                          await invoke("research_profile_ignore", { id: s.id });
+                          setSuggestions((list) => list.filter((x) => x.id !== s.id));
+                        } catch (e) {
+                          setError(String(e));
+                        }
+                      }}
+                    >
+                      忽略
+                    </button>
+                  </div>
+                  <p className="text-micro text-l4">{suggestionReason(s)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

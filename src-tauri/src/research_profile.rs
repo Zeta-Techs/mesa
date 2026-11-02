@@ -33,6 +33,9 @@ pub struct ProfileSettings {
     /// 开对话时把研究档案附进项目说明（默认开）
     #[serde(default = "yes")]
     pub inject: bool,
+    /// 人点过「忽略」的提议（按提议 id），不再提
+    #[serde(default)]
+    pub ignored: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -41,8 +44,13 @@ fn yes() -> bool {
 
 impl Default for ProfileSettings {
     fn default() -> Self {
-        Self { inject: true }
+        Self { inject: true, ignored: Vec::new() }
     }
+}
+
+fn write_settings_at(dir: &Path, settings: &ProfileSettings) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    crate::storage::atomic_write(&settings_path(dir), text.as_bytes(), true)
 }
 
 fn read_raw_at(dir: &Path) -> Result<String, String> {
@@ -309,8 +317,9 @@ pub async fn research_profile_update(
 pub async fn research_profile_set_inject(inject: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = base_dir()?;
-        let text = serde_json::to_string_pretty(&ProfileSettings { inject }).map_err(|e| e.to_string())?;
-        crate::storage::atomic_write(&settings_path(&dir), text.as_bytes(), true)
+        let mut settings = read_settings_at(&dir);
+        settings.inject = inject;
+        write_settings_at(&dir, &settings)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -321,6 +330,197 @@ pub async fn research_profile_papers() -> Result<Vec<ProfilePaper>, String> {
     tauri::async_runtime::spawn_blocking(|| Ok(papers_from(&crate::projects::registered_project_roots())))
         .await
         .map_err(|e| e.to_string())?
+}
+
+// ---------------- 自动提议（只提议，人点了才进） ----------------
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionSource {
+    pub project: String,
+    /// 项目长期知识 / 审查决定 / 逐条裁决依据
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSuggestion {
+    pub id: String,
+    pub text: String,
+    pub category: String,
+    pub count: usize,
+    pub sources: Vec<SuggestionSource>,
+}
+
+struct Seen {
+    text: String,
+    project: String,
+    kind: &'static str,
+}
+
+fn norm(text: &str) -> String {
+    text.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+fn bigrams(text: &str) -> std::collections::HashSet<(char, char)> {
+    let chars: Vec<char> = norm(text).chars().collect();
+    chars.windows(2).map(|w| (w[0], w[1])).collect()
+}
+
+fn similar(a: &str, b: &str) -> bool {
+    let (x, y) = (bigrams(a), bigrams(b));
+    if x.is_empty() || y.is_empty() {
+        return norm(a) == norm(b) && !norm(a).is_empty();
+    }
+    let inter = x.intersection(&y).count() as f64;
+    inter / (x.len() + y.len()) as f64 * 2.0 >= 0.6
+}
+
+fn md_files(dir: &Path, prefix: &str) -> Vec<PathBuf> {
+    fs::read_dir(dir)
+        .map(|it| {
+            it.flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension().is_some_and(|e| e == "md")
+                        && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn small_text(path: &Path) -> Option<String> {
+    (fs::metadata(path).ok()?.len() <= 2 * 1024 * 1024).then(|| fs::read_to_string(path).ok()).flatten()
+}
+
+/// 「决定：修改：……」「决定：拒绝：……」后面人写的说明（至少 6 个字）
+fn decision_note(line: &str) -> Option<String> {
+    let rest = line.split_once("决定：")?.1;
+    let rest = rest.strip_prefix("修改").or_else(|| rest.strip_prefix("拒绝"))?;
+    let note = rest.strip_prefix('：').or_else(|| rest.strip_prefix(':'))?.trim();
+    (note.chars().count() >= 6).then(|| note.chars().take(200).collect())
+}
+
+/// 逐条裁决里「依据：……」人写的理由（到下一个 | 为止，至少 6 个字）
+fn verdict_basis(line: &str) -> Option<String> {
+    let note = line.split_once("依据：")?.1.split('|').next()?.trim();
+    (note.chars().count() >= 6).then(|| note.chars().take(200).collect())
+}
+
+/// 一个项目里可提议的原料：有效的项目长期知识、审查报告里写了说明的「决定：修改 / 拒绝：……」、逐条裁决写了的依据
+fn collect_project(name: &str, root: &Path, out: &mut Vec<Seen>) {
+    if let Ok(doc) = parse(&crate::project_memory::read_raw(root).unwrap_or_default()) {
+        for e in doc.entries.iter().filter(|e| e.meta.state == "active") {
+            out.push(Seen { text: e.text.clone(), project: name.into(), kind: "项目长期知识" });
+        }
+    }
+    for dir in ["manuscript", "submission", "rebuttal"] {
+        let base = root.join(dir);
+        for path in md_files(&base, "review-report") {
+            if let Some(text) = small_text(&path) {
+                for note in text.lines().filter_map(decision_note) {
+                    out.push(Seen { text: note, project: name.into(), kind: "审查决定" });
+                }
+            }
+        }
+        for path in md_files(&base, "verification-decisions") {
+            if let Some(text) = small_text(&path) {
+                for note in text.lines().filter_map(verdict_basis) {
+                    out.push(Seen { text: note, project: name.into(), kind: "逐条裁决依据" });
+                }
+            }
+        }
+    }
+}
+
+/// 在两个以上项目里出现、或同一处反复出现三次以上的，才提议；档案里已有的、人忽略过的不提
+pub(crate) fn suggestions_from(
+    projects: &[(String, PathBuf)],
+    doc: &MemoryDocument,
+    ignored: &[String],
+) -> Vec<ProfileSuggestion> {
+    use sha2::{Digest, Sha256};
+    let mut seen = Vec::new();
+    for (name, root) in projects {
+        collect_project(name, root, &mut seen);
+    }
+    let existing: Vec<&str> = doc.entries.iter().filter(|e| e.meta.state == "active").map(|e| e.text.as_str()).collect();
+    let mut used = vec![false; seen.len()];
+    let mut out = Vec::new();
+    for i in 0..seen.len() {
+        if used[i] {
+            continue;
+        }
+        let mut group = vec![i];
+        for j in i + 1..seen.len() {
+            if !used[j] && similar(&seen[i].text, &seen[j].text) {
+                group.push(j);
+            }
+        }
+        for &k in &group {
+            used[k] = true;
+        }
+        let projects: std::collections::BTreeSet<&str> = group.iter().map(|&k| seen[k].project.as_str()).collect();
+        if projects.len() < 2 && group.len() < 3 {
+            continue;
+        }
+        // 取组里最长的那句当代表（通常最完整）
+        let text = group.iter().map(|&k| seen[k].text.as_str()).max_by_key(|t| t.chars().count()).unwrap_or("").to_string();
+        if existing.iter().any(|e| similar(e, &text)) {
+            continue;
+        }
+        let id = format!("{:x}", Sha256::digest(norm(&text).as_bytes()))[..16].to_string();
+        if ignored.contains(&id) {
+            continue;
+        }
+        let memory_only = group.iter().all(|&k| seen[k].kind == "项目长期知识");
+        let mut sources: Vec<SuggestionSource> = Vec::new();
+        for &k in &group {
+            let src = SuggestionSource { project: seen[k].project.clone(), kind: seen[k].kind.into() };
+            if !sources.contains(&src) {
+                sources.push(src);
+            }
+        }
+        out.push(ProfileSuggestion {
+            id,
+            text,
+            category: if memory_only { "常用方法" } else { "写作偏好" }.into(),
+            count: group.len(),
+            sources,
+        });
+    }
+    out.sort_by(|a, b| b.count.cmp(&a.count));
+    out.truncate(30);
+    out
+}
+
+#[tauri::command]
+pub async fn research_profile_suggestions() -> Result<Vec<ProfileSuggestion>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let dir = base_dir()?;
+        Ok(suggestions_from(
+            &crate::projects::registered_project_roots(),
+            &read_doc_at(&dir)?,
+            &read_settings_at(&dir).ignored,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn research_profile_ignore(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = base_dir()?;
+        let mut settings = read_settings_at(&dir);
+        if !settings.ignored.contains(&id) {
+            settings.ignored.push(id);
+        }
+        write_settings_at(&dir, &settings)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -365,6 +565,42 @@ mod tests {
         assert!(a < b, "按固定分类顺序");
         fs::write(settings_path(&dir), r#"{"inject":false}"#).unwrap();
         assert_eq!(context_text_at(&dir), "");
+    }
+
+    #[test]
+    fn suggestions_need_two_projects_or_three_repeats_and_skip_existing_or_ignored() {
+        let a = temp_dir("sa");
+        let b = temp_dir("sb");
+        for root in [&a, &b] {
+            fs::create_dir_all(root.join("manuscript")).unwrap();
+        }
+        fs::write(
+            a.join("manuscript/review-report.md"),
+            "## R001\n决定：修改：摘要里不要写 novel 和 first\n## R002\n决定：拒绝：保留原有方法描述即可\n",
+        )
+        .unwrap();
+        fs::write(b.join("manuscript/review-report.md"), "## R001\n决定：修改：摘要里不要写 novel、first\n").unwrap();
+        fs::write(
+            b.join("manuscript/verification-decisions.md"),
+            "- V001 | 裁决：修改 | 依据：只有摘要的文献不写成已确立\n- V002 | 裁决：修改 | 依据：只有摘要的文献不写成已确立\n- V003 | 裁决：接受 | 依据：只有摘要的文献不写成已确立。\n",
+        )
+        .unwrap();
+        let projects = vec![("甲".to_string(), a), ("乙".to_string(), b)];
+        let empty = parse("").unwrap();
+        let got = suggestions_from(&projects, &empty, &[]);
+        let texts: Vec<&str> = got.iter().map(|s| s.text.as_str()).collect();
+        assert!(texts.iter().any(|t| t.contains("novel")), "跨两个项目的审查决定：{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("只有摘要")), "同一处反复三次的裁决依据");
+        assert!(!texts.iter().any(|t| t.contains("保留原有方法")), "只出现一次的不提");
+        let novel = got.iter().find(|s| s.text.contains("novel")).unwrap();
+        assert_eq!(novel.sources.iter().map(|s| s.project.as_str()).collect::<Vec<_>>(), vec!["甲", "乙"]);
+        // 忽略过的不再提
+        let again = suggestions_from(&projects, &empty, &[novel.id.clone()]);
+        assert!(!again.iter().any(|s| s.text.contains("novel")));
+        // 档案里已有相近条目的不提
+        let dir = temp_dir("existing");
+        let doc = update_at(&dir, &revision(""), None, "add", "写作偏好", "摘要里不要写 novel 和 first", "导师").unwrap();
+        assert!(!suggestions_from(&projects, &doc, &[]).iter().any(|s| s.text.contains("novel")));
     }
 
     #[test]

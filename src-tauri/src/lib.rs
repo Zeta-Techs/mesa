@@ -787,6 +787,8 @@ pub fn run() {
             research_profile::research_profile_update,
             research_profile::research_profile_set_inject,
             research_profile::research_profile_papers,
+            research_profile::research_profile_suggestions,
+            research_profile::research_profile_ignore,
             local_stats::local_stats_read,
             fs_tree::save_file_preview,
             fs_tree::watch_dir,

@@ -1781,7 +1781,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底
   research_profile.rs        # 研究档案（2026-11-02）：用户层 research-profile.md（复用 project_memory 的 parse / render / 状态机，goalName=分类，
                              # 七类固定）、改前留 research-profile-history/；context_text 由 read_project_memory 附在项目知识后（可关、约 1500 字上限）；
-                             # research_profile_papers 只读各注册项目 included.json / notes/index.json 按 DOI / 题名去重
+                             # research_profile_papers 只读各注册项目 included.json / notes/index.json 按 DOI / 题名去重；
+                             # research_profile_suggestions 找跨项目 / 反复出现的意见（只提议），research_profile_ignore 记忽略
   research_export.rs         # 研究记录查看与三个导出（2026-11-02）：research_record_read；research_export(kind) 写「下载/ccode-exports」——
                              # AI 使用声明草稿（中英，按记录统计工具 / 模型 / 用途）、复现包 zip（代码 / 环境 / 登记文件 / 研究记录与核验存档，
                              # 数据目录只记 SHA-256，文本出包前脱敏）、研究过程报告 HTML（时间线、人的决定计数、核验摘要、人机分工）；不含对话原文

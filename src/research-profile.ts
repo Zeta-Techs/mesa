@@ -40,3 +40,21 @@ export function filterProfilePapers(papers: readonly ProfilePaper[], query: stri
     (p) => p.title.toLowerCase().includes(q) || p.doi.includes(q) || p.projects.some((name) => name.toLowerCase().includes(q)),
   );
 }
+
+/** Mesa 从各项目里找出的反复出现的意见（research_profile_suggestions）；只提议，人点「记下」才进档案 */
+export interface ProfileSuggestion {
+  id: string;
+  text: string;
+  category: string;
+  count: number;
+  sources: { project: string; kind: string }[];
+}
+
+/** 提议的出处说明，也当「记下」时预填的依据 */
+export function suggestionReason(s: ProfileSuggestion): string {
+  const projects = [...new Set(s.sources.map((x) => x.project))];
+  const kinds = [...new Set(s.sources.map((x) => x.kind))].join("、");
+  return projects.length > 1
+    ? `在「${projects.join("」「")}」${projects.length} 个项目的${kinds}里都出现过`
+    : `在「${projects[0]}」的${kinds}里出现了 ${s.count} 次`;
+}

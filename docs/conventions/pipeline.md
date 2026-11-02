@@ -120,7 +120,9 @@
   `passed` 一律降成 `needs_human`——Agent 的判断永不自动通过。
 - **研究档案**（`research_profile.rs`，用户层，配置目录 `research-profile.md`）：沿用项目长期知识的格式与状态机，`goalName` 当分类（七类固定）；
   只收人确认的条目、依据必填、revision 乐观锁、改前留历史副本；Agent 不能写。开对话时由 `read_project_memory` 附在项目知识之后，
-  标明「偏好与历史，不是事实依据」，上限约 1500 字，设置可整体关闭。跨项目文献总表只读各注册项目的 included.json / notes/index.json。
+  标明「偏好与历史，不是事实依据」，上限约 1500 字，设置可整体关闭。自动提议（`research_profile_suggestions`）只读各注册项目的有效项目知识、
+  审查报告「决定：修改 / 拒绝：说明」、逐条裁决「依据」，字二元组相似度 ≥0.6 归组，跨 ≥2 个项目或同组 ≥3 次才提；已有相近条目、人忽略过的（按 id 记在
+  research-profile.json）不提；「记下」只预填新增栏，仍要人写依据确认。跨项目文献总表只读各注册项目的 included.json / notes/index.json。
 - **AI 使用声明**以 `ai-usage.md` 为事实依据（Mesa 统计，只含在 Mesa 里跑过的），用途措辞与是否补充 Mesa 之外用过的工具由作者核对；不做「降 AI 率」。
 
 ## 工作区生命周期（无损口径）
