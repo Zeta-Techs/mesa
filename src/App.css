@@ -4260,3 +4260,21 @@ select:focus-visible {
   }
   .ccode-workbench-schedule-action { text-align: left; }
 }
+
+/* 不定进度条（UpdateProgressBar：还不知道总大小时）：三分之一宽的条从左滑到右循环；减弱动态效果时停在左侧不动 */
+@keyframes ccode-progress-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.ccode-progress-indeterminate {
+  animation: ccode-progress-indeterminate 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-progress-indeterminate {
+    animation: none;
+  }
+}

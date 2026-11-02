@@ -50,6 +50,7 @@ import { toast } from "../toast";
 import appIconDark from "../assets/app-icon/dark.png";
 import appIconLight from "../assets/app-icon/light.png";
 import UpdateNotes from "./UpdateNotes";
+import UpdateProgressBar from "./UpdateProgressBar";
 
 /** 帮助菜单弹窗族：诊断与日志 / 检查更新 / 关于。帮助菜单不跳设置页——
  *  内容能装进弹窗的都就地弹窗，弹窗里留「去完整页」的出口。 */
@@ -397,12 +398,7 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
               <span>{appUpdateProgressLabel(progress?.downloaded ?? 0, progress?.total ?? null)}</span>
               {pct !== null && <span className="tabular-nums">{pct}%</span>}
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-inset">
-              <div
-                className="h-full bg-ok-text transition-[width]"
-                style={{ width: `${pct ?? 15}%` }}
-              />
-            </div>
+            <UpdateProgressBar downloaded={progress?.downloaded ?? 0} total={progress?.total ?? null} />
           </div>
         )}
         {installError && !installing && (

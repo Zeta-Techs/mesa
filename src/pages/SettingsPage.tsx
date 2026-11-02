@@ -100,10 +100,10 @@ import {
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
+import UpdateProgressBar from "../components/UpdateProgressBar";
 import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
   appUpdateProgressLabel,
-  appUpdateProgressPct,
   appUpdateStatusHint,
 } from "../app-update";
 
@@ -4160,17 +4160,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             }
           >
             {installing && (
-              <div className="mb-2 h-1 overflow-hidden rounded-full bg-inset">
-                <div
-                  className="h-full bg-ok-text transition-[width]"
-                  style={{
-                    width: `${appUpdateProgressPct(
-                      installProgress?.downloaded ?? 0,
-                      installProgress?.total ?? null,
-                    ) ?? 15}%`,
-                  }}
-                />
-              </div>
+              <UpdateProgressBar
+                className="mb-2"
+                downloaded={installProgress?.downloaded ?? 0}
+                total={installProgress?.total ?? null}
+              />
             )}
             {appUpdateError && (
               <InlineNotice tone="err" className="mb-2">{appUpdateError}</InlineNotice>

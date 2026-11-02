@@ -178,6 +178,7 @@ types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文�
   feedback.ts                # 反馈与提需求纯逻辑（2026-11-02 加 localStatsText：本机使用计数一行，勾选才进自动附带段与负载）：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
   components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
+  components/UpdateProgressBar.tsx # 更新下载进度条（总大小未知画不定进度、已知按真实字节，不用固定宽度占位）；设置→更新卡片与帮助「检查更新」弹窗共用
   components/ChatHandoffStatsPanel.tsx # 设置「诊断」→ 聊天层转到终端：按 agent + 原因 + 细分的次数排序、近 30 天 / 全部、清空
 components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（SettingsPage 唯一挂载）：active_background_runs 2 秒轮询列 Mesa 替你跑的无头 Agent（定时任务、起名摘要等），run_cancel 停单条——给无头任务一个人能停的出口，不用干等超时（tests/background-tasks-panel.test.ts）
   components/ChatBetaBadge.tsx # 聊天层「测试版」说明（useChatBeta + ChatBetaNotes）：2026-10-23 起在模型菜单底部一行的二级页，说这一家的档与要回终端的事，CLI 比核对过的新时芯片带点并提醒
