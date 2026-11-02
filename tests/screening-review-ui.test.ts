@@ -223,3 +223,58 @@ test("检索步评审先出待确认与筛选决定，不重复摊 included.md",
     }
   }
 });
+
+test("已纳入一长串只先列前 20 篇，点「展开其余」才全列；只多几篇不折", async () => {
+  const bundle = await build({
+    stdin: { contents: `export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as List} from './src/components/PendingConfirmList';`, resolveDir: process.cwd(), loader: "tsx" },
+    bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
+    external: ["react", "react-dom/client", "react/jsx-runtime", "@tauri-apps/api/core", "@tauri-apps/plugin-opener"],
+  });
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  let count = 30;
+  Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
+    if (command === "list_dir") return [];
+    if (command === "journal_metrics_status") return { available: false, journalCount: 0 };
+    if (command !== "read_research_ledger") throw new Error(command);
+    if (String(args.path).endsWith("included.json")) {
+      const rows = Array.from({ length: count }, (_, i) => ({ id: `doi:${i}`, title: `Paper ${i}`, decision: "included", reason: "相关" }));
+      return { text: JSON.stringify(rows), truncated: false, revision: `j${count}` };
+    }
+    if (String(args.path).endsWith("to-fetch.md")) return { text: TO_FETCH, truncated: false, revision: "t1" };
+    throw new Error(String(args.path));
+  } } });
+  const mod = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports);
+  const { createElement: h, act, createRoot, List } = mod.exports;
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  const rows = () => host.querySelector("ul")!.children.length;
+  const toggle = () => [...host.querySelectorAll("button")].find((b) => /展开其余|收起，只看前/.test(b.textContent ?? ""));
+  try {
+    await act(async () => root.render(h(List, { projectRoot: "/project" })));
+    assert.match(host.textContent!, /已纳入 30/);
+    assert.equal(rows(), 20);
+    assert.equal(toggle()?.textContent, "展开其余 10 篇");
+    await act(async () => toggle()!.click());
+    assert.equal(rows(), 30);
+    assert.equal(toggle()?.textContent, "收起，只看前 20 篇");
+    await act(async () => root.unmount());
+    count = 24;
+    const again = createRoot(host);
+    await act(async () => again.render(h(List, { projectRoot: "/project2" })));
+    assert.equal(rows(), 24);
+    assert.equal(toggle(), undefined);
+    await act(async () => again.unmount());
+  } finally {
+    dom.window.close();
+    for (const [key, d] of restore) {
+      if (d) Object.defineProperty(globalThis, key, d);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

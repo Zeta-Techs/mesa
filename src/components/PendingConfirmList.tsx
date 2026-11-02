@@ -56,6 +56,10 @@ async function readFirst(roots: string[], rel: string) {
   return null;
 }
 
+/** 已纳入先列多少篇；只多出几篇时不折（折了反而多点一下） */
+const INCLUDED_PREVIEW = 20;
+const INCLUDED_FOLD_SLACK = 5;
+
 export type PendingConfirmHandle = {
   includeAll: () => void;
 };
@@ -100,6 +104,7 @@ export default forwardRef<PendingConfirmHandle, {
   const [metricsBusy, setMetricsBusy] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [excludedOpen, setExcludedOpen] = useState(false);
+  const [includedAllOpen, setIncludedAllOpen] = useState(false);
   /** 这次展开里逐篇拍过板的篇目，原地留在待确认里改显结果：一抽走，下面每篇都往上窜一行，
    *  连着点时点到的就不是想点的那篇。值是拍板前那一行（理由会加前缀变长，显示用旧的保持行高）。 */
   const [settled, setSettled] = useState<Map<string, IncludedRecord>>(new Map());
@@ -553,6 +558,10 @@ export default forwardRef<PendingConfirmHandle, {
     records.filter((row) => row.decision === "pending" || settled.has(includedRecordKey(row))),
   );
   const includedShown = shown(included);
+  // 已纳入一长串（191 条）平铺会把下面的「去评审」挤出视野（2026-11-02 体验审查）：多了只先列前一截，点了再全展开；
+  // 全选 / 移出所选仍按全部已纳入算
+  const includedFolded = !includedAllOpen && includedShown.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK;
+  const includedVisible = includedFolded ? includedShown.slice(0, INCLUDED_PREVIEW) : includedShown;
   const excludedShown = shown(excluded);
   const pickedRows = pending.filter((row) => picked.has(includedRecordKey(row)));
   const pickedIncludedRows = included.filter((row) => pickedIncluded.has(includedRecordKey(row)));
@@ -848,7 +857,7 @@ export default forwardRef<PendingConfirmHandle, {
             )}
           </div>
           <ul className="space-y-2">
-            {includedShown.map((row) => {
+            {includedVisible.map((row) => {
               const key = includedRecordKey(row);
               return rowBody(
                 row,
@@ -866,6 +875,16 @@ export default forwardRef<PendingConfirmHandle, {
               );
             })}
           </ul>
+          {includedShown.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK && (
+            <button
+              type="button"
+              onClick={() => setIncludedAllOpen((open) => !open)}
+              aria-expanded={includedAllOpen}
+              className="mt-1 text-micro text-l3 hover:text-l1"
+            >
+              {includedAllOpen ? `收起，只看前 ${INCLUDED_PREVIEW} 篇` : `展开其余 ${includedShown.length - INCLUDED_PREVIEW} 篇`}
+            </button>
+          )}
         </section>
       )}
       {excluded.length > 0 && (
