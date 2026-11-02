@@ -2117,7 +2117,10 @@ export default function StepFlow({
                 isInlineDecisionTaskTitle(human.title) &&
                 !node.done &&
                 (decisionOpen.get(human.title) ?? 1) > 0
-                  ? "还有没决定的条目"
+                  ? // 清单还没读到（没开工、AI 还没写出来）时不说「还有没决定的」，那时一条都还没有
+                    decisionOpen.has(human.title)
+                    ? `还有 ${decisionOpen.get(human.title)} 条没决定，逐条决定完才能勾`
+                    : "等 AI 写出要你裁决的清单，逐条决定完才能勾"
                   : node.done
                     ? "已完成；取消勾选会保留为未完成，需重新勾选确认"
                     : "勾选 = 人工确认完成（系统不再追问）"

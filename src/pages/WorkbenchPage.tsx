@@ -1070,6 +1070,10 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         if (w.isBase && w.isPrimary) continue;
         if (w.lastCommitAt && (!best || Date.parse(w.lastCommitAt) > Date.parse(best))) best = w.lastCommitAt;
       }
+      // 目标 / 步骤自己的更新时间也算：只看对话时，项目头会比下面「上次停了 9月11日」那条目标还早（2026-11-02 体验审查）
+      for (const task of card.tasks) {
+        if (task.touchedAt && (!best || Date.parse(task.touchedAt) > Date.parse(best))) best = task.touchedAt;
+      }
       if (best) out.set(card.path, best);
     }
     return out;
