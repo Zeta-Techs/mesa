@@ -208,6 +208,8 @@ export default function KickoffConfirmDialog({
     /** 已定方向（决策项答案，读自任务书草稿）：渲染进 TASK.md 的「已定方向」段 */
     decisions: { q: string; answer: string }[];
     upstream: UpstreamAcceptance[];
+    /** 以前定过的事（项目知识里的「已定 / 不做」） */
+    ledger: string[];
   } | null>(null);
   const [mainDirtyFiles, setMainDirtyFiles] = useState<GitFileDto[] | null>(
     null,
@@ -549,6 +551,7 @@ export default function KickoffConfirmDialog({
         : extras.providesByName,
       extras.decisions,
       IS_WINDOWS,
+      extras.ledger,
     );
   }, [extras, stepNow, cfgLocal, skillMeta, projectPath]);
 

@@ -992,6 +992,43 @@ export interface ImportDeliverableDto {
   registerError: string | null;
 }
 
+/** 项目知识（project_memory_read）：只收人确认的条目；goalName 在人工请求记下的条目里是分类「已定」「不做」 */
+export interface ProjectMemoryDocumentDto {
+  revision: string;
+  legacyText: string;
+  entries: {
+    meta: { id: string; createdAt: string; goalName: string; state: string; reason: string };
+    text: string;
+    stalePaths: string[];
+  }[];
+}
+
+/** 人工请求里的一个选项（「A：选项 —— 后果」） */
+export interface HelpOptionDto {
+  key: string;
+  label: string;
+  effect: string | null;
+}
+
+/** 人工请求里的一条问题（help_requests.rs 解析固定字段；只有一行的旧写法只有 question） */
+export interface HelpItemDto {
+  /** 问题原文短哈希：写回答时据此找回这一条 */
+  id: string;
+  question: string;
+  detail: string[];
+  /** 指向存在的选项键 */
+  recommend: string | null;
+  options: HelpOptionDto[];
+  fallback: string | null;
+  /** 范围 / 数据 / 对外 / 花钱 / 人写的内容 / 保护路径 / 一般 */
+  category: string;
+  refs: string | null;
+  /** 人在 Mesa 里的回答（文件里的「已答：」行） */
+  answer: string | null;
+  /** 交给 Agent 的时间（「已送：」行） */
+  sent: string | null;
+}
+
 /** agent 人工请求（.ccode/help-wanted.md 约定文件，list_help_requests 返回） */
 export interface HelpRequestDto {
   /** 来源根（工作树根或主仓根） */
@@ -999,7 +1036,9 @@ export interface HelpRequestDto {
   workspaceId: string | null;
   workspaceName: string | null;
   repoName: string;
-  items: string[];
+  /** 项目根：「以后同类照此办」记进这里的项目知识 */
+  repoPath: string;
+  items: HelpItemDto[];
 }
 
 /** 提货单 artifacts.yaml 条目（§11.3 机制五）：产物本体不进 git，清单随分支提交传递 */

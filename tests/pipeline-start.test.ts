@@ -566,9 +566,20 @@ test("TASK.md 本步骤脚本：简报没点名的不列；只有 bash 写法的
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本步骤脚本/);
 });
 
-test("TASK.md 决策暂停策略带人工请求文件的用法：只放没答的、答完删、不提交", () => {
+test("TASK.md 决策暂停策略带人工请求文件的用法：固定字段、七类必问、见「已答」照办后删、不提交", () => {
   const md = renderTaskMd(step(), cfg(), "/tmp/p");
-  assert.match(md, /\.ccode\/help-wanted\.md 只放还没回答的问题/);
-  assert.match(md, /人回复后把那一条删掉/);
-  assert.match(md, /这个文件不提交/);
+  assert.match(md, /问题写进 \.ccode\/help-wanted\.md（不提交，只放没处理完的/);
+  assert.match(md, /「建议：B」「A：选项 —— 后果」/);
+  assert.match(md, /必须停下来问人的只有七类（上面暂停策略更严时从严）/);
+  assert.match(md, /条目下出现「已答：」就照办.*再删掉这一条/);
+});
+
+test("TASK.md 带「以前定过的事」：项目知识里的已定 / 不做，同类照办不再问", () => {
+  const md = renderTaskMd(step(), cfg(), "/tmp/p", undefined, undefined, undefined, undefined, false, [
+    "已定：纳入会议论文吗？ → B（期刊 + 顶会）",
+    "不做：要不要加预印本？ → 不加",
+  ]);
+  assert.match(md, /## 以前定过的事\n- 已定：纳入会议论文吗？ → B（期刊 \+ 顶会）\n- 不做：要不要加预印本？ → 不加/);
+  assert.match(md, /遇到同类问题直接照办/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/tmp/p"), /以前定过的事/);
 });

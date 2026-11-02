@@ -40,6 +40,7 @@ export function renderTaskMd(
   providesByName?: SkillProvides,
   decisions?: { q: string; answer: string }[],
   isWindows = false,
+  ledger?: string[],
 ): string {
   const projectRoot = projectPath.replace(/[\\/]+$/, "");
   const lines = [`# ${step.name}`, "", `项目根：\`${projectRoot}\``, ""];
@@ -74,6 +75,15 @@ export function renderTaskMd(
       ...decisions.map((d) => `- ${d.q}：${d.answer}`),
       "",
       "以上为人已拍板的口径，按此执行；与简报冲突时以本节为准。",
+      "",
+    );
+  }
+  if (ledger && ledger.length > 0) {
+    lines.push(
+      "## 以前定过的事",
+      ...ledger.map((line) => `- ${line}`),
+      "",
+      "这些是人在之前的人工请求里定下、要求以后同类照此办的。遇到同类问题直接照办，在本步报告里写明依据哪一条，不要再问；「不做」的不要再提。",
       "",
     );
   }
@@ -229,7 +239,7 @@ export function renderTaskMd(
     }
     lines.push(
       "上述事项由人完成；有文件不代表已获批准。缺少必要人工确认时暂停受影响操作，只可推进无依赖、可逆的准备。",
-      "执行中若另需人协助，把请求逐条写进 .ccode/help-wanted.md（每条一行「- 」开头）；是否继续严格遵守本任务书的「决策暂停策略」。",
+      "执行中若另需人协助，按「决策暂停策略」里的格式写进 .ccode/help-wanted.md；是否继续严格遵守本任务书的「决策暂停策略」。",
     );
   }
   if (step.skills.length > 0) {

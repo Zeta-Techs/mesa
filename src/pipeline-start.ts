@@ -11,6 +11,7 @@ import {
 } from "./workspace-resume";
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
+import { ledgerLines } from "./help-requests";
 import { IS_WINDOWS } from "./hotkeys";
 import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-agents";
 export { renderTaskMd };
@@ -21,6 +22,7 @@ import type {
   BootstrapCommitDto,
   EnsureGitDto,
   ProjectConfigDto,
+  ProjectMemoryDocumentDto,
   ProjectStepDto,
   SessionMetaDto,
   SkillDto,
@@ -37,6 +39,7 @@ export async function gatherTaskMdExtras(
   providesByName: Record<string, string[]> | undefined;
   decisions: { q: string; answer: string }[];
   upstream: UpstreamAcceptance[];
+  ledger: string[];
 }> {
   // 提货单：项目根已有上一步产物清单时带进 TASK.md（读取失败不阻断）
   let artifacts: ArtifactEntryDto[] = [];
@@ -79,7 +82,14 @@ export async function gatherTaskMdExtras(
     /* 草稿不可读时跳过「已定方向」段 */
   }
   const upstream = await invoke<UpstreamAcceptance[]>("research_upstream_acceptances", { projectRoot: projectPath, stepName: step.name });
-  return { artifacts, skillMeta, providesByName, decisions, upstream };
+  // 以前定过的事：人在人工请求卡片上勾「以后同类照此办」记进项目知识的「已定 / 不做」（读失败只是不带这段）
+  let ledger: string[] = [];
+  try {
+    ledger = ledgerLines(await invoke<ProjectMemoryDocumentDto>("project_memory_read", { path: projectPath }));
+  } catch {
+    /* 项目知识不可读时跳过 */
+  }
+  return { artifacts, skillMeta, providesByName, decisions, upstream, ledger };
 }
 
 /** 只读预览用的一步到位拼装（步骤级「预览 TASK.md」入口）：与开工落盘同一出处
@@ -89,12 +99,12 @@ export async function buildTaskMdPreview(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
 ): Promise<string> {
-  const { artifacts, skillMeta, providesByName, decisions, upstream } = await gatherTaskMdExtras(
+  const { artifacts, skillMeta, providesByName, decisions, upstream, ledger } = await gatherTaskMdExtras(
     projectPath,
     step,
   );
   return appendUpstreamAcceptance(
-    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS),
+    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger),
     upstream,
   );
 }
@@ -212,7 +222,7 @@ export async function startPipelineStep({
   if (taskMdOverride?.trim()) {
     content = taskMdOverride;
   } else {
-    const { artifacts, skillMeta, providesByName, decisions } = await gatherTaskMdExtras(
+    const { artifacts, skillMeta, providesByName, decisions, ledger } = await gatherTaskMdExtras(
       projectPath,
       step,
     );
@@ -225,6 +235,7 @@ export async function startPipelineStep({
       providesByName,
       decisions,
       IS_WINDOWS,
+      ledger,
     );
   }
   content = appendUpstreamAcceptance(content, upstream);

@@ -234,6 +234,25 @@ pub(crate) fn append_confirmed(
     text: &str,
     version: Option<&str>,
 ) -> Result<(), String> {
+    append_entry(root, goal, text, version, "验收时人工确认")
+}
+
+/// 人在人工请求卡片上勾「以后同类照此办」：分类「已定」或「不做」（goal_name 当分类，同研究档案），
+/// 依据是那条问题与人的回答。仍是人确认的条目，Agent 不能写。
+pub(crate) fn append_human_decision(root: &Path, kind: &str, text: &str) -> Result<(), String> {
+    if !matches!(kind, "已定" | "不做") {
+        return Err("只能记为「已定」或「不做」".into());
+    }
+    append_entry(root, kind, text, None, "人工请求里由人选定")
+}
+
+fn append_entry(
+    root: &Path,
+    goal: &str,
+    text: &str,
+    version: Option<&str>,
+    reason: &str,
+) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
     }
@@ -269,7 +288,7 @@ pub(crate) fn append_confirmed(
             goal_name: goal.into(),
             state: "active".into(),
             replaces: None,
-            reason: "验收时人工确认".into(),
+            reason: reason.into(),
             files,
         },
         text: text.into(),

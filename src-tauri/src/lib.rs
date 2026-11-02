@@ -159,6 +159,7 @@ mod watch_review;
 mod win_snap;
 mod window_close;
 mod workspaces;
+mod help_requests;
 mod internal_sessions;
 mod ws_settings;
 mod zotero;
@@ -858,7 +859,9 @@ pub fn run() {
             workspaces::list_human_task_states,
             workspaces::set_human_task_check,
             workspaces::import_human_deliverable,
-            workspaces::list_help_requests,
+            help_requests::list_help_requests,
+            help_requests::help_request_answer,
+            help_requests::help_request_mark_sent,
             workspaces::write_review_notes,
             workspaces::workspace_drift,
             workspaces::workspace_repair_remount,

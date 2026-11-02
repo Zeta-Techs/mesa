@@ -78,10 +78,13 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // manuscript/template/；定稿收尾复核引用 / 统计 / 数字，写学位论文声明模板（原创性、授权、AI 使用说明）。实测 thesis 37389。
   // 同日数据处理补齐：清洗 [待确认] 规则走逐条裁决；EDA 交 summary-stats.json、结论条目要人认可；报告做数字追溯、统计核验与 [待验证] 逐条裁决。实测 data 14898。
   // 同日 LaTeX 补齐：写作步不再手写 bib 条目、不放「待绘制」占位；定稿加 xelatex 文本层抽检、逐条裁决清单（% TODO 待核实）与投稿声明模板。实测 latex 15064。
-  const before: Record<string, number> = { review: 29200, "research-paper": 38800, "data-processing": 15400, thesis: 37600, "submission-rebuttal": 10100, "latex-paper": 15400 };
+  // 2026-11-02 人工请求改固定字段（design-attention-dispatch §4.1）：决策暂停策略里的格式说明与七类必问清单每步约多 190 字。
+  // 实测 review 29731、论文 39722、数据 15699、学位 38445、投稿 10182、LaTeX 15795。
+  const before: Record<string, number> = { review: 29800, "research-paper": 39800, "data-processing": 15800, thesis: 38500, "submission-rebuttal": 10300, "latex-paper": 15900 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
-    assert.ok(tasks.reduce((n, s) => n+s.length, 0) < before[t.id], t.id);
+    const total = tasks.reduce((n, s) => n+s.length, 0);
+    assert.ok(total < before[t.id], `${t.id} ${total}`);
     for (const task of tasks) {
       assert.equal(task.split("验收摘要放在本步主要报告开头").length-1, 1);
       for (const text of ["关键证据/复现入口", "尚未验证", "影响结论的未决问题", "需要人决定", "未经重验不得复用旧结论"]) assert.ok(task.includes(text), text);

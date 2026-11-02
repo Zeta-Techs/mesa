@@ -241,6 +241,8 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES + 用户模板（list_pipeline_templates，命令未注册优雅降级只列内置），投稿与返修模板另选初稿/返修与轮次；选中只抛 steps（TemplatePickItem），写回 project.toml 与覆盖确认归父组件——注册成功后的首选层是另一个 TemplatePickModal
+  components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做；
+                             # 送达由 WorkspacesPage 的「交给 Agent 继续」统一做（buildWorkspaceTerminalRequest + help_request_mark_sent）
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
 components/ResearchProfileSection.tsx  # 设置「研究档案」分区：附带开关、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
@@ -538,6 +540,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （给了 scheduleRelPath 时种子请 AI 顺带写周期建议 JSON，2026-10-23）；
                              # defaultScheduleKind / scheduleExamples：按工作方式给新建默认种类与空态示例
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
+  help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
+                             # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
   inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
                              #   sched: = 「定时任务」类（其他巡检待评审 / 自动暂停，不进一键已读；2026-10-23）；
                              #   phone: 类别（从手机添加还没处理的）与 update: 一样由 store.ts visibleInboxItems 现算合并
@@ -1694,12 +1698,15 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   coding.rs                  # 编程项目 git 原语：worktree list / 从基准或已有本地·远程分支建树（~/ccode/worktrees）、
                              # origin 身份 + 相对上游 behind、fetch / pull --ff-only / push、合并进基准、
                              # Desktop CLI 打开该树 / gh --web 开 PR（CodingOpDto；不走科研工作区库）；overview 按树/分支并行 git
+  help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
+                             # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
+                             # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
                              # setup/archive 钩子、评审合并（health/merge/PR）、artifacts.yaml、
                              # 人工事项状态（human_task_checks 勾选 + human_target_hit 落点检测 + human_target_count 命中计数/to-fetch 清单计数——
                              # 计数口径与前端 step-flow.ts parseToFetchItems 双端镜像：编号/列表行都算，裸行须带「 — DOI」尾巴，说明行与「待补」不算）、import_human_deliverable
                              # 交付导入（复制落点 + 登记提货单；v3.74 起 step/title 可选 + target_override 固定落点，
-                             # 无步骤语境 = papers/imports/ 检索结果导入落主仓）、list_help_requests（.ccode/help-wanted.md 人工请求扫描）
+                             # 无步骤语境 = papers/imports/ 检索结果导入落主仓）
                              # 非 Git 产物冻结/带回（workspace_review_deliverables / apply_delivery_review）；workspace_delivery_skip 逐个勾掉不带回
                              # （skipped.json 按 SHA-256 记，归档守卫对勾掉的同一版放行，见 pipeline.md）
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM

@@ -4150,24 +4150,6 @@ pub async fn import_human_deliverable(
     .map_err(|e| format!("导入人工交付失败: {e}"))?
 }
 
-// ===== agent 人工请求（HELP-WANTED.md 约定文件） =====
-// agent 只会写文件，Mesa 负责看见：工作树/主仓 .ccode/help-wanted.md 里每行
-// 「- 」开头是一条请求，约定每条自带兜底句「若未回复则按 … 继续」（非阻断）。
-// 扫描范围：活跃工作区的工作树 + 其主仓根（聊想法在主仓进行）；无工作区的项目不扫。
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HelpRequestDto {
-    /// 来源根（工作树根或主仓根）
-    pub root: String,
-    pub workspace_id: Option<String>,
-    pub workspace_name: Option<String>,
-    pub repo_name: String,
-    /// 请求条目（已去「- 」前缀，上限 20 条 × 300 字符）
-    pub items: Vec<String>,
-}
-
-pub(crate) const HELP_WANTED_FILE: &str = ".ccode/help-wanted.md";
 pub(crate) const REVIEW_NOTES_FILE: &str = ".ccode/review-notes.md";
 
 /// 人在评审里写下的退回意见。只写本工作树 `.ccode/review-notes.md`。
@@ -4195,94 +4177,6 @@ pub async fn write_review_notes(
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-/// 只收条目行（「- 」「* 」「1. 」「1、」开头）；表格、普通段落不算（2026-10-22 实证：一张检索命中数表被拆成九条请求）。
-/// 标题写着已拍板 / 已解决 / 已回复 / 备查的那一节整节跳过——那是记录，不是在等人回答的问题
-fn parse_help_wanted(text: &str) -> Vec<String> {
-    let mut answered_section = false;
-    text.chars()
-        .take(32 * 1024)
-        .collect::<String>()
-        .lines()
-        .filter_map(|l| {
-            let t = l.trim();
-            if let Some(heading) = t.strip_prefix('#') {
-                // 「已拍板」「已由人拍板」都算；「待你拍板」不算
-                answered_section = ["已解决", "已回复", "已答复", "已处理", "已完成", "备查"]
-                    .iter()
-                    .any(|w| heading.contains(w))
-                    || (heading.contains('已') && heading.contains("拍板"));
-                return None;
-            }
-            if answered_section {
-                return None;
-            }
-            let item = t
-                .strip_prefix("- ")
-                .or_else(|| t.strip_prefix("* "))
-                .or_else(|| {
-                    let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
-                    (digits > 0)
-                        .then(|| &t[digits..])
-                        .and_then(|rest| rest.strip_prefix(". ").or_else(|| rest.strip_prefix('、')))
-                })?;
-            let item = item.trim();
-            if item.is_empty() {
-                return None;
-            }
-            Some(item.chars().take(300).collect())
-        })
-        .take(20)
-        .collect()
-}
-
-#[tauri::command]
-pub async fn list_help_requests() -> Vec<HelpRequestDto> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut out = Vec::new();
-        let Ok(conn) = db() else {
-            return out;
-        };
-        let Ok(rows) = query_workspaces(&conn) else {
-            return out;
-        };
-        let mut seen_roots = std::collections::HashSet::new();
-        // 已保存的步骤不再是 active，但 help-wanted 里的补全文、授权还要人做。
-        for w in rows.into_iter().filter(|w| w.status != "archived") {
-            // 工作树 + 主仓根各算一个来源（主仓可能覆盖多个工作区，去重）
-            for (root, ws_id, ws_name) in [
-                (
-                    w.worktree_path.clone(),
-                    Some(w.id.clone()),
-                    Some(w.name.clone()),
-                ),
-                (w.repo_path.clone(), None, None),
-            ] {
-                if !seen_roots.insert(root.clone()) {
-                    continue;
-                }
-                let file = Path::new(&root).join(HELP_WANTED_FILE);
-                let Ok(text) = fs::read_to_string(&file) else {
-                    continue;
-                };
-                let items = parse_help_wanted(&text);
-                if items.is_empty() {
-                    continue;
-                }
-                out.push(HelpRequestDto {
-                    root,
-                    workspace_id: ws_id,
-                    workspace_name: ws_name,
-                    repo_name: w.repo_name.clone(),
-                    items,
-                });
-            }
-        }
-        out
-    })
-    .await
-    .unwrap_or_default()
 }
 
 /// 合并回基准分支（本地 merge，git 写操作）：前置条件不满足直接报错，不动任何东西。
@@ -7980,26 +7874,6 @@ mod tests {
             "",
         ));
         fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn parse_help_wanted_bullets_only() {
-        let text = "# 需要人工协助\n\n- 请补充检索词 GLP-1 心血管（若未回复则按现有检索词继续）\n\n- 下载 smith 2024 全文\n---\n* 星号条目也算\n\n";
-        let items = parse_help_wanted(text);
-        assert_eq!(items.len(), 3, "{items:?}");
-        assert!(items[0].starts_with("请补充检索词"));
-        assert_eq!(items[2], "星号条目也算");
-        assert_eq!(parse_help_wanted("# 只有标题\n\n"), Vec::<String>::new());
-        // 表格、段落不算条目；已拍板 / 备查的小节整节跳过；编号条目算
-        let text = "# 需要人决定的事\n\n## 收尾\n\n- 7 篇 SI 未下载（兜底：只用正文数字）\n1. Zotero 进库待人操作\n\n## 0. 已由人拍板\n\n- **规模**：人答 20 篇\n\n## 1. 粗检依据（已拍板，保留备查）\n\n| # | 限定 | 命中数 |\n|---|---|---|\n| ① | 裸查 | 46,048 |\n\n复现：python scripts/x.py\n\n## 2. 待你拍板\n\n2、硼化物批身份最迟大纲前定\n";
-        assert_eq!(
-            parse_help_wanted(text),
-            vec![
-                "7 篇 SI 未下载（兜底：只用正文数字）".to_string(),
-                "Zotero 进库待人操作".to_string(),
-                "硼化物批身份最迟大纲前定".to_string(),
-            ]
-        );
     }
 
     #[test]
