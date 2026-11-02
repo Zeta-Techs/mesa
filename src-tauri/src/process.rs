@@ -728,6 +728,15 @@ impl DerefMut for TrackedChild {
 
 struct ActiveCapture {
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// 最后一次读到输出（stdout / stderr）的时刻，Unix 毫秒；启动时记为开始时刻（卡住检测用）
+    activity: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+pub(crate) fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 fn captures() -> &'static std::sync::Mutex<std::collections::HashMap<String, ActiveCapture>> {
     static CAPTURES: std::sync::OnceLock<
@@ -752,6 +761,14 @@ pub(crate) fn active_capture_ids() -> Vec<String> {
         .keys()
         .cloned()
         .collect()
+}
+/// 正在跑的捕获最后一次有输出的时刻（Unix 毫秒）；不在跑为 None
+pub(crate) fn capture_last_activity_ms(id: &str) -> Option<u64> {
+    captures()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .map(|c| c.activity.load(std::sync::atomic::Ordering::Acquire))
 }
 pub(crate) fn capture_count() -> usize {
     captures().lock().unwrap_or_else(|e| e.into_inner()).len()
@@ -921,6 +938,7 @@ struct CaptureBuffer {
 fn capture_pipe<R: std::io::Read + Send + 'static>(
     mut pipe: R,
     cap: usize,
+    activity: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 ) -> (
     std::thread::JoinHandle<()>,
     std::sync::Arc<std::sync::Mutex<CaptureBuffer>>,
@@ -933,6 +951,9 @@ fn capture_pipe<R: std::io::Read + Send + 'static>(
             match pipe.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
+                    if let Some(at) = &activity {
+                        at.store(now_unix_ms(), std::sync::atomic::Ordering::Release);
+                    }
                     let mut b = shared.lock().unwrap_or_else(|e| e.into_inner());
                     let keep = n.min(cap.saturating_sub(b.bytes.len()));
                     b.bytes.extend_from_slice(&chunk[..keep]);
@@ -972,6 +993,7 @@ pub(crate) fn capture_command_for(
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let activity = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_unix_ms()));
     {
         let mut registry = captures().lock().unwrap_or_else(|e| e.into_inner());
         if shutting_down() {
@@ -984,6 +1006,7 @@ pub(crate) fn capture_command_for(
             id.clone(),
             ActiveCapture {
                 cancelled: cancelled.clone(),
+                activity: activity.clone(),
             },
         );
     }
@@ -1024,8 +1047,10 @@ pub(crate) fn capture_command_for(
             return Err(error);
         }
     };
-    let (out_thread, out) = capture_pipe(child.stdout.take().expect("piped stdout"), cap);
-    let (err_thread, err) = capture_pipe(child.stderr.take().expect("piped stderr"), cap);
+    let (out_thread, out) =
+        capture_pipe(child.stdout.take().expect("piped stdout"), cap, Some(activity.clone()));
+    let (err_thread, err) =
+        capture_pipe(child.stderr.take().expect("piped stderr"), cap, Some(activity.clone()));
     let deadline = Instant::now() + timeout;
     let mut status = None;
     let mut failure = None;
@@ -1372,8 +1397,10 @@ mod tests {
 
     #[test]
     fn capture_pipe_drains_after_cap_without_unbounded_memory() {
-        let (thread, buffer) = capture_pipe(std::io::Cursor::new(vec![b'x'; 100_000]), 32);
+        let at = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (thread, buffer) = capture_pipe(std::io::Cursor::new(vec![b'x'; 100_000]), 32, Some(at.clone()));
         thread.join().unwrap();
+        assert!(at.load(std::sync::atomic::Ordering::Acquire) > 0, "读到输出要记活动时刻");
         let buffer = buffer.lock().unwrap();
         assert_eq!(buffer.bytes, vec![b'x'; 32]);
         assert!(buffer.truncated);
@@ -1388,7 +1415,7 @@ mod tests {
                 Err(std::io::Error::other("broken"))
             }
         }
-        let (thread, buffer) = capture_pipe(Broken, 32);
+        let (thread, buffer) = capture_pipe(Broken, 32, None);
         thread.join().unwrap();
         assert_eq!(buffer.lock().unwrap().error.as_deref(), Some("broken"));
     }

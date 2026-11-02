@@ -1673,6 +1673,16 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         const projectName =
           projects.find((p) => samePath(p.path, c.projectRoot))?.name ??
           pathBaseName(c.projectRoot);
+        if (c.kind === "stalled") {
+          // 卡住检测（2026-11-02）：输出、隔离副本、会话文件都没动静；只提示，停不停由人定
+          return {
+            key: `sched:stalled:${c.scheduleId}`,
+            dot: "bg-warn-text",
+            text: inboxTaskLine(projectName, `「${c.scheduleName}」可能卡住了：${c.count} 分钟没有动静`),
+            actionLabel: "去看看",
+            action: { type: "schedules" as const, projectRoot: c.projectRoot },
+          };
+        }
         if (c.kind === "paused") {
           return {
             key: `sched:paused:${c.scheduleId}`,
@@ -1685,7 +1695,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         return {
           key: `sched:review:${c.scheduleId}:${c.runId ?? ""}`,
           dot: "bg-ok-text",
-          text: inboxTaskLine(projectName, `「${c.scheduleName}」有新产物待评审`),
+          text: inboxTaskLine(
+            projectName,
+            `「${c.scheduleName}」有新产物待评审${c.count ? `（评审完另有 ${c.count} 批事件接着处理）` : ""}`,
+          ),
           actionLabel: "去评审",
           action: {
             type: "review" as const,

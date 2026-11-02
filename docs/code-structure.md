@@ -1566,7 +1566,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
-  ai.rs                      # 无头 AI 调用层（一次性调用对 claude/codex 不落盘 + JSON 记账：headless_oneshot_args / parse_oneshot_output）：一次性 prompt + 提交信息/摘要/PR 描述/冲突建议/提炼接力简报/评审沉淀起草（只写下一步还没有的约束，无新约束返回空）；
+  ai.rs                      # 2026-11-02：run_agent_task 跑的期间登记锁定的会话（headless_session_of，跑完即撤），卡住检测据此看会话文件有没有在长；
+                             # 无头 AI 调用层（一次性调用对 claude/codex 不落盘 + JSON 记账：headless_oneshot_args / parse_oneshot_output）：一次性 prompt + 提交信息/摘要/PR 描述/冲突建议/提炼接力简报/评审沉淀起草（只写下一步还没有的约束，无新约束返回空）；
                              # 会话自动起名：先判手改/临时标题再读对话；材料指纹 title_basis 没变不问 AI；步骤 / 工作区会话附背景
                              #   （title_background：项目名、步骤名、TASK.md 标题与课题主题）；去重参照 pick_reference_titles（相近优先、最近补满）；
                              # resolve_profile_from 最近使用回落跳过官方账号（OAuth 过期会甩 CLI 日志；显式/专用仍尊重）；
@@ -1818,7 +1819,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
                              #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）；
                              #   各家配置目录搬迁变量（CODEX_HOME 等）与会话目录变量（OPENCODE_DB / QWEN_RUNTIME_DIR / CURSOR_DATA_DIR）照带
-  process.rs                 # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
+  process.rs                 # 2026-11-02：捕获登记带 activity（读到 stdout / stderr 即记 Unix 毫秒），capture_last_activity_ms 给定时任务卡住检测用；
+                             # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
                              #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录；
                              #   子进程 PATH 走 child_path：Windows 补注册表里新出现的目录、macOS / Linux 补候选目录里新出现的，
                              #   都追加在末尾，Mesa 开着时装的 Git / Node / Quarto / Python 不用重启就认得）+

@@ -2150,6 +2150,8 @@ export interface ScheduleDto {
   event?: EventRuleDto | null;
   /** 攒着还没处理的事件批数 */
   pendingEvents?: number;
+  /** 正在跑但这么多分钟没有任何动静（可能卡住）；空 = 没卡或没在跑 */
+  stalledMinutes?: number | null;
 }
 
 export interface CreateScheduleInput {

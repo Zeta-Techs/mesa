@@ -250,6 +250,8 @@ pub struct ScheduleDto {
     pub event: Option<EventRule>,
     /// 攒着还没处理的事件条数
     pub pending_events: u32,
+    /// 正在跑但这么多分钟没有任何动静（可能卡住）；没卡或没在跑为 None。list_schedules 现算
+    pub stalled_minutes: Option<u64>,
 }
 
 impl From<Schedule> for ScheduleDto {
@@ -280,6 +282,7 @@ impl From<Schedule> for ScheduleDto {
             consecutive_failures: s.consecutive_failures,
             pending_events: s.pending_events.len() as u32,
             event: s.event,
+            stalled_minutes: None,
         }
     }
 }
@@ -2694,6 +2697,69 @@ fn collect_due() -> Vec<DuePlan> {
     out
 }
 
+// ===== 卡住检测（2026-11-02，design-attention-dispatch §6.2） =====
+
+/// 后台运行这么久没动静就提示「可能卡住」：只提示、不停，到点照旧由单次上限收口
+const STALL_MINUTES: u64 = 10;
+
+/// 取各个动静里最晚的一个，超过门槛才算（纯函数）
+fn stall_minutes(now_ms: u64, stamps: &[u64]) -> Option<u64> {
+    let latest = stamps.iter().copied().max()?;
+    let idle = now_ms.saturating_sub(latest) / 60_000;
+    (idle >= STALL_MINUTES).then_some(idle)
+}
+
+/// 目录里最近一次文件改动（跳过 .git，最多看 budget 个条目）
+fn latest_mtime_ms(dir: &Path, budget: &mut usize) -> u64 {
+    let mut latest = 0;
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    for entry in entries.flatten() {
+        if *budget == 0 {
+            break;
+        }
+        *budget -= 1;
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else { continue };
+        if let Some(ms) = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        {
+            latest = latest.max(ms.as_millis() as u64);
+        }
+        if meta.is_dir() {
+            latest = latest.max(latest_mtime_ms(&entry.path(), budget));
+        }
+    }
+    latest
+}
+
+/// 确定性判断（不用模型）：子进程输出、隔离副本文件改动、锁定的会话文件改动都超过门槛才算。
+/// 便宜的先看，前一个还新鲜就不看后面的
+fn run_idle_minutes(run_id: &str, isolation: Option<&str>) -> Option<u64> {
+    let now = crate::process::now_unix_ms();
+    let mut stamps = vec![crate::process::capture_last_activity_ms(run_id)?];
+    stall_minutes(now, &stamps)?;
+    if let Some(dir) = isolation.filter(|d| !d.is_empty()) {
+        stamps.push(latest_mtime_ms(Path::new(dir), &mut 3000));
+        stall_minutes(now, &stamps)?;
+    }
+    if let Some((agent, session_id)) = crate::ai::headless_session_of(run_id) {
+        if let Some(meta) = crate::sessions::find_session_sync(&agent, &session_id) {
+            if let Some(ms) = fs::metadata(&meta.file_path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            {
+                stamps.push(ms.as_millis() as u64);
+            }
+        }
+    }
+    stall_minutes(now, &stamps)
+}
+
 // ===== 事件规则（2026-11-02，design-attention-dispatch §5） =====
 
 /// 规则版本：事件、技能、连接、模型的哈希。改了规则，历史里能看出旧运行按的是哪一版
@@ -3070,14 +3136,14 @@ fn list_schedules_sync() -> Result<Vec<ScheduleDto>, String> {
             let mut dto = ScheduleDto::from(schedule);
             dto.next_run_at = next;
             if running {
-                dto.running_run_id = runs
-                    .iter()
-                    .find(|r| {
-                        r.task_ref.as_deref() == Some(&dto.id)
-                            && r.task_kind == "watch"
-                            && crate::process::capture_active(&r.id)
-                    })
-                    .map(|r| r.id.clone());
+                let run = runs.iter().find(|r| {
+                    r.task_ref.as_deref() == Some(&dto.id)
+                        && r.task_kind == "watch"
+                        && crate::process::capture_active(&r.id)
+                });
+                dto.running_run_id = run.map(|r| r.id.clone());
+                dto.stalled_minutes =
+                    run.and_then(|r| run_idle_minutes(&r.id, Some(r.isolation_path.as_str())));
             }
             dto.queued = queued;
             dto
@@ -5247,5 +5313,22 @@ mod tests {
         assert!(take_pending_events(&created.id).is_none());
         // 删除走 Run 账本（真实 app.db），不在单测里调；快照清理见 schedule_events 测试
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn stall_needs_every_signal_quiet_past_threshold() {
+        let min = 60_000;
+        assert_eq!(stall_minutes(100 * min, &[]), None);
+        assert_eq!(stall_minutes(100 * min, &[95 * min]), None);
+        assert_eq!(stall_minutes(100 * min, &[90 * min]), Some(10));
+        // 任一信号新鲜就不算
+        assert_eq!(stall_minutes(100 * min, &[60 * min, 99 * min]), None);
+        assert_eq!(stall_minutes(100 * min, &[60 * min, 70 * min]), Some(30));
+        let dir = std::env::temp_dir().join(format!("mesa-stall-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("a/.git")).unwrap();
+        std::fs::write(dir.join("a/x.txt"), "x").unwrap();
+        let mut budget = 100;
+        assert!(latest_mtime_ms(&dir, &mut budget) > 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -516,6 +516,34 @@ fn remember_headless_session(agent: &str, out: &str, err: &str) -> Option<String
     Some(id)
 }
 
+/// 正在跑的无头运行锁定的会话：run_id → (agent, 会话 id)。只在运行期间存在
+fn headless_sessions() -> &'static std::sync::Mutex<std::collections::HashMap<String, (String, String)>> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (String, String)>>> =
+        std::sync::OnceLock::new();
+    MAP.get_or_init(Default::default)
+}
+
+struct HeadlessSessionReg(String);
+impl HeadlessSessionReg {
+    fn new(run_id: &str, agent: &str, session_id: &str) -> Self {
+        headless_sessions()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(run_id.to_string(), (agent.to_string(), session_id.to_string()));
+        Self(run_id.to_string())
+    }
+}
+impl Drop for HeadlessSessionReg {
+    fn drop(&mut self) {
+        headless_sessions().lock().unwrap_or_else(|e| e.into_inner()).remove(&self.0);
+    }
+}
+
+/// 正在跑的无头运行锁定的会话（agent, 会话 id）
+pub(crate) fn headless_session_of(run_id: &str) -> Option<(String, String)> {
+    headless_sessions().lock().unwrap_or_else(|e| e.into_inner()).get(run_id).cloned()
+}
+
 /// 支持 --session-id 的 CLI：无头启动前锁死文件名并立刻标 internal。
 fn lock_headless_session(agent: &str) -> (Option<String>, Vec<String>) {
     let supported = crate::agent_specs::agent_spec(agent).is_some_and(|s| s.fixed_session_id);
@@ -878,6 +906,10 @@ pub(crate) fn run_agent_task(
         )?
     };
     crate::runs::claim_start(&run.id)?;
+    // 锁定了会话 id 的：跑的期间登记，卡住检测据此看会话文件有没有在长（跑完即撤）
+    let _session_reg = lock_id
+        .as_ref()
+        .map(|id| HeadlessSessionReg::new(&run.id, &profile.agent, id));
     if let Err(error) = crate::runs::mark_started(&run.id) {
         let _ = crate::runs::close_run_with_result(
             &run.id,

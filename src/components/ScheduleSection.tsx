@@ -1779,7 +1779,16 @@ export default function ScheduleSection({
                     </span>
                   </div>
                   {isRunning ? (
-                    <p className="mt-0.5 pl-11 text-micro text-l3">正在跑…结果出来会通知你</p>
+                    s.stalledMinutes != null ? (
+                      <p
+                        className="mt-0.5 pl-11 text-micro text-warn-text"
+                        title="没有输出、工作目录没有文件变化、会话记录也没在长。可能在等网络或卡死了；不一定要停，到单次上限会自己停下记超时"
+                      >
+                        可能卡住了：{s.stalledMinutes} 分钟没有动静。可以点停止，或等它到单次上限自己停下
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 pl-11 text-micro text-l3">正在跑…结果出来会通知你</p>
+                    )
                   ) : (
                     last &&
                     lastBrief && (

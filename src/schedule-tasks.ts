@@ -181,7 +181,7 @@ export function otherProjectSchedules(
 
 /** 「待处理」里的定时任务条目：其他巡检有新产物待评审 / 任务被自动暂停（文献雷达的新命中另走 lit:） */
 export interface ScheduleInboxCandidate {
-  kind: "review" | "paused";
+  kind: "review" | "paused" | "stalled";
   scheduleId: string;
   scheduleName: string;
   projectRoot: string;
@@ -189,6 +189,8 @@ export interface ScheduleInboxCandidate {
   isolationPath?: string | null;
   reason?: string | null;
   at?: string;
+  /** review：评审完才处理的事件批数；stalled：多少分钟没动静 */
+  count?: number;
 }
 
 export function scheduleInboxCandidates(
@@ -203,6 +205,15 @@ export function scheduleInboxCandidates(
         scheduleName: s.name,
         projectRoot: s.projectRoot,
         reason: s.pausedReason,
+      });
+    }
+    if (s.stalledMinutes != null) {
+      out.push({
+        kind: "stalled",
+        scheduleId: s.id,
+        scheduleName: s.name,
+        projectRoot: s.projectRoot,
+        count: s.stalledMinutes,
       });
     }
     if (s.skill === "lit-watch") continue;
@@ -223,6 +234,7 @@ export function scheduleInboxCandidates(
         runId: last.runId,
         isolationPath: last.isolationPath,
         at: last.at,
+        count: s.pendingEvents ?? 0,
       });
     }
   }

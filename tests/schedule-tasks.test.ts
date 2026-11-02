@@ -317,3 +317,24 @@ test("事件规则：触发选项、扩展名解析、任务行标签与只记�
     tone: "muted",
   });
 });
+
+test("收件箱：卡住的运行单独一条；待评审带上评审完要处理的事件批数", () => {
+  const base = {
+    id: "s1",
+    name: "清洗",
+    projectRoot: "/p",
+    skill: "data-clean",
+    profileId: null,
+    frequency: "manual",
+    weekday: null,
+    hour: 0,
+    minute: 0,
+    enabled: true,
+    lastRunAt: null,
+    lastStatus: null,
+    history: [{ at: "t", status: "ok", summary: "", noop: false, adopted: false, isolationPath: "/iso", runId: "r1" }],
+  } satisfies ScheduleDto;
+  const out = scheduleInboxCandidates([{ ...base, stalledMinutes: 12, pendingEvents: 2 }]);
+  assert.deepEqual(out.map((c) => [c.kind, c.count]), [["stalled", 12], ["review", 2]]);
+  assert.deepEqual(scheduleInboxCandidates([base]).map((c) => c.kind), ["review"]);
+});
