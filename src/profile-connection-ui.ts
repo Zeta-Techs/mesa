@@ -91,7 +91,7 @@ export function canProbeProfile(profile: {
   return slot !== "gemini" && slot !== "cursor";
 }
 
-/** 同一 agent 下名字重复的连接 id：列表里给它们补首个模型名，否则启动栏里分不清 */
+/** 同一 Agent 下名字重复的连接 id：列表里给它们补首个模型名，否则启动栏里分不清 */
 export function duplicateNameIds(
   profiles: { id: string; agent: string; name: string }[],
 ): Set<string> {

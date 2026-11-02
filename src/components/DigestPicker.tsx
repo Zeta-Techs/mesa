@@ -46,7 +46,7 @@ export default function DigestPicker({
   const [saving, setSaving] = useState(false);
   // 确实写回过 handoff 文件后显示「✓ 已写回 →」状态行
   const [writtenBack, setWrittenBack] = useState(false);
-  // 外部命令/指令的已复制反馈（按目标 agent 区分）
+  // 外部命令/指令的已复制反馈（按目标 Agent 区分）
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // kimi 无启动注入：简报就绪后停留展示手动发送提示
   const [ready, setReady] = useState<{
@@ -281,7 +281,7 @@ export default function DigestPicker({
     }
   }
 
-  // 排序：来源 agent 置顶（同 Agent 新会话），其余按 已安装+支持注入 → 已安装需手动 → 未安装
+  // 排序：来源 Agent 置顶（同 Agent 新会话），其余按 已安装+支持注入 → 已安装需手动 → 未安装
   const sorted = (targets ?? [])
     .slice()
     .sort(

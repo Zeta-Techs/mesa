@@ -6,9 +6,9 @@ import {
   slashQueryOf,
 } from "../src/slash-commands.ts";
 
-test("已知 agent 返回各自清单，未知 agent 只有 /help", () => {
+test("已知 Agent 返回各自清单，未知 Agent 只有 /help", () => {
   assert.ok(slashCommandsFor("claude").length > 3);
-  // 真实 agent id 是 claude-code（面板原先只剩 /help）
+  // 真实 Agent id 是 claude-code（面板原先只剩 /help）
   assert.ok(slashCommandsFor("claude-code").some((c) => c.cmd === "/compact"));
   assert.deepEqual(
     slashCommandsFor("cursor").map((c) => c.cmd),

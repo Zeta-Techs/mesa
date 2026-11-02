@@ -23,7 +23,7 @@ import type { RunOverviewInput } from "./run-overview.ts";
 export const RUN_ANNOUNCE_LINGER_MS = 4000;
 
 /**
- * 同窗口内到达的播报合并成一条。多标签并行是常态，五个 agent 同时收尾时
+ * 同窗口内到达的播报合并成一条。多标签并行是常态，五个 Agent 同时收尾时
  * 不该轮流霸屏四秒、滚出一条 20 秒的队列——合并成「3 个已跑完」一句话说完。
  */
 export const RUN_ANNOUNCE_MERGE_MS = 1500;

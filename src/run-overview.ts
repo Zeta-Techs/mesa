@@ -201,7 +201,7 @@ export function workspaceReviewInboxEligible(input: {
   return Boolean(input.readyToMerge) && !input.conflict && !input.agentBusy;
 }
 
-/** 「要你管」排序：待确认 > 工作中 > 其余 agent 运行中 > shell / 已退出。
+/** 「要你管」排序：待确认 > 工作中 > 其余 Agent 运行中 > shell / 已退出。
  *  「已回复」（done）不占档——回合结束不阻塞决策，归入普通运行/退出档 */
 export function itemRank(input: RunOverviewInput): number {
   if (input.attention === "confirm") return 0;

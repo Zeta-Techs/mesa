@@ -3,7 +3,7 @@
  * 平台一律显式传 isWindows，不在模块内读。
  */
 
-/** winget 装时会顺带装微软 VC++ 运行库的 agent。运行库只有全机安装版本，没装过的电脑会弹管理员确认。
+/** winget 装时会顺带装微软 VC++ 运行库的 Agent。运行库只有全机安装版本，没装过的电脑会弹管理员确认。
  *  来源：winget-pkgs 清单的 Dependencies（2026-10-31 核对 OpenAI.Codex 0.161.0、xAI.GrokBuild 1.0.70）。
  *  与 agent_specs.rs 的 winget 包同步：包的依赖变了这里跟着改 */
 const WINGET_NEEDS_ADMIN = new Set(["codex", "grok"]);

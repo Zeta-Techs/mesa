@@ -1,6 +1,6 @@
 /** 连接页 Agent 分组的顺序（2026-10-28 用户：分组可拖动排序）与组内连接的顺序（同日：每个连接也可排序）。
  *  纯逻辑，tests/agent-group-order.test.ts。存的是 id 列表（localStorage）；没存过的、以后新加的按默认顺序接在后面，
- *  存过但已不认识的 id 丢掉。连接顺序按 agent id 分存。 */
+ *  存过但已不认识的 id 丢掉。连接顺序按 Agent id 分存。 */
 
 export const AGENT_GROUP_ORDER_KEY = "ccode.profiles.agentGroupOrder";
 export const PROFILE_ORDER_KEY = "ccode.profiles.connectionOrder";

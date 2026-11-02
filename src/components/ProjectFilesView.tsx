@@ -285,7 +285,7 @@ export default function ProjectFilesView({
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  /** quiet=true 给监听器的后台重载用：失败不弹错（目录多半已被 agent 删/改名），
+  /** quiet=true 给监听器的后台重载用：失败不弹错（目录多半已被 Agent 删/改名），
    *  并把该目录从展开集合与缓存里收掉——否则每轮 fs 事件都重拉死路径、反复报错 */
   const load = useCallback(
     async (path: string, quiet = false) => {

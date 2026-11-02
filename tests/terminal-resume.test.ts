@@ -37,7 +37,7 @@ test("resume 兜底：只按 runId 或 agent+sessionId 认身份", () => {
     tab("t-shell"),
   ];
   const statuses = {
-    // 同目录的别家 agent 标签：不是这条会话的持有者
+    // 同目录的别家 Agent 标签：不是这条会话的持有者
     "t-claude": st(true, { agentId: "claude-code", sessionId: "s-other" }),
     "t-codex": st(true, { agentId: "codex", sessionId: "s-target" }),
     // shell 标签没有会话身份
@@ -50,7 +50,7 @@ test("resume 兜底：只按 runId 或 agent+sessionId 认身份", () => {
   assert.equal(hit?.id, "t-codex");
 });
 
-test("resume 兜底：同会话但 agent 不同不命中（防串 agent）", () => {
+test("resume 兜底：同会话但 Agent 不同不命中（防串 Agent）", () => {
   const tabs = [tab("t1", { initialAgentId: "claude-code" })];
   const statuses = {
     t1: st(true, { agentId: "claude-code", sessionId: "s-target" }),
@@ -166,7 +166,7 @@ test("恢复带原配置：保留调用方传入的模型", () => {
   assert.equal(pick.reselectNeeded, false);
 });
 
-test("恢复带原配置：已删除/停用/串 agent 都要求重选，不静默替换", () => {
+test("恢复带原配置：已删除/停用/串 Agent 都要求重选，不静默替换", () => {
   const profiles = [apiProfile("p-run"), apiProfile("p-other")];
   for (const [req, hidden] of [
     [{ agentId: "codex", profileId: "p-deleted" }, []],

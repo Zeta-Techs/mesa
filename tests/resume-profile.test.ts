@@ -133,7 +133,7 @@ test("兼容池为空（配置被删过）：回落全池，不拦死", () => {
   assert.equal(pick?.id, "p-official");
 });
 
-test("该 agent 没有任何配置：null", () => {
+test("该 Agent 没有任何配置：null", () => {
   assert.equal(pickResumeProfile([api("p-a")], "kimi", null, null), null);
   assert.equal(pickResumeProfile([], "codex", "ccode", null), null);
 });

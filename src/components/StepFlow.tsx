@@ -112,7 +112,7 @@ import type { ProjectStepDto, WorkspaceDto } from "../types";
 import type { StepRunStatus } from "../step-flow";
 import { pollEvery } from "../polling";
 
-/** 步骤内协同流程线（v3.71，聚焦视图顶部）：把这一步里人和 agent 的动作按先后排成有序节点链
+/** 步骤内协同流程线（v3.71，聚焦视图顶部）：把这一步里人和 Agent 的动作按先后排成有序节点链
  * （种子 → before 事项 → agent 执行 → during 事项 → after 事项 → 评审合并），当前节点高亮。
  *  回答三个问题：这一步谁先谁后（节点顺序）、现在轮到谁（当前节点）、轮到我时在哪操作（节点行就地）。 */
 /** 文献来源选项（值与后端 lit_source 对应）：zotero 与 folder 都属「我已有文献库」，
@@ -422,7 +422,7 @@ const LIT_SOURCES: {
 }[] = [
   {
     id: "search",
-    label: "让 agent 检索",
+    label: "让 Agent 检索",
     hint: "不用准备，开工即检索。",
     action: "去补几篇 →",
     focus: "files",
@@ -560,9 +560,9 @@ export default function StepFlow({
   toolBusy?: boolean;
   /** 嵌在「当前步骤卡」里时去掉自带的底色与内边距，由外层卡片统一承载（v3.85 三段式） */
   bare?: boolean;
-  /** agent 节点内嵌内容（如「预览 TASK.md」——TASK.md 是 agent 的合同，属于这个节点） */
+  /** agent 节点内嵌内容（如「预览 TASK.md」——TASK.md 是 Agent 的合同，属于这个节点） */
   agentContent?: React.ReactNode;
-  /** 步骤工作区已归档时 agent 节点的主入口（替代「开始」）：恢复工作区 */
+  /** 步骤工作区已归档时 Agent 节点的主入口（替代「开始」）：恢复工作区 */
   onRestore?: () => void;
   /** 合并冲突阻塞：评审节点入口改为「去处理冲突」（直达冲突解决意图） */
   reviewConflict?: boolean;
@@ -653,7 +653,7 @@ export default function StepFlow({
   const [draftPreview, setDraftPreview] = useState(false);
 
   /** 落盘一批答案：读-改-写整份草稿（write_task_draft 是整份覆盖），
-   *  批量入参让「全部用推荐值」只写一次，也少一次与 agent 并发改草稿的窗口 */
+   *  批量入参让「全部用推荐值」只写一次，也少一次与 Agent 并发改草稿的窗口 */
   async function commitDecisions(answers: { q: string; answer: string }[]) {
     if (answers.length === 0 || decisionBusy) return;
     setDecisionBusy(true);
@@ -2466,7 +2466,7 @@ export default function StepFlow({
           <div className="ml-9 mt-2.5">
             {runStatus !== "pending" && !litSourceEditing ? (
               // 开工后收成一行（2026-10-22）：这一轮的任务书已按当时的来源写好，
-              // 再点选项会改主仓档案卡与任务书草稿，正在跑的 agent 看不到——不能摆成随手可点
+              // 再点选项会改主仓档案卡与任务书草稿，正在跑的 Agent 看不到——不能摆成随手可点
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 <span className="text-l3">
                   {(LIT_SOURCES.find((o) => o.id === (litSource || "search")) ?? LIT_SOURCES[0]).label}
@@ -2538,13 +2538,13 @@ export default function StepFlow({
             )}
           </div>
         )}
-        {/* 想法区与「跟 AI 商量」：discuss 节点存在时挂它，否则挂 agent 节点（v3.89）——
+        {/* 想法区与「跟 AI 商量」：discuss 节点存在时挂它，否则挂 Agent 节点（v3.89）——
             内容一字未动，只是换了落点，避免节点被隐藏时这些入口一起消失 */}
         {(node.kind === "discuss" ||
           (node.kind === "agent" && !hasDiscussNode)) && (
           <div className="mt-1.5 space-y-2 pl-9">
             {/* ── 输入准备（v3.86；v3.89 升格为独立 input 节点，排在 AI 干活之前）──
-                · 决策项：答案写进任务书草稿，纯记录，给 agent 看的合同内容
+                · 决策项：答案写进任务书草稿，纯记录，给 Agent 看的合同内容
                 · 文献来源：答案写进项目配置 lit_source，要动手（导入），还会改变这一步的性质
                   （系统检索 → 盘点已有 + 查漏补缺）
                 所以它是「这一步的输入从哪来」，不是「这一步怎么做」，单独成块 + 自带动作按钮。
@@ -2816,7 +2816,7 @@ export default function StepFlow({
             )}
             {/* 预置话题 chips：只列还没开聊过的——开过的已经以话题行躺在下面的清单里，
                 两处都显示会让人以为是两个东西。点击 = 只读开聊（同话题清单口径），
-                「让 agent 直接改草稿」是上面那颗「跟 Agent 聊任务书」的活，两者不重叠 */}
+                「让 Agent 直接改草稿」是上面那颗「跟 Agent 聊任务书」的活，两者不重叠 */}
             {/* 预置话题：不再是独立一区，而是「跟 AI 商量」的现成话头。
                 前缀「聊聊：」让它一眼看出是同一件事的快捷入口，不是第三个功能 */}
             {(openSeeds ?? []).length > 0 && (

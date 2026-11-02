@@ -3,7 +3,7 @@ import type { StepDecisionDto } from "./types";
 /** 决策项答案的落点：任务书草稿 `.ccode/drafts/<工作区名>.md` 里的固定小节。
  *
  *  为什么落草稿而不是单独存一份状态：草稿就是开工合同（开工弹层草稿优先于模板拼装），
- *  人和 agent 读的是同一份文件。答案单独存别处就又多一层要对齐的中间态——
+ *  人和 Agent 读的是同一份文件。答案单独存别处就又多一层要对齐的中间态——
  *  §11.3 机制三的口径是「草稿是源，TASK.md 是开工那一刻的产物快照」，这里不破例。
  *
  *  纯函数 + 可测：解析与写入都不碰 IO，落盘由调用方走 write_task_draft。 */
@@ -149,7 +149,7 @@ function readAnswers(lines: string[]): {
 }
 
 /** 从草稿正文解析已定答案：问题 → 答案。
- *  只认「已定方向」小节内的行——小节外正文里同形的句子不算数，避免把 agent 写的散文吃进来 */
+ *  只认「已定方向」小节内的行——小节外正文里同形的句子不算数，避免把 Agent 写的散文吃进来 */
 export function parseDecisions(draft: string): Map<string, string> {
   const lines = draft.split(/\r?\n/);
   const { start, end } = locateSection(lines);
@@ -158,7 +158,7 @@ export function parseDecisions(draft: string): Map<string, string> {
 }
 
 /** 写入/更新答案，返回新草稿全文。
- *  批量入参是为了「全部用推荐值」只写一次盘（也少一次和 agent 并发改草稿的窗口）。
+ *  批量入参是为了「全部用推荐值」只写一次盘（也少一次和 Agent 并发改草稿的窗口）。
  *  小节已存在 = 原地替换（保留小节外的全部内容）；不存在 = 新建，插在首个一级标题之后，
  *  草稿通常以「# 任务书草稿：<步骤>」开头，已定方向紧随其后是这份合同里最该先被读到的部分。 */
 export function upsertDecisions(
@@ -325,7 +325,7 @@ export function resolveTaskMdSource(
  *
  *  这个判定是给开工用的：开工弹层的规则是「草稿非空则草稿全文顶掉模板拼装」（v3.72），
  *  那条规则的前提是草稿里有人/agent 写出来的实质内容。只点了几个选项就生成的草稿
- *  不该把整份简报顶掉——那样 agent 会拿到一份没有任务的任务书。
+ *  不该把整份简报顶掉——那样 Agent 会拿到一份没有任务的任务书。
  *  这种草稿走模板拼装（拼装里已经带上「已定方向」段），只有真写了正文才走草稿全文。
  *
  *  只剩标题行（如 append_step_draft 建的「# 任务书草稿：<步骤>」）也算没有正文。

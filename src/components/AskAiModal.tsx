@@ -262,7 +262,7 @@ export default function AskAiModal() {
               onChange={(e) => setProfileId(e.target.value)}
             >
               {agentProfiles.length === 0 ? (
-                <option value="">该 agent 还没有配置</option>
+                <option value="">该 Agent 还没有配置</option>
               ) : (
                 agentProfiles.map((p) => (
                   <option key={p.id} value={p.id}>

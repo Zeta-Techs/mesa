@@ -34,7 +34,7 @@ export function debounceAllows(
   return lastAt === undefined || now - lastAt >= windowMs;
 }
 
-/** 通知标题：标签名优先，缺省回落 agent 名 */
+/** 通知标题：标签名优先，缺省回落 Agent 名 */
 export function notifyTitle(tabTitle: string, agentLabel: string): string {
   return tabTitle ? `${agentLabel} · ${tabTitle}` : agentLabel;
 }

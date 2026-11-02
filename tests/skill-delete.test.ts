@@ -34,7 +34,7 @@ test("来源说明：外部导入给出渠道，github 带仓库名", () => {
     "GitHub 导入（未记录仓库）",
   );
   assert.equal(skillOriginLabel({ source: "zip" }), "ZIP 文件导入");
-  assert.equal(skillOriginLabel({ source: "discovered" }), "从 agent 目录收编");
+  assert.equal(skillOriginLabel({ source: "discovered" }), "从 Agent 目录收编");
 });
 
 test("fail-safe：旧 local 与未知来源一律按非自建提示", () => {
@@ -44,7 +44,7 @@ test("fail-safe：旧 local 与未知来源一律按非自建提示", () => {
   assert.equal(skillOriginLabel({ source: "whatever" }), "未知来源");
 });
 
-test("删除影响面：只列 apps=true 的 agent，按 agents 表序", () => {
+test("删除影响面：只列 apps=true 的 Agent，按 agents 表序", () => {
   assert.deepEqual(
     skillDeleteImpact(
       { "claude-code": true, codex: false, kimi: true },
@@ -54,6 +54,6 @@ test("删除影响面：只列 apps=true 的 agent，按 agents 表序", () => {
   );
   // 全未启用 = 空数组（弹层不列影响面行）
   assert.deepEqual(skillDeleteImpact({}, AGENTS), []);
-  // apps 里的未知 agent id 不在 agents 表中：不计入
+  // apps 里的未知 Agent id 不在 agents 表中：不计入
   assert.deepEqual(skillDeleteImpact({ ghost: true }, AGENTS), []);
 });

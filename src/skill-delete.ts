@@ -6,7 +6,7 @@
  *  ccode      = Mesa 新建（v3.100 起 create_skill 写入）
  *  local      = 本地目录导入；旧数据的自建技能同记 local 无法区分
  *  zip/github = ZIP / GitHub 仓库导入（github 带 repo 记录）
- *  discovered = 从 agent 目录收编
+ *  discovered = 从 Agent 目录收编
  *  fail-safe：空串/未知值与旧 local 一律按「非自建」对待——删除提示宁可多讲来源，
  *  也不漏掉「内置技能删除后不复活」这类警告。 */
 
@@ -35,13 +35,13 @@ export function skillOriginLabel(skill: {
       // 旧数据：自建与本地导入同记 local，按外部导入提示（fail-safe）
       return "本地目录导入或早期自建";
     case "discovered":
-      return "从 agent 目录收编";
+      return "从 Agent 目录收编";
     default:
       return "未知来源";
   }
 }
 
-/** 删除影响面：apps 里值为 true 的 agent 显示名清单（按 agents 表序，稳定可测）。
+/** 删除影响面：apps 里值为 true 的 Agent 显示名清单（按 agents 表序，稳定可测）。
  *  后端删除时只清理 Mesa 分发的副本/链接（symlink 指向库目录或带 .ccode-copy 标记），
  *  agent 目录里用户自放的同名内容本就不会被动 */
 export function skillDeleteImpact(

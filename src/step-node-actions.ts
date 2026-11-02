@@ -148,7 +148,7 @@ export interface StepNodeActionContext {
 /**
  * 选这一行该给什么动作。返回 null = 这一行不给入口。
  *
- * 未就绪、已完成的情况一律 null——不写「等 agent」之类的占位文案：节点排在 agent 之后，
+ * 未就绪、已完成的情况一律 null——不写「等 Agent」之类的占位文案：节点排在 Agent 之后，
  * 先后顺序看位置就知道，再标一句是同一件事说两遍。
  */
 export function stepNodeAction(

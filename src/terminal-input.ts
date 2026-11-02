@@ -9,7 +9,7 @@ const SHELL_SAFE_WIN = /^[A-Za-z0-9_@%+=:,./\\-]+$/;
 
 /** shell 路径转义：含空格/引号等特殊字符时整体包裹。
  *  POSIX 用单引号（单引号自身转 '\''）；Windows 用双引号（自身双写）——
- *  PowerShell / cmd / 各家 agent TUI 都认双引号，而 cmd 里单引号只是字面字符。
+ *  PowerShell / cmd / 各家 Agent TUI 都认双引号，而 cmd 里单引号只是字面字符。
  *  注意 Windows 分支不能沿用 POSIX 规则：`\` 不在 POSIX 安全集里，会导致**每一条**
  *  Windows 绝对路径都被套引号，而 macOS 上干净路径是裸写的——agent 收到的形态平白分叉。 */
 export function escapeShellPath(path: string, isWindows = false): string {
@@ -235,7 +235,7 @@ export function pasteImageFeedback(path: string): string {
   return `已粘贴图片路径：${name.length > 40 ? `${name.slice(0, 37)}…` : name}`;
 }
 
-/** OSC 10/11 前景/底色回报的 16-bit RGB 载荷（Windows 下主动推给 agent TUI）。 */
+/** OSC 10/11 前景/底色回报的 16-bit RGB 载荷（Windows 下主动推给 Agent TUI）。 */
 export function xtermOscColorReport(
   slot: 10 | 11,
   color: string,
@@ -257,10 +257,10 @@ export function xtermOscColorReport(
  *  claude-code 走 settings.json 的 theme 配置、不探测。 */
 const TERMINAL_BG_PROBING_AGENTS = new Set(["gemini", "qwen", "codex"]);
 
-/** 是否要在 attach 后主动把终端前景/底色推给 agent。
+/** 是否要在 attach 后主动把终端前景/底色推给 Agent。
  *  仅 Windows：ConPTY 两个方向都不转发 OSC 10/11 查询，agent 探不到底色只能回落深色。
- *  仅 agent 且在探测白名单内：见 TERMINAL_BG_PROBING_AGENTS——推给不探测的 agent 会变乱码。
- *  仅浅色：深色本就是 agent 探测失败时的回落值，推了没收益。
+ *  仅 Agent 且在探测白名单内：见 TERMINAL_BG_PROBING_AGENTS——推给不探测的 Agent 会变乱码。
+ *  仅浅色：深色本就是 Agent 探测失败时的回落值，推了没收益。
  *  enabled = 设置页开关（默认开）：白名单里的 CLI 换了实现时可以整体关掉。 */
 export function shouldReportTerminalColors(opts: {
   isWindows: boolean;

@@ -405,7 +405,7 @@ export default function PipelineEditor({
       const boundGone = gone.filter((n) => taskBindings?.[`step:${n}`]).length;
       const cardGone = cards.filter((c) => c.step !== null && gone.includes(c.step)).length;
       const impacts = [
-        ...(boundGone > 0 ? [`${boundGone} 条步骤专属绑定将失效（Agents 页可清）`] : []),
+        ...(boundGone > 0 ? [`${boundGone} 条步骤专属绑定将失效（「Agent 分工」页签可清）`] : []),
         ...(cardGone > 0 ? [`${cardGone} 张任务卡将脱离本步骤，转为想法卡（「继续/开工」入口随之消失）`] : []),
       ];
       if (impacts.length > 0) {
@@ -943,7 +943,7 @@ export default function PipelineEditor({
               })
             }
           >
-            + 添加人工事项
+            ＋ 添加人工事项
           </button>
         </div>
 
@@ -1000,7 +1000,7 @@ export default function PipelineEditor({
               })
             }
           >
-            + 添加决策项
+            ＋ 添加决策项
           </button>
         </div>
 
@@ -1045,7 +1045,7 @@ export default function PipelineEditor({
               patch(i, { discussionSeeds: [...d.discussionSeeds, ""] })
             }
           >
-            + 添加讨论种子
+            ＋ 添加讨论种子
           </button>
         </div>
           </>,
@@ -1151,7 +1151,7 @@ export default function PipelineEditor({
               })
             }
           >
-            + 添加脚本
+            ＋ 添加脚本
           </button>
         </div>
 
@@ -1285,7 +1285,7 @@ export default function PipelineEditor({
           {drafts.length === 0 && (
             <EmptyState
               title="还没有研究步骤"
-              detail="点下方「+ 添加步骤」逐张填写，保存即写入项目。"
+              detail="点下方「＋ 添加步骤」逐张填写，保存即写入项目。"
             />
           )}
           {drafts.map(renderCard)}
@@ -1319,7 +1319,7 @@ export default function PipelineEditor({
                 ])
               }
             >
-              + 添加步骤
+              ＋ 添加步骤
             </button>
             <button
               type="button"

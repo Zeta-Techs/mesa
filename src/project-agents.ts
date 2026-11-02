@@ -497,7 +497,7 @@ export function resolveTaskModel(input: {
   taskModel?: string | null;
   /** 本次实际用的连接 id */
   profileId: string;
-  /** 项目给该 agent 绑的连接 id（命中才取项目模型） */
+  /** 项目给该 Agent 绑的连接 id（命中才取项目模型） */
   defaultProfileId?: string | null;
   defaultModel?: string | null;
 }): string {

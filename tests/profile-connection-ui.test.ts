@@ -73,7 +73,7 @@ test("有网关、协议槽能体检的 API 连接给「测试」入口（测过
   assert.equal(canProbeProfile({ ...base, agent: "kimi", protocol: "anthropic" }), true);
 });
 
-test("重名只在同一 agent 内算，忽略大小写与首尾空白", () => {
+test("重名只在同一 Agent 内算，忽略大小写与首尾空白", () => {
   const ids = duplicateNameIds([
     { id: "a", agent: "codex", name: "Test" },
     { id: "b", agent: "codex", name: " test " },

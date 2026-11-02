@@ -117,7 +117,7 @@ ${intent}
 
 【硬要求】
 - 这是定时任务：Mesa 会在用户不在场时按周期无头跑，每轮会告诉它原定时刻和上一次成功运行的时间；需要跨轮记住的东西（处理过的条目、基线数字）写进 Mesa 给的跨轮记忆文件，技能里不用另找地方存。
-- 把完整 SKILL.md（含 YAML frontmatter）写入项目文件 \`${input.draftRelPath}\`。${input.scheduleRelPath ? "除了这里和下面的周期建议，" : "只写这一个文件，"}不要安装到 agent 技能目录、不要改其它文件。
+- 把完整 SKILL.md（含 YAML frontmatter）写入项目文件 \`${input.draftRelPath}\`。${input.scheduleRelPath ? "除了这里和下面的周期建议，" : "只写这一个文件，"}不要安装到 Agent 技能目录、不要改其它文件。
 - frontmatter 必须含：name: ${input.skillName}；description（一行）；outputs（结果写到哪）。不要把产出写成 notes/inbox.md（那是文献雷达专用）。
 - 正文写清：何时用、读什么、做什么、完成标准。约束：只新建/追加 outputs 里的文件；不删文件；未声明的表格和代码不要改；没有新内容时不要改任何文件；结束输出三行以内简报，关键数字在前。${schedulePart}
 - 写完告诉我文件路径，等我在 Mesa 里确认落盘。不要说已经安装好。`;

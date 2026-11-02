@@ -426,7 +426,7 @@ export default function ImageGenPanel({
                     className={ghostActionClass}
                     onClick={() => setPickOpen((v) => (v === "multi" ? null : "multi"))}
                   >
-                    + 加模型对比
+                    ＋ 加模型对比
                   </button>
                 )}
                 <span className="ml-auto flex items-center gap-2">

@@ -60,7 +60,7 @@ export default function ProjectSurfaceTabs({
     tasks: projectTaskLabel(project.workMode),
     schedules: "定时任务",
     files: "文件",
-    agents: "Agents",
+    agents: "Agent 分工",
   };
   const tabs = tabIds.map((id) => ({ id, label: labels[id] }));
   // 游标停在哪一格：优先键盘焦点，焦点值失效时回落到当前选中项

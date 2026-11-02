@@ -1,5 +1,5 @@
 /**
- * 「复制到其他 agent」（#14）的目标清单纯逻辑（与 DOM 解耦，node --test 直接单测）。
+ * 「复制到其他 Agent」（#14）的目标清单纯逻辑（与 DOM 解耦，node --test 直接单测）。
  * 协议族口径与后端 profile_validation::api_kind_label 保持一致（后端 copy_profile_to_agent
  * 会再校验一次，这里只做菜单的禁用与提示）。
  */
@@ -7,7 +7,7 @@
 // 运行时要取 AGENTS/AGENT_PROTOCOLS 的值，带 .ts 后缀（node --test 直接跑 TS，类型擦除不兜底运行时导入）
 import { AGENTS, AGENT_PROTOCOLS } from "./types.ts";
 
-/** 协议族：cursor 是专有协议（非 OpenAI/Anthropic 兼容），自成一族不与任何 agent 互通 */
+/** 协议族：cursor 是专有协议（非 OpenAI/Anthropic 兼容），自成一族不与任何 Agent 互通 */
 export function apiKindOf(agent: string, protocol: string | null): string {
   if (agent === "claude-code") return "anthropic";
   if (agent === "gemini") return "gemini";
@@ -32,7 +32,7 @@ export interface CopyTarget {
   reason?: string;
 }
 
-/** 复制目标清单：排除来源 agent 自身；不同协议族的项标禁用并给原因 */
+/** 复制目标清单：排除来源 Agent 自身；不同协议族的项标禁用并给原因 */
 export function copyTargets(
   sourceAgent: string,
   sourceProtocol: string | null,

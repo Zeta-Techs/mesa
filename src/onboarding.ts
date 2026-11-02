@@ -15,7 +15,7 @@ export type OnboardingAckId = "terminal" | "naming";
 
 /** 推导完成状态用的事实，全部来自 store 里已有的数据 */
 export type OnboardingFacts = {
-  /** 已安装（detect 到可执行文件）的 agent id，按 AGENTS 顺序 */
+  /** 已安装（detect 到可执行文件）的 Agent id，按 AGENTS 顺序 */
   installedAgents: readonly string[];
   gatewayCount: number;
   profileCount: number;
@@ -23,7 +23,7 @@ export type OnboardingFacts = {
   userSessionCount: number;
   /** 已添加（登记）的项目数 */
   projectCount: number;
-  /** 已装好且官方账号已登录的 agent id（只在还没有连接时探测）：有就能一键接入，不必建网关 */
+  /** 已装好且官方账号已登录的 Agent id（只在还没有连接时探测）：有就能一键接入，不必建网关 */
   officialReady?: readonly string[];
 };
 

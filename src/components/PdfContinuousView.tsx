@@ -137,7 +137,7 @@ function PdfContinuousView({
   askAs?: { label: string; done: string };
   /** 加载失败/被白名单拒绝时错误条上的「← 返回」 */
   onBack?: () => void;
-  /** 圈选截图「◈ 发给 agent」：返回 null 成功，否则为要展示的提示（批次 B2） */
+  /** 圈选截图「◈ 发给 Agent」：返回 null 成功，否则为要展示的提示（批次 B2） */
   onCaptureAgent?: (
     blob: Blob,
     page: number,
@@ -219,7 +219,7 @@ function PdfContinuousView({
 
   const fileName = basename(path);
 
-  // ===== 圈选截图（批次 B2）：模式开关 → 拖矩形 → 定格小条（发给 agent / 插入笔记） =====
+  // ===== 圈选截图（批次 B2）：模式开关 → 拖矩形 → 定格小条（发给 Agent / 插入笔记） =====
   const captureSupported = Boolean(onCaptureAgent || onCaptureNote);
   const [captureOn, setCaptureOn] = useState(false);
   /** 拖拽中的矩形（内容层坐标）；松手后清空 */

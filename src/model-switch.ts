@@ -45,7 +45,7 @@ export const MODEL_SWITCH: Record<string, ModelSwitchInfo> = {
 };
 
 /**
- * 启动栏模型下拉底部的一句话：只在「这个 agent 确实有坑」时出现，说人话。
+ * 启动栏模型下拉底部的一句话：只在「这个 Agent 确实有坑」时出现，说人话。
  * modelCount = 当前 profile 配了几个模型。
  */
 export function launchModelNote(

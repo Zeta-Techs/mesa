@@ -372,7 +372,7 @@ export function RegisterOfferRow({
 
 /** 人工事项平铺 checklist（开工确认弹层用；聚焦视图用 StepFlow 流程线）：
  *  状态与动作逻辑在 useHumanTasks，本组件只是分组渲染。
- *  收尾（after）事项不在这里出现——那是 agent 干完才轮到人做的活，开工时摆出来只会让人
+ *  收尾（after）事项不在这里出现——那是 Agent 干完才轮到人做的活，开工时摆出来只会让人
  *  误以为现在就要做；收尾语境由 StepFlow 流程线节点与评审「收尾事项」行承担 */
 export default function HumanTasksList({
   projectPath,

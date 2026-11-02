@@ -2,7 +2,7 @@ import type { HumanTaskStateDto, ProjectStepDto } from "./types";
 import { REVIEW_SAVE } from "./review-save-copy.ts";
 import { isCitationStyleTask } from "./citation-style-choice.ts";
 
-/** 步骤内协同流程线（v3.71）的纯逻辑：把「这一步里人和 agent 的动作」按先后排成有序节点链，
+/** 步骤内协同流程线（v3.71）的纯逻辑：把「这一步里人和 Agent 的动作」按先后排成有序节点链，
  *  全部状态派生（无状态机）。节点顺序 = 讨论种子 → before 人工事项 → agent 执行
  *  → during 人工事项（并行段） → after 人工事项（v3.97 起一律进主干——收尾项是流程的一步，
  *  沉到可选分隔线下会让用户以为它不存在） → 评审保存进项目。
@@ -105,7 +105,7 @@ export function buildStepFlow(args: {
    *  只要还有没答的，本节点就不算完事——只写了一条答案草稿就存在了，
    *  拿 hasDraft 当完成口径会在还剩几题没答时就打勾 */
   pendingDecisions?: number;
-  /** 本步要问的科研工具。稿件载体是开工前提，排在 agent 前；其余不挡主动作，沉到可选区。 */
+  /** 本步要问的科研工具。稿件载体是开工前提，排在 Agent 前；其余不挡主动作，沉到可选区。 */
   toolAsks?: Array<{ key: string; label: string }>;
   /** 精读保存后出现文献库同步。检索步的 RIS 还不齐，不在那里同步。 */
   endnoteExport?: boolean;
@@ -118,10 +118,10 @@ export function buildStepFlow(args: {
   const humans = (timing: string) => states.filter((s) => s.timing === timing);
 
   // 0.5 输入准备：文献从哪来（模板声明 asksLitSource 的步骤才有）。
-  //     独立成节点、排在 agent 之前——它是**开工的前提**（决定 AI 要不要去检索），
-  //     挂在 agent 节点内容区会让「开始」按钮出现在它上方，变成「先出发再问路」（用户实测）。
+  //     独立成节点、排在 Agent 之前——它是**开工的前提**（决定 AI 要不要去检索），
+  //     挂在 Agent 节点内容区会让「开始」按钮出现在它上方，变成「先出发再问路」（用户实测）。
   //     完成口径：选了非默认来源，或这一步已经开工——开工即按当时的来源执行了。
-  //     默认「让 agent 检索」不落值，旧口径只认非 search，AI 跑完待评审了「当前」
+  //     默认「让 Agent 检索」不落值，旧口径只认非 search，AI 跑完待评审了「当前」
   //     竖线还钉在这一行，真正该做的「去评审」反而不是当前（2026-10-17 用户截图）。
   if (step.asksLitSource) {
     nodes.push({
@@ -135,7 +135,7 @@ export function buildStepFlow(args: {
         runStatus !== "pending",
     });
   }
-  // 0.6 稿件载体会换本步正式稿，是开工前提，排在 agent 前（与「确定文献来源」同形）。
+  // 0.6 稿件载体会换本步正式稿，是开工前提，排在 Agent 前（与「确定文献来源」同形）。
   //     Origin / Blender / 库交付不是这一步的主工作，不插在步骤前面。
   for (const ask of (args.toolAsks ?? []).filter((item) => item.key === "manuscript")) {
     nodes.push({
@@ -153,8 +153,8 @@ export function buildStepFlow(args: {
   //    白占流程线一格还让人以为漏了什么。
   //    判定用**声明**（decisions/seeds 是否配置）而非「是否答完」：答完就消失会让
   //    流程线在你眼前少一格，比空着更让人不安。
-  //    想法区（discussContent）随之改挂 agent 节点——它本来就是「开工前想清楚要干嘛」，
-  //    贴着 agent 节点比单独占一格更贴切。
+  //    想法区（discussContent）随之改挂 Agent 节点——它本来就是「开工前想清楚要干嘛」，
+  //    贴着 Agent 节点比单独占一格更贴切。
   const decisions = step.decisions ?? [];
   const seeds = step.discussionSeeds ?? [];
   const hasSomethingToSettle = decisions.length > 0 || seeds.length > 0;
@@ -191,7 +191,7 @@ export function buildStepFlow(args: {
     hint: undefined,
     done: runStatus === "review" || runStatus === "done",
   });
-  // 4. during 人工事项（与 agent 并行段）
+  // 4. during 人工事项（与 Agent 并行段）
   for (const h of humans("during")) {
     nodes.push({
       key: `human:${h.title}`,

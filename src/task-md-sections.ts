@@ -5,7 +5,7 @@ import { isSettingPlaceholder, uniqueRuleLines } from "./project-context.ts";
 
 /** 「文献来源」段的正文行。search/空 = 无此段（从零系统检索是默认行为，不必写进 TASK.md）。
  *  文献来自已有库时检索步骤的性质变了——不是「去检索」而是「盘点 + 查漏」，
- *  放在简报之前，让 agent 先知道前提再读步骤简报（模板简报本身不必为此写两套） */
+ *  放在简报之前，让 Agent 先知道前提再读步骤简报（模板简报本身不必为此写两套） */
 export function litSourceSectionLines(
   litSource: string | undefined,
 ): string[] | null {

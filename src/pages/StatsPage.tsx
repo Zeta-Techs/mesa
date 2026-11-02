@@ -1980,7 +1980,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       ) : empty ? (
         <EmptyState
           title="还没有用量记录"
-          detail="跑几个 agent 会话后，这里会按天汇总 token 和费用。"
+          detail="跑几个 Agent 会话后，这里会按天汇总 token 和费用。"
         />
       ) : (
         <>

@@ -799,7 +799,7 @@ export default function ReaderOverlay({
 
   // ===== 圈选截图去向（批次 B2）：裁好的 PNG 由 PdfContinuousView 交来 =====
 
-  /** ◈ 发给 agent：落剪贴板临时图（终端粘贴图片同一命令/口径）→ 路径 + 预填 prompt 写进终端输入行，不自动发送 */
+  /** ◈ 发给 Agent：落剪贴板临时图（终端粘贴图片同一命令/口径）→ 路径 + 预填 prompt 写进终端输入行，不自动发送 */
   const captureToAgent = useCallback(
     async (blob: Blob, page: number, fileName: string): Promise<string | null> => {
       if (needsProfile) return "还没有可用的 API 配置";

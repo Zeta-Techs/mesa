@@ -2,8 +2,8 @@
  * 对话页筛选纯逻辑（v3.88）。
  *
  * 背景：`SessionMetaDto` 里早就有 stepName / taskName / workspace / live / pinned /
- * updatedAt 这些维度，**一个都没进筛选 UI**；唯一做进 UI 的 agent 维度恰恰最低频
- * （用户按项目、按时间、按状态找，不按 agent 找）。这里补上高频的状态/时间快筛，
+ * updatedAt 这些维度，**一个都没进筛选 UI**；唯一做进 UI 的 Agent 维度恰恰最低频
+ * （用户按项目、按时间、按状态找，不按 Agent 找）。这里补上高频的状态/时间快筛，
  * 以及把搜索框升级成「输入 → 结构化建议 → 落成可叠加 chip」。
  *
  * 与 DOM/Tauri 解耦，node --test 直接测。
@@ -157,7 +157,7 @@ export function groupSearchHitsByArchive<T extends { archived: boolean }>(
 
 /**
  * 搜索建议：从当前会话集里提取匹配查询的结构化维度，点选即落成 chip。
- * 取代原先「展开手风琴 → 找 agent → 展开 → 找项目」的三次点击钻取。
+ * 取代原先「展开手风琴 → 找 Agent → 展开 → 找项目」的三次点击钻取。
  * 每类最多 `perKind` 条，避免下拉过长。
  */
 export function buildScopeSuggestions(

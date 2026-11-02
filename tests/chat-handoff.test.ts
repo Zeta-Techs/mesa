@@ -62,7 +62,7 @@ test("发送钮变暂停：正在出字或等首个回复；停在提示符或�
 test("七家有 hooks，cursor/opencode 没有", () => {
   assert.equal(HOOKS_AGENTS.size, 8);
   assert.equal(agentHasHooks("claude-code"), true);
-  assert.equal(agentHasHooks("claude"), false, "键是 agent id");
+  assert.equal(agentHasHooks("claude"), false, "键是 Agent id");
   assert.equal(agentHasHooks("codex"), true);
   assert.equal(agentHasHooks("cursor"), false);
   assert.equal(agentHasHooks("opencode"), true);

@@ -382,7 +382,7 @@ export default function ProjectAgentsView({
     }
   }
 
-  /** 精读槽位可选的连接×模型（跨 agent 拍平，带 agent 前缀防混淆；显式槽
+  /** 精读槽位可选的连接×模型（跨 Agent 拍平，带 Agent 前缀防混淆；显式槽
       尊重停用——被停用的已绑定项仍列出） */
   const readerSlotProfiles = useMemo(() => {
     const boundId = project.taskBindings?.[READER_BINDING_SLOT]?.profile;
@@ -538,7 +538,7 @@ export default function ProjectAgentsView({
     return { tag: "跟随默认", line: inherited.line, detail: `${inherited.detail} · 跟随项目默认`, option: "项目默认" };
   }, [defaultAgent, defaultModels, defaultProfiles, profiles, scheduleCaps, inherited]);
 
-  /** 步骤槽可选清单与精读槽同款（跨 agent 拍平 + 停用尊重 + 绑定项保留） */
+  /** 步骤槽可选清单与精读槽同款（跨 Agent 拍平 + 停用尊重 + 绑定项保留） */
   const stepSlotProfiles = useMemo(() => {
     const boundIds = new Set(
       [

@@ -323,7 +323,7 @@ test("agent：进行中给「去终端看看」，会话跑完附完成提示", 
   assert.equal(stepNodeAction(node("agent"), ctx({ runStatus: "done" })), null);
 });
 
-test("review：待评审必给，进行中只在 agent 出字/等确认时藏起来", () => {
+test("review：待评审必给，进行中只在 Agent 出字/等确认时藏起来", () => {
   assert.deepEqual(stepNodeAction(node("review"), ctx({ runStatus: "review" })), {
     kind: "go-review",
     conflict: false,

@@ -548,7 +548,7 @@ function PdfPreview({
   path: string;
   /** 终端标签 cwd / 文件树根：后端白名单的第四类来源 */
   cwdHint: string | null;
-  /** 返回 null 表示已写入；返回字符串为要给用户看的提示（如无运行中 agent）。send=true 直接发送 */
+  /** 返回 null 表示已写入；返回字符串为要给用户看的提示（如无运行中 Agent）。send=true 直接发送 */
   onAskAi?: (
     text: string,
     page: number,

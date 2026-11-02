@@ -143,7 +143,7 @@ interface DiscoveredMcp {
   agent: string;
   name: string;
   summary: string;
-  /** 命令是相对路径（./ ../ 开头）：来源 agent 的运行语境下才解析得到，收编时后端会先尝试落绝对路径 */
+  /** 命令是相对路径（./ ../ 开头）：来源 Agent 的运行语境下才解析得到，收编时后端会先尝试落绝对路径 */
   relativeCommand: boolean;
 }
 
@@ -223,7 +223,7 @@ function PairEditor({
           className="text-xs text-l4 hover:text-l1"
           onClick={() => onChange([...pairs, { key: "", value: "" }])}
         >
-          + 添加
+          ＋ 添加
         </button>
       </div>
       <div className="space-y-1">
@@ -370,7 +370,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (visible) setDistStatus({});
   }, [visible]);
-  // 能力表（agent_capabilities）：只读 agent 的分发开关换「只读」+ 原因提示，与后端报错同源
+  // 能力表（agent_capabilities）：只读 Agent 的分发开关换「只读」+ 原因提示，与后端报错同源
   const [caps, setCaps] = useState<Record<string, AgentCapabilitiesDto>>({});
   useEffect(() => {
     if (!visible) return;
@@ -760,7 +760,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 全局启用/停用：停用从各 agent 移除条目但保留分发映射（重开按原样重投） */
+  /** 全局启用/停用：停用从各 Agent 移除条目但保留分发映射（重开按原样重投） */
   async function setEnabled(s: McpServerDto, enabled: boolean) {
     const key = `${s.id}:__global__`;
     if (!beginApply(key)) return;
@@ -789,7 +789,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
         const agents = msg.slice("EXTMOD:".length);
         if (
           await confirmDialog(
-            `「${s.name}」在这些 agent 的配置里已被外部修改：${agents}。停用会移除这些条目。仍要停用吗？`,
+            `「${s.name}」在这些 Agent 的配置里已被外部修改：${agents}。停用会移除这些条目。仍要停用吗？`,
             { danger: true },
           )
         ) {
@@ -837,7 +837,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       !(await confirmMissingEnv([...server.env, ...server.headers], "分发"))
     )
       return;
-    // 条目已被外部从该 agent 配置删除：拨开 = 重新写入，先点明再执行
+    // 条目已被外部从该 Agent 配置删除：拨开 = 重新写入，先点明再执行
     if (on && !force && distStatus[server.id]?.[agent] === "missing") {
       const label = AGENTS.find((a) => a.id === agent)?.label ?? agent;
       if (
@@ -847,7 +847,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       )
         return;
     }
-    // 收编条目（含旧数据空 origin，isAdoptedMcp 判定）关闭分发 = 从该 agent 配置移除条目，
+    // 收编条目（含旧数据空 origin，isAdoptedMcp 判定）关闭分发 = 从该 Agent 配置移除条目，
     // 先确认影响面；ccode 自建条目不加——开关语义本身就符合预期
     if (!on && !force && isAdoptedMcp(server.origin)) {
       const label = AGENTS.find((a) => a.id === agent)?.label ?? agent;
@@ -879,7 +879,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       // 成功不报：这一家的开关当场翻过去就是结果（2026-11-01 用户：多余的提示删去）
     } catch (e) {
       const msg = String(e);
-      // 该 agent 里的条目被外部改过：确认后才强删（保护手调版本）
+      // 该 Agent 里的条目被外部改过：确认后才强删（保护手调版本）
       if (msg.startsWith("EXTMOD:") && !force) {
         const label = AGENTS.find((a) => a.id === agent)?.label ?? agent;
         if (
@@ -915,8 +915,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
   }
 
   // 删除确认：收编条目（含旧数据空 origin，isAdoptedMcp 判定）走双选弹层——
-  // 主选「仅从清单移除」不动 agent 侧原有配置；ccode 自建条目维持单确认流。
-  // 两条路径的确认弹层都明示影响面（apps 为 true 的 agent 显示名列表）
+  // 主选「仅从清单移除」不动 Agent 侧原有配置；ccode 自建条目维持单确认流。
+  // 两条路径的确认弹层都明示影响面（apps 为 true 的 Agent 显示名列表）
   const [deleteTarget, setDeleteTarget] = useState<McpServerDto | null>(null);
 
   async function onDelete(server: McpServerDto) {
@@ -928,7 +928,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
     if (
       !(await confirmDialog(
         impact.length
-          ? `将删除 MCP「${server.name}」，并从以下 agent 的配置中删除：${impact.join("、")}。继续？`
+          ? `将删除 MCP「${server.name}」，并从以下 Agent 的配置中删除：${impact.join("、")}。继续？`
           : `将删除 MCP「${server.name}」。继续？`,
         { danger: true },
       ))
@@ -937,7 +937,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
     await doDelete(server, false, false);
   }
 
-  /** 执行删除：keepAgentConfigs=true 只从清单移除，不碰任何 agent 配置文件 */
+  /** 执行删除：keepAgentConfigs=true 只从清单移除，不碰任何 Agent 配置文件 */
   async function doDelete(
     server: McpServerDto,
     keepAgentConfigs: boolean,
@@ -953,7 +953,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       );
       setDeleteTarget(null);
       // 整条删掉的不报（行当场没了）；只从清单移除时说一句各家配置还留着
-      if (keepAgentConfigs) toast("已从清单移除（各 agent 配置中的该条目保留）");
+      if (keepAgentConfigs) toast("已从清单移除（各 Agent 配置中的该条目保留）");
     } catch (e) {
       const msg = String(e);
       // keepAgentConfigs=true 后端跳过 EXTMOD 预检，这里只有连同删除路径会命中
@@ -961,7 +961,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
         const agents = msg.slice("EXTMOD:".length);
         if (
           await confirmDialog(
-            `「${server.name}」在这些 agent 的配置里已被外部修改：${agents}。删除会丢掉外部改动的版本。仍要删除吗？`,
+            `「${server.name}」在这些 Agent 的配置里已被外部修改：${agents}。删除会丢掉外部改动的版本。仍要删除吗？`,
             { danger: true },
           )
         ) {
@@ -1002,7 +1002,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       // 相对路径命令的收编解析结果（后端 resolver）：随 toast 附注一句
       const note = mcpPathResolveNote(outcome.resolved, outcome.unresolved);
       toast(
-        `已收编「${item.name}」（标记为已分发到来源 agent）${note ? `；${note}` : ""}`,
+        `已收编「${item.name}」（标记为已分发到来源 Agent）${note ? `；${note}` : ""}`,
       );
       await load(); // 重读命令路径探测，徽标立即反映收编结果
     } catch (e) {
@@ -1048,7 +1048,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       setPasteText("");
       setPastePreview(null);
       await load();
-      // 相对路径命令的解析结果附注（粘贴无来源 agent，只按条目自己的 cwd 解）
+      // 相对路径命令的解析结果附注（粘贴无来源 Agent，只按条目自己的 cwd 解）
       const note = mcpPathResolveNote(resolved, unresolved);
       toast(
         `已导入 ${added.length} 个${skipped.length ? `，跳过同名 ${skipped.length} 个（${skipped.join("、")}）` : ""}${note ? `；${note}` : ""}`,
@@ -1071,14 +1071,14 @@ export default function McpPage({ visible }: { visible: boolean }) {
       );
       if (candidates.length === 0) {
         setError(
-          `「${s.name}」的相对路径未能解析（已试条目的工作目录与来源 agent 的配置/插件目录），请点 ✎ 编辑手工改为绝对路径`,
+          `「${s.name}」的相对路径未能解析（已试条目的工作目录与来源 Agent 的配置/插件目录），请点 ✎ 编辑手工改为绝对路径`,
         );
         return;
       }
       if (candidates.length === 1) {
         const c = candidates[0];
         const ok = await confirmDialog(
-          `已将「${s.name}」的相对路径解析为：\n命令：${c.command}${c.cwd ? `\n工作目录：${c.cwd}` : ""}\n确认后按此更新条目，并同步重写到已分发的 agent。`,
+          `已将「${s.name}」的相对路径解析为：\n命令：${c.command}${c.cwd ? `\n工作目录：${c.cwd}` : ""}\n确认后按此更新条目，并同步重写到已分发的 Agent。`,
         );
         if (ok) await applyCommandFix(s, c);
         return;
@@ -1089,7 +1089,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 应用修复：走现有保存链路（origin/apps/last_check 由后端保留），保存即重投已分发 agent */
+  /** 应用修复：走现有保存链路（origin/apps/last_check 由后端保留），保存即重投已分发 Agent */
   async function applyCommandFix(s: McpServerDto, fix: McpCommandFixCandidate) {
     setFixing(true);
     setError(null);
@@ -1129,7 +1129,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 setAddMenu({ x: rect.right, y: rect.bottom + 4 });
               }}
             >
-              + 添加 MCP
+              ＋ 添加 MCP
               <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
             </button>
             <button
@@ -1294,7 +1294,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     />
                     <RowAction
                       icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
-                      tip="删除（收编条目默认仅从清单移除，不动 agent 配置）"
+                      tip="删除（收编条目默认仅从清单移除，不动 Agent 配置）"
                       label={`删除 ${s.name}`}
                       onClick={() => void onDelete(s)}
                     />
@@ -1304,7 +1304,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                     className="flex pl-1"
                     title={
                       s.enabled
-                        ? "停用：从各 agent 移除条目，分发映射保留"
+                        ? "停用：从各 Agent 移除条目，分发映射保留"
                         : "启用：按分发映射重新写入各 agent"
                     }
                   >
@@ -1509,7 +1509,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                                           }`}
                                           title={
                                             badge?.tip ??
-                                            "已写入该 agent 的用户级配置"
+                                            "已写入该 Agent 的用户级配置"
                                           }
                                         />
                                       )}
@@ -1843,18 +1843,18 @@ export default function McpPage({ visible }: { visible: boolean }) {
             </div>
         </Modal>
       )}
-      {/* 收编条目删除双选弹层：主选「仅从清单移除」不动 agent 侧原有配置（收编条目本是
-          从 agent 配置读进来的，默认动作绝不能反向删用户原有配置）；影响面列表说明
+      {/* 收编条目删除双选弹层：主选「仅从清单移除」不动 Agent 侧原有配置（收编条目本是
+          从 Agent 配置读进来的，默认动作绝不能反向删用户原有配置）；影响面列表说明
           「连同删除」会碰哪些 agent（apps 全为 false 时不列） */}
       {deleteTarget && (
         <Modal open title={`删除 MCP「${deleteTarget.name}」？`} onClose={() => setDeleteTarget(null)} size="md">
             <p className="text-xs leading-5 text-l4">
               该条目来自{mcpOriginLabel(deleteTarget.origin, AGENTS)}
-              ，原本就在 agent 的配置里。
+              ，原本就在 Agent 的配置里。
             </p>
             {mcpDeleteImpact(deleteTarget.apps, AGENTS).length > 0 && (
               <p className="mt-1 text-xs leading-5 text-l4">
-                选「连同 agent 配置一起删除」将从以下 agent 的配置中删除：
+                选「连同 Agent 配置一起删除」将从以下 Agent 的配置中删除：
                 {mcpDeleteImpact(deleteTarget.apps, AGENTS).join("、")}。
               </p>
             )}
@@ -1871,7 +1871,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                 className={dangerActionClass}
                 onClick={() => void doDelete(deleteTarget, false, false)}
               >
-                连同 agent 配置一起删除
+                连同 Agent 配置一起删除
               </button>
               <button
                 className={primaryActionClass}
@@ -1882,7 +1882,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
               </button>
             </div>
             <p className="mt-1.5 text-right text-micro text-l4">
-              仅从清单移除（推荐）：保留各 agent 配置中的该条目
+              仅从清单移除（推荐）：保留各 Agent 配置中的该条目
             </p>
         </Modal>
       )}
@@ -2048,7 +2048,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
               <div className="mt-2 rounded-sm ccode-well p-2">
                 <p className="mb-1 text-xs text-l3">
                   将导入 {pastePreview.servers.length} 个（stdio
-                  命令会被各 agent 直接执行，请确认来源可信）：
+                  命令会被各 Agent 直接执行，请确认来源可信）：
                 </p>
                 <ul className="max-h-36 space-y-0.5 overflow-auto">
                   {pastePreview.servers.map((s) => (

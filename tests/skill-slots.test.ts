@@ -36,7 +36,7 @@ test("简报占位解析：换技能后正文跟随，空缺锚保留原样并�
   // 用户技能顶了检索位、内置顶了精读位、图位空缺
   const provides = { "my-search": ["lit-search"] };
   const r = resolveSkillRefs(brief, ["my-search", "lit-notes"], provides);
-  // 空缺锚渲染成锚名本身（可读，不把模板语法漏给 agent），锚名进 unresolved 供校验提醒
+  // 空缺锚渲染成锚名本身（可读，不把模板语法漏给 Agent），锚名进 unresolved 供校验提醒
   assert.equal(
     r.text,
     "全程按 my-search 技能执行，写法见 lit-notes 技能，出图按 figure-forge 技能。",

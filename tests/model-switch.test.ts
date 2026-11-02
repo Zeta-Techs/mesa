@@ -10,7 +10,7 @@ import {
 } from "../src/model-switch.ts";
 import { AGENTS } from "../src/types.ts";
 
-test("能力表只收录真实 agent id", () => {
+test("能力表只收录真实 Agent id", () => {
   const ids = new Set(AGENTS.map((a) => a.id));
   for (const id of Object.keys(MODEL_SWITCH))
     assert.ok(ids.has(id), `${id} 不是已知 agent`);
@@ -36,7 +36,7 @@ test("claude-code 超过选择器上限才提示", () => {
   assert.match(launchModelNote("claude-code", 6) ?? "", /第 6 个起/);
 });
 
-test("未知 agent 与不限量 CLI 不啰嗦", () => {
+test("未知 Agent 与不限量 CLI 不啰嗦", () => {
   assert.equal(launchModelNote("不存在的-agent", 3), null);
   assert.equal(launchModelNote("opencode", 9), null);
 });

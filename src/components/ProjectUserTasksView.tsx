@@ -125,7 +125,7 @@ function goalSettingLines(
       `Agent：${[agentLabel(task.agent ?? profile?.agent ?? ""), profile?.name ?? "连接已删除", task.model].filter(Boolean).join(" / ")}`,
     );
   } else {
-    lines.push("Agent：跟随项目默认（开始时按 Agents 页的项目默认）");
+    lines.push("Agent：跟随项目默认（开始时按「Agent 分工」页签的项目默认）");
   }
   return lines;
 }
@@ -322,7 +322,7 @@ export default function ProjectUserTasksView({
     });
     if (bound?.kind === "missing") {
       setError(
-        "这条目标绑定的连接已删除，启动已停：去 Agents 页这条目标的行内重绑，或清掉绑定跟随项目默认。",
+        "这条目标绑定的连接已删除，启动已停：去「Agent 分工」页签这条目标的行内重绑，或清掉绑定跟随项目默认。",
       );
       return;
     }

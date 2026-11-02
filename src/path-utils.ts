@@ -102,7 +102,7 @@ export function revealFolderLabel(isMac: boolean, isWindows: boolean): string {
   return "在文件管理器中显示";
 }
 
-/** filePath 落在 root 内时给相对路径（正斜杠，写进给 agent 的指令），否则原样（剥 verbatim）。
+/** filePath 落在 root 内时给相对路径（正斜杠，写进给 Agent 的指令），否则原样（剥 verbatim）。
  *  跨方言判定走 pathWithin：Windows 上后端给 `\` 分隔，旧写法拼 `${root}/` 永不命中。 */
 export function relativeUnder(
   filePath: string,

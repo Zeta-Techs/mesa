@@ -153,7 +153,7 @@ export interface AppSettings {
   aiProfiles?: Record<string, string>;
   /** 与 aiProfiles 同键：该功能选中的模型；键缺失 = 该配置的第一个模型 */
   aiProfileModels?: Record<string, string>;
-  /** 每个 agent 的默认 profile（agent id → profile id）：启动栏选完 agent 后预选它。
+  /** 每个 Agent 的默认 profile（agent id → profile id）：启动栏选完 Agent 后预选它。
    *  解析顺序 显式默认 > 上次使用 > 首个配置 */
   defaultProfiles?: Record<string, string>;
   /** 启动时进入哪一页（页面 id）；缺省 = workbench */
@@ -186,7 +186,7 @@ export interface AppSettings {
   navCapsuleRunAnnounce?: boolean;
   /** 「停用」的 profile id（字段名沿用旧称）：软停用 = 不被自动路径挑中，手动指定仍可用 */
   hiddenProfiles?: string[];
-  /** 「设为全局」追踪：agent id → 上次由 Mesa 写入该 agent 全局配置的 profile id
+  /** 「设为全局」追踪：agent id → 上次由 Mesa 写入该 Agent 全局配置的 profile id
       （只代表「上次写入」，Mesa 之外手改配置文件会失真；恢复备份后由后端清除） */
   activeGlobalProfiles?: Record<string, string>;
   /** cc-switch 提醒已确认过、一键「设为全局」不再提醒的 agent（⋯ 菜单的预览入口仍提醒） */
@@ -216,8 +216,8 @@ export interface AppSettings {
   statusBar?: boolean;
   /** 打开对话时先显示哪一层（默认聊天）：进入 Agent 对话的入口都跟它走，见 tab-surface.ts */
   openSurface?: "chat" | "terminal";
-  /** 向 agent 主动告知终端底色（Windows 专用，默认开）：ConPTY 吞掉 OSC 10/11
-      底色查询，浅色主题下 agent 会回落深色；开 = attach 后主动推当前主题前景/底色 */
+  /** 向 Agent 主动告知终端底色（Windows 专用，默认开）：ConPTY 吞掉 OSC 10/11
+      底色查询，浅色主题下 Agent 会回落深色；开 = attach 后主动推当前主题前景/底色 */
   terminalColorReport?: boolean;
   /** 出网代理（官方账号启动与登录注入 HTTPS_PROXY 等）；空 = 不注入。网关启动不走 */
   outboundProxy?: string | null;
@@ -325,7 +325,7 @@ export interface PendingTerminal {
   title?: string;
   /** run 脚本：进入 shell 后立即写入的命令行 */
   prefillCommand?: string;
-  /** run 脚本标签：只开 shell，不走 agent 启动流程 */
+  /** run 脚本标签：只开 shell，不走 Agent 启动流程 */
   shellOnly?: boolean;
   /** 直接启动 Custom Runtime，不经过 shell */
   customRuntimeId?: string;
@@ -339,7 +339,7 @@ export interface PendingTerminal {
      *  "ccode" = 内联 provider 会话，必须用带 Base URL 的配置（见 resume-profile.ts） */
     provider?: string | null;
   };
-  /** 指定启动配置（未给则按 ccode.lastProfile → 该 agent 首个配置兜底） */
+  /** 指定启动配置（未给则按 ccode.lastProfile → 该 Agent 首个配置兜底） */
   autoLaunchProfileId?: string;
   /** 预填启动栏（工作区记住上次配置） */
   agentId?: string;
@@ -954,7 +954,7 @@ interface AppState {
   checkAppUpdate: () => Promise<void>;
   loadAll: () => Promise<void>;
   connectionLoadError: string | null;
-  /** 拉取全部 agent 的会话元数据，返回最新列表供轮询比对 */
+  /** 拉取全部 Agent 的会话元数据，返回最新列表供轮询比对 */
   loadSessions: (force?: boolean) => Promise<SessionMetaDto[]>;
   /** 用户确认删除后先从列表拿掉，再在后台删（Mac 上进回收站要等 Finder）；删的过程中回来的刷新也不让它冒回来。
    *  返回撤销：删失败时调用，这几行随下一次刷新回来 */

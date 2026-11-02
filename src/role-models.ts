@@ -1,7 +1,7 @@
 import type { RoleModels } from "./types";
 
 /**
- * 连接的「模型分工」（2026-10-17 用户：补齐槽位、子 agent 的规则要在连接里看得见、能自定义）。
+ * 连接的「模型分工」（2026-10-17 用户：补齐槽位、子 Agent 的规则要在连接里看得见、能自定义）。
  * 只列真能分开指定的 CLI 与角色；说明写给用户看「这个模型会被用来干什么」。后端消费见 agents.rs
  * claude_model_env / grok_config_overlay / OpenCode small_model。
  */

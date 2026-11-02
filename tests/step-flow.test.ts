@@ -91,7 +91,7 @@ test("无决策项/种子的步骤：不生成 discuss 节点（v3.89）", () =>
     flow.nodes.map((n) => n.kind),
     ["human", "agent", "review"],
   );
-  assert.equal(flow.currentKey, "agent", "before 事项已完成、agent 进行中 → 当前是 agent 节点");
+  assert.equal(flow.currentKey, "agent", "before 事项已完成、agent 进行中 → 当前是 Agent 节点");
 });
 
 test("Blender/库交付沉到可选区，不挡在步骤工作前面", () => {
@@ -126,7 +126,7 @@ test("去评审：待评审必给；进行中只在出字时藏，回合结束�
   assert.equal(reviewActionVisible("done"), false);
 });
 
-test("runStatus 映射：review/done 都算 agent 节点完成；评审节点只在 done 完成", () => {
+test("runStatus 映射：review/done 都算 Agent 节点完成；评审节点只在 done 完成", () => {
   const review = buildStepFlow({
     step: step({}),
     states: [],
@@ -318,7 +318,7 @@ test("既无决策项也无种子：不生成 discuss 节点，当前直接落 a
   assert.equal(
     flow.nodes.find((n) => n.key === "discuss"),
     undefined,
-    "没东西要定就不生成该节点（想法区改挂 agent 节点，见 StepFlow.tsx hasDiscussNode）",
+    "没东西要定就不生成该节点（想法区改挂 Agent 节点，见 StepFlow.tsx hasDiscussNode）",
   );
   assert.equal(flow.currentKey, "agent");
 });

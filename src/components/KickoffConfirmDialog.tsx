@@ -808,7 +808,7 @@ export default function KickoffConfirmDialog({
           profileId: launch.profileId,
           model: launch.model || null,
         }).catch((reason) => {
-          toast(`本步骤默认没存成：${String(reason)}。开工不受影响，可去 Agents 页重存。`, "warning");
+          toast(`本步骤默认没存成：${String(reason)}。开工不受影响，可去「Agent 分工」页签重存。`, "warning");
         });
       }
     }
@@ -995,7 +995,7 @@ export default function KickoffConfirmDialog({
             {selectionMatchesSlot && (
               <span
                 className="shrink-0 text-micro text-l4"
-                title="本步骤已存专属默认（Agents → 专属绑定可改可清）"
+                title="本步骤已存专属默认（「Agent 分工」→ 专属绑定可改可清）"
               >
                 · 本步骤默认
               </span>
@@ -1312,7 +1312,7 @@ export default function KickoffConfirmDialog({
               onClick={() => setTaskMdOpen((v) => !v)}
               aria-expanded={taskMdOpen}
               title={
-                taskMdOpen ? "收起 TASK.md" : "展开查看/编辑本步交给 agent 的合同"
+                taskMdOpen ? "收起 TASK.md" : "展开查看/编辑本步交给 Agent 的合同"
               }
               className="-ml-1 flex items-center gap-1 rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1"
             >

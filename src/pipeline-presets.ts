@@ -448,7 +448,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     // 可选区在「同步到文献库」旁边给出入口（2026-09-20），进沉浸阅读；改完开大纲走未存进历史软门。
     // 「精读力度怎么分」卡片已移除（v3.97，用户拍板）：力度要看到清单规模和全文到位率才定得了，
     // 开工前点卡片等于让人盲猜——与 v3.89 移除「纳入标准定多严」同一道理。
-    // 改为 agent 粗读清单后带着数字经 help-wanted.md 按需问（见上方简报第 2 条）。
+    // 改为 Agent 粗读清单后带着数字经 help-wanted.md 按需问（见上方简报第 2 条）。
     decisions: [],
   },
   {
@@ -1319,7 +1319,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       {
         title: "放入学校格式规范与论文模板",
         guidance:
-          "学校官网/研究生院下载的格式规范与模板文件，放到项目 manuscript/template/ 目录；没有时 agent 按通用学位论文规范执行并注明依据。越早放入，初稿结构越少返工。初稿固定按编号制渲，引用格式在「格式与定稿」的「更换引用样式」里定。",
+          "学校官网/研究生院下载的格式规范与模板文件，放到项目 manuscript/template/ 目录；没有时 Agent 按通用学位论文规范执行并注明依据。越早放入，初稿结构越少返工。初稿固定按编号制渲，引用格式在「格式与定稿」的「更换引用样式」里定。",
         target: "manuscript/template/",
         timing: "before",
       },
@@ -1478,7 +1478,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       {
         title: "写下已定目标期刊（如已确定）",
         guidance:
-          "已确定期刊时在 submission/target-journal.md 写明刊名与理由；没有则 agent 会给 2-3 个候选并标注「待用户确认」",
+          "已确定期刊时在 submission/target-journal.md 写明刊名与理由；没有则 Agent 会给 2-3 个候选并标注「待用户确认」",
         target: "submission/target-journal.md",
         timing: "before",
         optional: true,
@@ -1602,7 +1602,7 @@ function submissionRevisionSteps(round: number): ProjectStepDto[] {
       humanTasks: [
         {
           title: `保存第${r}轮审稿意见全文`,
-          guidance: `把编辑来信/审稿意见保存为 reviews/round-${r}.md；缺该文件 agent 会停止`,
+          guidance: `把编辑来信/审稿意见保存为 reviews/round-${r}.md；缺该文件 Agent 会停止`,
           target: `reviews/round-${r}.md`,
           timing: "before",
         },

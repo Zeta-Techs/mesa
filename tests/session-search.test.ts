@@ -240,7 +240,7 @@ test("parseSearchQuery：引号整句与筛选写法，与后端 parse_query 同
   assert.deepEqual(parseSearchQuery('"没闭合 的引号').phrases, ["没闭合 的引号"]);
 });
 
-test("只写筛选不写词：按 agent / 日期筛列表；按角色搜时不拿标题先顶上", () => {
+test("只写筛选不写词：按 Agent / 日期筛列表；按角色搜时不拿标题先顶上", () => {
   const rows = [
     s({ sessionId: "a", agent: "codex", updatedAt: "2026-10-15T04:00:00Z", title: "消融" }),
     s({ sessionId: "b", agent: "claude-code", updatedAt: "2026-09-01T04:00:00Z", title: "消融" }),

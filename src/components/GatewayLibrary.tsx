@@ -1216,7 +1216,7 @@ export default function GatewayLibrary({
               关闭
             </button>
             <button type="button" className={primaryActionClass} onClick={() => openEdit("new")}>
-              + 新建网关
+              ＋ 新建网关
             </button>
           </>
         )
@@ -1846,7 +1846,7 @@ export default function GatewayLibrary({
           // 宽的时候（容器 ≥ 56rem）第二行拆成右边对齐的几列：地址与密钥 / 连接数 / 近 30 天花费；窄的时候照旧两行
           <ul className="@container space-y-0.5">
             {gateways.length === 0 && (
-              <li className="py-8 text-center text-sm text-l3">还没有网关。点右下角「+ 新建网关」，或在添加连接时新建。</li>
+              <li className="py-8 text-center text-sm text-l3">还没有网关。点右下角「＋ 新建网关」，或在添加连接时新建。</li>
             )}
             {gatewayPickerRows(gateways).map((row) => {
               const g = gateways.find((item) => item.id === row.id);

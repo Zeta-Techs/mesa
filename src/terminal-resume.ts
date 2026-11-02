@@ -3,7 +3,7 @@
  *
  * 两条规则：
  * 1. resume 兜底找「正持有这条会话」的活标签时只按 runId 或 agent+sessionId 认身份；
- *    cwd 相同不算数——同目录的别家 agent / shell 标签不是这条会话的持有者，
+ *    cwd 相同不算数——同目录的别家 Agent / shell 标签不是这条会话的持有者，
  *    抢过去等于把 Codex 会话恢复到 Claude 标签上。
  * 2. 恢复请求显式带了原配置（runId 恢复带出的 run.profileId）时优先原配置，
  *    不按「上次使用」重新挑选覆盖；原配置已删除/停用时不静默替换，

@@ -13,7 +13,7 @@ export const READER_SPLIT_L_KEY = "ccode.readerSplitL";
 export const READER_SPLIT_R_KEY = "ccode.readerSplitR";
 /** 右栏「翻译面板 × 终端」纵向分割：面板高度占右栏高度的百分比（未拖过 = 内容自适应，不落键） */
 export const READER_SPLIT_T_KEY = "ccode.readerSplitT";
-/** 译文卡「钉在 PDF 上」（true = 正文栏悬浮球形态；未落键 = 右栏 agent 上方原位） */
+/** 译文卡「钉在 PDF 上」（true = 正文栏悬浮球形态；未落键 = 右栏 Agent 上方原位） */
 export const READER_TL_PINNED_KEY = "ccode.readerTlPinned";
 /** 译文悬浮球位置（PDF 栏内百分比坐标，球心；缺省贴右缘中部） */
 export const READER_TL_BALL_KEY = "ccode.readerTlBall";
@@ -460,7 +460,7 @@ export function captureRectToCanvasPixels(
   return { sx, sy, sw: ex - sx, sh: ey - sy };
 }
 
-/** 圈选截图「发给 agent」的注入格式：转义路径（终端粘贴图片同一口径）+ 预填 prompt 与出处。
+/** 圈选截图「发给 Agent」的注入格式：转义路径（终端粘贴图片同一口径）+ 预填 prompt 与出处。
  *  isWindows 由调用方显式传入而不是在这里读 IS_WINDOWS——本模块是纯逻辑层，
  *  隐式依赖平台会让单测结果随宿主机器变化（Node 的 navigator.platform 在 Windows 上是 Win32）。 */
 export function formatReaderCapturePrompt(

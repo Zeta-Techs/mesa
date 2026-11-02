@@ -287,19 +287,19 @@ const reportOpts = (over: Partial<Parameters<typeof shouldReportTerminalColors>[
   ...over,
 });
 
-test("底色告知只在 Windows + 探测型 agent + 浅色 + 开关开启时发生", () => {
+test("底色告知只在 Windows + 探测型 Agent + 浅色 + 开关开启时发生", () => {
   assert.equal(shouldReportTerminalColors(reportOpts()), true);
   // macOS/Linux 的 xterm.js 会如实应答 OSC 查询，不需要主动推
   assert.equal(shouldReportTerminalColors(reportOpts({ isWindows: false })), false);
   // 普通 shell 不探测底色，推了只会变成输入框里的乱码
   assert.equal(shouldReportTerminalColors(reportOpts({ kind: "shell" })), false);
-  // 深色本就是 agent 探测失败的回落值，推了没收益
+  // 深色本就是 Agent 探测失败的回落值，推了没收益
   assert.equal(shouldReportTerminalColors(reportOpts({ themeId: "midnight" })), false);
   assert.equal(shouldReportTerminalColors(reportOpts({ themeId: undefined })), false);
   assert.equal(shouldReportTerminalColors(reportOpts({ enabled: false })), false);
 });
 
-test("只推给会消费 OSC 10/11 回报的 agent，其余一律不推", () => {
+test("只推给会消费 OSC 10/11 回报的 Agent，其余一律不推", () => {
   // 实测会探测并消费：gemini（TerminalCapabilityManager）、qwen（detectOsc11Theme）、
   // codex 0.162（terminal_identity.rs 重新引入探测；0.150 曾短暂移除）
   for (const id of ["gemini", "qwen", "codex"]) {

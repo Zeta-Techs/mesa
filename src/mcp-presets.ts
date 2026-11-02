@@ -167,7 +167,7 @@ export function applyBlenderMcpProbe(
 }
 
 /**
- * 从预设新建时自动启用的 agent：只含 MCP 分发可写、且本机装了的家。caps 未到则空（不强开）。
+ * 从预设新建时自动启用的 Agent：只含 MCP 分发可写、且本机装了的家。caps 未到则空（不强开）。
  * installedIds 传本机检测到的 agent；没传或为空 = 检测未就位，不按安装过滤。
  * 没装的不写：写了会替人建出 ~/.cursor 这类目录，Cursor 的配置还和它的编辑器共用。
  */

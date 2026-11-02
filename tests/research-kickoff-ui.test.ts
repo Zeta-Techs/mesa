@@ -86,7 +86,7 @@ test("开工弹层手选守卫：异步 profiles 引用替换不再顶回用户�
   });
   const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
   const restore:Array<[string,PropertyDescriptor|undefined]>=[];
-  // 两个 agent 各一条连接：codex p1 在前（无任何预填源时 pickKickoffLaunch 会选它）
+  // 两个 Agent 各一条连接：codex p1 在前（无任何预填源时 pickKickoffLaunch 会选它）
   const state={profiles:[
     {id:'p1',name:'Codex relay',agent:'codex',models:['test-model'],accountType:'api'},
     {id:'p2',name:'Claude relay',agent:'claude-code',models:['claude-model'],accountType:'api'},
@@ -116,7 +116,7 @@ test("开工弹层手选守卫：异步 profiles 引用替换不再顶回用户�
     // 用户手选换到 claude-code（对应连接 p2）
     await act(async()=>{agentSel.value='claude-code';agentSel.dispatchEvent(new dom.window.Event('change',{bubbles:true}));});
     assert.equal(agentSel.value,'claude-code');
-    assert.equal(selectOf('p2')!.value,'p2','换 agent 后连接跟随');
+    assert.equal(selectOf('p2')!.value,'p2','换 Agent 后连接跟随');
     // 窗口聚焦→loadAll→profiles 数组引用替换（内容不变）：守卫生效则手选保留
     state.profiles=[...state.profiles];
     await act(async()=>root.render(h(Kickoff,props())));

@@ -101,7 +101,7 @@ export default function PromptManager() {
               className={primaryActionClass}
               onClick={() => setEditing({ id: null, title: "", body: "" })}
             >
-              + 新建提示词
+              ＋ 新建提示词
             </button>
           </>
         )

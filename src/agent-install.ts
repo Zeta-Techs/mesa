@@ -60,9 +60,9 @@ export function installToolHelp(agentId: string, isWindows: boolean): string {
       return "Cursor CLI 在 Windows 上用官方的 PowerShell 安装器，但这台电脑找不到 PowerShell。也可以在 PowerShell 里手动运行：irm 'https://cursor.com/install?win32=true' | iex，装好后重新打开 Mesa。";
     }
     if (WINGET_AGENTS.has(agentId)) {
-      return "未找到可用的安装工具：winget 与 Node.js 都不可用。该 agent 在 Windows 上有两条路——① 系统自带 winget：刚建好的 Windows 账户第一次登录后，winget 要过几分钟才能用，稍等再点「安装」；仍然没有，请在 Microsoft Store 安装或更新「应用安装程序」；② 安装 Node.js LTS 走 npm 渠道（下载：https://nodejs.org/en/download）。完成后完全退出并重新打开 Mesa。";
+      return "未找到可用的安装工具：winget 与 Node.js 都不可用。该 Agent 在 Windows 上有两条路——① 系统自带 winget：刚建好的 Windows 账户第一次登录后，winget 要过几分钟才能用，稍等再点「安装」；仍然没有，请在 Microsoft Store 安装或更新「应用安装程序」；② 安装 Node.js LTS 走 npm 渠道（下载：https://nodejs.org/en/download）。完成后完全退出并重新打开 Mesa。";
     }
-    return "未找到可用的安装工具：该 agent 在 Windows 上只能走 npm 渠道。请先安装 Node.js LTS（自带 npm），安装完成后完全退出并重新打开 Mesa 再重试。下载：https://nodejs.org/en/download";
+    return "未找到可用的安装工具：该 Agent 在 Windows 上只能走 npm 渠道。请先安装 Node.js LTS（自带 npm），安装完成后完全退出并重新打开 Mesa 再重试。下载：https://nodejs.org/en/download";
   }
   return "未找到可用的安装工具。请先安装 Node.js（会同时提供 npm），然后完全退出并重新打开 Mesa 再重试。";
 }

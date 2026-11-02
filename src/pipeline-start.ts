@@ -368,7 +368,7 @@ export async function buildWorkspaceTerminalRequest(
     // 标签名统一用步骤名（「文献精读与笔记」），不再有时是工作区名 lit-notes、有时是步骤名
     title: (await workspaceStepName(ws)) ?? ws.name,
     focusSession: live ?? undefined,
-    // resume 命中时以会话的 agent 为准（TerminalPage 的 resume 分支会自选 profile/model）；
+    // resume 命中时以会话的 Agent 为准（TerminalPage 的 resume 分支会自选 profile/model）；
     // 同一家 Agent 时，步骤绑定的连接与模型作预填——不带模型时会落到连接名单第一个，
     // 接回的对话被悄悄换模型（2026-10-23 HER 精读步：glm-5.3 接回成 glm-5.3-flash）。
     // 未命中按三链预填

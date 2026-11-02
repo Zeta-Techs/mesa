@@ -100,9 +100,9 @@ export function addConnectionDefaults(input: {
   gateways: readonly Pick<Gateway, "id" | "slots">[];
   /** 现有连接各自绑的网关 id（官方账号为空） */
   boundGatewayIds: readonly (string | null | undefined)[];
-  /** 已安装的 agent id，按 AGENTS 顺序 */
+  /** 已安装的 Agent id，按 AGENTS 顺序 */
   installed: readonly string[];
-  /** 从某家 agent 组发起时预选的 agent，优先于一切推断 */
+  /** 从某家 Agent 组发起时预选的 Agent，优先于一切推断 */
   presetAgent?: string | null;
   /** 从网关库「为此网关添加连接」发起时指定的网关（2026-10-31），优先于「没有连接在用」的推断 */
   presetGatewayId?: string | null;

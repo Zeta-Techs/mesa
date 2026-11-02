@@ -8,7 +8,7 @@
 import type { ChatMessageDto, SessionSyncState } from "./types.ts";
 
 /** 有精确状态（hooks 或结构化旁路，docs/design-chat-structured-channels.md）的八家；cursor 没有等价事件。
- *  键是 agent id（原先误写成 claude，Claude Code 一直被当成「没有精确注意力」，2026-10-20 改正） */
+ *  键是 Agent id（原先误写成 claude，Claude Code 一直被当成「没有精确注意力」，2026-10-20 改正） */
 export const HOOKS_AGENTS: ReadonlySet<string> = new Set([
   "claude-code",
   "opencode",

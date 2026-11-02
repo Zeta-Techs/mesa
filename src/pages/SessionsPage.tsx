@@ -168,7 +168,7 @@ type Filter =
   | { kind: "all" }
   | { kind: "internal" }
   | { kind: "agent"; agent: string }
-  // 项目挂在 agent 下，筛选必须同时限定 agent 和路径（同名目录可能跨 agent）
+  // 项目挂在 Agent 下，筛选必须同时限定 Agent 和路径（同名目录可能跨 Agent）
   | { kind: "project"; agent: string; path: string }
   // 「范围 → 按项目」：只按路径、跨 Agent
   | { kind: "projectPath"; path: string }
@@ -291,11 +291,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     setQuick(next);
     if (id === "archived") setShowArchived(on);
   }
-  const [scopes, setScopes] = useState<ScopeChip[]>([]);  // 分类筛选折叠收进列表栏（默认收起），展开为单列纵向手风琴：点 agent 只展开/收起其项目
+  const [scopes, setScopes] = useState<ScopeChip[]>([]);  // 分类筛选折叠收进列表栏（默认收起），展开为单列纵向手风琴：点 Agent 只展开/收起其项目
   // 子列表（不动列表筛选、不关回放）；「全部项目」/单项目行落筛选且**面板保持展开**（v3.43：
   // 用户要边筛边浏览，选中不收起），手动点标题行或 × 清除才收。
   const [treeOpen, setTreeOpen] = useState(false);
-  // 当前展开项目子列表的 agent：只认显式点开/点收，不跟当前筛选（否则选中的 Agent 永远收不回去）
+  // 当前展开项目子列表的 Agent：只认显式点开/点收，不跟当前筛选（否则选中的 Agent 永远收不回去）
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
   /** 「范围」里「按项目」段默认展开，让项目分类不用再点一层 */
   const [projectsOpen, setProjectsOpen] = useState(false);
@@ -306,7 +306,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       .then(setHomeDir)
       .catch(() => {});
   }, []);
-  // 批量删除：选择模式 + 勾选集合（键为 agent+sessionId 复合键，防跨 agent 撞 id）
+  // 批量删除：选择模式 + 勾选集合（键为 agent+sessionId 复合键，防跨 Agent 撞 id）
   const [selecting, setSelecting] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [confirmBatch, setConfirmBatch] = useState(false);
@@ -661,7 +661,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** A4. 交给该 agent 自己的 GUI 客户端继续（预检与修复都在 useClientOpen / 后端 client_open.rs）。
+  /** A4. 交给该 Agent 自己的 GUI 客户端继续（预检与修复都在 useClientOpen / 后端 client_open.rs）。
    *  客户端与 CLI 共享本地会话存储，CLI 发起的对话同样能跳过去继续聊 */
   function openInClient(s: SessionMetaDto, clientId?: string) {
     clientOpen.openSession(
@@ -754,7 +754,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     [regularVisible],
   );
 
-  // 展开哪个 agent 的项目子列表：只跟手风琴开关，该 agent 已无会话则视为收起
+  // 展开哪个 Agent 的项目子列表：只跟手风琴开关，该 Agent 已无会话则视为收起
   const expandedGroup = useMemo(() => {
     if (!expandedAgent) return null;
     return tree.find((g) => g.agent === expandedAgent) ?? null;
@@ -1397,7 +1397,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 删除某 agent 下某项目的全部会话（后端按 agent+path 全删，extra 提示口径外数量） */
+  /** 删除某 Agent 下某项目的全部会话（后端按 agent+path 全删，extra 提示口径外数量） */
   async function deleteProjectSessions(
     agent: string,
     path: string,
@@ -1752,7 +1752,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             onChange={setQuery}
           />
           {/* 搜索建议（v3.88）：输入即给出结构化维度，点一下落成可叠加 chip——
-              取代「展开手风琴 → 找 agent → 展开 → 找项目」的三次点击钻取 */}
+              取代「展开手风琴 → 找 Agent → 展开 → 找项目」的三次点击钻取 */}
           {!selecting && q && suggestions.length > 0 && (
             <div className="mt-1 flex flex-wrap items-center gap-1">
               {suggestions.map((c) => (
@@ -2049,7 +2049,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     {tree.length > 0 && <div className={sectionCls}>Agent</div>}
                     {tree.map((g) => {
                       const on = filterActive({ kind: "agent", agent: g.agent });
-                      // 该 agent 下某个项目是当前筛选：行上弱提示，不抢「选中」填充
+                      // 该 Agent 下某个项目是当前筛选：行上弱提示，不抢「选中」填充
                       const childOn = filter.kind === "project" && filter.agent === g.agent;
                       const open = expandedGroup?.agent === g.agent;
                       return (
@@ -2442,7 +2442,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       </span>
                     )}
                     {/* 哪个项目：范围已限定到单个项目时不写（同一事实不重复）；
-                        原先 meta 行常常只剩一枚 agent 胶囊，第二行几乎是空的 */}
+                        原先 meta 行常常只剩一枚 Agent 胶囊，第二行几乎是空的 */}
                     {!projectScoped && (() => {
                       const label = sessionProjectLabel(s.projectPath, projectNames, IS_WINDOWS);
                       return label ? (
@@ -2910,7 +2910,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     )}
                   </div>
                 </div>
-                {/* 底部只读操作条：继续由头部主 CTA 负责；项目跳转与 agent 已在头部第二行，这里只留外部续聊 */}
+                {/* 底部只读操作条：继续由头部主 CTA 负责；项目跳转与 Agent 已在头部第二行，这里只留外部续聊 */}
                 <div className="shrink-0 px-4 pb-2 pt-2.5">
                   <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-xl bg-inset px-3 py-2">
                     <span className="min-w-0 flex-1 truncate text-xs text-l4">

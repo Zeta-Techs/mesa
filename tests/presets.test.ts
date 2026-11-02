@@ -5,7 +5,7 @@ import { slotForAgent } from "../src/gateway-slot.ts";
 
 const openAiAgents = ["codex", "qwen", "kimi", "opencode", "grok"];
 
-test("OpenAI 兼容 agent 都有 Moonshot 与百炼快速预设", () => {
+test("OpenAI 兼容 Agent 都有 Moonshot 与百炼快速预设", () => {
   for (const agent of openAiAgents) {
     const list = presetsForAgent(agent);
     const moonshot = list.find((p) => p.name === "Moonshot 月之暗面");

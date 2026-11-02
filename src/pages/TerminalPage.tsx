@@ -676,7 +676,7 @@ export interface SessionLinkState {
   ptyQuiet: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
   launchPick: LaunchPickState;
-  /** 当前 agent 可从聊天界面直接调用的技能 / MCP 资源。 */
+  /** 当前 Agent 可从聊天界面直接调用的技能 / MCP 资源。 */
   skills: SkillDto[];
   mcps: McpServerDto[];
   /** 结构化旁路快照（chat_channel.rs：hooks / Qwen Dual Output / OpenCode 服务 / Codex app-server）；没接上为 null */
@@ -908,7 +908,7 @@ const TerminalView = memo(function TerminalView({
   resumeKick?: number;
   /** run 脚本：进入 shell 后立即写入的命令行 */
   prefillCommand?: string;
-  /** run 脚本标签：挂载后自动开 shell 并执行 prefillCommand（不走 agent 启动流程） */
+  /** run 脚本标签：挂载后自动开 shell 并执行 prefillCommand（不走 Agent 启动流程） */
   shellOnly?: boolean;
   /** 直接启动 Custom Runtime，不经过 shell */
   customRuntimeId?: string;
@@ -1048,7 +1048,7 @@ const TerminalView = memo(function TerminalView({
       cancelled = true;
     };
   }, [agentId]);
-  // 换 agent 后按「显式默认 > 上次使用 > 该 agent 首个配置」预选（v3.88）。
+  // 换 Agent 后按「显式默认 > 上次使用 > 该 Agent 首个配置」预选（v3.88）。
   // 这才是用户心里的「启用某个配置」——不加 enabled 布尔（与注入语义打架，见 settings.rs）
   // 官方账号未登录时不要自动预选：选了会打官方接口且不带密钥，报 401 Missing bearer。
   useEffect(() => {
@@ -1110,7 +1110,7 @@ const TerminalView = memo(function TerminalView({
   const [effortSeen, setEffortSeen] = useState<string | null>(null);
   const [modelSeen, setModelSeen] = useState<string | null>(null);
   const effortTailRef = useRef("");
-  // 输出监听是启动时挂的闭包：认档用「这个进程启动时的 agent」，不跟启动栏后来的选择
+  // 输出监听是启动时挂的闭包：认档用「这个进程启动时的 Agent」，不跟启动栏后来的选择
   const launchAgentRef = useRef(agentId);
   /** 按当前渲染器重算单元格宽补位（WebGL 就近取整）；字号字体改了由设置 effect 调 */
   const cellWidthSyncRef = useRef<(() => void) | null>(null);
@@ -1120,7 +1120,7 @@ const TerminalView = memo(function TerminalView({
   // 扫屏回调里要拿「出错时用的是哪条连接」，不能读闭包里的旧值
   const selectedProfileRef = useRef(selectedProfile);
   selectedProfileRef.current = selectedProfile;
-  // 模型 combo：下拉开合状态 + 选项来源（profile 预设 + 本 agent 历史，去重）
+  // 模型 combo：下拉开合状态 + 选项来源（profile 预设 + 本 Agent 历史，去重）
   const [modelOpen, setModelOpen] = useState(false);
   // Agent / 配置同时只开一个，且不跟模型清单叠在一起
   const [openPick, setOpenPick] = useState<
@@ -1902,7 +1902,7 @@ const TerminalView = memo(function TerminalView({
     setPage("workspaces");
     useAppStore.getState().setNewProjectOpenReq({ token: Date.now(), returnTabId: tabId });
   }
-  // 开聊前的思考档（2026-10-17 用户选定）：与开工弹层同一判定——只有该 agent + 连接 + 模型
+  // 开聊前的思考档（2026-10-17 用户选定）：与开工弹层同一判定——只有该 Agent + 连接 + 模型
   // 有启动注入通道（combo_surface.injectEffortAllowed）才给档位；值是本次覆盖（标签 effort），不写回连接
   const launchAgents = useAppStore((s) => s.agents);
   const effectiveLaunchModel = model.trim() || selectedProfile?.models[0] || "";
@@ -2052,9 +2052,9 @@ const TerminalView = memo(function TerminalView({
   }
 
   const [skillCount, setSkillCount] = useState(0);
-  // 当前 agent 已启用的技能清单（技能页开关同步）；「插入」菜单一键使用
+  // 当前 Agent 已启用的技能清单（技能页开关同步）；「插入」菜单一键使用
   const [agentSkills, setAgentSkills] = useState<SkillDto[]>([]);
-  // 当前 agent 已分发的 MCP server 清单（MCP 页开关同步）；「插入」菜单一键提及/管理
+  // 当前 Agent 已分发的 MCP server 清单（MCP 页开关同步）；「插入」菜单一键提及/管理
   const [agentMcps, setAgentMcps] = useState<McpServerDto[]>([]);
   // 技能 + MCP 合并为一颗「插入」pill（聊天输入条「插入」菜单同口径），
   // 收缩态右侧只留 插入/修改/⋯ 三件，替代原先两粒常驻计数胶囊
@@ -2080,7 +2080,7 @@ const TerminalView = memo(function TerminalView({
     );
   }
 
-  // 当前 agent 已启用的技能数与清单（技能页开关同步）+ 已分发的 MCP server（MCP 页开关同步）
+  // 当前 Agent 已启用的技能数与清单（技能页开关同步）+ 已分发的 MCP server（MCP 页开关同步）
   useEffect(() => {
     invoke<SkillDto[]>("list_skills")
       .then((all) => {
@@ -2110,7 +2110,7 @@ const TerminalView = memo(function TerminalView({
     setInsertMenuFrom(null);
   }
 
-  /** 一键提及 MCP server：同技能注入机制（提示 agent 调用其工具；分发变更对新会话生效） */
+  /** 一键提及 MCP server：同技能注入机制（提示 Agent 调用其工具；分发变更对新会话生效） */
   function useMcp(name: string) {
     const text = `使用 ${name} 这个 MCP server 提供的工具：`;
     if (running && activePtyId) {
@@ -2192,7 +2192,7 @@ const TerminalView = memo(function TerminalView({
       : agentLabel(agentId)
     : "";
   // 已启动标签：身份前缀（Agent · 配置）+ 目录名——收缩行被隐藏后这是标签上
-  // 唯一的身份信息；同目录多开的终端靠它区分（纯 shell 标签没有 agent，前缀为空）
+  // 唯一的身份信息；同目录多开的终端靠它区分（纯 shell 标签没有 Agent，前缀为空）
   const startedIdentity =
     activePtyId || running || shellActive
       ? [
@@ -2266,7 +2266,7 @@ const TerminalView = memo(function TerminalView({
   };
   const welcomeVisibleRef = useRef(welcomeVisible);
   welcomeVisibleRef.current = welcomeVisible;
-  // xterm 键盘层 handler 是挂载期闭包，agentId 也要经 ref 拿最新值（切 agent 后 Enter/Ctrl+V 改写才跟随）
+  // xterm 键盘层 handler 是挂载期闭包，agentId 也要经 ref 拿最新值（切 Agent 后 Enter/Ctrl+V 改写才跟随）
   const agentIdRef = useRef(agentId);
   agentIdRef.current = agentId;
   // ⌘/Ctrl+Enter 直接启动（打字中不抢；终端聚焦时按键被 xterm 吞掉、走不到 window，
@@ -3788,7 +3788,7 @@ const TerminalView = memo(function TerminalView({
     });
 
     // BEL 响铃 → 系统通知（claude-code 的通知通道就是 BEL，不发 OSC 9/777；
-    // 2026-10-10 二进制核查确认）。只对 agent 生效，shell 里的 \a 不打扰。
+    // 2026-10-10 二进制核查确认）。只对 Agent 生效，shell 里的 \a 不打扰。
     // 订阅随 term.dispose() 一并释放，无需单独清理。
     term.onBell(() => {
       if (ptyKindRef.current !== "agent") return;
@@ -4436,9 +4436,9 @@ const TerminalView = memo(function TerminalView({
     }
     // 监听都挂好了再接通道：接上之前的输出在后端 backlog 里，可见就当场补发，不会丢开屏
     await invoke("pty_subscribe", { ptyId, channel: output }).catch(() => {});
-    // Windows/ConPTY 吞掉 agent 的 OSC 10/11 底色查询（两个方向都不通，见
+    // Windows/ConPTY 吞掉 Agent 的 OSC 10/11 底色查询（两个方向都不通，见
     // docs/conventions/terminal.md），xterm 的内置回报永远送不到子进程。
-    // 改为不等查询、attach 后主动推一次：浅色主题下把当前前景/底色告诉 agent，
+    // 改为不等查询、attach 后主动推一次：浅色主题下把当前前景/底色告诉 Agent，
     // 让 gemini/qwen 的启动探测选到浅色配色。ConPTY 会缓冲，早于子进程读 stdin 也不丢。
     if (
       shouldReportTerminalColors({
@@ -4625,7 +4625,7 @@ const TerminalView = memo(function TerminalView({
     if (id) invoke("unwatch_session", { watchId: id }).catch(() => {});
   }
 
-  /** 找当前 agent 进程对应的会话文件：有 hint 精确匹配，否则走后端排他声明。 */
+  /** 找当前 Agent 进程对应的会话文件：有 hint 精确匹配，否则走后端排他声明。 */
   async function findSessionFile(): Promise<{
     filePath: string;
     sessionId: string;
@@ -5582,7 +5582,7 @@ const TerminalView = memo(function TerminalView({
     linkStartedAtRef.current = Date.now();
     // 步骤认领（「跟 AI 商量一下」）：spawn 前以最终 agent/cwd 登记——此刻的值才是用户
     // 在启动栏确认后的真实选择；会话归属由列表扫描命中后固化进 session_meta.step_name。
-    // 同标签重复启动（重启 agent 接着聊任务书）重新登记，新会话仍归该步骤
+    // 同标签重复启动（重启 Agent 接着聊任务书）重新登记，新会话仍归该步骤
     if (stepClaimName && !resumeFrom) {
       invoke("claim_next_session_for_step", {
         agent: agentId,
@@ -5709,7 +5709,7 @@ const TerminalView = memo(function TerminalView({
           /* 损坏则重置 */
         }
       }
-      // 记住各 agent 上次使用的配置（会话恢复的兜底选择）
+      // 记住各 Agent 上次使用的配置（会话恢复的兜底选择）
       localStorage.setItem(`ccode.lastProfile.${agentId}`, profileId);
       // 工作区记住上次配置（W3：worktree 目录下的启动）
       if (cwd.includes("/ccode/workspaces/")) {
@@ -5850,7 +5850,7 @@ const TerminalView = memo(function TerminalView({
     await launch();
   }
 
-  /** 停止 agent：杀掉 PTY 后由退出事件自动回落到 shell */
+  /** 停止 Agent：杀掉 PTY 后由退出事件自动回落到 shell */
   // 运行中换权限（2026-10-17 用户：发完消息权限就改不了了）：各家权限都在启动参数里，
   // 只能停下再带新参数接回原会话。父级先改标签的 permission / permissionMode，再调这里；
   // 进程退出回落 shell 后（下方 effect）用最新 props 按原会话恢复，对话内容不丢
@@ -6880,7 +6880,7 @@ const TerminalView = memo(function TerminalView({
               className={`${seg} w-[clamp(6.5rem,12vw,9rem)] min-w-[6.5rem] max-w-[9rem] shrink`}
             />
             {selectedProfile && (
-              // 模型 combo-box：可输可选（profile 预设 + 本 agent 历史），输入即筛选，
+              // 模型 combo-box：可输可选（profile 预设 + 本 Agent 历史），输入即筛选，
               // 自由输入的模型启动成功后记入历史（ccode.modelHistory.<agent>.<连接>），下次直接可选
               <>
               <span
@@ -7155,7 +7155,7 @@ const TerminalView = memo(function TerminalView({
           {autoStart &&
             profileId &&
             !profiles.some((p) => p.id === profileId) && (
-              <p className="mb-2 text-sm text-l3">请先为该 agent 创建配置</p>
+              <p className="mb-2 text-sm text-l3">请先为该 Agent 创建配置</p>
             )}
         </>
       ) : compactBarHidden && !compactBarUrgent ? null : (
@@ -8763,7 +8763,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [preview, previewFiles, switchPreview]);
 
-  /** 写入指定终端标签 agent 输入的核心链路（pty_write；send=true 时末尾补 \r 直接发送，
+  /** 写入指定终端标签 Agent 输入的核心链路（pty_write；send=true 时末尾补 \r 直接发送，
       缺省不自动回车、用户检查后发送）。右栏选段（活跃标签）与阅读区（阅读会话标签）共用；
       返回 null 表示已写入，返回字符串为要展示给用户的提示。 */
   const injectToTab = useCallback(
@@ -8793,7 +8793,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     [statuses],
   );
 
-  /** 写入当前活跃终端标签 agent 输入（PDF 问 AI 与 md 讨论/改写共用） */
+  /** 写入当前活跃终端标签 Agent 输入（PDF 问 AI 与 md 讨论/改写共用） */
   const injectToActiveAgent = useCallback(
     (data: string, send?: boolean): Promise<string | null> =>
       injectToTab(focusedId, data, send),
@@ -9320,7 +9320,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       const pt = pendingTerminal;
       const prevActiveId = activeId;
       // 会话恢复：显式带了原配置（runId 恢复）时优先原配置；否则依次
-      // autoLaunchProfileId → ccode.lastProfile → 该 agent 首个配置；
+      // autoLaunchProfileId → ccode.lastProfile → 该 Agent 首个配置；
       // Codex 三条渠道分开挑（网关 / ChatGPT 官方 / 客户端磁盘渠道），见 pickResumeProfile。
       const launchAgentId = pt.agentId ?? pt.resume?.agentId;
       let profileId = pt.profileId;
@@ -9682,7 +9682,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
 
   /** 阅读会话的启动配置：项目 Agents「专属绑定 · 沉浸阅读对话」优先（现读注册表；
       agent 跟随绑定连接所属 CLI，停用项照常尊重——显式绑定；连接被删/读失败按
-      未绑定回落自动链）；否则 agent 跟随启动栏上次选择，profile 按既有解析顺序
+      未绑定回落自动链）；否则 Agent 跟随启动栏上次选择，profile 按既有解析顺序
       （显式默认 settings.defaultProfiles > 上次使用 > 首个可见 > 首个，与启动栏一致） */
   async function resolveReaderLaunch(projectRoot: string): Promise<{
     agentId: string;

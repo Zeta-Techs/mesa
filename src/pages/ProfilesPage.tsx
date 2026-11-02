@@ -168,14 +168,14 @@ export function ProfileModal({
   hidden = false,
 }: {
   initial: Profile | null;
-  /** 从某个 agent 组的「+ 添加连接」打开时预选该 agent */
+  /** 从某个 Agent 组的「＋ 添加连接」打开时预选该 Agent */
   presetAgent?: string;
   /** 从网关库「为此网关添加连接」打开时预选该网关（选用已有网关） */
   presetGatewayId?: string;
-  /** 各 agent 是否支持官方账号（来自 official_account_status） */
+  /** 各 Agent 是否支持官方账号（来自 official_account_status） */
   officialSupported: Record<string, boolean>;
   onClose: () => void;
-  /** 保存成功回调：页面据此判断要不要提示「该 agent 有标签在跑，需重开才生效」 */
+  /** 保存成功回调：页面据此判断要不要提示「该 Agent 有标签在跑，需重开才生效」 */
   onSaved?: (agent: string, name: string) => void;
   onOpenGateway?: (id: string) => void;
   /** 返回钮文字：从网关库进来时写「返回网关库」 */
@@ -294,7 +294,7 @@ export function ProfileModal({
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
   );
-  // 同一 agent 下重名只提醒不拦：名字是给人看的，启动栏 / 选择器里同名分不清
+  // 同一 Agent 下重名只提醒不拦：名字是给人看的，启动栏 / 选择器里同名分不清
   const allProfiles = useAppStore((s) => s.profiles);
   const sameNameTaken = (name: string) =>
     name !== "" &&
@@ -699,7 +699,7 @@ export function ProfileModal({
       accountType: form.accountType,
       noAuth: form.accountType === "api" && form.noAuth,
       protocol: AGENT_PROTOCOLS[form.agent] ? form.protocol : null,
-      // grok 专用：API 后端（仅设为全局写入消费），其余 agent 不携带
+      // grok 专用：API 后端（仅设为全局写入消费），其余 Agent 不携带
       apiBackend: form.agent === "grok" ? form.apiBackend : null,
       // 官方账号：认证交给 CLI 登录，不落端点/密钥
       baseUrl: form.accountType === "official" ? "" : form.baseUrl.trim(),
@@ -1945,7 +1945,7 @@ function commonPickerModels(catalog: string[], recommended: string[], inUse: str
   return [...new Set([...recommended, ...inUse])].filter((m) => has.has(m) && (!q || m.toLowerCase().includes(q)));
 }
 
-/** 分组折叠状态持久化的 localStorage key：值为折叠中的 agent id 数组 */
+/** 分组折叠状态持久化的 localStorage key：值为折叠中的 Agent id 数组 */
 const COLLAPSED_KEY = "ccode.profiles.collapsed";
 /** 连接页左栏选中项（all / image / agent id） */
 const PANE_KEY = "ccode.profiles.pane";
@@ -1989,7 +1989,7 @@ interface AgentUpdateInfo {
   interactiveUpdateCommand: string | null;
 }
 
-/** 各 agent 在 TUI 模型切换页可用的模型数上限（注入模式；matrix 调研结论）。
+/** 各 Agent 在 TUI 模型切换页可用的模型数上限（注入模式；matrix 调研结论）。
  *  max = null 表示不限（选择器列出全部已配置模型） */
 
 /** 各 CLI 断开官方账号的方式（Mesa 不删 auth 文件，引导用 CLI 自己的 logout；
@@ -2050,7 +2050,7 @@ function StatusPill({
 }
 
 /** 官方账号状态：收进组头芯片（已安装才挂），不再占一整行「未连接」。
- *  未连接仍出「连接」——那是 CLI 登录入口，不是「+ 添加连接」。
+ *  未连接仍出「连接」——那是 CLI 登录入口，不是「＋ 添加连接」。
  *  hook 约束：挂在 per-agent 组头上，useHoverTip 才能逐组实例化。 */
 function OfficialStatusChip({
   agentId,
@@ -2680,7 +2680,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 组头「! N 项连接冲突」胶囊的点击弹层（锚定 agent 分组头）
+  // 组头「! N 项连接冲突」胶囊的点击弹层（锚定 Agent 分组头）
   const [conflictPop, setConflictPop] = useState<{
     x: number;
     y: number;
@@ -2783,7 +2783,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       if (pending) void onInstall(pending);
     }
   });
-  // 各 agent 官方账号连接状态（P1a；仅 supported 的 agent 会展示状态行）
+  // 各 Agent 官方账号连接状态（P1a；仅 supported 的 Agent 会展示状态行）
   const [officialStatus, setOfficialStatus] = useState<
     Record<string, OfficialAccountStatusDto>
   >({});
@@ -2822,7 +2822,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       .catch(() => {});
   }
 
-  /** 重新检测某个 agent 的官方账号连接状态（只读 auth 文件，失败不影响页面） */
+  /** 重新检测某个 Agent 的官方账号连接状态（只读 auth 文件，失败不影响页面） */
   async function refreshOfficial(agentId: string) {
     try {
       const st = await invoke<OfficialAccountStatusDto>(
@@ -2927,7 +2927,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     y: number;
     agentId: string;
   } | null>(null);
-  // 「复制到其他 agent…」二级菜单（#14）：点 rowMenu 项后替换弹出，列出同协议族目标
+  // 「复制到其他 Agent…」二级菜单（#14）：点 rowMenu 项后替换弹出，列出同协议族目标
   const [copyMenu, setCopyMenu] = useState<{
     x: number;
     y: number;
@@ -2944,7 +2944,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     result: LaunchPlanPreviewDto;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // 操作成功提示（复制到其他 agent 等），几秒后自动消失
+  // 操作成功提示（复制到其他 Agent 等），几秒后自动消失
   const [notice, setNotice] = useState<string | null>(null);
   const [syncingCatalogId, setSyncingCatalogId] = useState<string | null>(null);
   // 行上「测试」的就地结果：测试中 / 刚测完（后端状态重算前先用它，重算后以后端为准，失败原因留在悬停里）
@@ -2973,7 +2973,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  // 左栏选中项（2026-10-29 借鉴 Claude 设置页「左选右看」）：all = 九家连排，image = 出图模型，其余是 agent id；记住上次看的
+  // 左栏选中项（2026-10-29 借鉴 Claude 设置页「左选右看」）：all = 九家连排，image = 出图模型，其余是 Agent id；记住上次看的
   const [pane, setPaneState] = useState<string>(() => {
     try {
       return localStorage.getItem(PANE_KEY) ?? "";
@@ -3007,7 +3007,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [groupOrder, setGroupOrder] = useState<string[] | null>(() => loadAgentGroupOrder());
   // 组内连接顺序（同日用户：每个连接也可自定义排序）：按 Agent 分存，行按住拖或 ⋯ 上移 / 下移
   const [profileOrder, setProfileOrder] = useState<Record<string, string[]>>(() => loadProfileOrder());
-  /** 拖动中的那一项：scope = "groups"（拖组）或某个 agent id（拖该组里的连接行） */
+  /** 拖动中的那一项：scope = "groups"（拖组）或某个 Agent id（拖该组里的连接行） */
   const [dragSort, setDragSort] = useState<{
     scope: string;
     id: string;
@@ -3226,13 +3226,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       setModelDbBusy(false);
     }
   }
-  // 各 agent 的升级/安装进行态、实时输出与最近结果（可并发操作多个 agent）
+  // 各 Agent 的升级/安装进行态、实时输出与最近结果（可并发操作多个 Agent）
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
   const [liveOutput, setLiveOutput] = useState<Record<string, string>>({});
   const [updateResults, setUpdateResults] = useState<
     Record<string, AgentCmdResult>
   >({});
-  // 更新成功提示 8s 自动收起（失败保留——输出要留着排错）；同一 agent 的新结果覆盖旧计时
+  // 更新成功提示 8s 自动收起（失败保留——输出要留着排错）；同一 Agent 的新结果覆盖旧计时
   const updateResultTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>(
     {},
   );
@@ -3255,7 +3255,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     },
     [],
   );
-  // 各 agent 最新版检查（组头「新版/已更新」状态；查不到渠道的组头回退普通「更新」按钮）
+  // 各 Agent 最新版检查（组头「新版/已更新」状态；查不到渠道的组头回退普通「更新」按钮）
   const [updateInfo, setUpdateInfo] = useState<Record<string, AgentUpdateInfo>>(
     {},
   );
@@ -3364,7 +3364,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 升级某个 agent 的 CLI；完成后重新 detect 刷新版本号。
+  /** 升级某个 Agent 的 CLI；完成后重新 detect 刷新版本号。
    *  交互式 TUI 自更新（kimi upgrade 方向键选择界面）行输入无法应答，
    *  与官方账号「连接」同款：开完整终端让用户用方向键操作 */
   async function onUpdate(agentId: string) {
@@ -3384,7 +3384,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     await runAgentCmd(agentId, "update_agent");
   }
 
-  /** 安装未装的 agent：先亮出将执行的命令，用户确认后才跑 */
+  /** 安装未装的 Agent：先亮出将执行的命令，用户确认后才跑 */
   async function onInstall(agentId: string) {
     setNodeInstallFor(null);
     try {
@@ -3421,7 +3421,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const labelOf = (agentId: string) =>
     AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
 
-  /** 每个 agent 是否有可恢复的完整全局配置批次（控制「撤销上次写入」按钮显隐）；
+  /** 每个 Agent 是否有可恢复的完整全局配置批次（控制「撤销上次写入」按钮显隐）；
       顺带查「首次写入前」原始快照（控制「恢复初始状态」入口显隐） */
   async function refreshGlobalBackups() {
     const entries = await Promise.all(
@@ -3746,7 +3746,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 恢复该 agent 最近一个完整备份批次；恢复前先备份当前状态。 */
+  /** 恢复该 Agent 最近一个完整备份批次；恢复前先备份当前状态。 */
   async function onRestoreBackup(agentId: string) {
     if (
       !(await confirmDialog(
@@ -3924,7 +3924,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         "all");
   const paneAgents = activePane === "all" ? shownAgents : shownAgents.filter((a) => a.id === activePane);
   const dupNameIds = duplicateNameIds(profiles);
-  // 保存后的「要重启标签才生效」提示（仅当该 agent 确有标签在跑）
+  // 保存后的「要重启标签才生效」提示（仅当该 Agent 确有标签在跑）
   const [savedNote, setSavedNote] = useState<string | null>(null);
   // 「设为全局」进度/结果弹层：确认后立即弹出（写文件 + CLI 复检含网络检查要几秒到
   // 十几秒，没反馈像点了没反应）；非 null 期间禁止重入
@@ -4111,7 +4111,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     await updateSettings({ hiddenProfiles: [...cur] });
   }
 
-  /** 设为该 agent 的默认配置（settings.defaultProfiles 整图覆盖；再点一次取消） */
+  /** 设为该 Agent 的默认配置（settings.defaultProfiles 整图覆盖；再点一次取消） */
   async function toggleDefaultProfile(profile: Profile) {
     const cur = { ...(settings?.defaultProfiles ?? {}) };
     if (cur[profile.agent] === profile.id) delete cur[profile.agent];
@@ -4190,7 +4190,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 onClick={() => setModal({ initial: null })}
                 className={primaryActionClass}
               >
-                + 添加连接
+                ＋ 添加连接
               </button>
               <button
                 type="button"
@@ -4705,7 +4705,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     )}
 
                     {list.length === 0 ? (
-                      // 只说状态不说教：页头已有「+ 添加连接」主按钮，入口不必每组复述一遍
+                      // 只说状态不说教：页头已有「＋ 添加连接」主按钮，入口不必每组复述一遍
                       <p className="border-b border-hairline px-1 py-4 text-sm text-l3">还没有连接</p>
                     ) : (
                       // 行间极细分割线（hairline）替代卡片间距：整列垂直严格对齐，视觉节奏与官方账号行一致
@@ -5409,7 +5409,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             },
             {
               // 用户要的「启用」其实是这个：注入模式没有全局激活态，
-              // 能表达的是「这个 agent 默认用哪套」（启动栏据此预选）
+              // 能表达的是「这个 Agent 默认用哪套」（启动栏据此预选）
               icon: Star,
               label:
                 settings?.defaultProfiles?.[rowMenu.profile.agent] ===
@@ -5421,7 +5421,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             },
             {
               icon: CopyPlus,
-              label: "复制到其他 agent…",
+              label: "复制到其他 Agent…",
               onSelect: () =>
                 setCopyMenu({
                   x: rowMenu.x,

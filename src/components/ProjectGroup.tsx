@@ -1479,7 +1479,7 @@ export default function ProjectGroup({
     const i = cfg.steps.findIndex((s) => s.name === focusStepName);
     return i >= 0 ? describeStep(i) : null;
   })();
-  // 聚焦步骤的终端注意力（流程线 agent 节点「已跑完」提示用）
+  // 聚焦步骤的终端注意力（流程线 Agent 节点「已跑完」提示用）
   const focusAttention = stepAttention(
     focusDesc?.st.ws && focusDesc.st.ws.status === "active"
       ? focusDesc.st.ws
@@ -1487,7 +1487,7 @@ export default function ProjectGroup({
     terminalRunInputs,
     IS_WINDOWS,
   );
-  // 聚焦步骤的已归档工作区（pending + ws）：流程线 agent 节点此时主入口是「恢复工作区」而非「开始」
+  // 聚焦步骤的已归档工作区（pending + ws）：流程线 Agent 节点此时主入口是「恢复工作区」而非「开始」
   const focusArchivedWs =
     focusDesc && focusDesc.st.key === "pending" ? (focusDesc.st.ws ?? null) : null;
   // 「开读这一篇」只给示例课题精读步；普通模板流程线只显示「开始」
@@ -2158,11 +2158,11 @@ export default function ProjectGroup({
                 <span className="text-micro text-l4">文献来源</span>
                 <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l2">
                   {{
-                    search: "让 agent 检索",
+                    search: "让 Agent 检索",
                     zotero: "我有 Zotero 库",
                     endnote: "我有 EndNote 库",
                     folder: "我已有 PDF / 题录",
-                  }[cfg.litSource?.trim() || "search"] ?? "让 agent 检索"}
+                  }[cfg.litSource?.trim() || "search"] ?? "让 Agent 检索"}
                 </span>
                 <span className="text-micro text-l4" title="在流程线的「确定文献来源」里更改">
                   在流程线里改
@@ -2189,7 +2189,7 @@ export default function ProjectGroup({
                 <button
                   type="button"
                   className={`${actionBtn} ${resFocus === "files" ? "ring-2 ring-cta" : ""}`}
-                  title="你在 Undermind / Google Scholar / Elicit 等网页端检索后，把结果导出成 RIS / BibTeX / CSV 文件，点这里导入（可多选）。开工时 agent 会自动解析、按 DOI 去重、并进筛选清单——省掉你手抄一遍"
+                  title="你在 Undermind / Google Scholar / Elicit 等网页端检索后，把结果导出成 RIS / BibTeX / CSV 文件，点这里导入（可多选）。开工时 Agent 会自动解析、按 DOI 去重、并进筛选清单——省掉你手抄一遍"
                   onClick={() => void importSearchResults()}
                 >
                   导入 RIS / BibTeX

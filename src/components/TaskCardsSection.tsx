@@ -68,8 +68,8 @@ const actionBtn = inlineActionClass;
 const fieldSm =
   "h-7 rounded-md border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
-/** 认领登记的 agent：与终端启动栏的种子口径一致（ccode.lastLaunch → claude-code 兜底）。
- *  用户在启动栏临时换了 agent 时登记会落空——静默降级，事后仍可在对话页手动归卡 */
+/** 认领登记的 Agent：与终端启动栏的种子口径一致（ccode.lastLaunch → claude-code 兜底）。
+ *  用户在启动栏临时换了 Agent 时登记会落空——静默降级，事后仍可在对话页手动归卡 */
 function launchBarAgent(): string {
   try {
     const saved = JSON.parse(
@@ -138,12 +138,12 @@ export default function TaskCardsSection({
   focusStatusText?: string | null;
   /** 聚焦步骤的执行状态（v3.71 流程线用；由父级从工作区派生——健康/漂移数据在本组件外） */
   focusRunStatus?: "pending" | "active" | "review" | "done";
-  /** 聚焦步骤工作区内终端的注意力（stepAttention 口径）：done 时流程线 agent 节点给「已跑完」提示 */
+  /** 聚焦步骤工作区内终端的注意力（stepAttention 口径）：done 时流程线 Agent 节点给「已跑完」提示 */
   focusAgentAttention?: "confirm" | "done" | "working" | null;
   focusRunId?: string | null;
   /** 聚焦步骤处于合并冲突阻塞：流程线评审节点入口改为「去处理冲突」 */
   reviewConflict?: boolean;
-  /** 聚焦步骤的工作区已归档：流程线 agent 节点主入口改为「恢复工作区」 */
+  /** 聚焦步骤的工作区已归档：流程线 Agent 节点主入口改为「恢复工作区」 */
   onRestoreWorkspace?: () => void;
   /** 头部 ‹ › 箭头切换聚焦步骤（与步进器大圆点击同一口径） */
   onFocusIndex?: (index: number) => void;
@@ -229,7 +229,7 @@ export default function TaskCardsSection({
   const deleteCard = useAppStore((s) => s.deleteCard);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setPage = useAppStore((s) => s.setPage);
-  // 聊想法固定只读开聊（2026-10-26 用户拍板收掉「想法期只读保护」开关）：当前启动栏 agent 没有只读参数
+  // 聊想法固定只读开聊（2026-10-26 用户拍板收掉「想法期只读保护」开关）：当前启动栏 Agent 没有只读参数
   // （或版本太旧的 Qwen / OpenCode）时启动会被拒绝，想法区先如实标注一句。
   // 能力位来自后端 detect_agents（与 agent_specs 注册表同一出处，不在前端另抄一份名单）
   const detected = useAppStore((s) => s.agents);
@@ -419,7 +419,7 @@ export default function TaskCardsSection({
 
   /** 从卡片发起聊天前登记认领（claim_next_session_for_card：该项目的下一个新会话自动归卡）。
    *  cwd 一律用项目根——工作区内会话的 project_path 已被后端改写为真实仓库，认领照样命中。
-   *  登记的 agent 必须与实际拉起的一致（认领键 = agent+cwd，登记别家 agent 会认领落空）——
+   *  登记的 Agent 必须与实际拉起的一致（认领键 = agent+cwd，登记别家 Agent 会认领落空）——
    *  B1 参数化：调用方传各自语境的 launch（onContinue 传 stepLaunch，onDiscuss 暂传
    *  projectLaunch、B4 换 discussLaunch）；开工（onStart）维持预测，spawn 时按最终值
    *  claim_next_session_for_step 兜底。
@@ -440,8 +440,8 @@ export default function TaskCardsSection({
    *  没有验收；真要改，在聊天里换权限重开）：预填指令带不动文件约束 + 只讨论（后端对支持的 CLI 注入只读/计划模式参数
    *  ——硬保护；discussOnly = 方案卡不给开工）。
    *  预填指令还要给「该动手了」一个明确出口（回项目页开工/商量）——只读约束管得住文件、
-   *  管不住 agent 在项目根读到 project.toml 与草稿后主动请缨开工；没有出口话术，
-   *  它会把「用户点头」当成在主仓直接产出的授权（实测：聊想法会话里 agent 问「要现在开 outline 吗」）。
+   *  管不住 Agent 在项目根读到 project.toml 与草稿后主动请缨开工；没有出口话术，
+   *  它会把「用户点头」当成在主仓直接产出的授权（实测：聊想法会话里 Agent 问「要现在开 outline 吗」）。
    *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（promptDropped 既有处理） */
   function onDiscuss(card: TaskCardDto, topic?: string) {
     claimForCard(card, discussLaunch);
@@ -474,9 +474,9 @@ export default function TaskCardsSection({
   }
 
   /** 开聊一个话题（种子 chip / 决策项「开聊」/ 手动加的话题共用；已有同名卡则续聊）。
-   *  与「聊想法」同一口径：**只读开聊**，结论不由 agent 直接落盘，
+   *  与「聊想法」同一口径：**只读开聊**，结论不由 Agent 直接落盘，
    *  聊完走「◈ 沉淀进任务书」提炼后追加——讨论入口只此一条，
-   *  「让 agent 直接改草稿」由 discuss 节点的「跟 Agent 聊任务书」单独承担，两者不再重叠 */
+   *  「让 Agent 直接改草稿」由 discuss 节点的「跟 Agent 聊任务书」单独承担，两者不再重叠 */
   async function onSeed(stepName: string, seed: string, topic?: string) {
     setError(null);
     try {
@@ -564,7 +564,7 @@ export default function TaskCardsSection({
     }
     if (!launch?.profileId) launch = stepLaunchFor(stepName);
     if (!launch?.profileId) {
-      setError("还没解析到可用连接：去 Agents 页给这一步绑一条，或确认项目默认 Agent 有连接。");
+      setError("还没解析到可用连接：去「Agent 分工」页签给这一步绑一条，或确认项目默认 Agent 有连接。");
       return;
     }
     try {
@@ -663,7 +663,7 @@ export default function TaskCardsSection({
   }
 
   function briefRel(worktreePath: string, filePath: string): string {
-    // 工作树外的原样路径也统一正斜杠（写进给 agent 的指令，沿用旧口径）
+    // 工作树外的原样路径也统一正斜杠（写进给 Agent 的指令，沿用旧口径）
     return normSep(relativeUnder(filePath, worktreePath, IS_WINDOWS));
   }
 

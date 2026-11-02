@@ -592,7 +592,7 @@ function DiscoverModal({
     <Modal open title="发现未纳管技能" onClose={onClose} size="md">
         {items.length === 0 ? (
           <p className="mb-4 text-sm text-l4">
-            各 agent 目录里没有发现未纳管的技能
+            各 Agent 目录里没有发现未纳管的技能
           </p>
         ) : (
           <div className="mb-4 max-h-64 overflow-auto">
@@ -651,8 +651,8 @@ function DiscoverModal({
 }
 
 /** 删除确认弹层（删除保护，与 MCP 收编条目弹层同思路但语义不同——技能删除没有
- *  「保留 agent 侧副本」选项：分发出去的本就是 Mesa 管的链接/带标记副本，删除即回收）：
- *  所有技能列出影响面（apps 已分发的 agent）；内置种子额外警告不会复活；
+ *  「保留 Agent 侧副本」选项：分发出去的本就是 Mesa 管的链接/带标记副本，删除即回收）：
+ *  所有技能列出影响面（apps 已分发的 Agent）；内置种子额外警告不会复活；
  *  外部导入提示来源；删除前库目录自动备份（delete_impl 先备份再卸载，保留最近 5 份）。 */
 function DeleteSkillModal({
   skill,
@@ -697,7 +697,7 @@ function DeleteSkillModal({
         )}
         {impact.length > 0 && (
           <p className="mb-1 text-xs leading-5 text-l3">
-            将从以下 agent 的技能目录移除：{impact.join("、")}
+            将从以下 Agent 的技能目录移除：{impact.join("、")}
             （只移除 Mesa 分发的副本/链接，你自己放的同名内容不受影响）。
           </p>
         )}
@@ -777,7 +777,7 @@ function SkillEditorModal({
           description: description.trim(),
           content,
         });
-        onDone(`已创建技能「${name.trim()}」，打开 agent 开关即可分发`);
+        onDone(`已创建技能「${name.trim()}」，打开 Agent 开关即可分发`);
       } else if (skill) {
         await invoke("update_skill_content", {
           name: skill.name,
@@ -1569,7 +1569,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     setSkillDraftReq(null);
   }, [visible, skillDraftReq, setSkillDraftReq]);
 
-  /** 切换某 agent 的应用开关（apply_skill），按钮级 spinner */
+  /** 切换某 Agent 的应用开关（apply_skill），按钮级 spinner */
   async function toggleApp(skill: SkillDto, agent: string) {
     const key = `${skill.id}:${agent}`;
     if (applying[key]) return;
@@ -1598,7 +1598,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
   }
 
   /** 一键应用：把技能分发到所有尚未启用的 agent（仅限该技能 apps 表中列出的，即规格声明了技能目录的）。
-   *  未安装的 agent 跳过并告知——CLI 不在时分发只会往它的配置目录塞没人读的副本
+   *  未安装的 Agent 跳过并告知——CLI 不在时分发只会往它的配置目录塞没人读的副本
    *  （如这台电脑没装的 cursor-agent）。detect 数据未就位（agents 为空）时不过滤，退回旧行为 */
   async function applyAllAgents(skill: SkillDto) {
     const key = `${skill.id}:__all__`;
@@ -1727,7 +1727,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** 副本过期：把库里的最新版本重新分发到漂移的 agent 副本 */
+  /** 副本过期：把库里的最新版本重新分发到漂移的 Agent 副本 */
   async function onResync(skill: SkillDto) {
     try {
       const agents = await invoke<string[]>("resync_skill_copies", {
@@ -1911,7 +1911,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   onClick={() => setEditor({ mode: "create" })}
                   className={primaryActionClass}
                 >
-                  + 创建技能
+                  ＋ 创建技能
                 </button>
                 <button
                   type="button"

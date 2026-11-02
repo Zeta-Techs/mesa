@@ -316,7 +316,7 @@ export function applySearchHits(
   if (!q) return { list: [...sessions], snippets: {} };
   const pq = parseSearchQuery(q);
   const tokens = pq.tokens;
-  // 只写了筛选、没写词：按 agent / 日期筛列表
+  // 只写了筛选、没写词：按 Agent / 日期筛列表
   if (tokens.length === 0 && hasSearchFilters(pq)) {
     return { list: sessions.filter((s) => sessionPassesFilters(s, pq)), snippets: {} };
   }

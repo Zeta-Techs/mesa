@@ -397,7 +397,7 @@ test("workspaceLaunchChain：本次手选 > 步骤绑定 > 目录上次使用；
   assert.deepEqual(workspaceLaunchChain(launch, stepL, last), launch);
   assert.deepEqual(workspaceLaunchChain(null, stepL, last), stepL);
   assert.deepEqual(workspaceLaunchChain(null, null, last), last);
-  // 层内字段级缺省也要逐字段回落（弹层只给 agent 的场景不存在，但链是字段级的）
+  // 层内字段级缺省也要逐字段回落（弹层只给 Agent 的场景不存在，但链是字段级的）
   assert.deepEqual(workspaceLaunchChain({ agentId: "x" }, stepL, last), {
     agentId: "x",
     profileId: "pf2",

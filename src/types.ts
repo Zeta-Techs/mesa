@@ -380,7 +380,7 @@ export interface FetchGatewayCatalogDto {
 
 /** 官方账号连接状态（official_account_status，P1a） */
 export interface OfficialAccountStatusDto {
-  /** 注册表已填该 agent 的官方账号规格 */
+  /** 注册表已填该 Agent 的官方账号规格 */
   supported: boolean;
   /** auth 文件检出凭证 */
   connected: boolean;
@@ -584,18 +584,18 @@ export interface SessionMetaDto {
   source: string;
   /** 后端精确标记的 Mesa 内部 AI 会话。 */
   internal: boolean;
-  /** 接力来源（P3 机制四）：该会话接自哪个 agent 的哪个会话；非接力会话为 null */
+  /** 接力来源（P3 机制四）：该会话接自哪个 Agent 的哪个会话；非接力会话为 null */
   handoffFromAgent: string | null;
   handoffFromSession: string | null;
   /** 归入的话题（卡片 = 对话的文件夹）；后端按项目回填卡片名，卡片删除后两者回落 null */
   taskId: string | null;
   taskName: string | null;
   /** Codex rollout 元信息的 model_provider："ccode" = Mesa 内联 provider 启动的会话，
-   *  恢复时只能用带 Base URL 的配置（否则 codex 报 provider not found）；其他 agent 为 null */
+   *  恢复时只能用带 Base URL 的配置（否则 codex 报 provider not found）；其他 Agent 为 null */
   provider?: string | null;
   /** Mesa profile used to start this session, when the launch was observed by Mesa. */
   profileId: string | null;
-  /** 从同一 agent 的哪条对话中途分出来（原对话分开后还在继续写）；直线接续已合并，不填 */
+  /** 从同一 Agent 的哪条对话中途分出来（原对话分开后还在继续写）；直线接续已合并，不填 */
   forkedFrom?: string | null;
 }
 
@@ -1109,7 +1109,7 @@ export interface WorkspacePrResultDto {
   message: string;
 }
 
-/** 技能库条目（技能页）：apps 记录各 agent 的应用开关 */
+/** 技能库条目（技能页）：apps 记录各 Agent 的应用开关 */
 export interface SkillDto {
   id: string;
   name: string;
@@ -1130,10 +1130,10 @@ export interface SkillDto {
   category: string | null;
   /** 用户自定义标签（名称后展示的小 pill，最多 4 个；旧数据无此字段时用 ?? [] 兜底） */
   tags?: string[];
-  /** 内容已与库版本不一致的副本（所在 agent id 列表；空 = 无漂移） */
+  /** 内容已与库版本不一致的副本（所在 Agent id 列表；空 = 无漂移） */
   /** 副本过期的 agent（后端空数组时省略该字段） */
   staleCopies?: string[];
-  /** 各 agent 的分发形态（"symlink" | "copy"；仅启用的 agent 有键） */
+  /** 各 Agent 的分发形态（"symlink" | "copy"；仅启用的 Agent 有键） */
   appModes?: Record<string, string>;
   /** SKILL.md 正文提及 MCP 工具/服务器（后端内容扫描，serde camelCase） */
   mentionsMcp: boolean;
@@ -1175,7 +1175,7 @@ export interface SkillUpdateDto {
   message: string;
 }
 
-/** 未被纳管的已发现技能（各 agent 目录里已存在但不在库中） */
+/** 未被纳管的已发现技能（各 Agent 目录里已存在但不在库中） */
 export interface DiscoveredSkillDto {
   name: string;
   description: string;
@@ -1258,7 +1258,7 @@ export interface UsageActivityDto {
   refreshing: boolean;
 }
 
-/** 按 agent 的单日分解（四类合计；非 internal） */
+/** 按 Agent 的单日分解（四类合计；非 internal） */
 export interface UsageDayAgentRowDto {
   agent: string;
   tokens: number;
@@ -1279,7 +1279,7 @@ export interface UsageDaySessionDto {
   costPartial: boolean;
 }
 
-/** 点格下钻：当日总量 + 按 agent 分解 + 会话列表 */
+/** 点格下钻：当日总量 + 按 Agent 分解 + 会话列表 */
 export interface UsageDayDetailDto {
   day: string;
   totals: UsageActivityDayDto;
@@ -1289,7 +1289,7 @@ export interface UsageDayDetailDto {
   sessions: UsageDaySessionDto[];
 }
 
-/** 按 agent 拆分的年矩阵（筛选胶囊用） */
+/** 按 Agent 拆分的年矩阵（筛选胶囊用） */
 export interface UsageActivityAgentsDayDto {
   day: string;
   byAgent: UsageDayAgentRowDto[];
@@ -1307,7 +1307,7 @@ export interface AgentUsageDto {
   tokens: number;
   costUsd: number | null;
   costPartial: boolean;
-  /** 统计范围内该 agent 用过的不同模型数 */
+  /** 统计范围内该 Agent 用过的不同模型数 */
   modelCount: number;
   /** 官方账号（订阅制）用量：不按量计费，费用栏显示「订阅」 */
   official: boolean;
@@ -1403,7 +1403,7 @@ export const AGENTS = [
   { id: "grok", label: "Grok Build", binary: "grok" },
 ] as const;
 
-/** 多协议 agent 的协议选项与默认值（其余 agent 返回 null，profile 不存协议） */
+/** 多协议 Agent 的协议选项与默认值（其余 Agent 返回 null，profile 不存协议） */
 export const AGENT_PROTOCOLS: Record<string, { options: string[]; default: string }> = {
   qwen: { options: ["openai", "anthropic"], default: "openai" },
   kimi: { options: ["kimi", "anthropic", "openai"], default: "kimi" },
@@ -1519,7 +1519,7 @@ export interface ProjectConfigDto {
   steps: ProjectStepDto[];
   /** 「不使用研究流程」显式标记：true = 隐藏模板引导横幅；选 true 时同时清空步骤表。选模板后后端自动清回 false */
   pipelineOptOut?: boolean;
-  /** 文献来源：search（默认，让 agent 系统检索）| zotero | folder。
+  /** 文献来源：search（默认，让 Agent 系统检索）| zotero | folder。
    *  后两者 = 用户已有文献库，TASK.md 会加「文献来源」段把检索步骤降级为「盘点 + 查漏补缺」。
    *  缺省 = search（向后兼容旧后端与旧配置） */
   litSource?: string;
@@ -1761,7 +1761,7 @@ export interface McpServerDto {
   headers: McpEnvPair[];
   /** agent id → 是否分发到其用户级配置 */
   apps: Record<string, boolean>;
-  /** 全局启用开关（v3.93）：false = 已从所有 agent 移除条目但保留分发映射，重开按原样重投 */
+  /** 全局启用开关（v3.93）：false = 已从所有 Agent 移除条目但保留分发映射，重开按原样重投 */
   enabled: boolean;
   /** 来源标记：ccode = 本应用新建；imported:<agent> = 收编；imported:json = 粘贴导入；
    *  空串 = 旧数据来源未知，删除分流按收编条目对待（mcp.rs） */

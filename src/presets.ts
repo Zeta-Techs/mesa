@@ -253,7 +253,7 @@ export function presetsForAgent(agent: string): Preset[] {
 }
 
 /**
- * 没有预设的 agent 及其原因（v3.88）。
+ * 没有预设的 Agent 及其原因（v3.88）。
  * 空下拉看起来像功能坏了——两家「本来就不该有预设」必须说清楚，而不是给个空选择器。
  */
 export const NO_PRESET_REASON: Record<string, string> = {

@@ -383,7 +383,7 @@ export default function ChatComposer({
   onSend: (text: string) => Promise<string | null>;
   /** 聊天层常驻挂载仅隐藏后，可见性翻转时重新聚焦输入框（替代挂载期一次性 autofocus） */
   focusWhen?: boolean;
-  /** 当前 agent id：斜杠命令面板按 agent 出命令清单 */
+  /** 当前 Agent id：斜杠命令面板按 Agent 出命令清单 */
   agentId?: string | null;
   /** 拖入文件等外部插入：追加到输入框并消费；对象形式（编辑后重发）里的图片还原成附件缩略卡 */
   seedInsert?: string | ComposerSeed | null;
@@ -397,7 +397,7 @@ export default function ChatComposer({
   footer?: ReactNode;
   /** 正在生成：发送钮本体变成「进行中」停止钮（符号），点击走 onInterrupt。
    *  进程活着但停在提示符时不要传 true——那时要点发送，Esc 会误伤 TUI。
-   *  Grok Build 不适用（非 prompt 态 Esc 会退出整进程），调用方按 agent 过滤。 */
+   *  Grok Build 不适用（非 prompt 态 Esc 会退出整进程），调用方按 Agent 过滤。 */
   running?: boolean;
   /** 聊天空态居中时收窄到约 720px（与问候、起手提示同宽）；开聊后回到正常宽度 */
   narrow?: boolean;

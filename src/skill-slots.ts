@@ -52,7 +52,7 @@ export interface ResolvedSkillRefs {
 
 /** 把简报里的 {skill:锚名} 解析成实际技能名：换技能后正文指令跟随，不再出现「本步骤技能：
  * my-search」与正文「按 lit-search 技能执行」打架。空缺锚渲染成锚名本身（可读、不把
- * 模板语法漏给 agent），锚名进 unresolved 供校验层提醒；形似占位但锚名不合法
+ * 模板语法漏给 Agent），锚名进 unresolved 供校验层提醒；形似占位但锚名不合法
  * （大写/中文/空格）的写法不解析、原样保留并同样进 unresolved */
 export function resolveSkillRefs(
   text: string,

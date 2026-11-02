@@ -94,7 +94,7 @@ export function pickKickoffLaunch(
       ? preferredModel.trim()
       : "";
   const rememberedModel = from?.model?.trim() ?? "";
-  // 连接没列模型时，记忆里的模型只认同一条连接：别的连接（甚至别家 agent）的模型名带过来会启动失败
+  // 连接没列模型时，记忆里的模型只认同一条连接：别的连接（甚至别家 Agent）的模型名带过来会启动失败
   const model = projectModel && models.includes(projectModel)
     ? projectModel
     : rememberedModel &&

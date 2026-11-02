@@ -40,12 +40,12 @@ export function shortenCommand(command: string, args: string[]): string {
 }
 
 /** 收编条目判定：只有 origin === "ccode" 是本应用自建；收编/粘贴导入/旧数据空串（来源未知）
- *  一律按收编对待——删除与关闭分发的默认动作不得反向动 agent 侧配置（宁可少删不可错删） */
+ *  一律按收编对待——删除与关闭分发的默认动作不得反向动 Agent 侧配置（宁可少删不可错删） */
 export function isAdoptedMcp(origin: string): boolean {
   return origin !== "ccode";
 }
 
-/** 删除影响面：apps 里值为 true 的 agent 显示名清单（按 agents 表序，稳定可测） */
+/** 删除影响面：apps 里值为 true 的 Agent 显示名清单（按 agents 表序，稳定可测） */
 export function mcpDeleteImpact(
   apps: Record<string, boolean>,
   agents: ReadonlyArray<{ id: string; label: string }>,
@@ -98,19 +98,19 @@ export function mcpDistBadge(state: string | undefined): McpDistBadge | null {
       return mkBadge(
         "#d9930d",
         "外部已修改",
-        "该 agent 侧的条目被外部改过——保存或重新分发会按本清单覆盖",
+        "该 Agent 侧的条目被外部改过——保存或重新分发会按本清单覆盖",
       );
     case "missing":
       return mkBadge(
         "#e05d5d",
         "外部已删除",
-        "该 agent 配置里的条目已不存在；拨开开关将把该条目重新写入",
+        "该 Agent 配置里的条目已不存在；拨开开关将把该条目重新写入",
       );
     case "disabled_externally":
       return mkBadge(
         "#8a8f98",
         "外部已禁用",
-        "在该 agent 侧被禁用，Mesa 清单不受影响；拨开开关重写条目即恢复启用",
+        "在该 Agent 侧被禁用，Mesa 清单不受影响；拨开开关重写条目即恢复启用",
       );
     default:
       return null;

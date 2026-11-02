@@ -64,7 +64,7 @@ interface PopState {
 }
 
 /**
- * 用量页「活跃度」区块：去年同月到今天的热力图 + 按 agent 筛选 + 点格下钻。
+ * 用量页「活跃度」区块：去年同月到今天的热力图 + 按 Agent 筛选 + 点格下钻。
  * 独立时间窗（去年同月 1 日到今天，不翻页），不跟随页顶 range；数据一次拉全
  * 历史非零日序列，窗口 / streak / 「显示内部活动」开关全部本地推导，零重查。
  * 挂载在页面 empty 三元之外：页面级空态是 range 口径，历史有数据的用户
@@ -280,7 +280,7 @@ export default function ActivityHeatmap({
   /** 两年矩阵已就位（拉取失败不算——此时回落全局口径，避免整图闪空白） */
   const matrixReady = agentsMatrix?.year === endYear;
 
-  /** 格子取数：选了 agent 按该 agent 当日量（没有即 0 档空槽），否则全局 main 量 */
+  /** 格子取数：选了 Agent 按该 Agent 当日量（没有即 0 档空槽），否则全局 main 量 */
   function cellInfo(day: string): { value: number; sessions: number; has: boolean } {
     if (selectedAgent && matrixReady) {
       const row = agentDayMap.get(day)?.get(selectedAgent);
@@ -314,7 +314,7 @@ export default function ActivityHeatmap({
     if (!dto || !grid) return null;
     const b = bounds ?? rollingBounds(dto.today);
     if (selectedAgent && matrixReady) {
-      // 胶囊口径：活跃/峰值/连续都按该 agent 在这一窗口的量算
+      // 胶囊口径：活跃/峰值/连续都按该 Agent 在这一窗口的量算
       let activeDays = 0;
       let peakTokens = 0;
       let peakDay: string | null = null;
@@ -635,7 +635,7 @@ export default function ActivityHeatmap({
           <div
             className="ccode-heat-agents ccode-seg-boxed is-sm"
             role="group"
-            aria-label="按 agent 筛选"
+            aria-label="按 Agent 筛选"
           >
             {[
               { id: null as string | null, label: "全部" },
@@ -650,7 +650,7 @@ export default function ActivityHeatmap({
                   onClick={() => setSelectedAgent(chip.id)}
                   title={
                     chip.id === "codebuddy" || chip.id === "cursor"
-                      ? `${chip.label}（该 agent 的用量字段尚未完全实证，数据可能偏薄）`
+                      ? `${chip.label}（该 Agent 的用量字段尚未完全实证，数据可能偏薄）`
                       : chip.label
                   }
                   className="ccode-seg-boxed-item flex items-center gap-1.5 text-xs"

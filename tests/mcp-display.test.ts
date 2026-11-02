@@ -108,7 +108,7 @@ test("收编判定：仅 ccode 算自建，收编/粘贴/旧数据空串都按�
   assert.equal(isAdoptedMcp(""), true); // 旧数据来源未知：宁可少删不可错删
 });
 
-test("删除影响面：取 apps 为 true 的 agent 显示名，按 agents 表序", () => {
+test("删除影响面：取 apps 为 true 的 Agent 显示名，按 agents 表序", () => {
   assert.deepEqual(
     mcpDeleteImpact(
       { codex: true, kimi: false, "claude-code": true },
@@ -120,7 +120,7 @@ test("删除影响面：取 apps 为 true 的 agent 显示名，按 agents 表�
   assert.deepEqual(
     mcpDeleteImpact({ unknown: true }, AGENTS_FIXTURE),
     [],
-    "未知 agent id 不进影响面（显示名无处查）",
+    "未知 Agent id 不进影响面（显示名无处查）",
   );
 });
 

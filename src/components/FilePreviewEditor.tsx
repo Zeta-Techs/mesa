@@ -221,7 +221,7 @@ function MarkdownView({
   filePath: string;
   /** 预览根约束（read_image_bytes 的 cwdHint 来源之一） */
   root: string;
-  /** 返回 null 表示已写入；返回字符串为要给用户看的提示（如无运行中 agent）。send=true 直接发送 */
+  /** 返回 null 表示已写入；返回字符串为要给用户看的提示（如无运行中 Agent）。send=true 直接发送 */
   onDiscuss?: (
     text: string,
     fileName: string,
@@ -393,7 +393,7 @@ function MarkdownView({
     [],
   );
 
-  /** 选段 → 活跃终端 agent 输入；send=true 直接发送。成功写入后清选区，浮动条随 selectionchange 收起 */
+  /** 选段 → 活跃终端 Agent 输入；send=true 直接发送。成功写入后清选区，浮动条随 selectionchange 收起 */
   function discuss(send?: boolean) {
     const selected = window.getSelection()?.toString().trim() ?? "";
     if (!selected || !onDiscuss) return;

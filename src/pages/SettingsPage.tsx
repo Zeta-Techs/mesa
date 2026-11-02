@@ -1758,7 +1758,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   // 诊断日志（进程内环形缓冲，分区展开时拉最近 100 条）
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [diagnosticsExporting, setDiagnosticsExporting] = useState(false);
-  // 生效配置快照导出进行态（排查九家 agent 配置漂移用）
+  // 生效配置快照导出进行态（排查九家 Agent 配置漂移用）
   const [configDumpExporting, setConfigDumpExporting] = useState(false);
   // 可安装字体预设的安装状态（id → installed）：进页面查一次缓存，安装成功后刷新
   const [fontStatus, setFontStatus] = useState<Record<string, boolean>>({});
@@ -2280,7 +2280,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     void patch({ aiProfileId: choice.profileId, aiModel: choice.model });
   }
 
-  /** 精确注意力标记开关：走专用命令（写/移除该 agent 的 hooks 配置 + 记设置），
+  /** 精确注意力标记开关：走专用命令（写/移除该 Agent 的 hooks 配置 + 记设置），
       不走普通 patch——失败时设置不落库，避免开关显示与实际安装不一致 */
   const [hooksBusy, setHooksBusy] = useState<string | null>(null);
   async function toggleHooks(agent: string, label: string, enabled: boolean) {
@@ -3274,11 +3274,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {/* ConPTY 专属问题，非 Windows 平台 xterm.js 会如实应答 OSC 查询，不给这一行 */}
         {IS_WINDOWS && (
           <Row
-            label="向 agent 告知终端底色"
+            label="向 Agent 告知终端底色"
             hint="浅色主题下告诉 gemini / qwen 底色，之后新起的终端生效"
           >
             <Toggle
-              label="向 agent 告知终端底色"
+              label="向 Agent 告知终端底色"
               checked={settings?.terminalColorReport ?? true}
               onChange={(checked) => patch({ terminalColorReport: checked })}
             />
@@ -3616,7 +3616,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               markPricingDirty(true);
             }}
           >
-            + 添加模型
+            ＋ 添加模型
           </button>
           {/* 待补清单：用量里出现过、三层价目都查不到的模型。原先只能对着用量页的「≥ / ~」猜是谁没价 */}
           {(() => {
@@ -3831,7 +3831,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </button>
           </div>
         )}
-        {/* 卡头说一次机制，行标签只写 agent 名，写入路径挂行悬浮（v3.88：机制说明不占版面）。
+        {/* 卡头说一次机制，行标签只写 Agent 名，写入路径挂行悬浮（v3.88：机制说明不占版面）。
             不支持的几家不再各占一行灰开关，并成卡底一句。
             2026-10-20 起五家在 Mesa 里启动时自动带上（docs/design-chat-structured-channels.md），不再给开关；
             只剩只认全局配置的三家（Gemini / Kimi / Grok）要开关 */}
