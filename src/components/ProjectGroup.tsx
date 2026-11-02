@@ -30,6 +30,7 @@ import TaskCardsSection from "./TaskCardsSection";
 import ResourceListSection from "./ResourceListSection";
 import ProjectUserTasksView from "./ProjectUserTasksView";
 import { SettingsDrawerShell, SettingsRulesSection } from "./ProjectSettingsDrawer";
+import ProjectMemoryPanel from "./ProjectMemoryPanel";
 import KickoffConfirmDialog from "./KickoffConfirmDialog";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import {
@@ -2054,6 +2055,9 @@ export default function ProjectGroup({
             onError={onError}
           />
         )}
+
+        {/* 项目长期知识：与编程 / 工作项目同一件（ProjectSettingsDrawer）；研究档案的「提升」入口在这里 */}
+        {project && <ProjectMemoryPanel key={project.path} projectPath={project.path} />}
 
         {registered && cfg && (
           <section>
