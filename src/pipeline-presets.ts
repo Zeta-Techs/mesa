@@ -849,7 +849,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     role: "you",
     workspaceName: "research-paper-polish",
     brief:
-      "输入：manuscript/draft.md、manuscript/section-status.md、analysis/results-table.md、references.bib（已随 main 合并在本工作区内）。\n" +
+      "输入：manuscript/draft.md、manuscript/section-status.md、analysis/results-table.md、references.bib（已随 main 合并在本工作区内）。上一步「去评审」里人退回过时，本步先修退回项（乱码 PDF、待绘制充图、内部编号、摘要里的 [待核实]、数字对不上），不要当定稿润色。\n" +
       REVIEW_FIRST +
       ENDNOTE_SYNC +
       "审查报告写 manuscript/review-report.md。第一轮按 {skill:bib-check} 写 manuscript/citation-check.md，并按 {skill:stats-check} 把统计问题写入 analysis/stats-check.md；这三份只列问题，不改稿。核对：每个论断有引用、未用 bib 条目只列出、图表编号连续、数字与 results-table.md 和已认可结论条目一致。\n" +
@@ -925,7 +925,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "1. 逐数据集记录：来源、获取时间、规模（行数/大小）、格式与编码、字段清单，写入 data-dictionary.md；\n" +
       "2. 字段逐个标注类型/含义/取值范围/缺失比例；含义不明的字段标「待确认」，不猜测含义；\n" +
       "3. 质量问题单列一节：缺失、重复、异常取值、口径不一致，逐项给出样例行号或计数；\n" +
-      "4. 敏感字段单列清单：疑似个人标识/隐私的字段只列字段名与判断依据，不复制内容样例；脱敏口径不写死，留人拍板（开工前的讨论种子已就此提问）；\n" +
+      "4. 敏感字段单列清单：疑似个人标识/隐私的字段只列字段名与判断依据，不复制内容样例；脱敏口径不写死，留人拍板（开工前的决定卡已就此提问）；\n" +
       "5. 数据不可读或格式损坏时在报告中说明并停止，不自行修复原始数据。\n" +
       "完成标准：data-dictionary.md 覆盖全部数据集与字段；同步写 data/fields.json，每个字段一条稳定唯一字符串 id、name、type、status 记录；质量问题逐项有证据（行号/计数），敏感字段清单无内容样例。\n" +
       QUALITY_STATUS,
@@ -1704,7 +1704,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
       "输入：课题主题（见上方「课题主题」段）。若存在成稿（manuscript/paper-final.md、review-final.md、thesis-final.md 或 draft.md），本步是排版后端：按成稿转成 LaTeX 骨架与章节文件，**不改学术观点与数据**。没有成稿时可从 notes/ 与 references.bib 搭草稿骨架；没有证据库只能做空骨架，在 README 注明‘结构样稿，不是科研成稿’，不得补写研究结果。\n" +
       "1. 文档类按开工前定下的选择（见任务书草稿决策段；未选则按项目层「目标期刊或学校」推断：中文正文用 ctexart，Elsevier 系用 elsarticle，IEEE 用 IEEEtran，ACS 系用 achemso，学位论文用通用学位架；都套不上就用 article 并在 manuscript/README.md 说明依据）。elsarticle/IEEEtran/achemso/ctexart 这些类 TeXLive 自带，tectonic 也会按需自动下载，不要自己去找 .cls 文件；\n" +
       "2. 若 manuscript/template/ 目录存在（人工事项放入的期刊官方模板），先读其中的 README/说明与示例 .tex，以模板文件为底做适配（documentclass、宏包、章节命令都按模板口径），不要从零另起一套；\n" +
-      "3. 产出 manuscript/main.tex（文档类 + 宏包 + \\input 各章）与 manuscript/chapters/ 下每章一个 .tex。有成稿时按成稿切章，每章放入对应正文；无成稿时每章先放节标题骨架与一句话要点；\n" +
+      "3. 产出 manuscript/main.tex（文档类 + 宏包 + \\input 各章；导言区加一行 \\ifdefined\\XeTeXgenerateactualtext\\XeTeXgenerateactualtext=1\\fi，xelatex 下分号等字符的文本层才不乱码，别的引擎不受影响）与 manuscript/chapters/ 下每章一个 .tex。有成稿时按成稿切章，每章放入对应正文；无成稿时每章先放节标题骨架与一句话要点；\n" +
       "4. 参考文献沿用 references.bib：natbib 或 biblatex 二选一（开工前决策；未选定则按文档类惯常搭配——elsarticle/IEEEtran 配 natbib 系，其余配 biblatex），在 main.tex 接好；已有 figures/ 时用 \\includegraphics 引用，不要把图复制进 manuscript/；\n" +
       "5. 冒烟编译：骨架必须能编译出 PDF（用本步骤 run 脚本 render-pdf；本机没装编译环境时把脚本打印的安装提示写进 .ccode/help-wanted.md 提醒用户，装好前不卡在等待）。\n" +
       "完成标准：manuscript/main.tex 与 chapters/ 各章文件存在且能编译出 PDF；references.bib 已接入；manuscript/README.md 记录文档类、宏包与是否从成稿转写。\n" +
@@ -1745,9 +1745,10 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
   },
   {
     name: "章节写作",
+    role: "both",
     workspaceName: "latex-writing",
     brief:
-      "输入：manuscript/main.tex 骨架与 chapters/ 各章文件；notes/ 与 references.bib 若已随 main 合并则读取，缺失时只能保留结构样稿，在 citation-check.md 标出证据缺口，不生成无依据正文。\n" +
+      "输入：manuscript/main.tex 骨架与 chapters/ 各章文件；notes/ 与 references.bib 若已随 main 合并则读取，缺失时只能保留结构样稿，在 citation-check.md 标出证据缺口，不生成无依据正文。有 notes/handoff.md 先读「写作约束」。\n" +
       "若 README 写明从成稿转写：只补全结构、交叉引用与引用纪律，**不改学术观点与数据**。从零写时按实证 IMRaD 用 {skill:research-writing} 技能（综述体裁则按项目层说明改用综述口径）。引用一律 \\cite{bib键}。\n" +
       SECTION_STATUS +
       "1. 按骨架逐章充实或校对内容：每节成文，学术语气，目标篇幅按项目层设定（未设定时每章 800-1500 词）；\n" +
@@ -1760,7 +1761,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
     expectedArtifacts: ["manuscript/chapters/*.tex", "manuscript/section-status.md", "output/main.pdf", "manuscript/citation-check.md"],
     acceptanceCriteria: ["machine:contains:manuscript/section-status.md::要回答", "machine:contains:manuscript/section-status.md::允许集"],
     inputs: ["manuscript/main.tex", "manuscript/chapters/*.tex"],
-    optionalInputs: ["notes/", "references.bib", "figures/*", "design.md", "analysis/", "results/"],
+    optionalInputs: ["notes/", "notes/handoff.md", "references.bib", "figures/*", "design.md", "analysis/", "results/"],
     skills: ["research-writing", "bib-check"],
     requiredSkills: ["bib-check"],
     run: [LATEX_RENDER_PDF_RUN],
@@ -1833,6 +1834,7 @@ const LATEX_PAPER_STEPS: ProjectStepDto[] = [
           "报告写出来后，在这一行逐条点接受、拒绝或修改。点完会回到原来的对话。没有决定之前，不把科学内容写进定稿。",
       },
       verificationDecisionTask("并重编译 main.pdf"),
+      styleChoiceTask(),
       { ...declarationsTask(), title: "填作者、单位与投稿声明（LaTeX）" },
     ],
   },
