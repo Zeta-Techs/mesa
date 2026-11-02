@@ -62,6 +62,7 @@ fn is_accumulation_ledger(path: &str) -> bool {
             | ".ccode/ai-usage.md"
     ) || (path.starts_with("notes/") && path.ends_with(".md"))
         || path.starts_with(".ccode/checks/")
+        || path.starts_with(".ccode/record/")
         || path.starts_with("notes/assets/")
         || path.starts_with(".ccode/watch/")
 }
@@ -396,6 +397,7 @@ mod tests {
         assert!(is_untracked_ledger_file("?? .ccode/checks/cite-check.jsonl"));
         assert!(is_untracked_ledger_file("?? .ccode/checks/runs/r1.jsonl"));
         assert!(!is_untracked_ledger_file("?? .ccode/checksum.txt"));
+        assert!(is_untracked_ledger_file("?? .ccode/record/tasks/r1.md"));
         // 积累账只豁免 ??：agent 违规提交后变 tracked，M 态要拦并点名（防呆）
         assert!(!is_untracked_ledger_file(" M papers/reading-list.md"));
         assert!(!is_untracked_ledger_file(" M .ccode/watch-explains.json"));

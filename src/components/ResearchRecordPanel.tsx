@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { RESEARCH_EXPORTS, runRecordLine, type ResearchExportKind, type RunRecordDto } from "../research-record";
 import { absTime, relTime } from "../rel-time";
-import { FoldMark } from "./PageFrame";
+import { Checkbox, FoldMark } from "./PageFrame";
 
 const RECENT = 30;
 
@@ -14,6 +14,8 @@ export default function ResearchRecordPanel({ projectPath }: { projectPath: stri
   const [busy, setBusy] = useState<ResearchExportKind | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 过程报告附任务书与对话原文（已脱敏）：默认不附，勾了才附
+  const [details, setDetails] = useState(false);
   useEffect(() => {
     let stale = false;
     invoke<{ runs: RunRecordDto[] }>("research_record_read", { path: projectPath })
@@ -33,7 +35,7 @@ export default function ResearchRecordPanel({ projectPath }: { projectPath: stri
     setError(null);
     setDone(null);
     try {
-      setDone(await invoke<string>("research_export", { path: projectPath, kind }));
+      setDone(await invoke<string>("research_export", { path: projectPath, kind, details: kind === "process_report" && details }));
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -87,6 +89,13 @@ export default function ResearchRecordPanel({ projectPath }: { projectPath: stri
             {busy === item.kind ? "导出中…" : item.label}
           </button>
         ))}
+      </div>
+      <div className="mt-1">
+        <Checkbox
+          checked={details}
+          onChange={setDetails}
+          label={<span className="text-micro text-l3">研究过程报告附上任务书与对话原文（已去掉密钥；交出去前请自己再看一遍）</span>}
+        />
       </div>
       {done && (
         <p className="mt-1 text-micro text-l3">

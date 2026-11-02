@@ -213,7 +213,8 @@ fn pack_selection(root: &Path) -> (Vec<String>, Vec<String>) {
         let code = CODE_EXT.contains(&ext.as_str()) && !r.starts_with("papers/");
         let keep = KEEP_FILES.contains(&r.as_str())
             || ENV_FILES.contains(&base.as_str())
-            || r.starts_with(".ccode/checks/runs/");
+            || r.starts_with(".ccode/checks/runs/")
+            || r.starts_with(".ccode/record/tasks/");
         if code || keep {
             include.push(r);
         } else if DATA_DIRS.iter().any(|d| r.starts_with(d)) {
@@ -378,7 +379,21 @@ fn human_decisions(root: &Path) -> (usize, usize) {
     (verdicts, decisions)
 }
 
-pub(crate) fn render_process_report(root: &Path) -> String {
+const DETAIL_CAP: usize = 200 * 1024;
+
+fn capped(text: &str) -> String {
+    if text.len() <= DETAIL_CAP {
+        return text.to_string();
+    }
+    let mut cut = DETAIL_CAP;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}\n…（超长截断）", &text[..cut])
+}
+
+/// details = 附任务书原文与对话原文（都已脱敏；默认不附）
+pub(crate) fn render_process_report(root: &Path, details: bool) -> String {
     let project = project_name(root);
     let mut runs = read_records_at(root);
     runs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
@@ -410,7 +425,7 @@ pub(crate) fn render_process_report(root: &Path) -> String {
         blocked,
         needs
     ));
-    html.push_str("<h2>AI 运行时间线</h2><table><tr><th>时间</th><th>用途</th><th>AI 工具</th><th>模型</th><th>结果</th><th>核验</th></tr>");
+    html.push_str("<h2>AI 运行时间线</h2><table><tr><th>时间</th><th>用途</th><th>AI 工具</th><th>模型</th><th>结果</th><th>核验</th><th>任务书指纹</th></tr>");
     for r in &runs {
         let status = match r.status.as_str() {
             "completed" => "完成",
@@ -422,18 +437,24 @@ pub(crate) fn render_process_report(root: &Path) -> String {
             .checks
             .map(|c| format!("通过 {} / 拦下 {} / 待判断 {}", c.passed, c.blocked, c.needs_human))
             .unwrap_or_default();
+        let task = r
+            .task
+            .as_ref()
+            .map(|t| format!("{} · {}", t.source, t.sha256.chars().take(12).collect::<String>()))
+            .unwrap_or_default();
         html.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             esc(&r.created_at.chars().take(16).collect::<String>().replace('T', " ")),
             esc(&r.purpose),
             esc(&agent_label(&r.agent)),
             esc(&if r.models.is_empty() { "（未记录）".to_string() } else { r.models.join("、") }),
             status,
-            esc(&check)
+            esc(&check),
+            esc(&task)
         ));
     }
     if runs.is_empty() {
-        html.push_str("<tr><td colspan=\"6\" class=\"muted\">还没有运行记录</td></tr>");
+        html.push_str("<tr><td colspan=\"7\" class=\"muted\">还没有运行记录</td></tr>");
     }
     html.push_str("</table><h2>人的决定（保存进项目 / 采纳）</h2><table><tr><th>时间</th><th>对象</th><th>文件数</th><th>备注</th></tr>");
     for a in &accepts {
@@ -482,12 +503,32 @@ pub(crate) fn render_process_report(root: &Path) -> String {
     } else {
         html.push_str(&list);
     }
+    if details {
+        html.push_str("<h2>任务书与对话原文</h2><p class=\"muted\">按你的选择附上；都已去掉已保存的密钥与常见密钥前缀，超长的截断。</p>");
+        for r in &runs {
+            html.push_str(&format!(
+                "<details><summary>{} · {} · {}</summary>",
+                esc(&r.created_at.chars().take(16).collect::<String>().replace('T', " ")),
+                esc(&r.purpose),
+                esc(&agent_label(&r.agent))
+            ));
+            match r.task.as_ref().and_then(|t| fs::read_to_string(root.join(&t.archived)).ok()) {
+                Some(text) => html.push_str(&format!("<h3>任务书（{}）</h3><pre>{}</pre>", esc(&r.task.as_ref().unwrap().source), esc(&capped(&text)))),
+                None => html.push_str("<p class=\"muted\">没有存下任务书。</p>"),
+            }
+            match r.session_id.as_deref().and_then(|sid| crate::sessions::session_markdown(&r.agent, sid)) {
+                Some(md) => html.push_str(&format!("<h3>对话原文</h3><pre>{}</pre>", esc(&capped(&md)))),
+                None => html.push_str("<p class=\"muted\">找不到这次的对话文件（可能已被 CLI 清理）。</p>"),
+            }
+            html.push_str("</details>");
+        }
+    }
     html.push_str("</html>\n");
     redact(&html)
 }
 
 #[tauri::command]
-pub async fn research_export(path: String, kind: String) -> Result<String, String> {
+pub async fn research_export(path: String, kind: String, details: Option<bool>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(&path);
         if !root.join(".ccode").is_dir() {
@@ -509,7 +550,7 @@ pub async fn research_export(path: String, kind: String) -> Result<String, Strin
             }
             "process_report" => {
                 let out = dir.join(format!("{name}-研究过程报告-{}.html", stamp()));
-                crate::storage::atomic_write(&out, render_process_report(&root).as_bytes(), false)?;
+                crate::storage::atomic_write(&out, render_process_report(&root, details.unwrap_or(false)).as_bytes(), false)?;
                 out
             }
             _ => return Err("未知的导出类型".to_string()),
@@ -614,10 +655,24 @@ mod tests {
             r#"{"id":"Q1","kind":"quote_in_source","status":"blocked","title":"[@a] 原文里找不到","checker":"script:x"}"#,
         )
         .unwrap();
-        let html = render_process_report(&root);
+        let html = render_process_report(&root, false);
         assert!(html.contains("逐条裁决 1 条、审查报告逐条决定 1 条"));
         assert!(html.contains("研究流程：&lt;综述&gt;"));
         assert!(html.contains("<td class=\"blocked\">拦下</td><td>[@a] 原文里找不到</td>"));
         assert!(html.contains("通过 2 / 拦下 1 / 待判断 0"));
+        assert!(!html.contains("任务书与对话原文"), "默认不附原文");
+    }
+
+    #[test]
+    fn process_report_details_embed_archived_task_and_say_when_transcript_missing() {
+        let root = temp_root("details");
+        let mut r = record("r9", "研究流程：综述初稿", "codex", &["gpt-5"], "2026-11-02");
+        r.task = Some(crate::research_record::archive_task(&root, "r9", "TASK.md", "# 写初稿\n<按大纲写>").unwrap());
+        r.session_id = Some("no-such-session".into());
+        append_run_record_at(&root, &r).unwrap();
+        let html = render_process_report(&root, true);
+        assert!(html.contains("TASK.md · "));
+        assert!(html.contains("<h3>任务书（TASK.md）</h3><pre># 写初稿\n&lt;按大纲写&gt;</pre>"));
+        assert!(html.contains("找不到这次的对话文件"));
     }
 }

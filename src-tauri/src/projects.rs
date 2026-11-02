@@ -3081,6 +3081,7 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          /.ccode/record.lock\n\
          /.ccode/ai-usage.md\n\
          /.ccode/checks/\n\
+         /.ccode/record/\n\
          \n\
          # 常见数据/产物目录（按需取消注释）\n\
          # /data/\n\
@@ -3095,7 +3096,7 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
 pub(crate) const GITIGNORE_LEDGER_MARKER: &str = "# Mesa 雷达与积累台账";
 
 /// gitignore 模板里的台账忽略路径清单（模板钉住测试逐条断言，二者必须同步改）。
-pub(crate) const LEDGER_IGNORE_PATHS: [&str; 13] = [
+pub(crate) const LEDGER_IGNORE_PATHS: [&str; 14] = [
     "/papers/reading-list.md",
     "/notes/inbox.md",
     "/papers/watch-seen.md",
@@ -3109,6 +3110,7 @@ pub(crate) const LEDGER_IGNORE_PATHS: [&str; 13] = [
     "/.ccode/record.lock",
     "/.ccode/ai-usage.md",
     "/.ccode/checks/",
+    "/.ccode/record/",
 ];
 
 fn ensure_git_at(project: &Path) -> Result<EnsureGitDto, String> {
@@ -3199,7 +3201,7 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     // 排除雷达/验收台账缓存（2026-10-13 双台账口径）：老项目 .gitignore 还没有忽略行，
     // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
     // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
-    const BOOTSTRAP_EXCLUDES: [&str; 9] = [
+    const BOOTSTRAP_EXCLUDES: [&str; 10] = [
         ".ccode/watch-explains.json",
         ".ccode/pending-registrations.json",
         ".ccode/acceptance-log.jsonl",
@@ -3209,6 +3211,7 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
         ".ccode/record.lock",
         ".ccode/ai-usage.md",
         ".ccode/checks",
+        ".ccode/record",
     ];
     // 已被 .gitignore 忽略的台账不再写 exclude：exclude 点名一个存在且已忽略的文件时，
     // git add 整条报「paths are ignored」退出 1，档案卡一次也提交不上（2026-10-22 实测：

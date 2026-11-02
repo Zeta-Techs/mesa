@@ -67,10 +67,10 @@ test("研究记录面板：没有记录不出现；有记录可展开、导出�
   }
   Object.assign(dom.window, {
     __TAURI_INTERNALS__: {
-      invoke: async (command: string, args: { path: string; kind?: string }) => {
+      invoke: async (command: string, args: { path: string; kind?: string; details?: boolean }) => {
         if (command === "research_record_read") return { runs };
         if (command === "research_export") {
-          exported.push(args.kind!);
+          exported.push(`${args.kind}:${args.details}`);
           return `/Users/x/Downloads/ccode-exports/课题-研究过程报告-20261102.html`;
         }
         throw new Error(command);
@@ -93,7 +93,11 @@ test("研究记录面板：没有记录不出现；有记录可展开、导出�
     assert.match(host.textContent!, /Codex · gpt-5 · 完成/);
     const report = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === "研究过程报告") as HTMLButtonElement;
     await act(async () => report.click());
-    assert.deepEqual(exported, ["process_report"]);
+    assert.deepEqual(exported, ["process_report:false"], "默认不附原文");
+    const box = host.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    await act(async () => box.click());
+    await act(async () => report.click());
+    assert.equal(exported[1], "process_report:true");
     assert.match(host.textContent!, /已导出到下载文件夹：课题-研究过程报告-20261102\.html/);
   } finally {
     await act(async () => root.unmount());

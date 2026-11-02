@@ -7373,6 +7373,20 @@ pub(crate) fn render_markdown(
     out
 }
 
+/// 研究过程报告附对话原文用（2026-11-02）：按 agent + session_id 找到会话文件，渲成 Markdown 并整份脱敏；找不到或空给 None
+pub(crate) fn session_markdown(agent: &str, session_id: &str) -> Option<String> {
+    let meta = cached_scan()
+        .sessions
+        .into_iter()
+        .find(|s| s.agent == agent && s.session_id == session_id)?;
+    let msgs = conversation_impl(agent, &meta.file_path);
+    if msgs.is_empty() {
+        return None;
+    }
+    let title = meta.title.clone().unwrap_or_else(|| session_id.to_string());
+    Some(redact_sensitive_text(&render_markdown(agent, session_id, &redact_sensitive_text(&title), &msgs)))
+}
+
 /// 导出当前会话为 Markdown 到 ~/Downloads/ccode-exports/，返回导出文件路径
 #[tauri::command]
 pub async fn export_session_markdown(

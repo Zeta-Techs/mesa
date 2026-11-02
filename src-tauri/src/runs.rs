@@ -2089,6 +2089,15 @@ fn task_review_dir(task_id: &str, run_id: &str) -> Result<PathBuf, String> {
     Ok(task_runs_root()?.join(task_id).join("review").join(run_id))
 }
 
+/// 目标 Run 实际下发的上下文原文（context.json 冻结的那份）；没有目标或没写快照给 None。研究记录存「问了什么」用
+pub(crate) fn run_context_text(task_id: &str, run_id: &str) -> Option<String> {
+    if task_id.is_empty() {
+        return None;
+    }
+    let dir = task_review_dir(task_id, run_id).ok()?;
+    crate::task_review::load_current_context(&dir).ok().flatten().map(|c| c.text)
+}
+
 pub(crate) fn result_version_for(run_id: &str) -> Result<Option<String>, String> {
     let run = run_get_sync(run_id.to_string())?.ok_or("Run 不存在")?;
     if run.task_id.is_empty() {

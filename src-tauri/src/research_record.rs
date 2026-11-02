@@ -235,6 +235,17 @@ pub(crate) fn append_jsonl_line(path: &Path, value: &str) -> Result<(), String> 
 }
 
 /// 研究记录里的一条运行事实。
+/// 「问了什么」：这次交给 Agent 的任务书（流程步骤的 TASK.md / 目标的上下文快照）的指纹与项目内存档位置
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRef {
+    /// 原文出处：TASK.md / context.json
+    pub source: String,
+    pub sha256: String,
+    /// 项目内存档（相对项目根，已脱敏）
+    pub archived: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRecord {
@@ -257,6 +268,11 @@ pub struct RunRecord {
     pub exit_code: Option<i32>,
     #[serde(default)]
     pub checks: Option<CheckCounts>,
+    #[serde(default)]
+    pub task: Option<TaskRef>,
+    /// 这次运行对应的会话（过程报告附对话原文时按它找）
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 pub(crate) fn read_records_at(root: &Path) -> Vec<RunRecord> {
@@ -387,6 +403,36 @@ pub(crate) fn append_run_record_at(root: &Path, record: &RunRecord) -> Result<bo
     Ok(true)
 }
 
+const TASK_ARCHIVE_CAP: usize = 512 * 1024;
+
+/// 存这次的任务书：流程步骤读工作目录的 TASK.md，目标读冻结的上下文快照；指纹按原文算，存档脱敏、超长截断
+pub(crate) fn archive_task(root: &Path, run_id: &str, source: &str, text: &str) -> Result<TaskRef, String> {
+    use sha2::{Digest, Sha256};
+    let sha256 = format!("{:x}", Sha256::digest(text.as_bytes()));
+    let mut body = crate::sessions::redact_sensitive_text(text);
+    if body.len() > TASK_ARCHIVE_CAP {
+        let mut cut = TASK_ARCHIVE_CAP;
+        while !body.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        body.truncate(cut);
+        body.push_str("\n…（超长截断）\n");
+    }
+    let rel = format!(".ccode/record/tasks/{run_id}.md");
+    crate::storage::atomic_write(&root.join(&rel), body.as_bytes(), true)?;
+    Ok(TaskRef { source: source.into(), sha256, archived: rel })
+}
+
+fn task_text_of(run: &crate::runs::RunDto) -> Option<(&'static str, String)> {
+    let task_md = Path::new(&run.isolation_path).join("TASK.md");
+    if let Some(text) = read_capped(&task_md, 4 * 1024 * 1024).filter(|t| !t.trim().is_empty()) {
+        return Some(("TASK.md", text));
+    }
+    crate::runs::run_context_text(&run.task_id, &run.id)
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| ("context.json", t))
+}
+
 fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) -> RunRecord {
     let mut models = Vec::new();
     if let Some(session) = run.session_id.as_deref() {
@@ -411,6 +457,8 @@ fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) ->
         status: run.status.clone(),
         exit_code: run.exit_code,
         checks: (!checks.is_empty()).then(|| count_checks(checks)),
+        task: task_text_of(run).and_then(|(source, text)| archive_task(root, &run.id, source, &text).ok()),
+        session_id: run.session_id.clone(),
     }
 }
 
@@ -561,6 +609,18 @@ mod tests {
         let text = render_ai_usage(&[record("r1", "目标|一", "codex", &[], "2026-11-02")]);
         assert!(text.contains("| 目标／一 | Codex | （未记录） | 1 | 2026-11-02 |"));
         assert!(render_ai_usage(&[]).contains("（还没有记录）"));
+    }
+
+    #[test]
+    fn task_archive_keeps_fingerprint_of_original_and_redacts_copy() {
+        let root = temp_root("task");
+        let text = "# 任务书\n用 sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 调接口\n";
+        let task = archive_task(&root, "r1", "TASK.md", text).unwrap();
+        assert_eq!(task.archived, ".ccode/record/tasks/r1.md");
+        assert_eq!(task.sha256.len(), 64);
+        let copy = fs::read_to_string(root.join(&task.archived)).unwrap();
+        assert!(copy.contains("# 任务书"));
+        assert!(!copy.contains("abcdefghijklmnopqrstuvwxyz0123456789"), "存档要脱敏");
     }
 
     #[test]

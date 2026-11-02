@@ -16,6 +16,9 @@ export interface RunRecordDto {
   status: string;
   exitCode?: number | null;
   checks?: { passed: number; blocked: number; needsHuman: number } | null;
+  /** 「问了什么」：任务书指纹与项目内存档（2026-11-02 起记） */
+  task?: { source: string; sha256: string; archived: string } | null;
+  sessionId?: string | null;
 }
 
 export type ResearchExportKind = "ai_statement" | "repro_pack" | "process_report";
