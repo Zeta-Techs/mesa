@@ -115,7 +115,9 @@
   `research-writing/num_check.py`（`manuscript/numbers.json` 数字追溯）、`stats-check/stat_check.py`（p 值与统计量、估计值与 CI）、
   `figure-forge/fig_check.py`（`figures/manifest.json` 逐张重跑）。脚本只拦确定性的不一致；登记文件（evidence / numbers / manifest）
   由干活的 Agent 写，**不得为过核验改结果文件或原文**。拦下的条目进 `verification-decisions.md` 逐条裁决。
-- **跨厂商复核**（`src/cross-review.ts`）：只从一等 Agent（Claude Code、Codex、Kimi）里挑、跳过干活的那家与停用连接，同家取最近用过的；
+- **跨厂商复核**（`src/cross-review.ts`）：「不同」按**模型族**比（`vendorForModel`，只认模型名不认中转站；官方账号没写模型按 Agent 认），
+  写稿方模型取 `research_run_producer`（会话用量 → 启动记录，与研究记录同源），认不出时退回按 Agent 比。默认一等在前、最近用过的连接在前，
+  连接里取第一个不同模型族的模型，一等挑不出再看维护级；人可在 ▾ 下拉里改选任一没停用的连接 × 模型（每条最多列 40 个），同模型族、维护级只标注不禁止；
   另开 `cross-review:<工作副本>` 标签（不用 `ws:` 键），只写 `.ccode/checks/cross-review.jsonl`。后端把 `checker` 以 `agent:` 开头的
   `passed` 一律降成 `needs_human`——Agent 的判断永不自动通过。
 - **研究档案**（`research_profile.rs`，用户层，配置目录 `research-profile.md`）：沿用项目长期知识的格式与状态机，`goalName` 当分类（七类固定）；

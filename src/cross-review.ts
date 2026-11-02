@@ -1,10 +1,13 @@
 /**
- * 跨厂商复核（2026-11-02，docs/design-research-moat.md §3.1）：评审页「请另一家复核」换一家一等支持的
- * Agent 读原文摘录与正文，逐条判断支持与否，只写 .ccode/checks/cross-review.jsonl。
+ * 跨厂商复核（2026-11-02，docs/design-research-moat.md §3.1）：评审页「请另一家复核」换一个**模型族不同**的
+ * 模型读原文摘录与正文，逐条判断支持与否，只写 .ccode/checks/cross-review.jsonl。「不同」按模型比（同一个 GLM
+ * 换个 CLI 外壳不算另一家）；默认自动挑、人可在下拉里改选，九家都能选，维护级与同模型族的标出来。
  * 复核结论一律「待你判断」——后端也把 agent: 检查器的 passed 降成 needs_human（research_record.rs）。
  */
 
-/** 一等支持的 Agent（AGENTS.md「CLI 支持分级」，2026-11-02）；复核按这个顺序挑 */
+import { vendorForModel, vendorForOfficialAgent } from "./vendor-icon.ts";
+
+/** 一等支持的 Agent（AGENTS.md「CLI 支持分级」，2026-11-02）；默认复核先从这几家挑 */
 export const TIER1_AGENTS = ["claude-code", "codex", "kimi"] as const;
 
 export const CROSS_REVIEW_FILE = ".ccode/checks/cross-review.jsonl";
@@ -15,6 +18,7 @@ export interface ReviewerProfile {
   name: string;
   models: readonly string[];
   lastUsedAt: string | null;
+  accountType?: "api" | "official";
 }
 
 export interface CrossReviewer {
@@ -24,23 +28,100 @@ export interface CrossReviewer {
   profileName: string;
 }
 
-/** 挑复核用的连接：一等支持、没被停用、和干活的不是同一家；同一家里挑最近用过的那条 */
+/** 写稿方：哪家 Agent、用过哪些模型（research_run_producer；没有 runId 时未知） */
+export interface Producer {
+  agent: string;
+  models: readonly string[];
+  /** 写稿那条连接（官方账号模型列表常为空，用它的 Agent 认厂商） */
+  profile?: ReviewerProfile | null;
+}
+
+/** 一个可选的复核方：连接 × 模型 */
+export interface ReviewerOption extends CrossReviewer {
+  /** 模型族（vendor-icon 的厂商 id）；认不出为 null */
+  family: string | null;
+  tier: 1 | 2;
+  /** 和写稿方同一个模型族：等于自己复核自己 */
+  sameFamily: boolean;
+}
+
+/** 模型 → 模型族：按模型名认厂商（不认中转站）；官方账号没写模型时按 Agent 认 */
+export function modelFamily(model: string, agent: string, accountType?: string): string | null {
+  // API 连接没写模型时不猜（中转站上 Codex 不一定跑 GPT）；只有官方账号才按 Agent 认
+  return vendorForModel(model) ?? (accountType === "official" ? vendorForOfficialAgent(agent) : null);
+}
+
+/** 写稿方用过的模型族；一个都认不出时为空集（调用方退回按 Agent 判断） */
+export function producerFamilies(producer: Producer | null | undefined): Set<string> {
+  const out = new Set<string>();
+  if (!producer) return out;
+  const models = producer.models.length ? producer.models : producer.profile?.models.slice(0, 1) ?? [];
+  for (const m of models) {
+    const f = modelFamily(m, producer.agent, producer.profile?.accountType);
+    if (f) out.add(f);
+  }
+  if (!out.size && producer.profile?.accountType === "official") {
+    const f = vendorForOfficialAgent(producer.agent);
+    if (f) out.add(f);
+  }
+  return out;
+}
+
+const tierOf = (agent: string): 1 | 2 => ((TIER1_AGENTS as readonly string[]).includes(agent) ? 1 : 2);
+
+/** 全部可选项：每条没停用的连接 × 它的模型（官方账号没写模型的给一项空模型 = CLI 默认）；
+ *  一等在前、最近用过的连接在前，连接内按模型列表顺序；每条连接最多列 40 个模型 */
+export function reviewerOptions(
+  profiles: readonly ReviewerProfile[],
+  hidden: readonly string[],
+  producer: Producer | null | undefined,
+): ReviewerOption[] {
+  const families = producerFamilies(producer);
+  const sorted = profiles
+    .filter((p) => !hidden.includes(p.id))
+    .sort((a, b) => tierOf(a.agent) - tierOf(b.agent) || (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? ""));
+  const out: ReviewerOption[] = [];
+  for (const p of sorted) {
+    const models = p.models.length ? p.models.slice(0, 40) : [""];
+    for (const model of models) {
+      const family = modelFamily(model, p.agent, p.accountType);
+      out.push({
+        agentId: p.agent,
+        profileId: p.id,
+        profileName: p.name,
+        model,
+        family,
+        tier: tierOf(p.agent),
+        sameFamily: family !== null && families.has(family),
+      });
+    }
+  }
+  return out;
+}
+
+/** 默认挑哪一个：一等支持、模型族与写稿方不同（写稿方认不出模型族时退回「不是同一家 Agent」），
+ *  最近用过的连接优先、连接里取第一个符合的模型；一等里没有就从维护级里按同样条件挑 */
 export function pickCrossReviewer(
   profiles: readonly ReviewerProfile[],
   hidden: readonly string[],
-  producerAgent: string | null | undefined,
-): CrossReviewer | null {
-  for (const agent of TIER1_AGENTS) {
-    if (agent === producerAgent) continue;
-    const candidates = profiles
-      .filter((p) => p.agent === agent && !hidden.includes(p.id))
-      .sort((a, b) => (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? ""));
-    const pick = candidates[0];
-    if (pick) {
-      return { agentId: agent, profileId: pick.id, model: pick.models[0] ?? "", profileName: pick.name };
-    }
-  }
-  return null;
+  producer: Producer | null | undefined,
+): ReviewerOption | null {
+  const options = reviewerOptions(profiles, hidden, producer);
+  const known = producerFamilies(producer).size > 0;
+  const differs = (o: ReviewerOption) =>
+    known ? o.family !== null && !o.sameFamily : o.agentId !== producer?.agent;
+  return options.find((o) => o.tier === 1 && differs(o)) ?? options.find(differs) ?? null;
+}
+
+/** 下拉里一项的写法：Agent · 连接 · 模型（厂商），后面带提醒 */
+export function reviewerOptionLabel(o: ReviewerOption, agentLabel: string): string {
+  const model = o.model || "默认模型";
+  const notes = [o.sameFamily ? "与写稿同一模型族" : "", o.tier === 2 ? "维护级，复核指令未在这家验证过" : ""].filter(Boolean);
+  return `${agentLabel} · ${o.profileName} · ${model}${notes.length ? `（${notes.join("；")}）` : ""}`;
+}
+
+export function reviewerOptionKey(o: Pick<CrossReviewer, "profileId" | "model">): string {
+  return `${o.profileId}::${o.model}`;
 }
 
 /** 这一步写不写「带引用的正文」：稿件 / 开题 / 章节 / 报告才有论断可核；文献检索、精读、数据步没有，

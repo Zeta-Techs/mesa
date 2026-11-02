@@ -781,6 +781,7 @@ pub fn run() {
             research_quality::research_get_acceptance,
             research_quality::research_upstream_acceptances,
             research_record::research_checks_read,
+            research_record::research_run_producer,
             research_export::research_record_read,
             research_export::research_export,
             research_profile::research_profile_read,

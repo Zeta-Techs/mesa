@@ -1,37 +1,73 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer, stepHasClaims, type ReviewerProfile } from "../src/cross-review.ts";
+import {
+  crossReviewPrompt,
+  crossReviewReuseKey,
+  modelFamily,
+  pickCrossReviewer,
+  producerFamilies,
+  reviewerOptionLabel,
+  reviewerOptions,
+  stepHasClaims,
+  type ReviewerProfile,
+} from "../src/cross-review.ts";
 
-const p = (id: string, agent: string, lastUsedAt: string | null, models: string[] = ["m-" + id]): ReviewerProfile => ({
-  id,
-  agent,
-  name: id,
-  models,
-  lastUsedAt,
+const p = (
+  id: string,
+  agent: string,
+  lastUsedAt: string | null,
+  models: string[] = ["m-" + id],
+  accountType: "api" | "official" = "api",
+): ReviewerProfile => ({ id, agent, name: id, models, lastUsedAt, accountType });
+
+test("模型族按模型名认、不认中转站；官方账号没写模型按 Agent 认，API 连接不猜", () => {
+  assert.equal(modelFamily("claude-sonnet-4", "codex"), "anthropic");
+  assert.equal(modelFamily("glm-5.3", "claude-code"), "zhipu");
+  assert.equal(modelFamily("gpt-5", "kimi"), "openai");
+  assert.equal(modelFamily("", "codex", "official"), "openai");
+  assert.equal(modelFamily("", "codex", "api"), null);
+  assert.equal(modelFamily("my-private-model", "claude-code"), null);
 });
 
-test("复核挑另一家一等支持的 Agent：跳过干活的那家、停用的连接与维护级 Agent，同家挑最近用过的", () => {
+test("「不同」按模型族比：Claude Code 接 GLM 写稿，接 GLM 的 Codex 不算另一家", () => {
   const profiles = [
-    p("cc-old", "claude-code", "2026-10-01"),
-    p("cc-new", "claude-code", "2026-11-01"),
-    p("codex", "codex", null),
-    p("gem", "gemini", "2026-11-02"),
-    p("kimi", "kimi", "2026-11-02"),
+    p("cx-glm", "codex", "2026-11-02", ["glm-5.3"]),
+    p("kimi", "kimi", "2026-10-01", ["kimi-k2"]),
+    p("cc", "claude-code", "2026-11-01", ["glm-5.3"]),
   ];
-  assert.deepEqual(pickCrossReviewer(profiles, [], "codex"), {
-    agentId: "claude-code",
-    profileId: "cc-new",
-    model: "m-cc-new",
-    profileName: "cc-new",
-  });
-  assert.equal(pickCrossReviewer(profiles, [], "claude-code")?.agentId, "codex");
-  assert.equal(pickCrossReviewer(profiles, ["codex"], "claude-code")?.agentId, "kimi");
-  // 干活的是维护级 Agent（如 Gemini）时照样从一等里挑
-  assert.equal(pickCrossReviewer(profiles, [], "gemini")?.agentId, "claude-code");
-  // 只有干活那一家与维护级：没有可复核的
-  assert.equal(pickCrossReviewer([p("cc", "claude-code", null), p("gem", "gemini", null)], [], "claude-code"), null);
-  // 官方账号没有模型名单：模型留空交给启动栏默认
-  assert.equal(pickCrossReviewer([p("cx", "codex", null, [])], [], null)?.model, "");
+  const producer = { agent: "claude-code", models: ["glm-5.3"] };
+  assert.deepEqual([...producerFamilies(producer)], ["zhipu"]);
+  const pick = pickCrossReviewer(profiles, [], producer)!;
+  assert.equal(pick.agentId, "kimi");
+  assert.equal(pick.model, "kimi-k2");
+  // 下拉里同模型族的标出来，但不删掉
+  const same = reviewerOptions(profiles, [], producer).find((o) => o.profileId === "cx-glm")!;
+  assert.equal(same.sameFamily, true);
+  assert.match(reviewerOptionLabel(same, "Codex"), /与写稿同一模型族/);
+});
+
+test("一条中转连接挂多家模型时取第一个模型族不同的；一等优先、最近用过的连接优先；一等里没有再看维护级", () => {
+  const relay = p("relay", "codex", "2026-11-01", ["claude-opus-4", "gpt-5", "deepseek-v3"]);
+  const producer = { agent: "claude-code", models: ["claude-opus-4"] };
+  assert.equal(pickCrossReviewer([relay], [], producer)?.model, "gpt-5");
+  const older = p("cx-old", "codex", "2026-09-01", ["gpt-5"]);
+  assert.equal(pickCrossReviewer([older, relay], [], producer)?.profileId, "relay");
+  // 一等里只有同模型族：从维护级挑，并标维护级
+  const gem = p("gem", "gemini", null, ["gemini-2.5-pro"]);
+  const onlyClaude = [p("cc2", "codex", null, ["claude-sonnet-4"]), gem];
+  const pick = pickCrossReviewer(onlyClaude, [], producer)!;
+  assert.equal(pick.agentId, "gemini");
+  assert.match(reviewerOptionLabel(pick, "Gemini CLI"), /维护级，复核指令未在这家验证过/);
+  // 停用的连接不出现
+  assert.equal(reviewerOptions([relay], ["relay"], producer).length, 0);
+});
+
+test("写稿方模型认不出时退回按 Agent 判断；官方账号没写模型按 Agent 认模型族", () => {
+  const profiles = [p("cc", "claude-code", null, ["x-1"]), p("cx", "codex", null, [], "official")];
+  assert.equal(pickCrossReviewer(profiles, [], { agent: "claude-code", models: ["internal-model"] })?.agentId, "codex");
+  assert.equal(pickCrossReviewer(profiles, [], null)?.agentId, "claude-code");
+  const official = reviewerOptions(profiles, [], { agent: "codex", models: [], profile: profiles[1] });
+  assert.equal(official.find((o) => o.profileId === "cx")?.sameFamily, true, "官方 Codex 写稿、官方 Codex 复核是同一模型族");
 });
 
 test("复核指令：只写一个核验文件、结论一律待你判断、不改稿件；标签与干活的分开", () => {

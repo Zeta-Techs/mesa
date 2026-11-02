@@ -107,7 +107,15 @@ import type {
 import { usePolling } from "../polling";
 import { checkChipText, countChecks, type ChecksDto } from "../research-checks";
 import CheckList from "./CheckList";
-import { crossReviewPrompt, crossReviewReuseKey, pickCrossReviewer, stepHasClaims } from "../cross-review";
+import {
+  crossReviewPrompt,
+  crossReviewReuseKey,
+  pickCrossReviewer,
+  reviewerOptionKey,
+  reviewerOptionLabel,
+  reviewerOptions,
+  stepHasClaims,
+} from "../cross-review";
 import { AGENTS } from "../types";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
@@ -1160,8 +1168,9 @@ function LiveWorkspaceReviewView({
   const setPage = useAppStore((s) => s.setPage);
   const profiles = useAppStore((s) => s.profiles);
   const hiddenProfiles = useAppStore(selectHiddenProfiles);
-  // 跨厂商复核：干活的是哪家（有 runId 才知道），复核挑另一家一等支持的
-  const [producerAgent, setProducerAgent] = useState<string | null>(null);
+  // 跨厂商复核：这一步是谁写的、用过哪些模型（有 runId 才知道）；默认挑模型族不同的一家，人可在下拉里改
+  const [producer, setProducer] = useState<{ agent: string; profileId: string | null; models: string[] } | null>(null);
+  const [reviewerKey, setReviewerKey] = useState<string | null>(null);
   const [crossBusy, setCrossBusy] = useState(false);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
@@ -1376,9 +1385,9 @@ function LiveWorkspaceReviewView({
       })
       .catch(() => {});
     if (runId) {
-      invoke<{ agent: string } | null>("run_get", { id: runId })
+      invoke<{ agent: string; profileId: string | null; models: string[] } | null>("research_run_producer", { runId })
         .then((run) => {
-          if (!stale) setProducerAgent(run?.agent ?? null);
+          if (!stale) setProducer(run);
         })
         .catch(() => {});
     }
@@ -1692,10 +1701,15 @@ function LiveWorkspaceReviewView({
     }
   }
 
-  const crossReviewer = pickCrossReviewer(profiles ?? [], hiddenProfiles, producerAgent);
-  const crossReviewerLabel = crossReviewer
-    ? (AGENTS.find((a) => a.id === crossReviewer.agentId)?.label ?? crossReviewer.agentId)
-    : "";
+  const producerInfo = producer
+    ? { ...producer, profile: (profiles ?? []).find((p) => p.id === producer.profileId) ?? null }
+    : null;
+  const reviewerChoices = reviewerOptions(profiles ?? [], hiddenProfiles, producerInfo);
+  const agentLabelOf = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
+  const crossReviewer =
+    (reviewerKey ? reviewerChoices.find((o) => reviewerOptionKey(o) === reviewerKey) : undefined) ??
+    pickCrossReviewer(profiles ?? [], hiddenProfiles, producerInfo);
+  const crossReviewerLabel = crossReviewer ? agentLabelOf(crossReviewer.agentId) : "";
 
   /** 请另一家复核：同一工作副本里另开一个标签，用另一家 Agent 只读复核，结果写进核验清单 */
   async function startCrossReview() {
@@ -2779,15 +2793,33 @@ function LiveWorkspaceReviewView({
                   </button>
                 )}
                 {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && crossReviewer && !mergeDone && (
-                  <button
-                    type="button"
-                    disabled={crossBusy || !wsRow}
-                    onClick={() => void startCrossReview()}
-                    title={`换 ${crossReviewerLabel}（${crossReviewer.profileName}）读原文摘录与正文，逐条判断支持与否；结论进核验清单，都标「待你判断」。只读，不改稿件`}
-                    className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                  >
-                    请 {crossReviewerLabel} 复核
-                  </button>
+                  <span className="flex shrink-0 items-center">
+                    <button
+                      type="button"
+                      disabled={crossBusy || !wsRow}
+                      onClick={() => void startCrossReview()}
+                      title={`用 ${reviewerOptionLabel(crossReviewer, crossReviewerLabel)} 读原文摘录与正文，逐条判断支持与否；结论进核验清单，都标「待你判断」。只读，不改稿件`}
+                      className={`rounded-sm px-1 hover:bg-hover hover:text-l1 disabled:opacity-50 ${crossReviewer.sameFamily ? "text-warn-text" : "text-l3"}`}
+                    >
+                      请 {crossReviewerLabel} 复核
+                    </button>
+                    {/* 换复核方：默认挑模型族不同的一家；同模型族、维护级的标在选项里，不禁止 */}
+                    <span className="relative flex h-5 w-4 items-center justify-center rounded-sm text-micro text-l4 hover:bg-hover hover:text-l1" title="换一个复核的 Agent、连接或模型">
+                      ▾
+                    <select
+                      aria-label="换复核方"
+                      value={reviewerOptionKey(crossReviewer)}
+                      onChange={(e) => setReviewerKey(e.target.value)}
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                    >
+                      {reviewerChoices.map((o) => (
+                        <option key={reviewerOptionKey(o)} value={reviewerOptionKey(o)}>
+                          {reviewerOptionLabel(o, agentLabelOf(o.agentId))}
+                        </option>
+                      ))}
+                    </select>
+                    </span>
+                  </span>
                 )}
                 {citations && citations.bibFound && citations.totalRefs > 0 && (
                   <button

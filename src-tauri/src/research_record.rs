@@ -433,16 +433,42 @@ fn task_text_of(run: &crate::runs::RunDto) -> Option<(&'static str, String)> {
         .map(|t| ("context.json", t))
 }
 
-fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) -> RunRecord {
-    let mut models = Vec::new();
-    if let Some(session) = run.session_id.as_deref() {
-        models = crate::usage::session_models(&run.agent, session);
-        if models.is_empty() {
-            if let Some(model) = crate::sessions::launch_model_of(&run.agent, session) {
-                models.push(model);
-            }
-        }
+/// 这次 Run 用过的模型：会话里已索引的用量优先，取不到用 Mesa 启动时记下的；都没有给空
+fn run_models(run: &crate::runs::RunDto) -> Vec<String> {
+    let Some(session) = run.session_id.as_deref() else {
+        return Vec::new();
+    };
+    let models = crate::usage::session_models(&run.agent, session);
+    if !models.is_empty() {
+        return models;
     }
+    crate::sessions::launch_model_of(&run.agent, session).into_iter().collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProducerDto {
+    pub agent: String,
+    pub profile_id: Option<String>,
+    pub models: Vec<String>,
+}
+
+/// 跨厂商复核用：这一步是谁写的（Agent、连接、用过的模型），按模型族挑「另一家」
+#[tauri::command]
+pub async fn research_run_producer(run_id: String) -> Result<Option<RunProducerDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::runs::run_get_sync(run_id)?.map(|run| RunProducerDto {
+            models: run_models(&run),
+            agent: run.agent,
+            profile_id: run.profile_id,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) -> RunRecord {
+    let models = run_models(run);
     RunRecord {
         v: 1,
         kind: "run".into(),
