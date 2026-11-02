@@ -789,7 +789,8 @@ export default function ProjectAgentsView({
                 Icon={schedStale ? TriangleAlert : Clock3}
                 label={item.name}
                 tag={!item.enabled
-                  ? "已暂停"
+                  // 与定时任务页同口径（ScheduleSection）：连续失败被系统停下才叫「已自动暂停」，人手关的叫「已停用」
+                  ? item.pausedReason ? "已自动暂停" : "已停用"
                   : schedStale
                     ? "已失效"
                     : item.profileId

@@ -4,8 +4,8 @@ import type { ModelCapabilityDto } from "./types";
 export function contextLabel(tokens: number | null | undefined): string | null {
   if (!tokens || tokens <= 0) return null;
   if (tokens >= 1_000_000) {
-    const m = tokens / 1_000_000;
-    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`;
+    // 取一位小数、去掉尾随 .0：1,048,576（2^20）写 1M，和同菜单里的 1,000,000 一个写法（2026-11-02 菜单里 1.0M / 1M 并排）
+    return `${Number((tokens / 1_000_000).toFixed(1))}M`;
   }
   return `${Math.round(tokens / 1000)}K`;
 }
