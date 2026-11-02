@@ -682,7 +682,7 @@ export default function ProjectAgentsView({
           <SlotCard
             Icon={MessageSquare}
             label="项目对话"
-            tag={chatBinding ? "已专属" : "跟随默认"}
+            tag={chatBinding ? "已指定" : "跟随默认"}
             marked={Boolean(chatBinding)}
             binding={chatBinding}
             unboundLine={inherited.line}
@@ -696,7 +696,7 @@ export default function ProjectAgentsView({
           <SlotCard
             Icon={Lightbulb}
             label={workMode === "research" ? "问 AI / 聊想法" : "问 AI"}
-            tag={discussBinding ? "已专属" : "跟随默认"}
+            tag={discussBinding ? "已指定" : "跟随默认"}
             marked={Boolean(discussBinding)}
             binding={discussBinding}
             unboundLine={inherited.line}
@@ -711,7 +711,7 @@ export default function ProjectAgentsView({
             <SlotCard
               Icon={BookOpen}
               label="沉浸阅读对话"
-              tag={readerBinding ? "已专属" : "跟随默认"}
+              tag={readerBinding ? "已指定" : "跟随默认"}
               marked={Boolean(readerBinding)}
               binding={readerBinding}
               unboundLine={inherited.line}
@@ -773,7 +773,7 @@ export default function ProjectAgentsView({
           <div className="mb-4">
             <SectionHeading
               title="定时任务"
-              hint="每条任务可以单独钉连接；不钉就跟随项目默认。和定时任务页改的是同一份。"
+              hint="每条任务可以单独指定连接；不指定就跟随项目默认。和定时任务页改的是同一份。"
             />
           </div>
           <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
@@ -924,7 +924,7 @@ export default function ProjectAgentsView({
                     key={row.slot}
                     Icon={row.stale ? TriangleAlert : stepIconFor(row.stepName, row.skills)}
                     label={row.stepName}
-                    tag={row.stale ? "已失效" : binding ? "已专属" : "跟随默认"}
+                    tag={row.stale ? "已失效" : binding ? "已指定" : "跟随默认"}
                     marked={Boolean(binding) && !row.stale}
                     stale={row.stale}
                     binding={binding}
@@ -1009,7 +1009,7 @@ function stepGroupSummary(total: number, bound: number, stale: number): string {
   // 三段常显口径（agent-binding.md：组头一眼感知）：N 步 · M 已专属 · K 条失效，
   // 各计数 >0 才出现——既有专属又有坏行时不再二选一吞掉其一
   const parts = [`${total} 步`];
-  if (bound > 0) parts.push(`${bound} 已专属`);
+  if (bound > 0) parts.push(`${bound} 已指定`);
   if (stale > 0) parts.push(`${stale} 条失效`);
   if (bound === 0 && stale === 0) parts.push("都跟项目默认");
   return parts.join(" · ");

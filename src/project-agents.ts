@@ -188,7 +188,7 @@ export function projectAgentsEmptyWorkHint(
 ): string {
   if (workMode === "coding") return "在工作树里选谁开工。";
   if (workMode === "office") return "新建目标时指定谁写文档。";
-  return "新建目标或开步时指定谁干。";
+  return "新建目标或开始步骤时再选由谁来做。";
 }
 
 export function selectedProjectAgentProfile<T extends { id: string; modelId?: string }>(

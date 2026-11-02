@@ -282,7 +282,7 @@ export default function ProjectIdentityHeader({
             className={`${compactFieldClass} min-w-0 flex-1`}
             value={topicDraft}
             onChange={(event) => setTopicDraft(event.target.value)}
-            placeholder="课题主题：一键开步时写进 TASK.md；留空清除"
+            placeholder="课题主题：开始步骤时写进任务书；留空清除"
             autoFocus
           />
           <button type="submit" className={inlineActionClass}>

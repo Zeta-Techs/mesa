@@ -2400,9 +2400,9 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 <p className="text-xs text-l3">
                   {selectedGroup.list.length === 0
                     ? wsView.steps.length > 0
-                      ? "该项目还没有工作区。从上方研究步骤点「开始」一键开步，或直接新建一个："
+                      ? "该项目还没有工作区。在上方研究步骤上点「开始」，或直接新建一个："
                       : "该项目还没有工作区。"
-                    : "该步骤还没有工作区。点流程线里的「开始」一键开步，或直接新建一个："}
+                    : "该步骤还没有工作区。在步骤卡上点「开始」，或直接新建一个："}
                 </p>
                 <button
                   type="button"

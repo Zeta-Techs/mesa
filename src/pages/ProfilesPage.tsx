@@ -2225,7 +2225,7 @@ function PreviewDialog({
   return (
     <Modal
       open
-      title={`启动计划预览 · ${profile.name}`}
+      title={`启动前预览 · ${profile.name}`}
       description="启动时实际注入的完整参数与环境变量"
       onClose={onClose}
       size="lg"
@@ -5377,7 +5377,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               onSelect: () => void onValidate(rowMenu.profile),
             },
             {
-              label: "启动计划预览",
+              label: "启动前预览",
               icon: Eye,
               onSelect: () => void onPreviewLaunchPlan(rowMenu.profile),
             },

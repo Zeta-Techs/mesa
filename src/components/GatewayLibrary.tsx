@@ -1190,7 +1190,7 @@ export default function GatewayLibrary({
             title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
             onClick={() => void undoMerge()}
           >
-            拆开自动合并的连接
+            撤销自动合并
           </button>
         )
       }

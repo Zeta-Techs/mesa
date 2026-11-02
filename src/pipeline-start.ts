@@ -183,7 +183,7 @@ export async function startPipelineStep({
       repoPath: projectPath,
     });
   } catch (reason) {
-    onError(`档案卡自动提交失败（不影响开步）：${String(reason)}`);
+    onError(`档案卡自动提交失败（不影响开始这一步）：${String(reason)}`);
   }
   // 开工接驳：勾选且命中非空时，把积累面（清单/笔记）随开工提交进基准分支——
   // 在档案卡 bootstrap 之后、建工作区之前，新工作区从基准 HEAD 建树即带上这批积累与笔记。
@@ -199,7 +199,7 @@ export async function startPipelineStep({
         paths: intakeBridge.paths,
       });
     } catch (reason) {
-      onError(`带上未保存的清单与笔记失败（不影响开步，积累与笔记留在项目根未提交）：${String(reason)}`);
+      onError(`带上未保存的清单与笔记失败（不影响开始这一步，积累与笔记留在项目根未提交）：${String(reason)}`);
     }
   }
   const ws = await invoke<WorkspaceDto>("create_workspace", {
@@ -245,7 +245,7 @@ export async function startPipelineStep({
       worktreePath: ws.worktreePath,
     });
   } catch (reason) {
-    onError(`积累清单快照写入失败（不影响开步）：${String(reason)}`);
+    onError(`积累清单快照写入失败（不影响开始这一步）：${String(reason)}`);
   }
   // 步骤预设的 run 脚本（P4 quarto 渲染等）落进项目层 .ccode/settings.toml：
   // 同名覆盖、其余键保留；best-effort 失败不阻断开步

@@ -197,7 +197,7 @@ test("hints stay short and never promise routing", () => {
   }
   assert.equal(projectNeedsDefaultAgent({ defaultAgent: "" }), true);
   assert.equal(projectNeedsDefaultAgent({ defaultAgent: "claude" }), false);
-  assert.equal(projectAgentsEmptyWorkHint("research"), "新建目标或开步时指定谁干。");
+  assert.equal(projectAgentsEmptyWorkHint("research"), "新建目标或开始步骤时再选由谁来做。");
   assert.equal(projectAgentsEmptyWorkHint("office"), "新建目标时指定谁写文档。");
   assert.equal(projectAgentsEmptyWorkHint("coding"), "在工作树里选谁开工。");
   assert.equal(taskStatusLabel("pending_review"), "待验收");

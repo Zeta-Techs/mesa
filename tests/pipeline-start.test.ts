@@ -385,7 +385,7 @@ test("冻结积累账失败只提示不阻断：链路仍交接终端", async ()
   });
   assert.equal(calls.filter((c) => c.cmd === "freeze_reading_list_intake").length, 1);
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /积累清单快照写入失败（不影响开步）/);
+  assert.match(errors[0], /积累清单快照写入失败（不影响开始这一步）/);
   assert.equal(opened, true, "冻结失败后仍要交接终端");
 });
 

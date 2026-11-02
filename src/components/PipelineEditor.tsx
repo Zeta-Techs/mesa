@@ -641,7 +641,7 @@ export default function PipelineEditor({
         </label>
         <label className="mb-2 block">
           <span className="mb-1 block text-xs text-l3">
-            简报（一键开步时落成工作区 TASK.md）
+            简报（开始这一步时写成任务书 TASK.md）
           </span>
           <textarea
             className={`${field} w-full`}
@@ -1102,7 +1102,7 @@ export default function PipelineEditor({
 
         <div className="mb-2">
           <span className="mb-1 block text-xs text-l3">
-            run 脚本（开步时写入项目 .ccode/settings.toml，可在工作区「运行脚本」菜单执行）
+            run 脚本（开始这一步时写入项目 .ccode/settings.toml，可在工作区「运行脚本」菜单执行）
           </span>
           {d.run.map((r, ri) => (
             <div key={ri} className="mb-1 flex items-center gap-1">

@@ -952,7 +952,7 @@ export default function TaskCardsSection({
                 type="button"
                 disabled={busyId === card.id}
                 onClick={() => onStart(card)}
-                title="一键开步：建工作区，TASK.md 随之落盘；会话自动归入本卡"
+                title="开始这一步：建工作区并写好任务书；会话自动归入本卡"
                 className={actionBtn}
               >
                 开工
