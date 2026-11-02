@@ -56,11 +56,15 @@ test("选项回答、类别标与交给 Agent 的话", () => {
   assert.equal(optionAnswer("B", "期刊 + 顶会"), "B（期刊 + 顶会）");
   assert.equal(helpCategoryTag("一般"), null);
   assert.equal(helpCategoryTag("范围"), "范围");
-  const plain = deliverHelpPrompt(2, 0);
-  assert.match(plain, /有 2 条问题人已经在 Mesa 里答了/);
-  assert.match(plain, /再把答过的这几条从 help-wanted\.md 删掉/);
+  const two = [
+    item({ id: "a", question: "会议论文要不要纳入？", answer: "A（只要期刊）" }),
+    item({ id: "b", question: "SI 要不要下？", answer: "先不下" }),
+  ];
+  const plain = deliverHelpPrompt(two, 0);
+  assert.match(plain, /答了 \.ccode\/help-wanted\.md 的 2 条问题：\n1\. 会议论文要不要纳入？ → A（只要期刊）\n2\. SI 要不要下？ → 先不下/);
+  assert.match(plain, /先把这些答案写进 TASK\.md「已定口径」.*确认写进去了，再把答过的这几条从 help-wanted\.md 删掉/);
   assert.doesNotMatch(plain, /项目知识/);
-  assert.match(deliverHelpPrompt(2, 1), /其中 1 条人要求以后同类照此办，已记进项目知识/);
+  assert.match(deliverHelpPrompt(two, 1), /其中 1 条人要求以后同类照此办，已记进项目知识/);
 });
 
 test("任务书账本只取有效、来源没变的已定 / 不做，新的在前", () => {

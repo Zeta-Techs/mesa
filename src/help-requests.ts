@@ -47,13 +47,16 @@ export function helpCategoryTag(category: string): string | null {
   return category && category !== "一般" ? category : null;
 }
 
-/** 交给 Agent 继续的那句话。回答已写在文件里，这里只告诉它去哪看、看完怎么收尾 */
-export function deliverHelpPrompt(answered: number, remembered: number): string {
+/** 交给 Agent 继续的那句话。问答原文直接写在话里：进了对话记录，Agent 中途出错把文件那一条先删了也不丢
+ *  （2026-11-02 Codex 干跑实证：先删条目、追加「已定口径」的补丁没打上就收尾，回答两头都没了）。
+ *  顺序写死：先记、确认记上了再删 */
+export function deliverHelpPrompt(answered: readonly HelpItemDto[], remembered: number): string {
+  const lines = answered.map((item, i) => `${i + 1}. ${item.question} → ${item.answer ?? ""}`).join("\n");
   const memo =
     remembered > 0
       ? `其中 ${remembered} 条人要求以后同类照此办，已记进项目知识，后面遇到同类问题不要再问。`
       : "";
-  return `.ccode/help-wanted.md 里有 ${answered} 条问题人已经在 Mesa 里答了（每条下面的「已答：」行）。${memo}按回答继续：把答案写进 TASK.md「已定口径」或本步报告，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样，按各自「不回时」处理。然后接着做这一步还没做完的事，不要停下来等我。`;
+  return `我在 Mesa 里答了 .ccode/help-wanted.md 的 ${answered.length} 条问题：\n${lines}\n${memo}按回答继续：先把这些答案写进 TASK.md「已定口径」（没有这一节就新建）或本步报告，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样，按各自「不回时」处理。然后接着做这一步还没做完的事，不要停下来等我。`;
 }
 
 /** 任务书「以前定过的事」：项目知识里仍有效、来源没变的「已定 / 不做」，新的在前，最多 15 条 */

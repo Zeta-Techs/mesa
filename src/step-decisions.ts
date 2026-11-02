@@ -503,7 +503,7 @@ export function stepWaitItems(step: WaitStep): { during: string[]; after: string
  *  2026-11-02 起每条带固定字段，Mesa 解析成卡片让人点选即答（help_requests.rs）；只有七类必须停下来问 */
 export const HELP_WANTED_RULE =
   "必须停下来问人的只有七类（上面暂停策略更严时从严）：范围（研究问题、纳入排除标准、结论方向）、数据（删改原始资料、改剔除口径）、合规、对外发送、花钱、改人写的内容、保护路径；其余自己定，写进本步报告「我自己定了什么」。\n" +
-  "问题写进 .ccode/help-wanted.md（不提交，只放没处理完的，没答的不超过 3 条）：「- 」开头一行写问题，下面缩进逐行写「建议：B」「A：选项 —— 后果」（2–4 个）「不回时：兜底」「类别：七类之一」「依据：位置」。条目下出现「已答：」就照办，答案写进 TASK.md「已定口径」或本步报告，再删掉这一条。";
+  "问题写进 .ccode/help-wanted.md（不提交，只放没处理完的，未答不超过 3 条）：「- 」开头一行写问题，下面缩进写「建议：B」「A：选项 —— 后果」（2–4 个）「不回时：兜底」「类别：七类之一」「依据：位置」。条目下出现「已答：」就照办，答案先写进 TASK.md「已定口径」或本步报告，确认写进去了再删掉这一条。";
 
 export function decisionPolicyBlock(step: WaitStep): string {
   const lines = [decisionPolicyText(step.decisionMode)];

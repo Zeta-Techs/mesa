@@ -2864,7 +2864,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 忽略此来源
               </button>
               {(() => {
-                const answered = helpAnsweredUnsent(helpView.items).length;
+                const answeredItems = helpAnsweredUnsent(helpView.items);
+                const answered = answeredItems.length;
                 return (
                   <button
                     type="button"
@@ -2874,7 +2875,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                       const remembered = view.items.filter((i) => helpRemembered.has(i.id)).length;
                       setHelpView(null);
                       setHelpRemembered(new Set());
-                      void openHelpTerminal(view, answered > 0 ? deliverHelpPrompt(answered, remembered) : undefined);
+                      void openHelpTerminal(view, answered > 0 ? deliverHelpPrompt(answeredItems, remembered) : undefined);
                     }}
                     className={primaryActionClass}
                   >
