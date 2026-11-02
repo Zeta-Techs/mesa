@@ -72,3 +72,13 @@ export function ledgerLines(doc: ProjectMemoryDocumentDto): string[] {
     .slice(0, 15)
     .map((e) => `${e.meta.goalName}：${e.text.replace(/\s+/g, " ").trim()}`);
 }
+
+/** 每个来源还要人管几条（流程线那一步上的「回答问题（N）」）；没有的不列 */
+export function helpPendingByRoot(requests: readonly HelpRequestDto[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of requests) {
+    const n = r.items.filter(helpNeedsAction).length;
+    if (n > 0) out[r.root] = n;
+  }
+  return out;
+}

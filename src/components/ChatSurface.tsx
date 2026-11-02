@@ -43,7 +43,7 @@ import type {
   SkillDto,
 } from "../types";
 import { IS_WINDOWS } from "../hotkeys";
-import { samePath } from "../path-utils";
+import { pathWithin, samePath } from "../path-utils";
 import { dropHitsRect } from "../terminal-input";
 import {
   approvalExtraHint,
@@ -932,6 +932,12 @@ export default function ChatSurface({
                 : { label: "去浏览器登录", primary: true, title: "往终端按回车，Cursor 会打开浏览器", onClick: () => onWaitKey?.("enter") },
             ],
           };
+  // 这次对话的工作目录里 AI 写了还没处理完的人工请求（2026-11-02）：对话里就能点开卡片回答，不用回收件箱
+  const helpPending = useAppStore((s) => s.helpPending);
+  const setHelpViewReq = useAppStore((s) => s.setHelpViewReq);
+  const helpHere = cwd
+    ? Object.entries(helpPending).find(([root]) => pathWithin(cwd, root, IS_WINDOWS))
+    : undefined;
   const decision: ChatDecision | null =
     failureDecision
       ? failureDecision
@@ -1578,6 +1584,18 @@ export default function ChatSurface({
             <p role="status" className="mb-2 text-xs text-caution-text">{channelSourceNote(channel)}</p>
           )}
           {firstRunNote && (firstRunNote.theme || firstRunNote.security) && <FirstRunLine note={firstRunNote} agent={agentLabel(agentId)} />}
+          {helpHere && !decision && (
+            <p role="status" className="mb-2 flex items-center gap-2 text-xs text-caution-text">
+              <span>AI 写了 {helpHere[1]} 个要你拍板的问题（不回它会按兜底继续）</span>
+              <button
+                type="button"
+                onClick={() => setHelpViewReq(helpHere[0])}
+                className="rounded-sm border border-field px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1"
+              >
+                <span className="text-xs">回答</span>
+              </button>
+            </p>
+          )}
           {decision && (
             <ChatDecisionCard
               decision={decision}

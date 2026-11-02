@@ -4,7 +4,7 @@ import { rowActionClass, secondaryActionClass } from "./PageFrame";
 import RunCaret from "./RunCaret";
 import { caretOfAttention } from "../run-caret";
 import { absTime, relTime } from "../rel-time";
-import { frequencyLabel, nextRunLabel, summaryPreview } from "../schedule-tasks";
+import { eventRuleLabel, frequencyLabel, nextRunLabel, scheduleStatusMark, summaryPreview } from "../schedule-tasks";
 import { codingDivergenceLabel } from "../work-mode";
 import { criterionText, readableBrief } from "../acceptance-text";
 import type { CardTask, ProjectCard } from "../workbench-cards";
@@ -246,8 +246,22 @@ export default function WorkbenchTaskPanel({
             <Section title="定时">
               <Rows
                 rows={[
-                  ["频率", frequencyLabel(schedule.frequency, schedule.weekday, schedule.hour, schedule.minute, schedule.intervalHours)],
-                  ["下次", nextRunLabel(schedule)?.replace(/^下次 /, "") ?? (schedule.enabled ? "仅手动" : "已停用")],
+                  // 事件规则（2026-11-02）没有频率和「下次」：写什么时候算一次、只记录还是直接跑、攒着几批
+                  ...(schedule.event
+                    ? ([
+                        ["触发", eventRuleLabel(schedule.event).split(" · ")[0]],
+                        ["事件来了", schedule.event.mode === "run" ? "直接跑（结果要你评审）" : "只记录（不叫 AI）"],
+                        ...(schedule.pendingEvents
+                          ? ([["攒着", `${schedule.pendingEvents} 批，评审完上一轮后一并处理`]] as [string, ReactNode][])
+                          : []),
+                      ] as [string, ReactNode][])
+                    : ([
+                        ["频率", frequencyLabel(schedule.frequency, schedule.weekday, schedule.hour, schedule.minute, schedule.intervalHours)],
+                        ["下次", nextRunLabel(schedule)?.replace(/^下次 /, "") ?? (schedule.enabled ? "仅手动" : "已停用")],
+                      ] as [string, ReactNode][])),
+                  ...(schedule.stalledMinutes != null
+                    ? ([["可能卡住", `${schedule.stalledMinutes} 分钟没有输出、文件和对话记录都没变`]] as [string, ReactNode][])
+                    : []),
                   ...(schedule.pausedReason ? ([["暂停原因", schedule.pausedReason]] as [string, ReactNode][]) : []),
                   ["技能", <span className="font-mono">{schedule.skill}</span>],
                 ]}
@@ -261,7 +275,8 @@ export default function WorkbenchTaskPanel({
                   <li key={`${r.at}-${r.status}`} className="text-sm">
                     <span className="text-micro text-l3" title={absTime(r.at)}>
                       {relTime(r.at)} ·{" "}
-                      {r.status === "ok" ? "完成" : r.status === "skipped" ? "跳过" : r.status === "timeout" ? "超时" : "失败"}
+                      {r.status === "ok" ? "完成" : scheduleStatusMark(r.status).label}
+                      {r.trigger === "event" ? " · 事件" : ""}
                     </span>
                     <p className="line-clamp-2 text-l2">{summaryPreview(r)}</p>
                   </li>

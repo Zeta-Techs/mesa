@@ -36,12 +36,10 @@ import {
 } from "../inbox";
 import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { confirmDialog } from "../components/ConfirmDialog";
-import HelpRequestCards from "../components/HelpRequestCards";
 import {
-  deliverHelpPrompt,
-  helpAnsweredUnsent,
   helpInboxLine,
   helpItemsSignature,
+  helpPendingByRoot,
 } from "../help-requests";
 import ProjectGroup from "../components/ProjectGroup";
 import ArtifactChecklist from "../components/ArtifactChecklist";
@@ -61,7 +59,7 @@ import TemplatePickModal from "../components/TemplatePickModal";
 import { Modal } from "../components/Modal";
 import { cloudSyncHint, loadNewProjectParent, saveNewProjectParent } from "../new-project-parent";
 import { filterWorkspacesByFocus } from "../workspace-visibility";
-import { buildWorkspaceTerminalRequest, resolveStepLaunchByWorkspace } from "../pipeline-start";
+import { buildWorkspaceTerminalRequest } from "../pipeline-start";
 import {
   EmptyState,
   fieldClass,
@@ -70,7 +68,6 @@ import {
   NoticeBar,
   PageFrame,
   primaryActionClass,
-  quietActionClass,
   rowActionClass,
   secondaryActionClass,
   InlineNotice,
@@ -985,70 +982,20 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const dismissHelpRequest = useAppStore((s) => s.dismissHelpRequest);
   const dismissInbox = useAppStore((s) => s.dismissInbox);
   const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
-  // 人工请求「去查看」的完整内容层（v3.97）：strip 行只有 40 字截断预览，
-  // 「选中项目」单独作为动作反馈太弱（已选中时像没反应）——弹出该来源的全部请求全文
-  const helpViewReq = useAppStore((s) => s.helpViewReq);
-  const setHelpViewReq = useAppStore((s) => s.setHelpViewReq);
-  const [helpView, setHelpView] = useState<HelpRequestDto | null>(null);
-  // 这次弹层里勾了「以后同类照此办」的条目：交给 Agent 时告诉它已记进项目知识
-  const [helpRemembered, setHelpRemembered] = useState<Set<string>>(new Set());
-  /** 打开人工请求对应的对话；带 prompt 时是「交给 Agent 继续」：先建好请求再标「已送」，建不成不标 */
-  async function openHelpTerminal(view: HelpRequestDto, prompt?: string) {
-    const ws =
-      workspaces.find((w) => w.id === view.workspaceId) ??
-      workspaces.find((w) => w.worktreePath === view.root);
-    let req: Parameters<typeof setPendingTerminal>[0];
-    try {
-      if (ws) {
-        // B1：help-wanted 也是步骤工作区语境——步骤槽绑定作预填
-        //（该入口 resume 优先，绑定只在无会话回落时生效）
-        const stepL = await resolveStepLaunchByWorkspace(ws, useAppStore.getState().profiles);
-        req = await buildWorkspaceTerminalRequest(
-          ws,
-          prompt,
-          prompt
-            ? { autoStart: true, resumeSession: true, stepLaunch: stepL ?? undefined }
-            : { stepLaunch: stepL ?? undefined },
-        );
-      } else {
-        req = {
-          cwd: view.root,
-          extraEnv: {},
-          title: view.workspaceName ?? view.repoName,
-          ...(prompt ? { initialPrompt: prompt } : {}),
-        };
-      }
-    } catch (reason) {
-      // 弹层已关、不落错误面就等于点了没反应（workspace_env_for 失败等后端异常会走到这里）
-      toast(`打不开终端：${String(reason)}`, "error");
-      return;
-    }
-    if (prompt) {
-      try {
-        await invoke<number>("help_request_mark_sent", { root: view.root });
-      } catch (reason) {
-        toast(`回答已送出，但没能标记为已送：${String(reason)}`, "warning");
-      }
-      void reloadHelp(view.root);
-    }
-    setPendingTerminal(req);
-    setPage("terminal");
-  }
-  async function reloadHelp(root: string) {
-    try {
-      const list = await invoke<HelpRequestDto[]>("list_help_requests");
-      setHelpRequests(list);
-      setHelpView(list.find((h) => h.root === root) ?? null);
-    } catch {
-      /* 下轮刷新再拉 */
-    }
-  }
+  // 人工请求卡片弹层全局挂在 App（HelpRequestDialog）；答过 / 送过后它 bump，这里重拉收件箱数据源
+  const helpRefreshTick = useAppStore((s) => s.helpRefreshTick);
+  const setHelpPending = useAppStore((s) => s.setHelpPending);
   useEffect(() => {
-    if (!helpViewReq) return;
-    setHelpView(helpRequests.find((h) => h.root === helpViewReq) ?? null);
-    setHelpViewReq(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [helpViewReq, helpRequests]);
+    setHelpPending(helpPendingByRoot(helpRequests));
+  }, [helpRequests, setHelpPending]);
+  useEffect(() => {
+    if (helpRefreshTick === 0) return;
+    invoke<HelpRequestDto[]>("list_help_requests")
+      .then(setHelpRequests)
+      .catch(() => {
+        /* 下轮刷新重试 */
+      });
+  }, [helpRefreshTick]);
   // 会话清单（启动即加载）：外部 live 会话的收件箱入口
   const sessions = useAppStore((s) => s.sessions);
   // 外部 live 会话（无终端标签可跳）的尾部注意力：后端直查 session_tail_state，
@@ -2837,61 +2784,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           onRetry={() => void refresh()}
           onClose={() => setDetailsPopover(null)}
         />
-      )}
-      {/* 人工请求卡片（2026-11-02）：Agent 写的票拟，点一下就是批红；回答立刻写进文件，
-          「交给 Agent 继续」走原对话送达（同「让 Agent 按决定继续」）。不回它会按每条兜底继续，不停工 */}
-      {helpView && (
-        <Modal
-          open
-          size="md"
-          title={`人工请求 · ${helpView.repoName}${helpView.workspaceName ? ` / ${helpView.workspaceName}` : ""}`}
-          description="Agent 干到一半需要你拍板。点选项或写一句就记下；答完交给 Agent，它接着干。不回它会按每条「不回时」继续。"
-          onClose={() => {
-            setHelpView(null);
-            setHelpRemembered(new Set());
-          }}
-          footer={
-            <>
-              <button
-                type="button"
-                title="忽略此来源（问题或回答变化后会重新出现）"
-                onClick={() => {
-                  dismissHelpRequest(helpView.root, helpItemsSignature(helpView.items));
-                  setHelpView(null);
-                }}
-                className={quietActionClass}
-              >
-                忽略此来源
-              </button>
-              {(() => {
-                const answeredItems = helpAnsweredUnsent(helpView.items);
-                const answered = answeredItems.length;
-                return (
-                  <button
-                    type="button"
-                    title={answered > 0 ? "把回答交给这一步原来的对话，让 Agent 接着干" : "打开该步骤终端，直接回答这些请求"}
-                    onClick={() => {
-                      const view = helpView;
-                      const remembered = view.items.filter((i) => helpRemembered.has(i.id)).length;
-                      setHelpView(null);
-                      setHelpRemembered(new Set());
-                      void openHelpTerminal(view, answered > 0 ? deliverHelpPrompt(answeredItems, remembered) : undefined);
-                    }}
-                    className={primaryActionClass}
-                  >
-                    {answered > 0 ? `交给 Agent 继续（${answered} 条已答）` : "去终端回答"}
-                  </button>
-                );
-              })()}
-            </>
-          }
-        >
-          <HelpRequestCards
-            request={helpView}
-            onAnswered={() => void reloadHelp(helpView.root)}
-            onRemembered={(id) => setHelpRemembered((prev) => new Set(prev).add(id))}
-          />
-        </Modal>
       )}
         </PageFrame>
       </div>

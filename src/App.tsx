@@ -108,6 +108,7 @@ import {
 } from "./components/OnboardingGuide";
 import WindowControls from "./components/WindowControls";
 import PhoneDropDialog from "./components/PhoneDropDialog";
+import HelpRequestDialog from "./components/HelpRequestDialog";
 import PromptManager from "./components/PromptManager";
 import { usePhoneDropEvents, usePhoneDropStore } from "./phone-drop-store";
 import { phonePendingCount } from "./phone-drop";
@@ -2459,6 +2460,7 @@ function App() {
             />
           )}
           <PhoneDropDialog />
+          <HelpRequestDialog />
           <PromptManager />
           <FeedbackModal
             open={feedbackOpen}

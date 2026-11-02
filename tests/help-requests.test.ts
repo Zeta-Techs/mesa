@@ -6,6 +6,7 @@ import {
   helpCategoryTag,
   helpInboxLine,
   helpItemsSignature,
+  helpPendingByRoot,
   helpUnanswered,
   ledgerLines,
   optionAnswer,
@@ -85,4 +86,10 @@ test("任务书账本只取有效、来源没变的已定 / 不做，新的在�
     ],
   };
   assert.deepEqual(ledgerLines(doc), ["不做：预印本 → 不加", "已定：旧的 → A"]);
+});
+
+test("流程线上的「回答问题（N）」按来源数还要人管的条目，全送出的来源不列", () => {
+  const a = request([item({ id: "1" }), item({ id: "2", answer: "A" }), item({ id: "3", answer: "B", sent: "t" })]);
+  const b = { ...request([item({ id: "4", answer: "A", sent: "t" })]), root: "/w2" };
+  assert.deepEqual(helpPendingByRoot([a, b]), { "/w": 2 });
 });

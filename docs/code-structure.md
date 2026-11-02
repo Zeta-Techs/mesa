@@ -241,8 +241,9 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES + 用户模板（list_pipeline_templates，命令未注册优雅降级只列内置），投稿与返修模板另选初稿/返修与轮次；选中只抛 steps（TemplatePickItem），写回 project.toml 与覆盖确认归父组件——注册成功后的首选层是另一个 TemplatePickModal
-  components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做；
-                             # 送达由 WorkspacesPage 的「交给 Agent 继续」统一做（buildWorkspaceTerminalRequest + help_request_mark_sent）
+  components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做
+  components/HelpRequestDialog.tsx # 人工请求弹层（全局挂在 App，消费 store.helpViewReq）：收件箱 / 工作台队列 / 流程线「回答问题」/ 对话页那一行都原地弹；
+                             # 「交给 Agent 继续」走 buildWorkspaceTerminalRequest，建成后 help_request_mark_sent；答过送过 bumpHelpRefresh 让工作区页重拉收件箱数据源
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
 components/ResearchProfileSection.tsx  # 设置「研究档案」分区：附带开关、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
@@ -449,7 +450,8 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # （科研流程步骤 / 目标（工作与 liteResearch，同 goalCaptureTargets 口径）/ 编程分支 / 定时 / 对不上的活标签「对话」），
                              # 活标签按 taskId / 工作副本目录归行、一条只归一行；在拍板队列里的行标 queued；
                              # cardIsActive（「进行中」筛选：此刻有事，或手上在做且 7 天内动过；只落后基准不算）、filterCards：有活的 / 全部 / 按工作方式；第三批 liveActivityLine（旁路快照→此刻在做什么，复用 chat-status describeActivity）、
-                             # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费）；
+                             # turnElapsedMs / durationLabel、awaySummary 离开期间摘要（只数结束的非内部运行与定时跑次，不估花费；只记录的事件规则单列）；
+                             # 2026-11-02：步骤行认 help:<工作副本>（「AI 在等你回答问题」），项目根 help: 作要点；定时行认事件规则 / 只记录 / 攒着 / 卡住（sched:stalled:）；
                              # 任务行 touchedAt（最后一次动它）与 current（流程当前步）；scheduleCardTask / scheduleOverview / scheduleTimeline / scheduleTimelineGroups
                              # 定时任务总览（项目分组里不再列定时）；orderLikeSidebar 项目先后跟侧栏置顶与拖动顺序（tests/workbench-cards.test.ts）
   lit-watch.ts               # 文献雷达纯逻辑：日分组/关键词分组（groupEntriesByKeyword，取 keywordsHit 首词、

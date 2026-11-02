@@ -626,10 +626,8 @@ export function runInboxAction(item: InboxItem) {
     });
     s.setPage("workspaces");
   } else if (item.action.type === "help") {
-    // 人工请求「去查看」：选中项目之外还要弹出完整内容层——请求全文在 strip 行里只有 40 字截断预览
-    s.setSelectProjectReq(item.action.projectRoot);
+    // 人工请求「去回答」：全局卡片弹层原地打开（工作台、标题栏收件箱都不跳页，2026-11-02）
     s.setHelpViewReq(item.action.projectRoot);
-    s.setPage("workspaces");
   } else if (item.action.type === "phoneDrop") {
     usePhoneDropStore.getState().openDialog(null, { start: false });
   } else if (item.action.type === "settings") {
@@ -899,9 +897,15 @@ interface AppState {
   /** 待获取清单等：切到文件页并打开这篇 PDF */
   filePreviewReq: { projectRoot: string; path: string; token: number } | null;
   setFilePreviewReq: (req: AppState["filePreviewReq"]) => void;
-  /** 收件箱人工请求「去查看」的一次性请求（项目根路径）：工作区页弹出该来源的完整请求内容层 */
+  /** 收件箱人工请求「去回答」的一次性请求（来源根路径）：全局 HelpRequestDialog 原地弹出卡片（2026-11-02 起不跳页） */
   helpViewReq: string | null;
   setHelpViewReq: (path: string | null) => void;
+  /** 人工请求答过 / 送过后 +1：收件箱数据源（工作区页）据此重拉 list_help_requests */
+  helpRefreshTick: number;
+  bumpHelpRefresh: () => void;
+  /** 每个来源（工作副本 / 项目根）还要人管的人工请求条数（没答或答了没送）：流程线在那一步上给「回答问题」 */
+  helpPending: Record<string, number>;
+  setHelpPending: (map: Record<string, number>) => void;
   /** 对话页作用域筛选的一次性请求（落成 step / project / task / agent chip） */
   sessionScopeReq: { kind: "project" | "step" | "task" | "agent" | "day"; value: string; label: string } | null;
   setSessionScopeReq: (
@@ -1347,6 +1351,10 @@ export const useAppStore = create<AppState>((set, get) => {
   setFilePreviewReq: (req) => set({ filePreviewReq: req }),
   helpViewReq: null,
   setHelpViewReq: (path) => set({ helpViewReq: path }),
+  helpRefreshTick: 0,
+  bumpHelpRefresh: () => set((s) => ({ helpRefreshTick: s.helpRefreshTick + 1 })),
+  helpPending: {},
+  setHelpPending: (map) => set({ helpPending: map }),
   setSelectProjectReq: (path) => set({ selectProjectReq: path }),
   taskReviewReq: null,
   setTaskReviewReq: (req) => set({ taskReviewReq: req }),

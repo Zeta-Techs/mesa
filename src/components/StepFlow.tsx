@@ -609,6 +609,9 @@ export default function StepFlow({
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
+  // 这一步的工作副本里 AI 问了还没处理完的（2026-11-02）：动作前面给「回答问题」，点了弹全局卡片
+  const asking = useAppStore((s) => (ws ? (s.helpPending[ws.worktreePath] ?? 0) : 0));
+  const setHelpViewReq = useAppStore((s) => s.setHelpViewReq);
 
   /** 已经有文献库的项目：落点在 papers/ 的事项不该再劝人把 PDF 往项目里塞——
    *  文献的唯一出处是那个库，往 papers/ 另放一份之后两边各自漂移。
@@ -1798,6 +1801,17 @@ export default function StepFlow({
       "shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1";
     const primary =
       "shrink-0 rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-xs text-cta-text hover:brightness-110";
+    const askBtn =
+      asking > 0 && ws ? (
+        <button
+          type="button"
+          onClick={() => setHelpViewReq(ws.worktreePath)}
+          title="AI 在这一步写了要你拍板的问题，点开在卡片上选"
+          className={primary}
+        >
+          回答问题（{asking}）
+        </button>
+      ) : null;
     switch (action.kind) {
       case "continue-notes":
         return (
@@ -1968,6 +1982,7 @@ export default function StepFlow({
           agentAttention === "working" || agentAttention === "confirm";
         return (
           <span className="flex shrink-0 items-center gap-1.5">
+            {askBtn}
             {action.agentDone && <span className="text-xs text-l3">Agent 已跑完</span>}
             {!live && onContinueStep && onContinueFresh && (
               <button
@@ -2007,9 +2022,12 @@ export default function StepFlow({
       }
       case "go-review":
         return (
-          <button type="button" onClick={goReview} className={primary}>
-            {action.conflict ? "去处理冲突" : "去评审"}
-          </button>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {askBtn}
+            <button type="button" onClick={goReview} className={askBtn ? outline : primary}>
+              {action.conflict ? "去处理冲突" : "去评审"}
+            </button>
+          </span>
         );
     }
   }

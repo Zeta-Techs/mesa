@@ -9,7 +9,8 @@
 import { pathWithin, samePath } from "./path-utils.ts";
 import { goalBucket, GOAL_BUCKET_LABEL } from "./project-tasks.ts";
 import { CODING_KIND_LABEL, deriveCodingKind, type CodingKind } from "./work-mode.ts";
-import { frequencyLabel, nextRunLabel, parseLocalSlot } from "./schedule-tasks.ts";
+import { eventRuleLabel, frequencyLabel, nextRunLabel, parseLocalSlot } from "./schedule-tasks.ts";
+import type { EventRuleDto } from "./types.ts";
 import { describeActivity, thinkingHeadline } from "./chat-status.ts";
 
 export type CardWorkMode = "research" | "coding" | "office";
@@ -129,6 +130,12 @@ export interface CardScheduleInput {
   runningRunId?: string | null;
   pausedReason?: string | null;
   nextRunAt?: string | null;
+  /** 事件规则（2026-11-02）：有它就不按时间跑，行上写触发条件而不是周期 */
+  event?: EventRuleDto | null;
+  /** 攒着还没处理的事件批数 */
+  pendingEvents?: number;
+  /** 正在跑但这么多分钟没动静（可能卡住） */
+  stalledMinutes?: number | null;
   /** 新的在前；跳过的不算「上次」 */
   history: readonly { at?: string; status: string; summary?: string; startedAt?: string | null; newEntries?: number | null }[];
 }
@@ -227,7 +234,9 @@ export function buildProjectCard(input: {
       if (s.done || (i !== current && !s.ws)) return;
       const run = s.ws ? take(runIn(s.ws.worktreePath)) : undefined;
       const live = run ? liveOf(run) : null;
-      const queued = inQueue(confirmKey(run), s.ws && `conflict:${s.ws.id}`, s.ws && `ready:${s.ws.id}`, s.ws && `artifacts:${s.ws.id}`);
+      // AI 在 help-wanted 里问了还没答完的（收件箱 help:<工作副本>，2026-11-02 起点开是卡片）
+      const asking = inQueue(s.ws && `help:${s.ws.worktreePath}`);
+      const queued = asking || inQueue(confirmKey(run), s.ws && `conflict:${s.ws.id}`, s.ws && `ready:${s.ws.id}`, s.ws && `artifacts:${s.ws.id}`);
       tasks.push({
         id: `step:${s.step.workspaceName}`,
         kind: "step",
@@ -236,7 +245,9 @@ export function buildProjectCard(input: {
         // 当前这一步写「工作副本开着」；排在它后面、提前开了工作副本的写「提前开了，还没保存」（2026-10-27 用户截图：三行同一句读不出区别）
         state: live
           ? liveState(live, "进行中")
-          : !s.ws
+          : asking
+            ? "AI 在等你回答问题"
+            : !s.ws
             ? "还没开始"
             : s.ws.status === "creating"
               ? "正在准备工作副本"
@@ -253,6 +264,9 @@ export function buildProjectCard(input: {
       });
     });
   }
+
+  // 主仓根上的人工请求（聊想法时 AI 写在项目根）：不挂在某一步上，作一条要点
+  if (inQueue(`help:${project.path}`)) vitals.push({ label: "人工请求", value: "等你回答" });
 
   if (project.workMode === "office" || liteResearch) {
     const counts = { running: 0, review: 0, open: 0, stuck: 0, done: 0 };
@@ -482,11 +496,15 @@ export function awaySummary(input: {
   };
   const closed = input.runs.filter((r) => !r.internal && after(r.closedAt));
   const failedRuns = closed.filter((r) => r.status === "failed").length;
-  const schedRuns = input.schedules.flatMap((s) => s.history).filter((r) => r.status !== "skipped" && after(r.at));
+  const schedRows = input.schedules.flatMap((s) => s.history).filter((r) => after(r.at));
+  // 只记录的事件规则没叫 AI，不算「跑了」，单说一句（2026-11-02）
+  const schedRuns = schedRows.filter((r) => r.status !== "skipped" && r.status !== "recorded");
+  const recorded = schedRows.filter((r) => r.status === "recorded").length;
   const failedSched = schedRuns.filter((r) => r.status === "error" || r.status === "timeout").length;
   const parts: string[] = [];
   if (closed.length) parts.push(`结束了 ${closed.length} 次运行${failedRuns ? `（${failedRuns} 次出错退出）` : ""}`);
   if (schedRuns.length) parts.push(`定时任务跑了 ${schedRuns.length} 次${failedSched ? `（${failedSched} 次失败）` : ""}`);
+  if (recorded) parts.push(`事件规则记下 ${recorded} 次（只记录，没叫 AI）`);
   if (!parts.length) return null;
   if (input.waiting) parts.push(`${input.waiting} 件等你拍板`);
   return { lead: `你离开的 ${durationLabel(input.nowMs - since)}里`, parts };
@@ -520,16 +538,27 @@ export function scheduleCardTask(
   const failed = last === "error" || last === "timeout";
   // 失败写第一行原因（同原工作台「定时任务」摘要口径）
   const reason = last === "error" ? (lastRun?.summary ?? "").split("\n").find((l) => l.trim())?.trim().slice(0, 30) : null;
-  const queued = queueKeys.has(`sched:paused:${s.id}`) || [...queueKeys].some((k) => k.startsWith(`sched:review:${s.id}:`));
-  const next = nextRunLabel(s, now);
-  const hits = last === "ok" && typeof lastRun?.newEntries === "number" ? `上次新命中 ${lastRun.newEntries}` : null;
+  const queued =
+    queueKeys.has(`sched:paused:${s.id}`) ||
+    queueKeys.has(`sched:stalled:${s.id}`) ||
+    [...queueKeys].some((k) => k.startsWith(`sched:review:${s.id}:`));
+  // 事件规则没有「下次」：写触发条件、只记录 / 直接跑、攒着几批；上次是只记录就说只记录
+  const next = s.event ? eventRuleLabel(s.event, s.pendingEvents ?? 0) : nextRunLabel(s, now);
+  const hits =
+    last === "ok" && typeof lastRun?.newEntries === "number"
+      ? `上次新命中 ${lastRun.newEntries}`
+      : last === "recorded"
+        ? "上次只记录"
+        : null;
   return {
     id: `schedule:${s.id}`,
     kind: "schedule",
     kindLabel: "定时",
     name: s.name,
     state: running
-      ? "正在跑"
+      ? s.stalledMinutes != null
+        ? `可能卡住了：${s.stalledMinutes} 分钟没有动静`
+        : "正在跑"
       : s.pausedReason
         ? `已自动暂停：${s.pausedReason}`
         : failed
@@ -577,7 +606,9 @@ export function scheduleOverview(
       task,
       projectRoot: s.projectRoot,
       projectName: project.name,
-      frequency: frequencyLabel(s.frequency, s.weekday, s.hour, s.minute, s.intervalHours),
+      frequency: s.event
+        ? eventRuleLabel(s.event, s.pendingEvents ?? 0)
+        : frequencyLabel(s.frequency, s.weekday, s.hour, s.minute, s.intervalHours),
       action,
       nextAt: next,
       rank: s.runningRunId ? 0 : task.tone === "fail" ? 1 : 2,

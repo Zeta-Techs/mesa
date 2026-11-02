@@ -306,3 +306,53 @@ test("定时时间项按显示分钟归组：同刻不重叠，在跑独立一�
   assert.equal(groups[0].running, true);
   assert.equal(groups[1].running, false);
 });
+
+test("人工请求：步骤的工作副本有没答完的问题写「AI 在等你回答问题」并进拍板；主仓根上的作要点", () => {
+  const card = buildProjectCard({
+    ...base,
+    project: { path: "/p", name: "综述", registered: true, workMode: "research" },
+    steps: [{ name: "检索", workspaceName: "s1" }],
+    workspaces: [{ id: "w1", repoPath: "/p", name: "s1", worktreePath: "/wt/s1", status: "active", mergedAt: null }],
+    queueKeys: new Set(["help:/wt/s1", "help:/p"]),
+  });
+  assert.deepEqual(card.tasks.map((t) => [t.state, t.tone, t.queued]), [["AI 在等你回答问题", "wait", true]]);
+  assert.ok(card.vitals.some((v) => v.label === "人工请求" && v.value === "等你回答"));
+});
+
+test("定时任务总览认事件规则、只记录、卡住", () => {
+  const now = new Date("2026-11-02T10:00:00");
+  const sched = (over: object) => ({
+    id: "s", name: "清洗", projectRoot: "/p", enabled: true, frequency: "manual", weekday: null, hour: 0, minute: 0, history: [], ...over,
+  });
+  const folder = { kind: "folder", folder: "data/raw", exts: ["csv"], mode: "record" };
+  const rows = scheduleOverview(
+    [
+      sched({ id: "run", name: "在跑", runningRunId: "r", stalledMinutes: 12 }),
+      sched({ id: "rec", name: "记录", event: folder, history: [{ at: "2026-11-02T09:00:00", status: "recorded" }] }),
+      sched({ id: "wait", name: "攒着", event: { ...folder, mode: "run" }, pendingEvents: 2 }),
+    ],
+    [{ path: "/p", name: "课题" }],
+    new Set(["sched:stalled:run"]),
+    now,
+  );
+  assert.deepEqual(rows.map((r) => [r.task.name, r.task.state, r.action]), [
+    ["在跑", "可能卡住了：12 分钟没有动静", null],
+    ["记录", "data/raw/ 有新文件（csv）时 · 只记录 · 上次只记录", "run"],
+    ["攒着", "data/raw/ 有新文件（csv）时 · 直接跑 · 攒着 2 批", "run"],
+  ]);
+  assert.equal(rows[1].frequency, "data/raw/ 有新文件（csv）时 · 只记录");
+});
+
+test("awaySummary：只记录的事件不算跑了，单说一句", () => {
+  const now = Date.parse("2026-11-02T12:00:00");
+  const since = now - 3 * 3600_000;
+  const at = "2026-11-02T11:00:00";
+  const out = awaySummary({
+    sinceMs: since,
+    nowMs: now,
+    runs: [],
+    schedules: [{ history: [{ at, status: "recorded" }, { at, status: "recorded" }, { at, status: "ok" }] }],
+    waiting: 0,
+  });
+  assert.deepEqual(out?.parts, ["定时任务跑了 1 次", "事件规则记下 2 次（只记录，没叫 AI）"]);
+});
