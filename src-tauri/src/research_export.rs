@@ -49,8 +49,8 @@ fn agent_label(agent: &str) -> String {
         .unwrap_or_else(|| agent.to_string())
 }
 
-/// 「Claude Code（claude-opus-4、claude-sonnet-4）」这样的工具清单，按首次使用排
-fn tools_list(records: &[RunRecord]) -> Vec<String> {
+/// 「Claude Code（claude-opus-4、claude-sonnet-4）」这样的工具清单，按首次使用排；english = 半角标点（英文声明用）
+fn tools_list(records: &[RunRecord], english: bool) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
     let mut models: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut sorted: Vec<&RunRecord> = records.iter().collect();
@@ -73,6 +73,8 @@ fn tools_list(records: &[RunRecord]) -> Vec<String> {
             let ms = &models[&label];
             if ms.is_empty() {
                 label
+            } else if english {
+                format!("{label} ({})", ms.join(", "))
             } else {
                 format!("{label}（{}）", ms.join("、"))
             }
@@ -103,12 +105,14 @@ pub(crate) fn render_ai_statement(project: &str, records: &[RunRecord]) -> Strin
         text.push_str("本项目还没有 AI 运行记录。\n");
         return text;
     }
-    let tools = tools_list(records).join("；");
+    let tools = tools_list(records, false).join("；");
+    let tools_en = tools_list(records, true).join("; ");
     let purposes = purposes_list(records).join("、");
+    let purposes_en = purposes_list(records).join("; ");
     text.push_str(&format!(
         "## 中文\n\n在本研究与稿件的准备过程中，作者使用了 {tools}，用于{purposes}。\
          使用后，作者对相关内容逐项审阅、核对与修改，并对发表内容承担全部责任。\n\n\
-         ## English\n\nDuring the preparation of this work, the author(s) used {tools} for: {purposes} \
+         ## English\n\nDuring the preparation of this work, the author(s) used {tools_en} for: {purposes_en} \
          [translate the purposes]. After using these tools, the author(s) reviewed and edited the content as needed \
          and take(s) full responsibility for the content of the publication.\n\n\
          ## 依据（Mesa 统计）\n\n"
@@ -407,9 +411,10 @@ pub(crate) fn render_process_report(root: &Path, details: bool) -> String {
          table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top}}\
          th{{background:#f5f5f5}}.muted{{color:#777}}.blocked{{color:#b42318}}.human{{color:#b54708}}</style>\
          <h1>研究过程报告 · {p}</h1><p class=\"muted\">由 Mesa 于 {t} 按本项目的研究记录导出。只含在 Mesa 里运行过的 AI 与在 Mesa 里做出的决定；\
-         不含对话原文。这是透明说明，不用于规避 AI 生成内容检测。</p>",
+         {d}。这是透明说明，不用于规避 AI 生成内容检测。</p>",
         p = esc(&project),
         t = chrono::Local::now().format("%Y-%m-%d %H:%M"),
+        d = if details { "文末按作者选择附了任务书与对话原文（已去掉密钥）" } else { "不含对话原文" },
     );
     let blocked: usize = checks.values().flatten().filter(|c| c.status == "blocked").count();
     let needs: usize = checks.values().flatten().filter(|c| c.status == "needs_human").count();
@@ -418,7 +423,7 @@ pub(crate) fn render_process_report(root: &Path, details: bool) -> String {
          <li>人保存进项目 / 采纳 {} 次；逐条裁决 {} 条、审查报告逐条决定 {} 条（都只能由人做出）。</li>\
          <li>核验存档里拦下 {} 条、交人判断 {} 条（处理结果见逐条裁决）。</li></ul>",
         runs.len(),
-        esc(&tools_list(&runs).join("；")),
+        esc(&tools_list(&runs, false).join("；")),
         accepts.len(),
         verdicts,
         decisions,
@@ -597,6 +602,7 @@ mod tests {
         ];
         let text = render_ai_statement("我的课题", &records);
         assert!(text.contains("作者使用了 Claude Code（claude-opus、claude-sonnet）；Codex（gpt-5），用于文献检索与筛选、综述初稿。"));
+        assert!(text.contains("used Claude Code (claude-opus, claude-sonnet); Codex (gpt-5) for: 文献检索与筛选; 综述初稿"), "英文段用半角标点");
         assert!(text.contains("## English"));
         assert!(text.contains("不能用于规避"));
         assert!(text.contains("| 研究流程：综述初稿 | Codex | gpt-5 | 1 | 2026-11-03 |"));
@@ -674,5 +680,7 @@ mod tests {
         assert!(html.contains("TASK.md · "));
         assert!(html.contains("<h3>任务书（TASK.md）</h3><pre># 写初稿\n&lt;按大纲写&gt;</pre>"));
         assert!(html.contains("找不到这次的对话文件"));
+        assert!(html.contains("文末按作者选择附了任务书与对话原文"));
+        assert!(!html.contains("；不含对话原文"), "附了原文就不能再说不含");
     }
 }

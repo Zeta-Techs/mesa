@@ -623,6 +623,73 @@ mod tests {
         assert!(!copy.contains("abcdefghijklmnopqrstuvwxyz0123456789"), "存档要脱敏");
     }
 
+    /// 真实项目干跑（AGENTS.md「动真实数据先干跑」）：MESA_DRYRUN_ROOT 指向**真实项目的副本**，
+    /// 按 Run 结束的同一套函数写记录、存任务书与核验，再跑三个导出与研究档案的总表 / 提议。默认不跑。
+    #[test]
+    #[ignore]
+    fn real_project_dry_run() {
+        let Ok(root) = std::env::var("MESA_DRYRUN_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let checks = read_checks_at(&root).items;
+        let drafts: Vec<PathBuf> = fs::read_dir(root.join(".ccode/drafts"))
+            .map(|it| it.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        for (i, (purpose, agent, model)) in [
+            ("研究流程：文献检索与筛选", "claude-code", "claude-opus-4"),
+            ("研究流程：综述初稿", "codex", "gpt-5"),
+            ("研究流程：润色与定稿", "claude-code", "claude-sonnet-4"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let run_id = format!("dryrun-{i}");
+            let text = drafts.get(i).and_then(|p| fs::read_to_string(p).ok()).unwrap_or_else(|| format!("# {purpose}\n"));
+            let task = archive_task(&root, &run_id, "TASK.md", &text).unwrap();
+            if i == 2 {
+                archive_checks(&root, &run_id, &checks).unwrap();
+            }
+            let mut record = RunRecord {
+                v: 1,
+                kind: "run".into(),
+                run_id,
+                task_kind: "pipeline_step".into(),
+                purpose: purpose.to_string(),
+                agent: agent.to_string(),
+                models: vec![model.to_string()],
+                created_at: format!("2026-10-1{i}T08:00:00Z"),
+                status: "completed".into(),
+                task: Some(task),
+                ..RunRecord::default()
+            };
+            if i == 2 {
+                record.checks = Some(count_checks(&checks));
+            }
+            append_run_record_at(&root, &record).unwrap();
+        }
+        let out = root.join("dryrun-out");
+        fs::create_dir_all(&out).unwrap();
+        let records = read_records_at(&root);
+        fs::write(out.join("ai-statement.md"), crate::research_export::render_ai_statement("综述流程测试", &records)).unwrap();
+        let (packed, data) = crate::research_export::write_repro_pack(&root, &out.join("repro.zip")).unwrap();
+        fs::write(out.join("report.html"), crate::research_export::render_process_report(&root, true)).unwrap();
+        let papers = crate::research_profile::papers_from(&[("综述流程测试".into(), root.clone())]);
+        let empty = crate::project_memory::parse("").unwrap();
+        let suggestions = crate::research_profile::suggestions_from(&[("综述流程测试".into(), root.clone())], &empty, &[]);
+        eprintln!(
+            "records={} checks={:?} packed={packed} data={data} papers={} suggestions={}",
+            records.len(),
+            count_checks(&checks),
+            papers.len(),
+            suggestions.len()
+        );
+        for s in suggestions.iter().take(5) {
+            eprintln!("  建议：{}（{} 次）", s.text, s.count);
+        }
+        assert_eq!(records.len(), 3);
+    }
+
     #[test]
     fn archived_checks_are_not_read_as_live_checks() {
         let root = temp_root("archive");
