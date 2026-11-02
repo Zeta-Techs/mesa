@@ -60,6 +60,8 @@ export function crossReviewPrompt(agentId: string, projectRoot: string): string 
     `   {"id": "X-<摘录编号或键>", "kind": "claim_support", "status": "needs_human", "title": "[@键] 支持 / 部分支持 / 不支持 / 无法判断：<一句话>", ` +
       `"target": {"file": "<稿件>", "line": <行号>}, "evidence": {"source": "<键>", "quote": "<原文摘录>", "detail": "<理由：正文哪部分超出了原文>"}, "checker": "agent:${agentId}"}`,
     "   status 一律写 needs_human：支持与否由人最终判断，你的判断只是参考。只列「部分支持」「不支持」「无法判断」的条目，支持的不必列。",
-    "4. 不改稿件、不改其他任何文件、不提交。写完在对话里汇总：不支持几条、部分支持几条、无法判断几条。",
+    "4. 不改稿件、不改其他任何文件、不提交。抽 PDF 文字等临时文件放系统临时目录（macOS / Linux 的 /tmp，Windows 的 %TEMP%），不在工作目录建文件。",
+    `5. 每判断完一条就立刻往 ${CROSS_REVIEW_FILE} 追加一行（先落盘再核下一条；写文件单独一条命令或用编辑工具，不和删除等命令拼在一起），不要攒到最后一起写。`,
+    "6. 一轮内做完：不要只说「接下来我要核对……」就停。全部写完后在对话里汇总：不支持几条、部分支持几条、无法判断几条。",
   ].join("\n");
 }

@@ -40,6 +40,10 @@ test("复核指令：只写一个核验文件、结论一律待你判断、不�
   assert.match(prompt, /"status": "needs_human"/);
   assert.match(prompt, /"checker": "agent:codex"/);
   assert.match(prompt, /不改稿件、不改其他任何文件、不提交/);
+  // 2026-11-02 真跑：Codex 把临时文本抽到工作目录、写文件与 rm -f 拼一条被拦后没写成记录
+  assert.match(prompt, /临时文件放系统临时目录/);
+  assert.match(prompt, /每判断完一条就立刻往 \.ccode\/checks\/cross-review\.jsonl 追加一行/);
+  assert.match(prompt, /一轮内做完/);
   assert.match(prompt, /\/proj\/papers\//);
   assert.equal(crossReviewReuseKey("/wt/a"), "cross-review:/wt/a");
   assert.ok(!crossReviewReuseKey("/wt/a").startsWith("ws:"));
