@@ -1000,6 +1000,30 @@ pub struct AgentCapabilitiesDto {
     pub headless_write: CapabilityFlagDto,
     /// 执行形态：九家均为 local_cli + headless；cloud 不预研
     pub runtime_kinds: Vec<&'static str>,
+    /// 支持分级（2026-11-02 用户拍板，AGENTS.md「CLI 支持分级」）：1 = 一等，新功能先在这几家做全；2 = 维护级
+    pub support_tier: u8,
+    /// 分级的人话说明（界面悬停用）
+    pub tier_note: &'static str,
+}
+
+/// 一等支持的 Agent（AGENTS.md「CLI 支持分级」）：跨厂商复核等新功能先在这三家做全。
+/// 前端 src/cross-review.ts TIER1_AGENTS 是镜像，tests/cross-review.test.ts 逐字比对
+pub(crate) const TIER1_AGENTS: [&str; 3] = ["claude-code", "codex", "kimi"];
+
+pub(crate) fn support_tier(agent: &str) -> u8 {
+    if TIER1_AGENTS.contains(&agent) {
+        1
+    } else {
+        2
+    }
+}
+
+fn tier_note(agent: &str) -> &'static str {
+    if support_tier(agent) == 1 {
+        "一等支持：新功能（核验接入、跨厂商复核等）先在这几家做全"
+    } else {
+        "维护级：能启动、能注入连接、能看会话；新功能尽力而为，做不到的会写明。跨厂商复核从 Claude Code、Codex、Kimi Code 里挑"
+    }
 }
 
 /// 逐 agent 的策略通道形态说明（求交 DTO 下发，前端策略编辑区展示；None = 标准形态不用说）
@@ -1345,6 +1369,8 @@ pub fn agent_capabilities() -> Vec<AgentCapabilitiesDto> {
             readonly: readonly_cap(s),
             headless_write: headless_write_cap(s.id),
             runtime_kinds: vec!["local_cli", "headless"],
+            support_tier: support_tier(s.id),
+            tier_note: tier_note(s.id),
         })
         .collect()
 }
@@ -1566,6 +1592,19 @@ pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn support_tiers_follow_agents_md() {
+        let tiers: Vec<(String, u8)> = super::agent_capabilities()
+            .into_iter()
+            .map(|c| (c.agent.to_string(), c.support_tier))
+            .collect();
+        for (agent, tier) in &tiers {
+            let want = if ["claude-code", "codex", "kimi"].contains(&agent.as_str()) { 1 } else { 2 };
+            assert_eq!(*tier, want, "{agent}");
+        }
+        assert_eq!(tiers.len(), 9);
+    }
+
     use super::*;
 
     #[test]

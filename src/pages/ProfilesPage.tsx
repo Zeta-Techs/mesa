@@ -4268,7 +4268,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       }
                       muted={!installed}
                       selected={activePane === agent.id}
-                      title={installed ? `${agent.label}：${count} 个连接；按住上下拖可调整顺序` : `${agent.label}（本机未安装）`}
+                      title={`${installed ? `${agent.label}：${count} 个连接；按住上下拖可调整顺序` : `${agent.label}（本机未安装）`}${caps[agent.id]?.tierNote ? `\n${caps[agent.id].tierNote}` : ""}`}
                       onClick={() => {
                         if (suppressHeaderClickRef.current) return;
                         selectPane(agent.id);

@@ -1844,6 +1844,9 @@ export interface AgentCapabilitiesDto {
   headlessWrite: CapabilityFlagDto;
   /** local_cli / headless；cloud 不预研 */
   runtimeKinds: string[];
+  /** 支持分级（2026-11-02）：1 一等 / 2 维护级；tierNote 是悬停人话 */
+  supportTier: 1 | 2;
+  tierNote: string;
 }
 
 export interface RunDto {

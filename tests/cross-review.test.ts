@@ -44,3 +44,12 @@ test("复核指令：只写一个核验文件、结论一律待你判断、不�
   assert.equal(crossReviewReuseKey("/wt/a"), "cross-review:/wt/a");
   assert.ok(!crossReviewReuseKey("/wt/a").startsWith("ws:"));
 });
+
+test("一等 Agent 名单与后端能力表同一份（AGENTS.md「CLI 支持分级」）", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { TIER1_AGENTS } = await import("../src/cross-review.ts");
+  const rust = readFileSync("src-tauri/src/agent_specs.rs", "utf8");
+  const m = rust.match(/TIER1_AGENTS: \[&str; \d+\] = \[([^\]]+)\]/);
+  assert.ok(m, "agent_specs.rs 里找不到 TIER1_AGENTS");
+  assert.deepEqual(m[1].split(",").map((s) => s.trim().replace(/"/g, "")).filter(Boolean), [...TIER1_AGENTS]);
+});
