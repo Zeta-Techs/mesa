@@ -45,9 +45,16 @@ test("留话：工作台摘要与每条状态字", async () => {
     { status: "pending" as const, toOpen: false },
     { status: "delivered" as const, toOpen: true },
   ];
-  assert.equal(mailSummary(mails), "同项目留话 3 条，1 条等对方空闲");
+  assert.equal(mailSummary(mails), "留话 3 条，1 条等对方空闲");
   assert.equal(mailStatusText(mails[1]), "对方已结束，送不到");
   assert.equal(mailStatusText(mails[2]), "已送到");
-  assert.equal(mailSummary([mails[2]]), "同项目留话 1 条");
+  assert.equal(mailSummary([mails[2]]), "留话 1 条");
   assert.ok(peekSectionLines(1, false).join("\n").includes('tell --to 名字 "要说的话"'));
+});
+
+test("任务面板改动行：加减、二进制、新文件", async () => {
+  const { changeLine } = await import("../src/peek.ts");
+  assert.equal(changeLine({ added: "12", removed: "3", newFile: false }), "+12 −3");
+  assert.equal(changeLine({ added: "-", removed: "-", newFile: false }), "二进制");
+  assert.equal(changeLine({ added: "", removed: "", newFile: true }), "新文件");
 });

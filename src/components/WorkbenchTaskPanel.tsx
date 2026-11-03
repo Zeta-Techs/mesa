@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { rowActionClass, secondaryActionClass } from "./PageFrame";
 import RunCaret from "./RunCaret";
+import TaskPanelPeek from "./TaskPanelPeek";
 import { caretOfAttention } from "../run-caret";
 import { absTime, relTime } from "../rel-time";
 import { applyStepParams } from "../task-packs";
@@ -154,6 +155,8 @@ export default function WorkbenchTaskPanel({
             </span>
           </div>
           {live}
+          {/* 开着的工作：改了哪些文件、给它留话（2026-11-03 协调对话并进工作台）；定时任务的无头运行不收留话 */}
+          {task.live?.runId && card && task.ref.kind !== "schedule" && <TaskPanelPeek runId={task.live.runId} projectPath={card.path} />}
 
           {goal && (
             <Section title="目标">

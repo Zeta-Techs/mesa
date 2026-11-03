@@ -1,9 +1,19 @@
 /**
  * 看一眼（2026-11-03 项目内协作一期，docs/design-project-coordination.md）前端纯逻辑：
  * - openPeerCount：开工时数一次同项目还开着的其他工作（不含内部后台对话与登录标签）；
- * - peekSectionLines：有其他工作时任务书带「同项目的其他工作」一节，告诉 Agent 怎么只读看一眼（mesa_helper peek，Rust 侧 peek.rs）。
+ * - peekSectionLines：有其他工作时任务书带「同项目的其他工作」一节，告诉 Agent 怎么只读看一眼（mesa_helper peek，Rust 侧 peek.rs）；
+ * - changeLine：工作台任务面板「改了哪些文件」每行的加减字样（Rust peek_changes）。
  */
-import type { RunDto } from "./types.ts";
+import type { ChangedFileDto, RunDto } from "./types.ts";
+
+/** 任务面板先列这么多个改动文件，其余点开 */
+export const CHANGES_SHOWN = 8;
+
+export function changeLine(f: Pick<ChangedFileDto, "added" | "removed" | "newFile">): string {
+  if (f.newFile) return "新文件";
+  if (f.added === "-") return "二进制";
+  return `+${f.added} −${f.removed}`;
+}
 
 export function openPeerCount(runs: readonly Pick<RunDto, "closedAt" | "internal" | "taskKind">[]): number {
   return runs.filter((r) => !r.closedAt && !r.internal && r.taskKind !== "login").length;

@@ -314,14 +314,15 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
-  components/ProjectCoordRow.tsx # 工作台项目分组下「协调对话」一行：开 / 回到这个项目唯一的协调对话（beginAskAi，reuseKey coord:<项目>，开场 buildCoordinatorPrompt）；
-                             # 20 秒拉一次 split_plan_read，有方案多一个「拆分方案待你批准（N 路）」
-  components/SplitPlanDialog.tsx # 拆分方案卡：按什么拆 / 共享文件 / 拦下与提醒 / 逐路可勾；批准 = task_create 每路（整仓、write_tree）→ split_plan_close approved →
+  components/SplitPlanRow.tsx # 工作台项目分组下「拆成几路做…」（2026-11-03 取代协调对话）：只在能一次开几路的项目画；写一句 → split-draft.ts 出方案 → 弹方案卡；
+                             # 20 秒拉一次 split_plan_read，有方案时这一行是「拆分方案待你批准（N 路）」；AI 拒拆 / 没按格式回时写一句、不存
+  components/SplitPlanDialog.tsx # 拆分方案卡：按什么拆 / 共享文件 / 拦下与提醒 / 逐路可勾 /「让它改」（带上一版与意见整份重写）；批准 = task_create 每路（整仓、write_tree）→ split_plan_close approved →
                              # 不等的用项目默认 Agent 依次 prepareGoalRun 开工（等终端页收下一个再交下一个），写了「等」的只记下；只在无流程科研 / 工作项目可开
-  components/ProjectMailRow.tsx # 工作台项目分组下「同项目留话 N 条」：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；7 天内没有就不画
+  components/ProjectMailRow.tsx # 工作台项目分组下「留话 N 条」（Agent 之间的与你在任务面板留的）：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；7 天内没有就不画
   components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 实际导航落点 / 外开）+ 缩进任务行（按容器宽度调整名称 / 状态 / 时间，点开任务面板，花费在详情），项目支持收起 + 组末插槽
   components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时具名时间项（同分钟聚合展开）+ 一行一个任务（时间 / 名称与项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只导航回队列
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
+  components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions / backdropClassName 可传，工作台任务与审批详情复用，独立设定 400px 宽度与标题栏下沿定位）
                              #   （ccode-sheet-right 滑入/退场 + Esc/Tab 焦点圈闭 + role=dialog + 遮罩 mousedown
@@ -555,8 +556,10 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   fan-out.ts                 # 分几路纯逻辑：laneReuseKey（ws:<工作树>#lane-<k>）、lanePrompt（只做这几条、不碰共享文件与会写它的命令、做完写标记）、
                              # mergePrompt、fanOutSummary（开工弹层那一行）、FanOutPending / allLanesDone（终端页 20 秒一轮，到齐开收尾）（tests/fan-out.test.ts）
   terminal-queue.ts          # openTerminalInTurn：一次开几个标签时交一个、等终端页收下再交下一个（拆分方案批准、分几路共用）
-  split-plan.ts              # 协调对话与拆分方案纯逻辑：buildCoordinatorPrompt、parseSplitPlan（不认识的字段记备注、等 / 依赖 / 前置）、planIssues（拦下 / 提醒）、
+  split-plan.ts              # 拆分方案纯逻辑：buildSplitPrompt（无头一次的提示词，含让它改）/ readSplitReply（去围栏前言；方案 / 不拆 / 没按格式）、parseSplitPlan（不认识的字段记备注、等 / 依赖 / 前置）、planIssues（拦下 / 提醒）、
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）
+  split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
+                             # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
   project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
   pack-add.ts                # 我的任务加进项目的唯一出处 addPackToProject（编辑器 / 模板库 / 新项目选择层 / 草稿试跑共用）：packStepsForProject
                              # （与 task_packs.rs steps_for_project 同口径）+ adaptPack（按项目研究工具设置 withResearchTools，项目设定套工具行）（tests/pack-add.test.ts）
@@ -1749,15 +1752,16 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # Desktop CLI 打开该树 / gh --web 开 PR（CodingOpDto；不走科研工作区库）；overview 按树/分支并行 git
   fan_out.rs                 # 一步按数据分几路（2026-11-03 四期）：items_at 从项目内 JSON 按 filter 挑条目（全局序号）、shard 均匀切（不到两路一路、封顶 max）、
                              # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
-  split_plan.rs              # 协调对话的拆分方案（2026-11-03 三期）：split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
+  split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
   project_mail.rs            # 项目内传话（2026-11-03 二期）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run
                              # 的发件箱（from 须是工作目录在此的 Run、to 须同项目、7 天内），送达 / 撤回记配置目录 mail-state.json；mail_list / mail_take（取走并记已送）/
-                             # mail_requeue / mail_withdraw；delivery_text 是送进对话的那段话
+                             # mail_requeue / mail_withdraw / mail_send（人在任务面板留话，记 mail-state.json from_you，from = you）；delivery_text 是送进对话的那段话（你的在前）
   peek.rs                    # 看一眼（2026-11-03 项目内协作一期，design-project-coordination.md）：mesa_helper peek agents / runs / changes / mail，tell（二期，写发件箱），
                              # 经 runs::peek_context / peek_events 只读打开 app.db；同伴 = 同项目、非内部、非登录、开着或 3 天内结束、最多 12 个；
                              # 改动对项目根当前分支的分叉点（项目根自己对 HEAD），.ccode/ 不算，没 --file 时只给改得少的文本片段（≤150 行改动、120 行上限）；
-                             # 事件不含 run.output（终端原始字节）；输出整段 redact_sensitive_text。注入 MESA_PEEK_TOOL / MESA_RUN_ID 在 pty.rs
+                             # 事件不含 run.output（终端原始字节）；输出整段 redact_sensitive_text。注入 MESA_PEEK_TOOL / MESA_RUN_ID 在 pty.rs；
+                             # peek_changes 命令给工作台任务面板（同一 changed_files 口径）
   help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）

@@ -5,6 +5,8 @@
 //! - **收**：Mesa 主进程扫同项目各 Run 工作目录的发件箱汇总（只认 from 的工作目录确实是这个发件箱所在处的）；
 //!   收话方标签空闲、输入框里没你没发的字时，终端页经那个标签自己的发送链送进对话（TerminalPage）。
 //! - **状态**：送达 / 撤回记在配置目录 `mail-state.json`（只有 Mesa 写）；工作台列出往来、能撤回。
+//! - **人也能留话**（2026-11-03 用户：协调对话并进工作台）：工作台任务面板里写给某段工作的话由 Mesa 记进
+//!   `mail-state.json` 的 `from_you`（发话人是你，不经任何 Agent），同一条送达 / 撤回链路。
 //! - 只在同一项目内；跨项目不直连（拍板 §2 第 3 条）。文字限长、过脱敏。
 
 use crate::runs::RunDto;
@@ -20,6 +22,8 @@ pub const MAX_TEXT: usize = 2000;
 /// 只看这么多天内的留话
 const KEEP_DAYS: i64 = 7;
 const OUTBOX_CAP: u64 = 512 * 1024;
+/// 人在工作台留的话：from 写这个
+pub const FROM_YOU: &str = "you";
 
 /// 发件箱里的一行（helper 写）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +41,9 @@ struct MailState {
     delivered: BTreeMap<String, String>,
     #[serde(default)]
     withdrawn: BTreeMap<String, String>,
+    /// 人在工作台留的话（from = FROM_YOU，project 记在 to 那个 Run 上）
+    #[serde(default)]
+    from_you: Vec<OutboxLine>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -75,6 +82,7 @@ fn prune(state: &mut MailState) {
     let keep = |at: &String| chrono::DateTime::parse_from_rfc3339(at).map(|t| t.with_timezone(&chrono::Utc) > cutoff).unwrap_or(true);
     state.delivered.retain(|_, at| keep(at));
     state.withdrawn.retain(|_, at| keep(at));
+    state.from_you.retain(|l| keep(&l.at));
 }
 
 fn write_state(state: &MailState) -> Result<(), String> {
@@ -136,13 +144,7 @@ fn collect_with(root: &Path, runs: &[RunDto], state: &MailState, now: chrono::Da
                 continue;
             };
             let Some(to) = runs.iter().find(|r| r.id == line.to) else { continue };
-            let status = if state.withdrawn.contains_key(&line.id) {
-                "withdrawn"
-            } else if state.delivered.contains_key(&line.id) {
-                "delivered"
-            } else {
-                "pending"
-            };
+            let status = status_of(state, &line.id);
             out.push(MailDto {
                 delivered_at: state.delivered.get(&line.id).cloned(),
                 from_run: from.id.clone(),
@@ -158,16 +160,44 @@ fn collect_with(root: &Path, runs: &[RunDto], state: &MailState, now: chrono::Da
             });
         }
     }
+    for line in &state.from_you {
+        if !recent(&line.at, now) {
+            continue;
+        }
+        let Some(to) = runs.iter().find(|r| r.id == line.to) else { continue };
+        out.push(MailDto {
+            delivered_at: state.delivered.get(&line.id).cloned(),
+            from_run: FROM_YOU.into(),
+            from_label: "你".into(),
+            from_agent: String::new(),
+            to_run: to.id.clone(),
+            to_label: crate::peek::label_of(to, root),
+            to_open: to.closed_at.is_none(),
+            status: status_of(state, &line.id).into(),
+            id: line.id.clone(),
+            at: line.at.clone(),
+            text: line.text.clone(),
+        });
+    }
     out.sort_by(|a, b| b.at.cmp(&a.at));
     out
+}
+
+fn status_of(state: &MailState, id: &str) -> &'static str {
+    if state.withdrawn.contains_key(id) {
+        "withdrawn"
+    } else if state.delivered.contains_key(id) {
+        "delivered"
+    } else {
+        "pending"
+    }
 }
 
 pub(crate) fn collect(root: &Path, runs: &[RunDto]) -> Vec<MailDto> {
     collect_with(root, runs, &read_state(), chrono::Utc::now())
 }
 
-/// helper 写一条留话进自己工作目录的发件箱
-pub(crate) fn append_outbox(dir: &Path, from: &str, to: &str, text: &str) -> Result<OutboxLine, String> {
+fn new_line(from: &str, to: &str, text: &str) -> Result<OutboxLine, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("留话不能是空的".into());
@@ -175,13 +205,18 @@ pub(crate) fn append_outbox(dir: &Path, from: &str, to: &str, text: &str) -> Res
     if text.chars().count() > MAX_TEXT {
         return Err(format!("留话最多 {MAX_TEXT} 字；长内容写成文件，留话里只说在哪"));
     }
-    let line = OutboxLine {
+    Ok(OutboxLine {
         id: uuid::Uuid::new_v4().simple().to_string(),
         at: crate::sessions::now_iso(),
         from: from.to_string(),
         to: to.to_string(),
         text: crate::sessions::redact_sensitive_text(text),
-    };
+    })
+}
+
+/// helper 写一条留话进自己工作目录的发件箱
+pub(crate) fn append_outbox(dir: &Path, from: &str, to: &str, text: &str) -> Result<OutboxLine, String> {
+    let line = new_line(from, to, text)?;
     let path = dir.join(OUTBOX_REL);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("建 .ccode 目录失败：{e}"))?;
@@ -196,14 +231,37 @@ pub(crate) fn append_outbox(dir: &Path, from: &str, to: &str, text: &str) -> Res
     Ok(line)
 }
 
-/// 送进对话时的那段话（多条合一次）
+/// 送进对话时的那段话（多条合一次）：人留的话写在前，照人的话办；Agent 留的话按任务书判断
 pub(crate) fn delivery_text(items: &[MailDto]) -> String {
-    let mut out = String::from("【同项目留话，Mesa 转达】\n");
-    for m in items {
-        out.push_str(&format!("来自「{}」（{}）：\n{}\n\n", m.from_label, m.from_agent, m.text.trim()));
+    let (yours, peers): (Vec<&MailDto>, Vec<&MailDto>) = items.iter().partition(|m| m.from_run == FROM_YOU);
+    let mut out = String::new();
+    if !yours.is_empty() {
+        out.push_str("【你在 Mesa 工作台留的话，Mesa 转达】\n");
+        for m in &yours {
+            out.push_str(&format!("{}\n\n", m.text.trim()));
+        }
     }
-    out.push_str("这是同一项目里另一段工作留给你的话，按你的任务书判断要不要照做；要回话：\"$MESA_PEEK_TOOL\" tell --to 对方名字 \"…\"（Windows：& $env:MESA_PEEK_TOOL tell …）。");
-    out
+    if !peers.is_empty() {
+        out.push_str("【同项目留话，Mesa 转达】\n");
+        for m in &peers {
+            out.push_str(&format!("来自「{}」（{}）：\n{}\n\n", m.from_label, m.from_agent, m.text.trim()));
+        }
+        out.push_str("这是同一项目里另一段工作留给你的话，按你的任务书判断要不要照做；要回话：\"$MESA_PEEK_TOOL\" tell --to 对方名字 \"…\"（Windows：& $env:MESA_PEEK_TOOL tell …）。");
+    }
+    out.trim_end().to_string()
+}
+
+/// 人在工作台给某段工作留话：收话方要是还开着的、属于某个项目的 Run
+fn send_from_you(state: &mut MailState, to: &RunDto, text: &str) -> Result<OutboxLine, String> {
+    if to.closed_at.is_some() {
+        return Err("这段工作已经结束了，留话送不到；要接着做就先回到它".into());
+    }
+    if to.project_root.is_none() {
+        return Err("这段对话不属于任何项目".into());
+    }
+    let line = new_line(FROM_YOU, &to.id, text)?;
+    state.from_you.push(line.clone());
+    Ok(line)
 }
 
 fn project_runs_for(run_id: &str) -> Result<(RunDto, PathBuf, Vec<RunDto>), String> {
@@ -269,6 +327,20 @@ pub async fn mail_requeue(ids: Vec<String>) -> Result<(), String> {
         for id in &ids {
             state.delivered.remove(id);
         }
+        write_state(&state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 人在工作台给一段开着的工作留话（它空闲、你没在它输入框里打字时送进去）
+#[tauri::command]
+pub async fn mail_send(to_run: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let to = crate::runs::run_get_sync(to_run)?.ok_or("找不到这段工作的记录")?;
+        let _lock = crate::storage::config_lock("project-mail")?;
+        let mut state = read_state();
+        send_from_you(&mut state, &to, &text)?;
         write_state(&state)
     })
     .await
@@ -359,6 +431,32 @@ mod tests {
         let text = delivery_text(&after[..1]);
         assert!(text.starts_with("【同项目留话，Mesa 转达】"), "{text}");
         assert!(text.contains("tell --to"), "{text}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mail_from_you_listed_delivered_together_and_rejects_closed() {
+        let dir = std::env::temp_dir().join(format!("mesa-mail-you-{}", uuid::Uuid::new_v4()));
+        let a = dir.join("wt-a");
+        fs::create_dir_all(&a).unwrap();
+        let runs = vec![run("ra", a.to_str().unwrap(), false), run("rb", dir.join("wt-b").to_str().unwrap(), false), run("rc", "/x", true)];
+        let mut state = MailState::default();
+        assert!(send_from_you(&mut state, &runs[2], "给结束了的").is_err());
+        assert!(send_from_you(&mut state, &runs[1], " ").is_err());
+        let mine = send_from_you(&mut state, &runs[1], "样本 3 号剔掉").unwrap();
+        append_outbox(&a, "ra", "rb", "X 列改名成 Y").unwrap();
+        let all = collect_with(&dir, &runs, &state, chrono::Utc::now());
+        assert_eq!(all.len(), 2, "{all:?}");
+        let m = all.iter().find(|m| m.id == mine.id).unwrap();
+        assert_eq!((m.from_label.as_str(), m.status.as_str(), m.to_run.as_str()), ("你", "pending", "rb"));
+        let text = delivery_text(&all);
+        assert!(text.starts_with("【你在 Mesa 工作台留的话，Mesa 转达】\n样本 3 号剔掉"), "{text}");
+        assert!(text.contains("【同项目留话，Mesa 转达】\n来自「"), "{text}");
+        // 只有人留的话：不带「要回话 tell」那句
+        let only_you: Vec<MailDto> = all.iter().filter(|m| m.from_run == FROM_YOU).cloned().collect();
+        assert!(!delivery_text(&only_you).contains("tell --to"));
+        state.withdrawn.insert(mine.id.clone(), "t".into());
+        assert_eq!(collect_with(&dir, &runs, &state, chrono::Utc::now()).iter().find(|m| m.id == mine.id).unwrap().status, "withdrawn");
         fs::remove_dir_all(&dir).ok();
     }
 

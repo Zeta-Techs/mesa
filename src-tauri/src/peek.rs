@@ -529,6 +529,38 @@ fn run_cli(args: &[String]) -> Result<String, String> {
     }
 }
 
+/// 工作台任务面板「改了哪些文件」的一行（2026-11-03 协调对话并进工作台）
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFileDto {
+    pub path: String,
+    /// 加 / 减行数；二进制是「-」，没跟踪的新文件为空
+    pub added: String,
+    pub removed: String,
+    pub new_file: bool,
+}
+
+pub(crate) fn changes_dto(files: Vec<(String, String, String)>, untracked: Vec<String>) -> Vec<ChangedFileDto> {
+    files
+        .into_iter()
+        .map(|(path, added, removed)| ChangedFileDto { path, added, removed, new_file: false })
+        .chain(untracked.into_iter().map(|path| ChangedFileDto { path, added: String::new(), removed: String::new(), new_file: true }))
+        .collect()
+}
+
+/// 人在工作台看一段工作改了哪些文件（与 `peek changes` 同一口径：.ccode/ 不算、对开工基线比）
+#[tauri::command]
+pub async fn peek_changes(run_id: String) -> Result<Vec<ChangedFileDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let run = crate::runs::run_get_sync(run_id)?.ok_or("找不到这段工作的记录")?;
+        let root = PathBuf::from(run.project_root.clone().unwrap_or_else(|| run.isolation_path.clone()));
+        let (files, untracked) = changed_files(Path::new(&run.isolation_path), &root)?;
+        Ok(changes_dto(files, untracked))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// `mesa_helper peek …` 的入口：结果打到 stdout（整段脱敏），错误打到 stderr，返回退出码
 pub fn helper_peek_cli(args: &[String]) -> i32 {
     if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help" | "help") {

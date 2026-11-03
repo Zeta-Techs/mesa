@@ -6,7 +6,7 @@ import { toast } from "../toast";
 import type { ProjectMailDto } from "../types";
 
 /**
- * 工作台项目分组里的「同项目留话」（2026-11-03 项目内协作二期）：一段工作给另一段的留话都列在这，看得见、没送的能撤回。
+ * 工作台项目分组里的「留话」（2026-11-03 项目内协作二期）：一段工作给另一段的、你在任务面板里留的都列在这，看得见、没送的能撤回。
  * 7 天内一条都没有就不画；送达由终端页在收话方空闲时经它自己的发送链完成（TerminalPage）
  */
 export default function ProjectMailRow({ projectPath }: { projectPath: string }) {

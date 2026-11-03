@@ -1585,10 +1585,20 @@ export interface FanOutPlanDto {
   lanes: FanOutItemDto[][];
 }
 
-/** 同项目留话（mail_list，project_mail.rs）：一段工作给另一段的话 */
+/** 留话（mail_list，project_mail.rs）：一段工作给另一段的话，或人在工作台任务面板里留的话 */
+/** 工作台任务面板「改了哪些文件」（Rust peek::ChangedFileDto） */
+export interface ChangedFileDto {
+  path: string;
+  /** 加 / 减行数；二进制是「-」，没跟踪的新文件为空 */
+  added: string;
+  removed: string;
+  newFile: boolean;
+}
+
 export interface ProjectMailDto {
   id: string;
   at: string;
+  /** 发话的 Run；人在工作台留的是 "you" */
   fromRun: string;
   fromLabel: string;
   fromAgent: string;

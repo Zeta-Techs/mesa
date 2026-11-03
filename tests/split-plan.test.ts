@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCoordinatorPrompt, laneGoalText, MAX_LANES, parseSplitPlan, planIssues } from "../src/split-plan.ts";
+import { buildSplitPrompt, laneGoalText, MAX_LANES, parseSplitPlan, planIssues, readSplitReply } from "../src/split-plan.ts";
 
 const SAMPLE = `# 拆分方案：三个数据集各做一遍质控
 按什么拆：按数据集（三个批次互不依赖）
@@ -56,16 +56,26 @@ test("一路变成目标原文：读 / 交 / 共享 / 预算都写进去，提�
   assert.ok(laneGoalText(plan, plan.lanes[1]).includes("共享文件：analysis/summary.md"));
 });
 
-test("协调对话开场：不自己干活、写方案的格式与位置、按平台写工具", () => {
-  const p = buildCoordinatorPrompt("单细胞课题", false);
-  assert.ok(p.includes("你是项目「单细胞课题」的协调对话"));
-  assert.ok(p.includes("`.ccode/split-plan.md`"));
-  assert.ok(p.includes('`"$MESA_PEEK_TOOL" peek agents`'));
-  assert.ok(p.includes("不要替人回答"));
-  assert.ok(buildCoordinatorPrompt("x", true).includes("`& $env:MESA_PEEK_TOOL peek agents`"));
-  // 开场里的格式示例自己就能被解析出两路
-  const example = p.split("```markdown")[1].split("```")[0];
+test("拆成几路：提示词带要做的事、项目概况与格式；让它改时带上一版与意见", () => {
+  const p = buildSplitPrompt({ projectName: "单细胞课题", request: "三个批次各做质控再汇总", context: "项目目录（前两层）：\n- data/（3 项）" });
+  assert.ok(p.includes("项目「单细胞课题」"));
+  assert.ok(p.includes("三个批次各做质控再汇总") && p.includes("- data/（3 项）"));
+  assert.ok(p.includes("不拆：理由") && p.includes("需要你定"));
+  assert.ok(!p.includes("上一版方案"));
+  // 格式示例自己就能被解析出两路
+  const example = p.split("格式：\n\n")[1].split("\n\n规矩")[0];
   assert.equal(parseSplitPlan(example).lanes.length, 2);
+  const again = buildSplitPrompt({ projectName: "x", request: "y", context: "", previous: "# 拆分方案：旧", feedback: "批次三不用做" });
+  assert.ok(again.includes("上一版方案：\n# 拆分方案：旧") && again.includes("批次三不用做"));
+});
+
+test("读 AI 回话：去围栏和前言；不拆；没按格式", () => {
+  const got = readSplitReply("好的，方案如下：\n```markdown\n# 拆分方案：质控\n按什么拆：按批次\n\n## A\n要做：x\n```");
+  assert.equal(got.kind, "plan");
+  assert.ok(got.kind === "plan" && got.text.startsWith("# 拆分方案：质控") && got.text.endsWith("要做：x"));
+  assert.deepEqual(readSplitReply("**不拆：** 前后一步接一步"), { kind: "no-split", reason: "前后一步接一步" });
+  assert.deepEqual(readSplitReply("不拆：只有一个文件"), { kind: "no-split", reason: "只有一个文件" });
+  assert.equal(readSplitReply("我觉得可以分三路").kind, "bad");
 });
 
 test("等前面几路：认「等 / 依赖 / 前置」，只记下不开；不认识的字段单独成行、不混进上一个字段", async () => {
@@ -97,4 +107,11 @@ test("等前面几路：认「等 / 依赖 / 前置」，只记下不开；不�
   assert.deepEqual(planIssues(plan), [], "不再把「依赖」误报成写共享文件");
   const goal = laneGoalText(plan, summary);
   assert.ok(goal.includes("开工前提：这一路要等前三路") && goal.includes("备注：图用同一配色"), goal);
+});
+
+test("先说「不写」再补一句的不算写共享文件（Codex 实写）", async () => {
+  const plan = parseSplitPlan("# 拆分方案：x\n按什么拆：按批次\n\n## 汇总\n要做：合并\n交：a.md\n写共享文件：不写；只写汇总目录内的文件\n等：不等，先开\n");
+  assert.deepEqual(planIssues(plan), []);
+  const { laneWaits } = await import("../src/split-plan.ts");
+  assert.equal(laneWaits(plan.lanes[0]), false, "「不等，先开」不算要等");
 });
