@@ -2231,6 +2231,47 @@ pub(crate) fn kill_process_group(pid: u32) {
         .status();
 }
 
+/// 连同另起了进程组的子孙一起杀（unix）：brew 把 curl 放进它自己的进程组，`kill_process_group`
+/// 只杀 brew 那一组，curl 成了孤儿接着下载、占着 brew 的下载锁，之后每次更新都等锁失败（2026-11-03 实测）。
+/// 必须在杀父进程之前取：父一死，子孙就挂到 1 号进程下面，按 ppid 再也找不回
+#[cfg(unix)]
+pub(crate) fn kill_descendants(pid: u32) {
+    let Ok(out) = std::process::Command::new("/bin/ps")
+        .args(["-A", "-o", "pid=", "-o", "ppid="])
+        .output()
+    else {
+        return;
+    };
+    let table: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace().map(|n| n.parse::<u32>().ok());
+            Some((it.next()??, it.next()??))
+        })
+        .collect();
+    for child in descendants_in(pid, &table) {
+        let _ = std::process::Command::new("/bin/kill")
+            .args(["-KILL", &child.to_string()])
+            .status();
+    }
+}
+
+/// 进程表（pid, ppid）里 root 的全部子孙，不含 root 自己
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+fn descendants_in(root: u32, table: &[(u32, u32)]) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut frontier = vec![root];
+    while let Some(p) = frontier.pop() {
+        for &(pid, ppid) in table {
+            if ppid == p && pid != root && !out.contains(&pid) {
+                out.push(pid);
+                frontier.push(pid);
+            }
+        }
+    }
+    out
+}
+
 /// 连带终止子孙进程（非 PTY、走裸管道的超时路径专用）。
 ///
 /// 只杀直接子进程在 Windows 上必然留孤儿：`shell_cmd` 走的是 `cmd /C <script>`，
@@ -2324,6 +2365,18 @@ pub async fn pty_kill(app: AppHandle, pty_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descendants_in_walks_whole_tree_including_reparent_free_children() {
+        // 10 = brew，11 = brew 拉起的 curl（另起进程组，按 ppid 仍在 10 下面），12 = curl 的子进程；20 无关
+        let table = [(10, 1), (11, 10), (12, 11), (20, 1), (21, 20)];
+        let mut got = descendants_in(10, &table);
+        got.sort();
+        assert_eq!(got, vec![11, 12]);
+        assert!(descendants_in(99, &table).is_empty());
+        // 环（ps 读到一半进程号复用）不死循环
+        assert_eq!(descendants_in(5, &[(6, 5), (5, 6)]), vec![6]);
+    }
 
     #[test]
     fn exit_waits_until_frontend_takes_output() {

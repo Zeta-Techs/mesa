@@ -23,9 +23,14 @@ fn mono_ms() -> u64 {
 // 慢网络整包下载可能很久（tap/cask 走 GitHub Release，实测 73KB/s 下 46MB 要 13 分钟），
 // 硬上限 30 分钟；真挂死靠闲置判定单独杀（见 IDLE_TIMEOUT）
 const TIMEOUT: Duration = Duration::from_secs(1800);
-/// 600 秒无任何输出才判挂死：下载活着时 curl 进度条每 5–10 秒一簇输出（PTY 实测），
-/// 不会误伤慢下载；真挂起/网络断死的进程在 10 分钟内被终止
+/// 600 秒既无输出、下载也没长才判挂死。brew 7 下 cask 只打一行 `Fetching downloads for:`，之后不出进度
+/// （2026-11-03：claude-code 275MB 经代理 143KB/s，10 分钟无输出被判死，其实下到一大半），所以 brew 另看
+/// 缓存里 `*.incomplete` 有没有在长（brew_incomplete_bytes），长了就算有动静
 const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+/// 下载一直在长时不按 30 分钟截断，放到这个上限
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(3 * 3600);
+/// 最近这么久内下载长过，算「还在下」
+const DOWNLOAD_RECENT: Duration = Duration::from_secs(60);
 
 /// 超时触发种类：闲置（无输出）优先于硬上限判定
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,15 +39,61 @@ pub(crate) enum PtyDeadline {
     Idle,
 }
 
-/// 纯判定函数：elapsed = 进程已运行时长，idle = 距最近一次收到输出的时长
-pub(crate) fn pty_deadline_kind(elapsed: Duration, idle: Duration) -> Option<PtyDeadline> {
+/// 纯判定函数：elapsed = 进程已运行时长，idle = 距最近一次有动静（输出或下载在长）的时长，
+/// downloading = 最近 DOWNLOAD_RECENT 内下载长过——那时硬上限放宽到 DOWNLOAD_TIMEOUT
+pub(crate) fn pty_deadline_kind(elapsed: Duration, idle: Duration, downloading: bool) -> Option<PtyDeadline> {
+    let hard = if downloading { DOWNLOAD_TIMEOUT } else { TIMEOUT };
     if idle >= IDLE_TIMEOUT {
         Some(PtyDeadline::Idle)
-    } else if elapsed >= TIMEOUT {
+    } else if elapsed >= hard {
         Some(PtyDeadline::Hard)
     } else {
         None
     }
+}
+
+/// brew 的下载缓存目录：HOMEBREW_CACHE > macOS ~/Library/Caches/Homebrew > XDG 缓存/Homebrew
+fn brew_downloads_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("HOMEBREW_CACHE")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let home = crate::dirs::home_dir()?;
+            Some(if cfg!(target_os = "macos") {
+                home.join("Library/Caches/Homebrew")
+            } else {
+                std::env::var_os("XDG_CACHE_HOME")
+                    .filter(|v| !v.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| home.join(".cache"))
+                    .join("Homebrew")
+            })
+        })?;
+    Some(base.join("downloads"))
+}
+
+/// 本次开跑以来还在写的 `*.incomplete` 总字节数（brew 下到一半的文件）；没有返回 0
+fn brew_incomplete_bytes(dir: &std::path::Path, since: std::time::SystemTime) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    rd.flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".incomplete"))
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.modified().is_ok_and(|t| t >= since))
+        .map(|m| m.len())
+        .sum()
+}
+
+/// 下载进度一行：「下载中：已下载 230.1 MB · 143 KB/s」
+pub(crate) fn download_progress_line(bytes: u64, bytes_per_sec: u64) -> String {
+    let mb = bytes as f64 / 1_048_576.0;
+    let rate = if bytes_per_sec >= 1_048_576 {
+        format!("{:.1} MB/s", bytes_per_sec as f64 / 1_048_576.0)
+    } else {
+        format!("{} KB/s", bytes_per_sec / 1024)
+    };
+    format!("下载中：已下载 {mb:.1} MB · {rate}")
 }
 /// npm 默认重试/等待可能持续数分钟且几乎没有可见输出；安装和更新使用
 /// 明确的网络参数，让失败在约 30 秒内反馈到界面，避免被误认为 Mesa 卡死。
@@ -470,7 +521,7 @@ pub(crate) fn prepend_path(current: Option<&std::ffi::OsStr>, dir: &std::path::P
 
 /// 同一 key 同时只允许一个 run：入口抢占，并发请求直接拒绝。
 /// updater（key=agent_id）与 fonts（key="fonts"）共用本函数。
-pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
+pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + Sync + 'static>(
     key: &str,
     program: &str,
     args: &[String],
@@ -553,6 +604,14 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
 
     let collected = Arc::new(Mutex::new(String::new()));
     let collected2 = collected.clone();
+    let emit = Arc::new(emit);
+    let emit2 = emit.clone();
+    // 下载进度行用 \r 原地刷新：开着时真输出要先换行，不然接在进度行后面；
+    // 进度行第一次出现时，上一块真输出没换行就先换行，不盖掉它（如 `Fetching downloads for:`）
+    let progress_open = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let progress_open2 = progress_open.clone();
+    let at_line_start = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let at_line_start2 = at_line_start.clone();
     // 最近一次收到子进程输出的时间戳（毫秒，单调时钟基准）：闲置判超时用。
     // 下载活着时 curl 进度条持续出字，该值会一直刷新
     let last_active_ms = Arc::new(std::sync::atomic::AtomicU64::new(mono_ms()));
@@ -588,7 +647,11 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
                             let _ = w.flush();
                         }
                         if !text.is_empty() {
-                            emit(&text);
+                            if progress_open2.swap(false, Ordering::Relaxed) {
+                                emit2("\n");
+                            }
+                            at_line_start2.store(text.ends_with('\n'), Ordering::Relaxed);
+                            emit2(&text);
                             collected2.lock().unwrap().push_str(&text);
                         }
                         pending.drain(..used);
@@ -600,7 +663,10 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
         if !pending.is_empty() {
             let text = strip_ansi_keep_cr(&String::from_utf8_lossy(&pending));
             if !text.is_empty() {
-                emit(&text);
+                if progress_open2.swap(false, Ordering::Relaxed) {
+                    emit2("\n");
+                }
+                emit2(&text);
                 collected2.lock().unwrap().push_str(&text);
             }
         }
@@ -608,19 +674,53 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
     });
 
     let start = std::time::Instant::now();
+    let started_at = std::time::SystemTime::now();
+    // brew 下载不出进度：每 5 秒看一眼缓存里下到一半的文件，长了算有动静并刷新进度行
+    let downloads_dir = (program_path.file_stem().and_then(|s| s.to_str()) == Some("brew"))
+        .then(brew_downloads_dir)
+        .flatten();
+    let mut last_probe = start;
+    let mut last_bytes = 0u64;
+    let mut last_growth: Option<std::time::Instant> = None;
     let mut deadline_hit: Option<PtyDeadline> = None;
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
             Ok(None) => {
+                if let Some(dir) = downloads_dir.as_deref() {
+                    if last_probe.elapsed() >= Duration::from_secs(5) {
+                        let secs = last_probe.elapsed().as_secs_f64();
+                        last_probe = std::time::Instant::now();
+                        let bytes = brew_incomplete_bytes(dir, started_at - Duration::from_secs(5));
+                        if bytes > last_bytes {
+                            let rate = ((bytes - last_bytes) as f64 / secs) as u64;
+                            last_bytes = bytes;
+                            last_growth = Some(std::time::Instant::now());
+                            last_active_ms.store(mono_ms(), Ordering::Relaxed);
+                            let opened = progress_open.swap(true, Ordering::Relaxed);
+                            let lead = if opened {
+                                "\r"
+                            } else if at_line_start.load(Ordering::Relaxed) {
+                                ""
+                            } else {
+                                "\n"
+                            };
+                            emit(&format!("{lead}{}", download_progress_line(bytes, rate)));
+                        }
+                    }
+                }
                 let idle = Duration::from_millis(
                     mono_ms().saturating_sub(last_active_ms.load(Ordering::Relaxed)),
                 );
-                deadline_hit = pty_deadline_kind(start.elapsed(), idle);
+                let downloading = last_growth.is_some_and(|t| t.elapsed() < DOWNLOAD_RECENT);
+                deadline_hit = pty_deadline_kind(start.elapsed(), idle, downloading);
                 if deadline_hit.is_some() {
-                    // 连子孙一起杀：unix 杀进程组（brew/npm 拉起的 curl 等与父同组）；Windows 走
-                    // taskkill /T——只杀 ConPTY 直接子进程时 npm/node/msiexec 孙进程照跑，继续锁着 npm 目录
+                    // 连子孙一起杀：unix 先杀另起进程组的子孙（brew 拉起的 curl 自成一组，只杀组会留孤儿占着
+                    // 下载锁），再杀进程组；Windows 走 taskkill /T——只杀 ConPTY 直接子进程时 npm/node/msiexec
+                    // 孙进程照跑，继续锁着 npm 目录
                     if let Some(pid) = child.process_id() {
+                        #[cfg(unix)]
+                        crate::pty::kill_descendants(pid);
                         crate::pty::kill_process_tree(pid);
                     }
                     let _ = child.kill();
@@ -637,7 +737,15 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + 'static>(
     let tail = tail_lines(&collapse_cr(&collected.lock().unwrap()), 30);
     if let Some(kind) = deadline_hit {
         let mut msg = match kind {
+            PtyDeadline::Hard if last_growth.is_some() => format!(
+                "命令超时（下载超过 {} 小时仍未完成，多半是网络太慢；可在设置页「网络」换个出网代理再试）",
+                DOWNLOAD_TIMEOUT.as_secs() / 3600
+            ),
             PtyDeadline::Hard => format!("命令超时（{} 秒）", TIMEOUT.as_secs()),
+            PtyDeadline::Idle if last_growth.is_some() => format!(
+                "下载已停了 {} 分钟（网络中断或代理断开），已终止；已下的部分会留着，再点更新会接着下",
+                IDLE_TIMEOUT.as_secs() / 60
+            ),
             PtyDeadline::Idle => {
                 format!(
                     "命令 {} 秒无任何输出（进程挂起或网络中断），已终止",
@@ -1466,25 +1574,37 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
     fn pty_deadline_idle_wins_and_slow_download_survives() {
         use std::time::Duration as D;
         // 慢下载：持续有输出（闲置远小于阈值）→ 即使逼近硬上限也不杀
-        assert_eq!(
-            pty_deadline_kind(D::from_secs(1750), D::from_secs(30)),
-            None
-        );
+        assert_eq!(pty_deadline_kind(D::from_secs(1750), D::from_secs(30), false), None);
         // 闲置达标 → 优先判闲置（报「无输出」而非笼统超时）
-        assert_eq!(
-            pty_deadline_kind(D::from_secs(60), D::from_secs(600)),
-            Some(PtyDeadline::Idle)
-        );
+        assert_eq!(pty_deadline_kind(D::from_secs(60), D::from_secs(600), false), Some(PtyDeadline::Idle));
         // 硬上限：一直有输出但跑满 30 分钟
-        assert_eq!(
-            pty_deadline_kind(D::from_secs(1800), D::from_secs(5)),
-            Some(PtyDeadline::Hard)
-        );
+        assert_eq!(pty_deadline_kind(D::from_secs(1800), D::from_secs(5), false), Some(PtyDeadline::Hard));
         // 双达标 → 闲置优先
-        assert_eq!(
-            pty_deadline_kind(D::from_secs(1800), D::from_secs(700)),
-            Some(PtyDeadline::Idle)
-        );
+        assert_eq!(pty_deadline_kind(D::from_secs(1800), D::from_secs(700), false), Some(PtyDeadline::Idle));
+        // 下载还在长：30 分钟不截断，放到 3 小时；下载停住照样按闲置判死
+        assert_eq!(pty_deadline_kind(D::from_secs(1900), D::from_secs(5), true), None);
+        assert_eq!(pty_deadline_kind(D::from_secs(3 * 3600), D::from_secs(5), true), Some(PtyDeadline::Hard));
+        assert_eq!(pty_deadline_kind(D::from_secs(1900), D::from_secs(600), true), Some(PtyDeadline::Idle));
+    }
+
+    #[test]
+    fn brew_incomplete_bytes_counts_only_files_written_this_run() {
+        let dir = std::env::temp_dir().join(format!("ccode-brew-dl-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let since = std::time::SystemTime::now() - Duration::from_secs(1);
+        std::fs::write(dir.join("abc--claude.incomplete"), vec![0u8; 3000]).unwrap();
+        std::fs::write(dir.join("abc--claude"), vec![0u8; 9000]).unwrap(); // 下完的不算
+        assert_eq!(brew_incomplete_bytes(&dir, since), 3000);
+        // 本次开跑之前就搁着的半截文件（上次留下、没在写）不算
+        assert_eq!(brew_incomplete_bytes(&dir, std::time::SystemTime::now() + Duration::from_secs(60)), 0);
+        assert_eq!(brew_incomplete_bytes(&dir.join("nope"), since), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn download_progress_line_formats_size_and_rate() {
+        assert_eq!(download_progress_line(241_281_024, 146_000), "下载中：已下载 230.1 MB · 142 KB/s");
+        assert_eq!(download_progress_line(10 * 1_048_576, 3 * 1_048_576), "下载中：已下载 10.0 MB · 3.0 MB/s");
     }
 
     #[test]
