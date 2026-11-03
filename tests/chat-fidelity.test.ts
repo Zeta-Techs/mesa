@@ -14,7 +14,9 @@ test("九家都写了聊天层能做到哪一步", () => {
   assert.equal(chatFidelity("custom"), null);
 });
 
-test("Windows 上 Grok 没有程序状态旁路，降到读画面那一档；其余家两平台一样", () => {
+test("Windows 上 Grok、Kimi 没有程序状态旁路，降到读画面那一档；其余家两平台一样", () => {
+  assert.equal(chatFidelity("kimi")?.tier, 2);
+  assert.equal(chatFidelity("kimi", true)?.tier, 3);
   assert.equal(chatFidelity("grok")?.tier, 2);
   const win = chatFidelity("grok", true);
   assert.equal(win?.tier, 3);

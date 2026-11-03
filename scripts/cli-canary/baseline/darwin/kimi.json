@@ -1,11 +1,39 @@
 {
  "agent": "kimi",
- "channel": null,
+ "channel": {
+  "approvalKind": "other",
+  "approvalReplyable": false,
+  "approvalTool": null,
+  "kind": "program-status",
+  "statuses": [
+   "-",
+   "awaiting_approval",
+   "completed"
+  ]
+ },
  "checks": {
   "假网关收到主对话请求": true,
   "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
   "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
-  "抓屏跑完": true
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "Bash"
+  ]
  },
  "platform": "darwin",
  "request": {
@@ -68,9 +96,7 @@
     "Write"
    ]
   },
-  "other": [
-   "/kimi/v1/chat/completions tools=True"
-  ]
+  "other": []
  },
  "screen": {
   "liveReplySupported": true,
@@ -84,6 +110,232 @@
    "question": "Run this command?"
   },
   "previewReadable": true
+ },
+ "transcript": {
+  "agent.message.appended": {
+   "keys": [
+    "kind",
+    "message",
+    "time",
+    "type"
+   ]
+  },
+  "agent.turn.ended": {
+   "keys": [
+    "kind",
+    "outcome",
+    "time",
+    "turnId",
+    "type"
+   ]
+  },
+  "agent.turn.started": {
+   "keys": [
+    "kind",
+    "queueItemId",
+    "time",
+    "turnId",
+    "type"
+   ]
+  },
+  "changeNotifier.snapshot": {
+   "keys": [
+    "agentId",
+    "agentsMdFiles",
+    "agentsMdHash",
+    "modelPool",
+    "skillsHash",
+    "subagentNames",
+    "time",
+    "type"
+   ]
+  },
+  "context.append_loop_event": {
+   "keys": [
+    "agentId",
+    "event",
+    "time",
+    "type"
+   ]
+  },
+  "context.append_message": {
+   "blocks": [
+    "text"
+   ],
+   "keys": [
+    "agentId",
+    "message",
+    "time",
+    "type"
+   ]
+  },
+  "interaction.request": {
+   "keys": [
+    "agentId",
+    "id",
+    "kind",
+    "request",
+    "time",
+    "toolCallId",
+    "type"
+   ]
+  },
+  "interaction.resolved": {
+   "keys": [
+    "agentId",
+    "id",
+    "response",
+    "time",
+    "type"
+   ]
+  },
+  "llm.request": {
+   "keys": [
+    "agentId",
+    "kind",
+    "messageCount",
+    "model",
+    "modelAlias",
+    "provider",
+    "systemPromptHash",
+    "thinkingEffort",
+    "thinkingKeep",
+    "time",
+    "toolSelect",
+    "toolsHash",
+    "turnStep",
+    "type"
+   ]
+  },
+  "llm.tools_snapshot": {
+   "keys": [
+    "agentId",
+    "hash",
+    "time",
+    "tools",
+    "type"
+   ]
+  },
+  "metadata": {
+   "keys": [
+    "created_at",
+    "protocol_version",
+    "type"
+   ]
+  },
+  "permission.record_approval_result": {
+   "keys": [
+    "action",
+    "agentId",
+    "result",
+    "time",
+    "toolCallId",
+    "toolName",
+    "turnId",
+    "type"
+   ]
+  },
+  "permission.set_mode": {
+   "keys": [
+    "agentId",
+    "mode",
+    "time",
+    "type"
+   ]
+  },
+  "plugin.session_start": {
+   "keys": [
+    "agentId",
+    "content",
+    "time",
+    "type"
+   ]
+  },
+  "profile.bind": {
+   "keys": [
+    "activeToolNames",
+    "agentId",
+    "agentsMdPaths",
+    "disallowedTools",
+    "environmentDisclosure",
+    "modelAlias",
+    "profileName",
+    "subagents",
+    "systemPrompt",
+    "thinkingEffort",
+    "time",
+    "type"
+   ]
+  },
+  "prompt.completed": {
+   "keys": [
+    "agentId",
+    "finishedAt",
+    "promptId",
+    "reason",
+    "time",
+    "type"
+   ]
+  },
+  "runtime.set_binding": {
+   "keys": [
+    "agentId",
+    "runtimeId",
+    "time",
+    "type",
+    "workspaceId"
+   ]
+  },
+  "token_counting.measured": {
+   "keys": [
+    "agentId",
+    "length",
+    "time",
+    "tokens",
+    "type"
+   ]
+  },
+  "token_counting.turn_recorded": {
+   "keys": [
+    "agentId",
+    "length",
+    "time",
+    "tokens",
+    "turnId",
+    "type"
+   ]
+  },
+  "turn.ended": {
+   "keys": [
+    "agentId",
+    "durationMs",
+    "reason",
+    "time",
+    "turnId",
+    "type"
+   ]
+  },
+  "turn.prompt": {
+   "keys": [
+    "agentId",
+    "input",
+    "origin",
+    "promptId",
+    "time",
+    "turnId",
+    "type"
+   ]
+  },
+  "usage.record": {
+   "keys": [
+    "agentId",
+    "model",
+    "time",
+    "type",
+    "usage",
+    "usageScope"
+   ]
+  }
  },
  "version": "2.4.1"
 }

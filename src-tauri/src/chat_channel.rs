@@ -31,7 +31,7 @@ const CODEBUDDY_SETTINGS_MIN: (u32, u32, u32) = (2, 169, 0);
 /// OSC 7501 程序状态（program_status.rs）：开始支持的版本（Orca 实测表，2026-10-17）；本机 2026-10-22 实测
 /// Claude Code 2.1.306、Grok 1.0.67 都会报。只在这家没有别的旁路时用它
 const PROGRAM_STATUS_MIN: &[(&str, (u32, u32, u32))] =
-    &[("claude-code", (2, 1, 295)), ("grok", (1, 0, 60))];
+    &[("claude-code", (2, 1, 295)), ("grok", (1, 0, 60)), ("kimi", (2, 4, 0))];
 /// CLI 自己报的一句现状（程序状态 msg）上限
 const STATUS_LINE_CAP: usize = 240;
 /// 这一轮实时文字最多留多少字符（只给预览用，正文以会话文件为准）

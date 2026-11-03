@@ -29,11 +29,13 @@ BIN = {"claude-code": "claude", "codex": "codex", "gemini": "gemini", "qwen": "q
        "kimi": "kimi", "codebuddy": "codebuddy", "cursor": "cursor-agent", "grok": "grok"}
 # 不在 PATH 上时的常见安装位置（Kimi 官方安装脚本装在自己的目录里）
 BIN_FALLBACK = {"kimi": "~/.kimi-code/bin/kimi"}
-# 有结构化旁路的家跑 Mesa 的旁路端到端（chat_channel e2e）；Gemini / Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏。
-# Grok 的旁路是程序状态（OSC 7501），Windows 的 ConPTY 两个方向都吞 OSC，Mesa 在 Windows 不接它（chat_channel.rs prepare），也只抓屏
-CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "codex", "grok"} - ({"grok"} if PLATFORM == "win32" else set())
-# 旁路直接报会话 id 的家（Grok 的程序状态不带会话 id）
-SESSION_ID = CHANNEL - {"grok"}
+# 有结构化旁路的家跑 Mesa 的旁路端到端（chat_channel e2e）；Gemini 不开全局 hooks、Cursor 没有旁路，只抓屏。
+# Grok、Kimi（2.4 起，2026-11-04）的旁路是程序状态（OSC 7501），Windows 的 ConPTY 两个方向都吞 OSC，Mesa 在 Windows 不接它
+# （chat_channel.rs prepare），也只抓屏
+PROGRAM_STATUS = {"grok", "kimi"}
+CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "codex"} | (set() if PLATFORM == "win32" else PROGRAM_STATUS)
+# 旁路直接报会话 id 的家（程序状态不带会话 id）
+SESSION_ID = CHANNEL - PROGRAM_STATUS
 # 连不上假网关的家（Cursor 只走自家云端，临时 HOME 里也没登录）：只记版本，请求 / 画面都不比
 NO_GATEWAY = {"cursor"}
 # CI 标记变量不往下传：Gemini 见 CI / GITHUB_ACTIONS 就走无头模式（「No input provided via stdin」），Ink 写的界面

@@ -74,11 +74,12 @@ export const CHAT_FIDELITY: Record<string, ChatFidelity> = {
     source: "没开「精确注意力标记」时，在干活还是在等你都靠读终端画面推断",
     terminalOnly: "登录、方向键选择的菜单、认不出的确认",
   },
+  // 2026-11-04 起：Kimi 2.4 自己报程序状态（OSC 7501），从读画面推断升到第二档；更老的 Kimi 没有这条旁路，照旧读画面
   kimi: {
-    tier: 3,
-    beta: false,
-    source: "没开「精确注意力标记」时，在干活还是在等你都靠读终端画面推断",
-    terminalOnly: "登录、方向键选择的菜单、认不出的确认",
+    tier: 2,
+    beta: true,
+    source: "回合与等确认来自 Kimi 自己报的状态（2.4 起；更老的版本靠读终端画面推断）；正在写的字和确认菜单靠读终端画面",
+    terminalOnly: "登录、方向键选择的菜单",
   },
   codebuddy: {
     tier: 3,
@@ -95,10 +96,16 @@ export const CHAT_FIDELITY: Record<string, ChatFidelity> = {
 };
 
 /**
- * Windows 上与上表不同的家：ConPTY 两个方向都吞 OSC，Grok 自己报的状态（OSC 7501）到不了 Mesa，
- * 后端 Windows 不接这条旁路（chat_channel.rs prepare），Grok 退回和 Gemini、Kimi 一样读画面（2026-10-25 本机实测）
+ * Windows 上与上表不同的家：ConPTY 两个方向都吞 OSC，Grok / Kimi 自己报的状态（OSC 7501）到不了 Mesa，
+ * 后端 Windows 不接这条旁路（chat_channel.rs prepare），两家退回和 Gemini 一样读画面（2026-10-25 本机实测）
  */
 const CHAT_FIDELITY_WINDOWS: Record<string, ChatFidelity> = {
+  kimi: {
+    tier: 3,
+    beta: false,
+    source: "Windows 的终端层会吞掉 Kimi 自己报的状态；没开「精确注意力标记」时，在干活还是在等你都靠读终端画面推断",
+    terminalOnly: "登录、方向键选择的菜单、认不出的确认",
+  },
   grok: {
     tier: 3,
     beta: false,

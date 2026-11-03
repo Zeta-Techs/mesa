@@ -18,14 +18,14 @@ CLI 官方的结构化通道最准、变得慢、坏了是明着坏（握不上�
 | 档 | CLI | 状态 / 审批 / 正在写的字从哪来 | 承诺 |
 |---|---|---|---|
 | 1 接近完整 | Codex、Qwen Code、OpenCode | 官方结构化通道；审批能从聊天直接回 | 聊天里基本不用回终端 |
-| 2 常用的事都能做 | Claude Code、Grok | 回合与审批来自注入的 hooks / 程序状态；正在写的字、菜单、提问表单靠读屏 | 常用的在聊天，其余回终端 |
-| 3 简化 | Gemini、Kimi、CodeBuddy | 不开全局 hooks 就靠读屏推断（CodeBuddy 有 hooks 但没有边写边显示） | 同上，回终端更常见 |
+| 2 常用的事都能做 | Claude Code、Grok、Kimi（2.4 起，2026-11-04） | 回合与审批来自注入的 hooks / 程序状态；正在写的字、菜单、提问表单靠读屏 | 常用的在聊天，其余回终端 |
+| 3 简化 | Gemini、CodeBuddy | 不开全局 hooks 就靠读屏推断（CodeBuddy 有 hooks 但没有边写边显示） | 同上，回终端更常见 |
 | 4 简化版 | Cursor | 只有会话文件与读屏，没有「等你确认」信号 | 确认菜单在终端里操作 |
 
 输入框左下的小标签点开就是这一张表里当前这家的一行。标签写什么（`fidelityBadge`）：`beta: true` 写「测试版」（第一、二档现在都是）；
 第三、四档写「简化」；第一、二档摘了测试版就不标，但 CLI 比核对过的新时标「未核对」。新增一家或某家换了通道，改 `CHAT_FIDELITY` 一处（测试钉住九家都在）。
 
-**平台差异**（`CHAT_FIDELITY_WINDOWS`，`chatFidelity(agent, isWindows)` 显式传平台）：Windows 上 Grok 降到第 3 档——程序状态（OSC 7501）
+**平台差异**（`CHAT_FIDELITY_WINDOWS`，`chatFidelity(agent, isWindows)` 显式传平台）：Windows 上 Grok、Kimi 降到第 3 档——程序状态（OSC 7501）
 过不了 ConPTY，后端不接这条旁路（2026-10-25 本机实测，matrix「程序状态 OSC 7501」），和 Gemini、Kimi 一样靠读屏。只有两平台真不一样的家才写进这张表。
 
 ## 2. 五条设计规则
@@ -56,7 +56,7 @@ CLI 官方的结构化通道最准、变得慢、坏了是明着坏（握不上�
 | Claude 提问表单 | Claude Code | `tui-ask.ts` | AskUserQuestion 的 hook 只给题目，交卷仍要按键 |
 | 启动信任目录 | 九家 | `trust-prompt.ts` | Grok 程序状态报 `blocked`（只说在等，不给选项） |
 | 「猜的下一句」、生成中 token 数、面板 / 通知识别 | Claude Code | `prompt-suggestion.ts`、`live-reply.ts`、`tui-panel.ts` | 无 |
-| 在不在等你（没开全局 hooks 时） | Gemini、Kimi | `tab-working.ts` 推断 + 读屏菜单 | 两家都没有每次注入 hooks 的口子（matrix §14） |
+| 在不在等你（没开全局 hooks 时） | Gemini；Windows 上的 Kimi、Grok | `tab-working.ts` 推断 + 读屏菜单 | Gemini 没有每次注入 hooks 的口子（matrix §14）；Kimi 2.4 起 macOS 改走程序状态 |
 
 每修一次读屏问题，把那次的原始画面存进抓屏语料库（见 `tests/fixtures/screens/README.md`），以后改解析不会改回去。
 

@@ -655,7 +655,7 @@
   Claude Code / CodeBuddy = `--settings` 带 hooks（`hooks::launch_hooks_value`，与用户 hooks 合并）；Qwen = Dual Output；
   OpenCode = `--port` + `OPENCODE_SERVER_PASSWORD`；Codex = 私有 app-server（ws + 能力令牌）+ TUI `--remote`；开了全局开关的
   Gemini / Kimi / Grok = 同一份状态日志按标签号过滤；**没有别的旁路、CLI 支持程序状态的家 = OSC 7501（2026-10-22，`program_status.rs`，
-  旁路 kind `program-status`）**：Grok ≥1.0.60（没开全局 hooks 时）、Claude Code ≥2.1.295（hooks 起不来时）；**Windows 不接**
+  旁路 kind `program-status`）**：Grok ≥1.0.60、Kimi ≥2.4.0（2026-11-04；两家都是没开全局 hooks 时）、Claude Code ≥2.1.295（hooks 起不来时）；**Windows 不接**
   （2026-10-25：ConPTY 两个方向都吞 OSC，同下文「OSC 底色握手」那条——本机 Grok 1.0.67 经 ConPTY 的输出里只剩 OSC 0 / 12，探询与报告都过不来，
   接了只是一条永远空着的旁路；Windows 上 Grok 退回读屏，聊天层说明见 `chat-fidelity.ts` 的 Windows 表）。PTY 读线程只对这类标签答
   `OSC 7501 ; ?`（`term_query::QueryScanner::new(true)`，排在 DA1 应答之前——Claude 拿 DA1 当探询哨兵；答了 Claude 不再往窗口标题写转圈符号，
