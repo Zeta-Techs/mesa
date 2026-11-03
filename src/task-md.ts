@@ -1,4 +1,4 @@
-import { applyStepParams } from "./task-packs.ts";
+import { applyStepParams, checkSectionLines } from "./task-packs.ts";
 import { litSourceSectionLines } from "./task-md-sections.ts";
 import { decisionPolicyBlock } from "./step-decisions.ts";
 import { RESOURCE_TYPE_LABELS } from "./pipeline-presets.ts";
@@ -91,6 +91,7 @@ export function renderTaskMd(
       "",
     );
   }
+  lines.push(...checkSectionLines(step, isWindows));
   if (ledger && ledger.length > 0) {
     lines.push(
       "## 以前定过的事",

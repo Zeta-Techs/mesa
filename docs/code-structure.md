@@ -549,7 +549,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
                              # （tests/task-pack-author.test.ts）
-  task-packs.ts              # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，
+  task-packs.ts              # 第三期：packCheckFile / checkCommand / checkSectionLines（任务书「本步核验」）、triggerSummary / triggerDefaultOn；
+                             # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，
                              # machine: 验收行不动）、nextParamKey；替换范围与 task_packs.rs step_texts 一致（tests/task-packs.test.ts）
   inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
                              #   sched: = 「定时任务」类（其他巡检待评审 / 自动暂停，不进一键已读；2026-10-23）；
@@ -1331,6 +1332,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 校验 {param:键} 都有定义；add_task_pack_to_project 先 skills::install_pack_skills 补装库里缺的、再走 apply_pipeline_template_at 原子追加，
                              # 每一步带 pack 与 params（定义连同取值）；删除走回收站
                              # 第二期：check_pack / check_structure 机器校验（拦下 / 提醒）、check_task_pack；草稿 start/list/check/install/discard_task_pack_draft
+                             # 第三期：PackTriggerDto（[trigger]）与步骤 checks 的校验；add_task_pack_to_project 带 with_trigger 时 create_trigger → scheduler::create_schedule_for_pack；
+                             #   覆盖另存沿用旧版本随包技能与触发
                              # （<项目>/.ccode/pack-drafts/<id>/，exclude_in_git 不进 git）
   skills.rs                  # 技能库（§6.13）：SSOT 库 + symlink/copy 分发（cursor/grok 固定 copy）、四路导入、ZIP 导出、卸载备份、
                              # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，
@@ -1647,7 +1650,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # journal_metrics_status（含 downloadedAt：两份 CSV 取较新 mtime）+ check_journal_metrics_update
                              # （GitHub commits API 按数据目录查最近 commit，与本地 mtime 比对出 hasUpdate，前端静默失败）
   research_quality.rs        # 科研复现运行记录与验收决定：独立输出 ~/ccode/reproductions/；验收写 .ccode/research-acceptance.json，不替代 Git 合并
-  research_record.rs         # 核验记录与研究记录（2026-11-02）：research_checks_read 读 <工作目录>/.ccode/checks/ 顶层 *.jsonl（三档状态，
+  research_record.rs         # 2026-11-03：核验文件分三种来源 CheckSource（内置脚本固定文件 / pack- 任务包脚本：检查器记成文件名、通过降待判断 / 其余 Agent）；
+                             # 核验记录与研究记录（2026-11-02）：research_checks_read 读 <工作目录>/.ccode/checks/ 顶层 *.jsonl（三档状态，
                              # 认不出的行计 skipped 不猜；runs/ 是存档不读）；record_run_closed 在 Run 关闭后（close_run_with_result /
                              # 崩溃补收）把运行事实追加进项目 .ccode/record.jsonl（runId 去重、record.lock）、核验项存档 checks/runs/<runId>.jsonl、
                              # 整份重写 .ccode/ai-usage.md（AI 使用声明事实底稿）；append_jsonl_line 是项目 JSONL 账本的通用追加（验收账本共用）

@@ -17,6 +17,10 @@ test("跟 AI 写的提示词：写在草稿目录、给出格式与闭集、不�
   assert.match(p, /不要安装技能，不要开工去做这件任务本身/);
   assert.match(p, /七类必须停下来问人/);
   assert.match(p, /不要说已经装好/);
+  assert.match(p, /\[\[steps\.checks\]\]/);
+  assert.match(p, /\[trigger\]/);
+  assert.match(p, /--root <工作目录> --out <结果文件>/);
+  assert.match(p, /passed 显示成「待你判断」/);
   assert.match(buildPackAuthorPrompt({ name: "x", intent: " ", dirRel: "d", packRel: "d/p", anchors: [], userSkills: [] }), /先问清楚/);
 });
 

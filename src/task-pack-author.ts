@@ -61,6 +61,20 @@ options = ["CellTypist", "SingleR"]
 title = "把测序原始数据放进 data/raw/"
 target = "data/raw/"
 timing = "before"                            # before / during / after
+
+[[steps.checks]]                             # 可选：交付前要跑的核验脚本，脚本放在随包技能的 scripts/ 里
+name = "qc-thresholds"                       # 小写英文、数字、连字符
+skill = "sc-qc"                              # 脚本所在的技能
+script = "scripts/qc_check.py"               # 技能目录里的相对路径
+description = "阈值是否都写进报告、剔除数是否对得上"
+
+[trigger]                                    # 可选：要不要按时间或有事时自动跑一个技能；不需要就别写
+name = "新数据质控"
+kind = "folder"      # schedule 按时间 / folder 目录落新文件 / radar 文献雷达采纳后 / phone 手机文件放进项目后
+skill = "sc-qc"
+folder = "{param:inbox}"   # 只有 folder 写；可以用参数
+exts = ["h5"]
+mode = "record"      # 事件先写 record（只记录、不叫 AI）。schedule 改写 frequency（daily/weekdays/weekly/hourly/manual）、hour、minute，weekly 加 weekday（1–7）
 \`\`\`
 
 【写好简报的规则】（Mesa 装库前会机器检查，违反的装不进去）
@@ -70,6 +84,10 @@ timing = "before"                            # before / during / after
 - {skill:…} 只能写这些内置技能名：${input.anchors.join("、")}。本机已有的用户技能：${userSkills}（可以直接写进 skills）。
 - 开工前就能定的选项写成 decisions；干到一半才知道要问的，简报里写明「写进 .ccode/help-wanted.md 问人」。研究范围、原始数据、合规、对外发送、花钱、改人写的内容、保护路径这七类必须停下来问人，简报不能叫 AI 跳过。
 - 不写密钥、口令；不写要 Mesa 运行的代码。要跑的脚本放进技能目录，由 AI 在工作副本里跑。
+- 核验脚本只做机器判得了的事（数字对不对得上、文件在不在、阈值有没有写进报告）；要读懂内容才判得了的（论断成不成立）别写成脚本。
+  脚本接受 \`--root <工作目录> --out <结果文件>\`，结果一行一个 JSON：
+  {"id":"Q1","kind":"qc","status":"blocked","title":"一句话","target":{"file":"analysis/qc_report.md","line":12},"evidence":{"detail":"依据"},"checker":"script:qc-thresholds","at":"<ISO 时间>"}。
+  status 只有 passed / blocked / needs_human；Mesa 会把你脚本的 passed 显示成「待你判断」，blocked 进逐条裁决。脚本要能在 Windows 上跑（不用 bash 专有写法；Python 用标准库优先）。
 
 写完告诉我写了哪些文件，等我在 Mesa 里点「检查」看结果、确认后装进我的任务。不要说已经装好。`;
 }

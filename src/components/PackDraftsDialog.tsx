@@ -11,6 +11,7 @@ import {
   secondaryActionClass,
 } from "./PageFrame";
 import { buildPackAuthorPrompt, buildPackFixPrompt, issueLine, splitIssues } from "../task-pack-author";
+import { triggerSummary } from "../task-packs";
 import { renderTaskMd } from "../task-md";
 import { IS_WINDOWS } from "../hotkeys";
 import { toast } from "../toast";
@@ -335,6 +336,11 @@ function DraftList({
               {pack.params.length > 0 && ` · 参数 ${pack.params.map((p) => `${p.label}（默认 ${p.value || "空"}）`).join("、")}`}
               {pack.skills.length > 0 && ` · 随包技能 ${pack.skills.join("、")}`}
             </p>
+            {pack.trigger && (
+              <p className="text-xs text-l3">
+                带触发：{triggerSummary(pack.trigger)}（加进项目时勾选才建；「装进并加到这个项目试跑」不建）
+              </p>
+            )}
             {pack.steps.length > 0 && (
               <div className="flex flex-wrap items-center gap-1 text-xs">
                 <span className="text-l3">预览任务书：</span>

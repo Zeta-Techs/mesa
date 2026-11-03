@@ -1500,6 +1500,30 @@ export interface StepParamDto {
   options: string[];
 }
 
+/** 任务包核验脚本（第三期）：脚本在某个技能目录里，结果写 .ccode/checks/pack-<包>-<名>.jsonl，「通过」降为待你判断 */
+export interface StepCheckDto {
+  name: string;
+  skill: string;
+  /** 技能目录内的相对路径，如 scripts/qc_check.py */
+  script: string;
+  description: string;
+}
+
+/** 任务包带的触发：schedule 按时间；folder / radar / phone 是事件规则（mode 缺省 record 只记录） */
+export interface PackTriggerDto {
+  name: string;
+  kind: string;
+  skill: string;
+  frequency: string;
+  weekday: number | null;
+  intervalHours: number | null;
+  hour: number;
+  minute: number;
+  folder: string;
+  exts: string[];
+  mode: string;
+}
+
 /** 我的任务（task_packs.rs list_task_packs） */
 export interface TaskPackDto {
   id: string;
@@ -1512,6 +1536,8 @@ export interface TaskPackDto {
   steps: ProjectStepDto[];
   /** 随包的用户技能 */
   skills: string[];
+  /** 可选的触发：加进项目时勾选一并建 */
+  trigger?: PackTriggerDto | null;
 }
 
 /** 任务包机器校验的一条（task_packs.rs check_pack）：block 拦下不让存，warn 只提醒 */
@@ -1549,6 +1575,8 @@ export interface AddPackResultDto {
   renamed: { name: string; from: string; to: string }[];
   /** 这次新装进技能库的随包技能（没分发给任何 Agent） */
   skillsAdded: string[];
+  /** 触发建了什么 / 为什么没建；没带触发或没勾为空 */
+  triggerNote?: string | null;
 }
 
 export interface StepDecisionDto {
@@ -1597,6 +1625,8 @@ export interface ProjectStepDto {
   pack?: string;
   /** 任务包参数（定义连同取值）；文字里的 {param:键} 拼任务书时替换 */
   params?: StepParamDto[];
+  /** 任务包核验脚本：任务书「本步核验」叫 Agent 跑 */
+  checks?: StepCheckDto[];
   /** 预置完成：产物已在主仓（示例课题检索步），步进器视为已完成。真建了工作区后以工作区为准 */
   seedComplete?: boolean;
 }

@@ -601,3 +601,12 @@ test("TASK.md：来自我的任务的步骤先代入参数，并列出「本步�
   assert.match(md, /没填的参数先按决策暂停策略问人/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/tmp/p"), /本步参数/);
 });
+
+test("TASK.md：来自我的任务的核验脚本列在「本步核验」", () => {
+  const md = renderTaskMd(
+    step({ pack: "pk-1", checks: [{ name: "qc", skill: "sc-qc", script: "scripts/qc.py", description: "阈值写进报告" }] }),
+    cfg(),
+    "/tmp/p",
+  );
+  assert.match(md, /## 本步核验\n- 阈值写进报告：`python3 <技能 sc-qc 的目录>\/scripts\/qc\.py --root <工作目录> --out \.ccode\/checks\/pack-pk-1-qc\.jsonl`/);
+});

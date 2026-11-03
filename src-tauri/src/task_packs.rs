@@ -28,7 +28,30 @@ pub struct TaskPackDto {
     pub steps: Vec<StepDto>,
     /// 随包技能名（`skills/` 下有 SKILL.md 的目录）
     pub skills: Vec<String>,
+    /// 可选的触发（第三期）：加进项目时由人勾选一并建定时任务或事件规则
+    pub trigger: Option<PackTriggerDto>,
 }
+
+/// 任务包带的触发：schedule 按时间；folder / radar / phone 是事件规则（模式缺省只记录）。
+/// 跑的是 skill（技能目录名，随包或本机已有）；folder 里可以写 {param:键}
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PackTriggerDto {
+    pub name: String,
+    pub kind: String,
+    pub skill: String,
+    pub frequency: String,
+    pub weekday: Option<u8>,
+    pub interval_hours: Option<u8>,
+    pub hour: u8,
+    pub minute: u8,
+    pub folder: String,
+    pub exts: Vec<String>,
+    pub mode: String,
+}
+
+const TRIGGER_KINDS: [&str; 4] = ["schedule", "folder", "radar", "phone"];
+const FREQUENCIES: [&str; 5] = ["daily", "weekdays", "weekly", "hourly", "manual"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +61,8 @@ pub struct AddPackResultDto {
     pub renamed: Vec<crate::projects::WorkspaceRenameDto>,
     /// 这次新装进技能库的随包技能（默认没分发给任何 Agent，要去技能页打开）
     pub skills_added: Vec<String>,
+    /// 包带的触发建了什么 / 为什么没建（没带触发或人没勾为 None）
+    pub trigger_note: Option<String>,
 }
 
 fn packs_root() -> Result<PathBuf, String> {
@@ -127,6 +152,36 @@ fn render_pack(pack: &TaskPackDto) -> Result<String, String> {
         }
         doc["params"] = Item::ArrayOfTables(ps);
     }
+    if let Some(tr) = &pack.trigger {
+        let mut t = Table::new();
+        t["name"] = value(&tr.name);
+        t["kind"] = value(&tr.kind);
+        t["skill"] = value(&tr.skill);
+        if tr.kind == "schedule" {
+            t["frequency"] = value(&tr.frequency);
+            if let Some(w) = tr.weekday {
+                t["weekday"] = value(i64::from(w));
+            }
+            if let Some(n) = tr.interval_hours {
+                t["interval_hours"] = value(i64::from(n));
+            }
+            t["hour"] = value(i64::from(tr.hour));
+            t["minute"] = value(i64::from(tr.minute));
+        } else {
+            if !tr.folder.is_empty() {
+                t["folder"] = value(&tr.folder);
+            }
+            if !tr.exts.is_empty() {
+                let mut a = toml_edit::Array::new();
+                for e in &tr.exts {
+                    a.push(e.as_str());
+                }
+                t["exts"] = value(a);
+            }
+            t["mode"] = value(if tr.mode.is_empty() { "record" } else { tr.mode.as_str() });
+        }
+        doc["trigger"] = Item::Table(t);
+    }
     if let Some(steps) = body.get("steps") {
         doc["steps"] = steps.clone();
     }
@@ -167,6 +222,10 @@ fn parse_pack(text: &str, dir: &Path) -> Result<TaskPackDto, String> {
         params: crate::projects::normalize_step_params(params),
         steps: crate::projects::parse_config(text).0.steps,
         skills,
+        trigger: match value.get("trigger") {
+            Some(v) => Some(trigger_from_toml(v)?),
+            None => None,
+        },
         id,
     })
 }
@@ -210,6 +269,20 @@ pub(crate) fn save_at(
     steps: Vec<StepDto>,
     skill_dirs: &[(String, PathBuf)],
 ) -> Result<TaskPackDto, String> {
+    save_with_trigger_at(root, id, name, description, params, steps, skill_dirs, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_with_trigger_at(
+    root: &Path,
+    id: Option<&str>,
+    name: &str,
+    description: &str,
+    params: Vec<StepParamDto>,
+    steps: Vec<StepDto>,
+    skill_dirs: &[(String, PathBuf)],
+    trigger: Option<PackTriggerDto>,
+) -> Result<TaskPackDto, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("任务名不能为空".into());
@@ -226,6 +299,23 @@ pub(crate) fn save_at(
             }
         }
     }
+    let _lock = crate::storage::config_lock("task-packs")?;
+    fs::create_dir_all(root).map_err(|e| format!("建任务包目录失败：{e}"))?;
+    let existing = match id {
+        Some(id) => Some(read_pack_at(root, id)?),
+        None => None,
+    };
+    // 覆盖时旧版本随包、这次没给的技能沿用（从项目另存拿不到包里的核验 / 触发技能，不该丢）
+    let mut skill_dirs: Vec<(String, PathBuf)> = skill_dirs.to_vec();
+    if let Some(old) = &existing {
+        let old_dir = pack_dir(root, &old.id)?.join("skills");
+        for name in &old.skills {
+            if !skill_dirs.iter().any(|(n, _)| n == name) {
+                skill_dirs.push((name.clone(), old_dir.join(name)));
+            }
+        }
+    }
+    let trigger = trigger.or_else(|| existing.as_ref().and_then(|p| p.trigger.clone()));
     // 拦下的一律不存（提醒不拦）；技能库名单只影响提醒，这里不用
     let probe = TaskPackDto {
         id: "pk-check".into(),
@@ -236,17 +326,12 @@ pub(crate) fn save_at(
         updated_at: String::new(),
         params: params.clone(),
         steps: steps.clone(),
-        skills: Vec::new(),
+        skills: skill_dirs.iter().map(|(n, _)| n.clone()).collect(),
+        trigger: trigger.clone(),
     };
-    if let Some(msg) = blocked(&check_pack(&probe, &[])) {
+    if let Some(msg) = blocked(&check_pack(&probe, &crate::skills::library_skill_names_for_check())) {
         return Err(msg);
     }
-    let _lock = crate::storage::config_lock("task-packs")?;
-    fs::create_dir_all(root).map_err(|e| format!("建任务包目录失败：{e}"))?;
-    let existing = match id {
-        Some(id) => Some(read_pack_at(root, id)?),
-        None => None,
-    };
     let now = crate::sessions::now_iso();
     let pack = TaskPackDto {
         id: existing
@@ -261,6 +346,8 @@ pub(crate) fn save_at(
         params,
         steps,
         skills: skill_dirs.iter().map(|(n, _)| n.clone()).collect(),
+        // 没给触发就沿用旧版本的（从项目另存时拿不到触发，不该把它丢掉）
+        trigger,
     };
     // 先在临时目录写全，再整目录换上：中途失败不留半个包
     let final_dir = pack_dir(root, &pack.id)?;
@@ -268,7 +355,7 @@ pub(crate) fn save_at(
     let result = (|| -> Result<(), String> {
         fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         crate::profiles::atomic_write(&tmp.join(PACK_FILE), &render_pack(&pack)?)?;
-        for (skill, src) in skill_dirs {
+        for (skill, src) in &skill_dirs {
             crate::paths::validate_fs_name(skill)?;
             crate::skills::copy_dir_recursive(src, &tmp.join("skills").join(skill))?;
         }
@@ -329,7 +416,7 @@ pub async fn save_task_pack(
     tauri::async_runtime::spawn_blocking(move || {
         let mut names: Vec<String> = Vec::new();
         for s in &steps {
-            for k in s.skills.iter().chain(s.required_skills.iter()) {
+            for k in s.skills.iter().chain(s.required_skills.iter()).chain(s.checks.iter().map(|c| &c.skill)) {
                 if !names.contains(k) {
                     names.push(k.clone());
                 }
@@ -363,6 +450,7 @@ pub async fn add_task_pack_to_project(
     project_root: String,
     id: String,
     values: BTreeMap<String, String>,
+    with_trigger: Option<bool>,
 ) -> Result<AddPackResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::projects::ensure_task_project_root(Path::new(&crate::sessions::expand_tilde(&project_root)))?;
@@ -378,15 +466,83 @@ pub async fn add_task_pack_to_project(
             None,
             None,
         )?;
+        let trigger_note = match (&pack.trigger, with_trigger.unwrap_or(false)) {
+            (Some(tr), true) => Some(create_trigger(&root, &pack, tr, &values)),
+            _ => None,
+        };
         Ok(AddPackResultDto {
             appended: res.appended,
             skipped: res.skipped,
             renamed: res.renamed,
             skills_added: skills.added,
+            trigger_note,
         })
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// [trigger] 表 → 触发（toml 的整数是 i64，逐键取，写错类型当没写）
+fn trigger_from_toml(v: &toml::Value) -> Result<PackTriggerDto, String> {
+    let t = v.as_table().ok_or("[trigger] 要写成一张表")?;
+    let s = |k: &str| t.get(k).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let n = |k: &str| t.get(k).and_then(|x| x.as_integer()).and_then(|x| u8::try_from(x).ok());
+    Ok(PackTriggerDto {
+        name: s("name"),
+        kind: s("kind"),
+        skill: s("skill"),
+        frequency: s("frequency"),
+        weekday: n("weekday"),
+        interval_hours: n("interval_hours"),
+        hour: n("hour").unwrap_or(0),
+        minute: n("minute").unwrap_or(0),
+        folder: s("folder"),
+        exts: t
+            .get("exts")
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+        mode: s("mode"),
+    })
+}
+
+/// 文字里的 {param:键} 换成取值（触发的目录用；没取值用默认）
+fn fill_params(text: &str, pack: &TaskPackDto, values: &BTreeMap<String, String>) -> String {
+    let mut out = text.to_string();
+    for p in &pack.params {
+        let v = values.get(&p.key).map(|v| v.trim().to_string()).unwrap_or_else(|| p.value.clone());
+        out = out.replace(&format!("{{param:{}}}", p.key), &v);
+    }
+    out
+}
+
+/// 按包的触发建定时任务或事件规则；建不成说明原因，不挡步骤已经加进来
+fn create_trigger(root: &Path, pack: &TaskPackDto, tr: &PackTriggerDto, values: &BTreeMap<String, String>) -> String {
+    let name = if tr.name.trim().is_empty() { pack.name.clone() } else { tr.name.trim().to_string() };
+    let event = (tr.kind != "schedule").then(|| crate::scheduler::EventRule {
+        kind: tr.kind.clone(),
+        folder: (tr.kind == "folder").then(|| fill_params(&tr.folder, pack, values)),
+        exts: tr.exts.clone(),
+        mode: if tr.mode.is_empty() { "record".into() } else { tr.mode.clone() },
+    });
+    let (frequency, weekday, interval) = if tr.kind == "schedule" {
+        (tr.frequency.as_str(), tr.weekday, tr.interval_hours)
+    } else {
+        ("manual", None, None)
+    };
+    match crate::scheduler::create_schedule_for_pack(root, &name, &tr.skill, frequency, weekday, interval, tr.hour, tr.minute, event) {
+        Ok((task, dist)) => {
+            let what = match &task.event {
+                Some(e) => format!("事件规则「{}」（{}）", task.name, if e.mode == "run" { "直接跑" } else { "先只记录" }),
+                None => format!("定时任务「{}」", task.name),
+            };
+            match dist {
+                Some(e) => format!("建了{what}；技能「{}」没分发成：{e}，去「技能」页打开", tr.skill),
+                None => format!("建了{what}，在项目的定时任务页能看到"),
+            }
+        }
+        Err(e) => format!("步骤已加进来，但没建成触发：{e}"),
+    }
 }
 
 // ===== 机器校验（第二期，design-task-packs.md §5）=====
@@ -410,13 +566,15 @@ fn issue(level: &str, step: Option<&str>, message: impl Into<String>) -> PackIss
 const STEP_TEXT_WARN: usize = 6000;
 const STEP_TEXT_BLOCK: usize = 12000;
 
-const PACK_KEYS: [&str; 3] = ["pack", "params", "steps"];
+const PACK_KEYS: [&str; 4] = ["pack", "params", "steps", "trigger"];
+const CHECK_KEYS: [&str; 4] = ["name", "skill", "script", "description"];
+const TRIGGER_KEYS: [&str; 11] = ["name", "kind", "skill", "frequency", "weekday", "interval_hours", "hour", "minute", "folder", "exts", "mode"];
 const META_KEYS: [&str; 6] = ["id", "name", "description", "version", "created_at", "updated_at"];
 const PARAM_KEYS: [&str; 5] = ["key", "label", "value", "help", "options"];
-const STEP_KEYS: [&str; 21] = [
+const STEP_KEYS: [&str; 22] = [
     "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
     "optional_inputs", "any_of_inputs", "skills", "required_skills", "resources", "run", "human_tasks",
-    "discussion_seeds", "decisions", "asks_lit_source", "seed_complete", "role", "pack", "params",
+    "discussion_seeds", "decisions", "asks_lit_source", "seed_complete", "role", "pack", "params", "checks",
 ];
 const HUMAN_KEYS: [&str; 8] = ["title", "guidance", "target", "timing", "optional", "completion", "expected_count", "manifest_path"];
 const DECISION_MODES: [&str; 3] = ["auto_continue", "soft_pause", "hard_pause"];
@@ -436,6 +594,9 @@ fn check_structure(value: &toml::Value) -> Vec<PackIssueDto> {
     if let Some(meta) = root.get("pack").and_then(|v| v.as_table()) {
         unknown(&mut out, None, meta, &META_KEYS, "[pack] ");
     }
+    if let Some(tr) = root.get("trigger").and_then(|v| v.as_table()) {
+        unknown(&mut out, None, tr, &TRIGGER_KEYS, "[trigger] ");
+    }
     for p in root.get("params").and_then(|v| v.as_array()).into_iter().flatten() {
         if let Some(t) = p.as_table() {
             unknown(&mut out, None, t, &PARAM_KEYS, "[[params]] ");
@@ -453,6 +614,11 @@ fn check_structure(value: &toml::Value) -> Vec<PackIssueDto> {
         for h in t.get("human_tasks").and_then(|v| v.as_array()).into_iter().flatten() {
             if let Some(ht) = h.as_table() {
                 unknown(&mut out, name, ht, &HUMAN_KEYS, "人工事项");
+            }
+        }
+        for c in t.get("checks").and_then(|v| v.as_array()).into_iter().flatten() {
+            if let Some(ct) = c.as_table() {
+                unknown(&mut out, name, ct, &CHECK_KEYS, "核验");
             }
         }
     }
@@ -572,6 +738,59 @@ pub(crate) fn check_pack(pack: &TaskPackDto, lib_skills: &[String]) -> Vec<PackI
                 out.push(issue("warn", sn, format!("技能「{skill}」本机没有，也没随包带上")));
             }
         }
+        // 核验脚本（第三期）：名字只收小写字母数字连字符（拼进结果文件名），脚本放在随包或本机的技能目录里
+        for (ci, c) in step.checks.iter().enumerate() {
+            if c.name.is_empty() || !c.name.chars().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-') {
+                out.push(issue("block", sn, format!("核验名「{}」只能用小写英文、数字和连字符", c.name)));
+            } else if step.checks[..ci].iter().any(|x| x.name == c.name) {
+                out.push(issue("block", sn, format!("核验名「{}」重复", c.name)));
+            }
+            if c.skill.trim().is_empty() || (!pack.skills.contains(&c.skill) && !lib_skills.contains(&c.skill)) {
+                out.push(issue("block", sn, format!("核验「{}」的脚本所在技能「{}」没随包，本机也没有", c.name, c.skill)));
+            }
+            let script = c.script.replace('\\', "/");
+            if script.trim().is_empty() || script.starts_with('/') || script.chars().nth(1) == Some(':') || script.split('/').any(|seg| seg == "..") {
+                out.push(issue("block", sn, format!("核验「{}」的脚本要写技能目录里的相对路径，写的是「{}」", c.name, c.script)));
+            }
+        }
+    }
+    // 触发：种类与周期闭集；跑的技能要随包或本机有；目录写项目内相对路径
+    if let Some(tr) = &pack.trigger {
+        if !TRIGGER_KINDS.contains(&tr.kind.as_str()) {
+            out.push(issue("block", None, format!("[trigger] kind 只能是 schedule / folder / radar / phone，写的是「{}」", tr.kind)));
+        }
+        if tr.skill.trim().is_empty() {
+            out.push(issue("block", None, "[trigger] 要写跑哪个技能（skill）"));
+        } else if !pack.skills.contains(&tr.skill) && !lib_skills.contains(&tr.skill) {
+            out.push(issue("block", None, format!("[trigger] 跑的技能「{}」没随包，本机也没有", tr.skill)));
+        }
+        if tr.kind == "schedule" {
+            if !FREQUENCIES.contains(&tr.frequency.as_str()) {
+                out.push(issue("block", None, format!("[trigger] frequency 只能是 daily / weekdays / weekly / hourly / manual，写的是「{}」", tr.frequency)));
+            }
+            if tr.hour > 23 || tr.minute > 59 {
+                out.push(issue("block", None, "[trigger] 时间不对：hour 0–23、minute 0–59"));
+            }
+        } else if !tr.mode.is_empty() && !matches!(tr.mode.as_str(), "record" | "run") {
+            out.push(issue("block", None, format!("[trigger] mode 只能是 record（只记录）或 run（直接跑），写的是「{}」", tr.mode)));
+        }
+        if tr.kind == "folder" {
+            if tr.folder.trim().is_empty() {
+                out.push(issue("block", None, "[trigger] 目录事件要写盯哪个目录（folder）"));
+            } else if let Some(found) = path_issue("触发", "盯的目录", &tr.folder) {
+                out.push(PackIssueDto { step: None, ..found });
+            }
+            for key in param_refs(&tr.folder) {
+                if !pack.params.iter().any(|p| p.key == key) {
+                    out.push(issue("block", None, format!("[trigger] 目录里用了没定义的参数 {{param:{key}}}")));
+                } else if !used_params.contains(&key) {
+                    used_params.push(key);
+                }
+            }
+        }
+        if tr.kind != "schedule" && tr.mode == "run" {
+            out.push(issue("warn", None, "触发是直接跑：建议先写 record（只记录），装进项目看几次再改"));
+        }
     }
     for p in &pack.params {
         if !used_params.contains(&p.key) {
@@ -612,6 +831,7 @@ pub async fn check_task_pack(name: String, params: Vec<StepParamDto>, steps: Vec
             params: crate::projects::normalize_step_params(params),
             steps: steps.into_iter().map(pack_step).collect(),
             skills: Vec::new(),
+            trigger: None,
         };
         Ok(check_pack(&pack, &crate::skills::library_skill_names()))
     })
@@ -696,6 +916,7 @@ pub(crate) fn start_draft_at(project: &Path, name: &str, description: &str) -> R
         params: Vec::new(),
         steps: Vec::new(),
         skills: Vec::new(),
+        trigger: None,
     };
     crate::profiles::atomic_write(&dir.join(PACK_FILE), &render_pack(&skeleton)?)?;
     crate::projects::exclude_in_git(project, &format!("{DRAFTS_REL}/"));
@@ -730,6 +951,15 @@ pub(crate) fn check_draft_at(project: &Path, id: &str, lib_skills: &[String]) ->
             pack.id = id.to_string();
             pack.steps = pack.steps.into_iter().map(pack_step).collect();
             issues.extend(check_pack(&pack, lib_skills));
+            // 随包技能里的核验脚本要真有这个文件
+            for step in &pack.steps {
+                for c in step.checks.iter().filter(|c| pack.skills.contains(&c.skill)) {
+                    let rel = c.script.replace('\\', "/");
+                    if !rel.split('/').any(|seg| seg == "..") && !dir.join("skills").join(&c.skill).join(&rel).is_file() {
+                        issues.push(issue("block", Some(&step.name), format!("核验「{}」的脚本 skills/{}/{} 不存在", c.name, c.skill, rel)));
+                    }
+                }
+            }
             Ok(PackDraftCheckDto { pack: Some(pack), issues, parse_error: None })
         }
         Err(e) => Ok(PackDraftCheckDto { pack: None, issues, parse_error: Some(e) }),
@@ -760,7 +990,7 @@ pub(crate) fn install_draft_at(
             skill_dirs.push((name.clone(), path.clone()));
         }
     }
-    let saved = save_at(packs, overwrite, &pack.name, &pack.description, pack.params, pack.steps, &skill_dirs)?;
+    let saved = save_with_trigger_at(packs, overwrite, &pack.name, &pack.description, pack.params, pack.steps, &skill_dirs, pack.trigger)?;
     let _ = fs::remove_dir_all(&dir);
     Ok(saved)
 }
@@ -885,11 +1115,11 @@ mod tests {
         let text = fs::read_to_string(root.join(&first.id).join(PACK_FILE)).unwrap();
         assert!(text.starts_with("# Mesa 任务包：单细胞质控"), "{text}");
         assert!(!text.contains("artifact_dir"), "只留步骤，不带项目级键：{text}");
-        // 覆盖：版本 +1，建立时间不变，旧技能快照被替换
+        // 覆盖：版本 +1，建立时间不变；这次没给的随包技能沿用旧版本的
         let second = save_at(&root, Some(&first.id), "单细胞质控", "改过", first.params.clone(), first.steps.clone(), &[]).unwrap();
         assert_eq!(second.version, 2);
         assert_eq!(second.created_at, first.created_at);
-        assert!(second.skills.is_empty());
+        assert_eq!(second.skills, ["my-qc"]);
         assert_eq!(list_at(&root).len(), 1);
         assert!(save_at(&root, Some("../x"), "n", "", vec![], vec![step("a", "b")], &[]).is_err());
         // 加进项目：取值按人填的，没填用默认；每一步带包 id
@@ -941,6 +1171,7 @@ mod tests {
             params: vec![param("j", "期刊", "Nature"), param("unused", "没用上", "x")],
             steps: vec![good.clone()],
             skills: vec![],
+            trigger: None,
         };
         let issues = check_pack(&pack, &[]);
         assert!(levels(&issues, "block").is_empty(), "{issues:?}");
@@ -1023,6 +1254,65 @@ mod tests {
         assert_eq!(installed.params[0].value, "20%");
         assert!(!ddir.exists());
         assert!(list_drafts_at(&project).is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn checks_and_trigger_round_trip_validate_and_create() {
+        let dir = std::env::temp_dir().join(format!("mesa-pack-p3-{}", uuid::Uuid::new_v4()));
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let project = dir.join("proj");
+        fs::create_dir_all(project.join("data/incoming")).unwrap();
+        let draft = start_draft_at(&project, "质控", "").unwrap();
+        let ddir = project.join(&draft.dir_rel);
+        let pack_toml = |trigger: &str, script: &str| {
+            format!(
+                "[pack]\nid = \"{id}\"\nname = \"质控\"\n\n[[params]]\nkey = \"inbox\"\nlabel = \"数据目录\"\nvalue = \"data/incoming\"\n\n{trigger}\n[[steps]]\nname = \"质控\"\nbrief = \"按 sc-qc 做\"\nexpected_artifacts = [\"analysis/qc.md\"]\nacceptance_criteria = [\"写明阈值\"]\nskills = [\"sc-qc\"]\n\n[[steps.checks]]\nname = \"qc-thresholds\"\nskill = \"sc-qc\"\nscript = \"{script}\"\ndescription = \"阈值是否都写进报告\"\n",
+                id = draft.id
+            )
+        };
+        fs::create_dir_all(ddir.join("skills/sc-qc/scripts")).unwrap();
+        fs::write(ddir.join("skills/sc-qc/SKILL.md"), "---\nname: sc-qc\n---\n").unwrap();
+        // 写错的：脚本不存在、触发 kind / frequency 不认识、核验名带大写、多余字段
+        fs::write(
+            ddir.join(PACK_FILE),
+            pack_toml("[trigger]\nkind = \"webhook\"\nskill = \"sc-qc\"\nwhen = \"x\"\n", "scripts/nope.py").replace("qc-thresholds", "QC"),
+        )
+        .unwrap();
+        let bad = check_draft_at(&project, &draft.id, &[]).unwrap();
+        let blocks = levels(&bad.issues, "block");
+        for want in ["不认识的字段「when」", "kind 只能是", "核验名「QC」", "脚本 skills/sc-qc/scripts/nope.py 不存在"] {
+            assert!(blocks.iter().any(|b| b.contains(want)), "缺「{want}」：{blocks:?}");
+        }
+        // 改对：目录事件、目录用参数、脚本真在
+        fs::write(ddir.join("skills/sc-qc/scripts/qc_check.py"), "print('ok')").unwrap();
+        fs::write(
+            ddir.join(PACK_FILE),
+            pack_toml("[trigger]\nname = \"新数据质控\"\nkind = \"folder\"\nskill = \"sc-qc\"\nfolder = \"{param:inbox}\"\nexts = [\"h5\"]\n", "scripts/qc_check.py"),
+        )
+        .unwrap();
+        let ok = check_draft_at(&project, &draft.id, &[]).unwrap();
+        assert!(levels(&ok.issues, "block").is_empty(), "{:?}", ok.issues);
+        let pack = install_draft_at(&project, &dir.join("packs"), &draft.id, None, &[], &[]).unwrap();
+        let tr = pack.trigger.clone().expect("触发随包");
+        assert_eq!((tr.kind.as_str(), tr.folder.as_str(), tr.mode.as_str()), ("folder", "{param:inbox}", "record"));
+        assert_eq!(pack.steps[0].checks[0].script, "scripts/qc_check.py");
+        // 覆盖另存（拿不到触发）沿用旧的
+        let again = save_at(&dir.join("packs"), Some(&pack.id), "质控", "", pack.params.clone(), pack.steps.clone(), &[]).unwrap();
+        assert_eq!(again.trigger, pack.trigger);
+        // 加进项目：步骤带核验进 project.toml；触发按参数取值建成只记录的事件规则
+        let steps = steps_for_project(&again, &BTreeMap::new());
+        crate::projects::apply_pipeline_template_at(&project, steps, Vec::new(), "append", None, None, None).unwrap();
+        let back = crate::projects::read_config_at(&project).config;
+        assert_eq!(back.steps[0].checks[0].name, "qc-thresholds");
+        let note = create_trigger(&project, &again, again.trigger.as_ref().unwrap(), &BTreeMap::new());
+        assert!(note.contains("建了事件规则「新数据质控」（先只记录）"), "{note}");
+        let list = crate::scheduler::read_schedules_for_test();
+        let rule = list.iter().find(|t| t.name == "新数据质控").unwrap();
+        assert_eq!(rule.event.as_ref().unwrap().folder.as_deref(), Some("data/incoming"));
+        // 目录不存在：建不成、说明原因，不 panic
+        let values = BTreeMap::from([("inbox".to_string(), "no/such".to_string())]);
+        assert!(create_trigger(&project, &again, again.trigger.as_ref().unwrap(), &values).contains("没建成触发"));
         fs::remove_dir_all(&dir).ok();
     }
 }

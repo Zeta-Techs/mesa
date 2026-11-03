@@ -1127,6 +1127,15 @@ pub(crate) fn builtin_skill_names() -> Vec<&'static str> {
     BUILTIN_SKILLS.iter().map(|(name, _)| *name).collect()
 }
 
+/// 存包时的拦下检查用：单测里不读本机真实技能库（结果随机器变）
+pub(crate) fn library_skill_names_for_check() -> Vec<String> {
+    if cfg!(test) {
+        Vec::new()
+    } else {
+        library_skill_names()
+    }
+}
+
 /// 库里所有技能名（任务包检查「本机没有这个技能」用）
 pub(crate) fn library_skill_names() -> Vec<String> {
     SkillStore::default_paths()

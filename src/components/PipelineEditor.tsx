@@ -39,11 +39,13 @@ import type {
   ProjectStepDto,
   ProjectStepRunDto,
   SkillDto,
+  StepCheckDto,
   StepParamDto,
   TaskPackDto,
   AddPackResultDto,
 } from "../types";
 import { useAppStore } from "../store";
+import { triggerDefaultOn, triggerSummary } from "../task-packs";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
@@ -90,6 +92,8 @@ type StepDraft = {
   /** 任务包溯源与参数（2026-11-03）：编辑器只改取值，保存时原样带回，免得一保存就丢 */
   pack: string;
   params: StepParamDto[];
+  /** 任务包核验（第三期）：编辑器只展示、原样带回 */
+  checks: StepCheckDto[];
 };
 
 function toDraft(s: ProjectStepDto): StepDraft {
@@ -118,6 +122,7 @@ function toDraft(s: ProjectStepDto): StepDraft {
     seedComplete: s.seedComplete ?? false,
     pack: s.pack ?? "",
     params: (s.params ?? []).map((p) => ({ ...p, options: [...p.options] })),
+    checks: (s.checks ?? []).map((c) => ({ ...c })),
   };
 }
 
@@ -195,6 +200,7 @@ function toStep(d: StepDraft, index: number): ProjectStepDto {
     seedComplete: d.seedComplete,
     ...(d.pack ? { pack: d.pack } : {}),
     ...(d.params.length ? { params: d.params.map((p) => ({ ...p, value: p.value.trim() })) } : {}),
+    ...(d.checks.length ? { checks: d.checks } : {}),
   };
 }
 
@@ -254,7 +260,12 @@ export default function PipelineEditor({
   const [userTemplates, setUserTemplates] = useState<PipelineTemplateDto[]>([]);
   // 我的任务（任务包，2026-11-03）：追加面板里一栏；有参数的先填表再加
   const [packs, setPacks] = useState<TaskPackDto[]>([]);
-  const [packForm, setPackForm] = useState<{ pack: TaskPackDto; values: Record<string, string> } | null>(null);
+  const [packForm, setPackForm] = useState<{
+    pack: TaskPackDto;
+    values: Record<string, string>;
+    /** 包带触发时：要不要一并建定时任务 / 事件规则 */
+    withTrigger: boolean;
+  } | null>(null);
   const [packNote, setPackNote] = useState<string | null>(null);
   const resources = config.resources;
   // 技能库（推荐技能 chip 的展示元数据与「＋ 添加技能」候选）：挂载时读一次，失败降级为不可编辑 chip
@@ -310,7 +321,7 @@ export default function PipelineEditor({
   }, [appendOpen]);
 
   /** 从我的任务追加：后端补装库里缺的随包技能，再按模板追加同一条原子写入；成功后同 appendTemplate 重读 */
-  async function appendPack(pack: TaskPackDto, values: Record<string, string>) {
+  async function appendPack(pack: TaskPackDto, values: Record<string, string>, withTrigger = false) {
     if (appending) return;
     if (
       dirty &&
@@ -329,17 +340,20 @@ export default function PipelineEditor({
         projectRoot: projectPath,
         id: pack.id,
         values,
+        withTrigger,
       });
       const read = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectPath });
       setDrafts(read.config.steps.map(toDraft));
       setTools(researchToolsFromSettings(read.config.settings));
       onConfigReload(read);
       setAppendResult({ appended: res.appended, skipped: res.skipped, renamed: res.renamed });
-      if (res.skillsAdded.length > 0) {
-        setPackNote(
-          `新装了技能 ${res.skillsAdded.join("、")}：还没分发给任何 Agent，去「技能」页为要用的 Agent 打开。`,
-        );
-      }
+      const notes = [
+        ...(res.skillsAdded.length > 0
+          ? [`新装了技能 ${res.skillsAdded.join("、")}：还没分发给任何 Agent，去「技能」页为要用的 Agent 打开。`]
+          : []),
+        ...(res.triggerNote ? [res.triggerNote] : []),
+      ];
+      if (notes.length > 0) setPackNote(notes.join(" "));
       setPackForm(null);
       setAppendOpen(false);
     } catch (reason) {
@@ -838,6 +852,11 @@ export default function PipelineEditor({
           />
         </div>
 
+        {d.checks.length > 0 && (
+          <p className="mb-2 text-xs text-l3">
+            核验（来自我的任务，任务书里会叫 AI 交付前跑）：{d.checks.map((c) => c.description || c.name).join("、")}
+          </p>
+        )}
         {d.params.length > 0 && (
           // 来自「我的任务」的参数：只改取值；简报等文字里的 {param:键} 拼任务书时换成这里的值
           <div className="mb-2">
@@ -1435,6 +1454,7 @@ export default function PipelineEditor({
                     seedComplete: false,
                     pack: "",
                     params: [],
+                    checks: [],
                   },
                 ])
               }
@@ -1482,7 +1502,10 @@ export default function PipelineEditor({
               </p>
               {packForm ? (
                 <div className="rounded-sm ccode-well p-3">
-                  <p className="text-xs font-medium text-l1">{packForm.pack.name}：填参数</p>
+                  <p className="text-xs font-medium text-l1">
+                    {packForm.pack.name}
+                    {packForm.pack.params.length > 0 ? "：填参数" : ""}
+                  </p>
                   <div className="mt-2 space-y-2">
                     {packForm.pack.params.map((p) => (
                       <label key={p.key} className="block text-xs">
@@ -1514,6 +1537,22 @@ export default function PipelineEditor({
                       </label>
                     ))}
                   </div>
+                  {packForm.pack.trigger && (
+                    <label className="mt-3 flex items-start gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={packForm.withTrigger}
+                        onChange={(e) => setPackForm((f) => (f ? { ...f, withTrigger: e.target.checked } : f))}
+                      />
+                      <span>
+                        <span className="block text-l2">一并建：{triggerSummary(packForm.pack.trigger)}</span>
+                        <span className="block text-micro text-l4">
+                          建好在项目的定时任务页能看到、能改能关。只记录的不叫 AI、不花钱；定时和直接跑的会按时叫 AI。
+                        </span>
+                      </span>
+                    </label>
+                  )}
                   <div className="mt-3 flex justify-end gap-2">
                     <button type="button" className={actionBtn} disabled={appending} onClick={() => setPackForm(null)}>
                       取消
@@ -1522,7 +1561,7 @@ export default function PipelineEditor({
                       type="button"
                       className={ctaSm}
                       disabled={appending}
-                      onClick={() => void appendPack(packForm.pack, packForm.values)}
+                      onClick={() => void appendPack(packForm.pack, packForm.values, packForm.withTrigger)}
                     >
                       加进流程
                     </button>
@@ -1656,8 +1695,12 @@ export default function PipelineEditor({
                       disabled={appending}
                       title={p.description || undefined}
                       onClick={() =>
-                        p.params.length > 0
-                          ? setPackForm({ pack: p, values: Object.fromEntries(p.params.map((x) => [x.key, x.value])) })
+                        p.params.length > 0 || p.trigger
+                          ? setPackForm({
+                              pack: p,
+                              values: Object.fromEntries(p.params.map((x) => [x.key, x.value])),
+                              withTrigger: p.trigger ? triggerDefaultOn(p.trigger) : false,
+                            })
                           : void appendPack(p, {})
                       }
                     >

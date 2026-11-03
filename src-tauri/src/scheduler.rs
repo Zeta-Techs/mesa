@@ -3858,6 +3858,52 @@ pub async fn ensure_schedule_skill_distributed(
         .await
         .map_err(|e| e.to_string())?
 }
+#[cfg(test)]
+pub(crate) fn read_schedules_for_test() -> Vec<Schedule> {
+    read_schedules_at(&schedules_path().unwrap()).unwrap()
+}
+
+/// 任务包带的触发（2026-11-03 第三期）：加进项目时由人勾选一并建，照常校验；建好后把技能分发给默认那家（失败只提示，不撤任务）。
+/// 返回（任务, 分发失败的原因）
+pub(crate) fn create_schedule_for_pack(
+    project_root: &Path,
+    name: &str,
+    skill: &str,
+    frequency: &str,
+    weekday: Option<u8>,
+    interval_hours: Option<u8>,
+    hour: u8,
+    minute: u8,
+    event: Option<EventRule>,
+) -> Result<(Schedule, Option<String>), String> {
+    let task = create_schedule_at(
+        &schedules_path()?,
+        CreateScheduleInput {
+            name: Some(name.to_string()),
+            project_root: project_root.to_string_lossy().into_owned(),
+            skill: Some(skill.to_string()),
+            profile_id: None,
+            model: None,
+            linked_step: None,
+            frequency: frequency.to_string(),
+            weekday,
+            interval_hours,
+            hour,
+            minute,
+            skip_if_unreviewed: None,
+            timeout_minutes: None,
+            event,
+        },
+    )?;
+    // 分发会写各家 Agent 的技能目录：单测里不碰本机真实配置
+    let distributed = if cfg!(test) {
+        None
+    } else {
+        ensure_schedule_skill_distributed_sync(skill.to_string(), None).err()
+    };
+    Ok((task, distributed))
+}
+
 fn ensure_schedule_skill_distributed_sync(
     skill: String,
     profile_id: Option<String>,

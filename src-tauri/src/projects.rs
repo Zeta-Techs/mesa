@@ -165,6 +165,19 @@ pub struct StepDto {
     /// 任务包参数（定义连同取值，项目自带一份：换机器、包被删也照样能拼任务书）。
     /// 简报等文字里的 `{param:键}` 在拼任务书时替换（task-packs.ts applyStepParams）
     pub params: Vec<StepParamDto>,
+    /// 任务包里的核验脚本（第三期，2026-11-03）：Agent 按任务书「本步核验」跑，结果写
+    /// `.ccode/checks/pack-<包>-<名>.jsonl`；判「通过」一律降为待你判断（research_record CheckSource::Pack）
+    pub checks: Vec<StepCheckDto>,
+}
+
+/// 任务包核验脚本：脚本放在某个技能目录里（跟着技能分发走），script 是技能目录内的相对路径
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StepCheckDto {
+    pub name: String,
+    pub skill: String,
+    pub script: String,
+    pub description: String,
 }
 
 /// 任务包参数：options 非空 = 下拉选择，否则自由填写
@@ -1334,6 +1347,8 @@ struct TomlStep {
     pack: String,
     #[serde(default)]
     params: Vec<StepParamDto>,
+    #[serde(default)]
+    checks: Vec<StepCheckDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1748,6 +1763,17 @@ pub(crate) fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
                         },
                         pack: s.pack.trim().to_string(),
                         params: normalize_step_params(s.params),
+                        checks: s
+                            .checks
+                            .into_iter()
+                            .map(|c| StepCheckDto {
+                                name: c.name.trim().to_string(),
+                                skill: c.skill.trim().to_string(),
+                                script: c.script.trim().replace('\\', "/"),
+                                description: c.description.trim().to_string(),
+                            })
+                            .filter(|c| !c.name.is_empty())
+                            .collect(),
                     });
                 }
                 Err(e) => warnings.push(format!("steps[{i}] 字段无效，已跳过: {e}")),
@@ -2331,6 +2357,20 @@ pub(crate) fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -
                     ps.push(pt);
                 }
                 t["params"] = Item::ArrayOfTables(ps);
+            }
+            if !s.checks.is_empty() {
+                let mut cs = ArrayOfTables::new();
+                for c in &s.checks {
+                    let mut ct = Table::new();
+                    ct["name"] = value(&c.name);
+                    ct["skill"] = value(&c.skill);
+                    ct["script"] = value(&c.script);
+                    if !c.description.is_empty() {
+                        ct["description"] = value(&c.description);
+                    }
+                    cs.push(ct);
+                }
+                t["checks"] = Item::ArrayOfTables(cs);
             }
             arr.push(t);
         }
@@ -5350,6 +5390,7 @@ mod tests {
                 role: "ai".into(),
                 pack: String::new(),
                 params: Vec::new(),
+                checks: Vec::new(),
                 run: vec![
                     StepRunDto {
                         name: "dev".into(),
@@ -6851,6 +6892,7 @@ resources = ["ghost.pdf"]
                 role: "ai".into(),
                 pack: String::new(),
                 params: Vec::new(),
+                checks: Vec::new(),
                 run: vec![StepRunDto {
                     name: "dev".into(),
                     command: "echo hi".into(),
