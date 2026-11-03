@@ -610,3 +610,27 @@ test("TASK.md：来自我的任务的核验脚本列在「本步核验」", () =
   );
   assert.match(md, /## 本步核验\n- 阈值写进报告：`python3 <技能 sc-qc 的目录>\/scripts\/qc\.py --root <工作目录> --out \.ccode\/checks\/pack-pk-1-qc\.jsonl`/);
 });
+
+test("项目资源多时按类型收：PDF 只列前 5 篇加数量并指明在哪查，数据照旧全列；绑了的、不多的全列", () => {
+  const pdfs = Array.from({ length: 102 }, (_, i) => ({ name: `Paper ${i}`, path: `papers/p${i}.pdf`, type: "paper", readonly: true, note: "" }));
+  const data = [
+    { name: "批次 A", path: "data/a.csv", type: "dataset", readonly: true, note: "" },
+    { name: "批次 B", path: "data/b.csv", type: "dataset", readonly: true, note: "" },
+  ];
+  const md = renderTaskMd(step(), cfg({ resources: [...pdfs, ...data] }), "/p");
+  const section = md.split("## 项目资源")[1].split("\n## ")[0];
+  assert.equal((section.match(/\[论文\]/g) ?? []).length, 5);
+  assert.match(section, /另有 97 个「论文」没列出/);
+  assert.match(section, /批次 A：\/p\/data\/a\.csv/);
+  assert.match(section, /批次 B/);
+  assert.match(section, /全部 104 个资源.*\/p\/\.ccode\/project\.toml.*\[\[resources\]\]/);
+  assert.ok(section.length < 1500, `${section.length}`);
+  // 步骤绑了的照旧全列
+  const bound = step({ resources: pdfs.slice(0, 30).map((p) => p.path) });
+  assert.equal((renderTaskMd(bound, cfg({ resources: pdfs }), "/p").match(/\[论文\]/g) ?? []).length, 30);
+  // 不多的照旧全列
+  assert.equal((renderTaskMd(step(), cfg({ resources: pdfs.slice(0, 20) }), "/p").match(/\[论文\]/g) ?? []).length, 20);
+  // 一类只多一条时不省（「另有 1 个」不如直接列）
+  const six = renderTaskMd(step(), cfg({ resources: [...pdfs.slice(0, 6), ...data, ...pdfs.slice(6, 6)].concat(Array.from({ length: 14 }, (_, i) => ({ name: `R${i}`, path: `refs/r${i}.ris`, type: "reference", readonly: true, note: "" }))) }), "/p");
+  assert.equal((six.match(/\[论文\]/g) ?? []).length, 6);
+});

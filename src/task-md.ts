@@ -23,6 +23,34 @@ function looksPosixShell(command: string): boolean {
   return /(?:&&|\|\||\bmkdir -p\b|\bcommand -v\b|\$\(|\bthen\b|\bfi\b|\bexport\b|>\s*\/dev\/null)/.test(command);
 }
 
+/** 「项目资源」超过这么多条且步骤没绑时按类型收：多的那类只列前几条 + 数量 */
+const RESOURCE_LIST_ALL = 20;
+const RESOURCE_PER_TYPE = 5;
+
+/** 「项目资源」各行：步骤绑了的、或总共不多的全列；没绑又很多时，条目多的那类（多半是一堆 PDF）只列前几条，
+ *  其余写明在哪查——2026-11-03 真实项目：102 个 PDF 每一步全列，占了任务书 2.7 万字。数据、引文这类条目少的照旧全列 */
+function resourceLines(resources: ProjectConfigDto["resources"], projectRoot: string, bound: boolean): string[] {
+  const line = (r: ProjectConfigDto["resources"][number]) => {
+    const abs = /^([a-zA-Z]:[\\/]|\/)/.test(r.path) ? r.path : `${projectRoot}/${r.path}`;
+    const label = RESOURCE_TYPE_LABELS[r.type] ?? r.type;
+    return `- [${label}] ${r.name}：${abs}${r.readonly ? "（只读）" : ""}`;
+  };
+  if (bound || resources.length <= RESOURCE_LIST_ALL) return resources.map(line);
+  const types = [...new Set(resources.map((r) => r.type))];
+  const out: string[] = [];
+  for (const t of types) {
+    const ofType = resources.filter((r) => r.type === t);
+    out.push(...ofType.slice(0, RESOURCE_PER_TYPE + 1 >= ofType.length ? ofType.length : RESOURCE_PER_TYPE).map(line));
+    if (ofType.length > RESOURCE_PER_TYPE + 1) {
+      out.push(`- ……另有 ${ofType.length - RESOURCE_PER_TYPE} 个「${RESOURCE_TYPE_LABELS[t] ?? t}」没列出`);
+    }
+  }
+  out.push(
+    `全部 ${resources.length} 个资源的名字和路径在 \`${projectRoot}/.ccode/project.toml\` 的 [[resources]] 里（name / path / type），要用哪个去那里按名字找；文献 PDF 也可以直接在项目里按文件名找。`,
+  );
+  return out;
+}
+
 /** 本步「项目资源」段列哪些：步骤绑了就只列绑的，没绑列全部 */
 function stepResources(step: ProjectStepDto, cfg: ProjectConfigDto) {
   const boundPaths = step.resources ?? [];
@@ -283,15 +311,7 @@ export function renderTaskMd(
   const resources = stepResources(step, cfg);
   if (resources.length > 0) {
     lines.push("", "## 项目资源（只读引用，勿复制到本工作区）");
-    for (const r of resources) {
-      const abs = /^([a-zA-Z]:[\\/]|\/)/.test(r.path)
-        ? r.path
-        : `${projectRoot}/${r.path}`;
-      const label = RESOURCE_TYPE_LABELS[r.type] ?? r.type;
-      lines.push(
-        `- [${label}] ${r.name}：${abs}${r.readonly ? "（只读）" : ""}`,
-      );
-    }
+    lines.push(...resourceLines(resources, projectRoot, (step.resources ?? []).length > 0));
   }
   const inputPatterns = [
     ...(step.inputs ?? []),
