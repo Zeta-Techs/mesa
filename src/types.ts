@@ -1491,6 +1491,38 @@ export interface ProjectStepRunDto {
 /** 步骤决策项（模板预置的「开工前要拍板的选择题」）：答案可枚举的走这里——点一下就答完，
  *  不开会话；真正开放、需要来回讨论的留在 discussionSeeds。同样不进 TASK.md：
  *  答案选定后写进任务书草稿，草稿才是开工合同 */
+/** 任务包参数（2026-11-03）：options 非空 = 下拉选择，否则自由填写；value 在包里是默认值、在项目里是取值 */
+export interface StepParamDto {
+  key: string;
+  label: string;
+  value: string;
+  help: string;
+  options: string[];
+}
+
+/** 我的任务（task_packs.rs list_task_packs） */
+export interface TaskPackDto {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  params: StepParamDto[];
+  steps: ProjectStepDto[];
+  /** 随包的用户技能 */
+  skills: string[];
+}
+
+/** 从我的任务加进项目的结果 */
+export interface AddPackResultDto {
+  appended: number;
+  skipped: string[];
+  renamed: { name: string; from: string; to: string }[];
+  /** 这次新装进技能库的随包技能（没分发给任何 Agent） */
+  skillsAdded: string[];
+}
+
 export interface StepDecisionDto {
   /** 问题（短句，不带问号） */
   q: string;
@@ -1533,6 +1565,10 @@ export interface ProjectStepDto {
    *  文献来源选择器 + 就地导入入口，答案写 config.litSource。
    *  与 decisions 分属两类——decisions 写草稿只做记录，这条写项目配置且带动作 */
   asksLitSource?: boolean;
+  /** 从哪个任务包加进来的（包 id；只作溯源） */
+  pack?: string;
+  /** 任务包参数（定义连同取值）；文字里的 {param:键} 拼任务书时替换 */
+  params?: StepParamDto[];
   /** 预置完成：产物已在主仓（示例课题检索步），步进器视为已完成。真建了工作区后以工作区为准 */
   seedComplete?: boolean;
 }

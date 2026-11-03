@@ -1120,6 +1120,47 @@ fn compose_skill_md(
 
 // ===== 发现：含 SKILL.md 的目录即技能，找到不下钻，跳过 . 开头目录 =====
 
+// ===== 任务包（2026-11-03，design-task-packs.md）=====
+
+/// 另存为我的任务：步骤用到的用户技能（非内置、库里确有 SKILL.md）的库目录，供随包快照。
+/// 内置技能每台机器都有，不打包
+pub(crate) fn user_skill_dirs(names: &[String]) -> Result<Vec<(String, PathBuf)>, String> {
+    let store = SkillStore::default_paths()?;
+    let skills = store.read();
+    Ok(names
+        .iter()
+        .filter_map(|name| {
+            let skill = skills.iter().find(|s| &s.name == name && s.source != "builtin")?;
+            let dir = store.skill_dir(&skill.name);
+            dir.join("SKILL.md").is_file().then(|| (skill.name.clone(), dir))
+        })
+        .collect())
+}
+
+/// 把任务包随带的技能装进库：库里没有才装；同名以库里那份为准、不覆盖（覆盖要人去技能页做）。
+/// 新装的不自动分发给任何 Agent（与新建技能同口径），由调用方提示人去技能页打开
+pub(crate) fn install_pack_skills(root: &Path) -> Result<SkillImportResultDto, String> {
+    let store = SkillStore::default_paths()?;
+    let mut found = Vec::new();
+    find_skill_dirs(root, &mut found);
+    let _lock = store.lock()?;
+    let mut skills = store.read();
+    let mut result = SkillImportResultDto::default();
+    for dir in found {
+        let Some(name) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        crate::paths::validate_fs_name(&name)?;
+        if skills.iter().any(|s| s.name == name) {
+            result.skipped.push(name);
+            continue;
+        }
+        add_skill_from_dir(&store, &mut skills, &dir, &name, "local", None)?;
+        result.added.push(name);
+    }
+    Ok(result)
+}
+
 fn find_skill_dirs(root: &Path, out: &mut Vec<PathBuf>) {
     find_skill_dirs_at(root, out, 0);
 }
@@ -1150,7 +1191,7 @@ fn find_skill_dirs_at(root: &Path, out: &mut Vec<PathBuf>, depth: usize) {
     }
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     copy_dir_recursive_at(src, dst, 0)
 }
 

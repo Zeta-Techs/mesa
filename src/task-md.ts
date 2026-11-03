@@ -1,3 +1,4 @@
+import { applyStepParams } from "./task-packs.ts";
 import { litSourceSectionLines } from "./task-md-sections.ts";
 import { decisionPolicyBlock } from "./step-decisions.ts";
 import { RESOURCE_TYPE_LABELS } from "./pipeline-presets.ts";
@@ -42,6 +43,9 @@ export function renderTaskMd(
   isWindows = false,
   ledger?: string[],
 ): string {
+  // 任务包参数（2026-11-03）：文字里的 {param:键} 先换成取值，后面各段照常拼
+  const rawParams = step.params ?? [];
+  step = applyStepParams(step);
   const projectRoot = projectPath.replace(/[\\/]+$/, "");
   const lines = [`# ${step.name}`, "", `项目根：\`${projectRoot}\``, ""];
   const topic = cfg.topic?.trim();
@@ -75,6 +79,15 @@ export function renderTaskMd(
       ...decisions.map((d) => `- ${d.q}：${d.answer}`),
       "",
       "以上为人已拍板的口径，按此执行；与简报冲突时以本节为准。",
+      "",
+    );
+  }
+  if (rawParams.length > 0) {
+    lines.push(
+      "## 本步参数",
+      ...rawParams.map((p) => `- ${p.label}：${p.value.trim() || "（未填）"}`),
+      "",
+      "这一步来自「我的任务」，上面是这次填的参数，已代入下文。没填的参数先按决策暂停策略问人，不要自己编一个值。",
       "",
     );
   }

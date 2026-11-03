@@ -1460,6 +1460,20 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - `machine:records-allow-empty:` 明确允许有效零记录；`machine:optional-empty:` 允许该精确交付文件为空但不允许缺文件。一般 records/产物非空语义保持不变。零结果不等于后续研究可以通过。
 - 原始数据、图源/场景源、数值结果和来源许可分别验收；工程大文件放配置产物目录、manifest 带版本/命令/哈希。UI 测试/合成示意不等于 Windows Origin、EndNote、真实 Zotero 写库或真人科研端到端已验收。
 
+## 任务包（2026-11-03 第一期，design-task-packs.md）
+
+- **包 = 声明 + 文字 + 可选脚本，不含跑在 Mesa 进程里的代码**；存在配置目录 `ccode/packs/<id>/`：`pack.toml`（`[pack]` 身份与版本、`[[params]]` 参数定义、
+  `[[steps]]` 步骤合同）+ `skills/`（随包的用户技能快照；内置技能不打包）。`[[steps]]` 与项目档案卡同一写法，由 `projects::render_config` / `parse_config` 渲染与解析，
+  不另写一套。包 id 形如 `pk-<12 位>`，只收小写字母数字连字符。
+- **参数**：文字里写 `{param:键}`，键只收字母数字下划线连字符；替换范围固定为简报、验收条件（`machine:` 行不动）、讨论种子、决策问题、人工事项标题与说明，
+  前后端同一范围（`task-packs.ts` ↔ `task_packs.rs step_texts`）。另存时引用了没定义的参数直接拒存。拼任务书时先代入、再拼各段，另列「## 本步参数」；
+  没填的写成「（参数「X」未填）」并叮嘱先按决策暂停策略问人，不得自编。
+- **项目自带一份**：加进项目的每一步写 `pack`（只作溯源）与 `params`（定义连同取值），换机器、包被删都照样能拼任务书；流程编辑器保存必须原样带回这两个字段。
+- **另存**：项目设置 → 研究流程 →「另存为我的任务」（`SavePackForm`）；同名覆盖先确认、版本 +1、建立时间不变；先写临时目录再整目录换上，中途失败不留半个包。
+- **加进项目**：流程编辑器「＋ 从模板追加 → 我的任务」，有参数先填表；后端先补装库里缺的随包技能（同名以库里那份为准、不覆盖；新装的不自动分发，提示人去技能页打开），
+  再走 `apply_pipeline_template_at` 原子追加（同名同交付跳过、工作区名冲突自动加后缀）。不自动推荐、不自动套用。
+- **删除**走回收站；已加进项目的步骤不受影响。导入导出、跟 AI 写、机器校验、包内核验与触发、内置也是包，见设计稿后续各期。
+
 ## 技能位与个性化替换（2026-10-11）
 
 - **占位语法**：模板简报里指挥技能的句子一律写 `{skill:锚名}`，锚名闭集 = 内置技能名（lit-search、lit-notes、review-framework、review-writing、review-figures、research-writing、proposal-writer、rebuttal-crafter、data-clean、data-eda、stats-check、figure-forge、quarto-render、bib-check、slides-deck、lit-watch、zotero-sync、endnote-bridge、origin-plot、blender-research）。新锚进闭集须拍板。渲染进 TASK.md 时解析：步骤挂载技能里 frontmatter `provides` 声明含锚名者优先顶位（多个声明者按挂载顺序取第一个），无人声明回落名字精确匹配，都不中渲染成锚名可读形态、锚名进未解析清单（占位语法不漏进 TASK.md；写错的占位——大写/中文/空格——不解析，原样保留并同样进清单）。

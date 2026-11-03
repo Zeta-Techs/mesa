@@ -161,6 +161,7 @@ mod window_close;
 mod workspaces;
 mod help_requests;
 mod schedule_events;
+mod task_packs;
 mod internal_sessions;
 mod ws_settings;
 mod zotero;
@@ -920,6 +921,10 @@ pub fn run() {
             projects::append_notes_excerpt,
             projects::append_project_clip,
             projects::list_pipeline_templates,
+            task_packs::list_task_packs,
+            task_packs::save_task_pack,
+            task_packs::delete_task_pack,
+            task_packs::add_task_pack_to_project,
             projects::save_pipeline_template,
             projects::delete_pipeline_template,
             projects::ensure_scratch_dir,

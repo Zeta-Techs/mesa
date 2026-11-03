@@ -4,6 +4,7 @@ import { rowActionClass, secondaryActionClass } from "./PageFrame";
 import RunCaret from "./RunCaret";
 import { caretOfAttention } from "../run-caret";
 import { absTime, relTime } from "../rel-time";
+import { applyStepParams } from "../task-packs";
 import { eventRuleLabel, frequencyLabel, nextRunLabel, scheduleStatusMark, summaryPreview } from "../schedule-tasks";
 import { codingDivergenceLabel } from "../work-mode";
 import { criterionText, readableBrief } from "../acceptance-text";
@@ -215,7 +216,7 @@ export default function WorkbenchTaskPanel({
           })() : null}
           {step && (
             <Section title="这一步要做什么">
-              <Brief text={step.brief || step.name} resetKey={task.id} />
+              <Brief text={applyStepParams(step).brief || step.name} resetKey={task.id} />
             </Section>
           )}
           {task.ref.kind === "step" && (

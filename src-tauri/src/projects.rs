@@ -160,10 +160,53 @@ pub struct StepDto {
     /// 预置完成：本步产物已在主仓（示例课题的检索步），步进器视为已完成。
     /// 一旦用户真的建了该步工作区，以工作区状态为准。缺省 false。
     pub seed_complete: bool,
+    /// 从哪个任务包加进来的（包 id；2026-11-03 任务包第一期）。只作溯源展示，不参与任何流程判定
+    pub pack: String,
+    /// 任务包参数（定义连同取值，项目自带一份：换机器、包被删也照样能拼任务书）。
+    /// 简报等文字里的 `{param:键}` 在拼任务书时替换（task-packs.ts applyStepParams）
+    pub params: Vec<StepParamDto>,
+}
+
+/// 任务包参数：options 非空 = 下拉选择，否则自由填写
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StepParamDto {
+    pub key: String,
+    pub label: String,
+    pub value: String,
+    pub help: String,
+    pub options: Vec<String>,
 }
 
 fn default_decision_mode() -> String {
     "auto_continue".into()
+}
+
+/// 参数键只收字母数字下划线连字符（`{param:键}` 里要能认出来），重复键留第一个；label 空就用键
+pub(crate) fn normalize_step_params(params: Vec<StepParamDto>) -> Vec<StepParamDto> {
+    let mut out: Vec<StepParamDto> = Vec::new();
+    for mut p in params {
+        p.key = p.key.trim().to_string();
+        if p.key.is_empty()
+            || !p.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            || out.iter().any(|q| q.key == p.key)
+        {
+            continue;
+        }
+        p.label = p.label.trim().to_string();
+        if p.label.is_empty() {
+            p.label = p.key.clone();
+        }
+        p.help = p.help.trim().to_string();
+        p.options = p
+            .options
+            .into_iter()
+            .map(|o| o.trim().to_string())
+            .filter(|o| !o.is_empty())
+            .collect();
+        out.push(p);
+    }
+    out
 }
 
 /// 文献雷达筛选（可选，存 project.toml）：新命中的展示与推送计数按期刊指标过滤。
@@ -1287,6 +1330,10 @@ struct TomlStep {
     seed_complete: bool,
     #[serde(default)]
     role: String,
+    #[serde(default)]
+    pack: String,
+    #[serde(default)]
+    params: Vec<StepParamDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1373,7 +1420,7 @@ pub(crate) fn path_is_protected(relative: &str, protected: &[String]) -> bool {
     })
 }
 
-fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
+pub(crate) fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
     let mut warnings = Vec::new();
     let value: toml::Value = match toml::from_str(text) {
         Ok(v) => v,
@@ -1699,6 +1746,8 @@ fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
                             "both" => "both".to_string(),
                             _ => "ai".to_string(),
                         },
+                        pack: s.pack.trim().to_string(),
+                        params: normalize_step_params(s.params),
                     });
                 }
                 Err(e) => warnings.push(format!("steps[{i}] 字段无效，已跳过: {e}")),
@@ -1940,7 +1989,7 @@ pub(crate) fn step_names_at(project: &Path) -> std::collections::HashMap<String,
 /// 生成写入文本：以现有文件为底用 toml_edit 打补丁（同 global_config.rs 的 TOML 补丁风格），
 /// 只全量替换 topic/artifact_dir/resources/steps 四个已知部分，其余未知键、注释、格式原样保留。
 /// 现有文件无法解析时停止写入并报错，宁可让用户手工修复也不覆盖未知内容。
-fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -> Result<String, String> {
+pub(crate) fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -> Result<String, String> {
     use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
     let mut doc = existing
         .unwrap_or("")
@@ -2258,6 +2307,30 @@ fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -> Result<St
             }
             if s.role != "ai" && !s.role.is_empty() {
                 t["role"] = value(s.role.as_str());
+            }
+            if !s.pack.trim().is_empty() {
+                t["pack"] = value(s.pack.trim());
+            }
+            if !s.params.is_empty() {
+                let mut ps = ArrayOfTables::new();
+                for p in &s.params {
+                    let mut pt = Table::new();
+                    pt["key"] = value(&p.key);
+                    pt["label"] = value(&p.label);
+                    pt["value"] = value(&p.value);
+                    if !p.help.is_empty() {
+                        pt["help"] = value(&p.help);
+                    }
+                    if !p.options.is_empty() {
+                        let mut opts = toml_edit::Array::new();
+                        for o in &p.options {
+                            opts.push(o.as_str());
+                        }
+                        pt["options"] = value(opts);
+                    }
+                    ps.push(pt);
+                }
+                t["params"] = Item::ArrayOfTables(ps);
             }
             arr.push(t);
         }
@@ -5268,6 +5341,8 @@ mod tests {
                 asks_lit_source: false,
                 seed_complete: false,
                 role: "ai".into(),
+                pack: String::new(),
+                params: Vec::new(),
                 run: vec![
                     StepRunDto {
                         name: "dev".into(),
@@ -6767,6 +6842,8 @@ resources = ["ghost.pdf"]
                 asks_lit_source: false,
                 seed_complete: false,
                 role: "ai".into(),
+                pack: String::new(),
+                params: Vec::new(),
                 run: vec![StepRunDto {
                     name: "dev".into(),
                     command: "echo hi".into(),

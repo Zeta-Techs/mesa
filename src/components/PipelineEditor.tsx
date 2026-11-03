@@ -39,6 +39,9 @@ import type {
   ProjectStepDto,
   ProjectStepRunDto,
   SkillDto,
+  StepParamDto,
+  TaskPackDto,
+  AddPackResultDto,
 } from "../types";
 import { useAppStore } from "../store";
 
@@ -84,6 +87,9 @@ type StepDraft = {
   /** 这一步要先拍板文献从哪来（流程线「定方向」出现输入准备块） */
   asksLitSource: boolean;
   seedComplete: boolean;
+  /** 任务包溯源与参数（2026-11-03）：编辑器只改取值，保存时原样带回，免得一保存就丢 */
+  pack: string;
+  params: StepParamDto[];
 };
 
 function toDraft(s: ProjectStepDto): StepDraft {
@@ -110,6 +116,8 @@ function toDraft(s: ProjectStepDto): StepDraft {
     })),
     asksLitSource: s.asksLitSource ?? false,
     seedComplete: s.seedComplete ?? false,
+    pack: s.pack ?? "",
+    params: (s.params ?? []).map((p) => ({ ...p, options: [...p.options] })),
   };
 }
 
@@ -185,6 +193,8 @@ function toStep(d: StepDraft, index: number): ProjectStepDto {
       .filter((x) => x.q),
     asksLitSource: d.asksLitSource,
     seedComplete: d.seedComplete,
+    ...(d.pack ? { pack: d.pack } : {}),
+    ...(d.params.length ? { params: d.params.map((p) => ({ ...p, value: p.value.trim() })) } : {}),
   };
 }
 
@@ -242,6 +252,10 @@ export default function PipelineEditor({
     round: number;
   } | null>(null);
   const [userTemplates, setUserTemplates] = useState<PipelineTemplateDto[]>([]);
+  // 我的任务（任务包，2026-11-03）：追加面板里一栏；有参数的先填表再加
+  const [packs, setPacks] = useState<TaskPackDto[]>([]);
+  const [packForm, setPackForm] = useState<{ pack: TaskPackDto; values: Record<string, string> } | null>(null);
+  const [packNote, setPackNote] = useState<string | null>(null);
   const resources = config.resources;
   // 技能库（推荐技能 chip 的展示元数据与「＋ 添加技能」候选）：挂载时读一次，失败降级为不可编辑 chip
   const [skillLib, setSkillLib] = useState<SkillDto[] | null>(null);
@@ -283,10 +297,73 @@ export default function PipelineEditor({
       .catch(() => {
         if (!stale) setUserTemplates([]);
       });
+    invoke<TaskPackDto[]>("list_task_packs")
+      .then((list) => {
+        if (!stale) setPacks(list);
+      })
+      .catch(() => {
+        if (!stale) setPacks([]);
+      });
     return () => {
       stale = true;
     };
   }, [appendOpen]);
+
+  /** 从我的任务追加：后端补装库里缺的随包技能，再按模板追加同一条原子写入；成功后同 appendTemplate 重读 */
+  async function appendPack(pack: TaskPackDto, values: Record<string, string>) {
+    if (appending) return;
+    if (
+      dirty &&
+      !(await confirmDialog(
+        "当前有未保存的改动，追加后会按最新 project.toml 刷新步骤列表，未保存改动将丢失。继续？",
+        { danger: true },
+      ))
+    )
+      return;
+    setAppending(true);
+    setAppendResult(null);
+    setPackNote(null);
+    setError(null);
+    try {
+      const res = await invoke<AddPackResultDto>("add_task_pack_to_project", {
+        projectRoot: projectPath,
+        id: pack.id,
+        values,
+      });
+      const read = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectPath });
+      setDrafts(read.config.steps.map(toDraft));
+      setTools(researchToolsFromSettings(read.config.settings));
+      onConfigReload(read);
+      setAppendResult({ appended: res.appended, skipped: res.skipped, renamed: res.renamed });
+      if (res.skillsAdded.length > 0) {
+        setPackNote(
+          `新装了技能 ${res.skillsAdded.join("、")}：还没分发给任何 Agent，去「技能」页为要用的 Agent 打开。`,
+        );
+      }
+      setPackForm(null);
+      setAppendOpen(false);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setAppending(false);
+    }
+  }
+
+  async function deletePack(pack: TaskPackDto) {
+    if (
+      !(await confirmDialog(
+        `删除我的任务「${pack.name}」？会移到回收站；已经加进项目的步骤不受影响。`,
+        { danger: true, confirmText: "删除" },
+      ))
+    )
+      return;
+    try {
+      await invoke("delete_task_pack", { id: pack.id });
+      setPacks((list) => list.filter((p) => p.id !== pack.id));
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
 
   // 挂载时定位一次（仅 ✎ 入口带 focusStep；卡片内第一个 textarea 即简报框）
   useEffect(() => {
@@ -760,6 +837,47 @@ export default function PipelineEditor({
             }
           />
         </div>
+
+        {d.params.length > 0 && (
+          // 来自「我的任务」的参数：只改取值；简报等文字里的 {param:键} 拼任务书时换成这里的值
+          <div className="mb-2">
+            <span className="mb-1 block text-xs text-l3">参数（来自我的任务，简报里的 {"{param:…}"} 拼任务书时换成这里的值）</span>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {d.params.map((p, pi) => (
+                <label key={p.key} className="block text-xs">
+                  <span className="mb-0.5 block text-l3" title={p.help || undefined}>
+                    {p.label}
+                  </span>
+                  {p.options.length > 0 ? (
+                    <select
+                      className={`${field} w-full`}
+                      value={p.value}
+                      onChange={(e) =>
+                        patch(i, { params: d.params.map((x, xi) => (xi === pi ? { ...x, value: e.target.value } : x)) })
+                      }
+                    >
+                      {!p.options.includes(p.value) && <option value={p.value}>{p.value || "（未填）"}</option>}
+                      {p.options.map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className={`${field} w-full`}
+                      value={p.value}
+                      placeholder="未填时任务书会写明缺这一项"
+                      onChange={(e) =>
+                        patch(i, { params: d.params.map((x, xi) => (xi === pi ? { ...x, value: e.target.value } : x)) })
+                      }
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         {fold(
           i,
@@ -1315,6 +1433,8 @@ export default function PipelineEditor({
                     decisions: [],
                     asksLitSource: false,
                     seedComplete: false,
+                    pack: "",
+                    params: [],
                   },
                 ])
               }
@@ -1354,12 +1474,61 @@ export default function PipelineEditor({
               )}
             </p>
           )}
+          {packNote && <p className="text-xs text-warn-text">{packNote}</p>}
           {appendOpen && (
             <div className="rounded-md ccode-well p-3">
               <p className="mb-2 text-xs text-l3">
                 选择模板，把它的步骤追加到当前流程末尾（同名交付不同需确认改名；工作区名冲突会自动加后缀）：
               </p>
-              {submissionAppend ? (
+              {packForm ? (
+                <div className="rounded-sm ccode-well p-3">
+                  <p className="text-xs font-medium text-l1">{packForm.pack.name}：填参数</p>
+                  <div className="mt-2 space-y-2">
+                    {packForm.pack.params.map((p) => (
+                      <label key={p.key} className="block text-xs">
+                        <span className="mb-1 block text-l3">{p.label}</span>
+                        {p.options.length > 0 ? (
+                          <select
+                            className={`${field} w-full`}
+                            value={packForm.values[p.key] ?? p.value}
+                            onChange={(e) =>
+                              setPackForm((f) => (f ? { ...f, values: { ...f.values, [p.key]: e.target.value } } : f))
+                            }
+                          >
+                            {p.options.map((o) => (
+                              <option key={o} value={o}>
+                                {o}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className={`${field} w-full`}
+                            value={packForm.values[p.key] ?? p.value}
+                            onChange={(e) =>
+                              setPackForm((f) => (f ? { ...f, values: { ...f.values, [p.key]: e.target.value } } : f))
+                            }
+                          />
+                        )}
+                        {p.help && <span className="mt-0.5 block text-micro text-l4">{p.help}</span>}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button type="button" className={actionBtn} disabled={appending} onClick={() => setPackForm(null)}>
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className={ctaSm}
+                      disabled={appending}
+                      onClick={() => void appendPack(packForm.pack, packForm.values)}
+                    >
+                      加进流程
+                    </button>
+                  </div>
+                </div>
+              ) : submissionAppend ? (
                 <div className="rounded-sm ccode-well p-3">
                   <p className="text-xs font-medium text-l1">投稿与返修分支</p>
                   <div className="mt-2 space-y-1.5 text-xs text-l2">
@@ -1473,6 +1642,41 @@ export default function PipelineEditor({
                       <span className="mt-1 block truncate text-xs text-l4">
                         {t.steps.map((s) => s.name).join(" → ")}
                       </span>
+                    </button>
+                  </li>
+                ))}
+                {packs.length > 0 && (
+                  <li className="pt-1 text-xs text-l3">我的任务</li>
+                )}
+                {packs.map((p) => (
+                  <li key={p.id} className="group relative">
+                    <button
+                      type="button"
+                      className="w-full rounded-sm ccode-well p-2 pr-8 text-left hover:bg-hover disabled:opacity-40"
+                      disabled={appending}
+                      title={p.description || undefined}
+                      onClick={() =>
+                        p.params.length > 0
+                          ? setPackForm({ pack: p, values: Object.fromEntries(p.params.map((x) => [x.key, x.value])) })
+                          : void appendPack(p, {})
+                      }
+                    >
+                      <span className="text-xs font-medium text-l1">{p.name}</span>
+                      <span className="ml-2 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
+                        {p.steps.length} 步{p.params.length > 0 ? ` · ${p.params.length} 个参数` : ""}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-l4">
+                        {p.description || p.steps.map((s) => s.name).join(" → ")}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="absolute right-1.5 top-1.5 rounded-sm px-1 text-xs text-l4 opacity-0 hover:text-err-text focus:opacity-100 group-hover:opacity-100"
+                      aria-label={`删除我的任务：${p.name}`}
+                      title="删除这个我的任务（进回收站）"
+                      onClick={() => void deletePack(p)}
+                    >
+                      ✕
                     </button>
                   </li>
                 ))}

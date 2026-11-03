@@ -583,3 +583,21 @@ test("TASK.md 带「以前定过的事」：项目知识里的已定 / 不做，
   assert.match(md, /遇到同类问题直接照办/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/tmp/p"), /以前定过的事/);
 });
+
+test("TASK.md：来自我的任务的步骤先代入参数，并列出「本步参数」", () => {
+  const md = renderTaskMd(
+    step({
+      brief: "按 {param:j} 的要求，阈值 {param:t}",
+      params: [
+        { key: "j", label: "目标期刊", value: "Cell", help: "", options: [] },
+        { key: "t", label: "阈值", value: "", help: "", options: [] },
+      ],
+    }),
+    cfg(),
+    "/tmp/p",
+  );
+  assert.match(md, /按 Cell 的要求，阈值 （参数「阈值」未填）/);
+  assert.match(md, /## 本步参数\n- 目标期刊：Cell\n- 阈值：（未填）/);
+  assert.match(md, /没填的参数先按决策暂停策略问人/);
+  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/tmp/p"), /本步参数/);
+});

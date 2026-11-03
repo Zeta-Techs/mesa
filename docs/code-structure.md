@@ -244,6 +244,7 @@ components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；Pr
   components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做
   components/HelpRequestDialog.tsx # 人工请求弹层（全局挂在 App，消费 store.helpViewReq）：收件箱 / 工作台队列 / 流程线「回答问题」/ 对话页那一行都原地弹；
                              # 「交给 Agent 继续」走 buildWorkspaceTerminalRequest，建成后 help_request_mark_sent；答过送过 bumpHelpRefresh 让工作区页重拉收件箱数据源
+  components/SavePackForm.tsx # 另存为我的任务（项目设置 → 研究流程）：选步骤、加参数（显示命中几处）、同名覆盖先确认，保存走 save_task_pack
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
 components/ResearchProfileSection.tsx  # 设置「研究档案」分区：附带开关、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
@@ -544,6 +545,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
   help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
                              # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
+  task-packs.ts              # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，
+                             # machine: 验收行不动）、nextParamKey；替换范围与 task_packs.rs step_texts 一致（tests/task-packs.test.ts）
   inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
                              #   sched: = 「定时任务」类（其他巡检待评审 / 自动暂停，不进一键已读；2026-10-23）；
                              #   phone: 类别（从手机添加还没处理的）与 update: 一样由 store.ts visibleInboxItems 现算合并
@@ -1203,7 +1206,8 @@ src-tauri/src/
                              #   四档对齐内置 grok-4.6；已有菜单不覆盖）。中转目录把模型标成
                              #   supports_reasoning_effort=false 时改回 true，否则菜单写了也不出。
                              #   中转目录不带 reasoning_efforts 时不写这段则 /effort 不出
-  projects.rs                # 项目档案卡（§11.3）：project.toml 读写、注册、资源登记/发现、一键开步、append_workspace_inbox、
+  projects.rs                # 2026-11-03：StepDto 加 pack / params（StepParamDto，project.toml 里 pack = "…" 与 [[steps.params]]），normalize_step_params；
+                             # 项目档案卡（§11.3）：project.toml 读写、注册、资源登记/发现、一键开步、append_workspace_inbox、
                              # 摘记 append_project_clip（notes/clips.md，与文献摘录 excerpts.md 共用写入内核 append_notes_file_at；
                              #   手机文字走 append_clip_at；新建文件头 2026-10-20 起为通用「摘记」）、
                              #   槽位专属绑定（task_bindings 列：reader=沉浸阅读对话，set/get_project_agent_binding；删连接时连带清理）、
@@ -1318,6 +1322,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   claude/qwen 非字母数字→- 按 UTF-16 码元、codebuddy compressWorkspacePathName、cursor workspace-paths、
                              #   kimi 新版 wd_<slug>_<sha256(斜杠化路径)[:12]> + wire.jsonl workspaceId 同步 + session_index.jsonl、
                              #   gemini 先查 projects.json 已登记 slug、grok URL 编码 cwd；cursor 续聊靠自家 store.db，导入只给提示
+  task_packs.rs              # 任务包（2026-11-03 第一期，design-task-packs.md）：「我的任务」库在配置目录 packs/<id>/（pack.toml + skills/ 用户技能快照），
+                             # pack.toml 的 [[steps]] 借 projects::render_config / parse_config 与项目档案卡同一写法；save_at 先写临时目录再整目录换上、
+                             # 校验 {param:键} 都有定义；add_task_pack_to_project 先 skills::install_pack_skills 补装库里缺的、再走 apply_pipeline_template_at 原子追加，
+                             # 每一步带 pack 与 params（定义连同取值）；删除走回收站
   skills.rs                  # 技能库（§6.13）：SSOT 库 + symlink/copy 分发（cursor/grok 固定 copy）、四路导入、ZIP 导出、卸载备份、
                              # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，
                              #   compose_skill_md 重写链保留——曾在这里剥过字段）；「AI 优化另存」两阶段命令

@@ -31,6 +31,7 @@ import ResourceListSection from "./ResourceListSection";
 import ProjectUserTasksView from "./ProjectUserTasksView";
 import { SettingsDrawerShell, SettingsRulesSection } from "./ProjectSettingsDrawer";
 import ProjectMemoryPanel from "./ProjectMemoryPanel";
+import SavePackForm from "./SavePackForm";
 import KickoffConfirmDialog from "./KickoffConfirmDialog";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import {
@@ -592,6 +593,8 @@ export default function ProjectGroup({
   const [tplDescDraft, setTplDescDraft] = useState("");
   const [tplSaving, setTplSaving] = useState(false);
   const [tplSavedMsg, setTplSavedMsg] = useState<string | null>(null);
+  // 另存为我的任务（任务包第一期，2026-11-03）
+  const [savingPack, setSavingPack] = useState(false);
 
   /** 一键开步（§11.3 机制三）：invoke 链路在 pipeline-start.ts 与评审「开始下一步」共用，此处只管组件态。
    *  v3.64 起「开工」为两步：先开 KickoffConfirmDialog（TASK.md 预览编辑，任务书草稿优先），
@@ -1540,6 +1543,17 @@ export default function ProjectGroup({
         </form>
       )}
 
+      {savingPack && cfg && (
+        <SavePackForm
+          steps={cfg.steps}
+          onCancel={() => setSavingPack(false)}
+          onSaved={(message) => {
+            setSavingPack(false);
+            setTplSavedMsg(message);
+          }}
+        />
+      )}
+
       {tplSavedMsg && (
         <NoticeBar className="mb-2" onDismiss={() => setTplSavedMsg(null)}>
           {tplSavedMsg}
@@ -2099,6 +2113,23 @@ export default function ProjectGroup({
                   }}
                 >
                   另存为模板
+                </button>
+                <button
+                  type="button"
+                  className={ghostActionClass}
+                  disabled={cfg.steps.length === 0}
+                  title={
+                    cfg.steps.length > 0
+                      ? "选一步或几步存成「我的任务」，带上技能，可把期刊名、阈值等改成参数，以后在别的项目里直接加进来"
+                      : "没有可保存的研究步骤"
+                  }
+                  onClick={() => {
+                    setTplSavedMsg(null);
+                    setSavingPack(true);
+                    setSettingsOpen(false);
+                  }}
+                >
+                  另存为我的任务
                 </button>
                 {cfg.steps.length > 0 && (
                   <button
