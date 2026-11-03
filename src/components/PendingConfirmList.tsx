@@ -74,6 +74,8 @@ export default forwardRef<PendingConfirmHandle, {
   onMeta?: (meta: { count: number; busy: boolean }) => void;
   /** 审阅清单页占满剩余高度，不再自己截成一块再留出底下空区。 */
   fill?: boolean;
+  /** 变了就重读。退回修改后 agent 在同一工作区补文献，项目页常驻不卸载，不重读就一直是旧清单。 */
+  refreshKey?: string;
 }>(function PendingConfirmList({
   worktreePath,
   projectRoot,
@@ -82,6 +84,7 @@ export default forwardRef<PendingConfirmHandle, {
   onCleared,
   onMeta,
   fill = false,
+  refreshKey,
 }, ref) {
   const roots = [...new Set([worktreePath, projectRoot].filter((p): p is string => Boolean(p)))];
   const [error, setError] = useState<string | null>(null);
@@ -223,7 +226,7 @@ export default forwardRef<PendingConfirmHandle, {
 
   useEffect(() => {
     void load();
-  }, [worktreePath, projectRoot]);
+  }, [worktreePath, projectRoot, refreshKey]);
 
   const pending = (records ?? []).filter((row) => row.decision === "pending");
   function shown(rows: IncludedRecord[]) {

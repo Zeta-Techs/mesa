@@ -46,7 +46,7 @@ import {
   type ResearchToolField,
   type ResearchTools,
 } from "../research-tools";
-import { displayCitationTitle } from "../screening-review";
+import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
 import { excludedIncludedIds, notesProgress, notesProgressLine, spotCheckPicks, type SpotCheckPick } from "../notes-progress";
 import { stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
@@ -705,7 +705,8 @@ export default function StepFlow({
   const citeBefore = useRef<StyleFamily | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   // 付费墙任务的待获取清单就地展开（papers/to-fetch.md，只读预览）：
-  // 首次点开才读文件，收起不清缓存（agent 不会在展示期间改它）。
+  // 首次点开才读文件，收起不清缓存；这一步的运行状态变了（退回修改后 agent 在同一工作区
+  // 又跑一轮）就重读——项目页常驻不卸载，不重读会一直显示上一轮的清单。
   // 位置口径：agent 的产出落在步骤工作区，评审合并后才进项目根——先读工作区再回落项目根
   const [pendingListOpen, setPendingListOpen] = useState(true);
   // 开工后「确定文献来源」收成一行；点「更改」才摊开选项
@@ -719,6 +720,36 @@ export default function StepFlow({
   }, [states]);
   const pendingListRef = useRef<PendingConfirmHandle>(null);
   const [pendingMeta, setPendingMeta] = useState({ count: 0, busy: false });
+  /** 文献清单与待获取跟着这一步的运行状态重读（与 ReviewDecisionList 同口径） */
+  const ledgerRefreshKey = `${runStatus}|${agentAttention ?? ""}`;
+  const ledgerKeySeen = useRef(ledgerRefreshKey);
+  useEffect(() => {
+    if (ledgerKeySeen.current === ledgerRefreshKey) return;
+    ledgerKeySeen.current = ledgerRefreshKey;
+    if (paywallList.text != null || paywallList.error) void loadPaywallList();
+    // 收起的文献清单：新一轮补进了待确认篇目就摊开，不让人以为没补上
+    if (pendingListOpen || !ws) return;
+    if (!(step.humanTasks ?? []).some((task) => isPendingConfirmTaskTitle(task.title))) return;
+    let stale = false;
+    void (async () => {
+      for (const root of [ws.worktreePath, projectPath]) {
+        try {
+          const file = await readResearchLedger(root, "papers/included.json");
+          if (stale || file.truncated) return;
+          if (parseIncludedRecords(file.text).some((row) => row.decision === "pending")) {
+            setPendingListOpen(true);
+          }
+          return;
+        } catch {
+          // 试下一个位置
+        }
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledgerRefreshKey]);
   const [academicMcp, setAcademicMcp] = useState<AcademicMcpLogin | null>(null);
   const [paywallListOpen, setPaywallListOpen] = useState(() =>
     readPaywallListOpen(projectPath),
@@ -2934,7 +2965,7 @@ export default function StepFlow({
           !dense && (
             <div className="mt-1 pl-9 text-micro leading-5 text-l4">
               {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走，提醒移出的后果 */}
-              <p>{node.done ? PENDING_DONE_HINT : PENDING_HINT}</p>
+              <p>{node.done && pendingMeta.count === 0 ? PENDING_DONE_HINT : PENDING_HINT}</p>
               <div className="mt-1.5">
                 <div className="flex items-center gap-2">
                   <button
@@ -2965,6 +2996,7 @@ export default function StepFlow({
                     <PendingConfirmList
                       ref={pendingListRef}
                       onMeta={setPendingMeta}
+                      refreshKey={ledgerRefreshKey}
                       worktreePath={ws?.worktreePath}
                       projectRoot={projectPath}
                       onOpenPdf={(path) =>
