@@ -1800,6 +1800,23 @@ fn patch_codebuddy_settings(
     // 别家留下的另一种令牌与请求头会跟着这次的地址一起发出
     env.remove("CODEBUDDY_AUTH_TOKEN");
     env.remove("CODEBUDDY_CUSTOM_HEADERS");
+    // 顶层 `model`（CLI 里 /model 写的）压过 env 的 CODEBUDDY_MODEL（2.179.1 实测，2026-11-03：顶层留着上一家的
+    // gpt-6-astra，GLM 回「模型不存在」，连新对话都起不来）。同 Claude：有模型写成这次的，没有就撤别家的非官方模型名
+    let root = v.as_object_mut().expect("parse_json_doc 保证是对象");
+    match model {
+        Some(m) => {
+            root.insert("model".into(), json!(m));
+        }
+        None => {
+            let foreign = root
+                .get("model")
+                .and_then(|m| m.as_str())
+                .is_some_and(|m| !official_model_kept("codebuddy", m));
+            if foreign {
+                root.remove("model");
+            }
+        }
+    }
     to_pretty(&v)
 }
 
@@ -2337,6 +2354,7 @@ fn drift_plans(profile: &Profile, plans: &[PlannedWrite]) -> Vec<PlannedWrite> {
     let keys: &[&str] = match profile.agent.as_str() {
         "codex" => &["model", "model_reasoning_effort"],
         "claude-code" => &["model", "effortLevel"],
+        "codebuddy" => &["model"],
         _ => &[],
     };
     plans
@@ -5526,6 +5544,17 @@ trust_level = "trusted"
         for k in ["CODEBUDDY_BASE_URL", "CODEBUDDY_MODEL", "CODEBUDDY_CODE_MAX_OUTPUT_TOKENS"] {
             assert!(v["env"].get(k).is_none(), "{k}");
         }
+        // 顶层 model 压过 env：写成这次的模型；没有模型时撤上一家的非官方模型名
+        let prev = r#"{"model":"gpt-6-astra","env":{}}"#;
+        let v: Value = serde_json::from_str(&patch_codebuddy_settings(Some(prev), None, Some("sk"), Some("glm-5.3"), None).unwrap()).unwrap();
+        assert_eq!(v["model"], "glm-5.3");
+        // 没列模型：上一家中转的模型名撤掉，官方也认的留着（同 official_model_kept）
+        let relay = r#"{"model":"deepseek-v4-flash","env":{}}"#;
+        let v: Value = serde_json::from_str(&patch_codebuddy_settings(Some(relay), None, Some("sk"), None, None).unwrap()).unwrap();
+        assert!(v.get("model").is_none());
+        let kept = official_model_kept("codebuddy", "gpt-6-astra");
+        let v: Value = serde_json::from_str(&patch_codebuddy_settings(Some(prev), None, Some("sk"), None, None).unwrap()).unwrap();
+        assert_eq!(v.get("model").is_some(), kept);
     }
 
     #[test]
