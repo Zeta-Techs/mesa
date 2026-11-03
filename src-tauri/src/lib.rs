@@ -93,6 +93,7 @@ mod codex_continuity;
 mod image_gen;
 mod peek;
 mod project_mail;
+mod split_plan;
 
 mod browser_bridge;
 mod capability_golden;
@@ -943,6 +944,8 @@ pub fn run() {
             project_mail::mail_take,
             project_mail::mail_requeue,
             project_mail::mail_withdraw,
+            split_plan::split_plan_read,
+            split_plan::split_plan_close,
             task_packs::preview_task_pack_import,
             task_packs::install_task_pack_import,
             task_packs::discard_task_pack_import,

@@ -540,7 +540,9 @@ Headless 支持取消但不承诺会话恢复；定时任务行显示「停止�
 - **跨项目不直连**：只经「提升到研究档案」或人转发。
 - **项目内传话**（二期，已落地）：自动送达，全部留记录、工作台可见、可撤回。`mesa_helper tell --to 名 "…"` 写**发话方自己工作目录**的
   `.ccode/outbox.jsonl`（沙箱只让写工作目录）；Mesa 汇总时只认 from 的工作目录确实在此、to 是同项目 Run；送达只在收话方 Agent 开着、不是 shell、
-  不在干活 / 等确认、输入框没有草稿时经它自己的 sendMessage（TerminalPage），送不出退回；状态记配置目录 `mail-state.json`；一条最多 2000 字、7 天内。**协调对话**（三期）：只起草方案，不替人答人工请求。
+  不在干活 / 等确认、输入框没有草稿时经它自己的 sendMessage（TerminalPage），送不出退回；状态记配置目录 `mail-state.json`；一条最多 2000 字、7 天内。**协调对话**（三期，已落地）：只起草方案，不替人答人工请求。
+  工作台项目分组下「协调对话」开 / 回到唯一一个（`coord:<项目>`）；方案写项目根 `.ccode/split-plan.md`（格式与检查见 `split-plan.ts`，读与留底 `split_plan.rs`），
+  批准 = 每路记目标（整仓隔离、验收后写回）并用项目默认 Agent 一起开，**写了「等」的只记下不开**；只在能记目标的项目（无流程科研、工作项目）一次开。
 - **看一眼（一期）**：`mesa_helper peek agents|runs|changes`，Mesa 拉起 Agent 时注入 `MESA_PEEK_TOOL` 与 `MESA_RUN_ID`；只读打开 app.db，只看同一项目，
   不列内部后台对话与登录标签，已结束的只列 3 天内、最多 12 个；改动只给文件、加减行数与片段（有上限），不给整文件；输出过 `redact_sensitive_text`。
 
