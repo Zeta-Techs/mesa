@@ -552,6 +552,9 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （给了 scheduleRelPath 时种子请 AI 顺带写周期建议 JSON，2026-10-23）；
                              # defaultScheduleKind / scheduleExamples：按工作方式给新建默认种类与空态示例
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
+  fan-out.ts                 # 分几路纯逻辑：laneReuseKey（ws:<工作树>#lane-<k>）、lanePrompt（只做这几条、不碰共享文件与会写它的命令、做完写标记）、
+                             # mergePrompt、fanOutSummary（开工弹层那一行）、FanOutPending / allLanesDone（终端页 20 秒一轮，到齐开收尾）（tests/fan-out.test.ts）
+  terminal-queue.ts          # openTerminalInTurn：一次开几个标签时交一个、等终端页收下再交下一个（拆分方案批准、分几路共用）
   split-plan.ts              # 协调对话与拆分方案纯逻辑：buildCoordinatorPrompt、parseSplitPlan（不认识的字段记备注、等 / 依赖 / 前置）、planIssues（拦下 / 提醒）、
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）
   project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
@@ -1744,6 +1747,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   coding.rs                  # 编程项目 git 原语：worktree list / 从基准或已有本地·远程分支建树（~/ccode/worktrees）、
                              # origin 身份 + 相对上游 behind、fetch / pull --ff-only / push、合并进基准、
                              # Desktop CLI 打开该树 / gh --web 开 PR（CodingOpDto；不走科研工作区库）；overview 按树/分支并行 git
+  fan_out.rs                 # 一步按数据分几路（2026-11-03 四期）：items_at 从项目内 JSON 按 filter 挑条目（全局序号）、shard 均匀切（不到两路一路、封顶 max）、
+                             # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
   split_plan.rs              # 协调对话的拆分方案（2026-11-03 三期）：split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
   project_mail.rs            # 项目内传话（2026-11-03 二期）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run

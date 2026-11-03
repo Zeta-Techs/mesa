@@ -61,6 +61,8 @@ import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
 import { importedScriptsNote } from "../task-packs";
 import { addPackToProject } from "../pack-add";
+import { FANOUT_STORAGE_PREFIX } from "../fan-out";
+import { openTerminalInTurn } from "../terminal-queue";
 import { toast } from "../toast";
 import {
   projectAgentPrefs,
@@ -607,6 +609,7 @@ export default function ProjectGroup({
     launch?: KickoffLaunch | null,
     decisionPauseAcknowledged = false,
     intakeBridge?: IntakeBridgeDecision,
+    fanOut = false,
   ) {
     if (!project || !cfg) return;
     const step = cfg.steps[index];
@@ -620,7 +623,20 @@ export default function ProjectGroup({
         decisionPauseAcknowledged,
         launch,
         intakeBridge,
+        fanOut,
         onError,
+        // 分几路：各路标签依次开，收尾一路记进 localStorage，终端页数到各路做完标记后开
+        onOpenLanes: async (lanes, pending) => {
+          await onRefresh();
+          try {
+            localStorage.setItem(`${FANOUT_STORAGE_PREFIX}${pending.worktreePath}`, JSON.stringify(pending));
+          } catch {
+            /* 存不下就不自动开收尾，人在各路做完后自己开 */
+          }
+          useAppStore.getState().setPage("terminal");
+          for (const req of lanes) await openTerminalInTurn(req);
+          toast(`「${step.name}」分成 ${lanes.length} 路同时做，各路做完 Mesa 会再开一路收尾。`, "info");
+        },
         // 刷新先于跳终端：run 脚本写入在工作区行刷新之前，「运行脚本」菜单当次即可见
         onOpenTerminal: async (ws, initialPrompt, opts) => {
           await onRefresh();
@@ -2509,10 +2525,10 @@ export default function ProjectGroup({
           originCardId={kickoff.originCardId}
           busy={starting !== null}
           onCancel={() => setKickoff(null)}
-          onConfirm={(taskMd, launch, decisionPauseAcknowledged, intake) => {
+          onConfirm={(taskMd, launch, decisionPauseAcknowledged, intake, fanOut) => {
             const index = kickoff.index;
             setKickoff(null);
-            void runStartStep(index, taskMd, launch, decisionPauseAcknowledged, intake);
+            void runStartStep(index, taskMd, launch, decisionPauseAcknowledged, intake, fanOut);
           }}
           onCfgChange={(next) => setCfg(next)}
           unsavedUpstream={unsavedUpstreamSteps(cfg.steps, kickoff.index, (i) => {

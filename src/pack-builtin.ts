@@ -25,6 +25,7 @@ export const COMPARED_FIELDS = [
   "decisions",
   "discussionSeeds",
   "role",
+  "fanOut",
 ] as const;
 
 const FIELD_LABELS: Record<(typeof COMPARED_FIELDS)[number], string> = {
@@ -42,6 +43,7 @@ const FIELD_LABELS: Record<(typeof COMPARED_FIELDS)[number], string> = {
   decisions: "决策项",
   discussionSeeds: "讨论种子",
   role: "角色",
+  fanOut: "分路",
 };
 
 /** 去掉「没写」的各种写法（undefined / null / 空串 / 空数组 / false），键排序：档案卡读回来的和前端原样的才比得上 */

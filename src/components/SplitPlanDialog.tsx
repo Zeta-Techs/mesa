@@ -9,19 +9,10 @@ import { goalDefaultProfile, resolveTaskModel } from "../project-agents";
 import { goalRunTerminalFields, prepareGoalRun } from "../goal-run";
 import { samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
-import { useAppStore, type PendingTerminal } from "../store";
+import { useAppStore } from "../store";
+import { openTerminalInTurn } from "../terminal-queue";
 import { toast } from "../toast";
 import type { ProjectConfigReadDto, ProjectDto, TaskDto } from "../types";
-
-/** 交一个终端请求，等终端页收下（pendingTerminal 清空）再交下一个：一次开几路就是几个标签 */
-async function openTerminalInTurn(req: PendingTerminal) {
-  const store = useAppStore.getState();
-  store.setPendingTerminal(req);
-  const deadline = Date.now() + 15_000;
-  while (useAppStore.getState().pendingTerminal && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 150));
-  }
-}
 
 /**
  * 拆分方案卡（2026-11-03 项目内协作三期）：协调对话写的 `.ccode/split-plan.md` 给人看——按什么拆、每路要做 / 读 / 交 / 写不写共享文件 / 预算，

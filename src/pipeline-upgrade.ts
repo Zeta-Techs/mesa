@@ -6,7 +6,7 @@ export function pipelineUpgradeCandidates(current: ProjectStepDto[], template: P
   return current.flatMap((step, index) => {
     const proposed = template.steps.find((s) => s.name === step.name && s.workspaceName === step.workspaceName);
     if (!proposed) return [];
-    const fields = (["brief", "expectedArtifacts", "inputs", "optionalInputs", "anyOfInputs", "acceptanceCriteria", "run", "skills", "requiredSkills", "humanTasks", "decisionMode", "decisions"] as const)
+    const fields = (["brief", "expectedArtifacts", "inputs", "optionalInputs", "anyOfInputs", "acceptanceCriteria", "run", "skills", "requiredSkills", "humanTasks", "decisionMode", "decisions", "fanOut"] as const)
       .filter((key) => JSON.stringify(step[key] ?? null) !== JSON.stringify(proposed[key] ?? null));
     return fields.length ? [{ index, current: step, proposed, fields }] : [];
   });

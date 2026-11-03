@@ -13,6 +13,7 @@ import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
 import { ledgerLines } from "./help-requests";
 import { openPeerCount } from "./peek";
+import { fanOutSummary, laneReuseKey, lanePrompt, mergePrompt, type FanOutPending } from "./fan-out";
 import { IS_WINDOWS } from "./hotkeys";
 import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-agents";
 export { renderTaskMd };
@@ -24,6 +25,7 @@ import type {
   EnsureGitDto,
   ProjectConfigDto,
   ProjectMemoryDocumentDto,
+  FanOutPlanDto,
   ProjectStepDto,
   RunDto,
   SessionMetaDto,
@@ -143,6 +145,8 @@ export async function startPipelineStep({
   launch,
   decisionPauseAcknowledged = false,
   intakeBridge,
+  fanOut = false,
+  onOpenLanes,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -163,6 +167,10 @@ export async function startPipelineStep({
   decisionPauseAcknowledged?: boolean;
   /** 开工接驳决定：开工弹层「开工接驳」勾选态 + 积累面命中路径（无命中传 undefined） */
   intakeBridge?: IntakeBridgeDecision;
+  /** 开工弹层勾了「分几路同时跑」（步骤声明了 fanOut 才有这个勾） */
+  fanOut?: boolean;
+  /** 分路时的终端交接：依次开各路标签，并把收尾一路记下等各路做完（ProjectGroup 实现） */
+  onOpenLanes?: (lanes: PendingTerminal[], pending: FanOutPending) => Promise<void>;
 }): Promise<void> {
   const gate = decisionGate(step, taskMdOverride ?? "");
   if (gate.blocked) {
@@ -284,6 +292,35 @@ export async function startPipelineStep({
         `工作区「${ws.name}」已创建，run 脚本写入失败：${String(reason)}`,
       );
     }
+  }
+  // 分几路（协作四期）：同一工作区里每路一段对话，做完写标记，到齐后开收尾一路（复用这一步本来的复用键）
+  if (fanOut && step.fanOut && onOpenLanes) {
+    const plan = await invoke<FanOutPlanDto>("fan_out_plan", { dir: ws.worktreePath, spec: step.fanOut });
+    if (plan.lanes.length >= 2) {
+      const opts = { autoStart: Boolean(launch?.profileId), launch: launch ?? undefined };
+      const lanes: PendingTerminal[] = [];
+      for (const [i, items] of plan.lanes.entries()) {
+        const k = i + 1;
+        const req = await buildWorkspaceTerminalRequest(ws, lanePrompt(step.fanOut, items, k, plan.lanes.length, IS_WINDOWS), opts);
+        lanes.push({
+          ...req,
+          reuseKey: laneReuseKey(req.reuseKey ?? workspaceReuseKey(ws), k),
+          title: `${step.name} · 第 ${k} 路`,
+          parallelLane: true,
+        });
+      }
+      const merge = await buildWorkspaceTerminalRequest(ws, mergePrompt(step, step.fanOut, plan.lanes.length), opts);
+      await onOpenLanes(lanes, {
+        worktreePath: ws.worktreePath,
+        stepName: step.name,
+        lanes: plan.lanes.length,
+        merge: { ...merge, title: `${step.name} · 收尾`, parallelLane: true },
+        mergeStarted: false,
+        createdAt: Date.now(),
+      });
+      return;
+    }
+    onError(`「${step.name}」${fanOutSummary(plan.total, plan.lanes.length)}。`);
   }
   // 预填首条指令：跳到终端后用户确认配置点「启动」即自动注入，无需手动打字
   await onOpenTerminal(ws, DEFAULT_KICKOFF_PROMPT, {

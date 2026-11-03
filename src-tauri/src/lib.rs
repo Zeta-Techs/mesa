@@ -94,6 +94,7 @@ mod image_gen;
 mod peek;
 mod project_mail;
 mod split_plan;
+mod fan_out;
 
 mod browser_bridge;
 mod capability_golden;
@@ -946,6 +947,8 @@ pub fn run() {
             project_mail::mail_withdraw,
             split_plan::split_plan_read,
             split_plan::split_plan_close,
+            fan_out::fan_out_plan,
+            fan_out::fan_out_done,
             task_packs::preview_task_pack_import,
             task_packs::install_task_pack_import,
             task_packs::discard_task_pack_import,

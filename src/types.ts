@@ -1558,6 +1558,33 @@ export interface PackBasedOnDto {
   steps: ProjectStepDto[];
 }
 
+/** 一步按数据分几路（2026-11-03 协作四期，project.toml [steps.fan_out]；fan_out.rs） */
+export interface StepFanOutDto {
+  /** 项目内 JSON 文件（数组或对象里第一个数组） */
+  items: string;
+  /** 「字段=值」，空 = 全要 */
+  filter: string;
+  key: string;
+  label: string;
+  per: number;
+  max: number;
+  /** 每路只许写什么（白话） */
+  own: string;
+  /** 收尾一路要做的事 */
+  merge: string;
+}
+
+export interface FanOutItemDto {
+  seq: number;
+  key: string;
+  label: string;
+}
+
+export interface FanOutPlanDto {
+  total: number;
+  lanes: FanOutItemDto[][];
+}
+
 /** 同项目留话（mail_list，project_mail.rs）：一段工作给另一段的话 */
 export interface ProjectMailDto {
   id: string;
@@ -1674,6 +1701,8 @@ export interface ProjectStepDto {
   params?: StepParamDto[];
   /** 任务包核验脚本：任务书「本步核验」叫 Agent 跑 */
   checks?: StepCheckDto[];
+  /** 按数据分几路（协作四期）：开工弹层勾选才分 */
+  fanOut?: StepFanOutDto | null;
   /** 预置完成：产物已在主仓（示例课题检索步），步进器视为已完成。真建了工作区后以工作区为准 */
   seedComplete?: boolean;
 }

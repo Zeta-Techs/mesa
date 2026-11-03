@@ -233,6 +233,9 @@
   流程期间继续「加入积累」不影响本轮；检索步简报把它与 included 存量、`papers/imports/` 导入、本轮检索候选
   统一去重当进料口，不回写、不清空积累账。**任务书写入是启动前置（2026-09-08）**：`write_workspace_task_md` 失败时保留已创建工作区并报错，不写后续 run 配置、不打开/自动启动 Agent；修复本轮任务书后方可继续。不得无合同启动以兜底旧命令缺失。**TASK.md 不进 git**：落盘时自动追加进
   `.git/info/exclude`（`exclude_task_md`，全 worktree 与主仓生效，best-effort 不阻断）——TASK.md 是开步脚手架而非任务产物。
+- **分路声明（2026-11-03 协作四期）**：`[steps.fan_out]` 写在步骤合同里（与 checks 同级），英文综述 / 毕业论文的「文献精读与笔记」带 `LIT_NOTES_FANOUT`
+  （`pipeline-presets.ts`：included.json 纳入的篇、每路 8 篇、最多 4 路；`own` 点名开头不跑 `lit_records.py write`，`merge` 写清收尾要出的共享文件）。
+  不进任务书正文（各路开场另给），不占长度预算。改英文综述模板后照旧跑 `scripts/export-review-template.ts` 同步示例课题 JSON。
 - **任务书长度（2026-11-03 实测定口径）**：一步任务书最长约 7200 字（约三四千 token），其中简报（完成标准与硬约束，11-02 已定一句不删）约占八成五，
   各步共用的固定段约一成五；`tests/research-usability.test.ts` 的上限是**整套模板各步之和**的棘轮，防悄悄变长，不代表 Agent 读不下。
   所以新加的任务书段**优先做成条件段**（用得上才出现，如「本步参数」「本步核验」「以前定过的事」「同项目的其他工作」）；

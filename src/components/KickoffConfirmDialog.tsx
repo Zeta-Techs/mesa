@@ -68,7 +68,9 @@ import {
 import { decisionGate, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
 import { RESOURCE_TYPE_LABELS } from "../pipeline-presets";
 import { IS_WINDOWS } from "../hotkeys";
+import { fanOutSummary } from "../fan-out";
 import type {
+  FanOutPlanDto,
   ArtifactEntryDto,
   DiscoveredResourceDto,
   HumanTaskStateDto,
@@ -155,6 +157,8 @@ export default function KickoffConfirmDialog({
     launch: KickoffLaunch | null,
     decisionPauseAcknowledged: boolean,
     intake?: IntakeBridgeDecision,
+    /** 勾了「分几路同时跑」（步骤声明了 fanOut、数据够两路才有这个勾，默认不勾） */
+    fanOut?: boolean,
   ) => void;
   /** 技能区增删写回 project.toml 后同步父级 cfg（保持步进器/下次打开一致） */
   onCfgChange?: (cfg: ProjectConfigDto) => void;
@@ -171,6 +175,27 @@ export default function KickoffConfirmDialog({
   // 当前步骤（技能区写回后 cfgLocal 里的最新版本，prop 可能是旧的）
   const stepNow =
     cfgLocal.steps.find((s) => s.name === step.name) ?? step;
+  // 分几路（协作四期）：按项目根当前的数据预算几路；读不到就不显示这一行
+  const [fanOutPlan, setFanOutPlan] = useState<FanOutPlanDto | null>(null);
+  const [fanOutOn, setFanOutOn] = useState(false);
+  const fanOutSpec = stepNow.fanOut ?? null;
+  useEffect(() => {
+    if (!fanOutSpec) {
+      setFanOutPlan(null);
+      return;
+    }
+    let stale = false;
+    invoke<FanOutPlanDto>("fan_out_plan", { dir: projectPath, spec: fanOutSpec })
+      .then((plan) => {
+        if (!stale) setFanOutPlan(plan);
+      })
+      .catch(() => {
+        if (!stale) setFanOutPlan(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [fanOutSpec, projectPath]);
   const skillMeta = useMemo(
     () =>
       skillLib
@@ -818,7 +843,7 @@ export default function KickoffConfirmDialog({
         });
       }
     }
-    onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck, intakeDecision);
+    onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck, intakeDecision, fanOutOn && (fanOutPlan?.lanes.length ?? 0) >= 2);
   }
   return (
     <div
@@ -1149,6 +1174,21 @@ export default function KickoffConfirmDialog({
               <span className="mt-1 block text-err-text">{dirtySaveError}</span>
             )}
           </p>
+        )}
+
+        {/* 分几路（2026-11-03 协作四期）：步骤声明了 fanOut 才出现；几路按项目根的数据现算，默认不分，人勾了才分 */}
+        {stepNow.fanOut && fanOutPlan && (
+          <KickoffRow label="分路" title="同一个工作区里几段对话同时做，各管几条，最后一路收尾写共享文件；只评审一次">
+            {fanOutPlan.lanes.length >= 2 ? (
+              <Checkbox
+                checked={fanOutOn}
+                onChange={setFanOutOn}
+                label={<span className="text-xs text-l2">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>}
+              />
+            ) : (
+              <span className="text-xs text-l3">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>
+            )}
+          </KickoffRow>
         )}
 
         {/* 开工接驳（2026-10-13 双台账拍板）：项目根积累面（流程正典清单 + 用户笔记）有

@@ -730,10 +730,10 @@ const CHECK_KEYS: [&str; 4] = ["name", "skill", "script", "description"];
 const TRIGGER_KEYS: [&str; 11] = ["name", "kind", "skill", "frequency", "weekday", "interval_hours", "hour", "minute", "folder", "exts", "mode"];
 const META_KEYS: [&str; 8] = ["id", "name", "description", "version", "created_at", "updated_at", "imported", "project_settings"];
 const PARAM_KEYS: [&str; 5] = ["key", "label", "value", "help", "options"];
-const STEP_KEYS: [&str; 22] = [
+const STEP_KEYS: [&str; 23] = [
     "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
     "optional_inputs", "any_of_inputs", "skills", "required_skills", "resources", "run", "human_tasks",
-    "discussion_seeds", "decisions", "asks_lit_source", "seed_complete", "role", "pack", "params", "checks",
+    "discussion_seeds", "decisions", "asks_lit_source", "seed_complete", "role", "pack", "params", "checks", "fan_out",
 ];
 const HUMAN_KEYS: [&str; 8] = ["title", "guidance", "target", "timing", "optional", "completion", "expected_count", "manifest_path"];
 const DECISION_MODES: [&str; 3] = ["auto_continue", "soft_pause", "hard_pause"];

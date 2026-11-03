@@ -1,4 +1,4 @@
-import type { HumanTaskDto, ProjectStepDto } from "./types";
+import type { HumanTaskDto, ProjectStepDto, StepFanOutDto } from "./types";
 import {
   DRAFT_EVIDENCE_DEFAULT,
   KEEP_WORKING_CLAUSE,
@@ -217,6 +217,21 @@ const OA_VERSION_CLAUSE =
   "预印本服务器（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下，不允许时这篇写入 to-fetch.md。";
 
 /** 精读步 TASK 合同。写法细节以 lit-notes 技能为准；此处堵住「每篇都有文件=完成」。 */
+/** 精读按篇分几路（2026-11-03 协作四期，fan-out.ts / fan_out.rs）：开工弹层勾了才分，几路由 included.json 里纳入的篇数定；
+ *  各路只写自己那几篇的笔记，索引、引文库、待获取清单、交棒与验收摘要留给收尾一路 */
+const LIT_NOTES_FANOUT: StepFanOutDto = {
+  items: "papers/included.json",
+  filter: "decision=included",
+  key: "id",
+  label: "title",
+  per: 8,
+  max: 4,
+  own: "notes/<序号>-<短标题>.md（序号照上面给的写；已有同篇笔记的按 lit-notes 技能的配对办法在原文件上续写）。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
+  merge:
+    "按 lit-notes 技能收尾：先跑技能目录 scripts/lit_records.py write 出清单，再用它写 references.bib；按各路写好的笔记把 notes/index.json 与 papers/included.json 全部 id 对齐" +
+    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。",
+};
+
 const LIT_NOTES_WRITE =
   "写法见 {skill:lit-notes} 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
@@ -413,6 +428,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     name: "文献精读与笔记",
     role: "both",
     workspaceName: "lit-notes",
+    fanOut: LIT_NOTES_FANOUT,
     brief:
       "输入：上一步产物 papers/included.md 与 papers/to-fetch.md（已随 main 合并在本工作区内）。全程按 {skill:lit-notes} 技能执行。\n" +
       LIT_NOTES_WRITE +
@@ -1117,6 +1133,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     name: "文献精读与笔记",
     role: "both",
     workspaceName: "lit-notes",
+    fanOut: LIT_NOTES_FANOUT,
     brief:
       "输入：papers/included.md 与 papers/to-fetch.md。全程按 {skill:lit-notes} 技能。已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。\n" +
       LIT_NOTES_WRITE +

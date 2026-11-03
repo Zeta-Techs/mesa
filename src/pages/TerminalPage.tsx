@@ -21,7 +21,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { sessionRuntimeKey, useAppStore } from "../store";
+import { sessionRuntimeKey, useAppStore, type PendingTerminal } from "../store";
 import type { ProjectSurfaceTab } from "../project-surface";
 import {
   DEFAULT_TOGGLE_SURFACE_HOTKEY,
@@ -197,6 +197,8 @@ import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { italicLine, lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
+import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, type FanOutPending } from "../fan-out";
+import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
@@ -9462,7 +9464,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       // 工作区入口的最后一道：会话 id 对不上（Claude 接续后换了新会话文件、老标签没带复用键）时，
       // 这棵工作树里正有 Agent 在跑的标签就是这一步的对话。工作树一步一棵，按目录认不会认错别的对话
       //（2026-10-22 实证：收件箱「去终端回答」在 Agent 还在跑时新开了一个终端）
-      if (!tabId && (pt.focusSession || pt.reuseKey?.startsWith("ws:"))) {
+      if (!tabId && !pt.parallelLane && (pt.focusSession || pt.reuseKey?.startsWith("ws:"))) {
         const running = tabsRef.current.find((t) => {
           const st = statusesRef.current[t.id];
           return st?.running && !st.shell && samePath(st.cwd ?? "", pt.cwd, IS_WINDOWS);
@@ -10217,6 +10219,37 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       }
     };
     const timer = window.setInterval(() => void tick(), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  // 一步分几路（2026-11-03 协作四期，fan-out.ts）：各路都写了做完标记，用这一步本来的复用键开收尾一路
+  //（开工时拼好、存在 localStorage）；开了就删记录，三天还没到齐的不再等
+  useEffect(() => {
+    const tick = async () => {
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(FANOUT_STORAGE_PREFIX)) keys.push(key);
+      }
+      for (const key of keys) {
+        let pending: FanOutPending;
+        try {
+          pending = JSON.parse(localStorage.getItem(key) ?? "") as FanOutPending;
+        } catch {
+          localStorage.removeItem(key);
+          continue;
+        }
+        if (pending.mergeStarted || (pending.createdAt && Date.now() - pending.createdAt > FANOUT_EXPIRE_MS)) {
+          localStorage.removeItem(key);
+          continue;
+        }
+        const done = await invoke<number[]>("fan_out_done", { dir: pending.worktreePath }).catch(() => null);
+        if (!done || !allLanesDone(done, pending.lanes)) continue;
+        localStorage.removeItem(key);
+        await openTerminalInTurn(pending.merge as PendingTerminal);
+        toast(`「${pending.stepName}」${pending.lanes} 路都做完了，开了收尾一路写共享文件和验收摘要。`, "info");
+      }
+    };
+    const timer = window.setInterval(() => void tick(), 20_000);
     return () => window.clearInterval(timer);
   }, []);
   // 只看没接的标签发出第一句、Agent 起来了：它就是一段正在用的对话，不再算「只看」——

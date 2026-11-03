@@ -168,6 +168,23 @@ pub struct StepDto {
     /// 任务包里的核验脚本（第三期，2026-11-03）：Agent 按任务书「本步核验」跑，结果写
     /// `.ccode/checks/pack-<包>-<名>.jsonl`；判「通过」一律降为待你判断（research_record CheckSource::Pack）
     pub checks: Vec<StepCheckDto>,
+    /// 按数据分几路（2026-11-03 项目内协作四期）：模板 / 任务包声明，开工时人勾选才分；几路由数据定（fan_out.rs）
+    pub fan_out: Option<StepFanOutDto>,
+}
+
+/// 一步按数据分几路：从 `items`（项目内 JSON 文件，数组或对象里第一个数组）按 `filter`（`字段=值`）挑条目、以 `key` 为编号、`label` 为显示名，
+/// 每路 `per` 条、最多 `max` 路；`own` 是每路只许写什么的白话规则，`merge` 是最后收尾一路要做的事（写共享文件、验收摘要）
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StepFanOutDto {
+    pub items: String,
+    pub filter: String,
+    pub key: String,
+    pub label: String,
+    pub per: u32,
+    pub max: u32,
+    pub own: String,
+    pub merge: String,
 }
 
 /// 任务包核验脚本：脚本放在某个技能目录里（跟着技能分发走），script 是技能目录内的相对路径
@@ -1349,6 +1366,8 @@ struct TomlStep {
     params: Vec<StepParamDto>,
     #[serde(default)]
     checks: Vec<StepCheckDto>,
+    #[serde(default)]
+    fan_out: Option<StepFanOutDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1774,6 +1793,17 @@ pub(crate) fn parse_config(text: &str) -> (ProjectConfigDto, Vec<String>) {
                             })
                             .filter(|c| !c.name.is_empty())
                             .collect(),
+                        // 没写数据来源的当没声明；路数至少 1、每路至少 1 条
+                        fan_out: s.fan_out.filter(|f| !f.items.trim().is_empty()).map(|f| StepFanOutDto {
+                            items: f.items.trim().replace('\\', "/"),
+                            filter: f.filter.trim().to_string(),
+                            key: if f.key.trim().is_empty() { "id".into() } else { f.key.trim().to_string() },
+                            label: f.label.trim().to_string(),
+                            per: f.per.max(1),
+                            max: f.max.clamp(1, 8),
+                            own: f.own.trim().to_string(),
+                            merge: f.merge.trim().to_string(),
+                        }),
                     });
                 }
                 Err(e) => warnings.push(format!("steps[{i}] 字段无效，已跳过: {e}")),
@@ -2371,6 +2401,26 @@ pub(crate) fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -
                     cs.push(ct);
                 }
                 t["checks"] = Item::ArrayOfTables(cs);
+            }
+            if let Some(f) = &s.fan_out {
+                let mut ft = Table::new();
+                ft["items"] = value(&f.items);
+                if !f.filter.is_empty() {
+                    ft["filter"] = value(&f.filter);
+                }
+                ft["key"] = value(&f.key);
+                if !f.label.is_empty() {
+                    ft["label"] = value(&f.label);
+                }
+                ft["per"] = value(i64::from(f.per));
+                ft["max"] = value(i64::from(f.max));
+                if !f.own.is_empty() {
+                    ft["own"] = value(&f.own);
+                }
+                if !f.merge.is_empty() {
+                    ft["merge"] = value(&f.merge);
+                }
+                t["fan_out"] = Item::Table(ft);
             }
             arr.push(t);
         }
@@ -5263,6 +5313,7 @@ mod tests {
                 pack: String::new(),
                 params: Vec::new(),
                 checks: Vec::new(),
+                fan_out: None,
                 run: vec![
                     StepRunDto {
                         name: "dev".into(),
@@ -6757,6 +6808,7 @@ resources = ["ghost.pdf"]
                 pack: String::new(),
                 params: Vec::new(),
                 checks: Vec::new(),
+                fan_out: None,
                 run: vec![StepRunDto {
                     name: "dev".into(),
                     command: "echo hi".into(),
