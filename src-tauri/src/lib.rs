@@ -92,6 +92,7 @@ pub fn helper_codex_token(args: &[String]) -> i32 {
 mod codex_continuity;
 mod image_gen;
 mod peek;
+mod project_mail;
 
 mod browser_bridge;
 mod capability_golden;
@@ -938,6 +939,10 @@ pub fn run() {
             task_packs::discard_task_pack_draft,
             task_packs::export_task_pack,
             task_packs::normalize_pack_steps,
+            project_mail::mail_list,
+            project_mail::mail_take,
+            project_mail::mail_requeue,
+            project_mail::mail_withdraw,
             task_packs::preview_task_pack_import,
             task_packs::install_task_pack_import,
             task_packs::discard_task_pack_import,

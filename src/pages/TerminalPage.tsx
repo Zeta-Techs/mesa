@@ -10192,6 +10192,33 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const reportDraft = useCallback((tabId: string, has: boolean) => {
     draftByTabRef.current[tabId] = has;
   }, []);
+  // 项目内传话（2026-11-03 项目内协作二期，project_mail.rs）：同项目另一段工作给这个标签留了话，等它空闲
+  //（Agent 开着、不在干活、不在等你确认）、输入框里没有你没发的字时，经这个标签自己的发送链送进对话，聊天里看得见；
+  // 送不出退回等送。回落成 shell 的标签不送（sendMessage 在那时会接回会话，不能为一条留话替人重开对话）
+  const mailBusyRef = useRef(false);
+  useEffect(() => {
+    const tick = async () => {
+      if (mailBusyRef.current) return;
+      mailBusyRef.current = true;
+      try {
+        for (const [tabId, st] of Object.entries(statusesRef.current)) {
+          if (!st?.running || st.shell || !st.runId || st.attention === "working" || st.attention === "confirm") continue;
+          if (draftByTabRef.current[tabId]) continue;
+          const action = tabActionsRef.current.get(tabId);
+          if (!action) continue;
+          const got = await invoke<[string[], string] | null>("mail_take", { runId: st.runId }).catch(() => null);
+          if (!got) continue;
+          const [ids, text] = got;
+          const res = await action.sendMessage(text).catch((e) => ({ error: String(e) }));
+          if (res.error) await invoke("mail_requeue", { ids }).catch(() => {});
+        }
+      } finally {
+        mailBusyRef.current = false;
+      }
+    };
+    const timer = window.setInterval(() => void tick(), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
   // 只看没接的标签发出第一句、Agent 起来了：它就是一段正在用的对话，不再算「只看」——
   // 不然 Agent 之后退出、切走时会被当成看了没说的顺手收掉
   useEffect(() => {

@@ -180,6 +180,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("peek") {
         std::process::exit(ccode_lib::helper_peek(&args[2..]));
     }
+    // `mesa_helper tell --to 名 "…"`：给同项目另一段工作留话（写自己工作目录的发件箱，project_mail.rs）
+    if args.get(1).map(String::as_str) == Some("tell") {
+        std::process::exit(ccode_lib::helper_peek(&args[1..]));
+    }
     if args.get(1).map(String::as_str) == Some("codex-token") {
         std::process::exit(ccode_lib::helper_codex_token(&args[2..]));
     }

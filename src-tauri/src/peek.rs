@@ -27,7 +27,9 @@ const USAGE: &str = "用法（只读，只看同一项目；Windows PowerShell �
   \"$MESA_PEEK_TOOL\" peek agents                          同项目里其他工作在做什么（不含你自己）
   \"$MESA_PEEK_TOOL\" peek runs [--worker 名]               运行事实：开始 / 结束 / 退出码、最近事件、没通过的核验
   \"$MESA_PEEK_TOOL\" peek changes [--worker 名] [--file 路径]  改了哪些文件、各加减几行；指定工作者时给改动片段
---worker 可写步骤名、目标名、Agent 名、分支名或编号开头几位；写「我」看自己。
+  \"$MESA_PEEK_TOOL\" peek mail                            你发出的和收到的留话、送没送到
+  \"$MESA_PEEK_TOOL\" tell --to 名 \"要说的话\"               给同项目另一段工作留话（或 --file 文件），对方空闲时 Mesa 送进它的对话
+--worker / --to 可写步骤名、目标名、Agent 名、分支名或编号开头几位；--worker 写「我」看自己。
 别人工作副本里的文件只读不改；要用它们的产物，等评审采纳进项目再读。";
 
 /// 一个同伴（或自己）的概况
@@ -56,7 +58,7 @@ fn looks_like_path(s: &str) -> bool {
 }
 
 /// 做什么：研究记录同一口径（purpose_of），目标 / 对话再带上名字
-fn label_of(run: &RunDto, root: &Path) -> String {
+pub(crate) fn label_of(run: &RunDto, root: &Path) -> String {
     let purpose = crate::research_record::purpose_of(run, root);
     match run.task_ref.as_deref().map(str::trim) {
         Some(r) if !r.is_empty() && !looks_like_path(r) && !purpose.contains(r) && run.task_kind != "pipeline_step" => {
@@ -394,16 +396,75 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
     Ok(out)
 }
 
+/// `tell --to 名 "话"` / `tell --to 名 --file 路径`：写进自己工作目录的发件箱（project_mail.rs）
+fn run_tell(args: &[String], me: &RunDto, workers: &[Worker]) -> Result<String, String> {
+    let mut to: Option<String> = None;
+    let mut file: Option<String> = None;
+    let mut words: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--to" => to = Some(it.next().ok_or("--to 后面要写对方名字")?.clone()),
+            "--file" => file = Some(it.next().ok_or("--file 后面要写路径")?.clone()),
+            _ => words.push(a.clone()),
+        }
+    }
+    let to = to.ok_or("要写给谁：--to 对方名字（peek agents 里能看到）")?;
+    let text = match file {
+        Some(f) => std::fs::read_to_string(&f).map_err(|e| format!("读不了 {f}：{e}"))?,
+        None => words.join(" "),
+    };
+    let target = select(workers, &to)?;
+    if target.is_me {
+        return Err("不用给自己留话".into());
+    }
+    if target.run.closed_at.is_some() {
+        return Err(format!("「{}」已经结束，留话送不到；要交代的写进你的报告", target.label));
+    }
+    crate::project_mail::append_outbox(Path::new(&me.isolation_path), &me.id, &target.run.id, &text)?;
+    Ok(format!(
+        "已给「{}」留话：它空闲时 Mesa 会送进它的对话；人能在工作台看到、能撤回。送没送到：peek mail",
+        target.label
+    ))
+}
+
+fn render_mail(me: &RunDto, mails: &[crate::project_mail::MailDto]) -> String {
+    let mine: Vec<&crate::project_mail::MailDto> = mails.iter().filter(|m| m.from_run == me.id || m.to_run == me.id).collect();
+    if mine.is_empty() {
+        return "没有你发出或收到的留话（7 天内）。".into();
+    }
+    let mut out = String::new();
+    for m in mine {
+        let status = match m.status.as_str() {
+            "delivered" => "已送到",
+            "withdrawn" => "人撤回了",
+            _ if !m.to_open => "对方已结束，送不到",
+            _ => "等对方空闲",
+        };
+        let (dir, who) = if m.from_run == me.id { ("发给", &m.to_label) } else { ("来自", &m.from_label) };
+        let text: String = m.text.chars().take(200).collect();
+        out.push_str(&format!("{} {}「{}」 · {}：{}\n", time_text(&m.at), dir, who, status, text.replace('\n', " ")));
+    }
+    out
+}
+
 fn run_cli(args: &[String]) -> Result<String, String> {
-    let a = parse_args(args)?;
-    if !matches!(a.cmd.as_str(), "agents" | "runs" | "changes") {
+    let is_tell = args.first().map(String::as_str) == Some("tell");
+    let a = if is_tell { Args { cmd: "tell".into(), worker: None, file: None } } else { parse_args(args)? };
+    if !matches!(a.cmd.as_str(), "agents" | "runs" | "changes" | "mail" | "tell") {
         return Err(USAGE.into());
     }
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let (me, runs) = crate::runs::peek_context(std::env::var(RUN_ENV).ok().as_deref(), &cwd)?;
     let root = PathBuf::from(me.project_root.clone().unwrap_or_default());
+    if a.cmd == "mail" {
+        return Ok(render_mail(&me, &crate::project_mail::collect(&root, &runs)));
+    }
     let mut workers = vec![worker(me.clone(), &root, true)];
     workers.extend(pick_peers(&me, runs, chrono::Utc::now()).into_iter().map(|r| worker(r, &root, false)));
+    if is_tell {
+        return run_tell(&args[1..], &me, &workers);
+    }
     match a.cmd.as_str() {
         "agents" => Ok(render_agents(&workers)),
         "runs" => {

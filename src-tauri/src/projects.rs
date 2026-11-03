@@ -3158,6 +3158,7 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
              # Mesa 过程文件（人工请求一步一份、只放没答的问题）\n\
              .ccode/handoff-*.md\n\
              .ccode/help-wanted.md\n\
+             .ccode/outbox.jsonl\n\
              /output/\n"
             .into();
     }
@@ -3169,6 +3170,7 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          # Mesa 接力简报与人工请求：过程文件，不进版本库（人工请求一步一份、只放没答的问题）\n\
          .ccode/handoff-*.md\n\
          .ccode/help-wanted.md\n\
+         .ccode/outbox.jsonl\n\
          \n\
          # 同步到文献库时 Mesa 按引文库生成的导入文件：每次重写，不进 git\n\
          /papers/zotero-library.ris\n\
@@ -4598,6 +4600,8 @@ pub async fn inspect_step_inputs(
 /// best-effort：拿不到 git 公共目录（非仓库/异常）时静默跳过，不阻断 TASK.md 写入。
 pub(crate) fn exclude_task_md(worktree_root: &Path) {
     exclude_in_git(worktree_root, "TASK.md");
+    // 项目内传话的发件箱（project_mail.rs）：Agent 写在自己工作目录，过程文件不进 git
+    exclude_in_git(worktree_root, crate::project_mail::OUTBOX_REL);
 }
 
 /// 往仓库的 `.git/info/exclude` 加一行（已有就不加；不是 git 仓库或失败都静默——best-effort，不阻断）。

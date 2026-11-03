@@ -1558,6 +1558,23 @@ export interface PackBasedOnDto {
   steps: ProjectStepDto[];
 }
 
+/** 同项目留话（mail_list，project_mail.rs）：一段工作给另一段的话 */
+export interface ProjectMailDto {
+  id: string;
+  at: string;
+  fromRun: string;
+  fromLabel: string;
+  fromAgent: string;
+  toRun: string;
+  toLabel: string;
+  text: string;
+  /** pending 等送 | delivered 已送进对话 | withdrawn 人撤回了 */
+  status: "pending" | "delivered" | "withdrawn";
+  deliveredAt: string | null;
+  /** 收话方还开着 */
+  toOpen: boolean;
+}
+
 /** 导入任务包预览（preview_task_pack_import）：人看过、确认才装 */
 export interface PackImportPreviewDto {
   token: string;

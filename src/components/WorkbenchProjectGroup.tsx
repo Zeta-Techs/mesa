@@ -13,6 +13,7 @@ import {
 import RunCaret from "./RunCaret";
 import { ghostActionClass } from "./PageFrame";
 import type { RunCaretState } from "../run-caret";
+import ProjectMailRow from "./ProjectMailRow";
 import { absTime, shortWhen } from "../rel-time";
 import {
   CARD_VISIBLE_TASKS,
@@ -238,6 +239,7 @@ export default function WorkbenchProjectGroup({
             )}
           </ul>
         )}
+        {!collapsed && <ProjectMailRow projectPath={card.path} />}
         {footer ? <div className="pb-2 pl-[calc(1.5rem+6px+0.25rem)] pr-4">{footer}</div> : null}
       </div>
     </section>

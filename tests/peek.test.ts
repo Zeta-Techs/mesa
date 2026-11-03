@@ -37,3 +37,17 @@ test("项目说明：同项目有别的工作开着才带「看一眼」那一�
   assert.ok(text.includes('`"$MESA_PEEK_TOOL" peek agents`'), text);
   assert.ok(renderProjectContextPack({ ...base, peers: 1, isWindows: true }).includes("`& $env:MESA_PEEK_TOOL peek agents`"));
 });
+
+test("留话：工作台摘要与每条状态字", async () => {
+  const { mailStatusText, mailSummary } = await import("../src/project-mail.ts");
+  const mails = [
+    { status: "pending" as const, toOpen: true },
+    { status: "pending" as const, toOpen: false },
+    { status: "delivered" as const, toOpen: true },
+  ];
+  assert.equal(mailSummary(mails), "同项目留话 3 条，1 条等对方空闲");
+  assert.equal(mailStatusText(mails[1]), "对方已结束，送不到");
+  assert.equal(mailStatusText(mails[2]), "已送到");
+  assert.equal(mailSummary([mails[2]]), "同项目留话 1 条");
+  assert.ok(peekSectionLines(1, false).join("\n").includes('tell --to 名字 "要说的话"'));
+});

@@ -3534,6 +3534,7 @@ fn is_delivery_process_file(path: &str) -> bool {
         base,
         "included.json"
             | "help-wanted.md"
+            | "outbox.jsonl"
             | "zotero-sync.md"
             | ".gitignore"
             | ".gitattributes"
