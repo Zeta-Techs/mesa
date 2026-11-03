@@ -252,6 +252,11 @@ fn stale_merged_copy(root: &str) -> bool {
     crate::workspaces::run_git(dir, &["diff", "--quiet", "HEAD", "--", HELP_WANTED_FILE], std::time::Duration::from_secs(10)).is_ok()
 }
 
+/// 工作区里那份是不是老历史：全是没有选项的自由写法，且已提交、没再改
+fn legacy_history(root: &str, items: &[HelpItemDto]) -> bool {
+    items.iter().all(|i| i.options.is_empty() && i.recommend.is_none()) && stale_merged_copy(root)
+}
+
 fn sources() -> Vec<Source> {
     let Ok(conn) = crate::workspaces::db() else { return Vec::new() };
     let Ok(rows) = crate::workspaces::query_workspaces(&conn) else { return Vec::new() };
@@ -307,6 +312,11 @@ pub async fn list_help_requests() -> Vec<HelpRequestDto> {
                 let text = fs::read_to_string(Path::new(&s.root).join(HELP_WANTED_FILE)).ok()?;
                 let items: Vec<_> =
                     parse_items(&text).into_iter().map(|i| redact_item(i, &secrets)).collect();
+                // 步骤工作区里那份：已提交、没再改、全是 11-02 之前的自由写法（没有 A–D 选项）——是老项目从主仓带过来或早就答完的历史，
+                // 不再列（2026-11-03 用户真实项目核对：综述流程测试 5 个工作区各挂 18–21 条九月的旧问题）。新格式的问题照常列，提交了也列
+                if s.workspace_id.is_some() && legacy_history(&s.root, &items) {
+                    return None;
+                }
                 (!items.is_empty()).then_some(HelpRequestDto {
                     root: s.root,
                     workspace_id: s.workspace_id,
@@ -541,6 +551,16 @@ mod tests {
         assert!(stale_merged_copy(&r));
         fs::write(root.join(HELP_WANTED_FILE), "- 旧问题\n- 新问题\n").unwrap();
         assert!(!stale_merged_copy(&r));
+        // 工作区里那份：已提交的旧写法算历史；已提交的新格式（带选项）照常列
+        g(&["commit", "-qam", "y"]);
+        let legacy = parse_items("- 旧问题\n- 新问题\n");
+        assert!(legacy_history(&r, &legacy));
+        let structured = "- 年份下限？\n  建议：A\n  A：2021 起 —— 少\n  B：不限 —— 多\n";
+        fs::write(root.join(HELP_WANTED_FILE), structured).unwrap();
+        g(&["commit", "-qam", "z"]);
+        let items = parse_items(structured);
+        assert!(!items.is_empty() && !items[0].options.is_empty(), "{items:?}");
+        assert!(!legacy_history(&r, &items));
         fs::remove_dir_all(&root).ok();
     }
 }
