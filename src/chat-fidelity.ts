@@ -134,6 +134,15 @@ function cmp(a: [number, number, number], b: [number, number, number]): number {
   return 0;
 }
 
+/** 两个版本串取较新的；一边读不出就取另一边 */
+export function newerVersion(a: string | null, b: string | null): string | null {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa) return pb ? b : a;
+  if (!pb) return a;
+  return cmp(pb, pa) > 0 ? b : a;
+}
+
 /** 平台 → agent → 已核对到的版本（金丝雀基线） */
 export type VerifiedTable = Record<string, Record<string, string>>;
 

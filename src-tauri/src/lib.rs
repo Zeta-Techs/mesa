@@ -4,6 +4,7 @@ mod about;
 pub mod dirs;
 mod attach_grants;
 mod agent_specs;
+mod cli_verified;
 mod client_open;
 mod app_icon;
 mod feedback;
@@ -631,6 +632,7 @@ pub fn run() {
             global_config::global_drift_detail,
             global_config::forget_active_global,
             global_config::set_global_conflict,
+            cli_verified::cli_verified_advanced,
             client_open::client_open_list,
             client_open::client_open_plan,
             client_open::client_open_launch,

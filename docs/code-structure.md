@@ -597,7 +597,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   chat-fidelity.ts           # 聊天层对九家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）
   chat-mismatch.ts           # 「聊天和终端对不上」一键对照反馈（2026-10-30，tests/chat-mismatch.test.ts）：入口标签、标题、详情脚手架、聊天侧 / 终端侧摘录与对照全文拼法；只拼不脱敏（出站前经 feedback.rs feedback_chat_snapshot），事件 mesa:report-chat-mismatch 由 App 接、打开 FeedbackModal
-  cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表）；useCliNewer 给降级用
+  cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表），与后端 cli_verified_advanced 联网前移的取较新；useCliNewer 给降级用
 vite-env.d.ts              # Vite client 类型引用一行：import.meta.glob（cli-verified.ts 构建期读金丝雀基线用）与 import.meta.env 的 TS 类型来源
 __conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore 钉死不进仓）：内嵌一段真会话 JSON 按 ?s= 参数切十片挂 ConversationView，供开发用 Vite 17575＋headless Chrome 截对话组件（memory「组件截图 harness」流程）；验完即删，tsc 会扫到它、别提交
   text-reveal.ts             # 聊天实时预览匀速显示（2026-10-22，tests/text-reveal.test.ts）：revealStep 按积压放字、shownAfterRetarget
@@ -1190,6 +1190,8 @@ src-tauri/src/
                              # 基础鉴权/裸流式 SSE 检测/带策略参数对比降级定位/自定义 Header 接受度，
                              # matrix §9 第 8 条）；请求策略字段校验（范围、claude effort 闭集、
                              # Header 名禁引号冒号、环境变量名 POSIX 字符集）
+  cli_verified.rs            # 已核对 CLI 版本联网前移：include_str! 随包本平台金丝雀基线，半天一次取 main 上的基线，指纹（除 version/checks）
+                             #   一样才认更新的版本；缓存 <config>/ccode/cli-verified-cache.json，按 Mesa 版本作废
   client_open.rs             # 客户端接力（设计 docs/design-client-handoff.md）：Mesa 的一条对话/一个项目交给该 agent 的 GUI 客户端接着做。
                              # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR 的 scheme、版本取当前用户应用包仓库的
                              #   MSIX 包全名（两家 Windows 客户端都是 MSIX，2026-10-20 本机核实），30 秒缓存）→ 纯函数 build_plan 预检

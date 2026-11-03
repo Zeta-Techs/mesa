@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_FIDELITY, chatFidelity, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
+import { CHAT_FIDELITY, chatFidelity, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
 test("九家都写了聊天层能做到哪一步", () => {
   const nine = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok"];
@@ -57,4 +57,12 @@ test("小标签：还在测试写「测试版」，第三四档写「简化」�
   assert.equal(fidelityBadge(null, false), null);
   assert.equal(fidelityBadge(chatFidelity("cursor"), false), "简化");
   assert.equal(fidelityBadge(chatFidelity("codex"), false), "测试版");
+});
+
+test("联网前移的核对版本与随包的取较新，一边读不出取另一边", () => {
+  assert.equal(newerVersion("2.1.316", "2.1.320"), "2.1.320");
+  assert.equal(newerVersion("2.1.316", "2.1.300"), "2.1.316");
+  assert.equal(newerVersion(null, "2.1.320"), "2.1.320");
+  assert.equal(newerVersion("2.1.316", null), "2.1.316");
+  assert.equal(newerVersion(null, null), null);
 });

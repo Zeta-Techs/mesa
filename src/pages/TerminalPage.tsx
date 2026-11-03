@@ -82,8 +82,8 @@ import {
   forkPreviewCovered,
 } from "../chat-handoff";
 import { recordChatHandoff } from "../chat-handoff-log";
-import { CANARY_PLATFORM, VERIFIED_VERSIONS, useCliNewer } from "../cli-verified";
-import { chatFidelity, tierLabel, verifiedVersion, versionTrust } from "../chat-fidelity";
+import { currentVerifiedVersion, useCliNewer } from "../cli-verified";
+import { chatFidelity, tierLabel, versionTrust } from "../chat-fidelity";
 import {
   MISMATCH_EVENT,
   MISMATCH_TEMPLATE,
@@ -9023,7 +9023,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const agentId = sess?.agentId ?? statuses[tabId]?.agentId ?? null;
     const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
     const installed = agents.find((a) => a.id === agentId)?.version ?? null;
-    const verified = agentId ? verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId) : null;
+    const verified = currentVerifiedVersion(agentId);
     const channel = sess?.channel ?? null;
     const fidelity = chatFidelity(agentId, IS_WINDOWS);
     const raw = mismatchSnapshot({

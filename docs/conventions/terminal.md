@@ -247,7 +247,8 @@
 - **聊天层标「测试版」与按版本降级（2026-10-22 用户，设计 `docs/design-chat-fidelity.md`）**：输入框左下 `ChatBetaBadge`（字由 `fidelityBadge` 定：
   `beta` 的写「测试版」、第三四档「简化」、摘了测试版的只在 CLI 更新时写「未核对」；按家摘测试版的条件见设计 §4）点开说当前这家的档
   （`chat-fidelity.ts` `CHAT_FIDELITY` 单一出处，九家各一行）与要回终端做的事。已核对版本 = 金丝雀基线的 `version`（`cli-verified.ts`
-  构建时 `import.meta.glob` 只取这个字段；本平台没有就取别的平台最新的）。用户的 CLI 更新时（`useCliNewer`）：**不替人自动按任何一步**
+  构建时 `import.meta.glob` 只取这个字段；本平台没有就取别的平台最新的）；**2026-11-04 起另联网前移**（`cli_verified.rs`，半天一次）：
+  main 上本平台基线的指纹（除 version / checks）与随包的完全一样才认它更新的版本，两者取较新——指纹变过就照旧降级。用户的 CLI 更新时（`useCliNewer`）：**不替人自动按任何一步**
   （Claude 提问表单交卷后的自动「Submit answers」停掉）、菜单卡提示「这版 CLI Mesa 还没核对过」、徽标带点；读不到版本不降级。
   新加「替人按键」的自动动作必须同样看 `cliNewerRef`。esbuild 打包组件的测试里没有 `import.meta.glob`，`cli-verified.ts` 用 try 兜成空表。
 - **聊天和终端对不上：如实说明 + 一键对照反馈（2026-10-30 用户）**：聊天层不是 CLI 原生数据，说明里如实写「聊天是 Mesa 从终端整理出来的，

@@ -1,8 +1,8 @@
 import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
-import { chatFidelity, fidelityBadge, tierLabel, verifiedVersion } from "../chat-fidelity";
-import { CANARY_PLATFORM, VERIFIED_VERSIONS, useCliNewer } from "../cli-verified";
+import { chatFidelity, fidelityBadge, tierLabel } from "../chat-fidelity";
+import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
 
 /**
@@ -35,7 +35,7 @@ export function ChatBetaNotes({
   const installed = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
   const fidelity = chatFidelity(agentId, IS_WINDOWS);
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
-  const verified = agentId ? verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId) : null;
+  const verified = useVerifiedVersion(agentId);
   const newer = useCliNewer(agentId);
   return (
     <div className="px-2 pb-1 pt-0.5 text-xs leading-5 text-l3">
