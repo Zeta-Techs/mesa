@@ -9,9 +9,11 @@ on:
     - cron: '17 1 * * *'   # 北京时间每天 9:17
   workflow_dispatch:
 
-# 写权限只用来把「核对版本前移」的基线提交回主线（只动 scripts/cli-canary/baseline/，见最后一步）
+# 写权限只用来把「核对版本前移」的基线提交回主线（只动 scripts/cli-canary/baseline/，见最后一步）；
+# issues 写权限只用来发「上游有新的结构化通道」提醒（scripts/cli-canary/upstream_issue.py）
 permissions:
   contents: write
+  issues: write
 
 jobs:
   canary:
@@ -51,13 +53,24 @@ jobs:
           "$env:LOCALAPPDATA\cursor-agent" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: 跑金丝雀
         shell: bash
-        # --accept-unchanged：只是版本往前走、指纹没变的家，顺手把核对版本前移（随包进 Mesa，决定聊天层降不降级）；
+        # --accept-unchanged：只是版本往前走、指纹没变的家，顺手把核对版本前移（随包进 Mesa，装好的 Mesa 也会从 main 取，决定聊天层降不降级）；
         # 有变化 / 检查没过的家照旧报红，等人看报告
         run: python -I -X utf8 scripts/cli-canary/canary.py --accept-unchanged --out "$RUNNER_TEMP/canary"
       - name: 报告进摘要
         if: always()
         shell: bash
         run: cat "$RUNNER_TEMP/canary/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+      # 上游通道雷达（不算红）：CLI 新出了能让聊天层更接近上游的通道（程序状态、本机服务、ACP…），或更新日志提到，
+      # 开一条 issue / 追加评论，同一条只提醒一次。只在 macOS 这一路发（程序状态要伪终端才探得到，也免得两路抢着发）
+      - name: 上游新通道提醒
+        if: always() && runner.os == 'macOS' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          f="$RUNNER_TEMP/canary/upstream-new.md"
+          if [ ! -s "$f" ]; then echo "没有要提醒的"; exit 0; fi
+          python3 -I scripts/cli-canary/upstream_issue.py "$f"
       - name: 核对版本前移的基线提交回主线
         if: always() && github.ref == 'refs/heads/main'
         shell: bash

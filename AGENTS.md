@@ -197,7 +197,9 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   两层核对。各家走法（Codex app-server、OpenCode 服务、OSC 7501 程序状态及其 Windows 不接）见 terminal.md / safety.md 同名条、
   matrix §14、`docs/design-chat-structured-channels.md`。
 - **CLI 金丝雀（2026-10-21）**：`.github/workflows/cli-canary.yml` 每天装最新版九家 CLI 比指纹；红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI。
-  适配（或判定无需适配）后在**同一平台**跑 `--accept`，把新指纹连同改动一起提交；基线 `version` 随包进 Mesa（`src/cli-verified.ts`），
+  适配（或判定无需适配）后在**同一平台**跑 `--accept`，把新指纹连同改动一起提交；基线 `version` 随包进 Mesa（`src/cli-verified.ts`；
+  装好的 Mesa 另半天一次从 main 取指纹没变的前移，`cli_verified.rs`，2026-11-04），**上游新出的结构化通道由金丝雀「上游通道雷达」开 issue 提醒、
+  结论记 `scripts/cli-canary/upstream.json`**（2026-11-04），
   CI 会把只前进了版本的基线自动提交回 main，本地推送前先 pull。维护流程见 `docs/agent-skills/mesa-cli-canary/SKILL.md` 与
   `scripts/cli-canary/README.md`；**仓库维护技能放 `docs/agent-skills/`，不进 `src-tauri/resources/skills/`**（那里随应用分发给用户）。
 - **非对话模型与出图（2026-10-23）**：出图 / 视频 / 向量等模型按名分类（`image_gen.rs` ↔ `src/model-kinds.ts` 镜像，共读

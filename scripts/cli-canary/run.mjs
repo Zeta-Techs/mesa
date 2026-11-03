@@ -6,6 +6,7 @@
  *   npm run canary                              九家都跑，和基线比
  *   npm run canary -- --accept                  看过报告、Mesa 也改好了：记成新基线
  *   npm run canary -- --accept-unchanged        只是版本往前走、指纹没变：只挪核对版本
+ *   npm run canary -- --accept-upstream         上游通道雷达里没登记的线索先以「未定」写进 upstream.json
  *   npm run canary -- --agents claude-code      只跑这几家
  */
 import { spawnSync } from "node:child_process";

@@ -10,7 +10,7 @@ Mesa 的聊天层建在九家 CLI（Claude Code、Codex、Gemini、Qwen Code、O
 和 `scripts/cli-canary/baseline/<平台>/<家>.json` 比；另有一层「全局配置」检查：Mesa 写进去的配置，外部直接用 CLI 时还认不认（2026-10-30 起）。
 
 这个技能管三件事，按用户这次要的做：**日常维护**（第一～五步）、**发版前复核官方配置文档**（「发版前」一节）、**改连接 / 设为全局写法时的核对**（「改写法时」一节）。
-基线里的 `version` 会随包进 Mesa：用户的 CLI 比它新时，聊天层不替人自动按键（`src/cli-verified.ts`）。你的工作是让这套东西一直是真的。
+基线里的 `version` 会随包进 Mesa（装好的 Mesa 另每半天从 main 取指纹没变的前移，`cli_verified.rs`）：用户的 CLI 比它新时，聊天层不替人自动按键（`src/cli-verified.ts`）。你的工作是让这套东西一直是真的。
 
 开始前读：`AGENTS.md`（仓库硬约束）、`scripts/cli-canary/README.md`、`docs/design-chat-fidelity.md`；涉及连接 / 设为全局时再读
 `docs/conventions/profiles.md` §12 开头九条与 `docs/design-connection-agent-forms.md`。
@@ -182,6 +182,13 @@ Qwen 官方登录停用都是读文档才发现的）。每次发版前（archit
 - 连接弹层「看实际会拿到什么」（`EffectPreview`）显示的就是 `preview_launch_plan` / `preview_profile_global` 的结果：改完自己打开看一眼对不对。
 - 用户看得见的变化同步 `CHANGELOG.md` 与 `docs/guide/user-guide.md` 第 9 章。
 
+## 上游通道雷达
+
+report.md 最后一节「上游通道雷达（不算红）」，以及仓库 issue「上游有新的结构化通道：聊天层可以更接近上游」：某家 CLI 新出了
+能让聊天层少靠读屏的通道。逐条按 `scripts/cli-canary/README.md`「上游通道雷达」评估：能替掉 `docs/design-chat-fidelity.md` §3 读屏债
+哪一项、本机实测它真这么做，再决定接或不接；结论写进 `scripts/cli-canary/upstream.json`（「用上：…」「不接：原因」），
+要接的改动另起提交、先给用户看方案。不要为了压提醒而批量写「不接」。
+
 ## 每两周一次：哪些家可以摘「测试版」
 
 条件（`docs/design-chat-fidelity.md` §4）：这家连续两周金丝雀没报红，且「转到终端」计数里「等确认，聊天卡上认不出菜单」「等确认，这家没有精确状态」基本为 0。
@@ -210,5 +217,6 @@ sqlite3 "<app.db 路径>" "SELECT agent, reason, detail, SUM(count) FROM chat_ha
 - 环境故障：<有就写，重跑了没有>
 - Mesa 自身问题：<如主线 CI 红、Windows 测试起不来>
 - 等你决定：<要在 Windows 上 accept 的家 / 可以摘测试版的家 / 要不要推送>
-- 提醒：基线有更新的话，要发新版 Mesa 用户才拿得到
+- 上游通道雷达：<报告最后一节的新线索；评估了哪几条、接了 / 写了「不接：原因」的，没定的列出来等用户>
+- 提醒：用 --accept 改过指纹的基线，要发新版 Mesa 用户才拿得到（只是版本前移的，装好的 Mesa 自己会取）
 ```

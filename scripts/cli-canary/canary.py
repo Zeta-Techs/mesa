@@ -10,11 +10,13 @@
   画面    聊天层读屏：审批菜单认不认得出、实时预览读不读得到
   Codex   本机 Codex 的默认提示词还取不取得到（Mesa 给 Codex 的 base_instructions 来源）
   全局    Mesa「设为全局」写进临时 HOME 的配置，不经 Mesa 直接拉起 CLI，请求用没用上这条连接的模型和密钥
+另附「上游通道雷达」（不算红）：CLI 新出的结构化通道线索，与 upstream.json 的结论比（见下文 upstream_phase）
 
 用法（仓库根目录）：
   python -I -X utf8 scripts/cli-canary/canary.py                 # 九家都跑（没装的跳过），和 baseline/<平台>/ 比
   python -I -X utf8 scripts/cli-canary/canary.py --accept        # 核对过、Mesa 也改好了：把这次的指纹记成新基线
   python -I -X utf8 scripts/cli-canary/canary.py --accept-unchanged  # 只有版本往前走、指纹没变：把核对版本往前挪
+  python -I -X utf8 scripts/cli-canary/canary.py --accept-upstream   # 上游通道雷达里没登记的线索以「未定」写进 upstream.json
   可选：--agents codex,qwen  --out <目录>  --skip-screen（不抓屏，不需要 pyte）
 退出码：0 = 没变化且检查全过；1 = 有变化或检查没过（看 <out>/report.md）；2 = 环境问题没跑起来。
 不用任何真实密钥：请求只到本机假网关；临时 HOME 不拷本机配置（用户的 MCP / 插件会改工具清单，各台机器才可比）。
@@ -50,10 +52,11 @@ TOOL_PROMPT = {"codex": "TRIGGER_TOOL TRIGGER_ESC 跑一下"}
 DEFAULT_TOOL_PROMPT = "TRIGGER_TOOL 跑一下"
 # 公开发版说明（GitHub Releases）；Claude 另取 CHANGELOG.md，没有公开说明的家不取
 RELEASES = {"codex": "openai/codex", "gemini": "google-gemini/gemini-cli", "qwen": "QwenLM/qwen-code",
-            "opencode": "sst/opencode"}
+            "opencode": "anomalyco/opencode", "kimi": "MoonshotAI/kimi-code"}
 CHANGELOG_KEYWORDS = re.compile(
     r"env|hook|session|transcript|rollout|jsonl|tool|todo|task|config|setting|permission|approv|sandbox|app-server|"
-    r"instruction|prompt|windows|stream|render|provider|gateway|base.?url|resume|/clear|third-party|model", re.I)
+    r"instruction|prompt|windows|stream|render|provider|gateway|base.?url|resume|/clear|third-party|model|"
+    r"\bacp\b|\bosc\b|status|server|\bserve\b|remote|\bsdk\b|protocol|daemon", re.I)
 
 
 def log(msg):
@@ -576,6 +579,141 @@ def changelog(agent, old, new):
     return out[:80]
 
 
+# ---------- 上游新通道雷达（2026-11-04 用户：「Kimi 早就能报程序状态，今天才偶然知道」）----------
+# 聊天层能接近上游多少，取决于 CLI 给不给结构化通道（docs/design-chat-fidelity.md）。每次跑都看三处线索：
+#   终端探询：在伪终端里起一下 CLI，看它问不问 / 报不报程序状态（OSC 7501）——只在 macOS / Linux（ConPTY 吞 OSC）；
+#   命令行帮助：--help 里的 ACP、stream-json、本机服务、远程、hooks 一类开关；
+#   更新日志：基线版本到这一版之间提到这些词的条目。
+# 线索与 upstream.json（每家每条线索：Mesa 用上了 / 看过不接及原因）比，没登记过的就是「上游新出的」：写进报告，
+# 不算红（不是 CLI 坏了，是能做得更好），CI 另开 / 追加一条 issue。核对后在 upstream.json 写上结论（--accept-upstream 先占位）。
+UPSTREAM_PATH = os.path.join(HERE, "upstream.json")
+UPSTREAM_SIGNALS = {
+    "program-status": ("程序状态（OSC 7501）", None, r"OSC ?7501|program.?status"),
+    "acp": ("ACP（Agent Client Protocol）", r"\bacp\b", r"\bACP\b|agent client protocol"),
+    "stream-json": ("结构化输出（stream-json）", r"stream(ing)?-json", r"stream(ing)?-json"),
+    "server": ("本机服务 / 接口", r"\bserve\b|--serve\b|app-server|exec-server|\bserver\b.*\b(daemon|headless|http|local|web)\b",
+               r"app-server|\bserve\b|server mode|http api|\bSDK\b|daemon"),
+    "remote": ("远程接入", r"--remote\b|remote-control|\bremote\b \[", r"remote.?control|--remote\b"),
+    "hooks": ("hooks", r"\bhooks?\b", r"\bhooks?\b"),
+}
+
+
+def terminal_probe(agent, adir, secs=8):
+    """伪终端里起一下 CLI（临时 HOME、不发话），照 Mesa 的口径答 DA1 / kitty / 程序状态探询，记它问了 / 报了什么"""
+    if PLATFORM == "win32":
+        return None
+    import pty, select, signal
+    b = bin_path(agent)
+    if not b:
+        return None
+    home = tempfile.mkdtemp(prefix="mesa-upstream-")
+    work = os.path.join(home, "work"); os.makedirs(work)
+    env = {"HOME": home, "PATH": os.environ.get("PATH", ""), "TERM": "xterm-256color", "COLORTERM": "truecolor",
+           "TERM_PROGRAM": "Mesa", "LANG": os.environ.get("LANG", "en_US.UTF-8")}
+    # 一律断网：只看启动时问了终端什么，不能让没登录的 CLI 去拿设备码、弹浏览器
+    env.update(OFFLINE_ENV)
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(work)
+        os.execve(b, [b], env)
+    out, end = b"", time.time() + secs
+    replies = {b"\x1b[c": b"\x1b[?1;2c", b"\x1b[0c": b"\x1b[?1;2c", b"\x1b[?u": b"\x1b[?0u",
+               b"\x1b[>0q": b"\x1bP>|Mesa\x1b\\",
+               b"\x1b]7501;?": b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\"}
+    try:
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.2)
+            if not r:
+                continue
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            out += chunk
+            for q, a in replies.items():
+                if q in chunk:
+                    os.write(fd, a)
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL); os.waitpid(pid, 0)
+        except OSError:
+            pass
+        shutil.rmtree(home, ignore_errors=True)
+    open(os.path.join(adir, "terminal-probe.bin"), "wb").write(out)
+    return {"osc7501Query": b"\x1b]7501;?" in out, "osc7501Report": b"\x1b]7501;state=" in out}
+
+
+def upstream_phase(agent, adir, notes):
+    """这一家此刻露出的结构化通道线索：{线索: [证据…]}；外加 notes（基线到这一版的更新日志条目）里提到的"""
+    found = {}
+    b = bin_path(agent)
+    if b:
+        _, text = run([b, "--help"], timeout=60)
+        open(os.path.join(adir, "help.txt"), "w", encoding="utf-8").write(text)
+        for key, (_, help_re, _) in UPSTREAM_SIGNALS.items():
+            if not help_re:
+                continue
+            hits = [l.strip() for l in text.splitlines() if re.search(help_re, l, re.I)]
+            if hits:
+                found.setdefault(key, []).extend(f"--help：{h[:160]}" for h in hits[:3])
+    tp = terminal_probe(agent, adir)
+    if tp and (tp["osc7501Query"] or tp["osc7501Report"]):
+        found.setdefault("program-status", []).append(
+            "启动时" + ("问了终端 OSC 7501;?" if tp["osc7501Query"] else "直接报了 OSC 7501 状态"))
+    news = []
+    for line in notes:
+        for key, (_, _, log_re) in UPSTREAM_SIGNALS.items():
+            if re.search(log_re, line, re.I):
+                news.append((key, line))
+    return found, news
+
+
+def upstream_report(results, accept):
+    """results：{agent: (found, news)}。返回 (报告行, 要提醒的键)：键是没登记过的线索（agent:线索），以及更新日志里提到
+    Mesa 还没用上的通道的条目（agent:线索:条目摘要）——同一条只提醒一次由 CI 按键去重。accept 时把没登记的占位写进 upstream.json"""
+    import hashlib
+    known = json.load(open(UPSTREAM_PATH, encoding="utf-8")) if os.path.exists(UPSTREAM_PATH) else {}
+    lines, fresh, gone, pending, alert = [], [], [], [], []
+    for agent, (found, news) in results.items():
+        mine = known.get(agent, {})
+        for key, ev in found.items():
+            if key not in mine:
+                fresh.append((agent, key, ev))
+            elif str(mine[key]).startswith("未定"):
+                pending.append((agent, key, mine[key]))
+        # 只在本平台探得到的线索（程序状态要伪终端）不算「撤了」
+        for key in mine:
+            if key not in found and not (key == "program-status" and PLATFORM == "win32"):
+                gone.append((agent, key, mine[key]))
+        for key, line in news:
+            lines.append(f"- {agent} 更新日志提到{UPSTREAM_SIGNALS[key][0]}：{line[:240]}")
+            # 已用上的通道（如 Claude 的 hooks）更新日志天天提，只进报告；程序状态这类新通道一律提醒
+            if not str(mine.get(key, "")).startswith("用上") or key == "program-status":
+                alert.append(f"{agent}:{key}:{hashlib.sha1(line.encode('utf-8')).hexdigest()[:8]}")
+    head = ["## 上游通道雷达（不算红）", ""]
+    if fresh:
+        head += ["**上游有、Mesa 还没登记的结构化通道**——聊天层可能能做得更接近上游，看完在 `scripts/cli-canary/upstream.json` 写结论：", ""]
+        head += [f"- {a} · {UPSTREAM_SIGNALS[k][0]}：{'；'.join(ev)}" for a, k, ev in fresh]
+        head.append("")
+    if pending:
+        head += ["还没定的：", ""] + [f"- {a} · {UPSTREAM_SIGNALS[k][0]}：{v}" for a, k, v in pending] + [""]
+    if gone:
+        head += ["登记过、这次没探到的（上游撤了，或改了名字）：", ""]
+        head += [f"- {a} · {UPSTREAM_SIGNALS.get(k, (k,))[0]}：原结论「{v}」" for a, k, v in gone] + [""]
+    if lines:
+        head += ["更新日志里和通道有关的条目：", ""] + lines + [""]
+    if not (fresh or pending or gone or lines):
+        head += ["没有新线索。", ""]
+    if accept and fresh:
+        for a, k, _ in fresh:
+            known.setdefault(a, {})[k] = f"未定（{time.strftime('%Y-%m-%d')} 发现，待评估）"
+        json.dump(known, open(UPSTREAM_PATH, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1, sort_keys=True)
+        open(UPSTREAM_PATH, "a", encoding="utf-8", newline="\n").write("\n")
+        head += [f"> 已把 {len(fresh)} 条新线索以「未定」登记进 upstream.json", ""]
+    alert = sorted(set(alert) | {f"{a}:{k}" for a, k, _ in fresh})
+    return head, alert
+
+
 def baseline_path(agent):
     return os.path.join(HERE, "baseline", PLATFORM, f"{agent}.json")
 
@@ -588,6 +726,7 @@ def main():
     ap.add_argument("--accept-unchanged", action="store_true",
                     help="检查全过、指纹和基线一样、只有版本往前走时，把基线的核对版本往前挪（随包进 Mesa，见 src/cli-verified.ts）")
     ap.add_argument("--skip-screen", action="store_true")
+    ap.add_argument("--accept-upstream", action="store_true", help="把上游雷达里没登记的线索以「未定」写进 upstream.json")
     args = ap.parse_args()
     for k in [k for k in os.environ if k in CI_ENV or k.startswith("CI_")]:
         del os.environ[k]
@@ -614,6 +753,7 @@ def main():
     if why:
         report += [f"> 抓屏没跑：{why}", ""]
     bad = False
+    upstream = {}
     try:
         for agent in agents:
             fp = probe_agent(agent, gw, out, args.skip_screen, deps)
@@ -630,6 +770,8 @@ def main():
                        f"- 与基线比：{'没有变化' if base and not changes else ('无基线，用 --accept 建立' if not base else f'{len(changes)} 处变化')}", ""]
             report += [f"  - {c}" for c in changes]
             notes = changelog(agent, base and base.get("version"), fp["version"])
+            log(f"[{agent}] 上游通道雷达…")
+            upstream[agent] = upstream_phase(agent, os.path.join(out, agent), [n for n in notes if not n.startswith("（")])
             if notes:
                 report += ["", "### 更新日志里可能相关的条目", ""] + [f"  - {n}" for n in notes]
             report.append("")
@@ -651,6 +793,12 @@ def main():
                 bad = True
     finally:
         gw.stop()
+    radar, alert = upstream_report(upstream, args.accept_upstream)
+    report += radar
+    # CI 据此开 / 追加 issue（.github/workflows/cli-canary.yml，按键去重）：只有要提醒的才写
+    if alert:
+        open(os.path.join(out, "upstream-new.md"), "w", encoding="utf-8").write(
+            f"<!-- upstream-keys: {','.join(alert)} -->\n平台：{PLATFORM}\n\n" + "\n".join(radar))
     text = "\n".join(report)
     open(os.path.join(out, "report.md"), "w", encoding="utf-8").write(text)
     log(text)
