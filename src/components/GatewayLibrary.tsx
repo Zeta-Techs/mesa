@@ -10,6 +10,7 @@ import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, quietActionClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import PagePanel from "./PagePanel";
+import GatewayAutoConfig from "./GatewayAutoConfig";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
@@ -1521,6 +1522,9 @@ export default function GatewayLibrary({
                   </div>
                 )}
               </div>
+            )}
+            {editing !== "new" && (
+              <GatewayAutoConfig gateway={gateways.find((g) => g.id === editing.id) ?? editing} dirty={dirty} />
             )}
             <div className="text-sm text-l2">
               <button
