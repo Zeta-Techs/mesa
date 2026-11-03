@@ -69,7 +69,18 @@ fn read_state() -> MailState {
         .unwrap_or_default()
 }
 
+/// 状态文件只留近 30 天的（汇总只看 7 天内的留话，再早的记录没用了）
+fn prune(state: &mut MailState) {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+    let keep = |at: &String| chrono::DateTime::parse_from_rfc3339(at).map(|t| t.with_timezone(&chrono::Utc) > cutoff).unwrap_or(true);
+    state.delivered.retain(|_, at| keep(at));
+    state.withdrawn.retain(|_, at| keep(at));
+}
+
 fn write_state(state: &MailState) -> Result<(), String> {
+    let mut state = state.clone();
+    prune(&mut state);
+    let state = &state;
     let path = state_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -77,12 +88,22 @@ fn write_state(state: &MailState) -> Result<(), String> {
     crate::profiles::atomic_write(&path, &serde_json::to_string_pretty(state).map_err(|e| e.to_string())?)
 }
 
+/// 只读末尾 OUTBOX_CAP 字节（新的在后；项目根的发件箱所有根目录对话共用、只增不减）。
+/// 按字节读、宽松转 UTF-8：切在汉字中间也不会整段读空，截断的那一行解析不了就跳过（2026-11-03 自查）
 fn read_outbox(dir: &Path) -> Vec<OutboxLine> {
+    use std::io::{Read, Seek, SeekFrom};
     let path = dir.join(OUTBOX_REL);
-    let Ok(file) = fs::File::open(&path) else { return Vec::new() };
-    let mut text = String::new();
-    let _ = std::io::Read::read_to_string(&mut std::io::Read::take(file, OUTBOX_CAP), &mut text);
-    text.lines().filter_map(|l| serde_json::from_str::<OutboxLine>(l.trim()).ok()).collect()
+    let Ok(mut file) = fs::File::open(&path) else { return Vec::new() };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    if len > OUTBOX_CAP && file.seek(SeekFrom::Start(len - OUTBOX_CAP)).is_err() {
+        return Vec::new();
+    }
+    let mut bytes = Vec::new();
+    let _ = file.take(OUTBOX_CAP).read_to_end(&mut bytes);
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<OutboxLine>(l.trim()).ok())
+        .collect()
 }
 
 fn recent(at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
@@ -338,6 +359,20 @@ mod tests {
         let text = delivery_text(&after[..1]);
         assert!(text.starts_with("【同项目留话，Mesa 转达】"), "{text}");
         assert!(text.contains("tell --to"), "{text}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn outbox_reads_tail_past_cap_even_mid_character() {
+        let dir = std::env::temp_dir().join(format!("mesa-mail-tail-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join(".ccode")).unwrap();
+        // 前面塞满中文旧行（截断点会落在汉字中间），最后一条是新的
+        let old = format!("{{\"id\":\"o\",\"at\":\"x\",\"from\":\"a\",\"to\":\"b\",\"text\":\"{}\"}}\n", "旧".repeat(300));
+        let mut text = old.repeat((OUTBOX_CAP as usize / old.len()) + 50);
+        text.push_str("{\"id\":\"new\",\"at\":\"x\",\"from\":\"a\",\"to\":\"b\",\"text\":\"新的\"}\n");
+        fs::write(dir.join(OUTBOX_REL), text).unwrap();
+        let lines = read_outbox(&dir);
+        assert_eq!(lines.last().map(|l| l.id.as_str()), Some("new"));
         fs::remove_dir_all(&dir).ok();
     }
 }

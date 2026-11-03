@@ -10198,6 +10198,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   //（Agent 开着、不在干活、不在等你确认）、输入框里没有你没发的字时，经这个标签自己的发送链送进对话，聊天里看得见；
   // 送不出退回等送。回落成 shell 的标签不送（sendMessage 在那时会接回会话，不能为一条留话替人重开对话）
   const mailBusyRef = useRef(false);
+  const pageVisibleRef = useRef(visible);
+  pageVisibleRef.current = visible;
   useEffect(() => {
     const tick = async () => {
       if (mailBusyRef.current) return;
@@ -10206,6 +10208,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         for (const [tabId, st] of Object.entries(statusesRef.current)) {
           if (!st?.running || st.shell || !st.runId || st.attention === "working" || st.attention === "confirm") continue;
           if (draftByTabRef.current[tabId]) continue;
+          // 你正对着它的终端层：可能在 TUI 里直接打字（聊天框草稿管不到），这一轮不送，免得粘进你没打完的那行（2026-11-03 自查）
+          if (
+            pageVisibleRef.current &&
+            tabId === focusedIdRef.current &&
+            (surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current) === "terminal"
+          )
+            continue;
           const action = tabActionsRef.current.get(tabId);
           if (!action) continue;
           const got = await invoke<[string[], string] | null>("mail_take", { runId: st.runId }).catch(() => null);
@@ -10230,6 +10239,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         const key = localStorage.key(i);
         if (key?.startsWith(FANOUT_STORAGE_PREFIX)) keys.push(key);
       }
+      // 终端页不在前台时收不下开工请求：等人回到对话页再开，记录留着（2026-11-03 自查：原先先删记录再交请求，没收下就丢了收尾）
+      if (!pageVisibleRef.current) return;
       for (const key of keys) {
         let pending: FanOutPending;
         try {
@@ -10244,8 +10255,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         }
         const done = await invoke<number[]>("fan_out_done", { dir: pending.worktreePath }).catch(() => null);
         if (!done || !allLanesDone(done, pending.lanes)) continue;
+        if (!(await openTerminalInTurn(pending.merge as PendingTerminal))) continue;
         localStorage.removeItem(key);
-        await openTerminalInTurn(pending.merge as PendingTerminal);
         toast(`「${pending.stepName}」${pending.lanes} 路都做完了，开了收尾一路写共享文件和验收摘要。`, "info");
       }
     };

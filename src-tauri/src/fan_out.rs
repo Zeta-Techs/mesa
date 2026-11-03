@@ -40,7 +40,8 @@ fn value_text(v: &serde_json::Value) -> String {
 /// 数据文件里的条目：数组本身，或对象里第一个数组字段
 pub(crate) fn items_at(dir: &Path, spec: &StepFanOutDto) -> Result<Vec<FanOutItemDto>, String> {
     let rel = spec.items.replace('\\', "/");
-    if rel.starts_with('/') || rel.split('/').any(|seg| seg == "..") {
+    // 只收普通路径段：Windows 上 C:/x、C:x 不以 / 开头，join 却会整个换掉 dir（2026-11-03 自查）
+    if rel.is_empty() || !Path::new(&rel).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
         return Err(format!("分路的数据文件要写项目内相对路径：{}", spec.items));
     }
     let path = dir.join(&rel);
@@ -50,9 +51,11 @@ pub(crate) fn items_at(dir: &Path, spec: &StepFanOutDto) -> Result<Vec<FanOutIte
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{rel} 读不懂：{e}"))?;
     let array = match &value {
         serde_json::Value::Array(a) => a.clone(),
-        serde_json::Value::Object(o) => o
-            .values()
-            .find_map(|v| v.as_array().cloned())
+        // 对象里认 items / records / rows（与 lit_records.py 同序），都没有再取第一个数组；serde_json 的对象按键名排序，「第一个」不是文件里的顺序
+        serde_json::Value::Object(o) => ["items", "records", "rows"]
+            .iter()
+            .find_map(|k| o.get(*k).and_then(|v| v.as_array()).cloned())
+            .or_else(|| o.values().find_map(|v| v.as_array().cloned()))
             .ok_or(format!("{rel} 里没有条目列表"))?,
         _ => return Err(format!("{rel} 里没有条目列表")),
     };
@@ -211,5 +214,18 @@ mod tests {
         assert!(shard(items(0), 8, 4).is_empty());
         let lanes = shard(items(7), 3, 4);
         assert_eq!(lanes[2][0].seq, 6, "序号连续不跳");
+    }
+
+    #[test]
+    fn items_reject_non_normal_paths_and_prefer_known_list_keys() {
+        let dir = std::env::temp_dir().join(format!("mesa-fan-keys-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("x.json"), r#"{"excluded":[{"id":"e"}],"rows":[{"id":"r1"},{"id":"r2"}]}"#).unwrap();
+        let s = StepFanOutDto { items: "x.json".into(), key: "id".into(), per: 1, max: 4, ..Default::default() };
+        assert_eq!(items_at(&dir, &s).unwrap().iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["r1", "r2"]);
+        for bad in ["/etc/x.json", "../x.json", "./x.json", ""] {
+            assert!(items_at(&dir, &StepFanOutDto { items: bad.into(), ..s.clone() }).is_err(), "{bad}");
+        }
+        fs::remove_dir_all(&dir).ok();
     }
 }

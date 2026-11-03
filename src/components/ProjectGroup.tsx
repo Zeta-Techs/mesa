@@ -634,8 +634,14 @@ export default function ProjectGroup({
             /* 存不下就不自动开收尾，人在各路做完后自己开 */
           }
           useAppStore.getState().setPage("terminal");
-          for (const req of lanes) await openTerminalInTurn(req);
-          toast(`「${step.name}」分成 ${lanes.length} 路同时做，各路做完 Mesa 会再开一路收尾。`, "info");
+          let opened = 0;
+          for (const req of lanes) if (await openTerminalInTurn(req)) opened += 1;
+          toast(
+            opened === lanes.length
+              ? `「${step.name}」分成 ${lanes.length} 路同时做，各路做完 Mesa 会再开一路收尾。`
+              : `「${step.name}」分 ${lanes.length} 路，只开起来 ${opened} 路；没开的那几路到对话页重新开工这一步再勾分路。`,
+            opened === lanes.length ? "info" : "warning",
+          );
         },
         // 刷新先于跳终端：run 脚本写入在工作区行刷新之前，「运行脚本」菜单当次即可见
         onOpenTerminal: async (ws, initialPrompt, opts) => {

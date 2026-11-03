@@ -89,10 +89,13 @@ export default function SplitPlanDialog({
     setError(null);
     try {
       const paths = taskPathsForScope("whole", [], "write_tree");
-      const tasks: TaskDto[] = [];
+      // 一路一路记；中途有一路记不下也接着记别的，只要记下了一路就把方案收进留底——
+      // 不然人再点一次批准，前面记下的会重复一遍（2026-11-03 自查）
+      const recorded: { task: TaskDto; waits: boolean }[] = [];
+      const failed: string[] = [];
       for (const lane of lanes) {
-        tasks.push(
-          await invoke<TaskDto>("task_create", {
+        try {
+          const task = await invoke<TaskDto>("task_create", {
             input: {
               projectRoot: projectPath,
               kind: project.workMode === "office" ? "office_doc" : "free_research",
@@ -102,12 +105,18 @@ export default function SplitPlanDialog({
               outputPaths: paths.outputPaths,
               permission: "write_tree",
             },
-          }),
-        );
+          });
+          recorded.push({ task, waits: laneWaits(lane) });
+        } catch (reason) {
+          failed.push(`${lane.name}（${String(reason)}）`);
+        }
       }
+      if (recorded.length === 0) throw new Error(`一路都没记下：${failed.join("；")}`);
       await invoke("split_plan_close", { projectRoot: projectPath, outcome: "approved" });
+      if (failed.length) toast(`这几路没记下，方案已收进留底，要做就在项目里手动新建目标：${failed.join("；")}`, "error");
+      const tasks = recorded.map((r) => r.task);
       // 要等别的几路做完的只记下、不开工（人等前面评审采纳后在项目里点开始；开工时整仓复制，就带上了前面的产物）
-      const toStart = tasks.filter((_, i) => !laneWaits(lanes[i]));
+      const toStart = recorded.filter((r) => !r.waits).map((r) => r.task);
       const parked = tasks.length - toStart.length;
       // 终端页先挂上，才收得下开工请求
       if (toStart.length > 0) setPage("terminal");
@@ -122,7 +131,7 @@ export default function SplitPlanDialog({
             agent: profile.agent,
             profileId: profile.id,
           });
-          await openTerminalInTurn({
+          const taken = await openTerminalInTurn({
             extraEnv: {},
             title: task.name,
             agentId: profile.agent,
@@ -136,6 +145,7 @@ export default function SplitPlanDialog({
             }),
             ...goalRunTerminalFields(task, run, prompt),
           });
+          if (!taken) throw new Error("终端页没收下开工请求");
           started += 1;
         } catch (reason) {
           toast(`「${task.name}」没开起来：${String(reason)}。目标已记下，可以在项目里点开始重试。`, "error");
