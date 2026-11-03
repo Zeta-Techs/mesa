@@ -78,7 +78,7 @@ Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用�
 - 项目列表**从各 agent 历史会话自动聚合并分类**，辅以手动添加
 - token/费用统计随 P3 顺带做，不提前
 - **三平台（macOS/Windows/Linux）同步**支持，功能不得以平台为由裁剪
-- **Agent Workspace（v3.221 / v3.235）**：以 Project 为家。人负责目标，系统给环境（文件地图、规则、上下文）和验收门；Agent 自己规划。CLI 是第一种 Runtime。用户不面对 Run。并行只来自人声明或模板，禁止自动拆任务 / 智能路由。科研/编程两套 worktree 库不合并。工作台「正在进行」只列交互活；关标签后按 `runId` 找回。定时隔离产物经评审才进主仓。改工作台/目标/验收前必读 `docs/conventions/agent-workbench.md`
+- **Agent Workspace（v3.221 / v3.235）**：以 Project 为家。人负责目标，系统给环境（文件地图、规则、上下文）和验收门；Agent 自己规划。CLI 是第一种 Runtime。用户不面对 Run。**并行三层（2026-11-03 改写）**：Run 内部 CLI 自己的子 agent 不限制；Mesa 层的拆分由 AI 提议、人批准一次才开；免批准的自动展开只限模板 / 任务包声明过、能机械分片的（几路由数据定、每路只写自己的文件、有预算、合成一次评审）；不做自动模型路由。项目内工作者可互相「看一眼」与传话（留记录、可撤回），跨项目不直连。细则 agent-workbench.md「项目内协作」、设计稿 `docs/design-project-coordination.md`。科研/编程两套 worktree 库不合并。工作台「正在进行」只列交互活；关标签后按 `runId` 找回。定时隔离产物经评审才进主仓。改工作台/目标/验收前必读 `docs/conventions/agent-workbench.md`
 - **开源与许可（2026-10-12）**：Apache-2.0；**版权落款 `泽塔前沿科技（杭州）有限公司`**（七处署名）；商业中转预设不进开源默认表；
   厂商图标只给官方域名，第三方中转站一律首字占位；**改动依赖后必须 `npm run gen:notices`**；对外发布修改版须换名换图标（`TRADEMARKS.md`）。
   细则 `docs/conventions/open-source.md`
@@ -261,7 +261,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 | 终端与工作台 | `docs/conventions/terminal.md` | PTY 回落 shell、会话标题、标签持久化白名单、评审/冲突覆盖层、改动面板、收件箱与注意力规则、键盘流、分屏、关窗守卫、WebGL 探针、输入侧（图片粘贴/文件拖入/右键菜单/链接点击）、沉浸阅读区、聊天层旁路 |
 | 流水线与项目域 | `docs/conventions/pipeline.md` | 工作区创建/漂移/归档/删除、流水线开步/模板/编辑器、接力与提炼接力、任务卡、人工事项与讨论种子、agent 人工请求（help-wanted）、收件箱分类胶囊、示例课题、白话双层、定时雷达与双台账 |
 | 编程 Git / GitHub | `docs/conventions/coding-git.md` | **改编程页 git 前必读**：工作树 vs 主仓 vs GitHub Desktop、从基准开工、远程身份、PR 环、不做任意 git 命令框 |
-| 多 Agent 工作台对象 | `docs/conventions/agent-workbench.md` | **改工作台/并行/无头/Runtime 前必读（v3.221 定稿；第 0–3 期核心路径已落地）**：Project→Task→Run、编程车道、RuntimeKind、禁止自动拆工；定时任务默认隔离 worktree；非 Git 项目失败 |
+| 多 Agent 工作台对象 | `docs/conventions/agent-workbench.md` | **改工作台/并行/无头/Runtime 前必读（v3.221 定稿；第 0–3 期核心路径已落地）**：Project→Task→Run、编程车道、RuntimeKind、并行三层与项目内协作；定时任务默认隔离 worktree；非 Git 项目失败 |
 | 步骤工作面板 | `docs/conventions/step-panel.md` | **新增步骤/模板前必读**：七条硬规则（顺序即语义、空节点不出现、同一事实只说一次、孤立按钮、主路径唯一、显式决策契约门控、角色标注）、问题该在什么时刻与层级出现（项目层/决策项/按需问/种子/人工事项五选一）、文案与术语、新增模板检查清单 |
 | 主题与设计系统 | `docs/conventions/design-system.md` | 主题令牌、字体栈、线条语言、控件密度、页面框架、对话页三栏、步进器规格、活跃度热力图、已否决设计 |
 | 各页界面规格 | `docs/conventions/codex-style-ui.md` | 应用外壳与灵动岛、交互语法、工作台/项目/运行/对话/连接/技能/MCP/用量/设置各页布局、逐项核验清单 |
