@@ -81,6 +81,14 @@ test("导入的包带文件才在加进项目前再问一次", () => {
   const note = importedScriptsNote({ name: "质控", imported: true, scripts: many })!;
   assert.ok(note.includes("「质控」是从别人那里导入的"));
   assert.ok(note.includes("· x/s0.py"));
-  assert.ok(note.includes("…共 10 个"));
+  assert.ok(note.includes("…共 10 项"));
   assert.ok(!note.includes("s9.py"));
+});
+
+test("自查：我的版本加了核验或资源就算改过，内置升级不自动整份换掉", () => {
+  const review = basedOnFor("review")!;
+  const old = [{ ...review.steps[0], brief: "旧" }, ...review.steps.slice(1)];
+  const withCheck = old.map((s, i) => (i === 1 ? { ...s, checks: [{ name: "c", skill: "k", script: "s.py", description: "" }] } : s));
+  const up = builtinUpdate({ steps: withCheck, basedOn: { ...review, steps: old } }, review.steps)!;
+  assert.equal(up.untouched, false);
 });

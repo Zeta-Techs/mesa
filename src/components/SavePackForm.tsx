@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
 import { compactFieldClass, compactPrimaryActionClass, inlineActionClass } from "./PageFrame";
-import { nextParamKey, parameterize } from "../task-packs";
+import { mergeStepParams, nextParamKey, parameterize } from "../task-packs";
 import { issueLine, splitIssues } from "../task-pack-author";
 import type { PackIssueDto, ProjectStepDto, StepParamDto, TaskPackDto } from "../types";
 
@@ -22,16 +22,13 @@ export default function SavePackForm({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [picked, setPicked] = useState<Set<number>>(() => new Set(steps.map((_, i) => i)));
-  // 已经来自某个包的步骤：它的参数原样带进来（简报里已是 {param:键}）
-  const [params, setParams] = useState<StepParamDto[]>(() => {
-    const out: StepParamDto[] = [];
-    for (const s of steps) for (const p of s.params ?? []) if (!out.some((x) => x.key === p.key)) out.push({ ...p });
-    return out;
-  });
+  // 已经来自某个包的步骤：它的参数原样带进来（简报里已是 {param:键}）；几个包同键不同义的换新键（mergeStepParams）
+  const merged = useMemo(() => mergeStepParams(steps), [steps]);
+  const [params, setParams] = useState<StepParamDto[]>(() => merged.params.map((p) => ({ ...p })));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const chosen = useMemo(() => steps.filter((_, i) => picked.has(i)), [steps, picked]);
+  const chosen = useMemo(() => merged.steps.filter((_, i) => picked.has(i)), [merged, picked]);
   const preview = useMemo(() => parameterize(chosen, params), [chosen, params]);
 
   function setParam(index: number, patch: Partial<StepParamDto>) {

@@ -26,6 +26,11 @@ export const COMPARED_FIELDS = [
   "discussionSeeds",
   "role",
   "fanOut",
+  // 2026-11-03 自查：少比这几样时，加了核验 / 资源的「我的版本」被当成没改过、内置一升级就被整份换掉
+  "checks",
+  "resources",
+  "workspaceName",
+  "asksLitSource",
 ] as const;
 
 const FIELD_LABELS: Record<(typeof COMPARED_FIELDS)[number], string> = {
@@ -44,6 +49,10 @@ const FIELD_LABELS: Record<(typeof COMPARED_FIELDS)[number], string> = {
   discussionSeeds: "讨论种子",
   role: "角色",
   fanOut: "分路",
+  checks: "核验",
+  resources: "资源",
+  workspaceName: "工作区名",
+  asksLitSource: "问文献来源",
 };
 
 /** 去掉「没写」的各种写法（undefined / null / 空串 / 空数组 / false），键排序：档案卡读回来的和前端原样的才比得上 */

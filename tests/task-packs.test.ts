@@ -97,3 +97,29 @@ test("触发：一句话说明与默认勾不勾", () => {
   assert.equal(triggerSummary(sched), "定时任务：每周三 09:05跑技能 sc-qc");
   assert.equal(triggerDefaultOn(sched), false, "定时会叫 AI 花钱，默认不勾");
 });
+
+test("自查：短值不会换进已写好的占位、原有占位不动；两个包同键不同义换新键", async () => {
+  const { parameterize, mergeStepParams } = await import("../src/task-packs.ts");
+  const s = { name: "a", workspaceName: "a", brief: "投 Nature，阈值 1，目录 {param:dir}", expectedArtifacts: [], skills: [], run: [] };
+  const { steps, hits } = parameterize([s as never], [
+    { key: "p1", label: "期刊", value: "Nature", help: "", options: [] },
+    { key: "p2", label: "阈值", value: "1", help: "", options: [] },
+  ]);
+  assert.equal(steps[0].brief, "投 {param:p1}，阈值 {param:p2}，目录 {param:dir}");
+  assert.deepEqual(hits, { p1: 1, p2: 1 });
+  const fromA = { ...s, brief: "投 {param:p1}", params: [{ key: "p1", label: "期刊", value: "Nature", help: "", options: [] }] };
+  const fromB = { ...s, brief: "阈值 {param:p1}", params: [{ key: "p1", label: "阈值", value: "20%", help: "", options: [] }] };
+  const fromB2 = { ...s, brief: "再用 {param:p1}", params: [{ key: "p1", label: "阈值", value: "20%", help: "", options: [] }] };
+  const merged = mergeStepParams([fromA, fromB, fromB2] as never);
+  assert.deepEqual(merged.params.map((p) => `${p.key}=${p.label}`), ["p1=期刊", "p2=阈值"]);
+  assert.equal(merged.steps[0].brief, "投 {param:p1}");
+  assert.equal(merged.steps[1].brief, "阈值 {param:p2}");
+  assert.equal(merged.steps[2].brief, "再用 {param:p2}", "同义的第二步也认到同一个新键");
+});
+
+test("自查：导入的包只带运行命令也要再问一次", async () => {
+  const { importedScriptsNote } = await import("../src/task-packs.ts");
+  const note = importedScriptsNote({ name: "x", imported: true, scripts: [], steps: [{ run: [{ name: "go", command: "rm -rf data", isDefault: true }] }] as never });
+  assert.ok(note?.includes("运行命令：rm -rf data"), note ?? "");
+  assert.equal(importedScriptsNote({ name: "x", imported: true, scripts: [], steps: [{ run: [] }] as never }), null);
+});

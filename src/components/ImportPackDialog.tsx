@@ -140,6 +140,20 @@ export default function ImportPackDialog({
             )}
           </div>
         )}
+        {pack.steps.some((st) => st.run.length > 0) && (
+          <div>
+            <p className="mb-1 text-xs font-medium text-l2">步骤自带的运行命令（加进项目后能在终端一键跑）</p>
+            <ul className="space-y-0.5 font-mono text-micro text-l2">
+              {pack.steps.flatMap((st) =>
+                st.run.map((r) => (
+                  <li key={`${st.name}-${r.name}`}>
+                    {st.name} · {r.name}：{r.command}
+                  </li>
+                )),
+              )}
+            </ul>
+          </div>
+        )}
         {preview.ignored > 0 && <p className="text-xs text-l4">zip 里另有 {preview.ignored} 个文件不属于任务包，没解开。</p>}
       </div>
     </Modal>

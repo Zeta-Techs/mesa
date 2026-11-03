@@ -64,18 +64,48 @@ export function parameterize(
 ): { steps: ProjectStepDto[]; hits: Record<string, number> } {
   const hits: Record<string, number> = Object.fromEntries(params.map((p) => [p.key, 0]));
   const order = [...params].filter((p) => p.value.trim()).sort((a, b) => b.value.trim().length - a.value.trim().length);
+  // 先换成私用区单字符占位、全部换完再落成 {param:键}：直接写 {param:p1} 的话，后面短的值（如阈值「1」）
+  // 会被换进前面写好的占位里，变成 {param:p{param:p2}}（2026-11-03 自查实测）。原文里已有的 {param:…} 也先藏起来不动
+  const keep: string[] = [];
+  const hide = (t: string) => t.replace(/\{param:[A-Za-z0-9_-]+\}/g, (m) => String.fromCharCode(0xf000 + keep.push(m) - 1));
   const out = steps.map((step) =>
     mapTexts(step, (text) => {
-      let t = text;
-      for (const p of order) {
+      let t = hide(text);
+      order.forEach((p, i) => {
         const v = p.value.trim();
         hits[p.key] += countIn(t, v);
-        t = t.split(v).join(`{param:${p.key}}`);
-      }
-      return t;
+        t = t.split(v).join(String.fromCharCode(0xe000 + i));
+      });
+      return t
+        .replace(/[\ue000-\ue0ff]/g, (c) => `{param:${order[c.charCodeAt(0) - 0xe000].key}}`)
+        .replace(/[\uf000-\uf8ff]/g, (c) => keep[c.charCodeAt(0) - 0xf000]);
     }),
   );
   return { steps: out, hits };
+}
+
+/** 另存时把选中步骤自带的参数并成一份：两个包都用了 p1 但意思不同（名字或取值不同）时，后来的那个换成新键，
+ *  并把它那几步文字里的 {param:p1} 一起改掉（2026-11-03 自查：原先同键只留第一个，另一个包的步骤悄悄换了含义） */
+export function mergeStepParams(steps: readonly ProjectStepDto[]): { steps: ProjectStepDto[]; params: StepParamDto[] } {
+  const params: StepParamDto[] = [];
+  const outSteps = steps.map((step) => {
+    const renames: Record<string, string> = {};
+    for (const p of step.params ?? []) {
+      const same = params.find((x) => x.key === p.key);
+      if (!same) {
+        params.push({ ...p });
+        continue;
+      }
+      if (same.label === p.label && same.value === p.value) continue;
+      const twin = params.find((x) => x.label === p.label && x.value === p.value);
+      const key = twin?.key ?? nextParamKey(params);
+      if (!twin) params.push({ ...p, key });
+      renames[p.key] = key;
+    }
+    if (Object.keys(renames).length === 0) return step;
+    return mapTexts(step, (t) => t.replace(PARAM_RE, (m, k: string) => (renames[k] ? `{param:${renames[k]}}` : m)));
+  });
+  return { steps: outSteps, params };
 }
 
 /** 任务包核验的结果文件（research_record 认 pack- 开头：检查器记成文件名、「通过」降为待你判断） */
@@ -143,9 +173,12 @@ export function triggerDefaultOn(t: PackTriggerDto): boolean {
  * 导入的包第一次加进项目前再问一次（第四期，design-task-packs §7.2「来自别人的脚本首次运行前再提示一次」）：
  * 返回要问的话；不是导入的、或没带文件返回 null。人点了确认才带 scriptsReviewed 去加，加成后后端去掉导入标记
  */
-export function importedScriptsNote(pack: Pick<TaskPackDto, "name" | "imported" | "scripts">): string | null {
-  if (!pack.imported || pack.scripts.length === 0) return null;
-  const list = pack.scripts.slice(0, 8).map((s) => `· ${s.replace(/^skills\//, "")}`);
-  if (pack.scripts.length > 8) list.push(`· …共 ${pack.scripts.length} 个`);
-  return `「${pack.name}」是从别人那里导入的，带着这些文件：\n${list.join("\n")}\n\n加进流程后，AI 会在工作副本里按任务书运行它们。导入时看过全文、信得过再继续；这个提示只出现这一次。`;
+export function importedScriptsNote(pack: Pick<TaskPackDto, "name" | "imported" | "scripts"> & { steps?: readonly Pick<ProjectStepDto, "run">[] }): string | null {
+  // 步骤自带的运行命令也算（2026-11-03 自查：只带 run 命令、没有脚本文件的导入包原先不再问）
+  const runs = (pack.steps ?? []).flatMap((s) => (s.run ?? []).map((r) => `运行命令：${r.command}`));
+  const all = [...pack.scripts.map((s) => s.replace(/^skills\//, "")), ...runs];
+  if (!pack.imported || all.length === 0) return null;
+  const list = all.slice(0, 8).map((s) => `· ${s}`);
+  if (all.length > 8) list.push(`· …共 ${all.length} 项`);
+  return `「${pack.name}」是从别人那里导入的，带着这些文件和命令：\n${list.join("\n")}\n\n加进流程后，AI 会在工作副本里按任务书运行它们。导入时看过全文、信得过再继续；这个提示只出现这一次。`;
 }

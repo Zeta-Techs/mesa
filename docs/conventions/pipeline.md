@@ -1512,7 +1512,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `normalize_pack_steps` 命令给前端用）才比，**前端不另抄缺省值**（2026-11-03 实证：不归一时 decision_mode / role / 人工事项 completion 的缺省值
   让六套内置全被误判「改过」）。比较字段见 `pack-builtin.ts COMPARED_FIELDS`。现在的内置与当时的不同 → 标「内置有更新」；我的版本与当时的一模一样 →
   打开模板库时直接换成新版；改过的由人逐步勾（changed 换新版、added 按内置位置插入、removed 拿掉），「保留我的」与「按勾选更新」都把对照点挪到现在的内置。
-  覆盖另存不给 `based_on` 时沿用旧的。内置模板本身不迁成包文件（仍在 `pipeline-presets.ts`，偏离设计稿 §6，见 architecture §10 同日条）。
+  覆盖另存不给 `based_on` 时沿用旧的；**导入与装草稿是整份换掉**（`SaveExtras.fresh`），覆盖同名时不沿用旧版本的技能、触发、based_on、项目设定（2026-11-03 自查）。内置模板本身不迁成包文件（仍在 `pipeline-presets.ts`，偏离设计稿 §6，见 architecture §10 同日条）。
 - **模板库里「使用」我的任务（第四期）**：空流程追加、已有步骤整条换（`add_task_pack_to_project` 带 `strategy: replace`，确认同「更换模板」）；
   参数取默认值、触发不建——要填参数或建触发走流程编辑器「＋ 从模板追加」。新项目的模板选择层（TemplatePickModal）同样列我的任务。
 - **加进项目只有一条路（2026-11-03）**：编辑器追加、模板库使用、新项目选择层、草稿试跑都走 `pack-add.ts addPackToProject`：
