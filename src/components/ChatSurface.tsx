@@ -1586,7 +1586,8 @@ export default function ChatSurface({
           {firstRunNote && (firstRunNote.theme || firstRunNote.security) && <FirstRunLine note={firstRunNote} agent={agentLabel(agentId)} />}
           {helpHere && !decision && (
             <p role="status" className="mb-2 flex items-center gap-2 text-xs text-caution-text">
-              <span>AI 写了 {helpHere[1]} 个要你拍板的问题（不回它会按兜底继续）</span>
+              {/* 不说「AI 写了」：项目根是几段对话共用的，问题未必是眼前这段写的（2026-11-03 用户截图：出图对话下挂着 21 个旧问题） */}
+              <span>这个目录里有 {helpHere[1]} 个等你拍板的问题（不回会按兜底继续）</span>
               <button
                 type="button"
                 onClick={() => setHelpViewReq(helpHere[0])}

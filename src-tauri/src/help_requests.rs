@@ -148,10 +148,13 @@ fn parse_blocks(text: &str) -> Vec<Block> {
         }
         if let Some(heading) = t.strip_prefix('#') {
             finish(&mut open, &mut seen, &mut out);
-            // 「已拍板」「已由人拍板」都算；「待你拍板」不算
-            answered_section = ["已解决", "已回复", "已答复", "已处理", "已完成", "备查"]
-                .iter()
-                .any(|w| heading.contains(w))
+            // 「已拍板」「已由人拍板」都算；「待你拍板」不算。旧写法的「记录事项（不需回复）」「——已闭环」也不是问题
+            //（2026-11-03 用户截图：综述测试项目根的旧文件把记录事项与闭环条目数成 21 个待拍板）
+            answered_section = [
+                "已解决", "已回复", "已答复", "已处理", "已完成", "备查", "已闭环", "不需回复", "无需回复", "不用回复", "记录事项", "仅记录",
+            ]
+            .iter()
+            .any(|w| heading.contains(w))
                 || (heading.contains('已') && heading.contains("拍板"));
             continue;
         }
@@ -238,6 +241,17 @@ struct Source {
     repo_path: String,
 }
 
+/// 主仓根的 help-wanted.md 被 git 跟踪、且和上次提交一字不差：是早先步骤把它提交进工作区、采纳时合并上来的旧副本
+///（新项目 .gitignore 里已排除，老项目还在跟踪），不是根目录对话新写的问题，不列（2026-11-03 用户截图）。
+/// 根目录对话后来又往里写了问题，文件就和提交不一样了，照常列
+fn stale_merged_copy(root: &str) -> bool {
+    let dir = Path::new(root);
+    if crate::workspaces::run_git(dir, &["ls-files", "--error-unmatch", HELP_WANTED_FILE], std::time::Duration::from_secs(10)).is_err() {
+        return false;
+    }
+    crate::workspaces::run_git(dir, &["diff", "--quiet", "HEAD", "--", HELP_WANTED_FILE], std::time::Duration::from_secs(10)).is_ok()
+}
+
 fn sources() -> Vec<Source> {
     let Ok(conn) = crate::workspaces::db() else { return Vec::new() };
     let Ok(rows) = crate::workspaces::query_workspaces(&conn) else { return Vec::new() };
@@ -251,6 +265,9 @@ fn sources() -> Vec<Source> {
             (w.repo_path.clone(), None, None),
         ] {
             if !seen.insert(crate::paths::path_key(&root)) {
+                continue;
+            }
+            if ws_id.is_none() && stale_merged_copy(&root) {
                 continue;
             }
             out.push(Source {
@@ -502,5 +519,28 @@ mod tests {
         assert!(answer_at(&dir, "nope", "A").is_err());
         assert_eq!(mark_sent_at(&dir, "x").unwrap(), 0);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn closed_and_record_sections_skipped_and_stale_root_copy_detected() {
+        let text = "# 帮助请求\n\n## 一、两轮门口径——已闭环\n\n- 已经定了的事\n\n## 二、记录事项（不需回复）\n\n- 只是告诉你一声\n\n## 三、待你拍板\n\n- 真要问的\n";
+        let qs: Vec<String> = parse_items(text).into_iter().map(|i| i.question).collect();
+        assert_eq!(qs, ["真要问的"]);
+        // 被 git 跟踪且和提交一样 = 合并上来的旧副本；改过（根目录对话又写了问题）就不算旧
+        let root = std::env::temp_dir().join(format!("mesa-help-stale-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join(".ccode")).unwrap();
+        let g = |args: &[&str]| crate::workspaces::run_git(&root, args, std::time::Duration::from_secs(15)).unwrap();
+        g(&["init", "-q"]);
+        g(&["config", "user.email", "t@t"]);
+        g(&["config", "user.name", "t"]);
+        fs::write(root.join(HELP_WANTED_FILE), "- 旧问题\n").unwrap();
+        let r = root.to_string_lossy().into_owned();
+        assert!(!stale_merged_copy(&r), "没被跟踪的不算旧副本");
+        g(&["add", "-A"]);
+        g(&["commit", "-qm", "x"]);
+        assert!(stale_merged_copy(&r));
+        fs::write(root.join(HELP_WANTED_FILE), "- 旧问题\n- 新问题\n").unwrap();
+        assert!(!stale_merged_copy(&r));
+        fs::remove_dir_all(&root).ok();
     }
 }
