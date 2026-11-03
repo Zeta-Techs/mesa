@@ -4,7 +4,8 @@ import { KIMI_CSI_U_ENTER } from "./terminal-input";
 import { EFFORT_SEEN_DEFAULT, currentEffort, modelReadbackSupported } from "./reasoning-effort";
 import type { ComboSurfaceDto, DetectResult } from "./types";
 import type { TabStatus } from "./pages/TerminalPage";
-import { switchByRelaunch, switchPersists } from "./switch-strategy";
+import { inSessionSwitchCommand, switchByRelaunch, switchPersists } from "./switch-strategy";
+import { useAppStore } from "./store";
 
 /** 切模型命令发出后的待确认记录：baseline = 发命令时屏上读到的模型，屏上读回值一变就以读回为准 */
 const modelOverrides = new Map<string, { model: string; baseline: string | null; at: number }>();
@@ -40,8 +41,14 @@ export function useRuntimeModelEffort(opts: {
 }) {
   const { status, profileId, launchModel, modelSwitch, effort, submitCsiU, send, relaunch } = opts;
   const agentId = status?.agentId ?? "";
+  const cliVersion = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
+  /** 新版 Codex 等：会话里直接切、不写全局配置的命令（switch-strategy.ts） */
+  const sessionModelCmd = inSessionSwitchCommand(agentId, "model", cliVersion);
+  const sessionEffortCmd = inSessionSwitchCommand(agentId, "effort", cliVersion);
   /** 换模型走重开接回（Mesa 自己列连接里的模型，不唤 CLI 的选择器、不写 CLI 的全局配置） */
-  const modelByRelaunch = Boolean(relaunch) && switchByRelaunch(agentId, "model", true);
+  const modelByRelaunch = Boolean(relaunch) && switchByRelaunch(agentId, "model", true, cliVersion);
+  /** 能带参直切（写一条命令就换到指定模型）：菜单直接列连接里的模型，不唤 CLI 的选择器 */
+  const modelDirect = Boolean(sessionModelCmd) || modelSwitch?.kind === "direct";
   /** 这一轮还在生成：重开会打断它，等这一轮结束再换 */
   const relaunchBlocked = status?.attention === "working";
 
@@ -93,11 +100,12 @@ export function useRuntimeModelEffort(opts: {
       relaunch?.({ model: m });
       return;
     }
-    if (!modelSwitch || modelSwitch.kind !== "direct") return;
+    const template = sessionModelCmd ?? (modelSwitch?.kind === "direct" ? modelSwitch.command : null);
+    if (!template) return;
     // kimi 的 /model 参数是 config.toml 的 [models.*] 别名（非法字符清洗为 _，
     // 与 global_config.rs 的 kimi_model_alias 同规则）；别家直接吃模型 id
     const arg = status?.agentId === "kimi" ? m.replace(/[^A-Za-z0-9_-]/g, "_") : m;
-    writeCmd(modelSwitch.command.replace("{model}", arg));
+    writeCmd(template.replace("{model}", arg));
     if (ptyId) {
       modelOverrides.set(ptyId, { model: m, baseline: seenModel, at: Date.now() });
       overrideListeners.forEach((fn) => fn());
@@ -131,13 +139,18 @@ export function useRuntimeModelEffort(opts: {
       cancelled = true;
     };
   }, [profileId, launchModel]);
-  // 未确认不显示：combo 未加载或求交明确不允许时藏 /effort
-  const effortLive = comboReady && combo?.showNativeEffort === true ? effort : null;
+  // 未确认不显示：combo 未加载或求交明确不允许时藏 /effort。
+  // 新版 Codex 没有单独的 /effort，思考档跟着 /model --reasoning 在会话里切；档表与启动注入同口径（这个组合能带思考档才给）
+  const sessionEffort =
+    sessionEffortCmd && comboReady && combo?.injectEffortAllowed === true
+      ? { levels: [] as string[], command: sessionEffortCmd }
+      : null;
+  const effortLive = sessionEffort ?? (comboReady && combo?.showNativeEffort === true ? effort : null);
   /** 换思考档走重开接回：会写回全局配置、且这个组合启动时能注入思考档 */
   const effortByRelaunch =
-    Boolean(relaunch) && switchByRelaunch(agentId, "effort", combo?.injectEffortAllowed === true);
+    Boolean(relaunch) && switchByRelaunch(agentId, "effort", combo?.injectEffortAllowed === true, cliVersion);
   /** 中途切会写回全局配置、但启动时又注不进去：只能用命令，菜单底部要写明会存成默认 */
-  const effortPersistsViaCommand = switchPersists(agentId, "effort") && !effortByRelaunch;
+  const effortPersistsViaCommand = switchPersists(agentId, "effort", cliVersion) && !effortByRelaunch;
 
   const nativeLevels =
     combo?.effortLevels && combo.effortLevels.length > 0
@@ -145,7 +158,7 @@ export function useRuntimeModelEffort(opts: {
       : (effortLive?.levels ?? effort?.levels ?? []);
   // 没有原生档表、只有启动注入通道的（Codex）给通用三档，与开聊前选择器同口径
   const levels =
-    nativeLevels.length > 0 ? nativeLevels : effortByRelaunch ? ["low", "medium", "high"] : [];
+    nativeLevels.length > 0 ? nativeLevels : effortByRelaunch || sessionEffort ? ["low", "medium", "high"] : [];
   /** 运行中能不能在 Mesa 里换思考档（命令或重开接回） */
   const effortSwitchable = (Boolean(effortLive) || effortByRelaunch) && levels.length > 1;
   // 当前档的真值：CLI 画在屏上的 > 本次开工覆盖 > 绑定开场档；都没有 = 不知道。
@@ -200,6 +213,7 @@ export function useRuntimeModelEffort(opts: {
     commitEffort,
     setEffortLevel,
     modelByRelaunch,
+    modelDirect,
     effortByRelaunch,
     effortSwitchable,
     effortPersistsViaCommand,

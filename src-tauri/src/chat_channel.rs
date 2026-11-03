@@ -4205,6 +4205,13 @@ mod e2e {
         }
         let probe = work.join("mesa_probe.txt");
         let _ = std::fs::remove_file(&probe);
+        // E2E_BEFORE="/model e2e-default --reasoning high"：发话前先打几条斜杠命令（| 分隔），核对会话内切换后请求带的模型 / 思考档
+        for cmd in std::env::var("E2E_BEFORE").unwrap_or_default().split('|').filter(|c| !c.trim().is_empty()) {
+            send(cmd.as_bytes());
+            std::thread::sleep(Duration::from_millis(400));
+            send(b"\r");
+            std::thread::sleep(Duration::from_millis(1500));
+        }
         if arg_prompt.is_none() {
             // E2E_PROMPT：换触发词（如 Codex 去掉 TRIGGER_ESC = 沙箱里直接跑、不走审批）
             let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {

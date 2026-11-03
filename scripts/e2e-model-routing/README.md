@@ -163,6 +163,7 @@ MESA_E2E_REAL_CLI=1 E2E_PLANS=/tmp/e2e-plans.json E2E_AGENT=codex cargo test --l
 #       E2E_REPLY_DELAY_MS=<毫秒>（审批卡出来后等这么久再从聊天层答，像人一样先看一会儿）
 #       E2E_ANSWER=esc（不能从聊天层答的审批 / Claude 提问表单改在终端按 Esc 不答，并像前端那样反复调 chat_channel_settle_from_transcript，
 #       核对 Claude 不发 Stop 时回合能否靠会话文件收掉；配 E2E_PROMPT="TRIGGER_ASK 问我一个问题"）
+#       E2E_BEFORE="/model e2e-default --reasoning high"（发话前先打几条斜杠命令，| 分隔；看假网关日志里这一轮请求的模型 / effort 换没换）、
 #       E2E_PROMPT="TRIGGER_TOOL TRIGGER_THINK 跑一下"（假网关先出一段思考：Responses 推理摘要 / Anthropic thinking 块 / Chat reasoning_content，
 #       报告末尾「正在跑的工具」「思考摘要」两行核对聊天层生成中那一行的取数；Codex 照旧加 TRIGGER_ESC）
 ```

@@ -462,7 +462,7 @@ export default function TerminalStatusBar({
         {!idle && !chat && shownModel &&
           ((modelSwitch || rt.modelByRelaunch) && profileModels.length > 0 ? (
             // 会写回 CLI 全局配置的家（Codex 选择器、Claude / Grok /model）改走重开接回：底栏自己列连接里的模型
-            modelSwitch?.kind === "picker" && !rt.modelByRelaunch ? (
+            modelSwitch?.kind === "picker" && !rt.modelByRelaunch && !rt.modelDirect ? (
               /* picker 档（codex /model、opencode /models）不摆模型菜单：
                  两家 CLI 的切换命令都不吃参数（codex 源码 supports_inline_args
                  不含 Model；opencode run 无参），点哪个模型都只是唤选择器——

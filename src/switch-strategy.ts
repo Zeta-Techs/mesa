@@ -13,7 +13,34 @@
  *   Kimi 2.2：/effort on|off 写 config.toml 的 thinking enabled
  * 没写回的：Gemini 0.64 /model set（只管这一段），Grok /effort——这两样照旧中途切，快。
  * 启动时注不进去的（思考档：combo_surface.injectEffortAllowed 为假）只能退回命令，菜单底部写明会存成默认。
+ *
+ * 2026-11-04：Codex 0.164 起 `/model [模型] --reasoning <档>` 带参数时只改这一段、不写 config.toml（本机 0.166 实测：
+ * 屏上「Model changed to … for this session only」，config.toml 不动；Mesa 的 --remote 经 app-server 起时请求也照样换）。
+ * 这个版本起 Codex 换模型 / 思考档改回中途切，不用停下重开。
  */
+import { parseVersion } from "./chat-fidelity.ts";
+
+const CODEX_SESSION_SWITCH_MIN: [number, number, number] = [0, 164, 0];
+
+function atLeast(version: string | null | undefined, min: [number, number, number]): boolean {
+  const v = parseVersion(version);
+  if (!v) return false;
+  for (let i = 0; i < 3; i++) if (v[i] !== min[i]) return v[i] > min[i];
+  return true;
+}
+
+/** 这一家这个版本能在会话里直接切、又不写全局配置的命令（{model} / {level} 占位）；没有返回 null */
+export function inSessionSwitchCommand(
+  agentId: string,
+  kind: "model" | "effort",
+  version: string | null | undefined,
+): string | null {
+  if (agentId === "codex" && atLeast(version, CODEX_SESSION_SWITCH_MIN)) {
+    return kind === "model" ? "/model {model}" : "/model --reasoning {level}";
+  }
+  return null;
+}
+
 export const SWITCH_PERSISTS: Record<string, { model?: boolean; effort?: boolean }> = {
   "claude-code": { model: true, effort: true },
   codex: { model: true, effort: true },
@@ -22,7 +49,8 @@ export const SWITCH_PERSISTS: Record<string, { model?: boolean; effort?: boolean
   kimi: { effort: true },
 };
 
-export function switchPersists(agentId: string, kind: "model" | "effort"): boolean {
+export function switchPersists(agentId: string, kind: "model" | "effort", version?: string | null): boolean {
+  if (inSessionSwitchCommand(agentId, kind, version)) return false;
   return Boolean(SWITCH_PERSISTS[agentId]?.[kind]);
 }
 
@@ -31,6 +59,7 @@ export function switchByRelaunch(
   agentId: string,
   kind: "model" | "effort",
   injectableAtLaunch: boolean,
+  version?: string | null,
 ): boolean {
-  return switchPersists(agentId, kind) && injectableAtLaunch;
+  return switchPersists(agentId, kind, version) && injectableAtLaunch;
 }

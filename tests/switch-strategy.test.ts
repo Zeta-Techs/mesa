@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { switchByRelaunch, switchPersists } from "../src/switch-strategy.ts";
+import { inSessionSwitchCommand, switchByRelaunch, switchPersists } from "../src/switch-strategy.ts";
 
 test("会写回全局配置的切换改走重开接回；写不回去的照旧中途切", () => {
   assert.equal(switchByRelaunch("claude-code", "model", true), true);
@@ -12,4 +12,16 @@ test("会写回全局配置的切换改走重开接回；写不回去的照旧�
   // 启动时注不进思考档：只能退回命令（菜单写明会存成默认）
   assert.equal(switchByRelaunch("qwen", "effort", false), false);
   assert.equal(switchPersists("qwen", "effort"), true);
+});
+
+test("Codex 0.164 起会话内带参切模型 / 思考档、不写 config.toml：不再重开接回", () => {
+  assert.equal(inSessionSwitchCommand("codex", "model", "codex-cli 0.166.0"), "/model {model}");
+  assert.equal(inSessionSwitchCommand("codex", "effort", "codex-cli 0.164.0"), "/model --reasoning {level}");
+  assert.equal(inSessionSwitchCommand("codex", "model", "codex-cli 0.163.0"), null);
+  assert.equal(inSessionSwitchCommand("codex", "model", null), null, "读不到版本按老版本走重开");
+  assert.equal(inSessionSwitchCommand("claude-code", "model", "2.1.316"), null);
+  assert.equal(switchByRelaunch("codex", "model", true, "codex-cli 0.166.0"), false);
+  assert.equal(switchByRelaunch("codex", "effort", true, "codex-cli 0.166.0"), false);
+  assert.equal(switchByRelaunch("codex", "model", true, "codex-cli 0.163.0"), true);
+  assert.equal(switchPersists("codex", "effort", "codex-cli 0.166.0"), false);
 });

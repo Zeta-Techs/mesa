@@ -381,7 +381,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     );
     if (launch) return list;
     if (next) return list;
-    if ((rt.modelByRelaunch || runtime?.modelSwitch?.kind === "direct") && models.length > 0) return list;
+    if ((rt.modelByRelaunch || rt.modelDirect) && models.length > 0) return list;
     if (runtime?.modelSwitch?.kind === "picker") {
       return (
         <button
