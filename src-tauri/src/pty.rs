@@ -661,6 +661,7 @@ fn pty_agent_env() -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(tool) = crate::image_gen::helper_exe() {
         env.push((crate::image_gen::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
+        env.push((crate::peek::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
     }
     if let Some((k, v)) = crate::process::agent_python_io_env() {
         env.push((k.to_string(), v.to_string()));
@@ -700,7 +701,14 @@ fn spawn_tracked(
     cmd.env("PWD", cwd);
     // 出图：告诉 Agent 随包 helper 在哪（技能 image-gen 按它调）；密钥不进环境变量，helper 出图时自己取
     if let Some(tool) = crate::image_gen::helper_exe() {
-        cmd.env(crate::image_gen::TOOL_ENV, tool);
+        cmd.env(crate::image_gen::TOOL_ENV, &tool);
+        // 看一眼（peek.rs）：同一个 helper；带上这次的 Run，helper 按它找项目、把自己排除在同伴外
+        if purpose == PtyPurpose::Agent {
+            cmd.env(crate::peek::TOOL_ENV, &tool);
+            if let Some(id) = run_id.as_deref() {
+                cmd.env(crate::peek::RUN_ENV, id);
+            }
+        }
     }
 
     let pair = native_pty_system()
@@ -1208,6 +1216,9 @@ fn pty_spawn_sync(
     // Codex 的命令由 app-server 跑、不经 PTY：PTY 上另加的变量（出图工具路径、Windows 的 Python 输出编码）也要给它。
     // 原先只进 PTY，Codex 里 `$MESA_IMAGE_TOOL` 恒为空、出图技能用不了（2026-10-26 用户实测）
     channel_env_full.extend(pty_agent_env());
+    if let Some(id) = opened_id.as_deref() {
+        channel_env_full.push((crate::peek::RUN_ENV.to_string(), id.to_string()));
+    }
     let (channel_env, channel) = crate::chat_channel::prepare(
         &agent_id,
         link_claim_id.as_deref(),

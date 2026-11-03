@@ -3896,7 +3896,9 @@ pub async fn run_list(project_root: Option<String>) -> Result<Vec<RunDto>, Strin
         .map_err(|e| e.to_string())?
 }
 pub fn run_list_sync(project_root: Option<String>) -> Result<Vec<RunDto>, String> {
-    let conn = db()?;
+    run_list_at(&db()?, project_root)
+}
+fn run_list_at(conn: &Connection, project_root: Option<String>) -> Result<Vec<RunDto>, String> {
     match project_root.as_deref() {
         None => query_runs(&conn, "ORDER BY created_at DESC LIMIT 500", []),
         Some(root) => match project_id_for(&conn, Some(root))
@@ -3915,6 +3917,57 @@ pub fn run_list_sync(project_root: Option<String>) -> Result<Vec<RunDto>, String
         },
     }
 }
+/// 「看一眼」（peek.rs，helper 进程里跑）：**只读**打开 app.db，按 Run id 定位自己（没给就按当前目录找开着的 Run），
+/// 返回自己与同项目的全部 Run（同 run_list 口径，最多 500）。不建表、不回填，Mesa 没记录时直接报错
+pub(crate) fn peek_context(run_id: Option<&str>, cwd: &Path) -> Result<(RunDto, Vec<RunDto>), String> {
+    let conn = readonly_db()?;
+    let me = match run_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => get_run_at(&conn, id)?,
+        None => None,
+    };
+    let me = match me {
+        Some(run) => run,
+        None => {
+            let here = cwd.to_string_lossy();
+            query_runs(&conn, "WHERE closed_at IS NULL AND internal=0", [])?
+                .into_iter()
+                .filter(|r| crate::paths::path_within(&here, &r.isolation_path))
+                .max_by_key(|r| r.isolation_path.len())
+                .ok_or("找不到这次对话在 Mesa 里的记录：要在 Mesa 拉起的对话里用")?
+        }
+    };
+    let root = me.project_root.clone().ok_or("这次对话不属于任何项目，没有同项目的工作可看")?;
+    let peers = run_list_at(&conn, Some(root))?;
+    Ok((me, peers))
+}
+
+/// 一个 Run 最近的事件（旧在前），给「看一眼」用；payload 写入时已脱敏。
+/// 不含 run.output：那是终端原始字节（满屏控制符），给 Agent 只是噪声（2026-11-03 真实库干跑实证）
+pub(crate) fn peek_events(run_id: &str, limit: usize) -> Result<Vec<(String, String, Option<String>)>, String> {
+    let conn = readonly_db()?;
+    let mut stmt = conn
+        .prepare("SELECT event_type,created_at,payload FROM run_events WHERE run_id=?1 AND event_type<>'run.output' ORDER BY rowid DESC LIMIT ?2")
+        .map_err(|e| e.to_string())?;
+    let mut rows: Vec<(String, String, Option<String>)> = stmt
+        .query_map(params![run_id, limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    rows.reverse();
+    Ok(rows)
+}
+
+fn readonly_db() -> Result<Connection, String> {
+    let path = crate::dirs::config_dir().ok_or("无法确定平台配置目录")?.join("ccode").join("app.db");
+    let conn = Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| format!("打开 Mesa 的运行记录失败：{e}"))?;
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(3));
+    Ok(conn)
+}
+
 pub(crate) fn has_active_run_in(path: &str) -> Result<bool, String> {
     Ok(query_runs(
         &db()?,

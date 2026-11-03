@@ -12,6 +12,7 @@ import {
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
 import { ledgerLines } from "./help-requests";
+import { openPeerCount } from "./peek";
 import { IS_WINDOWS } from "./hotkeys";
 import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-agents";
 export { renderTaskMd };
@@ -24,6 +25,7 @@ import type {
   ProjectConfigDto,
   ProjectMemoryDocumentDto,
   ProjectStepDto,
+  RunDto,
   SessionMetaDto,
   SkillDto,
   WorkspaceDto,
@@ -40,6 +42,8 @@ export async function gatherTaskMdExtras(
   decisions: { q: string; answer: string }[];
   upstream: UpstreamAcceptance[];
   ledger: string[];
+  /** 同项目还开着的其他工作数 */
+  peers: number;
 }> {
   // 提货单：项目根已有上一步产物清单时带进 TASK.md（读取失败不阻断）
   let artifacts: ArtifactEntryDto[] = [];
@@ -89,7 +93,15 @@ export async function gatherTaskMdExtras(
   } catch {
     /* 项目知识不可读时跳过 */
   }
-  return { artifacts, skillMeta, providesByName, decisions, upstream, ledger };
+  // 同项目还开着的其他工作（2026-11-03 看一眼）：有才在任务书里带「同项目的其他工作」一节，顺序推进的步骤不占篇幅
+  let peers = 0;
+  try {
+    const runs = await invoke<RunDto[]>("run_list", { projectRoot: projectPath });
+    peers = openPeerCount(runs);
+  } catch {
+    /* 读不到运行记录时不带这一节 */
+  }
+  return { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers };
 }
 
 /** 只读预览用的一步到位拼装（步骤级「预览 TASK.md」入口）：与开工落盘同一出处
@@ -99,12 +111,12 @@ export async function buildTaskMdPreview(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
 ): Promise<string> {
-  const { artifacts, skillMeta, providesByName, decisions, upstream, ledger } = await gatherTaskMdExtras(
+  const { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers } = await gatherTaskMdExtras(
     projectPath,
     step,
   );
   return appendUpstreamAcceptance(
-    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger),
+    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger, peers),
     upstream,
   );
 }
@@ -222,7 +234,7 @@ export async function startPipelineStep({
   if (taskMdOverride?.trim()) {
     content = taskMdOverride;
   } else {
-    const { artifacts, skillMeta, providesByName, decisions, ledger } = await gatherTaskMdExtras(
+    const { artifacts, skillMeta, providesByName, decisions, ledger, peers } = await gatherTaskMdExtras(
       projectPath,
       step,
     );
@@ -236,6 +248,7 @@ export async function startPipelineStep({
       decisions,
       IS_WINDOWS,
       ledger,
+      peers,
     );
   }
   content = appendUpstreamAcceptance(content, upstream);

@@ -80,12 +80,18 @@ pub fn helper_image(args: &[String]) -> i32 {
     image_gen::helper_image_cli(args)
 }
 
+/// helper 看一眼（`mesa_helper peek agents|runs|changes`）：Agent 经 MESA_PEEK_TOOL 调用，只读看同项目的其他工作，返回退出码
+pub fn helper_peek(args: &[String]) -> i32 {
+    peek::helper_peek_cli(args)
+}
+
 /// helper 取 Codex 渠道密钥（`mesa_helper codex-token <网关 id>`）：Codex 渠道 `auth.command` 调用，返回退出码
 pub fn helper_codex_token(args: &[String]) -> i32 {
     codex_continuity::helper_token_cli(args)
 }
 mod codex_continuity;
 mod image_gen;
+mod peek;
 
 mod browser_bridge;
 mod capability_golden;

@@ -1,4 +1,5 @@
 import { applyStepParams, checkSectionLines } from "./task-packs.ts";
+import { peekSectionLines } from "./peek.ts";
 import { litSourceSectionLines } from "./task-md-sections.ts";
 import { decisionPolicyBlock } from "./step-decisions.ts";
 import { RESOURCE_TYPE_LABELS } from "./pipeline-presets.ts";
@@ -42,6 +43,8 @@ export function renderTaskMd(
   decisions?: { q: string; answer: string }[],
   isWindows = false,
   ledger?: string[],
+  /** 同项目还开着的其他工作数（开工时数一次）；有才带「同项目的其他工作」一节 */
+  peers = 0,
 ): string {
   // 任务包参数（2026-11-03）：文字里的 {param:键} 先换成取值，后面各段照常拼
   const rawParams = step.params ?? [];
@@ -92,6 +95,7 @@ export function renderTaskMd(
     );
   }
   lines.push(...checkSectionLines(step, isWindows));
+  lines.push(...peekSectionLines(peers, isWindows));
   if (ledger && ledger.length > 0) {
     lines.push(
       "## 以前定过的事",

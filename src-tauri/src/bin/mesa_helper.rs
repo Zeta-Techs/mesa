@@ -176,6 +176,10 @@ fn main() {
     }
     // `mesa_helper codex-token <网关 id>`：Codex 渠道定义块的 `auth.command`，现取 keys.json 里的密钥打到 stdout，
     // config.toml 里不落明文（Codex 客户端续 Mesa 开的对话靠它）
+    // `mesa_helper peek agents|runs|changes`：同项目的 Agent 只读看彼此（经 MESA_PEEK_TOOL 调用，peek.rs）
+    if args.get(1).map(String::as_str) == Some("peek") {
+        std::process::exit(ccode_lib::helper_peek(&args[2..]));
+    }
     if args.get(1).map(String::as_str) == Some("codex-token") {
         std::process::exit(ccode_lib::helper_codex_token(&args[2..]));
     }

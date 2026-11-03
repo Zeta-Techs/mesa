@@ -210,6 +210,8 @@ export default function KickoffConfirmDialog({
     upstream: UpstreamAcceptance[];
     /** 以前定过的事（项目知识里的「已定 / 不做」） */
     ledger: string[];
+    /** 同项目还开着的其他工作数（有才带「同项目的其他工作」一节） */
+    peers: number;
   } | null>(null);
   const [mainDirtyFiles, setMainDirtyFiles] = useState<GitFileDto[] | null>(
     null,
@@ -552,6 +554,7 @@ export default function KickoffConfirmDialog({
       extras.decisions,
       IS_WINDOWS,
       extras.ledger,
+      extras.peers,
     );
   }, [extras, stepNow, cfgLocal, skillMeta, projectPath]);
 

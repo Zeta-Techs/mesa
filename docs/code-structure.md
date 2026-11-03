@@ -547,6 +547,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （给了 scheduleRelPath 时种子请 AI 顺带写周期建议 JSON，2026-10-23）；
                              # defaultScheduleKind / scheduleExamples：按工作方式给新建默认种类与空态示例
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
+  peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
+                             # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL）（tests/peek.test.ts）
   help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
                              # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
@@ -1589,7 +1591,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   当前项目+打开篇标题/DOI 调 ccode_lib::helper_ingest；PDF 阅读器空标题不得落 paper-5.pdf；
                              #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路；
                              #   2026-10-20 起另有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs；
-                             #   2026-10-23 起另有 `image …` 出图模式：调 ccode_lib::helper_image，唯一会读 keys.json 的模式，见 image_gen.rs）
+                             #   2026-10-23 起另有 `image …` 出图模式：调 ccode_lib::helper_image，唯一会读 keys.json 的模式，见 image_gen.rs；
+                             #   2026-11-03 起另有 `peek agents|runs|changes` 看一眼模式：调 ccode_lib::helper_peek，只读 app.db，见 peek.rs）
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
@@ -1731,6 +1734,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   coding.rs                  # 编程项目 git 原语：worktree list / 从基准或已有本地·远程分支建树（~/ccode/worktrees）、
                              # origin 身份 + 相对上游 behind、fetch / pull --ff-only / push、合并进基准、
                              # Desktop CLI 打开该树 / gh --web 开 PR（CodingOpDto；不走科研工作区库）；overview 按树/分支并行 git
+  peek.rs                    # 看一眼（2026-11-03 项目内协作一期，design-project-coordination.md）：mesa_helper peek agents / runs / changes，
+                             # 经 runs::peek_context / peek_events 只读打开 app.db；同伴 = 同项目、非内部、非登录、开着或 3 天内结束、最多 12 个；
+                             # 改动对项目根当前分支的分叉点（项目根自己对 HEAD），.ccode/ 不算，没 --file 时只给改得少的文本片段（≤150 行改动、120 行上限）；
+                             # 事件不含 run.output（终端原始字节）；输出整段 redact_sensitive_text。注入 MESA_PEEK_TOOL / MESA_RUN_ID 在 pty.rs
   help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）

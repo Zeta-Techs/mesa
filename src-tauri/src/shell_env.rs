@@ -192,7 +192,7 @@ mod tests {
             "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "GITHUB_TOKEN", "HF_TOKEN",
             "my_secret", "DB_PASSWORD", "AWS_ACCESS_KEY_ID", "GOOGLE_API_KEY", "MOONSHOT_API_KEY",
             "PWD", "SHLVL", "_", "FPATH", "PROMPT", "TERM", "TERM_PROGRAM", "NO_COLOR", "CCODE_CWD_FILE",
-            "MESA_IMAGE_TOOL", "XPC_SERVICE_NAME", "__CF_USER_TEXT_ENCODING",
+            "MESA_IMAGE_TOOL", "MESA_PEEK_TOOL", "MESA_RUN_ID", "XPC_SERVICE_NAME", "__CF_USER_TEXT_ENCODING",
         ] {
             assert!(!should_import(key), "{key} 不该带");
         }

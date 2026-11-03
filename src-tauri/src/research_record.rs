@@ -335,7 +335,7 @@ pub(crate) fn read_records_at(root: &Path) -> Vec<RunRecord> {
         .collect()
 }
 
-fn purpose_of(run: &crate::runs::RunDto, root: &Path) -> String {
+pub(crate) fn purpose_of(run: &crate::runs::RunDto, root: &Path) -> String {
     match run.task_kind.as_str() {
         "pipeline_step" => {
             let steps = crate::projects::step_names_at(root);

@@ -65,6 +65,11 @@ Mesa 拉起 Agent 时注入 `MESA_PEEK_TOOL`（helper 路径）与 `MESA_RUN_ID`
 | 三 | 协调对话：每个项目一个，带看一眼与汇总；能起草拆分方案（§2 第 4 条第二层），人点一次开齐；结果分档回到协调对话 |
 | 四 | 模板 / 任务包声明「可机械分片」的步骤自动展开：几路由数据决定、每路只写自己的文件、预算上限、合成一次评审 |
 
-## 6. 一期落地记录
+## 6. 一期落地记录（2026-11-03）
 
-见 `docs/conventions/agent-workbench.md`「项目内协作」与 architecture §12 当日条。
+- `peek.rs`（helper 子命令）、`runs::peek_context / peek_events`（只读 app.db）、`pty.rs` 注入、`src/peek.ts` + `task-md.ts`（有其他开着的工作才带那一节，
+  顺序推进的步骤不占任务书篇幅——六套模板的长度预算余量只有几十字）。
+- **真实库干跑**：在「测试项目」上以另一个 Run 的身份看 → 列出 11-02 的检索步、14 个待答问题、改动清单；发现事件里 `run.output` 是满屏终端控制符，改为不给。
+- **Codex 0.166 实跑**（workspace-write 沙箱）：按任务书那一节自己调了 agents / changes，只读打开 app.db 没被沙箱挡，摘要准确；
+  发现几千行的生成文件把片段配额占满（一次四万 token），改为没 `--file` 时只给改动 ≤150 行的文本文件、上限 120 行。
+- **未验**：Mesa Dev 窗口里实际开两段工作、在任务书预览里看到这一节、Claude Code / Kimi 各调一次；Windows 上 `& $env:MESA_PEEK_TOOL`。
