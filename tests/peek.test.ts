@@ -27,3 +27,13 @@ test("有其他工作才在任务书带「同项目的其他工作」，按平�
   assert.ok(peekSectionLines(1, true).join("\n").includes("`& $env:MESA_PEEK_TOOL peek agents`"));
   assert.deepEqual(peekSectionLines(0, false), []);
 });
+
+test("项目说明：同项目有别的工作开着才带「看一眼」那一句", async () => {
+  const { renderProjectContextPack } = await import("../src/project-context.ts");
+  const base = { name: "综述", path: "/p", workMode: "research", kind: "session" as const, settings: [], topLevel: [] };
+  assert.ok(!renderProjectContextPack(base).includes("MESA_PEEK_TOOL"));
+  const text = renderProjectContextPack({ ...base, peers: 2 });
+  assert.ok(text.includes('同项目还有 2 段别的工作开着'), text);
+  assert.ok(text.includes('`"$MESA_PEEK_TOOL" peek agents`'), text);
+  assert.ok(renderProjectContextPack({ ...base, peers: 1, isWindows: true }).includes("`& $env:MESA_PEEK_TOOL peek agents`"));
+});

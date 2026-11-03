@@ -15,7 +15,8 @@ import {
 } from "./project-context";
 import { acceptedGoalOutputs, isDeclaredTask } from "./project-tasks";
 import { IS_WINDOWS } from "./hotkeys";
-import type { ProjectConfigReadDto, ProjectStatusDto, SkillDto, TaskDto } from "./types";
+import type { ProjectConfigReadDto, ProjectStatusDto, RunDto, SkillDto, TaskDto } from "./types";
+import { openPeerCount } from "./peek";
 
 type PackRequest = {
   name: string;
@@ -178,6 +179,9 @@ async function gatherPack(input: PackRequest) {
     memory,
     skills,
     isWindows: IS_WINDOWS,
+    peers: await invoke<RunDto[]>("run_list", { projectRoot: input.path })
+      .then(openPeerCount)
+      .catch(() => 0),
   };
   if (input.sessionOverride) {
     injectionMode = input.sessionOverride.mode;

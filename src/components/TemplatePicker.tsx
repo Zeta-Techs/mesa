@@ -7,6 +7,7 @@ import { basedOnFor, builtinKey, builtinUpdate, currentBuiltinSteps, rebased } f
 import {
   PIPELINE_TEMPLATES,
   pipelineStepsForTemplate,
+  settingsForTemplateApply,
   UNTESTED_TEMPLATE_BADGE,
   UNTESTED_TEMPLATE_HINT,
   type SubmissionMode,
@@ -121,6 +122,8 @@ export default function TemplatePicker({
         params: [],
         steps: basedOn.steps,
         basedOn,
+        // 内置模板的项目规则与全局设定（「名称：（提示）」空位）一并带上，用它建流程时和直接选内置一样写进项目设置
+        projectSettings: settingsForTemplateApply(t),
       });
       await reload();
       setNotice(

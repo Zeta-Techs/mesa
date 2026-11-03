@@ -12,7 +12,9 @@ import {
   type PipelineTemplateDef,
   type SubmissionMode,
 } from "../pipeline-presets";
-import type { AppendStepsResultDto, ProjectConfigReadDto } from "../types";
+import type { AppendStepsResultDto, ProjectConfigReadDto, TaskPackDto } from "../types";
+import { addPackToProject } from "../pack-add";
+import { importedScriptsNote } from "../task-packs";
 import {
   fieldClass,
   primaryActionClass,
@@ -68,6 +70,19 @@ export default function TemplatePickModal({
   const [submissionRound, setSubmissionRound] = useState(1);
   const [topic, setTopic] = useState("");
   const [tools, setTools] = useState({ ...DEFAULT_RESEARCH_TOOLS });
+  // 我的任务（2026-11-03）：内置下面一起列，选中按默认参数整条加进来（填参数、建触发事后在编辑研究流程里做）
+  const [packs, setPacks] = useState<TaskPackDto[]>([]);
+  useEffect(() => {
+    let stale = false;
+    invoke<TaskPackDto[]>("list_task_packs")
+      .then((list) => {
+        if (!stale) setPacks(list);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,6 +186,25 @@ export default function TemplatePickModal({
         },
       );
       onApplied(res, tpl.name);
+    } catch (reason) {
+      setError(String(reason));
+      setBusy(null);
+    }
+  }
+
+  async function applyPack(pack: TaskPackDto) {
+    if (busy) return;
+    const note = importedScriptsNote(pack);
+    if (note && !(await confirmDialog(note, { confirmText: "看过了，继续" }))) return;
+    setBusy(pack.id);
+    setError(null);
+    try {
+      const current = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectPath });
+      if (current.config.steps.length && JSON.stringify(researchToolsFromSettings(current.config.settings)) !== JSON.stringify(tools)) {
+        throw new Error("已有流程的工具选择请在「编辑研究流程」统一修改，再追加；未改变现有步骤");
+      }
+      const res = await addPackToProject({ projectPath, pack, tools, topic, scriptsReviewed: Boolean(note) });
+      onApplied({ appended: res.appended, skipped: res.skipped, renamed: res.renamed }, pack.name);
     } catch (reason) {
       setError(String(reason));
       setBusy(null);
@@ -416,6 +450,34 @@ export default function TemplatePickModal({
                 </li>
               ))}
             </ul>
+            {packs.length > 0 && (
+              <>
+                <p className="mb-1.5 mt-4 text-xs text-l3">我的任务</p>
+                <ul className="space-y-1.5">
+                  {packs.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void applyPack(p)}
+                        title={p.params.length > 0 ? "参数先用默认值，之后在「编辑研究流程」里改" : undefined}
+                        className="w-full rounded-sm ccode-well p-2.5 text-left hover:bg-hover disabled:opacity-50"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-l1">{p.name}</span>
+                          <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
+                            {p.steps.length} 步{p.params.length > 0 ? ` · ${p.params.length} 个参数` : ""}
+                          </span>
+                          {p.imported && <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">导入</span>}
+                          {busy === p.id && <span className="ml-auto text-xs text-l3">写入中…</span>}
+                        </div>
+                        <p className="mt-1 truncate text-xs text-l3">{p.description || p.steps.map((s) => s.name).join(" → ")}</p>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
             {/* 「不使用」显式写 pipeline_opt_out 标记（隐藏模板引导）；「稍后」只关闭不留痕，
                 两者事后都可从项目组 ⋯「选择研究流程模板」/编辑器「＋ 从模板追加」补 */}

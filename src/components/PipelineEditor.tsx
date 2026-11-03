@@ -41,10 +41,10 @@ import type {
   StepCheckDto,
   StepParamDto,
   TaskPackDto,
-  AddPackResultDto,
 } from "../types";
 import { useAppStore } from "../store";
 import { importedScriptsNote, triggerDefaultOn, triggerSummary } from "../task-packs";
+import { addPackToProject } from "../pack-add";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
@@ -330,10 +330,10 @@ export default function PipelineEditor({
     setPackNote(null);
     setError(null);
     try {
-      const res = await invoke<AddPackResultDto>("add_task_pack_to_project", {
-        projectRoot: projectPath,
-        id: pack.id,
-        values,
+      const res = await addPackToProject({
+        projectPath,
+        pack,
+        values: Object.fromEntries(pack.params.map((p) => [p.key, values[p.key] ?? p.value])),
         withTrigger,
         scriptsReviewed: Boolean(scriptsNote),
       });

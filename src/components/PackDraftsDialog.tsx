@@ -12,11 +12,11 @@ import {
 } from "./PageFrame";
 import { buildPackAuthorPrompt, buildPackFixPrompt, issueLine, splitIssues } from "../task-pack-author";
 import { triggerSummary } from "../task-packs";
+import { addPackToProject } from "../pack-add";
 import { renderTaskMd } from "../task-md";
 import { IS_WINDOWS } from "../hotkeys";
 import { toast } from "../toast";
 import type {
-  AddPackResultDto,
   PackDraftCheckDto,
   PackDraftDto,
   ProjectConfigDto,
@@ -193,11 +193,7 @@ function DraftList({
         overwrite: same?.id ?? null,
       });
       if (addToProject) {
-        const res = await invoke<AddPackResultDto>("add_task_pack_to_project", {
-          projectRoot: projectPath,
-          id: saved.id,
-          values: Object.fromEntries(saved.params.map((p) => [p.key, p.value])),
-        });
+        const res = await addPackToProject({ projectPath, pack: saved });
         onAddedToProject();
         toast(
           `已装进我的任务，并把 ${res.appended} 步加到流程末尾${res.skipped.length ? `（同名跳过 ${res.skipped.join("、")}）` : ""}。点那一步的「开始」试跑：在工作副本里做，评审后才进项目。${

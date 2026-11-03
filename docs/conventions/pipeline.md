@@ -1507,7 +1507,13 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   打开模板库时直接换成新版；改过的由人逐步勾（changed 换新版、added 按内置位置插入、removed 拿掉），「保留我的」与「按勾选更新」都把对照点挪到现在的内置。
   覆盖另存不给 `based_on` 时沿用旧的。内置模板本身不迁成包文件（仍在 `pipeline-presets.ts`，偏离设计稿 §6，见 architecture §10 同日条）。
 - **模板库里「使用」我的任务（第四期）**：空流程追加、已有步骤整条换（`add_task_pack_to_project` 带 `strategy: replace`，确认同「更换模板」）；
-  参数取默认值、触发不建——要填参数或建触发走流程编辑器「＋ 从模板追加」。
+  参数取默认值、触发不建——要填参数或建触发走流程编辑器「＋ 从模板追加」。新项目的模板选择层（TemplatePickModal）同样列我的任务。
+- **加进项目只有一条路（2026-11-03）**：编辑器追加、模板库使用、新项目选择层、草稿试跑都走 `pack-add.ts addPackToProject`：
+  先按项目的研究工具设置改步骤（`withResearchTools`，与内置模板追加同一结果）、包的项目设定也套上工具行，再交后端；
+  后端只收名字与顺序和包一致、`pack` 是这个包的步骤（防借这里塞别的步骤），没给步骤时退回 `steps_for_project`。
+- **包带项目设定（2026-11-03）**：`[pack] project_settings`（与内置 projectRules + projectSettings 同一写法，「名称：（提示）」是空位），
+  加进项目时经 `apply_pipeline_template_at` 并进项目设置；内置另存为我的版本带 `settingsForTemplateApply(内置)`，从项目另存的不带；
+  覆盖另存不给时沿用；疑似密钥拦下。
 
 ## 技能位与个性化替换（2026-10-11）
 

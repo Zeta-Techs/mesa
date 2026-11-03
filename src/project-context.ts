@@ -1,5 +1,6 @@
 import { WORK_MODE_LABEL, normalizeWorkMode } from "./work-mode.ts";
 import { readableResearchToolSetting } from "./research-tool-fields.ts";
+import { peekContextLine } from "./peek.ts";
 
 export type ContextPackEntry = {
   name: string;
@@ -75,6 +76,8 @@ export type ProjectContextInput = {
   skills?: readonly ProjectSkillPack[];
   /** Windows 上补「本机 Python」提示（纯模块不读平台，调用方显式传） */
   isWindows?: boolean;
+  /** 同项目还开着的其他工作数（开对话时数一次）；有才带「看一眼」那一句 */
+  peers?: number;
 };
 
 /** Windows 本机 Python 的两条提示：开工任务书（task-md）与项目说明共用这一处。
@@ -290,6 +293,7 @@ type PackSections = {
   openGoals: string;
   feedback: string;
   permission: string;
+  peers: string;
   python: string;
 };
 
@@ -378,6 +382,7 @@ function packSections(input: ProjectContextInput): PackSections {
     permission: input.writeReview
       ? "权限：只改当前工作目录。完成后不要修改项目原目录；改动会交给人验收再写回。"
       : "",
+    peers: peekContextLine(input.peers ?? 0, Boolean(input.isWindows)),
     python: input.isWindows
       ? ["本机 Python（Windows）：", ...WINDOWS_PYTHON_HINTS.map((line) => `- ${line}`)].join("\n")
       : "",
@@ -403,6 +408,7 @@ export function renderProjectContextPack(input: ProjectContextInput): string {
     s.openGoals,
     s.feedback,
     s.permission,
+    s.peers,
     s.python,
   ]
     .filter(Boolean)

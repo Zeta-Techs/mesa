@@ -1544,6 +1544,8 @@ export interface TaskPackDto {
   imported: boolean;
   /** 随包技能里 SKILL.md 以外的文件（skills/<技能>/<相对路径>） */
   scripts: string[];
+  /** 加进项目时带上的项目规则与全局设定（内置另存为我的版本时带上；「名称：（提示）」是待填空位） */
+  projectSettings: string[];
 }
 
 /** 我的版本基于哪个内置模板；steps 是另存时内置步骤原样，前端拿来算「内置有更新」 */

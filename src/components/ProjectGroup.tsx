@@ -60,6 +60,7 @@ import { stepperStatusText } from "../stepper-status";
 import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
 import { importedScriptsNote } from "../task-packs";
+import { addPackToProject } from "../pack-add";
 import { toast } from "../toast";
 import {
   projectAgentPrefs,
@@ -75,7 +76,6 @@ import {
 import type {
   DiscoveredResourceDto,
   ZoteroLibraryDto,
-  AddPackResultDto,
   EnsureGitDto,
   ProjectConfigDto,
   ProjectConfigReadDto,
@@ -786,13 +786,12 @@ export default function ProjectGroup({
       return;
     setApplyingTemplate(true);
     try {
-      const res = await invoke<AddPackResultDto>("add_task_pack_to_project", {
-        projectRoot: project.path,
-        id: pack.id,
-        values: Object.fromEntries(pack.params.map((p) => [p.key, p.value])),
-        withTrigger: false,
+      const res = await addPackToProject({
+        projectPath: project.path,
+        pack,
         strategy: replace ? "replace" : "append",
         scriptsReviewed: Boolean(note),
+        topic: templateTopic,
       });
       await reloadCfg(project.path);
       setPickerOpen(false);

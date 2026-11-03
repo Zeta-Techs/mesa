@@ -36,6 +36,9 @@ pub struct TaskPackDto {
     pub imported: bool,
     /// 随包技能里 SKILL.md 以外的文件（`skills/<技能>/<相对路径>`）：脚本等，导入与首次加进项目时给人看
     pub scripts: Vec<String>,
+    /// 加进项目时带上的项目规则与全局设定（与内置模板 projectRules + projectSettings 同一写法，「名称：（提示）」是待填空位）；
+    /// 内置另存为我的版本时带上，从项目另存的不带（那是那个项目自己的）
+    pub project_settings: Vec<String>,
 }
 
 /// 基于哪个内置模板。`steps` 是另存时的内置步骤，存前经与包步骤同一套归一（`normalize_steps`），
@@ -59,6 +62,7 @@ pub(crate) struct SaveExtras {
     pub trigger: Option<PackTriggerDto>,
     pub based_on: Option<PackBasedOnDto>,
     pub imported: bool,
+    pub project_settings: Option<Vec<String>>,
 }
 
 /// 任务包带的触发：schedule 按时间；folder / radar / phone 是事件规则（模式缺省只记录）。
@@ -161,6 +165,13 @@ fn render_pack(pack: &TaskPackDto) -> Result<String, String> {
     meta["updated_at"] = value(&pack.updated_at);
     if pack.imported {
         meta["imported"] = value(true);
+    }
+    if !pack.project_settings.is_empty() {
+        let mut arr = toml_edit::Array::new();
+        for line in &pack.project_settings {
+            arr.push(line.as_str());
+        }
+        meta["project_settings"] = value(arr);
     }
     doc["pack"] = Item::Table(meta);
     if !pack.params.is_empty() {
@@ -285,6 +296,11 @@ fn parse_pack(text: &str, dir: &Path) -> Result<TaskPackDto, String> {
         based_on,
         imported: meta.get("imported").and_then(|v| v.as_bool()).unwrap_or(false),
         scripts,
+        project_settings: meta
+            .get("project_settings")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default(),
         id,
     })
 }
@@ -382,6 +398,10 @@ pub(crate) fn save_with_trigger_at(
     };
     // 导入的标记一直带到人在加进项目前确认过脚本为止（本人覆盖另存也不清：脚本还是别人写的）
     let imported = extras.imported || existing.as_ref().is_some_and(|p| p.imported);
+    let project_settings = extras
+        .project_settings
+        .or_else(|| existing.as_ref().map(|p| p.project_settings.clone()))
+        .unwrap_or_default();
     // 拦下的一律不存（提醒不拦）；技能库名单只影响提醒，这里不用
     let probe = TaskPackDto {
         id: "pk-check".into(),
@@ -394,6 +414,7 @@ pub(crate) fn save_with_trigger_at(
         steps: steps.clone(),
         skills: skill_dirs.iter().map(|(n, _)| n.clone()).collect(),
         trigger: trigger.clone(),
+        project_settings: project_settings.clone(),
         ..Default::default()
     };
     if let Some(msg) = blocked(&check_pack(&probe, &crate::skills::library_skill_names_for_check())) {
@@ -418,6 +439,7 @@ pub(crate) fn save_with_trigger_at(
         based_on,
         imported,
         scripts: Vec::new(),
+        project_settings,
     };
     // 先在临时目录写全，再整目录换上：中途失败不留半个包
     let final_dir = pack_dir(root, &pack.id)?;
@@ -505,6 +527,7 @@ pub async fn save_task_pack(
     params: Vec<StepParamDto>,
     steps: Vec<StepDto>,
     based_on: Option<PackBasedOnDto>,
+    project_settings: Option<Vec<String>>,
 ) -> Result<TaskPackDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut names: Vec<String> = Vec::new();
@@ -516,7 +539,7 @@ pub async fn save_task_pack(
             }
         }
         let skill_dirs = crate::skills::user_skill_dirs(&names)?;
-        let extras = SaveExtras { based_on, ..Default::default() };
+        let extras = SaveExtras { based_on, project_settings, ..Default::default() };
         save_with_trigger_at(&packs_root()?, id.as_deref(), &name, &description, params, steps, &skill_dirs, extras)
     })
     .await
@@ -549,6 +572,9 @@ pub async fn add_task_pack_to_project(
     with_trigger: Option<bool>,
     strategy: Option<String>,
     scripts_reviewed: Option<bool>,
+    steps: Option<Vec<StepDto>>,
+    project_settings: Option<Vec<String>>,
+    topic: Option<String>,
 ) -> Result<AddPackResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::projects::ensure_task_project_root(Path::new(&crate::sessions::expand_tilde(&project_root)))?;
@@ -562,13 +588,24 @@ pub async fn add_task_pack_to_project(
             Some("replace") => "replace",
             Some(other) => return Err(format!("不认识的加入方式：{other}")),
         };
+        // 前端按项目的研究工具设置改过的步骤（withResearchTools）：只认名字、顺序与包一致的，不许借这里塞别的步骤
+        let project_steps = match steps {
+            Some(given) => {
+                let names = |list: &[StepDto]| list.iter().map(|s| s.name.trim().to_string()).collect::<Vec<_>>();
+                if names(&given) != names(&pack.steps) || given.iter().any(|s| s.pack != pack.id) {
+                    return Err("加进来的步骤和我的任务对不上，重新打开再试".into());
+                }
+                given
+            }
+            None => steps_for_project(&pack, &values),
+        };
         let skills = crate::skills::install_pack_skills(&pack_dir(&packs, &id)?.join("skills"))?;
         let res = crate::projects::apply_pipeline_template_at(
             &root,
-            steps_for_project(&pack, &values),
-            Vec::new(),
+            project_steps,
+            project_settings.unwrap_or_else(|| pack.project_settings.clone()),
             strategy,
-            None,
+            topic,
             None,
             None,
         )?;
@@ -691,7 +728,7 @@ const STEP_TEXT_BLOCK: usize = 12000;
 const PACK_KEYS: [&str; 4] = ["pack", "params", "steps", "trigger"];
 const CHECK_KEYS: [&str; 4] = ["name", "skill", "script", "description"];
 const TRIGGER_KEYS: [&str; 11] = ["name", "kind", "skill", "frequency", "weekday", "interval_hours", "hour", "minute", "folder", "exts", "mode"];
-const META_KEYS: [&str; 7] = ["id", "name", "description", "version", "created_at", "updated_at", "imported"];
+const META_KEYS: [&str; 8] = ["id", "name", "description", "version", "created_at", "updated_at", "imported", "project_settings"];
 const PARAM_KEYS: [&str; 5] = ["key", "label", "value", "help", "options"];
 const STEP_KEYS: [&str; 22] = [
     "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
@@ -773,6 +810,9 @@ pub(crate) fn check_pack(pack: &TaskPackDto, lib_skills: &[String]) -> Vec<PackI
     }
     if pack.steps.is_empty() {
         out.push(issue("block", None, "至少要有一个步骤"));
+    }
+    if pack.project_settings.iter().any(|l| crate::sessions::redact_sensitive_text(l) != *l) {
+        out.push(issue("block", None, "项目设定里像是有密钥，拿掉再存"));
     }
     let anchors = crate::skills::builtin_skill_names();
     let mut produced: Vec<String> = Vec::new();
@@ -1109,7 +1149,7 @@ pub(crate) fn install_draft_at(
         pack.params,
         pack.steps,
         &skill_dirs,
-        SaveExtras { trigger: pack.trigger, ..Default::default() },
+        SaveExtras { trigger: pack.trigger, project_settings: Some(pack.project_settings), ..Default::default() },
     )?;
     let _ = fs::remove_dir_all(&dir);
     Ok(saved)
@@ -1444,7 +1484,7 @@ pub(crate) fn install_import_at(
         pack.params,
         pack.steps,
         &skill_dirs,
-        SaveExtras { trigger: pack.trigger, based_on: pack.based_on, imported: true },
+        SaveExtras { trigger: pack.trigger, based_on: pack.based_on, imported: true, project_settings: Some(pack.project_settings) },
     )?;
     let _ = fs::remove_dir_all(&stage);
     Ok(saved)
@@ -1804,6 +1844,21 @@ mod tests {
         // 覆盖另存不给 based_on：沿用
         let again = save_at(&packs, Some(&saved.id), "质控", "", saved.params.clone(), saved.steps.clone(), &[]).unwrap();
         assert_eq!(again.based_on, saved.based_on);
+        // 项目设定：给了就存，覆盖另存不给就沿用
+        let with_settings = save_with_trigger_at(
+            &packs,
+            Some(&saved.id),
+            "质控",
+            "",
+            saved.params.clone(),
+            saved.steps.clone(),
+            &[],
+            SaveExtras { project_settings: Some(vec!["综述角度：（写一句）".into(), "目标期刊：Nature".into()]), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(with_settings.project_settings, ["综述角度：（写一句）", "目标期刊：Nature"]);
+        let again = save_at(&packs, Some(&saved.id), "质控", "", saved.params.clone(), saved.steps.clone(), &[]).unwrap();
+        assert_eq!(again.project_settings, with_settings.project_settings);
 
         // 导出：顶层一层 <id>/
         let zip_path = dir.join("out.zip");
