@@ -512,12 +512,17 @@ fn patch_qwen_settings(
                 if let Some(val) = policy.max_output_tokens {
                     sp.insert("max_tokens".into(), json!(val));
                 }
-                // 思考档：0.26.3 从 samplingParams 的扁平 reasoning_effort 读（chunk resolveReasoningForModel）
+                // 思考档：openai 协议从 samplingParams 的扁平 reasoning_effort 读（0.26.3 chunk resolveReasoningForModel）；
+                // anthropic 协议只读条目的 generationConfig.reasoning.effort（0.26.5 假网关实测，同 agents::qwen_system_settings_body）
+                let mut gc = serde_json::Map::new();
                 if let Some(raw) = policy.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
                     let val = crate::agent_specs::canonical_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
-                    sp.insert("reasoning_effort".into(), json!(val));
+                    if is_anthropic {
+                        gc.insert("reasoning".into(), json!({ "effort": val }));
+                    } else {
+                        sp.insert("reasoning_effort".into(), json!(val));
+                    }
                 }
-                let mut gc = serde_json::Map::new();
                 if !sp.is_empty() {
                     gc.insert("samplingParams".into(), Value::Object(sp));
                 }

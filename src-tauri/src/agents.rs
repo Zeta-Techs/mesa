@@ -1294,7 +1294,13 @@ fn qwen_system_settings_body(
                 }
                 if let Some(raw) = policy.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
                     let val = crate::agent_specs::canonical_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
-                    sp.insert("reasoning_effort".into(), json!(val));
+                    // anthropic 协议的生成器不看 samplingParams 里的思考档，只读条目的 generationConfig.reasoning.effort
+                    //（0.26.5 假网关实测：写前者请求里没有 output_config.effort，写后者才有）；openai 协议照旧扁平 reasoning_effort
+                    if protocol == "anthropic" {
+                        gc.insert("reasoning".into(), json!({ "effort": val }));
+                    } else {
+                        sp.insert("reasoning_effort".into(), json!(val));
+                    }
                 }
                 if !sp.is_empty() {
                     gc.insert("samplingParams".into(), serde_json::Value::Object(sp));
@@ -7899,6 +7905,23 @@ api_backend = "responses"
         assert!(msg.contains("https://other/v1"));
         assert!(grok_endpoint_conflict(&dir, &official_profile("grok")).is_none(), "官方账号不走这条");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn qwen_effort_goes_where_each_protocol_reads_it() {
+        // 2026-11-04 假网关实测（Qwen 0.26.5）：anthropic 协议只认条目 generationConfig.reasoning.effort
+        //（请求里出 output_config.effort），samplingParams.reasoning_effort 被忽略；openai 协议认后者（请求里扁平 reasoning_effort）
+        let mut p = profile("qwen", Some("https://relay.example.com/v1"));
+        p.models = vec!["m".into()];
+        p.request_policy.reasoning_effort = Some("high".into());
+        let a = qwen_system_settings_body(&p, "anthropic", Some("m"), "ANTHROPIC_API_KEY", None);
+        let ea = &a["modelProviders"]["anthropic"][0]["generationConfig"];
+        assert_eq!(ea["reasoning"]["effort"], "high");
+        assert!(ea.get("samplingParams").is_none());
+        let o = qwen_system_settings_body(&p, "openai", Some("m"), "OPENAI_API_KEY", None);
+        let eo = &o["modelProviders"]["openai"][0]["generationConfig"];
+        assert_eq!(eo["samplingParams"]["reasoning_effort"], "high");
+        assert!(eo.get("reasoning").is_none());
     }
 
     #[test]
