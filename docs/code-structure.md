@@ -712,7 +712,7 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
   （scripts/e2e-model-routing/：假网关 + 驱动，用 agents.rs 的 e2e_dump_launch_plans 生成的真实启动计划拉起各家 CLI，核对请求里的模型与路径；
    chat-capture.py 按权限四档拉起、发 TRIGGER_SLOW / TRIGGER_TOOL / 切换命令逐帧抓屏，聊天层第三期逐家核实用（2026-10-20 起
    Windows 走 ConPTY / pywinpty；TRIGGER_ASK / TRIGGER_ASK2 回 Claude 提问表单、APPROVE_KEYS 每按一键记一帧，假网关认 SUGGESTION MODE 回猜的下一句）；capture-check.ts 把抓屏交给 tui-menu / live-reply 解析器看读不读得出；live-replay.ts 用真 xterm.js
-   回放抓屏的原始输出（CAP_RAW=1）、逐块读屏接预览，数重复 / 漏行；见其 README）
+   回放抓屏的原始输出（CAP_RAW=1）、逐块读屏接预览，数重复 / 漏行；resume-drive.py 用 e2e_dump_resume_plans 按内嵌终端的恢复口径给本机真实老对话出计划、拉起真 CLI 接着问一句（能分叉的先分叉，Codex 用副本，不写原对话）；见其 README）
   （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
    .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家：有旁路的六家跑旁路端到端，Gemini / Kimi 只抓屏，

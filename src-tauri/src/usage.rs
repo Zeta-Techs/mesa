@@ -703,8 +703,8 @@ pub(crate) fn last_session_model(agent: &str, file_path: &str, session_id: &str)
     last_model_of(extract_file_events(agent, path, Some(session_id)))
 }
 
-/// 一行 Codex rollout 若是带思考档的 turn_context，取出思考档
-fn codex_turn_effort(text: &str) -> Option<String> {
+/// 一行 Codex rollout 若是 turn_context，取出它 payload 里的某个字段（effort / model）
+fn codex_turn_field(text: &str, key: &str) -> Option<String> {
     if !text.contains("\"turn_context\"") {
         return None;
     }
@@ -712,26 +712,36 @@ fn codex_turn_effort(text: &str) -> Option<String> {
     if get_str(&v, "type") != Some("turn_context") {
         return None;
     }
-    let e = v.get("payload").and_then(|p| get_str(p, "effort"))?;
+    let e = v.get("payload").and_then(|p| get_str(p, key))?;
     (!e.is_empty()).then(|| e.to_string())
 }
 
-/// Codex 会话最后一轮的思考档（rollout 的 turn_context 每轮都记 effort）；别家会话文件不记，返回 None
-pub(crate) fn last_codex_effort(file_path: &str) -> Option<String> {
+/// Codex 会话最后一个 turn_context 的某字段：先读尾窗，没有再整份顺读
+fn last_codex_turn_field(file_path: &str, key: &str) -> Option<String> {
     let path = Path::new(file_path);
     if let Some(found) = find_in_tail(path, |lines| {
-        lines.iter().rev().find_map(|l| codex_turn_effort(l))
+        lines.iter().rev().find_map(|l| codex_turn_field(l, key))
     }) {
         return found;
     }
     let reader = usage_line_reader(path)?;
-    let mut effort = None;
+    let mut value = None;
     for line in reader.split(b'\n').map_while(Result::ok) {
-        if let Some(e) = codex_turn_effort(&String::from_utf8_lossy(&line)) {
-            effort = Some(e);
+        if let Some(e) = codex_turn_field(&String::from_utf8_lossy(&line), key) {
+            value = Some(e);
         }
     }
-    effort
+    value
+}
+
+/// Codex 会话最后一轮的思考档（rollout 的 turn_context 每轮都记 effort）；别家会话文件不记，返回 None
+pub(crate) fn last_codex_effort(file_path: &str) -> Option<String> {
+    last_codex_turn_field(file_path, "effort")
+}
+
+/// Codex 会话最后一轮发请求用的模型（turn_context 记的）：一轮都没跑完、没有用量记录的对话也读得到
+pub(crate) fn last_codex_turn_model(file_path: &str) -> Option<String> {
+    last_codex_turn_field(file_path, "model")
 }
 
 // ===== 聚合 =====
@@ -3194,6 +3204,31 @@ mod tests {
         format!(
             r#"{{"type":"assistant","timestamp":"2026-10-24T01:00:00Z","message":{{"model":"{model}","usage":{{"input_tokens":1,"output_tokens":1}}}}}}"#
         )
+    }
+
+    #[test]
+    fn last_codex_turn_model_reads_turn_context_without_usage() {
+        // 一轮都没跑完（请求被拒）的对话没有 token_count，模型只在 turn_context 里
+        let dir = std::env::temp_dir().join(format!("ccode-turn-model-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("rollout.jsonl");
+        std::fs::write(
+            &f,
+            [
+                r#"{"type":"session_meta","payload":{"id":"x","model_provider":"openai"}}"#,
+                r#"{"type":"turn_context","payload":{"model":"gpt-6-luna","effort":"high"}}"#,
+                r#"{"type":"event_msg","payload":{"type":"error","message":"boom"}}"#,
+                r#"{"type":"turn_context","payload":{"model":"gpt-6-sol","effort":"high"}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let path = f.to_string_lossy();
+        assert_eq!(last_codex_turn_model(&path).as_deref(), Some("gpt-6-sol"));
+        assert_eq!(last_session_model("codex", &path, "x"), None, "用量口径读不到，所以续聊不能用它");
+        assert_eq!(last_codex_effort(&path).as_deref(), Some("high"));
+        assert_eq!(last_codex_turn_model("/no/such/file.jsonl"), None);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

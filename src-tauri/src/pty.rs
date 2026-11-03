@@ -1082,8 +1082,10 @@ fn pty_spawn_sync(
     // 每-agent 启动前文件准备（codex：写模型 catalog，让 /model 选择器列出全部模型）
     let mut extra_args = agents::prepare_launch(&profile)?;
     // Codex 0.166 起续聊只认对话记下的渠道：对话不是 Mesa 的 ccode-… 时按它自己的渠道续（agents 同名函数）
-    if agent_id == "codex" && resume_session_id.is_some() {
-        agents::codex_resume_on_thread_provider(&mut plan, &mut extra_args, resume_provider.as_deref());
+    if let (true, Some(sid)) = (agent_id == "codex", resume_session_id.as_deref()) {
+        let thread_model = agents::codex_foreign_thread_provider(resume_provider.as_deref())
+            .and_then(|_| crate::sessions::codex_thread_model(sid));
+        agents::codex_resume_on_thread_provider(&mut plan, &mut extra_args, resume_provider.as_deref(), thread_model.as_deref());
     }
     // 可写时的原生权限档（聊天权限徽标，2026-10-17）：ask / auto / full 只加在本次命令行上；
     // 缺省 = 按这家 CLI 本机设置。Run 的权限政策仍只有 discuss / write_tree 两种，不受影响

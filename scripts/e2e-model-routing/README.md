@@ -195,3 +195,19 @@ Codex 远程 TUI 恢复会话时拒收权限参数（Permission overrides are no
 修之前不通的两处：官方账号的 Claude（内联 `--settings` 经 claude.cmd 包装被 cmd 拆坏，起不来）、带换行 / 引号 / `%` 的首条消息
 （经 cmd 包装被截断 / 展开）——改为 shim 直启后 `E2E_DROP_SETTINGS=1 E2E_ARG_PROMPT=1` 通过。`E2E_DELETE_SETTINGS=1` 通过：
 网关覆盖文件 60 秒后被清理不影响已启动的 Claude 继续触发 hooks。
+
+## 老对话续聊核对（2026-11-03）
+
+按 Mesa 内嵌终端「点开老对话接着聊」的同一套拼法（连接、模型取 `session_resume_config` 再按连接名单过滤、Codex 按对话渠道续、Gemini 认证拦截），
+给本机真实老对话（Mesa 记过连接的）每家挑几条出启动计划，再拉起真 CLI 接着问一句「只回复 ok」。用真实连接与密钥：配置根先拷一份给 `E2E_CFG`，计划文件 0600、用完删。
+不写原对话：Claude / CodeBuddy / Qwen / Grok / OpenCode / Kimi 先分叉（会留下分叉出的新对话，测完自己清），Codex 在临时 `CODEX_HOME` 的副本上续；Gemini 没有分叉，会追加到原对话。
+
+```bash
+umask 077; mkdir -p /tmp/cfg && cp ~/Library/Application\ Support/ccode/*.json /tmp/cfg/
+cd src-tauri && MESA_E2E_REAL_CLI=1 E2E_CFG=/tmp/cfg E2E_OUT=/tmp/resume-plans.json E2E_PER_AGENT=2 E2E_SKIP=<不测的会话id,…> \
+  cargo test --lib e2e_dump_resume_plans -- --ignored
+cd .. && python3 -I scripts/e2e-model-routing/resume-drive.py /tmp/resume-plans.json /tmp/resume-logs [agent …]
+rm -rf /tmp/cfg /tmp/resume-plans.json
+```
+
+每条一份日志（命令行、输出、`RESULT=ok/fail`）。`PLAN_ERROR` 开头的是 Mesa 在启动前就拦下（如 Gemini 还是 Google 账号登录），界面上对应一张设置卡。

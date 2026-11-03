@@ -6149,6 +6149,18 @@ pub(crate) fn sessions_for_card(task_id: &str) -> Vec<SessionMetaDto> {
     sessions_belonging_to(sessions, task_id)
 }
 
+/// 全量扫描 + session_meta 合并（会话列表同口径，不分页）；续聊核对 harness 用
+#[cfg(test)]
+pub(crate) fn scan_with_meta() -> Vec<SessionMetaDto> {
+    let scan = cached_scan();
+    let mut sessions = scan.sessions;
+    if let Ok(conn) = open_db() {
+        let meta = read_all_meta(&conn);
+        apply_meta(&mut sessions, &scan.chain_members, &meta);
+    }
+    sessions
+}
+
 /// 把 session_meta 表的整理数据合并进扫描结果；codex 链代表自身没有行时按任一成员 id 找
 fn apply_meta(
     sessions: &mut [SessionMetaDto],
@@ -6481,10 +6493,46 @@ fn session_resume_config_at(
     } else {
         None
     };
+    let mut file_model = crate::usage::last_session_model(agent, file_path, session_id);
+    if agent == "kimi" {
+        let config = SessionRoots::current()
+            .and_then(|r| fs::read_to_string(r.kimi_code.join("config.toml")).ok())
+            .unwrap_or_default();
+        file_model = file_model.and_then(|alias| kimi_model_from_alias(&alias, &config));
+    }
     SessionResumeConfigDto {
-        model: crate::usage::last_session_model(agent, file_path, session_id).or(launch_model),
+        model: file_model.or(launch_model),
         effort: file_effort.or(launch_effort),
     }
+}
+
+/// Kimi 会话文件记的是 config.toml 里的模型别名（`zetatechs/kimi-k3`、Mesa 启动时合成的 `__kimi_env_model__`），
+/// 不是网关上的模型名——原样拿去续聊，网关报「No available channel for model zetatechs/kimi-k3」（2026-11-03 实测）。
+/// 按 `[models.<别名>].model` 换回真名；Mesa 合成的别名只活在那次启动的环境变量里，换不回给 None（调用方用启动时记下的）
+fn kimi_model_from_alias(alias: &str, config: &str) -> Option<String> {
+    if alias == crate::agents::KIMI_ENV_MODEL_ALIAS {
+        return None;
+    }
+    let real = config
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| {
+            t.get("models")?
+                .get(alias)?
+                .get("model")?
+                .as_str()
+                .map(str::to_string)
+        });
+    real.or_else(|| Some(alias.to_string()))
+        .filter(|m| !m.trim().is_empty())
+}
+
+/// session_resume_config 的同步版（续聊核对 harness 用，同一口径）
+#[cfg(test)]
+pub(crate) fn session_resume_config_sync(agent: &str, session_id: &str, file_path: &str) -> SessionResumeConfigDto {
+    open_db()
+        .map(|conn| session_resume_config_at(&conn, agent, session_id, file_path))
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -8443,6 +8491,12 @@ fn grok_member_files_in(roots: &[PathBuf], member_ids: &[String]) -> Vec<PathBuf
         }
     }
     out
+}
+
+/// Codex 对话最后一轮用的模型（按 id 找 rollout 读 turn_context）；续聊补 `-m` 用，读不到给 None
+pub(crate) fn codex_thread_model(session_id: &str) -> Option<String> {
+    let file = codex_member_files(&[session_id.to_string()]).into_iter().next()?;
+    crate::usage::last_codex_turn_model(&file.to_string_lossy())
 }
 
 fn codex_member_files(member_ids: &[String]) -> Vec<PathBuf> {
@@ -11787,6 +11841,17 @@ mod tests {
         let cfg = session_resume_config_at(&conn, "codex", "x1", "/no/such/file.jsonl");
         assert_eq!(cfg.model.as_deref(), Some("gpt-5.4"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn kimi_resume_model_maps_config_alias_to_real_name() {
+        let cfg = "default_model = \"zetatechs/kimi-k3\"\n[models.\"zetatechs/kimi-k3\"]\nprovider = \"zetatechs\"\nmodel = \"kimi-k3\"\n[models.kimi-k2]\nprovider = \"ccode\"\n";
+        assert_eq!(kimi_model_from_alias("zetatechs/kimi-k3", cfg).as_deref(), Some("kimi-k3"));
+        // 别名段没写 model、或配置里没有：原样（老会话直接记真名的情况）
+        assert_eq!(kimi_model_from_alias("kimi-k2", cfg).as_deref(), Some("kimi-k2"));
+        assert_eq!(kimi_model_from_alias("kimi-k3", "").as_deref(), Some("kimi-k3"));
+        // Mesa 启动时合成的别名换不回真名
+        assert_eq!(kimi_model_from_alias("__kimi_env_model__", cfg), None);
     }
 
     #[test]

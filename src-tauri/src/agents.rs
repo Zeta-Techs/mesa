@@ -3458,7 +3458,7 @@ fn resume_extra_args(
 }
 
 /// 对话记下的渠道不是 Mesa 的 `ccode` / `ccode-<短id>` 时返回它（只认 TOML 裸键能写的名字，防拼进 `-c` 出错）
-fn codex_foreign_thread_provider(session_provider: Option<&str>) -> Option<&str> {
+pub(crate) fn codex_foreign_thread_provider(session_provider: Option<&str>) -> Option<&str> {
     let p = session_provider.map(str::trim).filter(|s| !s.is_empty())?;
     let bare = p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     (bare && !crate::provider_id::is_ccode_provider(p)).then_some(p)
@@ -3469,11 +3469,14 @@ fn codex_foreign_thread_provider(session_provider: Option<&str>) -> Option<&str>
 /// 对话记的不是 Mesa 的 `ccode-…`（客户端里开的 `custom`、官方 `openai`、用户自己配的渠道）时，按对话自己的渠道续
 /// （2026-11-01 用户拍板）：`model_provider` 指回它；这条连接自己的模型、上下文、模型目录、旁路模型不带（那是别的渠道的）；
 /// 不注入 `CODEX_API_KEY`——`openai` 要走 ChatGPT 登录，别的渠道认证在 config.toml 里——随之也不加
-/// `forced_login_method` 覆盖。`openai` 另按官方账号撤掉残留密钥变量、不关官方的网页搜索和 apps。返回是否改过
+/// `forced_login_method` 覆盖。`openai` 另按官方账号撤掉残留密钥变量、不关官方的网页搜索和 apps。
+/// 模型改用对话自己最后一轮的（`thread_model`）：不带 `-m` 时 codex 续聊发的是全局默认模型，不是对话原来的
+/// （2026-11-03 本机 0.166 实测：GLM 老对话指回渠道后报「模型不存在」，补 `-m` 才续上）。返回是否改过
 pub(crate) fn codex_resume_on_thread_provider(
     plan: &mut LaunchPlan,
     extra_args: &mut Vec<String>,
     thread_provider: Option<&str>,
+    thread_model: Option<&str>,
 ) -> bool {
     let Some(p) = codex_foreign_thread_provider(thread_provider) else {
         return false;
@@ -3525,6 +3528,9 @@ pub(crate) fn codex_resume_on_thread_provider(
     }
     plan.args.push("-c".into());
     plan.args.push(format!(r#"model_provider="{p}""#));
+    if let Some(m) = thread_model.map(str::trim).filter(|m| !m.is_empty()) {
+        plan.args.extend(["-m".into(), m.to_string()]);
+    }
     true
 }
 
@@ -3960,17 +3966,23 @@ fn external_launch_args(
     key: Option<String>,
     model: Option<&str>,
     resume_session_id: Option<&str>,
+    resume_provider: Option<&str>,
     prompt: Option<&str>,
 ) -> Result<(Vec<String>, Vec<(String, String)>, Vec<String>), String> {
     validate_launch_compatibility(profile, model)?;
     // 没带首条指令也走 launch_plan_with_prompt：交互启动的环境（关更新提示）只在那里加
-    let plan = launch_plan_with_prompt(profile, key, model, prompt)?;
+    let mut plan = launch_plan_with_prompt(profile, key, model, prompt)?;
     if prompt.is_some() && plan.prompt_dropped {
         return Err(format!(
             "{agent_id} 不支持启动注入参数，简报指令需启动后手动发送"
         ));
     }
-    let extra = prepare_launch(profile)?;
+    let mut extra = prepare_launch(profile)?;
+    // 与内嵌终端同口径：对话不是 Mesa 的 ccode-… 时按它自己的渠道和模型续（不然 codex 报 modelProviderMismatch）
+    if let (true, Some(sid), Some(_)) = (agent_id == "codex", resume_session_id, codex_foreign_thread_provider(resume_provider)) {
+        let thread_model = crate::sessions::codex_thread_model(sid);
+        codex_resume_on_thread_provider(&mut plan, &mut extra, resume_provider, thread_model.as_deref());
+    }
     let mut args = Vec::new();
     if let Some(session_id) = resume_session_id {
         let (prepend, resume) = resume_args(agent_id, session_id);
@@ -4023,6 +4035,7 @@ fn open_external_profiled(
         key,
         selected_model.as_deref(),
         resume_session_id,
+        provider,
         prompt,
     )?;
     let binary =
@@ -4248,7 +4261,13 @@ pub fn session_resume_command(
     provider: Option<String>,
 ) -> Result<String, String> {
     let binary = binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?;
-    let extra = resume_extra_args(agent_id, base_url.as_deref(), provider.as_deref());
+    let mut extra = resume_extra_args(agent_id, base_url.as_deref(), provider.as_deref());
+    // 外面续 Codex 老对话：不带 `-m` 发的是全局默认模型，换过默认连接后老渠道报「模型不存在」
+    if agent_id == "codex" {
+        if let Some(m) = crate::sessions::codex_thread_model(session_id) {
+            extra.extend(["-m".into(), m]);
+        }
+    }
     #[cfg(target_os = "windows")]
     return windows_resume_command_line(
         agent_id,
@@ -5853,6 +5872,103 @@ mod tests {
     /// 按假网关地址给每家生成真实启动计划，写成 JSON，由 scripts/e2e-model-routing/drive.py 拿去真起 CLI，
     /// 看请求里带的模型、打到的路径对不对。`E2E_BASE=http://127.0.0.1:端口 E2E_OUT=计划.json
     /// cargo test --lib e2e_dump_launch_plans -- --ignored`
+    /// 续聊核对（2026-11-03）：按 Mesa 内嵌终端「点开老对话接着聊」的同一套拼法（pty.rs spawn 的恢复分支），
+    /// 给本机真实对话生成启动计划，交 `scripts/e2e-model-routing/resume-drive.py` 拉起真 CLI 问一句。
+    /// `E2E_CFG` = 真实配置根的一份拷贝（连接、密钥、绑定都从拷贝读，不碰真实目录），`E2E_OUT` 输出（含密钥，0600），
+    /// `E2E_PER_AGENT` 每家几条（默认 2），`E2E_SKIP` 逗号分隔的不测会话 id
+    #[test]
+    #[ignore = "手动跑：配合 scripts/e2e-model-routing/resume-drive.py"]
+    fn e2e_dump_resume_plans() {
+        let cfg = std::env::var("E2E_CFG").expect("E2E_CFG");
+        let out = std::env::var("E2E_OUT").expect("E2E_OUT");
+        let per: usize = std::env::var("E2E_PER_AGENT").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        let skip: Vec<String> = std::env::var("E2E_SKIP").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect();
+        CODEX_VERSION_FOR_TEST.with(|c| c.set(cli_version_uncached_ok("codex")));
+        // 测试态的 Gemini 认证方式是注入的：按本机真实 settings.json 填，拦不拦才和 Mesa 一致
+        let gemini_auth = crate::dirs::home_dir()
+            .and_then(|h| std::fs::read_to_string(h.join(".gemini/settings.json")).ok())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.pointer("/security/auth/selectedType").and_then(|x| x.as_str()).map(str::to_string));
+        TEST_GEMINI_AUTH.with(|k| *k.borrow_mut() = gemini_auth);
+        // Codex 同理：磁盘渠道带不带 auth 决定注不注 env_key
+        let codex_cfg = crate::dirs::home_dir()
+            .and_then(|h| std::fs::read_to_string(h.join(".codex/config.toml")).ok())
+            .and_then(|t| t.parse::<toml::Value>().ok());
+        tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = codex_cfg);
+        let store = ProfileStore::new_for_test(std::path::Path::new(&cfg));
+        let mut sessions = crate::sessions::scan_with_meta();
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        let mut picked: std::collections::HashMap<String, usize> = Default::default();
+        let mut all = Vec::new();
+        for s in sessions {
+            let Some(pid) = s.profile_id.clone() else { continue };
+            let cwd = s.cwd.clone().unwrap_or_else(|| s.project_path.clone());
+            if s.internal || skip.contains(&s.session_id) || !std::path::Path::new(&cwd).is_dir() {
+                continue;
+            }
+            let n = picked.entry(s.agent.clone()).or_default();
+            if *n >= per {
+                continue;
+            }
+            // 同前端点开老对话：session_resume_config 给的模型，连接的模型名单里没有就用连接默认（resumeModelChoice）
+            let recorded = crate::sessions::session_resume_config_sync(&s.agent, &s.session_id, &s.file_path).model;
+            let built = (|| -> Result<serde_json::Value, String> {
+                let listed = store.get_with_model(&pid, None)?.models;
+                let model = recorded.clone().filter(|m| listed.is_empty() || listed.contains(m));
+                let mut profile = store.get_with_model(&pid, model.as_deref())?;
+                if profile.agent != s.agent {
+                    return Err("profile 与 agent 不匹配".into());
+                }
+                profile.apply_session_provider(s.provider.as_deref());
+                let key = crate::profiles::get_key_for_profile(&profile)?;
+                ensure_launch_credentials(&profile, key.as_deref())?;
+                let model = model.clone().or_else(|| profile.models.first().cloned());
+                crate::combo::apply_to_profile(&mut profile, model.as_deref());
+                validate_launch_compatibility(&profile, model.as_deref())?;
+                if let Some(msg) = gemini_interactive_blocker(&profile, key.is_some()) {
+                    return Err(format!("Mesa 拦下并给出设置卡：{msg}"));
+                }
+                let mut plan = launch_plan_with_prompt(&profile, key, model.as_deref(), None)?;
+                let mut extra = prepare_launch(&profile)?;
+                if s.agent == "codex" {
+                    let thread_model = codex_foreign_thread_provider(s.provider.as_deref())
+                        .and_then(|_| crate::sessions::codex_thread_model(&s.session_id));
+                    codex_resume_on_thread_provider(&mut plan, &mut extra, s.provider.as_deref(), thread_model.as_deref());
+                }
+                let (prepend, resume) = resume_args(&s.agent, &s.session_id);
+                let mut args = Vec::new();
+                if prepend {
+                    args.extend(resume.iter().cloned());
+                }
+                args.extend(plan.args.iter().cloned());
+                args.extend(extra);
+                if !prepend {
+                    args.extend(resume);
+                }
+                Ok(serde_json::json!({
+                    "profile": profile.name, "model": model, "recorded_model": recorded, "args": args,
+                    "env": plan.env, "env_remove": plan.env_remove,
+                }))
+            })();
+            let mut row = serde_json::json!({
+                "agent": s.agent, "sid": s.session_id, "cwd": cwd, "file": s.file_path,
+                "provider": s.provider, "title": s.custom_title.or(s.title),
+            });
+            match built {
+                Ok(v) => row.as_object_mut().unwrap().extend(v.as_object().unwrap().clone()),
+                Err(e) => row["error"] = serde_json::json!(e),
+            }
+            all.push(row);
+            *n += 1;
+        }
+        std::fs::write(&out, serde_json::to_string_pretty(&all).unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
     #[test]
     #[ignore = "手动跑：配合 scripts/e2e-model-routing/"]
     fn e2e_dump_launch_plans() {
@@ -8472,16 +8588,18 @@ api_backend = "responses"
         // Mesa 自己的 ccode-… 对话：不动
         let mut plan = plan_of();
         let mut extra = vec!["-c".to_string(), "model_catalog_json=/x.json".to_string()];
-        assert!(!codex_resume_on_thread_provider(&mut plan, &mut extra, Some("ccode-a1b2c3d4")));
+        assert!(!codex_resume_on_thread_provider(&mut plan, &mut extra, Some("ccode-a1b2c3d4"), Some("glm-5.3-flash")));
         assert!(joined(&plan).contains("-m glm-5") && extra.len() == 2);
         // 客户端里开的 custom 对话：指回 custom，这条连接的模型 / 上下文 / 目录 / 密钥不带，中转兼容项留着
         let mut plan = plan_of();
         let mut extra = vec!["-c".to_string(), "model_catalog_json=/x.json".to_string(), "--no-daemon".to_string()];
-        assert!(codex_resume_on_thread_provider(&mut plan, &mut extra, Some("custom")));
+        assert!(codex_resume_on_thread_provider(&mut plan, &mut extra, Some("custom"), Some("deepseek-v4-flash")));
         let s = joined(&plan);
-        assert!(s.ends_with(r#"-c model_provider="custom""#));
+        // 模型换成对话自己最后一轮的：不带 -m 时 codex 发全局默认模型，老渠道报「模型不存在」
+        assert!(s.ends_with(r#"-c model_provider="custom" -m deepseek-v4-flash"#));
         assert_eq!(s.matches("model_provider=").count(), 1);
-        for gone in ["-m", "model_providers.", "model_context_window", "review_model", "forced_login_method"] {
+        assert_eq!(s.matches("-m ").count(), 1, "连接自己的 -m glm-5 不该留");
+        for gone in ["model_providers.", "model_context_window", "review_model", "forced_login_method"] {
             assert!(!s.contains(gone), "{gone} 不该带");
         }
         assert!(s.contains(r#"web_search="disabled""#) && s.contains("model_reasoning_effort") && s.contains("-s workspace-write"));
@@ -8489,12 +8607,13 @@ api_backend = "responses"
         assert!(plan.env.is_empty());
         // 官方对话：走 ChatGPT 登录，撤残留密钥变量，官方的网页搜索不关
         let mut plan = plan_of();
-        assert!(codex_resume_on_thread_provider(&mut plan, &mut vec![], Some("openai")));
+        assert!(codex_resume_on_thread_provider(&mut plan, &mut vec![], Some("openai"), None));
         assert!(!joined(&plan).contains("web_search"));
+        assert!(!joined(&plan).contains("-m "), "读不到对话模型就不带 -m，用 codex 自己的默认");
         assert!(plan.env_remove.contains(&"CODEX_API_KEY".to_string()) && plan.env_remove.contains(&"OPENAI_API_KEY".to_string()));
         // 记不到渠道、或名字不是裸键：不动
-        assert!(!codex_resume_on_thread_provider(&mut plan_of(), &mut vec![], None));
-        assert!(!codex_resume_on_thread_provider(&mut plan_of(), &mut vec![], Some("a\"b")));
+        assert!(!codex_resume_on_thread_provider(&mut plan_of(), &mut vec![], None, Some("glm-5")));
+        assert!(!codex_resume_on_thread_provider(&mut plan_of(), &mut vec![], Some("a\"b"), None));
     }
 
     #[test]
@@ -8582,6 +8701,7 @@ api_backend = "responses"
             Some("deepseek-v4"),
             Some("session-1"),
             None,
+            None,
         )
         .unwrap();
         assert!(args.iter().any(|a| a == "model_provider=\"ccode\""));
@@ -8617,6 +8737,7 @@ api_backend = "responses"
             &p,
             Some("sk-secret".into()),
             Some("sonnet-custom"),
+            None,
             None,
             Some("读取简报继续"),
         )
