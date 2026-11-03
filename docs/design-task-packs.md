@@ -1,8 +1,7 @@
 # Mesa 设计草案：任务包——让用户自己定义专属科研任务
 
-> 状态：**草案，待拍板**（2026-11-03）。§9 是待拍板清单，每项附建议。拍板后决定写进 architecture §10，
-> 细则随各期写进 `docs/conventions/pipeline.md` / `step-panel.md` / `safety.md`。
-> §9 第 1 项与 `docs/design-research-moat.md` §6「科研包（本轮暂缓）」相关，必须先拍板才能动手。
+> 状态：**2026-11-03 已拍板**（architecture §10 同日条）：§9 七项全部按建议采纳，其中部分解禁 `docs/design-research-moat.md` §6「科研包暂缓」
+> （本机自建与 zip 分享放开，公开分发仍暂缓）。先做第一期。细则随各期写进 `docs/conventions/pipeline.md`「任务包」/ `step-panel.md` / `safety.md`。
 
 ## 0. 一句话
 
@@ -152,7 +151,7 @@
 | 三 | 包内核验脚本接入核验层；包带触发时装进项目建定时任务 / 事件规则 | research_record.rs 认包检查器、scheduler 建规则 |
 | 四 | 导入导出；内置也是包；内置升级差异；旧用户模板迁移 | pipeline-presets 迁包、模板预算测试改读包 |
 
-## 9. 待拍板清单（附建议）
+## 9. 拍板清单（2026-11-03 全部按建议采纳）
 
 | # | 事项 | 建议 |
 |---|---|---|
