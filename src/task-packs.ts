@@ -4,7 +4,7 @@
  * - parameterize：另存为我的任务时把选中步骤文字里的具体值改成 `{param:键}`；
  * 替换范围与后端 task_packs.rs `step_texts` 一致：简报、验收条件（`machine:` 行不动）、讨论种子、决策问题、人工事项标题与说明。
  */
-import type { PackTriggerDto, ProjectStepDto, StepCheckDto, StepParamDto } from "./types.ts";
+import type { PackTriggerDto, ProjectStepDto, StepCheckDto, StepParamDto, TaskPackDto } from "./types.ts";
 
 const PARAM_RE = /\{param:([A-Za-z0-9_-]+)\}/g;
 
@@ -137,4 +137,15 @@ export function triggerSummary(t: PackTriggerDto): string {
 /** 默认要不要一并建：只记录的事件规则不花钱，默认勾；定时任务和直接跑的要花钱，默认不勾 */
 export function triggerDefaultOn(t: PackTriggerDto): boolean {
   return t.kind !== "schedule" && t.mode !== "run";
+}
+
+/**
+ * 导入的包第一次加进项目前再问一次（第四期，design-task-packs §7.2「来自别人的脚本首次运行前再提示一次」）：
+ * 返回要问的话；不是导入的、或没带文件返回 null。人点了确认才带 scriptsReviewed 去加，加成后后端去掉导入标记
+ */
+export function importedScriptsNote(pack: Pick<TaskPackDto, "name" | "imported" | "scripts">): string | null {
+  if (!pack.imported || pack.scripts.length === 0) return null;
+  const list = pack.scripts.slice(0, 8).map((s) => `· ${s.replace(/^skills\//, "")}`);
+  if (pack.scripts.length > 8) list.push(`· …共 ${pack.scripts.length} 个`);
+  return `「${pack.name}」是从别人那里导入的，带着这些文件：\n${list.join("\n")}\n\n加进流程后，AI 会在工作副本里按任务书运行它们。导入时看过全文、信得过再继续；这个提示只出现这一次。`;
 }

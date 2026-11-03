@@ -1538,6 +1538,34 @@ export interface TaskPackDto {
   skills: string[];
   /** 可选的触发：加进项目时勾选一并建 */
   trigger?: PackTriggerDto | null;
+  /** 从内置模板另存的「我的版本」：记基于哪个内置与当时的内置步骤原样（第四期） */
+  basedOn?: PackBasedOnDto | null;
+  /** 从别人的 zip 导入、带的文件还没在加进项目前确认过 */
+  imported: boolean;
+  /** 随包技能里 SKILL.md 以外的文件（skills/<技能>/<相对路径>） */
+  scripts: string[];
+}
+
+/** 我的版本基于哪个内置模板；steps 是另存时内置步骤原样，前端拿来算「内置有更新」 */
+export interface PackBasedOnDto {
+  template: string;
+  templateName: string;
+  /** 投稿与返修模板的分支与轮次；其他模板为空 / 0 */
+  mode: string;
+  round: number;
+  steps: ProjectStepDto[];
+}
+
+/** 导入任务包预览（preview_task_pack_import）：人看过、确认才装 */
+export interface PackImportPreviewDto {
+  token: string;
+  pack: TaskPackDto;
+  issues: PackIssueDto[];
+  /** new 会装 | same 库里有、一样 | differs 库里有同名但不一样：用库里那份 */
+  skills: { name: string; status: "new" | "same" | "differs" }[];
+  /** 随包的全部文件；text 为空 = 二进制或太大 */
+  files: { path: string; size: number; text: string | null }[];
+  ignored: number;
 }
 
 /** 任务包机器校验的一条（task_packs.rs check_pack）：block 拦下不让存，warn 只提醒 */
@@ -1714,15 +1742,6 @@ export interface TaskCardDto {
 export interface ProjectConfigReadDto {
   config: ProjectConfigDto;
   warnings: string[];
-}
-
-/** 用户另存的流水线模板（list/save/delete_pipeline_template）；内置模板在前端 pipeline-presets.ts */
-export interface PipelineTemplateDto {
-  id: string;
-  name: string;
-  description: string;
-  steps: ProjectStepDto[];
-  createdAt: string;
 }
 
 /** append_pipeline_steps 返回：实际追加步数 + 因步骤名重复跳过的步骤名 + 工作区改名明细 */

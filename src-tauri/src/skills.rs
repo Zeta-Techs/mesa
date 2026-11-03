@@ -1143,6 +1143,13 @@ pub(crate) fn library_skill_names() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 库里这个名字的技能目录（内置也算）；导入任务包时拿来比同名技能是不是同一份
+pub(crate) fn library_skill_dir(name: &str) -> Option<PathBuf> {
+    let store = SkillStore::default_paths().ok()?;
+    let found = store.read().into_iter().any(|s| s.name == name);
+    found.then(|| store.skill_dir(name)).filter(|d| d.is_dir())
+}
+
 /// 另存为我的任务：步骤用到的用户技能（非内置、库里确有 SKILL.md）的库目录，供随包快照。
 /// 内置技能每台机器都有，不打包
 pub(crate) fn user_skill_dirs(names: &[String]) -> Result<Vec<(String, PathBuf)>, String> {

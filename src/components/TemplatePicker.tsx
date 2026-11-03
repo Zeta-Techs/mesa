@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
+import MyPacksSection from "./MyPacksSection";
 import { compactPrimaryActionClass, inlineActionClass } from "./PageFrame";
+import { basedOnFor, builtinKey, builtinUpdate, currentBuiltinSteps, rebased } from "../pack-builtin";
 import {
   PIPELINE_TEMPLATES,
   pipelineStepsForTemplate,
@@ -9,7 +11,7 @@ import {
   UNTESTED_TEMPLATE_HINT,
   type SubmissionMode,
 } from "../pipeline-presets";
-import type { PipelineTemplateDto, ProjectStepDto } from "../types";
+import type { ProjectStepDto, TaskPackDto } from "../types";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
@@ -26,50 +28,104 @@ export interface TemplatePickItem {
 }
 
 /**
- * 研究流程模板选择器（内联面板）：内置模板（pipeline-presets）+ 用户模板（list_pipeline_templates）。
- * 后端命令未注册（旧版本）时优雅降级为仅内置模板，不报错也不影响其他功能；
- * 选中只抛出 steps，写回 project.toml（含覆盖确认/保留 topic 与 resources）由父组件负责。
+ * 研究流程模板选择器（内联面板）：内置模板（pipeline-presets）+ 我的任务（任务包，list_task_packs）。
+ * 内置模板选中只抛出 steps，写回 project.toml（含覆盖确认/保留 topic 与 resources）由父组件负责；
+ * 我的任务抛出整个包，由父组件经 add_task_pack_to_project 写入（2026-11-03 第四期：旧「我的模板」并进我的任务）。
+ * 内置可「另存为我的版本」（记 based_on）；打开时把一步都没改过的我的版本直接跟上内置新版。
  */
 export default function TemplatePicker({
   applying,
   onApply,
+  onApplyPack,
   onError,
 }: {
   applying: boolean;
   onApply: (item: TemplatePickItem) => void;
+  onApplyPack: (pack: TaskPackDto) => void;
   onError: (msg: string) => void;
 }) {
-  const [userTemplates, setUserTemplates] = useState<PipelineTemplateDto[]>([]);
-  const [backendMissing, setBackendMissing] = useState(false);
+  const [packs, setPacks] = useState<TaskPackDto[]>([]);
+  // 现在的内置步骤（经后端归一，与包里读出来的同一个样子），按 builtinKey 存
+  const [currents, setCurrents] = useState<Record<string, ProjectStepDto[]>>({});
+  const [notice, setNotice] = useState<string | null>(null);
   const [submissionMode, setSubmissionMode] =
     useState<SubmissionMode>("initial");
   const [submissionRound, setSubmissionRound] = useState(1);
 
+  /** 读我的任务，并把它们基于的内置按现在的样子归一一遍 */
+  const load = useCallback(async () => {
+    const list = await invoke<TaskPackDto[]>("list_task_packs").catch(() => [] as TaskPackDto[]);
+    const next: Record<string, ProjectStepDto[]> = {};
+    for (const p of list) {
+      if (!p.basedOn || builtinKey(p.basedOn) in next) continue;
+      const raw = currentBuiltinSteps(p.basedOn);
+      if (!raw) continue;
+      const norm = await invoke<ProjectStepDto[]>("normalize_pack_steps", { steps: raw }).catch(() => null);
+      if (norm) next[builtinKey(p.basedOn)] = norm;
+    }
+    return { list, currents: next };
+  }, []);
+
+  const reload = useCallback(async () => {
+    const { list, currents: next } = await load();
+    setPacks(list);
+    setCurrents(next);
+  }, [load]);
+
   useEffect(() => {
     let stale = false;
-    invoke<PipelineTemplateDto[]>("list_pipeline_templates")
-      .then((list) => {
-        if (!stale) setUserTemplates(list);
-      })
-      .catch(() => {
-        // 后端未就绪：只展示内置模板，并在「我的模板」区给出提示
-        if (!stale) setBackendMissing(true);
-      });
+    (async () => {
+      const { list, currents: next } = await load();
+      // 没改过的我的版本自动跟内置新版（design-task-packs §6）；改过的留给人在「内置有更新」里挑
+      const followed: string[] = [];
+      for (const p of list) {
+        const update = p.basedOn ? builtinUpdate(p, next[builtinKey(p.basedOn)]) : null;
+        if (!update?.untouched || !p.basedOn) continue;
+        try {
+          await invoke("save_task_pack", {
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            params: p.params,
+            steps: update.current,
+            basedOn: rebased(p.basedOn, update.current),
+          });
+          followed.push(p.name);
+        } catch {
+          /* 跟不上就留着「内置有更新」让人处理 */
+        }
+      }
+      const fresh = followed.length ? await invoke<TaskPackDto[]>("list_task_packs").catch(() => list) : list;
+      if (stale) return;
+      setPacks(fresh);
+      setCurrents(next);
+      if (followed.length) setNotice(`你没改过的「${followed.join("」「")}」已跟上内置新版。`);
+    })();
     return () => {
       stale = true;
     };
-  }, []);
+  }, [load]);
 
-  async function removeTemplate(t: PipelineTemplateDto) {
-    if (
-      !(await confirmDialog(`删除模板「${t.name}」？已应用的研究流程不受影响。继续？`, {
-        danger: true,
-      }))
-    )
-      return;
+  /** 内置另存为我的版本：步骤原样存进我的任务，记基于哪个内置（投稿模板按当前选的分支） */
+  async function saveAsMine(t: (typeof PIPELINE_TEMPLATES)[number]) {
+    const basedOn = basedOnFor(t.id, submissionMode, submissionRound);
+    if (!basedOn) return;
+    const name = `${t.name}（我的版本）`;
+    const same = packs.find((p) => p.name === name);
+    if (same && !(await confirmDialog(`已有「${name}」，再存一次会把它换回内置原样，你在上面的改动会丢。继续？`, { danger: true }))) return;
     try {
-      await invoke("delete_pipeline_template", { id: t.id });
-      setUserTemplates((list) => list.filter((x) => x.id !== t.id));
+      await invoke<TaskPackDto>("save_task_pack", {
+        id: same?.id ?? null,
+        name,
+        description: t.description,
+        params: [],
+        steps: basedOn.steps,
+        basedOn,
+      });
+      await reload();
+      setNotice(
+        `已另存为我的任务「${name}」。要改内容：先用它建流程，在「编辑研究流程」里改好，再用项目设置「另存为我的任务」同名存回；内置以后升级，这里会标「内置有更新」。`,
+      );
     } catch (reason) {
       onError(String(reason));
     }
@@ -86,7 +142,6 @@ export default function TemplatePicker({
       fieldTested?: boolean;
     },
     key: string,
-    onDelete?: () => void,
   ) {
     const stepPreview = t.steps.map((s) => s.name).join(" → ");
     return (
@@ -96,7 +151,7 @@ export default function TemplatePicker({
           <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
             {t.steps.length} 步
           </span>
-          {!onDelete && !t.fieldTested && (
+          {!t.fieldTested && (
             <span
               className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
               title={UNTESTED_TEMPLATE_HINT}
@@ -104,17 +159,15 @@ export default function TemplatePicker({
               {UNTESTED_TEMPLATE_BADGE}
             </span>
           )}
-          {onDelete && (
-            <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
-              我的
-            </span>
-          )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {onDelete && (
-              <button type="button" className={actionBtn} onClick={onDelete}>
-                删除
-              </button>
-            )}
+            <button
+              type="button"
+              className={actionBtn}
+              title="把这套内置复制成「我的任务」，在你的版本上改；内置以后升级时会提示差异"
+              onClick={() => void saveAsMine(t as (typeof PIPELINE_TEMPLATES)[number])}
+            >
+              另存为我的版本
+            </button>
             <button
               type="button"
               className={ctaSm}
@@ -197,26 +250,21 @@ export default function TemplatePicker({
   }
 
   return (
-    <div>
+    // 字号放容器上：全站 button { font: inherit } 会吞掉按钮上的 text-xs
+    <div className="text-xs">
       <ul className="space-y-1.5">
         {PIPELINE_TEMPLATES.map((t) => renderRow(t, t.id))}
       </ul>
-      {(userTemplates.length > 0 || backendMissing) && (
-        <>
-          <p className="mb-1 mt-3 text-xs text-l3">我的模板</p>
-          {backendMissing ? (
-            <p className="text-xs text-l4">
-              模板存储需要更新版本的后端支持，当前仅可使用内置模板。
-            </p>
-          ) : (
-            <ul className="space-y-1.5">
-              {userTemplates.map((t) =>
-                renderRow(t, t.id, () => void removeTemplate(t)),
-              )}
-            </ul>
-          )}
-        </>
-      )}
+      {notice && <p className="mt-2 text-xs text-l3">{notice}</p>}
+      <MyPacksSection
+        packs={packs}
+        currents={currents}
+        reload={reload}
+        applying={applying}
+        onApplyPack={onApplyPack}
+        onError={onError}
+        onNotice={setNotice}
+      />
     </div>
   );
 }

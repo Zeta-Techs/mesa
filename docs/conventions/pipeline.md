@@ -234,8 +234,9 @@
   统一去重当进料口，不回写、不清空积累账。**任务书写入是启动前置（2026-09-08）**：`write_workspace_task_md` 失败时保留已创建工作区并报错，不写后续 run 配置、不打开/自动启动 Agent；修复本轮任务书后方可继续。不得无合同启动以兜底旧命令缺失。**TASK.md 不进 git**：落盘时自动追加进
   `.git/info/exclude`（`exclude_task_md`，全 worktree 与主仓生效，best-effort 不阻断）——TASK.md 是开步脚手架而非任务产物。
 - **流水线模板库**：内置模板集中在 `src/pipeline-presets.ts` 的 `PIPELINE_TEMPLATES`（综述/科研论文/数据处理/毕业论文/投稿与返修/LaTeX 论文），
-  新增场景 = 数组加一项，简报必须遵守输入明确/决策分级/交付可验约定（低风险准备可继续，关键未决不默认批准）；用户模板走后端
-  `list/save/delete_pipeline_template`，选择器（TemplatePicker）合并展示，后端命令未就绪时优雅降级为仅内置模板。
+  新增场景 = 数组加一项，简报必须遵守输入明确/决策分级/交付可验约定（低风险准备可继续，关键未决不默认批准）；用户自己的版本一律是
+  「我的任务」（任务包，见下「任务包」第四期），选择器（TemplatePicker）内置在上、我的任务在下；旧的 `pipeline-templates.json` 与
+  `list/save/delete_pipeline_template` 2026-11-03 拆掉，不留两套。
   **步骤输入与完成判定（P0）**：`steps[].inputs` 只声明本步骤需要读取的上游产物或已登记项目资源；开工时由
   `renderTaskMd` 原样写入 TASK.md 的「本步骤输入」段。读取配置时，从第二步起逐项检查输入是否被前序
   `expected_artifacts` 或 `[[resources]]` 覆盖；第一步允许外部/跨项目输入，避免模板刚应用就产生不可行动警告。
@@ -1462,7 +1463,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - `machine:records-allow-empty:` 明确允许有效零记录；`machine:optional-empty:` 允许该精确交付文件为空但不允许缺文件。一般 records/产物非空语义保持不变。零结果不等于后续研究可以通过。
 - 原始数据、图源/场景源、数值结果和来源许可分别验收；工程大文件放配置产物目录、manifest 带版本/命令/哈希。UI 测试/合成示意不等于 Windows Origin、EndNote、真实 Zotero 写库或真人科研端到端已验收。
 
-## 任务包（2026-11-03 第一期，design-task-packs.md）
+## 任务包（2026-11-03 第一至四期，design-task-packs.md）
 
 - **包 = 声明 + 文字 + 可选脚本，不含跑在 Mesa 进程里的代码**；存在配置目录 `ccode/packs/<id>/`：`pack.toml`（`[pack]` 身份与版本、`[[params]]` 参数定义、
   `[[steps]]` 步骤合同）+ `skills/`（随包的用户技能快照；内置技能不打包）。`[[steps]]` 与项目档案卡同一写法，由 `projects::render_config` / `parse_config` 渲染与解析，
@@ -1474,7 +1475,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **另存**：项目设置 → 研究流程 →「另存为我的任务」（`SavePackForm`）；同名覆盖先确认、版本 +1、建立时间不变；先写临时目录再整目录换上，中途失败不留半个包。
 - **加进项目**：流程编辑器「＋ 从模板追加 → 我的任务」，有参数先填表；后端先补装库里缺的随包技能（同名以库里那份为准、不覆盖；新装的不自动分发，提示人去技能页打开），
   再走 `apply_pipeline_template_at` 原子追加（同名同交付跳过、工作区名冲突自动加后缀）。不自动推荐、不自动套用。
-- **删除**走回收站；已加进项目的步骤不受影响。包内核验与触发、导入导出、内置也是包，见设计稿后续各期。
+- **删除**走回收站；已加进项目的步骤不受影响。
 - **机器校验（第二期，`task_packs::check_pack` / `check_structure`）**：另存（`check_task_pack` 先给前端看，`save_at` 再拒一次）与装草稿都过。
   拦下：名字 / 简报空、步骤重名、未定义参数、`{skill:}` 不在内置技能名闭集（`skills::builtin_skill_names`）、路径绝对 / 含 `..` / 指 `.git`、文字像密钥
   （`sessions::redact_sensitive_text` 前后不等）、一步文字超 12000 字（6000 起提醒）、手写 pack.toml 的字段不在闭集（顶层 / `[pack]` / `[[params]]` /
@@ -1494,6 +1495,19 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   `hour` / `minute`，事件写 `folder`（可含 `{param:}`，按取值代入）/ `exts` / `mode`（缺省 record）。加进项目时**人勾选才建**：只记录的事件默认勾、
   定时和直接跑默认不勾（会叫 AI 花钱）；草稿「装进并加到这个项目试跑」不建。建法走 `scheduler::create_schedule_for_pack`（同一套校验，建好分发技能，
   分发失败只提示）；目录不存在等建不成时说明原因，不挡步骤加进来。覆盖另存拿不到触发时沿用旧版本的。
+- **导出 / 导入（第四期）**：导出 = 包目录原样打 zip（顶层一层 `<id>/`）。导入两段：`preview_task_pack_import` 只读解到配置目录 `pack-imports/<token>/`
+  （只收 `pack.toml`、`based-on.json`、`skills/**`；路径穿越与链接条目丢弃并计数；条目 ≤ 2000、解开 ≤ 64MB；超过一天的暂存下次自动清），跑结构与内容校验，
+  列随包技能与库里同名的比对（new / same / differs，differs 用库里那份）和随包每个文件的全文（SKILL.md 也列）；人点了才 `install_task_pack_import`
+  （再校验一遍、拦下不装、新 id、同名覆盖前端先确认），放弃 `discard_task_pack_import` 直删暂存。装好的标 `[pack] imported = true`：
+  **加进项目前前端再列一遍随包文件确认**，后端没带 `scripts_reviewed` 就拒；加成后去掉标记（不升版本）。本人覆盖另存不清标记（脚本还是别人写的）。
+- **内置另存为我的版本（第四期）**：模板库内置行「另存为我的版本」= 内置步骤原样存成包，`based-on.json` 记 `template` / `templateName` / 投稿模板的
+  `mode` 与 `round` / 当时的内置步骤。三份步骤（我的版本、当时的内置、现在的内置）都经后端同一套归一（`normalize_steps` = 去溯源后档案卡写出读回，
+  `normalize_pack_steps` 命令给前端用）才比，**前端不另抄缺省值**（2026-11-03 实证：不归一时 decision_mode / role / 人工事项 completion 的缺省值
+  让六套内置全被误判「改过」）。比较字段见 `pack-builtin.ts COMPARED_FIELDS`。现在的内置与当时的不同 → 标「内置有更新」；我的版本与当时的一模一样 →
+  打开模板库时直接换成新版；改过的由人逐步勾（changed 换新版、added 按内置位置插入、removed 拿掉），「保留我的」与「按勾选更新」都把对照点挪到现在的内置。
+  覆盖另存不给 `based_on` 时沿用旧的。内置模板本身不迁成包文件（仍在 `pipeline-presets.ts`，偏离设计稿 §6，见 architecture §10 同日条）。
+- **模板库里「使用」我的任务（第四期）**：空流程追加、已有步骤整条换（`add_task_pack_to_project` 带 `strategy: replace`，确认同「更换模板」）；
+  参数取默认值、触发不建——要填参数或建触发走流程编辑器「＋ 从模板追加」。
 
 ## 技能位与个性化替换（2026-10-11）
 

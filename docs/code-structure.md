@@ -240,7 +240,9 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
-components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES + 用户模板（list_pipeline_templates，命令未注册优雅降级只列内置），投稿与返修模板另选初稿/返修与轮次；选中只抛 steps（TemplatePickItem），写回 project.toml 与覆盖确认归父组件——注册成功后的首选层是另一个 TemplatePickModal
+components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——注册成功后的首选层是另一个 TemplatePickModal（只列内置）
+  components/MyPacksSection.tsx # 模板库「我的任务」一栏：使用 / 导出 zip / 删除 / 导入…；「内置有更新」展开逐步看内置旧版 → 新版（你改过的附你的版本），勾选后 save_task_pack 带新 based_on
+  components/ImportPackDialog.tsx # 导入任务包预览：步骤、参数、触发、检查结果、随包技能与库里同名比对、随包每个文件全文；装进我的任务 / 不装（删暂存）
   components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做
   components/HelpRequestDialog.tsx # 人工请求弹层（全局挂在 App，消费 store.helpViewReq）：收件箱 / 工作台队列 / 流程线「回答问题」/ 对话页那一行都原地弹；
                              # 「交给 Agent 继续」走 buildWorkspaceTerminalRequest，建成后 help_request_mark_sent；答过送过 bumpHelpRefresh 让工作区页重拉收件箱数据源
@@ -549,7 +551,10 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
                              # （tests/task-pack-author.test.ts）
-  task-packs.ts              # 第三期：packCheckFile / checkCommand / checkSectionLines（任务书「本步核验」）、triggerSummary / triggerDefaultOn；
+  pack-builtin.ts            # 任务包第四期：内置另存为我的版本 basedOnFor、builtinKey、builtinUpdate（当时的内置 vs 现在的内置，标我改没改过；三份步骤须先经后端归一）、
+                             # mergeBuiltinUpdate（按勾选换新版 / 插入新加的 / 拿掉去掉的）、rebased（tests/pack-builtin.test.ts）
+  task-packs.ts              # 第四期：importedScriptsNote（导入的包首次加进项目前再问一次的话）
+                             # 第三期：packCheckFile / checkCommand / checkSectionLines（任务书「本步核验」）、triggerSummary / triggerDefaultOn；
                              # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，
                              # machine: 验收行不动）、nextParamKey；替换范围与 task_packs.rs step_texts 一致（tests/task-packs.test.ts）
   inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
@@ -1334,6 +1339,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 第二期：check_pack / check_structure 机器校验（拦下 / 提醒）、check_task_pack；草稿 start/list/check/install/discard_task_pack_draft
                              # 第三期：PackTriggerDto（[trigger]）与步骤 checks 的校验；add_task_pack_to_project 带 with_trigger 时 create_trigger → scheduler::create_schedule_for_pack；
                              #   覆盖另存沿用旧版本随包技能与触发
+                             # 第四期：TaskPackDto.based_on（based-on.json）/ imported / scripts；SaveExtras 覆盖时沿用；normalize_steps / normalize_pack_steps；
+                             #   export_task_pack、preview/install/discard_task_pack_import（暂存在配置目录 pack-imports/<token>/）；
+                             #   add_task_pack_to_project 带 strategy（append / replace）与 scripts_reviewed（导入的包没确认过拒加，加成去标记）
                              # （<项目>/.ccode/pack-drafts/<id>/，exclude_in_git 不进 git）
   skills.rs                  # 技能库（§6.13）：SSOT 库 + symlink/copy 分发（cursor/grok 固定 copy）、四路导入、ZIP 导出、卸载备份、
                              # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，

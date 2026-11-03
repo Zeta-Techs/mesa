@@ -219,7 +219,7 @@
   「基本」，验收账本由分区自取。折叠头单一 idiom＝xs·font-medium·l3 + FoldMark + micro/l4 摘要
   （验收记录、文献与数据、项目长期知识同款）；长期知识默认折叠（摘要给有效条数）、内容入井、表单走
   surfaceFieldClass、原生 `<details>` 不用。研究流程按钮分级：更换/选择模板=secondary 主按钮、
-  另存为模板=ghost、「不使用研究流程」=ghost 悬停转红；TemplatePicker 实例收在研究流程分区井内。
+  另存为我的任务 / 跟 AI 写我的任务=ghost、「不使用研究流程」=ghost 悬停转红；TemplatePicker 实例收在研究流程分区井内，字号放容器上（按钮的 text-xs 会被全站 font: inherit 吞掉）。
   科研分组 = 基本（项目名 / 课题主题 / 项目路径）· 规则与验收 · 研究流程 ·
   文献与数据（litSource + 资源清单 + 发现资源）。
   项目 `⋯` 随之收敛为四项：编辑研究流程 · 项目设置… · 历史 · 移除项目注册

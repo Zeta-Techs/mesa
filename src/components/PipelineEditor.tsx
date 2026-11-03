@@ -33,7 +33,6 @@ import {
 import type {
   AppendStepsResultDto,
   HumanTaskDto,
-  PipelineTemplateDto,
   ProjectConfigDto,
   ProjectConfigReadDto,
   ProjectStepDto,
@@ -45,7 +44,7 @@ import type {
   AddPackResultDto,
 } from "../types";
 import { useAppStore } from "../store";
-import { triggerDefaultOn, triggerSummary } from "../task-packs";
+import { importedScriptsNote, triggerDefaultOn, triggerSummary } from "../task-packs";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
@@ -253,11 +252,10 @@ export default function PipelineEditor({
     null,
   );
   const [submissionAppend, setSubmissionAppend] = useState<{
-    template: PipelineTemplateDto | (typeof PIPELINE_TEMPLATES)[number];
+    template: (typeof PIPELINE_TEMPLATES)[number];
     mode: SubmissionMode;
     round: number;
   } | null>(null);
-  const [userTemplates, setUserTemplates] = useState<PipelineTemplateDto[]>([]);
   // 我的任务（任务包，2026-11-03）：追加面板里一栏；有参数的先填表再加
   const [packs, setPacks] = useState<TaskPackDto[]>([]);
   const [packForm, setPackForm] = useState<{
@@ -297,17 +295,10 @@ export default function PipelineEditor({
     };
   }, []);
 
-  // 展开模板列表时拉一次用户另存模板；后端未就绪（旧版本）降级为仅内置模板
+  // 展开模板列表时拉一次我的任务（旧「我的模板」2026-11-03 并进我的任务）
   useEffect(() => {
     if (!appendOpen) return;
     let stale = false;
-    invoke<PipelineTemplateDto[]>("list_pipeline_templates")
-      .then((list) => {
-        if (!stale) setUserTemplates(list);
-      })
-      .catch(() => {
-        if (!stale) setUserTemplates([]);
-      });
     invoke<TaskPackDto[]>("list_task_packs")
       .then((list) => {
         if (!stale) setPacks(list);
@@ -331,6 +322,9 @@ export default function PipelineEditor({
       ))
     )
       return;
+    // 导入的包第一次加进项目：再确认一次随包文件（后端也会拦）
+    const scriptsNote = importedScriptsNote(pack);
+    if (scriptsNote && !(await confirmDialog(scriptsNote, { confirmText: "看过了，继续" }))) return;
     setAppending(true);
     setAppendResult(null);
     setPackNote(null);
@@ -341,6 +335,7 @@ export default function PipelineEditor({
         id: pack.id,
         values,
         withTrigger,
+        scriptsReviewed: Boolean(scriptsNote),
       });
       const read = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectPath });
       setDrafts(read.config.steps.map(toDraft));
@@ -1720,29 +1715,6 @@ export default function PipelineEditor({
                       onClick={() => void deletePack(p)}
                     >
                       ✕
-                    </button>
-                  </li>
-                ))}
-                {userTemplates.length > 0 && (
-                  <li className="pt-1 text-xs text-l3">我的模板</li>
-                )}
-                {userTemplates.map((t) => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      className="w-full rounded-sm ccode-well p-2 text-left hover:bg-hover disabled:opacity-40"
-                      disabled={appending}
-                      onClick={() => void appendTemplate(t)}
-                    >
-                      <span className="text-xs font-medium text-l1">
-                        {t.name}
-                      </span>
-                      <span className="ml-2 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
-                        {t.steps.length} 步
-                      </span>
-                      <span className="mt-1 block truncate text-xs text-l4">
-                        {t.steps.map((s) => s.name).join(" → ")}
-                      </span>
                     </button>
                   </li>
                 ))}

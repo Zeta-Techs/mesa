@@ -59,6 +59,8 @@ import { stepAttention } from "../run-overview";
 import { stepperStatusText } from "../stepper-status";
 import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
+import { importedScriptsNote } from "../task-packs";
+import { toast } from "../toast";
 import {
   projectAgentPrefs,
   projectNeedsDefaultAgent,
@@ -73,13 +75,14 @@ import {
 import type {
   DiscoveredResourceDto,
   ZoteroLibraryDto,
+  AddPackResultDto,
   EnsureGitDto,
-  PipelineTemplateDto,
   ProjectConfigDto,
   ProjectConfigReadDto,
   ProjectDto,
   ProjectResourceDto,
   ProjectStepDto,
+  TaskPackDto,
   WorkspaceDto,
   WorkspaceDriftDto,
   WorkspaceHealthDto,
@@ -588,11 +591,6 @@ export default function ProjectGroup({
   }, [cfg]);
   // 模板选择器：首启引导与「更换模板」共用，列出内置 + 用户模板
   const [pickerOpen, setPickerOpen] = useState(false);
-  // 另存为模板：内联表单（WKWebView 无 window.prompt），同名覆盖先 confirm
-  const [savingTemplate, setSavingTemplate] = useState(false);
-  const [tplNameDraft, setTplNameDraft] = useState("");
-  const [tplDescDraft, setTplDescDraft] = useState("");
-  const [tplSaving, setTplSaving] = useState(false);
   const [tplSavedMsg, setTplSavedMsg] = useState<string | null>(null);
   // 另存为我的任务（任务包第一期，2026-11-03）
   const [savingPack, setSavingPack] = useState(false);
@@ -771,37 +769,40 @@ export default function ProjectGroup({
     }
   }
 
-  /** 另存为模板：当前 steps 存入用户模板库（后端同名覆盖，先查重 confirm） */
-  async function submitSaveTemplate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!cfg || cfg.steps.length === 0) return;
-    const name = tplNameDraft.trim();
-    if (!name) return;
-    setTplSaving(true);
+  /** 模板库里「使用」我的任务：空流程追加，已有步骤整条换掉（同「更换模板」的确认）；参数用默认值，触发不建
+   *  （要填参数、建触发走编辑器「＋ 从模板追加」）；导入的包第一次用先再确认一次随包文件 */
+  async function applyPack(pack: TaskPackDto) {
+    if (!cfg || !project) return;
+    const note = importedScriptsNote(pack);
+    if (note && !(await confirmDialog(note, { confirmText: "看过了，继续" }))) return;
+    const replace = cfg.steps.length > 0;
+    if (
+      replace &&
+      !(await confirmDialog(
+        `用我的任务「${pack.name}」换掉现有 ${cfg.steps.length} 个步骤？绑定的工作区与资源不受影响；步骤专属绑定按步骤名匹配，可能失效或转移。参数先用默认值，之后在「编辑研究流程」里改。`,
+        { danger: true },
+      ))
+    )
+      return;
+    setApplyingTemplate(true);
     try {
-      // 后端未就绪时列表回落为空，保存本身会报错提示，不阻断内置流程
-      const existing = await invoke<PipelineTemplateDto[]>(
-        "list_pipeline_templates",
-      ).catch(() => [] as PipelineTemplateDto[]);
-      if (
-        existing.some((t) => t.name === name) &&
-        !(await confirmDialog(`已存在同名模板「${name}」，保存将覆盖。继续？`, {
-          danger: true,
-        }))
-      )
-        return;
-      const saved = await invoke<PipelineTemplateDto>(
-        "save_pipeline_template",
-        { name, description: tplDescDraft.trim(), steps: cfg.steps },
-      );
-      setSavingTemplate(false);
-      setTplNameDraft("");
-      setTplDescDraft("");
-      setTplSavedMsg(`已保存模板「${saved.name}」，可在模板库中选择使用。`);
+      const res = await invoke<AddPackResultDto>("add_task_pack_to_project", {
+        projectRoot: project.path,
+        id: pack.id,
+        values: Object.fromEntries(pack.params.map((p) => [p.key, p.value])),
+        withTrigger: false,
+        strategy: replace ? "replace" : "append",
+        scriptsReviewed: Boolean(note),
+      });
+      await reloadCfg(project.path);
+      setPickerOpen(false);
+      setSettingsOpen(false);
+      setTplApplied(true);
+      if (res.skillsAdded.length) toast(`新装了技能 ${res.skillsAdded.join("、")}：去「技能」页为要用的 Agent 打开。`, "info");
     } catch (reason) {
       onError(String(reason));
     } finally {
-      setTplSaving(false);
+      setApplyingTemplate(false);
     }
   }
 
@@ -1530,38 +1531,6 @@ export default function ProjectGroup({
       {/* 分组主体：左侧 1px 缩进线 + 透明度分层，保持原 p-4 留白节奏 */}
       <div className="border-l border-white/5 pb-4 pl-3 pr-1">
 
-      {savingTemplate && cfg && (
-        <form
-          onSubmit={submitSaveTemplate}
-          className="mb-2 flex flex-wrap items-center gap-1"
-        >
-          <input
-            className={fieldSm}
-            value={tplNameDraft}
-            onChange={(e) => setTplNameDraft(e.target.value)}
-            placeholder="模板名，如 我的综述流程"
-            autoFocus
-            required
-          />
-          <input
-            className={`${fieldSm} min-w-0 flex-1`}
-            value={tplDescDraft}
-            onChange={(e) => setTplDescDraft(e.target.value)}
-            placeholder="描述（可选）：适用场景说明"
-          />
-          <button type="submit" className={ctaSm} disabled={tplSaving}>
-            {tplSaving ? "保存中…" : "保存"}
-          </button>
-          <button
-            type="button"
-            className={actionBtn}
-            onClick={() => setSavingTemplate(false)}
-          >
-            取消
-          </button>
-        </form>
-      )}
-
       {packDrafts && project && cfg && (
         <PackDraftsDialog
           mode={packDrafts}
@@ -2133,21 +2102,6 @@ export default function ProjectGroup({
                   className={ghostActionClass}
                   disabled={cfg.steps.length === 0}
                   title={
-                    cfg.steps.length > 0 ? undefined : "没有可保存的研究步骤"
-                  }
-                  onClick={() => {
-                    setTplSavedMsg(null);
-                    setSavingTemplate(true);
-                    setSettingsOpen(false);
-                  }}
-                >
-                  另存为模板
-                </button>
-                <button
-                  type="button"
-                  className={ghostActionClass}
-                  disabled={cfg.steps.length === 0}
-                  title={
                     cfg.steps.length > 0
                       ? "选一步或几步存成「我的任务」，带上技能，可把期刊名、阈值等改成参数，以后在别的项目里直接加进来"
                       : "没有可保存的研究步骤"
@@ -2202,6 +2156,7 @@ export default function ProjectGroup({
                   <TemplatePicker
                     applying={applyingTemplate}
                     onApply={(item) => void applyTemplate(item)}
+                    onApplyPack={(pack) => void applyPack(pack)}
                     onError={onError}
                   />
                 </div>

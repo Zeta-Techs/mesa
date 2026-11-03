@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 const PACK_FILE: &str = "pack.toml";
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskPackDto {
     pub id: String,
@@ -30,6 +30,35 @@ pub struct TaskPackDto {
     pub skills: Vec<String>,
     /// 可选的触发（第三期）：加进项目时由人勾选一并建定时任务或事件规则
     pub trigger: Option<PackTriggerDto>,
+    /// 从内置模板另存的「我的版本」（第四期）：记基于哪个内置、当时的内置步骤原样，内置升级时前端拿它算差异
+    pub based_on: Option<PackBasedOnDto>,
+    /// 从别人的 zip 导入、带的脚本还没在加进项目前再确认过一次（第四期）
+    pub imported: bool,
+    /// 随包技能里 SKILL.md 以外的文件（`skills/<技能>/<相对路径>`）：脚本等，导入与首次加进项目时给人看
+    pub scripts: Vec<String>,
+}
+
+/// 基于哪个内置模板。`steps` 是另存时的内置步骤，存前经与包步骤同一套归一（`normalize_steps`），
+/// 前端拿它和现在的内置（同样经 `normalize_pack_steps` 归一）比：变了就是「内置有更新」；和我的版本比：没改过就自动跟新版
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PackBasedOnDto {
+    pub template: String,
+    pub template_name: String,
+    /// 投稿与返修模板的分支（initial / revision）与轮次；其他模板留空
+    pub mode: String,
+    pub round: u32,
+    pub steps: Vec<StepDto>,
+}
+
+const BASED_ON_FILE: &str = "based-on.json";
+
+/// 另存时除步骤与参数外的东西；覆盖时没给的沿用旧版本
+#[derive(Default)]
+pub(crate) struct SaveExtras {
+    pub trigger: Option<PackTriggerDto>,
+    pub based_on: Option<PackBasedOnDto>,
+    pub imported: bool,
 }
 
 /// 任务包带的触发：schedule 按时间；folder / radar / phone 是事件规则（模式缺省只记录）。
@@ -130,6 +159,9 @@ fn render_pack(pack: &TaskPackDto) -> Result<String, String> {
     meta["version"] = value(i64::from(pack.version));
     meta["created_at"] = value(&pack.created_at);
     meta["updated_at"] = value(&pack.updated_at);
+    if pack.imported {
+        meta["imported"] = value(true);
+    }
     doc["pack"] = Item::Table(meta);
     if !pack.params.is_empty() {
         let mut ps = ArrayOfTables::new();
@@ -213,6 +245,30 @@ fn parse_pack(text: &str, dir: &Path) -> Result<TaskPackDto, String> {
         })
         .unwrap_or_default();
     skills.sort();
+    let mut scripts = Vec::new();
+    for skill in &skills {
+        let base = skills_dir.join(skill);
+        let mut stack = vec![base.clone()];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                let Ok(ft) = e.file_type() else { continue };
+                if ft.is_dir() {
+                    stack.push(p);
+                } else if ft.is_file() && p != base.join("SKILL.md") {
+                    let rel = p.strip_prefix(&skills_dir).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+                    scripts.push(format!("skills/{rel}"));
+                }
+            }
+        }
+    }
+    scripts.sort();
+    let based_on = match fs::read_to_string(dir.join(BASED_ON_FILE)) {
+        Ok(text) => serde_json::from_str::<PackBasedOnDto>(&text)
+            .map_err(|e| crate::logbuf::record("warn", "task_packs", &format!("{BASED_ON_FILE} 读不懂：{e}")))
+            .ok(),
+        Err(_) => None,
+    };
     Ok(TaskPackDto {
         name: s("name"),
         description: s("description"),
@@ -226,6 +282,9 @@ fn parse_pack(text: &str, dir: &Path) -> Result<TaskPackDto, String> {
             Some(v) => Some(trigger_from_toml(v)?),
             None => None,
         },
+        based_on,
+        imported: meta.get("imported").and_then(|v| v.as_bool()).unwrap_or(false),
+        scripts,
         id,
     })
 }
@@ -260,6 +319,7 @@ fn pack_step(mut step: StepDto) -> StepDto {
     step
 }
 
+#[cfg(test)]
 pub(crate) fn save_at(
     root: &Path,
     id: Option<&str>,
@@ -269,7 +329,7 @@ pub(crate) fn save_at(
     steps: Vec<StepDto>,
     skill_dirs: &[(String, PathBuf)],
 ) -> Result<TaskPackDto, String> {
-    save_with_trigger_at(root, id, name, description, params, steps, skill_dirs, None)
+    save_with_trigger_at(root, id, name, description, params, steps, skill_dirs, SaveExtras::default())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -281,7 +341,7 @@ pub(crate) fn save_with_trigger_at(
     params: Vec<StepParamDto>,
     steps: Vec<StepDto>,
     skill_dirs: &[(String, PathBuf)],
-    trigger: Option<PackTriggerDto>,
+    extras: SaveExtras,
 ) -> Result<TaskPackDto, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -315,7 +375,13 @@ pub(crate) fn save_with_trigger_at(
             }
         }
     }
-    let trigger = trigger.or_else(|| existing.as_ref().and_then(|p| p.trigger.clone()));
+    let trigger = extras.trigger.or_else(|| existing.as_ref().and_then(|p| p.trigger.clone()));
+    let based_on = match extras.based_on {
+        Some(b) => Some(PackBasedOnDto { steps: normalize_steps(b.steps)?, ..b }),
+        None => existing.as_ref().and_then(|p| p.based_on.clone()),
+    };
+    // 导入的标记一直带到人在加进项目前确认过脚本为止（本人覆盖另存也不清：脚本还是别人写的）
+    let imported = extras.imported || existing.as_ref().is_some_and(|p| p.imported);
     // 拦下的一律不存（提醒不拦）；技能库名单只影响提醒，这里不用
     let probe = TaskPackDto {
         id: "pk-check".into(),
@@ -328,6 +394,7 @@ pub(crate) fn save_with_trigger_at(
         steps: steps.clone(),
         skills: skill_dirs.iter().map(|(n, _)| n.clone()).collect(),
         trigger: trigger.clone(),
+        ..Default::default()
     };
     if let Some(msg) = blocked(&check_pack(&probe, &crate::skills::library_skill_names_for_check())) {
         return Err(msg);
@@ -348,6 +415,9 @@ pub(crate) fn save_with_trigger_at(
         skills: skill_dirs.iter().map(|(n, _)| n.clone()).collect(),
         // 没给触发就沿用旧版本的（从项目另存时拿不到触发，不该把它丢掉）
         trigger,
+        based_on,
+        imported,
+        scripts: Vec::new(),
     };
     // 先在临时目录写全，再整目录换上：中途失败不留半个包
     let final_dir = pack_dir(root, &pack.id)?;
@@ -355,6 +425,10 @@ pub(crate) fn save_with_trigger_at(
     let result = (|| -> Result<(), String> {
         fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         crate::profiles::atomic_write(&tmp.join(PACK_FILE), &render_pack(&pack)?)?;
+        if let Some(b) = &pack.based_on {
+            let json = serde_json::to_string_pretty(b).map_err(|e| e.to_string())?;
+            crate::profiles::atomic_write(&tmp.join(BASED_ON_FILE), &json)?;
+        }
         for (skill, src) in &skill_dirs {
             crate::paths::validate_fs_name(skill)?;
             crate::skills::copy_dir_recursive(src, &tmp.join("skills").join(skill))?;
@@ -375,6 +449,23 @@ pub(crate) fn save_with_trigger_at(
     }
     result?;
     read_pack_at(root, &pack.id)
+}
+
+/// 步骤按存进包的样子归一：去溯源与取值，再走一遍档案卡写出、读回（缺省值补齐、空白去掉）。
+/// 包里的步骤就是这样读出来的；内置对照也走这里，前后才比得上
+pub(crate) fn normalize_steps(steps: Vec<StepDto>) -> Result<Vec<StepDto>, String> {
+    let cfg = ProjectConfigDto {
+        steps: steps.into_iter().map(pack_step).collect(),
+        ..Default::default()
+    };
+    Ok(crate::projects::parse_config(&crate::projects::render_config(None, &cfg)?).0.steps)
+}
+
+#[tauri::command]
+pub async fn normalize_pack_steps(steps: Vec<StepDto>) -> Result<Vec<StepDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || normalize_steps(steps))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 加进项目的步骤：每一步带上包 id 与参数（取值 = 人填的，没填用默认）
@@ -404,7 +495,8 @@ pub async fn list_task_packs() -> Result<Vec<TaskPackDto>, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// 另存为我的任务：步骤用到的用户技能一并快照进包。id 给了就是覆盖那一个（同名覆盖的确认在前端）
+/// 另存为我的任务：步骤用到的用户技能一并快照进包。id 给了就是覆盖那一个（同名覆盖的确认在前端）。
+/// `based_on`：内置模板「另存为我的版本」与内置升级后「保留我的 / 按勾选更新」时给，记这次对照的内置原样
 #[tauri::command]
 pub async fn save_task_pack(
     id: Option<String>,
@@ -412,6 +504,7 @@ pub async fn save_task_pack(
     description: String,
     params: Vec<StepParamDto>,
     steps: Vec<StepDto>,
+    based_on: Option<PackBasedOnDto>,
 ) -> Result<TaskPackDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut names: Vec<String> = Vec::new();
@@ -423,7 +516,8 @@ pub async fn save_task_pack(
             }
         }
         let skill_dirs = crate::skills::user_skill_dirs(&names)?;
-        save_at(&packs_root()?, id.as_deref(), &name, &description, params, steps, &skill_dirs)
+        let extras = SaveExtras { based_on, ..Default::default() };
+        save_with_trigger_at(&packs_root()?, id.as_deref(), &name, &description, params, steps, &skill_dirs, extras)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -444,28 +538,45 @@ pub async fn delete_task_pack(id: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-/// 从我的任务加进项目流程末尾：先补装库里缺的随包技能，再按模板追加同一条原子写入
+/// 从我的任务加进项目流程：先补装库里缺的随包技能，再按模板追加同一条原子写入。
+/// strategy 缺省追加到末尾；模板库里「使用」整条换掉时传 replace（覆盖确认在前端）。
+/// 导入来的包带脚本：人在前端再确认一次（scripts_reviewed）才加，加成后去掉导入标记
 #[tauri::command]
 pub async fn add_task_pack_to_project(
     project_root: String,
     id: String,
     values: BTreeMap<String, String>,
     with_trigger: Option<bool>,
+    strategy: Option<String>,
+    scripts_reviewed: Option<bool>,
 ) -> Result<AddPackResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::projects::ensure_task_project_root(Path::new(&crate::sessions::expand_tilde(&project_root)))?;
         let packs = packs_root()?;
         let pack = read_pack_at(&packs, &id)?;
+        if pack.imported && !pack.scripts.is_empty() && scripts_reviewed != Some(true) {
+            return Err(format!("「{}」是导入的，带 {} 个别人写的文件，加进项目前要先确认看过", pack.name, pack.scripts.len()));
+        }
+        let strategy = match strategy.as_deref() {
+            None | Some("append") => "append",
+            Some("replace") => "replace",
+            Some(other) => return Err(format!("不认识的加入方式：{other}")),
+        };
         let skills = crate::skills::install_pack_skills(&pack_dir(&packs, &id)?.join("skills"))?;
         let res = crate::projects::apply_pipeline_template_at(
             &root,
             steps_for_project(&pack, &values),
             Vec::new(),
-            "append",
+            strategy,
             None,
             None,
             None,
         )?;
+        if pack.imported {
+            if let Err(e) = clear_imported_at(&packs, &id) {
+                crate::logbuf::record("warn", "task_packs", &format!("去掉导入标记失败：{e}"));
+            }
+        }
         let trigger_note = match (&pack.trigger, with_trigger.unwrap_or(false)) {
             (Some(tr), true) => Some(create_trigger(&root, &pack, tr, &values)),
             _ => None,
@@ -480,6 +591,17 @@ pub async fn add_task_pack_to_project(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 导入的包在人确认过脚本后去掉标记（只改 [pack] imported，不升版本）
+fn clear_imported_at(root: &Path, id: &str) -> Result<(), String> {
+    let _lock = crate::storage::config_lock("task-packs")?;
+    let mut pack = read_pack_at(root, id)?;
+    if !pack.imported {
+        return Ok(());
+    }
+    pack.imported = false;
+    crate::profiles::atomic_write(&pack_dir(root, id)?.join(PACK_FILE), &render_pack(&pack)?)
 }
 
 /// [trigger] 表 → 触发（toml 的整数是 i64，逐键取，写错类型当没写）
@@ -569,7 +691,7 @@ const STEP_TEXT_BLOCK: usize = 12000;
 const PACK_KEYS: [&str; 4] = ["pack", "params", "steps", "trigger"];
 const CHECK_KEYS: [&str; 4] = ["name", "skill", "script", "description"];
 const TRIGGER_KEYS: [&str; 11] = ["name", "kind", "skill", "frequency", "weekday", "interval_hours", "hour", "minute", "folder", "exts", "mode"];
-const META_KEYS: [&str; 6] = ["id", "name", "description", "version", "created_at", "updated_at"];
+const META_KEYS: [&str; 7] = ["id", "name", "description", "version", "created_at", "updated_at", "imported"];
 const PARAM_KEYS: [&str; 5] = ["key", "label", "value", "help", "options"];
 const STEP_KEYS: [&str; 22] = [
     "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
@@ -830,8 +952,7 @@ pub async fn check_task_pack(name: String, params: Vec<StepParamDto>, steps: Vec
             updated_at: String::new(),
             params: crate::projects::normalize_step_params(params),
             steps: steps.into_iter().map(pack_step).collect(),
-            skills: Vec::new(),
-            trigger: None,
+            ..Default::default()
         };
         Ok(check_pack(&pack, &crate::skills::library_skill_names()))
     })
@@ -913,10 +1034,7 @@ pub(crate) fn start_draft_at(project: &Path, name: &str, description: &str) -> R
         version: 1,
         created_at: crate::sessions::now_iso(),
         updated_at: crate::sessions::now_iso(),
-        params: Vec::new(),
-        steps: Vec::new(),
-        skills: Vec::new(),
-        trigger: None,
+        ..Default::default()
     };
     crate::profiles::atomic_write(&dir.join(PACK_FILE), &render_pack(&skeleton)?)?;
     crate::projects::exclude_in_git(project, &format!("{DRAFTS_REL}/"));
@@ -952,14 +1070,7 @@ pub(crate) fn check_draft_at(project: &Path, id: &str, lib_skills: &[String]) ->
             pack.steps = pack.steps.into_iter().map(pack_step).collect();
             issues.extend(check_pack(&pack, lib_skills));
             // 随包技能里的核验脚本要真有这个文件
-            for step in &pack.steps {
-                for c in step.checks.iter().filter(|c| pack.skills.contains(&c.skill)) {
-                    let rel = c.script.replace('\\', "/");
-                    if !rel.split('/').any(|seg| seg == "..") && !dir.join("skills").join(&c.skill).join(&rel).is_file() {
-                        issues.push(issue("block", Some(&step.name), format!("核验「{}」的脚本 skills/{}/{} 不存在", c.name, c.skill, rel)));
-                    }
-                }
-            }
+            issues.extend(missing_check_scripts(&pack, &dir));
             Ok(PackDraftCheckDto { pack: Some(pack), issues, parse_error: None })
         }
         Err(e) => Ok(PackDraftCheckDto { pack: None, issues, parse_error: Some(e) }),
@@ -990,7 +1101,16 @@ pub(crate) fn install_draft_at(
             skill_dirs.push((name.clone(), path.clone()));
         }
     }
-    let saved = save_with_trigger_at(packs, overwrite, &pack.name, &pack.description, pack.params, pack.steps, &skill_dirs, pack.trigger)?;
+    let saved = save_with_trigger_at(
+        packs,
+        overwrite,
+        &pack.name,
+        &pack.description,
+        pack.params,
+        pack.steps,
+        &skill_dirs,
+        SaveExtras { trigger: pack.trigger, ..Default::default() },
+    )?;
     let _ = fs::remove_dir_all(&dir);
     Ok(saved)
 }
@@ -1047,6 +1167,331 @@ pub async fn discard_task_pack_draft(project_root: String, id: String) -> Result
             return Ok(());
         }
         crate::projects::trash_delete_retry(&dir, "任务草稿")
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ===== 导出 / 导入（第四期，design-task-packs.md §7.2）=====
+// 导出：包目录原样打成 zip（顶层一层 <id>/）。导入：先只读解到暂存区，列出会装的技能（与库里同名的怎么处理）、
+// 随包的每个文件全文、参数与检查结果，人确认才装进我的任务；装好标「导入」，加进项目前再确认一次脚本。
+
+const IMPORTS_DIR: &str = "pack-imports";
+const IMPORT_MAX_ENTRIES: usize = 2000;
+const IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// 预览里给人看全文的单个文件上限；超了只列名字
+const PREVIEW_TEXT_MAX: u64 = 256 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackImportSkillDto {
+    pub name: String,
+    /// "new" 库里没有，会装 | "same" 库里有、内容一样 | "differs" 库里有同名但内容不同：用库里那份，包里这份不装
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackImportFileDto {
+    /// `skills/<技能>/<相对路径>`
+    pub path: String,
+    pub size: u64,
+    /// 文本且不太大时给全文；二进制或太大为 None
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackImportPreviewDto {
+    /// 暂存区编号：确认装 / 放弃时带回来
+    pub token: String,
+    pub pack: TaskPackDto,
+    pub issues: Vec<PackIssueDto>,
+    pub skills: Vec<PackImportSkillDto>,
+    /// 随包的全部文件（SKILL.md 也列：那是写给 Agent 的指令，一样要人看过）
+    pub files: Vec<PackImportFileDto>,
+    /// zip 里被忽略的条目数（包目录约定之外的文件）
+    pub ignored: usize,
+}
+
+fn imports_root() -> Result<PathBuf, String> {
+    Ok(crate::storage::config_root().ok_or("无法确定配置目录")?.join(IMPORTS_DIR))
+}
+
+pub(crate) fn export_at(root: &Path, id: &str, dest: &Path) -> Result<(), String> {
+    let dir = pack_dir(root, id)?;
+    if !dir.join(PACK_FILE).is_file() {
+        return Err(format!("找不到任务包：{id}"));
+    }
+    let tmp = dest.with_extension(format!("zip.part-{}", uuid::Uuid::new_v4().simple()));
+    let result = (|| -> Result<(), String> {
+        let file = fs::File::create(&tmp).map_err(|e| format!("建导出文件失败：{e}"))?;
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        let mut stack = vec![dir.clone()];
+        while let Some(d) = stack.pop() {
+            let mut entries: Vec<_> = fs::read_dir(&d).map_err(|e| e.to_string())?.flatten().collect();
+            entries.sort_by_key(|e| e.file_name());
+            for e in entries {
+                let p = e.path();
+                let ft = e.file_type().map_err(|e| e.to_string())?;
+                if ft.is_dir() {
+                    stack.push(p);
+                } else if ft.is_file() {
+                    let rel = p.strip_prefix(&dir).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+                    writer.start_file(format!("{id}/{rel}"), options).map_err(|e| format!("写 zip 失败：{e}"))?;
+                    let bytes = fs::read(&p).map_err(|e| e.to_string())?;
+                    std::io::Write::write_all(&mut writer, &bytes).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        writer.finish().map_err(|e| format!("写 zip 失败：{e}"))?;
+        fs::rename(&tmp, dest).map_err(|e| format!("写导出文件失败：{e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// zip 里的条目名 → 包内相对路径：认顶层直接是 pack.toml，或只套一层目录；只收 pack.toml、based-on.json、skills/**
+fn import_rel(name: &Path, prefix: &Option<PathBuf>) -> Option<PathBuf> {
+    let rel = match prefix {
+        Some(pre) => name.strip_prefix(pre).ok()?.to_path_buf(),
+        None => name.to_path_buf(),
+    };
+    let s = rel.to_string_lossy().replace('\\', "/");
+    (s == PACK_FILE || s == BASED_ON_FILE || (s.starts_with("skills/") && s.len() > 7)).then_some(rel)
+}
+
+fn dirs_equal(a: &Path, b: &Path) -> bool {
+    fn files(root: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                match e.file_type() {
+                    Ok(ft) if ft.is_dir() => stack.push(p),
+                    Ok(ft) if ft.is_file() => {
+                        let rel = p.strip_prefix(root).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+                        // 库里的副本有 Mesa 自己的分发标记，不算内容
+                        if !rel.starts_with(".ccode") {
+                            out.push((rel, fs::read(&p).unwrap_or_default()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+    files(a) == files(b)
+}
+
+/// 只读解开到暂存区并检查。lib_dir：库里同名技能的目录（单测注入）
+pub(crate) fn preview_import_at(
+    imports: &Path,
+    zip_path: &Path,
+    lib_skills: &[String],
+    lib_dir: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Result<PackImportPreviewDto, String> {
+    let file = fs::File::open(zip_path).map_err(|e| format!("打开 zip 失败：{e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读不懂这个 zip：{e}"))?;
+    if archive.len() > IMPORT_MAX_ENTRIES {
+        return Err(format!("zip 里文件太多（{} 个），不像一个任务包", archive.len()));
+    }
+    // 找 pack.toml：顶层或套一层目录
+    let mut prefix: Option<Option<PathBuf>> = None;
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else { continue };
+        let Some(name) = entry.enclosed_name() else { continue };
+        if name.file_name().is_some_and(|n| n == PACK_FILE) {
+            match name.parent() {
+                Some(p) if p.as_os_str().is_empty() => prefix = Some(None),
+                Some(p) if p.components().count() == 1 && prefix.is_none() => prefix = Some(Some(p.to_path_buf())),
+                _ => {}
+            }
+        }
+    }
+    let prefix = prefix.ok_or("zip 里没有 pack.toml：不是 Mesa 导出的任务包")?;
+    // 清掉一天以前没处理的暂存
+    if let Ok(entries) = fs::read_dir(imports) {
+        for e in entries.flatten() {
+            let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+            if old.is_some_and(|d| d.as_secs() > 86_400) {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let stage = imports.join(&token);
+    let result = (|| -> Result<PackImportPreviewDto, String> {
+        fs::create_dir_all(&stage).map_err(|e| format!("建暂存目录失败：{e}"))?;
+        let mut total = 0u64;
+        let mut ignored = 0usize;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| format!("读 zip 条目失败：{e}"))?;
+            if entry.is_dir() {
+                continue;
+            }
+            // 路径穿越与链接一律不收
+            let is_link = entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000);
+            let Some(rel) = entry.enclosed_name().filter(|_| !is_link).and_then(|n| import_rel(&n, &prefix)) else {
+                ignored += 1;
+                continue;
+            };
+            let out = stage.join(&rel);
+            if let Some(parent) = out.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("建暂存目录失败：{e}"))?;
+            }
+            let mut buf = Vec::new();
+            let budget = IMPORT_MAX_BYTES.saturating_sub(total) + 1;
+            std::io::Read::read_to_end(&mut std::io::Read::take(&mut entry, budget), &mut buf)
+                .map_err(|e| format!("解开 zip 失败：{e}"))?;
+            total += buf.len() as u64;
+            if total > IMPORT_MAX_BYTES {
+                return Err(format!("解开后超过 {}MB，不像一个任务包", IMPORT_MAX_BYTES / 1024 / 1024));
+            }
+            fs::write(&out, &buf).map_err(|e| format!("写暂存文件失败：{e}"))?;
+        }
+        let text = fs::read_to_string(stage.join(PACK_FILE)).map_err(|_| "pack.toml 读不出来")?;
+        let value: toml::Value = toml::from_str(&text).map_err(|e| format!("pack.toml 写法不对：{e}"))?;
+        let mut issues = check_structure(&value);
+        let pack = parse_pack(&text, &stage)?;
+        issues.extend(check_pack(&pack, lib_skills));
+        issues.extend(missing_check_scripts(&pack, &stage));
+        let skills = pack
+            .skills
+            .iter()
+            .map(|name| PackImportSkillDto {
+                name: name.clone(),
+                status: match lib_dir(name) {
+                    None => "new",
+                    Some(dir) if dirs_equal(&dir, &stage.join("skills").join(name)) => "same",
+                    Some(_) => "differs",
+                }
+                .into(),
+            })
+            .collect();
+        let mut files = Vec::new();
+        for skill in &pack.skills {
+            let mut paths = vec![format!("skills/{skill}/SKILL.md")];
+            paths.extend(pack.scripts.iter().filter(|p| p.starts_with(&format!("skills/{skill}/"))).cloned());
+            for path in paths {
+                let full = stage.join(&path);
+                let size = fs::metadata(&full).map(|m| m.len()).unwrap_or(0);
+                let text = (size <= PREVIEW_TEXT_MAX)
+                    .then(|| fs::read(&full).ok().and_then(|b| String::from_utf8(b).ok()))
+                    .flatten();
+                files.push(PackImportFileDto { path, size, text });
+            }
+        }
+        Ok(PackImportPreviewDto { token: token.clone(), pack, issues, skills, files, ignored })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+/// 核验脚本要真在随包技能里（草稿与导入同一条）
+fn missing_check_scripts(pack: &TaskPackDto, dir: &Path) -> Vec<PackIssueDto> {
+    let mut out = Vec::new();
+    for step in &pack.steps {
+        for c in step.checks.iter().filter(|c| pack.skills.contains(&c.skill)) {
+            let rel = c.script.replace('\\', "/");
+            if !rel.split('/').any(|seg| seg == "..") && !dir.join("skills").join(&c.skill).join(&rel).is_file() {
+                out.push(issue("block", Some(&step.name), format!("核验「{}」的脚本 skills/{}/{} 不存在", c.name, c.skill, rel)));
+            }
+        }
+    }
+    out
+}
+
+fn import_stage(imports: &Path, token: &str) -> Result<PathBuf, String> {
+    if token.len() != 32 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("导入编号不对".into());
+    }
+    Ok(imports.join(token))
+}
+
+/// 人确认后装进我的任务：再检查一遍，拦下的不装；标「导入」
+pub(crate) fn install_import_at(
+    imports: &Path,
+    packs: &Path,
+    token: &str,
+    overwrite: Option<&str>,
+    lib_skills: &[String],
+) -> Result<TaskPackDto, String> {
+    let stage = import_stage(imports, token)?;
+    let text = fs::read_to_string(stage.join(PACK_FILE)).map_err(|_| "导入已失效：重新选一次 zip")?;
+    let value: toml::Value = toml::from_str(&text).map_err(|e| format!("pack.toml 写法不对：{e}"))?;
+    let pack = parse_pack(&text, &stage)?;
+    let mut issues = check_structure(&value);
+    issues.extend(check_pack(&pack, lib_skills));
+    issues.extend(missing_check_scripts(&pack, &stage));
+    if let Some(msg) = blocked(&issues) {
+        return Err(msg);
+    }
+    let skill_dirs: Vec<(String, PathBuf)> = pack.skills.iter().map(|s| (s.clone(), stage.join("skills").join(s))).collect();
+    let saved = save_with_trigger_at(
+        packs,
+        overwrite,
+        &pack.name,
+        &pack.description,
+        pack.params,
+        pack.steps,
+        &skill_dirs,
+        SaveExtras { trigger: pack.trigger, based_on: pack.based_on, imported: true },
+    )?;
+    let _ = fs::remove_dir_all(&stage);
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn export_task_pack(id: String, dest_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        export_at(&packs_root()?, &id, Path::new(&dest_path))?;
+        Ok(dest_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn preview_task_pack_import(zip_path: String) -> Result<PackImportPreviewDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_import_at(
+            &imports_root()?,
+            Path::new(&zip_path),
+            &crate::skills::library_skill_names(),
+            &crate::skills::library_skill_dir,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn install_task_pack_import(token: String, overwrite: Option<String>) -> Result<TaskPackDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        install_import_at(&imports_root()?, &packs_root()?, &token, overwrite.as_deref(), &crate::skills::library_skill_names())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 放弃导入：删暂存（Mesa 自己的临时目录，不进回收站）
+#[tauri::command]
+pub async fn discard_task_pack_import(token: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let stage = import_stage(&imports_root()?, &token)?;
+        if stage.exists() {
+            fs::remove_dir_all(&stage).map_err(|e| format!("清暂存失败：{e}"))?;
+        }
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1170,8 +1615,7 @@ mod tests {
             updated_at: String::new(),
             params: vec![param("j", "期刊", "Nature"), param("unused", "没用上", "x")],
             steps: vec![good.clone()],
-            skills: vec![],
-            trigger: None,
+            ..Default::default()
         };
         let issues = check_pack(&pack, &[]);
         assert!(levels(&issues, "block").is_empty(), "{issues:?}");
@@ -1313,6 +1757,123 @@ mod tests {
         // 目录不存在：建不成、说明原因，不 panic
         let values = BTreeMap::from([("inbox".to_string(), "no/such".to_string())]);
         assert!(create_trigger(&project, &again, again.trigger.as_ref().unwrap(), &values).contains("没建成触发"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_import_preview_install_and_based_on_carry() {
+        let dir = std::env::temp_dir().join(format!("mesa-pack-p4-{}", uuid::Uuid::new_v4()));
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let packs = dir.join("packs");
+        let skill_src = dir.join("lib/sc-qc");
+        fs::create_dir_all(skill_src.join("scripts")).unwrap();
+        fs::write(skill_src.join("SKILL.md"), "---\nname: sc-qc\n---\n质控").unwrap();
+        fs::write(skill_src.join("scripts/qc_check.py"), "print('ok')\n").unwrap();
+        let mut s = step("质控", "按 {param:mt} 做");
+        s.skills = vec!["sc-qc".into()];
+        s.checks = vec![crate::projects::StepCheckDto {
+            name: "qc".into(),
+            skill: "sc-qc".into(),
+            script: "scripts/qc_check.py".into(),
+            description: String::new(),
+        }];
+        let based = PackBasedOnDto {
+            template: "review".into(),
+            template_name: "综述".into(),
+            steps: vec![StepDto { name: "质控".into(), brief: " 旧 ".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let saved = save_with_trigger_at(
+            &packs,
+            None,
+            "质控",
+            "",
+            vec![param("mt", "线粒体阈值", "20%")],
+            vec![s],
+            &[("sc-qc".to_string(), skill_src.clone())],
+            SaveExtras { based_on: Some(based.clone()), ..Default::default() },
+        )
+        .unwrap();
+        // 对照步骤存前归一：与包步骤读回来同一个样子
+        let b = saved.based_on.clone().unwrap();
+        assert_eq!((b.template.as_str(), b.steps.len()), ("review", 1));
+        assert_eq!(b.steps, normalize_steps(based.steps.clone()).unwrap());
+        assert_eq!(b.steps[0].decision_mode, "auto_continue");
+        assert_eq!(saved.scripts, ["skills/sc-qc/scripts/qc_check.py"]);
+        assert!(!saved.imported);
+        // 覆盖另存不给 based_on：沿用
+        let again = save_at(&packs, Some(&saved.id), "质控", "", saved.params.clone(), saved.steps.clone(), &[]).unwrap();
+        assert_eq!(again.based_on, saved.based_on);
+
+        // 导出：顶层一层 <id>/
+        let zip_path = dir.join("out.zip");
+        export_at(&packs, &again.id, &zip_path).unwrap();
+        let names: Vec<String> = {
+            let mut a = zip::ZipArchive::new(fs::File::open(&zip_path).unwrap()).unwrap();
+            (0..a.len()).map(|i| a.by_index(i).unwrap().name().to_string()).collect()
+        };
+        for want in ["pack.toml", "based-on.json", "skills/sc-qc/SKILL.md", "skills/sc-qc/scripts/qc_check.py"] {
+            assert!(names.contains(&format!("{}/{want}", again.id)), "{names:?}");
+        }
+
+        // 导入预览：库里同名技能内容不同 → differs；文件全文给人看；多余条目忽略
+        let imports = dir.join("imports");
+        let lib_other = dir.join("lib-other/sc-qc");
+        fs::create_dir_all(&lib_other).unwrap();
+        fs::write(lib_other.join("SKILL.md"), "别的版本").unwrap();
+        let lib = |name: &str| (name == "sc-qc").then(|| lib_other.clone());
+        let preview = preview_import_at(&imports, &zip_path, &[], &lib).unwrap();
+        assert!(levels(&preview.issues, "block").is_empty(), "{:?}", preview.issues);
+        assert_eq!(preview.skills[0].status, "differs");
+        let script = preview.files.iter().find(|f| f.path.ends_with("qc_check.py")).unwrap();
+        assert_eq!(script.text.as_deref(), Some("print('ok')\n"));
+        assert!(preview.files.iter().any(|f| f.path == "skills/sc-qc/SKILL.md"));
+        assert_eq!(preview.pack.based_on, saved.based_on);
+        assert!(imports.join(&preview.token).is_dir());
+        let same = |_: &str| Some(skill_src.clone());
+        assert_eq!(preview_import_at(&imports, &zip_path, &[], &same).unwrap().skills[0].status, "same");
+
+        // 装进去：新 id、标导入、based_on 跟着走，暂存删掉
+        let installed = install_import_at(&imports, &packs, &preview.token, None, &[]).unwrap();
+        assert_ne!(installed.id, again.id);
+        assert!(installed.imported);
+        assert_eq!(installed.based_on, saved.based_on);
+        assert!(!imports.join(&preview.token).exists());
+        assert!(install_import_at(&imports, &packs, &preview.token, None, &[]).is_err(), "暂存用过就没了");
+        assert!(install_import_at(&imports, &packs, "../x", None, &[]).is_err());
+        // 本人覆盖另存：导入标记不清（脚本还是别人写的）；确认过脚本后才清
+        let resaved = save_at(&packs, Some(&installed.id), "质控", "", installed.params.clone(), installed.steps.clone(), &[]).unwrap();
+        assert!(resaved.imported);
+        clear_imported_at(&packs, &installed.id).unwrap();
+        let cleared = read_pack_at(&packs, &installed.id).unwrap();
+        assert!(!cleared.imported);
+        assert_eq!(cleared.version, resaved.version, "去标记不升版本");
+
+        // 不是任务包的 zip、路径穿越条目
+        let bad = dir.join("bad.zip");
+        {
+            let mut w = zip::ZipWriter::new(fs::File::create(&bad).unwrap());
+            let o = zip::write::SimpleFileOptions::default();
+            w.start_file("readme.txt", o).unwrap();
+            std::io::Write::write_all(&mut w, b"x").unwrap();
+            w.finish().unwrap();
+        }
+        assert!(preview_import_at(&imports, &bad, &[], &lib).unwrap_err().contains("没有 pack.toml"));
+        let evil = dir.join("evil.zip");
+        {
+            let mut w = zip::ZipWriter::new(fs::File::create(&evil).unwrap());
+            let o = zip::write::SimpleFileOptions::default();
+            w.start_file("pack.toml", o).unwrap();
+            std::io::Write::write_all(&mut w, b"[pack]\nid = \"pk-a\"\nname = \"a\"\n\n[[steps]]\nname = \"a\"\nbrief = \"b\"\nexpected_artifacts = [\"o.md\"]\n").unwrap();
+            w.start_file("../escape.txt", o).unwrap();
+            std::io::Write::write_all(&mut w, b"x").unwrap();
+            w.start_file("notes/other.txt", o).unwrap();
+            std::io::Write::write_all(&mut w, b"x").unwrap();
+            w.finish().unwrap();
+        }
+        let p = preview_import_at(&imports, &evil, &[], &lib).unwrap();
+        assert_eq!(p.ignored, 2);
+        assert!(!dir.join("escape.txt").exists() && !imports.join("escape.txt").exists());
         fs::remove_dir_all(&dir).ok();
     }
 }
