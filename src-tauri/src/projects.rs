@@ -4557,6 +4557,12 @@ pub async fn inspect_step_inputs(
 /// 把 TASK.md 追加到仓库共享的 .git/info/exclude（对所有 worktree 与主仓生效）。
 /// best-effort：拿不到 git 公共目录（非仓库/异常）时静默跳过，不阻断 TASK.md 写入。
 pub(crate) fn exclude_task_md(worktree_root: &Path) {
+    exclude_in_git(worktree_root, "TASK.md");
+}
+
+/// 往仓库的 `.git/info/exclude` 加一行（已有就不加；不是 git 仓库或失败都静默——best-effort，不阻断）。
+/// 只影响本机，不改项目的 .gitignore
+pub(crate) fn exclude_in_git(worktree_root: &Path, line: &str) {
     let Ok(common) = crate::workspaces::run_git(
         worktree_root,
         &["rev-parse", "--git-common-dir"],
@@ -4577,14 +4583,15 @@ pub(crate) fn exclude_task_md(worktree_root: &Path) {
     };
     let exclude = dir.join("info").join("exclude");
     let existing = fs::read_to_string(&exclude).unwrap_or_default();
-    if existing.lines().any(|l| l.trim() == "TASK.md") {
+    if existing.lines().any(|l| l.trim() == line) {
         return;
     }
     let mut content = existing;
     if !content.is_empty() && !content.ends_with('\n') {
         content.push('\n');
     }
-    content.push_str("TASK.md\n");
+    content.push_str(line);
+    content.push('\n');
     let _ = fs::create_dir_all(exclude.parent().unwrap());
     let _ = crate::profiles::atomic_write(&exclude, &content);
 }

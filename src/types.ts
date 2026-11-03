@@ -1514,6 +1514,34 @@ export interface TaskPackDto {
   skills: string[];
 }
 
+/** 任务包机器校验的一条（task_packs.rs check_pack）：block 拦下不让存，warn 只提醒 */
+export interface PackIssueDto {
+  level: "block" | "warn";
+  /** 哪一步；整包的问题为空 */
+  step: string | null;
+  message: string;
+}
+
+/** 跟 AI 写的任务草稿（<项目>/.ccode/pack-drafts/<id>/，不进 git） */
+export interface PackDraftDto {
+  id: string;
+  name: string;
+  dirRel: string;
+  packRel: string;
+  updatedAt: string;
+  /** 内置技能名（简报 {skill:锚名} 的闭集） */
+  anchors: string[];
+  /** 本机库里的用户技能 */
+  userSkills: string[];
+}
+
+export interface PackDraftCheckDto {
+  pack: TaskPackDto | null;
+  issues: PackIssueDto[];
+  /** pack.toml 还没写或写法不对 */
+  parseError: string | null;
+}
+
 /** 从我的任务加进项目的结果 */
 export interface AddPackResultDto {
   appended: number;

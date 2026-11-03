@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
 import { compactFieldClass, compactPrimaryActionClass, inlineActionClass } from "./PageFrame";
 import { nextParamKey, parameterize } from "../task-packs";
-import type { ProjectStepDto, StepParamDto, TaskPackDto } from "../types";
+import { issueLine, splitIssues } from "../task-pack-author";
+import type { PackIssueDto, ProjectStepDto, StepParamDto, TaskPackDto } from "../types";
 
 /**
  * 另存为我的任务（任务包第一期，2026-11-03）：选这条流程里的一步或几步，把每次会变的值（期刊名、阈值、数据目录）改成参数，
@@ -49,6 +50,24 @@ export default function SavePackForm({
       const same = existing.find((p) => p.name === trimmed);
       if (same && !(await confirmDialog(`已有同名的我的任务「${trimmed}」，保存会覆盖成新版本。继续？`, { danger: true }))) return;
       const { steps: packSteps } = parameterize(chosen, usable);
+      // 机器检查（第二期）：拦下的不存；提醒列给人看，问要不要照存
+      const issues = await invoke<PackIssueDto[]>("check_task_pack", {
+        name: trimmed,
+        params: usable,
+        steps: packSteps,
+      });
+      const { blocks, warns } = splitIssues(issues);
+      if (blocks.length > 0) {
+        setError(`先改这些再存：${blocks.map(issueLine).join("；")}`);
+        return;
+      }
+      if (
+        warns.length > 0 &&
+        !(await confirmDialog(`检查有 ${warns.length} 条提醒：\n${warns.map((w) => `· ${issueLine(w)}`).join("\n")}\n\n仍然存吗？`, {
+          confirmText: "照存",
+        }))
+      )
+        return;
       const saved = await invoke<TaskPackDto>("save_task_pack", {
         id: same?.id ?? null,
         name: trimmed,

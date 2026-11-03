@@ -32,6 +32,7 @@ import ProjectUserTasksView from "./ProjectUserTasksView";
 import { SettingsDrawerShell, SettingsRulesSection } from "./ProjectSettingsDrawer";
 import ProjectMemoryPanel from "./ProjectMemoryPanel";
 import SavePackForm from "./SavePackForm";
+import PackDraftsDialog from "./PackDraftsDialog";
 import KickoffConfirmDialog from "./KickoffConfirmDialog";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import {
@@ -595,6 +596,9 @@ export default function ProjectGroup({
   const [tplSavedMsg, setTplSavedMsg] = useState<string | null>(null);
   // 另存为我的任务（任务包第一期，2026-11-03）
   const [savingPack, setSavingPack] = useState(false);
+  // 跟 AI 写我的任务（第二期）：new = 起头表单；list = 草稿检查与装库。草稿数打开设置时现拉
+  const [packDrafts, setPackDrafts] = useState<"new" | "list" | null>(null);
+  const [packDraftCount, setPackDraftCount] = useState(0);
 
   /** 一键开步（§11.3 机制三）：invoke 链路在 pipeline-start.ts 与评审「开始下一步」共用，此处只管组件态。
    *  v3.64 起「开工」为两步：先开 KickoffConfirmDialog（TASK.md 预览编辑，任务书草稿优先），
@@ -882,6 +886,21 @@ export default function ProjectGroup({
   // 各占详情页一条常驻带，配置项还散在 ⋯ 菜单八项里；收进抽屉后详情页少两条带、
   // ⋯ 菜单收到四项，项目级配置也终于有了一个能一眼看全的地方。
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 设置抽屉打开或草稿弹层关上时数一下草稿（不常驻轮询）
+  useEffect(() => {
+    if (!project || !(settingsOpen || packDrafts === null)) return;
+    let stale = false;
+    invoke<unknown[]>("list_task_pack_drafts", { projectRoot: project.path })
+      .then((list) => {
+        if (!stale) setPackDraftCount(list.length);
+      })
+      .catch(() => {
+        if (!stale) setPackDraftCount(0);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [project, settingsOpen, packDrafts]);
   const chromeConsumed = useRef<number | null>(null);
   useEffect(() => {
     if (!chromeReq || !cfg) return;
@@ -1543,6 +1562,16 @@ export default function ProjectGroup({
         </form>
       )}
 
+      {packDrafts && project && cfg && (
+        <PackDraftsDialog
+          mode={packDrafts}
+          projectPath={project.path}
+          config={cfg}
+          onClose={() => setPackDrafts(null)}
+          onAddedToProject={() => void reloadCfg(project.path)}
+        />
+      )}
+
       {savingPack && cfg && (
         <SavePackForm
           steps={cfg.steps}
@@ -2131,6 +2160,30 @@ export default function ProjectGroup({
                 >
                   另存为我的任务
                 </button>
+                <button
+                  type="button"
+                  className={ghostActionClass}
+                  title="说清要做什么，让 AI 按格式写一份我的任务草稿；在 Mesa 里检查、预览后再装"
+                  onClick={() => {
+                    setPackDrafts("new");
+                    setSettingsOpen(false);
+                  }}
+                >
+                  跟 AI 写我的任务
+                </button>
+                {packDraftCount > 0 && (
+                  <button
+                    type="button"
+                    className={ghostActionClass}
+                    title="检查 AI 写好的草稿，确认后装进我的任务"
+                    onClick={() => {
+                      setPackDrafts("list");
+                      setSettingsOpen(false);
+                    }}
+                  >
+                    我的任务草稿（{packDraftCount}）
+                  </button>
+                )}
                 {cfg.steps.length > 0 && (
                   <button
                     type="button"

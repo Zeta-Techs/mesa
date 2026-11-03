@@ -1122,6 +1122,18 @@ fn compose_skill_md(
 
 // ===== 任务包（2026-11-03，design-task-packs.md）=====
 
+/// 内置技能名 = 简报里 `{skill:锚名}` 的闭集（pipeline.md「技能位与个性化替换」）
+pub(crate) fn builtin_skill_names() -> Vec<&'static str> {
+    BUILTIN_SKILLS.iter().map(|(name, _)| *name).collect()
+}
+
+/// 库里所有技能名（任务包检查「本机没有这个技能」用）
+pub(crate) fn library_skill_names() -> Vec<String> {
+    SkillStore::default_paths()
+        .map(|store| store.read().into_iter().map(|s| s.name).collect())
+        .unwrap_or_default()
+}
+
 /// 另存为我的任务：步骤用到的用户技能（非内置、库里确有 SKILL.md）的库目录，供随包快照。
 /// 内置技能每台机器都有，不打包
 pub(crate) fn user_skill_dirs(names: &[String]) -> Result<Vec<(String, PathBuf)>, String> {

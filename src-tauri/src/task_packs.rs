@@ -226,6 +226,21 @@ pub(crate) fn save_at(
             }
         }
     }
+    // 拦下的一律不存（提醒不拦）；技能库名单只影响提醒，这里不用
+    let probe = TaskPackDto {
+        id: "pk-check".into(),
+        name: name.to_string(),
+        description: String::new(),
+        version: 1,
+        created_at: String::new(),
+        updated_at: String::new(),
+        params: params.clone(),
+        steps: steps.clone(),
+        skills: Vec::new(),
+    };
+    if let Some(msg) = blocked(&check_pack(&probe, &[])) {
+        return Err(msg);
+    }
     let _lock = crate::storage::config_lock("task-packs")?;
     fs::create_dir_all(root).map_err(|e| format!("建任务包目录失败：{e}"))?;
     let existing = match id {
@@ -374,6 +389,439 @@ pub async fn add_task_pack_to_project(
     .map_err(|e| e.to_string())?
 }
 
+// ===== 机器校验（第二期，design-task-packs.md §5）=====
+// 把 step-panel.md「新增模板 / 新增步骤检查清单」里机器判得了的做成校验：「拦下」不让存，「提醒」只提醒。
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PackIssueDto {
+    /// "block" 拦下 | "warn" 提醒
+    pub level: String,
+    /// 哪一步（整包的问题为 None）
+    pub step: Option<String>,
+    pub message: String,
+}
+
+fn issue(level: &str, step: Option<&str>, message: impl Into<String>) -> PackIssueDto {
+    PackIssueDto { level: level.into(), step: step.map(str::to_string), message: message.into() }
+}
+
+/// 一步的文字超过这么多字提醒、超过上限拦下（任务书长度预算：内置模板每步约 4–5 千字）
+const STEP_TEXT_WARN: usize = 6000;
+const STEP_TEXT_BLOCK: usize = 12000;
+
+const PACK_KEYS: [&str; 3] = ["pack", "params", "steps"];
+const META_KEYS: [&str; 6] = ["id", "name", "description", "version", "created_at", "updated_at"];
+const PARAM_KEYS: [&str; 5] = ["key", "label", "value", "help", "options"];
+const STEP_KEYS: [&str; 21] = [
+    "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
+    "optional_inputs", "any_of_inputs", "skills", "required_skills", "resources", "run", "human_tasks",
+    "discussion_seeds", "decisions", "asks_lit_source", "seed_complete", "role", "pack", "params",
+];
+const HUMAN_KEYS: [&str; 8] = ["title", "guidance", "target", "timing", "optional", "completion", "expected_count", "manifest_path"];
+const DECISION_MODES: [&str; 3] = ["auto_continue", "soft_pause", "hard_pause"];
+
+/// 手写的 pack.toml：字段闭集与取值闭集（parse_config 会把写错的悄悄丢掉或归一，这里先说出来）
+fn check_structure(value: &toml::Value) -> Vec<PackIssueDto> {
+    let mut out = Vec::new();
+    let unknown = |out: &mut Vec<PackIssueDto>, step: Option<&str>, table: &toml::value::Table, allowed: &[&str], what: &str| {
+        for key in table.keys() {
+            if !allowed.contains(&key.as_str()) {
+                out.push(issue("block", step, format!("{what}里有不认识的字段「{key}」")));
+            }
+        }
+    };
+    let Some(root) = value.as_table() else { return out };
+    unknown(&mut out, None, root, &PACK_KEYS, "pack.toml 顶层");
+    if let Some(meta) = root.get("pack").and_then(|v| v.as_table()) {
+        unknown(&mut out, None, meta, &META_KEYS, "[pack] ");
+    }
+    for p in root.get("params").and_then(|v| v.as_array()).into_iter().flatten() {
+        if let Some(t) = p.as_table() {
+            unknown(&mut out, None, t, &PARAM_KEYS, "[[params]] ");
+        }
+    }
+    for s in root.get("steps").and_then(|v| v.as_array()).into_iter().flatten() {
+        let Some(t) = s.as_table() else { continue };
+        let name = t.get("name").and_then(|v| v.as_str());
+        unknown(&mut out, name, t, &STEP_KEYS, "这一步");
+        if let Some(mode) = t.get("decision_mode").and_then(|v| v.as_str()) {
+            if !DECISION_MODES.contains(&mode) {
+                out.push(issue("block", name, format!("decision_mode 只能是 auto_continue / soft_pause / hard_pause，写的是「{mode}」")));
+            }
+        }
+        for h in t.get("human_tasks").and_then(|v| v.as_array()).into_iter().flatten() {
+            if let Some(ht) = h.as_table() {
+                unknown(&mut out, name, ht, &HUMAN_KEYS, "人工事项");
+            }
+        }
+    }
+    out
+}
+
+fn path_issue(step: &str, what: &str, path: &str) -> Option<PackIssueDto> {
+    let p = path.trim().replace('\\', "/");
+    if p.is_empty() {
+        return None;
+    }
+    if p.starts_with('/') || p.chars().nth(1) == Some(':') || p.split('/').any(|seg| seg == "..") {
+        return Some(issue("block", Some(step), format!("{what}「{path}」要写成项目内的相对路径")));
+    }
+    let first = p.split('/').next().unwrap_or_default();
+    if first == ".git" {
+        return Some(issue("block", Some(step), format!("{what}「{path}」不能指向 .git")));
+    }
+    if first == ".ccode" {
+        return Some(issue("warn", Some(step), format!("{what}「{path}」在 .ccode/ 下：那是 Mesa 的地方，一般不该写")));
+    }
+    None
+}
+
+/// 内容校验。lib_skills = 本机技能库里有的技能名
+pub(crate) fn check_pack(pack: &TaskPackDto, lib_skills: &[String]) -> Vec<PackIssueDto> {
+    let mut out = Vec::new();
+    if pack.name.trim().is_empty() {
+        out.push(issue("block", None, "任务名不能为空"));
+    }
+    if pack.steps.is_empty() {
+        out.push(issue("block", None, "至少要有一个步骤"));
+    }
+    let anchors = crate::skills::builtin_skill_names();
+    let mut produced: Vec<String> = Vec::new();
+    let mut used_params: Vec<String> = Vec::new();
+    for (i, step) in pack.steps.iter().enumerate() {
+        let name = step.name.trim();
+        let sn = Some(name);
+        if name.is_empty() {
+            out.push(issue("block", None, format!("第 {} 步没有名字", i + 1)));
+        } else if pack.steps[..i].iter().any(|s| s.name.trim() == name) {
+            out.push(issue("block", sn, "步骤名重复"));
+        }
+        if step.brief.trim().is_empty() {
+            out.push(issue("block", sn, "没有简报：AI 不知道这一步做什么"));
+        }
+        let texts = step_texts(step);
+        let len: usize = texts.iter().map(|t| t.chars().count()).sum();
+        if len > STEP_TEXT_BLOCK {
+            out.push(issue("block", sn, format!("文字有 {len} 字，超过一步 {STEP_TEXT_BLOCK} 字的上限，任务书会太长；把细则挪进技能")));
+        } else if len > STEP_TEXT_WARN {
+            out.push(issue("warn", sn, format!("文字有 {len} 字，偏长；细则可以挪进技能")));
+        }
+        for t in &texts {
+            if crate::sessions::redact_sensitive_text(t) != *t {
+                out.push(issue("block", sn, "文字里像是有密钥，拿掉再存"));
+                break;
+            }
+            for key in param_refs(t) {
+                if !pack.params.iter().any(|p| p.key == key) {
+                    out.push(issue("block", sn, format!("用了没定义的参数 {{param:{key}}}")));
+                }
+                if !used_params.contains(&key) {
+                    used_params.push(key);
+                }
+            }
+        }
+        let brief = &step.brief;
+        let mut rest = brief.as_str();
+        while let Some(at) = rest.find("{skill:") {
+            rest = &rest[at + 7..];
+            let Some(end) = rest.find('}') else { break };
+            let anchor = &rest[..end];
+            if !anchors.contains(&anchor) {
+                out.push(issue("block", sn, format!("{{skill:{anchor}}} 不是认得的技能位（只能写内置技能名）")));
+            }
+            rest = &rest[end + 1..];
+        }
+        let paths = step
+            .expected_artifacts
+            .iter()
+            .map(|p| ("预期产物", p))
+            .chain(step.inputs.iter().map(|p| ("输入", p)))
+            .chain(step.optional_inputs.iter().map(|p| ("可选输入", p)))
+            .chain(step.any_of_inputs.iter().flatten().map(|p| ("任一输入", p)))
+            .chain(step.resources.iter().map(|p| ("资源", p)))
+            .chain(step.human_tasks.iter().map(|h| ("人工事项落点", &h.target)))
+            .chain(step.human_tasks.iter().map(|h| ("人工事项清单", &h.manifest_path)));
+        for (what, p) in paths {
+            if let Some(found) = path_issue(name, what, p) {
+                out.push(found);
+            }
+        }
+        if step.expected_artifacts.is_empty() {
+            out.push(issue("warn", sn, "没有预期产物：Mesa 判断不了这一步做没做完"));
+        } else if step.expected_artifacts.iter().all(|p| p.ends_with('/') || p.rsplit('/').next().is_some_and(|last| last.contains('*'))) {
+            out.push(issue("warn", sn, "预期产物只写了目录或通配：先写一个能证明做完的入口文件（如 analysis/report.md）"));
+        }
+        if step.acceptance_criteria.is_empty() {
+            out.push(issue("warn", sn, "没有验收条件：评审时不知道按什么标准看"));
+        }
+        if i > 0 {
+            for input in &step.inputs {
+                if !produced.iter().any(|p| p == input) {
+                    out.push(issue("warn", sn, format!("必需输入「{input}」不是前面步骤的产物：加进项目时要确认项目里已有")));
+                }
+            }
+        }
+        produced.extend(step.expected_artifacts.iter().cloned());
+        let asks = ["问用户", "问人", "请用户", "让用户决定", "等用户"].iter().any(|w| brief.contains(w));
+        if asks && step.decisions.is_empty() && !brief.contains("help-wanted") {
+            out.push(issue("warn", sn, "简报说要问人，但没写决策项；开工前就能问的写成决策项，干到一半才知道的写明写进 .ccode/help-wanted.md"));
+        }
+        for skill in step.skills.iter().chain(step.required_skills.iter()) {
+            if !lib_skills.iter().any(|s| s == skill) && !pack.skills.iter().any(|s| s == skill) {
+                out.push(issue("warn", sn, format!("技能「{skill}」本机没有，也没随包带上")));
+            }
+        }
+    }
+    for p in &pack.params {
+        if !used_params.contains(&p.key) {
+            out.push(issue("warn", None, format!("参数「{}」没有被任何步骤用到", p.label)));
+        }
+    }
+    for skill in &pack.skills {
+        if lib_skills.iter().any(|s| s == skill) {
+            out.push(issue("warn", None, format!("随包技能「{skill}」本机库里已有同名的：加进项目时用库里那份，不覆盖")));
+        }
+    }
+    out
+}
+
+fn blocked(issues: &[PackIssueDto]) -> Option<String> {
+    let blocks: Vec<String> = issues
+        .iter()
+        .filter(|i| i.level == "block")
+        .map(|i| match &i.step {
+            Some(s) => format!("「{s}」{}", i.message),
+            None => i.message.clone(),
+        })
+        .collect();
+    (!blocks.is_empty()).then(|| format!("没存：{}", blocks.join("；")))
+}
+
+/// 另存前的检查（前端先展示提醒、问人要不要照存；拦下的另存时后端还会再拒一次）
+#[tauri::command]
+pub async fn check_task_pack(name: String, params: Vec<StepParamDto>, steps: Vec<StepDto>) -> Result<Vec<PackIssueDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let pack = TaskPackDto {
+            id: "pk-check".into(),
+            name,
+            description: String::new(),
+            version: 1,
+            created_at: String::new(),
+            updated_at: String::new(),
+            params: crate::projects::normalize_step_params(params),
+            steps: steps.into_iter().map(pack_step).collect(),
+            skills: Vec::new(),
+        };
+        Ok(check_pack(&pack, &crate::skills::library_skill_names()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ===== 跟 AI 写（第二期）：草稿在 <项目>/.ccode/pack-drafts/<id>/，写进 .git/info/exclude 不进 git =====
+// 放项目里是因为 Agent 的沙箱多半不让写工作目录以外（Codex workspace-write）
+
+const DRAFTS_REL: &str = ".ccode/pack-drafts";
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PackDraftDto {
+    pub id: String,
+    pub name: String,
+    /// 草稿目录、pack.toml 相对项目根的路径（给 Agent 的提示词用）
+    pub dir_rel: String,
+    pub pack_rel: String,
+    pub updated_at: String,
+    /// 内置技能名（{skill:锚名} 的闭集）与本机库里的用户技能名，写进提示词
+    pub anchors: Vec<String>,
+    pub user_skills: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackDraftCheckDto {
+    pub pack: Option<TaskPackDto>,
+    pub issues: Vec<PackIssueDto>,
+    /// pack.toml 读不懂时的原因（还没写、TOML 写错）
+    pub parse_error: Option<String>,
+}
+
+fn draft_dir(project: &Path, id: &str) -> Result<PathBuf, String> {
+    if !valid_id(id) {
+        return Err(format!("草稿 id 不合法：{id}"));
+    }
+    Ok(project.join(DRAFTS_REL).join(id))
+}
+
+fn draft_dto(project: &Path, id: &str) -> PackDraftDto {
+    let dir = project.join(DRAFTS_REL).join(id);
+    let text = fs::read_to_string(dir.join(PACK_FILE)).unwrap_or_default();
+    let name = toml::from_str::<toml::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("pack")?.get("name")?.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let updated_at = fs::metadata(dir.join(PACK_FILE))
+        .and_then(|m| m.modified())
+        .map(|t| chrono::DateTime::<chrono::Local>::from(t).to_rfc3339())
+        .unwrap_or_default();
+    let user = crate::skills::library_skill_names();
+    let anchors: Vec<String> = crate::skills::builtin_skill_names().into_iter().map(str::to_string).collect();
+    PackDraftDto {
+        id: id.to_string(),
+        name,
+        dir_rel: format!("{DRAFTS_REL}/{id}"),
+        pack_rel: format!("{DRAFTS_REL}/{id}/{PACK_FILE}"),
+        updated_at,
+        user_skills: user.into_iter().filter(|s| !anchors.contains(s)).collect(),
+        anchors,
+    }
+}
+
+pub(crate) fn start_draft_at(project: &Path, name: &str, description: &str) -> Result<PackDraftDto, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("先给任务起个名字".into());
+    }
+    let id = format!("pk-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let dir = draft_dir(project, &id)?;
+    fs::create_dir_all(dir.join("skills")).map_err(|e| format!("建草稿目录失败：{e}"))?;
+    let skeleton = TaskPackDto {
+        id: id.clone(),
+        name: name.to_string(),
+        description: description.trim().lines().next().unwrap_or_default().to_string(),
+        version: 1,
+        created_at: crate::sessions::now_iso(),
+        updated_at: crate::sessions::now_iso(),
+        params: Vec::new(),
+        steps: Vec::new(),
+        skills: Vec::new(),
+    };
+    crate::profiles::atomic_write(&dir.join(PACK_FILE), &render_pack(&skeleton)?)?;
+    crate::projects::exclude_in_git(project, &format!("{DRAFTS_REL}/"));
+    Ok(draft_dto(project, &id))
+}
+
+pub(crate) fn list_drafts_at(project: &Path) -> Vec<PackDraftDto> {
+    let Ok(entries) = fs::read_dir(project.join(DRAFTS_REL)) else { return Vec::new() };
+    let mut out: Vec<PackDraftDto> = entries
+        .flatten()
+        .filter(|e| e.path().join(PACK_FILE).is_file() && valid_id(&e.file_name().to_string_lossy()))
+        .map(|e| draft_dto(project, &e.file_name().to_string_lossy()))
+        .collect();
+    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    out
+}
+
+pub(crate) fn check_draft_at(project: &Path, id: &str, lib_skills: &[String]) -> Result<PackDraftCheckDto, String> {
+    let dir = draft_dir(project, id)?;
+    let text = match fs::read_to_string(dir.join(PACK_FILE)) {
+        Ok(text) => text,
+        Err(_) => return Ok(PackDraftCheckDto { pack: None, issues: Vec::new(), parse_error: Some("还没有 pack.toml".into()) }),
+    };
+    let value: toml::Value = match toml::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return Ok(PackDraftCheckDto { pack: None, issues: Vec::new(), parse_error: Some(format!("pack.toml 写法不对：{e}")) }),
+    };
+    let mut issues = check_structure(&value);
+    match parse_pack(&text, &dir) {
+        Ok(mut pack) => {
+            // 草稿里的步骤不该带溯源与取值；id 以草稿目录为准
+            pack.id = id.to_string();
+            pack.steps = pack.steps.into_iter().map(pack_step).collect();
+            issues.extend(check_pack(&pack, lib_skills));
+            Ok(PackDraftCheckDto { pack: Some(pack), issues, parse_error: None })
+        }
+        Err(e) => Ok(PackDraftCheckDto { pack: None, issues, parse_error: Some(e) }),
+    }
+}
+
+/// 草稿装进我的任务：有拦下就不装；随包技能 = 草稿 skills/ 里写的 + 步骤用到的本机用户技能（草稿里有的优先）
+pub(crate) fn install_draft_at(
+    project: &Path,
+    packs: &Path,
+    id: &str,
+    overwrite: Option<&str>,
+    lib_skills: &[String],
+    library_dirs: &[(String, PathBuf)],
+) -> Result<TaskPackDto, String> {
+    let check = check_draft_at(project, id, lib_skills)?;
+    if let Some(e) = check.parse_error {
+        return Err(e);
+    }
+    if let Some(msg) = blocked(&check.issues) {
+        return Err(msg);
+    }
+    let pack = check.pack.ok_or("草稿读不出来")?;
+    let dir = draft_dir(project, id)?;
+    let mut skill_dirs: Vec<(String, PathBuf)> = pack.skills.iter().map(|s| (s.clone(), dir.join("skills").join(s))).collect();
+    for (name, path) in library_dirs {
+        if !skill_dirs.iter().any(|(n, _)| n == name) {
+            skill_dirs.push((name.clone(), path.clone()));
+        }
+    }
+    let saved = save_at(packs, overwrite, &pack.name, &pack.description, pack.params, pack.steps, &skill_dirs)?;
+    let _ = fs::remove_dir_all(&dir);
+    Ok(saved)
+}
+
+fn draft_project(project_root: &str) -> Result<PathBuf, String> {
+    crate::projects::ensure_task_project_root(Path::new(&crate::sessions::expand_tilde(project_root)))
+}
+
+#[tauri::command]
+pub async fn start_task_pack_draft(project_root: String, name: String, description: String) -> Result<PackDraftDto, String> {
+    tauri::async_runtime::spawn_blocking(move || start_draft_at(&draft_project(&project_root)?, &name, &description))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_task_pack_drafts(project_root: String) -> Result<Vec<PackDraftDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(list_drafts_at(&draft_project(&project_root)?)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn check_task_pack_draft(project_root: String, id: String) -> Result<PackDraftCheckDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        check_draft_at(&draft_project(&project_root)?, &id, &crate::skills::library_skill_names())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn install_task_pack_draft(project_root: String, id: String, overwrite: Option<String>) -> Result<TaskPackDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = draft_project(&project_root)?;
+        let lib = crate::skills::library_skill_names();
+        let names: Vec<String> = check_draft_at(&project, &id, &lib)?
+            .pack
+            .map(|p| p.steps.iter().flat_map(|s| s.skills.iter().chain(s.required_skills.iter()).cloned()).collect())
+            .unwrap_or_default();
+        let library_dirs = crate::skills::user_skill_dirs(&names)?;
+        install_draft_at(&project, &packs_root()?, &id, overwrite.as_deref(), &lib, &library_dirs)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 丢弃草稿：整个草稿目录进回收站
+#[tauri::command]
+pub async fn discard_task_pack_draft(project_root: String, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = draft_dir(&draft_project(&project_root)?, &id)?;
+        if !dir.exists() {
+            return Ok(());
+        }
+        crate::projects::trash_delete_retry(&dir, "任务草稿")
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,5 +916,113 @@ mod tests {
         let back = crate::projects::parse_config(&text).0.steps;
         assert_eq!(back[0].pack, "pk-abc");
         assert_eq!(back[0].params, s.params);
+    }
+
+    fn levels(issues: &[PackIssueDto], level: &str) -> Vec<String> {
+        issues.iter().filter(|i| i.level == level).map(|i| i.message.clone()).collect()
+    }
+
+    #[test]
+    fn check_blocks_and_warns() {
+        let good = StepDto {
+            name: "质控".into(),
+            brief: "按 {skill:data-clean} 做质控，期刊 {param:j}".into(),
+            expected_artifacts: vec!["analysis/qc.md".into()],
+            acceptance_criteria: vec!["写明阈值".into()],
+            ..Default::default()
+        };
+        let mut pack = TaskPackDto {
+            id: "pk-x".into(),
+            name: "质控".into(),
+            description: String::new(),
+            version: 1,
+            created_at: String::new(),
+            updated_at: String::new(),
+            params: vec![param("j", "期刊", "Nature"), param("unused", "没用上", "x")],
+            steps: vec![good.clone()],
+            skills: vec![],
+        };
+        let issues = check_pack(&pack, &[]);
+        assert!(levels(&issues, "block").is_empty(), "{issues:?}");
+        assert_eq!(levels(&issues, "warn"), ["参数「没用上」没有被任何步骤用到"]);
+        // 拦下：越界路径、.git、不认得的技能位、没简报、重名、像密钥
+        let bad = StepDto {
+            name: "质控".into(),
+            brief: "按 {skill:not-a-skill} 做，key sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".into(),
+            expected_artifacts: vec!["../out.md".into(), ".git/x".into()],
+            inputs: vec!["/abs/in.csv".into()],
+            ..Default::default()
+        };
+        let empty = StepDto { name: "空".into(), ..Default::default() };
+        pack.steps = vec![good.clone(), bad, empty];
+        let blocks = levels(&check_pack(&pack, &[]), "block");
+        for want in ["步骤名重复", "不是认得的技能位", "像是有密钥", "「../out.md」要写成项目内的相对路径", "不能指向 .git", "「/abs/in.csv」要写成项目内的相对路径", "没有简报"] {
+            assert!(blocks.iter().any(|b| b.contains(want)), "缺「{want}」：{blocks:?}");
+        }
+        // 提醒：只写目录的产物、没验收、上游没提供的输入、要问人却没决策项、本机没有的技能
+        let step2 = StepDto {
+            name: "注释".into(),
+            brief: "做完问用户要不要继续".into(),
+            expected_artifacts: vec!["figures/*".into()],
+            inputs: vec!["data/raw.csv".into()],
+            skills: vec!["my-anno".into()],
+            ..Default::default()
+        };
+        pack.steps = vec![good, step2];
+        let warns = levels(&check_pack(&pack, &[]), "warn");
+        for want in ["只写了目录或通配", "没有验收条件", "不是前面步骤的产物", "简报说要问人", "技能「my-anno」本机没有"] {
+            assert!(warns.iter().any(|w| w.contains(want)), "缺「{want}」：{warns:?}");
+        }
+        // save_at 拒存有拦下的
+        let dir = std::env::temp_dir().join(format!("mesa-pack-chk-{}", uuid::Uuid::new_v4()));
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let err = save_at(&dir.join("packs"), None, "x", "", vec![], vec![StepDto { name: "a".into(), ..Default::default() }], &[]).unwrap_err();
+        assert!(err.contains("没有简报"), "{err}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn draft_round_trip_checks_structure_then_installs() {
+        let dir = std::env::temp_dir().join(format!("mesa-pack-draft-{}", uuid::Uuid::new_v4()));
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let project = dir.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        assert!(start_draft_at(&project, " ", "").is_err());
+        let draft = start_draft_at(&project, "单细胞质控", "组里的 QC\n第二行不要").unwrap();
+        assert_eq!(draft.pack_rel, format!(".ccode/pack-drafts/{}/pack.toml", draft.id));
+        assert_eq!(draft.name, "单细胞质控");
+        assert!(draft.anchors.iter().any(|a| a == "data-clean"));
+        assert_eq!(list_drafts_at(&project).len(), 1);
+        // 骨架没有步骤：检查给出拦下
+        let skeleton = check_draft_at(&project, &draft.id, &[]).unwrap();
+        assert!(levels(&skeleton.issues, "block").iter().any(|m| m.contains("至少要有一个步骤")));
+        // AI 写的 pack.toml：带一个写错的字段与决策模式
+        let ddir = project.join(&draft.dir_rel);
+        fs::write(
+            ddir.join(PACK_FILE),
+            format!(
+                "[pack]\nid = \"{}\"\nname = \"单细胞质控\"\ndescription = \"QC\"\n\n[[params]]\nkey = \"mt\"\nlabel = \"线粒体阈值\"\nvalue = \"20%\"\n\n[[steps]]\nname = \"质控\"\nbrief = \"线粒体阈值 {{param:mt}}，按 my-qc 技能做\"\nexpected_artifacts = [\"analysis/qc.md\"]\nacceptance_criteria = [\"写明阈值\"]\nskills = [\"my-qc\"]\ndecision_mode = \"maybe\"\nbreif = \"拼错\"\n",
+                draft.id
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(ddir.join("skills/my-qc")).unwrap();
+        fs::write(ddir.join("skills/my-qc/SKILL.md"), "---\nname: my-qc\n---\n质控").unwrap();
+        let checked = check_draft_at(&project, &draft.id, &[]).unwrap();
+        let blocks = levels(&checked.issues, "block");
+        assert!(blocks.iter().any(|b| b.contains("不认识的字段「breif」")), "{blocks:?}");
+        assert!(blocks.iter().any(|b| b.contains("decision_mode")), "{blocks:?}");
+        assert!(install_draft_at(&project, &dir.join("packs"), &draft.id, None, &[], &[]).unwrap_err().starts_with("没存："));
+        // 改对了再装：随包技能来自草稿，装完草稿目录删掉
+        let text = fs::read_to_string(ddir.join(PACK_FILE)).unwrap().replace("decision_mode = \"maybe\"\nbreif = \"拼错\"\n", "");
+        fs::write(ddir.join(PACK_FILE), text).unwrap();
+        let ok = check_draft_at(&project, &draft.id, &[]).unwrap();
+        assert!(levels(&ok.issues, "block").is_empty(), "{:?}", ok.issues);
+        let installed = install_draft_at(&project, &dir.join("packs"), &draft.id, None, &[], &[]).unwrap();
+        assert_eq!(installed.skills, ["my-qc"]);
+        assert_eq!(installed.params[0].value, "20%");
+        assert!(!ddir.exists());
+        assert!(list_drafts_at(&project).is_empty());
+        fs::remove_dir_all(&dir).ok();
     }
 }
