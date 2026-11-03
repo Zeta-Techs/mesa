@@ -204,6 +204,23 @@ fn project_url(spec: &ClientSpec, path: &str) -> Option<String> {
 
 // ===== 预检（纯函数） =====
 
+/// 版本串按点分数字比（「1.2.1」「1.10.0」）；读不出的段当 0
+fn version_lt(have: &str, min: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.trim()
+            .split(|c: char| !c.is_ascii_digit() && c != '.')
+            .next()
+            .unwrap_or("")
+            .split('.')
+            .map(|p| p.parse().unwrap_or(0))
+            .collect()
+    };
+    let (a, b) = (parse(have), parse(min));
+    let n = a.len().max(b.len());
+    let at = |v: &Vec<u64>, i: usize| v.get(i).copied().unwrap_or(0);
+    (0..n).map(|i| (at(&a, i), at(&b, i))).find(|(x, y)| x != y).is_some_and(|(x, y)| x < y)
+}
+
 fn check(id: &str, status: &str, text: impl Into<String>) -> CheckDto {
     CheckDto {
         id: id.into(),
@@ -352,11 +369,31 @@ pub(crate) fn build_plan(
         ));
     }
 
+    if let (Some(min), Some(have)) = (spec.min_version, env.probe.version.as_deref()) {
+        if version_lt(have, min) {
+            checks.push(check(
+                "client_too_old",
+                "block",
+                format!("{}需要 {min} 以上才能从 Mesa 打开，你装的是 {have}，先在它里面更新。", spec.display),
+            ));
+        }
+    }
+
     match target {
         OpenTarget::Project { path } => {
             level = "project";
             if !env.dir_exists {
                 checks.push(check("dir_missing", "block", format!("目录不存在或已移动：{path}")));
+            }
+            if spec.channel == ChannelPolicy::GlobalConfig {
+                checks.push(check(
+                    "channel_global",
+                    "note",
+                    format!(
+                        "{}用它自己的登录，或写在配置文件里的连接；Mesa 启动时选的连接带不过去。要用接口连接，先在连接页对它点「设为全局」。",
+                        spec.display
+                    ),
+                ));
             }
             match project_url(spec, path) {
                 Some(u) => url = u,
@@ -410,6 +447,8 @@ pub(crate) fn build_plan(
                     env,
                     &mut checks,
                 ),
+                // 只有项目级的客户端，上面已因没有会话深链拦下
+                ChannelPolicy::GlobalConfig => {}
             }
         }
     }
@@ -869,6 +908,7 @@ fn gather_env(
                 env.session_file_exists = file.map(Path::exists);
                 env.session_model = file.and_then(claude_last_model);
             }
+            ChannelPolicy::GlobalConfig => {}
         },
     }
     env
@@ -1293,6 +1333,40 @@ mod tests {
         let plan = build_plan("claude-code", claude(), &t, &env);
         assert_eq!(plan.verdict, "blocked");
         assert!(plan.checks.iter().any(|c| c.id == "dir_missing"));
+    }
+
+    #[test]
+    fn kimi_desktop_opens_project_only_with_version_gate_and_channel_note() {
+        let kimi = find_client("kimi-desktop").unwrap().1;
+        let mut env = env_ok();
+        env.probe.version = Some("1.2.1".into());
+        let t = OpenTarget::Project { path: "/p/我的 项目".into() };
+        let plan = build_plan("kimi", kimi, &t, &env);
+        assert_eq!(plan.verdict, "ready");
+        assert_eq!(plan.level, "project");
+        // 与 kimi CLI 的 `kimi app` 同一条（encodeURIComponent）
+        assert_eq!(plan.url, "kimi-code://open?root=%2Fp%2F%E6%88%91%E7%9A%84%20%E9%A1%B9%E7%9B%AE&new=1");
+        assert!(plan.checks.iter().any(|c| c.id == "channel_global" && c.status == "note"));
+        // 太旧拦下；读不到版本（Windows）不拦
+        env.probe.version = Some("1.0.9".into());
+        let plan = build_plan("kimi", kimi, &t, &env);
+        assert_eq!(plan.verdict, "blocked");
+        assert!(plan.checks.iter().any(|c| c.id == "client_too_old"));
+        env.probe.version = None;
+        assert_eq!(build_plan("kimi", kimi, &t, &env).verdict, "ready");
+        // 没有按会话打开的深链
+        let plan = build_plan("kimi", kimi, &session("kimi", SID), &env_ok());
+        assert_eq!(plan.verdict, "blocked");
+        assert!(plan.checks.iter().any(|c| c.id == "no_session_open"));
+    }
+
+    #[test]
+    fn version_lt_compares_dotted_numbers() {
+        assert!(version_lt("1.0.9", "1.1.0"));
+        assert!(!version_lt("1.10.0", "1.9.0"));
+        assert!(!version_lt("1.1.0", "1.1.0"));
+        assert!(!version_lt("1.1", "1.1.0"));
+        assert!(version_lt("0.9.12-beta", "1.1.0"));
     }
 
     #[test]

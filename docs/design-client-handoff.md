@@ -108,7 +108,7 @@ ClientSpec {
 |---|---|---|
 | P1 | `ClientSpec` + `client_open.rs` + `useClientOpen` 钩子与确认层；Codex 迁入（含预检浮层、就地注册）；删掉对话页「灰按钮 + 去连接页」的绕路；诊断日志事件 | 直接解决你说的两个痛点，同时是后面所有家的骨架 |
 | P2 | Claude 桌面版会话级 + 项目级 | 九家里第二个能精确定位对话的。**VS Code 扩展不做**：`vscode://anthropic.claude-code/open?session=` 落在最前面的 VS Code 窗口，按该窗口工作目录 `--resume`，窗口目录与对话项目不同就找不到，Mesa 控制不了落哪个窗口 |
-| P3 | Kimi、OpenCode 项目级（含版本门槛） | 补全 B 档 |
+| P3 | Kimi、OpenCode 项目级（含版本门槛） | 补全 B 档。**2026-11-04 Kimi 已做、OpenCode 不做**：Kimi 按官方 dmg 1.2.1 的 Info.plist 定 bundle `com.kimi.code.desktop` / 应用名 `Kimi Code`，深链同 CLI `kimi app`，`ChannelPolicy::GlobalConfig` 给 note、`min_version` 1.1.0（Windows 是 NSIS 包读不到版本，不拦）。OpenCode 桌面版 2.x（Electron 重写，`anomalyco/opencode` dev 分支 `packages/desktop`）的主进程只处理 `opencode://console/authorized`，渲染进程收下深链后没有消费者，`open-project` / `new-session` 已不在——等官方重新给出按目录打开的入口再接 |
 | 暂不做 | C 档 Qwen/CodeBuddy 本机 Web 服务（要管进程、端口、令牌）；D 档三家 | 成本高于价值，等官方出稳定入口再说 |
 
 ## 8. 实施前必须实测（动用户真实数据，按 AGENTS「先干跑」纪律）

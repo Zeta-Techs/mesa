@@ -1199,7 +1199,8 @@ src-tauri/src/
                              # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR 的 scheme、版本取当前用户应用包仓库的
                              #   MSIX 包全名（两家 Windows 客户端都是 MSIX，2026-10-20 本机核实），30 秒缓存）→ 纯函数 build_plan 预检
                              #   （ok/note/warn/fix/block；Codex 查 state_<N>.sqlite 的 threads 表与 config.toml 的 provider 定义块，
-                             #   Claude 查 transcript 文件与连接是否网关）→ client_open_list / client_open_plan / client_open_launch。
+                             #   Claude 查 transcript 文件与连接是否网关；Kimi 桌面版只有项目级，给「只认设为全局的连接」note、min_version 门槛）
+                             #   → client_open_list / client_open_plan / client_open_launch。
                              #   红线：客户端侧失败看不见，判断全在发深链前；launch 每次现算、修复只能选预检候选；会话 id / 块名后端校验后才进 URL / TOML；
                              #   读不到就不假装知道（Unknown 不出检查项）；深链模板与客户端规格数据在 agent_specs.rs 的 ClientSpec
   codex_continuity.rs        # Codex 客户端续聊（2026-10-31）：切全局只动默认，老对话要用的只加不删。只读对话表 state_<N>.sqlite，

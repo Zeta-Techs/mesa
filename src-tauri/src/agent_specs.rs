@@ -104,6 +104,8 @@ pub struct ClientSpec {
     pub download_url: Option<&'static str>,
     /// 渠道（API 配置）如何到达客户端
     pub channel: ChannelPolicy,
+    /// 深链要求的最低客户端版本；读得到版本且更旧时拦下（读不到不拦，如 Windows 非 MSIX 安装）
+    pub min_version: Option<&'static str>,
 }
 
 /// 渠道到达客户端的方式；决定预检里「渠道」一项怎么判
@@ -114,6 +116,8 @@ pub enum ChannelPolicy {
     RegisteredProvider,
     /// 客户端用它自己的账号 / 推理配置继续，不会带上 Mesa 里选的网关（claude 桌面版）
     OwnAccount,
+    /// 客户端只读写在 CLI 配置文件里的连接（kimi 桌面版）：Mesa 启动时注入的连接带不过去，要「设为全局」才认
+    GlobalConfig,
 }
 
 /// 「设为全局默认」能力：把 profile 写入 CLI 自己的配置文件
@@ -439,6 +443,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             win_package_names: &["Claude"],
             download_url: Some("https://claude.ai/download"),
             channel: ChannelPolicy::OwnAccount,
+            min_version: None,
         }],
     },
     AgentSpec {
@@ -503,6 +508,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             win_package_names: &["OpenAI.Codex"],
             download_url: None,
             channel: ChannelPolicy::RegisteredProvider,
+            min_version: None,
         }],
     },
     AgentSpec {
@@ -758,7 +764,22 @@ static AGENT_SPECS: &[AgentSpec] = &[
         set_global: SetGlobalCap::Supported,
         mcp_write: McpWriteCap::Full,
         skill_dist: SkillDist::SymlinkOrCopy,
-        clients: &[],
+        // Kimi Code 桌面版（2026-11-04：官方 dmg 1.2.1 的 Info.plist 核实 bundle / scheme；深链与 CLI 自带 `kimi app`
+        // 同一条，2.4.1 二进制核实）。只能按目录开新对话，没有按会话打开的参数（matrix §13.1）
+        clients: &[ClientSpec {
+            id: "kimi-desktop",
+            display: "Kimi Code 桌面版",
+            session_url: None,
+            project_url: Some("kimi-code://open?root={path}&new=1"),
+            scheme: "kimi-code",
+            mac_bundle_ids: &["com.kimi.code.desktop"],
+            mac_app_names: &["Kimi Code"],
+            // Windows 是 NSIS 安装包，不进应用包仓库：只靠 HKCR 的 scheme 判断装没装，读不到版本
+            win_package_names: &[],
+            download_url: Some("https://www.kimi.com/code"),
+            channel: ChannelPolicy::GlobalConfig,
+            min_version: Some("1.1.0"),
+        }],
     },
     AgentSpec {
         id: "codebuddy",
@@ -1668,7 +1689,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(ids.len(), 2, "本期只有 claude-desktop 与 codex-desktop");
+        assert_eq!(ids.len(), 3, "claude-desktop、codex-desktop、kimi-desktop（2026-11-04）");
     }
 
     /// 注册表完整性：全部已知 agent 都有规格，必填字段非空
