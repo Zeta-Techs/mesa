@@ -246,6 +246,46 @@ pub(crate) fn append_human_decision(root: &Path, kind: &str, text: &str) -> Resu
     append_entry(root, kind, text, None, "人工请求里由人选定")
 }
 
+/// 人工请求「以后同类照此办」：同一个问题已经记过（还有效的「已定 / 不做」、正文以「问题 → 」开头）就把旧的标成被替换、新的接上，
+/// 不叠两条互相矛盾的（2026-11-03 自查：改答后旧答案还留在任务书「以前定过的事」里）
+pub(crate) fn record_human_decision(root: &Path, kind: &str, question: &str, answer: &str) -> Result<(), String> {
+    if !matches!(kind, "已定" | "不做") {
+        return Err("只能记为「已定」或「不做」".into());
+    }
+    let prefix = format!("{} → ", question.trim());
+    let full = format!("{prefix}{}", answer.trim());
+    let text = validate_text(&full)?.to_string();
+    fs::create_dir_all(root.join(".ccode")).map_err(|e| e.to_string())?;
+    let _lock = crate::storage::lock_at(&root.join(".ccode/memory.lock"))?;
+    let before = read_raw(root)?;
+    let mut doc = parse(&before)?;
+    let mut replaces = None;
+    for e in doc.entries.iter_mut() {
+        if e.meta.state == "active" && matches!(e.meta.goal_name.as_str(), "已定" | "不做") && e.text.starts_with(&prefix) {
+            if e.text == text && e.meta.goal_name == kind {
+                return Ok(());
+            }
+            e.meta.state = "superseded".into();
+            replaces = Some(e.meta.id.clone());
+        }
+    }
+    doc.entries.push(MemoryEntry {
+        meta: MemoryMeta {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at: crate::sessions::now_iso(),
+            source_version: None,
+            goal_name: kind.into(),
+            state: "active".into(),
+            replaces,
+            reason: "人工请求里由人选定".into(),
+            files: Vec::new(),
+        },
+        text,
+        stale_paths: Vec::new(),
+    });
+    write_at(root, &before, &doc)
+}
+
 fn append_entry(
     root: &Path,
     goal: &str,
@@ -551,5 +591,25 @@ mod tests {
         assert!(append_confirmed(&root, "目标", "结论", None).is_err());
         assert!(parse("<!-- mesa-memory:broken --> x").is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn record_human_decision_replaces_same_question_instead_of_stacking() {
+        let root = std::env::temp_dir().join(format!("mesa-memory-decide-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        record_human_decision(&root, "已定", "年份下限", "A（2021 起）").unwrap();
+        record_human_decision(&root, "已定", "年份下限", "A（2021 起）").unwrap();
+        let doc = read_at(&root).unwrap();
+        assert_eq!(doc.entries.iter().filter(|e| e.meta.state == "active").count(), 1, "同样的答案不重复记");
+        // 改答：旧的标成被替换，新的接上
+        record_human_decision(&root, "已定", "年份下限", "B（2015 起）").unwrap();
+        record_human_decision(&root, "不做", "别的问题", "不扩到综述").unwrap();
+        let doc = read_at(&root).unwrap();
+        let active: Vec<&str> = doc.entries.iter().filter(|e| e.meta.state == "active").map(|e| e.text.as_str()).collect();
+        assert_eq!(active, ["年份下限 → B（2015 起）", "别的问题 → 不扩到综述"]);
+        let new = doc.entries.iter().find(|e| e.text.ends_with("B（2015 起）")).unwrap();
+        let old = doc.entries.iter().find(|e| e.text.ends_with("A（2021 起）")).unwrap();
+        assert_eq!((old.meta.state.as_str(), new.meta.replaces.as_deref()), ("superseded", Some(old.meta.id.as_str())));
+        fs::remove_dir_all(&root).ok();
     }
 }

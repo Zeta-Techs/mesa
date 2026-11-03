@@ -93,13 +93,17 @@ export default function HelpRequestDialog() {
       toast(`打不开终端：${String(reason)}`, "error");
       return;
     }
-    if (prompt) {
+    // 只有接回原对话且自动发出的才算「已送」（2026-11-03 自查）：主仓根来的请求、要重选连接的，
+    // 回答只是填进新标签的输入里，人没点启动就关掉会丢——不标已送，收件箱继续提醒
+    if (prompt && req.autoStart) {
       try {
         await invoke<number>("help_request_mark_sent", { root: target.root });
       } catch (reason) {
         toast(`回答已送出，但没能标记为已送：${String(reason)}`, "warning");
       }
       bumpHelpRefresh();
+    } else if (prompt) {
+      toast("回答已填进对话的输入里，启动发出后才算送到；送到前待处理里会一直留着这一条。", "info");
     }
     setPendingTerminal(req);
     setPage("terminal");

@@ -940,15 +940,15 @@ fn create_schedule_at(path: &Path, mut input: CreateScheduleInput) -> Result<Sch
         event,
         ..Default::default()
     };
-    let mut list = read_schedules_at(path)?;
-    list.push(task.clone());
-    write_schedules_at(path, &list)?;
-    // 目录规则建好就记底：建规则时已在目录里的文件不算事件
+    // 目录规则先记底再落盘：建规则时已在目录里的文件不算事件；记底失败就不建，免得报错了规则却已经在（2026-11-03 自查）
     if let Some(EventRule { kind, folder: Some(folder), exts, .. }) = &task.event {
         if kind == "folder" {
             crate::schedule_events::scan_folder(&task.id, Path::new(&task.project_root), folder, exts)?;
         }
     }
+    let mut list = read_schedules_at(path)?;
+    list.push(task.clone());
+    write_schedules_at(path, &list)?;
     Ok(task)
 }
 
@@ -2602,7 +2602,10 @@ fn queued_for_list(s: &Schedule, now: NaiveDateTime, running: bool) -> bool {
     s.enabled
         && !running
         && (due_slot(Cadence::of(s), last_handled(s), now).is_some()
-            || (s.event.as_ref().is_some_and(|e| e.mode == "run") && !s.pending_events.is_empty()))
+            || (s.event.as_ref().is_some_and(|e| e.mode == "run")
+                && !s.pending_events.is_empty()
+                // 与 collect_due 同口径：上一轮还没评审时不会跑，不能写「排队中」（2026-11-03 自查）
+                && !(effective_skip_if_unreviewed(s) && has_unreviewed(s))))
 }
 
 /// 本轮该跑的一条：应跑时刻 + 之前还错过几次
@@ -2962,6 +2965,11 @@ fn flush_recorded_events() {
 
 /// 真跑档跑起来时取走攒着的事件
 fn take_pending_events(id: &str) -> Option<RunOrigin> {
+    take_pending_events_with_hits(id).map(|(origin, _)| origin)
+}
+
+/// 取走攒着的事件，连同原样的条目（跑失败时放回去）
+fn take_pending_events_with_hits(id: &str) -> Option<(RunOrigin, Vec<EventHit>)> {
     let _g = sched_lock().ok()?;
     let path = schedules_path().ok()?;
     let mut list = read_schedules_at(&path).ok()?;
@@ -2970,9 +2978,20 @@ fn take_pending_events(id: &str) -> Option<RunOrigin> {
         return None;
     }
     let hits = std::mem::take(&mut t.pending_events);
-    let origin = origin_from(t, hits);
+    let origin = origin_from(t, hits.clone());
     write_schedules_at(&path, &list).ok()?;
-    Some(origin)
+    Some((origin, hits))
+}
+
+/// 事件真跑没跑成（出错或被跳过）：取走的事件放回队首，下一轮重试（连续失败照旧自动暂停，不会无限重跑；2026-11-03 自查）
+fn restore_pending_events(id: &str, mut hits: Vec<EventHit>) {
+    let Ok(_g) = sched_lock() else { return };
+    let Ok(path) = schedules_path() else { return };
+    let Ok(mut list) = read_schedules_at(&path) else { return };
+    let Some(t) = list.iter_mut().find(|t| t.id == id) else { return };
+    hits.append(&mut t.pending_events);
+    t.pending_events = hits;
+    let _ = write_schedules_at(&path, &list);
 }
 
 fn claim_due_after_lock(id: &str, due: &[DuePlan]) -> bool {
@@ -3027,12 +3046,14 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                         continue;
                     }
                 };
+                let mut taken_hits: Option<Vec<EventHit>> = None;
                 let ctx = if plan.event {
                     // 跑起来才取走攒着的事件；被别处取空了就算了
-                    let Some(origin) = take_pending_events(&id) else {
+                    let Some((origin, hits)) = take_pending_events_with_hits(&id) else {
                         unmark_running(&id);
                         continue;
                     };
+                    taken_hits = Some(hits);
                     RunContext { trigger: "event".into(), event: Some(origin), ..Default::default() }
                 } else {
                     let (trigger, reason) = classify_trigger(plan.slot, app_started, prev_tick, now);
@@ -3065,6 +3086,12 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                     })
                     .await;
                     TICK_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+                    if let (Some(hits), Ok(payload)) = (taken_hits, outcome.as_ref()) {
+                        // 状态只有 ok / error / skipped：没跑成（出错、被跳过）的都放回去
+                        if payload.status != "ok" {
+                            restore_pending_events(&id, hits);
+                        }
+                    }
                     unmark_running(&id);
                     match outcome {
                         Ok(payload) => emit_done(&app2, payload),
@@ -3151,14 +3178,19 @@ fn list_schedules_sync() -> Result<Vec<ScheduleDto>, String> {
         .collect())
 }
 
+/// 后台线程跑：目录事件规则建的时候要遍历目录记底（最多几千个文件），放主线程上终端会停住
 #[tauri::command]
-pub fn create_schedule(input: CreateScheduleInput) -> Result<ScheduleDto, String> {
-    create_schedule_at(&schedules_path()?, input).map(ScheduleDto::from)
+pub async fn create_schedule(input: CreateScheduleInput) -> Result<ScheduleDto, String> {
+    tauri::async_runtime::spawn_blocking(move || create_schedule_at(&schedules_path()?, input).map(ScheduleDto::from))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn update_schedule(id: String, patch: UpdateSchedulePatch) -> Result<ScheduleDto, String> {
-    update_schedule_at(&schedules_path()?, &id, patch).map(ScheduleDto::from)
+pub async fn update_schedule(id: String, patch: UpdateSchedulePatch) -> Result<ScheduleDto, String> {
+    tauri::async_runtime::spawn_blocking(move || update_schedule_at(&schedules_path()?, &id, patch).map(ScheduleDto::from))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 在后台线程删：隔离 worktree 走系统回收站（macOS 经 Finder，几秒）还带重试，

@@ -305,7 +305,8 @@ pub async fn list_help_requests() -> Vec<HelpRequestDto> {
     .unwrap_or_default()
 }
 
-/// 读-改-写人工请求文件（同一把文件锁；Agent 同时在写时以 Agent 的新内容为准，找不到那一条就报错不覆盖）
+/// 读-改-写人工请求文件（同一把文件锁；锁只管得住 Mesa 自己，Agent 写文件不拿这把锁：写回前再读一遍，
+/// 期间被 Agent 改过就不覆盖、报错让人再点一次，免得把 Agent 刚追加的问题盖掉——2026-11-03 自查）
 fn edit_file(root: &Path, edit: impl FnOnce(&str, &[Block]) -> Result<Vec<(usize, Option<String>)>, String>) -> Result<(), String> {
     // 锁放在 Mesa 配置目录：放进项目 .ccode/ 会成为未跟踪文件，被 Agent 顺手提交
     let key = format!("{:x}", Sha256::digest(crate::paths::path_key(&root.to_string_lossy()).as_bytes()));
@@ -340,6 +341,9 @@ fn edit_file(root: &Path, edit: impl FnOnce(&str, &[Block]) -> Result<Vec<(usize
     let mut joined = out.join(newline);
     if text.ends_with('\n') {
         joined.push_str(newline);
+    }
+    if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        return Err("人工请求文件刚被 Agent 改过，没写进去；再点一次".into());
     }
     crate::profiles::atomic_write(&path, &joined)
 }
@@ -409,12 +413,14 @@ pub async fn help_request_answer(
             None => None,
         };
         let item = answer_at(Path::new(&source.root), &item_id, &answer)?;
+        let secrets = crate::profiles::stored_secrets();
         if let (Some(kind), Some(project)) = (remember.as_deref(), project) {
-            let text = format!("{} → {}", item.question, item.answer.as_deref().unwrap_or_default());
-            crate::project_memory::append_human_decision(&project, kind, &text)
+            // 问题是 Agent 写的：进项目知识前和出站同一口径脱敏（项目知识原样回到界面、进任务书）
+            let r = |t: &str| crate::sessions::redact_sensitive_text_with(t, &secrets);
+            crate::project_memory::record_human_decision(&project, kind, &r(&item.question), &r(item.answer.as_deref().unwrap_or_default()))
                 .map_err(|e| format!("回答已记下，但没写进项目知识：{e}"))?;
         }
-        Ok(redact_item(item, &crate::profiles::stored_secrets()))
+        Ok(redact_item(item, &secrets))
     })
     .await
     .map_err(|e| e.to_string())?

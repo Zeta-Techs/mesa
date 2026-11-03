@@ -33,7 +33,8 @@ export default function HelpRequestCards({
     setBusy(item.id);
     setError(null);
     try {
-      const kind = remember[item.id];
+      // 记过的再改答：照原来记的那一类再记一次，后端按问题替换旧的那条（不留前后矛盾的两条）
+      const kind = remember[item.id] ?? recorded[item.id];
       const saved = await invoke<HelpItemDto>("help_request_answer", {
         root: request.root,
         itemId: item.id,
