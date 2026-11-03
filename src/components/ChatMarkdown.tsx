@@ -529,12 +529,13 @@ export function ChatImageCard({
   const name = abs.split(/[\\/]/).pop() ?? abs;
   // 读过的图首帧就画（image-cache），切回会话不再先出「图片加载中」
   const [src, setSrc] = useState<string | null>(() => cachedImageUrl(abs) ?? null);
-  const [failed, setFailed] = useState(false);
+  // 读不出的原因：超大、格式不对照实说，其余（白名单外 / 已删）说「不在可读取范围」
+  const [failed, setFailed] = useState<string | null>(null);
   const [viewing, setViewing] = useState(false);
 
   useEffect(() => {
     let stale = false;
-    setFailed(false);
+    setFailed(null);
     const hit = cachedImageUrl(abs);
     if (hit) {
       setSrc(hit);
@@ -551,16 +552,16 @@ export function ChatImageCard({
       .then((url) => {
         if (!stale) setSrc(url);
       })
-      .catch(() => {
-        if (!stale) setFailed(true);
+      .catch((reason) => {
+        if (!stale) setFailed(String(reason));
       });
     return () => {
       stale = true;
     };
   }, [abs, cwd]);
 
-  if (failed && quiet) return null;
-  if (failed)
+  if (failed !== null && quiet) return null;
+  if (failed !== null)
     return (
       <div
         className="my-1 flex items-start gap-1.5 break-all rounded-md border border-hairline bg-inset px-2.5 py-1.5 font-mono text-xs text-l3"
@@ -569,7 +570,9 @@ export function ChatImageCard({
         <span className="ccode-icon-line">
           <ImageOff size={13} strokeWidth={1.8} aria-hidden="true" className="text-l4" />
         </span>
-        <span>{name}（不在可读取范围或文件已删除）</span>
+        <span>
+          {name}（{/只支持|不是有效|超过/.test(failed) ? failed : "不在可读取范围或文件已删除"}）
+        </span>
       </div>
     );
   if (!src) return quiet ? null : <div className="md-img-pending my-1">图片加载中…</div>;

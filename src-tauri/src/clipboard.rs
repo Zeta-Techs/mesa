@@ -24,6 +24,23 @@ fn sanitize_ext(ext: &str) -> &str {
     }
 }
 
+/// 按文件头认真实格式：网页剪贴板报的类型不一定是字节本身的格式，扩展名跟着字节走，
+/// 否则读图时文件头对不上扩展名被拒，聊天里的图片卡只剩「读不到」（2026-11-04 用户截图：粘贴的 .gif 显示不出）。
+/// 认不出的照前端报的类型
+fn sniff_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 /// paste-* 且 mtime 早于截止时刻才算残留（其它文件绝不碰）
 fn is_expired_paste(name: &str, mtime_secs: i64, now_secs: i64, ttl_secs: i64) -> bool {
     name.starts_with("paste-") && mtime_secs < now_secs - ttl_secs
@@ -93,7 +110,7 @@ fn save_image_bytes(bytes: &[u8], ext: &str) -> Result<String, String> {
         "paste-{}-{}.{}",
         chrono::Local::now().format("%Y%m%d-%H%M%S"),
         &uuid[..8],
-        sanitize_ext(ext),
+        sniff_ext(bytes).unwrap_or_else(|| sanitize_ext(ext)),
     );
     let path = dir.join(&name);
     std::fs::write(&path, bytes).map_err(|e| format!("保存剪贴板图片失败: {e}"))?;
@@ -114,6 +131,15 @@ mod tests {
         assert_eq!(sanitize_ext("bmp"), "png");
         assert_eq!(sanitize_ext("PNG"), "png");
         assert_eq!(sanitize_ext("../../etc/x"), "png");
+    }
+
+    #[test]
+    fn saved_ext_follows_image_bytes() {
+        assert_eq!(sniff_ext(b"\x89PNG\r\n\x1a\n...."), Some("png"));
+        assert_eq!(sniff_ext(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("jpg"));
+        assert_eq!(sniff_ext(b"GIF89a...."), Some("gif"));
+        assert_eq!(sniff_ext(b"RIFF\0\0\0\0WEBPVP8 "), Some("webp"));
+        assert_eq!(sniff_ext(b"MM\0*tiff"), None);
     }
 
     #[test]

@@ -1235,8 +1235,64 @@ fn push_claude_user_string(
     }
 }
 
+/// 图片附件的来源行（isMeta）：`[Image: source: /abs/path.png]`，一张图一个 text 块
+fn claude_image_sources(v: &Value) -> Option<Vec<String>> {
+    let arr = v.get("message")?.get("content")?.as_array()?;
+    let sources = arr
+        .iter()
+        .map(|b| {
+            get_str(b, "text")?
+                .trim()
+                .strip_prefix("[Image: source: ")?
+                .strip_suffix(']')
+                .map(String::from)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!sources.is_empty()).then_some(sources)
+}
+
+/// 去掉正文里的 `[Image #N]` 占位（连同后面一个空格），返回去掉后的正文与去掉了几个
+fn strip_claude_image_placeholders(text: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let mut count = 0;
+    let mut rest = text;
+    while let Some(at) = rest.find("[Image #") {
+        let tail = &rest[at + "[Image #".len()..];
+        let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 || tail.as_bytes().get(digits) != Some(&b']') {
+            out.push_str(&rest[..at + 1]);
+            rest = &rest[at + 1..];
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        rest = &tail[digits + 1..];
+        rest = rest.strip_prefix(' ').unwrap_or(rest);
+        count += 1;
+    }
+    out.push_str(rest);
+    (out, count)
+}
+
+/// 聊天层发图是「正文 + 一行一个图片路径」，Claude Code 把单独一行的图片路径收成图片附件：正文里换成前置的
+/// `[Image #N]`、图本身以 base64 记进同一行，路径另记一条 isMeta 的 `[Image: source: 路径]`（2.1.308 实测）。
+/// 照原文拼回「正文 + 路径行」：气泡画出图片卡，也对得上聊天层刚发出的那条（2026-11-04 用户截图：
+/// 同一句出现两次，一条带「[Image #2]」没图、一条有图）。占位与来源数对不上（终端里直接贴的剪贴板图没有来源）
+/// 不动占位，只把认得出的路径接在后面
+fn restore_claude_image_paths(msg: &mut ChatMessageDto, sources: &[String]) {
+    let paths = sources.join("\n");
+    let Some(block) = msg.blocks.iter_mut().find(|b| b.kind == "text") else {
+        msg.blocks.push(text_block(paths));
+        return;
+    };
+    let (stripped, count) = strip_claude_image_placeholders(&block.text);
+    let body = if count == sources.len() { stripped.trim().to_string() } else { block.text.clone() };
+    block.text = if body.is_empty() { paths } else { format!("{body}\n{paths}") };
+}
+
 fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
     let mut msgs = Vec::new();
+    // 最近一条带图片附件的用户消息：（在 msgs 里的下标，promptId）——等它的 `[Image: source:]` 来源行
+    let mut awaiting_sources: Option<(usize, Option<String>)> = None;
     for line in lines {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue; // 末行截断等坏行直接跳过
@@ -1245,6 +1301,18 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
             continue; // 子 agent 支线消息不进主对话
         }
         if v.get("isMeta").and_then(|x| x.as_bool()) == Some(true) {
+            if let (Some((idx, prompt)), Some(sources)) = (&awaiting_sources, claude_image_sources(&v)) {
+                let same_prompt = match (prompt.as_deref(), get_str(&v, "promptId")) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => true,
+                };
+                if same_prompt {
+                    if let Some(msg) = msgs.get_mut(*idx) {
+                        restore_claude_image_paths(msg, &sources);
+                    }
+                    awaiting_sources = None;
+                }
+            }
             continue;
         }
         let ts = get_str(&v, "timestamp").map(String::from);
@@ -1289,6 +1357,10 @@ fn parse_claude(lines: &[String]) -> Vec<ChatMessageDto> {
                         if blocks.iter().all(|b| b.kind == "tool_result") {
                             push_tool_result(&mut msgs, blocks, ts);
                         } else {
+                            if arr.iter().any(|b| get_str(b, "type") == Some("image")) {
+                                awaiting_sources =
+                                    Some((msgs.len(), get_str(&v, "promptId").map(String::from)));
+                            }
                             msgs.push(ChatMessageDto {
                                 role: "user".into(),
                                 blocks,
@@ -9075,6 +9147,31 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":"<command-name>/init</command-name>"}}"#,
         ]);
         assert_eq!(claude_tail_state(&pending), "working", "/init 这类会让模型干活的命令仍算进行中");
+    }
+
+    #[test]
+    fn claude_image_attachments_restore_source_paths() {
+        // 2.1.308 实测：聊天层发「正文 + 两行图片路径」，落盘成前置占位 + base64 图，路径另记一条 isMeta 来源行
+        let lines = s(&[
+            r#"{"type":"user","promptId":"p1","imagePasteIds":[1,2],"message":{"role":"user","content":[{"type":"text","text":"[Image #1] [Image #2]第一行文字\n第二行"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBO"}},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBO"}}]}}"#,
+            r#"{"type":"user","promptId":"p1","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"[Image: source: /tmp/a.png]"},{"type":"text","text":"[Image: source: /tmp/b.png]"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"红色"}]}}"#,
+        ]);
+        let msgs = parse_claude(&lines);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].blocks[0].text, "第一行文字\n第二行\n/tmp/a.png\n/tmp/b.png");
+
+        // 终端里直接贴的剪贴板图没有来源行：占位原样留着
+        let pasted = s(&[
+            r#"{"type":"user","promptId":"p2","message":{"role":"user","content":[{"type":"text","text":"[Image #3] 看这个"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBO"}}]}}"#,
+        ]);
+        assert_eq!(parse_claude(&pasted)[0].blocks[0].text, "[Image #3] 看这个");
+    }
+
+    #[test]
+    fn strip_claude_image_placeholders_only_takes_numbered_tags() {
+        assert_eq!(strip_claude_image_placeholders("[Image #12] 正文"), ("正文".to_string(), 1));
+        assert_eq!(strip_claude_image_placeholders("[Image #x] [Image #]"), ("[Image #x] [Image #]".to_string(), 0));
     }
 
     #[test]
