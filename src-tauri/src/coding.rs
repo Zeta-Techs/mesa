@@ -1408,10 +1408,10 @@ fn merge_at(
             ));
         }
     }
-    match git_long(
-        &cwd,
-        &["-c", "commit.gpgsign=false", "merge", "--no-edit", &tip],
-    ) {
+    let ident = crate::git_info::commit_identity_args(&cwd);
+    let mut merge_args: Vec<&str> = ident.iter().map(String::as_str).collect();
+    merge_args.extend(["-c", "commit.gpgsign=false", "merge", "--no-edit", &tip]);
+    match git_long(&cwd, &merge_args) {
         Ok(text) => {
             let version_id = git_long(&cwd, &["rev-parse", "HEAD"])?;
             let paths: Vec<String> = touched

@@ -129,6 +129,10 @@
 - **应用内自动 merge/commit 必须绕过用户全局 `commit.gpgsign` 且带超时**：无头环境调 gpg 会卡住或失败。
   `workspaces` 的 merge/sync_base/finish_merge 与 `coding.rs` 的 merge/push/空仓初始提交同一口径：
   `-c commit.gpgsign=false` + `run_git` 超时（短操作 20s，merge/push/worktree 60s）。禁止再写裸 `git merge`。
+- **应用内提交 / 合并没署名时代填，不写用户 gitconfig（2026-11-03）**：Mesa 发起的每一次 commit / merge（评审页与改动面板提交、
+  保存进项目、并入基准、冲突收尾、编程页合并、空仓与档案卡自动提交）都先经 `git_info::commit_identity_args`：git 能得出署名
+  （配过或系统能推断）就不动；得不出只用 `-c` 补缺的那一项（`Mesa` / `ccode@localhost`），配过的一项不覆盖。新增提交 / 合并调用点照此办。
+  agent 自己的提交不归这里管：任务书收尾节让它在权限或署名失败时不重试、不改 git 配置，交给评审页提交。
 - **`git branch -d` 失败不得静默回落 `-D`**：未合入基准的提交必须向用户说明；强删只在用户确认 `force` 后执行。
   删工作树时若勾了「同时删分支」，`-d` 失败要把「树已删、分支还在」说清楚，不得吞错。
 - **多阶段 Git 操作必须返回结构化阶段结果**：commit/push、merge/archive、push/PR 任一后阶段失败时，前阶段成功事实必须

@@ -475,19 +475,10 @@ pub(crate) fn ensure_initial_commit(repo: &Path) -> Result<bool, String> {
     if run_git(repo, &["rev-parse", "--verify", "--quiet", "HEAD"], T).is_ok() {
         return Ok(false);
     }
-    let configured = |key: &str| {
-        run_git(repo, &["config", "--get", key], T)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    };
+    let ident = crate::git_info::commit_identity_args(repo);
     // 与 merge/sync_base 一致：应用内自动提交必须绕过用户全局 commit.gpgsign
     let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false"];
-    if !configured("user.name") {
-        args.extend(["-c", "user.name=Mesa"]);
-    }
-    if !configured("user.email") {
-        args.extend(["-c", "user.email=ccode@localhost"]);
-    }
+    args.extend(ident.iter().map(String::as_str));
     args.extend([
         "commit",
         "--allow-empty",
@@ -1817,11 +1808,10 @@ fn merge_impl_with_guard(
     };
     save_delivery_pending(&w.id, &pending)?;
     // 应用内自动 merge commit 必须绕过用户全局 commit.gpgsign：无头环境调 gpg 会卡住或失败
-    let mut log = match run_git(
-        &repo,
-        &["-c", "commit.gpgsign=false", "merge", "--no-ff", &tip],
-        Duration::from_secs(60),
-    ) {
+    let ident = crate::git_info::commit_identity_args(&repo);
+    let mut merge_args: Vec<&str> = ident.iter().map(String::as_str).collect();
+    merge_args.extend(["-c", "commit.gpgsign=false", "merge", "--no-ff", &tip]);
+    let mut log = match run_git(&repo, &merge_args, Duration::from_secs(60)) {
         Ok(out) => out,
         Err(e) => {
             let files = run_git(
@@ -4705,11 +4695,10 @@ fn sync_base_impl(wt: &Path, base_branch: &str, restart: bool) -> Result<String,
         return Err("工作区有未提交改动，请先在「改动」面板提交，再并入主分支".into());
     }
     // 干净并入会产生 merge commit，同样要绕过用户全局 commit.gpgsign
-    match run_git(
-        wt,
-        &["-c", "commit.gpgsign=false", "merge", base_branch],
-        Duration::from_secs(60),
-    ) {
+    let ident = crate::git_info::commit_identity_args(wt);
+    let mut merge_args: Vec<&str> = ident.iter().map(String::as_str).collect();
+    merge_args.extend(["-c", "commit.gpgsign=false", "merge", base_branch]);
+    match run_git(wt, &merge_args, Duration::from_secs(60)) {
         Ok(out) => Ok(format!(
             "已把 {} 并入当前任务分支：\n{}",
             base_branch,
@@ -5017,11 +5006,10 @@ fn finish_merge_impl(wt: &Path) -> Result<String, String> {
         return Err(format!("还有未解决的冲突文件：{}", st.files.join("、")));
     }
     // 与 merge 路径一致：应用内自动提交绕过用户全局 commit.gpgsign
-    run_git(
-        wt,
-        &["-c", "commit.gpgsign=false", "commit", "--no-edit"],
-        Duration::from_secs(60),
-    )?;
+    let ident = crate::git_info::commit_identity_args(wt);
+    let mut args: Vec<&str> = ident.iter().map(String::as_str).collect();
+    args.extend(["-c", "commit.gpgsign=false", "commit", "--no-edit"]);
+    run_git(wt, &args, Duration::from_secs(60))?;
     Ok("冲突解决完成，已提交并入".to_string())
 }
 

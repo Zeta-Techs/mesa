@@ -80,7 +80,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 同日 LaTeX 补齐：写作步不再手写 bib 条目、不放「待绘制」占位；定稿加 xelatex 文本层抽检、逐条裁决清单（% TODO 待核实）与投稿声明模板。实测 latex 15064。
   // 2026-11-02 人工请求改固定字段（design-attention-dispatch §4.1）：决策暂停策略里的格式说明与七类必问清单每步约多 190 字。
   // 实测 review 29731、论文 39722、数据 15699、学位 38445、投稿 10182、LaTeX 15795。
-  const before: Record<string, number> = { review: 29800, "research-paper": 39800, "data-processing": 15800, thesis: 38500, "submission-rebuttal": 10300, "latex-paper": 15900 };
+  // 2026-11-03 收尾节加一句「提交因权限或没配 git 署名失败时别重试」（Codex 沙箱写不到主仓 .git，agent 反复试后报失败），每步约 45 字。
+  // 实测 review 30001、论文 40154、数据 15915、学位 38877、投稿 10290、LaTeX 16011。
+  const before: Record<string, number> = { review: 30100, "research-paper": 40300, "data-processing": 16000, thesis: 39000, "submission-rebuttal": 10400, "latex-paper": 16100 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

@@ -48,6 +48,35 @@ pub(crate) const PLATFORM_GIT_CONFIG: &[&str] = if cfg!(windows) {
     &[]
 };
 
+/// 本机没配 git 署名时 Mesa 代填的作者。只经命令行 -c 作用于 Mesa 自己发起的那一次提交 / 合并，
+/// 不写用户 gitconfig；用户自己配了署名，下一次提交就照用他的。
+const FALLBACK_GIT_NAME: &str = "Mesa";
+const FALLBACK_GIT_EMAIL: &str = "ccode@localhost";
+
+/// Mesa 发起提交 / 合并前调用：git 已能得出作者署名（配过，或能从系统自动推断）就返回空；
+/// 得不出就只补缺的那一项（`-c user.name=…` / `-c user.email=…`），配过的一项不覆盖。
+/// 不补时 git 直接拒绝提交（Please tell me who you are），评审页「保存进项目」卡在这一步——
+/// Windows 上电脑名不像域名、邮箱推断不出来是常态。
+pub(crate) fn commit_identity_args(cwd: &Path) -> Vec<String> {
+    let cwd = cwd.to_string_lossy();
+    let ok = |args: &[&str]| run_git(&cwd, args).is_ok_and(|o| o.status.success());
+    if ok(&["var", "GIT_COMMITTER_IDENT"]) && ok(&["var", "GIT_AUTHOR_IDENT"]) {
+        return Vec::new();
+    }
+    let configured = |key: &str| {
+        run_git(&cwd, &["config", "--get", key])
+            .is_ok_and(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+    };
+    let mut args = Vec::new();
+    if !configured("user.name") {
+        args.extend(["-c".to_string(), format!("user.name={FALLBACK_GIT_NAME}")]);
+    }
+    if !configured("user.email") {
+        args.extend(["-c".to_string(), format!("user.email={FALLBACK_GIT_EMAIL}")]);
+    }
+    args
+}
+
 pub(crate) fn run_git(cwd: &str, args: &[&str]) -> Result<Output, String> {
     let git = crate::agents::resolve_binary("git").ok_or("找不到 git 可执行文件，请先安装 git")?;
     crate::process::background_command(git)
@@ -477,13 +506,14 @@ fn git_commit_sync(
             if !add.status.success() {
                 return Err(output_tail(&add));
             }
-            let mut args = vec![
+            let mut args = commit_identity_args(Path::new(&cwd));
+            args.extend([
                 "--literal-pathspecs".into(),
                 "commit".into(),
                 "-m".into(),
                 message.into(),
                 "--".into(),
-            ];
+            ]);
             args.extend(selected.iter().cloned());
             run_git_owned(&cwd, &args)?
         }
@@ -505,7 +535,9 @@ fn git_commit_sync(
         if !add.status.success() {
             return Err(output_tail(&add));
         }
-        run_git(&cwd, &["commit", "-m", message])?
+        let mut args = commit_identity_args(Path::new(&cwd));
+        args.extend(["commit".into(), "-m".into(), message.into()]);
+        run_git_owned(&cwd, &args)?
     };
     log.push_str(&output_tail(&commit));
     if !commit.status.success() {
@@ -708,7 +740,10 @@ fn commit_selected_with_index(
                 }
             }
         }
-        let mut commit = run(&["commit", "-m", message])?;
+        let ident = commit_identity_args(Path::new(cwd));
+        let mut args: Vec<&str> = ident.iter().map(String::as_str).collect();
+        args.extend(["commit", "-m", message]);
+        let mut commit = run(&args)?;
         if commit.status.success() {
             // 真实索引里这些勾选路径仍是旧条目（落后于新 HEAD），status 会出现幻影 MM——
             // 按路径把真实索引同步回 HEAD（不碰工作树、不碰未勾选文件的暂存内容）
@@ -1822,6 +1857,34 @@ mod tests {
         git(&dir, &["config", "user.email", "t@t.dev"]);
         git(&dir, &["config", "user.name", "t"]);
         dir
+    }
+
+    fn head_author(dir: &Path) -> String {
+        let out = run_git(&dir.to_string_lossy(), &["log", "-1", "--format=%an <%ae>"]).unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn commit_without_identity_uses_fallback() {
+        if !git_available() {
+            return;
+        }
+        // 本地配置里置空署名，盖住测试机的全局署名：git 不补就拒绝提交（empty ident name not allowed）
+        let dir = tmpdir("no-ident");
+        git(&dir, &["init", "-b", "main"]);
+        git(&dir, &["config", "user.name", ""]);
+        git(&dir, &["config", "user.email", ""]);
+        fs::write(dir.join("a.txt"), "l1\n").unwrap();
+        let cwd = dir.to_string_lossy().into_owned();
+        git_commit_sync(&cwd, "init", false, None).expect("没配署名也能提交");
+        assert_eq!(head_author(&dir), format!("{FALLBACK_GIT_NAME} <{FALLBACK_GIT_EMAIL}>"));
+        // 用户配了署名之后照用他的，不再代填
+        git(&dir, &["config", "user.name", "t"]);
+        git(&dir, &["config", "user.email", "t@t.dev"]);
+        assert!(commit_identity_args(&dir).is_empty());
+        fs::write(dir.join("b.txt"), "l1\n").unwrap();
+        git_commit_sync(&cwd, "second", false, None).unwrap();
+        assert_eq!(head_author(&dir), "t <t@t.dev>");
     }
 
     #[test]

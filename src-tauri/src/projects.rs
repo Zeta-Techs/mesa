@@ -3424,18 +3424,9 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     }
     // 与 ensure_initial_commit 同一模式：绕过 gpgsign；git 身份缺失时仅本次提交
     // 用 -c 注入临时身份，不写入用户 git config
-    let configured = |key: &str| {
-        crate::workspaces::run_git(repo, &["config", "--get", key], T)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    };
+    let ident = crate::git_info::commit_identity_args(repo);
     let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false", "--literal-pathspecs"];
-    if !configured("user.name") {
-        args.extend(["-c", "user.name=Mesa"]);
-    }
-    if !configured("user.email") {
-        args.extend(["-c", "user.email=ccode@localhost"]);
-    }
+    args.extend(ident.iter().map(String::as_str));
     // pathspec 限定提交范围：用户先前自行暂存的其他文件留在暂存区，不被本次提交带走
     args.extend([
         "commit",
@@ -3473,18 +3464,9 @@ fn commit_demo_seed_at(repo: &Path) -> Result<(), String> {
     let mut add_args: Vec<&str> = vec!["--literal-pathspecs", "add", "--"];
     add_args.extend(existing.iter().copied());
     crate::workspaces::run_git(repo, &add_args, T)?;
-    let configured = |key: &str| {
-        crate::workspaces::run_git(repo, &["config", "--get", key], T)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    };
+    let ident = crate::git_info::commit_identity_args(repo);
     let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false", "--literal-pathspecs"];
-    if !configured("user.name") {
-        args.extend(["-c", "user.name=Mesa"]);
-    }
-    if !configured("user.email") {
-        args.extend(["-c", "user.email=ccode@localhost"]);
-    }
+    args.extend(ident.iter().map(String::as_str));
     args.extend(["commit", "-m", "Mesa: 示例课题检索步演示产物", "--"]);
     args.extend(existing.iter().copied());
     crate::workspaces::run_git(repo, &args, T)?;
