@@ -873,10 +873,12 @@ static AGENT_SPECS: &[AgentSpec] = &[
             ..NO_PACKAGING
         },
         // login 走浏览器 OAuth；凭证默认 macOS 钥匙串，
-        // 仅 AGENT_CLI_CREDENTIAL_STORE=file 时落 ~/.cursor/auth.json（双通道检测说明见 detection_note）
+        // 仅 AGENT_CLI_CREDENTIAL_STORE=file 时落 auth.json（双通道检测说明见 detection_note）。
+        // 文件位置按平台（2026-11-04 读 2026.10.22 bundle 的 getAuthFilePath）：macOS ~/.cursor，
+        // Windows %APPDATA%\Cursor，Linux $XDG_CONFIG_HOME/cursor（缺省 ~/.config/cursor）；三处都列，没有的跳过
         official_account: Some(OfficialAccountSpec {
             login_cmd: &["login"],
-            auth_file_paths: &[".cursor/auth.json"],
+            auth_file_paths: &[".cursor/auth.json", "AppData/Roaming/Cursor/auth.json", ".config/cursor/auth.json"],
             env_purge_list: &["CURSOR_API_KEY"],
             // ~/.cursor 与 IDE 共享且 CLI 配置形态未核实，保守不探测配置文件冲突
             conflict_probes: &[],
