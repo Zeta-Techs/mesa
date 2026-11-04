@@ -74,10 +74,14 @@ test("英文综述设定屏只填全局设定，不问稿件载体或 Blender", 
     assert.doesNotMatch(text, /文献库交付/);
     // 选择题是点选；选「投期刊」才追问目标期刊
     const btn = (label: string) => [...ui.host.querySelectorAll("button")].find((b: { textContent: string }) => b.textContent === label) as HTMLButtonElement;
-    assert.ok(btn("严格检索档"), "综述深度应是点选");
+    assert.ok([...ui.host.querySelectorAll("button")].some((b: { textContent: string }) => b.textContent.startsWith("严格检索档")), "综述深度应是点选");
     assert.doesNotMatch(ui.host.textContent ?? "", /目标期刊（可选）/);
     await ui.act(async () => btn("投期刊").click());
     assert.equal(btn("投期刊").getAttribute("aria-pressed"), "true");
     assert.match(ui.host.textContent ?? "", /目标期刊（可选）/);
+    // 综述深度只能二选一（检索步按原文认「严格检索档」），不给「其他…」
+    const others = [...ui.host.querySelectorAll("button")].filter((b: { textContent: string }) => b.textContent === "其他…");
+    assert.equal(others.length, 4);
+    assert.doesNotMatch(ui.host.textContent ?? "", /读者预期|系统综述/);
   } finally { await ui.close(); }
 });

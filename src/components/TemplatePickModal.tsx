@@ -39,6 +39,11 @@ import { SETTING_FOLLOW_UPS, SETTING_NOTES, answerWithFollowUp, parseSettingLine
  * 留空仍写入「名称：（提示）」占位，人在项目设置的规则里改，或让「跟 AI 商量一下」逐项问完再改。占位不进 TASK.md。
  * 2026-09-14：设定屏只填全局设定。稿件载体问在会换正式稿的步骤；库交付/Origin/Blender 问在用得上的那一步。
  */
+/** 设定选项按钮：与新建项目「工作方式」卡片同一套选中样式 */
+function choiceClass(on: boolean): string {
+  return `rounded-md border ${on ? "border-cta-bd bg-cta/15" : "border-field hover:bg-hover"}`;
+}
+
 export default function TemplatePickModal({
   projectPath,
   projectName,
@@ -336,9 +341,9 @@ export default function TemplatePickModal({
              在用得上的那一步问，不挡在创建屏。 */
           <>
             <p className="mb-4 text-xs text-l3">
-              这些设定会贯穿后续研究流程。填了的下次开工会写进任务书。留空也会在项目设置的规则里留出「综述角度：（…）」这样的空位，你可以把括号换成自己的答案，或稍后让 AI 逐项问你。
+              这些设定会写进之后每一步的任务书，AI 照着干活。拿不准的先空着，之后可以在项目设置里补，或开工时让 AI 问你。
             </p>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {settingsTpl.projectSettings!.map((line, i) => {
                 const { q, hint, options } = parseSettingLine(line);
                 const notes = SETTING_NOTES[q];
@@ -351,33 +356,49 @@ export default function TemplatePickModal({
                   <div key={q}>
                     <span className="mb-1 block text-xs text-l2">{q}</span>
                     {options ? (
-                      <div className="ccode-seg-boxed is-sm inline-flex max-w-full flex-wrap" role="group" aria-label={q}>
-                        {options.map((opt) => (
+                      <div
+                        className="grid gap-1.5"
+                        style={{
+                          gridTemplateColumns: notes
+                            ? "repeat(2, minmax(0, 1fr))"
+                            : `repeat(${options.length + 1}, minmax(0, 1fr))`,
+                        }}
+                        role="group"
+                        aria-label={q}
+                      >
+                        {options.map((opt) => {
+                          const on = !custom && value === opt;
+                          return (
+                            <button
+                              key={opt}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() => {
+                                setCustomOpen((prev) => ({ ...prev, [i]: false }));
+                                setValue(on ? "" : opt);
+                              }}
+                              className={`${choiceClass(on)} ${notes ? "flex flex-col justify-start px-3 py-2 text-left" : "h-9 px-2 text-center"}`}
+                            >
+                              <span className="block truncate text-sm text-l1">{opt}</span>
+                              {notes?.options[opt] && (
+                                <span className="mt-0.5 block text-xs leading-5 text-l3">{notes.options[opt]}</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                        {!notes?.closed && (
                           <button
-                            key={opt}
                             type="button"
-                            aria-pressed={!custom && value === opt}
-                            title={notes?.options?.[opt]}
+                            aria-pressed={custom}
                             onClick={() => {
-                              setCustomOpen((prev) => ({ ...prev, [i]: false }));
-                              setValue(value === opt && !custom ? "" : opt);
+                              setCustomOpen((prev) => ({ ...prev, [i]: !custom }));
+                              if (!custom || options.includes(value)) setValue("");
                             }}
-                            className="ccode-seg-boxed-item text-xs"
+                            className={`${choiceClass(custom)} h-9 px-2 text-center`}
                           >
-                            {opt}
+                            <span className="text-sm text-l2">其他…</span>
                           </button>
-                        ))}
-                        <button
-                          type="button"
-                          aria-pressed={custom}
-                          onClick={() => {
-                            setCustomOpen((prev) => ({ ...prev, [i]: !custom }));
-                            if (!custom || options.includes(value)) setValue("");
-                          }}
-                          className="ccode-seg-boxed-item text-xs"
-                        >
-                          其他…
-                        </button>
+                        )}
                       </div>
                     ) : null}
                     {(options === null || custom) && (
@@ -388,18 +409,6 @@ export default function TemplatePickModal({
                         autoFocus={custom}
                         onChange={(e) => setValue(e.target.value)}
                       />
-                    )}
-                    {notes?.options && (
-                      <ul className="mt-1 space-y-0.5 text-micro text-l4">
-                        {Object.entries(notes.options).map(([opt, note]) => (
-                          <li key={opt}>
-                            <span className="text-l3">{opt}</span>：{note}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {notes?.footnote && (
-                      <span className="mt-1 block text-micro text-l4">{notes.footnote}</span>
                     )}
                     {followUp && value === followUp.option && (
                       <label className="mt-2 block">

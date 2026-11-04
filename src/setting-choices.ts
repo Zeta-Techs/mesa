@@ -31,17 +31,18 @@ function choicesFromHint(hint: string): string[] | null {
   return parts;
 }
 
-/** 选项下的白话说明与整题的小字注（按问题名；没有的不显示） */
-export const SETTING_NOTES: Record<string, { options?: Record<string, string>; footnote?: string }> = {
+/**
+ * 选项卡片上的一行白话（按问题名；有说明的题画成带说明的卡片）。这里是给人看的，
+ * 写「选了会怎样」，不写给 AI 的纪律（「篇幅不是凑数」「严格检索不是系统综述」在任务书和技能里）。
+ * closed = 只能在给定选项里选（下游按选项原文判断，如检索步认「严格检索档」），不给「其他…」。
+ */
+export const SETTING_NOTES: Record<string, { options: Record<string, string>; closed?: boolean }> = {
   综述深度: {
     options: {
-      标准档: "一条主检索式检索、筛选，不做引文扩展；多数综述够用",
-      严格检索档: "另做引文扩展、分层筛选，并写检索披露，耗时明显更长",
+      标准档: "以一个主要文献库检索，逐篇筛选。适合大多数综述",
+      严格检索档: "再顺着已选文献的参考文献和被引文献补查，并记下完整检索过程。适合要写检索方法的投稿，耗时明显更长",
     },
-    footnote: "严格检索档仍不等于系统综述：系统综述要另定完整方法方案",
-  },
-  目标篇幅: {
-    footnote: "这是读者预期，不是初稿必须凑到的词数",
+    closed: true,
   },
 };
 
