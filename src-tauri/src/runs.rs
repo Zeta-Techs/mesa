@@ -3006,6 +3006,17 @@ pub async fn task_get(id: String) -> Result<Option<TaskDto>, String> {
         .await
         .map_err(|e| e.to_string())?
 }
+/// 只讨论的目标没有冻结的上下文快照、也不在副本里跑（没有 TASK.md）：研究记录的「问了什么」退回目标自己写的那段（2026-11-04 真实库重放发现）
+pub(crate) fn goal_text(task_id: &str) -> Option<String> {
+    if task_id.is_empty() {
+        return None;
+    }
+    let task = task_get_sync(task_id.to_string()).ok().flatten()?;
+    // 自动登记的（名字是路径、没写说明）不算人问的话，宁缺不记
+    let body = task.description.trim();
+    (!body.is_empty()).then(|| format!("# 目标：{}\n\n{}\n", task.name.trim(), body))
+}
+
 fn task_get_sync(id: String) -> Result<Option<TaskDto>, String> {
     let conn = db()?;
     let task = conn

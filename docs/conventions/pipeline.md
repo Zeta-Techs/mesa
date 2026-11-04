@@ -110,7 +110,7 @@
 - **研究记录**：Run 关闭时（含崩溃补收）由 Mesa 把运行事实追加进项目 `.ccode/record.jsonl`（只追加、按 runId 去重、持 `record.lock`），
   这次工作目录里的核验项存档到 `.ccode/checks/runs/<runId>.jsonl`，并按记录整份重写 `.ccode/ai-usage.md`。登录、Mesa 内部后台调用、
   没有项目的 Run 不记。模型取会话用量里已索引的模型，取不到用启动时记下的，都没有写「（未记录）」，不猜。
-  「问了什么」：流程步骤读工作目录 TASK.md、目标读冻结的上下文快照，指纹按原文算，脱敏后存 `.ccode/record/tasks/<runId>.md`（512 KB 截断）；
+  「问了什么」：流程步骤读工作目录 TASK.md、目标读冻结的上下文快照（只讨论的目标没有快照，退回目标里人写的说明，记 `source=goal`；没写说明的自动登记目标不记，2026-11-04），指纹按原文算，脱敏后存 `.ccode/record/tasks/<runId>.md`（512 KB 截断）；
   `.ccode/record/` 同属不进 git 的台账。过程报告默认不附原文，用户勾选才附任务书与对话原文（会话按 sessionId 现找、整份脱敏、200 KB 截断）。
 - 这几样与 `acceptance-log.jsonl` 同口径：进 `.gitignore`（`LEDGER_IGNORE_PATHS`）、开工 bootstrap 排除、合并闸门双态豁免（`is_accumulation_ledger`）。
 - **核验脚本一览**（都在技能目录里直接调用，不复制进工作区）：`bib-check/cite_check.py`（引用键、DOI、撤稿、原文摘录逐字）、

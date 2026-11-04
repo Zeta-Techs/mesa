@@ -481,6 +481,8 @@ fn task_text_of(run: &crate::runs::RunDto) -> Option<(&'static str, String)> {
     crate::runs::run_context_text(&run.task_id, &run.id)
         .filter(|t| !t.trim().is_empty())
         .map(|t| ("context.json", t))
+        // 只讨论的目标：没有快照也没有 TASK.md，记目标原文（只有人写的那段，不含 Mesa 附的项目说明）
+        .or_else(|| crate::runs::goal_text(&run.task_id).map(|t| ("goal", t)))
 }
 
 /// 这次 Run 用过的模型：会话里已索引的用量优先，取不到用 Mesa 启动时记下的；都没有给空
