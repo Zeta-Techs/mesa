@@ -178,3 +178,20 @@ test("快照超长时先砍事件和日志，最后硬截", () => {
   assert.ok(!cut.includes("出错那次的最后几条事件"));
   assert.match(cut, /第 1 步「文献检索」/);
 });
+
+test("只读查看项目文件：只在问出错原因、或带着某次运行进来时", async () => {
+  const { wantsInspect, basisText, inspectRules, buildAssistantPrompt } = await import("../src/project-assistant.ts");
+  assert.equal(wantsInspect("第 2 步为什么出错", "project"), true);
+  assert.equal(wantsInspect("第3步出错了怎么办", "mixed"), true);
+  assert.equal(wantsInspect("现在到哪了？", "project"), false);
+  assert.equal(wantsInspect("我下一步该做什么？", "project"), false);
+  assert.equal(wantsInspect("现在到哪了？", "project", true), true, "带着某次运行进来的要查");
+  assert.equal(wantsInspect("为什么换模型没生效", "howto"), false, "问怎么用不进项目文件");
+  assert.equal(basisText("project", [], true), "这个项目的记录与文件（只读查看）");
+  const rules = inspectRules("/p/x", ["/w/s1"]);
+  assert.match(rules, /只读/);
+  assert.match(rules, /- \/w\/s1/);
+  assert.match(rules, /不读 \.env/);
+  const prompt = buildAssistantPrompt({ intent: "project", snapshot: "# 快照", inspect: rules, history: [], question: "为什么出错" });
+  assert.match(prompt, /## 这次可以只读查看项目文件/);
+});

@@ -193,5 +193,10 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
 - **问题分流**（同日用户：「问怎么换模型也要看项目记录吗，问答逻辑交互逻辑好好完善」）：本地按字面分 howto / project / mixed / chat（`classifyQuestion`，不多调一次 AI）。
   howto 只带说明书摘录 + 一点项目概况（说明书编译期打包进后端，`assistant_guide_search` 按段打分，常问几类由 `GUIDE_TOPICS` 直接指到小节）；project 带快照（90 秒缓存）；
   mixed 两样都带；chat 什么都不带。回答下面写依据（说明书小节可点开到 GitHub 上那一节）；等待文案按分流写、超过 3 秒写秒数；没问成译成白话 + 「再问一次」。
+- **只读查看项目文件**（同日用户问「能不能像你一样读代码定位错误」→ 拍板「可以」）：改了 §5「正文不交给它」的约定——问出错原因（`wantsInspect`）或带着某次运行进来时，
+  在项目根只读跑一次（`ai::ai_inspect_readonly`，超时 240 秒），让它自己打开脚本 / 日志 / 任务书 / 产物，回答写清文件与行号。只支持 Claude Code（`-p --permission-mode plan
+  --no-session-persistence --add-dir <工作副本>`）与 Codex（`exec --ephemeral -s read-only`）：两家都不落盘、进程级只读；别家后端报 INSPECT_UNSUPPORTED，前端退回只看记录。
+  运行登记为 internal（不进项目运行列表与卡点），花费从输出记账。问进度、下一步、怎么用都不进文件。Mesa 自己的 bug 仍做不到读代码定位（用户机器上没有源码），只能整理记录交开发者。
+  干跑：Codex 0.166 在临时项目里读出「clean.py 第 3 行取 sample_id、表头没有这一列」，没写任何文件；**Claude Code 这条没干跑成**（本机全局配置的模型名 Claude 不认，换 Mesa 注入的连接后要实测一次）。
 - **未验**：Mesa Dev 窗口里实际点一遍（卡点、出错了、项目助手问答与按钮、Agent 分工新卡、反馈表预填）。
 

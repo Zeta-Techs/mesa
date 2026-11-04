@@ -129,6 +129,20 @@ export function classifyQuestion(question: string, hasFocus = false): AssistantI
   return "mixed";
 }
 
+/**
+ * 要不要让它只读查看项目文件（2026-11-04 用户拍板）：问「为什么出错 / 哪里卡住」这类要找具体原因的、或带着某次运行进来的，
+ * 才在项目里只读跑一次去打开脚本、日志、产物核对；问进度、问下一步只看记录（快，便宜）。
+ */
+const INSPECT_RE = /出错|报错|错误|失败|为什么|怎么回事|卡住|卡在|没成|不成功|保存不进|跑不|不对|异常|bug|问题出在|原因/i;
+
+export function wantsInspect(question: string, intent: AssistantIntent, hasFocus = false): boolean {
+  if (intent !== "project" && intent !== "mixed") return false;
+  return hasFocus || INSPECT_RE.test(question);
+}
+
+/** 目前能只读查看项目文件的 Agent：不落盘 + 进程级只读两样都有的（后端 ai::inspect_readonly_args 同口径） */
+export const INSPECT_AGENTS: readonly string[] = ["claude-code", "codex"];
+
 /** 等的时候那一行写什么 */
 export const INTENT_WAITING: Record<AssistantIntent, string> = {
   howto: "正在翻说明书…",
@@ -136,6 +150,8 @@ export const INTENT_WAITING: Record<AssistantIntent, string> = {
   mixed: "正在看项目记录、翻说明书…",
   chat: "在想…",
 };
+
+export const INSPECT_WAITING = "正在打开项目里的文件核对…（只读，不会改动）";
 
 const ACTION_MARKS = `你不能动手：不能改文件、不能开工、不能传话。要用户动手时，在回答末尾写动作标记，用户点了才发生。可用的标记（N 是第几步，从 1 数）：
    [[看这一步:N]]  打开这一步的详情（里面有去终端、去评审、继续等按钮）
@@ -156,7 +172,7 @@ export const PROJECT_RULES = `${IDENTITY}
 用户看不懂进度、不知道哪里出错、不知道下一步做什么时来问你。下面附了 Mesa 整理好的项目快照，你只能依据它回答。
 
 规矩：
-1. 只答这个项目。快照里没有的不要猜，直接说「记录里看不到」，并告诉用户去哪里能看到。
+1. 只答这个项目。快照里没有的不要猜：这次能只读查看文件就去文件里核对，不能就直说「记录里看不到」，并告诉用户去哪里能看到。
 2. 问到出错或卡住时，第一句先分清是谁的问题，三选一：
    - 课题 / AI 干活的问题（AI 跑出错、核验拦下、评审退回、产物不对）；
    - 环境的问题（缺 Git / Python / Quarto、CLI 没装或版本不对、连接失效、网络）；
@@ -166,8 +182,16 @@ export const PROJECT_RULES = `${IDENTITY}
 3. 只解释、只建议，不替用户拍板：人工请求、开工前的决定、评审采纳一律只讲清选项和后果，不替他选。
 4. ${ACTION_MARKS}
 5. ${STYLE}
-6. 用户问的是课题内容本身（这段方法怎么写、这批数据怎么清），你看不到文件，回答要点并给 [[商量|…]]。
+6. 用户问的是课题内容本身（这段方法怎么写、这批数据怎么清），那不归你做，回答要点并给 [[商量|…]]。
 7. 附了「说明书摘录」时，讲到怎么操作照摘录说，摘录没写的操作不要编。`;
+
+/** 只读查看项目文件时多给的一段（跑在项目根，工作副本另列） */
+export function inspectRules(projectRoot: string, worktrees: readonly string[]): string {
+  return `这次你在项目文件夹里，可以**只读**查看文件：读、搜索、列目录。不能改文件、不能运行命令，也不要试。
+项目根：${projectRoot}${worktrees.length ? `\n各步骤的工作副本（AI 实际干活的地方，出错多半在这里）：\n${worktrees.map((w) => `- ${w}`).join("\n")}` : ""}
+怎么查：先从快照里找可疑处（出错的那一步、出错那次的事件、核验拦下的、退回意见），再去打开相关的脚本、日志、任务书（TASK.md）、产物核对；
+最多看十来个文件，不读大数据文件和 PDF 正文，不读 .env、密钥一类文件。回答里写清你看了哪个文件、哪一行，看到了什么；没找到就直说没找到。`;
+}
 
 /** 怎么用 Mesa：只依据说明书摘录 */
 export const HOWTO_RULES = `${IDENTITY}
@@ -206,6 +230,8 @@ export interface AssistantMaterials {
   guide?: readonly { heading: string; text: string }[];
   /** 一点项目概况（howto：项目名、工作方式、默认 Agent、项目助手用的连接） */
   context?: string | null;
+  /** 只读查看项目文件时的那段说明（inspectRules） */
+  inspect?: string | null;
 }
 
 export function buildAssistantPrompt(
@@ -220,6 +246,7 @@ export function buildAssistantPrompt(
       : "";
   return [
     rules,
+    input.inspect ? `---\n## 这次可以只读查看项目文件\n${input.inspect}` : "",
     input.context ? `---\n## 项目概况\n${input.context}` : "",
     input.snapshot ? `---\n${input.snapshot}` : "",
     guide ? `---\n${guide}` : "",
@@ -231,13 +258,13 @@ export function buildAssistantPrompt(
 }
 
 /** 回答下面那行「依据」：说明书哪几节 / 这个项目的记录 */
-export function basisText(intent: AssistantIntent, guideHeadings: readonly string[]): string {
+export function basisText(intent: AssistantIntent, guideHeadings: readonly string[], inspected = false): string {
   const parts: string[] = [];
   if (intent === "howto" || intent === "mixed") {
     const heads = [...new Set(guideHeadings)].slice(0, 3);
     parts.push(heads.length ? `说明书${heads.map((h) => `「${h}」`).join("")}` : "说明书里没翻到相关段落");
   }
-  if (intent === "project" || intent === "mixed") parts.push("这个项目的记录");
+  if (intent === "project" || intent === "mixed") parts.push(inspected ? "这个项目的记录与文件（只读查看）" : "这个项目的记录");
   return parts.join(" · ");
 }
 

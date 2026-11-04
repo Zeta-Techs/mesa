@@ -807,6 +807,141 @@ pub(crate) fn ai_prompt_impl_model(
     result
 }
 
+/// 项目助手「只读查看项目文件」（2026-11-04 用户拍板：问出错时让它自己打开脚本 / 日志 / 产物核对）。
+/// 目前只有 Claude Code 与 Codex：两家都能不落盘（花费从输出直接记账，不在项目里留内部会话、不登记项目级内部来源），
+/// 只读也有进程级保证（Claude `--permission-mode plan`、Codex `-s read-only`）。别家返回以 INSPECT_UNSUPPORTED 开头的错，
+/// 前端退回只看记录。跑在项目根，工作副本经 `--add-dir`（Claude）带上；Codex 只读沙箱本就能读别处
+pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
+const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
+
+pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String]) -> Option<Vec<String>> {
+    match agent {
+        "claude-code" => {
+            let mut a: Vec<String> = vec![
+                "-p".into(),
+                prompt.into(),
+                "--output-format".into(),
+                "json".into(),
+                "--no-session-persistence".into(),
+                "--permission-mode".into(),
+                "plan".into(),
+            ];
+            for d in extra_dirs {
+                a.push("--add-dir".into());
+                a.push(d.clone());
+            }
+            Some(a)
+        }
+        "codex" => Some(vec![
+            "exec".into(),
+            "--skip-git-repo-check".into(),
+            "--ephemeral".into(),
+            "--json".into(),
+            "-s".into(),
+            "read-only".into(),
+            prompt.into(),
+        ]),
+        _ => None,
+    }
+}
+
+pub(crate) fn ai_inspect_readonly(
+    profiles: Vec<Profile>,
+    profile_id: Option<String>,
+    model: Option<String>,
+    project_root: &std::path::Path,
+    extra_dirs: &[String],
+    prompt: String,
+) -> Result<String, String> {
+    if !project_root.is_dir() {
+        return Err("项目文件夹不在了".into());
+    }
+    let settings = crate::settings::read_current_checked()?;
+    let fn_key = "project-assistant";
+    let fn_profile = settings.ai_profiles.as_ref().and_then(|m| m.get(fn_key).cloned());
+    let profile = resolve_profile_from(
+        profiles,
+        profile_id.clone().filter(|v| !v.trim().is_empty()),
+        fn_profile,
+        settings.ai_profile_id.clone(),
+        &settings.hidden_profiles.unwrap_or_default().into_iter().collect(),
+    )?;
+    let dirs: Vec<String> = extra_dirs
+        .iter()
+        .filter(|d| std::path::Path::new(d.as_str()).is_dir())
+        .take(8)
+        .cloned()
+        .collect();
+    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs) else {
+        return Err(format!("{INSPECT_UNSUPPORTED}: {}", profile.agent));
+    };
+    let binary = agents::binary_for(&profile.agent)
+        .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
+    let binary_path = agents::resolve_binary(binary)
+        .ok_or_else(|| format!("未找到 {binary}（PATH 与常见安装目录均无）"))?;
+    let key = profiles::get_key_for_profile(&profile)?;
+    agents::ensure_launch_credentials(&profile, key.as_deref())?;
+    let mut profile = profile;
+    let selected = pick_listed_model(&profile.models, model.as_deref());
+    crate::combo::apply_to_profile(&mut profile, selected.as_deref());
+    agents::validate_launch_compatibility(&profile, selected.as_deref())?;
+    let plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    let mut cmd = crate::process::background_command(&binary_path);
+    for a in compose_headless_args(&profile.agent, &plan.args, &args) {
+        cmd.arg(a);
+    }
+    for (k, v) in &plan.env {
+        cmd.env(k, v);
+    }
+    for k in &plan.env_remove {
+        cmd.env_remove(k);
+    }
+    for (k, v) in crate::mcp::spawn_env_secrets() {
+        cmd.env(k, v);
+    }
+    cmd.current_dir(project_root);
+    let host = endpoint_host(profile.base_url.as_deref());
+    let root_text = project_root.to_string_lossy().into_owned();
+    // internal：不进项目的运行列表、任务面板「过程」与卡点
+    let run = crate::runs::open_headless_with_root(
+        Some(&root_text),
+        &profile.agent,
+        &profile.id,
+        &root_text,
+        "headless:ai-prompt:project-assistant-inspect",
+        false,
+        "discuss",
+    )?;
+    if let Err(error) = crate::runs::claim_start(&run.id).and_then(|_| crate::runs::mark_started(&run.id)) {
+        let _ = crate::runs::close_run_with_result(&run.id, None, "failed", None, Some("无头 Run 状态登记失败"));
+        return Err(error);
+    }
+    let result = run_capture_for(Some(&profile.agent), host.as_deref(), &mut cmd, INSPECT_TIMEOUT, Some(&run.id), &mut None)
+        .and_then(|raw| {
+            let (text, events) =
+                parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &crate::usage::today_local())?;
+            if let Err(e) = crate::usage::record_ephemeral_usage(
+                &profile.agent,
+                &format!("ephemeral-{}", run.id),
+                &root_text,
+                profile.account_type == crate::profiles::AccountType::Official,
+                &events,
+            ) {
+                eprintln!("[ai] {e}");
+            }
+            Ok(text)
+        });
+    let status = if result.is_ok() { "completed" } else { "failed" };
+    let _ = crate::runs::close_run_with_result(
+        &run.id,
+        None,
+        status,
+        None,
+        result.is_err().then_some("项目助手只读查看失败"),
+    );
+    result
+}
+
 /// 定时任务执行段（scheduler 用）：与 ai_prompt_impl 同一注入链路，但 cwd 是传入的
 /// 项目目录——不建/删临时目录，也不登记 usage_provenance.internal（那会把该 Agent
 /// 在此项目的交互会话一并标成内部）。会话按 session id 标 internal，不进本项目会话。
@@ -2964,6 +3099,25 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             headless_task_args("opencode", "你好"),
             headless_args("opencode", "你好")
         );
+    }
+
+    #[test]
+    fn inspect_readonly_args_are_read_only_and_ephemeral() {
+        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()]).unwrap();
+        assert!(claude.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+        assert!(claude.iter().any(|a| a == "--no-session-persistence"));
+        assert!(claude.windows(2).any(|w| w == ["--add-dir", "/w/a"]));
+        assert!(!claude.iter().any(|a| a.contains("bypass")));
+        let codex = inspect_readonly_args("codex", "看看", &[]).unwrap();
+        assert!(codex.windows(2).any(|w| w == ["-s", "read-only"]));
+        assert!(codex.iter().any(|a| a == "--ephemeral"));
+        // plan 默认的 -s workspace-write 要被剥掉，只剩只读那一档
+        let plan = vec!["-s".to_string(), "workspace-write".to_string()];
+        let composed = compose_headless_args("codex", &plan, &codex);
+        assert_eq!(composed.iter().filter(|a| *a == "-s").count(), 1);
+        assert!(composed.windows(2).any(|w| w == ["-s", "read-only"]));
+        assert!(inspect_readonly_args("kimi", "看看", &[]).is_none());
+        assert!(inspect_readonly_args("gemini", "看看", &[]).is_none());
     }
 
     #[test]

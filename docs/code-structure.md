@@ -568,11 +568,11 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
   project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat，
-                             # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
+                             # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
-                             # askProjectAssistant 先分流再取材料（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+                             # planAsk（分流 + 要不要只读查看文件）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
@@ -1787,6 +1787,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
   project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），
                              # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
+                             # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；
                              # assistant_review_notes 只读工作副本 .ccode/review-notes.md（16KB、脱敏）。没有改项目文件、派活、传话的口子。
                              # assistant_guide_search：说明书编译期读进来（include_str docs/guide/user-guide.md），按段切、汉字两两字组 + idf 打分，
                              # GUIDE_TOPICS 把常问的「怎么用」指到对应小节（锚点有测试守着，改说明书标题记得同步）

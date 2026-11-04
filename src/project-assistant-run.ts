@@ -13,7 +13,16 @@ import { isAppCrashClose, latestRunFailure } from "./run-failure";
 import { projectAssistantLaunch } from "./project-agents";
 import { AGENTS } from "./types";
 import { buildProjectSnapshot, type SnapshotInput, type SnapshotRun, type SnapshotStep } from "./project-snapshot";
-import { basisText, buildAssistantPrompt, classifyQuestion, type AssistantHistoryTurn, type AssistantIntent } from "./project-assistant";
+import {
+  basisText,
+  buildAssistantPrompt,
+  classifyQuestion,
+  inspectRules,
+  INSPECT_AGENTS,
+  wantsInspect,
+  type AssistantHistoryTurn,
+  type AssistantIntent,
+} from "./project-assistant";
 import type { ChecksDto } from "./research-checks";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
@@ -72,14 +81,16 @@ export function assistantConnection(project: ProjectDto | null): {
   model: string | null;
   line: string;
   bound: boolean;
+  /** 用的是哪家 Agent；走「AI 功能」连接时前端不知道，为 null */
+  agentId: string | null;
 } {
   const { profiles } = useAppStore.getState();
   const launch = projectAssistantLaunch(profiles, project);
-  if (!launch) return { profileId: null, model: null, line: "设置里「AI 功能」的连接", bound: false };
+  if (!launch) return { profileId: null, model: null, line: "设置里「AI 功能」的连接", bound: false, agentId: null };
   const profile = profiles.find((p) => p.id === launch.profileId);
   const agent = AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
   const line = [agent, profile?.name, launch.model || "默认模型"].filter(Boolean).join(" · ");
-  return { profileId: launch.profileId, model: launch.model || null, line, bound: launch.bound };
+  return { profileId: launch.profileId, model: launch.model || null, line, bound: launch.bound, agentId: launch.agentId };
 }
 
 export async function gatherSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
@@ -242,7 +253,19 @@ function projectContext(projectPath: string, project: ProjectDto | null, connLin
   ].join("\n");
 }
 
+/** 这一问怎么问：分到哪一类、要不要只读查看项目文件（面板据此写等待文案） */
+export function planAsk(question: string, hasFocus: boolean, project: ProjectDto | null): { intent: AssistantIntent; inspect: boolean } {
+  const intent = classifyQuestion(question, hasFocus);
+  const agent = assistantConnection(project).agentId;
+  // 走「AI 功能」连接时不知道是哪家：先试，后端说不支持再退回只看记录
+  const inspect = wantsInspect(question, intent, hasFocus) && (agent === null || INSPECT_AGENTS.includes(agent));
+  return { intent, inspect };
+}
+
+const INSPECT_UNSUPPORTED = "INSPECT_UNSUPPORTED";
+
 /** 问一次：先分流（classifyQuestion），按类取材料 → 拼提示词 → 后端脱敏后无头调用、落记录。
+ *  问出错类问题且连接支持时，在项目根只读跑一次，让它自己打开文件核对；不支持就只看记录。
  *  项目默认那家不支持无头调用时退回「AI 功能」的连接 */
 export async function askProjectAssistant(input: {
   projectPath: string;
@@ -251,40 +274,63 @@ export async function askProjectAssistant(input: {
   history: readonly AssistantHistoryTurn[];
   focus: AssistantFocus | null;
   intent?: AssistantIntent;
+  inspect?: boolean;
 }): Promise<AssistantTurn> {
-  const intent = input.intent ?? classifyQuestion(input.question, !!input.focus);
+  const planned = planAsk(input.question, !!input.focus, input.project);
+  const intent = input.intent ?? planned.intent;
+  const inspect = input.inspect ?? planned.inspect;
   const conn = assistantConnection(input.project);
   const needSnapshot = intent === "project" || intent === "mixed";
   const needGuide = intent === "howto" || intent === "mixed";
-  const [snapshot, guide] = await Promise.all([
+  const [snapshot, guide, worktrees] = await Promise.all([
     needSnapshot ? cachedSnapshot(input.projectPath, input.focus) : Promise.resolve(null),
     needGuide
       ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? 2 : 4 }), [])
       : Promise.resolve([] as { heading: string; text: string }[]),
+    inspect
+      ? safe(invoke<WorkspaceDto[]>("list_workspaces"), []).then((list) =>
+          list
+            .filter((w) => w.status !== "archived" && samePath(w.repoPath, input.projectPath, IS_WINDOWS))
+            .map((w) => w.worktreePath),
+        )
+      : Promise.resolve([] as string[]),
   ]);
-  const prompt = buildAssistantPrompt({
-    intent,
-    snapshot,
-    guide,
-    context: intent === "howto" ? projectContext(input.projectPath, input.project, conn.line) : null,
-    history: input.history,
-    question: input.question,
-  });
-  const basis = basisText(intent, guide.map((g) => g.heading));
-  const ask = (profileId: string | null, model: string | null, connection: string) =>
+  const promptFor = (withInspect: boolean) =>
+    buildAssistantPrompt({
+      intent,
+      snapshot,
+      guide,
+      inspect: withInspect ? inspectRules(input.projectPath, worktrees) : null,
+      context: intent === "howto" ? projectContext(input.projectPath, input.project, conn.line) : null,
+      history: input.history,
+      question: input.question,
+    });
+  const guideHeads = guide.map((g) => g.heading);
+  const ask = (profileId: string | null, model: string | null, connection: string, withInspect: boolean) =>
     invoke<AssistantTurn>("project_assistant_ask", {
       projectRoot: input.projectPath,
       profileId,
       model,
       connection,
-      basis,
+      basis: basisText(intent, guideHeads, withInspect),
       question: input.question,
-      prompt,
+      prompt: promptFor(withInspect),
+      inspect: withInspect,
+      extraDirs: withInspect ? worktrees : null,
     });
+  const askWithFallback = async (profileId: string | null, model: string | null, connection: string) => {
+    try {
+      return await ask(profileId, model, connection, inspect);
+    } catch (reason) {
+      // 这家还不能只读查看项目文件：退回只看记录
+      if (inspect && String(reason).includes(INSPECT_UNSUPPORTED)) return ask(profileId, model, connection, false);
+      throw reason;
+    }
+  };
   try {
-    return await ask(conn.profileId, conn.model, conn.line);
+    return await askWithFallback(conn.profileId, conn.model, conn.line);
   } catch (reason) {
     if (!conn.profileId || conn.bound || !String(reason).includes("不支持无头调用")) throw reason;
-    return ask(null, null, "设置里「AI 功能」的连接");
+    return askWithFallback(null, null, "设置里「AI 功能」的连接");
   }
 }

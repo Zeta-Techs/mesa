@@ -12,8 +12,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   assistantErrorText,
   basisGuideHeadings,
-  classifyQuestion,
   guideAnchor,
+  INSPECT_WAITING,
   INTENT_WAITING,
   parseAssistantAnswer,
   QUICK_QUESTIONS,
@@ -25,6 +25,7 @@ import { userGuideUrl } from "../help-links";
 import {
   askProjectAssistant,
   assistantConnection,
+  planAsk,
   type AssistantFocus,
   type AssistantTurn,
 } from "../project-assistant-run";
@@ -87,6 +88,8 @@ export default function ProjectAssistantPanel({
   const [pending, setPending] = useState<string | null>(null);
   /** 这次问的是哪一类（等的时候那一行写什么） */
   const [intent, setIntent] = useState<AssistantIntent>("project");
+  /** 这次会不会只读打开项目文件（等得久一些，等待文案要说清） */
+  const [inspecting, setInspecting] = useState(false);
   /** 已经等了几秒（超过 3 秒才写出来） */
   const [waited, setWaited] = useState(0);
   /** 没问成的那一问（错误上方照样显示，「再问一次」用它） */
@@ -133,8 +136,9 @@ export default function ProjectAssistantPanel({
   async function send(question: string, withFocus: AssistantFocus | null) {
     const q = question.trim();
     if (!q || busy || !projectPath) return;
-    const kind = classifyQuestion(q, !!withFocus);
-    setIntent(kind);
+    const plan = planAsk(q, !!withFocus, project);
+    setIntent(plan.intent);
+    setInspecting(plan.inspect);
     setBusy(true);
     setPending(q);
     setFailed(null);
@@ -148,7 +152,8 @@ export default function ProjectAssistantPanel({
         question: q,
         history: turns,
         focus: withFocus,
-        intent: kind,
+        intent: plan.intent,
+        inspect: plan.inspect,
       });
       setTurns((list) => [...list, turn]);
       setFreshAt(turn.at);
@@ -380,7 +385,7 @@ export default function ProjectAssistantPanel({
               <div className="flex items-center gap-2 text-sm text-l3">
                 <MesaBuddy size={22} pose="think" />
                 {/* 小桌自己在托腮想（头上三道光标），这里不再叠一个 M▁；按问题分流写在翻什么 */}
-                <span>{INTENT_WAITING[intent]}</span>
+                <span>{inspecting ? INSPECT_WAITING : INTENT_WAITING[intent]}</span>
                 {waited >= 3 && <span className="text-xs tabular-nums text-l4">{waited} 秒</span>}
               </div>
             </article>

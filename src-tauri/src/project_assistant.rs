@@ -305,6 +305,8 @@ pub async fn project_assistant_ask(
     basis: Option<String>,
     question: String,
     prompt: String,
+    inspect: Option<bool>,
+    extra_dirs: Option<Vec<String>>,
 ) -> Result<AssistantTurnDto, String> {
     let profiles = store.list()?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -313,13 +315,14 @@ pub async fn project_assistant_ask(
             return Err("先写要问什么".into());
         }
         let prompt = crate::sessions::redact_sensitive_text(&prompt);
-        let raw = crate::ai::ai_prompt_impl_model(
-            profiles,
-            profile_id,
-            model.filter(|m| !m.trim().is_empty()),
-            Some("project-assistant"),
-            prompt,
-        )?;
+        let model = model.filter(|m| !m.trim().is_empty());
+        // 只读查看项目文件（问出错时）：在项目根跑、只读、不落盘；这家不支持时报 INSPECT_UNSUPPORTED，前端退回只看记录
+        let raw = if inspect.unwrap_or(false) {
+            let root = PathBuf::from(crate::sessions::expand_tilde(&project_root));
+            crate::ai::ai_inspect_readonly(profiles, profile_id, model, &root, &extra_dirs.unwrap_or_default(), prompt)?
+        } else {
+            crate::ai::ai_prompt_impl_model(profiles, profile_id, model, Some("project-assistant"), prompt)?
+        };
         let answer = truncate(crate::sessions::redact_sensitive_text(raw.trim()).as_str(), ANSWER_CAP);
         if answer.is_empty() {
             return Err("AI 没有回答，换个说法再问一次".into());
