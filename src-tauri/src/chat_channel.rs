@@ -50,6 +50,8 @@ const EMIT_INTERVAL: Duration = Duration::from_millis(150);
 const STRAGGLER_MS: i64 = 1000;
 /// Codex app-server 起来的等待上限（实测 0.1 秒左右）
 const CODEX_READY_TIMEOUT: Duration = Duration::from_secs(4);
+/// OpenCode 2.x 私有服务报就绪（stdout 首行 {"url"}）的时限；2.2.5 本机冷启动约 0.2 秒
+const OPENCODE2_READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ===== 快照（前端读的形状） =====
 
@@ -1407,6 +1409,141 @@ pub(crate) fn map_opencode(ev: &Value, st: &mut OpenCodeState) -> Vec<ChannelEve
     out
 }
 
+/// OpenCode 2.x 事件流状态；只跟 TUI 当前这个会话
+#[derive(Default)]
+pub(crate) struct OpenCode2State {
+    session: Option<String>,
+    /// 工具调用 id → 名字：`session.tool.called` 不带名字，名字在先到的 `session.tool.input.started` 里
+    tool_names: HashMap<String, String>,
+    /// 工具调用 id → 参数：2.x 的 permission.asked 只带 action / resources，审批卡的命令与文件从这里补
+    tool_inputs: HashMap<String, Value>,
+}
+
+/// OpenCode 2.x `/api/event` 的一帧 → 聊天层事件（2.2.5 实录与 `schema/src/session-event.ts`，2026-11-04）。
+/// 帧是 `{id, type, data}`；会话事件的 data 带 sessionID，表单（question 工具）在 `data.form.sessionID`
+pub(crate) fn map_opencode2(ev: &Value, st: &mut OpenCode2State) -> Vec<ChannelEvent> {
+    let mut out = Vec::new();
+    let ty = ev.get("type").and_then(Value::as_str).unwrap_or("");
+    let d = ev.get("data").cloned().unwrap_or(Value::Null);
+    let sid = d
+        .get("sessionID")
+        .or_else(|| d.pointer("/form/sessionID"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    if ty == "session.created" {
+        // 子 agent 的会话带 parentID，不跟
+        let child = d.get("parentID").is_some_and(|x| !x.is_null());
+        if let (Some(id), false) = (sid, child) {
+            st.session = Some(id.clone());
+            out.push(ChannelEvent::Session { id, path: None, source: None });
+        }
+        return out;
+    }
+    match (&st.session, &sid) {
+        (Some(cur), Some(s)) if cur != s => return out,
+        // 接着聊旧对话时没有 session.created：从第一条带会话的执行 / 消息事件认出来
+        (None, Some(s)) if ty.starts_with("session.") => {
+            st.session = Some(s.clone());
+            out.push(ChannelEvent::Session { id: s.clone(), path: None, source: None });
+        }
+        _ => {}
+    }
+    let str_of = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(String::from);
+    match ty {
+        "session.execution.started" => out.push(ChannelEvent::TurnStart),
+        "session.execution.succeeded" => out.push(ChannelEvent::TurnEnd { reason: Some("end_turn".into()) }),
+        "session.execution.interrupted" => out.push(ChannelEvent::TurnEnd { reason: Some("cancelled".into()) }),
+        "session.execution.failed" => {
+            out.push(ChannelEvent::TurnEnd { reason: Some("failed".into()) });
+            if let Some(message) = d.pointer("/error/message").and_then(Value::as_str) {
+                out.push(ChannelEvent::ErrorDetail(message.to_string()));
+            }
+        }
+        "session.retry.scheduled" => {
+            let attempt = d.get("attempt").and_then(Value::as_u64).unwrap_or(1);
+            let message = d.pointer("/error/message").and_then(Value::as_str).unwrap_or("连接暂时不可用");
+            out.push(ChannelEvent::Retrying(format!("正在重试（第 {attempt} 次）：{message}")));
+        }
+        "session.text.started" => out.push(ChannelEvent::TextBreak),
+        "session.text.delta" => {
+            if let Some(t) = str_of(&d, "delta") {
+                out.push(ChannelEvent::TextDelta(t));
+            }
+        }
+        "session.reasoning.started" => out.push(ChannelEvent::ThinkingBreak),
+        "session.reasoning.delta" => {
+            if let Some(t) = str_of(&d, "delta") {
+                out.push(ChannelEvent::ThinkingDelta(t));
+            }
+        }
+        "session.tool.input.started" => {
+            if let (Some(id), Some(name)) = (str_of(&d, "id"), str_of(&d, "name")) {
+                st.tool_names.insert(id, name);
+            }
+        }
+        "session.tool.called" => {
+            let call = str_of(&d, "id");
+            let name = call.as_ref().and_then(|c| st.tool_names.get(c).cloned()).unwrap_or_default();
+            let input = d.get("input").cloned().unwrap_or(Value::Null);
+            if let Some(c) = &call {
+                st.tool_inputs.insert(c.clone(), input.clone());
+            }
+            out.push(ChannelEvent::ToolStart { call_id: call, name, input });
+        }
+        "session.tool.success" | "session.tool.failed" => {
+            let call = str_of(&d, "id");
+            if let Some(c) = &call {
+                st.tool_names.remove(c);
+                st.tool_inputs.remove(c);
+            }
+            out.push(ChannelEvent::ToolEnd { call_id: call });
+        }
+        "permission.asked" => {
+            let resources: Vec<&str> = d
+                .get("resources")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let call = d.pointer("/source/id").and_then(Value::as_str).map(String::from);
+            let action = str_of(&d, "action");
+            // 卡片要的命令 / 文件：先取这次工具调用的参数，没对上（子 agent、MCP）再按 action 用 resources 拼
+            let input = call
+                .as_ref()
+                .and_then(|c| st.tool_inputs.get(c).cloned())
+                .unwrap_or_else(|| match (action.as_deref(), resources.first()) {
+                    (Some("shell"), Some(_)) => json!({ "command": resources.join(" ") }),
+                    (Some("edit" | "read" | "external_directory"), Some(path)) => json!({ "filePath": path }),
+                    _ => d.clone(),
+                });
+            out.push(ChannelEvent::ApprovalAsked {
+                request_id: str_of(&d, "id"),
+                call_id: call,
+                name: action,
+                input,
+                replyable: true,
+                detail: Some(resources.join("、")).filter(|s| !s.is_empty()),
+            });
+        }
+        "permission.replied" => out.push(ChannelEvent::ApprovalResolved { request_id: str_of(&d, "requestID") }),
+        // question 工具在 2.x 是表单：聊天层只提示，回答在终端里做（同 1.x question.asked）
+        "form.created" => out.push(ChannelEvent::ApprovalAsked {
+            request_id: d.pointer("/form/id").and_then(Value::as_str).map(String::from),
+            call_id: None,
+            name: Some("question".into()),
+            input: d.get("form").cloned().unwrap_or(Value::Null),
+            replyable: false,
+            detail: d.pointer("/form/title").and_then(Value::as_str).map(String::from),
+        }),
+        "form.replied" | "form.cancelled" => {
+            if let Some(id) = str_of(&d, "id") {
+                out.push(ChannelEvent::ApprovalResolved { request_id: Some(id) });
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 /// Codex app-server 的一条消息（通知 / 服务端请求 / 对我们请求的响应）
 #[derive(Default)]
 pub(crate) struct CodexState {
@@ -1817,6 +1954,8 @@ pub(crate) fn ws_read_message(
 enum Replier {
     Qwen { input: PathBuf },
     OpenCode { port: u16, password: String },
+    /// OpenCode 2.x：Mesa 自起的 `opencode serve` 地址（形如 http://127.0.0.1:端口）
+    OpenCode2 { base: String, password: String },
     Codex { stream: Arc<Mutex<TcpStream>> },
 }
 
@@ -1916,6 +2055,8 @@ pub(crate) struct Prepared {
     qwen_events: Option<PathBuf>,
     replier: Option<Replier>,
     codex: Option<(u16, String, u32)>,
+    /// 旁路自起的服务进程（OpenCode 2.x 的 serve）：标签关时连进程树一起收
+    sidecar: Option<u32>,
 }
 
 impl Prepared {
@@ -1927,6 +2068,9 @@ impl Prepared {
     /// 进程没起来：收掉旁路进程与目录
     pub(crate) fn abort(self) {
         if let Some((_, _, pid)) = self.codex {
+            crate::pty::kill_process_tree(pid);
+        }
+        if let Some(pid) = self.sidecar {
             crate::pty::kill_process_tree(pid);
         }
         if let Some(dir) = self.dir {
@@ -2183,6 +2327,74 @@ fn start_codex_server(
     Some((port, token, pid))
 }
 
+/// OpenCode 2.x 的私有服务：`opencode serve --stdio --port 0`，口令走 OPENCODE_PASSWORD，就绪时 stdout 首行打 `{"url": …}`；
+/// stdin 管道是租约——管道一断（标签收掉、Mesa 退出或崩溃）服务自己退出（2.2.5 `services/standalone.ts` 同法）。
+/// 服务带着 Mesa 注入的配置与密钥跑工具，环境与 PTY 同一份。返回 (地址, 进程号)
+fn start_opencode2_server(
+    binary: &Path,
+    cwd: &str,
+    env: &[(String, String)],
+    env_remove: &[String],
+    password: &str,
+) -> Option<(String, u32)> {
+    use std::io::BufRead;
+    let mut cmd = crate::process::background_command(binary);
+    cmd.args(["serve", "--stdio", "--port", "0"]);
+    cmd.current_dir(cwd);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    for k in env_remove {
+        cmd.env_remove(k);
+    }
+    cmd.env("OPENCODE_PASSWORD", password);
+    cmd.env_remove("OPENCODE_SERVER_PASSWORD");
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    let mut child = cmd.spawn_tied_to_app().ok()?;
+    #[cfg(not(windows))]
+    let mut child = cmd.spawn().ok()?;
+    let pid = child.id();
+    let lease = child.stdin.take();
+    let stdout = child.stdout.take();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    if let Some(out) = stdout {
+        // 读到首行交出去，之后接着读空，免得服务往满了的管道写卡住
+        std::thread::spawn(move || {
+            let mut lines = std::io::BufReader::new(out).lines();
+            if let Some(Ok(first)) = lines.next() {
+                let _ = tx.send(first);
+            }
+            for _ in lines {}
+        });
+    }
+    let url = rx
+        .recv_timeout(OPENCODE2_READY_TIMEOUT)
+        .ok()
+        .and_then(|line| serde_json::from_str::<Value>(&line).ok())
+        .and_then(|v| v.get("url").and_then(Value::as_str).map(|u| u.trim_end_matches('/').to_string()))
+        .filter(|u| u.starts_with("http://127.0.0.1:") || u.starts_with("http://localhost:"));
+    let Some(url) = url else {
+        crate::pty::kill_process_tree(pid);
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    // 租约随回收线程活到服务退出；结束由 close_for_pty 按进程组杀
+    std::thread::spawn(move || {
+        let _lease = lease;
+        let _ = child.wait();
+    });
+    Some((url, pid))
+}
+
 /// pty_spawn 在起进程前调用：按这家改启动参数（`args` 不含末尾的初始 prompt）、返回要加给 PTY 的环境变量
 /// 与旁路句柄。`server_env` = 交给 PTY 的完整环境（Codex 的 app-server 跑工具，要同一份）。
 pub(crate) fn prepare(
@@ -2218,6 +2430,7 @@ pub(crate) fn prepare(
                 qwen_events: None,
                 replier: None,
                 codex: None,
+                sidecar: None,
             }),
         ),
         _ => (env, None),
@@ -2246,6 +2459,7 @@ fn prepare_structured(
         qwen_events: None,
         replier: None,
         codex: None,
+        sidecar: None,
     };
     let hooks_channel = |p: &mut Prepared| {
         let log = crate::hooks::log_path_for(agent)?;
@@ -2312,8 +2526,27 @@ fn prepare_structured(
             p.dir = Some(dir);
             (env, Some(p))
         }
-        // 2.x 主命令不认 --port（旁路改走 Mesa 自起的 serve，见 opencode 2.x 分支）
-        "opencode" if version_at_least(agent, OPENCODE_PORT_MIN) && !crate::agents::opencode_v2() => {
+        // 2.x 主命令不认 --port：Mesa 自己起 `opencode serve`（口令自定），TUI 用 --server 连它。
+        // 2.x 的 --standalone 也是这么做的，只是口令随机、Mesa 拿不到
+        "opencode" if crate::agents::opencode_v2() => {
+            let password = format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            );
+            let Some((server_url, pid)) = start_opencode2_server(binary, cwd, server_env, env_remove, &password) else {
+                return (env, None);
+            };
+            args.retain(|a| a != "--standalone");
+            args.push("--server".into());
+            args.push(server_url.clone());
+            env.push(("OPENCODE_PASSWORD".into(), password.clone()));
+            let mut p = base("opencode");
+            p.replier = Some(Replier::OpenCode2 { base: server_url, password });
+            p.sidecar = Some(pid);
+            (env, Some(p))
+        }
+        "opencode" if version_at_least(agent, OPENCODE_PORT_MIN) => {
             let Some(port) = free_port() else {
                 return (env, None);
             };
@@ -2394,6 +2627,7 @@ pub(crate) fn start_with_sink(pty_id: &str, prepared: Prepared, sink: Sink) {
         qwen_events,
         replier,
         codex,
+        sidecar,
     } = prepared;
     let channel = Arc::new(Channel {
         tab_id: tab_id.clone(),
@@ -2406,7 +2640,7 @@ pub(crate) fn start_with_sink(pty_id: &str, prepared: Prepared, sink: Sink) {
         dirty: AtomicBool::new(true),
         replier: Mutex::new(replier),
         codex: Mutex::new(CodexState::default()),
-        sidecar_pid: Mutex::new(codex.as_ref().map(|(_, _, pid)| *pid)),
+        sidecar_pid: Mutex::new(codex.as_ref().map(|(_, _, pid)| *pid).or(sidecar)),
         dir,
     });
     // 同一标签之前的旁路（重启 Agent 时旧进程还没走完退出流程）先收掉
@@ -2575,6 +2809,13 @@ fn basic_auth(password: &str) -> String {
 }
 
 async fn opencode_loop(ch: Arc<Channel>) {
+    let v2 = ch.replier.lock().ok().and_then(|r| match r.as_ref() {
+        Some(Replier::OpenCode2 { base, password }) => Some((base.clone(), password.clone())),
+        _ => None,
+    });
+    if let Some((base, password)) = v2 {
+        return opencode2_loop(ch, base, password).await;
+    }
     let (port, password) = match ch.replier.lock().ok().and_then(|r| match r.as_ref() {
         Some(Replier::OpenCode { port, password }) => Some((*port, password.clone())),
         _ => None,
@@ -2634,6 +2875,55 @@ async fn opencode_loop(ch: Arc<Channel>) {
             }
         }
         // SSE 没有可重放的游标，重连会漏掉断线期间的审批与收尾，不能继续沿用旧状态。
+        disconnect(&ch);
+        return;
+    }
+}
+
+/// OpenCode 2.x 的事件流：`/api/event`（SSE，每帧 `{id, type, data}`）。服务是 Mesa 起的、PTY 前就绪，连不上多半是已经退了
+async fn opencode2_loop(ch: Arc<Channel>, base: String, password: String) {
+    let Ok(client) = reqwest::Client::builder().no_proxy().build() else {
+        return;
+    };
+    let mut state = OpenCode2State::default();
+    let started = Instant::now();
+    while !ch.stop.load(Ordering::Acquire) {
+        let resp = client
+            .get(format!("{base}/api/event"))
+            .header("Authorization", basic_auth(&password))
+            .send()
+            .await;
+        let mut resp = match resp {
+            Ok(r) if r.status().is_success() => r,
+            _ => {
+                if started.elapsed() >= Duration::from_secs(30) {
+                    disconnect(&ch);
+                    return;
+                }
+                tokio_sleep(300).await;
+                continue;
+            }
+        };
+        feed(&ch, vec![ChannelEvent::Connected]);
+        let mut buf: Vec<u8> = Vec::new();
+        while !ch.stop.load(Ordering::Acquire) {
+            match resp.chunk().await {
+                Ok(Some(bytes)) => {
+                    buf.extend_from_slice(&bytes);
+                    while let Some(end) = buf.iter().position(|&b| b == b'\n') {
+                        let raw: Vec<u8> = buf.drain(..=end).collect();
+                        let line = String::from_utf8_lossy(&raw);
+                        if let Some(data) = line.trim_end().strip_prefix("data:") {
+                            if let Ok(v) = serde_json::from_str::<Value>(data.trim()) {
+                                feed(&ch, map_opencode2(&v, &mut state));
+                            }
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        // 2.x 的事件流同样没有续传游标（官方说明「断线期间的事件会丢」）：断了就交回读屏
         disconnect(&ch);
         return;
     }
@@ -2907,15 +3197,23 @@ async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result
             return Err("当前回合已经变化，请按最新状态操作".into());
         }
     }
-    let (port, password) = {
+    // 1.x：POST /session/<id>/abort；2.x：POST /api/session/<id>/interrupt
+    let (root, password, segments) = {
         let r = ch.replier.lock().map_err(|_| "实时通道不可用")?;
         match r.as_ref() {
-            Some(Replier::OpenCode { port, password }) => (*port, password.clone()),
+            Some(Replier::OpenCode { port, password }) => {
+                (format!("http://127.0.0.1:{port}/"), password.clone(), ["session", session_id, "abort"].map(String::from).to_vec())
+            }
+            Some(Replier::OpenCode2 { base, password }) => (
+                format!("{base}/"),
+                password.clone(),
+                ["api", "session", session_id, "interrupt"].map(String::from).to_vec(),
+            ),
             _ => return Err("实时通道已断开，请到终端停止".into()),
         }
     };
-    let mut url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).map_err(|e| e.to_string())?;
-    url.path_segments_mut().map_err(|_| "无法构造停止请求")?.extend(["session", session_id, "abort"]);
+    let mut url = reqwest::Url::parse(&root).map_err(|e| e.to_string())?;
+    url.path_segments_mut().map_err(|_| "无法构造停止请求")?.extend(segments);
     let response = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5))
         .build().map_err(|e| e.to_string())?.post(url)
         .header("Authorization", basic_auth(&password)).json(&json!({})).send().await
@@ -2956,6 +3254,7 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<()
     enum Plan {
         Qwen(PathBuf),
         OpenCode(u16, String),
+        OpenCode2(String, String),
         Codex(Arc<Mutex<TcpStream>>),
     }
     let plan = {
@@ -2963,6 +3262,7 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<()
         match r.as_ref() {
             Some(Replier::Qwen { input }) => Plan::Qwen(input.clone()),
             Some(Replier::OpenCode { port, password }) => Plan::OpenCode(*port, password.clone()),
+            Some(Replier::OpenCode2 { base, password }) => Plan::OpenCode2(base.clone(), password.clone()),
             Some(Replier::Codex { stream }) => Plan::Codex(stream.clone()),
             None => return Err("这一家只能在终端菜单里回答".into()),
         }
@@ -2994,6 +3294,40 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<()
                 .post(format!("http://127.0.0.1:{port}/permission/{request_id}/reply"))
                 .header("Authorization", basic_auth(&password))
                 .json(&json!({ "reply": reply }))
+                .send()
+                .await
+                .map_err(|e| format!("回复失败: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("回复失败（{}）", resp.status()));
+            }
+        }
+        Plan::OpenCode2(base, password) => {
+            // 2.x 的回复挂在会话下：审批卡只出自正在跟的会话
+            let sid = ch
+                .tracker
+                .lock()
+                .ok()
+                .and_then(|t| t.snap.session_id.clone())
+                .ok_or("还没认出这段对话，请到终端里回答")?;
+            let decision = if always {
+                "always"
+            } else if allow {
+                "once"
+            } else {
+                "reject"
+            };
+            let mut url = reqwest::Url::parse(&format!("{base}/")).map_err(|e| e.to_string())?;
+            url.path_segments_mut()
+                .map_err(|_| "无法构造回复请求")?
+                .extend(["api", "session", sid.as_str(), "permission", request_id.as_str(), "reply"]);
+            let resp = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .map_err(|e| e.to_string())?
+                .post(url)
+                .header("Authorization", basic_auth(&password))
+                .json(&json!({ "decision": decision }))
                 .send()
                 .await
                 .map_err(|e| format!("回复失败: {e}"))?;
@@ -3493,6 +3827,57 @@ mod tests {
         // 别的会话的事件不跟
         let other = json!({"type":"session.status","properties":{"sessionID":"ses_2","status":{"type":"busy"}}});
         assert!(map_opencode(&other, &mut st).is_empty());
+    }
+
+    #[test]
+    fn opencode2_events_drive_tracker() {
+        let mut st = OpenCode2State::default();
+        let mut t = Tracker::new("tab-o2", "opencode", "opencode");
+        // 2026-11-04 本机 OpenCode 2.2.5 实录（channel-probe.py opencode2，DISCUSS=1），帧 {id, type, data}
+        let run = |t: &mut Tracker, st: &mut OpenCode2State, events: &[Value], now: i64| {
+            for e in events {
+                for ev in map_opencode2(e, st) {
+                    t.apply(ev, now);
+                }
+            }
+        };
+        run(&mut t, &mut st, &[
+            json!({"id":"evt_0","type":"server.connected","data":{}}),
+            json!({"type":"session.created","data":{"sessionID":"ses_1","agent":"plan","model":{"id":"m","providerID":"ccode"}}}),
+            json!({"type":"session.execution.started","data":{"sessionID":"ses_1"}}),
+            json!({"type":"session.reasoning.started","data":{"sessionID":"ses_1","assistantMessageID":"msg_1","ordinal":0}}),
+            json!({"type":"session.reasoning.delta","data":{"sessionID":"ses_1","assistantMessageID":"msg_1","ordinal":0,"delta":"先看看"}}),
+            json!({"type":"session.tool.input.started","data":{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_probe","name":"shell"}}),
+            json!({"type":"session.tool.called","data":{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_probe","input":{"command":"echo mesa > mesa_probe.txt"},"executed":false}}),
+            json!({"type":"permission.asked","data":{"id":"per_1","sessionID":"ses_1","action":"shell","resources":["echo mesa > mesa_probe.txt"],"save":["echo *"],"source":{"type":"tool","messageID":"msg_1","id":"call_probe"}}}),
+        ], 1);
+        assert_eq!(t.snap.session_id.as_deref(), Some("ses_1"));
+        let a = t.snap.approval.clone().unwrap();
+        assert_eq!(a.request_id.as_deref(), Some("per_1"));
+        assert_eq!(a.kind, "execute");
+        assert_eq!(a.command.as_deref(), Some("echo mesa > mesa_probe.txt"), "命令从这次工具调用的参数补");
+        assert!(a.replyable);
+        run(&mut t, &mut st, &[
+            json!({"type":"permission.replied","data":{"sessionID":"ses_1","requestID":"per_1","reply":"once"}}),
+            json!({"type":"session.tool.success","data":{"sessionID":"ses_1","id":"call_probe","content":[{"type":"text","text":"(no output)"}]}}),
+            json!({"type":"session.text.started","data":{"sessionID":"ses_1","assistantMessageID":"msg_2","ordinal":0}}),
+            json!({"type":"session.text.delta","data":{"sessionID":"ses_1","assistantMessageID":"msg_2","ordinal":0,"delta":"done"}}),
+        ], 2);
+        assert!(t.snap.approval.is_none());
+        assert_eq!(t.snap.live_text.as_deref(), Some("done"));
+        run(&mut t, &mut st, &[json!({"type":"session.execution.succeeded","data":{"sessionID":"ses_1"}})], 3);
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "completed");
+        // 别的会话（子 agent）不跟；子会话的 created 不抢当前会话
+        assert!(map_opencode2(&json!({"type":"session.execution.started","data":{"sessionID":"ses_2"}}), &mut st).is_empty());
+        assert!(map_opencode2(&json!({"type":"session.created","data":{"sessionID":"ses_3","parentID":"ses_1"}}), &mut st).is_empty());
+        // 失败：收回合 + 原因
+        let evs = map_opencode2(&json!({"type":"session.execution.failed","data":{"sessionID":"ses_1","error":{"type":"api","message":"quota exceeded"}}}), &mut st);
+        assert!(matches!(&evs[0], ChannelEvent::TurnEnd { reason: Some(r) } if r == "failed"));
+        assert!(matches!(&evs[1], ChannelEvent::ErrorDetail(m) if m == "quota exceeded"));
+        // 接着聊旧对话：没有 created，从第一条会话事件认出
+        let mut fresh = OpenCode2State::default();
+        let evs = map_opencode2(&json!({"type":"session.execution.started","data":{"sessionID":"ses_9"}}), &mut fresh);
+        assert!(matches!(&evs[0], ChannelEvent::Session { id, .. } if id == "ses_9"));
     }
 
     #[test]
@@ -4564,6 +4949,14 @@ mod e2e {
             .iter()
             .map(|p| (p[0].as_str().unwrap().to_string(), p[1].as_str().unwrap().to_string()))
             .collect();
+        // 先出方案档另加的环境（OpenCode 2.x 的 default_agent 与权限都在内联配置里）
+        if tier == "discuss" {
+            for p in plan["discuss_env"].as_array().into_iter().flatten() {
+                let (k, v) = (p[0].as_str().unwrap().to_string(), p[1].as_str().unwrap().to_string());
+                env.retain(|(n, _)| *n != k);
+                env.push((k, v));
+            }
+        }
         let home_s = home.to_string_lossy().into_owned();
         env.push(("HOME".into(), home_s.clone()));
         if cfg!(windows) {

@@ -467,6 +467,7 @@ OpenCode 带口令的本机服务；Codex 先试验（通过，已接入）；�
 | CodeBuddy 2.169.0 | ✓ | `--settings <JSON>`（帮助里没列，二进制里有） | 同上 |
 | Qwen 0.25.2 | ✓ | Dual Output（hooks 走系统默认设置路径也通，没用） | 审批经 input 文件答通 |
 | OpenCode 1.19.3 | ✓ | `--port` + `OPENCODE_SERVER_PASSWORD` | 无口令 401、带口令 200；审批经接口答通 |
+| OpenCode 2.2.5（2026-11-04） | ✓ | Mesa 自起 `opencode serve --stdio --port 0` + `OPENCODE_PASSWORD`，TUI `--server` | 无口令 401；`/api/event` 事件、审批回复 204、`/api/session/<sid>/interrupt` 停止都经 e2e_channel 走通（matrix §14） |
 | Codex 0.163.0 | ✓ | 私有 app-server（本机 WebSocket + 能力令牌）+ TUI `--remote` | `-c hooks` 每次都要在 /hooks 面板审核，不可用 |
 | Gemini 0.64.0 | ✗ | 只能全局 | 系统设置 / 系统默认设置文件必须属 root（`isFileAndDirectorySecureSync`） |
 | Kimi 2.2.0 | ✗ | 只能全局 | 没有指定配置文件的参数或环境变量 |

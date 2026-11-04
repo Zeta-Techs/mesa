@@ -5,11 +5,13 @@
              hook 命令把「标签号 + payload」追加到日志；临时 HOME 里另放一条「用户自己的」hook，看两者是否都触发
   dual     ：Qwen Dual Output（--json-file / --input-file），审批走 input 文件的 confirmation_response
   opencode ：OpenCode TUI 自带服务（--port + OPENCODE_SERVER_PASSWORD），订阅 /event，审批走 /permission/<id>/reply
+  opencode2：OpenCode 2.x——先起 `opencode serve --stdio --port 0`（OPENCODE_PASSWORD，读首行 {"url"}），TUI 换成 --server <url>，
+             订阅 /api/event（帧 {id,type,data}），审批走 /api/session/<sid>/permission/<rid>/reply {"decision":"once"}；FULL_EVENTS=1 记下全部事件
 
 用法：python3 -I channel-probe.py <计划.json> <agent> <hooks|dual|opencode> <输出.json>
 HOME 换临时目录并拷入本机 CLI 配置（同 chat-capture.py），只打本机假网关，不碰真实会话目录，不需要 pyte。
 """
-import base64, json, os, pty, re, select, shutil, signal, socket, sys, tempfile, threading, time, fcntl, termios, struct
+import base64, json, os, pty, re, select, shutil, signal, socket, subprocess, sys, tempfile, threading, time, fcntl, termios, struct
 import urllib.request
 
 plans = json.load(open(sys.argv[1])); agent = sys.argv[2]; mode = sys.argv[3]; out_path = sys.argv[4]
@@ -49,6 +51,10 @@ env.update(HOME=home, NO_PROXY="127.0.0.1", no_proxy="127.0.0.1", TERM="xterm-25
 for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy"): env.pop(k, None)
 for k in plan.get("env_remove", []): env.pop(k, None)
 for k, v in plan["env"]: env[k] = v
+# DISCUSS=1：按「先出方案」档起（计划里的 discuss 参数与 discuss_env），看审批卡与回复
+if os.environ.get("DISCUSS"):
+    a = list(perm.get("discuss") or a)
+    for k, v in plan.get("discuss_env", []): env[k] = v
 # EXTRA_ENV='{"OPENCODE_CONFIG_CONTENT": "{\"permission\":{\"bash\":\"ask\"}}"}'：额外环境变量（如让 OpenCode 跑命令前先问）
 env.update(json.loads(os.environ.get("EXTRA_ENV", "{}")))
 # OPENCODE_ASK=1：在 Mesa 注入的 OPENCODE_CONFIG_CONTENT 上加「跑命令先问」（不能整份覆盖：会丢掉网关连接、打到真实服务）
@@ -126,6 +132,17 @@ elif mode == "opencode":
     oc["password"] = base64.urlsafe_b64encode(os.urandom(18)).decode()
     env["OPENCODE_SERVER_PASSWORD"] = oc["password"]
     a = [*a, "--port", str(oc["port"])]
+elif mode == "opencode2":
+    oc["password"] = base64.urlsafe_b64encode(os.urandom(18)).decode()
+    env["OPENCODE_PASSWORD"] = oc["password"]
+    # 服务端拿 Mesa 的注入配置；stdin 管道是租约，探针退出时它自己收摊
+    oc["proc"] = subprocess.Popen([shutil.which(BIN[agent]) or BIN[agent], "serve", "--stdio", "--port", "0"], cwd=work, env=env,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    ready = oc["proc"].stdout.readline().decode()
+    oc["url"] = json.loads(ready)["url"].rstrip("/")
+    threading.Thread(target=lambda: [None for _ in oc["proc"].stdout], daemon=True).start()
+    a = [x for x in a if x != "--standalone"] + ["--server", oc["url"]]
+    record["serve_ready"] = ready.strip()
 record["args"] = a
 
 COLS, ROWS = 120, 40
@@ -177,6 +194,21 @@ def send(text):
 
 
 sse_events = []
+def sse_reader2():
+    auth = "Basic " + base64.b64encode(f"opencode:{oc['password']}".encode()).decode()
+    for _ in range(60):
+        try:
+            req = urllib.request.Request(f"{oc['url']}/api/event", headers={"Authorization": auth})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                for line in resp:
+                    if line.startswith(b"data:"):
+                        try: sse_events.append(json.loads(line[5:]))
+                        except Exception: pass
+            return
+        except Exception as e:
+            sse_events.append({"_connect_error": str(e)[:120]}); time.sleep(0.5)
+
+
 def sse_reader():
     auth = "Basic " + base64.b64encode(f"opencode:{oc['password']}".encode()).decode()
     for _ in range(60):
@@ -204,6 +236,16 @@ if mode == "opencode":
     record["opencode_noauth_status"] = get("/session", False)
     record["opencode_auth_status"] = get("/session", True)
     threading.Thread(target=sse_reader, daemon=True).start()
+if mode == "opencode2":
+    auth = "Basic " + base64.b64encode(f"opencode:{oc['password']}".encode()).decode()
+    def get2(path, with_auth=True):
+        req = urllib.request.Request(f"{oc['url']}{path}", headers={"Authorization": auth} if with_auth else {})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r: return r.status
+        except urllib.error.HTTPError as e: return e.code
+        except Exception as e: return str(e)[:80]
+    record["opencode_noauth_status"] = get2("/api/event?types=server.connected", False)
+    threading.Thread(target=sse_reader2, daemon=True).start()
 for _ in range(4):
     t = recent_text()
     if "Yes, I accept" in t:
@@ -238,6 +280,16 @@ while time.time() - t0 < 45 and alive[0]:
                 body = json.dumps({"reply": "once"}).encode()
                 req = urllib.request.Request(f"http://127.0.0.1:{oc['port']}/permission/{rid}/reply", data=body, method="POST",
                                              headers={"Authorization": auth, "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(req, timeout=5) as r: approved = f"POST reply → {r.status}"
+                except Exception as e: approved = f"POST reply 失败：{e}"
+        elif mode == "opencode2":
+            asked = [e for e in sse_events if e.get("type") == "permission.asked"]
+            if asked:
+                d = asked[-1].get("data", {})
+                body = json.dumps({"decision": "once"}).encode()
+                req = urllib.request.Request(f"{oc['url']}/api/session/{d.get('sessionID')}/permission/{d.get('id')}/reply", data=body,
+                                             method="POST", headers={"Authorization": auth, "Content-Type": "application/json"})
                 try:
                     with urllib.request.urlopen(req, timeout=5) as r: approved = f"POST reply → {r.status}"
                 except Exception as e: approved = f"POST reply 失败：{e}"
@@ -284,7 +336,8 @@ elif mode == "dual":
         if ev.get("type") == "user": record.setdefault("user_samples", []).append({"uuid": ev.get("uuid"), "content": str(ev.get("message", {}).get("content"))[:160]})
         if ev.get("type") == "result": record["result_sample"] = {k2: ev.get(k2) for k2 in ("subtype", "is_error", "duration_ms", "num_turns", "usage")}
     record["dual_events"] = kinds
-elif mode == "opencode":
+elif mode in ("opencode", "opencode2"):
+    if os.environ.get("FULL_EVENTS"): record["events"] = sse_events
     seen = []
     for e in sse_events:
         k = e.get("type") or next(iter(e))
@@ -296,6 +349,8 @@ elif mode == "opencode":
 json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
 try: os.kill(pid, signal.SIGKILL)
 except OSError: pass
+if oc.get("proc"):
+    oc["proc"].stdin.close(); oc["proc"].wait(timeout=10)
 shutil.rmtree(home, ignore_errors=True)
 summary = {k: record.get(k) for k in ("probe_created", "approved_by", "mesa_hook_events", "tab_id_seen", "user_hook_fired",
                                       "opencode_noauth_status", "opencode_auth_status")}

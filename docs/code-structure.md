@@ -1292,9 +1292,10 @@ src-tauri/src/
   chat_handoff_log.rs        # 聊天层转到终端的计数（2026-10-22）：app.db chat_handoff_events（日 × agent × CLI 版本 × 原因 × 细分），
                              #   原因闭集、细分只收短标识、留 180 天；summary_for_bundle 进诊断包 chat-handoffs.json。只计数不记文字
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
-                             #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode --port + 口令、
+                             #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode 1.x --port + 口令、
+                             #   OpenCode 2.x 自起私有 serve（start_opencode2_server，stdin 租约）+ TUI --server、
                              #   Codex 私有 app-server + TUI --remote，split_codex_args 恢复时把权限参数改成服务配置），
-                             #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE、Codex ws 客户端，手写最小 WebSocket），
+                             #   start 起读取线程（状态日志 / 事件文件追加读、OpenCode SSE（1.x map_opencode / 2.x map_opencode2）、Codex ws 客户端，手写最小 WebSocket），
                              #   Tracker = 回合状态机（幂等开始 / 结束、审批、实时文字、会话跟随），快照推 chat-channel-<tabId>；
                              #   快照另带 activity（正在跑的工具，track_activity 按开始 / 结束登记，参数 slim_input 截断脱敏）与 thinking
                              #   （Codex item/reasoning/summaryTextDelta、Qwen thinking_delta、OpenCode reasoning part）；出站 outbound 脱敏实时文字与思考；

@@ -73,11 +73,14 @@
   出版商风控识别并连坐全校 IP）——只有用户在独立登录窗里自己完成的 SSO 会话可复用，且只由人在 UI 上逐篇触发
   下载，scheduler/无头 Run 不携带该会话。会话只在请求头按域名匹配注入（`cookie_header_for`），不写进任何
   agent env、不进 shell。
-- **聊天层旁路的秘密与边界（2026-10-20，chat_channel.rs）**：OpenCode 服务口令、Codex app-server 能力令牌每标签随机生成，
+- **聊天层旁路的秘密与边界（2026-10-20，chat_channel.rs；OpenCode 2.x 2026-11-04）**：OpenCode 服务口令（1.x 给 TUI 自带服务，2.x 给 Mesa 自起的 `opencode serve`，TUI 用 `--server` 连）、Codex app-server 能力令牌每标签随机生成，
   **只经环境变量**交给 CLI（Codex 的 app-server 参数里只有令牌的 SHA-256），不落盘、不进 Run 记录 / 日志 / 诊断包；两者都只监听
   127.0.0.1，无口令 / 错令牌一律 401（已实测）。旁路目录 0700、事件 / 输入文件 0600，标签退出即删。hooks 日志每条 payload 截到 64KB
   （PostToolUse 2KB，带整份工具结果），截断记录按字段名兜底取事件名与会话 id；审批卡的命令 / 差异 / 实时文字出站前过
   `redact_sensitive_text`。hook 只记录不决策，不阻塞 TUI；回复审批只在用户点按钮后发生，不做「免确认自动选第一项」。
+  **OpenCode 2.x 不连共享后台服务**（2026-11-04）：它默认把对话交给一个常驻服务，服务已在跑时 Mesa 注入的 `OPENCODE_CONFIG_CONTENT`
+  被忽略，带密钥的配置还会留在服务里被别的客户端看到——启动与无头调用一律 `--standalone`，开旁路时换成 Mesa 自起的私有 serve（标签关即收，
+  stdin 租约断了它自己退出），两者都不碰共享服务（`agents::opencode_v2`、`chat_channel::start_opencode2_server`）。
   **程序状态（OSC 7501，2026-10-22，program_status.rs）**：终端流里谁都能写这串，当不可信输入——整条序列 ≤4096 字节、msg 是 base64 的
   UTF-8（≤2048 字节）、解出来含控制字符或超限整条丢；只认根记录；msg 当「现状一句」出站前过 `redact_sensitive_text`，截到 240 字。
   探询只对用这条旁路的标签答，不写任何配置。
