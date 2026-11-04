@@ -543,8 +543,8 @@ fn official_connected_caveat(agent_id: &str) -> &'static str {
 
 /// Claude Code 官方登录状态：macOS 上凭证在系统钥匙串、不落 ~/.claude/.credentials.json，
 /// 只看文件会把已登录的人显示成「未登录」、让人以为要重新登录。文件查不到时问 `claude auth status`
-/// （只读，JSON 的 loggedIn / authMethod；2.1.308 实证）。None = 问不到（没装 / 超时 / 输出变了）
-fn claude_auth_status() -> Option<(bool, String)> {
+/// （只读，JSON 的 loggedIn / authMethod；2.1.308 实证；2.1.318 起另有 loginExpiresAt）。None = 问不到（没装 / 超时 / 输出变了）
+fn claude_auth_status() -> Option<(bool, String, Option<i64>)> {
     let path = resolve_binary("claude")?;
     let args = ["auth", "status", "--json"];
     let timeout = std::time::Duration::from_secs(8);
@@ -559,7 +559,30 @@ fn claude_auth_status() -> Option<(bool, String)> {
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let logged_in = v.get("loggedIn")?.as_bool()?;
     let method = v.get("authMethod").and_then(|m| m.as_str()).unwrap_or("").to_string();
-    Some((logged_in, method))
+    Some((logged_in, method, v.get("loginExpiresAt").and_then(expiry_epoch_secs)))
+}
+
+/// 到期时间读成秒：ISO 时间串，或数字（毫秒 / 秒）。格式认不出返回 None（不猜）
+fn expiry_epoch_secs(v: &serde_json::Value) -> Option<i64> {
+    if let Some(s) = v.as_str() {
+        return chrono::DateTime::parse_from_rfc3339(s.trim()).ok().map(|t| t.timestamp());
+    }
+    let n = v.as_i64()?;
+    Some(if n > 100_000_000_000 { n / 1000 } else { n })
+}
+
+/// 官方登录快到期时的一句提醒（2.1.318 起 -p 会在到期前 10 天提醒，连接页同口径）；还早或已过都不说
+fn login_expiry_note(expires_at: Option<i64>, now: i64) -> Option<String> {
+    let left = expires_at? - now;
+    if !(0..=10 * 86_400).contains(&left) {
+        return None;
+    }
+    let days = left / 86_400;
+    Some(if days == 0 {
+        "这次登录今天到期，到期后要点「官方登录」重新登录".into()
+    } else {
+        format!("这次登录还有 {days} 天到期，到期后要点「官方登录」重新登录")
+    })
 }
 
 const CLAUDE_SHADOW_KEYS: &[&str] = &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
@@ -5602,15 +5625,19 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     }
     let mut cli_says_logged_out: Option<&str> = None;
     if agent_id == "claude-code" {
-        if let Some((logged_in, method)) = claude_auth_status() {
+        if let Some((logged_in, method, expires_at)) = claude_auth_status() {
             if !logged_in {
                 cli_says_logged_out = Some("claude auth status 显示未登录（登录已过期或已登出），点「官方登录」重登");
             }
             if logged_in {
+                let mut detail = format!("claude auth status 显示已登录（{method}）");
+                if let Some(note) = login_expiry_note(expires_at, chrono::Utc::now().timestamp()) {
+                    detail = format!("{detail}；{note}");
+                }
                 return OfficialAccountStatusDto {
                     supported: true,
                     connected: true,
-                    detail: Some(format!("claude auth status 显示已登录（{method}）")),
+                    detail: Some(detail),
                     login_command,
                     conflicts,
                     cleanup_supported: true,
@@ -7905,6 +7932,19 @@ api_backend = "responses"
         assert!(msg.contains("https://other/v1"));
         assert!(grok_endpoint_conflict(&dir, &official_profile("grok")).is_none(), "官方账号不走这条");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_login_expiry_note_only_in_last_ten_days() {
+        let now = 1_800_000_000;
+        assert_eq!(expiry_epoch_secs(&serde_json::json!((now + 3 * 86_400) * 1000)), Some(now + 3 * 86_400));
+        assert_eq!(expiry_epoch_secs(&serde_json::json!("2027-01-15T00:00:00Z")), Some(1_799_971_200));
+        assert_eq!(expiry_epoch_secs(&serde_json::json!(null)), None);
+        assert!(login_expiry_note(Some(now + 3 * 86_400 + 60), now).unwrap().contains("还有 3 天"));
+        assert!(login_expiry_note(Some(now + 3600), now).unwrap().contains("今天到期"));
+        assert_eq!(login_expiry_note(Some(now + 30 * 86_400), now), None);
+        assert_eq!(login_expiry_note(Some(now - 10), now), None);
+        assert_eq!(login_expiry_note(None, now), None);
     }
 
     #[test]

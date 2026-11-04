@@ -406,10 +406,13 @@ pub(crate) fn summarize_headless_error(detail: &str, expected_host: Option<&str>
         return "官方账号登录已失效，请到连接页重新登录。后台调用请在设置里指定一套 API 配置。"
             .into();
     }
-    // 官方账号没登录 / 登录过期（Claude 的 JSON result「Not logged in · Please run /login」、CodeBuddy「Authentication required」）
+    // 官方账号没登录 / 登录过期（Claude 的 JSON result「Not logged in · Please run /login」、CodeBuddy「Authentication required」；
+    // Claude 2.1.318 起登录到期说「Failed to authenticate: this login reached its time limit and cannot be renewed. Run `claude auth login`…」）
     if low.contains("not logged in")
         || low.contains("please run /login")
         || low.contains("authentication required")
+        || low.contains("reached its time limit")
+        || low.contains("claude auth login")
     {
         return "官方账号还没登录或登录已过期，请到连接页这家 Agent 的组头点「官方登录」。".into();
     }
@@ -600,7 +603,13 @@ fn run_capture_for(
         }
         return Ok(text);
     }
-    let detail = if err.trim().is_empty() { out } else { err };
+    // stdout 和 stderr 都给摘要：Claude 2.1.318 起官方登录到期前 10 天往 stderr 写一行提醒，只取 stderr 时
+    // 真正的错误（在 stdout 的 JSON / 文本里）会被这行盖掉
+    let detail = match (err.trim().is_empty(), out.trim().is_empty()) {
+        (true, _) => out,
+        (false, true) => err,
+        (false, false) => format!("{err}\n{out}"),
+    };
     let detail = detail.trim();
     if detail.is_empty() {
         // 噪音过滤后可能两头皆空：如实说没有错误信息，别给一条空摘要
@@ -2738,6 +2747,8 @@ mod tests {
     fn summarize_headless_error_explains_logged_out_and_unwraps_claude_json() {
         let claude = r#"{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}"#;
         assert!(summarize_headless_error(claude, None).contains("官方登录"));
+        let expired = "Failed to authenticate: this login reached its time limit and cannot be renewed. Run `claude auth login` or `claude setup-token`.";
+        assert!(summarize_headless_error(expired, None).contains("官方登录"));
         let other = r#"{"type":"result","is_error":true,"result":"API Error: 529 overloaded"}"#;
         assert_eq!(summarize_headless_error(other, None), "API Error: 529 overloaded");
         assert!(headless_oneshot_args("cursor", "hi").contains(&"--trust".to_string()));
