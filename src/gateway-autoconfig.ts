@@ -95,25 +95,39 @@ export function modelVendor(id: string): VendorId | null {
 }
 
 /**
- * 型号里的版本号：取第一段「1–3 位数字 + 若干 .x / -x 小版本」，日期（4 位以上）与参数量（72b）不算。
- * claude-opus-4-7-20260101 → [4,7]、gpt-5.6-sol → [5,6]、kimi-k2.5 → [2,5]、qwen2.5-72b → [2,5]、deepseek-chat → []
+ * 型号里的版本号（各段原样字符串）：取第一段「1–3 位数字 + 若干 .x / -x 小版本」。
+ * 不算的：日期（2025-09-11、20260101、0309 这类 4 位以上或跟在年份后的月日）、上下文长度与参数量（32k、72b）。
+ * claude-opus-4-7-20260101 → 4,7；qwen-plus-2025-09-11 → 无；doubao-pro-32k-241215 → 无；grok-4.20-0309 → 4,20
  */
-export function modelVersion(id: string): number[] {
-  const bare = bareId(id);
-  const re = /(?<!\d)(\d{1,3})(?!\d)((?:[.-]\d{1,2}(?![\da-z]))*)/g;
+function versionParts(id: string): string[] {
+  const bare = bareId(id).replace(/(^|[-_])\d{4}(?:[-_]\d{2}){1,2}(?=$|[-_])/g, "$1");
+  const re = /(?<!\d)(\d{1,3})(?!\d)(?![kmb](?![a-z]))((?:[.-]\d{1,2}(?![\da-z]))*)/g;
   for (const m of bare.matchAll(re)) {
-    const parts = [m[1], ...(m[2] ? m[2].slice(1).split(/[.-]/) : [])];
-    return parts.map((p) => Number(p));
+    return [m[1], ...(m[2] ? m[2].slice(1).split(/[.-]/) : [])];
   }
   return [];
 }
 
-export function compareVersion(a: number[], b: number[]): number {
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const d = (a[i] ?? 0) - (b[i] ?? 0);
+/** 版本号的数字形式（展示、测试用） */
+export function modelVersion(id: string): number[] {
+  return versionParts(id).map(Number);
+}
+
+/**
+ * 比两个型号的版本：大版本按整数比，小版本按小数位比（grok-4.20 是 4.2，旧于 4.7——xAI 的 4.20 早于 4.3～4.7）。
+ * 返回正数 = a 更新。
+ */
+export function compareModelVersion(a: string, b: string): number {
+  const va = versionParts(a);
+  const vb = versionParts(b);
+  for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+    const x = va[i] ?? "0";
+    const y = vb[i] ?? "0";
+    const d = i === 0 ? Number(x) - Number(y) : Number(`0.${x}`) - Number(`0.${y}`);
     if (d) return d;
   }
-  return 0;
+  // 有版本号的新于没有的（kimi-k3 > kimi-for-coding 之外的老别名）
+  return va.length - vb.length;
 }
 
 export function isLightModel(id: string): boolean {
@@ -141,7 +155,7 @@ function variantPenalty(id: string): number {
 function newestFirst(ids: string[], vendor: VendorId | null): string[] {
   return [...ids].sort(
     (a, b) =>
-      compareVersion(modelVersion(b), modelVersion(a)) ||
+      compareModelVersion(b, a) ||
       tierScore(b, vendor) - tierScore(a, vendor) ||
       variantPenalty(a) - variantPenalty(b) ||
       a.length - b.length ||

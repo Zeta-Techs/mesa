@@ -35,6 +35,29 @@ test("modelVersion 取型号版本，日期与参数量不算", () => {
   assert.deepEqual(modelVersion("gemini-2.5-flash-preview-05-20"), [2, 5]);
   assert.deepEqual(modelVersion("anthropic/claude-sonnet-4.5"), [4, 5]);
   assert.deepEqual(modelVersion("deepseek-chat"), []);
+  // 年月日、上下文长度不算版本（2026-11-04 用户 Zeta 网关实例）
+  assert.deepEqual(modelVersion("qwen-plus-2025-09-11"), []);
+  assert.deepEqual(modelVersion("doubao-pro-32k-241215"), []);
+  assert.deepEqual(modelVersion("doubao-seed-2-0-pro-260215"), [2, 0]);
+  assert.deepEqual(modelVersion("grok-4.20-0309-reasoning"), [4, 20]);
+});
+
+test("用户 Zeta 网关真实目录片段：各家都挑到最新", () => {
+  const c = cat(
+    "qwen-plus-2025-09-11", "qwen3.7-max", "qwen3.8-max", "qwen3.7-max-2026-05-17",
+    "grok-4.20-0309-reasoning", "grok-4.5", "grok-4.7", "grok-3-mini",
+    "doubao-pro-32k-241215", "doubao-seed-2-0-pro-260215", "doubao-seed-1-8-251228",
+    "gpt-5.5", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-5.4-mini",
+    "claude-opus-4-8", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+  );
+  assert.equal(vendorPicks(c, "qwen").flagships[0], "qwen3.8-max");
+  assert.equal(vendorPicks(c, "grok").flagships[0], "grok-4.7", "4.20 按小数是 4.2，旧于 4.7");
+  assert.equal(vendorPicks(c, "doubao").flagships[0], "doubao-seed-2-0-pro-260215");
+  assert.equal(vendorPicks(c, "gpt").flagships[0], "gpt-6.1-sol");
+  assert.deepEqual(
+    { top: vendorPicks(c, "claude").flagships[0], light: vendorPicks(c, "claude").light },
+    { top: "claude-opus-5-5", light: "claude-haiku-5-5" },
+  );
 });
 
 test("modelVendor 认厂商，带前缀与方括号标签也认", () => {

@@ -20,13 +20,23 @@ const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
  * 模型取目录里各家最新的；先出预览，人点了才建。只建 Mesa 连接，不写 CLI 配置文件。
  * 规则见 gateway-autoconfig.ts。
  */
-export default function GatewayAutoConfig({ gateway, dirty }: { gateway: Gateway; dirty: boolean }) {
+export default function GatewayAutoConfig({
+  gateway,
+  dirty,
+  open,
+  onOpenChange,
+}: {
+  gateway: Gateway;
+  dirty: boolean;
+  /** 展开与否由网关库管：列表行的「一键配置」入口打开编辑页时直接展开 */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const agents = useAppStore((s) => s.agents);
   const profiles = useAppStore((s) => s.profiles);
   const settings = useAppStore((s) => s.settings);
   const bindGateway = useAppStore((s) => s.bindGateway);
   const updateSettings = useAppStore((s) => s.updateSettings);
-  const [open, setOpen] = useState(false);
   // 人改过的默认模型 / 取消勾选的 CLI；键 = agent
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -116,7 +126,7 @@ export default function GatewayAutoConfig({ gateway, dirty }: { gateway: Gateway
       <button
         type="button"
         className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => onOpenChange(!open)}
       >
         <FoldMark open={open} />
         <span className="flex-1">一键配置各 CLI</span>
