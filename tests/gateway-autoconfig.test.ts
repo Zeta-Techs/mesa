@@ -190,3 +190,21 @@ test("已有一模一样的连接时标出来（后端会拒绝重复建）", ()
 test("catalogVendors 不排名次，按目录出现顺序", () => {
   assert.deepEqual(catalogVendors(cat("qwen3.7-plus", "glm-5.3", "qwen3-coder-plus", "embedding-3")), ["qwen", "glm"]);
 });
+
+test("名字看不出的轻量档按价格认：gpt-6-luna；上一代便宜的不算；最新的是便宜档时不当旗舰", () => {
+  const c = cat("gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.4-mini");
+  const prices = { "gpt-6.1-sol": 2, "gpt-6.1-terra": 1, "gpt-6-sol": 2, "gpt-6-astra": 10, "gpt-6-luna": 0.1, "gpt-5.4-mini": 0.25 };
+  const p = vendorPicks(c, "gpt", prices);
+  assert.equal(p.flagships[0], "gpt-6.1-sol", "sol 对 astra 只差 5 倍，不算轻量档");
+  assert.equal(p.light, "gpt-6-luna");
+  assert.ok(!p.flagships.includes("gpt-6-luna"));
+  assert.ok(p.flagships.includes("gpt-6.1-terra"), "terra 是旗舰一半价，不到 1/5，仍算旗舰候选");
+  // 没价格时退回只看名字
+  assert.equal(vendorPicks(c, "gpt").light, "gpt-5.4-mini");
+
+  const k = vendorPicks(cat("kimi-k3", "kimi-k2-thinking"), "kimi", { "kimi-k3": 4, "kimi-k2-thinking": 0.6 });
+  assert.equal(k.light, null, "上一代便宜是因为旧，不当轻量");
+
+  const n = vendorPicks(cat("gpt-6.2-luna", "gpt-6.1-sol"), "gpt", { "gpt-6.2-luna": 0.1, "gpt-6.1-sol": 2 });
+  assert.deepEqual([n.flagships[0], n.light], ["gpt-6.1-sol", "gpt-6.2-luna"]);
+});

@@ -170,13 +170,37 @@ export interface VendorPicks {
   light: string | null;
 }
 
-/** 目录里某一家的最新旗舰与轻量（只有轻量型号的厂商：轻量的也进旗舰候选） */
-export function vendorPicks(catalog: readonly GatewayModel[], vendor: VendorId): VendorPicks {
+/** 模型输入单价（美元 / 百万 token，后端 model_input_prices 给，与用量页算费同一条定价链）；查不到的不在表里 */
+export type PriceTable = Readonly<Record<string, number>>;
+
+/**
+ * 目录里某一家的最新旗舰与轻量（只有轻量型号的厂商：轻量的也进旗舰候选）。
+ * 轻量先看名字（mini / flash / haiku …），名字看不出的再看价格——GPT-6 按代号分档
+ * （astra / sol / terra / luna），luna 单价只有 sol 的 1/20，名字里却没有 mini（2026-11-04 用户 Zeta 网关实例）：
+ * - 旗舰：按新旧挑，同一大版本里有贵 8 倍以上的兄弟就当它是轻量档跳过（sol 对 astra 只差 5 倍，不跳）；
+ * - 轻量：名字像轻量的，加上和旗舰同一大版本、单价不到旗舰 1/5 的，取最新。价格不全时退回只看名字。
+ */
+export function vendorPicks(catalog: readonly GatewayModel[], vendor: VendorId, prices: PriceTable = {}): VendorPicks {
   const ids = catalog.filter((m) => usable(m) && modelVendor(m.id) === vendor).map((m) => m.id);
+  const named = newestFirst(ids.filter((id) => isLightModel(id)), vendor);
   const heavy = newestFirst(ids.filter((id) => !isLightModel(id)), vendor);
-  const light = newestFirst(ids.filter((id) => isLightModel(id)), vendor);
-  if (heavy.length === 0) return { flagships: light, light: null };
-  return { flagships: heavy, light: light[0] ?? null };
+  if (heavy.length === 0) return { flagships: named, light: null };
+  const major = (id: string) => modelVersion(id)[0] ?? -1;
+  const price = (id: string) => prices[id];
+  const dwarfed = (id: string) => {
+    const p = price(id);
+    return p != null && heavy.some((o) => o !== id && major(o) === major(id) && (price(o) ?? 0) >= p * 8);
+  };
+  const flagship = heavy.find((id) => !dwarfed(id)) ?? heavy[0];
+  const fp = price(flagship);
+  // 只认和旗舰同一代的便宜型号：上一代的老模型便宜是因为旧（kimi-k2-thinking 对 kimi-k3），不是轻量档
+  const cheap = (id: string) =>
+    id !== flagship && major(id) === major(flagship) && fp != null && price(id) != null && price(id)! * 5 <= fp;
+  const light = newestFirst([...named, ...heavy.filter(cheap)], vendor);
+  return {
+    flagships: [flagship, ...heavy.filter((id) => id !== flagship && !cheap(id))],
+    light: light[0] ?? null,
+  };
 }
 
 /** 目录里认得出的厂商，按在目录里第一次出现的顺序（不排名次） */
@@ -237,12 +261,14 @@ export function planAutoConfig(input: {
   installed: readonly string[];
   profiles: readonly ProfileLike[];
   presets: readonly ProviderPreset[];
+  /** 目录模型的输入单价；没给就只按名字认轻量 */
+  prices?: PriceTable;
 }): AutoConfigRow[] {
   const { gateway, installed, profiles } = input;
   const preset = matchPreset(gateway, input.presets);
   const vendors = catalogVendors(gateway.models);
   const single = vendors.length === 1 ? vendors[0] : null;
-  const picks = new Map(vendors.map((v) => [v, vendorPicks(gateway.models, v)]));
+  const picks = new Map(vendors.map((v) => [v, vendorPicks(gateway.models, v, input.prices)]));
   const lightOf: Partial<Record<VendorId, string>> = {};
   for (const [v, p] of picks) if (p.light) lightOf[v] = p.light;
 

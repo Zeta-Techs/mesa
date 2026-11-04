@@ -962,7 +962,8 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
   windows-shell.ts           # Windows WebView2 默认行为收口纯判定（刷新/打印/查找/后退快捷键、鼠标侧键、默认右键、
                              #   Win11 判定）；挂载在 main.tsx，仅 Windows
   gateway-autoconfig.ts      # 一键配置纯逻辑（tests/gateway-autoconfig.test.ts）：型号认厂商 / 取版本号、各家最新旗舰与轻量、
-                             #   单厂商网关全配这家 / 聚合网关原厂 CLI 配原厂模型、多厂商行不预选默认；只比版本号，不排厂商名次
+                             #   单厂商网关全配这家 / 聚合网关原厂 CLI 配原厂模型、多厂商行不预选默认；只比版本号，不排厂商名次；
+                             #   轻量先看名字、再看同代单价（≤ 旗舰 1/5，后端 usage.rs model_input_prices 给价）
   gateway-draft.ts           # 网关库槽位纯逻辑（gatewayProbeModel / probeCandidateRank 与 profile_validation.rs probe_candidate_rank 双端镜像）：effectiveSlotUrl 主输入跟随/脱离、slotsFollowMaster、firstProbeableSlot
 gateway-catalog.ts         # 网关目录刷新合并 mergeGatewayCatalog（GatewayLibrary 消费）：fetch_gateway_catalog 回来的目录只并元数据，逐模型策略（temperature/topP/maxOutputTokens/reasoningEffort）保留未保存的本地值；手工添加的模型（source=user）来源与状态以本地为准不被目录覆盖（tests/gateway-catalog.test.ts）
   goal-review.ts             # 目标验收弹层分组与文案：科研按文献/笔记/数据/论文、工作按文档/表格/幻灯（tests/goal-review.test.ts）
@@ -1432,6 +1433,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 永久删除、用量行保留；顺扫 ~/.claude/projects 下 ccode-ai 空壳目录（2026-10-17）
   usage.rs                   # 用量统计（§6.11）：usage 事件提取、usage_daily 按天聚合、任务成本归因、订阅口径、
                              # 复用提取器给接着聊取会话最后一轮的模型 last_session_model / Codex 思考档 last_codex_effort（2026-10-24）、
+                             # model_input_prices（同一条定价链取输入单价，网关库一键配置认名字看不出的轻量档）、
                              # rebuild_locked 进程互斥（DELETE→upsert 非事务，并发双跑会 ON CONFLICT 累加翻倍，
                              #   四个调用点 session_usage/rebuild_usage_index/get_usage_stats 首跑/usage_activity 全走它）；
                              # usage_activity 活跃度热力图：全历史非零日序列（day×agent×model 聚合 +

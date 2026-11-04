@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { AGENTS, type Gateway } from "../types";
 import { PROVIDER_PRESETS } from "../presets";
@@ -10,6 +11,7 @@ import {
   rowRoleModels,
   VENDOR_LABEL,
   type AutoConfigRow,
+  type PriceTable,
 } from "../gateway-autoconfig";
 import { Checkbox, FoldMark, InlineNotice, MenuSelect, primaryActionClass } from "./PageFrame";
 
@@ -48,13 +50,25 @@ export default function GatewayAutoConfig({
     () => AGENTS.map((a) => a.id as string).filter((id) => agents.some((d) => d.id === id && d.binaryPath)),
     [agents],
   );
+  // 单价用来认名字里看不出的轻量档（gpt-6-luna）；没拿到前先只按名字认
+  const [prices, setPrices] = useState<PriceTable>({});
+  useEffect(() => {
+    if (!open || gateway.models.length === 0) return;
+    let live = true;
+    invoke<PriceTable>("model_input_prices", { models: gateway.models.map((m) => m.id) })
+      .then((p) => live && setPrices(p))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [open, gateway.models]);
   const rows = useMemo(
     // 配不了的沉到最后
     () =>
-      planAutoConfig({ gateway, installed, profiles, presets: PROVIDER_PRESETS }).sort(
+      planAutoConfig({ gateway, installed, profiles, presets: PROVIDER_PRESETS, prices }).sort(
         (a, b) => Number(Boolean(a.skip)) - Number(Boolean(b.skip)),
       ),
-    [gateway, installed, profiles],
+    [gateway, installed, profiles, prices],
   );
 
   const pickOf = (r: AutoConfigRow) => chosen[r.agent] ?? r.defaultModel;

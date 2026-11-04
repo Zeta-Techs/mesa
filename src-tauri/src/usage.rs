@@ -2587,6 +2587,25 @@ pub async fn usage_unpriced_models() -> Result<Vec<UnpricedModelDto>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 一批模型的输入单价（美元 / 百万 token，与用量页算费同一条定价链）；查不到的不出现在结果里。
+/// 网关库「一键配置各 CLI」靠它认同家的轻量型号（gpt-6-luna 这类名字里没有 mini / flash 的）
+#[tauri::command]
+pub async fn model_input_prices(models: Vec<String>) -> Result<std::collections::HashMap<String, f64>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (chain, _) = pricing_table_and_rate();
+        Ok(input_prices(&models, &chain))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn input_prices(models: &[String], chain: &PriceChain) -> std::collections::HashMap<String, f64> {
+    models
+        .iter()
+        .filter_map(|m| price_of(m, chain).map(|(input, _)| (m.clone(), input)))
+        .collect()
+}
+
 fn pricing_table_and_rate() -> (PriceChain, f64) {
     let pricing_path = crate::dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
     (
@@ -3199,6 +3218,24 @@ pub async fn usage_activity_agents(year: i32) -> Result<UsageActivityAgentsDto, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn input_prices_tell_light_tiers_without_name_hints() {
+        // 一键配置认轻量靠它：gpt-6-luna 名字里没有 mini / flash，价格远低于同代 sol；
+        // 公共库层按统一写法存键（gpt-6-1-sol），目录里写 gpt-6.1-sol 也要对上
+        let db = crate::model_registry::keyed(vec![
+            ("gpt-6-luna".to_string(), (0.1, 0.5)),
+            ("gpt-6-1-sol".to_string(), (2.0, 10.0)),
+        ]);
+        let chain: PriceChain = [Vec::new(), db, Vec::new()];
+        let p = input_prices(
+            &["gpt-6-luna".into(), "gpt-6.1-sol".into(), "zz-no-such-model".into()],
+            &chain,
+        );
+        assert_eq!(p.get("gpt-6-luna"), Some(&0.1));
+        assert_eq!(p.get("gpt-6.1-sol"), Some(&2.0));
+        assert!(!p.contains_key("zz-no-such-model"));
+    }
 
     fn claude_assistant(model: &str) -> String {
         format!(
