@@ -2472,7 +2472,7 @@ mod tests {
                 include_str!("custom_runtime.rs"),
                 &["list_custom_runtimes", "save_custom_runtime", "delete_custom_runtime"],
             ),
-            ("profiles.rs", include_str!("profiles.rs"), &["profile_usage_refs"]),
+            ("profiles.rs", include_str!("profiles.rs"), &["profile_usage_refs", "list_profiles", "list_gateways"]),
             ("model_registry.rs", include_str!("model_registry.rs"), &["model_db_status"]),
             (
                 "projects.rs",

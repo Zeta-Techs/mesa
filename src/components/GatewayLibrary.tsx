@@ -69,6 +69,11 @@ const SLOT_LABELS: { key: keyof ProtocolSlots; label: string }[] = [
   { key: "cursor", label: "Cursor" },
 ];
 
+/** 上次打开网关库时的「近 30 天」用量：再打开先显示它，新结果回来再换（不让那一列每次从空白弹出来） */
+let monthUsageCache: GatewayUsageRow[] = [];
+/** PagePanel 滑入时长（ccode-sheet-right 220ms）稍多一点：重拉放在它之后 */
+const SLIDE_IN_MS = 240;
+
 function emptySlots(): ProtocolSlots {
   return { anthropic: "", openai: "", responses: "", gemini: "", cursor: "" };
 }
@@ -336,7 +341,7 @@ export default function GatewayLibrary({
   const [onlySet, setOnlySet] = useState(false);
   // 列表行上「测试」进行中的网关
   const [rowProbingId, setRowProbingId] = useState<string | null>(null);
-  const [monthUsage, setMonthUsage] = useState<GatewayUsageRow[]>([]);
+  const [monthUsage, setMonthUsage] = useState<GatewayUsageRow[]>(() => monthUsageCache);
   const [draftProbes, setDraftProbes] = useState<Record<string, SlotProbeSummary>>({});
   const [showSlots, setShowSlots] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -412,13 +417,29 @@ export default function GatewayLibrary({
     if (await confirmDiscard()) onClose();
   }
 
+  // 打开即显示：列表用 store 里已有的网关，「近 30 天」先用上次打开时的结果；
+  // 重拉网关会连同连接一起换掉、整个连接页跟着重渲染，放到滑入动画之后，免得面板滑到一半卡一下（2026-11-04 用户：点进去有点延迟）
   useEffect(() => {
-    void loadGateways().catch((e) => {
-      setError(`网关列表加载失败：${String(e)}`);
-    });
+    let live = true;
     invoke<GatewayUsageRow[]>("usage_by_gateway", { range: "month" })
-      .then(setMonthUsage)
-      .catch(() => setMonthUsage([]));
+      .then((rows) => {
+        monthUsageCache = rows;
+        if (live) setMonthUsage(rows);
+      })
+      .catch(() => live && setMonthUsage([]));
+    const timer = window.setTimeout(
+      () =>
+        void loadGateways().catch((e) => {
+          if (live) setError(`网关列表加载失败：${String(e)}`);
+        }),
+      animate ? SLIDE_IN_MS : 0,
+    );
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+    // 只在打开时跑一次；animate 是打开那一刻的值
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadGateways]);
 
   const openedInitial = useRef(false);

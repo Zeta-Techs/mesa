@@ -15,7 +15,7 @@
   在网页里执行一段脚本）也要排主线程的队——同步命令里等一秒，所有标签的输出和按键就停一秒。凡会等子进程或外部应用（osascript /
   open / start）、等端口就绪、走回收站、删拷目录树、冻结评审快照的命令，一律 `async fn` + `tauri::async_runtime::spawn_blocking`，
   需要的 State 在闭包里经 `app.state()` 取。已挪出：`pty_spawn` / `shell_spawn` / `pty_spawn_custom` / `pty_kill`、三个外部终端命令、
-  `run_close`、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`、`save_clipboard_image`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）、
+  `run_close`、`list_profiles` / `list_gateways`（带文件锁读几百 KB 网关目录，2026-11-04 网关库打开卡滑入）、`delete_schedule` / `schedule_run_delete` / `adopt_watch_run`、`save_clipboard_image`（pty.rs `waiting_commands_stay_off_main_thread` 钉住）、
   `run_find`（侧栏点开对话要等它，2026-10-24）、`pty_get_cwd`（原先在 PTY 全局锁里起 lsof，连 `pty_ack` / `pty_write` 一起挡住；现在锁内只取 pid，2026-10-24）、`task_list` / `run_list` / `run_get` / `list_schedules`（页面轮询 / 挂载时调，要开 app.db，2026-10-24；Rust 内部调用走 `run_get_sync` / `run_list_sync`，别回头调 async 版）；
   2026-10-26 一批收齐写 app.db 或扫目录的：目标与 Run 的增删改查（`task_create` / `task_update` / `task_delete` / `task_unarchive` /
   `task_purge_archived` / `task_set_launch` / `task_get` / `run_events` / `task_goal_events` / `run_open` / `run_open_custom` /

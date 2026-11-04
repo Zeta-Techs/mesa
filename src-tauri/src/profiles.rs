@@ -1938,9 +1938,13 @@ fn delete_gateway_secrets(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 列表命令带进程锁 + OS 文件锁、要读 gateways.json（大网关目录几百 KB）：async + spawn_blocking 不占主线程
+// （2026-11-04：网关库打开时同步调用卡住面板滑入，见 terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn list_profiles(store: tauri::State<'_, ProfileStore>) -> Result<Vec<Profile>, String> {
-    store.list()
+pub async fn list_profiles() -> Result<Vec<Profile>, String> {
+    tauri::async_runtime::spawn_blocking(|| ProfileStore::new()?.list())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -2558,8 +2562,10 @@ fn merge_one_slot(
 }
 
 #[tauri::command]
-pub fn list_gateways(store: tauri::State<'_, ProfileStore>) -> Result<Vec<Gateway>, String> {
-    store.list_gateways()
+pub async fn list_gateways() -> Result<Vec<Gateway>, String> {
+    tauri::async_runtime::spawn_blocking(|| ProfileStore::new()?.list_gateways())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
