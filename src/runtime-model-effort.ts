@@ -49,7 +49,8 @@ export function useRuntimeModelEffort(opts: {
   const modelByRelaunch = Boolean(relaunch) && switchByRelaunch(agentId, "model", true, cliVersion);
   /** 能带参直切（写一条命令就换到指定模型）：菜单直接列连接里的模型，不唤 CLI 的选择器 */
   const modelDirect = Boolean(sessionModelCmd) || modelSwitch?.kind === "direct";
-  /** 这一轮还在生成：重开会打断它，等这一轮结束再换 */
+  /** 这一轮还在生成：重开会打断它，等这一轮结束再换；Codex 生成中也不收斜杠命令（「'/model' is disabled while a task
+   *  is in progress」，0.166 二进制），会话内切换同样等这一轮结束 */
   const relaunchBlocked = status?.attention === "working";
 
   // 模型显示名的真值：屏上读回（status.modelSeen：/model 回显、开场横幅）> 刚发出的切换（待确认）> 启动模型。
@@ -100,6 +101,7 @@ export function useRuntimeModelEffort(opts: {
       relaunch?.({ model: m });
       return;
     }
+    if (sessionModelCmd && relaunchBlocked) return;
     const template = sessionModelCmd ?? (modelSwitch?.kind === "direct" ? modelSwitch.command : null);
     if (!template) return;
     // kimi 的 /model 参数是 config.toml 的 [models.*] 别名（非法字符清洗为 _，
@@ -186,6 +188,7 @@ export function useRuntimeModelEffort(opts: {
       relaunch?.({ effort: level });
       return;
     }
+    if (sessionEffort && relaunchBlocked) return;
     if (effortLive) writeCmd(effortLive.command.replace("{level}", level));
   }
   function commitEffort() {
@@ -215,6 +218,9 @@ export function useRuntimeModelEffort(opts: {
     modelByRelaunch,
     modelDirect,
     effortByRelaunch,
+    /** 生成中不能换（重开会打断；或 CLI 生成中不收切换命令）：菜单置灰、写明等这一轮结束 */
+    modelWaitsForTurn: modelByRelaunch || Boolean(sessionModelCmd),
+    effortWaitsForTurn: effortByRelaunch || Boolean(sessionEffort),
     effortSwitchable,
     effortPersistsViaCommand,
     relaunchBlocked,

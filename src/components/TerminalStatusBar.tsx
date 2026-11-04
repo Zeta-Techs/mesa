@@ -495,11 +495,11 @@ export default function TerminalStatusBar({
                   title={
                     !status?.ptyId
                       ? "启动终端后可切换模型"
-                      : rt.modelByRelaunch
-                        ? rt.relaunchBlocked
-                          ? "正在生成，等这一轮结束再换模型"
-                          : "切换模型（停下 Agent，用新模型接回这段对话；不改它的全局配置）"
-                        : "切换模型（写入终端执行）"
+                      : rt.modelWaitsForTurn && rt.relaunchBlocked
+                        ? "正在生成，等这一轮结束再换模型"
+                        : rt.modelByRelaunch
+                          ? "切换模型（停下 Agent，用新模型接回这段对话；不改它的全局配置）"
+                          : "切换模型（写入终端执行）"
                   }
                   aria-expanded={modelMenuOpen}
                   className={`rounded-full border-0 px-2 py-0.5 font-mono${narrow ? " max-w-[8rem] truncate align-middle" : ""}`}
@@ -531,7 +531,7 @@ export default function TerminalStatusBar({
                           <button
                             type="button"
                             onClick={() => pickModel(m)}
-                            disabled={rt.modelByRelaunch && rt.relaunchBlocked}
+                            disabled={rt.modelWaitsForTurn && rt.relaunchBlocked}
                             className="flex w-full items-center gap-1 rounded-sm px-2 py-1 text-left font-mono text-micro disabled:opacity-50"
                             style={{ color: m === shownModel ? fg : dim }}
                             onMouseEnter={(e) => {

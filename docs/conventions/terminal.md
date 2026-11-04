@@ -302,7 +302,11 @@
   （attention working）不让换（重开会打断这一轮）。Gemini /model set、Grok /effort 不写配置，照旧中途切。Codex 模型不再唤它的选择器，
   Mesa 自己列连接里的模型。**Codex ≥0.164 改回中途切**（2026-11-04，`switch-strategy.ts inSessionSwitchCommand`）：`/model <id>`、
   `/model --reasoning <档>` 带参数只改本段（屏上「for this session only」、config.toml 不动；--remote 经 app-server 时请求的模型 / effort 照换，
-  e2e_channel `E2E_BEFORE` 核对），菜单直接列连接里的模型；读不到版本按老版本重开。`chat-capture.py` 带 `ANSWER_MENU=1` 跑第三幕会比对临时 HOME 里的配置文件，新 CLI 版本先这样复核。
+  e2e_channel `E2E_BEFORE` 核对），菜单直接列连接里的模型；读不到版本按老版本重开。**生成中同样不让换**（`modelWaitsForTurn` /
+  `effortWaitsForTurn`）：Codex 生成中不收斜杠命令（「'/model' is disabled while a task is in progress」，0.166 二进制），写进去会被拒、
+  芯片白等 20 秒。Kimi 2.5（canary）起生成中也能 /model、/effort、下一轮生效，转正后再按版本放开。
+- **Grok 多行回车（2026-11-04 留意）**：Grok 1.0.74 alpha 新增 `ui.multiline_default`，用户开了回车变换行，Mesa 用 `\r` 提交会失效。
+  alpha 未转正、提交键未核实，暂不适配；转正后在金丝雀里核对它的提交键，再按用户 `~/.grok/config.toml` 的这个键改写提交。`chat-capture.py` 带 `ANSWER_MENU=1` 跑第三幕会比对临时 HOME 里的配置文件，新 CLI 版本先这样复核。
 - **信任菜单不走通用确认菜单（2026-10-18 用户：点完信任后同一个画面又出现一次）**：启动 20 秒的菜单扫描与这一轮的审批扫描都会把
   启动信任菜单认成通用菜单；点完信任、按键还没生效的那一两帧，信任卡撤了、通用卡顶上来。扫描时屏上是信任菜单（`parseTrustPrompt`）
   或选项与见过的信任菜单相同就不报；`answerTrust` 同时撤掉 menuPrompt。

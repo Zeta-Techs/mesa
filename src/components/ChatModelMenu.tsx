@@ -150,8 +150,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     send: runtime?.onTuiCommand,
     relaunch: runtime?.onRelaunch,
   });
-  // 换了要重开接回、而这一轮还在生成：先不让换（重开会打断这一轮）
-  const relaunchWaiting = Boolean(runtime) && rt.relaunchBlocked && (rt.modelByRelaunch || rt.effortByRelaunch);
+  // 换了要重开接回、而这一轮还在生成：先不让换（重开会打断这一轮）；Codex 这类生成中不收切换命令的同样等
+  const relaunchWaiting = Boolean(runtime) && rt.relaunchBlocked && (rt.modelWaitsForTurn || rt.effortWaitsForTurn);
 
   useEffect(() => {
     if (!open) {
@@ -343,7 +343,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             <button
               type="button"
               data-selected={m === currentModel}
-              disabled={Boolean(blocked) || (relaunchWaiting && rt.modelByRelaunch)}
+              disabled={Boolean(blocked) || (relaunchWaiting && rt.modelWaitsForTurn)}
               className={`${twoLine(m === currentModel)} disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent`}
               title={blocked ? `${m}\n${blocked}` : nameOf(m).tip}
               onClick={() => pickModel(m)}
@@ -414,7 +414,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           choices={effortChoices}
           current={currentEffort}
           onCommit={pickEffort}
-          disabled={relaunchWaiting && rt.effortByRelaunch}
+          disabled={relaunchWaiting && rt.effortWaitsForTurn}
         />
       );
     }
@@ -457,7 +457,10 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       : relaunchWaiting
         ? {
             short: "正在生成，等这一轮结束再换。",
-            full: `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}要停下 ${agentLabel} 再接回这段对话，正在生成时换会打断这一轮。`,
+            full:
+              rt.modelByRelaunch || rt.effortByRelaunch
+                ? `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}要停下 ${agentLabel} 再接回这段对话，正在生成时换会打断这一轮。`
+                : `${agentLabel} 正在生成时不接受切换命令，等这一轮结束再换。`,
           }
         : rt.modelByRelaunch || rt.effortByRelaunch
           ? {
