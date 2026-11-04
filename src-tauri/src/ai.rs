@@ -809,9 +809,14 @@ pub(crate) fn ai_prompt_impl_model(
 
 /// 项目助手「只读查看项目文件」（2026-11-04 用户拍板：问出错时让它自己打开脚本 / 日志 / 产物核对）。
 /// 目前只有 Claude Code 与 Codex：两家都能不落盘（花费从输出直接记账，不在项目里留内部会话、不登记项目级内部来源），
-/// 只读也有进程级保证（Claude `--permission-mode plan`、Codex `-s read-only`）。别家返回以 INSPECT_UNSUPPORTED 开头的错，
+/// 只读也有进程级保证（Claude 拿掉一切写 / 执行 / 联网工具、Codex `-s read-only`）。
+/// Claude 不用 plan 档：2026-11-04 实测 2.1.309 的 `-p --permission-mode plan` 会在 `~/.claude/plans/` 落一份计划文件
+/// （碰了 CLI 配置目录，违反「各 CLI 配置目录只读」）；改 default 档 + `--disallowedTools` 去掉写与执行，
+/// 同日实测让它「顺手把脚本改好」也只是把改法贴出来，项目与 ~/.claude/plans 都没多文件。别家返回以 INSPECT_UNSUPPORTED 开头的错，
 /// 前端退回只看记录。跑在项目根，工作副本经 `--add-dir`（Claude）带上；Codex 只读沙箱本就能读别处
 pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
+/// 只读查看时 Claude 不给的工具：改文件、跑命令、联网、开子代理（-p 里要审批的本就会被拒，这里写死成不给）
+const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash WebFetch WebSearch Task";
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
 
 pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String]) -> Option<Vec<String>> {
@@ -824,7 +829,9 @@ pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[Str
                 "json".into(),
                 "--no-session-persistence".into(),
                 "--permission-mode".into(),
-                "plan".into(),
+                "default".into(),
+                "--disallowedTools".into(),
+                CLAUDE_INSPECT_DISALLOWED.into(),
             ];
             for d in extra_dirs {
                 a.push("--add-dir".into());
@@ -3104,7 +3111,11 @@ ERROR: Your access token could not be refreshed because your refresh token was r
     #[test]
     fn inspect_readonly_args_are_read_only_and_ephemeral() {
         let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()]).unwrap();
-        assert!(claude.windows(2).any(|w| w == ["--permission-mode", "plan"]));
+        assert!(claude.windows(2).any(|w| w == ["--permission-mode", "default"]), "不用 plan 档（会写 ~/.claude/plans）");
+        let disallowed = claude.iter().position(|a| a == "--disallowedTools").map(|i| claude[i + 1].clone()).unwrap();
+        for tool in ["Edit", "Write", "Bash", "WebFetch"] {
+            assert!(disallowed.split(' ').any(|t| t == tool), "{tool} 要拿掉");
+        }
         assert!(claude.iter().any(|a| a == "--no-session-persistence"));
         assert!(claude.windows(2).any(|w| w == ["--add-dir", "/w/a"]));
         assert!(!claude.iter().any(|a| a.contains("bypass")));

@@ -194,8 +194,8 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
   howto 只带说明书摘录 + 一点项目概况（说明书编译期打包进后端，`assistant_guide_search` 按段打分，常问几类由 `GUIDE_TOPICS` 直接指到小节）；project 带快照（90 秒缓存）；
   mixed 两样都带；chat 什么都不带。回答下面写依据（说明书小节可点开到 GitHub 上那一节）；等待文案按分流写、超过 3 秒写秒数；没问成译成白话 + 「再问一次」。
 - **只读查看项目文件**（同日用户问「能不能像你一样读代码定位错误」→ 拍板「可以」）：改了 §5「正文不交给它」的约定——问出错原因（`wantsInspect`）或带着某次运行进来时，
-  在项目根只读跑一次（`ai::ai_inspect_readonly`，超时 240 秒），让它自己打开脚本 / 日志 / 任务书 / 产物，回答写清文件与行号。只支持 Claude Code（`-p --permission-mode plan
-  --no-session-persistence --add-dir <工作副本>`）与 Codex（`exec --ephemeral -s read-only`）：两家都不落盘、进程级只读；别家后端报 INSPECT_UNSUPPORTED，前端退回只看记录。
+  在项目根只读跑一次（`ai::ai_inspect_readonly`，超时 240 秒），让它自己打开脚本 / 日志 / 任务书 / 产物，回答写清文件与行号。只支持 Claude Code（`-p --permission-mode default --disallowedTools "Edit Write MultiEdit NotebookEdit Bash WebFetch WebSearch Task"
+  --no-session-persistence --add-dir <工作副本>`；不用 plan 档，见下「第一档核对」）与 Codex（`exec --ephemeral -s read-only`）：两家都不落盘、进程级只读；别家后端报 INSPECT_UNSUPPORTED，前端退回只看记录。
   运行登记为 internal（不进项目运行列表与卡点），花费从输出记账。问进度、下一步、怎么用都不进文件。Mesa 自己的 bug 仍做不到读代码定位（用户机器上没有源码），只能整理记录交开发者。
   干跑：Codex 0.166 在临时项目里读出「clean.py 第 3 行取 sample_id、表头没有这一列」，没写任何文件；**Claude Code 这条没干跑成**（本机全局配置的模型名 Claude 不认，换 Mesa 注入的连接后要实测一次）。
 - **同日用户截图三处修正**：输入框里又套一个直角焦点框（textarea 吃了全站 focus 环，改与聊天输入框同口径 `.ccode-assistant-composer`）；
@@ -206,5 +206,13 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
   面板画成派活单卡片（`WorkOrderCard`，可改一改），点「派出去」走 `assistant-dispatch.ts`：第 N 步的 AI 开着 → `mail_send` 留话；没开着 → `buildWorkspaceTerminalRequest` 接回那段对话带上单子自动开跑（同评审退回修改，步骤绑定优先）；
   新目标 → `task_create` + `prepareGoalRun`（同拆成几路做批准后开一路），编程项目不走。派过的按项目 + 那一轮时间记在本机，同一张不派两次。项目助手仍只读，活全由工作者做、做完走原有评审 / 验收。
   **未验**：三条派活路线都还没在 Mesa Dev 里实际派过。
+- **第一档核对**（2026-11-04 用户「先做第一档」）：
+  - 出错记录太吵：本机一天记下的 26 条全是界面探文件的「没找到」（read_file_preview / read_research_ledger / list_dir 的 os error 2 / 20），一条红色提示都没配上。
+    定：这类例行失败只在紧跟着弹了红色提示时才记（前端 `isRoutineFailure`、后端 `is_routine_failure` 同口径，读出时也滤掉旧的），同一处错 10 分钟内只送一次后端。
+    `read_image_raw` / `file_stamp` 的「路径不在范围内，拒绝读取」不算例行，照记（没配提示时项目助手不单凭它断定 Mesa 坏了）。
+  - Claude Code 只读查看实测（2.1.309，干净环境）：plan 档能读、能用 `--add-dir` 读工作副本，但会在 `~/.claude/plans/` 落一份计划文件（碰了 CLI 配置目录）——改 default 档 + 拿掉写 / 执行 / 联网工具；
+    改后实测让它「顺手把脚本改好」也只贴改法、项目没被改、`~/.claude/plans/` 没多文件，`--add-dir` 里的文件照样读得到。（Claude 每次启动会自己写一份 `~/.claude/backups/.claude.json.backup.*`，与 Mesa 其他无头调用一样，不是这里引入的。）
+    顺带发现：聊想法 / 先出方案的只读开聊也用 Claude 的 plan 档，同样可能往 `~/.claude/plans/` 落计划文件，没在这里改，另行处理。
+  - 打包产物：`npm run build` 后 `@tauri-apps/api/core` 只有一份，应用与插件的调用都走包装（失败先通知出错记录再抛），没有第二份未包装的 invoke。
 - **未验**：Mesa Dev 窗口里实际点一遍（卡点、出错了、项目助手问答与按钮、Agent 分工新卡、反馈表预填）。
 

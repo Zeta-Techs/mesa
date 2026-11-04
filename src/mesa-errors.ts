@@ -53,6 +53,18 @@ export function errorText(error: unknown): string {
   }
 }
 
+/**
+ * 例行的「没找到」：界面在探文件在不在（预览、台账、缩略图、目录），没有就算了，不是 Mesa 出错。
+ * 2026-11-04 本机一天的记录实证：记下的全是这一类（read_file_preview / read_research_ledger / list_dir 的
+ * No such file or directory、Not a directory），一条红色提示都没配上。这类只在紧跟着弹了红色提示时才记
+ * （后端 project_assistant.rs is_routine_failure 同口径）。
+ */
+const ROUTINE_RE = /\(os error 2\)|\(os error 20\)|No such file or directory|Not a directory|文件不存在或不可读|路径不可读/i;
+
+export function isRoutineFailure(message: string): boolean {
+  return ROUTINE_RE.test(message);
+}
+
 /** 从调用参数里找出所有像路径的字符串（只看两层，够覆盖 { input: { projectRoot } } 这类写法） */
 export function pathLikeArgs(args: unknown, depth = 0): string[] {
   if (depth > 2 || args == null) return [];

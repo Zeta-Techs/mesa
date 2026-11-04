@@ -54,3 +54,12 @@ test("出错一行写清次数与用户看到的提示", () => {
   ];
   assert.deepEqual(recentMesaErrors(rows, now).map((r) => r.command), ["a"]);
 });
+
+test("例行的「没找到」认得出来（只在配上红色提示时才记）", async () => {
+  const { isRoutineFailure } = await import("../src/mesa-errors.ts");
+  assert.equal(isRoutineFailure("路径不可读: No such file or directory (os error 2)"), true);
+  assert.equal(isRoutineFailure("读取目录失败: Not a directory (os error 20)"), true);
+  assert.equal(isRoutineFailure("文件不存在或不可读: x"), true);
+  assert.equal(isRoutineFailure("nothing added to commit"), false);
+  assert.equal(isRoutineFailure("路径不在项目/登记资源/工作区/终端目录范围内，拒绝读取"), false);
+});

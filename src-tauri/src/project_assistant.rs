@@ -169,6 +169,21 @@ pub(crate) fn attach_notice(
     true
 }
 
+/// 例行的「没找到」（界面探文件在不在，没有就算了）：没配上红色提示的不记、读出时也滤掉（前端 mesa-errors.ts isRoutineFailure 同口径）。
+/// 2026-11-04 本机实证：一天记下的全是 read_file_preview / read_research_ledger / list_dir 的这一类，一条提示都没有
+pub(crate) fn is_routine_failure(message: &str) -> bool {
+    const ROUTINE: &[&str] = &[
+        "(os error 2)",
+        "(os error 20)",
+        "No such file or directory",
+        "Not a directory",
+        "文件不存在或不可读",
+        "路径不可读",
+    ];
+    let lower = message.to_lowercase();
+    ROUTINE.iter().any(|p| lower.contains(&p.to_lowercase()))
+}
+
 fn now_fixed() -> chrono::DateTime<chrono::FixedOffset> {
     chrono::Local::now().fixed_offset()
 }
@@ -190,6 +205,9 @@ fn record_error_sync(
         .filter(|n| !n.is_empty())
         .map(|n| truncate(&crate::sessions::redact_sensitive_text(n), FIELD_CAP));
     if message.is_empty() && notice.is_none() {
+        return Ok(());
+    }
+    if source == "invoke" && notice.is_none() && is_routine_failure(&message) {
         return Ok(());
     }
     let dir = project_dir(project_root)?;
@@ -247,7 +265,10 @@ pub async fn mesa_error_record(
 pub async fn mesa_errors_read(project_root: String, limit: Option<usize>) -> Result<Vec<MesaErrorDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = project_dir(&project_root)?.join(ERRORS_FILE);
-        let rows: Vec<MesaErrorDto> = read_jsonl(&path);
+        let rows: Vec<MesaErrorDto> = read_jsonl::<MesaErrorDto>(&path)
+            .into_iter()
+            .filter(|r| r.notice.is_some() || !is_routine_failure(&r.message))
+            .collect();
         let limit = limit.unwrap_or(ERRORS_CAP).min(ERRORS_CAP);
         Ok(rows[rows.len().saturating_sub(limit)..].to_vec())
     })
@@ -681,6 +702,22 @@ mod tests {
         assert_eq!(merged.len(), ERRORS_CAP);
         assert_eq!(merged.last().unwrap().message, "new");
         assert_eq!(merged[0].message, "1");
+    }
+
+    #[test]
+    fn routine_not_found_is_only_kept_with_a_notice() {
+        let tmp = std::env::temp_dir().join(format!("mesa-assistant-routine-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let _guard = crate::storage::redirect_config_root(&tmp);
+        record_error_sync("/p/r", "invoke", "read_file_preview", "路径不可读: No such file or directory (os error 2)", None).unwrap();
+        assert!(read_jsonl::<MesaErrorDto>(&project_dir("/p/r").unwrap().join(ERRORS_FILE)).is_empty());
+        record_error_sync("/p/r", "invoke", "save_step", "路径不可读: No such file or directory (os error 2)", Some("保存失败")).unwrap();
+        record_error_sync("/p/r", "invoke", "workspace_review", "评审基线写入失败", None).unwrap();
+        let rows: Vec<MesaErrorDto> = read_jsonl(&project_dir("/p/r").unwrap().join(ERRORS_FILE));
+        assert_eq!(rows.len(), 2, "配上提示的例行失败、真正的失败都记");
+        assert!(is_routine_failure("读取目录失败: Not a directory (os error 20)"));
+        assert!(!is_routine_failure("路径不在项目/登记资源/工作区/终端目录范围内，拒绝读取"));
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

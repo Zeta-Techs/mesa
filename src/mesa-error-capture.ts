@@ -8,11 +8,12 @@ import { rawInvoke, setInvokeFailureHook } from "./tauri-core-shim";
 import type { ProjectDto, WorkspaceDto } from "./types";
 import { IS_WINDOWS } from "./hotkeys";
 import { subscribeToasts } from "./toast";
-import { attributeProject, errorText, shouldRecordFailure, type ProjectRootIndex } from "./mesa-errors";
+import { attributeProject, errorText, isRoutineFailure, shouldRecordFailure, type ProjectRootIndex } from "./mesa-errors";
 
 const INDEX_TTL_MS = 60_000;
 /** 红色提示与后台失败相隔多久内算同一件事 */
 const NOTICE_WINDOW_MS = 3_000;
+const THROTTLE_MS = 10 * 60_000;
 
 let installed = false;
 
@@ -43,10 +44,12 @@ export function installMesaErrorCapture() {
     return indexing;
   };
 
-  /** 最近一次记下的后台失败（等红色提示来配对） */
-  let lastFailure: { project: string; at: number } | null = null;
+  /** 最近一次后台失败（等红色提示来配对）；例行的「没找到」先不落盘，配上提示才记 */
+  let lastFailure: { project: string; command: string; message: string; at: number; recorded: boolean } | null = null;
   /** 归属还没查完提示就先到了：先存着，查完一起记 */
   let pendingNotice: { message: string; at: number } | null = null;
+  /** 同一处错 10 分钟内只送一次后端（后端也会合并，这里省掉一次次写盘） */
+  const lastSent = new Map<string, number>();
 
   const record = (project: string, source: string, command: string, message: string, notice?: string) => {
     rawInvoke("mesa_error_record", { projectRoot: project, source, command, message, notice: notice ?? null }).catch(
@@ -57,27 +60,46 @@ export function installMesaErrorCapture() {
   setInvokeFailureHook((cmd, args, error) => {
     if (!shouldRecordFailure(cmd, error)) return;
     const failedAt = Date.now();
+    const message = errorText(error);
     void refreshIndex()
       .then(() => {
         const project = attributeProject(args, index, IS_WINDOWS);
         if (!project) return;
         const notice = pendingNotice && Math.abs(pendingNotice.at - failedAt) <= NOTICE_WINDOW_MS ? pendingNotice : null;
         pendingNotice = null;
-        lastFailure = notice ? null : { project, at: failedAt };
-        record(project, "invoke", cmd, errorText(error), notice?.message);
+        if (notice) {
+          lastFailure = null;
+          record(project, "invoke", cmd, message, notice.message);
+          return;
+        }
+        const routine = isRoutineFailure(message);
+        const key = `${project}\n${cmd}\n${message}`;
+        const throttled = failedAt - (lastSent.get(key) ?? 0) < THROTTLE_MS;
+        const recorded = !routine && !throttled;
+        if (recorded) {
+          lastSent.set(key, failedAt);
+          if (lastSent.size > 200) lastSent.clear();
+          record(project, "invoke", cmd, message);
+        }
+        lastFailure = { project, command: cmd, message, at: failedAt, recorded };
       })
       .catch(() => {});
   });
 
   subscribeToasts((notice) => {
     if (notice.tone !== "error") return;
-    if (!lastFailure || Date.now() - lastFailure.at > NOTICE_WINDOW_MS) {
+    const failure = lastFailure;
+    if (!failure || Date.now() - failure.at > NOTICE_WINDOW_MS) {
       pendingNotice = { message: notice.message, at: Date.now() };
       return;
     }
-    const project = lastFailure.project;
     lastFailure = null;
+    if (!failure.recorded) {
+      // 例行失败 / 刚记过的这一回配上了红色提示：用户确实看到了，连原因一起记
+      record(failure.project, "invoke", failure.command, failure.message, notice.message);
+      return;
+    }
     // 稍等一下，让后台失败那条先落盘，提示才补得上
-    setTimeout(() => record(project, "toast", "", "", notice.message), 300);
+    setTimeout(() => record(failure.project, "toast", "", "", notice.message), 300);
   });
 }

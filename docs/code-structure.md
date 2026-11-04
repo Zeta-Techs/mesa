@@ -579,8 +579,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
-  mesa-errors.ts             # Mesa 出错记录纯逻辑：shouldRecordFailure（终端收发 / 插件 / 取消不记）、attributeProject（参数里的路径落在项目根或其工作副本）、mesaErrorLine（tests/mesa-errors.test.ts）
-  mesa-error-capture.ts      # Mesa 出错记录的安装（main.tsx 启动时一次）：tauri-core-shim 的失败钩子按项目记 mesa_error_record，3 秒内的红色提示补到同一条；归不到项目的不记
+  mesa-errors.ts             # Mesa 出错记录纯逻辑：shouldRecordFailure（终端收发 / 插件 / 取消不记）、isRoutineFailure（探文件的「没找到」，配上红色提示才记，后端同口径）、attributeProject（参数里的路径落在项目根或其工作副本）、mesaErrorLine（tests/mesa-errors.test.ts）
+  mesa-error-capture.ts      # Mesa 出错记录的安装（main.tsx 启动时一次）：tauri-core-shim 的失败钩子按项目记 mesa_error_record，3 秒内的红色提示补到同一条；归不到项目的不记；同一处 10 分钟内只送一次
   tauri-core-shim.ts         # `@tauri-apps/api/core` 的薄包装（vite.config.ts 精确别名指到这里）：invoke 失败先通知出错记录再原样抛出，其余导出原样转出；rawInvoke 不经钩子。
                              # Tauri 注入的 __TAURI_INTERNALS__.invoke 不可改写，只能在导入层包；node / esbuild 测试不走别名
   project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
