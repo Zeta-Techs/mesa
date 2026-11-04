@@ -60,7 +60,7 @@
 | 会话格式 | JSONL。首行 metadata；消息 `{id, timestamp, content, type: user/info/error/warning/gemini}`，gemini 类型带 `toolCalls` 和 `tokens{input,output,cached,thoughts,tool,total}`；**控制记录 `$rewindTo`（截断后续消息）和 `$set`（patch 元数据）必须处理**，不能简单拼接。旧版单 JSON 文件仍需兼容。若多个落盘文件声明同一 `sessionId`，按最新文件作为唯一会话代表。**易漂移** |
 | 关键启动参数 | `-m`、`-p`（进入 headless）、`--output-format stream-json`、`-r/--resume`、`--list-sessions` |
 | 坑 | **默认 30 天自动删除会话**（`general.sessionRetention`）；新目录首次运行有信任确认（`--skip-trust` 绕过）；管道 stdio 会静默进入 headless；会话文件边写边追加，末行可能残缺；**多模型切换无配置注入机制**（已核实），只能在 TUI 里 `/model set <id>` 手动切换。**0.46 实机核实补充**：`/model` 的「Select Model」选择器列表**硬编码**（main 视图 Auto/Manual 两项 + Manual 子视图官方模型），`GEMINI_MODEL` env 的值不进列表（优先级 `--model` > `GEMINI_MODEL` > settings `model.name`）；`/model set <id>` 零校验任意 id 当场生效。自定义模型进选择器的官方机制：`experimental.dynamicModelConfiguration: true` + `modelConfigs.modelDefinitions`（与内置表 merge，`tier:"custom"` + `isVisible:true` 进 Manual 子视图；实验开关，requiresRestart）——**Ccode「设为全局默认」已写入该登记**（2026-09-01：开关 + 逐模型 definition，displayName = 配置名·模型，thinking/multimodalToolUse 按注册表确知才写；只写不删旧条目）。**闪烁**：inline 模式 UI 高度超终端行数即整区重绘（内置 useFlickerDetector 检测；上游已知问题簇，官方 Epic google-gemini/gemini-cli#10673，与终端种类无关，维护者背书 alternate buffer 可根治），缓解 = settings `ui.useAlternateBuffer: true`（默认 false；开了之后 `ui.incrementalRendering`（默认 true）才生效），可叠加 `ui.showSpinner: false` / `ui.loadingPhrases: "off"` |
-| 发版复核（2026-11-01） | 核到 0.66.0（另看 0.67.0-preview.0）。无影响：0.65 未受信任文件夹里项目级 `.gemini/settings.json` 只读（Mesa 只写用户级）、0.66 settings 的 `$VAR` 在 `.env` 读完后才展开。0.67 预览新增 `gemini models [-o json]`，转正后看它是否读网关模型列表 |
+| 发版复核（2026-11-01） | 核到 0.66.0（另看 0.67.0-preview.0）。无影响：0.65 未受信任文件夹里项目级 `.gemini/settings.json` 只读（Mesa 只写用户级）、0.66 settings 的 `$VAR` 在 `.env` 读完后才展开。0.67 预览新增 `gemini models [-o json]`：读的是内置静态模型表、不读网关（2026-11-04 读源码），与 Mesa 无关，关闭 |
 
 ## 4. Qwen Code
 
@@ -297,7 +297,8 @@
      二进制里的 `max_output_tokens` 全部是 exec pragma（工具输出截断）非模型请求 → unsupported；
      `model_reasoning_effort`（config 键）与 provider `http_headers`/`env_http_headers` 实证 → inject。
    - **gemini**：settings schema chunk 内 temperature/topP/maxOutputTokens 零命中 → unsupported；
-     effort/headers 未核实 → unknown（modelConfigs.customAliases 可挂生成参数但需 experimental
+     headers：`GEMINI_CLI_CUSTOM_HEADERS`（逗号分隔「名: 值」，0.66 parseCustomHeaders；2026-11-04 假网关实测请求带上）→ inject。
+     effort 未核实 → unknown（modelConfigs.customAliases 可挂生成参数但需 experimental
      开关且消费链未逐键实证，不接线）。
    - **qwen**（0.22.0 bundle 复核，2026-09-01，旧「无通道」结论修正）：temperature/top_p/
      max_output_tokens 通道 = settings.json **条目级** `generationConfig.samplingParams`

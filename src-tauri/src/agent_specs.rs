@@ -1191,12 +1191,13 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         // gemini：启动注入无 temperature/topP/maxOutputTokens 通道；0.66 起 settings 的
         // modelConfigs.customOverrides（match.model → generateContentConfig）可按模型落盘（bundle
         // ModelConfigService 实证，2026-10-30）→ persist，由「设为全局」写（global_config::patch_gemini_extras）
+        // custom_headers：GEMINI_CLI_CUSTOM_HEADERS（逗号分隔「名: 值」，2026-11-04 假网关实测 0.66）
         "gemini" => row(
             "persist",
             "persist",
             "persist",
             "unknown",
-            "unknown",
+            "inject",
         ),
         // codex：temperature/top_p 仅存在于 wire schema（ModelPreferences），config 无键；
         // max_output_tokens 字符串全部是 exec pragma（工具输出截断）非模型请求；

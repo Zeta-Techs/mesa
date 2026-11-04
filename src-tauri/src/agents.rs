@@ -111,6 +111,7 @@ fn env_preview_source(name: &str, profile: &Profile) -> &'static str {
         | "KIMI_MODEL_TOP_P"
         | "KIMI_MODEL_MAX_COMPLETION_TOKENS"
         | "KIMI_CODE_CUSTOM_HEADERS"
+        | "GEMINI_CLI_CUSTOM_HEADERS"
         | "QWEN_CODE_MAX_OUTPUT_TOKENS" => return "请求策略",
         // grok 的模型名单收敛 + 请求策略 [models] 全局默认都装在这个 overlay 里
         "GROK_CONFIG" => return "Grok overlay",
@@ -669,8 +670,9 @@ fn apply_request_policy_env(
     policy: &crate::profiles::RequestPolicy,
     getenv: &dyn Fn(&str) -> Option<String>,
 ) {
-    // Header 名=环境变量名 → "Name: value" 逐行（claude/codebuddy 同格式，\n 连接，二进制实证）
-    let inject_headers = |plan: &mut LaunchPlan, env_key: &str| {
+    // Header 名=环境变量名 → "Name: value" 逐行（claude/codebuddy/kimi 同格式，\n 连接，二进制实证）；
+    // gemini 按逗号切（0.66 parseCustomHeaders：`,(?=\s*[^,:]+:)`），用 ", " 连
+    let inject_headers_sep = |plan: &mut LaunchPlan, env_key: &str, sep: &str| {
         let lines: Vec<String> = policy
             .header_env
             .iter()
@@ -681,9 +683,10 @@ fn apply_request_policy_env(
             })
             .collect();
         if !lines.is_empty() {
-            plan.env.push((env_key.into(), lines.join("\n")));
+            plan.env.push((env_key.into(), lines.join(sep)));
         }
     };
+    let inject_headers = |plan: &mut LaunchPlan, env_key: &str| inject_headers_sep(plan, env_key, "\n");
     match agent {
         "claude-code" => {
             // temperature/top_p 无独立 env：CLAUDE_CODE_EXTRA_BODY 解析为 JSON 对象后展开进
@@ -745,6 +748,10 @@ fn apply_request_policy_env(
                     .push(("KIMI_MODEL_MAX_COMPLETION_TOKENS".into(), v.to_string()));
             }
             inject_headers(plan, "KIMI_CODE_CUSTOM_HEADERS");
+        }
+        "gemini" => {
+            // 2026-11-04 假网关实测 0.66：gemini-api-key / gateway 认证下每个请求都带
+            inject_headers_sep(plan, "GEMINI_CLI_CUSTOM_HEADERS", ", ");
         }
         _ => {}
     }
@@ -6317,6 +6324,16 @@ mod tests {
         assert!(plan
             .env
             .contains(&("CODEBUDDY_CUSTOM_HEADERS".into(), "X-Region: cn-1".into())));
+    }
+
+    #[test]
+    fn gemini_custom_headers_are_comma_joined() {
+        let mut p = profile("gemini", None);
+        p.request_policy.header_env.insert("X-A".into(), "VA".into());
+        p.request_policy.header_env.insert("X-B".into(), "VB".into());
+        let mut plan = LaunchPlan::default();
+        apply_request_policy_env(&mut plan, "gemini", &p.request_policy, &|k| Some(format!("v-{k}")));
+        assert_eq!(plan.env, vec![("GEMINI_CLI_CUSTOM_HEADERS".into(), "X-A: v-VA, X-B: v-VB".into())]);
     }
 
     #[test]
