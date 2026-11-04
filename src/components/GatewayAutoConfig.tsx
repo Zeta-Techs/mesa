@@ -18,6 +18,7 @@ import {
 } from "../gateway-autoconfig";
 import { Checkbox, InlineNotice, primaryActionClass, searchFieldClass, secondaryActionClass } from "./PageFrame";
 import { Modal } from "./Modal";
+import AgentIcon from "./AgentIcon";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 
@@ -261,10 +262,11 @@ export default function GatewayAutoConfig({
                 )}
               </div>
               <span
-                className={`flex h-7 w-28 shrink-0 items-center truncate text-sm ${r.skip ? "text-l3" : "text-l1"}`}
+                className={`flex h-7 w-32 shrink-0 items-center gap-2 text-sm ${r.skip ? "text-l3" : "text-l1"}`}
                 title={r.slot ? `走 ${SLOT_LABEL[r.slot]} 协议地址` : undefined}
               >
-                {agentLabel(r.agent)}
+                <AgentIcon agent={r.agent} label={agentLabel(r.agent)} className={r.skip ? "opacity-50" : ""} />
+                <span className="min-w-0 truncate">{agentLabel(r.agent)}</span>
               </span>
               {r.skip ? (
                 <span className="flex min-h-7 min-w-0 flex-1 items-center text-xs text-l3">{r.skip}</span>
