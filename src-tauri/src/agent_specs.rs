@@ -2134,7 +2134,7 @@ mod tests {
         // 启动注入够不到，设为全局写 modelConfigs.customOverrides（2026-10-30）
         assert_eq!(gemini_dto.request_policy.temperature, "persist");
         assert_eq!(gemini_dto.request_policy.reasoning_effort, "unknown");
-        assert_eq!(gemini_dto.request_policy.custom_headers, "unknown");
+        assert_eq!(gemini_dto.request_policy.custom_headers, "inject");
         assert_eq!(gemini_dto.request_policy.max_output_tokens, "persist");
         assert_eq!(gemini_dto.request_policy.top_p, "persist");
         let codex_dto = agent_capabilities()
