@@ -367,7 +367,7 @@ components/ProjectRulesPanel.tsx  # 项目设置抽屉「规则」面板（Proje
                              #   按 agent 筛选胶囊（usage_activity_agents 年矩阵一次拉、切胶囊纯前端过滤，
                              #   分档/活跃/峰值/连续随胶囊重算，streak 限所选年）；
                              #   数据自持（usage_activity 全历史非零日，refreshKey 由页级刷新驱动）
-  pipeline-presets.ts        # 内置流水线模板 PIPELINE_TEMPLATES（六套，含 v3.97「LaTeX 论文」）；
+  pipeline-presets.ts        # 内置流水线模板 PIPELINE_TEMPLATES（六套，含 v3.97「LaTeX 论文」）；分路声明 LIT_NOTES_FANOUT（精读）/ DATA_CLEAN_FANOUT（清洗按数据集，2026-11-04）；
 pipeline-append.ts         # 「＋ 从模板追加」冲突判定（PipelineEditor / TemplatePickModal 消费，与后端 append_pipeline_steps 同口径）：同名步骤交付相容（expectedArtifacts 被旧步包含）可直接复用，不相容的 renameConflictingSteps 改名「步骤名（模板名）·N」防撞名——显示名不等于步骤身份（tests/research-tools.test.ts）
 pipeline-upgrade.ts        # 模板升级候选 pipelineUpgradeCandidates：名称与工作区名同时一致才配对，逐字段比 brief/产物/输入/人工事项/决策等十余键，只提出更新候选、不自动改写已有项目（PipelineEditor 消费；tests/research-tools.test.ts）
 manuscript-font.ts         # 初稿正文字体一句话指令（默认 Times New Roman＋宋体）：让 agent 渲染前先跑 quarto-render 技能的 manuscript_font.py 写 YAML mainfont/CJKmainfont 与 format.docx 的 reference-doc，写完再渲、本机没这套字体就停下不换。注意：现挂载点仅 tests/manuscript-font.test.ts——同口径纪律文本已并入 pipeline-presets.ts 初稿步 brief，运行时无消费方，改提示词两处对齐

@@ -232,6 +232,24 @@ const LIT_NOTES_FANOUT: StepFanOutDto = {
     "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。",
 };
 
+/** 数据清洗按数据集分几路（2026-11-04）：数据登记一步写的 data/datasets.json，每路 1 个起、最多 4 路。
+ *  各路只画像、起草本批规则与脚本（拿不准的标 [待确认]），不问人、不写 cleaning/ 顶层文件；收尾一路合规则、问人、写总入口与对账 */
+const DATA_CLEAN_FANOUT: StepFanOutDto = {
+  items: "data/datasets.json",
+  filter: "",
+  key: "id",
+  label: "name",
+  per: 1,
+  max: 4,
+  own:
+    "cleaning/batches/<序号>-<数据集名>/ 下的文件：本批画像 profile.md、规则草案 rules.md（拿不准的标 [待确认]）、清洗脚本 clean.py（只读原始数据）、报告片段 report.md；" +
+    "各路问不了人，去重、剔除、插补、合表、单位与编码这类关键规则只写进草案、脚本里默认不执行（留开关），收尾一路问过人再开；" +
+    "处理后的数据写产物目录、文件名带序号。不写 .ccode/help-wanted.md 与 cleaning/ 顶层文件（rules.md、clean.py、manifest、报告、fields.json、rule-decisions.md），不问人",
+  merge:
+    "按 data-clean 技能收尾：把 cleaning/batches/ 各批规则草案合成 cleaning/rules.md（同一条合并、各批冲突的标 [待确认]）；按任务书第 1 条先报数、写 help-wanted 问人，[待确认] 列进 cleaning/rule-decisions.md；" +
+    "人答过后按裁决打开各批脚本里对应的关键规则开关；cleaning/clean.py 做总入口（支持 --input/--output，依次调各批脚本）；写 cleaned-data-manifest.md、cleaning-report.md、cleaning/fields.json 与本步验收摘要。",
+};
+
 const LIT_NOTES_WRITE =
   "写法见 {skill:lit-notes} 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
@@ -943,14 +961,15 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "3. 质量问题单列一节：缺失、重复、异常取值、口径不一致，逐项给出样例行号或计数；\n" +
       "4. 敏感字段单列清单：疑似个人标识/隐私的字段只列字段名与判断依据，不复制内容样例；脱敏口径不写死，留人拍板（开工前的决定卡已就此提问）；\n" +
       "5. 数据不可读或格式损坏时在报告中说明并停止，不自行修复原始数据。\n" +
-      "完成标准：data-dictionary.md 覆盖全部数据集与字段；同步写 data/fields.json，每个字段一条稳定唯一字符串 id、name、type、status 记录；质量问题逐项有证据（行号/计数），敏感字段清单无内容样例。\n" +
+      "完成标准：data-dictionary.md 覆盖全部数据集与字段；同步写 data/fields.json，每个字段一条稳定唯一字符串 id、name、type、status 记录；同步写 data/datasets.json，每个数据集一条 id、name、path（项目根相对路径）；质量问题逐项有证据（行号/计数），敏感字段清单无内容样例。\n" +
       QUALITY_STATUS,
-    expectedArtifacts: ["data-dictionary.md", "data/fields.json"],
+    expectedArtifacts: ["data-dictionary.md", "data/fields.json", "data/datasets.json"],
     decisionMode: "hard_pause",
     acceptanceCriteria: [
       "machine:file:data-dictionary.md",
       "machine:contains:data-dictionary.md::字段",
       "machine:records:data/fields.json::id,name,type,status",
+      "machine:records:data/datasets.json::id,name,path",
     ],
     skills: [],
     run: [],
@@ -1005,6 +1024,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
     ],
     inputs: ["data-dictionary.md", "data/fields.json"],
     skills: ["data-clean"],
+    fanOut: DATA_CLEAN_FANOUT,
     run: [],
     humanTasks: [
       // 2026-11-02：由「直接改 rules.md」改成流程线上逐条点（decisions_cleared），与审查报告、待核实同一套

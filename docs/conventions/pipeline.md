@@ -236,6 +236,9 @@
 - **分路声明（2026-11-03 协作四期）**：`[steps.fan_out]` 写在步骤合同里（与 checks 同级），英文综述 / 毕业论文的「文献精读与笔记」带 `LIT_NOTES_FANOUT`
   （`pipeline-presets.ts`：included.json 纳入的篇、每路 8 篇、最多 4 路；`own` 点名开头不跑 `lit_records.py write`，`merge` 写清收尾要出的共享文件）。
   不进任务书正文（各路开场另给），不占长度预算。改英文综述模板后照旧跑 `scripts/export-review-template.ts` 同步示例课题 JSON。
+  **数据清洗（2026-11-04）**：数据处理模板「数据登记与检查」多交 `data/datasets.json`（id、name、path，机器验收 records），「清洗与整理」带 `DATA_CLEAN_FANOUT`
+  （每个数据集一路、最多 4 路）。各路只写 `cleaning/batches/<序号>-<名>/`，不写 help-wanted 与 cleaning/ 顶层文件；**各路问不了人，关键规则（去重、剔除、插补、合表、
+  单位编码）只写草案、脚本里默认不执行**，收尾一路问过人再按裁决打开。Codex 干跑实证：不写这句时 glm-5.2 一路自己把去重做了。
 - **任务书「项目资源」段（2026-11-03）**：步骤绑了资源只列绑的、全列；没绑且总数 ≤ 20 全列；超过 20 按类型收——条目多的那类（多半是一堆论文 PDF）
   只列前 5 条加「另有 N 个」，数据、引文这类少的照旧全列，末尾写明全部在 `.ccode/project.toml` 的 [[resources]]（`task-md.ts resourceLines`）。
   起因：真实项目登记 102 个 PDF，每一步任务书全列，占 2.7 万字（一步 3.4 万字），收后一步 6.5–10 千字。PDF 有无的判断（「读 PDF」一节）仍看全部资源。

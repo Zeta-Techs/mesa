@@ -82,7 +82,8 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 实测 review 29731、论文 39722、数据 15699、学位 38445、投稿 10182、LaTeX 15795。
   // 2026-11-03 收尾节加一句「提交因权限或没配 git 署名失败时别重试」（Codex 沙箱写不到主仓 .git，agent 反复试后报失败），每步约 45 字。
   // 实测 review 30001、论文 40154、数据 15915、学位 38877、投稿 10290、LaTeX 16011。
-  const before: Record<string, number> = { review: 30100, "research-paper": 40300, "data-processing": 16000, thesis: 39000, "submission-rebuttal": 10400, "latex-paper": 16100 };
+  // 2026-11-04：数据登记一步加「同步写 data/datasets.json（id、name、path）」——清洗按数据集分几路靠它，data-processing 实测 16040，上限 16100。
+  const before: Record<string, number> = { review: 30100, "research-paper": 40300, "data-processing": 16100, thesis: 39000, "submission-rebuttal": 10400, "latex-paper": 16100 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);
