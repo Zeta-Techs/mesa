@@ -47,6 +47,7 @@ import {
   secondaryActionClass,
 } from "./PageFrame";
 import { useAppStore } from "../store";
+import { GitInstallOffer } from "../dep-install";
 import { RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
 import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
@@ -414,6 +415,8 @@ export default function ProjectGroup({
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
   // 新登记的是不是科研项目（决定进页引导里要不要出「初始化 git」）
   const freshResearch = (cfg?.workMode ?? project?.workMode) === "research";
+  const depCheck = useAppStore((s) => s.depCheck);
+  const gitMissing = depCheck?.git.status === "missing" || depCheck?.git.status === "clt_stub";
   const [cfgWarnings, setCfgWarnings] = useState<string[]>([]);
   const [cfgLoadError, setCfgLoadError] = useState<string | null>(null);
 
@@ -1596,15 +1599,17 @@ export default function ProjectGroup({
         </div>
       )}
 
-      {/* 科研项目点「开始」时自动初始化 git（pipeline-start.ts ensure_git_repo），不让人先做这一步；
-          只在扫到了文献 / 数据时留这一行给「查看文献」 */}
-      {registered && freshGitGuide && (!freshResearch || (cfg?.resources.length ?? 0) > 0) && (
+      {/* 科研项目点「开始」时自动初始化 git（pipeline-start.ts ensure_git_repo），装了 Git 的人不用先做这一步；
+          这一行只在这台电脑缺 Git（给一键安装）或扫到了文献 / 数据（给「查看文献」）时出现 */}
+      {registered && freshGitGuide && (!freshResearch || gitMissing || (cfg?.resources.length ?? 0) > 0) && (
         <div className="ccode-well mb-3 flex items-center gap-3 rounded-lg px-3 py-2 text-xs text-l2">
           <span className="min-w-0 flex-1">
             {!freshResearch && "初始化 git 后才能建工作区。"}
+            {freshResearch && gitMissing && "这台电脑还没装 Git：每一步的成果靠它留版本、供你评审，点「开始」前先装上。"}
+            {freshResearch && gitMissing && <GitInstallOffer error={null} force retryHint="Git 装好了，可以点「开始」了" />}
             {cfg && (cfg.resources.length > 0) && (
-              <span className={freshResearch ? "" : "text-l3"}>
-                {freshResearch ? "" : " "}已扫到 {resourceSummary}。
+              <span className={freshResearch && !gitMissing ? "" : "text-l3"}>
+                {freshResearch && !gitMissing ? "" : " "}已扫到 {resourceSummary}。
               </span>
             )}
             {gitMsg && <span className="text-ok-text"> ✓ {gitMsg}</span>}

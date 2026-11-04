@@ -139,8 +139,11 @@ export function GitInstallOffer({
   error,
   onInstalled,
   retryHint = "Git 装好了，可以继续了",
+  force = false,
 }: {
   error: string | null | undefined;
+  /** 已从依赖检测得知缺 Git（不等报错）：直接给安装按钮 */
+  force?: boolean;
   onInstalled?: () => void;
   retryHint?: string;
 }) {
@@ -156,7 +159,7 @@ export function GitInstallOffer({
     toast(retryHint, "success");
     onInstalled?.();
   });
-  if (!error || !isGitMissingError(error)) return null;
+  if (!force && (!error || !isGitMissingError(error))) return null;
   const entry = depInstall.entries.git;
   return (
     <div className="mt-2">
