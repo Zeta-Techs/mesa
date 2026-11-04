@@ -63,6 +63,9 @@ pub struct AssistantTurnDto {
     /// 用的哪个连接（给人看的一行，如「Codex · 公司中转 · gpt-5」）
     #[serde(default)]
     pub connection: String,
+    /// 这一问依据了什么（「说明书 · 8.1 聊天 / 终端」「这个项目的记录」），回答下面一行小字
+    #[serde(default)]
+    pub basis: String,
 }
 
 fn truncate(text: &str, cap: usize) -> String {
@@ -299,6 +302,7 @@ pub async fn project_assistant_ask(
     profile_id: Option<String>,
     model: Option<String>,
     connection: Option<String>,
+    basis: Option<String>,
     question: String,
     prompt: String,
 ) -> Result<AssistantTurnDto, String> {
@@ -325,6 +329,7 @@ pub async fn project_assistant_ask(
             question: truncate(&crate::sessions::redact_sensitive_text(&question), FIELD_CAP),
             answer,
             connection: connection.unwrap_or_default().chars().take(200).collect(),
+            basis: basis.unwrap_or_default().chars().take(300).collect(),
         };
         // 记不下不挡回答：这次照样给人看
         let _ = append_turn(&project_root, turn.clone());
@@ -350,6 +355,250 @@ pub async fn assistant_review_notes(worktree_path: String) -> Option<String> {
     .flatten()
 }
 
+// ===== 说明书检索（2026-11-04 用户：「问怎么换模型也要看项目记录吗」）=====
+// 「怎么用 Mesa」一类问题不拼项目快照，改翻说明书：说明书随应用打包（编译期读进来），按问题挑最相关的几段。
+// 切分口径：按标题记下所在小节，按空行切段（列表紧跟在引导句后面不空行，会和引导句在同一段）；
+// 打分用汉字两两相邻的字组与英文词，罕见的词分量重（idf），标题里出现的加倍。
+
+const USER_GUIDE: &str = include_str!("../../docs/guide/user-guide.md");
+const GUIDE_HIT_CAP: usize = 1800;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GuideHitDto {
+    /// 所在小节标题（如「8.1 聊天 / 终端」）
+    pub heading: String,
+    pub text: String,
+}
+
+struct GuidePara {
+    heading: String,
+    /// 在本小节里是第几段（0 起）
+    pos: usize,
+    text: String,
+    grams: std::collections::HashSet<String>,
+    heading_grams: std::collections::HashSet<String>,
+}
+
+/// 字组：连续汉字两两相邻取一组；英文 / 数字按词（两个字符以上），一律小写
+pub(crate) fn guide_grams(text: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut han: Vec<char> = Vec::new();
+    let mut word = String::new();
+    let flush_han = |han: &mut Vec<char>, out: &mut std::collections::HashSet<String>| {
+        for pair in han.windows(2) {
+            out.insert(pair.iter().collect());
+        }
+        han.clear();
+    };
+    for ch in text.chars() {
+        let is_han = ('\u{4e00}'..='\u{9fff}').contains(&ch);
+        if is_han {
+            if word.chars().count() >= 2 {
+                out.insert(std::mem::take(&mut word));
+            }
+            word.clear();
+            han.push(ch);
+        } else {
+            flush_han(&mut han, &mut out);
+            if ch.is_ascii_alphanumeric() {
+                word.push(ch.to_ascii_lowercase());
+            } else {
+                if word.chars().count() >= 2 {
+                    out.insert(std::mem::take(&mut word));
+                }
+                word.clear();
+            }
+        }
+    }
+    flush_han(&mut han, &mut out);
+    if word.chars().count() >= 2 {
+        out.insert(word);
+    }
+    out
+}
+
+/// 问句里不带意思的词（问法、语气、人称），去掉再取字组，免得「怎么」「如何」把所有段都匹配上
+const QUESTION_FILLERS: &[&str] = &[
+    "怎么样", "怎么办", "怎么", "如何", "怎样", "在哪里", "在哪儿", "在哪", "哪里", "哪儿", "能不能", "可不可以", "可以", "是不是",
+    "什么", "一下", "我想", "我要", "请问", "为什么", "这个", "那个", "应该", "需要", "吗", "呢", "吧", "啊", "的", "了", "我", "你",
+];
+
+fn guide_paras() -> &'static Vec<GuidePara> {
+    static PARAS: std::sync::OnceLock<Vec<GuidePara>> = std::sync::OnceLock::new();
+    PARAS.get_or_init(|| {
+        let mut out = Vec::new();
+        let mut heading = String::new();
+        let mut buf: Vec<&str> = Vec::new();
+        let mut in_comment = false;
+        let push = |heading: &str, buf: &mut Vec<&str>, out: &mut Vec<GuidePara>| {
+            let text = buf.join("\n").trim().to_string();
+            buf.clear();
+            // 目录那一节只是链接清单，不进检索
+            if text.chars().count() < 12 || heading.is_empty() || heading == "目录" {
+                return;
+            }
+            let pos = out.iter().rev().take_while(|p: &&GuidePara| p.heading == heading).count();
+            out.push(GuidePara {
+                heading: heading.to_string(),
+                pos,
+                grams: guide_grams(&text),
+                heading_grams: guide_grams(heading),
+                text,
+            });
+        };
+        for line in USER_GUIDE.lines() {
+            let t = line.trim();
+            if in_comment {
+                if t.contains("-->") {
+                    in_comment = false;
+                }
+                continue;
+            }
+            if t.starts_with("<!--") {
+                in_comment = !t.contains("-->");
+                continue;
+            }
+            if t.starts_with('#') {
+                push(&heading, &mut buf, &mut out);
+                heading = t.trim_start_matches('#').trim().to_string();
+                continue;
+            }
+            // 后补素材位不进检索
+            if t.starts_with("【配图】") || t.starts_with("【配视频】") || t.starts_with("> 【配") {
+                continue;
+            }
+            if t.is_empty() {
+                push(&heading, &mut buf, &mut out);
+            } else {
+                buf.push(line);
+            }
+        }
+        push(&heading, &mut buf, &mut out);
+        out
+    })
+}
+
+/// 常问的几类「怎么用」直接指到说明书对应处（光靠字面匹配，「换模型」会先翻到「雷达解读换模型」这种偏门段落）：
+/// 问句里有左边任一词，就给右边这些小节（标题包含）或段落（以它开头）加重分
+const GUIDE_TOPICS: &[(&[&str], &[&str])] = &[
+    (&["模型", "思考档", "思考强度"], &["**换 Agent、模型和思考强度**", "9.7 思考档位"]),
+    (&["连接", "中转", "密钥", "apikey", "网关"], &["9.2 加一条连接"]),
+    (&["官方", "订阅", "登录"], &["9.3 官方订阅"]),
+    (&["默认agent", "分工", "绑定", "专属"], &["**Agent 分工页签**"]),
+    (&["全局"], &["9.6 两种「生效」别混"]),
+    (&["技能", "skill"], &["10 技能页"]),
+    (&["mcp"], &["11 MCP 页"]),
+    (&["主题", "深色", "浅色", "外观", "字号", "字体"], &["13.1 外观"]),
+    (&["快捷键"], &["13.4 快捷键"]),
+    (&["更新", "升级", "新版"], &["检查更新"]),
+    (&["反馈", "提需求", "bug"], &["反馈与提需求"]),
+    (&["定时", "雷达"], &["5.2 新建定时任务", "5.1 文献雷达"]),
+    (&["评审", "保存进项目", "采纳"], &["4.9 评审页"]),
+    (&["用量", "花费", "余额", "费用"], &["12 用量页"]),
+    (&["手机"], &["8.4.2 从手机添加"]),
+    (&["添加项目", "新建项目", "加项目"], &["3.2 添加项目"]),
+    (&["出图", "画图", "生成图片"], &["9.8 出图模型"]),
+    (&["项目助手", "小桌"], &["**项目助手：看不懂、出错了，问它**"]),
+];
+
+fn topic_boost(question: &str, para: &GuidePara) -> f64 {
+    let q: String = question.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    let mut boost = 0.0;
+    for (words, anchors) in GUIDE_TOPICS {
+        if !words.iter().any(|w| q.contains(w)) {
+            continue;
+        }
+        for anchor in *anchors {
+            if para.text.starts_with(anchor) {
+                boost += 60.0;
+            } else if para.heading.contains(anchor) {
+                boost += (40.0 - para.pos as f64 * 6.0).max(8.0);
+            }
+        }
+    }
+    boost
+}
+
+pub(crate) fn guide_search(question: &str, limit: usize) -> Vec<GuideHitDto> {
+    let mut q = question.to_string();
+    for filler in QUESTION_FILLERS {
+        q = q.replace(filler, " ");
+    }
+    let grams = guide_grams(&q);
+    if grams.is_empty() && !GUIDE_TOPICS.iter().any(|(words, _)| words.iter().any(|w| question.to_lowercase().contains(w))) {
+        return Vec::new();
+    }
+    let paras = guide_paras();
+    let n = paras.len() as f64;
+    let weights: Vec<(&String, f64)> = grams
+        .iter()
+        .map(|g| {
+            let df = paras.iter().filter(|p| p.grams.contains(g) || p.heading_grams.contains(g)).count() as f64;
+            (g, ((n + 1.0) / (df + 1.0)).ln())
+        })
+        .filter(|(_, w)| *w > 0.0)
+        .collect();
+    let mut scored: Vec<(usize, f64)> = paras
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let score: f64 = weights
+                .iter()
+                .map(|(g, w)| {
+                    let mut s = 0.0;
+                    if p.grams.contains(*g) {
+                        s += 1.0;
+                    }
+                    if p.heading_grams.contains(*g) {
+                        s += 2.0;
+                    }
+                    s * w
+                })
+                .sum::<f64>()
+                + topic_boost(question, p);
+            (i, score)
+        })
+        .filter(|(_, s)| *s > 0.0)
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let mut used = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for (i, _) in scored {
+        if out.len() >= limit {
+            break;
+        }
+        if used.contains(&i) {
+            continue;
+        }
+        // 带上同一小节里紧跟的两段（引导句后面常是分条说明）
+        let mut text = String::new();
+        for j in i..(i + 3).min(paras.len()) {
+            if paras[j].heading != paras[i].heading || used.contains(&j) {
+                break;
+            }
+            used.insert(j);
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&paras[j].text);
+            if text.chars().count() >= GUIDE_HIT_CAP {
+                break;
+            }
+        }
+        out.push(GuideHitDto { heading: paras[i].heading.clone(), text: truncate(&text, GUIDE_HIT_CAP) });
+    }
+    out
+}
+
+#[tauri::command]
+pub async fn assistant_guide_search(question: String, limit: Option<usize>) -> Vec<GuideHitDto> {
+    let limit = limit.unwrap_or(4).clamp(1, 8);
+    tauri::async_runtime::spawn_blocking(move || guide_search(&question, limit))
+        .await
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +618,41 @@ mod tests {
             notice: None,
             version: "0".into(),
         }
+    }
+
+    #[test]
+    fn guide_search_finds_the_model_switch_section() {
+        let hits = guide_search("如何跟换模型", 4);
+        assert!(!hits.is_empty());
+        assert!(
+            hits.iter().any(|h| h.text.contains("模型 · 思考")),
+            "换模型应翻到「模型 · 思考档」那一段：{:?}",
+            hits.iter().map(|h| &h.heading).collect::<Vec<_>>()
+        );
+        assert!(guide_search("怎么 如何 吗", 4).is_empty(), "只有问法没有内容时不乱翻");
+        assert!(hits.iter().all(|h| h.text.chars().count() <= GUIDE_HIT_CAP + 10));
+    }
+
+    #[test]
+    fn every_guide_topic_anchor_still_exists() {
+        // 说明书改了标题 / 引导句，这里会红：同步改 GUIDE_TOPICS，免得「怎么换模型」又翻到偏门段落
+        let paras = guide_paras();
+        for (_, anchors) in GUIDE_TOPICS {
+            for anchor in *anchors {
+                assert!(
+                    paras.iter().any(|p| p.text.starts_with(anchor) || p.heading.contains(anchor)),
+                    "说明书里找不到 GUIDE_TOPICS 的锚点：{anchor}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn guide_grams_pairs_han_and_keeps_words() {
+        let g = guide_grams("换 Claude 模型");
+        assert!(g.contains("claude"));
+        assert!(g.contains("模型"));
+        assert!(!g.contains("换"));
     }
 
     #[test]
@@ -419,7 +703,7 @@ mod tests {
         assert_eq!(one[0].notice.as_deref(), Some("保存进项目失败：boom"));
         assert!(!project_dir("/p/one").unwrap().starts_with("/p/one"), "不写进项目目录");
         assert!(record_error_sync("/p/one", "weird", "", "x", None).is_err());
-        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new() }).unwrap();
+        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new() }).unwrap();
         let turns: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/one").unwrap().join(LOG_FILE));
         assert_eq!(turns.len(), 1);
         let none: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/two").unwrap().join(LOG_FILE));

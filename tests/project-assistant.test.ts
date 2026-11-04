@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAssistantPrompt, historyBlock, parseAssistantAnswer } from "../src/project-assistant.ts";
+import {
+  assistantErrorText,
+  basisGuideHeadings,
+  basisText,
+  buildAssistantPrompt,
+  classifyQuestion,
+  guideAnchor,
+  historyBlock,
+  parseAssistantAnswer,
+} from "../src/project-assistant.ts";
 import { buildProjectSnapshot, type SnapshotInput } from "../src/project-snapshot.ts";
 
 test("动作标记：只认白名单，按钮文字由前端生成，最多三个", () => {
@@ -26,18 +35,66 @@ test("动作标记：缺内容的不要，同一种只留一个，全角冒号�
   assert.deepEqual(actions.map((a) => a.kind), ["discuss", "step"]);
 });
 
-test("提示词带规矩、快照、最近几轮和这次的问题", () => {
-  const prompt = buildAssistantPrompt({
-    snapshot: "# 项目快照",
-    history: [{ question: "到哪了", answer: "第 2 步" }],
-    question: "哪里出错了",
+test("提示词按分流带材料：问项目带快照，问怎么用带说明书与概况，打招呼什么都不带", () => {
+  const history = [{ question: "到哪了", answer: "第 2 步" }];
+  const project = buildAssistantPrompt({ intent: "project", snapshot: "# 项目快照", history, question: "哪里出错了" });
+  assert.match(project, /先分清是谁的问题/);
+  assert.match(project, /# 项目快照/);
+  assert.match(project, /用户：到哪了\n你：第 2 步/);
+  assert.match(project, /## 这次的问题\n哪里出错了$/);
+  assert.doesNotMatch(project, /## 说明书摘录/);
+
+  const howto = buildAssistantPrompt({
+    intent: "howto",
+    guide: [{ heading: "8.1 聊天 / 终端", text: "**换 Agent、模型和思考强度**：……" }],
+    context: "项目：综述",
+    history,
+    question: "如何换模型",
   });
-  assert.match(prompt, /先分清是谁的问题/);
-  assert.match(prompt, /# 项目快照/);
-  assert.match(prompt, /用户：到哪了\n你：第 2 步/);
-  assert.match(prompt, /## 这次的问题\n哪里出错了$/);
+  assert.match(howto, /Mesa 怎么用/);
+  assert.match(howto, /### 8\.1 聊天 \/ 终端/);
+  assert.match(howto, /## 项目概况\n项目：综述/);
+  assert.doesNotMatch(howto, /项目快照/);
+  assert.match(buildAssistantPrompt({ intent: "howto", guide: [], history: [], question: "x" }), /说明书里没翻到/);
+
+  const chat = buildAssistantPrompt({ intent: "chat", history, question: "谢谢" });
+  assert.match(chat, /打个招呼/);
+  assert.doesNotMatch(chat, /项目快照|## 说明书摘录/);
+
   const many = Array.from({ length: 10 }, (_, i) => ({ question: `q${i}`, answer: "a" }));
   assert.ok(!historyBlock(many).includes("q3") && historyBlock(many).includes("q4"));
+});
+
+test("问题分流：怎么用 / 问项目 / 两样都沾 / 打招呼", () => {
+  assert.equal(classifyQuestion("如何跟换模型"), "howto");
+  assert.equal(classifyQuestion("在哪设置快捷键？"), "howto");
+  assert.equal(classifyQuestion("MCP 是什么意思"), "howto");
+  assert.equal(classifyQuestion("现在到哪了？"), "project");
+  assert.equal(classifyQuestion("哪里出问题了？"), "project");
+  assert.equal(classifyQuestion("我下一步该做什么？"), "project");
+  assert.equal(classifyQuestion("第 3 步为什么一直保存不进项目？"), "project");
+  assert.equal(classifyQuestion("第3步出错了怎么办"), "mixed");
+  assert.equal(classifyQuestion("你好"), "chat");
+  assert.equal(classifyQuestion("谢谢！"), "chat");
+  assert.equal(classifyQuestion("综述写得怎么样"), "howto");
+  assert.equal(classifyQuestion("帮我看看"), "mixed");
+  assert.equal(classifyQuestion("你好", true), "project", "带着某次运行进来的一律问项目");
+});
+
+test("依据一行：说明书哪几节 + 项目记录；小节能拆出来做链接", () => {
+  const b = basisText("mixed", ["8.1 聊天 / 终端", "8.1 聊天 / 终端", "9.7 思考档位"]);
+  assert.equal(b, "说明书「8.1 聊天 / 终端」「9.7 思考档位」 · 这个项目的记录");
+  assert.deepEqual(basisGuideHeadings(b), ["8.1 聊天 / 终端", "9.7 思考档位"]);
+  assert.equal(basisText("howto", []), "说明书里没翻到相关段落");
+  assert.equal(basisText("chat", []), "");
+  assert.equal(guideAnchor("8.1 聊天 / 终端"), "81-聊天--终端");
+  assert.equal(guideAnchor("9.2 加一条连接（中转 / API 密钥）"), "92-加一条连接中转--api-密钥");
+});
+
+test("没问成：超时、找不到 Agent 译成白话，其余照原文", () => {
+  assert.match(assistantErrorText("AI 调用超时（120s）。"), /两分钟还没答完/);
+  assert.match(assistantErrorText("未找到 claude（PATH 与常见安装目录均无）"), /找不到/);
+  assert.equal(assistantErrorText("Error: something odd"), "something odd");
 });
 
 function input(over: Partial<SnapshotInput> = {}): SnapshotInput {

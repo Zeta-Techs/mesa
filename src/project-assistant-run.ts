@@ -13,7 +13,7 @@ import { isAppCrashClose, latestRunFailure } from "./run-failure";
 import { projectAssistantLaunch } from "./project-agents";
 import { AGENTS } from "./types";
 import { buildProjectSnapshot, type SnapshotInput, type SnapshotRun, type SnapshotStep } from "./project-snapshot";
-import { buildAssistantPrompt, type AssistantHistoryTurn } from "./project-assistant";
+import { basisText, buildAssistantPrompt, classifyQuestion, type AssistantHistoryTurn, type AssistantIntent } from "./project-assistant";
 import type { ChecksDto } from "./research-checks";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
@@ -36,6 +36,8 @@ export interface AssistantTurn {
   question: string;
   answer: string;
   connection: string;
+  /** 这一问依据了什么（说明书哪几节 / 这个项目的记录）；旧记录没有 */
+  basis?: string;
 }
 
 /** 「问问为什么」带进来的那件事 */
@@ -215,23 +217,67 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
   return buildProjectSnapshot(input);
 }
 
-/** 问一次：取快照 → 拼提示词 → 后端脱敏后无头调用、落记录。项目默认那家不支持无头调用时退回「AI 功能」的连接 */
+/** 快照留 90 秒：接着追问不用每次重新取一遍（带「这次重点」的不走缓存） */
+const SNAPSHOT_TTL_MS = 90_000;
+const snapshotCache = new Map<string, { at: number; text: string }>();
+
+async function cachedSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
+  if (!focus) {
+    const hit = snapshotCache.get(projectPath);
+    if (hit && Date.now() - hit.at < SNAPSHOT_TTL_MS) return hit.text;
+  }
+  const text = await gatherSnapshot(projectPath, focus);
+  if (!focus) snapshotCache.set(projectPath, { at: Date.now(), text });
+  return text;
+}
+
+/** 「怎么用」类问题只带的一点项目概况：项目名、工作方式、默认 Agent、项目助手用的连接 */
+function projectContext(projectPath: string, project: ProjectDto | null, connLine: string): string {
+  const mode = project?.workMode === "research" ? "科研" : project?.workMode === "coding" ? "编程" : project?.workMode === "office" ? "工作" : "未登记";
+  const agent = project?.defaultAgent ? (AGENTS.find((a) => a.id === project.defaultAgent)?.label ?? project.defaultAgent) : "没设";
+  return [
+    `项目：${project?.name ?? projectPath}（${mode}项目）`,
+    `项目默认 Agent：${agent}`,
+    `项目助手这次用的连接：${connLine}`,
+  ].join("\n");
+}
+
+/** 问一次：先分流（classifyQuestion），按类取材料 → 拼提示词 → 后端脱敏后无头调用、落记录。
+ *  项目默认那家不支持无头调用时退回「AI 功能」的连接 */
 export async function askProjectAssistant(input: {
   projectPath: string;
   project: ProjectDto | null;
   question: string;
   history: readonly AssistantHistoryTurn[];
   focus: AssistantFocus | null;
+  intent?: AssistantIntent;
 }): Promise<AssistantTurn> {
-  const snapshot = await gatherSnapshot(input.projectPath, input.focus);
-  const prompt = buildAssistantPrompt({ snapshot, history: input.history, question: input.question });
+  const intent = input.intent ?? classifyQuestion(input.question, !!input.focus);
   const conn = assistantConnection(input.project);
+  const needSnapshot = intent === "project" || intent === "mixed";
+  const needGuide = intent === "howto" || intent === "mixed";
+  const [snapshot, guide] = await Promise.all([
+    needSnapshot ? cachedSnapshot(input.projectPath, input.focus) : Promise.resolve(null),
+    needGuide
+      ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? 2 : 4 }), [])
+      : Promise.resolve([] as { heading: string; text: string }[]),
+  ]);
+  const prompt = buildAssistantPrompt({
+    intent,
+    snapshot,
+    guide,
+    context: intent === "howto" ? projectContext(input.projectPath, input.project, conn.line) : null,
+    history: input.history,
+    question: input.question,
+  });
+  const basis = basisText(intent, guide.map((g) => g.heading));
   const ask = (profileId: string | null, model: string | null, connection: string) =>
     invoke<AssistantTurn>("project_assistant_ask", {
       projectRoot: input.projectPath,
       profileId,
       model,
       connection,
+      basis,
       question: input.question,
       prompt,
     });

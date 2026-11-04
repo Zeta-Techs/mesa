@@ -8,7 +8,20 @@ import MesaBuddy from "./MesaBuddy";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
 import { buddyDayPart, buddyMood } from "../buddy-time";
-import { parseAssistantAnswer, QUICK_QUESTIONS, splitAnswerLead, type AssistantAction } from "../project-assistant";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  assistantErrorText,
+  basisGuideHeadings,
+  classifyQuestion,
+  guideAnchor,
+  INTENT_WAITING,
+  parseAssistantAnswer,
+  QUICK_QUESTIONS,
+  splitAnswerLead,
+  type AssistantAction,
+  type AssistantIntent,
+} from "../project-assistant";
+import { userGuideUrl } from "../help-links";
 import {
   askProjectAssistant,
   assistantConnection,
@@ -72,6 +85,12 @@ export default function ProjectAssistantPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  /** 这次问的是哪一类（等的时候那一行写什么） */
+  const [intent, setIntent] = useState<AssistantIntent>("project");
+  /** 已经等了几秒（超过 3 秒才写出来） */
+  const [waited, setWaited] = useState(0);
+  /** 没问成的那一问（错误上方照样显示，「再问一次」用它） */
+  const [failed, setFailed] = useState<{ question: string; focus: AssistantFocus | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<AssistantFocus | null>(null);
   /** 这次打开后刚答完的那一轮（它旁边的小桌举手蹦一下，旧的站着） */
@@ -103,11 +122,22 @@ export default function ProjectAssistantPanel({
     endRef.current?.scrollIntoView({ block: "end" });
   }, [turns.length, busy, error]);
 
+  useEffect(() => {
+    if (!busy) return;
+    setWaited(0);
+    const started = Date.now();
+    const timer = window.setInterval(() => setWaited(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
+
   async function send(question: string, withFocus: AssistantFocus | null) {
     const q = question.trim();
     if (!q || busy || !projectPath) return;
+    const kind = classifyQuestion(q, !!withFocus);
+    setIntent(kind);
     setBusy(true);
     setPending(q);
+    setFailed(null);
     setDraft("");
     if (inputRef.current) inputRef.current.style.height = "";
     setError(null);
@@ -118,13 +148,14 @@ export default function ProjectAssistantPanel({
         question: q,
         history: turns,
         focus: withFocus,
+        intent: kind,
       });
       setTurns((list) => [...list, turn]);
       setFreshAt(turn.at);
       setFocus(null);
     } catch (reason) {
-      setError(String(reason));
-      setDraft(q);
+      setError(assistantErrorText(String(reason)));
+      setFailed({ question: q, focus: withFocus });
     } finally {
       setBusy(false);
       setPending(null);
@@ -297,6 +328,33 @@ export default function ProjectAssistantPanel({
                       <ChatMarkdown text={rest} cwd={projectPath} />
                     </div>
                   )}
+                  {turn.basis && (
+                    <p className="mt-2 text-micro text-l4">
+                      依据：
+                      {(() => {
+                        const heads = basisGuideHeadings(turn.basis);
+                        if (heads.length === 0) return turn.basis;
+                        const tail = turn.basis.replace(/^说明书(「[^」]+」)+/, "");
+                        return (
+                          <>
+                            说明书
+                            {heads.map((h) => (
+                              <button
+                                key={h}
+                                type="button"
+                                className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                                title="在浏览器里打开说明书这一节"
+                                onClick={() => void openUrl(userGuideUrl(guideAnchor(h))).catch(() => toast("浏览器没打开，稍后再试", "warning"))}
+                              >
+                                <span className="text-micro">「{h}」</span>
+                              </button>
+                            ))}
+                            {tail}
+                          </>
+                        );
+                      })()}
+                    </p>
+                  )}
                   {parsed.actions.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {parsed.actions.map((action) => (
@@ -321,16 +379,34 @@ export default function ProjectAssistantPanel({
               {pending && <QuestionBubble text={pending} />}
               <div className="flex items-center gap-2 text-sm text-l3">
                 <MesaBuddy size={22} pose="think" />
-                {/* 小桌自己在托腮想（头上三道光标），这里不再叠一个 M▁ */}
-                <span>正在看这个项目的记录…</span>
+                {/* 小桌自己在托腮想（头上三道光标），这里不再叠一个 M▁；按问题分流写在翻什么 */}
+                <span>{INTENT_WAITING[intent]}</span>
+                {waited >= 3 && <span className="text-xs tabular-nums text-l4">{waited} 秒</span>}
               </div>
             </article>
           )}
           {error && (
-            <div className="flex items-start gap-2">
-              <MesaBuddy size={22} pose="oops" />
-              <p className="min-w-0 break-words text-sm text-err-text">没问成：{error}</p>
-            </div>
+            <article className="flex flex-col gap-3">
+              {failed && <QuestionBubble text={failed.question} />}
+              <div className="flex items-start gap-2">
+                <MesaBuddy size={22} pose="oops" />
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm leading-6 text-err-text">没问成：{error}</p>
+                  {failed && (
+                    <button
+                      type="button"
+                      className={`${secondaryActionClass} mt-2`}
+                      onClick={() => {
+                        setError(null);
+                        void send(failed.question, failed.focus);
+                      }}
+                    >
+                      再问一次
+                    </button>
+                  )}
+                </div>
+              </div>
+            </article>
           )}
         </div>
       )}

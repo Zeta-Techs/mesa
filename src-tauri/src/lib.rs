@@ -960,6 +960,7 @@ pub fn run() {
             project_assistant::assistant_log_clear,
             project_assistant::project_assistant_ask,
             project_assistant::assistant_review_notes,
+            project_assistant::assistant_guide_search,
             fan_out::fan_out_plan,
             fan_out::fan_out_done,
             task_packs::preview_task_pack_import,
