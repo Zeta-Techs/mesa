@@ -1,27 +1,59 @@
-import { useState } from "react";
-import { Check, Send } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Send } from "lucide-react";
 import { compactFieldClass, ghostActionClass, primaryActionClass } from "./PageFrame";
+import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
+import { relTime } from "../rel-time";
 import type { WorkOrder } from "../project-assistant";
+
+const TONE_CLASS: Record<DispatchTone, string> = {
+  wait: "text-warn-text",
+  live: "text-ok-text",
+  done: "text-cta",
+  fail: "text-err-text",
+  idle: "text-l3",
+};
 
 /**
  * 项目助手起草的派活单（2026-11-04 用户拍板「它起草、你点一下就派」）：看清交给谁、要做什么、怎样算做完，
- * 能就地改一改，点「派出去」才开工；派过的记在本机（同一张不会派两次）。项目助手自己不碰文件。
+ * 能就地改一改，点「派出去」才开工。派过的记在问答记录那一轮上（不再派第二次），卡片每 10 秒看一次进度：
+ * 还没送到（对方停在等确认 / 对话关了）/ 在做 / 做完等评审 / 做完等验收 / 已保存进项目。项目助手自己不碰文件。
  */
 export default function WorkOrderCard({
   order,
-  sentNote,
+  record,
+  projectPath,
   onDispatch,
 }: {
   order: WorkOrder;
-  /** 已派出时的那句（「已留话给第 2 步的 AI」）；没派为 null */
-  sentNote: string | null;
+  /** 派过了的记录；没派为 null */
+  record: DispatchRecord | null;
+  projectPath: string | null;
   onDispatch: (order: WorkOrder) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<WorkOrder>(order);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const to = draft.target === "step" ? `第 ${draft.step} 步的 AI` : "新目标（隔离副本里做，做完验收）";
+  const [status, setStatus] = useState<{ text: string; tone: DispatchTone } | null>(null);
+  const shown = record ? { ...draft, title: record.title } : draft;
+  const to = shown.target === "step" ? `第 ${shown.step} 步的 AI` : "新目标（隔离副本里做，做完验收）";
+
+  useEffect(() => {
+    if (!record || !projectPath) return;
+    let stale = false;
+    const load = () =>
+      void dispatchStatus(record, projectPath)
+        .then((s) => {
+          if (!stale) setStatus(s);
+        })
+        .catch(() => {});
+    load();
+    const timer = window.setInterval(load, 10_000);
+    return () => {
+      stale = true;
+      window.clearInterval(timer);
+    };
+  }, [record, projectPath]);
 
   async function dispatch() {
     if (!draft.task.trim()) return;
@@ -43,7 +75,7 @@ export default function WorkOrderCard({
         <span className="font-medium text-l2">派活单</span>
         <span>· 交给{to}</span>
       </div>
-      {editing ? (
+      {editing && !record ? (
         <div className="space-y-2">
           <input
             className={`${compactFieldClass} w-full`}
@@ -73,23 +105,25 @@ export default function WorkOrderCard({
         </div>
       ) : (
         <div className="space-y-1.5 text-sm leading-6">
-          <p className="font-medium text-l1">{draft.title}</p>
-          <p className="whitespace-pre-wrap break-words text-l2">{draft.task}</p>
-          {draft.done && (
+          <p className="font-medium text-l1">{shown.title}</p>
+          <p className="whitespace-pre-wrap break-words text-l2">{shown.task}</p>
+          {shown.done && (
             <p className="whitespace-pre-wrap break-words text-l3">
               <span className="text-l3">怎样算做完：</span>
-              {draft.done}
+              {shown.done}
             </p>
           )}
         </div>
       )}
       {error && <p className="mt-2 break-words text-xs text-err-text">没派出去：{error}</p>}
-      <div className="mt-3 flex items-center gap-2">
-        {sentNote ? (
-          <span className="flex items-center gap-1.5 text-xs text-ok-text">
-            <Check size={13} strokeWidth={2} aria-hidden="true" />
-            {sentNote}
-          </span>
+      <div className="mt-3 flex min-w-0 items-center gap-2">
+        {record ? (
+          <div className="min-w-0 text-xs leading-5">
+            <p className="text-l3">
+              {relTime(record.at)}派出 · {record.mode === "mail" ? "留话给开着的 AI" : record.mode === "resume" ? "接回那一步的对话开跑" : "记成目标开工"}
+            </p>
+            <p className={status ? TONE_CLASS[status.tone] : "text-l3"}>现在：{status?.text ?? "正在看…"}</p>
+          </div>
         ) : (
           <>
             <button type="button" className={`${primaryActionClass} gap-1.5`} disabled={busy || !draft.task.trim()} onClick={() => void dispatch()}>

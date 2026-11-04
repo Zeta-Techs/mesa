@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
-import { subscribeToastDismiss, subscribeToasts, type ToastNotice } from "../toast";
+import { subscribeToastDismiss, subscribeToastPatch, subscribeToasts, type ToastNotice } from "../toast";
 import { noticeDurationMs, splitNoticeText } from "../notice-text";
 import { compactPrimaryActionClass, rowActionClass } from "./PageFrame";
 
 export default function ToastHost() {
   const [items, setItems] = useState<ToastNotice[]>([]);
+  /** 每条会自动消失的提示的计时器（补了按钮的要重新计时，多留一会儿） */
+  const timers = useRef(new Map<number, number>());
 
   useEffect(() => {
     const unsubscribe = subscribeToasts((notice) => {
@@ -23,9 +25,28 @@ export default function ToastHost() {
       });
       if (notice.sticky) return;
       // 长说明按字数多留一会儿（原来一律 3.2 秒，长句还没读完就消失）
-      window.setTimeout(() => {
-        setItems((current) => current.filter((item) => item.id !== notice.id));
-      }, noticeDurationMs(notice.message, notice.tone));
+      timers.current.set(
+        notice.id,
+        window.setTimeout(() => {
+          timers.current.delete(notice.id);
+          setItems((current) => current.filter((item) => item.id !== notice.id));
+        }, noticeDurationMs(notice.message, notice.tone)),
+      );
+    });
+    const unsubscribePatch = subscribeToastPatch((id, actions) => {
+      setItems((current) =>
+        current.map((item) => (item.id === id ? { ...item, actions: [...(item.actions ?? []), ...actions] } : item)),
+      );
+      const old = timers.current.get(id);
+      if (old === undefined) return;
+      window.clearTimeout(old);
+      timers.current.set(
+        id,
+        window.setTimeout(() => {
+          timers.current.delete(id);
+          setItems((current) => current.filter((item) => item.id !== id));
+        }, 12_000),
+      );
     });
     const unsubscribeDismiss = subscribeToastDismiss((key) => {
       setItems((current) => current.filter((item) => item.key !== key));
@@ -33,6 +54,7 @@ export default function ToastHost() {
     return () => {
       unsubscribe();
       unsubscribeDismiss();
+      unsubscribePatch();
     };
   }, []);
 

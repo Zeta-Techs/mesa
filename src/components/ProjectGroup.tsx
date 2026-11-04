@@ -1370,16 +1370,17 @@ export default function ProjectGroup({
   const stepDoneFlags = stepStatuses.map((st) => st.key === "done");
   // 圆下状态小字（2026-10-17 用户拍板）：圆只有颜色，待评审/进行中一眼分不清；
   // 进行中再按终端注意力细分「等你确认 / 等你查看」。待开始与检查中不写
-  const stepperTexts = stepStatuses.map((st) =>
+  const stepFailures = stepStatuses.map((st) =>
+    st.key === "active" && st.ws ? latestRunFailure(projectRuns, st.ws.worktreePath, IS_WINDOWS) : null,
+  );
+  const stepperTexts = stepStatuses.map((st, i) =>
     stepperStatusText(st.key, {
       archived: st.key === "pending" && !!st.ws,
       attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs, IS_WINDOWS) : null,
-      failure:
-        st.key === "active" && st.ws
-          ? (latestRunFailure(projectRuns, st.ws.worktreePath, IS_WINDOWS)?.reason ?? null)
-          : null,
+      failure: stepFailures[i]?.reason ?? null,
     }),
   );
+  const openAssistant = useAppStore((s) => s.openAssistant);
   const allStepsDone =
     stepDoneFlags.length > 0 && stepDoneFlags.every(Boolean);
   /** 步骤状态快照：白话状态短语 + 主推进动作（聚焦头部与流程线节点入口共用口径；
@@ -1931,11 +1932,28 @@ export default function ProjectGroup({
                         key={`${i}-${cfg.steps[i]?.name ?? ""}`}
                         className="flex h-4 min-w-0 items-center justify-center"
                       >
-                        {text && (
+                        {text && text.text === "出错了" && stepFailures[i] ? (
+                          // 出错了直接问项目助手（2026-11-04）：带着这次出错的运行打开，它会去看记录、必要时只读打开文件
+                          <button
+                            type="button"
+                            className={`truncate text-micro leading-4 underline decoration-dotted underline-offset-2 hover:opacity-80 ${text.tone}`}
+                            title={`${text.title ?? ""}\n点一下问项目助手为什么`}
+                            onClick={() => {
+                              const failure = stepFailures[i]!;
+                              openAssistant(projectPath, `第 ${i + 1} 步「${cfg.steps[i]?.name ?? ""}」为什么出错？我该怎么办？`, {
+                                title: `第 ${i + 1} 步最近一次运行出错`,
+                                detail: `出错原因：${failure.reason}`,
+                                runId: failure.run.id,
+                              });
+                            }}
+                          >
+                            <span className="text-micro">出错了 · 问问</span>
+                          </button>
+                        ) : text ? (
                           <span className={`truncate text-micro leading-4 ${text.tone}`} title={text.title}>
                             {text.text}
                           </span>
-                        )}
+                        ) : null}
                       </li>
                     ))}
                   </ol>

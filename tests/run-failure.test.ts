@@ -33,3 +33,13 @@ test("只看这一步最近一次运行；应用异常退出不算这一步出�
   assert.equal(latestRunFailure([{ ...crash, isolationPath: "/w/other", closeReason: "x" }], "/w/step1"), null);
   assert.equal(latestRunFailure([{ ...crash, internal: true, closeReason: "x" }], "/w/step1"), null);
 });
+
+test("AI 自己说出了错：失败 / 报错 / Traceback 算，「没有报错」「全部通过」不算", async () => {
+  const { aiReportsFailure } = await import("../src/run-failure.ts");
+  assert.equal(aiReportsFailure("跑了 pytest，有 3 个测试失败了，见下面。"), true);
+  assert.equal(aiReportsFailure("渲染报错：Traceback (most recent call last) ..."), true);
+  assert.equal(aiReportsFailure("quarto render failed with exit code 1"), true);
+  assert.equal(aiReportsFailure("脚本跑完了，没有报错，输出在 output/。"), false);
+  assert.equal(aiReportsFailure("测试全部通过，0 failed。"), false);
+  assert.equal(aiReportsFailure("综述大纲写好了，等你评审。"), false);
+});

@@ -1300,7 +1300,7 @@ export default function ProjectFilesView({
               <button
                 type="button"
                 className={iconActionClass}
-                title={entry.isDir ? "打开终端" : "问 AI"}
+                title={entry.isDir ? "打开终端" : "问 AI：带着这份文件开一段对话，问内容、让它改（问进度和出错找工作台的项目助手）"}
                 aria-label={entry.isDir ? "打开终端" : "问 AI"}
                 onClick={() => {
                   if (entry.isDir) {
@@ -1407,7 +1407,7 @@ export default function ProjectFilesView({
                 <button
                   type="button"
                   className={iconActionClass}
-                  title="问 AI"
+                  title="问 AI：带着这份文件开一段对话，问内容、让它改（问进度和出错找工作台的项目助手）"
                   aria-label="问 AI"
                   onClick={() => askAi(asFileEntry(file))}
                 >

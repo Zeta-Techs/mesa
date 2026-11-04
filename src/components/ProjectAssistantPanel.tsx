@@ -9,14 +9,13 @@ import { MesaStatusLead } from "./MesaMark";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
 import { buddyDayPart, buddyMood } from "../buddy-time";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   assistantErrorText,
   basisGuideHeadings,
-  guideAnchor,
   INSPECT_WAITING,
   INTENT_WAITING,
   localReply,
+  retryIntents,
   parseAssistantAnswer,
   parseWorkOrder,
   QUICK_QUESTIONS,
@@ -26,7 +25,8 @@ import {
   type WorkOrder,
 } from "../project-assistant";
 import WorkOrderCard from "./WorkOrderCard";
-import { userGuideUrl } from "../help-links";
+import GuideSectionModal from "./GuideSectionModal";
+import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
 import {
   askProjectAssistant,
   assistantConnection,
@@ -90,12 +90,14 @@ export default function ProjectAssistantPanel({
   ask: AssistantAsk | null;
   onAction: (action: AssistantAction, turn: AssistantTurn) => void;
   /** 派活单「派出去」：页面按去处开工，返回给人看的一句（「已留话给第 2 步的 AI」） */
-  onDispatch: (order: WorkOrder) => Promise<string>;
+  onDispatch: (order: WorkOrder) => Promise<DispatchResult>;
 }) {
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  /** 在应用里打开的说明书小节 */
+  const [guideHeading, setGuideHeading] = useState<string | null>(null);
   /** 边生成边推来的：到此为止的回答、正在做的一步（Claude Code / Codex 才有） */
   const [liveText, setLiveText] = useState("");
   const [liveStep, setLiveStep] = useState<string | null>(null);
@@ -115,24 +117,24 @@ export default function ProjectAssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askedNonce = useRef<number | null>(null);
   const conn = assistantConnection(project);
-  // 派过的派活单记在本机（按项目 + 那一轮的时间），重开面板也不会再派一次
-  const sentKey = projectPath ? `ccode.assistantSent.${projectPath}` : null;
-  const [sent, setSent] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!sentKey) return;
-    try {
-      setSent(JSON.parse(localStorage.getItem(sentKey) ?? "{}") as Record<string, string>);
-    } catch {
-      setSent({});
-    }
-  }, [sentKey]);
+  // 派活单派出去后记到那一轮上（后端问答记录），卡片据此跟进度、不重复派；项目快照据此告诉项目助手派过什么
   async function dispatch(turnAt: string, order: WorkOrder) {
-    const note = await onDispatch(order);
-    setSent((prev) => {
-      const next = { ...prev, [turnAt]: note };
-      if (sentKey) localStorage.setItem(sentKey, JSON.stringify(next));
-      return next;
-    });
+    const result = await onDispatch(order);
+    const record: DispatchRecord = {
+      at: new Date().toISOString(),
+      target: order.target,
+      step: order.step,
+      title: order.title,
+      mode: result.mode,
+      mailId: result.mailId ?? null,
+      taskId: result.taskId ?? null,
+      worktreePath: result.worktreePath ?? null,
+      note: result.note,
+    };
+    setTurns((list) => list.map((t) => (t.at === turnAt ? { ...t, dispatched: record } : t)));
+    if (projectPath) {
+      await invoke("assistant_mark_dispatched", { projectRoot: projectPath, turnAt, record }).catch(() => {});
+    }
   }
   const mood = buddyMood(buddyDayPart(new Date().getHours()));
 
@@ -167,11 +169,11 @@ export default function ProjectAssistantPanel({
     return () => window.clearInterval(timer);
   }, [busy]);
 
-  async function send(question: string, withFocus: AssistantFocus | null) {
+  async function send(question: string, withFocus: AssistantFocus | null, forced?: AssistantIntent) {
     const q = question.trim();
     if (!q || busy || !projectPath) return;
     // 纯寒暄本地直接回，不调 AI（原来一句「你好」要 8–19 秒）
-    const canned = withFocus ? null : localReply(q, new Date().getHours());
+    const canned = withFocus || forced ? null : localReply(q, new Date().getHours());
     if (canned) {
       setDraft("");
       if (inputRef.current) inputRef.current.style.height = "";
@@ -185,7 +187,7 @@ export default function ProjectAssistantPanel({
       }
       return;
     }
-    const plan = planAsk(q, !!withFocus, project);
+    const plan = planAsk(q, !!withFocus, project, forced);
     setIntent(plan.intent);
     setInspecting(plan.inspect);
     setBusy(true);
@@ -355,6 +357,7 @@ export default function ProjectAssistantPanel({
           <h3 className="mt-5 text-lg font-semibold text-l1">{mood.greeting}</h3>
           <p className="mt-2 text-sm leading-6 text-l3">
             我看得到每一步的状态、出错原因、核验和退回意见，也看得到 Mesa 自己出过的错。只解释、只指路，要动手时给你按钮，你点了才发生。
+            要聊课题内容、让 AI 动手干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」或项目里的「新对话」。
           </p>
           <ul className="mt-8 border-t border-hairline">
             {QUICK_QUESTIONS.map((q, i) => (
@@ -389,6 +392,8 @@ export default function ProjectAssistantPanel({
                     <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
                     <span className="text-xs text-l3" title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}`}>
                       项目助手 · {relTime(turn.at)}
+                      {/* 这次调用花了多少（只有 Claude Code / Codex、模型查得到价时有；同用量页口径） */}
+                      {turn.costUsd != null && <span title="这次问答的花费（用量页同一口径，记在内部活动里）"> · ${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}</span>}
                     </span>
                   </div>
                   {lead && (
@@ -402,7 +407,8 @@ export default function ProjectAssistantPanel({
                   {withOrder.order && (
                     <WorkOrderCard
                       order={withOrder.order}
-                      sentNote={sent[turn.at] ?? null}
+                      record={turn.dispatched ?? null}
+                      projectPath={projectPath}
                       onDispatch={(order) => dispatch(turn.at, order)}
                     />
                   )}
@@ -421,8 +427,8 @@ export default function ProjectAssistantPanel({
                                 key={h}
                                 type="button"
                                 className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                                title="在浏览器里打开说明书这一节"
-                                onClick={() => void openUrl(userGuideUrl(guideAnchor(h))).catch(() => toast("浏览器没打开，稍后再试", "warning"))}
+                                title="在应用里打开说明书这一节"
+                                onClick={() => setGuideHeading(h)}
                               >
                                 <span className="text-micro">「{h}」</span>
                               </button>
@@ -447,6 +453,21 @@ export default function ProjectAssistantPanel({
                         </button>
                       ))}
                     </div>
+                  )}
+                  {i === turns.length - 1 && !busy && retryIntents(turn.basis, turn.connection).length > 0 && (
+                    <p className="mt-2 flex flex-wrap items-center gap-x-2 text-micro text-l4">
+                      <span>没答到点上？换个查法：</span>
+                      {retryIntents(turn.basis, turn.connection).map((r) => (
+                        <button
+                          key={r.intent}
+                          type="button"
+                          className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                          onClick={() => void send(turn.question, null, r.intent)}
+                        >
+                          <span className="text-micro">{r.label}</span>
+                        </button>
+                      ))}
+                    </p>
                   )}
                 </div>
               </article>
@@ -502,6 +523,7 @@ export default function ProjectAssistantPanel({
         </div>
       )}
       <div ref={endRef} />
+      <GuideSectionModal heading={guideHeading} onClose={() => setGuideHeading(null)} />
     </SettingsDrawerShell>
   );
 }

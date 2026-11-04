@@ -697,7 +697,7 @@ pub(crate) fn ai_prompt_impl_model(
     fn_key: Option<&str>,
     prompt: String,
 ) -> Result<String, String> {
-    ai_prompt_impl_full(profiles, profile_id, model, fn_key, prompt, None, None)
+    ai_prompt_impl_full(profiles, profile_id, model, fn_key, prompt, None, None, None)
 }
 
 /// 项目助手要的两样（2026-11-04 用户：回答太慢）：
@@ -712,6 +712,7 @@ pub(crate) fn ai_prompt_impl_full(
     prompt: String,
     effort: Option<&str>,
     on_line: Option<&mut dyn FnMut(&str)>,
+    cost_out: Option<&mut Option<f64>>,
 ) -> Result<String, String> {
     // 设置页的按功能/全局专用 profile 作为显式 id 之外的默认（每次现读，改动即时生效）
     let settings = crate::settings::read_current_checked()?;
@@ -859,6 +860,9 @@ pub(crate) fn ai_prompt_impl_full(
                 selected.as_deref(),
                 &crate::usage::today_local(),
             )?;
+            if let Some(out) = cost_out {
+                *out = crate::usage::events_cost_usd(&events);
+            }
             if let Err(e) = crate::usage::record_ephemeral_usage(
                 &profile.agent,
                 &format!("ephemeral-{}", run.id),
@@ -952,6 +956,7 @@ pub(crate) fn ai_inspect_readonly(
     prompt: String,
     effort: Option<&str>,
     on_line: Option<&mut dyn FnMut(&str)>,
+    cost_out: Option<&mut Option<f64>>,
 ) -> Result<String, String> {
     if !project_root.is_dir() {
         return Err("项目文件夹不在了".into());
@@ -1030,6 +1035,9 @@ pub(crate) fn ai_inspect_readonly(
         .and_then(|raw| {
             let (text, events) =
                 parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &crate::usage::today_local())?;
+            if let Some(out) = cost_out {
+                *out = crate::usage::events_cost_usd(&events);
+            }
             if let Err(e) = crate::usage::record_ephemeral_usage(
                 &profile.agent,
                 &format!("ephemeral-{}", run.id),

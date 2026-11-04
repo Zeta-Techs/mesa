@@ -16,6 +16,7 @@ import {
   LocateFixed,
   MessagesSquare,
   Play,
+  LifeBuoy,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -980,6 +981,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const projectFocusReq = useAppStore((s) => s.projectFocusReq);
   const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
+  const openAssistant = useAppStore((s) => s.openAssistant);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   // 产物待核验（后端只读检查，随 refresh 同频次拉取）：绑定步骤的预期产物全部产出且够新
   const [artifactReady, setArtifactReady] = useState<PendingArtifactDto[]>([]);
@@ -2301,15 +2303,27 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           trailing={
             // 「对话」页签撤掉后（2026-10-23，对话挂在侧栏项目树下面），从项目里开聊留这一个入口
             selectedGroup.project ? (
-              <button
-                type="button"
-                onClick={() => selectedGroup.project && startProjectChat(selectedGroup.project)}
-                title={`在「${selectedGroup.project.name}」里开一段新对话：发第一句才启动，Agent 和模型在输入框里选`}
-                className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
-              >
-                <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
-                新对话
-              </button>
+              <>
+                {/* 项目助手（2026-11-04）：工作台只列进行中的项目，安静的项目从这里问 */}
+                <button
+                  type="button"
+                  onClick={() => selectedGroup.project && openAssistant(selectedGroup.project.path)}
+                  title="项目助手：问进度、哪里出错、Mesa 怎么用；只解释和指路，不开对话、不改文件"
+                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  <LifeBuoy size={13} strokeWidth={1.8} aria-hidden="true" />
+                  项目助手
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedGroup.project && startProjectChat(selectedGroup.project)}
+                  title={`在「${selectedGroup.project.name}」里开一段新对话：发第一句才启动，Agent 和模型在输入框里选。要 AI 动手干活、聊课题内容用这个`}
+                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
+                  新对话
+                </button>
+              </>
             ) : undefined
           }
         >

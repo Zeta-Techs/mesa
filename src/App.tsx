@@ -33,6 +33,7 @@ import { nextUnread, sameKeys } from "./chat-unread";
 import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from "./rail-width";
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
+import ProjectAssistantHost from "./components/ProjectAssistantHost";
 import {
   HelpAboutDialog,
   HelpDiagnosticsDialog,
@@ -2461,6 +2462,7 @@ function App() {
           )}
           <PhoneDropDialog />
           <HelpRequestDialog />
+          <ProjectAssistantHost />
           <PromptManager />
           <FeedbackModal
             open={feedbackOpen}

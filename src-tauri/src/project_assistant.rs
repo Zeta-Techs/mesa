@@ -66,6 +66,34 @@ pub struct AssistantTurnDto {
     /// 这一问依据了什么（「说明书 · 8.1 聊天 / 终端」「这个项目的记录」），回答下面一行小字
     #[serde(default)]
     pub basis: String,
+    /// 这次调用花了多少（美元；只有不落盘的 Claude Code / Codex 算得出、且模型查得到价）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// 这一轮起草的派活单派出去了：派给谁、怎么派的、留话 id / 目标 id（项目助手据此跟进度，2026-11-04）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatched: Option<DispatchRecordDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchRecordDto {
+    pub at: String,
+    /// step / goal
+    pub target: String,
+    #[serde(default)]
+    pub step: Option<u32>,
+    pub title: String,
+    /// mail（留话给开着的 AI）/ resume（接回那段对话带单开跑）/ goal（记成目标开工）
+    pub mode: String,
+    #[serde(default)]
+    pub mail_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    /// 派出去时给人看的那句
+    #[serde(default)]
+    pub note: String,
 }
 
 fn truncate(text: &str, cap: usize) -> String {
@@ -324,12 +352,72 @@ pub async fn assistant_log_append(project_root: String, question: String, answer
             answer: truncate(answer.trim(), ANSWER_CAP),
             connection: "本地直接回答（没调 AI）".into(),
             basis: String::new(),
+            cost_usd: None,
+            dispatched: None,
         };
         append_turn(&project_root, turn.clone())?;
         Ok(turn)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn mark_dispatched_sync(project_root: &str, turn_at: &str, record: DispatchRecordDto) -> Result<(), String> {
+    let dir = project_dir(project_root)?;
+    let path = dir.join(LOG_FILE);
+    with_lock(&dir, || {
+        let mut rows: Vec<AssistantTurnDto> = read_jsonl(&path);
+        let row = rows.iter_mut().find(|r| r.at == turn_at).ok_or("找不到那一轮问答（可能已清空）")?;
+        let mut record = record;
+        record.title = truncate(&crate::sessions::redact_sensitive_text(&record.title), 200);
+        record.note = truncate(&record.note, 300);
+        row.dispatched = Some(record);
+        write_jsonl(&path, &rows)
+    })
+}
+
+/// 派活单派出去后记到那一轮上：卡片据此显示进度、不重复派，项目快照据此告诉项目助手派过什么
+#[tauri::command]
+pub async fn assistant_mark_dispatched(project_root: String, turn_at: String, record: DispatchRecordDto) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || mark_dispatched_sync(&project_root, &turn_at, record))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 说明书某一节的原文（项目助手「依据」里点小节名，在应用里打开那一节，不跳 GitHub；随应用打包，版本对得上、离线也能看）：
+/// 从这个标题起，到下一个同级或更高级的标题为止，最多 2 万字
+pub(crate) fn guide_section(heading: &str) -> Option<String> {
+    let want = heading.trim();
+    if want.is_empty() {
+        return None;
+    }
+    let mut out: Vec<&str> = Vec::new();
+    let mut level = 0usize;
+    for line in USER_GUIDE.lines() {
+        let t = line.trim_start();
+        let hashes = t.chars().take_while(|c| *c == '#').count();
+        let is_heading = hashes > 0 && t[hashes..].starts_with(' ');
+        if level == 0 {
+            if is_heading && t[hashes..].trim() == want {
+                level = hashes;
+                out.push(line);
+            }
+            continue;
+        }
+        if is_heading && hashes <= level {
+            break;
+        }
+        out.push(line);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(truncate(out.join("\n").trim(), 20_000))
+}
+
+#[tauri::command]
+pub fn assistant_guide_section(heading: String) -> Option<String> {
+    guide_section(&heading)
 }
 
 /// 问一次：prompt 是前端拼好的（规矩 + 项目快照 + 最近几轮 + 这次的问题），这里整段脱敏后出站。
@@ -374,6 +462,7 @@ pub async fn project_assistant_ask(
                 }
             }
         };
+        let mut cost: Option<f64> = None;
         let raw = if inspect.unwrap_or(false) {
             let root = PathBuf::from(&root_text);
             crate::ai::ai_inspect_readonly(
@@ -385,6 +474,7 @@ pub async fn project_assistant_ask(
                 prompt,
                 effort.as_deref(),
                 Some(&mut on_line),
+                Some(&mut cost),
             )?
         } else {
             crate::ai::ai_prompt_impl_full(
@@ -395,6 +485,7 @@ pub async fn project_assistant_ask(
                 prompt,
                 effort.as_deref(),
                 Some(&mut on_line),
+                Some(&mut cost),
             )?
         };
         let answer = truncate(crate::sessions::redact_sensitive_text(raw.trim()).as_str(), ANSWER_CAP);
@@ -407,6 +498,8 @@ pub async fn project_assistant_ask(
             answer,
             connection: connection.unwrap_or_default().chars().take(200).collect(),
             basis: basis.unwrap_or_default().chars().take(300).collect(),
+            cost_usd: cost,
+            dispatched: None,
         };
         // 记不下不挡回答：这次照样给人看
         let _ = append_turn(&project_root, turn.clone());
@@ -858,6 +951,14 @@ mod tests {
     }
 
     #[test]
+    fn guide_section_cuts_at_the_next_sibling_heading() {
+        let sec = guide_section("9.7 思考档位").unwrap();
+        assert!(sec.starts_with("### 9.7 思考档位"));
+        assert!(!sec.contains("### 9.8"), "到下一节为止");
+        assert!(guide_section("没有这一节").is_none());
+    }
+
+    #[test]
     fn guide_grams_pairs_han_and_keeps_words() {
         let g = guide_grams("换 Claude 模型");
         assert!(g.contains("claude"));
@@ -962,7 +1063,23 @@ mod tests {
         assert_eq!(one[0].notice.as_deref(), Some("保存进项目失败：boom"));
         assert!(!project_dir("/p/one").unwrap().starts_with("/p/one"), "不写进项目目录");
         assert!(record_error_sync("/p/one", "weird", "", "x", None).is_err());
-        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new() }).unwrap();
+        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new(), cost_usd: None, dispatched: None }).unwrap();
+        let rec = DispatchRecordDto {
+            at: at(0),
+            target: "step".into(),
+            step: Some(2),
+            title: "修列名".into(),
+            mode: "mail".into(),
+            mail_id: Some("m1".into()),
+            task_id: None,
+            worktree_path: Some("/w/s2".into()),
+            note: "已留话".into(),
+        };
+        let at0 = read_jsonl::<AssistantTurnDto>(&project_dir("/p/one").unwrap().join(LOG_FILE))[0].at.clone();
+        mark_dispatched_sync("/p/one", &at0, rec.clone()).unwrap();
+        let turns: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/one").unwrap().join(LOG_FILE));
+        assert_eq!(turns[0].dispatched.as_ref(), Some(&rec));
+        assert!(mark_dispatched_sync("/p/one", "nope", rec).is_err(), "找不到那一轮就报错，不乱记");
         let turns: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/one").unwrap().join(LOG_FILE));
         assert_eq!(turns.len(), 1);
         let none: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/two").unwrap().join(LOG_FILE));

@@ -1,7 +1,7 @@
 /**
  * 工作台项目头下的「卡点」一行（2026-11-04 项目助手一期，docs/design-project-assistant.md §4）：
  * 把这个项目卡住的事合成最多三条，点哪条跳哪；旁边就是「问项目助手」。纯逻辑，配 tests/project-blockers.test.ts。
- * 只收「卡住了」的事：出错的步骤 / 目标、Mesa 近一天出的错、等你拍板的。工作副本开着没保存、落后基准这类是事实不是卡点。
+ * 只收「卡住了」的事：出错的步骤 / 目标、AI 在对话里自己说出了错、Mesa 近一天出的错、等你拍板的。工作副本开着没保存、落后基准这类是事实不是卡点。
  */
 import type { CardTask, ProjectCard } from "./workbench-cards.ts";
 import { latestRunFailure, type RunFailureInput } from "./run-failure.ts";
@@ -24,11 +24,19 @@ export function projectBlockers(input: {
   mesaErrors: readonly MesaErrorRecord[];
   nowMs: number;
   isWindows?: boolean;
+  /** 步骤那段对话里 AI 最后说的话像是出了错（session-tail.ts）：任务行 id → 那一句 */
+  tailFailures?: Readonly<Record<string, string>>;
 }): ProjectBlocker[] {
   const out: ProjectBlocker[] = [];
   const win = input.isWindows ?? false;
   const label = (t: CardTask) => (t.ref.kind === "step" ? `第 ${t.ref.stepIndex + 1} 步「${t.name}」` : `「${t.name}」`);
   for (const task of input.card.tasks) {
+    // AI 自己在对话里说出了错（交互对话出错不进运行记录）：它不在干活时才算，正在干活的说不定马上就修好了
+    const said = input.tailFailures?.[task.id];
+    if (said && task.live?.attention !== "working") {
+      out.push({ key: `said:${task.id}`, text: `${label(task)}的 AI 说：${said}`, tone: "fail", target: { kind: "task", taskId: task.id } });
+      continue;
+    }
     if (task.live) continue;
     if (task.ref.kind === "step" && task.ref.worktreePath) {
       const failure = latestRunFailure(input.runs, task.ref.worktreePath, win);

@@ -1713,6 +1713,25 @@ fn cost_of(acc: &TokenAcc, price: (f64, f64)) -> f64 {
         / 1_000_000.0
 }
 
+/// 一次不落盘调用的花费（项目助手每条回答下面写，2026-11-04）：同统计页口径（用户 pricing.json > 公共库 > 内置），
+/// 有一个模型查不到价就返回 None（不报半个数）
+pub(crate) fn events_cost_usd(events: &[UsageEvent]) -> Option<f64> {
+    if events.is_empty() {
+        return None;
+    }
+    let pricing_path = crate::dirs::config_dir().map(|d| d.join("ccode").join("pricing.json"));
+    let chain = load_pricing(pricing_path.as_deref());
+    let mut total = 0.0;
+    for e in events {
+        let price = price_of(&e.model, &chain)?;
+        total += cost_of(
+            &TokenAcc { input: e.input, output: e.output, cache_read: e.cache_read, cache_write: e.cache_write },
+            price,
+        );
+    }
+    Some(total)
+}
+
 /// 缓存读相对「按输入全价」省下的钱：实际按 1 折计，省 9 折。无定价或 0 读则 None。
 fn cache_savings_usd(model: &str, cache_read: u64, chain: &PriceChain) -> Option<f64> {
     if cache_read == 0 {

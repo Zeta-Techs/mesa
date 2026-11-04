@@ -896,6 +896,19 @@ interface AppState {
   /** 进项目页时切到指定页签（侧栏旧「定时巡检」→ 项目「定时任务」） */
   projectSurfaceReq: ProjectSurfaceTab | null;
   setProjectSurfaceReq: (tab: ProjectSurfaceTab | null) => void;
+  /** 项目助手（2026-11-04 改成全局：工作台、项目页、红色报错提示都能叫出来；App 里的 ProjectAssistantHost 唯一消费）。
+   *  question 有值 = 打开就问（nonce 变了才再问），focus = 「这次重点」 */
+  assistantReq: {
+    path: string;
+    question?: string;
+    focus?: { title: string; detail: string; runId?: string | null } | null;
+    nonce: number;
+  } | null;
+  openAssistant: (path: string, question?: string, focus?: { title: string; detail: string; runId?: string | null } | null) => void;
+  closeAssistant: () => void;
+  /** 工作台打开某个项目第几步的任务面板（项目助手「看第 N 步」从别的页来也能落到那一行） */
+  workbenchTaskReq: { path: string; stepIndex: number; nonce: number } | null;
+  setWorkbenchTaskReq: (req: AppState["workbenchTaskReq"]) => void;
   /** 待获取清单等：切到文件页并打开这篇 PDF */
   filePreviewReq: { projectRoot: string; path: string; token: number } | null;
   setFilePreviewReq: (req: AppState["filePreviewReq"]) => void;
@@ -1349,6 +1362,12 @@ export const useAppStore = create<AppState>((set, get) => {
   setProjectFocusReq: (req) => set({ projectFocusReq: req }),
   projectSurfaceReq: null,
   setProjectSurfaceReq: (tab) => set({ projectSurfaceReq: tab }),
+  assistantReq: null,
+  openAssistant: (path, question, focus) =>
+    set((st) => ({ assistantReq: { path, question, focus: focus ?? null, nonce: (st.assistantReq?.nonce ?? 0) + 1 } })),
+  closeAssistant: () => set({ assistantReq: null }),
+  workbenchTaskReq: null,
+  setWorkbenchTaskReq: (req) => set({ workbenchTaskReq: req }),
   filePreviewReq: null,
   setFilePreviewReq: (req) => set({ filePreviewReq: req }),
   helpViewReq: null,

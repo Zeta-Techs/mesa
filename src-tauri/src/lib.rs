@@ -962,6 +962,8 @@ pub fn run() {
             project_assistant::assistant_review_notes,
             project_assistant::assistant_guide_search,
             project_assistant::assistant_log_append,
+            project_assistant::assistant_mark_dispatched,
+            project_assistant::assistant_guide_section,
             fan_out::fan_out_plan,
             fan_out::fan_out_done,
             task_packs::preview_task_pack_import,

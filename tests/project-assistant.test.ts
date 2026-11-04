@@ -246,3 +246,12 @@ test("提速：寒暄本地回、按类型压低思考档", async () => {
   assert.equal(intentEffort("project"), null);
   assert.equal(intentEffort("mixed"), null);
 });
+
+test("换个查法：按依据给另一种，两样都看过 / 本地现答的不给", async () => {
+  const { retryIntents } = await import("../src/project-assistant.ts");
+  assert.deepEqual(retryIntents("说明书「9.7 思考档位」", "x").map((r) => r.intent), ["project"]);
+  assert.deepEqual(retryIntents("这个项目的记录", "x").map((r) => r.intent), ["howto"]);
+  assert.deepEqual(retryIntents("", "x").map((r) => r.intent), ["project", "howto"]);
+  assert.deepEqual(retryIntents("说明书「x」 · 这个项目的记录", "x"), []);
+  assert.deepEqual(retryIntents("", "本地直接回答（没调 AI）"), []);
+});

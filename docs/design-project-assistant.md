@@ -223,5 +223,11 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
   后台边生成边推（`capture_command_streaming` + `StreamState`，Claude `stream-json --include-partial-messages`、Codex `--json`），
   面板用聊天层的 M▁ 状态头写正在做的一步、回答边出字，写完整段换上。不接终端、不留会话（见上文否决「接聊天层」的理由：要开着的 CLI 对话、只读靠权限档撑、快照会过期）。
   实测 Claude 2.1.309 stream-json：逐字 text_delta、tool_use 在 assistant 消息里、最后一行 result；**未在 Mesa Dev 里实测提速后的整体耗时**。
+- **第二、三档**（同日用户：「这些也完成，按推荐做」；问「只读查看会把文件发给服务商，科研步骤难道不发吗」→ 定：不加开关、不加首次提示，说明书写清读哪些、不读哪些）：
+  - 全局：项目助手改由 App 里的 `ProjectAssistantHost` 唯一宿主，`store.openAssistant` 叫出来；按钮执行挪到 `assistant-actions.ts`（「看第 N 步」经 `workbenchTaskReq` 落到工作台那一行，不在工作台列着的退回项目页；留话先确认再送）。
+  - 入口：项目页页签行「项目助手」、步进器「出错了 · 问问」、红色报错提示补「问问为什么」（`toast.addToastActions`，出错记录归到项目时补，提示重新计时 12 秒）。
+  - 派活闭环：`mail_send` 返回留话 id；派出去记到问答那一轮（`assistant_mark_dispatched`，替代原本存本机的已派标记）；卡片每 10 秒 `dispatchStatus`（留话送没送到、对方是否停在等确认、工作副本有没有新提交、目标状态）；项目快照多一段「项目助手派过的活」。
+  - 会话尾巴：`session-tail.ts` 读每步最近那段对话最后一页里 AI 的最后一段话，`aiReportsFailure` 认出错（否定说法不算），进卡点（AI 不在干活时）与快照。步进器仍只认运行记录。
+  - 体验：每条回答写花费（`usage::events_cost_usd`，与用量页同价链）；说明书小节在应用里打开（`assistant_guide_section` + `GuideSectionModal`）；「换个查法」按依据给另一种查法重问（`retryIntents`）；三个 AI 入口的悬停说明与空状态写清各管什么。
 - **未验**：Mesa Dev 窗口里实际点一遍（卡点、出错了、项目助手问答与按钮、Agent 分工新卡、反馈表预填）。
 

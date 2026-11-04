@@ -69,3 +69,18 @@ test("卡点：没有事就是空的；一天前的、没弹过提示的 Mesa �
   });
   assert.deepEqual(blockers, []);
 });
+
+test("卡点：AI 在对话里自己说出了错也算；正在干活的先不催", () => {
+  const tasks = [
+    step(0, "检索", "/w/s1"),
+    step(1, "精读", "/w/s2", { live: { tabId: "t", agentId: "codex", attention: "working", running: true } }),
+  ];
+  const blockers = projectBlockers({
+    card: { tasks },
+    runs: [],
+    mesaErrors: [],
+    nowMs: 0,
+    tailFailures: { "step:检索": "有 3 个测试失败了", "step:精读": "报错了" },
+  });
+  assert.deepEqual(blockers.map((b) => b.text), ["第 1 步「检索」的 AI 说：有 3 个测试失败了"]);
+});

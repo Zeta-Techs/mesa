@@ -68,6 +68,10 @@ export interface SnapshotInput {
   deps: readonly SnapshotDep[];
   agents: readonly { id: string; installed: boolean; version: string | null }[];
   decided: readonly string[];
+  /** 项目助手派过的活与现在的进度（「「修列名」交给第 2 步（留话）· 现在：在做」） */
+  dispatched?: readonly string[];
+  /** 各步最近那段对话里 AI 最后说的话（交互对话出错不进运行记录，靠这里补；第几步 → 末尾一段） */
+  stepTails?: readonly { where: string; text: string; flagged: boolean }[];
 }
 
 const RUN_STATUS: Record<string, string> = {
@@ -149,6 +153,10 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
     ...input.agents.map((a) => `- ${a.id}：${a.installed ? `已装${a.version ? ` ${a.version}` : ""}` : "没装"}`),
   ];
   const decidedLines = input.decided.slice(0, 15).map((d) => `- ${clip(d, 160)}`);
+  const dispatchedLines = (input.dispatched ?? []).slice(0, 6).map((d) => `- ${clip(d, 200)}`);
+  const tailLines = (input.stepTails ?? []).map(
+    (t) => `- ${t.where}${t.flagged ? "（像是在说出错 / 失败）" : ""}：${clip(t.text, 500)}`,
+  );
   const mailLines = input.pendingMail.slice(0, 8).map((m) => `- ${clip(m, 160)}`);
 
   const focus = input.focus
@@ -174,6 +182,8 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
       section("目标", goalLines),
       section("最近的运行（新在前）", input.runs.slice(0, opts.runs).map(runLine), "（还没有运行记录）"),
       section("出错运行的事件", eventLines),
+      section("项目助手派过的活", dispatchedLines),
+      section("各步最近对话里 AI 最后说的话（交互对话里的出错不进运行记录，看这里）", tailLines),
       section("等你回答的人工请求", helpLines),
       section("还没送到的留话", mailLines),
       section("Mesa 自己在这个项目上出的错（新在后）", mesaLines, "（没有记录）"),

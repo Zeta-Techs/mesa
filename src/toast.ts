@@ -25,10 +25,12 @@ export type ToastOptions = Pick<ToastNotice, "actions" | "sticky" | "key" | "bus
 
 type ToastListener = (notice: ToastNotice) => void;
 type DismissListener = (key: string) => void;
+type PatchListener = (id: number, actions: ToastAction[]) => void;
 
 let nextId = 1;
 const listeners = new Set<ToastListener>();
 const dismissListeners = new Set<DismissListener>();
+const patchListeners = new Set<PatchListener>();
 
 export function toast(message: string, tone: ToastTone = "info", options?: ToastOptions) {
   const notice = { id: nextId++, message, tone, ...options, sticky: options?.sticky || options?.busy };
@@ -48,4 +50,15 @@ export function subscribeToasts(listener: ToastListener) {
 export function subscribeToastDismiss(listener: DismissListener) {
   dismissListeners.add(listener);
   return () => dismissListeners.delete(listener);
+}
+
+/** 给已经弹出来的提示补按钮（项目助手：Mesa 的后台失败归到项目后，在那条红色报错上补「问问为什么」，2026-11-04）；
+ *  补了按钮的提示多留一会儿（ToastHost 重新计时） */
+export function addToastActions(id: number, actions: ToastAction[]) {
+  patchListeners.forEach((listener) => listener(id, actions));
+}
+
+export function subscribeToastPatch(listener: PatchListener) {
+  patchListeners.add(listener);
+  return () => patchListeners.delete(listener);
 }

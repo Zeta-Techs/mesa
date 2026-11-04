@@ -451,3 +451,15 @@ export function localReply(question: string, hour: number): string | null {
 /** 喂给 AI 的材料上限（砍过一刀）：快照字数、说明书段数、最近几轮 */
 export const SNAPSHOT_MAX_CHARS = 14_000;
 export const GUIDE_LIMIT: Record<"howto" | "mixed", number> = { howto: 3, mixed: 2 };
+
+/** 「换个查法」（分流靠字面会判错）：按这一轮的依据给出另一种查法，人点了按那一类重问；寒暄、本地现答的不给 */
+export function retryIntents(basis: string | undefined, connection: string | undefined): { intent: AssistantIntent; label: string }[] {
+  if (connection?.startsWith("本地")) return [];
+  const b = basis ?? "";
+  const guide = b.includes("说明书");
+  const project = b.includes("项目的记录");
+  const out: { intent: AssistantIntent; label: string }[] = [];
+  if (!project) out.push({ intent: "project", label: "看项目记录重问" });
+  if (!guide) out.push({ intent: "howto", label: "翻说明书重问" });
+  return guide && project ? [] : out;
+}

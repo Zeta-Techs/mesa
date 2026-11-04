@@ -26,7 +26,9 @@ import {
 } from "../workbench-cards";
 import { WORK_MODE_LABEL } from "../work-mode";
 import { BLOCKERS_SHOWN, projectBlockers } from "../project-blockers";
-import type { RunFailureInput } from "../run-failure";
+import { failureSnippet, type RunFailureInput } from "../run-failure";
+import { stepSessionTail } from "../session-tail";
+import type { RunDto } from "../types";
 import type { MesaErrorRecord } from "../mesa-errors";
 import { IS_WINDOWS } from "../hotkeys";
 
@@ -138,7 +140,27 @@ export default function WorkbenchProjectGroup({
       stale = true;
     };
   }, [card.path, card.registered, taskSig]);
-  const blockers = projectBlockers({ card, runs, mesaErrors, nowMs: Date.now(), isWindows: IS_WINDOWS });
+  // 各步那段对话里 AI 最后说的话（交互对话出错不进运行记录，从会话尾巴补抓；只看开了工作副本的步骤）
+  const [tailFailures, setTailFailures] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!card.registered) return;
+    let stale = false;
+    const steps = card.tasks.filter((t) => t.ref.kind === "step" && t.ref.worktreePath);
+    void Promise.all(
+      steps.map(async (t) => {
+        const tail = t.ref.kind === "step" && t.ref.worktreePath ? await stepSessionTail(runs as RunDto[], t.ref.worktreePath) : null;
+        return tail?.flagged ? ([t.id, failureSnippet(tail.text)] as const) : null;
+      }),
+    ).then((entries) => {
+      if (!stale) setTailFailures(Object.fromEntries(entries.filter((e): e is readonly [string, string] => !!e)));
+    });
+    return () => {
+      stale = true;
+    };
+    // runs 每次都是新数组，按任务行签名重读即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.path, card.registered, taskSig]);
+  const blockers = projectBlockers({ card, runs, mesaErrors, nowMs: Date.now(), isWindows: IS_WINDOWS, tailFailures });
   // 进度写在几个数里（「进行到 第 1 / 5 步」）：项目头不再挂进度条——下面的步骤序号圈已经说了走到哪（2026-10-27 用户：进度条突兀）
   const vitals = card.vitals;
   return (
@@ -187,7 +209,7 @@ export default function WorkbenchProjectGroup({
           <button
             type="button"
             className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
-            title="问项目助手：进度、哪里出错、下一步做什么"
+            title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件。要聊课题内容或让 AI 干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」"
             onClick={() => onAskAssistant()}
           >
             <LifeBuoy size={12} strokeWidth={1.8} aria-hidden="true" />

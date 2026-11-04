@@ -335,13 +335,15 @@ pub async fn mail_requeue(ids: Vec<String>) -> Result<(), String> {
 
 /// 人在工作台给一段开着的工作留话（它空闲、你没在它输入框里打字时送进去）
 #[tauri::command]
-pub async fn mail_send(to_run: String, text: String) -> Result<(), String> {
+pub async fn mail_send(to_run: String, text: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let to = crate::runs::run_get_sync(to_run)?.ok_or("找不到这段工作的记录")?;
         let _lock = crate::storage::config_lock("project-mail")?;
         let mut state = read_state();
-        send_from_you(&mut state, &to, &text)?;
-        write_state(&state)
+        // 返回这条留话的 id：项目助手派的活据此跟「等送达 / 已送达」（2026-11-04）
+        let line = send_from_you(&mut state, &to, &text)?;
+        write_state(&state)?;
+        Ok(line.id)
     })
     .await
     .map_err(|e| e.to_string())?

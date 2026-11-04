@@ -28,6 +28,8 @@ import {
   type AssistantIntent,
 } from "./project-assistant";
 import type { ChecksDto } from "./research-checks";
+import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
+import { stepSessionTail } from "./session-tail";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
 import type {
@@ -51,6 +53,10 @@ export interface AssistantTurn {
   connection: string;
   /** 这一问依据了什么（说明书哪几节 / 这个项目的记录）；旧记录没有 */
   basis?: string;
+  /** 这次调用花了多少（美元；只有 Claude Code / Codex、模型查得到价时有） */
+  costUsd?: number | null;
+  /** 这一轮的派活单派出去了 */
+  dispatched?: DispatchRecord | null;
 }
 
 /** 「问问为什么」带进来的那件事 */
@@ -155,6 +161,30 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     }),
   );
 
+  // 交互对话里的出错不进运行记录：各步最近那段对话里 AI 最后说的话（只读最后一页）
+  const stepTails = (
+    await Promise.all(
+      steps
+        .filter((s) => s.worktreePath)
+        .map(async (s) => {
+          const tail = await stepSessionTail(runs, s.worktreePath!);
+          return tail ? { where: `第 ${s.index + 1} 步「${s.name}」`, text: tail.text, flagged: tail.flagged } : null;
+        }),
+    )
+  ).filter((t): t is { where: string; text: string; flagged: boolean } => !!t);
+  // 项目助手自己派过的活与现在的进度（问「进度」时说得出「第 2 步正在按派活单改」）
+  const dispatchedTurns = (await safe(invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath }), []))
+    .filter((t) => t.dispatched)
+    .slice(-6);
+  const dispatched = await Promise.all(
+    dispatchedTurns.map(async (t) => {
+      const d = t.dispatched!;
+      const status = await dispatchStatus(d, projectPath).catch(() => ({ text: "看不到进度", tone: "idle" as const }));
+      const to = d.target === "step" ? `第 ${d.step} 步` : "新目标";
+      const how = d.mode === "mail" ? "留话" : d.mode === "resume" ? "接回对话开跑" : "记成目标开工";
+      return `「${d.title}」交给${to}（${how}，${d.at}）· 现在：${status.text}`;
+    }),
+  );
   const where = (run: RunDto): string => {
     const step = steps.find((s) => s.worktreePath && pathWithin(run.isolationPath, s.worktreePath, IS_WINDOWS));
     if (step) return `第 ${step.index + 1} 步`;
@@ -228,6 +258,8 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     deps: depRows,
     agents: detected.map((d) => ({ id: AGENTS.find((a) => a.id === d.id)?.label ?? d.id, installed: !!d.binaryPath, version: d.version })),
     decided: memory?.entries.filter((e) => e.meta.state === "active").map((e) => e.text) ?? [],
+    dispatched,
+    stepTails,
   };
   return buildProjectSnapshot(input, SNAPSHOT_MAX_CHARS);
 }
@@ -266,8 +298,14 @@ function projectContext(projectPath: string, project: ProjectDto | null, connLin
 }
 
 /** 这一问怎么问：分到哪一类、要不要只读查看项目文件（面板据此写等待文案） */
-export function planAsk(question: string, hasFocus: boolean, project: ProjectDto | null): { intent: AssistantIntent; inspect: boolean } {
-  const intent = classifyQuestion(question, hasFocus);
+export function planAsk(
+  question: string,
+  hasFocus: boolean,
+  project: ProjectDto | null,
+  /** 「换个查法」：人点了按哪一类重问 */
+  forced?: AssistantIntent,
+): { intent: AssistantIntent; inspect: boolean } {
+  const intent = forced ?? classifyQuestion(question, hasFocus);
   const agent = assistantConnection(project).agentId;
   // 走「AI 功能」连接时不知道是哪家：先试，后端说不支持再退回只看记录
   const inspect = wantsInspect(question, intent, hasFocus) && (agent === null || INSPECT_AGENTS.includes(agent));
