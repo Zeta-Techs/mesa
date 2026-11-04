@@ -1,7 +1,7 @@
 import { DEFAULT_RESEARCH_TOOLS, researchToolsFromSettings, settingsWithResearchTools, withResearchTools } from "../research-tools";
 import { confirmDialog } from "./ConfirmDialog";
 import { conflictingTemplateSteps, renameConflictingSteps } from "../pipeline-append";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   PIPELINE_TEMPLATES,
@@ -68,7 +68,11 @@ export default function TemplatePickModal({
   const [submissionMode, setSubmissionMode] =
     useState<SubmissionMode>("initial");
   const [submissionRound, setSubmissionRound] = useState(1);
-  const [topic, setTopic] = useState("");
+  // 课题主题默认预填项目名、打开时整段选中（2026-11-04 用户拍板）：像主题就直接用，不像就打字整段替换；
+  // 项目里已存过主题的以存的为准。人动过输入框后，读回的配置不再覆盖
+  const [topic, setTopic] = useState(projectName);
+  const topicEditedRef = useRef(false);
+  const topicInputRef = useRef<HTMLInputElement>(null);
   const [tools, setTools] = useState({ ...DEFAULT_RESEARCH_TOOLS });
   // 我的任务（2026-11-03）：内置下面一起列，选中按默认参数整条加进来（填参数、建触发事后在编辑研究流程里做）
   const [packs, setPacks] = useState<TaskPackDto[]>([]);
@@ -91,7 +95,10 @@ export default function TemplatePickModal({
         if (cancelled) return;
         setTools(researchToolsFromSettings(read.config.settings));
         const t = read.config.topic?.trim();
-        if (t) setTopic(t);
+        if (t && !topicEditedRef.current) {
+          setTopic(t);
+          requestAnimationFrame(() => topicInputRef.current?.select());
+        }
       })
       .catch(() => {});
     return () => {
@@ -410,11 +417,21 @@ export default function TemplatePickModal({
                 title="每次开工时写进 TASK.md，给 Agent 交代研究背景"
               >
                 课题主题（可选）
+                {!topicEditedRef.current && topic === projectName && (
+                  <span className="ml-2 text-l4">先填了项目名，直接打字就整段换掉</span>
+                )}
               </span>
               <input
                 className={fieldClass}
+                ref={topicInputRef}
                 value={topic}
-                onChange={(e) => setTopic(e.target.value)}
+                onChange={(e) => {
+                  topicEditedRef.current = true;
+                  setTopic(e.target.value);
+                }}
+                onFocus={(e) => {
+                  if (!topicEditedRef.current) e.currentTarget.select();
+                }}
                 placeholder="如 GLP-1 受体激动剂的心血管结局"
                 autoFocus
               />
