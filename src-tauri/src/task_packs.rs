@@ -187,6 +187,9 @@ fn render_pack(pack: &TaskPackDto) -> Result<String, String> {
             if !p.help.is_empty() {
                 t["help"] = value(&p.help);
             }
+            if !p.kind.is_empty() {
+                t["kind"] = value(&p.kind);
+            }
             if !p.options.is_empty() {
                 let mut opts = toml_edit::Array::new();
                 for o in &p.options {
@@ -737,7 +740,7 @@ const PACK_KEYS: [&str; 4] = ["pack", "params", "steps", "trigger"];
 const CHECK_KEYS: [&str; 4] = ["name", "skill", "script", "description"];
 const TRIGGER_KEYS: [&str; 11] = ["name", "kind", "skill", "frequency", "weekday", "interval_hours", "hour", "minute", "folder", "exts", "mode"];
 const META_KEYS: [&str; 8] = ["id", "name", "description", "version", "created_at", "updated_at", "imported", "project_settings"];
-const PARAM_KEYS: [&str; 5] = ["key", "label", "value", "help", "options"];
+const PARAM_KEYS: [&str; 6] = ["key", "label", "value", "help", "options", "kind"];
 const STEP_KEYS: [&str; 23] = [
     "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
     "optional_inputs", "any_of_inputs", "skills", "required_skills", "resources", "run", "human_tasks",
@@ -1670,6 +1673,7 @@ mod tests {
             value: "Nature".into(),
             help: "投哪家".into(),
             options: vec!["Nature".into(), "Cell".into()],
+            kind: String::new(),
         }];
         let cfg = ProjectConfigDto { steps: vec![s.clone()], ..Default::default() };
         let text = crate::projects::render_config(None, &cfg).unwrap();
@@ -2022,5 +2026,44 @@ mod tests {
             assert!(checked.issues.iter().any(|i| i.level == "block" && i.message.contains("链接文件 x/k")), "{:?}", checked.issues);
         }
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn typed_params_normalize_validate_and_round_trip() {
+        use crate::projects::{normalize_step_params, param_value_problem};
+        let p = |key: &str, kind: &str, value: &str| StepParamDto {
+            key: key.into(),
+            label: key.into(),
+            value: value.into(),
+            kind: kind.into(),
+            options: vec!["a".into()],
+            ..Default::default()
+        };
+        let got = normalize_step_params(vec![
+            p("n", "Number", "0.05"),
+            p("n2", "number", "五"),
+            p("b", "bool", "true"),
+            p("b2", "bool", "也许"),
+            p("dir", "path", "data/raw/"),
+            p("bad", "file", "../secret.txt"),
+            p("abs", "file", "/etc/passwd"),
+            p("x", "color", "红"),
+        ]);
+        let v: Vec<(&str, &str, &str)> = got.iter().map(|q| (q.key.as_str(), q.kind.as_str(), q.value.as_str())).collect();
+        assert_eq!(
+            v,
+            [("n", "number", "0.05"), ("n2", "number", ""), ("b", "bool", "是"), ("b2", "bool", ""), ("dir", "path", "data/raw/"), ("bad", "file", ""), ("abs", "file", ""), ("x", "", "红")]
+        );
+        assert!(got[0].options.is_empty(), "有类型的不是下拉");
+        assert_eq!(got[7].options, ["a"], "不认得的类型当普通参数，下拉照旧");
+        assert!(param_value_problem("file", "C:/x.txt").is_some());
+        assert!(param_value_problem("number", "").is_none(), "空值不算错");
+        // 写进 project.toml 再读回，类型跟着走
+        let mut s = step("质控", "读 {param:dir}");
+        s.params = got[..5].to_vec();
+        let cfg = ProjectConfigDto { steps: vec![s.clone()], ..Default::default() };
+        let text = crate::projects::render_config(None, &cfg).unwrap();
+        assert!(text.contains("kind = \"path\""), "{text}");
+        assert_eq!(crate::projects::parse_config(&text).0.steps[0].params, s.params);
     }
 }

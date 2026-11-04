@@ -41,6 +41,7 @@ label = "目标期刊"
 value = "Nature"        # 默认值
 help = "一句话说明"     # 可省
 options = ["Nature", "Cell"]   # 有固定选项才写
+# kind = "number"       # 可省：number 数字 / bool 是否（值写 是 或 否）/ path 项目里的文件夹 / file 项目里的文件（相对路径）；写了 kind 就不写 options
 
 [[steps]]               # 一步一段，按先后顺序
 name = "数据质控"

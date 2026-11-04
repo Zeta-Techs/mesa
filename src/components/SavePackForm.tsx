@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
 import { compactFieldClass, compactPrimaryActionClass, inlineActionClass } from "./PageFrame";
-import { mergeStepParams, nextParamKey, parameterize } from "../task-packs";
+import { mergeStepParams, nextParamKey, PARAM_KIND_LABEL, paramValueProblem, parameterize } from "../task-packs";
 import { issueLine, splitIssues } from "../task-pack-author";
 import type { PackIssueDto, ProjectStepDto, StepParamDto, TaskPackDto } from "../types";
 
@@ -40,6 +40,12 @@ export default function SavePackForm({
     const trimmed = name.trim();
     if (!trimmed || chosen.length === 0) return;
     const usable = params.filter((p) => p.label.trim() && p.value.trim());
+    // 原文就是默认值：选了数字 / 是否 / 文件夹 / 文件的，默认值得合这个类型，不然存进去会被清空
+    const wrong = usable.find((p) => paramValueProblem(p.kind, p.value));
+    if (wrong) {
+      setError(`参数「${wrong.label.trim()}」的原文「${wrong.value.trim()}」${paramValueProblem(wrong.kind, wrong.value)}；换个类型，或改成文字`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -143,6 +149,19 @@ export default function SavePackForm({
               onChange={(e) => setParam(i, { value: e.target.value })}
               placeholder="简报里的原文，如 Nature"
             />
+            <select
+              className={`${compactFieldClass} w-20 shrink-0`}
+              value={p.kind ?? ""}
+              aria-label="参数类型"
+              title="加进项目时给什么样的填写框；文件夹 / 文件只收项目里的相对路径"
+              onChange={(e) => setParam(i, { kind: e.target.value })}
+            >
+              {Object.entries(PARAM_KIND_LABEL).map(([k, label]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
+            </select>
             <span
               className={`w-20 shrink-0 ${p.value.trim() && !preview.hits[p.key] && !(chosen.some((s) => (s.params ?? []).some((x) => x.key === p.key))) ? "text-warn-text" : "text-l4"}`}
             >

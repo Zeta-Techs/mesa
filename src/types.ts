@@ -1498,6 +1498,8 @@ export interface StepParamDto {
   value: string;
   help: string;
   options: string[];
+  /** 空 = 文字（options 非空即下拉）；number 数字 / bool 是否 / path 项目内文件夹 / file 项目内文件（2026-11-04） */
+  kind?: string;
 }
 
 /** 任务包核验脚本（第三期）：脚本在某个技能目录里，结果写 .ccode/checks/pack-<包>-<名>.jsonl，「通过」降为待你判断 */

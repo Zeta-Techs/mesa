@@ -45,6 +45,7 @@ import type {
 import { useAppStore } from "../store";
 import { importedScriptsNote, triggerDefaultOn, triggerSummary } from "../task-packs";
 import { addPackToProject } from "../pack-add";
+import PackParamInput from "./PackParamInput";
 
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
@@ -862,31 +863,13 @@ export default function PipelineEditor({
                   <span className="mb-0.5 block text-l3" title={p.help || undefined}>
                     {p.label}
                   </span>
-                  {p.options.length > 0 ? (
-                    <select
-                      className={`${field} w-full`}
-                      value={p.value}
-                      onChange={(e) =>
-                        patch(i, { params: d.params.map((x, xi) => (xi === pi ? { ...x, value: e.target.value } : x)) })
-                      }
-                    >
-                      {!p.options.includes(p.value) && <option value={p.value}>{p.value || "（未填）"}</option>}
-                      {p.options.map((o) => (
-                        <option key={o} value={o}>
-                          {o}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      className={`${field} w-full`}
-                      value={p.value}
-                      placeholder="未填时任务书会写明缺这一项"
-                      onChange={(e) =>
-                        patch(i, { params: d.params.map((x, xi) => (xi === pi ? { ...x, value: e.target.value } : x)) })
-                      }
-                    />
-                  )}
+                  <PackParamInput
+                    param={p}
+                    value={p.value}
+                    fieldClass={field}
+                    allowUnlisted
+                    onChange={(value) => patch(i, { params: d.params.map((x, xi) => (xi === pi ? { ...x, value } : x)) })}
+                  />
                 </label>
               ))}
             </div>
@@ -1505,29 +1488,12 @@ export default function PipelineEditor({
                     {packForm.pack.params.map((p) => (
                       <label key={p.key} className="block text-xs">
                         <span className="mb-1 block text-l3">{p.label}</span>
-                        {p.options.length > 0 ? (
-                          <select
-                            className={`${field} w-full`}
-                            value={packForm.values[p.key] ?? p.value}
-                            onChange={(e) =>
-                              setPackForm((f) => (f ? { ...f, values: { ...f.values, [p.key]: e.target.value } } : f))
-                            }
-                          >
-                            {p.options.map((o) => (
-                              <option key={o} value={o}>
-                                {o}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            className={`${field} w-full`}
-                            value={packForm.values[p.key] ?? p.value}
-                            onChange={(e) =>
-                              setPackForm((f) => (f ? { ...f, values: { ...f.values, [p.key]: e.target.value } } : f))
-                            }
-                          />
-                        )}
+                        <PackParamInput
+                          param={p}
+                          value={packForm.values[p.key] ?? p.value}
+                          fieldClass={field}
+                          onChange={(value) => setPackForm((f) => (f ? { ...f, values: { ...f.values, [p.key]: value } } : f))}
+                        />
                         {p.help && <span className="mt-0.5 block text-micro text-l4">{p.help}</span>}
                       </label>
                     ))}

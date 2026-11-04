@@ -248,7 +248,8 @@ components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；Pr
                              # 「交给 Agent 继续」走 buildWorkspaceTerminalRequest，建成后 help_request_mark_sent；答过送过 bumpHelpRefresh 让工作区页重拉收件箱数据源
   components/PackDraftsDialog.tsx # 跟 AI 写我的任务：new 起头表单（建草稿 + beginAskAi 开对话）；list 草稿检查（拦下 / 提醒）、按默认参数预览每一步任务书、
                              # 回对话接着改、装进我的任务、装进并加到这个项目试跑、丢弃
-  components/SavePackForm.tsx # 另存为我的任务（项目设置 → 研究流程）：选步骤、加参数（显示命中几处）、同名覆盖先确认，保存走 save_task_pack
+  components/SavePackForm.tsx # 另存为我的任务（项目设置 → 研究流程）：选步骤、加参数（显示命中几处、选类型，原文不合类型不让存）、同名覆盖先确认，保存走 save_task_pack
+  components/PackParamInput.tsx # 任务包参数的一格（2026-11-04）：按 kind 给下拉 / 数字 / 是否 / 相对路径输入，不合规就地红字；流程编辑器两处共用
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
 components/ResearchProfileSection.tsx  # 设置「研究档案」分区：附带开关、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
@@ -602,7 +603,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （tests/task-pack-author.test.ts）
   pack-builtin.ts            # 任务包第四期：内置另存为我的版本 basedOnFor、builtinKey、builtinUpdate（当时的内置 vs 现在的内置，标我改没改过；三份步骤须先经后端归一）、
                              # mergeBuiltinUpdate（按勾选换新版 / 插入新加的 / 拿掉去掉的）、rebased（tests/pack-builtin.test.ts）
-  task-packs.ts              # 第四期：importedScriptsNote（导入的包首次加进项目前再问一次的话）
+  task-packs.ts              # 2026-11-04 参数类型：PARAM_KIND_LABEL、paramValueProblem（与 projects.rs param_value_problem 同口径），不合规的当没填
+                             # 第四期：importedScriptsNote（导入的包首次加进项目前再问一次的话）
                              # 第三期：packCheckFile / checkCommand / checkSectionLines（任务书「本步核验」）、triggerSummary / triggerDefaultOn；
                              # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，
                              # machine: 验收行不动）、nextParamKey；替换范围与 task_packs.rs step_texts 一致（tests/task-packs.test.ts）

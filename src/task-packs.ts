@@ -16,8 +16,38 @@ function unfilled(p: StepParamDto | undefined, key: string): string {
 function fill(text: string, params: readonly StepParamDto[]): string {
   return text.replace(PARAM_RE, (_, key: string) => {
     const p = params.find((x) => x.key === key);
-    return p && p.value.trim() ? p.value.trim() : unfilled(p, key);
+    return p && p.value.trim() && !paramValueProblem(p.kind, p.value) ? p.value.trim() : unfilled(p, key);
   });
+}
+
+/** 参数类型（2026-11-04 补齐）：空 = 文字 / 下拉；与后端 projects.rs PARAM_KINDS 同一张表 */
+export const PARAM_KIND_LABEL: Record<string, string> = {
+  "": "文字",
+  number: "数字",
+  bool: "是 / 否",
+  path: "文件夹",
+  file: "文件",
+};
+
+/** 取值哪里不对（空值不算错）。与后端 projects.rs param_value_problem 同口径，改一边两边同改 */
+export function paramValueProblem(kind: string | undefined, value: string): string | null {
+  const v = value.trim();
+  if (!v) return null;
+  switch (kind) {
+    case "number":
+      // 与 Rust str::parse::<f64> 同口径（不认 0x10、Infinity 这类 JS 才认的写法）
+      return /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(v) ? null : "要填数字";
+    case "bool":
+      return v === "是" || v === "否" ? null : "只能是「是」或「否」";
+    case "path":
+    case "file": {
+      const rel = v.replace(/\\/g, "/").replace(/\/+$/, "");
+      const ok = rel !== "" && !rel.includes(":") && !rel.startsWith("/") && rel.split("/").filter(Boolean).every((seg) => seg !== "." && seg !== "..");
+      return ok ? null : "要写项目里的相对路径，如 data/raw（不能是绝对路径、不能带 ..）";
+    }
+    default:
+      return null;
+  }
 }
 
 function mapTexts(step: ProjectStepDto, f: (text: string) => string): ProjectStepDto {
@@ -38,9 +68,9 @@ export function applyStepParams(step: ProjectStepDto): ProjectStepDto {
   return mapTexts(step, (t) => fill(t, params));
 }
 
-/** 这一步还没填的参数（开工前提醒） */
+/** 这一步还没填（或填得不合规）的参数（开工前提醒） */
 export function missingParams(step: ProjectStepDto): StepParamDto[] {
-  return (step.params ?? []).filter((p) => !p.value.trim());
+  return (step.params ?? []).filter((p) => !p.value.trim() || paramValueProblem(p.kind, p.value));
 }
 
 /** 参数键：按顺序 p1、p2……（人看的是 label，键只给占位用） */

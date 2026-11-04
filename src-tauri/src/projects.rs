@@ -197,7 +197,8 @@ pub struct StepCheckDto {
     pub description: String,
 }
 
-/// 任务包参数：options 非空 = 下拉选择，否则自由填写
+/// 任务包参数：kind 空 = options 非空下拉选择、否则自由填写；`number` 数字、`bool` 是 / 否、
+/// `path` 项目内文件夹、`file` 项目内文件（2026-11-04 补齐，两种路径都只收项目内相对路径）
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StepParamDto {
@@ -206,6 +207,40 @@ pub struct StepParamDto {
     pub value: String,
     pub help: String,
     pub options: Vec<String>,
+    pub kind: String,
+}
+
+pub(crate) const PARAM_KINDS: [&str; 4] = ["number", "bool", "path", "file"];
+
+/// 参数取值哪里不对（空值不算错：未填时任务书写明缺这一项）。与 src/task-packs.ts paramValueProblem 同口径
+pub(crate) fn param_value_problem(kind: &str, value: &str) -> Option<&'static str> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    match kind {
+        "number" => v.parse::<f64>().ok().filter(|n| n.is_finite()).is_none().then_some("要填数字"),
+        "bool" => (!matches!(v, "是" | "否")).then_some("只能是「是」或「否」"),
+        "path" | "file" => {
+            let rel = v.replace('\\', "/");
+            let rel = rel.trim_end_matches('/');
+            // 盘符（C:）在 macOS 上会被当成普通一段，冒号单独拦：跨平台文件名本来就不许有
+            let ok = !rel.is_empty()
+                && !rel.contains(':')
+                && std::path::Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            (!ok).then_some("要写项目里的相对路径，如 data/raw（不能是绝对路径、不能带 ..）")
+        }
+        _ => None,
+    }
+}
+
+/// 是 / 否的几种写法归成「是」「否」，认不出的原样留着给校验报
+fn normalize_bool(v: &str) -> String {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "y" | "1" => "是".into(),
+        "false" | "no" | "n" | "0" => "否".into(),
+        _ => v.trim().to_string(),
+    }
 }
 
 fn default_decision_mode() -> String {
@@ -234,6 +269,21 @@ pub(crate) fn normalize_step_params(params: Vec<StepParamDto>) -> Vec<StepParamD
             .map(|o| o.trim().to_string())
             .filter(|o| !o.is_empty())
             .collect();
+        p.kind = p.kind.trim().to_ascii_lowercase();
+        if !PARAM_KINDS.contains(&p.kind.as_str()) {
+            p.kind.clear();
+        }
+        if !p.kind.is_empty() {
+            // 有类型的不是下拉
+            p.options.clear();
+        }
+        if p.kind == "bool" {
+            p.value = normalize_bool(&p.value);
+        }
+        // 不合规的取值不进任务书（路径越界尤其不能交给 Agent 去读写）：清空，任务书写明缺这一项
+        if param_value_problem(&p.kind, &p.value).is_some() {
+            p.value.clear();
+        }
         out.push(p);
     }
     out
@@ -2376,6 +2426,9 @@ pub(crate) fn render_config(existing: Option<&str>, config: &ProjectConfigDto) -
                     pt["value"] = value(&p.value);
                     if !p.help.is_empty() {
                         pt["help"] = value(&p.help);
+                    }
+                    if !p.kind.is_empty() {
+                        pt["kind"] = value(&p.kind);
                     }
                     if !p.options.is_empty() {
                         let mut opts = toml_edit::Array::new();

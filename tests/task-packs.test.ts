@@ -123,3 +123,25 @@ test("自查：导入的包只带运行命令也要再问一次", async () => {
   assert.ok(note?.includes("运行命令：rm -rf data"), note ?? "");
   assert.equal(importedScriptsNote({ name: "x", imported: true, scripts: [], steps: [{ run: [] }] as never }), null);
 });
+
+test("参数类型：取值校验与后端同口径，不合规的拼任务书时当没填", async () => {
+  const { paramValueProblem, applyStepParams, missingParams } = await import("../src/task-packs.ts");
+  assert.equal(paramValueProblem("number", "0.05"), null);
+  assert.equal(paramValueProblem("number", "1e3"), null);
+  assert.match(paramValueProblem("number", "0x10") ?? "", /数字/);
+  assert.match(paramValueProblem("number", "五") ?? "", /数字/);
+  assert.equal(paramValueProblem("bool", "是"), null);
+  assert.match(paramValueProblem("bool", "true") ?? "", /是/);
+  assert.equal(paramValueProblem("path", "data/raw/"), null);
+  assert.equal(paramValueProblem("path", "a//b"), null);
+  for (const bad of ["../x", "/etc/passwd", "C:/x.txt", "./a", "a/../b"]) assert.ok(paramValueProblem("file", bad), bad);
+  assert.equal(paramValueProblem("number", ""), null, "空值不算错");
+  assert.equal(paramValueProblem(undefined, "../随便"), null, "文字参数不管");
+  const step = {
+    name: "s",
+    brief: "读 {param:dir}",
+    params: [{ key: "dir", label: "数据目录", value: "../secret", help: "", options: [], kind: "path" }],
+  } as never;
+  assert.equal((applyStepParams(step) as { brief: string }).brief, "读 （参数「数据目录」未填）");
+  assert.equal(missingParams(step).length, 1);
+});
