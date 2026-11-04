@@ -208,6 +208,34 @@ fn npm_for(binary_path: &str) -> String {
 /// 渠道数据全部来自 AgentSpec.packaging：method 精确命中包管理器时优先包管理器，
 /// 否则双变体 CLI 先看旧版变体渠道，最后按 update_fallback 顺序展开
 fn update_commands(agent_id: &str, method: &str, binary_path: &str) -> Vec<UpdateCmd> {
+    update_commands_for(agent_id, method, binary_path, false)
+}
+
+/// OpenCode 2.x 换了包名（2026-11-04）：npm `@opencode/cli`（1.x 是 `opencode-ai`），Homebrew 官方源 `opencode`
+///（Mesa 装 1.x 用的 anomalyco tap 常规更新不跨大版本），2.x 没有 winget 包。按本机装的大版本选渠道，
+/// 别让 2.x 用户一点更新又装回 1.x（两版同命令名、同一个会话库，不能并存）
+const OPENCODE_V2_NPM: &str = "@opencode/cli";
+const OPENCODE_V2_BREW: &str = "homebrew/core/opencode";
+
+/// 本机装的是不是 OpenCode 2.x：npm 包路径带 `@opencode/cli`，或 `--version` 报 2 以上
+fn opencode_v2_install(agent_id: &str, resolved_path: &str, installed: Option<&str>) -> bool {
+    agent_id == "opencode"
+        && (resolved_path.replace('\\', "/").contains("@opencode/cli")
+            || installed
+                .and_then(semver_token)
+                .and_then(|v| v.split('.').next().and_then(|m| m.parse::<u32>().ok()))
+                .is_some_and(|major| major >= 2))
+}
+
+/// npm 渠道的包名（OpenCode 2.x 换名）
+fn npm_package(agent_id: &str, opencode_v2: bool) -> Option<&'static str> {
+    if opencode_v2 {
+        return Some(OPENCODE_V2_NPM);
+    }
+    agent_spec(agent_id)?.packaging.npm_update
+}
+
+fn update_commands_for(agent_id: &str, method: &str, binary_path: &str, opencode_v2: bool) -> Vec<UpdateCmd> {
     let npm_cmd = |pkg: &str| {
         let mut args: Vec<String> = ["install", "-g"].iter().map(|s| s.to_string()).collect();
         args.push(format!("{pkg}@latest"));
@@ -243,10 +271,10 @@ fn update_commands(agent_id: &str, method: &str, binary_path: &str) -> Vec<Updat
                 .map(brew_upgrade)
                 .into_iter()
                 .collect(),
-            UpdateChannel::Npm => p.npm_update.map(|pkg| npm_cmd(pkg)).into_iter().collect(),
+            UpdateChannel::Npm => npm_package(agent_id, opencode_v2).map(|pkg| npm_cmd(pkg)).into_iter().collect(),
             // winget 是 Windows 原生渠道：其他平台展开为空候选，不产生噪音报错
             UpdateChannel::Winget => {
-                if cfg!(windows) {
+                if cfg!(windows) && !opencode_v2 {
                     p.winget.map(|id| winget_upgrade(id)).into_iter().collect()
                 } else {
                     vec![]
@@ -268,8 +296,10 @@ fn update_commands(agent_id: &str, method: &str, binary_path: &str) -> Vec<Updat
         "brew" if p.brew_upgrade.is_some() => {
             return vec![brew_upgrade(p.brew_upgrade.as_ref().unwrap())];
         }
-        "npm" if p.npm_update.is_some() => return vec![npm_cmd(p.npm_update.unwrap())],
-        "winget" if cfg!(windows) && p.winget.is_some() => {
+        "npm" if npm_package(agent_id, opencode_v2).is_some() => {
+            return vec![npm_cmd(npm_package(agent_id, opencode_v2).unwrap())];
+        }
+        "winget" if cfg!(windows) && p.winget.is_some() && !opencode_v2 => {
             return vec![winget_upgrade(p.winget.unwrap())];
         }
         "uv" if p.uv.is_some() => {
@@ -811,7 +841,8 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
     let version_before = version_of(&path);
     let resolved = path.canonicalize().unwrap_or_else(|_| path.clone());
     let method = detect_method(&resolved.to_string_lossy());
-    let cmds = update_commands(agent_id, method, &path.to_string_lossy());
+    let opencode_v2 = opencode_v2_install(agent_id, &resolved.to_string_lossy(), version_before.as_deref());
+    let cmds = update_commands_for(agent_id, method, &path.to_string_lossy(), opencode_v2);
     if cmds.is_empty() {
         return Ok(UpdateResultDto {
             ok: false,
@@ -1202,8 +1233,11 @@ fn winget_show_args(id: &str) -> Vec<&str> {
 /// 最新版查询口与 update_commands 同渠道（包管理器装的查包管理器）；
 /// 自更新渠道（claude/kimi 自更新、opencode 非 npm）没有轻量查询口，返回 None。
 /// brew 查询名单独声明（brew_latest）：opencode 升级用 tap 短名，brew info 会命中歧义，不查
-fn latest_version(agent_id: &str, method: &str) -> Option<String> {
+fn latest_version(agent_id: &str, method: &str, opencode_v2: bool) -> Option<String> {
     let p = &agent_spec(agent_id)?.packaging;
+    if opencode_v2 {
+        return if method == "brew" { brew_latest(OPENCODE_V2_BREW, false) } else { npm_latest(OPENCODE_V2_NPM) };
+    }
     if method == "brew" {
         if let Some(b) = &p.brew_latest {
             return brew_latest(b.name, b.cask);
@@ -1243,7 +1277,8 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
             let installed = version_of(&path);
             let resolved = path.canonicalize().unwrap_or_else(|_| path.clone());
             let method = detect_method(&resolved.to_string_lossy());
-            let latest = latest_version(agent_id, method);
+            let opencode_v2 = opencode_v2_install(agent_id, &resolved.to_string_lossy(), installed.as_deref());
+            let latest = latest_version(agent_id, method, opencode_v2);
             // 与 update_agent 同一套渠道判定：首条命令是交互式 TUI 自更新时给前端改路由
             interactive_update_command =
                 interactive_self_update(agent_id, method, &path.to_string_lossy());
@@ -1252,7 +1287,7 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
             // npm view 失败 → None → 静默不带提示
             if method == "brew" {
                 if let Some(brew_v) = latest.as_deref() {
-                    if let Some(pkg) = agent_spec(agent_id).and_then(|s| s.packaging.npm_update) {
+                    if let Some(pkg) = npm_package(agent_id, opencode_v2) {
                         if let Some(npm_v) = npm_latest(pkg) {
                             if semver_newer(&npm_v, brew_v) {
                                 upstream_note = Some(npm_v);
@@ -1421,6 +1456,21 @@ mod tests {
                 .is_some_and(|c| c.is_ascii_digit()),
             "输出不像版本号：{out}"
         );
+    }
+
+    #[test]
+    fn opencode_v2_updates_stay_on_v2_packages() {
+        assert!(opencode_v2_install("opencode", "/usr/local/lib/node_modules/@opencode/cli/bin/opencode.exe", None));
+        assert!(opencode_v2_install("opencode", "/opt/homebrew/Cellar/opencode/2.2.5/bin/opencode", Some("opencode v2.2.5")));
+        assert!(!opencode_v2_install("opencode", "/opt/homebrew/Cellar/opencode/1.19.5/bin/opencode", Some("1.19.5")));
+        assert!(!opencode_v2_install("codex", "/x/@opencode/cli/bin/codex", Some("2.0.0")), "只管 OpenCode");
+        let cmds = update_commands_for("opencode", "npm", "/usr/local/bin/opencode", true);
+        assert_eq!(cmds[0].args[2], "@opencode/cli@latest", "2.x 不能被 npm 更新装回 opencode-ai（1.x）");
+        let cmds = update_commands_for("opencode", "self", "/usr/local/bin/opencode", true);
+        assert!(cmds.iter().all(|c| c.method != "npm" || c.args[2] == "@opencode/cli@latest"));
+        assert!(cmds.iter().all(|c| c.method != "winget"), "2.x 没有 winget 包");
+        let cmds = update_commands("opencode", "npm", "/usr/local/bin/opencode");
+        assert_eq!(cmds[0].args[2], "opencode-ai@latest", "1.x 照旧");
     }
 
     #[test]

@@ -40,6 +40,11 @@
   "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",
   "server": "用上：TUI 自带服务 --port + OPENCODE_SERVER_PASSWORD"
  },
+ "opencode2": {
+  "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",
+  "server": "用上：Mesa 自起 opencode serve --stdio --port 0 + OPENCODE_PASSWORD，TUI --server 连，/api/event 事件流",
+  "program-status": "不接：已走自起 serve 的事件流，回合、审批、边写边显示都有，比程序状态全"
+ },
  "qwen": {
   "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",
   "hooks": "不接：已走 Dual Output，回合、审批、边写边显示都有",

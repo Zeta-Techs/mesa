@@ -150,6 +150,15 @@ export function newerVersion(a: string | null, b: string | null): string | null 
   return cmp(pb, pa) > 0 ? b : a;
 }
 
+/**
+ * 这家 CLI 该比哪份金丝雀基线：OpenCode 2.x 另有一份「opencode2」（1.x / 2.x 同命令名、不能并存，按装的大版本取，
+ * 不然装 2.x 的人永远比 1.x 的核对版本新、一直「未核对」）。后端 cli_verified.rs 联网前移用同一个名字
+ */
+export function baselineKey(agentId: string, installed: string | null | undefined): string {
+  const v = parseVersion(installed);
+  return agentId === "opencode" && v && v[0] >= 2 ? "opencode2" : agentId;
+}
+
 /** 平台 → agent → 已核对到的版本（金丝雀基线） */
 export type VerifiedTable = Record<string, Record<string, string>>;
 

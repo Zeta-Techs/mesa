@@ -53,7 +53,8 @@ fn handoff_targets_sync() -> Vec<HandoffTargetDto> {
             id: spec.id.into(),
             installed: crate::agents::resolve_binary(spec.binary).is_some(),
             prompt_supported: spec.prompt_inject != PromptInject::Unsupported,
-            native_fork: spec.fork.is_some(),
+            // 按本机版本看（OpenCode 2.x 主命令没有 --fork）
+            native_fork: crate::agents::fork_args(spec.id, "x").is_some(),
         })
         .collect()
 }

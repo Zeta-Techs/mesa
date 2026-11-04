@@ -1733,6 +1733,12 @@ pub fn launch_plan(
                         config["provider"][&pid]["options"]["headers"] =
                             serde_json::Value::Object(headers);
                     }
+                    // 2.x：provider 换成原生写法（思考能力才保得住）；加 --standalone 用自己的私有服务——
+                    // 默认连共享后台服务时内联配置被忽略，带着密钥的配置还会留在服务里被别的客户端看到（2026-11-04 实测）
+                    if opencode_v2() {
+                        opencode_inline_config_v2(&mut config, policy.reasoning_effort.as_deref());
+                        plan.args.push("--standalone".into());
+                    }
                     plan.env.push(((*config_env).into(), config.to_string()));
                     // 防止自更新在启动时替换掉我们检测到的二进制
                     plan.env.push(((*no_autoupdate_env).into(), "1".into()));
@@ -2002,11 +2008,6 @@ pub fn validate_launch_compatibility(
             return Err(msg);
         }
     }
-    if profile.agent == "opencode" {
-        if let Some(msg) = opencode_unsupported_version(cli_version("opencode")) {
-            return Err(msg);
-        }
-    }
     if profile.agent == "grok" && profile.account_type == crate::profiles::AccountType::Api {
         if let (Some(model), Some(root)) = (
             selected_model.or_else(|| profile.models.first().map(String::as_str)),
@@ -2154,22 +2155,121 @@ pub fn readonly_launch_args(agent_id: &str, base_args: &[String]) -> Option<Vec<
     } else {
         base_args.to_vec()
     };
+    // OpenCode 2.x 主命令不认 `--agent`：只讨论改由内联配置的 default_agent 定（readonly_launch_env）
+    if agent_id == "opencode" && opencode_v2() {
+        return Some(args);
+    }
     for a in spec.readonly_args {
         args.push((*a).into());
     }
     Some(args)
 }
 
-/// OpenCode 2.x 还没适配：主命令不再认 `--model` / `--agent` / `--port` / `--fork`（2.2.5 实测 `Unrecognized flag: --model`），
-/// 配置结构也换了。按 1.x 参数硬启动只会报错，启动前拦下说清。Homebrew 官方源的 `opencode` 已跟 2.x，
-/// Mesa 自己装的 anomalyco tap 与 npm `opencode-ai` 仍是 1.x（2026-11-01）
-fn opencode_unsupported_version(version: Option<(u32, u32, u32)>) -> Option<String> {
-    let (major, minor, patch) = version.filter(|v| v.0 >= 2)?;
-    Some(format!(
-        "本机的 OpenCode 是 {major}.{minor}.{patch}，Mesa 目前只适配 1.x：2.x 改了启动参数，照旧启动会直接报错。\
-         可以先换回 1.x：Homebrew 用 `brew uninstall opencode && brew install anomalyco/tap/opencode`，\
-         npm 用 `npm i -g opencode-ai`（`@opencode/cli` 是 2.x）。"
-    ))
+/// 本机 OpenCode 是不是 2.x（2026-11-04 起两版都支持）：查不到版本按 1.x。2.x 换了启动参数、默认把对话交给共享后台服务、
+/// 会话换了表，这几处按它分开走（matrix §5「OpenCode 2」）
+pub(crate) fn opencode_v2() -> bool {
+    cli_version("opencode").is_some_and(|v| v.0 >= 2)
+}
+
+/// 2.x 声明给思考模型的档位：1.x 配置枚举里通用的三档，连接另选了档位就补上
+const OPENCODE_V2_EFFORTS: [&str; 3] = ["low", "medium", "high"];
+
+/// 1.x 写法里 `@ai-sdk/openai-compatible` 模型 options 中留在请求外的键（2.x `ConfigProviderOptionsV1.compatibleModel`），
+/// 其余的 2.x 原样放进请求体
+const OPENCODE_V2_COMPATIBLE_SETTINGS: [&str; 13] = [
+    "apiKey", "baseURL", "headers", "body", "extraBody", "timeout", "chunkTimeout", "headerTimeout", "disabled",
+    "reasoningEffort", "textVerbosity", "user", "strictJsonSchema",
+];
+
+/// 1.x 写法的 provider 块 → 2.x 原生 `providers` 条目。照 2.2.5 `opencode debug config` 对 1.x 写法的规整结果逐字段写，
+/// 只多两处：思考模型写 `capabilities.reasoning`（2.x 读 1.x 写法会丢掉 `reasoning: true`，档位就选不了），
+/// 没声明视觉的模型写明只收文本（2.x 缺省收图，1.x 缺省纯文本；中转的纯文本模型收到图会报错）。
+/// 同名的原生条目整块替换 1.x 条目，所以不能只补一个字段
+fn opencode_provider_v2(v1: &serde_json::Value, effort: Option<&str>) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+    let npm = v1.get("npm").and_then(Value::as_str);
+    let mut out = Map::new();
+    if let Some(name) = v1.get("name") {
+        out.insert("name".into(), name.clone());
+    }
+    if let Some(npm) = npm {
+        out.insert("package".into(), json!(format!("aisdk:{npm}")));
+    }
+    if let Some(opts) = v1.get("options").and_then(Value::as_object) {
+        let mut settings = Map::new();
+        for (k, v) in opts {
+            match k.as_str() {
+                "headers" | "body" => {
+                    out.insert(k.clone(), v.clone());
+                }
+                _ => {
+                    settings.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        out.insert("settings".into(), Value::Object(settings));
+    }
+    let compatible = npm == Some("@ai-sdk/openai-compatible");
+    let mut models = Map::new();
+    for (id, m) in v1.get("models").and_then(Value::as_object).into_iter().flatten() {
+        let mut entry = Map::new();
+        for key in ["name", "limit"] {
+            if let Some(v) = m.get(key) {
+                entry.insert(key.into(), v.clone());
+            }
+        }
+        let mut caps = Map::new();
+        let modalities = m.get("modalities");
+        caps.insert(
+            "input".into(),
+            modalities.and_then(|x| x.get("input")).cloned().unwrap_or_else(|| json!(["text"])),
+        );
+        if let Some(output) = modalities.and_then(|x| x.get("output")) {
+            caps.insert("output".into(), output.clone());
+        }
+        if m.get("reasoning") == Some(&json!(true)) {
+            let mut efforts: Vec<&str> = OPENCODE_V2_EFFORTS.to_vec();
+            if let Some(e) = effort.filter(|e| !e.is_empty() && *e != "none" && !efforts.contains(e)) {
+                efforts.push(e);
+            }
+            caps.insert("reasoning".into(), json!({ "supported": true, "effort": efforts }));
+        }
+        entry.insert("capabilities".into(), Value::Object(caps));
+        if let Some(opts) = m.get("options").and_then(Value::as_object) {
+            let (mut settings, mut body) = (Map::new(), Map::new());
+            for (k, v) in opts {
+                if !compatible || OPENCODE_V2_COMPATIBLE_SETTINGS.contains(&k.as_str()) {
+                    settings.insert(k.clone(), v.clone());
+                } else {
+                    body.insert(k.clone(), v.clone());
+                }
+            }
+            if !settings.is_empty() {
+                entry.insert("settings".into(), Value::Object(settings));
+            }
+            if !body.is_empty() {
+                entry.insert("body".into(), Value::Object(body));
+            }
+        }
+        models.insert(id.clone(), Value::Object(entry));
+    }
+    out.insert("models".into(), Value::Object(models));
+    Value::Object(out)
+}
+
+/// 启动内联配置改成 2.x 写法：`provider` 整体换成原生 `providers`；`model` / `small_model` / `agent` 等 2.x 照 1.x 写法读得懂，不动
+fn opencode_inline_config_v2(config: &mut serde_json::Value, effort: Option<&str>) {
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+    let Some(serde_json::Value::Object(legacy)) = obj.remove("provider") else {
+        return;
+    };
+    let native: serde_json::Map<String, serde_json::Value> = legacy
+        .iter()
+        .map(|(id, block)| (id.clone(), opencode_provider_v2(block, effort)))
+        .collect();
+    obj.insert("providers".into(), serde_json::Value::Object(native));
 }
 
 /// 只讨论要看版本的家（2026-10-26 本机实测的版本）：低于它或查不到版本就当没有只讨论，启动时拒绝、徽标置灰。
@@ -2210,6 +2310,10 @@ pub fn readonly_launch_env(agent_id: &str, env: &mut Vec<(String, String)>) {
     if agent_id != "opencode" {
         return;
     }
+    if opencode_v2() {
+        opencode_readonly_env_v2(env);
+        return;
+    }
     env.retain(|(k, _)| k != "OPENCODE_EXPERIMENTAL_PLAN_MODE");
     env.push(("OPENCODE_EXPERIMENTAL_PLAN_MODE".into(), "1".into()));
     let idx = env.iter().position(|(k, _)| k == "OPENCODE_CONFIG_CONTENT");
@@ -2230,6 +2334,37 @@ pub fn readonly_launch_env(agent_id: &str, env: &mut Vec<(String, String)>) {
         *plan = serde_json::json!({});
     }
     plan.as_object_mut().unwrap().insert("permission".into(), opencode_plan_permission());
+    let text = cfg.to_string();
+    match idx {
+        Some(i) => env[i].1 = text,
+        None => env.push(("OPENCODE_CONFIG_CONTENT".into(), text)),
+    }
+}
+
+/// OpenCode 2.x 只讨论时的权限。2.x 的 plan agent 只禁改文件（方案目录 `~/.opencode/plan/` 除外，2.2.5 `plugin/plan.ts`），
+/// shell、子任务、MCP 都按默认走；也没有 plan_exit——计划模式只在对话里商量，开工要人切回 build。
+/// 规则后来者优先、deny 先判（2.x `Permission.evaluate`）；serde_json 按键名排序，`*` 排在字母前正好先兜底
+fn opencode_plan_permission_v2() -> serde_json::Value {
+    serde_json::json!({
+        "*": "ask",
+        "read": { "*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow" },
+        "glob": "allow", "grep": "allow", "webfetch": "allow", "websearch": "allow",
+        "todo": "allow", "question": "allow", "skill": "allow",
+        "edit": { "*": "deny", "~/.opencode/plan/*": "allow" },
+        "external_directory": { "*": "ask", "~/.opencode/plan/*": "allow", "*opencode/tool-output/*": "allow" }
+    })
+}
+
+/// 2.x 只讨论：主命令不认 `--agent`，改写内联配置的 `default_agent: "plan"`；权限写在顶层 `permission`，
+/// 对所有 agent 生效——接着聊一段原本在 build 下的对话时 default_agent 管不到它，只讨论照样兑现（AGENTS.md 新建 / 恢复都兑现）
+fn opencode_readonly_env_v2(env: &mut Vec<(String, String)>) {
+    let idx = env.iter().position(|(k, _)| k == "OPENCODE_CONFIG_CONTENT");
+    let mut cfg: serde_json::Value = idx
+        .and_then(|i| serde_json::from_str(&env[i].1).ok())
+        .filter(|v: &serde_json::Value| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    cfg["default_agent"] = serde_json::json!("plan");
+    cfg["permission"] = opencode_plan_permission_v2();
     let text = cfg.to_string();
     match idx {
         Some(i) => env[i].1 = text,
@@ -3363,6 +3498,10 @@ pub(crate) fn resume_args(agent_id: &str, session_id: &str) -> (bool, Vec<String
 
 /// 原生分叉参数：(是否放最前, 参数, 能否同时用 --session-id 定新会话 ID)；这家没有原生分叉返回 None
 pub(crate) fn fork_args(agent_id: &str, session_id: &str) -> Option<(bool, Vec<String>, bool)> {
+    // OpenCode 2.x 主命令没有 --fork（只剩 `opencode run --fork`，不进交互界面），按没有原生分叉处理
+    if agent_id == "opencode" && opencode_v2() {
+        return None;
+    }
     let fork = agent_spec(agent_id)?.fork.as_ref()?;
     Some((
         fork.prepend,
@@ -6682,11 +6821,50 @@ mod tests {
     }
 
     #[test]
-    fn opencode_2x_refused_before_spawn() {
-        assert!(opencode_unsupported_version(Some((1, 19, 5))).is_none());
-        assert!(opencode_unsupported_version(None).is_none(), "查不到版本照常启动");
-        let msg = opencode_unsupported_version(Some((2, 2, 5))).unwrap();
-        assert!(msg.contains("2.2.5") && msg.contains("anomalyco/tap/opencode"));
+    fn opencode_v2_inline_config_uses_native_providers() {
+        let mut p = profile("opencode", Some("https://relay.example.com/v1"));
+        p.models = vec!["deepseek-v4".into(), "plain-model".into()];
+        p.request_policy.reasoning_effort = Some("xhigh".into());
+        p.request_policy.temperature = Some(0.3);
+        let plan = launch_plan(&p, Some("sk-test".into()), Some("deepseek-v4")).unwrap();
+        let raw = plan.env.iter().find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT").unwrap().1.clone();
+        let mut cfg: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let pid = p.provider_name();
+        let reasoning = cfg["provider"][&pid]["models"]["deepseek-v4"]["reasoning"] == true;
+        opencode_inline_config_v2(&mut cfg, Some("xhigh"));
+        assert!(cfg.get("provider").is_none(), "1.x 的 provider 整体换掉");
+        let prov = &cfg["providers"][&pid];
+        assert_eq!(prov["package"], "aisdk:@ai-sdk/openai-compatible");
+        assert_eq!(prov["settings"]["apiKey"], "sk-test");
+        assert_eq!(prov["settings"]["baseURL"], "https://relay.example.com/v1");
+        let m = &prov["models"]["deepseek-v4"];
+        assert_eq!(m["settings"]["reasoningEffort"], "xhigh", "思考档留在请求外的 settings");
+        assert_eq!(m["body"]["temperature"], 0.3, "其余参数进请求体（2.x 对 1.x 写法同样处理）");
+        assert!(m["limit"]["context"].as_i64().unwrap() > 0);
+        if reasoning {
+            assert_eq!(m["capabilities"]["reasoning"]["supported"], true);
+            let efforts: Vec<&str> =
+                m["capabilities"]["reasoning"]["effort"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+            assert_eq!(efforts, vec!["low", "medium", "high", "xhigh"], "连接选的档补进可选档位");
+        }
+        assert_eq!(prov["models"]["plain-model"]["capabilities"]["input"], serde_json::json!(["text"]), "没声明视觉的只收文本");
+        assert_eq!(cfg["model"], format!("{pid}/deepseek-v4"), "顶层 model 2.x 照读，不动");
+    }
+
+    #[test]
+    fn opencode_v2_readonly_env_sets_default_agent_and_global_rules() {
+        let mut env = vec![("OPENCODE_CONFIG_CONTENT".to_string(), r#"{"model":"ccode/m"}"#.to_string())];
+        opencode_readonly_env_v2(&mut env);
+        assert!(!env.iter().any(|(k, _)| k == "OPENCODE_EXPERIMENTAL_PLAN_MODE"), "2.x 没有这个开关");
+        let cfg: serde_json::Value = serde_json::from_str(&env[0].1).unwrap();
+        assert_eq!(cfg["model"], "ccode/m");
+        assert_eq!(cfg["default_agent"], "plan", "主命令不认 --agent，改由配置定");
+        let perm = &cfg["permission"];
+        assert_eq!(perm.as_object().unwrap().keys().next().map(String::as_str), Some("*"), "先兜底");
+        assert_eq!(perm["*"], "ask");
+        let edit: Vec<(&String, &serde_json::Value)> = perm["edit"].as_object().unwrap().iter().collect();
+        assert_eq!(edit[0], (&"*".to_string(), &serde_json::json!("deny")));
+        assert_eq!(edit[1], (&"~/.opencode/plan/*".to_string(), &serde_json::json!("allow")), "2.x 方案目录在家目录下");
     }
 
     #[test]

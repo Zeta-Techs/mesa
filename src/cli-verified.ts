@@ -6,7 +6,7 @@
  */
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { newerVersion, verifiedVersion, versionTrust, type VerifiedTable } from "./chat-fidelity";
+import { baselineKey, newerVersion, verifiedVersion, versionTrust, type VerifiedTable } from "./chat-fidelity";
 import { IS_MAC, IS_WINDOWS } from "./hotkeys";
 import { useAppStore } from "./store";
 
@@ -62,16 +62,20 @@ function subscribe(fn: () => void) {
   };
 }
 
-/** 这一家眼下认的核对版本：随包的与联网前移的取较新 */
+/** 这一家眼下认的核对版本：随包的与联网前移的取较新（基线名按装的版本取，见 baselineKey） */
 export function currentVerifiedVersion(agentId: string | null | undefined): string | null {
   if (!agentId) return null;
-  return newerVersion(verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId), advanced[agentId] ?? null);
+  const installed = useAppStore.getState().agents.find((a) => a.id === agentId)?.version ?? null;
+  const key = baselineKey(agentId, installed);
+  return newerVersion(verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, key), advanced[key] ?? null);
 }
 
 export function useVerifiedVersion(agentId: string | null | undefined): string | null {
-  const remote = useSyncExternalStore(subscribe, () => (agentId ? advanced[agentId] ?? null : null));
-  if (!agentId) return null;
-  return newerVersion(verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, agentId), remote);
+  const installed = useAppStore((s) => (agentId ? s.agents.find((a) => a.id === agentId)?.version ?? null : null));
+  const key = agentId ? baselineKey(agentId, installed) : null;
+  const remote = useSyncExternalStore(subscribe, () => (key ? advanced[key] ?? null : null));
+  if (!key) return null;
+  return newerVersion(verifiedVersion(VERIFIED_VERSIONS, CANARY_PLATFORM, key), remote);
 }
 
 /** 这一家的 CLI 比 Mesa 核对过的新（读屏可能已对不上）：替人自动按的步骤先停、确认卡上提醒一句 */

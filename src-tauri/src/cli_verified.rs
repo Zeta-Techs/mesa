@@ -48,6 +48,12 @@ const BUNDLED: &[(&str, &str)] = bundled!("darwin");
 const PLATFORM: &str = "win32";
 #[cfg(windows)]
 const BUNDLED: &[(&str, &str)] = bundled!("win32");
+/// 只在部分平台有基线的：OpenCode 2.x（opencode2，金丝雀 2026-11-04 起；Windows 的基线要在 Windows 上 --accept 后再加进来）
+#[cfg(target_os = "macos")]
+const BUNDLED_EXTRA: &[(&str, &str)] =
+    &[("opencode2", include_str!("../../scripts/cli-canary/baseline/darwin/opencode2.json"))];
+#[cfg(not(target_os = "macos"))]
+const BUNDLED_EXTRA: &[(&str, &str)] = &[];
 // Linux 没有金丝雀基线（本版本未开发），前端照旧取别的平台里最新的
 #[cfg(not(any(target_os = "macos", windows)))]
 const PLATFORM: &str = "linux";
@@ -143,7 +149,7 @@ pub async fn cli_verified_advanced() -> BTreeMap<String, String> {
     let mut advanced = cached.as_ref().map(|c| c.advanced.clone()).unwrap_or_default();
     let mut hosts: Vec<&str> = BASELINE_HOSTS.to_vec();
     let mut fetched_any = false;
-    for (agent, bundled) in BUNDLED {
+    for (agent, bundled) in BUNDLED.iter().chain(BUNDLED_EXTRA) {
         let mut remote = None;
         while let Some(host) = hosts.first().copied() {
             match fetch_text(&client, &format!("{host}/{PLATFORM}/{agent}.json")).await {

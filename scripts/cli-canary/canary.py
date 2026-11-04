@@ -28,14 +28,23 @@ E2E = os.path.join(ROOT, "scripts", "e2e-model-routing")
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLATFORM = sys.platform if sys.platform in ("win32", "darwin") else "linux"
 BIN = {"claude-code": "claude", "codex": "codex", "gemini": "gemini", "qwen": "qwen", "opencode": "opencode",
-       "kimi": "kimi", "codebuddy": "codebuddy", "cursor": "cursor-agent", "grok": "grok"}
+       "kimi": "kimi", "codebuddy": "codebuddy", "cursor": "cursor-agent", "grok": "grok", "opencode2": "opencode"}
+# 金丝雀里的名字 → Mesa 的 agent id。OpenCode 1.x / 2.x 同命令名、同一个会话库，不能装在一起（2026-11-04 起两版都支持）：
+# 「opencode2」是装着 2.x 时的那一份基线，Mesa 里仍是 opencode（按 --version 大版本分开走，agents::opencode_v2）
+MESA_ID = {"opencode2": "opencode"}
+# 要求的大版本：装的不对就当没装、跳过（CI 先装 1.x 跑一轮，再换 2.x 只跑 opencode2）
+MAJOR = {"opencode": lambda m: m < 2, "opencode2": lambda m: m >= 2}
+
+
+def mesa(agent):
+    return MESA_ID.get(agent, agent)
 # 不在 PATH 上时的常见安装位置（Kimi 官方安装脚本装在自己的目录里）
 BIN_FALLBACK = {"kimi": "~/.kimi-code/bin/kimi"}
 # 有结构化旁路的家跑 Mesa 的旁路端到端（chat_channel e2e）；Gemini 不开全局 hooks、Cursor 没有旁路，只抓屏。
 # Grok、Kimi（2.4 起，2026-11-04）的旁路是程序状态（OSC 7501），Windows 的 ConPTY 两个方向都吞 OSC，Mesa 在 Windows 不接它
 # （chat_channel.rs prepare），也只抓屏
 PROGRAM_STATUS = {"grok", "kimi"}
-CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "codex"} | (set() if PLATFORM == "win32" else PROGRAM_STATUS)
+CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "opencode2", "codex"} | (set() if PLATFORM == "win32" else PROGRAM_STATUS)
 # 旁路直接报会话 id 的家（程序状态不带会话 id）
 SESSION_ID = CHANNEL - PROGRAM_STATUS
 # 连不上假网关的家（Cursor 只走自家云端，临时 HOME 里也没登录）：只记版本，请求 / 画面都不比
@@ -52,7 +61,7 @@ TOOL_PROMPT = {"codex": "TRIGGER_TOOL TRIGGER_ESC 跑一下"}
 DEFAULT_TOOL_PROMPT = "TRIGGER_TOOL 跑一下"
 # 公开发版说明（GitHub Releases）；Claude 另取 CHANGELOG.md，没有公开说明的家不取
 RELEASES = {"codex": "openai/codex", "gemini": "google-gemini/gemini-cli", "qwen": "QwenLM/qwen-code",
-            "opencode": "anomalyco/opencode", "kimi": "MoonshotAI/kimi-code"}
+            "opencode": "anomalyco/opencode", "opencode2": "anomalyco/opencode", "kimi": "MoonshotAI/kimi-code"}
 CHANGELOG_KEYWORDS = re.compile(
     r"env|hook|session|transcript|rollout|jsonl|tool|todo|task|config|setting|permission|approv|sandbox|app-server|"
     r"instruction|prompt|windows|stream|render|provider|gateway|base.?url|resume|/clear|third-party|model|"
@@ -292,7 +301,7 @@ def make_plans(gw, out):
 def channel_phase(agent, gw, out, adir):
     plans = make_plans(gw, out)
     keep = os.path.join(adir, "channel")
-    env = dict(os.environ, MESA_E2E_REAL_CLI="1", E2E_PLANS=plans, E2E_AGENT=agent, E2E_CLEAN_HOME="1", E2E_KEEP=keep)
+    env = dict(os.environ, MESA_E2E_REAL_CLI="1", E2E_PLANS=plans, E2E_AGENT=mesa(agent), E2E_CLEAN_HOME="1", E2E_KEEP=keep)
     if agent in OFFLINE:
         env["E2E_EXTRA_ENV"] = ";".join(f"{k}={v}" for k, v in OFFLINE_ENV.items())
     mark = gw.mark()
@@ -326,8 +335,8 @@ def screen_phase(agent, gw, out, adir, deps):
     if agent in OFFLINE:
         env["CAP_ENV"] = ";".join(filter(None, [env.get("CAP_ENV", ""), *(f"{k}={v}" for k, v in OFFLINE_ENV.items())]))
     # 有「请求批准」档就按它抓（看审批菜单）；没有这一档的家（Kimi、OpenCode）按默认启动参数
-    tier = "ask" if (json.load(open(plans, encoding="utf-8")).get(agent, {}).get("permission") or {}).get("ask") else "base"
-    code, text = run([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "chat-capture.py"), plans, agent, tier, cap],
+    tier = "ask" if (json.load(open(plans, encoding="utf-8")).get(mesa(agent), {}).get("permission") or {}).get("ask") else "base"
+    code, text = run([sys.executable, "-I", "-X", "utf8", os.path.join(E2E, "chat-capture.py"), plans, mesa(agent), tier, cap],
                      env=env, timeout=300)
     open(os.path.join(adir, "screen.log"), "w", encoding="utf-8").write(text)
     if not os.path.exists(cap):
@@ -342,7 +351,9 @@ def screen_phase(agent, gw, out, adir, deps):
 # 「全局配置」层（2026-10-30）：外部终端里直接用 CLI 的无头命令。Cursor 不支持设为全局，不跑
 GLOBAL_PROMPT = "say ok"
 GLOBAL_CMD = {"claude-code": ["-p"], "codex": ["exec", "--skip-git-repo-check"], "gemini": ["-p"], "qwen": ["-p"],
-              "opencode": ["run"], "kimi": ["-p"], "codebuddy": ["-p"], "grok": ["-p"]}
+              "opencode": ["run"], "kimi": ["-p"], "codebuddy": ["-p"], "grok": ["-p"],
+              # 2.x 不带 --standalone 会拉起常驻的共享后台服务、跑完不退（临时 HOME 里留一个进程）；读全局配置两者一样
+              "opencode2": ["run", "--standalone"]}
 # 外部终端的环境里不该有的：各家连接 / 密钥 / 配置目录变量（同 shell_env 的凭据口径），免得盖过写进去的配置
 GLOBAL_DROP_PREFIXES = ("ANTHROPIC_", "OPENAI_", "AZURE_OPENAI_", "GEMINI_", "GOOGLE_GEMINI_", "GOOGLE_API_", "CLAUDE_",
                         "CODEX_", "KIMI_", "MOONSHOT_", "QWEN_", "DASHSCOPE_", "CODEBUDDY_", "CURSOR_", "XAI_", "GROK_",
@@ -362,7 +373,7 @@ def global_phase(agent, gw, adir):
     os.makedirs(work)
     # 写计划按搬迁变量找目录（CODEX_HOME 等）：本机设了就会写进真实配置目录，这里一并去掉
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(GLOBAL_DROP_PREFIXES)}
-    env.update(E2E_BASE=gw.base, E2E_GLOBAL_HOME=home, E2E_AGENT=agent)
+    env.update(E2E_BASE=gw.base, E2E_GLOBAL_HOME=home, E2E_AGENT=mesa(agent))
     code, text = run([cargo(), "test", "--lib", "e2e_write_global_config", "--", "--ignored", "--nocapture"],
                      cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=1800)
     open(os.path.join(adir, "global-write.log"), "w", encoding="utf-8").write(text)
@@ -380,7 +391,7 @@ def global_phase(agent, gw, adir):
         cenv["CODEX_HOME"] = os.path.join(home, ".codex")
     # OpenCode 首次要装 provider 包：本机装过就复用缓存，免得每次下载（CI 上没有缓存照常下载）
     real_cache = os.path.join(os.path.expanduser("~"), ".cache")
-    if agent == "opencode" and os.path.isdir(os.path.join(real_cache, "opencode")):
+    if mesa(agent) == "opencode" and os.path.isdir(os.path.join(real_cache, "opencode")):
         cenv["XDG_CACHE_HOME"] = real_cache
     if agent in OFFLINE:
         cenv.update(OFFLINE_ENV)
@@ -740,6 +751,10 @@ def main():
         log(f"不认得：{', '.join(unknown)}"); sys.exit(2)
     # 没装的跳过（报告里写明），一家都没有才算环境问题
     missing = [a for a in agents if not bin_path(a)]
+    for a in [a for a in agents if a in MAJOR and a not in missing]:
+        v = vtuple(version_of(a))
+        if v and not MAJOR[a](v[0]):
+            missing.append(a)  # 装的是另一个大版本（OpenCode 1.x / 2.x 不能并存）
     agents = [a for a in agents if a not in missing]
     if not agents:
         log(f"一家都没装：{', '.join(missing)}"); sys.exit(2)

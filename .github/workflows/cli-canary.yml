@@ -56,10 +56,21 @@ jobs:
         # --accept-unchanged：只是版本往前走、指纹没变的家，顺手把核对版本前移（随包进 Mesa，装好的 Mesa 也会从 main 取，决定聊天层降不降级）；
         # 有变化 / 检查没过的家照旧报红，等人看报告
         run: python -I -X utf8 scripts/cli-canary/canary.py --accept-unchanged --out "$RUNNER_TEMP/canary"
+      # OpenCode 2.x（2026-11-04 起两版都支持）：与 1.x 同命令名、不能并存，上面那轮跑完换装 2.x，只跑 opencode2 那份基线。
+      # 先只在 macOS 跑——Windows 还没有 2.x 基线，要在 Windows 上 `npm run canary -- --accept --agents opencode2` 建好再放开
+      - name: 换装 OpenCode 2.x 再跑一轮（opencode2）
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          npm uninstall -g opencode-ai
+          npm install -g @opencode/cli@latest
+          python -I -X utf8 scripts/cli-canary/canary.py --agents opencode2 --accept-unchanged --out "$RUNNER_TEMP/canary-opencode2"
       - name: 报告进摘要
         if: always()
         shell: bash
-        run: cat "$RUNNER_TEMP/canary/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          cat "$RUNNER_TEMP/canary/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+          cat "$RUNNER_TEMP/canary-opencode2/report.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
       # 上游通道雷达（不算红）：CLI 新出了能让聊天层更接近上游的通道（程序状态、本机服务、ACP…），或更新日志提到，
       # 开一条 issue / 追加评论，同一条只提醒一次。只在 macOS 这一路发（程序状态要伪终端才探得到，也免得两路抢着发）
       - name: 上游新通道提醒
@@ -68,9 +79,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          f="$RUNNER_TEMP/canary/upstream-new.md"
-          if [ ! -s "$f" ]; then echo "没有要提醒的"; exit 0; fi
-          python3 -I scripts/cli-canary/upstream_issue.py "$f"
+          sent=0
+          for f in "$RUNNER_TEMP/canary/upstream-new.md" "$RUNNER_TEMP/canary-opencode2/upstream-new.md"; do
+            if [ -s "$f" ]; then python3 -I scripts/cli-canary/upstream_issue.py "$f"; sent=1; fi
+          done
+          [ "$sent" = 1 ] || echo "没有要提醒的"
       - name: 核对版本前移的基线提交回主线
         if: always() && github.ref == 'refs/heads/main'
         shell: bash
@@ -91,5 +104,7 @@ jobs:
         if: always()
         with:
           name: canary-${{ matrix.os }}
-          path: ${{ runner.temp }}/canary
+          path: |
+            ${{ runner.temp }}/canary
+            ${{ runner.temp }}/canary-opencode2
           retention-days: 14
