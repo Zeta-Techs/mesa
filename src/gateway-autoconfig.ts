@@ -358,21 +358,20 @@ export function planAutoConfig(input: {
       }
       row = { ...base, slot, options, defaultModel: options.length === 1 ? options[0] : null, vendorOf, multi: true };
     }
-    if (row.defaultModel) row.duplicateOf = duplicateConnection(row, row.defaultModel, gateway.id, profiles);
+    if (row.defaultModel) row.duplicateOf = duplicateConnection(row, rowModels(row, row.defaultModel), gateway.id, profiles);
     return row;
   });
 }
 
 type ProfileLike = Pick<Profile, "agent" | "gatewayId" | "protocol" | "models" | "extraEnv" | "name">;
 
-/** 这个网关上已有一条名单一模一样的同家连接：返回它的名字（后端 has_duplicate_binding 会拒绝重复建） */
+/** 这个网关上已有一条名单一模一样的同家连接：返回它的名字（后端 has_duplicate_binding 会拒绝重复建）。models = 人在预览里定下的名单 */
 export function duplicateConnection(
   row: AutoConfigRow,
-  chosen: string,
+  models: readonly string[],
   gatewayId: string,
   profiles: readonly ProfileLike[],
 ): string | null {
-  const models = rowModels(row, chosen);
   const dup = profiles.find(
     (p) =>
       p.agent === row.agent &&
@@ -403,10 +402,20 @@ export function rowModels(row: AutoConfigRow, chosen: string): string[] {
  * 没有的跟默认（智谱这类非 Claude 模型就全跟默认）；haiku 跟后台小模型
  */
 export function rowRoleModels(row: AutoConfigRow, chosen: string): RoleModels {
+  return roleModelsFor(row, rowModels(row, chosen));
+}
+
+/**
+ * 按人改过的名单（第一个 = 默认）定分工：后台小模型先认默认那家的同代轻量，名单里没有就取第一个名字像轻量的；
+ * Claude Code 别名同 rowRoleModels
+ */
+export function roleModelsFor(row: AutoConfigRow, models: readonly string[]): RoleModels {
+  const chosen = models[0] ?? "";
   const vendor = row.vendorOf[chosen] ?? modelVendor(chosen);
   const light = vendor ? row.lightOf[vendor] : undefined;
-  const models = rowModels(row, chosen);
-  const small = light && light !== chosen && models.includes(light) && SMALL_ROLE_AGENTS.has(row.agent) ? light : null;
+  const rest = models.slice(1);
+  const pickLight = light && rest.includes(light) ? light : rest.find((id) => isLightModel(id)) ?? null;
+  const small = pickLight && SMALL_ROLE_AGENTS.has(row.agent) ? pickLight : null;
   const roles: RoleModels = { small, subagent: null };
   if (row.agent === "claude-code") {
     const slots: Record<string, string> = {};
@@ -417,4 +426,20 @@ export function rowRoleModels(row: AutoConfigRow, chosen: string): RoleModels {
     roles.slots = slots;
   }
   return roles;
+}
+
+/**
+ * 预览里某个模型槽可换成的模型：目录里能对话的，和这个槽同家的排前面（新的在前），其余按目录顺序。
+ * 名单里已有的（除了这个槽自己）不列
+ */
+export function slotCandidates(
+  catalog: readonly GatewayModel[],
+  current: string | null,
+  taken: readonly string[],
+): string[] {
+  const ids = catalog.filter(usable).map((m) => m.id).filter((id) => id === current || !taken.includes(id));
+  const vendor = current ? modelVendor(current) : null;
+  if (!vendor) return ids;
+  const same = newestFirst(ids.filter((id) => modelVendor(id) === vendor), vendor);
+  return [...same, ...ids.filter((id) => modelVendor(id) !== vendor)];
 }

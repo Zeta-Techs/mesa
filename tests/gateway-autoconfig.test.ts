@@ -4,9 +4,12 @@ import {
   catalogVendors,
   modelVendor,
   modelVersion,
+  duplicateConnection,
   planAutoConfig,
+  roleModelsFor,
   rowModels,
   rowRoleModels,
+  slotCandidates,
   vendorPicks,
 } from "../src/gateway-autoconfig.ts";
 import { PROVIDER_PRESETS } from "../src/presets.ts";
@@ -237,6 +240,22 @@ test("每条连接放最新一代整套产品线：Claude 四款并按名字占�
     subagent: null,
     slots: { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5", fable: "claude-fable-5-1" },
   });
+  // 人在弹窗里改过名单（去掉 fable、换默认）：分工按改后的名单算
+  assert.deepEqual(roleModelsFor(cc, ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]), {
+    small: "claude-haiku-5-5",
+    subagent: null,
+    slots: { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" },
+  });
+  // 换槽的候选：同家新的在前，名单里已有的不列（槽自己除外）
+  const cands = slotCandidates(c, "claude-sonnet-5-5", ["claude-opus-5-5", "claude-sonnet-5-5"]);
+  assert.equal(cands.includes("claude-opus-5-5"), false);
+  assert.equal(cands.includes("claude-sonnet-5-5"), true);
+  assert.equal(cands.findIndex((id) => !id.startsWith("claude")) > cands.findLastIndex((id) => id.startsWith("claude")), true);
+  // 查重按人定下的名单比
+  const list = ["claude-opus-5-5", "claude-haiku-5-5"];
+  const prof = { agent: "claude-code", gatewayId: "g", protocol: null, models: list, extraEnv: {}, name: "R" };
+  assert.equal(duplicateConnection(cc, list, "g", [prof]), "R");
+  assert.equal(duplicateConnection(cc, rowModels(cc, "claude-opus-5-5"), "g", [prof]), null);
   assert.deepEqual(rowModels(by.grok, "grok-4.7"), ["grok-4.7"], "grok-3-mini 是上一代，不配；-reasoning 开关后缀不算产品线");
   assert.deepEqual(
     rowModels(by.qwen, "qwen3.8-max"),

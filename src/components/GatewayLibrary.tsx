@@ -349,8 +349,8 @@ export default function GatewayLibrary({
   // 「Agent 配置」区：新建网关保存后滚到这里接着绑
   const bindSectionRef = useRef<HTMLDivElement>(null);
   // 一键配置各 CLI：列表行上的入口打开编辑页并直接展开这一块
-  const [showAutoConfig, setShowAutoConfig] = useState(false);
-  const autoConfigRef = useRef<HTMLDivElement>(null);
+  // 「一键配置各 CLI」弹窗开给哪个网关（列表行魔棒 / 编辑页入口；2026-11-04 用户：原设计就是弹窗）
+  const [autoConfigFor, setAutoConfigFor] = useState<string | null>(null);
 
   // 未保存判定：打开表单（或保存成功）那一刻的快照 vs 当前填写。逐模型能力声明各自有保存钮、不算在内
   const formSnapshot = useMemo(
@@ -439,16 +439,6 @@ export default function GatewayLibrary({
 
   const rate = useAppStore((s) => s.settings?.rateUsdCny) ?? 7.2;
 
-  function openAutoConfig(g: Gateway) {
-    openEdit(g);
-    setShowBind(false);
-    setShowAutoConfig(true);
-    // 编辑页这一帧才挂上，等下一帧再滚
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => autoConfigRef.current?.scrollIntoView({ block: "start" })),
-    );
-  }
-
   function openEdit(g: Gateway | "new") {
     modelSurfaceGen.current += 1;
     setBaseline(null);
@@ -463,7 +453,6 @@ export default function GatewayLibrary({
     setDraftProbes({});
     setShowAdvanced(false);
     setShowBind(false);
-    setShowAutoConfig(false);
     setShowModels(false);
     setPolicyFilter("");
     setPolicyVendor("all");
@@ -1541,14 +1530,15 @@ export default function GatewayLibrary({
               </div>
             )}
             {editing !== "new" && (
-              <div ref={autoConfigRef} className="scroll-mt-4">
-                <GatewayAutoConfig
-                  gateway={gateways.find((g) => g.id === editing.id) ?? editing}
-                  dirty={dirty}
-                  open={showAutoConfig}
-                  onOpenChange={setShowAutoConfig}
-                />
-              </div>
+              <button
+                type="button"
+                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2 hover:text-l1"
+                onClick={() => setAutoConfigFor(editing.id)}
+              >
+                <Wand2 className="size-3.5 shrink-0 text-l3" aria-hidden="true" />
+                <span className="flex-1">一键配置各 CLI…</span>
+                <span className="text-micro text-l3">给每个装了的 CLI 各建一条连接</span>
+              </button>
             )}
             <div className="text-sm text-l2">
               <button
@@ -1954,7 +1944,7 @@ export default function GatewayLibrary({
                   <span className={`flex shrink-0 items-center ${hoverRevealClass}`} onClick={(e) => e.stopPropagation()}>
                     <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
                     <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
-                    <RowAction icon={<Wand2 className="size-3.5" />} tip="一键配置各 CLI：每个装了的 CLI 用目录里各家最新的模型" label={`用 ${row.name} 一键配置各 CLI`} onClick={() => openAutoConfig(g)} />
+                    <RowAction icon={<Wand2 className="size-3.5" />} tip="一键配置各 CLI：每个装了的 CLI 用目录里各家最新的模型" label={`用 ${row.name} 一键配置各 CLI`} onClick={() => setAutoConfigFor(g.id)} />
                     <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
                   </span>
                   <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-l4" />
@@ -1964,6 +1954,17 @@ export default function GatewayLibrary({
           </ul>
         )}
       </div>
+      {(() => {
+        const g = autoConfigFor ? gateways.find((x) => x.id === autoConfigFor) : undefined;
+        return g ? (
+          <GatewayAutoConfig
+            gateway={g}
+            dirty={editing !== null && editing !== "new" && editing.id === g.id && dirty}
+            open
+            onClose={() => setAutoConfigFor(null)}
+          />
+        ) : null;
+      })()}
     </PagePanel>
   );
 }
