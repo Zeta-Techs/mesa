@@ -795,20 +795,33 @@ fn opencode_thread_refs() -> Vec<(String, String)> {
         return Vec::new();
     };
     let _ = conn.busy_timeout(std::time::Duration::from_millis(300));
-    let Ok(mut stmt) = conn.prepare(
+    // 1.x 在 message 表；2.x 在 session_message（模型是 data.model 的 {id, providerID}）。
+    // 升级过的库两张都有，缺哪张那条查询就跳过
+    let mut out: Vec<(String, String)> = Vec::new();
+    for sql in [
         "SELECT DISTINCT json_extract(data, '$.providerID'), json_extract(data, '$.modelID') FROM message \
          WHERE json_extract(data, '$.role') = 'assistant'",
-    ) else {
-        return Vec::new();
-    };
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)));
-    rows.map(|it| {
-        it.flatten()
-            .filter_map(|(p, m)| Some((p?, m.unwrap_or_default())))
-            .filter(|(p, _)| crate::provider_id::short_id_from_provider(p).is_some())
-            .collect()
-    })
-    .unwrap_or_default()
+        "SELECT DISTINCT json_extract(data, '$.model.providerID'), json_extract(data, '$.model.id') FROM session_message \
+         WHERE type = 'assistant'",
+    ] {
+        let Ok(mut stmt) = conn.prepare(sql) else {
+            continue;
+        };
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)));
+        if let Ok(it) = rows {
+            for (p, m) in it.flatten() {
+                let Some(p) = p else { continue };
+                if crate::provider_id::short_id_from_provider(&p).is_none() {
+                    continue;
+                }
+                let pair = (p, m.unwrap_or_default());
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// 一条 OpenCode 绑定写成渠道块：密钥落 0600 文件、块里写 `{file:}`，按模型的参数与请求头同启动口径

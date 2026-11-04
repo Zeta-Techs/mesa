@@ -513,10 +513,15 @@ fn opencode_events(db_path: &Path, session_id: &str) -> Vec<UsageEvent> {
         return Vec::new();
     };
     // 逐行流式消费：message.data 可能很大，整会话一次性入内存在长会话下峰值过高。
-    // 列级防御沿用 SELECT * + 按列名取索引（drizzle 迁移频繁，缺列给默认而不是报错）
-    let Ok(mut stmt) =
-        conn.prepare("SELECT * FROM message WHERE session_id=? ORDER BY time_created ASC")
-    else {
+    // 列级防御沿用 SELECT * + 按列名取索引（drizzle 迁移频繁，缺列给默认而不是报错）。
+    // 2.x 的会话在 session_message：用量在 assistant 行与压缩行的 data.tokens，模型在 data.model.id
+    let v2 = crate::sessions::opencode_store_of(&conn, session_id) == crate::sessions::OpencodeStore::V2;
+    let sql = if v2 {
+        "SELECT * FROM session_message WHERE session_id=? AND type IN ('assistant','compaction') ORDER BY seq ASC"
+    } else {
+        "SELECT * FROM message WHERE session_id=? ORDER BY time_created ASC"
+    };
+    let Ok(mut stmt) = conn.prepare(sql) else {
         return Vec::new();
     };
     let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -543,7 +548,7 @@ fn opencode_events(db_path: &Path, session_id: &str) -> Vec<UsageEvent> {
         let Ok(v) = serde_json::from_str::<Value>(&data) else {
             continue;
         };
-        if get_str(&v, "role") != Some("assistant") {
+        if !v2 && get_str(&v, "role") != Some("assistant") {
             continue;
         }
         let Some(t) = v.get("tokens") else {
@@ -557,12 +562,12 @@ fn opencode_events(db_path: &Path, session_id: &str) -> Vec<UsageEvent> {
                 .and_then(|x| x.as_i64())
                 .unwrap_or(0)
         };
-        // modelID 为主；model 也可能是 {providerID,modelID} 对象
+        // modelID 为主；model 也可能是 {providerID,modelID} 对象，2.x 是 {id,providerID}
         let model = get_str(&v, "modelID")
             .map(String::from)
             .or_else(|| {
                 v.get("model")
-                    .and_then(|m| get_str(m, "modelID"))
+                    .and_then(|m| get_str(m, "modelID").or_else(|| get_str(m, "id")))
                     .map(String::from)
             })
             .unwrap_or_default();
@@ -3404,6 +3409,33 @@ mod tests {
             "reasoning 计入输出侧"
         );
         assert_eq!(events[0].model, "grok-4");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn opencode_v2_events_from_session_message() {
+        // 2.x：会话在 session_v2，用量在 session_message 的 assistant 行与压缩行，模型是 data.model.id
+        let dir = std::env::temp_dir().join(format!("ccode-usage-oc2-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("opencode.db");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                r#"CREATE TABLE session_v2(id TEXT PRIMARY KEY, time_updated INTEGER);
+                   CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, data TEXT);
+                   INSERT INTO session_v2 VALUES('s1', 1785307072000);
+                   INSERT INTO session_message VALUES('m1','s1','user',1,1785307071000,'{"text":"hi"}');
+                   INSERT INTO session_message VALUES('m2','s1','assistant',2,1785307072000,'{"model":{"id":"e2e-picked","providerID":"x"},"tokens":{"input":5,"output":1,"reasoning":2,"cache":{"read":3,"write":0}}}');
+                   INSERT INTO session_message VALUES('m3','s1','compaction',3,1785307073000,'{"status":"completed","summary":"…","tokens":{"input":40,"output":8}}');
+                   INSERT INTO session_message VALUES('m4','s1','idle',4,1785307074000,'{"outcome":"succeeded"}');"#,
+            )
+            .unwrap();
+        }
+        let events = opencode_events(&db, "s1");
+        assert_eq!(events.len(), 2, "assistant 与压缩各一条，user / idle 不算");
+        assert_eq!(events[0].model, "e2e-picked");
+        assert_eq!((events[0].input, events[0].output, events[0].cache_read), (5, 3, 3));
+        assert_eq!((events[1].input, events[1].output), (40, 8));
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -3877,15 +3877,32 @@ fn opencode_scan_db(db_path: &Path) -> Vec<SessionMetaDto> {
             worktrees.insert(id, wt);
         }
     }
+    // 1.x 表 session 与 2.x 表 session_v2 列相同；升级时旧会话复制进新表、旧表保留，
+    // 同一 id 两边都有时留 time_updated 新的那份（平手留 2.x），读消息时 opencode_store_of 同口径选表
+    let mut picked: HashMap<String, (OpencodeStore, DbRow)> = HashMap::new();
+    for (store, table) in [(OpencodeStore::V1, "session"), (OpencodeStore::V2, "session_v2")] {
+        for row in query_rows(&conn, &format!("SELECT * FROM {table}"), &[]) {
+            let row = DbRow {
+                names: row.0,
+                vals: row.1,
+            };
+            let Some(id) = row.as_str("id") else {
+                continue;
+            };
+            let newer = picked.get(&id).map_or(true, |(_, old)| {
+                row.as_i64("time_updated").unwrap_or(0) >= old.as_i64("time_updated").unwrap_or(0)
+            });
+            if newer {
+                picked.insert(id, (store, row));
+            }
+        }
+    }
+    let mut picked: Vec<(String, (OpencodeStore, DbRow))> = picked.into_iter().collect();
+    picked.sort_by_key(|(_, (_, row))| row.as_i64("time_created").unwrap_or(0));
+    let mut stores: HashMap<String, OpencodeStore> = HashMap::new();
     let mut out = Vec::new();
-    for row in query_rows(&conn, "SELECT * FROM session", &[]) {
-        let row = DbRow {
-            names: row.0,
-            vals: row.1,
-        };
-        let Some(id) = row.as_str("id") else {
-            continue;
-        };
+    for (id, (store, row)) in picked {
+        stores.insert(id.clone(), store);
         let project_id = row.as_str("project_id").unwrap_or_default();
         let directory = row.as_str("directory").unwrap_or_default();
         let project_path = if project_id.is_empty() || project_id == "global" {
@@ -3954,6 +3971,10 @@ fn opencode_scan_db(db_path: &Path) -> Vec<SessionMetaDto> {
     // LIMIT 是防御兜底：首条真实用户消息通常就是最前面几条之一
     for m in out.iter_mut().filter(|m| m.title.is_none()) {
         let sid = m.session_id.clone();
+        if stores.get(&sid) == Some(&OpencodeStore::V2) {
+            m.title = opencode_v2_first_user_title(&conn, &sid);
+            continue;
+        }
         for row in query_rows(
             &conn,
             "SELECT * FROM message WHERE session_id=? ORDER BY time_created ASC LIMIT 20",
@@ -4135,67 +4156,290 @@ fn opencode_message(
     }
 }
 
+// ----- OpenCode 2.x：session_v2 / session_message / session_part -----
+// 2.x 换了表：会话在 session_v2（列同 1.x session）；消息在 session_message（type 列 + data，data 不含 id / type，
+// 用户话在 data.text，assistant 内容在 data.content[]）；assistant 有 session_part 行时以 part 为准（按 ordinal）。
+// 1.x 库升级时旧会话复制进新表、旧表保留，所以两套表都读；下面把 2.x 的行规整成 1.x 的 (message.data, parts) 形状，
+// 出块、快照、搜索都沿用 1.x 那一套。
+
+/// 一个会话的消息该读哪套表
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum OpencodeStore {
+    V1,
+    V2,
+}
+
+impl OpencodeStore {
+    fn message_table(self) -> &'static str {
+        match self {
+            OpencodeStore::V1 => "message",
+            OpencodeStore::V2 => "session_message",
+        }
+    }
+
+    fn session_table(self) -> &'static str {
+        match self {
+            OpencodeStore::V1 => "session",
+            OpencodeStore::V2 => "session_v2",
+        }
+    }
+}
+
+fn opencode_session_updated(conn: &Connection, store: OpencodeStore, sid: &str) -> Option<i64> {
+    conn.query_row(
+        &format!("SELECT time_updated FROM {} WHERE id=?1", store.session_table()),
+        params![sid],
+        |r| r.get::<_, i64>(0),
+    )
+    .ok()
+}
+
+/// 只在一边有就读那边；两边都有（升级时复制）读 time_updated 新的，平手读 2.x（与列表去重同口径）
+pub(crate) fn opencode_store_of(conn: &Connection, sid: &str) -> OpencodeStore {
+    match (
+        opencode_session_updated(conn, OpencodeStore::V1, sid),
+        opencode_session_updated(conn, OpencodeStore::V2, sid),
+    ) {
+        (Some(v1), Some(v2)) if v1 > v2 => OpencodeStore::V1,
+        (_, Some(_)) => OpencodeStore::V2,
+        _ => OpencodeStore::V1,
+    }
+}
+
+/// 两套表里这个会话最新的 time_updated（文件签名用）
+fn opencode_latest_updated(conn: &Connection, sid: &str) -> Option<i64> {
+    let v1 = opencode_session_updated(conn, OpencodeStore::V1, sid);
+    let v2 = opencode_session_updated(conn, OpencodeStore::V2, sid);
+    v1.max(v2)
+}
+
+/// 工具结果 content[]：文本拼起来，文件只留名字
+fn opencode_v2_content_text(content: Option<&Value>) -> String {
+    let Some(items) = content.and_then(|c| c.as_array()) else {
+        return content.map(|c| stringify_payload(Some(c))).unwrap_or_default();
+    };
+    items
+        .iter()
+        .filter_map(|item| match get_str(item, "type") {
+            Some("text") => get_str(item, "text").map(String::from),
+            Some("file") => get_str(item, "name")
+                .or_else(|| get_str(item, "uri"))
+                .map(|n| format!("[文件] {n}")),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 2.x assistant 的一项内容 → 1.x part 形状（text / reasoning 原样，tool 改成 {tool, state:{input, output, error}}）
+fn opencode_v2_part_as_v1(item: &Value) -> Option<Value> {
+    match get_str(item, "type") {
+        Some("text") | Some("reasoning") => Some(item.clone()),
+        Some("tool") => {
+            let state = item.get("state");
+            let input = state.and_then(|s| s.get("input")).cloned().unwrap_or(Value::Null);
+            let output = opencode_v2_content_text(state.and_then(|s| s.get("content")));
+            let error = state
+                .and_then(|s| s.get("error"))
+                .map(|e| get_str(e, "message").map(String::from).unwrap_or_else(|| e.to_string()));
+            let mut st = serde_json::json!({ "input": input });
+            if !output.is_empty() {
+                st["output"] = Value::String(output);
+            }
+            if let Some(e) = error.filter(|e| !e.is_empty()) {
+                st["error"] = Value::String(e);
+            }
+            Some(serde_json::json!({
+                "type": "tool",
+                "tool": get_str(item, "name").unwrap_or_default(),
+                "state": st,
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// 2.x 的一条 session_message → 1.x 形状的 (message.data, parts)；不进对话的类型（idle、切模型、系统提示、压缩等）给 None。
+/// `parts` 是这条消息的 session_part（已按 ordinal 排好），有就替换 data.content
+pub(crate) fn opencode_v2_as_v1(
+    kind: &str,
+    data: &Value,
+    parts: Option<&[Value]>,
+) -> Option<(Value, Vec<Value>)> {
+    let time = data.get("time").cloned().unwrap_or(Value::Null);
+    match kind {
+        "user" => {
+            let text = get_str(data, "text").unwrap_or_default();
+            Some((
+                serde_json::json!({ "role": "user", "time": time }),
+                vec![serde_json::json!({ "type": "text", "text": text })],
+            ))
+        }
+        // 用户在 TUI 里直接跑的 `!命令`：按一次工具调用展示
+        "shell" => {
+            let output = data
+                .get("output")
+                .map(|o| get_str(o, "output").map(String::from).unwrap_or_else(|| stringify_payload(Some(o))))
+                .unwrap_or_default();
+            let part = serde_json::json!({
+                "type": "tool",
+                "tool": "shell",
+                "state": { "input": { "command": get_str(data, "command").unwrap_or_default() }, "output": output },
+            });
+            Some((serde_json::json!({ "role": "assistant", "time": time }), vec![part]))
+        }
+        "assistant" => {
+            let content: Vec<Value> = match parts {
+                Some(p) if !p.is_empty() => p.to_vec(),
+                _ => data
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .cloned()
+                    .unwrap_or_default(),
+            };
+            let model = data.get("model");
+            let mut v1 = serde_json::json!({ "role": "assistant", "time": time });
+            for key in ["tokens", "cost", "error", "finish"] {
+                if let Some(v) = data.get(key) {
+                    v1[key] = v.clone();
+                }
+            }
+            if let Some(id) = model.and_then(|m| get_str(m, "id")) {
+                v1["modelID"] = Value::String(id.to_string());
+            }
+            if let Some(p) = model.and_then(|m| get_str(m, "providerID")) {
+                v1["providerID"] = Value::String(p.to_string());
+            }
+            Some((v1, content.iter().filter_map(opencode_v2_part_as_v1).collect()))
+        }
+        _ => None,
+    }
+}
+
+/// 2.x 会话首条用户话作标题（会话行还是占位标题时）
+fn opencode_v2_first_user_title(conn: &Connection, sid: &str) -> Option<String> {
+    for row in query_rows(
+        conn,
+        "SELECT * FROM session_message WHERE session_id=? AND type='user' ORDER BY seq ASC LIMIT 20",
+        &[&sid],
+    ) {
+        let row = DbRow {
+            names: row.0,
+            vals: row.1,
+        };
+        let data = row
+            .as_str("data")
+            .and_then(|d| serde_json::from_str::<Value>(&d).ok())?;
+        if let Some(title) = get_str(&data, "text").and_then(usable_title) {
+            return Some(title);
+        }
+    }
+    None
+}
+
+/// 一条规整后的消息行：(id, time_created, 1.x 形状 data, parts)
+type OpencodeRow = (Option<String>, Option<i64>, Value, Vec<Value>);
+
+/// 消息行（`store` 那套表里查出来的）→ 规整行：1.x 按 message_id 配 part 表，2.x 配 session_part 并改形状。
+/// part 按消息 id 分批 IN 查（防 SQLite 变量上限），不整会话扫
+fn opencode_rows_with_parts(conn: &Connection, store: OpencodeStore, rows: Vec<DbRow>) -> Vec<OpencodeRow> {
+    let ids: Vec<String> = rows
+        .iter()
+        .filter(|row| store == OpencodeStore::V1 || row.as_str("type").as_deref() == Some("assistant"))
+        .filter_map(|row| row.as_str("id"))
+        .collect();
+    let (part_table, order) = match store {
+        OpencodeStore::V1 => ("part", "time_created ASC"),
+        OpencodeStore::V2 => ("session_part", "message_id ASC, ordinal ASC"),
+    };
+    let mut parts_by_msg: HashMap<String, Vec<Value>> = HashMap::new();
+    for chunk in ids.chunks(400) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("SELECT * FROM {part_table} WHERE message_id IN ({placeholders}) ORDER BY {order}");
+        let params: Vec<&dyn rusqlite::ToSql> = chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        for row in query_rows(conn, &sql, &params) {
+            let row = DbRow {
+                names: row.0,
+                vals: row.1,
+            };
+            let (Some(message_id), Some(data)) = (row.as_str("message_id"), row.as_str("data")) else {
+                continue;
+            };
+            if let Ok(value) = serde_json::from_str::<Value>(&data) {
+                parts_by_msg.entry(message_id).or_default().push(value);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for row in rows {
+        let Some(data) = row
+            .as_str("data")
+            .and_then(|d| serde_json::from_str::<Value>(&d).ok())
+        else {
+            continue;
+        };
+        let id = row.as_str("id");
+        let parts = id.as_ref().and_then(|id| parts_by_msg.remove(id));
+        let ts = row.as_i64("time_created");
+        match store {
+            OpencodeStore::V1 => out.push((id, ts, data, parts.unwrap_or_default())),
+            OpencodeStore::V2 => {
+                let kind = row.as_str("type").unwrap_or_default();
+                if let Some((v1, parts)) = opencode_v2_as_v1(&kind, &data, parts.as_deref()) {
+                    out.push((id, ts, v1, parts));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 整个会话的消息行（按时间序；2.x 再按 seq 排同一毫秒的行）
+fn opencode_session_rows(conn: &Connection, store: OpencodeStore, sid: &str) -> Vec<OpencodeRow> {
+    let order = match store {
+        OpencodeStore::V1 => "time_created ASC",
+        OpencodeStore::V2 => "seq ASC",
+    };
+    let rows = query_rows(
+        conn,
+        &format!("SELECT * FROM {} WHERE session_id=? ORDER BY {order}", store.message_table()),
+        &[&sid],
+    )
+    .into_iter()
+    .map(|row| DbRow {
+        names: row.0,
+        vals: row.1,
+    })
+    .collect();
+    opencode_rows_with_parts(conn, store, rows)
+}
+
 fn opencode_parse_db(db_path: &Path, session_id: &str) -> Vec<ChatMessageDto> {
     let Some(conn) = open_opencode_db(db_path) else {
         return Vec::new();
     };
-    let sid = session_id.to_string();
-    // parts 按 message_id 分组（part 表带 session_id 列，按时间序）
-    let mut parts_by_msg: HashMap<String, Vec<Value>> = HashMap::new();
-    for row in query_rows(
-        &conn,
-        "SELECT * FROM part WHERE session_id=? ORDER BY time_created ASC",
-        &[&sid],
-    ) {
-        let row = DbRow {
-            names: row.0,
-            vals: row.1,
-        };
-        let (Some(msg_id), Some(data)) = (row.as_str("message_id"), row.as_str("data")) else {
-            continue;
-        };
-        if let Ok(v) = serde_json::from_str::<Value>(&data) {
-            parts_by_msg.entry(msg_id).or_default().push(v);
-        }
-    }
-    let mut msgs = Vec::new();
-    for row in query_rows(
-        &conn,
-        "SELECT * FROM message WHERE session_id=? ORDER BY time_created ASC",
-        &[&sid],
-    ) {
-        let row = DbRow {
-            names: row.0,
-            vals: row.1,
-        };
-        let Some(data) = row.as_str("data") else {
-            continue;
-        };
-        let Ok(v) = serde_json::from_str::<Value>(&data) else {
-            continue;
-        };
-        let parts = row
-            .as_str("id")
-            .and_then(|id| parts_by_msg.remove(&id))
-            .unwrap_or_default();
-        let ts = row.as_i64("time_created");
-        if let Some(m) = opencode_message(&v, parts.iter().collect(), ts) {
-            msgs.push(m);
-        }
-    }
-    msgs
+    let store = opencode_store_of(&conn, session_id);
+    opencode_session_rows(&conn, store, session_id)
+        .into_iter()
+        .filter_map(|(_, ts, data, parts)| opencode_message(&data, parts.iter().collect(), ts))
+        .collect()
 }
 
 /// pin 导出：{session:{列...}, messages:[{id,time_created,data}], parts:[{message_id,data}]}
-///（自包含且保留 id 关联，回放不依赖原库）
+///（自包含且保留 id 关联，回放不依赖原库；2.x 会话导出时已规整成 1.x 形状，快照解析不分版本）
 fn opencode_export_session(db_path: &Path, session_id: &str) -> Result<Value, String> {
     let conn = open_opencode_db(db_path).ok_or("OpenCode 数据库不可读")?;
     let sid = session_id.to_string();
+    let store = opencode_store_of(&conn, &sid);
     let mut session_json = serde_json::json!({ "id": sid });
     // id 是主键，最多一行；查不到时保留只含 id 的兜底对象
-    if let Some(row) = query_rows(&conn, "SELECT * FROM session WHERE id=?", &[&sid])
-        .into_iter()
-        .next()
+    if let Some(row) = query_rows(
+        &conn,
+        &format!("SELECT * FROM {} WHERE id=?", store.session_table()),
+        &[&sid],
+    )
+    .into_iter()
+    .next()
     {
         let row = DbRow {
             names: row.0,
@@ -4214,47 +4458,18 @@ fn opencode_export_session(db_path: &Path, session_id: &str) -> Result<Value, St
         }
         session_json = Value::Object(obj);
     }
-    let messages: Vec<Value> = query_rows(
-        &conn,
-        "SELECT * FROM message WHERE session_id=? ORDER BY time_created ASC",
-        &[&sid],
-    )
-    .into_iter()
-    .filter_map(|r| {
-        let row = DbRow {
-            names: r.0,
-            vals: r.1,
-        };
-        let data = row
-            .as_str("data")
-            .and_then(|d| serde_json::from_str::<Value>(&d).ok())?;
-        Some(serde_json::json!({
-            "id": row.as_str("id"),
-            "time_created": row.as_i64("time_created"),
+    let mut messages = Vec::new();
+    let mut parts = Vec::new();
+    for (id, ts, data, msg_parts) in opencode_session_rows(&conn, store, &sid) {
+        for p in msg_parts {
+            parts.push(serde_json::json!({ "message_id": id, "data": p }));
+        }
+        messages.push(serde_json::json!({
+            "id": id,
+            "time_created": ts,
             "data": data,
-        }))
-    })
-    .collect();
-    let parts: Vec<Value> = query_rows(
-        &conn,
-        "SELECT * FROM part WHERE session_id=? ORDER BY time_created ASC",
-        &[&sid],
-    )
-    .into_iter()
-    .filter_map(|r| {
-        let row = DbRow {
-            names: r.0,
-            vals: r.1,
-        };
-        let data = row
-            .as_str("data")
-            .and_then(|d| serde_json::from_str::<Value>(&d).ok())?;
-        Some(serde_json::json!({
-            "message_id": row.as_str("message_id"),
-            "data": data,
-        }))
-    })
-    .collect();
+        }));
+    }
     Ok(serde_json::json!({
         "session": session_json,
         "messages": messages,
@@ -6030,11 +6245,48 @@ fn cursor_tail_state(lines: &[String]) -> &'static str {
     "unknown"
 }
 
+/// 2.x 有明确的回合结束行（idle）：最后一行是 idle 即回合结束；assistant 还没完成或停在工具调用上算在干活。
+/// 系统提示、切模型 / 切 agent 等行不表示回合状态，往前找（升级过来的旧会话末尾常是一条 system 提示）
+fn opencode_v2_tail_state(conn: &Connection, sid: &str) -> &'static str {
+    for row in query_rows(
+        conn,
+        "SELECT * FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT 20",
+        &[&sid],
+    ) {
+        let row = DbRow {
+            names: row.0,
+            vals: row.1,
+        };
+        let data = row
+            .as_str("data")
+            .and_then(|d| serde_json::from_str::<Value>(&d).ok())
+            .unwrap_or(Value::Null);
+        match row.as_str("type").as_deref() {
+            Some("idle") => return "settled",
+            Some("user") | Some("shell") => return "working",
+            Some("compaction") if get_str(&data, "status") == Some("running") => return "working",
+            Some("assistant") => {
+                let completed = data.get("time").and_then(|t| t.get("completed")).is_some();
+                return if completed && get_str(&data, "finish") != Some("tool-calls") {
+                    "done"
+                } else {
+                    "working"
+                };
+            }
+            _ => continue,
+        }
+    }
+    "unknown"
+}
+
 fn opencode_tail_state(db_path: &Path, session_id: &str) -> &'static str {
     let Some(conn) = open_opencode_db(db_path) else {
         return "unknown";
     };
     let sid = session_id.to_string();
+    if opencode_store_of(&conn, &sid) == OpencodeStore::V2 {
+        return opencode_v2_tail_state(&conn, &sid);
+    }
     let last_part = query_rows(
         &conn,
         "SELECT * FROM part WHERE session_id=? ORDER BY time_created DESC LIMIT 1",
@@ -7043,12 +7295,14 @@ fn opencode_conversation_page(
 ) -> Result<ConversationPageDto, String> {
     let conn = open_opencode_db(db_path).ok_or("OpenCode 数据库不可读")?;
     let sid = session_id.to_string();
+    let store = opencode_store_of(&conn, &sid);
+    let table = store.message_table();
     let before_i64 = before.map(|value| value.min(i64::MAX as u64) as i64);
     let (message_rows, cursor) = if let Some(at) = around {
         let at_i = at.min(i64::MAX as u64) as i64;
         let mut older: Vec<DbRow> = query_rows(
             &conn,
-            "SELECT * FROM message WHERE session_id=? AND time_created<=? ORDER BY time_created DESC LIMIT 40",
+            &format!("SELECT * FROM {table} WHERE session_id=? AND time_created<=? ORDER BY time_created DESC LIMIT 40"),
             &[&sid, &at_i],
         )
         .into_iter()
@@ -7056,7 +7310,7 @@ fn opencode_conversation_page(
         .collect();
         let newer: Vec<DbRow> = query_rows(
             &conn,
-            "SELECT * FROM message WHERE session_id=? AND time_created>? ORDER BY time_created ASC LIMIT 40",
+            &format!("SELECT * FROM {table} WHERE session_id=? AND time_created>? ORDER BY time_created ASC LIMIT 40"),
             &[&sid, &at_i],
         )
         .into_iter()
@@ -7076,11 +7330,11 @@ fn opencode_conversation_page(
         (older, cursor)
     } else {
         let rows = if let Some(before) = before_i64 {
-            query_rows(&conn, "SELECT * FROM message WHERE session_id=? AND time_created<? ORDER BY time_created DESC LIMIT 80", &[&sid, &before])
+            query_rows(&conn, &format!("SELECT * FROM {table} WHERE session_id=? AND time_created<? ORDER BY time_created DESC LIMIT 80"), &[&sid, &before])
         } else {
             query_rows(
                 &conn,
-                "SELECT * FROM message WHERE session_id=? ORDER BY time_created DESC LIMIT 80",
+                &format!("SELECT * FROM {table} WHERE session_id=? ORDER BY time_created DESC LIMIT 80"),
                 &[&sid],
             )
         };
@@ -7103,50 +7357,10 @@ fn opencode_conversation_page(
         message_rows.reverse();
         (message_rows, cursor)
     };
-    let ids: Vec<String> = message_rows
-        .iter()
-        .filter_map(|row| row.as_str("id"))
+    let mut messages: Vec<ChatMessageDto> = opencode_rows_with_parts(&conn, store, message_rows)
+        .into_iter()
+        .filter_map(|(_, ts, data, parts)| opencode_message(&data, parts.iter().collect(), ts))
         .collect();
-    let mut parts_by_msg: HashMap<String, Vec<Value>> = HashMap::new();
-    if !ids.is_empty() {
-        let placeholders = (0..ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "SELECT * FROM part WHERE message_id IN ({placeholders}) ORDER BY time_created ASC"
-        );
-        let params: Vec<&dyn rusqlite::ToSql> =
-            ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-        for row in query_rows(&conn, &sql, &params) {
-            let row = DbRow {
-                names: row.0,
-                vals: row.1,
-            };
-            let (Some(message_id), Some(data)) = (row.as_str("message_id"), row.as_str("data"))
-            else {
-                continue;
-            };
-            if let Ok(value) = serde_json::from_str::<Value>(&data) {
-                parts_by_msg.entry(message_id).or_default().push(value);
-            }
-        }
-    }
-    let mut messages = Vec::new();
-    for row in message_rows {
-        let Some(data) = row.as_str("data") else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<Value>(&data) else {
-            continue;
-        };
-        let parts = row
-            .as_str("id")
-            .and_then(|id| parts_by_msg.remove(&id))
-            .unwrap_or_default();
-        if let Some(message) =
-            opencode_message(&value, parts.iter().collect(), row.as_i64("time_created"))
-        {
-            messages.push(message);
-        }
-    }
     redact_conversation(&mut messages);
     Ok(ConversationPageDto { messages, cursor })
 }
@@ -8517,15 +8731,62 @@ fn delete_opencode_rows_impl(db_path: &Path, session_id: &str) -> Result<(), Str
     let mut conn =
         Connection::open(db_path).map_err(|e| format!("打开 OpenCode 数据库失败: {e}"))?;
     let _ = conn.busy_timeout(std::time::Duration::from_secs(3));
+    let tables: HashSet<String> = query_rows(&conn, "SELECT name FROM sqlite_master WHERE type='table'", &[])
+        .into_iter()
+        .filter_map(|row| DbRow { names: row.0, vals: row.1 }.as_str("name"))
+        .collect();
+    // 2.x 删会话只删 session_v2 一行、靠外键级联带走收件箱 / 指令 / 附件引用等附属行；Mesa 不开外键开关
+    //（1.x 旧表开了可能删不动），照库里声明的外键逐表删引用这个会话的行
+    let mut v2_children: Vec<(String, String)> = Vec::new();
+    if tables.contains("session_v2") {
+        let mut names: Vec<&String> = tables.iter().collect();
+        names.sort();
+        for t in names {
+            if t == "session_v2" {
+                continue;
+            }
+            for row in query_rows(
+                &conn,
+                "SELECT \"table\" AS parent, \"from\" AS col FROM pragma_foreign_key_list(?)",
+                &[&t.as_str()],
+            ) {
+                let row = DbRow { names: row.0, vals: row.1 };
+                if row.as_str("parent").as_deref() == Some("session_v2") {
+                    if let Some(col) = row.as_str("col") {
+                        v2_children.push((t.clone(), col));
+                    }
+                }
+            }
+        }
+    }
     let tx = conn
         .transaction()
         .map_err(|e| format!("开启事务失败: {e}"))?;
-    for sql in [
-        "DELETE FROM part WHERE session_id=?1",
-        "DELETE FROM message WHERE session_id=?1",
-        "DELETE FROM session WHERE id=?1",
+    // 升级过的库同一会话两套表各有一份：两边都删，否则删了 2.x 那份、1.x 的旧副本又冒出来
+    for (table, sql) in [
+        ("part", "DELETE FROM part WHERE session_id=?1"),
+        ("message", "DELETE FROM message WHERE session_id=?1"),
+        ("session", "DELETE FROM session WHERE id=?1"),
+        ("event", "DELETE FROM event WHERE aggregate_id=?1"),
+        ("event_sequence", "DELETE FROM event_sequence WHERE aggregate_id=?1"),
     ] {
+        if !tables.contains(table) {
+            continue;
+        }
         tx.execute(sql, params![session_id])
+            .map_err(|e| format!("删除 OpenCode 会话失败: {e}"))?;
+    }
+    // session_part 同时引用 session_message，先删它；其余子表无先后
+    v2_children.sort_by_key(|(t, _)| t != "session_part");
+    for (table, col) in &v2_children {
+        tx.execute(
+            &format!("DELETE FROM \"{table}\" WHERE \"{col}\"=?1"),
+            params![session_id],
+        )
+        .map_err(|e| format!("删除 OpenCode 会话失败: {e}"))?;
+    }
+    if tables.contains("session_v2") {
+        tx.execute("DELETE FROM session_v2 WHERE id=?1", params![session_id])
             .map_err(|e| format!("删除 OpenCode 会话失败: {e}"))?;
     }
     tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
@@ -8796,14 +9057,7 @@ fn delete_project_sessions_impl(
 pub async fn session_file_sig(file_path: String) -> Option<(u64, u64)> {
     if let Some((db, session_id)) = file_path.split_once('#') {
         let conn = open_opencode_db(Path::new(db))?;
-        let updated = conn
-            .query_row(
-                "SELECT time_updated FROM session WHERE id=?1",
-                params![session_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .ok()?
-            .max(0) as u64;
+        let updated = opencode_latest_updated(&conn, session_id)?.max(0) as u64;
         let wal_len = std::fs::metadata(format!("{db}-wal"))
             .map(|meta| meta.len())
             .unwrap_or(0);
@@ -12334,6 +12588,131 @@ mod tests {
         )
         .unwrap();
         db
+    }
+
+    /// 升级过的库：1.x 四表（opencode_fixture_db）+ 2.x 新表（建表语句照 2.2.5 实库）。
+    /// ses_1 升级时复制进 session_v2 后在 2.x 里续聊过（time_updated 更新）；ses_3 只在 2.x，内容在 session_part；ses_2 只在 1.x
+    fn opencode_v2_fixture_db(dir: &Path) -> PathBuf {
+        let db = opencode_fixture_db(dir);
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE session_v2 (id text PRIMARY KEY, project_id text NOT NULL, workspace_id text, parent_id text,
+                 slug text NOT NULL, directory text NOT NULL, path text, title text, version text NOT NULL,
+                 cost real DEFAULT 0 NOT NULL, tokens_input integer DEFAULT 0 NOT NULL, tokens_output integer DEFAULT 0 NOT NULL,
+                 tokens_reasoning integer DEFAULT 0 NOT NULL, tokens_cache_read integer DEFAULT 0 NOT NULL,
+                 tokens_cache_write integer DEFAULT 0 NOT NULL, agent text, model text,
+                 time_created integer NOT NULL, time_updated integer NOT NULL);
+               CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL,
+                 time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL,
+                 CONSTRAINT fk_sm FOREIGN KEY (session_id) REFERENCES session_v2(id) ON DELETE CASCADE);
+               CREATE TABLE session_part (message_id text NOT NULL, session_id text NOT NULL, ordinal integer NOT NULL, type text NOT NULL,
+                 call_id text, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL,
+                 CONSTRAINT session_part_pk PRIMARY KEY(message_id, ordinal),
+                 CONSTRAINT fk_sp_m FOREIGN KEY (message_id) REFERENCES session_message(id) ON DELETE CASCADE,
+                 CONSTRAINT fk_sp_s FOREIGN KEY (session_id) REFERENCES session_v2(id) ON DELETE CASCADE);
+               CREATE TABLE session_inbox (id text PRIMARY KEY, session_id text NOT NULL,
+                 CONSTRAINT fk_si FOREIGN KEY (session_id) REFERENCES session_v2(id) ON DELETE CASCADE);
+               CREATE TABLE event_sequence (aggregate_id text PRIMARY KEY NOT NULL, seq integer NOT NULL, owner_id text);
+               INSERT INTO session_v2 VALUES('ses_1','p1',NULL,NULL,'kind-forest','/fallback','','修复登录 bug（续）','2.2.5',0,130,30,5,10,2,'build',NULL,1785307071000,1785307099000);
+               INSERT INTO session_v2 VALUES('ses_3','global',NULL,NULL,'calm-lake','/tmp/dir3','',NULL,'2.2.5',0,0,0,0,0,0,NULL,NULL,1785307095000,1785307096000);
+               INSERT INTO session_message VALUES('msg_1','ses_1','user',4,1785307071100,1785307071100,'{"time":{"created":1785307071100},"text":"帮我修 bug","files":[]}');
+               INSERT INTO session_message VALUES('msg_v2a','ses_1','assistant',7,1785307098000,1785307098100,'{"time":{"created":1785307098000,"completed":1785307098100},"agent":"build","model":{"id":"e2e-picked","providerID":"ccode-abc12345"},"content":[{"type":"reasoning","text":"想想"},{"type":"tool","id":"call_probe","name":"shell","state":{"status":"completed","input":{"command":"ls"},"content":[{"type":"text","text":"ok"}]},"time":{"created":1785307098010}},{"type":"tool","id":"call_e","name":"edit","state":{"status":"error","input":{"file":"/a"},"error":{"type":"unknown","message":"写入失败"}},"time":{"created":1785307098020}},{"type":"text","text":"好了"}],"finish":"stop","tokens":{"input":30,"output":10,"reasoning":0,"cache":{"read":0,"write":0}}}');
+               INSERT INTO session_message VALUES('msg_idle','ses_1','idle',12,1785307098200,1785307098200,'{"time":{"created":1785307098200},"outcome":"succeeded"}');
+               INSERT INTO session_message VALUES('msg_3u','ses_3','user',4,1785307095100,1785307095100,'{"time":{"created":1785307095100},"text":"看看这个目录","files":[]}');
+               INSERT INTO session_message VALUES('msg_3sys','ses_3','model-switched',5,1785307095150,1785307095150,'{"time":{"created":1785307095150},"model":{"id":"m2","providerID":"x"}}');
+               INSERT INTO session_message VALUES('msg_3a','ses_3','assistant',7,1785307095200,1785307095200,'{"time":{"created":1785307095200},"agent":"build","model":{"id":"m2","providerID":"x"},"content":[{"type":"text","text":"旧的内联内容"}]}');
+               INSERT INTO session_part VALUES('msg_3a','ses_3',0,'text',NULL,1785307095201,1785307095201,'{"type":"text","text":"部件里的内容"}');
+               INSERT INTO session_inbox VALUES('inb_1','ses_1');
+               INSERT INTO event_sequence VALUES('ses_1',12,NULL);"#,
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn opencode_v2_scan_merges_tables_and_dedupes() {
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = opencode_v2_fixture_db(&dir);
+        let metas = opencode_scan_db(&db);
+        let ids: Vec<&str> = metas.iter().map(|m| m.session_id.as_str()).collect();
+        assert_eq!(ids.len(), 3, "两套表合读、同 id 只留一条: {ids:?}");
+        let m1 = metas.iter().find(|m| m.session_id == "ses_1").unwrap();
+        assert_eq!(m1.title.as_deref(), Some("修复登录 bug（续）"), "升级后续聊过的取 2.x 那份");
+        assert_eq!(m1.cli_version.as_deref(), Some("2.2.5"));
+        assert_eq!(m1.project_path, "/repo/x");
+        let m3 = metas.iter().find(|m| m.session_id == "ses_3").unwrap();
+        assert_eq!(m3.title.as_deref(), Some("看看这个目录"), "2.x 无标题时取首条用户话");
+        assert_eq!(m3.project_path, "/tmp/dir3");
+        assert!(metas.iter().any(|m| m.session_id == "ses_2"), "只在 1.x 的照旧在");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn opencode_v2_parse_page_export_tail() {
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = opencode_v2_fixture_db(&dir);
+        let conn = open_opencode_db(&db).unwrap();
+        assert_eq!(opencode_store_of(&conn, "ses_1"), OpencodeStore::V2);
+        assert_eq!(opencode_store_of(&conn, "ses_2"), OpencodeStore::V1);
+        drop(conn);
+        let msgs = opencode_parse_db(&db, "ses_1");
+        assert_eq!(msgs.len(), 2, "idle 行不进对话");
+        assert_eq!(msgs[0].blocks[0].text, "帮我修 bug");
+        let kinds: Vec<&str> = msgs[1].blocks.iter().map(|b| b.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec!["thinking", "tool_use", "tool_result", "tool_use", "tool_result", "text"]
+        );
+        assert_eq!(msgs[1].blocks[1].tool_name.as_deref(), Some("shell"));
+        assert_eq!(msgs[1].blocks[2].text, "ok", "工具结果取 state.content[] 的文本");
+        assert_eq!(msgs[1].blocks[4].text, "写入失败", "失败取 state.error.message");
+        let u = msgs[1].usage.as_ref().unwrap();
+        assert_eq!((u.input, u.output), (30, 10));
+        let m3 = opencode_parse_db(&db, "ses_3");
+        assert_eq!(m3.len(), 2, "切模型行不进对话");
+        assert_eq!(m3[1].blocks[0].text, "部件里的内容", "有 session_part 时以 part 为准");
+        // 分页读同一套表
+        let page = opencode_conversation_page(&db, "ses_1", None, None).unwrap();
+        assert_eq!(page.messages.len(), 2);
+        assert!(page.cursor.is_none());
+        // 快照导出成 1.x 形状，回放与读库一致
+        let exported = opencode_export_session(&db, "ses_1").unwrap();
+        assert_eq!(get_str(exported.get("session").unwrap(), "version"), Some("2.2.5"));
+        let snap = opencode_parse_snapshot(&exported);
+        assert_eq!(snap.len(), msgs.len());
+        assert_eq!(snap[1].blocks.len(), msgs[1].blocks.len());
+        // 最后一行是 idle：回合确定结束
+        assert_eq!(opencode_tail_state(&db, "ses_1"), "settled");
+        assert_eq!(opencode_tail_state(&db, "ses_3"), "working", "assistant 没完成算在干活");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn opencode_v2_delete_clears_both_tables() {
+        let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = opencode_v2_fixture_db(&dir);
+        delete_opencode_rows_impl(&db, "ses_1").unwrap();
+        delete_opencode_rows_impl(&db, "ses_3").unwrap();
+        let conn = open_opencode_db(&db).unwrap();
+        for sql in [
+            "SELECT * FROM session WHERE id='ses_1'",
+            "SELECT * FROM message WHERE session_id='ses_1'",
+            "SELECT * FROM session_v2 WHERE id IN ('ses_1','ses_3')",
+            "SELECT * FROM session_message WHERE session_id IN ('ses_1','ses_3')",
+            "SELECT * FROM session_part WHERE session_id='ses_3'",
+            "SELECT * FROM session_inbox WHERE session_id='ses_1'",
+            "SELECT * FROM event_sequence WHERE aggregate_id='ses_1'",
+        ] {
+            assert!(query_rows(&conn, sql, &[]).is_empty(), "没删干净: {sql}");
+        }
+        assert_eq!(query_rows(&conn, "SELECT * FROM session WHERE id='ses_2'", &[]).len(), 1);
+        drop(conn);
+        let ids: Vec<String> = opencode_scan_db(&db).into_iter().map(|m| m.session_id).collect();
+        assert_eq!(ids, vec!["ses_2".to_string()], "删掉 2.x 那份后旧副本不能再冒出来");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
