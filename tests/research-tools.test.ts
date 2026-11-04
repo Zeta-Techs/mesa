@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PIPELINE_TEMPLATES, pipelineStepsForTemplate } from "../src/pipeline-presets.ts";
-import { DEFAULT_RESEARCH_TOOLS, researchToolAskFieldsForStep, researchToolFieldsForSteps, researchToolsFromSettings, settingsWithResearchTools, withResearchTools } from "../src/research-tools.ts";
+import { DEFAULT_RESEARCH_TOOLS, researchToolAskFieldsForStep, researchToolFieldsForSteps, researchToolStageOutputs, researchToolsFromSettings, settingsWithResearchTools, withResearchTools } from "../src/research-tools.ts";
 import { conflictingTemplateSteps, renameConflictingSteps } from "../src/pipeline-append.ts";
 import { parseReproductionContract } from "../src/research-report.ts";
 
@@ -278,4 +278,13 @@ test("个性化技能顶位：声明 provides 的用户技能点亮文献库与�
   // 无映射回落名字匹配：my-notes 不叫 lit-notes → 不点亮（等价旧行为）
   const outNoMap = withResearchTools(step, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" }, "artifacts", "search", undefined);
   assert.ok(!outNoMap.skills.includes("zotero-sync"), "无映射时不点亮（名字兜底语义）");
+});
+
+test("多阶段文献库技能：精读步只认通道报告，定稿步只认域稿", () => {
+  const notes = { skills: ["lit-notes", "zotero-sync"], workspaceName: "lit-notes" };
+  assert.deepEqual(researchToolStageOutputs(notes)["zotero-sync"], ["papers/zotero-sync.md"]);
+  assert.deepEqual(researchToolStageOutputs(notes)["endnote-bridge"], []);
+  const polish = { skills: ["review-writing", "zotero-sync"], workspaceName: "polish" };
+  assert.deepEqual(researchToolStageOutputs(polish)["zotero-sync"], ["output/zotero.docx", "papers/zotero-cite-report.md"]);
+  assert.deepEqual(researchToolStageOutputs({ skills: ["data-eda"], workspaceName: "eda" }), {});
 });

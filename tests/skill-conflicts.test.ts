@@ -181,3 +181,18 @@ test("skillChainWarnings：路径归一化后判定（./ 前缀、反斜杠）",
     [],
   );
 });
+
+test("skillChainWarnings：手动挂到精读步的 zotero-sync 只比对本阶段文件，不报定稿域稿", () => {
+  const lib = [
+    iface("zotero-sync", [], ["papers/zotero-sync.md", "output/zotero.docx", "papers/zotero-cite-report.md"]),
+  ];
+  const expected = ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md", "notes/handoff.md"];
+  assert.deepEqual(
+    skillChainWarnings(["zotero-sync"], lib, [], expected, undefined, { "zotero-sync": ["papers/zotero-sync.md"] }),
+    [{ skill: "zotero-sync", kind: "output", path: "papers/zotero-sync.md", inferred: false }],
+  );
+  assert.deepEqual(
+    skillChainWarnings(["zotero-sync"], lib, [], [...expected, "papers/zotero-sync.md"], undefined, { "zotero-sync": ["papers/zotero-sync.md"] }),
+    [],
+  );
+});

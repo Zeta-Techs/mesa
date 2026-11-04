@@ -105,6 +105,8 @@ export function skillChainWarnings(
   expectedArtifacts: string[],
   /** 本步合同实际要写的文件。给了就只对这批做产物检查，技能声明里别的阶段不报。 */
   stepOutputs?: string[],
+  /** 多阶段技能在本步该写的文件（技能名 → 路径）；命中的技能只拿这批比对，优先于 stepOutputs 与声明 */
+  stageOutputs?: Record<string, string[]>,
 ): SkillChainWarning[] {
   const byName = new Map(lib.map((s) => [s.name, s]));
   const out: SkillChainWarning[] = [];
@@ -131,7 +133,9 @@ export function skillChainWarnings(
     }
     if (expectedArtifacts.length > 0) {
       const declared = skill.outputs ?? [];
-      const outputs = stepOutputs ?? declared;
+      const stage = stageOutputs?.[name];
+      const scoped = stage ?? stepOutputs;
+      const outputs = scoped ?? declared;
       const covered = outputs.filter((output) =>
         expectedArtifacts.some(
           (a) => pathCovered(output, a) || pathCovered(a, output),
@@ -140,7 +144,7 @@ export function skillChainWarnings(
       // 多阶段技能挂在其中一步时，对上了本步产物即可。
       // 调用方给了本步实际产出时，只报这一批里没进预期产物的，不拿别的阶段挡开工。
       const missing =
-        stepOutputs != null
+        scoped != null
           ? outputs.filter(
               (output) =>
                 !expectedArtifacts.some(

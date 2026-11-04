@@ -25,6 +25,7 @@ export default function StepSkillsChips({
   chainSupply,
   expectedArtifacts,
   stepOutputs,
+  stageOutputs,
   brief,
   hint,
   bare = false,
@@ -51,6 +52,8 @@ export default function StepSkillsChips({
   expectedArtifacts?: string[];
   /** 本步合同实际要写的文件。给了就只检查这批，不拿技能声明里别的阶段来报。 */
   stepOutputs?: string[];
+  /** 多阶段技能在本步该写的文件（技能名 → 路径，research-tools 给）；命中的技能只比对这批 */
+  stageOutputs?: Record<string, string[]>;
   /** 步骤简报：{skill:锚名} 占位校验用（点名了没挂载的技能位 → 提醒，不拦截） */
   brief?: string;
   /** 标题旁小字；false = 不写（开工弹层用 tooltip 承担） */
@@ -69,8 +72,18 @@ export default function StepSkillsChips({
   const unresolvedRefs = skillLib && brief ? unresolvedSkillRefs(brief, skills, skillLib) : [];
   const chainWarnings =
     skillLib && chainSupply && expectedArtifacts
-      ? skillChainWarnings(skills, skillLib, chainSupply, expectedArtifacts, stepOutputs)
+      ? skillChainWarnings(skills, skillLib, chainSupply, expectedArtifacts, stepOutputs, stageOutputs)
       : [];
+  // 产出侧只是提示、不挡开工：同一技能合成一行，不每个文件刷一行黄字
+  const inputWarnings = chainWarnings.filter((w) => w.kind === "input");
+  const extraOutputs = new Map<string, { paths: string[]; inferred: boolean }>();
+  for (const w of chainWarnings) {
+    if (w.kind !== "output") continue;
+    const entry = extraOutputs.get(w.skill) ?? { paths: [], inferred: false };
+    entry.paths.push(w.path);
+    entry.inferred ||= w.inferred;
+    extraOutputs.set(w.skill, entry);
+  }
   if (skills.length === 0 && !editable) return null;
   return (
     <div className={bare ? "min-w-0" : "mb-3 shrink-0"}>
@@ -197,15 +210,19 @@ export default function StepSkillsChips({
           ——确认步骤简报里写明了分工（如“按 {c.a} 执行、{c.b} 只出报告”）
         </p>
       ))}
-      {chainWarnings.map((w) => (
+      {inputWarnings.map((w) => (
         <p
-          key={`${w.skill}|${w.kind}|${w.path}`}
+          key={`${w.skill}|input|${w.path}`}
           className="mt-1 text-micro text-warn-text"
         >
-          {w.kind === "input"
-            ? `! 技能「${w.skill}」预期读入 ${w.path}，但上游产物、本步骤输入与项目资源里都没有——确认上游落点或调整技能`
-            : `! 技能「${w.skill}」产出 ${w.path}，不在本步骤预期产物里——中间产物可忽略，关键产物建议补进步骤定义`}
+          ! 技能「{w.skill}」预期读入 {w.path}，但上游产物、本步骤输入与项目资源里都没有——确认上游落点或调整技能
           {w.inferred ? "（接口为正文推断，供参考）" : ""}
+        </p>
+      ))}
+      {[...extraOutputs].map(([name, { paths, inferred }]) => (
+        <p key={`${name}|output`} className="mt-1 text-micro text-l4">
+          · 技能「{name}」还会写 {paths.join("、")}，不在本步骤预期产物里，不影响开工；要当成本步交付再补进步骤定义
+          {inferred ? "（接口为正文推断，供参考）" : ""}
         </p>
       ))}
       {unresolvedRefs.length > 0 && (

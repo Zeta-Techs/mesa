@@ -1,4 +1,4 @@
-import { researchToolArtifacts, researchToolContractMatches } from "../research-tools";
+import { researchToolArtifacts, researchToolContractMatches, researchToolStageOutputs } from "../research-tools";
 import { appendUpstreamAcceptance, type UpstreamAcceptance } from "../research-acceptance";
 import UpstreamResearchAcceptance from "./UpstreamResearchAcceptance";
 import ResearchToolPreflight from "./ResearchToolPreflight";
@@ -1142,6 +1142,10 @@ export default function KickoffConfirmDialog({
             chainSupply={chainSupply}
             expectedArtifacts={stepNow.expectedArtifacts}
             stepOutputs={researchToolArtifacts(stepNow.brief)}
+            stageOutputs={researchToolStageOutputs(
+              stepNow,
+              skillLib ? Object.fromEntries(skillLib.map((s) => [s.name, s.provides ?? []])) : extras?.providesByName,
+            )}
             brief={stepNow.brief}
             onChange={(next) => void onSkillsChange(next)}
           />

@@ -37,6 +37,28 @@ function stepTakesEndnoteCite(step: Pick<ProjectStepDto, "workspaceName">): bool
     name === "journal-format"
   );
 }
+/** 文献库技能分阶段：精读只写通道报告，定稿才出域稿。挂载与开工提醒共用这一份。 */
+const ZOTERO_READING_OUTPUTS = ["papers/zotero-sync.md"];
+const ZOTERO_CITE_OUTPUTS = ["output/zotero.docx", "papers/zotero-cite-report.md"];
+const ENDNOTE_CITE_OUTPUTS = ["output/endnote.docx", "papers/endnote-cite-report.md"];
+function endnoteReadingOutputs(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): string[] {
+  return stepFillsAnySlot(step.skills, ["lit-search"], providesByName) ? ["papers/endnote-import.ris"] : [];
+}
+
+/** 多阶段技能在这一步该写哪几份（技能名 → 路径）。手动挂上、没有工具合同记录时，开工弹层只拿这一批
+ *  比对预期产物，不把别的阶段（如定稿才有的 output/zotero.docx）报成本步缺口。不在表里的技能照旧按声明比对。 */
+export function researchToolStageOutputs(
+  step: Pick<ProjectStepDto, "skills" | "workspaceName">,
+  providesByName?: SkillProvides,
+): Record<string, string[]> {
+  if (stepTakesEndnoteCite(step)) {
+    return { "zotero-sync": ZOTERO_CITE_OUTPUTS, "endnote-bridge": ENDNOTE_CITE_OUTPUTS };
+  }
+  if (stepTakesReading(step, providesByName)) {
+    return { "zotero-sync": ZOTERO_READING_OUTPUTS, "endnote-bridge": endnoteReadingOutputs(step, providesByName) };
+  }
+  return {};
+}
 function stepTakesManuscript(step: Pick<ProjectStepDto, "name" | "workspaceName">): boolean {
   return /论文|初稿|定稿|格式|投稿|回复/.test(step.name)
     || step.workspaceName === "journal-format"
@@ -141,13 +163,13 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
   const illustration = stepTakesIllustration(step);
   const lit = litSource.trim();
   if (reading && (lit === "zotero" || tools.libraryExport === "zotero")) {
-    mount("zotero-sync", ["papers/zotero-sync.md"], "Zotero：导入用「从 Zotero 导入」（只读，不 POST）。用户若把 PDF 拖进 Zotero，它会检索元数据并生成条目，拖完再导入。未使用 Zotero 的项目不要走这条，题录直接写入 references.bib。同步用待获取清单「同步到 Zotero」或拖 to-fetch.ris。已有主 bib 键不改。定稿同时交 output/endnote.docx 与 output/zotero.docx。");
+    mount("zotero-sync", ZOTERO_READING_OUTPUTS, "Zotero：导入用「从 Zotero 导入」（只读，不 POST）。用户若把 PDF 拖进 Zotero，它会检索元数据并生成条目，拖完再导入。未使用 Zotero 的项目不要走这条，题录直接写入 references.bib。同步用待获取清单「同步到 Zotero」或拖 to-fetch.ris。已有主 bib 键不改。定稿同时交 output/endnote.docx 与 output/zotero.docx。");
   }
   if (reading && (lit === "endnote" || tools.libraryExport === "endnote")) {
-    const ownsImport = stepFillsAnySlot(step.skills, ["lit-search"], providesByName);
+    const ownsImport = endnoteReadingOutputs(step, providesByName).length > 0;
     mount(
       "endnote-bridge",
-      ownsImport ? ["papers/endnote-import.ris"] : [],
+      endnoteReadingOutputs(step, providesByName),
       ownsImport
         ? "EndNote：papers/endnote-import.ris 只在检索步生成（纳入篇题录）。精读后人点同步时，Mesa 按引文库另写 papers/endnote-library.ris 交给 EndNote，不改这一份。已有记录不覆盖。"
         : "EndNote：精读只按已对上 DOI 的 PDF 改 references.bib 的标题和摘要，不写 RIS。人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件。PDF 从「打开 papers」拖进库，挂到对应条目上。",
@@ -218,12 +240,12 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
             : "manuscript/review-final.md";
     mount(
       "endnote-bridge",
-      ["output/endnote.docx", "papers/endnote-cite-report.md"],
+      ENDNOTE_CITE_OUTPUTS,
       `EndNote 交稿：用技能 scripts/cite_docx.py 从 ${md} 的 [@键] 写出 output/endnote.docx（真正的 ADDIN EN.CITE，带 traveling library）。运行时加 --project-root，项目根为任务书给出的绝对路径。只读 papers/endnote-library.path 里那一行 .enl 绝对路径，不扫磁盘。DOI 整段相同且只有一条未进废纸篓的记录时，才写入记录号和库编号；多条、没有、没指定库都不猜，写进报告。没指定库不是前置条件：照样交 docx，只是域里不写记录号（人点 Update 时这些条目走漫游库，可在 EndNote 里导出进自己的库），不得因此撤下 docx。只有未匹配键才不交：写 papers/endnote-cite-report.md。不覆盖 manuscript/source.docx，不点 Word 插件。`,
     );
     mount(
       "zotero-sync",
-      ["output/zotero.docx", "papers/zotero-cite-report.md"],
+      ZOTERO_CITE_OUTPUTS,
       `Zotero 交稿：用技能 scripts/zotero_docx.py 从同一份 ${md} 的 [@键] 写出 output/zotero.docx（真正的 ADDIN ZOTERO_ITEM CSL_CITATION，文献嵌在域里）。只读当前默认 Zotero 配置写明的数据目录，只查用户库。DOI 整段相同且只有一条未删除条目时，才写入那条的条目地址；多条或不唯一都不猜，写进报告。库里找不到不是前置条件：照样交 docx，文献已嵌在域里。只有未匹配键才不交：写 papers/zotero-cite-report.md。不点 Zotero 插件。`,
     );
     // 「在 Word 里换样式」不再挂成这一步的人工事项（2026-10-24 用户拍板）：那是保存进项目之后人自己的可选事，

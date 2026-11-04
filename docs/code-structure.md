@@ -545,7 +545,7 @@ step-node-actions.ts       # 步骤节点行的动作选择纯逻辑（StepFlow 
   skill-conflicts.ts         # 技能接口对账纯逻辑：产物冲突（skillOutputConflicts，outputs 两两相交）+
 skill-diff.ts              # 内置技能「本机与新版对照」diff（SkillsPage 消费）：换行统一 LF 再比（Windows 本机副本常是 CRLF，不统一整份都算改了），复用 tool-activity 的 lineDiff，中间连续未改行折「⋯」、改动前后各留 2 行 ctx；无增删返回空不画（tests/skill-diff.test.ts）
                              # 跨步骤链路（skillChainWarnings：inputs 找供给/outputs 对账预期产物，
-                             # 支持 * 通配与目录/文件互含，推断接口打标；tests/skill-conflicts.test.ts）
+                             # 支持 * 通配与目录/文件互含，推断接口打标；多阶段技能按 stageOutputs 只比本阶段文件；tests/skill-conflicts.test.ts）
   schedule-tasks.ts          # 定时任务纯逻辑：周期白话/相对时间/按 projectRoot 过滤（tests/schedule-tasks.test.ts）；
                              # 2026-10-23：周期闭集与间隔/上限选项、slotLabel/nextRunLabel、跳过白话与悬停提示、补跑小标、
                              # 无新内容不通知（shouldNotifyRunDone）、补跑通知文案、待处理「定时任务」候选（scheduleInboxCandidates：
@@ -1033,7 +1033,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
                              #   索引里没有的笔记（沉浸阅读建的）按 list_paper_notes 来源行配 PDF、题名取 PDF 文件名
   research-tool-fields.ts    # 科研工具字段表 / 默认值 / 档案卡键读写与 readableResearchToolSetting（机器键→界面说法）；纯模块不引
                              #   React / Tauri，上下文包从这里取，research-tools.ts 原样转出
-  research-tools.ts          # 科研工具注入 withResearchTools；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
+  research-tools.ts          # 科研工具注入 withResearchTools；researchToolStageOutputs 给开工提醒的分阶段文件（与挂载同一份表）；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
                              # 域稿不再挂成定稿步人工事项（入口在完结文件，2026-10-24）；老档案的域稿行不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
