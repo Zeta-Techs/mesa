@@ -92,7 +92,7 @@ test("vendorPicks：最新旗舰在前，轻量另取；搜索、语音、出图
 
   // 只有轻量型号的厂商：轻量的顶旗舰
   const f = vendorPicks(cat("glm-5.3-flash"), "glm");
-  assert.deepEqual(f, { flagships: ["glm-5.3-flash"], light: null });
+  assert.deepEqual(f, { flagships: ["glm-5.3-flash"], light: null, lineup: ["glm-5.3-flash"] });
 });
 
 test("聚合网关：原厂 CLI 配原厂模型，没有这家的不拿别家顶", () => {
@@ -109,11 +109,12 @@ test("聚合网关：原厂 CLI 配原厂模型，没有这家的不拿别家顶
   });
   const by = Object.fromEntries(rows.map((r) => [r.agent, r]));
   assert.equal(by["claude-code"].defaultModel, "claude-opus-4-7");
+  // haiku-4-5 与 opus-4-7 同属 4 代，算同代轻量
   assert.deepEqual(rowModels(by["claude-code"], "claude-opus-4-7"), ["claude-opus-4-7", "claude-haiku-4-5"]);
   assert.deepEqual(rowRoleModels(by["claude-code"], "claude-opus-4-7"), {
     small: "claude-haiku-4-5",
     subagent: null,
-    slots: {},
+    slots: { opus: "claude-opus-4-7" },
   });
   assert.equal(by.codex.defaultModel, "gpt-5.6");
   assert.equal(by.codex.slot, "responses");
@@ -199,12 +200,47 @@ test("名字看不出的轻量档按价格认：gpt-6-luna；上一代便宜的�
   assert.equal(p.light, "gpt-6-luna");
   assert.ok(!p.flagships.includes("gpt-6-luna"));
   assert.ok(p.flagships.includes("gpt-6.1-terra"), "terra 是旗舰一半价，不到 1/5，仍算旗舰候选");
-  // 没价格时退回只看名字
-  assert.equal(vendorPicks(c, "gpt").light, "gpt-5.4-mini");
+  // 没价格时只看名字：gpt-5.4-mini 是上一代，不配（用户：轻量的不是最新就不要）
+  assert.equal(vendorPicks(c, "gpt").light, null);
+  assert.deepEqual(p.lineup, ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra", "gpt-6-luna"], "GPT-6 每条产品线一款");
 
   const k = vendorPicks(cat("kimi-k3", "kimi-k2-thinking"), "kimi", { "kimi-k3": 4, "kimi-k2-thinking": 0.6 });
   assert.equal(k.light, null, "上一代便宜是因为旧，不当轻量");
 
   const n = vendorPicks(cat("gpt-6.2-luna", "gpt-6.1-sol"), "gpt", { "gpt-6.2-luna": 0.1, "gpt-6.1-sol": 2 });
   assert.deepEqual([n.flagships[0], n.light], ["gpt-6.1-sol", "gpt-6.2-luna"]);
+});
+
+test("每条连接放最新一代整套产品线：Claude 四款并按名字占别名；上一代轻量不配", () => {
+  const c = cat(
+    "claude-opus-5", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5",
+    "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-opus-4-7-thinking",
+    "grok-4.7", "grok-4.6", "grok-3-mini", "grok-4.20-0309-reasoning",
+    "qwen3.8-max", "qwen3.7-plus", "qwen3.7-plus-2026-05-26", "qwen3-coder-flash",
+  );
+  const rows = planAutoConfig({
+    gateway: { id: "g", slots: allSlots("https://r.example"), models: c },
+    installed: ["claude-code", "grok", "qwen"],
+    profiles: [],
+    presets: PROVIDER_PRESETS,
+  });
+  const by = Object.fromEntries(rows.map((r) => [r.agent, r]));
+  const cc = by["claude-code"];
+  assert.deepEqual(rowModels(cc, "claude-opus-5-5"), [
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-fable-5-1",
+    "claude-haiku-5-5",
+  ]);
+  assert.deepEqual(rowRoleModels(cc, "claude-opus-5-5"), {
+    small: "claude-haiku-5-5",
+    subagent: null,
+    slots: { sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5", fable: "claude-fable-5-1" },
+  });
+  assert.deepEqual(rowModels(by.grok, "grok-4.7"), ["grok-4.7"], "grok-3-mini 是上一代，不配；-reasoning 开关后缀不算产品线");
+  assert.deepEqual(
+    rowModels(by.qwen, "qwen3.8-max"),
+    ["qwen3.8-max", "qwen3.7-plus", "qwen3-coder-flash"],
+    "带日期的快照让给同线不带日期的",
+  );
 });

@@ -151,7 +151,7 @@ export default function GatewayAutoConfig({
       {open && (
         <div className="space-y-2 pt-1 text-sm">
           <p className="text-xs text-l3">
-            {"给每个装了的 CLI 在这个网关上各建一条连接，模型按型号版本挑目录里最新的，每条放旗舰和同家轻量各一个。" +
+            {"给每个装了的 CLI 在这个网关上各建一条连接，放目录里这家最新一代的每条产品线（如 Claude 的 opus、sonnet、fable、haiku），最新的旗舰作默认。" +
               "目录里只有一家的，所有 CLI 都用这家；有多家的，各 CLI 用自家模型，OpenCode、CodeBuddy 放各家最新旗舰，默认用哪个由你选。" +
               "只建 Mesa 连接，不改 CLI 自己的配置文件。"}
           </p>
@@ -160,7 +160,8 @@ export default function GatewayAutoConfig({
               const pick = pickOf(r);
               const dup = r.skip ? null : dupOf(r);
               const on = !r.skip && !dup && !excluded.has(r.agent);
-              const light = pick ? rowModels(r, pick).filter((m) => m !== pick && !r.options.includes(m)) : [];
+              // 多厂商行的其余各家旗舰另写「另 N 家旗舰」，这里只列同家的
+              const light = pick ? rowModels(r, pick).filter((m) => m !== pick && !(r.multi && r.options.includes(m))) : [];
               return (
                 <div key={r.agent} className="flex min-h-8 items-center gap-2 rounded-md px-2 py-1">
                   <Checkbox

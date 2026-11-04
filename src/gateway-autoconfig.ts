@@ -7,7 +7,9 @@
  * - 目录里只认出一家（智谱、Kimi 一类厂商网关）：每个 CLI 都配这家。认出多家（聚合网关）：
  *   原厂 CLI 配原厂模型（Claude Code → Claude、Codex → GPT …），目录里没有这家的就不配、写明原因，不拿别家顶。
  * - OpenCode / CodeBuddy 没有原厂模型：名单放各家最新旗舰，默认用哪个不预选，由人在预览里选。
- * - 每条连接 = 旗舰 + 同家轻量各一个；轻量的作后台小模型（Claude 的 haiku 也指向它）。
+ * - 每条连接 = 这家最新一代的整套产品线（2026-11-04 用户：「最简单就是各家官方的推荐模型，Claude 那四款最新的」）：
+ *   同一大版本里每条产品线取最新一款（Claude opus / sonnet / fable / haiku，GPT-6 sol / terra / astra / luna），
+ *   旗舰排第一作默认；同代的轻量款作后台小模型（Claude 的 haiku 也指向它），上一代的轻量款不配（grok-3-mini）。
  */
 import { modelKind } from "./model-kinds.ts";
 import { slotForAgent, type GatewaySlotName } from "./gateway-slot.ts";
@@ -76,6 +78,12 @@ const SPECIAL_TOKENS = new Set([
 ]);
 // 同版本里往后放的：思考 / 预览 / 实验 / 快速通道一类别名
 const VARIANT_TOKENS = new Set(["thinking", "preview", "exp", "experimental", "beta", "turbo", "free", "online", "latest"]);
+// 不单算一条产品线的：上面的别名，加中转自己拼的开关后缀（-reasoning / -non-reasoning / -openai-compact …）
+const NOT_A_LINE_TOKENS = new Set([
+  ...VARIANT_TOKENS, "instruct", "reasoning", "non", "nothinking", "multi", "agent", "customtools", "compact", "openai", "chat",
+]);
+/** 一条连接最多放几款（Claude Code 选择器上限 5） */
+const LINEUP_MAX = 5;
 
 function bareId(id: string): string {
   const lower = id.trim().toLowerCase();
@@ -166,25 +174,38 @@ function newestFirst(ids: string[], vendor: VendorId | null): string[] {
 export interface VendorPicks {
   /** 旗舰候选，最新的在前（预览下拉用） */
   flagships: string[];
-  /** 同家最新的轻量型号；没有为 null */
+  /** 和旗舰同一代的最新轻量型号；没有为 null */
   light: string | null;
+  /** 最新一代每条产品线的最新一款：旗舰第一、其余旗舰档、轻量档最后，最多 LINEUP_MAX 款 */
+  lineup: string[];
+}
+
+/** 产品线：去掉带数字的段（版本、日期、规格）。claude-opus-5-5 → claude-opus、gpt-6.1-sol → gpt-sol、qwen3.8-max → max */
+export function modelLine(id: string): string {
+  return tokensOf(id).filter((t) => !/\d/.test(t)).join("-");
+}
+
+function isLineModel(id: string): boolean {
+  return modelLine(id) !== "" && !tokensOf(id).some((t) => NOT_A_LINE_TOKENS.has(t));
 }
 
 /** 模型输入单价（美元 / 百万 token，后端 model_input_prices 给，与用量页算费同一条定价链）；查不到的不在表里 */
 export type PriceTable = Readonly<Record<string, number>>;
 
 /**
- * 目录里某一家的最新旗舰与轻量（只有轻量型号的厂商：轻量的也进旗舰候选）。
+ * 目录里某一家的最新旗舰、同代轻量与整套产品线。
  * 轻量先看名字（mini / flash / haiku …），名字看不出的再看价格——GPT-6 按代号分档
  * （astra / sol / terra / luna），luna 单价只有 sol 的 1/20，名字里却没有 mini（2026-11-04 用户 Zeta 网关实例）：
  * - 旗舰：按新旧挑，同一大版本里有贵 8 倍以上的兄弟就当它是轻量档跳过（sol 对 astra 只差 5 倍，不跳）；
- * - 轻量：名字像轻量的，加上和旗舰同一大版本、单价不到旗舰 1/5 的，取最新。价格不全时退回只看名字。
+ * - 轻量：和旗舰同一大版本、名字像轻量或单价不到旗舰 1/5 的，取最新；上一代的不要（用户：grok-3-mini 不是最新就不配）。
+ * 价格不全时退回只看名字。只有轻量型号的厂商：轻量的当旗舰。
  */
 export function vendorPicks(catalog: readonly GatewayModel[], vendor: VendorId, prices: PriceTable = {}): VendorPicks {
   const ids = catalog.filter((m) => usable(m) && modelVendor(m.id) === vendor).map((m) => m.id);
-  const named = newestFirst(ids.filter((id) => isLightModel(id)), vendor);
-  const heavy = newestFirst(ids.filter((id) => !isLightModel(id)), vendor);
-  if (heavy.length === 0) return { flagships: named, light: null };
+  let named = newestFirst(ids.filter((id) => isLightModel(id)), vendor);
+  let heavy = newestFirst(ids.filter((id) => !isLightModel(id)), vendor);
+  if (heavy.length === 0) [heavy, named] = [named, []];
+  if (heavy.length === 0) return { flagships: [], light: null, lineup: [] };
   const major = (id: string) => modelVersion(id)[0] ?? -1;
   const price = (id: string) => prices[id];
   const dwarfed = (id: string) => {
@@ -193,14 +214,29 @@ export function vendorPicks(catalog: readonly GatewayModel[], vendor: VendorId, 
   };
   const flagship = heavy.find((id) => !dwarfed(id)) ?? heavy[0];
   const fp = price(flagship);
-  // 只认和旗舰同一代的便宜型号：上一代的老模型便宜是因为旧（kimi-k2-thinking 对 kimi-k3），不是轻量档
-  const cheap = (id: string) =>
-    id !== flagship && major(id) === major(flagship) && fp != null && price(id) != null && price(id)! * 5 <= fp;
-  const light = newestFirst([...named, ...heavy.filter(cheap)], vendor);
-  return {
-    flagships: [flagship, ...heavy.filter((id) => id !== flagship && !cheap(id))],
-    light: light[0] ?? null,
-  };
+  // 只认和旗舰同一代的：上一代的老模型便宜是因为旧（kimi-k2-thinking 对 kimi-k3），也不是「最新」
+  const sameGen = (id: string) => major(id) === major(flagship);
+  const cheap = (id: string) => id !== flagship && fp != null && price(id) != null && price(id)! * 5 <= fp;
+  const lights = newestFirst([...named, ...heavy.filter(cheap)].filter(sameGen), vendor);
+  const tops = heavy.filter((id) => id !== flagship && !cheap(id));
+  // 每条产品线先在整条线里挑最新的一款（带日期的快照让给不带的），再排：旗舰档在前、轻量档在后
+  const best = new Map<string, string>();
+  for (const id of newestFirst([...tops, ...lights].filter((id) => sameGen(id) && isLineModel(id)), vendor)) {
+    if (!best.has(modelLine(id))) best.set(modelLine(id), id);
+  }
+  best.delete(modelLine(flagship));
+  const members = [...best.values()];
+  const lineup = [
+    flagship,
+    ...tops.filter((id) => members.includes(id)),
+    ...lights.filter((id) => members.includes(id)),
+  ];
+
+  const light = lights.find((id) => lineup.includes(id)) ?? lights[0] ?? null;
+  if (light && !lineup.includes(light)) lineup.push(light);
+  // 超出上限时先保住旗舰和轻量
+  const capped = lineup.length > LINEUP_MAX ? [...lineup.filter((id) => id !== light).slice(0, LINEUP_MAX - 1), light!] : lineup;
+  return { flagships: [flagship, ...tops], light, lineup: capped };
 }
 
 /** 目录里认得出的厂商，按在目录里第一次出现的顺序（不排名次） */
@@ -234,8 +270,10 @@ export interface AutoConfigRow {
   defaultModel: string | null;
   /** 多厂商行：每个候选是哪家（选中后补同家轻量用） */
   vendorOf: Record<string, VendorId>;
-  /** 每家的轻量型号 */
+  /** 每家同代的轻量型号 */
   lightOf: Partial<Record<VendorId, string>>;
+  /** 每家最新一代的整套产品线 */
+  lineupOf: Partial<Record<VendorId, string[]>>;
   /** 多厂商行（OpenCode / CodeBuddy 在聚合网关上）：名单放各家旗舰 */
   multi: boolean;
   /** 不配的原因；null = 可以配 */
@@ -270,7 +308,11 @@ export function planAutoConfig(input: {
   const single = vendors.length === 1 ? vendors[0] : null;
   const picks = new Map(vendors.map((v) => [v, vendorPicks(gateway.models, v, input.prices)]));
   const lightOf: Partial<Record<VendorId, string>> = {};
-  for (const [v, p] of picks) if (p.light) lightOf[v] = p.light;
+  const lineupOf: Partial<Record<VendorId, string[]>> = {};
+  for (const [v, p] of picks) {
+    if (p.light) lightOf[v] = p.light;
+    lineupOf[v] = p.lineup;
+  }
 
   return installed.map((agent): AutoConfigRow => {
     const protocol = pickProtocol(agent, gateway, preset);
@@ -282,6 +324,7 @@ export function planAutoConfig(input: {
       defaultModel: null,
       vendorOf: {},
       lightOf,
+      lineupOf,
       multi: false,
       skip: null,
       duplicateOf: null,
@@ -342,22 +385,36 @@ export function duplicateConnection(
   return dup ? dup.name : null;
 }
 
-/** 选定默认模型后的名单：多厂商行 = 选中的放第一 + 其余各家旗舰 + 选中那家的轻量；其余行 = 旗舰 + 同家轻量 */
+/** 选定默认模型后的名单：多厂商行 = 选中的放第一 + 其余各家旗舰 + 选中那家的同代轻量；其余行 = 选中的放第一 + 这家最新一代整套产品线 */
 export function rowModels(row: AutoConfigRow, chosen: string): string[] {
   const vendor = row.vendorOf[chosen] ?? modelVendor(chosen);
+  if (!row.multi) {
+    const lineup = (vendor ? row.lineupOf[vendor] : undefined) ?? [];
+    return [chosen, ...lineup.filter((m) => m !== chosen)].slice(0, LINEUP_MAX);
+  }
   const light = vendor ? row.lightOf[vendor] : undefined;
-  const others = row.multi ? row.options.filter((m) => m !== chosen) : [];
-  const list = [chosen, ...others];
+  const list = [chosen, ...row.options.filter((m) => m !== chosen)];
   if (light && !list.includes(light)) list.push(light);
   return list;
 }
 
-/** 模型分工：轻量的作后台小模型；Claude Code 用显式空映射（sonnet / opus / fable 跟默认，haiku 跟后台小模型） */
+/**
+ * 模型分工：同代轻量的作后台小模型。Claude Code 写显式映射：名单里名字带 sonnet / opus / fable 的各占对应别名，
+ * 没有的跟默认（智谱这类非 Claude 模型就全跟默认）；haiku 跟后台小模型
+ */
 export function rowRoleModels(row: AutoConfigRow, chosen: string): RoleModels {
   const vendor = row.vendorOf[chosen] ?? modelVendor(chosen);
   const light = vendor ? row.lightOf[vendor] : undefined;
-  const small = light && light !== chosen && SMALL_ROLE_AGENTS.has(row.agent) ? light : null;
+  const models = rowModels(row, chosen);
+  const small = light && light !== chosen && models.includes(light) && SMALL_ROLE_AGENTS.has(row.agent) ? light : null;
   const roles: RoleModels = { small, subagent: null };
-  if (row.agent === "claude-code") roles.slots = {};
+  if (row.agent === "claude-code") {
+    const slots: Record<string, string> = {};
+    for (const alias of ["sonnet", "opus", "fable"]) {
+      const m = models.find((id) => tokensOf(id).includes(alias));
+      if (m) slots[alias] = m;
+    }
+    roles.slots = slots;
+  }
   return roles;
 }
