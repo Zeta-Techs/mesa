@@ -570,10 +570,10 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
   project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general，
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
-                             # assistantErrorText（没问成译白话）、splitAnswerLead、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
+                             # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
-                             # planAsk（分流 + 要不要只读查看文件）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+                             # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-dispatch.ts      # 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
                              # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
@@ -1646,7 +1646,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   + browser_bridge.rs（装 NativeMessagingHosts
                              #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
-  ai.rs                      # 2026-11-02：run_agent_task 跑的期间登记锁定的会话（headless_session_of，跑完即撤），卡住检测据此看会话文件有没有在长；
+  ai.rs                      # 2026-11-04：ai_prompt_impl_full（项目助手：effort 只压已设的思考档 lower_effort、on_line 逐行回调；Claude 走 claude_stream_args 的 stream-json）、feed_lines 切行；
+                             # 2026-11-02：run_agent_task 跑的期间登记锁定的会话（headless_session_of，跑完即撤），卡住检测据此看会话文件有没有在长；
                              # 无头 AI 调用层（一次性调用对 claude/codex 不落盘 + JSON 记账：headless_oneshot_args / parse_oneshot_output）：一次性 prompt + 提交信息/摘要/PR 描述/冲突建议/提炼接力简报/评审沉淀起草（只写下一步还没有的约束，无新约束返回空）；
                              # 会话自动起名：先判手改/临时标题再读对话；材料指纹 title_basis 没变不问 AI；步骤 / 工作区会话附背景
                              #   （title_background：项目名、步骤名、TASK.md 标题与课题主题）；去重参照 pick_reference_titles（相近优先、最近补满）；
@@ -1791,7 +1792,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），
                              # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
                              # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；
-                             # assistant_review_notes 只读工作副本 .ccode/review-notes.md（16KB、脱敏）。没有改项目文件、派活、传话的口子。
+                             # 边生成边推：StreamState 读 Claude stream-json / Codex --json 行，emit assistant-stream-<id>（整段脱敏后的回答 + 正在做的一步，文字 120ms 一推）；
+                             # assistant_log_append 记本地现答的寒暄；assistant_review_notes 只读工作副本 .ccode/review-notes.md（16KB、脱敏）。没有改项目文件、派活、传话的口子。
                              # assistant_guide_search：说明书编译期读进来（include_str docs/guide/user-guide.md），按段切、汉字两两字组 + idf 打分，
                              # GUIDE_TOPICS 把常问的「怎么用」指到对应小节（锚点有测试守着，改说明书标题记得同步）
   project_mail.rs            # 项目内传话（2026-11-03 二期）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run
@@ -1918,7 +1920,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
                              #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）；
                              #   各家配置目录搬迁变量（CODEX_HOME 等）与会话目录变量（OPENCODE_DB / QWEN_RUNTIME_DIR / CURSOR_DATA_DIR）照带
-  process.rs                 # 2026-11-02：捕获登记带 activity（读到 stdout / stderr 即记 Unix 毫秒），capture_last_activity_ms 给定时任务卡住检测用；
+  process.rs                 # 2026-11-04：capture_command_streaming（等待循环里把 stdout 新到的字节交给回调，完整输出照旧返回；capture_command_for 是它不带回调的版本）；
+                             # 2026-11-02：捕获登记带 activity（读到 stdout / stderr 即记 Unix 毫秒），capture_last_activity_ms 给定时任务卡住检测用；
                              # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——
                              #   opencode run 按 PWD 取目录，2026-10-20；PTY 那边 spawn_tracked 把 PWD 设成工作目录；
                              #   子进程 PATH 走 child_path：Windows 补注册表里新出现的目录、macOS / Linux 补候选目录里新出现的，

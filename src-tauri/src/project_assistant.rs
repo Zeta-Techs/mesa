@@ -314,10 +314,29 @@ fn append_turn(project_root: &str, turn: AssistantTurnDto) -> Result<(), String>
     })
 }
 
+/// 不调 AI 的那几句（打招呼、道谢，前端 localReply 现答）也记进问答记录，续问时上下文接得上
+#[tauri::command]
+pub async fn assistant_log_append(project_root: String, question: String, answer: String) -> Result<AssistantTurnDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let turn = AssistantTurnDto {
+            at: now_fixed().to_rfc3339(),
+            question: truncate(&crate::sessions::redact_sensitive_text(question.trim()), FIELD_CAP),
+            answer: truncate(answer.trim(), ANSWER_CAP),
+            connection: "本地直接回答（没调 AI）".into(),
+            basis: String::new(),
+        };
+        append_turn(&project_root, turn.clone())?;
+        Ok(turn)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 问一次：prompt 是前端拼好的（规矩 + 项目快照 + 最近几轮 + 这次的问题），这里整段脱敏后出站。
 /// profile_id 为空 = 设置里「AI 功能」的连接（fn_key = project-assistant）；model 为空 = 连接里的第一个
 #[tauri::command]
 pub async fn project_assistant_ask(
+    app: tauri::AppHandle,
     store: tauri::State<'_, crate::profiles::ProfileStore>,
     project_root: String,
     profile_id: Option<String>,
@@ -328,6 +347,8 @@ pub async fn project_assistant_ask(
     prompt: String,
     inspect: Option<bool>,
     extra_dirs: Option<Vec<String>>,
+    effort: Option<String>,
+    stream_id: Option<String>,
 ) -> Result<AssistantTurnDto, String> {
     let profiles = store.list()?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -338,11 +359,43 @@ pub async fn project_assistant_ask(
         let prompt = crate::sessions::redact_sensitive_text(&prompt);
         let model = model.filter(|m| !m.trim().is_empty());
         // 只读查看项目文件（问出错时）：在项目根跑、只读、不落盘；这家不支持时报 INSPECT_UNSUPPORTED，前端退回只看记录
+        // 思考档只接受固定几档；这里只会往低调（前端按问题类型给 low）
+        let effort = effort.filter(|e| matches!(e.as_str(), "minimal" | "low" | "medium"));
+        // 边生成边推到面板：事件名 assistant-stream-<id>，载荷是到此为止的整段（脱敏后）与正在做的一步
+        let root_text = crate::sessions::expand_tilde(&project_root);
+        let mut stream = stream_id
+            .filter(|id| !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            .map(|id| (format!("assistant-stream-{id}"), StreamState::new(root_text.clone())));
+        let mut on_line = |line: &str| {
+            use tauri::Emitter;
+            if let Some((event, state)) = stream.as_mut() {
+                if let Some(update) = state.handle_line(line) {
+                    let _ = app.emit(event, update);
+                }
+            }
+        };
         let raw = if inspect.unwrap_or(false) {
-            let root = PathBuf::from(crate::sessions::expand_tilde(&project_root));
-            crate::ai::ai_inspect_readonly(profiles, profile_id, model, &root, &extra_dirs.unwrap_or_default(), prompt)?
+            let root = PathBuf::from(&root_text);
+            crate::ai::ai_inspect_readonly(
+                profiles,
+                profile_id,
+                model,
+                &root,
+                &extra_dirs.unwrap_or_default(),
+                prompt,
+                effort.as_deref(),
+                Some(&mut on_line),
+            )?
         } else {
-            crate::ai::ai_prompt_impl_model(profiles, profile_id, model, Some("project-assistant"), prompt)?
+            crate::ai::ai_prompt_impl_full(
+                profiles,
+                profile_id,
+                model,
+                Some("project-assistant"),
+                prompt,
+                effort.as_deref(),
+                Some(&mut on_line),
+            )?
         };
         let answer = truncate(crate::sessions::redact_sensitive_text(raw.trim()).as_str(), ANSWER_CAP);
         if answer.is_empty() {
@@ -361,6 +414,139 @@ pub async fn project_assistant_ask(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 推给面板的一次更新：到此为止的回答（整段、脱敏后）和 / 或正在做的一步（「读 scripts/clean.py」）
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+}
+
+/// 读 CLI 逐条吐出的 JSON 行，攒出「到此为止的回答」与「正在做的一步」。
+/// Claude `stream-json`：`stream_event` 里的 text_delta 逐字攒，新一条消息开始（message_start）清空——中途读文件前的
+/// 「我先看看」不留在最终显示里；`assistant` 消息里的 tool_use 变成一步。Codex `--json`：agent_message 整段、
+/// command_execution / reasoning 变成一步。整段每次都整体脱敏再推（逐字片段单独脱敏会漏掉被拆开的密钥），
+/// 文字更新最多 120ms 推一次，步骤立刻推
+pub(crate) struct StreamState {
+    root: String,
+    text: String,
+    secrets: Vec<String>,
+    last_text_emit: Option<std::time::Instant>,
+}
+
+impl StreamState {
+    pub(crate) fn new(root: String) -> Self {
+        Self { root, text: String::new(), secrets: crate::profiles::stored_secrets(), last_text_emit: None }
+    }
+
+    fn short_path(&self, p: &str) -> String {
+        let root = self.root.trim_end_matches(['/', '\\']);
+        let rel = p.strip_prefix(root).map(|r| r.trim_start_matches(['/', '\\'])).unwrap_or(p);
+        let rel: String = rel.chars().rev().take(60).collect::<Vec<_>>().into_iter().rev().collect();
+        rel
+    }
+
+    fn tool_step(&self, name: &str, input: &serde_json::Value) -> String {
+        let s = |k: &str| input.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let clip = |t: String| t.chars().take(60).collect::<String>();
+        match name {
+            "Read" => format!("读 {}", self.short_path(&s("file_path"))),
+            "Grep" => format!("搜「{}」", clip(s("pattern"))),
+            "Glob" => format!("找文件 {}", clip(s("pattern"))),
+            "LS" => format!("看目录 {}", self.short_path(&s("path"))),
+            other => format!("用 {other}"),
+        }
+    }
+
+    fn redacted(&self, text: &str) -> String {
+        crate::sessions::redact_sensitive_text_with(text, &self.secrets)
+    }
+
+    pub(crate) fn handle_line(&mut self, line: &str) -> Option<StreamUpdate> {
+        let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let mut step: Option<String> = None;
+        let mut text_changed = false;
+        // 一条消息的第一片立刻推（「在想」换成出字要跟手），后面的按 120ms 攒
+        let was_empty = self.text.is_empty();
+        match kind {
+            // Claude
+            "stream_event" => {
+                let ev = v.get("event")?;
+                match ev.get("type").and_then(|t| t.as_str()) {
+                    Some("message_start") => {
+                        if !self.text.is_empty() {
+                            self.text.clear();
+                            text_changed = true;
+                        }
+                    }
+                    Some("content_block_delta") => {
+                        let d = ev.get("delta")?;
+                        if d.get("type").and_then(|t| t.as_str()) == Some("text_delta") {
+                            self.text.push_str(d.get("text").and_then(|t| t.as_str()).unwrap_or(""));
+                            text_changed = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "assistant" => {
+                let content = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())?;
+                for item in content {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        step = Some(self.tool_step(name, item.get("input").unwrap_or(&serde_json::Value::Null)));
+                    }
+                }
+            }
+            // Codex
+            "item.started" | "item.completed" => {
+                let item = v.get("item")?;
+                match item.get("type").and_then(|t| t.as_str()) {
+                    Some("agent_message") if kind == "item.completed" => {
+                        self.text = item.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                        text_changed = true;
+                    }
+                    // 有的版本只发 item.completed：开始、结束都当一步（重复推同一步无妨）
+                    Some("command_execution") => {
+                        let cmd = item.get("command").and_then(|t| t.as_str()).unwrap_or("");
+                        // codex 把命令包在 `/bin/zsh -lc '…'` 里：取引号里的那段
+                        let inner = cmd.split_once("-lc ").map(|(_, r)| r.trim_matches(['\'', '"'])).unwrap_or(cmd);
+                        step = Some(format!("查看：{}", inner.chars().take(60).collect::<String>()));
+                    }
+                    Some("reasoning") if kind == "item.completed" => {
+                        let t = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                        let first = t.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().trim_matches('*');
+                        if !first.is_empty() {
+                            step = Some(format!("在想：{}", first.chars().take(40).collect::<String>()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        let now = std::time::Instant::now();
+        let text_due = text_changed
+            && (step.is_some()
+                || self.text.is_empty()
+                || was_empty
+                || self.last_text_emit.is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(120)));
+        if !text_due && step.is_none() {
+            return None;
+        }
+        if text_due {
+            self.last_text_emit = Some(now);
+        }
+        Some(StreamUpdate {
+            text: text_due.then(|| self.redacted(&self.text)),
+            step: step.map(|s| self.redacted(&s)),
+        })
+    }
 }
 
 /// 评审退回意见（工作副本里的 `.ccode/review-notes.md`）：快照用，只读、有上限、脱敏
@@ -385,7 +571,7 @@ pub async fn assistant_review_notes(worktree_path: String) -> Option<String> {
 // 打分用汉字两两相邻的字组与英文词，罕见的词分量重（idf），标题里出现的加倍。
 
 const USER_GUIDE: &str = include_str!("../../docs/guide/user-guide.md");
-const GUIDE_HIT_CAP: usize = 1800;
+const GUIDE_HIT_CAP: usize = 1400;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -677,6 +863,39 @@ mod tests {
         assert!(g.contains("claude"));
         assert!(g.contains("模型"));
         assert!(!g.contains("换"));
+    }
+
+    #[test]
+    fn stream_state_collects_claude_text_and_steps() {
+        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None };
+        let start = r#"{"type":"stream_event","event":{"type":"message_start"}}"#;
+        assert!(st.handle_line(start).is_none());
+        let d1 = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"我先看看"}}}"#;
+        assert_eq!(st.handle_line(d1).unwrap().text.as_deref(), Some("我先看看"));
+        let tool = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/p/x/scripts/clean.py"}}]}}"#;
+        assert_eq!(st.handle_line(tool).unwrap().step.as_deref(), Some("读 scripts/clean.py"));
+        // 新一条消息：先前的「我先看看」清掉
+        let up = st.handle_line(start).unwrap();
+        assert_eq!(up.text.as_deref(), Some(""));
+        let d2 = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"原因是"}}}"#;
+        assert_eq!(st.handle_line(d2).unwrap().text.as_deref(), Some("原因是"));
+        // 120ms 内的下一片先攒着不推
+        let d3 = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"列名"}}}"#;
+        assert!(st.handle_line(d3).is_none());
+        assert_eq!(st.text, "原因是列名");
+        assert!(st.handle_line("not json").is_none());
+        assert!(st.handle_line(r#"{"type":"result","result":"x"}"#).is_none());
+    }
+
+    #[test]
+    fn stream_state_reads_codex_events() {
+        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None };
+        let cmd = r#"{"type":"item.started","item":{"type":"command_execution","command":"/bin/zsh -lc 'cat -n scripts/clean.py'"}}"#;
+        assert_eq!(st.handle_line(cmd).unwrap().step.as_deref(), Some("查看：cat -n scripts/clean.py"));
+        let msg = r#"{"type":"item.completed","item":{"type":"agent_message","text":"报错出在第 3 行"}}"#;
+        assert_eq!(st.handle_line(msg).unwrap().text.as_deref(), Some("报错出在第 3 行"));
+        let secret = StreamState { root: "/".into(), text: String::new(), secrets: vec!["sk-abcdefgh12345678".into()], last_text_emit: None };
+        assert!(!secret.redacted("key sk-abcdefgh12345678 here").contains("abcdefgh12345678"));
     }
 
     #[test]

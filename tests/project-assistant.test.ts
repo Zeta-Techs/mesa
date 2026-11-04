@@ -231,3 +231,18 @@ test("派活单：从回答里取出来，去处只认第 N 步 / 新目标，�
   assert.match(buildAssistantPrompt({ intent: "project", snapshot: "s", history: [], question: "q" }), /:::派活/);
   assert.doesNotMatch(buildAssistantPrompt({ intent: "howto", history: [], question: "q" }), /:::派活/);
 });
+
+test("提速：寒暄本地回、按类型压低思考档", async () => {
+  const { localReply, intentEffort } = await import("../src/project-assistant.ts");
+  assert.match(localReply("你好", 15) ?? "", /^你好！/);
+  assert.match(localReply("你好呀", 8) ?? "", /^早！/);
+  assert.match(localReply("hi", 23) ?? "", /这么晚/);
+  assert.equal(localReply("谢谢！", 10), "不客气，有事再叫我。");
+  assert.equal(localReply("你好，第 3 步为什么出错", 10), null, "带了正事的交给 AI");
+  assert.equal(localReply("现在几点", 10), null);
+  assert.equal(intentEffort("chat"), "low");
+  assert.equal(intentEffort("howto"), "low");
+  assert.equal(intentEffort("general"), "low");
+  assert.equal(intentEffort("project"), null);
+  assert.equal(intentEffort("mixed"), null);
+});

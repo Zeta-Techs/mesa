@@ -260,7 +260,7 @@ export function buildAssistantPrompt(
         : input.intent === "general"
           ? GENERAL_RULES
           : PROJECT_RULES;
-  const history = historyBlock(input.history, input.intent === "chat" || input.intent === "general" ? 3 : 6);
+  const history = historyBlock(input.history, input.intent === "chat" || input.intent === "general" ? 3 : 4);
   const guide = input.guide?.length
     ? `## 说明书摘录（Mesa 产品说明书，按问题挑的几段）\n${input.guide.map((g) => `### ${g.heading}\n${g.text}`).join("\n\n")}`
     : input.intent === "howto"
@@ -423,3 +423,31 @@ export const WORK_ORDER_RULES = `派活：真要动手（改脚本、补产物�
 :::
 交给第 N 步 = 那一步自己的 AI 在它的工作副本里按单接着做（问题出在某一步的产物时用这个）；新目标 = 另起一个目标在隔离副本里做，做完走验收（不属于任何一步的活用这个）。
 只在确实需要动手、而且你说得清要改什么时才写；人工请求、开工前的决定、评审采不采纳这些要用户拍板的事不派活；Mesa 自己的毛病派不了活，给「报告」。`;
+
+// ===== 提速（2026-11-04 用户：「为什么感觉回答很慢」，实测寒暄 8–19 秒、问怎么用 51–57 秒）=====
+
+/** 按问题类型压低思考档：寒暄 / 判不出 / 问怎么用用低档，问项目、查出错照连接原档（后端只在连接本来就设了思考档时才改） */
+export function intentEffort(intent: AssistantIntent): "low" | null {
+  return intent === "chat" || intent === "general" || intent === "howto" ? "low" : null;
+}
+
+const GREETING_RE = /^(你好|您好|嗨|哈喽|hi|hello|hey|在吗|在不在|早|早上好|晚上好)[呀啊哦了吧！!。.~～，, ]*$/i;
+const THANKS_RE = /^(谢谢|多谢|感谢|thanks|thank you|辛苦了|好的|好|ok|okay|收到|明白了|懂了)[呀啊哦了吧！!。.~～，, ]*$/i;
+const BYE_RE = /^(拜拜|再见|晚安|bye)[呀啊哦了吧！!。.~～，, ]*$/i;
+
+/** 纯寒暄本地直接回，不调 AI（瞬间回；其余一律交给 AI） */
+export function localReply(question: string, hour: number): string | null {
+  const q = question.trim();
+  if (q.length > 12) return null;
+  if (GREETING_RE.test(q)) {
+    const lead = hour >= 22 || hour < 6 ? "这么晚还在忙呀。" : hour < 11 ? "早！" : "你好！";
+    return `${lead}想问项目到哪了、哪一步出了错，还是想知道 Mesa 怎么用，直接说就行。`;
+  }
+  if (THANKS_RE.test(q)) return "不客气，有事再叫我。";
+  if (BYE_RE.test(q)) return hour >= 22 || hour < 6 ? "晚安，早点休息。" : "回头见。";
+  return null;
+}
+
+/** 喂给 AI 的材料上限（砍过一刀）：快照字数、说明书段数、最近几轮 */
+export const SNAPSHOT_MAX_CHARS = 14_000;
+export const GUIDE_LIMIT: Record<"howto" | "mixed", number> = { howto: 3, mixed: 2 };

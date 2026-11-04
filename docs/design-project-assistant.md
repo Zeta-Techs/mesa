@@ -216,5 +216,12 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
     （计划文件供续聊恢复，本机已有 Mesa 开的会话留下的），属于 CLI 在会话里自己写的东西，与会话记录同类，**不改**；
     Claude 的 `plansDirectory` 设置只能指到项目根里，改了反而把计划文件带进工作副本与评审。口径写进 safety.md「各 CLI 会话/配置目录一律只读」条。
   - 打包产物：`npm run build` 后 `@tauri-apps/api/core` 只有一份，应用与插件的调用都走包装（失败先通知出错记录再抛），没有第二份未包装的 invoke。
+- **提速**（同日用户：「为什么感觉回答很慢」→「全部做」）：实测（运行库里的起止时间）寒暄 8–19 秒、问怎么用 51–57 秒，同一连接直接跑「你好」3.5 秒——
+  大头是连接设的思考档整套带上、没有边出字、每问一次启动完整 Claude Code（自带约 1.4 万 token 说明）+ 材料偏多。定：
+  寒暄本地现答（`localReply`，记进问答记录）；寒暄 / 判不出 / 怎么用把思考档压到 low（`lower_effort` 只改连接本来设了的，没设不加）；
+  面板一打开就取快照（`prefetchSnapshot`）；快照上限 2.4 万 → 1.4 万字、说明书 4 → 3 段（每段 1400 字）、最近 6 → 4 轮；
+  后台边生成边推（`capture_command_streaming` + `StreamState`，Claude `stream-json --include-partial-messages`、Codex `--json`），
+  面板用聊天层的 M▁ 状态头写正在做的一步、回答边出字，写完整段换上。不接终端、不留会话（见上文否决「接聊天层」的理由：要开着的 CLI 对话、只读靠权限档撑、快照会过期）。
+  实测 Claude 2.1.309 stream-json：逐字 text_delta、tool_use 在 assistant 消息里、最后一行 result；**未在 Mesa Dev 里实测提速后的整体耗时**。
 - **未验**：Mesa Dev 窗口里实际点一遍（卡点、出错了、项目助手问答与按钮、Agent 分工新卡、反馈表预填）。
 

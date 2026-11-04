@@ -201,6 +201,41 @@ fn headless_oneshot_args(agent: &str, prompt: &str) -> Vec<String> {
     }
 }
 
+/// 边跑边出字的 Claude 一次性调用参数（项目助手用）：`stream-json` 逐条吐（要配 `--verbose`），
+/// `--include-partial-messages` 带上逐字的增量；最后一行仍是 `type: result`，parse_oneshot_output 照常认
+pub(crate) fn claude_stream_args(prompt: &str) -> Vec<String> {
+    vec![
+        "-p".into(),
+        prompt.into(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--verbose".into(),
+        "--include-partial-messages".into(),
+        "--no-session-persistence".into(),
+    ]
+}
+
+/// 把启动计划里已有的思考档改成 `level`（只改已经设了的，没设的不加）
+pub(crate) fn lower_effort(agent: &str, plan: &mut agents::LaunchPlan, level: &str) {
+    match agent {
+        "claude-code" => {
+            for (k, v) in plan.env.iter_mut() {
+                if k == "CLAUDE_CODE_EFFORT_LEVEL" {
+                    *v = level.to_string();
+                }
+            }
+        }
+        "codex" => {
+            for a in plan.args.iter_mut() {
+                if a.starts_with("model_reasoning_effort=") {
+                    *a = format!(r#"model_reasoning_effort="{level}""#);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 解析不落盘调用的 JSON 输出 → (正文, 用量事件)。格式 2026-10-17 本机实录：
 /// - claude `--output-format json`：单个对象，`result` 是正文，`is_error` 为真时 `result` 是错误句；
 ///   用量优先 `modelUsage`（按模型分），没有就用顶层 `usage` 记在所选模型上
@@ -580,7 +615,32 @@ fn run_capture_for(
     run_id: Option<&str>,
     session_out: &mut Option<String>,
 ) -> Result<String, String> {
-    let captured = crate::process::capture_command_for(cmd, timeout, 8 * 1024 * 1024, run_id)?;
+    run_capture_with(agent, expected_host, cmd, timeout, run_id, session_out, None)
+}
+
+/// 把 stdout 字节流切成完整的行交给回调（最后一段不完整的留在 pending 里等下一批）
+pub(crate) fn feed_lines(pending: &mut Vec<u8>, bytes: &[u8], on_line: &mut dyn FnMut(&str)) {
+    pending.extend_from_slice(bytes);
+    while let Some(pos) = pending.iter().position(|b| *b == b'\n') {
+        let line: Vec<u8> = pending.drain(..=pos).collect();
+        let text = String::from_utf8_lossy(&line);
+        let text = text.trim_end();
+        if !text.is_empty() {
+            on_line(text);
+        }
+    }
+}
+
+fn run_capture_with(
+    agent: Option<&str>,
+    expected_host: Option<&str>,
+    cmd: &mut crate::process::BackgroundCommand,
+    timeout: Duration,
+    run_id: Option<&str>,
+    session_out: &mut Option<String>,
+    on_stdout: Option<&mut dyn FnMut(&[u8])>,
+) -> Result<String, String> {
+    let captured = crate::process::capture_command_streaming(cmd, timeout, 8 * 1024 * 1024, run_id, on_stdout)?;
     if captured.cancelled {
         return Err("任务已取消".into());
     }
@@ -637,6 +697,22 @@ pub(crate) fn ai_prompt_impl_model(
     fn_key: Option<&str>,
     prompt: String,
 ) -> Result<String, String> {
+    ai_prompt_impl_full(profiles, profile_id, model, fn_key, prompt, None, None)
+}
+
+/// 项目助手要的两样（2026-11-04 用户：回答太慢）：
+/// - `effort`：把这次调用的思考档压到这一档——只在连接本来就设了思考档时改（Claude `CLAUDE_CODE_EFFORT_LEVEL`、
+///   Codex `model_reasoning_effort`），没设的不加（加了不认的网关会 400）；
+/// - `on_line`：边跑边拿到 stdout 的完整一行（Claude 换成 `stream-json` 逐字吐，Codex `--json` 本就逐条），用于推到面板。
+pub(crate) fn ai_prompt_impl_full(
+    profiles: Vec<Profile>,
+    profile_id: Option<String>,
+    model: Option<String>,
+    fn_key: Option<&str>,
+    prompt: String,
+    effort: Option<&str>,
+    on_line: Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
     // 设置页的按功能/全局专用 profile 作为显式 id 之外的默认（每次现读，改动即时生效）
     let settings = crate::settings::read_current_checked()?;
     let explicit_id = profile_id.clone().filter(|v| !v.trim().is_empty());
@@ -683,9 +759,13 @@ pub(crate) fn ai_prompt_impl_model(
     let selected = pick_listed_model(&profile.models, model.as_deref().or(preferred));
     crate::combo::apply_to_profile(&mut profile, selected.as_deref());
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
-    let plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    let mut plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    if let Some(level) = effort {
+        lower_effort(&profile.agent, &mut plan, level);
+    }
     let mut cmd = crate::process::background_command(&binary_path);
     let ephemeral = oneshot_is_ephemeral(&profile.agent);
+    let streaming = on_line.is_some() && profile.agent == "claude-code";
     // 不落盘就没有会话文件，锁会话 id / 标 internal 都无对象
     let (lock_id, lock_args) = if ephemeral {
         (None, Vec::new())
@@ -695,11 +775,8 @@ pub(crate) fn ai_prompt_impl_model(
     if let Some(id) = &lock_id {
         let _ = crate::sessions::mark_session_internal(&profile.agent, id);
     }
-    for a in compose_headless_args(
-        &profile.agent,
-        &plan.args,
-        &headless_oneshot_args(&profile.agent, &prompt),
-    ) {
+    let oneshot = if streaming { claude_stream_args(&prompt) } else { headless_oneshot_args(&profile.agent, &prompt) };
+    for a in compose_headless_args(&profile.agent, &plan.args, &oneshot) {
         cmd.arg(a);
     }
     for a in lock_args {
@@ -757,13 +834,21 @@ pub(crate) fn ai_prompt_impl_model(
             return Err(error);
         }
     }
-    let result = run_capture_for(
+    let mut on_line = on_line;
+    let mut pending: Vec<u8> = Vec::new();
+    let mut feed = |bytes: &[u8]| {
+        if let Some(cb) = on_line.as_mut() {
+            feed_lines(&mut pending, bytes, *cb);
+        }
+    };
+    let result = run_capture_with(
         Some(&profile.agent),
         host.as_deref(),
         &mut cmd,
         AI_TIMEOUT,
         Some(&run.id),
         &mut None,
+        Some(&mut feed),
     );
     // 不落盘调用：JSON 里拆出正文与用量，用量直接记账（扫描不到会话文件，重建补不回来）
     let result = if ephemeral {
@@ -819,20 +904,26 @@ pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
 const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash WebFetch WebSearch Task";
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
 
-pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String]) -> Option<Vec<String>> {
+pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String], stream: bool) -> Option<Vec<String>> {
     match agent {
         "claude-code" => {
-            let mut a: Vec<String> = vec![
-                "-p".into(),
-                prompt.into(),
-                "--output-format".into(),
-                "json".into(),
-                "--no-session-persistence".into(),
-                "--permission-mode".into(),
+            let mut a: Vec<String> = if stream {
+                claude_stream_args(prompt)
+            } else {
+                vec![
+                    "-p".into(),
+                    prompt.into(),
+                    "--output-format".into(),
+                    "json".into(),
+                    "--no-session-persistence".into(),
+                ]
+            };
+            a.extend([
+                "--permission-mode".to_string(),
                 "default".into(),
                 "--disallowedTools".into(),
                 CLAUDE_INSPECT_DISALLOWED.into(),
-            ];
+            ]);
             for d in extra_dirs {
                 a.push("--add-dir".into());
                 a.push(d.clone());
@@ -859,6 +950,8 @@ pub(crate) fn ai_inspect_readonly(
     project_root: &std::path::Path,
     extra_dirs: &[String],
     prompt: String,
+    effort: Option<&str>,
+    on_line: Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
     if !project_root.is_dir() {
         return Err("项目文件夹不在了".into());
@@ -879,7 +972,7 @@ pub(crate) fn ai_inspect_readonly(
         .take(8)
         .cloned()
         .collect();
-    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs) else {
+    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some()) else {
         return Err(format!("{INSPECT_UNSUPPORTED}: {}", profile.agent));
     };
     let binary = agents::binary_for(&profile.agent)
@@ -892,7 +985,10 @@ pub(crate) fn ai_inspect_readonly(
     let selected = pick_listed_model(&profile.models, model.as_deref());
     crate::combo::apply_to_profile(&mut profile, selected.as_deref());
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
-    let plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    let mut plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    if let Some(level) = effort {
+        lower_effort(&profile.agent, &mut plan, level);
+    }
     let mut cmd = crate::process::background_command(&binary_path);
     for a in compose_headless_args(&profile.agent, &plan.args, &args) {
         cmd.arg(a);
@@ -923,7 +1019,14 @@ pub(crate) fn ai_inspect_readonly(
         let _ = crate::runs::close_run_with_result(&run.id, None, "failed", None, Some("无头 Run 状态登记失败"));
         return Err(error);
     }
-    let result = run_capture_for(Some(&profile.agent), host.as_deref(), &mut cmd, INSPECT_TIMEOUT, Some(&run.id), &mut None)
+    let mut on_line = on_line;
+    let mut pending: Vec<u8> = Vec::new();
+    let mut feed = |bytes: &[u8]| {
+        if let Some(cb) = on_line.as_mut() {
+            feed_lines(&mut pending, bytes, *cb);
+        }
+    };
+    let result = run_capture_with(Some(&profile.agent), host.as_deref(), &mut cmd, INSPECT_TIMEOUT, Some(&run.id), &mut None, Some(&mut feed))
         .and_then(|raw| {
             let (text, events) =
                 parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &crate::usage::today_local())?;
@@ -3109,8 +3212,35 @@ ERROR: Your access token could not be refreshed because your refresh token was r
     }
 
     #[test]
+    fn lower_effort_only_rewrites_an_existing_level() {
+        let mut plan = agents::LaunchPlan::default();
+        plan.env.push(("CLAUDE_CODE_EFFORT_LEVEL".into(), "xhigh".into()));
+        lower_effort("claude-code", &mut plan, "low");
+        assert_eq!(plan.env, vec![("CLAUDE_CODE_EFFORT_LEVEL".to_string(), "low".to_string())]);
+        let mut none = agents::LaunchPlan::default();
+        lower_effort("claude-code", &mut none, "low");
+        assert!(none.env.is_empty(), "连接没设思考档的不加（加了不认的网关会 400）");
+        let mut codex = agents::LaunchPlan::default();
+        codex.args = vec!["-c".into(), r#"model_reasoning_effort="high""#.into()];
+        lower_effort("codex", &mut codex, "low");
+        assert_eq!(codex.args[1], r#"model_reasoning_effort="low""#);
+        let stream = claude_stream_args("hi");
+        assert!(stream.windows(2).any(|w| w == ["--output-format", "stream-json"]) && stream.iter().any(|a| a == "--verbose"));
+    }
+
+    #[test]
+    fn feed_lines_waits_for_whole_lines() {
+        let mut pending = Vec::new();
+        let mut got: Vec<String> = Vec::new();
+        let mut cb = |l: &str| got.push(l.to_string());
+        feed_lines(&mut pending, b"{\"a\":1}\n{\"b\"", &mut cb);
+        feed_lines(&mut pending, b":2}\n\n", &mut cb);
+        assert_eq!(got, vec![r#"{"a":1}"#, r#"{"b":2}"#]);
+    }
+
+    #[test]
     fn inspect_readonly_args_are_read_only_and_ephemeral() {
-        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()]).unwrap();
+        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false).unwrap();
         assert!(claude.windows(2).any(|w| w == ["--permission-mode", "default"]), "不用 plan 档（会写 ~/.claude/plans）");
         let disallowed = claude.iter().position(|a| a == "--disallowedTools").map(|i| claude[i + 1].clone()).unwrap();
         for tool in ["Edit", "Write", "Bash", "WebFetch"] {
@@ -3119,7 +3249,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(claude.iter().any(|a| a == "--no-session-persistence"));
         assert!(claude.windows(2).any(|w| w == ["--add-dir", "/w/a"]));
         assert!(!claude.iter().any(|a| a.contains("bypass")));
-        let codex = inspect_readonly_args("codex", "看看", &[]).unwrap();
+        let codex = inspect_readonly_args("codex", "看看", &[], false).unwrap();
         assert!(codex.windows(2).any(|w| w == ["-s", "read-only"]));
         assert!(codex.iter().any(|a| a == "--ephemeral"));
         // plan 默认的 -s workspace-write 要被剥掉，只剩只读那一档
@@ -3127,8 +3257,12 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let composed = compose_headless_args("codex", &plan, &codex);
         assert_eq!(composed.iter().filter(|a| *a == "-s").count(), 1);
         assert!(composed.windows(2).any(|w| w == ["-s", "read-only"]));
-        assert!(inspect_readonly_args("kimi", "看看", &[]).is_none());
-        assert!(inspect_readonly_args("gemini", "看看", &[]).is_none());
+        assert!(inspect_readonly_args("kimi", "看看", &[], false).is_none());
+        assert!(inspect_readonly_args("gemini", "看看", &[], false).is_none());
+        let streamed = inspect_readonly_args("claude-code", "看看", &[], true).unwrap();
+        assert!(streamed.windows(2).any(|w| w == ["--output-format", "stream-json"]));
+        assert!(streamed.iter().any(|a| a == "--include-partial-messages") && streamed.iter().any(|a| a == "--verbose"));
+        assert!(streamed.windows(2).any(|w| w == ["--permission-mode", "default"]));
     }
 
     #[test]

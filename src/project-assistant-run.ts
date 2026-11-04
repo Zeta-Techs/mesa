@@ -4,6 +4,7 @@
  * 某一样读不到就跳过那一块，不挡回答。
  */
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { IS_MAC, IS_WINDOWS } from "./hotkeys";
 import { useAppStore } from "./store";
@@ -17,8 +18,11 @@ import {
   basisText,
   buildAssistantPrompt,
   classifyQuestion,
+  GUIDE_LIMIT,
   inspectRules,
   INSPECT_AGENTS,
+  intentEffort,
+  SNAPSHOT_MAX_CHARS,
   wantsInspect,
   type AssistantHistoryTurn,
   type AssistantIntent,
@@ -225,12 +229,17 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     agents: detected.map((d) => ({ id: AGENTS.find((a) => a.id === d.id)?.label ?? d.id, installed: !!d.binaryPath, version: d.version })),
     decided: memory?.entries.filter((e) => e.meta.state === "active").map((e) => e.text) ?? [],
   };
-  return buildProjectSnapshot(input);
+  return buildProjectSnapshot(input, SNAPSHOT_MAX_CHARS);
 }
 
 /** 快照留 90 秒：接着追问不用每次重新取一遍（带「这次重点」的不走缓存） */
 const SNAPSHOT_TTL_MS = 90_000;
 const snapshotCache = new Map<string, { at: number; text: string }>();
+
+/** 面板一打开就先把项目记录整理好（你打字时已经取完，问的时候不再等这一两秒）；失败不管 */
+export function prefetchSnapshot(projectPath: string): void {
+  void cachedSnapshot(projectPath, null).catch(() => {});
+}
 
 async function cachedSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
   if (!focus) {
@@ -278,6 +287,8 @@ export async function askProjectAssistant(input: {
   focus: AssistantFocus | null;
   intent?: AssistantIntent;
   inspect?: boolean;
+  /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
+  onStream?: (update: { text?: string; step?: string }) => void;
 }): Promise<AssistantTurn> {
   const planned = planAsk(input.question, !!input.focus, input.project);
   const intent = input.intent ?? planned.intent;
@@ -288,7 +299,7 @@ export async function askProjectAssistant(input: {
   const [snapshot, guide, worktrees] = await Promise.all([
     needSnapshot ? cachedSnapshot(input.projectPath, input.focus) : Promise.resolve(null),
     needGuide
-      ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? 2 : 4 }), [])
+      ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? GUIDE_LIMIT.mixed : GUIDE_LIMIT.howto }), [])
       : Promise.resolve([] as { heading: string; text: string }[]),
     inspect
       ? safe(invoke<WorkspaceDto[]>("list_workspaces"), []).then((list) =>
@@ -309,18 +320,30 @@ export async function askProjectAssistant(input: {
       question: input.question,
     });
   const guideHeads = guide.map((g) => g.heading);
-  const ask = (profileId: string | null, model: string | null, connection: string, withInspect: boolean) =>
-    invoke<AssistantTurn>("project_assistant_ask", {
-      projectRoot: input.projectPath,
-      profileId,
-      model,
-      connection,
-      basis: basisText(intent, guideHeads, withInspect),
-      question: input.question,
-      prompt: promptFor(withInspect),
-      inspect: withInspect,
-      extraDirs: withInspect ? worktrees : null,
-    });
+  const streamId = crypto.randomUUID();
+  const ask = async (profileId: string | null, model: string | null, connection: string, withInspect: boolean) => {
+    // 先挂上监听再发：后端一开跑就推（只有 Claude Code / Codex 推得出来，别家整段一次给）
+    const unlisten = input.onStream
+      ? await listen<{ text?: string; step?: string }>(`assistant-stream-${streamId}`, (event) => input.onStream?.(event.payload))
+      : null;
+    try {
+      return await invoke<AssistantTurn>("project_assistant_ask", {
+        projectRoot: input.projectPath,
+        profileId,
+        model,
+        connection,
+        basis: basisText(intent, guideHeads, withInspect),
+        question: input.question,
+        prompt: promptFor(withInspect),
+        inspect: withInspect,
+        extraDirs: withInspect ? worktrees : null,
+        effort: intentEffort(intent),
+        streamId,
+      });
+    } finally {
+      unlisten?.();
+    }
+  };
   const askWithFallback = async (profileId: string | null, model: string | null, connection: string) => {
     try {
       return await ask(profileId, model, connection, inspect);

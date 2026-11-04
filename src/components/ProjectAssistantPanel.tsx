@@ -16,6 +16,7 @@ import {
   guideAnchor,
   INSPECT_WAITING,
   INTENT_WAITING,
+  localReply,
   parseAssistantAnswer,
   parseWorkOrder,
   QUICK_QUESTIONS,
@@ -30,6 +31,7 @@ import {
   askProjectAssistant,
   assistantConnection,
   planAsk,
+  prefetchSnapshot,
   type AssistantFocus,
   type AssistantTurn,
 } from "../project-assistant-run";
@@ -94,6 +96,9 @@ export default function ProjectAssistantPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
+  /** 边生成边推来的：到此为止的回答、正在做的一步（Claude Code / Codex 才有） */
+  const [liveText, setLiveText] = useState("");
+  const [liveStep, setLiveStep] = useState<string | null>(null);
   /** 这次问的是哪一类（等的时候那一行写什么） */
   const [intent, setIntent] = useState<AssistantIntent>("project");
   /** 这次会不会只读打开项目文件（等得久一些，等待文案要说清） */
@@ -136,6 +141,8 @@ export default function ProjectAssistantPanel({
     let stale = false;
     setError(null);
     setFreshAt(null);
+    // 一打开就先把项目记录整理好，问项目类问题时不再等这一段
+    prefetchSnapshot(projectPath);
     invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath })
       .then((list) => {
         if (!stale) setTurns(list);
@@ -150,7 +157,7 @@ export default function ProjectAssistantPanel({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [turns.length, busy, error]);
+  }, [turns.length, busy, error, liveText, liveStep]);
 
   useEffect(() => {
     if (!busy) return;
@@ -163,11 +170,28 @@ export default function ProjectAssistantPanel({
   async function send(question: string, withFocus: AssistantFocus | null) {
     const q = question.trim();
     if (!q || busy || !projectPath) return;
+    // 纯寒暄本地直接回，不调 AI（原来一句「你好」要 8–19 秒）
+    const canned = withFocus ? null : localReply(q, new Date().getHours());
+    if (canned) {
+      setDraft("");
+      if (inputRef.current) inputRef.current.style.height = "";
+      setError(null);
+      try {
+        const turn = await invoke<AssistantTurn>("assistant_log_append", { projectRoot: projectPath, question: q, answer: canned });
+        setTurns((list) => [...list, turn]);
+        setFreshAt(turn.at);
+      } catch {
+        setTurns((list) => [...list, { at: new Date().toISOString(), question: q, answer: canned, connection: "" }]);
+      }
+      return;
+    }
     const plan = planAsk(q, !!withFocus, project);
     setIntent(plan.intent);
     setInspecting(plan.inspect);
     setBusy(true);
     setPending(q);
+    setLiveText("");
+    setLiveStep(null);
     setFailed(null);
     setDraft("");
     if (inputRef.current) inputRef.current.style.height = "";
@@ -181,6 +205,10 @@ export default function ProjectAssistantPanel({
         focus: withFocus,
         intent: plan.intent,
         inspect: plan.inspect,
+        onStream: (update) => {
+          if (update.text !== undefined) setLiveText(update.text);
+          if (update.step) setLiveStep(update.step);
+        },
       });
       setTurns((list) => [...list, turn]);
       setFreshAt(turn.at);
@@ -191,6 +219,8 @@ export default function ProjectAssistantPanel({
     } finally {
       setBusy(false);
       setPending(null);
+      setLiveText("");
+      setLiveStep(null);
     }
   }
 
@@ -426,14 +456,25 @@ export default function ProjectAssistantPanel({
             <article className="flex flex-col gap-3">
               {pending && <QuestionBubble text={pending} />}
               <div className="flex min-w-0 items-center gap-2 text-sm text-l3">
-                {/* 与聊天层生成中那一行同一个 M▁ 状态头（MesaStatusLead：光标呼吸 + 光带扫过），2026-11-04 用户：「用 Mesa 的聊天层图标显示」 */}
-                <MesaStatusLead text={inspecting ? INSPECT_WAITING : INTENT_WAITING[intent]} motion="breathe" sweep />
+                {/* 与聊天层生成中那一行同一个 M▁ 状态头（MesaStatusLead：光标呼吸 + 光带扫过），2026-11-04 用户：「用 Mesa 的聊天层图标显示」；
+                    只读查看时实时写正在读哪个文件 / 搜什么（后端推来的步骤） */}
+                <MesaStatusLead
+                  text={liveStep ?? (liveText ? "正在写…" : inspecting ? INSPECT_WAITING : INTENT_WAITING[intent])}
+                  motion={liveText ? "stretch" : "breathe"}
+                  sweep
+                />
                 {waited >= 3 && (
                   <span className="shrink-0 text-xs tabular-nums text-l4" aria-hidden="true">
                     {waited} 秒
                   </span>
                 )}
               </div>
+              {/* 边生成边出字：动作标记、派活单写完前先不画，最终回答到了整段换上 */}
+              {liveText && (
+                <div className="text-sm text-l1">
+                  <ChatMarkdown text={parseAssistantAnswer(parseWorkOrder(liveText, stepCount).text, stepCount).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
+                </div>
+              )}
             </article>
           )}
           {error && (

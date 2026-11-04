@@ -984,6 +984,18 @@ pub(crate) fn capture_command_for(
     cap: usize,
     run_id: Option<&str>,
 ) -> Result<CapturedOutput, String> {
+    capture_command_streaming(cmd, timeout, cap, run_id, None)
+}
+
+/// 同 `capture_command_for`，另可边跑边拿到 stdout 新到的字节（项目助手边生成边推到面板，2026-11-04）：
+/// 等待循环里每一圈把缓冲里新增的部分交给回调；回调只读，完整输出照旧在返回值里
+pub(crate) fn capture_command_streaming(
+    cmd: &mut BackgroundCommand,
+    timeout: std::time::Duration,
+    cap: usize,
+    run_id: Option<&str>,
+    mut on_stdout: Option<&mut dyn FnMut(&[u8])>,
+) -> Result<CapturedOutput, String> {
     use std::process::Stdio;
     use std::time::{Duration, Instant};
     if shutting_down() {
@@ -1055,7 +1067,20 @@ pub(crate) fn capture_command_for(
     let mut status = None;
     let mut failure = None;
     let mut timed_out = false;
+    let mut streamed = 0usize;
+    let mut pump = |out: &std::sync::Arc<std::sync::Mutex<CaptureBuffer>>, streamed: &mut usize| {
+        if let Some(cb) = on_stdout.as_mut() {
+            let b = out.lock().unwrap_or_else(|e| e.into_inner());
+            if b.bytes.len() > *streamed {
+                let fresh = b.bytes[*streamed..].to_vec();
+                *streamed = b.bytes.len();
+                drop(b);
+                cb(&fresh);
+            }
+        }
+    };
     loop {
+        pump(&out, &mut streamed);
         if status.is_none() {
             match child.try_wait() {
                 Ok(value) => status = value,
@@ -1077,6 +1102,7 @@ pub(crate) fn capture_command_for(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    pump(&out, &mut streamed);
     let was_cancelled = cancelled.load(std::sync::atomic::Ordering::Acquire);
     if timed_out || was_cancelled || failure.is_some() {
         #[cfg(windows)]
