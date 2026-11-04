@@ -2312,7 +2312,8 @@ fn prepare_structured(
             p.dir = Some(dir);
             (env, Some(p))
         }
-        "opencode" if version_at_least(agent, OPENCODE_PORT_MIN) => {
+        // 2.x 主命令不认 --port（旁路改走 Mesa 自起的 serve，见 opencode 2.x 分支）
+        "opencode" if version_at_least(agent, OPENCODE_PORT_MIN) && !crate::agents::opencode_v2() => {
             let Some(port) = free_port() else {
                 return (env, None);
             };
