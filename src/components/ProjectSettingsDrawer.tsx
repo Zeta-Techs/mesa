@@ -17,6 +17,8 @@ export function SettingsDrawerShell({
   subtitle,
   title = "项目设置",
   headerActions,
+  titleIcon,
+  footer,
   className = "",
   backdropClassName = "",
   children,
@@ -29,6 +31,10 @@ export function SettingsDrawerShell({
   subtitle?: string;
   /** 固定在标题下的操作区；任务 / 审批详情复用，其他设置抽屉不传。 */
   headerActions?: ReactNode;
+  /** 标题前的形象（项目助手的 Mesa 图标，2026-11-04）；其他抽屉不传 */
+  titleIcon?: ReactNode;
+  /** 钉在底部、不随内容滚动的一栏（项目助手的输入框）；其他抽屉不传 */
+  footer?: ReactNode;
   className?: string;
   backdropClassName?: string;
   children: ReactNode;
@@ -92,6 +98,25 @@ export function SettingsDrawerShell({
         tabIndex={-1}
         className={`ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas outline-none ${className}${exiting ? " ccode-exiting" : ""}`}
       >
+        {titleIcon ? (
+          // 带形象的抽屉（项目助手）：形象 + 标题，项目名在标题下一行，头下一道细线
+          <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-5 py-3">
+            {titleIcon}
+            <div className="min-w-0 flex-1">
+              <h2 id={titleId} className="truncate text-base font-semibold leading-5 text-l1">
+                {title}
+              </h2>
+              {subtitle && (
+                <p className="truncate text-xs text-l3" title={subtitle}>
+                  {subtitle}
+                </p>
+              )}
+            </div>
+            <button type="button" className={inlineActionClass} onClick={onClose} aria-label={`关闭${title}`}>
+              ✕
+            </button>
+          </header>
+        ) : (
         <header className={`flex shrink-0 items-center gap-2 px-5 ${headerActions ? "min-h-12 flex-wrap py-3" : "h-12"}`}>
           <h2
             id={titleId}
@@ -115,10 +140,12 @@ export function SettingsDrawerShell({
           </button>
           {headerActions && subtitle && <p className="w-full break-words text-xs text-l3">{subtitle}</p>}
         </header>
+        )}
         {headerActions && <div className="shrink-0 border-b border-hairline px-5 pb-3">{headerActions}</div>}
-        <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions ? "pt-4" : ""}`}>
+        <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions || titleIcon ? "pt-4" : ""}`}>
           {children}
         </div>
+        {footer && <div className="shrink-0 border-t border-hairline px-5 pb-4 pt-3">{footer}</div>}
       </aside>
     </div>
   );

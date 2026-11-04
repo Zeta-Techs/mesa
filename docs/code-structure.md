@@ -324,7 +324,10 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 2026-11-04：项目头「项目助手」按钮、头下卡点一行（project-blockers.ts，组内读 mesa_errors_read）
   components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时具名时间项（同分钟聚合展开）+ 一行一个任务（时间 / 名称与项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只导航回队列
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
-  components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置）：问答记录、三个常用问题、输入框；带问题打开按 nonce 只问一次；回答经 parseAssistantAnswer 画按钮，点了交页面 runAssistantAction
+  components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置，SettingsDrawerShell 的 titleIcon / footer）：顶栏小桌 + 名字 + 项目名；空状态大图小桌按时段换样子 + 三个常用问题细线列表；
+                             # 回答首句经 splitAnswerLead 加粗带琥珀竖线、动作按钮经 parseAssistantAnswer；输入框钉底，连接与清空记录在下一行小字；带问题打开按 nonce 只问一次
+  components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：pose idle / wave / think / happy / oops / sleep（盘腿睡），prop coffee / lamp；
+                             # 深浅主题同一套米白身子 + 墨线；≤40px 只取半身；动作在 App.css .mesa-buddy*，减弱动态效果时静止
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions / backdropClassName 可传，工作台任务与审批详情复用，独立设定 400px 宽度与标题栏下沿定位）
@@ -569,6 +572,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
                              # askProjectAssistant → project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+  buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
   mesa-errors.ts             # Mesa 出错记录纯逻辑：shouldRecordFailure（终端收发 / 插件 / 取消不记）、attributeProject（参数里的路径落在项目根或其工作副本）、mesaErrorLine（tests/mesa-errors.test.ts）

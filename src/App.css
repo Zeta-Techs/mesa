@@ -4278,3 +4278,94 @@ select:focus-visible {
     animation: none;
   }
 }
+
+/* 项目助手的卡通形象「小桌」（MesaBuddy.tsx，2026-11-04）：平时轻轻晃、隔几秒眨眼、桌上光标闪；
+   打招呼时挥手；在想时头上三道光标依次亮；答完蹦一下。减弱动态效果时全部静止 */
+.mesa-buddy-body {
+  transform-box: view-box;
+  transform-origin: 60px 108px;
+  animation: mesa-buddy-bob 3.2s ease-in-out infinite;
+}
+.mesa-buddy[data-pose="happy"] .mesa-buddy-body {
+  animation: mesa-buddy-hop 0.9s ease-out 1, mesa-buddy-bob 3.2s ease-in-out 0.9s infinite;
+}
+.mesa-buddy[data-pose="oops"] .mesa-buddy-body {
+  animation: none;
+}
+/* 睡着：慢慢一起一伏，z 一个接一个往上飘；早上的咖啡冒热气 */
+.mesa-buddy[data-pose="sleep"] .mesa-buddy-body {
+  animation: mesa-buddy-breathe 4.4s ease-in-out infinite;
+}
+.mesa-buddy-z {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mesa-buddy-z 2.4s ease-in-out infinite;
+}
+.mesa-buddy-steam {
+  animation: mesa-buddy-steam 2.2s ease-in-out infinite;
+}
+@keyframes mesa-buddy-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.015, 1.03); }
+}
+@keyframes mesa-buddy-z {
+  0% { opacity: 0; transform: translate(-3px, 4px) scale(0.8); }
+  30%, 70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(3px, -4px) scale(1.05); }
+}
+@keyframes mesa-buddy-steam {
+  0%, 100% { opacity: 0.15; transform: translateY(1px); }
+  50% { opacity: 0.75; transform: translateY(-2px); }
+}
+.mesa-buddy-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mesa-buddy-blink 4.8s ease-in-out infinite;
+}
+.mesa-buddy-cursor {
+  animation: ccode-run-breathe 2.4s ease-in-out infinite;
+}
+.mesa-buddy-wave {
+  transform-box: view-box;
+  transform-origin: 26px 62px;
+  animation: mesa-buddy-wave 1.2s ease-in-out infinite;
+}
+.mesa-buddy-dot {
+  animation: mesa-buddy-dot 1.5s ease-in-out infinite;
+}
+@keyframes mesa-buddy-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-2px) rotate(-1.5deg); }
+}
+@keyframes mesa-buddy-hop {
+  0% { transform: translateY(0) scale(1, 1); }
+  20% { transform: translateY(0) scale(1.05, 0.93); }
+  50% { transform: translateY(-9px) scale(0.97, 1.04); }
+  80% { transform: translateY(0) scale(1.03, 0.97); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+@keyframes mesa-buddy-blink {
+  0%, 93%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+@keyframes mesa-buddy-wave {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-22deg); }
+}
+@keyframes mesa-buddy-dot {
+  0%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mesa-buddy-body,
+  .mesa-buddy-eyes,
+  .mesa-buddy-cursor,
+  .mesa-buddy-wave,
+  .mesa-buddy-dot,
+  .mesa-buddy-z,
+  .mesa-buddy-steam,
+  .mesa-buddy[data-pose="sleep"] .mesa-buddy-body,
+  .mesa-buddy[data-pose="happy"] .mesa-buddy-body {
+    animation: none;
+  }
+}

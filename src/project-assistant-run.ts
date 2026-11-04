@@ -55,8 +55,9 @@ const GOAL_STATUS: Record<string, string> = {
   stopped: "上次停了",
 };
 
+/** 读不到（报错或返回空值）一律当没有，不挡回答 */
 function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
-  return p.catch(() => fallback);
+  return p.then((v) => v ?? fallback).catch(() => fallback);
 }
 
 function eventLine(e: RunEventDto): string {
