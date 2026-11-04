@@ -72,6 +72,12 @@ npm run canary
 抓屏依赖（pyte，Windows 另加 pywinpty）缺了会自动 `pip install --target` 到 `CANARY_DEPS`，默认在系统临时目录下。
 一家约 1–3 分钟，九家合计约 15–25 分钟，另加首次编译测试的时间。
 
+**OpenCode 1.x / 2.x（2026-11-04）**：两版同命令名、同一个会话库，不能装在一起。金丝雀里 `opencode` 是 1.x 那份基线，`opencode2` 是 2.x 那份
+（同一个 `opencode` 命令，Mesa 里仍是 opencode，按 `--version` 大版本分开走）；装的大版本不对就当没装、跳过。CI 先装 npm `opencode-ai` 跑完九家，
+再换装 `@opencode/cli` 只跑 `opencode2`（目前只在 macOS；Windows 的 2.x 基线要在 Windows 上 `npm run canary -- --accept --agents opencode2`
+建好，再把工作流里那一步的 `runner.os == 'macOS'` 去掉，并在 `src-tauri/src/cli_verified.rs` 的 `BUNDLED_EXTRA` 加上 win32 那份）。
+本机装着 2.x 时只能跑 `opencode2`，要跑 `opencode` 得先换回 1.x。Mesa 认核对版本时 OpenCode 2.x 比 `opencode2` 那份（`chat-fidelity.ts baselineKey`）。
+
 各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，
 请求、旁路、会话、画面四层都比；Gemini、Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏，请求形状取抓屏那一趟。
 Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。**Windows 上 Grok 也只抓屏**：程序状态（OSC 7501）

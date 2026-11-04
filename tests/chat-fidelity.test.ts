@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_FIDELITY, chatFidelity, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
+import { CHAT_FIDELITY, baselineKey, chatFidelity, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
 test("九家都写了聊天层能做到哪一步", () => {
   const nine = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok"];
@@ -39,6 +39,15 @@ test("已核对版本：先取本平台，没有就取别的平台里最新的",
   assert.equal(verifiedVersion(table, "linux", "kimi"), "2.3.1");
   assert.equal(verifiedVersion({ win32: { codex: "0.163.0" } }, "darwin", "codex"), "0.163.0");
   assert.equal(verifiedVersion(table, "darwin", "cursor"), null);
+});
+
+test("OpenCode 2.x 比自己那份基线（opencode2），1.x 与别家照旧", () => {
+  assert.equal(baselineKey("opencode", "opencode v2.2.5"), "opencode2");
+  assert.equal(baselineKey("opencode", "1.19.5"), "opencode");
+  assert.equal(baselineKey("opencode", null), "opencode", "读不到版本按 1.x");
+  assert.equal(baselineKey("codex", "2.0.0"), "codex");
+  const table = { darwin: { opencode: "1.19.5", opencode2: "2.2.5" } };
+  assert.equal(versionTrust("opencode v2.2.5", verifiedVersion(table, "darwin", baselineKey("opencode", "opencode v2.2.5"))), "verified");
 });
 
 test("比核对过的新才算没核对过；读不到版本不降级", () => {
