@@ -205,8 +205,8 @@ export default function MesaBuddy({
 }
 
 /**
- * 「小桌」的线条小图标（项目助手入口按钮用，2026-11-04 用户：救生圈换掉）：和 Lucide 图标同一种笔触（24 格、圆头、currentColor），
- * 桌面一横 + 桌裙一张脸 + 两条桌腿，按钮里一眼认得出是项目助手。可当 LucideIcon 传（size / strokeWidth / className）
+ * 「小桌」的线条小图标（项目助手入口按钮用，2026-11-04 用户：救生圈换掉 →「只留脸」）：和 Lucide 图标同一种笔触（24 格、圆头、currentColor），
+ * 只有桌裙那张脸（圆角框 + 两点眼 + 一道笑），按钮里不挤。可当 LucideIcon 传（size / strokeWidth / className）
  */
 export function MesaBuddyIcon({
   size = 14,
@@ -232,12 +232,10 @@ export function MesaBuddyIcon({
       className={className}
       {...rest}
     >
-      <path d="M2.5 6.5h19" />
-      <rect x="5" y="6.5" width="14" height="10.5" rx="3.5" />
-      <path d="M8.5 17v3.5M15.5 17v3.5" />
-      <circle cx="9.6" cy="11" r="1.1" fill="currentColor" stroke="none" />
-      <circle cx="14.4" cy="11" r="1.1" fill="currentColor" stroke="none" />
-      <path d="M10.2 13.6c1 .9 2.6 .9 3.6 0" />
+      <rect x="3.5" y="4.5" width="17" height="15" rx="5" />
+      <circle cx="9" cy="11" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="11" r="1.3" fill="currentColor" stroke="none" />
+      <path d="M9.4 14.6c1.5 1.3 3.7 1.3 5.2 0" />
     </svg>
   );
 }
