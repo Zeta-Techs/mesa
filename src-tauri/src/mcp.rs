@@ -1267,6 +1267,62 @@ fn check_managed_guard(agent: &str) -> Result<(), String> {
 // ===== 读-改-写分发 =====
 
 /// JSON 系七家：写/删 obj[top_key][name]，保留其余一切键；备份 + 原子写 + 读回校验
+/// Claude Code 改 `~/.claude.json` 前拿 `<文件>.lock`（建目录即上锁、持有期间约 5 秒刷一次时间，10 秒没刷算陈旧；
+/// 2.1.318 起 `claude mcp add/remove` 也等这把锁，2026-11-04 读二进制）。Mesa 改同一个文件时同样拿它，
+/// 免得和正在运行的 Claude 互相覆盖；5 秒拿不到就不写、说明原因。锁目录在 Drop 时删掉
+#[derive(Debug)]
+struct ClaudeJsonLock(PathBuf);
+
+impl ClaudeJsonLock {
+    const STALE: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn acquire(file: &Path) -> Result<Self, String> {
+        Self::acquire_within(file, std::time::Duration::from_secs(5))
+    }
+
+    fn acquire_within(file: &Path, wait: std::time::Duration) -> Result<Self, String> {
+        let mut name = file.as_os_str().to_owned();
+        name.push(".lock");
+        let lock = PathBuf::from(name);
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match std::fs::create_dir(&lock) {
+                Ok(()) => return Ok(Self(lock)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&lock)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|d| d > Self::STALE);
+                    if stale {
+                        // 持锁的进程已经不在了（没刷时间）：与 Claude 自己的处理一样，清掉重拿
+                        let _ = std::fs::remove_dir(&lock);
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(format!(
+                            "Claude Code 正在改 {}（它的锁一直没放），稍后再试",
+                            file.display()
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                // 目录不存在（还没有 ~/.claude.json 的上级）等情形：没有可抢的人，不拦
+                Err(_) if !file.parent().is_some_and(Path::exists) => return Ok(Self(PathBuf::new())),
+                Err(e) => return Err(format!("拿 {} 的锁失败：{e}", file.display())),
+            }
+        }
+    }
+}
+
+impl Drop for ClaudeJsonLock {
+    fn drop(&mut self) {
+        if !self.0.as_os_str().is_empty() {
+            let _ = std::fs::remove_dir(&self.0);
+        }
+    }
+}
+
 fn write_json_entry(
     agent: &str,
     name: &str,
@@ -1275,6 +1331,8 @@ fn write_json_entry(
     check_managed_guard(agent)?;
     let (path, _) = agent_paths(agent)?;
     let _lock = agent_config_guard()?;
+    // ~/.claude.json 是 Claude Code 运行中也在写的状态文件：读改写全程拿它自己的锁
+    let _claude_lock = if agent == "claude-code" { Some(ClaudeJsonLock::acquire(&path)?) } else { None };
     let mut root = if path.exists() {
         jsonc_read(&path)?
     } else {
@@ -2289,6 +2347,33 @@ fn s_get(v: &serde_json::Value, k: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_json_lock_waits_for_holder_and_clears_stale() {
+        let dir = std::env::temp_dir().join(format!("mesa-claude-lock-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(".claude.json");
+        let lock = dir.join(".claude.json.lock");
+        {
+            let _g = ClaudeJsonLock::acquire(&file).unwrap();
+            assert!(lock.is_dir(), "拿锁 = 建目录");
+            // 别人（Claude）正拿着：等不到就报错，不写
+            let err = ClaudeJsonLock::acquire_within(&file, std::time::Duration::from_millis(250)).unwrap_err();
+            assert!(err.contains("锁一直没放"), "{err}");
+        }
+        assert!(!lock.exists(), "Drop 时放锁");
+        // 陈旧的锁（10 秒没刷时间）清掉重拿（改目录时间要打开目录，unix 才行）
+        #[cfg(unix)]
+        {
+            std::fs::create_dir(&lock).unwrap();
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+            std::fs::File::open(&lock).unwrap().set_modified(old).unwrap();
+            let g = ClaudeJsonLock::acquire_within(&file, std::time::Duration::from_millis(250));
+            assert!(g.is_ok());
+            drop(g);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
     use std::collections::HashSet;
 
     fn stdio_server() -> McpServerDto {

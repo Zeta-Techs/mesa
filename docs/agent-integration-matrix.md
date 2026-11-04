@@ -405,6 +405,7 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
 ### 10.4 共性红线
 
 - **绝不整文件覆盖**：claude/codex/gemini/qwen 的目标文件都是混合状态文件（存登录态/信任记录/model 选择等），只读-改-写一个键/段，写前备份 + 原子写（复用 global_config.rs 的 agent 级事务批次模式）。
+- **~/.claude.json 拿 Claude 自己的锁**（2026-11-04，`mcp.rs ClaudeJsonLock`）：Claude Code 改它前建 `<文件>.lock` 目录（持有期间刷时间，10 秒没刷算陈旧），2.1.318 起 `claude mcp add/remove` 也等这把锁；Mesa 读改写全程同样拿，5 秒拿不到不写。
 - **企业管理层探测**：claude（managed-mcp.json 三系统路径）/opencode（managed 目录）存在即放弃分发并提示。
 - **项目级都有审批闸**（claude/qwen/cursor/codebuddy 逐工作区批准，gemini/qwen 未信任目录整层忽略）——默认只写用户级。
 - **校验手段**：claude `mcp get`（不要 `mcp list`，会真连 server）、codex `mcp list --json`（脱敏）、cursor 没有非交互校验命令（只能解析文件）。
