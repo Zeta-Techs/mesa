@@ -117,7 +117,7 @@ import {
   type WorkMode,
 } from "../work-mode";
 import { sortWorkspacesByAttention } from "../project-status";
-import { samePath as samePathKey } from "../path-utils";
+import { abbrevHome, samePath as samePathKey } from "../path-utils";
 import { toast } from "../toast";
 import { GitInstallOffer } from "../dep-install";
 import {
@@ -188,6 +188,12 @@ function AddProjectModal({
   const [syncProvider, setSyncProvider] = useState<string | null>(null);
   const [createdPath, setCreatedPath] = useState<string | null>(null);
   const path = pickedPath ?? createdPath ?? "";
+  // 「建在」一行把家目录折成 ~，拿不到就照原样显示
+  const [homeDir, setHomeDir] = useState("");
+  useEffect(() => {
+    if (!creating) return;
+    invoke<string>("home_dir").then(setHomeDir).catch(() => {});
+  }, [creating]);
   useEffect(() => {
     if (!creating) return;
     invoke<string>("default_project_parent", { remembered: loadNewProjectParent() })
@@ -376,8 +382,23 @@ function AddProjectModal({
           <>
           <div className={`${syncProvider && !createdPath ? "mb-1" : "mb-3"} flex items-center gap-2 text-xs text-l3`}>
             <span className="shrink-0">建在</span>
-            <span className="min-w-0 flex-1 truncate font-mono" title={parent}>
-              {createdPath ?? (parent ? `${parent.replace(/[\\/]+$/, "")}/${name.trim() || "…"}` : "…")}
+            {/* 截断只截父目录，末段（项目名）恒可见；没填名字时末段是浅灰「项目名」占位，不用「…」（像被截断） */}
+            <span
+              className="flex min-w-0 flex-1 font-mono"
+              title={createdPath ?? (parent ? `${parent.replace(/[\\/]+$/, "")}/${name.trim()}` : "")}
+            >
+              {createdPath ? (
+                <span className="truncate">{abbrevHome(createdPath, homeDir, IS_WINDOWS)}</span>
+              ) : parent ? (
+                <>
+                  <span className="min-w-0 truncate">
+                    {abbrevHome(parent.replace(/[\\/]+$/, ""), homeDir, IS_WINDOWS)}/
+                  </span>
+                  {name.trim()
+                    ? <span className="max-w-[60%] shrink-0 truncate text-l2">{name.trim()}</span>
+                    : <span className="shrink-0 font-sans text-l4">项目名</span>}
+                </>
+              ) : null}
             </span>
             {!createdPath && (
               <button
