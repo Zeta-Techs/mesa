@@ -1565,7 +1565,8 @@ pub(crate) fn env_path(var: &str) -> Option<std::path::PathBuf> {
 /// - `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `QWEN_HOME` / `KIMI_CODE_HOME` / `CODEBUDDY_CONFIG_DIR` /
 ///   `GROK_HOME` 整体顶替该目录；
 /// - `GEMINI_CLI_HOME` 顶替的是**家目录**，配置仍在其下 `.gemini/`（0.66 bundle `homedir()` 实证）；
-/// - OpenCode 是 `$XDG_CONFIG_HOME/opencode`；Cursor 无搬迁变量（只读不写）。
+/// - OpenCode 是 `$XDG_CONFIG_HOME/opencode`；Cursor 的 `CURSOR_CONFIG_DIR` 只搬 `cli-config.json`（Mesa 不读写），
+///   mcp / hooks / 技能写死 `~/.cursor`，这里照旧按 `~/.cursor`（2026-11-04 读 2026.10.22 bundle）。
 pub fn agent_config_root_with(
     agent: &str,
     home: &std::path::Path,
