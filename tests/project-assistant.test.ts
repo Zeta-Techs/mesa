@@ -196,3 +196,38 @@ test("只读查看项目文件：只在问出错原因、或带着某次运行�
   const prompt = buildAssistantPrompt({ intent: "project", snapshot: "# 快照", inspect: rules, history: [], question: "为什么出错" });
   assert.match(prompt, /## 这次可以只读查看项目文件/);
 });
+
+test("派活单：从回答里取出来，去处只认第 N 步 / 新目标，没写要做什么的不要", async () => {
+  const { parseWorkOrder, workOrderMessage, workOrderGoalText, buildAssistantPrompt } = await import("../src/project-assistant.ts");
+  const answer = [
+    "是课题的问题：清洗脚本取了不存在的列。",
+    "",
+    ":::派活",
+    "交给：第 2 步",
+    "标题：修正清洗脚本列名",
+    "要做：scripts/clean.py 第 3 行把 sample_id 改成 id，",
+    "  并重跑清洗。",
+    "怎样算做完：output/clean.csv 生成、行数与原始一致",
+    ":::",
+  ].join("\n");
+  const { text, order } = parseWorkOrder(answer, 3);
+  assert.equal(text, "是课题的问题：清洗脚本取了不存在的列。");
+  assert.equal(order?.target, "step");
+  assert.equal(order?.step, 2);
+  assert.equal(order?.title, "修正清洗脚本列名");
+  assert.match(order?.task ?? "", /sample_id 改成 id，\n\s*并重跑清洗。/);
+  assert.match(order?.done ?? "", /行数与原始一致/);
+  assert.match(workOrderMessage(order!), /^【项目助手起草、我在 Mesa 工作台批准的一件活】\n要做：/);
+  assert.match(workOrderGoalText(order!), /怎样算做完：/);
+
+  const goal = parseWorkOrder(":::派活\n交给：新目标\n要做：补一份数据说明\n:::", 0);
+  assert.equal(goal.order?.target, "goal");
+  assert.equal(goal.order?.title, "补一份数据说明");
+  assert.equal(parseWorkOrder(":::派活\n交给：第 9 步\n要做：x\n:::", 3).order, null, "越界的步骤不要");
+  assert.equal(parseWorkOrder(":::派活\n交给：第 1 步\n标题：空的\n:::", 3).order, null, "没写要做什么不要");
+  assert.equal(parseWorkOrder(":::派活\n交给：隔壁\n要做：x\n:::", 3).order, null, "不认识的去处不要");
+  assert.equal(parseWorkOrder("没有派活单", 3).order, null);
+
+  assert.match(buildAssistantPrompt({ intent: "project", snapshot: "s", history: [], question: "q" }), /:::派活/);
+  assert.doesNotMatch(buildAssistantPrompt({ intent: "howto", history: [], question: "q" }), /:::派活/);
+});

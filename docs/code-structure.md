@@ -326,6 +326,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
   components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置，SettingsDrawerShell 的 titleIcon / footer）：顶栏小桌 + 名字 + 项目名；空状态大图小桌按时段换样子 + 三个常用问题细线列表；
                              # 回答首句经 splitAnswerLead 加粗带琥珀竖线、动作按钮经 parseAssistantAnswer；输入框钉底，连接与清空记录在下一行小字；带问题打开按 nonce 只问一次
+  components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，可「改一改」，「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：pose idle / wave / think / happy / oops / sleep（盘腿睡），prop coffee / lamp；
                              # 深浅主题同一套米白身子 + 墨线；≤40px 只取半身；动作在 App.css .mesa-buddy*，减弱动态效果时静止
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
@@ -568,11 +569,13 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
   project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general，
-                             # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
+                             # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
                              # planAsk（分流 + 要不要只读查看文件）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+  assistant-dispatch.ts      # 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
+                             # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）

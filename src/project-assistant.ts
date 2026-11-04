@@ -251,7 +251,9 @@ export function buildAssistantPrompt(
   input: AssistantMaterials & { history: readonly AssistantHistoryTurn[]; question: string },
 ): string {
   const rules =
-    input.intent === "howto"
+    input.intent === "project" || input.intent === "mixed"
+      ? `${PROJECT_RULES}\n8. ${WORK_ORDER_RULES}`
+      : input.intent === "howto"
       ? HOWTO_RULES
       : input.intent === "chat"
         ? CHAT_RULES
@@ -333,3 +335,91 @@ export function assistantErrorText(reason: string): string {
   if (/network|connect|ENOTFOUND|ECONNREFUSED|网络/i.test(r)) return `网络没连上：${r}。检查网络或代理后再问一次。`;
   return r;
 }
+
+// ===== 派活单（2026-11-04 用户：「能不能像 Grok Bot 的子 bot 那样真正干活」→ 拍板「它起草、你点一下就派」）=====
+// 项目助手自己仍不碰文件；要动手时起草一张派活单，人点「派出去」才开工：
+// - 交给第 N 步：那一步自己的 AI 按单接着做（开着就留话，关着就接回那段对话带上单子）；
+// - 新目标：记成一条目标，用项目默认 Agent 在隔离副本里做，做完照常验收。
+// 一次回答最多一张；人工请求、拍板类事项不派活（Mesa 不替人回答）。
+
+export interface WorkOrder {
+  /** step = 交给某一步；goal = 另起一个目标 */
+  target: "step" | "goal";
+  /** 第几步（从 1 数），只有 step 用 */
+  step: number | null;
+  title: string;
+  task: string;
+  done: string;
+}
+
+const ORDER_BLOCK = /:::\s*派活\s*\n([\s\S]*?)\n\s*:::/;
+const ORDER_FIELDS: [keyof Pick<WorkOrder, "title" | "task" | "done"> | "target", RegExp][] = [
+  ["target", /^交给[:：]\s*/],
+  ["title", /^标题[:：]\s*/],
+  ["task", /^要做[:：]\s*/],
+  ["done", /^怎样算做完[:：]\s*/],
+];
+
+/** 从回答里取出派活单：正文去掉这一块；格式不对、去处不认识、没写要做什么的不要 */
+export function parseWorkOrder(answer: string, stepCount: number): { text: string; order: WorkOrder | null } {
+  const m = answer.match(ORDER_BLOCK);
+  if (!m) return { text: answer, order: null };
+  const text = answer.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  const fields: Record<string, string> = {};
+  let current: string | null = null;
+  for (const raw of m[1].split("\n")) {
+    const line = raw.trimEnd();
+    const hit = ORDER_FIELDS.find(([, re]) => re.test(line.trim()));
+    if (hit) {
+      current = hit[0];
+      fields[current] = line.trim().replace(hit[1], "");
+    } else if (current) {
+      fields[current] = `${fields[current]}\n${line}`.trim();
+    }
+  }
+  const targetText = (fields.target ?? "").replace(/\s+/g, "");
+  const stepMatch = targetText.match(/^第(\d+)步/);
+  const target: WorkOrder["target"] | null = stepMatch ? "step" : /新目标|目标/.test(targetText) ? "goal" : null;
+  const step = stepMatch ? Number(stepMatch[1]) : null;
+  const task = (fields.task ?? "").trim();
+  if (!target || !task || (target === "step" && (step === null || step < 1 || step > stepCount))) {
+    return { text, order: null };
+  }
+  return {
+    text,
+    order: {
+      target,
+      step,
+      title: (fields.title ?? "").trim().slice(0, 80) || task.split("\n")[0].slice(0, 40),
+      task: task.slice(0, 4000),
+      done: (fields.done ?? "").trim().slice(0, 2000),
+    },
+  };
+}
+
+/** 交给某一步时送进那段对话的话（留话或接回时的第一句） */
+export function workOrderMessage(order: WorkOrder): string {
+  return [
+    "【项目助手起草、我在 Mesa 工作台批准的一件活】",
+    `要做：${order.task}`,
+    order.done ? `怎样算做完：${order.done}` : "",
+    "按这一步原来的任务书和项目规则做；做完照常停下，等我评审、保存进项目。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** 新目标的目标原文（要求写清、做完怎样算数） */
+export function workOrderGoalText(order: WorkOrder): string {
+  return [order.task, order.done ? `怎样算做完：${order.done}` : ""].filter(Boolean).join("\n\n");
+}
+
+export const WORK_ORDER_RULES = `派活：真要动手（改脚本、补产物、重做某一步的一部分）时，你自己不做，写一张派活单交给干活的 AI，用户点「派出去」才开工。格式（单独成块、放在回答末尾、一次最多一张）：
+:::派活
+交给：第 N 步   （或：新目标）
+标题：一句话，十来个字
+要做：具体到文件、位置、怎么改；写清依据（哪个文件哪一行、哪条记录）
+怎样算做完：能核对的标准
+:::
+交给第 N 步 = 那一步自己的 AI 在它的工作副本里按单接着做（问题出在某一步的产物时用这个）；新目标 = 另起一个目标在隔离副本里做，做完走验收（不属于任何一步的活用这个）。
+只在确实需要动手、而且你说得清要改什么时才写；人工请求、开工前的决定、评审采不采纳这些要用户拍板的事不派活；Mesa 自己的毛病派不了活，给「报告」。`;

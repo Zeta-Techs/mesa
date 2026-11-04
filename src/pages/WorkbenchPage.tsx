@@ -80,6 +80,7 @@ import { MISMATCH_EVENT, type MismatchReport } from "../chat-mismatch";
 import { DISCUSS_BINDING_SLOT, slotPrefs } from "../project-agents";
 import { runFailureReason } from "../run-failure";
 import type { AssistantAction } from "../project-assistant";
+import { dispatchWorkOrder } from "../assistant-dispatch";
 import type { AssistantFocus, AssistantTurn } from "../project-assistant-run";
 import {
   awaySummary,
@@ -1552,6 +1553,12 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       stepCount={assistantSteps.length}
       ask={assistant?.ask ?? null}
       onAction={runAssistantAction}
+      onDispatch={async (order) => {
+        if (!assistant) throw new Error("项目助手已经关了");
+        const note = await dispatchWorkOrder({ order, projectPath: assistant.path, project: assistantProject });
+        toast(note, "success");
+        return note;
+      }}
     />
   );
 

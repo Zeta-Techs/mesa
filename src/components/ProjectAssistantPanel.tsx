@@ -17,11 +17,14 @@ import {
   INSPECT_WAITING,
   INTENT_WAITING,
   parseAssistantAnswer,
+  parseWorkOrder,
   QUICK_QUESTIONS,
   splitAnswerLead,
   type AssistantAction,
   type AssistantIntent,
+  type WorkOrder,
 } from "../project-assistant";
+import WorkOrderCard from "./WorkOrderCard";
 import { userGuideUrl } from "../help-links";
 import {
   askProjectAssistant,
@@ -74,6 +77,7 @@ export default function ProjectAssistantPanel({
   stepCount,
   ask,
   onAction,
+  onDispatch,
 }: {
   open: boolean;
   onClose: () => void;
@@ -83,6 +87,8 @@ export default function ProjectAssistantPanel({
   stepCount: number;
   ask: AssistantAsk | null;
   onAction: (action: AssistantAction, turn: AssistantTurn) => void;
+  /** 派活单「派出去」：页面按去处开工，返回给人看的一句（「已留话给第 2 步的 AI」） */
+  onDispatch: (order: WorkOrder) => Promise<string>;
 }) {
   const [turns, setTurns] = useState<AssistantTurn[]>([]);
   const [draft, setDraft] = useState("");
@@ -104,6 +110,25 @@ export default function ProjectAssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askedNonce = useRef<number | null>(null);
   const conn = assistantConnection(project);
+  // 派过的派活单记在本机（按项目 + 那一轮的时间），重开面板也不会再派一次
+  const sentKey = projectPath ? `ccode.assistantSent.${projectPath}` : null;
+  const [sent, setSent] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!sentKey) return;
+    try {
+      setSent(JSON.parse(localStorage.getItem(sentKey) ?? "{}") as Record<string, string>);
+    } catch {
+      setSent({});
+    }
+  }, [sentKey]);
+  async function dispatch(turnAt: string, order: WorkOrder) {
+    const note = await onDispatch(order);
+    setSent((prev) => {
+      const next = { ...prev, [turnAt]: note };
+      if (sentKey) localStorage.setItem(sentKey, JSON.stringify(next));
+      return next;
+    });
+  }
   const mood = buddyMood(buddyDayPart(new Date().getHours()));
 
   useEffect(() => {
@@ -323,7 +348,8 @@ export default function ProjectAssistantPanel({
       ) : (
         <div className="flex flex-col gap-6">
           {turns.map((turn, i) => {
-            const parsed = parseAssistantAnswer(turn.answer, stepCount);
+            const withOrder = parseWorkOrder(turn.answer, stepCount);
+            const parsed = parseAssistantAnswer(withOrder.text, stepCount);
             const { lead, rest } = splitAnswerLead(parsed.text);
             return (
               <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
@@ -342,6 +368,13 @@ export default function ProjectAssistantPanel({
                     <div className="text-sm text-l1">
                       <ChatMarkdown text={rest} cwd={projectPath} />
                     </div>
+                  )}
+                  {withOrder.order && (
+                    <WorkOrderCard
+                      order={withOrder.order}
+                      sentNote={sent[turn.at] ?? null}
+                      onDispatch={(order) => dispatch(turn.at, order)}
+                    />
                   )}
                   {turn.basis && (
                     <p className="mt-2 text-micro text-l4">
