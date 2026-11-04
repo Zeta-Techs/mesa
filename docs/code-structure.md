@@ -316,7 +316,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、
                              # up 参数支持锚点上方弹出（行内动作栏 tooltip 专用）；PageFrame 的 RowAction 内置上方 tooltip
   components/SplitPlanRow.tsx # 工作台项目分组下「拆成几路做…」（2026-11-03 取代协调对话）：只在能一次开几路的项目画；写一句 → split-draft.ts 出方案 → 弹方案卡；
-                             # 20 秒拉一次 split_plan_read，有方案时这一行是「拆分方案待你批准（N 路）」；AI 拒拆 / 没按格式回时写一句、不存
+                             # 20 秒拉一次 split_plan_read，有方案时这一行是「拆分方案待你批准（N 路）」；AI 拒拆 / 没按格式回时写一句、不存；
+                             # 2026-11-04 批准过的几批按 task_list 写进度、都收场时弹一次提示留汇总行（去验收 / 知道了，split-batch.ts）
   components/SplitPlanDialog.tsx # 拆分方案卡：按什么拆 / 共享文件 / 拦下与提醒 / 逐路可勾 /「让它改」（带上一版与意见整份重写）；批准 = task_create 每路（整仓、write_tree）→ split_plan_close approved →
                              # 不等的用项目默认 Agent 依次 prepareGoalRun 开工（等终端页收下一个再交下一个），写了「等」的只记下；只在无流程科研 / 工作项目可开
   components/ProjectMailRow.tsx # 工作台项目分组下「留话 N 条」（Agent 之间的与你在任务面板留的）：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；7 天内没有就不画
@@ -569,6 +570,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   terminal-queue.ts          # openTerminalInTurn：一次开几个标签时交一个、等终端页收下再交下一个（拆分方案批准、分几路共用）
   split-plan.ts              # 拆分方案纯逻辑：buildSplitPrompt（无头一次的提示词，含让它改）/ readSplitReply（去围栏前言；方案 / 不拆 / 没按格式）、parseSplitPlan（不认识的字段记备注、等 / 依赖 / 前置）、planIssues（拦下 / 提醒）、
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）
+  split-batch.ts             # 拆成几路做的回报（2026-11-04）：批准时记一批（哪几条目标、开没开、等不等，localStorage 每项目 3 批、一周过期），
+                             # batchProgress 按目标状态写进度 / 都收场后的汇总一句（tests/split-batch.test.ts）
   split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
   project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general，

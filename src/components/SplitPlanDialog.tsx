@@ -11,6 +11,7 @@ import { draftSplitPlan, projectDefaultProfile, replyNotice, splitEligibility } 
 import { useAppStore } from "../store";
 import { openTerminalInTurn } from "../terminal-queue";
 import { toast } from "../toast";
+import { pushBatch, readBatches, writeBatches } from "../split-batch";
 import type { ProjectDto, TaskDto } from "../types";
 
 /**
@@ -144,6 +145,7 @@ export default function SplitPlanDialog({
       // 终端页先挂上，才收得下开工请求
       if (toStart.length > 0) setPage("terminal");
       let started = 0;
+      const startedIds = new Set<string>();
       for (const task of toStart) {
         try {
           const { run, prompt } = await prepareGoalRun({
@@ -170,12 +172,25 @@ export default function SplitPlanDialog({
           });
           if (!taken) throw new Error("终端页没收下开工请求");
           started += 1;
+          startedIds.add(task.id);
         } catch (reason) {
           toast(`「${task.name}」没开起来：${String(reason)}。目标已记下，可以在项目里点开始重试。`, "error");
         }
       }
+      // 记下这一批，工作台「拆成几路做」那一行写进度、都收场时回报一次（split-batch.ts）
+      if (started > 0) {
+        writeBatches(
+          projectPath,
+          pushBatch(readBatches(projectPath), {
+            id: crypto.randomUUID(),
+            title: plan.title,
+            createdAt: Date.now(),
+            lanes: recorded.map((r) => ({ taskId: r.task.id, name: r.task.name, waits: r.waits, started: startedIds.has(r.task.id) })),
+          }),
+        );
+      }
       toast(
-        `已按方案开了 ${started} 路${started < toStart.length ? `（${toStart.length - started} 路没开起来）` : ""}，做完各自进待验收。${
+        `已按方案开了 ${started} 路${started < toStart.length ? `（${toStart.length - started} 路没开起来）` : ""}，做完各自进待验收，都做完时工作台这一行会回报。${
           parked ? `另有 ${parked} 路要等前面做完，已记成目标没开，前面验收后在项目里点「开始」。` : ""
         }`,
         started || parked ? "success" : "error",

@@ -4,7 +4,16 @@ import SplitPlanDialog from "./SplitPlanDialog";
 import { compactFieldClass, inlineActionClass } from "./PageFrame";
 import { parseSplitPlan } from "../split-plan";
 import { draftSplitPlan, replyNotice, splitEligibility } from "../split-draft";
-import type { ProjectDto } from "../types";
+import { batchProgress, liveBatches, readBatches, writeBatches, type BatchProgress, type SplitBatch } from "../split-batch";
+import { useAppStore } from "../store";
+import { toast } from "../toast";
+import type { ProjectDto, TaskDto } from "../types";
+
+const BATCH_TONE: Record<BatchProgress["tone"], string> = {
+  live: "text-l3",
+  done: "text-ok-text",
+  fail: "text-err-text",
+};
 
 /**
  * 工作台项目分组下的「拆成几路做」（2026-11-03 用户拍板，取代协调对话）：写一句要做什么，Mesa 在后台调用一次 AI 写拆分方案；
@@ -19,10 +28,42 @@ export default function SplitPlanRow({ projectPath, projectName }: { projectPath
   const [request, setRequest] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /** 批准过的几批与各自进度（split-batch.ts）：开了的几路都收场时回报一次，人点「知道了」才收 */
+  const [batches, setBatches] = useState<{ batch: SplitBatch; progress: BatchProgress }[]>([]);
+  const [batchOpen, setBatchOpen] = useState<string | null>(null);
+
+  async function loadBatches() {
+    const list = liveBatches(readBatches(projectPath), Date.now());
+    if (list.length === 0) {
+      setBatches([]);
+      return;
+    }
+    const tasks = await invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: true }).catch(() => null);
+    if (!tasks) return;
+    const status = new Map(tasks.map((t) => [t.id, t.status]));
+    let changed = false;
+    const next = list.map((batch) => {
+      const progress = batchProgress(batch, (id) => status.get(id) ?? null);
+      if (progress.done && !batch.reported) {
+        changed = true;
+        toast(progress.text, progress.tone === "fail" ? "warning" : "success");
+        return { batch: { ...batch, reported: true }, progress };
+      }
+      return { batch, progress };
+    });
+    if (changed) writeBatches(projectPath, next.map((x) => x.batch));
+    setBatches(next);
+  }
+
+  function dismissBatch(id: string) {
+    writeBatches(projectPath, readBatches(projectPath).filter((b) => b.id !== id));
+    setBatches((cur) => cur.filter((x) => x.batch.id !== id));
+  }
 
   async function load() {
     const got = await invoke<{ text: string } | null>("split_plan_read", { projectRoot: projectPath }).catch(() => null);
     setPlan(got?.text ?? null);
+    await loadBatches();
   }
 
   useEffect(() => {
@@ -62,10 +103,51 @@ export default function SplitPlanRow({ projectPath, projectName }: { projectPath
     }
   }
 
-  if (!eligible && !plan) return null;
+  if (!eligible && !plan && batches.length === 0) return null;
   const lanes = plan ? parseSplitPlan(plan).lanes.length : 0;
   return (
     <div className="pb-1 pl-[calc(1.5rem+6px+0.75rem)] pr-4 text-xs">
+      {batches.map(({ batch, progress }) => (
+        <div key={batch.id} className="mb-1 min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              className={`min-w-0 truncate text-left hover:underline ${BATCH_TONE[progress.tone]}`}
+              title="点开看每一路"
+              onClick={() => setBatchOpen((cur) => (cur === batch.id ? null : batch.id))}
+            >
+              <span className="text-xs">{progress.text}</span>
+            </button>
+            {progress.done && (
+              <>
+                <button
+                  type="button"
+                  className={inlineActionClass}
+                  onClick={() => {
+                    const st = useAppStore.getState();
+                    st.setSelectProjectReq(projectPath);
+                    st.setPage("workspaces");
+                  }}
+                >
+                  <span className="text-xs">去验收</span>
+                </button>
+                <button type="button" className={inlineActionClass} onClick={() => dismissBatch(batch.id)}>
+                  <span className="text-xs">知道了</span>
+                </button>
+              </>
+            )}
+          </div>
+          {batchOpen === batch.id && (
+            <ul className="mt-1 space-y-0.5 text-l3">
+              {progress.lines.map((l) => (
+                <li key={l.name} className="truncate">
+                  {l.name} · {l.label}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
       {plan ? (
         <button type="button" className="text-warn-text hover:underline" onClick={() => setOpen(true)}>
           <span className="text-xs">拆分方案待你批准（{lanes} 路）</span>
