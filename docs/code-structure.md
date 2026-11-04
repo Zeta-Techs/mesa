@@ -310,7 +310,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 2026-10-31 起用全站 Modal：保存 / 取消常驻底栏、Esc 走 confirmDiscard、编辑态标题「‹ 网关库 / 编辑」；
                              # 模型区手填 / 移除 / 「已设参数」；列表行状态点（connection-form.ts gatewayHealth）与「测试」；
                              # 「用这个网关的连接」：onAddConnection / onEditProfile 交给 ProfilesPage 开添加 / 编辑连接弹层（库内不再自建绑定）；
-  components/GatewayAutoConfig.tsx # 网关库「一键配置各 CLI」弹窗（Modal，挂在 GatewayLibrary 的 PagePanel 里——主内容区 inert）：每个已装 CLI 一行、名单一个模型一个胶囊槽（ModelSlot：可搜索换 / 去掉 / ＋ / 设为默认，弹出层 portal 到 body、捕获阶段收 Esc 与点外）→ 逐条 bindGateway 带逐家进度动画，可选写 defaultProfiles；只建连接不写 CLI 文件
+  components/GatewayAutoConfig.tsx # 网关库「一键配置各 CLI」弹窗（Modal，挂在 GatewayLibrary 的 PagePanel 里——主内容区 inert）：每个已装 CLI 一行、名单一个模型一个槽（ModelSlot：平铺模型名、超 4 个收「+N」；可搜索换 / 去掉 / ＋ / 设为默认，弹出层 portal 到 body、捕获阶段收 Esc 与点外）→ 逐条 bindGateway 带逐家进度动画，可选写 defaultProfiles；只建连接不写 CLI 文件
                              # initialNew = 打开即进新建表单；新建保存后「用这个网关的连接」滚进视野，改已有网关保存弹 toast
   components/HoverTip.tsx      # 应用内 tooltip 共享件（v3.93 提取自 ProjectGroup）：useHoverTip + HoverTip，
                              # portal 到 body（免疫祖先 opacity/transform 的 fixed 包含块问题）、滚动/缩放即关、

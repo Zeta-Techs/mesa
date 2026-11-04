@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, Loader2, Plus, X } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, X } from "lucide-react";
 import { useAppStore } from "../store";
 import { AGENTS, type Gateway } from "../types";
 import { PROVIDER_PRESETS } from "../presets";
@@ -24,6 +24,8 @@ const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 type RunState = "queued" | "running" | "done" | "failed";
 /** 建连接时每家至少停这么久，逐家打勾看得清（后端建一条通常几十毫秒） */
 const STEP_MIN_MS = 220;
+/** 一行先露几个模型，多的收成「+N」 */
+const VISIBLE = 4;
 
 /**
  * 网关库「一键配置各 CLI」弹窗（2026-11-04 用户拍板）：网关行尾的魔棒打开。每个已安装的 CLI 一行，
@@ -53,6 +55,7 @@ export default function GatewayAutoConfig({
   const [setDefault, setSetDefault] = useState(false);
   const [progress, setProgress] = useState<Record<string, RunState> | null>(null);
   const [result, setResult] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const busy = Boolean(progress && Object.values(progress).some((s) => s === "queued" || s === "running"));
   const finished = Boolean(progress) && !busy;
 
@@ -61,6 +64,7 @@ export default function GatewayAutoConfig({
     if (!open) return;
     setLists({});
     setExcluded(new Set());
+    setExpanded(new Set());
     setProgress(null);
     setResult(null);
   }, [open, gateway.id]);
@@ -177,8 +181,7 @@ export default function GatewayAutoConfig({
       size="xl"
       title={`一键配置各 CLI · ${gateway.name}`}
       description={
-        "给每个装了的 CLI 在这个网关上各建一条连接。每个小格是一个模型：点它换成别的、× 去掉、＋ 再加一个，第一个是默认。" +
-        "只建 Mesa 连接，不改 CLI 自己的配置文件。"
+        "给每个装了的 CLI 在这个网关上各建一条连接，第一个模型是默认。点模型名换掉，悬停出 × 去掉。只建 Mesa 连接，不改 CLI 自己的配置文件。"
       }
       dismissOnBackdrop={!busy}
       onClose={() => {
@@ -213,7 +216,7 @@ export default function GatewayAutoConfig({
         </>
       }
     >
-      <div className="space-y-1 text-sm">
+      <div className="text-sm">
         {rows.map((r) => {
           const state = progress?.[r.agent];
           const locked = Boolean(progress);
@@ -222,14 +225,23 @@ export default function GatewayAutoConfig({
           const list = listOf(r);
           const pending = needsDefault(r);
           const small = pending ? null : roleModelsFor(r, list).small;
+          // 一行放不下的收起来（OpenCode 在聚合网关上能有十家旗舰）；没定默认的多厂商行，各家旗舰都收在「另 N 家」里
+          const open = expanded.has(r.agent);
+          const shown = pending ? [] : open ? list : list.slice(0, VISIBLE);
+          const hidden = pending ? list.length : list.length - shown.length;
+          const toggle = () =>
+            setExpanded((s) => {
+              const n = new Set(s);
+              if (n.has(r.agent)) n.delete(r.agent);
+              else n.add(r.agent);
+              return n;
+            });
           return (
             <div
               key={r.agent}
-              className={`flex items-start gap-2 rounded-md px-2 py-1.5 transition-opacity duration-200 ${
-                locked && !state ? "opacity-40" : ""
-              }`}
+              className={`flex items-start gap-3 py-1 transition-opacity duration-200 ${locked && !state ? "opacity-40" : ""}`}
             >
-              <div className="flex h-7 w-5 shrink-0 items-center">
+              <div className="flex h-7 w-4 shrink-0 items-center">
                 {state ? (
                   <RunMark state={state} />
                 ) : (
@@ -248,38 +260,67 @@ export default function GatewayAutoConfig({
                   />
                 )}
               </div>
-              <span className="flex h-7 w-24 shrink-0 items-center truncate text-xs text-l2">{agentLabel(r.agent)}</span>
+              <span
+                className={`flex h-7 w-28 shrink-0 items-center truncate text-sm ${r.skip ? "text-l3" : "text-l1"}`}
+                title={r.slot ? `走 ${SLOT_LABEL[r.slot]} 协议地址` : undefined}
+              >
+                {agentLabel(r.agent)}
+              </span>
               {r.skip ? (
                 <span className="flex min-h-7 min-w-0 flex-1 items-center text-xs text-l3">{r.skip}</span>
               ) : (
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                  {list.map((m, i) => (
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-0.5">
+                  {pending && (
+                    <ModelSlot
+                      model={null}
+                      placeholder="选默认模型"
+                      disabled={locked}
+                      candidates={list}
+                      labelOf={(m) => `${m}（${VENDOR_LABEL[r.vendorOf[m]]}）`}
+                      onReplace={(m) => makeDefault(r, m)}
+                    />
+                  )}
+                  {shown.map((m, i) => (
                     <ModelSlot
                       key={m}
                       model={m}
-                      tag={pending ? VENDOR_LABEL[r.vendorOf[m]] : i === 0 ? "默认" : m === small ? "后台" : null}
-                      primary={!pending && i === 0}
+                      primary={i === 0}
+                      hint={i === 0 ? "默认" : m === small ? "后台小活用它" : undefined}
                       disabled={locked}
                       candidates={slotCandidates(gateway.models, m, list)}
-                      canDefault={pending || i > 0}
+                      canDefault={i > 0}
                       canRemove={list.length > 1}
                       onReplace={(next) => edit(r, list.map((x) => (x === m ? next : x)))}
                       onMakeDefault={() => makeDefault(r, m)}
                       onRemove={() => edit(r, list.filter((x) => x !== m))}
                     />
                   ))}
-                  {!locked && (
+                  {hidden > 0 && (
+                    <button
+                      type="button"
+                      disabled={locked || pending}
+                      className="h-7 rounded-md px-1.5 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:hover:bg-transparent disabled:hover:text-l3"
+                      title={list.slice(shown.length).join("、")}
+                      onClick={toggle}
+                    >
+                      {pending ? `选好后其余 ${hidden - 1} 家旗舰一起放` : `+${hidden}`}
+                    </button>
+                  )}
+                  {open && list.length > VISIBLE && (
+                    <button type="button" className="h-7 rounded-md px-1.5 text-xs text-l3 hover:bg-hover hover:text-l1" onClick={toggle}>
+                      收起
+                    </button>
+                  )}
+                  {!locked && !pending && (open || hidden === 0) && (
                     <ModelSlot
                       model={null}
                       candidates={slotCandidates(gateway.models, list[0] ?? null, list)}
                       onReplace={(next) => edit(r, [...list, next])}
                     />
                   )}
-                  {pending && <span className="text-micro text-warn-text">点一个设为默认</span>}
-                  {dup && <span className="text-micro text-l3">已有一样的连接「{dup}」</span>}
+                  {dup && <span className="text-xs text-l3">· 已有一样的连接「{dup}」</span>}
                 </div>
               )}
-              <span className="flex h-7 shrink-0 items-center text-micro text-l3">{r.slot ? SLOT_LABEL[r.slot] : ""}</span>
             </div>
           );
         })}
@@ -312,15 +353,17 @@ function RunMark({ state }: { state: RunState }) {
 }
 
 /**
- * 名单里的一个模型槽：小胶囊，点开是可搜索的模型列表（同家新的在前）。model = null 是末尾的「＋」。
- * 弹出层挂 body：弹窗面板会滚动、会裁掉子元素
+ * 名单里的一个模型槽：平铺的模型名（不画边框，默认那个用浅底），点开是可搜索的模型列表（同家新的在前）。
+ * model = null 是末尾的「＋」，带 placeholder 时是「选默认模型 ▾」。弹出层挂 body：弹窗面板会滚动、会裁掉子元素
  */
 function ModelSlot({
   model,
-  tag = null,
+  placeholder,
+  hint,
   primary = false,
   disabled = false,
   candidates,
+  labelOf = (m: string) => m,
   canDefault = false,
   canRemove = false,
   onReplace,
@@ -328,10 +371,12 @@ function ModelSlot({
   onRemove,
 }: {
   model: string | null;
-  tag?: string | null;
+  placeholder?: string;
+  hint?: string;
   primary?: boolean;
   disabled?: boolean;
   candidates: string[];
+  labelOf?: (model: string) => string;
   canDefault?: boolean;
   canRemove?: boolean;
   onReplace: (model: string) => void;
@@ -380,6 +425,7 @@ function ModelSlot({
     if (id !== model) onReplace(id);
   };
 
+  const removable = Boolean(model && canRemove && !disabled);
   return (
     <span className="group relative inline-flex">
       <button
@@ -388,26 +434,33 @@ function ModelSlot({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={model ? "点一下换成别的模型" : "再加一个模型"}
+        title={model ? [hint, "点一下换成别的模型"].filter(Boolean).join(" · ") : placeholder ?? "再加一个模型"}
         onClick={() => setOpen((v) => !v)}
         className={
           model
-            ? `inline-flex h-7 max-w-[18rem] items-center gap-1.5 rounded-md border px-2 font-mono text-xs transition-colors disabled:cursor-default ${
-                primary ? "border-cta-bd text-l1" : "border-field text-l2"
-              } ${open ? "bg-hover" : "hover:bg-hover"} ${canRemove && !disabled ? "pr-6" : ""}`
-            : "inline-flex size-7 items-center justify-center rounded-md border border-dashed border-field text-l3 hover:bg-hover hover:text-l1"
+            ? `inline-flex h-7 max-w-[18rem] items-center gap-1 rounded-md px-2 font-mono text-xs transition-colors disabled:cursor-default ${
+                primary ? "bg-inset text-l1" : "text-l2"
+              } ${open ? "bg-hover" : "hover:bg-hover"} ${removable ? "group-hover:pr-6" : ""}`
+            : placeholder
+              ? `inline-flex h-7 items-center gap-1 rounded-md border border-dashed border-field px-2 text-xs text-l2 hover:bg-hover hover:text-l1 ${open ? "bg-hover" : ""}`
+              : "inline-flex size-7 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1"
         }
       >
         {model ? (
           <>
             <span className="truncate">{model}</span>
-            {tag && <span className="shrink-0 font-sans text-micro text-l3">{tag}</span>}
+            {primary && <span className="shrink-0 font-sans text-micro text-l3">默认</span>}
+          </>
+        ) : placeholder ? (
+          <>
+            {placeholder}
+            <ChevronDown className="size-3.5 text-l4" aria-hidden="true" />
           </>
         ) : (
           <Plus className="size-3.5" aria-label="再加一个模型" />
         )}
       </button>
-      {model && canRemove && !disabled && (
+      {removable && (
         <button
           type="button"
           aria-label={`去掉 ${model}`}
@@ -445,7 +498,7 @@ function ModelSlot({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && shown[0]) pick(shown[0]);
               }}
-              placeholder={model ? "换成…（输入筛选）" : "加一个模型（输入筛选）"}
+              placeholder={model ? "换成…（输入筛选）" : placeholder ? "输入筛选" : "加一个模型（输入筛选）"}
               className={`${searchFieldClass} w-full`}
             />
             <ul role="listbox" className="max-h-64 overflow-auto">
@@ -460,7 +513,7 @@ function ModelSlot({
                     }`}
                     onClick={() => pick(id)}
                   >
-                    <span className="truncate">{id}</span>
+                    <span className="truncate">{labelOf(id)}</span>
                   </button>
                 </li>
               ))}
