@@ -212,7 +212,9 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
     `read_image_raw` / `file_stamp` 的「路径不在范围内，拒绝读取」不算例行，照记（没配提示时项目助手不单凭它断定 Mesa 坏了）。
   - Claude Code 只读查看实测（2.1.309，干净环境）：plan 档能读、能用 `--add-dir` 读工作副本，但会在 `~/.claude/plans/` 落一份计划文件（碰了 CLI 配置目录）——改 default 档 + 拿掉写 / 执行 / 联网工具；
     改后实测让它「顺手把脚本改好」也只贴改法、项目没被改、`~/.claude/plans/` 没多文件，`--add-dir` 里的文件照样读得到。（Claude 每次启动会自己写一份 `~/.claude/backups/.claude.json.backup.*`，与 Mesa 其他无头调用一样，不是这里引入的。）
-    顺带发现：聊想法 / 先出方案的只读开聊也用 Claude 的 plan 档，同样可能往 `~/.claude/plans/` 落计划文件，没在这里改，另行处理。
+    顺带查了聊想法 / 先出方案的只读开聊（`agents::readonly_launch_args`，只用在用户开的交互会话）：Claude 的 plan 档在那里写计划文件是先出方案本身的一部分
+    （计划文件供续聊恢复，本机已有 Mesa 开的会话留下的），属于 CLI 在会话里自己写的东西，与会话记录同类，**不改**；
+    Claude 的 `plansDirectory` 设置只能指到项目根里，改了反而把计划文件带进工作副本与评审。口径写进 safety.md「各 CLI 会话/配置目录一律只读」条。
   - 打包产物：`npm run build` 后 `@tauri-apps/api/core` 只有一份，应用与插件的调用都走包装（失败先通知出错记录再抛），没有第二份未包装的 invoke。
 - **未验**：Mesa Dev 窗口里实际点一遍（卡点、出错了、项目助手问答与按钮、Agent 分工新卡、反馈表预填）。
 

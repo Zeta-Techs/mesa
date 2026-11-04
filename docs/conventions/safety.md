@@ -154,7 +154,11 @@
   **API Key 模式不算官方账号**：凭证字段表只认 OAuth token 字段；`OfficialAccountSpec.api_key_fields`（codex =
   `OPENAI_API_KEY`）命中时显示「API Key 配置」而非「已连接」——官方 `--api-key` 与第三方中转（cc-switch 等）写出的
   auth.json 形状相同，文件层面无法区分，不得冒充官方账号。
-- **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作：
+- **各 CLI 会话/配置目录一律只读**（管的是 Mesa 自己写；CLI 在用户开的会话里自己写的——会话记录、Claude plan 档的计划文件
+  `~/.claude/plans/`、启动时的 `~/.claude/backups/`——是 CLI 本身的行为，不归这条管，先出方案 / 聊想法照旧用 plan 档。
+  但 **Mesa 的后台一次性 / 无头调用不得借 CLI 留这类东西**：一次性调用不落盘，项目助手只读查看不用 Claude 的 plan 档
+  （2026-11-04 实测 2.1.309 `-p --permission-mode plan` 会写 `~/.claude/plans/`；`plansDirectory` 设置只能指到项目里，更不能用）；
+  例外仅限用户显式操作：
   1. 「设为全局默认」（写前必须备份）；
   1a. **连接页「编辑配置文件」**（2026-11-01，`config_editor.rs` → `global_config::write_user_edit`）：清单与设为全局同一份（不含 Codex `auth.json`）；
      读出时密钥在 Rust 层换成 `«已隐藏密钥 ···末4位 #哈希8位»` 占位，前端拿不到原值、不给「显示密钥」；保存时重读磁盘按哈希还原，认不出的占位拒存；
