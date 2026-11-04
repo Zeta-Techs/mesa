@@ -889,7 +889,9 @@ interface AppState {
   selectProjectReq: string | null;
   projectFocusReq: {
     projectRoot: string;
-    focus: "lit" | "schedule";
+    /** step = 进任务页签并把步进器聚焦到 stepIndex 那一步（项目助手「看第 N 步」，2026-11-04） */
+    focus: "lit" | "schedule" | "step";
+    stepIndex?: number;
     token: number;
   } | null;
   setProjectFocusReq: (req: AppState["projectFocusReq"]) => void;

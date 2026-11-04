@@ -1231,8 +1231,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       setOpenTask({ path: workbenchTaskReq.path, taskId: task.id });
       return;
     }
-    // 这一步不在工作台列着（项目没在进行中、或这一步还没开工作副本）：去项目页看
-    toast(`第 ${workbenchTaskReq.stepIndex + 1} 步不在工作台上，去项目页看`, "info");
+    // 这一步不在工作台列着（项目没在进行中、或这一步还没开工作副本）：去项目页，步进器直接聚焦到这一步
+    useAppStore.getState().setProjectFocusReq({
+      projectRoot: workbenchTaskReq.path,
+      focus: "step",
+      stepIndex: workbenchTaskReq.stepIndex,
+      token: Date.now(),
+    });
     setSelectProjectReq(workbenchTaskReq.path);
     setPage("workspaces");
   }, [workbenchTaskReq, visible, cards, setWorkbenchTaskReq, setSelectProjectReq, setPage]);

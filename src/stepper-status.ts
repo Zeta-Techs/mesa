@@ -23,7 +23,13 @@ export interface StepperStatusText {
 
 export function stepperStatusText(
   key: StepperStatusKey,
-  opts: { archived?: boolean; attention?: StepperAttention; failure?: string | null } = {},
+  opts: {
+    archived?: boolean;
+    attention?: StepperAttention;
+    failure?: string | null;
+    /** 出错是 AI 自己在对话里说的（会话尾巴，session-tail.ts），不是运行出错退出 */
+    failureFromAi?: boolean;
+  } = {},
 ): StepperStatusText | null {
   // 出错了（2026-11-04 项目助手一期）：这一步最近一次运行出错收场、此刻又没有 AI 在干活 / 等确认时写出来，
   // 原因放悬停（run-failure.ts）。已完成、待评审、有冲突各有更要紧的下一步，不盖掉
@@ -33,7 +39,11 @@ export function stepperStatusText(
     opts.attention !== "working" &&
     opts.attention !== "confirm"
   ) {
-    return { text: "出错了", tone: "text-err-text", title: `最近一次运行出错：${opts.failure}` };
+    return {
+      text: "出错了",
+      tone: "text-err-text",
+      title: opts.failureFromAi ? `这一步的 AI 在对话里说：${opts.failure}` : `最近一次运行出错：${opts.failure}`,
+    };
   }
   switch (key) {
     case "pending":

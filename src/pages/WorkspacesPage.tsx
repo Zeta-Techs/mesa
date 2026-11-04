@@ -1795,7 +1795,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   // v3.97 补强——原实现只改选中态，已选中/已展开时毫无视觉反馈（用户实测「点了没反应」）：
   // ① 聚焦切到该工作区所属步骤（否则聚焦过滤会把目标行藏掉）② 行滚动进视野 + 短暂高亮
   const [focusStepReq, setFocusStepReq] = useState<{
-    wsName: string;
+    wsName?: string;
+    stepIndex?: number;
     token: number;
   } | null>(null);
   const [flashWsId, setFlashWsId] = useState<string | null>(null);
@@ -1861,6 +1862,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       (focusReq.focus === "lit" || focusReq.focus === "schedule")
     ) {
       tab = "schedules";
+    } else if (focusReq?.focus === "step" && g.project && samePath(focusReq.projectRoot, g.repoPath)) {
+      // 项目助手「看第 N 步」：进任务页签、步进器聚焦那一步（一次性，用完就清）
+      tab = "tasks";
+      setFocusStepReq({ stepIndex: focusReq.stepIndex ?? 0, token: focusReq.token });
+      useAppStore.getState().setProjectFocusReq(null);
     }
     if (tab) {
       try {

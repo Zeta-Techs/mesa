@@ -31,3 +31,10 @@ test("步进器状态小字：最近一次运行出错、此刻没人在干活�
   assert.equal(stepperStatusText("review", { failure: "x" })?.text, "待评审");
   assert.equal(stepperStatusText("done", { failure: "x" })?.text, "已完成");
 });
+
+test("步进器「出错了」：AI 在对话里自己说的，悬停写明是它说的", () => {
+  const said = stepperStatusText("active", { failure: "有 3 个测试失败了", failureFromAi: true, attention: "done" });
+  assert.equal(said?.text, "出错了");
+  assert.equal(said?.title, "这一步的 AI 在对话里说：有 3 个测试失败了");
+  assert.equal(stepperStatusText("active", { failure: "x", failureFromAi: true, attention: "working" })?.text, "进行中");
+});

@@ -58,7 +58,9 @@ import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
 import { stepAttention } from "../run-overview";
 import { stepperStatusText } from "../stepper-status";
-import { latestRunFailure } from "../run-failure";
+import { failureSnippet, latestRunFailure } from "../run-failure";
+import { stepSessionTail } from "../session-tail";
+import { pathWithin } from "../path-utils";
 import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
 import { importedScriptsNote } from "../task-packs";
@@ -396,7 +398,7 @@ export default function ProjectGroup({
   /** 外部一次性聚焦请求（收件箱「去核验」：目标工作区被聚焦过滤藏掉时，先切到它的步骤）；
    *  传工作区名，步骤名按 steps[].workspaceName 在本组件内解析（父级没有 cfg）；
    *  token 变化才消费，同目标重复点不重复切 */
-  focusStepReq?: { wsName: string; token: number } | null;
+  focusStepReq?: { wsName?: string; stepIndex?: number; token: number } | null;
   /** 页面可见性（v3.97）：项目页常驻挂载，手动聚焦会跨页留存——从终端页等回来时，
    *  若聚焦的步骤已完成（ merged ），放掉手动聚焦、回落到当前步骤（第一个未完成），
    *  否则用户看到的永远是上次点过的那一步（实测：已完成的「文献检索」一直占着聚焦） */
@@ -571,7 +573,10 @@ export default function ProjectGroup({
   // 恒可见，不需要切）就不动
   useEffect(() => {
     if (!focusStepReq || !cfg) return;
-    const step = cfg.steps.find((s) => s.workspaceName === focusStepReq.wsName);
+    const step =
+      focusStepReq.stepIndex != null
+        ? cfg.steps[focusStepReq.stepIndex]
+        : cfg.steps.find((s) => s.workspaceName === focusStepReq.wsName);
     if (step) setFocusStepKey(step.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusStepReq, cfg]);
@@ -1328,6 +1333,31 @@ export default function ProjectGroup({
     };
   }, [projectPath, runSig]);
 
+  // 各步那段对话里 AI 最后说的话像不像在说出错（session-tail.ts，30 秒缓存）：只看开着工作副本的步骤，运行记录变了重读。
+  // 键 = 工作副本路径；值 = 挑出来的那一句、说话时间、那段对话的运行 id（问项目助手时带上）
+  const [stepTails, setStepTails] = useState<Record<string, { text: string; at: string | null; runId: string | null }>>({});
+  const tailPaths = workspaces.filter((w) => w.status === "active").map((w) => w.worktreePath);
+  const tailSig = `${tailPaths.join("|")}#${projectRuns.length}:${projectRuns[0]?.id ?? ""}`;
+  useEffect(() => {
+    let stale = false;
+    void Promise.all(
+      tailPaths.map(async (path) => {
+        const tail = await stepSessionTail(projectRuns, path).catch(() => null);
+        if (!tail?.flagged) return null;
+        const run = projectRuns
+          .filter((r) => !r.internal && !!r.sessionId && pathWithin(r.isolationPath, path, IS_WINDOWS))
+          .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+        return [path, { text: failureSnippet(tail.text), at: tail.at, runId: run?.id ?? null }] as const;
+      }),
+    ).then((entries) => {
+      if (!stale) setStepTails(Object.fromEntries(entries.filter((e) => e !== null)));
+    });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tailSig]);
+
   // ===== 渲染 =====
   // 步骤状态表：每步算一次，下面各处派生共用同一份快照。
   // 原先 7 处各调一次 deriveStepStatus，每次都遍历 workspaces——N 步项目每渲染要跑 2N+ 次
@@ -1372,14 +1402,23 @@ export default function ProjectGroup({
   const stepDoneFlags = stepStatuses.map((st) => st.key === "done");
   // 圆下状态小字（2026-10-17 用户拍板）：圆只有颜色，待评审/进行中一眼分不清；
   // 进行中再按终端注意力细分「等你确认 / 等你查看」。待开始与检查中不写
-  const stepFailures = stepStatuses.map((st) =>
-    st.key === "active" && st.ws ? latestRunFailure(projectRuns, st.ws.worktreePath, IS_WINDOWS) : null,
-  );
+  // 出错有两个来源：运行出错退出（运行库），或这一步的 AI 在对话里自己说失败了 / 报错了（交互对话不进运行记录，读会话尾巴）。
+  // 两样都有时取更晚的那个：AI 后来又说出了错，比早先那次退出更接近现在
+  const stepFailures = stepStatuses.map((st) => {
+    if (st.key !== "active" || !st.ws) return null;
+    const run = latestRunFailure(projectRuns, st.ws.worktreePath, IS_WINDOWS);
+    const said = stepTails[st.ws.worktreePath];
+    if (said && (!run || (said.at ?? "") > (run.run.closedAt ?? run.run.createdAt))) {
+      return { reason: said.text, runId: said.runId, fromAi: true };
+    }
+    return run ? { reason: run.reason, runId: run.run.id, fromAi: false } : null;
+  });
   const stepperTexts = stepStatuses.map((st, i) =>
     stepperStatusText(st.key, {
       archived: st.key === "pending" && !!st.ws,
       attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs, IS_WINDOWS) : null,
       failure: stepFailures[i]?.reason ?? null,
+      failureFromAi: stepFailures[i]?.fromAi ?? false,
     }),
   );
   const openAssistant = useAppStore((s) => s.openAssistant);
@@ -1505,7 +1544,8 @@ export default function ProjectGroup({
     }
     if (!becameVisible || focusStepKey === null) return;
     const i = cfg?.steps.findIndex((s) => s.name === focusStepKey) ?? -1;
-    if (i >= 0 && stepStatuses[i]?.key === "done") setFocusStepKey(null);
+    // 只放掉这一刻还是它的聚焦：同一轮里外部请求（项目助手「看第 N 步」）刚设的新聚焦不能被冲掉
+    if (i >= 0 && stepStatuses[i]?.key === "done") setFocusStepKey((cur) => (cur === focusStepKey ? null : cur));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageVisible]);
   // 聚焦步骤草稿加载（state 声明在上方 describeStep 之前）：进项目详情/切聚焦/页面刷新时重读，不轮询；
@@ -1944,9 +1984,9 @@ export default function ProjectGroup({
                             onClick={() => {
                               const failure = stepFailures[i]!;
                               openAssistant(projectPath, `第 ${i + 1} 步「${cfg.steps[i]?.name ?? ""}」为什么出错？我该怎么办？`, {
-                                title: `第 ${i + 1} 步最近一次运行出错`,
-                                detail: `出错原因：${failure.reason}`,
-                                runId: failure.run.id,
+                                title: failure.fromAi ? `第 ${i + 1} 步的 AI 在对话里说出了错` : `第 ${i + 1} 步最近一次运行出错`,
+                                detail: failure.fromAi ? `它说：${failure.reason}` : `出错原因：${failure.reason}`,
+                                runId: failure.runId,
                               });
                             }}
                           >
