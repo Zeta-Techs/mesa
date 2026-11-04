@@ -5,7 +5,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LOG = open(sys.argv[2], "a", buffering=1)
 # E2E_DUMP=<文件>：每个 POST 的完整请求体与少数请求头另记一行（CLI 金丝雀拿它比工具清单、系统提示词结构、请求参数）
 DUMP = open(os.environ["E2E_DUMP"], "a", buffering=1, encoding="utf-8") if os.environ.get("E2E_DUMP") else None
-DUMP_HEADERS = ("anthropic-beta", "anthropic-version", "user-agent", "openai-beta", "x-app", "originator", "version")
+DUMP_HEADERS = ("anthropic-beta", "anthropic-version", "user-agent", "openai-beta", "x-app", "originator", "version",
+                "x-mesa-probe")  # x-mesa-probe：核对各家「自定义请求头」通道带没带上
 MODELS = ["e2e-default", "e2e-picked"]
 
 # 聊天层第三期抓屏用的两个触发词（只认带工具列表的主对话请求，标题 / 摘要这类后台请求照常回 ok）：

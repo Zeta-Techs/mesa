@@ -1213,8 +1213,10 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         "opencode" => row("inject", "inject", "inject", "inject", "inject"),
         // kimi 新版合成通道 KIMI_MODEL_THINKING_EFFORT（2026-08-28 二进制实证：原样透传 +
         // 小写归一，无闭集校验；**仅 kimi 协议通道读取**——求交器按绑定 protocol 再门控，
-        // 见 combo.rs channel_status_for），anthropic/openai 通道静默忽略
-        "kimi" => row("unknown", "unknown", "unknown", "inject", "unknown"),
+        // 见 combo.rs channel_status_for），anthropic/openai 通道静默忽略。
+        // 温度 / top_p / 输出上限 / 请求头（2026-11-04 假网关实测 2.4.1，三种协议都发）：
+        // KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P / KIMI_MODEL_MAX_COMPLETION_TOKENS / KIMI_CODE_CUSTOM_HEADERS
+        "kimi" => row("inject", "inject", "inject", "inject", "inject"),
         // qwen：temperature/top_p/max_tokens/reasoning_effort 的通道是 settings 条目级
         // generationConfig.samplingParams（snake_case 线格式键；0.26.3 bundle resolveReasoningForModel 读扁平
         // reasoning_effort）。启动时经系统设置覆盖层（QWEN_CODE_SYSTEM_SETTINGS_PATH，agents::qwen_system_settings_overlay）
@@ -2107,8 +2109,8 @@ mod tests {
             .find(|c| c.agent == "kimi")
             .unwrap();
         assert_eq!(kimi_dto.request_policy.reasoning_effort, "inject");
-        assert_eq!(kimi_dto.request_policy.temperature, "unknown");
-        assert_eq!(kimi_dto.request_policy.custom_headers, "unknown");
+        assert_eq!(kimi_dto.request_policy.temperature, "inject");
+        assert_eq!(kimi_dto.request_policy.custom_headers, "inject");
         let cursor_dto = agent_capabilities()
             .into_iter()
             .find(|c| c.agent == "cursor")

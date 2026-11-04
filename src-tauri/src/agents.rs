@@ -107,6 +107,10 @@ fn env_preview_source(name: &str, profile: &Profile) -> &'static str {
         | "CODEBUDDY_CODE_MAX_OUTPUT_TOKENS"
         | "CODEBUDDY_CUSTOM_HEADERS"
         | "KIMI_MODEL_THINKING_EFFORT"
+        | "KIMI_MODEL_TEMPERATURE"
+        | "KIMI_MODEL_TOP_P"
+        | "KIMI_MODEL_MAX_COMPLETION_TOKENS"
+        | "KIMI_CODE_CUSTOM_HEADERS"
         | "QWEN_CODE_MAX_OUTPUT_TOKENS" => return "请求策略",
         // grok 的模型名单收敛 + 请求策略 [models] 全局默认都装在这个 overlay 里
         "GROK_CONFIG" => return "Grok overlay",
@@ -724,6 +728,23 @@ fn apply_request_policy_env(
                 plan.env
                     .push(("QWEN_CODE_MAX_OUTPUT_TOKENS".into(), v.to_string()));
             }
+        }
+        "kimi" => {
+            // 2026-11-04 假网关实测（2.4.1）：KIMI_MODEL_TEMPERATURE / TOP_P / MAX_COMPLETION_TOKENS 进合成通道的
+            // modelOverrides，kimi / openai / anthropic 三种协议都发（openai、anthropic 发成 max_tokens）；只在合成通道
+            // 启用（有 KIMI_MODEL_NAME）时才生效。KIMI_CODE_CUSTOM_HEADERS 每行「名: 值」，所有渠道都带。
+            // 思考档另在 KimiDualChannel 臂里注（只有 kimi 协议读）
+            if let Some(v) = policy.temperature {
+                plan.env.push(("KIMI_MODEL_TEMPERATURE".into(), v.to_string()));
+            }
+            if let Some(v) = policy.top_p {
+                plan.env.push(("KIMI_MODEL_TOP_P".into(), v.to_string()));
+            }
+            if let Some(v) = policy.max_output_tokens {
+                plan.env
+                    .push(("KIMI_MODEL_MAX_COMPLETION_TOKENS".into(), v.to_string()));
+            }
+            inject_headers(plan, "KIMI_CODE_CUSTOM_HEADERS");
         }
         _ => {}
     }
@@ -6296,6 +6317,30 @@ mod tests {
         assert!(plan
             .env
             .contains(&("CODEBUDDY_CUSTOM_HEADERS".into(), "X-Region: cn-1".into())));
+    }
+
+    #[test]
+    fn kimi_request_policy_goes_through_env_model_overrides() {
+        // 2026-11-04 假网关实测 2.4.1：三种协议都发温度 / top_p / 输出上限，请求头每行「名: 值」
+        let mut p = profile("kimi", None);
+        p.request_policy.temperature = Some(0.33);
+        p.request_policy.top_p = Some(0.77);
+        p.request_policy.max_output_tokens = Some(1234);
+        p.request_policy
+            .header_env
+            .insert("X-Region".into(), "MODEL_REGION".into());
+        let mut plan = LaunchPlan::default();
+        apply_request_policy_env(&mut plan, "kimi", &p.request_policy, &|k| {
+            (k == "MODEL_REGION").then(|| "cn-1".to_string())
+        });
+        for pair in [
+            ("KIMI_MODEL_TEMPERATURE", "0.33"),
+            ("KIMI_MODEL_TOP_P", "0.77"),
+            ("KIMI_MODEL_MAX_COMPLETION_TOKENS", "1234"),
+            ("KIMI_CODE_CUSTOM_HEADERS", "X-Region: cn-1"),
+        ] {
+            assert!(plan.env.contains(&(pair.0.into(), pair.1.into())), "{pair:?}");
+        }
     }
 
     #[test]

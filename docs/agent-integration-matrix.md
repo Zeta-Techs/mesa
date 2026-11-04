@@ -101,7 +101,7 @@
 | 会话存储 | `~/.kimi-code/session_index.jsonl`（枚举入口：sessionId/sessionDir/**workDir**）+ `sessions/<wd_*>/<id>/agents/main/wire.jsonl`；**目录名规则（2026-10-21 kimi.exe 源码 + 本机实证）**：`wd_<末段slug>_<sha256(路径，反斜杠先换成斜杠、去尾斜杠)[:12]>`，slug=小写、非 `[a-z0-9._-]` 连续段并成 `-`、去首尾 `-`、截 40，空记 `workspace`；wire.jsonl 的 `runtime.set_binding.workspaceId` 必须等于所在目录名，否则恢复报「runtime binding workspace … does not match」 | `~/.kimi/sessions/<md5(workDir)>/<uuid>/context.jsonl`（无时间戳；时间戳在 `wire.jsonl`，标题在 `state.json`）；项目映射读 `~/.kimi/kimi.json` 的 `work_dirs[]`。根目录随 `KIMI_CODE_HOME` 搬家（旧版 `~/.kimi` 随 `KIMI_SHARE_DIR`），Mesa 扫描 / 删除 / 导入都认（2026-11-01，`sessions::SessionRoots`） |
 | 会话格式 | wire.jsonl：版本化 record（`metadata` / `turn.prompt`（用户输入）/ `context.append_message`（assistant/tool）/ `usage.record`（token）），协议 v1.0→v1.4 有迁移 | context.jsonl：`{role, content, tool_calls, tool_call_id}`；`_` 开头的 role 是内部记录（跳过）；content 可能是字符串或 parts 数组；tool_calls.arguments 是 JSON 字符串 |
 | 坑 | 密钥在 config.toml 里是明文；旧版 1.47+ 会催用户升级新版；模型选择器按 `[models.*]` 别名列出（注入模式的 KIMI_MODEL_* 合成通道是单模型设计，多模型需走全局写入）。**合成模型只当新会话的默认**：它注册成别名 `__kimi_env_model__`，`-S <id>` 续聊仍按会话里存的模型别名走（2.3.3 实证：换连接后续聊照打旧连接的 key）；Ccode 注入合成通道时一并传 `-m __kimi_env_model__`，新开与续聊都按当前连接走，点名后该会话再续聊也沿用（旧版 Python CLI 无此别名，不传）。运行中切换（0.36.1 pty 探针实证）：`/model <别名>` 与 `/effort <档>` 带参直切（/model 吃的是别名不是模型 id；档位随模型，K3 等布尔模型只有 on/off）；**kitty 键盘协议坑**：TUI 启动 push flags（`\x1b[>7u`）后只认 CSI-u 的 Enter（`\x1b[13u`），普通 `\r` 不提交——xterm.js 不支持该协议，Ccode 在 xterm 键盘层与写入链路两处改写（注册表 `submit_csi_u`） | 正在被新版替代，安装新版会迁移其数据（不改旧数据） |
-| 发版复核（2026-11-01） | 核到 2.4.1（另看 2.5.0 canary）。**已接（2026-11-04）**：2.4.0 起经 OSC 7501 报会话状态，kimi 已进 `chat_channel::PROGRAM_STATUS_MIN`（见 §14 Kimi 行）；`KIMI_MODEL_TEMPERATURE` / `KIMI_MODEL_TOP_P`（仅 kimi 协议）、`KIMI_CODE_CUSTOM_HEADERS` 早已有，§9 记成 unknown 可改。留意：2.4.0 Agent 不能自己进计划模式（`--plan` 仍在，不影响只讨论）；2.5.0 canary 工作区 id 多了 `wm_<uuid>` 形（Mesa 按 `session_index.jsonl` 枚举不受影响）；wire `protocol_version` 已是 1.5 |
+| 发版复核（2026-11-01） | 核到 2.4.1（另看 2.5.0 canary）。**已接（2026-11-04）**：2.4.0 起经 OSC 7501 报会话状态，kimi 已进 `chat_channel::PROGRAM_STATUS_MIN`（见 §14 Kimi 行）；温度 / top_p / 输出上限 / 请求头四个变量 2026-11-04 实测三种协议都认，已接（§9）。留意：2.4.0 Agent 不能自己进计划模式（`--plan` 仍在，不影响只讨论）；2.5.0 canary 工作区 id 多了 `wm_<uuid>` 形（Mesa 按 `session_index.jsonl` 枚举不受影响）；wire `protocol_version` 已是 1.5 |
 
 **兼容端点（2026-08-05 核实）**：`KIMI_MODEL_PROVIDER_TYPE=openai` 可接任意 OpenAI 兼容端点（如智谱 `https://open.bigmodel.cn/api/paas/v4`、DeepSeek `https://api.deepseek.com/v1`）；`=anthropic` 理论上可接 §1 附注的 Anthropic 兼容端点，未实测。
 
@@ -313,7 +313,10 @@
      reasoningEffort（枚举），provider options 支持 headers → 全 inject。
    - **kimi**（2026-08-28 二进制反编译实证）：`KIMI_MODEL_THINKING_EFFORT` 原样透传 + 小写归一，
      env 路径无闭集校验（合法值随模型 catalog 漂移：low/medium/high/xhigh/max/on/off），但**仅
-     kimi 协议通道读取**，anthropic/openai 兼容通道静默忽略 → reasoning_effort inject；余 unknown。
+     kimi 协议通道读取**，anthropic/openai 兼容通道静默忽略 → reasoning_effort inject。
+     **2026-11-04 假网关实测 2.4.1 补齐其余四项 → 全 inject**：`KIMI_MODEL_TEMPERATURE` / `KIMI_MODEL_TOP_P` /
+     `KIMI_MODEL_MAX_COMPLETION_TOKENS`（合成通道 modelOverrides，kimi 协议发 max_completion_tokens、openai / anthropic 发
+     max_tokens，三种协议都带）、`KIMI_CODE_CUSTOM_HEADERS`（每行「名: 值」，所有渠道都带）；只在合成通道启用（有模型）时生效。
      求交按绑定 protocol 门控（combo.rs channel_status_for：非 kimi 协议的绑定该字段按 unknown 计）。
      配套（2026-09-01 语义核实，判决**不接入自动注入**，留 extra_env 逃生口）：
      `KIMI_MODEL_ADAPTIVE_THINKING`（布尔）是 Anthropic 思考 wire 形态开关（true=adaptive 新形态
