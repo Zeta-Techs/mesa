@@ -167,7 +167,8 @@ export function eventRuleLabel(rule: EventRuleDto, pending = 0): string {
           ? "手机文件放进项目之后"
           : rule.kind;
   const mode = rule.mode === "run" ? "直接跑" : "只记录";
-  return `${what} · ${mode}${pending > 0 ? ` · 攒着 ${pending} 批` : ""}`;
+  const cap = rule.mode === "run" && rule.weeklyCapUsd ? ` · 每周最多 $${rule.weeklyCapUsd}` : "";
+  return `${what} · ${mode}${cap}${pending > 0 ? ` · 攒着 ${pending} 批` : ""}`;
 }
 
 /** 其他项目的定时任务（项目「定时任务」页底部总览用） */

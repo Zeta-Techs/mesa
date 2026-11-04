@@ -564,7 +564,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # defaultScheduleKind / scheduleExamples：按工作方式给新建默认种类与空态示例
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
   fan-out.ts                 # 分几路纯逻辑：laneReuseKey（ws:<工作树>#lane-<k>）、lanePrompt（只做这几条、不碰共享文件与会写它的命令、做完写标记）、
-                             # mergePrompt、fanOutSummary（开工弹层那一行）、FanOutPending / allLanesDone（终端页 20 秒一轮，到齐开收尾）（tests/fan-out.test.ts）
+                             # mergePrompt、fanOutSummary（开工弹层那一行）、FanOutPending / allLanesDone（终端页 20 秒一轮，到齐开收尾）、
+                             # lanesToStop / capStopNote（2026-11-04 每步花费上限：到了停没写做完标记的路）（tests/fan-out.test.ts）
   terminal-queue.ts          # openTerminalInTurn：一次开几个标签时交一个、等终端页收下再交下一个（拆分方案批准、分几路共用）
   split-plan.ts              # 拆分方案纯逻辑：buildSplitPrompt（无头一次的提示词，含让它改）/ readSplitReply（去围栏前言；方案 / 不拆 / 没按格式）、parseSplitPlan（不认识的字段记备注、等 / 依赖 / 前置）、planIssues（拦下 / 提醒）、
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）
@@ -1670,6 +1671,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
                              # 2026-11-02 事件规则：Schedule.event（folder/radar/phone × record/run）+ pending_events；tick 先 scan_event_sources、flush_recorded_events，
                              #   直接跑档进 collect_due，跑起来 take_pending_events；push_project_event 给雷达采纳与手机投递用；RunRecord.origin 记规则版本与文件；
+                             #   2026-11-04 每周花费上限 EventRule.weekly_cap_usd：flush_recorded_events 锁外按近 7 天历史会话算花费（usage::sessions_cost_usd），到了 apply_cost_cap 记一行只记录；
                              # 2026-10-20：Windows 上 Codex 用非提权沙箱时任务说明追加「读写文件用绝对路径」（codex_win_unelevated_note）；
                              #   沙箱覆盖参数本身由 ai.rs codex_win_sandbox_for_run 加（用户确认过、自己没配才加），判定在 agent_specs.rs
                              # schedules.json（每日/每周+时分，本地时区）、60s tick + 启动补跑
@@ -1790,7 +1792,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # origin 身份 + 相对上游 behind、fetch / pull --ff-only / push、合并进基准、
                              # Desktop CLI 打开该树 / gh --web 开 PR（CodingOpDto；不走科研工作区库）；overview 按树/分支并行 git
   fan_out.rs                 # 一步按数据分几路（2026-11-03 四期）：items_at 从项目内 JSON 按 filter 挑条目（全局序号）、shard 均匀切（不到两路一路、封顶 max）、
-                             # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
+                             # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）、
+                             # fan_out_spent（2026-11-04 每步花费上限：运行库里落在这个工作副本、开工以来的会话经 usage::sessions_cost_usd 合计）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
   project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），

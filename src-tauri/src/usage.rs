@@ -1713,6 +1713,20 @@ fn cost_of(acc: &TokenAcc, price: (f64, f64)) -> f64 {
         / 1_000_000.0
 }
 
+/// 几段会话一共花了多少（事件规则每周花费上限用，2026-11-04）：先增量建一次索引，再按会话合计，查不到价的不计
+pub(crate) fn sessions_cost_usd(sessions: &[(String, String)]) -> f64 {
+    if sessions.is_empty() {
+        return 0.0;
+    }
+    let _ = rebuild_locked();
+    let Ok(conn) = usage_db() else { return 0.0 };
+    sessions
+        .iter()
+        .filter_map(|(agent, sid)| session_usage_from(&conn, agent, sid).ok())
+        .map(|u| u.cost_usd)
+        .sum()
+}
+
 /// 一次不落盘调用的花费（项目助手每条回答下面写，2026-11-04）：同统计页口径（用户 pricing.json > 公共库 > 内置），
 /// 有一个模型查不到价就返回 None（不报半个数）
 pub(crate) fn events_cost_usd(events: &[UsageEvent]) -> Option<f64> {

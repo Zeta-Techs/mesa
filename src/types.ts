@@ -2268,6 +2268,8 @@ export interface EventRuleDto {
   exts: string[];
   /** "record" 只记录 | "run" 直接跑 */
   mode: string;
+  /** 每周花费上限（美元，2026-11-04）：近 7 天这条规则历次运行合计到了，攒着的那批只记录、不叫 AI；不设为空 */
+  weeklyCapUsd?: number | null;
 }
 
 /** 运行依据 */
@@ -2364,6 +2366,8 @@ export interface UpdateSchedulePatch {
   linkedStep?: string | null;
   /** 事件规则：「record」只记录 /「run」直接跑 */
   eventMode?: string;
+  /** 事件规则每周花费上限（美元）；0 = 不设 */
+  eventWeeklyCapUsd?: number;
 }
 
 /** 新建巡检技能：确认落盘前的草稿（.ccode/drafts/watch-*.meta.json） */

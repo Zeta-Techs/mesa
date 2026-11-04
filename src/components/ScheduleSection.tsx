@@ -431,6 +431,8 @@ function CreateScheduleModal({
   const [folder, setFolder] = useState("");
   const [exts, setExts] = useState("");
   const [eventMode, setEventMode] = useState<"record" | "run">("record");
+  /** 直接跑档的每周花费上限（美元，2026-11-04）：默认 2，填 0 = 不设 */
+  const [weeklyCap, setWeeklyCap] = useState("2");
 
   const isNew = skill === NEW_WATCH;
   // 新建巡检技能（周期由 AI 建议）与文献雷达（按关键词定时查）只按时间跑
@@ -537,6 +539,7 @@ function CreateScheduleModal({
                 folder: trigger === "folder" ? folder.trim() : null,
                 exts: trigger === "folder" ? parseExts(exts) : [],
                 mode: eventMode,
+                weeklyCapUsd: eventMode === "run" ? Number(weeklyCap) || null : null,
               }
             : null,
         },
@@ -682,6 +685,21 @@ function CreateScheduleModal({
                 <span className="block text-micro text-l4">
                   在隔离副本里按技能处理这些文件，结果照样要你评审、采纳才进项目。
                 </span>
+                {eventMode === "run" && (
+                  <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-l2">
+                    每周最多花 $
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      className={`${fieldClass} h-7 w-20 py-0`}
+                      value={weeklyCap}
+                      aria-label="每周花费上限（美元）"
+                      onChange={(e) => setWeeklyCap(e.target.value)}
+                    />
+                    <span className="text-micro text-l4">近 7 天到了就只记录、不叫 AI；填 0 不设</span>
+                  </span>
+                )}
               </span>
             </label>
           </fieldset>
@@ -953,6 +971,7 @@ function EditScheduleModal({
   const [profileId, setProfileId] = useState(schedule.profileId ?? "");
   const [modelId, setModelId] = useState(schedule.model ?? "");
   const [eventMode, setEventMode] = useState(schedule.event?.mode ?? "record");
+  const [weeklyCapEdit, setWeeklyCapEdit] = useState(String(schedule.event?.weeklyCapUsd ?? 0));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const caps = useAgentCaps();
@@ -987,7 +1006,7 @@ function EditScheduleModal({
           name: name.trim(),
           skill,
           // 事件规则不按时间跑：不改周期，只改模式
-          ...(schedule.event ? { eventMode } : fields),
+          ...(schedule.event ? { eventMode, eventWeeklyCapUsd: Number(weeklyCapEdit) || 0 } : fields),
           skipIfUnreviewed,
           timeoutMinutes,
           // 清空运行配置/模型必须发空串：后端 Option<Option> 语义下显式 null ≡ 缺失 ≡ 不改，
@@ -1035,6 +1054,22 @@ function EditScheduleModal({
           </label>
         ) : (
           <CadenceFields value={cadence} onChange={setCadence} />
+        )}
+        {schedule.event && eventMode === "run" && (
+          <label className="mb-3 block text-sm">
+            <span className="mb-1 block text-xs text-l3">每周最多花（美元）</span>
+            <span className="mb-1 block text-micro text-l4">
+              近 7 天这条规则历次运行合计到了，攒着的那批只记录、不叫 AI，花费降下来自动恢复；填 0 不设
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              className={fieldClass}
+              value={weeklyCapEdit}
+              onChange={(e) => setWeeklyCapEdit(e.target.value)}
+            />
+          </label>
         )}
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">运行配置</span><span className="mb-1 block text-micro text-l4">文献雷达选 Codex。没有后缀的只在课题目录里写。</span><select className={fieldClass} value={profileId} onChange={(e) => { setProfileId(e.target.value); setModelId(""); }}><option value="">跟随项目默认</option>{profiles.map((p) => { const meta = profileScheduleMeta(p, caps); return <option key={p.id} value={p.id} disabled={meta.disabled}>{meta.label}</option>; })}</select></label>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-xs text-l3">模型</span><select className={fieldClass} value={modelId} disabled={!profileId} onChange={(e) => setModelId(e.target.value)}><option value="">{profileId ? "默认（名单第一个）" : "跟随执行时解析"}</option>{profileId && (profiles.find((p) => p.id === profileId)?.models ?? []).map((m) => <option key={m} value={m}>{m}</option>)}</select></label>

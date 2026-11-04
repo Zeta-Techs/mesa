@@ -689,6 +689,8 @@ fn create_trigger(root: &Path, pack: &TaskPackDto, tr: &PackTriggerDto, values: 
         folder: (tr.kind == "folder").then(|| fill_params(&tr.folder, pack, values)),
         exts: tr.exts.clone(),
         mode: if tr.mode.is_empty() { "record".into() } else { tr.mode.clone() },
+        // 每周花费上限由人在定时任务里设，包不带
+        weekly_cap_usd: None,
     });
     let (frequency, weekday, interval) = if tr.kind == "schedule" {
         (tr.frequency.as_str(), tr.weekday, tr.interval_hours)

@@ -966,6 +966,7 @@ pub fn run() {
             project_assistant::assistant_guide_section,
             fan_out::fan_out_plan,
             fan_out::fan_out_done,
+            fan_out::fan_out_spent,
             task_packs::preview_task_pack_import,
             task_packs::install_task_pack_import,
             task_packs::discard_task_pack_import,

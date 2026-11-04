@@ -159,6 +159,8 @@ export default function KickoffConfirmDialog({
     intake?: IntakeBridgeDecision,
     /** 勾了「分几路同时跑」（步骤声明了 fanOut、数据够两路才有这个勾，默认不勾） */
     fanOut?: boolean,
+    /** 分路时这一步的花费上限（美元，2026-11-04）；空 = 不设 */
+    fanOutCapUsd?: number | null,
   ) => void;
   /** 技能区增删写回 project.toml 后同步父级 cfg（保持步进器/下次打开一致） */
   onCfgChange?: (cfg: ProjectConfigDto) => void;
@@ -178,6 +180,8 @@ export default function KickoffConfirmDialog({
   // 分几路（协作四期）：按项目根当前的数据预算几路；读不到就不显示这一行
   const [fanOutPlan, setFanOutPlan] = useState<FanOutPlanDto | null>(null);
   const [fanOutOn, setFanOutOn] = useState(false);
+  /** 分路花费上限（美元）：空 = 不设；各路合计到了就停掉没做完的路、不自动开收尾 */
+  const [fanOutCap, setFanOutCap] = useState("");
   const fanOutSpec = stepNow.fanOut ?? null;
   useEffect(() => {
     if (!fanOutSpec) {
@@ -843,7 +847,15 @@ export default function KickoffConfirmDialog({
         });
       }
     }
-    onConfirm(editor.text, launch, gate.needsAck && !needsDecisionAck, intakeDecision, fanOutOn && (fanOutPlan?.lanes.length ?? 0) >= 2);
+    const fanOutChosen = fanOutOn && (fanOutPlan?.lanes.length ?? 0) >= 2;
+    onConfirm(
+      editor.text,
+      launch,
+      gate.needsAck && !needsDecisionAck,
+      intakeDecision,
+      fanOutChosen,
+      fanOutChosen ? Number(fanOutCap) || null : null,
+    );
   }
   return (
     <div
@@ -1184,11 +1196,29 @@ export default function KickoffConfirmDialog({
         {stepNow.fanOut && fanOutPlan && (
           <KickoffRow label="分路" title="同一个工作区里几段对话同时做，各管几条，最后一路收尾写共享文件；只评审一次">
             {fanOutPlan.lanes.length >= 2 ? (
-              <Checkbox
-                checked={fanOutOn}
-                onChange={setFanOutOn}
-                label={<span className="text-xs text-l2">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>}
-              />
+              <div className="min-w-0">
+                <Checkbox
+                  checked={fanOutOn}
+                  onChange={setFanOutOn}
+                  label={<span className="text-xs text-l2">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>}
+                />
+                {fanOutOn && (
+                  <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-l2">
+                    这一步最多花 $
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      className={`${compactFieldClass} h-7 w-20 py-0`}
+                      value={fanOutCap}
+                      placeholder="不设"
+                      aria-label="这一步的花费上限（美元）"
+                      onChange={(e) => setFanOutCap(e.target.value)}
+                    />
+                    <span className="text-micro text-l4">各路合计到了，没做完的路停下、收尾不自动开；空着不设</span>
+                  </span>
+                )}
+              </div>
             ) : (
               <span className="text-xs text-l3">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>
             )}

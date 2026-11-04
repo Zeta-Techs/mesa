@@ -129,6 +129,10 @@ pub struct EventRule {
     /// "record" 只记录（不调模型、不花钱）| "run" 真跑
     #[serde(default)]
     pub mode: String,
+    /// 每周花费上限（美元，近 7 天按这条规则历次运行的会话合计；2026-11-04 补上设计稿 §5.1 的 costCap）。
+    /// 到了上限，攒着的这批只记录、不叫 AI，下周自动恢复；None = 不设
+    #[serde(default)]
+    pub weekly_cap_usd: Option<f64>,
 }
 
 pub(crate) const EVENT_KINDS: [&str; 3] = ["folder", "radar", "phone"];
@@ -353,6 +357,9 @@ pub struct UpdateSchedulePatch {
     /// 事件规则：只记录 / 真跑
     #[serde(default)]
     pub event_mode: Option<String>,
+    /// 事件规则每周花费上限（美元）；0 = 不设
+    #[serde(default)]
+    pub event_weekly_cap_usd: Option<f64>,
 }
 
 /// `scheduler-run-done` 事件载荷
@@ -953,10 +960,21 @@ fn create_schedule_at(path: &Path, mut input: CreateScheduleInput) -> Result<Sch
 }
 
 /// 事件规则写法收口：种类闭集、目录在项目内、扩展名小写去点、模式缺省只记录
+/// 每周上限：0 或不填 = 不设；负数、非数字拒收；最多 1000 美元
+fn normalize_cap(cap: Option<f64>) -> Result<Option<f64>, String> {
+    match cap {
+        None => Ok(None),
+        Some(c) if !c.is_finite() || c < 0.0 => Err("每周花费上限要填 0 或正数".into()),
+        Some(c) if c == 0.0 => Ok(None),
+        Some(c) => Ok(Some(c.min(1000.0))),
+    }
+}
+
 fn normalize_event_rule(root: &Path, mut rule: EventRule) -> Result<EventRule, String> {
     if !EVENT_KINDS.contains(&rule.kind.as_str()) {
         return Err(format!("不认识的事件：{}", rule.kind));
     }
+    rule.weekly_cap_usd = normalize_cap(rule.weekly_cap_usd)?;
     rule.mode = match rule.mode.as_str() {
         "" | "record" => "record".into(),
         "run" => "run".into(),
@@ -1074,6 +1092,10 @@ fn update_schedule_at(
             return Err(format!("不认识的模式：{mode}"));
         }
         rule.mode = mode;
+    }
+    if let Some(cap) = patch.event_weekly_cap_usd {
+        let rule = task.event.as_mut().ok_or("这条不是事件规则")?;
+        rule.weekly_cap_usd = normalize_cap(Some(cap))?;
     }
     if task.event.is_some() && task.frequency != "manual" {
         return Err("事件规则不按时间跑".into());
@@ -2943,7 +2965,61 @@ fn apply_record_mode(task: &mut Schedule, now_iso: &str) -> bool {
     true
 }
 
+/// 近 7 天这条规则历次运行（有后台会话的）的会话键
+fn week_sessions(task: &Schedule, now: chrono::DateTime<chrono::FixedOffset>) -> Vec<(String, String)> {
+    task.history
+        .iter()
+        .filter(|r| {
+            chrono::DateTime::parse_from_rfc3339(&r.at).is_ok_and(|t| (now - t).num_days() < 7)
+        })
+        .filter_map(|r| Some((r.agent.clone()?, r.session_id.clone()?)))
+        .collect()
+}
+
+/// 到了每周花费上限：攒着的这批记一行「到了上限、只记录」，不叫 AI（下周花费降下来自动恢复直接跑）
+fn apply_cost_cap(task: &mut Schedule, now_iso: &str, spent: f64, cap: f64) -> bool {
+    if !task.enabled || task.pending_events.is_empty() {
+        return false;
+    }
+    let hits = std::mem::take(&mut task.pending_events);
+    let origin = origin_from(task, hits);
+    task.history.insert(
+        0,
+        RunRecord {
+            at: now_iso.to_string(),
+            status: "recorded".into(),
+            summary: format!(
+                "到了每周花费上限：近 7 天已花 ${spent:.2}，上限 ${cap:.2}。这批只记录、没叫 AI——{}",
+                origin.summary
+            ),
+            trigger: Some("event".into()),
+            noop: false,
+            origin: Some(origin),
+            ..Default::default()
+        },
+    );
+    task.history.truncate(HISTORY_CAP);
+    true
+}
+
 fn flush_recorded_events() {
+    // 先在锁外算好哪些真跑的规则到了每周上限（要读用量库，不占调度锁）
+    let capped: Vec<(String, f64, f64)> = {
+        let list = sched_lock()
+            .ok()
+            .and_then(|_g| schedules_path().and_then(|p| read_schedules_at(&p)).ok())
+            .unwrap_or_default();
+        let now = chrono::Local::now().fixed_offset();
+        list.iter()
+            .filter(|t| t.enabled && !t.pending_events.is_empty())
+            .filter_map(|t| {
+                let rule = t.event.as_ref().filter(|e| e.mode == "run")?;
+                let cap = rule.weekly_cap_usd?;
+                let spent = crate::usage::sessions_cost_usd(&week_sessions(t, now));
+                (spent >= cap).then(|| (t.id.clone(), spent, cap))
+            })
+            .collect()
+    };
     let result = (|| -> Result<(), String> {
         let _g = sched_lock()?;
         let path = schedules_path()?;
@@ -2952,6 +3028,9 @@ fn flush_recorded_events() {
         let mut changed = false;
         for t in &mut list {
             changed |= apply_record_mode(t, &now);
+            if let Some((_, spent, cap)) = capped.iter().find(|(id, _, _)| *id == t.id) {
+                changed |= apply_cost_cap(t, &now, *spent, *cap);
+            }
         }
         if changed {
             write_schedules_at(&path, &list)?;
@@ -5228,7 +5307,7 @@ mod tests {
             skill: "data-clean".into(),
             frequency: "manual".into(),
             enabled: true,
-            event: Some(EventRule { kind: "folder".into(), folder: Some("data/raw".into()), exts: vec![], mode: mode.into() }),
+            event: Some(EventRule { kind: "folder".into(), folder: Some("data/raw".into()), exts: vec![], mode: mode.into(), weekly_cap_usd: None }),
             ..Default::default()
         }
     }
@@ -5303,10 +5382,33 @@ mod tests {
     }
 
     #[test]
+    fn weekly_cap_turns_a_batch_into_a_record_line() {
+        assert_eq!(normalize_cap(Some(0.0)).unwrap(), None, "0 = 不设");
+        assert_eq!(normalize_cap(Some(2.5)).unwrap(), Some(2.5));
+        assert_eq!(normalize_cap(Some(5000.0)).unwrap(), Some(1000.0));
+        assert!(normalize_cap(Some(-1.0)).is_err());
+        let mut t = event_task("run");
+        t.pending_events.push(EventHit { at: "x".into(), kind: "folder".into(), objects: vec!["data/raw/a.csv".into()], summary: "data/raw/ 有新文件".into() });
+        assert!(apply_cost_cap(&mut t, "2026-11-04T10:00:00+08:00", 2.31, 2.0));
+        assert!(t.pending_events.is_empty(), "这批取走，不再真跑");
+        assert_eq!(t.history[0].status, "recorded");
+        assert!(t.history[0].summary.starts_with("到了每周花费上限：近 7 天已花 $2.31，上限 $2.00"));
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-04T10:00:00+08:00").unwrap();
+        let mut h = event_task("run");
+        h.history = vec![
+            RunRecord { at: "2026-11-03T10:00:00+08:00".into(), agent: Some("codex".into()), session_id: Some("s1".into()), ..Default::default() },
+            RunRecord { at: "2026-10-20T10:00:00+08:00".into(), agent: Some("codex".into()), session_id: Some("old".into()), ..Default::default() },
+            RunRecord { at: "2026-11-04T09:00:00+08:00".into(), ..Default::default() },
+        ];
+        assert_eq!(week_sessions(&h, now), vec![("codex".to_string(), "s1".to_string())]);
+    }
+
+    #[test]
     fn event_rule_normalizes_and_rejects() {
         let dir = std::env::temp_dir().join(format!("mesa-rule-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("data/raw")).unwrap();
         let rule = |kind: &str, folder: Option<&str>, mode: &str| EventRule {
+            weekly_cap_usd: None,
             kind: kind.into(),
             folder: folder.map(str::to_string),
             exts: vec![".CSV".into(), " xlsx ".into(), "a/b".into()],
@@ -5353,6 +5455,7 @@ mod tests {
                     folder: Some("data/raw".into()),
                     exts: vec!["csv".into()],
                     mode: String::new(),
+                    weekly_cap_usd: None,
                 }),
             },
         )

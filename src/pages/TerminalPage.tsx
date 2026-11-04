@@ -197,7 +197,7 @@ import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { italicLine, lineCells } from "../screen-cells";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
-import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, type FanOutPending } from "../fan-out";
+import { allLanesDone, capStopNote, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, lanesToStop, type FanOutPending } from "../fan-out";
 import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
@@ -10238,8 +10238,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         const key = localStorage.key(i);
         if (key?.startsWith(FANOUT_STORAGE_PREFIX)) keys.push(key);
       }
-      // 终端页不在前台时收不下开工请求：等人回到对话页再开，记录留着（2026-11-03 自查：原先先删记录再交请求，没收下就丢了收尾）
-      if (!pageVisibleRef.current) return;
       for (const key of keys) {
         let pending: FanOutPending;
         try {
@@ -10253,7 +10251,29 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           continue;
         }
         const done = await invoke<number[]>("fan_out_done", { dir: pending.worktreePath }).catch(() => null);
-        if (!done || !allLanesDone(done, pending.lanes)) continue;
+        if (!done) continue;
+        // 这一步的花费上限（2026-11-04）：各路合计到了，停掉没做完的路（标签留着看它做到哪），收尾不自动开、记录删掉
+        if (pending.capUsd && !allLanesDone(done, pending.lanes)) {
+          const spent = await invoke<number>("fan_out_spent", {
+            dir: pending.worktreePath,
+            sinceMs: pending.createdAt ?? 0,
+          }).catch(() => 0);
+          if (spent >= pending.capUsd) {
+            const stop = lanesToStop(done, pending.lanes);
+            for (const k of stop) {
+              const tab = tabsRef.current.find((t) => t.reuseKey && t.reuseKey === pending.laneKeys?.[k - 1]);
+              const ptyId = tab ? statusesRef.current[tab.id]?.ptyId : undefined;
+              if (ptyId) void invoke("pty_kill", { ptyId }).catch(() => {});
+            }
+            localStorage.removeItem(key);
+            toast(capStopNote(pending.stepName, spent, pending.capUsd, stop.length, pending.lanes), "warning");
+            continue;
+          }
+        }
+        if (!allLanesDone(done, pending.lanes)) continue;
+        // 终端页不在前台时收不下开工请求：等人回到对话页再开，记录留着（2026-11-03 自查：原先先删记录再交请求，没收下就丢了收尾）；
+        // 花费上限照常看（上面），不等人回来
+        if (!pageVisibleRef.current) continue;
         if (!(await openTerminalInTurn(pending.merge as PendingTerminal))) continue;
         localStorage.removeItem(key);
         toast(`「${pending.stepName}」${pending.lanes} 路都做完了，开了收尾一路写共享文件和验收摘要。`, "info");
