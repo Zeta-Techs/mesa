@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowRight,
   Briefcase,
@@ -6,6 +7,7 @@ import {
   Code,
   FlaskConical,
   GitBranch,
+  LifeBuoy,
   MessageSquare,
   SquareArrowOutUpRight,
   Target,
@@ -23,6 +25,10 @@ import {
   type ProjectCard,
 } from "../workbench-cards";
 import { WORK_MODE_LABEL } from "../work-mode";
+import { BLOCKERS_SHOWN, projectBlockers } from "../project-blockers";
+import type { RunFailureInput } from "../run-failure";
+import type { MesaErrorRecord } from "../mesa-errors";
+import { IS_WINDOWS } from "../hotkeys";
 
 /** 工作方式图标：与对话页项目选择器同一套（ChatProjectPicker MODE_ICON）；未添加的目录（随手聊）用对话图标 */
 const MODE_ICON = { research: FlaskConical, coding: Code, office: Briefcase } as const;
@@ -79,6 +85,8 @@ export default function WorkbenchProjectGroup({
   agentLabel,
   caretFor,
   footer,
+  runs,
+  onAskAssistant,
 }: {
   card: ProjectCard;
   /** 右侧任务面板正开着的那一行 */
@@ -100,6 +108,10 @@ export default function WorkbenchProjectGroup({
   caretFor: (live: CardLiveRun) => RunCaretState;
   /** 分组末尾一行（记目标的按钮 / 输入框由页面给）；没有就不画 */
   footer: ReactNode;
+  /** 这个项目的运行记录（卡点里「出错了」用） */
+  runs: readonly RunFailureInput[];
+  /** 打开项目助手；带问题时直接问（卡点里 Mesa 出错那条）。只有登记过的项目有 */
+  onAskAssistant: ((question?: string) => void) | null;
 }) {
   const contentsId = useId();
   const [collapsed, setCollapsed] = useState(false);
@@ -111,6 +123,22 @@ export default function WorkbenchProjectGroup({
   const expanded = expandedByClick || selectedAt >= CARD_VISIBLE_TASKS;
   const shown = expanded ? card.tasks : card.tasks.slice(0, CARD_VISIBLE_TASKS);
   const hidden = card.tasks.length - shown.length;
+  // 卡点（2026-11-04 项目助手一期）：Mesa 出错记录按项目读，任务行变了再读一次
+  const [mesaErrors, setMesaErrors] = useState<MesaErrorRecord[]>([]);
+  const taskSig = card.tasks.map((t) => `${t.id}:${t.state}:${t.tone}`).join("|");
+  useEffect(() => {
+    if (!card.registered) return;
+    let stale = false;
+    invoke<MesaErrorRecord[]>("mesa_errors_read", { projectRoot: card.path, limit: 50 })
+      .then((list) => {
+        if (!stale) setMesaErrors(list);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [card.path, card.registered, taskSig]);
+  const blockers = projectBlockers({ card, runs, mesaErrors, nowMs: Date.now(), isWindows: IS_WINDOWS });
   // 进度写在几个数里（「进行到 第 1 / 5 步」）：项目头不再挂进度条——下面的步骤序号圈已经说了走到哪（2026-10-27 用户：进度条突兀）
   const vitals = card.vitals;
   return (
@@ -155,6 +183,17 @@ export default function WorkbenchProjectGroup({
             </span>
           )}
         </div>
+        {onAskAssistant && (
+          <button
+            type="button"
+            className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
+            title="问项目助手：进度、哪里出错、下一步做什么"
+            onClick={() => onAskAssistant()}
+          >
+            <LifeBuoy size={12} strokeWidth={1.8} aria-hidden="true" />
+            <span className="text-xs">项目助手</span>
+          </button>
+        )}
         {clientJump && (
           <button
             type="button"
@@ -182,6 +221,39 @@ export default function WorkbenchProjectGroup({
           </span>
         )}
       </div>
+
+      {blockers.length > 0 && (
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 pb-1 pl-[calc(1.5rem+6px+0.75rem)] pr-4 text-xs">
+          <span className="shrink-0 text-l3">卡点</span>
+          {blockers.slice(0, BLOCKERS_SHOWN).map((b) => (
+            <button
+              key={b.key}
+              type="button"
+              className={`min-w-0 max-w-full truncate text-left hover:underline ${b.tone === "fail" ? "text-err-text" : "text-warn-text"}`}
+              title={b.text}
+              onClick={() => {
+                if (b.target.kind === "assistant") onAskAssistant?.(b.target.question);
+                else {
+                  const task = card.tasks.find((t) => t.id === (b.target as { taskId: string }).taskId);
+                  if (task) onOpenTask(task);
+                }
+              }}
+            >
+              {b.text}
+            </button>
+          ))}
+          {blockers.length > BLOCKERS_SHOWN && <span className="shrink-0 text-l3">还有 {blockers.length - BLOCKERS_SHOWN} 处</span>}
+          {onAskAssistant && (
+            <button
+              type="button"
+              className="shrink-0 text-l3 underline hover:text-l1"
+              onClick={() => onAskAssistant("这个项目现在卡在哪？每一处是谁的问题、我该怎么办？")}
+            >
+              问项目助手
+            </button>
+          )}
+        </div>
+      )}
 
       <div id={contentsId} hidden={collapsed}>
         {shown.length > 0 && (

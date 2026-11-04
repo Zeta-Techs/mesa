@@ -22,6 +22,9 @@ export interface MismatchReport {
   detail: string;
   /** 已脱敏的对照材料；整理失败时为 null（表单照开，只是不附） */
   snapshot: string | null;
+  /** 附件勾选与说明的文字（项目助手「报告给开发者」借这条路，附的是问答与出错记录，2026-11-04）；不给就是聊天层对照的原文案 */
+  attachLabel?: string;
+  attachHint?: string;
 }
 
 /** 详情脚手架：两行没填的发送时剔除（feedback.ts stripUnfilledTemplate） */

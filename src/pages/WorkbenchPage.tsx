@@ -74,6 +74,13 @@ import { unreadKeyOf } from "../chat-unread";
 import WorkbenchApprovalPanel from "../components/WorkbenchApprovalPanel";
 import WorkbenchProjectGroup from "../components/WorkbenchProjectGroup";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
+import ProjectAssistantPanel, { type AssistantAsk } from "../components/ProjectAssistantPanel";
+import { beginAskAi } from "../components/AskAiModal";
+import { MISMATCH_EVENT, type MismatchReport } from "../chat-mismatch";
+import { DISCUSS_BINDING_SLOT, slotPrefs } from "../project-agents";
+import { runFailureReason } from "../run-failure";
+import type { AssistantAction } from "../project-assistant";
+import type { AssistantFocus, AssistantTurn } from "../project-assistant-run";
 import {
   awaySummary,
   buildProjectCard,
@@ -193,6 +200,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
   const setDemoProjectOpenReq = useAppStore((s) => s.setDemoProjectOpenReq);
   const setWorkspaceReviewRequest = useAppStore((s) => s.setWorkspaceReviewRequest);
+  const setProjectSurfaceReq = useAppStore((s) => s.setProjectSurfaceReq);
 
   function openRun(runId: string, tabId?: string) {
     if (tabId && terminalRunInputs.some((run) => run.tabId === tabId)) {
@@ -1208,6 +1216,114 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }, [openCard, openCardTask, researchCfg, codingByPath, userTasks, schedules, allRuns]);
   function closeTaskPanel() {
     setOpenTask(null);
+    setMailDraft(null);
+  }
+
+  // ===== 项目助手（2026-11-04，docs/design-project-assistant.md）：与任务面板同一位置，开一个就收另一个 =====
+  const [assistant, setAssistant] = useState<{ path: string; ask: AssistantAsk | null } | null>(null);
+  const assistantNonce = useRef(0);
+  const [mailDraft, setMailDraft] = useState<{ taskId: string; text: string } | null>(null);
+  function openAssistant(path: string, question?: string, focus?: AssistantFocus | null) {
+    setOpenTask(null);
+    setAssistant({
+      path,
+      ask: question ? { question, focus: focus ?? null, nonce: ++assistantNonce.current } : null,
+    });
+  }
+  const assistantCard = assistant ? (cards.find((c) => samePath(c.path, assistant.path, IS_WINDOWS)) ?? null) : null;
+  const assistantProject = assistant ? (projects.find((p) => samePath(p.path, assistant.path, IS_WINDOWS)) ?? null) : null;
+  const assistantSteps = assistant
+    ? (Object.entries(researchCfg).find(([path]) => samePath(path, assistant.path, IS_WINDOWS))?.[1]?.steps ?? [])
+    : [];
+  function runAssistantAction(action: AssistantAction, turn: AssistantTurn) {
+    if (!assistant) return;
+    const path = assistant.path;
+    const stepTask = (n: number | null) =>
+      n == null ? undefined : assistantCard?.tasks.find((t) => t.ref.kind === "step" && t.ref.stepIndex === n - 1);
+    const toProject = () => {
+      setAssistant(null);
+      setSelectProjectReq(path);
+      setPage("workspaces");
+    };
+    switch (action.kind) {
+      case "step":
+      case "mail": {
+        const task = stepTask(action.step);
+        if (!task) {
+          toast(`第 ${action.step} 步还没开工作副本，去项目页看`, "info");
+          toProject();
+          return;
+        }
+        if (action.kind === "mail") {
+          if (!task.live?.runId) toast(`第 ${action.step} 步现在没有开着的 AI，留话送不到；先在这一步点继续`, "info");
+          else setMailDraft({ taskId: task.id, text: action.text });
+        }
+        setAssistant(null);
+        setOpenTask({ path, taskId: task.id });
+        return;
+      }
+      case "review": {
+        const task = stepTask(action.step);
+        const worktreePath = task?.ref.kind === "step" ? task.ref.worktreePath : null;
+        if (!worktreePath) {
+          toast(`第 ${action.step} 步还没有可评审的工作副本`, "info");
+          return;
+        }
+        setAssistant(null);
+        setWorkspaceReviewRequest({ worktreePath, runId: null, requestId: crypto.randomUUID() });
+        setPage("terminal");
+        return;
+      }
+      case "project":
+      case "split":
+        // 拆成几路做在工作台项目分组下；方案要人批准，这里只把需求复制好
+        if (action.kind === "split") {
+          void navigator.clipboard?.writeText(action.text).catch(() => {});
+          toast("要拆的事已复制，在项目分组下点「拆成几路做…」粘进去", "info");
+          setAssistant(null);
+          return;
+        }
+        toProject();
+        return;
+      case "agents":
+        setProjectSurfaceReq("agents");
+        toProject();
+        return;
+      case "profiles":
+        setAssistant(null);
+        setPage("profiles");
+        return;
+      case "settings":
+        setAssistant(null);
+        setPage("settings");
+        return;
+      case "discuss": {
+        const project = assistantProject;
+        setAssistant(null);
+        beginAskAi({
+          path: "",
+          name: project?.name ?? assistantCard?.name ?? path,
+          cwd: path,
+          root: path,
+          reuseKey: `assistant-discuss:${path}:${Date.now()}`,
+          prompt: action.text,
+          workMode: project?.workMode === "coding" || project?.workMode === "office" || project?.workMode === "research" ? project.workMode : undefined,
+          ...slotPrefs(useAppStore.getState().profiles, project, DISCUSS_BINDING_SLOT),
+        });
+        return;
+      }
+      case "report": {
+        const report: MismatchReport = {
+          title: action.text,
+          detail: `项目助手判断这是 Mesa 的问题。\n你当时在做什么：`,
+          snapshot: `问：${turn.question}\n\n项目助手：${turn.answer}`,
+          attachLabel: "附上这次问答（项目助手的判断，已去掉密钥）",
+          attachHint: "里面可能有你的项目名、文件名和出错原文，不想发就取消勾选。",
+        };
+        window.dispatchEvent(new CustomEvent(MISMATCH_EVENT, { detail: report }));
+        return;
+      }
+    }
   }
   const panelActions: TaskPanelAction[] = [];
   if (openCard && openCardTask && panelData) {
@@ -1413,6 +1529,29 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       agentLabel={agentLabel}
       live={panelLive}
       actions={panelActions}
+      mailDraft={mailDraft && openTask?.taskId === mailDraft.taskId ? mailDraft.text : null}
+      onAskWhy={
+        openCard?.registered && openCardTask
+          ? (run) =>
+              openAssistant(openCard.path, `「${openCardTask.name}」这次运行为什么出错？我该怎么办？`, {
+                title: `「${openCardTask.name}」${run.createdAt} 那次运行出错`,
+                detail: `出错原因：${runFailureReason(run)}`,
+                runId: run.id,
+              })
+          : null
+      }
+    />
+  );
+  const assistantPanel = (
+    <ProjectAssistantPanel
+      open={!!assistant}
+      onClose={() => setAssistant(null)}
+      projectPath={assistant?.path ?? null}
+      projectName={assistantProject?.name ?? assistantCard?.name ?? ""}
+      project={assistantProject}
+      stepCount={assistantSteps.length}
+      ask={assistant?.ask ?? null}
+      onAction={runAssistantAction}
     />
   );
 
@@ -1687,8 +1826,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                       selectedTaskId={navSelected?.card === card ? (navSelected.task?.id ?? null) : null}
                       onOpenTask={(task) => {
                         setSelectedKey(`t:${card.path}\n${task.id}`);
+                        setAssistant(null);
                         setOpenTask({ path: card.path, taskId: task.id });
                       }}
+                      runs={allRuns}
+                      onAskAssistant={card.registered ? (question) => openAssistant(card.path, question) : null}
                       onOpenProject={
                         card.registered
                           ? () => {
@@ -1849,6 +1991,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       </div>
 
       {taskPanel}
+      {assistantPanel}
       <WorkbenchApprovalPanel
         approval={openApprovalRow?.kind === "inbox" ? openApprovalRow.approval : null}
         project={openApprovalRow?.project ?? null}

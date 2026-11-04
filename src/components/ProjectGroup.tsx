@@ -58,6 +58,7 @@ import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
 import { stepAttention } from "../run-overview";
 import { stepperStatusText } from "../stepper-status";
+import { latestRunFailure } from "../run-failure";
 import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
 import { importedScriptsNote } from "../task-packs";
@@ -85,6 +86,7 @@ import type {
   ProjectDto,
   ProjectResourceDto,
   ProjectStepDto,
+  RunDto,
   TaskPackDto,
   WorkspaceDto,
   WorkspaceDriftDto,
@@ -1309,6 +1311,21 @@ export default function ProjectGroup({
     ];
   }
 
+  // 这个项目的运行记录：步进器「出错了」用（run-failure.ts）。终端开关时重拉，读不到就当没有
+  const runSig = terminalRunInputs.map((r) => `${r.tabId}:${r.running ? 1 : 0}`).join("|");
+  const [projectRuns, setProjectRuns] = useState<RunDto[]>([]);
+  useEffect(() => {
+    let stale = false;
+    invoke<RunDto[]>("run_list", { projectRoot: projectPath })
+      .then((list) => {
+        if (!stale) setProjectRuns(list);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [projectPath, runSig]);
+
   // ===== 渲染 =====
   // 步骤状态表：每步算一次，下面各处派生共用同一份快照。
   // 原先 7 处各调一次 deriveStepStatus，每次都遍历 workspaces——N 步项目每渲染要跑 2N+ 次
@@ -1357,6 +1374,10 @@ export default function ProjectGroup({
     stepperStatusText(st.key, {
       archived: st.key === "pending" && !!st.ws,
       attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs, IS_WINDOWS) : null,
+      failure:
+        st.key === "active" && st.ws
+          ? (latestRunFailure(projectRuns, st.ws.worktreePath, IS_WINDOWS)?.reason ?? null)
+          : null,
     }),
   );
   const allStepsDone =
@@ -1911,7 +1932,7 @@ export default function ProjectGroup({
                         className="flex h-4 min-w-0 items-center justify-center"
                       >
                         {text && (
-                          <span className={`truncate text-micro leading-4 ${text.tone}`}>
+                          <span className={`truncate text-micro leading-4 ${text.tone}`} title={text.title}>
                             {text.text}
                           </span>
                         )}

@@ -625,6 +625,18 @@ pub(crate) fn ai_prompt_impl(
     fn_key: Option<&str>,
     prompt: String,
 ) -> Result<String, String> {
+    ai_prompt_impl_model(profiles, profile_id, None, fn_key, prompt)
+}
+
+/// 同 `ai_prompt_impl`，另可点名模型（项目专属绑定带的模型，如项目助手）；
+/// 点名的不在这份连接的模型名单里时照旧回落名单第一个
+pub(crate) fn ai_prompt_impl_model(
+    profiles: Vec<Profile>,
+    profile_id: Option<String>,
+    model: Option<String>,
+    fn_key: Option<&str>,
+    prompt: String,
+) -> Result<String, String> {
     // 设置页的按功能/全局专用 profile 作为显式 id 之外的默认（每次现读，改动即时生效）
     let settings = crate::settings::read_current_checked()?;
     let explicit_id = profile_id.clone().filter(|v| !v.trim().is_empty());
@@ -668,7 +680,7 @@ pub(crate) fn ai_prompt_impl(
     let key = profiles::get_key_for_profile(&profile)?;
     agents::ensure_launch_credentials(&profile, key.as_deref())?;
     let mut profile = profile;
-    let selected = pick_listed_model(&profile.models, preferred);
+    let selected = pick_listed_model(&profile.models, model.as_deref().or(preferred));
     crate::combo::apply_to_profile(&mut profile, selected.as_deref());
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
     let plan = agents::launch_plan(&profile, key, selected.as_deref())?;

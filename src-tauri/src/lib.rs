@@ -95,6 +95,7 @@ mod image_gen;
 mod peek;
 mod project_mail;
 mod split_plan;
+mod project_assistant;
 mod fan_out;
 
 mod browser_bridge;
@@ -953,6 +954,12 @@ pub fn run() {
             split_plan::split_plan_close,
             split_plan::split_plan_context,
             split_plan::split_plan_write,
+            project_assistant::mesa_error_record,
+            project_assistant::mesa_errors_read,
+            project_assistant::assistant_log_read,
+            project_assistant::assistant_log_clear,
+            project_assistant::project_assistant_ask,
+            project_assistant::assistant_review_notes,
             fan_out::fan_out_plan,
             fan_out::fan_out_done,
             task_packs::preview_task_pack_import,

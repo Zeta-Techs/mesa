@@ -3610,10 +3610,11 @@ pub async fn set_project_default_profile(
 
 /// 项目槽位专属 Agent 绑定可用槽位（白名单：槽位是稳定契约 key，先开一个，
 /// 后续任务槽位按需入列）
-/// 槽位白名单：固定用途槽逐一列出（reader=精读阅读会话；discuss=问 AI 与聊想法）。
+/// 槽位白名单：固定用途槽逐一列出（reader=精读阅读会话；discuss=问 AI 与聊想法；
+/// assistant=项目助手，只做无头问答、不启动 CLI 会话，2026-11-04）。
 /// 步骤槽走 `step:<步骤名>` 前缀（B1）。读取侧
 /// （get_project_agent_binding）不做白名单校验，天然通用
-const PROJECT_AGENT_BINDING_SLOTS: &[&str] = &["reader", "discuss", "chat"];
+const PROJECT_AGENT_BINDING_SLOTS: &[&str] = &["reader", "discuss", "chat", "assistant"];
 const STEP_SLOT_PREFIX: &str = "step:";
 
 /// 槽位合法性：固定槽在白名单，或 step: 前缀 + 非空步骤名
@@ -8367,6 +8368,7 @@ briefs = "not-an-array"
         assert!(!valid_agent_binding_slot("step"));
         assert!(valid_agent_binding_slot("discuss")); // B4 已与消费同批放开
         assert!(valid_agent_binding_slot("chat")); // 项目对话，与 discuss 分开
+        assert!(valid_agent_binding_slot("assistant")); // 项目助手（无头问答）
         assert!(!valid_agent_binding_slot(""));
         assert!(!valid_agent_binding_slot("random-slot"));
     }

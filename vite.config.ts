@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Plugin as EsbuildPlugin } from "esbuild";
 import { defineConfig, type Plugin, type Rollup } from "vite";
 import react from "@vitejs/plugin-react";
@@ -105,6 +106,16 @@ const port = Number(process.env.CCODE_PORT ?? 17575);
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss(), monacoClipboardCancelPlugin(), entryGuardPlugin()],
+  resolve: {
+    // 应用里的 `@tauri-apps/api/core` 指到薄包装：后台调用失败时记进 Mesa 出错记录（src/tauri-core-shim.ts）。
+    // 只认这一个精确路径；包装自己按相对路径引原模块，不会绕回来
+    alias: [
+      {
+        find: /^@tauri-apps\/api\/core$/,
+        replacement: fileURLToPath(new URL("./src/tauri-core-shim.ts", import.meta.url)),
+      },
+    ],
+  },
   optimizeDeps: {
     esbuildOptions: {
       plugins: [monacoClipboardCancelEsbuildPlugin()],

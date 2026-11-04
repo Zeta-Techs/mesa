@@ -12,6 +12,7 @@ import {
   FlaskConical,
   GitBranch,
   House,
+  LifeBuoy,
   Lightbulb,
   MessageSquare,
   PenLine,
@@ -38,6 +39,7 @@ import {
   READER_BINDING_SLOT,
   CHAT_BINDING_SLOT,
   DISCUSS_BINDING_SLOT,
+  ASSISTANT_BINDING_SLOT,
   stepSlotKey,
   type ProjectAgentRow,
 } from "../project-agents";
@@ -353,6 +355,7 @@ export default function ProjectAgentsView({
       (slot) =>
         slot === CHAT_BINDING_SLOT ||
         slot === DISCUSS_BINDING_SLOT ||
+        slot === ASSISTANT_BINDING_SLOT ||
         slot === READER_BINDING_SLOT ||
         slot.startsWith("step:"),
     );
@@ -420,6 +423,23 @@ export default function ProjectAgentsView({
         }));
       });
   }, [profiles, hiddenProfiles, chatBinding?.profile]);
+  const assistantBinding = project.taskBindings?.[ASSISTANT_BINDING_SLOT];
+  const assistantSlotProfiles = useMemo(() => {
+    const boundId = assistantBinding?.profile;
+    return profiles
+      .filter((p) => !hiddenProfiles.includes(p.id) || p.id === boundId)
+      .flatMap((p) => {
+        const agentLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
+        const models = p.models.length > 0 ? p.models : [""];
+        return models.map((modelId) => ({
+          id: p.id,
+          name: `${agentLabel} · ${p.name}`,
+          modelId,
+          model: modelId || "CLI 默认",
+          modelLine: `${agentLabel} · ${p.name} · ${modelId || "CLI 默认"}`,
+        }));
+      });
+  }, [profiles, hiddenProfiles, assistantBinding]);
   const discussSlotProfiles = useMemo(() => {
     const boundId = discussBinding?.profile;
     return profiles
@@ -505,6 +525,7 @@ export default function ProjectAgentsView({
     (slot) =>
       slot === CHAT_BINDING_SLOT ||
       slot === DISCUSS_BINDING_SLOT ||
+      slot === ASSISTANT_BINDING_SLOT ||
       slot === READER_BINDING_SLOT ||
       slot.startsWith("step:"),
   );
@@ -705,6 +726,20 @@ export default function ProjectAgentsView({
             disabled={saving}
             onPick={(pid, mid) => void saveSlotBinding(DISCUSS_BINDING_SLOT, pid, mid)}
             onClear={() => void saveSlotBinding(DISCUSS_BINDING_SLOT, "", "")}
+            onAdd={() => setPage("profiles")}
+          />
+          <SlotCard
+            Icon={LifeBuoy}
+            label="项目助手"
+            tag={assistantBinding ? "已指定" : "跟随默认"}
+            marked={Boolean(assistantBinding)}
+            binding={assistantBinding}
+            unboundLine={inherited.line}
+            unboundDetail={inherited.detail}
+            choices={assistantSlotProfiles}
+            disabled={saving}
+            onPick={(pid, mid) => void saveSlotBinding(ASSISTANT_BINDING_SLOT, pid, mid)}
+            onClear={() => void saveSlotBinding(ASSISTANT_BINDING_SLOT, "", "")}
             onAdd={() => setPage("profiles")}
           />
           {workMode === "research" && (

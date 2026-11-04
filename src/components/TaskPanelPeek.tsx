@@ -10,7 +10,16 @@ import type { ChangedFileDto, ProjectMailDto } from "../types";
  * - 改了哪些文件：与 Agent 用的 `peek changes` 同一口径（.ccode/ 不算、对开工基线比），打开面板时读一次；
  * - 给它留话：Mesa 记下，它空闲、你没在它输入框里打字时送进对话（与同项目 Agent 之间的留话同一条送达 / 撤回链路）。
  */
-export default function TaskPanelPeek({ runId, projectPath }: { runId: string; projectPath: string }) {
+export default function TaskPanelPeek({
+  runId,
+  projectPath,
+  draft = null,
+}: {
+  runId: string;
+  projectPath: string;
+  /** 项目助手「给第 N 步留话」带来的草稿：只填进框里，发不发人点 */
+  draft?: string | null;
+}) {
   const [files, setFiles] = useState<ChangedFileDto[] | null>(null);
   const [filesError, setFilesError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -40,6 +49,9 @@ export default function TaskPanelPeek({ runId, projectPath }: { runId: string; p
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, projectPath]);
+  useEffect(() => {
+    if (draft) setText(draft);
+  }, [draft, runId]);
 
   async function send() {
     if (!text.trim()) return;

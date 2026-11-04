@@ -8,7 +8,7 @@
 ```
 本次手选（弹层/启动栏改的，永远最高）
 L4 实体绑定   step:<步骤名> 槽 / 目标 tasks.agent+profile_id+model / 日程 schedule.profile_id+model
-L3 用途槽位   reader（精读）/ chat（项目对话）/ discuss（问 AI 与聊想法）
+L3 用途槽位   reader（精读）/ chat（项目对话）/ discuss（问 AI 与聊想法）/ assistant（项目助手，只做无头问答）
 L2 项目默认   defaultAgent + defaultProfiles/defaultModels（Agents 名册）
 L1 记忆       ccode.wsLast（目录）/ ccode.kickoffLast.<projectRoot>（开工）/ ccode.askAi（问 AI）/ ccode.quickChat
 L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（含 translate、watch-explain）
@@ -18,7 +18,7 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 
 ## 存储与命令
 
-- 槽位绑定：SQLite `projects.task_bindings`（`slot → {profile, model?}`）。白名单 `reader` / `chat` / `discuss` + `step:` 前缀（`valid_agent_binding_slot`）；写 `set_project_agent_binding`（模型须在名单）、读 `get_project_agent_binding`（无白名单校验）。
+- 槽位绑定：SQLite `projects.task_bindings`（`slot → {profile, model?}`）。白名单 `reader` / `chat` / `discuss` / `assistant` + `step:` 前缀（`valid_agent_binding_slot`）；写 `set_project_agent_binding`（模型须在名单）、读 `get_project_agent_binding`（无白名单校验）。
 - 目标绑定：`tasks` 表 `agent + profile_id + model`（创建时写入，没开始过的目标可经 `task_update` 改；新建目标弹层不点 Agent/连接/模型就存空＝跟随项目默认，未绑目标开工与弹层摘要共用 `goalDefaultProfile`；model 列**追加队尾**——map_task 按位置索引，插中间静默串列，有回归测试钉住）。
 - 日程绑定：`schedules.json` `profile_id + model`（`#[serde(default)]` 兼容旧档；UpdateSchedulePatch 的 model 走 `Option<Option>+空串清空`，与 profileId 同口径；行内换配置连带清 model）。
 
@@ -37,6 +37,7 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 | 接力/提炼接力/外部恢复 | 会话连续性优先，**不进塔** |
 | resume（继续会话：侧栏点对话、工作台「最近对话」、对话页「继续」） | 恒用会话原 agent。连接：**这段对话上次用的（还在、没停用）> 所属项目的 chat 槽（agent 相同）> 项目给这家的默认 > 终端页回落**；模型 / 思考档同取上次的。所属项目按会话目录 = 项目根认（`sessionProjectResumeProfileId`），**各入口同一口径**（2026-10-24：原先只有侧栏带项目预填，工作台 / 对话页点同一段对话会落到别的连接）。改了项目绑定不改写已有对话上次的连接。步骤 / 任务卡「继续」接回时绑定连接作 autoLaunchProfileId 预填、绑定模型一并带上（agent 匹配才采纳；2026-10-23：只带连接时模型落到连接名单第一个，接回的对话被悄悄换模型） |
 | 定时任务（雷达/自定义巡检）执行 | **日程钉的连接 > 项目默认 > 设置页 AI 专用 / 最近使用**（见下「日程未钉连接」） |
+| 工作台「项目助手」（2026-11-04，无头一问一答，不开会话） | **assistant 槽 > 项目默认 > settings.ai_profiles[project-assistant] / AI 专用**（`projectAssistantLaunch`；项目默认那家不支持无头时退回 AI 专用，绑了槽的不偷换）。开工弹层、步骤解析塔、商量类都不读 assistant 槽 |
 | AI 无头功能（摘要/起名/提交/翻译/雷达解读 watch-explain…） | settings.ai_profiles[fn]，全局按功能，与项目塔无关 |
 
 派生钉死（TaskCardsSection）：`discussLaunch = discuss 槽 ?? projectLaunch`；`stepLaunch = step 槽 ?? discussLaunch`——引用同一基变量，B4 中间层自动生效。
@@ -49,7 +50,7 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 - **步骤名是槽键**：编辑器+write_project_config 双端查重（重名会让绑定/坏行归堆错乱）；改名/换模板绑定可能悬空 → Agents 页步骤组坏行（⚠ 前缀）可清；摘要行「N 步 · M 已专属 · K 失效」组头常显。
 - **日程例外**：pinned profile 失效 fail-loud 不换供应商（铁律只管连接层）；model 不在名单回落名单第一 + 运行历史 summary 前缀披露（无人值守不静默换档）。
 - **日程未钉连接＝跟随项目默认（2026-10-17 审查修复）**：旧口径未钉直接跳到 L0（设置页 AI 专用配置 → 最近用过的连接），跳过项目默认，Agents 页又只写「自动」——无人值守的雷达用哪家看你最近在别处点了什么。现按塔回落：L4 未钉 → **L2 项目默认**（`scheduler::pick_project_default`，与前端 `projectAgentLaunch` 同口径：默认 Agent 的绑定连接还在就用它、否则该 Agent 第一条；模型取名册点选的、不在名单取第一）→ 项目没设默认、或默认那家不能无头写盘（能力表）才回落 L0，回落原因写进运行历史 summary 前缀。界面下拉第一项改叫「跟随项目默认」，Agents 页未钉卡片写出实际会用的连接（`scheduleFallback`）。
-- **Agents 页**：名册两列定稿不动（步骤不进名册——同一事实只在专属绑定区表达一次）；专属绑定、定时任务、科研步骤都是两列卡片（标题在左、状态标签在右、连接和模型在下）。固定用途：项目对话；科研为「问 AI / 聊想法」，编程和工作只显示「问 AI」（没有聊想法）；沉浸阅读对话只在科研项目出现。未绑时卡片里写出实际会用的项目默认，下拉第一项是「项目默认」。标题旁可「全部跟随项目默认」，清掉 chat/discuss/reader 与 step: 槽，不动定时任务。没有定时任务则不出现这一组。科研步骤直接铺开，不设收起。按项目自己的工作来：科研有步骤才显示「科研步骤」；科研无流程显示「新建目标」；工作项目显示「工作目标」；编程项目显示「开工」（工作树用项目默认，不按树绑），专属绑定不出现沉浸阅读对话。新建目标不单开槽，默认用名册项目默认。有科研步骤时，已有目标仍单独成组，可改这一条的连接（task_set_launch；正在跑则拒绝）。编程项目列出工作树，一律显示项目默认，不能按树改。编程和工作项目即使存过 reader 槽，打开阅读区也不吃它。
+- **Agents 页**：名册两列定稿不动（步骤不进名册——同一事实只在专属绑定区表达一次）；专属绑定、定时任务、科研步骤都是两列卡片（标题在左、状态标签在右、连接和模型在下）。固定用途：项目对话；科研为「问 AI / 聊想法」，编程和工作只显示「问 AI」（没有聊想法）；沉浸阅读对话只在科研项目出现。未绑时卡片里写出实际会用的项目默认，下拉第一项是「项目默认」。专属绑定另有「项目助手」一张卡（三种工作方式都有）。标题旁可「全部跟随项目默认」，清掉 chat/discuss/assistant/reader 与 step: 槽，不动定时任务。没有定时任务则不出现这一组。科研步骤直接铺开，不设收起。按项目自己的工作来：科研有步骤才显示「科研步骤」；科研无流程显示「新建目标」；工作项目显示「工作目标」；编程项目显示「开工」（工作树用项目默认，不按树绑），专属绑定不出现沉浸阅读对话。新建目标不单开槽，默认用名册项目默认。有科研步骤时，已有目标仍单独成组，可改这一条的连接（task_set_launch；正在跑则拒绝）。编程项目列出工作树，一律显示项目默认，不能按树改。编程和工作项目即使存过 reader 槽，打开阅读区也不吃它。
 
 ## 测试钉住面
 

@@ -336,6 +336,21 @@ export function projectChatLaunch(
   );
 }
 
+/** 项目助手槽（2026-11-04）：只做无头问答、不启动 CLI 会话，开工弹层与步骤解析塔都不读它 */
+export const ASSISTANT_BINDING_SLOT = "assistant";
+
+/** 项目助手用谁答：assistant 槽专属绑定 > 项目默认（名册）；都没有返回 null（交给设置里「AI 功能」的连接） */
+export function projectAssistantLaunch(
+  profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
+  project: Parameters<typeof projectChatLaunch>[1],
+): { agentId: string; profileId: string; model: string; bound: boolean } | null {
+  if (!project) return null;
+  const bound = taskBindingLaunch(profiles, project.taskBindings?.[ASSISTANT_BINDING_SLOT]);
+  if (bound) return { ...bound, bound: true };
+  const fallback = projectAgentLaunch(profiles, project.defaultAgent, project.defaultProfiles, project.defaultModels);
+  return fallback ? { ...fallback, bound: false } : null;
+}
+
 /**
  * 问 AI / ＋新对话 / 聊想法的 preferred 三件套（B4）：discuss 槽绑定命中即用它
  * （agent 跟随绑定连接），否则原样回落项目默认（projectAgentPrefs）。签名带

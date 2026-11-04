@@ -9,6 +9,7 @@ import { applyStepParams } from "../task-packs";
 import { eventRuleLabel, frequencyLabel, nextRunLabel, scheduleStatusMark, summaryPreview } from "../schedule-tasks";
 import { codingDivergenceLabel } from "../work-mode";
 import { criterionText, readableBrief } from "../acceptance-text";
+import { runFailureReason } from "../run-failure";
 import type { CardTask, ProjectCard } from "../workbench-cards";
 import type { CodingWorktreeDto, ProjectStepDto, RunDto, ScheduleDto, TaskDto } from "../types";
 
@@ -105,6 +106,8 @@ export default function WorkbenchTaskPanel({
   agentLabel,
   live,
   actions,
+  onAskWhy = null,
+  mailDraft = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -121,6 +124,10 @@ export default function WorkbenchTaskPanel({
   /** 在跑那一行的实时信息（第三批：此刻在做什么 / 跑了多久 / 花费）；没有就不画 */
   live: ReactNode;
   actions: readonly TaskPanelAction[];
+  /** 出错的那次运行旁「问问为什么」：带着这次运行打开项目助手（只有登记过的项目有） */
+  onAskWhy?: ((run: RunDto) => void) | null;
+  /** 项目助手带来的留话草稿（填进「给它留话」框） */
+  mailDraft?: string | null;
 }) {
   return (
     <SettingsDrawerShell
@@ -156,7 +163,7 @@ export default function WorkbenchTaskPanel({
           </div>
           {live}
           {/* 开着的工作：改了哪些文件、给它留话（2026-11-03 协调对话并进工作台）；定时任务的无头运行不收留话 */}
-          {task.live?.runId && card && task.ref.kind !== "schedule" && <TaskPanelPeek runId={task.live.runId} projectPath={card.path} />}
+          {task.live?.runId && card && task.ref.kind !== "schedule" && <TaskPanelPeek runId={task.live.runId} projectPath={card.path} draft={mailDraft} />}
 
           {goal && (
             <Section title="目标">
@@ -303,8 +310,21 @@ export default function WorkbenchTaskPanel({
                     <span className="w-16 shrink-0 text-micro text-l3" title={absTime(run.createdAt)}>
                       {relTime(run.createdAt)}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-l2">
-                      {agentLabel(run.agent) ?? run.agent} · {RUN_STATUS_LABEL[run.status] ?? run.status}
+                    <span className="min-w-0 flex-1 text-l2">
+                      <span className="block truncate">
+                        {agentLabel(run.agent) ?? run.agent} · {RUN_STATUS_LABEL[run.status] ?? run.status}
+                      </span>
+                      {/* 出错写清原因（2026-11-04）：退出码白话 + 关闭原因，原来只有「出错退出」四个字 */}
+                      {run.status === "failed" && (
+                        <span className="block break-words text-xs text-err-text">
+                          {runFailureReason(run)}
+                          {onAskWhy && (
+                            <button type="button" className="ml-2 text-l3 underline hover:text-l1" onClick={() => onAskWhy(run)}>
+                              问问为什么
+                            </button>
+                          )}
+                        </span>
+                      )}
                     </span>
                   </li>
                 ))}

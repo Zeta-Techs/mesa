@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { installMesaErrorCapture } from "./mesa-error-capture";
 import { IS_MAC, IS_WINDOWS } from "./hotkeys";
 import {
   isBrowserShortcut,
@@ -58,6 +59,9 @@ if (IS_WINDOWS) {
     })
     .catch(() => {});
 }
+
+// Mesa 出错记录：失败的后台调用按项目留底，项目助手据此判断是不是 Mesa 的问题
+installMesaErrorCapture();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

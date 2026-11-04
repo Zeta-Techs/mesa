@@ -321,8 +321,10 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 不等的用项目默认 Agent 依次 prepareGoalRun 开工（等终端页收下一个再交下一个），写了「等」的只记下；只在无流程科研 / 工作项目可开
   components/ProjectMailRow.tsx # 工作台项目分组下「留话 N 条」（Agent 之间的与你在任务面板留的）：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；7 天内没有就不画
   components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 实际导航落点 / 外开）+ 缩进任务行（按容器宽度调整名称 / 状态 / 时间，点开任务面板，花费在详情），项目支持收起 + 组末插槽
+                             # 2026-11-04：项目头「项目助手」按钮、头下卡点一行（project-blockers.ts，组内读 mesa_errors_read）
   components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时具名时间项（同分钟聚合展开）+ 一行一个任务（时间 / 名称与项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只导航回队列
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
+  components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置）：问答记录、三个常用问题、输入框；带问题打开按 nonce 只问一次；回答经 parseAssistantAnswer 画按钮，点了交页面 runAssistantAction
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions / backdropClassName 可传，工作台任务与审批详情复用，独立设定 400px 宽度与标题栏下沿定位）
@@ -562,6 +564,17 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）
   split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
+  project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：ASSISTANT_RULES（只解释不动手、先分清课题 / 环境 / Mesa 谁的问题）、
+                             # buildAssistantPrompt（规矩 + 快照 + 最近 6 轮 + 问题）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
+  project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
+  project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
+                             # askProjectAssistant → project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+  project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
+  run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
+  mesa-errors.ts             # Mesa 出错记录纯逻辑：shouldRecordFailure（终端收发 / 插件 / 取消不记）、attributeProject（参数里的路径落在项目根或其工作副本）、mesaErrorLine（tests/mesa-errors.test.ts）
+  mesa-error-capture.ts      # Mesa 出错记录的安装（main.tsx 启动时一次）：tauri-core-shim 的失败钩子按项目记 mesa_error_record，3 秒内的红色提示补到同一条；归不到项目的不记
+  tauri-core-shim.ts         # `@tauri-apps/api/core` 的薄包装（vite.config.ts 精确别名指到这里）：invoke 失败先通知出错记录再原样抛出，其余导出原样转出；rawInvoke 不经钩子。
+                             # Tauri 注入的 __TAURI_INTERNALS__.invoke 不可改写，只能在导入层包；node / esbuild 测试不走别名
   project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
   pack-add.ts                # 我的任务加进项目的唯一出处 addPackToProject（编辑器 / 模板库 / 新项目选择层 / 草稿试跑共用）：packStepsForProject
                              # （与 task_packs.rs steps_for_project 同口径）+ adaptPack（按项目研究工具设置 withResearchTools，项目设定套工具行）（tests/pack-add.test.ts）
@@ -1012,7 +1025,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
   spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、
                              #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
-  stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；
+  stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；最近一次运行出错且没人在干活写「出错了」、原因放 title；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单（镜像 agent_specs.rs TIER1_AGENTS，测试逐字比对）、modelFamily / producerFamilies（按模型族判「另一家」）、reviewerOptions（连接 × 模型全部可选项，标同模型族与维护级）、pickCrossReviewer（默认挑哪一个）、复核标签键与首条指令（tests/cross-review.test.ts）
   research-profile.ts        # 研究档案纯逻辑（有效条目按分类分组、文献总表筛选，tests/research-profile.test.ts）
@@ -1767,6 +1780,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
+  project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），
+                             # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
+                             # assistant_review_notes 只读工作副本 .ccode/review-notes.md（16KB、脱敏）。没有改项目文件、派活、传话的口子
   project_mail.rs            # 项目内传话（2026-11-03 二期）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run
                              # 的发件箱（from 须是工作目录在此的 Run、to 须同项目、7 天内），送达 / 撤回记配置目录 mail-state.json；mail_list / mail_take（取走并记已送）/
                              # mail_requeue / mail_withdraw / mail_send（人在任务面板留话，记 mail-state.json from_you，from = you）；delivery_text 是送进对话的那段话（你的在前）

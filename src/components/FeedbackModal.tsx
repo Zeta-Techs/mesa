@@ -204,6 +204,7 @@ export default function FeedbackModal({
   const [errorLog, setErrorLog] = useState<string | null | undefined>(undefined);
   // 「和终端对不上」的两边对照（后端已脱敏）：单独勾选、单独预览，与「附环境」不同进退
   const [chatSnapshot, setChatSnapshot] = useState<string | null>(null);
+  const [snapshotText, setSnapshotText] = useState<{ label?: string; hint?: string }>({});
   // 本机使用计数：默认不带，用户勾选才随反馈发出（2026-11-02 拍板）
   const [usageStats, setUsageStats] = useState<string | null>(null);
   const [includeStats, setIncludeStats] = useState(false);
@@ -306,6 +307,7 @@ export default function FeedbackModal({
     setTitle(mismatch.title);
     setDetail(mismatch.detail);
     setChatSnapshot(mismatch.snapshot);
+    setSnapshotText({ label: mismatch.attachLabel, hint: mismatch.attachHint });
     setIncludeSnapshot(true);
     setSnapshotPreviewOpen(false);
   }, [open, mismatch]);
@@ -401,6 +403,7 @@ export default function FeedbackModal({
     setDiagPath(null);
     setHandoff(null);
     setChatSnapshot(null);
+    setSnapshotText({});
   };
 
   /** 端点通道：后台直发（截图随 JSON 直传，诊断包由后端按路径读）。
@@ -1052,7 +1055,7 @@ export default function FeedbackModal({
                 <Checkbox
                   checked={includeSnapshot}
                   onChange={setIncludeSnapshot}
-                  label={<span className="text-xs text-l2">附上聊天里显示的和终端里的内容（已去掉密钥）</span>}
+                  label={<span className="text-xs text-l2">{snapshotText.label ?? "附上聊天里显示的和终端里的内容（已去掉密钥）"}</span>}
                 />
                 <button
                   type="button"
@@ -1069,7 +1072,7 @@ export default function FeedbackModal({
                 </pre>
               )}
               <p className="mt-1 text-micro leading-4 text-l4">
-                两边对照着看，最容易找到聊天哪里认错了。里面可能有你的文件名和对话内容，不想发就取消勾选。
+                {snapshotText.hint ?? "两边对照着看，最容易找到聊天哪里认错了。里面可能有你的文件名和对话内容，不想发就取消勾选。"}
               </p>
             </div>
           )}

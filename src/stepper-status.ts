@@ -17,12 +17,24 @@ export interface StepperStatusText {
   text: string;
   /** 文字色类：与大圆状态色同族（不引入新颜色） */
   tone: string;
+  /** 悬停看的一句（出错了写原因） */
+  title?: string;
 }
 
 export function stepperStatusText(
   key: StepperStatusKey,
-  opts: { archived?: boolean; attention?: StepperAttention } = {},
+  opts: { archived?: boolean; attention?: StepperAttention; failure?: string | null } = {},
 ): StepperStatusText | null {
+  // 出错了（2026-11-04 项目助手一期）：这一步最近一次运行出错收场、此刻又没有 AI 在干活 / 等确认时写出来，
+  // 原因放悬停（run-failure.ts）。已完成、待评审、有冲突各有更要紧的下一步，不盖掉
+  if (
+    opts.failure &&
+    key === "active" &&
+    opts.attention !== "working" &&
+    opts.attention !== "confirm"
+  ) {
+    return { text: "出错了", tone: "text-err-text", title: `最近一次运行出错：${opts.failure}` };
+  }
   switch (key) {
     case "pending":
       return opts.archived ? { text: "已归档", tone: "text-l4" } : null;
