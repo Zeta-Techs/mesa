@@ -934,7 +934,13 @@ pub(crate) fn check_pack(pack: &TaskPackDto, lib_skills: &[String]) -> Vec<PackI
         if asks && step.decisions.is_empty() && !brief.contains("help-wanted") {
             out.push(issue("warn", sn, "简报说要问人，但没写决策项；开工前就能问的写成决策项，干到一半才知道的写明写进 .ccode/help-wanted.md"));
         }
+        // skills 与 required_skills 常写同一个：一步里同一技能只提醒一次
+        let mut named: Vec<&String> = Vec::new();
         for skill in step.skills.iter().chain(step.required_skills.iter()) {
+            if named.contains(&skill) {
+                continue;
+            }
+            named.push(skill);
             if !lib_skills.iter().any(|s| s == skill) && !pack.skills.iter().any(|s| s == skill) {
                 out.push(issue("warn", sn, format!("技能「{skill}」本机没有，也没随包带上")));
             }
@@ -2113,6 +2119,12 @@ mod tests {
         assert!(!issues.iter().any(|i| i.message.contains("mcp")), "mcp 在 [pack] 字段闭集里：{issues:?}");
         let leaky = TaskPackDto { mcp: vec!["github：token sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()], ..pack };
         assert!(check_pack(&leaky, &[]).iter().any(|i| i.level == "block" && i.message.contains("MCP")));
+        // 一步里 skills 与 required_skills 写了同一个技能，只提醒一次（2026-11-04 真实项目往返干跑发现）
+        let mut st = step("检索", "按 lit-search 做");
+        st.skills = vec!["lit-search".into()];
+        st.required_skills = vec!["lit-search".into()];
+        let twice = TaskPackDto { steps: vec![st], mcp: Vec::new(), ..leaky };
+        assert_eq!(check_pack(&twice, &[]).iter().filter(|i| i.message.contains("lit-search")).count(), 1);
         fs::remove_dir_all(&dir).ok();
     }
 }
