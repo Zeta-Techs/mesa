@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -2632,7 +2633,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         )}
         </ProjectSurfaceTabs>
       ) : null}
-      {(addProjectPath || creatingProject) && (
+      {/* 挂到 body：从别的页就地弹出，不切到项目页（见 project-add.ts） */}
+      {(addProjectPath || creatingProject) && createPortal(
         <AddProjectModal
           path={addProjectPath}
           onClose={() => {
@@ -2671,6 +2673,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               );
               return;
             }
+            useAppStore.getState().setPage("workspaces");
             setFreshProjectPath(project.path);
             setJustScanned(scan);
             // 先落进列表再选中：分组表由 projects 派生，反了会被空表 effect
@@ -2704,7 +2707,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             }
             void refresh();
           }}
-        />
+        />,
+        document.body,
       )}
       {templatePick && (
         <TemplatePickModal

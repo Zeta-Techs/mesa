@@ -2655,9 +2655,7 @@ function ProjectSwitchPanel({
             type="button"
             onClick={() => {
               onClose();
-              const s = useAppStore.getState();
-              s.setPage("workspaces");
-              s.setAddProjectOpenReq(Date.now());
+              useAppStore.getState().setAddProjectOpenReq(Date.now());
             }}
             title="添加项目"
             aria-label="添加项目"

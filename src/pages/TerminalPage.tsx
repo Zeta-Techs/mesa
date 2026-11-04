@@ -1901,7 +1901,6 @@ const TerminalView = memo(function TerminalView({
     }
   }
   function openNewProject() {
-    setPage("workspaces");
     useAppStore.getState().setNewProjectOpenReq({ token: Date.now(), returnTabId: tabId });
   }
   // 开聊前的思考档（2026-10-17 用户选定）：与开工弹层同一判定——只有该 Agent + 连接 + 模型
