@@ -433,6 +433,11 @@ fn run_tell(args: &[String], me: &RunDto, workers: &[Worker]) -> Result<String, 
         match a.as_str() {
             "--to" => to = Some(it.next().ok_or("--to 后面要写对方名字")?.clone()),
             "--file" => file = Some(it.next().ok_or("--file 后面要写路径")?.clone()),
+            // Agent 常顺手写 --message / -m（2026-11-04 Claude Code 实跑：原先把「--message」当正文一起送了出去）
+            "--message" | "-m" | "--text" => words.push(it.next().ok_or("--message 后面要写要说的话")?.clone()),
+            other if other.starts_with('-') && other.len() > 1 && words.is_empty() => {
+                return Err(format!("不认识的参数：{other}。用法：tell --to 对方名字 \"要说的话\"（或 --file 文件）"));
+            }
             _ => words.push(a.clone()),
         }
     }
@@ -740,5 +745,24 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert!(changed_files(&dir.join("nope"), &root).unwrap_err().contains("不在了"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tell_takes_message_flag_and_rejects_unknown_flags() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("mesa-tell-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("a")).unwrap();
+        let me = run("me", "scratch", &dir.join("a").to_string_lossy(), "2026-11-04T10:00:00Z", None);
+        let peer = run("peer", "scratch", &dir.join("b").to_string_lossy(), "2026-11-04T10:00:00Z", None);
+        let root = dir.clone();
+        let workers = vec![worker(me.clone(), &root, true), worker(peer, &root, false)];
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        run_tell(&args(&["--to", "peer", "--message", "测试留话"]), &me, &workers).unwrap();
+        let out = fs::read_to_string(dir.join("a").join(crate::project_mail::OUTBOX_REL)).unwrap();
+        assert!(out.contains("\"text\":\"测试留话\""), "{out}");
+        assert!(run_tell(&args(&["--to", "peer", "--urgent", "x"]), &me, &workers).unwrap_err().contains("不认识的参数"));
+        // 正文里出现的 - 开头的词照常算正文
+        run_tell(&args(&["--to", "peer", "改成", "-1"]), &me, &workers).unwrap();
+        fs::remove_dir_all(&dir).ok();
     }
 }
