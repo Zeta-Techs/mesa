@@ -5,6 +5,7 @@ import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { secondaryActionClass } from "./PageFrame";
 import ChatMarkdown from "./ChatMarkdown";
 import MesaBuddy from "./MesaBuddy";
+import { MesaStatusLead } from "./MesaMark";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
 import { buddyDayPart, buddyMood } from "../buddy-time";
@@ -59,7 +60,7 @@ function QuestionBubble({ text, at }: { text: string; at?: string }) {
  * 项目助手（2026-11-04，docs/design-project-assistant.md）：工作台右侧抽屉，与任务面板同一位置。
  * 形象是卡通小工作台「小桌」（MesaBuddy.tsx；同日用户几轮拍板：要生动的卡通形象、深色同浅色一套、按时间换样子）：
  * 没问过时正文是大图小桌（按时段打招呼 / 端咖啡 / 亮台灯 / 盘腿睡觉）+ 三个常用问题细线列表，顶栏只有名字；
- * 问过以后小桌只在顶栏一个，跟着状态变：问着托腮想、刚答完举手、没问成皱眉；回答前只一道琥珀短线 + 名字，
+ * 问过以后小桌只在顶栏一个，跟着状态变：问着托腮想、刚答完举手、没问成皱眉；回答前只一道琥珀短线 + 名字，等待那一行用聊天层的 M▁ 状态头，
  * 多段回答的第一句结论加粗带琥珀竖线，按钮在下。
  * 输入框钉在底部，连接与「清空记录」在输入框下一行小字。
  * 不开终端、不派活：每问一次，取一次项目快照、无头调用一次；回答里的按钮交给页面跳到原有入口。
@@ -391,11 +392,14 @@ export default function ProjectAssistantPanel({
           {busy && (
             <article className="flex flex-col gap-3">
               {pending && <QuestionBubble text={pending} />}
-              <div className="flex items-center gap-2 text-sm text-l3">
-                {/* 顶栏的小桌在托腮想；这里只一道呼吸的琥珀光标 + 在翻什么 */}
-                <span className="mesa-buddy-cursor h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
-                <span>{inspecting ? INSPECT_WAITING : INTENT_WAITING[intent]}</span>
-                {waited >= 3 && <span className="text-xs tabular-nums text-l4">{waited} 秒</span>}
+              <div className="flex min-w-0 items-center gap-2 text-sm text-l3">
+                {/* 与聊天层生成中那一行同一个 M▁ 状态头（MesaStatusLead：光标呼吸 + 光带扫过），2026-11-04 用户：「用 Mesa 的聊天层图标显示」 */}
+                <MesaStatusLead text={inspecting ? INSPECT_WAITING : INTENT_WAITING[intent]} motion="breathe" sweep />
+                {waited >= 3 && (
+                  <span className="shrink-0 text-xs tabular-nums text-l4" aria-hidden="true">
+                    {waited} 秒
+                  </span>
+                )}
               </div>
             </article>
           )}
