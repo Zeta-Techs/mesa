@@ -160,55 +160,56 @@ export default function GatewayAutoConfig({
               const pick = pickOf(r);
               const dup = r.skip ? null : dupOf(r);
               const on = !r.skip && !dup && !excluded.has(r.agent);
-              // 多厂商行的其余各家旗舰另写「另 N 家旗舰」，这里只列同家的
-              const light = pick ? rowModels(r, pick).filter((m) => m !== pick && !(r.multi && r.options.includes(m))) : [];
+              // 名单第二行写全、可换行（2026-11-04 用户：截断后看不到各家放了哪些模型）：默认模型在下拉里，这里列同时放进去的
+              const others = pick ? rowModels(r, pick).filter((m) => m !== pick) : [];
+              const listLine = dup
+                ? `已有一样的连接「${dup}」`
+                : !pick
+                  ? `先选默认模型；会同时放这几家旗舰：${r.options.join("、")}`
+                  : others.length
+                    ? `同时放：${others.join("、")}`
+                    : "只放这一个模型";
               return (
-                <div key={r.agent} className="flex min-h-8 items-center gap-2 rounded-md px-2 py-1">
-                  <Checkbox
-                    checked={on}
-                    disabled={Boolean(r.skip || dup)}
-                    onChange={(v) =>
-                      setExcluded((s) => {
-                        const n = new Set(s);
-                        if (v) n.delete(r.agent);
-                        else n.add(r.agent);
-                        return n;
-                      })
-                    }
-                    label={<span className="inline-block w-24 truncate text-xs text-l2">{agentLabel(r.agent)}</span>}
-                  />
-                  {r.skip ? (
-                    <span className="min-w-0 flex-1 truncate text-xs text-l3">{r.skip}</span>
-                  ) : (
-                    <>
-                      <div className="w-64 min-w-0 shrink">
-                        <MenuSelect
-                          aria-label={`${agentLabel(r.agent)} 默认模型`}
-                          value={pick ?? ""}
-                          placeholder={r.multi ? "选默认模型" : undefined}
-                          onChange={(v) => setChosen((c) => ({ ...c, [r.agent]: v }))}
-                          options={r.options.map((m) => ({
-                            value: m,
-                            label: r.multi ? `${m}（${VENDOR_LABEL[r.vendorOf[m]]}）` : m,
-                            short: m,
-                          }))}
-                        />
-                      </div>
-                      <span
-                        className="min-w-0 flex-1 truncate font-mono text-micro text-l3"
-                        title={pick ? `名单：${rowModels(r, pick).join("、")}` : undefined}
-                      >
-                        {dup
-                          ? `已有一样的连接「${dup}」`
-                          : [
-                              r.multi && pick ? `另 ${r.options.length - 1} 家旗舰` : null,
-                              light.length ? `+ ${light.join("、")}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                      </span>
-                      <span className="shrink-0 text-micro text-l3">{r.slot ? SLOT_LABEL[r.slot] : ""}</span>
-                    </>
+                <div key={r.agent} className="rounded-md px-2 py-1">
+                  <div className="flex min-h-8 items-center gap-2">
+                    <Checkbox
+                      checked={on}
+                      disabled={Boolean(r.skip || dup)}
+                      onChange={(v) =>
+                        setExcluded((s) => {
+                          const n = new Set(s);
+                          if (v) n.delete(r.agent);
+                          else n.add(r.agent);
+                          return n;
+                        })
+                      }
+                      label={<span className="inline-block w-24 truncate text-xs text-l2">{agentLabel(r.agent)}</span>}
+                    />
+                    {r.skip ? (
+                      <span className="min-w-0 flex-1 truncate text-xs text-l3">{r.skip}</span>
+                    ) : (
+                      <>
+                        <div className="w-64 min-w-0 shrink">
+                          <MenuSelect
+                            aria-label={`${agentLabel(r.agent)} 默认模型`}
+                            value={pick ?? ""}
+                            placeholder={r.multi ? "选默认模型" : undefined}
+                            onChange={(v) => setChosen((c) => ({ ...c, [r.agent]: v }))}
+                            options={r.options.map((m) => ({
+                              value: m,
+                              label: r.multi ? `${m}（${VENDOR_LABEL[r.vendorOf[m]]}）` : m,
+                              short: m,
+                            }))}
+                          />
+                        </div>
+                        <span className="min-w-0 flex-1" />
+                        <span className="shrink-0 text-micro text-l3">{r.slot ? SLOT_LABEL[r.slot] : ""}</span>
+                      </>
+                    )}
+                  </div>
+                  {!r.skip && (
+                    // 与下拉左缘对齐：复选框列 + 名称列 w-24 + 间距
+                    <p className="mt-0.5 break-words pl-[7.875rem] font-mono text-micro text-l3">{listLine}</p>
                   )}
                 </div>
               );
