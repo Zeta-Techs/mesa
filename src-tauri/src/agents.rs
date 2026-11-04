@@ -2185,7 +2185,7 @@ const OPENCODE_V2_COMPATIBLE_SETTINGS: [&str; 13] = [
 /// 只多两处：思考模型写 `capabilities.reasoning`（2.x 读 1.x 写法会丢掉 `reasoning: true`，档位就选不了），
 /// 没声明视觉的模型写明只收文本（2.x 缺省收图，1.x 缺省纯文本；中转的纯文本模型收到图会报错）。
 /// 同名的原生条目整块替换 1.x 条目，所以不能只补一个字段
-fn opencode_provider_v2(v1: &serde_json::Value, effort: Option<&str>) -> serde_json::Value {
+pub(crate) fn opencode_provider_v2(v1: &serde_json::Value, effort: Option<&str>) -> serde_json::Value {
     use serde_json::{json, Map, Value};
     let npm = v1.get("npm").and_then(Value::as_str);
     let mut out = Map::new();
@@ -2228,9 +2228,14 @@ fn opencode_provider_v2(v1: &serde_json::Value, effort: Option<&str>) -> serde_j
             caps.insert("output".into(), output.clone());
         }
         if m.get("reasoning") == Some(&json!(true)) {
+            // 2.x 不声明时按包给默认档（openai-compatible 是 low / medium / high，2.2.5 /api/model 实测），
+            // 声明了就只有这几档：连接选的、这个模型自己设的档（全局写入逐模型写 options.reasoningEffort）都补进去
+            let own = m.pointer("/options/reasoningEffort").and_then(Value::as_str);
             let mut efforts: Vec<&str> = OPENCODE_V2_EFFORTS.to_vec();
-            if let Some(e) = effort.filter(|e| !e.is_empty() && *e != "none" && !efforts.contains(e)) {
-                efforts.push(e);
+            for e in [effort, own].into_iter().flatten() {
+                if !e.is_empty() && e != "none" && !efforts.contains(&e) {
+                    efforts.push(e);
+                }
             }
             caps.insert("reasoning".into(), json!({ "supported": true, "effort": efforts }));
         }
