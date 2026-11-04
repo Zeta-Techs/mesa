@@ -12,6 +12,8 @@ export const CHANGES_SHOWN = 8;
 export function changeLine(f: Pick<ChangedFileDto, "added" | "removed" | "newFile">): string {
   if (f.newFile) return "新文件";
   if (f.added === "-") return "二进制";
+  // 不是 Git 的工作副本（非 Git 项目的目标）：知道改过，没有行数（peek.rs NO_LINES）
+  if (f.added === "~") return "改过";
   return `+${f.added} −${f.removed}`;
 }
 

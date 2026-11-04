@@ -1813,7 +1813,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 经 runs::peek_context / peek_events 只读打开 app.db；同伴 = 同项目、非内部、非登录、开着或 3 天内结束、最多 12 个；
                              # 改动对项目根当前分支的分叉点（项目根自己对 HEAD），.ccode/ 不算，没 --file 时只给改得少的文本片段（≤150 行改动、120 行上限）；
                              # 事件不含 run.output（终端原始字节）；输出整段 redact_sensitive_text。注入 MESA_PEEK_TOOL / MESA_RUN_ID 在 pty.rs；
-                             # peek_changes 命令给工作台任务面板（同一 changed_files 口径）
+                             # peek_changes 命令给工作台任务面板（同一 changed_files 口径）；2026-11-04 changed_files_of：不是 Git 的隔离副本（非 Git 项目的目标）
+                             #   走 runs::live_copy_changes（与评审页没冻结时现算同口径、只读），改过的记 NO_LINES「~」不给行数；无头 / 定时运行的注入在 ai::run_agent_task
   help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）

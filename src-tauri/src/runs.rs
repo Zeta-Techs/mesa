@@ -755,6 +755,20 @@ fn collect_output_changes(
     push_file_change(source, target, source_root, changes)
 }
 
+/// 不是 Git 的隔离副本里此刻改了哪些文件（看一眼用，2026-11-04）：与评审页「没冻结时现算」同口径——按目标的产出范围拿副本对项目根比。
+/// 只读：只读打开 app.db、只读遍历；项目根在开工后又变过的，会把那部分也算进来（看一眼只求大概，验收以评审页冻结的为准）
+pub(crate) fn live_copy_changes(run: &RunDto) -> Result<Vec<TaskOutputChangeDto>, String> {
+    let conn = readonly_db()?;
+    let task = task_by_id(&conn, &run.task_id)?;
+    let root = run
+        .project_root
+        .clone()
+        .or(task.project_root.clone())
+        .ok_or("这段工作不属于任何项目")?;
+    let paths = if task.output_paths.is_empty() { vec![".".to_string()] } else { task.output_paths.clone() };
+    list_output_changes(Path::new(&run.isolation_path), Path::new(&root), &paths)
+}
+
 fn list_output_changes(
     run_root: &Path,
     project_root: &Path,

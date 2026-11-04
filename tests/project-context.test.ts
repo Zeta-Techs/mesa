@@ -483,3 +483,15 @@ test("第一句里的项目说明和人说的话分开：气泡与取回只认�
     said: "第一段\n\n----\n\n第二段",
   });
 });
+
+test("自定义模板：同项目还有别的工作开着时同样带「看一眼」那一句，没有就不带", () => {
+  const withPeers = { ...FULL_SESSION_INPUT, peers: 2 };
+  assert.match(renderSessionInjection("{{项目名}}", withPeers), /MESA_PEEK_TOOL/);
+  assert.equal(renderSessionInjection(DEFAULT_SESSION_TEMPLATE, withPeers), renderProjectContextPack(withPeers));
+  assert.doesNotMatch(renderSessionInjection("{{项目名}}", FULL_SESSION_INPUT), /MESA_PEEK_TOOL/);
+});
+
+test("看一眼改动：不是 Git 的副本只知道改过", async () => {
+  const { changeLine } = await import("../src/peek.ts");
+  assert.equal(changeLine({ added: "~", removed: "~", newFile: false }), "改过");
+});

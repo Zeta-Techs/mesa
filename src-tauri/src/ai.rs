@@ -1180,6 +1180,14 @@ pub(crate) fn run_agent_task(
         )?
     };
     crate::runs::claim_start(&run.id)?;
+    // 看一眼（2026-11-04 补）：属于某个项目的无头运行（定时任务）也带上 helper 与这次的 Run，能只读看同项目在做什么、给别的工作留话；
+    // 与 PTY 同一对变量（pty.rs），helper 按 Run 找项目、把自己排除在同伴外
+    if project_root.is_some() {
+        if let Some(tool) = crate::image_gen::helper_exe() {
+            cmd.env(crate::peek::TOOL_ENV, &tool);
+            cmd.env(crate::peek::RUN_ENV, &run.id);
+        }
+    }
     // 锁定了会话 id 的：跑的期间登记，卡住检测据此看会话文件有没有在长（跑完即撤）
     let _session_reg = lock_id
         .as_ref()

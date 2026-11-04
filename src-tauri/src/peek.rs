@@ -319,13 +319,40 @@ pub(crate) fn changed_files(dir: &Path, root: &Path) -> Result<(Vec<(String, Str
     Ok((files, untracked))
 }
 
+/// 不是 Git 的副本没有行数：改过的文件加减两栏记成这个
+pub(crate) const NO_LINES: &str = "~";
+
+/// 一段工作改了哪些文件：Git 工作树按 numstat；不是 Git 的隔离副本（非 Git 项目的目标）按评审页同口径现算，改过的不给行数
+pub(crate) fn changed_files_of(run: &RunDto, root: &Path) -> Result<(Vec<(String, String, String)>, Vec<String>), String> {
+    let dir = Path::new(&run.isolation_path);
+    if !dir.is_dir() || is_git_tree(dir) || crate::paths::same_path(&run.isolation_path, &root.to_string_lossy()) {
+        return changed_files(dir, root);
+    }
+    let changes = crate::runs::live_copy_changes(run).map_err(|e| format!("不在 Git 工作树里，现算改动也没成（{e}）；去评审页看"))?;
+    let mut files = Vec::new();
+    let mut added = Vec::new();
+    for c in changes.into_iter().filter(|c| ours(&c.path)) {
+        match c.kind.as_str() {
+            "added" => added.push(c.path),
+            _ => files.push((c.path, NO_LINES.to_string(), NO_LINES.to_string())),
+        }
+    }
+    Ok((files, added))
+}
+
 fn render_file_list(files: &[(String, String, String)], untracked: &[String]) -> String {
     if files.is_empty() && untracked.is_empty() {
         return "   没有改动\n".into();
     }
     let mut out = String::new();
     for (p, a, d) in files {
-        let n = if a == "-" { "二进制".to_string() } else { format!("+{a} -{d}") };
+        let n = if a == "-" {
+            "二进制".to_string()
+        } else if a == NO_LINES {
+            "改过（不是 Git 工作副本，没有行数）".to_string()
+        } else {
+            format!("+{a} -{d}")
+        };
         out.push_str(&format!("   {p}  {n}\n"));
     }
     for p in untracked {
@@ -489,10 +516,13 @@ fn run_cli(args: &[String]) -> Result<String, String> {
                 Some(k) => {
                     let w = select(&workers, k)?;
                     let dir = PathBuf::from(&w.run.isolation_path);
-                    let (files, untracked) = changed_files(&dir, &root)?;
+                    let (files, untracked) = changed_files_of(&w.run, &root)?;
                     let mut out = format!("{} 的改动（工作副本 {}）：\n", w.label, w.place);
                     out.push_str(&render_file_list(&files, &untracked));
                     match a.file.as_deref() {
+                        Some(f) if !is_git_tree(&dir) => {
+                            out.push_str(&format!("\n不是 Git 工作副本，给不了改动片段；要看就直接读 {}\n", dir.join(f).display()));
+                        }
                         Some(f) => {
                             out.push_str(&format!("\n{f} 的改动片段：\n"));
                             out.push_str(&diff_hunks(&dir, &root, &[f.to_string()], MAX_DIFF_LINES));
@@ -514,7 +544,7 @@ fn run_cli(args: &[String]) -> Result<String, String> {
                     let mut out = String::new();
                     for w in workers.iter().filter(|w| !w.is_me) {
                         out.push_str(&format!("{}（{}，工作副本 {}）：\n", w.label, short_id(&w.run.id), w.place));
-                        match changed_files(Path::new(&w.run.isolation_path), &root) {
+                        match changed_files_of(&w.run, &root) {
                             Ok((files, untracked)) => out.push_str(&render_file_list(&files, &untracked)),
                             Err(e) => out.push_str(&format!("   {e}\n")),
                         }
@@ -554,7 +584,7 @@ pub async fn peek_changes(run_id: String) -> Result<Vec<ChangedFileDto>, String>
     tauri::async_runtime::spawn_blocking(move || {
         let run = crate::runs::run_get_sync(run_id)?.ok_or("找不到这段工作的记录")?;
         let root = PathBuf::from(run.project_root.clone().unwrap_or_else(|| run.isolation_path.clone()));
-        let (files, untracked) = changed_files(Path::new(&run.isolation_path), &root)?;
+        let (files, untracked) = changed_files_of(&run, &root)?;
         Ok(changes_dto(files, untracked))
     })
     .await

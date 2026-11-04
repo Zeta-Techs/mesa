@@ -511,7 +511,8 @@ export function sessionTemplateValues(input: ProjectContextInput): Record<string
   };
 }
 
-/** 自定义模板同样在末尾带上 Windows 本机提示：这是平台必需的环境事实，不是可选段。 */
+/** 自定义模板同样在末尾带上同项目还有别的工作开着时的「看一眼」一句（2026-11-04 补）与 Windows 本机提示：
+ *  都是这次开对话时的环境事实，不是可选段。 */
 export function renderSessionInjection(
   template: string,
   input: ProjectContextInput,
@@ -529,8 +530,8 @@ export function renderSessionInjection(
     })
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const python = packSections(input).python;
-  return python ? (body ? `${body}\n\n${python}` : python) : body;
+  const { peers, python } = packSections(input);
+  return [body, peers, python].filter(Boolean).join("\n\n");
 }
 
 /** 上下文包与用户第一句话之间的分隔（工作台「上次停在」据此只取人话，改这里两边一起变） */

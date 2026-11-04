@@ -2400,6 +2400,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         if let Some(note) = codex_win_unelevated_note(&profile.agent, root) {
             task_prompt.push_str(&note);
         }
+        task_prompt.push_str(PEEK_NOTE);
         crate::ai::run_agent_task(
             &profile,
             model.as_deref(),
@@ -2975,6 +2976,9 @@ fn week_sessions(task: &Schedule, now: chrono::DateTime<chrono::FixedOffset>) ->
         .filter_map(|r| Some((r.agent.clone()?, r.session_id.clone()?)))
         .collect()
 }
+
+/// 定时运行里看一眼的一句（2026-11-04）：ai::run_agent_task 给属于项目的无头运行注入了 MESA_PEEK_TOOL / MESA_RUN_ID
+const PEEK_NOTE: &str = "\n\n【同项目的其他工作】想知道同项目里别的工作在做什么、改了哪些文件，可只读看一眼：\"$MESA_PEEK_TOOL\" peek agents / peek changes（Windows：& $env:MESA_PEEK_TOOL peek agents）。不必等它们，按本任务说明做。\n";
 
 /// 到了每周花费上限：攒着的这批记一行「到了上限、只记录」，不叫 AI（下周花费降下来自动恢复直接跑）
 fn apply_cost_cap(task: &mut Schedule, now_iso: &str, spent: f64, cap: f64) -> bool {
