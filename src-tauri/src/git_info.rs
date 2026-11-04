@@ -456,6 +456,9 @@ fn run_git_owned(cwd: &str, args: &[String]) -> Result<Output, String> {
         .map_err(|e| format!("执行 git 失败: {e}"))
 }
 
+const NOTHING_TO_COMMIT: &str =
+    "没有需要提交的改动（评审退回意见 .ccode/review-notes.md 只留在工作区，不进提交）";
+
 fn git_commit_sync(
     cwd: &str,
     message: &str,
@@ -534,6 +537,10 @@ fn git_commit_sync(
         }
         if !add.status.success() {
             return Err(output_tail(&add));
+        }
+        // 撤掉退回意见后可能已无物可提交：给人话，别把 git 原文甩给人
+        if run_git(&cwd, &["diff", "--cached", "--quiet"])?.status.success() {
+            return Err(NOTHING_TO_COMMIT.into());
         }
         let mut args = commit_identity_args(Path::new(&cwd));
         args.extend(["commit".into(), "-m".into(), message.into()]);
@@ -1996,6 +2003,22 @@ mod tests {
         assert!(s.is_repo);
         assert!(s.files.is_empty(), "提交后工作区应干净: {:?}", s.files);
         assert!(git_commit_sync(dir.to_str().unwrap(), "   ", false, None).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn commit_all_with_only_review_notes_reports_nothing_to_commit() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo("commit-review-notes");
+        fs::write(dir.join("a.txt"), "hello\n").unwrap();
+        git_commit_sync(dir.to_str().unwrap(), "初始提交", false, None).unwrap();
+        fs::create_dir_all(dir.join(".ccode")).unwrap();
+        fs::write(dir.join(".ccode/review-notes.md"), "请改第二段\n").unwrap();
+        let err = git_commit_sync(dir.to_str().unwrap(), "再提交", false, None).unwrap_err();
+        assert_eq!(err, NOTHING_TO_COMMIT);
+        assert!(dir.join(".ccode/review-notes.md").exists(), "退回意见要留在工作区");
         fs::remove_dir_all(&dir).ok();
     }
 

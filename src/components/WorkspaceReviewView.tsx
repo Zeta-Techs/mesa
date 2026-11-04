@@ -73,7 +73,7 @@ import {
   deliveryFollowupText,
 } from "../acceptance-log";
 import { defaultCommitMessage } from "../git-commit-message";
-import { userDirtyFiles } from "../git-status-groups";
+import { commitWorthyFiles, userDirtyFiles } from "../git-status-groups";
 import {
   absUnderRoot,
   blockerList,
@@ -2402,7 +2402,8 @@ function LiveWorkspaceReviewView({
       return;
     }
     if (!diff || !status || !health) return;
-    const shouldCommit = status.files.length > 0;
+    const commitFiles = commitWorthyFiles(status.files);
+    const shouldCommit = commitFiles.length > 0;
     const shouldMerge = mode === "merge" || mode === "merge-archive";
     if (shouldMerge && !deliveryReviewRef.current) { setError(REVIEW_SAVE.needDelivery); return; }
     const shouldArchive = mode === "archive";
@@ -2410,7 +2411,7 @@ function LiveWorkspaceReviewView({
     // 提交信息可留空（v3.97，面向不懂编程的用户）：留空走本地规则默认信息
     // （chore: 更新 N 个文件），与主仓快速提交面板同口径；想写更好的点输入框旁 ◈ 让 AI 起草
     const commitMessage =
-      message.trim() || defaultCommitMessage(status.files);
+      message.trim() || defaultCommitMessage(commitFiles);
     if (
       shouldMerge &&
       !(await confirmDialog(

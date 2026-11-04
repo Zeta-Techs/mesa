@@ -116,3 +116,15 @@ test("项目页提醒不把 Mesa 自有档案（.ccode/、.gitignore）当成你
   // 评审提交面板照旧能看见档案卡——挡合并的东西都要能提交
   assert.ok(userDirtyFiles(files).some((f) => f.path === ".ccode/project.toml"));
 });
+
+test("commitWorthyFiles 只剩退回意见时为空，台账类照旧算", async () => {
+  const { commitWorthyFiles } = await import("../src/git-status-groups.ts");
+  const rows = [
+    { path: ".ccode/review-notes.md", status: "??" },
+  ];
+  assert.deepEqual(commitWorthyFiles(rows), []);
+  assert.deepEqual(
+    commitWorthyFiles([...rows, { path: "notes/inbox.md", status: "M" }]).map((r) => r.path),
+    ["notes/inbox.md"],
+  );
+});

@@ -62,6 +62,12 @@ function isReviewNotesPath(path: string): boolean {
   return name === "review-notes.md";
 }
 
+/** 「保存进项目」前要不要先提交的口径：与后端 git_commit 全量提交同口径，退回意见文件不进提交，
+ *  只剩它时不该去提交（否则 git 无物可提交而报错）。台账类照旧算——add -A 会带上它们。 */
+export function commitWorthyFiles<T extends { path: string }>(files: readonly T[]): T[] {
+  return files.filter((file) => !isReviewNotesPath(file.path));
+}
+
 export function userDirtyFiles<T extends { path: string; status: string }>(
   files: readonly T[],
 ): T[] {
