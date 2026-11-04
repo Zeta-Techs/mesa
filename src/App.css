@@ -2321,10 +2321,14 @@ select:focus-visible {
   outline-offset: 1px;
 }
 
-/* 聊天 composer 的焦点反馈由外层 rounded 容器承载；textarea 本身不能再出现直角黑框。 */
+/* 聊天 composer 的焦点反馈由外层 rounded 容器承载；textarea 本身不能再出现直角黑框。
+   项目助手的输入框同一口径（2026-11-04 用户截图：框里又套了一个直角框） */
 .ccode-chat-composer textarea,
 .ccode-chat-composer textarea:focus,
-.ccode-chat-composer textarea:focus-visible {
+.ccode-chat-composer textarea:focus-visible,
+.ccode-assistant-composer textarea,
+.ccode-assistant-composer textarea:focus,
+.ccode-assistant-composer textarea:focus-visible {
   border: 0 !important;
   outline: 0 !important;
   box-shadow: none !important;

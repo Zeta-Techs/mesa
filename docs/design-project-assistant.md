@@ -198,5 +198,8 @@ user-guide 新增「项目助手」一节、§14.1 加词；CHANGELOG；agent-bi
   --no-session-persistence --add-dir <工作副本>`）与 Codex（`exec --ephemeral -s read-only`）：两家都不落盘、进程级只读；别家后端报 INSPECT_UNSUPPORTED，前端退回只看记录。
   运行登记为 internal（不进项目运行列表与卡点），花费从输出记账。问进度、下一步、怎么用都不进文件。Mesa 自己的 bug 仍做不到读代码定位（用户机器上没有源码），只能整理记录交开发者。
   干跑：Codex 0.166 在临时项目里读出「clean.py 第 3 行取 sample_id、表头没有这一列」，没写任何文件；**Claude Code 这条没干跑成**（本机全局配置的模型名 Claude 不认，换 Mesa 注入的连接后要实测一次）。
+- **同日用户截图三处修正**：输入框里又套一个直角焦点框（textarea 吃了全站 focus 环，改与聊天输入框同口径 `.ccode-assistant-composer`）；
+  小桌出现两次（顶栏 + 每条回答旁）→ 只留顶栏一个、跟着状态变，没问过时顶栏不放（正文有大图）；问「现在几点」也去看记录翻说明书 →
+  判不出的归 general，只带当前时间与项目概况；只有一段的回答不再整段加粗带竖线。
 - **未验**：Mesa Dev 窗口里实际点一遍（卡点、出错了、项目助手问答与按钮、Agent 分工新卡、反馈表预填）。
 

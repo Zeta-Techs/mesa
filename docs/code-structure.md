@@ -567,7 +567,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）
   split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
-  project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat，
+  project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general，
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）

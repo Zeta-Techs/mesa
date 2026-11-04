@@ -105,11 +105,13 @@ export function parseAssistantAnswer(answer: string, stepCount: number): { text:
  * 问题分流（2026-11-04 用户：「问怎么换模型也要看项目记录吗」）：本地按字面先判一次，不多调一次 AI。
  * - howto 怎么用 Mesa（在哪设置、怎么换模型、某个词什么意思）：只翻说明书，带一点项目概况，不拼项目快照；
  * - project 问这个项目（进度、出错、下一步、第几步）：拼项目快照（原来的做法）；
- * - mixed 两样都沾（「第 3 步保存不进项目怎么办」）或判不出：快照 + 说明书都带；
- * - chat 打招呼、道谢：什么都不带，一两句回。
+ * - mixed 两样都沾（「第 3 步保存不进项目怎么办」）：快照 + 说明书都带；
+ * - chat 打招呼、道谢：什么都不带，一两句回；
+ * - general 判不出的（「现在几点」「帮我看看」）：只带一点项目概况和当前时间，直接答；要查记录或说明书才答得了的，
+ *   请用户问得具体些（2026-11-04 用户截图：问「现在几点」也去看项目记录、翻说明书）。
  * 「问问为什么」带着某次运行进来的一律按 project。
  */
-export type AssistantIntent = "howto" | "project" | "mixed" | "chat";
+export type AssistantIntent = "howto" | "project" | "mixed" | "chat" | "general";
 
 const CHAT_RE = /^(你好|您好|嗨|哈喽|hi|hello|hey|谢谢|多谢|感谢|thanks|thank you|好的|好|ok|okay|收到|在吗|在不在|辛苦了|早|早上好|晚安|拜拜|再见)[呀啊哦了吧！!。.~～，, ]*$/i;
 const PROJECT_RE =
@@ -126,7 +128,7 @@ export function classifyQuestion(question: string, hasFocus = false): AssistantI
   if (project && howto) return "mixed";
   if (project) return "project";
   if (howto) return "howto";
-  return "mixed";
+  return "general";
 }
 
 /**
@@ -149,6 +151,7 @@ export const INTENT_WAITING: Record<AssistantIntent, string> = {
   project: "正在看这个项目的记录…",
   mixed: "正在看项目记录、翻说明书…",
   chat: "在想…",
+  general: "在想…",
 };
 
 export const INSPECT_WAITING = "正在打开项目里的文件核对…（只读，不会改动）";
@@ -204,6 +207,16 @@ export const HOWTO_RULES = `${IDENTITY}
 4. ${ACTION_MARKS}
 5. ${STYLE}`;
 
+/** 判不出是问项目还是问怎么用：只给概况和时间，直接答 */
+export const GENERAL_RULES = `${IDENTITY}
+这一问不像是问项目进度，也不像是问 Mesa 怎么用。下面只附了项目概况和当前时间。
+
+规矩：
+1. 能直接答的就直接答，一两句（比如问时间就照「当前时间」说）。
+2. 要看项目记录或说明书才答得了的，不要猜，告诉用户换个问法（比如「第 3 步为什么出错」「怎么换模型」），你就会去查。
+3. 课题内容本身的问题（方法怎么写、数据怎么处理）不归你做，回答要点并给 [[商量|…]]。
+4. ${STYLE}`;
+
 /** 打招呼、道谢 */
 export const CHAT_RULES = `${IDENTITY}
 用户只是打个招呼或道个谢。用一两句自然地回应，顺带说一句你能帮什么（问进度、查哪里出错、问 Mesa 怎么用）。不要罗列清单，不要写动作标记。`;
@@ -237,8 +250,15 @@ export interface AssistantMaterials {
 export function buildAssistantPrompt(
   input: AssistantMaterials & { history: readonly AssistantHistoryTurn[]; question: string },
 ): string {
-  const rules = input.intent === "howto" ? HOWTO_RULES : input.intent === "chat" ? CHAT_RULES : PROJECT_RULES;
-  const history = historyBlock(input.history, input.intent === "chat" ? 2 : 6);
+  const rules =
+    input.intent === "howto"
+      ? HOWTO_RULES
+      : input.intent === "chat"
+        ? CHAT_RULES
+        : input.intent === "general"
+          ? GENERAL_RULES
+          : PROJECT_RULES;
+  const history = historyBlock(input.history, input.intent === "chat" || input.intent === "general" ? 3 : 6);
   const guide = input.guide?.length
     ? `## 说明书摘录（Mesa 产品说明书，按问题挑的几段）\n${input.guide.map((g) => `### ${g.heading}\n${g.text}`).join("\n\n")}`
     : input.intent === "howto"
@@ -294,7 +314,8 @@ export function splitAnswerLead(text: string): { lead: string | null; rest: stri
   const cut = trimmed.search(/\n\s*\n/);
   const first = (cut < 0 ? trimmed : trimmed.slice(0, cut)).trim();
   const rest = cut < 0 ? "" : trimmed.slice(cut).trim();
-  if (!first || first.length > 120 || first.includes("\n") || /^([-*+]\s|[>#|]|\d+[.、)]|```)/.test(first)) {
+  // 只有一段的（寒暄、一句话回答）不拎：整段加粗带竖线像在强调，读着别扭（2026-11-04 用户截图）
+  if (!rest || !first || first.length > 120 || first.includes("\n") || /^([-*+]\s|[>#|]|\d+[.、)]|```)/.test(first)) {
     return { lead: null, rest: trimmed };
   }
   return { lead: first.replace(/^\*\*(.+)\*\*$/, "$1"), rest };

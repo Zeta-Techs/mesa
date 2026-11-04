@@ -77,7 +77,8 @@ test("问题分流：怎么用 / 问项目 / 两样都沾 / 打招呼", () => {
   assert.equal(classifyQuestion("你好"), "chat");
   assert.equal(classifyQuestion("谢谢！"), "chat");
   assert.equal(classifyQuestion("综述写得怎么样"), "howto");
-  assert.equal(classifyQuestion("帮我看看"), "mixed");
+  assert.equal(classifyQuestion("帮我看看"), "general");
+  assert.equal(classifyQuestion("现在几点"), "general", "判不出的不去看项目记录、翻说明书");
   assert.equal(classifyQuestion("你好", true), "project", "带着某次运行进来的一律问项目");
 });
 

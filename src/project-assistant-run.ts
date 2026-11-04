@@ -242,11 +242,14 @@ async function cachedSnapshot(projectPath: string, focus: AssistantFocus | null)
   return text;
 }
 
-/** 「怎么用」类问题只带的一点项目概况：项目名、工作方式、默认 Agent、项目助手用的连接 */
+/** 不看项目记录的几类问题（怎么用 / 寒暄 / 判不出）只带的一点概况：当前时间、项目名、工作方式、默认 Agent、项目助手用的连接 */
 function projectContext(projectPath: string, project: ProjectDto | null, connLine: string): string {
   const mode = project?.workMode === "research" ? "科研" : project?.workMode === "coding" ? "编程" : project?.workMode === "office" ? "工作" : "未登记";
   const agent = project?.defaultAgent ? (AGENTS.find((a) => a.id === project.defaultAgent)?.label ?? project.defaultAgent) : "没设";
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
   return [
+    `当前时间（本机）：${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
     `项目：${project?.name ?? projectPath}（${mode}项目）`,
     `项目默认 Agent：${agent}`,
     `项目助手这次用的连接：${connLine}`,
@@ -301,7 +304,7 @@ export async function askProjectAssistant(input: {
       snapshot,
       guide,
       inspect: withInspect ? inspectRules(input.projectPath, worktrees) : null,
-      context: intent === "howto" ? projectContext(input.projectPath, input.project, conn.line) : null,
+      context: intent === "howto" || intent === "general" || intent === "chat" ? projectContext(input.projectPath, input.project, conn.line) : null,
       history: input.history,
       question: input.question,
     });

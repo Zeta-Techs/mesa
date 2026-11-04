@@ -58,8 +58,9 @@ function QuestionBubble({ text, at }: { text: string; at?: string }) {
 /**
  * 项目助手（2026-11-04，docs/design-project-assistant.md）：工作台右侧抽屉，与任务面板同一位置。
  * 形象是卡通小工作台「小桌」（MesaBuddy.tsx；同日用户几轮拍板：要生动的卡通形象、深色同浅色一套、按时间换样子）：
- * 顶栏小桌 + 名字 + 项目名；没问过时大图小桌按时段打招呼 / 端咖啡 / 亮台灯 / 盘腿睡觉，下面三个常用问题排成细线列表；
- * 回答一侧是小桌，第一句结论加粗带琥珀竖线，按钮在下；问着时小桌托腮想、头上冒三道光标；没问成时它皱眉。
+ * 没问过时正文是大图小桌（按时段打招呼 / 端咖啡 / 亮台灯 / 盘腿睡觉）+ 三个常用问题细线列表，顶栏只有名字；
+ * 问过以后小桌只在顶栏一个，跟着状态变：问着托腮想、刚答完举手、没问成皱眉；回答前只一道琥珀短线 + 名字，
+ * 多段回答的第一句结论加粗带琥珀竖线，按钮在下。
  * 输入框钉在底部，连接与「清空记录」在输入框下一行小字。
  * 不开终端、不派活：每问一次，取一次项目快照、无头调用一次；回答里的按钮交给页面跳到原有入口。
  */
@@ -187,7 +188,16 @@ export default function ProjectAssistantPanel({
   }
 
   const empty = turns.length === 0 && !busy && !error;
-  const headPose = busy ? "think" : error ? "oops" : mood.restPose;
+  // 小桌只在顶栏出现一个（2026-11-04 用户：「聊天信息有个小人，顶部还有小人」）：问着托腮想、没问成皱眉、
+  // 刚答完举手蹦两秒半，其余按时段；还没问过时正文里有大图，顶栏就不再放
+  const [cheer, setCheer] = useState(false);
+  useEffect(() => {
+    if (!freshAt) return;
+    setCheer(true);
+    const timer = window.setTimeout(() => setCheer(false), 2500);
+    return () => window.clearTimeout(timer);
+  }, [freshAt]);
+  const headPose = busy ? "think" : error ? "oops" : cheer ? "happy" : mood.restPose;
 
   const composer = (
     <div className="space-y-2">
@@ -216,7 +226,7 @@ export default function ProjectAssistantPanel({
         </div>
       )}
       <form
-        className="flex items-end gap-2 rounded-xl border border-hairline bg-inset px-3 py-2 focus-within:border-l4"
+        className="ccode-assistant-composer flex items-end gap-2 rounded-xl border border-hairline bg-inset px-3 py-2 focus-within:border-l4"
         onSubmit={(event) => {
           event.preventDefault();
           void send(draft, focus);
@@ -280,7 +290,7 @@ export default function ProjectAssistantPanel({
       onClose={onClose}
       title="项目助手"
       subtitle={projectName}
-      titleIcon={<MesaBuddy size={34} pose={headPose} prop={busy || error ? null : mood.prop} />}
+      titleIcon={empty ? <></> : <MesaBuddy size={34} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
     >
       {empty ? (
@@ -314,13 +324,12 @@ export default function ProjectAssistantPanel({
           {turns.map((turn, i) => {
             const parsed = parseAssistantAnswer(turn.answer, stepCount);
             const { lead, rest } = splitAnswerLead(parsed.text);
-            const fresh = turn.at === freshAt;
             return (
               <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
                 <QuestionBubble text={turn.question} at={turn.at} />
                 <div>
                   <div className="mb-1.5 flex items-center gap-2">
-                    <MesaBuddy size={22} pose={fresh ? "happy" : "idle"} />
+                    <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
                     <span className="text-xs text-l3" title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}`}>
                       项目助手 · {relTime(turn.at)}
                     </span>
@@ -383,8 +392,8 @@ export default function ProjectAssistantPanel({
             <article className="flex flex-col gap-3">
               {pending && <QuestionBubble text={pending} />}
               <div className="flex items-center gap-2 text-sm text-l3">
-                <MesaBuddy size={22} pose="think" />
-                {/* 小桌自己在托腮想（头上三道光标），这里不再叠一个 M▁；按问题分流写在翻什么 */}
+                {/* 顶栏的小桌在托腮想；这里只一道呼吸的琥珀光标 + 在翻什么 */}
+                <span className="mesa-buddy-cursor h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
                 <span>{inspecting ? INSPECT_WAITING : INTENT_WAITING[intent]}</span>
                 {waited >= 3 && <span className="text-xs tabular-nums text-l4">{waited} 秒</span>}
               </div>
@@ -394,7 +403,6 @@ export default function ProjectAssistantPanel({
             <article className="flex flex-col gap-3">
               {failed && <QuestionBubble text={failed.question} />}
               <div className="flex items-start gap-2">
-                <MesaBuddy size={22} pose="oops" />
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-sm leading-6 text-err-text">没问成：{error}</p>
                   {failed && (

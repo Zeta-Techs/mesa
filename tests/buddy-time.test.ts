@@ -33,5 +33,5 @@ test("回答的第一句结论单独拎出来，长段、列表不拎", () => {
   assert.deepEqual(splitAnswerLead("**是环境的问题。**\n\n缺 Git"), { lead: "是环境的问题。", rest: "缺 Git" });
   assert.equal(splitAnswerLead("- 第一条\n\n- 第二条").lead, null);
   assert.equal(splitAnswerLead("x".repeat(200)).lead, null);
-  assert.deepEqual(splitAnswerLead("只有一句"), { lead: "只有一句", rest: "" });
+  assert.deepEqual(splitAnswerLead("只有一句"), { lead: null, rest: "只有一句" }, "只有一段不拎");
 });
