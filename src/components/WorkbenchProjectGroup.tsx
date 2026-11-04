@@ -265,15 +265,7 @@ export default function WorkbenchProjectGroup({
             </button>
           ))}
           {blockers.length > BLOCKERS_SHOWN && <span className="shrink-0 text-l3">还有 {blockers.length - BLOCKERS_SHOWN} 处</span>}
-          {onAskAssistant && (
-            <button
-              type="button"
-              className="shrink-0 text-l3 underline hover:text-l1"
-              onClick={() => onAskAssistant("这个项目现在卡在哪？每一处是谁的问题、我该怎么办？")}
-            >
-              问项目助手
-            </button>
-          )}
+          {/* 行末不再挂「问项目助手」（2026-11-04 用户：入口太多）——项目头正上方就有；Mesa 出错那条点了本身就去问 */}
         </div>
       )}
 

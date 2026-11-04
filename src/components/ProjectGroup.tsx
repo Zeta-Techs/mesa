@@ -1934,9 +1934,10 @@ export default function ProjectGroup({
                       >
                         {text && text.text === "出错了" && stepFailures[i] ? (
                           // 出错了直接问项目助手（2026-11-04）：带着这次出错的运行打开，它会去看记录、必要时只读打开文件
+                          // 看起来和别的状态小字一样安静（2026-11-04 用户：入口太多，进度条变吵），悬停才写原因与「点一下问为什么」
                           <button
                             type="button"
-                            className={`truncate text-micro leading-4 underline decoration-dotted underline-offset-2 hover:opacity-80 ${text.tone}`}
+                            className={`truncate text-micro leading-4 hover:underline ${text.tone}`}
                             title={`${text.title ?? ""}\n点一下问项目助手为什么`}
                             onClick={() => {
                               const failure = stepFailures[i]!;
@@ -1947,7 +1948,7 @@ export default function ProjectGroup({
                               });
                             }}
                           >
-                            <span className="text-micro">出错了 · 问问</span>
+                            <span className="text-micro">出错了</span>
                           </button>
                         ) : text ? (
                           <span className={`truncate text-micro leading-4 ${text.tone}`} title={text.title}>
