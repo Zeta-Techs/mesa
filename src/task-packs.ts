@@ -68,6 +68,45 @@ export function applyStepParams(step: ProjectStepDto): ProjectStepDto {
   return mapTexts(step, (t) => fill(t, params));
 }
 
+/**
+ * 「记下目标」时用我的任务当模板（2026-11-04，design-task-packs §3.3）：把包的各步写成一段目标说明（参数代入），
+ * 一次性目标只有这段文字——核验脚本与触发不跟过来（调用方写明），技能只点名项目里已有的。
+ */
+export function goalTextFromPack(
+  pack: Pick<TaskPackDto, "name" | "description" | "params" | "steps">,
+  values: Readonly<Record<string, string>>,
+): string {
+  const params = pack.params.map((p) => ({ ...p, value: values[p.key] !== undefined ? values[p.key] : p.value }));
+  const steps = pack.steps.map((s) => applyStepParams({ ...s, params }));
+  const one = steps.length === 1;
+  const lines: string[] = [];
+  if (pack.description.trim()) lines.push(pack.description.trim(), "");
+  steps.forEach((s, i) => {
+    if (!one) lines.push(`第 ${i + 1} 步「${s.name}」：`);
+    lines.push(s.brief.trim());
+    const deliver = (s.expectedArtifacts ?? []).filter(Boolean);
+    if (deliver.length) lines.push(`交：${deliver.join("、")}`);
+    const done = (s.acceptanceCriteria ?? []).filter((c) => c.trim() && !c.trim().startsWith("machine:"));
+    if (done.length) lines.push(`怎样算做完：${done.join("；")}`);
+    if (!one && i < steps.length - 1) lines.push("");
+  });
+  lines.push("", `（按我的任务「${pack.name}」记下）`);
+  return lines.join("\n").trim();
+}
+
+/** 推荐的 MCP 那一句（加进项目、导入预览、记目标时给人看）；没有返回 null */
+export function packMcpNote(pack: Pick<TaskPackDto, "mcp">): string | null {
+  const list = (pack.mcp ?? []).filter((x) => x.trim());
+  return list.length ? `这个任务推荐配的 MCP：${list.join("；")}。不会自动装，要用到 MCP 页添加。` : null;
+}
+
+/** 包里各步点名的技能（去重，按出现顺序） */
+export function packSkillNames(pack: Pick<TaskPackDto, "steps">): string[] {
+  const out: string[] = [];
+  for (const s of pack.steps) for (const k of s.skills ?? []) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
 /** 这一步还没填（或填得不合规）的参数（开工前提醒） */
 export function missingParams(step: ProjectStepDto): StepParamDto[] {
   return (step.params ?? []).filter((p) => !p.value.trim() || paramValueProblem(p.kind, p.value));

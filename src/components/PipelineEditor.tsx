@@ -43,7 +43,7 @@ import type {
   TaskPackDto,
 } from "../types";
 import { useAppStore } from "../store";
-import { importedScriptsNote, triggerDefaultOn, triggerSummary } from "../task-packs";
+import { importedScriptsNote, packMcpNote, triggerDefaultOn, triggerSummary } from "../task-packs";
 import { addPackToProject } from "../pack-add";
 import PackParamInput from "./PackParamInput";
 
@@ -1498,6 +1498,7 @@ export default function PipelineEditor({
                       </label>
                     ))}
                   </div>
+                  {packMcpNote(packForm.pack) && <p className="mt-2 text-micro text-l4">{packMcpNote(packForm.pack)}</p>}
                   {packForm.pack.trigger && (
                     <label className="mt-3 flex items-start gap-2 text-xs">
                       <input

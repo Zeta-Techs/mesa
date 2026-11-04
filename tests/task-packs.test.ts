@@ -145,3 +145,30 @@ test("参数类型：取值校验与后端同口径，不合规的拼任务书�
   assert.equal((applyStepParams(step) as { brief: string }).brief, "读 （参数「数据目录」未填）");
   assert.equal(missingParams(step).length, 1);
 });
+
+test("记下目标用我的任务当模板：各步写成一段说明，参数代入，machine: 行不写", async () => {
+  const { goalTextFromPack, packSkillNames } = await import("../src/task-packs.ts");
+  const pack = {
+    name: "单细胞质控",
+    description: "每批数据先做质控",
+    params: [{ key: "mt", label: "线粒体阈值", value: "20", help: "", options: [], kind: "number" }],
+    steps: [
+      { name: "质控", brief: "线粒体阈值 {param:mt}%，按 sc-qc 做", expectedArtifacts: ["analysis/qc.md"], acceptanceCriteria: ["写明阈值", "machine: exists analysis/qc.md"], skills: ["sc-qc"] },
+      { name: "汇报", brief: "写一页汇报", expectedArtifacts: [], acceptanceCriteria: [], skills: ["sc-qc", "slides-deck"] },
+    ],
+  } as never;
+  const text = goalTextFromPack(pack, { mt: "15" });
+  assert.equal(
+    text,
+    "每批数据先做质控\n\n第 1 步「质控」：\n线粒体阈值 15%，按 sc-qc 做\n交：analysis/qc.md\n怎样算做完：写明阈值\n\n第 2 步「汇报」：\n写一页汇报\n\n（按我的任务「单细胞质控」记下）",
+  );
+  assert.match(goalTextFromPack(pack, { mt: "很多" }), /（参数「线粒体阈值」未填）/);
+  assert.deepEqual(packSkillNames(pack), ["sc-qc", "slides-deck"]);
+});
+
+test("推荐的 MCP：有才写一句，写明不自动装", async () => {
+  const { packMcpNote } = await import("../src/task-packs.ts");
+  assert.equal(packMcpNote({ mcp: [] }), null);
+  assert.equal(packMcpNote({}), null);
+  assert.equal(packMcpNote({ mcp: ["zotero：读文献库题录", " "] }), "这个任务推荐配的 MCP：zotero：读文献库题录。不会自动装，要用到 MCP 页添加。");
+});

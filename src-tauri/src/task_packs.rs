@@ -39,6 +39,8 @@ pub struct TaskPackDto {
     /// 加进项目时带上的项目规则与全局设定（与内置模板 projectRules + projectSettings 同一写法，「名称：（提示）」是待填空位）；
     /// 内置另存为我的版本时带上，从项目另存的不带（那是那个项目自己的）
     pub project_settings: Vec<String>,
+    /// 推荐配的 MCP（2026-11-04，design-task-packs §9 第 5 项）：每条「名字：用途」，只列给人看，不自动安装、不写任何配置
+    pub mcp: Vec<String>,
 }
 
 /// 基于哪个内置模板。`steps` 是另存时的内置步骤，存前经与包步骤同一套归一（`normalize_steps`），
@@ -63,6 +65,7 @@ pub(crate) struct SaveExtras {
     pub based_on: Option<PackBasedOnDto>,
     pub imported: bool,
     pub project_settings: Option<Vec<String>>,
+    pub mcp: Option<Vec<String>>,
     /// 整份换掉（导入、装草稿）：覆盖同名时不沿用旧版本的技能、触发、based_on、项目设定——新来的那份就是全部
     pub fresh: bool,
 }
@@ -175,6 +178,13 @@ fn render_pack(pack: &TaskPackDto) -> Result<String, String> {
             arr.push(line.as_str());
         }
         meta["project_settings"] = value(arr);
+    }
+    if !pack.mcp.is_empty() {
+        let mut arr = toml_edit::Array::new();
+        for line in &pack.mcp {
+            arr.push(line.as_str());
+        }
+        meta["mcp"] = value(arr);
     }
     doc["pack"] = Item::Table(meta);
     if !pack.params.is_empty() {
@@ -307,6 +317,11 @@ fn parse_pack(text: &str, dir: &Path) -> Result<TaskPackDto, String> {
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
             .unwrap_or_default(),
+        mcp: meta
+            .get("mcp")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+            .unwrap_or_default(),
         id,
     })
 }
@@ -410,6 +425,7 @@ pub(crate) fn save_with_trigger_at(
         .project_settings
         .or_else(|| inherit.map(|p| p.project_settings.clone()))
         .unwrap_or_default();
+    let mcp = extras.mcp.or_else(|| inherit.map(|p| p.mcp.clone())).unwrap_or_default();
     // 拦下的一律不存（提醒不拦）；技能库名单只影响提醒，这里不用
     let probe = TaskPackDto {
         id: "pk-check".into(),
@@ -423,6 +439,7 @@ pub(crate) fn save_with_trigger_at(
         skills: skill_dirs.iter().map(|(n, _)| n.clone()).collect(),
         trigger: trigger.clone(),
         project_settings: project_settings.clone(),
+        mcp: mcp.clone(),
         ..Default::default()
     };
     if let Some(msg) = blocked(&check_pack(&probe, &crate::skills::library_skill_names_for_check())) {
@@ -448,6 +465,7 @@ pub(crate) fn save_with_trigger_at(
         imported,
         scripts: Vec::new(),
         project_settings,
+        mcp,
     };
     // 先在临时目录写全，再整目录换上：中途失败不留半个包
     let final_dir = pack_dir(root, &pack.id)?;
@@ -739,7 +757,7 @@ const STEP_TEXT_BLOCK: usize = 12000;
 const PACK_KEYS: [&str; 4] = ["pack", "params", "steps", "trigger"];
 const CHECK_KEYS: [&str; 4] = ["name", "skill", "script", "description"];
 const TRIGGER_KEYS: [&str; 11] = ["name", "kind", "skill", "frequency", "weekday", "interval_hours", "hour", "minute", "folder", "exts", "mode"];
-const META_KEYS: [&str; 8] = ["id", "name", "description", "version", "created_at", "updated_at", "imported", "project_settings"];
+const META_KEYS: [&str; 9] = ["id", "name", "description", "version", "created_at", "updated_at", "imported", "project_settings", "mcp"];
 const PARAM_KEYS: [&str; 6] = ["key", "label", "value", "help", "options", "kind"];
 const STEP_KEYS: [&str; 23] = [
     "name", "workspace_name", "brief", "expected_artifacts", "acceptance_criteria", "decision_mode", "inputs",
@@ -824,6 +842,13 @@ pub(crate) fn check_pack(pack: &TaskPackDto, lib_skills: &[String]) -> Vec<PackI
     }
     if pack.project_settings.iter().any(|l| crate::sessions::redact_sensitive_text(l) != *l) {
         out.push(issue("block", None, "项目设定里像是有密钥，拿掉再存"));
+    }
+    // 推荐的 MCP 只写名字与用途；连接串、令牌一律不进包（包会导出给别人）
+    if pack.mcp.iter().any(|l| crate::sessions::redact_sensitive_text(l) != *l) {
+        out.push(issue("block", None, "推荐的 MCP 里像是有密钥，只写名字和用途"));
+    }
+    if pack.mcp.len() > 12 {
+        out.push(issue("warn", None, format!("推荐了 {} 个 MCP，偏多；只留真用得上的", pack.mcp.len())));
     }
     let anchors = crate::skills::builtin_skill_names();
     let mut produced: Vec<String> = Vec::new();
@@ -1167,7 +1192,7 @@ pub(crate) fn install_draft_at(
         pack.params,
         pack.steps,
         &skill_dirs,
-        SaveExtras { trigger: pack.trigger, project_settings: Some(pack.project_settings), fresh: true, ..Default::default() },
+        SaveExtras { trigger: pack.trigger, project_settings: Some(pack.project_settings), mcp: Some(pack.mcp), fresh: true, ..Default::default() },
     )?;
     let _ = fs::remove_dir_all(&dir);
     Ok(saved)
@@ -1532,7 +1557,7 @@ pub(crate) fn install_import_at(
         pack.params,
         pack.steps,
         &skill_dirs,
-        SaveExtras { trigger: pack.trigger, based_on: pack.based_on, imported: true, project_settings: Some(pack.project_settings), fresh: true },
+        SaveExtras { trigger: pack.trigger, based_on: pack.based_on, imported: true, project_settings: Some(pack.project_settings), mcp: Some(pack.mcp), fresh: true },
     )?;
     let _ = fs::remove_dir_all(&stage);
     Ok(saved)
@@ -2065,5 +2090,29 @@ mod tests {
         let text = crate::projects::render_config(None, &cfg).unwrap();
         assert!(text.contains("kind = \"path\""), "{text}");
         assert_eq!(crate::projects::parse_config(&text).0.steps[0].params, s.params);
+    }
+
+    #[test]
+    fn pack_mcp_round_trips_and_blocks_secrets() {
+        let dir = std::env::temp_dir().join(format!("mesa-pack-mcp-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let pack = TaskPackDto {
+            id: "pk-abcdefabcdef".into(),
+            name: "质控".into(),
+            version: 1,
+            steps: vec![step("质控", "按 sc-qc 做")],
+            mcp: vec!["zotero：读文献库题录".into()],
+            ..Default::default()
+        };
+        let text = render_pack(&pack).unwrap();
+        assert!(text.contains("mcp = [\"zotero：读文献库题录\"]"), "{text}");
+        let back = parse_pack(&text, &dir).unwrap();
+        assert_eq!(back.mcp, pack.mcp);
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        let issues = check_structure(&value);
+        assert!(!issues.iter().any(|i| i.message.contains("mcp")), "mcp 在 [pack] 字段闭集里：{issues:?}");
+        let leaky = TaskPackDto { mcp: vec!["github：token sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()], ..pack };
+        assert!(check_pack(&leaky, &[]).iter().any(|i| i.level == "block" && i.message.contains("MCP")));
+        fs::remove_dir_all(&dir).ok();
     }
 }

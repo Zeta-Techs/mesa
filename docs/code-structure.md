@@ -603,7 +603,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （tests/task-pack-author.test.ts）
   pack-builtin.ts            # 任务包第四期：内置另存为我的版本 basedOnFor、builtinKey、builtinUpdate（当时的内置 vs 现在的内置，标我改没改过；三份步骤须先经后端归一）、
                              # mergeBuiltinUpdate（按勾选换新版 / 插入新加的 / 拿掉去掉的）、rebased（tests/pack-builtin.test.ts）
-  task-packs.ts              # 2026-11-04 参数类型：PARAM_KIND_LABEL、paramValueProblem（与 projects.rs param_value_problem 同口径），不合规的当没填
+  task-packs.ts              # 2026-11-04 参数类型：PARAM_KIND_LABEL、paramValueProblem（与 projects.rs param_value_problem 同口径），不合规的当没填；
+                             #   goalTextFromPack / packSkillNames（新建目标用我的任务当模板）、packMcpNote（推荐的 MCP 那一句）
                              # 第四期：importedScriptsNote（导入的包首次加进项目前再问一次的话）
                              # 第三期：packCheckFile / checkCommand / checkSectionLines（任务书「本步核验」）、triggerSummary / triggerDefaultOn；
                              # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，

@@ -4,7 +4,7 @@ import { Modal } from "./Modal";
 import { confirmDialog } from "./ConfirmDialog";
 import { InlineNotice, primaryActionClass, secondaryActionClass } from "./PageFrame";
 import { issueLine, splitIssues } from "../task-pack-author";
-import { triggerSummary } from "../task-packs";
+import { packMcpNote, triggerSummary } from "../task-packs";
 import type { PackImportPreviewDto, TaskPackDto } from "../types";
 
 const SKILL_STATUS: Record<string, string> = {
@@ -83,6 +83,7 @@ export default function ImportPackDialog({
           <p className="text-xs text-l3">参数：{pack.params.map((p) => `${p.label}（默认 ${p.value || "空"}）`).join("、")}</p>
         )}
         {pack.trigger && <p className="text-xs text-l3">带触发：{triggerSummary(pack.trigger)}（加进项目时你勾选才建）</p>}
+        {packMcpNote(pack) && <p className="text-xs text-l3">{packMcpNote(pack)}</p>}
         {pack.basedOn && <p className="text-xs text-l3">基于内置模板「{pack.basedOn.templateName}」改的版本</p>}
         {blocks.length > 0 && (
           <div>

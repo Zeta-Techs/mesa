@@ -36,6 +36,9 @@ import { confirmDialog } from "./ConfirmDialog";
 import ResearchReproductionPanel from "./ResearchReproductionPanel";
 import ResearchAcceptancePanel from "./ResearchAcceptancePanel";
 import ProjectSettingsDrawer from "./ProjectSettingsDrawer";
+import PackParamInput from "./PackParamInput";
+import { goalTextFromPack, packMcpNote, packSkillNames } from "../task-packs";
+import type { TaskPackDto } from "../types";
 import {
   acceptedGoalOutputs,
   canSaveDeclaredGoal,
@@ -906,6 +909,51 @@ function CreateTaskModal({
       stale = true;
     };
   }, [project.path]);
+  // 用我的任务当模板（2026-11-04，design-task-packs §3.3）：只在新建时给；选了把各步写进「要完成什么」、点名项目里已有的技能。
+  // 人改过文字后再改参数不覆盖（filledText 记着上次填进去的那段）
+  const [packs, setPacks] = useState<TaskPackDto[]>([]);
+  const [packId, setPackId] = useState("");
+  const [packValues, setPackValues] = useState<Record<string, string>>({});
+  const filledTextRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (editing) return;
+    let stale = false;
+    invoke<TaskPackDto[]>("list_task_packs")
+      .then((list) => {
+        if (!stale) setPacks(list);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [editing]);
+  const pickedPack = packs.find((p) => p.id === packId) ?? null;
+  const packMissingSkills = pickedPack ? packSkillNames(pickedPack).filter((k) => !poolSkills.includes(k)) : [];
+  function fillFromPack(pack: TaskPackDto | null, values: Record<string, string>, force: boolean) {
+    if (!pack) return;
+    // 人动过文字就不再覆盖（换模板时 force，先问过）
+    if (!force && filledTextRef.current !== null && text !== filledTextRef.current) return;
+    const next = goalTextFromPack(pack, values);
+    filledTextRef.current = next;
+    setText(next);
+  }
+  async function choosePack(id: string) {
+    const pack = packs.find((p) => p.id === id) ?? null;
+    if (pack && text.trim() && text !== filledTextRef.current) {
+      const ok = await confirmDialog(`用「${pack.name}」填写会换掉「要完成什么」里你已经写的字。继续？`);
+      if (!ok) return;
+    }
+    setPackId(id);
+    if (!pack) {
+      filledTextRef.current = null;
+      return;
+    }
+    const values = Object.fromEntries(pack.params.map((p) => [p.key, p.value]));
+    setPackValues(values);
+    fillFromPack(pack, values, true);
+    const names = packSkillNames(pack).filter((k) => poolSkills.includes(k));
+    if (names.length) setPickedSkills((cur) => [...cur, ...names.filter((k) => !cur.includes(k))]);
+  }
   const configuredAgents = AGENTS.filter((agent) =>
     profiles.some((profile) => profile.agent === agent.id),
   );
@@ -1061,6 +1109,54 @@ function CreateTaskModal({
   return (
     <Modal open title={editing ? "编辑目标" : "新建目标"} onClose={onClose} size={moreOpen ? "lg" : "md"}>
       <form onSubmit={submit} className="space-y-3">
+        {!editing && packs.length > 0 && (
+          <div className="space-y-2 text-xs">
+            <label className="flex min-w-0 items-center gap-2 text-l3">
+              <span className="shrink-0">用我的任务当模板</span>
+              <select
+                className="h-7 min-w-0 flex-1 rounded-md border border-field bg-canvas px-2 text-xs text-l1"
+                value={packId}
+                onChange={(e) => void choosePack(e.target.value)}
+              >
+                <option value="">不用</option>
+                {packs.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}（{p.steps.length} 步）
+                  </option>
+                ))}
+              </select>
+            </label>
+            {pickedPack && pickedPack.params.length > 0 && (
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {pickedPack.params.map((p) => (
+                  <label key={p.key} className="block">
+                    <span className="mb-0.5 block text-l3" title={p.help || undefined}>
+                      {p.label}
+                    </span>
+                    <PackParamInput
+                      param={p}
+                      value={packValues[p.key] ?? p.value}
+                      fieldClass="h-7 rounded-md border border-field bg-canvas px-2 text-xs text-l1"
+                      onChange={(value) => {
+                        const next = { ...packValues, [p.key]: value };
+                        setPackValues(next);
+                        fillFromPack(pickedPack, next, false);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+            {pickedPack && (
+              <p className="text-micro text-l4">
+                已按「{pickedPack.name}」填好下面的说明，可以再改。一次性目标只带这段文字
+                {pickedPack.trigger || pickedPack.steps.some((st) => (st.checks ?? []).length > 0) ? "；包里的核验脚本与触发不跟过来" : ""}
+                {packMissingSkills.length ? `；这几个技能项目里还没加，没点名：${packMissingSkills.join("、")}（到规则里从技能库添加）` : ""}。
+                {packMcpNote(pickedPack) ? ` ${packMcpNote(pickedPack)}` : ""}
+              </p>
+            )}
+          </div>
+        )}
         <label className="block text-xs text-l3">
           要完成什么
           <textarea

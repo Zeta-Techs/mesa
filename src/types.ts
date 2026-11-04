@@ -1548,6 +1548,8 @@ export interface TaskPackDto {
   scripts: string[];
   /** 加进项目时带上的项目规则与全局设定（内置另存为我的版本时带上；「名称：（提示）」是待填空位） */
   projectSettings: string[];
+  /** 推荐配的 MCP（每条「名字：用途」）：只列给人看，不自动安装（2026-11-04） */
+  mcp?: string[];
 }
 
 /** 我的版本基于哪个内置模板；steps 是另存时内置步骤原样，前端拿来算「内置有更新」 */
