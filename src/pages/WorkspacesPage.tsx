@@ -16,7 +16,6 @@ import {
   LocateFixed,
   MessagesSquare,
   Play,
-  LifeBuoy,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -47,6 +46,7 @@ import ProjectGroup from "../components/ProjectGroup";
 import ArtifactChecklist from "../components/ArtifactChecklist";
 import { REVIEW_SAVE } from "../review-save-copy";
 import ProjectAgentsView from "../components/ProjectAgentsView";
+import { MesaBuddyIcon } from "../components/MesaBuddy";
 import ProjectFilesView from "../components/ProjectFilesView";
 import {
   slotPrefs,
@@ -2311,7 +2311,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   title="项目助手：问进度、哪里出错、Mesa 怎么用；只解释和指路，不开对话、不改文件"
                   className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
-                  <LifeBuoy size={13} strokeWidth={1.8} aria-hidden="true" />
+                  <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
                   项目助手
                 </button>
                 <button

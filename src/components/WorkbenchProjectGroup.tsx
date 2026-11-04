@@ -7,12 +7,12 @@ import {
   Code,
   FlaskConical,
   GitBranch,
-  LifeBuoy,
   MessageSquare,
   SquareArrowOutUpRight,
   Target,
 } from "lucide-react";
 import RunCaret from "./RunCaret";
+import { MesaBuddyIcon } from "./MesaBuddy";
 import { ghostActionClass } from "./PageFrame";
 import type { RunCaretState } from "../run-caret";
 import ProjectMailRow from "./ProjectMailRow";
@@ -212,7 +212,7 @@ export default function WorkbenchProjectGroup({
             title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件。要聊课题内容或让 AI 干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」"
             onClick={() => onAskAssistant()}
           >
-            <LifeBuoy size={12} strokeWidth={1.8} aria-hidden="true" />
+            <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
             <span className="text-xs">项目助手</span>
           </button>
         )}

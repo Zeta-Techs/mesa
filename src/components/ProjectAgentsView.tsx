@@ -12,7 +12,6 @@ import {
   FlaskConical,
   GitBranch,
   House,
-  LifeBuoy,
   Lightbulb,
   MessageSquare,
   PenLine,
@@ -28,6 +27,7 @@ import { selectHiddenProfiles, useAppStore } from "../store";
 import { toast } from "../toast";
 import { AGENTS, type CodingOverviewDto, type ProjectDto, type ScheduleDto, type TaskDto } from "../types";
 import { ghostActionClass } from "./PageFrame";
+import { MesaBuddyIcon } from "./MesaBuddy";
 import { agentBrand } from "../agent-colors";
 import {
   buildProjectAgentRoster,
@@ -729,7 +729,7 @@ export default function ProjectAgentsView({
             onAdd={() => setPage("profiles")}
           />
           <SlotCard
-            Icon={LifeBuoy}
+            Icon={MesaBuddyIcon as unknown as LucideIcon}
             label="项目助手"
             tag={assistantBinding ? "已指定" : "跟随默认"}
             marked={Boolean(assistantBinding)}
