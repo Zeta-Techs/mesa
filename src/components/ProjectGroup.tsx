@@ -412,6 +412,8 @@ export default function ProjectGroup({
   // ===== 档案卡（仅注册项目） =====
   const skillProvides = useSkillProvides();
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
+  // 新登记的是不是科研项目（决定进页引导里要不要出「初始化 git」）
+  const freshResearch = (cfg?.workMode ?? project?.workMode) === "research";
   const [cfgWarnings, setCfgWarnings] = useState<string[]>([]);
   const [cfgLoadError, setCfgLoadError] = useState<string | null>(null);
 
@@ -1579,32 +1581,44 @@ export default function ProjectGroup({
         </NoticeBar>
       )}
 
+      {/* 默认 Agent 不是开工前提（开始时的确认弹层能选、会记住），这里只是可选的一步，口气不能像必做 */}
       {registered && freshGitGuide && project && projectNeedsDefaultAgent(project) && onOpenAgents && (
         <div className="ccode-well mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-xs text-l2">
-          <span className="min-w-0 flex-1">先定这个项目默认用哪家、哪个模型。</span>
-          <button type="button" className={ctaSm} onClick={onOpenAgents}>
+          <span className="min-w-0 flex-1">
+            可以先定这个项目默认用哪家、哪个模型；不定也行，点「开始」时再选。
+          </span>
+          <button type="button" className={actionBtn} onClick={onOpenAgents}>
             设默认
+          </button>
+          <button type="button" className="shrink-0 text-l3 hover:text-l1" onClick={onDismissGitGuide}>
+            知道了
           </button>
         </div>
       )}
 
-      {registered && freshGitGuide && (
+      {/* 科研项目点「开始」时自动初始化 git（pipeline-start.ts ensure_git_repo），不让人先做这一步；
+          只在扫到了文献 / 数据时留这一行给「查看文献」 */}
+      {registered && freshGitGuide && (!freshResearch || (cfg?.resources.length ?? 0) > 0) && (
         <div className="ccode-well mb-3 flex items-center gap-3 rounded-lg px-3 py-2 text-xs text-l2">
           <span className="min-w-0 flex-1">
-            初始化 git 后才能建工作区。
+            {!freshResearch && "初始化 git 后才能建工作区。"}
             {cfg && (cfg.resources.length > 0) && (
-              <span className="text-l3"> 已扫到 {resourceSummary}。</span>
+              <span className={freshResearch ? "" : "text-l3"}>
+                {freshResearch ? "" : " "}已扫到 {resourceSummary}。
+              </span>
             )}
             {gitMsg && <span className="text-ok-text"> ✓ {gitMsg}</span>}
           </span>
-          <button
-            type="button"
-            className={ctaSm}
-            disabled={gitBusy}
-            onClick={() => void ensureGit()}
-          >
-            {gitBusy ? "初始化中…" : "初始化 git"}
-          </button>
+          {!freshResearch && (
+            <button
+              type="button"
+              className={ctaSm}
+              disabled={gitBusy}
+              onClick={() => void ensureGit()}
+            >
+              {gitBusy ? "初始化中…" : "初始化 git"}
+            </button>
+          )}
           {cfg && cfg.resources.length > 0 && (
             <button
               type="button"

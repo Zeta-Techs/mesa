@@ -2696,7 +2696,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             }
             useAppStore.getState().setPage("workspaces");
             setFreshProjectPath(project.path);
-            setJustScanned(scan);
+            // 新建的是空文件夹，「没扫到文献」是废话；只有添加已有文件夹才报扫描结果
+            setJustScanned(creatingProject ? null : scan);
             // 先落进列表再选中：分组表由 projects 派生，反了会被空表 effect
             // 重置成原来的第一项（示例课题创建已经踩过同一坑）
             const next = { ...project, workMode: mode };
