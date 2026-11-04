@@ -7,6 +7,7 @@ import {
   projectRailStatus,
   runIdForPath,
   stepAttention,
+  stepHeldActiveByAgent,
   workspaceAgentBusy,
   workspaceHasLiveAgent,
   workspaceReviewInboxEligible,
@@ -293,4 +294,14 @@ test("tabRunInput：标签刚开还没上报状态时用开标签时的 Agent / 
     sessionId: null,
   });
   assert.equal(reported.sessionId, null);
+});
+
+test("stepHeldActiveByAgent：已保存的步骤终端停在提示符上不算进行中", () => {
+  const ws = "/ccode/workspaces/lit-search";
+  const idle = input({ cwd: ws, running: true, shell: false, attention: "done" });
+  const working = input({ cwd: ws, running: true, shell: false, attention: "working" });
+  assert.equal(stepHeldActiveByAgent(ws, true, [idle]), false);
+  assert.equal(stepHeldActiveByAgent(ws, true, [working]), true);
+  // 没保存过：进程活着就算进行中（中途提交时圆不提前变待评审）
+  assert.equal(stepHeldActiveByAgent(ws, false, [idle]), true);
 });

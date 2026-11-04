@@ -173,6 +173,20 @@ export function workspaceAgentBusy(
   });
 }
 
+/** 步骤大圆该不该因终端停在「进行中」。已保存进项目、又没有新提交的步骤，
+ *  只在 Agent 真在出字 / 等确认时才算进行中——CLI 收完这一轮坐在提示符上不算，
+ *  否则保存后终端没关，步骤会一直卡在进行中并挂着「去评审」。 */
+export function stepHeldActiveByAgent(
+  worktreePath: string | undefined,
+  savedAndClean: boolean,
+  inputs: readonly RunOverviewInput[],
+  isWindows = false,
+): boolean {
+  return savedAndClean
+    ? workspaceAgentBusy(worktreePath, inputs, isWindows)
+    : workspaceHasLiveAgent(worktreePath, inputs, isWindows);
+}
+
 /** 项目列表行的状态点：待处理优先；否则只有 Agent 进程还在这个课题里跑才亮绿。
  *  未归档工作区、回合结束、回落 shell 都不亮。 */
 export function projectRailStatus(input: {

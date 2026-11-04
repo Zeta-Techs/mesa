@@ -73,7 +73,7 @@ import {
 } from "../project-agents";
 import {
   runIdForPath,
-  workspaceHasLiveAgent,
+  stepHeldActiveByAgent,
   type RunOverviewInput,
 } from "../run-overview";
 import type {
@@ -323,14 +323,14 @@ function deriveStepStatus(
   if (d?.canResolveMerge === true || h?.conflict === true) {
     return { key: "blocked", ws };
   }
-  // Agent 还在跑：即使已经有待合并提交，也还是进行中，不能提前「去评审」
-  if (workspaceHasLiveAgent(ws.worktreePath, liveInputs, IS_WINDOWS)) {
+  // 衔接工作区「已合并」规则：merged_at 置位且没有新的待合并提交
+  const savedAndClean = ws.status === "active" && !!ws.mergedAt && h?.ahead === 0;
+  // Agent 还在跑：即使已经有待合并提交，也还是进行中，不能提前「去评审」。
+  // 已保存的步骤只认真在出字 / 等确认，终端停在提示符上不把它打回进行中
+  if (stepHeldActiveByAgent(ws.worktreePath, savedAndClean, liveInputs, IS_WINDOWS)) {
     return { key: "active", ws };
   }
-  // 衔接工作区「已合并」规则：merged_at 置位且没有新的待合并提交
-  if (ws.status === "active" && ws.mergedAt && h?.ahead === 0) {
-    return { key: "done", ws };
-  }
+  if (savedAndClean) return { key: "done", ws };
   if (!h) return { key: "checking", ws };
   // 有待合并提交就是待评审；未提交改动（纳入/排除等）不得把「去评审」打回进行中
   if (h.ahead > 0) return { key: "review", ws };
