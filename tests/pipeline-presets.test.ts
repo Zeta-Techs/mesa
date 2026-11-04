@@ -151,11 +151,12 @@ test("每套模板有自己的纪律，没填的全局设定留占位", () => {
     ...(review.projectSettings ?? []),
   ]);
   assert.deepEqual(
-    settingsForTemplateApply(review, ["聚焦某个子问题", "", "", "", ""]),
+    settingsForTemplateApply(review, ["", "聚焦某个子问题", "", "", ""]),
     [
       ...review.projectRules!,
+      review.projectSettings![0],
       "综述角度：聚焦某个子问题",
-      ...(review.projectSettings ?? []).slice(1),
+      ...(review.projectSettings ?? []).slice(2),
     ],
   );
 });

@@ -23,6 +23,7 @@ import {
   NoticeBar,
 } from "./PageFrame";
 import { Modal } from "./Modal";
+import { SETTING_FOLLOW_UPS, SETTING_NOTES, answerWithFollowUp, parseSettingLine } from "../setting-choices";
 
 /**
  * 添加项目注册成功后的研究流程模板选择层（v3.79）：
@@ -62,6 +63,9 @@ export default function TemplatePickModal({
     null,
   );
   const [answers, setAnswers] = useState<string[]>([]);
+  // 点选题里点了「其他…」的题号；投期刊时追问的目标期刊（按题号）
+  const [customOpen, setCustomOpen] = useState<Record<number, boolean>>({});
+  const [followUps, setFollowUps] = useState<Record<number, string>>({});
   // 投稿与返修模板先选真实分支；返修轮次写入 project.toml，产物由轮次化步骤生成。
   const [submissionTpl, setSubmissionTpl] =
     useState<PipelineTemplateDef | null>(null);
@@ -129,18 +133,6 @@ export default function TemplatePickModal({
     onClose();
   }
 
-  /** 「问题：（提示）」拆成问题与提示（提示去掉括号做输入占位） */
-  function splitSetting(line: string): { q: string; hint: string } {
-    const i = line.indexOf("：");
-    if (i < 0) return { q: line, hint: "" };
-    return {
-      q: line.slice(0, i),
-      hint: line
-        .slice(i + 1)
-        .replace(/^（|）$/g, ""),
-    };
-  }
-
   /** 选中模板：有全局设定建议项先进填写屏，否则直接应用 */
   function pick(templateId: string) {
     const tpl = PIPELINE_TEMPLATES.find((t) => t.id === templateId);
@@ -155,6 +147,8 @@ export default function TemplatePickModal({
     if (tpl.projectSettings?.length) {
       setSettingsTpl(tpl);
       setAnswers(tpl.projectSettings.map(() => ""));
+      setCustomOpen({});
+      setFollowUps({});
       setError(null);
     } else {
       void apply(tpl);
@@ -325,6 +319,8 @@ export default function TemplatePickModal({
                   if (tpl.projectSettings?.length) {
                     setSettingsTpl(tpl);
                     setAnswers(tpl.projectSettings.map(() => ""));
+                    setCustomOpen({});
+                    setFollowUps({});
                   } else {
                     void apply(tpl);
                   }
@@ -342,30 +338,83 @@ export default function TemplatePickModal({
             <p className="mb-4 text-xs text-l3">
               这些设定会贯穿后续研究流程。填了的下次开工会写进任务书。留空也会在项目设置的规则里留出「综述角度：（…）」这样的空位，你可以把括号换成自己的答案，或稍后让 AI 逐项问你。
             </p>
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {settingsTpl.projectSettings!.map((line, i) => {
-                const { q, hint } = splitSetting(line);
-                const depth = q === "综述深度";
+                const { q, hint, options } = parseSettingLine(line);
+                const notes = SETTING_NOTES[q];
+                const followUp = SETTING_FOLLOW_UPS[q];
+                const value = answers[i] ?? "";
+                const setValue = (v: string) =>
+                  setAnswers((prev) => prev.map((a, j) => (j === i ? v : a)));
+                const custom = options !== null && (customOpen[i] || (value !== "" && !options.includes(value)));
                 return (
-                  <label key={q} className="block">
+                  <div key={q}>
                     <span className="mb-1 block text-xs text-l2">{q}</span>
-                    <input
-                      className={fieldClass}
-                      value={answers[i] ?? ""}
-                      placeholder={hint}
-                      title={depth ? "系统综述要另定完整方法方案，不能只把检索升到严格档。" : undefined}
-                      onChange={(e) =>
-                        setAnswers((prev) =>
-                          prev.map((a, j) => (j === i ? e.target.value : a)),
-                        )
-                      }
-                    />
-                    {depth && (
-                      <span className="mt-1 block text-micro text-l4">
-                        严格检索档不是系统综述
-                      </span>
+                    {options ? (
+                      <div className="ccode-seg-boxed is-sm inline-flex max-w-full flex-wrap" role="group" aria-label={q}>
+                        {options.map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            aria-pressed={!custom && value === opt}
+                            title={notes?.options?.[opt]}
+                            onClick={() => {
+                              setCustomOpen((prev) => ({ ...prev, [i]: false }));
+                              setValue(value === opt && !custom ? "" : opt);
+                            }}
+                            className="ccode-seg-boxed-item text-xs"
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          aria-pressed={custom}
+                          onClick={() => {
+                            setCustomOpen((prev) => ({ ...prev, [i]: !custom }));
+                            if (!custom || options.includes(value)) setValue("");
+                          }}
+                          className="ccode-seg-boxed-item text-xs"
+                        >
+                          其他…
+                        </button>
+                      </div>
+                    ) : null}
+                    {(options === null || custom) && (
+                      <input
+                        className={`${fieldClass}${options ? " mt-1.5" : ""}`}
+                        value={value}
+                        placeholder={options ? "写你自己的答案" : hint}
+                        autoFocus={custom}
+                        onChange={(e) => setValue(e.target.value)}
+                      />
                     )}
-                  </label>
+                    {notes?.options && (
+                      <ul className="mt-1 space-y-0.5 text-micro text-l4">
+                        {Object.entries(notes.options).map(([opt, note]) => (
+                          <li key={opt}>
+                            <span className="text-l3">{opt}</span>：{note}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {notes?.footnote && (
+                      <span className="mt-1 block text-micro text-l4">{notes.footnote}</span>
+                    )}
+                    {followUp && value === followUp.option && (
+                      <label className="mt-2 block">
+                        <span className="mb-1 block text-xs text-l3">{followUp.label}</span>
+                        <input
+                          className={fieldClass}
+                          value={followUps[i] ?? ""}
+                          placeholder={followUp.placeholder}
+                          onChange={(e) =>
+                            setFollowUps((prev) => ({ ...prev, [i]: e.target.value }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -395,7 +444,18 @@ export default function TemplatePickModal({
                 <button
                   type="button"
                   disabled={busy !== null}
-                  onClick={() => void apply(settingsTpl, answers)}
+                  onClick={() =>
+                    void apply(
+                      settingsTpl,
+                      answers.map((a, i) =>
+                        answerWithFollowUp(
+                          parseSettingLine(settingsTpl.projectSettings![i]).q,
+                          a,
+                          followUps[i] ?? "",
+                        ),
+                      ),
+                    )
+                  }
                   className={`${primaryActionClass} disabled:opacity-50`}
                 >
                   {busy === settingsTpl.id ? "写入中…" : "保存设定并应用模板"}
