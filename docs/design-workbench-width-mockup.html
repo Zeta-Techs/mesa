@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>工作台宽度对比（2026-11-05）</title>
+<style>
+  :root {
+    --canvas: #1c1c1e; --raised: #2a2a2d; --well: #252528; --hover: #303034; --hair: #3a3a3e;
+    --l1: #ecebe7; --l2: #c9c7c2; --l3: #8f8d88; --l4: #6b6a66;
+    --amber: #f5b83d; --ok: #6cc788; --err: #ef7d73; --warn: #e9b44c; --seg: #3a3a3e;
+    --rail: #19191b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #111113; color: var(--l2); font: 14px/1.45 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  .bar { position: sticky; top: 0; z-index: 9; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; padding: 12px 20px; background: #0c0c0d; border-bottom: 1px solid #222; }
+  .bar b { color: var(--l1); font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--hair); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button { background: none; border: 0; color: var(--l3); padding: 5px 10px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--seg); color: var(--l1); }
+  .note { color: var(--l3); font-size: 13px; max-width: 760px; }
+  .stage { padding: 20px; overflow: hidden; }
+  /* 模拟的 Mesa 窗口：左侧栏 + 主区；按所选窗口宽度画，再整体缩放放进浏览器 */
+  .win { transform-origin: top left; background: var(--canvas); border-radius: 12px; overflow: hidden; display: flex; box-shadow: 0 0 0 1px #2c2c2f; }
+  .side { width: 240px; flex: none; background: var(--rail); border-right: 1px solid #242427; padding: 18px 14px; color: var(--l3); font-size: 13px; }
+  .side .it { padding: 6px 8px; border-radius: 6px; margin-bottom: 2px; }
+  .side .it.on { background: var(--hover); color: var(--l1); }
+  .side .grp { margin: 16px 8px 6px; font-size: 12px; color: var(--l4); }
+  .main { flex: 1; min-width: 0; padding: 18px 24px 40px; }
+  .frame { margin: 0 auto; width: 100%; }
+  .frame.w960 { max-width: 960px; }
+  .frame.w1080 { max-width: 1080px; margin-left: 0; }
+  .frame.w1440 { max-width: 1440px; }
+  .cols { display: grid; gap: 20px; }
+  .cols.two { grid-template-columns: minmax(0, 1fr) 340px; }
+  .h { display: flex; align-items: center; gap: 10px; margin: 0 4px 10px; }
+  .h h2 { margin: 0; font-size: 18px; color: var(--l1); font-weight: 600; }
+  .chip { font-size: 12px; color: var(--l3); background: var(--well); border-radius: 999px; padding: 2px 8px; }
+  .grow { flex: 1; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; color: var(--l3); font-size: 13px; padding: 4px 8px; border-radius: 6px; }
+  .btn:hover { background: var(--hover); color: var(--l1); }
+  .fseg { display: inline-flex; border: 1px solid var(--hair); border-radius: 8px; padding: 2px; font-size: 12px; }
+  .fseg span { padding: 3px 9px; border-radius: 6px; color: var(--l3); }
+  .fseg span.on { background: var(--seg); color: var(--l1); }
+  .card { background: var(--well); border-radius: 12px; margin-bottom: 10px; }
+  .card:hover .reveal { opacity: 1; }
+  .reveal { opacity: 0; transition: opacity .12s; }
+  .ph { display: flex; align-items: center; gap: 8px; padding: 10px 16px 8px 10px; }
+  .chev { width: 24px; text-align: center; color: var(--l3); }
+  .pname { color: var(--l1); font-weight: 600; }
+  .vit { color: var(--l3); font-size: 13px; }
+  .row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 7.5rem; gap: 10px; align-items: center; padding: 7px 16px 7px 14px; min-height: 34px; }
+  .row:hover { background: var(--hover); }
+  .row .nm { color: var(--l1); }
+  .row .st { color: var(--l3); font-size: 13px; margin-left: 8px; }
+  .row .tm { text-align: right; color: var(--l3); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .dot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--l3); font-size: 10px; display: flex; align-items: center; justify-content: center; color: var(--l3); }
+  .dot.cur { background: var(--amber); border-color: var(--amber); color: #1d1608; font-weight: 700; }
+  .warn { color: var(--warn) !important; }
+  .err { color: var(--err) !important; }
+  .live { color: var(--ok) !important; }
+  .block { padding: 0 16px 8px 44px; font-size: 13px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .block .k { color: var(--l3); }
+  .foot { padding: 2px 16px 10px 36px; display: flex; gap: 6px; }
+  .foot .btn { font-size: 12px; }
+  .quiet { color: var(--l3); font-size: 13px; padding: 4px 16px 14px; }
+  .quiet a { color: var(--l2); margin: 0 4px; }
+  .sect { margin-top: 26px; }
+  .sched { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) auto; gap: 12px; align-items: center; background: var(--well); border-radius: 12px; padding: 12px 16px; }
+  .sched .when { color: var(--l1); }
+  .sched .sub { color: var(--l3); font-size: 12px; }
+  .pill { border: 1px solid var(--hair); border-radius: 8px; padding: 4px 10px; font-size: 12px; color: var(--l2); }
+  .queue { background: var(--well); border-radius: 12px; padding: 4px 0; margin-bottom: 10px; }
+  .q { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px 14px; }
+  .q:hover { background: var(--hover); }
+  .q .t { color: var(--l1); font-size: 13px; }
+  .q .s { color: var(--l3); font-size: 12px; }
+  .q .ic { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--warn); }
+  .rail h3 { margin: 0 4px 10px; font-size: 15px; color: var(--l1); font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+  .rail h3 small { color: var(--l3); font-weight: 400; font-size: 12px; }
+  .rail .sched { grid-template-columns: minmax(0, 1fr) auto; }
+  .ruler { position: relative; height: 0; }
+  .guide { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(245,184,61,.5); }
+  svg.buddy { width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>工作台宽度对比</b>
+  <span class="seg" id="opt">
+    <button data-v="a" aria-pressed="true">A 现在：960 居中</button>
+    <button data-v="b">B 1080 靠左</button>
+    <button data-v="c">C 两栏（推荐）</button>
+  </span>
+  <span class="seg" id="ww">
+    <button data-w="1280">窗口 1280</button>
+    <button data-w="1600" aria-pressed="true">窗口 1600</button>
+    <button data-w="1920">窗口 1920</button>
+  </span>
+  <label class="note"><input type="checkbox" id="guide" /> 显示其他页面（连接 / 用量 / 设置）的内容左缘</label>
+  <span class="note" id="desc"></span>
+</div>
+<div class="stage" id="stage"><div class="win" id="win"></div></div>
+
+<template id="buddy"><svg class="buddy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.2H8.4a4.8 4.8 0 0 0-4.8 4.8v3.4a4.8 4.8 0 0 0 4.8 4.8h.9v2.6l3.4-2.6h2.9a4.8 4.8 0 0 0 4.8-4.8v-1.6"/><path d="M19.4 2.2l.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55z" fill="#f5b83d" stroke="#f5b83d" stroke-width="1"/><ellipse cx="9.3" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none"/><ellipse cx="14.5" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none"/><circle cx="7.2" cy="13.9" r="1" fill="#f5b83d" stroke="none"/><circle cx="16.6" cy="13.9" r="1" fill="#f5b83d" stroke="none"/><path d="M10.5 14.3c.8.7 2 .7 2.8 0"/></svg></template>
+
+<script>
+const B = () => document.getElementById("buddy").innerHTML;
+const side = `<div class="side">
+  <div class="it">＋ 新对话</div><div class="it">＋ 新项目</div><div class="it on">工作台</div><div class="it">对话管理</div>
+  <div class="grp">项目</div>
+  <div class="it">AI模型</div><div class="it">测试项目</div><div class="it">Ccode</div><div class="it">后端管理</div><div class="it">网页设计</div><div class="it">HER催化综述</div><div class="it">综述流程测试</div>
+</div>`;
+
+const projects = `
+  <div class="card">
+    <div class="ph"><span class="chev">⌄</span><span>▣</span><span class="pname">AI模型</span><span class="grow"></span>
+      <span class="btn reveal">回到对话 →</span><span class="btn" style="color:var(--l2)">${B()} 问问怎么回事</span></div>
+    <div class="block"><span class="k">卡点</span><span class="warn">「根据这份表格格式整理最新的模型」上次停了，需要处理</span></div>
+    <div class="row"><span class="dot">◎</span><span><span class="nm">根据这份表格格式整理最新的模型 完善表格</span><span class="st warn">上次停了，需要处理</span></span><span></span><span class="tm">9月11日</span></div>
+    <div class="foot"><span class="btn">＋ 记下一个目标</span><span class="btn">⑂ 拆成几个目标同时做…</span></div>
+  </div>
+  <div class="card">
+    <div class="ph"><span class="chev">⌄</span><span>⚗</span><span class="pname">测试项目</span><span class="vit">进行到 第 1 / 5 步</span><span class="grow"></span>
+      <span class="btn reveal">回到对话 →</span><span class="btn reveal">${B()}</span></div>
+    <div class="row"><span class="dot cur">1</span><span><span class="nm">文献检索与筛选</span><span class="st live">正在干活 · 运行 lit_records.py · Codex</span></span><span></span><span class="tm">本轮 12 分钟</span></div>
+    <div class="row"><span class="dot">2</span><span><span class="nm">文献精读与笔记</span><span class="st">提前开了，还没保存</span></span><span></span><span class="tm">11 小时前</span></div>
+    <div class="row"><span class="dot">3</span><span><span class="nm">综述大纲</span><span class="st">提前开了，还没保存</span></span><span></span><span class="tm">11 小时前</span></div>
+  </div>
+  <div class="card">
+    <div class="ph"><span class="chev">⌄</span><span>&lt;&gt;</span><span class="pname">Ccode</span><span class="vit">基准 main · 分支 3 条 · 需同步 3</span><span class="grow"></span>
+      <span class="btn reveal">打开项目 →</span><span class="btn reveal">${B()}</span></div>
+    <div class="row"><span class="dot">⑂</span><span><span class="nm">feat/workbench-layout</span><span class="st">正在开发</span></span><span></span><span class="tm">3 分钟前</span></div>
+  </div>
+  <div class="quiet">另有 5 个项目没有进行中的事：<a>后端管理</a>·<a>网页设计</a>·<a>HER催化综述</a>·<a>综述流程测试</a>·<a>AI应用教程</a></div>`;
+
+const queue = `
+  <div class="queue">
+    <div class="q"><span class="ic"></span><span><div class="t">「文献检索与筛选」纳入标准要你拍板</div><div class="s">测试项目 · 人工请求 · 3 个选项</div></span></div>
+    <div class="q"><span class="ic"></span><span><div class="t">「后端管理」评审：feat/Model-and-Chat 待验收</div><div class="s">后端管理 · 待评审</div></span></div>
+  </div>`;
+const sched = (narrow) => narrow
+  ? `<div class="sched"><span><div class="when">明天 09:00 · 文献雷达</div><div class="sub">综述流程测试 · 每天 09:00 · 上次新命中 0</div></span><span class="pill">现在跑</span></div>`
+  : `<div class="sched"><span class="when">明天 09:00</span><span><div style="color:var(--l1)">文献雷达</div><div class="sub">综述流程测试 · 每天 09:00 · 上次新命中 0</div></span><span class="pill">现在跑</span></div>`;
+
+const head = `<div class="h"><h2>项目</h2><span class="chip">1 个运行中</span><span class="grow"></span>
+  <span class="btn">${B()} 项目助手</span>
+  <span class="fseg"><span>进行中 3</span><span class="on">全部</span><span>科研</span><span>编程</span><span>工作</span></span></div>`;
+
+function single(cls) {
+  return `<div class="frame ${cls}">
+    <div class="h"><h2>等你拍板</h2><span class="chip">2</span></div>${queue}
+    <div class="sect">${head}${projects}</div>
+    <div class="sect"><div class="h"><h2>定时任务</h2><span class="chip">1 个在用</span></div>${sched(false)}</div>
+  </div>`;
+}
+function two(wide) {
+  if (!wide) return single("w960");
+  return `<div class="frame w1440"><div class="cols two">
+    <div>${head}${projects}</div>
+    <aside class="rail">
+      <h3>等你拍板 <small>2</small></h3>${queue}
+      <h3 style="margin-top:22px">定时任务 <small>1 个在用</small></h3>${sched(true)}
+    </aside>
+  </div></div>`;
+}
+const DESC = {
+  a: "A：只有一栏，最宽 960，居中。大屏两边空，切到别的页面时内容左边缘会跳。",
+  b: "B：只有一栏，最宽 1080，靠左。左边缘和别的页面对齐、切页不跳；大屏右边仍空着。",
+  c: "C：外框和别的页面同宽（1440）、左边缘对齐。大屏上左边项目列表约 1080，右边 340 一栏放「等你拍板」和「定时任务」；窗口窄（主区不到约 1280）时退回单栏。",
+};
+let opt = "a", ww = 1600;
+function render() {
+  const mainW = ww - 240 - 48;
+  const content = opt === "a" ? single("w960") : opt === "b" ? single("w1080") : two(mainW >= 1280);
+  const guide = document.getElementById("guide").checked;
+  // 别的页面：外框 1440 居中，内容左缘 = 主区左 + max(0, (主区 - 1440)/2)
+  const otherLeft = 24 + Math.max(0, (mainW - 1440) / 2);
+  const win = document.getElementById("win");
+  win.style.width = ww + "px";
+  win.style.height = "900px";
+  win.innerHTML = side + `<div class="main" style="position:relative">${guide ? `<div class="guide" style="left:${otherLeft}px"></div>` : ""}${content}</div>`;
+  const avail = document.getElementById("stage").clientWidth - 40;
+  const k = Math.min(1, avail / ww);
+  win.style.transform = `scale(${k})`;
+  document.getElementById("stage").style.height = 900 * k + 40 + "px";
+  document.getElementById("desc").textContent = DESC[opt] + (opt === "c" && mainW < 1280 ? "（这个窗口宽度下已退回单栏）" : "");
+}
+document.querySelectorAll("#opt button").forEach((b) => b.onclick = () => {
+  opt = b.dataset.v; document.querySelectorAll("#opt button").forEach((x) => x.setAttribute("aria-pressed", x === b)); render();
+});
+document.querySelectorAll("#ww button").forEach((b) => b.onclick = () => {
+  ww = +b.dataset.w; document.querySelectorAll("#ww button").forEach((x) => x.setAttribute("aria-pressed", x === b)); render();
+});
+document.getElementById("guide").onchange = render;
+window.onresize = render;
+render();
+</script>
+</body>
+</html>

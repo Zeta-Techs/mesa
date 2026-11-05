@@ -1615,7 +1615,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
 
   return (
-    <PageFrame width="workbench" className="pb-12 pt-2">
+    <PageFrame width="wide" className="pb-12 pt-2">
       <div className="ccode-workbench min-w-0">
       {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
           标题只留给屏幕阅读器；顶上 pt-2 让第一块的「项目」标题与其余管理页页名同一高度、同一字号（2026-10-29 用户：页头统一用这一档）。2026-10-29 试过各页同款小页头 + 对话栏宽度单列，
@@ -1655,13 +1655,16 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           </button>
         </div>
       )}
+      {/* 大屏两栏（2026-11-05 用户比过三种宽度后选「两栏」）：工作台够宽时项目在左、右边 340 一栏放等你拍板与定时任务；
+          不够宽时照旧单栏、上下顺序不变。只靠 CSS 网格区域摆位（App.css .ccode-workbench-cols），不挪 DOM，键盘顺序不变 */}
+      <div className="ccode-workbench-cols">
       {queueRows.length > 0 && (
-        <section className="mb-7 min-w-0" data-workbench-queue="">
+        <section className="ccode-wb-queue mb-7 min-w-0" data-workbench-queue="">
           <SectionHeading
             title={decisionRows.length ? "等你拍板" : "通知"}
             action={
               <span className="flex flex-wrap items-center justify-end gap-2">
-                <span className="hidden text-micro text-l3 lg:inline" aria-hidden="true">{QUEUE_KEY_HINT}</span>
+                <span className="ccode-wb-queue-hint hidden text-micro text-l3 lg:inline" aria-hidden="true">{QUEUE_KEY_HINT}</span>
                 {noticeRows.length > 0 && (
                   <button type="button" className={ghostActionClass} aria-expanded={noticesExpanded} aria-controls="workbench-notices" onClick={() => setNoticesExpanded((value) => !value)}>
                     {decisionRows.length ? "通知" : noticesExpanded ? "收起" : "展开"} {noticeRows.length}
@@ -1688,7 +1691,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         </section>
       )}
 
-      <section className="min-w-0">
+      <section className="ccode-wb-main min-w-0">
           <div className="mb-2.5 flex flex-wrap items-center gap-2 px-1">
             {/* 三块的标题同一个样子（同 SectionHeading） */}
             <h2 className="text-lg font-semibold text-l1">
@@ -1934,6 +1937,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       </section>
 
 
+      {/* 上边距放在这一层：右栏时由 .ccode-workbench-cols 的两栏规则去掉（规则写在栏里面会按栏自己的宽度算，判不中） */}
+      <div className="ccode-wb-sched mt-7 min-w-0">
       <WorkbenchSchedules
         rows={scheduleRows}
         nowMs={nowMs}
@@ -1943,6 +1948,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         onQueue={openScheduleQueue}
         onAction={(row) => void runScheduleAction(row)}
       />
+      </div>
+      </div>
       </div>
 
       {taskPanel}

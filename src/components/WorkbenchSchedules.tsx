@@ -81,7 +81,7 @@ export default function WorkbenchSchedules({
     if (row) row.task.queued ? onQueue(row) : onOpen(row);
   };
   return (
-    <section className="mt-7 min-w-0" aria-label="定时任务" data-workbench-queue="">
+    <section className="min-w-0" aria-label="定时任务" data-workbench-queue="">
       <div className="mb-2.5 flex min-h-8 items-center gap-2 px-1">
         <h2 className="text-lg font-semibold text-l1">定时任务</h2>
         <span className="text-micro text-l3">

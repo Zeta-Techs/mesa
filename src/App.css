@@ -4145,6 +4145,28 @@ select:focus-visible {
   /* 宽度由 PageFrame width="wide"（最宽 1440px、居中、两侧 px-6）给，与连接 / 技能 / MCP / 用量 / 设置同一档（2026-10-27 用户拍板；
      2026-10-29 试过对话栏宽度单列，用户否掉，回到 wide） */
 }
+/* 大屏两栏（2026-11-05 用户比过三种宽度后选「两栏」）：单栏时上下是 等你拍板 → 项目 → 定时任务；够宽时项目占左栏，右栏 340 上拍板下定时。
+   三块各自是名为 workbench 的尺寸容器：下面按宽度收行布局的规则（max-width 740 / 470）就按各自那一栏算，右栏自动用紧凑行 */
+.ccode-workbench-cols { display: grid; grid-template-columns: minmax(0, 1fr); }
+.ccode-wb-queue, .ccode-wb-main, .ccode-wb-sched { container: workbench / inline-size; min-width: 0; }
+@container workbench (min-width: 1240px) {
+  .ccode-workbench-cols {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "main queue" "main sched";
+    column-gap: 24px;
+    align-items: start;
+  }
+  .ccode-wb-main { grid-area: main; }
+  .ccode-wb-queue { grid-area: queue; }
+  .ccode-wb-sched { grid-area: sched; }
+  /* 右栏里定时任务紧跟拍板（拍板区自带下边距），不再另加上边距 */
+  .ccode-wb-sched { margin-top: 0; }
+}
+/* 拍板区窄（右栏里，或窗口本身很窄）时不写键盘提示，免得挤标题；按拍板区自己的宽度判 */
+@container workbench (max-width: 470px) {
+  .ccode-wb-queue-hint { display: none !important; }
+}
 .ccode-workbench, .ccode-workbench-detail {
   font-size: var(--text-sm);
 }
