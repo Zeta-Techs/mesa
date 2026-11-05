@@ -19,7 +19,7 @@ test("拆分回报：在做时写进度，等着的那路点名", () => {
   const p = batchProgress(batch, (id) => st[id] ?? null);
   assert.equal(p.done, false);
   assert.equal(p.tone, "live");
-  assert.equal(p.text, "「三批质控」3 路：2 路在做、1 路待验收；「汇总」在等");
+  assert.equal(p.text, "「三批质控」拆成的 3 个目标：2 个在做、1 个待验收；「汇总」在等");
   assert.deepEqual(p.lines[3], { name: "汇总", label: "还没开工" });
 });
 
@@ -28,7 +28,7 @@ test("拆分回报：开了的都收场才算做完，失败的标红，等着�
   const p = batchProgress(batch, (id) => st[id] ?? null);
   assert.equal(p.done, true);
   assert.equal(p.tone, "fail");
-  assert.equal(p.text, "「三批质控」开的 3 路都收场了：1 路待验收、1 路已验收、1 路失败；「汇总」在等，前面验收后在项目里点开始");
+  assert.equal(p.text, "「三批质控」拆成的 3 个目标都结束了：1 个待验收、1 个已验收、1 个失败；「汇总」在等，前面验收后在项目里点开始");
   // 汇总那路已经开了，就不再说在等
   const st2: Record<string, string> = { ...st, c: "pending_review", d: "running" };
   assert.doesNotMatch(batchProgress(batch, (id) => st2[id] ?? null).text, /在等/);

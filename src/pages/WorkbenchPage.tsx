@@ -1754,6 +1754,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                           ? { label: clientJumpLabel, onClick: () => clientOpen.openProject(card.path) }
                           : null
                       }
+                      footerExpanded={Boolean(canGoal && goalOpen && goalTarget && samePath(goalTarget.path, card.path, IS_WINDOWS))}
                       footer={
                         canGoal && goalOpen && goalTarget && samePath(goalTarget.path, card.path, IS_WINDOWS) ? (
                           // 想到就记：只记下不开工，落到该项目的目标列表；开工、选 Agent 仍在项目页由人来

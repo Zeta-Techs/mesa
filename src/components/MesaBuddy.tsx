@@ -232,10 +232,20 @@ export function MesaBuddyIcon({
       className={className}
       {...rest}
     >
-      <rect x="3.5" y="4.5" width="17" height="15" rx="5" />
-      <circle cx="9" cy="11" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="15" cy="11" r="1.3" fill="currentColor" stroke="none" />
-      <path d="M9.4 14.6c1.5 1.3 3.7 1.3 5.2 0" />
+      {/* 2026-11-05 用户：「图标还是有点简陋」——改成会说话的笑脸气泡（右上缺口里一颗琥珀星，示意 AI），两颊琥珀；
+          线条跟文字色走，琥珀用品牌色 --color-mesa-amber，深浅主题都成立。14px 下实测能认出是张脸 */}
+      <path d="M15 5.2H8.4a4.8 4.8 0 0 0-4.8 4.8v3.4a4.8 4.8 0 0 0 4.8 4.8h.9v2.6l3.4-2.6h2.9a4.8 4.8 0 0 0 4.8-4.8v-1.6" />
+      <path
+        d="M19.4 2.2l.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55z"
+        fill="var(--color-mesa-amber)"
+        stroke="var(--color-mesa-amber)"
+        strokeWidth={1}
+      />
+      <ellipse cx="9.3" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none" />
+      <ellipse cx="14.5" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none" />
+      <circle cx="7.2" cy="13.9" r="1" fill="var(--color-mesa-amber)" stroke="none" />
+      <circle cx="16.6" cy="13.9" r="1" fill="var(--color-mesa-amber)" stroke="none" />
+      <path d="M10.5 14.3c.8.7 2 .7 2.8 0" />
     </svg>
   );
 }

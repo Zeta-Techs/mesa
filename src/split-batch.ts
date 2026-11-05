@@ -64,20 +64,20 @@ export function batchProgress(batch: SplitBatch, status: (taskId: string) => str
   const done = started > 0 && finished === started;
   const count = (st: string) => startedLines.filter((x) => x.status === st).length;
   const parts = [
-    count("running") + count("queued") ? `${count("running") + count("queued")} 路在做` : "",
-    count("pending_review") ? `${count("pending_review")} 路待验收` : "",
-    count("completed") ? `${count("completed")} 路已验收` : "",
-    count("failed") ? `${count("failed")} 路失败` : "",
-    count("stopped") ? `${count("stopped")} 路停了` : "",
+    count("running") + count("queued") ? `${count("running") + count("queued")} 个在做` : "",
+    count("pending_review") ? `${count("pending_review")} 个待验收` : "",
+    count("completed") ? `${count("completed")} 个已验收` : "",
+    count("failed") ? `${count("failed")} 个失败` : "",
+    count("stopped") ? `${count("stopped")} 个停了` : "",
   ].filter(Boolean);
   const waiting = lines.filter((x) => !x.lane.started && (x.status === "pending" || x.status === null)).map((x) => `「${x.name}」`);
   const bad = count("failed") + count("stopped") > 0;
   const head = batch.title ? `「${batch.title}」` : "拆的";
   const text = done
-    ? `${head}开的 ${started} 路都收场了：${parts.join("、") || "都找不到了"}${
+    ? `${head}拆成的 ${started} 个目标都结束了：${parts.join("、") || "都找不到了"}${
         waiting.length ? `；${waiting.join("")}在等，前面验收后在项目里点开始` : ""
       }`
-    : `${head}${started} 路：${parts.join("、") || "还没动"}${waiting.length ? `；${waiting.join("")}在等` : ""}`;
+    : `${head}拆成的 ${started} 个目标：${parts.join("、") || "还没动"}${waiting.length ? `；${waiting.join("")}在等` : ""}`;
   return {
     started,
     finished,

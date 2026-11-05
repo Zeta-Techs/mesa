@@ -87,6 +87,7 @@ export default function WorkbenchProjectGroup({
   agentLabel,
   caretFor,
   footer,
+  footerExpanded = false,
   runs,
   onAskAssistant,
 }: {
@@ -110,6 +111,8 @@ export default function WorkbenchProjectGroup({
   caretFor: (live: CardLiveRun) => RunCaretState;
   /** 分组末尾一行（记目标的按钮 / 输入框由页面给）；没有就不画 */
   footer: ReactNode;
+  /** footer 里记目标的输入框开着（拆分入口这时让出这一行） */
+  footerExpanded?: boolean;
   /** 这个项目的运行记录（卡点里「出错了」用） */
   runs: readonly RunFailureInput[];
   /** 打开项目助手；带问题时直接问（卡点里 Mesa 出错那条）。只有登记过的项目有 */
@@ -205,17 +208,6 @@ export default function WorkbenchProjectGroup({
             </span>
           )}
         </div>
-        {onAskAssistant && (
-          <button
-            type="button"
-            className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
-            title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件。要聊课题内容或让 AI 干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」"
-            onClick={() => onAskAssistant()}
-          >
-            <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
-            <span className="text-xs">项目助手</span>
-          </button>
-        )}
         {clientJump && (
           <button
             type="button"
@@ -236,12 +228,23 @@ export default function WorkbenchProjectGroup({
           <span className="text-xs">{continueLabel}</span>
           <ArrowRight size={12} strokeWidth={1.8} aria-hidden="true" />
         </button>
-        {/* 时间放最右、与任务行时间同一右缘；按钮紧挨着时间，不再隔一整列（2026-10-27 用户） */}
-        {lastActive && (
-          <span className="ccode-workbench-updated shrink-0 text-right text-micro tabular-nums text-l3" title={absTime(lastActive)}>
-            {shortWhen(lastActive)}
-          </span>
+        {onAskAssistant && (
+          <button
+            type="button"
+            className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
+            title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件。要聊课题内容或让 AI 干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」"
+            onClick={() => onAskAssistant()}
+          >
+            <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+            <span className="text-xs">项目助手</span>
+          </button>
         )}
+        {/* 时间放最右、与任务行时间同一右缘、同一列宽（2026-10-27 用户）；没有时间也占着这一列，
+            项目助手才在每个项目上落在同一处（2026-11-05 用户截图：各项目的「项目助手」左右错开）。
+            悬停才出现的「回到对话」等放在项目助手左边，出现与否都不挪它 */}
+        <span className="ccode-workbench-updated shrink-0 text-right text-micro tabular-nums text-l3" title={lastActive ? absTime(lastActive) : undefined}>
+          {lastActive ? shortWhen(lastActive) : ""}
+        </span>
       </div>
 
       {blockers.length > 0 && (
@@ -326,9 +329,13 @@ export default function WorkbenchProjectGroup({
             )}
           </ul>
         )}
-        {!collapsed && card.registered && <SplitPlanRow projectPath={card.path} projectName={card.name} />}
         {!collapsed && <ProjectMailRow projectPath={card.path} />}
-        {footer ? <div className="pb-2 pl-[calc(1.5rem+6px+0.25rem)] pr-4">{footer}</div> : null}
+        {/* 「＋ 记下一个目标」与「拆成几个目标同时做」同一行（2026-11-05） */}
+        {!collapsed && card.registered ? (
+          <SplitPlanRow projectPath={card.path} projectName={card.name} footer={footer} footerExpanded={footerExpanded} />
+        ) : footer ? (
+          <div className="pb-2 pl-[calc(1.5rem+6px+0.25rem)] pr-4">{footer}</div>
+        ) : null}
       </div>
     </section>
   );

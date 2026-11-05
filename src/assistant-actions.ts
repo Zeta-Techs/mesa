@@ -66,7 +66,7 @@ export async function runAssistantAction(
     case "split":
       // 拆成几路做在工作台项目分组下；方案要人批准，这里只把需求复制好
       void navigator.clipboard?.writeText(action.text).catch(() => {});
-      toast("要拆的事已复制，在工作台项目分组下点「拆成几路做…」粘进去", "info");
+      toast("要拆的事已复制，在工作台项目分组下点「拆成几个目标同时做…」粘进去", "info");
       return;
     case "project":
       toProject();

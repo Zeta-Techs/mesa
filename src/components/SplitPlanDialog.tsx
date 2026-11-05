@@ -91,7 +91,7 @@ export default function SplitPlanDialog({
   }
 
   async function decline() {
-    if (!(await confirmDialog("不开这份方案？方案会移进 .ccode/split-plans/ 留底，之后可以在工作台重新「拆成几路做」。", { confirmText: "不开" }))) return;
+    if (!(await confirmDialog("不开这份方案？方案会移进 .ccode/split-plans/ 留底，之后可以在工作台重新「拆成几个目标同时做」。", { confirmText: "不开" }))) return;
     try {
       await invoke("split_plan_close", { projectRoot: projectPath, outcome: "declined" });
       onDone();
@@ -135,9 +135,9 @@ export default function SplitPlanDialog({
           failed.push(`${lane.name}（${String(reason)}）`);
         }
       }
-      if (recorded.length === 0) throw new Error(`一路都没记下：${failed.join("；")}`);
+      if (recorded.length === 0) throw new Error(`一个目标都没记下：${failed.join("；")}`);
       await invoke("split_plan_close", { projectRoot: projectPath, outcome: "approved" });
-      if (failed.length) toast(`这几路没记下，方案已收进留底，要做就在项目里手动新建目标：${failed.join("；")}`, "error");
+      if (failed.length) toast(`这几个没记下，方案已收进留底，要做就在项目里手动新建目标：${failed.join("；")}`, "error");
       const tasks = recorded.map((r) => r.task);
       // 要等别的几路做完的只记下、不开工（人等前面评审采纳后在项目里点开始；开工时整仓复制，就带上了前面的产物）
       const toStart = recorded.filter((r) => !r.waits).map((r) => r.task);
@@ -190,8 +190,8 @@ export default function SplitPlanDialog({
         );
       }
       toast(
-        `已按方案开了 ${started} 路${started < toStart.length ? `（${toStart.length - started} 路没开起来）` : ""}，做完各自进待验收，都做完时工作台这一行会回报。${
-          parked ? `另有 ${parked} 路要等前面做完，已记成目标没开，前面验收后在项目里点「开始」。` : ""
+        `已按方案开了 ${started} 个目标${started < toStart.length ? `（${toStart.length - started} 个没开起来）` : ""}，做完各自进待验收，都做完时工作台这一行会回报。${
+          parked ? `另有 ${parked} 个要等前面做完，已记下没开，前面验收后在项目里点「开始」。` : ""
         }`,
         started || parked ? "success" : "error",
       );
@@ -210,7 +210,7 @@ export default function SplitPlanDialog({
       open
       size="lg"
       title={`拆分方案：${plan.title || "（没写标题）"}`}
-      description="AI 起草的方案。看清每一路做什么、写不写共享文件，勾掉不想开的，不满意就在下面让它改；批准后每路记成一条目标，各自在隔离副本里做，验收后才写回项目。"
+      description="AI 起草的拆法：一件事拆成几个目标同时做。看清每个目标做什么、写不写共享文件，勾掉不想开的，不满意就在下面让它改；批准后每个都记成目标，各自在隔离副本里做，验收后才写回项目。"
       onClose={onClose}
       footer={
         <>
@@ -230,8 +230,8 @@ export default function SplitPlanDialog({
               {busy
                 ? "开工中…"
                 : chosenWaiting > 0
-                  ? `批准：开 ${chosen - chosenWaiting} 路，记下 ${chosenWaiting} 路`
-                  : `批准并开 ${chosen} 路`}
+                  ? `批准：开 ${chosen - chosenWaiting} 个，记下 ${chosenWaiting} 个`
+                  : `批准并开 ${chosen} 个目标`}
             </span>
           </button>
         </>
@@ -241,7 +241,7 @@ export default function SplitPlanDialog({
         {error && <InlineNotice tone="err">{error}</InlineNotice>}
         {eligible === false && (
           <InlineNotice tone="warn">
-            这个项目有研究流程或是编程项目，不能一次开几路目标；照方案在流程 / 编程页自己开，或点「不开」收起方案。
+            这个项目有研究流程或是编程项目，不能一次开几个目标；照方案在流程 / 编程页自己开，或点「不开」收起方案。
           </InlineNotice>
         )}
         {plan.basis && <p className="text-xs text-l2">按什么拆：{plan.basis}</p>}
@@ -307,7 +307,7 @@ export default function SplitPlanDialog({
         >
           <input
             className={`${compactFieldClass} min-w-0 flex-1`}
-            placeholder="让它改：比如「批次三不用做」「汇总那路等前三路」"
+            placeholder="让它改：比如「批次三不用做」「汇总那个等前三个做完」"
             value={feedback}
             disabled={revising || busy}
             onChange={(e) => setFeedback(e.target.value)}
