@@ -18,6 +18,10 @@ export const COACH_TIP_KEYS = {
   /** 用量页订阅余量卡第一次有多家、收着时告诉能左右滑动切换（2026-10-31 用户点名要，例外于「不首次即弹」：
    *  收起态不放标签，不提示就没人知道能滑） */
   planSwipe: "ccode.coachPlanSwipeSeen",
+  /** 文献雷达第一次有命中、积累还是空的时候，说清接下来怎么做：加入积累 → 下全文 → 精读写笔记
+   *  （2026-11-05 用户点名要，例外于「不首次即弹」与「一次打开只出一条」：行内操作平时藏在悬停里，
+   *  不提示就不知道命中出来以后该干什么）。点了「加入积累」也算学会 */
+  radarNext: "ccode.coachRadarNextSeen",
 } as const;
 export type CoachTipId = keyof typeof COACH_TIP_KEYS;
 

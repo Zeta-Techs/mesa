@@ -102,6 +102,8 @@ import type {
   ScheduleDto,
 } from "../types";
 import { usePolling } from "../polling";
+import { coachTipSeen, markCoachTipSeen } from "../coach-tips";
+import CoachTip from "./CoachTip";
 
 function HeadIcon({
   label,
@@ -438,6 +440,32 @@ function EntryBadges({ entry }: { entry: WatchEntryDto }) {
 
 /** 新命中固定两行：标题独占一行；徽章、日期和操作在第二行。
  *  免费全文由巡检结束时收下，这里不再放「获取全文」。英文摘要点开才见。 */
+/** 命中出来以后怎么做（挂在第一行下面，小三角对着书标）：挑 → 下全文 → 精读写笔记 */
+function RadarNextTip({ onClose }: { onClose: () => void }) {
+  const icon = "mx-0.5 inline-block align-[-2px]";
+  return (
+    <CoachTip
+      arrow="up"
+      arrowAt={237}
+      title="看中的文献，接下来这样做"
+      onClose={onClose}
+      className="absolute top-full right-0 mt-1 w-80 text-xs leading-5"
+      actions={[{ label: "知道了", onClick: onClose }]}
+    >
+      <ol className="list-decimal space-y-0.5 pl-4">
+        <li>
+          点<BookmarkPlus size={12} strokeWidth={1.8} className={icon} aria-label="书标" />加入积累。下次开科研流程时，积累的文献会一起带进检索
+        </li>
+        <li>
+          点<ExternalLink size={12} strokeWidth={1.8} className={icon} aria-label="打开来源" />打开来源页下载全文，PDF 会自动收进 papers/
+        </li>
+        <li>在右上角「积累」里点「精读」，边读边写笔记</li>
+      </ol>
+      <p className="mt-1 opacity-80">平时这些按钮在鼠标移到一篇上时出现。</p>
+    </CoachTip>
+  );
+}
+
 function WatchEntryRow({
   entry,
   explain,
@@ -453,8 +481,11 @@ function WatchEntryRow({
   savedPdf,
   ledger,
   onBookmarkClick,
+  coach,
 }: {
   entry: WatchEntryDto;
+  /** 挂在这一行下面的引导气泡（只给第一行）；出着的时候行内操作常驻，不用悬停就看得见气泡说的按钮 */
+  coach?: ReactNode;
   explain: ExplainState | null;
   /** 书标点击的统一出口：ledger=reading 时是移出积累，否则加入（父级判定） */
   onBookmarkClick: () => void;
@@ -567,7 +598,7 @@ function WatchEntryRow({
   );
   return (
     <li
-      className="group rounded-md px-2 py-1.5 hover:bg-hover"
+      className={`group rounded-md px-2 py-1.5 hover:bg-hover${coach ? " relative" : ""}`}
       data-lit-open-url={entry.url.trim() || undefined}
     >
       {/* 第一行：标题（可截断/展开换行；已存 PDF 时前置文件图标、点击打开） + 复合胶囊。
@@ -640,13 +671,19 @@ function WatchEntryRow({
               槽宽恒为两层较大值，悬停零位移；淡出层同时关 pointer-events，不挡按钮 */}
           <span className="relative grid shrink-0 justify-items-end">
             <span
-              className="col-start-1 row-start-1 flex w-max max-w-64 items-center gap-1 text-micro leading-4 text-l3 transition-opacity group-hover:pointer-events-none group-hover:opacity-0"
+              className={`col-start-1 row-start-1 flex w-max max-w-64 items-center gap-1 text-micro leading-4 text-l3 transition-opacity group-hover:pointer-events-none group-hover:opacity-0${
+                coach ? " pointer-events-none opacity-0" : ""
+              }`}
               title={[entry.journal?.trim() || source, pub].filter(Boolean).join(" · ")}
             >
               {source && <span className="min-w-0 truncate">{source}</span>}
               {pub && <span className="shrink-0 font-mono">{compactPubDate(pub)}</span>}
             </span>
-            <span className="col-start-1 row-start-1 flex items-center invisible group-hover:visible group-focus-within:visible">
+            <span
+              className={`col-start-1 row-start-1 flex items-center ${
+                coach ? "visible" : "invisible group-hover:visible group-focus-within:visible"
+              }`}
+            >
               {rowActions}
             </span>
           </span>
@@ -737,6 +774,7 @@ function WatchEntryRow({
           ]}
         />
       )}
+      {coach}
     </li>
   );
 }
@@ -1000,6 +1038,15 @@ export default function LitWatchCard({
   const [included, setIncluded] = useState<IncludedEntryDto[] | null>(null);
   /** 积累账 papers/reading-list.md 的行；与正典 included.md 并行拉，供书标双态与「积累」抽屉 */
   const [readingList, setReadingList] = useState<IncludedEntryDto[] | null>(null);
+  // 「命中出来以后怎么做」引导气泡（一次性，coach-tips radarNext）：积累一有东西就算学会了
+  const [radarNudgeOpen, setRadarNudgeOpen] = useState(() => !coachTipSeen("radarNext"));
+  const dismissRadarNudge = useCallback(() => {
+    markCoachTipSeen("radarNext");
+    setRadarNudgeOpen(false);
+  }, []);
+  useEffect(() => {
+    if (radarNudgeOpen && readingList && readingList.length > 0) dismissRadarNudge();
+  }, [radarNudgeOpen, readingList, dismissRadarNudge]);
   const [schedules, setSchedules] = useState<ScheduleDto[] | null>(null);
   /** list_schedules 失败才乐观出卡；加载中不出，避免没建巡检时卡片闪一下再消失 */
   const [schedulesFailed, setSchedulesFailed] = useState(false);
@@ -2257,6 +2304,14 @@ export default function LitWatchCard({
                         <WatchEntryRow
                           key={entry.id}
                           entry={entry}
+                          coach={
+                            radarNudgeOpen &&
+                            readingList !== null &&
+                            readingList.length === 0 &&
+                            entry.id === entryGroups[0]?.entries[0]?.id ? (
+                              <RadarNextTip onClose={dismissRadarNudge} />
+                            ) : undefined
+                          }
                           explain={
                             explainOpen.has(entry.id)
                               ? (explains[entry.id] ?? { status: "loading" as const })

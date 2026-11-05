@@ -565,3 +565,115 @@ test("雷达空态入口只认有任务的卡：没雷达巡检不摆「订阅�
     }
   }
 });
+
+/** 命中出来以后怎么做（2026-11-05 用户点名要的一次性气泡）：积累还空时挂在第一行下面、行内操作常驻；
+ *  点了「加入积累」就算学会、收起并记下，重开卡片不再出 */
+test("雷达引导气泡：积累为空时挂第一行，加入积累后收起且不再出", async () => {
+  const bundle = await build({
+    stdin: {
+      contents: `export {createElement, act} from 'react';
+        export {createRoot} from 'react-dom/client';
+        export {default as Card} from './src/components/LitWatchCard';`,
+      resolveDir: process.cwd(), loader: "tsx",
+    },
+    bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
+    loader: { ".css": "empty", ".woff": "empty", ".woff2": "empty", ".ttf": "empty", ".svg": "empty", ".gif": "empty" },
+    external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
+    plugins: [{
+      name: "radar-tip-host",
+      setup(b) {
+        b.onResolve({ filter: /^\.\.\/store$/ }, () => ({ path: "store", namespace: "stub" }));
+        b.onResolve({ filter: /^\.\/FilePreviewEditor$/ }, () => ({ path: "editor", namespace: "stub" }));
+        b.onLoad({ filter: /.*/, namespace: "stub" }, ({ path }) => ({
+          loader: "js",
+          contents: path === "store"
+            ? "export const useAppStore = select => select({setPage(){},setReaderReq(){},setWorkspaceReviewRequest(){},setFilePreviewReq(){},setProjectSurfaceReq(){}});"
+            : "export default function Editor(){return null;}",
+        }));
+      },
+    }],
+  });
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
+  })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  const schedules = [{
+    id: "s1", name: "雷达", projectRoot: "/project", skill: "lit-watch",
+    profileId: null, frequency: "daily", weekday: null, hour: 9, minute: 0,
+    enabled: true, lastRunAt: null, lastStatus: null, history: [],
+  }];
+  let readingRows: IncludedEntryDto[] = [];
+  Object.assign(dom.window, {
+    __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
+    __TAURI_INTERNALS__: {
+      transformCallback: () => 1,
+      unregisterCallback() {},
+      invoke: async (command: string, args?: Record<string, unknown>) => {
+        if (command === "list_watch_entries") return { entries: [entry("a", null), entry("b", null)], followups: [] };
+        if (command === "list_watch_subscriptions") return [{ keyword: "test", sources: [], note: "" }];
+        if (command === "list_included_entries") return [];
+        if (command === "list_reading_list_entries") return readingRows;
+        if (command === "list_paper_notes") return [];
+        if (command === "list_schedules") return schedules;
+        if (command === "to_fetch_progress") return [];
+        if (command === "read_project_config") return { config: { resources: [] } };
+        if (command === "add_reading_list_entry") {
+          readingRows = [{ lineId: "r-1", title: String(args?.title ?? ""), authorsYear: "", source: "", link: "", rawLine: "" }];
+          return { added: true };
+        }
+        if (command === "journal_metrics_status") return { available: false, journalCount: 0, downloadedAt: null };
+        if (command === "plugin:event|listen") return 1;
+        if (command === "plugin:event|unlisten") return;
+        throw new Error(command);
+      },
+    },
+  });
+  const compiled = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(
+    createRequire(import.meta.url), compiled, compiled.exports,
+  );
+  const { createElement: h, act, createRoot, Card } = compiled.exports;
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  let seq = 0;
+  const render = () => act(async () => root.render(h(Card, {
+    key: ++seq, projectRoot: "/project", cfg: { steps: [] }, workspaces: [],
+    focusToken: seq, onOpenSchedules() {}, onConfigChanged() {},
+  })));
+  const tips = () => [...host.querySelectorAll("[data-coach-tip]")];
+  try {
+    await render();
+    assert.equal(tips().length, 1, "只挂一个气泡");
+    const tip = tips()[0];
+    assert.match(tip.textContent!, /看中的文献，接下来这样做/);
+    assert.match(tip.textContent!, /加入积累/);
+    assert.match(tip.textContent!, /下载全文/);
+    assert.match(tip.textContent!, /精读/);
+    const firstRow = tip.closest("li[data-lit-open-url], li")!;
+    assert.match(firstRow.textContent!, /Paper a/, "挂在第一行");
+    // 气泡说的按钮不用悬停就看得见
+    const join = [...firstRow.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "加入积累：Paper a")!;
+    assert.match(join.parentElement!.getAttribute("class") ?? "", /(^|\s)visible(\s|$)/);
+    assert.doesNotMatch(join.parentElement!.getAttribute("class") ?? "", /invisible/);
+
+    await act(async () => join.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    assert.equal(tips().length, 0, "加入积累后收起");
+    assert.equal(dom.window.localStorage.getItem("ccode.coachRadarNextSeen"), "1");
+
+    readingRows = [];
+    await render();
+    assert.equal(tips().length, 0, "学会了就不再出");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of restore) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
