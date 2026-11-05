@@ -146,13 +146,13 @@ test("shiftDay 跨月跨年", () => {
   assert.equal(shiftDay("2026-12-31", 1), "2027-01-01");
 });
 
-test("heatCellPx：9–16 夹紧，16 以上不再抬（2026-11-05 由 28 收）", () => {
+test("heatCellPx：9–17 夹紧，17 以上不再抬（2026-11-05 由 28 收）", () => {
   assert.equal(HEAT_CELL_MIN_PX, 9);
   assert.equal(heatCellPx(400, 53), HEAT_CELL_MIN_PX);
   // 常规卡宽约 918：floor((918-22)/53)-3 = 13，吃满而不是停在更小档
   assert.equal(heatCellPx(918, 53), 13);
-  // 1440 限宽页卡内约 1360：原先吃满到 22，现封顶 16
-  assert.equal(heatCellPx(1360, 53), 16);
+  // 1440 限宽页卡内约 1360：原先吃满到 22，现封顶 17
+  assert.equal(heatCellPx(1360, 53), 17);
   // 再宽也停在上限，不再长成地砖
   assert.equal(heatCellPx(1720, 53), HEAT_CELL_MAX_PX);
   assert.equal(heatCellPx(4000, 53), HEAT_CELL_MAX_PX);
@@ -189,6 +189,6 @@ test("heatLayout：宽卡先留统计栏、格子在剩下里取最大；留了�
   assert.deepEqual(heatLayout(1328, 57), { cell: 15, side: true });
   // 窄卡 918：留栏后只剩 8 → 不并排，格子按整卡 12
   assert.deepEqual(heatLayout(918, 57), { cell: 12, side: false });
-  // 再宽也只到 16
-  assert.deepEqual(heatLayout(2400, 57), { cell: 16, side: true });
+  // 再宽也只到 17
+  assert.deepEqual(heatLayout(2400, 57), { cell: 17, side: true });
 });

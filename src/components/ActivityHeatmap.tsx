@@ -790,7 +790,7 @@ export default function ActivityHeatmap({
       </div>
       {side && (
         // 右侧统计栏（2026-11-05）：格子封顶 14px 后多出的宽度用来把四个数写大，不再挤在网格下面一行
-        <dl className="ccode-heat-side grid shrink-0 grid-cols-2 gap-x-6 gap-y-4 tabular-nums">
+        <dl className="ccode-heat-side grid gap-x-6 gap-y-4 tabular-nums">
           {[
             ["活跃", `${stats.activeDays} 天`],
             ["连续", `${stats.streak.current} 天`],
