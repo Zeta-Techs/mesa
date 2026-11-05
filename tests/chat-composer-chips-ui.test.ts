@@ -352,6 +352,48 @@ test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一�
   }
 });
 
+test("模型菜单接回旧对话（还没发第一句）：那一行写「接回用」，不写底部说明；换配置那层写明 Agent 不能换", async () => {
+  const ui = await mount();
+  try {
+    await ui.render(
+      ui.h(ui.Menu, {
+        kind: "launch",
+        pick: {
+          editable: true,
+          resumeSessionId: "s1",
+          resumePick: true,
+          agentId: "claude-code",
+          profileId: "p1",
+          model: "glm-5.3",
+          profiles: [{ value: "p1", label: "GLM-flash" }, { value: "p2", label: "官方" }],
+          models: ["glm-5.3"],
+          effort: "",
+          effortLevels: ["low", "high"],
+          permission: "write_tree",
+          permissionMode: null,
+          permissionModes: ["ask"],
+          readonlySupported: true,
+          permissionNote: null,
+        },
+        onAgent: () => {},
+        onProfile: () => {},
+        onModel: () => {},
+        onEffort: () => {},
+        onPermission: () => {},
+      }),
+    );
+    await ui.click("glm-5.3");
+    assert.match(ui.el.textContent ?? "", /接回用/);
+    assert.doesNotMatch(ui.el.textContent ?? "", /发第一句时/);
+    await openModels(ui);
+    await ui.click("换配置");
+    assert.match(ui.el.textContent ?? "", /只能用原来那家 Agent/);
+    assert.doesNotMatch(ui.el.textContent ?? "", /Codex/, "不列别家 Agent");
+  } finally {
+    await ui.close();
+  }
+});
+
 test("输入区收字（2026-10-23）：框里只有 + 与发送，下面那一行由调用方给；权限平时灰字、切到时同步亮；测试版收进模型菜单", async () => {
   const ui = await mount();
   try {

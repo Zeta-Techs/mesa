@@ -449,13 +449,10 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   })();
 
   // 底部说明压到一两行，完整原委放悬停提示（原先 Claude 的说明三行，比菜单本身还抢眼）
+  // 打开旧对话还没发第一句（resumePick）不再写底部说明（2026-11-05 用户问「这个提示是干嘛的」）：
+  // 主屏那一行前面写「接回用」，「Agent 不能换」写在换配置那一层
   const footer: { short: string; full: string } | null = launch
-    ? launch.pick.resumePick
-      ? {
-          short: "发第一句时按这里的选择接回这段对话。",
-          full: "默认是这段对话上次用的配置、模型和思考强度。Agent 跟着这段对话，不能换；要换 Agent 请新开一段对话。",
-        }
-      : null
+    ? null
     : next
       ? {
           short: "Agent 已经停了。发下一句时按这里的选择接回原来的对话。",
@@ -494,10 +491,15 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       type="button"
       onClick={() => setView("model")}
       title={`${agentLabel}${profileLabel ? ` · ${profileLabel}` : ""}${currentModel ? ` · ${currentModel}` : ""}\n${
-        launch && !launch.pick.resumePick ? "换模型、Agent 或连接" : "换模型"
+        launch?.pick.resumePick
+          ? "发第一句时用这里的连接、模型和思考强度接回这段对话（默认是它上次用的）"
+          : launch
+            ? "换模型、Agent 或连接"
+            : "换模型"
       }`}
       className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
     >
+      {launch?.pick.resumePick && <span className="shrink-0 text-l4">接回用</span>}
       {agentId && <AgentMark agentId={agentId} />}
       <span className={`min-w-0 truncate ${pendingMark ? "italic" : ""}`}>{whoText}</span>
       {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
@@ -732,7 +734,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   <span className="truncate font-medium">{agentLabel}</span>
                   {profileId && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 text-xs text-l4">
-                    换
+                    {launch.pick.resumePick ? "换配置" : "换"}
                     <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </button>
@@ -865,6 +867,9 @@ function WhoView({
           </>
         )}
         <h4 className={section}>配置</h4>
+        {pick.resumePick && (
+          <p className={note}>接着这段对话只能用原来那家 Agent；要换 Agent 请新开一段对话。</p>
+        )}
         <ul>
           {pick.profiles.length === 0 && (
             <li className={note}>这个 Agent 还没有配置，去「连接」页添加</li>

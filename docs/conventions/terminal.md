@@ -499,7 +499,7 @@
   **发第一句才接回**：走恢复占位同一分支（launch + 1.2s 后写入）；接回途中 `resetLink` 不清摆着的记录（`keepPreviewConvRef`），接上后由
   SessionLink 整份替换，不闪回空态。聊天层左下写「发一句就接着聊」（2026-10-24 起；原「发一句就用 〈连接〉 接着聊」），
   **底部照常摆权限与「模型 · 思考」芯片、能改**（`launchPick.resumePick`：只看不接、没起进程；ChatModelMenu launch 形态但 Agent 锁定、不列「最近用过」，
-  底部说明「发第一句时按这里的选择接回」），默认就是这段对话上次的：连接 `resumeProfileChoice`（会话自己的 `session_meta.profile_id` → 原 Run → 项目「对话」槽 / 默认），
+  不写底部说明，主屏「连接 · 模型」那一行前缀灰字「接回用」、换配置那层写明只能用原来那家 Agent——2026-11-05 用户问「这个提示是干嘛的」后删去原底部说明「发第一句时按这里的选择接回」），默认就是这段对话上次的：连接 `resumeProfileChoice`（会话自己的 `session_meta.profile_id` → 原 Run → 项目「对话」槽 / 默认），
   模型与思考档 `session_resume_config`（模型取会话文件最后一轮实际用的，复用用量提取器；思考档 Codex 取 rollout 每轮 turn_context.effort，别家用 Mesa 启动时记的
   `session_meta.launch_model / launch_effort`——`lockLink` 连同连接一起记）。源文件不在的不进运行页，去对话页看快照。
   **「别的终端在写」误报**（2026-10-24 实证：关掉刚起的 Codex 标签，一分钟内从侧栏点它就弹）：Mesa 里有标签持着这段（`liveSessions` 或 `terminalRunInputs`
