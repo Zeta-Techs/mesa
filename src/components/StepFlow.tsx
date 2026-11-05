@@ -17,6 +17,8 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { marked } from "marked";
 import { renderMathInto } from "../md-math";
 import { useAppStore } from "../store";
+import { stepStopTab } from "../run-overview";
+import { IS_WINDOWS } from "../hotkeys";
 import { absoluteResourcePath } from "./ArtifactChecklist";
 import { confirmDialog } from "./ConfirmDialog";
 import {
@@ -603,6 +605,9 @@ export default function StepFlow({
     dismissRegisterOffer,
   } = useHumanTasks({ projectPath, stepName: step.name, containerRef, onChanged });
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
+  // 「停下」关的是这一步工作区里还开着的 AI 标签（同侧栏「关掉这段对话」，在干活的会先问）
+  const stopTabId = useAppStore((s) => stepStopTab(ws ?? undefined, s.terminalRunInputs, IS_WINDOWS));
+  const requestCloseTab = useAppStore((s) => s.requestCloseTab);
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );
@@ -2055,6 +2060,16 @@ export default function StepFlow({
                 className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
               >
                 继续
+              </button>
+            )}
+            {stopTabId && (
+              <button
+                type="button"
+                onClick={() => requestCloseTab(stopTabId)}
+                title="停下这一步的 AI、收起对话；工作区文件和对话记录都在，之后点「继续」接回（正在干活时会先问你）"
+                className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+              >
+                停下
               </button>
             )}
           </span>

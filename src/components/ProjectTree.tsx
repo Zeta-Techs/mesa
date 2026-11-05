@@ -600,9 +600,12 @@ export default function ProjectTree({
       ...(holder?.running && !holder.shell
         ? [
             {
-              label: "关掉这段对话",
+              // 流程步骤的对话叫「停下这一步」：用户要停步骤时找的是「停」，认不出「关掉对话」就是它（2026-11-05 实测差点点了删除）
+              label: s.stepName ? "停下这一步" : "关掉这段对话",
               icon: X,
-              title: "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
+              title: s.stepName
+                ? "停下这一步的 AI、收起对话；工作区文件和记录都在，流程线上点「继续」接回（在干活的会先问你）"
+                : "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
               onSelect: () => {
                 const row = rowOf(chatKey(s));
                 if (row) noteMouseCloseChat(row.getBoundingClientRect(), "right", listRef.current);
@@ -685,7 +688,9 @@ export default function ProjectTree({
         danger: true,
         disabled: chatRunning(s),
         title: chatRunning(s)
-          ? "AI 还开着，先关掉这段对话再删"
+          ? s.stepName
+            ? "AI 还开着。只想停下就点上面的「停下这一步」，不用删"
+            : "AI 还开着，先关掉这段对话再删"
           : "源文件移入系统回收站（可找回）；整理数据和快照一并清掉",
         confirm: deleteConfirm([s]),
         onSelect: () => void deleteChats([s]),

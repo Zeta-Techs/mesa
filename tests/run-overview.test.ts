@@ -8,6 +8,7 @@ import {
   runIdForPath,
   stepAttention,
   stepHeldActiveByAgent,
+  stepStopTab,
   workspaceAgentBusy,
   workspaceHasLiveAgent,
   workspaceReviewInboxEligible,
@@ -304,4 +305,28 @@ test("stepHeldActiveByAgent：已保存的步骤终端停在提示符上不算�
   assert.equal(stepHeldActiveByAgent(ws, true, [working]), true);
   // 没保存过：进程活着就算进行中（中途提交时圆不提前变待评审）
   assert.equal(stepHeldActiveByAgent(ws, false, [idle]), true);
+});
+
+test("stepStopTab：只挑这一步工作区里还开着的 AI，忙的优先；shell 与别处的不算", () => {
+  const ws = { worktreePath: "/repo/.worktrees/outline" };
+  assert.equal(stepStopTab(undefined, [input({ running: true })]), null);
+  assert.equal(
+    stepStopTab(ws, [
+      input({ tabId: "shell", cwd: "/repo/.worktrees/outline", running: true, shell: true }),
+      input({ tabId: "other", cwd: "/repo/.worktrees/draft", running: true }),
+      input({ tabId: "exited", cwd: "/repo/.worktrees/outline", running: false }),
+    ]),
+    null,
+  );
+  assert.equal(
+    stepStopTab(ws, [
+      input({ tabId: "idle", cwd: "/repo/.worktrees/outline", running: true, attention: "done" }),
+      input({ tabId: "busy", cwd: "/repo/.worktrees/outline/sub", running: true, attention: "working" }),
+    ]),
+    "busy",
+  );
+  assert.equal(
+    stepStopTab(ws, [input({ tabId: "idle", cwd: "/repo/.worktrees/outline", running: true })]),
+    "idle",
+  );
 });

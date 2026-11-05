@@ -36,6 +36,21 @@ export function stepAttention(
   return found;
 }
 
+/** 流程线「停下」要关的标签：cwd 落在这一步工作区内、AI 还开着（不是回落的 shell）的那个。
+ *  几个都开着时先关正在出字 / 等确认的；没有开着的 AI 返回 null（按钮不出）。 */
+export function stepStopTab(
+  ws: { worktreePath: string } | undefined,
+  inputs: RunOverviewInput[],
+  isWindows = false,
+): string | null {
+  if (!ws) return null;
+  const open = inputs.filter(
+    (input) => input.running && !input.shell && pathWithin(input.cwd, ws.worktreePath, isWindows),
+  );
+  const busy = open.find((input) => input.attention === "working" || input.attention === "confirm");
+  return (busy ?? open[0])?.tabId ?? null;
+}
+
 /** 聚合输入的单项：TerminalPage 从 tabs + statuses 派生（无状态的标签由调用方填默认值） */
 export interface RunOverviewInput {
   tabId: string;
