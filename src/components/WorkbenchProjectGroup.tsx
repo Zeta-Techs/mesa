@@ -229,22 +229,25 @@ export default function WorkbenchProjectGroup({
           <ArrowRight size={12} strokeWidth={1.8} aria-hidden="true" />
         </button>
         {onAskAssistant && (
+          // 项目助手按需出现（2026-11-05 用户拍板，取代 11-04「项目头常显」）：平时悬停 / 键盘聚焦到这个项目才露出一颗小图标；
+          // 有卡点时常显并写「问问怎么回事」——它在出事的地方主动出现。页头另有一个全局入口
           <button
             type="button"
-            className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 text-l3 hover:text-l1`}
-            title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件。要聊课题内容或让 AI 干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」"
-            onClick={() => onAskAssistant()}
+            className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 hover:text-l1 ${blockers.length > 0 ? "text-l2" : "ccode-workbench-reveal text-l3"}`}
+            title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件"
+            aria-label={`问项目助手：${card.name}`}
+            onClick={() => onAskAssistant(blockers.length > 0 ? "这个项目卡在哪了？我该先处理什么？" : undefined)}
           >
             <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
-            <span className="text-xs">项目助手</span>
+            {blockers.length > 0 && <span className="text-xs">问问怎么回事</span>}
           </button>
         )}
-        {/* 时间放最右、与任务行时间同一右缘、同一列宽（2026-10-27 用户）；没有时间也占着这一列，
-            项目助手才在每个项目上落在同一处（2026-11-05 用户截图：各项目的「项目助手」左右错开）。
-            悬停才出现的「回到对话」等放在项目助手左边，出现与否都不挪它 */}
-        <span className="ccode-workbench-updated shrink-0 text-right text-micro tabular-nums text-l3" title={lastActive ? absTime(lastActive) : undefined}>
-          {lastActive ? shortWhen(lastActive) : ""}
-        </span>
+        {/* 时间只在收起时写（2026-11-05）：展开时每一行都有自己的时间，项目头再写一遍是重复，还为对齐占掉一整列 */}
+        {collapsed && lastActive && (
+          <span className="ccode-workbench-updated shrink-0 text-right text-micro tabular-nums text-l3" title={absTime(lastActive)}>
+            {shortWhen(lastActive)}
+          </span>
+        )}
       </div>
 
       {blockers.length > 0 && (

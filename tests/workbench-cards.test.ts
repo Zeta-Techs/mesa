@@ -104,7 +104,9 @@ test("cardIsActive：此刻有事就算；手上在做要 7 天内动过；只�
       runs,
     });
   const stale = coding([wt({ path: "/wt/a", branch: "feat", behind: 3 })]);
-  assert.equal(stale.tasks[0].state, "落后 dev，需同步");
+  // 只落后基准、没人在动的分支不再单列一行（2026-11-05），项目头写「需同步 1」
+  assert.equal(stale.tasks.length, 0);
+  assert.ok(stale.vitals.some((v) => v.label === "需同步" && v.value === "1"));
   assert.equal(cardIsActive(stale, now - day, now), false);
   const dirty = coding([wt({ path: "/wt/a", branch: "feat", dirty: true })]);
   assert.equal(cardIsActive(dirty, now - 2 * day, now), true);
@@ -355,4 +357,19 @@ test("awaySummary：只记录的事件不算跑了，单说一句", () => {
     waiting: 0,
   });
   assert.deepEqual(out?.parts, ["定时任务跑了 1 次", "事件规则记下 2 次（只记录，没叫 AI）"]);
+});
+
+test("按要你出手的程度排：等你 > 在跑 > 手上在做 > 只是开着；同一档保持原顺序", async () => {
+  const { orderByNeed, cardNeedLevel } = await import("../src/workbench-cards.ts");
+  const t = (over: object) => ({ id: "x", kind: "goal", kindLabel: "目标", name: "n", state: "", tone: "idle", live: null, queued: false, inProgress: false, touchedAt: null, ref: { kind: "goal", taskId: "x", status: "draft" }, ...over });
+  const cards = [
+    { name: "idle", tasks: [t({})] },
+    { name: "doing", tasks: [t({ inProgress: true })] },
+    { name: "live", tasks: [t({ tone: "live" })] },
+    { name: "fail", tasks: [t({ tone: "fail" })] },
+    { name: "doing2", tasks: [t({ inProgress: true })] },
+    { name: "queued", tasks: [t({ queued: true })] },
+  ] as never[];
+  assert.deepEqual(orderByNeed(cards).map((c: { name: string }) => c.name), ["fail", "queued", "live", "doing", "doing2", "idle"]);
+  assert.equal(cardNeedLevel({ tasks: [] }), 0);
 });

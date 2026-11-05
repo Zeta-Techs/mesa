@@ -324,6 +324,9 @@ export function buildProjectCard(input: {
       const run = take(runIn(w.path));
       const live = run ? liveOf(run) : null;
       const queued = inQueue(confirmKey(run));
+      // 只是落后基准、没人在动的分支不再一条条列（2026-11-05 用户：「全部按你的思路改」）：项目头的「需同步 N」已经说了，
+      // 点项目名去编程页看；在改的、在跑的、等合并的、在拍板队列里的照列
+      if (!live && !queued && kind !== "dev" && kind !== "ready") continue;
       tasks.push({
         id: `branch:${w.path}`,
         kind: "branch",
@@ -406,6 +409,25 @@ export function cardIsActive(card: ProjectCard, lastActiveMs: number | null, now
   if (card.tasks.some((t) => t.queued || t.tone === "live" || t.tone === "wait" || t.tone === "fail")) return true;
   if (!card.tasks.some((t) => t.inProgress)) return false;
   return lastActiveMs !== null && nowMs - lastActiveMs <= ACTIVE_IDLE_MS;
+}
+
+/**
+ * 这个项目要你出手的程度（2026-11-05 用户拍板：工作台按「要你做什么」排，取代按侧栏顺序）：
+ * 3 = 等你（拍板、确认、待评审 / 验收、出错）；2 = AI 正在干活；1 = 手上在做但此刻没人动；0 = 只是开着、什么都没动
+ */
+export function cardNeedLevel(card: Pick<ProjectCard, "tasks">): 0 | 1 | 2 | 3 {
+  if (card.tasks.some((t) => t.queued || t.tone === "wait" || t.tone === "fail")) return 3;
+  if (card.tasks.some((t) => t.tone === "live")) return 2;
+  if (card.tasks.some((t) => t.inProgress)) return 1;
+  return 0;
+}
+
+/** 按要你出手的程度排；同一档保持传入的顺序（侧栏顺序 / 最近活动） */
+export function orderByNeed<T extends Pick<ProjectCard, "tasks">>(cards: readonly T[]): T[] {
+  return cards
+    .map((card, i) => ({ card, i, need: cardNeedLevel(card) }))
+    .sort((a, b) => b.need - a.need || a.i - b.i)
+    .map((x) => x.card);
 }
 
 /** 卡上默认列几行，其余折成「还有 N 项」 */

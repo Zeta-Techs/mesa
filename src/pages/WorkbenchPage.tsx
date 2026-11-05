@@ -73,6 +73,8 @@ import { caretOfAttention, withUnread } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import WorkbenchApprovalPanel from "../components/WorkbenchApprovalPanel";
 import WorkbenchProjectGroup from "../components/WorkbenchProjectGroup";
+import ContextMenu from "../components/ContextMenu";
+import { MesaBuddyIcon } from "../components/MesaBuddy";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
 import { runFailureReason } from "../run-failure";
 import {
@@ -83,6 +85,8 @@ import {
   filterCards,
   liveActivityLine,
   orderLikeSidebar,
+  orderByNeed,
+  cardNeedLevel,
   scheduleOverview,
   type ScheduleOverviewRow,
   turnElapsedMs,
@@ -1114,14 +1118,20 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     }
     return orderLikeSidebar(byRecent, pins, order, IS_WINDOWS);
   }
-  const shownCards = orderLikeSidebarSafe(filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS));
-  // 安静的项目收成一行（2026-10-27 精修）：「有活的」里不出现的、以及其余筛选下手上什么都没有的，
-  // 不再各画一整组（空组里只剩一行「记下一个目标」）；分组只给有事可看的
-  const groupCards = cardFilter === "active" ? shownCards : shownCards.filter((card) => card.tasks.length > 0);
+  // 先按要你出手的程度（等你 > 在跑 > 手上在做），同一档再按侧栏顺序（2026-11-05 用户拍板，取代纯侧栏顺序）
+  const shownCards = orderByNeed(orderLikeSidebarSafe(filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS)));
+  // 安静的项目收成一行（2026-10-27 精修）：「有活的」里不出现的、以及其余筛选下什么都没在动的
+  //（只有没开始的步骤、落后基准的分支这类事实，2026-11-05 起也收进这一行），分组只给有事可看的
+  const groupCards = cardFilter === "active" ? shownCards : shownCards.filter((card) => card.tasks.length > 0 && cardNeedLevel(card) > 0);
   const quietCards = (cardFilter === "active"
     ? orderLikeSidebarSafe(cards.filter((card) => card.registered && !activeCardPaths.some((p) => samePath(p, card.path, IS_WINDOWS))))
-    : shownCards.filter((card) => card.tasks.length === 0)
+    : shownCards.filter((card) => card.tasks.length === 0 || cardNeedLevel(card) === 0)
   ).filter((card) => card.registered);
+  /** 页头「项目助手」能问的项目：登记过的，要你出手多的在前（与下面分组同序），再接安静的 */
+  const assistProjects = [...groupCards, ...quietCards].filter(
+    (card, i, list) => card.registered && list.findIndex((c) => samePath(c.path, card.path, IS_WINDOWS)) === i,
+  );
+  const [assistMenu, setAssistMenu] = useState<{ x: number; y: number } | null>(null);
   const cardFilterOptions: { id: CardFilter; label: string }[] = [
     // 「进行中」：此刻有事或手上在做的项目（2026-10-27 用户：「有活的」看着随意）；区块标题因此改叫「项目」，不写两遍进行中
     { id: "active", label: `进行中 ${activeCardPaths.length}` },
@@ -1605,7 +1615,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
 
   return (
-    <PageFrame width="wide" className="pb-12 pt-2">
+    <PageFrame width="workbench" className="pb-12 pt-2">
       <div className="ccode-workbench min-w-0">
       {/* 首页不放页面大标题（2026-10-24 用户）：侧栏「工作台」已高亮，大字只重复一遍、还占掉最显眼的一行；
           标题只留给屏幕阅读器；顶上 pt-2 让第一块的「项目」标题与其余管理页页名同一高度、同一字号（2026-10-29 用户：页头统一用这一档）。2026-10-29 试过各页同款小页头 + 对话栏宽度单列，
@@ -1690,9 +1700,30 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 {runningBadge} 个运行中
               </span>
             )}
+            <div className="ml-auto flex items-center gap-2">
+            {/* 项目助手的全局入口（2026-11-05）：项目头上的改成按需出现后，这里随时能叫出来；先选问哪个项目，要你出手多的在前 */}
+            {assistProjects.length > 0 && (
+              <button
+                type="button"
+                className={`${ghostActionClass} h-7 gap-1.5 px-2 text-l3 hover:text-l1`}
+                title="问项目助手：进度、哪里出错、下一步做什么、Mesa 怎么用"
+                aria-haspopup={assistProjects.length > 1 ? "menu" : undefined}
+                onClick={(e) => {
+                  if (assistProjects.length === 1) {
+                    openAssistant(assistProjects[0].path);
+                    return;
+                  }
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setAssistMenu({ x: r.right, y: r.bottom + 4 });
+                }}
+              >
+                <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span className="text-xs">项目助手</span>
+              </button>
+            )}
             {cardFilterOptions.length > 2 && (
               // 分段控件写法（2026-10-29，同设置 / 用量页）；仍是一组 aria-pressed 按钮
-              <div className="ccode-seg-boxed is-sm ml-auto inline-flex items-center" role="group" aria-label="筛选项目">
+              <div className="ccode-seg-boxed is-sm inline-flex items-center" role="group" aria-label="筛选项目">
                 {cardFilterOptions.map((opt) => (
                   <button
                     key={opt.id}
@@ -1706,7 +1737,27 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 ))}
               </div>
             )}
+            </div>
           </div>
+          {assistMenu && (
+            <ContextMenu
+              x={assistMenu.x}
+              y={assistMenu.y}
+              alignRight
+              items={[
+                { header: "问哪个项目" },
+                ...assistProjects.map((card) => {
+                  const need = cardNeedLevel(card);
+                  return {
+                    label: card.name,
+                    hint: need === 3 ? "等你" : need === 2 ? "在跑" : undefined,
+                    onSelect: () => openAssistant(card.path),
+                  };
+                }),
+              ]}
+              onClose={() => setAssistMenu(null)}
+            />
+          )}
 
           {nowRows.length > 0 ? (
             groupCards.length > 0 || quietCards.length > 0 ? (
