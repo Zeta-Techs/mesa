@@ -1332,6 +1332,8 @@ fn schedule_isolation(task: &Schedule) -> Result<PathBuf, String> {
     if !root.is_dir() {
         return Err(format!("项目目录不存在: {}", root.display()));
     }
+    // 科研项目还不是仓库时先自动初始化（与开步同口径）；编程项目照旧要求已是仓库
+    crate::projects::ensure_research_git(&root)?;
     crate::workspaces::run_git(&root, &["rev-parse", "--git-dir"], Duration::from_secs(10))
         .map_err(|e| format!("定时任务必须在 Git 项目中运行，无法创建隔离 worktree：{e}"))?;
     let repo_name = root

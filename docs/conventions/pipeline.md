@@ -934,7 +934,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   不做（同日拍板）：邮件/微信推送（收件箱即推送）、arXiv 分类全量扫（无嵌入排序=噪声消防栓，关联推荐已给同款价值）、
   多维评分（「排序不影响收录」保守口径不推翻）。
 - **执行复用 ai.rs 无头链路**（`run_agent_task`）：cwd 用隔离 worktree（`~/ccode/watch-worktrees/<仓>/<日程id>`，
-  项目根只用于归属与播种；非 Git 项目 fail-closed），`headless_task_args`（codex 用 `-s workspace-write`，
+  项目根只用于归属与播种；非 Git 项目 fail-closed，**科研项目例外：先自动 init 并把档案卡提交成第一笔**——`projects::ensure_research_git`，与开步、手动新建工作区同口径，2026-11-05 新建项目进页不再提示初始化后雷达首跑失败实证；编程项目照旧要求已是仓库），`headless_task_args`（codex 用 `-s workspace-write`，
   巡检要写 notes/inbox.md 与 watch-seen.md，read-only 跑不了）；超时 30 分钟（2026-10-03 由 10 分钟提高：GLM 跑 lit-watch 实测超 10 分钟，
   600s 在掐死健康任务；定时任务无人等，超时只担防僵尸职责；2026-10-23 起每任务可调 5–180 分钟，不填仍 30）记 `timeout` 与真失败 `error` 分列；安全口径照旧（密钥拉起瞬间注入、
   background_command、出站脱敏）。建树后从主仓播种订阅/台账，跑完只读评审，人点「采纳进主仓」才拷产出回项目根。**codex 参数顺序坑（v3.98 实测踩坑）**：`exec` 是子命令，plan 注入的

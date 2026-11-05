@@ -3382,6 +3382,28 @@ fn ensure_git_at_mode(project: &Path, work_mode: &str) -> Result<EnsureGitDto, S
     })
 }
 
+/// 科研项目在要用 Git 的地方自动初始化（2026-11-05）：开步本来就自动 init（pipeline-start），
+/// 但定时任务与手动「新建工作区」原先直接报「必须在 Git 项目中运行」，而新建项目进页已不再提示先初始化，
+/// 用户建完雷达第一次跑就失败。只管科研项目——编程项目的仓库归用户，不替它 init。
+/// 已是仓库且有提交时什么都不做；刚 init 或还没有任何提交时把档案卡与 .gitignore 提交成第一笔（没有提交建不了 worktree）。
+/// 返回是否这次新建了仓库。
+pub(crate) fn ensure_research_git(root: &Path) -> Result<bool, String> {
+    if normalize_work_mode(&read_config_at(root).config.work_mode) != "research" {
+        return Ok(false);
+    }
+    let ensured = ensure_git_at_mode(root, "research")?;
+    let has_head = crate::workspaces::run_git(
+        root,
+        &["rev-parse", "--verify", "HEAD"],
+        Duration::from_secs(10),
+    )
+    .is_ok();
+    if ensured.initialized || !has_head {
+        commit_bootstrap_at(root)?;
+    }
+    Ok(ensured.initialized)
+}
+
 // ===== 开步自动提交：只把 .ccode 与 .gitignore 两个 Mesa 自有路径提交进主仓库 =====
 // 背景：git init 后档案卡（.ccode/project.toml）与 .gitignore 长期未跟踪，
 // 工作区评审合并会被「主仓库有未提交改动」拦截。此命令只碰这两个路径，
@@ -6460,6 +6482,32 @@ resources = ["ghost.pdf"]
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].path, d1.path);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ensure_research_git_inits_research_only_and_gives_head() {
+        if crate::agents::resolve_binary("git").is_none() {
+            eprintln!("测试环境无 git，跳过");
+            return;
+        }
+        let dir = temp_dir("research-git");
+        // 科研项目（档案卡缺省即科研）：自动 init 并有第一笔提交，建得了 worktree
+        let research = dir.join("research");
+        fs::create_dir_all(&research).unwrap();
+        write_config_at(&research, &ProjectConfigDto::default()).unwrap();
+        assert!(ensure_research_git(&research).unwrap());
+        assert!(crate::workspaces::run_git(&research, &["rev-parse", "--verify", "HEAD"], Duration::from_secs(10)).is_ok());
+        // 再调一次：已是仓库且有提交，什么都不做
+        assert!(!ensure_research_git(&research).unwrap());
+        // 编程项目：不替它 init
+        let coding = dir.join("coding");
+        fs::create_dir_all(&coding).unwrap();
+        let mut cfg = ProjectConfigDto::default();
+        cfg.work_mode = "coding".into();
+        write_config_at(&coding, &cfg).unwrap();
+        assert!(!ensure_research_git(&coding).unwrap());
+        assert!(!coding.join(".git").exists());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

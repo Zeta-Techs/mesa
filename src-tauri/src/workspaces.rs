@@ -2057,6 +2057,8 @@ fn pr_impl(
 #[tauri::command]
 pub async fn create_workspace(repo_path: String, name: String) -> Result<WorkspaceDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // 科研项目手动「新建工作区」也先自动初始化 Git（与开步、定时任务同口径，2026-11-05）
+        crate::projects::ensure_research_git(&PathBuf::from(crate::sessions::expand_tilde(&repo_path)))?;
         let conn = db()?;
         create_impl(&conn, &workspaces_root()?, &repo_path, &name)
     })
