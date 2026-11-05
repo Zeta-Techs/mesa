@@ -1112,11 +1112,14 @@ fn find_doi(text: &str) -> Option<&str> {
                 j += 1;
             }
             if digits >= 4 && bytes.get(j) == Some(&b'/') {
+                // DOI 只由 ASCII 组成：遇到任何非 ASCII 字节（全角括号、中文标点、中文）就停。
+                // 以前逐字节往前走、再用 text[k..] 切片判全角右括号，DOI 后紧跟全角左括号「（」时
+                // 会切在字符中间直接 panic，整个收件箱读不出来（2026-11-05 跟进队列「…142028（Colloids…」实证）
                 let mut k = j + 1;
                 while k < bytes.len()
+                    && bytes[k].is_ascii()
                     && !bytes[k].is_ascii_whitespace()
                     && bytes[k] != b')'
-                    && !text[k..].starts_with('）')
                 {
                     k += 1;
                 }
@@ -4165,6 +4168,20 @@ lone keyword
         remove_reading_list_at(&dir, &list[0].line_id).unwrap();
         assert!(reading_list_entries_at(&dir).unwrap().is_empty());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn find_doi_stops_at_fullwidth_punctuation_without_panicking() {
+        assert_eq!(
+            find_doi("10.1016/j.colsurfa.2026.142028（Colloids and Surfaces A，2026-10-07）"),
+            Some("10.1016/j.colsurfa.2026.142028")
+        );
+        assert_eq!(find_doi("DOI：10.1016/j.apcatb.2026.127635）后面"), Some("10.1016/j.apcatb.2026.127635"));
+        assert_eq!(find_doi("见 10.1021/acs.nano.5b01234。中文"), Some("10.1021/acs.nano.5b01234"));
+        assert_eq!(
+            find_followup_link("- DOI：10.1016/j.colsurfa.2026.142028（Colloids）"),
+            "https://doi.org/10.1016/j.colsurfa.2026.142028"
+        );
     }
 
     #[test]
