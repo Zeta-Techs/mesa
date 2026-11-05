@@ -589,9 +589,10 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
+  assistant-capabilities.ts  # 接活二期能力清单的两块：workerCapabilityLines（干活的连接能做到哪一步——支持程度、看图、出图、能否定时，数据来自 agent_capabilities / model_capabilities / 设置出图模型 / image_gen_status）、TRIGGER_CATALOG_LINES（定时与事件只说明不建）（tests/assistant-capabilities.test.ts）
   builtin-tasks.ts           # 内置科研任务（2026-11-05）：组会汇报 / 进展周报 / 实验规划的做法数据；不是流程模板、不进 pipeline-presets。findBuiltinTask、builtinTaskCatalogLines（能力清单）、builtinTaskMethod（派活单附上的做法）、builtinTaskGoalText（新建目标当模板）（tests/builtin-tasks.test.ts）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
-                             # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+                             # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
   assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）（tests/assistant-dock.test.ts）
   session-tail.ts            # 某一步最近那段对话里 AI 最后说的话（find_session + get_session_conversation_page 最后一页），aiReportsFailure 标出错；30 秒缓存

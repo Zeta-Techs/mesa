@@ -31,12 +31,17 @@ import {
 import type { ChecksDto } from "./research-checks";
 import { renderProjectMap, type MapEntry } from "./project-map";
 import { builtinTaskCatalogLines } from "./builtin-tasks";
+import { TRIGGER_CATALOG_LINES, workerCapabilityLines } from "./assistant-capabilities";
+import { projectDefaultProfile } from "./split-draft";
+import { resolveTaskModel } from "./project-agents";
 import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
 import { stepSessionTail } from "./session-tail";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
 import type {
+  AgentCapabilitiesDto,
   DetectResult,
+  ModelCapabilityDto,
   HelpRequestDto,
   ProjectConfigReadDto,
   ProjectDto,
@@ -318,11 +323,40 @@ function firstSentence(text: string, cap = 90): string {
   return one.length > cap ? `${one.slice(0, cap)}…` : one;
 }
 
-/** 能力清单（2026-11-05 一期精简版）：内置任务、我的任务、已装技能的名字和一句话；连接能力二期再加 */
-export async function gatherCatalog(): Promise<string> {
-  const [skills, packs] = await Promise.all([
+/** 干活的连接能做到哪一步（二期）：项目默认连接的能力表、模型看不看得了图、出图模型配没配 */
+async function workerCapabilities(project: ProjectDto | null): Promise<string[]> {
+  const profile = projectDefaultProfile(project);
+  if (!profile) return workerCapabilityLines({ worker: null, headlessWrite: null, vision: null, imageGen: { model: null, helperReady: false }, tier: null });
+  const model = resolveTaskModel({
+    models: profile.models,
+    profileId: profile.id,
+    defaultProfileId: project?.defaultProfiles?.[profile.agent],
+    defaultModel: project?.defaultModels?.[profile.agent],
+  });
+  const imageModel = useAppStore.getState().settings?.imageGenModel?.trim() || null;
+  const [caps, vision, imageStatus] = await Promise.all([
+    safe(invoke<AgentCapabilitiesDto[]>("agent_capabilities"), []),
+    model
+      ? safe(invoke<ModelCapabilityDto[]>("model_capabilities", { models: [model], gatewayId: profile.gatewayId ?? null }), []).then((rows) => rows[0]?.vision ?? null)
+      : Promise.resolve(null),
+    imageModel ? safe(invoke<{ helperReady: boolean }>("image_gen_status"), { helperReady: false }) : Promise.resolve({ helperReady: false }),
+  ]);
+  const cap = caps.find((c) => c.agent === profile.agent) ?? null;
+  return workerCapabilityLines({
+    worker: { agent: AGENTS.find((a) => a.id === profile.agent)?.label ?? profile.agent, profile: profile.name, model },
+    headlessWrite: cap?.headlessWrite ?? null,
+    vision,
+    imageGen: { model: imageModel, helperReady: imageStatus.helperReady },
+    tier: cap ? { level: cap.supportTier, note: cap.tierNote } : null,
+  });
+}
+
+/** 能力清单：内置任务、我的任务、已装技能的名字和一句话（一期）；干活的连接能做到哪一步、定时与事件（二期） */
+export async function gatherCatalog(project: ProjectDto | null): Promise<string> {
+  const [skills, packs, worker] = await Promise.all([
     safe(invoke<SkillDto[]>("list_skills"), []),
     safe(invoke<TaskPackDto[]>("list_task_packs"), []),
+    workerCapabilities(project).catch(() => [] as string[]),
   ]);
   const lines = ["任务（写在「按任务」里）：", ...builtinTaskCatalogLines()];
   for (const p of packs) lines.push(`- 我的任务「${p.name}」：${firstSentence(p.description || p.steps.map((s) => s.name).join("、"))}`);
@@ -330,6 +364,8 @@ export async function gatherCatalog(): Promise<string> {
     lines.push("", "已装技能（写在「用到的技能」里）：");
     for (const sk of skills) lines.push(`- ${sk.name}：${firstSentence(sk.description)}`);
   }
+  if (worker.length) lines.push("", ...worker);
+  lines.push("", ...TRIGGER_CATALOG_LINES);
   return lines.join("\n");
 }
 
@@ -391,7 +427,7 @@ export async function askProjectAssistant(input: {
         )
       : Promise.resolve([] as string[]),
     request ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at) : Promise.resolve(null),
-    request ? gatherCatalog() : Promise.resolve(null),
+    request ? gatherCatalog(input.project) : Promise.resolve(null),
   ]);
   const promptFor = (withInspect: boolean) =>
     buildAssistantPrompt({

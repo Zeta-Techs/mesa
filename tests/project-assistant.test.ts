@@ -374,3 +374,9 @@ test("接活干跑实证：同一栏写好几行要累加；动作标记写成 :
   assert.equal(parsed.text, "单子：", "块原文不露给人");
   assert.match(parseAssistantAnswer(":::不认识\n:::", 0).text, /不认识/, "不认识的块照原文留着");
 });
+
+test("接活二期：规矩里写按干活的连接说能做到哪一步", async () => {
+  const { REQUEST_RULES } = await import("../src/project-assistant.ts");
+  assert.match(REQUEST_RULES, /按能力清单里「干活的连接」说能做到哪一步/);
+  assert.match(REQUEST_RULES, /不要假装能做/);
+});

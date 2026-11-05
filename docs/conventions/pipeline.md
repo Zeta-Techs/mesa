@@ -1575,6 +1575,9 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **科研通则唯一出处** `project-assistant.ts RESEARCH_ORDER_RULES`：科研项目（workMode research）派出的每件活（留话、接回对话、新目标）都附上，不按场景另写。
 - **内置科研任务**在 `builtin-tasks.ts`，**不是流程模板**（选中会把整条流程换成一步），不进 `pipeline-presets.ts`、不加模板库入口；用处只有两个：派活单「按任务」与科研项目新建目标「用任务当模板」。
   点名的技能必须是随包内置技能（测试守着）。「另存为我的版本」与三期「存成我的任务」同一机制，届时一起做。
+- **能力清单的连接能力（二期）**：只描述项目默认连接（派成新目标时用它；交给第 N 步用那一步的绑定，清单里写明可能不同）；数据只取已有来源——能力表 `agent_capabilities`
+  （headlessWrite、supportTier）、能力库 `model_capabilities` 的 vision（查不到写「不确定」，不当成能）、设置里的出图模型 + `image_gen_status`。规矩要求做不到的部分直说、单子只派做得到的。
+  PDF 不另设能力位：扫描版 PDF 的图归到「看图」。
 - **不做**：自动链式派活（做完 A 自动派 B）、项目助手自己建定时任务、跨项目、替人选方案。
 
   路径越界不能交给 Agent 去读写。校验前后端同口径（`projects::param_value_problem` ↔ `task-packs.ts paramValueProblem`，数字按 Rust `parse::<f64>` 认）。
