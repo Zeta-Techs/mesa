@@ -737,7 +737,7 @@ export default function ProjectAgentsView({
             unboundLine={inherited.line}
             unboundDetail={inherited.detail}
             choices={assistantSlotProfiles}
-            note="哪家都能答；查错时打开项目文件核对、边想边出字目前只有 Claude Code / Codex"
+            note="推荐使用 Claude Code / Codex：查错时可以打开项目文件核对"
             disabled={saving}
             onPick={(pid, mid) => void saveSlotBinding(ASSISTANT_BINDING_SLOT, pid, mid)}
             onClear={() => void saveSlotBinding(ASSISTANT_BINDING_SLOT, "", "")}
