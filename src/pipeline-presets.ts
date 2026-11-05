@@ -433,7 +433,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "收尾时在验收摘要第⑤项写一句：「已纳入 N 篇，其中 M 篇没有拿到全文，需要你下载放进项目根 papers/；没全文的下一步只能按摘要记，初稿里相关论述会标待核实」（M 为 0 就写已全部拿到）。\n" +
       "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），screening.md 有「核心问题与边界」，每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
       QUALITY_STATUS,
-    optionalInputs: ["references.bib"],
+    optionalInputs: ["notes/", "references.bib"],
     expectedArtifacts: LIT_SEARCH_ARTIFACTS.filter((path) => path !== "papers/zotero-sync.md"),
     acceptanceCriteria: [
       "machine:file:papers/screening.md",

@@ -6317,6 +6317,18 @@ resources = [1, "papers/a.pdf", "", 42]
     }
 
     #[test]
+    fn bundled_review_template_has_no_step_warnings() {
+        // 英文综述模板应用到新项目后不该一进页就挂「!」（2026-11-05：检索步简报提到 notes/ 却没声明输入）
+        let steps = demo_review_template().steps;
+        let mut prior: Vec<String> = Vec::new();
+        for (i, step) in steps.iter().enumerate() {
+            let warnings = validate_step(step, &[], &prior, i == 0);
+            assert!(warnings.is_empty(), "{}：{warnings:?}", step.name);
+            prior.extend(step.expected_artifacts.iter().cloned());
+        }
+    }
+
+    #[test]
     fn read_config_merges_validation_warnings() {
         // read_project_config 的 warnings 自动并入校验结果
         let dir = temp_dir("validate");
