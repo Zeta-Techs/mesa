@@ -233,13 +233,13 @@ function PublisherOpenButton({
             });
         }}
       >
-        {waiting ? "等待收货…" : "官网"}
+        {waiting ? "等待下载…" : "官网"}
       </button>
       {waiting && (
         <button
           type="button"
           className={`${ghostActionClass} shrink-0`}
-          title="这篇不下载了。收货等待取消，之后的 PDF 不会挂到这一行。"
+          title="这篇不下载了。不再等它，之后下载的 PDF 不会挂到这一行。"
           onClick={() => {
             setWaiting(false);
             void invoke("inst_browser_cancel", {

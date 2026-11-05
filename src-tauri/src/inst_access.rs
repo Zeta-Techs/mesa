@@ -2862,6 +2862,7 @@ pub async fn inst_save_relayed_pdf(
     path: String,
     file_name_hint: String,
 ) -> Result<crate::lit_watch::DownloadedPaperDto, String> {
+    let (notify_root, notify_title) = (project_root.clone(), file_name_hint.clone());
     let result = tauri::async_runtime::spawn_blocking(move || {
         let mut slot = RELAY_SLOT
             .lock()
@@ -2940,6 +2941,19 @@ pub async fn inst_save_relayed_pdf(
         });
     } else if let Err(e) = &result {
         record_dl_notice(&format!("✗ 入库失败：{e}"));
+    }
+    // 下载文件夹那条路收进来的也广播「papers/ 变了」（2026-11-05 用户实测：右下角已报存进 papers/，
+    // 雷达那一行还挂着「等待下载」——只有扩展那条路发这个事件，雷达卡与待获取清单只能等轮询 / 90 秒到期）
+    if let Ok(dto) = &result {
+        use tauri::Emitter as _;
+        let _ = app.emit(
+            "inst-papers-changed",
+            serde_json::json!({
+                "projectRoot": notify_root,
+                "title": notify_title,
+                "saved": dto.name,
+            }),
+        );
     }
     if let Some(window) = app.get_webview_window(LOGIN_WINDOW_LABEL) {
         let js = match &result {

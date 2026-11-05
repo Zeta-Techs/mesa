@@ -678,7 +678,7 @@ pub async fn inst_browser_cancel(
     doi: String,
 ) -> Result<(), String> {
     let Ok(mut q) = PENDING.lock() else {
-        return Err("收货登记暂时不可用".into());
+        return Err("下载登记暂时不可用".into());
     };
     let now = std::time::SystemTime::now();
     if let Some(i) = consume_pending_index(&q, &project_root, &doi, &title, now) {
@@ -890,7 +890,7 @@ fn ensure_watcher(app: &tauri::AppHandle) -> Result<(), String> {
         .spawn(move || watcher_loop(app, dirs))
     {
         WATCHER_RUNNING.store(false, std::sync::atomic::Ordering::Release);
-        return Err(format!("启动收货监听失败: {e}"));
+        return Err(format!("启动下载监听失败: {e}"));
     }
     dinbox_log(&format!("监听已启动: {dir_disp}"));
     Ok(())

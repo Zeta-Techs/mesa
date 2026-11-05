@@ -66,7 +66,7 @@ fn helper_exe_path() -> Result<std::path::PathBuf, String> {
 fn host_manifest(helper: &std::path::Path) -> String {
     let helper = helper.to_string_lossy().replace('\\', "\\\\");
     format!(
-        r#"{{"name":"{HOST_NAME}","description":"Mesa 文献收货通道","path":"{helper}","type":"stdio","allowed_origins":["chrome-extension://{EXT_ID}/"]}}"#
+        r#"{{"name":"{HOST_NAME}","description":"Mesa 文献下载通道","path":"{helper}","type":"stdio","allowed_origins":["chrome-extension://{EXT_ID}/"]}}"#
     )
 }
 

@@ -568,14 +568,14 @@ function WatchEntryRow({
       {entry.url.trim() && collecting && (
         // 收货等待态（原「待获取全文」的等待/取消收进行内）：点 ✕ 取消等待
         <span className="flex shrink-0 items-center gap-0.5">
-          <span className="text-micro text-l4" title="浏览器已打开；90 秒内落下的 PDF 会自动收进 papers/">
-            收货中
+          <span className="text-micro text-l4" title="浏览器已打开；90 秒内下载的 PDF 会自动收进 papers/">
+            等待下载
           </span>
           <button
             type="button"
             className={iconActionClass}
-            title="这篇不下载了：取消收货等待，之后落下的 PDF 不再挂到这一条"
-            aria-label="取消收货等待"
+            title="这篇不下载了：不再等它，之后下载的 PDF 不会挂到这一条"
+            aria-label="不再等待下载"
             onClick={onCancelCollect}
           >
             ✕
@@ -2349,6 +2349,7 @@ export default function LitWatchCard({
                           onRerun={() => void explain(entry)}
                           onOpenSource={() => openWithSession(entry.url, entry.title)}
                           collecting={
+                            !savedPdfBy[entry.id] &&
                             !!entry.url.trim() &&
                             !!browserOpenedAt[entry.url.trim()] &&
                             Date.now() - browserOpenedAt[entry.url.trim()] < 95000

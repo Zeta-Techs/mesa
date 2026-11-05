@@ -1,4 +1,4 @@
-# Mesa 文献收货扩展（通道 C）
+# Mesa 文献下载扩展（通道 C）
 
 真实浏览器干浏览器的事：扩展在文献页加「存到 Mesa」按钮，用**真实登录会话**在页内
 fetch PDF 字节，经 native messaging 送给 Mesa 的 helper 落进当前项目 `papers/`。

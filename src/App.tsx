@@ -1311,7 +1311,7 @@ function App() {
           pushRelayToast({
             kind: "err",
             text: "PDF 入库失败",
-            detail: `${String(err)}——原文件在回收站（收货通道）或下载文件夹，可用「关联本地 PDF」重新导入`,
+            detail: `${String(err)}——原文件在回收站或下载文件夹，可用「关联本地 PDF」重新导入`,
           });
         });
     })
