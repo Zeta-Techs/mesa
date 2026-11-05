@@ -91,7 +91,7 @@ export default function SplitPlanDialog({
   }
 
   async function decline() {
-    if (!(await confirmDialog("不开这份方案？方案会移进 .ccode/split-plans/ 留底，之后可以在工作台重新「拆成几个目标同时做」。", { confirmText: "不开" }))) return;
+    if (!(await confirmDialog("不开这份方案？\n\n方案会留底，之后可以在工作台重新拆。", { confirmText: "不开" }))) return;
     try {
       await invoke("split_plan_close", { projectRoot: projectPath, outcome: "declined" });
       onDone();

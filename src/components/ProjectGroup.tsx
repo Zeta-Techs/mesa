@@ -740,7 +740,7 @@ export default function ProjectGroup({
     // 步骤专属绑定按步骤名匹配，步骤被换可能失效或转移到同名新步骤（B1）
     if (
       !(await confirmDialog(
-        `更换模板「${item.name}」？现有 ${cfg.steps.length} 个步骤会被替换，绑定的工作区与资源不受影响；步骤专属绑定按步骤名匹配，可能失效或转移。继续？`,
+        `换成模板「${item.name}」？\n\n现有 ${cfg.steps.length} 个步骤会被替换；工作区和文件不受影响，给步骤单独指定的 Agent 可能要重新选。`,
         { danger: true },
       ))
     )
@@ -815,7 +815,7 @@ export default function ProjectGroup({
     if (
       replace &&
       !(await confirmDialog(
-        `用我的任务「${pack.name}」换掉现有 ${cfg.steps.length} 个步骤？绑定的工作区与资源不受影响；步骤专属绑定按步骤名匹配，可能失效或转移。参数先用默认值，之后在「编辑研究流程」里改。`,
+        `用「${pack.name}」换掉现有 ${cfg.steps.length} 个步骤？\n\n工作区和文件不受影响；给步骤单独指定的 Agent 可能要重新选。`,
         { danger: true },
       ))
     )

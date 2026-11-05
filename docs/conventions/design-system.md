@@ -91,6 +91,10 @@
   按钮只用 PageFrame 四档：primary / secondary / danger（不可逆）/ quiet（弹窗页脚里的跳过、忽略、稍后，32px 高，
   与主次同高；行内 28px 的低调钮仍用 ghost）。**禁用旧「rounded-sm px-3 py-1.5 text-sm」本地按钮写法**（2026-10-17
   清掉 53 处）；输入框只用 fieldClass / compactFieldClass / surfaceFieldClass，标签 `mb-1 block text-xs text-l3`。
+- **确认框文案要短（2026-11-05 用户：「这一类弹窗好像 Mesa 有很多都写的很复杂」）**：首段一句问句当标题，说清要做什么
+  （「删除项目「X」？」「从 Codex 移除「Y」？」）；正文最多一两句，只写人会在意的后果——会丢什么、能不能找回、影响到谁。
+  **不写内部机制**（worktree、.ccode、project.toml、备份批次、PID、同步重写、冻结证据这类），Mesa 照做但不告诉人怎么做；
+  不以「继续？」收尾（按钮已经说了要做什么）；不可恢复、会中断运行、会覆盖人改过的内容这三类后果必须写，其余能删就删。
 - **二次确认框统一口径（2026-10-17，`confirmDialog` 一处承载 126 处调用）**：调用方照旧只传纯文本，组件经
   `parseConfirmMessage`（`src/confirm-dialog.ts`，配单测）自动认结构——首段单行 ≤60 字＝标题（sm·semibold·l1，配
   语气图标：危险三角/确认问号/提示信息）；成组（≥2 行）「键：值」行（只认全角冒号）＝对照表（well 底，键 l3、值按

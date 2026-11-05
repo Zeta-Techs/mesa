@@ -281,7 +281,7 @@ test("进行中的目标卡能就地停止：确认后杀这条 Run 的终端进
     const card = view.row(task);
     // 取消确认：什么都不做
     await view.click(`停止目标：${task.name}`, card);
-    assert.match(view.data.confirmations.at(-1)!, /停止目标「整理进行中文档」/);
+    assert.match(view.data.confirmations.at(-1)!, /停止「整理进行中文档」/);
     assert.ok(!view.calls.some((call) => call.command === "pty_kill"));
     // 进程不在这个 Mesa 里：不替它收尾
     view.data.confirm = true;
@@ -350,8 +350,8 @@ test("归档保留确认，已归档默认收起可恢复，失败明确反馈",
     await view.click(`目标详情：${task.name}`, view.row(task));
     await view.click(`归档目标：${task.name}`);
     assert.equal(view.data.confirmations.length, 1);
-    assert.match(view.data.confirmations[0], /释放副本空间/);
-    assert.match(view.data.confirmations[0], /归档不等于清理/);
+    assert.match(view.data.confirmations[0], /可以在「已归档」里恢复/);
+    assert.match(view.data.confirmations[0], /归档不腾出磁盘空间/);
     assert.ok(!view.data.confirmations[0].includes("待验收"));
     assert.ok(!view.calls.some((call) => call.command === "task_delete"));
     view.data.confirm = true;
@@ -675,7 +675,7 @@ test("工作副本已清理后只能从当前项目重新开始，已归档可�
     const card = view.row(cleared);
     await view.click("从项目重新开始", card);
     assert.equal(view.data.starts.length, 0);
-    assert.match(view.data.confirmations.at(-1)!, /旧工作副本已清理/);
+    assert.match(view.data.confirmations.at(-1)!, /旧的工作副本已经清理/);
     view.data.confirm = true;
     await view.click("从项目重新开始", card);
     assert.equal(view.data.starts[0].reuseIsolation, false);
@@ -702,8 +702,7 @@ test("待验收归档会说明不再提醒；未完成接受不能归档", async
     const archive = view.button(`归档目标：${review.name}`, view.row(review));
     assert.equal(archive.disabled, false);
     await view.click(`归档目标：${review.name}`, view.row(review));
-    assert.match(view.data.confirmations[0], /还在待验收/);
-    assert.match(view.data.confirmations[0], /释放副本空间/);
+    assert.match(view.data.confirmations[0], /还没验收，归档后不再提醒/);
     assert.ok(!view.calls.some((call) => call.command === "task_delete"));
   } finally { await view.close(); }
 

@@ -347,7 +347,7 @@ export default function ProjectUserTasksView({
       // 重试（失败/已停止）且有上一版：复用上次的隔离副本，并尽量恢复上次会话——
       // 「重试」的产品语义是接着干，不是从零复制一份重跑
       if (task.storageCleanupPending) throw new Error("请先继续未完成的副本清理");
-      if (task.workspaceCleared && !await confirmDialog("旧工作副本已清理。将从当前项目复制资料重新开始，不恢复旧会话；已写入成果和接受记录保留。继续？", { focusCancel: true, confirmText: "重新开始" })) return;
+      if (task.workspaceCleared && !await confirmDialog("从头重新开始？\n\n旧的工作副本已经清理，接不回原来的对话；已经采纳的成果保留。", { focusCancel: true, confirmText: "重新开始" })) return;
       const previousRun = task.workspaceCleared ? undefined : latestRunByTask.get(task.id);
       const retrying =
         (task.status === "failed" || task.status === "stopped") && previousRun
@@ -395,7 +395,7 @@ export default function ProjectUserTasksView({
    *  后端按「用户主动停止」收尾，有可审成果的照旧进待验收，没有的变「已停止」可重试接着做 */
   async function stopGoal(task: TaskDto, run: RunDto) {
     const ok = await confirmDialog(
-      `停止目标「${goalDisplayName(task)}」正在跑的 Agent？\n\n正在做的这一步会被打断。已经写下的文件留在工作副本里：之后点「重试」接着做，有成果的也可以先去验收。`,
+      `停止「${goalDisplayName(task)}」？\n\n已经写下的文件保留，之后可以点「重试」接着做。`,
       { danger: true, confirmText: "停止" },
     );
     if (!ok) return;
@@ -424,10 +424,10 @@ export default function ProjectUserTasksView({
   async function deleteGoal(task: TaskDto) {
     const name = goalDisplayName(task);
     const reviewNote = task.status === "pending_review"
-      ? "这份目标还在待验收。归档后主列表不再提醒验收，可从已归档恢复再验收。\n\n"
+      ? "它还没验收，归档后不再提醒。"
       : "";
     const ok = await confirmDialog(
-      `归档目标「${name}」？它会从列表收起；产出文件、会话和验收记录全部保留，之后可在下方「已归档」里恢复。\n\n${reviewNote}归档不等于清理。内部副本不会因归档而删除，仍占磁盘；要腾空间请另点「释放副本空间」。`,
+      `归档目标「${name}」？\n\n${reviewNote}文件和记录都保留，可以在「已归档」里恢复；归档不腾出磁盘空间。`,
       {
         danger: true,
         confirmText: "归档",
@@ -450,7 +450,7 @@ export default function ProjectUserTasksView({
   async function purgeGoal(task: TaskDto) {
     const name = goalDisplayName(task);
     const ok = await confirmDialog(
-      `删除归档目标「${name}」？它会从已归档里消失，不能恢复。项目里已经接受的文件还在。如果还有内部副本，请先释放副本空间。`,
+      `删除归档目标「${name}」？\n\n删除后不能恢复；已经采纳进项目的文件还在。`,
       { danger: true, confirmText: "删除" },
     );
     if (!ok) return;
@@ -1618,7 +1618,7 @@ function ReviewOutputsModal({
 
   async function freezeLarge() {
     if (!run || (reviewSeq == null && !freezeRequired) || busy || pendingApply) return;
-    const ok = await confirmDialog("将为这次运行启用扩展冻结：单文件最多 1 GB、每版合计最多 4 GB。会额外占用磁盘，之后仍按版本人工验收；不会直接写进项目。超过上限请先拆分或归档文件。继续？", { focusCancel: true, confirmText: "确认冻结大文件" });
+    const ok = await confirmDialog("保存这次的大文件以便验收？\n\n单个最多 1 GB、合计最多 4 GB，会额外占用磁盘。", { focusCancel: true, confirmText: "确认冻结大文件" });
     if (!ok) return;
     setBusy(true);
     try {
@@ -1656,7 +1656,7 @@ function ReviewOutputsModal({
 
   async function recover(action: "continue" | "rollback") {
     if (!run || !pendingApply || busy) return;
-    if (action === "rollback" && !await confirmDialog("恢复本次接受之前的项目文件？只恢复仍等于本次写入内容的文件；后来被修改的文件不会强制覆盖。已记账的接受不可从此撤销。", { confirmText: "恢复原文件", focusCancel: true })) return;
+    if (action === "rollback" && !await confirmDialog("把项目文件恢复到这次采纳之前？\n\n之后你又改过的文件不动。", { confirmText: "恢复原文件", focusCancel: true })) return;
     setBusy(true);
     try {
       await invoke("task_recover_outputs", { runId: run.id, operationId: pendingApply.id, action });

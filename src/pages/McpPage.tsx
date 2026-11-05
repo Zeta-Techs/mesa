@@ -789,7 +789,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
         const agents = msg.slice("EXTMOD:".length);
         if (
           await confirmDialog(
-            `「${s.name}」在这些 Agent 的配置里已被外部修改：${agents}。停用会移除这些条目。仍要停用吗？`,
+            `仍要停用「${s.name}」？\n\n${agents} 里它被改过，停用会把这一项移除。`,
             { danger: true },
           )
         ) {
@@ -842,7 +842,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       const label = AGENTS.find((a) => a.id === agent)?.label ?? agent;
       if (
         !(await confirmDialog(
-          `「${server.name}」在 ${label} 的配置里已不存在（外部已删除）。拨开会将该条目重新写入 ${label} 的配置。仍要打开吗？`,
+          `重新给 ${label} 加上「${server.name}」？\n\n它在 ${label} 的配置里已经被删掉了。`,
         ))
       )
         return;
@@ -853,7 +853,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       const label = AGENTS.find((a) => a.id === agent)?.label ?? agent;
       if (
         !(await confirmDialog(
-          `关闭将把「${server.name}」从 ${label} 的配置中移除（清单里仍保留该条目）。仍要关闭吗？`,
+          `从 ${label} 移除「${server.name}」？\n\nMCP 清单里还留着，随时能再打开。`,
           { danger: true },
         ))
       )
@@ -884,7 +884,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
         const label = AGENTS.find((a) => a.id === agent)?.label ?? agent;
         if (
           await confirmDialog(
-            `「${server.name}」在 ${label} 的配置里已被外部修改，移除会丢掉外部改动的版本。仍要移除吗？`,
+            `仍要从 ${label} 移除「${server.name}」？\n\n它在那边被改过，改动会一起丢掉。`,
             { danger: true },
           )
         ) {
@@ -928,8 +928,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
     if (
       !(await confirmDialog(
         impact.length
-          ? `将删除 MCP「${server.name}」，并从以下 Agent 的配置中删除：${impact.join("、")}。继续？`
-          : `将删除 MCP「${server.name}」。继续？`,
+          ? `删除 MCP「${server.name}」？\n\n${impact.join("、")} 里的这一项也会一起删掉。`
+          : `删除 MCP「${server.name}」？`,
         { danger: true },
       ))
     )
@@ -961,7 +961,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
         const agents = msg.slice("EXTMOD:".length);
         if (
           await confirmDialog(
-            `「${server.name}」在这些 Agent 的配置里已被外部修改：${agents}。删除会丢掉外部改动的版本。仍要删除吗？`,
+            `仍要删除「${server.name}」？\n\n${agents} 里它被改过，改动会一起丢掉。`,
             { danger: true },
           )
         ) {
@@ -1078,7 +1078,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
       if (candidates.length === 1) {
         const c = candidates[0];
         const ok = await confirmDialog(
-          `已将「${s.name}」的相对路径解析为：\n命令：${c.command}${c.cwd ? `\n工作目录：${c.cwd}` : ""}\n确认后按此更新条目，并同步重写到已分发的 Agent。`,
+          `把「${s.name}」的命令改成下面这样？\n\n命令：${c.command}${c.cwd ? `\n工作目录：${c.cwd}` : ""}\n\n已分发到的 Agent 一起更新。`,
         );
         if (ok) await applyCommandFix(s, c);
         return;

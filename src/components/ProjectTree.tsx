@@ -1651,10 +1651,7 @@ export default function ProjectTree({
     if (
       !(await confirmDialog(
         `清除「${row.name}」的 Mesa 痕迹？\n\n` +
-          `文件夹与你的文件：保留\n` +
-          `.ccode/（档案卡、任务卡、各步骤 TASK.md 内容）：移入回收站（可找回）\n` +
-          `工作区 worktree 与分支、注册记录：彻底删除\n\n` +
-          `注意：如果 .ccode 曾被 git 跟踪，改动面板会显示对应删除，需要你自行提交。请先关闭该项目内正在运行的终端标签。`,
+          `你的文件保留；Mesa 的档案卡移入回收站，工作区与分支彻底删除。先关掉这个项目里正在运行的对话。`,
         { danger: true },
       ))
     )
@@ -1674,7 +1671,7 @@ export default function ProjectTree({
   async function deleteProjectDir(row: TreeRow, wsCount: number) {
     if (
       !(await confirmDialog(
-        `删除项目「${row.name}」？\n\n目录：${row.repoPath}\n工作区：${wsCount} 个\n\n目录将移入系统回收站（可找回）；工作区的 worktree 与分支将彻底删除、不可恢复。请先关闭该项目内正在运行的终端标签。`,
+        `删除项目「${row.name}」？\n\n文件夹移入回收站，可以找回；${wsCount > 0 ? `${wsCount} 个工作区彻底删除，不可恢复。` : ""}先关掉这个项目里正在运行的对话。`,
         { danger: true },
       ))
     )
@@ -1877,7 +1874,7 @@ export default function ProjectTree({
     if (
       !(await confirmDialog(
         `归档 ${stale.length} 段 ${SCRATCH_STALE_DAYS} 天没动的随手聊？\n\n` +
-          `归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回、取消归档。置顶的、开着的不动。`,
+          `记录不删，在对话页「已归档」里能找回；置顶的、开着的不动。`,
       ))
     )
       return;
@@ -2019,7 +2016,7 @@ export default function ProjectTree({
     if (
       !(await confirmDialog(
         `归档这 ${list.length} 段对话？\n\n${head}${list.length > 3 ? ` 等 ${list.length} 段` : ""}\n\n` +
-          `归档后侧栏不再列，对话记录不删；在对话页「更多 → 已归档」里能找回、取消归档。开着的对话照样开着。`,
+          `记录不删，在对话页「已归档」里能找回。`,
       ))
     )
       return;

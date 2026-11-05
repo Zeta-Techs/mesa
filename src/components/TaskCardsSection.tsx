@@ -404,7 +404,7 @@ export default function TaskCardsSection({
   async function onDelete(card: TaskCardDto) {
     if (
       !(await confirmDialog(
-        `删除卡片「${card.name}」？卡片内的对话会移出卡片（对话本身不删除），TASK.md 不受影响。继续？`,
+        `删除卡片「${card.name}」？\n\n里面的对话不删，只是移出卡片。`,
         { danger: true },
       ))
     )

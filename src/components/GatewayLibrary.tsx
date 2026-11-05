@@ -886,7 +886,7 @@ export default function GatewayLibrary({
     const more = bound.length > 8 ? `\n· 等共 ${bound.length} 个` : "";
     const ok = await confirmDialog(
       `「${g.name}」还有 ${bound.length} 个连接在用：\n${lines}${more}\n\n` +
-        `将先解绑这些连接，再删除网关，密钥一并删除。${usageWarnText(refs)}${scheduleWarnText(schedules)}`,
+        `删除后这些连接和密钥一起删掉。${usageWarnText(refs)}${scheduleWarnText(schedules)}`,
       { danger: true, confirmText: "解绑并删除" },
     );
     if (!ok) return;

@@ -116,7 +116,7 @@ export default function ResearchReproductionPanel({ workspace, step, onLaunched,
     const context = scope;
     try {
       const planned = reproductionCommandFromContract(choice.contract, current.source.root, "独立输出目录", IS_WINDOWS);
-      const approved = await confirmDialog(`将在工作区执行复现（不是打开终端让你改命令）：\n${current.source.root}\n来源版本：${current.source.resultVersion}\n\n${planned}\n\n约定输出写到 ~/ccode/reproductions/；脚本仍有工作目录访问权，不是只读沙箱。启动不代表验证通过。`, { confirmText: "确认运行", focusCancel: true });
+      const approved = await confirmDialog(`运行复现？\n\n${planned}\n\n输出写到 ~/ccode/reproductions/。脚本能读写工作目录；跑完不等于验证通过。`, { confirmText: "确认运行", focusCancel: true });
       if (!approved || scopeRef.current !== context) return;
       const preview = await readResearchFile(current.source.root, choice.entry);
       if (preview.truncated || preview.revision !== choice.revision) throw new Error("复现入口已变化，请刷新后重新审阅");

@@ -166,7 +166,7 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
 
     pending.length = 0;
     await click("进入", main);
-    assert.match(confirmations.at(-1)!, /主仓正停在基准分支上/);
+    assert.match(confirmations.at(-1)!, /仍要在主仓直接改/);
     assert.equal(pending.length, 0);
     await click("进入", work);
     assert.equal(pending.at(-1)?.cwd, "/worktrees/test");

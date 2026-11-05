@@ -498,7 +498,7 @@ export function cwdIsCodingWorktree(
 
 `进入` 在 `w.isPrimary && w.isBase` 时弹 `confirmDialog`：
 
-> 主仓正停在基准分支上。Agent 会直接改 main。建议先从基准拉出工作树。
+> 仍要在主仓直接改 main？建议先从基准拉出工作树。
 
 `confirmText: "仍要进入"`。v1 不扩展第三键。
 

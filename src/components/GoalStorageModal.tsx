@@ -33,9 +33,9 @@ export default function GoalStorageModal({ taskId, onClose, onChanged }: {
     if (!review || busy || loading) return;
     const usage = scope === "workspace" ? review.workspace : review.review;
     const effect = scope === "workspace"
-      ? "删除这个目标所有工作副本（含复制的输入和未采纳成果）。之后不能从旧副本或旧会话续跑，只能从当前项目重新开始。历史冻结版本暂时保留。"
-      : "永久删除这个目标的历史冻结版本、上下文副本及写回前备份；旧版将无法预览、重新采纳或恢复。";
-    const ok = await confirmDialog(`${review.pending ? "继续原来的清理操作。" : ""}将清理约 ${size(usage.bytes)}（${usage.files} 个文件）。\n\n${effect}\n\n不删除主项目文件、目标记录或接受账本；归档不等于清理。此操作不能撤销。`,
+      ? "没采纳的成果一起删掉，之后只能从当前项目重新开始。"
+      : "旧版本将无法预览、重新采纳或恢复。";
+    const ok = await confirmDialog(`${review.pending ? "继续上次没做完的清理，" : ""}清理约 ${size(usage.bytes)}（${usage.files} 个文件）？\n\n${effect}项目里的文件不受影响，此操作不能撤销。`,
       { danger: true, focusCancel: true, confirmText: review.pending ? "继续清理" : "确认清理" });
     if (!ok) return;
     setBusy(true); setError(null); setNotice(null);

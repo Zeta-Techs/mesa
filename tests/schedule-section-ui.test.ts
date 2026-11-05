@@ -217,7 +217,7 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
     const before = commands.filter((c) => c.command === "schedule_run_delete").length;
     await click(delBtn);
     assert.ok(
-      data.confirms.some((m) => /已采纳进项目的产物不受影响/.test(m)),
+      data.confirms.some((m) => /已采纳进项目的不受影响/.test(m)),
       `历史删除确认应说明已采纳产物不受影响：${JSON.stringify(data.confirms)}`,
     );
     const deleted = commands.filter((c) => c.command === "schedule_run_delete");

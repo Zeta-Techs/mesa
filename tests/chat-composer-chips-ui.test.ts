@@ -264,7 +264,7 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     await ui.render(ui.h(ui.Badge, { ...props, editable: false, mode: "ask", note: null, live: { busy: false, onRestart: () => restarts++ } }));
     await ui.click("请求批准");
     await ui.act(async () => menuItem(ui, "帮我批准").click());
-    assert.match(String((ui.host.confirms.at(-1) as unknown[])[0]), /换权限要重开/);
+    assert.match(String((ui.host.confirms.at(-1) as unknown[])[0]), /要重开一次/);
     assert.deepEqual(picks.at(-1), ["write_tree", "auto"]);
     assert.equal(restarts, 1);
   } finally {

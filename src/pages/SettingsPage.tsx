@@ -1338,10 +1338,8 @@ function UninstallRow() {
           onClick={() => void (async () => {
             const ok = await confirmDialog(
               "卸载 Mesa 的本机数据？\n\n" +
-                "会移入回收站：配置与密钥、技能库、会话索引、工作副本、定时任务记录，以及界面记住的最近项目和偏好。\n" +
-                "课题文件夹、论文和各家 AI 自己的会话不会动；各家 AI 技能目录里指向 Mesa 的链接、Mesa 写进全局配置的 hooks 会一并收回。\n" +
-                "用「设为全局默认」写进各家配置的连接（含密钥）不会动。\n\n" +
-                "应用本身还在：Mac 把 Mesa.app 拖进废纸篓；Windows 在「设置 → 应用」里卸载。",
+                "配置、密钥、技能库、会话索引和工作副本移入回收站；课题文件夹、论文和各家 AI 自己的会话不动。\n\n" +
+                "应用本身要另外删：Mac 把 Mesa.app 拖进废纸篓，Windows 在「设置 → 应用」里卸载。",
               { danger: true, confirmText: "继续", focusCancel: true },
             );
             if (ok) setArmed(true);
@@ -1844,9 +1842,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     }
     const where = target ? `${target.replace(/[\\/]+$/, "")}${IS_WINDOWS ? "\\" : "/"}ccode` : "~/ccode";
     const ok = await confirmDialog(
-      `此后新建的编程工作树、科研工作副本、定时隔离树放进：\n${where}\n\n` +
-        "已有的不会自动搬，继续留在原处照常使用；它们在下方「本机占用」里仍会列出，" +
-        "走项目页的归档 / 删除清掉后，空间才会释放。",
+      `以后新建的工作副本放进 ${where}？\n\n` +
+        "已有的不搬，留在原处照常使用。",
       { confirmText: target ? "使用这个位置" : "恢复默认", focusCancel: false },
     );
     if (!ok) return;

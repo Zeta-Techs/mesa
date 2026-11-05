@@ -119,7 +119,7 @@ test("工作副本与历史版本分两步，各需单独确认；有工作副�
     assert.equal(view.button("删除历史版本与备份").disabled, true);
     await view.click("清理工作副本");
     assert.equal(view.calls.some((c) => c.command === "task_cleanup"), false);
-    assert.match(view.data.confirmations[0].text, /不能从旧副本或旧会话续跑/);
+    assert.match(view.data.confirmations[0].text, /只能从当前项目重新开始/);
     assert.equal(view.data.confirmations[0].confirmText, "确认清理");
     view.data.confirm = true;
     await view.click("清理工作副本");
@@ -148,7 +148,7 @@ test("中断后显示继续清理；外部改动或引用失败时保留入口�
     assert.equal(view.button("删除历史版本与备份").disabled, true);
     await view.click("继续清理");
     assert.equal(view.data.confirmations[0].confirmText, "继续清理");
-    assert.match(view.data.confirmations[0].text, /继续原来的清理操作/);
+    assert.match(view.data.confirmations[0].text, /继续上次没做完的清理/);
     const cleanup = view.calls.find((c) => c.command === "task_cleanup")!;
     assert.equal(cleanup.args.operationId, "op-1");
     assert.equal(cleanup.args.scope, "workspace");

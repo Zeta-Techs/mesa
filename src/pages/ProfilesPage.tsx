@@ -3525,7 +3525,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       const conflict = await invoke<string | null>("set_global_conflict", { agent }).catch(() => null);
       if (conflict) {
         const ok = await confirmDialog(
-          `${conflict}\n\n确认后，在连接页点地球图标或在托盘里切换 ${labelOf(agent)} 不再问这一句；⋯ 里的「写入 CLI 全局默认…」仍会先给你看要改什么。`,
+          `${conflict}\n\n以后切换 ${labelOf(agent)} 不再问这一句。`,
           { confirmText: "切换，以后不再问" },
         );
         if (!ok) return;
@@ -3750,7 +3750,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   async function onRestoreBackup(agentId: string) {
     if (
       !(await confirmDialog(
-        `将恢复 ${labelOf(agentId)} 最近一个完整备份批次。当前状态会先另存为新备份，原恢复点不会被消耗。继续？`,
+        `把 ${labelOf(agentId)} 的配置恢复到最近一次备份？\n\n现在的配置会先备份，可以再换回来。`,
       ))
     )
       return;
@@ -3777,7 +3777,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   async function onRestoreOriginal(agentId: string) {
     if (
       !(await confirmDialog(
-        `将把 ${labelOf(agentId)} 的全局配置恢复到 Mesa 首次写入前的原始状态（Mesa 当时新建的文件会被删除）。当前状态会先另存为新备份，可用「撤销上次写入」反悔。继续？`,
+        `把 ${labelOf(agentId)} 的全局配置恢复成 Mesa 改动之前的样子？\n\n反悔可以点「撤销上次写入」。`,
       ))
     )
       return;
@@ -3869,7 +3869,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       .catch(() => "");
     if (
       !(await confirmDialog(
-        `解绑「${p.name}」？网关和密钥会留下，其它 Agent 的绑定不受影响。${usageWarn}${warn}`,
+        `解绑「${p.name}」？\n\n网关和密钥保留。${usageWarn}${warn}`,
         {
           danger: true,
         },

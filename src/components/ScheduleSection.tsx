@@ -1918,10 +1918,10 @@ export default function ScheduleSection({
                               if (
                                 !(await confirmDialog(
                                   rec.runId
-                                    ? `删除 ${relTime(rec.at)} 这条运行记录？历史行、冻结证据和运行账目一起删除；已采纳进项目的产物不受影响。`
+                                    ? `删除 ${relTime(rec.at)} 的运行记录？\n\n已采纳进项目的不受影响。`
                                     : rec.status === "skipped"
-                                      ? `删除 ${relTime(rec.at)} 这条跳过记录？只删历史行。`
-                                      : `删除 ${relTime(rec.at)} 这条失败记录？它启动就失败了，只删历史行。`,
+                                      ? `删除 ${relTime(rec.at)} 的跳过记录？`
+                                      : `删除 ${relTime(rec.at)} 的失败记录？`,
                                   { confirmText: "删除" },
                                 ))
                               )

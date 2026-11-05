@@ -395,7 +395,7 @@ async function offerAddLitProject(
   const name = dir.split(/[\\/]/).pop() || dir;
   if (
     !(await confirmDialog(
-      `这份 PDF 还不在任何已添加的项目里。\n沉浸阅读会把笔记写进项目文件夹，需要先添加项目。\n\n将添加：${dir}\n添加后不挂研究流程，只用来读文献、写笔记。`,
+      `把「${dir}」添加为项目？\n\n沉浸阅读的笔记要写进项目文件夹，这份 PDF 还不在任何项目里。`,
       { confirmText: "添加并继续" },
     ))
   ) {
@@ -5462,7 +5462,7 @@ const TerminalView = memo(function TerminalView({
       !officialSt.connected
     ) {
       const ok = await confirmDialog(
-        "「官方账号」走 ChatGPT / OpenAI 官方接口，不带网关密钥。当前还没登录，启动会变成 401（Missing bearer）。请到连接页登录，或改选网关配置。",
+        "官方账号还没登录，仍要启动？\n\n启动后会报未登录（401）。可以先去连接页登录，或换一条连接。",
         { confirmText: "仍要启动" },
       );
       if (!ok) {
@@ -5487,7 +5487,7 @@ const TerminalView = memo(function TerminalView({
       })
     ) {
       const ok = await confirmDialog(
-        "Codex 要在主目录里运行\n\nCodex 在 Windows 上跑命令前，会给工作目录里的每个文件改访问权限。现在的目录是主目录，会改到整个用户文件夹（文档、桌面、AppData 等）：第一次跑命令会很慢，Codex 的沙箱账户也会留下这些文件的写权限。\n\n建议点「取消」，在目录芯片里换成「随手聊」或某个项目文件夹再开始。",
+        "Codex 要在主目录里运行\n\n在 Windows 上它会改整个用户文件夹的访问权限，第一次会很慢。建议取消，换成「随手聊」或某个项目文件夹。",
         { confirmText: "仍在主目录运行" },
       );
       if (!ok) {
@@ -6530,7 +6530,7 @@ const TerminalView = memo(function TerminalView({
           if (!dir) return;
           if (
             !(await confirmDialog(
-              `把「${dir}」登记为 Mesa 项目？\n只登记这个目录，不会建工作区、不改动任何文件。写论文可在项目页选研究流程；只读文献写笔记可以不选。\n对话跟着这个目录走；要落到别的文件夹，得在开聊前另选目录。`,
+              `把「${name}」登记为 Mesa 项目？\n\n只登记，不改动任何文件。`,
               { confirmText: "登记" },
             ))
           )
@@ -10171,7 +10171,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         });
         if (
           alive &&
-          !(await confirmDialog("这段对话的 Agent 还在干活或在等你确认，关掉会停下它。确认关掉？\n\n记录还在侧栏，再点开发一句就接回。", {
+          !(await confirmDialog("关掉这段对话？\n\nAgent 还在干活，关掉会停下它；记录还在侧栏，点开就能接着聊。", {
             danger: true,
           }))
         )

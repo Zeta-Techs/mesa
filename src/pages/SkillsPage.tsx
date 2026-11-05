@@ -1526,7 +1526,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     if (builtinApplying || builtinUpdates.length === 0) return;
     if (
       !(await confirmDialog(
-        `将把 ${builtinUpdates.length} 个内置技能更新为官方最新版。每个技能先备份本机文件（SKILL.md.bak）再覆盖，自改内容不会自动合并。确认全部更新？`,
+        `把 ${builtinUpdates.length} 个内置技能更新到最新版？\n\n你自己改过的内容会被覆盖（先自动备份）。`,
         { confirmText: "备份并全部更新" },
       ))
     ) return;
@@ -1756,7 +1756,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     if (applyingUpdate) return;
     if (
       !(await confirmDialog(
-        `将下载 ${skill.repo} 最新版本并覆盖技能「${skill.name}」（覆盖前自动备份，同仓库其他技能不受影响）。继续？`,
+        `把技能「${skill.name}」更新到最新版？\n\n本机的会被覆盖（先自动备份）。`,
       ))
     )
       return;

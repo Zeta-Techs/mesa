@@ -35,9 +35,8 @@ export function useAppUpdateInstall(onError?: (message: string) => void) {
         const first = active[0];
         const label = first.taskRef || first.agent || "后台任务";
         const ok = await confirmDialog(
-          `有 ${active.length} 个后台任务正在运行（如「${label}」）。\n\n` +
-            "更新安装完成后应用会重启，这些任务会被直接中断，未保存的进度会丢失。\n\n" +
-            "可以先去「后台任务」停止它们再更新。仍要现在安装？",
+          `有 ${active.length} 个后台任务正在运行（如「${label}」），仍要现在更新？\n\n` +
+            "更新后 Mesa 会重启，这些任务会被中断。",
           { danger: true, confirmText: "仍然安装", focusCancel: true },
         );
         if (!ok) return;

@@ -73,11 +73,11 @@ export async function confirmPermissionChoice(
   live: boolean,
 ): Promise<boolean> {
   const restartNote = live
-    ? `\n\n权限在启动时定下，换权限要重开：Mesa 会停下 ${agentLabel}，再带着新权限接回原来这段对话，聊过的内容不会丢。`
+    ? `\n\n要重开一次 ${agentLabel} 才生效，聊过的内容不会丢。`
     : "";
   if (id === "full") {
     return confirmDialog(
-      `开启完全访问？\n\n这次对话里，${agentLabel} 改文件、跑命令都不会先问你，包括删除文件、安装软件这类操作；出了错没有人拦。\n\n只对这一次对话生效，不改 ${agentLabel} 的本机设置。不确定就选「帮我批准」。${restartNote}`,
+      `开启完全访问？\n\n这次对话里 ${agentLabel} 删文件、装软件都不会先问你，只对这一次对话生效。不确定就选「帮我批准」。${restartNote}`,
       { danger: true, confirmText: "开启完全访问" },
     );
   }

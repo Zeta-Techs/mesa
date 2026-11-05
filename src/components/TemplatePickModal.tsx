@@ -176,7 +176,7 @@ export default function TemplatePickModal({
       let steps = pipelineStepsForTemplate(tpl, mode ?? "initial", round).map((s) => withResearchTools(s, tools, current.config.artifactDir, current.config.litSource));
       const conflicts = conflictingTemplateSteps(current.config.steps, steps);
       if (conflicts.length) {
-        if (!(await confirmDialog(`这些同名步骤的交付不同：${conflicts.join("、")}。保留旧步骤，按「${tpl.name}」改名追加？`, { confirmText: "改名追加" }))) { setBusy(null); return; }
+        if (!(await confirmDialog(`已有同名步骤：${conflicts.join("、")}。保留旧的，新的改名追加？`, { confirmText: "改名追加" }))) { setBusy(null); return; }
         steps = renameConflictingSteps(current.config.steps, steps, tpl.name);
       }
       const res = await invoke<AppendStepsResultDto>(

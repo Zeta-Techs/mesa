@@ -318,7 +318,7 @@ export default function PipelineEditor({
     if (
       dirty &&
       !(await confirmDialog(
-        "当前有未保存的改动，追加后会按最新 project.toml 刷新步骤列表，未保存改动将丢失。继续？",
+        "追加会丢掉还没保存的改动，继续？",
         { danger: true },
       ))
     )
@@ -497,7 +497,7 @@ export default function PipelineEditor({
       ];
       if (impacts.length > 0) {
         const okToSave = await confirmDialog(
-          `步骤被删除或改名：${gone.join("、")}。${impacts.join("；")}。仍要保存？`,
+          `删掉或改名了步骤：${gone.join("、")}，仍要保存？\n\n${impacts.join("；")}。`,
           { danger: true, confirmText: "仍要保存" },
         );
         if (!okToSave) return;
@@ -525,7 +525,7 @@ export default function PipelineEditor({
     if (
       dirty &&
       !(await confirmDialog(
-        "当前有未保存的改动，追加模板后会按最新 project.toml 刷新步骤列表，未保存改动将丢失。继续？",
+        "追加模板会丢掉还没保存的改动，继续？",
         { danger: true },
       ))
     )
@@ -547,7 +547,7 @@ export default function PipelineEditor({
       submissionSteps = submissionSteps.map((s) => withResearchTools(s, savedTools, current.config.artifactDir, current.config.litSource, providesByName));
       const conflicts = conflictingTemplateSteps(current.config.steps, submissionSteps);
       if (conflicts.length) {
-        if (!(await confirmDialog(`同名步骤交付不同：${conflicts.join("、")}。不能直接跳过；是否保留旧步骤，将这些步骤按「${tpl.name}」改名追加？取消可回编辑器自行选择复用并调整输入。`, { confirmText: "改名追加" }))) return;
+        if (!(await confirmDialog(`已有同名步骤：${conflicts.join("、")}。保留旧的，新的改名追加？`, { confirmText: "改名追加" }))) return;
         submissionSteps = renameConflictingSteps(current.config.steps, submissionSteps, tpl.name);
       }
       const res = await invoke<AppendStepsResultDto>(
@@ -1379,7 +1379,7 @@ export default function PipelineEditor({
               {changes.length === 0 && <p className="mt-2 text-l3">没有可匹配的差异；自定义/改名步骤请人工对照。</p>}
               {changes.map((change) => <details key={change.index} className="mt-2"><summary><input type="checkbox" checked={upgradeSelection.includes(change.index)} onClick={(e) => e.stopPropagation()} onChange={(e) => setUpgradeSelection((old) => e.target.checked ? [...old, change.index] : old.filter((i) => i !== change.index))} /> {change.current.name} · {change.fields.join("、")}</summary><div className="grid grid-cols-2 gap-2"><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.current,null,2)}</pre><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.proposed,null,2)}</pre></div></details>)}
               <button type="button" disabled={!upgradeSelection.length} className="mt-2 text-l2 disabled:opacity-40" onClick={async () => {
-                if (!(await confirmDialog("将用新版合同替换勾选步骤的简报、输入输出、技能和人工事项；自定义修改不会自动合并。只更新编辑草稿，确认？", { confirmText: "载入草稿" }))) return;
+                if (!(await confirmDialog("把勾选的步骤换成新版？\n\n这些步骤里你自己改过的会被覆盖；只改编辑中的草稿，保存前还能撤。", { confirmText: "载入草稿" }))) return;
                 setDrafts((old) => old.map((draft, index) => { const change = changes.find((c) => c.index === index); return change && upgradeSelection.includes(index) ? toDraft(withResearchTools({ ...change.proposed, resources: draft.resources }, tools, config.artifactDir, config.litSource, providesByName)) : draft; }));
                 setUpgradeSelection([]);
               }}>将勾选更新载入草稿</button>

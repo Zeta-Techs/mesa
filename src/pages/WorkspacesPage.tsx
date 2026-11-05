@@ -307,7 +307,7 @@ function AddProjectModal({
         const isRepo = await invoke<boolean>("git_is_repo", { path });
         if (!isRepo) {
           const ok = await confirmDialog(
-            "这个文件夹还不是 git 仓库。继续会在其中创建 .git，并写入一份编程用的 .gitignore（不含科研那套忽略 PDF 的规则）。之后才能用工作树和分支台。",
+            "把这个文件夹初始化为 Git 仓库？\n\n编程项目要靠它建工作树、管分支。",
             { confirmText: "初始化 git 并继续" },
           );
           if (!ok) {
@@ -1372,7 +1372,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   async function onCleanRecord(ws: WorkspaceDto) {
     if (
       !(await confirmDialog(
-        `只清理 Mesa 中「${ws.name}」的记录并释放端口，不删除磁盘目录或 Git 分支。继续？`,
+        `从 Mesa 里移除「${ws.name}」？\n\n只去掉记录，磁盘上的文件夹和分支都不动。`,
       ))
     )
       return;

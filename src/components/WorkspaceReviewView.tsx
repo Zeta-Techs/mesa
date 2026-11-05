@@ -2074,7 +2074,7 @@ function LiveWorkspaceReviewView({
     if (
       restart &&
       !(await confirmDialog(
-        `${diff.baseBranch} 已在冲突开始后更新。重新同步会放弃当前尚未提交的选边结果，并用最新 ${diff.baseBranch} 重新生成冲突。继续？`,
+        `按最新的 ${diff.baseBranch} 重新生成冲突？\n\n你已经选好但还没提交的会丢掉。`,
         { danger: true },
       ))
     ) {
@@ -2424,7 +2424,7 @@ function LiveWorkspaceReviewView({
       shouldArchive &&
       !archiveOpen &&
       !(await confirmDialog(
-        `${shouldCommit ? "将提交当前全部改动，然后" : "将"}归档工作区。worktree 会被移除，分支仍保留以便恢复。继续？`,
+        `${shouldCommit ? "提交当前改动并归档" : "归档"}这个工作区？\n\n分支保留，之后可以恢复。`,
       ))
     ) {
       return;

@@ -328,7 +328,7 @@ export function resumeSessionInTerminal(
     ]);
     if (s.live && !holder && !lastWriteIsMesas(s.updatedAt, run)) {
       const ok = await confirmDialog(
-        "这段对话可能正在别的终端里运行\n\n它的记录在最近一分钟里还有写入，而 Mesa 里没有打开它——多半是你在 iTerm、Ghostty 这类终端里直接运行的。两边同时接着聊，两份回复会交错写进同一段记录。\n\n建议先在那个终端里退出（Claude Code 按两次 Ctrl+C），再回来点继续。如果那边刚刚已经退出，可以直接继续。",
+        "这段对话可能正在别的终端里运行\n\n两边同时聊，回复会交错写进同一段记录。先在那个终端里退出再继续；刚退出的话可以直接继续。",
         { confirmText: "仍在 Mesa 里继续", focusCancel: true },
       );
       if (!ok) {

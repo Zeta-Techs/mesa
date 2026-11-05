@@ -652,8 +652,8 @@ export default function CodingProjectView({
     if (warn.warn) {
       const ok = await confirmDialog(
         warn.kind === "agent"
-          ? "主仓里已有 Agent 在跑。再开一个会改同一份目录。"
-          : `主仓正停在基准分支上。Agent 会直接改 ${w.branch || "基准"}。建议先从基准拉出工作树。`,
+          ? "主仓里已有 Agent 在跑，仍要再开一个？\n\n两个会改同一份目录。"
+          : `仍要在主仓直接改 ${w.branch || "基准"}？\n\n建议先从基准拉出工作树。`,
         { confirmText: "仍要进入" },
       );
       if (!ok) return;
