@@ -1,0 +1,115 @@
+/**
+ * 调度台取数与转达（调 invoke，2026-11-06 docs/design-assistant-dispatch-desk.md §2）：
+ * loadDesk 收这个项目「等你的事」（判定在 assistant-queue.ts）；replyDesk 把你的回复原路、原话送回去。
+ * 桌面面板与飞书通道共用，不各写一套。
+ */
+import { invoke } from "@tauri-apps/api/core";
+import { useAppStore } from "./store";
+import { IS_WINDOWS } from "./hotkeys";
+import { pathWithin, samePath } from "./path-utils";
+import { stepSessionTail } from "./session-tail";
+import { deliverHelpPrompt } from "./help-requests";
+import { sendToWorkspace } from "./assistant-dispatch";
+import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
+import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, WorkspaceDto } from "./types";
+
+function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
+  return p.then((v) => v ?? fallback).catch(() => fallback);
+}
+
+export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
+  const [read, workspaces, runs, help] = await Promise.all([
+    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
+    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
+    safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
+  ]);
+  const mine = workspaces.filter((w) => w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS));
+  const steps: DeskStep[] = (read?.config.steps ?? []).map((s, index) => ({
+    index,
+    name: s.name,
+    workspaceName: s.workspaceName,
+    worktreePath: mine.find((w) => w.name === s.workspaceName)?.worktreePath ?? null,
+  }));
+  const live = useAppStore.getState().terminalRunInputs;
+  const busy = (path: string) =>
+    live.some((r) => r.running && !r.shell && pathWithin(r.cwd, path, IS_WINDOWS) && (r.attention === "working" || r.attention === "confirm"));
+  const tails = (
+    await Promise.all(
+      steps
+        .filter((s) => s.worktreePath)
+        .map(async (s) => {
+          const tail = await stepSessionTail(runs, s.worktreePath!).catch(() => null);
+          return tail ? { step: s, text: tail.text, busy: busy(s.worktreePath!) } : null;
+        }),
+    )
+  ).filter((t): t is { step: DeskStep; text: string; busy: boolean } => !!t);
+  const roots = [projectPath, ...mine.map((w) => w.worktreePath)];
+  const confirms = live
+    .filter((r) => r.running && !r.shell && r.attention === "confirm" && roots.some((root) => pathWithin(r.cwd, root, IS_WINDOWS)))
+    .map((r) => ({
+      tabId: r.tabId,
+      title: r.title,
+      step: steps.find((s) => s.worktreePath && pathWithin(r.cwd, s.worktreePath, IS_WINDOWS)) ?? null,
+    }));
+  return buildDeskItems({
+    steps,
+    help: help.filter((h) => samePath(h.repoPath, projectPath, IS_WINDOWS)),
+    tails,
+    confirms,
+  });
+}
+
+async function workspaceFor(path: string | null | undefined): Promise<WorkspaceDto | null> {
+  if (!path) return null;
+  const list = await safe(invoke<WorkspaceDto[]>("list_workspaces"), []);
+  return list.find((w) => samePath(w.worktreePath, path, IS_WINDOWS)) ?? null;
+}
+
+/**
+ * 回一件「等你的事」：人工请求写回作答，再把「按决定继续」送进那一步；对话里的问题把原话送进那段对话。
+ * 等确认的命令不在这里答（只在桌面、回对话里确认），调用方先按分级表挡住。返回给人看的一句。
+ */
+export async function replyDesk(projectPath: string, item: DeskItem, text: string): Promise<string> {
+  const value = text.trim();
+  if (!value) throw new Error("回复是空的");
+  if (item.kind === "confirm") throw new Error("等确认的命令要回到电脑上的对话里确认");
+  if (item.kind === "help") {
+    const saved = await invoke<HelpItemDto>("help_request_answer", {
+      root: item.helpRoot,
+      itemId: item.helpItemId,
+      answer: value,
+      remember: null,
+    });
+    const ws = (await workspaceFor(item.worktreePath)) ?? (await workspaceFor(item.helpRoot));
+    if (!ws) return "已记下你的回答；这条来自项目根，回到那段对话里点「交给 Agent」才送得到";
+    const sent = await sendToWorkspace(projectPath, ws, null, deliverHelpPrompt([saved], 0));
+    await invoke<number>("help_request_mark_sent", { root: item.helpRoot }).catch(() => 0);
+    return sent.mode === "mail" ? `已记下，并留话给${item.where}的 AI，它空闲时按你的决定继续` : `已记下，并接回${item.where}的对话按你的决定继续`;
+  }
+  const ws = await workspaceFor(item.worktreePath);
+  if (!ws) throw new Error(`${item.where}的工作副本不在了，送不到`);
+  const sent = await sendToWorkspace(projectPath, ws, null, relayText(value));
+  return sent.mode === "mail" ? `已原话留给${item.where}的 AI，它空闲时送到` : `已接回${item.where}的对话，把你的话原样送了进去`;
+}
+
+/** 带路去确认：切到那个终端标签（只在桌面） */
+export function focusConfirm(item: DeskItem): void {
+  if (!item.tabId) return;
+  const s = useAppStore.getState();
+  s.setFocusTabReq(item.tabId);
+  s.setPage("terminal");
+}
+
+/** 记一条规矩进项目知识「已定 / 不做」（项目助手的「以后照这样办」，桌面卡片与飞书按钮共用） */
+export async function addProjectKnowledge(projectPath: string, text: string): Promise<void> {
+  const doc = await invoke<{ revision: string }>("project_memory_read", { path: projectPath });
+  await invoke("project_memory_update", {
+    path: projectPath,
+    expectedRevision: doc.revision,
+    id: null,
+    action: "add",
+    text: text.trim(),
+    reason: `项目助手对话里由你确认（${new Date().toLocaleDateString()}）`,
+  });
+}

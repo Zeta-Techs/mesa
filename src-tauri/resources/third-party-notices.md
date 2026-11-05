@@ -467,6 +467,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | bitflags | 1.3.2 | MIT/Apache-2.0 |
 | bitflags | 2.13.1 | MIT OR Apache-2.0 |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 |
+| block-buffer | 0.12.1 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
 | blocking | 1.6.2 | Apache-2.0 OR MIT |
 | brotli | 8.0.4 | BSD-3-Clause AND MIT |
@@ -505,6 +506,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | compression-codecs | 0.4.38 | MIT OR Apache-2.0 |
 | compression-core | 0.4.32 | MIT OR Apache-2.0 |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
+| const-oid | 0.10.2 | Apache-2.0 OR MIT |
 | constant_time_eq | 0.3.1 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | cookie | 0.18.1 | MIT OR Apache-2.0 |
 | core_maths | 0.1.1 | MIT |
@@ -523,6 +525,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | crossbeam-epoch | 0.9.20 | MIT OR Apache-2.0 |
 | crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
+| crypto-common | 0.2.2 | MIT OR Apache-2.0 |
 | cssparser | 0.36.0 | MPL-2.0 |
 | cssparser-macros | 0.6.1 | MPL-2.0 |
 | csv | 1.4.0 | Unlicense/MIT |
@@ -532,6 +535,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | darling | 0.23.0 | MIT |
 | darling_core | 0.23.0 | MIT |
 | darling_macro | 0.23.0 | MIT |
+| data-encoding | 2.11.1 | MIT |
 | data-url | 0.3.2 | MIT OR Apache-2.0 |
 | dbus | 0.9.12 | Apache-2.0/MIT |
 | deflate64 | 0.1.12 | MIT |
@@ -540,6 +544,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | derive_more | 2.1.1 | MIT |
 | derive_more-impl | 2.1.1 | MIT |
 | digest | 0.10.7 | MIT OR Apache-2.0 |
+| digest | 0.11.3 | MIT OR Apache-2.0 |
 | dirs | 6.0.0 | MIT OR Apache-2.0 |
 | dirs-sys | 0.5.0 | MIT OR Apache-2.0 |
 | dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT |
@@ -640,6 +645,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | http-range | 0.1.6 | MIT |
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
 | httpdate | 1.0.3 | MIT OR Apache-2.0 |
+| hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
 | hyper | 1.11.0 | MIT |
 | hyper-rustls | 0.27.9 | Apache-2.0 OR ISC OR MIT |
 | hyper-util | 0.1.20 | MIT |
@@ -867,6 +873,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | serialize-to-javascript-impl | 0.1.2 | MIT OR Apache-2.0 |
 | servo_arc | 0.4.3 | MIT OR Apache-2.0 |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 |
+| sha1 | 0.11.0 | MIT OR Apache-2.0 |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 |
 | shared_library | 0.1.9 | Apache-2.0/MIT |
 | shell-words | 1.1.1 | MIT/Apache-2.0 |
@@ -965,6 +972,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | tray-icon | 0.24.2 | MIT OR Apache-2.0 |
 | try-lock | 0.2.5 | MIT |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
+| tungstenite | 0.30.0 | MIT OR Apache-2.0 |
 | typeid | 1.0.3 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | uds_windows | 1.2.1 | MIT |

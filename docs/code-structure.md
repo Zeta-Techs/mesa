@@ -335,6 +335,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ProjectAssistantHost.tsx # 项目助手唯一宿主（App 挂一份）：读 store.assistantReq，补项目条目与步骤数，按钮交 assistant-actions、派活交 assistant-dispatch；
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
+  components/AssistantDesk.tsx # 项目助手顶上的「等你的事」：就地点选项 / 写一句送过去，等确认的带路回对话；20 秒刷新
+  components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、测试连接、绑定 6 位码、解绑
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
   components/SavePackModal.tsx # 弹层版另存为我的任务（挂 body，表单里不嵌表单）：派活单验收后「存成我的任务…」、内置科研任务「另存为我的版本…」共用，里面是 SavePackForm
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
@@ -591,6 +593,12 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
+  assistant-queue.ts         # 调度台「等你的事」纯逻辑（2026-11-06）：buildDeskItems（人工请求 / 对话里在问 / 等确认，looksLikeQuestion）、relayText（原话转达只加一行来源）、deskSummary（tests/assistant-queue.test.ts）
+  assistant-desk.ts          # 调度台取数与转达（调 invoke）：loadDesk、replyDesk（人工请求写回作答再交给那一步；对话问题原话送进去）、focusConfirm、addProjectKnowledge（记规矩，桌面卡片与飞书共用）
+  assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp（tests/im-route.test.ts）
+  im-route.ts                # 总助手路由：帮助 / 项目 / 等我的 / 切到 / 点名项目 / 回第 N 步 / 默认项目 / 说不清给项目按钮；只认点名不猜（tests/im-route.test.ts）
+  im-cards.ts                # 飞书卡片 JSON：answerCard（追问选项、派出去、记进项目知识按钮）、deskCard、projectPickCard、phoneText（tests/im-cards.test.ts）
+  im-bridge.ts               # 飞书通道前端桥（调 invoke）：听 feishu-message / feishu-card-action，路由 → askProjectAssistant → 卡片；按钮按分级执行；pushNewHelp、imPushText（派活回音）
   assistant-echo.ts          # 派活回音纯逻辑（2026-11-05）：echoText（做完 / 失败 / 停了各一句、带去处标记，已验收不说）、echoInboxItems（没看过的进收件箱「项目助手」asst:）、本机已看记录 ccode.assistantEchoSeen（tests/assistant-echo.test.ts）
   assistant-echo-watch.ts    # 派活回音巡视（调 invoke）：pollAssistantEchoes 每分钟 assistant_open_dispatches → dispatchStatus.phase → assistant_echo，刷新 store.assistantEchoes、到新回音 bumpAssistantEchoTick；seeAssistantEchoes 打开项目助手即算看过
   work-order-pack.ts         # 接活三期：workOrderToStep / builtinTaskStep（派活单、内置科研任务 → 一步步骤合同）、artifactPaths（交付物认路径）、suggestPackParams（时间范围 / 日期 / 时长 / 这次的文件预填成参数）、workOrderScheduleIntent（做成定时任务的描述）（tests/work-order-pack.test.ts）
@@ -1848,6 +1856,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # fan_out_spent（2026-11-04 每步花费上限：运行库里落在这个工作副本、开工以来的会话经 usage::sessions_cost_usd 合计）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
+  feishu.rs                  # 飞书机器人通道（2026-11-06，design-assistant-dispatch-desk.md）：只出不进的长连接（同步 tungstenite 跑在 feishu-ws 线程，手写 pbbp2 帧编解码、
+                             #   ping / 分片重组 / ack 照官方 Go SDK ws 客户端），REST 取 tenant token、发文字与卡片；配置 feishu.json（App ID / 开关 / 绑定的 open_id，0600），
+                             #   Secret 进 keys.json「feishu:<app_id>」不回显；配对 6 位码 10 分钟、错 5 次作废；只认绑定人的私聊，按 event_id / message_id 去重；
+                             #   事件 feishu-message / feishu-card-action / feishu-status；命令 feishu_config_get / _set / pair_start / unbind / send_text / send_card / test
   project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），
                              # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
                              # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；带 images（粘贴目录里的图、≤4）也走这条：

@@ -29,6 +29,7 @@ import {
 } from "../project-assistant";
 import WorkOrderCard from "./WorkOrderCard";
 import RememberCard from "./RememberCard";
+import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
 import {
@@ -458,6 +459,8 @@ export default function ProjectAssistantPanel({
       footer={composer}
       docked={docked}
     >
+      {/* 调度台：这个项目里等你的事，就地回、原路转达（2026-11-06） */}
+      {projectPath && <AssistantDesk projectPath={projectPath} />}
       {empty ? (
         <div className="px-1 pt-8">
           <MesaBuddy size={112} pose={mood.greetPose} prop={mood.prop} />

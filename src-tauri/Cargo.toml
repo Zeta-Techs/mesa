@@ -67,6 +67,9 @@ tauri-plugin-drag = "2.1.1"
 tiny_http = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 if-addrs = "0.15"
+# 飞书机器人（feishu.rs）：Mesa 主动连出去的长连接（WebSocket），不开端口、不要公网地址。
+# 同步版 tungstenite 跑在自己的线程里；证书走系统根证书（rustls-native-certs 已在锁文件里）
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
 # 科研做图（svg_render.rs）：图纸 SVG → PNG / PDF，随包 helper 自带，三平台一致、用户不用另装。
 # svg2pdf 0.13 与 resvg 0.45 共用一份 usvg；PDF 里文字嵌子集字体、不转曲（svg2pdf 的 text feature）
 resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }

@@ -103,6 +103,7 @@ mod project_mail;
 mod split_plan;
 mod project_assistant;
 mod fan_out;
+mod feishu;
 
 mod browser_bridge;
 mod capability_golden;
@@ -195,6 +196,7 @@ fn shutdown_for_exit(app: &tauri::AppHandle) {
     app.state::<pty::PtyManager>().shutdown();
     chat_channel::shutdown_all();
     phone_drop::shutdown();
+    feishu::shutdown();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while process::capture_count() > 0 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -273,6 +275,8 @@ pub fn run() {
             // 扩展「存到 Mesa」的回执监听：helper 是独立进程不发 Tauri 事件，
             // 这里把收货回执变成 inst-papers-changed 广播给清单/雷达
             browser_bridge::spawn_receipts_watch(app.handle().clone());
+            // 飞书机器人：开着就在后台连上长连接（读配置也在后台线程）
+            feishu::start_at_setup(app.handle().clone());
             // 托盘菜单要逐个连接比对磁盘配置（开发版实测 2.5 秒）。Windows 上放后台线程建：setup 占着主线程时
             // WebView2 出不了画面，启动窗口要么一直隐身、要么到点露出一块白（main_window.rs）。
             // 托盘与菜单项 tauri 会自己转到主线程建，托盘页「刷新」也是从后台线程调同一个 rebuild。
@@ -1185,6 +1189,13 @@ pub fn run() {
             phone_drop::phone_drop_remove_device,
             phone_drop::phone_drop_sync,
             phone_drop::phone_drop_set_standby,
+            feishu::feishu_config_get,
+            feishu::feishu_config_set,
+            feishu::feishu_pair_start,
+            feishu::feishu_unbind,
+            feishu::feishu_send_text,
+            feishu::feishu_send_card,
+            feishu::feishu_test,
             prepare_app_exit,
         ])
         .build(tauri::generate_context!())

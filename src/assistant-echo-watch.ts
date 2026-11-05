@@ -9,6 +9,8 @@ import { echoInboxItems, echoText, loadEchoSeen, markEchoSeen, type OpenDispatch
 import { samePath } from "./path-utils";
 import { IS_WINDOWS } from "./hotkeys";
 import type { ProjectDto } from "./types";
+import { imPushText } from "./im-bridge";
+import { phoneText } from "./im-cards";
 
 export const ECHO_POLL_MS = 60_000;
 
@@ -31,7 +33,12 @@ export async function pollAssistantEchoes(): Promise<void> {
         text: echoText(d.record, phase),
       }).catch(() => null);
       d.record = { ...d.record, echoed: phase, echoedAt: echo?.at ?? new Date().toISOString() };
-      if (echo) added = true;
+      if (echo) {
+        added = true;
+        // 手机上也说一声（飞书连上、绑定过才发）
+        const name = d.projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? d.projectRoot;
+        void imPushText(`${name}：${phoneText(echoText(d.record, phase))}`);
+      }
     }
     const state = useAppStore.getState();
     // 只有要进收件箱的才去取项目名（list_projects 不便宜，没回音时不取）

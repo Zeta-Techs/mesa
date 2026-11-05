@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { BookmarkPlus } from "lucide-react";
 import { compactFieldClass, ghostActionClass, primaryActionClass } from "./PageFrame";
 import type { ProjectMemoryDocumentDto } from "../types";
+import { addProjectKnowledge } from "../assistant-desk";
 
 /**
  * 项目助手起草的「记进项目知识」（2026-11-05 用户「让它真正像个助手」：记录和记忆分开）：
@@ -34,15 +35,7 @@ export default function RememberCard({ text, projectPath }: { text: string; proj
     setState("busy");
     setError(null);
     try {
-      const doc = await invoke<ProjectMemoryDocumentDto>("project_memory_read", { path: projectPath });
-      await invoke("project_memory_update", {
-        path: projectPath,
-        expectedRevision: doc.revision,
-        id: null,
-        action: "add",
-        text: line,
-        reason: `项目助手对话里由你确认（${new Date().toLocaleDateString()}）`,
-      });
+      await addProjectKnowledge(projectPath, line);
       setState("done");
       setEditing(false);
     } catch (reason) {

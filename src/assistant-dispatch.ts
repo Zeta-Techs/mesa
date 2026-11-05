@@ -76,19 +76,34 @@ export function liveRunIn(worktreePath: string): string | null {
 async function dispatchToStep(order: WorkOrder, projectPath: string, opts: OrderTextOptions): Promise<DispatchResult> {
   const n = order.step ?? 0;
   const { step, ws } = await stepWorkspace(projectPath, n);
-  const message = workOrderMessage(order, opts);
-  const { profiles, setPendingTerminal, setPage } = useAppStore.getState();
-  // 那一步的 AI 开着（不是回落的 shell）：留话，它空闲、输入框没草稿时送进对话
+  const sent = await sendToWorkspace(projectPath, ws, step.name, workOrderMessage(order, opts));
+  return sent.mode === "mail"
+    ? { note: `已留话给第 ${n} 步的 AI，它空闲时送到`, mode: "mail", mailId: sent.mailId, worktreePath: ws.worktreePath }
+    : { note: `已让第 ${n} 步的 AI 接着做，做完照常去评审`, mode: "resume", worktreePath: ws.worktreePath };
+}
+
+/**
+ * 把一段话送进某个工作副本里的那段对话（派活单交给第 N 步、调度台转达你的回复共用，2026-11-06）：
+ * AI 开着（不是回落的 shell）→ 留话，它空闲、输入框没草稿时送进对话；没开着 → 接回那一步上次的对话、带上这段话自动开跑（步骤绑定的连接优先）。
+ */
+export async function sendToWorkspace(
+  projectPath: string,
+  ws: WorkspaceDto,
+  stepName: string | null,
+  message: string,
+): Promise<{ mode: "mail" | "resume"; mailId?: string }> {
   const liveRun = liveRunIn(ws.worktreePath);
   if (liveRun) {
     const mailId = await invoke<string>("mail_send", { toRun: liveRun, text: message });
-    return { note: `已留话给第 ${n} 步的 AI，它空闲时送到`, mode: "mail", mailId, worktreePath: ws.worktreePath };
+    return { mode: "mail", mailId };
   }
-  // 没开着：接回那一步上次的对话，带上派活单自动开跑；步骤绑定的连接优先（读不到按没绑）
-  const binding = await invoke<{ profile: string; model?: string | null } | null>("get_project_agent_binding", {
-    projectRoot: projectPath,
-    slot: stepSlotKey(step.name),
-  }).catch(() => null);
+  const { profiles, setPendingTerminal, setPage } = useAppStore.getState();
+  const binding = stepName
+    ? await invoke<{ profile: string; model?: string | null } | null>("get_project_agent_binding", {
+        projectRoot: projectPath,
+        slot: stepSlotKey(stepName),
+      }).catch(() => null)
+    : null;
   setPendingTerminal(
     await buildWorkspaceTerminalRequest(ws, message, {
       autoStart: true,
@@ -97,7 +112,7 @@ async function dispatchToStep(order: WorkOrder, projectPath: string, opts: Order
     }),
   );
   setPage("terminal");
-  return { note: `已让第 ${n} 步的 AI 接着做，做完照常去评审`, mode: "resume", worktreePath: ws.worktreePath };
+  return { mode: "resume" };
 }
 
 async function dispatchAsGoal(

@@ -107,6 +107,8 @@ Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用�
   退出只经 `window_close::request_quit`（Mac 禁用预置 `quit()`）。细则 terminal.md「关窗与退出」
 - **从手机添加（2026-10-20）**：手机→桌面**单向**、**Mesa 开着才收**、只走局域网；配对永远要人点开始；收到的先进暂存区，**人点了才进项目**
   且只走已有入口。改这块前读 `docs/design-phone-drop.md` 与 safety.md 同名条
+- **手机上用项目助手（2026-11-06）**：经用户自建的飞书机器人长连接（只出不进、不自建服务器），只听绑定的一个人；手机只做动作分级 auto / tap 两档
+  （`assistant-ops.ts` 唯一真源），确认命令、评审采纳、写回、删除只在桌面；调度台转达是原话、不经 AI 改写。设计稿 `docs/design-assistant-dispatch-desk.md`，细则 safety.md「飞书通道」
 
 ## 构建与运行
 

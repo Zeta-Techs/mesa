@@ -16,6 +16,7 @@ import {
 } from "../assistant-dock";
 import { readProjectSurfaceTab } from "../project-surface";
 import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
+import { pushNewHelp, startImBridge } from "../im-bridge";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
 function savedWidth(): number {
@@ -44,10 +45,25 @@ export default function ProjectAssistantHost() {
   const path = req?.path ?? null;
 
   // 派活回音（2026-11-05）：应用开着就每分钟看一次派出去的活，做完 / 失败 / 停了在问答里补一条、进收件箱
+  // 飞书通道（2026-11-06）：收手机消息与卡片按钮；新出现的人工请求推到手机。没配飞书时这些都是空转
   useEffect(() => {
     void pollAssistantEchoes();
-    const timer = window.setInterval(() => void pollAssistantEchoes(), ECHO_POLL_MS);
-    return () => window.clearInterval(timer);
+    void pushNewHelp();
+    const timer = window.setInterval(() => {
+      void pollAssistantEchoes();
+      void pushNewHelp();
+    }, ECHO_POLL_MS);
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    void startImBridge().then((off) => {
+      if (cancelled) off();
+      else stop = off;
+    });
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      stop?.();
+    };
   }, []);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
   useEffect(() => {

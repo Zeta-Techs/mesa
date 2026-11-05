@@ -21,6 +21,7 @@ import appIconDark from "../assets/app-icon/dark.png";
 import appIconLight from "../assets/app-icon/light.png";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
+import FeishuSettingsCard from "../components/FeishuSettingsCard";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
@@ -514,7 +515,7 @@ const SETTING_NAV: {
   { id: "terminal", label: "终端", group: "basic", icon: SquareTerminal, description: "内嵌终端的显示、外部终端与自定义运行时" },
   { id: "startup", label: "通用", group: "basic", icon: SlidersHorizontal, description: "启动页面、导航形态、关窗与系统通知" },
   { id: "hotkeys", label: "快捷键", group: "basic", icon: Keyboard, description: "点绑定钮后按下新组合即保存，Esc 取消" },
-  { id: "integration", label: "AI 与 Agent", group: "management", icon: Sparkles, description: "内置 AI 功能用哪份配置，以及 Mesa 对各家 Agent 的约束" },
+  { id: "integration", label: "AI 与 Agent", group: "management", icon: Sparkles, description: "内置 AI 功能用哪份配置、Mesa 对各家 Agent 的约束，以及手机上的项目助手（飞书）" },
   { id: "profile", label: "研究档案", group: "management", icon: BookUser, description: "跨项目积累的研究背景与读过的文献，开对话时 Agent 会带上" },
   { id: "network", label: "网络", group: "management", icon: Globe, description: "出网代理、下载镜像与学校图书馆" },
   { id: "stats", label: "用量", group: "management", icon: ChartColumn, description: "用量页折算费用用的汇率与价目" },
@@ -3879,6 +3880,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </Card>
           );
         })()}
+        <FeishuSettingsCard />
       </Section>
 
       <Section id="profile" active={activeSection}>
