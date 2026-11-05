@@ -531,12 +531,14 @@ export default function ProjectAgentsView({
   );
   const inherited = useMemo(() => {
     const launch = projectAgentLaunch(profiles, defaultAgent, defaultProfiles, defaultModels);
-    if (!launch) return { line: "跟随项目默认", detail: "" };
+    // 没设项目默认时如实说「开始时再选」（2026-11-05 用户：满屏「跟随项目默认」看不出到底用谁）；
+    // 设了就写出它解析到的那家，「跟随项目默认」只在第二行说一次，卡片右上角不再另挂标签
+    if (!launch) return { line: "还没设项目默认", detail: "开始或开对话时再选" };
     const agentLabel = AGENTS.find((agent) => agent.id === launch.agentId)?.label ?? launch.agentId;
     const profile = profiles.find((item) => item.id === launch.profileId);
     return {
       line: `${agentLabel} · ${profile?.name ?? "连接"}`,
-      detail: launch.model || "CLI 默认",
+      detail: `${launch.model || "CLI 默认"} · 跟随项目默认`,
     };
   }, [defaultAgent, defaultModels, defaultProfiles, profiles]);
 
@@ -556,7 +558,7 @@ export default function ProjectAgentsView({
         option: "自动",
       };
     }
-    return { tag: "跟随默认", line: inherited.line, detail: `${inherited.detail} · 跟随项目默认`, option: "项目默认" };
+    return { tag: "", line: inherited.line, detail: inherited.detail, option: "项目默认" };
   }, [defaultAgent, defaultModels, defaultProfiles, profiles, scheduleCaps, inherited]);
 
   /** 步骤槽可选清单与精读槽同款（跨 Agent 拍平 + 停用尊重 + 绑定项保留） */
@@ -583,12 +585,14 @@ export default function ProjectAgentsView({
   }, [goals, profiles, hiddenProfiles, stepRows, project.taskBindings]);
 
   return (
-    <section aria-label="项目 Agents">
+    <section aria-label="本项目用哪家 Agent">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-medium text-l1">项目 Agents</h2>
+          <h2 className="text-sm font-medium text-l1">本项目用哪家 Agent</h2>
           <p className="mt-1 text-xs text-l3">
-            {projectAgentsHint(project.workMode)}
+            {defaultAgent
+              ? projectAgentsHint(project.workMode)
+              : "还没设默认：点「开始」或开对话时再选。在下面任一家点 ☆ 设为默认，这个项目的对话和步骤都用它。"}
           </p>
         </div>
         <button
@@ -613,7 +617,8 @@ export default function ProjectAgentsView({
         </p>
       ) : (
         <ul aria-label="项目 Agent 名册" className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
-          {roster.rows.map((row) => (
+          {/* 设了默认的那家排第一（2026-11-05）：一眼看到这个项目用谁；其余保持原顺序 */}
+          {[...roster.rows].sort((a, b) => Number(b.isProjectDefault) - Number(a.isProjectDefault)).map((row) => (
             <li
               key={row.agentId}
               className={`min-w-0 rounded-lg p-3 transition-colors ${
@@ -703,7 +708,7 @@ export default function ProjectAgentsView({
           <SlotCard
             Icon={MessageSquare}
             label="项目对话"
-            tag={chatBinding ? "已指定" : "跟随默认"}
+            tag={chatBinding ? "已指定" : ""}
             marked={Boolean(chatBinding)}
             binding={chatBinding}
             unboundLine={inherited.line}
@@ -717,7 +722,7 @@ export default function ProjectAgentsView({
           <SlotCard
             Icon={Lightbulb}
             label={workMode === "research" ? "问 AI / 聊想法" : "问 AI"}
-            tag={discussBinding ? "已指定" : "跟随默认"}
+            tag={discussBinding ? "已指定" : ""}
             marked={Boolean(discussBinding)}
             binding={discussBinding}
             unboundLine={inherited.line}
@@ -731,7 +736,7 @@ export default function ProjectAgentsView({
           <SlotCard
             Icon={MesaBuddyIcon as unknown as LucideIcon}
             label="项目助手"
-            tag={assistantBinding ? "已指定" : "跟随默认"}
+            tag={assistantBinding ? "已指定" : ""}
             marked={Boolean(assistantBinding)}
             binding={assistantBinding}
             unboundLine={inherited.line}
@@ -747,7 +752,7 @@ export default function ProjectAgentsView({
             <SlotCard
               Icon={BookOpen}
               label="沉浸阅读对话"
-              tag={readerBinding ? "已指定" : "跟随默认"}
+              tag={readerBinding ? "已指定" : ""}
               marked={Boolean(readerBinding)}
               binding={readerBinding}
               unboundLine={inherited.line}
@@ -960,7 +965,7 @@ export default function ProjectAgentsView({
                     key={row.slot}
                     Icon={row.stale ? TriangleAlert : stepIconFor(row.stepName, row.skills)}
                     label={row.stepName}
-                    tag={row.stale ? "已失效" : binding ? "已指定" : "跟随默认"}
+                    tag={row.stale ? "已失效" : binding ? "已指定" : ""}
                     marked={Boolean(binding) && !row.stale}
                     stale={row.stale}
                     binding={binding}
@@ -1029,7 +1034,11 @@ export default function ProjectAgentsView({
 
 /** 步骤符号按名称和技能推导，同一步永远同一个。 */
 function stepIconFor(name: string, skills: string[]): LucideIcon {
-  const all = [name, ...skills].join(" ").toLowerCase();
+  // 先只看步骤名，认不出再带上技能名：技能名里的 endnote-bridge 含「note」，会把「润色与定稿」认成精读（2026-11-05）
+  return stepIconMatch(name.toLowerCase()) ?? stepIconMatch([name, ...skills].join(" ").toLowerCase()) ?? Circle;
+}
+
+function stepIconMatch(all: string): LucideIcon | null {
   if (/检索|筛选|search|screen/.test(all)) return Search;
   if (/精读|阅读|笔记|note|read|paper/.test(all)) return BookOpen;
   if (/大纲|outline|框架/.test(all)) return ClipboardList;
@@ -1038,7 +1047,7 @@ function stepIconFor(name: string, skills: string[]): LucideIcon {
   if (/数据|清洗|clean|dataset/.test(all)) return Database;
   if (/图|plot|fig|chart|visual/.test(all)) return TrendingUp;
   if (/复现|reproduc/.test(all)) return FlaskConical;
-  return Circle;
+  return null;
 }
 
 function stepGroupSummary(total: number, bound: number, stale: number): string {
@@ -1047,7 +1056,6 @@ function stepGroupSummary(total: number, bound: number, stale: number): string {
   const parts = [`${total} 步`];
   if (bound > 0) parts.push(`${bound} 已指定`);
   if (stale > 0) parts.push(`${stale} 条失效`);
-  if (bound === 0 && stale === 0) parts.push("都跟项目默认");
   return parts.join(" · ");
 }
 
@@ -1118,11 +1126,13 @@ function SlotCard({
           className={`shrink-0 ${stale ? "text-warn-text" : "text-l3"}`}
         />
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-l1">{label}</h3>
-        <span
-          className={`shrink-0 text-xs ${marked ? "font-medium text-l1" : "text-l4"}`}
-        >
-          {tag}
-        </span>
+        {tag && (
+          <span
+            className={`shrink-0 text-xs ${marked ? "font-medium text-l1" : "text-l4"}`}
+          >
+            {tag}
+          </span>
+        )}
       </div>
       <div className="mt-1 min-w-0">
         {choices.length === 0 ? (

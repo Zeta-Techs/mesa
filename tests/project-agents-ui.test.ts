@@ -350,3 +350,23 @@ test("目标绑定连接已删：卡片如实标「已失效」，不再显示�
     await view.close();
   }
 });
+
+test("没设默认时如实说开始时再选；跟随项目默认只说一次；设了默认的那家排第一", async () => {
+  const none = await renderView({ project: { workMode: "research", defaultAgent: null, defaultProfiles: {} } });
+  try {
+    assert.match(none.host.textContent!, /还没设默认：点「开始」或开对话时再选/);
+    assert.match(none.host.textContent!, /还没设项目默认/);
+    assert.ok(!none.host.textContent!.includes("跟随默认"), "卡片右上角不再挂「跟随默认」");
+  } finally {
+    await none.close();
+  }
+  const gem = await renderView({ project: { defaultAgent: "gemini" } });
+  try {
+    const list = gem.host.querySelector('[aria-label="项目 Agent 名册"]')!;
+    assert.match(list.children[0].textContent!, /Gemini CLI/);
+    assert.ok(list.children[0].classList.contains("bg-seg-sel"));
+    assert.match(gem.host.textContent!, /默认选择仅对本项目生效。/);
+  } finally {
+    await gem.close();
+  }
+});
