@@ -414,6 +414,12 @@
   **开一轮前两道拦**：目标步骤的 AI 正在干活或等确认（`stepAttention`；只是开着停在提示符的不拦，新一轮按复用键就地换掉）、或有没保存进项目的产出（health.ahead > 0）都不叠一轮，请人先处理。
   补料单原文写进开场指令，不靠 AI 去读项目根文件。精读跟进没有新篇但上游改了别的时，按改动文件跟进，免得「待跟进」永远消不掉。
   「这一步做过 N 轮」两轮以上或有未保存的一轮才出。实现：`step_loop.rs`、`src/step-loop.ts`、`components/StepLoop.tsx`、`TaskCardsSection.tsx`（编排）。
+- **三期落地（2026-11-05）**：`included.json` 的 `kind`（review / research / other）与 `core` 只在 json，**不进任何 RIS / 引文库**（`lit_records.py check` 拦写错的值；Mesa 文献清单改类型只动这两个键，`patchIncludedKind`）。
+  **综述卡沿用八段小节标题**（阅读区、抽查、「已读」判定都按这八个认），按综述读法填，主要结果后加「覆盖范围与时效」「结构骨架」两节；截至年份同时写进 index 的 `cutoffYear`。
+  时效对照只由 `lit_records.py angles-facts` 数，AI 只引用。综述精读第一轮的分路用 `decision=included&kind=review|decision=included&core=true`（`fan_out.rs` 筛选：`&` 并、`|` 或，单条 `k=v` 照旧）；
+  一篇都没标 kind 的旧清单挑不出条目就不分路，简报回退全量读。精读跟进只读**索引里还没有的** id（索引记了 pending 的是有意留待按章节读的，不顺带读）。
+  大纲六问逐条经 help-wanted；「定框架记录」「覆盖检查」两张表的列格式是界面计数与补料单预填的契约（`notes-progress.ts sectionTableRows`），改表头要两边一起改。
+  已有项目的模板更新只提示（流程进度条上方一行，按项目研究工具换算后比，`pipeline-upgrade.ts templateUpdateNotice`），换不换仍在编辑器逐步勾选。
 
 ## 科研做图（2026-11-05 拍板，design-research-figures.md）
 

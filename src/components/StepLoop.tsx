@@ -26,6 +26,7 @@ export interface ReworkFields {
 export function ReworkDialog({
   fromStep,
   targets,
+  prefill = {},
   busy,
   error,
   onCancel,
@@ -34,14 +35,25 @@ export function ReworkDialog({
   fromStep: string;
   /** 可退回的上游步骤名，近的在前 */
   targets: string[];
+  /** 按退回目标预填的主题与原因（大纲「覆盖检查」里的薄节，三期 §9.3）；人改过就不再覆盖 */
+  prefill?: Record<string, { topics: string; reason: string }>;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
   onSend: (fields: ReworkFields) => void;
 }) {
-  const [target, setTarget] = useState(targets[0] ?? "");
-  const [topics, setTopics] = useState("");
-  const [reason, setReason] = useState("");
+  const first = targets.find((t) => prefill[t]) ?? targets[0] ?? "";
+  const [target, setTarget] = useState(first);
+  const [topics, setTopics] = useState(prefill[first]?.topics ?? "");
+  const [reason, setReason] = useState(prefill[first]?.reason ?? "");
+  const [edited, setEdited] = useState(false);
+  const pickTarget = (next: string) => {
+    setTarget(next);
+    if (!edited) {
+      setTopics(prefill[next]?.topics ?? "");
+      setReason(prefill[next]?.reason ?? "");
+    }
+  };
   const [clues, setClues] = useState("");
   const [scale, setScale] = useState("");
   const parsed = parseTopics(topics);
@@ -86,10 +98,11 @@ export function ReworkDialog({
         {targets.length > 1 && (
           <label className="block space-y-1">
             <span>退回到</span>
-            <select className={fieldClass} value={target} onChange={(e) => setTarget(e.target.value)}>
+            <select className={fieldClass} value={target} onChange={(e) => pickTarget(e.target.value)}>
               {targets.map((t) => (
                 <option key={t} value={t}>
                   {t}
+                  {prefill[t] ? "（大纲覆盖检查里有要补的）" : ""}
                 </option>
               ))}
             </select>
@@ -100,7 +113,10 @@ export function ReworkDialog({
           <textarea
             className={`${fieldClass} min-h-20 resize-y`}
             value={topics}
-            onChange={(e) => setTopics(e.target.value)}
+            onChange={(e) => {
+              setEdited(true);
+              setTopics(e.target.value);
+            }}
             placeholder={"例：§3.2 催化剂失活机理：近三年原位表征工作"}
             autoFocus
           />
@@ -110,7 +126,10 @@ export function ReworkDialog({
           <input
             className={fieldClass}
             value={reason}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(e) => {
+              setEdited(true);
+              setReason(e.target.value);
+            }}
             placeholder="例：这一节能写进正文的只有 2 篇，而且都早于 2021 年"
           />
         </label>

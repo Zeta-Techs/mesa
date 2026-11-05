@@ -84,7 +84,8 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 实测 review 30001、论文 40154、数据 15915、学位 38877、投稿 10290、LaTeX 16011。
   // 2026-11-04：数据登记一步加「同步写 data/datasets.json（id、name、path）」——清洗按数据集分几路靠它，data-processing 实测 16040，上限 16100。
   // 2026-11-05 综述回路一期：大纲每节可写一行表计划、初稿按表计划出对照表（两句，已压到最短）。实测 review 30161。
-  const before: Record<string, number> = { review: 30200, "research-paper": 40300, "data-processing": 16100, thesis: 39000, "submission-rebuttal": 10400, "latex-paper": 16100 };
+  // 同日综述回路三期：检索标 kind / core、精读第一轮只读综述 + 核心篇并写 angles.md、大纲一问一答六问 + 覆盖检查（取代「先报候选再融合」）。实测 review 31377。
+  const before: Record<string, number> = { review: 31500, "research-paper": 40300, "data-processing": 16100, thesis: 39000, "submission-rebuttal": 10400, "latex-paper": 16100 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

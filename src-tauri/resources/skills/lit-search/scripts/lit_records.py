@@ -12,6 +12,7 @@ papers/included.json 是唯一的题录来源。补字段（enrich）把 Crossre
   python3 lit_records.py write  --json papers/included.json --root <项目根>
   python3 lit_records.py check  --json papers/included.json --root <项目根>
   python3 lit_records.py bib    --json papers/included.json --bib references.bib
+  python3 lit_records.py angles-facts --json papers/included.json --index notes/index.json
 
 接口缓存在系统临时目录 mesa-lit-cache/（--cache 可改），重跑不重复联网；--refresh 忽略缓存，--offline 只读缓存。
 """
@@ -47,6 +48,8 @@ FIELDS = (
 )
 HEAD = ("id", "title", "decision", "reason")
 DECISIONS = ("included", "pending", "excluded")
+# 文献类型（检索时判，人在 Mesa 里可改）：综述 / 研究论文 / 其他。只在 json 里，不进任何 RIS 与引文库
+KINDS = ("review", "research", "other")
 # 预印本服务器：托管处是它们的版本一律算预印本（OpenAlex 会把 Research Square 标成 acceptedVersion）
 PREPRINT_HOSTS = (
     "arxiv.org", "researchsquare.com", "biorxiv.org", "medrxiv.org", "chemrxiv.org", "ssrn.com",
@@ -928,6 +931,11 @@ def cmd_check(args):
             errors.append(f"{tag} decision 应是 included / pending / excluded，现在是「{rec.get('decision')}」")
         if d == "excluded":
             continue
+        kind = as_text(rec.get("kind"))
+        if kind and kind not in KINDS:
+            errors.append(f"{tag} kind 应是 review / research / other，现在是「{kind}」")
+        if "core" in rec and not isinstance(rec.get("core"), bool):
+            errors.append(f"{tag} core 只能写 true / false")
         for key in FIELDS:
             value = rec.get(key)
             if value is None or (isinstance(value, str) and not value.strip()) or value == []:
@@ -1191,6 +1199,46 @@ def cmd_bib(args):
     return 0
 
 
+def year_of(value):
+    m = re.match(r"\s*(\d{4})", as_text(value))
+    return int(m.group(1)) if m else None
+
+
+def cmd_angles_facts(args):
+    """可写点清单的时效对照：每篇纳入的综述发表于哪年、文献截至哪年、之后又纳入了几篇研究论文。
+    「截至」取 notes/index.json 那篇的 cutoffYear（综述卡「覆盖范围与时效」读出来写的）；没写时按发表年算并注明。
+    数字由脚本数，AI 只在 notes/angles.md 里引用、解释，不自己数（2026-11-05 综述回路三期）。"""
+    records = [r for r in read_records(Path(args.json)) if decision_of(r) == "included"]
+    index = {}
+    index_path = Path(args.index)
+    if index_path.is_file():
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        rows = data if isinstance(data, list) else next((data[k] for k in ("records", "items", "papers", "entries", "notes") if isinstance(data, dict) and isinstance(data.get(k), list)), [])
+        index = {as_text(r.get("id")): r for r in rows if isinstance(r, dict)}
+    key_of = lambda rec: as_text(index.get(as_text(rec.get("id")), {}).get("bibKey")) or as_text(rec.get("id"))
+    reviews = [r for r in records if as_text(r.get("kind")) == "review"]
+    research = [r for r in records if as_text(r.get("kind")) == "research"]
+    untyped = [r for r in records if not as_text(r.get("kind"))]
+    lines = [f"纳入综述 {len(reviews)} 篇、研究论文 {len(research)} 篇" + (f"、未标类型 {len(untyped)} 篇（不算进下表）" if untyped else "") + "。", ""]
+    if not reviews:
+        lines.append("纳入清单里没有标为综述（kind=review）的篇，没有可对照的时效。")
+        print("\n".join(lines))
+        return 0
+    lines += ["| 综述 | 发表 | 文献截至 | 之后纳入的研究论文 |", "|---|---|---|---|"]
+    for rev in sorted(reviews, key=lambda r: year_of(r.get("year")) or 0):
+        pub = year_of(rev.get("year"))
+        cutoff = year_of(index.get(as_text(rev.get("id")), {}).get("cutoffYear"))
+        basis = cutoff or pub
+        after = [r for r in research if basis and (year_of(r.get("year")) or 0) > basis]
+        keys = "; ".join(f"@{key_of(r)}" for r in after[:12]) + ("; …" if len(after) > 12 else "")
+        cut_text = str(cutoff) if cutoff else f"未写（按发表年 {pub or '待补'} 算）"
+        later = f"{len(after)} 篇" + (f"：[{keys}]" if after else "")
+        title = ris_value(rev.get("title"))[:40]
+        lines.append(f"| [@{key_of(rev)}] {title} | {pub or '待补'} | {cut_text} | {later} |")
+    print("\n".join(lines))
+    return 0
+
+
 def main():
     utf8_stdio()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1220,13 +1268,16 @@ def main():
     sp.add_argument("--bib", default="references.bib")
     sp.add_argument("--ids", default="", help="只写这些 id（逗号分隔）")
     sp.add_argument("--with-pending", action="store_true")
+    sp = sub.add_parser("angles-facts", help="精读步：纳入综述的时效对照表（截至年份、之后纳入的研究论文），贴进 notes/angles.md")
+    common(sp, root=False)
+    sp.add_argument("--index", default="notes/index.json")
     a = p.parse_args()
     if a.cache:
         Net.cache = Path(a.cache)
     Net.refresh = a.refresh
     Net.offline = a.offline
     try:
-        return {"enrich": cmd_enrich, "fetch": cmd_fetch, "write": cmd_write, "check": cmd_check, "bib": cmd_bib}[a.cmd](a)
+        return {"enrich": cmd_enrich, "fetch": cmd_fetch, "write": cmd_write, "check": cmd_check, "bib": cmd_bib, "angles-facts": cmd_angles_facts}[a.cmd](a)
     except (OSError, ValueError, json.JSONDecodeError) as err:
         print(f"✗ {err}", file=sys.stderr)
         return 1

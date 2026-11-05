@@ -232,6 +232,18 @@ const LIT_NOTES_FANOUT: StepFanOutDto = {
     "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。",
 };
 
+/** 综述精读第一轮的分路：只分综述与核心研究论文（综述回路三期，design-review-loop.md §7.3 方案 A）。
+ *  一篇都没标 kind 的旧清单挑不出条目，不分路，按简报里的回退全量读 */
+const REVIEW_NOTES_FANOUT: StepFanOutDto = {
+  ...LIT_NOTES_FANOUT,
+  filter: "decision=included&kind=review|decision=included&core=true",
+  own:
+    LIT_NOTES_FANOUT.own + "。这一路分到的综述按 lit-notes 技能「综述卡」写，研究论文按八段写",
+  merge:
+    LIT_NOTES_FANOUT.merge +
+    "没分到的研究论文在 index 记 pending、不写笔记（等大纲定了按章节读）。再跑 lit_records.py angles-facts，按本步简报写 notes/angles.md。",
+};
+
 /** 数据清洗按数据集分几路（2026-11-04）：数据登记一步写的 data/datasets.json，每路 1 个起、最多 4 路。
  *  各路只画像、起草本批规则与脚本（拿不准的标 [待确认]），不问人、不写 cleaning/ 顶层文件；收尾一路合规则、问人、写总入口与对账 */
 const DATA_CLEAN_FANOUT: StepFanOutDto = {
@@ -421,17 +433,17 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "**先粗检一轮报数再定标准**：用主题词在 OpenAlex 粗查命中量，把你建议的标准和**建议纳入规模**写进 " +
       ".ccode/help-wanted.md 问用户：标准一条、纳入规模一条，各给 2–4 个选项并标出推荐，依据写「命中约 N 篇」（附兜底：未回复只做试检，不冻结标准或正式筛选），写完仅推进无依赖、可逆的准备。" +
       "标准的四项都要给建议值：年份（领域全景一般以近 10 年为主，奠基工作不受年份限制）、语言（默认英文）、来源级别（默认只收正式发表的期刊与会议论文，不收预印本）、相关性口径。" +
-      "建议纳入规模按「目标篇幅」与「综述角度」给一个篇数并说理由——下一步会把有全文的每篇都精读，篇数直接决定精读的时间和花费；人定了规模后按相关性取舍到这个量级。" +
+      "建议纳入规模按「目标篇幅」与「综述角度」给一个篇数并说理由——精读先读综述和核心研究论文，其余等大纲定了按章节读，篇数决定后面的时间和花费；人定了规模后按相关性取舍到这个量级。" +
       "正式标准按问题制定，不为凑篇数或结果而改；\n" +
       "2. 先解析人工导入的题录（RIS/BibTeX/CSV）：项目根 papers/imports/ 与本工作区 papers/imports/ 都要看；本任务书若有「项目资源」段（类型为「引文」的条目）或「上一步产物（提货单）」段（来自「人工交付」的条目），按其中给的绝对路径直读、勿复制。都没有就跳过。解析后按 {skill:lit-search} 技能口径去重合并进候选池，每条保留来源标注；" + LIT_INTAKE_CLAUSE + "\n" +
       "3. 检索候选文献。" + LIT_SEARCH_NO_WASTE +
       "检索式、检索日期与命中数记入 papers/screening.md；WoS/SerpAPI 等付费 key 一律用 $VAR 环境变量引用，禁止写进任何文件；末尾写覆盖缺口声明（哪些库没检，含按上面停手跳过的库）；\n" +
       "4. 按标准逐条筛选，每篇给出纳入/排除及理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入，不允许自行裁掉；\n" +
-      "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）。开工时清单里已有的存量条目（上一轮留下的、人手动加进清单的，或雷达「加入积累」的）是进料口的一部分：保留在清单里与检索候选池统一去重（同篇不重复列），不删除不清空、不当作异常；\n" +
+      "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）。每条再写 kind：review（综述）/ research（研究论文）/ other；研究论文里与核心问题最直接、精读第一轮就要读的标 core: true（约占研究论文五分之一，验收摘要写出综述几篇、核心几篇，人可在文献清单里改）。核心问题领域近十年的综述有意去找、尽量纳入，它们是下一步找可写点的原料。开工时清单里已有的存量条目（上一轮留下的、人手动加进清单的，或雷达「加入积累」的）是进料口的一部分：保留在清单里与检索候选池统一去重（同篇不重复列），不删除不清空、不当作异常；\n" +
       "6. " + LIT_PENDING_BEFORE_FETCH +
       "开放获取直接下载到**项目根 papers/**（见上方「项目根」，文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，写入 papers/to-fetch.md 等用户提供全文。" + LIT_RECORDS_SCRIPT + " references.bib 不在这一步写（精读步用同一个脚本从 included.json 写），已有的不得覆盖。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。" +
       "收尾时在验收摘要第⑤项写一句：「已纳入 N 篇，其中 M 篇没有拿到全文，需要你下载放进项目根 papers/；没全文的下一步只能按摘要记，初稿里相关论述会标待核实」（M 为 0 就写已全部拿到）。\n" +
-      "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），screening.md 有「核心问题与边界」，每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
+      "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），screening.md 有「核心问题与边界」，纳入与待确认的每条都标了 kind，每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
       QUALITY_STATUS,
     optionalInputs: ["notes/", "references.bib"],
     expectedArtifacts: LIT_SEARCH_ARTIFACTS.filter((path) => path !== "papers/zotero-sync.md"),
@@ -455,7 +467,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     name: "文献精读与笔记",
     role: "both",
     workspaceName: "lit-notes",
-    fanOut: LIT_NOTES_FANOUT,
+    fanOut: REVIEW_NOTES_FANOUT,
     brief:
       "输入：上一步产物 papers/included.md 与 papers/to-fetch.md（已随 main 合并在本工作区内）。全程按 {skill:lit-notes} 技能执行。\n" +
       LIT_NOTES_WRITE +
@@ -463,23 +475,27 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "若后续提交把 included.json 从「纳入+待确认」改成「纳入+排除」、并把部分行移出 included.md，那是人在 Mesa 里做的筛选，不是定稿被退回。help-wanted.md 里列出的待确认是提问当时的名单，json 里已经没有 pending 就不要再当成未决。\n" +
       "to-fetch.md 是还没拿到全文的名单，不手改：开工先跑一次 {skill:lit-notes} 技能目录里的 scripts/lit_records.py write --root <项目根>，它按 DOI、标题认出项目根 papers/ 里已有的 PDF（文件名随意），在 included.json 记 pdf 路径、给 to-fetch.md 对应行打 ✓、重算篇数。references.bib 没有就用脚本 bib 从 included.json 建，不要把缺库当成检索失败。\n" +
       "1. 项目根 papers/ 里的 PDF 一律不改名、不移动（见上方「项目根」，含未进本工作区的文件，按绝对路径读）：Mesa 的资源登记、沉浸阅读的标注和笔记都按路径认文件，改了名就对不上。哪篇对哪个文件以 included.json 的 pdf 字段为准（上面的 write 写的）；write 没认出、你按内容能确定归属的，把相对路径写进那篇的 pdf 字段再跑一次 write，拿不准的不写、在报告里列出。然后按 included.md 处理已确认纳入项（清单缺失或为空时在报告中说明并停止，不要自行换题或自行补清单）；\n" +
-      "2. 有全文 PDF 的全部按八段精读，不另提一份核心篇名单等人拍板。没有 PDF 的按摘要写短记并标「仅摘要·待全文」；摘要也拿不到的标「题录·待全文」，不编正文。\n" +
+      "2. 第一轮只读综述（included.json 里 kind=review）和核心研究论文（core: true）：有全文的精读（综述按技能「综述卡」写，研究论文按八段写），没 PDF 的按摘要写短记并标「仅摘要·待全文」，摘要也拿不到的标「题录·待全文」，不编正文。" +
+      "其余研究论文在 notes/index.json 记 reviewStatus=pending、不写笔记——等大纲定了按章节读（大纲会退回补料点名要读哪几篇），不算没做完。一篇都没标 kind 时按旧口径：有全文的全部精读，并在验收摘要写明。\n" +
       "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（按 included.json 的 pdf 字段，文件名不改）→ 开放获取补下到项目根 papers/（版本规则见上）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
-      "4. 上下文写不下可分批，提交后立刻继续，直到有 PDF 的都写成精读、没有 PDF 的都写成短记。index pending 只留给待确认或题录都不足以写的篇。有实际 PDF 时笔记开头记来源锚点行「> 来源 PDF：<项目内相对路径或已登记只读资源绝对路径>.pdf」，无 PDF 改记 DOI/URL，不造虚假路径。笔记、index、references.bib 写在本工作区；临时脚本和接口缓存放本工作区 artifacts/，不写项目根。\n" +
+      "4. 上下文写不下可分批，提交后立刻继续，直到本轮要读的都写完：有 PDF 的写成精读、没有 PDF 的写成短记。index pending 只留给待确认或题录都不足以写的篇。有实际 PDF 时笔记开头记来源锚点行「> 来源 PDF：<项目内相对路径或已登记只读资源绝对路径>.pdf」，无 PDF 改记 DOI/URL，不造虚假路径。笔记、index、references.bib 写在本工作区；临时脚本和接口缓存放本工作区 artifacts/，不写项目根。\n" +
       "5. 引文库按上面那句用脚本 bib 写；脚本报的「待补」保持待补，不得编造，不得用卷或页填空着的期。已有条目只补空字段，不改键、不覆盖人改过的作者和标题；\n" +
       "6. 收尾前复查：notes/ 中「仅摘要」笔记对应的全文若已出现在项目根 papers/（人工补投），重读全文并更新该笔记、去掉标记；仍未补的保持标注并在报告末尾计数说明。\n" +
       "7. " + NOTES_HANDOFF +
       "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。RIS 只随 write 重出，不手改。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
-      "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法；确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
+      "9. 可写点：综述卡写完后，把每篇综述文献截至的年份写进 notes/index.json 那篇的 cutoffYear，跑 {skill:lit-notes} 技能目录 scripts/lit_records.py angles-facts，输出原样贴进 notes/angles.md 的「## 时效对照（脚本算）」。" +
+      "再按技能写候选角度，一条一个：一句话、已有综述覆盖到哪、之后的新工作（引上表的键）、和已有综述的重合度（高 / 中 / 低，最像哪篇哪节）、撑起来还缺什么文献、风险。只给证据，不判断能不能写，重合度高的照列；不写「必须创新」一类的话。\n" +
+      "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认、无法按摘要写、或留待按章节读的研究论文 notePath 可空）；综述与核心研究论文写完，notes/angles.md 有时效对照与候选角度；已写笔记符合 {skill:lit-notes} 写法；确认过的核心篇未写完、或已确认要按摘要记的非核心还没写完，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
       QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf"],
-    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md", "notes/handoff.md"],
+    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md", "notes/handoff.md", "notes/angles.md"],
     acceptanceCriteria: [
       // handoff.md 是必交产物、glossary/excerpts 是人写的，都不算「写了笔记」
-      "machine:count:notes/*.md>=1::except=handoff.md,glossary.md,excerpts.md,inbox.md",
+      "machine:count:notes/*.md>=1::except=handoff.md,glossary.md,excerpts.md,inbox.md,angles.md",
       "machine:file:references.bib",
       "machine:contains:notes/handoff.md::写作约束",
+      "machine:contains:notes/angles.md::时效对照",
       "machine:contains:papers/included.md::—",
       LIT_NOTES_INDEX_RECORDS,
       "machine:same-ids:papers/included.json::notes/index.json",
@@ -499,25 +515,29 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     role: "you",
     workspaceName: "outline",
     brief:
-      "输入：notes/ 全部笔记、notes/handoff.md、papers/included.md 与 references.bib（已随 main 合并在本工作区内）。先读 handoff 的「写作约束」：仅摘要不得写成已确立，机制分歧并列，图按笔记锚点再核。「不由下一步做」不要接手。框架构造全程按 {skill:review-framework} 技能执行（空白清单 → 范式卡片 → 融合）：\n" +
-      "1. 提炼研究空白清单：通读 notes/ 各笔记的「局限」与「可引用点」，最新一批精读文献回到原文前言核对作者自述的 gap（是待检主张，须用最邻近工作与反例核验）；每条空白标注来源笔记/bib 键，多条指向同一空白时合并；仅凭单篇文献主观抱怨的标「孤证」；\n" +
-      "2. 拆解范式卡片：从 papers/included.md 选择足以比较候选框架的综述（篇数按问题，不凑数量）（问题相关性与方法透明度优先；期刊/被引仅为发现线索，不作证据权重；清单里没有综述类文献时如实说明并跳过本步，不虚构范式），每篇拆「结构逻辑 / 详略配比 / 论证顺序」三项；\n" +
-      "3. **先报候选再融合**：把拆出的范式卡片连同「我建议以哪篇为骨架（按核心问题、证据分歧与读者需求给理由）+ 建议的综述卖点（想让读者读完记住的一句话）」写进 .ccode/help-wanted.md 问用户一句（附兜底：未回复仅保留候选框架，不锁定论证），写完仅推进无依赖、可逆的准备。；\n" +
-      "4. 融合构造框架：以最能回答核心问题、解释证据分歧且适合读者的范式做骨架（用户已拍板时从用户选择），核心空白落到具体章节，其余说明未覆盖理由；范式冲突时选更符合核心问题与证据结构的，落选范式的局部优点吸收为节内参考；必要背景/方法/综合章说明其对回答问题的作用，不强迫每章挂 gap；空白无处安放时允许新增章节并在该节标注「空白驱动新增」；\n" +
+      "输入：notes/ 全部笔记、notes/angles.md、notes/handoff.md、papers/included.md 与 references.bib（已随 main 合并在本工作区内）。先读 handoff 的「写作约束」：仅摘要不得写成已确立，机制分歧并列，图按笔记锚点再核。「不由下一步做」不要接手。框架构造全程按 {skill:review-framework} 技能执行（空白清单 → 范式卡片 → 融合）：\n" +
+      "1. 起点是 notes/angles.md 与综述卡：空白清单从 angles.md 的候选角度起步，再通读各笔记「局限」「可引用点」补 gap（作者自述的 gap 是待检主张，须用最邻近工作与反例核验；每条标来源笔记 / bib 键，同一空白合并，单篇主观抱怨标「孤证」）；范式卡片直接取综述卡「结构骨架」，没有综述卡的才回原文拆「结构逻辑 / 详略配比 / 论证顺序」（清单里没有综述就如实说明、不虚构范式）；\n" +
+      "2. **一问一答定框架**：outline.md 顶部先建「## 定框架记录」表（| 问 | 问题 | 人的选择 | 日期 |）。按顺序一次只问一个，每个经 .ccode/help-wanted.md 写一条（属「范围」类：建议选项标推荐、各选项后果一行、依据引 angles.md 条目或笔记），人答了写进表再问下一个：" +
+      "① 核心问题还对吗（取 screening.md「核心问题与边界」）；② 选哪几个角度（angles.md 多选，可自填）；③ 读者是谁、读完带走哪一句（按②给 2–3 句候选）；④ 以哪篇综述的结构为骨架，或不照搬（综述卡「结构骨架」）；⑤ 章节草图（你起草，人逐节保留 / 合并 / 删 / 改名）；⑥ 覆盖检查后哪些节要补料（见第 3 条）。" +
+      "表里已有答案的不再问，人改了表里哪一行就按新的来；等答案时只做无依赖、可逆的准备，不替人选；\n" +
+      "3. **覆盖检查**：草图定下后写「## 覆盖检查」表（| 节 | 可写正文的键 | 仅线索 | 最新一篇年份 | 判断 | 建议 |），判断写「够」或「薄」；薄的在建议里写「补检：要补的方向」或「补读：[@键] [@键]」（已纳入、还没精读的）。第⑥问把薄节列成选项；人选不补的，判断改「薄·不补：理由」。" +
+      "人选要补的，告诉他在流程线点「退回上一步补料…」（Mesa 按这张表预填），本轮停在这里，等补料跟进回来再往下；\n" +
+      "4. 没有未处理的薄节后构造二级逻辑：以第④问选定的骨架为准，没选时以最能回答核心问题、解释证据分歧且适合读者的范式做骨架，核心空白落到具体章节，其余说明未覆盖理由；范式冲突时选更符合核心问题与证据结构的，落选范式的局部优点吸收为节内参考；必要背景/方法/综合章说明其对回答问题的作用，不强迫每章挂 gap；空白无处安放时允许新增章节并在该节标注「空白驱动新增」；\n" +
       "5. 产出 outline.md：章节结构（引言 / 背景 / 主题各节 / 讨论 / 结论），每节给必要要点、拟引用 bib 键及章节作用（适用时回应空白编号）；拟引用必须分「可写正文 / 仅线索」，初稿按这个等级写。有小节则每小节、否则每章写用图计划：一张拼图对应一个论点，写成「拼 图N（论点一句话）= (a) [@键] Fig.2c + (b) [@键] Fig.3a + …」，至少 2 块子图、至少来自两篇，块数按版面可读性定（9 块排 3×3，一页放不下按子论点拆两张），不把整张多联图并排；凑不成则仅引用一篇的图号；禁止写「初稿待绘制」。需要横向比较几篇的节另写一行表计划「表 N（比什么）= 列：…；行：[@键]…」，数值只取笔记里有出处的。源图只来自笔记可引用图；G 编号只出现在「框架推演」，不要让初稿把 G1 写进正文。篇幅数字只是读者预期，旁注「不是初稿必须凑到的词数」。末尾固定附「## 框架推演」段（空白清单 / 范式卡片 / 融合理由三块）；\n" +
       "6. 在 outline.md 附证据综合表：研究对象/设计/结果/局限/支持强度/分歧/原文位置；核心论断逐项做支持性核验，不数赞成论文投票。摘要-only 只可支持摘要实际报告的信息；核心全文未得则收窄结论或阻塞。不得把研究作者的 gap 宣传当已证实事实；记录最邻近反例与检索边界。\n" +
       "7. 只引用 references.bib 中存在的键，不为大纲新造引用。\n" +
-      "完成标准：outline.md 结构完整，每节要点/引用键/章节作用齐全，「框架推演」段三块内容齐备；每章拟引用分可写正文与仅线索，可写键均在证据综合表且非题录级；表内论断编号全部定义；图表占位写明已有数据来源（无现成数据则改示意图，禁止空许诺计数）；每章/小节有用图计划（拼或仅引用）。质量状态在拟引用未分档、论断编号未闭集或用图计划缺源时不得高于已生成待审。\n" +
+      "完成标准：「定框架记录」六问都有人的选择；「覆盖检查」没有未处理的「薄」（薄·不补写了理由算处理）；outline.md 结构完整，每节要点/引用键/章节作用齐全，「框架推演」段三块内容齐备；每章拟引用分可写正文与仅线索，可写键均在证据综合表且非题录级；表内论断编号全部定义；图表占位写明已有数据来源（无现成数据则改示意图，禁止空许诺计数）；每章/小节有用图计划（拼或仅引用）。质量状态在拟引用未分档、论断编号未闭集或用图计划缺源时不得高于已生成待审。\n" +
       QUESTION_GATE + QUALITY_STATUS,
     expectedArtifacts: ["outline.md"],
+    acceptanceCriteria: ["machine:contains:outline.md::定框架记录", "machine:contains:outline.md::覆盖检查"],
     inputs: ["notes/", "notes/handoff.md", "papers/included.md", "papers/included.json", "references.bib"],
+    optionalInputs: ["notes/angles.md"],
     skills: ["review-framework"],
     run: [],
     humanTasks: [],
     // 讨论种子已移除（用户拍板，与 v3.89 检索步移除决策项同一道理）：范式锚点/卖点
-    // 要看到候选范式卡片才定得了，开工前点卡片等于盲猜；且只读想法卡聊完要手动
-    // 「◈ 沉淀」、只追加草稿末尾，对「定任务书参数」类问题是绕路。改为简报第 3 条
-    // 带候选经 help-wanted 按需问；「跟 AI 商量一下」开场本就逐条问拿不准的点。
+    // 要看到候选范式卡片才定得了，开工前点卡片等于盲猜。2026-11-05 综述回路三期：
+    // 「先报候选再融合」单问改为简报第 2 条一问一答六问（经 help-wanted 一次一问），第 3 条覆盖检查薄节退回补料。
   },
   {
     name: "综述初稿",

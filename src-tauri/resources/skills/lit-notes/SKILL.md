@@ -90,11 +90,42 @@ provides: [lit-notes]
 7. **与本课题的关系**：这篇在综述里支撑哪条论点；不要只写「核心/背景：××分类」。
 8. **疑问与待跟进**：只写还没核清、或还要去读的下一篇/字段，不重复局限里已经下的判断；待跟进文献追加 `papers/to-fetch.md`。
 
+**综述卡**（`included.json` 里 `kind=review` 的篇）：小节标题照上面八段原样写（阅读区、抽查都按这八个标题认），内容按综述的读法填，并在「主要结果」之后多两节：
+
+```
+## 覆盖范围与时效
+## 结构骨架
+```
+
+- 来源行下的状态行开头写「综述」（如「综述 · 全文 · 正式版」）。
+- **一句话总结**：这篇综述的立场与主线。**研究问题**：它要回答的问题、自己划的范围。**方法**：综述类型（叙述 / 系统 / 范围）、检索范围与篇数（写了才记）。
+- **主要结果**：按主题列它覆盖了什么、每个主题的结论（一题一行，带页码）。
+- **覆盖范围与时效**：发表年；参考文献里最新一篇的年份（= 文献截至年份，读参考文献表数出来，同时写进 `notes/index.json` 那篇的 `cutoffYear`）；哪些主题写得深、哪些一笔带过。
+- **结构骨架**：章节顺序，每章一句话说它在全文里起什么作用（大纲拆范式卡片直接用这一节）。
+- **局限**：拆「作者点出的空白与展望」和「本笔记识别的局限」。
+- **与本课题的关系**：和本课题的重合度（高 / 中 / 低）及重合在哪几节。可引用点、疑问与待跟进照八段写法。
+
 **写法**：叙述用中文（把读到的内容说清楚），不要整段粘贴英文摘要或 PDF 抽取原文。材料名、离子、电解液、方法缩写、图/表编号等惯用英文原词直接写，不强翻。有 PDF 的核心篇读正文再写，页码/图表来自正文。用户确认「按摘要记」的篇根据摘要消化来写，开头标「仅摘要」——不是把摘要原文粘贴交差。
 
 **全文不可得时**，按摘要 + 可见元数据写笔记，开头标注「仅摘要」。无实际 PDF 不伪造来源锚点，改记 DOI/URL 及访问日期。无法核实的页码、方法细节、数值和因果主张写不可核验，不凑齐八段。核心结论依赖全文时暂停该结论或缩窄范围；获取全文后复核并记录影响的大纲/稿件。
 
-在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending；`decision=excluded` 的排除篇不建行）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
+在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending；`decision=excluded` 的排除篇不建行）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`；`included.json` 标了 `kind` 的照抄 `kind`，综述再写 `cutoffYear`。TASK.md 让这一轮只读综述与核心研究论文时，其余研究论文记 `reviewStatus=pending`、不写笔记，不算没做完。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
+
+### 可写点清单（TASK.md 要求时）
+
+综述卡写完后跑 `python3 <技能目录>/scripts/lit_records.py angles-facts --json papers/included.json --index notes/index.json`，输出原样贴进 `notes/angles.md` 的「## 时效对照（脚本算）」——截至年份、之后又纳入了几篇研究论文都由脚本数，不自己数。再写候选角度，一条一个：
+
+```markdown
+## 角度 3：原位表征揭示的失活路径
+- 一句话：……
+- 已有综述覆盖：[@键A]（截至 2020，第 4 节两段带过）、[@键B]（截至 2022，未涉及）
+- 之后的新工作：2021 年后 9 篇 [@键C; @键D; …]，其中有全文 6 篇
+- 和已有综述的重合度：中——最像 [@键B] 第 3 节，但它只讲热力学
+- 撑起来还缺：动力学方向的研究论文，目前 1 篇
+- 风险：新工作多为同一课题组
+```
+
+只给证据，**不判断能不能写**：别人写过不等于不能写，重合度高的照列、标明最像哪篇，取舍交给人。不写「必须创新」「不能和已有综述重合」一类的话。
 
 ### 3. 同步引文库
 

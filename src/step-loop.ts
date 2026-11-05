@@ -3,6 +3,7 @@
  *  引擎不认识「检索」「综述」：哪一步算检索、算精读由调用方按技能槽判定后传进来（isSearch / isNotes）。 */
 
 import { KEEP_WORKING_CLAUSE } from "./step-decisions.ts";
+import { sectionTableRows } from "./notes-progress.ts";
 
 export interface ReworkDraft {
   fromStep: string;
@@ -87,7 +88,9 @@ function joinRoot(root: string, rel: string): string {
   return `${root.replace(/[\\/]+$/, "")}${sep}${sep === "\\" ? rel.replace(/\//g, "\\") : rel}`;
 }
 
-/** 精读跟进的增量：纳入（含待确认）里还没写完笔记的 id。读不懂的 JSON 返回 null（界面改按文件列表说）。 */
+/** 精读跟进的增量：纳入里**索引还没有这一行**的 id（上游新加的篇）。索引里记了 pending 的不算——
+ *  那是有意留待按章节读的研究论文（综述精读第一轮只读综述 + 核心篇，三期）或缺全文的篇，跟进不顺带把它们全读了。
+ *  读不懂的 JSON 返回 null（界面改按文件列表说）。 */
 export function notesFollowupIds(includedText: string, indexText: string | null): string[] | null {
   let included: unknown;
   try {
@@ -97,13 +100,12 @@ export function notesFollowupIds(includedText: string, indexText: string | null)
   }
   const rows = recordsOf(included);
   if (!rows) return null;
-  const reviewed = new Set<string>();
+  const listed = new Set<string>();
   if (indexText) {
     try {
       for (const row of recordsOf(JSON.parse(indexText)) ?? []) {
         const r = row as Record<string, unknown>;
-        const status = typeof r.reviewStatus === "string" ? r.reviewStatus.trim().toLowerCase() : "";
-        if (typeof r.id === "string" && REVIEWED.has(status)) reviewed.add(r.id);
+        if (typeof r.id === "string") listed.add(r.id);
       }
     } catch {
       /* 索引坏了：当成都没写，增量 = 全部纳入，由人在确认框里看到数字再决定 */
@@ -114,12 +116,10 @@ export function notesFollowupIds(includedText: string, indexText: string | null)
     const r = row as Record<string, unknown>;
     const decision = typeof r.decision === "string" ? r.decision.trim().toLowerCase() : "";
     if (decision !== "included" && decision !== "include") continue;
-    if (typeof r.id === "string" && !reviewed.has(r.id)) out.push(r.id);
+    if (typeof r.id === "string" && !listed.has(r.id)) out.push(r.id);
   }
   return out;
 }
-
-const REVIEWED = new Set(["reviewed", "done", "read", "complete", "completed", "已读", "已完成"]);
 
 function recordsOf(parsed: unknown): unknown[] | null {
   if (Array.isArray(parsed)) return parsed;
@@ -158,7 +158,7 @@ export function followupPrompt(opts: {
     const more = opts.notesIds.length > ID_CAP ? ` 等 ${opts.notesIds.length} 篇（以 papers/included.json 为准）` : "";
     return [
       head,
-      `纳入清单里还有 ${opts.notesIds.length} 篇没有写完笔记：${shown}${more}。`,
+      `纳入清单里新加了 ${opts.notesIds.length} 篇，笔记索引里还没有：${shown}${more}。`,
       "只给这些篇写笔记，写法照 TASK.md 与技能（先跑 lit_records.py write 认 PDF）；已有笔记一字不动。",
       "收尾更新 notes/index.json、references.bib 与 notes/handoff.md。",
       KEEP_WORKING_CLAUSE,
@@ -179,7 +179,7 @@ export function followupPrompt(opts: {
 export function followupScale(opts: { upstream: string; notesIds: string[] | null; files: string[] }): string {
   if (opts.notesIds) {
     return opts.notesIds.length > 0
-      ? `上游「${opts.upstream}」有新内容：${opts.notesIds.length} 篇纳入的文献还没有笔记，AI 只读这 ${opts.notesIds.length} 篇，已有笔记不动。`
+      ? `上游「${opts.upstream}」有新内容：新纳入 ${opts.notesIds.length} 篇，AI 只读这 ${opts.notesIds.length} 篇，已有笔记不动、留待按章节读的不顺带读。`
       : "";
   }
   return opts.files.length > 0
@@ -219,4 +219,40 @@ export function roundTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso;
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 大纲「## 覆盖检查」里还没处理的薄节 → 补料单预填（综述回路三期 §9.3）。
+ *  建议写「补检：…」的退回检索、「补读：…」的退回精读；别的写法归 other，交人选。 */
+export interface CoverageDraft {
+  target: "search" | "read" | "other";
+  topic: string;
+  reason: string;
+}
+
+export function coverageReworkDrafts(outlineText: string): CoverageDraft[] {
+  const rows = sectionTableRows(outlineText, "覆盖检查") ?? [];
+  const out: CoverageDraft[] = [];
+  for (const row of rows) {
+    const [section = "", body = "", hint = "", latest = "", verdict = "", advice = ""] = row;
+    if (!/^薄/.test(verdict) || /不补/.test(verdict)) continue;
+    const m = advice.match(/^(补检|补读)\s*[：:]\s*(.*)$/);
+    const target = m ? (m[1] === "补检" ? "search" : "read") : "other";
+    const what = (m ? m[2] : advice).trim();
+    out.push({
+      target,
+      topic: `${section}${what ? `：${what}` : ""}`,
+      reason: `覆盖检查：这一节可写正文 ${body || "?"} 篇、仅线索 ${hint || "?"} 篇，最新一篇 ${latest || "?"}`,
+    });
+  }
+  return out;
+}
+
+/** 预填按退回目标分组：主题一行一条，原因取第一条（其余节的原因并进主题后面） */
+export function groupCoverageDrafts(drafts: CoverageDraft[], target: CoverageDraft["target"]): { topics: string; reason: string } | null {
+  const picked = drafts.filter((d) => d.target === target);
+  if (picked.length === 0) return null;
+  return {
+    topics: picked.map((d) => d.topic).join("\n"),
+    reason: picked.length === 1 ? picked[0].reason : `大纲覆盖检查里这 ${picked.length} 节是薄的（${picked.map((d) => d.reason.replace(/^覆盖检查：这一节/, "")).join("；")}）`,
+  };
 }

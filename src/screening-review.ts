@@ -245,6 +245,10 @@ export interface IncludedRecord {
   language: string;
   /** 已有全文的位置（lit_records.py write 写）：项目根相对路径，或 Zotero 导入登记的库内绝对路径 */
   pdf?: string;
+  /** 文献类型（综述回路三期，检索时判、人可改）：review / research / other；没标不出这个键。不进任何 RIS */
+  kind?: string;
+  /** 核心研究论文：综述模板精读第一轮连同综述一起读 */
+  core?: boolean;
 }
 
 function stringField(rec: Record<string, unknown>, keys: string[]): string {
@@ -768,6 +772,8 @@ export function parseIncludedRecords(text: string): IncludedRecord[] {
       keywords: keywordsOf(rec),
       language: stringField(rec, ["language"]),
       ...(stringField(rec, ["pdf"]) ? { pdf: stringField(rec, ["pdf"]) } : {}),
+      ...(stringField(rec, ["kind"]) ? { kind: stringField(rec, ["kind"]) } : {}),
+      ...(rec.core === true ? { core: true } : {}),
     });
   }
   return out;
@@ -1101,6 +1107,35 @@ export function patchIncludedJsonMany(
     found += 1;
   }
   if (found === 0) throw new Error("清单里找不到选中的篇目");
+  return `${JSON.stringify(data, null, 2)}\n`;
+}
+
+/** 文献类型的界面说法与点一下换到的下一个（综述 → 研究论文 → 其他 → 综述） */
+export const KIND_LABEL: Record<string, string> = { review: "综述", research: "研究论文", other: "其他" };
+export function nextKind(kind: string | undefined): "review" | "research" | "other" {
+  return kind === "review" ? "research" : kind === "research" ? "other" : "review";
+}
+
+/** 改一篇的类型或核心标记（只动这两个键，其余原样；不是研究论文就去掉核心）。对不上抛错。 */
+export function patchIncludedKind(
+  text: string,
+  key: string,
+  patch: { kind?: "review" | "research" | "other"; core?: boolean },
+): string {
+  const data = JSON.parse(text) as unknown;
+  let found = false;
+  for (const row of asRows(data)) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as Record<string, unknown>;
+    const id = typeof rec.id === "string" ? rec.id : "";
+    const title = typeof rec.title === "string" ? rec.title : "";
+    if (id !== key && title !== key) continue;
+    if (patch.kind) rec.kind = patch.kind;
+    if (patch.core !== undefined) rec.core = patch.core;
+    if (rec.kind !== "research" && "core" in rec) delete rec.core;
+    found = true;
+  }
+  if (!found) throw new Error("清单里找不到这篇");
   return `${JSON.stringify(data, null, 2)}\n`;
 }
 

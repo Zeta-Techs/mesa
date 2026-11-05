@@ -144,6 +144,10 @@ export interface SearchProgress {
   included: number;
   pending: number;
   withPdf: number;
+  /** 纳入里标成综述（kind=review）的；没人标类型时 0（行里不出） */
+  reviews?: number;
+  /** 纳入里标成核心研究论文（core: true）的 */
+  core?: number;
 }
 
 export function searchProgress(includedText: string): SearchProgress | null {
@@ -163,13 +167,16 @@ export function searchProgress(includedText: string): SearchProgress | null {
     out.included += 1;
     const pdf = (row as Record<string, unknown>).pdf;
     if (typeof pdf === "string" && pdf.trim()) out.withPdf += 1;
+    if (field(row, "kind") === "review") out.reviews = (out.reviews ?? 0) + 1;
+    if ((row as Record<string, unknown>).core === true) out.core = (out.core ?? 0) + 1;
   }
   return out.included + out.pending > 0 ? out : null;
 }
 
 /** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9」。没有的分项不出。 */
 export function searchProgressLine(p: SearchProgress): string {
-  const parts = [`纳入 ${p.included} 篇`];
+  const typed = [p.reviews ? `综述 ${p.reviews}` : "", p.core ? `核心 ${p.core}` : ""].filter(Boolean);
+  const parts = [`纳入 ${p.included} 篇${typed.length ? `（${typed.join(" · ")}）` : ""}`];
   if (p.pending > 0) parts.push(`待确认 ${p.pending}`);
   if (p.withPdf > 0) parts.push(`已有全文 ${p.withPdf}`);
   if (p.included - p.withPdf > 0) parts.push(`缺全文 ${p.included - p.withPdf}`);
@@ -202,4 +209,54 @@ export function figurePlanLine(p: FigurePlan): string {
   if (p.citeOnly > 0) parts.push(`直接引原图 ${p.citeOnly} 处`);
   if (p.tables > 0) parts.push(`对照表 ${p.tables} 张`);
   return `用图计划：${parts.join(" · ")}`;
+}
+
+/** 大纲 outline.md 的定框架与覆盖检查（综述回路三期）：「## 定框架记录」表里第 1–6 问有几问填了人的选择，
+ *  「## 覆盖检查」表里还有几节判断是「薄」（「薄·不补」算处理过）。两节都没有返回 null。 */
+export interface OutlineProgress {
+  answered: number | null;
+  thin: number | null;
+}
+
+/** 取 `## 标题` 到下一个 `## ` 之间的表格行（去掉表头与分隔行），每行切成格子 */
+export function sectionTableRows(text: string, heading: string): string[][] | null {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^##\s+/.test(l) && l.replace(/^##\s+/, "").trim().startsWith(heading));
+  if (start < 0) return null;
+  const rows: string[][] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^##?\s/.test(line)) break;
+    const t = line.trim();
+    if (!t.startsWith("|")) continue;
+    const cells = t.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+    if (cells.every((c) => /^:?-{2,}:?$/.test(c) || c === "")) continue;
+    rows.push(cells);
+  }
+  // 第一行是表头
+  return rows.slice(1);
+}
+
+export function outlineProgress(text: string): OutlineProgress | null {
+  const framed = sectionTableRows(text, "定框架记录");
+  const coverage = sectionTableRows(text, "覆盖检查");
+  if (!framed && !coverage) return null;
+  let answered: number | null = null;
+  if (framed) {
+    const done = new Set<string>();
+    for (const row of framed) {
+      const q = (row[0] ?? "").replace(/[^\d①②③④⑤⑥]/g, "");
+      const n = "①②③④⑤⑥".indexOf(q) >= 0 ? String("①②③④⑤⑥".indexOf(q) + 1) : q;
+      if (/^[1-6]$/.test(n) && (row[2] ?? "").trim() && !/^(待|—|-)$/.test((row[2] ?? "").trim())) done.add(n);
+    }
+    answered = done.size;
+  }
+  const thin = coverage ? coverage.filter((row) => /^薄/.test(row[4] ?? "") && !/不补/.test(row[4] ?? "")).length : null;
+  return { answered, thin };
+}
+
+export function outlineProgressParts(p: OutlineProgress): string[] {
+  const parts: string[] = [];
+  if (p.answered !== null) parts.push(`定框架 ${p.answered}/6 问`);
+  if (p.thin !== null) parts.push(p.thin > 0 ? `薄 ${p.thin} 节待补料` : "覆盖检查没有薄节");
+  return parts;
 }

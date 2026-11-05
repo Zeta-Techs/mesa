@@ -48,7 +48,8 @@ import {
 } from "./PageFrame";
 import { useAppStore } from "../store";
 import { GitInstallOffer } from "../dep-install";
-import { RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
+import { PIPELINE_TEMPLATES, RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
+import { templateUpdateNotice } from "../pipeline-upgrade";
 import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
 import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md-sections";
@@ -417,6 +418,23 @@ export default function ProjectGroup({
   // ===== 档案卡（仅注册项目） =====
   const skillProvides = useSkillProvides();
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
+  // 已有项目的「内置模板有更新」：按本项目研究工具换算后比，有差异才提示；「不用了」记签名，同一批更新不再提
+  const templateNotice = useMemo(() => {
+    if (!cfg || cfg.steps.length === 0) return null;
+    const tools = researchToolsFromSettings(cfg.settings);
+    return templateUpdateNotice(cfg.steps, PIPELINE_TEMPLATES, (s) =>
+      withResearchTools(s, tools, cfg.artifactDir, cfg.litSource, skillProvides),
+    );
+  }, [cfg, skillProvides]);
+  const noticeKey = project ? `mesa.templateNotice.dismissed:${project.path}` : "";
+  const [noticeDismissed, setNoticeDismissed] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setNoticeDismissed(noticeKey ? localStorage.getItem(noticeKey) : null);
+    } catch {
+      setNoticeDismissed(null);
+    }
+  }, [noticeKey]);
   // 新登记的是不是科研项目（决定进页引导里要不要出「初始化 git」）
   const freshResearch = (cfg?.workMode ?? project?.workMode) === "research";
   const depCheck = useAppStore((s) => s.depCheck);
@@ -559,6 +577,8 @@ export default function ProjectGroup({
   } | null>(null);
   // 研究流程编辑器（RX1）：步骤编辑唯一入口，覆盖旧 ⋯ 内联重命名/编辑简报/+ 步骤表单
   const [editorOpen, setEditorOpen] = useState(false);
+  // 从「内置模板有更新 · 去看看」打开编辑器时预选的模板（综述回路三期 §13-6）
+  const [editorUpgrade, setEditorUpgrade] = useState<string | null>(null);
   // 步骤 ⋯「编辑步骤」：打开编辑器并定位到该步骤卡片（null = 从项目菜单进入，不定位）
   const [editorFocus, setEditorFocus] = useState<number | null>(null);
   // 步骤 ⋯「产物核验」手风琴：strip 下方就地展开 ArtifactChecklist，记展开的步骤 index（单开）
@@ -1781,6 +1801,40 @@ export default function ProjectGroup({
         </div>
       )}
 
+      {registered && templateNotice && noticeDismissed !== templateNotice.signature && (
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-l3" role="note">
+          <span>
+            内置模板「{templateNotice.templateName}」有更新：{templateNotice.steps.join("、")}
+            可以换成新版。先看差异、勾选了才改，已写的产物不动。
+          </span>
+          <button
+            type="button"
+            className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
+            onClick={() => {
+              setEditorUpgrade(templateNotice.templateId);
+              openEditor();
+            }}
+          >
+            去看看
+          </button>
+          <button
+            type="button"
+            className="text-l4 hover:text-l2"
+            title="这一批更新不再提示；内置模板以后再改了还会提示"
+            onClick={() => {
+              try {
+                localStorage.setItem(noticeKey, templateNotice.signature);
+              } catch {
+                /* 存不下就只在这次隐藏 */
+              }
+              setNoticeDismissed(templateNotice.signature);
+            }}
+          >
+            不用了
+          </button>
+        </div>
+      )}
+
       {/* 研究流程 strip（大圆步进器，v3.46）：状态从绑定工作区派生；
           大圆 = 状态色 + 主推进点击；编辑步骤/产物核验收进步骤 ⋯ 菜单（原圆前/圆后小方块
           伪装成虚线块可发现性为零，入口删除、视觉块保留为普通虚线块）；末端菱形 = 流程终点，
@@ -2543,7 +2597,11 @@ export default function ProjectGroup({
           taskBindings={project.taskBindings ?? null}
           focusStep={editorFocus}
           onSave={(steps, settings) => void savePipeline(steps, settings)}
-          onClose={() => setEditorOpen(false)}
+          initialUpgradeTemplate={editorUpgrade ?? undefined}
+          onClose={() => {
+            setEditorOpen(false);
+            setEditorUpgrade(null);
+          }}
           onConfigReload={(read) => {
             setCfg(read.config);
             setCfgWarnings(read.warnings);

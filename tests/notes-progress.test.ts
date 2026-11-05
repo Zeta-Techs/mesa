@@ -123,3 +123,31 @@ test("用图计划：拼图按编号去重，仅引用只数真引用，技能�
   assert.equal(figurePlanLine(p!), "用图计划：初稿要拼 3 张图 · 直接引原图 1 处 · 对照表 2 张");
   assert.equal(figurePlan("# 大纲\n没有用图计划"), null);
 });
+
+test("检索篇数标了类型时括号里写综述 / 核心；大纲定框架几问、薄几节", async () => {
+  const { outlineProgress, outlineProgressParts } = await import("../src/notes-progress.ts");
+  const json = JSON.stringify([
+    { id: "a", decision: "included", kind: "review" },
+    { id: "b", decision: "included", kind: "research", core: true },
+    { id: "c", decision: "included", kind: "research" },
+  ]);
+  assert.equal(searchProgressLine(searchProgress(json)!), "纳入 3 篇（综述 1 · 核心 1） · 缺全文 3");
+  const outline = [
+    "## 定框架记录",
+    "| 问 | 问题 | 人的选择 | 日期 |",
+    "|---|---|---|---|",
+    "| ① | 核心问题 | 照原样 | 11-05 |",
+    "| 2 | 角度 | 角度 1、3 | 11-05 |",
+    "| 3 | 读者 |  | |",
+    "## 覆盖检查",
+    "| 节 | 可写正文的键 | 仅线索 | 最新一篇年份 | 判断 | 建议 |",
+    "|---|---|---|---|---|---|",
+    "| 3.2 | 2 | 3 | 2020 | 薄 | 补检：x |",
+    "| 3.4 | 0 | 1 | 2019 | 薄·不补：不是重点 | |",
+    "| 4 | 6 | 2 | 2025 | 够 | |",
+  ].join("\n");
+  const p = outlineProgress(outline)!;
+  assert.deepEqual(p, { answered: 2, thin: 1 });
+  assert.deepEqual(outlineProgressParts(p), ["定框架 2/6 问", "薄 1 节待补料"]);
+  assert.equal(outlineProgress("# 旧大纲\n用图：拼 图1"), null);
+});

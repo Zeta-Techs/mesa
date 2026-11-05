@@ -22,9 +22,11 @@ import FuseDraftModal from "./FuseDraftModal";
 import { useAppStore } from "../store";
 import { stepAttention } from "../run-overview";
 import { toast } from "../toast";
-import { readResearchLedger } from "../research-report-load";
+import { readResearchFile, readResearchLedger } from "../research-report-load";
 import { ReworkDialog, StepRoundsSection, type ReworkFields } from "./StepLoop";
 import {
+  coverageReworkDrafts,
+  groupCoverageDrafts,
   followupFiles,
   followupPrompt,
   followupScale,
@@ -259,6 +261,7 @@ export default function TaskCardsSection({
   const [reworkOpen, setReworkOpen] = useState(false);
   const [reworkBusy, setReworkBusy] = useState(false);
   const [reworkError, setReworkError] = useState<string | null>(null);
+  const [reworkPrefill, setReworkPrefill] = useState<Record<string, { topics: string; reason: string }>>({});
   const [followBusy, setFollowBusy] = useState(false);
   /** 继续时上次会话是另一家 Agent：问要不要带简报。取消 = 先不开。 */
   const [carryAsk, setCarryAsk] = useState<{
@@ -808,6 +811,38 @@ export default function TaskCardsSection({
     }
   }
 
+  /** 打开补料单：本步有 outline.md 且「覆盖检查」里有薄节时按退回目标预填（三期 §9.3）。读不到就空着开 */
+  async function openRework() {
+    setReworkError(null);
+    const prefill: Record<string, { topics: string; reason: string }> = {};
+    const step = focusStepDto;
+    const ws = step ? activeWorkspaceFor(step.name, step.workspaceName) : undefined;
+    let outline: string | null = null;
+    for (const root of [ws?.worktreePath, projectPath].filter(Boolean) as string[]) {
+      try {
+        const f = await readResearchFile(root, "outline.md");
+        if (!f.truncated) {
+          outline = f.text;
+          break;
+        }
+      } catch {
+        /* 这一处没有大纲 */
+      }
+    }
+    if (outline) {
+      const drafts = coverageReworkDrafts(outline);
+      const upstream = reworkTargets(steps, focusIdx);
+      const searchStep = upstream.find((st) => stepFillsAnySlot(st.skills, ["lit-search"], skillProvides));
+      const notesStep = upstream.find((st) => stepFillsAnySlot(st.skills, ["lit-notes"], skillProvides));
+      const search = groupCoverageDrafts(drafts, "search");
+      const read = groupCoverageDrafts(drafts, "read");
+      if (searchStep && search) prefill[searchStep.name] = search;
+      if (notesStep && read) prefill[notesStep.name] = read;
+    }
+    setReworkPrefill(prefill);
+    setReworkOpen(true);
+  }
+
   /** 退回上一步补料（§4）：恢复 / 并入项目最新内容 → 写补料单 → 记轮次 → 在上游工作区另开一段对话 */
   async function sendRework(fields: ReworkFields) {
     if (!focusStepDto) return;
@@ -1300,10 +1335,7 @@ export default function TaskCardsSection({
                   {targets.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setReworkError(null);
-                        setReworkOpen(true);
-                      }}
+                      onClick={() => void openRework()}
                       title="这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补"
                       className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
                     >
@@ -1566,6 +1598,7 @@ export default function TaskCardsSection({
         <ReworkDialog
           fromStep={focusStepDto.name}
           targets={reworkTargets(steps, focusIdx).map((st) => st.name)}
+          prefill={reworkPrefill}
           busy={reworkBusy}
           error={reworkError}
           onCancel={() => setReworkOpen(false)}

@@ -218,6 +218,7 @@ export default function PipelineEditor({
   saving,
   taskBindings,
   focusStep,
+  initialUpgradeTemplate,
   onSave,
   onClose,
   onConfigReload,
@@ -233,6 +234,8 @@ export default function PipelineEditor({
   taskBindings?: Record<string, { profile: string; model?: string | null }> | null;
   /** 从步骤 ✎ 进入时定位的步骤序号：滚动到该卡片并聚焦简报输入框 */
   focusStep?: number | null;
+  /** 从项目页「内置模板有更新 · 去看看」进来：展开模板更新一节并选好这套模板 */
+  initialUpgradeTemplate?: string;
   /** 保存成功与关闭覆盖层由父组件负责 */
   onSave: (steps: ProjectStepDto[], settings?: string[]) => void;
   onClose: () => void;
@@ -246,7 +249,7 @@ export default function PipelineEditor({
   const [error, setError] = useState<string | null>(null);
   // 「从模板追加」：内联模板列表 + 追加结果行内提示
   const [appendOpen, setAppendOpen] = useState(false);
-  const [upgradeTemplate, setUpgradeTemplate] = useState("");
+  const [upgradeTemplate, setUpgradeTemplate] = useState(initialUpgradeTemplate ?? "");
   const [upgradeSelection, setUpgradeSelection] = useState<number[]>([]);
   const [appending, setAppending] = useState(false);
   const [appendResult, setAppendResult] = useState<AppendStepsResultDto | null>(
@@ -1372,7 +1375,7 @@ export default function PipelineEditor({
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl space-y-3 px-8 py-4">
           <ResearchToolFields value={tools} onChange={setTools} disabled={saving || appending} />
-          <details className="rounded ccode-well p-3 text-xs"><summary className="cursor-pointer text-l2">检查已有步骤的内置模板更新</summary>
+          <details open={initialUpgradeTemplate ? true : undefined} className="rounded ccode-well p-3 text-xs"><summary className="cursor-pointer text-l2">检查已有步骤的内置模板更新</summary>
             <p className="my-2 text-l3">只对名称与工作区都一致的步骤提出更新；先看差异、勾选，再载入编辑草稿。资源绑定保留，不修改已有 TASK.md 或研究产物。保存前仍可取消。</p>
             <select className="rounded border border-field bg-canvas p-1" value={upgradeTemplate} onChange={(e) => { setUpgradeTemplate(e.target.value); setUpgradeSelection([]); }}><option value="">选择原模板</option>{PIPELINE_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
             {(() => { const template = PIPELINE_TEMPLATES.find((t) => t.id === upgradeTemplate); if (!template) return null; const changes = pipelineUpgradeCandidates(drafts.map(toStep), template); return <>

@@ -39,6 +39,9 @@ import {
   restorePendingReason,
   syncIncludedSummary,
   type IncludedRecord,
+  KIND_LABEL,
+  nextKind,
+  patchIncludedKind,
 } from "../screening-review";
 import { InlineNotice } from "./PageFrame";
 
@@ -396,6 +399,25 @@ export default forwardRef<PendingConfirmHandle, {
     }
   }
 
+  /** 改一篇的类型 / 核心（综述回路三期 §7.1）：只写 included.json 这两个键，清单与 RIS 不变 */
+  async function patchKind(row: IncludedRecord, patch: { kind?: "review" | "research" | "other"; core?: boolean }) {
+    if (!jsonRevision) return;
+    const key = includedRecordKey(row);
+    setBusyKey(key);
+    setError(null);
+    try {
+      const nextJson = patchIncludedKind(jsonText, key, patch);
+      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      setJsonText(nextJson);
+      setJsonRevision(nextJsonRev);
+      setRecords(parseIncludedRecords(nextJson));
+    } catch (reason) {
+      setError(`改类型失败：${String(reason)}`);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function confirmRow(row: IncludedRecord, decision: "included" | "excluded") {
     if (!jsonRevision) return;
     const key = includedRecordKey(row);
@@ -643,6 +665,7 @@ export default forwardRef<PendingConfirmHandle, {
   ) {
     const key = includedRecordKey(row);
     const pdfPath = matchPaperPdf(row, pdfFiles, papersDir);
+    const typed = (records ?? []).some((r) => !!r.kind);
     const meta = includedRecordMeta(row);
     const title = displayCitationTitle(row.title);
     const metric = metrics.get(key);
@@ -689,6 +712,29 @@ export default forwardRef<PendingConfirmHandle, {
           <JournalBadges metric={metric} tableReady={metricsReady} loading={metricsLoading} />
           {/* 有全文只占一个小记号，不再单起一行（标题本身就是打开入口） */}
           {pdfPath && <span className="text-ok-text">· 有 PDF</span>}
+          {/* 类型与核心（综述回路三期）：清单里有人标过类型才出，点一下换到下一种；只改 included.json */}
+          {typed && (
+            <button
+              type="button"
+              disabled={busyKey === key || !jsonRevision}
+              onClick={() => void patchKind(row, { kind: nextKind(row.kind) })}
+              title="文献类型：点一下在综述 / 研究论文 / 其他之间换。综述流程的精读第一轮先读综述和核心研究论文"
+              className="rounded-sm bg-raised px-1 text-l3 hover:text-l1 disabled:opacity-50"
+            >
+              {row.kind ? (KIND_LABEL[row.kind] ?? row.kind) : "未标类型"}
+            </button>
+          )}
+          {typed && row.kind === "research" && (
+            <button
+              type="button"
+              disabled={busyKey === key || !jsonRevision}
+              onClick={() => void patchKind(row, { core: !row.core })}
+              title={row.core ? "核心研究论文：精读第一轮连同综述一起读。点一下取消" : "标成核心：精读第一轮连同综述一起读"}
+              className={`rounded-sm px-1 disabled:opacity-50 ${row.core ? "bg-cta-pill text-cta-pill-text" : "text-l4 hover:text-l1"}`}
+            >
+              {row.core ? "核心" : "＋核心"}
+            </button>
+          )}
         </p>
         {!pdfPath && row.url && (
           <button

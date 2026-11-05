@@ -459,3 +459,42 @@ test("Zotero 导入：登记的 PDF 认成全文不进待获取；导入条目�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("kind / core 只在 json 里：不进 RIS；写错值 check 拦；angles-facts 按截至年数之后纳入的研究论文", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    const path = join(ws, "papers/included.json");
+    const json = JSON.parse(readFileSync(path, "utf8"));
+    json.find((x: { id: string }) => x.id === "W2").kind = "review";
+    json.find((x: { id: string }) => x.id === "W1").kind = "research";
+    json.find((x: { id: string }) => x.id === "W1").core = true;
+    writeFileSync(path, JSON.stringify(json, null, 2));
+    let r = run(["write", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const ris = readFileSync(join(ws, "papers/to-fetch.ris"), "utf8") + readFileSync(join(ws, "papers/endnote-import.ris"), "utf8");
+    assert.doesNotMatch(ris, /\bkind\b|\bcore\b/);
+    r = run(["check", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stdout);
+    // 写错值：check 点名
+    json.find((x: { id: string }) => x.id === "W1").kind = "综述";
+    json.find((x: { id: string }) => x.id === "W1").core = "yes";
+    writeFileSync(path, JSON.stringify(json, null, 2));
+    r = run(["write", "--root", proj], ws);
+    r = run(["check", "--root", proj], ws);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout, /kind 应是 review \/ research \/ other/);
+    assert.match(r.stdout, /core 只能写 true \/ false/);
+    // angles-facts：W2（综述，2021 截至 2020）之后纳入的研究论文 = W1（2023）
+    json.find((x: { id: string }) => x.id === "W1").kind = "research";
+    json.find((x: { id: string }) => x.id === "W1").core = true;
+    writeFileSync(path, JSON.stringify(json, null, 2));
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    writeFileSync(join(ws, "notes/index.json"), JSON.stringify([{ id: "W2", bibKey: "Bai2021", cutoffYear: 2020 }, { id: "W1", bibKey: "Da2023" }]));
+    r = run(["angles-facts"], ws);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /纳入综述 1 篇、研究论文 1 篇/);
+    assert.match(r.stdout, /\| \[@Bai2021\] Recent advances of MXenes .* \| 2020 \| 1 篇：\[@Da2023\] \|/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

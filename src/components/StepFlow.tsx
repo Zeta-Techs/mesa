@@ -59,6 +59,8 @@ import {
   figurePlanLine,
   notesProgress,
   notesProgressLine,
+  outlineProgress,
+  outlineProgressParts,
   searchProgress,
   searchProgressLine,
   spotCheckPicks,
@@ -402,9 +404,12 @@ const searchCountLine = (text: string) => {
   const p = searchProgress(text);
   return p ? searchProgressLine(p) : null;
 };
+/** 大纲一行：定框架几问、薄几节（综述回路三期）+ 用图计划 */
 const figurePlanCountLine = (text: string) => {
+  const o = outlineProgress(text);
   const p = figurePlan(text);
-  return p ? figurePlanLine(p) : null;
+  const parts = [...(o ? outlineProgressParts(o) : []), ...(p ? [figurePlanLine(p)] : [])];
+  return parts.length ? parts.join(" · ") : null;
 };
 
 /** 「抽查 3 篇笔记」就地给出三篇候选（notes/index.json，工作区优先、项目根兜底）：
@@ -3045,7 +3050,7 @@ export default function StepFlow({
             rel="outline.md"
             read={readResearchFile}
             line={figurePlanCountLine}
-            title="按 outline.md 的用图计划数：初稿会从全文 PDF 裁子图拼成这些图，对照表在正文里用表格写出；裁不到的改成「见 [@键] Fig.n」"
+            title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「退回上一步补料…」，Mesa 按这张表预填）；用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
           />
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。

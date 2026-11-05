@@ -37,7 +37,7 @@ test("reworkPrompt：补料单原文进指令；检索步与其他步写法不�
   assert.match(other, /C:\\p\\\.ccode\\rework\\1-lit-search\.json/);
 });
 
-test("notesFollowupIds：纳入里没写完笔记的；排除与待确认不算，坏 JSON 返回 null", () => {
+test("notesFollowupIds：纳入里索引还没有的（上游新加的）；索引记了 pending 的留待按章节读、不算；排除与待确认不算", () => {
   const included = JSON.stringify([
     { id: "a", decision: "included" },
     { id: "b", decision: "include" },
@@ -46,7 +46,7 @@ test("notesFollowupIds：纳入里没写完笔记的；排除与待确认不算�
     { id: "e", decision: "included" },
   ]);
   const index = JSON.stringify([{ id: "a", reviewStatus: "reviewed" }, { id: "e", reviewStatus: "pending" }]);
-  assert.deepEqual(notesFollowupIds(included, index), ["b", "e"]);
+  assert.deepEqual(notesFollowupIds(included, index), ["b"]);
   assert.deepEqual(notesFollowupIds(included, null), ["a", "b", "e"]);
   assert.equal(notesFollowupIds("{坏", index), null);
 });
@@ -61,7 +61,7 @@ test("followupFiles：Mesa 过程文件与积累台账不算上游新增", () =>
 test("followupPrompt / followupScale：精读按篇、其他按文件；超长截断", () => {
   const ids = Array.from({ length: 45 }, (_, i) => `p${i}`);
   const notes = followupPrompt({ upstream: "文献检索与筛选", notesIds: ids, files: [] });
-  assert.match(notes, /还有 45 篇没有写完笔记/);
+  assert.match(notes, /新加了 45 篇/);
   assert.match(notes, /等 45 篇/);
   assert.match(notes, /已有笔记一字不动/);
   const files = Array.from({ length: 33 }, (_, i) => `notes/${i}.md`);
@@ -83,4 +83,27 @@ test("roundCauseLabel", () => {
   assert.equal(roundCauseLabel("first"), "首轮");
   assert.equal(roundCauseLabel("rework"), "补料轮");
   assert.equal(roundCauseLabel("manual"), "接着改");
+});
+
+test("coverageReworkDrafts：只取没处理的薄节，补检 / 补读分到检索 / 精读；按目标分组预填", async () => {
+  const { coverageReworkDrafts, groupCoverageDrafts } = await import("../src/step-loop.ts");
+  const outline = [
+    "# 大纲",
+    "## 覆盖检查",
+    "| 节 | 可写正文的键 | 仅线索 | 最新一篇年份 | 判断 | 建议 |",
+    "|---|---|---|---|---|---|",
+    "| 3.2 失活机理 | 2 | 3 | 2020 | 薄 | 补检：近三年原位表征工作 |",
+    "| 3.3 动力学 | 1 | 0 | 2023 | 薄 | 补读：[@Wu2023] [@Li2024] |",
+    "| 3.4 成本 | 0 | 1 | 2019 | 薄·不补：不是本综述重点 | 补检：技术经济分析 |",
+    "| 4 展望 | 6 | 2 | 2025 | 够 | |",
+    "## 框架推演",
+    "| 3.9 | 0 | 0 | 2000 | 薄 | 补检：不在本节 |",
+  ].join("\n");
+  const drafts = coverageReworkDrafts(outline);
+  assert.deepEqual(drafts.map((d) => d.target), ["search", "read"]);
+  assert.equal(drafts[0].topic, "3.2 失活机理：近三年原位表征工作");
+  assert.match(drafts[0].reason, /可写正文 2 篇、仅线索 3 篇，最新一篇 2020/);
+  assert.deepEqual(groupCoverageDrafts(drafts, "read"), { topics: "3.3 动力学：[@Wu2023] [@Li2024]", reason: drafts[1].reason });
+  assert.equal(groupCoverageDrafts(drafts, "other"), null);
+  assert.deepEqual(coverageReworkDrafts("# 没有覆盖检查"), []);
 });
