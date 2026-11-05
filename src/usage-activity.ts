@@ -207,10 +207,12 @@ export const HEAT_GAP_PX = 3;
 /** 格子下限（2026-10-31 用户拍板 11 → 9）：窗口铺满去年同月 1 日到今天最多 57 周，11px 要约 820px，
  *  分屏 / 窄窗下卡片放不下就出横向滚动条；9px 仍是圆角正方形，形状、圆角比例、3px 间距都不变 */
 export const HEAT_CELL_MIN_PX = 9;
-/** 格子边长上限（2026-10-16 单模布局拍板：胶囊全上卡头、主区无左栏，格子吃满卡宽，
- *  16 → 28 两轮上调）。当前用量页 1440 限宽下实际最大 ~21–22px；28 只是放开限宽前的
- *  地砖闸，不得再抬。 */
-export const HEAT_CELL_MAX_PX = 28;
+/** 格子边长上限：2026-11-05 用户「方格子是不是太大了」28 → 14（GitHub 贡献图约 10–11px）。
+ *  原先（10-16）为吃满卡宽两轮上调到 28，1440 限宽下实际 ~22px，成片琥珀方砖太重；
+ *  封顶后多出来的宽度给右侧统计栏（heatSideFits），不再靠放大格子填满 */
+export const HEAT_CELL_MAX_PX = 14;
+/** 右侧统计栏至少要这么宽（四个数两列两行），连同与网格的间距 */
+export const HEAT_SIDE_PX = 232;
 /** 活跃度卡 `p-4` 左右合计。哨兵量的是卡外满宽，算格子前要扣掉。 */
 export const HEAT_WELL_PAD_PX = 32;
 
@@ -218,6 +220,12 @@ export const HEAT_WELL_PAD_PX = 32;
  *  整数倍屏（Mac 视网膜 2x）按 1/dpr 步进，每格、每道间距仍落在整设备像素上、列宽一致，
  *  窗口拉伸时网格每档只跳约 57×0.5px 而不是 57px；非整数缩放（Windows 125%/150%）
  *  3px 间距本就落不到整设备像素，维持整 CSS px 步进不变。 */
+/** 格子封顶后网格右边空出来的够不够放统计栏：够就把「活跃 / 连续 / 最长 / 峰值」挪到右侧，不够照旧写在网格下面 */
+export function heatSideFits(avail: number, cell: number, weeks: number): boolean {
+  const gridW = HEAT_LABEL_PX + (cell + HEAT_GAP_PX) * Math.max(1, weeks);
+  return avail - gridW >= HEAT_SIDE_PX;
+}
+
 export function heatCellPx(avail: number, weeks: number, dpr = 1): number {
   const w = Math.max(1, weeks);
   const k = Number.isInteger(dpr) && dpr >= 1 ? dpr : 1;

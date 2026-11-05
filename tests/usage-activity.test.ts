@@ -146,14 +146,13 @@ test("shiftDay 跨月跨年", () => {
   assert.equal(shiftDay("2026-12-31", 1), "2027-01-01");
 });
 
-test("heatCellPx：9–28 夹紧，28 以上不再抬", () => {
+test("heatCellPx：9–14 夹紧，14 以上不再抬（2026-11-05 由 28 收）", () => {
   assert.equal(HEAT_CELL_MIN_PX, 9);
   assert.equal(heatCellPx(400, 53), HEAT_CELL_MIN_PX);
   // 常规卡宽约 918：floor((918-22)/53)-3 = 13，吃满而不是停在更小档
   assert.equal(heatCellPx(918, 53), 13);
-  // 单模布局（2026-10-16）：胶囊全上卡头、主区无左栏，满宽都给格子
-  // ——1440 限宽页卡内约 1360：floor((1360-22)/53)-3 = 22
-  assert.equal(heatCellPx(1360, 53), 22);
+  // 1440 限宽页卡内约 1360：原先吃满到 22，现封顶 14，余量给右侧统计栏
+  assert.equal(heatCellPx(1360, 53), 14);
   // 再宽也停在上限，不再长成地砖
   assert.equal(heatCellPx(1720, 53), HEAT_CELL_MAX_PX);
   assert.equal(heatCellPx(4000, 53), HEAT_CELL_MAX_PX);
@@ -182,4 +181,12 @@ test("heatCellPx：整数倍屏按设备像素分档，非整数缩放仍按整 
   // 125% / 150%：3px 间距本就落不到整设备像素，维持整 CSS px，与 dpr=1 同值
   assert.equal(heatCellPx(918, 53, 1.25), 13);
   assert.equal(heatCellPx(918, 53, 1.5), 13);
+});
+
+test("heatSideFits：格子封顶后右边空出 ≥ 232 才挪统计栏", async () => {
+  const { heatSideFits, heatCellPx } = await import("../src/usage-activity.ts");
+  // 1440 页卡内约 1328、57 周：网格 22 + 17×57 = 991，余 337 → 右挂
+  assert.equal(heatSideFits(1328, heatCellPx(1328, 57), 57), true);
+  // 窄卡 918：格子 12，网格 877，余 41 → 统计照旧在下面
+  assert.equal(heatSideFits(918, heatCellPx(918, 57), 57), false);
 });

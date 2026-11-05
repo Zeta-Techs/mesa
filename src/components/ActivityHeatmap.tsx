@@ -25,6 +25,7 @@ import {
   buildRollingGrid,
   HEAT_WELL_PAD_PX,
   heatCellPx,
+  heatSideFits,
   levelOf,
   levelThresholds,
   mainTokens,
@@ -105,6 +106,8 @@ export default function ActivityHeatmap({
    *  吃满卡宽；主区恒收成内容宽在卡内居中（2026-10-31），卡片保持列宽对齐兄弟卡。
    *  容器查询在本环境不稳，ResizeObserver 确定性写入 */
   const [cellPx, setCellPx] = useState(11);
+  /** 格子封顶后右边够宽：统计挪到右侧一栏（2026-11-05） */
+  const [side, setSide] = useState(false);
   const weeksRef = useRef(53);
   const tableRef = useRef<HTMLTableElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -223,14 +226,18 @@ export default function ActivityHeatmap({
     const track = measureRef.current;
     if (!track || typeof ResizeObserver === "undefined") return;
     let cell = 11;
+    let sideNow = false;
     const sync = (urgent: boolean) => {
       const inner = Math.max(0, track.clientWidth - HEAT_WELL_PAD_PX);
       const nextCell = heatCellPx(inner, weeksRef.current, window.devicePixelRatio);
-      if (nextCell === cell) return;
-      // 格子边长变了，开着的浮层锚定坐标全部作废，一并关掉
+      const nextSide = heatSideFits(inner, nextCell, weeksRef.current);
+      if (nextCell === cell && nextSide === sideNow) return;
+      // 格子边长或布局变了，开着的浮层锚定坐标全部作废，一并关掉
       cell = nextCell;
+      sideNow = nextSide;
       const apply = () => {
         setCellPx(nextCell);
+        setSide(nextSide);
         setTip(null);
         setPop(null);
       };
@@ -675,6 +682,7 @@ export default function ActivityHeatmap({
         )}
       </div>
 
+      <div className={side ? "ccode-heat-body is-side" : "ccode-heat-body"}>
       <div className="ccode-heat-main">
       <div
         className="ccode-heat-grid"
@@ -764,7 +772,7 @@ export default function ActivityHeatmap({
         </table>
       </div>
       <div className="ccode-heat-foot">
-        {statsLine}
+        {side ? <span /> : statsLine}
         <span
           className="ccode-heat-scale shrink-0"
           title="颜色按所选范围内有用量的日子相对分档，越深当天用量越大"
@@ -781,6 +789,24 @@ export default function ActivityHeatmap({
           <span className="text-micro text-l4">多</span>
         </span>
       </div>
+      </div>
+      {side && (
+        // 右侧统计栏（2026-11-05）：格子封顶 14px 后多出的宽度用来把四个数写大，不再挤在网格下面一行
+        <dl className="ccode-heat-side grid shrink-0 grid-cols-2 gap-x-6 gap-y-4 tabular-nums">
+          {[
+            ["活跃", `${stats.activeDays} 天`],
+            ["连续", `${stats.streak.current} 天`],
+            ["最长", `${stats.streak.longest} 天`],
+            ["峰值", compact(stats.peakTokens)],
+          ].map(([k, v]) => (
+            <div key={k} className="min-w-0">
+              <dt className="text-xs text-l3">{k}</dt>
+              <dd className="mt-0.5 text-lg font-medium text-l1">{v}</dd>
+            </div>
+          ))}
+          {peakSuffix && <p className="col-span-2 -mt-2 text-micro text-l4">峰值在 {peakSuffix}</p>}
+        </dl>
+      )}
       </div>
 
       {tip &&
