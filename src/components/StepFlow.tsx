@@ -2858,6 +2858,12 @@ export default function StepFlow({
                 >
                   TASK.md
                 </button>
+                {/* R5 补一句：刚进项目的人会以为要先商量才能开始（2026-11-05 用户反馈）。商量过 / 任务书改过就不再说 */}
+                {!discussed && !draftHasBody && (
+                  <span className="text-micro text-l4">
+                    可选。想先调整这一步怎么做时用；不用改就直接点「开始」
+                  </span>
+                )}
               </div>
             )}
             {chatError && (
