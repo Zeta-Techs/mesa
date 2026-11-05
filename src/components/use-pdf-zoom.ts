@@ -187,16 +187,34 @@ export function usePdfGestureZoom({
       return best ? { el: best.el, fx: best.fx, fy: best.fy, vx, vy } : null;
     };
 
+    // 一帧只提交一次（2026-11-05 用户：缩放不丝滑）：触控板 / 滚轮一帧能来好几个事件，
+    // 每个都量锚点、重渲整列页槽会把帧拖长；倍率仍在事件里同步累积，只把「量锚点 + 提交」并到下一帧
+    let frame: number | null = null;
+    let framePointer: { x: number; y: number } | null = null;
+    const flushZoom = () => {
+      frame = null;
+      const pointer = framePointer;
+      framePointer = null;
+      const next = targetScaleRef.current;
+      if (!pointer) return;
+      if (next === scaleRef.current) {
+        // 一帧内放大又缩回原倍率：没有提交，也就不会有停稳回调来清标记
+        liveZoomingRef.current = false;
+        return;
+      }
+      const anchor = anchorOf(pointer);
+      if (!anchor) return; // 页盒还没渲染出来，等下一个事件
+      pendingAnchorRef.current = { ...anchor, to: next };
+      onCommitRef.current(next);
+    };
     const queueZoom = (nextScale: number, pointer: { x: number; y: number }) => {
       const next = Math.min(maxScaleRef.current, clampPdfScale(nextScale));
       // 钳制到顶/底后倍率不再变：不记锚点不提交，避免滞留锚点在下次无关重排时误跳
       if (next === scaleRef.current && next === targetScaleRef.current) return;
-      const anchor = anchorOf(pointer);
-      if (!anchor) return; // 页盒还没渲染出来，等下一帧事件
       liveZoomingRef.current = true;
       targetScaleRef.current = next;
-      pendingAnchorRef.current = { ...anchor, to: next };
-      onCommitRef.current(next);
+      framePointer = pointer;
+      if (frame == null) frame = requestAnimationFrame(flushZoom);
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -242,6 +260,7 @@ export function usePdfGestureZoom({
     window.addEventListener("gestureend", onGestureEnd, gestureOpts);
     window.addEventListener("gesturecancel", onGestureEnd, gestureOpts);
     return () => {
+      if (frame != null) cancelAnimationFrame(frame);
       el.removeEventListener("wheel", onWheel, wheelOpts);
       window.removeEventListener("gesturestart", onGestureStart, gestureOpts);
       window.removeEventListener("gesturechange", onGestureChange, gestureOpts);

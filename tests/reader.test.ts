@@ -66,6 +66,7 @@ import {
   loadReaderTlCard,
   saveReaderTlCard,
   type TlHistoryEntry,
+  pdfRenderWindow,
 } from "../src/reader.ts";
 
 test("nextFitScale：无效宽返回 null，亚像素变化保持原值", () => {
@@ -788,4 +789,20 @@ test("rewriteMdImageHtml：把音频写成图片的不去读图，留文字（�
   assert.ok(html.includes("🔊 读音"));
   assert.ok(!html.includes('data-md-src="mesa.aiff"'));
   assert.ok(html.includes('data-md-src="a.png"'));
+});
+
+test("pdfRenderWindow：可见页 ±2 挂载，画过的页 ±5 内不卸载，下界不再恒为第 1 页", () => {
+
+  // 滚到第 20 页：只挂 18–22，不再把 1–17 全挂着
+  const a = pdfRenderWindow(new Set([20]), new Set(), 40, 2, 5);
+  assert.deepEqual(a.renderRange, { lo: 18, hi: 22 });
+  assert.deepEqual([...a.mounted].sort((x, y) => x - y), [18, 19, 20, 21, 22]);
+  // 往下滚到 23：18 还在 ±5 内留着，再往下到 30 才卸
+  const b = pdfRenderWindow(new Set([23]), a.mounted, 40, 2, 5);
+  assert.ok(b.mounted.has(18) && b.mounted.has(25));
+  const c = pdfRenderWindow(new Set([30]), b.mounted, 40, 2, 5);
+  assert.ok(!c.mounted.has(18) && !c.mounted.has(24) && c.mounted.has(28));
+  // 文档没开 / 可见集为空
+  assert.equal(pdfRenderWindow(null, new Set(), 10, 2, 5).mounted.size, 0);
+  assert.deepEqual(pdfRenderWindow(new Set(), new Set(), 10, 2, 5).renderRange, { lo: 1, hi: 3 });
 });

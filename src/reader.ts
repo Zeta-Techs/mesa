@@ -1027,3 +1027,32 @@ export function findGlossaryMatches(
   }
   return out;
 }
+
+/**
+ * 连续阅读的渲染窗口（2026-11-05 用户：滚动卡）：可见页 ±margin 挂 canvas + 文本层；已画过的页滚出去后
+ * 在 ±keep 内先留着（来回滚不重画），出了才卸载。seen = null 表示文档还没打开。
+ * 旧写法下界从 1 起算再取 min，恒为第 1 页——滚到第 N 页时 1…N+2 页全挂着，越往后越卡。
+ */
+export function pdfRenderWindow(
+  seen: ReadonlySet<number> | null,
+  prevMounted: ReadonlySet<number>,
+  pageCount: number,
+  margin: number,
+  keep: number,
+): { renderRange: { lo: number; hi: number }; mounted: ReadonlySet<number> } {
+  const mounted = new Set<number>();
+  if (!seen) return { renderRange: { lo: 1, hi: 0 }, mounted };
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (const n of seen) {
+    lo = Math.min(lo, n);
+    hi = Math.max(hi, n);
+  }
+  if (lo === Number.POSITIVE_INFINITY) lo = hi = 1;
+  const renderRange = { lo: Math.max(1, lo - margin), hi: Math.min(pageCount, hi + margin) };
+  for (const n of prevMounted) {
+    if (n >= lo - keep && n <= hi + keep && n >= 1 && n <= pageCount) mounted.add(n);
+  }
+  for (let n = renderRange.lo; n <= renderRange.hi; n++) mounted.add(n);
+  return { renderRange, mounted };
+}

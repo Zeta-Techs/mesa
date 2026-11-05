@@ -32,6 +32,7 @@ import {
   type PageBox,
   type RawTextSpan,
   type ReaderTranslateResult,
+  pdfRenderWindow,
 } from "../reader";
 import {
   findAllIn,
@@ -88,6 +89,8 @@ interface IndexedPage {
 const FALLBACK_PAGE = { w: 595, h: 842 };
 /** 离窗页的预渲染带宽：可视窗口上下各扩展的页数 */
 const RENDER_MARGIN = 2;
+/** 已画好的页滚出 ±RENDER_MARGIN 后先留着，出了 ±KEEP_MARGIN 才卸载：来回滚不重画（2026-11-05 用户：滚动卡） */
+const KEEP_MARGIN = 5;
 /** 适配宽度重算的停稳阈值：容器宽度连续变化（侧栏收起动画/分隔条拖拽）期间
  *  RO 逐帧连发，等停稳这么多毫秒才重算换挡（与 use-pdf-zoom 的 120ms 位图
  *  去抖同量级，衔接成「布局停稳 → 位图追平」两段收口） */
@@ -536,20 +539,16 @@ function PdfContinuousView({
     };
   }, [doc]);
 
-  // 渲染窗口 = 可视页 ±2（离窗页只留骨架占位）
-  const renderRange = (() => {
-    if (!doc) return { lo: 1, hi: 0 };
-    let lo = 1;
-    let hi = 1;
-    for (const n of seenPages) {
-      lo = Math.min(lo, n);
-      hi = Math.max(hi, n);
-    }
-    return {
-      lo: Math.max(1, lo - RENDER_MARGIN),
-      hi: Math.min(pageCount, hi + RENDER_MARGIN),
-    };
-  })();
+  // 渲染窗口 = 可视页 ±2，画过的页 ±5 内不卸载（pdfRenderWindow，reader.ts；离窗页只留骨架占位）
+  const mountedPagesRef = useRef<ReadonlySet<number>>(new Set());
+  const { renderRange, mounted: mountedPages } = pdfRenderWindow(
+    doc ? seenPages : null,
+    mountedPagesRef.current,
+    pageCount,
+    RENDER_MARGIN,
+    KEEP_MARGIN,
+  );
+  mountedPagesRef.current = mountedPages;
 
   // 进入渲染窗口的页补测原始尺寸（pdfjs 的 getPage 有内部缓存，代价低）
   useEffect(() => {
@@ -578,13 +577,37 @@ function PdfContinuousView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, renderRange.lo, renderRange.hi]);
 
+  // 缩放期间攒下的可见性变化：renderScale 追上（= 停稳）时一次并进 seenPages
+  const pendingVisRef = useRef<Map<number, boolean>>(new Map());
+  useEffect(() => {
+    const pending = pendingVisRef.current;
+    if (pending.size === 0) return;
+    pendingVisRef.current = new Map();
+    setSeenPages((prev) => {
+      const next = new Set(prev);
+      for (const [n, vis] of pending) {
+        if (vis) next.add(n);
+        else next.delete(n);
+      }
+      return next;
+    });
+  }, [renderScale]);
+
   // 可视窗口跟踪：slot 全部常驻（占位或真渲染），IO 只汇报可见性
   useEffect(() => {
     const rootEl = scrollRef.current;
     if (!rootEl || !doc) return;
     const io = new IntersectionObserver(
       (entries) => {
-        if (liveZoomingRef.current) return;
+        // 缩放中先攒着、停稳再并进去（2026-11-05 修：旧写法直接丢，IO 不会为同一状态再报一次——
+        // 缩小后新露出的页一直是占位、放大后滚出去的页不卸载，停稳那一下多画好几页）
+        if (liveZoomingRef.current) {
+          for (const e of entries) {
+            const n = Number((e.target as HTMLElement).dataset.pageSlot);
+            if (n) pendingVisRef.current.set(n, e.isIntersecting);
+          }
+          return;
+        }
         setSeenPages((prev) => {
           const next = new Set(prev);
           for (const e of entries) {
@@ -1519,7 +1542,7 @@ function PdfContinuousView({
           >
             {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => {
               const natural = pageSizes[n] ?? firstSize;
-              const shouldRender = n >= renderRange.lo && n <= renderRange.hi;
+              const shouldRender = mountedPages.has(n);
               const boxW = Math.floor(natural.w * scale);
               const boxH = Math.floor(natural.h * scale);
               return (
@@ -1542,7 +1565,7 @@ function PdfContinuousView({
                     className={
                       shouldRender
                         ? "overflow-hidden bg-white"
-                        : "animate-pulse rounded-sm bg-inset"
+                        : "rounded-sm bg-inset"
                     }
                     style={{ width: boxW, height: boxH }}
                   >

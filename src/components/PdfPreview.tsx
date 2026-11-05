@@ -325,13 +325,14 @@ export const PdfPageView = memo(function PdfPageView({
         const cssW = Math.floor(viewport.width);
         const cssH = Math.floor(viewport.height);
         const out = pdfCanvasOutputScale(cssW, cssH, dpr);
-        // 离屏画完再换上：一改可见 canvas.width 会立刻清空当前帧，缩放提交时闪/抖
+        // 离屏画完再换上：一改可见 canvas.width 会立刻清空当前帧，缩放提交时闪/抖。
+        // 不设 willReadFrequently（2026-11-05 修滚动 / 缩放卡）：WebKit 会因此把画布放 CPU、不进合成层，
+        // 这里从不读回像素（截图走 drawImage）；alpha:true 仍要先绑（Windows 白屏，见 AGENTS 环境档案）
         const off = document.createElement("canvas");
         off.width = Math.max(1, Math.floor(cssW * out.sx));
         off.height = Math.max(1, Math.floor(cssH * out.sy));
         const offCtx = off.getContext("2d", {
           alpha: true,
-          willReadFrequently: true,
         });
         if (!offCtx) throw new Error("无法创建画布");
         const needScale =
@@ -348,7 +349,6 @@ export const PdfPageView = memo(function PdfPageView({
         if (!canvas || !host) return;
         const visCtx = canvas.getContext("2d", {
           alpha: true,
-          willReadFrequently: true,
         });
         if (!visCtx) throw new Error("无法创建画布");
         canvas.width = off.width;
