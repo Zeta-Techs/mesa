@@ -1783,7 +1783,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                       selectedTaskId={navSelected?.card === card ? (navSelected.task?.id ?? null) : null}
                       onOpenTask={(task) => {
                         setSelectedKey(`t:${card.path}\n${task.id}`);
-                        if (assistantOpen) closeAssistant();
+                        // 浮层抽屉与任务面板同位互斥；常驻侧栏不挡，留着
+                        if (assistantOpen && !useAppStore.getState().assistantDocked) closeAssistant();
                         setOpenTask({ path: card.path, taskId: task.id });
                       }}
                       runs={allRuns}

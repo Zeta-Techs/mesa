@@ -90,7 +90,13 @@ export default function ProjectAssistantPanel({
   ask,
   onAction,
   onDispatch,
+  where = "",
+  docked = null,
 }: {
+  /** 用户此刻在看哪（「项目页 · HER催化综述 ·「定时任务」页签」）：提问时附上，问「这个提示什么意思」时它知道「这个」在哪 */
+  where?: string;
+  /** 常驻侧栏（宿主够宽时给）；null = 浮层抽屉 */
+  docked?: { width: number; onResize: (width: number) => void; onResizeEnd?: () => void } | null;
   open: boolean;
   onClose: () => void;
   projectPath: string | null;
@@ -216,7 +222,12 @@ export default function ProjectAssistantPanel({
       }
       return;
     }
-    const plan = planAsk(q, !!withFocus, project, forced);
+    const planned = planAsk(q, !!withFocus, project, forced);
+    // 带截图的多半在问眼前这个项目里的东西：说明书和项目记录都看（2026-11-05：「这个提示什么意思」+ 截图只翻了说明书，没对上项目的实际产物）
+    const plan =
+      attached.length && !forced && (planned.intent === "howto" || planned.intent === "general" || planned.intent === "chat")
+        ? { ...planned, intent: "mixed" as const }
+        : planned;
     setIntent(plan.intent);
     setInspecting(plan.inspect);
     setBusy(true);
@@ -239,6 +250,7 @@ export default function ProjectAssistantPanel({
         intent: plan.intent,
         inspect: plan.inspect,
         images: attached.map((img) => img.path),
+        where,
         onStream: (update) => {
           if (update.text !== undefined) setLiveText(update.text);
           if (update.step) setLiveStep(update.step);
@@ -423,6 +435,7 @@ export default function ProjectAssistantPanel({
       subtitle={projectName}
       titleIcon={empty ? <></> : <MesaBuddy size={34} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
+      docked={docked}
     >
       {empty ? (
         <div className="px-1 pt-8">

@@ -908,6 +908,9 @@ interface AppState {
   } | null;
   openAssistant: (path: string, question?: string, focus?: { title: string; detail: string; runId?: string | null } | null) => void;
   closeAssistant: () => void;
+  /** 项目助手此刻是常驻侧栏（不挡页面）：按钮跳转、开任务面板时不用关它（2026-11-05） */
+  assistantDocked: boolean;
+  setAssistantDocked: (docked: boolean) => void;
   /** 工作台打开某个项目第几步的任务面板（项目助手「看第 N 步」从别的页来也能落到那一行） */
   workbenchTaskReq: { path: string; stepIndex: number; nonce: number } | null;
   setWorkbenchTaskReq: (req: AppState["workbenchTaskReq"]) => void;
@@ -1368,6 +1371,8 @@ export const useAppStore = create<AppState>((set, get) => {
   openAssistant: (path, question, focus) =>
     set((st) => ({ assistantReq: { path, question, focus: focus ?? null, nonce: (st.assistantReq?.nonce ?? 0) + 1 } })),
   closeAssistant: () => set({ assistantReq: null }),
+  assistantDocked: false,
+  setAssistantDocked: (docked) => set({ assistantDocked: docked }),
   workbenchTaskReq: null,
   setWorkbenchTaskReq: (req) => set({ workbenchTaskReq: req }),
   filePreviewReq: null,

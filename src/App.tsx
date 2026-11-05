@@ -2449,6 +2449,8 @@ function App() {
                 )}
               </div>
             </main>
+            {/* 项目助手常驻侧栏的位置（2026-11-05）：ProjectAssistantHost 够宽时把面板放进这里，主区让出宽度；不够宽仍是浮层抽屉 */}
+            <div id="ccode-assistant-dock" className="flex h-full min-h-0 shrink-0" />
           </div>
           {paletteOpen && (
             <CommandPalette

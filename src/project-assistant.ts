@@ -245,6 +245,8 @@ export interface AssistantMaterials {
   context?: string | null;
   /** 只读查看项目文件时的那段说明（inspectRules） */
   inspect?: string | null;
+  /** 用户此刻在看哪（2026-11-05）：「这个提示」「这里」指的是这一页上的东西 */
+  where?: string | null;
 }
 
 export function buildAssistantPrompt(
@@ -268,6 +270,7 @@ export function buildAssistantPrompt(
       : "";
   return [
     rules,
+    input.where ? `---\n## 用户提问时正在看\n${input.where}（问题里的「这个」「这里」多半指这一页上的东西）` : "",
     input.inspect ? `---\n## 这次可以只读查看项目文件\n${input.inspect}` : "",
     input.context ? `---\n## 项目概况\n${input.context}` : "",
     input.snapshot ? `---\n${input.snapshot}` : "",

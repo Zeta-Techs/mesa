@@ -255,3 +255,10 @@ test("换个查法：按依据给另一种，两样都看过 / 本地现答的�
   assert.deepEqual(retryIntents("说明书「x」 · 这个项目的记录", "x"), []);
   assert.deepEqual(retryIntents("", "本地直接回答（没调 AI）"), []);
 });
+
+test("提问时附上用户正在看哪一页；没有就不写这一段", async () => {
+  const { buildAssistantPrompt } = await import("../src/project-assistant.ts");
+  const withWhere = buildAssistantPrompt({ intent: "mixed", history: [], question: "这个提示什么意思", where: "项目页 · 「HER」 · 「定时任务」页签" });
+  assert.match(withWhere, /## 用户提问时正在看\n项目页 · 「HER」 · 「定时任务」页签/);
+  assert.doesNotMatch(buildAssistantPrompt({ intent: "mixed", history: [], question: "q" }), /正在看/);
+});

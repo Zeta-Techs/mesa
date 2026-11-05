@@ -22,14 +22,18 @@ export async function runAssistantAction(
 ): Promise<void> {
   const st = useAppStore.getState();
   const { path, project } = ctx;
+  // 常驻侧栏不挡页面：跳过去时留着它，边看边对照；浮层抽屉照旧先收起（2026-11-05）
+  const leave = () => {
+    if (!useAppStore.getState().assistantDocked) st.closeAssistant();
+  };
   const toProject = () => {
-    st.closeAssistant();
+    leave();
     st.setSelectProjectReq(path);
     st.setPage("workspaces");
   };
   switch (action.kind) {
     case "step":
-      st.closeAssistant();
+      leave();
       st.setWorkbenchTaskReq({ path, stepIndex: (action.step ?? 1) - 1, nonce: Date.now() });
       st.setPage("workbench");
       return;
@@ -55,7 +59,7 @@ export async function runAssistantAction(
     case "review": {
       try {
         const { ws } = await stepWorkspace(path, action.step ?? 0);
-        st.closeAssistant();
+        leave();
         st.setWorkspaceReviewRequest({ worktreePath: ws.worktreePath, runId: null, requestId: crypto.randomUUID() });
         st.setPage("terminal");
       } catch (reason) {
@@ -76,15 +80,15 @@ export async function runAssistantAction(
       toProject();
       return;
     case "profiles":
-      st.closeAssistant();
+      leave();
       st.setPage("profiles");
       return;
     case "settings":
-      st.closeAssistant();
+      leave();
       st.setPage("settings");
       return;
     case "discuss":
-      st.closeAssistant();
+      leave();
       beginAskAi({
         path: "",
         name: project?.name ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path,

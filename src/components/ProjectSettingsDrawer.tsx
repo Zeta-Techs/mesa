@@ -21,6 +21,7 @@ export function SettingsDrawerShell({
   footer,
   className = "",
   backdropClassName = "",
+  docked = null,
   children,
 }: {
   open: boolean;
@@ -37,6 +38,9 @@ export function SettingsDrawerShell({
   footer?: ReactNode;
   className?: string;
   backdropClassName?: string;
+  /** 常驻在页面右侧（项目助手，2026-11-05 用户拍板「右侧常驻侧栏」）：不压暗、不锁滚动、不困住焦点，页面照常能点；
+   *  宽度由宿主给，左缘可拖。不给就是原来的浮层抽屉 */
+  docked?: { width: number; onResize: (width: number) => void; onResizeEnd?: () => void } | null;
   children: ReactNode;
 }) {
   const titleId = useId();
@@ -46,7 +50,7 @@ export function SettingsDrawerShell({
   onCloseRef.current = onClose;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || docked) return;
     const previous = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -81,9 +85,62 @@ export function SettingsDrawerShell({
       document.body.style.overflow = previousOverflow;
       previous?.focus();
     };
-  }, [open]);
+    // docked 只看有没有，宽度变不重挂
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, !!docked]);
 
   if (!render) return null;
+  // 常驻侧栏关掉就收，不等退场动画（它不是从右边滑进来的浮层）
+  if (docked && !open) return null;
+  const inner = renderInner();
+  if (docked) {
+    // 常驻侧栏：页面让出宽度（宿主放在主区右边的同一行里），左缘一条拖动条调宽窄；Esc 只在焦点在侧栏里时关
+    return (
+      <aside
+        ref={panelRef}
+        data-surface="canvas"
+        role="complementary"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        style={{ width: docked.width }}
+        className={`relative flex h-full shrink-0 flex-col border-l border-hairline bg-canvas outline-none ${className}`}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+          }
+        }}
+      >
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整宽度"
+          title="拖动调整宽度，双击恢复默认"
+          className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize hover:bg-hairline"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            const startX = event.clientX;
+            const startW = docked.width;
+            const move = (e: PointerEvent) => docked.onResize(startW + (startX - e.clientX));
+            const up = () => {
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", up);
+              document.body.style.cursor = "";
+              docked.onResizeEnd?.();
+            };
+            document.body.style.cursor = "col-resize";
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up);
+          }}
+          onDoubleClick={() => {
+            docked.onResize(-1);
+            docked.onResizeEnd?.();
+          }}
+        />
+        {inner}
+      </aside>
+    );
+  }
   return (
     <div
       className={`fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade ${backdropClassName}${exiting ? " ccode-exiting" : ""}`}
@@ -98,6 +155,14 @@ export function SettingsDrawerShell({
         tabIndex={-1}
         className={`ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas outline-none ${className}${exiting ? " ccode-exiting" : ""}`}
       >
+        {inner}
+      </aside>
+    </div>
+  );
+
+  function renderInner() {
+    return (
+      <>
         {titleIcon ? (
           // 带形象的抽屉（项目助手）：形象 + 标题，项目名在标题下一行，头下一道细线
           <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-5 py-3">
@@ -146,9 +211,9 @@ export function SettingsDrawerShell({
           {children}
         </div>
         {footer && <div className="shrink-0 border-t border-hairline px-5 pb-4 pt-3">{footer}</div>}
-      </aside>
-    </div>
-  );
+      </>
+    );
+  }
 }
 
 /** 「规则与验收」分区：规则 + 验收记录 + 对话注入，三种工作方式同一份
