@@ -24,8 +24,7 @@ import {
   activeMainDays,
   buildRollingGrid,
   HEAT_WELL_PAD_PX,
-  heatCellPx,
-  heatSideFits,
+  heatLayout,
   levelOf,
   levelThresholds,
   mainTokens,
@@ -229,8 +228,7 @@ export default function ActivityHeatmap({
     let sideNow = false;
     const sync = (urgent: boolean) => {
       const inner = Math.max(0, track.clientWidth - HEAT_WELL_PAD_PX);
-      const nextCell = heatCellPx(inner, weeksRef.current, window.devicePixelRatio);
-      const nextSide = heatSideFits(inner, nextCell, weeksRef.current);
+      const { cell: nextCell, side: nextSide } = heatLayout(inner, weeksRef.current, window.devicePixelRatio);
       if (nextCell === cell && nextSide === sideNow) return;
       // 格子边长或布局变了，开着的浮层锚定坐标全部作废，一并关掉
       cell = nextCell;

@@ -207,12 +207,15 @@ export const HEAT_GAP_PX = 3;
 /** 格子下限（2026-10-31 用户拍板 11 → 9）：窗口铺满去年同月 1 日到今天最多 57 周，11px 要约 820px，
  *  分屏 / 窄窗下卡片放不下就出横向滚动条；9px 仍是圆角正方形，形状、圆角比例、3px 间距都不变 */
 export const HEAT_CELL_MIN_PX = 9;
-/** 格子边长上限：2026-11-05 用户「方格子是不是太大了」28 → 14（GitHub 贡献图约 10–11px）。
- *  原先（10-16）为吃满卡宽两轮上调到 28，1440 限宽下实际 ~22px，成片琥珀方砖太重；
- *  封顶后多出来的宽度给右侧统计栏（heatSideFits），不再靠放大格子填满 */
-export const HEAT_CELL_MAX_PX = 14;
-/** 右侧统计栏至少要这么宽（四个数两列两行），连同与网格的间距 */
+/** 格子边长上限：2026-11-05 用户「方格子是不是太大了」28 → 16（GitHub 贡献图约 10–11px）。
+ *  原先（10-16）为吃满卡宽两轮上调到 28，1440 限宽下实际 ~22px，成片琥珀方砖太重。
+ *  同日先收到 14 + 统计栏居中，用户「左右留白有点大」→ 宽卡改为右侧先留统计栏、格子在剩下的宽度里取最大（≤16），
+ *  网格贴卡片左缘、统计栏贴右缘（heatLayout） */
+export const HEAT_CELL_MAX_PX = 16;
+/** 右侧统计栏占的宽度（四个数两列两行，连同与网格的间距） */
 export const HEAT_SIDE_PX = 232;
+/** 留出统计栏后格子至少要这么大才并排；更小就不并排，统计照旧写在网格下面、格子吃满 */
+export const HEAT_SIDE_MIN_CELL_PX = 12;
 /** 活跃度卡 `p-4` 左右合计。哨兵量的是卡外满宽，算格子前要扣掉。 */
 export const HEAT_WELL_PAD_PX = 32;
 
@@ -220,10 +223,12 @@ export const HEAT_WELL_PAD_PX = 32;
  *  整数倍屏（Mac 视网膜 2x）按 1/dpr 步进，每格、每道间距仍落在整设备像素上、列宽一致，
  *  窗口拉伸时网格每档只跳约 57×0.5px 而不是 57px；非整数缩放（Windows 125%/150%）
  *  3px 间距本就落不到整设备像素，维持整 CSS px 步进不变。 */
-/** 格子封顶后网格右边空出来的够不够放统计栏：够就把「活跃 / 连续 / 最长 / 峰值」挪到右侧，不够照旧写在网格下面 */
-export function heatSideFits(avail: number, cell: number, weeks: number): boolean {
-  const gridW = HEAT_LABEL_PX + (cell + HEAT_GAP_PX) * Math.max(1, weeks);
-  return avail - gridW >= HEAT_SIDE_PX;
+/** 宽卡：先给右侧统计栏留出 HEAT_SIDE_PX，剩下的宽度里格子取最大（≤16）；这样格子仍 ≥ 12 才并排，
+ *  否则不并排、统计写在网格下面，格子按整张卡宽取 */
+export function heatLayout(avail: number, weeks: number, dpr = 1): { cell: number; side: boolean } {
+  const withSide = heatCellPx(avail - HEAT_SIDE_PX, weeks, dpr);
+  if (withSide >= HEAT_SIDE_MIN_CELL_PX) return { cell: withSide, side: true };
+  return { cell: heatCellPx(avail, weeks, dpr), side: false };
 }
 
 export function heatCellPx(avail: number, weeks: number, dpr = 1): number {
