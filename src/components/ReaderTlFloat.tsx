@@ -31,6 +31,7 @@ export default function ReaderTlFloat({
   openTick,
   startOpen,
   bounds,
+  autoPos,
 }: {
   /** 译文卡除摆位外的全部 props（ReaderOverlay 的 tlPanelProps） */
   panelProps: PanelProps;
@@ -42,11 +43,19 @@ export default function ReaderTlFloat({
   startOpen?: boolean;
   /** PDF 栏离覆盖层四边的 px：球和卡都只在 PDF 栏里，不盖笔记栏/右栏/顶栏 */
   bounds?: ReaderPdfBounds;
+  /** 新译文落地时球该在的位置（原文段旁，ReaderOverlay 量好按译文条目给 key）：换 key 就挪过去，
+   *  不记进位置记忆；之后拖动照旧记（2026-11-05 用户：段落在下面、球在上面） */
+  autoPos?: { xp: number; yp: number; key: string } | null;
 }) {
   const [pos, setPos] = useState(() => loadReaderTlBall());
   const posRef = useRef(pos);
   posRef.current = pos;
   const [open, setOpen] = useState(Boolean(startOpen));
+  useEffect(() => {
+    if (autoPos) setPos({ xp: autoPos.xp, yp: autoPos.yp });
+    // 同一条译文的两次测量（120ms / 500ms）坐标可能微调，跟着走；换条目时 key 变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPos?.key, autoPos?.xp, autoPos?.yp]);
   const ballRef = useRef<HTMLButtonElement>(null);
   // openTick 只认「递进」不认存量：记下挂载时的计数，之后变化才是新信号
   // （StrictMode 双挂载 ref 保留：记值式哨兵不受 setup→cleanup→setup 影响）

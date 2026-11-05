@@ -239,6 +239,31 @@ export function readerTlBallOffset(pct: number, near: number, span: number): str
   return `calc(${near}px + clamp(18px, calc((100% - ${span}px) * ${pct / 100}), calc(100% - ${span}px - 18px)))`;
 }
 
+/** 新译文落地时「译」球摆到原文段旁（2026-11-05 用户：段落在下面、球在上面）：段落右边外侧、对齐首行；
+ *  右边放不下放左边外侧，都放不下贴 PDF 栏右缘。坐标都是覆盖层根 px，返回球在 PDF 栏里的百分比
+ *  （与 readerTlBallOffset 同一换算）。只摆这一次、不记进位置记忆，拖过照旧记 */
+export function readerTlBallNear(
+  para: { top: number; left: number; right: number },
+  bounds: ReaderPdfBounds,
+  root: { width: number; height: number },
+): { xp: number; yp: number } | null {
+  const top = bounds.top ?? 0;
+  const bottom = bounds.bottom ?? 0;
+  const colW = root.width - bounds.left - bounds.right;
+  const colH = root.height - top - bottom;
+  if (colW <= 36 || colH <= 36) return null;
+  const R = 18;
+  const gap = 22;
+  const colRight = root.width - bounds.right;
+  let x = para.right + gap;
+  if (x > colRight - R) {
+    const leftSide = para.left - gap;
+    x = leftSide >= bounds.left + R ? leftSide : colRight - R;
+  }
+  const y = Math.min(Math.max(para.top + R, top + R), root.height - bottom - R);
+  return clampReaderTlBall(((x - bounds.left) / colW) * 100, ((y - top) / colH) * 100);
+}
+
 /** 译文卡避让它的原文段（覆盖层根坐标 px）：只看横向压没压到——上下换位不改横向范围，
  *  判定不会来回翻；压到了摆到原文段下方或上方（下方够 160px 或比上方大就放下方），
  *  两边都不足 120px 就不避让。below：top = px；above：bottom = px；room = 那一侧可用高度 */

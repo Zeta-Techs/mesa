@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fileStamp, stampKey } from "../file-watch";
 import PreviewErrorState from "./PreviewErrorState";
 import * as pdfjs from "pdfjs-dist";
+import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 // textLayer 的官方样式（选区/定位规则）；随本组件进懒加载 chunk
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -24,6 +25,7 @@ import {
   buildSearchStream,
   findAllInStream,
   matchSegments,
+  clipRectsToSpan,
   mergeLineRects,
   quoteSearchCandidates,
   type PdfMarkRect,
@@ -198,11 +200,16 @@ function measureMarks(
     for (const at of picked) {
       const px: PdfMarkRect[] = [];
       for (const seg of matchSegments(stream, at, q.length)) {
-        const range = rangeInSpan(spans[seg.piece], seg.from, seg.to);
+        const span = spans[seg.piece];
+        const range = rangeInSpan(span, seg.from, seg.to);
         if (!range) continue;
-        for (const r of Array.from(range.getClientRects())) {
-          px.push({ x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height });
-        }
+        const segRects = Array.from(range.getClientRects()).map((r) => ({
+          x: r.left - hr.left,
+          y: r.top - hr.top,
+          w: r.width,
+          h: r.height,
+        }));
+        px.push(...clipRectsToSpan(segRects, spanTrueBox(span as HTMLElement, hr.width)));
       }
       const rects = mergeLineRects(px).map((r) => ({
         x: (r.x / hr.width) * 100,
@@ -214,6 +221,16 @@ function measureMarks(
     }
   }
   return out;
+}
+
+/** 文本片的字实际占的横向范围（页宿主像素）：渲染时按 PDF 文本项宽度记进 data-tw（页宽百分比）；
+ *  没记（旋转页 / 单字片）返回 null 不夹 */
+function spanTrueBox(span: HTMLElement, hostWidth: number): { left: number; right: number } | null {
+  const tw = Number(span.dataset.tw);
+  const left = parseFloat(span.style.left);
+  if (!Number.isFinite(tw) || tw <= 0 || !Number.isFinite(left)) return null;
+  const l = (left / 100) * hostWidth;
+  return { left: l, right: l + (tw / 100) * hostWidth };
 }
 
 const NO_MARKS: readonly PdfPageMark[] = [];
@@ -373,8 +390,11 @@ export const PdfPageView = memo(function PdfPageView({
         // pdf.js 的 TextLayer 只往容器 append 不清空：重渲染前先清，
         // 否则缩放/重排后选段与高亮都会叠出重复文本片
         textRef.current!.replaceChildren();
+        // 先取全文本项（与 streamTextContent 同参），渲染后按顺序对上文本片、记下每片的真实字宽
+        const content = await page.getTextContent();
+        if (cancelled) return;
         const text = new pdfjs.TextLayer({
-          textContentSource: page.streamTextContent(),
+          textContentSource: content,
           container: textRef.current!,
           viewport,
         });
@@ -389,6 +409,22 @@ export const PdfPageView = memo(function PdfPageView({
         drawLayer.setParent(host);
         await text.render();
         if (!cancelled) {
+          // 每个文本片记下 PDF 文本项的真实宽度（页宽百分比，data-tw）：标记高亮按它横向夹边，
+          // 不跟着文本片的拉伸盒伸出栏外（textDivs 与有 str 的文本项一一对应、顺序一致）
+          const pageW = baseVp.width;
+          const items = content.items.filter(
+            (it): it is TextItem => "str" in it,
+          );
+          const divs = text.textDivs;
+          if (pageW > 0 && divs.length === items.length && page.rotate % 360 === 0) {
+            for (let i = 0; i < divs.length; i++) {
+              const it = items[i];
+              // 只记横排字（变换矩阵无旋转 / 斜切）
+              if (it.width > 0 && Math.abs(it.transform[1]) < 1e-6 && Math.abs(it.transform[2]) < 1e-6) {
+                divs[i].dataset.tw = ((it.width / pageW) * 100).toFixed(3);
+              }
+            }
+          }
           // 页尾捕手（官方 viewer 的 endOfContent，配合上面 selecting 类生效）；
           // DrawLayer 的 MutationObserver 也靠它感知重渲染后重算选区高亮
           const end = document.createElement("div");

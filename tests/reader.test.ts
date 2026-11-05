@@ -67,6 +67,7 @@ import {
   saveReaderTlCard,
   type TlHistoryEntry,
   pdfRenderWindow,
+  readerTlBallNear,
 } from "../src/reader.ts";
 
 test("nextFitScale：无效宽返回 null，亚像素变化保持原值", () => {
@@ -805,4 +806,19 @@ test("pdfRenderWindow：可见页 ±2 挂载，画过的页 ±5 内不卸载，�
   // 文档没开 / 可见集为空
   assert.equal(pdfRenderWindow(null, new Set(), 10, 2, 5).mounted.size, 0);
   assert.deepEqual(pdfRenderWindow(new Set(), new Set(), 10, 2, 5).renderRange, { lo: 1, hi: 3 });
+});
+
+test("readerTlBallNear：译球摆到原文段右侧外、对齐首行；右边放不下放左边，再不行贴栏右缘", () => {
+  const bounds = { left: 300, right: 400, top: 40, bottom: 0 };
+  const root = { width: 1700, height: 1040 }; // PDF 栏 = x 300–1300，y 40–1040
+  // 左栏段落（右缘 760）：球心 x = 782 → (782-300)/1000 = 48.2%；y = 首行 500+18 → (518-40)/1000
+  const a = readerTlBallNear({ top: 500, left: 320, right: 760 }, bounds, root)!;
+  assert.ok(Math.abs(a.xp - 48.2) < 1e-9 && Math.abs(a.yp - 47.8) < 1e-9);
+  // 段落贴着栏右缘：放到左侧外
+  const b = readerTlBallNear({ top: 500, left: 820, right: 1290 }, bounds, root)!;
+  assert.ok(Math.abs(b.xp - 49.8) < 1e-9);
+  // 整栏宽的段落：贴栏右缘（100%）
+  assert.equal(readerTlBallNear({ top: 500, left: 305, right: 1295 }, bounds, root)!.xp, 98.2);
+  // 栏太小不摆
+  assert.equal(readerTlBallNear({ top: 0, left: 0, right: 10 }, bounds, { width: 720, height: 1040 }), null);
 });

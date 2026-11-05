@@ -6,6 +6,7 @@ import {
   flattenPdfOutline,
   locateFigure,
   matchSegments,
+  clipRectsToSpan,
   mergeLineRects,
   normalizeSearchQuery,
   pageSearchLines,
@@ -158,4 +159,20 @@ test("标注重定位候选：原样 → 去词内连字符 → 前 60 字；查
   const long = "a".repeat(70);
   assert.deepEqual(quoteSearchCandidates(long), [long, "a".repeat(60)]);
   assert.deepEqual(quoteSearchCandidates("   "), []);
+});
+
+test("高亮矩形夹到文本片真实字宽；上标小字只横向并进行里，不撑高整行", () => {
+  // 文本片拉伸盒伸出栏外 30px：夹回字宽 [100, 400]
+  assert.deepEqual(clipRectsToSpan([{ x: 90, y: 10, w: 340, h: 12 }], { left: 100, right: 400 }), [
+    { x: 100, y: 10, w: 300, h: 12 },
+  ]);
+  // 整个落在字宽外（片尾空格的盒）丢掉；没有真实字宽时原样
+  assert.deepEqual(clipRectsToSpan([{ x: 405, y: 10, w: 8, h: 12 }], { left: 100, right: 400 }), []);
+  assert.deepEqual(clipRectsToSpan([{ x: 1, y: 2, w: 3, h: 4 }], null), [{ x: 1, y: 2, w: 3, h: 4 }]);
+  // 上标引用号 [1,2]（高 7、偏上）并进正文行：宽度并上，行的 y/h 不变
+  const merged = mergeLineRects([
+    { x: 10, y: 100, w: 200, h: 12 },
+    { x: 212, y: 97, w: 20, h: 7 },
+  ]);
+  assert.deepEqual(merged, [{ x: 10, y: 100, w: 222, h: 12 }]);
 });

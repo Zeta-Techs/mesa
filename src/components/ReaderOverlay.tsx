@@ -49,6 +49,7 @@ import {
   saveTlHistory,
   translationSavedToast,
   upsertTlEntry,
+  readerTlBallNear,
   type ReaderPdfBounds,
   type GlossaryEntry,
   type ReaderTranslateResult,
@@ -984,6 +985,8 @@ export default function ReaderOverlay({
   /** 译文卡正在摆出来的那条（面板经 onDisplay 报上来）：PDF 上常驻标出它的原文段，
       悬浮卡据此避开那段——卡压在原文上就没法对照（2026-10-23 用户点名） */
   const [tlShown, setTlShown] = useState<TlHistoryEntry | null>(null);
+  const tlShownAtRef = useRef<string | null>(null);
+  tlShownAtRef.current = tlShown?.at ?? null;
   const tlSource = useMemo(
     () => (tlShown ? { page: tlShown.page, quote: tlShown.original } : null),
     // 按条目身份比，不按对象：面板每次渲染报上来的是同一条
@@ -998,6 +1001,8 @@ export default function ReaderOverlay({
     left: number;
     right: number;
   } | null>(null);
+  /** 新译文时球该摆的位置（量到原文段才有；按译文条目记 key，同一条只摆一次） */
+  const [tlBallAuto, setTlBallAuto] = useState<{ xp: number; yp: number; key: string } | null>(null);
   useEffect(() => {
     if (!tlSource || !tlFloat) {
       setTlAvoid(null);
@@ -1023,12 +1028,25 @@ export default function ReaderOverlay({
         right = Math.max(right, r.right);
       });
       if (!Number.isFinite(top)) return;
-      setTlAvoid({
+      const box = {
         top: Math.round(top - rr.top),
         bottom: Math.round(bottom - rr.top),
         left: Math.round(left - rr.left),
         right: Math.round(right - rr.left),
-      });
+      };
+      setTlAvoid(box);
+      const near = readerTlBallNear(
+        box,
+        {
+          left: Math.max(0, col.left - rr.left),
+          right: Math.max(0, rr.right - col.right),
+          top: Math.max(0, col.top - rr.top),
+          bottom: Math.max(0, rr.bottom - col.bottom),
+        },
+        { width: rr.width, height: rr.height },
+      );
+      const key = tlShownAtRef.current;
+      if (near && key != null) setTlBallAuto({ ...near, key });
     };
     setTlAvoid(null);
     const t1 = setTimeout(measure, 120);
@@ -1552,15 +1570,15 @@ export default function ReaderOverlay({
       </div>
 
       {tlFloat && (
-        // 译文悬浮档（钉住显式声明，或右栏收起时的兜底）：挂覆盖层根——坐标域是
-        // 整窗，右栏/笔记栏展开时球也拖得到窗口边缘（挂 PDF 栏会被栏界挡住）。
-        // 拖动状态留在球组件内，不惊动三栏树
+        // 译文悬浮档（钉住显式声明，或右栏收起时的兜底）：挂覆盖层根、坐标域是 PDF 栏（bounds）。
+        // 新译文落地时球先摆到原文段旁（autoPos），拖动状态留在球组件内，不惊动三栏树
         <ReaderTlFloat
           panelProps={tlPanelProps}
           hasContent={Boolean(tlHistory[0] || tlPending)}
           openTick={tlOpenTick}
           startOpen={tlStartOpenRef.current}
           bounds={pdfBounds}
+          autoPos={tlBallAuto}
         />
       )}
 

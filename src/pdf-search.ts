@@ -205,11 +205,39 @@ export function mergeLineRects(rects: readonly PdfMarkRect[]): PdfMarkRect[] {
       continue;
     }
     const x = Math.min(hit.x, r.x);
-    const y = Math.min(hit.y, r.y);
     hit.w = Math.max(hit.x + hit.w, r.x + r.w) - x;
-    hit.h = Math.max(hit.y + hit.h, r.y + r.h) - y;
     hit.x = x;
-    hit.y = y;
+    // 高度差三成以上（上标引用号 [1,2]、脚注号这类小字）只横向并进来，行高跟高的那个，
+    // 不把整行撑高、挪位（2026-11-05 用户截图：译段高亮一行行高低不齐）
+    const small = Math.min(hit.h, r.h) < Math.max(hit.h, r.h) * 0.7;
+    if (small) {
+      if (r.h > hit.h) {
+        hit.y = r.y;
+        hit.h = r.h;
+      }
+    } else {
+      const y = Math.min(hit.y, r.y);
+      hit.h = Math.max(hit.y + hit.h, r.y + r.h) - y;
+      hit.y = y;
+    }
+  }
+  return out;
+}
+
+/** 把一个文本片上量到的矩形横向夹到这片字真正占的范围（PDF 文本项宽度换算出来的 [left, right]）。
+ *  文本层的片是 DOM 字体排出来再按 canvas 量宽拉伸的，两边量法不同、片尾空格也算进去，
+ *  量出来常比字宽出一截，伸进栏间空白甚至隔壁栏（2026-11-05 用户截图）；夹完宽度为 0 的丢掉 */
+export function clipRectsToSpan(
+  rects: readonly PdfMarkRect[],
+  box: { left: number; right: number } | null,
+): PdfMarkRect[] {
+  if (!box) return rects.slice();
+  const out: PdfMarkRect[] = [];
+  for (const r of rects) {
+    const x0 = Math.max(r.x, box.left);
+    const x1 = Math.min(r.x + r.w, box.right);
+    if (x1 - x0 <= 0.5) continue;
+    out.push({ ...r, x: x0, w: x1 - x0 });
   }
   return out;
 }

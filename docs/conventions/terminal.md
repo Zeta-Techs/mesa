@@ -990,6 +990,13 @@
   两边都不足 120px 不避让）；②**表头收成 原文 / 存进笔记 / 复制 / ⋯ / ×**，钉位（菜单文案「钉在 PDF 上（悬浮球）」/
   「回到右栏」）、问这段、历史收进「⋯」（Esc / 点外关，capture 相）；③悬浮卡译文 `text-xs`（工作台内 13px）行高 1.7（原位档仍 text-sm；字号走令牌，禁 text-[Npx]）；
   ④正文区下面还有字时 mask 渐隐卡底 28px（scroll + RO 判定）。
+  **2026-11-05 用户「段落在下面、球在上面」「高亮超出段落」两处修订**：①同一次测量里按原文段外框算球位
+  （`readerTlBallNear`，reader.ts：段落右侧外 22px、对齐首行；右边放不下放左侧外，都不行贴 PDF 栏右缘），经
+  `autoPos`（按译文条目 `at` 作 key）交给 `ReaderTlFloat` 挪过去——**只在换条目时摆一次、不跟滚动、不写
+  `ccode.readerTlBall`**，拖过照旧记；②标记矩形按 PDF 文本项真实字宽横向夹边：`PdfPageView` 先取
+  `getTextContent()` 喂 TextLayer，渲染后按顺序给每个文本片记 `data-tw`（页宽百分比，只记横排），`measureMarks`
+  用 `clipRectsToSpan`（pdf-search.ts）夹到 `[left, left+tw]`——文本片是 DOM 字体排版再按 canvas 量宽拉伸的，
+  拉伸盒常比字宽出一截伸进栏间；`mergeLineRects` 遇高度差三成以上的小盒（上标引用号）只横向并入、行高取高者。
   从看得见的卡点「钉住」球先展开接续（卡搬家，不是缩成球）；兜底档（收起右栏自动出球）收着球起步。悬浮卡可**自由改形**：球对侧
   下角角柄拖宽高（`clampReaderTlCard` 240×140 下限、窗内空间上限，显式尺寸记 `ccode.readerTlCard`，
   双击角柄复位自适应——「拖过 = 显式记忆」与右栏高度条同款口径；角柄与球同款 4px 位移阈值——1px 抖动不得
