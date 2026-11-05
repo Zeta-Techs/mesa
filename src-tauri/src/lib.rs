@@ -169,6 +169,7 @@ mod usage;
 mod watch_review;
 mod win_snap;
 mod window_close;
+mod step_loop;
 mod workspaces;
 mod help_requests;
 mod schedule_events;
@@ -1114,6 +1115,13 @@ pub fn run() {
             fs_tree::drop_fetch_line,
             fs_tree::drop_ris_record,
             fs_tree::read_research_ledger,
+            step_loop::rework_create,
+            step_loop::rework_list,
+            step_loop::step_round_record,
+            step_loop::step_rounds,
+            step_loop::step_round_file,
+            step_loop::step_round_diff,
+            step_loop::step_followup_scope,
             fs_tree::save_research_ledger,
             journal_metrics::lookup_journal_metrics,
             journal_metrics::journal_metrics_status,

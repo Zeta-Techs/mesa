@@ -38,3 +38,12 @@ test("步进器「出错了」：AI 在对话里自己说的，悬停写明是�
   assert.equal(said?.title, "这一步的 AI 在对话里说：有 3 个测试失败了");
   assert.equal(stepperStatusText("active", { failure: "x", failureFromAi: true, attention: "working" })?.text, "进行中");
 });
+
+test("已完成之后上游又保存过：写「待跟进」并在悬停里点名上游；没有就仍是已完成", () => {
+  const t = stepperStatusText("done", { staleUpstream: "文献检索与筛选" });
+  assert.equal(t?.text, "待跟进");
+  assert.match(t?.title ?? "", /「文献检索与筛选」/);
+  assert.equal(stepperStatusText("done", { staleUpstream: null })?.text, "已完成");
+  // 只认已完成：进行中的步骤上游变了不改状态字
+  assert.equal(stepperStatusText("review", { staleUpstream: "x" })?.text, "待评审");
+});

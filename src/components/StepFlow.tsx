@@ -554,6 +554,8 @@ export default function StepFlow({
   onChanged,
   draft,
   agentContent,
+  loopActions,
+  roundsContent,
   onRestore,
   reviewConflict,
   onDraftChanged,
@@ -642,6 +644,10 @@ export default function StepFlow({
   bare?: boolean;
   /** agent 节点内嵌内容（如「预览 TASK.md」——TASK.md 是 Agent 的合同，属于这个节点） */
   agentContent?: React.ReactNode;
+  /** 已保存 / 待评审步骤「AI 干活」行尾的回路动作：退回上一步补料、跟进上游的新增（design-review-loop.md §4/§5） */
+  loopActions?: React.ReactNode;
+  /** 「这一步做过 N 轮」折叠区，挂在 AI 干活节点下（§6） */
+  roundsContent?: React.ReactNode;
   /** 步骤工作区已归档时 Agent 节点的主入口（替代「开始」）：恢复工作区 */
   onRestore?: () => void;
   /** 合并冲突阻塞：评审节点入口改为「去处理冲突」（直达冲突解决意图） */
@@ -2364,6 +2370,7 @@ export default function StepFlow({
             </span>
           )}
           {nodeActions(node)}
+          {node.kind === "agent" && loopActions}
         </div>
         {node.kind === "human" && isCitationStyleTask(human?.title) && ws && (
           <div className="ml-9 mt-1.5">
@@ -3030,6 +3037,7 @@ export default function StepFlow({
             title="按 papers/included.json 数：纳入的篇里有 pdf 字段的算已有全文；缺全文的精读时只能按摘要记"
           />
         )}
+        {node.kind === "agent" && roundsContent}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
           <LedgerCountLine
             roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}

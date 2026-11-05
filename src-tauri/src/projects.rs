@@ -3301,6 +3301,10 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          /.ccode/checks/\n\
          /.ccode/record/\n\
          \n\
+         # 综述回路：补料单与开轮起因（本机记录，不进 git；2026-11-05）\n\
+         /.ccode/rework/\n\
+         /.ccode/step-rounds.jsonl\n\
+         \n\
          # 常见数据/产物目录（按需取消注释）\n\
          # /data/\n\
          /output/\n\

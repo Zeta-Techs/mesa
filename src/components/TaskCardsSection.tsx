@@ -21,6 +21,19 @@ import StepFlow from "./StepFlow";
 import FuseDraftModal from "./FuseDraftModal";
 import { useAppStore } from "../store";
 import { stepAttention } from "../run-overview";
+import { toast } from "../toast";
+import { readResearchLedger } from "../research-report-load";
+import { ReworkDialog, StepRoundsSection, type ReworkFields } from "./StepLoop";
+import {
+  followupFiles,
+  followupPrompt,
+  followupScale,
+  notesFollowupIds,
+  reworkPrompt,
+  reworkTargets,
+  type FollowupScopeDto,
+  type ReworkDto,
+} from "../step-loop";
 import { workspaceReuseKey } from "../pipeline-start";
 import {
   bucketCardsByStep,
@@ -51,11 +64,12 @@ import type {
   TaskCardDto,
   TaskDraftDto,
   WorkspaceDto,
+  WorkspaceHealthDto,
 } from "../types";
 import { isSettingPlaceholder } from "../project-context";
 import { upsertPendingSettingsSection } from "../task-md-sections";
 import { researchToolAskFieldsForStep, researchToolsFromSettings } from "../research-tools";
-import { useSkillProvides } from "../skill-slots.ts";
+import { stepFillsAnySlot, useSkillProvides } from "../skill-slots.ts";
 import { statusBadgeTitle, userWorkDirtyFiles } from "../git-status-groups";
 import {
   historySaveBlockedReason,
@@ -241,6 +255,11 @@ export default function TaskCardsSection({
     detected?.find((a) => a.id === guardAgentId)?.readonlySupported ?? true;
   const skillProvides = useSkillProvides();
   const [error, setError] = useState<string | null>(null);
+  // 综述回路二期：补料单弹层与跟进在途（design-review-loop.md §4/§5）
+  const [reworkOpen, setReworkOpen] = useState(false);
+  const [reworkBusy, setReworkBusy] = useState(false);
+  const [reworkError, setReworkError] = useState<string | null>(null);
+  const [followBusy, setFollowBusy] = useState(false);
   /** 继续时上次会话是另一家 Agent：问要不要带简报。取消 = 先不开。 */
   const [carryAsk, setCarryAsk] = useState<{
     fromAgent: string;
@@ -745,7 +764,135 @@ export default function TaskCardsSection({
     if (!focusStepDto) return;
     const ws = activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName);
     if (!ws) return;
+    // 「这一步的几轮」要知道这一轮是人点的新开一轮（记不上不挡开工）
+    if (fresh) void recordRound(ws, focusStepDto.name, "fresh");
     void openStepContinuation(focusStepDto.name, ws, focusStepDto.name, null, fresh);
+  }
+
+  function recordRound(ws: WorkspaceDto, step: string, kind: "rework" | "followup" | "fresh", reworkId?: string) {
+    return invoke("step_round_record", {
+      root: projectPath,
+      entry: { workspaceId: ws.id, step, kind, reworkId: reworkId ?? null, at: "" },
+    }).catch(() => undefined);
+  }
+
+  /** 补料轮 / 跟进轮用哪条连接：步骤绑定 > 步骤槽链（同「继续」）；都没有报错 */
+  async function loopLaunch(stepName: string) {
+    let launch: { agentId: string; profileId: string; model: string } | null = null;
+    try {
+      const b = await invoke<{ profile: string; model?: string | null } | null>(
+        "get_project_agent_binding",
+        { projectRoot: projectPath, slot: stepSlotKey(stepName) },
+      );
+      launch = taskBindingLaunch(useAppStore.getState().profiles, b);
+    } catch {
+      /* DB 读失败走 props 链 */
+    }
+    if (!launch?.profileId) launch = stepLaunchFor(stepName);
+    if (!launch?.profileId) {
+      throw new Error(`「${stepName}」还没解析到可用连接：去「Agent 分工」页签给它绑一条，或确认项目默认 Agent 有连接。`);
+    }
+    return launch;
+  }
+
+  /** 开一轮之前的共同检查：AI 正在干活 / 等确认、有没保存的产出都不叠一轮。
+   *  只是开着、停在提示符上的标签不拦：新一轮按工作区复用键就地换掉它（已保存的步骤卡上没有「停下」可点） */
+  async function assertRoundable(ws: WorkspaceDto, stepName: string) {
+    const attention = stepAttention(ws, useAppStore.getState().terminalRunInputs, IS_WINDOWS);
+    if (attention === "working" || attention === "confirm") {
+      throw new Error(`「${stepName}」的 AI 正在干活或等你确认：等它这一轮做完（或在侧栏那段对话的 ⋯ 里停下这一步），再开这一轮。`);
+    }
+    const h = await invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id });
+    if (h.ahead > 0) {
+      throw new Error(`「${stepName}」还有没保存进项目的产出：先去那一步评审，保存或退回修改后再开这一轮。`);
+    }
+  }
+
+  /** 退回上一步补料（§4）：恢复 / 并入项目最新内容 → 写补料单 → 记轮次 → 在上游工作区另开一段对话 */
+  async function sendRework(fields: ReworkFields) {
+    if (!focusStepDto) return;
+    const fromStep = focusStepDto.name;
+    const target = steps.find((s) => s.name === fields.target);
+    if (!target?.workspaceName) return;
+    setReworkBusy(true);
+    setReworkError(null);
+    try {
+      let ws = workspaces.find((w) => w.name === target.workspaceName && w.status === "active");
+      if (!ws) {
+        const archived = workspaces.find((w) => w.name === target.workspaceName);
+        if (!archived) throw new Error(`「${target.name}」还没开过工，没有可以补的工作副本。`);
+        await invoke("restore_workspace", { id: archived.id });
+        const list = await invoke<WorkspaceDto[]>("list_workspaces");
+        ws = list.find((w) => w.id === archived.id && w.status === "active");
+        if (!ws) throw new Error(`「${target.name}」的工作副本恢复后没找到，刷新页面再试。`);
+      }
+      await assertRoundable(ws, target.name);
+      const launch = await loopLaunch(target.name);
+      await invoke("workspace_sync_base", { id: ws.id, restart: false });
+      const rework = await invoke<ReworkDto>("rework_create", {
+        root: projectPath,
+        draft: {
+          fromStep,
+          toStep: target.name,
+          toWorkspaceId: ws.id,
+          toWorkspaceName: ws.name,
+          topics: fields.topics,
+          reason: fields.reason,
+          clues: fields.clues,
+          scale: fields.scale,
+        },
+      });
+      await recordRound(ws, target.name, "rework", rework.id);
+      const d = new Date();
+      const prompt = reworkPrompt(rework, {
+        isSearch: stepFillsAnySlot(target.skills, ["lit-search"], skillProvides),
+        projectRoot: projectPath,
+        date: `${d.getMonth() + 1}-${d.getDate()}`,
+      });
+      setReworkOpen(false);
+      await launchContinuation(launch, ws, target.name, prompt);
+    } catch (reason) {
+      setReworkError(String(reason instanceof Error ? reason.message : reason));
+    } finally {
+      setReworkBusy(false);
+    }
+  }
+
+  /** 跟进上游的新增（§5）：只读算增量 → 人确认规模 → 并入 → 记轮次 → 另开一段对话只做增量 */
+  async function followUpstream() {
+    const step = focusStepDto;
+    const ws = step ? activeWorkspaceFor(step.name, step.workspaceName) : undefined;
+    if (!step || !ws) return;
+    const upstream = ws.staleUpstream ?? "上一步";
+    setFollowBusy(true);
+    setError(null);
+    try {
+      await assertRoundable(ws, step.name);
+      const scope = await invoke<FollowupScopeDto>("step_followup_scope", { workspaceId: ws.id });
+      const files = followupFiles(scope.files);
+      let notesIds: string[] | null = null;
+      if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
+        const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
+        const idx = await readResearchLedger(projectPath, "notes/index.json").catch(() => null);
+        notesIds = inc && !inc.truncated ? notesFollowupIds(inc.text, idx && !idx.truncated ? idx.text : null) : null;
+        // 没有新篇要读、但上游改了别的（清单、待获取）：按文件跟进
+        if (notesIds && notesIds.length === 0) notesIds = null;
+      }
+      const scale = followupScale({ upstream, notesIds, files });
+      if (!scale) {
+        toast("项目里没有这一步还没用上的新内容，不用跟进。", "info");
+        return;
+      }
+      const launch = await loopLaunch(step.name);
+      if (!(await confirmDialog(`${scale}\n开始前会先把项目里的新内容并进这一步的工作副本。`, { confirmText: "开始跟进" }))) return;
+      await invoke("workspace_sync_base", { id: ws.id, restart: false });
+      await recordRound(ws, step.name, "followup");
+      await launchContinuation(launch, ws, step.name, followupPrompt({ upstream, notesIds, files }));
+    } catch (reason) {
+      setError(String(reason instanceof Error ? reason.message : reason));
+    } finally {
+      setFollowBusy(false);
+    }
   }
 
   /** 这个工作区有没有能接回的上次对话（只看会话列表，不管是哪家）：有才给「新开一轮」 */
@@ -1141,6 +1288,52 @@ export default function TaskCardsSection({
               )
             }
             onContinueStep={() => continueFocusedStep()}
+            loopActions={(() => {
+              // 已保存 / 待评审的步骤：跟进上游的新增（待跟进时）与退回上一步补料（design-review-loop.md §4/§5）
+              if (focusRunStatus !== "done" && focusRunStatus !== "review") return null;
+              const ws = activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName);
+              const targets = reworkTargets(steps, focusIdx).map((s) => s.name);
+              const follow = focusRunStatus === "done" && !!ws?.staleUpstream;
+              if (!follow && targets.length === 0) return null;
+              return (
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {targets.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReworkError(null);
+                        setReworkOpen(true);
+                      }}
+                      title="这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补"
+                      className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    >
+                      退回上一步补料…
+                    </button>
+                  )}
+                  {follow && (
+                    <button
+                      type="button"
+                      disabled={followBusy}
+                      onClick={() => void followUpstream()}
+                      title={`上游「${ws?.staleUpstream}」在这一步保存之后又保存过：只处理新增的部分，已有的不重做（先告诉你有多少再开始）`}
+                      className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                    >
+                      {followBusy ? "正在算新增…" : "跟进上游的新增"}
+                    </button>
+                  )}
+                </span>
+              );
+            })()}
+            roundsContent={(() => {
+              const ws = activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName);
+              return ws ? (
+                <StepRoundsSection
+                  projectPath={projectPath}
+                  workspaceId={ws.id}
+                  refreshKey={`${focusRunStatus ?? ""}|${refreshToken}`}
+                />
+              ) : null;
+            })()}
             onContinueFresh={
               hasPriorSession(
                 focusStepDto
@@ -1367,6 +1560,16 @@ export default function TaskCardsSection({
               onSelect: () => void onDelete(menu.card),
             },
           ]}
+        />
+      )}
+      {reworkOpen && focusStepDto && (
+        <ReworkDialog
+          fromStep={focusStepDto.name}
+          targets={reworkTargets(steps, focusIdx).map((st) => st.name)}
+          busy={reworkBusy}
+          error={reworkError}
+          onCancel={() => setReworkOpen(false)}
+          onSend={(fields) => void sendRework(fields)}
         />
       )}
       {carryAsk && (

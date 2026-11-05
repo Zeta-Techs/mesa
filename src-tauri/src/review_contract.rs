@@ -60,7 +60,9 @@ fn is_accumulation_ledger(path: &str) -> bool {
             | ".ccode/record.jsonl"
             | ".ccode/record.lock"
             | ".ccode/ai-usage.md"
+            | ".ccode/step-rounds.jsonl"
     ) || (path.starts_with("notes/") && path.ends_with(".md"))
+        || path.starts_with(".ccode/rework/")
         || path.starts_with(".ccode/checks/")
         || path.starts_with(".ccode/record/")
         || path.starts_with("notes/assets/")
@@ -371,6 +373,10 @@ mod tests {
     #[test]
     fn only_untracked_ledger_files_are_nonblocking() {
         assert!(is_untracked_ledger_file("?? .ccode/acceptance-log.jsonl"));
+        // 综述回路的补料单与开轮起因（2026-11-05）：已有项目的 .gitignore 没有它们，靠豁免不拦合并
+        assert!(is_untracked_ledger_file("?? .ccode/rework/"));
+        assert!(is_untracked_ledger_file("?? .ccode/rework/20261105-lit-search.json"));
+        assert!(is_untracked_ledger_file("?? .ccode/step-rounds.jsonl"));
         assert!(is_untracked_ledger_file("?? .ccode/acceptance-log.lock"));
         // 验收台账已跟踪态也豁免：合并写台账不应拦住下一次合并
         assert!(is_untracked_ledger_file(" M .ccode/acceptance-log.jsonl"));

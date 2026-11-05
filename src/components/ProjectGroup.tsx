@@ -1419,6 +1419,7 @@ export default function ProjectGroup({
       attention: st.key === "active" ? stepAttention(st.ws, terminalRunInputs, IS_WINDOWS) : null,
       failure: stepFailures[i]?.reason ?? null,
       failureFromAi: stepFailures[i]?.fromAi ?? false,
+      staleUpstream: st.key === "done" ? (st.ws?.staleUpstream ?? null) : null,
     }),
   );
   const openAssistant = useAppStore((s) => s.openAssistant);

@@ -29,6 +29,8 @@ export function stepperStatusText(
     failure?: string | null;
     /** 出错是 AI 自己在对话里说的（会话尾巴，session-tail.ts），不是运行出错退出 */
     failureFromAi?: boolean;
+    /** 已完成之后上游又保存过（WorkspaceDto.staleUpstream）：写「待跟进」（综述回路 §5.1，只提醒不阻断） */
+    staleUpstream?: string | null;
   } = {},
 ): StepperStatusText | null {
   // 出错了（2026-11-04 项目助手一期）：这一步最近一次运行出错收场、此刻又没有 AI 在干活 / 等确认时写出来，
@@ -59,6 +61,12 @@ export function stepperStatusText(
     case "blocked":
       return { text: "有冲突", tone: "text-warn-text" };
     case "done":
-      return { text: "已完成", tone: "text-l3" };
+      return opts.staleUpstream
+        ? {
+            text: "待跟进",
+            tone: "text-warn-text",
+            title: `上游「${opts.staleUpstream}」在这一步保存之后又保存过，这一步可能没用上新内容；到这一步点「跟进上游的新增」，或不管它直接往下走`,
+          }
+        : { text: "已完成", tone: "text-l3" };
   }
 }
