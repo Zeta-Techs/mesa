@@ -687,7 +687,9 @@ export function includedLineFor(entry: WatchEntryDto): {
   return {
     title: entry.title,
     authorsYear,
-    source: entry.source,
+    // 期刊名优先：来源行第一段对期刊论文只是「期刊」二字（2026-11-05 用户截图：积累行写「· 期刊」，
+    // 带进检索的积累快照也只剩「期刊」）；arXiv / 会议没有期刊名时才用它
+    source: entry.journal?.trim() || entry.source,
     link: entry.url,
   };
 }

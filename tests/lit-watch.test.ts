@@ -330,6 +330,12 @@ test("includedLineFor：作者在附年份（批次年），作者缺整段「�
       .authorsYear,
     "Vaswani et al.",
   );
+  // 期刊论文的来源行第一段只是「期刊」：积累行要写期刊名
+  assert.equal(
+    includedLineFor(entry({ source: "期刊", journal: "Applied Catalysis B: Environment and Energy" })).source,
+    "Applied Catalysis B: Environment and Energy",
+  );
+  assert.equal(includedLineFor(entry({ source: "期刊", journal: "  " })).source, "期刊");
 });
 
 test("normalizeTitle：小写、标点折叠为单空格", () => {
