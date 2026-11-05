@@ -52,7 +52,7 @@ import {
 import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
 import { excludedIncludedIds, notesProgress, notesProgressLine, spotCheckPicks, type SpotCheckPick } from "../notes-progress";
-import { stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
+import { inlineDecisionListVisible, stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
   DECISION_STATUS,
   DECISION_STATUS_ASK,
@@ -3052,7 +3052,7 @@ export default function StepFlow({
           human.target &&
           !node.done &&
           !dense &&
-          (isCurrent || afterReady(human)) && (
+          (isCurrent || inlineDecisionListVisible(runStatus, agentAttention, human)) && (
             <div className="mt-1 pl-9">
               <ReviewDecisionList
                 worktreePath={ws?.worktreePath}

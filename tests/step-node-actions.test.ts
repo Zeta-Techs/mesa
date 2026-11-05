@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   hasLitLibrary,
+  inlineDecisionListVisible,
   isPapersTarget,
   papersImportFocus,
   stepNodeAction,
@@ -441,4 +442,11 @@ test("模板语料全覆盖：文献落点的事项落哪条分支与预期一�
     0,
     "内建模板出现了走导入分支的事项——说明新增了 papers/ 落点的普通事项，这条注释该更新",
   );
+});
+
+test("逐条决定清单：第一轮写完报告停下等人时（步骤仍进行中）就挂出来，没开工不挂", () => {
+  assert.equal(inlineDecisionListVisible("active", null, {}), true);
+  assert.equal(inlineDecisionListVisible("active", "working", {}), true);
+  assert.equal(inlineDecisionListVisible("review", null, {}), true);
+  assert.equal(inlineDecisionListVisible("pending", null, {}), false);
 });

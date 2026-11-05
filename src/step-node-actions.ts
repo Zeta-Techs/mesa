@@ -84,6 +84,20 @@ export function stepNodeReady(
 }
 
 /**
+ * 逐条决定 / 逐条裁决的条目清单何时挂出来：步骤一开工就挂。
+ * 审查报告是第一轮写完就停下等人点的，那时 AI 还坐在对话里、步骤仍是进行中，
+ * 按 stepNodeReady 要等「做完」才挂，人就看不到要点的条目（2026-11-05 用户实测）。
+ * 文件还没写出来时清单自己显示「还没写出来」并隔几秒再读。
+ */
+export function inlineDecisionListVisible(
+  runStatus: StepRunStatus,
+  agentAttention: AgentAttention,
+  human: { expectedCount?: number },
+): boolean {
+  return runStatus !== "pending" || stepNodeReady(runStatus, agentAttention, human);
+}
+
+/**
  * 行是否压暗（「还轮不到你」）。与 stepNodeReady 同一口径，反向使用。
  * 待确认清单已经挂在这一行上，不因为检索会话还没标完成就发灰。
  */
