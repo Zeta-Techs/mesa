@@ -50,6 +50,7 @@ import { useAppStore } from "../store";
 import { GitInstallOffer } from "../dep-install";
 import { PIPELINE_TEMPLATES, RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
 import { templateUpdateNotice } from "../pipeline-upgrade";
+import { loopHint } from "../step-loop";
 import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
 import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md-sections";
@@ -321,22 +322,28 @@ function deriveStepStatus(
   if (step.seedComplete && (!ws || ws.status === "archived")) {
     return { key: "done", ws };
   }
-  // 归档工作区视为待开始：行内给出「恢复」入口
+  // 保存进项目后又归档（评审「保存并归档」）：成果已在项目里，算完成——原先判成待开始，
+  // 回看时面板全没了、主按钮变「恢复工作区」、默认聚焦被拉回来（2026-11-05 用户反馈「回去前面的面板就没有了」）
+  if (ws && ws.status === "archived" && ws.mergedAt) return { key: "done", ws };
+  // 没保存过就归档：视为待开始，行内给出「恢复」入口
   if (!ws || ws.status === "archived") return { key: "pending", ws };
   const h = health[ws.id];
   const d = drift[ws.id];
   if (d?.canResolveMerge === true || h?.conflict === true) {
     return { key: "blocked", ws };
   }
-  // 衔接工作区「已合并」规则：merged_at 置位且没有新的待合并提交
-  const savedAndClean = ws.status === "active" && !!ws.mergedAt && h?.ahead === 0;
+  // 衔接工作区「已合并」规则：merged_at 置位、没有新的待合并提交、也没有没提交的改动。
+  // 有没提交的改动（保存后在面板里改了、AI 又写了文件）不算完成：落到下面「进行中」，评审入口重新出现，
+  // 否则这些改动既看不到也进不了项目（2026-11-05 排查）
+  const savedAndClean = ws.status === "active" && !!ws.mergedAt && h?.ahead === 0 && !h?.uncommitted;
   // Agent 还在跑：即使已经有待合并提交，也还是进行中，不能提前「去评审」。
   // 已保存的步骤只认真在出字 / 等确认，终端停在提示符上不把它打回进行中
   if (stepHeldActiveByAgent(ws.worktreePath, savedAndClean, liveInputs, IS_WINDOWS)) {
     return { key: "active", ws };
   }
   if (savedAndClean) return { key: "done", ws };
-  if (!h) return { key: "checking", ws };
+  // 状态还没读回来：保存过的先按完成显示，不让「继续 / 去评审」闪出来又收回
+  if (!h) return { key: ws.mergedAt ? "done" : "checking", ws };
   // 有待合并提交就是待评审；未提交改动（纳入/排除等）不得把「去评审」打回进行中
   if (h.ahead > 0) return { key: "review", ws };
   if (h.uncommitted) return { key: "active", ws };
@@ -1801,6 +1808,28 @@ export default function ProjectGroup({
         </div>
       )}
 
+      {registered && cfg && (() => {
+        // 回路进行中「下一步去哪」：前面在补一轮先指它，否则指第一个待跟进的步骤（step-loop.ts loopHint）
+        const hint = loopHint(
+          cfg.steps,
+          stepStatuses.map((st) => ({ key: st.key, staleUpstream: st.key === "done" ? (st.ws?.staleUpstream ?? null) : null })),
+        );
+        if (!hint) return null;
+        return (
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-warn-text" role="note">
+            <span>{hint.text}</span>
+            {focusIndex !== hint.index && (
+              <button
+                type="button"
+                className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
+                onClick={() => focusByIndex(hint.index)}
+              >
+                去这一步
+              </button>
+            )}
+          </div>
+        );
+      })()}
       {registered && templateNotice && noticeDismissed !== templateNotice.signature && (
         <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-l3" role="note">
           <span>
@@ -2114,6 +2143,7 @@ export default function ProjectGroup({
           refreshToken={refreshToken}
           mainDirty={mainDirty}
           onMainDirtyRefresh={reloadMainDirty}
+          onWorkspacesChanged={() => void onRefresh()}
           focusStep={focusStepName}
           focusStatusText={focusDesc?.statusText ?? null}
           focusRunStatus={focusRunStatus}

@@ -2408,6 +2408,19 @@ function LiveWorkspaceReviewView({
     if (shouldMerge && !deliveryReviewRef.current) { setError(REVIEW_SAVE.needDelivery); return; }
     const shouldArchive = mode === "archive";
     const archive = mode === "merge-archive";
+    // 带着没答的人工请求归档：问题文件不进 git、归档后收件箱不再列，恢复工作区也找不回来（2026-11-05 排查）。先问一句
+    if (shouldArchive || archive) {
+      const asking = useAppStore.getState().helpPending[diff.worktreePath] ?? 0;
+      if (
+        asking > 0 &&
+        !(await confirmDialog(
+          `这一步还有 ${asking} 个 AI 留的问题没回答。归档后这些问题会从「待处理」里消失，恢复工作区也找不回来。仍然归档？`,
+          { confirmText: "仍然归档", danger: true },
+        ))
+      ) {
+        return;
+      }
+    }
     // 提交信息可留空（v3.97，面向不懂编程的用户）：留空走本地规则默认信息
     // （chore: 更新 N 个文件），与主仓快速提交面板同口径；想写更好的点输入框旁 ◈ 让 AI 起草
     const commitMessage =

@@ -123,7 +123,13 @@ export default function ReviewDecisionList({
       setItems(parsed);
       onOpenCount?.(parsed.filter((item) => item.verdict == null).length);
     } catch (reason) {
-      setError(String(reason));
+      // AI 还在写这份清单时点了决定：版本对不上就重读，不卡在「请重新打开清单」（这一行没有重新打开的入口，2026-11-05 排查）
+      if (String(reason).includes("已被 Agent 或其他程序修改")) {
+        await load();
+        setError("清单刚被 AI 改过，已重新读取，请再点一次。");
+      } else {
+        setError(String(reason));
+      }
     } finally {
       setBusyId(null);
     }
@@ -155,7 +161,12 @@ export default function ReviewDecisionList({
       setItems(parsed);
       onOpenCount?.(parsed.filter((item) => item.verdict == null).length);
     } catch (reason) {
-      setError(String(reason));
+      if (String(reason).includes("已被 Agent 或其他程序修改")) {
+        await load();
+        setError("清单刚被 AI 改过，已重新读取，请再点一次。");
+      } else {
+        setError(String(reason));
+      }
     } finally {
       setAcceptingAll(false);
     }

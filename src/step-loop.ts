@@ -256,3 +256,33 @@ export function groupCoverageDrafts(drafts: CoverageDraft[], target: CoverageDra
     reason: picked.length === 1 ? picked[0].reason : `大纲覆盖检查里这 ${picked.length} 节是薄的（${picked.map((d) => d.reason.replace(/^覆盖检查：这一节/, "")).join("；")}）`,
   };
 }
+
+/** 回路进行中「下一步去哪」（2026-11-05，用户反馈「跑完一个节点就不会弄了」）：流程进度条上方一行。
+ *  ① 前面某步在补一轮（进行中 / 待评审 / 有冲突），后面已有做完的步骤 → 先把它做完、评审保存；
+ *  ② 否则第一个「已完成但上游又保存过」的步骤 → 去那一步点「跟进上游的新增」。
+ *  都不是返回 null。只认状态，不认模板。 */
+export function loopHint(
+  steps: { name: string }[],
+  statuses: { key: string; staleUpstream?: string | null }[],
+): { index: number; text: string } | null {
+  const lastDone = statuses.map((s) => s.key).lastIndexOf("done");
+  for (let i = 0; i < lastDone; i++) {
+    const key = statuses[i]?.key;
+    if (key === "active" || key === "review" || key === "blocked") {
+      const name = steps[i]?.name ?? "";
+      const what =
+        key === "review"
+          ? "这一轮做完了，去评审、保存进项目"
+          : key === "blocked"
+            ? "有冲突要先处理"
+            : "正在补一轮，做完去评审、保存进项目";
+      return { index: i, text: `回头补的这一轮在「${name}」：${what}；保存后，后面做完的步骤会显示「待跟进」，再依次去跟进。` };
+    }
+  }
+  const i = statuses.findIndex((s) => s.key === "done" && !!s.staleUpstream);
+  if (i >= 0) {
+    const name = steps[i]?.name ?? "";
+    return { index: i, text: `上游「${statuses[i].staleUpstream}」保存了新内容：下一步到「${name}」点「跟进上游的新增」。` };
+  }
+  return null;
+}

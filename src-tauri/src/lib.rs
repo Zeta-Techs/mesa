@@ -879,6 +879,7 @@ pub fn run() {
             help_requests::help_request_mark_sent,
             workspaces::write_review_notes,
             workspaces::workspace_drift,
+            workspaces::clear_human_task_checks,
             workspaces::workspace_repair_remount,
             workspaces::workspace_relocate_repo,
             workspaces::workspace_mark_archived,

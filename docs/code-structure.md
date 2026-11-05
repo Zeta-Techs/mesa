@@ -1864,10 +1864,12 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM
   ws_settings.rs             # .ccode/settings.toml 三层合并（用户→仓库→local）；开步自动写 quarto 渲染脚本
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
+                             #   followed_at（每个工作区最近一次 followup / ack 的时间，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
                              # list_dir 可选 withCounts：文件夹带 child_count（同一套隐藏规则，数到 1000 封顶，默认不数）；
                              # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
+                             #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_cleared 判定工作区有文件只看工作区
                              # list_recent_files：项目里最近改过的文件（不限类型，跳过点开头与依赖 / 构建目录，扫 2 万个后按修改时间取前 300；只读元数据），
                              #   与 list_office_docs 共用 office_walk（exts=None 不限类型）；
                              # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md（to-fetch.md 开头「还没有全文的 N 篇」按剩下没打 ✓ 的行重算）

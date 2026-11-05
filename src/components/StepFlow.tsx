@@ -424,11 +424,14 @@ function SpotCheckPicks({
   ws,
   stepName,
   taskTitle,
+  refreshKey,
 }: {
   projectPath: string;
   ws: WorkspaceDto | undefined;
   stepName: string;
   taskTitle: string;
+  /** 步骤状态变了就重读：挂载时索引还没写出来、补读一轮后换了篇，都要跟上（2026-11-05 排查） */
+  refreshKey: string;
 }) {
   const setReaderReq = useAppStore((s) => s.setReaderReq);
   const setPage = useAppStore((s) => s.setPage);
@@ -454,7 +457,7 @@ function SpotCheckPicks({
     return () => {
       stale = true;
     };
-  }, [rootsKey]);
+  }, [rootsKey, refreshKey]);
   if (!picks) return null;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -699,6 +702,10 @@ export default function StepFlow({
   // 「停下」关的是这一步工作区里还开着的 AI 标签（同侧栏「关掉这段对话」，在干活的会先问）
   const stopTabId = useAppStore((s) => stepStopTab(ws ?? undefined, s.terminalRunInputs, IS_WINDOWS));
   const requestCloseTab = useAppStore((s) => s.requestCloseTab);
+  // 给后面步骤用的台账（待确认清单、待获取、计数、抽查选篇）读写哪一份：这一步已保存进项目就以项目根为准。
+  // 原先保存后仍先读写工作副本那份旧的——后面步骤改过的看不到，回头在这里改的也永远进不了项目（2026-11-05 排查）。
+  // 要交回这一步 AI 接着做的（逐条决定、许可 / 声明、引用样式）仍走工作副本：AI 在那里接着干活
+  const dataWs = runStatus === "done" ? undefined : ws;
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );
@@ -827,11 +834,11 @@ export default function StepFlow({
     ledgerKeySeen.current = ledgerRefreshKey;
     if (paywallList.text != null || paywallList.error) void loadPaywallList();
     // 收起的文献清单：新一轮补进了待确认篇目就摊开，不让人以为没补上
-    if (pendingListOpen || !ws) return;
+    if (pendingListOpen || !dataWs) return;
     if (!(step.humanTasks ?? []).some((task) => isPendingConfirmTaskTitle(task.title))) return;
     let stale = false;
     void (async () => {
-      for (const root of [ws.worktreePath, projectPath]) {
+      for (const root of [dataWs.worktreePath, projectPath]) {
         try {
           const file = await readResearchLedger(root, "papers/included.json");
           if (stale || file.truncated) return;
@@ -1361,11 +1368,11 @@ export default function StepFlow({
   }
   /** 读 to-fetch.md（步骤工作区优先回落项目根）；恢复展开的挂载路径也走这里 */
   async function loadPaywallList() {
-    const candidates = ws
+    const candidates = dataWs
       ? [
           {
-            path: `${ws.worktreePath}/papers/to-fetch.md`,
-            root: ws.worktreePath,
+            path: `${dataWs.worktreePath}/papers/to-fetch.md`,
+            root: dataWs.worktreePath,
             from: "步骤工作区",
           },
           {
@@ -1934,6 +1941,19 @@ export default function StepFlow({
       readPaper: !!onReadPaper,
       readPaperPrimary,
     });
+    // 已保存的步骤上 AI 还留着没答的问题：照样给「回答问题」（原先只挂在「去终端看看 / 去评审」旁边，done 时没入口）
+    if (!action && node.kind === "agent" && runStatus === "done" && asking > 0 && ws) {
+      return (
+        <button
+          type="button"
+          onClick={() => setHelpViewReq(ws.worktreePath)}
+          title="AI 在这一步写了要你拍板的问题，点开在卡片上选"
+          className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
+        >
+          回答问题（{asking}）
+        </button>
+      );
+    }
     if (!action) return null;
     const outline =
       "shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1";
@@ -3034,13 +3054,13 @@ export default function StepFlow({
         )}
         {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
           <NotesProgressLine
-            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
           />
         )}
         {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
           <LedgerCountLine
-            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
             rel="notes/skim.md"
             read={readResearchFile}
@@ -3050,7 +3070,7 @@ export default function StepFlow({
         )}
         {node.kind === "agent" && searchStep && (ws || runStatus === "done") && (
           <LedgerCountLine
-            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
             rel="papers/included.json"
             line={searchCountLine}
@@ -3060,7 +3080,7 @@ export default function StepFlow({
         {node.kind === "agent" && roundsContent}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
           <LedgerCountLine
-            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
             rel="outline.md"
             read={readResearchFile}
@@ -3163,7 +3183,7 @@ export default function StepFlow({
                       ref={pendingListRef}
                       onMeta={setPendingMeta}
                       refreshKey={ledgerRefreshKey}
-                      worktreePath={ws?.worktreePath}
+                      worktreePath={dataWs?.worktreePath}
                       projectRoot={projectPath}
                       onOpenPdf={(path) =>
                         setFilePreviewReq({
@@ -3281,7 +3301,8 @@ export default function StepFlow({
               {isSpotCheckTaskTitle(human.title) && !node.done && (
                 <SpotCheckPicks
                   projectPath={projectPath}
-                  ws={ws}
+                  ws={dataWs}
+                  refreshKey={ledgerRefreshKey}
                   stepName={step.name}
                   taskTitle={human.title}
                 />

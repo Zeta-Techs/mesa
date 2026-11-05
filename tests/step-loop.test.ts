@@ -107,3 +107,20 @@ test("coverageReworkDrafts：只取没处理的薄节，补检 / 补读分到检
   assert.equal(groupCoverageDrafts(drafts, "other"), null);
   assert.deepEqual(coverageReworkDrafts("# 没有覆盖检查"), []);
 });
+
+test("loopHint：前面在补一轮先指它；否则指第一个待跟进；正常往下走时不出", async () => {
+  const { loopHint } = await import("../src/step-loop.ts");
+  const steps = [{ name: "检索" }, { name: "精读" }, { name: "大纲" }, { name: "初稿" }];
+  // 正常推进：前面都完成、当前在做，不提示
+  assert.equal(loopHint(steps, [{ key: "done" }, { key: "done" }, { key: "active" }, { key: "pending" }]), null);
+  // 检索在补料、后面已完成
+  const a = loopHint(steps, [{ key: "review" }, { key: "done" }, { key: "done" }, { key: "pending" }]);
+  assert.equal(a?.index, 0);
+  assert.match(a!.text, /「检索」：这一轮做完了，去评审/);
+  // 检索保存了，精读、大纲待跟进 → 先指精读
+  const b = loopHint(steps, [{ key: "done" }, { key: "done", staleUpstream: "检索" }, { key: "done", staleUpstream: "检索" }, { key: "pending" }]);
+  assert.equal(b?.index, 1);
+  assert.match(b!.text, /到「精读」点「跟进上游的新增」/);
+  // 精读在跟进（进行中），大纲已完成 → 指精读
+  assert.equal(loopHint(steps, [{ key: "done" }, { key: "active" }, { key: "done", staleUpstream: "检索" }, { key: "pending" }])?.index, 1);
+});

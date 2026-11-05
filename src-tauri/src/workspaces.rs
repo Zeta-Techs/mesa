@@ -225,20 +225,27 @@ fn row_to_dto(
 
 /// 上游漂移（纯逻辑，启发式提醒非硬状态）：步骤 k 的任一上游步骤（序号更小）晚于本步
 /// 「最后推进时间」发生合并 → 返回最晚合并的上游步骤名，否则 None。
-/// 最后推进时间口径：本步工作区已合并取 merged_at，未合并取 created_at。
+/// 最后推进时间口径：本步工作区已合并取 merged_at，未合并取 created_at；人点过「跟进上游的新增」
+/// （开了跟进轮，或 Mesa 算出没有要跟进的）取那一刻与前者较晚的（`followed`：工作区 id → 时间，
+/// step_loop::followed_at；2026-11-05 修「待跟进」在跟进轮没提交或上游只改了过程文件时永远消不掉）。
 /// 时间戳均为 now_iso 定宽 UTC 串，字典序即时间序。
 /// workspaces 需先按同仓库过滤；步骤-工作区绑定 = steps[].workspace_name 匹配工作区名。
 pub(crate) fn stale_upstream_for(
     steps: &[crate::projects::StepDto],
     workspaces: &[WorkspaceDto],
     step_index: usize,
+    followed: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
     let step = steps.get(step_index)?;
     let target_ws = workspaces.iter().find(|w| w.name == step.workspace_name)?;
-    let last_progress = target_ws
+    let saved = target_ws
         .merged_at
         .as_deref()
         .unwrap_or(&target_ws.created_at);
+    let last_progress = match followed.get(&target_ws.id) {
+        Some(at) if at.as_str() > saved => at.as_str(),
+        _ => saved,
+    };
     let mut best: Option<(&str, &str)> = None; // (merged_at, 步骤名)
     for step in &steps[..step_index] {
         let Some(upstream_ws) = workspaces.iter().find(|w| w.name == step.workspace_name) else {
@@ -1018,8 +1025,10 @@ fn restore_impl(conn: &Connection, id: &str) -> Result<(), String> {
             }
         }
     }
+    // 不清 merged_at（2026-11-05）：恢复工作副本不等于撤销保存——原先清掉后，保存过的步骤一恢复就成了
+    // 没有 AI 在跑的「进行中」、还冒出没东西可审的「去评审」；有没有新的待保存改动由 ahead / 未提交改动判断
     conn.execute(
-        "UPDATE workspaces SET status='active', archived_at=NULL, merged_at=NULL WHERE id=?1",
+        "UPDATE workspaces SET status='active', archived_at=NULL WHERE id=?1",
         params![id],
     )
     .map_err(|e| format!("更新 workspaces 失败: {e}"))?;
@@ -2093,8 +2102,9 @@ pub async fn list_workspaces() -> Result<Vec<WorkspaceDto>, String> {
                 .filter(|w| w.repo_path == repo)
                 .cloned()
                 .collect();
+            let followed = crate::step_loop::followed_at(Path::new(&repo));
             for index in 0..steps.len() {
-                let Some(stale) = stale_upstream_for(&steps, &repo_ws, index) else {
+                let Some(stale) = stale_upstream_for(&steps, &repo_ws, index, &followed) else {
                     continue;
                 };
                 if let Some(w) = rows
@@ -3218,7 +3228,20 @@ pub(crate) fn list_human_task_states_at(root: &Path) -> Vec<HumanTaskStateDto> {
                 })
                 .max();
             let completion = crate::projects::normalize_human_completion(&h.completion);
-            let detected = roots.iter().any(|r| {
+            // 逐条裁决这类「文件里条目都拍板了」的判定只看一份：工作区里有这份文件就看工作区的（这一轮 AI 新写的），
+            // 否则看项目根。原先两边任一满足即算完成——项目根里上一轮全裁决完的旧报告，会把这一轮还没裁决的也判成完成，
+            // 面板随之消失（2026-11-05 排查）
+            let judged: Vec<&PathBuf> = if completion == "decisions_cleared" {
+                roots
+                    .iter()
+                    .rev()
+                    .find(|r| r.join(&h.target).is_file())
+                    .into_iter()
+                    .collect()
+            } else {
+                roots.iter().collect()
+            };
+            let detected = judged.iter().any(|r| {
                 human_target_satisfied(
                     r,
                     &h.target,
@@ -3308,6 +3331,28 @@ pub async fn set_human_task_check(
     })
     .await
     .map_err(|e| format!("更新人工事项勾选失败: {e}"))?
+}
+
+/// 开新一轮（退回补料、跟进、新开一轮）时清掉这一步手动打的勾，回到按落点检测（2026-11-05 排查）：
+/// 手动勾优先于检测，原先勾过一次就永远算完成——新一轮写出新的待裁决条目、补了新的待获取篇目，面板也不再出现。
+/// 只删 checked=1；人显式取消的（checked=0）留着。
+#[tauri::command]
+pub async fn clear_human_task_checks(project_root: String, step: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = crate::projects::ensure_task_project_root(Path::new(&crate::sessions::expand_tilde(
+            &project_root,
+        )))?;
+        let conn = db()?;
+        ensure_human_task_checks_table(&conn)?;
+        conn.execute(
+            "DELETE FROM human_task_checks WHERE project_path=?1 AND step=?2 AND checked=1",
+            params![root.to_string_lossy().into_owned(), step],
+        )
+        .map_err(|e| format!("清人工事项勾选失败: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("清人工事项勾选失败: {e}"))?
 }
 
 // ===== 人工交付导入：选中的外部文件复制进落点目录 + 登记提货单 =====
@@ -5621,24 +5666,31 @@ mod tests {
             ws_named("lit", "2026-08-01T00:00:00Z", Some("2026-08-02T00:00:00Z")),
             ws_named("ana", "2026-08-03T00:00:00Z", None),
         ];
-        assert_eq!(stale_upstream_for(&steps, &ws, 0), None);
+        assert_eq!(stale_upstream_for(&steps, &ws, 0, &std::collections::HashMap::new()), None);
         // 上游合并早于本步推进（本步未合并，推进时间=创建时间）：新鲜
-        assert_eq!(stale_upstream_for(&steps, &ws, 1), None);
+        assert_eq!(stale_upstream_for(&steps, &ws, 1, &std::collections::HashMap::new()), None);
         // 上游晚于本步创建发生合并 → 标出上游步骤名
         let ws = vec![
             ws_named("lit", "2026-08-01T00:00:00Z", Some("2026-08-05T00:00:00Z")),
             ws_named("ana", "2026-08-03T00:00:00Z", None),
         ];
         assert_eq!(
-            stale_upstream_for(&steps, &ws, 1).as_deref(),
+            stale_upstream_for(&steps, &ws, 1, &std::collections::HashMap::new()).as_deref(),
             Some("查文献")
         );
+        // 人点过「跟进上游的新增」且晚于上游合并（跟进轮还没保存、或没有要跟进的）→ 不再报
+        let mut followed = std::collections::HashMap::new();
+        followed.insert(ws[1].id.clone(), "2026-08-05T00:00:00Z".to_string());
+        assert_eq!(stale_upstream_for(&steps, &ws, 1, &followed), None);
+        // 跟进记录早于上游这次合并：照报
+        followed.insert(ws[1].id.clone(), "2026-08-03T12:00:00Z".to_string());
+        assert_eq!(stale_upstream_for(&steps, &ws, 1, &followed).as_deref(), Some("查文献"));
         // 本步之后重新合并（merged_at 晚于上游合并）→ 恢复新鲜
         let ws = vec![
             ws_named("lit", "2026-08-01T00:00:00Z", Some("2026-08-05T00:00:00Z")),
             ws_named("ana", "2026-08-03T00:00:00Z", Some("2026-08-06T00:00:00Z")),
         ];
-        assert_eq!(stale_upstream_for(&steps, &ws, 1), None);
+        assert_eq!(stale_upstream_for(&steps, &ws, 1, &std::collections::HashMap::new()), None);
         // 多个上游时标最晚合并的那个；未合并/未建工作区的上游不参与
         let ws = vec![
             ws_named("lit", "2026-08-01T00:00:00Z", Some("2026-08-04T00:00:00Z")),
@@ -5646,11 +5698,11 @@ mod tests {
             ws_named("write", "2026-08-03T00:00:00Z", None),
         ];
         assert_eq!(
-            stale_upstream_for(&steps, &ws, 2).as_deref(),
+            stale_upstream_for(&steps, &ws, 2, &std::collections::HashMap::new()).as_deref(),
             Some("做分析")
         );
         // 本步尚未创建工作区 / 步骤未绑定工作区名 → 不标
-        assert_eq!(stale_upstream_for(&steps, &ws[..2], 2), None);
+        assert_eq!(stale_upstream_for(&steps, &ws[..2], 2, &std::collections::HashMap::new()), None);
     }
 
     #[test]
