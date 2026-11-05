@@ -11,6 +11,7 @@ import {
   type PdfPageMark,
 } from "./PdfPreview";
 import { usePdfGestureZoom } from "./use-pdf-zoom";
+import PdfFigurePeek from "./PdfFigurePeek";
 import { useFileVersion } from "../file-watch";
 import {
   PDF_ZOOM_STEP,
@@ -33,11 +34,14 @@ import {
   type RawTextSpan,
   type ReaderTranslateResult,
   pdfRenderWindow,
+  captureRectToPageRegion,
+  type PdfPeekItem,
 } from "../reader";
 import {
   findAllIn,
   flattenPdfOutline,
   locateFigure,
+  captionItemIndex,
   normalizeSearchQuery,
   pageSearchLines,
   pageSearchText,
@@ -232,7 +236,26 @@ function PdfContinuousView({
     rect: CaptureRect;
     blob: Blob;
     page: number;
+    /** 框住的页内区域（0–1）：「钉住对照」按它在对照窗里重新渲染，放大不糊 */
+    region: { x: number; y: number; w: number; h: number } | null;
   } | null>(null);
+  // ===== 对照窗（2026-11-05）：圈选钉住 / 点正文或笔记里的 Fig. N，把图钉在 PDF 栏上方对照着读 =====
+  const [peeks, setPeeks] = useState<PdfPeekItem[]>([]);
+  const [peekActive, setPeekActive] = useState("");
+  const openPeek = useCallback((item: PdfPeekItem) => {
+    setPeeks((cur) => {
+      const rest = cur.filter((p) => p.key !== item.key);
+      return [...rest, item].slice(-6);
+    });
+    setPeekActive(item.key);
+  }, []);
+  const closePeek = useCallback((key: string) => {
+    setPeeks((cur) => {
+      const next = cur.filter((p) => p.key !== key);
+      setPeekActive((a) => (a === key ? (next[next.length - 1]?.key ?? "") : a));
+      return next;
+    });
+  }, []);
   const [captureBusy, setCaptureBusy] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -346,6 +369,12 @@ function PdfContinuousView({
       与圈选模式互斥（圈选交互层盖住内容层，这里再守一道） */
   function onContentClick(e: React.MouseEvent<HTMLDivElement>) {
     if (captureOn) return;
+    const figRef = (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref");
+    if (figRef && window.getSelection()?.isCollapsed !== false && !e.metaKey && !e.ctrlKey) {
+      const kind = figRef.dataset.figKind === "table" ? "table" : "figure";
+      void openFigurePeek(kind, figRef.dataset.figLabel ?? "");
+      return;
+    }
     if (!e.metaKey && !e.ctrlKey) {
       // 普通单击：落在高亮上（且不是拖选收尾）就出那条标注的小卡
       if (!annotations?.length || !window.getSelection()?.isCollapsed) return;
@@ -891,6 +920,33 @@ function PdfContinuousView({
     scrollToPage(Math.min(pageCount, n));
   }
 
+  /** 打开某张图 / 表的对照窗：按图注定位所在页，整页显示并先滚到图注（第一期不裁图） */
+  async function openFigurePeek(kind: "figure" | "table", label: string) {
+    const pages = await ensureTextIndex();
+    const hit = pages ? locateFigure(pages.map((p) => p.lines), kind, label) : null;
+    const name = `${kind === "figure" ? "Fig." : "Table"} ${label}`;
+    if (!hit || !doc) {
+      showHint(`没在这篇 PDF 里找到「${name}」`);
+      return;
+    }
+    let focusY: number | null = null;
+    try {
+      const page = await doc.getPage(hit.page);
+      const tc = await page.getTextContent();
+      const items = tc.items as { str?: string; hasEOL?: boolean; transform?: number[] }[];
+      const idx = captionItemIndex(items, hit.quote);
+      const tr = idx != null ? items[idx].transform : undefined;
+      if (tr) {
+        const vp = page.getViewport({ scale: 1 });
+        const [, vy] = vp.convertToViewportPoint(tr[4], tr[5]);
+        focusY = Math.min(1, Math.max(0, vy / vp.height));
+      }
+    } catch {
+      /* 取不到图注位置：整页从顶上看 */
+    }
+    openPeek({ key: `fig:${kind}:${label.toLowerCase()}`, page: hit.page, label: name, region: null, focusY });
+  }
+
   // ----- 外部跳转（笔记里点 p.3 / Fig. 2）-----
   const jumpDoneRef = useRef(0);
   useEffect(() => {
@@ -901,16 +957,8 @@ function PdfContinuousView({
     void (async () => {
       const label = req.figure ?? req.table;
       if (label) {
-        const pages = await ensureTextIndex();
-        const hit = pages
-          ? locateFigure(
-              pages.map((p) => p.lines),
-              req.figure ? "figure" : "table",
-              label,
-            )
-          : null;
-        if (hit) flashAt(hit.page, hit.quote);
-        else showHint(`没在这篇 PDF 里找到「${req.label}」`);
+        // 笔记里点 Fig. 2：打开对照窗，正文停在原处（读到哪不丢）
+        await openFigurePeek(req.figure ? "figure" : "table", label);
         return;
       }
       if (!req.page) return;
@@ -1101,6 +1149,7 @@ function PdfContinuousView({
   // 换文档时退出圈选模式（矩形/定格都只对当前文档有意义）
   useEffect(() => {
     exitCapture();
+    setPeeks([]); // 对照窗只对当前这篇有意义
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
@@ -1163,7 +1212,12 @@ function PdfContinuousView({
       showHint("截图失败，请重试");
       return;
     }
-    setFrozen({ rect: r, blob, page: hit.page });
+    setFrozen({
+      rect: r,
+      blob,
+      page: hit.page,
+      region: captureRectToPageRegion(client, { x: cr.left, y: cr.top, w: cr.width, h: cr.height }),
+    });
   }
 
   /** 圈选拖拽：内容层上按下起框，pointer 全程在 window 上跟（出层也不断） */
@@ -1219,7 +1273,18 @@ function PdfContinuousView({
   const firstSize = pageSizes[1] ?? FALLBACK_PAGE;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {doc && peeks.length > 0 && (
+        <PdfFigurePeek
+          doc={doc}
+          items={peeks}
+          activeKey={peekActive}
+          dark={dark}
+          onActivate={setPeekActive}
+          onClose={closePeek}
+          onJump={scrollToPage}
+        />
+      )}
       {hint && (
         <p className="shrink-0 bg-inset px-3 py-1 text-xs text-l2">{hint}</p>
       )}
@@ -1578,6 +1643,7 @@ function PdfContinuousView({
                         fillParent
                         active
                         glossTerms={glossTerms}
+                        figRefs
                         marks={marksByPage.get(n) ?? NO_PAGE_MARKS}
                         scrollTo={scrollMark?.page === n ? scrollMark : null}
                         onScrolledTo={markScrolled}
@@ -1639,6 +1705,26 @@ function PdfContinuousView({
                     className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1 disabled:opacity-60"
                   >
                     ＋ 插入笔记
+                  </button>
+                )}
+                {frozen.region && (
+                  <button
+                    type="button"
+                    disabled={captureBusy}
+                    title="把框住的这块钉在 PDF 上方，滚动正文时对照着看"
+                    onClick={() => {
+                      const f = frozen;
+                      openPeek({
+                        key: `cap:${f.page}:${f.region!.x.toFixed(3)}:${f.region!.y.toFixed(3)}`,
+                        page: f.page,
+                        label: `p.${f.page} 圈选`,
+                        region: f.region,
+                      });
+                      setFrozen(null);
+                    }}
+                    className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1 disabled:opacity-60"
+                  >
+                    钉住对照
                   </button>
                 )}
                 <button

@@ -273,6 +273,33 @@ export function pageSearchLines(
   return lines;
 }
 
+/** 找图注那一行的第一个文本项（下标，对应 getTextContent 的 items）：分行口径同 pageSearchLines，
+ *  quote 用 locateFigure 给的那段（图注行首，或正文里提到的「fig. 2」）。对照窗按它的纵坐标滚到图注 */
+export function captionItemIndex(
+  items: readonly { str?: string; hasEOL?: boolean }[],
+  quote: string,
+): number | null {
+  const q = quote.trim();
+  if (!q) return null;
+  let cur: PdfTextPiece[] = [];
+  let first = -1;
+  let hit: number | null = null;
+  const flush = () => {
+    const t = buildSearchStream(cur).text.trim();
+    if (hit === null && t && first >= 0 && (t.startsWith(q) || t.includes(q))) hit = first;
+    cur = [];
+    first = -1;
+  };
+  items.forEach((it, i) => {
+    if (typeof it.str !== "string" || hit !== null) return;
+    if (first < 0) first = i;
+    cur.push({ text: it.str, eol: false });
+    if (it.hasEOL) flush();
+  });
+  if (hit === null) flush();
+  return hit;
+}
+
 export type PdfFigureKind = "figure" | "table";
 
 function figurePrefix(kind: PdfFigureKind): string {

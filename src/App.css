@@ -3964,6 +3964,15 @@ select:focus-visible {
   text-underline-offset: 2px;
 }
 
+/* 正文图号（Fig. 2 / Table 1）：点开对照窗。同生词压回 static；虚下划线用强调色和生词区分，手形光标 */
+.textLayer span.ccode-figref {
+  position: static;
+  cursor: pointer;
+  text-decoration: underline dashed;
+  text-decoration-color: var(--color-cta);
+  text-underline-offset: 2px;
+}
+
 /* PDF 页宿主：从全局 color-scheme:dark 里隔离出来。pdf.js 默认不透明 canvas +
    pdf_viewer.css 的 .textLayer { color-scheme:only light; inset:0 } 在
    Chromium/WebView2 里会给盖住 canvas 的 stacking context 铺一层 Canvas 白底，

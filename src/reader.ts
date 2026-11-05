@@ -1081,3 +1081,84 @@ export function pdfRenderWindow(
   for (let n = renderRange.lo; n <= renderRange.hi; n++) mounted.add(n);
   return { renderRange, mounted };
 }
+
+// ===== 对照窗（2026-11-05 用户：读文献时想对照着图看，图一般在后面几页）=====
+// 把一块 PDF 区域（圈选钉住的，或某张图所在的整页）钉在 PDF 栏上方的小窗里，正文照常滚、窗不动。
+
+/** 对照窗里的一项：页号 + 页内区域（0–1 比例，null = 整页）+ 整页时先滚到的高度（图注位置，0–1） */
+export interface PdfPeekItem {
+  key: string;
+  page: number;
+  label: string;
+  region: { x: number; y: number; w: number; h: number } | null;
+  focusY?: number | null;
+}
+
+/** 对照窗位置与大小（PDF 栏内 px），记在 localStorage，换篇不丢 */
+export interface PdfPeekWin {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export const PDF_PEEK_WIN_KEY = "ccode.readerPeekWin";
+export const PDF_PEEK_MIN_W = 220;
+export const PDF_PEEK_MIN_H = 160;
+/** 顶部留给 PDF 工具条（h-8），窗头不压住它 */
+export const PDF_PEEK_TOP = 36;
+
+/** 把窗收进容器：先限大小（不超过容器、不小于下限），再限位置（窗头始终可抓） */
+export function clampPdfPeekWin(win: PdfPeekWin, box: { w: number; h: number }): PdfPeekWin {
+  const maxW = Math.max(PDF_PEEK_MIN_W, box.w - 8);
+  const maxH = Math.max(PDF_PEEK_MIN_H, box.h - PDF_PEEK_TOP - 4);
+  const w = Math.min(maxW, Math.max(PDF_PEEK_MIN_W, Math.round(win.w)));
+  const h = Math.min(maxH, Math.max(PDF_PEEK_MIN_H, Math.round(win.h)));
+  const x = Math.min(Math.max(4, Math.round(win.x)), Math.max(4, box.w - w - 4));
+  const y = Math.min(Math.max(PDF_PEEK_TOP, Math.round(win.y)), Math.max(PDF_PEEK_TOP, box.h - h - 4));
+  return { x, y, w, h };
+}
+
+/** 没记过的默认：贴右上，宽四成（不少于 320），高一半 */
+export function defaultPdfPeekWin(box: { w: number; h: number }): PdfPeekWin {
+  const w = Math.max(320, Math.round(box.w * 0.4));
+  const h = Math.max(240, Math.round(box.h * 0.5));
+  return clampPdfPeekWin({ x: box.w - w - 12, y: PDF_PEEK_TOP + 8, w, h }, box);
+}
+
+export function loadPdfPeekWin(): PdfPeekWin | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PDF_PEEK_WIN_KEY) ?? "null");
+    if (raw && [raw.x, raw.y, raw.w, raw.h].every((v) => Number.isFinite(v))) return raw as PdfPeekWin;
+  } catch {
+    /* 坏值当没记过 */
+  }
+  return null;
+}
+
+export function savePdfPeekWin(win: PdfPeekWin): void {
+  try {
+    localStorage.setItem(PDF_PEEK_WIN_KEY, JSON.stringify(win));
+  } catch {
+    /* 存不下只是下次回默认 */
+  }
+}
+
+/** 圈选框（client 坐标）→ 页内 0–1 区域，按页 canvas 的 client 矩形换算；夹在页内 */
+export function captureRectToPageRegion(
+  sel: { x: number; y: number; w: number; h: number },
+  pageRect: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; w: number; h: number } | null {
+  if (pageRect.w <= 0 || pageRect.h <= 0) return null;
+  const x0 = Math.max(0, (sel.x - pageRect.x) / pageRect.w);
+  const y0 = Math.max(0, (sel.y - pageRect.y) / pageRect.h);
+  const x1 = Math.min(1, (sel.x + sel.w - pageRect.x) / pageRect.w);
+  const y1 = Math.min(1, (sel.y + sel.h - pageRect.y) / pageRect.h);
+  if (x1 - x0 <= 0.005 || y1 - y0 <= 0.005) return null;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** 整页对照时先滚到哪：图注多在图下方，让图注落在窗下方约八成处，上面露出图 */
+export function pdfPeekScrollTop(focusY: number, contentH: number, viewH: number): number {
+  const target = focusY * contentH - viewH * 0.8;
+  return Math.max(0, Math.min(Math.round(target), Math.max(0, contentH - viewH)));
+}

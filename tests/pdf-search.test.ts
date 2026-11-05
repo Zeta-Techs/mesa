@@ -6,6 +6,7 @@ import {
   flattenPdfOutline,
   locateFigure,
   matchSegments,
+  captionItemIndex,
   clipRectsToSpan,
   mergeLineRects,
   normalizeSearchQuery,
@@ -175,4 +176,17 @@ test("高亮矩形夹到文本片真实字宽；上标小字只横向并进行�
     { x: 212, y: 97, w: 20, h: 7 },
   ]);
   assert.deepEqual(merged, [{ x: 10, y: 100, w: 222, h: 12 }]);
+});
+
+test("captionItemIndex：按 locateFigure 给的图注行找它的第一个文本项", () => {
+  const items = [
+    { str: "as shown in Fig. 2, the", hasEOL: true },
+    { str: "Fig. 2.", hasEOL: false },
+    { str: " Cycling performance", hasEOL: true },
+    { hasEOL: false },
+  ];
+  const lines = pageSearchLines(items);
+  const hit = locateFigure([lines], "figure", "2")!;
+  assert.equal(captionItemIndex(items, hit.quote), 1);
+  assert.equal(captionItemIndex(items, "fig. 9"), null);
 });

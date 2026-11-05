@@ -822,3 +822,23 @@ test("readerTlBallNear：译球摆到原文段右侧外、对齐首行；右边�
   // 栏太小不摆
   assert.equal(readerTlBallNear({ top: 0, left: 0, right: 10 }, bounds, { width: 720, height: 1040 }), null);
 });
+
+test("对照窗：窗收进 PDF 栏、圈选框换成页内比例、整页时让图注落在窗下方", async () => {
+  const r = await import("../src/reader.ts");
+  const box = { w: 900, h: 700 };
+  // 太大缩到容器内，太小撑到下限，跑出右下角拉回，窗头不压工具条
+  assert.deepEqual(r.clampPdfPeekWin({ x: 800, y: 10, w: 2000, h: 50 }, box), { x: 4, y: r.PDF_PEEK_TOP, w: 892, h: r.PDF_PEEK_MIN_H });
+  assert.deepEqual(r.clampPdfPeekWin({ x: 850, y: 690, w: 300, h: 200 }, box), { x: 596, y: 496, w: 300, h: 200 });
+  const d = r.defaultPdfPeekWin(box);
+  assert.ok(d.x + d.w <= box.w - 4 && d.y >= r.PDF_PEEK_TOP);
+  // 页 canvas 在 (100,50) 尺寸 400×600；框住右下四分之一，超出页面的部分夹掉
+  assert.deepEqual(
+    r.captureRectToPageRegion({ x: 300, y: 350, w: 300, h: 400 }, { x: 100, y: 50, w: 400, h: 600 }),
+    { x: 0.5, y: 0.5, w: 0.5, h: 0.5 },
+  );
+  assert.equal(r.captureRectToPageRegion({ x: 0, y: 0, w: 10, h: 10 }, { x: 100, y: 50, w: 400, h: 600 }), null);
+  // 图注在页高 60% 处：内容 1000 高、窗 300 高 → 600-240 = 360；靠顶 / 靠底夹住
+  assert.equal(r.pdfPeekScrollTop(0.6, 1000, 300), 360);
+  assert.equal(r.pdfPeekScrollTop(0.1, 1000, 300), 0);
+  assert.equal(r.pdfPeekScrollTop(1, 1000, 300), 700);
+});

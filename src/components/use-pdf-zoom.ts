@@ -132,6 +132,8 @@ export function usePdfGestureZoom({
     };
 
     const overPane = (e: { clientX: number; clientY: number }) => {
+      // 指针在对照窗上：捏合归那扇窗，不缩正文（2026-11-05 对照窗）
+      if (document.elementFromPoint?.(e.clientX, e.clientY)?.closest("[data-figure-peek]")) return false;
       const r = el.getBoundingClientRect();
       return (
         e.clientX >= r.left &&

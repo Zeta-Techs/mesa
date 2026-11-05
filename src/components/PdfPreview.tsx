@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fileStamp, stampKey } from "../file-watch";
 import PreviewErrorState from "./PreviewErrorState";
 import * as pdfjs from "pdfjs-dist";
+import { findPdfRefs } from "../reader-note";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 // textLayer 的官方样式（选区/定位规则）；随本组件进懒加载 chunk
@@ -242,6 +243,7 @@ export const PdfPageView = memo(function PdfPageView({
   renderScale,
   active,
   glossTerms,
+  figRefs,
   fillParent,
   marks = NO_MARKS,
   scrollTo,
@@ -256,6 +258,8 @@ export const PdfPageView = memo(function PdfPageView({
   active: boolean;
   /** 生词高亮术语表（阅读区 B3；空/缺省不高亮） */
   glossTerms?: readonly GlossaryEntry[];
+  /** 正文里的「Fig. 2」「Table 1」「图 2」包成可点的 .ccode-figref（阅读区对照窗，点击由 PdfContinuousView 代理） */
+  figRefs?: boolean;
   /** 连续滚动页盒已定尺寸时填满父级，backing store 仍按渲染倍率渲染 */
   fillParent?: boolean;
   /** 页内高亮（查找/标注/跳转一闪），同内容换引用不重算 */
@@ -491,6 +495,46 @@ export const PdfPageView = memo(function PdfPageView({
       container.normalize();
     };
   }, [textRendered, glossTerms]);
+
+  // 图号可点（对照窗入口，2026-11-05）：textLayer 落地后对文本节点找「Fig. 2 / Figure 2b / 图 2 / Table 1 / 表 1」，
+  // 包 <span class="ccode-figref" data-fig-kind data-fig-label>（虚下划线）；页码引用不包（正文里到处是 p. 的误伤）。
+  // 只认一个文本片里的完整写法，跨片断开的不包；cleanup 还原，幂等可重入（与生词高亮同一套）
+  useEffect(() => {
+    const container = textRef.current;
+    if (!container || textRendered === 0 || !figRefs) return;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    while (walker.nextNode()) {
+      const n = walker.currentNode as Text;
+      if (!/fig|tab|图|表/i.test(n.data)) continue;
+      if (n.parentElement?.closest(".ccode-figref")) continue;
+      nodes.push(n);
+    }
+    for (const node of nodes) {
+      const refs = findPdfRefs(node.data).filter((r) => r.figure || r.table);
+      if (refs.length === 0) continue;
+      const frag = document.createDocumentFragment();
+      let pos = 0;
+      for (const r of refs) {
+        if (r.start > pos) frag.append(document.createTextNode(node.data.slice(pos, r.start)));
+        const span = document.createElement("span");
+        span.className = "ccode-figref";
+        span.dataset.figKind = r.figure ? "figure" : "table";
+        span.dataset.figLabel = (r.figure ?? r.table)!;
+        span.textContent = node.data.slice(r.start, r.end);
+        frag.append(span);
+        pos = r.end;
+      }
+      frag.append(document.createTextNode(node.data.slice(pos)));
+      node.parentNode?.replaceChild(frag, node);
+    }
+    return () => {
+      container.querySelectorAll(".ccode-figref").forEach((el) => {
+        el.replaceWith(...Array.from(el.childNodes));
+      });
+      container.normalize();
+    };
+  }, [textRendered, figRefs]);
 
   // 页内高亮：textLayer 落地后（或标记变化后）按摘句重定位算矩形；矩形存页内百分比，
   // 布局倍率先行的缩放过程中不失位，重渲落地再按新文本层重算一次
