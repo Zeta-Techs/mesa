@@ -136,3 +136,61 @@ export function spotCheckPicks(indexText: string, count = 3): SpotCheckPick[] {
   for (let i = rows.length - 1; i >= 0 && picks.length < count; i -= 1) take(rows[i]);
   return picks;
 }
+
+/** 检索步「AI 干活」行下的篇数（papers/included.json）：纳入 / 待确认 / 已有全文 / 缺全文。
+ *  数字由 Mesa 从台账数，不靠 AI 在报告里自述——用户担心 AI 选择性下载，缺多少要摆在明处
+ *  （2026-11-05 综述回路设计稿 §12）。全文按 pdf 字段认（lit_records.py write 认出项目里的 PDF 后写）。 */
+export interface SearchProgress {
+  included: number;
+  pending: number;
+  withPdf: number;
+}
+
+export function searchProgress(includedText: string): SearchProgress | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(includedText);
+  } catch {
+    return null;
+  }
+  const rows = records(parsed);
+  if (!rows || rows.length === 0) return null;
+  const out: SearchProgress = { included: 0, pending: 0, withPdf: 0 };
+  for (const row of rows) {
+    const decision = field(row, "decision");
+    if (decision === "pending") out.pending += 1;
+    if (decision !== "included" && decision !== "include") continue;
+    out.included += 1;
+    const pdf = (row as Record<string, unknown>).pdf;
+    if (typeof pdf === "string" && pdf.trim()) out.withPdf += 1;
+  }
+  return out.included + out.pending > 0 ? out : null;
+}
+
+/** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9」。没有的分项不出。 */
+export function searchProgressLine(p: SearchProgress): string {
+  const parts = [`纳入 ${p.included} 篇`];
+  if (p.pending > 0) parts.push(`待确认 ${p.pending}`);
+  if (p.withPdf > 0) parts.push(`已有全文 ${p.withPdf}`);
+  if (p.included - p.withPdf > 0) parts.push(`缺全文 ${p.included - p.withPdf}`);
+  return parts.join(" · ");
+}
+
+/** 大纲 outline.md 的用图计划：初稿要拼几张图（「拼 图N」按编号去重）、几处只引原图（「仅引用 [@键] Fig」）。
+ *  技能样例里的「凑不成则仅引用」是备选说明，不算一处。两样都没有返回 null。 */
+export function figurePlan(outlineText: string): { composites: number; citeOnly: number } | null {
+  const ids = new Set<string>();
+  for (const m of outlineText.matchAll(/拼\s*图\s*(\d+)/g)) ids.add(m[1]);
+  let citeOnly = 0;
+  for (const m of outlineText.matchAll(/(凑不成则)?仅引用\s*\[@[^\]]+\]\s*Fig/g)) {
+    if (!m[1]) citeOnly += 1;
+  }
+  return ids.size + citeOnly > 0 ? { composites: ids.size, citeOnly } : null;
+}
+
+export function figurePlanLine(p: { composites: number; citeOnly: number }): string {
+  const parts: string[] = [];
+  if (p.composites > 0) parts.push(`初稿要拼 ${p.composites} 张图`);
+  if (p.citeOnly > 0) parts.push(`直接引原图 ${p.citeOnly} 处`);
+  return `用图计划：${parts.join(" · ")}`;
+}

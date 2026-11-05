@@ -53,7 +53,17 @@ import {
 } from "../research-tools";
 import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
-import { excludedIncludedIds, notesProgress, notesProgressLine, spotCheckPicks, type SpotCheckPick } from "../notes-progress";
+import {
+  excludedIncludedIds,
+  figurePlan,
+  figurePlanLine,
+  notesProgress,
+  notesProgressLine,
+  searchProgress,
+  searchProgressLine,
+  spotCheckPicks,
+  type SpotCheckPick,
+} from "../notes-progress";
 import { inlineDecisionListVisible, stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
   DECISION_STATUS,
@@ -331,6 +341,71 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
     </p>
   );
 }
+
+/** 检索 / 大纲步「AI 干活」行下的一行台账计数（同 NotesProgressLine：工作区优先、项目根兜底，跑着时 20 秒重读）。
+ *  数字由 Mesa 从文件数，不靠 AI 自述（综述回路设计稿 §11/§12）。 */
+function LedgerCountLine({
+  roots,
+  live,
+  rel,
+  line,
+  title,
+  read = readResearchLedger,
+}: {
+  roots: string[];
+  live: boolean;
+  rel: string;
+  line: (text: string) => string | null;
+  title: string;
+  /** 台账白名单外的文件（outline.md）走只读预览通道：白名单同时管写回，不为计数放宽 */
+  read?: (root: string, rel: string) => Promise<{ text: string; truncated: boolean }>;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const rootsKey = roots.join("\n");
+  const lineRef = useRef(line);
+  lineRef.current = line;
+  useEffect(() => {
+    let stale = false;
+    const load = async () => {
+      for (const root of rootsKey.split("\n")) {
+        try {
+          const file = await read(root, rel);
+          if (file.truncated) continue;
+          const out = lineRef.current(file.text);
+          if (!stale) setText(out);
+          return;
+        } catch {
+          /* 这一处还没有这份文件，试下一处 */
+        }
+      }
+      if (!stale) setText(null);
+    };
+    void load();
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    const unpoll = live ? pollEvery(() => load(), 20000) : null;
+    return () => {
+      stale = true;
+      window.removeEventListener("focus", onFocus);
+      unpoll?.();
+    };
+  }, [rootsKey, live, rel, read]);
+  if (!text) return null;
+  return (
+    <p className="mt-1 pl-9 text-micro tabular-nums text-l4" title={title}>
+      {text}
+    </p>
+  );
+}
+
+const searchCountLine = (text: string) => {
+  const p = searchProgress(text);
+  return p ? searchProgressLine(p) : null;
+};
+const figurePlanCountLine = (text: string) => {
+  const p = figurePlan(text);
+  return p ? figurePlanLine(p) : null;
+};
 
 /** 「抽查 3 篇笔记」就地给出三篇候选（notes/index.json，工作区优先、项目根兜底）：
  *  点一篇直接盖上阅读区的核对档（笔记｜原文），三篇在里面切，退出回流程页（2026-10-23）。 */
@@ -1751,6 +1826,8 @@ export default function StepFlow({
 
   if (!states) return null;
   const notesStep = stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides);
+  const searchStep = stepFillsAnySlot(step.skills, ["lit-search"], skillProvides);
+  const outlineStep = stepFillsAnySlot(step.skills, ["review-framework"], skillProvides);
   const flow = buildStepFlow({
     step,
     states,
@@ -2942,6 +3019,25 @@ export default function StepFlow({
           <NotesProgressLine
             roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
+          />
+        )}
+        {node.kind === "agent" && searchStep && (ws || runStatus === "done") && (
+          <LedgerCountLine
+            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            live={runStatus === "active"}
+            rel="papers/included.json"
+            line={searchCountLine}
+            title="按 papers/included.json 数：纳入的篇里有 pdf 字段的算已有全文；缺全文的精读时只能按摘要记"
+          />
+        )}
+        {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
+          <LedgerCountLine
+            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            live={runStatus === "active"}
+            rel="outline.md"
+            read={readResearchFile}
+            line={figurePlanCountLine}
+            title="按 outline.md 的用图计划数：初稿会从全文 PDF 裁子图拼成这些图，对照表在正文里用表格写出；裁不到的改成「见 [@键] Fig.n」"
           />
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。

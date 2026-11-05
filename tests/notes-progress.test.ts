@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { excludedIncludedIds, notesProgress, notesProgressLine } from "../src/notes-progress.ts";
+import {
+  excludedIncludedIds,
+  figurePlan,
+  figurePlanLine,
+  notesProgress,
+  notesProgressLine,
+  searchProgress,
+  searchProgressLine,
+} from "../src/notes-progress.ts";
 
 test("精读进度：reviewed 才算写完，按全文/摘要分开数", () => {
   const index = JSON.stringify([
@@ -78,4 +86,37 @@ test("精读进度：旧索引写 done 也算写完", () => {
   assert.equal(p?.reviewed, 2);
   assert.equal(p?.fulltext, 1);
   assert.equal(p?.abstractOnly, 1);
+});
+
+test("检索篇数：纳入按 pdf 字段分有无全文，待确认单列，排除不算", () => {
+  const json = JSON.stringify([
+    { id: "a", decision: "included", pdf: "papers/a.pdf" },
+    { id: "b", decision: "include", pdf: "" },
+    { id: "c", decision: "included" },
+    { id: "d", decision: "pending" },
+    { id: "e", decision: "excluded", pdf: "papers/e.pdf" },
+  ]);
+  const p = searchProgress(json);
+  assert.deepEqual(p, { included: 3, pending: 1, withPdf: 1 });
+  assert.equal(searchProgressLine(p!), "纳入 3 篇 · 待确认 1 · 已有全文 1 · 缺全文 2");
+  assert.equal(searchProgressLine({ included: 2, pending: 0, withPdf: 2 }), "纳入 2 篇 · 已有全文 2");
+  assert.equal(searchProgress("[]"), null);
+  assert.equal(searchProgress(JSON.stringify([{ id: "x", decision: "excluded" }])), null);
+  assert.equal(searchProgress("{坏"), null);
+});
+
+test("用图计划：拼图按编号去重，仅引用只数真引用，技能样例里的备选不算", () => {
+  const outline = [
+    "## 2. 背景",
+    "- 用图：拼 图1（论点）= (a) [@k1] Fig.2c + (b) [@k2] Fig.3a",
+    "- 正文再提一次 拼 图1 的位置",
+    "## 3. 机理",
+    "- 用图：拼图2（论点）= (a) [@k3] Fig.1 + (b) [@k4] Fig.2",
+    "- 用图：仅引用 [@k5] Fig.4",
+    "- 用图：拼 图3（论点）= …（凑不成则仅引用 [@k6] Fig.2）",
+  ].join("\n");
+  const p = figurePlan(outline);
+  assert.deepEqual(p, { composites: 3, citeOnly: 1 });
+  assert.equal(figurePlanLine(p!), "用图计划：初稿要拼 3 张图 · 直接引原图 1 处");
+  assert.equal(figurePlan("# 大纲\n没有用图计划"), null);
 });
