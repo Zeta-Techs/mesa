@@ -171,15 +171,6 @@ export function eventRuleLabel(rule: EventRuleDto, pending = 0): string {
   return `${what} · ${mode}${cap}${pending > 0 ? ` · 攒着 ${pending} 批` : ""}`;
 }
 
-/** 其他项目的定时任务（项目「定时任务」页底部总览用） */
-export function otherProjectSchedules(
-  schedules: ScheduleDto[],
-  projectRoot: string,
-  isWindows: boolean,
-): ScheduleDto[] {
-  return schedules.filter((s) => !samePath(s.projectRoot, projectRoot, isWindows));
-}
-
 /** 「待处理」里的定时任务条目：其他巡检有新产物待评审 / 任务被自动暂停（文献雷达的新命中另走 lit:） */
 export interface ScheduleInboxCandidate {
   kind: "review" | "paused" | "stalled";

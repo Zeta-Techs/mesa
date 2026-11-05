@@ -70,7 +70,6 @@ export default function ProjectSchedulesView({
           layout="card"
           subsVersion={subsVersion}
           onSchedulesChanged={() => setSchedulesVersion((v) => v + 1)}
-          showOthers
           workMode={project.workMode}
         />
       </div>

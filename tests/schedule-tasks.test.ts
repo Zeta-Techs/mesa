@@ -7,7 +7,6 @@ import {
   lastRunAction,
   lastRunBrief,
   nextRunLabel,
-  otherProjectSchedules,
   scheduleInboxCandidates,
   shouldNotifyRunDone,
   skipLine,
@@ -274,11 +273,6 @@ test("scheduleInboxCandidates：其他巡检待评审只认新记录；自动暂
       ["paused", "r-1", null],
     ],
   );
-});
-
-test("otherProjectSchedules：排除本项目", () => {
-  const list = [schedule("/repo/a", "s-1"), schedule("/repo/b", "s-2")];
-  assert.deepEqual(otherProjectSchedules(list, "/repo/a/", false).map((s) => s.id), ["s-2"]);
 });
 
 test("lastRunBrief / lastRunAction：上次结果一句话与入口", () => {

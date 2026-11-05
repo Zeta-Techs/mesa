@@ -2979,25 +2979,30 @@ pub async fn remove_reading_list_entry(
     .map_err(|e| format!("删除积累清单行失败: {e}"))?
 }
 
-/// 开工冻结进料：把项目根积累账非空内容原样复制为工作区 `.ccode/handoff-lit-intake.md`
+/// 开工冻结进料：把项目根积累账原样复制为工作区 `.ccode/handoff-lit-intake.md`
 /// （被 `.ccode/handoff-*.md` 规则忽略，不进提交/合并/交付评审）。agent 读的是开工定格
-/// 副本而非活文件——流程期间继续「加入积累」不影响本轮。返回是否生成了快照。
+/// 副本而非活文件——流程期间继续「加入积累」不影响本轮。
+/// 积累账空或没有时也写一份只有说明行的快照（2026-11-05）：以前不写，简报回落去读项目根的活文件，
+/// 开工后才加入积累的文献会混进这一轮。返回快照里是否有文献。
 fn freeze_intake_at(root: &Path, worktree: &Path) -> Result<bool, String> {
     if !worktree.is_dir() {
         return Err("工作区目录不存在".into());
     }
-    let Some(text) = read_text_inside(root, READING_LIST_REL)? else {
-        return Ok(false);
+    let text = read_text_inside(root, READING_LIST_REL)?.unwrap_or_default();
+    let has_entries = text
+        .lines()
+        .any(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'));
+    let text = if has_entries {
+        text
+    } else {
+        "# 开工时积累清单为空。之后再加入积累的文献留到下一轮，这一轮不读项目根的 papers/reading-list.md。\n".to_string()
     };
-    if text.trim().is_empty() {
-        return Ok(false);
-    }
     let dest = worktree.join(".ccode").join("handoff-lit-intake.md");
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建工作区 .ccode 失败：{e}"))?;
     }
     crate::profiles::atomic_write(&dest, &text).map_err(|e| format!("写入进料快照失败：{e}"))?;
-    Ok(true)
+    Ok(has_entries)
 }
 
 #[tauri::command]
@@ -4167,8 +4172,10 @@ lone keyword
         let dir = tmpdir("intake");
         let worktree = dir.join("wt");
         fs::create_dir_all(&worktree).unwrap();
-        // 空账/无账：不生成快照，不报错
+        // 空账/无账：照样写一份只有说明行的快照（不让 Agent 回落去读活文件），返回 false
         assert!(!freeze_intake_at(&dir, &worktree).unwrap());
+        let empty = fs::read_to_string(worktree.join(".ccode/handoff-lit-intake.md")).unwrap();
+        assert!(empty.starts_with("# 开工时积累清单为空"), "{empty}");
         add_reading_list_at(&dir, "Accumulated Paper", "A, 2026", "J", "10.1/x").unwrap();
         assert!(freeze_intake_at(&dir, &worktree).unwrap());
         let snap = fs::read_to_string(worktree.join(".ccode/handoff-lit-intake.md")).unwrap();

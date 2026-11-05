@@ -38,7 +38,6 @@ import {
   lastRunAction,
   lastRunBrief,
   nextRunLabel,
-  otherProjectSchedules,
   scheduleStatusMark,
   schedulesForProject,
   skipHint,
@@ -48,7 +47,6 @@ import {
   triggerOptions,
   triggerTag,
 } from "../schedule-tasks";
-import { baseName } from "../session-filter";
 import { normalizeWorkMode } from "../work-mode";
 import {
   LIT_WATCH_SKILL,
@@ -1295,7 +1293,6 @@ export default function ScheduleSection({
   layout = "fold",
   subsVersion = 0,
   onSchedulesChanged,
-  showOthers = false,
   workMode,
 }: {
   projectRoot: string;
@@ -1308,8 +1305,6 @@ export default function ScheduleSection({
   /** 增删改（含启停/改运行配置）成功后调用：同页兄弟组件（雷达卡）靠它感知任务集变化。
    *  新建/删除不发 scheduler-run-done（那只管跑完），没有这座桥雷达空态行要切页才翻新。 */
   onSchedulesChanged?: () => void;
-  /** 底部折叠列出其他项目的定时任务（只读总览，点一行去那个项目）；只在项目「定时任务」页签开 */
-  showOthers?: boolean;
 }) {
   const isCard = layout === "card";
   const mode = workMode ? normalizeWorkMode(workMode) : "research";
@@ -1329,10 +1324,6 @@ export default function ScheduleSection({
     (s) => s.setWorkspaceReviewRequest,
   );
   const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
-  const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
-  const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
-  const [others, setOthers] = useState<ScheduleDto[]>([]);
-  const [othersOpen, setOthersOpen] = useState(false);
   const [noteFor, setNoteFor] = useState<ScheduleDto | null>(null);
   const [memoryFor, setMemoryFor] = useState<ScheduleDto | null>(null);
   /** 手动「立即跑」中的任务 id：靠 scheduler-run-done 事件清除并触发重拉 */
@@ -1366,7 +1357,6 @@ export default function ScheduleSection({
         invoke<SkillDto[]>("list_skills").catch(() => [] as SkillDto[]),
       ]);
       const mine = schedulesForProject(list, projectRoot, IS_WINDOWS);
-      setOthers(otherProjectSchedules(list, projectRoot, IS_WINDOWS));
       setRunningCount(list.filter((t) => t.runningRunId).length);
       const counts = await Promise.all(
         mine
@@ -1527,19 +1517,6 @@ export default function ScheduleSection({
     }
   }
 
-  /** 总览一行点进去：选中那个项目并切到它的「定时任务」页签 */
-  function goProjectSchedules(root: string) {
-    setSelectProjectReq?.(root);
-    setProjectFocusReq?.({ projectRoot: root, focus: "schedule", token: Date.now() });
-    setPage("workspaces");
-  }
-
-  function otherStatus(o: ScheduleDto): string {
-    if (o.runningRunId) return "运行中";
-    if (!o.enabled) return o.pausedReason ? "已自动暂停" : "已停用";
-    return nextRunLabel(o) ?? "仅手动";
-  }
-
   /** 打开某次运行的评审（历史行与「上次」行共用） */
   function openReview(rec: RunRecordDto) {
     if (!rec.isolationPath) return;
@@ -1603,8 +1580,11 @@ export default function ScheduleSection({
           {error && <InlineNotice tone="err" className="py-1">{error}</InlineNotice>}
           {schedules !== null && schedules.length === 0 && drafts.length === 0 && (
             <div className="text-xs text-l3">
+              {/* 2026-11-05 用户：空态太复杂、说明看不懂——一句说清它做什么、结果去哪 */}
               <p>
-                还没有定时任务。Agent 按你定的周期在后台跑，结果先放在隔离目录，你评审后才进项目。
+                {research
+                  ? "让 AI 按周期替你跑，比如每天查新文献。结果先等你过目，点了才进项目。"
+                  : "让 AI 按周期替你跑。结果先等你过目，点了才进项目。"}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span className="text-micro text-l4">试试：</span>
@@ -2099,53 +2079,6 @@ export default function ScheduleSection({
       )}
       {memoryFor && (
         <MemoryModal schedule={memoryFor} onClose={() => setMemoryFor(null)} />
-      )}
-      {showOthers && others.length > 0 && (
-        <div className="mt-3 border-t border-hairline pt-2">
-          <button
-            type="button"
-            className="flex items-center gap-1 text-micro text-l3 hover:text-l1"
-            aria-expanded={othersOpen}
-            onClick={() => setOthersOpen((v) => !v)}
-          >
-            <FoldMark open={othersOpen} /> 其他项目的定时任务（{others.length}）
-          </button>
-          {othersOpen && (
-            <ul className="mt-1 space-y-0.5">
-              {others.map((o) => {
-                const mark = o.lastStatus ? scheduleStatusMark(o.lastStatus) : null;
-                return (
-                  <li key={o.id}>
-                    <button
-                      type="button"
-                      className="flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1 text-left text-xs hover:bg-hover"
-                      title="去这个项目的定时任务页"
-                      onClick={() => goProjectSchedules(o.projectRoot)}
-                    >
-                      <span className="min-w-0 max-w-40 shrink truncate text-l2">
-                        {baseName(o.projectRoot)}
-                      </span>
-                      <span className="min-w-0 truncate text-l3">{o.name}</span>
-                      <span className="shrink-0 text-micro text-l4">
-                        {o.event
-                          ? eventRuleLabel(o.event, o.pendingEvents ?? 0)
-                          : frequencyLabel(o.frequency, o.weekday, o.hour, o.minute, o.intervalHours)}
-                      </span>
-                      <span className="ml-auto flex shrink-0 items-center gap-1 text-micro text-l4">
-                        {mark && (
-                          <span className={mark.className} title={`上次：${mark.label}`}>
-                            {mark.glyph}
-                          </span>
-                        )}
-                        {otherStatus(o)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
       )}
     </div>
   );

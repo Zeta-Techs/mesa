@@ -123,10 +123,9 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
   const { createElement: h, act, createRoot, Section } = compiled.exports;
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
-  let showOthers = false;
   let workMode: string | undefined;
   const render = async () => act(async () => root.render(h(Section, {
-    projectRoot: "/project", layout: "card", subsVersion, showOthers, workMode,
+    projectRoot: "/project", layout: "card", subsVersion, workMode,
     onSchedulesChanged: () => { data.changed++; },
   })));
   const allButtons = () => Array.from(dom.window.document.querySelectorAll("button"));
@@ -253,7 +252,6 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
         nextRunAt: "2026-10-24T09:00:00",
       },
     ];
-    showOthers = true;
     subs = [{ keyword: "mixture-of-experts" }]; // 没关键词时菜单里不给「带附言运行」
     subsVersion = 3;
     await render();
@@ -273,13 +271,9 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
     await click(byText("看过程"));
     assert.deepEqual(data.openSession.at(-1), { agent: "codex", sessionId: "sess-1" });
     assert.equal(data.pages.at(-1), "sessions");
-    // 其他项目总览：折叠着，点开后一行去那个项目
-    const fold = allButtons().find((b) => b.textContent?.includes("其他项目的定时任务（1）"));
-    assert.ok(fold, "应有其他项目总览");
-    await click(fold!);
-    await click(allButtons().find((b) => b.textContent?.includes("别处的雷达"))! as HTMLButtonElement);
-    assert.equal(data.selected.at(-1), "/elsewhere");
-    assert.equal(data.pages.at(-1), "workspaces");
+    // 其他项目的定时任务不在本项目页签列出（2026-11-05 用户：空态太复杂）
+    assert.ok(!host.textContent!.includes("其他项目的定时任务"));
+    assert.ok(!host.textContent!.includes("别处的雷达"));
     // 带附言运行：⋯ 菜单 → 弹层 → 立即运行，附言跟着 run_schedule_now 走
     await click(allButtons().find((b) => b.getAttribute("aria-label") === "任务操作：文献雷达")! as HTMLButtonElement);
     await click(byText("带附言运行…"));
@@ -294,11 +288,10 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
 
     // ⑦ 编程项目：空态给示例；默认新建巡检技能，种类里没有文献雷达；点示例预填描述
     schedules = [];
-    showOthers = false;
     workMode = "coding";
     subsVersion = 4;
     await render();
-    assert.match(host.textContent!, /还没有定时任务/);
+    assert.match(host.textContent!, /让 AI 按周期替你跑/);
     await click(byText("每周汇总代码改动"));
     const body = dom.window.document.body;
     const kind = Array.from(body.querySelectorAll<HTMLSelectElement>("select")).find((s) =>
