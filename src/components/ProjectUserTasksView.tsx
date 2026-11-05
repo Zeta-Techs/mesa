@@ -39,6 +39,8 @@ import ProjectSettingsDrawer from "./ProjectSettingsDrawer";
 import PackParamInput from "./PackParamInput";
 import { goalTextFromPack, packMcpNote, packSkillNames } from "../task-packs";
 import { BUILTIN_TASKS, builtinTaskGoalText } from "../builtin-tasks";
+import { builtinTaskStep } from "../work-order-pack";
+import SavePackModal from "./SavePackModal";
 import type { TaskPackDto } from "../types";
 import {
   acceptedGoalOutputs,
@@ -940,6 +942,8 @@ function CreateTaskModal({
   }
   // 内置科研任务（2026-11-05，design-assistant-intake §5）：只在科研项目给，选了填做法、点名项目里已有的技能；没有参数
   const builtinTasks = project.workMode === "research" ? BUILTIN_TASKS : [];
+  const pickedBuiltin = packId.startsWith("builtin:") ? (builtinTasks.find((t) => `builtin:${t.id}` === packId) ?? null) : null;
+  const [savingBuiltin, setSavingBuiltin] = useState(false);
   async function choosePack(id: string) {
     const pack = packs.find((p) => p.id === id) ?? null;
     const builtin = id.startsWith("builtin:") ? (builtinTasks.find((t) => `builtin:${t.id}` === id) ?? null) : null;
@@ -1179,6 +1183,32 @@ function CreateTaskModal({
                   </label>
                 ))}
               </div>
+            )}
+            {pickedBuiltin && (
+              <p className="text-micro text-l4">
+                已按内置科研任务「{pickedBuiltin.name}」填好下面的说明，补上开头要写清的事再开始。改成你们组的写法后，可以
+                <button type="button" className="mx-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1" onClick={() => setSavingBuiltin(true)}>
+                  <span className="text-micro">另存为我的版本…</span>
+                </button>
+                以后都按它来。
+              </p>
+            )}
+            {pickedBuiltin && (
+              <SavePackModal
+                open={savingBuiltin}
+                title={`把「${pickedBuiltin.name}」另存为我的版本`}
+                steps={[
+                  {
+                    ...builtinTaskStep(pickedBuiltin),
+                    // 存的是你在「要完成什么」里改好的写法（没改就是内置原文），去掉末尾「按内置任务记下」那句
+                    brief: text.replace(/\n*（按内置任务「[^」]*」记下）\s*$/, "").trim() || builtinTaskStep(pickedBuiltin).brief,
+                  },
+                ]}
+                initialName={`${pickedBuiltin.name}（我的）`}
+                initialDescription={`基于内置科研任务「${pickedBuiltin.name}」：${pickedBuiltin.summary}`}
+                intro="按你现在「要完成什么」里的写法存进「我的任务」；以后新建目标当模板、项目助手派活单「按任务」都用你的版本。"
+                onClose={() => setSavingBuiltin(false)}
+              />
             )}
             {pickedPack && (
               <p className="text-micro text-l4">

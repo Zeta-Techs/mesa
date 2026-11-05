@@ -335,6 +335,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ProjectAssistantHost.tsx # 项目助手唯一宿主（App 挂一份）：读 store.assistantReq，补项目条目与步骤数，按钮交 assistant-actions、派活交 assistant-dispatch；
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
+  components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
+  components/SavePackModal.tsx # 弹层版另存为我的任务（挂 body，表单里不嵌表单）：派活单验收后「存成我的任务…」、内置科研任务「另存为我的版本…」共用，里面是 SavePackForm
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 另导出 MesaBuddyIcon（线条小图标，项目助手入口按钮、Agent 分工卡片用）；项目助手的卡通形象「小桌」（活过来的小工作台，原创）：pose idle / wave / think / happy / oops / sleep（盘腿睡），prop coffee / lamp；
                              # 深浅主题同一套米白身子 + 墨线；≤40px 只取半身；动作在 App.css .mesa-buddy*，减弱动态效果时静止
@@ -588,10 +590,13 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 接活：REQUEST_RULES（六种去向、问清楚、派活单）、parseClarify（:::问 块）、派活单 v2 字段与 parseOrderPaths、RESEARCH_ORDER_RULES（科研通则唯一出处）、OrderTextOptions；
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
-  project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
+  assistant-echo.ts          # 派活回音纯逻辑（2026-11-05）：echoText（做完 / 失败 / 停了各一句、带去处标记，已验收不说）、echoInboxItems（没看过的进收件箱「项目助手」asst:）、本机已看记录 ccode.assistantEchoSeen（tests/assistant-echo.test.ts）
+  assistant-echo-watch.ts    # 派活回音巡视（调 invoke）：pollAssistantEchoes 每分钟 assistant_open_dispatches → dispatchStatus.phase → assistant_echo，刷新 store.assistantEchoes、到新回音 bumpAssistantEchoTick；seeAssistantEchoes 打开项目助手即算看过
+  work-order-pack.ts         # 接活三期：workOrderToStep / builtinTaskStep（派活单、内置科研任务 → 一步步骤合同）、artifactPaths（交付物认路径）、suggestPackParams（时间范围 / 日期 / 时长 / 这次的文件预填成参数）、workOrderScheduleIntent（做成定时任务的描述）（tests/work-order-pack.test.ts）
   assistant-capabilities.ts  # 接活二期能力清单的两块：workerCapabilityLines（干活的连接能做到哪一步——支持程度、看图、出图、能否定时，数据来自 agent_capabilities / model_capabilities / 设置出图模型 / image_gen_status）、TRIGGER_CATALOG_LINES（定时与事件只说明不建）（tests/assistant-capabilities.test.ts）
   builtin-tasks.ts           # 内置科研任务（2026-11-05）：组会汇报 / 进展周报 / 实验规划的做法数据；不是流程模板、不进 pipeline-presets。findBuiltinTask、builtinTaskCatalogLines（能力清单）、builtinTaskMethod（派活单附上的做法）、builtinTaskGoalText（新建目标当模板）（tests/builtin-tasks.test.ts）
+  project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
@@ -1847,6 +1852,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；带 images（粘贴目录里的图、≤4）也走这条：
                              #   Codex `--image=a,b`、Claude 图所在目录 --add-dir + 提示词点名让它用 Read 打开（ai::image_prompt_note），别家明说换连接；
                              # 边生成边推：StreamState 读 Claude stream-json / Codex --json 行，emit assistant-stream-<id>（整段脱敏后的回答 + 正在做的一步，文字 120ms 一推）；
+                             # 派活回音（2026-11-05）：trim_log 超上限只丢普通问答（派过活的轮次与回音留着）；派活时写 root.txt 记项目；assistant_open_dispatches 各项目还在跟的派活（14 天内、未验收）；
+                             #   assistant_echo 同一阶段只补一次回音（echo_of，accepted 只记不说）；
+                             # project_file_map（2026-11-05 接活）：项目根下文件清单（路径、大小、修改时间），不读内容，跳隐藏 / 依赖目录 / 符号链接，4000 条 8 层封顶；
                              # assistant_log_append 记本地现答的寒暄；assistant_mark_dispatched 把派活记到那一轮；assistant_guide_section 说明书一节原文；回答带 costUsd；assistant_review_notes 只读工作副本 .ccode/review-notes.md（16KB、脱敏）。没有改项目文件、派活、传话的口子。
                              # assistant_guide_search：说明书编译期读进来（include_str docs/guide/user-guide.md），按段切、汉字两两字组 + idf 打分，
                              # GUIDE_TOPICS 把常问的「怎么用」指到对应小节（锚点有测试守着，改说明书标题记得同步）
@@ -1861,13 +1869,14 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   走 runs::live_copy_changes（与评审页没冻结时现算同口径、只读），改过的记 NO_LINES「~」不给行数；无头 / 定时运行的注入在 ai::run_agent_task
   help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
-                             # project_file_map（2026-11-05 接活）：项目根下文件清单（路径、大小、修改时间），不读内容，跳隐藏 / 依赖目录 / 符号链接，4000 条 8 层封顶；
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
   step_loop.rs               # 综述回路二期（design-review-loop.md §4–§6）：补料单 .ccode/rework/<id>.json、开轮起因 .ccode/step-rounds.jsonl（只追加，时间后端写）——
+                             #   followed_at（每个工作区最近一次 followup / ack 的时间，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
                              #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
+                             #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_cleared 判定工作区有文件只看工作区
                              # setup/archive 钩子、评审合并（health/merge/PR）、artifacts.yaml、
                              # 人工事项状态（human_task_checks 勾选 + human_target_hit 落点检测 + human_target_count 命中计数/to-fetch 清单计数——
                              # 计数口径与前端 step-flow.ts parseToFetchItems 双端镜像：编号/列表行都算，裸行须带「 — DOI」尾巴，说明行与「待补」不算）、import_human_deliverable
@@ -1878,12 +1887,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM
   ws_settings.rs             # .ccode/settings.toml 三层合并（用户→仓库→local）；开步自动写 quarto 渲染脚本
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
-                             #   followed_at（每个工作区最近一次 followup / ack 的时间，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
                              # list_dir 可选 withCounts：文件夹带 child_count（同一套隐藏规则，数到 1000 封顶，默认不数）；
                              # existing_files：聊天回复里提到的路径哪些是 cwd 内的文件（只看元数据，返回原样路径 + 规范化绝对路径）；
-                             #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_cleared 判定工作区有文件只看工作区
                              # list_recent_files：项目里最近改过的文件（不限类型，跳过点开头与依赖 / 构建目录，扫 2 万个后按修改时间取前 300；只读元数据），
                              #   与 list_office_docs 共用 office_walk（exts=None 不限类型）；
                              # drop_ris_record / drop_fetch_line：移出时整份改写超过 256 KB 的 RIS 与 to-fetch.md（to-fetch.md 开头「还没有全文的 N 篇」按剩下没打 ✓ 的行重算）

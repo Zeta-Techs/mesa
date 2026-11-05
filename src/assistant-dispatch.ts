@@ -179,23 +179,31 @@ export interface DispatchRecord {
   taskId?: string | null;
   worktreePath?: string | null;
   note: string;
+  /** 派活回音补到哪个阶段了（后端 assistant_echo 记） */
+  echoed?: string | null;
+  echoedAt?: string | null;
 }
 
 export type DispatchTone = "wait" | "live" | "done" | "fail" | "idle";
+/** 值得补一句回音的阶段（2026-11-05）：做完等评审 / 验收、失败、停了；已验收只记不说 */
+export type DispatchPhase = "review" | "failed" | "stopped" | "accepted";
 
 /** 派出去的活现在怎样（卡片上实时一行、项目快照里一行）：等送达 / 在做 / 做完待评审 / 做完待验收… */
-export async function dispatchStatus(rec: DispatchRecord, projectPath: string): Promise<{ text: string; tone: DispatchTone }> {
+export async function dispatchStatus(
+  rec: DispatchRecord,
+  projectPath: string,
+): Promise<{ text: string; tone: DispatchTone; phase?: DispatchPhase }> {
   if (rec.mode === "goal" && rec.taskId) {
     const task = await invoke<TaskDto | null>("task_get", { id: rec.taskId }).catch(() => null);
     if (!task) return { text: "目标找不到了（可能删了）", tone: "idle" };
-    const map: Record<string, { text: string; tone: DispatchTone }> = {
+    const map: Record<string, { text: string; tone: DispatchTone; phase?: DispatchPhase }> = {
       pending: { text: "记下了，还没开工", tone: "wait" },
       queued: { text: "排队中", tone: "wait" },
       running: { text: "在做", tone: "live" },
-      pending_review: { text: "做完了，等你验收", tone: "done" },
-      completed: { text: "已验收", tone: "idle" },
-      failed: { text: "上次失败，需要处理", tone: "fail" },
-      stopped: { text: "停了，需要处理", tone: "wait" },
+      pending_review: { text: "做完了，等你验收", tone: "done", phase: "review" },
+      completed: { text: "已验收", tone: "idle", phase: "accepted" },
+      failed: { text: "上次失败，需要处理", tone: "fail", phase: "failed" },
+      stopped: { text: "停了，需要处理", tone: "wait", phase: "stopped" },
     };
     return map[task.status] ?? { text: task.status, tone: "idle" };
   }
@@ -219,7 +227,7 @@ export async function dispatchStatus(rec: DispatchRecord, projectPath: string): 
   const ws = (await invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[])).find((w) => samePath(w.worktreePath, path, IS_WINDOWS));
   if (!ws) return { text: "工作副本不在了（可能已保存进项目并归档）", tone: "idle" };
   const health = await invoke<{ ahead: number; uncommitted: boolean }>("workspace_health", { id: ws.id }).catch(() => null);
-  if (health && health.ahead > 0) return { text: "做完了，等你评审、保存进项目", tone: "done" };
-  if (ws.mergedAt && health?.ahead === 0) return { text: "已保存进项目", tone: "idle" };
+  if (health && health.ahead > 0) return { text: "做完了，等你评审、保存进项目", tone: "done", phase: "review" };
+  if (ws.mergedAt && health?.ahead === 0) return { text: "已保存进项目", tone: "idle", phase: "accepted" };
   return { text: live ? "这一轮说完了，等你看" : "停下了，没看到新的改动", tone: "idle" };
 }

@@ -15,6 +15,7 @@ import {
   clampAssistantWidth,
 } from "../assistant-dock";
 import { readProjectSurfaceTab } from "../project-surface";
+import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
 function savedWidth(): number {
@@ -41,6 +42,17 @@ export default function ProjectAssistantHost() {
   const [project, setProject] = useState<ProjectDto | null>(null);
   const [stepCount, setStepCount] = useState(0);
   const path = req?.path ?? null;
+
+  // 派活回音（2026-11-05）：应用开着就每分钟看一次派出去的活，做完 / 失败 / 停了在问答里补一条、进收件箱
+  useEffect(() => {
+    void pollAssistantEchoes();
+    const timer = window.setInterval(() => void pollAssistantEchoes(), ECHO_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  const echoTick = useAppStore((s) => s.assistantEchoTick);
+  useEffect(() => {
+    if (path) seeAssistantEchoes(path);
+  }, [path, echoTick]);
 
   useEffect(() => {
     if (!path) return;

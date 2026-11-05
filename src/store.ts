@@ -457,7 +457,9 @@ export interface InboxItem {
     | { type: "run"; runId?: string; tabId?: string }
     | { type: "settings"; section: string }
     | { type: "phoneDrop" }
-    | { type: "profiles" };
+    | { type: "profiles" }
+    /** 项目助手派活回音（2026-11-05）：打开那个项目的项目助手 */
+    | { type: "assistant"; projectRoot: string };
 }
 
 /** 应用更新收件箱条目（去设置页「更新」分区） */
@@ -488,16 +490,17 @@ export function phoneDropInboxEntry(pending: number): InboxItem | null {
   };
 }
 
-/** 标题栏 / 工作台可见收件箱：业务条目 + 现算的应用更新与手机待处理（项目页未挂载也能看到） */
+/** 标题栏 / 工作台可见收件箱：业务条目 + 现算的应用更新与手机待处理 + 项目助手派活回音（项目页未挂载也能看到） */
 export function visibleInboxItems(
   items: InboxItem[],
   update: { version: string; currentVersion: string } | null,
   dismissed: Record<string, string>,
   phonePending = 0,
+  assistant: readonly InboxItem[] = [],
 ): InboxItem[] {
   const phone = phoneDropInboxEntry(phonePending);
   return filterDismissed(
-    [...mergeAppUpdateInbox(items, appUpdateInboxEntry(update)), ...(phone ? [phone] : [])],
+    [...mergeAppUpdateInbox(items, appUpdateInboxEntry(update)), ...(phone ? [phone] : []), ...assistant],
     dismissed,
   );
 }
@@ -627,6 +630,8 @@ export function runInboxAction(item: InboxItem) {
       token: Date.now(),
     });
     s.setPage("workspaces");
+  } else if (item.action.type === "assistant") {
+    s.openAssistant(item.action.projectRoot);
   } else if (item.action.type === "help") {
     // 人工请求「去回答」：全局卡片弹层原地打开（工作台、标题栏收件箱都不跳页，2026-11-02）
     s.setHelpViewReq(item.action.projectRoot);
@@ -907,6 +912,14 @@ interface AppState {
     nonce: number;
   } | null;
   openAssistant: (path: string, question?: string, focus?: { title: string; detail: string; runId?: string | null } | null) => void;
+  /** 派活回音（2026-11-05）：还没看过的回音进收件箱「项目助手」；tick 每补一条回音加一，开着的面板据此重读记录 */
+  assistantEchoes: InboxItem[];
+  setAssistantEchoes: (items: InboxItem[]) => void;
+  assistantEchoTick: number;
+  bumpAssistantEchoTick: () => void;
+  /** 项目助手派活单「做成定时任务…」：项目「定时任务」页签打开新建弹层并预填（新建巡检技能） */
+  scheduleDraftReq: { projectRoot: string; name: string; intent: string; token: number } | null;
+  setScheduleDraftReq: (req: AppState["scheduleDraftReq"]) => void;
   closeAssistant: () => void;
   /** 项目助手此刻是常驻侧栏（不挡页面）：按钮跳转、开任务面板时不用关它（2026-11-05） */
   assistantDocked: boolean;
@@ -1371,6 +1384,12 @@ export const useAppStore = create<AppState>((set, get) => {
   openAssistant: (path, question, focus) =>
     set((st) => ({ assistantReq: { path, question, focus: focus ?? null, nonce: (st.assistantReq?.nonce ?? 0) + 1 } })),
   closeAssistant: () => set({ assistantReq: null }),
+  assistantEchoes: [],
+  setAssistantEchoes: (items) => set({ assistantEchoes: items }),
+  assistantEchoTick: 0,
+  bumpAssistantEchoTick: () => set((st) => ({ assistantEchoTick: st.assistantEchoTick + 1 })),
+  scheduleDraftReq: null,
+  setScheduleDraftReq: (req) => set({ scheduleDraftReq: req }),
   assistantDocked: false,
   setAssistantDocked: (docked) => set({ assistantDocked: docked }),
   workbenchTaskReq: null,

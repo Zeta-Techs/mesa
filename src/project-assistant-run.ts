@@ -67,6 +67,8 @@ export interface AssistantTurn {
   costUsd?: number | null;
   /** 这一轮的派活单派出去了 */
   dispatched?: DispatchRecord | null;
+  /** 派活回音（2026-11-05）：为哪一轮派出去的活补的进展；问题为空，不当成问答喂给 AI */
+  echoOf?: string | null;
 }
 
 /** 「问问为什么」带进来的那件事 */

@@ -74,6 +74,9 @@ pub struct AssistantTurnDto {
     /// 这一轮起草的派活单派出去了：派给谁、怎么派的、留话 id / 目标 id（项目助手据此跟进度，2026-11-04）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatched: Option<DispatchRecordDto>,
+    /// 派活回音（2026-11-05）：这一条是项目助手为哪一轮派出去的活补的进展（那一轮的 at）；问题为空
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echo_of: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -96,6 +99,11 @@ pub struct DispatchRecordDto {
     /// 派出去时给人看的那句
     #[serde(default)]
     pub note: String,
+    /// 派活回音补到哪个阶段了（review / failed / stopped / accepted）；accepted 后不再跟
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echoed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub echoed_at: Option<String>,
 }
 
 fn truncate(text: &str, cap: usize) -> String {
@@ -330,16 +338,26 @@ pub async fn assistant_log_clear(project_root: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 问答记录超过上限时丢最旧的普通问答；派过活的轮次与它的回音不丢（2026-11-05：派活单和后来的进度是审计线索，
+/// 删了就对不上「哪一轮起草、派给谁、结果怎样」）
+pub(crate) fn trim_log(rows: &mut Vec<AssistantTurnDto>, cap: usize) {
+    while rows.len() > cap {
+        match rows.iter().position(|r| r.dispatched.is_none() && r.echo_of.is_none()) {
+            Some(i) => {
+                rows.remove(i);
+            }
+            None => break,
+        }
+    }
+}
+
 fn append_turn(project_root: &str, turn: AssistantTurnDto) -> Result<(), String> {
     let dir = project_dir(project_root)?;
     let path = dir.join(LOG_FILE);
     with_lock(&dir, || {
         let mut rows: Vec<AssistantTurnDto> = read_jsonl(&path);
         rows.push(turn);
-        if rows.len() > LOG_CAP {
-            let drop = rows.len() - LOG_CAP;
-            rows.drain(..drop);
-        }
+        trim_log(&mut rows, LOG_CAP);
         write_jsonl(&path, &rows)
     })
 }
@@ -356,6 +374,7 @@ pub async fn assistant_log_append(project_root: String, question: String, answer
             basis: String::new(),
             cost_usd: None,
             dispatched: None,
+            echo_of: None,
         };
         append_turn(&project_root, turn.clone())?;
         Ok(turn)
@@ -374,8 +393,100 @@ fn mark_dispatched_sync(project_root: &str, turn_at: &str, record: DispatchRecor
         record.title = truncate(&crate::sessions::redact_sensitive_text(&record.title), 200);
         record.note = truncate(&record.note, 300);
         row.dispatched = Some(record);
+        // 记下这份记录是哪个项目的：派活回音要从配置目录反查项目（目录名是哈希）
+        let _ = crate::storage::atomic_write(&dir.join(ROOT_FILE), project_root.trim().as_bytes(), true);
         write_jsonl(&path, &rows)
     })
+}
+
+const ROOT_FILE: &str = "root.txt";
+/// 派出去超过这么多天还没收尾的不再跟（可能早被人处理掉了）
+const ECHO_WATCH_DAYS: i64 = 14;
+/// 到了这个阶段就不再跟
+const ECHO_FINAL: &[&str] = &["accepted"];
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDispatchDto {
+    pub project_root: String,
+    pub turn_at: String,
+    pub record: DispatchRecordDto,
+}
+
+fn open_dispatches_sync(now: chrono::DateTime<chrono::FixedOffset>) -> Vec<OpenDispatchDto> {
+    let Some(base) = crate::storage::config_root().map(|r| r.join(DIR)) else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(&base) else { return Vec::new() };
+    let mut out = Vec::new();
+    for dir in rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+        let Ok(root) = fs::read_to_string(dir.join(ROOT_FILE)) else { continue };
+        let root = root.trim().to_string();
+        if root.is_empty() {
+            continue;
+        }
+        for row in read_jsonl::<AssistantTurnDto>(&dir.join(LOG_FILE)) {
+            let Some(rec) = row.dispatched else { continue };
+            if rec.echoed.as_deref().is_some_and(|e| ECHO_FINAL.contains(&e)) {
+                continue;
+            }
+            if !parse_at(&rec.at).is_some_and(|t| (now - t).num_days() < ECHO_WATCH_DAYS) {
+                continue;
+            }
+            out.push(OpenDispatchDto { project_root: root.clone(), turn_at: row.at, record: rec });
+        }
+    }
+    out
+}
+
+/// 还在跟的派活（各项目）：应用里的巡视据此看进度、补回音
+#[tauri::command]
+pub async fn assistant_open_dispatches() -> Vec<OpenDispatchDto> {
+    tauri::async_runtime::spawn_blocking(|| open_dispatches_sync(now_fixed())).await.unwrap_or_default()
+}
+
+fn echo_sync(project_root: &str, turn_at: &str, state: &str, text: &str) -> Result<Option<AssistantTurnDto>, String> {
+    if !matches!(state, "review" | "failed" | "stopped" | "accepted") {
+        return Err("未知的进展阶段".into());
+    }
+    let dir = project_dir(project_root)?;
+    let path = dir.join(LOG_FILE);
+    with_lock(&dir, || {
+        let mut rows: Vec<AssistantTurnDto> = read_jsonl(&path);
+        let row = rows.iter_mut().find(|r| r.at == turn_at).ok_or("找不到那一轮问答（可能已清空）")?;
+        let rec = row.dispatched.as_mut().ok_or("那一轮没有派过活")?;
+        // 同一阶段只补一次（巡视每分钟看一次，重启后也不重复）
+        if rec.echoed.as_deref() == Some(state) {
+            return Ok(None);
+        }
+        let now = now_fixed().to_rfc3339();
+        rec.echoed = Some(state.to_string());
+        rec.echoed_at = Some(now.clone());
+        let text = text.trim();
+        let echo = (!text.is_empty()).then(|| AssistantTurnDto {
+            at: now,
+            question: String::new(),
+            answer: truncate(&crate::sessions::redact_sensitive_text(text), 2000),
+            connection: "项目助手".into(),
+            basis: String::new(),
+            cost_usd: None,
+            dispatched: None,
+            echo_of: Some(turn_at.to_string()),
+        });
+        if let Some(e) = &echo {
+            rows.push(e.clone());
+            trim_log(&mut rows, LOG_CAP);
+        }
+        write_jsonl(&path, &rows)?;
+        Ok(echo)
+    })
+}
+
+/// 派活回音：派出去的活到了新阶段（做完等评审 / 验收、失败、停了），在那个项目的问答里补一条；
+/// text 为空只记阶段不补话（如已验收：人自己点的，不用再说）。同一阶段只补一次
+#[tauri::command]
+pub async fn assistant_echo(project_root: String, turn_at: String, state: String, text: String) -> Result<Option<AssistantTurnDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || echo_sync(&project_root, &turn_at, &state, &text))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 派活单派出去后记到那一轮上：卡片据此显示进度、不重复派，项目快照据此告诉项目助手派过什么
@@ -530,6 +641,7 @@ pub async fn project_assistant_ask(
             basis: basis.unwrap_or_default().chars().take(300).collect(),
             cost_usd: cost,
             dispatched: None,
+            echo_of: None,
         };
         // 记不下不挡回答：这次照样给人看
         let _ = append_turn(&project_root, turn.clone());
@@ -1203,7 +1315,7 @@ mod tests {
         assert_eq!(one[0].notice.as_deref(), Some("保存进项目失败：boom"));
         assert!(!project_dir("/p/one").unwrap().starts_with("/p/one"), "不写进项目目录");
         assert!(record_error_sync("/p/one", "weird", "", "x", None).is_err());
-        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new(), cost_usd: None, dispatched: None }).unwrap();
+        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new(), cost_usd: None, dispatched: None, echo_of: None }).unwrap();
         let rec = DispatchRecordDto {
             at: at(0),
             target: "step".into(),
@@ -1214,6 +1326,8 @@ mod tests {
             task_id: None,
             worktree_path: Some("/w/s2".into()),
             note: "已留话".into(),
+            echoed: None,
+            echoed_at: None,
         };
         let at0 = read_jsonl::<AssistantTurnDto>(&project_dir("/p/one").unwrap().join(LOG_FILE))[0].at.clone();
         mark_dispatched_sync("/p/one", &at0, rec.clone()).unwrap();
@@ -1224,6 +1338,59 @@ mod tests {
         assert_eq!(turns.len(), 1);
         let none: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/two").unwrap().join(LOG_FILE));
         assert!(none.is_empty());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn dispatched_turns_survive_trim_and_echo_once_per_stage() {
+        let tmp = std::env::temp_dir().join(format!("mesa-echo-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let _guard = crate::storage::redirect_config_root(&tmp);
+        let turn = |i: usize| AssistantTurnDto {
+            at: format!("2026-11-05T10:{:02}:{:02}+08:00", i / 60, i % 60),
+            question: format!("q{i}"),
+            answer: "a".into(),
+            connection: String::new(),
+            basis: String::new(),
+            cost_usd: None,
+            dispatched: None,
+            echo_of: None,
+        };
+        // 上限裁剪：派过活的那一轮最旧也留着
+        let mut rows: Vec<AssistantTurnDto> = (0..5).map(turn).collect();
+        rows[0].dispatched = Some(DispatchRecordDto {
+            at: now_fixed().to_rfc3339(),
+            target: "goal".into(),
+            step: None,
+            title: "组会汇报".into(),
+            mode: "goal".into(),
+            mail_id: None,
+            task_id: Some("t1".into()),
+            worktree_path: None,
+            note: String::new(),
+            echoed: None,
+            echoed_at: None,
+        });
+        trim_log(&mut rows, 3);
+        assert_eq!(rows.iter().map(|r| r.question.as_str()).collect::<Vec<_>>(), vec!["q0", "q3", "q4"]);
+
+        append_turn("/p/echo", turn(0)).unwrap();
+        let at0 = turn(0).at;
+        let mut rec = rows[0].dispatched.clone().unwrap();
+        rec.note = "已记成目标".into();
+        mark_dispatched_sync("/p/echo", &at0, rec).unwrap();
+        let open = open_dispatches_sync(now_fixed());
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].project_root, "/p/echo", "从 root.txt 反查到项目");
+        let echo = echo_sync("/p/echo", &at0, "review", "「组会汇报」做完了，等你验收。").unwrap().unwrap();
+        assert_eq!(echo.echo_of.as_deref(), Some(at0.as_str()));
+        assert!(echo.question.is_empty());
+        assert!(echo_sync("/p/echo", &at0, "review", "再说一遍").unwrap().is_none(), "同一阶段只补一次");
+        assert!(echo_sync("/p/echo", &at0, "accepted", "").unwrap().is_none(), "已验收只记阶段不补话");
+        assert!(open_dispatches_sync(now_fixed()).is_empty(), "已验收不再跟");
+        let log: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/echo").unwrap().join(LOG_FILE));
+        assert_eq!(log.len(), 2);
+        assert!(echo_sync("/p/echo", &at0, "weird", "").is_err());
         let _ = fs::remove_dir_all(&tmp);
     }
 }

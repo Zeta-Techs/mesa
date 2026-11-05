@@ -8,6 +8,7 @@ import MesaBuddy from "./MesaBuddy";
 import { MesaStatusLead } from "./MesaMark";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
+import { useAppStore } from "../store";
 import { buddyDayPart, buddyMood } from "../buddy-time";
 import {
   assistantErrorText,
@@ -18,6 +19,7 @@ import {
   retryIntents,
   parseAssistantAnswer,
   parseClarify,
+  parseRemember,
   parseWorkOrder,
   QUICK_QUESTIONS,
   splitAnswerLead,
@@ -26,6 +28,7 @@ import {
   type WorkOrder,
 } from "../project-assistant";
 import WorkOrderCard from "./WorkOrderCard";
+import RememberCard from "./RememberCard";
 import GuideSectionModal from "./GuideSectionModal";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
 import {
@@ -173,6 +176,21 @@ export default function ProjectAssistantPanel({
   }
   const mood = buddyMood(buddyDayPart(new Date().getHours()));
 
+  // 派活回音补了一条（巡视在 ProjectAssistantHost）：开着就重读记录，新的回音接在最后
+  const echoTick = useAppStore((s) => s.assistantEchoTick);
+  useEffect(() => {
+    if (!open || !projectPath || echoTick === 0) return;
+    let stale = false;
+    invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath })
+      .then((list) => {
+        if (!stale) setTurns(list);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [echoTick, open, projectPath]);
+
   useEffect(() => {
     if (!open || !projectPath) return;
     let stale = false;
@@ -223,7 +241,9 @@ export default function ProjectAssistantPanel({
       }
       return;
     }
-    const planned = planAsk(q, !!withFocus, project, forced, turns);
+    // 回音不是问答：不喂给 AI、不算「上一轮」
+    const qaTurns = turns.filter((t) => !t.echoOf);
+    const planned = planAsk(q, !!withFocus, project, forced, qaTurns);
     // 带截图的多半在问眼前这个项目里的东西：说明书和项目记录都看（2026-11-05：「这个提示什么意思」+ 截图只翻了说明书，没对上项目的实际产物）
     const plan =
       attached.length && !forced && (planned.intent === "howto" || planned.intent === "general" || planned.intent === "chat")
@@ -246,7 +266,7 @@ export default function ProjectAssistantPanel({
         projectPath,
         project,
         question: q,
-        history: turns,
+        history: qaTurns,
         focus: withFocus,
         intent: plan.intent,
         inspect: plan.inspect,
@@ -468,7 +488,31 @@ export default function ProjectAssistantPanel({
       ) : (
         <div className="flex flex-col gap-6">
           {turns.map((turn, i) => {
-            const withAsk = parseClarify(turn.answer);
+            if (turn.echoOf) {
+              const echo = parseAssistantAnswer(turn.answer, stepCount);
+              return (
+                <article key={`${turn.at}-${i}`} className="flex flex-col gap-1.5" aria-label="派活进展">
+                  <div className="flex items-center gap-2">
+                    <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
+                    <span className="text-xs text-l3" title={absTime(turn.at)}>
+                      项目助手 · 派活进展 · {relTime(turn.at)}
+                    </span>
+                  </div>
+                  <p className="text-sm leading-6 text-l1">{echo.text}</p>
+                  {echo.actions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {echo.actions.map((action) => (
+                        <button key={`${action.kind}-${action.step ?? ""}`} type="button" className={secondaryActionClass} onClick={() => onAction(action, turn)}>
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              );
+            }
+            const withMemo = parseRemember(turn.answer);
+            const withAsk = parseClarify(withMemo.text);
             const withOrder = parseWorkOrder(withAsk.text, stepCount);
             const parsed = parseAssistantAnswer(withOrder.text, stepCount);
             // 只有最后一轮的问题能点选作答（前面的已经答过了）
@@ -509,6 +553,7 @@ export default function ProjectAssistantPanel({
                       ) : null}
                     </section>
                   )}
+                  {withMemo.remember && <RememberCard text={withMemo.remember} projectPath={projectPath} />}
                   {withOrder.order && (
                     <WorkOrderCard
                       order={withOrder.order}
@@ -598,7 +643,7 @@ export default function ProjectAssistantPanel({
               {/* 边生成边出字：动作标记、派活单写完前先不画，最终回答到了整段换上 */}
               {liveText && (
                 <div className="text-sm text-l1">
-                  <ChatMarkdown text={parseAssistantAnswer(parseWorkOrder(parseClarify(liveText).text, stepCount).text, stepCount).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
+                  <ChatMarkdown text={parseAssistantAnswer(parseWorkOrder(parseClarify(parseRemember(liveText).text).text, stepCount).text, stepCount).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
                 </div>
               )}
             </article>

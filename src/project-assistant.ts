@@ -129,6 +129,9 @@ const HOWTO_RE =
 const REQUEST_RE =
   /帮我|给我|替我|麻烦你?|请你|我要|我想要|我需要|^(请)?(整理|总结|汇总|画|做|写|准备|规划|设计|分析|统计|生成|对比|合并|改|重画|重做|列|起草|汇报)|(准备|做|出).{0,8}(组会|汇报|答辩|周报|月报|报告|幻灯片|PPT|海报)/i;
 
+/** 以后都要照办的偏好或决定（记忆，2026-11-05） */
+const PREFERENCE_RE = /以后|今后|往后|每次都|一律|我们组|课题组|导师(要|要求|喜欢|习惯)|不要再|别再|记住/;
+
 /** 只说了「帮我看看」「处理一下」、没说做什么的：判不出，请他说具体（不当成要做事去翻文件） */
 const VAGUE_RE = /^(请|麻烦)?你?(帮我|给我|替我)?(看看|看一下|瞧瞧|弄一下|处理一下|搞一下)[吧呗。.!！?？~～]*$/;
 
@@ -152,6 +155,8 @@ export function classifyQuestion(question: string, hasFocus = false, prev?: Prev
   if (prev?.asked && !(q.length <= 12 && CHAT_RE.test(q))) return "request";
   if (q.length <= 12 && CHAT_RE.test(q)) return "chat";
   if (REQUEST_RE.test(q) && !INSPECT_RE.test(q) && !VAGUE_RE.test(q)) return "request";
+  // 说的是以后都要照办的偏好（「以后组会都讲 15 分钟」「导师要 Word 版」）：按问项目走，快照里带着已记的知识，好判断要不要记
+  if (PREFERENCE_RE.test(q) && !HOWTO_RE.test(q)) return "project";
   const project = PROJECT_RE.test(q);
   const howto = HOWTO_RE.test(q);
   if (project && howto) return "mixed";
@@ -204,6 +209,13 @@ const IDENTITY = `你是 Mesa 里这个项目的「项目助手」（形象是�
 
 const STYLE = `说人话：先一句结论（单独成段），再说依据和怎么做，最后才是动作标记。不用表格，不堆术语，三五段以内；界面上的按钮、页面名照原文加粗写。`;
 
+/** 记忆（2026-11-05）：用户说出以后都要照办的偏好时，起草一句交给人确认后记进项目知识 */
+export const REMEMBER_RULES = `记住：用户说出以后都要照办的偏好或决定（「以后组会都讲 15 分钟」「导师要 Word 版」「不要再用某个方法」），在回答末尾加一块（一次最多一块）：
+:::记下
+一句话写清以后怎么办，脱离这段对话也看得懂
+:::
+用户点了才记进项目知识「已定 / 不做」，以后干活的 AI 和你都会照着办。快照「已定」里已经有的不再记；一次性的要求（只管这一次）不记；要定期做的事（「每周五出周报」）不记，那走派活单的「定时」一栏。`;
+
 /** 问这个项目：只依据快照 */
 export const PROJECT_RULES = `${IDENTITY}
 用户看不懂进度、不知道哪里出错、不知道下一步做什么时来问你。下面附了 Mesa 整理好的项目快照，你只能依据它回答。
@@ -220,7 +232,8 @@ export const PROJECT_RULES = `${IDENTITY}
 4. ${ACTION_MARKS}
 5. ${STYLE}
 6. 用户问的是课题内容本身（这段方法怎么写、这批数据怎么清），那不归你做，回答要点并给 [[商量|…]]。
-7. 附了「说明书摘录」时，讲到怎么操作照摘录说，摘录没写的操作不要编。`;
+7. 附了「说明书摘录」时，讲到怎么操作照摘录说，摘录没写的操作不要编。
+8. ${REMEMBER_RULES}`;
 
 /** 只读查看项目文件时多给的一段（跑在项目根，工作副本另列） */
 export function inspectRules(projectRoot: string, worktrees: readonly string[], purpose: "debug" | "intake" = "debug"): string {
@@ -303,7 +316,7 @@ export function buildAssistantPrompt(
     input.intent === "request"
       ? REQUEST_RULES
       : input.intent === "project" || input.intent === "mixed"
-      ? `${PROJECT_RULES}\n8. ${WORK_ORDER_RULES}`
+      ? `${PROJECT_RULES}\n9. ${WORK_ORDER_RULES}`
       : input.intent === "howto"
       ? HOWTO_RULES
       : input.intent === "chat"
@@ -419,10 +432,12 @@ export interface WorkOrder {
   assumptions?: string;
   /** 做的时候遇到这些要停下来问 */
   mustAsk?: string;
+  /** 想多久做一次（「常做」才有，如「每周五 17:00」）：卡片据此给「做成定时任务…」，人点了才去建（三期） */
+  schedule?: string;
 }
 
 const ORDER_BLOCK = /:::\s*派活\s*\n([\s\S]*?)\n\s*:::/;
-type OrderField = "target" | "title" | "task" | "done" | "inputs" | "deliver" | "basedOn" | "skills" | "assumptions" | "mustAsk";
+type OrderField = "target" | "title" | "task" | "done" | "inputs" | "deliver" | "basedOn" | "skills" | "assumptions" | "mustAsk" | "schedule";
 const ORDER_FIELDS: [OrderField, RegExp][] = [
   ["target", /^交给[:：]\s*/],
   ["title", /^标题[:：]\s*/],
@@ -434,6 +449,7 @@ const ORDER_FIELDS: [OrderField, RegExp][] = [
   ["skills", /^用到的技能[:：]\s*/],
   ["assumptions", /^先定下的假设[:：]\s*/],
   ["mustAsk", /^要停下来问的[:：]\s*/],
+  ["schedule", /^定时[:：]\s*/],
 ];
 
 const NONE_RE = /^(无|没有|不写|暂无|—|-|（?无）?)$/;
@@ -519,6 +535,8 @@ export function parseWorkOrder(answer: string, stepCount: number): { text: strin
   if (assumptions) order.assumptions = assumptions;
   const mustAsk = optional(fields.mustAsk, 2000);
   if (mustAsk) order.mustAsk = mustAsk;
+  const schedule = optional(fields.schedule, 80);
+  if (schedule) order.schedule = schedule;
   return { text, order };
 }
 
@@ -579,9 +597,19 @@ export const WORK_ORDER_RULES = `派活：真要动手（整理、分析、画�
 用到的技能：能力清单里的技能名，顿号隔开（可省）
 先定下的假设：没问清、按默认处理的几条（可省）
 要停下来问的：这件活做的时候遇到哪些情况必须先问用户（可省）
+定时：用户要以后定期做时写多久一次，如「每周五 17:00」（可省；只说明意愿，你不建定时任务）
 :::
 交给第 N 步 = 那一步自己的 AI 在它的工作副本里按单接着做（问题出在某一步的产物时用这个）；新目标 = 另起一个目标在隔离副本里做，做完走验收（不属于任何一步的活用这个）。
 只在确实需要动手、而且你说得清要做什么时才写；人工请求、开工前的决定、评审采不采纳这些要用户拍板的事不派活；Mesa 自己的毛病派不了活，给「报告」。`;
+
+/** 从回答里取出要记进项目知识的那一句（:::记下 块）：正文去掉这一块；空的不要，截到 300 字 */
+export function parseRemember(answer: string): { text: string; remember: string | null } {
+  const m = answer.match(/:::\s*记下\s*\n([\s\S]*?)\n\s*:::/);
+  if (!m) return { text: answer, remember: null };
+  const text = answer.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  const one = m[1].replace(/\s*\n\s*/g, " ").trim().slice(0, 300);
+  return { text, remember: one || null };
+}
 
 // ===== 问清楚（2026-11-05，design-assistant-intake §3.3）：缺关键信息时一次问一个，给可点的选项 =====
 
@@ -614,7 +642,7 @@ export const REQUEST_RULES = `${IDENTITY}
 - 问：快照、地图、文件里就答得了的，直接答。
 - 做：要产出或改动项目里的文件（整理、分析、画图、写报告、做幻灯片、规划实验……），起草派活单。
 - 定：要用户拍板的（选方案、答人工请求、评审采不采纳），只讲清选项和各自依据，不替他选。
-- 常做：「以后每周都……」：先按一次起草派活单，说明做成后可以在项目里建定时任务；你不建。
+- 常做：「以后每周都……」：先按一次起草派活单，单子里写「定时」一栏；告诉用户先看这一次的效果，满意了点单子上的「做成定时任务…」去建（会先让 AI 写一个巡检技能、他确认才落盘）。你不建。
 - 改流程：要在流程里加减步骤，说明怎么改，给 [[项目页]]。
 - 范围外：别的项目、电脑之外的动作（发邮件、订试剂、操作仪器、提交投稿系统）、修 Mesa 自己：说清做不了；能做到哪一步就派那一步（比如把邮件正文起草成文件，由用户自己发）。
 
@@ -637,7 +665,8 @@ ${WORK_ORDER_RULES}
 其他：
 - ${ACTION_MARKS}
 - ${STYLE}
-- 只依据快照、地图和你看过的文件，不编文件名；看不到的直说。`;
+- 只依据快照、地图和你看过的文件，不编文件名；看不到的直说。
+- ${REMEMBER_RULES}`;
 
 // ===== 提速（2026-11-04 用户：「为什么感觉回答很慢」，实测寒暄 8–19 秒、问怎么用 51–57 秒）=====
 

@@ -3,6 +3,10 @@ import { Send } from "lucide-react";
 import { compactFieldClass, ghostActionClass, primaryActionClass } from "./PageFrame";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
 import { relTime } from "../rel-time";
+import { useAppStore } from "../store";
+import SavePackModal from "./SavePackModal";
+import { builtinTaskMethod, findBuiltinTask } from "../builtin-tasks";
+import { suggestPackParams, workOrderScheduleIntent, workOrderToStep } from "../work-order-pack";
 import { parseOrderPaths, type WorkOrder } from "../project-assistant";
 
 /** 可省的几栏（派活单 v2）：看的时候没写就不显示，改的时候都给框 */
@@ -53,7 +57,8 @@ export default function WorkOrderCard({
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<{ text: string; tone: DispatchTone } | null>(null);
+  const [status, setStatus] = useState<{ text: string; tone: DispatchTone; phase?: string } | null>(null);
+  const [savingPack, setSavingPack] = useState(false);
   const shown = record ? { ...draft, title: record.title } : draft;
   const to = shown.target === "step" ? `第 ${shown.step} 步的 AI` : "新目标（隔离副本里做，做完验收）";
 
@@ -93,6 +98,22 @@ export default function WorkOrderCard({
     } finally {
       setBusy(false);
     }
+  }
+
+  // 按内置科研任务做的：存成我的任务、做成定时时把那份做法一起带上
+  const builtin = shown.basedOn ? findBuiltinTask(shown.basedOn) : null;
+  const method = builtin ? builtinTaskMethod(builtin) : null;
+  const step = workOrderToStep(shown, { method, extraSkills: builtin?.skills ?? [] });
+  const accepted = status?.phase === "accepted";
+
+  // 「做成定时任务…」（2026-11-05 接活三期）：进这个项目的「定时任务」页签，新建弹层按「新建巡检技能」预填；AI 写技能、人确认才落盘
+  function draftSchedule() {
+    if (!projectPath) return;
+    const s = useAppStore.getState();
+    s.setSelectProjectReq(projectPath);
+    s.setProjectFocusReq({ projectRoot: projectPath, focus: "schedule", token: Date.now() });
+    s.setScheduleDraftReq({ projectRoot: projectPath, name: shown.title, intent: workOrderScheduleIntent(shown, method), token: Date.now() });
+    s.setPage("workspaces");
   }
 
   return (
@@ -163,6 +184,7 @@ export default function WorkOrderCard({
           )}
         </div>
       )}
+      {shown.schedule && !record && <p className="mt-1.5 text-xs text-l3">想定期做：{shown.schedule}。先派这一次，满意了再点「做成定时任务…」。</p>}
       {error && <p className="mt-2 break-words text-xs text-err-text">没派出去：{error}</p>}
       <div className="mt-3 flex min-w-0 items-center gap-2">
         {record ? (
@@ -171,6 +193,20 @@ export default function WorkOrderCard({
               {relTime(record.at)}派出 · {record.mode === "mail" ? "留话给开着的 AI" : record.mode === "resume" ? "接回那一步的对话开跑" : "记成目标开工"}
             </p>
             <p className={status ? TONE_CLASS[status.tone] : "text-l3"}>现在：{status?.text ?? "正在看…"}</p>
+            {(accepted || shown.schedule) && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {accepted && (
+                  <button type="button" className={ghostActionClass} onClick={() => setSavingPack(true)} title="以后同类的事按这一次的做法来：存进「我的任务」，项目助手起草时也会用上">
+                    存成我的任务…
+                  </button>
+                )}
+                {shown.schedule && (
+                  <button type="button" className={ghostActionClass} onClick={draftSchedule} title={`想${shown.schedule}做一次：去定时任务页，先让 AI 写一个巡检技能，你确认才建`}>
+                    做成定时任务…
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -185,6 +221,16 @@ export default function WorkOrderCard({
           </>
         )}
       </div>
+      <SavePackModal
+        open={savingPack}
+        title="存成我的任务"
+        steps={[step]}
+        initialName={shown.title}
+        initialDescription={builtin ? `基于内置科研任务「${builtin.name}」，按这次验收过的做法改` : ""}
+        initialParams={suggestPackParams(step, shown.inputs ?? [])}
+        intro="把这次验收过的做法存进「我的任务」：以后在别的项目里加进流程、新建目标时当模板，项目助手起草时也会用上。下面预填了每次会变的值（日期、时长、这次用的文件），不需要的删掉。"
+        onClose={() => setSavingPack(false)}
+      />
     </section>
   );
 }

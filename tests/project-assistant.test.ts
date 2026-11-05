@@ -380,3 +380,24 @@ test("接活二期：规矩里写按干活的连接说能做到哪一步", async
   assert.match(REQUEST_RULES, /按能力清单里「干活的连接」说能做到哪一步/);
   assert.match(REQUEST_RULES, /不要假装能做/);
 });
+
+test("记忆：以后都要照办的偏好按问项目走，回答里 :::记下 一句交人确认", async () => {
+  const { classifyQuestion, parseRemember, buildAssistantPrompt, REQUEST_RULES } = await import("../src/project-assistant.ts");
+  assert.equal(classifyQuestion("以后组会都讲 15 分钟"), "project");
+  assert.equal(classifyQuestion("导师要求报告都交 Word 版"), "project");
+  assert.equal(classifyQuestion("以后怎么换模型"), "howto", "问怎么用的不算");
+  const { text, remember } = parseRemember("好的，记住了。\n\n:::记下\n组会汇报一律按 15 分钟准备，\n约 8 页。\n:::");
+  assert.equal(text, "好的，记住了。");
+  assert.equal(remember, "组会汇报一律按 15 分钟准备， 约 8 页。");
+  assert.equal(parseRemember(":::记下\n\n:::").remember, null);
+  const prompt = buildAssistantPrompt({ intent: "project", snapshot: "快照", history: [], question: "以后组会都讲 15 分钟" });
+  assert.match(prompt, /:::记下/);
+  assert.match(REQUEST_RULES, /:::记下/);
+});
+
+test("三期：派活单「定时」一栏", async () => {
+  const { parseWorkOrder, REQUEST_RULES } = await import("../src/project-assistant.ts");
+  const { order } = parseWorkOrder(":::派活\n交给：新目标\n要做：出周报\n定时：每周五 17:00\n:::", 0);
+  assert.equal(order!.schedule, "每周五 17:00");
+  assert.match(REQUEST_RULES, /做成定时任务…/);
+});

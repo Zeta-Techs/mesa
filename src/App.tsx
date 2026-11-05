@@ -569,6 +569,7 @@ function App() {
     void sendSystemNotification({ title: "手机发来了东西", body: item.name });
   });
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
+  const assistantEchoes = useAppStore((s) => s.assistantEchoes);
   const inboxItems = visibleInboxItems(
     rawInboxItems,
     appUpdate
@@ -576,6 +577,7 @@ function App() {
       : null,
     inboxDismissed,
     phonePending,
+    assistantEchoes,
   );
   const inboxCount = inboxItems.length;
   const contextLabel = useAppStore((s) => s.contextLabel);

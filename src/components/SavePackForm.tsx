@@ -14,17 +14,29 @@ export default function SavePackForm({
   steps,
   onSaved,
   onCancel,
+  initialName = "",
+  initialDescription = "",
+  initialParams,
+  intro,
 }: {
   steps: ProjectStepDto[];
   onSaved: (message: string) => void;
   onCancel: () => void;
+  /** 从派活单 / 内置科研任务另存时预填（2026-11-05 接活三期）；参数是按字面挑出来的建议，人可删可改 */
+  initialName?: string;
+  initialDescription?: string;
+  initialParams?: StepParamDto[];
+  /** 表单顶上那句说明；缺省是「从流程另存」的说法 */
+  intro?: string;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription);
   const [picked, setPicked] = useState<Set<number>>(() => new Set(steps.map((_, i) => i)));
   // 已经来自某个包的步骤：它的参数原样带进来（简报里已是 {param:键}）；几个包同键不同义的换新键（mergeStepParams）
   const merged = useMemo(() => mergeStepParams(steps), [steps]);
-  const [params, setParams] = useState<StepParamDto[]>(() => merged.params.map((p) => ({ ...p })));
+  const [params, setParams] = useState<StepParamDto[]>(() =>
+    merged.params.length ? merged.params.map((p) => ({ ...p })) : (initialParams ?? []).map((p) => ({ ...p })),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +49,8 @@ export default function SavePackForm({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // 弹层里的表单经 React 门户冒泡到外面的表单（新建目标弹窗本身是表单），别让外面那个也提交
+    e.stopPropagation();
     const trimmed = name.trim();
     if (!trimmed || chosen.length === 0) return;
     const usable = params.filter((p) => p.label.trim() && p.value.trim());
@@ -93,7 +107,8 @@ export default function SavePackForm({
   return (
     <form onSubmit={submit} className="ccode-well mb-2 space-y-2 rounded-lg p-3 text-xs">
       <p className="text-l3">
-        把这条流程里调顺的一步或几步存成「我的任务」，以后在别的项目里直接加进来。每次会变的值（期刊名、阈值、数据目录）改成参数，加进来时再填。
+        {intro ??
+          "把这条流程里调顺的一步或几步存成「我的任务」，以后在别的项目里直接加进来。每次会变的值（期刊名、阈值、数据目录）改成参数，加进来时再填。"}
       </p>
       <div className="flex flex-wrap gap-1">
         <input

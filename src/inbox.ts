@@ -20,7 +20,8 @@ export type InboxCategory =
   | "phone"
   | "skill"
   | "profile"
-  | "help";
+  | "help"
+  | "assistant";
 
 export interface InboxCategoryMeta {
   id: InboxCategory;
@@ -46,6 +47,7 @@ export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "skill", label: "技能" },
   { id: "profile", label: "配置失效" },
   { id: "help", label: "人工请求" },
+  { id: "assistant", label: "项目助手" },
 ];
 
 /** 从条目 key 前缀推导类别；未知前缀回落待确认（warn 语义），保证新条目不静默丢失 */
@@ -63,6 +65,7 @@ export function inboxCategoryOf(key: string): InboxCategory {
   if (key.startsWith("skill:")) return "skill";
   if (key.startsWith("profile:")) return "profile";
   if (key.startsWith("help:")) return "help";
+  if (key.startsWith("asst:")) return "assistant";
   return "confirm";
 }
 
@@ -97,6 +100,8 @@ export const BULK_READABLE: ReadonlySet<InboxCategory> = new Set([
   "digest",
   "phone",
   "skill",
+  // 项目助手派活回音（2026-11-05）：只是通报进展，验收 / 评审仍在原处做，批量消掉不藏决策
+  "assistant",
 ]);
 
 /** 一键已读的取数：当前可见条目里属于信息类的那些 */
