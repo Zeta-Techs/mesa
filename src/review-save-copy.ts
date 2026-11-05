@@ -37,7 +37,8 @@ export const REVIEW_SAVE = {
   needDelivery: "非 Git 产物尚未完成评审，请先刷新并查看后再保存进项目",
   ledgerPending: "文件已进入项目，产物接收或验收记录尚未完成",
   reviewNodeLabel: "你核对后，保存进项目",
-  reviewHintReady: "逐文件核对改动与产物，确认无误后提交并保存进项目；有问题回终端继续修改",
+  // 讲按钮没说的两件事：保存后流程线自己跳到下一步；不满意怎么退（2026-11-05 用户「跑完了一个节点就不会弄了」）
+  reviewHintReady: "核对改动与产物，满意就保存进项目，流程线随即跳到下一步；不满意在评审里写上意见、退回修改，AI 按意见接着改",
   reviewHintActive: "AI 提交产出后，回来核对并保存进项目",
   workspaceReady: "已有提交，可在评审中保存进项目。",
   workspaceDone: "已保存进项目；有新提交后可再次评审。",
