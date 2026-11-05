@@ -3,6 +3,7 @@
 
 图登记在 figures/manifest.json：
   {"figures": [{"file": "figures/fig2-ablation.pdf", "script": "figures/make_figures.py", "args": ["fig2"]}]}
+  - kind 为 schematic 的（示意图，由图纸 figure.json 生成）不在这里重跑，见 schematic-forge 的 schematic_check.py；--coverage 照样算已登记。
   - script 按扩展名运行：.py 用当前 Python，.R 用 Rscript，.jl 用 julia；在工作目录下运行，单张最多 5 分钟；
   - 同一脚本出多张图时各登记一行（args 可空，重复的脚本 + 参数只跑一次）。
 结论：脚本失败或没生成该文件 → 拦下；重跑后与原文件逐字节一致 → 通过；生成了但字节不同（PDF/PNG 常带时间戳）→ 待你判断，
@@ -108,6 +109,8 @@ def main():
     ran = {}
     for n, fig in enumerate(figures, 1):
         file = str(fig.get("file", ""))
+        if fig.get("kind") == "schematic":
+            continue  # 示意图由图纸生成，schematic-forge 的 schematic_check.py 负责重建核对（人改过的以人改的为准）
         script_rel = str(fig.get("script", ""))
         iid = f"FIG-{file or n}"
         if not file or not script_rel:

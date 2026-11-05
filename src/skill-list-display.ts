@@ -9,7 +9,7 @@ export const BUILTIN_USAGE_GROUPS: ReadonlyArray<{ label: string; names: readonl
   { label: "文献", names: ["lit-search", "lit-notes", "lit-watch", "zotero-sync", "endnote-bridge"] },
   {
     label: "数据与作图",
-    names: ["data-clean", "data-eda", "figure-forge", "origin-plot", "image-gen", "blender-research"],
+    names: ["data-clean", "data-eda", "figure-forge", "schematic-forge", "origin-plot", "image-gen", "blender-research"],
   },
   {
     label: "写作与成稿",

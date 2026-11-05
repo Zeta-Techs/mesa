@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachmentLines, composerImageKind, docPathFromLine, imagePathFromLine, labeledImageFromLine, splitDocPaths, splitImagePaths } from "../src/chat-image.ts";
+import { attachmentLines, composerImageKind, schematicSourceOf, docPathFromLine, imagePathFromLine, labeledImageFromLine, splitDocPaths, splitImagePaths } from "../src/chat-image.ts";
 
 test("整行绝对路径识别为图片", () => {
   assert.equal(imagePathFromLine("/Users/x/pic/a.png"), "/Users/x/pic/a.png");
@@ -87,4 +87,17 @@ test("splitDocPaths：整行的文档路径抽成附件，正文里顺口提到�
   assert.equal(docPathFromLine("paper.pdf"), null);
   assert.equal(docPathFromLine("https://x.org/a.pdf"), null);
   assert.equal(docPathFromLine("/tmp/a.png"), null);
+});
+
+test("示意图接着改：figures/<图名>/<图名>.png 带上图纸与可编辑文件两行，别的图照旧", () => {
+  assert.deepEqual(attachmentLines({ path: "/p/figures/rads/rads.png", edit: true }),
+    ["原图：/p/figures/rads/rads.png", "图纸：/p/figures/rads/figure.json", "可编辑文件：/p/figures/rads/rads.pptx"]);
+  assert.deepEqual(attachmentLines({ path: "/p/figures/rads/rads.png", edit: true, marked: "/tmp/m.png" }),
+    ["标注图：/tmp/m.png", "原图：/p/figures/rads/rads.png", "图纸：/p/figures/rads/figure.json", "可编辑文件：/p/figures/rads/rads.pptx"]);
+  assert.deepEqual(attachmentLines({ path: "/p/figures/rads/rads.png" }), ["/p/figures/rads/rads.png"]);
+  assert.equal(schematicSourceOf("/p/figures/fig2.png"), null);
+  assert.equal(schematicSourceOf("/p/figures/x/y.png"), null);
+  assert.deepEqual(schematicSourceOf("C:\\p\\figures\\a\\a.png"), { spec: "C:\\p\\figures\\a\\figure.json", pptx: "C:\\p\\figures\\a\\a.pptx" });
+  // 图纸行不是图片行：发出去后不会被当成图抽走
+  assert.deepEqual(splitImagePaths("改一下\n原图：/p/figures/rads/rads.png\n图纸：/p/figures/rads/figure.json").images, ["/p/figures/rads/rads.png"]);
 });

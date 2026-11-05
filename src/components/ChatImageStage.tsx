@@ -55,6 +55,8 @@ const TOOLS: { id: MarkTool; label: string; icon: ReactNode; hint: string }[] = 
 const IDLE_HINT = "选一样工具在图上标；消息照常在下面写，标好的图随消息发出，原图不动";
 /** 点 AI 回复里的图进来（接着改这张图）：说清发出去会怎样 */
 const EDIT_HINT = "在下面写怎么改，要改的地方可以先框出来；发出去由 AI 用出图模型在原图上改，原图不动";
+/** 示意图（有图纸的）接着改：AI 改图纸重新渲染，人改过的 PPTX 就在它上面改 */
+const SCHEMATIC_HINT = "这是示意图：在下面写怎么改（改字、挪框、换图标），要改的地方可以先框出来；发出去由 AI 改图纸重新出图，你改过的 PPT 会保留";
 
 /** 改图时的常用说法：点一下写进输入框，照常可改（不直接发） */
 const EDIT_QUICK: { label: string; text: string; icon: ReactNode }[] = [
@@ -168,6 +170,7 @@ export default function ChatImageStage({
   onBoxAdded,
   onClose,
   onQuickText,
+  schematic = false,
 }: {
   name: string;
   url: string;
@@ -182,6 +185,8 @@ export default function ChatImageStage({
   onClose: () => void;
   /** 给了 = 这张是从 AI 回复里点进来接着改的：提示换成改图说明、工具条后面多「移除背景 / 调整画幅」，点了把说法写进输入框 */
   onQuickText?: (text: string) => void;
+  /** 接着改的是 schematic-forge 渲出的示意图：提示换成按图纸改，不出「移除背景 / 调整画幅」 */
+  schematic?: boolean;
 }) {
   const [tool, setTool] = useState<MarkTool | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(
@@ -295,7 +300,7 @@ export default function ChatImageStage({
     }
   }
 
-  const hint = tool ? TOOLS.find((t) => t.id === tool)?.hint : onQuickText ? EDIT_HINT : IDLE_HINT;
+  const hint = tool ? TOOLS.find((t) => t.id === tool)?.hint : onQuickText ? (schematic ? SCHEMATIC_HINT : EDIT_HINT) : IDLE_HINT;
   const hasMarks = (current?.marks.length ?? 0) > 0;
   const toolBtn = (on: boolean) =>
     `flex h-7 items-center gap-1 rounded-full px-2.5 text-xs transition-colors ${
@@ -407,7 +412,7 @@ export default function ChatImageStage({
             <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
             清空
           </button>
-          {onQuickText && (
+          {onQuickText && !schematic && (
             <>
               <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline" />
               {EDIT_QUICK.map((q) => (

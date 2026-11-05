@@ -182,6 +182,12 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
   if (tools.plotting === "origin" && figures) {
     mount("origin-plot", ["analysis/plot_origin.py", "figures/origin-manifest.json", "figures/origin-plot.png", `${outputRoot}/origin/project.opju`], `Origin：只在 Windows + 有许可证的 Origin 执行，缺能力停止该工具工作，不偷换 matplotlib。stats-check 定统计口径，figure-forge 定图型规格，Origin 只驱动。脚本与数值结果可复算，figures/origin-plot.png 及 ${outputRoot}/origin/project.opju 工程逐项登记哈希/版本/命令。`, "重开 Origin 工程并核对数值、坐标与图形");
   }
+  if (tools.illustration === "schematic" && illustration && !step.skills.includes("schematic-forge")) {
+    // 示意图默认走图纸（2026-11-05 拍板）：挂技能但不设为必需——没装这个技能的 Agent 照常开工，只是少一个做法
+    step.skills.push("schematic-forge");
+    added.skills.push("schematic-forge");
+    notes.push("示意图：机理 / 装置 / 流程 / 技术路线图按 schematic-forge 技能先写立意与事实、再写图纸 figure.json，渲成可编辑的 PPTX + SVG（文字是真文字，出图模型只画无字图标）；人改过的文件为准。");
+  }
   if (tools.illustration === "blender" && illustration) {
     mount("blender-research", ["analysis/build_scene.py", "figures/blender-manifest.json", "figures/blender-schematic.png", `${outputRoot}/blender/scene.blend`], `Blender：仅用于本步明确的结构/装置/机制示意；不把示意冒充实验观测。先确认真实尺寸、单位、来源/许可与不按比例部分。MCP 无 OS 沙箱，使用新建受控工程；交付脚本、${outputRoot}/blender/scene.blend、figures/blender-schematic.png 和 manifest，后台重建失败非零退出。`, "核对 Blender 结构、比例、来源和示意标注");
   }

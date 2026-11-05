@@ -30,6 +30,7 @@ export function useDepInstall(
     tex: IDLE,
     pymupdf: IDLE,
     pillow: IDLE,
+    pptx: IDLE,
   });
   // onDone 走 ref：调用方回调常捕获组件态，不为它重建 install
   const onDoneRef = useRef(onDone);

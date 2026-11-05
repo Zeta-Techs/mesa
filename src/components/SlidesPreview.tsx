@@ -18,6 +18,8 @@ interface SlideDto {
 interface SlidesOutlineDto {
   slides: SlideDto[];
   thumbnail: string | null;
+  /** schematic-forge 渲出的示意图：同名 PNG 预览；stale = PPTX 比它新（人在 PPT 里改过） */
+  figurePreview: { image: string; stale: boolean } | null;
 }
 
 /**
@@ -111,7 +113,21 @@ function SlidesPreview({ path, cwdHint }: { path: string; cwdHint: string | null
               这里列的是每页的文字、第一张图和备注，不是版式原样；装上 LibreOffice（免费）就能在这里一页页看原样，或用系统应用打开。
             </p>
           )}
-          {outline.thumbnail && (
+          {outline.figurePreview && (
+            <figure className="mb-3">
+              <img
+                src={outline.figurePreview.image}
+                alt="示意图预览"
+                className="max-h-[28rem] max-w-full rounded-sm border border-hairline bg-white object-contain"
+              />
+              <figcaption className={`mt-1 text-micro ${outline.figurePreview.stale ? "text-warn-text" : "text-l4"}`}>
+                {outline.figurePreview.stale
+                  ? "这是生成时的预览：PPT 在那之后改过，改过的样子请用系统应用打开看"
+                  : "示意图预览（与这份 PPT 同一次生成）；在 PowerPoint / WPS / Keynote 里打开就能改字、挪框"}
+              </figcaption>
+            </figure>
+          )}
+          {!outline.figurePreview && outline.thumbnail && (
             <figure className="mb-3">
               <img
                 src={outline.thumbnail}

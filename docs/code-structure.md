@@ -119,6 +119,7 @@ components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
+                             #   schematic-forge 渲出的 PPTX：figurePreview 显示同名 PNG，PPTX 更新时标「生成时的预览」
   components/OfficePdfView.tsx # Word / 幻灯经 LibreOffice 转出的 PDF 视图（原文件改了重转）
 components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；FloatBarOverflow = 浮动条 ⋯ 溢出菜单（低频动作收这里，主条只留一个蓝色主钮）；useDistillSkill = ⋯ 里的「✦ 沉淀为技能…」项（ai_distill_skill 出草稿跳技能页预填新建）
   components/NotebookPreview.tsx # Jupyter 笔记本按单元预览（Markdown / 高亮代码 / 输出文字图表格报错），「源码」切回编辑器
@@ -686,6 +687,7 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
   chat-image.ts              # 消息里的图片行（tests/chat-image.test.ts）：整行图片路径 imagePathFromLine、改图的「原图：」「标注图：」行
                              # labeledImageFromLine / attachmentLines（Claude Code 只把单独一行的路径升级成图片附件，带前缀不升级）、
                              # 要不要模型看图 composerImageKind（plain / marks / null，ChatModelMenu 据此出看不了图的提示）
+                             #   schematicSourceOf：figures/<图名>/<图名>.png 认作示意图，接着改时 attachmentLines 加「图纸：」「可编辑文件：」两行
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
                              # 确认按钮是否给出（tests/chat-reply.test.ts）
@@ -1087,6 +1089,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
   research-tool-fields.ts    # 科研工具字段表 / 默认值 / 档案卡键读写与 readableResearchToolSetting（机器键→界面说法）；纯模块不引
                              #   React / Tauri，上下文包从这里取，research-tools.ts 原样转出
   research-tools.ts          # 科研工具注入 withResearchTools；researchToolStageOutputs 给开工提醒的分阶段文件（与挂载同一份表）；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
+                             #   示意图默认「图纸」（illustration=schematic）：实验设计 / 方法步挂 schematic-forge（只挂技能、不设必需）
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
                              # 域稿不再挂成定稿步人工事项（入口在完结文件，2026-10-24）；老档案的域稿行不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示
@@ -1761,6 +1764,17 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   只拦算术不一致，不评方法
   （技能脚本）figure-forge/scripts/fig_check.py  # 图重建：figures/manifest.json 逐张重跑脚本（.py/.R/.jl，5 分钟上限），逐字节一致才通过，
                              #   字节不同交人目视；--coverage 列稿件引用了却没登记的图
+  （技能脚本）figure-forge/scripts/fig_lint.py  # 数据图画后自检（2026-11-05）：子进程里给 matplotlib savefig 挂钩子、照常跑 manifest 登记的脚本，
+                             #   保存那一刻查缺字（warnings + logging 两路）、文字出界 / 相交（只算真正画出来的刻度标签）、字号下限、SVG 转曲、JPEG，
+                             #   灰度预览进 .ccode/checks/fig-lint/；kind=schematic 的登记不归它（fig_check 同样跳过）
+  （技能脚本）schematic-forge/scripts/  # 科研示意图（2026-11-05，design-research-figures.md）：figlib.py 图纸读取 / 配色 / 字体库（系统字体按族名索引、缓存进临时目录）
+                             #   / 量字排版（中西文分段选字体、显式断行、4% 余量）/ 连线几何——渲染与检查共用同一份排版；
+                             #   render_figure.py 图纸 → SVG（每段 tspan 带绝对坐标，避开 usvg 整段回落）+ PPTX（python-pptx，形状按元素 id 命名、
+                             #   中文写东亚字体位、固定行距、连接线绑形状连接点、图标挂 svgBlip 原件）+ PNG / PDF（MESA_FIGURE_TOOL 先试跑 --probe，
+                             #   不认退 LibreOffice）；render.json 记输出哈希，人改过的 PPTX / SVG 拒绝覆盖（退出码 4，--force 才重出）；--wrap 单图包成一页；
+                             #   schematic_check.py 三档检查（文字相交 / 出框 / 跨框 / 字号 / 缺字 / 文字出处 / facts 关系 / ppi / 组图子图字号 / 重建一致）；
+                             #   asset_sheet.py 出图模型素材板（品红底、按格切、碰格边整板拒绝）；pptx_edit.py 人改过的 PPTX 局部改（改前备份 .history/）；
+                             #   measure_text.py / overlay.py 复刻量字号与叠图比对；style_profile.py 从已有图归纳课题组风格；icons/ 73 个矢量图元 + index.json
   （技能脚本）bib-check/scripts/cite_check.py  # 引用核验固定脚本（2026-11-02，tests/cite-check.test.ts）：refs（引用键 / 重复键；联网查 DOI 指向与
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
                              #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py
@@ -1884,6 +1898,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # watch_file：单文件监听（非递归盯所在文件夹、只认这个文件名，300ms 防抖），预览跟随磁盘变化
   office_view.rs             # Office 预览补强：docx_features（mammoth 丢掉的公式 / 修订 / 批注 / 页眉页脚计数）、slides_outline（pptx 逐页大纲）、
                              #   office_converter / office_to_pdf（LibreOffice 转 PDF 到 config tmp，白名单内，超时杀树）
+                             #   slides_outline 另带 figure_preview（同目录有 render.json 才认、PPTX 比 PNG 新标 stale，figure_preview_for）
   pdf.rs                     # PDF/docx 字节读取：read_pdf_bytes 白名单 + canonicalize + 上限，base64 传输
                              #   （白名单根含 ccode/tmp 粘贴图与 phone_drop 暂存区，精确路径含 attach_grants 登记的文件）；
                              #   grant_media_url：白名单通过后 asset_protocol_scope().allow_file 只放行这一个音视频文件；
@@ -1928,7 +1943,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   引文按键），排除只对本轮新命中生效；自定义契约产出仍整文件写入并查冲突；流程正典
                              #   （scheduler::watch_path_denied）展开与采纳都跳过；pdfsInitial/pdfsAfter 记本轮新下的 PDF
                              #   （基线文件 + 技能产出契约，与 task_review.rs 同构不合并）
-  dep_check.rs               # 依赖体检 + 一键安装（git/node/quarto/tex/pymupdf/pillow）：check_dependencies（git 三态
+  dep_check.rs               # 依赖体检 + 一键安装（git/node/quarto/tex/pymupdf/pillow/pptx；三个 Python 库一次 pip 装齐）：check_dependencies（git 三态
                              #   ok/missing/clt_stub，quarto 要 --version 有版本号才 ok、否则 broken，TeX 认 xelatex/tectonic/pdflatex 任一，
                              #   拼图库问 python 能否导入）
                              #   + install_dependency（quarto 走 brew --cask / winget Posit.Quarto；tex 装 tectonic；

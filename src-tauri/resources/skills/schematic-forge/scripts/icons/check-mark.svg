@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<!-- default C1=#70AD47 C3=#404040 -->
+<g stroke-linejoin="round" stroke-linecap="round"><circle cx="50" cy="50" r="44" fill="@C1@" stroke="@C3@" stroke-width="3"/><polyline points="28,52 43,67 73,35" fill="none" stroke="#FFFFFF" stroke-width="10"/></g>
+</svg>

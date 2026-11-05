@@ -74,7 +74,21 @@ export function labeledImageFromLine(line: string): { label: "原图" | "标注�
  */
 export function attachmentLines(a: { path: string; edit?: boolean; marked?: string | null }): string[] {
   if (!a.edit) return [a.marked ?? a.path];
-  return a.marked ? [`标注图：${a.marked}`, `原图：${a.path}`] : [`原图：${a.path}`];
+  const lines = a.marked ? [`标注图：${a.marked}`, `原图：${a.path}`] : [`原图：${a.path}`];
+  // 示意图（schematic-forge 渲出的）：带上图纸与可编辑文件，AI 改图纸重渲或在人改过的 PPTX 上局部改，不让出图模型重画
+  const src = schematicSourceOf(a.path);
+  return src ? [...lines, `图纸：${src.spec}`, `可编辑文件：${src.pptx}`] : lines;
+}
+
+/**
+ * 这张图是不是 schematic-forge 渲出的示意图：渲染器只把预览写成 figures/<图名>/<图名>.png（图纸 figure.json 同目录），
+ * 按这个约定认，不读文件（图纸真不在时技能会照实说）。2026-11-05 科研做图拍板：示意图改字、挪框走图纸，不走出图模型
+ */
+export function schematicSourceOf(path: string): { spec: string; pptx: string } | null {
+  const m = /^(.*[\\/])?figures([\\/](?:[^\\/]+[\\/])*)([^\\/]+)([\\/])\3\.png$/i.exec(path);
+  if (!m) return null;
+  const dir = path.slice(0, path.length - `${m[3]}.png`.length);
+  return { spec: `${dir}figure.json`, pptx: `${dir}${m[3]}.pptx` };
 }
 
 /**

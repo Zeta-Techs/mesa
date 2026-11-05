@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<!-- default C1=#5B9BD5 -->
+<g stroke-linejoin="round" stroke-linecap="round"><path d="M50,50 L50,6 M50,22 L40,13.6 M50,22 L60,13.6 M50,50 L88.1,28 M74.2,36 L76.5,23.2 M74.2,36 L86.5,40.4 M50,50 L88.1,72 M74.2,64 L86.5,59.6 M74.2,64 L76.5,76.8 M50,50 L50,94 M50,78 L60,86.4 M50,78 L40,86.4 M50,50 L11.9,72 M25.8,64 L23.5,76.8 M25.8,64 L13.5,59.6 M50,50 L11.9,28 M25.8,36 L13.5,40.4 M25.8,36 L23.5,23.2" fill="none" stroke="@C1@" stroke-width="6"/><circle cx="50" cy="50" r="7" fill="@C1@"/></g>
+</svg>

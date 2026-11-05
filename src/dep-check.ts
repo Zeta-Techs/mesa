@@ -28,6 +28,8 @@ export interface DepCheckDto {
   pymupdf: DepItemDto;
   /** 综述拼图排版。 */
   pillow: DepItemDto;
+  /** 示意图出可编辑 PPTX（python-pptx）。 */
+  pptx: DepItemDto;
   /** 一键安装渠道：brew | winget | xcode | none */
   channel: "brew" | "winget" | "xcode" | "none";
   checkedAt: string;
@@ -42,7 +44,9 @@ export interface UpdateResultDto {
   versionAfter: string | null;
 }
 
-export type DepTool = "git" | "node" | "quarto" | "tex" | "pymupdf" | "pillow";
+export type DepTool = "git" | "node" | "quarto" | "tex" | "pymupdf" | "pillow" | "pptx";
+/** 走 pip 一起装的做图 Python 库 */
+export const PIP_TOOLS: readonly DepTool[] = ["pymupdf", "pillow", "pptx"];
 export type DepPlatform = "mac" | "win" | "linux";
 
 /** git 缺失错误识别：后端错误串单一出处在 git_info.rs/workspaces.rs/projects.rs
@@ -58,6 +62,7 @@ const SITES: Record<DepTool, string> = {
   tex: "tectonic-typesetting.github.io",
   pymupdf: "pypi.org/project/pymupdf",
   pillow: "pypi.org/project/pillow",
+  pptx: "pypi.org/project/python-pptx",
 };
 
 const APT: Record<DepTool, string> = {
@@ -67,6 +72,7 @@ const APT: Record<DepTool, string> = {
   tex: "tectonic",
   pymupdf: "python3-pymupdf",
   pillow: "python3-pil",
+  pptx: "python3-pptx",
 };
 
 /** 一键安装可行性。拼图库走本机 pip：有 Python 时总能装；还缺 Python（prereq）时要靠
@@ -90,7 +96,7 @@ export function canOneClickInstall(
 ): boolean {
   // xcode = macOS 没有 Homebrew：Git 弹系统安装窗，Node.js / Python / Quarto 用官方 .pkg（系统密码框），
   // TeX 由 Quarto 装 TinyTeX——都还能一键（2026-10-20 起；此前只有 Git 能点）
-  if (tool === "pymupdf" || tool === "pillow")
+  if (PIP_TOOLS.includes(tool))
     return prereq === "python"
       ? channel === "brew" || channel === "winget" || channel === "xcode"
       : true;
@@ -108,13 +114,13 @@ export function installButtonHint(
     if (tool === "node" || tool === "quarto")
       return "没有 Homebrew：下载官方安装包，装的时候系统会要开机密码";
     if (tool === "tex") return "由 Quarto 安装 TinyTeX，先装好 Quarto";
-    if ((tool === "pymupdf" || tool === "pillow") && prereq === "python")
-      return "会先用 python.org 的官方安装包装 Python 3（要开机密码），再一起装 PyMuPDF 和 Pillow";
+    if (PIP_TOOLS.includes(tool) && prereq === "python")
+      return "会先用 python.org 的官方安装包装 Python 3（要开机密码），再一起装 PyMuPDF、Pillow 和 python-pptx";
   }
-  if (tool !== "pymupdf" && tool !== "pillow") return null;
+  if (!PIP_TOOLS.includes(tool)) return null;
   return prereq === "python"
-    ? "会先装好 Python 3，再一起装 PyMuPDF 和 Pillow，几分钟"
-    : "PyMuPDF 和 Pillow 一起装";
+    ? "会先装好 Python 3，再一起装 PyMuPDF、Pillow 和 python-pptx，几分钟"
+    : "PyMuPDF、Pillow 和 python-pptx 一起装";
 }
 
 /** 不可一键装时的指引文案（口径与 dep_check.rs 的无渠道报错文案一致）；

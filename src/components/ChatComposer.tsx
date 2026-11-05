@@ -39,7 +39,7 @@ import { usePhoneDropStore } from "../phone-drop-store";
 import type { PhoneItem } from "../phone-drop";
 import ChatImageStage, { MarkupLayer } from "./ChatImageStage";
 import { appendMarkRef, exportMarkup, nextMarkNumber, type Markup } from "../image-markup";
-import { attachmentLines, composerImageKind } from "../chat-image";
+import { attachmentLines, composerImageKind, schematicSourceOf } from "../chat-image";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { FileTypeGlyph } from "./FileTypeMark";
 import ProjectFilePicker from "./ProjectFilePicker";
@@ -1016,6 +1016,7 @@ export default function ChatComposer({
           onBoxAdded={addMarkRef}
           onClose={closeStage}
           onQuickText={viewed.edit ? insertResourceText : undefined}
+          schematic={!!viewed.edit && !!schematicSourceOf(viewed.path)}
         />
       )}
       {/* 开聊后与对话流同一条中轴：栏宽跟聊天字号走（App.css .ccode-chat-column） */}

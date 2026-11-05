@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<!-- default C1=#4472C4 C2=#ED7D31 C3=#404040 -->
+<g stroke-linejoin="round" stroke-linecap="round"><g transform="rotate(20 50 50)"><rect x="43" y="3" width="14" height="7" rx="2" fill="@C2@" stroke="@C3@" stroke-width="3"/><rect x="47" y="10" width="6" height="8" fill="@C3@" stroke="@C3@" stroke-width="3"/><path d="M37,18 H63 V56 Q63,62 57,62 H43 Q37,62 37,56 Z" fill="@C1@" stroke="@C3@" stroke-width="3"/><path d="M63,24 Q72,24 72,32 V38" fill="none" stroke="@C3@" stroke-width="5"/><rect x="42" y="24" width="5" height="30" rx="2.5" fill="#FFFFFF" opacity="0.45"/><path d="M44,62 H56 L54,72 H46 Z" fill="@C3@" stroke="@C3@" stroke-width="3"/><path d="M45,72 H55 L51.5,95 H48.5 Z" fill="#FFFFFF" stroke="@C3@" stroke-width="3"/><path d="M47,80 H53 L51.5,93 H48.5 Z" fill="@C2@" opacity="0.8"/></g></g>
+</svg>

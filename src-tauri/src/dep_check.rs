@@ -58,6 +58,8 @@ pub struct DepCheckDto {
     pub pymupdf: DepItemDto,
     /// 综述拼图排版。缺失只展示。
     pub pillow: DepItemDto,
+    /// 示意图出可编辑 PPTX（python-pptx，schematic-forge 技能）。缺失只展示。
+    pub pptx: DepItemDto,
     /// 一键安装渠道：brew | winget | xcode | none
     pub channel: String,
     /// 本地时间可读串（YYYY-MM-DD HH:MM:SS）
@@ -361,6 +363,7 @@ fn check_dependencies_sync() -> Result<DepCheckDto, String> {
         .unwrap_or_else(missing_item);
     let pymupdf = probe_python_module(PYMUPDF_MODULES);
     let pillow = probe_python_module(&["PIL"]);
+    let pptx = probe_python_module(&["pptx"]);
     let has_brew = os == HostOs::Macos && agents::resolve_binary("brew").is_some();
     let has_winget = os == HostOs::Windows && agents::resolve_binary("winget").is_some();
     Ok(DepCheckDto {
@@ -370,6 +373,7 @@ fn check_dependencies_sync() -> Result<DepCheckDto, String> {
         tex,
         pymupdf,
         pillow,
+        pptx,
         channel: channel_for(os, has_brew, has_winget).into(),
         checked_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     })
@@ -390,11 +394,11 @@ fn dep_key(tool: &str) -> String {
 }
 
 fn validate_tool(tool: &str) -> Result<(), String> {
-    if matches!(tool, "git" | "node" | "quarto" | "tex" | "pymupdf" | "pillow") {
+    if matches!(tool, "git" | "node" | "quarto" | "tex" | "pymupdf" | "pillow" | "pptx") {
         Ok(())
     } else {
         Err(format!(
-            "不支持安装的依赖：{tool}（仅 git / node / quarto / tex / pymupdf / pillow）"
+            "不支持安装的依赖：{tool}（仅 git / node / quarto / tex / pymupdf / pillow / pptx）"
         ))
     }
 }
@@ -450,6 +454,13 @@ fn install_spec(tool: &str) -> InstallSpec {
             apt: "python3-pil",
             site: "pypi.org/project/pillow",
         },
+        "pptx" => InstallSpec {
+            brew: "",
+            brew_cask: false,
+            winget: "",
+            apt: "python3-pptx",
+            site: "pypi.org/project/python-pptx",
+        },
         _ => InstallSpec {
             brew: "node",
             brew_cask: false,
@@ -497,6 +508,7 @@ fn installed_after(tool: &str) -> bool {
             .any(|name| probe_named(name).status == "ok"),
         "pymupdf" => probe_python_module(PYMUPDF_MODULES).status == "ok",
         "pillow" => probe_python_module(&["PIL"]).status == "ok",
+        "pptx" => probe_python_module(&["pptx"]).status == "ok",
         other => probe_named(other).status == "ok",
     }
 }
@@ -511,7 +523,7 @@ fn finish_install(tool: &str, ok: bool, output: String, method: &str) -> UpdateR
     let ok = ok || present;
     let version_after = if ok && present {
         match tool {
-            "pymupdf" | "pillow" | "tex" => Some("已安装".into()),
+            "pymupdf" | "pillow" | "pptx" | "tex" => Some("已安装".into()),
             other => agents::resolve_binary(other)
                 .and_then(|p| agents::version_with_timeout(&p, agents::VERSION_QUERY_TIMEOUT))
                 .or(Some("已安装".into())),
@@ -538,8 +550,8 @@ fn install_with_brew(app: &AppHandle, tool: &str, package: &str, cask: bool) -> 
     finish_install(tool, ok, output, "brew")
 }
 
-/// 拼图两个库一起装：普通用户分不清 PyMuPDF / Pillow，点任一行的「一键安装」都补齐两个
-const PIP_PACKAGES: [&str; 2] = ["pymupdf", "pillow"];
+/// 做图用的 Python 库一起装：普通用户分不清 PyMuPDF / Pillow / python-pptx，点任一行的「一键安装」都补齐三个
+const PIP_PACKAGES: [&str; 3] = ["pymupdf", "pillow", "python-pptx"];
 
 /// winget 上的 Python 包：3.12 已停出安装包，用 3.13
 const WINGET_PYTHON_ID: &str = "Python.Python.3.13";
@@ -613,7 +625,7 @@ fn install_with_pip(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, Stri
         }
     }
     if FIGURE_LIBS_BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Err("PyMuPDF 和 Pillow 正在一起安装，等它装完".into());
+        return Err("做图用的 Python 库（PyMuPDF、Pillow、python-pptx）正在一起安装，等它装完".into());
     }
     let _busy = BusyGuard;
     let python = match usable_python() {
@@ -790,7 +802,7 @@ fn install_with_winget(app: &AppHandle, tool: &str, winget_id: &str) -> UpdateRe
 }
 
 fn install_macos(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String> {
-    if matches!(tool, "pymupdf" | "pillow") {
+    if matches!(tool, "pymupdf" | "pillow" | "pptx") {
         return install_with_pip(app, tool);
     }
     let spec = install_spec(tool);
@@ -978,7 +990,7 @@ fn install_tex_via_quarto(app: &AppHandle, update_path: bool) -> Result<UpdateRe
 }
 
 fn install_windows(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String> {
-    if matches!(tool, "pymupdf" | "pillow") {
+    if matches!(tool, "pymupdf" | "pillow" | "pptx") {
         return install_with_pip(app, tool);
     }
     if tool == "tex" {
@@ -1135,7 +1147,7 @@ mod tests {
 
     #[test]
     fn tool_whitelist_accepts_known_deps_only() {
-        for tool in ["git", "node", "quarto", "tex", "pymupdf", "pillow"] {
+        for tool in ["git", "node", "quarto", "tex", "pymupdf", "pillow", "pptx"] {
             assert!(validate_tool(tool).is_ok(), "{tool}");
         }
         for bad in ["brew", "Git", "", "git;rm", "pip"] {
@@ -1213,13 +1225,13 @@ mod tests {
     #[test]
     fn pip_installs_both_figure_libs_and_handles_pep668() {
         let plain = pip_args(false);
-        assert!(plain.ends_with(&["pymupdf".to_string(), "pillow".to_string()]));
+        assert!(plain.ends_with(&["pymupdf".to_string(), "pillow".to_string(), "python-pptx".to_string()]));
         assert!(!plain.contains(&"--user".to_string()));
         // PEP 668 连 --user 也拦，必须带 --break-system-packages
         let managed = pip_args(true);
         assert!(managed.contains(&"--user".to_string()));
         assert!(managed.contains(&"--break-system-packages".to_string()));
-        assert!(managed.ends_with(&["pymupdf".to_string(), "pillow".to_string()]));
+        assert!(managed.ends_with(&["pymupdf".to_string(), "pillow".to_string(), "python-pptx".to_string()]));
     }
 
     /// 手动跑：真弹一次 UAC，以管理员身份对本机全机 Python 跑 pip（已装就是 Requirement already satisfied）。
@@ -1255,7 +1267,7 @@ mod tests {
         let s = elevated_pip_script(Path::new(r"C:\Users\me\AppData\Roaming\ccode\tmp\pip-elevated-x\pip.log"));
         // 路径按 JSON 字符串转义进 Python（反斜杠成对）
         assert!(s.contains(r#"open("C:\\Users\\me\\AppData\\Roaming\\ccode\\tmp\\pip-elevated-x\\pip.log""#), "{s}");
-        assert!(s.contains(r#"["-m","pip","install","--disable-pip-version-check","--no-input","pymupdf","pillow"]"#), "{s}");
+        assert!(s.contains(r#"["-m","pip","install","--disable-pip-version-check","--no-input","pymupdf","pillow","python-pptx"]"#), "{s}");
         assert!(s.contains("sys.exit(r.returncode)"));
         assert_eq!(ps_quote(r"C:\it's\python.exe"), r"'C:\it''s\python.exe'");
     }

@@ -1,0 +1,965 @@
+{
+ "icons": [
+  {
+   "name": "beaker",
+   "zh": "烧杯",
+   "domain": "通用实验",
+   "keywords": [
+    "烧杯",
+    "溶液",
+    "试剂",
+    "beaker"
+   ]
+  },
+  {
+   "name": "flask",
+   "zh": "锥形瓶",
+   "domain": "通用实验",
+   "keywords": [
+    "锥形瓶",
+    "三角瓶",
+    "烧瓶",
+    "erlenmeyer",
+    "flask"
+   ]
+  },
+  {
+   "name": "round-flask",
+   "zh": "圆底烧瓶",
+   "domain": "通用实验",
+   "keywords": [
+    "圆底烧瓶",
+    "烧瓶",
+    "round-bottom flask"
+   ]
+  },
+  {
+   "name": "test-tube",
+   "zh": "试管",
+   "domain": "通用实验",
+   "keywords": [
+    "试管",
+    "样品",
+    "test tube"
+   ]
+  },
+  {
+   "name": "pipette",
+   "zh": "移液枪",
+   "domain": "通用实验",
+   "keywords": [
+    "移液枪",
+    "移液器",
+    "取样",
+    "pipette"
+   ]
+  },
+  {
+   "name": "petri-dish",
+   "zh": "培养皿",
+   "domain": "通用实验",
+   "keywords": [
+    "培养皿",
+    "菌落",
+    "细胞培养",
+    "petri dish"
+   ]
+  },
+  {
+   "name": "microscope",
+   "zh": "显微镜",
+   "domain": "通用实验",
+   "keywords": [
+    "显微镜",
+    "观察",
+    "表征",
+    "microscope"
+   ]
+  },
+  {
+   "name": "balance",
+   "zh": "天平",
+   "domain": "通用实验",
+   "keywords": [
+    "天平",
+    "称量",
+    "质量",
+    "balance",
+    "scale"
+   ]
+  },
+  {
+   "name": "thermometer",
+   "zh": "温度计",
+   "domain": "通用实验",
+   "keywords": [
+    "温度计",
+    "温度",
+    "测温",
+    "thermometer"
+   ]
+  },
+  {
+   "name": "pressure-gauge",
+   "zh": "压力表",
+   "domain": "通用实验",
+   "keywords": [
+    "压力表",
+    "压力",
+    "压强",
+    "gauge",
+    "pressure"
+   ]
+  },
+  {
+   "name": "flame",
+   "zh": "火焰（加热）",
+   "domain": "通用实验",
+   "keywords": [
+    "火焰",
+    "加热",
+    "燃烧",
+    "高温",
+    "flame",
+    "heat"
+   ]
+  },
+  {
+   "name": "light-sun",
+   "zh": "光照",
+   "domain": "通用实验",
+   "keywords": [
+    "光照",
+    "太阳",
+    "光",
+    "日光",
+    "light",
+    "sun",
+    "irradiation"
+   ]
+  },
+  {
+   "name": "snowflake",
+   "zh": "冷却",
+   "domain": "通用实验",
+   "keywords": [
+    "冷却",
+    "低温",
+    "冷冻",
+    "雪花",
+    "cooling",
+    "cold",
+    "snowflake"
+   ]
+  },
+  {
+   "name": "gas-cylinder",
+   "zh": "气瓶",
+   "domain": "通用实验",
+   "keywords": [
+    "气瓶",
+    "钢瓶",
+    "气源",
+    "气体",
+    "gas cylinder"
+   ]
+  },
+  {
+   "name": "water-drop",
+   "zh": "水滴",
+   "domain": "通用实验",
+   "keywords": [
+    "水滴",
+    "水",
+    "液体",
+    "溶剂",
+    "water",
+    "drop"
+   ]
+  },
+  {
+   "name": "magnifier",
+   "zh": "放大镜",
+   "domain": "通用实验",
+   "keywords": [
+    "放大镜",
+    "检测",
+    "查找",
+    "分析",
+    "magnifier",
+    "search"
+   ]
+  },
+  {
+   "name": "gear",
+   "zh": "齿轮",
+   "domain": "通用实验",
+   "keywords": [
+    "齿轮",
+    "设置",
+    "机械",
+    "工艺",
+    "gear",
+    "settings"
+   ]
+  },
+  {
+   "name": "stopwatch",
+   "zh": "秒表（计时）",
+   "domain": "通用实验",
+   "keywords": [
+    "秒表",
+    "计时",
+    "时间",
+    "反应时间",
+    "stopwatch",
+    "time"
+   ]
+  },
+  {
+   "name": "molecule-ball-stick",
+   "zh": "分子（球棍模型）",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "分子",
+    "球棍模型",
+    "化合物",
+    "反应物",
+    "molecule"
+   ]
+  },
+  {
+   "name": "reactor",
+   "zh": "搅拌釜反应器",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "反应釜",
+    "搅拌釜",
+    "反应器",
+    "合成",
+    "stirred tank",
+    "reactor"
+   ]
+  },
+  {
+   "name": "fixed-bed-reactor",
+   "zh": "固定床管式反应器",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "固定床",
+    "管式炉",
+    "管式反应器",
+    "催化剂床层",
+    "fixed bed",
+    "tube furnace"
+   ]
+  },
+  {
+   "name": "catalyst-surface",
+   "zh": "催化剂表面（载体+金属颗粒）",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "催化剂",
+    "负载型催化剂",
+    "金属颗粒",
+    "载体",
+    "活性位",
+    "catalyst",
+    "supported"
+   ]
+  },
+  {
+   "name": "adsorption-site",
+   "zh": "表面吸附",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "吸附",
+    "吸附位",
+    "表面",
+    "吸附质",
+    "adsorption",
+    "adsorbate"
+   ]
+  },
+  {
+   "name": "separation-column",
+   "zh": "分离柱（色谱柱）",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "色谱柱",
+    "分离",
+    "层析",
+    "纯化",
+    "column",
+    "chromatography"
+   ]
+  },
+  {
+   "name": "distillation",
+   "zh": "蒸馏",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "蒸馏",
+    "精馏",
+    "冷凝",
+    "分离",
+    "distillation"
+   ]
+  },
+  {
+   "name": "gas-bubbles",
+   "zh": "气泡",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "气泡",
+    "产气",
+    "通气",
+    "鼓泡",
+    "bubbles",
+    "gas evolution"
+   ]
+  },
+  {
+   "name": "nanoparticle",
+   "zh": "纳米颗粒",
+   "domain": "材料",
+   "keywords": [
+    "纳米颗粒",
+    "颗粒",
+    "球形颗粒",
+    "nanoparticle",
+    "particle"
+   ]
+  },
+  {
+   "name": "core-shell-particle",
+   "zh": "核壳颗粒",
+   "domain": "材料",
+   "keywords": [
+    "核壳",
+    "包覆",
+    "壳层",
+    "core-shell",
+    "coated particle"
+   ]
+  },
+  {
+   "name": "porous-particle",
+   "zh": "多孔颗粒",
+   "domain": "材料",
+   "keywords": [
+    "多孔",
+    "孔道",
+    "多孔材料",
+    "比表面积",
+    "porous",
+    "mesoporous"
+   ]
+  },
+  {
+   "name": "layered-structure",
+   "zh": "层状结构",
+   "domain": "材料",
+   "keywords": [
+    "层状",
+    "插层",
+    "二维材料",
+    "层间",
+    "layered",
+    "intercalation"
+   ]
+  },
+  {
+   "name": "crystal-lattice",
+   "zh": "晶格（晶胞）",
+   "domain": "材料",
+   "keywords": [
+    "晶格",
+    "晶胞",
+    "晶体结构",
+    "体心立方",
+    "crystal",
+    "lattice",
+    "unit cell"
+   ]
+  },
+  {
+   "name": "mof-framework",
+   "zh": "MOF 骨架",
+   "domain": "材料",
+   "keywords": [
+    "MOF",
+    "金属有机框架",
+    "配位聚合物",
+    "骨架",
+    "孔",
+    "framework"
+   ]
+  },
+  {
+   "name": "nanotube",
+   "zh": "纳米管",
+   "domain": "材料",
+   "keywords": [
+    "纳米管",
+    "碳纳米管",
+    "管状",
+    "一维材料",
+    "nanotube",
+    "CNT"
+   ]
+  },
+  {
+   "name": "graphene-sheet",
+   "zh": "石墨烯片",
+   "domain": "材料",
+   "keywords": [
+    "石墨烯",
+    "二维材料",
+    "蜂窝晶格",
+    "碳材料",
+    "graphene",
+    "2D"
+   ]
+  },
+  {
+   "name": "thin-film",
+   "zh": "薄膜（基底+膜层）",
+   "domain": "材料",
+   "keywords": [
+    "薄膜",
+    "涂层",
+    "镀膜",
+    "基底",
+    "沉积",
+    "thin film",
+    "coating",
+    "substrate"
+   ]
+  },
+  {
+   "name": "li-ion-battery",
+   "zh": "锂离子电池",
+   "domain": "能源 / 电化学",
+   "keywords": [
+    "电池",
+    "锂电池",
+    "锂离子电池",
+    "储能",
+    "battery",
+    "Li-ion"
+   ]
+  },
+  {
+   "name": "electrode-electrolyte",
+   "zh": "电极与电解液",
+   "domain": "能源 / 电化学",
+   "keywords": [
+    "电极",
+    "电解液",
+    "电解池",
+    "电化学池",
+    "electrode",
+    "electrolyte",
+    "cell"
+   ]
+  },
+  {
+   "name": "fuel-cell",
+   "zh": "燃料电池",
+   "domain": "能源 / 电化学",
+   "keywords": [
+    "燃料电池",
+    "质子交换膜",
+    "膜电极",
+    "fuel cell",
+    "PEM",
+    "MEA"
+   ]
+  },
+  {
+   "name": "solar-panel",
+   "zh": "太阳能电池板",
+   "domain": "能源 / 电化学",
+   "keywords": [
+    "太阳能",
+    "光伏",
+    "太阳能电池",
+    "光伏板",
+    "solar",
+    "photovoltaic",
+    "PV"
+   ]
+  },
+  {
+   "name": "wind-turbine",
+   "zh": "风力发电机",
+   "domain": "能源 / 电化学",
+   "keywords": [
+    "风电",
+    "风力发电",
+    "风能",
+    "可再生能源",
+    "wind turbine",
+    "wind"
+   ]
+  },
+  {
+   "name": "lightning",
+   "zh": "电能（闪电）",
+   "domain": "能源 / 电化学",
+   "keywords": [
+    "电",
+    "电能",
+    "闪电",
+    "放电",
+    "电流",
+    "lightning",
+    "electricity",
+    "power"
+   ]
+  },
+  {
+   "name": "cell",
+   "zh": "细胞",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "细胞",
+    "真核细胞",
+    "细胞核",
+    "cell",
+    "eukaryotic"
+   ]
+  },
+  {
+   "name": "bacterium",
+   "zh": "细菌",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "细菌",
+    "杆菌",
+    "微生物",
+    "病原体",
+    "bacterium",
+    "bacteria",
+    "microbe"
+   ]
+  },
+  {
+   "name": "virus",
+   "zh": "病毒",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "病毒",
+    "病毒颗粒",
+    "刺突",
+    "冠状病毒",
+    "virus",
+    "virion"
+   ]
+  },
+  {
+   "name": "dna-helix",
+   "zh": "DNA 双螺旋",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "DNA",
+    "双螺旋",
+    "基因",
+    "核酸",
+    "遗传",
+    "dna",
+    "double helix",
+    "gene"
+   ]
+  },
+  {
+   "name": "protein",
+   "zh": "蛋白质",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "蛋白质",
+    "蛋白",
+    "酶",
+    "α螺旋",
+    "β折叠",
+    "protein",
+    "enzyme"
+   ]
+  },
+  {
+   "name": "antibody",
+   "zh": "抗体",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "抗体",
+    "免疫球蛋白",
+    "IgG",
+    "免疫",
+    "antibody",
+    "immunoglobulin"
+   ]
+  },
+  {
+   "name": "mitochondrion",
+   "zh": "线粒体",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "线粒体",
+    "细胞器",
+    "能量代谢",
+    "ATP",
+    "mitochondria",
+    "mitochondrion"
+   ]
+  },
+  {
+   "name": "neuron",
+   "zh": "神经元",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "神经元",
+    "神经细胞",
+    "轴突",
+    "树突",
+    "神经",
+    "neuron",
+    "nerve"
+   ]
+  },
+  {
+   "name": "mouse",
+   "zh": "实验小鼠",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "小鼠",
+    "大鼠",
+    "动物实验",
+    "体内",
+    "模型动物",
+    "mouse",
+    "rodent",
+    "in vivo"
+   ]
+  },
+  {
+   "name": "leaf",
+   "zh": "植物（叶片）",
+   "domain": "生物 / 医学",
+   "keywords": [
+    "植物",
+    "叶片",
+    "叶子",
+    "光合作用",
+    "生物质",
+    "plant",
+    "leaf"
+   ]
+  },
+  {
+   "name": "laser",
+   "zh": "激光器",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "激光",
+    "激光器",
+    "光源",
+    "laser"
+   ]
+  },
+  {
+   "name": "lens",
+   "zh": "透镜",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "透镜",
+    "凸透镜",
+    "聚焦",
+    "光路",
+    "lens",
+    "focusing"
+   ]
+  },
+  {
+   "name": "mirror",
+   "zh": "反射镜",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "反射镜",
+    "镜子",
+    "反射",
+    "光路",
+    "mirror",
+    "reflection"
+   ]
+  },
+  {
+   "name": "beam-splitter",
+   "zh": "分束器",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "分束器",
+    "分光",
+    "分束镜",
+    "光路",
+    "beam splitter"
+   ]
+  },
+  {
+   "name": "detector",
+   "zh": "探测器",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "探测器",
+    "检测器",
+    "光电探测器",
+    "传感",
+    "信号",
+    "detector",
+    "photodetector"
+   ]
+  },
+  {
+   "name": "waveguide",
+   "zh": "波导 / 光纤",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "波导",
+    "光纤",
+    "全反射",
+    "光传输",
+    "waveguide",
+    "optical fiber"
+   ]
+  },
+  {
+   "name": "wave",
+   "zh": "波形",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "波",
+    "波形",
+    "信号",
+    "振动",
+    "正弦",
+    "wave",
+    "signal",
+    "oscillation"
+   ]
+  },
+  {
+   "name": "magnet",
+   "zh": "磁铁",
+   "domain": "物理 / 光学",
+   "keywords": [
+    "磁铁",
+    "磁场",
+    "磁性",
+    "马蹄形磁铁",
+    "magnet",
+    "magnetic"
+   ]
+  },
+  {
+   "name": "chip",
+   "zh": "芯片",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "芯片",
+    "集成电路",
+    "处理器",
+    "微电子",
+    "chip",
+    "IC",
+    "processor"
+   ]
+  },
+  {
+   "name": "computer",
+   "zh": "计算机",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "计算机",
+    "电脑",
+    "显示器",
+    "模拟",
+    "计算",
+    "computer",
+    "simulation"
+   ]
+  },
+  {
+   "name": "server",
+   "zh": "服务器",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "服务器",
+    "集群",
+    "高性能计算",
+    "算力",
+    "server",
+    "HPC",
+    "cluster"
+   ]
+  },
+  {
+   "name": "neural-network",
+   "zh": "神经网络",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "神经网络",
+    "深度学习",
+    "机器学习",
+    "人工智能",
+    "AI",
+    "neural network",
+    "machine learning"
+   ]
+  },
+  {
+   "name": "robot-arm",
+   "zh": "机械臂",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "机械臂",
+    "机器人",
+    "自动化",
+    "自动化实验",
+    "robot arm",
+    "automation"
+   ]
+  },
+  {
+   "name": "sensor",
+   "zh": "传感器",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "传感器",
+    "监测",
+    "信号",
+    "物联网",
+    "无线",
+    "sensor",
+    "monitoring",
+    "IoT"
+   ]
+  },
+  {
+   "name": "database",
+   "zh": "数据库",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "数据库",
+    "数据",
+    "存储",
+    "数据集",
+    "database",
+    "data",
+    "storage"
+   ]
+  },
+  {
+   "name": "document",
+   "zh": "文档",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "文档",
+    "报告",
+    "论文",
+    "文件",
+    "记录",
+    "document",
+    "paper",
+    "report"
+   ]
+  },
+  {
+   "name": "cloud",
+   "zh": "云",
+   "domain": "工程 / 计算",
+   "keywords": [
+    "云",
+    "云端",
+    "云计算",
+    "在线",
+    "cloud",
+    "cloud computing"
+   ]
+  },
+  {
+   "name": "cycle-arrows",
+   "zh": "循环 / 再生",
+   "domain": "流程符号",
+   "keywords": [
+    "循环",
+    "再生",
+    "回收",
+    "重复使用",
+    "迭代",
+    "cycle",
+    "recycle",
+    "regeneration"
+   ]
+  },
+  {
+   "name": "check-mark",
+   "zh": "通过（对勾）",
+   "domain": "流程符号",
+   "keywords": [
+    "通过",
+    "正确",
+    "完成",
+    "合格",
+    "对勾",
+    "check",
+    "pass",
+    "ok"
+   ]
+  },
+  {
+   "name": "cross-mark",
+   "zh": "失败（叉）",
+   "domain": "流程符号",
+   "keywords": [
+    "失败",
+    "错误",
+    "不合格",
+    "排除",
+    "叉",
+    "cross",
+    "fail",
+    "error"
+   ]
+  },
+  {
+   "name": "warning",
+   "zh": "警示",
+   "domain": "流程符号",
+   "keywords": [
+    "警示",
+    "注意",
+    "危险",
+    "安全",
+    "警告",
+    "warning",
+    "caution",
+    "hazard"
+   ]
+  },
+  {
+   "name": "person",
+   "zh": "研究人员",
+   "domain": "流程符号",
+   "keywords": [
+    "研究人员",
+    "人",
+    "用户",
+    "操作者",
+    "科研人员",
+    "person",
+    "researcher",
+    "user"
+   ]
+  }
+ ]
+}

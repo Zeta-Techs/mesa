@@ -433,6 +433,13 @@
   时效对照只由 `lit_records.py angles-facts` 数，AI 只引用。精读分路照旧按全部纳入的篇分，速读行写各路自己的 `notes/skim-<路号>.md`、收尾合表。精读跟进只处理**索引里还没有的** id。
   大纲六问逐条经 help-wanted；「定框架记录」「覆盖检查」两张表的列格式是界面计数与补料单预填的契约（`notes-progress.ts sectionTableRows`），改表头要两边一起改。
   已有项目的模板更新只提示（流程进度条上方一行，按项目研究工具换算后比，`pipeline-upgrade.ts templateUpdateNotice`），换不换仍在编辑器逐步勾选。
+
+## 科研做图（2026-11-05 拍板，design-research-figures.md）
+
+以下是以后做图功能都要守的规则。三期已于 2026-11-05 一并落地，实现位置：技能 `schematic-forge`（`src-tauri/resources/skills/schematic-forge/`，
+脚本与图元见 code-structure.md 同名条）、`figure-forge/scripts/fig_lint.py`、`mesa_helper svg-render`（`svg_render.rs`，注入 `MESA_FIGURE_TOOL` 前单独试跑
+`svg-render --probe`）、`office_view.rs` 示意图预览、`chat-image.ts schematicSourceOf`、`dep_check.rs` 的 python-pptx、`research-tools.ts` 默认挂载。
+
 - **交付 = 能改的源文件 + 重建过程**：数据图有脚本，示意图 / 组图有图纸（`figures/<图名>/figure.json`），都登记 `figures/manifest.json`、
   `fig_check` 能重跑。示意图同时出 PPTX + SVG + PNG（PDF 投稿副本进 `output/figures/`）。不交只有一张 PNG 的示意图。
 - **文字永远是真文字**：出图模型不写字；SVG 不转曲（`svg.fonttype: none`）、PDF 嵌字体（`pdf.fonttype: 42`）、PPTX 是文本框。
@@ -451,6 +458,9 @@
 - 数据图画前拦误用时**不停下来问**：默认按替代画法画，交付写明换了什么、为什么；用户明说要原样才照画并留记录。
 - 已有图转可编辑（复刻模式）放三期：只给能看图的模型，文字位置字号本地脚本量，不接第三方 OCR、不装 SAM / RMBG；复刻别人已发表的图只作风格参考或附出处。
 - 不画冒充实验数据的图；照片类面板只许整体缩放、裁切。
+- **落地细则**（2026-11-05）：「人改过」以 `render.json` 记的输出哈希为准；示意图的身份按文件名约定认（`figures/<图名>/<图名>.png` 且同目录有
+  `render.json`），前端不读文件；组图里的子图 SVG 整份以 data URI 图片嵌入（自带 `<style>` 与 id 不串块），PPTX 里图标 / 子图挂 svgBlip 原件 + PNG 后备；
+  示意图技能挂上不设为必需（没装的 Agent 照常开工）；PPTX 不追求字节可重现，重建核对只比 SVG。
 
 ## 问题该在什么时刻、什么层级出现（v3.89，专家/新手双视角复盘）
 
@@ -1563,16 +1573,6 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - `machine:records-allow-empty:` 明确允许有效零记录；`machine:optional-empty:` 允许该精确交付文件为空但不允许缺文件。一般 records/产物非空语义保持不变。零结果不等于后续研究可以通过。
 - 原始数据、图源/场景源、数值结果和来源许可分别验收；工程大文件放配置产物目录、manifest 带版本/命令/哈希。UI 测试/合成示意不等于 Windows Origin、EndNote、真实 Zotero 写库或真人科研端到端已验收。
 
-## 任务包（2026-11-03 第一至四期，design-task-packs.md）
-
-- **包 = 声明 + 文字 + 可选脚本，不含跑在 Mesa 进程里的代码**；存在配置目录 `ccode/packs/<id>/`：`pack.toml`（`[pack]` 身份与版本、`[[params]]` 参数定义、
-  `[[steps]]` 步骤合同）+ `skills/`（随包的用户技能快照；内置技能不打包）。`[[steps]]` 与项目档案卡同一写法，由 `projects::render_config` / `parse_config` 渲染与解析，
-  不另写一套。包 id 形如 `pk-<12 位>`，只收小写字母数字连字符。
-- **参数**：文字里写 `{param:键}`，键只收字母数字下划线连字符；替换范围固定为简报、验收条件（`machine:` 行不动）、讨论种子、决策问题、人工事项标题与说明，
-  前后端同一范围（`task-packs.ts` ↔ `task_packs.rs step_texts`）。另存时引用了没定义的参数直接拒存。拼任务书时先代入、再拼各段，另列「## 本步参数」；
-  没填的写成「（参数「X」未填）」并叮嘱先按决策暂停策略问人，不得自编。
-  **参数类型（2026-11-04）**：`kind` 空 = 文字（`options` 非空即下拉）；`number` / `bool`（值只存「是」「否」，true/yes/1 归一）/ `path` / `file`（项目内相对路径：
-  不许绝对、`..`、`.`、冒号）。有 `kind` 的不带 `options`。不合规的取值 `projects::normalize_step_params` 一律清空、前端 `applyStepParams` 当没填——
 ## 项目助手接活（2026-11-05，design-assistant-intake.md）
 
 - **不按场景补功能**：科研需求（组会、周报、实验规划、数据异常、改图…）不做专门按钮 / 页面 / 入口，统一由项目助手按
@@ -1593,6 +1593,16 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   PDF 不另设能力位：扫描版 PDF 的图归到「看图」。
 - **不做**：自动链式派活（做完 A 自动派 B）、项目助手自己建定时任务、跨项目、替人选方案。
 
+## 任务包（2026-11-03 第一至四期，design-task-packs.md）
+
+- **包 = 声明 + 文字 + 可选脚本，不含跑在 Mesa 进程里的代码**；存在配置目录 `ccode/packs/<id>/`：`pack.toml`（`[pack]` 身份与版本、`[[params]]` 参数定义、
+  `[[steps]]` 步骤合同）+ `skills/`（随包的用户技能快照；内置技能不打包）。`[[steps]]` 与项目档案卡同一写法，由 `projects::render_config` / `parse_config` 渲染与解析，
+  不另写一套。包 id 形如 `pk-<12 位>`，只收小写字母数字连字符。
+- **参数**：文字里写 `{param:键}`，键只收字母数字下划线连字符；替换范围固定为简报、验收条件（`machine:` 行不动）、讨论种子、决策问题、人工事项标题与说明，
+  前后端同一范围（`task-packs.ts` ↔ `task_packs.rs step_texts`）。另存时引用了没定义的参数直接拒存。拼任务书时先代入、再拼各段，另列「## 本步参数」；
+  没填的写成「（参数「X」未填）」并叮嘱先按决策暂停策略问人，不得自编。
+  **参数类型（2026-11-04）**：`kind` 空 = 文字（`options` 非空即下拉）；`number` / `bool`（值只存「是」「否」，true/yes/1 归一）/ `path` / `file`（项目内相对路径：
+  不许绝对、`..`、`.`、冒号）。有 `kind` 的不带 `options`。不合规的取值 `projects::normalize_step_params` 一律清空、前端 `applyStepParams` 当没填——
   路径越界不能交给 Agent 去读写。校验前后端同口径（`projects::param_value_problem` ↔ `task-packs.ts paramValueProblem`，数字按 Rust `parse::<f64>` 认）。
 - **记目标用我的任务当模板（2026-11-04）**：只在新建目标给；`goalTextFromPack` 把各步写成一段说明（参数代入、`machine:` 行不写），技能只点名项目技能池里已有的，
   不装随包技能、不建触发、核验脚本不跟——一次性目标只有文字，要这些走流程。人改过文字后再改参数不覆盖。

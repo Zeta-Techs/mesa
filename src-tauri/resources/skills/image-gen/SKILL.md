@@ -51,7 +51,7 @@ thin dark outlines, muted blue and coral palette, no text, no labels.
 
 出图模型写短标题多数能写对，但仍会重字、漏字、拼错，还会自己编出没要的小字；字越多越长越容易错。
 
-- **默认不让模型画文字**：描述里写 `no text, no labels`。标注、图例、标题交给后面一步：示意图用脚本（Python matplotlib 叠字）或让用户在 PPT、Illustrator 里加，图形摘要在排版时加。
+- **默认不让模型画文字**：描述里写 `no text, no labels`。标注、图例、标题交给后面一步：示意图、图形摘要按 schematic-forge 技能写图纸、文字是真文字（出图模型只画图标）。
 - 用户确实要图里带字（海报标题、标牌）：字越少越好，原文写进引号，比如 `a title that reads "OPEN LAB"`、`标题写着“开放日”`。2026-10-30 用一中一英两个短标题实测：gpt-image-1.5 / 2.5、gemini-3-pro-image、qwen-image-2.0-pro、wan2.6-t2i 都写对了；豆包 seedream-4 把「细胞信号实验室」写成了「细胞信号实验验室」；gemini-3.1-flash-image 标题对，却自己编了日期、地点等小字。要字时优先用写对的那几家，描述里加 `no other text`。
 - 长句、小字、公式、图例，任何模型都不可靠，不要让模型画。
 - 画完必须逐字核对（见「画完自检」），错一个字就不能当成品交。
@@ -91,7 +91,7 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 | 模型 | 按 `--size` 出画幅 | 能到多大 | `--quality` | `--transparent` |
 |---|---|---|---|---|
 | gpt-image-1.5、gpt-image-1-mini | 只有 1024×1024、1536×1024、1024×1536 三种 | 1536 | 有效 | 有效 |
-| gpt-image-2、gpt-image-2.5 | **不按**：不管要什么都出接近方形、约 1250 像素见方的图 | 约 1250 | 网关接受 | 有效 |
+| gpt-image-2、gpt-image-2.5 | **不按**：画幅由模型自己定（10-30 实测出近方形约 1250 像素见方；11-05 要 1536x1024 实测出 1774x887） | 约 1250–1800 | 网关接受 | 有效 |
 | gemini-3-pro-image、gemini-3.1-flash-image、gemini-nano-banana-2.1 | 按（取最接近的宽高比） | 2K、4K | 不支持 | 不支持 |
 | gemini-3.1-flash-lite-image、gemini-2.5-flash-image | 按 | 只出 1K | 不支持 | 不支持 |
 | 豆包 doubao-seedream-4-0 | 按 | 4K | 不支持 | 不支持 |
@@ -120,6 +120,7 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 - `原图：路径`：Mesa 聊天里点图「接着改」发来的，就是要改的那张，`--image` 用它；
 - `标注图：路径`：同一张图上画了框、箭头、编号（①② 对应消息里的话），只用来看位置。你能看图就用读文件的工具看它，把位置写进描述；看不了图就只按文字改，**不要**把标注图传给 `--image`（框和编号会被画进新图）；
 - 单独一行的图片路径：用户粘贴或拖进来的图，也是要改的那张。
+- 消息里另有 `图纸：…/figure.json` 一行时，这张是示意图（schematic-forge 渲出的）：**不要用出图模型改**，按 schematic-forge 技能改图纸重渲（人改过的 PPTX 就在它上面局部改）。
 
 ```bash
 "$MESA_IMAGE_TOOL" image --image 原图.jpg --prompt "Keep everything else the same, change the straw hat to a blue baseball cap" --out figures/cover-v2.png

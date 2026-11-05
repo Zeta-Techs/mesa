@@ -137,6 +137,33 @@ pub struct SlidesOutlineDto {
     pub slides: Vec<SlideDto>,
     /// 文档自带的首页缩略图（docProps/thumbnail.jpeg）
     pub thumbnail: Option<String>,
+    /// schematic-forge 渲出的示意图：同目录同名 PNG 当预览（2026-11-05 科研做图二期）
+    pub figure_preview: Option<FigurePreviewDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FigurePreviewDto {
+    /// data URL
+    pub image: String,
+    /// PPTX 比预览图新：人在 PPT 里改过，预览还是生成时的样子
+    pub stale: bool,
+}
+
+/// 示意图的预览图：`figures/<图名>/<图名>.pptx` 同目录有 `<图名>.png` 且有渲染记录 render.json 才算
+/// （只认 schematic-forge 的产物，不拿随便一张同名图冒充预览）。返回 PNG 路径与「PPTX 比它新」。
+fn figure_preview_for(pptx: &std::path::Path) -> Option<(std::path::PathBuf, bool)> {
+    let dir = pptx.parent()?;
+    let png = pptx.with_extension("png");
+    if !dir.join("render.json").is_file() || !png.is_file() {
+        return None;
+    }
+    let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let stale = match (mtime(pptx), mtime(&png)) {
+        (Some(a), Some(b)) => a.duration_since(b).is_ok_and(|d| d.as_secs() >= 2),
+        _ => false,
+    };
+    Some((png, stale))
 }
 
 fn xml_unescape(s: &str) -> String {
@@ -328,14 +355,26 @@ pub(crate) fn slides_outline_of(zip: &mut zip::ZipArchive<Cursor<Vec<u8>>>) -> S
             let bytes = zip_bytes(zip, n, SLIDE_IMAGE_CAP)?;
             Some(data_url(image_mime(n)?, &bytes))
         });
-    SlidesOutlineDto { slides, thumbnail }
+    SlidesOutlineDto { slides, thumbnail, figure_preview: None }
 }
 
 #[tauri::command]
 pub async fn slides_outline(path: String, cwd_hint: Option<String>) -> Result<SlidesOutlineDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut zip = read_zip(&path, cwd_hint.as_deref())?;
-        Ok(slides_outline_of(&mut zip))
+        let mut outline = slides_outline_of(&mut zip);
+        if let Some((png, stale)) = figure_preview_for(std::path::Path::new(&path)) {
+            // 预览图走同一个读取白名单；读不了就当没有，不影响大纲
+            if let Ok((bytes, _)) = crate::pdf::read_whitelisted_sync(&png.to_string_lossy(), cwd_hint.as_deref(), 20 * 1024 * 1024, |mb| {
+                format!("预览图超过 20 MB（{mb:.1} MB）")
+            }) {
+                outline.figure_preview = Some(FigurePreviewDto {
+                    image: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)),
+                    stale,
+                });
+            }
+        }
+        Ok(outline)
     })
     .await
     .map_err(|e| format!("读取幻灯失败: {e}"))?
@@ -497,6 +536,29 @@ mod tests {
                 citation_fields: 1,
             }
         );
+    }
+
+    #[test]
+    fn figure_preview_only_for_schematic_outputs_and_flags_newer_pptx() {
+        let root = std::env::temp_dir().join(format!("ccode-figprev-{}", uuid::Uuid::new_v4()));
+        let fig = root.join("rads");
+        std::fs::create_dir_all(&fig).unwrap();
+        let pptx = fig.join("rads.pptx");
+        std::fs::write(&pptx, b"PK").unwrap();
+        std::fs::write(fig.join("rads.png"), b"png").unwrap();
+        // 没有渲染记录：不是 schematic-forge 的产物，不当预览
+        assert!(figure_preview_for(&pptx).is_none());
+        std::fs::write(fig.join("render.json"), b"{}").unwrap();
+        let (png, stale) = figure_preview_for(&pptx).unwrap();
+        assert!(png.ends_with("rads/rads.png") || png.ends_with("rads\\rads.png"));
+        assert!(!stale);
+        // 人在 PPT 里改过：PPTX 比预览图新
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(&pptx).unwrap().set_modified(later).unwrap();
+        assert!(figure_preview_for(&pptx).unwrap().1);
+        std::fs::remove_file(fig.join("rads.png")).unwrap();
+        assert!(figure_preview_for(&pptx).is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 name: figure-forge
-description: 投稿级图表生产规范。当用户要求把分析结果画成论文/投稿用图、按期刊规格调整图（尺寸/分辨率/字体）、或把探索性草稿图升级为投稿质量时使用；只是看数据、找规律的探索图归 data-eda，按描述画的示意插画归 image-gen。先立一句话论点契约，再按数据形态选图型、按期刊规格出图。全部图由可复现脚本生成，禁止手工改图。
+description: 投稿级图表生产规范。当用户要求把分析结果画成论文/投稿用图、按期刊规格调整图（尺寸/分辨率/字体）、或把探索性草稿图升级为投稿质量时使用；只是看数据、找规律的探索图归 data-eda，机理图、流程图、图形摘要等示意图归 schematic-forge。先立一句话论点契约，再按数据形态选图型、按期刊规格出图。全部图由可复现脚本生成，禁止手工改图。
 outputs: [figures/]
 provides: [figure-forge]
 ---
@@ -14,7 +14,7 @@ provides: [figure-forge]
 - 用户要求把 results/analysis 的数字画成论文用图，或把 EDA 草稿图升级为投稿质量
 - 用户给出目标期刊/会议的图表要求，要求逐条适配
 - 科研论文/毕业论文流水线中「结果分析」「实验与结果」步骤的出图环节
-- 示意图/机制图不在本技能射程：可产 TikZ 骨架，但必须标 [MANUAL] 由人工在 draw.io/Illustrator 完成，不冒充投稿级产出
+- 示意图/机制图/图形摘要不在本技能射程，交给 schematic-forge 技能（图纸出可编辑 PPTX / SVG）；本技能的图要和示意图拼成组图时也在那边拼
 
 ## 操作规范
 
@@ -38,6 +38,7 @@ provides: [figure-forge]
 - 时序 → 折线；N 方法 × M 基准 → 分组柱；单指标多方法排名 → 横向条；两连续变量 → 散点；方阵 → 热图（≤200 格逐格印数）；占比 → 堆叠条（避免饼图）；
 - 分布对比按 n：小 n 抖动散点+中位线，大 n box/violin，均值即信息时 bar+原始点；
 - 反模式三条：对数轴禁实心柱（用点+中位线）；空槽标 n.d./—，不得看似 0；误差棒与原始点叠加二选一。
+- **常见误用默认改画**（不停下来问）：每组 n < 10 画均值柱 → 箱线 / 抖动点；双 Y 轴暗示相关 → 拆成上下两块或标准化；柱状图 Y 轴不从 0 起 → 改点图或从 0 起；分类变量连折线 → 点或柱；连续色阶无色标 → 补色标；rainbow / jet → viridis / RdBu_r；饼图、装饰性 3D → 横向条；显著性星号不写检验与校正 → 在图注写清或去掉；图例用程序变量名 → 改成人话。交付时写明换了什么、为什么；用户明说要原样才照画，并在 `figures/README.md` 记一句。
 
 ### 4. 期刊规格适配
 
@@ -45,9 +46,9 @@ provides: [figure-forge]
 
 - **物理尺寸**：单栏图宽约 8-9 cm、双栏约 17-18 cm，按目标版式设 figsize，不靠缩放凑；
 - **分辨率**：位图元素 ≥ 300 dpi（照片/热图类 600 dpi 更稳）；
-- **字体字号**：成稿字号下限 5 pt、常规 7-9 pt，全图统一字族；默认嵌入字体，目标期刊要求可编辑文字（如 Nature 系）时不转曲；
+- **字体字号**：成稿字号下限 5 pt、常规 7-9 pt，全图统一字族；**文字默认可编辑**：脚本开头固定 `plt.rcParams['svg.fonttype'] = 'none'`（SVG 里是真文字，Illustrator / PPT 里能改）、`plt.rcParams['pdf.fonttype'] = 42`（PDF 嵌 TrueType，不用 Type 3）；中文用本机有的中文字体（`font.sans-serif` 里放 Arial 之后再放 PingFang SC / Microsoft YaHei / Source Han Sans SC），负号设 `axes.unicode_minus = False` 防方框；
 - **线宽与标记**：坐标轴/数据线 ≥ 0.5 pt，标记点在成稿尺寸下可分辨；
-- **格式**：主交付写入 `figures/` 的 SVG 或 PNG（要进 git，下一步初稿才能读到）；投稿用 PDF/EPS 副本写入本工作区 `output/figures/`（`*.pdf` 被 git 忽略，评审合并后自动进项目根同名目录）。含连续色调的位图部分用 PNG；
+- **格式**：主交付写入 `figures/` 的 SVG 或 PNG（要进 git，下一步初稿才能读到）；投稿用 PDF/EPS 副本写入本工作区 `output/figures/`（`*.pdf` 被 git 忽略，评审合并后自动进项目根同名目录）。含连续色调的位图部分用 PNG；不存 JPEG。组会 / 答辩要放进 PPT 时，装了 schematic-forge 技能就用它的 `render_figure.py --wrap figures/<图>.svg`（PPTX 里挂 SVG 原件、图注是文本框）；
 - **高频规格速查**：Nature 系单栏 89 mm/双栏 183 mm/高 ≤170 mm、面板字母 8 pt 粗体小写；ML 会议 ICML 3.25/6.75 in、NeurIPS/ICLR 5.5 in。速查与目标期刊当年作者指南冲突时，以指南为准。
 
 ### 5. 可读性与一致性
@@ -69,12 +70,13 @@ provides: [figure-forge]
 ### 7. 图登记与重建核验（固定脚本，结果进 Mesa 评审页的核验清单）
 
 - 每张数据图在 `figures/manifest.json` 登记一行：`{"file": "figures/fig2-ablation.pdf", "script": "figures/make_figures.py", "args": ["fig2"]}`（脚本按扩展名运行：.py / .R / .jl，在工作目录下执行）。示意图、转载图不登记，在 `figures/README.md` 写明来源。
-- 出完图跑技能目录里的 `scripts/fig_check.py --root <工作目录> --coverage`（不复制进工作区；`python3` 在 Windows 上换成 `python`）：逐张重跑脚本，失败或没生成登记的文件就拦下；重跑后字节不同（PDF / PNG 常带时间戳）交人目视对比。结果写进 `.ccode/checks/fig-check.jsonl`。
+- 出完图先跑 `scripts/fig_lint.py --root <工作目录>`（画后自检：照常跑登记的脚本、在保存图那一刻查缺字、文字出界或互压、字号低于 5 pt、SVG 转曲、JPEG，并出灰度预览；拦下的改到没有），结果写进 `.ccode/checks/fig-lint.jsonl`。
+- 再跑技能目录里的 `scripts/fig_check.py --root <工作目录> --coverage`（不复制进工作区；`python3` 在 Windows 上换成 `python`）：逐张重跑脚本，失败或没生成登记的文件就拦下；重跑后字节不同（PDF / PNG 常带时间戳）交人目视对比。结果写进 `.ccode/checks/fig-check.jsonl`。
 - 拦下的修到能重跑为止；`--coverage` 列出稿件引用了却没登记脚本的图，数据图补登记，示意图在 README 写明来源。
 
 ## 交付前复查（两层）
 
-- **机械层**：脚本自检无文本重叠、不出图框、字号达标（bbox 两两重叠检测可写 10 行内），不通过则修到通过；
+- **机械层**：`fig_lint.py` 无拦下（文本不重叠、不出图框、字号达标、无缺字、SVG 未转曲），不通过则修到通过；
 - **感知层**：agent 读图不可靠，导出最终物理尺寸 PNG 供人工过目；复查结论逐图一行写进 `figures/README.md`，视觉项标注「待人工确认」，不假装已目验。
 
 ## 完成标准

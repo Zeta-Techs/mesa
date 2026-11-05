@@ -3,16 +3,16 @@
 export interface ResearchTools {
   libraryExport: "none" | "zotero" | "endnote";
   plotting: "python" | "origin";
-  illustration: "none" | "blender";
+  illustration: "schematic" | "none" | "blender";
   manuscript: "markdown" | "latex" | "word";
 }
 export const DEFAULT_RESEARCH_TOOLS: ResearchTools = {
-  libraryExport: "none", plotting: "python", illustration: "none", manuscript: "markdown",
+  libraryExport: "none", plotting: "python", illustration: "schematic", manuscript: "markdown",
 };
 export const RESEARCH_TOOL_FIELDS = [
   { key: "libraryExport", label: "文献库", options: [["none", "不使用"], ["zotero", "Zotero"], ["endnote", "EndNote"]] },
   { key: "plotting", label: "数值图", options: [["python", "Python"], ["origin", "Origin（Windows）"]] },
-  { key: "illustration", label: "结构 / 装置示意", options: [["none", "不需要"], ["blender", "Blender"]] },
+  { key: "illustration", label: "示意图", options: [["schematic", "图纸（PPT / SVG）"], ["blender", "Blender（三维）"], ["none", "不需要"]] },
   { key: "manuscript", label: "稿件载体", options: [["markdown", "Markdown / Quarto"], ["latex", "LaTeX（原生源码）"], ["word", "已有 Word（人工插件验收）"]] },
 ] as const;
 export type ResearchToolField = (typeof RESEARCH_TOOL_FIELDS)[number];

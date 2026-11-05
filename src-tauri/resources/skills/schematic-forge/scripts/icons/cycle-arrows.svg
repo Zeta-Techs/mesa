@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<!-- default C1=#4472C4 C2=#ED7D31 C3=#404040 -->
+<g stroke-linejoin="round" stroke-linecap="round"><path d="M18.1,38.4 A34,34 0 0,1 73.2,25.1" fill="none" stroke="@C3@" stroke-width="15" stroke-linecap="butt"/><polygon points="65.7,33.2 81.9,38.4 80.7,17.1" fill="@C1@" stroke="@C3@" stroke-width="3"/><path d="M18.1,38.4 A34,34 0 0,1 74.1,26" fill="none" stroke="@C1@" stroke-width="9" stroke-linecap="butt"/><path d="M81.9,61.6 A34,34 0 0,1 26.8,74.9" fill="none" stroke="@C3@" stroke-width="15" stroke-linecap="butt"/><polygon points="34.3,66.8 18.1,61.6 19.3,82.9" fill="@C2@" stroke="@C3@" stroke-width="3"/><path d="M81.9,61.6 A34,34 0 0,1 25.9,74" fill="none" stroke="@C2@" stroke-width="9" stroke-linecap="butt"/></g>
+</svg>
