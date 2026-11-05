@@ -186,6 +186,14 @@ async function slideEffort(ui: { el: HTMLElement; act: (fn: () => Promise<void>)
   });
 }
 
+/** 模型菜单主屏只有思考强度（2026-11-05）：大字下面那一行「M · 连接 · 模型 ›」是弹层里第一个按钮，点进模型屏 */
+async function openModels(ui: { el: HTMLElement; act: (fn: () => Promise<void>) => Promise<void> }) {
+  const line = ui.el.querySelector<HTMLButtonElement>('[role="dialog"] button');
+  assert.ok(line, "主屏有「连接 · 模型」那一行");
+  await ui.act(async () => line.click());
+  await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+}
+
 const menuItem = (ui: { el: HTMLElement }, text: string) => {
   const found = Array.from(ui.el.querySelectorAll('[role="menuitemradio"]')).find((b) =>
     b.textContent?.startsWith(text),
@@ -278,7 +286,7 @@ const status = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-test("模型菜单开聊前：顶部 Agent · 配置可进二级，模型带能力灰字，思考是滑块", async () => {
+test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一行进模型屏，Agent · 配置再进一层", async () => {
   const ui = await mount();
   try {
     const calls: string[] = [];
@@ -313,22 +321,32 @@ test("模型菜单开聊前：顶部 Agent · 配置可进二级，模型带能�
     assert.ok(ui.el.querySelector('svg[role="img"][aria-label="Claude Code"]'), "品牌色 M 带 Agent 名供读屏");
     await ui.click("glm-5.3");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
-    assert.match(ui.el.textContent ?? "", /200K · 思考/);
-    assert.match(ui.el.textContent ?? "", /128K · 思考 · 看图/);
+    // 主屏：当前档大字 + 连接 · 模型一行 + 滑块，不列模型、不列最近搭配
+    assert.match(ui.el.textContent ?? "", /默认思考强度/);
+    assert.match(ui.el.textContent ?? "", /GLM-flash · glm-5\.3/);
+    assert.doesNotMatch(ui.el.textContent ?? "", /200K · 思考/);
+    assert.equal(ui.el.querySelector('input[aria-label="输入其他模型"]'), null);
     const range = ui.el.querySelector<HTMLInputElement>('input[type="range"][aria-label="思考强度"]');
     assert.equal(range?.getAttribute("aria-valuetext"), "默认");
     assert.equal(range?.max, "3", "默认 + low / medium / high 四个刻度");
     // 拖到 high（第 3 格）松手才提交
     await slideEffort(ui, 3);
     assert.deepEqual(calls.at(-1), "effort:high");
-    // 进二级换配置，选完回到主菜单
+    // 模型屏：能力灰字、左上回思考强度
+    await openModels(ui);
+    assert.match(ui.el.textContent ?? "", /200K · 思考/);
+    assert.match(ui.el.textContent ?? "", /128K · 思考 · 看图/);
+    assert.equal(ui.el.querySelector('input[type="range"]'), null, "模型屏不放滑块");
+    // 再进一层换配置，选完回到模型屏
     await ui.click("GLM-flash");
-    assert.match(ui.el.textContent ?? "", /模型与思考强度/);
+    assert.match(ui.el.textContent ?? "", /配置/);
     await ui.click("官方");
     assert.deepEqual(calls.at(-1), "profile:p2");
-    assert.match(ui.el.textContent ?? "", /思考强度/);
+    assert.ok(ui.el.querySelector('input[aria-label="输入其他模型"]'), "回到模型屏");
+    // 选了模型回到思考强度那一屏
     await ui.click("glm-5.2");
     assert.deepEqual(calls.at(-1), "model:glm-5.2");
+    assert.ok(ui.el.querySelector('input[type="range"]'), "选完模型回主屏");
   } finally {
     await ui.close();
   }
@@ -412,6 +430,7 @@ test("模型菜单运行中：切模型写命令、显示「待确认」，读�
     await ui.click("glm-5.3 · high");
     // 没接「重开接回」时只能写命令：Claude 会把思考档存成默认，底部如实写
     assert.match(ui.el.textContent ?? "", /会把它存成以后的默认/);
+    await openModels(ui);
     await ui.click("glm-5.2");
     assert.deepEqual(sent, ["/model glm-5.2"]);
     assert.match(ui.el.textContent ?? "", /glm-5\.2 · high待确认/);
@@ -448,6 +467,7 @@ test("模型菜单运行中：会写回 CLI 全局配置的切换改走重开接
     await ui.render(ui.h(ui.Menu, props));
     await ui.click("glm-5.3 · high");
     assert.match(ui.el.textContent ?? "", /不改它的全局配置/);
+    await openModels(ui);
     await ui.click("glm-5.2");
     assert.deepEqual(relaunched, [{ model: "glm-5.2" }]);
     assert.deepEqual(sent, [], "不写 /model：Claude 会把它存成全局默认");
@@ -458,6 +478,7 @@ test("模型菜单运行中：会写回 CLI 全局配置的切换改走重开接
     // 生成中：重开会打断这一轮，先不让换
     await ui.render(ui.h(ui.Menu, { ...props, status: status({ attention: "working" }) }));
     assert.match(ui.el.textContent ?? "", /正在生成，等这一轮结束再换/);
+    await openModels(ui);
     assert.equal(ui.button("glm-5.2").disabled, true);
   } finally {
     await ui.close();
@@ -1096,6 +1117,9 @@ test("模型菜单开聊前：最近在这个项目用过的搭配一点四样�
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     await ui.click("glm-flash");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
+    assert.doesNotMatch(ui.el.textContent ?? "", /最近在 Ccode 用过/, "主屏不列最近搭配");
+    assert.match(ui.el.textContent ?? "", /看不了图/, "主屏那一行就标出当前模型看不了图");
+    await openModels(ui);
     const text = ui.el.textContent ?? "";
     assert.match(text, /最近在 Ccode 用过/);
     // 「最近用过」只剩 Codex 一行：和当前一样的那套不列（各行前是品牌色 M，读屏名就是 Agent 名）

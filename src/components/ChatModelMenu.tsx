@@ -98,7 +98,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const launch = props.kind === "launch" ? props : null;
   const runtime = props.kind === "runtime" ? props : null;
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<"main" | "who" | "beta">("main");
+  // 主屏只有思考强度（2026-11-05 用户：点开先只看思考档）；模型、Agent / 连接逐层点进去
+  const [view, setView] = useState<"main" | "model" | "who" | "beta">("main");
   const [customModel, setCustomModel] = useState("");
   // 手填的是出图 / 向量等不能对话的模型：不收，原因写在输入框下
   const [customErr, setCustomErr] = useState<string | null>(null);
@@ -316,7 +317,13 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     if (launch) launch.onModel(m);
     else if (next) next.onModel(m);
     else rt.pickModel(m);
-    setOpen(false);
+    // 开聊前 / 接着聊：选完回思考档那一屏（换了模型，档位可能跟着变）；运行中切换会写终端或重开，直接收起
+    if (runtime && !next) setOpen(false);
+    else afterModelPick();
+  }
+  function afterModelPick() {
+    if (effortSection) setView("main");
+    else setOpen(false);
   }
   function pickEffort(v: string) {
     if (launch) launch.onEffort(v);
@@ -477,6 +484,54 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 full: "切换会写进终端执行；CLI 要你确认时，对话末尾会出现确认卡。",
               };
 
+  // 主屏大字下面那一行：「M · 连接 · 模型 ›」，点进模型屏（换模型、Agent、连接都从这里进）
+  const noConn = Boolean(launch && launch.pick.profiles.length === 0);
+  const whoText = noConn
+    ? "还没有连接"
+    : [profileLabel || null, currentModel ? nameOf(currentModel).text : "默认模型"].filter(Boolean).join(" · ");
+  const whoLine = (
+    <button
+      type="button"
+      onClick={() => setView("model")}
+      title={`${agentLabel}${profileLabel ? ` · ${profileLabel}` : ""}${currentModel ? ` · ${currentModel}` : ""}\n${
+        launch && !launch.pick.resumePick ? "换模型、Agent 或连接" : "换模型"
+      }`}
+      className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+    >
+      {agentId && <AgentMark agentId={agentId} />}
+      <span className={`min-w-0 truncate ${pendingMark ? "italic" : ""}`}>{whoText}</span>
+      {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
+      {hasImages && currentModel && caps.vision[currentModel] === false && (
+        <span className="shrink-0 text-caution-text">看不了图</span>
+      )}
+      <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+    </button>
+  );
+  const footerNote = footer && (
+    <p
+      className="mx-1 mt-1 flex shrink-0 gap-1.5 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4"
+      title={footer.full}
+    >
+      <span className="ccode-icon-line">
+        <Info size={12} strokeWidth={1.8} aria-hidden="true" />
+      </span>
+      <span>{footer.short}</span>
+    </p>
+  );
+  const betaRow = beta.badge && (
+    // 「测试版」原先单占输入框底下一格（2026-10-23 收进来）：点进二级看这一家在聊天里能做到哪一步
+    <button
+      type="button"
+      onClick={() => setView("beta")}
+      className="mt-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-lg border-t border-hairline px-2 text-left text-micro text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover"
+    >
+      <span className="shrink-0 text-l3">{beta.badge}</span>
+      <span className="min-w-0 truncate">{beta.newer ? "CLI 比 Mesa 核对过的新" : "聊天里能做到哪一步"}</span>
+      {beta.newer && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
+      <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" className="ml-auto shrink-0" />
+    </button>
+  );
+
   // 上下文用量圆环（docs/design-chat-layer.md §4.4）：上一轮输入占模型窗口的比例，>80% 变 warn；窗口不知道就不画
   const ctxWindow = rt.combo?.context ?? null;
   const ctxUsed = runtime?.contextUsed ?? null;
@@ -536,7 +591,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             <WhoView
               pick={launch.pick}
               agents={agents}
-              onBack={() => setView("main")}
+              onBack={() => setView("model")}
               onAgent={(id) => {
                 launch.onAgent(id);
                 // 换 Agent：思考档换家后不一定还认，回到「默认」；新那家做不到只讨论 /
@@ -553,7 +608,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               }}
               onProfile={(id) => {
                 launch.onProfile(id);
-                setView("main");
+                setView("model");
               }}
               bodyRef={bodyRef}
               bodyClass={scrollBody}
@@ -597,8 +652,42 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 />
               </div>
             </>
+          ) : view === "main" && effortSection ? (
+            <>
+              {/* 主屏（2026-11-05 用户）：只有思考强度——大字当前档，下面一行「M · 连接 · 模型 ›」点进模型屏 */}
+              {effortChoices ? (
+                <EffortSlider
+                  choices={effortChoices}
+                  current={currentEffort}
+                  onCommit={pickEffort}
+                  disabled={relaunchWaiting && rt.effortWaitsForTurn}
+                  subtitle={whoLine}
+                />
+              ) : (
+                <>
+                  <EffortHero text={rt.knownEffort ?? runtimeEffortText ?? "思考强度"} depth={null} subtitle={whoLine} />
+                  {effortSection}
+                </>
+              )}
+              {footerNote}
+              {betaRow}
+            </>
           ) : (
             <>
+              {/* 模型屏：有思考档时左上返回主屏 */}
+              {effortSection && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setView("main")}
+                    className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+                  >
+                    <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+                    <span className="text-xs">思考强度</span>
+                  </button>
+                  {divider}
+                </>
+              )}
               {launch && shownCombos.length > 0 && (
                 // 最近在这个项目用过的搭配（2026-10-22）：九家 × 多条连接，常换的其实是整套；点一下四样一起换
                 <div className="shrink-0">
@@ -682,7 +771,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                     }
                     launch.onModel(m);
                     setCustomModel("");
-                    setOpen(false);
+                    afterModelPick();
                   }}
                 >
                   <input
@@ -698,40 +787,9 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   {customErr && <p className="mt-1 px-0.5 leading-4 text-caution-text">{customErr}</p>}
                 </form>
               )}
-              {effortSection && (
-                <div className="shrink-0">
-                  {divider}
-                  {/* 滑块自带「思考强度 … 当前档」一行；其余形态（终端里换 / 只读说明）才要单独标题 */}
-                  {!effortChoices && <h4 className={section}>思考强度</h4>}
-                  {effortSection}
-                </div>
-              )}
-              {footer && (
-                <p
-                  className="mx-1 mt-1 flex shrink-0 gap-1.5 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4"
-                  title={footer.full}
-                >
-                  <span className="ccode-icon-line">
-                    <Info size={12} strokeWidth={1.8} aria-hidden="true" />
-                  </span>
-                  <span>{footer.short}</span>
-                </p>
-              )}
-              {beta.badge && (
-                // 「测试版」原先单占输入框底下一格（2026-10-23 收进来）：点进二级看这一家在聊天里能做到哪一步
-                <button
-                  type="button"
-                  onClick={() => setView("beta")}
-                  className="mt-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-lg border-t border-hairline px-2 text-left text-micro text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover"
-                >
-                  <span className="shrink-0 text-l3">{beta.badge}</span>
-                  <span className="min-w-0 truncate">
-                    {beta.newer ? "CLI 比 Mesa 核对过的新" : "聊天里能做到哪一步"}
-                  </span>
-                  {beta.newer && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
-                  <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" className="ml-auto shrink-0" />
-                </button>
-              )}
+              {footerNote}
+              {/* 没有思考档可调的组合直接打开这一屏，测试版那一行跟过来 */}
+              {!effortSection && betaRow}
             </>
           )}
         </div>
@@ -774,7 +832,7 @@ function WhoView({
         className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
       >
         <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
-        <span className="text-xs">模型与思考强度</span>
+        <span className="text-xs">模型</span>
       </button>
       <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
       {/* Agent 与配置同在一个滚动区里：原先两段各自 max-h 再叠起来，九家 Agent 一摆就顶出窗口（2026-10-20 用户） */}
@@ -919,11 +977,14 @@ function EffortSlider({
   current,
   onCommit,
   disabled = false,
+  subtitle,
 }: {
   choices: { value: string; label: string }[];
   current: string | null;
   onCommit: (value: string) => void;
   disabled?: boolean;
+  /** 大字档名下面那一行（菜单里是「M · 连接 · 模型 ›」） */
+  subtitle?: ReactNode;
 }) {
   const knownIdx = current === null ? -1 : choices.findIndex((c) => c.value === current);
   const [draft, setDraft] = useState<number | null>(null);
@@ -949,14 +1010,14 @@ function EffortSlider({
   // 拖动时光标块跟手；点刻度 / 点档名 / 键盘跳格时滑过去（120ms，动效口径 200ms 内）
   const glide = dragging ? "" : "transition-[left,width] duration-[120ms] ease-[var(--ccode-motion-ease)]";
   return (
-    <div className={`group/effort px-2 pb-2 pt-1.5 ${disabled ? "opacity-50" : ""}`}>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs text-l3">思考强度</span>
-        <span className={`flex items-center gap-1.5 text-xs font-medium ${idx >= 0 ? "text-l1" : "text-l4"}`}>
-          <EffortMark depth={depth} className="h-3 w-auto" />
-          {label}
-        </span>
-      </div>
+    <div className="group/effort px-2 pb-2 pt-2">
+      <EffortHero
+        text={idx >= 0 && choices[idx].value === "" ? "默认思考强度" : label}
+        depth={depth}
+        subtitle={subtitle}
+        muted={idx < 0}
+      />
+      <div className={`mt-1.5 ${disabled ? "opacity-50" : ""}`}>
       {/* 左右各缩进半个光标块，两端不贴边；原生 range 向两边各伸出半块，它的停靠点才与画出来的刻度对齐 */}
       <div className="relative mx-2.5 h-5">
         <span className="absolute bottom-1 left-0 h-0.5 w-full rounded-full bg-field" />
@@ -1027,6 +1088,33 @@ function EffortSlider({
           <span>{choices[last]?.label}</span>
         </div>
       )}
+      </div>
+    </div>
+  );
+}
+
+/** 思考菜单主屏的抬头：当前档大字居中（前面小 M，V 深 = 档位），下面一行交给调用方（「M · 连接 · 模型 ›」） */
+function EffortHero({
+  text,
+  depth,
+  subtitle,
+  muted = false,
+}: {
+  text: string;
+  depth: number | null;
+  subtitle?: ReactNode;
+  muted?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col items-center gap-0.5 px-2 pt-1">
+      <span
+        className={`flex items-center gap-1.5 text-base font-medium leading-6 ${muted ? "text-l4" : "text-l1"}`}
+        title="思考强度"
+      >
+        <EffortMark depth={depth} className="h-3.5 w-auto" />
+        {text}
+      </span>
+      {subtitle}
     </div>
   );
 }
