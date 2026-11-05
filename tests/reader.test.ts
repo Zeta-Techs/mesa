@@ -831,6 +831,13 @@ test("对照窗：窗收进 PDF 栏、圈选框换成页内比例、整页时让
   assert.deepEqual(r.clampPdfPeekWin({ x: 850, y: 690, w: 300, h: 200 }, box), { x: 596, y: 496, w: 300, h: 200 });
   const d = r.defaultPdfPeekWin(box);
   assert.ok(d.x + d.w <= box.w - 4 && d.y >= r.PDF_PEEK_TOP);
+  // 默认是窗口一半宽、横向居中（不再缩在 PDF 栏一角）
+  const big = r.defaultPdfPeekWin({ w: 1600, h: 1000 });
+  assert.equal(big.w, 800);
+  assert.equal(big.x, 400);
+  // 圈选区域整块装进窗里：宽高取小；整页按窗宽
+  assert.equal(r.pdfPeekFitScale({ w: 100, h: 200 }, { w: 402, h: 402 }, false), 2);
+  assert.equal(r.pdfPeekFitScale({ w: 100, h: 200 }, { w: 402, h: 402 }, true), 4);
   // 页 canvas 在 (100,50) 尺寸 400×600；框住右下四分之一，超出页面的部分夹掉
   assert.deepEqual(
     r.captureRectToPageRegion({ x: 300, y: 350, w: 300, h: 400 }, { x: 100, y: 50, w: 400, h: 600 }),

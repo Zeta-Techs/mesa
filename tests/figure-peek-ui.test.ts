@@ -65,6 +65,11 @@ test("对照窗：标签切换、关一项、跳页，圈选区域按页内比�
   try {
     await render();
     await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
+    // 浮窗挂 body、fixed：能拖到笔记栏 / 对话栏上面，不关在 PDF 栏里
+    const win = dom.window.document.querySelector<HTMLElement>("body > [data-figure-peek]");
+    assert.ok(win, "挂在 body 上");
+    assert.match(win!.className, /\bfixed\b/);
+    assert.ok(parseInt(win!.style.width) >= 420, "默认比栏内窗大");
     assert.ok(buttons().some((b) => b.textContent?.includes("p.3 圈选")));
     assert.ok(buttons().some((b) => b.textContent?.includes("Fig. 2")));
     // 圈选区域：平移量 = 区域左上角在当前倍率下的像素（× 输出倍率），落在画布原点

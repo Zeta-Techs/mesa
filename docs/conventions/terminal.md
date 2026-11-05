@@ -990,13 +990,16 @@
   两边都不足 120px 不避让）；②**表头收成 原文 / 存进笔记 / 复制 / ⋯ / ×**，钉位（菜单文案「钉在 PDF 上（悬浮球）」/
   「回到右栏」）、问这段、历史收进「⋯」（Esc / 点外关，capture 相）；③悬浮卡译文 `text-xs`（工作台内 13px）行高 1.7（原位档仍 text-sm；字号走令牌，禁 text-[Npx]）；
   ④正文区下面还有字时 mask 渐隐卡底 28px（scroll + RO 判定）。
-  **对照窗（2026-11-05 用户：读文献要对照着图看）**：`PdfFigurePeek` 挂 `PdfContinuousView` 根（`relative`，不在滚动层里），
+  **对照窗（2026-11-05 用户：读文献要对照着图看）**：`PdfFigurePeek` 由 `PdfContinuousView` 渲染、**portal 到 body、fixed、
+  坐标域是整个窗口**（同日用户：钉在 PDF 栏里太小，要悬浮窗——能拖到笔记栏 / 对话栏上面，默认窗口一半宽六成高居中；
+  否决独立系统窗口：要另开 webview 加载 PDF、跨窗口联动，代价大），
   两个入口——圈选定格条「钉住对照」（`captureRectToPageRegion` 换成页内 0–1 区域，窗里按区域重新渲染，放大不糊）、
   点正文里的图号（`PdfPageView figRefs`：文本层落地后 `findPdfRefs` 只包 figure/table 成 `.ccode-figref`，跨文本片断开的不包；
   页码不包）或笔记里的 Fig. N（`jumpReq` 的图表跳转改开对照窗，正文不动）→ `locateFigure` 找图注页、`captionItemIndex`
   取图注纵坐标，整页显示先滚到图注（`pdfPeekScrollTop` 让图注落窗下方八成处）。窗内倍率独立（⌘/Ctrl+滚轮拦在窗上，
-  `use-pdf-zoom` 的 `overPane` 遇 `[data-figure-peek]` 让出捏合）；拖头 / 右下角改位置大小，`clampPdfPeekWin` 收在 PDF 栏里、
-  窗头不压工具条，松手记 `ccode.readerPeekWin`；最多 6 项成标签，换篇清空。第一期不自动裁图（第二期：图像框 / 空白带裁切、
+  `use-pdf-zoom` 的 `overPane` 遇 `[data-figure-peek]` 让出捏合）；拖头 / 右下角改位置大小，`clampPdfPeekWin` 收在窗口里、
+  窗头不压阅读区顶栏，松手记 `ccode.readerPeekFloat`（栏内坐标的旧键 `readerPeekWin` 不沿用）；圈选的区域按
+  `pdfPeekFitScale` 整块装进窗里（宽高取小、居中），整页按窗宽；最多 6 项成标签，换篇清空。第一期不自动裁图（第二期：图像框 / 空白带裁切、
   悬停预览）。
   **2026-11-05 用户「段落在下面、球在上面」「高亮超出段落」两处修订**：①同一次测量里按原文段外框算球位
   （`readerTlBallNear`，reader.ts：段落右侧外 22px、对齐首行；右边放不下放左侧外，都不行贴 PDF 栏右缘），经

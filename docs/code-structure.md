@@ -1031,7 +1031,7 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
                              #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
-components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：挂 PdfContinuousView 根（不在滚动层里），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekWin），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts
+components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfContinuousView 渲染、portal 到 body 的整窗浮窗（可拖到笔记 / 对话栏上），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekFloat），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts
 components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆位：ReaderOverlay 原位档占布局流可拖高度、ReaderTlFloat 悬浮档锚在「译」球旁）：表头行（收起/原文显隐/存进笔记/复制/⋯/×）+ 块级对照正文 + 历史抽屉点行载入；历史/pending/高度/钉位等状态由 ReaderOverlay 持有，本组件 memo 只管呈现，旧 bilingual 条目经 reader.ts shim 转纯译文
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
   session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；

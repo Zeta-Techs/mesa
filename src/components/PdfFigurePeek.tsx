@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type * as pdfjs from "pdfjs-dist";
 import { X } from "lucide-react";
 import {
@@ -7,6 +8,7 @@ import {
   clampPdfPeekWin,
   defaultPdfPeekWin,
   loadPdfPeekWin,
+  pdfPeekFitScale,
   pdfPeekScrollTop,
   pdfWheelShouldZoom,
   pdfWheelZoomFactor,
@@ -17,10 +19,10 @@ import {
 
 /**
  * 对照窗（2026-11-05 用户：读文献时想对照着图看，图一般在后面几页）：
- * 把一块 PDF 区域钉在 PDF 栏上方，正文照常滚、窗不动。两种来源——圈选后「钉住对照」（框哪块显示哪块），
- * 正文 / 笔记里点 Fig. N（显示那张图所在的整页，先滚到图注）。几项并存时窗顶是标签。
- * 挂在 PDF 栏根（不在滚动层里）；拖窗头换位、拖右下角改大小，松手记 localStorage。
- * 窗内按区域单独渲染：适配窗宽 × 窗内倍率，⌘/Ctrl+滚轮与 − / ＋ 缩放，不影响正文的倍率。
+ * 把一块 PDF 区域钉成浮窗，正文照常滚、窗不动。两种来源——圈选后「钉住对照」（框哪块显示哪块，整块装进窗里），
+ * 正文 / 笔记里点 Fig. N（显示那张图所在的整页，按窗宽、先滚到图注）。几项并存时窗顶是标签。
+ * 浮窗挂 body、坐标域是整个窗口（同日用户：关在 PDF 栏里太小）——能拖到笔记栏、对话栏上面，拉到很大；
+ * 拖窗头换位、拖右下角改大小，松手记 localStorage。窗内倍率独立，⌘/Ctrl+滚轮与 − / ＋ 缩放，不影响正文。
  */
 export default function PdfFigurePeek({
   doc,
@@ -48,22 +50,20 @@ export default function PdfFigurePeek({
   const winRef = useRef(win);
   winRef.current = win;
   const [zoom, setZoom] = useState(1);
-  const [bodyW, setBodyW] = useState(0);
+  const [bodySize, setBodySize] = useState({ w: 0, h: 0 });
+  const bodyW = bodySize.w;
   const [error, setError] = useState<string | null>(null);
   const item = items.find((i) => i.key === activeKey) ?? items[0];
 
-  // 量父容器（PDF 栏根）：窗位置 / 大小都收在里面；栏变窄时跟着收
+  // 坐标域是整个窗口：窗口变小时把浮窗收回来
   useLayoutEffect(() => {
-    const host = rootRef.current?.parentElement;
-    if (!host) return;
     const measure = () => {
-      const next = { w: host.clientWidth, h: host.clientHeight };
+      const next = { w: window.innerWidth, h: window.innerHeight };
       setBox((prev) => (prev && prev.w === next.w && prev.h === next.h ? prev : next));
     };
     measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(host);
-    return () => ro.disconnect();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, []);
   useEffect(() => {
     if (!box || box.w === 0 || box.h === 0) return;
@@ -74,7 +74,12 @@ export default function PdfFigurePeek({
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    const measure = () => setBodyW(body.clientWidth);
+    const measure = () =>
+      setBodySize((prev) =>
+        prev.w === body.clientWidth && prev.h === body.clientHeight
+          ? prev
+          : { w: body.clientWidth, h: body.clientHeight },
+      );
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(body);
@@ -100,7 +105,8 @@ export default function PdfFigurePeek({
           const r = item.region ?? { x: 0, y: 0, w: 1, h: 1 };
           const regionW = r.w * base.width;
           const regionH = r.h * base.height;
-          const scale = (Math.max(40, bodyW - 2) / regionW) * zoom;
+          const scale =
+            pdfPeekFitScale({ w: regionW, h: regionH }, bodySize, !item.region) * zoom;
           const cssW = Math.floor(regionW * scale);
           const cssH = Math.floor(regionH * scale);
           let out = window.devicePixelRatio || 1;
@@ -145,7 +151,7 @@ export default function PdfFigurePeek({
       clearTimeout(t);
       task?.cancel();
     };
-  }, [doc, item?.key, item?.page, item?.region, item?.focusY, bodyW, zoom]);
+  }, [doc, item?.key, item?.page, item?.region, item?.focusY, bodySize, zoom]);
 
   // 窗内 ⌘/Ctrl+滚轮、触控板捏合只缩这扇窗（拦在这里，不冒到正文的缩放）
   useEffect(() => {
@@ -196,13 +202,13 @@ export default function PdfFigurePeek({
   const btn =
     "flex h-6 min-w-6 shrink-0 items-center justify-center rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1";
   if (!item) return null;
-  return (
+  return createPortal(
     <div
       ref={rootRef}
       data-figure-peek
       role="dialog"
       aria-label={`对照：${item.label}`}
-      className="ccode-float-surface absolute z-30 flex flex-col overflow-hidden rounded-md border border-field"
+      className="ccode-float-surface fixed z-50 flex flex-col overflow-hidden rounded-md border border-field shadow-lg"
       style={
         win
           ? { left: win.x, top: win.y, width: win.w, height: win.h }
@@ -245,7 +251,7 @@ export default function PdfFigurePeek({
         <button type="button" className={btn} title="缩小" onClick={() => setZoom((z) => Math.max(0.5, z / PDF_ZOOM_STEP))}>
           <span className="text-xs">−</span>
         </button>
-        <button type="button" className={btn} title="适配窗宽" onClick={() => setZoom(1)}>
+        <button type="button" className={btn} title={item.region ? "整块装进窗里" : "适配窗宽"} onClick={() => setZoom(1)}>
           <span className="text-micro tabular-nums">{Math.round(zoom * 100)}%</span>
         </button>
         <button type="button" className={btn} title="放大（窗里 ⌘/Ctrl+滚轮也行）" onClick={() => setZoom((z) => Math.min(6, z * PDF_ZOOM_STEP))}>
@@ -262,8 +268,11 @@ export default function PdfFigurePeek({
         {error ? (
           <p className="p-3 text-xs text-err-text">{error}</p>
         ) : (
-          <div data-page-num={item.page} className="w-max bg-white">
-            <canvas ref={canvasRef} className="block" />
+          // 比窗小时居中（圈选的图整块装进窗里，四周留底色）
+          <div className="flex min-h-full min-w-full w-max items-center justify-center">
+            <div data-page-num={item.page} className="bg-white">
+              <canvas ref={canvasRef} className="block" />
+            </div>
           </div>
         )}
       </div>
@@ -273,6 +282,7 @@ export default function PdfFigurePeek({
         onPointerDown={(e) => startDrag(e, "resize")}
         title="拖动改大小"
       />
-    </div>
+    </div>,
+    document.body,
   );
 }

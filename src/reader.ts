@@ -1094,18 +1094,19 @@ export interface PdfPeekItem {
   focusY?: number | null;
 }
 
-/** 对照窗位置与大小（PDF 栏内 px），记在 localStorage，换篇不丢 */
+/** 对照窗位置与大小（窗口 px，2026-11-05 用户：钉在 PDF 栏里太小，改成整窗可拖的浮窗），记在 localStorage，换篇不丢 */
 export interface PdfPeekWin {
   x: number;
   y: number;
   w: number;
   h: number;
 }
-export const PDF_PEEK_WIN_KEY = "ccode.readerPeekWin";
+// 改了坐标域（PDF 栏 → 整窗）换新键，旧的栏内坐标不再沿用
+export const PDF_PEEK_WIN_KEY = "ccode.readerPeekFloat";
 export const PDF_PEEK_MIN_W = 220;
 export const PDF_PEEK_MIN_H = 160;
-/** 顶部留给 PDF 工具条（h-8），窗头不压住它 */
-export const PDF_PEEK_TOP = 36;
+/** 顶部留给阅读区顶栏，窗头不压住「← 返回」那一行 */
+export const PDF_PEEK_TOP = 44;
 
 /** 把窗收进容器：先限大小（不超过容器、不小于下限），再限位置（窗头始终可抓） */
 export function clampPdfPeekWin(win: PdfPeekWin, box: { w: number; h: number }): PdfPeekWin {
@@ -1118,11 +1119,22 @@ export function clampPdfPeekWin(win: PdfPeekWin, box: { w: number; h: number }):
   return { x, y, w, h };
 }
 
-/** 没记过的默认：贴右上，宽四成（不少于 320），高一半 */
+/** 没记过的默认：窗口一半宽、六成高，横向居中、靠上 */
 export function defaultPdfPeekWin(box: { w: number; h: number }): PdfPeekWin {
-  const w = Math.max(320, Math.round(box.w * 0.4));
-  const h = Math.max(240, Math.round(box.h * 0.5));
-  return clampPdfPeekWin({ x: box.w - w - 12, y: PDF_PEEK_TOP + 8, w, h }, box);
+  const w = Math.max(420, Math.round(box.w * 0.5));
+  const h = Math.max(320, Math.round(box.h * 0.6));
+  return clampPdfPeekWin({ x: (box.w - w) / 2, y: PDF_PEEK_TOP + box.h * 0.08, w, h }, box);
+}
+
+/** 窗里的适配倍率：圈选的区域整块装进窗里（宽高都不超）；整页按窗宽（再滚到图注） */
+export function pdfPeekFitScale(
+  region: { w: number; h: number },
+  body: { w: number; h: number },
+  wholePage: boolean,
+): number {
+  const byW = Math.max(40, body.w - 2) / region.w;
+  if (wholePage) return byW;
+  return Math.min(byW, Math.max(40, body.h - 2) / region.h);
 }
 
 export function loadPdfPeekWin(): PdfPeekWin | null {
