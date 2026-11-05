@@ -86,6 +86,11 @@ pub fn helper_peek(args: &[String]) -> i32 {
     peek::helper_peek_cli(args)
 }
 
+/// helper 科研做图（`mesa_helper svg-render --in 图纸.svg --out 图.png|图.pdf`）：Agent 经 MESA_FIGURE_TOOL 调用，返回退出码
+pub fn helper_svg_render(args: &[String]) -> i32 {
+    svg_render::helper_svg_render_cli(args)
+}
+
 /// helper 取 Codex 渠道密钥（`mesa_helper codex-token <网关 id>`）：Codex 渠道 `auth.command` 调用，返回退出码
 pub fn helper_codex_token(args: &[String]) -> i32 {
     codex_continuity::helper_token_cli(args)
@@ -93,6 +98,7 @@ pub fn helper_codex_token(args: &[String]) -> i32 {
 mod codex_continuity;
 mod image_gen;
 mod peek;
+mod svg_render;
 mod project_mail;
 mod split_plan;
 mod project_assistant;

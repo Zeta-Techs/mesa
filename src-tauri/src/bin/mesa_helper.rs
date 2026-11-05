@@ -180,6 +180,11 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("peek") {
         std::process::exit(ccode_lib::helper_peek(&args[2..]));
     }
+    // `mesa_helper svg-render --in 图纸.svg --out 图.png --out 图.pdf`：科研做图把图纸 SVG 转 PNG / PDF
+    // （经 MESA_FIGURE_TOOL 调用，svg_render.rs）；不联网、不读密钥
+    if args.get(1).map(String::as_str) == Some("svg-render") {
+        std::process::exit(ccode_lib::helper_svg_render(&args[2..]));
+    }
     // `mesa_helper tell --to 名 "…"`：给同项目另一段工作留话（写自己工作目录的发件箱，project_mail.rs）
     if args.get(1).map(String::as_str) == Some("tell") {
         std::process::exit(ccode_lib::helper_peek(&args[1..]));

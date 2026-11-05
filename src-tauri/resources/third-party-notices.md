@@ -191,6 +191,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### GB/T 7714-2015 顺序编码制引用样式（CC BY-SA 3.0）
+
+- 用途：quarto-render 技能随包的 `gbt7714-numeric.csl`，人在流程线「更换引用样式」选「GB/T 7714」时，Agent 把它复制成稿件旁的
+  `citation.csl` 渲染（国内学位论文、中文期刊常用）。
+- 来源：[citation-style-language/styles](https://github.com/citation-style-language/styles) 的
+  `china-national-standard-gb-t-7714-2015-numeric.csl`（2024-01-22 版），作者牛耕田，贡献者 Zeping Lee 等（详见文件 `<info>`）。
+- 许可：[Creative Commons Attribution-ShareAlike 3.0](http://creativecommons.org/licenses/by-sa/3.0/)。原样随包、未作修改，
+  文件内保留 `<rights>` 许可声明；Mesa 自写的 `ieee.csl`、`author-date.csl` 不属此条。
+
 ### Codex CLI 默认系统提示词（Apache-2.0）
 
 - 用途：Mesa 为第三方连接生成的 Codex 模型清单里的 `base_instructions` 的**兜底**
@@ -432,6 +441,8 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | android_system_properties | 0.1.5 | MIT/Apache-2.0 |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 |
 | arbitrary | 1.4.2 | MIT OR Apache-2.0 |
+| arrayref | 0.3.9 | BSD-2-Clause |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 |
 | ascii | 1.1.0 | Apache-2.0 OR MIT |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT |
@@ -463,7 +474,9 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | bs58 | 0.5.1 | MIT/Apache-2.0 |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
+| bytemuck_derive | 1.12.1 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
+| byteorder-lite | 0.1.0 | Unlicense OR MIT |
 | bytes | 1.12.1 | MIT |
 | bzip2 | 0.5.2 | MIT OR Apache-2.0 |
 | bzip2-sys | 0.1.13+1.0.8 | MIT/Apache-2.0 |
@@ -487,12 +500,14 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | chunked_transfer | 1.5.0 | MIT OR Apache-2.0 |
 | cipher | 0.4.4 | MIT OR Apache-2.0 |
 | codepage | 0.1.2 | Apache-2.0 OR MIT |
+| color_quant | 1.1.0 | MIT |
 | combine | 4.6.7 | MIT |
 | compression-codecs | 0.4.38 | MIT OR Apache-2.0 |
 | compression-core | 0.4.32 | MIT OR Apache-2.0 |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
 | constant_time_eq | 0.3.1 | CC0-1.0 OR MIT-0 OR Apache-2.0 |
 | cookie | 0.18.1 | MIT OR Apache-2.0 |
+| core_maths | 0.1.1 | MIT |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 |
 | core-graphics | 0.24.0 | MIT OR Apache-2.0 |
@@ -517,6 +532,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | darling | 0.23.0 | MIT |
 | darling_core | 0.23.0 | MIT |
 | darling_macro | 0.23.0 | MIT |
+| data-url | 0.3.2 | MIT OR Apache-2.0 |
 | dbus | 0.9.12 | Apache-2.0/MIT |
 | deflate64 | 0.1.12 | MIT |
 | deranged | 0.5.8 | MIT OR Apache-2.0 |
@@ -552,6 +568,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | equivalent | 1.0.2 | Apache-2.0 OR MIT |
 | erased-serde | 0.4.10 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
+| euclid | 0.22.14 | MIT OR Apache-2.0 |
 | event-listener | 5.4.2 | Apache-2.0 OR MIT |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
 | fallible-iterator | 0.3.0 | MIT/Apache-2.0 |
@@ -563,8 +580,12 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | filetime | 0.2.29 | MIT/Apache-2.0 |
 | find-msvc-tools | 0.1.9 | MIT OR Apache-2.0 |
 | flate2 | 1.1.9 | MIT OR Apache-2.0 |
+| float-cmp | 0.9.0 | MIT |
 | fnv | 1.0.7 | Apache-2.0 / MIT |
 | foldhash | 0.2.0 | Zlib |
+| font-types | 0.11.3 | MIT OR Apache-2.0 |
+| fontconfig-parser | 0.5.8 | MIT |
+| fontdb | 0.23.0 | MIT |
 | foreign-types | 0.5.0 | MIT/Apache-2.0 |
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 |
 | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 |
@@ -590,6 +611,8 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | getrandom | 0.2.17 | MIT OR Apache-2.0 |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 |
+| gif | 0.13.3 | MIT OR Apache-2.0 |
+| gif | 0.14.2 | MIT OR Apache-2.0 |
 | gio | 0.18.4 | MIT |
 | gio-sys | 0.18.1 | MIT |
 | glib | 0.18.5 | MIT |
@@ -634,6 +657,9 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
 | if-addrs | 0.15.0 | MIT OR BSD-3-Clause |
+| image | 0.25.10 | MIT OR Apache-2.0 |
+| image-webp | 0.2.4 | MIT OR Apache-2.0 |
+| imagesize | 0.13.0 | MIT |
 | indexmap | 1.9.3 | Apache-2.0 OR MIT |
 | indexmap | 2.14.0 | Apache-2.0 OR MIT |
 | infer | 0.19.0 | MIT |
@@ -660,6 +686,8 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | keyring | 3.6.3 | MIT OR Apache-2.0 |
 | kqueue | 1.2.0 | MIT |
 | kqueue-sys | 1.1.2 | MIT |
+| kurbo | 0.11.3 | Apache-2.0 OR MIT |
+| kurbo | 0.13.1 | Apache-2.0 OR MIT |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 |
 | lettre | 0.11.23 | MIT |
 | libappindicator | 0.9.0 | Apache-2.0 OR MIT |
@@ -667,6 +695,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | libc | 0.2.189 | MIT OR Apache-2.0 |
 | libdbus-sys | 0.2.7 | Apache-2.0/MIT |
 | libloading | 0.7.4 | ISC |
+| libm | 0.2.16 | MIT |
 | libredox | 0.1.18 | MIT |
 | libsqlite3-sys | 0.30.1 | MIT |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
@@ -681,12 +710,14 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | markup5ever | 0.38.0 | MIT OR Apache-2.0 |
 | md5 | 0.7.0 | Apache-2.0/MIT |
 | memchr | 2.8.3 | Unlicense OR MIT |
+| memmap2 | 0.9.12 | MIT OR Apache-2.0 |
 | memoffset | 0.9.1 | MIT |
 | mime | 0.3.17 | MIT OR Apache-2.0 |
 | minisign-verify | 0.2.5 | MIT |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | mio | 0.8.11 | MIT |
 | mio | 1.2.2 | MIT |
+| moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
 | muda | 0.19.3 | Apache-2.0 OR MIT |
 | ndk | 0.9.0 | MIT OR Apache-2.0 |
 | ndk-sys | 0.6.0+11769913 | MIT OR Apache-2.0 |
@@ -731,12 +762,14 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
 | pbkdf2 | 0.12.2 | MIT OR Apache-2.0 |
+| pdf-writer | 0.12.1 | MIT OR Apache-2.0 |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | phf | 0.13.1 | MIT |
 | phf_codegen | 0.13.1 | MIT |
 | phf_generator | 0.13.1 | MIT |
 | phf_macros | 0.13.1 | MIT |
 | phf_shared | 0.13.1 | MIT |
+| pico-args | 0.5.0 | MIT |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
 | piper | 0.2.5 | MIT OR Apache-2.0 |
 | pkg-config | 0.3.33 | MIT OR Apache-2.0 |
@@ -744,6 +777,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | png | 0.17.16 | MIT OR Apache-2.0 |
 | png | 0.18.1 | MIT OR Apache-2.0 |
 | polling | 3.11.0 | Apache-2.0 OR MIT |
+| polycool | 0.4.0 | MIT OR Apache-2.0 |
 | portable-pty | 0.9.0 | MIT |
 | potential_utf | 0.1.5 | Unicode-3.0 |
 | powerfmt | 0.2.0 | MIT OR Apache-2.0 |
@@ -755,7 +789,9 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | proc-macro-error | 1.0.4 | MIT OR Apache-2.0 |
 | proc-macro-error-attr | 1.0.4 | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
+| pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 |
 | qrcode | 0.14.1 | MIT OR Apache-2.0 |
+| quick-error | 2.0.1 | MIT/Apache-2.0 |
 | quick-xml | 0.31.0 | MIT |
 | quick-xml | 0.41.0 | MIT |
 | quinn | 0.11.11 | MIT OR Apache-2.0 |
@@ -774,6 +810,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
 | rayon | 1.12.0 | MIT OR Apache-2.0 |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 |
+| read-fonts | 0.39.2 | MIT OR Apache-2.0 |
 | redox_syscall | 0.5.18 | MIT |
 | redox_users | 0.5.2 | MIT |
 | ref-cast | 1.0.26 | MIT OR Apache-2.0 |
@@ -783,8 +820,11 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 |
 | reqwest | 0.12.28 | MIT OR Apache-2.0 |
 | reqwest | 0.13.4 | MIT OR Apache-2.0 |
+| resvg | 0.45.1 | Apache-2.0 OR MIT |
 | rfd | 0.16.0 | MIT |
+| rgb | 0.8.53 | MIT |
 | ring | 0.17.14 | Apache-2.0 AND ISC |
+| roxmltree | 0.20.0 | MIT OR Apache-2.0 |
 | rusqlite | 0.32.1 | MIT |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
@@ -797,6 +837,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | rustls-platform-verifier-android | 0.1.1 | MIT OR Apache-2.0 |
 | rustls-webpki | 0.103.13 | ISC |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 |
+| rustybuzz | 0.20.1 | MIT |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 |
 | same-file | 1.0.6 | Unlicense/MIT |
 | schannel | 0.1.29 | MIT |
@@ -834,18 +875,25 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | simd_cesu8 | 1.2.0 | Apache-2.0 OR MIT |
 | simd-adler32 | 0.3.10 | MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
+| simplecss | 0.2.2 | Apache-2.0 OR MIT |
 | siphasher | 1.0.3 | MIT/Apache-2.0 |
+| skrifa | 0.42.1 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
+| slotmap | 1.1.1 | Zlib |
 | smallvec | 1.15.2 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
 | soup3 | 0.5.0 | MIT |
 | soup3-sys | 0.5.0 | MIT |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
+| strict-num | 0.1.1 | MIT |
 | string_cache | 0.9.0 | MIT OR Apache-2.0 |
 | string_cache_codegen | 0.6.1 | MIT OR Apache-2.0 |
 | strsim | 0.11.1 | MIT |
+| subsetter | 0.2.6 | MIT OR Apache-2.0 |
 | subtle | 2.6.1 | BSD-3-Clause |
+| svg2pdf | 0.13.0 | MIT OR Apache-2.0 |
+| svgtypes | 0.15.3 | Apache-2.0 OR MIT |
 | swift-rs | 1.0.7 | MIT OR Apache-2.0 |
 | syn | 1.0.109 | MIT OR Apache-2.0 |
 | syn | 2.0.119 | MIT OR Apache-2.0 |
@@ -885,6 +933,8 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | time-core | 0.1.9 | MIT OR Apache-2.0 |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 |
 | tiny_http | 0.12.0 | MIT OR Apache-2.0 |
+| tiny-skia | 0.11.4 | BSD-3-Clause |
+| tiny-skia-path | 0.11.4 | BSD-3-Clause |
 | tinystr | 0.8.3 | Unicode-3.0 |
 | tinyvec | 1.12.0 | Zlib OR Apache-2.0 OR MIT |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib |
@@ -914,6 +964,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | trash | 5.2.6 | MIT |
 | tray-icon | 0.24.2 | MIT OR Apache-2.0 |
 | try-lock | 0.2.5 | MIT |
+| ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
 | typeid | 1.0.3 | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
 | uds_windows | 1.2.1 | MIT |
@@ -922,12 +973,19 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | unic-common | 0.9.0 | MIT/Apache-2.0 |
 | unic-ucd-ident | 0.9.0 | MIT/Apache-2.0 |
 | unic-ucd-version | 0.9.0 | MIT/Apache-2.0 |
+| unicode-bidi | 0.3.18 | MIT OR Apache-2.0 |
+| unicode-bidi-mirroring | 0.4.0 | MIT/Apache-2.0 |
+| unicode-ccc | 0.4.0 | MIT/Apache-2.0 |
 | unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 |
+| unicode-properties | 0.1.5 | (MIT OR Apache-2.0) AND Unicode-3.0 |
+| unicode-script | 0.5.9 | MIT OR Apache-2.0 |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
+| unicode-vo | 0.1.0 | MIT/Apache-2.0 |
 | untrusted | 0.9.0 | ISC |
 | url | 2.5.8 | MIT OR Apache-2.0 |
 | urlencoding | 2.1.3 | MIT |
 | urlpattern | 0.3.0 | MIT |
+| usvg | 0.45.1 | Apache-2.0 OR MIT |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
 | uuid | 1.24.0 | Apache-2.0 OR MIT |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 |
@@ -955,6 +1013,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | webview2-com | 0.38.2 | MIT |
 | webview2-com-macros | 0.8.1 | MIT |
 | webview2-com-sys | 0.38.2 | MIT |
+| weezl | 0.1.12 | MIT OR Apache-2.0 |
 | which | 6.0.3 | MIT |
 | winapi | 0.3.9 | MIT/Apache-2.0 |
 | winapi-i686-pc-windows-gnu | 0.4.0 | MIT/Apache-2.0 |
@@ -1042,11 +1101,13 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | winreg | 0.55.0 | MIT |
 | winsafe | 0.0.19 | MIT |
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| write-fonts | 0.48.1 | MIT OR Apache-2.0 |
 | writeable | 0.6.3 | Unicode-3.0 |
 | wry | 0.55.1 | Apache-2.0 OR MIT |
 | x11 | 2.21.0 | MIT |
 | x11-dl | 2.21.0 | MIT |
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
+| xmlwriter | 0.1.0 | MIT |
 | xz2 | 0.1.7 | MIT/Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.2 | Unicode-3.0 |
@@ -1069,6 +1130,10 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | zstd | 0.13.3 | MIT |
 | zstd-safe | 7.2.4 | MIT OR Apache-2.0 |
 | zstd-sys | 2.0.16+zstd.1.5.7 | MIT/Apache-2.0 |
+| zune-core | 0.4.12 | MIT OR Apache-2.0 OR Zlib |
+| zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
+| zune-jpeg | 0.4.21 | MIT OR Apache-2.0 OR Zlib |
+| zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 | zvariant | 5.13.1 | MIT |
 | zvariant_derive | 5.13.1 | MIT |
 | zvariant_utils | 3.5.0 | MIT |

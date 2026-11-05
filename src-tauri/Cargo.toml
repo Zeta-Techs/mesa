@@ -67,6 +67,12 @@ tauri-plugin-drag = "2.1.1"
 tiny_http = "0.12"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 if-addrs = "0.15"
+# 科研做图（svg_render.rs）：图纸 SVG → PNG / PDF，随包 helper 自带，三平台一致、用户不用另装。
+# svg2pdf 0.13 与 resvg 0.45 共用一份 usvg；PDF 里文字嵌子集字体、不转曲（svg2pdf 的 text feature）
+resvg = { version = "0.45", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+svg2pdf = { version = "0.13", default-features = false, features = ["text", "image", "filters"] }
+# 缺字回落时挑中文字体要查字形表；已是 usvg 的传递依赖，不新增下载
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_DataExchange", "Win32_UI_Shell", "Win32_System_Diagnostics_Debug", "Win32_System_Power", "Wdk_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Graphics_Dwm"] }
