@@ -59,7 +59,9 @@ import {
   groupEntriesByDay,
   includedLineFor,
   loadLitDismissed,
+  readLitReadingOpen,
   readLitWatchBodyOpen,
+  writeLitReadingOpen,
   watchKeywordLabel,
   writeLitWatchBodyOpen,
   entryPassesFilter,
@@ -459,7 +461,7 @@ function RadarNextTip({ onClose }: { onClose: () => void }) {
         <li>
           点<ExternalLink size={12} strokeWidth={1.8} className={icon} aria-label="打开来源" />打开来源页下载全文，PDF 会自动收进 papers/
         </li>
-        <li>在右上角「积累」里点「精读」，边读边写笔记</li>
+        <li>在上面「我的积累」里点「精读」，边读边写笔记</li>
       </ol>
       <p className="mt-1 opacity-80">平时这些按钮在鼠标移到一篇上时出现。</p>
     </CoachTip>
@@ -530,9 +532,9 @@ function WatchEntryRow({
       >
         ◈
       </button>
-      {/* 书标：都不在两账 → 加入积累；已在积累 → 点击在「积累」抽屉里定位这一篇
+      {/* 书标：都不在两账 → 加入积累；已在积累 → 点击在「我的积累」块里定位这一篇
           （移出只走抽屉里的 ✕，行内不放第二个动词）；已在正典 → 只报状态不写；
-          精读/全文入口统一在卡头「积累」抽屉 */}
+          精读/全文入口统一在「我的积累」块 */}
       <button
         type="button"
         className={iconActionClass}
@@ -540,7 +542,7 @@ function WatchEntryRow({
           ledger === "included"
             ? "这篇已在流程的文献清单 papers/included.md（检索/人审纳入的），不在你的积累清单；点击打开已存全文，纳入/移出在文件页"
             : ledger === "reading"
-              ? "已在积累 papers/reading-list.md；点击在「积累」抽屉里定位这一篇（移出在抽屉里）"
+              ? "已在积累 papers/reading-list.md；点击在「我的积累」里定位这一篇（移出也在那里）"
               : "存入项目积累清单 papers/reading-list.md；进行中的流程不受影响，下一轮检索步开工时自动作为进料口"
         }
         aria-label={
@@ -1066,8 +1068,15 @@ export default function LitWatchCard({
   const [subsOpen, setSubsOpen] = useState(false);
   /** 卡头筛选行开关 */
   const [filterOpen, setFilterOpen] = useState(false);
-  /** 卡头「积累」抽屉开关 */
-  const [readingOpen, setReadingOpen] = useState(false);
+  /** 「我的积累」块开合（2026-11-05 用户选：从卡头抽屉改成新命中上面单独一块），按项目记住 */
+  const [readingOpen, setReadingOpenState] = useState(() => readLitReadingOpen(projectRoot));
+  const setReadingOpen = useCallback((open: boolean) => {
+    setReadingOpenState(open);
+    writeLitReadingOpen(projectRoot, open);
+  }, [projectRoot]);
+  useEffect(() => {
+    setReadingOpenState(readLitReadingOpen(projectRoot));
+  }, [projectRoot]);
   /** 书标定位：点已积累的书标 → 展开抽屉并高亮这一篇（token 重触发，同篇再点再闪） */
   const [readingFocus, setReadingFocus] = useState<{ lineId: string; token: number } | null>(null);
   const [readingFlash, setReadingFlash] = useState<string | null>(null);
@@ -1459,7 +1468,7 @@ export default function LitWatchCard({
       ).catch(() => null);
       if (rows) setReadingList(rows);
       refreshFollowupSaved();
-      showToast(res.added ? "已加入积累清单，点书标在「积累」里定位开读" : "已在积累清单（正典或积累账其一）");
+      showToast(res.added ? "已加入积累，在上面「我的积累」里开读" : "已在积累清单（正典或积累账其一）");
     } catch (reason) {
       setError(String(reason));
     }
@@ -1957,17 +1966,6 @@ export default function LitWatchCard({
               订阅
             </button>
           )}
-          {/* 积累清单入口：条数为 0 也显示，让「攒候选」这条路径常驻可见 */}
-          <button
-            type="button"
-            className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-            title="项目积累清单 papers/reading-list.md：雷达里「加入积累」的候选都攒在这里。不进 git、不影响进行中的流程，下一轮检索步开工时自动作为进料口"
-            aria-expanded={readingOpen}
-            onClick={() => setReadingOpen((v) => !v)}
-          >
-            <Bookmark size={13} strokeWidth={1.8} />
-            积累 {readingList?.length ?? 0}
-          </button>
           {filterOn ? (
             /* 筛选生效时换成带字状态：藏掉多少条一眼可见，不必悬停 */
             <button
@@ -2025,123 +2023,6 @@ export default function LitWatchCard({
             })}
           </div>
         )}
-        {/* 积累清单抽屉：展开方式与筛选行一致。内容三层——定位说明 / 条目行（含开读） / 去向说明 */}
-        {bodyOpen && readingOpen && (
-          <div className="mt-2 w-full px-1">
-            <p
-              className="mb-2 text-micro leading-snug text-l4"
-              title="记在 papers/reading-list.md，不进 git，不影响进行中的流程"
-            >
-              你攒下的精读候选。下次开科研流程时会一起带进检索。
-            </p>
-            {readingList !== null && readingList.length === 0 && (
-              <p className="text-xs text-l4">
-                还没有积累。雷达里点『加入积累』攒你自己的精读候选；配了全文的可以直接开读。
-              </p>
-            )}
-            {readingList !== null && readingList.length > 0 && (
-              <ul className="max-h-64 divide-y divide-border/30 overflow-auto">
-                {readingList.map((row) => {
-                  const pdf = readingPdfBy[row.lineId];
-                  // 有笔记 → 「继续精读」：接续铁律在入口上可见（配对口径与文件页
-                  // 精读状态同源：list_paper_notes + noteLinkForPaper）
-                  const hasNote = !!pdf && !!noteLinkForPaper(`papers/${pdf}`, noteLinks ?? []);
-                  return (
-                  <li
-                    key={row.lineId}
-                    data-reading-line={row.lineId}
-                    className={`group flex items-start gap-2 py-2 hover:bg-hover/50${
-                      readingFlash === row.lineId ? " bg-inset" : ""
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1 px-1">
-                      <p className="truncate text-xs leading-snug text-l2" title={row.title}>
-                        {row.title}
-                      </p>
-                      {/* 题录字段缺失时积累账写「待补」占位：不展示占位，全缺就不出这一行 */}
-                      {[row.authorsYear, row.source].some((v) => v && v.trim() !== "待补") && (
-                        <p className="mt-0.5 truncate text-micro text-l4">
-                          {[row.authorsYear, row.source]
-                            .filter((v) => v && v.trim() !== "待补")
-                            .join(" · ")}
-                        </p>
-                      )}
-                    </div>
-                    {pdf ? (
-                      <span className="flex shrink-0 items-center gap-1 pr-1">
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-ok-text hover:bg-ok-text/10"
-                          title={
-                            hasNote
-                              ? "继续精读：进沉浸阅读（三栏），笔记接着已写的内容补全"
-                              : "精读：进沉浸阅读（三栏），先建八段骨架笔记"
-                          }
-                          aria-label={`${hasNote ? "继续精读" : "精读"}：${row.title}`}
-                          onClick={() => void openReaderFor(pdf)}
-                        >
-                          {hasNote ? "继续精读" : "精读"}
-                        </button>
-                        <span className="flex items-center gap-0.5">
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-                            title="打开这篇的精读笔记（notes/）；还没有就先精读建档"
-                            aria-label={`笔记：${row.title}`}
-                            onClick={() => void openNoteFor(pdf)}
-                          >
-                            笔记
-                          </button>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-                            title={`预览全文 papers/${pdf}`}
-                            aria-label={`预览全文：${row.title}`}
-                            onClick={() => openSavedPdf(pdf)}
-                          >
-                            全文
-                          </button>
-                        </span>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 opacity-0 hover:bg-hover hover:text-l1 focus-visible:opacity-100 group-hover:opacity-100"
-                          aria-label={`从积累清单移除：${row.title}`}
-                          title="从积累清单移除（只动 papers/reading-list.md，不影响流程正典）"
-                          onClick={() => void removeReading(row.lineId)}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-                          title="papers/ 里还没有这篇的全文：选一个已下载的 PDF 关联进来（复制进 papers/ 并登记）"
-                          aria-label={`关联本地 PDF：${row.title}`}
-                          onClick={() => void attachPdf(row.title)}
-                        >
-                          关联
-                        </button>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 opacity-0 hover:bg-hover hover:text-l1 focus-visible:opacity-100 group-hover:opacity-100"
-                          aria-label={`从积累清单移除：${row.title}`}
-                          title="从积累清单移除（只动 papers/reading-list.md，不影响流程正典）"
-                          onClick={() => void removeReading(row.lineId)}
-                        >
-                          ✕
-                        </button>
-                      </>
-                    )}
-                  </li>
-                  );
-                })}
-              </ul>
-            )}
-
-          </div>
-        )}
       </div>
       {unsubscribed.length > 0 && hasSubs && (
         <p className="mb-2 px-1 text-xs text-l4">
@@ -2164,6 +2045,137 @@ export default function LitWatchCard({
       )}
 
       {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
+
+      {/* 我的积累（2026-11-05 用户选：从卡头「积累 N」抽屉改成新命中上面单独一块，入口只此一个）：
+          攒下要精读的文献，行样式与新命中同一套；块头点击折叠、按项目记住 */}
+      {bodyOpen && (
+        <div className={`${projectWellClass} mb-2`}>
+          <button
+            type="button"
+            className="flex w-full min-w-0 items-center gap-2 px-1 text-left"
+            aria-expanded={readingOpen}
+            onClick={() => setReadingOpen(!readingOpen)}
+            title="记在 papers/reading-list.md，不进 git，不影响进行中的流程"
+          >
+            <FoldMark open={readingOpen} />
+            <span className="shrink-0 text-sm font-medium text-l1">
+              我的积累 · {readingList?.length ?? 0} 篇
+            </span>
+            <span className="min-w-0 truncate text-micro text-l4">
+              下次开科研流程时会一起带进检索
+            </span>
+          </button>
+          {readingOpen && (
+            <>
+              {readingList !== null && readingList.length === 0 && (
+                <p className="px-2 pt-1 text-xs text-l4">
+                  还没有积累。在下面的新命中里点书标，把想精读的文献攒到这里。
+                </p>
+              )}
+              {readingList !== null && readingList.length > 0 && (
+                <ul className="mt-1 max-h-80 space-y-0.5 overflow-auto">
+                  {readingList.map((row) => {
+                    const pdf = readingPdfBy[row.lineId];
+                    // 有笔记 → 「继续精读」：接续铁律在入口上可见（配对口径与文件页
+                    // 精读状态同源：list_paper_notes + noteLinkForPaper）
+                    const hasNote = !!pdf && !!noteLinkForPaper(`papers/${pdf}`, noteLinks ?? []);
+                    return (
+                    <li
+                      key={row.lineId}
+                      data-reading-line={row.lineId}
+                      className={`group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-hover${
+                        readingFlash === row.lineId ? " bg-inset" : ""
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm leading-5 text-l2" title={row.title}>
+                          {row.title}
+                        </p>
+                        {/* 题录字段缺失时积累账写「待补」占位：不展示占位，全缺就不出这一行 */}
+                        {[row.authorsYear, row.source].some((v) => v && v.trim() !== "待补") && (
+                          <p className="mt-0.5 truncate text-micro text-l4">
+                            {[row.authorsYear, row.source]
+                              .filter((v) => v && v.trim() !== "待补")
+                              .join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                      {pdf ? (
+                        <span className="flex shrink-0 items-center gap-1 pr-1">
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-sm px-1.5 py-0.5 text-ok-text hover:bg-ok-text/10"
+                            title={
+                              hasNote
+                                ? "继续精读：进沉浸阅读（三栏），笔记接着已写的内容补全"
+                                : "精读：进沉浸阅读（三栏），先建八段骨架笔记"
+                            }
+                            aria-label={`${hasNote ? "继续精读" : "精读"}：${row.title}`}
+                            onClick={() => void openReaderFor(pdf)}
+                          >
+                            <span className="text-xs">{hasNote ? "继续精读" : "精读"}</span>
+                          </button>
+                          <span className="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                              title="打开这篇的精读笔记（notes/）；还没有就先精读建档"
+                              aria-label={`笔记：${row.title}`}
+                              onClick={() => void openNoteFor(pdf)}
+                            >
+                              <span className="text-xs">笔记</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                              title={`预览全文 papers/${pdf}`}
+                              aria-label={`预览全文：${row.title}`}
+                              onClick={() => openSavedPdf(pdf)}
+                            >
+                              <span className="text-xs">全文</span>
+                            </button>
+                          </span>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 opacity-0 hover:bg-hover hover:text-l1 focus-visible:opacity-100 group-hover:opacity-100"
+                            aria-label={`从积累清单移除：${row.title}`}
+                            title="从积累清单移除（只动 papers/reading-list.md，不影响流程正典）"
+                            onClick={() => void removeReading(row.lineId)}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                            title="papers/ 里还没有这篇的全文：选一个已下载的 PDF 关联进来（复制进 papers/ 并登记）"
+                            aria-label={`关联本地 PDF：${row.title}`}
+                            onClick={() => void attachPdf(row.title)}
+                          >
+                            <span className="text-xs">关联</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 opacity-0 hover:bg-hover hover:text-l1 focus-visible:opacity-100 group-hover:opacity-100"
+                            aria-label={`从积累清单移除：${row.title}`}
+                            title="从积累清单移除（只动 papers/reading-list.md，不影响流程正典）"
+                            onClick={() => void removeReading(row.lineId)}
+                          >
+                            ✕
+                          </button>
+                        </>
+                      )}
+                    </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* 无订阅的早返回分支已带 pendingRow，这里恒走内容井（原三元永远取不到左支） */}
       {bodyOpen && (

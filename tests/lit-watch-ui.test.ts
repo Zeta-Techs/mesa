@@ -364,10 +364,12 @@ test("加入积累：书标双态两表并集，已积累书标定位抽屉，�
     assert.match(host.textContent!, /这篇已在流程的文献清单里；打开已存全文/);
     assert.equal(previewReqs.at(-1)?.path, "/project/papers/Paper d.pdf");
 
-    // 卡头「积累 N」入口：N = 积累账条数；点开抽屉列出 title 一行 + 作者/来源第二行
-    const drawerBtn = buttonByText("积累 2")!;
-    assert.ok(drawerBtn, "卡头显示「积累 N」，N 为积累账条数");
-    await click(drawerBtn);
+    // 「我的积累」单独一块（2026-11-05 用户选，取代卡头「积累 N」抽屉）：块头写条数，默认展开，
+    // 列出 title 一行 + 作者/来源第二行；卡头不再有第二个入口
+    assert.ok(!buttonByText("积累 2"), "卡头不再有「积累 N」按钮");
+    const blockBtn = buttonByText("我的积累 · 2 篇")!;
+    assert.ok(blockBtn, "块头写「我的积累 · N 篇」");
+    assert.equal(blockBtn.getAttribute("aria-expanded"), "true", "没记过默认展开");
     assert.match(host.textContent!, /Chen L, 2026 · Nat\. Energy/);
     assert.match(host.textContent!, /Guo et al\., 2026 · Joule/);
 
@@ -376,8 +378,9 @@ test("加入积累：书标双态两表并集，已积累书标定位抽屉，�
     assert.ok(buttonByLabel("精读：Paper extra"), "没笔记 → 精读");
 
     // 点「定位积累」书标：移出不在行内——书标负责展开抽屉并高亮这一篇
-    await click(buttonByText("积累 2")!); // 先收起，验证书标能把抽屉重新展开
+    await click(buttonByText("我的积累 · 2 篇")!); // 先收起，验证书标能把这一块重新展开
     assert.doesNotMatch(host.textContent!, /Chen L, 2026/);
+    assert.equal(localStorage.getItem("ccode.litWatch.readingOpen./project"), "0", "开合按项目记住");
     await click(buttonByLabel("定位积累：Paper b")!);
     assert.ok(!commands.includes("remove_reading_list_entry"), "书标不再行内移出");
     assert.match(host.textContent!, /Chen L, 2026 · Nat\. Energy/, "书标定位重新展开抽屉");
@@ -391,7 +394,7 @@ test("加入积累：书标双态两表并集，已积累书标定位抽屉，�
     await click(remove);
     assert.ok(commands.includes("remove_reading_list_entry"));
     assert.doesNotMatch(host.textContent!, /Chen L, 2026/);
-    assert.ok(buttonByText("积累 1"), "移除后计数就地刷新");
+    assert.ok(buttonByText("我的积累 · 1 篇"), "移除后计数就地刷新");
 
     // 「加入积累」点击：走 add_reading_list_entry（字段拼装 includedLineFor 同款）。
     // 2026-10-14 拍板：只写账不跳精读（精读/笔记入口统一在积累抽屉），toast 指路书标定位
@@ -400,16 +403,14 @@ test("加入积累：书标双态两表并集，已积累书标定位抽屉，�
     assert.equal(addArgs[0]?.title, "Paper c");
     assert.equal(addArgs[0]?.authorsYear, "待补");
     assert.equal(addArgs[0]?.source, "Journal");
-    assert.match(host.textContent!, /已加入积累清单，点书标在「积累」里定位开读/);
-    assert.ok(buttonByText("积累 2"), "加入后计数就地刷新");
+    assert.match(host.textContent!, /已加入积累，在上面「我的积累」里开读/);
+    assert.ok(buttonByText("我的积累 · 2 篇"), "加入后计数就地刷新");
 
     // 空态：积累账清零后「积累 0」仍显示入口，展开给攒候选的空态文案
     readingRows = [];
     await render([entry("a", null), entry("b", null), entry("c", null)]);
-    const emptyBtn = buttonByText("积累 0")!;
-    assert.ok(emptyBtn, "条数为 0 也显示入口");
-    await click(emptyBtn);
-    assert.match(host.textContent!, /还没有积累。雷达里点『加入积累』攒你自己的精读候选；配了全文的可以直接开读。/);
+    assert.ok(buttonByText("我的积累 · 0 篇"), "条数为 0 也显示这一块");
+    assert.match(host.textContent!, /还没有积累。在下面的新命中里点书标，把想精读的文献攒到这里。/);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

@@ -1072,6 +1072,27 @@ export function writeLitWatchBodyOpen(projectRoot: string, open: boolean): void 
   }
 }
 
+/** 「我的积累」块的开合：按项目记住；没记过默认展开（攒下的就是要回来读的） */
+function litReadingOpenKey(projectRoot: string): string {
+  return `ccode.litWatch.readingOpen.${projectRoot.replace(/[\\/]+$/, "")}`;
+}
+
+export function readLitReadingOpen(projectRoot: string): boolean {
+  try {
+    return localStorage.getItem(litReadingOpenKey(projectRoot)) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function writeLitReadingOpen(projectRoot: string, open: boolean): void {
+  try {
+    localStorage.setItem(litReadingOpenKey(projectRoot), open ? "1" : "0");
+  } catch {
+    /* 隐私模式写不进就只靠本次 */
+  }
+}
+
 /** 命中条目忽略表的 localStorage 键：字符串数组（内容哈希 id） */
 export const LIT_DISMISSED_KEY = "ccode.litDismissed";
 
