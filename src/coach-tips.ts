@@ -96,3 +96,31 @@ export function noteChatOpen(
   const other = opens.length === 4 && a !== b && a === c && b === d ? c : null;
   return { opens, other };
 }
+
+/** 「跟 AI 商量一下」引导气泡（2026-11-05 用户点名要，例外于「不首次即弹」与「一次打开只出一条」）：
+ *  商量能把人的想法问进任务书、成稿更贴他的判断，所以每个项目第一次走到还没开工、也没商量过的步骤就出；
+ *  点了商量、点「先不了」或 × 都记下，这个项目不再出。按项目路径记 */
+const DISCUSS_NUDGE_KEY = "ccode.coachDiscussNudgeProjects";
+
+function discussNudgeProjects(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISCUSS_NUDGE_KEY) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function discussNudgeSeen(projectPath: string): boolean {
+  return discussNudgeProjects().includes(projectPath);
+}
+
+export function markDiscussNudgeSeen(projectPath: string) {
+  const list = discussNudgeProjects();
+  if (list.includes(projectPath)) return;
+  try {
+    localStorage.setItem(DISCUSS_NUDGE_KEY, JSON.stringify([...list, projectPath].slice(-200)));
+  } catch {
+    /* 存不下只是下次可能再出一次 */
+  }
+}

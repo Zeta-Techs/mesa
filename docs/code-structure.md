@@ -413,6 +413,7 @@ human-task-completion.ts   # 人工事项完成判定闭集与落点兼容（Pip
                              # 保护文件夹勾选（验收写回保持原样，不是另存副本；tests/project-tasks.test.ts）
   project-agents.ts          # 项目 Agents 名册：每家默认配置 / 项目选用的模型 / 项目默认 / 声明步骤归属
                              # （不自动分派；tests/project-agents.test.ts）
+  discuss-prompt.ts          # 「跟 AI 商量一下」的开场指令（苏格拉底式：一次一问、复述确认、不问模板已定的流程）与按步骤工作区名的提问方向 DISCUSS_FOCUS（只进开场指令，不上步骤卡）
   setting-choices.ts         # 模板全局设定的填写形态：短选项判定为点选（parseSettingLine）、选项白话说明与小字注、选某项时的追问并进同一行答案
   project-context.ts         # 项目环境包：名称/规则/顶层文件地图（启动注入）；包与第一句的拼接 composeLaunchPrompt / 拆开 splitLaunchPrompt
                              #   （气泡折「已附项目说明」、↑ 取回、工作台「上次停在」只认人话；Rust 镜像 sessions.rs strip_mesa_launch_pack）；

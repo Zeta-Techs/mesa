@@ -1,3 +1,6 @@
+import CoachTip from "./CoachTip";
+import { discussNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
+import { discussOpeningPrompt } from "../discuss-prompt";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1545,8 +1548,19 @@ export default function StepFlow({
     setCiteNote(null);
   }
 
+  const [discussNudgeOpen, setDiscussNudgeOpen] = useState(() => !discussNudgeSeen(projectPath));
+  useEffect(() => {
+    setDiscussNudgeOpen(!discussNudgeSeen(projectPath));
+  }, [projectPath]);
+  function dismissDiscussNudge() {
+    markDiscussNudgeSeen(projectPath);
+    setDiscussNudgeOpen(false);
+  }
+  const showDiscussNudge = discussNudgeOpen && Boolean(draft) && !ws && !discussed && !draftHasBody;
+
   async function chatDraft() {
     if (!draft || chatBusy) return;
+    dismissDiscussNudge();
     setChatBusy(true);
     setChatError(null);
     try {
@@ -1580,18 +1594,13 @@ export default function StepFlow({
             autoStart: true,
           }
         : {
-            initialPrompt:
-              `我们一起敲定「${step.name}」这一步的任务书（${draft.relPath}）。` +
-              `它现在的内容就是 TASK.md 的默认拼装（步骤简报、预期产物等都在里面），定稿后会原样落成工作区的 TASK.md。` +
-              `先通读一遍，把拿不准的点（范围、口径、标准等）逐个问我，按我的回答直接修改这份文件。` +
-              `只允许新建/修改这一个文件，以及下面点名的项目规则行。其他文件一律不要动。` +
-              `讨论中没定下来的问题，记到这份任务书的「## 待拍板」小节。` +
-              // 2026-10-24 HER 润色：商量时把「导入 EndNote 库、写库路径」写成了域稿的硬前置，AI 做好的 docx 又撤下
-              `不要把模板里的可选事项改成开工前必须办的前置，也不要因为某个可选设置没办就让某份产物不交，除非我明确这么说。` +
-              ((openSettings ?? []).filter((line) => line.trim()).length
-                ? `项目规则里还有没定的全局设定。开场先逐项问我，说明括号里的说法。我确定一项，就把 .ccode/project.toml 的 settings 里对应那一行从「名称：（提示）」改成「名称：我的答案」，不要改这个文件的其他内容。还没定的是：${(openSettings ?? []).filter((line) => line.trim()).join("；")}。`
-                : "") +
-              (seeds.length > 0 ? `可以先从这几个问题聊起：${seeds.join("；")}` : ""),
+            initialPrompt: discussOpeningPrompt({
+              stepName: step.name,
+              relPath: draft.relPath,
+              workspaceName: step.workspaceName,
+              openSettings,
+              seeds,
+            }),
             ...(projectLaunch ?? {}),
             autoStart: Boolean(projectLaunch?.profileId),
           }),
@@ -2785,6 +2794,8 @@ export default function StepFlow({
                 ▸ 折叠只露一行标签，▾ 展开才露动作（方式一展开是卡片、方式二展开是聊天按钮）。
                 「预览/编辑 TASK.md」是看结果不是第三条路——跟在本行标签后面
                 （与方式一行的「全部用推荐值」同位），不 ml-auto 拉到右缘抢「开始」。 */}
+            {/* 商量引导气泡（2026-11-05 用户点名）：每个项目第一次走到没开工、没商量过的步骤时出，引导先聊再开工 */}
+            <div className="relative">
             {decisions.length > 0 ? (
               <div className="space-y-1.5">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -2858,14 +2869,24 @@ export default function StepFlow({
                 >
                   TASK.md
                 </button>
-                {/* R5 补一句：刚进项目的人会以为要先商量才能开始（2026-11-05 用户反馈）。商量过 / 任务书改过就不再说 */}
-                {!discussed && !draftHasBody && (
-                  <span className="text-micro text-l4">
-                    可选。想先调整这一步怎么做时用；不用改就直接点「开始」
-                  </span>
-                )}
               </div>
             )}
+              {showDiscussNudge && (
+                <CoachTip
+                  arrow="up"
+                  arrowAt={28}
+                  title="开始前，先跟 AI 聊几句？"
+                  onClose={dismissDiscussNudge}
+                  className="absolute top-full left-0 mt-2 w-80"
+                  actions={[
+                    { label: "先不了", onClick: dismissDiscussNudge },
+                    { label: "跟 AI 商量一下", onClick: () => void chatDraft() },
+                  ]}
+                >
+                  AI 会一次问你一个问题，帮你把这一步想要什么说清楚，写进任务书；再点「开始」，做出来的东西更贴你的想法。
+                </CoachTip>
+              )}
+            </div>
             {chatError && (
               <InlineNotice tone="err" size="micro">{chatError}</InlineNotice>
             )}
