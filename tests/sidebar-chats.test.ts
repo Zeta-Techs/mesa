@@ -14,6 +14,10 @@ import {
   openTabRows,
   paletteOpenChats,
   parseChatPins,
+  parseProjectChatPins,
+  isProjectPinned,
+  toggleProjectChatPin,
+  splitProjectPinned,
   nextPicked,
   nudgeAnchor,
   pinnedChats,
@@ -477,4 +481,37 @@ test("foldForks：收起只藏分叉，正看着的那段照样列", () => {
   assert.deepEqual(foldForks(rows, folded).map((r) => r.s.sessionId), ["a", "x"]);
   assert.deepEqual(foldForks(rows, folded, "claude-code\nc").map((r) => r.s.sessionId), ["a", "c", "x"]);
   assert.deepEqual(foldForks(rows, new Set()).map((r) => r.s.sessionId), ["a", "b", "c", "x"]);
+});
+
+test("项目内置顶：流程对话自动在前按开工先后，人手钉的跟在后面，其余保持最近活动顺序", () => {
+  const outline = session({ sessionId: "o", stepName: "综述大纲", createdAt: "2026-11-03", updatedAt: "2026-11-03" });
+  const search = session({ sessionId: "a", stepName: "文献检索", createdAt: "2026-11-01", updatedAt: "2026-11-04" });
+  const free1 = session({ sessionId: "f1", updatedAt: "2026-11-05" });
+  const free2 = session({ sessionId: "f2", updatedAt: "2026-11-02" });
+  const pins = { pinned: ["claude-code\nf2"], dropped: [] };
+  const { pinned, rest } = splitProjectPinned([free1, search, outline, free2], pins);
+  assert.deepEqual(pinned.map((s) => s.sessionId), ["a", "o", "f2"]);
+  assert.deepEqual(rest.map((s) => s.sessionId), ["f1"]);
+});
+
+test("项目内置顶：流程对话取消记 dropped、再钉回撤掉；普通对话进出 pinned", () => {
+  const step = session({ sessionId: "s", stepName: "精读" });
+  const free = session({ sessionId: "f" });
+  let pins = parseProjectChatPins(null);
+  assert.equal(isProjectPinned(step, pins), true);
+  assert.equal(isProjectPinned(free, pins), false);
+  pins = toggleProjectChatPin(pins, step);
+  assert.deepEqual(pins, { pinned: [], dropped: ["claude-code\ns"] });
+  assert.equal(isProjectPinned(step, pins), false);
+  pins = toggleProjectChatPin(pins, step);
+  assert.deepEqual(pins.dropped, []);
+  pins = toggleProjectChatPin(pins, free);
+  assert.deepEqual(pins.pinned, ["claude-code\nf"]);
+  pins = toggleProjectChatPin(pins, free);
+  assert.deepEqual(pins.pinned, []);
+});
+
+test("项目内置顶：坏数据当空表", () => {
+  assert.deepEqual(parseProjectChatPins("not json"), { pinned: [], dropped: [] });
+  assert.deepEqual(parseProjectChatPins('{"pinned":[1,"a\\nb","x"]}'), { pinned: ["a\nb"], dropped: [] });
 });

@@ -94,6 +94,11 @@ import {
   nestForks,
   foldForks,
   FORK_FOLDS_KEY,
+  PROJECT_CHAT_PINS_KEY,
+  parseProjectChatPins,
+  isProjectPinned,
+  toggleProjectChatPin,
+  splitProjectPinned,
   type ChatDot,
   type ForkRow,
   type OpenTabRow,
@@ -364,6 +369,25 @@ export default function ProjectTree({
       return next;
     });
   }
+  // 项目内置顶（PROJECT_CHAT_PINS_KEY，2026-11-05）：流程步骤的对话自动钉在所属项目最上面，别的可人手钉；不占「显示更多」的段数
+  const [projectPins, setProjectPins] = useState(() => {
+    try {
+      return parseProjectChatPins(localStorage.getItem(PROJECT_CHAT_PINS_KEY));
+    } catch {
+      return parseProjectChatPins(null);
+    }
+  });
+  function toggleProjectPinFor(s: SessionMetaDto) {
+    setProjectPins((prev) => {
+      const next = toggleProjectChatPin(prev, s);
+      try {
+        localStorage.setItem(PROJECT_CHAT_PINS_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+  }
   // 收起了分叉的对话（FORK_FOLDS_KEY）：默认展开，人手收起的记本机
   const [forkFolds, setForkFolds] = useState<string[]>(() => {
     try {
@@ -483,6 +507,11 @@ export default function ProjectTree({
     const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
     return key ? (rows.find((r) => pathKey(r.repoPath, IS_WINDOWS) === key)?.project ?? null) : null;
   }
+  /** 这段挂在侧栏的某个课题下（不是随手聊、不是认不出的） */
+  function inRegisteredProject(s: SessionMetaDto): boolean {
+    const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
+    return key != null && key !== SCRATCH_FOLDER_KEY && rows.some((r) => pathKey(r.repoPath, IS_WINDOWS) === key);
+  }
   /** 一段对话属于哪个文件夹（课题名 / 随手聊）；不在任何一个里的给 null */
   function originOfChat(s: SessionMetaDto): string | null {
     const key = currentFolderKey(s.projectPath, folders, projectPaths, IS_WINDOWS);
@@ -599,6 +628,26 @@ export default function ProjectTree({
               toggleChatPinFor(chatKey(s));
             },
           },
+      // 项目内置顶（2026-11-05）：只给课题里的、没钉到树最上面「置顶」的
+      ...(!chatPins.includes(chatKey(s)) && inRegisteredProject(s)
+        ? [
+            isProjectPinned(s, projectPins)
+              ? {
+                  label: "取消项目内置顶",
+                  icon: PinOff,
+                  title: s.stepName
+                    ? "流程步骤的对话默认留在项目最上面；取消后和别的对话一样按最近活动排"
+                    : "放回项目里按最近活动排",
+                  onSelect: () => toggleProjectPinFor(s),
+                }
+              : {
+                  label: "在项目里置顶",
+                  icon: Pin,
+                  title: "留在这个项目的最上面，不被新对话挤进「显示更多」",
+                  onSelect: () => toggleProjectPinFor(s),
+                },
+          ]
+        : []),
       {
         label: "重命名",
         icon: Pencil,
@@ -804,12 +853,18 @@ export default function ProjectTree({
     [unpinnedSessions, projectPaths, openChatKeys],
   );
   // 每个文件夹实际列出的行：分叉挂在原对话下面，收起的不列（列几段、「显示更多」都按这份算）
-  const chatRowsOf = useMemo(() => {
+  // 课题里项目内置顶的那几段单拿出来（projectPinnedRowsOf）放最上面、全列；chatRowsOf 只剩其余的，段数限额只管它们
+  const { chatRowsOf, projectPinnedRowsOf } = useMemo(() => {
     const m = new Map<string, ForkRow[]>();
+    const pm = new Map<string, ForkRow[]>();
     m.set(SCRATCH_FOLDER_KEY, foldForks(nestForks(scratchList), forkFoldSet, selectedChatKey));
-    for (const [k, list] of chatsByRoot) m.set(k, foldForks(nestForks(list), forkFoldSet, selectedChatKey));
-    return m;
-  }, [scratchList, chatsByRoot, forkFoldSet, selectedChatKey]);
+    for (const [k, list] of chatsByRoot) {
+      const { pinned, rest } = splitProjectPinned(list, projectPins);
+      m.set(k, foldForks(nestForks(rest), forkFoldSet, selectedChatKey));
+      if (pinned.length > 0) pm.set(k, foldForks(nestForks(pinned), forkFoldSet, selectedChatKey));
+    }
+    return { chatRowsOf: m, projectPinnedRowsOf: pm };
+  }, [scratchList, chatsByRoot, forkFoldSet, selectedChatKey, projectPins]);
   // 运行页开着、但列表里还没有的（新对话、纯终端、刚起来还没认出会话的…）：挂在所属文件夹最上面，
   // 不在任何项目里的放「其他打开的」（标签条撤掉后开着的东西都在这里能找到，2026-10-24 第二期）
   const openByFolder = useMemo(() => {
@@ -945,12 +1000,17 @@ export default function ProjectTree({
   const quotaOf = useMemo(() => {
     const sections = [...grouped.pinned, ...grouped.projects, ...grouped.unregistered];
     const open: { key: string; count: number }[] = [];
+    // 项目内置顶的全列，不进限额，只当固定高度扣掉（每段一行，块下多垫 6px）
+    let projectPinnedCount = 0;
     if (folderOpen(SCRATCH_FOLDER_KEY, chatOpenPrefs, currentKey)) {
       open.push({ key: SCRATCH_FOLDER_KEY, count: chatRowsOf.get(SCRATCH_FOLDER_KEY)?.length ?? 0 });
     }
     for (const r of sections) {
       const k = pathKey(r.repoPath, IS_WINDOWS);
-      if (folderOpen(k, chatOpenPrefs, currentKey)) open.push({ key: k, count: chatRowsOf.get(k)?.length ?? 0 });
+      if (folderOpen(k, chatOpenPrefs, currentKey)) {
+        open.push({ key: k, count: chatRowsOf.get(k)?.length ?? 0 });
+        projectPinnedCount += projectPinnedRowsOf.get(k)?.length ?? 0;
+      }
     }
     // 行高按 rem 折算（Mac 根 14px、Windows 16px）。2026-10-28 用户嫌挤、照 Claude 客户端放松：对话行 h-8 + 3px 行距；
     // 节头 h-8，收着的之间隔 3px，展开的上下各留 pt-3；展开的文件夹头下垫 3px，再留一行「显示更多」（h-6）与底边距 pb-1；
@@ -963,7 +1023,8 @@ export default function ProjectTree({
     const otherRows = otherCount > 0 ? 3 * rem + (collapsedSections.includes("other") ? 0 : 3 + otherCount * (2 * rem + 3)) : 0;
     // 「项目」标签行（mt-4 + h-8）占 3rem，紧跟它的第一段省掉 pt-2
     const fixed =
-      headers * (2 * rem + 3) + open.length * (3.25 * rem + 3) + 1.5 * rem + pinnedRows + otherRows + 2.5 * rem;
+      headers * (2 * rem + 3) + open.length * (3.25 * rem + 3) + 1.5 * rem + pinnedRows + otherRows + 2.5 * rem +
+      projectPinnedCount * (2 * rem + 3) + (projectPinnedCount > 0 ? 6 : 0);
     const slots = chatSlots({ available: listHeight, fixed, rowHeight: 2 * rem + 3 });
     const shown = chatQuotas({
       counts: open.map((o) => o.count),
@@ -971,7 +1032,7 @@ export default function ProjectTree({
       slots,
     });
     return new Map(open.map((o, i) => [o.key, shown[i]]));
-  }, [grouped, chatOpenPrefs, currentKey, chatRowsOf, listHeight, chatExtra, pinnedList.length, collapsedSections, openByFolder]);
+  }, [grouped, chatOpenPrefs, currentKey, chatRowsOf, projectPinnedRowsOf, listHeight, chatExtra, pinnedList.length, collapsedSections, openByFolder]);
 
   /** 一段对话（2026-10-23 照 Claude 客户端侧栏）：与所属文件夹的名字左对齐、不再缩进，只写主题（去掉「MMDD|类型|」，
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
@@ -985,6 +1046,8 @@ export default function ProjectTree({
     originTag = true,
     /** 课题 / 随手聊下面才给：分叉挂在原对话下面（depth），原对话带开合箭头（forks） */
     fork?: ForkRow,
+    /** 人手在项目里置顶的（流程对话行尾写步骤名，不另标）：行尾一枚小图钉 */
+    projectPinMark = false,
   ) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
@@ -1104,7 +1167,7 @@ export default function ProjectTree({
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
-          title={`${full}\n${depth > 0 ? "分叉出来的对话 · " : ""}${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊，双击改名`}
+          title={`${full}\n${depth > 0 ? "分叉出来的对话 · " : ""}${projectPinMark ? "在项目里置顶 · " : ""}${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊，双击改名`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             "text-l1"
           }`}
@@ -1158,6 +1221,15 @@ export default function ProjectTree({
             >
               {origin}
             </span>
+          )}
+          {projectPinMark && (
+            <Pin
+              size={10}
+              strokeWidth={1.8}
+              aria-label="在项目里置顶"
+              className="mr-1.5 shrink-0 text-l4 group-hover/chat:hidden group-focus-within/chat:hidden"
+              data-project-pin
+            />
           )}
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
@@ -1289,7 +1361,14 @@ export default function ProjectTree({
 
   /** 文件夹展开后的那一串：列几段由 chatQuotas 按侧栏空位算（至少 5 段），没列完的点「展开更多」在原地多列 10 段；
    *  点过展开更多的给「收起」回到按空位列。要看全部、搜、整理，去对话页（节头 ⋯ 里有入口） */
-  function renderChats(chats: ForkRow[], project: ProjectDto | null, name: string, folderKey: string) {
+  function renderChats(
+    chats: ForkRow[],
+    project: ProjectDto | null,
+    name: string,
+    folderKey: string,
+    /** 项目内置顶的那几段（只课题有）：放最上面、全列，不算进段数 */
+    pinnedRows: ForkRow[] = [],
+  ) {
     const shown = quotaOf.get(folderKey) ?? Math.min(chats.length, SIDEBAR_CHAT_LIMIT);
     const folded = (chatExtra[folderKey] ?? 0) > 0;
     // 「显示更多 / 收起」是动作不是对话：比对话行矮、再小一号、最淡（l4），读作挂在最后一段下面的注脚
@@ -1301,7 +1380,7 @@ export default function ProjectTree({
     const visible = selIdx >= shown ? [...chats.slice(0, shown), chats[selIdx]] : chats.slice(0, shown);
     const openedAll = openByFolder.get(folderKey) ?? [];
     // 分叉标签还没认出新会话（Claude 等发第一句才落盘）：挂在原对话下面，原对话不在这一串里才照常放最上面
-    const listedHere = new Set(visible.map((r) => chatKey(r.s)));
+    const listedHere = new Set([...pinnedRows, ...visible].map((r) => chatKey(r.s)));
     const forkOpenOf = new Map<string, OpenTabRow[]>();
     for (const r of openedAll) {
       if (r.forkParentKey && listedHere.has(r.forkParentKey)) {
@@ -1314,8 +1393,19 @@ export default function ProjectTree({
     return (
       <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
         {opened.map((r) => renderOpenRow(r))}
+        {/* 项目内置顶（2026-11-05）：流程步骤的对话按流程顺序、行尾写步骤名；人手钉的行尾一枚图钉。和下面按最近活动的隔开一点 */}
+        {pinnedRows.length > 0 && (
+          <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 ? "pb-1.5" : ""}`}>
+            {pinnedRows.map((r) => (
+              <Fragment key={chatKey(r.s)}>
+                {renderChat(r.s, project, name, r.s.stepName ?? null, true, r, !r.s.stepName)}
+                {(forkOpenOf.get(chatKey(r.s)) ?? []).map((o) => renderOpenRow(o, r.depth + 1, name))}
+              </Fragment>
+            ))}
+          </div>
+        )}
         {chats.length === 0 ? (
-          opened.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
+          opened.length === 0 && pinnedRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
           visible.map((r) => (
             <Fragment key={chatKey(r.s)}>
@@ -1790,7 +1880,7 @@ export default function ProjectTree({
             <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
-        {open && renderChats(chatRowsOf.get(fkey) ?? [], row.project, row.name, fkey)}
+        {open && renderChats(chatRowsOf.get(fkey) ?? [], row.project, row.name, fkey, projectPinnedRowsOf.get(fkey) ?? [])}
       </div>
     );
   }

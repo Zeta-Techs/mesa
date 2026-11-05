@@ -129,6 +129,68 @@ export function nudgeAnchor(order: readonly string[], key: string): string | nul
   return order[i + 1] ?? order[i - 1] ?? null;
 }
 
+/**
+ * 项目内置顶（2026-11-05 用户：科研流程发起的检索 / 精读 / 大纲对话要一直留在项目下面随时接着聊，不被新对话挤进「显示更多」）。
+ * 流程步骤的对话（stepName 非空）自动置顶，人手取消的记 dropped；别的项目对话人手置顶记 pinned。
+ * 键 = agent\nsessionId（全局唯一，不分项目存）；与树最上面跨课题的「置顶」（CHAT_PINS_KEY）是两回事，钉到那里的不在项目下重复列。
+ */
+export const PROJECT_CHAT_PINS_KEY = "ccode.projectChatPins";
+
+export interface ProjectChatPins {
+  pinned: string[];
+  dropped: string[];
+}
+
+export function parseProjectChatPins(raw: string | null): ProjectChatPins {
+  const keys = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.includes("\n")) : [];
+  try {
+    const v = JSON.parse(raw ?? "{}") as { pinned?: unknown; dropped?: unknown } | null;
+    return { pinned: keys(v?.pinned), dropped: keys(v?.dropped) };
+  } catch {
+    return { pinned: [], dropped: [] };
+  }
+}
+
+/** 这段眼下在不在项目内置顶里 */
+export function isProjectPinned(s: SessionMetaDto, pins: ProjectChatPins): boolean {
+  const key = `${s.agent}\n${s.sessionId}`;
+  return s.stepName ? !pins.dropped.includes(key) : pins.pinned.includes(key);
+}
+
+/** 在项目里置顶 / 取消：流程对话改 dropped，其余改 pinned（新置顶的排在最后） */
+export function toggleProjectChatPin(pins: ProjectChatPins, s: SessionMetaDto): ProjectChatPins {
+  const key = `${s.agent}\n${s.sessionId}`;
+  const on = isProjectPinned(s, pins);
+  const pinned = pins.pinned.filter((k) => k !== key);
+  const dropped = pins.dropped.filter((k) => k !== key);
+  if (s.stepName) return { pinned, dropped: on ? [...dropped, key] : dropped };
+  return { pinned: on ? pinned : [...pinned, key], dropped };
+}
+
+/** 一个项目的对话（projectChats 的输出，最近在前）拆成项目内置顶与其余：
+ *  置顶里流程对话在前、按开工先后（就是流程顺序），人手置顶的跟在后面、按置顶先后；其余保持原顺序 */
+export function splitProjectPinned(
+  chats: readonly SessionMetaDto[],
+  pins: ProjectChatPins,
+): { pinned: SessionMetaDto[]; rest: SessionMetaDto[] } {
+  const steps: SessionMetaDto[] = [];
+  const manual: SessionMetaDto[] = [];
+  const rest: SessionMetaDto[] = [];
+  for (const s of chats) {
+    if (!isProjectPinned(s, pins)) rest.push(s);
+    else (s.stepName ? steps : manual).push(s);
+  }
+  steps.sort((a, b) => {
+    const x = a.createdAt ?? a.updatedAt ?? "";
+    const y = b.createdAt ?? b.updatedAt ?? "";
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+  const order = new Map(pins.pinned.map((k, i) => [k, i]));
+  manual.sort((a, b) => order.get(`${a.agent}\n${a.sessionId}`)! - order.get(`${b.agent}\n${b.sessionId}`)!);
+  return { pinned: [...steps, ...manual], rest };
+}
+
 /** 「置顶」一节列哪几段：按置顶顺序，归档 / 内部 / 源文件不在的不列（同各课题口径） */
 export function pinnedChats(sessions: readonly SessionMetaDto[], pins: readonly string[]): SessionMetaDto[] {
   const byKey = new Map(sessions.filter(listable).map((s) => [`${s.agent}\n${s.sessionId}`, s]));
