@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, ArrowUp } from "lucide-react";
+import { ArrowRight, ArrowUp, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { secondaryActionClass } from "./PageFrame";
 import ChatMarkdown from "./ChatMarkdown";
@@ -36,6 +36,16 @@ import {
   type AssistantTurn,
 } from "../project-assistant-run";
 import type { ProjectDto } from "../types";
+import { saveClipboardImage } from "../clipboard-image";
+import { firstImageItem, imageExtFromMime } from "../terminal-input";
+
+/** 项目助手一次最多附几张截图（与后端 project_assistant.rs MAX_IMAGES 同） */
+const MAX_ASSISTANT_IMAGES = 4;
+interface AssistantImage {
+  path: string;
+  /** 缩略图：粘贴时的本地对象地址 */
+  url: string;
+}
 
 /** 外面要它带着问题打开（卡点、「问问为什么」）：nonce 变了才再问一次 */
 export interface AssistantAsk {
@@ -108,7 +118,23 @@ export default function ProjectAssistantPanel({
   /** 已经等了几秒（超过 3 秒才写出来） */
   const [waited, setWaited] = useState(0);
   /** 没问成的那一问（错误上方照样显示，「再问一次」用它） */
-  const [failed, setFailed] = useState<{ question: string; focus: AssistantFocus | null } | null>(null);
+  const [failed, setFailed] = useState<{ question: string; focus: AssistantFocus | null; images?: AssistantImage[] } | null>(null);
+  /** 这一问附的截图（2026-11-05 用户：「有些问题可能需要截图去问」）：粘贴 / 拖进输入框，和聊天层同一条落盘通道 */
+  const [images, setImages] = useState<AssistantImage[]>([]);
+  const [imageNote, setImageNote] = useState<string | null>(null);
+  async function addImageFile(file: File) {
+    if (images.length >= MAX_ASSISTANT_IMAGES) {
+      setImageNote(`一次最多附 ${MAX_ASSISTANT_IMAGES} 张截图`);
+      return;
+    }
+    try {
+      const path = await saveClipboardImage(await file.arrayBuffer(), imageExtFromMime(file.type));
+      setImages((cur) => (cur.length >= MAX_ASSISTANT_IMAGES ? cur : [...cur, { path, url: URL.createObjectURL(file) }]));
+      setImageNote(null);
+    } catch (reason) {
+      setImageNote(`截图没贴上：${String(reason)}`);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<AssistantFocus | null>(null);
   /** 这次打开后刚答完的那一轮（它旁边的小桌举手蹦一下，旧的站着） */
@@ -117,6 +143,8 @@ export default function ProjectAssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askedNonce = useRef<number | null>(null);
   const conn = assistantConnection(project);
+  // 能看图的只有 Claude Code / Codex（走只读查看那条路）；走「AI 功能」连接时前端不知道是哪家，先不拦，后端会说
+  const imageCapable = conn.agentId === null || conn.agentId === "claude-code" || conn.agentId === "codex";
   // 派活单派出去后记到那一轮上（后端问答记录），卡片据此跟进度、不重复派；项目快照据此告诉项目助手派过什么
   async function dispatch(turnAt: string, order: WorkOrder) {
     const result = await onDispatch(order);
@@ -169,11 +197,12 @@ export default function ProjectAssistantPanel({
     return () => window.clearInterval(timer);
   }, [busy]);
 
-  async function send(question: string, withFocus: AssistantFocus | null, forced?: AssistantIntent) {
-    const q = question.trim();
+  async function send(question: string, withFocus: AssistantFocus | null, forced?: AssistantIntent, attached: AssistantImage[] = images) {
+    // 只贴了图没写字：替人补一句最常见的问法
+    const q = question.trim() || (attached.length ? "看看这张截图是怎么回事，我该怎么办？" : "");
     if (!q || busy || !projectPath) return;
-    // 纯寒暄本地直接回，不调 AI（原来一句「你好」要 8–19 秒）
-    const canned = withFocus || forced ? null : localReply(q, new Date().getHours());
+    // 纯寒暄本地直接回，不调 AI（原来一句「你好」要 8–19 秒）；带图的不算寒暄
+    const canned = withFocus || forced || attached.length ? null : localReply(q, new Date().getHours());
     if (canned) {
       setDraft("");
       if (inputRef.current) inputRef.current.style.height = "";
@@ -196,6 +225,8 @@ export default function ProjectAssistantPanel({
     setLiveStep(null);
     setFailed(null);
     setDraft("");
+    setImages([]);
+    setImageNote(null);
     if (inputRef.current) inputRef.current.style.height = "";
     setError(null);
     try {
@@ -207,6 +238,7 @@ export default function ProjectAssistantPanel({
         focus: withFocus,
         intent: plan.intent,
         inspect: plan.inspect,
+        images: attached.map((img) => img.path),
         onStream: (update) => {
           if (update.text !== undefined) setLiveText(update.text);
           if (update.step) setLiveStep(update.step);
@@ -217,7 +249,7 @@ export default function ProjectAssistantPanel({
       setFocus(null);
     } catch (reason) {
       setError(assistantErrorText(String(reason)));
-      setFailed({ question: q, focus: withFocus });
+      setFailed({ question: q, focus: withFocus, images: attached });
     } finally {
       setBusy(false);
       setPending(null);
@@ -283,11 +315,43 @@ export default function ProjectAssistantPanel({
           ))}
         </div>
       )}
+      {images.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2" aria-label="附的截图">
+          {images.map((img, i) => (
+            <span key={img.path} className="group relative">
+              <img src={img.url} alt={`截图 ${i + 1}`} className="size-12 rounded-md border border-hairline object-cover" />
+              <button
+                type="button"
+                className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-raised text-l3 shadow-none ring-1 ring-hairline hover:text-l1"
+                aria-label={`去掉截图 ${i + 1}`}
+                onClick={() => setImages((cur) => cur.filter((x) => x.path !== img.path))}
+              >
+                <X size={10} strokeWidth={2} aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+          {!imageCapable && (
+            <span className="min-w-0 flex-1 text-micro text-warn-text">
+              现在的连接看不了图：到 Agent 分工给项目助手换成 Claude Code / Codex，或把图里的字打出来
+            </span>
+          )}
+        </div>
+      )}
+      {imageNote && <p className="text-micro text-warn-text">{imageNote}</p>}
       <form
         className="ccode-assistant-composer flex items-end gap-2 rounded-xl border border-hairline bg-inset px-3 py-2 focus-within:border-l4"
         onSubmit={(event) => {
           event.preventDefault();
           void send(draft, focus);
+        }}
+        onDragOver={(event) => {
+          if (Array.from(event.dataTransfer.items).some((it) => it.type.startsWith("image/"))) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          const files = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+          if (files.length === 0) return;
+          event.preventDefault();
+          for (const f of files) void addImageFile(f);
         }}
       >
         <textarea
@@ -296,8 +360,17 @@ export default function ProjectAssistantPanel({
           rows={1}
           value={draft}
           maxLength={2000}
-          placeholder={mood.restPose === "sleep" ? "问点什么，它就醒…" : "问点什么…"}
+          placeholder={mood.restPose === "sleep" ? "问点什么，它就醒…" : "问点什么…（可以粘贴截图）"}
           aria-label="问项目助手"
+          onPaste={(event) => {
+            // 剪贴板里有图就接管（存成附图），纯文字照常粘贴
+            const items = Array.from(event.clipboardData?.items ?? []);
+            const idx = firstImageItem(items);
+            if (idx < 0) return;
+            event.preventDefault();
+            const file = items[idx].getAsFile();
+            if (file) void addImageFile(file);
+          }}
           onChange={(event) => {
             setDraft(event.target.value);
             const el = event.target;
@@ -315,8 +388,8 @@ export default function ProjectAssistantPanel({
         <button
           type="submit"
           className="ccode-send-block mb-0.5"
-          data-state={busy ? "sending" : draft.trim() ? "ready" : "empty"}
-          disabled={busy || !draft.trim()}
+          data-state={busy ? "sending" : draft.trim() || images.length ? "ready" : "empty"}
+          disabled={busy || (!draft.trim() && images.length === 0)}
           aria-label="发送"
           title={busy ? "正在问…" : "Enter 发送 · Shift+Enter 换行"}
         >
@@ -510,7 +583,7 @@ export default function ProjectAssistantPanel({
                       className={`${secondaryActionClass} mt-2`}
                       onClick={() => {
                         setError(null);
-                        void send(failed.question, failed.focus);
+                        void send(failed.question, failed.focus, undefined, failed.images ?? []);
                       }}
                     >
                       再问一次

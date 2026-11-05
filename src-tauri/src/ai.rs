@@ -908,7 +908,10 @@ pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
 const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash WebFetch WebSearch Task";
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
 
-pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String], stream: bool) -> Option<Vec<String>> {
+/// images：附图（项目助手粘贴的截图，2026-11-05）。Codex 用自带的 `--image=a,b` 附在这条消息上（写成一个参数：
+/// `-i` 后面能吃多个值，会把提示词也当成图）；Claude Code 没有附图参数，由调用方把图所在目录 `--add-dir`、提示词里点名路径，
+/// 它用 Read 工具打开（只读模式里 Read 本来就放行，实测 2.1.309 能读出截图里的报错）
+pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String], stream: bool, images: &[String]) -> Option<Vec<String>> {
     match agent {
         "claude-code" => {
             let mut a: Vec<String> = if stream {
@@ -934,16 +937,37 @@ pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[Str
             }
             Some(a)
         }
-        "codex" => Some(vec![
-            "exec".into(),
-            "--skip-git-repo-check".into(),
-            "--ephemeral".into(),
-            "--json".into(),
-            "-s".into(),
-            "read-only".into(),
-            prompt.into(),
-        ]),
+        "codex" => {
+            let mut a: Vec<String> = vec![
+                "exec".into(),
+                "--skip-git-repo-check".into(),
+                "--ephemeral".into(),
+                "--json".into(),
+                "-s".into(),
+                "read-only".into(),
+            ];
+            if !images.is_empty() {
+                a.push(format!("--image={}", images.join(",")));
+            }
+            a.push(prompt.into());
+            Some(a)
+        }
         _ => None,
+    }
+}
+
+/// 带图时提示词前面加的一段：Claude Code 要自己用 Read 打开（点名路径），Codex 图已附在消息上
+pub(crate) fn image_prompt_note(agent: &str, images: &[String]) -> String {
+    if images.is_empty() {
+        return String::new();
+    }
+    match agent {
+        "claude-code" => format!(
+            "用户随问题附了 {} 张截图，回答前先用 Read 工具逐张打开看（图里的报错、界面状态是这次提问的关键）：\n{}\n\n",
+            images.len(),
+            images.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
+        ),
+        _ => format!("用户随问题附了 {} 张截图（已附在这条消息里），回答前先看图，图里的报错、界面状态是这次提问的关键。\n\n", images.len()),
     }
 }
 
@@ -957,6 +981,7 @@ pub(crate) fn ai_inspect_readonly(
     effort: Option<&str>,
     on_line: Option<&mut dyn FnMut(&str)>,
     cost_out: Option<&mut Option<f64>>,
+    images: &[String],
 ) -> Result<String, String> {
     if !project_root.is_dir() {
         return Err("项目文件夹不在了".into());
@@ -971,13 +996,22 @@ pub(crate) fn ai_inspect_readonly(
         settings.ai_profile_id.clone(),
         &settings.hidden_profiles.unwrap_or_default().into_iter().collect(),
     )?;
-    let dirs: Vec<String> = extra_dirs
+    let mut dirs: Vec<String> = extra_dirs
         .iter()
         .filter(|d| std::path::Path::new(d.as_str()).is_dir())
         .take(8)
         .cloned()
         .collect();
-    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some()) else {
+    // 附图所在目录也给 Claude 读（Codex 的只读沙箱本就能读别处，图又是作为附件传）
+    for img in images {
+        if let Some(parent) = std::path::Path::new(img).parent().map(|p| p.to_string_lossy().into_owned()) {
+            if !dirs.contains(&parent) {
+                dirs.push(parent);
+            }
+        }
+    }
+    let prompt = format!("{}{}", image_prompt_note(&profile.agent, images), prompt);
+    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some(), images) else {
         return Err(format!("{INSPECT_UNSUPPORTED}: {}", profile.agent));
     };
     let binary = agents::binary_for(&profile.agent)
@@ -3256,7 +3290,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
 
     #[test]
     fn inspect_readonly_args_are_read_only_and_ephemeral() {
-        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false).unwrap();
+        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false, &[]).unwrap();
         assert!(claude.windows(2).any(|w| w == ["--permission-mode", "default"]), "不用 plan 档（会写 ~/.claude/plans）");
         let disallowed = claude.iter().position(|a| a == "--disallowedTools").map(|i| claude[i + 1].clone()).unwrap();
         for tool in ["Edit", "Write", "Bash", "WebFetch"] {
@@ -3265,7 +3299,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(claude.iter().any(|a| a == "--no-session-persistence"));
         assert!(claude.windows(2).any(|w| w == ["--add-dir", "/w/a"]));
         assert!(!claude.iter().any(|a| a.contains("bypass")));
-        let codex = inspect_readonly_args("codex", "看看", &[], false).unwrap();
+        let codex = inspect_readonly_args("codex", "看看", &[], false, &[]).unwrap();
         assert!(codex.windows(2).any(|w| w == ["-s", "read-only"]));
         assert!(codex.iter().any(|a| a == "--ephemeral"));
         // plan 默认的 -s workspace-write 要被剥掉，只剩只读那一档
@@ -3273,9 +3307,14 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let composed = compose_headless_args("codex", &plan, &codex);
         assert_eq!(composed.iter().filter(|a| *a == "-s").count(), 1);
         assert!(composed.windows(2).any(|w| w == ["-s", "read-only"]));
-        assert!(inspect_readonly_args("kimi", "看看", &[], false).is_none());
-        assert!(inspect_readonly_args("gemini", "看看", &[], false).is_none());
-        let streamed = inspect_readonly_args("claude-code", "看看", &[], true).unwrap();
+        assert!(inspect_readonly_args("kimi", "看看", &[], false, &[]).is_none());
+        assert!(inspect_readonly_args("gemini", "看看", &[], false, &[]).is_none());
+        // 附图（2026-11-05）：Codex 一个 --image= 参数、在提示词前面；Claude 不加参数，靠提示词点名 + --add-dir
+        let with_img = inspect_readonly_args("codex", "看看", &[], false, &["/t/a.png".into(), "/t/b.png".into()]).unwrap();
+        assert_eq!(&with_img[with_img.len() - 2..], ["--image=/t/a.png,/t/b.png", "看看"]);
+        assert!(image_prompt_note("claude-code", &["/t/a.png".into()]).contains("Read 工具") );
+        assert!(image_prompt_note("codex", &[]).is_empty());
+        let streamed = inspect_readonly_args("claude-code", "看看", &[], true, &[]).unwrap();
         assert!(streamed.windows(2).any(|w| w == ["--output-format", "stream-json"]));
         assert!(streamed.iter().any(|a| a == "--include-partial-messages") && streamed.iter().any(|a| a == "--verbose"));
         assert!(streamed.windows(2).any(|w| w == ["--permission-mode", "default"]));

@@ -25,6 +25,8 @@ const DEDUPE_MINUTES: i64 = 10;
 const LOG_CAP: usize = 200;
 const FIELD_CAP: usize = 4000;
 const ANSWER_CAP: usize = 12000;
+/// 一次最多附几张截图
+const MAX_IMAGES: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -437,6 +439,7 @@ pub async fn project_assistant_ask(
     extra_dirs: Option<Vec<String>>,
     effort: Option<String>,
     stream_id: Option<String>,
+    images: Option<Vec<String>>,
 ) -> Result<AssistantTurnDto, String> {
     let profiles = store.list()?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -463,7 +466,19 @@ pub async fn project_assistant_ask(
             }
         };
         let mut cost: Option<f64> = None;
-        let raw = if inspect.unwrap_or(false) {
+        // 附图（2026-11-05 用户：「有些问题需要截图去问」）：只收 Mesa 自己存下的粘贴图，最多 4 张；带图一律走只读查看那条路
+        //（只有 Claude Code / Codex 能看图），别家明说换连接，不悄悄丢图
+        let asked = images.unwrap_or_default();
+        let images: Vec<String> = asked
+            .iter()
+            .filter(|p| crate::clipboard::is_pasted_image(std::path::Path::new(p.as_str())))
+            .take(MAX_IMAGES)
+            .cloned()
+            .collect();
+        if !asked.is_empty() && images.is_empty() {
+            return Err("附的截图找不到了（粘贴的图存 7 天），重新粘贴一次再问".into());
+        }
+        let raw = if inspect.unwrap_or(false) || !images.is_empty() {
             let root = PathBuf::from(&root_text);
             crate::ai::ai_inspect_readonly(
                 profiles,
@@ -475,7 +490,15 @@ pub async fn project_assistant_ask(
                 effort.as_deref(),
                 Some(&mut on_line),
                 Some(&mut cost),
-            )?
+                &images,
+            )
+            .map_err(|e| {
+                if !images.is_empty() && e.starts_with(crate::ai::INSPECT_UNSUPPORTED) {
+                    "看截图要项目助手用 Claude Code 或 Codex 的连接：到项目「Agent 分工 → 专属绑定 → 项目助手」换一条，或者把截图里的字打出来再问".to_string()
+                } else {
+                    e
+                }
+            })?
         } else {
             crate::ai::ai_prompt_impl_full(
                 profiles,
@@ -494,7 +517,14 @@ pub async fn project_assistant_ask(
         }
         let turn = AssistantTurnDto {
             at: now_fixed().to_rfc3339(),
-            question: truncate(&crate::sessions::redact_sensitive_text(&question), FIELD_CAP),
+            question: truncate(
+                &crate::sessions::redact_sensitive_text(&if images.is_empty() {
+                    question.clone()
+                } else {
+                    format!("{question}（附图 {} 张）", images.len())
+                }),
+                FIELD_CAP,
+            ),
             answer,
             connection: connection.unwrap_or_default().chars().take(200).collect(),
             basis: basis.unwrap_or_default().chars().take(300).collect(),

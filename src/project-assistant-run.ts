@@ -325,6 +325,8 @@ export async function askProjectAssistant(input: {
   focus: AssistantFocus | null;
   intent?: AssistantIntent;
   inspect?: boolean;
+  /** 附的截图（Mesa 粘贴目录里的绝对路径，2026-11-05）：后端带图一律走只读查看，只有 Claude Code / Codex 能看 */
+  images?: readonly string[];
   /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
   onStream?: (update: { text?: string; step?: string }) => void;
 }): Promise<AssistantTurn> {
@@ -377,6 +379,7 @@ export async function askProjectAssistant(input: {
         extraDirs: withInspect ? worktrees : null,
         effort: intentEffort(intent),
         streamId,
+        images: input.images?.length ? input.images : null,
       });
     } finally {
       unlisten?.();

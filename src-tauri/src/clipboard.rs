@@ -17,6 +17,27 @@ fn paste_dir() -> Result<PathBuf, String> {
 }
 
 /// 扩展名白名单：前端按 MIME 映射后传入，这里再兜一层，非法一律 png
+/// 粘贴图片落在哪（项目助手只认这里的图，2026-11-05）：用户粘贴 / 拖进来的截图都先存到这里，7 天后清掉
+pub(crate) fn paste_dir_path() -> Result<PathBuf, String> {
+    paste_dir()
+}
+
+/// 是不是 Mesa 自己存下的粘贴图：在粘贴目录里、是文件、扩展名是图片。项目助手只把这种图交给 AI，不收任意路径
+pub(crate) fn is_pasted_image(path: &std::path::Path) -> bool {
+    let Ok(dir) = paste_dir().and_then(|d| std::fs::canonicalize(&d).map_err(|e| e.to_string())) else {
+        return false;
+    };
+    let Ok(real) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let ext_ok = real
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp"))
+        .unwrap_or(false);
+    real.is_file() && ext_ok && real.parent() == Some(dir.as_path())
+}
+
 fn sanitize_ext(ext: &str) -> &str {
     match ext {
         "png" | "jpg" | "jpeg" | "gif" | "webp" => ext,
