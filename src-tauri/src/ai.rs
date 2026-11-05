@@ -679,6 +679,17 @@ fn run_capture_with(
     Err(summarize_headless_error(detail, expected_host))
 }
 
+/// prompt 作命令行参数传给 CLI：参数里不能有 NUL，有一个整条命令就起不来（「启动进程失败: nul byte found in
+/// provided data」）。2026-11-05 用户实测：沉浸阅读划词翻译，PDF 文字层抽出的文字带 U+0000（缺字形的
+/// 占位），翻译直接失败。NUL 对 prompt 没有意义，去掉
+fn argv_safe_prompt(prompt: String) -> String {
+    if prompt.contains('\0') {
+        prompt.replace('\0', "")
+    } else {
+        prompt
+    }
+}
+
 pub(crate) fn ai_prompt_impl(
     profiles: Vec<Profile>,
     profile_id: Option<String>,
@@ -714,6 +725,7 @@ pub(crate) fn ai_prompt_impl_full(
     on_line: Option<&mut dyn FnMut(&str)>,
     cost_out: Option<&mut Option<f64>>,
 ) -> Result<String, String> {
+    let prompt = argv_safe_prompt(prompt);
     // 设置页的按功能/全局专用 profile 作为显式 id 之外的默认（每次现读，改动即时生效）
     let settings = crate::settings::read_current_checked()?;
     let explicit_id = profile_id.clone().filter(|v| !v.trim().is_empty());
@@ -2774,6 +2786,12 @@ pub async fn ai_conflict_advice(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn argv_safe_prompt_drops_nul_bytes() {
+        assert_eq!(super::argv_safe_prompt("ab\0c\0".into()), "abc");
+        assert_eq!(super::argv_safe_prompt("译这段".into()), "译这段");
+    }
+
     /// 跨厂商复核真跑（2026-11-02，用户允许）：走定时任务同一条无头启动——密钥在本进程里从 keys.json 取、只注入子进程，
     /// 不经过命令行。MESA_RR_AGENT / MESA_RR_CWD（真实项目副本）/ MESA_RR_PROMPT（复核指令文件）；默认不跑。
     #[test]
