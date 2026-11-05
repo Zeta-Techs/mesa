@@ -1461,7 +1461,9 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const setProjectSurfaceReq = useAppStore((s) => s.setProjectSurfaceReq);
   const filePreviewReq = useAppStore((s) => s.filePreviewReq);
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
-  useEffect(() => {
+  // 一次性跳转请求用 layout effect 在绘制前消费（2026-11-05 用户：从别的页切到定时任务会一闪别的画面）：
+  // 切页与请求同一批写进 store，普通 effect 在首帧绘制之后才换项目 / 页签，旧画面先露一帧
+  useLayoutEffect(() => {
     if (!projectSurfaceReq || !selectedProjectPath) return;
     try {
       localStorage.setItem(
@@ -1855,7 +1857,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
 
   // 对话页卡片 chip / 收件箱「去查看」的一次性跳转：按项目根或工作树根选中分组
   //（无对应分组静默忽略，与 focusTabReq 同口径）
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!selectProjectReq) return;
     const g = groups.find(
       (gr) =>
