@@ -49,6 +49,7 @@ test("对照窗：标签切换、关一项、跳页，圈选区域按页内比�
   const { createElement: h, act, createRoot, Peek } = compiled.exports;
   const root = createRoot(dom.window.document.getElementById("root")!);
   const closed: string[] = [];
+  const reframed: { key: string; region: Record<string, number> }[] = [];
   const jumped: number[] = [];
   let active = "cap";
   const items = [
@@ -60,6 +61,7 @@ test("对照窗：标签切换、关一项、跳页，圈选区域按页内比�
     onActivate: (k: string) => { active = k; },
     onClose: (k: string) => closed.push(k),
     onJump: (p: number) => jumped.push(p),
+    onReframe: (key: string, region: Record<string, number>) => reframed.push({ key, region }),
   })));
   const buttons = () => [...dom.window.document.querySelectorAll("button")];
   try {
@@ -88,6 +90,16 @@ test("对照窗：标签切换、关一项、跳页，圈选区域按页内比�
     assert.deepEqual(jumped, [7]);
     await act(async () => buttons().find((b) => b.getAttribute("aria-label") === "关掉对照窗")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.deepEqual(closed, ["fig"]);
+    // 重新框：点裁切钮进框选（整页），拖一个框 → 交回页内比例
+    await act(async () => buttons().find((b) => b.getAttribute("aria-pressed") === "false")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    const overlay = dom.window.document.querySelector<HTMLElement>(".cursor-crosshair")!;
+    assert.ok(overlay, "进了框选");
+    overlay.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 600, right: 400, bottom: 600, x: 0, y: 0, toJSON() {} }) as DOMRect;
+    await act(async () => {
+      overlay.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, clientY: 150 }));
+      dom.window.dispatchEvent(new dom.window.MouseEvent("pointerup", { clientX: 300, clientY: 450 }));
+    });
+    assert.deepEqual(reframed, [{ key: "fig", region: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 } }]);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

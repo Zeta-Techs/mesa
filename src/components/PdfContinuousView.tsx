@@ -35,8 +35,12 @@ import {
   type ReaderTranslateResult,
   pdfRenderWindow,
   captureRectToPageRegion,
+  loadFigRegion,
+  saveFigRegion,
   type PdfPeekItem,
 } from "../reader";
+import { cropFigureRegion, graphicBoxesFromOps, type Rect } from "../pdf-figure-crop";
+import { PdfRegionThumb } from "./PdfFigurePeek";
 import {
   findAllIn,
   flattenPdfOutline,
@@ -372,6 +376,7 @@ function PdfContinuousView({
     const figRef = (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref");
     if (figRef && window.getSelection()?.isCollapsed !== false && !e.metaKey && !e.ctrlKey) {
       const kind = figRef.dataset.figKind === "table" ? "table" : "figure";
+      onFigRefHover(null);
       void openFigurePeek(kind, figRef.dataset.figLabel ?? "");
       return;
     }
@@ -421,6 +426,7 @@ function PdfContinuousView({
 
   /** 术语悬停释义：事件代理命中 .ccode-gloss（HoverTip 横向钳制同 useHoverTip 口径） */
   function onContentMouseOver(e: React.MouseEvent<HTMLDivElement>) {
+    onFigRefHover((e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref") ?? null);
     const el = (e.target as HTMLElement).closest?.(".ccode-gloss");
     const meaning = el?.getAttribute("data-meaning") ?? "";
     if (el && meaning) {
@@ -920,32 +926,138 @@ function PdfContinuousView({
     scrollToPage(Math.min(pageCount, n));
   }
 
-  /** 打开某张图 / 表的对照窗：按图注定位所在页，整页显示并先滚到图注（第一期不裁图） */
+  /** 找一张图 / 表：图注所在页 → 自动框出图（第二期；用户重新框过的以它为准）→ 框不出就整页并记下图注高度。
+   *  按文档缓存（悬停预览和点击共用一次计算） */
+  const figCacheRef = useRef<{ doc: pdfjs.PDFDocumentProxy | null; map: Map<string, Promise<PdfPeekItem | null>> }>({
+    doc: null,
+    map: new Map(),
+  });
+  function resolveFigure(kind: "figure" | "table", label: string): Promise<PdfPeekItem | null> {
+    if (figCacheRef.current.doc !== doc) figCacheRef.current = { doc, map: new Map() };
+    const figKey = `${kind}:${label.toLowerCase()}`;
+    const cached = figCacheRef.current.map.get(figKey);
+    if (cached) return cached;
+    const d = doc;
+    const job = (async (): Promise<PdfPeekItem | null> => {
+      const pages = await ensureTextIndex();
+      const hit = pages ? locateFigure(pages.map((p) => p.lines), kind, label) : null;
+      if (!hit || !d) return null;
+      const name = `${kind === "figure" ? "Fig." : "Table"} ${label}`;
+      const base: PdfPeekItem = { key: `fig:${figKey}`, page: hit.page, label: name, region: null, focusY: null };
+      const saved = loadFigRegion(path, figKey);
+      if (saved) return { ...base, region: saved, auto: false };
+      try {
+        const page = await d.getPage(hit.page);
+        const vp = page.getViewport({ scale: 1 });
+        const toPage = (r: readonly number[]): Rect => {
+          const [ax, ay] = vp.convertToViewportPoint(r[0], r[1]) as number[];
+          const [bx, by] = vp.convertToViewportPoint(r[2], r[3]) as number[];
+          return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
+        };
+        const tc = await page.getTextContent();
+        const items = tc.items as { str?: string; hasEOL?: boolean; transform?: number[]; width?: number; height?: number }[];
+        const textBox = (it: (typeof items)[number]): Rect | null => {
+          const tr = it.transform;
+          if (!tr || !it.str?.trim()) return null;
+          const fh = Math.hypot(tr[2], tr[3]) || it.height || 0;
+          return toPage([tr[4], tr[5] - fh * 0.2, tr[4] + (it.width ?? 0), tr[5] + fh * 0.8]);
+        };
+        const idx = captionItemIndex(items, hit.quote);
+        if (idx == null) return base;
+        // 图注第一行：从命中的文本项到行尾
+        let caption: Rect | null = null;
+        for (let i = idx; i < items.length; i++) {
+          const b = textBox(items[i]);
+          if (b) caption = caption ? [Math.min(caption[0], b[0]), Math.min(caption[1], b[1]), Math.max(caption[2], b[2]), Math.max(caption[3], b[3])] : b;
+          if (items[i].hasEOL) break;
+        }
+        if (!caption) return base;
+        const focusY = Math.min(1, Math.max(0, caption[1] / vp.height));
+        const ops = await page.getOperatorList();
+        const region = cropFigureRegion({
+          page: { w: vp.width, h: vp.height },
+          caption,
+          graphics: graphicBoxesFromOps(ops.fnArray, ops.argsArray).map((g) => ({ rect: toPage(g.rect), kind: g.kind })),
+          texts: items.map(textBox).filter((b): b is Rect => b !== null),
+          kind,
+        });
+        return { ...base, region, focusY, auto: region !== null };
+      } catch {
+        return base;
+      }
+    })();
+    figCacheRef.current.map.set(figKey, job);
+    return job;
+  }
+
+  /** 打开某张图 / 表的对照窗（第二期：自动框出图，框不出就整页滚到图注） */
   async function openFigurePeek(kind: "figure" | "table", label: string) {
-    const pages = await ensureTextIndex();
-    const hit = pages ? locateFigure(pages.map((p) => p.lines), kind, label) : null;
-    const name = `${kind === "figure" ? "Fig." : "Table"} ${label}`;
-    if (!hit || !doc) {
-      showHint(`没在这篇 PDF 里找到「${name}」`);
+    const item = await resolveFigure(kind, label);
+    if (!item) {
+      showHint(`没在这篇 PDF 里找到「${kind === "figure" ? "Fig." : "Table"} ${label}」`);
       return;
     }
-    let focusY: number | null = null;
-    try {
-      const page = await doc.getPage(hit.page);
-      const tc = await page.getTextContent();
-      const items = tc.items as { str?: string; hasEOL?: boolean; transform?: number[] }[];
-      const idx = captionItemIndex(items, hit.quote);
-      const tr = idx != null ? items[idx].transform : undefined;
-      if (tr) {
-        const vp = page.getViewport({ scale: 1 });
-        const [, vy] = vp.convertToViewportPoint(tr[4], tr[5]);
-        focusY = Math.min(1, Math.max(0, vy / vp.height));
-      }
-    } catch {
-      /* 取不到图注位置：整页从顶上看 */
-    }
-    openPeek({ key: `fig:${kind}:${label.toLowerCase()}`, page: hit.page, label: name, region: null, focusY });
+    openPeek(item);
   }
+
+  /** 对照窗里重新框：更新这一项；图号项按篇记住，下次自动框直接用它 */
+  const reframePeek = useCallback(
+    (key: string, region: { x: number; y: number; w: number; h: number }) => {
+      setPeeks((cur) => cur.map((p) => (p.key === key ? { ...p, region, auto: false } : p)));
+      if (key.startsWith("fig:")) {
+        const figKey = key.slice(4);
+        saveFigRegion(path, figKey, region);
+        figCacheRef.current.map.delete(figKey);
+      }
+    },
+    [path],
+  );
+
+  /** 对照窗里「插入笔记 / 发给 Agent」：沿用圈选的两个去向 */
+  const sendPeek = useCallback(
+    async (target: "agent" | "note", blob: Blob, page: number) => {
+      const handler = target === "agent" ? onCaptureAgent : onCaptureNote;
+      const err = await (handler?.(blob, page, fileName) ?? Promise.resolve("当前环境不支持"));
+      showHint(err ?? (target === "agent" ? "已放进对话的输入框，检查后发送" : "已贴进笔记"));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onCaptureAgent, onCaptureNote, fileName],
+  );
+
+  // 正文图号悬停预览：停 0.45 秒出一张小图，移开就收；点击照旧钉成对照窗
+  const [figPreview, setFigPreview] = useState<{ item: PdfPeekItem; x: number; y: number; below: boolean } | null>(null);
+  const figHoverRef = useRef<{ el: Element | null; timer: ReturnType<typeof setTimeout> | null }>({ el: null, timer: null });
+  function onFigRefHover(el: HTMLElement | null) {
+    const st = figHoverRef.current;
+    if (st.el === el) return;
+    if (st.timer) clearTimeout(st.timer);
+    st.el = el;
+    st.timer = null;
+    if (!el) {
+      setFigPreview(null);
+      return;
+    }
+    st.timer = setTimeout(() => {
+      const kind = el.dataset.figKind === "table" ? "table" : "figure";
+      void resolveFigure(kind, el.dataset.figLabel ?? "").then((item) => {
+        if (!item || figHoverRef.current.el !== el) return;
+        const r = el.getBoundingClientRect();
+        const below = r.bottom + 300 < window.innerHeight;
+        setFigPreview({
+          item,
+          x: Math.min(Math.max(8, r.left), window.innerWidth - 380),
+          y: below ? r.bottom + 6 : r.top - 6,
+          below,
+        });
+      });
+    }, 450);
+  }
+  useEffect(
+    () => () => {
+      if (figHoverRef.current.timer) clearTimeout(figHoverRef.current.timer);
+    },
+    [],
+  );
 
   // ----- 外部跳转（笔记里点 p.3 / Fig. 2）-----
   const jumpDoneRef = useRef(0);
@@ -1283,7 +1395,25 @@ function PdfContinuousView({
           onActivate={setPeekActive}
           onClose={closePeek}
           onJump={scrollToPage}
+          onReframe={reframePeek}
+          onSend={captureSupported ? sendPeek : undefined}
         />
+      )}
+      {doc && figPreview && (
+        <div
+          role="tooltip"
+          className="ccode-float-surface pointer-events-none fixed z-50 w-[372px] overflow-hidden rounded-md border border-field p-1.5 shadow-lg"
+          style={
+            figPreview.below
+              ? { left: figPreview.x, top: figPreview.y }
+              : { left: figPreview.x, bottom: window.innerHeight - figPreview.y }
+          }
+        >
+          <PdfRegionThumb doc={doc} item={figPreview.item} width={360} maxHeight={280} dark={dark} />
+          <p className="mt-1 px-0.5 text-micro text-l3">
+            {figPreview.item.label} · p.{figPreview.item.page} · 点一下钉成对照窗
+          </p>
+        </div>
       )}
       {hint && (
         <p className="shrink-0 bg-inset px-3 py-1 text-xs text-l2">{hint}</p>
@@ -1596,6 +1726,7 @@ function PdfContinuousView({
             onScroll={() => {
               if (liveZoomingRef.current) return;
               setGlossTip(null);
+              if (figHoverRef.current.el) onFigRefHover(null);
             }}
             onMouseOver={onContentMouseOver}
             className="ccode-pdf-scroll relative min-h-0 flex-1 overflow-auto [overflow-anchor:none]"

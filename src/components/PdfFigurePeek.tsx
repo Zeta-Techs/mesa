@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type * as pdfjs from "pdfjs-dist";
-import { X } from "lucide-react";
+import { Crop, MessageSquarePlus, NotebookPen, X } from "lucide-react";
 import {
   PDF_MAX_CANVAS_PIXELS,
   PDF_ZOOM_STEP,
@@ -24,6 +24,99 @@ import {
  * 浮窗挂 body、坐标域是整个窗口（同日用户：关在 PDF 栏里太小）——能拖到笔记栏、对话栏上面，拉到很大；
  * 拖窗头换位、拖右下角改大小，松手记 localStorage。窗内倍率独立，⌘/Ctrl+滚轮与 − / ＋ 缩放，不影响正文。
  */
+type Region = { x: number; y: number; w: number; h: number };
+
+/** 把一页里的一块区域画进 canvas：按 fit（窗宽，或宽高都装下）× zoom 算倍率，离屏画完再换上。
+ *  对照窗与悬停预览共用；返回画好的 CSS 尺寸，cancel 打断在途渲染 */
+function renderRegion(
+  doc: pdfjs.PDFDocumentProxy,
+  pageNum: number,
+  region: Region | null,
+  fitBox: { w: number; h: number },
+  wholePageFitWidth: boolean,
+  zoom: number,
+  canvas: HTMLCanvasElement,
+): { promise: Promise<{ cssW: number; cssH: number } | null>; cancel: () => void } {
+  let cancelled = false;
+  let task: pdfjs.RenderTask | null = null;
+  const promise = (async () => {
+    const page = await doc.getPage(pageNum);
+    if (cancelled) return null;
+    const base = page.getViewport({ scale: 1 });
+    const r = region ?? { x: 0, y: 0, w: 1, h: 1 };
+    const regionW = r.w * base.width;
+    const regionH = r.h * base.height;
+    const scale = pdfPeekFitScale({ w: regionW, h: regionH }, fitBox, !region && wholePageFitWidth) * zoom;
+    const cssW = Math.floor(regionW * scale);
+    const cssH = Math.floor(regionH * scale);
+    let out = window.devicePixelRatio || 1;
+    // 画布像素上限（同正文）：放太大时降清晰度，不整块涂黑
+    if (cssW * cssH * out * out > PDF_MAX_CANVAS_PIXELS) out = Math.sqrt(PDF_MAX_CANVAS_PIXELS / (cssW * cssH));
+    const viewport = page.getViewport({ scale });
+    const off = document.createElement("canvas");
+    off.width = Math.max(1, Math.floor(cssW * out));
+    off.height = Math.max(1, Math.floor(cssH * out));
+    // 先绑 alpha:true（Windows WebView2 深色下不透明画布会合成白块，同正文）
+    off.getContext("2d", { alpha: true });
+    task = page.render({
+      canvas: off,
+      viewport,
+      transform: [out, 0, 0, out, -r.x * viewport.width * out, -r.y * viewport.height * out],
+    });
+    await task.promise;
+    if (cancelled) return null;
+    canvas.width = off.width;
+    canvas.height = off.height;
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    canvas.getContext("2d", { alpha: true })?.drawImage(off, 0, 0);
+    return { cssW, cssH };
+  })();
+  return {
+    promise,
+    cancel: () => {
+      cancelled = true;
+      task?.cancel();
+    },
+  };
+}
+
+/** 正文图号的悬停预览：自动框出的图；没框出来就取图注上方半页 */
+export function PdfRegionThumb({
+  doc,
+  item,
+  width,
+  maxHeight,
+  dark,
+}: {
+  doc: pdfjs.PDFDocumentProxy;
+  item: PdfPeekItem;
+  width: number;
+  maxHeight: number;
+  dark?: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const region =
+      item.region ??
+      (item.focusY != null
+        ? { x: 0, y: Math.max(0, item.focusY - 0.45), w: 1, h: Math.min(0.5, item.focusY + 0.05) }
+        : null);
+    const job = renderRegion(doc, item.page, region, { w: width, h: maxHeight }, false, 1, canvas);
+    job.promise.catch(() => {});
+    return job.cancel;
+  }, [doc, item.key, item.page, item.region, item.focusY, width, maxHeight]);
+  return (
+    <div className={`flex justify-center bg-inset ${dark ? "ccode-reader-dark" : ""}`} style={{ maxHeight }}>
+      <div data-page-num={item.page} className="bg-white">
+        <canvas ref={canvasRef} className="block" />
+      </div>
+    </div>
+  );
+}
+
 export default function PdfFigurePeek({
   doc,
   items,
@@ -32,6 +125,8 @@ export default function PdfFigurePeek({
   onActivate,
   onClose,
   onJump,
+  onReframe,
+  onSend,
 }: {
   doc: pdfjs.PDFDocumentProxy;
   items: readonly PdfPeekItem[];
@@ -41,6 +136,10 @@ export default function PdfFigurePeek({
   onClose: (key: string) => void;
   /** 正文跳到这一项的页 */
   onJump: (page: number) => void;
+  /** 在窗里重新框：整页显示、拖一个框，交回页内 0–1 区域（图号项按篇记住） */
+  onReframe?: (key: string, region: Region) => void;
+  /** 窗里这块图「插入笔记」/「发给 Agent」（沿用圈选的两个去向） */
+  onSend?: (target: "agent" | "note", blob: Blob, page: number) => void | Promise<void>;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -54,6 +153,10 @@ export default function PdfFigurePeek({
   const bodyW = bodySize.w;
   const [error, setError] = useState<string | null>(null);
   const item = items.find((i) => i.key === activeKey) ?? items[0];
+  /** 重新框：先整页按窗宽显示，拖出的框换成页内比例交回 */
+  const [reframing, setReframing] = useState(false);
+  const [dragBox, setDragBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [sending, setSending] = useState(false);
 
   // 坐标域是整个窗口：窗口变小时把浮窗收回来
   useLayoutEffect(() => {
@@ -87,71 +190,79 @@ export default function PdfFigurePeek({
   }, [win !== null]);
 
   // 换一项就回到适配宽度
-  useEffect(() => setZoom(1), [item?.key]);
+  useEffect(() => {
+    setZoom(1);
+    setReframing(false);
+  }, [item?.key]);
 
-  // 渲染这一项的区域：适配窗宽 × zoom；整页且有图注位置时，首次画好滚到图注
+  // 渲染这一项的区域：圈选 / 自动框的整块装进窗里，整页按窗宽 × zoom；整页且有图注位置时，首次画好滚到图注
   const scrolledKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!item || bodyW <= 0) return;
-    let cancelled = false;
-    let task: pdfjs.RenderTask | null = null;
+    const canvas = canvasRef.current;
+    if (!item || bodyW <= 0 || !canvas) return;
+    const region = reframing ? null : item.region;
+    let job: ReturnType<typeof renderRegion> | null = null;
     const t = setTimeout(() => {
-      void (async () => {
-        try {
-          setError(null);
-          const page = await doc.getPage(item.page);
-          if (cancelled) return;
-          const base = page.getViewport({ scale: 1 });
-          const r = item.region ?? { x: 0, y: 0, w: 1, h: 1 };
-          const regionW = r.w * base.width;
-          const regionH = r.h * base.height;
-          const scale =
-            pdfPeekFitScale({ w: regionW, h: regionH }, bodySize, !item.region) * zoom;
-          const cssW = Math.floor(regionW * scale);
-          const cssH = Math.floor(regionH * scale);
-          let out = window.devicePixelRatio || 1;
-          // 画布像素上限（同正文）：放太大时降清晰度，不整块涂黑
-          if (cssW * cssH * out * out > PDF_MAX_CANVAS_PIXELS) {
-            out = Math.sqrt(PDF_MAX_CANVAS_PIXELS / (cssW * cssH));
-          }
-          const viewport = page.getViewport({ scale });
-          const canvas = canvasRef.current;
-          if (!canvas) return;
-          const off = document.createElement("canvas");
-          off.width = Math.max(1, Math.floor(cssW * out));
-          off.height = Math.max(1, Math.floor(cssH * out));
-          // 先绑 alpha:true（Windows WebView2 深色下不透明画布会合成白块，同正文）
-          off.getContext("2d", { alpha: true });
-          task = page.render({
-            canvas: off,
-            viewport,
-            transform: [out, 0, 0, out, -r.x * viewport.width * out, -r.y * viewport.height * out],
-          });
-          await task.promise;
-          if (cancelled) return;
-          canvas.width = off.width;
-          canvas.height = off.height;
-          canvas.style.width = `${cssW}px`;
-          canvas.style.height = `${cssH}px`;
-          canvas.getContext("2d", { alpha: true })?.drawImage(off, 0, 0);
+      setError(null);
+      job = renderRegion(doc, item.page, region, bodySize, true, zoom, canvas);
+      job.promise
+        .then((size) => {
           const body = bodyRef.current;
-          if (body && item.focusY != null && !item.region && scrolledKeyRef.current !== item.key) {
-            scrolledKeyRef.current = item.key;
-            body.scrollTop = pdfPeekScrollTop(item.focusY, cssH, body.clientHeight);
+          if (!size || !body) return;
+          if (!region && item.focusY != null && scrolledKeyRef.current !== `${item.key}:${reframing}`) {
+            scrolledKeyRef.current = `${item.key}:${reframing}`;
+            body.scrollTop = pdfPeekScrollTop(item.focusY, size.cssH, body.clientHeight);
           }
-        } catch (e) {
-          if (!cancelled && (e as { name?: string })?.name !== "RenderingCancelledException") {
-            setError(String(e));
-          }
-        }
-      })();
+        })
+        .catch((e) => {
+          if ((e as { name?: string })?.name !== "RenderingCancelledException") setError(String(e));
+        });
     }, 60);
     return () => {
-      cancelled = true;
       clearTimeout(t);
-      task?.cancel();
+      job?.cancel();
     };
-  }, [doc, item?.key, item?.page, item?.region, item?.focusY, bodySize, zoom]);
+  }, [doc, item?.key, item?.page, item?.region, item?.focusY, bodySize, zoom, reframing]);
+
+  /** 重新框：在整页上拖框，换成页内比例交回；太小的当误触 */
+  function startReframeDrag(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0 || !item) return;
+    e.preventDefault();
+    const host = e.currentTarget.getBoundingClientRect();
+    const x0 = e.clientX - host.left;
+    const y0 = e.clientY - host.top;
+    const norm = (ev: PointerEvent) => {
+      const x1 = Math.min(Math.max(0, ev.clientX - host.left), host.width);
+      const y1 = Math.min(Math.max(0, ev.clientY - host.top), host.height);
+      return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+    };
+    const onMove = (ev: PointerEvent) => setDragBox(norm(ev));
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      setDragBox(null);
+      const b = norm(ev);
+      if (b.w < 12 || b.h < 12 || host.width <= 0 || host.height <= 0) return;
+      setReframing(false);
+      onReframe?.(item.key, { x: b.x / host.width, y: b.y / host.height, w: b.w / host.width, h: b.h / host.height });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  async function send(target: "agent" | "note") {
+    const canvas = canvasRef.current;
+    if (!canvas || !item || !onSend || sending) return;
+    setSending(true);
+    try {
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (blob) await onSend(target, blob, item.page);
+    } finally {
+      setSending(false);
+    }
+  }
 
   // 窗内 ⌘/Ctrl+滚轮、触控板捏合只缩这扇窗（拦在这里，不冒到正文的缩放）
   useEffect(() => {
@@ -257,6 +368,33 @@ export default function PdfFigurePeek({
         <button type="button" className={btn} title="放大（窗里 ⌘/Ctrl+滚轮也行）" onClick={() => setZoom((z) => Math.min(6, z * PDF_ZOOM_STEP))}>
           <span className="text-xs">＋</span>
         </button>
+        {onReframe && (
+          <button
+            type="button"
+            className={`${btn} ${reframing ? "bg-seg-sel text-l1" : ""}`}
+            title={
+              reframing
+                ? "在下面整页上拖一个框；再点一下取消"
+                : item.auto
+                  ? "这块是自动框出来的，不对就重新框（会记住）"
+                  : "重新框"
+            }
+            aria-pressed={reframing}
+            onClick={() => setReframing((v) => !v)}
+          >
+            <Crop size={13} strokeWidth={1.8} />
+          </button>
+        )}
+        {onSend && (
+          <>
+            <button type="button" className={btn} title="把这块图插入笔记" disabled={sending || reframing} onClick={() => void send("note")}>
+              <NotebookPen size={13} strokeWidth={1.8} />
+            </button>
+            <button type="button" className={btn} title="把这块图发给 Agent" disabled={sending || reframing} onClick={() => void send("agent")}>
+              <MessageSquarePlus size={13} strokeWidth={1.8} />
+            </button>
+          </>
+        )}
         <button type="button" className={btn} title="正文跳到这一页" onClick={() => onJump(item.page)}>
           <span className="text-xs">p.{item.page}</span>
         </button>
@@ -270,8 +408,22 @@ export default function PdfFigurePeek({
         ) : (
           // 比窗小时居中（圈选的图整块装进窗里，四周留底色）
           <div className="flex min-h-full min-w-full w-max items-center justify-center">
-            <div data-page-num={item.page} className="bg-white">
+            <div data-page-num={item.page} className="relative bg-white">
               <canvas ref={canvasRef} className="block" />
+              {reframing && (
+                <div
+                  className="absolute inset-0 cursor-crosshair select-none"
+                  onPointerDown={startReframeDrag}
+                  title="拖一个框，框住这张图"
+                >
+                  {dragBox && (
+                    <div
+                      className="pointer-events-none absolute rounded-sm border border-cta bg-cta/15"
+                      style={{ left: dragBox.x, top: dragBox.y, width: dragBox.w, height: dragBox.h }}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

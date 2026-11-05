@@ -998,7 +998,13 @@
   页码不包）或笔记里的 Fig. N（`jumpReq` 的图表跳转改开对照窗，正文不动）→ `locateFigure` 找图注页、`captionItemIndex`
   取图注纵坐标，整页显示先滚到图注（`pdfPeekScrollTop` 让图注落窗下方八成处）。窗内倍率独立（⌘/Ctrl+滚轮拦在窗上，
   `use-pdf-zoom` 的 `overPane` 遇 `[data-figure-peek]` 让出捏合）；拖头 / 右下角改位置大小，`clampPdfPeekWin` 收在窗口里、
-  窗头不压阅读区顶栏，松手记 `ccode.readerPeekFloat`（栏内坐标的旧键 `readerPeekWin` 不沿用）；圈选的区域按
+  窗头不压阅读区顶栏，松手记 `ccode.readerPeekFloat`（栏内坐标的旧键 `readerPeekWin` 不沿用）；**第二期（同日）**：
+  图号打开先 `resolveFigure`（按文档缓存，悬停与点击共用）——用户框过的（`ccode.readerFigRegions` 按 PDF 路径 + 图号）优先，
+  否则 `pdf-figure-crop.ts`：`graphicBoxesFromOps` 跟踪 cm / save / restore / 表单矩阵取图片单位方块与路径 minMax，
+  `cropFigureRegion` 图从图注往上把相距 <3% 页高、横向相交或同一行并排的图形聚成一块再并进短文字（轴标、子图字母，
+  整行正文与图注不并），表从图注往下按三线表横线（相隔 <¼ 页高）；认不出 null 退整页滚图注。窗顶裁切钮整页框选交回比例
+  （图号项记住、清缓存），笔记 / Agent 两钮把窗里 canvas 转 PNG 走圈选同一对去向；正文 `.ccode-figref` 悬停 0.45s 出
+  `PdfRegionThumb` 小图（没框出时取图注上方半页），滚动 / 移开即收；圈选的区域按
   `pdfPeekFitScale` 整块装进窗里（宽高取小、居中），整页按窗宽；最多 6 项成标签，换篇清空。第一期不自动裁图（第二期：图像框 / 空白带裁切、
   悬停预览）。
   **2026-11-05 用户「段落在下面、球在上面」「高亮超出段落」两处修订**：①同一次测量里按原文段外框算球位

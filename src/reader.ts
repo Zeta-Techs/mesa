@@ -1092,6 +1092,8 @@ export interface PdfPeekItem {
   label: string;
   region: { x: number; y: number; w: number; h: number } | null;
   focusY?: number | null;
+  /** 区域是自动框出来的（窗顶提示「不对就重新框」）；用户框过 / 圈选的为 false */
+  auto?: boolean;
 }
 
 /** 对照窗位置与大小（窗口 px，2026-11-05 用户：钉在 PDF 栏里太小，改成整窗可拖的浮窗），记在 localStorage，换篇不丢 */
@@ -1173,4 +1175,35 @@ export function captureRectToPageRegion(
 export function pdfPeekScrollTop(focusY: number, contentH: number, viewH: number): number {
   const target = focusY * contentH - viewH * 0.8;
   return Math.max(0, Math.min(Math.round(target), Math.max(0, contentH - viewH)));
+}
+
+/** 用户在对照窗里「重新框」的图区域：按 PDF 路径 + 图号记（第二期，自动框认错了以它为准） */
+export const PDF_FIG_REGION_KEY = "ccode.readerFigRegions";
+type FigRegion = { x: number; y: number; w: number; h: number };
+
+function readFigRegions(): Record<string, Record<string, FigRegion>> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PDF_FIG_REGION_KEY) ?? "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+export function loadFigRegion(pdfPath: string, figKey: string): FigRegion | null {
+  const r = readFigRegions()[pdfPath]?.[figKey];
+  return r && [r.x, r.y, r.w, r.h].every((v) => Number.isFinite(v)) ? r : null;
+}
+
+export function saveFigRegion(pdfPath: string, figKey: string, region: FigRegion): void {
+  const all = readFigRegions();
+  all[pdfPath] = { ...(all[pdfPath] ?? {}), [figKey]: region };
+  // 只留最近 200 篇
+  const keys = Object.keys(all);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete all[k];
+  try {
+    localStorage.setItem(PDF_FIG_REGION_KEY, JSON.stringify(all));
+  } catch {
+    /* 存不下只是下次再自动框 */
+  }
 }

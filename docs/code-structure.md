@@ -498,6 +498,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
                              # 目录拍平与落点高度（tests/pdf-search.test.ts）
+  pdf-figure-crop.ts         # 对照窗自动框图（纯逻辑）：graphicBoxesFromOps 从 getOperatorList 取图片 / 路径外框，cropFigureRegion 按图注往上（表往下按横线）聚块并进轴标，认不出 null 退整页（tests/pdf-figure-crop.test.ts）
   note-pdf-pair.ts           # md 笔记配不配得上本篇 PDF（reader_for_note 结果按路径缓存 30 秒、同路径并发只问一次 + useNotePaired）：
                              # 「沉浸阅读」入口只给配得上的——FilePreviewEditor 预览右上角、ProjectFilesView 文件行悬停、FileTree 右键（2026-10-25；tests/note-pdf-pair.test.ts）
   reader-note.ts             # 笔记 ↔ PDF 纯逻辑（2026-10-18）：「## 标注」行格式与解析（与 reader.rs 双端镜像，改动需同步）、
@@ -1031,7 +1032,7 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
                              #   动画是 data-shown 驱动的 CSS 过渡（App.css .ccode-rail-peek，可半路改向），收起由 App 的 useExitRender(180) 多挂一会儿
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
-components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfContinuousView 渲染、portal 到 body 的整窗浮窗（可拖到笔记 / 对话栏上），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekFloat），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts
+components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfContinuousView 渲染、portal 到 body 的整窗浮窗（可拖到笔记 / 对话栏上），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekFloat），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts；导出 PdfRegionThumb（正文图号悬停小图）
 components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆位：ReaderOverlay 原位档占布局流可拖高度、ReaderTlFloat 悬浮档锚在「译」球旁）：表头行（收起/原文显隐/存进笔记/复制/⋯/×）+ 块级对照正文 + 历史抽屉点行载入；历史/pending/高度/钉位等状态由 ReaderOverlay 持有，本组件 memo 只管呈现，旧 bilingual 条目经 reader.ts shim 转纯译文
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
   session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；
