@@ -737,6 +737,7 @@ export default function ProjectAgentsView({
             unboundLine={inherited.line}
             unboundDetail={inherited.detail}
             choices={assistantSlotProfiles}
+            note="哪家都能答；查错时打开项目文件核对、边想边出字目前只有 Claude Code / Codex"
             disabled={saving}
             onPick={(pid, mid) => void saveSlotBinding(ASSISTANT_BINDING_SLOT, pid, mid)}
             onClear={() => void saveSlotBinding(ASSISTANT_BINDING_SLOT, "", "")}
@@ -1071,6 +1072,7 @@ function SlotCard({
   unboundLine = "跟随项目默认",
   unboundDetail = "",
   defaultOptionLabel = "项目默认",
+  note,
   choices,
   disabled,
   onPick,
@@ -1088,6 +1090,8 @@ function SlotCard({
   unboundDetail?: string;
   /** 下拉第一项。专属绑定是「项目默认」；定时任务未钉连接是「项目默认」（那家不能定时写盘或项目没设默认时是「自动」）。 */
   defaultOptionLabel?: string;
+  /** 卡片最下面一行小字说明（项目助手：哪些能力只有部分 CLI 有） */
+  note?: string;
   choices: readonly {
     id: string;
     name: string;
@@ -1146,6 +1150,7 @@ function SlotCard({
           />
         )}
       </div>
+      {note && <p className="mt-1.5 text-micro leading-4 text-l4">{note}</p>}
     </li>
   );
 }
