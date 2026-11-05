@@ -1,8 +1,13 @@
 import {
+  History,
+  LoaderCircle,
   MessageSquarePlus,
+  MoreHorizontal,
   NotebookPen,
   Pencil,
+  Play,
   Sparkles,
+  Square,
   Trash2,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -1548,7 +1553,7 @@ export default function ScheduleSection({
       title={research ? "新建定时任务（默认文献雷达，也可以选巡检技能或新建一个）" : "新建定时任务（让 AI 按你的描述写一个巡检技能）"}
       onClick={() => openCreate()}
     >
-      ＋ 新建定时任务
+      <span className="text-xs">＋ 新建定时任务</span>
     </button>
   );
 
@@ -1725,9 +1730,11 @@ export default function ScheduleSection({
                         }
                         onClick={() => setKeywordFor(s)}
                       >
-                        {subCounts[s.id] === 1 && subKeywords[s.id]?.[0]
-                          ? subKeywords[s.id][0]
-                          : `关键词${subCounts[s.id] != null ? ` ${subCounts[s.id]}` : ""}`}
+                        <span className="text-xs">
+                          {subCounts[s.id] === 1 && subKeywords[s.id]?.[0]
+                            ? subKeywords[s.id][0]
+                            : `关键词${subCounts[s.id] != null ? ` ${subCounts[s.id]}` : ""}`}
+                        </span>
                       </button>
                     )}
                     {s.profileId && (
@@ -1746,23 +1753,27 @@ export default function ScheduleSection({
                       {s.history.length > 0 && (
                         <button
                           type="button"
-                          className={`${actionBtn} inline-flex items-center gap-1`}
+                          className={`${actionBtn} gap-1 ${historyOpen === s.id ? "bg-hover text-l1" : ""}`}
                           aria-expanded={historyOpen === s.id}
-                          title="最近运行记录"
+                          title={historyOpen === s.id ? "收起运行记录" : "最近运行记录"}
                           onClick={() =>
                             setHistoryOpen((v) => (v === s.id ? null : s.id))
                           }
                         >
-                          <FoldMark open={historyOpen === s.id} /> 历史
+                          <History size={13} strokeWidth={1.8} aria-hidden="true" />
+                          {/* 全站 button { font: inherit } 会吞掉按钮上的 text-xs，字号写在内层 */}
+                          <span className="text-xs">历史</span>
                         </button>
                       )}
                       {s.runningRunId && (
                         <button
                           type="button"
-                          className={actionBtn}
+                          className={`${actionBtn} gap-1 hover:text-err-text`}
+                          title="停止这次运行"
                           onClick={() => void cancelSchedule(s)}
                         >
-                          停止运行
+                          <Square size={10} strokeWidth={2} fill="currentColor" aria-hidden="true" />
+                          <span className="text-xs">停止</span>
                         </button>
                       )}
                       <button
@@ -1774,10 +1785,15 @@ export default function ScheduleSection({
                             ? "先在文献雷达里订阅关键词，再立即运行"
                             : "立即运行一次（结果走通知）"
                         }
-                        aria-label={`立即运行：${s.name}`}
+                        aria-label={running.has(s.id) ? `正在运行：${s.name}` : `立即运行：${s.name}`}
                         onClick={() => void runNow(s)}
                       >
-                        {running.has(s.id) ? "◔" : "▶"}
+                        {/* 文字符号 ◔ / ▶ 换成线条图标（2026-11-05 用户：这几处要优化），与行内其他图标同一套 */}
+                        {running.has(s.id) ? (
+                          <LoaderCircle size={14} strokeWidth={1.8} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+                        ) : (
+                          <Play size={13} strokeWidth={1.8} aria-hidden="true" />
+                        )}
                       </button>
                       <button
                         type="button"
@@ -1789,7 +1805,7 @@ export default function ScheduleSection({
                         aria-label={`任务操作：${s.name}`}
                         className={`${iconActionClass} ${hoverRevealClass}`}
                       >
-                        ⋯
+                        <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
                       </button>
                     </span>
                   </div>
