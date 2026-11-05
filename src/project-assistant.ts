@@ -76,6 +76,10 @@ export function parseAssistantAnswer(answer: string, stepCount: number): { text:
   const actions: AssistantAction[] = [];
   const seen = new Set<string>();
   const text = answer
+    // 动作标记写成了派活单那样的块（「:::商量|…\n:::」，2026-11-05 Codex 干跑实证）：认识的种类按标记收，不把原文露给人
+    .replace(/:::[ \t]*([^\n]{1,600}?)[ \t]*\n\s*:::/g, (whole, body: string) =>
+      KIND_WORDS[body.split(/[|:：]/)[0].replace(/\s+/g, "")] ? `[[${body}]]` : whole,
+    )
     .replace(MARK, (_, body: string) => {
       const [head, ...rest] = body.split("|");
       const payload = rest.join("|").trim();
@@ -107,11 +111,13 @@ export function parseAssistantAnswer(answer: string, stepCount: number): { text:
  * - project 问这个项目（进度、出错、下一步、第几步）：拼项目快照（原来的做法）；
  * - mixed 两样都沾（「第 3 步保存不进项目怎么办」）：快照 + 说明书都带；
  * - chat 打招呼、道谢：什么都不带，一两句回；
- * - general 判不出的（「现在几点」「帮我看看」）：只带一点项目概况和当前时间，直接答；要查记录或说明书才答得了的，
+ * - general 判不出的（「现在几点」「这是什么」）：只带一点项目概况和当前时间，直接答；要查记录或说明书才答得了的，
  *   请用户问得具体些（2026-11-04 用户截图：问「现在几点」也去看项目记录、翻说明书）。
+ * - request 要做事（2026-11-05，docs/design-assistant-intake.md）：交代一件要产出或改动文件的事（整理、画图、写报告、准备组会、规划实验…），
+ *   带快照、项目地图、能力清单，起草前可只读查看文件，问清楚后起草派活单；上一轮刚问过它一个问题时，这一轮按 request 接着走。
  * 「问问为什么」带着某次运行进来的一律按 project。
  */
-export type AssistantIntent = "howto" | "project" | "mixed" | "chat" | "general";
+export type AssistantIntent = "howto" | "project" | "mixed" | "chat" | "general" | "request";
 
 const CHAT_RE = /^(你好|您好|嗨|哈喽|hi|hello|hey|谢谢|多谢|感谢|thanks|thank you|好的|好|ok|okay|收到|在吗|在不在|辛苦了|早|早上好|晚安|拜拜|再见)[呀啊哦了吧！!。.~～，, ]*$/i;
 const PROJECT_RE =
@@ -119,15 +125,40 @@ const PROJECT_RE =
 const HOWTO_RE =
   /怎么|如何|怎样|在哪|能不能|可不可以|可以.{0,12}吗|是什么|什么意思|啥意思|设置|切换|更换|跟换|换(个|成|一个|一下)?(模型|连接|主题|agent|配置|账号)|快捷键|入口|按钮|教程|用法/i;
 
-export function classifyQuestion(question: string, hasFocus = false): AssistantIntent {
+/** 交代要做的事：「帮我 / 给我 / 我要…」或以动作开头；问出错原因的（含「为什么」「报错」）不算，那是查错 */
+const REQUEST_RE =
+  /帮我|给我|替我|麻烦你?|请你|我要|我想要|我需要|^(请)?(整理|总结|汇总|画|做|写|准备|规划|设计|分析|统计|生成|对比|合并|改|重画|重做|列|起草|汇报)|(准备|做|出).{0,8}(组会|汇报|答辩|周报|月报|报告|幻灯片|PPT|海报)/i;
+
+/** 只说了「帮我看看」「处理一下」、没说做什么的：判不出，请他说具体（不当成要做事去翻文件） */
+const VAGUE_RE = /^(请|麻烦)?你?(帮我|给我|替我)?(看看|看一下|瞧瞧|弄一下|处理一下|搞一下)[吧呗。.!！?？~～]*$/;
+
+export interface PreviousTurnHint {
+  /** 上一轮回答里问了用户一个问题（:::问） */
+  asked: boolean;
+  /** 上一轮回答里起草了派活单、还没派 */
+  drafted: boolean;
+}
+
+/** 从上一轮回答看要不要接着按「要做事」走 */
+export function previousTurnHint(answer: string | undefined, dispatched = false): PreviousTurnHint {
+  const a = answer ?? "";
+  return { asked: CLARIFY_BLOCK.test(a), drafted: ORDER_BLOCK.test(a) && !dispatched };
+}
+
+export function classifyQuestion(question: string, hasFocus = false, prev?: PreviousTurnHint): AssistantIntent {
   if (hasFocus) return "project";
   const q = question.trim();
+  // 上一轮问了它一个问题：这一句多半是在回答（「20 分钟」「上周的」），接着起草
+  if (prev?.asked && !(q.length <= 12 && CHAT_RE.test(q))) return "request";
   if (q.length <= 12 && CHAT_RE.test(q)) return "chat";
+  if (REQUEST_RE.test(q) && !INSPECT_RE.test(q) && !VAGUE_RE.test(q)) return "request";
   const project = PROJECT_RE.test(q);
   const howto = HOWTO_RE.test(q);
   if (project && howto) return "mixed";
   if (project) return "project";
   if (howto) return "howto";
+  // 刚起草了派活单、这句又看不出别的意思（「交付改成 pptx」「再加上第二批数据」）：接着改单子
+  if (prev?.drafted) return "request";
   return "general";
 }
 
@@ -138,6 +169,8 @@ export function classifyQuestion(question: string, hasFocus = false): AssistantI
 const INSPECT_RE = /出错|报错|错误|失败|为什么|怎么回事|卡住|卡在|没成|不成功|保存不进|跑不|不对|异常|bug|问题出在|原因/i;
 
 export function wantsInspect(question: string, intent: AssistantIntent, hasFocus = false): boolean {
+  // 要做事：起草前打开相关文件看一眼，单子才写得出依据（2026-11-05 放宽，原来只用于查错）
+  if (intent === "request") return true;
   if (intent !== "project" && intent !== "mixed") return false;
   return hasFocus || INSPECT_RE.test(question);
 }
@@ -152,6 +185,7 @@ export const INTENT_WAITING: Record<AssistantIntent, string> = {
   mixed: "正在看项目记录、翻说明书…",
   chat: "在想…",
   general: "在想…",
+  request: "正在看项目里有什么，想想怎么做…",
 };
 
 export const INSPECT_WAITING = "正在打开项目里的文件核对…（只读，不会改动）";
@@ -189,9 +223,16 @@ export const PROJECT_RULES = `${IDENTITY}
 7. 附了「说明书摘录」时，讲到怎么操作照摘录说，摘录没写的操作不要编。`;
 
 /** 只读查看项目文件时多给的一段（跑在项目根，工作副本另列） */
-export function inspectRules(projectRoot: string, worktrees: readonly string[]): string {
-  return `这次你在项目文件夹里，可以**只读**查看文件：读、搜索、列目录。不能改文件、不能运行命令，也不要试。
-项目根：${projectRoot}${worktrees.length ? `\n各步骤的工作副本（AI 实际干活的地方，出错多半在这里）：\n${worktrees.map((w) => `- ${w}`).join("\n")}` : ""}
+export function inspectRules(projectRoot: string, worktrees: readonly string[], purpose: "debug" | "intake" = "debug"): string {
+  const head = `这次你在项目文件夹里，可以**只读**查看文件：读、搜索、列目录。不能改文件、不能运行命令，也不要试。
+项目根：${projectRoot}${worktrees.length ? `\n各步骤的工作副本（AI 实际干活的地方${purpose === "debug" ? "，出错多半在这里" : ""}）：\n${worktrees.map((w) => `- ${w}`).join("\n")}` : ""}`;
+  if (purpose === "intake") {
+    return `${head}
+怎么看：先在项目地图里找和这件事相关的数据、记录、以前的产出，打开几个看清内容（记录怎么写的、数据有哪些列、时间范围），
+够写清依据和范围就停；最多看十来个文件，大数据文件只看开头几十行，不读 PDF 正文，不读 .env、密钥一类文件。
+派活单里的路径只写你在地图或文件里确实看到的。`;
+  }
+  return `${head}
 怎么查：先从快照里找可疑处（出错的那一步、出错那次的事件、核验拦下的、退回意见），再去打开相关的脚本、日志、任务书（TASK.md）、产物核对；
 最多看十来个文件，不读大数据文件和 PDF 正文，不读 .env、密钥一类文件。回答里写清你看了哪个文件、哪一行，看到了什么；没找到就直说没找到。`;
 }
@@ -224,6 +265,8 @@ export const CHAT_RULES = `${IDENTITY}
 export interface AssistantHistoryTurn {
   question: string;
   answer: string;
+  /** 这一轮的时间（项目地图据此标「上次问以来新出现或改过」） */
+  at?: string;
 }
 
 /** 喂给 AI 的最近几轮（只带最近 6 轮，回答截短） */
@@ -247,13 +290,19 @@ export interface AssistantMaterials {
   inspect?: string | null;
   /** 用户此刻在看哪（2026-11-05）：「这个提示」「这里」指的是这一页上的东西 */
   where?: string | null;
+  /** 项目地图（request，project-map.ts renderProjectMap） */
+  map?: string | null;
+  /** 能力清单（request）：内置任务、我的任务、已装技能 */
+  catalog?: string | null;
 }
 
 export function buildAssistantPrompt(
   input: AssistantMaterials & { history: readonly AssistantHistoryTurn[]; question: string },
 ): string {
   const rules =
-    input.intent === "project" || input.intent === "mixed"
+    input.intent === "request"
+      ? REQUEST_RULES
+      : input.intent === "project" || input.intent === "mixed"
       ? `${PROJECT_RULES}\n8. ${WORK_ORDER_RULES}`
       : input.intent === "howto"
       ? HOWTO_RULES
@@ -262,7 +311,8 @@ export function buildAssistantPrompt(
         : input.intent === "general"
           ? GENERAL_RULES
           : PROJECT_RULES;
-  const history = historyBlock(input.history, input.intent === "chat" || input.intent === "general" ? 3 : 4);
+  // 要做事要连着几轮问答（问了什么、答了什么）才起草得对，多带两轮
+  const history = historyBlock(input.history, input.intent === "chat" || input.intent === "general" ? 3 : input.intent === "request" ? 6 : 4);
   const guide = input.guide?.length
     ? `## 说明书摘录（Mesa 产品说明书，按问题挑的几段）\n${input.guide.map((g) => `### ${g.heading}\n${g.text}`).join("\n\n")}`
     : input.intent === "howto"
@@ -274,6 +324,8 @@ export function buildAssistantPrompt(
     input.inspect ? `---\n## 这次可以只读查看项目文件\n${input.inspect}` : "",
     input.context ? `---\n## 项目概况\n${input.context}` : "",
     input.snapshot ? `---\n${input.snapshot}` : "",
+    input.map ? `---\n## 项目里有什么（项目地图，只有文件名、大小、修改日期）\n${input.map}` : "",
+    input.catalog ? `---\n## Mesa 能用的任务和技能（能力清单）\n${input.catalog}` : "",
     guide ? `---\n${guide}` : "",
     history ? `---\n## 之前的问答（最近几轮）\n${history}` : "",
     `---\n## 这次的问题\n${input.question.trim()}`,
@@ -290,6 +342,7 @@ export function basisText(intent: AssistantIntent, guideHeadings: readonly strin
     parts.push(heads.length ? `说明书${heads.map((h) => `「${h}」`).join("")}` : "说明书里没翻到相关段落");
   }
   if (intent === "project" || intent === "mixed") parts.push(inspected ? "这个项目的记录与文件（只读查看）" : "这个项目的记录");
+  if (intent === "request") parts.push(inspected ? "这个项目的记录、项目地图与文件（只读查看）" : "这个项目的记录与项目地图");
   return parts.join(" · ");
 }
 
@@ -353,29 +406,88 @@ export interface WorkOrder {
   title: string;
   task: string;
   done: string;
+  // ↓ 派活单 v2（2026-11-05，docs/design-assistant-intake.md §3.4）：与目标同一套合同字段，旧单子没有这些
+  /** 依据材料：项目根下的相对路径（只读输入）；空 = 带整个项目 */
+  inputs?: string[];
+  /** 交付物：产出什么、写到哪里 */
+  deliver?: string;
+  /** 按哪个任务做（内置任务或我的任务的名字） */
+  basedOn?: string;
+  /** 点名的技能（派出时只留技能库里有的） */
+  skills?: string[];
+  /** 没问清、按默认处理的几条 */
+  assumptions?: string;
+  /** 做的时候遇到这些要停下来问 */
+  mustAsk?: string;
 }
 
 const ORDER_BLOCK = /:::\s*派活\s*\n([\s\S]*?)\n\s*:::/;
-const ORDER_FIELDS: [keyof Pick<WorkOrder, "title" | "task" | "done"> | "target", RegExp][] = [
+type OrderField = "target" | "title" | "task" | "done" | "inputs" | "deliver" | "basedOn" | "skills" | "assumptions" | "mustAsk";
+const ORDER_FIELDS: [OrderField, RegExp][] = [
   ["target", /^交给[:：]\s*/],
   ["title", /^标题[:：]\s*/],
   ["task", /^要做[:：]\s*/],
+  ["inputs", /^依据材料[:：]\s*/],
+  ["deliver", /^交付物[:：]\s*/],
   ["done", /^怎样算做完[:：]\s*/],
+  ["basedOn", /^按任务[:：]\s*/],
+  ["skills", /^用到的技能[:：]\s*/],
+  ["assumptions", /^先定下的假设[:：]\s*/],
+  ["mustAsk", /^要停下来问的[:：]\s*/],
 ];
+
+const NONE_RE = /^(无|没有|不写|暂无|—|-|（?无）?)$/;
+
+/** 依据材料一栏拆成路径：一行一个或顿号隔开；去掉列表符、反引号与括号里的说明；绝对路径、`..`、`~` 一律不要（不能带项目外的东西进隔离副本） */
+export function parseOrderPaths(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/\n|、|；|;|，/)) {
+    const p = raw
+      .trim()
+      .replace(/^[-*+•]\s*/, "")
+      .replace(/[（(][^）)]*[）)]\s*$/, "")
+      .replace(/^`|`$/g, "")
+      .trim()
+      .replace(/^\.\//, "")
+      .replace(/\\/g, "/");
+    if (!p || NONE_RE.test(p)) continue;
+    if (p.startsWith("/") || p.startsWith("~") || /^[a-zA-Z]:/.test(p) || p.split("/").includes("..")) continue;
+    if (!out.includes(p)) out.push(p);
+  }
+  return out.slice(0, 30);
+}
+
+function parseNames(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .split(/、|，|,|\n|\s+/)
+        .map((x) => x.replace(/^[-*+•]\s*/, "").replace(/[「」`]/g, "").trim())
+        .filter((x) => x && !NONE_RE.test(x)),
+    ),
+  ].slice(0, 8);
+}
+
+function optional(text: string | undefined, cap: number): string | undefined {
+  const t = (text ?? "").trim();
+  return t && !NONE_RE.test(t) ? t.slice(0, cap) : undefined;
+}
 
 /** 从回答里取出派活单：正文去掉这一块；格式不对、去处不认识、没写要做什么的不要 */
 export function parseWorkOrder(answer: string, stepCount: number): { text: string; order: WorkOrder | null } {
   const m = answer.match(ORDER_BLOCK);
   if (!m) return { text: answer, order: null };
   const text = answer.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
-  const fields: Record<string, string> = {};
-  let current: string | null = null;
+  const fields: Partial<Record<OrderField, string>> = {};
+  let current: OrderField | null = null;
   for (const raw of m[1].split("\n")) {
     const line = raw.trimEnd();
     const hit = ORDER_FIELDS.find(([, re]) => re.test(line.trim()));
     if (hit) {
       current = hit[0];
-      fields[current] = line.trim().replace(hit[1], "");
+      const value = line.trim().replace(hit[1], "");
+      // 同一栏写了好几行（「依据材料：a」「依据材料：b」，2026-11-05 Codex 干跑实证）：接着往下记，不覆盖
+      fields[current] = fields[current] ? `${fields[current]}\n${value}` : value;
     } else if (current) {
       fields[current] = `${fields[current]}\n${line}`.trim();
     }
@@ -388,24 +500,62 @@ export function parseWorkOrder(answer: string, stepCount: number): { text: strin
   if (!target || !task || (target === "step" && (step === null || step < 1 || step > stepCount))) {
     return { text, order: null };
   }
-  return {
-    text,
-    order: {
-      target,
-      step,
-      title: (fields.title ?? "").trim().slice(0, 80) || task.split("\n")[0].slice(0, 40),
-      task: task.slice(0, 4000),
-      done: (fields.done ?? "").trim().slice(0, 2000),
-    },
+  const order: WorkOrder = {
+    target,
+    step,
+    title: (fields.title ?? "").trim().slice(0, 80) || task.split("\n")[0].slice(0, 40),
+    task: task.slice(0, 4000),
+    done: (fields.done ?? "").trim().slice(0, 2000),
   };
+  const inputs = parseOrderPaths(fields.inputs ?? "");
+  if (inputs.length) order.inputs = inputs;
+  const skills = parseNames(fields.skills ?? "");
+  if (skills.length) order.skills = skills;
+  const deliver = optional(fields.deliver, 2000);
+  if (deliver) order.deliver = deliver;
+  const basedOn = optional(fields.basedOn?.replace(/[「」]/g, ""), 80);
+  if (basedOn) order.basedOn = basedOn;
+  const assumptions = optional(fields.assumptions, 2000);
+  if (assumptions) order.assumptions = assumptions;
+  const mustAsk = optional(fields.mustAsk, 2000);
+  if (mustAsk) order.mustAsk = mustAsk;
+  return { text, order };
+}
+
+/** 科研项目里每件派出去的活都带的通则（2026-11-05，design-assistant-intake §3.5）：不按场景写规矩，只写这一套 */
+export const RESEARCH_ORDER_RULES = `科研通则（每件活都守）：
+- 数字由脚本从数据算出，脚本留在交付物里；不手抄、不估算。
+- 每条结论标出处：哪条记录、哪个数据文件、哪篇文献（bib 键）。
+- 不编造数据，不生成冒充实验结果的图像。
+- 规划类只给两到三个候选方案，各写依据、假设、风险和所需样本量，由我来选，不写「建议采用」。
+- 原始资料只读；我改过的文件为准，在它上面局部改。`;
+
+export interface OrderTextOptions {
+  /** 科研项目：附科研通则 */
+  research?: boolean;
+  /** 按内置任务做时的做法（builtin-tasks.ts builtinTaskMethod） */
+  method?: string | null;
+}
+
+/** 单子各栏拼成正文（留话、接回对话、记目标三处共用） */
+function orderBody(order: WorkOrder, opts: OrderTextOptions): string[] {
+  return [
+    order.inputs?.length ? `依据材料（先从这些看起）：\n${order.inputs.map((p) => `- ${p}`).join("\n")}` : "",
+    order.deliver ? `交付物：${order.deliver}` : "",
+    order.done ? `怎样算做完：${order.done}` : "",
+    order.assumptions ? `先定下的假设（不对就先停下来问我）：${order.assumptions}` : "",
+    order.mustAsk ? `做的时候遇到这些要先停下来问我：${order.mustAsk}` : "",
+    opts.method ?? (order.basedOn ? `按「${order.basedOn}」的做法来做。` : ""),
+    opts.research ? RESEARCH_ORDER_RULES : "",
+  ].filter(Boolean);
 }
 
 /** 交给某一步时送进那段对话的话（留话或接回时的第一句） */
-export function workOrderMessage(order: WorkOrder): string {
+export function workOrderMessage(order: WorkOrder, opts: OrderTextOptions = {}): string {
   return [
     "【项目助手起草、我在 Mesa 工作台批准的一件活】",
     `要做：${order.task}`,
-    order.done ? `怎样算做完：${order.done}` : "",
+    ...orderBody(order, opts),
     "按这一步原来的任务书和项目规则做；做完照常停下，等我评审、保存进项目。",
   ]
     .filter(Boolean)
@@ -413,19 +563,79 @@ export function workOrderMessage(order: WorkOrder): string {
 }
 
 /** 新目标的目标原文（要求写清、做完怎样算数） */
-export function workOrderGoalText(order: WorkOrder): string {
-  return [order.task, order.done ? `怎样算做完：${order.done}` : ""].filter(Boolean).join("\n\n");
+export function workOrderGoalText(order: WorkOrder, opts: OrderTextOptions = {}): string {
+  return [order.task, ...orderBody(order, opts)].filter(Boolean).join("\n\n");
 }
 
-export const WORK_ORDER_RULES = `派活：真要动手（改脚本、补产物、重做某一步的一部分）时，你自己不做，写一张派活单交给干活的 AI，用户点「派出去」才开工。格式（单独成块、放在回答末尾、一次最多一张）：
+export const WORK_ORDER_RULES = `派活：真要动手（整理、分析、画图、写报告、改脚本、补产物、重做某一步的一部分）时，你自己不做，写一张派活单交给干活的 AI，用户点「派出去」才开工。格式（单独成块、放在回答末尾、一次最多一张；标了「可省」的栏没有就不写那一行）：
 :::派活
 交给：第 N 步   （或：新目标）
 标题：一句话，十来个字
-要做：具体到文件、位置、怎么改；写清依据（哪个文件哪一行、哪条记录）
+要做：具体做什么；写清依据（哪个文件哪一行、哪条记录）
+依据材料：要读的文件或目录，项目根下的相对路径，一行一个（可省，省了就带整个项目）
+交付物：产出什么、写到哪里（可省）
 怎样算做完：能核对的标准
+按任务：能力清单里的任务名（可省）
+用到的技能：能力清单里的技能名，顿号隔开（可省）
+先定下的假设：没问清、按默认处理的几条（可省）
+要停下来问的：这件活做的时候遇到哪些情况必须先问用户（可省）
 :::
 交给第 N 步 = 那一步自己的 AI 在它的工作副本里按单接着做（问题出在某一步的产物时用这个）；新目标 = 另起一个目标在隔离副本里做，做完走验收（不属于任何一步的活用这个）。
-只在确实需要动手、而且你说得清要改什么时才写；人工请求、开工前的决定、评审采不采纳这些要用户拍板的事不派活；Mesa 自己的毛病派不了活，给「报告」。`;
+只在确实需要动手、而且你说得清要做什么时才写；人工请求、开工前的决定、评审采不采纳这些要用户拍板的事不派活；Mesa 自己的毛病派不了活，给「报告」。`;
+
+// ===== 问清楚（2026-11-05，design-assistant-intake §3.3）：缺关键信息时一次问一个，给可点的选项 =====
+
+export interface ClarifyAsk {
+  question: string;
+  options: string[];
+}
+
+const CLARIFY_BLOCK = /:::\s*问\s*\n([\s\S]*?)\n\s*:::/;
+
+/** 从回答里取出要问用户的那一个问题：正文去掉这一块，选项最多四个，点了当作回答发回 */
+export function parseClarify(answer: string): { text: string; ask: ClarifyAsk | null } {
+  const m = answer.match(CLARIFY_BLOCK);
+  if (!m) return { text: answer, ask: null };
+  const text = answer.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  const q = m[1].match(/问题[:：]\s*(.+)/)?.[1]?.trim() ?? "";
+  const opts = (m[1].match(/选项[:：]\s*(.+)/)?.[1] ?? "")
+    .split(/｜|\|/)
+    .map((o) => o.trim().slice(0, 40))
+    .filter(Boolean);
+  if (!q) return { text, ask: null };
+  return { text, ask: { question: q.slice(0, 200), options: [...new Set(opts)].slice(0, 4) } };
+}
+
+/** 要做事：判断去向 → 看材料 → 问清楚 → 起草派活单（2026-11-05，docs/design-assistant-intake.md §2–3） */
+export const REQUEST_RULES = `${IDENTITY}
+用户这次交代了一件要做的事。下面附了项目快照、项目地图（项目里有哪些文件）和能力清单（Mesa 能用的任务和技能）。
+
+先判断这件事归哪种去向；一句话里混着几种就拆开，能答的先答：
+- 问：快照、地图、文件里就答得了的，直接答。
+- 做：要产出或改动项目里的文件（整理、分析、画图、写报告、做幻灯片、规划实验……），起草派活单。
+- 定：要用户拍板的（选方案、答人工请求、评审采不采纳），只讲清选项和各自依据，不替他选。
+- 常做：「以后每周都……」：先按一次起草派活单，说明做成后可以在项目里建定时任务；你不建。
+- 改流程：要在流程里加减步骤，说明怎么改，给 [[项目页]]。
+- 范围外：别的项目、电脑之外的动作（发邮件、订试剂、操作仪器、提交投稿系统）、修 Mesa 自己：说清做不了；能做到哪一步就派那一步（比如把邮件正文起草成文件，由用户自己发）。
+
+起草派活单前：
+1. 先看材料：从地图里找相关的数据、记录、以前的产出；这次能只读查看文件就打开看几个，依据写到具体文件。
+2. 缺关键信息先问，不要猜。一次只问一个，放在回答末尾，格式：
+:::问
+问题：一句话
+选项：选项一｜选项二｜选项三
+:::
+   选项两到四个（用户也可以自己打字答）。问过的不再问；已经问过三个还不清楚的，按最稳妥的做法起草，写进「先定下的假设」。
+   你问的只是「要什么」（范围、对象、格式、时长、给谁看）；方法细节交给干活的 AI，它做的时候会问。
+3. 能力清单里有合适的任务就写「按任务」，有合适的技能就写进「用到的技能」；只能写清单里有的名字，不要编。没有合适的就不写，干活的 AI 按通用做法做。
+4. 一次回答里要么问一个问题，要么起草一张派活单，不要两样都有。动作标记只用 [[…]] 写法，不要写成 ::: 块。
+
+${WORK_ORDER_RULES}
+
+其他：
+- ${ACTION_MARKS}
+- ${STYLE}
+- 只依据快照、地图和你看过的文件，不编文件名；看不到的直说。`;
 
 // ===== 提速（2026-11-04 用户：「为什么感觉回答很慢」，实测寒暄 8–19 秒、问怎么用 51–57 秒）=====
 

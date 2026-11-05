@@ -38,6 +38,7 @@ import ResearchAcceptancePanel from "./ResearchAcceptancePanel";
 import ProjectSettingsDrawer from "./ProjectSettingsDrawer";
 import PackParamInput from "./PackParamInput";
 import { goalTextFromPack, packMcpNote, packSkillNames } from "../task-packs";
+import { BUILTIN_TASKS, builtinTaskGoalText } from "../builtin-tasks";
 import type { TaskPackDto } from "../types";
 import {
   acceptedGoalOutputs,
@@ -937,13 +938,25 @@ function CreateTaskModal({
     filledTextRef.current = next;
     setText(next);
   }
+  // 内置科研任务（2026-11-05，design-assistant-intake §5）：只在科研项目给，选了填做法、点名项目里已有的技能；没有参数
+  const builtinTasks = project.workMode === "research" ? BUILTIN_TASKS : [];
   async function choosePack(id: string) {
     const pack = packs.find((p) => p.id === id) ?? null;
-    if (pack && text.trim() && text !== filledTextRef.current) {
-      const ok = await confirmDialog(`用「${pack.name}」填写会换掉「要完成什么」里你已经写的字。继续？`);
+    const builtin = id.startsWith("builtin:") ? (builtinTasks.find((t) => `builtin:${t.id}` === id) ?? null) : null;
+    const name = pack?.name ?? builtin?.name;
+    if (name && text.trim() && text !== filledTextRef.current) {
+      const ok = await confirmDialog(`用「${name}」填写会换掉「要完成什么」里你已经写的字。继续？`);
       if (!ok) return;
     }
     setPackId(id);
+    if (builtin) {
+      const next = builtinTaskGoalText(builtin);
+      filledTextRef.current = next;
+      setText(next);
+      const names = builtin.skills.filter((k) => poolSkills.includes(k));
+      if (names.length) setPickedSkills((cur) => [...cur, ...names.filter((k) => !cur.includes(k))]);
+      return;
+    }
     if (!pack) {
       filledTextRef.current = null;
       return;
@@ -1109,21 +1122,41 @@ function CreateTaskModal({
   return (
     <Modal open title={editing ? "编辑目标" : "新建目标"} onClose={onClose} size={moreOpen ? "lg" : "md"}>
       <form onSubmit={submit} className="space-y-3">
-        {!editing && packs.length > 0 && (
+        {!editing && packs.length + builtinTasks.length > 0 && (
           <div className="space-y-2 text-xs">
             <label className="flex min-w-0 items-center gap-2 text-l3">
-              <span className="shrink-0">用我的任务当模板</span>
+              <span className="shrink-0">{builtinTasks.length ? "用任务当模板" : "用我的任务当模板"}</span>
               <select
                 className="h-7 min-w-0 flex-1 rounded-md border border-field bg-canvas px-2 text-xs text-l1"
                 value={packId}
                 onChange={(e) => void choosePack(e.target.value)}
               >
                 <option value="">不用</option>
-                {packs.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}（{p.steps.length} 步）
-                  </option>
-                ))}
+                {builtinTasks.length > 0 && (
+                  <optgroup label="内置科研任务">
+                    {builtinTasks.map((t) => (
+                      <option key={t.id} value={`builtin:${t.id}`}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {packs.length > 0 &&
+                  (builtinTasks.length ? (
+                    <optgroup label="我的任务">
+                      {packs.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}（{p.steps.length} 步）
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : (
+                    packs.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}（{p.steps.length} 步）
+                      </option>
+                    ))
+                  ))}
               </select>
             </label>
             {pickedPack && pickedPack.params.length > 0 && (

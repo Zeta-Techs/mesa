@@ -688,6 +688,94 @@ pub async fn assistant_review_notes(worktree_path: String) -> Option<String> {
     .flatten()
 }
 
+// ===== 项目地图（2026-11-05，docs/design-assistant-intake.md §3.2）=====
+// 接活时项目助手要知道项目里有什么：数据、记录、文献、稿件各在哪、最近动了什么。纯机械列目录，不读任何文件内容。
+// 只给文件（目录由前端按路径折叠），跳过隐藏项、依赖与缓存目录、符号链接；条数与深度有上限，超了标「没列完」。
+
+const MAP_CAP: usize = 4000;
+const MAP_DEPTH: usize = 8;
+/// 依赖、缓存、构建目录：里面多是机器生成的文件，列出来只占篇幅
+const MAP_SKIP_DIRS: &[&str] = &["node_modules", "__pycache__", "venv", "env", "target", "_freeze", "renv", "site-packages"];
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MapEntryDto {
+    /// 相对项目根，分隔符一律 `/`
+    pub path: String,
+    pub size: u64,
+    /// 修改时间（毫秒）；读不到为 0
+    pub modified_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMapDto {
+    pub entries: Vec<MapEntryDto>,
+    /// 到了条数上限没列完
+    pub truncated: bool,
+}
+
+fn map_walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<MapEntryDto>, truncated: &mut bool) {
+    if *truncated {
+        return;
+    }
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    let mut items: Vec<_> = rd.flatten().collect();
+    items.sort_by_key(|e| e.file_name());
+    for e in items {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        // symlink_metadata：不跟符号链接（可能指到项目外或成环）
+        let Ok(meta) = e.path().symlink_metadata() else { continue };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            if depth + 1 < MAP_DEPTH && !MAP_SKIP_DIRS.contains(&name.as_str()) {
+                map_walk(root, &e.path(), depth + 1, out, truncated);
+            }
+            continue;
+        }
+        if out.len() >= MAP_CAP {
+            *truncated = true;
+            return;
+        }
+        let rel = e.path().strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or_else(|_| PathBuf::from(&name));
+        let modified_ms = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        out.push(MapEntryDto {
+            path: rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/"),
+            size: meta.len(),
+            modified_ms,
+        });
+    }
+}
+
+fn project_map_sync(project_root: &str) -> Result<ProjectMapDto, String> {
+    let root = PathBuf::from(crate::sessions::expand_tilde(project_root));
+    if !root.is_dir() {
+        return Err(format!("项目目录不存在：{}", crate::paths::strip_verbatim(root).display()));
+    }
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    map_walk(&root, &root, 0, &mut entries, &mut truncated);
+    Ok(ProjectMapDto { entries, truncated })
+}
+
+/// 项目地图：项目根下的文件清单（路径、大小、修改时间），只列不读
+#[tauri::command]
+pub async fn project_file_map(project_root: String) -> Result<ProjectMapDto, String> {
+    tauri::async_runtime::spawn_blocking(move || project_map_sync(&project_root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // ===== 说明书检索（2026-11-04 用户：「问怎么换模型也要看项目记录吗」）=====
 // 「怎么用 Mesa」一类问题不拼项目快照，改翻说明书：说明书随应用打包（编译期读进来），按问题挑最相关的几段。
 // 切分口径：按标题记下所在小节，按空行切段（列表紧跟在引导句后面不空行，会和引导句在同一段）；
@@ -935,6 +1023,28 @@ pub async fn assistant_guide_search(question: String, limit: Option<usize>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_map_lists_files_and_skips_hidden_deps_and_symlinks() {
+        let dir = std::env::temp_dir().join(format!("mesa-map-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("data/raw")).unwrap();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir_all(dir.join("node_modules/x")).unwrap();
+        fs::write(dir.join("data/raw/a.csv"), "1,2\n").unwrap();
+        fs::write(dir.join("lab.md"), "记录").unwrap();
+        fs::write(dir.join(".env"), "SECRET=1").unwrap();
+        fs::write(dir.join(".git/HEAD"), "ref").unwrap();
+        fs::write(dir.join("node_modules/x/i.js"), "").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
+        let map = project_map_sync(&dir.to_string_lossy()).unwrap();
+        let paths: Vec<_> = map.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["data/raw/a.csv", "lab.md"]);
+        assert_eq!(map.entries[0].size, 4);
+        assert!(!map.truncated);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn at(minutes_ago: i64) -> String {
         (now_fixed() - chrono::Duration::minutes(minutes_ago)).to_rfc3339()

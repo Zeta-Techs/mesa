@@ -1,9 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Send } from "lucide-react";
 import { compactFieldClass, ghostActionClass, primaryActionClass } from "./PageFrame";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
 import { relTime } from "../rel-time";
-import type { WorkOrder } from "../project-assistant";
+import { parseOrderPaths, type WorkOrder } from "../project-assistant";
+
+/** 可省的几栏（派活单 v2）：看的时候没写就不显示，改的时候都给框 */
+const TEXT_FIELDS: { key: "deliver" | "done" | "assumptions" | "mustAsk"; label: string }[] = [
+  { key: "deliver", label: "交付物" },
+  { key: "done", label: "怎样算做完" },
+  { key: "assumptions", label: "先定下的假设" },
+  { key: "mustAsk", label: "做的时候要停下来问的" },
+];
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <p className="whitespace-pre-wrap break-words text-l2">
+      <span className="text-l3">{label}：</span>
+      {children}
+    </p>
+  );
+}
 
 const TONE_CLASS: Record<DispatchTone, string> = {
   wait: "text-warn-text",
@@ -31,6 +48,8 @@ export default function WorkOrderCard({
   onDispatch: (order: WorkOrder) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<WorkOrder>(order);
+  // 依据材料按一行一个改，存回时同一套规则拆（绝对路径、.. 一律去掉）
+  const [inputsText, setInputsText] = useState((order.inputs ?? []).join("\n"));
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +79,15 @@ export default function WorkOrderCard({
     setBusy(true);
     setError(null);
     try {
-      await onDispatch({ ...draft, title: draft.title.trim() || draft.task.trim().slice(0, 40) });
+      const inputs = parseOrderPaths(inputsText);
+      await onDispatch({
+        ...draft,
+        title: draft.title.trim() || draft.task.trim().slice(0, 40),
+        inputs: inputs.length ? inputs : undefined,
+        deliver: draft.deliver?.trim() || undefined,
+        assumptions: draft.assumptions?.trim() || undefined,
+        mustAsk: draft.mustAsk?.trim() || undefined,
+      });
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -94,23 +121,44 @@ export default function WorkOrderCard({
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-xs text-l3">怎样算做完</span>
+            <span className="mb-1 block text-xs text-l3">依据材料（项目里的相对路径，一行一个；空着 = 带整个项目）</span>
             <textarea
-              className={`${compactFieldClass} min-h-12 w-full resize-y py-1.5`}
-              value={draft.done}
-              maxLength={2000}
-              onChange={(e) => setDraft({ ...draft, done: e.target.value })}
+              className={`${compactFieldClass} min-h-12 w-full resize-y py-1.5 font-mono`}
+              value={inputsText}
+              onChange={(e) => setInputsText(e.target.value)}
             />
           </label>
+          {TEXT_FIELDS.map((f) => (
+            <label key={f.key} className="block">
+              <span className="mb-1 block text-xs text-l3">{f.label}</span>
+              <textarea
+                className={`${compactFieldClass} min-h-12 w-full resize-y py-1.5`}
+                value={draft[f.key] ?? ""}
+                maxLength={2000}
+                onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+              />
+            </label>
+          ))}
         </div>
       ) : (
         <div className="space-y-1.5 text-sm leading-6">
           <p className="font-medium text-l1">{shown.title}</p>
           <p className="whitespace-pre-wrap break-words text-l2">{shown.task}</p>
-          {shown.done && (
-            <p className="whitespace-pre-wrap break-words text-l3">
-              <span className="text-l3">怎样算做完：</span>
-              {shown.done}
+          {shown.inputs && shown.inputs.length > 0 && (
+            <Field label="依据材料">
+              {shown.inputs.map((p) => (
+                <span key={p} className="mr-2 font-mono text-xs">
+                  {p}
+                </span>
+              ))}
+            </Field>
+          )}
+          {TEXT_FIELDS.map((f) => (shown[f.key] ? <Field key={f.key} label={f.label}>{shown[f.key]}</Field> : null))}
+          {(shown.basedOn || (shown.skills && shown.skills.length > 0)) && (
+            <p className="text-xs text-l3">
+              {shown.basedOn && <>按「{shown.basedOn}」的做法</>}
+              {shown.basedOn && shown.skills?.length ? " · " : ""}
+              {shown.skills?.length ? <>用技能 {shown.skills.join("、")}</> : null}
             </p>
           )}
         </div>

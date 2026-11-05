@@ -262,3 +262,115 @@ test("提问时附上用户正在看哪一页；没有就不写这一段", async
   assert.match(withWhere, /## 用户提问时正在看\n项目页 · 「HER」 · 「定时任务」页签/);
   assert.doesNotMatch(buildAssistantPrompt({ intent: "mixed", history: [], question: "q" }), /正在看/);
 });
+
+// ===== 接活（2026-11-05，docs/design-assistant-intake.md）=====
+
+test("接活分流：交代要做的事归 request；问出错原因仍是查错；上一轮问过一句、起草过单子时接着走", async () => {
+  const { classifyQuestion, previousTurnHint, wantsInspect } = await import("../src/project-assistant.ts");
+  for (const q of ["帮我把这周的实验记录整理成组会汇报", "整理一下 lab 里的记录", "下周要准备组会", "我需要一份下一轮实验的方案", "画一张剂量响应曲线"]) {
+    assert.equal(classifyQuestion(q), "request", q);
+  }
+  assert.equal(classifyQuestion("帮我看看第 3 步为什么失败"), "project", "带「为什么」「失败」的是查错");
+  assert.equal(classifyQuestion("怎么换模型"), "howto");
+  const asked = previousTurnHint("先问一句。\n\n:::问\n问题：讲多长时间？\n选项：10 分钟｜20 分钟\n:::");
+  assert.deepEqual(asked, { asked: true, drafted: false });
+  assert.equal(classifyQuestion("20 分钟", false, asked), "request", "回答上一轮的问题");
+  assert.equal(classifyQuestion("好的", false, asked), "chat", "寒暄照旧");
+  const drafted = previousTurnHint("单子起好了。\n:::派活\n交给：新目标\n要做：x\n:::");
+  assert.equal(classifyQuestion("交付改成 pptx", false, drafted), "request", "接着改单子");
+  assert.equal(classifyQuestion("交付改成 pptx", false, previousTurnHint("单子\n:::派活\n交给：新目标\n要做：x\n:::", true)), "general", "派过的不再接着改");
+  assert.equal(wantsInspect("帮我整理记录", "request"), true, "起草前只读查看");
+});
+
+test("派活单 v2：可省各栏、路径只收项目内相对路径、技能拆名", async () => {
+  const { parseWorkOrder, parseOrderPaths } = await import("../src/project-assistant.ts");
+  const answer = `准备好了。
+
+:::派活
+交给：新目标
+标题：11 月第一周组会汇报
+要做：把 11-01 到 11-05 的记录整理成 20 分钟组会
+依据材料：
+- lab/2026-11-01.md（周一）
+- \`data/raw/batch3.csv\`
+- /etc/passwd
+- ../secret
+交付物：output/group-meeting/2026-11-06/slides.html
+怎样算做完：每页结论有出处
+按任务：「组会汇报」
+用到的技能：slides-deck、figure-forge
+先定下的假设：只讲第三批
+要停下来问的：无
+:::`;
+  const { text, order } = parseWorkOrder(answer, 0);
+  assert.equal(text, "准备好了。");
+  assert.deepEqual(order!.inputs, ["lab/2026-11-01.md", "data/raw/batch3.csv"], "绝对路径与 .. 去掉，括号说明与反引号去掉");
+  assert.equal(order!.deliver, "output/group-meeting/2026-11-06/slides.html");
+  assert.equal(order!.basedOn, "组会汇报");
+  assert.deepEqual(order!.skills, ["slides-deck", "figure-forge"]);
+  assert.equal(order!.assumptions, "只讲第三批");
+  assert.equal(order!.mustAsk, undefined, "写「无」等于没写");
+  assert.deepEqual(parseOrderPaths("a.csv、C:\\x\\y.csv、~/z、./b/c.md"), ["a.csv", "b/c.md"]);
+  const old = parseWorkOrder(":::派活\n交给：第 1 步\n要做：改脚本\n怎样算做完：能跑\n:::", 2).order!;
+  assert.equal(old.inputs, undefined, "旧四栏单子照旧解析");
+});
+
+test("派活单 v2：正文带依据、假设、做法与科研通则", async () => {
+  const { workOrderGoalText, workOrderMessage, RESEARCH_ORDER_RULES } = await import("../src/project-assistant.ts");
+  const order = {
+    target: "goal" as const,
+    step: null,
+    title: "周报",
+    task: "汇总本周进展",
+    done: "数字可重算",
+    inputs: ["lab/"],
+    assumptions: "写给导师",
+  };
+  const goal = workOrderGoalText(order, { research: true, method: "按内置任务「进展周报」的做法：\n1. 只写有记录的事" });
+  assert.match(goal, /依据材料（先从这些看起）：\n- lab\//);
+  assert.match(goal, /先定下的假设（不对就先停下来问我）：写给导师/);
+  assert.match(goal, /按内置任务「进展周报」的做法/);
+  assert.ok(goal.includes(RESEARCH_ORDER_RULES), "科研项目带通则");
+  assert.ok(!workOrderGoalText(order).includes("科研通则"), "非科研不带");
+  assert.match(workOrderMessage({ ...order, target: "step", step: 1, basedOn: "我的周报" }), /按「我的周报」的做法来做/);
+});
+
+test("问清楚：一次一个问题，选项最多四个", async () => {
+  const { parseClarify } = await import("../src/project-assistant.ts");
+  const { text, ask } = parseClarify("要先问一句。\n\n:::问\n问题：讲多长时间？\n选项：10 分钟｜20 分钟|30 分钟｜45 分钟｜一小时\n:::");
+  assert.equal(text, "要先问一句。");
+  assert.deepEqual(ask, { question: "讲多长时间？", options: ["10 分钟", "20 分钟", "30 分钟", "45 分钟"] });
+  assert.equal(parseClarify(":::问\n选项：a｜b\n:::").ask, null, "没写问题不要");
+  assert.equal(parseClarify("没有问题").ask, null);
+});
+
+test("要做事的提示词：带接活规矩、项目地图与能力清单，多带两轮问答", async () => {
+  const { buildAssistantPrompt } = await import("../src/project-assistant.ts");
+  const history = Array.from({ length: 8 }, (_, i) => ({ question: `问${i}`, answer: `答${i}` }));
+  const prompt = buildAssistantPrompt({
+    intent: "request",
+    snapshot: "## 项目快照",
+    map: "共 2 个文件",
+    catalog: "- 内置任务「组会汇报」",
+    history,
+    question: "帮我准备组会",
+  });
+  assert.match(prompt, /先判断这件事归哪种去向/);
+  assert.match(prompt, /:::派活/);
+  assert.match(prompt, /## 项目里有什么（项目地图/);
+  assert.match(prompt, /## Mesa 能用的任务和技能（能力清单）\n- 内置任务「组会汇报」/);
+  assert.ok(prompt.includes("问2") && !prompt.includes("问1"), "带最近 6 轮");
+});
+
+test("接活干跑实证：同一栏写好几行要累加；动作标记写成 ::: 块也认", async () => {
+  const { parseWorkOrder, parseAssistantAnswer } = await import("../src/project-assistant.ts");
+  const { order, text } = parseWorkOrder(
+    "单子：\n:::派活\n交给：新目标\n要做：做汇报\n依据材料：data/a.csv\n依据材料：lab/b.md\n:::\n\n:::商量|1 µM 那两孔保留还是剔除\n:::",
+    0,
+  );
+  assert.deepEqual(order!.inputs, ["data/a.csv", "lab/b.md"]);
+  const parsed = parseAssistantAnswer(text, 0);
+  assert.deepEqual(parsed.actions.map((a) => [a.kind, a.text]), [["discuss", "1 µM 那两孔保留还是剔除"]]);
+  assert.equal(parsed.text, "单子：", "块原文不露给人");
+  assert.match(parseAssistantAnswer(":::不认识\n:::", 0).text, /不认识/, "不认识的块照原文留着");
+});

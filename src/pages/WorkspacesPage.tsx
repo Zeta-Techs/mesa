@@ -2340,7 +2340,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 <button
                   type="button"
                   onClick={() => selectedGroup.project && openAssistant(selectedGroup.project.path)}
-                  title="项目助手：问进度、哪里出错、Mesa 怎么用；只解释和指路，不开对话、不改文件"
+                  title="项目助手：问进度、哪里出错、Mesa 怎么用，也可以交代要做的事——它起草派活单，你点了才派；它自己不改文件"
                   className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />

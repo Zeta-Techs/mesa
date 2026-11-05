@@ -971,6 +971,7 @@ pub fn run() {
             task_packs::preview_task_pack_import,
             task_packs::install_task_pack_import,
             task_packs::discard_task_pack_import,
+            project_assistant::project_file_map,
             projects::ensure_scratch_dir,
             projects::append_pipeline_steps,
             projects::append_pipeline_steps_with_submission,

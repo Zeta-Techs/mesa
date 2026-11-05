@@ -17,6 +17,7 @@ import {
   localReply,
   retryIntents,
   parseAssistantAnswer,
+  parseClarify,
   parseWorkOrder,
   QUICK_QUESTIONS,
   splitAnswerLead,
@@ -222,7 +223,7 @@ export default function ProjectAssistantPanel({
       }
       return;
     }
-    const planned = planAsk(q, !!withFocus, project, forced);
+    const planned = planAsk(q, !!withFocus, project, forced, turns);
     // 带截图的多半在问眼前这个项目里的东西：说明书和项目记录都看（2026-11-05：「这个提示什么意思」+ 截图只翻了说明书，没对上项目的实际产物）
     const plan =
       attached.length && !forced && (planned.intent === "howto" || planned.intent === "general" || planned.intent === "chat")
@@ -442,8 +443,8 @@ export default function ProjectAssistantPanel({
           <MesaBuddy size={112} pose={mood.greetPose} prop={mood.prop} />
           <h3 className="mt-5 text-lg font-semibold text-l1">{mood.greeting}</h3>
           <p className="mt-2 text-sm leading-6 text-l3">
-            我看得到每一步的状态、出错原因、核验和退回意见，也看得到 Mesa 自己出过的错。只解释、只指路，要动手时给你按钮，你点了才发生。
-            要聊课题内容、让 AI 动手干活，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」或项目里的「新对话」。
+            我看得到每一步的状态、出错原因、核验和退回意见、Mesa 自己出过的错，还有项目里有哪些文件。有事要做（整理记录、画图、写报告、规划实验……）直接交代给我：我先问清楚，再起草一张派活单，你点「派出去」才交给 AI 做，做完照常评审。我自己不改文件。
+            想和 AI 边聊边改课题内容，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」或项目里的「新对话」。
           </p>
           <ul className="mt-8 border-t border-hairline">
             {QUICK_QUESTIONS.map((q, i) => (
@@ -467,8 +468,11 @@ export default function ProjectAssistantPanel({
       ) : (
         <div className="flex flex-col gap-6">
           {turns.map((turn, i) => {
-            const withOrder = parseWorkOrder(turn.answer, stepCount);
+            const withAsk = parseClarify(turn.answer);
+            const withOrder = parseWorkOrder(withAsk.text, stepCount);
             const parsed = parseAssistantAnswer(withOrder.text, stepCount);
+            // 只有最后一轮的问题能点选作答（前面的已经答过了）
+            const openAsk = i === turns.length - 1 ? withAsk.ask : null;
             const { lead, rest } = splitAnswerLead(parsed.text);
             return (
               <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
@@ -489,6 +493,21 @@ export default function ProjectAssistantPanel({
                     <div className="text-sm text-l1">
                       <ChatMarkdown text={rest} cwd={projectPath} />
                     </div>
+                  )}
+                  {withAsk.ask && (
+                    <section className="mt-3 rounded-xl border border-hairline p-3" aria-label="要先问你一句">
+                      <p className="text-sm font-medium leading-6 text-l1">{withAsk.ask.question}</p>
+                      {openAsk ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {openAsk.options.map((o) => (
+                            <button key={o} type="button" className={secondaryActionClass} disabled={busy} onClick={() => void send(o, null)}>
+                              {o}
+                            </button>
+                          ))}
+                          <span className="self-center text-micro text-l4">{openAsk.options.length ? "或者直接在下面打字回答" : "在下面打字回答"}</span>
+                        </div>
+                      ) : null}
+                    </section>
                   )}
                   {withOrder.order && (
                     <WorkOrderCard
@@ -579,7 +598,7 @@ export default function ProjectAssistantPanel({
               {/* 边生成边出字：动作标记、派活单写完前先不画，最终回答到了整段换上 */}
               {liveText && (
                 <div className="text-sm text-l1">
-                  <ChatMarkdown text={parseAssistantAnswer(parseWorkOrder(liveText, stepCount).text, stepCount).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
+                  <ChatMarkdown text={parseAssistantAnswer(parseWorkOrder(parseClarify(liveText).text, stepCount).text, stepCount).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
                 </div>
               )}
             </article>

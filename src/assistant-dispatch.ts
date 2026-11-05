@@ -16,8 +16,10 @@ import { taskPathsForScope } from "./project-tasks";
 import { goalRunTerminalFields, prepareGoalRun } from "./goal-run";
 import { projectDefaultProfile } from "./split-draft";
 import { openTerminalInTurn } from "./terminal-queue";
-import { workOrderGoalText, workOrderMessage, type WorkOrder } from "./project-assistant";
-import type { ProjectConfigReadDto, ProjectDto, ProjectMailDto, TaskDto, WorkspaceDto } from "./types";
+import { workOrderGoalText, workOrderMessage, type OrderTextOptions, type WorkOrder } from "./project-assistant";
+import { builtinTaskMethod, findBuiltinTask } from "./builtin-tasks";
+import { goalTextFromPack } from "./task-packs";
+import type { ProjectConfigReadDto, ProjectDto, ProjectMailDto, SkillDto, TaskDto, TaskPackDto, WorkspaceDto } from "./types";
 
 export interface DispatchResult {
   note: string;
@@ -29,8 +31,25 @@ export interface DispatchResult {
 
 export async function dispatchWorkOrder(input: { order: WorkOrder; projectPath: string; project: ProjectDto | null }): Promise<DispatchResult> {
   const { order, projectPath, project } = input;
-  if (order.target === "step") return dispatchToStep(order, projectPath);
-  return dispatchAsGoal(order, projectPath, project);
+  const based = await resolveBasedOn(order.basedOn);
+  const opts: OrderTextOptions = { research: project?.workMode === "research", method: based?.method ?? null };
+  if (order.target === "step") return dispatchToStep(order, projectPath, opts);
+  return dispatchAsGoal(order, projectPath, project, opts, based?.skills ?? []);
+}
+
+/** 「按任务」写的是内置任务还是我的任务：取出做法与它点名的技能；都对不上就只在单子里写一句「按 X 的做法」 */
+async function resolveBasedOn(name: string | undefined): Promise<{ method: string; skills: string[] } | null> {
+  if (!name) return null;
+  const builtin = findBuiltinTask(name);
+  if (builtin) return { method: builtinTaskMethod(builtin), skills: builtin.skills };
+  const key = name.replace(/[「」\s]/g, "").replace(/^我的任务/, "");
+  const packs = await invoke<TaskPackDto[]>("list_task_packs").catch(() => [] as TaskPackDto[]);
+  const pack = packs.find((p) => p.name.replace(/\s/g, "") === key);
+  if (!pack) return null;
+  return {
+    method: `按我的任务「${pack.name}」的做法：\n${goalTextFromPack(pack, {})}`,
+    skills: [...new Set(pack.steps.flatMap((st) => st.skills ?? []))],
+  };
 }
 
 /** 第 n 步（从 1 数）和它开着的工作副本；没有就抛人话 */
@@ -54,10 +73,10 @@ export function liveRunIn(worktreePath: string): string | null {
   return live?.runId ?? null;
 }
 
-async function dispatchToStep(order: WorkOrder, projectPath: string): Promise<DispatchResult> {
+async function dispatchToStep(order: WorkOrder, projectPath: string, opts: OrderTextOptions): Promise<DispatchResult> {
   const n = order.step ?? 0;
   const { step, ws } = await stepWorkspace(projectPath, n);
-  const message = workOrderMessage(order);
+  const message = workOrderMessage(order, opts);
   const { profiles, setPendingTerminal, setPage } = useAppStore.getState();
   // 那一步的 AI 开着（不是回落的 shell）：留话，它空闲、输入框没草稿时送进对话
   const liveRun = liveRunIn(ws.worktreePath);
@@ -81,21 +100,39 @@ async function dispatchToStep(order: WorkOrder, projectPath: string): Promise<Di
   return { note: `已让第 ${n} 步的 AI 接着做，做完照常去评审`, mode: "resume", worktreePath: ws.worktreePath };
 }
 
-async function dispatchAsGoal(order: WorkOrder, projectPath: string, project: ProjectDto | null): Promise<DispatchResult> {
+async function dispatchAsGoal(
+  order: WorkOrder,
+  projectPath: string,
+  project: ProjectDto | null,
+  opts: OrderTextOptions,
+  taskSkills: readonly string[],
+): Promise<DispatchResult> {
   if (!project) throw new Error("这个目录还没添加成项目，记不了目标");
   if (project.workMode === "coding") throw new Error("编程项目按分支开工：到项目页从基准开一条分支来做");
   const profile = projectDefaultProfile(project);
   if (!profile) throw new Error("还没有可用连接：先到连接页配一个，或在项目的 Agent 分工里定默认");
-  const paths = taskPathsForScope("whole", [], "write_tree");
+  // 单子写了依据材料就只带这些进隔离副本（省时省预算）；没写带整个项目
+  const paths = order.inputs?.length
+    ? taskPathsForScope("selected", order.inputs, "write_tree")
+    : taskPathsForScope("whole", [], "write_tree");
+  if (paths.error) throw new Error(paths.error);
+  // 点名的技能只留技能库里有的（没装的点名会让开工直接失败），没装的写进提示
+  const wanted = [...new Set([...(order.skills ?? []), ...taskSkills])];
+  const installed = wanted.length
+    ? new Set((await invoke<SkillDto[]>("list_skills").catch(() => [] as SkillDto[])).map((sk) => sk.name))
+    : new Set<string>();
+  const skills = wanted.filter((name) => installed.has(name));
+  const missing = wanted.filter((name) => !installed.has(name));
   const task = await invoke<TaskDto>("task_create", {
     input: {
       projectRoot: projectPath,
       kind: project.workMode === "office" ? "office_doc" : "free_research",
       name: order.title,
-      description: workOrderGoalText(order),
+      description: workOrderGoalText(order, opts),
       inputPaths: paths.inputPaths,
       outputPaths: paths.outputPaths,
       permission: "write_tree",
+      skills,
     },
   });
   // 终端页先挂上，才收得下开工请求
@@ -127,7 +164,8 @@ async function dispatchAsGoal(order: WorkOrder, projectPath: string, project: Pr
   } catch (reason) {
     throw new Error(`目标「${task.name}」已记下，但没开起来：${String(reason)}。可以在项目里点「开始」重试`);
   }
-  return { note: `已记成目标「${task.name}」并开工，做完在待验收里`, mode: "goal", taskId: task.id };
+  const skipped = missing.length ? `；技能库里没有 ${missing.join("、")}，这次没带` : "";
+  return { note: `已记成目标「${task.name}」并开工，做完在待验收里${skipped}`, mode: "goal", taskId: task.id };
 }
 
 /** 派活记录（存在问答记录那一轮上，后端 DispatchRecordDto） */

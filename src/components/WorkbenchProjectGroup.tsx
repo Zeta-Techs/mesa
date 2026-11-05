@@ -234,7 +234,7 @@ export default function WorkbenchProjectGroup({
           <button
             type="button"
             className={`${ghostActionClass} h-6 shrink-0 gap-1 px-1.5 hover:text-l1 ${blockers.length > 0 ? "text-l2" : "ccode-workbench-reveal text-l3"}`}
-            title="项目助手：问进度、哪里出错、下一步做什么、Mesa 怎么用；只解释和指路，不开对话、不改文件"
+            title="项目助手：问进度、哪里出错、Mesa 怎么用，也可以交代要做的事——它起草派活单，你点了才派；它自己不改文件"
             aria-label={`问项目助手：${card.name}`}
             onClick={() => onAskAssistant(blockers.length > 0 ? "这个项目卡在哪了？我该先处理什么？" : undefined)}
           >

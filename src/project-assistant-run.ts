@@ -22,12 +22,15 @@ import {
   inspectRules,
   INSPECT_AGENTS,
   intentEffort,
+  previousTurnHint,
   SNAPSHOT_MAX_CHARS,
   wantsInspect,
   type AssistantHistoryTurn,
   type AssistantIntent,
 } from "./project-assistant";
 import type { ChecksDto } from "./research-checks";
+import { renderProjectMap, type MapEntry } from "./project-map";
+import { builtinTaskCatalogLines } from "./builtin-tasks";
 import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
 import { stepSessionTail } from "./session-tail";
 import type { DepCheckDto } from "./dep-check";
@@ -41,7 +44,9 @@ import type {
   ProjectMemoryDocumentDto,
   RunDto,
   RunEventDto,
+  SkillDto,
   TaskDto,
+  TaskPackDto,
   WorkspaceDto,
   WorkspaceHealthDto,
 } from "./types";
@@ -297,6 +302,37 @@ function projectContext(projectPath: string, project: ProjectDto | null, connLin
   ].join("\n");
 }
 
+/** 项目地图（要做事时带）：上次问以来新出现或改过的标「新」；读不到就不带 */
+async function gatherMap(projectPath: string, lastAt: string | undefined): Promise<string | null> {
+  const map = await safe(invoke<{ entries: MapEntry[]; truncated: boolean } | null>("project_file_map", { projectRoot: projectPath }), null);
+  if (!map) return null;
+  const since = lastAt ? Date.parse(lastAt) : NaN;
+  return renderProjectMap(map.entries, { truncated: map.truncated, sinceMs: Number.isFinite(since) ? since : null });
+}
+
+/** 一句说明只取第一句、截短：能力清单要的是「什么时候用」，不是整段 */
+function firstSentence(text: string, cap = 90): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  const cut = t.search(/[。.!！?？]/);
+  const one = cut > 0 ? t.slice(0, cut + 1) : t;
+  return one.length > cap ? `${one.slice(0, cap)}…` : one;
+}
+
+/** 能力清单（2026-11-05 一期精简版）：内置任务、我的任务、已装技能的名字和一句话；连接能力二期再加 */
+export async function gatherCatalog(): Promise<string> {
+  const [skills, packs] = await Promise.all([
+    safe(invoke<SkillDto[]>("list_skills"), []),
+    safe(invoke<TaskPackDto[]>("list_task_packs"), []),
+  ]);
+  const lines = ["任务（写在「按任务」里）：", ...builtinTaskCatalogLines()];
+  for (const p of packs) lines.push(`- 我的任务「${p.name}」：${firstSentence(p.description || p.steps.map((s) => s.name).join("、"))}`);
+  if (skills.length) {
+    lines.push("", "已装技能（写在「用到的技能」里）：");
+    for (const sk of skills) lines.push(`- ${sk.name}：${firstSentence(sk.description)}`);
+  }
+  return lines.join("\n");
+}
+
 /** 这一问怎么问：分到哪一类、要不要只读查看项目文件（面板据此写等待文案） */
 export function planAsk(
   question: string,
@@ -304,8 +340,11 @@ export function planAsk(
   project: ProjectDto | null,
   /** 「换个查法」：人点了按哪一类重问 */
   forced?: AssistantIntent,
+  /** 之前的问答：上一轮问了用户一个问题 / 起草了单子时，这一轮接着按「要做事」走 */
+  history?: readonly (AssistantHistoryTurn & { dispatched?: unknown })[],
 ): { intent: AssistantIntent; inspect: boolean } {
-  const intent = forced ?? classifyQuestion(question, hasFocus);
+  const last = history?.[history.length - 1];
+  const intent = forced ?? classifyQuestion(question, hasFocus, last ? previousTurnHint(last.answer, !!last.dispatched) : undefined);
   const agent = assistantConnection(project).agentId;
   // 走「AI 功能」连接时不知道是哪家：先试，后端说不支持再退回只看记录
   const inspect = wantsInspect(question, intent, hasFocus) && (agent === null || INSPECT_AGENTS.includes(agent));
@@ -332,13 +371,14 @@ export async function askProjectAssistant(input: {
   /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
   onStream?: (update: { text?: string; step?: string }) => void;
 }): Promise<AssistantTurn> {
-  const planned = planAsk(input.question, !!input.focus, input.project);
+  const planned = planAsk(input.question, !!input.focus, input.project, undefined, input.history);
   const intent = input.intent ?? planned.intent;
   const inspect = input.inspect ?? planned.inspect;
   const conn = assistantConnection(input.project);
-  const needSnapshot = intent === "project" || intent === "mixed";
+  const needSnapshot = intent === "project" || intent === "mixed" || intent === "request";
   const needGuide = intent === "howto" || intent === "mixed";
-  const [snapshot, guide, worktrees] = await Promise.all([
+  const request = intent === "request";
+  const [snapshot, guide, worktrees, map, catalog] = await Promise.all([
     needSnapshot ? cachedSnapshot(input.projectPath, input.focus) : Promise.resolve(null),
     needGuide
       ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? GUIDE_LIMIT.mixed : GUIDE_LIMIT.howto }), [])
@@ -350,17 +390,21 @@ export async function askProjectAssistant(input: {
             .map((w) => w.worktreePath),
         )
       : Promise.resolve([] as string[]),
+    request ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at) : Promise.resolve(null),
+    request ? gatherCatalog() : Promise.resolve(null),
   ]);
   const promptFor = (withInspect: boolean) =>
     buildAssistantPrompt({
       intent,
       snapshot,
       guide,
-      inspect: withInspect ? inspectRules(input.projectPath, worktrees) : null,
+      inspect: withInspect ? inspectRules(input.projectPath, worktrees, request ? "intake" : "debug") : null,
       context: intent === "howto" || intent === "general" || intent === "chat" ? projectContext(input.projectPath, input.project, conn.line) : null,
       history: input.history,
       question: input.question,
       where: input.where || null,
+      map,
+      catalog,
     });
   const guideHeads = guide.map((g) => g.heading);
   const streamId = crypto.randomUUID();

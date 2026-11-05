@@ -334,7 +334,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ProjectAssistantHost.tsx # 项目助手唯一宿主（App 挂一份）：读 store.assistantReq，补项目条目与步骤数，按钮交 assistant-actions、派活交 assistant-dispatch；
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
-  components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，可「改一改」，「派出去」交页面执行；派过显示结果、不再派
+  components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 另导出 MesaBuddyIcon（线条小图标，项目助手入口按钮、Agent 分工卡片用）；项目助手的卡通形象「小桌」（活过来的小工作台，原创）：pose idle / wave / think / happy / oops / sleep（盘腿睡），prop coffee / lamp；
                              # 深浅主题同一套米白身子 + 墨线；≤40px 只取半身；动作在 App.css .mesa-buddy*，减弱动态效果时静止
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
@@ -583,17 +583,21 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # batchProgress 按目标状态写进度 / 都收场后的汇总一句（tests/split-batch.test.ts）
   split-draft.ts             # 拆成几路做（调 invoke）：splitEligibility（无流程科研 / 工作项目）、projectDefaultProfile、draftSplitPlan（split_plan_context →
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
-  project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general，
+  project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general / request（2026-11-05 接活，previousTurnHint 接着上一轮）；
+                             # 接活：REQUEST_RULES（六种去向、问清楚、派活单）、parseClarify（:::问 块）、派活单 v2 字段与 parseOrderPaths、RESEARCH_ORDER_RULES（科研通则唯一出处）、OrderTextOptions；
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
+  project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
+  builtin-tasks.ts           # 内置科研任务（2026-11-05）：组会汇报 / 进展周报 / 实验规划的做法数据；不是流程模板、不进 pipeline-presets。findBuiltinTask、builtinTaskCatalogLines（能力清单）、builtinTaskMethod（派活单附上的做法）、builtinTaskGoalText（新建目标当模板）（tests/builtin-tasks.test.ts）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
-                             # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
+                             # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
   assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）（tests/assistant-dock.test.ts）
   session-tail.ts            # 某一步最近那段对话里 AI 最后说的话（find_session + get_session_conversation_page 最后一页），aiReportsFailure 标出错；30 秒缓存
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
-                             # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口
+                             # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口；
+                             # v2：依据材料作 inputPaths、技能只留已装的、resolveBasedOn 取内置科研任务 / 我的任务的做法，科研项目附科研通则
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
@@ -1842,6 +1846,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   走 runs::live_copy_changes（与评审页没冻结时现算同口径、只读），改过的记 NO_LINES「~」不给行数；无头 / 定时运行的注入在 ai::run_agent_task
   help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
+                             # project_file_map（2026-11-05 接活）：项目根下文件清单（路径、大小、修改时间），不读内容，跳隐藏 / 依赖目录 / 符号链接，4000 条 8 层封顶；
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
   step_loop.rs               # 综述回路二期（design-review-loop.md §4–§6）：补料单 .ccode/rework/<id>.json、开轮起因 .ccode/step-rounds.jsonl（只追加，时间后端写）——
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
