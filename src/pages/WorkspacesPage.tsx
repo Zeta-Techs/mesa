@@ -1261,6 +1261,30 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboxLive, terminalRunInputs]);
 
+  // 人工请求不等本页或工作台可见（2026-11-05 用户问「接上了吗」）：AI 写 .ccode/help-wanted.md 时人多半正看着聊天页，
+  // 原先只在本页 / 工作台可见时才重拉，标题栏收件箱、聊天里的「等你回答」都要等切页才出现。
+  // 任一对话的注意力一变就重拉；有 AI 在干活时每 20 秒轻量重拉（只读各工作副本的那一个文件），内容没变不触发重渲
+  const helpAttentionSig = terminalRunInputs.map((i) => `${i.cwd}:${i.attention ?? ""}`).join("\n");
+  const helpAnyWorking = terminalRunInputs.some((i) => i.running && i.attention === "working");
+  useEffect(() => {
+    let cancelled = false;
+    const pull = () =>
+      invoke<HelpRequestDto[]>("list_help_requests")
+        .then((next) => {
+          if (cancelled) return;
+          setHelpRequests((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+        })
+        .catch(() => {
+          /* 下次再拉 */
+        });
+    void pull();
+    const timer = helpAnyWorking ? window.setInterval(() => void pull(), 20_000) : null;
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearInterval(timer);
+    };
+  }, [helpAttentionSig, helpAnyWorking]);
+
   // 定时巡检跑完：重拉 schedules 刷新收件箱「文献」胶囊（ScheduleSection 同款监听模式；
   // 全局 OS 通知在 App.tsx 另行监听，这里只管收件箱条目）
   useEffect(() => {
