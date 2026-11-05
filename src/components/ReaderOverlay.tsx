@@ -227,6 +227,10 @@ export default function ReaderOverlay({
       if (e.key !== "Escape" || e.isComposing) return;
       // 焦点在右栏（终端或聊天输入框）时 Esc 归它们：xterm 本就就地消化，聊天层输入框也一样不关阅读区
       if (rightColRef.current?.contains(e.target as Node)) return;
+      // 正在笔记 / 输入框里打字时 Esc 也不关（2026-11-05：Esc 取消中文候选，WKWebView 上组词刚结束时 isComposing
+      // 已是 false，会把阅读区连同没存的笔记一起关掉）；要退出点「← 返回」或先点 PDF 再 Esc
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.(".monaco-editor, textarea, input, [contenteditable='true']")) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
@@ -1359,6 +1363,7 @@ export default function ReaderOverlay({
                       onOpenFile={setNoteViewPath}
                       modeTick={noteModeTick}
                       onDirtyChange={setNoteDirty}
+                      autoSave={!noteReadOnly}
                       onPdfRef={
                         !noteViewPath || noteViewPath === note.path ? jumpToPdf : undefined
                       }

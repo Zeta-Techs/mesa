@@ -772,6 +772,7 @@ function TextFilePreviewEditor({
   path,
   root,
   onDirtyChange,
+  autoSave,
   revealLine,
   onDiscuss,
   onAnnotate,
@@ -796,6 +797,9 @@ function TextFilePreviewEditor({
   /** 定位到含这段文字的地方：阅读态滚到那一块并闪一下，编辑态选中并居中（nonce 递增即执行） */
   focusText?: { text: string; nonce: number } | null;
   onDirtyChange?: (dirty: boolean) => void;
+  /** 停手 1.5 秒自动保存（阅读区笔记栏，2026-11-05 用户：笔记编辑要完善——关阅读区不再丢没存的字）。
+   *  走同一条带版本号的保存：磁盘上已是别的版本（Agent 刚写过）照旧摆出对比合并，不覆盖 */
+  autoSave?: boolean;
   /** 打开后滚到这一行。终端路径点击传入。 */
   revealLine?: number | null;
   /** md 阅读视图选段「◈ 讨论/改写此段」：写入活跃终端输入（send=true 直接发送）；返回 null 已写入，否则为提示 */
@@ -1210,6 +1214,7 @@ function TextFilePreviewEditor({
       dirtyRef.current = true;
       setDirty(true);
       onDirtyChange?.(true);
+      scheduleAutoSaveRef.current();
     });
     const draft = pendingDraftRef.current;
     if (draft) {
@@ -1221,8 +1226,22 @@ function TextFilePreviewEditor({
     }
     const editorPath = path;
     return () => {
-      // 宿主搬家（arm 过）时把没保存的修改寄存给下一个编辑器
-      if (dirtyRef.current && lastSavedRef.current) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      const baseline = lastSavedRef.current;
+      if (autoSaveRef.current && dirtyRef.current && baseline?.revision && !savingRef.current) {
+        // 自动保存的编辑器关掉时还有没存的：带版本号当场存（磁盘上已是别的版本就存不进，不覆盖 Agent 刚写的）
+        void invoke<string>("save_file_preview", {
+          path: editorPath,
+          root,
+          text: ed.getValue(),
+          expectedRevision: baseline.revision,
+          encoding: baseline.encoding ?? null,
+        }).catch((e) => console.warn("关闭时自动保存笔记失败", e));
+      } else if (dirtyRef.current && lastSavedRef.current) {
+        // 宿主搬家（arm 过）时把没保存的修改寄存给下一个编辑器
         stashDraftIfArmed(editorPath, {
           text: ed.getValue(),
           baseline: lastSavedRef.current,
@@ -1284,6 +1303,20 @@ function TextFilePreviewEditor({
 
   // ⌘S / Ctrl+S 保存；编辑器有焦点时 ⌘= / ⌘- / ⌘0 调字号（capture 抢在 Monaco 前；沉浸层也在根节点里）
   const saveRef = useRef<() => void>(() => {});
+  // 自动保存：每次改动重新计时，停手 1.5 秒存一次；编辑器卸载（关阅读区 / 换文件）时还有没存的，在下面创建 effect 的清理里当场存
+  const autoSaveRef = useRef(Boolean(autoSave));
+  autoSaveRef.current = Boolean(autoSave);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleAutoSaveRef = useRef<() => void>(() => {});
+  scheduleAutoSaveRef.current = () => {
+    if (!autoSaveRef.current) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      saveRef.current();
+    }, 1500);
+  };
+
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
