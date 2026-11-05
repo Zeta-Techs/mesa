@@ -26,6 +26,25 @@ export function bestTemplateMatch(current: ProjectStepDto[], templates: Pipeline
   return best;
 }
 
+/** 模板步骤按本项目的研究工具设置换算成保存时的样子（编辑器保存前都过 withResearchTools）；
+ *  提示与编辑器里的「检查更新」共用，两边才列出同一批差异。换算失败的步骤保持原样 */
+export function normalizedTemplate(
+  template: PipelineTemplateDef,
+  normalize?: (step: ProjectStepDto) => ProjectStepDto,
+): PipelineTemplateDef {
+  if (!normalize) return template;
+  return {
+    ...template,
+    steps: template.steps.map((s) => {
+      try {
+        return normalize(s);
+      } catch {
+        return s;
+      }
+    }),
+  };
+}
+
 /** 已有项目的「内置模板有更新」提示（综述回路三期 §13-6：提示升级，人点了才改）。
  *  normalize 把模板步骤按本项目的研究工具设置换算成保存时的样子（编辑器保存前都过 withResearchTools），
  *  否则每个项目都会被误报。signature 用于「不用了」之后同一批更新不再提示。 */
@@ -36,16 +55,7 @@ export function templateUpdateNotice(
 ): { templateId: string; templateName: string; steps: string[]; signature: string } | null {
   const t = bestTemplateMatch(current, templates);
   if (!t) return null;
-  const steps = normalize
-    ? t.steps.map((s) => {
-        try {
-          return normalize(s);
-        } catch {
-          return s;
-        }
-      })
-    : t.steps;
-  const changes = pipelineUpgradeCandidates(current, { ...t, steps });
+  const changes = pipelineUpgradeCandidates(current, normalizedTemplate(t, normalize));
   if (changes.length === 0) return null;
   const text = JSON.stringify(changes.map((c) => [c.current.name, c.proposed]));
   let h = 5381;

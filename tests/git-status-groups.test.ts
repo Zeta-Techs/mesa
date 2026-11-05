@@ -71,6 +71,12 @@ test("积累面台账不算「你的改动未存入历史」（与合并闸门�
     file("notes/my-note.md", "??"),
     file("notes/slug/我的笔记.md", "M"),
     file(".ccode/watch/s1/watchlist.md", "M"),
+    // 与后端 is_accumulation_ledger 同口径：研究记录、核验记录、补料单与开轮起因
+    file(".ccode/record.jsonl", "M"),
+    file(".ccode/checks/c1.json", "??"),
+    file(".ccode/rework/", "??"),
+    file(".ccode/rework/r1.json", "M"),
+    file(".ccode/step-rounds.jsonl", "M"),
   ];
   assert.deepEqual(
     userDirtyFiles(clean).map((row) => row.path),

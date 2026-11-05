@@ -32,6 +32,7 @@ import {
   followupScale,
   notesFollowupIds,
   reworkPrompt,
+  unplacedCoverageDrafts,
   reworkTargets,
   type FollowupScopeDto,
   type ReworkDto,
@@ -265,6 +266,8 @@ export default function TaskCardsSection({
   const [reworkBusy, setReworkBusy] = useState(false);
   const [reworkError, setReworkError] = useState<string | null>(null);
   const [reworkPrefill, setReworkPrefill] = useState<Record<string, { topics: string; reason: string }>>({});
+  // 覆盖检查里归不到退回目标的薄节：补料单上单列给人看
+  const [reworkUnplaced, setReworkUnplaced] = useState<string[]>([]);
   const [followBusy, setFollowBusy] = useState(false);
   /** 继续时上次会话是另一家 Agent：问要不要带简报。取消 = 先不开。 */
   const [carryAsk, setCarryAsk] = useState<{
@@ -826,6 +829,7 @@ export default function TaskCardsSection({
   async function openRework() {
     setReworkError(null);
     const prefill: Record<string, { topics: string; reason: string }> = {};
+    let unplaced: string[] = [];
     const step = focusStepDto;
     const ws = step ? activeWorkspaceFor(step.name, step.workspaceName) : undefined;
     let outline: string | null = null;
@@ -849,8 +853,10 @@ export default function TaskCardsSection({
       const read = groupCoverageDrafts(drafts, "read");
       if (searchStep && search) prefill[searchStep.name] = search;
       if (notesStep && read) prefill[notesStep.name] = read;
+      unplaced = unplacedCoverageDrafts(drafts, { search: !!searchStep, read: !!notesStep });
     }
     setReworkPrefill(prefill);
+    setReworkUnplaced(unplaced);
     setReworkOpen(true);
   }
 
@@ -945,6 +951,7 @@ export default function TaskCardsSection({
       const d = new Date();
       const prompt = reworkPrompt(rework, {
         isSearch: stepFillsAnySlot(target.skills, ["lit-search"], skillProvides),
+        isNotes: stepFillsAnySlot(target.skills, ["lit-notes"], skillProvides),
         projectRoot: projectPath,
         date: `${d.getMonth() + 1}-${d.getDate()}`,
       });
@@ -972,10 +979,7 @@ export default function TaskCardsSection({
     setError(null);
     try {
       const launch = await loopLaunch(step.name);
-      const ws = await ensureActive(found, step.name);
-      await assertRoundable(ws, step.name);
-      const scope = await invoke<FollowupScopeDto>("step_followup_scope", { workspaceId: ws.id });
-      const files = followupFiles(scope.files);
+      // 精读步的增量按项目根的台账算，不用工作副本：收起了也先算、先问，人确认了才恢复（2026-11-05 排查：原先一点就恢复）
       let notesIds: string[] | null = null;
       if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
         const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
@@ -984,6 +988,24 @@ export default function TaskCardsSection({
         // 没有新篇要读、但上游改了别的（清单、待获取）：按文件跟进
         if (notesIds && notesIds.length === 0) notesIds = null;
       }
+      let ws = found;
+      let files: string[] = [];
+      if (!notesIds) {
+        // 按文件算增量要看工作副本：收起了的先问一句再恢复
+        if (
+          found.status !== "active" &&
+          !(await confirmDialog(
+            `「${step.name}」的工作副本已收起：要先恢复它，才能算出上游有多少新内容要跟进。恢复并检查？`,
+            { confirmText: "恢复并检查" },
+          ))
+        )
+          return;
+        ws = await ensureActive(found, step.name);
+        const scope = await invoke<FollowupScopeDto>("step_followup_scope", { workspaceId: ws.id });
+        files = followupFiles(scope.files);
+      }
+      // AI 正在干活 / 有没保存的产出：先拦，别让人确认完才知道开不了（收起了的恢复后再查）
+      if (ws.status === "active") await assertRoundable(ws, step.name);
       const scale = followupScale({ upstream, notesIds, files });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
@@ -991,7 +1013,12 @@ export default function TaskCardsSection({
         toast("项目里没有这一步还没用上的新内容，不用跟进；「待跟进」已去掉。", "info");
         return;
       }
-      if (!(await confirmDialog(`${scale}\n开始前会先把项目里的新内容并进这一步的工作副本。`, { confirmText: "开始跟进" }))) return;
+      const restoreNote = ws.status !== "active" ? "开始前会先恢复这一步收起的工作副本，再把项目里的新内容并进去。" : "开始前会先把项目里的新内容并进这一步的工作副本。";
+      if (!(await confirmDialog(`${scale}\n${restoreNote}`, { confirmText: "开始跟进" }))) return;
+      if (ws.status !== "active") {
+        ws = await ensureActive(ws, step.name);
+        await assertRoundable(ws, step.name);
+      }
       if (!(await commitLeftovers(ws, step.name))) return;
       await syncForRound(ws, step.name);
       await launchContinuation(launch, ws, step.name, followupPrompt({ upstream, notesIds, files }));
@@ -1676,6 +1703,7 @@ export default function TaskCardsSection({
           fromStep={focusStepDto.name}
           targets={reworkTargets(steps, focusIdx).map((st) => st.name)}
           prefill={reworkPrefill}
+          unplaced={reworkUnplaced}
           busy={reworkBusy}
           error={reworkError}
           onCancel={() => setReworkOpen(false)}

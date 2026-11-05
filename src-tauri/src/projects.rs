@@ -3445,7 +3445,7 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     // 排除雷达/验收台账缓存（2026-10-13 双台账口径）：老项目 .gitignore 还没有忽略行，
     // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
     // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
-    const BOOTSTRAP_EXCLUDES: [&str; 10] = [
+    const BOOTSTRAP_EXCLUDES: [&str; 12] = [
         ".ccode/watch-explains.json",
         ".ccode/pending-registrations.json",
         ".ccode/acceptance-log.jsonl",
@@ -3456,6 +3456,8 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
         ".ccode/ai-usage.md",
         ".ccode/checks",
         ".ccode/record",
+        ".ccode/rework",
+        ".ccode/step-rounds.jsonl",
     ];
     // 已被 .gitignore 忽略的台账不再写 exclude：exclude 点名一个存在且已忽略的文件时，
     // git add 整条报「paths are ignored」退出 1，档案卡一次也提交不上（2026-10-22 实测：
@@ -3550,6 +3552,71 @@ fn commit_demo_seed_at(repo: &Path) -> Result<(), String> {
     args.extend(existing.iter().copied());
     crate::workspaces::run_git(repo, &args, T)?;
     Ok(())
+}
+
+/// 已保存步骤的清单（文献台账）可在项目根直接改的文件：都进 git，改完不提交会让主仓库一直有未提交改动、
+/// 挡住后面的保存。白名单之外一律拒绝（2026-11-05）。
+const SAVED_LEDGER_PATHS: [&str; 6] = [
+    "papers/included.json",
+    "papers/included.md",
+    "papers/to-fetch.md",
+    "papers/to-fetch.ris",
+    "papers/endnote-import.ris",
+    "papers/screening.md",
+];
+
+/// 只提交白名单里真有改动的那几份；被忽略或没改的跳过。pathspec 限定提交，
+/// 人自己暂存 / 改着的其他文件原样留下。返回是否提交了。
+fn commit_ledger_at(repo: &Path, paths: &[String]) -> Result<bool, String> {
+    const T: Duration = Duration::from_secs(30);
+    let mut wanted: Vec<&'static str> = Vec::new();
+    for raw in paths {
+        let norm = raw.trim().replace('\\', "/");
+        let hit = SAVED_LEDGER_PATHS
+            .iter()
+            .find(|p| **p == norm)
+            .ok_or_else(|| format!("不能这样提交的文件：{raw}"))?;
+        if !wanted.contains(hit) {
+            wanted.push(hit);
+        }
+    }
+    // 未跟踪且被忽略的 status 里不出现；没改的也不出现
+    let changed: Vec<&str> = wanted
+        .into_iter()
+        .filter(|p| {
+            crate::workspaces::run_git(
+                repo,
+                &["--literal-pathspecs", "status", "--porcelain=v1", "--", p],
+                T,
+            )
+            .is_ok_and(|out| !out.trim().is_empty())
+        })
+        .collect();
+    if changed.is_empty() {
+        return Ok(false);
+    }
+    let mut add_args: Vec<&str> = vec!["--literal-pathspecs", "add", "--"];
+    add_args.extend(changed.iter().copied());
+    crate::workspaces::run_git(repo, &add_args, T).map_err(|e| format!("暂存清单改动失败：{e}"))?;
+    let ident = crate::git_info::commit_identity_args(repo);
+    let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false", "--literal-pathspecs"];
+    args.extend(ident.iter().map(String::as_str));
+    args.extend(["commit", "-m", "Mesa: 已保存步骤的清单改动", "--"]);
+    args.extend(changed.iter().copied());
+    crate::workspaces::run_git(repo, &args, T)
+        .map_err(|e| format!("清单改动没能存进项目历史（git 提交失败）：{e}"))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn commit_project_ledger(project_root: String, paths: Vec<String>) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root =
+            ensure_task_project_root(Path::new(&crate::sessions::expand_tilde(&project_root)))?;
+        commit_ledger_at(&root, &paths)
+    })
+    .await
+    .map_err(|e| format!("提交清单改动失败: {e}"))?
 }
 
 // ===== Tauri commands =====
@@ -6592,6 +6659,46 @@ resources = ["ghost.pdf"]
             Duration::from_secs(10),
         )
         .is_ok()
+    }
+
+    #[test]
+    fn ledger_commit_only_whitelisted_changed_paths() {
+        if crate::agents::resolve_binary("git").is_none() {
+            return;
+        }
+        let dir = temp_dir("ledger-commit");
+        let project = dir.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        ensure_git_at(&project).unwrap();
+        write(&project.join("papers/included.md"), "v1");
+        write(&project.join("papers/to-fetch.md"), "t1");
+        git_ok(&project, &["add", "papers"]);
+        let ident = crate::git_info::commit_identity_args(&project);
+        let mut args: Vec<&str> = ident.iter().map(String::as_str).collect();
+        args.extend(["-c", "commit.gpgsign=false", "commit", "-m", "init"]);
+        git_ok(&project, &args);
+        // 白名单外、路径穿越一律拒绝
+        assert!(commit_ledger_at(&project, &["README.md".into()]).is_err());
+        assert!(commit_ledger_at(&project, &["papers/../x.md".into()]).is_err());
+        // 没改：不提交
+        assert!(!commit_ledger_at(&project, &["papers/included.md".into()]).unwrap());
+        // 改了 included.md；用户另有暂存与未暂存改动，都不得被带走
+        write(&project.join("papers/included.md"), "v2");
+        write(&project.join("papers/to-fetch.md"), "t2");
+        write(&project.join("staged.txt"), "s");
+        git_ok(&project, &["add", "staged.txt"]);
+        let head0 = git_ok(&project, &["rev-parse", "HEAD"]);
+        assert!(commit_ledger_at(
+            &project,
+            &["papers\\included.md".into(), "papers/screening.md".into()]
+        )
+        .unwrap());
+        let changed = git_ok(&project, &["diff", "--name-only", &format!("{}..HEAD", head0.trim())]);
+        assert_eq!(changed.trim(), "papers/included.md");
+        let status = git_ok(&project, &["status", "--porcelain=v1"]);
+        assert!(status.lines().any(|l| l.starts_with("A ") && l.contains("staged.txt")), "{status}");
+        assert!(status.lines().any(|l| l.contains("papers/to-fetch.md")), "没点名的清单不动: {status}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

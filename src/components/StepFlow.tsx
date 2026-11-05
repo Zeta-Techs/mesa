@@ -3185,6 +3185,7 @@ export default function StepFlow({
                       refreshKey={ledgerRefreshKey}
                       worktreePath={dataWs?.worktreePath}
                       projectRoot={projectPath}
+                      commitToProject={runStatus === "done"}
                       onOpenPdf={(path) =>
                         setFilePreviewReq({
                           projectRoot: projectPath,

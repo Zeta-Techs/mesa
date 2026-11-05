@@ -1,4 +1,4 @@
-import { pipelineUpgradeCandidates } from "../pipeline-upgrade";
+import { normalizedTemplate, pipelineUpgradeCandidates } from "../pipeline-upgrade";
 import ResearchToolFields from "./ResearchToolFields";
 import { researchToolsFromSettings, settingsWithResearchTools, withResearchTools } from "../research-tools";
 import { conflictingTemplateSteps, renameConflictingSteps } from "../pipeline-append";
@@ -1378,7 +1378,7 @@ export default function PipelineEditor({
           <details open={initialUpgradeTemplate ? true : undefined} className="rounded ccode-well p-3 text-xs"><summary className="cursor-pointer text-l2">检查已有步骤的内置模板更新</summary>
             <p className="my-2 text-l3">只对名称与工作区都一致的步骤提出更新；先看差异、勾选，再载入编辑草稿。资源绑定保留，不修改已有 TASK.md 或研究产物。保存前仍可取消。</p>
             <select className="rounded border border-field bg-canvas p-1" value={upgradeTemplate} onChange={(e) => { setUpgradeTemplate(e.target.value); setUpgradeSelection([]); }}><option value="">选择原模板</option>{PIPELINE_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-            {(() => { const template = PIPELINE_TEMPLATES.find((t) => t.id === upgradeTemplate); if (!template) return null; const changes = pipelineUpgradeCandidates(drafts.map(toStep), template); return <>
+            {(() => { const raw = PIPELINE_TEMPLATES.find((t) => t.id === upgradeTemplate); if (!raw) return null; /* 与项目页「模板有更新」提示同一口径：模板先按本项目研究工具换算再比，否则每步都报差异 */ const template = normalizedTemplate(raw, (s) => withResearchTools(s, tools, config.artifactDir, config.litSource, providesByName)); const changes = pipelineUpgradeCandidates(drafts.map(toStep), template); return <>
               {changes.length === 0 && <p className="mt-2 text-l3">没有可匹配的差异；自定义/改名步骤请人工对照。</p>}
               {changes.map((change) => <details key={change.index} className="mt-2"><summary><input type="checkbox" checked={upgradeSelection.includes(change.index)} onClick={(e) => e.stopPropagation()} onChange={(e) => setUpgradeSelection((old) => e.target.checked ? [...old, change.index] : old.filter((i) => i !== change.index))} /> {change.current.name} · {change.fields.join("、")}</summary><div className="grid grid-cols-2 gap-2"><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.current,null,2)}</pre><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.proposed,null,2)}</pre></div></details>)}
               <button type="button" disabled={!upgradeSelection.length} className="mt-2 text-l2 disabled:opacity-40" onClick={async () => {

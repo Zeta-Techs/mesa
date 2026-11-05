@@ -15,6 +15,18 @@ test("parseTopics：一行一条，去掉列表记号与空行", () => {
   assert.deepEqual(parseTopics("- §3.2 失活机理\n\n2. 原位表征\n* 动力学\n  "), ["§3.2 失活机理", "原位表征", "动力学"]);
 });
 
+test("parseTopics：节号不是序号——「3.2 失活机理」原样保留；「3. x」「3、x」「3）x」照去", () => {
+  assert.deepEqual(parseTopics("3.2 失活机理\n3. 原位表征\n4、动力学\n5）成本\n6) 展望\n12.3.1 细节\n• 机理"), [
+    "3.2 失活机理",
+    "原位表征",
+    "动力学",
+    "成本",
+    "展望",
+    "12.3.1 细节",
+    "机理",
+  ]);
+});
+
 test("reworkPrompt：补料单原文进指令；检索步与其他步写法不同；线索、规模可选", () => {
   const rework = {
     fromStep: "综述大纲",
@@ -35,6 +47,18 @@ test("reworkPrompt：补料单原文进指令；检索步与其他步写法不�
   assert.match(other, /不超过 8 篇/);
   assert.match(other, /人确认过的内容不推翻/);
   assert.match(other, /C:\\p\\\.ccode\\rework\\1-lit-search\.json/);
+});
+
+test("reworkPrompt：退回精读的点名篇写成完整笔记，不照任务书只速读；不提主要报告", () => {
+  const notes = reworkPrompt(
+    { fromStep: "综述大纲", topics: ["3.3 动力学：[@Wu2023] [@Li2024]"], reason: "薄", clues: "", scale: null, relPath: ".ccode/rework/2.json" },
+    { isSearch: false, isNotes: true, projectRoot: "/p", date: "11-05" },
+  );
+  assert.match(notes, /完整精读笔记/);
+  assert.match(notes, /reviewStatus=reviewed/);
+  assert.match(notes, /去掉 skimmed/);
+  assert.match(notes, /对这几篇不适用/);
+  assert.doesNotMatch(notes, /主要报告/);
 });
 
 test("notesFollowupIds：纳入里索引还没有的（上游新加的）；索引记了 pending 的留待按章节读、不算；排除与待确认不算", () => {
@@ -68,6 +92,7 @@ test("followupPrompt / followupScale：精读按篇、其他按文件；超长�
   const outline = followupPrompt({ upstream: "文献精读与笔记", notesIds: null, files });
   assert.match(outline, /另有 3 个/);
   assert.match(outline, /本轮改了什么/);
+  assert.match(outline, /本轮之前没做完的.*照 TASK\.md 接着做/);
   assert.equal(followupScale({ upstream: "x", notesIds: [], files: [] }), "");
   assert.match(followupScale({ upstream: "x", notesIds: ["a"], files: [] }), /只处理这 1 篇/);
   assert.match(followupScale({ upstream: "x", notesIds: null, files: ["a.md"] }), /1 个文件/);
@@ -90,7 +115,7 @@ test("coverageReworkDrafts：只取没处理的薄节，补检 / 补读分到检
   const outline = [
     "# 大纲",
     "## 覆盖检查",
-    "| 节 | 可写正文的键 | 仅线索 | 最新一篇年份 | 判断 | 建议 |",
+    "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
     "|---|---|---|---|---|---|",
     "| 3.2 失活机理 | 2 | 3 | 2020 | 薄 | 补检：近三年原位表征工作 |",
     "| 3.3 动力学 | 1 | 0 | 2023 | 薄 | 补读：[@Wu2023] [@Li2024] |",
@@ -106,6 +131,24 @@ test("coverageReworkDrafts：只取没处理的薄节，补检 / 补读分到检
   assert.deepEqual(groupCoverageDrafts(drafts, "read"), { topics: "3.3 动力学：[@Wu2023] [@Li2024]", reason: drafts[1].reason });
   assert.equal(groupCoverageDrafts(drafts, "other"), null);
   assert.deepEqual(coverageReworkDrafts("# 没有覆盖检查"), []);
+});
+
+test("unplacedCoverageDrafts：建议没写补检 / 补读的、或对应上游步骤没有的薄节单列，不悄悄丢掉", async () => {
+  const { coverageReworkDrafts, unplacedCoverageDrafts } = await import("../src/step-loop.ts");
+  const outline = [
+    "## 覆盖检查",
+    "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+    "|---|---|---|---|---|---|",
+    "| 3.2 失活 | 2 | 3 | 2020 | 薄 | 补检：原位表征 |",
+    "| 3.5 稳定性 | 1 | 1 | 2022 | 薄 | 找课题组要数据 |",
+    "| 3.3 动力学 | 1 | 0 | 2023 | 薄 | 补读：[@Wu2023] |",
+  ].join("\n");
+  const drafts = coverageReworkDrafts(outline);
+  assert.equal(drafts.find((d) => d.target === "other")?.topic, "3.5 稳定性：找课题组要数据");
+  assert.deepEqual(unplacedCoverageDrafts(drafts, { search: true, read: true }), [
+    "3.5 稳定性：找课题组要数据（这一节可写正文 1 篇、仅线索 1 篇，最新一篇 2022）",
+  ]);
+  assert.equal(unplacedCoverageDrafts(drafts, { search: true, read: false }).length, 2);
 });
 
 test("loopHint：前面在补一轮先指它；否则指第一个待跟进；正常往下走时不出", async () => {

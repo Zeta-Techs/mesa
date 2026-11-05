@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestTemplateMatch, templateUpdateNotice } from "../src/pipeline-upgrade.ts";
+import { bestTemplateMatch, normalizedTemplate, pipelineUpgradeCandidates, templateUpdateNotice } from "../src/pipeline-upgrade.ts";
 import type { PipelineTemplateDef } from "../src/pipeline-presets.ts";
 import type { ProjectStepDto } from "../src/types.ts";
 
@@ -28,4 +28,13 @@ test("templateUpdateNotice：有差异才提示；按项目换算后一致的不
   assert.equal(templateUpdateNotice(saved, [review], normalize), null);
   // 换算抛错时按原样比，不挡
   assert.ok(templateUpdateNotice(current, [review], () => { throw new Error("x"); }));
+});
+
+test("normalizedTemplate：编辑器的「检查更新」与提示同一口径——换算后一致的步骤不列差异", () => {
+  const review = tpl("review", [step("检索", "s", "新"), step("精读", "n", "新")]);
+  const saved = [step("检索", "s", "新+工具"), step("精读", "n", "新")];
+  const normalize = (s: ProjectStepDto) => (s.name === "检索" ? { ...s, brief: `${s.brief}+工具` } : s);
+  assert.equal(pipelineUpgradeCandidates(saved, review).length, 1);
+  assert.equal(pipelineUpgradeCandidates(saved, normalizedTemplate(review, normalize)).length, 0);
+  assert.equal(normalizedTemplate(review), review);
 });

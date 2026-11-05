@@ -700,7 +700,8 @@ fn create_impl(
 /// 分支撞名不能拿「请换一个任务名」把人堵死：步骤工作区名是固定的，
 /// 重跑同一步是常态。三种情况分开处置（2026-10-13）：
 /// ① 活动工作区占着——指路：继续它，或删除后再开新轮；
-/// ② 已归档且已合并——旧轮产物已在主仓，分支只是恢复用的冗余，让位给新轮；
+/// ② 已归档且已合并、分支尖已进基准分支——旧轮产物已在主仓，分支只是恢复用的冗余，让位给新轮；
+///    恢复后又有没保存的提交则拒绝（2026-11-05）；
 /// ③ 没有任何行引用的悬空 ccode/* 分支——创建失败等半路留下的残留，清掉继续。
 fn ensure_branch_free(
     conn: &Connection,
@@ -728,6 +729,13 @@ fn ensure_branch_free(
             "工作区 {name} 已存在且未合并：在工作台继续它跑完，或不需要这一轮就删除工作区后再开"
         )),
         Some(w) if w.merged_at.is_some() => {
+            // 恢复过的轮次保留 merged_at，恢复后又提交、没保存就归档的，分支上有主仓没有的提交：
+            // 只有分支尖已进基准分支才让位，否则删分支会丢那一轮的活
+            if !git_is_ancestor(repo, branch, &w.base_branch)? {
+                return Err(format!(
+                    "上一轮工作区 {name} 已归档，但那一轮有没保存进项目的提交：先在工作台恢复它、保存或删除后再开新一轮"
+                ));
+            }
             run_git(repo, &["branch", "-D", branch], Duration::from_secs(30))?;
             conn.execute("DELETE FROM workspaces WHERE id=?1", params![w.id])
                 .map_err(|e| e.to_string())?;
@@ -1072,14 +1080,22 @@ fn delete_impl(conn: &Connection, id: &str) -> Result<(), String> {
 /// 迁移动跟踪关系、project.toml 写入拦合并才需要避让。「已合并保留」（merged_at 置位）
 /// 的轮次产物已进主仓，不算进行中——否则合并完没归档的旧项目永远迁不了（2026-10-13 实证）。
 /// 不新增状态文件——workspaces 表的 status + merged_at 就是唯一事实。
+/// 例外：恢复过的轮次保留 merged_at，恢复后又提交（分支领先基准）就又是进行中（2026-11-05）。
 pub(crate) fn project_has_active_workspace(repo: &Path) -> bool {
     let Ok(conn) = db() else {
         return false;
     };
-    workspaces_of_repo(&conn, repo)
+    has_unlanded_workspace(&conn, repo)
+}
+
+fn has_unlanded_workspace(conn: &Connection, repo: &Path) -> bool {
+    workspaces_of_repo(conn, repo)
         .map(|list| {
             list.iter().any(|w| {
-                (w.status == "active" || w.status == "creating") && w.merged_at.is_none()
+                (w.status == "active" || w.status == "creating")
+                    && (w.merged_at.is_none()
+                        // git 出错按已落地算，保持原口径，不让一条坏分支永远挡住迁移
+                        || !git_is_ancestor(repo, &w.branch, &w.base_branch).unwrap_or(true))
             })
         })
         .unwrap_or(false)
@@ -1590,7 +1606,7 @@ fn merge_impl_with_guard(
         };
         if ledger {
             if let Err(e) = conn.execute(
-                "UPDATE workspaces SET merged_at=COALESCE(merged_at,?1) WHERE id=?2",
+                "UPDATE workspaces SET merged_at=?1 WHERE id=?2",
                 params![pending.fact.decided_at, id],
             ) {
                 result.failed_phase = Some("state".into());
@@ -1647,7 +1663,7 @@ fn merge_impl_with_guard(
             return Ok(result);
         }
         if let Err(e) = conn.execute(
-            "UPDATE workspaces SET merged_at=COALESCE(merged_at,?1) WHERE id=?2",
+            "UPDATE workspaces SET merged_at=?1 WHERE id=?2",
             params![entry.decided_at, id],
         ) {
             result.failed_phase = Some("state".into());
@@ -3195,6 +3211,20 @@ fn human_detection_roots(
     roots
 }
 
+/// 工作树对应的工作区已保存进项目：合并过（merged_at）且分支没有基准分支以外的新提交。
+/// 恢复后又提交的轮次不算（2026-11-05）。查不到行或 git 出错按「没保存」处理。
+fn saved_worktree(conn: Option<&Connection>, wt: &Path) -> bool {
+    let Some(conn) = conn else { return false };
+    let wt_key = wt.to_string_lossy();
+    let Ok(rows) = query_workspaces(conn) else { return false };
+    rows.iter()
+        .find(|w| crate::paths::same_path(&w.worktree_path, &wt_key))
+        .is_some_and(|w| {
+            w.merged_at.is_some()
+                && git_is_ancestor(wt, "HEAD", &w.base_branch).unwrap_or(false)
+        })
+}
+
 pub(crate) fn list_human_task_states_at(root: &Path) -> Vec<HumanTaskStateDto> {
     let cfg = crate::projects::read_config_at(root).config;
     if cfg.steps.iter().all(|s| s.human_tasks.is_empty()) {
@@ -3231,10 +3261,12 @@ pub(crate) fn list_human_task_states_at(root: &Path) -> Vec<HumanTaskStateDto> {
             // 逐条裁决这类「文件里条目都拍板了」的判定只看一份：工作区里有这份文件就看工作区的（这一轮 AI 新写的），
             // 否则看项目根。原先两边任一满足即算完成——项目根里上一轮全裁决完的旧报告，会把这一轮还没裁决的也判成完成，
             // 面板随之消失（2026-11-05 排查）
+            // 已保存进项目的步骤（合并过、分支没再前进）界面把裁决写进项目根，工作区那份是旧的：看项目根
             let judged: Vec<&PathBuf> = if completion == "decisions_cleared" {
                 roots
                     .iter()
                     .rev()
+                    .filter(|r| *r == &roots[0] || !saved_worktree(conn.as_ref(), r))
                     .find(|r| r.join(&h.target).is_file())
                     .into_iter()
                     .collect()
@@ -5804,6 +5836,24 @@ mod tests {
             .unwrap();
         let w2 = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit").unwrap();
         assert_ne!(w2.id, w.id);
+        // ②' 恢复过（保留 merged_at）又提交、没保存就归档：分支尖不在基准里，不得删分支
+        fs::write(Path::new(&w2.worktree_path).join("new.md"), "x").unwrap();
+        sh(Path::new(&w2.worktree_path), &["add", "new.md"]);
+        sh(Path::new(&w2.worktree_path), &["commit", "-m", "unsaved"]);
+        fs::remove_dir_all(&w2.worktree_path).unwrap();
+        run_git(&fx.repo, &["worktree", "prune"], Duration::from_secs(30)).unwrap();
+        fx.conn
+            .execute(
+                "UPDATE workspaces SET status='archived', archived_at='2026-10-14T00:00:00Z', merged_at='2026-10-13T00:00:00Z' WHERE id=?1",
+                params![w2.id],
+            )
+            .unwrap();
+        let err = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit").unwrap_err();
+        assert!(err.contains("没保存进项目的提交"), "{err}");
+        assert!(
+            run_git(&fx.repo, &["rev-parse", "--verify", "--quiet", "ccode/lit"], Duration::from_secs(10)).is_ok(),
+            "有没保存提交的分支不得删"
+        );
         assert!(
             query_workspaces(&fx.conn)
                 .unwrap()
@@ -5815,6 +5865,46 @@ mod tests {
         run_git(&fx.repo, &["branch", "ccode/orphan"], Duration::from_secs(10)).unwrap();
         let w3 = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "orphan").unwrap();
         assert_eq!(w3.branch, "ccode/orphan");
+    }
+
+    #[test]
+    fn restored_round_with_new_commits_counts_as_unlanded() {
+        let Some(fx) = Fixture::new() else { return };
+        let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit").unwrap();
+        assert!(has_unlanded_workspace(&fx.conn, &fx.repo), "没合并的活动轮次是进行中");
+        fx.conn
+            .execute(
+                "UPDATE workspaces SET merged_at='2026-11-05T00:00:00Z' WHERE id=?1",
+                params![w.id],
+            )
+            .unwrap();
+        assert!(!has_unlanded_workspace(&fx.conn, &fx.repo), "已合并保留且没新提交：已落地");
+        let wt = PathBuf::from(&w.worktree_path);
+        fs::write(wt.join("x.md"), "x").unwrap();
+        sh(&wt, &["add", "x.md"]);
+        sh(&wt, &["commit", "-m", "after restore"]);
+        assert!(has_unlanded_workspace(&fx.conn, &fx.repo), "恢复后又提交：又是进行中");
+    }
+
+    #[test]
+    fn saved_worktree_requires_merged_and_not_ahead() {
+        let Some(fx) = Fixture::new() else { return };
+        let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "rev").unwrap();
+        let wt = PathBuf::from(&w.worktree_path);
+        assert!(!saved_worktree(Some(&fx.conn), &wt), "没合并过不算已保存");
+        fx.conn
+            .execute(
+                "UPDATE workspaces SET merged_at='2026-11-05T00:00:00Z' WHERE id=?1",
+                params![w.id],
+            )
+            .unwrap();
+        assert!(saved_worktree(Some(&fx.conn), &wt), "合并过且分支没前进 = 已保存");
+        // 恢复后又提交：分支领先基准，裁决仍看工作区那份
+        fs::write(wt.join("x.md"), "x").unwrap();
+        sh(&wt, &["add", "x.md"]);
+        sh(&wt, &["commit", "-m", "more"]);
+        assert!(!saved_worktree(Some(&fx.conn), &wt));
+        assert!(!saved_worktree(None, &wt));
     }
 
     #[test]

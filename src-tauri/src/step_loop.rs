@@ -89,13 +89,23 @@ fn create_rework_at(root: &Path, mut draft: ReworkDraft) -> Result<ReworkDto, St
     let name = crate::paths::sanitize_fs_name(&draft.to_workspace_name).unwrap_or_else(|_| "step".into());
     let dir = rework_dir(root);
     fs::create_dir_all(&dir).map_err(|e| format!("建补料单目录失败：{e}"))?;
-    // 同一秒发两张：后缀递增，不覆盖
+    // 同一秒发两张：后缀递增，不覆盖；create_new 占位，两路同时发也不会撞同一个名
     let base = format!("{}-{}", compact_stamp(&sent_at), name);
     let mut id = base.clone();
     let mut n = 2;
-    while dir.join(format!("{id}.json")).exists() {
-        id = format!("{base}-{n}");
-        n += 1;
+    loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(format!("{id}.json")))
+        {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 1000 => {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
+            Err(e) => return Err(format!("写补料单失败：{e}")),
+        }
     }
     let dto = ReworkDto {
         rel_path: format!(".ccode/rework/{id}.json"),
@@ -327,7 +337,13 @@ fn capped(text: String) -> Result<RoundTextDto, String> {
     Ok(RoundTextDto { text: text[..end].to_string(), truncated: true })
 }
 
+/// 早期保存记录可能没记所审版本（reviewed_sha 为空）：如实说看不了，不报「版本不对」
+const NO_SHA: &str = "这一轮保存时没记下版本，看不了这一版";
+
 fn round_file_at(root: &Path, sha: &str, path: &str) -> Result<RoundTextDto, String> {
+    if sha.trim().is_empty() {
+        return Err(NO_SHA.into());
+    }
     if !valid_sha(sha) || !valid_rel(path) {
         return Err("版本或文件路径不对".into());
     }
@@ -338,6 +354,9 @@ fn round_file_at(root: &Path, sha: &str, path: &str) -> Result<RoundTextDto, Str
 }
 
 fn round_diff_at(root: &Path, from: &str, to: &str, path: &str) -> Result<RoundTextDto, String> {
+    if from.trim().is_empty() || to.trim().is_empty() {
+        return Err(NO_SHA.into());
+    }
     if !valid_sha(from) || !valid_sha(to) || !valid_rel(path) {
         return Err("版本或文件路径不对".into());
     }
@@ -379,7 +398,51 @@ pub struct FollowupScopeDto {
     pub files: Vec<String>,
 }
 
-fn followup_scope_at(worktree: &Path, base_branch: &str) -> Result<FollowupScopeDto, String> {
+/// 上游步骤带回项目、这一步还没有的文件：验收账本里上游步骤的保存（`goal_name` 首段 = 工作区名），
+/// 所审版本（`reviewed_sha`）还不在本工作区 HEAD 里的，取它们带回的文件。
+/// 基准分支的三点差异还含下游 / 并列步骤后来保存的产物，跟进不该把它们当成上游新增（2026-11-05）。
+/// 返回 None = 档案卡里找不到这一步，不过滤。
+fn upstream_new_paths(
+    root: &Path,
+    worktree: &Path,
+    workspace_name: &str,
+) -> Option<std::collections::HashSet<String>> {
+    let cfg = crate::projects::read_config_at(root).config;
+    let idx = cfg.steps.iter().position(|s| s.workspace_name == workspace_name)?;
+    let upstream: std::collections::HashSet<&str> = cfg.steps[..idx]
+        .iter()
+        .map(|s| s.workspace_name.as_str())
+        .filter(|n| !n.is_empty())
+        .collect();
+    let mut out = std::collections::HashSet::new();
+    for e in crate::projects::read_acceptance_log_at(root) {
+        if e.kind != crate::review_contract::KIND_PIPELINE_MERGE {
+            continue;
+        }
+        let name = e.goal_name.split(" / ").next().unwrap_or("");
+        if !upstream.contains(name) {
+            continue;
+        }
+        // 查不了（版本已被清理等）按「还没有」算：最终还要与三点差异取交集，多算不会越界
+        let have = e
+            .reviewed_sha
+            .as_deref()
+            .filter(|sha| !sha.is_empty())
+            .is_some_and(|sha| {
+                crate::workspaces::git_is_ancestor(worktree, sha, "HEAD").unwrap_or(false)
+            });
+        if !have {
+            out.extend(e.paths.into_iter().map(|p| p.replace('\\', "/")));
+        }
+    }
+    Some(out)
+}
+
+fn followup_scope_at(
+    worktree: &Path,
+    base_branch: &str,
+    only: Option<&std::collections::HashSet<String>>,
+) -> Result<FollowupScopeDto, String> {
     let t = Duration::from_secs(30);
     let range = format!("HEAD..{base_branch}");
     let behind = crate::workspaces::run_git(worktree, &["rev-list", "--count", &range], t)?
@@ -395,6 +458,7 @@ fn followup_scope_at(worktree: &Path, base_branch: &str) -> Result<FollowupScope
         .lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
+        .filter(|l| only.is_none_or(|set| set.contains(l)))
         .collect();
     Ok(FollowupScopeDto { behind, files })
 }
@@ -407,7 +471,9 @@ pub async fn step_followup_scope(workspace_id: String) -> Result<FollowupScopeDt
         if w.status != "active" {
             return Err("这一步的工作区已收起，先恢复再跟进".into());
         }
-        followup_scope_at(Path::new(&w.worktree_path), &w.base_branch)
+        let wt = Path::new(&w.worktree_path);
+        let only = upstream_new_paths(Path::new(&w.repo_path), wt, &w.name);
+        followup_scope_at(wt, &w.base_branch, only.as_ref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -553,6 +619,8 @@ mod tests {
         assert!(valid_sha("abc1234"));
         assert!(!valid_sha("HEAD"));
         assert!(!valid_sha("abc"));
+        assert_eq!(round_file_at(Path::new("."), "", "a.md").unwrap_err(), NO_SHA);
+        assert_eq!(round_diff_at(Path::new("."), "abc1234", " ", "a.md").unwrap_err(), NO_SHA);
     }
 
     #[cfg(unix)]
@@ -580,19 +648,84 @@ mod tests {
         let wt_holder = temp("wt");
         let wt = wt_holder.path().join("wt");
         git(repo, &["worktree", "add", "-q", "-b", "step", wt.to_str().unwrap()]);
-        assert_eq!(followup_scope_at(&wt, "main").unwrap(), FollowupScopeDto { behind: 0, files: vec![] });
+        assert_eq!(followup_scope_at(&wt, "main", None).unwrap(), FollowupScopeDto { behind: 0, files: vec![] });
         fs::create_dir_all(repo.join("notes")).unwrap();
         fs::write(repo.join("notes/new.md"), "n\n").unwrap();
         fs::write(repo.join("outline.md"), "v2\n").unwrap();
         git(repo, &["add", "notes/new.md", "outline.md"]);
         git(repo, &["commit", "-qm", "two"]);
         let v2 = git(repo, &["rev-parse", "HEAD"]);
-        let scope = followup_scope_at(&wt, "main").unwrap();
+        let scope = followup_scope_at(&wt, "main", None).unwrap();
         assert_eq!(scope.behind, 1);
         assert_eq!(scope.files, vec!["notes/new.md".to_string(), "outline.md".to_string()]);
         assert_eq!(round_file_at(repo, &v1, "outline.md").unwrap().text, "v1\n");
         let diff = round_diff_at(repo, &v1, &v2, "outline.md").unwrap().text;
         assert!(diff.contains("-v1") && diff.contains("+v2"), "{diff}");
         assert!(round_file_at(repo, &v1, "../outline.md").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn followup_lists_only_upstream_saves_not_downstream_outputs() {
+        let git = |dir: &Path, args: &[&str]| {
+            let bin = crate::agents::resolve_binary("git").expect("测试环境找不到 git");
+            let out = std::process::Command::new(bin)
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{:?}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let dir = project();
+        let repo = dir.path();
+        fs::write(
+            repo.join(".ccode/project.toml"),
+            "[[steps]]\nname = \"检索\"\nworkspace_name = \"lit\"\n\n[[steps]]\nname = \"大纲\"\nworkspace_name = \"outline\"\n\n[[steps]]\nname = \"写作\"\nworkspace_name = \"write\"\n",
+        )
+        .unwrap();
+        git(repo, &["init", "-q", "-b", "main"]);
+        fs::create_dir_all(repo.join("papers")).unwrap();
+        fs::write(repo.join("papers/included.md"), "v1\n").unwrap();
+        git(repo, &["add", "papers/included.md"]);
+        git(repo, &["commit", "-qm", "lit round 1"]);
+        let lit1 = git(repo, &["rev-parse", "HEAD"]);
+        let wt_holder = temp("wt");
+        let wt = wt_holder.path().join("wt");
+        git(repo, &["worktree", "add", "-q", "-b", "ccode/outline", wt.to_str().unwrap()]);
+        // 之后：上游检索又保存一轮，下游写作也保存了一轮
+        fs::write(repo.join("papers/included.md"), "v2\n").unwrap();
+        git(repo, &["add", "papers/included.md"]);
+        git(repo, &["commit", "-qm", "lit round 2"]);
+        let lit2 = git(repo, &["rev-parse", "HEAD"]);
+        fs::create_dir_all(repo.join("manuscript")).unwrap();
+        fs::write(repo.join("manuscript/draft.md"), "d\n").unwrap();
+        git(repo, &["add", "manuscript/draft.md"]);
+        git(repo, &["commit", "-qm", "write round"]);
+        let write1 = git(repo, &["rev-parse", "HEAD"]);
+        let entry = |name: &str, sha: &str, path: &str| crate::projects::AcceptanceLogEntry {
+            kind: crate::review_contract::KIND_PIPELINE_MERGE.into(),
+            goal_name: format!("{name} / ccode/{name}"),
+            reviewed_sha: Some(sha.into()),
+            paths: vec![path.into()],
+            ..Default::default()
+        };
+        let lines: Vec<String> = [
+            entry("lit", &lit1, "papers/old.md"),
+            entry("lit", &lit2, "papers/included.md"),
+            entry("write", &write1, "manuscript/draft.md"),
+        ]
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect();
+        fs::write(repo.join(".ccode/acceptance-log.jsonl"), lines.join("\n")).unwrap();
+        let only = upstream_new_paths(repo, &wt, "outline").unwrap();
+        assert_eq!(only.len(), 1, "已在本工作区里的上游旧轮不算：{only:?}");
+        let scope = followup_scope_at(&wt, "main", Some(&only)).unwrap();
+        assert_eq!(scope.behind, 2);
+        assert_eq!(scope.files, vec!["papers/included.md".to_string()], "下游写作的产物不算上游新增");
+        assert!(upstream_new_paths(repo, &wt, "nope").is_none());
     }
 }

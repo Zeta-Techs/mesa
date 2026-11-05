@@ -19,7 +19,7 @@ test("精读进度：reviewed 才算写完，按全文/摘要分开数", () => {
     { id: "e" },
   ]);
   const p = notesProgress(index);
-  assert.deepEqual(p, { total: 5, reviewed: 2, fulltext: 1, abstractOnly: 1, blocked: 1 });
+  assert.deepEqual(p, { total: 5, reviewed: 2, fulltext: 1, abstractOnly: 1, blocked: 1, skimmed: 0 });
   assert.equal(notesProgressLine(p!), "已写笔记 2 / 5 篇 · 全文 1 · 仅摘要 1 · 卡住 1");
 });
 
@@ -140,7 +140,7 @@ test("检索篇数标了类型时括号里写综述几篇；大纲定框架几�
     "| 2 | 角度 | 角度 1、3 | 11-05 |",
     "| 3 | 读者 |  | |",
     "## 覆盖检查",
-    "| 节 | 可写正文的键 | 仅线索 | 最新一篇年份 | 判断 | 建议 |",
+    "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
     "|---|---|---|---|---|---|",
     "| 3.2 | 2 | 3 | 2020 | 薄 | 补检：x |",
     "| 3.4 | 0 | 1 | 2019 | 薄·不补：不是重点 | |",
@@ -158,4 +158,35 @@ test("速读表行数：去掉表头与分隔行；没有表返回 null", async 
   assert.equal(skimRowCount(md), 2);
   assert.equal(skimRowCount("# 速读表\n\n| 键 | 年份 |\n|:--|--:|\n"), 0);
   assert.equal(skimRowCount("# 空"), null);
+});
+
+test("速读表行数：按主题分几张表逐张去表头；另有的小计表不算", async () => {
+  const { skimRowCount } = await import("../src/notes-progress.ts");
+  const head = "| 键 | 年份 | 主题 | 研究问题 | 方法 | 主要结论 | 新在哪 | 全文 |\n|---|---|---|---|---|---|---|---|\n";
+  const md = [
+    "# 速读表",
+    "## 原位表征",
+    head + "| @a | 2023 | x | q | m | c | n | 有 |\n| @b | 2024 | x | q | m | c | n | 无 |",
+    "## 动力学",
+    head + "| @c | 2025 | y | q | m | c | n | 有 |",
+    "## 小计",
+    "| 主题 | 篇数 |\n|---|---|\n| 原位表征 | 2 |\n| 动力学 | 1 |",
+  ].join("\n\n");
+  assert.equal(skimRowCount(md), 3);
+});
+
+test("精读进度：只速读的（skimmed 且没写成笔记）不进分母，单列；补读写成笔记的照常算", () => {
+  const index = JSON.stringify([
+    { id: "r1", reviewStatus: "reviewed", fulltextStatus: "fulltext", kind: "review" },
+    { id: "r2", reviewStatus: "pending", kind: "review" },
+    { id: "s1", reviewStatus: "pending", skimmed: true },
+    { id: "s2", reviewStatus: "pending", skimmed: true },
+    { id: "s3", reviewStatus: "reviewed", fulltextStatus: "fulltext", skimmed: true },
+  ]);
+  const p = notesProgress(index)!;
+  assert.equal(p.total, 3);
+  assert.equal(p.skimmed, 2);
+  assert.equal(notesProgressLine(p), "已写笔记 2 / 3 篇 · 全文 2 · 只速读 2");
+  const allSkim = JSON.stringify([{ id: "s1", reviewStatus: "pending", skimmed: true }]);
+  assert.equal(notesProgressLine(notesProgress(allSkim)!), "只速读 1 篇，还没有要写单篇笔记的");
 });

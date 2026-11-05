@@ -15,6 +15,9 @@ export interface NotesProgress {
   abstractOnly: number;
   /** reviewStatus = blocked */
   blocked: number;
+  /** index 记了 skimmed: true 且还没写成笔记的（综述精读第一轮研究论文只速读，2026-11-05）：
+   *  不进 total——它们这一轮本就不写单篇笔记，算进分母会让「已写 6 / 72」看着像没做完 */
+  skimmed: number;
 }
 
 function records(parsed: unknown): unknown[] | null {
@@ -75,8 +78,14 @@ export function notesProgress(
     return !(typeof id === "string" && excluded.has(id));
   });
   if (!rows || rows.length === 0) return null;
-  const out: NotesProgress = { total: rows.length, reviewed: 0, fulltext: 0, abstractOnly: 0, blocked: 0 };
+  const out: NotesProgress = { total: 0, reviewed: 0, fulltext: 0, abstractOnly: 0, blocked: 0, skimmed: 0 };
   for (const row of rows) {
+    const skimmed = (row as Record<string, unknown> | null)?.skimmed === true;
+    if (skimmed && !isReviewed(row)) {
+      out.skimmed += 1;
+      continue;
+    }
+    out.total += 1;
     if (field(row, "reviewStatus") === "blocked") out.blocked += 1;
     if (!isReviewed(row)) continue;
     out.reviewed += 1;
@@ -86,12 +95,15 @@ export function notesProgress(
   return out;
 }
 
-/** 一行摘要：「已写笔记 42 / 199 篇 · 全文 30 · 仅摘要 12 · 卡住 3」。没写的分项不出。 */
+/** 一行摘要：「已写笔记 42 / 199 篇 · 全文 30 · 仅摘要 12 · 卡住 3 · 只速读 60」。没写的分项不出。
+ *  只速读的篇不在分母里，单列在末尾；全都只速读时不出「0 / 0」。 */
 export function notesProgressLine(p: NotesProgress): string {
+  if (p.total === 0) return `只速读 ${p.skimmed} 篇，还没有要写单篇笔记的`;
   const parts = [`已写笔记 ${p.reviewed} / ${p.total} 篇`];
   if (p.fulltext > 0) parts.push(`全文 ${p.fulltext}`);
   if (p.abstractOnly > 0) parts.push(`仅摘要 ${p.abstractOnly}`);
   if (p.blocked > 0) parts.push(`卡住 ${p.blocked}`);
+  if (p.skimmed > 0) parts.push(`只速读 ${p.skimmed}`);
   return parts.join(" · ");
 }
 
@@ -207,15 +219,27 @@ export function figurePlanLine(p: FigurePlan): string {
   return `用图计划：${parts.join(" · ")}`;
 }
 
-/** 速读表 notes/skim.md 有几行（去掉表头与分隔行）。综述精读第一轮研究论文只速读（2026-11-05 用户拍板），
- *  「已写笔记」不数它们，单给一行「速读 N 篇」。没有表返回 null。 */
+/** 速读表 notes/skim.md 有几行（每张表各去掉自己的表头与分隔行）。综述精读第一轮研究论文只速读（2026-11-05 用户拍板），
+ *  「已写笔记」不数它们，单给一行「速读 N 篇」。按主题分成几张表时逐张数；文件里另有别的表（如按主题的小计）时
+ *  只数表头像速读表的（有「新在哪」或「主要结论」列），一张都不像才全数。没有表返回 null。 */
 export function skimRowCount(text: string): number | null {
-  const rows = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith("|"))
-    .filter((l) => !/^\|(\s*:?-{2,}:?\s*\|)+$/.test(l));
-  return rows.length > 0 ? rows.length - 1 : null;
+  const tables: { header: string; rows: number }[] = [];
+  let current: { header: string; rows: number } | null = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l.startsWith("|")) {
+      current = null;
+      continue;
+    }
+    if (/^\|(\s*:?-{2,}:?\s*\|)+$/.test(l)) continue;
+    if (!current) {
+      current = { header: l, rows: 0 };
+      tables.push(current);
+    } else current.rows += 1;
+  }
+  if (tables.length === 0) return null;
+  const skim = tables.filter((t) => /新在哪|主要结论/.test(t.header));
+  return (skim.length > 0 ? skim : tables).reduce((n, t) => n + t.rows, 0);
 }
 
 /** 大纲 outline.md 的定框架与覆盖检查（综述回路三期）：「## 定框架记录」表里第 1–6 问有几问填了人的选择，

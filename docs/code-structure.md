@@ -1107,6 +1107,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
   session-search.ts          # 对话搜索纯逻辑：分词、元数据即时过滤、正文命中合并排序
   session-slim.ts            # 会话瘦身纯逻辑（撞网关 413）：提示条/菜单项出现条件、拦路原因（Mesa 终端在跑 / 最近一分钟有写入）、瘦身后体积预告、结果文案（tests/session-slim.test.ts）
   session-transfer.ts        # 会话导入向导纯逻辑：状态文案、目标目录预填、可否执行
+  ledger-commit.ts           # 已保存步骤在项目根改清单（纳入 / 移出 / 类型 / 待获取）后统一提交：invoke commit_project_ledger，只认 papers/ 六个清单文件，失败只报不撤（tests/ledger-commit.test.ts）
   step-loop.ts               # 综述回路二期纯逻辑：补料轮 / 跟进轮开场指令（补料单原文写进指令；isSearch / 精读由调用方按技能槽判，引擎不认识检索）、
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游（tests/step-loop.test.ts）

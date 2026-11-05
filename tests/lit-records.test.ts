@@ -485,11 +485,18 @@ test("kind 只在 json 里：不进 RIS；写错值 check 拦；angles-facts 按
     json.find((x: { id: string }) => x.id === "W1").kind = "research";
     writeFileSync(path, JSON.stringify(json, null, 2));
     mkdirSync(join(ws, "notes"), { recursive: true });
-    writeFileSync(join(ws, "notes/index.json"), JSON.stringify([{ id: "W2", bibKey: "Bai2021", cutoffYear: 2020 }, { id: "W1", bibKey: "Da2023" }]));
+    // 带 BOM 的 index.json（Windows 记事本存的）照样读
+    writeFileSync(join(ws, "notes/index.json"), "\uFEFF" + JSON.stringify([{ id: "W2", bibKey: "Bai2021", cutoffYear: 2020 }, { id: "W1", bibKey: "Da2023" }]));
     r = run(["angles-facts"], ws);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.match(r.stdout, /纳入综述 1 篇、研究论文 1 篇/);
     assert.match(r.stdout, /\| \[@Bai2021\] Recent advances of MXenes .* \| 2020 \| 1 篇：\[@Da2023\] \|/);
+    // 标题里的 | 转义，不把表格拆列
+    json.find((x: { id: string }) => x.id === "W2").title = "MXenes | a review";
+    writeFileSync(path, JSON.stringify(json, null, 2));
+    r = run(["angles-facts"], ws);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /\| \[@Bai2021\] MXenes \\\| a review \| 2021 \| 2020 \|/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

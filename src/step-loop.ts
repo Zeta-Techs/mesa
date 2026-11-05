@@ -49,18 +49,20 @@ export interface RoundTextDto {
   truncated: boolean;
 }
 
-/** 补料单从表单文字拆出主题：一行一条，去掉行首的 -、*、序号 */
+/** 补料单从表单文字拆出主题：一行一条，去掉行首的 -、*、序号（「3.2 失活机理」的节号不是序号，留着） */
 export function parseTopics(text: string): string[] {
   return text
     .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.、)）])\s*/, "").trim())
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[、)）]|\d+\.(?!\d))\s*/, "").trim())
     .filter(Boolean);
 }
 
-/** 补料轮的开场指令：补料单原文写进去（不靠 AI 去读项目根的文件），只补单上的。 */
+/** 补料轮的开场指令：补料单原文写进去（不靠 AI 去读项目根的文件），只补单上的。
+ *  isNotes = 退回精读（「补读」）：点名的篇写成完整精读笔记——任务书里「研究论文只速读、不写单篇笔记」对它们不适用，
+ *  否则 AI 照任务书只补速读行（2026-11-05 排查）；精读步没有「主要报告」，不叫它往报告末尾追加。 */
 export function reworkPrompt(
   rework: Pick<ReworkDto, "fromStep" | "topics" | "reason" | "clues" | "scale" | "relPath">,
-  opts: { isSearch: boolean; projectRoot: string; date: string },
+  opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string },
 ): string {
   const lines = [
     `这是一轮补料：「${rework.fromStep}」退回来的，只补下面列的，不重做整步。`,
@@ -75,7 +77,10 @@ export function reworkPrompt(
     opts.isSearch
       ? "已纳入、已判定的文献不重筛、不改判定；新找到的按原纳入标准筛，纳入的追加进 papers/included.json，再按技能跑 lit_records.py write 重出清单。" +
           `在 papers/screening.md 末尾追加「## 补料轮（${opts.date}）」一节：补了什么、检索式、候选数与纳入数、没拿到全文的原因。`
-      : "在本步已有产物上追加或修改，人确认过的内容不推翻；" +
+      : opts.isNotes
+        ? "单上点名的篇（或这些主题下该精读的篇）写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
+          "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。收尾补 references.bib、按新笔记更新 notes/handoff.md 的写作约束，最后在对话里列出补了哪几篇、改了哪些文件。"
+        : "在本步已有产物上追加或修改，人确认过的内容不推翻；" +
           `在本步主要报告末尾追加「## 补料轮（${opts.date}）」一节，写清补了什么、改了哪些文件。`,
     `补料单原件：${joinRoot(opts.projectRoot, rework.relPath)}。`,
     KEEP_WORKING_CLAUSE,
@@ -170,7 +175,7 @@ export function followupPrompt(opts: {
     head,
     "这些文件在本步上次保存之后改过：",
     ...shown,
-    "先读这些改动，只修改受它们影响的部分；人确认过的内容不推翻。在本步主要产物末尾追加「## 本轮改了什么」一节，逐条写改了哪里、因为上游哪处变化。",
+    "先读这些改动，只修改受它们影响的部分；本轮之前没做完的（还没问完的问、没写的节）照 TASK.md 接着做；人确认过的内容不推翻。在本步主要产物末尾追加「## 本轮改了什么」一节，逐条写改了哪里、因为上游哪处变化。",
     KEEP_WORKING_CLAUSE,
   ].join("\n");
 }
@@ -255,6 +260,14 @@ export function groupCoverageDrafts(drafts: CoverageDraft[], target: CoverageDra
     topics: picked.map((d) => d.topic).join("\n"),
     reason: picked.length === 1 ? picked[0].reason : `大纲覆盖检查里这 ${picked.length} 节是薄的（${picked.map((d) => d.reason.replace(/^覆盖检查：这一节/, "")).join("；")}）`,
   };
+}
+
+/** 归不到任何退回目标的薄节（建议没写「补检」「补读」，或对应的上游步骤不存在）：不能悄悄丢掉，
+ *  补料单上单列一块让人自己决定退回哪一步（2026-11-05 排查）。一条一行：「节：建议（原因）」 */
+export function unplacedCoverageDrafts(drafts: CoverageDraft[], has: { search: boolean; read: boolean }): string[] {
+  return drafts
+    .filter((d) => d.target === "other" || (d.target === "search" && !has.search) || (d.target === "read" && !has.read))
+    .map((d) => `${d.topic}（${d.reason.replace(/^覆盖检查：/, "")}）`);
 }
 
 /** 回路进行中「下一步去哪」（2026-11-05，用户反馈「跑完一个节点就不会弄了」）：流程进度条上方一行。

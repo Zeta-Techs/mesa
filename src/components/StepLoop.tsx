@@ -27,6 +27,7 @@ export function ReworkDialog({
   fromStep,
   targets,
   prefill = {},
+  unplaced = [],
   busy,
   error,
   onCancel,
@@ -37,6 +38,8 @@ export function ReworkDialog({
   targets: string[];
   /** 按退回目标预填的主题与原因（大纲「覆盖检查」里的薄节，三期 §9.3）；人改过就不再覆盖 */
   prefill?: Record<string, { topics: string; reason: string }>;
+  /** 覆盖检查里归不到退回目标的薄节（建议没写补检 / 补读）：单列提示，人自己决定抄进哪一步 */
+  unplaced?: string[];
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -95,6 +98,17 @@ export function ReworkDialog({
       }
     >
       <div className="space-y-3 text-xs text-l3">
+        {unplaced.length > 0 && (
+          <InlineNotice tone="info">
+            大纲覆盖检查里还有 {unplaced.length} 节是薄的，但建议没写「补检」或「补读」，没法自动归到哪一步：
+            {unplaced.map((u) => (
+              <span key={u} className="block">
+                · {u}
+              </span>
+            ))}
+            要补的话选好退回到哪一步，抄进下面的主题里。
+          </InlineNotice>
+        )}
         {targets.length > 1 && (
           <label className="block space-y-1">
             <span>退回到</span>

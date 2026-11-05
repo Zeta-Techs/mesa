@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { DirEntryDto } from "./FileTree";
 import { researchAbsolutePath } from "../research-report";
 import { readResearchFile, readResearchLedger, saveResearchLedger } from "../research-report-load";
+import { commitProjectLedger } from "../ledger-commit";
 import {
   cachedJournalMetric,
   forgetJournalMetrics,
@@ -79,6 +80,8 @@ export default forwardRef<PendingConfirmHandle, {
   fill?: boolean;
   /** 变了就重读。退回修改后 agent 在同一工作区补文献，项目页常驻不卸载，不重读就一直是旧清单。 */
   refreshKey?: string;
+  /** 这一步已保存进项目、清单直接写项目根时为 true：每次改完把动到的台账提交进项目，免得项目一直是脏的 */
+  commitToProject?: boolean;
 }>(function PendingConfirmList({
   worktreePath,
   projectRoot,
@@ -88,6 +91,7 @@ export default forwardRef<PendingConfirmHandle, {
   onMeta,
   fill = false,
   refreshKey,
+  commitToProject = false,
 }, ref) {
   const roots = [...new Set([worktreePath, projectRoot].filter((p): p is string => Boolean(p)))];
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +118,8 @@ export default forwardRef<PendingConfirmHandle, {
   /** 这次展开里逐篇拍过板的篇目，原地留在待确认里改显结果：一抽走，下面每篇都往上窜一行，
    *  连着点时点到的就不是想点的那篇。值是拍板前那一行（理由会加前缀变长，显示用旧的保持行高）。 */
   const [settled, setSettled] = useState<Map<string, IncludedRecord>>(new Map());
+  // 这次动作写过项目根的哪些台账（commitToProject 时动作收尾一并提交）
+  const touchedRef = useRef<Set<string>>(new Set());
   const onClearedRef = useRef(onCleared);
   onClearedRef.current = onCleared;
 
@@ -247,6 +253,22 @@ export default forwardRef<PendingConfirmHandle, {
     onMeta?.({ count: pending.length, busy: includingAll || busyKey != null });
   }, [pending.length, includingAll, busyKey]);
 
+  const sameRoot = (a: string, b: string) => a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "");
+  /** 写台账并记下写过哪份（只记写在项目根的） */
+  async function save(root: string, rel: string, text: string, revision: string): Promise<string> {
+    const next = await saveResearchLedger(root, rel, text, revision);
+    if (sameRoot(root, projectRoot)) touchedRef.current.add(rel);
+    return next;
+  }
+  /** 动作收尾：已保存的步骤把这次写过的台账提交进项目；失败只提示，不撤销已经做完的改动 */
+  async function commitTouched() {
+    const touched = [...touchedRef.current];
+    touchedRef.current = new Set();
+    if (!commitToProject || touched.length === 0) return;
+    const note = await commitProjectLedger(projectRoot, touched);
+    if (note) setError((prev) => (prev ? `${prev}${note}` : note));
+  }
+
   async function appendImport(rows: IncludedRecord[]) {
     const file = await readFirst([jsonRoot, ...roots], "papers/endnote-import.ris");
     if (!file?.file.revision) return;
@@ -268,14 +290,14 @@ export default forwardRef<PendingConfirmHandle, {
     let next = file.file.text;
     for (const row of rows) next = appendEndnoteImportRecord(next, row, source);
     if (next !== file.file.text) {
-      await saveResearchLedger(file.root, "papers/endnote-import.ris", next, file.file.revision);
+      await save(file.root, "papers/endnote-import.ris", next, file.file.revision);
     }
     const zotero = await readFirst([file.root, ...roots], "papers/to-fetch.ris");
     if (!zotero?.file.revision) return;
     let znext = zotero.file.text;
     for (const row of rows) znext = appendZoteroImportRecord(znext, row, source);
     if (znext === zotero.file.text) return;
-    await saveResearchLedger(zotero.root, "papers/to-fetch.ris", znext, zotero.file.revision);
+    await save(zotero.root, "papers/to-fetch.ris", znext, zotero.file.revision);
   }
 
   async function dropOne(
@@ -290,6 +312,7 @@ export default forwardRef<PendingConfirmHandle, {
         doi: doiToken(row.id, row.url),
         title: row.title,
       });
+      if (sameRoot(jsonRoot, projectRoot)) touchedRef.current.add(rel);
       return "ok";
     } catch (reason) {
       const text = String(reason);
@@ -339,7 +362,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = patchIncludedJson(jsonText, key, "excluded", removeReason(row.reason));
-      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      const nextJsonRev = await save(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       const nextRecords = parseIncludedRecords(nextJson);
@@ -354,7 +377,7 @@ export default forwardRef<PendingConfirmHandle, {
           patchIncludedMd(mdText, row.title, "excluded", includedMdLine(row)),
           parseIncludedRecords(nextJson),
         );
-        const nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, mdRevision);
+        const nextMdRev = await save(jsonRoot, "papers/included.md", nextMd, mdRevision);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -367,6 +390,7 @@ export default forwardRef<PendingConfirmHandle, {
     } catch (reason) {
       setError(String(reason));
     } finally {
+      await commitTouched();
       setBusyKey(null);
     }
   }
@@ -378,7 +402,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = patchIncludedJson(jsonText, key, "pending", restorePendingReason(row.reason));
-      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      const nextJsonRev = await save(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -387,7 +411,7 @@ export default forwardRef<PendingConfirmHandle, {
           patchIncludedMd(mdText, row.title, "pending", includedMdLine(row)),
           parseIncludedRecords(nextJson),
         );
-        const nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, mdRevision);
+        const nextMdRev = await save(jsonRoot, "papers/included.md", nextMd, mdRevision);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -395,6 +419,7 @@ export default forwardRef<PendingConfirmHandle, {
     } catch (reason) {
       setError(String(reason));
     } finally {
+      await commitTouched();
       setBusyKey(null);
     }
   }
@@ -407,13 +432,14 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = patchIncludedKind(jsonText, key, kind);
-      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      const nextJsonRev = await save(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
     } catch (reason) {
       setError(`改类型失败：${String(reason)}`);
     } finally {
+      await commitTouched();
       setBusyKey(null);
     }
   }
@@ -426,7 +452,7 @@ export default forwardRef<PendingConfirmHandle, {
     const reason = confirmReason(decision, row.reason);
     try {
       const nextJson = patchIncludedJson(jsonText, key, decision, reason);
-      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      const nextJsonRev = await save(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setSettled((prev) => (prev.has(key) ? prev : new Map(prev).set(key, row)));
@@ -436,7 +462,7 @@ export default forwardRef<PendingConfirmHandle, {
         patchIncludedMd(mdText, row.title, decision, includedMdLine(row)),
         parseIncludedRecords(nextJson),
       );
-        const nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, mdRevision);
+        const nextMdRev = await save(jsonRoot, "papers/included.md", nextMd, mdRevision);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -450,7 +476,7 @@ export default forwardRef<PendingConfirmHandle, {
         } else {
           const nextFetch = appendToFetchEntry(fetch.file.text, row);
           if (nextFetch !== fetch.file.text) {
-            await saveResearchLedger(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
+            await save(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
           }
         }
       }
@@ -459,6 +485,7 @@ export default forwardRef<PendingConfirmHandle, {
     } catch (reason) {
       setError(String(reason));
     } finally {
+      await commitTouched();
       setBusyKey(null);
     }
   }
@@ -478,7 +505,7 @@ export default forwardRef<PendingConfirmHandle, {
         decision,
         reasonFor,
       );
-      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      const nextJsonRev = await save(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -490,7 +517,7 @@ export default forwardRef<PendingConfirmHandle, {
           nextMd = patchIncludedMd(nextMd, row.title, decision, includedMdLine(row));
         }
         nextMd = syncIncludedSummary(nextMd, parseIncludedRecords(nextJson));
-        nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, nextMdRev);
+        nextMdRev = await save(jsonRoot, "papers/included.md", nextMd, nextMdRev);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -505,7 +532,7 @@ export default forwardRef<PendingConfirmHandle, {
             let nextFetch = fetch.file.text;
             for (const row of missing) nextFetch = appendToFetchEntry(nextFetch, row);
             if (nextFetch !== fetch.file.text) {
-              await saveResearchLedger(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
+              await save(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
             }
           }
         }
@@ -521,6 +548,7 @@ export default forwardRef<PendingConfirmHandle, {
     } catch (reason) {
       setError(String(reason));
     } finally {
+      await commitTouched();
       setIncludingAll(false);
     }
   }
@@ -531,7 +559,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     try {
       const nextJson = includeAllPendingJson(jsonText);
-      const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
+      const nextJsonRev = await save(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
@@ -543,7 +571,7 @@ export default forwardRef<PendingConfirmHandle, {
           nextMd = patchIncludedMd(nextMd, row.title, "included", includedMdLine(row));
         }
         nextMd = syncIncludedSummary(nextMd, parseIncludedRecords(nextJson));
-        nextMdRev = await saveResearchLedger(jsonRoot, "papers/included.md", nextMd, nextMdRev);
+        nextMdRev = await save(jsonRoot, "papers/included.md", nextMd, nextMdRev);
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
@@ -557,7 +585,7 @@ export default forwardRef<PendingConfirmHandle, {
           let nextFetch = fetch.file.text;
           for (const row of missing) nextFetch = appendToFetchEntry(nextFetch, row);
           if (nextFetch !== fetch.file.text) {
-            await saveResearchLedger(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
+            await save(fetch.root, "papers/to-fetch.md", nextFetch, fetch.file.revision);
           }
         }
       }
@@ -566,6 +594,7 @@ export default forwardRef<PendingConfirmHandle, {
     } catch (reason) {
       setError(String(reason));
     } finally {
+      await commitTouched();
       setIncludingAll(false);
     }
   }

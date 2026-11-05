@@ -1210,7 +1210,7 @@ def cmd_angles_facts(args):
     index = {}
     index_path = Path(args.index)
     if index_path.is_file():
-        data = json.loads(index_path.read_text(encoding="utf-8"))
+        data = json.loads(index_path.read_text(encoding="utf-8-sig"))
         rows = data if isinstance(data, list) else next((data[k] for k in ("records", "items", "papers", "entries", "notes") if isinstance(data, dict) and isinstance(data.get(k), list)), [])
         index = {as_text(r.get("id")): r for r in rows if isinstance(r, dict)}
     key_of = lambda rec: as_text(index.get(as_text(rec.get("id")), {}).get("bibKey")) or as_text(rec.get("id"))
@@ -1231,7 +1231,8 @@ def cmd_angles_facts(args):
         keys = "; ".join(f"@{key_of(r)}" for r in after[:12]) + ("; …" if len(after) > 12 else "")
         cut_text = str(cutoff) if cutoff else f"未写（按发表年 {pub or '待补'} 算）"
         later = f"{len(after)} 篇" + (f"：[{keys}]" if after else "")
-        title = ris_value(rev.get("title"))[:40]
+        # 先截再转义：标题里的 | 会把 Markdown 表格拆成多列
+        title = ris_value(rev.get("title"))[:40].replace("|", "\\|")
         lines.append(f"| [@{key_of(rev)}] {title} | {pub or '待补'} | {cut_text} | {later} |")
     print("\n".join(lines))
     return 0
