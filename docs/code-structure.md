@@ -1048,7 +1048,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
                              #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
                              #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性，带 included.json id；tests/notes-progress.test.ts）；
                              #   searchProgress = 检索步篇数（included.json：纳入/待确认/有 pdf 字段算已有全文）、figurePlan = 大纲用图计划
-                             #   （outline.md「拼 图N」去重 +「仅引用 [@键] Fig」，技能样例里的「凑不成则仅引用」不算），StepFlow LedgerCountLine 显示；
+                             #   （outline.md「拼 图N」去重 +「仅引用 [@键] Fig」+ 表计划「表 N（」去重，技能样例里的「凑不成则仅引用」与「附表」不算），StepFlow LedgerCountLine 显示；
                              #   outline.md 不在台账白名单（白名单同时管写回），走 read_file_preview 只读；
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
   spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、

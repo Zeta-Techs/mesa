@@ -114,9 +114,12 @@ test("用图计划：拼图按编号去重，仅引用只数真引用，技能�
     "- 用图：拼图2（论点）= (a) [@k3] Fig.1 + (b) [@k4] Fig.2",
     "- 用图：仅引用 [@k5] Fig.4",
     "- 用图：拼 图3（论点）= …（凑不成则仅引用 [@k6] Fig.2）",
+    "- 表：表 1（活性对比）= 列：材料、条件；行：[@k1]、[@k2]",
+    "- 表：表 2（稳定性）= 列：循环数；行：[@k3]",
+    "- 附表 9（证据综合）不算对照表",
   ].join("\n");
   const p = figurePlan(outline);
-  assert.deepEqual(p, { composites: 3, citeOnly: 1 });
-  assert.equal(figurePlanLine(p!), "用图计划：初稿要拼 3 张图 · 直接引原图 1 处");
+  assert.deepEqual(p, { composites: 3, citeOnly: 1, tables: 2 });
+  assert.equal(figurePlanLine(p!), "用图计划：初稿要拼 3 张图 · 直接引原图 1 处 · 对照表 2 张");
   assert.equal(figurePlan("# 大纲\n没有用图计划"), null);
 });
