@@ -63,13 +63,13 @@ test("followupPrompt / followupScale：精读按篇、其他按文件；超长�
   const notes = followupPrompt({ upstream: "文献检索与筛选", notesIds: ids, files: [] });
   assert.match(notes, /新加了 45 篇/);
   assert.match(notes, /等 45 篇/);
-  assert.match(notes, /已有笔记一字不动/);
+  assert.match(notes, /已有笔记和速读行一字不动/);
   const files = Array.from({ length: 33 }, (_, i) => `notes/${i}.md`);
   const outline = followupPrompt({ upstream: "文献精读与笔记", notesIds: null, files });
   assert.match(outline, /另有 3 个/);
   assert.match(outline, /本轮改了什么/);
   assert.equal(followupScale({ upstream: "x", notesIds: [], files: [] }), "");
-  assert.match(followupScale({ upstream: "x", notesIds: ["a"], files: [] }), /只读这 1 篇/);
+  assert.match(followupScale({ upstream: "x", notesIds: ["a"], files: [] }), /只处理这 1 篇/);
   assert.match(followupScale({ upstream: "x", notesIds: null, files: ["a.md"] }), /1 个文件/);
 });
 

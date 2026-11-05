@@ -7,10 +7,10 @@ const spec = PIPELINE_TEMPLATES.find((t) => t.id === "review")!.steps.find((s) =
 
 test("精读步声明了按篇分路：纳入的篇、每路 8 篇、最多 4 路；论文模板的「精读与研究空白」不分", () => {
   assert.equal(spec.items, "papers/included.json");
-  // 综述精读第一轮只分综述与核心研究论文（2026-11-05 综述回路三期）；学位论文仍分全部纳入的篇
-  assert.equal(spec.filter, "decision=included&kind=review|decision=included&core=true");
-  assert.equal(PIPELINE_TEMPLATES.find((t) => t.id === "thesis")!.steps.find((s) => s.fanOut)!.fanOut!.filter, "decision=included");
-  assert.ok(spec.merge.includes("angles-facts"));
+  // 综述精读第一轮：综述精读、研究论文全部速读（2026-11-05 用户拍板），照旧按全部纳入的篇分；速读写各路自己的文件、收尾合表
+  assert.equal(spec.filter, "decision=included");
+  assert.ok(spec.own.includes("notes/skim-<本路号>.md"));
+  assert.ok(spec.merge.includes("notes/skim.md") && spec.merge.includes("angles-facts"));
   assert.deepEqual([spec.per, spec.max], [8, 4]);
   assert.ok(PIPELINE_TEMPLATES.find((t) => t.id === "thesis")!.steps.some((s) => s.fanOut));
   assert.ok(!PIPELINE_TEMPLATES.find((t) => t.id === "research-paper")!.steps.some((s) => s.fanOut));

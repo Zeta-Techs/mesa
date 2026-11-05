@@ -146,8 +146,6 @@ export interface SearchProgress {
   withPdf: number;
   /** 纳入里标成综述（kind=review）的；没人标类型时 0（行里不出） */
   reviews?: number;
-  /** 纳入里标成核心研究论文（core: true）的 */
-  core?: number;
 }
 
 export function searchProgress(includedText: string): SearchProgress | null {
@@ -168,15 +166,13 @@ export function searchProgress(includedText: string): SearchProgress | null {
     const pdf = (row as Record<string, unknown>).pdf;
     if (typeof pdf === "string" && pdf.trim()) out.withPdf += 1;
     if (field(row, "kind") === "review") out.reviews = (out.reviews ?? 0) + 1;
-    if ((row as Record<string, unknown>).core === true) out.core = (out.core ?? 0) + 1;
   }
   return out.included + out.pending > 0 ? out : null;
 }
 
 /** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9」。没有的分项不出。 */
 export function searchProgressLine(p: SearchProgress): string {
-  const typed = [p.reviews ? `综述 ${p.reviews}` : "", p.core ? `核心 ${p.core}` : ""].filter(Boolean);
-  const parts = [`纳入 ${p.included} 篇${typed.length ? `（${typed.join(" · ")}）` : ""}`];
+  const parts = [`纳入 ${p.included} 篇${p.reviews ? `（综述 ${p.reviews}）` : ""}`];
   if (p.pending > 0) parts.push(`待确认 ${p.pending}`);
   if (p.withPdf > 0) parts.push(`已有全文 ${p.withPdf}`);
   if (p.included - p.withPdf > 0) parts.push(`缺全文 ${p.included - p.withPdf}`);
@@ -209,6 +205,17 @@ export function figurePlanLine(p: FigurePlan): string {
   if (p.citeOnly > 0) parts.push(`直接引原图 ${p.citeOnly} 处`);
   if (p.tables > 0) parts.push(`对照表 ${p.tables} 张`);
   return `用图计划：${parts.join(" · ")}`;
+}
+
+/** 速读表 notes/skim.md 有几行（去掉表头与分隔行）。综述精读第一轮研究论文只速读（2026-11-05 用户拍板），
+ *  「已写笔记」不数它们，单给一行「速读 N 篇」。没有表返回 null。 */
+export function skimRowCount(text: string): number | null {
+  const rows = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("|"))
+    .filter((l) => !/^\|(\s*:?-{2,}:?\s*\|)+$/.test(l));
+  return rows.length > 0 ? rows.length - 1 : null;
 }
 
 /** 大纲 outline.md 的定框架与覆盖检查（综述回路三期）：「## 定框架记录」表里第 1–6 问有几问填了人的选择，

@@ -109,11 +109,25 @@ provides: [lit-notes]
 
 **全文不可得时**，按摘要 + 可见元数据写笔记，开头标注「仅摘要」。无实际 PDF 不伪造来源锚点，改记 DOI/URL 及访问日期。无法核实的页码、方法细节、数值和因果主张写不可核验，不凑齐八段。核心结论依赖全文时暂停该结论或缩窄范围；获取全文后复核并记录影响的大纲/稿件。
 
-在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending；`decision=excluded` 的排除篇不建行）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`；`included.json` 标了 `kind` 的照抄 `kind`，综述再写 `cutoffYear`。TASK.md 让这一轮只读综述与核心研究论文时，其余研究论文记 `reviewStatus=pending`、不写笔记，不算没做完。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
+在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending；`decision=excluded` 的排除篇不建行）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`；`included.json` 标了 `kind` 的照抄 `kind`，综述再写 `cutoffYear`。TASK.md 让研究论文这一轮只速读时，它们记 `reviewStatus=pending`、`skimmed: true`，只进速读表、不写单篇笔记，不算没做完。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
+
+### 速读表（TASK.md 要求时）
+
+研究论文先速读、不精读时，全部写进一张 `notes/skim.md`，一篇一行，按主题排——它是整批文献的大局：综述之后各个方向出了什么。不为速读的篇建单篇笔记（单篇笔记文件在，阅读区就当它读过了）。
+
+```markdown
+# 速读表
+
+| 键 | 年份 | 主题 | 研究问题 | 方法 | 主要结论 | 新在哪 | 全文 |
+|---|---|---|---|---|---|---|---|
+| @Li2023 | 2023 | 原位表征 | 失活是否来自表面重构 | operando XAS + DFT | 重构发生在 0.3 V 以下 | 综述截止后第一份原位证据 | 有 |
+```
+
+主要看 `included.json` 里的摘要，有全文的再扫引言和结论；每格一句，不编摘要里没有的数字。「新在哪」对照综述卡写：相对已有综述补了什么、推翻了什么，说不出就写「同类工作」。速读不是精读：后面写进正文的篇，要等大纲点名后精读。
 
 ### 可写点清单（TASK.md 要求时）
 
-综述卡写完后跑 `python3 <技能目录>/scripts/lit_records.py angles-facts --json papers/included.json --index notes/index.json`，输出原样贴进 `notes/angles.md` 的「## 时效对照（脚本算）」——截至年份、之后又纳入了几篇研究论文都由脚本数，不自己数。再写候选角度，一条一个：
+综述卡和速读表都写完后跑 `python3 <技能目录>/scripts/lit_records.py angles-facts --json papers/included.json --index notes/index.json`，输出原样贴进 `notes/angles.md` 的「## 时效对照（脚本算）」——截至年份、之后又纳入了几篇研究论文都由脚本数，不自己数。再写候选角度，一条一个（「之后的新工作」从速读表写它们各说了什么、分成哪几个方向）：
 
 ```markdown
 ## 角度 3：原位表征揭示的失活路径

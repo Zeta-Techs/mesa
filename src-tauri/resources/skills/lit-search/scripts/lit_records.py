@@ -934,8 +934,6 @@ def cmd_check(args):
         kind = as_text(rec.get("kind"))
         if kind and kind not in KINDS:
             errors.append(f"{tag} kind 应是 review / research / other，现在是「{kind}」")
-        if "core" in rec and not isinstance(rec.get("core"), bool):
-            errors.append(f"{tag} core 只能写 true / false")
         for key in FIELDS:
             value = rec.get(key)
             if value is None or (isinstance(value, str) and not value.strip()) or value == []:

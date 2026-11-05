@@ -399,14 +399,14 @@ export default forwardRef<PendingConfirmHandle, {
     }
   }
 
-  /** 改一篇的类型 / 核心（综述回路三期 §7.1）：只写 included.json 这两个键，清单与 RIS 不变 */
-  async function patchKind(row: IncludedRecord, patch: { kind?: "review" | "research" | "other"; core?: boolean }) {
+  /** 改一篇的类型（综述回路三期 §7.1）：只写 included.json 的 kind，清单与 RIS 不变 */
+  async function patchKind(row: IncludedRecord, kind: "review" | "research" | "other") {
     if (!jsonRevision) return;
     const key = includedRecordKey(row);
     setBusyKey(key);
     setError(null);
     try {
-      const nextJson = patchIncludedKind(jsonText, key, patch);
+      const nextJson = patchIncludedKind(jsonText, key, kind);
       const nextJsonRev = await saveResearchLedger(jsonRoot, "papers/included.json", nextJson, jsonRevision);
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
@@ -712,27 +712,16 @@ export default forwardRef<PendingConfirmHandle, {
           <JournalBadges metric={metric} tableReady={metricsReady} loading={metricsLoading} />
           {/* 有全文只占一个小记号，不再单起一行（标题本身就是打开入口） */}
           {pdfPath && <span className="text-ok-text">· 有 PDF</span>}
-          {/* 类型与核心（综述回路三期）：清单里有人标过类型才出，点一下换到下一种；只改 included.json */}
+          {/* 文献类型（综述回路三期）：清单里有人标过类型才出，点一下换到下一种；只改 included.json */}
           {typed && (
             <button
               type="button"
               disabled={busyKey === key || !jsonRevision}
-              onClick={() => void patchKind(row, { kind: nextKind(row.kind) })}
-              title="文献类型：点一下在综述 / 研究论文 / 其他之间换。综述流程的精读第一轮先读综述和核心研究论文"
+              onClick={() => void patchKind(row, nextKind(row.kind))}
+              title="文献类型：点一下在综述 / 研究论文 / 其他之间换。综述流程的精读第一轮精读综述、速读研究论文"
               className="rounded-sm bg-raised px-1 text-l3 hover:text-l1 disabled:opacity-50"
             >
               {row.kind ? (KIND_LABEL[row.kind] ?? row.kind) : "未标类型"}
-            </button>
-          )}
-          {typed && row.kind === "research" && (
-            <button
-              type="button"
-              disabled={busyKey === key || !jsonRevision}
-              onClick={() => void patchKind(row, { core: !row.core })}
-              title={row.core ? "核心研究论文：精读第一轮连同综述一起读。点一下取消" : "标成核心：精读第一轮连同综述一起读"}
-              className={`rounded-sm px-1 disabled:opacity-50 ${row.core ? "bg-cta-pill text-cta-pill-text" : "text-l4 hover:text-l1"}`}
-            >
-              {row.core ? "核心" : "＋核心"}
             </button>
           )}
         </p>

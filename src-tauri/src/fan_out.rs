@@ -37,33 +37,6 @@ fn value_text(v: &serde_json::Value) -> String {
     }
 }
 
-/// 分路条目筛选：`k=v` 一条；`&` 连的几条都要满足，`|` 隔开的几组满足一组即可
-/// （综述精读第一轮：`decision=included&kind=review|decision=included&core=true`，2026-11-05 综述回路三期）。
-/// 空串不筛。没有 `=` 的片段忽略。
-fn parse_filter(filter: &str) -> Vec<Vec<(String, String)>> {
-    filter
-        .split('|')
-        .map(|group| {
-            group
-                .split('&')
-                .filter_map(|c| c.split_once('='))
-                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
-                .filter(|(k, _)| !k.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .filter(|g| !g.is_empty())
-        .collect()
-}
-
-fn filter_matches(filter: &[Vec<(String, String)>], item: &serde_json::Value) -> bool {
-    filter.is_empty()
-        || filter.iter().any(|group| {
-            group
-                .iter()
-                .all(|(k, v)| item.get(k).map(value_text).as_deref() == Some(v.as_str()))
-        })
-}
-
 /// 数据文件里的条目：数组本身，或对象里第一个数组字段
 pub(crate) fn items_at(dir: &Path, spec: &StepFanOutDto) -> Result<Vec<FanOutItemDto>, String> {
     let rel = spec.items.replace('\\', "/");
@@ -86,10 +59,13 @@ pub(crate) fn items_at(dir: &Path, spec: &StepFanOutDto) -> Result<Vec<FanOutIte
             .ok_or(format!("{rel} 里没有条目列表"))?,
         _ => return Err(format!("{rel} 里没有条目列表")),
     };
-    let filter = parse_filter(&spec.filter);
+    let (fk, fv) = match spec.filter.split_once('=') {
+        Some((k, v)) => (k.trim().to_string(), v.trim().to_string()),
+        None => (String::new(), String::new()),
+    };
     let mut out = Vec::new();
     for item in &array {
-        if !filter_matches(&filter, item) {
+        if !fk.is_empty() && item.get(&fk).map(value_text).as_deref() != Some(fv.as_str()) {
             continue;
         }
         let key = item.get(&spec.key).map(value_text).unwrap_or_default();
@@ -198,21 +174,6 @@ mod tests {
             max,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn filter_and_or_groups() {
-        let item = |d: &str, k: &str, core: bool| serde_json::json!({"decision": d, "kind": k, "core": core});
-        let f = parse_filter("decision=included&kind=review|decision=included&core=true");
-        assert!(filter_matches(&f, &item("included", "review", false)));
-        assert!(filter_matches(&f, &item("included", "research", true)));
-        assert!(!filter_matches(&f, &item("included", "research", false)));
-        assert!(!filter_matches(&f, &item("pending", "review", false)));
-        // 旧写法照旧；空串不筛
-        let old = parse_filter("decision=included");
-        assert!(filter_matches(&old, &item("included", "x", false)));
-        assert!(!filter_matches(&old, &item("pending", "x", false)));
-        assert!(filter_matches(&parse_filter(""), &item("pending", "x", false)));
     }
 
     #[test]

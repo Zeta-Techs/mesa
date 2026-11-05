@@ -263,7 +263,7 @@ components/WatchRunReview.tsx  # 定时雷达单次运行评审（WorkspaceRevie
   components/HandbackPanels.tsx # 定稿步「打开清单 / 打开填写」展开的面板：许可清单一篇一行（文章页、状态下拉即存、原图文件夹），投稿声明一节一框离开即存
 components/ResearchToolFields.tsx  # 步骤编辑器里的科研工具下拉组（PipelineEditor 唯一消费者）：稿件载体/文献库等 select（Zotero 与 EndNote 二选一的白话说明在此），字段表与默认值单一出处 research-tool-fields.ts / research-tools.ts；折叠态已选过非默认交付自动展开，不把既有选择藏起来（tests/research-tool-ui.test.ts 经 PipelineEditor）
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
-                             #   综述回路三期：清单里有人标过类型时，作者行后加类型小标签（点一下综述→研究论文→其他）与研究论文的「＋核心」，只改 included.json 的 kind / core（patchIncludedKind）
+                             #   综述回路三期：清单里有人标过类型时，作者行后加类型小标签（点一下综述→研究论文→其他），只改 included.json 的 kind（patchIncludedKind）
 components/ScreeningReviewPanel.tsx  # 检索步评审面板（WorkspaceReviewView 检索步）：included.json 计数与清单、待获取计数、检索日志摘录（screening-review.ts），pane=list/process 两栏；待确认清空经 onPendingCleared 供步骤卡自动勾「核对待确认篇目」（tests/screening-review-ui.test.ts）
                              #   指标表状态与排序跟在「纳入所选 / 排除所选」右侧，没有待确认时单独靠右
   components/ProjectFilesView.tsx # 项目面「文件」页：左目录树右预览（v3.231 三态合一）。watch_dir/fs-changed 自动跟上
@@ -1049,7 +1049,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
                              #   sessionOverride 只给设置面板预览用（按未保存草稿渲染），开对话一律读盘；
                              #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
-                             #   outlineProgress（「定框架记录」答了几问、「覆盖检查」薄几节）与 sectionTableRows（按 ## 标题取表格行，补料单预填共用）；
+                             #   outlineProgress（「定框架记录」答了几问、「覆盖检查」薄几节）与 sectionTableRows（按 ## 标题取表格行，补料单预填共用）；skimRowCount（速读表 notes/skim.md 行数）；
                              #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
                              #   「抽查 3 篇笔记」三篇候选（全文/仅摘要各取中间一篇再从尾部补，确定性，带 included.json id；tests/notes-progress.test.ts）；
                              #   searchProgress = 检索步篇数（included.json：纳入/待确认/有 pdf 字段算已有全文）、figurePlan = 大纲用图计划
@@ -1069,7 +1069,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区翻译面板（两种摆�
   research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
   screening-review.ts        # 检索/筛选评审主面：计数/待拍板/筛选决定、表默认 pending、文件分组；included.md/json 不与表并列摊 diff；
-                             #   IncludedRecord.kind / core（综述回路三期，只在 json、不进 RIS）；patchIncludedKind 只动这两个键、非研究论文去掉 core；KIND_LABEL / nextKind
+                             #   IncludedRecord.kind（综述回路三期，只在 json、不进 RIS）；patchIncludedKind 只动 kind；KIND_LABEL / nextKind
                              #   displayCitationTitle 只改清单显示（苹果字符、拆开的化学式），不回写 json
                              # 移出：removeToFetchEntry 不重排编号、removeRisRecord 按 DOI/标题删整条、notePathForRecord / bibMentionsRecord 只提示不删；
                              # 接口缓存、脚本、.gitignore 进「过程」，不进非 Git 产物清单；
@@ -1760,7 +1760,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
                              #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py
   （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
-                             #   check 拦 kind 不是 review/research/other、core 不是布尔；angles-facts（2026-11-05）= 纳入综述的时效对照表（截至年取 index cutoffYear，没写按发表年）
+                             #   check 拦 kind 不是 review/research/other；angles-facts（2026-11-05）= 纳入综述的时效对照表（截至年取 index cutoffYear，没写按发表年）
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与
                              #   journal-abbreviations.csv；skills.rs BUILTIN_SUPPORT 给 lit-search 与 lit-notes 各放一份
@@ -1819,7 +1819,6 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # origin 身份 + 相对上游 behind、fetch / pull --ff-only / push、合并进基准、
                              # Desktop CLI 打开该树 / gh --web 开 PR（CodingOpDto；不走科研工作区库）；overview 按树/分支并行 git
   fan_out.rs                 # 一步按数据分几路（2026-11-03 四期）：items_at 从项目内 JSON 按 filter 挑条目（全局序号）、shard 均匀切（不到两路一路、封顶 max）、
-                             #   filter：`k=v`，`&` 并、`|` 或（parse_filter / filter_matches；综述精读第一轮只分综述与核心）
                              # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）、
                              # fan_out_spent（2026-11-04 每步花费上限：运行库里落在这个工作副本、开工以来的会话经 usage::sessions_cost_usd 合计）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），

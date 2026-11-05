@@ -63,6 +63,7 @@ import {
   outlineProgressParts,
   searchProgress,
   searchProgressLine,
+  skimRowCount,
   spotCheckPicks,
   type SpotCheckPick,
 } from "../notes-progress";
@@ -400,6 +401,10 @@ function LedgerCountLine({
   );
 }
 
+const skimCountLine = (text: string) => {
+  const n = skimRowCount(text);
+  return n === null ? null : `速读表 ${n} 篇（研究论文先速读，大纲定了按章节点名精读）`;
+};
 const searchCountLine = (text: string) => {
   const p = searchProgress(text);
   return p ? searchProgressLine(p) : null;
@@ -3031,6 +3036,16 @@ export default function StepFlow({
           <NotesProgressLine
             roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
+          />
+        )}
+        {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
+          <LedgerCountLine
+            roots={ws ? [ws.worktreePath, projectPath] : [projectPath]}
+            live={runStatus === "active"}
+            rel="notes/skim.md"
+            read={readResearchFile}
+            line={skimCountLine}
+            title="按 notes/skim.md 数：每篇研究论文一行（研究问题、方法、结论、主题、新在哪），是整批文献的大局；要写进正文的篇，大纲覆盖检查会点名退回精读"
           />
         )}
         {node.kind === "agent" && searchStep && (ws || runStatus === "done") && (

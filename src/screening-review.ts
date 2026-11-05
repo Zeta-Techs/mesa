@@ -247,8 +247,6 @@ export interface IncludedRecord {
   pdf?: string;
   /** 文献类型（综述回路三期，检索时判、人可改）：review / research / other；没标不出这个键。不进任何 RIS */
   kind?: string;
-  /** 核心研究论文：综述模板精读第一轮连同综述一起读 */
-  core?: boolean;
 }
 
 function stringField(rec: Record<string, unknown>, keys: string[]): string {
@@ -773,7 +771,6 @@ export function parseIncludedRecords(text: string): IncludedRecord[] {
       language: stringField(rec, ["language"]),
       ...(stringField(rec, ["pdf"]) ? { pdf: stringField(rec, ["pdf"]) } : {}),
       ...(stringField(rec, ["kind"]) ? { kind: stringField(rec, ["kind"]) } : {}),
-      ...(rec.core === true ? { core: true } : {}),
     });
   }
   return out;
@@ -1116,11 +1113,11 @@ export function nextKind(kind: string | undefined): "review" | "research" | "oth
   return kind === "review" ? "research" : kind === "research" ? "other" : "review";
 }
 
-/** 改一篇的类型或核心标记（只动这两个键，其余原样；不是研究论文就去掉核心）。对不上抛错。 */
+/** 改一篇的类型（只动 kind，其余原样）。对不上抛错。 */
 export function patchIncludedKind(
   text: string,
   key: string,
-  patch: { kind?: "review" | "research" | "other"; core?: boolean },
+  kind: "review" | "research" | "other",
 ): string {
   const data = JSON.parse(text) as unknown;
   let found = false;
@@ -1130,9 +1127,7 @@ export function patchIncludedKind(
     const id = typeof rec.id === "string" ? rec.id : "";
     const title = typeof rec.title === "string" ? rec.title : "";
     if (id !== key && title !== key) continue;
-    if (patch.kind) rec.kind = patch.kind;
-    if (patch.core !== undefined) rec.core = patch.core;
-    if (rec.kind !== "research" && "core" in rec) delete rec.core;
+    rec.kind = kind;
     found = true;
   }
   if (!found) throw new Error("清单里找不到这篇");

@@ -124,14 +124,14 @@ test("用图计划：拼图按编号去重，仅引用只数真引用，技能�
   assert.equal(figurePlan("# 大纲\n没有用图计划"), null);
 });
 
-test("检索篇数标了类型时括号里写综述 / 核心；大纲定框架几问、薄几节", async () => {
+test("检索篇数标了类型时括号里写综述几篇；大纲定框架几问、薄几节", async () => {
   const { outlineProgress, outlineProgressParts } = await import("../src/notes-progress.ts");
   const json = JSON.stringify([
     { id: "a", decision: "included", kind: "review" },
-    { id: "b", decision: "included", kind: "research", core: true },
+    { id: "b", decision: "included", kind: "research" },
     { id: "c", decision: "included", kind: "research" },
   ]);
-  assert.equal(searchProgressLine(searchProgress(json)!), "纳入 3 篇（综述 1 · 核心 1） · 缺全文 3");
+  assert.equal(searchProgressLine(searchProgress(json)!), "纳入 3 篇（综述 1） · 缺全文 3");
   const outline = [
     "## 定框架记录",
     "| 问 | 问题 | 人的选择 | 日期 |",
@@ -150,4 +150,12 @@ test("检索篇数标了类型时括号里写综述 / 核心；大纲定框架�
   assert.deepEqual(p, { answered: 2, thin: 1 });
   assert.deepEqual(outlineProgressParts(p), ["定框架 2/6 问", "薄 1 节待补料"]);
   assert.equal(outlineProgress("# 旧大纲\n用图：拼 图1"), null);
+});
+
+test("速读表行数：去掉表头与分隔行；没有表返回 null", async () => {
+  const { skimRowCount } = await import("../src/notes-progress.ts");
+  const md = "# 速读表\n\n| 键 | 年份 | 主题 |\n|---|---|---|\n| @a | 2023 | x |\n| @b | 2024 | y |\n";
+  assert.equal(skimRowCount(md), 2);
+  assert.equal(skimRowCount("# 速读表\n\n| 键 | 年份 |\n|:--|--:|\n"), 0);
+  assert.equal(skimRowCount("# 空"), null);
 });

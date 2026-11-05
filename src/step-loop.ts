@@ -89,7 +89,7 @@ function joinRoot(root: string, rel: string): string {
 }
 
 /** 精读跟进的增量：纳入里**索引还没有这一行**的 id（上游新加的篇）。索引里记了 pending 的不算——
- *  那是有意留待按章节读的研究论文（综述精读第一轮只读综述 + 核心篇，三期）或缺全文的篇，跟进不顺带把它们全读了。
+ *  那是只速读过、等大纲点名精读的研究论文（综述精读第一轮，2026-11-05）或缺全文的篇，跟进不顺带把它们全读了。
  *  读不懂的 JSON 返回 null（界面改按文件列表说）。 */
 export function notesFollowupIds(includedText: string, indexText: string | null): string[] | null {
   let included: unknown;
@@ -159,8 +159,8 @@ export function followupPrompt(opts: {
     return [
       head,
       `纳入清单里新加了 ${opts.notesIds.length} 篇，笔记索引里还没有：${shown}${more}。`,
-      "只给这些篇写笔记，写法照 TASK.md 与技能（先跑 lit_records.py write 认 PDF）；已有笔记一字不动。",
-      "收尾更新 notes/index.json、references.bib 与 notes/handoff.md。",
+      "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py write 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
+      "收尾更新 notes/index.json、references.bib 与 notes/handoff.md；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句。",
       KEEP_WORKING_CLAUSE,
     ].join("\n");
   }
@@ -179,7 +179,7 @@ export function followupPrompt(opts: {
 export function followupScale(opts: { upstream: string; notesIds: string[] | null; files: string[] }): string {
   if (opts.notesIds) {
     return opts.notesIds.length > 0
-      ? `上游「${opts.upstream}」有新内容：新纳入 ${opts.notesIds.length} 篇，AI 只读这 ${opts.notesIds.length} 篇，已有笔记不动、留待按章节读的不顺带读。`
+      ? `上游「${opts.upstream}」有新内容：新纳入 ${opts.notesIds.length} 篇，AI 只处理这 ${opts.notesIds.length} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读。`
       : "";
   }
   return opts.files.length > 0

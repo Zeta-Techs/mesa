@@ -592,24 +592,16 @@ test("清单行作者缩成前 3 位 + 等 N 人，三种写法都认", () => {
   assert.equal(shortAuthors(""), "");
 });
 
-test("patchIncludedKind：只动 kind / core，其余字段原样；不是研究论文就去掉核心；nextKind 循环", async () => {
+test("patchIncludedKind：只动 kind，其余字段原样；nextKind 循环", async () => {
   const { patchIncludedKind, parseIncludedRecords, nextKind } = await import("../src/screening-review.ts");
   const text = JSON.stringify([
     { id: "a", title: "A", decision: "included", reason: "r", year: "2020", pdf: "papers/a.pdf" },
-    { id: "b", title: "B", decision: "included", kind: "research", core: true },
+    { id: "b", title: "B", decision: "included", kind: "research" },
   ]);
-  let next = patchIncludedKind(text, "a", { kind: "review" });
-  let rows = JSON.parse(next);
-  assert.deepEqual(rows[0], { id: "a", title: "A", decision: "included", reason: "r", year: "2020", pdf: "papers/a.pdf", kind: "review" });
-  next = patchIncludedKind(next, "b", { kind: "other" });
-  rows = JSON.parse(next);
-  assert.equal(rows[1].kind, "other");
-  assert.equal("core" in rows[1], false);
-  next = patchIncludedKind(next, "B", { kind: "research", core: true });
-  const parsed = parseIncludedRecords(next);
-  assert.equal(parsed[1].kind, "research");
-  assert.equal(parsed[1].core, true);
+  const next = patchIncludedKind(text, "a", "review");
+  assert.deepEqual(JSON.parse(next)[0], { id: "a", title: "A", decision: "included", reason: "r", year: "2020", pdf: "papers/a.pdf", kind: "review" });
+  assert.equal(parseIncludedRecords(patchIncludedKind(next, "B", "other"))[1].kind, "other");
   assert.equal("kind" in parseIncludedRecords(JSON.stringify([{ id: "x", title: "X" }]))[0], false);
-  assert.throws(() => patchIncludedKind(text, "zzz", { kind: "review" }), /找不到/);
+  assert.throws(() => patchIncludedKind(text, "zzz", "review"), /找不到/);
   assert.deepEqual([nextKind(undefined), nextKind("review"), nextKind("research"), nextKind("other")], ["review", "research", "other", "review"]);
 });
