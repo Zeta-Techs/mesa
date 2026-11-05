@@ -97,7 +97,7 @@ export function noteDraftEmpty(text: string): boolean {
 
 /** 「让 AI 起草」直发给阅读会话的一句话（按 lit-notes 精读写法，原地补全，机管小节不碰） */
 export function buildNoteDraftPrompt(pdfPath: string, notePath: string): string {
-  return `请按 lit-notes 技能的精读写法起草这篇笔记：通读 PDF 全文 ${pdfPath}，把八个小节写进 ${notePath}（直接编辑这个文件）。标题下的来源行、「${NOTE_ANNOT_SECTION}」「译段」「我的想法」三节和里面已有的内容原样保留，不要改动。页码和图表编号以 PDF 为准，读不清的写「原文未核清」。写完用一两句告诉我哪些地方还不确定。`;
+  return `请按 lit-notes 技能的精读写法起草这篇笔记：通读 PDF 全文 ${pdfPath}，把八个小节写进 ${notePath}（直接编辑这个文件）。标题下的来源行一字不改（状态写在它下面另起一行），「${NOTE_ANNOT_SECTION}」「译段」「我的想法」三节和里面已有的内容原样保留、也不往里加。主要结果、可引用点和方法里的数字都带页码（p.N），页码和图表编号以 PDF 为准，读不清的写「原文未核清」。PDF 抽不出文字就停下告诉我，不要凭标题或印象写；只读到摘要的，在来源行下面写「仅摘要」。写完用一两句告诉我哪些地方还不确定。`;
 }
 
 /** 笔记正文里一处可点的 PDF 引用：页码，或图/表编号 */

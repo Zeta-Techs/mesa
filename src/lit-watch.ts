@@ -760,6 +760,13 @@ export interface PaperNoteLink {
   notePath: string;
   noteName: string;
   pdfRel: string | null;
+  /** 还是打开阅读区时建的空骨架：不算读过（缺字段的旧数据按写过算） */
+  untouched?: boolean;
+}
+
+/** 真写过东西的笔记（读过状态、「继续精读」只认这些） */
+export function writtenNotes(notes: readonly PaperNoteLink[]): PaperNoteLink[] {
+  return notes.filter((n) => !n.untouched);
 }
 
 function fileStem(path: string): string {

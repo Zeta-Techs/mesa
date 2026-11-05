@@ -84,6 +84,7 @@ import {
   watchEntryScanLine,
   sourceDisplayName,
   noteLinkForPaper,
+  writtenNotes,
 } from "../lit-watch";
 import type {
   AddIncludedResultDto,
@@ -2078,7 +2079,7 @@ export default function LitWatchCard({
                     const pdf = readingPdfBy[row.lineId];
                     // 有笔记 → 「继续精读」：接续铁律在入口上可见（配对口径与文件页
                     // 精读状态同源：list_paper_notes + noteLinkForPaper）
-                    const hasNote = !!pdf && !!noteLinkForPaper(`papers/${pdf}`, noteLinks ?? []);
+                    const hasNote = !!pdf && !!noteLinkForPaper(`papers/${pdf}`, writtenNotes(noteLinks ?? []));
                     return (
                     <li
                       key={row.lineId}

@@ -6,6 +6,7 @@ import {
   normalizeTitle,
   noteLinkForPaper,
   paperIsIncluded,
+  writtenNotes,
   type PaperNoteLink,
 } from "./lit-watch.ts";
 
@@ -81,7 +82,7 @@ export function pdfLitState(
 ): LitReadState {
   if (!/\.pdf$/i.test(path)) return "unread";
   return litReadState(
-    !!noteLinkForPaper(path, facts.notes),
+    !!noteLinkForPaper(path, writtenNotes(facts.notes)),
     paperIsAccumulated(path, facts.readingList),
     paperIsIncluded(path, facts.included),
   );

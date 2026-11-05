@@ -794,7 +794,7 @@ export default function ReaderOverlay({
     briefedRef.current = target;
     void Promise.resolve(
       onInject(
-        `【阅读上下文】我在沉浸阅读区读 PDF：${pdfPath}；配套笔记：${target}。之后我说「这篇」「笔记」都指它们；要改笔记就直接编辑这个文件。`,
+        `【阅读上下文】我在沉浸阅读区读 PDF：${pdfPath}；配套笔记：${target}。之后我说「这篇」「笔记」都指它们；要改笔记就直接编辑这个文件，但来源行、「标注」「译段」「我的想法」三节是我自己的，不改也不往里加。`,
         true,
       ),
     ).then((err) => {

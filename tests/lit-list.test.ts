@@ -101,4 +101,7 @@ test("PDF 行阅读状态：笔记 > 精读清单 > 积累清单 > 未读；非 
   const notes = [{ notePath: "/p/notes/x.md", noteName: "x.md", pdfRel: "papers/Boride catalysts for hydrogen evolution.pdf" }];
   assert.equal(pdfLitState(pdf, { notes, included: t, readingList: t }), "read");
   assert.equal(pdfLitState("/p/papers/Boride catalysts for hydrogen evolution.md", { notes, included: t, readingList: t }), "unread");
+  // 打开阅读区建的空骨架不算读过：回落到清单状态
+  const skeleton = [{ ...notes[0], untouched: true }];
+  assert.equal(pdfLitState(pdf, { notes: skeleton, included: t, readingList: t }), "queued");
 });

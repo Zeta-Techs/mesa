@@ -68,6 +68,11 @@ test("起草指令点名 PDF、笔记与要保留的机管小节", () => {
   assert.match(p, /\/p\/papers\/a\.pdf/);
   assert.match(p, /\/p\/notes\/a\.md/);
   assert.match(p, /「标注」「译段」「我的想法」/);
+  // 来源行不接字、抽不出文字就停、只读到摘要要标、数字带页码（2026-11-05 与 lit-notes 技能对齐）
+  assert.match(p, /来源行一字不改/);
+  assert.match(p, /抽不出文字就停下/);
+  assert.match(p, /仅摘要/);
+  assert.match(p, /p\.N/);
 });
 
 test("标注 toast：编辑态有未保存改动时明说", () => {

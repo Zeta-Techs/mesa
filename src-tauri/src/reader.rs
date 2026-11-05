@@ -365,6 +365,9 @@ pub struct PaperNoteLinkDto {
     pub note_name: String,
     /// 笔记头部来源行里的 PDF 相对路径；没有来源行则为 None（仍可用文件名配对）
     pub pdf_rel: Option<String>,
+    /// 还是打开阅读区时建的空骨架（只有标题 / 来源行）：不算「读过」、精读按钮不显示「继续精读」
+    /// （2026-11-05：打开过一次 PDF 就被标成已读）
+    pub untouched: bool,
 }
 
 fn list_paper_notes_sync(project_root: &str) -> Result<Vec<PaperNoteLinkDto>, String> {
@@ -397,13 +400,14 @@ fn list_paper_notes_sync(project_root: &str) -> Result<Vec<PaperNoteLinkDto>, St
         {
             continue;
         }
-        let pdf_rel = fs::read_to_string(&path)
-            .ok()
-            .and_then(|c| note_source_pdf(&c));
+        let content = fs::read_to_string(&path).ok();
+        let pdf_rel = content.as_deref().and_then(note_source_pdf);
+        let untouched = content.as_deref().is_some_and(note_is_untouched);
         out.push(PaperNoteLinkDto {
             note_path: path.to_string_lossy().replace('\\', "/"),
             note_name: name,
             pdf_rel,
+            untouched,
         });
     }
     out.sort_by(|a, b| a.note_name.cmp(&b.note_name));
@@ -2051,6 +2055,15 @@ mod tests {
                 .any(|l| l.note_name.eq_ignore_ascii_case("inbox.md")),
             "{links:?}"
         );
+        // 只有标题 / 来源行的骨架报 untouched（不算读过）；写了正文就不是
+        assert!(links.iter().all(|l| l.untouched), "{links:?}");
+        fs::write(
+            &note,
+            "> 来源 PDF：papers/转化型正极Mg电池透视.pdf\n\n# t\n\n## 一句话总结\n转化型正极综述。\n",
+        )
+        .unwrap();
+        let links = list_paper_notes_sync(&root.to_string_lossy()).unwrap();
+        assert!(links.iter().all(|l| !l.untouched), "{links:?}");
     }
 
     #[test]
