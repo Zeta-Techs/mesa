@@ -480,7 +480,7 @@ export function stepWaitItems(step: WaitStep): { during: string[]; after: string
   const brief = step.brief ?? "";
   if (/help-wanted\.md/.test(brief) && /问用户/.test(brief)) {
     during.push(
-      "简报里「先报依据再问」的那一项：写入 .ccode/help-wanted.md；问完按该条兜底做无依赖准备，未答不得锁死标准、核心篇目、大纲骨架或目标期刊",
+      "简报里要你写进 .ccode/help-wanted.md 问用户的那一项（带上依据再问）：问完按该条兜底做无依赖准备，未答不得锁死标准、核心篇目、大纲骨架或目标期刊",
     );
   }
   for (const h of step.humanTasks ?? []) {

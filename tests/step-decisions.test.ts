@@ -41,7 +41,7 @@ test("决策暂停策略：按步骤列出必须停的事项，批次提交不�
     brief: "把建议核心精读 K 篇写进 .ccode/help-wanted.md 问用户一句",
     humanTasks: [{ title: "继续精读笔记", timing: "after", optional: true }],
   });
-  assert.match(notes, /先报依据再问/);
+  assert.match(notes, /问用户的那一项/);
   assert.match(notes, /未答不得锁死/);
   assert.ok(notes.includes(KEEP_WORKING_CLAUSE));
   assert.doesNotMatch(notes, /继续精读笔记/);
@@ -66,7 +66,7 @@ test("决策暂停策略：按步骤列出必须停的事项，批次提交不�
     name: "文献检索与筛选",
     brief: "写进 .ccode/help-wanted.md 问用户一句",
   });
-  assert.equal(search.during.some((x) => x.includes("先报依据再问")), true);
+  assert.equal(search.during.some((x) => x.includes("问用户的那一项")), true);
 });
 
 test("空草稿：新建小节并写入答案", () => {

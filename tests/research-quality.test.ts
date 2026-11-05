@@ -76,7 +76,7 @@ test("三套文献链都有稳定 ID、全文状态与笔记覆盖，而非仅�
 
 test("十类失败模式在真实 TASK.md/技能中对应拦截要求，不宣称模型必然遵从", () => {
   const cases: [string, string, RegExp][] = [
-    ["猜题", md("review", "lit-search"), /等待人确认后正式筛选/],
+    ["猜题", md("review", "lit-search"), /等人确认后再正式筛选/],
     ["摘要冒充全文", md("review", "outline"), /摘要-only.*核心全文未得则收窄结论或阻塞/],
     ["真引用不支持论断", md("review", "polish"), /主要论断必须有支持性核验/],
     ["数据泄漏", md("research-paper", "exp-design"), /所有拟合型预处理仅在训练折学习/],

@@ -333,7 +333,7 @@ function paywallPdfTask(timing: "after" | "during" = "after"): HumanTaskDto {
     // 首句动作导向（2026-09-15 用户实测原首句「拿到全文后…」让人不知从哪下手）：
     // 第一步是看清单，入口就挂在本行（StepFlow 的「待获取」折叠就地展开）
     guidance:
-      "只补已纳入、缺 PDF 的篇目，落到项目根 papers/。待确认先拍板，不要先下。不想补可跳过——下一篇按摘要记。",
+      "只补已纳入、缺 PDF 的篇目，落到项目根 papers/。待确认先拍板，不要先下。可以跳过，但没全文的篇目精读时只能按摘要记，初稿里相关论述会标待核实——补得越全，成稿越扎实。",
     target: "papers/*.pdf",
     timing,
     optional: true,
@@ -409,21 +409,30 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     name: "文献检索与筛选",
     role: "both",
     workspaceName: "lit-search",
+    // 2026-11-05 用户走 HER 综述逐条过：核心问题前移到本步（第 0 条）、标准四项给默认建议、问标准时一并问纳入规模
+    // （精读步全量精读，篇数直接决定时间和花费）、收尾点明缺全文的后果；去掉科研论文的 G1 选题关卡与系统综述套话；
+    // 只在任务书里真有那几段时才去读「项目资源」「提货单」
     brief:
-      "输入：课题主题（见上方「课题主题」段；未填写时只能提出候选主题写入 papers/screening.md「检索主题假设」，等待人确认后正式筛选；期间只做可逆摸底）。全程按 {skill:lit-search} 技能执行。全局设定的「综述深度」若是严格检索档（技能里叫严格档），按技能严格档（引用扩展强制、screening 末尾 PRISMA-S 最小披露）；未写或标准档则按技能默认标准档。方法类型先按叙述性/范围/系统综述确认；严格检索不是完整系统综述。单人/人工或 Agent 复核范围在 Methods 如实声明，系统综述需完整方案与对应质量评价。\n" +
-      "1. 制定纳入/排除标准（年份、语言、来源级别、相关性口径），写进 papers/screening.md。" +
-      "**先粗检一轮报数再定标准**：用主题词在 OpenAlex 粗查命中量，把「命中约 N 篇」与你建议的标准写进 " +
+      "输入：课题主题（见上方「课题主题」段）与项目规则里的全局设定。全程按 {skill:lit-search} 技能执行。本步的主要报告是 papers/screening.md，验收摘要写在它开头。" +
+      "综述深度为严格检索档（技能里叫严格档）时按技能严格档（引用扩展强制、screening 末尾 PRISMA-S 最小披露），并在 screening.md 写明这是叙述性综述的严格检索、不是系统综述；未写或标准档按技能默认标准档。方法类型按叙述性综述处理，不再单独问。\n" +
+      "0. 先写核心问题：papers/screening.md 验收摘要之后紧接着写「## 核心问题与边界」——这篇综述要回答的问题、读者读完该带走的判断、要与不要的范围。任务书「已定方向」里写了的照抄；" +
+      "课题主题只是一个领域名（如「HER催化综述」）或没写时，按「综述角度」提出 2–3 个候选核心问题，和第 1 条的标准放进同一条人工请求里问（等人确认后再正式筛选；未回复只按最宽的候选做可逆摸底，不锁定问题、不冻结标准）；\n" +
+      "1. 制定纳入/排除标准，写进 papers/screening.md。" +
+      "**先粗检一轮报数再定标准**：用主题词在 OpenAlex 粗查命中量，把「命中约 N 篇」、你建议的标准和**建议纳入规模**写进 " +
       ".ccode/help-wanted.md 问用户一句（附兜底：未回复只做试检，不冻结标准或正式筛选），写完仅推进无依赖、可逆的准备。" +
+      "标准的四项都要给建议值：年份（领域全景一般以近 10 年为主，奠基工作不受年份限制）、语言（默认英文）、来源级别（默认只收正式发表的期刊与会议论文，不收预印本）、相关性口径。" +
+      "建议纳入规模按「目标篇幅」与「综述角度」给一个篇数并说理由——下一步会把有全文的每篇都精读，篇数直接决定精读的时间和花费；人定了规模后按相关性取舍到这个量级。" +
       "正式标准按问题制定，不为凑篇数或结果而改；\n" +
-      "2. 先解析人工导入的题录（RIS/BibTeX/CSV），三处都要看：① 本文件「项目根」下 papers/imports/；② 工作区内 papers/imports/；③ 「项目资源」段类型为「引文」的条目、以及「上一步产物（提货单）」段中来自「人工交付」的条目——后两类给绝对路径，按路径直读、勿复制。都没有才跳过。解析后按 {skill:lit-search} 技能口径去重合并进候选池，每条保留来源标注；" + LIT_INTAKE_CLAUSE + "\n" +
+      "2. 先解析人工导入的题录（RIS/BibTeX/CSV）：项目根 papers/imports/ 与本工作区 papers/imports/ 都要看；本任务书若有「项目资源」段（类型为「引文」的条目）或「上一步产物（提货单）」段（来自「人工交付」的条目），按其中给的绝对路径直读、勿复制。都没有就跳过。解析后按 {skill:lit-search} 技能口径去重合并进候选池，每条保留来源标注；" + LIT_INTAKE_CLAUSE + "\n" +
       "3. 检索候选文献。" + LIT_SEARCH_NO_WASTE +
       "检索式、检索日期与命中数记入 papers/screening.md；WoS/SerpAPI 等付费 key 一律用 $VAR 环境变量引用，禁止写进任何文件；末尾写覆盖缺口声明（哪些库没检，含按上面停手跳过的库）；\n" +
       "4. 按标准逐条筛选，每篇给出纳入/排除及理由；拿不准相关性的一律保留为 pending 候选并标注「待确认」，不冒充已决纳入，不允许自行裁掉；\n" +
-      "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）。开工时清单里已有的存量条目（上一轮留下的、或人手动加进清单的；雷达「加入积累」的在上面的积累快照里）是进料口的一部分：保留在清单里与检索候选池统一去重（同篇不重复列），不删除不清空、不当作异常；\n" +
+      "5. 纳入清单写入 papers/included.md（一行一篇：标题 — 作者, 年份 — 来源 — 链接/DOI），并同步写入 papers/included.json（每篇一条，至少含稳定唯一字符串 id、title、decision（included/pending）、reason；与 md 记录一一对应）。开工时清单里已有的存量条目（上一轮留下的、人手动加进清单的，或雷达「加入积累」的）是进料口的一部分：保留在清单里与检索候选池统一去重（同篇不重复列），不删除不清空、不当作异常；\n" +
       "6. " + LIT_PENDING_BEFORE_FETCH +
-      "开放获取直接下载到**项目根 papers/**（见上方「项目根」，文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，写入 papers/to-fetch.md 等用户提供全文。" + LIT_RECORDS_SCRIPT + " references.bib 不在这一步写（精读步用同一个脚本从 included.json 写），已有的不得覆盖。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。\n" +
-      "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
-      QUESTION_GATE + QUALITY_STATUS,
+      "开放获取直接下载到**项目根 papers/**（见上方「项目根」，文件名：作者年份-短标题.pdf），不要下载到本工作区；付费墙不得尝试绕过，写入 papers/to-fetch.md 等用户提供全文。" + LIT_RECORDS_SCRIPT + " references.bib 不在这一步写（精读步用同一个脚本从 included.json 写），已有的不得覆盖。不在这一步默认写同步文件。文献来源或文献库选了 Zotero / EndNote 时，才按对应技能做导入和同步。" +
+      "收尾时在验收摘要第⑤项写一句：「已纳入 N 篇，其中 M 篇没有拿到全文，需要你下载放进项目根 papers/；没全文的下一步只能按摘要记，初稿里相关论述会标待核实」（M 为 0 就写已全部拿到）。\n" +
+      "完成标准：papers/screening.md、papers/included.md、papers/to-fetch.md、papers/to-fetch.ris、papers/endnote-import.ris 均存在（两份 RIS 允许有效空文件，其他文件非空；无付费文献则 to-fetch.md 说明无待获取，两份 RIS 保留合法零条目空文件），screening.md 有「核心问题与边界」，每条记录无空缺字段（未知则标「待补」），筛选记录含检索日期与覆盖缺口、能让第三人按标准复现每条判定。\n" +
+      QUALITY_STATUS,
     optionalInputs: ["references.bib"],
     expectedArtifacts: LIT_SEARCH_ARTIFACTS.filter((path) => path !== "papers/zotero-sync.md"),
     acceptanceCriteria: [

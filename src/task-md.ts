@@ -61,6 +61,17 @@ function stepResources(step: ProjectStepDto, cfg: ProjectConfigDto) {
 
 /** TASK.md 拼装单一出处：弹层预览与开工落盘共用。纯函数，不碰文件系统。
  *  isWindows 显式传参（纯逻辑模块不读平台）：只影响「本步骤脚本」给哪种写法 */
+/** 带写作红线的技能：写稿、出大纲、出图拼板、渲染、开题、返修 */
+const WRITING_SKILLS = new Set([
+  "review-writing",
+  "research-writing",
+  "review-framework",
+  "review-figures",
+  "quarto-render",
+  "proposal-writer",
+  "rebuttal-crafter",
+]);
+
 export function renderTaskMd(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
@@ -305,8 +316,13 @@ export function renderTaskMd(
     lines.push(
       "必需技能缺失时先记录帮助请求；可选技能缺失可继续，但不得假装已执行其检查。",
       "技能正文里的读取/产出路径若与本文件（预期产物、项目资源、验收条件）不一致，一律以本文件为准。",
-      "写作红线以写作/渲染技能为准，即使本文件简报写了相反的话：不凑字数；禁止把「待绘制」当图；G1 不准进稿件；摘要不准出现 [待核实]；摘要级来源必须在句中降级；PDF 首页必须可读。不得把大纲或项目「目标篇幅」改写成必须凑到的词数，也不得把「文件非空」当成渲染通过。",
     );
+    // 写作红线只给写稿 / 出大纲 / 渲染的步骤（2026-11-05：检索、精读步每次都带着这一句，读了只会困惑）
+    if (step.skills.some((name) => WRITING_SKILLS.has(name))) {
+      lines.push(
+        "写作红线以写作/渲染技能为准，即使本文件简报写了相反的话：不凑字数；禁止把「待绘制」当图；G1 不准进稿件；摘要不准出现 [待核实]；摘要级来源必须在句中降级；PDF 首页必须可读。不得把大纲或项目「目标篇幅」改写成必须凑到的词数，也不得把「文件非空」当成渲染通过。",
+      );
+    }
   }
   const resources = stepResources(step, cfg);
   if (resources.length > 0) {
