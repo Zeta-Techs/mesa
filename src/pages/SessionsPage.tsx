@@ -9,7 +9,7 @@ import {
   Copy,
   Download,
   FileText,
-  Flag,
+  Bookmark,
   Forward,
   GitFork,
   Package,
@@ -1847,7 +1847,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       className="ccode-seg-boxed-item inline-flex items-center gap-1 whitespace-nowrap text-xs"
                     >
                       {/* 行内操作与快筛统一用 Lucide 线框（同侧栏）；保留 = 旗子，与行首已保留标记同形 */}
-                      {f.id === "pinned" && <Flag size={11} strokeWidth={1.8} aria-hidden="true" />}
+                      {f.id === "pinned" && <Bookmark size={11} strokeWidth={1.8} aria-hidden="true" />}
                       {f.label}
                     </button>
                   );
@@ -2314,7 +2314,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       </button>
                     )}
                     {s.pinned && (
-                      // 常驻状态标记本身可点（取消保留）——不再在 hover 区重复一个 ⚑
+                      // 常驻状态标记本身可点（取消保留）——不再在 hover 区重复一个书签
                       <button
                         type="button"
                         onClick={(event) => {
@@ -2325,7 +2325,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         aria-label="已保留（点击取消）"
                         className="flex shrink-0 items-center rounded-sm px-0.5 text-l2 hover:text-cta"
                       >
-                        <Flag size={13} strokeWidth={1.8} fill="currentColor" aria-hidden="true" />
+                        <Bookmark size={13} strokeWidth={1.8} fill="currentColor" aria-hidden="true" />
                       </button>
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium leading-7 text-l1">
@@ -2391,7 +2391,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                             aria-label={`保留：${sessionTitle(s)}`}
                             className={`${ghostActionClass} text-l3`}
                           >
-                            <Flag size={14} strokeWidth={1.8} aria-hidden="true" />
+                            <Bookmark size={14} strokeWidth={1.8} aria-hidden="true" />
                           </button>
                         )}
                         <button
