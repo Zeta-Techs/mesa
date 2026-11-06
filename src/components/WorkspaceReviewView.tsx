@@ -53,6 +53,8 @@ import {
 } from "lucide-react";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { bringLatest } from "../step-latest";
+import { withLatestNote } from "../step-loop";
 import ImagePairView, { isImagePath } from "./ImagePairView";
 import { loadArtifactRows } from "./ArtifactChecklist";
 import {
@@ -1662,6 +1664,13 @@ function LiveWorkspaceReviewView({
     setReturnBusy(true);
     setError(null);
     try {
+      // 流程步骤退回修改前先把项目最新内容并进来（2026-11-06 流程贯通 §3）；编程等别的工作区不动
+      let incoming: string[] = [];
+      if (researchContext?.step) {
+        const got = await bringLatest(wsRow, researchContext.step.name, confirmDialog, "退回修改");
+        if (got === null) return;
+        incoming = got;
+      }
       const stored =
         notes ||
         writingHits.map((hit) => `- ${hit.label}`).join("\n") ||
@@ -1688,7 +1697,7 @@ function LiveWorkspaceReviewView({
       setPendingTerminal(
         await buildWorkspaceTerminalRequest(
           wsRow,
-          writingReturnPrompt({ notes: stored, hits: writingHits, rewrite }),
+          withLatestNote(writingReturnPrompt({ notes: stored, hits: writingHits, rewrite }), incoming),
           { autoStart: true, resumeSession: !rewrite, stepLaunch: stepL ?? undefined },
         ),
       );

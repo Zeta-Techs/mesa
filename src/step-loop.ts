@@ -165,6 +165,24 @@ export function followupFiles(files: string[]): string[] {
 const ID_CAP = 40;
 const FILE_CAP = 30;
 
+/** 开一轮前并进来的新内容，附在开场指令末尾（2026-11-06 流程贯通 §3）；没有就空串 */
+export function latestNote(files: string[]): string {
+  if (files.length === 0) return "";
+  const shown = files.slice(0, FILE_CAP).map((f) => `- ${f}`);
+  if (files.length > FILE_CAP) shown.push(`- …另有 ${files.length - FILE_CAP} 个`);
+  return [
+    "项目里有这一步还没用上的新内容，开始前已经并进本工作区（多是别的步骤保存进项目的，例如文献清单、笔记、大纲）：",
+    ...shown,
+    "跟本步有关的照着用，无关的不用管；本步已有的、人确认过的内容不推翻。",
+  ].join("\n");
+}
+
+/** 指令后面接上并入说明（没有就原样） */
+export function withLatestNote(prompt: string, files: string[]): string {
+  const note = latestNote(files);
+  return note ? `${prompt}\n\n${note}` : prompt;
+}
+
 /** 跟进轮的开场指令。notesIds 非 null = 精读步：只给这些篇写笔记；否则按改动文件说。 */
 export function followupPrompt(opts: {
   upstream: string;

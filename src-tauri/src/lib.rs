@@ -910,6 +910,7 @@ pub fn run() {
             workspaces::workspace_clean_record,
             workspaces::merge_workspace,
             workspaces::workspace_sync_base,
+            workspaces::workspace_incoming,
             workspaces::workspace_unmerged_files,
             workspaces::workspace_conflict_content,
             workspaces::workspace_resolve_file,

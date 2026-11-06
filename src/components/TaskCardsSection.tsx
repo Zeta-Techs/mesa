@@ -34,9 +34,11 @@ import {
   reworkPrompt,
   unplacedCoverageDrafts,
   reworkTargets,
+  withLatestNote,
   type FollowupScopeDto,
   type ReworkDto,
 } from "../step-loop";
+import { bringLatest } from "../step-latest";
 import { workspaceReuseKey } from "../pipeline-start";
 import {
   bucketCardsByStep,
@@ -281,6 +283,8 @@ export default function TaskCardsSection({
     ws: WorkspaceDto;
     title: string;
     card: TaskCardDto | null;
+    /** 开始前并进来的新内容（附在开场指令后面） */
+    incoming: string[];
   } | null>(null);
   const [carryBusy, setCarryBusy] = useState(false);
   const [carryError, setCarryError] = useState<string | null>(null);
@@ -597,6 +601,17 @@ export default function TaskCardsSection({
       setError("还没解析到可用连接：去「Agent 分工」页签给这一步绑一条，或确认项目默认 Agent 有连接。");
       return;
     }
+    // 先把项目最新内容并进来（2026-11-06 流程贯通 §3）：后面步骤保存的笔记、大纲，这一步的 AI 接着做时就在手边
+    let incoming: string[] = [];
+    try {
+      const got = await bringLatest(ws, stepName ?? title, confirmDialog, "接着做");
+      if (got === null) return;
+      incoming = got;
+      if (got.length > 0) onWorkspacesChanged?.();
+    } catch (reason) {
+      setError(String(reason instanceof Error ? reason.message : reason));
+      return;
+    }
     try {
       await useAppStore.getState().loadSessions();
     } catch {
@@ -611,7 +626,7 @@ export default function TaskCardsSection({
     );
     if (route.kind === "resume") {
       try {
-        await resumeContinuation(launch, ws, title, card);
+        await resumeContinuation(launch, ws, title, card, incoming);
       } catch (reason) {
         setError(String(reason));
       }
@@ -629,11 +644,12 @@ export default function TaskCardsSection({
         ws,
         title,
         card: card ?? null,
+        incoming,
       });
       return;
     }
     try {
-      await launchContinuation(launch, ws, title, CONTINUE_STEP_PROMPT, card);
+      await launchContinuation(launch, ws, title, withLatestNote(CONTINUE_STEP_PROMPT, incoming), card);
       // 「这一步的几轮」要知道这一轮是人点的新开一轮：真开起来了才记（没连接、接力框取消都不记）
       if (fresh && stepName) void recordRound(ws, stepName, "fresh");
     } catch (reason) {
@@ -647,9 +663,10 @@ export default function TaskCardsSection({
     ws: WorkspaceDto,
     title: string,
     card?: TaskCardDto | null,
+    incoming: string[] = [],
   ) {
     if (card) claimForCard(card, launch);
-    const req = await buildWorkspaceTerminalRequest(ws, CONTINUE_RESUME_PROMPT, {
+    const req = await buildWorkspaceTerminalRequest(ws, withLatestNote(CONTINUE_RESUME_PROMPT, incoming), {
       autoStart: true,
       resumeSession: true,
       stepLaunch: launch,
@@ -724,7 +741,7 @@ export default function TaskCardsSection({
         fromAgent: ask.fromAgent,
         fromSessionId: ask.fromSessionId,
       });
-      const prompt = continueWithBriefPrompt(briefRel(ask.ws.worktreePath, brief.filePath));
+      const prompt = withLatestNote(continueWithBriefPrompt(briefRel(ask.ws.worktreePath, brief.filePath)), ask.incoming);
       await launchContinuation(ask.launch, ask.ws, ask.title, prompt, ask.card);
       setCarryAsk(null);
     } catch (reason) {
@@ -744,7 +761,7 @@ export default function TaskCardsSection({
         ask.launch,
         ask.ws,
         ask.title,
-        CONTINUE_STEP_PROMPT,
+        withLatestNote(CONTINUE_STEP_PROMPT, ask.incoming),
         ask.card,
       );
       setCarryAsk(null);
@@ -881,43 +898,6 @@ export default function TaskCardsSection({
     return back;
   }
 
-  /** 并入项目最新内容之前，工作副本必须干净（git merge 拒绝脏工作树，原先直接甩出「请先在改动面板提交」）。
-   *  有没提交的文件时点名问一句：一起提交进这一步再继续（这一轮评审时会一起看到），或取消。返回 false = 人取消了 */
-  async function commitLeftovers(ws: WorkspaceDto, stepName: string): Promise<boolean> {
-    const status = await invoke<{ files: GitFileDto[] }>("git_status", { cwd: ws.worktreePath });
-    if (status.files.length === 0) return true;
-    const shown = status.files.slice(0, 6).map((f) => `· ${f.path}`);
-    if (status.files.length > 6) shown.push(`· …另有 ${status.files.length - 6} 个`);
-    const ok = await confirmDialog(
-      `「${stepName}」的工作副本里有 ${status.files.length} 个文件改了还没提交：\n${shown.join("\n")}\n\n` +
-        "多半是上一轮 AI 写了没提交。一起提交进这一步再开新一轮？这一轮评审时会一起看到，不想要的到时退回或勾掉。",
-      { confirmText: "一起提交，继续" },
-    );
-    if (!ok) return false;
-    await invoke("git_commit", {
-      cwd: ws.worktreePath,
-      message: "开新一轮前提交上一轮留下的改动",
-      push: false,
-      paths: null,
-    });
-    return true;
-  }
-
-  /** 把项目最新内容并进这一步的工作副本；冲突时说清去哪处理（冲突现场留在工作副本，那一步的评审入口会变成「去处理冲突」） */
-  async function syncForRound(ws: WorkspaceDto, stepName: string) {
-    try {
-      await invoke("workspace_sync_base", { id: ws.id, restart: false });
-    } catch (reason) {
-      const text = String(reason);
-      if (text.includes("冲突")) {
-        throw new Error(
-          `把项目里的最新内容并进「${stepName}」时，有文件两边都改过、冲突了。到「${stepName}」这一步点「去处理冲突」，逐个文件选用哪一版，处理完再回来开这一轮。`,
-        );
-      }
-      throw reason;
-    }
-  }
-
   /** 退回上一步补料（§4）：恢复 / 并入项目最新内容 → 写补料单 → 记轮次 → 在上游工作区另开一段对话 */
   async function sendRework(fields: ReworkFields) {
     if (!focusStepDto) return;
@@ -935,8 +915,8 @@ export default function TaskCardsSection({
       restored = found.status !== "active";
       const ws = await ensureActive(found, target.name);
       await assertRoundable(ws, target.name);
-      if (!(await commitLeftovers(ws, target.name))) return;
-      await syncForRound(ws, target.name);
+      const incoming = await bringLatest(ws, target.name, confirmDialog);
+      if (incoming === null) return;
       const rework = await invoke<ReworkDto>("rework_create", {
         root: projectPath,
         draft: {
@@ -951,12 +931,12 @@ export default function TaskCardsSection({
         },
       });
       const d = new Date();
-      const prompt = reworkPrompt(rework, {
+      const prompt = withLatestNote(reworkPrompt(rework, {
         isSearch: stepFillsAnySlot(target.skills, ["lit-search"], skillProvides),
         isNotes: stepFillsAnySlot(target.skills, ["lit-notes"], skillProvides),
         projectRoot: projectPath,
         date: `${d.getMonth() + 1}-${d.getDate()}`,
-      });
+      }), incoming);
       await launchContinuation(launch, ws, target.name, prompt);
       // 对话真开起来了才记轮次、关弹层（开不起来时弹层留着、报错看得见）
       await recordRound(ws, target.name, "rework", rework.id);
@@ -1021,8 +1001,7 @@ export default function TaskCardsSection({
         ws = await ensureActive(ws, step.name);
         await assertRoundable(ws, step.name);
       }
-      if (!(await commitLeftovers(ws, step.name))) return;
-      await syncForRound(ws, step.name);
+      if ((await bringLatest(ws, step.name, confirmDialog, "跟进")) === null) return;
       await launchContinuation(launch, ws, step.name, followupPrompt({ upstream, notesIds, files }));
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
@@ -1431,6 +1410,19 @@ export default function TaskCardsSection({
             loopActions={(() => {
               // 已保存 / 待评审的步骤：跟进上游的新增（待跟进时）与退回上一步补料（design-review-loop.md §4/§5）
               // 只在已保存时给：待评审时退回补料，之后按旧版本保存，下游就没人提示它没用上补来的（2026-11-05 排查）
+              // 做到一半上游又保存过（2026-11-06 流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
+              if (focusRunStatus === "active" || focusRunStatus === "review") {
+                const live = stepWorkspace(focusStepDto);
+                if (!live?.staleUpstream) return null;
+                return (
+                  <span
+                    className="shrink-0 text-xs text-warn-text"
+                    title="这一步的工作副本还没并入上游这次保存的内容。点「继续」（待评审时在评审里退回修改）会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
+                  >
+                    上游「{live.staleUpstream}」有新内容，{focusRunStatus === "review" ? "这一版还没用上" : "继续时会先并进来"}
+                  </span>
+                );
+              }
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
               const upstreamSteps = reworkTargets(steps, focusIdx);

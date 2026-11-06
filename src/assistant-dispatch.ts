@@ -19,6 +19,9 @@ import { openTerminalInTurn } from "./terminal-queue";
 import { workOrderGoalText, workOrderMessage, type OrderTextOptions, type WorkOrder } from "./project-assistant";
 import { builtinTaskMethod, findBuiltinTask } from "./builtin-tasks";
 import { goalTextFromPack } from "./task-packs";
+import { bringLatest, incomingFor, stepBusy, type ConfirmFn } from "./step-latest";
+import { withLatestNote } from "./step-loop";
+import { confirmDialog } from "./components/ConfirmDialog";
 import type { ProjectConfigReadDto, ProjectDto, ProjectMailDto, RunDto, SkillDto, TaskDto, TaskPackDto, WorkspaceDto } from "./types";
 
 export interface DispatchResult {
@@ -29,11 +32,17 @@ export interface DispatchResult {
   worktreePath?: string;
 }
 
-export async function dispatchWorkOrder(input: { order: WorkOrder; projectPath: string; project: ProjectDto | null }): Promise<DispatchResult> {
+export async function dispatchWorkOrder(input: {
+  order: WorkOrder;
+  projectPath: string;
+  project: ProjectDto | null;
+  /** 并入前工作副本有没提交的文件时怎么问；null = 不问、不派（手机上派时，确认只在桌面） */
+  confirm?: ConfirmFn | null;
+}): Promise<DispatchResult> {
   const { order, projectPath, project } = input;
   const based = await resolveBasedOn(order.basedOn);
   const opts: OrderTextOptions = { research: project?.workMode === "research", method: based?.method ?? null };
-  if (order.target === "step") return dispatchToStep(order, projectPath, opts);
+  if (order.target === "step") return dispatchToStep(order, projectPath, opts, input.confirm === undefined ? confirmDialog : input.confirm);
   return dispatchAsGoal(order, projectPath, project, opts, based?.skills ?? []);
 }
 
@@ -73,10 +82,10 @@ export function liveRunIn(worktreePath: string): string | null {
   return live?.runId ?? null;
 }
 
-async function dispatchToStep(order: WorkOrder, projectPath: string, opts: OrderTextOptions): Promise<DispatchResult> {
+async function dispatchToStep(order: WorkOrder, projectPath: string, opts: OrderTextOptions, confirm: ConfirmFn | null): Promise<DispatchResult> {
   const n = order.step ?? 0;
   const { step, ws } = await stepWorkspace(projectPath, n);
-  const sent = await sendToWorkspace(projectPath, ws, step.name, workOrderMessage(order, opts));
+  const sent = await sendToWorkspace(projectPath, ws, step.name, workOrderMessage(order, opts), { latest: true, confirm });
   return sent.mode === "mail"
     ? { note: `已留话给第 ${n} 步的 AI，它空闲时送到`, mode: "mail", mailId: sent.mailId, worktreePath: ws.worktreePath }
     : { note: `已让第 ${n} 步的 AI 接着做，做完照常去评审`, mode: "resume", worktreePath: ws.worktreePath };
@@ -85,17 +94,45 @@ async function dispatchToStep(order: WorkOrder, projectPath: string, opts: Order
 /**
  * 把一段话送进某个工作副本里的那段对话（派活单交给第 N 步、调度台转达你的回复共用，2026-11-06）：
  * AI 开着（不是回落的 shell）→ 留话，它空闲、输入框没草稿时送进对话；没开着 → 接回那一步上次的对话、带上这段话自动开跑（步骤绑定的连接优先）。
+ * latest（派活单用）：送之前先把项目最新内容并进来（同日流程贯通 §3）；AI 正在干活或等确认时不并，留话里写明还没并入、
+ * 等它停下在 Mesa 里点「继续」。转达回答（调度台）不并：那是答它刚问的，不该趁机改它手下的文件。
  */
 export async function sendToWorkspace(
   projectPath: string,
   ws: WorkspaceDto,
   stepName: string | null,
   message: string,
+  opts: { latest?: boolean; confirm?: ConfirmFn | null } = {},
 ): Promise<{ mode: "mail" | "resume"; mailId?: string }> {
+  const label = stepName ?? ws.name;
+  const confirm: ConfirmFn = opts.confirm === undefined ? confirmDialog : (opts.confirm ?? (async () => false));
+  const refused = opts.confirm === null
+    ? `没派出去：「${label}」的工作副本里有没提交的文件，要在桌面的 Mesa 里确认一起提交后才能并入新内容`
+    : "没派出去：工作副本里有没提交的文件，你选了先不提交";
   const liveRun = liveRunIn(ws.worktreePath);
   if (liveRun) {
-    const mailId = await invoke<string>("mail_send", { toRun: liveRun, text: message });
+    let text = message;
+    if (!opts.latest) {
+      // 转达回答：原样送
+    } else if (stepBusy(ws)) {
+      const pending = await incomingFor(ws).catch(() => null);
+      if (pending && pending.length > 0) {
+        text +=
+          "\n\n注意：项目里有这一步还没用上的新内容（别的步骤保存的，例如清单、笔记、大纲），你正在干活，Mesa 没有并进你的工作副本。" +
+          "这件活要用到它们的话，先把手上这一轮做完停下，我在 Mesa 里点「继续」会先并进来。";
+      }
+    } else {
+      const got = await bringLatest(ws, label, confirm, "接着做");
+      if (got === null) throw new Error(refused);
+      text = withLatestNote(text, got);
+    }
+    const mailId = await invoke<string>("mail_send", { toRun: liveRun, text });
     return { mode: "mail", mailId };
+  }
+  if (opts.latest) {
+    const got = await bringLatest(ws, label, confirm, "接着做");
+    if (got === null) throw new Error(refused);
+    message = withLatestNote(message, got);
   }
   const { profiles, setPendingTerminal, setPage } = useAppStore.getState();
   const binding = stepName

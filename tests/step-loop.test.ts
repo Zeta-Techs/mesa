@@ -7,6 +7,8 @@ import {
   notesFollowupIds,
   parseTopics,
   reworkPrompt,
+  latestNote,
+  withLatestNote,
   reworkTargets,
   roundCauseLabel,
 } from "../src/step-loop.ts";
@@ -176,4 +178,16 @@ test("loopHint：前面在补一轮先指它；否则指第一个待跟进；正
   assert.match(b!.text, /到「精读」点「跟进上游的新增」/);
   // 精读在跟进（进行中），大纲已完成 → 指精读
   assert.equal(loopHint(steps, [{ key: "done" }, { key: "active" }, { key: "done", staleUpstream: "检索" }, { key: "pending" }])?.index, 1);
+});
+
+test("latestNote：并进来的新内容附在开场指令后；没有就原样；超过 30 个只列前 30", () => {
+  assert.equal(latestNote([]), "");
+  assert.equal(withLatestNote("接着做", []), "接着做");
+  const one = withLatestNote("接着做", ["outline.md", "notes/12-wang.md"]);
+  assert.match(one, /^接着做\n\n项目里有这一步还没用上的新内容/);
+  assert.match(one, /- outline\.md\n- notes\/12-wang\.md/);
+  assert.match(one, /人确认过的内容不推翻/);
+  const many = latestNote(Array.from({ length: 33 }, (_, i) => `notes/${i}.md`));
+  assert.match(many, /- notes\/29\.md\n- …另有 3 个/);
+  assert.doesNotMatch(many, /notes\/30\.md/);
 });

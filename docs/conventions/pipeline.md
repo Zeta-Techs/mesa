@@ -445,6 +445,11 @@
   ②项目助手可起草「:::补料」卡，人点「退回去补」才发，走步骤卡同一条路；③退回入口在步骤开过工后就有（含进行中、待评审）；
   ④补料单可勾下游链，目标步保存后下一步自动开跟进（不弹规模确认，规模 0 记 ack 往下走），每步仍评审保存；链断留「待跟进」；只在 Mesa 看见那次保存时自动走；
   ⑤项目页「资料全貌」：每份资料的机械计数、跟上游对齐没有、在途的回头与链。不做：合并前三步为一个工作区、步骤间靠留言传话、AI 自己决定回头、自动保存。
+  - **① 已落地**：`src/step-latest.ts bringLatest`（落后才并：`workspace_health.behind` + `workspace_incoming` 滤过程文件；AI 在忙报错、有没提交的先问、`workspace_sync_base`）；
+    接入继续 / 新开一轮 / 接力（TaskCardsSection `openStepContinuation`）、补料 / 跟进、评审「退回修改」（仅流程步骤）、项目助手派活交给第 N 步（`sendToWorkspace` 的 `latest`；
+    AI 在忙只留话注明没并；手机上派 `confirm: null` 不问、报回桌面处理；调度台转达回答**不并**）。开场话尾附 `step-loop.ts latestNote`。
+    并入成功（含评审「完成解决并合并」）后端 `step_loop::record_sync` 记 kind=sync（只记流程步骤的工作区，不算一轮）；`followed_at` 认 sync / ack / followup / rework；
+    `stale_upstream_for` 不再拿本步 merged_at 当进度。进行中 / 待评审的步骤待跟进时「AI 干活」行写一句（不另给按钮）。
 
 ## 科研做图（2026-11-05 拍板，design-research-figures.md）
 

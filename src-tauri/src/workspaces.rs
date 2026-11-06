@@ -224,10 +224,11 @@ fn row_to_dto(
 }
 
 /// 上游漂移（纯逻辑，启发式提醒非硬状态）：步骤 k 的任一上游步骤（序号更小）晚于本步
-/// 「最后推进时间」发生合并 → 返回最晚合并的上游步骤名，否则 None。
-/// 最后推进时间口径：本步工作区已合并取 merged_at，未合并取 created_at；人点过「跟进上游的新增」
-/// （开了跟进轮，或 Mesa 算出没有要跟进的）取那一刻与前者较晚的（`followed`：工作区 id → 时间，
-/// step_loop::followed_at；2026-11-05 修「待跟进」在跟进轮没提交或上游只改了过程文件时永远消不掉）。
+/// 「最后一次并入」发生合并 → 返回最晚合并的上游步骤名，否则 None。
+/// 最后一次并入（2026-11-06 流程贯通改，design-flow-weave.md §3）：工作区建立时间与 `followed`（工作区 id → 时间，
+/// step_loop::followed_at：并入项目最新内容、开补料 / 跟进轮、人点跟进而没有要跟进的）里较晚的那个。
+/// **本步自己保存（merged_at）不算并入**：没并入就保存，保存时间会把上游的新内容盖掉、待跟进从此不亮——
+/// 这原是「只许保存后退回」的理由，改判定后步骤做到一半也能退回。
 /// 时间戳均为 now_iso 定宽 UTC 串，字典序即时间序。
 /// workspaces 需先按同仓库过滤；步骤-工作区绑定 = steps[].workspace_name 匹配工作区名。
 pub(crate) fn stale_upstream_for(
@@ -238,13 +239,10 @@ pub(crate) fn stale_upstream_for(
 ) -> Option<String> {
     let step = steps.get(step_index)?;
     let target_ws = workspaces.iter().find(|w| w.name == step.workspace_name)?;
-    let saved = target_ws
-        .merged_at
-        .as_deref()
-        .unwrap_or(&target_ws.created_at);
+    let created = target_ws.created_at.as_str();
     let last_progress = match followed.get(&target_ws.id) {
-        Some(at) if at.as_str() > saved => at.as_str(),
-        _ => saved,
+        Some(at) if at.as_str() > created => at.as_str(),
+        _ => created,
     };
     let mut best: Option<(&str, &str)> = None; // (merged_at, 步骤名)
     for step in &steps[..step_index] {
@@ -4820,7 +4818,33 @@ pub async fn workspace_sync_base(id: String, restart: Option<bool>) -> Result<St
         let conn = db()?;
         let w = get_workspace(&conn, &id)?;
         let wt = PathBuf::from(&w.worktree_path);
-        sync_base_impl(&wt, &w.base_branch, restart.unwrap_or(false))
+        let out = sync_base_impl(&wt, &w.base_branch, restart.unwrap_or(false))?;
+        crate::step_loop::record_sync(&w);
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 项目最新（基准）比这一步工作副本多出来的改动文件：`git diff --name-only HEAD...基准`（合并基以来基准侧改过的）。
+/// 开一轮前据此决定要不要并入、开场指令里告诉 AI 新并进来了什么（2026-11-06 流程贯通 §3）
+fn incoming_impl(wt: &Path, base_branch: &str) -> Result<Vec<String>, String> {
+    let range = format!("HEAD...{base_branch}");
+    let out = run_git(wt, &["diff", "--name-only", &range], Duration::from_secs(30))?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+#[tauri::command]
+pub async fn workspace_incoming(id: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db()?;
+        let w = get_workspace(&conn, &id)?;
+        incoming_impl(&PathBuf::from(&w.worktree_path), &w.base_branch)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -5102,7 +5126,10 @@ pub async fn workspace_finish_merge(id: String) -> Result<String, String> {
         if unmerged_with_base(&wt, &w.base_branch)?.stale_base {
             return Err(format!("{} 已更新，请先重新同步最新基准", w.base_branch));
         }
-        finish_merge_impl(&wt)
+        let out = finish_merge_impl(&wt)?;
+        // 解完冲突也是一次并入（评审页「完成解决并合并」）：记下，「待跟进」才按它判
+        crate::step_loop::record_sync(&w);
+        Ok(out)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -5717,12 +5744,19 @@ mod tests {
         // 跟进记录早于上游这次合并：照报
         followed.insert(ws[1].id.clone(), "2026-08-03T12:00:00Z".to_string());
         assert_eq!(stale_upstream_for(&steps, &ws, 1, &followed).as_deref(), Some("查文献"));
-        // 本步之后重新合并（merged_at 晚于上游合并）→ 恢复新鲜
+        // 本步之后自己保存（merged_at 晚于上游合并）但没并入过：仍待跟进（2026-11-06：保存不算并入）
         let ws = vec![
             ws_named("lit", "2026-08-01T00:00:00Z", Some("2026-08-05T00:00:00Z")),
             ws_named("ana", "2026-08-03T00:00:00Z", Some("2026-08-06T00:00:00Z")),
         ];
-        assert_eq!(stale_upstream_for(&steps, &ws, 1, &std::collections::HashMap::new()), None);
+        assert_eq!(
+            stale_upstream_for(&steps, &ws, 1, &std::collections::HashMap::new()).as_deref(),
+            Some("查文献")
+        );
+        // 并入过（晚于上游合并）→ 恢复新鲜
+        let mut synced = std::collections::HashMap::new();
+        synced.insert(ws[1].id.clone(), "2026-08-05T12:00:00Z".to_string());
+        assert_eq!(stale_upstream_for(&steps, &ws, 1, &synced), None);
         // 多个上游时标最晚合并的那个；未合并/未建工作区的上游不参与
         let ws = vec![
             ws_named("lit", "2026-08-01T00:00:00Z", Some("2026-08-04T00:00:00Z")),
@@ -6736,6 +6770,23 @@ mod tests {
             Some("workspace-one\n"),
             "基准侧必须是工作区 1 合并后的最新 main，而不是工作区 2 创建时的旧内容"
         );
+    }
+
+    #[test]
+    fn incoming_lists_files_base_changed_since_branching() {
+        let Some(fx) = Fixture::new() else { return };
+        let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "incoming").unwrap();
+        let wt = PathBuf::from(&w.worktree_path);
+        assert!(incoming_impl(&wt, "main").unwrap().is_empty(), "刚开出来没有要并的");
+        // 分支自己改的不算；基准侧新提交的算
+        fs::write(wt.join("mine.txt"), "branch\n").unwrap();
+        commit_all_in_worktree(&wt, "分支改动");
+        fs::write(fx.repo.join("outline.md"), "# 大纲\n").unwrap();
+        sh(&fx.repo, &["add", "outline.md"]);
+        sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "大纲"]);
+        assert_eq!(incoming_impl(&wt, "main").unwrap(), vec!["outline.md".to_string()]);
+        sync_base_impl(&wt, "main", false).unwrap();
+        assert!(incoming_impl(&wt, "main").unwrap().is_empty(), "并入后清空");
     }
 
     #[test]

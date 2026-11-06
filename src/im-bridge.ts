@@ -227,7 +227,8 @@ async function dispatchTurn(project: ProjectDto, turn: AssistantTurn): Promise<v
   const order = parseWorkOrder(parseClarify(parseRemember(turn.answer).text).text, steps).order;
   if (!order) return sendText("那一轮里没有能派的单子。");
   try {
-    const result = await dispatchWorkOrder({ order, projectPath: project.path, project });
+    // 手机上派：并入前要确认的（工作副本有没提交的文件）不在手机上问，报回去让人回桌面处理
+    const result = await dispatchWorkOrder({ order, projectPath: project.path, project, confirm: null });
     const record: DispatchRecord = {
       at: new Date().toISOString(),
       target: order.target,

@@ -154,7 +154,8 @@ pub async fn rework_list(root: String) -> Result<Vec<ReworkDto>, String> {
 pub struct RoundStart {
     pub workspace_id: String,
     pub step: String,
-    /// rework | followup | fresh；ack = 点了「跟进上游的新增」但没有要跟进的（只用来清「待跟进」，不算一轮）
+    /// rework | followup | fresh；ack = 点了「跟进上游的新增」但没有要跟进的（只用来清「待跟进」，不算一轮）；
+    /// sync = 把项目最新内容并进了这一步的工作副本（workspace_sync_base 成功时后端自己记，不算一轮）
     pub kind: String,
     #[serde(default)]
     pub rework_id: Option<String>,
@@ -163,7 +164,7 @@ pub struct RoundStart {
 }
 
 fn record_round_at(root: &Path, mut entry: RoundStart) -> Result<(), String> {
-    if !matches!(entry.kind.as_str(), "rework" | "followup" | "fresh" | "ack") {
+    if !matches!(entry.kind.as_str(), "rework" | "followup" | "fresh" | "ack" | "sync") {
         return Err(format!("不认识的轮次类型：{}", entry.kind));
     }
     entry.at = crate::sessions::now_iso();
@@ -189,11 +190,13 @@ fn read_rounds_at(root: &Path) -> Vec<RoundStart> {
         .collect()
 }
 
-/// 每个工作区最近一次「跟进过」的时间（followup 或 ack 记录）：上游漂移判断用，见 workspaces::stale_upstream_for
+/// 每个工作区最近一次「并入过」的时间：上游漂移判断用，见 workspaces::stale_upstream_for。
+/// 认 sync（并入成功，2026-11-06 起后端自己记）、ack（人点跟进而没有要跟进的）、followup / rework
+/// （这两种轮开之前都先并入；早于 sync 记录的旧数据靠它们）
 pub(crate) fn followed_at(root: &Path) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::<String, String>::new();
     for s in read_rounds_at(root) {
-        if s.kind != "followup" && s.kind != "ack" {
+        if !matches!(s.kind.as_str(), "followup" | "ack" | "sync" | "rework") {
             continue;
         }
         let newer = out.get(&s.workspace_id).is_none_or(|at| s.at > *at);
@@ -202,6 +205,26 @@ pub(crate) fn followed_at(root: &Path) -> std::collections::HashMap<String, Stri
         }
     }
     out
+}
+
+/// 并入成功后记一行 sync（workspace_sync_base / 完成解冲突调用）。只记流程步骤的工作区——
+/// 编程等别的工作区不往仓库 .ccode/ 里写；记不下不影响并入本身
+pub(crate) fn record_sync(w: &crate::workspaces::WorkspaceDto) {
+    let root = Path::new(&w.repo_path);
+    let steps = crate::projects::read_config_at(root).config.steps;
+    let Some(step) = steps.iter().find(|s| !s.workspace_name.is_empty() && s.workspace_name == w.name) else {
+        return;
+    };
+    let _ = record_round_at(
+        root,
+        RoundStart {
+            workspace_id: w.id.clone(),
+            step: step.name.clone(),
+            kind: "sync".into(),
+            rework_id: None,
+            at: String::new(),
+        },
+    );
 }
 
 #[tauri::command]
@@ -258,7 +281,7 @@ fn step_rounds_at(root: &Path, workspace_id: &str) -> StepRoundsDto {
     saves.sort_by(|a, b| a.decided_at.cmp(&b.decided_at));
     let starts: Vec<RoundStart> = read_rounds_at(root)
         .into_iter()
-        .filter(|s| s.workspace_id == workspace_id && s.kind != "ack")
+        .filter(|s| s.workspace_id == workspace_id && s.kind != "ack" && s.kind != "sync")
         .collect();
     let reworks = list_reworks_at(root);
     let rework_of = |s: &RoundStart| {
@@ -606,6 +629,22 @@ mod tests {
         assert_eq!(followed_at(dir.path()).get("w").map(String::as_str), Some("2026-11-05T03:00:00Z"));
         // ack 不进轮次起因：最后一条是 fresh
         assert_eq!(step_rounds_at(dir.path(), "w").open_cause.as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn sync_counts_as_incorporation_but_not_as_a_round() {
+        let dir = project();
+        let start = |kind: &str, at: &str| RoundStart { workspace_id: "w".into(), step: "s".into(), kind: kind.into(), rework_id: None, at: at.into() };
+        let lines: Vec<String> = [start("rework", "2026-11-06T01:00:00Z"), start("sync", "2026-11-06T04:00:00Z")]
+            .iter()
+            .map(|s| serde_json::to_string(s).unwrap())
+            .collect();
+        fs::write(rounds_path(dir.path()), lines.join("\n")).unwrap();
+        // 并入是最后一次「跟上」的时间
+        assert_eq!(followed_at(dir.path()).get("w").map(String::as_str), Some("2026-11-06T04:00:00Z"));
+        // 但不是一轮：起因仍是补料轮
+        assert_eq!(step_rounds_at(dir.path(), "w").open_cause.as_deref(), Some("rework"));
+        assert!(record_round_at(dir.path(), start("sync", "")).is_ok());
     }
 
     #[test]
