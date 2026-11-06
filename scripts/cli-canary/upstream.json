@@ -3,6 +3,7 @@
   "hooks": "用上：每次启动经 --settings 带 hooks（chat_channel.rs prepare_structured）",
   "program-status": "用上：hooks 起不来时的兜底旁路（PROGRAM_STATUS_MIN）",
   "remote": "不接：--remote-control 是 claude.ai 远程操控，要官方账号，不是本机旁路",
+  "server": "不接：claude -p / Agent SDK 是无头模式，不是交互终端里同一段会话的旁路（design-chat-structured-channels.md §11）",
   "stream-json": "不接：只在 --print 无头模式；聊天层要的是交互终端里同一段会话（design-chat-structured-channels.md §11）"
  },
  "codebuddy": {
@@ -42,8 +43,8 @@
  },
  "opencode2": {
   "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",
-  "server": "用上：Mesa 自起 opencode serve --stdio --port 0 + OPENCODE_PASSWORD，TUI --server 连，/api/event 事件流",
-  "program-status": "不接：已走自起 serve 的事件流，回合、审批、边写边显示都有，比程序状态全"
+  "program-status": "不接：已走自起 serve 的事件流，回合、审批、边写边显示都有，比程序状态全",
+  "server": "用上：Mesa 自起 opencode serve --stdio --port 0 + OPENCODE_PASSWORD，TUI --server 连，/api/event 事件流"
  },
  "qwen": {
   "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",

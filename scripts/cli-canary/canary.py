@@ -682,6 +682,22 @@ def upstream_phase(agent, adir, notes):
     return found, news
 
 
+# 更新日志条目去掉「2.1.318 - 」「- 」这类前缀后，以这些词开头算修 bug / 小改进
+UPSTREAM_MINOR_RE = re.compile(r"^(?:[\w.\-]+\s+-\s+)?(?:\[[^\]]*\]\s*)?(?:[\w ]+:\s*)?(fix(ed|es)?|improved?|improves|reduced|updated)\b", re.I)
+
+
+def upstream_should_alert(conclusion, key, line):
+    """更新日志里提到某通道的一条，要不要提醒：用上的不提醒（程序状态除外）；不接的只提醒新增功能"""
+    c = str(conclusion)
+    if key == "program-status":
+        return True
+    if c.startswith("用上"):
+        return False
+    if c.startswith("不接") and UPSTREAM_MINOR_RE.match(line.strip()):
+        return False
+    return True
+
+
 def upstream_report(results, accept):
     """results：{agent: (found, news)}。返回 (报告行, 要提醒的键)：键是没登记过的线索（agent:线索），以及更新日志里提到
     Mesa 还没用上的通道的条目（agent:线索:条目摘要）——同一条只提醒一次由 CI 按键去重。accept 时把没登记的占位写进 upstream.json"""
@@ -701,8 +717,10 @@ def upstream_report(results, accept):
                 gone.append((agent, key, mine[key]))
         for key, line in news:
             lines.append(f"- {agent} 更新日志提到{UPSTREAM_SIGNALS[key][0]}：{line[:240]}")
-            # 已用上的通道（如 Claude 的 hooks）更新日志天天提，只进报告；程序状态这类新通道一律提醒
-            if not str(mine.get(key, "")).startswith("用上") or key == "program-status":
+            # 已用上的通道（如 Claude 的 hooks）更新日志天天提，只进报告；程序状态这类新通道一律提醒。
+            # 看过不接的通道，修 bug / 小改进的条目也只进报告（Claude 每版十来条 remote-control、claude -p 的 Fixed，
+            # 2026-11-04 起天天开 issue）；新增功能（Added 等）才可能值得重新评估，照旧提醒
+            if upstream_should_alert(mine.get(key, ""), key, line):
                 alert.append(f"{agent}:{key}:{hashlib.sha1(line.encode('utf-8')).hexdigest()[:8]}")
     head = ["## 上游通道雷达（不算红）", ""]
     if fresh:
