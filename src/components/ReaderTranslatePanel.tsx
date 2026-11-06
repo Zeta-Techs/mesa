@@ -1,16 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  clampReaderTlBall,
   clampReaderTlCard,
-  loadReaderTlBall,
   loadReaderTlCard,
   parseBilingual,
   plainFromBilingual,
-  readerTlBallOffset,
   readerTlWinPlace,
   READER_TL_BALL_SIZE,
   reflowBlockText,
-  saveReaderTlBall,
   saveReaderTlCard,
   type ReaderPdfBounds,
   type TlHistoryEntry,
@@ -40,12 +36,15 @@ function plainTextOf(e: TlHistoryEntry): string {
 
 const DEFAULT_W = 416;
 const EST_H = 240;
+/** 球左缘到窗左缘的距离：球宽 + 6px 缝 */
+const BALL_GAP = READER_TL_BALL_SIZE + 6;
 
 /**
  * 沉浸阅读的译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球两种摆法）：
  * 和对照窗一个样——挂覆盖层根，只在 PDF 栏里活动；划词翻译时摆到原文段下方（放不下放上方，不压原文段），
  * 拖标题栏换位、拖右下角改大小（尺寸记住，双击复位）。有译文时 PDF 栏里常驻一颗 Mesa 图标样的「译」悬浮球
- * （同日用户：用悬浮球代替「—」小标记）：点球收起 / 展开浮窗，窗开着球也在；拖球换位记住（与窗的位置各管各的）；
+ * （同日用户：用悬浮球代替「—」小标记）：球贴在窗左侧、和窗是一体——拖球或拖表头都一起走（同日用户：窗要跟着球动），
+ * 点球收起 / 展开（收起只藏窗，球留在原处，展开就在球右边）；新译一段连球带窗摆到原文段旁；
  * × 彻底关掉（球一起收掉），PDF 顶栏「译文 N」重新打开（回到关掉时的位置与大小）。
  * 表头：译文 · 第 N 页 | 原文 | 存进笔记 | 复制 | ⋯（问这段 / 历史）| ×。
  * 状态（历史 / 在途 / 开关）由 ReaderOverlay 持有，本组件只管位置、尺寸与面板内 UI 态。
@@ -126,11 +125,10 @@ function ReaderTranslatePanel({
     setViewingAt(null);
   }, [latestAt, pending]);
 
-  /** 悬浮球位置（PDF 栏里的百分比，记 localStorage）；状态留在本组件，拖动不惊动 ReaderOverlay 整树 */
-  const [ballPos, setBallPos] = useState(() => loadReaderTlBall());
-  const ballPosRef = useRef(ballPos);
-  ballPosRef.current = ballPos;
+  /** 悬浮球贴在窗左侧、顶边对齐，和窗是一体（同日用户：窗要跟着球动）：pos 是窗的左上角，球在它左边 BALL_GAP 处。
+   *  窗的活动范围左边让出球的位置（winBounds），球就永远在 PDF 栏里 */
   const ballRef = useRef<HTMLButtonElement>(null);
+  const winBounds = bounds ? { ...bounds, left: bounds.left + BALL_GAP } : undefined;
 
   /** 覆盖层根的尺寸（摆位与钳制都按它算）；窗收着时借球找定位祖先 */
   function hostSize(): { width: number; height: number } | null {
@@ -156,7 +154,7 @@ function ReaderTranslatePanel({
     const fresh = place && place.key !== placedKeyRef.current;
     if (!fresh && posRef.current) return;
     if (place) placedKeyRef.current = place.key;
-    setPos(readerTlWinPlace(place?.rect ?? null, bounds, host, winSize()));
+    setPos(readerTlWinPlace(place?.rect ?? null, winBounds!, host, winSize()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, place?.key, bounds]);
 
@@ -166,7 +164,7 @@ function ReaderTranslatePanel({
     const host = hostSize();
     if (!host) return;
     const s = winSize();
-    const L = bounds.left + 8;
+    const L = bounds.left + BALL_GAP + 8;
     const R = host.width - bounds.right - 8;
     const T = (bounds.top ?? 0) + 8;
     const B = host.height - (bounds.bottom ?? 0) - 8;
@@ -177,10 +175,10 @@ function ReaderTranslatePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bounds, visible]);
 
-  /** 拖标题栏换位：4px 阈值内不算拖，钳在 PDF 栏里 */
-  function startMove(e: React.PointerEvent<HTMLDivElement>) {
+  /** 拖标题栏或拖球：窗和球一起走（4px 阈值内不算拖，钳在 PDF 栏里）；onTap = 没拖动时当点击（球用） */
+  function startMove(e: React.PointerEvent<HTMLElement>, onTap?: () => void) {
     if (e.button !== 0 || !bounds || !posRef.current) return;
-    if ((e.target as HTMLElement).closest("button")) return;
+    if (!onTap && (e.target as HTMLElement).closest("button")) return;
     e.preventDefault();
     const host = hostSize();
     if (!host) return;
@@ -188,7 +186,7 @@ function ReaderTranslatePanel({
     const start = posRef.current;
     const sx = e.clientX;
     const sy = e.clientY;
-    const L = bounds.left + 8;
+    const L = bounds.left + BALL_GAP + 8;
     const R = host.width - bounds.right - 8;
     const T = (bounds.top ?? 0) + 8;
     const B = host.height - (bounds.bottom ?? 0) - 8;
@@ -207,6 +205,7 @@ function ReaderTranslatePanel({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      if (!moved) onTap?.();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -301,42 +300,6 @@ function ReaderTranslatePanel({
     };
   }, [displayedAt, showOriginal, pending, visible]);
 
-  /** 球的拖 / 点：4px 阈值内算点击（收起 ⇄ 展开），否则拖着走，松手记位置 */
-  function onBallPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
-    if (e.button !== 0 || !bounds) return;
-    e.preventDefault();
-    const host = hostSize();
-    if (!host) return;
-    const w = host.width - bounds.left - bounds.right;
-    const h = host.height - (bounds.top ?? 0) - (bounds.bottom ?? 0);
-    if (w <= 0 || h <= 0) return;
-    const sx = e.clientX;
-    const sy = e.clientY;
-    const start = ballPosRef.current;
-    let last = start;
-    let moved = false;
-    const onMove = (ev: PointerEvent) => {
-      const dx = ev.clientX - sx;
-      const dy = ev.clientY - sy;
-      if (!moved && dx * dx + dy * dy < 16) return;
-      moved = true;
-      last = clampReaderTlBall(start.xp + (dx / w) * 100, start.yp + (dy / h) * 100);
-      setBallPos(last);
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      if (moved) {
-        saveReaderTlBall(last.xp, last.yp);
-      } else {
-        toggleOpen();
-      }
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  }
   function toggleOpen() {
     setDrawerOpen(false);
     setMoreOpen(false);
@@ -344,19 +307,16 @@ function ReaderTranslatePanel({
   }
 
   const ball =
-    mode !== "closed" && hasContent && bounds ? (
+    mode !== "closed" && hasContent && bounds && pos ? (
       <ReaderTlBall
         ref={ballRef}
         light={light}
         open={mode === "open"}
         busy={pending?.phase === "loading"}
         page={(pending ?? current)?.page}
-        onPointerDown={onBallPointerDown}
+        onPointerDown={(e) => startMove(e, toggleOpen)}
         onKey={toggleOpen}
-        style={{
-          left: readerTlBallOffset(ballPos.xp, bounds.left, bounds.left + bounds.right),
-          top: readerTlBallOffset(ballPos.yp, bounds.top ?? 0, (bounds.top ?? 0) + (bounds.bottom ?? 0)),
-        }}
+        style={{ left: pos.x - BALL_GAP, top: pos.y }}
       />
     ) : null;
 
@@ -674,7 +634,7 @@ function ReaderTlBall({
           ? "inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1px rgba(0,0,0,0.12), 0 3px 8px rgba(0,0,0,0.18)"
           : "inset 0 1px 0 rgba(255,255,255,0.16), 0 0 0 1px rgba(0,0,0,0.35), 0 3px 10px rgba(0,0,0,0.35)",
       }}
-      className={`pointer-events-auto absolute z-31 flex -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none select-none items-baseline justify-center pt-[3px] text-sm font-semibold leading-none transition-opacity active:cursor-grabbing ${
+      className={`pointer-events-auto absolute z-31 flex cursor-grab touch-none select-none items-baseline justify-center pt-[3px] text-sm font-semibold leading-none transition-opacity active:cursor-grabbing ${
         open ? "opacity-100" : "opacity-90 hover:opacity-100"
       }`}
     >

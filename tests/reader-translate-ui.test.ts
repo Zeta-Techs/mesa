@@ -5,7 +5,7 @@ import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 
 /** 译文浮窗（2026-11-06 用户选「只留浮窗」）：摆到原文段下方、× 彻底关掉不留东西、⋯ 里只有问这段 / 历史、历史在窗里看 */
-test("译文浮窗：按原文段摆位、悬浮球收起 / 展开、× 关掉连球收掉、历史在窗里翻", async () => {
+test("译文浮窗：按原文段摆位、球和窗一体拖动、点球收起 / 展开、× 关掉连球收掉、历史在窗里翻", async () => {
   const bundle = await build({
     stdin: {
       contents: `export {createElement, act} from 'react';
@@ -71,37 +71,47 @@ test("译文浮窗：按原文段摆位、悬浮球收起 / 展开、× 关掉�
     await act(async () => first.click());
     assert.match(win()!.textContent!, /第 2 页/);
     assert.match(win()!.textContent!, /第一段译文/);
-    // 有译文就有「译」悬浮球，窗开着球也在；点球收起（不作废在途），再点在原处展开
+    // 有译文就有「译」悬浮球，贴在窗左侧、顶边对齐（窗左缘 300 − 球 36 − 缝 6 = 258）
     const ball = () => dom.window.document.querySelector<HTMLElement>("[data-reader-translate-ball]");
     assert.ok(ball(), "窗开着球也在");
+    assert.equal(ball()!.style.left, "258px");
+    assert.equal(ball()!.style.top, "328px");
     assert.equal(ball()!.getAttribute("aria-expanded"), "true");
     assert.equal(dom.window.document.querySelector('[aria-label="收起译文"]')?.textContent?.trim(), "译", "收起靠球，表头不再有「—」");
-    const tap = async () => act(async () => {
-      ball()!.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
-      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: 5, clientY: 5 }));
+    const drag = async (el: HTMLElement, x0: number, y0: number, x1: number, y1: number) => act(async () => {
+      el.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: x0, clientY: y0 }));
+      if (x1 !== x0 || y1 !== y0) dom.window.dispatchEvent(new dom.window.PointerEvent("pointermove", { clientX: x1, clientY: y1 }));
+      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: x1, clientY: y1 }));
     });
-    await tap();
+    // 拖球：窗跟着一起走，不算点击
+    const before = modes.length;
+    await drag(ball()!, 260, 330, 360, 280);
+    assert.equal(modes.length, before, "拖动不切换收起 / 展开");
+    assert.equal(win()!.style.left, "400px", "窗跟着球走");
+    assert.equal(win()!.style.top, "278px");
+    assert.equal(ball()!.style.left, "358px");
+    assert.equal(ball()!.style.top, "278px");
+    // 拖表头：球也跟着走
+    const header = win()!.firstElementChild as HTMLElement;
+    await drag(header, 500, 290, 450, 340);
+    assert.equal(win()!.style.left, "350px");
+    assert.equal(ball()!.style.left, "308px");
+    assert.equal(ball()!.style.top, "328px");
+    // 点球收起（不作废在途），球留在原处；再点展开
+    await drag(ball()!, 5, 5, 5, 5);
     assert.equal(modes.at(-1), "min");
     assert.equal(cancelled, 0, "收起不作废在途翻译");
     await act(async () => root.render(h(Panel, props({ mode: "min" }))));
     assert.equal(win(), null, "收起后窗不在");
     assert.ok(ball(), "收起后球还在");
+    assert.equal(ball()!.style.left, "308px", "球留在原处");
     assert.equal(ball()!.getAttribute("aria-expanded"), "false");
-    await tap();
+    // 收着也能拖球换位，展开时窗就在球右边
+    await drag(ball()!, 310, 330, 330, 330);
+    await drag(ball()!, 5, 5, 5, 5);
     assert.equal(modes.at(-1), "open", "点球展开");
-    // 拖球换位：记进 localStorage（PDF 栏里的百分比），不算点击
-    const before = modes.length;
-    await act(async () => {
-      ball()!.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 500, clientY: 400 }));
-      dom.window.dispatchEvent(new dom.window.PointerEvent("pointermove", { clientX: 300, clientY: 200 }));
-      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: 300, clientY: 200 }));
-    });
-    assert.equal(modes.length, before, "拖动不切换收起 / 展开");
-    // PDF 栏 1000×860：dx −200 = −20%，dy −200 ≈ −23%；缺省 100,45 → 80,22
-    assert.equal(dom.window.localStorage.getItem("ccode.readerTlBall"), "80,22");
-    // 重开回到原位置（摆位请求没换 key 不挪）
     await act(async () => root.render(h(Panel, props({ mode: "open" }))));
-    assert.equal(win()!.style.left, "300px");
+    assert.equal(win()!.style.left, "370px", "窗在球右边展开");
     assert.equal(win()!.style.top, "328px");
     // × 彻底关掉：作废在途、交给上层关；上层关了以后什么都不留
     await act(async () => (dom.window.document.querySelector('[aria-label="关掉译文"]') as HTMLButtonElement).click());
