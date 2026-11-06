@@ -1160,6 +1160,8 @@ src-tauri/
                              #   所有链接产物（含 lib 测试 exe，否则 cargo test 报 0xc0000139），别退回 tauri_build::build()
   windows-app-manifest.xml   # Windows 应用 manifest（Common-Controls 6.0，与 tauri-build 默认相同），build.rs 交给链接器
 src-tauri/src/
+  （大模块的单元测试在同名目录下：sessions/、agents/、projects/、workspaces/、global_config/、usage/、runs/、skills/、scheduler/
+   里的 tests.rs 等（2026-11-07 从主文件搬出，主文件只留 `#[cfg(test)] mod tests;`）；这些模块新增测试写进对应文件，不再往主文件里塞）
   agent_specs.rs             # 各家原生分叉参数 fork（ForkSpec，2026-10-31，matrix「原生分叉」表；pty_spawn 的 forkSessionId 用）；
                              # agent_config_root_with：各家用户级配置目录唯一解析（搬迁变量；GEMINI_CLI_HOME 顶替家目录），设为全局 / MCP / 技能同源；
                              # AgentSpec 中央注册表：一个 CLI 一张规格（detect/launch_plan/env/技能分发/安装更新/官方账号 login/readonly_args 只读模式参数/permission_args 原生权限档（聊天权限徽标，agents::permission_launch_args）/
