@@ -55,7 +55,7 @@ VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/
 {
   echo "# 打包版点验报告"
   echo
-  echo "- 应用：\`$APP\`（$VERSION，$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$APP")）"
+  echo "- 应用：\`$APP\`（${VERSION}，$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$APP")）"
   echo "- 签名：$(codesign -dv "$APP" 2>&1 | grep -E '^Signature=' | cut -d= -f2)"
   echo "- 沙盒家目录：\`$SANDBOX_HOME\`"
   echo "- 时间：$(date '+%Y-%m-%d %H:%M:%S')"
@@ -81,7 +81,7 @@ check() {
     FAILS=$((FAILS + 1))
     local stack
     stack="$(ax texts "$PID" | grep -A1 "界面渲染出错" | tail -1 | cut -c1-300)"
-    log "- ✗ $name：整页「界面渲染出错」——\`$stack\`${shot:+（[截图](shots/$shot)）}"
+    log "- ✗ ${name}：整页「界面渲染出错」——\`$stack\`${shot:+（[截图](shots/$shot)）}"
     ax press "$PID" "尝试恢复" >/dev/null 2>&1
     sleep 1
   else
@@ -94,7 +94,7 @@ press() {
   local what="$1"; shift
   if ! ax press "$PID" "$@" >/dev/null 2>"$OUT/last-press.err"; then
     FAILS=$((FAILS + 1))
-    log "- ✗ $what：$(cat "$OUT/last-press.err")"
+    log "- ✗ ${what}：$(cat "$OUT/last-press.err")"
     return 1
   fi
   sleep 1.2
@@ -106,6 +106,12 @@ if ax texts "$PID" | grep -qx "稍后再说"; then
   # 向导第一屏列出认出的 Agent：从访达启动认不出已装的 CLI，是短 PATH 一类问题
   agents="$(ax texts "$PID" | sed -n '/^已装好，选一个：$/,/^接入方式$/p' | sed '1d;$d' | grep -vx '[01]' | awk '{ printf "%s%s", (NR > 1 ? "、" : ""), $0 }')"
   [[ -n "$agents" ]] && log "- 认出的 Agent：$agents" || log "- 认出的 Agent：（向导第一屏没列，多半一个都没认出）"
+  # 第三屏：示例课题排第一并标「第一次用推荐」（2026-11-07 定位：科研是主线）
+  if press "向导第三屏" "建第一个项目" --role AXButton; then
+    if ax wait "$PID" "第一次用推荐" 10 >/dev/null 2>&1; then log "- 向导第三屏：示例课题标着「第一次用推荐」"
+    else FAILS=$((FAILS + 1)); log "- ✗ 向导第三屏没看到「第一次用推荐」"; fi
+    check "上手向导第三屏"
+  fi
   press "关上手向导" "稍后再说" --exact
 elif ax texts "$PID" | grep -qx "先自己看看"; then
   log "- 上手向导：欢迎弹窗（旧版）"
@@ -116,8 +122,19 @@ check "首屏"
 log
 log "## 各页"
 for page in 连接 对话管理 技能 MCP 用量 设置 工作台; do
-  press "进「$page」" "$page" --exact --role AXButton && check "「$page」页"
+  press "进「${page}」" "$page" --exact --role AXButton && check "「${page}」页"
 done
+log
+log "## 研究档案与运行页"
+press "进设置" "设置" --exact --role AXButton
+if press "进研究档案" "研究档案" --exact --role AXButton; then
+  if ax wait "$PID" "还没有条目：AI 现在什么也拿不到" 10 >/dev/null 2>&1; then log "- 研究档案：空档案写明 AI 拿不到"
+  else FAILS=$((FAILS + 1)); log "- ✗ 研究档案没出现生效状态框"; fi
+  check "设置「研究档案」"
+fi
+# 新对话落运行页：一个标签的终端 + 聊天层（TerminalView）真渲染一次；沙盒没有连接，不会启动 Agent
+press "开新对话" "新对话" --exact --role AXButton && { sleep 2; check "新对话（运行页）"; }
+press "回工作台" "工作台" --exact --role AXButton
 
 log
 log "## 示例课题与文件预览"
@@ -157,7 +174,7 @@ if ax wait "$PID" "示例课题（演示）" 60 2>/dev/null; then
       mod.ts:smoke-files figure.png:smoke-files Liraglutide:papers; do
       local f="${entry%%:*}" dir="${entry#*:}"
       reveal "$f" "$dir"
-      press "点开 $f（$theme）" "$f" --role AXButton && { sleep 2; check "预览 $f（$theme）"; }
+      press "点开 ${f}（${theme}）" "$f" --role AXButton && { sleep 2; check "预览 ${f}（${theme}）"; }
     done
   }
   open_files "默认主题"
@@ -211,5 +228,5 @@ else
   log "**结论：$FAILS 处失败**"
 fi
 echo "报告：$REPORT"
-[[ $KEEP == 1 ]] && echo "沙盒实例留着：进程 $PID（kill $PID 结束）"
+[[ $KEEP == 1 ]] && echo "沙盒实例留着：进程 ${PID}（kill $PID 结束）"
 [[ $FAILS == 0 ]]

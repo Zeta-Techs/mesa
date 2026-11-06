@@ -182,7 +182,7 @@ test("安装在途：有忙碌反馈且不丢失安装界面，完成后恢复�
 });
 
 test("项目卡整行可点击：三种入口分别派发原有请求", async () => {
-  for (const [label, request] of [["新建项目", "new"], ["添加已有文件夹", "add"], ["创建示例课题", "demo"]]) {
+  for (const [label, request] of [["新建项目", "new"], ["添加已有文件夹", "add"], ["创建示例课题（第一次用推荐）", "demo"]]) {
     const ui = await mount({ ...blank, profileCount: 1, userSessionCount: 1 });
     try {
       await ui.click(label);

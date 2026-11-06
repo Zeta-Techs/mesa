@@ -42,7 +42,7 @@ PIDFILE="$SANDBOX_HOME/.app-sandbox.pid"
 if [[ -f "$PIDFILE" ]]; then
   old="$(cat "$PIDFILE")"
   if ps -p "$old" -o command= 2>/dev/null | grep -qF "$EXE"; then
-    echo "这个沙盒已有实例在跑（进程 $old），先 kill $old" >&2
+    echo "这个沙盒已有实例在跑（进程 ${old}），先 kill $old" >&2
     exit 1
   fi
 fi
@@ -81,5 +81,5 @@ done
 [[ -n "$pid" ]] || { echo "实例没起来，看 $SANDBOX_HOME/mesa-stderr.log" >&2; exit 1; }
 echo "$pid" > "$SANDBOX_HOME/.app-sandbox.pid"
 echo "沙盒家目录：$SANDBOX_HOME" >&2
-echo "应用：$APP（$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")）" >&2
+echo "应用：${APP}（$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")）" >&2
 echo "$pid"

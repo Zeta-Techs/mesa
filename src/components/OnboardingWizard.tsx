@@ -773,15 +773,23 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
   return (
     <div className="space-y-3">
       {done && <SuccessCard title="项目建好了" detail="在侧栏「项目」下面点它，就能开始做课题；在它下面开的对话也列在它名下。还想再建，照下面选。" />}
-      {actions.map((action) => (
-        <button key={action.label} type="button" onClick={() => go(action.run)} className="ccode-well group flex w-full items-center gap-4 rounded-xl p-5 text-left transition-colors hover:bg-hover" aria-label={action.label}>
+      {actions.map((action, i) => (
+        // aria-label 会盖住按钮里的文字：「推荐」写进名字，说明经 aria-describedby 给读屏
+        <button
+          key={action.label}
+          type="button"
+          onClick={() => go(action.run)}
+          className="ccode-well group flex w-full items-center gap-4 rounded-xl p-5 text-left transition-colors hover:bg-hover"
+          aria-label={action.recommended && !done ? `${action.label}（第一次用推荐）` : action.label}
+          aria-describedby={`onboarding-project-hint-${i}`}
+        >
           <action.icon size={20} className="shrink-0 text-l3" aria-hidden="true" />
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2 text-sm font-medium text-l1">
               {action.label}
               {action.recommended && !done && <span className="rounded-full bg-cta/10 px-2 py-0.5 text-micro font-normal text-cta">第一次用推荐</span>}
             </span>
-            <span className="mt-1 block text-xs leading-5 text-l3">{action.hint}</span>
+            <span id={`onboarding-project-hint-${i}`} className="mt-1 block text-xs leading-5 text-l3">{action.hint}</span>
           </span>
           <ArrowRight size={16} className="shrink-0 text-l3 group-hover:text-l1" aria-hidden="true" />
         </button>
