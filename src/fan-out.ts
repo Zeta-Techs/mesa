@@ -4,6 +4,7 @@
  * 到齐后 Mesa 用这一步本来的复用键开收尾一路（TerminalPage 的定时检查）。几路由数据定（fan_out.rs），分不分由人在开工弹层勾。
  */
 import type { FanOutItemDto, ProjectStepDto, StepFanOutDto } from "./types.ts";
+import { PEEK_TOOL_WINDOWS_NOTE } from "./peek.ts";
 
 export const FANOUT_MARK_DIR = ".ccode/fanout";
 
@@ -28,7 +29,7 @@ export function lanePrompt(spec: StepFanOutDto, items: readonly FanOutItemDto[],
     ...items.map(itemLine),
     "",
     `只写这几条自己的文件${spec.own ? `：${spec.own}` : ""}。任务书里要求写的共享文件（索引、引文库、清单、验收摘要一类）一律不写，任务书里会生成或改写共享文件的命令（开头要先跑的整理、出清单脚本一类）也不跑，这些都留给最后的收尾一路；不跑 git 提交；不碰别的条目的文件。`,
-    `做完这几条后，写一个空文件 \`${laneDoneMark(k)}\` 就停下，不用等人。想知道别的几路进度：\`${tool} peek agents\`。`,
+    `做完这几条后，写一个空文件 \`${laneDoneMark(k)}\` 就停下，不用等人。想知道别的几路进度：\`${tool} peek agents\`。${isWindows ? PEEK_TOOL_WINDOWS_NOTE : ""}`,
   ].join("\n");
 }
 

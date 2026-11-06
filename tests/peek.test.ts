@@ -25,6 +25,9 @@ test("有其他工作才在任务书带「同项目的其他工作」，按平�
   assert.ok(md.includes('`"$MESA_PEEK_TOOL" peek agents`'));
   assert.ok(md.includes("别人工作副本里的文件不要改"));
   assert.ok(peekSectionLines(1, true).join("\n").includes("`& $env:MESA_PEEK_TOOL peek agents`"));
+  // Windows 上 Claude Code 的命令工具是 Git Bash，跑不了 & $env:…，要带 bash 写法
+  assert.ok(peekSectionLines(1, true).join("\n").includes('`"$MESA_PEEK_TOOL"`'));
+  assert.ok(!peekSectionLines(1, false).join("\n").includes("Git Bash"));
   assert.deepEqual(peekSectionLines(0, false), []);
 });
 
