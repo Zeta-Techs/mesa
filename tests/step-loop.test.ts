@@ -41,12 +41,15 @@ test("reworkPrompt：补料单原文进指令；检索步与其他步写法不�
   assert.match(search, /1\. §3\.2 失活机理/);
   assert.match(search, /不重筛、不改判定/);
   assert.match(search, /补料单原件：\/p\/proj\/\.ccode\/rework\/1-lit-search\.json/);
-  assert.doesNotMatch(search, /线索|规模/);
+  assert.doesNotMatch(search, /线索：|规模/);
+  assert.match(search, /先看单上这些节在大纲里要写什么.*按这些去找/);
+  assert.match(search, /按技能「引用扩展」/);
   const other = reworkPrompt({ ...rework, clues: "Zhang 2024", scale: 8 }, { isSearch: false, projectRoot: "C:\\p", date: "11-05" });
   assert.match(other, /线索：Zhang 2024/);
   assert.match(other, /不超过 8 篇/);
   assert.match(other, /人确认过的内容不推翻/);
   assert.match(other, /C:\\p\\\.ccode\\rework\\1-lit-search\.json/);
+  assert.doesNotMatch(other, /outline\.md|引用扩展/, "退回大纲 / 初稿等不加文献类的指引");
 });
 
 test("reworkPrompt：退回精读的点名篇写成完整笔记，不照任务书只速读；不提主要报告", () => {
@@ -59,6 +62,8 @@ test("reworkPrompt：退回精读的点名篇写成完整笔记，不照任务�
   assert.match(notes, /去掉 skimmed/);
   assert.match(notes, /对这几篇不适用/);
   assert.doesNotMatch(notes, /主要报告/);
+  assert.match(notes, /按这些去读/);
+  assert.doesNotMatch(notes, /引用扩展/);
 });
 
 test("notesFollowupIds：纳入里索引还没有的（上游新加的）；索引记了 pending 的留待按章节读、不算；排除与待确认不算", () => {

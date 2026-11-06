@@ -72,8 +72,19 @@ export function reworkPrompt(
   ];
   if (rework.clues.trim()) lines.push(`线索：${rework.clues.trim()}`);
   if (rework.scale) lines.push(`规模：这次大致不超过 ${rework.scale} 篇。`);
+  lines.push("先读 TASK.md 的完成标准和决策暂停策略，它们照旧有效。");
+  // 补检、补读要知道这一节拿来写什么（2026-11-06）：项目最新内容开轮前已并进工作副本，大纲和可写点清单就在手边；只读不改
+  if (opts.isSearch || opts.isNotes) {
+    lines.push(
+      "项目里有 outline.md 的，先看单上这些节在大纲里要写什么、已经用了哪些文献；有 notes/angles.md 的也看对应角度。按这些去" +
+        (opts.isSearch ? "找" : "读") +
+        "，大纲和可写点清单本轮不改。",
+    );
+  }
+  if (opts.isSearch) {
+    lines.push("线索里点名了种子文献（例如某几篇综述）的，按技能「引用扩展」从它们的参考文献和被引里找，只收和单上主题对得上的。");
+  }
   lines.push(
-    "先读 TASK.md 的完成标准和决策暂停策略，它们照旧有效。",
     opts.isSearch
       ? "已纳入、已判定的文献不重筛、不改判定；新找到的按原纳入标准筛，纳入的追加进 papers/included.json，再按技能跑 lit_records.py write 重出清单。" +
           `在 papers/screening.md 末尾追加「## 补料轮（${opts.date}）」一节：补了什么、检索式、候选数与纳入数、没拿到全文的原因。`
