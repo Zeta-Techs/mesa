@@ -1,3 +1,4 @@
+import { loginScreenLabel, runBlocker, type RunBlocker } from "../run-blocker";
 import {
   memo,
   lazy,
@@ -676,6 +677,8 @@ export interface SessionLinkState {
   promptSuggestion: string | null;
   /** Agent 在跑但 PTY 已 4 秒没出字：TUI 静止（多半停在菜单 / 登录上），不是模型还在想 */
   ptyQuiet: boolean;
+  /** 在跑、十分钟没出一个字（2026-11-06 统一「卡在哪」的兜底：没人盯着的活可能卡在认不出的地方） */
+  stalled: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
   launchPick: LaunchPickState;
   /** 当前 Agent 可从聊天界面直接调用的技能 / MCP 资源。 */
@@ -696,6 +699,8 @@ const CONVERSATION_ACTION_ICONS: Record<string, typeof SquarePen | undefined> = 
   "/chat": MessageSquare,
 };
 
+/** 在跑、这么久没出一个字算「可能卡住了」（统一「卡在哪」的兜底） */
+const STALLED_MS = 10 * 60_000;
 const RIGHT_PANEL_WIDTH_KEY = "ccode.terminalRightWidth";
 const RIGHT_PANEL_DEFAULT_WIDTH = RIGHT_DEFAULT_PX;
 const RIGHT_PANEL_MIN_WIDTH = RIGHT_MIN_PX;
@@ -2374,6 +2379,8 @@ const TerminalView = memo(function TerminalView({
   // PTY 静止：聊天层判断「等不到会话文件」是卡在菜单上，还是模型只是慢（转圈动画一直在出字）
   const [ptyQuiet, setPtyQuiet] = useState(false);
   const ptyQuietRef = useRef(false);
+  const [stalled, setStalled] = useState(false);
+  const stalledRef = useRef(false);
   const trustScanTimerRef = useRef<number | null>(null);
   const trustAnsweringUntilRef = useRef(0);
   function scanTrustPromptSoon() {
@@ -2421,11 +2428,20 @@ const TerminalView = memo(function TerminalView({
         ptyQuietRef.current = false;
         setPtyQuiet(false);
       }
+      if (stalledRef.current) {
+        stalledRef.current = false;
+        setStalled(false);
+      }
       return;
     }
     const timer = window.setInterval(() => {
+      const silence = Date.now() - lastOutputAtRef.current;
+      if (!stalledRef.current && lastOutputAtRef.current > 0 && silence >= STALLED_MS) {
+        stalledRef.current = true;
+        setStalled(true);
+      }
       if (ptyQuietRef.current) return;
-      if (Date.now() - lastOutputAtRef.current >= 4000) {
+      if (silence >= 4000) {
         ptyQuietRef.current = true;
         setPtyQuiet(true);
       }
@@ -3258,6 +3274,7 @@ const TerminalView = memo(function TerminalView({
       liveThinking,
       promptSuggestion,
       ptyQuiet,
+      stalled,
       launchPick,
       skills: agentSkills,
       mcps: agentMcps,
@@ -3292,6 +3309,7 @@ const TerminalView = memo(function TerminalView({
     liveThinking,
     promptSuggestion,
     ptyQuiet,
+    stalled,
     launchPick,
     agentSkills,
     agentMcps,
@@ -4370,6 +4388,10 @@ const TerminalView = memo(function TerminalView({
           if (ptyQuietRef.current) {
             ptyQuietRef.current = false;
             setPtyQuiet(false);
+          }
+          if (stalledRef.current) {
+            stalledRef.current = false;
+            setStalled(false);
           }
           // 帧会把一句话切开：拼上上一帧尾巴再认，只留最后 160 字当下一帧的前缀（不从转义序列中间开始）
           const scan = effortTailRef.current + host.text;
@@ -8598,6 +8620,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.connIssue === s.connIssue &&
         cur.grokLoginStuck === s.grokLoginStuck &&
         cur.ptyQuiet === s.ptyQuiet &&
+        cur.stalled === s.stalled &&
         cur.launchPick === s.launchPick &&
         cur.skills === s.skills &&
         cur.mcps === s.mcps &&
@@ -10602,22 +10625,37 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // inputs 镜像进 store（terminalRunInputs），供工作区首页「待你处理」跨页聚合只读
   // （排序/分类由首页自行用 buildRunOverview 完成）。
   const setTerminalRunInputs = useAppStore((s) => s.setTerminalRunInputs);
-  // 停在信任菜单的标签（2026-11-06）：调度台列成「等你的事」、手机上能点；只按菜单本身变化重算，不跟着对话刷新
-  const trustSig = tabs
-    .map((t) => {
-      const p = sessionByTab[t.id]?.trustPrompt;
-      return p ? `${t.id}\u0001${p.options[p.yesIndex] ?? ""}\u0001${p.options[p.noIndex] ?? ""}\u0001${p.path ?? ""}` : "";
-    })
-    .join("\u0002");
+  // 卡在哪（2026-11-06 run-blocker.ts）：十几个判断归成一个，调度台、收件箱、手机只读它；只按卡法本身变化重算，不跟着对话刷新
+  const blockerOf = (t: (typeof tabs)[number]): RunBlocker | null => {
+    const st = statuses[t.id];
+    const ss = sessionByTab[t.id];
+    const p = ss?.trustPrompt;
+    const input = tabRunInput(t, st);
+    return runBlocker({
+      running: input.running,
+      shell: input.shell,
+      attention: input.attention,
+      isGoal: !!input.taskId,
+      trust: p ? { yes: p.options[p.yesIndex] ?? "", no: p.options[p.noIndex] ?? "", path: p.path } : null,
+      menuQuestion: ss?.menuPrompt?.question ?? null,
+      hasMenu: !!ss?.menuPrompt,
+      waitTitle: ss?.waitScreen?.title ?? null,
+      launchFailureCode: ss?.launchFailure?.code ?? null,
+      loginScreen: loginScreenLabel(ss?.specialScreen ?? null, !!ss?.grokLoginStuck),
+      connIssue: !!ss?.connIssue,
+      stalled: !!ss?.stalled,
+    });
+  };
+  const blockerSig = tabs.map((t) => JSON.stringify(blockerOf(t))).join("\u0002");
   const runInputs: RunOverviewInput[] = useMemo(
     () =>
       tabs.map((t) => {
-        const p = sessionByTab[t.id]?.trustPrompt;
         const input = tabRunInput(t, statuses[t.id]);
-        return p ? { ...input, trust: { yes: p.options[p.yesIndex] ?? "", no: p.options[p.noIndex] ?? "", path: p.path } } : input;
+        const blocker = blockerOf(t);
+        return blocker ? { ...input, blocker } : input;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, statuses, trustSig],
+    [tabs, statuses, blockerSig],
   );
   useEffect(() => {
     setTerminalRunInputs(runInputs);

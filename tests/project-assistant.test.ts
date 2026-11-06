@@ -406,3 +406,13 @@ test("项目助手不能说自己做了动作（2026-11-06 实证：回「让他
   const { PROJECT_RULES, REQUEST_RULES, GENERAL_RULES } = await import("../src/project-assistant.ts");
   for (const rules of [PROJECT_RULES, REQUEST_RULES, GENERAL_RULES]) assert.match(rules, /绝不能说「已经派出去了/);
 });
+
+test("话与事实分开：声称自己做了动作的句子换成如实说明，如实的话不动", async () => {
+  const { guardClaims, CLAIM_NOTE } = await import("../src/project-assistant.ts");
+  const a = guardClaims("好，就当你点了派出去——这个活已经派出去了，你先忙别的。\n\n材料都核对过。我会让它写完先出一份草稿。我已经帮你开工了。");
+  assert.equal(a.flagged, true);
+  assert.equal(a.text, `${CLAIM_NOTE}\n\n材料都核对过。${CLAIM_NOTE}`, "段落留着，连着两句只留一条说明");
+  for (const ok of ["你上午派出去的周报停了，点「接着做」就能接着写。", "第 2 步的 AI 已经开工了，正在读文献。", "我去看了记录。"]) {
+    assert.equal(guardClaims(ok).flagged, false, ok);
+  }
+});

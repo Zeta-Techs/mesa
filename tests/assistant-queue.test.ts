@@ -34,7 +34,7 @@ test("等你的事：人工请求、等确认、对话里在问；同一步有�
       { step: steps[2], text: "配色用灰度还是彩色？", busy: false },
       { step: steps[0], text: "检索词要不要加 MeSH？", busy: true },
     ],
-    confirms: [{ tabId: "t9", title: "作图", step: null }],
+    confirms: [{ tabId: "t9", title: "作图", step: null, blocker: { kind: "confirm", text: "AI 停下来等你确认一条命令", phone: "notify" }, dispatched: false }],
   });
   assert.deepEqual(
     items.map((i) => [i.kind, i.step, i.where]),
@@ -59,7 +59,15 @@ test("信任文件夹：单列一类，带两项原文与是否你派的活；�
     steps,
     help: [],
     tails: [{ step: steps[2], text: "要不要继续？", busy: false }],
-    confirms: [{ tabId: "t1", title: "周报", step: steps[2], trust: { yes: "Yes, I trust this folder", no: "No, exit", path: "/iso/x", dispatched: true } }],
+    confirms: [
+      {
+        tabId: "t1",
+        title: "周报",
+        step: steps[2],
+        blocker: { kind: "trust", text: "AI 刚启动，停在「是否信任这个文件夹」（/iso/x），不选它就一直不干活", phone: "answer", trust: { yes: "Yes, I trust this folder", no: "No, exit", path: "/iso/x" } },
+        dispatched: true,
+      },
+    ],
   });
   assert.deepEqual(items.map((i) => [i.kind, i.key]), [["trust", "trust:t1"]]);
   assert.match(items[0].question, /是否信任这个文件夹」（\/iso\/x）/);

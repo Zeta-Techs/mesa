@@ -709,3 +709,26 @@ export function retryIntents(basis: string | undefined, connection: string | und
   if (!guide) out.push({ intent: "howto", label: "翻说明书重问" });
   return guide && project ? [] : out;
 }
+
+// ===== 话与事实分开（2026-11-06 根源三）=====
+// 项目助手只会说话；派没派、开没开工、做到哪，只由 Mesa 按记录说（派活回音、派活单卡片上的状态）。
+// 它回答里声称自己做了动作的句子（「就当你点了派出去」「我已经让它接着做」「我会让它先出草稿」），显示前换成一句如实的说明，
+// 不靠提示词里一句「不许说」兜底。原文照旧留在问答记录里（可追查）。
+
+const CLAIM_RE =
+  /就当你(已经)?点了|我(已经|已|这就|马上|现在就|会|来)?(帮你|替你|给你)?(把它|把这件活|把单子)?(派出去|派出|派给|派了|开工|启动|发出去|交给(干活|第)|让(它|他)(接着|继续|先|写)|去(盯|催))|(已经|已)(帮你|替你)(派|开工|启动|交给)/;
+
+export const CLAIM_NOTE = "〔这句说的动作没有发生：项目助手只会说话。要派活点单子上的「派出去」，要接着做点「接着做」，做到哪以 Mesa 补的进展为准。〕";
+
+/** 把回答里声称自己做了动作的句子换成如实说明；flagged = 换过 */
+export function guardClaims(text: string): { text: string; flagged: boolean } {
+  let flagged = false;
+  const out = text.replace(/[^。！？!?\n]*[。！？!?]?/g, (sentence) => {
+    if (!sentence.trim() || !CLAIM_RE.test(sentence)) return sentence;
+    flagged = true;
+    return CLAIM_NOTE;
+  });
+  // 连着几句都被换掉时只留一条说明
+  const note = CLAIM_NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return { text: flagged ? out.replace(new RegExp(`${note}(?:[ \\t]*${note})+`, "g"), CLAIM_NOTE) : out, flagged };
+}

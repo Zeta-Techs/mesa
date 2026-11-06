@@ -13,6 +13,7 @@ import { pathWithin, samePath } from "./path-utils";
 import { askProjectAssistant, type AssistantTurn } from "./project-assistant-run";
 import {
   actionLabel,
+  guardClaims,
   parseAssistantAnswer,
   parseClarify,
   parseRemember,
@@ -122,7 +123,7 @@ async function ask(project: ProjectDto, question: string): Promise<void> {
     answerCard({
       project: asRoute(project),
       turnAt: turn.at,
-      text: phoneText(parsed.text),
+      text: phoneText(guardClaims(parsed.text).text),
       ask: clar.ask,
       order: order.order,
       remember: memo.remember,
@@ -351,8 +352,8 @@ const stuckPushed = new Set<string>();
 
 /** 派出去的活停在信任文件夹或等确认：推到手机（信任且是你派的活带按钮；等确认只提醒回电脑） */
 export async function pushStuck(): Promise<void> {
-  const live = useAppStore.getState().terminalRunInputs.filter((r) => r.running && !r.shell && (r.trust || r.attention === "confirm"));
-  const liveKeys = new Set(live.flatMap((r) => [`trust:${r.tabId}`, `confirm:${r.tabId}`]));
+  const live = useAppStore.getState().terminalRunInputs.filter((r) => !!r.blocker);
+  const liveKeys = new Set(live.flatMap((r) => [`trust:${r.tabId}`, `confirm:${r.tabId}`, `blocked:${r.tabId}`]));
   for (const key of [...stuckPushed]) if (!liveKeys.has(key)) stuckPushed.delete(key);
   if (!live.length || !(await imReady())) return;
   const roots = new Set<string>();
@@ -367,7 +368,7 @@ export async function pushStuck(): Promise<void> {
     const p = list.find((x) => samePath(x.path, root, IS_WINDOWS));
     if (!p) continue;
     const items = (await loadDesk(p.path).catch(() => [] as DeskItem[])).filter(
-      (i) => (i.kind === "trust" || i.kind === "confirm") && !stuckPushed.has(i.key),
+      (i) => (i.kind === "trust" || i.kind === "confirm" || i.kind === "blocked") && !stuckPushed.has(i.key),
     );
     if (items.length) groups.push({ project: asRoute(p), items });
   }

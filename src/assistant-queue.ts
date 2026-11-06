@@ -3,8 +3,9 @@
  * 三个来源全机械判定，不调 AI：人工请求（未答的）、AI 在对话里问你的话（最后一段像在问、它没在干活）、等你确认的命令。
  * 你就地回，Mesa 原路、原话转达（assistant-desk.ts）。纯逻辑，配 tests/assistant-queue.test.ts。
  */
+import type { RunBlocker } from "./run-blocker";
 
-export type DeskKind = "help" | "question" | "confirm" | "trust";
+export type DeskKind = "help" | "question" | "confirm" | "trust" | "blocked";
 
 export interface DeskItem {
   /** 稳定键：同一件事在桌面与手机上同一个键（手机推送去重、按钮回传都靠它） */
@@ -63,8 +64,9 @@ export interface DeskConfirmInput {
   tabId: string;
   title: string;
   step: DeskStep | null;
-  /** 停在启动时的信任菜单（不是命令确认） */
-  trust?: { yes: string; no: string; path: string | null; dispatched: boolean } | null;
+  /** 卡在哪（run-blocker.ts 唯一出处）；dispatched = 这是经项目助手派出去的活 */
+  blocker: RunBlocker;
+  dispatched: boolean;
 }
 
 /** 最后一段话像在问人：结尾是问号，或用了「要不要 / 是否 / 请确认 / 选哪 / 你希望 / 需要你」这类问法；说「已完成」一类的总结不算 */
@@ -114,20 +116,20 @@ export function buildDeskItems(input: {
     }
   }
   for (const c of input.confirms) {
+    const b = c.blocker;
+    const kind: DeskKind = b.kind === "trust" ? "trust" : b.kind === "confirm" || b.kind === "menu" ? "confirm" : "blocked";
     out.push({
-      key: `${c.trust ? "trust" : "confirm"}:${c.tabId}`,
-      kind: c.trust ? "trust" : "confirm",
+      key: `${kind}:${c.tabId}`,
+      kind,
       step: c.step ? c.step.index + 1 : null,
       where: c.step ? stepLabel(c.step) : `对话「${c.title}」`,
-      question: c.trust
-        ? `AI 刚启动，停在「是否信任这个文件夹」${c.trust.path ? `（${c.trust.path}）` : ""}，不选它就一直不干活`
-        : "AI 停下来等你确认一条命令",
+      question: b.text,
       options: [],
       recommend: null,
       detail: [],
       tabId: c.tabId,
       worktreePath: c.step?.worktreePath ?? null,
-      ...(c.trust ? { trust: c.trust } : {}),
+      ...(b.trust ? { trust: { ...b.trust, dispatched: c.dispatched } } : {}),
     });
   }
   for (const t of input.tails) {
@@ -170,6 +172,7 @@ export function deskSummary(items: readonly DeskItem[]): string {
     n("question") ? `对话里在问 ${n("question")}` : "",
     n("confirm") ? `等确认 ${n("confirm")}` : "",
     n("trust") ? `等信任文件夹 ${n("trust")}` : "",
+    n("blocked") ? `卡住了 ${n("blocked")}` : "",
   ].filter(Boolean);
   return `等你的事 ${items.length} 件：${parts.join(" · ")}`;
 }

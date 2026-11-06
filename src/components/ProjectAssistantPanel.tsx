@@ -20,6 +20,7 @@ import {
   localReply,
   retryIntents,
   parseAssistantAnswer,
+  guardClaims,
   parseClarify,
   parseRemember,
   parseWorkOrder,
@@ -568,7 +569,8 @@ export default function ProjectAssistantPanel({
             const parsed = parseAssistantAnswer(withOrder.text, stepCount);
             // 只有最后一轮的问题能点选作答（前面的已经答过了）
             const openAsk = i === turns.length - 1 ? withAsk.ask : null;
-            const { lead, rest } = splitAnswerLead(parsed.text);
+            // 话与事实分开：它声称自己做了动作的句子换成如实说明（根源三，2026-11-06）
+            const { lead, rest } = splitAnswerLead(guardClaims(parsed.text).text);
             return (
               <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
                 <QuestionBubble text={turn.question} at={turn.at} />
@@ -694,7 +696,7 @@ export default function ProjectAssistantPanel({
               {/* 边生成边出字：动作标记、派活单写完前先不画，最终回答到了整段换上 */}
               {liveText && (
                 <div className="text-sm text-l1">
-                  <ChatMarkdown text={parseAssistantAnswer(parseWorkOrder(parseClarify(parseRemember(liveText).text).text, stepCount).text, stepCount).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
+                  <ChatMarkdown text={guardClaims(parseAssistantAnswer(parseWorkOrder(parseClarify(parseRemember(liveText).text).text, stepCount).text, stepCount).text).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
                 </div>
               )}
             </article>

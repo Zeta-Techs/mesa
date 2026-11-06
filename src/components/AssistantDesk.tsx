@@ -62,7 +62,7 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
             return (
               <li key={item.key} className="border-t border-hairline pt-2.5">
                 <p className="text-xs text-l3">
-                  {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : item.kind === "trust" ? "等你信任文件夹" : "等你确认"}
+                  {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : "等你确认"}
                 </p>
                 <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6 text-l1">{item.question}</p>
                 {item.detail.length > 0 && <p className="text-xs leading-5 text-l3">{item.detail.join("；")}</p>}
@@ -86,9 +86,9 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
                       去终端看看
                     </button>
                   </div>
-                ) : item.kind === "confirm" ? (
+                ) : item.kind === "confirm" || item.kind === "blocked" ? (
                   <button type="button" className={`${secondaryActionClass} mt-1.5`} onClick={() => focusConfirm(item)}>
-                    去对话里确认
+                    {item.kind === "confirm" ? "去对话里确认" : "去终端看看"}
                   </button>
                 ) : (
                   <>

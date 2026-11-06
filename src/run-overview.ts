@@ -1,3 +1,4 @@
+import type { RunBlocker } from "./run-blocker";
 import { pathWithin, samePath } from "./path-utils.ts";
 /**
  * 运行中总览（P5 聚合视图）的聚合/排序纯逻辑。
@@ -74,8 +75,8 @@ export interface RunOverviewInput {
   sessionId?: string | null;
   /** 分叉标签：从这段会话分出来的（原会话 id）；侧栏没认出新会话前把这一行挂在原对话下面 */
   forkOf?: string | null;
-  /** 停在启动时的「是否信任这个目录」菜单（2026-11-06 调度台 / 手机通道用）：信任与不信任那两项的原文、菜单里写的目录 */
-  trust?: { yes: string; no: string; path: string | null } | null;
+  /** 卡在哪（2026-11-06 run-blocker.ts 唯一出处）：调度台、收件箱、手机只读它 */
+  blocker?: RunBlocker | null;
 }
 
 /** 一个标签折成 RunOverviewInput。标签刚开、TerminalView 还没上报状态时先用开标签时就知道的（Agent / 目录 / 要接的会话）：

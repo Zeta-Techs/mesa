@@ -593,6 +593,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
+  run-blocker.ts             # 一件活「卡在哪」的唯一出处（2026-11-06）：runBlocker 把信任 / 等确认 / 菜单 / 等待屏 / 启动失败 / 登录 / 连接 / 十分钟没出字 / 目标说完一轮归成一个，按要紧程度取一，写手机能否直接点；终端页写进 terminalRunInputs.blocker（tests/run-blocker.test.ts）
   assistant-queue.ts         # 调度台「等你的事」纯逻辑（2026-11-06）：buildDeskItems（人工请求 / 对话里在问 / 等确认，looksLikeQuestion）、relayText（原话转达只加一行来源）、deskSummary（tests/assistant-queue.test.ts）
   assistant-desk.ts          # 调度台取数与转达（调 invoke）：loadDesk、replyDesk（人工请求写回作答再交给那一步；对话问题原话送进去）、focusConfirm、addProjectKnowledge（记规矩，桌面卡片与飞书共用）
   assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp（tests/im-route.test.ts）

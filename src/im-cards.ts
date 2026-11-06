@@ -97,7 +97,8 @@ export function deskCard(groups: readonly { project: RouteProject; items: readon
     if (els.length) els.push({ tag: "hr" });
     els.push({ tag: "markdown", content: `**${g.project.name}**` });
     for (const item of g.items.slice(0, 8)) {
-      const kind = item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在问你" : item.kind === "trust" ? "等你信任文件夹" : "等你确认";
+      const kind =
+        item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : "等你确认";
       els.push({ tag: "markdown", content: `${item.where} · ${kind}\n${item.question}` });
       if (item.kind === "help" && item.options.length) {
         els.push({
@@ -121,6 +122,8 @@ export function deskCard(groups: readonly { project: RouteProject; items: readon
         }
       } else if (item.kind === "confirm") {
         els.push(note("确认命令要回到电脑上的对话里做"));
+      } else if (item.kind === "blocked") {
+        els.push(note("回到电脑上处理"));
       } else {
         els.push(note(`回一句「${g.project.name}：回第 ${item.step ?? "?"} 步 你的话」，原话送进那段对话`));
       }

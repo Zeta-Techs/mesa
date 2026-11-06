@@ -462,6 +462,8 @@
   `useAppStore.getState()` 现查（交接与切页是同一批 store 更新），不依赖 effect 顺序；页内动作
   （单击文件树文件、◫ 工作台、对话联动）照常展开，不受影响。
 - ~~**文件树默认可收起（用户拍板）**~~（2026-10-24 文件树并进右栏文件窗格后作废：不再有单占一列的树、`ccode.terminal.treeOpen` / `ccode.terminal.treeWidth` 弃用、「主目录树自动收一次」`collapseHomeTreeOnce` 删除；右栏本就不跨重启、默认收起）。快速开聊 `pt.clean` 只关右栏，不另造专注态。
+- **卡在哪（2026-11-06，run-blocker.ts）**：`RunOverviewInput.blocker` 是唯一出处，终端页从各标签的会话状态（trustPrompt、menuPrompt、waitScreen、launchFailure、specialScreen、connIssue、grokLoginStuck、stalled）与 attention 现算；
+  `stalled` = 在跑且十分钟没出一个字（`STALLED_MS`，出字即清）。只按卡法本身变化重算（序列化签名），不跟着对话刷新。
 - **对话头右上角四个与两块宽度（2026-10-24，用户贴 Claude 客户端那一排；「文件、改动是分开的」「可以，改吧」）**：
   右上角是 **>_ 终端**（亮着 = 正看着这段对话的终端）、**± 改动**（`FileDiff`，右栏改动窗格，有改动右上角一个小点、文件数放悬停——那是整个文件夹没提交的数，写大数字像是这段对话改的）、
   **文件**（`FolderTree`，右栏文件窗格）、**⋯ 更多**（分屏对照 / 查找终端输出 / 显示启动配置行〔被收起时〕；原「打开文件预览」项取消，文件钮就是它）。

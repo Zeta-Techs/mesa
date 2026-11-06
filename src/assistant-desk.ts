@@ -55,12 +55,13 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
         ((!!taskId && d.record.taskId === taskId) || (!!d.record.worktreePath && pathWithin(cwd, d.record.worktreePath, IS_WINDOWS))),
     );
   const confirms = live
-    .filter((r) => r.running && !r.shell && (r.attention === "confirm" || !!r.trust) && roots.some((root) => pathWithin(r.cwd, root, IS_WINDOWS)))
+    .filter((r) => !!r.blocker && roots.some((root) => pathWithin(r.cwd, root, IS_WINDOWS)))
     .map((r) => ({
       tabId: r.tabId,
       title: r.title,
       step: steps.find((s) => s.worktreePath && pathWithin(r.cwd, s.worktreePath, IS_WINDOWS)) ?? null,
-      trust: r.trust ? { ...r.trust, dispatched: dispatchedHere(r.cwd, r.taskId) } : null,
+      blocker: r.blocker!,
+      dispatched: dispatchedHere(r.cwd, r.taskId),
     }));
   return buildDeskItems({
     steps,
