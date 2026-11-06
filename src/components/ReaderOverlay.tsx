@@ -17,6 +17,8 @@ import { macOverlayPadClass, useMacFullscreen } from "../mac-titlebar";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { LoadingRows } from "./PageFrame";
 import { AGENTS } from "../types";
+import { useAppStore } from "../store";
+import { isLightTheme } from "../themes";
 import {
   READER_PCT_DEFAULT_L,
   READER_PCT_DEFAULT_R,
@@ -612,9 +614,11 @@ export default function ReaderOverlay({
     setTlPending(null);
   }, [pdfPath]);
 
-  /** 浮窗状态：open 开着 / min 收成原位的小标记（点它展开）/ closed 关掉（PDF 顶栏「译文」再开）。
+  /** 浮窗状态：open 开着 / min 收到悬浮球（点球展开）/ closed 关掉、球也收掉（PDF 顶栏「译文」再开）。
    *  翻译开始就开；换文献关掉 */
   const [tlMode, setTlMode] = useState<"open" | "min" | "closed">("closed");
+  /** 悬浮球跟主题深浅换底板（同 Mesa 图标两版） */
+  const theme = useAppStore((s) => s.settings?.theme);
   useEffect(() => {
     setTlMode("closed");
   }, [pdfPath]);
@@ -1056,6 +1060,7 @@ export default function ReaderOverlay({
     bounds: pdfBounds,
     place: tlPlace,
     onDisplay: setTlShown,
+    light: isLightTheme(theme),
     latest: tlHistory[0] ?? null,
     pending: tlPending,
     history: tlHistory,

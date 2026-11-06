@@ -17,6 +17,11 @@ export const READER_TL_CARD_KEY = "ccode.readerTlCard";
 /** 悬浮卡尺寸下限：再窄动作钮排不下、再矮表头都不够 */
 export const READER_TL_CARD_MIN_W = 240;
 export const READER_TL_CARD_MIN_H = 140;
+/** 译文悬浮球位置（PDF 栏里的百分比 "xp,yp"，换窗口宽高不失位）；缺省右缘中部 */
+export const READER_TL_BALL_KEY = "ccode.readerTlBall";
+export const READER_TL_BALL_DEFAULT = { xp: 100, yp: 45 };
+/** 球的边长（px）：钳位按半边算 */
+export const READER_TL_BALL_SIZE = 36;
 /** 侧栏宽度百分比的可拖范围（相对三栏总宽） */
 export const READER_PCT_MIN = 12;
 export const READER_PCT_MAX = 40;
@@ -169,6 +174,40 @@ export interface ReaderPdfBounds {
   right: number;
   top?: number;
   bottom?: number;
+}
+
+/** 悬浮球位置归一：0–100 百分比（可贴边），真出界由 readerTlBallOffset 按球半边钳住 */
+export function clampReaderTlBall(xp: number, yp: number): { xp: number; yp: number } {
+  const c = (v: number) => (Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 50);
+  return { xp: c(xp), yp: c(yp) };
+}
+
+/** 球心离某一侧的距离（CSS 长度，挂覆盖层根的 left/top 用）：near = 这一侧栏外的距离，
+ *  span = 两侧栏外距离之和；按球半边兜在 PDF 栏里（球不跑到笔记栏 / 对话栏上） */
+export function readerTlBallOffset(pct: number, near: number, span: number): string {
+  const r = READER_TL_BALL_SIZE / 2;
+  return `calc(${near}px + clamp(${r}px, calc((100% - ${span}px) * ${pct / 100}), calc(100% - ${span}px - ${r}px)))`;
+}
+
+/** 读悬浮球位置记忆（坏值 / 缺省回落右缘中部） */
+export function loadReaderTlBall(): { xp: number; yp: number } {
+  try {
+    const raw = localStorage.getItem(READER_TL_BALL_KEY);
+    if (!raw) return { ...READER_TL_BALL_DEFAULT };
+    const [xp, yp] = raw.split(",").map(Number);
+    return clampReaderTlBall(xp, yp);
+  } catch {
+    return { ...READER_TL_BALL_DEFAULT };
+  }
+}
+
+/** 写悬浮球位置记忆（取整百分比 "xp,yp"） */
+export function saveReaderTlBall(xp: number, yp: number): void {
+  try {
+    localStorage.setItem(READER_TL_BALL_KEY, `${Math.round(xp)},${Math.round(yp)}`);
+  } catch {
+    /* 存不进就不记 */
+  }
 }
 
 /** 译文浮窗摆哪（覆盖层根坐标 px，2026-11-06 用户选「只留浮窗」）：有原文段 / 选区外框时左缘对齐它，

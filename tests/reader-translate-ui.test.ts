@@ -5,7 +5,7 @@ import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 
 /** 译文浮窗（2026-11-06 用户选「只留浮窗」）：摆到原文段下方、× 彻底关掉不留东西、⋯ 里只有问这段 / 历史、历史在窗里看 */
-test("译文浮窗：按原文段摆位、× 关掉不留横条或球、历史在窗里翻", async () => {
+test("译文浮窗：按原文段摆位、悬浮球收起 / 展开、× 关掉连球收掉、历史在窗里翻", async () => {
   const bundle = await build({
     stdin: {
       contents: `export {createElement, act} from 'react';
@@ -71,22 +71,34 @@ test("译文浮窗：按原文段摆位、× 关掉不留横条或球、历史�
     await act(async () => first.click());
     assert.match(win()!.textContent!, /第 2 页/);
     assert.match(win()!.textContent!, /第一段译文/);
-    // — 收成原处的小标记：点它在原处展开（位置不变）
-    await act(async () => (dom.window.document.querySelector('[aria-label="收起译文"]') as HTMLButtonElement).click());
+    // 有译文就有「译」悬浮球，窗开着球也在；点球收起（不作废在途），再点在原处展开
+    const ball = () => dom.window.document.querySelector<HTMLElement>("[data-reader-translate-ball]");
+    assert.ok(ball(), "窗开着球也在");
+    assert.equal(ball()!.getAttribute("aria-expanded"), "true");
+    assert.equal(dom.window.document.querySelector('[aria-label="收起译文"]')?.textContent?.trim(), "译", "收起靠球，表头不再有「—」");
+    const tap = async () => act(async () => {
+      ball()!.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
+      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: 5, clientY: 5 }));
+    });
+    await tap();
     assert.equal(modes.at(-1), "min");
     assert.equal(cancelled, 0, "收起不作废在途翻译");
     await act(async () => root.render(h(Panel, props({ mode: "min" }))));
-    const marker = dom.window.document.querySelector<HTMLElement>("[data-reader-translate-marker]")!;
-    assert.ok(marker, "收起留一个标记");
-    assert.equal(win(), null);
-    assert.equal(marker.style.left, "300px");
-    assert.equal(marker.style.top, "328px");
-    assert.match(marker.textContent!, /译.*第 2 页/);
+    assert.equal(win(), null, "收起后窗不在");
+    assert.ok(ball(), "收起后球还在");
+    assert.equal(ball()!.getAttribute("aria-expanded"), "false");
+    await tap();
+    assert.equal(modes.at(-1), "open", "点球展开");
+    // 拖球换位：记进 localStorage（PDF 栏里的百分比），不算点击
+    const before = modes.length;
     await act(async () => {
-      marker.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
-      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: 5, clientY: 5 }));
+      ball()!.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 500, clientY: 400 }));
+      dom.window.dispatchEvent(new dom.window.PointerEvent("pointermove", { clientX: 300, clientY: 200 }));
+      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: 300, clientY: 200 }));
     });
-    assert.equal(modes.at(-1), "open", "点标记展开");
+    assert.equal(modes.length, before, "拖动不切换收起 / 展开");
+    // PDF 栏 1000×860：dx −200 = −20%，dy −200 ≈ −23%；缺省 100,45 → 80,22
+    assert.equal(dom.window.localStorage.getItem("ccode.readerTlBall"), "80,22");
     // 重开回到原位置（摆位请求没换 key 不挪）
     await act(async () => root.render(h(Panel, props({ mode: "open" }))));
     assert.equal(win()!.style.left, "300px");
@@ -98,6 +110,7 @@ test("译文浮窗：按原文段摆位、× 关掉不留横条或球、历史�
     await act(async () => root.render(h(Panel, props({ mode: "closed" }))));
     assert.equal(win(), null);
     assert.equal(dom.window.document.getElementById("root")!.innerHTML, "", "不留横条、不留球");
+    assert.equal(ball(), null, "× 后球一起收掉");
     assert.equal(shown.at(-1), null, "关掉后撤掉原文段标记");
   } finally {
     await act(async () => root.unmount());

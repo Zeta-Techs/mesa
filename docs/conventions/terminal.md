@@ -985,11 +985,15 @@
   **摆位**：`TlPlace` 换 key 才挪——划词翻译时 `runTranslate` 量选区外框；没有选区（⌘+点段落、重试）就等原文段标记落位后
   120ms / 500ms 量 `[data-mark-id="tl-source"]`；`readerTlWinPlace`（reader.ts）左缘对齐、放下方放得下就放下方、否则上方、
   都不够放大的一边贴边，没有外框放 PDF 栏右上角。**不跟滚动、翻历史不挪窗**（按真外框摆过的请求记 `placedReqRef`）。
-  **开关**（ReaderOverlay `tlMode` open / min / closed）：翻译开始就开；**「—」收成原位小标记**（「译 · 第 N 页」胶囊，点它原处展开、拖它换位，
-  同日用户「留一个标记」）；**× 彻底关掉**（作废在途，不留东西）；PDF 顶栏「译文 N」（本篇有翻译才出）开 / 关；换文献关。
+  **开关**（ReaderOverlay `tlMode` open / min / closed）：翻译开始就开；**有译文就常驻「译」悬浮球**（open / min 都在，同日用户
+  「用悬浮球代替这个标记」，取代「—」小标记）：点球收起 ⇄ 展开（4px 内算点击），拖球换位记 `ccode.readerTlBall`（PDF 栏里的百分比，
+  `readerTlBallOffset` 按球半边钳在栏里），球和窗的位置各管各的、新译一段只挪窗不挪球；表头不再有「—」。
+  球样式照 Mesa 图标：36px 圆角底板（深 #2b2d39→#17181f / 浅 #fbf9f5→#ece7de，顶上 inset 细高光边）、「译」字 + 右下琥珀光标
+  （深 #f5b83d 带余辉 / 浅 #e39a1c），翻译在途光标闪；深浅由 ReaderOverlay 按主题传 `light`。
+  **× 彻底关掉**（作废在途，球一起收掉）；PDF 顶栏「译文 N」（本篇有翻译才出）开 / 关；换文献关。
   **重开回原位**：只有新翻译才挪窗——`needPlaceRef` 记还等着按原文段摆的那次请求，摆过清掉；× 作废在途会递增请求号，
   不得再拿「请求号对不上」判新翻译（同日用户：重开不是上次关的位置）。
-  表头 原文（默认只看译文）/ 存进笔记 / 复制 / ⋯（问这段、历史——历史在窗里列，「返回」回当前）/ ×；译文 `text-xs` 行高 1.7，
+  表头 原文（默认只看译文）/ 存进笔记 / 复制 / ⋯（问这段、历史——历史在窗里列，「返回」回当前）/ ×（收起靠悬浮球）；译文 `text-xs` 行高 1.7，
   下面还有字时窗底 mask 渐隐 28px。窗经 `onDisplay` 报上摆着的条目（关掉 / 在途 / 卸载报 null），ReaderOverlay 据此给
   PdfContinuousView `sourceMark`（`.ccode-mark-source` 淡蓝底 + 下划线）。右栏只放对话，不再放译文。
   **对照窗（2026-11-05 用户：读文献要对照着图看）**：`PdfFigurePeek` 由 `PdfContinuousView` 渲染、**portal 到 body、fixed、

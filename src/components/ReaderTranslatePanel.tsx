@@ -1,11 +1,16 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+  clampReaderTlBall,
   clampReaderTlCard,
+  loadReaderTlBall,
   loadReaderTlCard,
   parseBilingual,
   plainFromBilingual,
+  readerTlBallOffset,
   readerTlWinPlace,
+  READER_TL_BALL_SIZE,
   reflowBlockText,
+  saveReaderTlBall,
   saveReaderTlCard,
   type ReaderPdfBounds,
   type TlHistoryEntry,
@@ -39,9 +44,10 @@ const EST_H = 240;
 /**
  * 沉浸阅读的译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球两种摆法）：
  * 和对照窗一个样——挂覆盖层根，只在 PDF 栏里活动；划词翻译时摆到原文段下方（放不下放上方，不压原文段），
- * 拖标题栏换位、拖右下角改大小（尺寸记住，双击复位）；「—」收成原位的小标记「译 · 第 N 页」（点它原处展开、拖它换位，
- * 同日用户：没有悬浮球就收不起来了，要留一个标记）；× 彻底关掉，PDF 顶栏「译文 N」重新打开（都回到关掉时的位置与大小）。
- * 表头：译文 · 第 N 页 | 原文 | 存进笔记 | 复制 | ⋯（问这段 / 历史）| — | ×。
+ * 拖标题栏换位、拖右下角改大小（尺寸记住，双击复位）。有译文时 PDF 栏里常驻一颗 Mesa 图标样的「译」悬浮球
+ * （同日用户：用悬浮球代替「—」小标记）：点球收起 / 展开浮窗，窗开着球也在；拖球换位记住（与窗的位置各管各的）；
+ * × 彻底关掉（球一起收掉），PDF 顶栏「译文 N」重新打开（回到关掉时的位置与大小）。
+ * 表头：译文 · 第 N 页 | 原文 | 存进笔记 | 复制 | ⋯（问这段 / 历史）| ×。
  * 状态（历史 / 在途 / 开关）由 ReaderOverlay 持有，本组件只管位置、尺寸与面板内 UI 态。
  */
 function ReaderTranslatePanel({
@@ -61,8 +67,9 @@ function ReaderTranslatePanel({
   onAsk,
   canAsk,
   onDisplay,
+  light = false,
 }: {
-  /** open 开着 / min 收成小标记 / closed 关掉 */
+  /** open 开着 / min 收到悬浮球 / closed 关掉 */
   mode: "open" | "min" | "closed";
   onMode: (mode: "open" | "min" | "closed") => void;
   /** 最新历史条目（无历史且在途翻译时为 null） */
@@ -89,6 +96,8 @@ function ReaderTranslatePanel({
   canAsk?: boolean;
   /** 窗里此刻摆出来的那条译文（关掉 / 在途 / 卸载 = null）：上层据此在 PDF 上标出它的原文段 */
   onDisplay?: (entry: TlHistoryEntry | null) => void;
+  /** 浅色主题：悬浮球换浅色底板与深一档琥珀（同 Mesa 图标） */
+  light?: boolean;
 }) {
   /** 原文显隐：窗就在原文段旁，默认只看译文；点「原文」临时对照 */
   const [showOriginal, setShowOriginal] = useState(false);
@@ -117,9 +126,15 @@ function ReaderTranslatePanel({
     setViewingAt(null);
   }, [latestAt, pending]);
 
-  /** 覆盖层根的尺寸（摆位与钳制都按它算） */
+  /** 悬浮球位置（PDF 栏里的百分比，记 localStorage）；状态留在本组件，拖动不惊动 ReaderOverlay 整树 */
+  const [ballPos, setBallPos] = useState(() => loadReaderTlBall());
+  const ballPosRef = useRef(ballPos);
+  ballPosRef.current = ballPos;
+  const ballRef = useRef<HTMLButtonElement>(null);
+
+  /** 覆盖层根的尺寸（摆位与钳制都按它算）；窗收着时借球找定位祖先 */
   function hostSize(): { width: number; height: number } | null {
-    const host = rootRef.current?.offsetParent as HTMLElement | null;
+    const host = (rootRef.current ?? ballRef.current)?.offsetParent as HTMLElement | null;
     if (!host) return null;
     const r = host.getBoundingClientRect();
     return { width: r.width, height: r.height };
@@ -286,65 +301,66 @@ function ReaderTranslatePanel({
     };
   }, [displayedAt, showOriginal, pending, visible]);
 
-  /** 小标记：拖着换位（窗再展开就在这儿），没拖动算点击 = 原处展开 */
-  function startMarker(e: React.PointerEvent<HTMLDivElement>) {
-    if (e.button !== 0 || !bounds || !posRef.current) return;
+  /** 球的拖 / 点：4px 阈值内算点击（收起 ⇄ 展开），否则拖着走，松手记位置 */
+  function onBallPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    if (e.button !== 0 || !bounds) return;
     e.preventDefault();
     const host = hostSize();
     if (!host) return;
-    const start = posRef.current;
+    const w = host.width - bounds.left - bounds.right;
+    const h = host.height - (bounds.top ?? 0) - (bounds.bottom ?? 0);
+    if (w <= 0 || h <= 0) return;
     const sx = e.clientX;
     const sy = e.clientY;
-    const L = bounds.left + 8;
-    const R = host.width - bounds.right - 8;
-    const T = (bounds.top ?? 0) + 8;
-    const B = host.height - (bounds.bottom ?? 0) - 8;
+    const start = ballPosRef.current;
+    let last = start;
     let moved = false;
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - sx;
       const dy = ev.clientY - sy;
       if (!moved && dx * dx + dy * dy < 16) return;
       moved = true;
-      setPos({ x: Math.max(L, Math.min(start.x + dx, R - 96)), y: Math.max(T, Math.min(start.y + dy, B - 28)) });
+      last = clampReaderTlBall(start.xp + (dx / w) * 100, start.yp + (dy / h) * 100);
+      setBallPos(last);
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
-      if (!moved) onMode("open");
+      if (moved) {
+        saveReaderTlBall(last.xp, last.yp);
+      } else {
+        toggleOpen();
+      }
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
   }
-
-  if (mode === "min" && hasContent && bounds && pos) {
-    const p = (pending ?? current)?.page;
-    return (
-      <div
-        // 同用 rootRef：拖标记要按覆盖层根（offsetParent）算范围，收着时窗不在
-        ref={rootRef}
-        role="button"
-        tabIndex={0}
-        aria-label="展开译文"
-        data-reader-translate-marker
-        title="点一下展开译文；拖着换位置"
-        onPointerDown={startMarker}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onMode("open");
-          }
-        }}
-        style={{ left: pos.x, top: pos.y }}
-        className="ccode-float-surface pointer-events-auto absolute z-30 flex h-7 cursor-grab touch-none select-none items-center gap-1 rounded-full border border-field px-2.5 text-micro text-l2 shadow-md hover:text-l1 active:cursor-grabbing"
-      >
-        {pending?.phase === "loading" ? <span className="inline-block animate-spin">◌</span> : <span className="font-medium">译</span>}
-        {p != null && <span className="text-l4">第 {p} 页</span>}
-      </div>
-    );
+  function toggleOpen() {
+    setDrawerOpen(false);
+    setMoreOpen(false);
+    onMode(mode === "open" ? "min" : "open");
   }
-  if (!visible || !bounds) return null;
+
+  const ball =
+    mode !== "closed" && hasContent && bounds ? (
+      <ReaderTlBall
+        ref={ballRef}
+        light={light}
+        open={mode === "open"}
+        busy={pending?.phase === "loading"}
+        page={(pending ?? current)?.page}
+        onPointerDown={onBallPointerDown}
+        onKey={toggleOpen}
+        style={{
+          left: readerTlBallOffset(ballPos.xp, bounds.left, bounds.left + bounds.right),
+          top: readerTlBallOffset(ballPos.yp, bounds.top ?? 0, (bounds.top ?? 0) + (bounds.bottom ?? 0)),
+        }}
+      />
+    ) : null;
+
+  if (!visible || !bounds) return ball;
 
   const bB = bounds.bottom ?? 0;
   const style: React.CSSProperties = pos
@@ -361,6 +377,7 @@ function ReaderTranslatePanel({
   const page = (pending ?? current)?.page;
 
   return (
+    <>
     <div
       ref={rootRef}
       role="dialog"
@@ -472,19 +489,6 @@ function ReaderTranslatePanel({
               </div>
             )}
           </div>
-          <button
-            type="button"
-            aria-label="收起译文"
-            title="收起成小标记（点它在原处展开）"
-            onClick={() => {
-              setDrawerOpen(false);
-              setMoreOpen(false);
-              onMode("min");
-            }}
-            className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
-          >
-            —
-          </button>
           <button
             type="button"
             aria-label="关掉译文"
@@ -613,6 +617,74 @@ function ReaderTranslatePanel({
         />
       </div>
     </div>
+    {ball}
+    </>
+  );
+}
+
+/**
+ * 「译」悬浮球：Mesa 图标的小号版——圆角底板（深色 #2b2d39→#17181f / 浅色 #fbf9f5→#ece7de）、顶上一道细高光边，
+ * 中间「译」字、右下一道琥珀光标（深色 #f5b83d 带余辉 / 浅色 #e39a1c，同 src-tauri/icons/source/mesa-*.svg）。
+ * 翻译在途时光标闪（减弱动态效果时常亮）；收着 / 开着靠 aria-expanded 与悬停提示说清，球本身不变形
+ */
+function ReaderTlBall({
+  ref,
+  light,
+  open,
+  busy,
+  page,
+  style,
+  onPointerDown,
+  onKey,
+}: {
+  ref: React.Ref<HTMLButtonElement>;
+  light: boolean;
+  open: boolean;
+  busy: boolean;
+  page?: number;
+  style: React.CSSProperties;
+  onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  onKey: () => void;
+}) {
+  const amber = light ? "#e39a1c" : "#f5b83d";
+  const tip = `${open ? "收起译文" : "展开译文"}${page != null ? `（第 ${page} 页）` : ""}；拖着换位置`;
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label={open ? "收起译文" : "展开译文"}
+      aria-expanded={open}
+      title={tip}
+      data-reader-translate-ball
+      onPointerDown={onPointerDown}
+      // 键盘：pointer 路径吃掉了鼠标点击，Enter / Space 走 onClick（detail = 0）
+      onClick={(e) => {
+        if (e.detail === 0) onKey();
+      }}
+      style={{
+        ...style,
+        width: READER_TL_BALL_SIZE,
+        height: READER_TL_BALL_SIZE,
+        borderRadius: Math.round(READER_TL_BALL_SIZE * 0.224),
+        background: light
+          ? "linear-gradient(180deg, #fbf9f5, #ece7de)"
+          : "linear-gradient(180deg, #2b2d39, #17181f)",
+        color: light ? "#22232f" : "#efebe4",
+        boxShadow: light
+          ? "inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1px rgba(0,0,0,0.12), 0 3px 8px rgba(0,0,0,0.18)"
+          : "inset 0 1px 0 rgba(255,255,255,0.16), 0 0 0 1px rgba(0,0,0,0.35), 0 3px 10px rgba(0,0,0,0.35)",
+      }}
+      className={`pointer-events-auto absolute z-31 flex -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none select-none items-baseline justify-center pt-[3px] text-sm font-semibold leading-none transition-opacity active:cursor-grabbing ${
+        open ? "opacity-100" : "opacity-90 hover:opacity-100"
+      }`}
+    >
+      <span aria-hidden="true">译</span>
+      <span
+        aria-hidden="true"
+        className={`ml-[2px] inline-block h-[3px] w-[7px] ${busy ? "ccode-caret-blink" : ""}`}
+        style={{ background: amber, boxShadow: light ? undefined : `0 0 5px ${amber}99` }}
+      />
+    </button>
   );
 }
 

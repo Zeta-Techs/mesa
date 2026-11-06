@@ -524,7 +524,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   reader.ts                  # 沉浸阅读区纯逻辑：分栏钳制与像素换算（含收起滑动量 readerPanelSlideMargin，栏宽不变负 margin 滑出）/
                              # 圈选命中与 canvas 映射/截图注入格式/
                              # glossary 表格契约（与 reader.rs 双端镜像，改动需同步）/段落边界提取/术语匹配/
-                             # 进度与护眼存储键/译文浮窗尺寸键（readerTlCard，240×140 下限、拖过才落键）与摆位 readerTlWinPlace/
+                             # 进度与护眼存储键/译文浮窗尺寸键（readerTlCard，240×140 下限、拖过才落键）与摆位 readerTlWinPlace/悬浮球位置（readerTlBall 百分比、readerTlBallOffset 钳在 PDF 栏）/
                              # PDF 适配宽度 nextFitScale（亚像素门槛，防滚动条槽振荡闪白）/
                              # 手势缩放 clampPdfScale、pdfWheelZoomFactor（组件绑定共享在
                              # components/use-pdf-zoom.ts：布局倍率即时重排、渲染倍率 renderScale 延迟重绘、
@@ -1062,7 +1062,7 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
   nav-capsule.ts             # 侧栏可配置胶囊入口（恢复侧栏始终保留，不在此列）
   components/WindowControls.tsx # Windows 自绘窗口按钮（最小化/最大化-还原/关闭，46px 宽、关闭悬停红）；仅 Windows 渲染，
 components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfContinuousView 渲染、portal 到 body 的整窗浮窗（可拖到笔记 / 对话栏上），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekFloat），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts；导出 PdfRegionThumb（正文图号悬停小图）
-components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球）：挂覆盖层根、只在 PDF 栏里（bounds）；摆位请求 TlPlace（划词选区或原文段外框）换 key 就按 readerTlWinPlace 摆到原文段下方 / 上方；拖表头换位、拖右下角改大小（readerTlCard 记住，双击复位）；表头 原文 / 存进笔记 / 复制 / ⋯（问这段、历史——在窗里列）/ ×（彻底关，PDF 顶栏「译文 N」再开）；onDisplay 报正文摆着哪条供 PDF 标原文段（tests/reader-translate-ui.test.ts）
+components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球）：挂覆盖层根、只在 PDF 栏里（bounds）；摆位请求 TlPlace（划词选区或原文段外框）换 key 就按 readerTlWinPlace 摆到原文段下方 / 上方；拖表头换位、拖右下角改大小（readerTlCard 记住，双击复位）；有译文常驻 Mesa 图标样「译」悬浮球 ReaderTlBall（点球收起 / 展开，拖球换位记 readerTlBall）；表头 原文 / 存进笔记 / 复制 / ⋯（问这段、历史——在窗里列）/ ×（彻底关、连球收掉，PDF 顶栏「译文 N」再开）；onDisplay 报正文摆着哪条供 PDF 标原文段（tests/reader-translate-ui.test.ts）
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
   session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；
                              #   parseSimpleTemplate（放不进返回 null）/ serializeSimpleTemplate / coerceSimpleTemplate（只丢顺序不丢字）/
