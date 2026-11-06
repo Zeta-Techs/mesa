@@ -237,7 +237,7 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
-  components/StepLoop.tsx    # 综述回路二期界面（design-review-loop.md §4/§6）：ReworkDialog 补料单表单（只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排）、
+  components/StepLoop.tsx    # 综述回路二期界面（design-review-loop.md §4/§6）：ReworkDialog 补料单表单（只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数，tests/rework-dialog-ui.test.ts）、
                              #   StepRoundsSection「这一步做过 N 轮」只读列表 + 逐文件看这一版 / 和上一轮比（不回滚；两轮以上或有未保存的一轮才出）
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）

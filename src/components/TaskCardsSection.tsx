@@ -260,6 +260,8 @@ export default function TaskCardsSection({
   const guardHard =
     detected?.find((a) => a.id === guardAgentId)?.readonlySupported ?? true;
   const skillProvides = useSkillProvides();
+  /** 找文献 / 读文献的步骤（按技能槽认，引擎不认模板）：退回它叫「补料」，其余叫「修改」 */
+  const isLitStep = (st: ProjectStepDto) => stepFillsAnySlot(st.skills, ["lit-search", "lit-notes"], skillProvides);
   const [error, setError] = useState<string | null>(null);
   // 综述回路二期：补料单弹层与跟进在途（design-review-loop.md §4/§5）
   const [reworkOpen, setReworkOpen] = useState(false);
@@ -1431,7 +1433,10 @@ export default function TaskCardsSection({
               // 只在已保存时给：待评审时退回补料，之后按旧版本保存，下游就没人提示它没用上补来的（2026-11-05 排查）
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
-              const targets = reworkTargets(steps, focusIdx).map((s) => s.name);
+              const upstreamSteps = reworkTargets(steps, focusIdx);
+              const targets = upstreamSteps.map((s) => s.name);
+              // 默认退回最近的上一步：它是找 / 读文献的就叫「补料」，大纲、初稿这类叫「修改」
+              const nearestLit = !!upstreamSteps[0] && isLitStep(upstreamSteps[0]);
               const follow = !!ws?.staleUpstream;
               if (!follow && targets.length === 0) return null;
               return (
@@ -1440,10 +1445,14 @@ export default function TaskCardsSection({
                     <button
                       type="button"
                       onClick={() => void openRework()}
-                      title="这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补"
+                      title={
+                        nearestLit
+                          ? "这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补"
+                          : "做这一步时发现上游要改（比如大纲某节的顺序撑不住）：写清改什么，交给上一步另开一轮去改"
+                      }
                       className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
                     >
-                      退回上一步补料…
+                      {nearestLit ? "退回上一步补料…" : "退回上一步修改…"}
                     </button>
                   )}
                   {follow && (
@@ -1702,6 +1711,9 @@ export default function TaskCardsSection({
         <ReworkDialog
           fromStep={focusStepDto.name}
           targets={reworkTargets(steps, focusIdx).map((st) => st.name)}
+          litTargets={reworkTargets(steps, focusIdx)
+            .filter((st) => isLitStep(st))
+            .map((st) => st.name)}
           prefill={reworkPrefill}
           unplaced={reworkUnplaced}
           busy={reworkBusy}

@@ -28,6 +28,7 @@ export function ReworkDialog({
   targets,
   prefill = {},
   unplaced = [],
+  litTargets = [],
   busy,
   error,
   onCancel,
@@ -40,6 +41,8 @@ export function ReworkDialog({
   prefill?: Record<string, { topics: string; reason: string }>;
   /** 覆盖检查里归不到退回目标的薄节（建议没写补检 / 补读）：单列提示，人自己决定抄进哪一步 */
   unplaced?: string[];
+  /** 退回目标里找文献 / 读文献的步骤（检索、精读）：退回它们叫「补料」、问篇数；退回大纲、初稿这类叫「修改」（2026-11-06） */
+  litTargets?: string[];
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -62,13 +65,18 @@ export function ReworkDialog({
   const parsed = parseTopics(topics);
   const ready = !!target && parsed.length > 0 && reason.trim().length > 0 && !busy;
   const scaleNum = Number.parseInt(scale, 10);
+  const lit = litTargets.includes(target);
   return (
     <Modal
       open
       size="md"
       layer="overlay"
-      title="退回上一步补料"
-      description={`从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，之后这一步再点「跟进上游的新增」接上。`}
+      title={lit ? "退回上一步补料" : "退回上一步修改"}
+      description={
+        lit
+          ? `从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，之后这一步再点「跟进上游的新增」接上。`
+          : `从「${fromStep}」退回。AI 只改你列的这些，你确认过的内容不推翻；做完照常去评审、保存进项目，之后这一步再点「跟进上游的新增」接上。`
+      }
       dismissOnBackdrop={!busy}
       onClose={() => {
         if (!busy) onCancel();
@@ -88,11 +96,11 @@ export function ReworkDialog({
                 topics: parsed,
                 reason: reason.trim(),
                 clues: clues.trim(),
-                scale: Number.isFinite(scaleNum) && scaleNum > 0 ? scaleNum : null,
+                scale: lit && Number.isFinite(scaleNum) && scaleNum > 0 ? scaleNum : null,
               })
             }
           >
-            {busy ? "正在交给上一步…" : "退回去补"}
+            {busy ? "正在交给上一步…" : lit ? "退回去补" : "退回去改"}
           </button>
         </>
       }
@@ -123,7 +131,7 @@ export function ReworkDialog({
           </label>
         )}
         <label className="block space-y-1">
-          <span>要补的主题或章节（一行一条）</span>
+          <span>{lit ? "要补的主题或章节（一行一条）" : "要改的地方（一行一条）"}</span>
           <textarea
             className={`${fieldClass} min-h-20 resize-y`}
             value={topics}
@@ -131,12 +139,12 @@ export function ReworkDialog({
               setEdited(true);
               setTopics(e.target.value);
             }}
-            placeholder={"例：§3.2 催化剂失活机理：近三年原位表征工作"}
+            placeholder={lit ? "例：§3.2 催化剂失活机理：近三年原位表征工作" : "例：§3 先讲机理、再讲材料体系"}
             autoFocus
           />
         </label>
         <label className="block space-y-1">
-          <span>为什么要补（一句话）</span>
+          <span>{lit ? "为什么要补（一句话）" : "为什么要改（一句话）"}</span>
           <input
             className={fieldClass}
             value={reason}
@@ -144,17 +152,20 @@ export function ReworkDialog({
               setEdited(true);
               setReason(e.target.value);
             }}
-            placeholder="例：这一节能写进正文的只有 2 篇，而且都早于 2021 年"
+            placeholder={
+              lit ? "例：这一节能写进正文的只有 2 篇，而且都早于 2021 年" : "例：写初稿时发现先讲材料，读者看不出各体系为什么这样设计"
+            }
           />
         </label>
         <label className="block space-y-1">
-          <span>线索（可选）：关键词、已知的几篇、不要的方向</span>
+          <span>{lit ? "线索（可选）：关键词、已知的几篇、要顺着找的综述、不要的方向" : "参考（可选）：相关的文件、段落，或你希望的改法"}</span>
           <textarea
             className={`${fieldClass} min-h-12 resize-y`}
             value={clues}
             onChange={(e) => setClues(e.target.value)}
           />
         </label>
+{lit && (
         <label className="block space-y-1">
           <span>大致补多少篇（可选）</span>
           <input
@@ -165,6 +176,7 @@ export function ReworkDialog({
             placeholder="不填按需要"
           />
         </label>
+        )}
         {error && <InlineNotice>{error}</InlineNotice>}
       </div>
     </Modal>

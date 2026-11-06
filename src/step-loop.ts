@@ -64,9 +64,12 @@ export function reworkPrompt(
   rework: Pick<ReworkDto, "fromStep" | "topics" | "reason" | "clues" | "scale" | "relPath">,
   opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string },
 ): string {
+  const lit = opts.isSearch || !!opts.isNotes;
   const lines = [
-    `这是一轮补料：「${rework.fromStep}」退回来的，只补下面列的，不重做整步。`,
-    "要补：",
+    lit
+      ? `这是一轮补料：「${rework.fromStep}」退回来的，只补下面列的，不重做整步。`
+      : `这是一轮修改：「${rework.fromStep}」退回来的，只改下面列的，不重做整步。`,
+    lit ? "要补：" : "要改：",
     ...rework.topics.map((t, i) => `${i + 1}. ${t}`),
     `为什么：${rework.reason}`,
   ];
@@ -91,8 +94,8 @@ export function reworkPrompt(
       : opts.isNotes
         ? "单上点名的篇（或这些主题下该精读的篇）写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
           "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。收尾补 references.bib、按新笔记更新 notes/handoff.md 的写作约束，最后在对话里列出补了哪几篇、改了哪些文件。"
-        : "在本步已有产物上追加或修改，人确认过的内容不推翻；" +
-          `在本步主要报告末尾追加「## 补料轮（${opts.date}）」一节，写清补了什么、改了哪些文件。`,
+        : "在本步已有产物上修改，人确认过的内容不推翻；" +
+          `在本步主要报告末尾追加「## 修改轮（${opts.date}）」一节，写清改了什么、改了哪些文件。`,
     `补料单原件：${joinRoot(opts.projectRoot, rework.relPath)}。`,
     KEEP_WORKING_CLAUSE,
   );

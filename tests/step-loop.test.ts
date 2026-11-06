@@ -50,6 +50,11 @@ test("reworkPrompt：补料单原文进指令；检索步与其他步写法不�
   assert.match(other, /人确认过的内容不推翻/);
   assert.match(other, /C:\\p\\\.ccode\\rework\\1-lit-search\.json/);
   assert.doesNotMatch(other, /outline\.md|引用扩展/, "退回大纲 / 初稿等不加文献类的指引");
+  assert.match(other, /这是一轮修改.*只改下面列的/);
+  assert.match(other, /要改：\n1\. §3\.2 失活机理/);
+  assert.match(other, /「## 修改轮（11-05）」/);
+  assert.doesNotMatch(other, /补料轮|只补/);
+  assert.match(search, /这是一轮补料/);
 });
 
 test("reworkPrompt：退回精读的点名篇写成完整笔记，不照任务书只速读；不提主要报告", () => {
