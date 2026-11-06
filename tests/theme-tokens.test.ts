@@ -18,7 +18,7 @@ import { THEMES } from "../src/themes.ts";
  */
 const css = readFileSync(new URL("../src/App.css", import.meta.url), "utf8");
 const page = readFileSync(
-  new URL("../src/pages/TerminalPage.tsx", import.meta.url),
+  new URL("../src/pages/TerminalView.tsx", import.meta.url),
   "utf8",
 );
 

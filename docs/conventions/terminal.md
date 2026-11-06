@@ -45,7 +45,7 @@
   **藏着的标签传 `frozen`（2026-10-26）**：没在看、也不在阅读区右栏的标签，聊天层与状态栏收到 `frozen` 就不重画（记录照常刷新、通知照常判断），
   露出来那一下按最新的画一次。实测四段藏着的对话原先每 0.7 秒各白画一遍、各跑一次贴底。
 
-## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalPage.tsx` 的 `theme` 一处）
+## 终端行为（用户明确要求；配色 = VS Code Dark+ 调色板，集中在 `TerminalView.tsx` 的 `theme` 一处）
 
 - **Run 与标签（v3.221 / v3.223 / v3.225）**：终端标签是一次 Run 的视图，不是身份。同一 `reuseKey` 只留一个活标签；标题先任务名（工作区/分支/文档）后 Agent（Agent 只在进程起来后的状态栏）。交互 `pty_spawn` 必先登记 `runs` 行（登录标签除外）；无头标 `internal` 不进工作台。启动入口用 `permission`（`discuss` / `write_tree`），旧 `readonly` 仅回落。重启白名单含 `runId` 与工作区复用键（只留 `ws:` 前缀，2026-10-22），仍禁 PTY/密钥/env。关标签后按 `runId` 恢复。会话恢复自动启动必须可取消（开发态 StrictMode 假卸载），失败不得写成「进程已退出」。细则 `docs/conventions/agent-workbench.md`。
 - **启动几何合同（2026-09-26 落地，`src/terminal-geometry.ts` / `terminal-resume.ts`，合同全文 `docs/design-embedded-terminal.md`）**：进程看到的第一帧尺寸 = 布局提交后 `fittedPtySize` 量到的格子——会重放画面的 spawn 量不到格子就**不启动**（禁止回落 80×24）；测量前按 `launchChromeBeforeMeasure` 收启动栏。进程起来之后只有一份白名单手势才 `pty_resize`（拖窗口/拖分隔/改字号字体/开关文件树·右栏·拉起·分屏/阅读区搬进搬回/底部状态栏开关），查找条与运行中「修改」改高度不发 SIGWINCH；收养（attach 已有 PTY）不 resize。切聊天/终端层铺满同一容器、行列不变。
