@@ -1105,6 +1105,15 @@
   明说「笔记栏有未保存改动，保存后可见」（dirty 状态经 FilePreviewEditor `onDirtyChange` 上报 ReaderOverlay，
   文案口径纯函数 `translationSavedToast` 在 reader.ts，tests/reader.test.ts 锚定）；失败一律 loud
   （PDF 栏顶部 hint 条 + toast ✗）。
+- **阅读会话按篇一段、侧栏默认不列（2026-11-06 用户：「侧栏只保留重要的会话和用户自己发起的对话」「之前精读过的文献应该直接打开之前的会话」）**：
+  复用键 `reader:<项目根>\n<PDF 路径>`（`reader.ts readerReuseKey` ↔ `runs.rs reader_pdf_of_key` 双端镜像），进阅读区时
+  `readerSessionFor` 找这篇最近那段（同项目同篇、源文件在、没归档）就 resume 它（带原 Run id、连接按 `resumeProfileChoice`：
+  那段自己的优先，同家时精读槽位绑定作候补），找不到才新开；阅读区开着换篇时上一篇的标签照「退出即关」收掉。
+  **认精读对话只认 Run 记录**（`apply_reader_runs`：task_kind=reader 且登记了会话 → 会话 DTO `reader` / `readerPdf`），
+  不按标题——原先 `PROJECT_SESSION_EXCLUDE_HINTS` 的「【阅读上下文】」在自动起名后失效，精读对话漏进侧栏；
+  `sessionExcludedFromProjectList` 因此把 `reader` 一并排除（侧栏、工作台、任务卡同口径）。侧栏只在项目菜单
+  「显示精读对话」按课题打开（`READER_CHATS_SHOWN_KEY`，本机），打开后课题下照列、开着的阅读标签也挂出来。
+  旧的按项目一个的精读对话认得出是精读、认不出篇目，照样不列、不接回。
 - **Agent 上下文简报**：note 就绪、`agentStatus.running` 为真**且开屏遮面已撤**（会话联动到 ≈ TUI 已开屏，
   8s 兜底）时，ReaderOverlay 自动向阅读会话**直发**一行简报（「【阅读上下文】在读 PDF：<pdfPath>；配套笔记：<note.path>…」）。
   **先占位再发**（briefedRef 记 note.path，失败才撤）、换会话标签（重启）清占位——2026-10-18 修「简报打两遍、

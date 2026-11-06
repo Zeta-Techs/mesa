@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Columns2,
+  BookOpen,
   Copy,
   Eraser,
   Folder,
@@ -99,6 +100,10 @@ import {
   isProjectPinned,
   toggleProjectChatPin,
   splitProjectPinned,
+  READER_CHATS_SHOWN_KEY,
+  parseReaderChatsShown,
+  toggleReaderChatsShown,
+  hasReaderChats,
   type ChatDot,
   type ForkRow,
   type OpenTabRow,
@@ -382,6 +387,26 @@ export default function ProjectTree({
       const next = toggleProjectChatPin(prev, s);
       try {
         localStorage.setItem(PROJECT_CHAT_PINS_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+  }
+  // 列出精读对话的课题（READER_CHATS_SHOWN_KEY，2026-11-06）：默认都不列，项目菜单「显示精读对话」逐个打开
+  const [readerShown, setReaderShown] = useState<string[]>(() => {
+    try {
+      return parseReaderChatsShown(localStorage.getItem(READER_CHATS_SHOWN_KEY));
+    } catch {
+      return [];
+    }
+  });
+  const readerShownSet = useMemo(() => new Set(readerShown), [readerShown]);
+  function toggleReaderShownFor(repoPath: string) {
+    setReaderShown((prev) => {
+      const next = toggleReaderChatsShown(prev, pathKey(repoPath, IS_WINDOWS));
+      try {
+        localStorage.setItem(READER_CHATS_SHOWN_KEY, JSON.stringify(next));
       } catch {
         /* 存不下只影响下次启动 */
       }
@@ -849,10 +874,13 @@ export default function ProjectTree({
     const m = new Map<string, SessionMetaDto[]>();
     for (const r of rows) {
       const k = pathKey(r.repoPath, IS_WINDOWS);
-      m.set(k, projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys));
+      m.set(
+        k,
+        projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys, readerShownSet.has(k)),
+      );
     }
     return m;
-  }, [rows, unpinnedSessions, worktreesOf, openChatKeys]);
+  }, [rows, unpinnedSessions, worktreesOf, openChatKeys, readerShownSet]);
   const scratchList = useMemo(
     () => scratchChats(unpinnedSessions, projectPaths, IS_WINDOWS, openChatKeys),
     [unpinnedSessions, projectPaths, openChatKeys],
@@ -882,13 +910,14 @@ export default function ProjectTree({
       listed,
       focusedTabId: terminalActiveTabId,
       folderOf: (cwd) => currentFolderKey(cwd, folders, projectPaths, IS_WINDOWS),
+      showReader: (k) => k != null && readerShownSet.has(k),
     })) {
       const list = m.get(r.folderKey) ?? [];
       list.push(r);
       m.set(r.folderKey, list);
     }
     return m;
-  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths]);
+  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths, readerShownSet]);
 
   // 「展开更多」点过的文件夹多列几段（只记这次打开 Mesa 期间；收起即删）
   const [chatExtra, setChatExtra] = useState<Record<string, number>>({});
@@ -1660,6 +1689,16 @@ export default function ProjectTree({
           st.setPage("sessions");
         },
       },
+      ...(hasReaderChats(sessions, row.repoPath, IS_WINDOWS)
+        ? [
+            {
+              label: readerShownSet.has(pathKey(row.repoPath, IS_WINDOWS)) ? "隐藏精读对话" : "显示精读对话",
+              icon: BookOpen,
+              title: "精读对话是沉浸阅读区每篇文献各一段的对话，平时不在这里列；回去接着读点文献的「继续精读」",
+              onSelect: () => toggleReaderShownFor(row.repoPath),
+            },
+          ]
+        : []),
       {
         label: "在终端打开",
         icon: SquareTerminal,

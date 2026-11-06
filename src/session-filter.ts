@@ -285,8 +285,11 @@ export function sessionExcludedFromProjectList(s: {
   projectPath: string;
   title?: string | null;
   customTitle?: string | null;
+  reader?: boolean;
 }): boolean {
   if (sessionLooksInternal(s)) return true;
+  // 精读对话后端照 Run 记录认（2026-11-06）：标题提示只在没自动起名时管用，起了名就漏进侧栏
+  if (s.reader) return true;
   const hay = `${s.customTitle ?? ""} ${s.title ?? ""}`;
   return PROJECT_SESSION_EXCLUDE_HINTS.some((h) => hay.includes(h));
 }

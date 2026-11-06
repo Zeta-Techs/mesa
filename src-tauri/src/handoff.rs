@@ -796,6 +796,8 @@ fn test_session(
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     }
 }
 

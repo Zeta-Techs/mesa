@@ -135,6 +135,13 @@ pub struct SessionMetaDto {
     /// 而原会话之后还在继续写。直线接续合并成一条，不填这个字段
     #[serde(default)]
     pub forked_from: Option<String>,
+    /// 沉浸阅读区派的精读对话（照 Run 记录 task_kind=reader 认，runs::apply_reader_runs）：
+    /// 侧栏默认不列，项目菜单可打开（2026-11-06 用户）
+    #[serde(default)]
+    pub reader: bool,
+    /// 精读对话读的哪篇 PDF（复用键按篇之后才有；旧的按项目一个的为 None）：再点这篇精读时接回它
+    #[serde(default)]
+    pub reader_pdf: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1058,6 +1065,8 @@ fn claude_file_meta_lineage(path: &Path, alive: bool) -> Option<(SessionMetaDto,
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     };
     Some((meta, lineage))
 }
@@ -1665,6 +1674,8 @@ fn codex_file_meta(
             provider,
             profile_id: None,
             forked_from: None,
+            reader: false,
+            reader_pdf: None,
         },
         forked_from_id,
     ))
@@ -2015,6 +2026,8 @@ fn gemini_file_meta(
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -2337,6 +2350,8 @@ fn qwen_file_meta(path: &Path, alive: bool, archived: bool) -> Option<SessionMet
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -2569,6 +2584,8 @@ fn kimi_wire_file_meta(
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -2849,6 +2866,8 @@ fn kimi_legacy_file_meta(
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -3060,6 +3079,8 @@ fn codebuddy_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -3275,6 +3296,8 @@ fn cursor_file_meta(path: &Path, alive: bool) -> Option<SessionMetaDto> {
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -3453,6 +3476,8 @@ fn grok_file_meta(path: &Path, alive: bool) -> Option<(SessionMetaDto, Option<St
             provider: None,
             profile_id: None,
             forked_from: None,
+            reader: false,
+            reader_pdf: None,
         },
         parent,
     ))
@@ -3964,6 +3989,8 @@ fn opencode_scan_db(db_path: &Path) -> Vec<SessionMetaDto> {
             provider: None,
             profile_id: None,
             forked_from: None,
+            reader: false,
+            reader_pdf: None,
         });
     }
     // OpenCode 新会话常暂存为 "New Session"：只对占位标题的会话惰性补标题——
@@ -4627,6 +4654,8 @@ fn opencode_scan_legacy(storage: &Path) -> Vec<SessionMetaDto> {
             provider: None,
             profile_id: None,
             forked_from: None,
+            reader: false,
+            reader_pdf: None,
         });
     }
     out
@@ -5626,6 +5655,8 @@ fn opencode_snapshot_meta(path: &Path, session_id: &str) -> Option<SessionMetaDt
         provider: None,
         profile_id: None,
         forked_from: None,
+        reader: false,
+        reader_pdf: None,
     })
 }
 
@@ -6597,6 +6628,7 @@ pub(crate) fn list_sessions_sync() -> Vec<SessionMetaDto> {
         crate::handoff::apply_handoff(&conn, &mut sessions);
         apply_card_claims(&conn, &mut sessions);
         apply_step_claims(&conn, &mut sessions);
+        crate::runs::apply_reader_runs(&conn, &mut sessions, &scan.chain_members);
     }
     apply_task_names(&mut sessions);
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -10250,6 +10282,8 @@ mod tests {
                     provider: None,
                     profile_id: None,
                     forked_from: None,
+                    reader: false,
+                    reader_pdf: None,
                 },
                 None,
             ),
@@ -10807,6 +10841,8 @@ mod tests {
                 provider: None,
                 profile_id: None,
                 forked_from: None,
+                reader: false,
+                reader_pdf: None,
             },
             fork.map(String::from),
         )
@@ -11950,6 +11986,8 @@ mod tests {
             provider: None,
             profile_id: None,
             forked_from: None,
+            reader: false,
+            reader_pdf: None,
         }
     }
 
@@ -12396,6 +12434,8 @@ mod tests {
             provider: None,
             profile_id: None,
             forked_from: None,
+            reader: false,
+            reader_pdf: None,
         }
     }
 

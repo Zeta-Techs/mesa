@@ -158,7 +158,7 @@ import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
 import { buildWorkspaceTerminalRequest, wireWorkspaceLaunchGuard } from "../pipeline-start";
 import type { SpotCheckSession } from "../spot-check";
-import { formatPdfExcerptPrompt, readerReuseKey } from "../reader";
+import { formatPdfExcerptPrompt, readerReuseKey, readerSessionFor } from "../reader";
 import {
   projectChatLaunch,
   READER_BINDING_SLOT,
@@ -171,6 +171,7 @@ import {
   findResumeHolderTab,
   fittedPtySize,
   resolveResumeLaunch,
+  resumeProfileChoice,
   shouldRelaunchResumeTab,
 } from "../terminal-resume";
 import {
@@ -9696,7 +9697,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }, [visible, readerReq, setReaderReq]);
 
   // 抽查核对档不派阅读会话：阅读会话在项目根运行，改的是主仓里的笔记，不是工作区里待评审的那份
-  const readerKey = reader && !reader.spotCheck ? readerReuseKey(reader.projectRoot) : null;
+  const readerKey =
+    reader && !reader.spotCheck ? readerReuseKey(reader.projectRoot, reader.pdfPath) : null;
   /** 阅读会话标签（reuseKey 找回：退出再进接着聊；恢复出的占位标签不带 reuseKey 不参与复用） */
   const readerTabId = readerKey
     ? (tabs.find((t) => t.reuseKey === readerKey)?.id ?? null)
@@ -9788,20 +9790,63 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     projectRoot: string;
   }): Promise<boolean> {
     const launch = await resolveReaderLaunch(r.projectRoot);
+    const title = `阅读 · ${basename(r.pdfPath).replace(/\.pdf$/i, "")}`;
+    const reuseKey = readerReuseKey(r.projectRoot, r.pdfPath);
+    const askMode = (agentId: string) =>
+      useAppStore.getState().agents.find((a) => a.id === agentId)?.permissionModes.includes("ask")
+        ? { permissionMode: "ask" as const }
+        : {};
+    // 这篇以前读过、那段对话还在：接回它，不另开（2026-11-06 用户：之前精读过的文献直接打开之前的会话）。
+    // 连接默认用那段对话自己的；同一家时人在项目 Agents 里给精读绑的连接作候补（与侧栏接着聊同一套 resumeProfileChoice）
+    let sessions = useAppStore.getState().sessions;
+    try {
+      sessions = await useAppStore.getState().loadSessions(true);
+    } catch {
+      /* 拉不到就按手上的列表认，认不出照常新开 */
+    }
+    const prev = readerSessionFor(sessions, r.projectRoot, r.pdfPath, IS_WINDOWS);
+    if (prev) {
+      const run = await invoke<RunDto | null>("run_find", {
+        agent: prev.agent,
+        sessionId: prev.sessionId,
+      }).catch(() => null);
+      const st = useAppStore.getState();
+      const choice = resumeProfileChoice({
+        agentId: prev.agent,
+        own: prev.profileId ?? run?.profileId,
+        preferred: launch.agentId === prev.agent ? launch.profileId : null,
+        profiles: st.profiles,
+        hidden: st.settings?.hiddenProfiles,
+      });
+      if (choice.profileId || choice.autoLaunchProfileId) {
+        setPendingTerminal({
+          cwd: prev.cwd ?? r.projectRoot,
+          extraEnv: {},
+          title,
+          resume: { agentId: prev.agent, sessionId: prev.sessionId, provider: prev.provider },
+          agentId: prev.agent,
+          ...choice,
+          ...askMode(prev.agent),
+          runId: run?.id,
+          autoStart: true,
+          reuseKey,
+        });
+        return true;
+      }
+    }
     if (!launch.profileId) return false;
     // 阅读会话按「请求批准」起（本机设成完全访问也收窄）：改笔记以外的文件先问；
     // Claude Code 另由 pty_spawn 预放行 notes/（reuseKey reader: 识别）。没有这一档的 CLI 按本机设置
-    const det = useAppStore.getState().agents.find((a) => a.id === launch.agentId);
     setPendingTerminal({
       cwd: r.projectRoot,
       extraEnv: {},
-      title: `阅读 · ${basename(r.pdfPath).replace(/\.pdf$/i, "")}`,
+      title,
       agentId: launch.agentId,
       profileId: launch.profileId,
       ...(launch.model ? { model: launch.model } : {}),
-      ...(det?.permissionModes.includes("ask") ? { permissionMode: "ask" as const } : {}),
+      ...askMode(launch.agentId),
       autoStart: true,
-      reuseKey: readerReuseKey(r.projectRoot),
+      reuseKey,
     });
     return true;
   }
@@ -9827,6 +9872,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, reader, readerKey, readerTabId, profiles, readerAgentTick]);
+
+  // 阅读区开着换了一篇（复用键按篇）：上一篇的阅读会话标签照「退出即关」收掉，不留在标签里堆积
+  useEffect(() => {
+    if (!readerKey) return;
+    for (const t of tabs) {
+      if (t.reuseKey?.startsWith("reader:") && t.reuseKey !== readerKey) doCloseTab(t.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readerKey, tabs]);
 
   /** 阅读区注入（选段「↵ 直接发送」/ 输入框回车）：走与右栏选段同一条 injectToTab 链路，目标换成阅读会话标签 */
   const injectToReader = useCallback(

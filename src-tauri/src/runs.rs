@@ -3,6 +3,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -99,9 +100,70 @@ fn infer_task_ref(reuse: &str, isolation: &str) -> Option<String> {
     basename_of(isolation)
 }
 
+/// 精读会话复用键里项目根与 PDF 的分隔（2026-11-06 起按篇：`reader:<项目根>\n<PDF 路径>`；
+/// 路径里不会有换行。旧键 `reader:<项目根>` 没有这一段，认不出读的哪篇）。与 src/reader.ts readerReuseKey 同口径
+pub(crate) const READER_KEY_SEP: char = '\n';
+
+/// 精读会话读的哪篇：从复用键里取 PDF 路径；旧键（按项目一个）为 None
+pub(crate) fn reader_pdf_of_key(reuse: &str) -> Option<String> {
+    let rest = reuse.strip_prefix("reader:")?;
+    let (_, pdf) = rest.split_once(READER_KEY_SEP)?;
+    let pdf = pdf.trim();
+    (!pdf.is_empty()).then(|| pdf.to_string())
+}
+
+/// 给会话列表标上「这是精读对话、读的哪篇」：照 Run 记录认（task_kind=reader 且登记了会话），不猜标题。
+/// Codex 续链合并成一条时按任一成员 id 认。runs 表还没建（从没开过 Run）时什么都不做
+pub(crate) fn apply_reader_runs(
+    conn: &Connection,
+    sessions: &mut [crate::sessions::SessionMetaDto],
+    chain_members: &HashMap<String, Vec<String>>,
+) {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT agent, session_id, reuse_key FROM runs WHERE task_kind='reader' AND session_id IS NOT NULL AND internal=0 ORDER BY created_at",
+    ) else {
+        return;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    }) else {
+        return;
+    };
+    // 同一段会话登记过多次（每次接回都恢复同一条 Run）取最后一条认出的篇目
+    let mut found: HashMap<(String, String), Option<String>> = HashMap::new();
+    for (agent, sid, key) in rows.flatten() {
+        let pdf = key.as_deref().and_then(reader_pdf_of_key);
+        let slot = found.entry((agent, sid)).or_insert(None);
+        if pdf.is_some() {
+            *slot = pdf;
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    for s in sessions.iter_mut() {
+        let hit = found.get(&(s.agent.clone(), s.session_id.clone())).or_else(|| {
+            chain_members.get(&s.session_id).and_then(|members| {
+                members
+                    .iter()
+                    .find_map(|id| found.get(&(s.agent.clone(), id.clone())))
+            })
+        });
+        if let Some(pdf) = hit {
+            s.reader = true;
+            s.reader_pdf = pdf.clone();
+        }
+    }
+}
+
 fn infer_project_root(reuse: &str, isolation: &str) -> Option<String> {
     if let Some(rest) = reuse.strip_prefix("reader:") {
-        let t = rest.trim();
+        let root = rest.split_once(READER_KEY_SEP).map_or(rest, |(root, _)| root);
+        let t = root.trim();
         if !t.is_empty() {
             return Some(t.to_string());
         }
@@ -2612,7 +2674,7 @@ fn task_adopt_outputs_impl(
             // 冻结路径：三向判定（项目现读 vs 开工基线 vs 冻结内容），写入源只认 payload 副本；
             // 「看过的版本」与「写入的版本」由此逐字节绑定。
             let baseline = crate::task_review::load_baseline(&dir)?;
-            let mut accepted = std::collections::HashMap::new();
+            let mut accepted = HashMap::new();
             for fact in crate::projects::read_acceptance_log_at(Path::new(&root)) {
                 if fact.kind == crate::review_contract::KIND_GOAL_ADOPT && fact.goal_id == task.id {
                     for file in fact.content_fingerprints {
@@ -5236,9 +5298,19 @@ mod tests {
     }
 
     #[test]
+    fn reader_key_carries_paper() {
+        assert_eq!(reader_pdf_of_key("reader:/p\n/p/papers/a.pdf").as_deref(), Some("/p/papers/a.pdf"));
+        // 旧键按项目一个：认得出是精读对话，认不出读的哪篇
+        assert_eq!(reader_pdf_of_key("reader:/p"), None);
+        assert_eq!(reader_pdf_of_key("lane:/p\n/x.pdf"), None);
+        assert_eq!(infer_project_root("reader:/p\n/p/a.pdf", "/p").as_deref(), Some("/p"));
+    }
+
+    #[test]
     fn infer_task_kind_prefixes() {
         assert_eq!(infer_task_kind("login:claude-code", "/x"), "login");
         assert_eq!(infer_task_kind("reader:/p", "/p"), "reader");
+        assert_eq!(infer_task_kind("reader:/p\n/p/papers/a.pdf", "/p"), "reader");
         assert_eq!(infer_task_kind("watch:s1:/p", "/p"), "watch");
         assert_eq!(infer_task_kind("office:/p:file", "/p"), "office_doc");
         assert_eq!(infer_task_kind("free:/p:task", "/p"), "free_research");

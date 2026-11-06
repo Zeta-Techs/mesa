@@ -43,6 +43,7 @@ import {
   readerPanelSlideMargin,
   readerProgressKey,
   readerReuseKey,
+  readerSessionFor,
   relMdLinkPath,
   renderGlossaryTable,
   resolveMdPath,
@@ -263,8 +264,39 @@ test("readerPanelSlideMargin：展开归 0，收起滑出整块（栏宽 + 分�
   );
 });
 
-test("readerReuseKey 稳定格式（退出再进找回同一标签）", () => {
-  assert.equal(readerReuseKey("/Users/u/proj"), "reader:/Users/u/proj");
+test("readerReuseKey 按篇一个、格式与后端 runs.rs reader_pdf_of_key 同口径", () => {
+  assert.equal(
+    readerReuseKey("/Users/u/proj", "/Users/u/proj/papers/a.pdf"),
+    "reader:/Users/u/proj\n/Users/u/proj/papers/a.pdf",
+  );
+});
+
+test("readerSessionFor 认这篇以前的精读对话：同项目同篇、还在、没归档，取最近的", () => {
+  const s = (over: Record<string, unknown>) => ({
+    reader: true,
+    readerPdf: "/p/papers/a.pdf",
+    projectPath: "/p",
+    alive: true,
+    archived: false,
+    updatedAt: "2026-11-01",
+    sessionId: "x",
+    ...over,
+  });
+  const list = [
+    s({ sessionId: "old", updatedAt: "2026-11-01" }),
+    s({ sessionId: "new", updatedAt: "2026-11-05" }),
+    s({ sessionId: "gone", updatedAt: "2026-11-06", alive: false }),
+    s({ sessionId: "arch", updatedAt: "2026-11-06", archived: true }),
+    s({ sessionId: "other", updatedAt: "2026-11-06", readerPdf: "/p/papers/b.pdf" }),
+    s({ sessionId: "legacy", updatedAt: "2026-11-06", readerPdf: null }),
+    s({ sessionId: "chat", updatedAt: "2026-11-06", reader: false }),
+  ];
+  assert.equal(readerSessionFor(list, "/p", "/p/papers/a.pdf")?.sessionId, "new");
+  assert.equal(readerSessionFor(list, "/p", "/p/papers/c.pdf"), null);
+  assert.equal(
+    readerSessionFor([s({ projectPath: "C:/P", readerPdf: "c:\\p\\papers\\A.pdf" })], "c:\\p", "C:/P/papers/a.pdf", true)?.sessionId,
+    "x",
+  );
 });
 
 test("formatPdfExcerptPrompt 短文本原样 + 出处格式", () => {

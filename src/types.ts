@@ -597,6 +597,10 @@ export interface SessionMetaDto {
   profileId: string | null;
   /** 从同一 Agent 的哪条对话中途分出来（原对话分开后还在继续写）；直线接续已合并，不填 */
   forkedFrom?: string | null;
+  /** 沉浸阅读区派的精读对话（后端照 Run 记录认）：侧栏默认不列，项目菜单可打开（2026-11-06） */
+  reader?: boolean;
+  /** 精读对话读的哪篇 PDF；按项目一个的旧精读对话为 null（认不出篇目） */
+  readerPdf?: string | null;
 }
 
 /** 会话瘦身检测结果（session_slim.rs，只读估算；level 由后端按请求体大小判定） */

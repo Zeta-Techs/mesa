@@ -47,29 +47,63 @@ function listedInFolder(s: SessionMetaDto, openKeys: ReadonlySet<string>): boole
   return listable(s) && (!tidySessionTitle(s).unnamed || openKeys.has(`${s.agent}\n${s.sessionId}`));
 }
 
+/** 精读对话在项目菜单打开后照列：只看还在、没归档（统一排除表本来就把它们挡在外面，listable 不适用） */
+function readerListable(s: SessionMetaDto): boolean {
+  return !!s.reader && !s.archived && !s.internal && s.alive;
+}
+
 function byRecent(a: SessionMetaDto, b: SessionMetaDto): number {
   const x = a.updatedAt ?? "";
   const y = b.updatedAt ?? "";
   return x < y ? 1 : x > y ? -1 : 0;
 }
 
-/** 某个项目的对话：会话目录就是它，或落在它的工作区 / 工作树里（projectPath 多已归并回主仓，这里兜底），按最近活动倒序 */
+/** 某个项目的对话：会话目录就是它，或落在它的工作区 / 工作树里（projectPath 多已归并回主仓，这里兜底），按最近活动倒序。
+ *  精读对话（沉浸阅读区派的，一篇一段）默认不列：多了把课题下面挤乱，回去接着读走文献的「继续精读」；
+ *  项目菜单「显示精读对话」打开后照列（showReader，2026-11-06 用户） */
 export function projectChats(
   sessions: readonly SessionMetaDto[],
   root: string,
   worktrees: readonly string[] = [],
   isWindows = false,
   openKeys: ReadonlySet<string> = new Set(),
+  showReader = false,
 ): SessionMetaDto[] {
   const key = pathKey(root, isWindows);
   return sessions
     .filter(
       (s) =>
-        listedInFolder(s, openKeys) &&
+        (s.reader ? showReader && readerListable(s) : listedInFolder(s, openKeys)) &&
         (pathKey(s.projectPath, isWindows) === key ||
           worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
     )
     .sort(byRecent);
+}
+
+/** 哪些课题在侧栏列出精读对话（项目菜单「显示精读对话」，2026-11-06）：本机 localStorage，存课题的 pathKey */
+export const READER_CHATS_SHOWN_KEY = "ccode.projectShowReaderChats";
+
+export function parseReaderChatsShown(raw: string | null): string[] {
+  try {
+    const v: unknown = JSON.parse(raw ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function toggleReaderChatsShown(shown: readonly string[], folderKey: string): string[] {
+  return shown.includes(folderKey) ? shown.filter((k) => k !== folderKey) : [...shown, folderKey];
+}
+
+/** 某个课题有没有精读对话（项目菜单有这一项才出开关） */
+export function hasReaderChats(
+  sessions: readonly SessionMetaDto[],
+  root: string,
+  isWindows = false,
+): boolean {
+  const key = pathKey(root, isWindows);
+  return sessions.some((s) => readerListable(s) && pathKey(s.projectPath, isWindows) === key);
 }
 
 /**
@@ -448,6 +482,8 @@ export function expandedExtra(shownNow: number, base = SIDEBAR_CHAT_LIMIT): numb
 /** 运行页开着的一个标签（RunOverviewInput 的子集）：侧栏要把列表里还没有的那些也摆出来 */
 export interface OpenTabInput extends ChatRunInput {
   title: string;
+  /** 开聊复用键：`reader:` 开头的是精读区的标签 */
+  reuseKey?: string;
 }
 
 export type OpenTabKind = "new" | "terminal" | "chat";
@@ -474,10 +510,14 @@ export function openTabRows(input: {
   listed: ReadonlySet<string>;
   focusedTabId: string | null;
   folderOf: (cwd: string) => string | null;
+  /** 这个文件夹列不列精读对话（showReader 同口径）；不给 = 都列。精读区开着时它的标签也不挂出来 */
+  showReader?: (folderKey: string | null) => boolean;
 }): OpenTabRow[] {
   const out: OpenTabRow[] = [];
   for (const r of input.runs) {
     if (r.sessionId && input.listed.has(`${r.agentId}\n${r.sessionId}`)) continue;
+    const reader = (r.reuseKey ?? "").startsWith("reader:");
+    if (reader && input.showReader && !input.showReader(input.folderOf(r.cwd))) continue;
     if (!r.running && !r.shell && r.tabId !== input.focusedTabId) continue;
     const kind: OpenTabKind = r.shell ? "terminal" : r.running || r.sessionId ? "chat" : "new";
     const title = r.title.trim();

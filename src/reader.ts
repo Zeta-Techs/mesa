@@ -8,6 +8,7 @@
  *  布局常量与换算全部集中这里，组件（ReaderOverlay/PdfContinuousView/FilePreviewEditor）只做绑定。 */
 
 import { escapeShellPath } from "./terminal-input.ts";
+import { pathKey } from "./path-utils.ts";
 
 export const READER_SPLIT_L_KEY = "ccode.readerSplitL";
 export const READER_SPLIT_R_KEY = "ccode.readerSplitR";
@@ -381,9 +382,32 @@ export function readerPanelSlideMargin(panelPx: number, open: boolean): number {
   return open ? 0 : -(panelPx + READER_SPLITTER_PX);
 }
 
-/** 阅读会话终端标签的复用键：退出再进接着聊（TerminalPage 与覆盖层同一出处） */
-export function readerReuseKey(projectRoot: string): string {
-  return `reader:${projectRoot}`;
+/** 阅读会话终端标签的复用键（TerminalPage 与覆盖层同一出处）：按篇一个（2026-11-06 用户：读过的文献再点精读接回原来那段对话）。
+ *  格式 `reader:<项目根>\n<PDF 路径>`，与后端 runs.rs READER_KEY_SEP / reader_pdf_of_key 双端镜像（后端靠它认出读的哪篇） */
+export function readerReuseKey(projectRoot: string, pdfPath: string): string {
+  return `reader:${projectRoot}\n${pdfPath}`;
+}
+
+/** 这篇以前的精读对话（接回它，不另开）：同项目、读的同一篇、源文件还在、没归档，取最近的一段 */
+export function readerSessionFor<
+  T extends {
+    reader?: boolean;
+    readerPdf?: string | null;
+    projectPath: string;
+    alive: boolean;
+    archived: boolean;
+    updatedAt: string | null;
+  },
+>(sessions: readonly T[], projectRoot: string, pdfPath: string, isWindows = false): T | null {
+  const root = pathKey(projectRoot, isWindows);
+  const pdf = pathKey(pdfPath, isWindows);
+  let best: T | null = null;
+  for (const s of sessions) {
+    if (!s.reader || !s.readerPdf || !s.alive || s.archived) continue;
+    if (pathKey(s.projectPath, isWindows) !== root || pathKey(s.readerPdf, isWindows) !== pdf) continue;
+    if (!best || (s.updatedAt ?? "") > (best.updatedAt ?? "")) best = s;
+  }
+  return best;
 }
 
 /** PDF 选段「◈ 问 AI」的注入格式（与 TerminalPage.askAiFromPdf 同一出处，勿分叉）：

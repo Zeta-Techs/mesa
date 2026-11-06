@@ -31,6 +31,9 @@ import {
   scratchDot,
   sidebarChatTitle,
   staleScratchChats,
+  hasReaderChats,
+  parseReaderChatsShown,
+  toggleReaderChatsShown,
   type ChatRunInput,
 } from "../src/sidebar-chats.ts";
 import { isThrowawayTab } from "../src/quick-chat.ts";
@@ -514,4 +517,34 @@ test("项目内置顶：流程对话取消记 dropped、再钉回撤掉；普通
 test("项目内置顶：坏数据当空表", () => {
   assert.deepEqual(parseProjectChatPins("not json"), { pinned: [], dropped: [] });
   assert.deepEqual(parseProjectChatPins('{"pinned":[1,"a\\nb","x"]}'), { pinned: ["a\nb"], dropped: [] });
+});
+
+test("精读对话默认不在课题下列，项目菜单打开后照列；开着的精读标签同样跟着开关（2026-11-06）", () => {
+  const sessions = [
+    session({ sessionId: "mine", updatedAt: "2026-11-06T02:00:00Z" }),
+    session({ sessionId: "read", reader: true, readerPdf: "/repo/papers/a.pdf", updatedAt: "2026-11-06T03:00:00Z" }),
+    session({ sessionId: "old", reader: true, readerPdf: null, updatedAt: "2026-11-06T01:00:00Z" }),
+  ];
+  assert.deepEqual(projectChats(sessions, "/repo").map((s) => s.sessionId), ["mine"]);
+  assert.deepEqual(
+    projectChats(sessions, "/repo", [], false, new Set(), true).map((s) => s.sessionId),
+    ["read", "mine", "old"],
+  );
+  assert.equal(hasReaderChats(sessions, "/repo"), true);
+  assert.equal(hasReaderChats(sessions, "/other"), false);
+
+  const base = { agentId: "claude-code", running: true, shell: false, attention: null, sessionId: null };
+  const tabs = [{ ...base, tabId: "r", cwd: "/repo", title: "阅读 · a", reuseKey: "reader:/repo\n/repo/papers/a.pdf" }];
+  const folderOf = (cwd: string) => (cwd === "/repo" ? "/repo" : null);
+  const hidden = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showReader: () => false });
+  assert.equal(hidden.length, 0);
+  const shown = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showReader: (k) => k === "/repo" });
+  assert.deepEqual(shown.map((r) => r.tabId), ["r"]);
+});
+
+test("精读对话开关按课题记、坏值不炸", () => {
+  assert.deepEqual(parseReaderChatsShown("oops"), []);
+  assert.deepEqual(parseReaderChatsShown('["/a", 3, ""]'), ["/a"]);
+  assert.deepEqual(toggleReaderChatsShown(["/a"], "/b"), ["/a", "/b"]);
+  assert.deepEqual(toggleReaderChatsShown(["/a", "/b"], "/a"), ["/b"]);
 });

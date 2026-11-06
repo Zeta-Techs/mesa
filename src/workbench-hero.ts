@@ -773,6 +773,7 @@ export function latestProjectSession<T extends {
   source?: string;
   alive?: boolean;
   pinned?: boolean;
+  reader?: boolean;
 }>(sessions: readonly T[], projectPath: string, isWindows = false): T | null {
   let best: T | null = null;
   for (const session of sessions) {
@@ -786,6 +787,7 @@ export function latestProjectSession<T extends {
         projectPath: session.projectPath,
         title: session.title,
         customTitle: session.customTitle,
+        reader: session.reader,
       })
     )
       continue;
