@@ -337,8 +337,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
   components/AssistantDesk.tsx # 项目助手顶上的「等你的事」：就地点选项 / 写一句送过去，等确认的带路回对话；20 秒刷新
-  components/RouteCheckCard.tsx # 设置 → 网络「线路体检」：route_check_agents 列有探测点的 Agent，每家一行四列（状态点 · 名称 · 结果 · 用时，ROW_GRID 对齐），
-                             #   第二行小字放官方确认 / 出口类型，探测主机进 HoverTip；出网代理保存后自动重测
+  components/RouteCheckCard.tsx # 设置 → 网络「线路体检」（挂在 Row 的 extra 全宽区）：route_check_agents 列有探测点的 Agent，每家一行到底
+                             #   （点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮，ROW_GRID 定宽列对齐，拦下原因跨三列），探测主机进 HoverTip；出网代理保存后自动重测
   components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、测试连接、绑定 6 位码、解绑
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
   components/SavePackModal.tsx # 弹层版另存为我的任务（挂 body，表单里不嵌表单）：派活单验收后「存成我的任务…」、内置科研任务「另存为我的版本…」共用，里面是 SavePackForm

@@ -29,8 +29,9 @@ type Row = RouteCheck | { agent: string; error: string };
 
 /** 状态只给圆点上色（design-system：语义色只给点 / 图标，不铺在文字上） */
 const DOT_CLASS = { pass: "bg-ok-text", block: "bg-err-text", review: "bg-warn-text" } as const;
-/** 一行四列：点 · 名称 · 结果 · 用时；各行同列对齐 */
-const ROW_GRID = "grid grid-cols-[0.5rem_6.5rem_minmax(0,1fr)_auto] items-start gap-x-3";
+/** 一行到底：点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮（靠右）；各行用同一组定宽列对齐。
+ *  拦下的原因较长，占地区 / 用时 / 确认三列的位置 */
+const ROW_GRID = "grid grid-cols-[0.5rem_8rem_9rem_3.5rem_minmax(0,1fr)_auto] items-center gap-x-3";
 
 /** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行，经与启动同源的代理访问这家服务自己的地址。
  *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测。
@@ -133,7 +134,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   if (agents === null) return null;
   if (!targets.length) {
     return (
-      <p className="max-w-[36rem] text-xs text-l4">还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去。</p>
+      <p className="text-xs text-l4">还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去。</p>
     );
   }
   const checks = targets.map((t) => rows[t.agent]).filter((r): r is RouteCheck => !!r && !("error" in r));
@@ -142,7 +143,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const labelOf = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 
   return (
-    <div className="w-full max-w-[36rem]">
+    <div className="w-full">
       <div className="flex items-center gap-3 pb-2">
         <p className="min-w-0 flex-1 truncate text-xs text-l3">
           {anyCheck ? proxySourceText(anyCheck) : "体检中…"}
@@ -218,10 +219,12 @@ function RouteRow({
 
   if (!check) {
     return (
-      <li className={`${ROW_GRID} py-2.5`}>
-        <span className="mt-1.5 size-2 rounded-full bg-l4" />
+      <li className={`${ROW_GRID} min-h-10 py-2`}>
+        <span className="size-2 rounded-full bg-l4" />
         {nameCell}
-        <span className="truncate text-sm text-l4">{row && "error" in row ? `没测成：${row.error}` : "体检中…"}</span>
+        <span className="col-span-3 truncate text-sm text-l4">
+          {row && "error" in row ? `没测成：${row.error}` : "体检中…"}
+        </span>
         <span />
         <HoverTip tip={tip.tip} text={tipText} />
       </li>
@@ -260,7 +263,7 @@ function RouteRow({
     ) : null;
   const actions =
     check.regionChanged || fix ? (
-      <span className="flex gap-2 pt-1.5">
+      <span className="flex justify-end gap-2">
         {check.regionChanged && (
           <button type="button" disabled={busy} onClick={onAccept} className={rowActionClass}>
             <span className="text-xs">记为常用出口</span>
@@ -272,20 +275,25 @@ function RouteRow({
           </button>
         )}
       </span>
-    ) : null;
+    ) : (
+      <span />
+    );
+  const blocked = check.verdict === "block";
 
   return (
-    <li className={`${ROW_GRID} py-2.5`}>
-      <span className={`mt-1.5 size-2 rounded-full ${DOT_CLASS[check.verdict]}`} />
+    <li className={`${ROW_GRID} min-h-10 py-2`}>
+      <span className={`size-2 rounded-full ${DOT_CLASS[check.verdict]}`} />
       {nameCell}
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-sm text-l1">
-          {routeRowMain(check)}
-        </span>
-        {meta}
-        {actions}
-      </span>
-      <span className="pt-0.5 text-xs tabular-nums text-l4">{latencyText(check.latencyMs)}</span>
+      {blocked ? (
+        <span className="col-span-3 truncate text-sm text-l1">{routeRowMain(check)}</span>
+      ) : (
+        <>
+          <span className="truncate text-sm text-l1">{routeRowMain(check)}</span>
+          <span className="text-right text-xs tabular-nums text-l4">{latencyText(check.latencyMs)}</span>
+          {meta ?? <span />}
+        </>
+      )}
+      {actions}
       <HoverTip tip={tip.tip} text={tipText} />
     </li>
   );

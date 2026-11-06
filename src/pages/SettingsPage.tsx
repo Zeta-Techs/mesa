@@ -3979,8 +3979,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           align="start"
           hint="官方账号从哪出去、通不通"
           labelTitle="用官方账号启动时的同一套代理，访问这家服务自己的地址（如 claude.ai）。代理按网站分流时，用别的网站查出口不准。不带账号信息。"
+          // 列表比左侧说明高得多：放行下方全宽区（同字体安装日志），不挤在右侧控件位、左边空一大片
+          extra={<RouteCheckCard proxyKey={settings?.outboundProxy ?? ""} />}
         >
-          <RouteCheckCard proxyKey={settings?.outboundProxy ?? ""} />
+          {null}
         </Row>
         <Row
           label="不走代理的地址"
