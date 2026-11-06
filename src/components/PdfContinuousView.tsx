@@ -121,6 +121,7 @@ function PdfContinuousView({
   glossTerms,
   dark,
   onTranslate,
+  translations,
   onRequestTranslate,
   onAddGlossary,
   onOrganize,
@@ -164,9 +165,10 @@ function PdfContinuousView({
   glossTerms?: readonly GlossaryEntry[];
   /** 护眼反色开关（只反 canvas 层，CSS filter，不动 canvas 数据） */
   dark?: boolean;
-  /** 翻译触发（选段「译」/ ⌘+点击段落）：状态机与面板都在上层（ReaderOverlay
-      翻译面板，右栏终端上方），本组件只上送原文与页码 */
+  /** 翻译触发（选段「译」/ ⌘+点击段落）：状态机与译文浮窗都在上层（ReaderOverlay），本组件只上送原文与页码 */
   onTranslate?: (text: string, page: number) => void;
+  /** 顶栏「译文 N」：本篇有翻译才出，点了开 / 关译文浮窗（2026-11-06：浮窗 × 彻底关掉，从这里再打开） */
+  translations?: { count: number; open: boolean; onToggle: () => void };
   /** 纯文本翻译请求（＋生词预填要的是释义）；面板翻译走 onTranslate，不经本回调 */
   onRequestTranslate?: (
     text: string,
@@ -1538,6 +1540,16 @@ function PdfContinuousView({
                   }}
                 >
                   标注 {annotations.length}
+                </button>
+              )}
+              {translations && translations.count > 0 && (
+                <button
+                  type="button"
+                  title={translations.open ? "关掉译文" : "打开译文（本篇翻过的段落）"}
+                  className={`${zoomBtn} px-1.5 text-micro tabular-nums ${translations.open ? "bg-seg-sel text-l1" : ""}`}
+                  onClick={translations.onToggle}
+                >
+                  译文 {translations.count}
                 </button>
               )}
               <button

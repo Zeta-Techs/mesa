@@ -12,14 +12,7 @@ import { pathKey } from "./path-utils.ts";
 
 export const READER_SPLIT_L_KEY = "ccode.readerSplitL";
 export const READER_SPLIT_R_KEY = "ccode.readerSplitR";
-/** 右栏「翻译面板 × 终端」纵向分割：面板高度占右栏高度的百分比（未拖过 = 内容自适应，不落键） */
-export const READER_SPLIT_T_KEY = "ccode.readerSplitT";
-/** 译文卡「钉在 PDF 上」（true = 正文栏悬浮球形态；未落键 = 右栏 Agent 上方原位） */
-export const READER_TL_PINNED_KEY = "ccode.readerTlPinned";
-/** 译文悬浮球位置（PDF 栏内百分比坐标，球心；缺省贴右缘中部） */
-export const READER_TL_BALL_KEY = "ccode.readerTlBall";
-export const READER_TL_BALL_DEFAULT = { xp: 100, yp: 45 };
-/** 译文悬浮卡显式尺寸（px；未拖过角柄不落键 = 内容自适应 60% 封顶） */
+/** 译文浮窗显式尺寸（px；未拖过右下角不落键 = 宽 26rem、高按内容自适应） */
 export const READER_TL_CARD_KEY = "ccode.readerTlCard";
 /** 悬浮卡尺寸下限：再窄动作钮排不下、再矮表头都不够 */
 export const READER_TL_CARD_MIN_W = 240;
@@ -27,9 +20,6 @@ export const READER_TL_CARD_MIN_H = 140;
 /** 侧栏宽度百分比的可拖范围（相对三栏总宽） */
 export const READER_PCT_MIN = 12;
 export const READER_PCT_MAX = 40;
-/** 翻译面板高度百分比的可拖范围（相对右栏总高）：下限留表头+两行译文，上限给终端留可用高度 */
-export const READER_TL_PCT_MIN = 12;
-export const READER_TL_PCT_MAX = 70;
 /** 侧栏（笔记/Agent）最小像素宽：窗口再小也不压缩到不可用 */
 export const READER_SIDE_MIN_PX = 240;
 /** 分隔条抓取热区宽（splitter 外层）：与收起滑出量同源，改一处必改另一处 */
@@ -173,58 +163,7 @@ export function loadReaderPct(key: string, fallback: number): number {
   }
 }
 
-/** 翻译面板高度百分比钳制：同 clampReaderPct 形状，范围用 READER_TL_PCT_* */
-export function clampReaderTlPct(pct: number, fallback: number): number {
-  if (!Number.isFinite(pct) || pct <= 0) return fallback;
-  return Math.min(READER_TL_PCT_MAX, Math.max(READER_TL_PCT_MIN, pct));
-}
-
-/** 读本地记忆的翻译面板高度百分比；未拖过（无键）/坏值返回 null = 内容自适应 */
-export function loadReaderTlPct(key: string): number | null {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return null;
-    const v = Number(raw);
-    return Number.isFinite(v) && v > 0
-      ? clampReaderTlPct(v, READER_TL_PCT_MIN)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/** 读「译文卡钉在 PDF 上」记忆（缺省 false = 右栏原位）；localStorage 不可用时静默回落 */
-export function loadReaderTlPinned(): boolean {
-  try {
-    return localStorage.getItem(READER_TL_PINNED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-/** 写「钉在 PDF 上」记忆；false 时清键（缺省即原位，不落占位键） */
-export function saveReaderTlPinned(v: boolean): void {
-  try {
-    if (v) localStorage.setItem(READER_TL_PINNED_KEY, "1");
-    else localStorage.removeItem(READER_TL_PINNED_KEY);
-  } catch {
-    /* 隐私模式等存不进就算没记过 */
-  }
-}
-
-/** 悬浮球位置归一：0–100 百分比（可贴边）。真出界由渲染层兜——球心用
- *  translate(-50%,-50%) 居中，样式走 clamp(18px, x%, calc(100% - 18px))
- *  按球半径钳住，存档值与栏宽解耦（换窗口宽不失位、也不出界） */
-export function clampReaderTlBall(
-  xp: number,
-  yp: number,
-): { xp: number; yp: number } {
-  const c = (v: number) =>
-    Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 50;
-  return { xp: c(xp), yp: c(yp) };
-}
-
-/** 悬浮球与 PDF 栏的边距（px，相对覆盖层根）：球和卡都只在 PDF 栏里 */
+/** PDF 栏离覆盖层根四边的距离（px）：译文浮窗只在 PDF 栏里活动 */
 export interface ReaderPdfBounds {
   left: number;
   right: number;
@@ -232,84 +171,31 @@ export interface ReaderPdfBounds {
   bottom?: number;
 }
 
-/** 球心离某一侧的距离（CSS 长度，挂覆盖层根的 left/right/top 用）：
- *  near = 这一侧栏外的距离，span = 两侧栏外距离之和；pct 是球在 PDF 栏里的百分比，
- *  按球半径 18px 兜在栏内（2026-10-23 用户：球脱出了 PDF，跑到右栏上面）。
- *  球的渲染与译文卡的锚定共用这一份，二者不会错开 */
-export function readerTlBallOffset(pct: number, near: number, span: number): string {
-  return `calc(${near}px + clamp(18px, calc((100% - ${span}px) * ${pct / 100}), calc(100% - ${span}px - 18px)))`;
-}
-
-/** 新译文落地时「译」球摆到原文段旁（2026-11-05 用户：段落在下面、球在上面）：段落右边外侧、对齐首行；
- *  右边放不下放左边外侧，都放不下贴 PDF 栏右缘。坐标都是覆盖层根 px，返回球在 PDF 栏里的百分比
- *  （与 readerTlBallOffset 同一换算）。只摆这一次、不记进位置记忆，拖过照旧记 */
-export function readerTlBallNear(
-  para: { top: number; left: number; right: number },
+/** 译文浮窗摆哪（覆盖层根坐标 px，2026-11-06 用户选「只留浮窗」）：有原文段 / 选区外框时左缘对齐它，
+ *  放在它下方（放得下）或上方，都放不下就放空间大的那边、贴 PDF 栏边（可能压到一点原文）；
+ *  没有外框时放 PDF 栏右上角。全程钳在 PDF 栏里（各留 8px） */
+export function readerTlWinPlace(
+  src: { top: number; bottom: number; left: number } | null,
   bounds: ReaderPdfBounds,
-  root: { width: number; height: number },
-): { xp: number; yp: number } | null {
-  const top = bounds.top ?? 0;
-  const bottom = bounds.bottom ?? 0;
-  const colW = root.width - bounds.left - bounds.right;
-  const colH = root.height - top - bottom;
-  if (colW <= 36 || colH <= 36) return null;
-  const R = 18;
-  const gap = 22;
-  const colRight = root.width - bounds.right;
-  let x = para.right + gap;
-  if (x > colRight - R) {
-    const leftSide = para.left - gap;
-    x = leftSide >= bounds.left + R ? leftSide : colRight - R;
-  }
-  const y = Math.min(Math.max(para.top + R, top + R), root.height - bottom - R);
-  return clampReaderTlBall(((x - bounds.left) / colW) * 100, ((y - top) / colH) * 100);
+  host: { width: number; height: number },
+  win: { w: number; h: number },
+): { x: number; y: number } {
+  const L = bounds.left + 8;
+  const R = host.width - bounds.right - 8;
+  const T = (bounds.top ?? 0) + 8;
+  const B = host.height - (bounds.bottom ?? 0) - 8;
+  const cx = (x: number) => Math.round(Math.max(L, Math.min(x, R - win.w)));
+  const cy = (y: number) => Math.round(Math.max(T, Math.min(y, B - win.h)));
+  if (!src) return { x: cx(R - win.w), y: T };
+  const x = cx(src.left);
+  const below = B - (src.bottom + 8);
+  const above = src.top - 8 - T;
+  if (below >= win.h) return { x, y: Math.round(src.bottom + 8) };
+  if (above >= win.h) return { x, y: Math.round(src.top - 8 - win.h) };
+  return { x, y: cy(below >= above ? src.bottom + 8 : src.top - 8 - win.h) };
 }
 
-/** 译文卡避让它的原文段（覆盖层根坐标 px）：只看横向压没压到——上下换位不改横向范围，
- *  判定不会来回翻；压到了摆到原文段下方或上方（下方够 160px 或比上方大就放下方），
- *  两边都不足 120px 就不避让。below：top = px；above：bottom = px；room = 那一侧可用高度 */
-export function readerTlCardAvoid(
-  card: { left: number; right: number },
-  source: { top: number; bottom: number; left: number; right: number },
-  hostHeight: number,
-  bounds?: ReaderPdfBounds,
-): { side: "above" | "below"; px: number; room: number } | null {
-  if (!(card.right > source.left + 4 && card.left < source.right - 4)) return null;
-  const top = bounds?.top ?? 0;
-  const bottom = hostHeight - (bounds?.bottom ?? 0);
-  const below = bottom - source.bottom - 16;
-  const above = source.top - top - 16;
-  if (Math.max(below, above) < 120) return null;
-  return below >= 160 || below >= above
-    ? { side: "below", px: Math.round(source.bottom + 8), room: Math.round(below) }
-    : { side: "above", px: Math.round(hostHeight - source.top + 8), room: Math.round(above) };
-}
-
-/** 读悬浮球位置记忆（坏值/缺省回落右缘中部） */
-export function loadReaderTlBall(): { xp: number; yp: number } {
-  try {
-    const raw = localStorage.getItem(READER_TL_BALL_KEY);
-    if (!raw) return { ...READER_TL_BALL_DEFAULT };
-    const [xp, yp] = raw.split(",").map(Number);
-    return clampReaderTlBall(xp, yp);
-  } catch {
-    return { ...READER_TL_BALL_DEFAULT };
-  }
-}
-
-/** 写悬浮球位置记忆（取整百分比 "xp,yp"） */
-export function saveReaderTlBall(xp: number, yp: number): void {
-  try {
-    localStorage.setItem(
-      READER_TL_BALL_KEY,
-      `${Math.round(xp)},${Math.round(yp)}`,
-    );
-  } catch {
-    /* 存不进就不记 */
-  }
-}
-
-/** 悬浮卡尺寸钳制：下限常量、上限传栏内可用空间；坏值回落下限 */
+/** 浮窗尺寸钳制：下限常量、上限传栏内可用空间；坏值回落下限 */
 export function clampReaderTlCard(
   w: number,
   h: number,
@@ -327,7 +213,7 @@ export function clampReaderTlCard(
   return { w: cw, h: ch };
 }
 
-/** 读悬浮卡显式尺寸（"w,h" px；未拖过/坏值 = null，内容自适应） */
+/** 读浮窗显式尺寸（"w,h" px；未拖过/坏值 = null，内容自适应） */
 export function loadReaderTlCard(): { w: number; h: number } | null {
   try {
     const raw = localStorage.getItem(READER_TL_CARD_KEY);
@@ -340,7 +226,7 @@ export function loadReaderTlCard(): { w: number; h: number } | null {
   }
 }
 
-/** 写悬浮卡显式尺寸；undefined/null 清键回自适应（双击角柄复位） */
+/** 写浮窗显式尺寸；null 清键回自适应（双击右下角复位） */
 export function saveReaderTlCard(size: { w: number; h: number } | null): void {
   try {
     if (size) {

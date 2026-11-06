@@ -10,7 +10,6 @@ import {
   captureRectToCanvasPixels,
   captureRectUsable,
   clampReaderPct,
-  clampReaderTlPct,
   classifyMdHref,
   fileUrlToPath,
   mdImageAbsPath,
@@ -57,18 +56,11 @@ import {
   plainFromBilingual,
   reflowBlockText,
   READER_TL_HISTORY_MAX,
-  READER_TL_PINNED_KEY,
-  loadReaderTlPinned,
-  saveReaderTlPinned,
-  clampReaderTlBall,
-  loadReaderTlBall,
-  saveReaderTlBall,
   clampReaderTlCard,
   loadReaderTlCard,
   saveReaderTlCard,
   type TlHistoryEntry,
   pdfRenderWindow,
-  readerTlBallNear,
 } from "../src/reader.ts";
 
 test("nextFitScale：无效宽返回 null，亚像素变化保持原值", () => {
@@ -163,19 +155,6 @@ test("clampReaderPct 夹到 12–40", () => {
   assert.equal(clampReaderPct(25, 22), 25);
 });
 
-test("clampReaderTlPct 坏值/非正数回落缺省", () => {
-  assert.equal(clampReaderTlPct(Number.NaN, 40), 40);
-  assert.equal(clampReaderTlPct(0, 40), 40);
-  assert.equal(clampReaderTlPct(-5, 40), 40);
-  assert.equal(clampReaderTlPct(Infinity, 40), 40);
-});
-
-test("clampReaderTlPct 夹到 12–70", () => {
-  assert.equal(clampReaderTlPct(5, 40), 12);
-  assert.equal(clampReaderTlPct(80, 40), 70);
-  assert.equal(clampReaderTlPct(35, 40), 35);
-});
-
 test("readerColumnWidths 侧栏按百分比取整且保底 240px", () => {
   const { left, right } = readerColumnWidths(1600, 22, 28);
   assert.equal(left, 352);
@@ -213,38 +192,6 @@ test("抽查核对档：笔记栏留阅读宽度、问题单窄；放不下先�
   // 不传 keepLeft 照旧等比压缩
   const even = readerColumnWidths(1000, 40, 35);
   assert.ok(even.left < 400);
-});
-
-test("译文球心只在 PDF 栏里：近侧栏外距离 + 栏内百分比，按球半径兜住", async () => {
-  const { readerTlBallOffset } = await import("../src/reader.ts");
-  assert.equal(
-    readerTlBallOffset(100, 300, 560),
-    "calc(300px + clamp(18px, calc((100% - 560px) * 1), calc(100% - 560px - 18px)))",
-  );
-  // 没量到边界（0,0）时退回整窗口径
-  assert.match(readerTlBallOffset(45, 0, 0), /^calc\(0px \+ clamp\(18px, calc\(\(100% - 0px\) \* 0\.45\)/);
-});
-
-test("译文卡避让原文段：横向压到才挪，下方够放下方，否则上方，都不够不挪", async () => {
-  const { readerTlCardAvoid } = await import("../src/reader.ts");
-  const bounds = { left: 300, right: 260, top: 76, bottom: 0 };
-  const card = { left: 500, right: 900 };
-  // 原文段在上半页：卡挪到它下方
-  assert.deepEqual(readerTlCardAvoid(card, { top: 200, bottom: 360, left: 340, right: 980 }, 900, bounds), {
-    side: "below",
-    px: 368,
-    room: 524,
-  });
-  // 原文段贴底：卡挪到它上方（bottom 锚）
-  assert.deepEqual(readerTlCardAvoid(card, { top: 620, bottom: 860, left: 340, right: 980 }, 900, bounds), {
-    side: "above",
-    px: 288,
-    room: 528,
-  });
-  // 横向没压到：不挪
-  assert.equal(readerTlCardAvoid(card, { top: 200, bottom: 360, left: 920, right: 1100 }, 900, bounds), null);
-  // 原文段占满整栏：两边都放不下，不挪
-  assert.equal(readerTlCardAvoid(card, { top: 120, bottom: 820, left: 340, right: 980 }, 900, bounds), null);
 });
 
 test("readerColumnWidths 极端窄窗侧栏归零让位", () => {
@@ -492,46 +439,6 @@ test("buildReaderTranslatePrompt 学术直译约束 + 原文附上", () => {
 test("进度记忆与护眼的 localStorage 键格式", () => {
   assert.equal(readerProgressKey("/p/a.pdf"), "ccode.readerProgress./p/a.pdf");
   assert.equal(readerDarkKey("/p/a.pdf"), "ccode.readerDark./p/a.pdf");
-});
-
-test("译文卡钉位记忆：缺省原位，true 落键、false 清键", () => {
-  // Node 测试无 localStorage：装个最小内存桩（UI 测试走 JSDOM，纯逻辑测试就地造）
-  const store = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-      removeItem: (k: string) => void store.delete(k),
-    },
-  });
-  assert.equal(loadReaderTlPinned(), false);
-  saveReaderTlPinned(true);
-  assert.equal(loadReaderTlPinned(), true);
-  assert.equal(store.get(READER_TL_PINNED_KEY), "1");
-  saveReaderTlPinned(false);
-  assert.equal(loadReaderTlPinned(), false);
-  assert.equal(store.get(READER_TL_PINNED_KEY), undefined);
-});
-
-test("译文悬浮球位置：归一到 0–100（贴边由渲染层 clamp 兜），坏值回落中部，记忆往返取整", () => {
-  // 同上：本测试自带内存桩，不依赖前一个测试的装配
-  const store = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-      removeItem: (k: string) => void store.delete(k),
-    },
-  });
-  assert.deepEqual(clampReaderTlBall(-5, 120), { xp: 0, yp: 100 });
-  assert.deepEqual(clampReaderTlBall(50, 50), { xp: 50, yp: 50 });
-  assert.deepEqual(clampReaderTlBall(Number.NaN, 50).xp, 50);
-  saveReaderTlBall(73.6, 28.4);
-  assert.deepEqual(loadReaderTlBall(), { xp: 74, yp: 28 });
-  store.delete("ccode.readerTlBall");
-  assert.deepEqual(loadReaderTlBall(), { xp: 100, yp: 45 });
 });
 
 test("译文悬浮卡尺寸：下限常量、上限随栏钳制、坏值兜底；记忆往返与复位清键", () => {
@@ -840,21 +747,6 @@ test("pdfRenderWindow：可见页 ±2 挂载，画过的页 ±5 内不卸载，�
   assert.deepEqual(pdfRenderWindow(new Set(), new Set(), 10, 2, 5).renderRange, { lo: 1, hi: 3 });
 });
 
-test("readerTlBallNear：译球摆到原文段右侧外、对齐首行；右边放不下放左边，再不行贴栏右缘", () => {
-  const bounds = { left: 300, right: 400, top: 40, bottom: 0 };
-  const root = { width: 1700, height: 1040 }; // PDF 栏 = x 300–1300，y 40–1040
-  // 左栏段落（右缘 760）：球心 x = 782 → (782-300)/1000 = 48.2%；y = 首行 500+18 → (518-40)/1000
-  const a = readerTlBallNear({ top: 500, left: 320, right: 760 }, bounds, root)!;
-  assert.ok(Math.abs(a.xp - 48.2) < 1e-9 && Math.abs(a.yp - 47.8) < 1e-9);
-  // 段落贴着栏右缘：放到左侧外
-  const b = readerTlBallNear({ top: 500, left: 820, right: 1290 }, bounds, root)!;
-  assert.ok(Math.abs(b.xp - 49.8) < 1e-9);
-  // 整栏宽的段落：贴栏右缘（100%）
-  assert.equal(readerTlBallNear({ top: 500, left: 305, right: 1295 }, bounds, root)!.xp, 98.2);
-  // 栏太小不摆
-  assert.equal(readerTlBallNear({ top: 0, left: 0, right: 10 }, bounds, { width: 720, height: 1040 }), null);
-});
-
 test("对照窗：窗收进 PDF 栏、圈选框换成页内比例、整页时让图注落在窗下方", async () => {
   const r = await import("../src/reader.ts");
   const box = { w: 900, h: 700 };
@@ -880,4 +772,21 @@ test("对照窗：窗收进 PDF 栏、圈选框换成页内比例、整页时让
   assert.equal(r.pdfPeekScrollTop(0.6, 1000, 300), 360);
   assert.equal(r.pdfPeekScrollTop(0.1, 1000, 300), 0);
   assert.equal(r.pdfPeekScrollTop(1, 1000, 300), 700);
+});
+
+test("readerTlWinPlace：译文浮窗摆到原文段下方，放不下放上方，再不行放大的一边贴边；没有原文段放 PDF 栏右上角", async () => {
+  const { readerTlWinPlace } = await import("../src/reader.ts");
+  const bounds = { left: 100, right: 300, top: 40, bottom: 0 };
+  const host = { width: 1400, height: 900 };
+  const win = { w: 416, h: 240 };
+  // 下方够：左缘对齐原文段、贴在它下面 8px
+  assert.deepEqual(readerTlWinPlace({ top: 200, bottom: 320, left: 300 }, bounds, host, win), { x: 300, y: 328 });
+  // 下方不够、上方够：贴在它上面
+  assert.deepEqual(readerTlWinPlace({ top: 500, bottom: 760, left: 300 }, bounds, host, win), { x: 300, y: 252 });
+  // 原文段靠右：横向收回 PDF 栏里（右缘 1400-300-8）
+  assert.equal(readerTlWinPlace({ top: 200, bottom: 320, left: 900 }, bounds, host, win).x, 1092 - 416);
+  // 上下都不够：放空间大的一边，钳在栏里
+  assert.deepEqual(readerTlWinPlace({ top: 260, bottom: 700, left: 300 }, bounds, host, win), { x: 300, y: 48 });
+  // 没有原文段：右上角
+  assert.deepEqual(readerTlWinPlace(null, bounds, host, win), { x: 1092 - 416, y: 48 });
 });

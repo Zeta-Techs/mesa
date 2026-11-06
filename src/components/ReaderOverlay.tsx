@@ -27,7 +27,6 @@ import {
   SPOT_PCT_DEFAULT_R,
   SPOT_SPLIT_L_KEY,
   SPOT_SPLIT_R_KEY,
-  READER_SPLIT_T_KEY,
   buildReaderTranslatePrompt,
   bytesToBase64,
   clampReaderPct,
@@ -35,8 +34,6 @@ import {
   formatReaderCapturePrompt,
   loadReaderDark,
   loadReaderPct,
-  loadReaderTlPct,
-  loadReaderTlPinned,
   loadTlHistory,
   markTlEntrySaved,
   parseBilingual,
@@ -45,11 +42,9 @@ import {
   readerPanelSlideMargin,
   reflowBlockText,
   saveReaderDark,
-  saveReaderTlPinned,
   saveTlHistory,
   translationSavedToast,
   upsertTlEntry,
-  readerTlBallNear,
   type ReaderPdfBounds,
   type GlossaryEntry,
   type ReaderTranslateResult,
@@ -57,6 +52,7 @@ import {
 } from "../reader";
 import ReaderTranslatePanel, {
   type TlPending,
+  type TlPlace,
 } from "./ReaderTranslatePanel";
 import {
   annotationSavedToast,
@@ -67,7 +63,6 @@ import {
   type PdfJumpRef,
   type PdfJumpReq,
 } from "../reader-note";
-import ReaderTlFloat from "./ReaderTlFloat";
 import type { SessionLinkState, TabStatus } from "../pages/TerminalPage";
 import {
   buildSpotCheckPrompt,
@@ -562,27 +557,17 @@ export default function ReaderOverlay({
     [needsProfile],
   );
 
-  // ===== 翻译面板（原位 = 右栏状态行之下、xterm 之上；钉住 = 悬浮 PDF 正文栏右下）：
-  // 历史/pending 状态上提自 PdfContinuousView，下栏只留触发（选段「译」/ ⌘+点击段落
-  // → onTranslate）。localStorage 键不变，另加钉位键 =====
-  /** 翻译面板高度占比（% 右栏总高）：null = 内容自适应（40% 封顶，未拖过）；拖过底缘分割条后
-      显式高度并记忆（同左右分栏口径），双击分割条复位自适应 */
-  const [tlPct, setTlPct] = useState<number | null>(() =>
-    loadReaderTlPct(READER_SPLIT_T_KEY),
-  );
-  /** 译文卡「钉在 PDF 上」（跨收起/展开、跨次进入都保持悬浮球形态）；有效悬浮 = 钉住
-   *  OR 右栏收起/让位（兜底：终端栏收着时译文有地方看，展开即回原位，无需提前钉） */
-  const [tlPinned, setTlPinned] = useState(() => loadReaderTlPinned());
-  const tlFloat = tlPinned || !mountRight || !rightOpen;
-  /** 悬浮球与译文卡只在 PDF 栏里（不盖笔记栏/对话栏/顶栏）：量 PDF 栏离覆盖层四边的距离。
-   *  栏宽随收起滑动、分隔条拖拽变化，RO 逐帧报、按帧合并；只在悬浮档量 */
+  // ===== 译文浮窗（2026-11-06 用户选「只留浮窗」：取代右栏原位 + 悬浮球）：历史/在途/开关上提到这里，
+  // PDF 栏只留触发（选段「译」/ ⌘+点击段落 → onTranslate）与顶栏「译文 N」 =====
+  /** 浮窗只在 PDF 栏里（不盖笔记栏/对话栏/顶栏）：量 PDF 栏离覆盖层四边的距离。
+   *  栏宽随收起滑动、分隔条拖拽变化，RO 逐帧报、按帧合并 */
   const rootRef = useRef<HTMLDivElement>(null);
   const pdfColRef = useRef<HTMLDivElement>(null);
   const [pdfBounds, setPdfBounds] = useState<ReaderPdfBounds | undefined>(undefined);
   useEffect(() => {
     const col = pdfColRef.current;
     const root = rootRef.current;
-    if (!tlFloat || !col || !root) return;
+    if (!col || !root) return;
     let raf = 0;
     const measure = () => {
       cancelAnimationFrame(raf);
@@ -614,7 +599,7 @@ export default function ReaderOverlay({
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [tlFloat]);
+  }, []);
   const [tlHistory, setTlHistory] = useState<TlHistoryEntry[]>([]);
   const [tlPending, setTlPending] = useState<TlPending | null>(null);
   const [tlSaving, setTlSaving] = useState(false);
@@ -627,34 +612,15 @@ export default function ReaderOverlay({
     setTlPending(null);
   }, [pdfPath]);
 
-  // 悬浮会话内「新翻译落地/失败/在途开始」递进信号：球自动展开（译完即见；
-  // 失败也要弹——球关着时错误落地球里静默等于动作失灵）。只认变化不认存量
-  const [tlOpenTick, setTlOpenTick] = useState(0);
-  const tlSeenRef = useRef<{
-    at: string | null;
-    pending: boolean;
-    err: boolean;
-  } | null>(null);
+  /** 浮窗开着没有：翻译开始就开，× 关掉（PDF 顶栏「译文」再开）。换文献关掉 */
+  const [tlOpen, setTlOpen] = useState(false);
   useEffect(() => {
-    if (!tlFloat) {
-      tlSeenRef.current = null;
-      tlStartOpenRef.current = false; // 钉住接续标记只在本次悬浮会话生效
-      return;
-    }
-    const at = tlHistory[0]?.at ?? null;
-    const pending = tlPending !== null;
-    const err = tlPending?.phase === "error";
-    const prev = tlSeenRef.current;
-    tlSeenRef.current = { at, pending, err };
-    if (!prev) return; // 进入悬浮态第一拍只建基线
-    if (
-      (at !== null && at !== prev.at) ||
-      (pending && !prev.pending) ||
-      (err && !prev.err)
-    ) {
-      setTlOpenTick((t) => t + 1);
-    }
-  }, [tlFloat, tlHistory, tlPending]);
+    setTlOpen(false);
+  }, [pdfPath]);
+  /** 新翻译的摆位请求：划词时量到选区就用选区；没有（⌘+点段落）等原文段标出来再摆。
+   *  placedReqRef = 已按真外框摆过的那次请求，之后翻历史不再挪窗 */
+  const [tlPlace, setTlPlace] = useState<TlPlace | null>(null);
+  const placedReqRef = useRef(0);
 
   /** 面板翻译主链路：在途态 → 纯文本翻译 → 成功入历史（同原文替换置顶）。
       写盘放在 setState updater 里：StrictMode 双跑写同样内容，幂等无副作用 */
@@ -662,6 +628,28 @@ export default function ReaderOverlay({
     async (text: string, page: number) => {
       const my = ++tlReqRef.current;
       setTlPending({ text, page, phase: "loading" });
+      setTlOpen(true);
+      // 划词翻译时选区还在：按选区外框摆窗（PDF 栏里的选区才算）
+      const root = rootRef.current;
+      const col = pdfColRef.current;
+      const sel = window.getSelection();
+      if (root && col && sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        const c = col.getBoundingClientRect();
+        if (r.width > 0 && r.bottom > c.top && r.top < c.bottom && r.left < c.right && r.right > c.left) {
+          const rr = root.getBoundingClientRect();
+          placedReqRef.current = my;
+          setTlPlace({
+            key: `sel-${my}`,
+            rect: {
+              top: Math.round(r.top - rr.top),
+              bottom: Math.round(r.bottom - rr.top),
+              left: Math.round(r.left - rr.left),
+              right: Math.round(r.right - rr.left),
+            },
+          });
+        }
+      }
       const r = await requestTranslate(text);
       if (my !== tlReqRef.current) return;
       if (r.ok) {
@@ -682,6 +670,12 @@ export default function ReaderOverlay({
       }
     },
     [requestTranslate, pdfPath],
+  );
+  /** PDF 顶栏「译文 N」（memo 住，PdfContinuousView 是 memo） */
+  const tlCount = tlHistory.length;
+  const tlToolbar = useMemo(
+    () => ({ count: tlCount, open: tlOpen, onToggle: () => setTlOpen((v) => !v) }),
+    [tlCount, tlOpen],
   );
   /** PDF 栏的翻译触发（稳定引用：PdfContinuousView 是 memo） */
   const translateFromPdf = useCallback(
@@ -1005,25 +999,15 @@ export default function ReaderOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tlShown?.at, tlShown?.page],
   );
-  /** 原文段在覆盖层根里的外框（悬浮卡避让用）：标记由文本层异步落位，换条目/开卡后量两次；
-      不跟滚动——读者滚走了卡也不该追着跳 */
-  const [tlAvoid, setTlAvoid] = useState<{
-    top: number;
-    bottom: number;
-    left: number;
-    right: number;
-  } | null>(null);
-  /** 新译文时球该摆的位置（量到原文段才有；按译文条目记 key，同一条只摆一次） */
-  const [tlBallAuto, setTlBallAuto] = useState<{ xp: number; yp: number; key: string } | null>(null);
+  /** 没按选区摆过的这次翻译（⌘+点段落、重试）：原文段标出来后量它的外框，把窗摆到它旁边。
+      标记由文本层异步落位，量两次；不跟滚动，翻历史也不挪窗 */
   useEffect(() => {
-    if (!tlSource || !tlFloat) {
-      setTlAvoid(null);
-      return;
-    }
+    if (!tlSource || placedReqRef.current === tlReqRef.current) return;
+    const req = tlReqRef.current;
     const measure = () => {
       const root = rootRef.current;
       const marks = pdfColRef.current?.querySelectorAll<HTMLElement>('[data-mark-id="tl-source"]');
-      if (!root || !marks || marks.length === 0) return;
+      if (!root || !marks || marks.length === 0 || placedReqRef.current === req) return;
       const rr = root.getBoundingClientRect();
       const col = pdfColRef.current!.getBoundingClientRect();
       let top = Infinity;
@@ -1032,7 +1016,7 @@ export default function ReaderOverlay({
       let right = -Infinity;
       marks.forEach((m) => {
         const r = m.getBoundingClientRect();
-        // 只算露在 PDF 栏里的那部分（滚出去的行不参与避让）
+        // 只算露在 PDF 栏里的那部分
         if (r.bottom < col.top || r.top > col.bottom) return;
         top = Math.min(top, r.top);
         bottom = Math.max(bottom, r.bottom);
@@ -1040,75 +1024,36 @@ export default function ReaderOverlay({
         right = Math.max(right, r.right);
       });
       if (!Number.isFinite(top)) return;
-      const box = {
-        top: Math.round(top - rr.top),
-        bottom: Math.round(bottom - rr.top),
-        left: Math.round(left - rr.left),
-        right: Math.round(right - rr.left),
-      };
-      setTlAvoid(box);
-      const near = readerTlBallNear(
-        box,
-        {
-          left: Math.max(0, col.left - rr.left),
-          right: Math.max(0, rr.right - col.right),
-          top: Math.max(0, col.top - rr.top),
-          bottom: Math.max(0, rr.bottom - col.bottom),
+      placedReqRef.current = req;
+      setTlPlace({
+        key: `src-${req}`,
+        rect: {
+          top: Math.round(top - rr.top),
+          bottom: Math.round(bottom - rr.top),
+          left: Math.round(left - rr.left),
+          right: Math.round(right - rr.left),
         },
-        { width: rr.width, height: rr.height },
-      );
-      const key = tlShownAtRef.current;
-      if (near && key != null) setTlBallAuto({ ...near, key });
+      });
     };
-    setTlAvoid(null);
     const t1 = setTimeout(measure, 120);
     const t2 = setTimeout(measure, 500);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [tlSource, tlFloat]);
+  }, [tlSource]);
 
-  /** 表头「钉住/回栏」：钉住落记忆键（跨收起/展开、跨次进入保持悬浮）；回栏 = 取钉
-      并确保右栏展开——右栏收着时点回栏就是「把侧栏叫回来接住面板」，不让它无声消失。
-      从看得见的卡点钉住时球先展开接续（卡搬家，不是缩成球）；该标记只在本次悬浮
-      会话生效，兜底档（收起右栏自动出球）仍收着球起步 */
-  const tlStartOpenRef = useRef(false);
-  function toggleTlPlacement() {
-    if (tlFloat) {
-      setTlPinned(false);
-      saveReaderTlPinned(false);
-      // 回栏顺手展开右栏要带滑入过渡（与顶栏按钮同款成对翻转，否则瞬跳）
-      if (!rightOpen) {
-        setRightOpen(true);
-        setRightSlide(true);
-      }
-    } else {
-      tlStartOpenRef.current = true;
-      setTlPinned(true);
-      saveReaderTlPinned(true);
-    }
-  }
-
-  // 翻译面板两档摆位共用一套 props；摆位差异只在 heightPct（% 右栏高，悬浮档恒 null）
   const tlPanelProps = {
+    open: tlOpen,
+    onClose: () => setTlOpen(false),
+    bounds: pdfBounds,
+    place: tlPlace,
     onDisplay: setTlShown,
-    avoidRect: tlFloat ? tlAvoid : null,
     latest: tlHistory[0] ?? null,
     pending: tlPending,
     history: tlHistory,
     saving: tlSaving,
     canSave: !noteReadOnly,
-    onTogglePlacement: toggleTlPlacement,
-    onResize: setTlPct,
-    onResizeEnd: (pct: number) => {
-      setTlPct(pct);
-      localStorage.setItem(READER_SPLIT_T_KEY, String(Math.round(pct)));
-    },
-    onResizeReset: () => {
-      setTlPct(null);
-      localStorage.removeItem(READER_SPLIT_T_KEY);
-    },
     onRetry: (text: string, page: number) => void runTranslate(text, page),
     onCancelPending: () => {
       tlReqRef.current++;
@@ -1422,6 +1367,7 @@ export default function ReaderOverlay({
               dark={readerDark}
               onRequestTranslate={requestTranslate}
               onTranslate={translateFromPdf}
+              translations={tlToolbar}
               onAddGlossary={addGlossary}
               annotations={annotations}
               onAddAnnotation={noteReadOnly ? undefined : addAnnotation}
@@ -1454,11 +1400,6 @@ export default function ReaderOverlay({
             >
                 {/* 状态行：状态点 + agent 名 · 模型 + 启动中/运行中（终端页同语义）。
                     下方就是该阅读会话标签的 xterm 画面（宿主 DOM 搬移，PTY/scrollback 不动） */}
-                {/* 翻译面板在上，自成一张卡。下面的对话另起一张，中间留出栏底。
-                    钉住档 / 右栏收起时不在此渲染——同一张卡悬浮到 PDF 正文栏（见 PDF 栏） */}
-                {!tlFloat && (
-                  <ReaderTranslatePanel {...tlPanelProps} heightPct={tlPct} />
-                )}
                 {spotMode && spotCheck ? (
                   // 抽查核对档：右栏是问题单（不派阅读会话——它在项目根运行，改不到工作区里这份笔记）
                   <SpotCheckPanel
@@ -1582,18 +1523,8 @@ export default function ReaderOverlay({
         )}
       </div>
 
-      {tlFloat && (
-        // 译文悬浮档（钉住显式声明，或右栏收起时的兜底）：挂覆盖层根、坐标域是 PDF 栏（bounds）。
-        // 新译文落地时球先摆到原文段旁（autoPos），拖动状态留在球组件内，不惊动三栏树
-        <ReaderTlFloat
-          panelProps={tlPanelProps}
-          hasContent={Boolean(tlHistory[0] || tlPending)}
-          openTick={tlOpenTick}
-          startOpen={tlStartOpenRef.current}
-          bounds={pdfBounds}
-          autoPos={tlBallAuto}
-        />
-      )}
+      {/* 译文浮窗：挂覆盖层根、只在 PDF 栏里活动（bounds） */}
+      <ReaderTranslatePanel {...tlPanelProps} />
 
       {/* 保存译段/生词本结果 toast：右下角浮出 2.5s 淡出（✓/✗ 语义色小标） */}
       {toast && (
