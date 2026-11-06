@@ -30,6 +30,7 @@ export function ReworkDialog({
   unplaced = [],
   litTargets = [],
   initial,
+  fromInProgress = false,
   busy,
   error,
   onCancel,
@@ -46,6 +47,8 @@ export function ReworkDialog({
   litTargets?: string[];
   /** 整张单子预填（项目助手起草的补料单，2026-11-06）：给了就不按 prefill 换主题 */
   initial?: { target: string; topics: string; reason: string; clues: string; scale: number | null };
+  /** 发起的这一步还没保存（做到一半 / 待评审，2026-11-06 流程贯通 §5）：说明它之后怎么接上补来的 */
+  fromInProgress?: boolean;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -76,9 +79,12 @@ export function ReworkDialog({
       layer="overlay"
       title={lit ? "退回上一步补料" : "退回上一步修改"}
       description={
-        lit
-          ? `从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，之后这一步再点「跟进上游的新增」接上。`
-          : `从「${fromStep}」退回。AI 只改你列的这些，你确认过的内容不推翻；做完照常去评审、保存进项目，之后这一步再点「跟进上游的新增」接上。`
+        (lit
+          ? `从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，`
+          : `从「${fromStep}」退回。AI 只改你列的这些，你确认过的内容不推翻；做完照常去评审、保存进项目，`) +
+        (fromInProgress
+          ? `之后在「${fromStep}」点「继续」，会先把${lit ? "补" : "改"}来的并进来再接着做（这一步不用先保存）。`
+          : `之后「${fromStep}」再点「跟进上游的新增」接上。`)
       }
       dismissOnBackdrop={!busy}
       onClose={() => {

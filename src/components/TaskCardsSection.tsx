@@ -1365,51 +1365,57 @@ export default function TaskCardsSection({
             }
             onContinueStep={() => continueFocusedStep()}
             loopActions={(() => {
-              // 已保存 / 待评审的步骤：跟进上游的新增（待跟进时）与退回上一步补料（design-review-loop.md §4/§5）
-              // 只在已保存时给：待评审时退回补料，之后按旧版本保存，下游就没人提示它没用上补来的（2026-11-05 排查）
-              // 做到一半上游又保存过（2026-11-06 流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
+              // 退回上一步补料（design-review-loop.md §4）：这一步开过工就有——做到一半、待评审、已保存都能回头（2026-11-06 流程贯通 §5；
+              // 原先只在已保存时给，因为没并入就保存会把「待跟进」盖掉，§3 改判定后这个顾虑没了）。跟进上游的新增（§5）只在已保存且待跟进时给
+              const upstreamSteps = reworkTargets(steps, focusIdx);
+              const targets = upstreamSteps.map((s) => s.name);
+              // 默认退回最近的上一步：它是找 / 读文献的就叫「补料」，大纲、初稿这类叫「修改」
+              const nearestLit = !!upstreamSteps[0] && isLitStep(upstreamSteps[0]);
+              const reworkButton = targets.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void openRework()}
+                  title={
+                    nearestLit
+                      ? "这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补。这一步做到一半也可以，不用先保存"
+                      : "做这一步时发现上游要改（比如大纲某节的顺序撑不住）：写清改什么，交给上一步另开一轮去改。这一步做到一半也可以，不用先保存"
+                  }
+                  className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  {nearestLit ? "退回上一步补料…" : "退回上一步修改…"}
+                </button>
+              );
+              // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
-                if (!live?.staleUpstream) return null;
+                if (!live?.staleUpstream && !reworkButton) return null;
                 return (
-                  <span
-                    className="shrink-0 text-xs text-warn-text"
-                    title="这一步的工作副本还没并入上游这次保存的内容。点「继续」（待评审时在评审里退回修改）会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
-                  >
-                    上游「{live.staleUpstream}」有新内容，{focusRunStatus === "review" ? "这一版还没用上" : "继续时会先并进来"}
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    {reworkButton}
+                    {live?.staleUpstream && (
+                      <span
+                        className="shrink-0 text-xs text-warn-text"
+                        title="这一步的工作副本还没并入上游这次保存的内容。点「继续」（待评审时在评审里退回修改）会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
+                      >
+                        上游「{live.staleUpstream}」有新内容，{focusRunStatus === "review" ? "这一版还没用上" : "继续时会先并进来"}
+                      </span>
+                    )}
                   </span>
                 );
               }
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
-              const upstreamSteps = reworkTargets(steps, focusIdx);
-              const targets = upstreamSteps.map((s) => s.name);
-              // 默认退回最近的上一步：它是找 / 读文献的就叫「补料」，大纲、初稿这类叫「修改」
-              const nearestLit = !!upstreamSteps[0] && isLitStep(upstreamSteps[0]);
               const follow = !!ws?.staleUpstream;
               if (!follow && targets.length === 0) return null;
               return (
                 <span className="flex shrink-0 items-center gap-1.5">
-                  {targets.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => void openRework()}
-                      title={
-                        nearestLit
-                          ? "这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补"
-                          : "做这一步时发现上游要改（比如大纲某节的顺序撑不住）：写清改什么，交给上一步另开一轮去改"
-                      }
-                      className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                    >
-                      {nearestLit ? "退回上一步补料…" : "退回上一步修改…"}
-                    </button>
-                  )}
+                  {reworkButton}
                   {follow && (
                     <button
                       type="button"
                       disabled={followBusy}
                       onClick={() => void followUpstream()}
-                      title={`上游「${ws?.staleUpstream}」在这一步保存之后又保存过：只处理新增的部分，已有的不重做（先告诉你有多少再开始）`}
+                      title={`上游「${ws?.staleUpstream}」保存过新内容，这一步还没并进来：只处理新增的部分，已有的不重做（先告诉你有多少再开始）`}
                       className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
                     >
                       {followBusy ? "正在算新增…" : "跟进上游的新增"}
@@ -1663,6 +1669,7 @@ export default function TaskCardsSection({
           litTargets={reworkTargets(steps, focusIdx)
             .filter((st) => isLitStep(st))
             .map((st) => st.name)}
+          fromInProgress={focusRunStatus !== "done"}
           prefill={reworkPrefill}
           unplaced={reworkUnplaced}
           busy={reworkBusy}

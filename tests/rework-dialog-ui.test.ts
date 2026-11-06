@@ -46,6 +46,7 @@ test("退回弹层：退回文献步骤叫补料问篇数，退回大纲叫修�
       onCancel() {}, onSend: (f: Record<string, unknown>) => sent.push(f),
     })));
     assert.match(body(), /退回上一步修改/);
+    assert.match(body(), /再点「跟进上游的新增」接上/, "已保存的步骤发起：之后点跟进");
     assert.match(body(), /要改的地方/);
     assert.doesNotMatch(body(), /补多少篇/);
     const area = dom.window.document.querySelector("textarea")!;
@@ -58,6 +59,13 @@ test("退回弹层：退回文献步骤叫补料问篇数，退回大纲叫修�
     assert.match(body(), /退回上一步补料/);
     assert.match(body(), /大致补多少篇/);
     assert.ok(button("退回去补"));
+    // 做到一半发起：说明之后点「继续」会先并进来，不用先保存
+    await act(async () => root.render(h(ReworkDialog, {
+      key: "in-progress",
+      fromStep: "综述大纲", targets: ["文献精读与笔记"], litTargets: ["文献精读与笔记"], fromInProgress: true,
+      busy: false, error: null, onCancel() {}, onSend() {},
+    })));
+    assert.match(body(), /在「综述大纲」点「继续」，会先把补来的并进来再接着做（这一步不用先保存）/);
   } finally {
     await act(async () => root.unmount());
     for (const [key, desc] of restore) {
