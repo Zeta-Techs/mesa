@@ -75,6 +75,7 @@ import {
   type WaitScreen,
 } from "../terminal-wait";
 import type { AskAction } from "../tui-ask";
+import { classifierBillingNotice, classifierNoticeText, setClassifierNoticeAutoSkip } from "../cli-notices";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
   channelSourceNote,
@@ -938,6 +939,7 @@ export default function ChatSurface({
   const helpHere = cwd
     ? Object.entries(helpPending).find(([root]) => pathWithin(cwd, root, IS_WINDOWS))
     : undefined;
+  const billingNotice = classifierBillingNotice(tuiNotice);
   const decision: ChatDecision | null =
     failureDecision
       ? failureDecision
@@ -1065,6 +1067,25 @@ export default function ChatSurface({
                 onClick: () => onAnswerMenu?.(i),
               })),
             }
+          : tuiNotice && billingNotice
+            ? {
+                // 认得出的「auto mode 分类器计费」说明（cli-notices.ts，2026-11-06）：中文说清不用处理，可勾以后自动略过
+                key: `tui-notice:${tuiNotice.join("\n")}`,
+                title: "Claude Code 的一条计费说明，不用处理",
+                detail: classifierNoticeText(billingNotice.gateway),
+                hint: "英文原文在终端里（点「露出终端」看）；以后自动略过可在设置「AI 与 Agent」里关掉",
+                options: [
+                  { label: "知道了，继续", primary: true, title: "往终端按回车", onClick: () => onApprovalKey?.("enter") },
+                  {
+                    label: "以后自动略过",
+                    title: "这次继续，以后这条说明由 Mesa 替你按回车（只这一条）",
+                    onClick: () => {
+                      setClassifierNoticeAutoSkip(true);
+                      onApprovalKey?.("enter");
+                    },
+                  },
+                ],
+              }
           : tuiNotice
             ? {
                 // Claude 一轮中途弹的通知（2026-10-21：经第三方网关时 auto mode 分类器计费说明），按回车前这一轮停着；

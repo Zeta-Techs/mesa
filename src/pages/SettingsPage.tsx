@@ -1,4 +1,5 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
+import { classifierNoticeAutoSkip, setClassifierNoticeAutoSkip } from "../cli-notices";
 import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1784,6 +1785,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   // 精确注意力标记支持清单（九家全列出，支持与否与备注以后端注册表为准）
   const [hookSupport, setHookSupport] = useState<HookSupport[]>([]);
+  // Claude 计费说明自动略过（cli-notices.ts，只记在本机 localStorage）
+  const [noticeSkip, setNoticeSkip] = useState(classifierNoticeAutoSkip);
   const [hookSupportError, setHookSupportError] = useState<string | null>(null);
   async function loadHookSupport() {
     try {
@@ -3880,6 +3883,19 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </Card>
           );
         })()}
+        <Row
+          label="Claude 计费说明"
+          hint="Claude Code 走第三方网关、用「帮我批准」时每天弹一次的英文说明，弹着时 AI 停着等你按继续。开着就由 Mesa 替你按（只这一条，按继续不改任何设置）"
+        >
+          <Toggle
+            label="自动略过 Claude 计费说明"
+            checked={noticeSkip}
+            onChange={(checked) => {
+              setClassifierNoticeAutoSkip(checked);
+              setNoticeSkip(checked);
+            }}
+          />
+        </Row>
         <FeishuSettingsCard />
       </Section>
 

@@ -280,6 +280,10 @@
   选择器开着（发了会开选择器的命令到屏上回到输入框，最多 30 秒），或 Agent 静止 4 秒且这家有画面布局表、屏上没有它的输入框；
   看得见输入框或认得出的屏不出摘录。等确认 / 静止时 TerminalView 也扫一次屏（停在菜单上不再出字，没有输出驱动扫屏）。
   Grok 不给 Esc（`escInterruptSafe`）。出卡记一次「聊天层转到终端」计数（原因不变：认不出的确认 / 卡住 / 选择器）。
+  **认得出的通知（2026-11-06，§10 同日条）**：`parseTuiNotice` 认出的「要按回车才继续」通知算 attention=confirm（进收件箱 / 系统通知）。
+  其中 Claude「auto mode 分类器计费」说明由 `cli-notices.ts classifierBillingNotice` 认（固定句子 + 取网关名），聊天层出中文卡「不用处理」，
+  按钮「知道了，继续」/「以后自动略过」；勾了自动略过（localStorage `ccode.autoSkipClassifierNotice`，设置「AI 与 Agent」可关）后 TerminalView 扫屏认出即替人按回车（3 秒一次），
+  这条也不再算等你。只认这一条：别的通知照旧出卡等人点；不写 CLI 配置压掉它。
   **Claude Code 首次启动**：配色屏挪到「Auto (match terminal)」（Windows 的 ConPTY 吞底色查询，按 Mesa 主题选 Light / Dark mode），
   读屏核对高亮再回车；安全须知回车；聊天里留一行说明、原文可展开。CLI 比核对过的新、或每屏试三次没成，不替人按，交给通用卡。
   信任文件夹仍走信任卡、由人点。不写 `~/.claude.json` 跳过引导（配置目录只读）。2.1.308 实录样本在 `tests/fixtures/terminal-wait/`。

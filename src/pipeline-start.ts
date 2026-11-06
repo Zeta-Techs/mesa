@@ -445,6 +445,8 @@ export async function buildWorkspaceTerminalRequest(
     // 开工弹层的本次思考档覆盖（空 = 绑定默认）：随标签种子传递，launch 时经
     // pty_spawn effortOverride 注入，不写回绑定
     effort: opts?.launch?.effort ?? undefined,
+    // 开工弹层选的权限档（只加在这次命令行）；没选 = 按本机设置
+    ...(opts?.launch?.permissionMode ? { permission: "write_tree" as const, permissionMode: opts.launch.permissionMode } : {}),
     resume: resume ?? undefined,
     initialPrompt,
     autoStart: Boolean(opts?.autoStart && chain.profileId),

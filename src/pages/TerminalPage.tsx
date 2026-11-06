@@ -204,6 +204,7 @@ import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
 import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
+import { classifierBillingNotice, classifierNoticeAutoSkip } from "../cli-notices";
 import {
   claudeFirstRunStep,
   claudeThemeLabel,
@@ -2503,6 +2504,8 @@ const TerminalView = memo(function TerminalView({
   // 要按回车才继续的通知（Claude 中途弹的计费说明等）：同一次扫屏认，弹着时一直扫到它消失
   const [tuiNotice, setTuiNotice] = useState<string[] | null>(null);
   const tuiNoticeRef = useRef<string[] | null>(null);
+  // 上次替人按掉计费说明的时刻（cli-notices.ts）
+  const noticeSkipAtRef = useRef(0);
   function setTuiNoticeLines(next: string[] | null) {
     if ((tuiNoticeRef.current?.join("\n") ?? null) === (next?.join("\n") ?? null)) return;
     tuiNoticeRef.current = next;
@@ -2612,6 +2615,12 @@ const TerminalView = memo(function TerminalView({
     // 要按回车继续的通知也带 Esc to cancel：认出通知时不当面板（面板卡的按钮是 Esc，按了会取消）
     const notice = found === null ? parseTuiNotice(lines, launchAgentRef.current) : null;
     setTuiNoticeLines(notice);
+    // 「auto mode 分类器计费」说明：用户勾过「以后自动略过」就替他按回车（只认这一条，回车不改任何设置；cli-notices.ts）。
+    // 3 秒内只按一次：按完屏还没换过来的那几帧不重复按
+    if (notice && classifierBillingNotice(notice) && classifierNoticeAutoSkip() && Date.now() - noticeSkipAtRef.current > 3000) {
+      noticeSkipAtRef.current = Date.now();
+      pressWaitKey("enter");
+    }
     const panel = found === null && notice === null && parseTuiPanel(lines, launchAgentRef.current);
     setPanelOpen(panel);
     const inputBox = terminalHasInputBox(lines, launchAgentRef.current);
@@ -3192,10 +3201,12 @@ const TerminalView = memo(function TerminalView({
       // 屏上认出了等你选的菜单（工具审批 / 启动信任 / 切换确认，tui-menu.ts、trust-prompt.ts）也算 confirm
       // （2026-10-18）：原先「等你确认」只靠 hooks 精确注意力（要在设置里逐家打开）或会话尾部推断，没开 hooks 的家
       // 在等你批准时收件箱、标签黄点、系统通知全都不响；读屏认得出的七家（tui-menu.ts 样本）不用装 hooks。
+      // 要按回车才继续的通知（tui-panel.ts parseTuiNotice）同样算等你：弹着时这一轮停着（2026-11-06 补；
+      // 勾了自动略过的计费说明 Mesa 会替人按掉，不算）。
       // 反过来，hooks 还说「等批准」、屏上却已回到输入框：答过了，工具在跑（hooksApprovalAnswered）
       attention:
         running && !shellActive
-          ? menuPrompt || trustPrompt
+          ? menuPrompt || trustPrompt || (tuiNotice && !(classifierBillingNotice(tuiNotice) && classifierNoticeAutoSkip()))
             ? "confirm"
             : attention === "confirm" && hooksApprovalAnswered(channel, promptIdle)
               ? "working"
@@ -9421,6 +9432,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       initialAgentId: launchAgentId ?? t.initialAgentId,
                       initialProfileId: profileId || t.initialProfileId,
                       initialModel: model ?? t.initialModel,
+                      // 开工弹层选的权限档：同一工作区的标签复用时也换上（2026-11-06）
+                      ...(pt.permissionMode ? { permission: "write_tree" as const, permissionMode: pt.permissionMode } : {}),
                       launchSeed: (t.launchSeed ?? 0) + 1,
                       resumeSessionId: pt.resume ? pt.resume.sessionId : undefined,
                       resumeProvider: pt.resume

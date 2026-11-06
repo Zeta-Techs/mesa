@@ -12,6 +12,59 @@ export interface KickoffLaunch {
   /** 本次思考档覆盖（2026-09-15）：空 = 用绑定逐模型策略/端点默认；
    *  非空经 pty_spawn 的 effortOverride 注入，不写回绑定 */
   effort?: string | null;
+  /** 这一步用哪一档原生权限（2026-11-06 用户拍板：开工弹层能选，默认「帮我批准」）：
+   *  经标签种子 permissionMode → pty_spawn 只加在这次命令行；null / 缺省 = 按这家 CLI 本机设置 */
+  permissionMode?: KickoffPermission | null;
+}
+
+/** 开工能选的三档（先出方案不在这里：步骤要写文件） */
+export type KickoffPermission = "ask" | "auto" | "full";
+export const KICKOFF_PERMISSIONS: readonly KickoffPermission[] = ["ask", "auto", "full"];
+
+/** 开工弹层里每档的说明：按「一步要跑很久、人可能走开」来写 */
+export const KICKOFF_PERMISSION_TEXT: Record<KickoffPermission, string> = {
+  ask: "改文件、跑脚本前都先停下问你。一步要点很多次，你走开它就停着",
+  auto: "日常改文件、跑脚本直接做，删文件这类有风险的才停下问你",
+  full: "什么都不再问你，删文件也不问。只在你清楚这一步要做什么时用",
+};
+
+function kickoffPermKey(projectRoot: string): string {
+  return `ccode.kickoffPerm.${projectRoot}`;
+}
+
+/** 本项目上次开工选的档：只记「请求批准 / 帮我批准」——完全访问每次都要重新选、重新确认，不默认带上 */
+export function loadKickoffPermission(projectRoot: string): KickoffPermission | null {
+  try {
+    const v = localStorage.getItem(kickoffPermKey(projectRoot));
+    return v === "ask" || v === "auto" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveKickoffPermission(projectRoot: string, tier: KickoffPermission): void {
+  try {
+    if (tier === "full") localStorage.removeItem(kickoffPermKey(projectRoot));
+    else localStorage.setItem(kickoffPermKey(projectRoot), tier);
+  } catch {
+    /* 不记即可 */
+  }
+}
+
+/** 开工弹层预选哪一档：本项目上次选的 > 这家 CLI 本机设置对应的 > 帮我批准 > 请求批准；
+ *  这家一档原生参数都没有（available 空）返回 null = 按本机设置，不给选 */
+export function pickKickoffPermission(
+  available: readonly string[],
+  remembered: KickoffPermission | null,
+  localTier: string | null | undefined,
+): KickoffPermission | null {
+  const ok = (t: string | null | undefined): t is KickoffPermission =>
+    !!t && (KICKOFF_PERMISSIONS as readonly string[]).includes(t) && available.includes(t);
+  if (ok(remembered)) return remembered;
+  if (ok(localTier)) return localTier;
+  if (ok("auto")) return "auto";
+  if (ok("ask")) return "ask";
+  return null;
 }
 
 // ===== 开工项目级记忆（B1）：ccode.kickoffLast.<projectRoot> =====

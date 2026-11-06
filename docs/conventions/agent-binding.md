@@ -44,6 +44,11 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 
 ## 关键机制
 
+- **开工弹层的权限档（2026-11-06）**：「权限」一行可选 请求批准 / 帮我批准 / 完全访问（这家 `permissionModes` 没有的不列；一档都没有 = 按本机设置、不给选）。
+  预选 `pickKickoffPermission`：本项目上次（`ccode.kickoffPerm.<root>`，只记 ask / auto）> CLI 本机设置（`cli_default_permission`）> auto > ask。
+  完全访问走 `confirmPermissionChoice` 二次确认、不记成项目默认。值经 `KickoffLaunch.permissionMode` → `buildWorkspaceTerminalRequest` 标签种子
+  （`permission: write_tree` + `permissionMode`；同一工作区复用的闲置标签 reseed 时一并换上）→ pty_spawn 只加在这次命令行，不写 CLI 配置。分路各路同一档。
+
 - **开工弹层两态勾选**「存为本步骤默认」：勾=写槽；不勾=槽原样不动（临时换一次不毁绑定）；清槽唯一入口在 Agents 页步骤组行内。勾选框初值=槽存在且当前选择==槽值；偏离时自动摘勾并披露「已存默认 X；本次用 Y」。
 - **开工记忆拆键**：确认无条件写项目级 `ccode.kickoffLast.<projectRoot>`（预填+折叠判定 `!(stepBinding || preferredAgent || kickoffLast)`）；弹层停写 ccode.askAi（那是 AskAiModal 自管的键）。kickoffLast 缺失时只读回落 askAi 记忆做首跑预填（不回写）。
 - **工作区配置三链**：`workspaceLaunchChain`（launch > stepLaunch > wsLast）纯函数单一出处——buildWorkspaceTerminalRequest 与 organizePdfExcerpt 共用，勿在别处手拼。归属判定 `cfg.steps.find(s => s.workspaceName === ws.name)` **first-match**（wsStepMap 是 last-wins，勿混用）。

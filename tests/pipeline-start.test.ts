@@ -451,6 +451,14 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
     store["ccode.wsLast./p/.mesa/ws-data-clean"] = JSON.stringify({ agentId: "codex", profileId: "p-disabled", model: "m1" });
     const req3 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
     assert.equal(req3.profileId, "p-disabled", "未停用的记忆照常预填");
+    // ④ 开工弹层选的权限档随标签种子带过去（2026-11-06）；没选不带，按本机设置
+    const req4 = await api.buildWorkspaceTerminalRequest(ws, "开工", {
+      autoStart: true,
+      launch: { agentId: "codex", profileId: "p-disabled", model: "m1", permissionMode: "auto" },
+    });
+    assert.equal(req4.permission, "write_tree");
+    assert.equal(req4.permissionMode, "auto");
+    assert.equal(req3.permissionMode, undefined);
   } finally {
     if (lsPrev === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
     else (globalThis as { localStorage?: unknown }).localStorage = lsPrev;

@@ -17,7 +17,9 @@ import {
   primaryActionClass,
   secondaryActionClass,
   InlineNotice,
+  SegTabs,
 } from "./PageFrame";
+import { PERMISSION_TIERS, confirmPermissionChoice } from "./ChatPermissionBadge";
 import StepSkillsChips from "./StepSkillsChips";
 import HumanTasksList from "./HumanTasksList";
 import { useAppStore } from "../store";
@@ -33,11 +35,17 @@ import {
 import { userWorkDirtyFiles } from "../git-status-groups";
 import { loadAskAiRemembered } from "../ask-ai";
 import {
+  KICKOFF_PERMISSIONS,
+  KICKOFF_PERMISSION_TEXT,
   kickoffLaunchLabel,
   loadKickoffLast,
+  loadKickoffPermission,
   pickKickoffLaunch,
+  pickKickoffPermission,
   saveKickoffLast,
+  saveKickoffPermission,
   type KickoffLaunch,
+  type KickoffPermission,
 } from "../kickoff-launch";
 import {
   stepSlotKey,
@@ -441,12 +449,46 @@ export default function KickoffConfirmDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, agents]);
 
+  // 这一步用哪一档权限（2026-11-06 用户拍板，推翻 2026-09-15「不做成选项」）：AI 跑一步要很久、人常走开，
+  // 停在审批上就白等；默认帮我批准，完全访问要再确认、不记成项目默认。这家没有原生权限参数的不给选（按本机设置）
+  const permAvailable = useMemo(
+    () => agents.find((a) => a.id === agentId)?.permissionModes ?? [],
+    [agents, agentId],
+  );
+  const [localPermTier, setLocalPermTier] = useState<string | null>(null);
+  useEffect(() => {
+    let stale = false;
+    invoke<{ tier: string | null } | null>("cli_default_permission", { agent: agentId })
+      .then((note) => {
+        if (!stale) setLocalPermTier(note?.tier ?? null);
+      })
+      .catch(() => {
+        if (!stale) setLocalPermTier(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [agentId]);
+  const [permPick, setPermPick] = useState<KickoffPermission | null>(null);
+  const permTier: KickoffPermission | null =
+    permPick && permAvailable.includes(permPick)
+      ? permPick
+      : pickKickoffPermission(permAvailable, loadKickoffPermission(projectPath), localPermTier);
+  async function choosePermission(tier: KickoffPermission) {
+    if (tier === "full" && permTier !== "full") {
+      const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
+      if (!(await confirmPermissionChoice(label, "full", false))) return;
+    }
+    setPermPick(tier);
+  }
+
   const launch: KickoffLaunch | null = profileId
     ? {
         agentId,
         profileId,
         model: model.trim(),
         effort: kickEffort.trim() || null,
+        permissionMode: permTier,
       }
     : null;
   const launchLine = kickoffLaunchLabel(launch, profiles, (id) =>
@@ -834,6 +876,7 @@ export default function KickoffConfirmDialog({
         profileId: launch.profileId,
         model: launch.model,
       });
+      if (launch.permissionMode) saveKickoffPermission(projectPath, launch.permissionMode);
       if (saveStepDefault) {
         // 失败不拦开工（fire-and-forget）：槽写不进只是没记住默认，开工照常；
         // 但「勾了却没存成」要让人知道（典型：记忆里残留的模型不在所选连接名单）
@@ -1170,11 +1213,31 @@ export default function KickoffConfirmDialog({
           )}
         </KickoffRow>
 
-        {/* 运行权限（2026-09-15）：不做成选项——步骤执行必然可写，边界一句话，细节进悬浮 */}
+        {/* 运行权限（2026-11-06 用户拍板改成可选，取代 2026-09-15「不做成选项」）：选这一步会在什么时候停下问你；
+            可写范围仍是一句话，细节进悬浮 */}
         {launch && (
-          <KickoffRow label="权限">
+          <KickoffRow label="权限" title="这一步遇到什么会停下来问你；只对这一次生效，不改 CLI 自己的设置">
+            {permTier ? (
+              <div className="min-w-0">
+                <SegTabs
+                  variant="boxed"
+                  size="sm"
+                  items={KICKOFF_PERMISSIONS.filter((t) => permAvailable.includes(t)).map((t) => ({
+                    id: t,
+                    label: PERMISSION_TIERS.find((x) => x.id === t)?.label ?? t,
+                  }))}
+                  value={permTier}
+                  onChange={(t) => void choosePermission(t)}
+                />
+                <p className={`mt-1 text-micro ${permTier === "full" ? "text-caution-text" : "text-l3"}`}>
+                  {KICKOFF_PERMISSION_TEXT[permTier]}
+                </p>
+              </div>
+            ) : (
+              <p className="pt-px text-micro text-l3">按这家 CLI 本机设置</p>
+            )}
             <p
-              className="pt-px text-micro text-l3"
+              className="mt-0.5 text-micro text-l4"
               title="原始文献 PDF 直接放项目根 papers/；清洗后的数据、图、成稿等派生产物写在步骤工作区，经你评审后才合并进项目"
             >
               可写：步骤工作区、项目根 papers/（原始文献）

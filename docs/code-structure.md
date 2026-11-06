@@ -891,6 +891,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
   prompt-suggestion.ts       # Claude「猜你下一句」：输入框那一行除第一个字外全是灰字才算（readPromptSuggestion），排除 Try "…" 等固定提示；
                              # 聊天输入框空着时当占位字显示、Tab 填入（tests/prompt-suggestion.test.ts）
   screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色 / 字色 / 斜体，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题、Kimi 选择器的说明行、Kimi 收起的思考 italicLine）
+  cli-notices.ts             # 认得出的 CLI 中途通知：classifierBillingNotice（Claude auto mode 分类器计费说明，取网关名）+ 中文说明 + 「以后自动略过」开关（localStorage，只这一条；ChatSurface 出卡、TerminalView 扫屏替按、SettingsPage 开关；tests/kickoff-permission.test.ts）
   tui-panel.ts               # parseTuiNotice：没有输入框 + 「Enter to continue」= 要按回车才继续的通知（Claude 中途弹的计费说明），
                              #   聊天层给「继续」卡（回车），认出时不再当面板；
                              # 认「终端里开着一个面板」（parseTuiPanel：没有该家输入框 + Esc to cancel/close 一类关闭提示；/cost、/usage 的 Settings 面板）：
@@ -1042,7 +1043,7 @@ gateway-catalog.ts         # 网关目录刷新合并 mergeGatewayCatalog（Gate
                              # （报告自述，不是系统认证；tests/step-evidence.test.ts）
   review-save-copy.ts        # 科研保存链白话：保存进项目；不是编程合进基准、不是科研验收决定
   kickoff-inputs.ts          # 开步确认弹层「上一步接到的输入」芯片；isDeclaredStepInput 排除已声明输入，不进未登记列表；
-kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（指定绑定 > 记忆三元组 > 名册第一条；模型只在同一条连接名单里才沿用记忆值——别家连接的模型名带过来会启动失败）、codingTerminalLaunch（编程开工/进入工作树：项目绑了 Agents 直接拉起 autoStart）、kickoffLaunchLabel；开工项目级记忆 ccode.kickoffLast.<projectRoot>（2026-09-15 B1：与问 AI 的 ccode.askAi 彻底分键、此前两处互相覆写 useDefault；effort 是本次覆盖不入记忆；缺失时只读回落 loadAskAiRemembered 首跑预填不回写）（KickoffConfirmDialog / ProjectGroup / CodingProjectView / pipeline-start 消费；tests/kickoff-launch.test.ts）
+kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（指定绑定 > 记忆三元组 > 名册第一条；模型只在同一条连接名单里才沿用记忆值——别家连接的模型名带过来会启动失败）、codingTerminalLaunch（编程开工/进入工作树：项目绑了 Agents 直接拉起 autoStart）、kickoffLaunchLabel；开工项目级记忆 ccode.kickoffLast.<projectRoot>（2026-09-15 B1：与问 AI 的 ccode.askAi 彻底分键、此前两处互相覆写 useDefault；effort 是本次覆盖不入记忆；缺失时只读回落 loadAskAiRemembered 首跑预填不回写）；开工权限档 KickoffPermission / pickKickoffPermission（本项目上次 ask|auto > 本机设置 > auto > ask，完全访问不记）与 ccode.kickoffPerm.<root>（KickoffConfirmDialog / ProjectGroup / CodingProjectView / pipeline-start 消费；tests/kickoff-launch.test.ts）
                              #   unsavedUpstreamSteps：前面哪些步骤（进行中/待评审/有冲突）的产物与本步必读输入重叠、还没保存进项目
                              #   （模式按首个 * 前缀互相覆盖判定，宁多认；tests/kickoff-upstream.test.ts）
   lit-list.ts                # 无流程科研文献/笔记列表：展示名、编号、状态与过滤纯逻辑；pdfLitState + LIT_STATE_LABELS（文件页 PDF 行与资源列表同一套状态词）
