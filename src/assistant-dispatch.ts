@@ -298,7 +298,9 @@ export async function dispatchStatus(
   if (!ws) return { text: "工作副本不在了（可能已保存进项目并归档）", tone: "idle" };
   const health = await invoke<{ ahead: number; uncommitted: boolean }>("workspace_health", { id: ws.id }).catch(() => null);
   if (health && health.ahead > 0) return { text: "做完了，等你评审、保存进项目", tone: "done", phase: "review" };
-  if (ws.mergedAt && health?.ahead === 0) return { text: "已保存进项目", tone: "idle", phase: "accepted" };
+  // 派出之后又保存过才算（接回的是已保存的步骤时，旧的保存时间不能当成这件活做完了，2026-11-06）
+  const savedAfter = !!ws.mergedAt && Date.parse(ws.mergedAt) > Date.parse(rec.at);
+  if (savedAfter && health?.ahead === 0) return { text: "已保存进项目", tone: "idle", phase: "accepted" };
   return { text: live ? "这一轮说完了，等你看" : "停下了，没看到新的改动", tone: "idle" };
 }
 

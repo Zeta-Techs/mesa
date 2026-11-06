@@ -416,3 +416,44 @@ test("话与事实分开：声称自己做了动作的句子换成如实说明�
     assert.equal(guardClaims(ok).flagged, false, ok);
   }
 });
+
+test("补料单：退回到哪步、补什么、为什么都要有；退回目标要在「从」之前；正文去掉这一块", async () => {
+  const { parseReworkOrder, buildAssistantPrompt } = await import("../src/project-assistant.ts");
+  const answer = [
+    "大纲第 3 节文献不够，建议回检索补一轮。",
+    ":::补料",
+    "退回到：第 1 步",
+    "从：第 3 步",
+    "要补：",
+    "- §3.2 失活机理：近三年原位表征工作",
+    "- §3.4 动力学",
+    "为什么：这两节能写进正文的都不到 3 篇",
+    "线索：顺着 [@Wang2023] 的参考文献找",
+    "规模：约 10 篇",
+    ":::",
+  ].join("\n");
+  const { text, rework } = parseReworkOrder(answer, 5);
+  assert.equal(text, "大纲第 3 节文献不够，建议回检索补一轮。");
+  assert.deepEqual(rework, {
+    toStep: 1,
+    fromStep: 3,
+    topics: ["§3.2 失活机理：近三年原位表征工作", "§3.4 动力学"],
+    reason: "这两节能写进正文的都不到 3 篇",
+    clues: "顺着 [@Wang2023] 的参考文献找",
+    scale: 10,
+  });
+  // 越界、退回目标不在「从」之前、缺为什么：不要这张单子（正文照样去掉这一块）
+  const bad = (body: string) => parseReworkOrder(`说明\n:::补料\n${body}\n:::`, 5);
+  assert.equal(bad("退回到：第 6 步\n要补：x\n为什么：y").rework, null);
+  assert.equal(bad("退回到：第 3 步\n从：第 2 步\n要补：x\n为什么：y").rework, null);
+  assert.equal(bad("退回到：第 1 步\n要补：x").rework, null);
+  assert.equal(bad("退回到：第 1 步\n要补：x").text, "说明");
+  // 没写「从」也行；规模可省
+  assert.deepEqual(bad("退回到：第 2 步\n要补：改 §2 顺序\n为什么：读者看不懂").rework, {
+    toStep: 2, fromStep: null, topics: ["改 §2 顺序"], reason: "读者看不懂", clues: "", scale: null,
+  });
+  // 规矩写进项目类与要做事两种提问
+  for (const intent of ["project", "request"] as const) {
+    assert.match(buildAssistantPrompt({ intent, snapshot: "", history: [], question: "x" }), /:::补料/);
+  }
+});

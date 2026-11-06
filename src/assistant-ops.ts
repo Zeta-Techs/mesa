@@ -2,7 +2,8 @@
  * 项目助手的动作分级（2026-11-06 docs/design-assistant-dispatch-desk.md §1 第 2–3 条）：唯一真源，桌面与手机共用。
  * - auto 不用你点：回答、总结、把等你的事收进列表；
  * - tap 你点一下就生效：答人工请求、给会话留话 / 转达、派出派活单、记规矩、答它的追问——手机上点一下就算人批准过一次；
- * - desktop 只在桌面：确认执行命令、评审采纳、写回项目、删除、跳到某一页、拆成几路、开商量对话、报告给开发者。
+ * - desktop 只在桌面：确认执行命令、评审采纳、写回项目、删除、跳到某一页、拆成几路、开商量对话、报告给开发者、
+ *   发补料单（2026-11-06：要在补料单弹窗里看清退回到哪、勾补完后接着跟进的步骤，可能还要恢复工作副本）。
  * 纯逻辑，配 tests/assistant-ops.test.ts。
  */
 import type { AssistantActionKind } from "./project-assistant";
@@ -27,7 +28,8 @@ export type AssistantOp =
   | "navigate"
   | "split"
   | "discuss"
-  | "report";
+  | "report"
+  | "rework";
 
 export const OP_TIERS: Readonly<Record<AssistantOp, OpTier>> = {
   answer: "auto",
@@ -46,6 +48,7 @@ export const OP_TIERS: Readonly<Record<AssistantOp, OpTier>> = {
   split: "desktop",
   discuss: "desktop",
   report: "desktop",
+  rework: "desktop",
 };
 
 export function opAllowed(op: AssistantOp, channel: OpChannel): boolean {

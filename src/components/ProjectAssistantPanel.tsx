@@ -23,6 +23,7 @@ import {
   guardClaims,
   parseClarify,
   parseRemember,
+  parseReworkOrder,
   parseWorkOrder,
   QUICK_QUESTIONS,
   splitAnswerLead,
@@ -31,6 +32,7 @@ import {
   type WorkOrder,
 } from "../project-assistant";
 import WorkOrderCard from "./WorkOrderCard";
+import ReworkOrderCard from "./ReworkOrderCard";
 import RememberCard from "./RememberCard";
 import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
@@ -162,7 +164,7 @@ export default function ProjectAssistantPanel({
   // 派活单派出去后记到那一轮上（后端问答记录），卡片据此跟进度、不重复派；项目快照据此告诉项目助手派过什么
   async function dispatch(turnAt: string, order: WorkOrder) {
     const result = await onDispatch(order);
-    const record: DispatchRecord = {
+    await saveDispatched(turnAt, {
       at: new Date().toISOString(),
       target: order.target,
       step: order.step,
@@ -172,7 +174,10 @@ export default function ProjectAssistantPanel({
       taskId: result.taskId ?? null,
       worktreePath: result.worktreePath ?? null,
       note: result.note,
-    };
+    });
+  }
+  /** 派出去的单子记在那一轮上（派活单、补料单共用；不再派第二次，回音巡视按它补进展） */
+  async function saveDispatched(turnAt: string, record: DispatchRecord) {
     setTurns((list) => list.map((t) => (t.at === turnAt ? { ...t, dispatched: record } : t)));
     if (projectPath) {
       await invoke("assistant_mark_dispatched", { projectRoot: projectPath, turnAt, record }).catch(() => {});
@@ -247,7 +252,7 @@ export default function ProjectAssistantPanel({
       if (quick === "dispatch") {
         const steps = stepCount;
         const last = [...turns].reverse().find((t) => !t.echoOf && t.answer.includes(":::派活"));
-        const order = last ? parseWorkOrder(parseClarify(parseRemember(last.answer).text).text, steps).order : null;
+        const order = last ? parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(last.answer).text).text, steps).text, steps).order : null;
         if (!last || !order || last.dispatched) {
           toast("现在没有还没派的单子：先说要做什么，起草好单子再派", "info");
           return;
@@ -565,7 +570,8 @@ export default function ProjectAssistantPanel({
             }
             const withMemo = parseRemember(turn.answer);
             const withAsk = parseClarify(withMemo.text);
-            const withOrder = parseWorkOrder(withAsk.text, stepCount);
+            const withRework = parseReworkOrder(withAsk.text, stepCount);
+            const withOrder = parseWorkOrder(withRework.text, stepCount);
             const parsed = parseAssistantAnswer(withOrder.text, stepCount);
             // 只有最后一轮的问题能点选作答（前面的已经答过了）
             const openAsk = i === turns.length - 1 ? withAsk.ask : null;
@@ -607,6 +613,14 @@ export default function ProjectAssistantPanel({
                     </section>
                   )}
                   {withMemo.remember && <RememberCard text={withMemo.remember} projectPath={projectPath} />}
+                  {withRework.rework && (
+                    <ReworkOrderCard
+                      order={withRework.rework}
+                      record={turn.dispatched ?? null}
+                      projectPath={projectPath}
+                      onSent={(record) => saveDispatched(turn.at, record)}
+                    />
+                  )}
                   {withOrder.order && (
                     <WorkOrderCard
                       order={withOrder.order}
@@ -696,7 +710,7 @@ export default function ProjectAssistantPanel({
               {/* 边生成边出字：动作标记、派活单写完前先不画，最终回答到了整段换上 */}
               {liveText && (
                 <div className="text-sm text-l1">
-                  <ChatMarkdown text={guardClaims(parseAssistantAnswer(parseWorkOrder(parseClarify(parseRemember(liveText).text).text, stepCount).text, stepCount).text).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
+                  <ChatMarkdown text={guardClaims(parseAssistantAnswer(parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(liveText).text).text, stepCount).text, stepCount).text, stepCount).text).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
                 </div>
               )}
             </article>

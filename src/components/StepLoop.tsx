@@ -29,6 +29,7 @@ export function ReworkDialog({
   prefill = {},
   unplaced = [],
   litTargets = [],
+  initial,
   busy,
   error,
   onCancel,
@@ -43,16 +44,18 @@ export function ReworkDialog({
   unplaced?: string[];
   /** 退回目标里找文献 / 读文献的步骤（检索、精读）：退回它们叫「补料」、问篇数；退回大纲、初稿这类叫「修改」（2026-11-06） */
   litTargets?: string[];
+  /** 整张单子预填（项目助手起草的补料单，2026-11-06）：给了就不按 prefill 换主题 */
+  initial?: { target: string; topics: string; reason: string; clues: string; scale: number | null };
   busy: boolean;
   error: string | null;
   onCancel: () => void;
   onSend: (fields: ReworkFields) => void;
 }) {
-  const first = targets.find((t) => prefill[t]) ?? targets[0] ?? "";
+  const first = (initial && targets.includes(initial.target) ? initial.target : null) ?? targets.find((t) => prefill[t]) ?? targets[0] ?? "";
   const [target, setTarget] = useState(first);
-  const [topics, setTopics] = useState(prefill[first]?.topics ?? "");
-  const [reason, setReason] = useState(prefill[first]?.reason ?? "");
-  const [edited, setEdited] = useState(false);
+  const [topics, setTopics] = useState(initial?.topics ?? prefill[first]?.topics ?? "");
+  const [reason, setReason] = useState(initial?.reason ?? prefill[first]?.reason ?? "");
+  const [edited, setEdited] = useState(!!initial);
   const pickTarget = (next: string) => {
     setTarget(next);
     if (!edited) {
@@ -60,8 +63,8 @@ export function ReworkDialog({
       setReason(prefill[next]?.reason ?? "");
     }
   };
-  const [clues, setClues] = useState("");
-  const [scale, setScale] = useState("");
+  const [clues, setClues] = useState(initial?.clues ?? "");
+  const [scale, setScale] = useState(initial?.scale ? String(initial.scale) : "");
   const parsed = parseTopics(topics);
   const ready = !!target && parsed.length > 0 && reason.trim().length > 0 && !busy;
   const scaleNum = Number.parseInt(scale, 10);

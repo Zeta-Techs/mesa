@@ -339,6 +339,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、测试连接、绑定 6 位码、解绑
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
   components/SavePackModal.tsx # 弹层版另存为我的任务（挂 body，表单里不嵌表单）：派活单验收后「存成我的任务…」、内置科研任务「另存为我的版本…」共用，里面是 SavePackForm
+  components/ReworkOrderCard.tsx # 项目助手起草的补料单卡片（2026-11-06 流程贯通 §4）：退回到 / 因为 / 要补 / 为什么 / 线索 / 规模，「看一看，退回去补…」打开步骤卡同一个 ReworkDialog（initial 预填），
+                             #   发走 step-round.ts sendReworkRound，发过记 dispatched（mode=resume）并每 10 秒看进度；退回大纲 / 初稿叫修改单
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 另导出 MesaBuddyIcon（线条小图标，项目助手入口按钮、Agent 分工卡片用）；项目助手的卡通形象「小桌」（活过来的小工作台，原创）：pose idle / wave / think / happy / oops / sleep（盘腿睡），prop coffee / lamp；
                              # 深浅主题同一套米白身子 + 墨线；≤40px 只取半身；动作在 App.css .mesa-buddy*，减弱动态效果时静止
@@ -594,13 +596,14 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # ai_prompt 项目默认连接，不支持无头时退回 AI 功能连接 → split_plan_write）、replyNotice
   project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general / request（2026-11-05 接活，previousTurnHint 接着上一轮）；
                              # 接活：REQUEST_RULES（六种去向、问清楚、派活单）、parseClarify（:::问 块）、派活单 v2 字段与 parseOrderPaths、RESEARCH_ORDER_RULES（科研通则唯一出处）、OrderTextOptions；
+                             # 补料单（2026-11-06）：REWORK_RULES / parseReworkOrder（:::补料 块，退回目标须在「从」之前）；
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
   run-blocker.ts             # 一件活「卡在哪」的唯一出处（2026-11-06）：runBlocker 把信任 / 等确认 / 菜单 / 等待屏 / 启动失败 / 登录 / 连接 / 十分钟没出字 / 目标说完一轮归成一个，按要紧程度取一，写手机能否直接点；终端页写进 terminalRunInputs.blocker（tests/run-blocker.test.ts）
   assistant-queue.ts         # 调度台「等你的事」纯逻辑（2026-11-06）：buildDeskItems（人工请求 / 对话里在问 / 等确认，looksLikeQuestion）、relayText（原话转达只加一行来源）、deskSummary（tests/assistant-queue.test.ts）
   assistant-desk.ts          # 调度台取数与转达（调 invoke）：loadDesk、replyDesk（人工请求写回作答再交给那一步；对话问题原话送进去）、focusConfirm、addProjectKnowledge（记规矩，桌面卡片与飞书共用）
-  assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp（tests/im-route.test.ts）
+  assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp；rework（发补料单）= desktop（tests/im-route.test.ts）
   im-route.ts                # 总助手路由：帮助 / 项目 / 等我的 / 切到 / 点名项目 / 回第 N 步 / 默认项目 / 说不清给项目按钮；只认点名不猜（tests/im-route.test.ts）
   im-cards.ts                # 飞书卡片 JSON：answerCard（追问选项、派出去、记进项目知识按钮）、deskCard、projectPickCard、phoneText（tests/im-cards.test.ts）
   im-bridge.ts               # 飞书通道前端桥（调 invoke）：听 feishu-message / feishu-card-action，路由 → askProjectAssistant → 卡片；按钮按分级执行；pushNewHelp、imPushText（派活回音）
@@ -1130,6 +1133,8 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
                              #   latestNote / withLatestNote 开场话尾附「新并进来的文件」（2026-11-06 流程贯通）（tests/step-loop.test.ts）
+  step-round.ts              # 在某一步「开一轮」的共同编排（2026-11-06 流程贯通）：pickStepWorkspace / ensureActive（恢复）/ assertRoundable（在忙、有没保存产出不叠一轮）/
+                             #   boundStepLaunch / launchRound / recordRound / litKind；sendReworkRound = 退回补料整条路（步骤卡、项目助手补料单共用）。调 invoke，无单测
   step-latest.ts             # 开一轮前并入项目最新内容（流程贯通 §3）：bringLatest = 落后才并（health.behind + workspace_incoming）→ AI 在忙报错 →
                              #   commitLeftovers 问没提交的 → syncStep；继续 / 新开一轮 / 补料 / 跟进 / 评审退回修改 / 项目助手派活共用（调 invoke，无单测）
   step-decisions.ts          # 决策项：答案落任务书草稿固定小节；isTaskMdStub = 空/仅决策/仅评审沉淀不算可执行正文，resolveTaskMdSource 走模板拼装并接沉淀（decisionGate/orderedAnswers/parseDecisions，tests/step-decisions.test.ts）

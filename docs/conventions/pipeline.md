@@ -450,6 +450,11 @@
     AI 在忙只留话注明没并；手机上派 `confirm: null` 不问、报回桌面处理；调度台转达回答**不并**）。开场话尾附 `step-loop.ts latestNote`。
     并入成功（含评审「完成解决并合并」）后端 `step_loop::record_sync` 记 kind=sync（只记流程步骤的工作区，不算一轮）；`followed_at` 认 sync / ack / followup / rework；
     `stale_upstream_for` 不再拿本步 merged_at 当进度。进行中 / 待评审的步骤待跟进时「AI 干活」行写一句（不另给按钮）。
+  - **② 已落地**：`project-assistant.ts REWORK_RULES / parseReworkOrder`（`:::补料` 块：退回到 / 从 / 要补 / 为什么 / 线索 / 规模；越界或退回目标不在「从」之前就不要），
+    项目类与要做事两种提问都带这条规矩；`components/ReworkOrderCard.tsx` 卡片「看一看，退回去补…」打开步骤卡同一个 `ReworkDialog`（`initial` 整张预填），
+    人点「退回去补」才经 `src/step-round.ts sendReworkRound` 发（步骤卡的退回补料也改走它：找工作副本 → 恢复 → 拦 → 并入 → 写单 → 开轮 → 记轮次）。
+    发过记在那一轮的 `dispatched`（mode=resume，回音巡视照常补进展）。手机上只说去桌面点（`assistant-ops` 新增 `rework` = desktop）。
+    顺带：派出的活「已保存进项目」只认派出之后的保存（接回已保存步骤时旧的保存时间不算）。
 
 ## 科研做图（2026-11-05 拍板，design-research-figures.md）
 

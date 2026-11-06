@@ -31,14 +31,19 @@ import {
   followupPrompt,
   followupScale,
   notesFollowupIds,
-  reworkPrompt,
   unplacedCoverageDrafts,
   reworkTargets,
   withLatestNote,
   type FollowupScopeDto,
-  type ReworkDto,
 } from "../step-loop";
 import { bringLatest } from "../step-latest";
+import {
+  assertRoundable,
+  ensureActive,
+  pickStepWorkspace,
+  recordRound as recordStepRound,
+  sendReworkRound,
+} from "../step-round";
 import { workspaceReuseKey } from "../pipeline-start";
 import {
   bucketCardsByStep,
@@ -69,7 +74,6 @@ import type {
   TaskCardDto,
   TaskDraftDto,
   WorkspaceDto,
-  WorkspaceHealthDto,
 } from "../types";
 import { isSettingPlaceholder } from "../project-context";
 import { upsertPendingSettingsSection } from "../task-md-sections";
@@ -799,17 +803,7 @@ export default function TaskCardsSection({
 
   function recordRound(ws: WorkspaceDto, step: string, kind: "rework" | "followup" | "fresh" | "ack", reworkId?: string) {
     // 真开了新一轮（不是 ack）：这一步手动打的勾清掉，回到按落点检测，新一轮的条目与面板才会出来
-    const clear =
-      kind === "ack"
-        ? Promise.resolve()
-        : invoke("clear_human_task_checks", { projectRoot: projectPath, step }).catch(() => undefined);
-    return Promise.all([
-      clear,
-      invoke("step_round_record", {
-        root: projectPath,
-        entry: { workspaceId: ws.id, step, kind, reworkId: reworkId ?? null, at: "" },
-      }).catch(() => undefined),
-    ]).then(() => onHumanChanged?.());
+    return recordStepRound(projectPath, ws, step, kind, reworkId).then(() => onHumanChanged?.());
   }
 
   /** 补料轮 / 跟进轮用哪条连接：步骤绑定 > 步骤槽链（同「继续」）；都没有报错 */
@@ -829,19 +823,6 @@ export default function TaskCardsSection({
       throw new Error(`「${stepName}」还没解析到可用连接：去「Agent 分工」页签给它绑一条，或确认项目默认 Agent 有连接。`);
     }
     return launch;
-  }
-
-  /** 开一轮之前的共同检查：AI 正在干活 / 等确认、有没保存的产出都不叠一轮。
-   *  只是开着、停在提示符上的标签不拦：新一轮按工作区复用键就地换掉它（已保存的步骤卡上没有「停下」可点） */
-  async function assertRoundable(ws: WorkspaceDto, stepName: string) {
-    const attention = stepAttention(ws, useAppStore.getState().terminalRunInputs, IS_WINDOWS);
-    if (attention === "working" || attention === "confirm") {
-      throw new Error(`「${stepName}」的 AI 正在干活或等你确认：等它这一轮做完（或在侧栏那段对话的 ⋯ 里停下这一步），再开这一轮。`);
-    }
-    const h = await invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id });
-    if (h.ahead > 0) {
-      throw new Error(`「${stepName}」还有没保存进项目的产出：先去那一步评审，保存或退回修改后再开这一轮。`);
-    }
   }
 
   /** 打开补料单：本步有 outline.md 且「覆盖检查」里有薄节时按退回目标预填（三期 §9.3）。读不到就空着开 */
@@ -881,24 +862,10 @@ export default function TaskCardsSection({
 
   /** 这一步的工作区：正在用的优先；保存过又归档的也认（回路与「几轮」要找得到它） */
   function stepWorkspace(step: ProjectStepDto): WorkspaceDto | undefined {
-    if (!step.workspaceName) return undefined;
-    return (
-      workspaces.find((w) => w.name === step.workspaceName && w.status === "active") ??
-      workspaces.find((w) => w.name === step.workspaceName)
-    );
+    return pickStepWorkspace(workspaces, projectPath, step);
   }
 
-  /** 归档了的先恢复（不清保存时间，恢复后仍算已完成），返回恢复后的工作区 */
-  async function ensureActive(ws: WorkspaceDto, stepName: string): Promise<WorkspaceDto> {
-    if (ws.status === "active") return ws;
-    await invoke("restore_workspace", { id: ws.id });
-    const list = await invoke<WorkspaceDto[]>("list_workspaces");
-    const back = list.find((w) => w.id === ws.id && w.status === "active");
-    if (!back) throw new Error(`「${stepName}」的工作副本恢复后没找到，刷新页面再试。`);
-    return back;
-  }
-
-  /** 退回上一步补料（§4）：恢复 / 并入项目最新内容 → 写补料单 → 记轮次 → 在上游工作区另开一段对话 */
+  /** 退回上一步补料（§4）：恢复 / 并入项目最新内容 → 写补料单 → 记轮次 → 在上游工作区另开一段对话（step-round.ts 同一条路） */
   async function sendRework(fields: ReworkFields) {
     if (!focusStepDto) return;
     const fromStep = focusStepDto.name;
@@ -908,38 +875,28 @@ export default function TaskCardsSection({
     setReworkError(null);
     let restored = false;
     try {
-      const found = stepWorkspace(target);
-      if (!found) throw new Error(`「${target.name}」还没开过工，没有可以补的工作副本。`);
       // 先确认有连接再动工作区：恢复之后才发现开不了对话，会留下一个没人干活的工作副本
       const launch = await loopLaunch(target.name);
-      restored = found.status !== "active";
-      const ws = await ensureActive(found, target.name);
-      await assertRoundable(ws, target.name);
-      const incoming = await bringLatest(ws, target.name, confirmDialog);
-      if (incoming === null) return;
-      const rework = await invoke<ReworkDto>("rework_create", {
-        root: projectPath,
-        draft: {
+      const rework = await sendReworkRound(
+        {
+          projectPath,
           fromStep,
-          toStep: target.name,
-          toWorkspaceId: ws.id,
-          toWorkspaceName: ws.name,
+          target,
           topics: fields.topics,
           reason: fields.reason,
           clues: fields.clues,
           scale: fields.scale,
+          provides: skillProvides,
+          launch,
+          confirm: confirmDialog,
         },
-      });
-      const d = new Date();
-      const prompt = withLatestNote(reworkPrompt(rework, {
-        isSearch: stepFillsAnySlot(target.skills, ["lit-search"], skillProvides),
-        isNotes: stepFillsAnySlot(target.skills, ["lit-notes"], skillProvides),
-        projectRoot: projectPath,
-        date: `${d.getMonth() + 1}-${d.getDate()}`,
-      }), incoming);
-      await launchContinuation(launch, ws, target.name, prompt);
-      // 对话真开起来了才记轮次、关弹层（开不起来时弹层留着、报错看得见）
-      await recordRound(ws, target.name, "rework", rework.id);
+        () => {
+          restored = true;
+        },
+      );
+      if (!rework) return;
+      // 对话真开起来了才关弹层（开不起来时弹层留着、报错看得见）
+      onHumanChanged?.();
       setReworkOpen(false);
       onWorkspacesChanged?.();
     } catch (reason) {

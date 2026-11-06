@@ -318,7 +318,7 @@ export function buildAssistantPrompt(
     input.intent === "request"
       ? REQUEST_RULES
       : input.intent === "project" || input.intent === "mixed"
-      ? `${PROJECT_RULES}\n9. ${WORK_ORDER_RULES}`
+      ? `${PROJECT_RULES}\n9. ${WORK_ORDER_RULES}\n10. ${REWORK_RULES}`
       : input.intent === "howto"
       ? HOWTO_RULES
       : input.intent === "chat"
@@ -604,6 +604,97 @@ export const WORK_ORDER_RULES = `派活：真要动手（整理、分析、画�
 交给第 N 步 = 那一步自己的 AI 在它的工作副本里按单接着做（问题出在某一步的产物时用这个）；新目标 = 另起一个目标在隔离副本里做，做完走验收（不属于任何一步的活用这个）。
 只在确实需要动手、而且你说得清要做什么时才写；人工请求、开工前的决定、评审采不采纳这些要用户拍板的事不派活；Mesa 自己的毛病派不了活，给「报告」。`;
 
+// ===== 补料单（2026-11-06 流程贯通 §4，design-flow-weave.md）：按某一步的新结论回头补 / 改前面的步骤 =====
+
+export const REWORK_RULES = `回头补 / 改前面的步骤：用户要按后面某一步的新结论（大纲、笔记、初稿）回去补文献、补读，或改前面某一步的产物时，不写派活单，写补料单——
+Mesa 会先把项目最新内容并进那一步、在那一步另开一轮，只补单上列的，补完由用户评审、保存进项目，后面的步骤再跟进。格式（单独成块、放在回答末尾、一次最多一张；和派活单不同时写）：
+:::补料
+退回到：第 N 步（要补 / 要改的那一步）
+从：第 M 步（因为哪一步的结果要回头；可省）
+要补：一行一条，写主题或章节（如「§3.2 失活机理：近三年原位表征工作」）；改大纲、初稿时写要改的地方
+为什么：一句话，依据写清（如「大纲覆盖检查里这节能写进正文的只有 2 篇」）
+线索：关键词、已知的几篇、要顺着找参考文献的综述、不要的方向（可省）
+规模：大致补多少篇，只写数字（可省；改大纲、初稿时不写）
+:::
+只依据快照和看过的文件写；用户点「退回去补」才发，你不说已经发了。`;
+
+export interface ReworkOrder {
+  /** 退回到第几步（从 1 数） */
+  toStep: number;
+  /** 因为哪一步要回头（从 1 数）；没写 null */
+  fromStep: number | null;
+  topics: string[];
+  reason: string;
+  clues: string;
+  scale: number | null;
+}
+
+const REWORK_BLOCK = /:::\s*补料\s*\n([\s\S]*?)\n\s*:::/;
+type ReworkField = "to" | "from" | "topics" | "reason" | "clues" | "scale";
+const REWORK_FIELDS: [ReworkField, RegExp][] = [
+  ["to", /^退回到[:：]\s*/],
+  ["from", /^从[:：]\s*/],
+  ["topics", /^要补[:：]\s*/],
+  ["reason", /^为什么[:：]\s*/],
+  ["clues", /^线索[:：]\s*/],
+  ["scale", /^规模[:：]\s*/],
+];
+
+/** 从回答里取出补料单：正文去掉这一块；退回到哪步不对（越界、不在「从」之前）、没写补什么或为什么就不要 */
+export function parseReworkOrder(answer: string, stepCount: number): { text: string; rework: ReworkOrder | null } {
+  const m = answer.match(REWORK_BLOCK);
+  if (!m) return { text: answer, rework: null };
+  const text = answer.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
+  const fields: Partial<Record<ReworkField, string>> = {};
+  let current: ReworkField | null = null;
+  for (const raw of m[1].split("\n")) {
+    const line = raw.trim();
+    const hit = REWORK_FIELDS.find(([, re]) => re.test(line));
+    if (hit) {
+      current = hit[0];
+      const value = line.replace(hit[1], "");
+      fields[current] = fields[current] ? `${fields[current]}\n${value}` : value;
+    } else if (current && line) {
+      fields[current] = `${fields[current]}\n${line}`;
+    }
+  }
+  const stepNo = (v: string | undefined) => {
+    const n = (v ?? "").replace(/\s+/g, "").match(/^第(\d+)步/);
+    return n ? Number(n[1]) : null;
+  };
+  const toStep = stepNo(fields.to);
+  const fromStep = stepNo(fields.from);
+  const topics = (fields.topics ?? "")
+    .split("\n")
+    .map((t) => t.replace(/^\s*(?:[-*•]|\d+[、)）]|\d+\.(?!\d))\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 12)
+    .map((t) => t.slice(0, 300));
+  const reason = (fields.reason ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  if (
+    toStep === null ||
+    toStep < 1 ||
+    toStep > stepCount ||
+    (fromStep !== null && (fromStep <= toStep || fromStep > stepCount)) ||
+    topics.length === 0 ||
+    !reason
+  ) {
+    return { text, rework: null };
+  }
+  const scaleNum = Number.parseInt((fields.scale ?? "").replace(/[^\d]/g, ""), 10);
+  return {
+    text,
+    rework: {
+      toStep,
+      fromStep,
+      topics,
+      reason,
+      clues: (fields.clues ?? "").trim().slice(0, 1000),
+      scale: Number.isFinite(scaleNum) && scaleNum > 0 ? scaleNum : null,
+    },
+  };
+}
+
 /** 从回答里取出要记进项目知识的那一句（:::记下 块）：正文去掉这一块；空的不要，截到 300 字 */
 export function parseRemember(answer: string): { text: string; remember: string | null } {
   const m = answer.match(/:::\s*记下\s*\n([\s\S]*?)\n\s*:::/);
@@ -663,6 +754,8 @@ export const REQUEST_RULES = `${IDENTITY}
    单子只派做得到的，做不到的写清要用户补什么（给文字版或数据文件、到连接页配出图模型、换一条连接）；不要假装能做。
 
 ${WORK_ORDER_RULES}
+
+${REWORK_RULES}
 
 其他：
 - ${ACTION_MARKS}

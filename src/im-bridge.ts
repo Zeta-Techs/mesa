@@ -17,6 +17,7 @@ import {
   parseAssistantAnswer,
   parseClarify,
   parseRemember,
+  parseReworkOrder,
   parseWorkOrder,
 } from "./project-assistant";
 import { actionOp, opAllowed } from "./assistant-ops";
@@ -116,9 +117,12 @@ async function ask(project: ProjectDto, question: string): Promise<void> {
   const steps = await stepCount(project.path);
   const memo = parseRemember(turn.answer);
   const clar = parseClarify(memo.text);
-  const order = parseWorkOrder(clar.text, steps);
+  const rework = parseReworkOrder(clar.text, steps);
+  const order = parseWorkOrder(rework.text, steps);
   const parsed = parseAssistantAnswer(order.text, steps);
   const desktopOnly = parsed.actions.filter((a) => !opAllowed(actionOp(a.kind), "phone")).map((a) => actionLabel(a.kind, a.step));
+  // 补料单只在桌面发（assistant-ops rework = desktop）：手机上只说一句去哪点
+  if (rework.rework && !opAllowed("rework", "phone")) desktopOnly.push(`补料单（退回第 ${rework.rework.toStep} 步）：在桌面的项目助手里点「退回去补」`);
   await sendCard(
     answerCard({
       project: asRoute(project),
@@ -224,7 +228,7 @@ async function resumeLatest(project: ProjectDto): Promise<void> {
 async function dispatchTurn(project: ProjectDto, turn: AssistantTurn): Promise<void> {
   if (turn.dispatched) return sendText(`这张单已经派过了：${turn.dispatched.note}`);
   const steps = await stepCount(project.path);
-  const order = parseWorkOrder(parseClarify(parseRemember(turn.answer).text).text, steps).order;
+  const order = parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(turn.answer).text).text, steps).text, steps).order;
   if (!order) return sendText("那一轮里没有能派的单子。");
   try {
     // 手机上派：并入前要确认的（工作副本有没提交的文件）不在手机上问，报回去让人回桌面处理
