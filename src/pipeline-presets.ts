@@ -98,6 +98,11 @@ const APPROVED_DESIGN =
   "在 design.md 写固定小节「## 已批准设计」：假设编号（H1 起）、主指标、停止规则、批准状态（已批准或未批准）。执行和分析只对着这些编号。未批准的假设保持候选。\n";
 
 /** 一份稿上的章节状态和允许集，不拆成多个写作步骤。 */
+/** 初稿默认顺序写（2026-11-07 用户追问分路一致性后拍板，design-research-completion.md §1）：一段对话按章节顺序写，
+ *  先定写作规范，每节写完记要点 / 新术语 / 关键数带进下一节，引言、结论最后写 */
+const DRAFT_ORDER =
+  "写法：先写 manuscript/style-sheet.md（已有就接着用）——术语与缩写的统一写法、各在哪一节首次定义、符号与单位、时态语态。按大纲章节顺序一节一节写，每写完一节在 section-status.md 这一节下记要点、新定义的术语与缩写、用到的关键数，写下一节前先读一遍；引言、结论与展望、摘要最后写，它们给全文定调。\n";
+
 const SECTION_STATUS =
   "动笔前写 manuscript/section-status.md，不另建章节任务。文首「## 允许集」列出 references.bib 的键、状态为已认可的结论编号、结果表里出现过的数字。每一节再写：要回答什么、用哪些材料或结论编号、还缺什么、审核状态（已生成待审 / 有条件接受 / 证据通过（限定范围） / 阻塞）。正文新出现的键、结论或数字必须在允许集中，否则标 [待核实] 或 [待补实验]。\n";
 
@@ -260,6 +265,25 @@ const DATA_CLEAN_FANOUT: StepFanOutDto = {
   merge:
     "按 data-clean 技能收尾：把 cleaning/batches/ 各批规则草案合成 cleaning/rules.md（同一条合并、各批冲突的标 [待确认]）；按任务书第 1 条先报数、写 help-wanted 问人，[待确认] 列进 cleaning/rule-decisions.md；" +
     "人答过后按裁决打开各批脚本里对应的关键规则开关；cleaning/clean.py 做总入口（支持 --input/--output，依次调各批脚本）；写 cleaned-data-manifest.md、cleaning-report.md、cleaning/fields.json 与本步验收摘要。",
+};
+
+/** 综述初稿按章节分几路（2026-11-07，design-research-completion.md §1）：大纲一步交的 manuscript/sections.json 定几路；
+ *  开工弹层默认不勾，人勾了才分。各路只写正文分给自己的节，引言 / 结论 / 摘要与统稿留给收尾一路 */
+const REVIEW_DRAFT_FANOUT: StepFanOutDto = {
+  items: "manuscript/sections.json",
+  filter: "",
+  key: "id",
+  label: "title",
+  per: 2,
+  max: 4,
+  own:
+    "manuscript/sections/<序号>-<短标题>.md，只写分给本路的正文节（不写引言、结论与展望、摘要）。动笔前读完整份 outline.md、manuscript/style-sheet.md 与相邻节在大纲里的要点；" +
+    "术语、缩写、符号按写作规范，规范里没有的新术语写在本路文件末尾「## 建议加进写作规范」，不改 style-sheet.md；引用、对照表、用图计划照任务书。" +
+    "不写 manuscript/draft.md 与 section-status.md，不渲染",
+  merge:
+    "统稿：把 manuscript/sections/ 各路按大纲顺序合进 manuscript/draft.md，写引言、结论与展望、摘要；补节与节之间的过渡、删重复；" +
+    "把各路「建议加进写作规范」并进 style-sheet.md，全文术语按规范统一，缩写只在首次出现处定义；同一篇文献在不同节引的数要一致（有 notes/extraction.md 的对照它，对不上的列进待核实）；" +
+    "图表编号与交叉引用连续；写 section-status.md；再按任务书渲染与自检。合完删掉 manuscript/sections/。",
 };
 
 /** 精读简报的共用写法。order = 分批时先写什么后写什么：论文 / 学位论文先精读核心篇再按摘要写其余；
@@ -536,10 +560,15 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "5. 产出 outline.md：章节结构（引言 / 背景 / 主题各节 / 讨论 / 结论），每节给必要要点、拟引用 bib 键及章节作用（适用时回应空白编号）；拟引用必须分「可写正文 / 仅线索」，初稿按这个等级写。有小节则每小节、否则每章写用图计划：一张拼图对应一个论点，写成「拼 图N（论点一句话）= (a) [@键] Fig.2c + (b) [@键] Fig.3a + …」，至少 2 块子图、至少来自两篇，块数按版面可读性定（9 块排 3×3，一页放不下按子论点拆两张），不把整张多联图并排；凑不成则仅引用一篇的图号；禁止写「初稿待绘制」。需要横向比较几篇的节另写一行表计划「表 N（比什么）= 列：…；行：[@键]…」，数值只取笔记里有出处的。源图只来自笔记可引用图；G 编号只出现在「框架推演」，不要让初稿把 G1 写进正文。篇幅数字只是读者预期，旁注「不是初稿必须凑到的词数」。末尾固定附「## 框架推演」段（空白清单 / 范式卡片 / 融合理由三块）；\n" +
       "6. 在 outline.md 附证据综合表：研究对象/设计/结果/局限/支持强度/分歧/原文位置；核心论断逐项做支持性核验，不数赞成论文投票。摘要-only 只可支持摘要实际报告的信息；核心全文未得则收窄结论或阻塞。不得把研究作者的 gap 宣传当已证实事实；记录最邻近反例与检索边界。\n" +
       "7. 只引用 references.bib 中存在的键，不为大纲新造引用。\n" +
+      "8. 另交 manuscript/sections.json（正文各节，不含引言与结论，顺序同大纲：[{\"id\":\"S1\",\"title\":\"…\"}]）与 manuscript/style-sheet.md 初版（核心术语与缩写的写法、各在哪一节首次定义、符号与单位）——初稿顺序写或分路写都靠它们对齐。\n" +
       "完成标准：「定框架记录」六问都有人的选择；「覆盖检查」没有未处理的「薄」（薄·不补写了理由算处理）；outline.md 结构完整，每节要点/引用键/章节作用齐全，「框架推演」段三块内容齐备；每章拟引用分可写正文与仅线索，可写键均在证据综合表且非题录级；表内论断编号全部定义；图表占位写明已有数据来源（无现成数据则改示意图，禁止空许诺计数）；每章/小节有用图计划（拼或仅引用）。质量状态在拟引用未分档、论断编号未闭集或用图计划缺源时不得高于已生成待审。\n" +
       QUESTION_GATE + QUALITY_STATUS,
-    expectedArtifacts: ["outline.md"],
-    acceptanceCriteria: ["machine:contains:outline.md::定框架记录", "machine:contains:outline.md::覆盖检查"],
+    expectedArtifacts: ["outline.md", "manuscript/sections.json", "manuscript/style-sheet.md"],
+    acceptanceCriteria: [
+      "machine:contains:outline.md::定框架记录",
+      "machine:contains:outline.md::覆盖检查",
+      "machine:records:manuscript/sections.json::id,title",
+    ],
     inputs: ["notes/", "notes/handoff.md", "papers/included.md", "papers/included.json", "references.bib"],
     optionalInputs: ["notes/angles.md"],
     skills: ["review-framework"],
@@ -553,6 +582,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     name: "综述初稿",
     role: "both",
     workspaceName: "draft",
+    fanOut: REVIEW_DRAFT_FANOUT,
     brief:
       "输入：outline.md（含「框架推演」段）、notes/、references.bib（已随 main 合并在本工作区内）。写作规范全程按 {skill:review-writing} 技能执行。先读 notes/handoff.md「写作约束」：仅摘要/题录的键不写成已确立，机制分歧并列写。\n" +
       `写作范围由你按笔记判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
@@ -562,13 +592,14 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "4. 没有文献支撑的论断不得下。摘要只放全文撑得住的主张，禁止摘要里出现 [待核实] 或未测的近端动作（operando/软包等放 outlook 并标明是建议）。范围点名的主题后文必须展开，否则从范围删除。结论只写本综述论证了什么。\n" +
       "5. 用本步骤 run 脚本先渲 docx、再渲 PDF（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到定稿步再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "PDF 若 lualatex 无日志空转，按技能停掉改 xelatex，不要空等。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "6. 交稿前自检：打开 output/draft.pdf 第一页，必须能读出英文标题和段落；乱码、空心方框、目录页码变成字母 = 渲染失败，质量状态不得高于已生成待审，docx 仍交人审。引用键先对 references.bib，笔误键改正文不删句；材料名里的 @ 写成 \\@。正文数字若与笔记不符，按原文改稿并回写该笔记，记入 section-status.md。图裁不到就改成「见 [@键] Fig.n」，禁止用「待绘制」充产出。正文不得留 G1/任务编号、内部清单号。作者「待补」写进验收摘要等人填，不假装齐套。\n" +
+      DRAFT_ORDER +
       SECTION_STATUS +
       "完成标准：manuscript/draft.md 覆盖大纲全部章节；引用键全部可在 references.bib 中解析；扩写能回溯到笔记或原文；不以词数判定完成。用图计划里每一条「拼」要么有 figures/figN.png 且正文插了这张图，要么已改成「见 [@键] Fig.n」并在 figures/README.md 写明原因；正文不得出现「待绘制」。PDF 首页可读或已如实报渲染失败；人尚未审阅初稿前不得进入润色。\n" +
       QUALITY_STATUS,
     inputs: ["outline.md", "notes/", "notes/handoff.md", "references.bib"],
-    optionalInputs: ["papers/*.pdf"],
+    optionalInputs: ["papers/*.pdf", "manuscript/style-sheet.md", "manuscript/sections.json"],
     skills: ["review-writing", "review-figures", "quarto-render"],
-    expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "figures/README.md", "figures/sources.md", "output/draft.pdf", "output/draft.docx"],
+    expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/style-sheet.md", "manuscript/typeface.md", "manuscript/reference.docx", "figures/README.md", "figures/sources.md", "output/draft.pdf", "output/draft.docx"],
     acceptanceCriteria: [
       "machine:contains:manuscript/section-status.md::要回答",
       "machine:contains:manuscript/section-status.md::允许集",
@@ -874,6 +905,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     brief:
       "输入：manuscript/outline.md、survey/、notes/、design.md、analysis/、figures/、references.bib（已随 main 合并在本工作区内）。\n" +
       `写作范围由你按笔记与分析结果判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
+      DRAFT_ORDER +
       SECTION_STATUS +
       "1. 按 manuscript/outline.md 与项目语种（未设时英文）撰写初稿，产出 manuscript/draft.md：Introduction、Methods、Results、Discussion。篇幅跟证据走，不为凑字数扩写；某节薄只回 analysis/、notes/ 或原文补可定位证据，没有就保持短并标 [待核实]/[待补实验]。论断直接说，必要局限写一次，去掉防御性套话；\n" +
       "2. 引用一律用 [@bib键] 形式，且只能引用 references.bib 中已存在的键——严禁编造文献；\n" +
@@ -895,7 +927,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "references.bib",
     ],
     optionalInputs: ["analysis/results.json", "notes/handoff.md"],
-    expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/typeface.md", "manuscript/reference.docx", "manuscript/numbers.json", "output/draft.pdf", "output/draft.docx"],
+    expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/style-sheet.md", "manuscript/typeface.md", "manuscript/reference.docx", "manuscript/numbers.json", "output/draft.pdf", "output/draft.docx"],
     acceptanceCriteria: ["machine:contains:manuscript/section-status.md::要回答", "machine:contains:manuscript/section-status.md::允许集", "machine:not-contains:manuscript/draft.md::待绘制"],
     skills: ["research-writing", "quarto-render"],
     discussionSeeds: [
@@ -1364,6 +1396,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     brief:
       "输入：chapters/ 各章草稿、references.bib、figures/、proposal/proposal.md（已随 main 合并在本工作区内）。\n" +
       `写作范围由你按笔记与各章草稿判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
+      DRAFT_ORDER +
       SECTION_STATUS +
       "1. 按学校论文模板结构（模板放在 manuscript/template/；封面/摘要/目录/正文各章/参考文献/致谢；项目内无模板文件时用通用学位论文结构、语种默认中文，并在 manuscript/README.md 注明所依据的结构）组装全文初稿 manuscript/thesis-draft.md；学校要求独立讨论章则保留讨论章，不要并进结论；\n" +
       "2. 补齐缺失章节：引言（研究背景+问题+贡献，对应开题报告）、结论与展望（对应结果章节）；\n" +
@@ -1376,6 +1409,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     expectedArtifacts: [
       "manuscript/thesis-draft.md",
       "manuscript/section-status.md",
+      "manuscript/style-sheet.md",
       "manuscript/revision-notes.md",
       "manuscript/numbers.json",
       "manuscript/typeface.md",

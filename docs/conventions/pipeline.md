@@ -482,6 +482,9 @@
 - **意见回流**：Word 批注由后端抽成意见清单（不经 AI），AI 只分类、改本步能改的；去向是别的步骤的走退回，要讨论的交人。
 - **实验室实验**：科研工具「实验方式」，实验室模式只追加工具合同块（可撤回）；绝不生成或补全测量值。
 - 不做：自动分路写初稿、AI 判断意见采不采纳、接仪器软件、为每个场景加模板。
+- **① 已落地**：`pipeline-presets.ts DRAFT_ORDER`（三套初稿 SECTION_STATUS 前一句；初稿都交 `manuscript/style-sheet.md`）；综述大纲第 8 条另交 `manuscript/sections.json`
+  （`machine:records` 验 id、title）与写作规范初版；综述初稿 `fanOut: REVIEW_DRAFT_FANOUT`（items = sections.json，每路 2 节、最多 4 路，各路写 `manuscript/sections/`，收尾统稿并删掉分路文件）。
+  论文 / 学位论文初稿不声明分路（IMRaD 各节相互依赖；学位论文各章在前面几步已写）。已导出示例课题。
 
 ## 科研做图（2026-11-05 拍板，design-research-figures.md）
 

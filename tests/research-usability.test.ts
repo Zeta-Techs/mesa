@@ -89,7 +89,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 2026-11-06 流程贯通推到全部模板：有上游输入的步骤在「本步骤输入」末尾加一句——发现上游产物有问题不改上游交的文件，写进报告、
   // 提醒人点「退回上一步补料 / 修改…」（约 95 字 × 有输入的步数）；综述大纲简报不再叫人先保存再退回。
   // 实测 review 32068、论文 40359、数据 16050、学位 39072、投稿 10472、LaTeX 16375。
-  const before: Record<string, number> = { review: 32150, "research-paper": 40450, "data-processing": 16150, thesis: 39150, "submission-rebuttal": 10550, "latex-paper": 16450 };
+  // 2026-11-07 科研流程补全①：三套初稿加「先写写作规范、按章节顺序写、每节记要点、引言结论最后写」一句；综述大纲另交 sections.json 与写作规范初版，
+  // 综述初稿声明分路（各路 own / 收尾统稿）。实测 review 32588、论文 40557、学位 39270。
+  const before: Record<string, number> = { review: 32650, "research-paper": 40650, "data-processing": 16150, thesis: 39350, "submission-rebuttal": 10550, "latex-paper": 16450 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);
