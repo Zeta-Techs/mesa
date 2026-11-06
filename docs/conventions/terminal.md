@@ -804,6 +804,10 @@
   `request_quit` 发 `mesa:quit-requested`，App.tsx 立刻 `quit_ack`，按 `terminalRunInputs` 的 running 数 + 后台捕获数决定
   问不问（要问先 `show_main_window`），确认后 `confirm_quit`；1.5 秒没回执 Rust 兜底（只看后台捕获，弹原生框）。
   卸载、更新重启等程序内 `exit` 不经确认。程序坞右键退出 / 注销走系统 terminate:，在 `RunEvent::Exit` 补一次收尾。
+  **单实例（2026-11-06）**：Windows / Linux 挂 `tauri-plugin-single-instance`（`run` 第一个插件），再次打开 Mesa 只经
+  `show_main` 叫回已开的窗口、新进程退出——否则收进托盘后再打开会起第二个进程、托盘两个图标、两份进程抢配置与终端。
+  macOS 不挂（系统把同一 .app 的再次打开交给已开进程走 `Reopen`；插件在那边建临时套接字会挡同 identifier 的第二开发实例与打包沙盒）。
+  先起新进程再退旧进程的重启（更新后 `relaunch`）之前必须 `release_single_instance` 放锁，否则新进程把自己交给正在退的旧进程后退出。
   前端 `onCloseRequested` 不再挂（实机不执行，且若执行会绕开藏窗口）。
 
 ## 输入侧：图片粘贴 / 文件拖入 / 右键菜单 / 链接点击（2026-08-17）

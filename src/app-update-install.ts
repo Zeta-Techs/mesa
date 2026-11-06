@@ -74,6 +74,8 @@ export function useAppUpdateInstall(onError?: (message: string) => void) {
       stopped = true;
       // Windows 上 install 拉起安装包后进程就退出，走不到 relaunch
       await update.install();
+      // 重启是先起新进程再退旧进程：先放掉单实例锁，否则新进程以为已有 Mesa 在开、自己退出
+      await invoke("release_single_instance");
       await relaunch();
     } catch (e) {
       const message = stopped

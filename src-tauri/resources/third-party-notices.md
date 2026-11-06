@@ -924,6 +924,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | tauri-plugin-notification | 2.3.3 | Apache-2.0 OR MIT |
 | tauri-plugin-opener | 2.5.4 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.3.1 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.4.5 | Apache-2.0 OR MIT |
 | tauri-plugin-updater | 2.10.1 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.11.3 | Apache-2.0 OR MIT |
 | tauri-runtime-wry | 2.11.4 | Apache-2.0 OR MIT |

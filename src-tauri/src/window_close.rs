@@ -62,7 +62,7 @@ fn first_hide_hint(app: &AppHandle) {
     }
 }
 
-/// 程序坞点图标 / 托盘「打开 Mesa」：把主窗口叫回来
+/// 程序坞点图标 / 托盘「打开 Mesa」/ Windows 上再次打开 Mesa（单实例回调）：把主窗口叫回来
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -125,6 +125,16 @@ pub fn quit_background_count() -> usize {
 #[tauri::command]
 pub fn show_main_window(app: AppHandle) {
     show_main(&app);
+}
+
+/// 更新后重启前放掉单实例锁：relaunch 先起新进程再退旧进程，锁还在时新进程会把自己交给
+/// 正在退出的旧进程然后退出，结果一个都不剩（Windows 装包后由安装包拉起、不走这里，Linux 走）
+#[tauri::command]
+pub fn release_single_instance(app: AppHandle) {
+    #[cfg(any(windows, target_os = "linux"))]
+    tauri_plugin_single_instance::destroy(&app);
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = app;
 }
 
 #[tauri::command]

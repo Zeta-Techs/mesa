@@ -77,6 +77,10 @@ svg2pdf = { version = "0.13", default-features = false, features = ["text", "ima
 # 缺字回落时挑中文字体要查字形表；已是 usvg 的传递依赖，不新增下载
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
+# 单实例：再打开 Mesa 时叫回已开的窗口，不另起进程（lib.rs run 开头；macOS 由系统保证单份，不挂）
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_DataExchange", "Win32_UI_Shell", "Win32_System_Diagnostics_Debug", "Win32_System_Power", "Wdk_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry", "Win32_Graphics_Dwm"] }
 

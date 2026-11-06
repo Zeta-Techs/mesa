@@ -1981,7 +1981,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   2026-10-20：macOS 没有 Homebrew 时 Node.js / Python / Quarto 走官方 .pkg（mac_pkg_url 从各家版本索引挑
                              #   地址，curl 下载后 osascript「with administrator privileges」跑 installer，Mesa 碰不到密码）；
                              #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
-  window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()
+  window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()；Windows / Linux 单实例回调与更新重启前放锁（release_single_instance）
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底
   research_profile.rs        # 研究档案（2026-11-02）：用户层 research-profile.md（复用 project_memory 的 parse / render / 状态机，goalName=分类，

@@ -229,7 +229,16 @@ pub fn run() {
     #[cfg(unix)]
     agents::extend_process_path();
     diagnostics::start_process_monitor();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // 单实例（Windows / Linux）：关窗收进托盘后再从开始菜单 / 桌面打开，会起第二个进程、托盘出两个图标，
+    // 两份进程还会抢同一批配置与终端。第二次打开只把已开的主窗口叫回来，自己退出。必须是第一个插件。
+    // macOS 不挂：访达 / 程序坞打开同一个 .app 由系统交给已开的进程（RunEvent::Reopen），本就只有一份；
+    // 那边的插件按 identifier 在临时目录建套接字，会挡住同 identifier 的第二开发实例与打包沙盒（environment.md）
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        window_close::show_main(app);
+    }));
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // 应用自更新（tauri-plugin-updater）+ 安装后重启（tauri-plugin-process）
@@ -611,6 +620,7 @@ pub fn run() {
             window_close::quit_background_count,
             window_close::show_main_window,
             window_close::confirm_quit,
+            window_close::release_single_instance,
             app_icon::apply_app_icon,
             cli_permission::cli_default_permission,
             profile_validation::validate_profile,

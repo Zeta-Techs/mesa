@@ -208,7 +208,7 @@
   **agent 不得自行改端口、加 `--port`/`--strictPort` 参数或另起配置外的 dev 实例**；17575 被占时先报出占用方（Windows 用
   `netstat -ano | findstr :17575`）交用户处理，不静默换端口。
   **双 clone 并行开发的第二实例**：已入库 `src-tauri/tauri.dev.17576.conf.json`（`npm run tauri:dev:17576`，devUrl
-  127.0.0.1:17576，窗口标题带「 :17576」后缀；identifier 与主实例相同、共享配置目录）。验收三锚点缺一不可：
+  127.0.0.1:17576，窗口标题带「 :17576」后缀；identifier 与主实例相同、共享配置目录；Windows / Linux 上单实例按 identifier 认，两份同 identifier 的开发实例开不了第二个，Mac 不受影响）。验收三锚点缺一不可：
   用户指定的**仓库路径**（两个 clone 内容相同，开工先 `git rev-parse --show-toplevel` 自报并与用户指定路径对照）+
   **窗口标题**（17575 实例 = 「Mesa Dev - 热更新」，17576 实例 = 「Mesa Dev - 热更新 :17576」）+ **devUrl 端口**。
   用户指定了哪个实例就只核验哪个，其余窗口不算数；还要第三实例时照此加 conf 文件（端口连续顺延），不即兴改配置。
