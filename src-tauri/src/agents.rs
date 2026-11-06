@@ -7828,6 +7828,7 @@ api_backend = "responses"
             conflict_probes: &[],
             detection_note: None,
             api_key_fields: &[],
+            route_probe: None,
         };
         let found = auth_probe_candidates(&dir, &oa);
         // 只命中直接子级 .json：mcp/ 子目录与 .txt 都排除

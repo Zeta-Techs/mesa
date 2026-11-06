@@ -166,7 +166,23 @@ pub struct OfficialAccountSpec {
     /// 不算官方账号登录（codex auth.json 的 OPENAI_API_KEY：codex login --api-key 与
     /// cc-switch 等第三方中转写出来的是同一形状，文件层面无法区分，不得显示「已连接官方账号」）
     pub api_key_fields: &'static [&'static str],
+    /// 线路体检（design-outbound-route.md）：经与官方启动同源的代理访问这家服务自己的公开诊断地址；
+    /// None = 暂不体检（维护级各家二期再补，国内服务不需要出网代理）
+    pub route_probe: Option<RouteProbe>,
 }
+
+/// 线路体检的探测点：只访问不需登录的公开地址，不带任何凭据
+pub struct RouteProbe {
+    /// 探测地址；Cloudflare 的 `/cdn-cgi/trace` 会回 `loc=`（服务端看到的国家 / 地区）
+    pub url: &'static str,
+    /// 界面上显示的服务主机名
+    pub host: &'static str,
+    /// 这家服务已知不支持的地区（ISO 3166 两位码）；不在名单里不等于确认支持
+    pub unsupported_regions: &'static [&'static str],
+}
+
+/// Anthropic 与 OpenAI 都不对这些地区提供服务（两家官方支持地区页，2026-11 核对）
+const AI_UNSUPPORTED_REGIONS: &[&str] = &["CN", "HK", "MO", "RU", "BY", "IR", "KP", "SY", "CU"];
 
 /// 一条冲突探测：某个配置文件中存在指定变量即视为会覆盖官方账号登录
 pub struct ConflictProbe {
@@ -439,6 +455,11 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }],
             detection_note: Some("macOS 上凭证存于系统钥匙串，文件检测可能漏报，以 claude auth status 为准"),
             api_key_fields: &[],
+            route_probe: Some(RouteProbe {
+                url: "https://claude.ai/cdn-cgi/trace",
+                host: "claude.ai",
+                unsupported_regions: AI_UNSUPPORTED_REGIONS,
+            }),
         }),
         model_switch: ModelSwitch::Direct("/model {model}"),
         effort_levels: Some((&["low", "medium", "high", "xhigh", "max"], "/effort {level}")),
@@ -504,6 +525,11 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // auth.json 顶层 OPENAI_API_KEY = API Key 模式（官方 --api-key 或第三方中转同一形状），
             // 不算官方账号连接
             api_key_fields: &["OPENAI_API_KEY"],
+            route_probe: Some(RouteProbe {
+                url: "https://chatgpt.com/cdn-cgi/trace",
+                host: "chatgpt.com",
+                unsupported_regions: AI_UNSUPPORTED_REGIONS,
+            }),
         }),
         model_switch: ModelSwitch::Picker("/model"),
         effort_levels: None,
@@ -570,6 +596,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }],
             detection_note: Some("新版开启加密存储（GEMINI_FORCE_ENCRYPTED_STORAGE）时凭证不落该文件，可能漏报"),
             api_key_fields: &[],
+            route_probe: None,
         }),
         model_switch: ModelSwitch::Direct("/model set {model}"),
         effort_levels: None,
@@ -642,6 +669,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // matrix §4：Qwen OAuth 只有免费档，2026-04-15 停用（0.26.3：Limit: No longer available）
             detection_note: Some("Qwen OAuth 免费档 2026-04-15 已停用，官方账号登录后也用不了；请改用阿里云 Coding Plan 或 API Key 连接"),
             api_key_fields: &[],
+            route_probe: None,
         }),
         model_switch: ModelSwitch::None,
         // 0.22.0 bundle 实证 /effort 直切命令（写运行时 reasoning.effort；0.21.1 无此命令，
@@ -769,6 +797,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             conflict_probes: &[],
             detection_note: Some("凭证文件名随 provider 名变化（credentials/<name>.json）；设了 KIMI_CODE_HOME 时数据目录整体搬迁，文件检测可能漏报"),
             api_key_fields: &[],
+            route_probe: None,
         }),
         // /model <别名> 带参直切（0.36.1 实证）：参数是 config.toml [models.*] 的别名
         //（非法字符清洗为 _），注入模式下模型没入表会报 Unknown model alias（TUI 可见）
@@ -845,6 +874,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }],
             detection_note: Some("登录走浏览器 OAuth（国际站 codebuddy.ai / 中国站 copilot.tencent.com），以 TUI 内 /login 后的状态为准"),
             api_key_fields: &[],
+            route_probe: None,
         }),
         model_switch: ModelSwitch::None,
         // CodeBuddy exposes --effort at launch; no runtime /effort command is assumed.
@@ -904,6 +934,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             conflict_probes: &[],
             detection_note: Some("凭证默认存 macOS 钥匙串（仅设 AGENT_CLI_CREDENTIAL_STORE=file 时才落 auth.json），文件检测可能漏报，以 cursor-agent 实际登录态为准"),
             api_key_fields: &[],
+            route_probe: None,
         }),
         model_switch: ModelSwitch::None,
         effort_levels: None,
@@ -977,6 +1008,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }],
             detection_note: Some("凭证在 ~/.grok/auth.json（scope→GrokAuth 顶层 map，grok 自己原子重写）；「已连接」仅代表已登录——auth.json 不含订阅/会员字段，无会员的免费账号登录后同样显示已连接，能否用官方额度以实际使用为准"),
             api_key_fields: &[],
+            route_probe: None,
         }),
         // Grok 1.0.x supports /model and /effort in the running TUI.
         model_switch: ModelSwitch::Direct("/model {model}"),

@@ -23,6 +23,7 @@ import appIconLight from "../assets/app-icon/light.png";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import FeishuSettingsCard from "../components/FeishuSettingsCard";
+import RouteCheckCard from "../components/RouteCheckCard";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
@@ -3972,6 +3973,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 </ul>
               ))}
           </div>
+        </Row>
+        <Row
+          label="线路体检"
+          align="start"
+          hint="官方账号实际从哪里出去、通不通"
+          labelTitle="经和官方账号启动时完全相同的代理，访问这家服务自己的地址（如 claude.ai），看它能不能连上、从哪个国家或地区出去。代理按域名分流时，用别的网站查出口不准。只访问公开的诊断地址，不带账号信息。"
+        >
+          <RouteCheckCard proxyKey={settings?.outboundProxy ?? ""} />
         </Row>
         <Row
           label="不走代理的地址"

@@ -95,6 +95,12 @@ import {
 } from "../chat-mismatch";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
 import {
+  PREFLIGHT_MAX_AGE_SECS,
+  preflightBlockMessage,
+  preflightReviewNote,
+  type RouteCheck,
+} from "../route-check";
+import {
   channelAttention,
   channelCanAnswer,
   channelInfersApproval,
@@ -5504,6 +5510,30 @@ const TerminalView = memo(function TerminalView({
         return null;
       }
     }
+    // 线路体检（design-outbound-route.md）：官方账号启动前取 5 分钟内的结果，没有就当场测（最多约 6 秒）。
+    // 拦下 = 问一句；待你判断 = 启动后提一句；没有探测点的那几家后端报错，这里当没测
+    let routeBlocked = false;
+    let routeNote: string | null = null;
+    if (selectedProfile?.accountType === "official") {
+      const check = await invoke<RouteCheck>("route_check", {
+        agentId,
+        profileId,
+        maxAgeSecs: PREFLIGHT_MAX_AGE_SECS,
+      }).catch(() => null);
+      if (check?.verdict === "block") {
+        routeBlocked = true;
+        const ok = await confirmDialog(preflightBlockMessage(check, agentLabel(agentId)), {
+          confirmText: "仍要启动",
+        });
+        if (!ok) {
+          launchCancelRef.current = "没有启动：线路体检没通过，到 设置 → 网络 看原因";
+          setBarExpanded(true);
+          return null;
+        }
+      } else if (check) {
+        routeNote = preflightReviewNote(check, agentLabel(agentId));
+      }
+    }
     if (!(await checkWorkingDirectory(cwd))) {
       setBarExpanded(true);
       return null;
@@ -5702,9 +5732,11 @@ const TerminalView = memo(function TerminalView({
         toast("上次那段对话没有留下记录（Agent 没来得及保存就退出了），已在原目录开了新会话", "info");
       }
       // 官方账号走设置里的出网代理，本机代理端口没在监听：多半是代理软件没开，接下来的网络错误先往这上头想
-      if (res.proxyDown) {
+      // 预检已经就这件事问过就不再提（同一件事只说一次）；预检用的是 5 分钟内的结果，代理刚关掉时靠这里兜底
+      if (res.proxyDown && !routeBlocked) {
         toast(`出网代理 ${res.proxyDown} 没有在运行：官方账号可能连不上，先打开代理软件，或到设置 → 网络改掉`, "warning");
       }
+      if (routeNote) toast(routeNote, "info");
       // 后端兜底模型回传（前端留空 = profile 首个模型）：同步进标签状态，
       // 否则状态栏/对话头部在兜底路径下没有模型可显示；lastLaunch/模型历史也记生效值
       const effectiveModel = res.model ?? model;

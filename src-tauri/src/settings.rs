@@ -482,11 +482,18 @@ pub fn official_outbound_env() -> Vec<(String, String)> {
 /// 这里只把「连不上多半是代理没开」说出来，不替用户改走直连
 pub fn official_proxy_down_from(s: &AppSettingsDto, alive: impl Fn(&str) -> bool) -> Option<String> {
     let proxy = official_outbound_env_from(s).into_iter().find(|(k, _)| k == "HTTPS_PROXY")?.1;
-    let url = reqwest::Url::parse(&proxy).ok()?;
+    let target = loopback_proxy_target(&proxy)?;
+    (!alive(&proxy)).then_some(target)
+}
+
+/// 代理地址指向本机时给出 `主机:端口`（不带账号密码）；远端代理返回 None——只探本机，
+/// 连不上立刻被拒、不拖慢启动（官方启动提示与线路体检共用）
+pub(crate) fn loopback_proxy_target(proxy: &str) -> Option<String> {
+    let url = reqwest::Url::parse(proxy).ok()?;
     let host = url.host_str()?.trim_matches(|c| c == '[' || c == ']').to_string();
     let loopback = host.eq_ignore_ascii_case("localhost")
         || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    if !loopback || alive(&proxy) {
+    if !loopback {
         return None;
     }
     Some(match url.port_or_known_default() {
@@ -608,7 +615,7 @@ const COMMON_PROXY_PORTS: &[(u16, bool, &str)] = &[
 ];
 
 /// TCP 探测代理端口是否在监听（400ms；host:port 解析失败按不在线处理）
-fn proxy_url_alive(url: &str) -> bool {
+pub(crate) fn proxy_url_alive(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };

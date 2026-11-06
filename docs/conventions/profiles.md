@@ -388,6 +388,14 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 
 **出网代理**（设置 `outbound_proxy`）：只注入官方启动与组头登录（`HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY`）。网关 API 启动不走。连接 `extraEnv` 同名键最后覆盖。不建本地反代理，官方失败不回落中转。
 
+**线路体检（2026-11-06 用户拍板「按建议做」，设计稿 `docs/design-outbound-route.md`）**：判官方账号能不能用看**结果**不看配置——
+经与官方启动同源的代理（`route_check::resolve_proxy`：连接 extra_env > 设置 > 登录 shell 继承）访问**这家服务自己的**公开诊断地址
+（`agent_specs` `OfficialAccountSpec.route_probe`，一期 Claude Code `claude.ai`、Codex `chatgpt.com` 的 `/cdn-cgi/trace`；规则分流下出口随域名变，禁用中立查 IP 网站代测），
+不带任何凭据；判通过 / 拦下 / 待你判断（不支持地区名单 `AI_UNSUPPORTED_REGIONS`，不在名单不等于确认支持）。官方启动前取 5 分钟内结果，拦下 = confirmDialog 问一句、
+待你判断 = 启动后 toast；预检问过就不再弹 `proxy_down` toast。拍板细则：拦下要问；出口类型（住宅 / 机房）只做按钮、默认不查（要把出口 IP 发第三方）；
+中转启动继承的 shell 代理一期只在体检卡显示来源、不改行为；Mesa 普通终端标签不注出网代理；后台复查只在有官方会话运行时（二期）。
+Mesa 不切代理节点、不调代理软件接口、不写系统代理。
+
 ## 12. 设为全局与托盘
 
 **设为全局写入规则（2026-10-30 用户拍板「全部都修复」，九家对照官方文档 / 源码 / 实测审计后定）**——改任何一家的写计划前逐条对照：

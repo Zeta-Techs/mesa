@@ -151,6 +151,7 @@ mod research_profile;
 mod local_stats;
 mod research_tools;
 mod review_contract;
+mod route_check;
 mod runs;
 mod scan_persist;
 mod runtime;
@@ -1065,6 +1066,8 @@ pub fn run() {
             usage::usage_activity_agents,
             settings::get_settings,
             settings::detect_outbound_proxy,
+            route_check::route_check,
+            route_check::route_check_agents,
             settings::app_storage_usage,
             settings::clear_storage_entry,
             uninstall::uninstall_mesa,
