@@ -9,6 +9,8 @@ import { MesaStatusLead } from "./MesaMark";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
 import { useAppStore } from "../store";
+import { resumeDispatchedGoal } from "../assistant-dispatch";
+import { quickIntent } from "../im-route";
 import { buddyDayPart, buddyMood } from "../buddy-time";
 import {
   assistantErrorText,
@@ -223,10 +225,47 @@ export default function ProjectAssistantPanel({
     return () => window.clearInterval(timer);
   }, [busy]);
 
+  /** 让停了 / 失败的派出去的目标接着做（进展下面的按钮、或直接说「接着做」） */
+  async function resume(taskId: string) {
+    if (!projectPath) return;
+    try {
+      toast(await resumeDispatchedGoal(projectPath, project, taskId), "success");
+    } catch (reason) {
+      toast(`没接上：${String(reason)}`, "error");
+    }
+  }
+
   async function send(question: string, withFocus: AssistantFocus | null, forced?: AssistantIntent, attached: AssistantImage[] = images) {
     // 只贴了图没写字：替人补一句最常见的问法
     const q = question.trim() || (attached.length ? "看看这张截图是怎么回事，我该怎么办？" : "");
     if (!q || busy || !projectPath) return;
+    // 「派出去」「接着做」照字面办，不交给 AI（它自己做不了动作，交给它只会被说成「已经派出去了」，2026-11-06 实证）
+    const quick = !withFocus && !forced && !attached.length ? quickIntent(q) : null;
+    if (quick) {
+      setDraft("");
+      if (quick === "dispatch") {
+        const steps = stepCount;
+        const last = [...turns].reverse().find((t) => !t.echoOf && t.answer.includes(":::派活"));
+        const order = last ? parseWorkOrder(parseClarify(parseRemember(last.answer).text).text, steps).order : null;
+        if (!last || !order || last.dispatched) {
+          toast("现在没有还没派的单子：先说要做什么，起草好单子再派", "info");
+          return;
+        }
+        try {
+          await dispatch(last.at, order);
+        } catch (reason) {
+          toast(`没派出去：${String(reason)}`, "error");
+        }
+        return;
+      }
+      const last = [...turns].reverse().find((t) => t.dispatched?.mode === "goal" && t.dispatched.taskId && (t.dispatched.echoed === "stopped" || t.dispatched.echoed === "failed"));
+      if (!last?.dispatched?.taskId) {
+        toast("没有停下的、经项目助手派出去的活", "info");
+        return;
+      }
+      await resume(last.dispatched.taskId);
+      return;
+    }
     // 纯寒暄本地直接回，不调 AI（原来一句「你好」要 8–19 秒）；带图的不算寒暄
     const canned = withFocus || forced || attached.length ? null : localReply(q, new Date().getHours());
     if (canned) {
@@ -493,6 +532,10 @@ export default function ProjectAssistantPanel({
           {turns.map((turn, i) => {
             if (turn.echoOf) {
               const echo = parseAssistantAnswer(turn.answer, stepCount);
+              // 停了 / 失败的派出去的目标：最新那条进展下面给「接着做」（2026-11-06）
+              const rec = turns.find((t) => t.at === turn.echoOf)?.dispatched;
+              const latestEcho = !turns.slice(i + 1).some((t) => t.echoOf === turn.echoOf);
+              const resumable = latestEcho && rec?.mode === "goal" && !!rec.taskId && (rec.echoed === "stopped" || rec.echoed === "failed");
               return (
                 <article key={`${turn.at}-${i}`} className="flex flex-col gap-1.5" aria-label="派活进展">
                   <div className="flex items-center gap-2">
@@ -502,8 +545,13 @@ export default function ProjectAssistantPanel({
                     </span>
                   </div>
                   <p className="text-sm leading-6 text-l1">{echo.text}</p>
-                  {echo.actions.length > 0 && (
+                  {(echo.actions.length > 0 || resumable) && (
                     <div className="flex flex-wrap gap-1.5">
+                      {resumable && (
+                        <button type="button" className={secondaryActionClass} disabled={busy} onClick={() => void resume(rec!.taskId!)}>
+                          接着做
+                        </button>
+                      )}
                       {echo.actions.map((action) => (
                         <button key={`${action.kind}-${action.step ?? ""}`} type="button" className={secondaryActionClass} onClick={() => onAction(action, turn)}>
                           {action.label}

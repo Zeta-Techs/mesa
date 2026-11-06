@@ -14,9 +14,13 @@ export function echoText(rec: Pick<DispatchRecord, "target" | "step" | "title" |
         ? `${what}做完了，等你评审、保存进项目。[[去评审:${rec.step}]]`
         : `${what}做完了，在项目页的待验收里等你验收。[[项目页]]`;
     case "failed":
-      return `${what}没做成（上次运行失败）。想知道原因可以直接问我「为什么失败了」。`;
+      return rec.target === "goal"
+        ? `${what}没做成（上次运行失败）。想知道原因可以直接问我「为什么失败了」；要接着做，点下面的「接着做」。`
+        : `${what}没做成（上次运行失败）。想知道原因可以直接问我「为什么失败了」。`;
     case "stopped":
-      return `${what}停下了，没做完。要接着做，到项目页里点开始。[[项目页]]`;
+      return rec.target === "goal"
+        ? `${what}停下了，没做完。要接着做，点下面的「接着做」（接回上次的隔离副本和对话）。`
+        : `${what}停下了，没做完。要接着做，到那一步点「继续」。[[看这一步:${rec.step}]]`;
     case "accepted":
       return "";
   }

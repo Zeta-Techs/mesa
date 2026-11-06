@@ -9,7 +9,7 @@ import type { RouteProject } from "./im-route";
 
 /** 按钮回传值：op 动作、p 项目根、t 那一轮的时间、k 等你的事的键、v 选中的值、q 待问的话 */
 export interface CardValue {
-  op: "clarify" | "dispatch" | "remember" | "desk" | "project" | "trust";
+  op: "clarify" | "dispatch" | "remember" | "desk" | "project" | "trust" | "resume";
   p: string;
   t?: string;
   k?: string;
@@ -128,6 +128,16 @@ export function deskCard(groups: readonly { project: RouteProject; items: readon
     if (g.items.length > 8) els.push(note(`还有 ${g.items.length - 8} 件，在电脑上的项目助手里看`));
   }
   return card(`等你的事 ${total} 件`, els);
+}
+
+/** 派活进展（停了 / 失败带「接着做」，2026-11-06） */
+export function echoCard(project: RouteProject, turnAt: string, text: string, resumable: boolean): object {
+  const els: unknown[] = [{ tag: "markdown", content: text }];
+  if (resumable) {
+    els.push({ tag: "action", actions: [button("接着做", { op: "resume", p: project.path, t: turnAt }, true)] });
+    els.push(note("接回上次的隔离副本和对话接着做；也可以直接回一句「接着做」"));
+  }
+  return card(`派活进展 · ${project.name}`, els, resumable ? "orange" : "green");
 }
 
 /** 说不清是哪个项目：列项目按钮，点了把这句话交给它 */

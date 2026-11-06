@@ -401,3 +401,8 @@ test("三期：派活单「定时」一栏", async () => {
   assert.equal(order!.schedule, "每周五 17:00");
   assert.match(REQUEST_RULES, /做成定时任务…/);
 });
+
+test("项目助手不能说自己做了动作（2026-11-06 实证：回「让他接着做」被说成已经派出去了）", async () => {
+  const { PROJECT_RULES, REQUEST_RULES, GENERAL_RULES } = await import("../src/project-assistant.ts");
+  for (const rules of [PROJECT_RULES, REQUEST_RULES, GENERAL_RULES]) assert.match(rules, /绝不能说「已经派出去了/);
+});

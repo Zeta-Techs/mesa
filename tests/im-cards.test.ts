@@ -70,3 +70,10 @@ test("信任文件夹卡片：你派的活给两个按钮，别的只提示回�
   assert.equal(buttons(no).length, 0);
   assert.match(JSON.stringify(no), /信任文件夹要回到电脑上点/);
 });
+
+test("派活进展卡片：停了的目标带「接着做」", async () => {
+  const { echoCard } = await import("../src/im-cards.ts");
+  const card: any = echoCard(project, "t0", "停下了", true);
+  assert.deepEqual(buttons(card)[0].value, { op: "resume", p: "/p/a", t: "t0" });
+  assert.equal(buttons(echoCard(project, "t0", "做完了", false)).length, 0);
+});

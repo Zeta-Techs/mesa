@@ -38,3 +38,10 @@ test("动作分级：手机上只做点一下就生效那一档", () => {
   assert.equal(actionOp("review"), "navigate");
   assert.equal(OP_TIERS.answer, "auto");
 });
+
+test("「派出去」「接着做」照字面认，不交给 AI", async () => {
+  const { quickIntent } = await import("../src/im-route.ts");
+  for (const t of ["派出去", "派吧", "开工", "派出去吧"]) assert.equal(quickIntent(t), "dispatch", t);
+  for (const t of ["让他接着做", "接着做", "继续", "让它继续吧"]) assert.equal(quickIntent(t), "resume", t);
+  for (const t of ["派出去之前先问一下", "继续写第二节", "帮我写周报"]) assert.equal(quickIntent(t), null, t);
+});

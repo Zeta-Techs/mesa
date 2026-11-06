@@ -9,8 +9,7 @@ import { echoInboxItems, echoText, loadEchoSeen, markEchoSeen, type OpenDispatch
 import { samePath } from "./path-utils";
 import { IS_WINDOWS } from "./hotkeys";
 import type { ProjectDto } from "./types";
-import { imPushText } from "./im-bridge";
-import { phoneText } from "./im-cards";
+import { imPushEcho } from "./im-bridge";
 
 export const ECHO_POLL_MS = 60_000;
 
@@ -35,9 +34,8 @@ export async function pollAssistantEchoes(): Promise<void> {
       d.record = { ...d.record, echoed: phase, echoedAt: echo?.at ?? new Date().toISOString() };
       if (echo) {
         added = true;
-        // 手机上也说一声（飞书连上、绑定过才发）
-        const name = d.projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? d.projectRoot;
-        void imPushText(`${name}：${phoneText(echoText(d.record, phase))}`);
+        // 手机上也说一声（飞书连上、绑定过才发）；停了 / 失败的目标带「接着做」
+        void imPushEcho(d.projectRoot, d.turnAt, echoText(d.record, phase), d.record.mode === "goal" && (phase === "stopped" || phase === "failed"));
       }
     }
     const state = useAppStore.getState();

@@ -19,10 +19,10 @@ import {
   parseWorkOrder,
 } from "./project-assistant";
 import { actionOp, opAllowed } from "./assistant-ops";
-import { dispatchWorkOrder, type DispatchRecord } from "./assistant-dispatch";
+import { dispatchWorkOrder, resumeDispatchedGoal, type DispatchRecord } from "./assistant-dispatch";
 import { addProjectKnowledge, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
-import { IM_HELP_TEXT, routeMessage, type RouteProject } from "./im-route";
-import { answerCard, deskCard, phoneText, projectPickCard, type CardValue } from "./im-cards";
+import { IM_HELP_TEXT, quickIntent, routeMessage, type RouteProject } from "./im-route";
+import { answerCard, deskCard, echoCard, phoneText, projectPickCard, type CardValue } from "./im-cards";
 import type { DeskItem } from "./assistant-queue";
 import type { HelpRequestDto, ProjectConfigReadDto, ProjectDto, WorkspaceDto } from "./types";
 
@@ -185,9 +185,74 @@ async function handleMessage(text: string): Promise<void> {
         return sendText(`没送出去：${String(reason)}`);
       }
     }
-    case "ask":
-      return ask(byPath(route.project.path), route.text);
+    case "ask": {
+      const project = byPath(route.project.path);
+      // 「派出去」「接着做」照字面办：交给 AI 只会被说成「已经派出去了」（它自己做不了动作）
+      const quick = quickIntent(route.text);
+      if (quick === "dispatch") return dispatchLatest(project);
+      if (quick === "resume") return resumeLatest(project);
+      return ask(project, route.text);
+    }
   }
+}
+
+async function logOf(projectPath: string): Promise<AssistantTurn[]> {
+  return invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath }).catch(() => [] as AssistantTurn[]);
+}
+
+/** 派出最近一张还没派的单子 */
+async function dispatchLatest(project: ProjectDto): Promise<void> {
+  const log = (await logOf(project.path)).filter((t) => !t.echoOf);
+  const last = [...log].reverse().find((t) => t.answer.includes(":::派活"));
+  if (!last || last.dispatched) return sendText("现在没有还没派的单子。先说要做什么，项目助手起草好单子再派。");
+  return dispatchTurn(project, last);
+}
+
+/** 让最近一件停了 / 失败的派出去的目标接着做 */
+async function resumeLatest(project: ProjectDto): Promise<void> {
+  const log = await logOf(project.path);
+  const last = [...log].reverse().find((t) => t.dispatched?.mode === "goal" && t.dispatched.taskId && (t.dispatched.echoed === "stopped" || t.dispatched.echoed === "failed"));
+  if (!last?.dispatched?.taskId) return sendText("没有停下的、经项目助手派出去的活。要看进展说「现在到哪了」。");
+  try {
+    return sendText(await resumeDispatchedGoal(project.path, project, last.dispatched.taskId));
+  } catch (reason) {
+    return sendText(`没接上：${String(reason)}`);
+  }
+}
+
+async function dispatchTurn(project: ProjectDto, turn: AssistantTurn): Promise<void> {
+  if (turn.dispatched) return sendText(`这张单已经派过了：${turn.dispatched.note}`);
+  const steps = await stepCount(project.path);
+  const order = parseWorkOrder(parseClarify(parseRemember(turn.answer).text).text, steps).order;
+  if (!order) return sendText("那一轮里没有能派的单子。");
+  try {
+    const result = await dispatchWorkOrder({ order, projectPath: project.path, project });
+    const record: DispatchRecord = {
+      at: new Date().toISOString(),
+      target: order.target,
+      step: order.step,
+      title: order.title,
+      mode: result.mode,
+      mailId: result.mailId ?? null,
+      taskId: result.taskId ?? null,
+      worktreePath: result.worktreePath ?? null,
+      note: result.note,
+    };
+    await invoke("assistant_mark_dispatched", { projectRoot: project.path, turnAt: turn.at, record }).catch(() => {});
+    useAppStore.getState().bumpAssistantEchoTick();
+    return sendText(`${result.note}。做完了我会告诉你。`);
+  } catch (reason) {
+    return sendText(`没派出去：${String(reason)}`);
+  }
+}
+
+/** 派活进展推到手机：停了 / 失败的目标带「接着做」 */
+export async function imPushEcho(projectRoot: string, turnAt: string, text: string, resumable: boolean): Promise<void> {
+  if (!(await imReady())) return;
+  const list = await projects();
+  const p = list.find((x) => samePath(x.path, projectRoot, IS_WINDOWS));
+  const route = p ? asRoute(p) : { path: projectRoot, name: projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? projectRoot };
+  await sendCard(echoCard(route, turnAt, phoneText(text), resumable));
 }
 
 async function turnAnswer(projectPath: string, turnAt: string | undefined): Promise<AssistantTurn | null> {
@@ -221,28 +286,16 @@ async function handleCard(value: CardValue): Promise<void> {
     case "dispatch": {
       const turn = await turnAnswer(project.path, value.t);
       if (!turn) return sendText("那张派活单找不到了（问答记录可能清空了）。");
-      if (turn.dispatched) return sendText(`这张单已经派过了：${turn.dispatched.note}`);
-      const steps = await stepCount(project.path);
-      const order = parseWorkOrder(parseClarify(parseRemember(turn.answer).text).text, steps).order;
-      if (!order) return sendText("那一轮里没有能派的单子。");
+      return dispatchTurn(project, turn);
+    }
+    case "resume": {
+      const turn = await turnAnswer(project.path, value.t);
+      const taskId = turn?.dispatched?.taskId;
+      if (!taskId) return sendText("那件活找不到了（问答记录可能清空了）。");
       try {
-        const result = await dispatchWorkOrder({ order, projectPath: project.path, project });
-        const record: DispatchRecord = {
-          at: new Date().toISOString(),
-          target: order.target,
-          step: order.step,
-          title: order.title,
-          mode: result.mode,
-          mailId: result.mailId ?? null,
-          taskId: result.taskId ?? null,
-          worktreePath: result.worktreePath ?? null,
-          note: result.note,
-        };
-        await invoke("assistant_mark_dispatched", { projectRoot: project.path, turnAt: turn.at, record }).catch(() => {});
-        useAppStore.getState().bumpAssistantEchoTick();
-        return sendText(`${result.note}。做完了我会告诉你。`);
+        return sendText(await resumeDispatchedGoal(project.path, project, taskId));
       } catch (reason) {
-        return sendText(`没派出去：${String(reason)}`);
+        return sendText(`没接上：${String(reason)}`);
       }
     }
     case "trust": {

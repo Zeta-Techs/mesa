@@ -19,7 +19,7 @@ import { openTerminalInTurn } from "./terminal-queue";
 import { workOrderGoalText, workOrderMessage, type OrderTextOptions, type WorkOrder } from "./project-assistant";
 import { builtinTaskMethod, findBuiltinTask } from "./builtin-tasks";
 import { goalTextFromPack } from "./task-packs";
-import type { ProjectConfigReadDto, ProjectDto, ProjectMailDto, SkillDto, TaskDto, TaskPackDto, WorkspaceDto } from "./types";
+import type { ProjectConfigReadDto, ProjectDto, ProjectMailDto, RunDto, SkillDto, TaskDto, TaskPackDto, WorkspaceDto } from "./types";
 
 export interface DispatchResult {
   note: string;
@@ -245,4 +245,50 @@ export async function dispatchStatus(
   if (health && health.ahead > 0) return { text: "做完了，等你评审、保存进项目", tone: "done", phase: "review" };
   if (ws.mergedAt && health?.ahead === 0) return { text: "已保存进项目", tone: "idle", phase: "accepted" };
   return { text: live ? "这一轮说完了，等你看" : "停下了，没看到新的改动", tone: "idle" };
+}
+
+/**
+ * 派出去的目标停了 / 失败了，接着做（2026-11-06 用户在手机上回「让他接着做」，项目助手却谎称派出去了）：
+ * 同项目任务页「重试」——复用上次的隔离副本、尽量接回上次那段对话（同一家 Agent 时），不从零复制一份重跑。
+ * 只接经项目助手派出去、还没清理副本的目标；这是人点的那一下（按钮或明说「接着做」）。
+ */
+export async function resumeDispatchedGoal(projectPath: string, project: ProjectDto | null, taskId: string): Promise<string> {
+  if (!project) throw new Error("这个目录还没添加成项目");
+  const task = await invoke<TaskDto | null>("task_get", { id: taskId });
+  if (!task) throw new Error("那条目标找不到了（可能删了）");
+  if (task.status !== "stopped" && task.status !== "failed") {
+    throw new Error(task.status === "running" ? "它还在做，不用接" : `它现在的状态是「${task.status}」，接不了`);
+  }
+  if (task.workspaceCleared || task.storageCleanupPending) throw new Error("上次的工作副本已经清理，接不回去了：到项目页从头开始");
+  const profile = (task.profileId && useAppStore.getState().profiles.find((p) => p.id === task.profileId)) || projectDefaultProfile(project);
+  if (!profile) throw new Error("还没有可用连接：先到连接页配一个");
+  const runs = await invoke<RunDto[]>("run_list", { projectRoot: projectPath }).catch(() => [] as RunDto[]);
+  const previous = runs.filter((r) => r.taskId === task.id).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+  useAppStore.getState().setPage("terminal");
+  const { run, prompt } = await prepareGoalRun({
+    projectName: project.name,
+    projectPath,
+    workMode: project.workMode,
+    task,
+    agent: profile.agent,
+    profileId: profile.id,
+    reuseIsolation: true,
+  });
+  const taken = await openTerminalInTurn({
+    extraEnv: {},
+    title: task.name,
+    agentId: profile.agent,
+    profileId: profile.id,
+    model: resolveTaskModel({
+      models: profile.models,
+      taskModel: task.model,
+      profileId: profile.id,
+      defaultProfileId: project.defaultProfiles?.[profile.agent],
+      defaultModel: project.defaultModels?.[profile.agent],
+    }),
+    resume: previous?.sessionId && previous.agent === profile.agent ? { agentId: previous.agent, sessionId: previous.sessionId } : undefined,
+    ...goalRunTerminalFields(task, run, prompt),
+  });
+  if (!taken) throw new Error("终端页没收下开工请求，到项目页点「重试」");
+  return `已让「${task.name}」接着做（接回上次的隔离副本${previous?.sessionId ? "和对话" : ""}），做完在待验收里`;
 }
