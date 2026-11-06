@@ -126,6 +126,7 @@ mod models;
 mod paths;
 mod pdf;
 mod office_view;
+mod docx_comments;
 mod phone_drop;
 mod portwatch;
 mod pricing;
@@ -856,6 +857,7 @@ pub fn run() {
             pdf::file_stamp,
             pdf::grant_media_url,
             office_view::docx_features,
+            docx_comments::docx_comments_import,
             office_view::slides_outline,
             office_view::office_converter,
             office_view::office_to_pdf,

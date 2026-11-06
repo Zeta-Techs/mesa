@@ -83,7 +83,7 @@ export function chainWhere(
   return saved && Date.parse(saved) > Date.parse(since) ? { kind: "done" } : { kind: "waiting", step: prev };
 }
 
-export type RoundCause = "first" | "rework" | "followup" | "fresh" | "manual";
+export type RoundCause = "first" | "rework" | "followup" | "fresh" | "manual" | "comments";
 
 export interface StepRoundDto {
   index: number;
@@ -301,6 +301,8 @@ export function roundCauseLabel(cause: RoundCause): string {
       return "新开一轮";
     case "manual":
       return "接着改";
+    case "comments":
+      return "意见轮";
   }
 }
 
@@ -427,4 +429,43 @@ export function searchRefreshDraft(savedAt: string): { topics: string; reason: s
     topics: `更新检索：${day} 以来新发表的文献（按 papers/screening.md 检索日志里的原检索式与纳入标准，只补这段时间的）`,
     reason: "投稿前更新一次检索，避免漏掉最近发表的工作",
   };
+}
+
+// ===== 导师 / 合作者意见回流（2026-11-07 科研流程补全 §4） =====
+
+/** 导入 Word 批注后处理意见那一轮的开场话：清单原路径写进去，AI 逐条填类别 / 去向 / 处理；上游的事不自己改 */
+export function commentsPrompt(relPath: string, count: number, date: string): string {
+  return [
+    `这是一轮处理意见：我导入了 ${count} 条 Word 批注（导师 / 合作者的），清单在 ${relPath}（每行：编号 / 批注人 / 原文 / 意见 / 类别 / 去向 / 处理）。`,
+    "先读 TASK.md 的完成标准和决策暂停策略，它们照旧有效。逐条处理：",
+    "1. 填「类别」：改文字 / 补分析 / 补文献 / 改结构 / 要讨论。",
+    "2. 本步能改的：「去向」写「本步」，直接改稿，「处理」写改在哪一节哪一段；不采纳的也写「本步」，「处理」写有依据的理由。",
+    "3. 要前面步骤做的（补检索、补读、补算、改大纲 / 设计 / 清洗规则）：「去向」写「退回：步骤名」（步骤名照流程线上的原名），「处理」写要补 / 改什么；不自己改上游交的文件，Mesa 会按这一列预填退回单。",
+    "4. 「要讨论」的写进人工请求问人，不替人拍板；人确认过的内容不推翻。",
+    `全部过完，在本步主要报告末尾追加「## 意见处理（${date}）」：几条已改、几条待退回（退到哪几步）、几条要讨论、几条不采纳。`,
+    KEEP_WORKING_CLAUSE,
+  ].join("\n");
+}
+
+/** 意见清单里「去向」写了「退回：步骤名」的行，按退回目标归成补料单预填（targets：可退回的步骤名）。
+ *  表头列是 docx_comments.rs render_sheet 的契约：编号 / 批注人 / 原文 / 意见 / 类别 / 去向 / 处理 */
+export function commentReworkDrafts(sheet: string, targets: readonly string[]): Record<string, { topics: string; reason: string }> {
+  const out: Record<string, { ids: string[]; topics: string[] }> = {};
+  for (const line of sheet.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith("|")) continue;
+    const cells = t.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+    if (cells.length < 7 || !/^C\d+$/.test(cells[0])) continue;
+    const m = cells[5].match(/^退回[:：]\s*(.+)$/);
+    if (!m) continue;
+    const name = m[1].replace(/[「」]/g, "").trim();
+    const target = targets.find((x) => x === name) ?? targets.find((x) => name.includes(x) || x.includes(name));
+    if (!target) continue;
+    const what = cells[6] || cells[3];
+    (out[target] ??= { ids: [], topics: [] }).ids.push(cells[0]);
+    out[target].topics.push(`${cells[0]} ${what}`.slice(0, 200));
+  }
+  return Object.fromEntries(
+    Object.entries(out).map(([k, v]) => [k, { topics: v.topics.join("\n"), reason: `导师 / 合作者意见 ${v.ids.join("、")} 要前面这一步补或改` }]),
+  );
 }

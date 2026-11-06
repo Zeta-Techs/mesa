@@ -277,7 +277,8 @@ pub struct RoundStart {
     pub workspace_id: String,
     pub step: String,
     /// rework | followup | fresh；ack = 点了「跟进上游的新增」但没有要跟进的（只用来清「待跟进」，不算一轮）；
-    /// sync = 把项目最新内容并进了这一步的工作副本（workspace_sync_base 成功时后端自己记，不算一轮）
+    /// sync = 把项目最新内容并进了这一步的工作副本（workspace_sync_base 成功时后端自己记，不算一轮）；
+    /// comments = 导入 Word 批注后处理意见的一轮（2026-11-07）
     pub kind: String,
     #[serde(default)]
     pub rework_id: Option<String>,
@@ -286,7 +287,7 @@ pub struct RoundStart {
 }
 
 fn record_round_at(root: &Path, mut entry: RoundStart) -> Result<(), String> {
-    if !matches!(entry.kind.as_str(), "rework" | "followup" | "fresh" | "ack" | "sync") {
+    if !matches!(entry.kind.as_str(), "rework" | "followup" | "fresh" | "ack" | "sync" | "comments") {
         return Err(format!("不认识的轮次类型：{}", entry.kind));
     }
     entry.at = crate::sessions::now_iso();

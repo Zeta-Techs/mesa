@@ -485,6 +485,11 @@
 - **① 已落地**：`pipeline-presets.ts DRAFT_ORDER`（三套初稿 SECTION_STATUS 前一句；初稿都交 `manuscript/style-sheet.md`）；综述大纲第 8 条另交 `manuscript/sections.json`
   （`machine:records` 验 id、title）与写作规范初版；综述初稿 `fanOut: REVIEW_DRAFT_FANOUT`（items = sections.json，每路 2 节、最多 4 路，各路写 `manuscript/sections/`，收尾统稿并删掉分路文件）。
   论文 / 学位论文初稿不声明分路（IMRaD 各节相互依赖；学位论文各章在前面几步已写）。已导出示例课题。
+- **④ 已落地**：后端 `docx_comments.rs`（窄口径扫 word/comments.xml 与 document.xml：批注人、日期、文字、被批注原文；范围里没字的点批注退回取所在段；
+  只读源文件，清单写进这一步工作副本 `manuscript/comments/<日期>-<文件名>.md`、同名后缀递增不覆盖；表头是与 `step-loop.ts commentReworkDrafts` 的契约）。
+  TaskCardsSection `importComments`：写作 / 定稿类步骤开过工就有按钮；已保存的先 `assertRoundable`，做到一半的 AI 在忙则拦；并入最新 → 抽清单 → 提交 → 另开一轮
+  （`commentsPrompt`，轮次类型 `comments`「意见轮」）。退回单按最新一份清单「去向：退回：步骤名」预填（覆盖检查已填的目标不覆盖）。
+  干跑：2026-11-07 用一份真实返修稿（33 条批注）的副本跑通，31 条带原文，2 条批在图上无原文。
 - **③ 已落地**：三套模板全局设定加「文献数据抽取表：（让 AI 提议列 / 不需要）」（`setting-choices.ts` 有说明卡片、可「其他…」自写列）；
   `pipeline-presets.ts EXTRACTION_CLAUSE` 接在 `litNotesWrite` 末尾（三套精读都带）；精读分路各写 `notes/extraction-<路号>.md`、收尾合并；综述大纲表计划与初稿对照表先从抽取表取数；
   资料全貌精读一行「抽取表 N 行」（`materials-overview.ts`，按表格行数）。抽取表不进 expectedArtifacts（选「不需要」时不建）。

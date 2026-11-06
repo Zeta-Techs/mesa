@@ -253,3 +253,25 @@ test("searchRefreshHint：定稿类还没保存、检索保存超过 14 天才�
   assert.match(d.topics, /^更新检索：2026-10-0[12] 以来新发表的文献/);
   assert.match(d.reason, /投稿前/);
 });
+
+test("意见回流：处理意见的开场话；按「去向：退回」归成补料单预填", async () => {
+  const { commentsPrompt, commentReworkDrafts, roundCauseLabel } = await import("../src/step-loop.ts");
+  const p = commentsPrompt("manuscript/comments/20261107-稿.md", 3, "11-07");
+  assert.match(p, /导入了 3 条 Word 批注.*manuscript\/comments\/20261107-稿\.md/);
+  assert.match(p, /不自己改上游交的文件/);
+  assert.match(p, /「## 意见处理（11-07）」/);
+  assert.equal(roundCauseLabel("comments"), "意见轮");
+  const sheet = [
+    "| 编号 | 批注人 | 原文 | 意见 | 类别 | 去向 | 处理 |",
+    "|---|---|---|---|---|---|---|",
+    "| C001 | 王老师 | MoS2 | 补近三年原位表征 | 补文献 | 退回：文献检索与筛选 | 补 2023 年后原位 Raman / XAS |",
+    "| C002 | 王老师 | η10 | 数对不上 | 改文字 | 本步 | 已改 §3.2 |",
+    "| C003 | 李 | 机理 | 这几篇要精读 | 补文献 | 退回：「文献精读与笔记」 |  |",
+    "| C004 | 李 | x | y | 补分析 | 退回：不存在的步 | z |",
+  ].join("\n");
+  const drafts = commentReworkDrafts(sheet, ["文献精读与笔记", "文献检索与筛选"]);
+  assert.deepEqual(Object.keys(drafts).sort(), ["文献检索与筛选", "文献精读与笔记"]);
+  assert.equal(drafts["文献检索与筛选"].topics, "C001 补 2023 年后原位 Raman / XAS");
+  assert.equal(drafts["文献精读与笔记"].topics, "C003 这几篇要精读", "处理空着用意见");
+  assert.match(drafts["文献检索与筛选"].reason, /C001/);
+});

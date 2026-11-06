@@ -1140,7 +1140,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
                              #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）、
-                             #   searchRefreshHint / searchRefreshDraft 定稿前更新检索的入口判定与补料单预填（2026-11-07）（tests/step-loop.test.ts）
+                             #   searchRefreshHint / searchRefreshDraft 定稿前更新检索的入口判定与补料单预填、commentsPrompt / commentReworkDrafts 意见回流（2026-11-07）（tests/step-loop.test.ts）
   step-round.ts              # 在某一步「开一轮」的共同编排（2026-11-06 流程贯通）：pickStepWorkspace / ensureActive（恢复）/ assertRoundable（在忙、有没保存产出不叠一轮）/
                              #   boundStepLaunch / launchRound / recordRound / litKind；sendReworkRound = 退回补料整条路（步骤卡、项目助手补料单共用）。调 invoke，无单测
   step-latest.ts             # 开一轮前并入项目最新内容（流程贯通 §3）：bringLatest = 落后才并（health.behind + workspace_incoming）→ AI 在忙报错 →
@@ -1955,6 +1955,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   拖入只复制 attach_grants::user_supplied 登记过的源
                              # read_file_preview 非 UTF-8 用 chardetng 认编码（UTF-16 认 BOM），save_file_preview 按 encoding 写回、表示不了的字拒绝；台账通道不认编码
                              # watch_file：单文件监听（非递归盯所在文件夹、只认这个文件名，300ms 防抖），预览跟随磁盘变化
+  docx_comments.rs           # 导师 / 合作者意见回流（2026-11-07）：docx_comments_import 从 .docx 抽批注（批注人、日期、文字、被批注原文）写意见清单进步骤工作副本，
+                             #   只读源文件、不经 AI、同名不覆盖；render_sheet 表头与 step-loop.ts commentReworkDrafts 是契约（tests 在文件内）
   office_view.rs             # Office 预览补强：docx_features（mammoth 丢掉的公式 / 修订 / 批注 / 页眉页脚计数）、slides_outline（pptx 逐页大纲）、
                              #   office_converter / office_to_pdf（LibreOffice 转 PDF 到 config tmp，白名单内，超时杀树）
                              #   slides_outline 另带 figure_preview（同目录有 render.json 才认、PPTX 比 PNG 新标 stale，figure_preview_for）

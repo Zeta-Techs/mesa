@@ -93,7 +93,7 @@ export async function recordRound(
   projectPath: string,
   ws: WorkspaceDto,
   step: string,
-  kind: "rework" | "followup" | "fresh" | "ack",
+  kind: "rework" | "followup" | "fresh" | "ack" | "comments",
   reworkId?: string,
 ): Promise<void> {
   const clear =

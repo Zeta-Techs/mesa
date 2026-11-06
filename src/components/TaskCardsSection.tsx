@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   hoverRevealClass,
   inlineActionClass,
@@ -35,12 +36,14 @@ import {
   reworkTargets,
   withLatestNote,
   chainNext,
+  commentReworkDrafts,
+  commentsPrompt,
   searchRefreshDraft,
   searchRefreshHint,
   type ReworkDto,
   type FollowupScopeDto,
 } from "../step-loop";
-import { bringLatest } from "../step-latest";
+import { bringLatest, stepBusy } from "../step-latest";
 import { ROUND_CLAUSE, chainDefaultOff, stepKind } from "../step-kind";
 import {
   assertRoundable,
@@ -812,7 +815,7 @@ export default function TaskCardsSection({
     void openStepContinuation(focusStepDto.name, ws, focusStepDto.name, null, fresh);
   }
 
-  function recordRound(ws: WorkspaceDto, step: string, kind: "rework" | "followup" | "fresh" | "ack", reworkId?: string) {
+  function recordRound(ws: WorkspaceDto, step: string, kind: "rework" | "followup" | "fresh" | "ack" | "comments", reworkId?: string) {
     // 真开了新一轮（不是 ack）：这一步手动打的勾清掉，回到按落点检测，新一轮的条目与面板才会出来
     return recordStepRound(projectPath, ws, step, kind, reworkId).then(() => onHumanChanged?.());
   }
@@ -834,6 +837,36 @@ export default function TaskCardsSection({
       throw new Error(`「${stepName}」还没解析到可用连接：去「Agent 分工」页签给它绑一条，或确认项目默认 Agent 有连接。`);
     }
     return launch;
+  }
+
+  /** 导入 Word 批注（科研流程补全 §4）：人选 .docx → 拦在忙的 → 并入项目最新 → 后端抽批注写意见清单进这一步的工作副本并提交 →
+   *  在这一步另开一轮处理意见（AI 填类别 / 去向 / 处理，上游的事走退回）→ 记「意见轮」 */
+  async function importComments() {
+    const step = focusStepDto;
+    const found = step ? stepWorkspace(step) : undefined;
+    if (!step || !found) return;
+    setError(null);
+    try {
+      const picked = await openFileDialog({ multiple: false, directory: false, filters: [{ name: "Word", extensions: ["docx"] }] });
+      const docxPath = typeof picked === "string" ? picked : null;
+      if (!docxPath) return;
+      const launch = await loopLaunch(step.name);
+      const ws = await ensureActive(found, step.name);
+      // 已保存的步骤开新一轮要先干净；做到一半 / 待评审的就接着在这一步里处理
+      if (focusRunStatus === "done") await assertRoundable(ws, step.name);
+      else if (stepBusy(ws)) throw new Error(`「${step.name}」的 AI 正在干活或等你确认：等它这一轮停下再导入批注。`);
+      if ((await bringLatest(ws, step.name, confirmDialog, "处理意见")) === null) return;
+      const got = await invoke<{ relPath: string; count: number }>("docx_comments_import", { worktree: ws.worktreePath, docxPath });
+      const name = docxPath.split(/[\\/]/).pop() ?? "批注稿.docx";
+      await invoke("git_commit", { cwd: ws.worktreePath, message: `导入 Word 批注：${name}`, push: false, paths: [got.relPath] });
+      const d = new Date();
+      await launchContinuation(launch, ws, step.name, commentsPrompt(got.relPath, got.count, `${d.getMonth() + 1}-${d.getDate()}`));
+      await recordRound(ws, step.name, "comments");
+      onWorkspacesChanged?.();
+      toast(`抽出 ${got.count} 条批注，写进 ${got.relPath}；这一步另开了一轮逐条处理。`, "info");
+    } catch (reason) {
+      setError(String(reason instanceof Error ? reason.message : reason));
+    }
   }
 
   /** 打开补料单：本步有 outline.md 且「覆盖检查」里有薄节时按退回目标预填（三期 §9.3）。读不到就空着开 */
@@ -866,6 +899,29 @@ export default function TaskCardsSection({
       if (searchStep && search) prefill[searchStep.name] = search;
       if (notesStep && read) prefill[notesStep.name] = read;
       unplaced = unplacedCoverageDrafts(drafts, { search: !!searchStep, read: !!notesStep });
+    }
+    // 意见清单里「去向：退回」的行（科研流程补全 §4）：按最新一份清单预填，覆盖检查已预填的目标不覆盖
+    if (ws) {
+      try {
+        const entries = await invoke<{ name: string; isDir: boolean }[]>("list_dir", {
+          path: `${ws.worktreePath.replace(/[\\/]+$/, "")}/manuscript/comments`,
+          showHidden: false,
+        });
+        const latest = entries
+          .filter((e) => !e.isDir && e.name.endsWith(".md"))
+          .map((e) => e.name)
+          .sort()
+          .pop();
+        if (latest) {
+          const sheet = await readResearchFile(ws.worktreePath, `manuscript/comments/${latest}`);
+          if (!sheet.truncated) {
+            const fromComments = commentReworkDrafts(sheet.text, reworkTargets(steps, focusIdx).map((st) => st.name));
+            for (const [target, draft] of Object.entries(fromComments)) prefill[target] ??= draft;
+          }
+        }
+      } catch {
+        /* 没有意见清单 */
+      }
     }
     setReworkPrefill(prefill);
     setReworkUnplaced(unplaced);
@@ -1479,14 +1535,27 @@ export default function TaskCardsSection({
                   检索已是 {refresh.days} 天前 · 更新检索…
                 </button>
               );
+              // 导入 Word 批注（科研流程补全 §4）：写作 / 定稿类步骤开过工就有
+              const focusKind = stepKind(focusStepDto, skillProvides);
+              const commentsButton = (focusKind === "writing" || focusKind === "final") && stepWorkspace(focusStepDto) && (
+                <button
+                  type="button"
+                  onClick={() => void importComments()}
+                  title="选一份导师 / 合作者批注过的 Word：Mesa 抽出每条批注（批注人、原文、意见）写成意见清单，这一步另开一轮逐条处理；要前面步骤做的，退回单会按清单预填"
+                  className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  导入 Word 批注…
+                </button>
+              );
               if ((focusRunStatus ?? "pending") === "pending") return refreshButton || null;
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
-                if (!live?.staleUpstream && !reworkButton && !refreshButton) return null;
+                if (!live?.staleUpstream && !reworkButton && !refreshButton && !commentsButton) return null;
                 return (
                   <span className="flex shrink-0 items-center gap-1.5">
                     {refreshButton}
+                    {commentsButton}
                     {reworkButton}
                     {live?.staleUpstream && (
                       <span
@@ -1502,9 +1571,10 @@ export default function TaskCardsSection({
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
               const follow = !!ws?.staleUpstream;
-              if (!follow && targets.length === 0) return null;
+              if (!follow && targets.length === 0 && !commentsButton) return null;
               return (
                 <span className="flex shrink-0 items-center gap-1.5">
+                  {commentsButton}
                   {reworkButton}
                   {follow && (
                     <button
