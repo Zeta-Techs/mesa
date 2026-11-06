@@ -15,11 +15,13 @@ import {
 interface HostState {
   config: Record<string, unknown>;
   failConfig: boolean;
+  profile: string;
 }
 
 const state: HostState = {
   config: {},
   failConfig: false,
+  profile: "",
 };
 
 function baseConfig(overrides: Record<string, unknown> = {}) {
@@ -98,7 +100,7 @@ const host = {
       case "read_project_memory":
         return "记忆内容";
       case "research_profile_context":
-        return "";
+        return state.profile;
       case "read_project_status":
         return { accepted: [] };
       case "task_list":
@@ -215,4 +217,21 @@ test("config read failure keeps the auto pack for sessions", async () => {
   state.failConfig = false;
   // 读不到档案卡：三态未知，按 auto 走现状（短包），不能变成不注入
   assert.match(pack, /你正在项目「综述流程测试」中工作/);
+});
+
+test("research profile reaches session and goal packs as its own section after project knowledge", async () => {
+  const { loadProjectContextPack } = await bundleLoader();
+  state.config = baseConfig();
+  state.profile = "研究者档案（跨项目，人工确认；是这位研究者的偏好与历史，不是本项目的事实依据）：\n- 写作偏好：段首先给结论";
+  try {
+    for (const kind of ["session", "goal"] as const) {
+      const pack = await loadProjectContextPack({ ...LOAD_INPUT, kind, goal: kind === "goal" ? "写综述" : undefined });
+      assert.match(pack, /项目长期知识（[^\n]*）：\n记忆内容\n\n研究者档案（跨项目/, kind);
+    }
+    // 设置里关掉（后端给空串）：不出现
+    state.profile = "";
+    assert.doesNotMatch(await loadProjectContextPack({ ...LOAD_INPUT, kind: "session" }), /研究者档案/);
+  } finally {
+    state.profile = "";
+  }
 });
