@@ -28,7 +28,7 @@
 看它问不问程序状态（OSC 7501，只在 macOS / Linux）；`--help` 里的 ACP、stream-json、本机服务、远程、hooks 一类开关；基线版本到这一版之间
 更新日志里提到这些的条目。线索和 `upstream.json`（每家每条线索 Mesa 的结论：「用上：…」「不接：原因」「未定：…」）比，没登记过的、
 以及更新日志里提到 Mesa 还没用上的通道的条目，写进报告最后一节，CI（macOS 那一路）开 / 追加 issue，同一条只提醒一次
-（`upstream_issue.py`）。结论写了「不接」的通道，更新日志里 Fixed / Improved 开头的修 bug 条目只进报告、不开 issue，新增功能（Added 等）照旧提醒（2026-11-06，Claude 每版十来条 remote-control、`claude -p` 的修复天天开 issue）。2026-11-04 的来由：Kimi 2.4.0 的更新日志写了 OSC 7501，Mesa 隔了几版才偶然发现。
+（`upstream_issue.py`）。结论写了「不接」的通道，更新日志里修 bug / 测试 / 文档 / 重构的条目（Fixed、Improved、`fix(…)`、`test`、`docs`、`perf`、`refactor`…，各家前缀写法见 `canary.py UPSTREAM_MINOR_RE`）只进报告、不开 issue，新增功能（`feat`、Add、Added）照旧提醒（2026-11-06，Claude 每版十来条 remote-control、`claude -p` 的修复天天开 issue）。2026-11-04 的来由：Kimi 2.4.0 的更新日志写了 OSC 7501，Mesa 隔了几版才偶然发现。
 
 收到提醒怎么办（也可以直接交给 Agent：「按 issue 里的上游通道线索评估并接上」）：
 1. 看是哪家、哪种通道。对照 `docs/design-chat-fidelity.md` §3「读屏债清单」：它能不能替掉这家某项靠读屏的能力？

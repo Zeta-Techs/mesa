@@ -682,8 +682,14 @@ def upstream_phase(agent, adir, notes):
     return found, news
 
 
-# 更新日志条目去掉「2.1.318 - 」「- 」这类前缀后，以这些词开头算修 bug / 小改进
-UPSTREAM_MINOR_RE = re.compile(r"^(?:[\w.\-]+\s+-\s+)?(?:\[[^\]]*\]\s*)?(?:[\w ]+:\s*)?(fix(ed|es)?|improved?|improves|reduced|updated)\b", re.I)
+# 更新日志条目去掉前缀后以这些词开头，算修 bug / 测试 / 文档 / 重构这类小改动。前缀各家写法：版本号「2.1.318 - 」「0.26.8 * 」、
+# PR 号「#58357 」、changeset「[#4541](…) [`3a0b86e`](…) Thanks [@x](…)! - 」、分区「[Remote Control] 」「Remote Control: 」；
+# 约定式提交带作用域「fix(serve): 」。feat / Add / Added 不在里面：新增功能照旧提醒
+UPSTREAM_MINOR_RE = re.compile(
+    r"^(?:v?\d[\w.\-]*\s+[-*]\s+)?(?:.*?Thanks \[@[^\]]*\]\S*!\s*-\s*)?(?:#\d+\s+)?(?:\[[^\]]*\]\s*)?(?:[\w ]+:\s*)?"
+    r"(fix(ed|es)?|improved?|improves|reduced|updated|tests?|docs?|perf|chore|refactor(ed)?|ci|build|style|revert(ed)?|bump(ed)?|extract(ed|s)?)\b",
+    re.I,
+)
 
 
 def upstream_should_alert(conclusion, key, line):
