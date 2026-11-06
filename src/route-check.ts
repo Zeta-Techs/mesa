@@ -97,6 +97,33 @@ export function routeInboxFields(
   return null;
 }
 
+/** 体检卡一行的主结果：通过只写地区（不告诉地区的写「连得上」），其余写原因；用时单独一列，从原因里拿掉 */
+export function routeRowMain(check: Pick<RouteCheck, "verdict" | "reason" | "exitRegionName">): string {
+  if (check.verdict === "pass") return check.exitRegionName ?? "连得上";
+  return check.reason.replace(/ · [\d.]+ 秒$/, "");
+}
+
+/** 用时：1.2 秒；没测到写空 */
+export function latencyText(ms: number | null): string {
+  return ms == null ? "" : `${(ms / 1000).toFixed(1)} 秒`;
+}
+
+/** 出口网络名收短：去掉开头的 AS 号和结尾的公司后缀（Limited / Inc. / Corporation…），只留认得出的名字 */
+export function shortOrg(org: string): string {
+  return org
+    .replace(/^AS\d+\s+/i, "")
+    .replace(/[,\s]+(limited|ltd\.?|inc\.?|incorporated|corporation|corp\.?|llc|l\.l\.c\.|co\.,? ?ltd\.?|gmbh|s\.a\.|plc)$/i, "")
+    .trim();
+}
+
+/** 「3 分钟前」；不到 1 分钟写「刚刚」 */
+export function checkedAgoText(checkedAt: number, nowSecs: number): string {
+  const mins = Math.floor(Math.max(0, nowSecs - checkedAt) / 60);
+  if (mins < 1) return "刚刚测过";
+  if (mins < 60) return `${mins} 分钟前测过`;
+  return `${Math.floor(mins / 60)} 小时前测过`;
+}
+
 /** 服务方确认可用时在结果后面补一个小标记；其余情况不显示（被拒已经写在原因里） */
 export function serviceConfirmText(check: Pick<RouteCheck, "serviceSays" | "verdict">): string | null {
   return check.serviceSays === "allowed" && check.verdict !== "block" ? "官方确认" : null;
@@ -110,7 +137,8 @@ export interface ExitType {
 
 /** 出口类型一行：「住宅 · AS2856 British Telecommunications Limited」 */
 export function exitTypeText(t: ExitType): string {
-  return t.org ? `${t.label} · ${t.org}` : t.label;
+  const org = shortOrg(t.org);
+  return org ? `${t.label} · ${org}` : t.label;
 }
 
 /** 修复动作：换成检测到的代理（设置里的不在运行、本机另有在跑的），或打开已装的代理软件 */

@@ -12,6 +12,10 @@ import {
   runningOfficialTargets,
   exitTypeText,
   serviceConfirmText,
+  routeRowMain,
+  latencyText,
+  shortOrg,
+  checkedAgoText,
   type RouteCheck,
 } from "../src/route-check.ts";
 
@@ -105,7 +109,7 @@ test("修复只在代理没在运行时给：设置里的代理优先换成在�
   assert.equal(pickRouteFix({ ...dead, stage: "reach" }, cands, apps), null, "连不上服务不是本机代理的问题，不乱修");
   const msg = preflightFixMessage({ ...base, verdict: "block", reason: "代理 127.0.0.1:7888 没开" }, "Claude Code", sw!);
   assert.match(msg, /7897 在运行/);
-  assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited" }), "住宅 · AS2856 British Telecommunications Limited");
+  assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited" }), "住宅 · British Telecommunications");
 });
 
 test("服务方确认可用才标「官方确认」；没这项检查或没答复不标", () => {
@@ -113,4 +117,19 @@ test("服务方确认可用才标「官方确认」；没这项检查或没答�
   assert.equal(serviceConfirmText({ ...base, serviceSays: "unknown" }), null);
   assert.equal(serviceConfirmText({ ...base, serviceSays: null }), null);
   assert.equal(serviceConfirmText({ ...base, verdict: "block", serviceSays: "blocked" }), null);
+});
+
+test("体检卡一行：通过只写地区，用时单列；网络名收短；测过多久", () => {
+  assert.equal(routeRowMain({ verdict: "pass", reason: "英国 · 1.2 秒", exitRegionName: "英国" }), "英国");
+  assert.equal(routeRowMain({ verdict: "pass", reason: "连得上 · 1.6 秒", exitRegionName: null }), "连得上");
+  assert.equal(routeRowMain({ verdict: "review", reason: "连得上，没拿到地区 · 0.9 秒", exitRegionName: null }), "连得上，没拿到地区");
+  assert.equal(routeRowMain({ verdict: "block", reason: "代理 127.0.0.1:7888 没开", exitRegionName: null }), "代理 127.0.0.1:7888 没开");
+  assert.equal(latencyText(1234), "1.2 秒");
+  assert.equal(latencyText(null), "");
+  assert.equal(shortOrg("AS2856 British Telecommunications Limited"), "British Telecommunications");
+  assert.equal(shortOrg("AS26383 Baxet Group Inc."), "Baxet Group");
+  assert.equal(shortOrg("AS31898 Oracle Corporation"), "Oracle");
+  assert.equal(shortOrg("AS3462 Data Communication Business Group"), "Data Communication Business Group");
+  assert.equal(checkedAgoText(1000, 1030), "刚刚测过");
+  assert.equal(checkedAgoText(1000, 1000 + 180), "3 分钟前测过");
 });

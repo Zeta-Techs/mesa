@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { secondaryActionClass } from "./PageFrame";
+import { RotateCw, ShieldCheck } from "lucide-react";
+import { ghostActionClass, rowActionClass } from "./PageFrame";
+import { HoverTip, useHoverTip } from "./HoverTip";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import {
   PREFLIGHT_MAX_AGE_SECS,
   VERDICT_LABEL,
+  checkedAgoText,
+  exitTypeText,
+  latencyText,
   proxySourceText,
   routeCheckTargets,
-  exitTypeText,
   routeFixLabel,
+  routeRowMain,
   serviceConfirmText,
   type ExitType,
   type RouteCheck,
@@ -20,12 +25,18 @@ import { toast } from "../toast";
 
 type Row = RouteCheck | { agent: string; error: string };
 
-const VERDICT_CLASS = { pass: "text-ok-text", block: "text-err-text", review: "text-warn-text" } as const;
+// 按钮文字的字号写在内层 span：全站 button { font: inherit } 会吞掉按钮自身的 text-*
+
+/** 状态只给圆点上色（design-system：语义色只给点 / 图标，不铺在文字上） */
+const DOT_CLASS = { pass: "bg-ok-text", block: "bg-err-text", review: "bg-warn-text" } as const;
+/** 一行四列：点 · 名称 · 结果 · 用时；各行同列对齐 */
+const ROW_GRID = "grid grid-cols-[0.5rem_6.5rem_minmax(0,1fr)_auto] items-start gap-x-3";
 
 /** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行，经与启动同源的代理访问这家服务自己的地址。
  *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测。
  *  二期：换了地区给「记为常用出口」；代理没在运行给一个修复按钮（换成检测到的代理 / 打开代理软件）。
- *  三期：「查出口类型」按钮（要把出口 IP 发给 ipinfo.io，所以只在点了才查） */
+ *  三期：「查出口类型」（要把出口 IP 发给 ipinfo.io，所以只在点了才查）。
+ *  2026-11-06 用户嫌粗糙重排：四列对齐、状态只看点、用时单列等宽、确认与出口类型收进第二行小字、探测地址进悬停 */
 export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const profiles = useAppStore((s) => s.profiles);
   const [agents, setAgents] = useState<string[] | null>(null);
@@ -34,10 +45,14 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const [fixes, setFixes] = useState<Record<string, RouteFix | null>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [exitTypes, setExitTypes] = useState<Record<string, ExitType | string>>({});
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const firstRun = useRef(true);
 
   useEffect(() => {
     invoke<string[]>("route_check_agents").then(setAgents, () => setAgents([]));
+    // 「几分钟前测过」随时间走
+    const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000);
+    return () => clearInterval(timer);
   }, []);
 
   const targets = useMemo(() => (agents ? routeCheckTargets(profiles, agents) : []), [profiles, agents]);
@@ -65,6 +80,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
         }
       }),
     );
+    setNow(Math.floor(Date.now() / 1000));
     setRunning(false);
   }
 
@@ -117,121 +133,160 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   if (agents === null) return null;
   if (!targets.length) {
     return (
-      <p className="max-w-[34rem] text-micro text-l4">
-        还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去。
-      </p>
+      <p className="max-w-[36rem] text-xs text-l4">还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去。</p>
     );
   }
-  const anyCheck = targets.map((t) => rows[t.agent]).find((r): r is RouteCheck => !!r && !("error" in r));
+  const checks = targets.map((t) => rows[t.agent]).filter((r): r is RouteCheck => !!r && !("error" in r));
+  const anyCheck = checks[0];
+  const oldest = checks.length ? Math.min(...checks.map((c) => c.checkedAt)) : null;
   const labelOf = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 
   return (
-    <div className="flex w-full max-w-[34rem] flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 truncate text-micro text-l3" title={anyCheck ? proxySourceText(anyCheck) : undefined}>
-          {anyCheck ? proxySourceText(anyCheck) : running ? "体检中…" : ""}
+    <div className="w-full max-w-[36rem]">
+      <div className="flex items-center gap-3 pb-2">
+        <p className="min-w-0 flex-1 truncate text-xs text-l3">
+          {anyCheck ? proxySourceText(anyCheck) : "体检中…"}
+          {oldest != null && !running && <span className="text-l4"> · {checkedAgoText(oldest, now)}</span>}
         </p>
         <button
           type="button"
           onClick={() => void run(0)}
           disabled={running}
-          className={`${secondaryActionClass} shrink-0`}
+          className={`${ghostActionClass} shrink-0 gap-1.5`}
         >
-          {running ? "体检中…" : "重测"}
+          <RotateCw className={`size-3.5 ${running ? "animate-spin" : ""}`} aria-hidden="true" />
+          <span className="text-xs">{running ? "体检中" : "重测"}</span>
         </button>
       </div>
-      <ul className="space-y-1">
-        {targets.map((t) => {
-          const r = rows[t.agent];
-          const name = labelOf(t.agent);
-          if (!r) {
-            return (
-              <li key={t.agent} className="flex items-center gap-2 text-micro text-l4">
-                <span className="w-24 shrink-0 text-l2">{name}</span>
-                <span>体检中…</span>
-              </li>
-            );
-          }
-          if ("error" in r) {
-            return (
-              <li key={t.agent} className="flex items-center gap-2 text-micro">
-                <span className="w-24 shrink-0 text-l2">{name}</span>
-                <span className="text-l4">没测成：{r.error}</span>
-              </li>
-            );
-          }
-          const fix = fixes[t.agent];
-          return (
-            <li key={t.agent} className="flex items-start gap-2 text-micro">
-              <span className="w-24 shrink-0 text-l2">{name}</span>
-              <span className={`w-16 shrink-0 ${VERDICT_CLASS[r.verdict]}`}>● {VERDICT_LABEL[r.verdict]}</span>
-              <span className="min-w-0 flex-1">
-                <span className={r.verdict === "pass" ? "text-l3" : "text-l2"}>{r.reason}</span>
-                {serviceConfirmText(r) && (
-                  <span
-                    className="ml-1.5 text-ok-text"
-                    title="不带任何密钥问了这家服务本身，它回复这个出口所在的地区可以用"
-                  >
-                    {serviceConfirmText(r)}
-                  </span>
-                )}
-                {r.exitRegion &&
-                  (exitTypes[t.agent] === undefined ? (
-                    <button
-                      type="button"
-                      onClick={() => void lookupExitType(t.agent)}
-                      className="ml-2 text-l4 underline-offset-2 hover:text-l2 hover:underline"
-                      title="把出口 IP 发给 ipinfo.io，查它属于哪家网络：住宅宽带还是机房"
-                    >
-                      查出口类型
-                    </button>
-                  ) : (
-                    <span
-                      className={`ml-2 ${
-                        typeof exitTypes[t.agent] === "object" && (exitTypes[t.agent] as ExitType).kind === "datacenter"
-                          ? "text-warn-text"
-                          : "text-l4"
-                      }`}
-                    >
-                      {typeof exitTypes[t.agent] === "object"
-                        ? exitTypeText(exitTypes[t.agent] as ExitType)
-                        : (exitTypes[t.agent] as string)}
-                    </span>
-                  ))}
-                {(r.regionChanged || fix) && (
-                  <span className="mt-1 flex gap-2">
-                    {r.regionChanged && (
-                      <button
-                        type="button"
-                        disabled={busy === t.agent}
-                        onClick={() => void acceptRegion(t.agent)}
-                        className={secondaryActionClass}
-                        title={`以后把「${r.exitRegionName ?? ""}」当作常用出口，不再提示`}
-                      >
-                        记为常用出口
-                      </button>
-                    )}
-                    {fix && (
-                      <button
-                        type="button"
-                        disabled={busy === t.agent}
-                        onClick={() => void doFix(t.agent, t.profileId, fix)}
-                        className={secondaryActionClass}
-                        title={fix.kind === "switchProxy" ? `检测到本机 ${fix.source} 在运行` : "打开后等它起来再重测，最多约 20 秒"}
-                      >
-                        {busy === t.agent ? "处理中…" : routeFixLabel(fix)}
-                      </button>
-                    )}
-                  </span>
-                )}
-              </span>
-              <span className="shrink-0 text-l4" title="探测的是这家服务自己的地址：代理按域名分流时，出口以它为准">
-                {r.probeHost}
-              </span>
-            </li>
-          );
-        })}
+      <ul className="divide-y divide-hairline border-t border-hairline">
+        {targets.map((t) => (
+          <RouteRow
+            key={t.agent}
+            name={labelOf(t.agent)}
+            row={rows[t.agent]}
+            fix={fixes[t.agent] ?? null}
+            busy={busy === t.agent}
+            exitType={exitTypes[t.agent]}
+            onFix={(f) => void doFix(t.agent, t.profileId, f)}
+            onAccept={() => void acceptRegion(t.agent)}
+            onLookup={() => void lookupExitType(t.agent)}
+          />
+        ))}
       </ul>
     </div>
+  );
+}
+
+function RouteRow({
+  name,
+  row,
+  fix,
+  busy,
+  exitType,
+  onFix,
+  onAccept,
+  onLookup,
+}: {
+  name: string;
+  row: Row | undefined;
+  fix: RouteFix | null;
+  busy: boolean;
+  exitType: ExitType | string | undefined;
+  onFix: (fix: RouteFix) => void;
+  onAccept: () => void;
+  onLookup: () => void;
+}) {
+  const nameRef = useRef<HTMLSpanElement>(null);
+  const tip = useHoverTip(nameRef);
+  const check = row && !("error" in row) ? row : null;
+  const tipText = check
+    ? `${VERDICT_LABEL[check.verdict]} · 探测 ${check.probeHost}`
+    : row && "error" in row
+      ? "没测成"
+      : "体检中";
+
+  const nameCell = (
+    <span
+      ref={nameRef}
+      onMouseEnter={tip.show}
+      onMouseLeave={tip.hide}
+      className="truncate text-sm text-l2"
+    >
+      {name}
+    </span>
+  );
+
+  if (!check) {
+    return (
+      <li className={`${ROW_GRID} py-2.5`}>
+        <span className="mt-1.5 size-2 rounded-full bg-l4" />
+        {nameCell}
+        <span className="truncate text-sm text-l4">{row && "error" in row ? `没测成：${row.error}` : "体检中…"}</span>
+        <span />
+        <HoverTip tip={tip.tip} text={tipText} />
+      </li>
+    );
+  }
+
+  const confirm = serviceConfirmText(check);
+  const typed = typeof exitType === "object" ? exitType : null;
+  const meta =
+    confirm || check.exitRegion || exitType !== undefined ? (
+      <span className="flex min-w-0 items-center gap-1.5 text-micro text-l4">
+        {confirm && (
+          <span className="inline-flex shrink-0 items-center gap-1 text-l3">
+            <ShieldCheck className="size-3 text-ok-text" aria-hidden="true" />
+            {confirm}
+          </span>
+        )}
+        {confirm && check.exitRegion && <span aria-hidden="true">·</span>}
+        {check.exitRegion &&
+          (exitType === undefined ? (
+            <button
+              type="button"
+              onClick={onLookup}
+              className="shrink-0 underline-offset-2 hover:text-l2 hover:underline"
+            >
+              <span className="text-micro">查出口类型</span>
+            </button>
+          ) : (
+            <span
+              className={`min-w-0 truncate ${typed?.kind === "datacenter" ? "text-warn-text" : ""}`}
+            >
+              {typed ? exitTypeText(typed) : (exitType as string)}
+            </span>
+          ))}
+      </span>
+    ) : null;
+  const actions =
+    check.regionChanged || fix ? (
+      <span className="flex gap-2 pt-1.5">
+        {check.regionChanged && (
+          <button type="button" disabled={busy} onClick={onAccept} className={rowActionClass}>
+            <span className="text-xs">记为常用出口</span>
+          </button>
+        )}
+        {fix && (
+          <button type="button" disabled={busy} onClick={() => onFix(fix)} className={rowActionClass}>
+            <span className="text-xs">{busy ? "处理中…" : routeFixLabel(fix)}</span>
+          </button>
+        )}
+      </span>
+    ) : null;
+
+  return (
+    <li className={`${ROW_GRID} py-2.5`}>
+      <span className={`mt-1.5 size-2 rounded-full ${DOT_CLASS[check.verdict]}`} />
+      {nameCell}
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="truncate text-sm text-l1">
+          {routeRowMain(check)}
+        </span>
+        {meta}
+        {actions}
+      </span>
+      <span className="pt-0.5 text-xs tabular-nums text-l4">{latencyText(check.latencyMs)}</span>
+      <HoverTip tip={tip.tip} text={tipText} />
+    </li>
   );
 }
