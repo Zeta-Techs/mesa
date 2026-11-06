@@ -1,0 +1,100 @@
+{
+ "agent": "opencode2",
+ "channel": {
+  "approvalKind": null,
+  "approvalReplyable": null,
+  "approvalTool": null,
+  "kind": "opencode",
+  "statuses": [
+   "-",
+   "running",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
+  "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "旁路认出会话": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "shell"
+  ]
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "max_completion_tokens",
+    "messages",
+    "model",
+    "stream",
+    "stream_options",
+    "tools"
+   ],
+   "contextHeadings": [
+    "Code Mode",
+    "Code Mode tools (call only inside `execute`)",
+    "Communication",
+    "Harness",
+    "Working in codebases",
+    "Your Model"
+   ],
+   "contextTags": [
+    "available_skills",
+    "description",
+    "env",
+    "name",
+    "skill",
+    "skill_content",
+    "string",
+    "system-reminder"
+   ],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": "e2e-picked",
+   "path": "/opencode/v1/chat/completions",
+   "systemHeadings": [],
+   "tools": [
+    "edit",
+    "execute",
+    "glob",
+    "grep",
+    "question",
+    "read",
+    "shell",
+    "skill",
+    "subagent",
+    "webfetch",
+    "websearch",
+    "write"
+   ]
+  },
+  "other": [
+   "/opencode/v1/chat/completions tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": false,
+  "menu": null,
+  "previewReadable": false
+ },
+ "transcript": null,
+ "version": "2.2.5"
+}
