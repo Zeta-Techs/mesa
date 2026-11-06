@@ -49,8 +49,10 @@ test("工具预检先阻止未就绪开工，刷新后根据真实返回释放�
   Object.assign(ui.dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string) => { invokes.push(command); assert.equal(command,"research_tool_preflight"); return [{name:"origin-plot",status:available?"available":"missing",detail:available?"已启用":"未分发",blocking:!available}]; } } });
   const onBlocked = (v: boolean) => blocked.push(v);
   try {
-    await ui.act(async () => ui.root.render(ui.createElement(ui.Preflight,{projectRoot:"/fixture",stepName:"分析",agent:"codex",onBlocked})));
+    await ui.act(async () => ui.root.render(ui.createElement(ui.Preflight,{projectRoot:"/fixture",stepName:"分析",skills:["origin-plot"],agent:"codex",onBlocked})));
     assert.equal(blocked.at(-1),true);assert.match(ui.host.textContent!,/未分发/);
+    // 本步技能没分发：给「现在装上」，但人点之前不分发
+    assert.ok([...ui.host.querySelectorAll("button")].some((b) => b.textContent === "现在装上"));
     available=true;await ui.act(async () => ([...ui.host.querySelectorAll("button")].find((b) => b.textContent === "重新检测") as HTMLButtonElement).click());
     assert.equal(blocked.at(-1),false);assert.match(ui.host.textContent!,/已启用/);
     assert.deepEqual(invokes,["research_tool_preflight","research_tool_preflight"]);
