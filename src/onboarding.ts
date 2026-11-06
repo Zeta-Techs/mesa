@@ -66,19 +66,19 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     id: "connect",
     title: "接上 AI",
     headline: "先把 AI 接上",
-    summary: "Mesa 通过 AI 命令行工具（Agent）工作。装一个，再接上账号或 API Key。",
+    summary: "读文献、整数据、写论文的活由 AI 命令行工具（Agent）来做。装一个，再接上账号或 API Key。",
   },
   {
     id: "chat",
     title: "聊第一句",
     headline: "发一句话，确认接通",
-    summary: "开一段对话，试试 AI 能否正常回复。",
+    summary: "发一句话过去，看 AI 能不能正常回复。",
   },
   {
     id: "project",
     title: "建第一个项目",
-    headline: "开一个项目，开始做课题",
-    summary: "一个课题一个文件夹，把对话、步骤和文件放在一起。",
+    headline: "开一个课题",
+    summary: "一个课题一个文件夹，文献、数据、稿子和对话都放在一起。第一次用，建议先拿示例课题走一遍流程。",
   },
 ];
 

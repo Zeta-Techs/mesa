@@ -69,7 +69,11 @@ function loadLastLaunch(): { agentId?: string; profileId?: string } {
 async function openBlankChat(
   pick: QuickChatChoice & { agentId: string },
   reseedBlank: boolean,
+  prompt?: string,
 ): Promise<void> {
+  // 带一句话开聊（上手向导「发这一句试试」）：人点的按钮上写着这句话，点了就发；有可用连接才自动启动，
+  // 否则照常只落空态。另开新标签，不复用还没说过话的那个（复用会把这句话丢掉）
+  const send = Boolean(prompt?.trim() && pick.profileId);
   const { setPendingTerminal, setPage } = useAppStore.getState();
   const cwd = await invoke<string>("ensure_scratch_dir").catch(() => "~");
   setPendingTerminal({
@@ -80,12 +84,13 @@ async function openBlankChat(
     profileId: pick.profileId,
     model: pick.model,
     effort: pick.effort ?? null,
-    autoStart: false,
+    autoStart: send,
+    ...(send ? { initialPrompt: prompt } : {}),
     surface: "chat",
     clean: true,
     // 每个随手聊标签一把自己的复用键（后端按它认 Run）；再点快速开聊按前缀找还没说过话的那个
     reuseKey: `${QUICK_CHAT_KEY_PREFIX}${crypto.randomUUID()}`,
-    reuseBlank: QUICK_CHAT_KEY_PREFIX,
+    ...(send ? {} : { reuseBlank: QUICK_CHAT_KEY_PREFIX }),
     reseedBlank,
   });
   setPage("terminal");
@@ -109,7 +114,7 @@ function quickChatDefaultPick(): QuickChatChoice & { agentId: string } {
 }
 
 /** 开一个空白随手聊（或切到还没说过话的那个）。选谁见 pickQuickChatDefault */
-export async function openQuickChat(): Promise<void> {
+export async function openQuickChat(prompt?: string): Promise<void> {
   for (const key of RETIRED_KEYS) {
     try {
       localStorage.removeItem(key);
@@ -117,7 +122,7 @@ export async function openQuickChat(): Promise<void> {
       /* 忽略 */
     }
   }
-  await openBlankChat(quickChatDefaultPick(), false);
+  await openBlankChat(quickChatDefaultPick(), false, prompt);
 }
 
 /** 在某个项目里开一段新对话（侧栏项目行 ＋、项目页「＋ 新对话」）。2026-10-24 用户：点了 ＋ 不该自己开跑——

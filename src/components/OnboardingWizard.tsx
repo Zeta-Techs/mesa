@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ArrowLeft, ArrowRight, Check, ChevronDown, Copy, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Plus, Terminal,
+  ArrowLeft, ArrowRight, Check, ChevronDown, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Plus, Terminal,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { useExitRender } from "../exit-animation";
@@ -704,10 +704,9 @@ function ChooseStage({
 
 /* ---------- 第二屏：聊第一句 ---------- */
 
-const SAMPLE_PROMPT = "用三句话介绍你能帮我做什么。";
+const SAMPLE_PROMPT = "用三句话说说你能怎么帮我做科研，比如读文献、整理数据、写论文。";
 
 function ChatScreen({ done, connected, onConnect, close }: { done: boolean; connected: boolean; onConnect: () => void; close: () => void }) {
-  const [copied, setCopied] = useState(false);
   if (!connected) return (
     <Card className="space-y-3">
       <p className="text-sm font-medium text-l1">先添加一条 AI 连接</p>
@@ -720,30 +719,30 @@ function ChatScreen({ done, connected, onConnect, close }: { done: boolean; conn
       {done && <SuccessCard title="已经聊过了" detail="第一段对话在侧栏「随手聊」里。想再试一次，照下面再开一段。" />}
       <Card className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium text-l1"><MessageSquare size={16} aria-hidden="true" />试着问 AI</div>
-        <div className="flex items-center gap-3 rounded-lg bg-field py-3 pl-4 pr-2 text-xs">
-          <p className="min-w-0 flex-1 text-sm leading-6 text-l2">{SAMPLE_PROMPT}</p>
+        <p className="rounded-lg bg-field px-4 py-3 text-sm leading-6 text-l2">{SAMPLE_PROMPT}</p>
+        <p className="text-xs leading-5 text-l3">点下面的按钮，Mesa 开一段对话把这句话发出去；AI 有回复就说明接通了。</p>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className={`${quietActionClass} shrink-0 gap-1.5`}
+            className={primaryActionClass}
             onClick={() => {
-              void navigator.clipboard.writeText(SAMPLE_PROMPT).then(() => setCopied(true), () => {});
+              close();
+              void openQuickChat(SAMPLE_PROMPT);
             }}
           >
-            {copied ? <Check size={13} className="text-ok-text" aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
-            {copied ? "已复制" : "复制"}
+            {done ? "再发一次试试" : "发这一句试试"}
+          </button>
+          <button
+            type="button"
+            className={quietActionClass}
+            onClick={() => {
+              close();
+              void openQuickChat();
+            }}
+          >
+            自己写一句
           </button>
         </div>
-        <p className="text-xs leading-5 text-l3">打开对话后粘贴这句话发出去，有回复就说明接通了。</p>
-        <button
-          type="button"
-          className={primaryActionClass}
-          onClick={() => {
-            close();
-            void openQuickChat();
-          }}
-        >
-          {done ? "再开一段对话" : "开始第一段对话"}
-        </button>
       </Card>
       <details className="rounded-lg px-1 text-xs text-l3">
         <summary className="cursor-pointer py-2 hover:text-l1">聊天与终端、自动标题</summary>
@@ -765,10 +764,11 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
     s.setPage("workspaces");
     run(s);
   };
+  // 第一次用的人先走一遍示例课题最快看懂 Mesa 怎么帮你做课题（2026-11-07 定位：科研是主线），排第一并标推荐
   const actions = [
-    { label: "新建项目", hint: "从空文件夹开始，选择工作方式", icon: FolderPlus, run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }) },
-    { label: "添加已有文件夹", hint: "把已有课题或代码文件夹加进来", icon: FolderOpen, run: (s: ReturnType<typeof useAppStore.getState>) => s.setAddProjectOpenReq(Date.now()) },
-    { label: "创建示例课题", hint: "用示例体验科研流程", icon: FlaskConical, run: (s: ReturnType<typeof useAppStore.getState>) => s.setDemoProjectOpenReq(Date.now()) },
+    { label: "创建示例课题", hint: "带好文献和综述流程，照着点一遍，看 AI 怎么检索、精读、写初稿，你怎么评审", icon: FlaskConical, recommended: true, run: (s: ReturnType<typeof useAppStore.getState>) => s.setDemoProjectOpenReq(Date.now()) },
+    { label: "新建项目", hint: "为自己的课题建一个新文件夹，选科研流程模板（综述、论文、数据、毕业论文等）", icon: FolderPlus, recommended: false, run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }) },
+    { label: "添加已有文件夹", hint: "课题资料已经在电脑上了，把那个文件夹加进来", icon: FolderOpen, recommended: false, run: (s: ReturnType<typeof useAppStore.getState>) => s.setAddProjectOpenReq(Date.now()) },
   ];
   return (
     <div className="space-y-3">
@@ -777,7 +777,10 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
         <button key={action.label} type="button" onClick={() => go(action.run)} className="ccode-well group flex w-full items-center gap-4 rounded-xl p-5 text-left transition-colors hover:bg-hover" aria-label={action.label}>
           <action.icon size={20} className="shrink-0 text-l3" aria-hidden="true" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-l1">{action.label}</span>
+            <span className="flex items-center gap-2 text-sm font-medium text-l1">
+              {action.label}
+              {action.recommended && !done && <span className="rounded-full bg-cta/10 px-2 py-0.5 text-micro font-normal text-cta">第一次用推荐</span>}
+            </span>
             <span className="mt-1 block text-xs leading-5 text-l3">{action.hint}</span>
           </span>
           <ArrowRight size={16} className="shrink-0 text-l3 group-hover:text-l1" aria-hidden="true" />

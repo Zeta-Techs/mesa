@@ -24,7 +24,7 @@ const bundle = await build({
           useAppStore.getState = () => window.__onboarding.state;`,
         "../hotkeys": "export const IS_MAC = false; export const IS_WINDOWS = false;",
         "../mac-titlebar": "export const macOverlayPadClass = () => 'pl-3'; export const useMacFullscreen = () => false;",
-        "../quick-chat-launch": "export const openQuickChat = async () => { window.__onboarding.chats++; };",
+        "../quick-chat-launch": "export const openQuickChat = async (prompt) => { window.__onboarding.chats++; window.__onboarding.prompt = prompt; };",
         "../connect-official": `export const connectOfficialAccount = () => window.__onboarding.connect();
           export const startOfficialLogin = async () => {};`,
         "../agent-install": `export const diagnose = () => null; export const installToolHelp = () => '需要 Node.js';
@@ -138,8 +138,9 @@ test("没连接就去接上 AI；已有连接可打开对话，不提前启动�
   } finally { await ui.close(); }
   const connected = await mount({ ...blank, profileCount: 1 });
   try {
-    await connected.click("开始第一段对话");
+    await connected.click("发这一句试试");
     assert.equal(connected.data.chats, 1);
+    assert.match(String(connected.data.prompt), /帮我做科研/);
     assert.equal(connected.data.state.onboardingWizardOpen, false);
   } finally { await connected.close(); }
 });
@@ -303,7 +304,7 @@ test("做完的步骤回来还能看过程：接上 AI 可「再接一个」照�
     await ui.click("用 Claude Code 官方账号");
     assert.ok(ui.button("再接一个"), "接好后收回结果视图");
     await ui.click("聊第一句，已完成");
-    assert.ok(ui.button("再开一段对话"));
+    assert.ok(ui.button("再发一次试试"));
     await ui.click("建第一个项目，已完成");
     assert.ok(ui.button("新建项目"));
   } finally { await ui.close(); }
