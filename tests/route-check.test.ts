@@ -10,6 +10,7 @@ import {
   routeFixLabel,
   routeInboxFields,
   runningOfficialTargets,
+  exitTypeText,
   type RouteCheck,
 } from "../src/route-check.ts";
 
@@ -31,10 +32,10 @@ const base: RouteCheck = {
 };
 
 test("代理来源四种说法，shell 带进来的要点明不是 Mesa 设的", () => {
-  assert.equal(proxySourceText(base), "设置里的出网代理：http://127.0.0.1:7897");
+  assert.equal(proxySourceText(base), "出网代理 http://127.0.0.1:7897");
   assert.match(proxySourceText({ proxySource: "shell", proxy: "http://127.0.0.1:7897" }), /没在 Mesa 里设/);
   assert.match(proxySourceText({ proxySource: "connection", proxy: null }), /清空.*直连/);
-  assert.equal(proxySourceText({ proxySource: "none", proxy: null }), "没有代理，直连");
+  assert.equal(proxySourceText({ proxySource: "none", proxy: null }), "直连");
 });
 
 test("体检卡只列有探测点、且配了官方账号的那几家，每家取第一条官方连接", () => {
@@ -48,14 +49,14 @@ test("体检卡只列有探测点、且配了官方账号的那几家，每家�
 });
 
 test("拦下时确认框首行是标题、带原因；通过不提示、待你判断才提示", () => {
-  const blocked: RouteCheck = { ...base, verdict: "block", stage: "proxy", reason: "设置里的出网代理 127.0.0.1:7888 没有在运行" };
+  const blocked: RouteCheck = { ...base, verdict: "block", stage: "proxy", reason: "代理 127.0.0.1:7888 没开" };
   const msg = preflightBlockMessage(blocked, "Claude Code");
-  assert.equal(msg.split("\n")[0], "Claude Code 的官方账号可能用不了");
+  assert.equal(msg.split("\n")[0], "Claude Code 官方账号可能用不了");
   assert.match(msg, /7888/);
   assert.equal(preflightReviewNote(base, "Claude Code"), null);
   assert.equal(
-    preflightReviewNote({ ...base, verdict: "review", reason: "claude.ai 能连上，但没拿到出口地区" }, "Claude Code"),
-    "Claude Code 线路体检：claude.ai 能连上，但没拿到出口地区",
+    preflightReviewNote({ ...base, verdict: "review", reason: "美国（常用英国）" }, "Claude Code"),
+    "Claude Code：美国（常用英国）",
   );
 });
 
@@ -79,9 +80,10 @@ test("后台复查只认在跑的官方账号会话，每家一条", () => {
 
 test("收件箱只收拦下和换了出口地区；文案不带延迟，复查不会冒成新条目", () => {
   assert.equal(routeInboxFields(base, "Claude Code"), null);
-  const blocked = routeInboxFields({ ...base, verdict: "block", reason: "经出网代理访问 claude.ai 超时" }, "Claude Code");
-  assert.deepEqual(blocked, { key: "net:claude-code", text: "Claude Code 的线路不通：经出网代理访问 claude.ai 超时", warn: false });
-  const moved = routeInboxFields({ ...base, verdict: "review", regionChanged: true, reason: "这次从美国出去" }, "Claude Code");
+  const blocked = routeInboxFields({ ...base, verdict: "block", reason: "经代理连不上 claude.ai（超时）" }, "Claude Code");
+  assert.deepEqual(blocked, { key: "net:claude-code", text: "Claude Code 线路不通：经代理连不上 claude.ai（超时）", warn: false });
+  const moved = routeInboxFields({ ...base, verdict: "review", regionChanged: true, reason: "美国（常用英国）" }, "Claude Code");
+  assert.equal(moved?.text, "Claude Code 换了出口：美国（常用英国）");
   assert.equal(moved?.warn, true);
   assert.equal(routeInboxFields({ ...base, verdict: "review", regionChanged: false, reason: "没拿到出口地区" }, "Claude Code"), null);
 });
@@ -99,6 +101,7 @@ test("修复只在代理没在运行时给：设置里的代理优先换成在�
   assert.deepEqual(pickRouteFix(dead, [], apps), { kind: "openApp", name: "Clash Verge", path: "/Applications/Clash Verge.app" });
   assert.deepEqual(pickRouteFix({ ...dead, proxySource: "shell" }, cands, apps)?.kind, "openApp", "shell 带进来的代理不替你改设置");
   assert.equal(pickRouteFix({ ...dead, stage: "reach" }, cands, apps), null, "连不上服务不是本机代理的问题，不乱修");
-  const msg = preflightFixMessage({ ...base, verdict: "block", reason: "设置里的出网代理 127.0.0.1:7888 没有在运行" }, "Claude Code", sw!);
-  assert.match(msg, /7897.*在运行/);
+  const msg = preflightFixMessage({ ...base, verdict: "block", reason: "代理 127.0.0.1:7888 没开" }, "Claude Code", sw!);
+  assert.match(msg, /7897 在运行/);
+  assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited" }), "住宅 · AS2856 British Telecommunications Limited");
 });

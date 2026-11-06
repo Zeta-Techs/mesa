@@ -185,3 +185,11 @@ export function fmtRatio(ratio: number): string {
   if (p > 0 && p < 0.1) return "<0.1%";
   return `${p.toFixed(1)}%`;
 }
+
+/** 上下文很长时回复会明显变慢：2026-11-06 实测一个对话到 54 万 token 后首字 30–176 秒，同一线路的短对话 2 秒，
+ *  用户还以为是代理的问题。过 30 万给一句，让人先想到「新开对话」而不是去改网络 */
+export const LONG_CONTEXT_TOKENS = 300_000;
+
+export function longContextHint(used: number): string | null {
+  return used >= LONG_CONTEXT_TOKENS ? `对话已有 ${Math.round(used / 10_000)} 万 token，回复会变慢，新开对话会快` : null;
+}

@@ -1072,6 +1072,7 @@ pub fn run() {
             route_check::route_accept_region,
             route_check::route_proxy_apps,
             route_check::route_open_proxy_app,
+            route_check::route_exit_type,
             settings::app_storage_usage,
             settings::clear_storage_entry,
             uninstall::uninstall_mesa,

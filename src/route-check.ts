@@ -45,13 +45,13 @@ export const VERDICT_LABEL: Record<RouteVerdict, string> = {
 export function proxySourceText(check: Pick<RouteCheck, "proxySource" | "proxy">): string {
   switch (check.proxySource) {
     case "connection":
-      return check.proxy ? `这条连接的附加环境变量：${check.proxy}` : "这条连接的附加环境变量把代理清空了（直连）";
+      return check.proxy ? `连接里设的代理 ${check.proxy}` : "连接里把代理清空了，直连";
     case "settings":
-      return `设置里的出网代理：${check.proxy ?? ""}`;
+      return `出网代理 ${check.proxy ?? ""}`;
     case "shell":
-      return `没在 Mesa 里设，用的是登录 shell 带进来的代理：${check.proxy ?? ""}`;
+      return `终端环境带来的代理 ${check.proxy ?? ""}（没在 Mesa 里设）`;
     default:
-      return "没有代理，直连";
+      return "直连";
   }
 }
 
@@ -88,11 +88,22 @@ export function routeInboxFields(
   agentName: string,
 ): { key: string; text: string; warn: boolean } | null {
   const key = `net:${check.agent}`;
-  if (check.verdict === "block") return { key, text: `${agentName} 的线路不通：${check.reason}`, warn: false };
+  if (check.verdict === "block") return { key, text: `${agentName} 线路不通：${check.reason}`, warn: false };
   if (check.verdict === "review" && check.regionChanged) {
-    return { key, text: `${agentName} 换了出口地区：${check.reason}`, warn: true };
+    return { key, text: `${agentName} 换了出口：${check.reason}`, warn: true };
   }
   return null;
+}
+
+export interface ExitType {
+  kind: "residential" | "datacenter" | "unknown";
+  label: string;
+  org: string;
+}
+
+/** 出口类型一行：「住宅 · AS2856 British Telecommunications Limited」 */
+export function exitTypeText(t: ExitType): string {
+  return t.org ? `${t.label} · ${t.org}` : t.label;
 }
 
 /** 修复动作：换成检测到的代理（设置里的不在运行、本机另有在跑的），或打开已装的代理软件 */
@@ -120,25 +131,16 @@ export function routeFixLabel(fix: RouteFix): string {
 
 /** 启动预检被拦下时的确认框正文（confirmDialog 首行为标题） */
 export function preflightBlockMessage(check: RouteCheck, agentName: string): string {
-  return [
-    `${agentName} 的官方账号可能用不了`,
-    "",
-    check.reason,
-    "",
-    "取消后可到 设置 → 网络 看线路体检和改代理；确定要试也可以照常启动。",
-  ].join("\n");
+  return [`${agentName} 官方账号可能用不了`, "", check.reason, "", "可到 设置 → 网络 看线路体检。"].join("\n");
 }
 
 /** 拦下且有修复办法时先问的那一句：确定 = 修好再启动；取消再落到「仍要启动？」 */
 export function preflightFixMessage(check: RouteCheck, agentName: string, fix: RouteFix): string {
-  const how =
-    fix.kind === "switchProxy"
-      ? `检测到本机 ${fix.url}（${fix.source}）在运行，可以把出网代理换成它。`
-      : `本机装了 ${fix.name}，可以先打开它，等代理起来再启动（最多等约 20 秒）。`;
-  return [`${agentName} 的官方账号可能用不了`, "", check.reason, "", how].join("\n");
+  const how = fix.kind === "switchProxy" ? `本机 ${fix.url} 在运行，可以换成它。` : `可以先打开 ${fix.name}（最多等 20 秒）。`;
+  return [`${agentName} 官方账号可能用不了`, "", check.reason, "", how].join("\n");
 }
 
 /** 「待你判断」时启动后的一句提示；通过时不打扰（返回 null） */
 export function preflightReviewNote(check: RouteCheck, agentName: string): string | null {
-  return check.verdict === "review" ? `${agentName} 线路体检：${check.reason}` : null;
+  return check.verdict === "review" ? `${agentName}：${check.reason}` : null;
 }

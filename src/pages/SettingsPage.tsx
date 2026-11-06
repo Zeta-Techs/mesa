@@ -3977,8 +3977,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="线路体检"
           align="start"
-          hint="官方账号实际从哪里出去、通不通"
-          labelTitle="经和官方账号启动时完全相同的代理，访问这家服务自己的地址（如 claude.ai），看它能不能连上、从哪个国家或地区出去。代理按域名分流时，用别的网站查出口不准。只访问公开的诊断地址，不带账号信息。"
+          hint="官方账号从哪出去、通不通"
+          labelTitle="用官方账号启动时的同一套代理，访问这家服务自己的地址（如 claude.ai）。代理按网站分流时，用别的网站查出口不准。不带账号信息。"
         >
           <RouteCheckCard proxyKey={settings?.outboundProxy ?? ""} />
         </Row>

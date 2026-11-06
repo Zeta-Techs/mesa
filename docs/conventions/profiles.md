@@ -399,6 +399,11 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 **后台复查** `route-watch.ts::useRouteWatch` 挂在 App：只对在跑的官方会话（`RunOverviewInput.profileId`）每家一条、5 分钟一轮；拦下 / 换了地区进收件箱 `net:`「线路」，
 文案不带延迟（忽略按文案签名，复查不会冒成新条目），恢复或会话都停了就撤，不发系统通知。**修复**只两种：设置里的代理没在运行而本机另有在跑的 → 换成它；
 否则打开已装的代理软件（`route_proxy_apps` 白名单路径，`route_open_proxy_app` 只认名单里的）；连接 / shell 来的代理不替人改设置。
+三期（同日，用户：「文案可以简单些，直接写英国就行」）：判定文案一律短句——通过「英国 · 1.0 秒」、拦下「代理 X 没开」「经代理连不上 X（超时）」「香港，不支持这个地区」、
+换地区「美国（常用英国）」。探测点加 Grok（x.ai trace，回地区）、Gemini（cloudcode-pa）、Cursor（api2.cursor.sh）——后两家 `reports_region=false`，连得上即通过。
+**出口类型**只在点「查出口类型」时查：最近一次完整出口 IP 只存内存（`LAST_ADDR`，不落盘），发 ipinfo.io（先直连、不通走出网代理），
+`classify_exit` 先认云厂商 / 托管为机房、再认运营商与动态反解名为住宅、都不像说看不出来，按 IP 缓存 24 小时。
+**对话太长的慢**：`context-breakdown.ts::longContextHint` 过 30 万 token 在上下文圆环弹层提示新开对话（实测 54 万 token 首字 30–176 秒）。
 Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 
 ## 12. 设为全局与托盘

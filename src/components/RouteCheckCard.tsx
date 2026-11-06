@@ -8,7 +8,9 @@ import {
   VERDICT_LABEL,
   proxySourceText,
   routeCheckTargets,
+  exitTypeText,
   routeFixLabel,
+  type ExitType,
   type RouteCheck,
   type RouteFix,
 } from "../route-check";
@@ -21,7 +23,8 @@ const VERDICT_CLASS = { pass: "text-ok-text", block: "text-err-text", review: "t
 
 /** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行，经与启动同源的代理访问这家服务自己的地址。
  *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测。
- *  二期：显示常用出口；换了地区给「记为常用出口」；代理没在运行给一个修复按钮（换成检测到的代理 / 打开代理软件） */
+ *  二期：换了地区给「记为常用出口」；代理没在运行给一个修复按钮（换成检测到的代理 / 打开代理软件）。
+ *  三期：「查出口类型」按钮（要把出口 IP 发给 ipinfo.io，所以只在点了才查） */
 export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const profiles = useAppStore((s) => s.profiles);
   const [agents, setAgents] = useState<string[] | null>(null);
@@ -29,6 +32,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const [running, setRunning] = useState(false);
   const [fixes, setFixes] = useState<Record<string, RouteFix | null>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [exitTypes, setExitTypes] = useState<Record<string, ExitType | string>>({});
   const firstRun = useRef(true);
 
   useEffect(() => {
@@ -87,6 +91,16 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
     }
   }
 
+  async function lookupExitType(agent: string) {
+    setExitTypes((prev) => ({ ...prev, [agent]: "查询中…" }));
+    try {
+      const t = await invoke<ExitType>("route_exit_type", { agentId: agent });
+      setExitTypes((prev) => ({ ...prev, [agent]: t }));
+    } catch (e) {
+      setExitTypes((prev) => ({ ...prev, [agent]: String(e) }));
+    }
+  }
+
   async function acceptRegion(agent: string) {
     setBusy(agent);
     try {
@@ -103,7 +117,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   if (!targets.length) {
     return (
       <p className="max-w-[34rem] text-micro text-l4">
-        还没有官方账号连接。在连接页添加 Claude Code 或 Codex 的官方账号后，这里会测它实际从哪里出去。
+        还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去。
       </p>
     );
   }
@@ -152,9 +166,29 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
               <span className={`w-16 shrink-0 ${VERDICT_CLASS[r.verdict]}`}>● {VERDICT_LABEL[r.verdict]}</span>
               <span className="min-w-0 flex-1">
                 <span className={r.verdict === "pass" ? "text-l3" : "text-l2"}>{r.reason}</span>
-                {r.usualRegionName && !r.regionChanged && r.verdict === "pass" && (
-                  <span className="text-l4"> · 最近常用：{r.usualRegionName}</span>
-                )}
+                {r.exitRegion &&
+                  (exitTypes[t.agent] === undefined ? (
+                    <button
+                      type="button"
+                      onClick={() => void lookupExitType(t.agent)}
+                      className="ml-2 text-l4 underline-offset-2 hover:text-l2 hover:underline"
+                      title="把出口 IP 发给 ipinfo.io，查它属于哪家网络：住宅宽带还是机房"
+                    >
+                      查出口类型
+                    </button>
+                  ) : (
+                    <span
+                      className={`ml-2 ${
+                        typeof exitTypes[t.agent] === "object" && (exitTypes[t.agent] as ExitType).kind === "datacenter"
+                          ? "text-warn-text"
+                          : "text-l4"
+                      }`}
+                    >
+                      {typeof exitTypes[t.agent] === "object"
+                        ? exitTypeText(exitTypes[t.agent] as ExitType)
+                        : (exitTypes[t.agent] as string)}
+                    </span>
+                  ))}
                 {(r.regionChanged || fix) && (
                   <span className="mt-1 flex gap-2">
                     {r.regionChanged && (

@@ -66,7 +66,8 @@ pub struct RouteCheckDto {
 /// 一次探测的结果（judge 的输入）
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProbeOutcome {
-    Ok { loc: Option<String>, ip: Option<String>, latency_ms: u64 },
+    /// ip 是前缀（进出口记忆）；addr 是完整出口 IP，只留在内存里给「查出口类型」用，不落盘
+    Ok { loc: Option<String>, ip: Option<String>, addr: Option<String>, latency_ms: u64 },
     Timeout,
     Failed(String),
     /// 这个代理形态测不了（SOCKS：reqwest 没开 socks 特性），不当失败
@@ -237,7 +238,6 @@ fn write_history(h: &RouteHistory) {
 }
 
 pub struct JudgeInput<'a> {
-    pub display_name: &'a str,
     pub probe: &'a RouteProbe,
     pub source: ProxySource,
     pub proxy: Option<&'a str>,
@@ -248,95 +248,64 @@ pub struct JudgeInput<'a> {
     pub usual: Option<&'a str>,
 }
 
-/// 判定：纯函数，§4.3 三档
+/// 延迟写成「1.0 秒」
+pub fn secs(ms: u64) -> String {
+    format!("{:.1} 秒", ms as f64 / 1000.0)
+}
+
+/// 判定：纯函数，§4.3 三档。文案要短：通过只写「英国 · 1.0 秒」
 pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<String>, Option<u64>) {
     let host = input.probe.host;
     if let Some(target) = &input.proxy_down {
-        let where_ = match input.source {
-            ProxySource::Connection => "这条连接的附加环境变量里",
-            ProxySource::Shell => "登录 shell 带进来的",
-            _ => "设置里的",
+        let from = match input.source {
+            ProxySource::Connection => "（连接里设的）",
+            ProxySource::Shell => "（终端环境带来的）",
+            _ => "",
         };
-        return (
-            Verdict::Block,
-            Some(Stage::Proxy),
-            format!("{where_}出网代理 {target} 没有在运行：先打开代理软件，或到设置 → 网络改掉"),
-            None,
-            None,
-        );
+        return (Verdict::Block, Some(Stage::Proxy), format!("代理 {target} 没开{from}"), None, None);
     }
-    let via = if input.proxy.is_some() { "经出网代理" } else { "直连" };
-    let hint_no_proxy = if input.proxy.is_none() {
-        "；官方账号在国内一般要设出网代理"
-    } else {
-        "：代理软件的节点或它的下一跳可能不通"
+    let unreachable = |why: &str| {
+        if input.proxy.is_some() {
+            format!("经代理连不上 {host}（{why}）")
+        } else {
+            format!("直连连不上 {host}，要设出网代理")
+        }
     };
     match input.outcome.as_ref() {
-        None => (Verdict::Review, None, "还没体检".into(), None, None),
+        None => (Verdict::Review, None, "还没测".into(), None, None),
         Some(ProbeOutcome::Unsupported(msg)) => (Verdict::Review, None, msg.clone(), None, None),
-        Some(ProbeOutcome::Timeout) => (
-            Verdict::Block,
-            Some(Stage::Reach),
-            format!("{via}访问 {host} 超时{hint_no_proxy}"),
-            None,
-            None,
-        ),
-        Some(ProbeOutcome::Failed(err)) => (
-            Verdict::Block,
-            Some(Stage::Reach),
-            format!("{via}访问 {host} 失败（{err}）{hint_no_proxy}"),
-            None,
-            None,
-        ),
+        Some(ProbeOutcome::Timeout) => (Verdict::Block, Some(Stage::Reach), unreachable("超时"), None, None),
+        Some(ProbeOutcome::Failed(err)) => (Verdict::Block, Some(Stage::Reach), unreachable(err), None, None),
+        // 这家本来就不告诉出口地区（Gemini、Cursor）：连得上就算通过
+        Some(ProbeOutcome::Ok { loc: None, latency_ms, .. }) if !input.probe.reports_region => {
+            (Verdict::Pass, None, format!("连得上 · {}", secs(*latency_ms)), None, Some(*latency_ms))
+        }
         Some(ProbeOutcome::Ok { loc: None, latency_ms, .. }) => (
             Verdict::Review,
             None,
-            format!("{host} 能连上，但没拿到出口地区"),
+            format!("连得上，没拿到地区 · {}", secs(*latency_ms)),
             None,
             Some(*latency_ms),
         ),
         Some(ProbeOutcome::Ok { loc: Some(loc), latency_ms, .. }) => {
             let name = region_name(loc);
-            if input.probe.unsupported_regions.contains(&loc.as_str()) {
-                (
-                    Verdict::Block,
-                    Some(Stage::Region),
-                    format!(
-                        "{} 的请求从{name}出去，这个地区它不提供服务：到代理软件里把这家服务换到别的地区的节点",
-                        input.display_name
-                    ),
-                    Some(loc.clone()),
-                    Some(*latency_ms),
-                )
+            let (verdict, stage, reason) = if input.probe.unsupported_regions.contains(&loc.as_str()) {
+                (Verdict::Block, Some(Stage::Region), format!("{name}，不支持这个地区"))
             } else if let Some(usual) = input.usual.filter(|u| *u != loc.as_str()) {
-                (
-                    Verdict::Review,
-                    None,
-                    format!(
-                        "这次从{name}出去，最近常用的是{}：同一个账号换出口地区容易被风控，是你故意换的就点「记为常用出口」",
-                        region_name(usual)
-                    ),
-                    Some(loc.clone()),
-                    Some(*latency_ms),
-                )
+                (Verdict::Review, None, format!("{name}（常用{}）", region_name(usual)))
             } else {
-                (
-                    Verdict::Pass,
-                    None,
-                    format!("从{name}出去，{latency_ms} 毫秒"),
-                    Some(loc.clone()),
-                    Some(*latency_ms),
-                )
-            }
+                (Verdict::Pass, None, format!("{name} · {}", secs(*latency_ms)))
+            };
+            (verdict, stage, reason, Some(loc.clone()), Some(*latency_ms))
         }
     }
 }
 
 /// 真去访问一次：与启动同源的代理；没代理时显式直连（不让 reqwest 自己读进程环境里的代理变量）
-async fn probe(url: &str, proxy: Option<&str>) -> ProbeOutcome {
+async fn probe(url: &str, proxy: Option<&str>, reports_region: bool) -> ProbeOutcome {
     if let Some(p) = proxy {
         if p.trim_start().to_ascii_lowercase().starts_with("socks") {
-            return ProbeOutcome::Unsupported("出网代理是 SOCKS，线路体检暂时测不了，只确认了本机代理端口在运行".into());
+            return ProbeOutcome::Unsupported("SOCKS 代理，只确认了端口开着".into());
         }
     }
     let mut builder = reqwest::Client::builder()
@@ -359,10 +328,15 @@ async fn probe(url: &str, proxy: Option<&str>) -> ProbeOutcome {
             let latency_ms = started.elapsed().as_millis() as u64;
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            if !status.is_success() && parse_trace_loc(&body).is_none() {
+            if reports_region && !status.is_success() && parse_trace_loc(&body).is_none() {
                 return ProbeOutcome::Failed(format!("HTTP {}", status.as_u16()));
             }
-            ProbeOutcome::Ok { loc: parse_trace_loc(&body), ip: parse_trace_prefix(&body), latency_ms }
+            ProbeOutcome::Ok {
+                loc: parse_trace_loc(&body),
+                ip: parse_trace_prefix(&body),
+                addr: body.lines().find_map(|l| l.strip_prefix("ip=")).map(|v| v.trim().to_string()),
+                latency_ms,
+            }
         }
         Err(e) if e.is_timeout() => ProbeOutcome::Timeout,
         Err(e) if e.is_connect() => ProbeOutcome::Failed("连接被拒或中断".into()),
@@ -376,6 +350,10 @@ fn short_error(e: &reqwest::Error) -> String {
 }
 
 static CACHE: Mutex<Option<HashMap<String, RouteCheckDto>>> = Mutex::new(None);
+/// 每家最近一次的完整出口 IP（只在内存，Mesa 关了就没了）
+static LAST_ADDR: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+/// 出口类型查询结果，按 IP 缓存 24 小时
+static EXIT_TYPE_CACHE: Mutex<Option<HashMap<String, (i64, ExitTypeDto)>>> = Mutex::new(None);
 
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -436,7 +414,7 @@ pub async fn route_check(
     let outcome = if proxy_down.is_some() {
         None
     } else {
-        Some(probe(probe_spec.url, proxy.as_deref()).await)
+        Some(probe(probe_spec.url, proxy.as_deref(), probe_spec.reports_region).await)
     };
     let now = now_secs();
     let usual = {
@@ -452,8 +430,12 @@ pub async fn route_check(
         Some(ProbeOutcome::Ok { ip, .. }) => ip.clone(),
         _ => None,
     };
+    if let Some(ProbeOutcome::Ok { addr: Some(addr), .. }) = &outcome {
+        if let Ok(mut m) = LAST_ADDR.lock() {
+            m.get_or_insert_with(HashMap::new).insert(agent_id.clone(), addr.clone());
+        }
+    }
     let (verdict, stage, reason, exit_region, latency_ms) = judge(&JudgeInput {
-        display_name: spec.display_name,
         probe: probe_spec,
         source,
         proxy: proxy.as_deref(),
@@ -515,6 +497,94 @@ pub fn route_accept_region(agent_id: String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitTypeDto {
+    /// residential | datacenter | unknown
+    pub kind: &'static str,
+    /// 住宅 / 机房 / 看不出来
+    pub label: &'static str,
+    /// 出口 IP 所属的网络（如「AS2856 British Telecommunications Limited」）
+    pub org: String,
+}
+
+const DATACENTER_HINTS: &[&str] = &[
+    "oracle", "amazon", "aws", "google", "microsoft", "azure", "digitalocean", "vultr", "choopa", "linode",
+    "akamai", "ovh", "hetzner", "alibaba", "aliyun", "tencent", "huawei cloud", "cloudflare", "contabo",
+    "leaseweb", "m247", "datacamp", "cdn77", "hostinger", "it7", "bandwagon", "racknerd", "colocrossing",
+    "psychz", "zenlayer", "gcore", "g-core", "scaleway", "upcloud", "kamatera", "hosting", "server",
+    "data center", "datacenter", "cloud", "vps", "dedicated",
+];
+const RESIDENTIAL_HINTS: &[&str] = &[
+    "dynamic", "dsl", "broadband", "pool", "dhcp", "ftth", "fiber", "fibre", "cable", "ppp", "telecom",
+    "telekom", "telefonica", "mobile", "comcast", "verizon", "at&t", "charter", "hinet", "chunghwa",
+];
+
+/// 住宅还是机房：先认云厂商 / 托管（名字带 AI 的节点常是机房 IP），再认运营商与动态地址的反解名；都不像就说看不出来
+pub fn classify_exit(org: &str, hostname: &str) -> (&'static str, &'static str) {
+    let org_l = org.to_ascii_lowercase();
+    let host_l = hostname.to_ascii_lowercase();
+    if DATACENTER_HINTS.iter().any(|k| org_l.contains(k)) {
+        return ("datacenter", "机房");
+    }
+    if RESIDENTIAL_HINTS.iter().any(|k| org_l.contains(k) || host_l.contains(k)) {
+        return ("residential", "住宅");
+    }
+    ("unknown", "看不出来")
+}
+
+/// 「查出口类型」：把这家最近一次的出口 IP 发给 ipinfo.io 查所属网络。只在用户点按钮时查（要把 IP 发给第三方），
+/// 结果按 IP 缓存 24 小时；先直连查，不通再经出网代理
+#[tauri::command]
+pub async fn route_exit_type(agent_id: String) -> Result<ExitTypeDto, String> {
+    let addr = LAST_ADDR
+        .lock()
+        .ok()
+        .and_then(|m| m.as_ref()?.get(&agent_id).cloned())
+        .ok_or("先测一次线路")?;
+    if addr.parse::<std::net::IpAddr>().is_err() {
+        return Err("出口地址不对".into());
+    }
+    let now = now_secs();
+    if let Some((at, dto)) = EXIT_TYPE_CACHE.lock().ok().and_then(|m| m.as_ref()?.get(&addr).cloned()) {
+        if now - at < 24 * 3600 {
+            return Ok(dto);
+        }
+    }
+    let url = format!("https://ipinfo.io/{addr}/json");
+    let settings_proxy = crate::settings::official_outbound_env()
+        .into_iter()
+        .find(|(k, _)| k == "HTTPS_PROXY")
+        .map(|(_, v)| v);
+    let mut body = None;
+    for proxy in [None, settings_proxy.as_deref()] {
+        let mut b = reqwest::Client::builder().timeout(Duration::from_secs(6));
+        b = match proxy {
+            Some(p) => match reqwest::Proxy::all(p) {
+                Ok(px) => b.proxy(px),
+                Err(_) => continue,
+            },
+            None => b.no_proxy(),
+        };
+        let Ok(client) = b.build() else { continue };
+        if let Ok(resp) = client.get(&url).send().await {
+            if let Ok(v) = resp.json::<serde_json::Value>().await {
+                body = Some(v);
+                break;
+            }
+        }
+    }
+    let v = body.ok_or("查不到（ipinfo.io 连不上）")?;
+    let org = v.get("org").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let hostname = v.get("hostname").and_then(|x| x.as_str()).unwrap_or("");
+    let (kind, label) = classify_exit(&org, hostname);
+    let dto = ExitTypeDto { kind, label, org };
+    if let Ok(mut m) = EXIT_TYPE_CACHE.lock() {
+        m.get_or_insert_with(HashMap::new).insert(addr, (now, dto.clone()));
+    }
+    Ok(dto)
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -599,12 +669,12 @@ mod tests {
     const PROBE: RouteProbe = RouteProbe {
         url: "https://claude.ai/cdn-cgi/trace",
         host: "claude.ai",
+        reports_region: true,
         unsupported_regions: &["CN", "HK"],
     };
 
     fn input(outcome: Option<ProbeOutcome>) -> JudgeInput<'static> {
         JudgeInput {
-            display_name: "Claude Code",
             probe: &PROBE,
             source: ProxySource::Settings,
             proxy: Some("http://127.0.0.1:7897"),
@@ -648,35 +718,40 @@ mod tests {
         i.proxy_down = Some("127.0.0.1:7888".into());
         let (v, stage, reason, ..) = judge(&i);
         assert_eq!((v, stage), (Verdict::Block, Some(Stage::Proxy)));
-        assert!(reason.contains("127.0.0.1:7888") && reason.contains("设置里的"), "{reason}");
+        assert_eq!(reason, "代理 127.0.0.1:7888 没开");
     }
 
     #[test]
     fn unreachable_blocks_and_says_which_leg() {
         let (v, stage, reason, ..) = judge(&input(Some(ProbeOutcome::Timeout)));
         assert_eq!((v, stage), (Verdict::Block, Some(Stage::Reach)));
-        assert!(reason.contains("经出网代理") && reason.contains("下一跳"), "{reason}");
+        assert_eq!(reason, "经代理连不上 claude.ai（超时）");
         let mut direct = input(Some(ProbeOutcome::Failed("连接被拒或中断".into())));
         direct.proxy = None;
         direct.source = ProxySource::None;
         let (_, _, reason, ..) = judge(&direct);
-        assert!(reason.starts_with("直连") && reason.contains("要设出网代理"), "{reason}");
+        assert_eq!(reason, "直连连不上 claude.ai，要设出网代理");
     }
 
     #[test]
     fn unsupported_region_blocks() {
-        let (v, stage, reason, region, _) = judge(&input(Some(ProbeOutcome::Ok { loc: Some("HK".into()), ip: None, latency_ms: 300 })));
+        let (v, stage, reason, region, _) = judge(&input(Some(ProbeOutcome::Ok { loc: Some("HK".into()), ip: None, addr: None, latency_ms: 300 })));
         assert_eq!((v, stage, region.as_deref()), (Verdict::Block, Some(Stage::Region), Some("HK")));
-        assert!(reason.contains("香港"), "{reason}");
+        assert_eq!(reason, "香港，不支持这个地区");
     }
 
     #[test]
     fn supported_region_passes_and_unknown_is_review() {
-        let (v, stage, reason, region, latency) = judge(&input(Some(ProbeOutcome::Ok { loc: Some("GB".into()), ip: None, latency_ms: 1030 })));
+        let (v, stage, reason, region, latency) = judge(&input(Some(ProbeOutcome::Ok { loc: Some("GB".into()), ip: None, addr: None, latency_ms: 1030 })));
         assert_eq!((v, stage, region.as_deref(), latency), (Verdict::Pass, None, Some("GB"), Some(1030)));
-        assert_eq!(reason, "从英国出去，1030 毫秒");
-        let (v, ..) = judge(&input(Some(ProbeOutcome::Ok { loc: None, ip: None, latency_ms: 900 })));
+        assert_eq!(reason, "英国 · 1.0 秒");
+        let (v, ..) = judge(&input(Some(ProbeOutcome::Ok { loc: None, ip: None, addr: None, latency_ms: 900 })));
         assert_eq!(v, Verdict::Review);
+        const NO_REGION: RouteProbe = RouteProbe { url: "https://api2.cursor.sh/", host: "api2.cursor.sh", reports_region: false, unsupported_regions: &[] };
+        let mut cursor = input(Some(ProbeOutcome::Ok { loc: None, ip: None, addr: None, latency_ms: 1200 }));
+        cursor.probe = &NO_REGION;
+        assert_eq!(judge(&cursor).0, Verdict::Pass, "本来就不回地区的，连得上就算通过");
+        assert_eq!(judge(&cursor).2, "连得上 · 1.2 秒");
         let (v, ..) = judge(&input(Some(ProbeOutcome::Unsupported("SOCKS".into()))));
         assert_eq!(v, Verdict::Review, "测不了不当失败");
     }
@@ -695,17 +770,27 @@ mod tests {
 
     #[test]
     fn region_change_is_review_but_unsupported_still_blocks() {
-        let mut i = input(Some(ProbeOutcome::Ok { loc: Some("US".into()), ip: None, latency_ms: 800 }));
+        let mut i = input(Some(ProbeOutcome::Ok { loc: Some("US".into()), ip: None, addr: None, latency_ms: 800 }));
         i.usual = Some("GB");
         let (v, _, reason, ..) = judge(&i);
         assert_eq!(v, Verdict::Review);
-        assert!(reason.contains("美国") && reason.contains("英国") && reason.contains("记为常用出口"), "{reason}");
-        let mut hk = input(Some(ProbeOutcome::Ok { loc: Some("HK".into()), ip: None, latency_ms: 300 }));
+        assert_eq!(reason, "美国（常用英国）");
+        let mut hk = input(Some(ProbeOutcome::Ok { loc: Some("HK".into()), ip: None, addr: None, latency_ms: 300 }));
         hk.usual = Some("GB");
         assert_eq!(judge(&hk).0, Verdict::Block, "地区不支持优先于地区变化");
-        let mut same = input(Some(ProbeOutcome::Ok { loc: Some("GB".into()), ip: None, latency_ms: 300 }));
+        let mut same = input(Some(ProbeOutcome::Ok { loc: Some("GB".into()), ip: None, addr: None, latency_ms: 300 }));
         same.usual = Some("GB");
         assert_eq!(judge(&same).0, Verdict::Pass);
+    }
+
+    #[test]
+    fn classifies_exit_networks_seen_in_practice() {
+        // 2026-11-06 实测过的几种出口
+        assert_eq!(classify_exit("AS2856 British Telecommunications Limited", "").1, "住宅");
+        assert_eq!(classify_exit("AS3462 Data Communication Business Group", "36-232-2-128.dynamic-ip.hinet.net").1, "住宅");
+        assert_eq!(classify_exit("AS31898 Oracle Corporation", "").1, "机房", "名字带 AI 的节点实际是甲骨文云");
+        assert_eq!(classify_exit("AS16509 Amazon.com, Inc.", "ec2-1-2-3-4.compute.amazonaws.com").1, "机房");
+        assert_eq!(classify_exit("AS4134 CHINANET-BACKBONE", "").1, "看不出来");
     }
 
     #[test]
@@ -721,11 +806,11 @@ mod tests {
     fn real_probe_smoke() {
         let proxy = std::env::var("ROUTE_CHECK_PROXY").ok();
         for url in ["https://claude.ai/cdn-cgi/trace", "https://chatgpt.com/cdn-cgi/trace"] {
-            let out = tauri::async_runtime::block_on(probe(url, proxy.as_deref()));
+            let out = tauri::async_runtime::block_on(probe(url, proxy.as_deref(), true));
             println!("{url} via {proxy:?} → {out:?}");
         }
         println!("本机代理软件 → {:?}", route_proxy_apps());
-        let dead = tauri::async_runtime::block_on(probe(PROBE.url, Some("http://127.0.0.1:1")));
+        let dead = tauri::async_runtime::block_on(probe(PROBE.url, Some("http://127.0.0.1:1"), true));
         println!("死代理 → {dead:?}");
         assert!(matches!(dead, ProbeOutcome::Failed(_) | ProbeOutcome::Timeout));
     }
@@ -737,6 +822,6 @@ mod tests {
             assert!(p.url.ends_with("/cdn-cgi/trace") && p.url.contains(p.host));
             assert!(p.unsupported_regions.contains(&"CN"));
         }
-        assert_eq!(route_check_agents(), vec!["claude-code".to_string(), "codex".to_string()]);
+        assert_eq!(route_check_agents(), ["claude-code", "codex", "gemini", "cursor", "grok"].map(String::from).to_vec());
     }
 }

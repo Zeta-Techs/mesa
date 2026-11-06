@@ -6,6 +6,7 @@ import {
   breakdownSupported,
   contextView,
   fmtRatio,
+  longContextHint,
   type ContextBreakdown,
   type ContextBreakdownRequest,
   type ContextTone,
@@ -303,6 +304,9 @@ export default function ContextRing({
                     </button>
                   )}
                 </div>
+              )}
+              {longContextHint(used) && (
+                <div className="mt-2 leading-[18px] text-warn-text">{longContextHint(used)}</div>
               )}
               <div className="mt-2 leading-[18px] text-l4">
                 {note}

@@ -855,7 +855,8 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   components/ContextRing.tsx # 上下文用量圆环：模型芯片左边（状态栏在时由状态栏聊天变体画）与终端底栏右区共用（终端底栏传 xterm 调色板颜色）；悬停可加 extra 行（本段 token · 经连接）；点开是上下文浮层
                              # （总量 + 分类色横条 + 分类列表 + 离自动压缩还有多少 + 压缩上下文），同一轮的分类明细模块级缓存
   context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、
-                             # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）
+                             # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）；
+                             # longContextHint：过 30 万 token 提示回复会变慢、新开对话会快（对话太长的慢别当网络问题）
   runtime-model-effort.ts    # 运行中切模型 / 思考档的共用 hook（useRuntimeModelEffort）：终端底栏与聊天「模型 · 思考」芯片同用一份；切过的模型名按 ptyId 存模块级表，两处实例同步
   route-check.ts             # 线路体检前端纯逻辑：DTO 与 route_check.rs 对齐、代理来源文案、体检卡目标（每家第一条官方连接）、启动预检确认框文案、
                              #   后台复查目标 runningOfficialTargets、收件箱 net: 文案 routeInboxFields、修复选择 pickRouteFix（tests/route-check.test.ts）
@@ -1127,7 +1128,10 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   ledger-commit.ts           # 已保存步骤在项目根改清单（纳入 / 移出 / 类型 / 待获取）后统一提交：invoke commit_project_ledger，只认 papers/ 六个清单文件，失败只报不撤（tests/ledger-commit.test.ts）
   step-loop.ts               # 综述回路二期纯逻辑：补料轮 / 跟进轮开场指令（补料单原文写进指令；isSearch / 精读由调用方按技能槽判，引擎不认识检索）、
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
-                             #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游（tests/step-loop.test.ts）
+                             #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
+                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」（2026-11-06 流程贯通）（tests/step-loop.test.ts）
+  step-latest.ts             # 开一轮前并入项目最新内容（流程贯通 §3）：bringLatest = 落后才并（health.behind + workspace_incoming）→ AI 在忙报错 →
+                             #   commitLeftovers 问没提交的 → syncStep；继续 / 新开一轮 / 补料 / 跟进 / 评审退回修改 / 项目助手派活共用（调 invoke，无单测）
   step-decisions.ts          # 决策项：答案落任务书草稿固定小节；isTaskMdStub = 空/仅决策/仅评审沉淀不算可执行正文，resolveTaskMdSource 走模板拼装并接沉淀（decisionGate/orderedAnswers/parseDecisions，tests/step-decisions.test.ts）
   terminal-resume.ts         # 终端会话恢复的标签复用与配置挑选纯逻辑（2026-09-08 审计修复）；接着聊用会话自己的连接 resumeProfileChoice、
                              # 模型在连接名单里才带 resumeModelChoice、最近一分钟的写入是不是 Mesa 自己刚停掉的 lastWriteIsMesas（2026-10-24）
@@ -1840,7 +1844,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   route_check.rs             # 官方账号线路体检（design-outbound-route.md 一期）：resolve_proxy 按启动注入顺序定代理来源（连接 extra_env > 设置 > 登录 shell 继承），
                              #   probe 经该代理访问 agent_specs RouteProbe 的 cdn-cgi/trace 取 loc 与延迟（无代理显式 no_proxy，SOCKS 不测），
                              #   judge 纯函数判 pass / block / review；结果按 agent|profile 进程内缓存，启动预检传 max_age 300；
-                             #   二期：出口记忆 route-history.json（usual_region 纯函数）、route_accept_region、route_proxy_apps / route_open_proxy_app（只开白名单路径）
+                             #   二期：出口记忆 route-history.json（usual_region 纯函数）、route_accept_region、route_proxy_apps / route_open_proxy_app（只开白名单路径）；
+                             #   三期：route_exit_type（完整出口 IP 只在内存 LAST_ADDR，查 ipinfo.io，classify_exit 纯函数）
   runs.rs                    # 一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
                              # 精读对话标记 apply_reader_runs（task_kind=reader 且登记了会话 → 会话列表 reader / readerPdf，2026-11-06）；
                              # 关标签不删行；收件箱 action.run 可恢复；登录标签不建行；
@@ -1901,12 +1906,14 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
   step_loop.rs               # 综述回路二期（design-review-loop.md §4–§6）：补料单 .ccode/rework/<id>.json、开轮起因 .ccode/step-rounds.jsonl（只追加，时间后端写）——
-                             #   followed_at（每个工作区最近一次 followup / ack 的时间，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）
+                             #   followed_at（每个工作区最近一次并入的时间：sync / ack / followup / rework，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）；
+                             #   record_sync：workspace_sync_base / 完成解冲突成功后记 kind=sync（只记流程步骤的工作区，不算一轮，2026-11-06）
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
                              #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
-                             #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_cleared 判定工作区有文件只看工作区
+                             #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear
+                             #   2026-11-06：stale_upstream_for 按最后一次并入判（本步保存不算）；workspace_incoming 列基准侧多出的文件（HEAD...base）ed 判定工作区有文件只看工作区
                              # setup/archive 钩子、评审合并（health/merge/PR）、artifacts.yaml、
                              # 人工事项状态（human_task_checks 勾选 + human_target_hit 落点检测 + human_target_count 命中计数/to-fetch 清单计数——
                              # 计数口径与前端 step-flow.ts parseToFetchItems 双端镜像：编号/列表行都算，裸行须带「 — DOI」尾巴，说明行与「待补」不算）、import_human_deliverable

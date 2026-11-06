@@ -6,6 +6,7 @@ import {
   categoryLabel,
   contextView,
   fmtRatio,
+  longContextHint,
   type ContextBreakdown,
 } from "../src/context-breakdown.ts";
 
@@ -127,4 +128,9 @@ test("分类名与百分比", () => {
   assert.equal(fmtRatio(0.2723), "27.2%");
   assert.equal(fmtRatio(0.0002), "<0.1%");
   assert.equal(fmtRatio(0), "0.0%");
+});
+
+test("上下文过 30 万提示回复会变慢、新开对话会快（54 万 token 首字 30 秒起的实测）", () => {
+  assert.equal(longContextHint(120_000), null);
+  assert.equal(longContextHint(545_023), "对话已有 55 万 token，回复会变慢，新开对话会快");
 });

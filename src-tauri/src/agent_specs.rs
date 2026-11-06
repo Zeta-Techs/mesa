@@ -177,6 +177,8 @@ pub struct RouteProbe {
     pub url: &'static str,
     /// 界面上显示的服务主机名
     pub host: &'static str,
+    /// 这个地址会不会回出口地区（Cloudflare trace 会；Gemini、Cursor 的接口不会，只能测通不通）
+    pub reports_region: bool,
     /// 这家服务已知不支持的地区（ISO 3166 两位码）；不在名单里不等于确认支持
     pub unsupported_regions: &'static [&'static str],
 }
@@ -458,6 +460,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             route_probe: Some(RouteProbe {
                 url: "https://claude.ai/cdn-cgi/trace",
                 host: "claude.ai",
+                reports_region: true,
                 unsupported_regions: AI_UNSUPPORTED_REGIONS,
             }),
         }),
@@ -528,6 +531,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             route_probe: Some(RouteProbe {
                 url: "https://chatgpt.com/cdn-cgi/trace",
                 host: "chatgpt.com",
+                reports_region: true,
                 unsupported_regions: AI_UNSUPPORTED_REGIONS,
             }),
         }),
@@ -596,7 +600,13 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }],
             detection_note: Some("新版开启加密存储（GEMINI_FORCE_ENCRYPTED_STORAGE）时凭证不落该文件，可能漏报"),
             api_key_fields: &[],
-            route_probe: None,
+            // Gemini CLI 个人账号走 Code Assist 接口；Google 不回出口地区，只测通不通（三期）
+            route_probe: Some(RouteProbe {
+                url: "https://cloudcode-pa.googleapis.com/",
+                host: "cloudcode-pa.googleapis.com",
+                reports_region: false,
+                unsupported_regions: &[],
+            }),
         }),
         model_switch: ModelSwitch::Direct("/model set {model}"),
         effort_levels: None,
@@ -934,7 +944,13 @@ static AGENT_SPECS: &[AgentSpec] = &[
             conflict_probes: &[],
             detection_note: Some("凭证默认存 macOS 钥匙串（仅设 AGENT_CLI_CREDENTIAL_STORE=file 时才落 auth.json），文件检测可能漏报，以 cursor-agent 实际登录态为准"),
             api_key_fields: &[],
-            route_probe: None,
+            // Cursor 不回出口地区，只测通不通（三期）
+            route_probe: Some(RouteProbe {
+                url: "https://api2.cursor.sh/",
+                host: "api2.cursor.sh",
+                reports_region: false,
+                unsupported_regions: &[],
+            }),
         }),
         model_switch: ModelSwitch::None,
         effort_levels: None,
@@ -1008,7 +1024,13 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }],
             detection_note: Some("凭证在 ~/.grok/auth.json（scope→GrokAuth 顶层 map，grok 自己原子重写）；「已连接」仅代表已登录——auth.json 不含订阅/会员字段，无会员的免费账号登录后同样显示已连接，能否用官方额度以实际使用为准"),
             api_key_fields: &[],
-            route_probe: None,
+            // x.ai 在 Cloudflare 后面，trace 回出口地区（三期，2026-11-06 实测）
+            route_probe: Some(RouteProbe {
+                url: "https://x.ai/cdn-cgi/trace",
+                host: "x.ai",
+                reports_region: true,
+                unsupported_regions: AI_UNSUPPORTED_REGIONS,
+            }),
         }),
         // Grok 1.0.x supports /model and /effort in the running TUI.
         model_switch: ModelSwitch::Direct("/model {model}"),
