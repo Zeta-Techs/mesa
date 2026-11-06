@@ -12,6 +12,26 @@ export interface ResearchProfileDto {
   doc: { revision: string; legacyText: string; entries: ProfileEntryDto[] };
   settings: { inject: boolean };
   categories: string[];
+  /** 附给 AI 的原文（不看开关；开关关着时实际不附） */
+  context: string;
+}
+
+/** 新增栏按分类给的例句（只是占位提示，不进档案） */
+export const CATEGORY_EXAMPLES: Record<string, string> = {
+  研究方向: "例如：钠离子电池负极，侧重界面副反应机理",
+  常用方法: "例如：阻抗谱用等效电路拟合，报告拟合误差",
+  数据处理习惯: "例如：缺失值超过 20% 的变量直接剔除，不插补",
+  写作偏好: "例如：少用被动句；结论里不写「首次」",
+  导师意见: "例如：图注写清样本量和误差棒含义",
+  放弃的方向: "例如：试过隔膜涂层改性，循环寿命没改善，不再做",
+  其他: "例如：组会汇报用中文，图里的标注用英文",
+};
+
+/** 档案此刻对 AI 的状态：生效几条 / 关着 / 还没条目 */
+export function profileStatus(profile: ResearchProfileDto): { tone: "on" | "off" | "empty"; count: number } {
+  const count = profile.doc.entries.filter((e) => e.meta.state === "active").length;
+  if (count === 0) return { tone: "empty", count };
+  return { tone: profile.settings.inject ? "on" : "off", count };
 }
 
 export interface ProfilePaper {

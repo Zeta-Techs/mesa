@@ -116,7 +116,7 @@ export function assistantConnection(project: ProjectDto | null): {
 }
 
 export async function gatherSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
-  const [projects, read, workspaces, runs, tasks, help, mail, memory, mesaErrors, appLog, detected, version] =
+  const [projects, read, workspaces, runs, tasks, help, mail, memory, mesaErrors, appLog, detected, version, profile] =
     await Promise.all([
       safe(invoke<ProjectDto[]>("list_projects"), []),
       safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
@@ -130,6 +130,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       safe(invoke<{ ts: string; level: string; source: string; message: string }[]>("get_app_log", { limit: 300 }), []),
       safe(invoke<DetectResult[]>("detect_agents"), []),
       safe(getVersion(), ""),
+      safe(invoke<string>("research_profile_context"), ""),
     ]);
   const state = useAppStore.getState();
   const deps: DepCheckDto | null =
@@ -270,6 +271,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     deps: depRows,
     agents: detected.map((d) => ({ id: AGENTS.find((a) => a.id === d.id)?.label ?? d.id, installed: !!d.binaryPath, version: d.version })),
     decided: memory?.entries.filter((e) => e.meta.state === "active").map((e) => e.text) ?? [],
+    profile,
     dispatched,
     stepTails,
   };

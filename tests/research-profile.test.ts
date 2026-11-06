@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activeProfileGroups, filterProfilePapers, suggestionReason, type ResearchProfileDto } from "../src/research-profile.ts";
+import { activeProfileGroups, filterProfilePapers, profileStatus, suggestionReason, type ResearchProfileDto } from "../src/research-profile.ts";
 
 const entry = (id: string, goalName: string, state = "active", text = id) => ({
   meta: { id, createdAt: "2026-11-02", goalName, state, reason: "r" },
@@ -16,6 +16,7 @@ test("研究档案：只列有效条目，按后端分类顺序分组，组内�
     },
     settings: { inject: true },
     categories: ["研究方向", "常用方法", "写作偏好"],
+    context: "",
   };
   assert.deepEqual(
     activeProfileGroups(profile).map((g) => [g.category, g.entries.map((e) => e.meta.id)]),
@@ -44,4 +45,16 @@ test("建议记下的出处说明：跨项目写项目名，同一处写次数",
     suggestionReason({ ...base, count: 3, sources: [{ project: "甲", kind: "逐条裁决依据" }] }),
     "在「甲」的逐条裁决依据里出现了 3 次",
   );
+});
+
+test("研究档案状态：没有有效条目算空，有条目看开关", () => {
+  const make = (inject: boolean, states: string[]): ResearchProfileDto => ({
+    doc: { revision: "x", legacyText: "", entries: states.map((st, i) => entry(String(i), "其他", st)) },
+    settings: { inject },
+    categories: ["其他"],
+    context: "",
+  });
+  assert.deepEqual(profileStatus(make(true, ["revoked"])), { tone: "empty", count: 0 });
+  assert.deepEqual(profileStatus(make(true, ["active", "active"])), { tone: "on", count: 2 });
+  assert.deepEqual(profileStatus(make(false, ["active"])), { tone: "off", count: 1 });
 });

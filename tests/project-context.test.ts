@@ -495,3 +495,17 @@ test("看一眼改动：不是 Git 的副本只知道改过", async () => {
   const { changeLine } = await import("../src/peek.ts");
   assert.equal(changeLine({ added: "~", removed: "~", newFile: false }), "改过");
 });
+
+test("research profile is its own section after project knowledge, not under it", () => {
+  const profile = "研究者档案（跨项目，人工确认；是这位研究者的偏好与历史，不是本项目的事实依据）：\n- 写作偏好：少用被动句";
+  const input = { ...FULL_SESSION_INPUT, profile };
+  const auto = renderProjectContextPack(input);
+  assert.match(auto, /项目长期知识（[^\n]*）：\n只用项目内文献。\n\n研究者档案（跨项目/);
+  assert.equal(renderSessionInjection(DEFAULT_SESSION_TEMPLATE, input), auto);
+  // 老模板只写 {{长期知识}} 也带上研究档案
+  assert.match(renderSessionInjection("{{长期知识}}", input), /少用被动句/);
+  // 项目知识为空时研究档案照样单独出现，不冒用项目知识段头
+  const onlyProfile = renderProjectContextPack({ ...input, memory: "" });
+  assert.doesNotMatch(onlyProfile, /项目长期知识/);
+  assert.match(onlyProfile, /研究者档案/);
+});

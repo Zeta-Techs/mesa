@@ -255,7 +255,7 @@ components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；Pr
   components/PackParamInput.tsx # 任务包参数的一格（2026-11-04）：按 kind 给下拉 / 数字 / 是否 / 相对路径输入，不合规就地红字；流程编辑器两处共用
   components/ReviewDecisionList.tsx # 步骤上的审查/待核实清单：逐条接受、拒绝、修改，写回报告后再接回对话
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
-components/ResearchProfileSection.tsx  # 设置「研究档案」分区：附带开关、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
+components/ResearchProfileSection.tsx  # 设置「研究档案」分区：生效状态 + 附带开关 + AI 拿到的原文预览、与项目长期知识 / 项目说明的区别、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
 components/ResearchRecordPanel.tsx  # 项目设置「规则与验收」里的研究记录：有记录才出现、展开列最近 30 次运行、三颗导出按钮（research_export），导完点文件名在访达里显示（tests/research-record.test.ts）
 components/CheckList.tsx   # 评审页「基础检查」行展开的核验清单（2026-11-02）：按 拦下 / 待你判断 / 通过 分组，通过默认收起；末尾固定写「通过≠论断被支持」（tests/research-review-ui.test.ts）
 components/ResearchReproductionPanel.tsx  # 复现运行面板（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView）：从报告抽复现约定（parseReproductionContract：MESA_REPRODUCE / reproduce 子命令）+ 项目脚本拼可运行清单，research_run_reproduce 在工作区执行——确认框写明不是只读沙箱、约定输出写 ~/ccode/reproductions/；入口版本变了拒跑要求重新审阅（tests/research-panels.test.ts）
@@ -615,7 +615,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   work-order-pack.ts         # 接活三期：workOrderToStep / builtinTaskStep（派活单、内置科研任务 → 一步步骤合同）、artifactPaths（交付物认路径）、suggestPackParams（时间范围 / 日期 / 时长 / 这次的文件预填成参数）、workOrderScheduleIntent（做成定时任务的描述）（tests/work-order-pack.test.ts）
   assistant-capabilities.ts  # 接活二期能力清单的两块：workerCapabilityLines（干活的连接能做到哪一步——支持程度、看图、出图、能否定时，数据来自 agent_capabilities / model_capabilities / 设置出图模型 / image_gen_status）、TRIGGER_CATALOG_LINES（定时与事件只说明不建）（tests/assistant-capabilities.test.ts）
   builtin-tasks.ts           # 内置科研任务（2026-11-05）：组会汇报 / 进展周报 / 实验规划的做法数据；不是流程模板、不进 pipeline-presets。findBuiltinTask、builtinTaskCatalogLines（能力清单）、builtinTaskMethod（派活单附上的做法）、builtinTaskGoalText（新建目标当模板）（tests/builtin-tasks.test.ts）
-  project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定），超长先砍事件与日志（同上测试）
+  project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定 / 研究档案），超长先砍事件与日志（同上测试）
   project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
@@ -1102,7 +1102,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   已完成后上游又保存过（WorkspaceDto.staleUpstream）写橙字「待跟进」，只提醒不阻断；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单（镜像 agent_specs.rs TIER1_AGENTS，测试逐字比对）、modelFamily / producerFamilies（按模型族判「另一家」）、reviewerOptions（连接 × 模型全部可选项，标同模型族与维护级）、pickCrossReviewer（默认挑哪一个）、复核标签键与首条指令（tests/cross-review.test.ts）
-  research-profile.ts        # 研究档案纯逻辑（有效条目按分类分组、文献总表筛选，tests/research-profile.test.ts）
+  research-profile.ts        # 研究档案纯逻辑（有效条目按分类分组、生效状态、分类例句、文献总表筛选，tests/research-profile.test.ts）
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）

@@ -167,6 +167,12 @@ test("快照写清每步状态、出错原因、核验、退回意见与 Mesa �
   assert.match(text, /- Git：已就绪 2\.4/);
 });
 
+test("快照带研究档案、单独成段；关掉（空串）时不出现", () => {
+  const text = buildProjectSnapshot(input({ profile: "研究者档案（跨项目…）：\n- 写作偏好：少用被动句" }));
+  assert.match(text, /## 研究档案（[^\n]*不是本项目的事实）\n研究者档案/);
+  assert.doesNotMatch(buildProjectSnapshot(input({ profile: "" })), /## 研究档案/);
+});
+
 test("快照超长时先砍事件和日志，最后硬截", () => {
   const big = input({
     failedRunEvents: [{ where: "第 1 步", events: Array.from({ length: 50 }, () => "x".repeat(200)) }],

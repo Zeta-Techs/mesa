@@ -73,6 +73,9 @@ export type ProjectContextInput = {
   feedback?: string | null;
   /** 项目长期知识（.ccode/memory.md 全文；只含人确认过的结论） */
   memory?: string | null;
+  /** 研究档案（跨项目的个人偏好与历史，后端已带段头；设置里关掉时为空）。
+   *  单独成段，不放进「不要与之矛盾」的项目知识段 */
+  profile?: string | null;
   skills?: readonly ProjectSkillPack[];
   /** Windows 上补「本机 Python」提示（纯模块不读平台，调用方显式传） */
   isWindows?: boolean;
@@ -289,6 +292,7 @@ type PackSections = {
   discipline: string;
   goal: string;
   memory: string;
+  profile: string;
   accepted: string;
   openGoals: string;
   feedback: string;
@@ -372,6 +376,7 @@ function packSections(input: ProjectContextInput): PackSections {
             : memory,
         ].join("\n")
       : "",
+    profile: input.profile?.trim() ?? "",
     accepted: accepted.length
       ? ["已经验收过：", ...accepted.slice(0, 8)].join("\n")
       : "",
@@ -404,6 +409,7 @@ export function renderProjectContextPack(input: ProjectContextInput): string {
     s.discipline,
     s.goal,
     s.memory,
+    s.profile,
     s.accepted,
     s.openGoals,
     s.feedback,
@@ -449,7 +455,7 @@ export const SESSION_TEMPLATE_VARS: readonly {
   { token: "{{工作环境}}", hint: "项目对话的环境提示" },
   { token: "{{项目规则}}", hint: "档案卡规则（编号）" },
   { token: "{{技能纪律}}", hint: "不自行套流程的纪律句" },
-  { token: "{{长期知识}}", hint: "人确认过的结论（超长自动截断）" },
+  { token: "{{长期知识}}", hint: "项目长期知识与研究档案（各自成段，超长自动截断）" },
   { token: "{{已验收}}", hint: "已验收目标（上限 8 条）" },
 ];
 
@@ -506,7 +512,8 @@ export function sessionTemplateValues(input: ProjectContextInput): Record<string
     项目规则: s.rules,
     人的决定: "",
     技能纪律: s.discipline,
-    长期知识: s.memory,
+    // 研究档案跟在项目知识后面、各带段头；老模板只写了 {{长期知识}} 的照样带上
+    长期知识: [s.memory, s.profile].filter(Boolean).join("\n\n"),
     已验收: s.accepted,
   };
 }

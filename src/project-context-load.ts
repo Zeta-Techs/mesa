@@ -92,6 +92,8 @@ async function gatherPack(input: PackRequest) {
   } catch (error) {
     if (isGoal) throw new Error(`无法读取项目知识，未启动：${String(error)}`);
   }
+  // 研究档案（设置里关掉时后端给空串）；读不到只是不带这段
+  const profile = await invoke<string>("research_profile_context").catch(() => "");
   try {
     const status = await invoke<ProjectStatusDto>("read_project_status", {
       path: input.path,
@@ -177,6 +179,7 @@ async function gatherPack(input: PackRequest) {
     protectedPaths,
     feedback: input.feedback,
     memory,
+    profile,
     skills,
     isWindows: IS_WINDOWS,
     peers: await invoke<RunDto[]>("run_list", { projectRoot: input.path })

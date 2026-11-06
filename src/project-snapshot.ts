@@ -68,6 +68,8 @@ export interface SnapshotInput {
   deps: readonly SnapshotDep[];
   agents: readonly { id: string; installed: boolean; version: string | null }[];
   decided: readonly string[];
+  /** 研究档案（跨项目的个人偏好与历史，后端已带段头；设置里关掉时为空）——起草派活单时照顾，不当本项目事实 */
+  profile?: string;
   /** 项目助手派过的活与现在的进度（「「修列名」交给第 2 步（留话）· 现在：在做」） */
   dispatched?: readonly string[];
   /** 各步最近那段对话里 AI 最后说的话（交互对话出错不进运行记录，靠这里补；第几步 → 末尾一段） */
@@ -190,6 +192,7 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
       section("Mesa 诊断日志里和这个项目有关的警告 / 错误", logLines),
       section("环境", depLines),
       section("项目知识里已定 / 不做的", decidedLines),
+      section("研究档案（这位研究者跨项目的习惯，起草派活单时照顾；不是本项目的事实）", input.profile?.trim() ? [clip(input.profile.trim(), 1800)] : []),
     ]
       .filter(Boolean)
       .join("\n\n");

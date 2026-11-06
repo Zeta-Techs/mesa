@@ -2627,18 +2627,13 @@ pub(crate) fn append_project_memory_at(
     crate::project_memory::append_confirmed(root, goal_name, text, run_id)
 }
 
-/// 开对话附带的「长期知识」：项目知识在前，研究档案（跨项目、设置可关）附在末尾
+/// 开对话附带的「项目长期知识」；研究档案另走 research_profile_context，在项目说明里单独成段
+/// （放在「不要与之矛盾」的项目知识段下会把偏好说成事实）
 #[tauri::command]
 pub async fn read_project_memory(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(crate::sessions::expand_tilde(&path));
-        let memory = crate::project_memory::context_at(&root)?;
-        let profile = crate::research_profile::context_text();
-        Ok(match (memory.trim().is_empty(), profile.is_empty()) {
-            (_, true) => memory,
-            (true, false) => profile,
-            (false, false) => format!("{memory}\n\n{profile}"),
-        })
+        crate::project_memory::context_at(&root)
     })
     .await
     .map_err(|e| e.to_string())?

@@ -97,6 +97,8 @@ const host = {
         ];
       case "read_project_memory":
         return "记忆内容";
+      case "research_profile_context":
+        return "";
       case "read_project_status":
         return { accepted: [] };
       case "task_list":

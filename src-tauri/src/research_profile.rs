@@ -3,7 +3,8 @@
 //! - 条目沿用项目长期知识（project_memory）的格式与状态机：只收人确认过的内容，带依据，
 //!   active / superseded / revoked 三态；`goal_name` 字段在这里当「分类」用。Agent 只能提议，不能直接写。
 //! - 存在配置目录 `research-profile.md`（与网关、密钥同一个根，测试可重定向），改前留历史副本。
-//! - 开对话时按设置附进「长期知识」段末尾（read_project_memory），标明是偏好与历史、不是事实依据，有长度上限。
+//! - 开对话（项目说明）、流程步骤开工（任务书）、项目助手都经 research_profile_context 取这一段，各自单独成段，
+//!   标明是偏好与历史、不是事实依据，有长度上限；设置关掉时给空串。
 //! - 跨项目文献总表只读各注册项目的 `papers/included.json` 与 `notes/index.json`，按 DOI / 题名去重，不写任何项目。
 use crate::project_memory::{parse, render, revision, validate_text, MemoryDocument, MemoryEntry, MemoryMeta};
 use serde::{Deserialize, Serialize};
@@ -159,9 +160,11 @@ pub(crate) fn context_text_at(dir: &Path) -> String {
     if !read_settings_at(dir).inject {
         return String::new();
     }
-    let Ok(doc) = read_doc_at(dir) else {
-        return String::new();
-    };
+    read_doc_at(dir).map(|doc| render_context(&doc)).unwrap_or_default()
+}
+
+/// 不看开关的那一段（设置页「AI 实际拿到的」预览与真附带同一出处）
+fn render_context(doc: &MemoryDocument) -> String {
     let mut lines = Vec::new();
     for category in CATEGORIES {
         let items: Vec<&str> = doc
@@ -281,9 +284,11 @@ pub struct ResearchProfileDto {
     pub doc: MemoryDocument,
     pub settings: ProfileSettings,
     pub categories: Vec<String>,
+    /// 附给 AI 的原文（不看开关；开关关着时实际不附）
+    pub context: String,
 }
 
-/** 流程步骤任务书带的研究档案（与开对话附带的同一份；设置里关掉时为空串） */
+/** 附给 AI 的研究档案：开对话的项目说明、流程步骤任务书、项目助手同一份（设置里关掉时为空串） */
 #[tauri::command]
 pub async fn research_profile_context() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(context_text)
@@ -295,8 +300,10 @@ pub async fn research_profile_context() -> Result<String, String> {
 pub async fn research_profile_read() -> Result<ResearchProfileDto, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let dir = base_dir()?;
+        let doc = read_doc_at(&dir)?;
         Ok(ResearchProfileDto {
-            doc: read_doc_at(&dir)?,
+            context: render_context(&doc),
+            doc,
             settings: read_settings_at(&dir),
             categories: CATEGORIES.iter().map(|c| c.to_string()).collect(),
         })
