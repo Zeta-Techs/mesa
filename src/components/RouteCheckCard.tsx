@@ -11,6 +11,7 @@ import {
   checkedAgoText,
   exitTypeText,
   latencyText,
+  nativeText,
   proxySourceText,
   routeCheckTargets,
   routeFixLabel,
@@ -236,6 +237,7 @@ function RouteRow({
 
   const confirm = serviceConfirmText(check);
   const typed = typeof exitType === "object" ? exitType : null;
+  const native = typed ? nativeText(typed) : null;
   const meta =
     confirm || check.exitRegion || exitType !== undefined ? (
       <span className="flex min-w-0 items-center gap-1.5 text-micro text-l4">
@@ -262,11 +264,19 @@ function RouteRow({
               <span className="text-micro">查出口类型</span>
             </button>
           ) : (
-            <span
-              className={`min-w-0 truncate ${typed?.kind === "datacenter" ? "text-warn-text" : ""}`}
-            >
-              {typed ? exitTypeText(typed) : (exitType as string)}
-            </span>
+            <>
+              <span
+                className={`min-w-0 truncate ${typed?.kind === "datacenter" ? "text-warn-text" : ""}`}
+              >
+                {typed ? exitTypeText(typed) : (exitType as string)}
+              </span>
+              {native && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className={`shrink-0 ${typed?.native === false ? "text-warn-text" : ""}`}>{native}</span>
+                </>
+              )}
+            </>
           ))}
       </span>
     ) : null;

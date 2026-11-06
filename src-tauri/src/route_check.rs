@@ -598,6 +598,11 @@ pub struct ExitTypeDto {
     pub label: &'static str,
     /// 出口 IP 所属的网络（如「AS2856 British Telecommunications Limited」）
     pub org: String,
+    /// IP 注册在哪国（RDAP，两字母代码；ARIN 只给英文国名时换不成代码就原样放）；查不到为 None
+    pub registered_country: Option<String>,
+    pub registered_country_name: Option<String>,
+    /// 原生 IP：注册国家与这次测到的所在地相同；任一边不知道为 None
+    pub native: Option<bool>,
 }
 
 const DATACENTER_HINTS: &[&str] = &[
@@ -625,8 +630,58 @@ pub fn classify_exit(org: &str, hostname: &str) -> (&'static str, &'static str) 
     ("unknown", "看不出来")
 }
 
+/// RDAP 返回里取注册国家：RIPE / APNIC / LACNIC / AFRINIC 有顶层 `country`；
+/// ARIN 没有，取注册人地址（vCard adr 的 label）最后一行的英文国名
+pub fn parse_rdap_country(v: &serde_json::Value) -> Option<String> {
+    if let Some(c) = v.get("country").and_then(|x| x.as_str()).filter(|c| c.len() == 2) {
+        return Some(c.to_ascii_uppercase());
+    }
+    let entities = v.get("entities")?.as_array()?;
+    let registrant = entities.iter().find(|e| {
+        e.get("roles").and_then(|r| r.as_array()).is_some_and(|r| r.iter().any(|x| x == "registrant"))
+    })?;
+    let props = registrant.get("vcardArray")?.get(1)?.as_array()?;
+    let label = props
+        .iter()
+        .find(|p| p.get(0).and_then(|x| x.as_str()) == Some("adr"))?
+        .get(1)?
+        .get("label")?
+        .as_str()?;
+    let last = label.lines().map(str::trim).filter(|l| !l.is_empty()).last()?;
+    Some(match last {
+        "United States" => "US".to_string(),
+        "Canada" => "CA".to_string(),
+        other => other.to_string(),
+    })
+}
+
+/// 依次直连、经出网代理 GET 一个 JSON；都不通为 None
+async fn fetch_json(url: &str) -> Option<serde_json::Value> {
+    let settings_proxy = crate::settings::official_outbound_env()
+        .into_iter()
+        .find(|(k, _)| k == "HTTPS_PROXY")
+        .map(|(_, v)| v);
+    for proxy in [None, settings_proxy.as_deref()] {
+        let mut b = reqwest::Client::builder().timeout(Duration::from_secs(8));
+        b = match proxy {
+            Some(p) => match reqwest::Proxy::all(p) {
+                Ok(px) => b.proxy(px),
+                Err(_) => continue,
+            },
+            None => b.no_proxy(),
+        };
+        let Ok(client) = b.build() else { continue };
+        if let Ok(resp) = client.get(url).header("Accept", "application/rdap+json, application/json").send().await {
+            if let Ok(v) = resp.json::<serde_json::Value>().await {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
 /// 「查出口类型」：把这家最近一次的出口 IP 发给 ipinfo.io 查所属网络。只在用户点按钮时查（要把 IP 发给第三方），
-/// 结果按 IP 缓存 24 小时；先直连查，不通再经出网代理
+/// 顺带查 RDAP 注册国家判原生 IP；结果按 IP 缓存 24 小时；先直连查，不通再经出网代理
 #[tauri::command]
 pub async fn route_exit_type(agent_id: String) -> Result<ExitTypeDto, String> {
     let addr = LAST_ADDR
@@ -643,34 +698,32 @@ pub async fn route_exit_type(agent_id: String) -> Result<ExitTypeDto, String> {
             return Ok(dto);
         }
     }
-    let url = format!("https://ipinfo.io/{addr}/json");
-    let settings_proxy = crate::settings::official_outbound_env()
-        .into_iter()
-        .find(|(k, _)| k == "HTTPS_PROXY")
-        .map(|(_, v)| v);
-    let mut body = None;
-    for proxy in [None, settings_proxy.as_deref()] {
-        let mut b = reqwest::Client::builder().timeout(Duration::from_secs(6));
-        b = match proxy {
-            Some(p) => match reqwest::Proxy::all(p) {
-                Ok(px) => b.proxy(px),
-                Err(_) => continue,
-            },
-            None => b.no_proxy(),
-        };
-        let Ok(client) = b.build() else { continue };
-        if let Ok(resp) = client.get(&url).send().await {
-            if let Ok(v) = resp.json::<serde_json::Value>().await {
-                body = Some(v);
-                break;
-            }
-        }
-    }
-    let v = body.ok_or("查不到（ipinfo.io 连不上）")?;
+    let v = fetch_json(&format!("https://ipinfo.io/{addr}/json")).await.ok_or("查不到（ipinfo.io 连不上）")?;
     let org = v.get("org").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let hostname = v.get("hostname").and_then(|x| x.as_str()).unwrap_or("");
     let (kind, label) = classify_exit(&org, hostname);
-    let dto = ExitTypeDto { kind, label, org };
+    // 原生 IP：查公开注册信息（从 RIPE 的 RDAP 进，它会转到这段地址所属的注册机构；rdap.org 国内直连不通），和这次测到的所在地比；所在地以探测为准（服务方看到的也是它）
+    let registered_country = match fetch_json(&format!("https://rdap.db.ripe.net/ip/{addr}")).await {
+        Some(r) => parse_rdap_country(&r),
+        None => None,
+    };
+    let located = CACHE
+        .lock()
+        .ok()
+        .and_then(|m| m.as_ref()?.get(&agent_id)?.exit_region.clone())
+        .or_else(|| v.get("country").and_then(|x| x.as_str()).map(str::to_ascii_uppercase));
+    let native = match (&registered_country, &located) {
+        (Some(r), Some(l)) if r.len() == 2 => Some(r == l),
+        _ => None,
+    };
+    let dto = ExitTypeDto {
+        kind,
+        label,
+        org,
+        registered_country_name: registered_country.as_deref().map(region_name),
+        registered_country,
+        native,
+    };
     if let Ok(mut m) = EXIT_TYPE_CACHE.lock() {
         m.get_or_insert_with(HashMap::new).insert(addr, (now, dto.clone()));
     }
@@ -916,6 +969,19 @@ mod tests {
     }
 
     #[test]
+    fn rdap_country_from_regional_registries() {
+        // 2026-11-07 实测：RIPE 有顶层 country；ARIN 只有注册人地址
+        let ripe = serde_json::json!({"country": "GB", "name": "EE-MOBILE", "port43": "whois.ripe.net"});
+        assert_eq!(parse_rdap_country(&ripe).as_deref(), Some("GB"));
+        let arin = serde_json::json!({"name": "GOGL", "entities": [{"roles": ["registrant"], "vcardArray": ["vcard", [
+            ["version", {}, "text", "4.0"],
+            ["adr", {"label": "1600 Amphitheatre Parkway\nMountain View\nCA\n94043\nUnited States"}, "text", ["", "", "", "", "", "", ""]]
+        ]]}]});
+        assert_eq!(parse_rdap_country(&arin).as_deref(), Some("US"));
+        assert_eq!(parse_rdap_country(&serde_json::json!({"name": "X"})), None);
+    }
+
+    #[test]
     fn trace_prefix_drops_host_part() {
         assert_eq!(parse_trace_prefix("ip=31.94.12.127\nloc=GB").as_deref(), Some("31.94.12.0/24"));
         assert_eq!(parse_trace_prefix("ip=2408:8340:828:1ea0::1\n").as_deref(), Some("2408:8340:828::/48"));
@@ -934,6 +1000,10 @@ mod tests {
         for check in [ServiceCheck::AnthropicKeyless, ServiceCheck::OpenAiCompliance] {
             println!("{check:?} 经 {proxy:?} → {:?}", tauri::async_runtime::block_on(ask_service(check, proxy.as_deref())));
             println!("{check:?} 直连 → {:?}", tauri::async_runtime::block_on(ask_service(check, None)));
+        }
+        for ip in ["8.8.8.8", "31.94.12.1", "1.1.1.1"] {
+            let r = tauri::async_runtime::block_on(fetch_json(&format!("https://rdap.db.ripe.net/ip/{ip}")));
+            println!("RDAP {ip} → {:?}", r.as_ref().and_then(parse_rdap_country));
         }
         println!("本机代理软件 → {:?}", route_proxy_apps());
         let dead = tauri::async_runtime::block_on(probe(PROBE.url, Some("http://127.0.0.1:1"), true));

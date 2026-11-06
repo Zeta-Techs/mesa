@@ -11,6 +11,7 @@ import {
   routeInboxFields,
   runningOfficialTargets,
   exitTypeText,
+  nativeText,
   serviceConfirmText,
   serviceConfirmTip,
   routeRowMain,
@@ -110,7 +111,8 @@ test("修复只在代理没在运行时给：设置里的代理优先换成在�
   assert.equal(pickRouteFix({ ...dead, stage: "reach" }, cands, apps), null, "连不上服务不是本机代理的问题，不乱修");
   const msg = preflightFixMessage({ ...base, verdict: "block", reason: "代理 127.0.0.1:7888 没开" }, "Claude Code", sw!);
   assert.match(msg, /7897 在运行/);
-  assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited" }), "住宅 · British Telecommunications");
+  const noReg = { registeredCountry: null, registeredCountryName: null, native: null };
+  assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited", ...noReg }), "住宅 · British Telecommunications");
 });
 
 test("服务方确认可用才标「Claude 支持这个地区」；没这项检查或没答复不标", () => {
@@ -135,4 +137,10 @@ test("体检卡一行：通过只写地区，用时单列；网络名收短；�
   assert.equal(shortOrg("AS3462 Data Communication Business Group"), "Data Communication Business Group");
   assert.equal(checkedAgoText(1000, 1030), "刚刚测过");
   assert.equal(checkedAgoText(1000, 1000 + 180), "3 分钟前测过");
+});
+
+test("原生 IP：注册国家与所在地相同写「原生 IP」，不同点明注册在哪，判不出不写", () => {
+  assert.equal(nativeText({ native: true, registeredCountryName: "英国" }), "原生 IP");
+  assert.equal(nativeText({ native: false, registeredCountryName: "美国" }), "非原生（注册在美国）");
+  assert.equal(nativeText({ native: null, registeredCountryName: null }), null);
 });

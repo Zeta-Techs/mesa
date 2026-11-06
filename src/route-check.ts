@@ -145,12 +145,24 @@ export interface ExitType {
   kind: "residential" | "datacenter" | "unknown";
   label: string;
   org: string;
+  /** IP 注册在哪国（RDAP）；查不到为 null */
+  registeredCountry: string | null;
+  registeredCountryName: string | null;
+  /** 原生 IP = 注册国家与所在地相同；任一边不知道为 null */
+  native: boolean | null;
 }
 
 /** 出口类型一行：「住宅 · AS2856 British Telecommunications Limited」 */
 export function exitTypeText(t: ExitType): string {
   const org = shortOrg(t.org);
   return org ? `${t.label} · ${org}` : t.label;
+}
+
+/** 原生 IP 一小段：「原生 IP」/「非原生（注册在美国）」；判不出不写 */
+export function nativeText(t: Pick<ExitType, "native" | "registeredCountryName">): string | null {
+  if (t.native === true) return "原生 IP";
+  if (t.native === false) return `非原生（注册在${t.registeredCountryName ?? "别处"}）`;
+  return null;
 }
 
 /** 修复动作：换成检测到的代理（设置里的不在运行、本机另有在跑的），或打开已装的代理软件 */

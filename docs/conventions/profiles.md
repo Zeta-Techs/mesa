@@ -403,6 +403,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 换地区「美国（常用英国）」。探测点加 Grok（x.ai trace，回地区）、Gemini（cloudcode-pa）、Cursor（api2.cursor.sh）——后两家 `reports_region=false`，连得上即通过。
 **出口类型**只在点「查出口类型」时查：最近一次完整出口 IP 只存内存（`LAST_ADDR`，不落盘），发 ipinfo.io（先直连、不通走出网代理），
 `classify_exit` 先认云厂商 / 托管为机房、再认运营商与动态反解名为住宅、都不像说看不出来，按 IP 缓存 24 小时。
+**原生 IP**（2026-11-07 用户拍板补上）：同一次点击顺带查 RDAP 注册国家（入口 `rdap.db.ripe.net`，会转到所属注册机构；rdap.org 国内直连不通），ARIN 没有顶层 country 时取注册人地址末行国名；与体检测到的所在地相同 =「原生 IP」，不同 =「非原生（注册在 X）」标黄，任一边不知道不写。只作提示，不改判定。
 **服务方判定（同日，参考 xykt/IPQuality 的 ChatGPT 判据，只借思路不抄代码——AGPL 与 Apache-2.0 不兼容）**：`RouteProbe.service_check`，测通之后经同一代理不带任何密钥问服务方——
 Claude `POST api.anthropic.com/v1/messages` 回 401 authentication_error = 放行、403 forbidden「Request not allowed」= 地区被拒；
 OpenAI `GET api.openai.com/compliance/cookie_requirements` 带 unsupported_country = 被拒、有 cookie_consent_required = 放行。服务方明确答复以它为准（放行不再按名单拦），界面写「Claude 支持这个地区」/「英国，Claude 不支持这个地区」（2026-11-07 用户嫌「官方确认」看不懂，与官方「支持的国家和地区」同一说法），
