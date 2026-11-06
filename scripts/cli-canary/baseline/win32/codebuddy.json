@@ -3,7 +3,7 @@
  "channel": {
   "approvalKind": "execute",
   "approvalReplyable": false,
-  "approvalTool": "Bash",
+  "approvalTool": "REPL",
   "kind": "hooks",
   "statuses": [
    "-",
@@ -35,7 +35,7 @@
    "user:text"
   ],
   "toolNames": [
-   "Bash"
+   "REPL"
   ]
  },
  "platform": "win32",
@@ -54,39 +54,41 @@
    "contextHeadings": [
     "Asking questions as you work",
     "Autonomy and persistence",
+    "Before recommending from memory",
     "Before saving a memory",
-    "Checking before you recommend",
     "Code References",
     "Delegating to subagents",
     "Doing tasks",
     "Executing actions with care",
-    "Finding earlier context",
-    "Four kinds of memory",
-    "Leave these out",
-    "Long-term memory",
+    "How to save memories",
     "MEMORY.md",
-    "Memory versus other ways to keep information",
+    "Memory and other forms of persistence",
     "Output efficiency",
-    "Reading memory",
+    "PTC / Code Mode",
+    "Searching past context",
     "Task Management",
     "Tone and style",
-    "Tool usage policy",
-    "Writing a memory",
-    "feedback — how the user wants things done",
-    "project — the story behind current work",
-    "reference — where outside information lives",
-    "user — who the user is",
-    "当前工具模式"
+    "Types of memory",
+    "What NOT to save in memory",
+    "When to access memories",
+    "auto memory"
    ],
    "contextTags": [
+    "body_structure",
     "codebuddy_background_info",
     "content_policy",
+    "description",
     "env",
+    "examples",
+    "how_to_use",
     "memory",
+    "name",
     "system-reminder",
-    "term",
+    "type",
+    "types",
     "user-prompt-submit-hook",
-    "user_query"
+    "user_query",
+    "when_to_save"
    ],
    "headers": {
     "user-agent": "<有>"
@@ -95,31 +97,7 @@
    "path": "/codebuddy/v1/chat/completions",
    "systemHeadings": [],
    "tools": [
-    "Agent",
-    "AskUserQuestion",
-    "Bash",
-    "DeferExecuteTool",
-    "Edit",
-    "EnterPlanMode",
-    "ExitPlanMode",
-    "Glob",
-    "Grep",
-    "PowerShell",
-    "Read",
-    "SendMessage",
-    "Skill",
-    "TaskCreate",
-    "TaskGet",
-    "TaskList",
-    "TaskOutput",
-    "TaskStop",
-    "TaskUpdate",
-    "ToolSearch",
-    "ViewImage",
-    "WaitForMcpServers",
-    "WebFetch",
-    "WebSearch",
-    "Write"
+    "REPL"
    ]
   },
   "other": [
@@ -131,10 +109,10 @@
   "menu": {
    "options": [
     "Yes",
-    "Yes, and don't ask again for session (shift + tab)",
+    "Yes, and don't ask again this session (shift + tab)",
     "No, and tell CodeBuddy what to do differently (escape)"
    ],
-   "question": "Do you want to proceed?"
+   "question": "Are you sure you want to do this?"
   },
   "previewReadable": false
  },
@@ -203,6 +181,7 @@
    "keys": [
     "contextWindow",
     "id",
+    "meta",
     "sessionId",
     "timestamp",
     "type"
@@ -230,5 +209,5 @@
    ]
   }
  },
- "version": "2.180.0"
+ "version": "2.179.3"
 }

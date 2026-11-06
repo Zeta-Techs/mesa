@@ -74,7 +74,8 @@ npm run canary
 
 **OpenCode 1.x / 2.x（2026-11-04）**：两版同命令名、同一个会话库，不能装在一起。金丝雀里 `opencode` 是 1.x 那份基线，`opencode2` 是 2.x 那份
 （同一个 `opencode` 命令，Mesa 里仍是 opencode，按 `--version` 大版本分开走）；装的大版本不对就当没装、跳过。CI 先装 npm `opencode-ai` 跑完九家，
-再换装 `@opencode/cli` 只跑 `opencode2`（macOS、Windows 都跑；Windows 的 2.x 基线 2026-11-06 在 Windows 本机建好，随包进 `cli_verified.rs` 的 `BUNDLED_EXTRA`）。
+再换装 `@opencode/cli` 只跑 `opencode2`（目前只在 macOS；Windows 的 2.x 基线要在 Windows 上 `npm run canary -- --accept --agents opencode2`
+建好，再把工作流里那一步的 `runner.os == 'macOS'` 去掉，并在 `src-tauri/src/cli_verified.rs` 的 `BUNDLED_EXTRA` 加上 win32 那份）。
 本机装着 2.x 时只能跑 `opencode2`，要跑 `opencode` 得先换回 1.x。Mesa 认核对版本时 OpenCode 2.x 比 `opencode2` 那份（`chat-fidelity.ts baselineKey`）。
 
 各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，

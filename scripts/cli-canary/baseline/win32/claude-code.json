@@ -9,7 +9,6 @@
    "-",
    "running",
    "awaiting_approval",
-   "running",
    "completed"
   ]
  },
@@ -190,7 +189,6 @@
     "message",
     "parentUuid",
     "perTurnEffort",
-    "promptCacheRequested",
     "requestRef",
     "requestedModel",
     "sessionId",
@@ -342,5 +340,5 @@
    ]
   }
  },
- "version": "2.1.318"
+ "version": "2.1.317"
 }

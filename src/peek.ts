@@ -21,15 +21,11 @@ export function openPeerCount(runs: readonly Pick<RunDto, "closedAt" | "internal
   return runs.filter((r) => !r.closedAt && !r.internal && r.taskKind !== "login").length;
 }
 
-/** Windows 上 Claude Code 的命令工具是 Git Bash（跑不了 `& $env:…`），Codex 是 PowerShell：同 task-md.ts 脚本节两种写法都给 */
-export const PEEK_TOOL_WINDOWS_NOTE =
-  "上面是 PowerShell 写法；你的命令工具是 Git Bash（如 Claude Code）时把 `& $env:MESA_PEEK_TOOL` 换成 `\"$MESA_PEEK_TOOL\"`。";
-
 /** 项目说明（对话注入自动档 / 目标包）里的一句：同项目有别的工作开着时才带 */
 export function peekContextLine(peers: number, isWindows: boolean): string {
   if (peers <= 0) return "";
   const tool = isWindows ? "& $env:MESA_PEEK_TOOL" : '"$MESA_PEEK_TOOL"';
-  return `同项目还有 ${peers} 段别的工作开着：想知道它们在做什么、改了什么，跑 \`${tool} peek agents\`（只读，不打扰它们；别人工作副本里的文件不要改）；要给它们留话用 \`${tool} tell --to 名字 "…"\`。${isWindows ? PEEK_TOOL_WINDOWS_NOTE : ""}`;
+  return `同项目还有 ${peers} 段别的工作开着：想知道它们在做什么、改了什么，跑 \`${tool} peek agents\`（只读，不打扰它们；别人工作副本里的文件不要改）；要给它们留话用 \`${tool} tell --to 名字 "…"\`。`;
 }
 
 export function peekSectionLines(peers: number, isWindows: boolean): string[] {
@@ -39,7 +35,6 @@ export function peekSectionLines(peers: number, isWindows: boolean): string[] {
     "## 同项目的其他工作",
     `开工时这个项目还有 ${peers} 段别的工作开着。想知道它们在做什么、改了什么：\`${tool} peek agents\`，再细看 \`peek changes --worker 名字\` / \`peek runs --worker 名字\`。只读，不打扰它们。`,
     `要告诉它们一件会影响它们的事（比如改了它们要读的文件格式）：\`${tool} tell --to 名字 "要说的话"\`，它空闲时 Mesa 送进它的对话。别人工作副本里的文件不要改；要用它们的产物，等评审采纳进项目再读。`,
-    ...(isWindows ? [PEEK_TOOL_WINDOWS_NOTE] : []),
     "",
   ];
 }

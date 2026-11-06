@@ -624,7 +624,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   pack-add.ts                # 我的任务加进项目的唯一出处 addPackToProject（编辑器 / 模板库 / 新项目选择层 / 草稿试跑共用）：packStepsForProject
                              # （与 task_packs.rs steps_for_project 同口径）+ adaptPack（按项目研究工具设置 withResearchTools，项目设定套工具行）（tests/pack-add.test.ts）
   peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekContextLine（项目说明里那一句）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
-                             # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL，Windows 另附 Git Bash 写法）（tests/peek.test.ts）
+                             # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL）（tests/peek.test.ts）
   help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
                              # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
