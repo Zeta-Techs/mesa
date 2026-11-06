@@ -97,9 +97,12 @@ import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "..
 import {
   PREFLIGHT_MAX_AGE_SECS,
   preflightBlockMessage,
+  preflightFixMessage,
   preflightReviewNote,
+  routeFixLabel,
   type RouteCheck,
 } from "../route-check";
+import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import {
   channelAttention,
   channelCanAnswer,
@@ -5515,11 +5518,24 @@ const TerminalView = memo(function TerminalView({
     let routeBlocked = false;
     let routeNote: string | null = null;
     if (selectedProfile?.accountType === "official") {
-      const check = await invoke<RouteCheck>("route_check", {
+      let check = await invoke<RouteCheck>("route_check", {
         agentId,
         profileId,
         maxAgeSecs: PREFLIGHT_MAX_AGE_SECS,
       }).catch(() => null);
+      // 修复后启动（二期）：代理没在运行、而本机有在跑的代理或装了代理软件时，先问要不要修好再启动
+      if (check?.verdict === "block") {
+        const fix = await findRouteFix(check).catch(() => null);
+        if (
+          fix &&
+          (await confirmDialog(preflightFixMessage(check, agentLabel(agentId), fix), {
+            confirmText: `${routeFixLabel(fix)}再启动`,
+          }))
+        ) {
+          check = (await applyRouteFix(fix, agentId, profileId).catch(() => null)) ?? check;
+        }
+      }
+      if (check) setRouteAlertFromCheck(check);
       if (check?.verdict === "block") {
         routeBlocked = true;
         const ok = await confirmDialog(preflightBlockMessage(check, agentLabel(agentId)), {

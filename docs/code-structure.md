@@ -642,7 +642,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 第三期：packCheckFile / checkCommand / checkSectionLines（任务书「本步核验」）、triggerSummary / triggerDefaultOn；
                              # 任务包前端纯逻辑：applyStepParams（拼任务书 / 显示时 {param:键} 换取值，未填写明缺哪项）、parameterize（另存时把值改成参数，长的先换，
                              # machine: 验收行不动）、nextParamKey；替换范围与 task_packs.rs step_texts 一致（tests/task-packs.test.ts）
-  inbox.ts                   # 收件箱分类胶囊纯逻辑：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
+  inbox.ts                   # 收件箱分类胶囊纯逻辑（net: = 线路，route-watch 现算合并）：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
                              #   sched: = 「定时任务」类（其他巡检待评审 / 自动暂停，不进一键已读；2026-10-23）；
                              #   phone: 类别（从手机添加还没处理的）与 update: 一样由 store.ts visibleInboxItems 现算合并
   app-update.ts              # 应用自更新展示纯逻辑：收件箱字段/合并、检查失败文案、http(s) 代理、下载进度
@@ -857,7 +857,9 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、
                              # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）
   runtime-model-effort.ts    # 运行中切模型 / 思考档的共用 hook（useRuntimeModelEffort）：终端底栏与聊天「模型 · 思考」芯片同用一份；切过的模型名按 ptyId 存模块级表，两处实例同步
-  route-check.ts             # 线路体检前端纯逻辑：DTO 与 route_check.rs 对齐、代理来源文案、体检卡目标（每家第一条官方连接）、启动预检确认框文案（tests/route-check.test.ts）
+  route-check.ts             # 线路体检前端纯逻辑：DTO 与 route_check.rs 对齐、代理来源文案、体检卡目标（每家第一条官方连接）、启动预检确认框文案、
+                             #   后台复查目标 runningOfficialTargets、收件箱 net: 文案 routeInboxFields、修复选择 pickRouteFix（tests/route-check.test.ts）
+  route-watch.ts             # 线路体检副作用层：useRouteWatch（App 挂载，官方会话在跑时 5 分钟复查、写 store.routeAlerts）、findRouteFix / applyRouteFix（换代理或打开代理软件后重测）
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 网络不通 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
   live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
@@ -1837,7 +1839,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # build_handoff_brief 的 until_text = 聊天层「从这里分叉」，按正文截到那条助手回复（cut_messages_at，认不出报错不给全文）
   route_check.rs             # 官方账号线路体检（design-outbound-route.md 一期）：resolve_proxy 按启动注入顺序定代理来源（连接 extra_env > 设置 > 登录 shell 继承），
                              #   probe 经该代理访问 agent_specs RouteProbe 的 cdn-cgi/trace 取 loc 与延迟（无代理显式 no_proxy，SOCKS 不测），
-                             #   judge 纯函数判 pass / block / review；结果按 agent|profile 进程内缓存，启动预检传 max_age 300
+                             #   judge 纯函数判 pass / block / review；结果按 agent|profile 进程内缓存，启动预检传 max_age 300；
+                             #   二期：出口记忆 route-history.json（usual_region 纯函数）、route_accept_region、route_proxy_apps / route_open_proxy_app（只开白名单路径）
   runs.rs                    # 一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
                              # 精读对话标记 apply_reader_runs（task_kind=reader 且登记了会话 → 会话列表 reader / readerPdf，2026-11-06）；
                              # 关标签不删行；收件箱 action.run 可恢复；登录标签不建行；

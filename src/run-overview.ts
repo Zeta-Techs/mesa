@@ -77,6 +77,8 @@ export interface RunOverviewInput {
   forkOf?: string | null;
   /** 卡在哪（2026-11-06 run-blocker.ts 唯一出处）：调度台、收件箱、手机只读它 */
   blocker?: RunBlocker | null;
+  /** 用的哪条连接（线路体检后台复查认官方账号会话用） */
+  profileId?: string | null;
 }
 
 /** 一个标签折成 RunOverviewInput。标签刚开、TerminalView 还没上报状态时先用开标签时就知道的（Agent / 目录 / 要接的会话）：
@@ -104,6 +106,7 @@ export function tabRunInput(
         attention: RunOverviewInput["attention"];
         runId?: string | null;
         sessionId: string | null;
+        profileId?: string | null;
       }
     | undefined,
 ): RunOverviewInput {
@@ -121,6 +124,7 @@ export function tabRunInput(
     taskId: tab.taskId,
     sessionId: status ? status.sessionId : (tab.resumeSessionId ?? null),
     forkOf: tab.forkSource?.sessionId ?? null,
+    profileId: status?.profileId ?? null,
   };
 }
 

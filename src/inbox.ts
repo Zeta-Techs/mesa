@@ -11,6 +11,7 @@ export type InboxCategory =
   | "conflict"
   | "confirm"
   | "dep"
+  | "network"
   | "update"
   | "lit"
   | "schedule"
@@ -30,6 +31,7 @@ export interface InboxCategoryMeta {
 
 /** 固定展示顺序（与原 strip 摘要口径一致，confirm: 与 live: 合并为「待确认」；
  *  dep: 依赖缺失紧随「待确认」（git 不在 = 工作区/评审停工，与待确认同级紧迫）；
+ *  network: 官方账号线路体检拦下 / 换了出口地区（net:，有官方会话在跑时后台复查，2026-11-06）紧随依赖；
  *  update: 应用可更新（不阻断干活，但必须能看见）；lit: 文献雷达新命中随后；
  *  sched: 定时任务（其他巡检有产物待评审 / 被自动暂停，2026-10-23）紧跟文献；
  *  phone: 手机发来还没处理的（从手机添加，2026-10-20）跟在「待发送」后；help 追加在末尾） */
@@ -37,6 +39,7 @@ export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "conflict", label: "冲突" },
   { id: "confirm", label: "待确认" },
   { id: "dep", label: "依赖" },
+  { id: "network", label: "线路" },
   { id: "update", label: "更新" },
   { id: "lit", label: "文献" },
   { id: "schedule", label: "定时任务" },
@@ -55,6 +58,7 @@ export function inboxCategoryOf(key: string): InboxCategory {
   if (key.startsWith("conflict:")) return "conflict";
   if (key.startsWith("confirm:") || key.startsWith("live:")) return "confirm";
   if (key.startsWith("dep:")) return "dep";
+  if (key.startsWith("net:")) return "network";
   if (key.startsWith("update:")) return "update";
   if (key.startsWith("lit:")) return "lit";
   if (key.startsWith("sched:")) return "schedule";

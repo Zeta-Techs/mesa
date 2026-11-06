@@ -47,6 +47,7 @@ import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
 import { useAppStore, runInboxAction, visibleInboxItems } from "./store";
+import { useRouteWatch } from "./route-watch";
 import { bulkReadableItems } from "./inbox";
 import { groupInbox, type InboxCategory } from "./inbox";
 import {
@@ -562,6 +563,8 @@ function App() {
   const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   // 从手机添加：后端事件全局接一次；弹层开着时不在收件箱重复提醒
+  // 线路体检后台复查：只在有官方账号会话运行时每 5 分钟测一次，拦下 / 换了出口地区进收件箱「线路」
+  useRouteWatch();
   usePhoneDropEvents((item) => {
     // 手机直接发来（不在往输入框送）：弹窗已弹出；窗口不在前台时再发一条系统通知，同「长任务 OS 通知」开关
     if (document.hasFocus()) return;
@@ -570,6 +573,7 @@ function App() {
   });
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const assistantEchoes = useAppStore((s) => s.assistantEchoes);
+  const routeAlerts = useAppStore((s) => s.routeAlerts);
   const inboxItems = visibleInboxItems(
     rawInboxItems,
     appUpdate
@@ -578,6 +582,7 @@ function App() {
     inboxDismissed,
     phonePending,
     assistantEchoes,
+    Object.values(routeAlerts),
   );
   const inboxCount = inboxItems.length;
   const contextLabel = useAppStore((s) => s.contextLabel);

@@ -53,7 +53,7 @@ async function harness(options: { live?: boolean; empty?: boolean } = {}) {
   let rejectReply = false;
   const state: Record<string, any> = {
     contextLabel: null, terminalRunInputs: options.live ? [tab] : [], unreadChats: [],
-    inboxItems: options.live ? [confirm, notice] : [], appUpdate: null, inboxDismissed: [], sessions: [], recentRepos: [],
+    inboxItems: options.live ? [confirm, notice] : [], appUpdate: null, inboxDismissed: [], routeAlerts: {}, sessions: [], recentRepos: [],
     loadRecentRepos: async () => {},
   };
   for (const name of ["setPage", "setEnterCwdReq", "setSelectProjectReq", "setTaskReviewReq", "setFocusTabReq", "setProjectFocusReq", "setWorkspaceReviewRequest", "dismissInbox", "dismissInboxBulk"]) state[name] = (...args: any[]) => actions.push([name, ...args]);

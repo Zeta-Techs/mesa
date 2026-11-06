@@ -497,10 +497,16 @@ export function visibleInboxItems(
   dismissed: Record<string, string>,
   phonePending = 0,
   assistant: readonly InboxItem[] = [],
+  network: readonly InboxItem[] = [],
 ): InboxItem[] {
   const phone = phoneDropInboxEntry(phonePending);
   return filterDismissed(
-    [...mergeAppUpdateInbox(items, appUpdateInboxEntry(update)), ...(phone ? [phone] : []), ...assistant],
+    [
+      ...mergeAppUpdateInbox(items, appUpdateInboxEntry(update)),
+      ...network,
+      ...(phone ? [phone] : []),
+      ...assistant,
+    ],
     dismissed,
   );
 }
@@ -915,6 +921,9 @@ interface AppState {
   /** 派活回音（2026-11-05）：还没看过的回音进收件箱「项目助手」；tick 每补一条回音加一，开着的面板据此重读记录 */
   assistantEchoes: InboxItem[];
   setAssistantEchoes: (items: InboxItem[]) => void;
+  /** 线路体检后台复查（route-watch.ts）：按 Agent 一条「线路」收件箱条目，恢复或会话都停了就撤 */
+  routeAlerts: Record<string, InboxItem>;
+  setRouteAlert: (agent: string, item: InboxItem | null) => void;
   assistantEchoTick: number;
   bumpAssistantEchoTick: () => void;
   /** 项目助手派活单「做成定时任务…」：项目「定时任务」页签打开新建弹层并预填（新建巡检技能） */
@@ -1389,6 +1398,17 @@ export const useAppStore = create<AppState>((set, get) => {
   closeAssistant: () => set({ assistantReq: null }),
   assistantEchoes: [],
   setAssistantEchoes: (items) => set({ assistantEchoes: items }),
+  routeAlerts: {},
+  setRouteAlert: (agent, item) =>
+    set((st) => {
+      const cur = st.routeAlerts[agent];
+      if (!item && !cur) return st;
+      if (item && cur && cur.text === item.text) return st;
+      const next = { ...st.routeAlerts };
+      if (item) next[agent] = item;
+      else delete next[agent];
+      return { routeAlerts: next };
+    }),
   assistantEchoTick: 0,
   bumpAssistantEchoTick: () => set((st) => ({ assistantEchoTick: st.assistantEchoTick + 1 })),
   scheduleDraftReq: null,

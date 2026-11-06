@@ -8,20 +8,27 @@ import {
   VERDICT_LABEL,
   proxySourceText,
   routeCheckTargets,
+  routeFixLabel,
   type RouteCheck,
+  type RouteFix,
 } from "../route-check";
+import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
+import { toast } from "../toast";
 
 type Row = RouteCheck | { agent: string; error: string };
 
 const VERDICT_CLASS = { pass: "text-ok-text", block: "text-err-text", review: "text-warn-text" } as const;
 
 /** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行，经与启动同源的代理访问这家服务自己的地址。
- *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测 */
+ *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测。
+ *  二期：显示常用出口；换了地区给「记为常用出口」；代理没在运行给一个修复按钮（换成检测到的代理 / 打开代理软件） */
 export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const profiles = useAppStore((s) => s.profiles);
   const [agents, setAgents] = useState<string[] | null>(null);
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [running, setRunning] = useState(false);
+  const [fixes, setFixes] = useState<Record<string, RouteFix | null>>({});
+  const [busy, setBusy] = useState<string | null>(null);
   const firstRun = useRef(true);
 
   useEffect(() => {
@@ -46,6 +53,11 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
           row = { agent: t.agent, error: String(e) };
         }
         setRows((prev) => ({ ...prev, [t.agent]: row }));
+        if (!("error" in row)) {
+          setRouteAlertFromCheck(row);
+          const fix = await findRouteFix(row).catch(() => null);
+          setFixes((prev) => ({ ...prev, [t.agent]: fix }));
+        }
       }),
     );
     setRunning(false);
@@ -58,6 +70,34 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
     // targetsKey 代表 targets；proxyKey 变 = 出网代理刚保存过，要重测
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetsKey, proxyKey]);
+
+  async function doFix(agent: string, profileId: string, fix: RouteFix) {
+    setBusy(agent);
+    try {
+      const r = await applyRouteFix(fix, agent, profileId);
+      if (r) {
+        setRows((prev) => ({ ...prev, [agent]: r }));
+        setFixes((prev) => ({ ...prev, [agent]: null }));
+        if (r.verdict === "block") toast(`还是不通：${r.reason}`, "warning");
+      }
+    } catch (e) {
+      toast(`没修成：${String(e)}`, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function acceptRegion(agent: string) {
+    setBusy(agent);
+    try {
+      await invoke("route_accept_region", { agentId: agent });
+      await run(0);
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   if (agents === null) return null;
   if (!targets.length) {
@@ -105,11 +145,43 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
               </li>
             );
           }
+          const fix = fixes[t.agent];
           return (
             <li key={t.agent} className="flex items-start gap-2 text-micro">
               <span className="w-24 shrink-0 text-l2">{name}</span>
               <span className={`w-16 shrink-0 ${VERDICT_CLASS[r.verdict]}`}>● {VERDICT_LABEL[r.verdict]}</span>
-              <span className={`min-w-0 flex-1 ${r.verdict === "pass" ? "text-l3" : "text-l2"}`}>{r.reason}</span>
+              <span className="min-w-0 flex-1">
+                <span className={r.verdict === "pass" ? "text-l3" : "text-l2"}>{r.reason}</span>
+                {r.usualRegionName && !r.regionChanged && r.verdict === "pass" && (
+                  <span className="text-l4"> · 最近常用：{r.usualRegionName}</span>
+                )}
+                {(r.regionChanged || fix) && (
+                  <span className="mt-1 flex gap-2">
+                    {r.regionChanged && (
+                      <button
+                        type="button"
+                        disabled={busy === t.agent}
+                        onClick={() => void acceptRegion(t.agent)}
+                        className={secondaryActionClass}
+                        title={`以后把「${r.exitRegionName ?? ""}」当作常用出口，不再提示`}
+                      >
+                        记为常用出口
+                      </button>
+                    )}
+                    {fix && (
+                      <button
+                        type="button"
+                        disabled={busy === t.agent}
+                        onClick={() => void doFix(t.agent, t.profileId, fix)}
+                        className={secondaryActionClass}
+                        title={fix.kind === "switchProxy" ? `检测到本机 ${fix.source} 在运行` : "打开后等它起来再重测，最多约 20 秒"}
+                      >
+                        {busy === t.agent ? "处理中…" : routeFixLabel(fix)}
+                      </button>
+                    )}
+                  </span>
+                )}
+              </span>
               <span className="shrink-0 text-l4" title="探测的是这家服务自己的地址：代理按域名分流时，出口以它为准">
                 {r.probeHost}
               </span>

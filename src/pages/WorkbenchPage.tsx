@@ -179,6 +179,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const assistantEchoes = useAppStore((s) => s.assistantEchoes);
+  const routeAlerts = useAppStore((s) => s.routeAlerts);
   const inboxItems = visibleInboxItems(
     rawInboxItems,
     appUpdate
@@ -187,6 +188,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     inboxDismissed,
     phonePending,
     assistantEchoes,
+    Object.values(routeAlerts),
   );
   const bulkInboxItems = bulkReadableItems(inboxItems);
   const dismissInboxBulk = useAppStore((s) => s.dismissInboxBulk);
