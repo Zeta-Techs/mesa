@@ -485,6 +485,8 @@
 - **① 已落地**：`pipeline-presets.ts DRAFT_ORDER`（三套初稿 SECTION_STATUS 前一句；初稿都交 `manuscript/style-sheet.md`）；综述大纲第 8 条另交 `manuscript/sections.json`
   （`machine:records` 验 id、title）与写作规范初版；综述初稿 `fanOut: REVIEW_DRAFT_FANOUT`（items = sections.json，每路 2 节、最多 4 路，各路写 `manuscript/sections/`，收尾统稿并删掉分路文件）。
   论文 / 学位论文初稿不声明分路（IMRaD 各节相互依赖；学位论文各章在前面几步已写）。已导出示例课题。
+- **② 已落地**：`step-loop.ts searchRefreshHint`（聚焦步骤是 final 类且没保存、它之前的 search 类步骤已完成且保存超 14 天）/ `searchRefreshDraft`；
+  TaskCardsSection「AI 干活」行（含还没开工的步骤）给「检索已是 N 天前 · 更新检索…」，打开同一个补料单（`initial` 预填、`fromPending` 说明先跟进完再开始定稿）。
 
 ## 科研做图（2026-11-05 拍板，design-research-figures.md）
 

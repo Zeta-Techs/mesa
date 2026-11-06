@@ -35,6 +35,8 @@ import {
   reworkTargets,
   withLatestNote,
   chainNext,
+  searchRefreshDraft,
+  searchRefreshHint,
   type ReworkDto,
   type FollowupScopeDto,
 } from "../step-loop";
@@ -283,6 +285,8 @@ export default function TaskCardsSection({
   const [reworkPrefill, setReworkPrefill] = useState<Record<string, { topics: string; reason: string }>>({});
   // 覆盖检查里归不到退回目标的薄节：补料单上单列给人看
   const [reworkUnplaced, setReworkUnplaced] = useState<string[]>([]);
+  // 整张预填（定稿前更新检索）：给了就按它开，不按覆盖检查换主题
+  const [reworkInitial, setReworkInitial] = useState<{ target: string; topics: string; reason: string; clues: string; scale: number | null } | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
   /** 继续时上次会话是另一家 Agent：问要不要带简报。取消 = 先不开。 */
   const [carryAsk, setCarryAsk] = useState<{
@@ -833,8 +837,9 @@ export default function TaskCardsSection({
   }
 
   /** 打开补料单：本步有 outline.md 且「覆盖检查」里有薄节时按退回目标预填（三期 §9.3）。读不到就空着开 */
-  async function openRework() {
+  async function openRework(initial?: { target: string; topics: string; reason: string }) {
     setReworkError(null);
+    setReworkInitial(initial ? { ...initial, clues: "", scale: null } : null);
     const prefill: Record<string, { topics: string; reason: string }> = {};
     let unplaced: string[] = [];
     const step = focusStepDto;
@@ -1452,12 +1457,36 @@ export default function TaskCardsSection({
                   {nearestLit ? "退回上一步补料…" : "退回上一步修改…"}
                 </button>
               );
+              // 定稿前更新检索（科研流程补全 §2）：检索那一步保存超过 14 天，定稿还没保存过时给入口，点了走退回补料
+              const refresh = searchRefreshHint(
+                steps,
+                steps.map((st) => stepKind(st, skillProvides)),
+                stepKeys ?? [],
+                (name) => {
+                  const st = steps.find((x) => x.name === name);
+                  return (st && stepWorkspace(st)?.mergedAt) || null;
+                },
+                focusIdx,
+                Date.now(),
+              );
+              const refreshButton = refresh && (
+                <button
+                  type="button"
+                  onClick={() => void openRework({ target: refresh.step, ...searchRefreshDraft(refresh.savedAt) })}
+                  title={`「${refresh.step}」上次保存是 ${refresh.days} 天前：投稿前按原检索式补一轮这段时间新发表的文献，再顺着精读、大纲、初稿跟进`}
+                  className="shrink-0 rounded-sm px-1 text-xs text-warn-text underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  检索已是 {refresh.days} 天前 · 更新检索…
+                </button>
+              );
+              if ((focusRunStatus ?? "pending") === "pending") return refreshButton || null;
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
-                if (!live?.staleUpstream && !reworkButton) return null;
+                if (!live?.staleUpstream && !reworkButton && !refreshButton) return null;
                 return (
                   <span className="flex shrink-0 items-center gap-1.5">
+                    {refreshButton}
                     {reworkButton}
                     {live?.staleUpstream && (
                       <span
@@ -1737,6 +1766,8 @@ export default function TaskCardsSection({
             .filter((st) => isLitStep(st))
             .map((st) => st.name)}
           fromInProgress={focusRunStatus !== "done"}
+          fromPending={(focusRunStatus ?? "pending") === "pending"}
+          initial={reworkInitial ?? undefined}
           chainOff={steps.filter((st) => chainDefaultOff(stepKind(st, skillProvides))).map((st) => st.name)}
           chainOptions={Object.fromEntries(
             reworkTargets(steps, focusIdx).map((st) => {

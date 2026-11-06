@@ -33,6 +33,7 @@ export function ReworkDialog({
   litTargets = [],
   initial,
   fromInProgress = false,
+  fromPending = false,
   chainOptions = {},
   chainOff = [],
   busy,
@@ -53,6 +54,8 @@ export function ReworkDialog({
   initial?: { target: string; topics: string; reason: string; clues: string; scale: number | null };
   /** 发起的这一步还没保存（做到一半 / 待评审，2026-11-06 流程贯通 §5）：说明它之后怎么接上补来的 */
   fromInProgress?: boolean;
+  /** 发起的这一步还没开工（定稿前更新检索，2026-11-07）：补完、跟进完再开始它 */
+  fromPending?: boolean;
   /** 按退回目标列出补完后能接着自动跟进的下游步骤（目标之后、已保存的步骤，按顺序）；默认全勾 */
   chainOptions?: Record<string, string[]>;
   /** 链上默认不勾的步骤（重跑实验花时间、花算力，step-kind.ts chainDefaultOff）：列出来但要人自己勾 */
@@ -93,9 +96,11 @@ export function ReworkDialog({
         (lit
           ? `从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，`
           : `从「${fromStep}」退回。AI 只改你列的这些，你确认过的内容不推翻；做完照常去评审、保存进项目，`) +
-        (fromInProgress
-          ? `之后在「${fromStep}」点「继续」，会先把${lit ? "补" : "改"}来的并进来再接着做（这一步不用先保存）。`
-          : `之后「${fromStep}」再点「跟进上游的新增」接上。`)
+        (fromPending
+          ? `下面勾上的步骤跟进完、保存进项目后，再开始「${fromStep}」，它开工时用的就是更新后的内容。`
+          : fromInProgress
+            ? `之后在「${fromStep}」点「继续」，会先把${lit ? "补" : "改"}来的并进来再接着做（这一步不用先保存）。`
+            : `之后「${fromStep}」再点「跟进上游的新增」接上。`)
       }
       dismissOnBackdrop={!busy}
       onClose={() => {

@@ -396,3 +396,35 @@ export function loopHint(
   }
   return null;
 }
+
+/**
+ * 定稿前更新检索（2026-11-07 科研流程补全 §2）：定稿类步骤还没保存过、检索那一步已保存且超过 days 天没再保存时，
+ * 返回检索那一步与它的保存时间，给「投稿前更新检索…」入口；检索那一步正在补（没处于已完成）时不提示。纯逻辑。
+ */
+export function searchRefreshHint(
+  steps: readonly { name: string }[],
+  kinds: readonly string[],
+  keys: readonly (string | undefined)[],
+  savedAt: (name: string) => string | null,
+  focusIndex: number,
+  now: number,
+  days = 14,
+): { step: string; savedAt: string; days: number } | null {
+  if (kinds[focusIndex] !== "final" || keys[focusIndex] === "done") return null;
+  const i = kinds.findIndex((k, idx) => k === "search" && idx < focusIndex);
+  if (i < 0 || keys[i] !== "done") return null;
+  const saved = savedAt(steps[i].name);
+  if (!saved) return null;
+  const age = Math.floor((now - Date.parse(saved)) / 86_400_000);
+  return age >= days ? { step: steps[i].name, savedAt: saved, days: age } : null;
+}
+
+/** 更新检索的补料单预填 */
+export function searchRefreshDraft(savedAt: string): { topics: string; reason: string } {
+  const d = new Date(savedAt);
+  const day = Number.isNaN(d.getTime()) ? savedAt.slice(0, 10) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return {
+    topics: `更新检索：${day} 以来新发表的文献（按 papers/screening.md 检索日志里的原检索式与纳入标准，只补这段时间的）`,
+    reason: "投稿前更新一次检索，避免漏掉最近发表的工作",
+  };
+}

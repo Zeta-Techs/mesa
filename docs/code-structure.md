@@ -1139,7 +1139,8 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   step-loop.ts               # 综述回路二期纯逻辑：补料轮 / 跟进轮开场指令（补料单原文写进指令；isSearch / 精读由调用方按技能槽判，引擎不认识检索）、
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
-                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）（tests/step-loop.test.ts）
+                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）、
+                             #   searchRefreshHint / searchRefreshDraft 定稿前更新检索的入口判定与补料单预填（2026-11-07）（tests/step-loop.test.ts）
   step-round.ts              # 在某一步「开一轮」的共同编排（2026-11-06 流程贯通）：pickStepWorkspace / ensureActive（恢复）/ assertRoundable（在忙、有没保存产出不叠一轮）/
                              #   boundStepLaunch / launchRound / recordRound / litKind；sendReworkRound = 退回补料整条路（步骤卡、项目助手补料单共用）。调 invoke，无单测
   step-latest.ts             # 开一轮前并入项目最新内容（流程贯通 §3）：bringLatest = 落后才并（health.behind + workspace_incoming）→ AI 在忙报错 →

@@ -237,3 +237,19 @@ test("回头 / 跟进开场话按步骤类型补一句做法；文献两步不�
   assert.match(follow, /「## 本轮改了什么」[^\n]*\n重跑脚本，不手改。/);
   assert.doesNotMatch(followupPrompt({ upstream: "x", notesIds: ["a"], files: [], clause: "重跑脚本" }), /重跑脚本/, "精读按篇跟进不加");
 });
+
+test("searchRefreshHint：定稿类还没保存、检索保存超过 14 天才提示；检索在补、定稿已保存不提示", async () => {
+  const { searchRefreshHint, searchRefreshDraft } = await import("../src/step-loop.ts");
+  const steps = [{ name: "检索" }, { name: "精读" }, { name: "初稿" }, { name: "定稿" }];
+  const kinds = ["search", "notes", "writing", "final"];
+  const saved = (n: string) => (n === "检索" ? "2026-10-01T00:00:00Z" : null);
+  const now = Date.parse("2026-11-07T00:00:00Z");
+  assert.deepEqual(searchRefreshHint(steps, kinds, ["done", "done", "done", "pending"], saved, 3, now), { step: "检索", savedAt: "2026-10-01T00:00:00Z", days: 37 });
+  assert.equal(searchRefreshHint(steps, kinds, ["done", "done", "done", "done"], saved, 3, now), null, "定稿已保存");
+  assert.equal(searchRefreshHint(steps, kinds, ["active", "done", "done", "pending"], saved, 3, now), null, "检索正在补");
+  assert.equal(searchRefreshHint(steps, kinds, ["done", "done", "done", "pending"], saved, 2, now), null, "不是定稿类");
+  assert.equal(searchRefreshHint(steps, kinds, ["done", "done", "done", "pending"], () => "2026-11-01T00:00:00Z", 3, now), null, "不到 14 天");
+  const d = searchRefreshDraft("2026-10-01T08:00:00Z");
+  assert.match(d.topics, /^更新检索：2026-10-0[12] 以来新发表的文献/);
+  assert.match(d.reason, /投稿前/);
+});
