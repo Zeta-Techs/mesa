@@ -31,7 +31,7 @@ pages/SettingsPage.tsx     # 设置页：左导航＋分区内容，SETTING_NAV 
                              # 2026-10-17 版式：KickoffRow 标签列（读入/产出/执行/思考档/技能/权限/任务书）同列对齐，按钮字号靠容器继承；
                              # 上游未保存软门：unsavedUpstream（ProjectGroup 按步进器状态算）置顶 + 「去评审」，与收尾软门共用二击；
                              # 工作区名在标题行，不挂弹层 title（会悬浮压正文））、
-                             # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带分发/重测的块）、
+                             # ResearchToolPreflight（开工技能/工具只读预检：全部就绪只出一行「已启用到 X」，有缺口才展开带「现在装上」/分发/重测的块；「现在装上」经 skill-install.ts 只装本步没就绪的技能）、
                              # FigureVisionNotice（开工弹层「技能」行下：步骤挂 review-figures 而所选模型能力库查到不能看图 / 查不到时提醒一行，文案在 figure-vision.ts）、
                              # StepSkillsChips（步骤推荐技能 chip 区：只读/可编辑两态 + 产物冲突/跨步骤链路 ⚠ 警告行；bare = 不画标题行，供开工弹层标签列用）、
                              # HumanTasksList（人工事项清单 + useHumanTasks 共享逻辑；待确认清完且未手动取消才自动勾）、StepFlow（步骤内协同流程线；付费墙行已登录显示「已登录」，未登录才是「登录学校账号」（直接调起浏览器，点「登录好了」记本机标记，见 inst-access）；拖进待获取清单按文件名、DOI、PDF 元数据里的 DOI 和 PDF 内标题对条目）、
@@ -290,7 +290,7 @@ exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感�
                              #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
   onboarding.ts              # 上手引导纯逻辑（2026-10-20；2026-10-29 改三步）：三步表（connect / chat / project）与文案、完成判定（全由数据现算）、connectStage（接上 AI 一屏的子阶段）、
                              #   进度/当前步、新完成集合、首次判定（有连接=老用户收起）、完成提示与「两个小提示」（终端 + 标题，acks 记已讲过，旧存档的终端 / 标题确认沿用）、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
-  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 连接已添加」；切步回顶 / 焦点归还 / 在途锁导航，项目整卡入口与按需聊天说明（tests/onboarding-ui.test.ts）
+  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 连接已添加」，连接已添加时每家已装且接好的 Agent 一张 BuiltinSkillsCard（内置技能没装全才出，人点「装给 X」才分发）；切步回顶 / 焦点归还 / 在途锁导航，项目整卡入口与按需聊天说明（tests/onboarding-ui.test.ts）
   connect-official.ts        # 向导的官方账号接入：probeOfficial（只读 official_account_status，ready / login / none）、connectOfficialAccount（一键加官方连接）、startOfficialLogin（开终端登录标签）
   components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、官方账号探测（窗口回前台再探）、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
 components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染
@@ -568,6 +568,7 @@ step-node-actions.ts       # 步骤节点行的动作选择纯逻辑（StepFlow 
                              #   demoReadPaperResource：「开读这一篇」仅示例课题精读步，普通模板只显示「开始」；
                              #   tests/step-flow.test.ts）
   skill-conflicts.ts         # 技能接口对账纯逻辑：产物冲突（skillOutputConflicts，outputs 两两相交）+
+skill-install.ts           # 就地把库里技能装给一家 Agent（上手向导「装给 X」装全部内置、开工弹层「现在装上」装本步缺的）：planSkillInstall 分没启用 / 副本过期 / 库里没有三类，runSkillInstall 逐个 apply_skill / resync_skill_copies；只在人点按钮后调用（tests/skill-install.test.ts）
 skill-diff.ts              # 内置技能「本机与新版对照」diff（SkillsPage 消费）：换行统一 LF 再比（Windows 本机副本常是 CRLF，不统一整份都算改了），复用 tool-activity 的 lineDiff，中间连续未改行折「⋯」、改动前后各留 2 行 ctx；无增删返回空不画（tests/skill-diff.test.ts）
                              # 跨步骤链路（skillChainWarnings：inputs 找供给/outputs 对账预期产物，
                              # 支持 * 通配与目录/文件互含，推断接口打标；多阶段技能按 stageOutputs 只比本阶段文件；tests/skill-conflicts.test.ts）

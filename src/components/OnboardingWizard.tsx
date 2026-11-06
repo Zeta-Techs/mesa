@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowLeft, ArrowRight, Check, ChevronDown, Copy, FolderOpen, FolderPlus, FlaskConical, MessageSquare, Plus, Terminal,
@@ -10,7 +11,8 @@ import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { macOverlayPadClass, useMacFullscreen } from "../mac-titlebar";
 import { isLightTheme } from "../themes";
 import { openQuickChat } from "../quick-chat-launch";
-import { AGENTS } from "../types";
+import { AGENTS, type SkillDto } from "../types";
+import { planIsEmpty, planSkillInstall, runSkillInstall } from "../skill-install";
 import { canOneClickInstall } from "../dep-check";
 import { DepInstallLog, useDepInstall } from "../dep-install";
 import { diagnose, installToolHelp, useAgentInstall } from "../agent-install";
@@ -306,12 +308,17 @@ function ConnectScreen({ facts, onBusyChange }: { facts: OnboardingFacts; onBusy
   const [again, setAgain] = useState(false);
   if (stage === "done") {
     const names = profiles.map((p) => `${labelOf(p.agent)} · ${p.name}`);
+    // 接好连接、本机也装了的 Agent 才给「装上内置技能」：没装的 CLI 塞副本没人读（同技能页「一键应用」口径）
+    const skillAgents = [...new Set(profiles.map((p) => p.agent))].filter((a) => facts.installedAgents.includes(a));
     return (
       <div className="space-y-4">
         <SuccessCard
           title={profiles.length > 1 ? `已添加 ${profiles.length} 条连接` : `${labelOf(profiles[0]?.agent ?? "")} 连接已添加`}
           detail={`${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}。下一步发一句话，确认 AI 能正常回复。`}
         />
+        {skillAgents.map((agent) => (
+          <BuiltinSkillsCard key={agent} agent={agent} onBusyChange={onBusyChange} />
+        ))}
         {again ? (
           facts.installedAgents.length ? (
             <ChooseStage facts={facts} onBusyChange={onBusyChange} onDone={() => setAgain(false)} />
@@ -331,6 +338,63 @@ function ConnectScreen({ facts, onBusyChange }: { facts: OnboardingFacts; onBusy
     );
   }
   return stage === "install" ? <InstallStage onBusyChange={onBusyChange} /> : <ChooseStage facts={facts} onBusyChange={onBusyChange} />;
+}
+
+/** 内置技能只进了 Mesa 的技能库，没写进各 CLI 的技能目录：接好连接后在这里点一下装给这家 Agent，
+ *  否则流程步骤开工被「开工前要处理」拦下、对话里点名 /lit-search 也找不到。人点了才写。 */
+function BuiltinSkillsCard({ agent, onBusyChange }: { agent: string; onBusyChange: (busy: boolean) => void }) {
+  const [skills, setSkills] = useState<SkillDto[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [installed, setInstalled] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    invoke<SkillDto[]>("list_skills")
+      .then((rows) => { if (!stale) setSkills(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (!stale) setSkills([]); });
+    return () => { stale = true; };
+  }, []);
+  if (!skills) return null;
+  const plan = planSkillInstall(skills, null, agent);
+  const total = skills.filter((s) => s.source === "builtin" && agent in s.apps).length;
+  const label = labelOf(agent);
+  if (total === 0) return null;
+  if (planIsEmpty(plan)) {
+    return installed ? <SuccessCard title={`内置技能已装给 ${label}`} detail="流程步骤会按这些技能干活；对话里也能点名用。" /> : null;
+  }
+  const pending = plan.enable.length + plan.resync.length;
+  const install = async () => {
+    setRunning(true);
+    setError(null);
+    onBusyChange(true);
+    try {
+      await runSkillInstall(plan, agent);
+      setInstalled(true);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      const rows = await invoke<SkillDto[]>("list_skills").catch(() => null);
+      if (Array.isArray(rows)) setSkills(rows);
+      setRunning(false);
+      onBusyChange(false);
+    }
+  };
+  return (
+    <Card>
+      <p className="text-sm font-medium text-l1">把 Mesa 内置技能装给 {label}</p>
+      <p className="mt-1 leading-5 text-l3">
+        Mesa 自带 {total} 个科研技能（文献检索、精读笔记、作图、写作等），现在只在 Mesa 的技能库里，{label} 还读不到
+        {pending < total ? `（还差 ${pending} 个）` : ""}。装上后，研究流程的步骤才能开工，对话里也能点名用。
+        会放进 {label} 自己的技能目录，不动你原有的技能；以后在「技能」页可以逐个取消。
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" className={primaryActionClass} disabled={running} onClick={() => void install()}>
+          {running ? "正在安装…" : `装给 ${label}`}
+        </button>
+      </div>
+      {error && <p className="mt-2 text-err-text">没装完：{error}。可以再点一次，已装上的不会重复装。</p>}
+    </Card>
+  );
 }
 
 function InstallStage({ onBusyChange }: { onBusyChange: (busy: boolean) => void }) {

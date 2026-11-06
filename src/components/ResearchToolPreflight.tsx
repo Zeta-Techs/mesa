@@ -2,20 +2,23 @@ import { inlineActionClass } from "./PageFrame";
 import { useAppStore } from "../store";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AGENTS } from "../types";
+import { AGENTS, type SkillDto } from "../types";
+import { planIsEmpty, planSkillInstall, runSkillInstall } from "../skill-install";
 
 export interface ToolCheck { name: string; status: string; detail: string; blocking: boolean }
 
 /** 开工前只读检查技能与外部工具。全部就绪时只出一行小字（挂在开工弹层「技能」行下）；
- *  有缺口或步骤提示才展开成带「去技能页分发 / 重新检测」的块——就绪时还摆一整块，
+ *  有缺口或步骤提示才展开成带「现在装上 / 去技能页分发 / 重新检测」的块——就绪时还摆一整块，
  *  与下面的技能芯片把同一件事说两遍（2026-10-17 用户截图）。 */
-export default function ResearchToolPreflight({ projectRoot, stepName, agent, onBlocked }: {
-  projectRoot: string; stepName: string; agent: string; onBlocked: (blocked: boolean) => void;
+export default function ResearchToolPreflight({ projectRoot, stepName, skills, agent, onBlocked }: {
+  projectRoot: string; stepName: string; skills: string[]; agent: string; onBlocked: (blocked: boolean) => void;
 }) {
   const [checks, setChecks] = useState<ToolCheck[] | null>(null);
   const setPage = useAppStore((s) => s.setPage);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
     setChecks(null); setError(null); onBlocked(true);
@@ -33,6 +36,23 @@ export default function ResearchToolPreflight({ projectRoot, stepName, agent, on
   // 一条提醒把两行「已启用」和两个按钮一起带出来，开工卡乱）
   const notes = (checks ?? []).filter((c) => c.status !== "available" && !c.blocking);
   const blocking = (checks ?? []).filter((c) => c.blocking);
+  // 本步技能里没就绪的（没分发 / 副本过期）可就地装上，不必跳技能页；库里没有的仍要去技能页导入
+  const unready = (checks ?? []).filter((c) => c.status === "missing" && skills.includes(c.name)).map((c) => c.name);
+  const installNow = async () => {
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      const plan = planSkillInstall(await invoke<SkillDto[]>("list_skills"), unready, agent);
+      await runSkillInstall(plan, agent);
+      if (plan.missing.length) setInstallError(`技能库里没有 ${plan.missing.join("、")}，要先在技能页导入或新建`);
+      else if (planIsEmpty(plan)) setInstallError("技能库里的状态已变，点「重新检测」看看");
+    } catch (reason) {
+      setInstallError(`没装上：${String(reason)}`);
+    } finally {
+      setInstalling(false);
+      setReload((n) => n + 1);
+    }
+  };
   if (!error && blocking.length === 0) {
     if (ready.length === 0 && notes.length === 0) return null;
     return (
@@ -47,8 +67,9 @@ export default function ResearchToolPreflight({ projectRoot, stepName, agent, on
     );
   }
   return <section aria-label="开工工具检查" className="mt-1.5 rounded ccode-well p-2.5 text-xs">
-    <div className="flex items-center justify-between gap-2"><h3 className="font-medium text-l2">开工前要处理</h3><span className="flex gap-3 text-micro"><button type="button" className={inlineActionClass} onClick={() => setPage("skills")}>去技能页分发</button><button type="button" className={inlineActionClass} onClick={() => setReload((n) => n + 1)}>重新检测</button></span></div>
+    <div className="flex items-center justify-between gap-2"><h3 className="font-medium text-l2">开工前要处理</h3><span className="flex gap-3 text-micro">{unready.length > 0 && <button type="button" className={inlineActionClass} disabled={installing} title={`把 ${unready.join("、")} 装给 ${agentLabel}（放进它的技能目录）`} onClick={() => void installNow()}>{installing ? "正在装…" : "现在装上"}</button>}<button type="button" className={inlineActionClass} onClick={() => setPage("skills")}>去技能页分发</button><button type="button" className={inlineActionClass} onClick={() => setReload((n) => n + 1)}>重新检测</button></span></div>
     {error ? <p className="mt-1 text-err-text">{error}</p> : <ul className="mt-1 space-y-1">{blocking.map((c) => <li key={c.name} className="text-warn-text">{c.name}：{c.detail}</li>)}{notes.map((c) => <li key={c.name} className="text-micro text-l3">{c.name}：{c.detail}</li>)}</ul>}
+    {installError && <p className="mt-1 text-err-text">{installError}</p>}
     {!error && ready.length > 0 && <p className="mt-1 text-micro text-l4" title={ready.map((c) => `${c.name}：${c.detail}`).join("\n")}>其余已启用到 {agentLabel}</p>}
   </section>;
 }

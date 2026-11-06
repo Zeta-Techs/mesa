@@ -1206,7 +1206,7 @@ export default function KickoffConfirmDialog({
           />
           {/* 技能预检跟随弹层当前选的 agentId（不依赖 launch——无连接时也展示，
               切换 Agent 后重查；key 含 agentId 使组件重挂刷新检查结果） */}
-          {stepNow.skills.length > 0 && <ResearchToolPreflight key={`${stepNow.name}:${stepNow.skills.join(",")}:${agentId}`} projectRoot={projectPath} stepName={stepNow.name} agent={agentId} onBlocked={setToolsBlocked} />}
+          {stepNow.skills.length > 0 && <ResearchToolPreflight key={`${stepNow.name}:${stepNow.skills.join(",")}:${agentId}`} projectRoot={projectPath} stepName={stepNow.name} skills={stepNow.skills} agent={agentId} onBlocked={setToolsBlocked} />}
           <FigureVisionNotice skills={stepNow.skills} model={model} gatewayId={selected?.gatewayId ?? null} />
           {skillError && (
             <InlineNotice tone="err" className="mt-1">{skillError}</InlineNotice>

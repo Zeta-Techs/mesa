@@ -318,3 +318,29 @@ test("引导已收起或完成时从帮助回来看：底栏不再给「稍后�
     assert.match(ui.host.querySelector("footer")!.textContent!, /引导已收起/);
   } finally { await ui.close(); }
 });
+
+test("接好连接后给「装给 Claude Code」：人点了才分发内置技能，装完显示结果、没装的 CLI 不给", async () => {
+  const facts = { ...blank, installedAgents: ["claude-code"], profileCount: 1 };
+  const skill = (id: string, apps: Record<string, boolean>, source = "builtin") => ({ id, name: id, source, apps, staleCopies: [] });
+  let lib = [skill("lit-search", { "claude-code": false, codex: false }), skill("lit-notes", { "claude-code": true, codex: false }), skill("mine", { "claude-code": false }, "ccode")];
+  const calls: string[] = [];
+  const ui = await mount(facts);
+  try {
+    ui.data.invoke = async (cmd: string, args: { id?: string; agent?: string }) => {
+      if (cmd === "list_skills") return lib;
+      if (cmd === "apply_skill") {
+        calls.push(`${args.id}:${args.agent}`);
+        lib = lib.map((s) => s.id === args.id ? { ...s, apps: { ...s.apps, [args.agent!]: true } } : s);
+      }
+      return { ok: true, checks: [] };
+    };
+    await ui.act(async () => ui.patch({ profiles: [{ agent: "claude-code", name: "智谱" }, { agent: "codex", name: "中转" }] }));
+    await ui.click("接上 AI，已完成");
+    assert.deepEqual(calls, [], "打开向导不自动写 CLI 目录");
+    assert.match(ui.host.textContent!, /还差 1 个/);
+    assert.ok(!ui.host.textContent!.includes("装给 Codex"), "没装的 Codex 不给按钮");
+    await ui.click("装给 Claude Code");
+    assert.deepEqual(calls, ["lit-search:claude-code"], "只装内置、只补没装的");
+    assert.match(ui.host.textContent!, /内置技能已装给 Claude Code/);
+  } finally { await ui.close(); }
+});
