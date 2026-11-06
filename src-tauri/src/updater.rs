@@ -1196,6 +1196,26 @@ fn script_latest(url: &str) -> Option<String> {
     install_script_version(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// 正文只有一个版本号的查询口（kimi CDN /latest）；不是版本号就当没查到
+fn plain_latest(url: &str) -> Option<String> {
+    let curl = agents::resolve_binary("curl")?;
+    let mut c = crate::process::background_command(curl);
+    c.args(["-fsSL", "--max-time", "10", "--max-filesize", "4096", url]);
+    for (k, v) in crate::settings::download_proxy_env(&[]) {
+        c.env(k, v);
+    }
+    let out = c.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    plain_version(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn plain_version(body: &str) -> Option<String> {
+    let v = body.trim();
+    (semver_token(v).as_deref() == Some(v.trim_start_matches('v'))).then(|| v.trim_start_matches('v').to_string())
+}
+
 fn brew_latest(pkg: &str, cask: bool) -> Option<String> {
     let brew = agents::resolve_binary("brew")?;
     let mut c = crate::process::background_command(brew);
@@ -1285,7 +1305,13 @@ fn latest_version(agent_id: &str, method: &str, opencode_v2: bool) -> Option<Str
             return winget_latest(id);
         }
     }
-    // 有 npm 包名即可作为 latest 查询口：自更新渠道（kimi/opencode）本身没有轻量查询口，
+    // 自装且自更新渠道有自己的查询口（kimi）：只认它，查不到就不提示，不退回 npm（会和自更新对不上）
+    if method == "self" {
+        if let Some(url) = p.self_update_latest {
+            return plain_latest(url);
+        }
+    }
+    // 有 npm 包名即可作为 latest 查询口：自更新渠道（opencode）本身没有轻量查询口，
     // 但 npm registry 与自更新渠道同版本发布，自装方式也据此得到 latest 提示
     if let Some(pkg) = p.npm_update {
         return npm_latest(pkg);
@@ -1623,6 +1649,15 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         );
         // 未知 agent → None
         assert_eq!(interactive_self_update("nope", "self", "/x", None), None);
+    }
+
+    #[test]
+    fn plain_version_accepts_bare_semver_only() {
+        assert_eq!(plain_version("2.5.1\n").as_deref(), Some("2.5.1"));
+        assert_eq!(plain_version("v2.5.1").as_deref(), Some("2.5.1"));
+        // 跳转页、报错页不当版本
+        assert_eq!(plain_version("<html><title>302 Found</title></html>"), None);
+        assert_eq!(plain_version(""), None);
     }
 
     #[test]

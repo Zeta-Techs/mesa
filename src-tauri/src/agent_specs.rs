@@ -346,6 +346,9 @@ pub struct PackagingSpec {
     /// downloads.cursor.com/lab/<年.月.日-哈希>/ 下载地址），抓正文提取即可，
     /// 无包管理器渠道也能判定「已最新」；None = 脚本不带版本，不查
     pub script_latest: Option<&'static str>,
+    /// 自更新渠道自己的最新版查询口（正文就是版本号）：自装（method=self）时以它为准，不拿 npm 比——
+    /// 两边发版有先后，npm 先到时「新版」一直挂着、点了自更新又说已最新（kimi 2026-11-06：npm 2.5.2、CDN 2.5.1）
+    pub self_update_latest: Option<&'static str>,
     /// 安装方式非 brew/npm/uv 命中包管理器时的更新渠道顺序（首个成功即止）
     pub update_fallback: &'static [UpdateChannel],
     /// 新旧双变体（仅 kimi）
@@ -366,6 +369,7 @@ const NO_PACKAGING: PackagingSpec = PackagingSpec {
     install_script: None,
     install_script_win: None,
     script_latest: None,
+    self_update_latest: None,
     update_fallback: &[],
     legacy_variant: None,
 };
@@ -728,6 +732,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // 装法它自动装不了时只打印手动命令、照样退出 0，由 updater 按版本有没有变判断
             self_update_unattended: Some(UnattendedSelfUpdate { args: &["upgrade", "-y"], since: "0.43.0" }),
             install_script: Some("curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"),
+            // kimi upgrade 自己查的就是这个（main.mjs fetchLatestVersionFromCdn；手动 upgrade 不看分批放量）
+            self_update_latest: Some("https://code.kimi.com/kimi-code/latest"),
             update_fallback: &[UpdateChannel::SelfUpdate],
             legacy_variant: Some(LegacyVariantSpec {
                 new_dir: ".kimi-code",
