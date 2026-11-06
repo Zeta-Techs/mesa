@@ -263,6 +263,7 @@ components/UpstreamResearchAcceptance.tsx  # 开工弹层「上游已确认的�
 components/WatchRunReview.tsx  # 定时雷达单次运行评审（WorkspaceReviewView 里 taskKind=watch 的运行，历史行「去评审」进入）：watch_run_snapshot 只看冻结证据（before/initial/after）、watch_run_entries 只列该次新命中、逐条留下/排除（watch_run_decide）后采纳把留下的并进项目（排除的不写、已收过不重复加）；locked=已采纳只读重开，决定文件坏了 fail-closed 点名（tests/watch-run-review.test.ts）
   components/HandbackPanels.tsx # 定稿步「打开清单 / 打开填写」展开的面板：许可清单一篇一行（文章页、状态下拉即存、原图文件夹），投稿声明一节一框离开即存
 components/ResearchToolFields.tsx  # 步骤编辑器里的科研工具下拉组（PipelineEditor 唯一消费者）：稿件载体/文献库等 select（Zotero 与 EndNote 二选一的白话说明在此），字段表与默认值单一出处 research-tool-fields.ts / research-tools.ts；折叠态已选过非默认交付自动展开，不把既有选择藏起来（tests/research-tool-ui.test.ts 经 PipelineEditor）
+components/TemplateUpgradePanel.tsx # 研究流程编辑器里的「内置模板更新」：选模板 → 每步列改了哪几项、看差异（中文字段、不露 JSON）→ 勾选换成新版只改草稿，保存才写进项目（tests/template-upgrade-ui.test.ts）
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
                              #   综述回路三期：清单里有人标过类型时，作者行后加类型小标签（点一下综述→研究论文→其他），只改 included.json 的 kind（patchIncludedKind）
 components/ScreeningReviewPanel.tsx  # 检索步评审面板（WorkspaceReviewView 检索步）：included.json 计数与清单、待获取计数、检索日志摘录（screening-review.ts），pane=list/process 两栏；待确认清空经 onPendingCleared 供步骤卡自动勾「核对待确认篇目」（tests/screening-review-ui.test.ts）
@@ -379,7 +380,8 @@ components/ProjectRulesPanel.tsx  # 项目设置抽屉「规则」面板（Proje
                              #   数据自持（usage_activity 全历史非零日，refreshKey 由页级刷新驱动）
   pipeline-presets.ts        # 内置流水线模板 PIPELINE_TEMPLATES（六套，含 v3.97「LaTeX 论文」）；分路声明 LIT_NOTES_FANOUT（精读）/ DATA_CLEAN_FANOUT（清洗按数据集，2026-11-04）；
 pipeline-append.ts         # 「＋ 从模板追加」冲突判定（PipelineEditor / TemplatePickModal 消费，与后端 append_pipeline_steps 同口径）：同名步骤交付相容（expectedArtifacts 被旧步包含）可直接复用，不相容的 renameConflictingSteps 改名「步骤名（模板名）·N」防撞名——显示名不等于步骤身份（tests/research-tools.test.ts）
-pipeline-upgrade.ts        # 模板升级候选 pipelineUpgradeCandidates：名称与工作区名同时一致才配对，逐字段比 brief/产物/输入/人工事项/决策等十余键，只提出更新候选、不自动改写已有项目（PipelineEditor 消费；tests/research-tools.test.ts）
+pipeline-upgrade.ts        # 模板升级候选 pipelineUpgradeCandidates：名称与工作区名同时一致才配对，两边先过 canonicalStep（编辑器保存口径）再逐字段比，写法差异不算更新；describeUpgradeField 把差异翻成中文「原来 → 新版」/ 去掉新增 / 简报按行比。只提出候选、不自动改写已有项目（TemplateUpgradePanel 与项目页提示消费；tests/pipeline-upgrade.test.ts）
+pipeline-step-draft.ts     # 研究流程编辑器的步骤草稿与写回口径 toDraft / toStep（PipelineEditor 拆出）：编辑器不改的字段（谁来做 role、分路 fanOut、任务包溯源 / 参数 / 核验）必须原样带回，漏带 = 一保存就丢；canonicalStep = 来回一趟，模板更新比较用
                              #   bestTemplateMatch（项目不记模板 id，按步骤名+工作区名对上最多、至少两步）+ templateUpdateNotice（按项目研究工具 withResearchTools 换算后比，签名供「不用了」，tests/pipeline-upgrade.test.ts）
 manuscript-font.ts         # 初稿正文字体一句话指令（默认 Times New Roman＋宋体）：让 agent 渲染前先跑 quarto-render 技能的 manuscript_font.py 写 YAML mainfont/CJKmainfont 与 format.docx 的 reference-doc，写完再渲、本机没这套字体就停下不换。注意：现挂载点仅 tests/manuscript-font.test.ts——同口径纪律文本已并入 pipeline-presets.ts 初稿步 brief，运行时无消费方，改提示词两处对齐
                              #   每套 projectRules 纪律不同，settingsForTemplateApply 不落空表格

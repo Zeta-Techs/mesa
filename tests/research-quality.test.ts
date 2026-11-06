@@ -8,6 +8,7 @@ import vm from "node:vm";
 import { PIPELINE_TEMPLATES, pipelineStepsForTemplate, settingsForTemplateApply } from "../src/pipeline-presets.ts";
 import { decisionGate, formatDecisionAnswer, parseDecisions, recommendedAnswers, upsertDecisions } from "../src/step-decisions.ts";
 import { renderTaskMd } from "../src/task-md.ts";
+import { canonicalStep } from "../src/pipeline-step-draft.ts";
 
 const template = (id: string) => PIPELINE_TEMPLATES.find((t) => t.id === id)!;
 const step = (id: string, workspace: string) => template(id).steps.find((s) => s.workspaceName === workspace)!;
@@ -140,12 +141,7 @@ test("TASK.md 通用人工事项不把文件出现或 Agent 自评当批准", ()
 // Exercise the editor's actual pure conversion functions without mounting React/Tauri.
 // Transpiling those AST nodes keeps the assertion on production code, not a parallel implementation.
 test("流程编辑器读取再保存不会丢掉手写依据与硬暂停", () => {
-  const source = readFileSync("src/components/PipelineEditor.tsx", "utf8");
-  const file = ts.createSourceFile("PipelineEditor.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const functions = file.statements.filter((n) => ts.isFunctionDeclaration(n) && ["toDraft", "toStep"].includes(n.name?.text ?? ""));
-  assert.equal(functions.length, 2);
-  const js = ts.transpileModule(functions.map((n) => n.getText(file)).join("\n"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const roundtrip = vm.runInNewContext(`${js}\n(s) => toStep(toDraft(s), 0)`);
+  const roundtrip = (s: Parameters<typeof canonicalStep>[0]) => canonicalStep(s, 0);
   const original = structuredClone(step("research-paper", "exp-run"));
   original.humanTasks = []; // This test isolates decision conversion; human normalization has separate semantics.
   const result = JSON.parse(JSON.stringify(roundtrip(original)));

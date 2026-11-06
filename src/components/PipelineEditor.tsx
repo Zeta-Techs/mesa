@@ -1,8 +1,9 @@
-import { normalizedTemplate, pipelineUpgradeCandidates } from "../pipeline-upgrade";
+import TemplateUpgradePanel from "./TemplateUpgradePanel";
+import { sanitizeWsName, toDraft, toStep, type StepDraft } from "../pipeline-step-draft";
 import ResearchToolFields from "./ResearchToolFields";
 import { researchToolsFromSettings, settingsWithResearchTools, withResearchTools } from "../research-tools";
 import { conflictingTemplateSteps, renameConflictingSteps } from "../pipeline-append";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Checkbox,
@@ -36,10 +37,7 @@ import type {
   ProjectConfigDto,
   ProjectConfigReadDto,
   ProjectStepDto,
-  ProjectStepRunDto,
   SkillDto,
-  StepCheckDto,
-  StepParamDto,
   TaskPackDto,
 } from "../types";
 import { useAppStore } from "../store";
@@ -50,11 +48,8 @@ import PackParamInput from "./PackParamInput";
 const actionBtn = inlineActionClass;
 const ctaSm = compactPrimaryActionClass;
 const field = compactFieldClass;
-
-/** 与后端 sanitize 一致：非 [A-Za-z0-9-] → -，去掉首尾 - */
-function sanitizeWsName(name: string): string {
-  return name.replace(/[^A-Za-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
-}
+/** 多行框：compactFieldClass 带 h-7 定高，套在 textarea 上会把十行的简报压成一行（2026-11-06 用户截图） */
+const area = `${compactFieldClass.replace("h-7 ", "")} resize-y py-1.5 leading-relaxed`;
 
 /** 人工事项时机选项（值与后端 before/during/after 对应） */
 const TIMING_OPTIONS: { value: string; label: string }[] = [
@@ -62,147 +57,6 @@ const TIMING_OPTIONS: { value: string; label: string }[] = [
   { value: "during", label: "进行中" },
   { value: "after", label: "收尾" },
 ];
-
-/** 编辑器内的步骤草稿：预期产物/输入依赖用逗号分隔文本编辑，保存时再归一化为数组 */
-type StepDraft = {
-  name: string;
-  workspaceName: string;
-  brief: string;
-  artifactsText: string;
-  acceptanceText: string;
-  decisionMode: string;
-  inputsText: string;
-  optionalInputsText: string;
-  /** 每行一组，组内用 | 分隔，表示任一项满足即可 */
-  anyOfInputsText: string;
-  skills: string[];
-  requiredSkills: string[];
-  run: ProjectStepRunDto[];
-  /** 勾选中的资源绑定（path）；空 = 不绑定 = 使用项目全部资源 */
-  resources: string[];
-  /** 人工事项编辑态（人机分工清单） */
-  humanTasks: HumanTaskDto[];
-  /** 讨论种子编辑态：每行一条 */
-  discussionSeeds: string[];
-  /** 决策项编辑态：options 用逗号分隔的文本（同 artifactsText 口径） */
-  decisions: { q: string; optionsText: string }[];
-  /** 这一步要先拍板文献从哪来（流程线「定方向」出现输入准备块） */
-  asksLitSource: boolean;
-  seedComplete: boolean;
-  /** 任务包溯源与参数（2026-11-03）：编辑器只改取值，保存时原样带回，免得一保存就丢 */
-  pack: string;
-  params: StepParamDto[];
-  /** 任务包核验（第三期）：编辑器只展示、原样带回 */
-  checks: StepCheckDto[];
-};
-
-function toDraft(s: ProjectStepDto): StepDraft {
-  return {
-    name: s.name,
-    workspaceName: s.workspaceName,
-    brief: s.brief,
-    artifactsText: s.expectedArtifacts.join(", "),
-    acceptanceText: (s.acceptanceCriteria ?? []).join("\n"),
-    decisionMode: s.decisionMode ?? "auto_continue",
-    inputsText: (s.inputs ?? []).join(", "),
-    optionalInputsText: (s.optionalInputs ?? []).join(", "),
-    anyOfInputsText: (s.anyOfInputs ?? []).map((group) => group.join(" | ")).join("; "),
-    skills: [...s.skills],
-    // 旧配置没有 required_skills 时，挂载技能沿用历史“全部执行”语义。
-    requiredSkills: [...(s.requiredSkills ?? s.skills)],
-    run: s.run.map((r) => ({ ...r })),
-    resources: [...(s.resources ?? [])],
-    humanTasks: (s.humanTasks ?? []).map((t) => ({ ...t })),
-    discussionSeeds: [...(s.discussionSeeds ?? [])],
-    decisions: (s.decisions ?? []).map((d) => ({
-      q: d.q,
-      optionsText: d.options.join(", "),
-    })),
-    asksLitSource: s.asksLitSource ?? false,
-    seedComplete: s.seedComplete ?? false,
-    pack: s.pack ?? "",
-    params: (s.params ?? []).map((p) => ({ ...p, options: [...p.options] })),
-    checks: (s.checks ?? []).map((c) => ({ ...c })),
-  };
-}
-
-/** 草稿 → 写回的步骤：名称去空白、工作区名留空时按步骤名派生、产物按中英文逗号切分、run 丢弃缺名称/命令的行、
- *  人工事项丢弃标题空白的行并 trim 各字段 */
-function toStep(d: StepDraft, index: number): ProjectStepDto {
-  const name = d.name.trim();
-  return {
-    name,
-    workspaceName:
-      d.workspaceName.trim() || sanitizeWsName(name) || `step-${index + 1}`,
-    brief: d.brief,
-    decisionMode: d.decisionMode,
-    expectedArtifacts: d.artifactsText
-      .split(/[,，]/)
-      .map((x) => x.trim())
-      .filter(Boolean),
-    acceptanceCriteria: d.acceptanceText
-      .split(/[\n；;]/)
-      .map((x) => x.trim())
-      .filter(Boolean),
-    inputs: d.inputsText
-      .split(/[,，]/)
-      .map((x) => x.trim())
-      .filter(Boolean),
-    optionalInputs: d.optionalInputsText
-      .split(/[,，]/)
-      .map((x) => x.trim())
-      .filter(Boolean),
-    anyOfInputs: d.anyOfInputsText
-      .split(/[;；\n]/)
-      .map((group) =>
-        group
-          .split("|")
-          .map((x) => x.trim())
-          .filter(Boolean),
-      )
-      .filter((group) => group.length > 0),
-    skills: d.skills,
-    requiredSkills: d.requiredSkills.filter((name) => d.skills.includes(name)),
-    run: d.run
-      .filter((r) => r.name.trim() && r.command.trim())
-      .map((r) => ({ ...r, name: r.name.trim(), command: r.command.trim() })),
-    resources: [...d.resources],
-    humanTasks: d.humanTasks
-      .filter((t) => t.title.trim())
-      .map((t) => ({
-        title: t.title.trim(),
-        guidance: t.guidance.trim(),
-        // 落点可省：行内处理的事项（如「更换引用样式」）没有 target 字段。
-        target: (t.target ?? "").trim(),
-        timing: t.timing,
-        // optional 必须透传：内置模板用它标「不做也能跑」的事项，漏掉会让编辑器一保存
-        // 就把这些事项静默升级为必办（v3.85 修）
-        optional: t.optional ?? false,
-        completion: normalizeCompletion(t.target, t.completion),
-        expectedCount:
-          t.expectedCount != null && Number.isFinite(t.expectedCount)
-            ? Math.max(0, Math.floor(t.expectedCount))
-            : undefined,
-        manifestPath: t.manifestPath?.trim() || undefined,
-      })),
-    discussionSeeds: d.discussionSeeds.map((x) => x.trim()).filter(Boolean),
-    // 与后端一致：空选项保留为需手写依据的决策，不能静默删掉硬暂停条件。
-    decisions: d.decisions
-      .map((x) => ({
-        q: x.q.trim(),
-        options: x.optionsText
-          .split(/[,，]/)
-          .map((o) => o.trim())
-          .filter(Boolean),
-      }))
-      .filter((x) => x.q),
-    asksLitSource: d.asksLitSource,
-    seedComplete: d.seedComplete,
-    ...(d.pack ? { pack: d.pack } : {}),
-    ...(d.params.length ? { params: d.params.map((p) => ({ ...p, value: p.value.trim() })) } : {}),
-    ...(d.checks.length ? { checks: d.checks } : {}),
-  };
-}
 
 /**
  * 研究流程编辑器（全宽覆盖层）：项目研究流程的唯一编辑入口。
@@ -249,8 +103,6 @@ export default function PipelineEditor({
   const [error, setError] = useState<string | null>(null);
   // 「从模板追加」：内联模板列表 + 追加结果行内提示
   const [appendOpen, setAppendOpen] = useState(false);
-  const [upgradeTemplate, setUpgradeTemplate] = useState(initialUpgradeTemplate ?? "");
-  const [upgradeSelection, setUpgradeSelection] = useState<number[]>([]);
   const [appending, setAppending] = useState(false);
   const [appendResult, setAppendResult] = useState<AppendStepsResultDto | null>(
     null,
@@ -275,6 +127,12 @@ export default function PipelineEditor({
   const providesByName = useMemo(
     () => (skillLib ? Object.fromEntries(skillLib.map((s) => [s.name, s.provides ?? []])) : undefined),
     [skillLib],
+  );
+  // 模板更新：草稿按保存口径收成步骤，模板步骤按本项目研究工具换算（与项目页提示同一口径）
+  const draftSteps = useMemo(() => drafts.map(toStep), [drafts]);
+  const normalizeTemplateStep = useCallback(
+    (s: ProjectStepDto) => withResearchTools(s, tools, config.artifactDir, config.litSource, providesByName),
+    [tools, config.artifactDir, config.litSource, providesByName],
   );
   const skillMeta = useMemo(
     () =>
@@ -734,8 +592,8 @@ export default function PipelineEditor({
             简报（开始这一步时写成任务书 TASK.md）
           </span>
           <textarea
-            className={`${field} w-full`}
-            rows={10}
+            className={`${area} w-full`}
+            rows={12}
             value={d.brief}
             onChange={(e) => patch(i, { brief: e.target.value })}
             placeholder="本步骤的目标、背景与交付物要求"
@@ -759,8 +617,8 @@ export default function PipelineEditor({
             内容级验收条件（每行一条；仅文件存在不等于通过）
           </span>
           <textarea
-            className={`${field} w-full font-mono text-xs`}
-            rows={3}
+            className={`${area} w-full font-mono text-xs`}
+            rows={Math.min(10, Math.max(3, d.acceptanceText.split("\n").length))}
             value={d.acceptanceText}
             onChange={(e) => patch(i, { acceptanceText: e.target.value })}
             placeholder="如：每条引用键都能在 references.bib 解析\n如：脚本从 main 重跑结果一致"
@@ -947,8 +805,8 @@ export default function PipelineEditor({
               </div>
               <div className="flex items-center gap-2">
                 <textarea
-                  className={`${field} min-w-0 flex-1 text-xs`}
-                  rows={1}
+                  className={`${area} min-w-0 flex-1 text-xs`}
+                  rows={2}
                   value={t.guidance}
                   onChange={(e) =>
                     patchHumanTask(i, ti, { guidance: e.target.value })
@@ -1375,19 +1233,19 @@ export default function PipelineEditor({
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto w-full max-w-3xl space-y-3 px-8 py-4">
           <ResearchToolFields value={tools} onChange={setTools} disabled={saving || appending} />
-          <details open={initialUpgradeTemplate ? true : undefined} className="rounded ccode-well p-3 text-xs"><summary className="cursor-pointer text-l2">检查已有步骤的内置模板更新</summary>
-            <p className="my-2 text-l3">只对名称与工作区都一致的步骤提出更新；先看差异、勾选，再载入编辑草稿。资源绑定保留，不修改已有 TASK.md 或研究产物。保存前仍可取消。</p>
-            <select className="rounded border border-field bg-canvas p-1" value={upgradeTemplate} onChange={(e) => { setUpgradeTemplate(e.target.value); setUpgradeSelection([]); }}><option value="">选择原模板</option>{PIPELINE_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-            {(() => { const raw = PIPELINE_TEMPLATES.find((t) => t.id === upgradeTemplate); if (!raw) return null; /* 与项目页「模板有更新」提示同一口径：模板先按本项目研究工具换算再比，否则每步都报差异 */ const template = normalizedTemplate(raw, (s) => withResearchTools(s, tools, config.artifactDir, config.litSource, providesByName)); const changes = pipelineUpgradeCandidates(drafts.map(toStep), template); return <>
-              {changes.length === 0 && <p className="mt-2 text-l3">没有可匹配的差异；自定义/改名步骤请人工对照。</p>}
-              {changes.map((change) => <details key={change.index} className="mt-2"><summary><input type="checkbox" checked={upgradeSelection.includes(change.index)} onClick={(e) => e.stopPropagation()} onChange={(e) => setUpgradeSelection((old) => e.target.checked ? [...old, change.index] : old.filter((i) => i !== change.index))} /> {change.current.name} · {change.fields.join("、")}</summary><div className="grid grid-cols-2 gap-2"><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.current,null,2)}</pre><pre className="max-h-64 overflow-auto whitespace-pre-wrap bg-canvas p-2">{JSON.stringify(change.proposed,null,2)}</pre></div></details>)}
-              <button type="button" disabled={!upgradeSelection.length} className="mt-2 text-l2 disabled:opacity-40" onClick={async () => {
-                if (!(await confirmDialog("把勾选的步骤换成新版？\n\n这些步骤里你自己改过的会被覆盖；只改编辑中的草稿，保存前还能撤。", { confirmText: "载入草稿" }))) return;
-                setDrafts((old) => old.map((draft, index) => { const change = changes.find((c) => c.index === index); return change && upgradeSelection.includes(index) ? toDraft(withResearchTools({ ...change.proposed, resources: draft.resources }, tools, config.artifactDir, config.litSource, providesByName)) : draft; }));
-                setUpgradeSelection([]);
-              }}>将勾选更新载入草稿</button>
-            </>; })()}
-          </details>
+          <TemplateUpgradePanel
+            steps={draftSteps}
+            normalize={normalizeTemplateStep}
+            initialTemplate={initialUpgradeTemplate}
+            onLoad={(picked) =>
+              setDrafts((old) =>
+                old.map((draft, index) => {
+                  const hit = picked.find((p) => p.index === index);
+                  return hit ? toDraft({ ...hit.step, resources: draft.resources }) : draft;
+                }),
+              )
+            }
+          />
           {warnings.length > 0 && (
             <div className="rounded-sm ccode-well p-2 text-xs">
               <p className="mb-1 text-warn-text">
@@ -1436,6 +1294,8 @@ export default function PipelineEditor({
                     pack: "",
                     params: [],
                     checks: [],
+                    role: "",
+                    fanOut: null,
                   },
                 ])
               }
