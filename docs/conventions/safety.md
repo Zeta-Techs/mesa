@@ -162,6 +162,8 @@
   `~/.claude/plans/`、启动时的 `~/.claude/backups/`——是 CLI 本身的行为，不归这条管，先出方案 / 聊想法照旧用 plan 档。
   但 **Mesa 的后台一次性 / 无头调用不得借 CLI 留这类东西**：一次性调用不落盘，项目助手只读查看不用 Claude 的 plan 档
   （2026-11-04 实测 2.1.309 `-p --permission-mode plan` 会写 `~/.claude/plans/`；`plansDirectory` 设置只能指到项目里，更不能用）；
+  项目助手只读查看的 Claude 工具**用白名单不用黑名单**（2026-11-06）：`--tools "Read Grep Glob" --strict-mcp-config`，黑名单只作 2.1.186 以下的退路——
+  黑名单每个新版本都漏（当日实测漏了 Windows 的 PowerShell、建 worktree、定时任务、发消息等）；Codex `-s read-only` 当日 Windows 实测拦住 shell / apply_patch 写入；
   例外仅限用户显式操作：
   1. 「设为全局默认」（写前必须备份）；
   1a. **连接页「编辑配置文件」**（2026-11-01，`config_editor.rs` → `global_config::write_user_edit`）：清单与设为全局同一份（不含 Codex `auth.json`）；

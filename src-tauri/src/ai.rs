@@ -916,14 +916,28 @@ pub(crate) fn ai_prompt_impl_full(
 /// 同日实测让它「顺手把脚本改好」也只是把改法贴出来，项目与 ~/.claude/plans 都没多文件。别家返回以 INSPECT_UNSUPPORTED 开头的错，
 /// 前端退回只看记录。跑在项目根，工作副本经 `--add-dir`（Claude）带上；Codex 只读沙箱本就能读别处
 pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
-/// 只读查看时 Claude 不给的工具：改文件、跑命令、联网、开子代理（-p 里要审批的本就会被拒，这里写死成不给）
-const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash WebFetch WebSearch Task";
+/// 只读查看时 Claude 只给的内置工具（白名单，2026-11-06）：黑名单每个新版本都会漏——当日 2.1.318 实测 init 工具表里还有
+/// PowerShell（Windows，`CLAUDE_CODE_USE_POWERSHELL_TOOL=1` 时出现，设置里放行过的命令 -p 里不经审批）、EnterWorktree（在项目里建
+/// worktree）、CronCreate / SendMessage / Workflow 等。配 `--strict-mcp-config` 不加载用户的 MCP 服务器（MCP 工具同样能写）
+const CLAUDE_INSPECT_TOOLS: &str = "Read Grep Glob";
+/// `--tools` 白名单可靠的最低版本：2.1.186 起首次冷启动不再漏放特性开关后的工具（更新日志），2.1.162 起 Grep / Glob 才真生效
+const CLAUDE_INSPECT_TOOLS_MIN: (u32, u32, u32) = (2, 1, 186);
+/// 更老或读不到版本时退回的黑名单：改文件、跑命令（含 Windows 的 PowerShell）、建 worktree、联网、开子代理
+const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash PowerShell EnterWorktree WebFetch WebSearch Task";
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
 
 /// images：附图（项目助手粘贴的截图，2026-11-05）。Codex 用自带的 `--image=a,b` 附在这条消息上（写成一个参数：
 /// `-i` 后面能吃多个值，会把提示词也当成图）；Claude Code 没有附图参数，由调用方把图所在目录 `--add-dir`、提示词里点名路径，
 /// 它用 Read 工具打开（只读模式里 Read 本来就放行，实测 2.1.309 能读出截图里的报错）
-pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[String], stream: bool, images: &[String]) -> Option<Vec<String>> {
+/// claude_version：本机 Claude Code 版本（`agents::cli_version`），够 `CLAUDE_INSPECT_TOOLS_MIN` 才用白名单
+pub(crate) fn inspect_readonly_args(
+    agent: &str,
+    prompt: &str,
+    extra_dirs: &[String],
+    stream: bool,
+    images: &[String],
+    claude_version: Option<(u32, u32, u32)>,
+) -> Option<Vec<String>> {
     match agent {
         "claude-code" => {
             let mut a: Vec<String> = if stream {
@@ -937,12 +951,12 @@ pub(crate) fn inspect_readonly_args(agent: &str, prompt: &str, extra_dirs: &[Str
                     "--no-session-persistence".into(),
                 ]
             };
-            a.extend([
-                "--permission-mode".to_string(),
-                "default".into(),
-                "--disallowedTools".into(),
-                CLAUDE_INSPECT_DISALLOWED.into(),
-            ]);
+            a.extend(["--permission-mode".to_string(), "default".into()]);
+            if claude_version.is_some_and(|v| v >= CLAUDE_INSPECT_TOOLS_MIN) {
+                a.extend(["--tools".to_string(), CLAUDE_INSPECT_TOOLS.into(), "--strict-mcp-config".into()]);
+            } else {
+                a.extend(["--disallowedTools".to_string(), CLAUDE_INSPECT_DISALLOWED.into()]);
+            }
             for d in extra_dirs {
                 a.push("--add-dir".into());
                 a.push(d.clone());
@@ -1023,7 +1037,8 @@ pub(crate) fn ai_inspect_readonly(
         }
     }
     let prompt = format!("{}{}", image_prompt_note(&profile.agent, images), prompt);
-    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some(), images) else {
+    let claude_version = (profile.agent == "claude-code").then(|| agents::cli_version("claude-code")).flatten();
+    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some(), images, claude_version) else {
         return Err(format!("{INSPECT_UNSUPPORTED}: {}", profile.agent));
     };
     let binary = agents::binary_for(&profile.agent)
@@ -3308,16 +3323,25 @@ ERROR: Your access token could not be refreshed because your refresh token was r
 
     #[test]
     fn inspect_readonly_args_are_read_only_and_ephemeral() {
-        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false, &[]).unwrap();
+        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false, &[], Some((2, 1, 318))).unwrap();
         assert!(claude.windows(2).any(|w| w == ["--permission-mode", "default"]), "不用 plan 档（会写 ~/.claude/plans）");
-        let disallowed = claude.iter().position(|a| a == "--disallowedTools").map(|i| claude[i + 1].clone()).unwrap();
-        for tool in ["Edit", "Write", "Bash", "WebFetch"] {
-            assert!(disallowed.split(' ').any(|t| t == tool), "{tool} 要拿掉");
+        // 新版：白名单正好三样只读工具、不加载 MCP，不再带黑名单
+        assert!(claude.windows(2).any(|w| w == ["--tools", "Read Grep Glob"]));
+        assert!(claude.iter().any(|a| a == "--strict-mcp-config"));
+        assert!(!claude.iter().any(|a| a == "--disallowedTools"));
+        // 老版本 / 读不到版本：退回黑名单，Windows 的 PowerShell 与建 worktree 也要拿掉
+        for old in [Some((2, 1, 185)), None] {
+            let a = inspect_readonly_args("claude-code", "看看", &[], false, &[], old).unwrap();
+            assert!(!a.iter().any(|x| x == "--tools"));
+            let disallowed = a.iter().position(|x| x == "--disallowedTools").map(|i| a[i + 1].clone()).unwrap();
+            for tool in ["Edit", "Write", "Bash", "PowerShell", "EnterWorktree", "WebFetch"] {
+                assert!(disallowed.split(' ').any(|t| t == tool), "{tool} 要拿掉");
+            }
         }
         assert!(claude.iter().any(|a| a == "--no-session-persistence"));
         assert!(claude.windows(2).any(|w| w == ["--add-dir", "/w/a"]));
         assert!(!claude.iter().any(|a| a.contains("bypass")));
-        let codex = inspect_readonly_args("codex", "看看", &[], false, &[]).unwrap();
+        let codex = inspect_readonly_args("codex", "看看", &[], false, &[], None).unwrap();
         assert!(codex.windows(2).any(|w| w == ["-s", "read-only"]));
         assert!(codex.iter().any(|a| a == "--ephemeral"));
         // plan 默认的 -s workspace-write 要被剥掉，只剩只读那一档
@@ -3325,14 +3349,14 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let composed = compose_headless_args("codex", &plan, &codex);
         assert_eq!(composed.iter().filter(|a| *a == "-s").count(), 1);
         assert!(composed.windows(2).any(|w| w == ["-s", "read-only"]));
-        assert!(inspect_readonly_args("kimi", "看看", &[], false, &[]).is_none());
-        assert!(inspect_readonly_args("gemini", "看看", &[], false, &[]).is_none());
+        assert!(inspect_readonly_args("kimi", "看看", &[], false, &[], None).is_none());
+        assert!(inspect_readonly_args("gemini", "看看", &[], false, &[], None).is_none());
         // 附图（2026-11-05）：Codex 一个 --image= 参数、在提示词前面；Claude 不加参数，靠提示词点名 + --add-dir
-        let with_img = inspect_readonly_args("codex", "看看", &[], false, &["/t/a.png".into(), "/t/b.png".into()]).unwrap();
+        let with_img = inspect_readonly_args("codex", "看看", &[], false, &["/t/a.png".into(), "/t/b.png".into()], None).unwrap();
         assert_eq!(&with_img[with_img.len() - 2..], ["--image=/t/a.png,/t/b.png", "看看"]);
         assert!(image_prompt_note("claude-code", &["/t/a.png".into()]).contains("Read 工具") );
         assert!(image_prompt_note("codex", &[]).is_empty());
-        let streamed = inspect_readonly_args("claude-code", "看看", &[], true, &[]).unwrap();
+        let streamed = inspect_readonly_args("claude-code", "看看", &[], true, &[], None).unwrap();
         assert!(streamed.windows(2).any(|w| w == ["--output-format", "stream-json"]));
         assert!(streamed.iter().any(|a| a == "--include-partial-messages") && streamed.iter().any(|a| a == "--verbose"));
         assert!(streamed.windows(2).any(|w| w == ["--permission-mode", "default"]));
