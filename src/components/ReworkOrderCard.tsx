@@ -8,6 +8,7 @@ import { relTime } from "../rel-time";
 import { loadSkillProvides, type SkillProvides } from "../skill-slots";
 import { litKind, sendReworkRound } from "../step-round";
 import { reworkTargets } from "../step-loop";
+import { chainDefaultOff, stepKind } from "../step-kind";
 import type { ReworkOrder } from "../project-assistant";
 import type { ProjectConfigReadDto, ProjectStepDto, WorkspaceDto } from "../types";
 
@@ -185,6 +186,7 @@ export default function ReworkOrderCard({
           fromStep={from?.name ?? "项目助手"}
           targets={targets.map((s) => s.name)}
           litTargets={targets.filter((s) => Object.values(litKind(s, provides)).some(Boolean)).map((s) => s.name)}
+          chainOff={steps.filter((st) => chainDefaultOff(stepKind(st, provides))).map((st) => st.name)}
           chainOptions={Object.fromEntries(
             targets.map((t) => {
               const from = steps.indexOf(t);

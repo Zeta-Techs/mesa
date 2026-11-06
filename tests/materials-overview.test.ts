@@ -1,13 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assetCounts, assetKind, overviewRow, overviewSummary, reworkLine } from "../src/materials-overview.ts";
+import { assetCounts, assetFilesFor, matrixCounts, overviewRow, overviewSummary, reworkLine } from "../src/materials-overview.ts";
 
 test("资料全貌：按技能槽认资料，机械数现状", () => {
-  const provides = { "lit-search": ["lit-search"], "lit-notes": ["lit-notes"] };
-  assert.equal(assetKind({ skills: ["lit-search"] }, provides), "search");
-  assert.equal(assetKind({ skills: ["lit-notes"] }, provides), "notes");
-  assert.equal(assetKind({ skills: [], expectedArtifacts: ["outline.md"] }, provides), "outline");
-  assert.equal(assetKind({ skills: [] }, provides), "other");
   const included = JSON.stringify([
     { id: "a", decision: "included", pdf: "papers/a.pdf", kind: "review" },
     { id: "b", decision: "included" },
@@ -52,4 +47,28 @@ test("资料全貌：在途的补料单写清补到哪、链等谁；补完且�
   assert.match(waiting.text, /链：等「精读」评审、保存/);
   assert.equal(reworkLine({ ...r, chainState: { started: [], stopped: true } }, at), null, "补完了、链停了：不列");
   assert.equal(reworkLine({ ...r, chain: [] }, at), null, "补完了、没有链：不列");
+});
+
+test("资料全貌：其余科研步骤也机械数——实验矩阵、清洗待裁决、分析的图与结论条目", () => {
+  const matrix = JSON.stringify([
+    { id: "A", status: "done" }, { id: "B", status: "failed" }, { id: "C", status: "not-run" }, { id: "D", status: "planned" },
+  ]);
+  assert.deepEqual(matrixCounts(matrix), { total: 4, done: 1, failed: 1, notRun: 1 });
+  assert.equal(matrixCounts(JSON.stringify({ combinations: [{ id: "A", status: "完成" }] }))?.done, 1, "包一层也认");
+  assert.equal(assetCounts("design", { matrix }), "实验矩阵 4 组");
+  assert.equal(assetCounts("experiment", { matrix }), "矩阵 4 组：完成 1 · 失败 1 · 没跑 1 · 待跑 1");
+  assert.equal(assetCounts("clean", { decisions: "- V001 | 位置 | 裁决：待裁决 | 依据：\n- V002 | 裁决：保留 |" }), "1 条规则待你裁决");
+  assert.equal(assetCounts("clean", { decisions: "- V002 | 裁决：保留 |" }), "规则都裁决过了");
+  assert.equal(assetCounts("clean", { decisions: null }), null, "还没有裁决单就不说");
+  assert.equal(
+    assetCounts("analysis", { figures: JSON.stringify([{ file: "a" }, { file: "b" }]), reports: ["## 结论条目\n- C001 | 一 | 来源 | 强度\n- C002 | 二 | x | y", "无"] }),
+    "图 2 张 · 结论条目 2 条",
+  );
+  assert.equal(assetCounts("writing", {}), null);
+  // 分析步的报告按它交的 .md 取，通配的不要
+  assert.deepEqual(
+    assetFilesFor("analysis", ["analysis/findings.md", "figures/*", "analysis/results.json", "chapters/results.md"]).map((f) => f.path),
+    ["figures/manifest.json", "analysis/findings.md", "chapters/results.md"],
+  );
+  assert.deepEqual(assetFilesFor("other"), []);
 });

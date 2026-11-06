@@ -1084,7 +1084,9 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   session 包按档案卡对话注入三态分叉（off=空串 / custom=模板 / 其余=自动，空模板 fail-open 自动）；
                              #   sessionOverride 只给设置面板预览用（按未保存草稿渲染），开对话一律读盘；
                              #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
-  materials-overview.ts      # 资料全貌纯逻辑（2026-11-06 流程贯通 §7）：assetKind（检索 / 精读按技能槽、交 outline.md 的算大纲）、assetCounts（复用 notes-progress）、
+  step-kind.ts               # 步骤类型（2026-11-06 流程贯通推到全部模板）：stepKind 按技能槽与专属产物归 search / notes / outline / clean / design / experiment / analysis /
+                             #   writing / final / other；KIND_ASSET 资料名、ROUND_CLAUSE 回头 / 跟进开场话按类补的做法、chainDefaultOff（实验默认不进链）（tests/step-kind.test.ts）
+  materials-overview.ts      # 资料全貌纯逻辑（2026-11-06 流程贯通 §7）：assetFilesFor（按步骤类型读哪些文件）、assetCounts（复用 notes-progress；实验矩阵 matrixCounts、清洗待裁决、分析图与结论条目）、
                              #   overviewRow（状态 + 跟上游对齐没有）、reworkLine（在途补料单与链等谁，补完且链走完不列）、overviewSummary（tests/materials-overview.test.ts）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
                              #   outlineProgress（「定框架记录」答了几问、「覆盖检查」薄几节）与 sectionTableRows（按 ## 标题取表格行，补料单预填共用）；skimRowCount（速读表 notes/skim.md 行数）；

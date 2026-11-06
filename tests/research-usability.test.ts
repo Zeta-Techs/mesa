@@ -86,7 +86,10 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 2026-11-05 综述回路一期：大纲每节可写一行表计划、初稿按表计划出对照表（两句，已压到最短）。实测 review 30161。
   // 同日综述回路三期：检索标 kind / core、精读第一轮只读综述 + 核心篇并写 angles.md、大纲一问一答六问 + 覆盖检查（取代「先报候选再融合」）。实测 review 31377。
   // 同日用户拍板改：精读第一轮综述精读 + 研究论文全部速读进 notes/skim.md（取代「只读综述 + 核心篇」），大纲覆盖检查按速读表点名补读。实测 review 31596。
-  const before: Record<string, number> = { review: 31700, "research-paper": 40300, "data-processing": 16100, thesis: 39000, "submission-rebuttal": 10400, "latex-paper": 16100 };
+  // 2026-11-06 流程贯通推到全部模板：有上游输入的步骤在「本步骤输入」末尾加一句——发现上游产物有问题不改上游交的文件，写进报告、
+  // 提醒人点「退回上一步补料 / 修改…」（约 95 字 × 有输入的步数）；综述大纲简报不再叫人先保存再退回。
+  // 实测 review 32068、论文 40359、数据 16050、学位 39072、投稿 10472、LaTeX 16375。
+  const before: Record<string, number> = { review: 32150, "research-paper": 40450, "data-processing": 16150, thesis: 39150, "submission-rebuttal": 10550, "latex-paper": 16450 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

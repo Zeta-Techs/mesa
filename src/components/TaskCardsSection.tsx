@@ -39,6 +39,7 @@ import {
   type FollowupScopeDto,
 } from "../step-loop";
 import { bringLatest } from "../step-latest";
+import { ROUND_CLAUSE, chainDefaultOff, stepKind } from "../step-kind";
 import {
   assertRoundable,
   ensureActive,
@@ -978,7 +979,12 @@ export default function TaskCardsSection({
         await assertRoundable(ws, step.name);
       }
       if ((await bringLatest(ws, step.name, confirmDialog, "跟进")) === null) return "stopped";
-      await launchContinuation(launch, ws, step.name, followupPrompt({ upstream, notesIds, files }));
+      await launchContinuation(
+        launch,
+        ws,
+        step.name,
+        followupPrompt({ upstream, notesIds, files, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
+      );
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
       if (auto) toast(`${auto.label}：接着跟进「${step.name}」——${scale} 做完照常评审、保存。`, "info");
@@ -1731,6 +1737,7 @@ export default function TaskCardsSection({
             .filter((st) => isLitStep(st))
             .map((st) => st.name)}
           fromInProgress={focusRunStatus !== "done"}
+          chainOff={steps.filter((st) => chainDefaultOff(stepKind(st, skillProvides))).map((st) => st.name)}
           chainOptions={Object.fromEntries(
             reworkTargets(steps, focusIdx).map((st) => {
               // 补完后能接着自动跟进的：目标之后、已保存（已完成）的步骤，按顺序；做到一半的不进链，它点「继续」时自己并进来

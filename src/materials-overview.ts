@@ -3,8 +3,8 @@
  * 项目页一块里一行一份，写清现状（从文件机械数，不靠 AI 自述）、跟上游对齐没有，加上在途的回头（补料单走到哪、链等谁）。
  * 行按步骤与技能槽认，引擎不认综述；读文件在组件里（MaterialsOverview.tsx），这里只拼说法。配 tests/materials-overview.test.ts。
  */
-import { stepFillsAnySlot, type SkillProvides } from "./skill-slots.ts";
 import { chainWhere, type ReworkDto } from "./step-loop.ts";
+import type { StepKind } from "./step-kind.ts";
 import {
   excludedIncludedIds,
   notesProgress,
@@ -15,28 +15,88 @@ import {
   searchProgressLine,
 } from "./notes-progress.ts";
 
-export type AssetKind = "search" | "notes" | "outline" | "other";
-
-/** 这一步管的是哪份资料：检索 → 文献库，精读 → 笔记，交 outline.md 的 → 大纲，其余按步骤名叫 */
-export function assetKind(
-  step: { skills?: readonly string[]; expectedArtifacts?: readonly string[] },
-  provides: SkillProvides,
-): AssetKind {
-  if (stepFillsAnySlot(step.skills, ["lit-search"], provides)) return "search";
-  if (stepFillsAnySlot(step.skills, ["lit-notes"], provides)) return "notes";
-  if ((step.expectedArtifacts ?? []).some((a) => a.replace(/\\/g, "/").replace(/^\.\//, "") === "outline.md")) return "outline";
-  return "other";
+/** 资料全貌要读的文件（项目根相对路径；按步骤类型取，读不到的为 null） */
+export interface AssetFiles {
+  included?: string | null;
+  index?: string | null;
+  outline?: string | null;
+  /** 实验设计的 experiments/matrix.json、实验执行的 results/matrix.json */
+  matrix?: string | null;
+  /** 清洗的 cleaning/rule-decisions.md */
+  decisions?: string | null;
+  /** 分析的 figures/manifest.json */
+  figures?: string | null;
+  /** 分析步交的几份报告（数「## 结论条目」用） */
+  reports?: string[];
 }
 
-export const ASSET_LABEL: Record<AssetKind, string> = {
-  search: "文献库",
-  notes: "笔记",
-  outline: "大纲",
-  other: "",
-};
+/** 这一类步骤现状要读哪些文件（ledger = 走台账白名单读，否则走只读预览）。分析步的报告按它交的 .md 产物取，最多 4 份 */
+export function assetFilesFor(kind: StepKind, expectedArtifacts: readonly string[] = []): { key: keyof AssetFiles; path: string; ledger?: boolean }[] {
+  switch (kind) {
+    case "search":
+      return [{ key: "included", path: "papers/included.json", ledger: true }];
+    case "notes":
+      return [
+        { key: "included", path: "papers/included.json", ledger: true },
+        { key: "index", path: "notes/index.json", ledger: true },
+      ];
+    case "outline":
+      return [{ key: "outline", path: "outline.md" }];
+    case "design":
+      return [{ key: "matrix", path: "experiments/matrix.json" }];
+    case "experiment":
+      return [{ key: "matrix", path: "results/matrix.json" }];
+    case "clean":
+      return [{ key: "decisions", path: "cleaning/rule-decisions.md" }];
+    case "analysis":
+      return [
+        { key: "figures", path: "figures/manifest.json" },
+        ...expectedArtifacts
+          .map((a) => a.replace(/\\/g, "/"))
+          .filter((a) => a.endsWith(".md") && !a.includes("*"))
+          .slice(0, 4)
+          .map((path) => ({ key: "reports" as const, path })),
+      ];
+    default:
+      return [];
+  }
+}
 
-/** 一份资料此刻的机械计数（读不到 / 解析不了返回 null，界面不猜） */
-export function assetCounts(kind: AssetKind, files: { included?: string | null; index?: string | null; outline?: string | null }): string | null {
+function jsonRows(text: string): unknown[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object") {
+    for (const value of Object.values(parsed as Record<string, unknown>)) if (Array.isArray(value)) return value;
+    return Object.keys(parsed as Record<string, unknown>).length ? Object.values(parsed as Record<string, unknown>) : null;
+  }
+  return null;
+}
+
+const DONE = /^(done|completed?|success|succeeded|ok|finished|完成|已完成)$/i;
+const FAILED = /^(failed|fail|error|失败)$/i;
+const NOT_RUN = /^(not-run|not_run|cancell?ed|skipped|取消|未运行)$/i;
+
+/** 实验矩阵按 status 数：完成 / 失败 / 没跑（取消、not-run）/ 其余算待跑 */
+export function matrixCounts(text: string): { total: number; done: number; failed: number; notRun: number } | null {
+  const rows = jsonRows(text);
+  if (!rows || rows.length === 0) return null;
+  const out = { total: rows.length, done: 0, failed: 0, notRun: 0 };
+  for (const row of rows) {
+    const status = String((row as Record<string, unknown> | null)?.status ?? "").trim();
+    if (DONE.test(status)) out.done += 1;
+    else if (FAILED.test(status)) out.failed += 1;
+    else if (NOT_RUN.test(status)) out.notRun += 1;
+  }
+  return out;
+}
+
+/** 一类步骤此刻的机械计数（读不到 / 解析不了返回 null，界面不猜） */
+export function assetCounts(kind: StepKind, files: AssetFiles): string | null {
   if (kind === "search" && files.included) {
     const p = searchProgress(files.included);
     return p ? searchProgressLine(p) : null;
@@ -49,6 +109,32 @@ export function assetCounts(kind: AssetKind, files: { included?: string | null; 
     const p = outlineProgress(files.outline);
     const parts = p ? outlineProgressParts(p) : [];
     return parts.length ? parts.join(" · ") : "有大纲";
+  }
+  if (kind === "design" && files.matrix) {
+    const m = matrixCounts(files.matrix);
+    return m ? `实验矩阵 ${m.total} 组` : null;
+  }
+  if (kind === "experiment" && files.matrix) {
+    const m = matrixCounts(files.matrix);
+    if (!m) return null;
+    const parts = [`矩阵 ${m.total} 组：完成 ${m.done}`];
+    if (m.failed) parts.push(`失败 ${m.failed}`);
+    if (m.notRun) parts.push(`没跑 ${m.notRun}`);
+    const waiting = m.total - m.done - m.failed - m.notRun;
+    if (waiting) parts.push(`待跑 ${waiting}`);
+    return parts.join(" · ");
+  }
+  if (kind === "clean" && files.decisions != null) {
+    const n = (files.decisions.match(/裁决[:：]\s*待裁决/g) ?? []).length;
+    return n > 0 ? `${n} 条规则待你裁决` : "规则都裁决过了";
+  }
+  if (kind === "analysis") {
+    const parts: string[] = [];
+    const figs = files.figures ? jsonRows(files.figures) : null;
+    if (figs && figs.length) parts.push(`图 ${figs.length} 张`);
+    const conclusions = (files.reports ?? []).reduce((n, t) => n + (t.match(/^\s*-\s*C\d{3,}\s*\|/gm) ?? []).length, 0);
+    if (conclusions) parts.push(`结论条目 ${conclusions} 条`);
+    return parts.length ? parts.join(" · ") : null;
   }
   return null;
 }

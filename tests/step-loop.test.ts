@@ -225,3 +225,15 @@ test("chainNext / chainWhere：上一步开了之后又保存过才轮到下一�
   assert.deepEqual(chainWhere({ ...base, chainState: s3 }, at), { kind: "done" });
   assert.deepEqual(chainWhere({ toStep: "检索", sentAt: "x", chain: [] }, at), { kind: "none" });
 });
+
+test("回头 / 跟进开场话按步骤类型补一句做法；文献两步不加", async () => {
+  const { reworkPrompt, followupPrompt } = await import("../src/step-loop.ts");
+  const rework = { fromStep: "结果分析", topics: ["缺失值改成删除"], reason: "插补让组间差异虚高", clues: "", scale: null, relPath: ".ccode/rework/1.json" };
+  const clean = reworkPrompt(rework, { isSearch: false, projectRoot: "/p", date: "11-06", clause: "先改 cleaning/rules.md。" });
+  assert.match(clean, /这是一轮修改.*\n[\s\S]*「## 修改轮（11-06）」一节，写清改了什么、改了哪些文件。先改 cleaning\/rules\.md。/);
+  const search = reworkPrompt(rework, { isSearch: true, projectRoot: "/p", date: "11-06", clause: "不该出现" });
+  assert.doesNotMatch(search, /不该出现/);
+  const follow = followupPrompt({ upstream: "清洗与整理", notesIds: null, files: ["cleaning/rules.md"], clause: "重跑脚本，不手改。" });
+  assert.match(follow, /「## 本轮改了什么」[^\n]*\n重跑脚本，不手改。/);
+  assert.doesNotMatch(followupPrompt({ upstream: "x", notesIds: ["a"], files: [], clause: "重跑脚本" }), /重跑脚本/, "精读按篇跟进不加");
+});

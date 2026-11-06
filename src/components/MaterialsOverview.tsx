@@ -6,15 +6,15 @@ import { toast } from "../toast";
 import type { SkillProvides } from "../skill-slots";
 import type { ReworkDto } from "../step-loop";
 import {
-  ASSET_LABEL,
   assetCounts,
-  assetKind,
+  assetFilesFor,
   overviewRow,
   overviewSummary,
   reworkLine,
-  type AssetKind,
+  type AssetFiles,
   type OverviewRow,
 } from "../materials-overview";
+import { KIND_ASSET, stepKind } from "../step-kind";
 import type { ProjectStepDto, WorkspaceDto } from "../types";
 
 const TONE: Record<OverviewRow["align"]["tone"], string> = {
@@ -45,46 +45,56 @@ export default function MaterialsOverview({
   onFocus: (index: number) => void;
   refreshKey: string;
 }) {
-  const [files, setFiles] = useState<{ included: string | null; index: string | null; outline: string | null }>({
-    included: null,
-    index: null,
-    outline: null,
-  });
+  /** 每一步的机械计数（按步骤名；读不到的没有） */
+  const [counts, setCounts] = useState<Record<string, string | null>>({});
   const [reworks, setReworks] = useState<ReworkDto[]>([]);
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [tick, setTick] = useState(0);
 
-  const kinds = steps.map((st) => assetKind(st, provides));
-  const need = (k: AssetKind) => kinds.some((x, i) => x === k && statuses[i]?.key && statuses[i].key !== "pending");
-  const wantIncluded = need("search") || need("notes");
-  const wantIndex = need("notes");
-  const wantOutline = need("outline");
+  const kinds = steps.map((st) => stepKind(st, provides));
+  // 开过工的步骤要读哪些文件：同一份文件只读一次（检索和精读都要 included.json）
+  const plan = steps
+    .map((st, i) => ({ st, kind: kinds[i], started: !!statuses[i]?.key && statuses[i].key !== "pending" }))
+    .filter((x) => x.started)
+    .map((x) => ({ name: x.st.name, kind: x.kind, files: assetFilesFor(x.kind, x.st.expectedArtifacts ?? []) }));
+  const planKey = plan.map((p) => `${p.name}:${p.kind}:${p.files.map((f) => f.path).join("+")}`).join("|");
 
   useEffect(() => {
     let stale = false;
-    const text = async (read: () => Promise<{ text: string; truncated: boolean }>) => {
+    const read = async (path: string, ledger?: boolean) => {
       try {
-        const f = await read();
+        const f = ledger ? await readResearchLedger(projectPath, path) : await readResearchFile(projectPath, path);
         return f.truncated ? null : f.text;
       } catch {
         return null;
       }
     };
     void (async () => {
-      const [included, index, outline, list] = await Promise.all([
-        wantIncluded ? text(() => readResearchLedger(projectPath, "papers/included.json")) : Promise.resolve(null),
-        wantIndex ? text(() => readResearchLedger(projectPath, "notes/index.json")) : Promise.resolve(null),
-        wantOutline ? text(() => readResearchFile(projectPath, "outline.md")) : Promise.resolve(null),
-        invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]),
-      ]);
+      const paths = new Map<string, { ledger?: boolean }>();
+      for (const p of plan) for (const f of p.files) paths.set(f.path, { ledger: f.ledger });
+      const texts = new Map<string, string | null>();
+      await Promise.all([...paths].map(async ([path, o]) => texts.set(path, await read(path, o.ledger))));
+      const list = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
       if (stale) return;
-      setFiles({ included, index, outline });
+      const next: Record<string, string | null> = {};
+      for (const p of plan) {
+        const files: AssetFiles = { reports: [] };
+        for (const f of p.files) {
+          const text = texts.get(f.path) ?? null;
+          if (f.key === "reports") {
+            if (text) files.reports!.push(text);
+          } else files[f.key] = text;
+        }
+        next[p.name] = assetCounts(p.kind, files);
+      }
+      setCounts(next);
       setReworks(list);
     })();
     return () => {
       stale = true;
     };
-  }, [projectPath, refreshKey, tick, wantIncluded, wantIndex, wantOutline]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectPath, refreshKey, tick, planKey]);
 
   const savedAt = (name: string) => {
     const i = steps.findIndex((st) => st.name === name);
@@ -96,11 +106,11 @@ export default function MaterialsOverview({
     if (!s) return;
     const row = overviewRow({
       name: st.name,
-      asset: ASSET_LABEL[kinds[i]],
+      asset: KIND_ASSET[kinds[i]],
       key: s.key,
       staleUpstream: s.ws?.staleUpstream ?? null,
       mergedAt: s.ws?.mergedAt ?? null,
-      counts: assetCounts(kinds[i], files),
+      counts: counts[st.name] ?? null,
     });
     if (row) rows.push({ index: i, row });
   });

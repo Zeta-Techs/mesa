@@ -12,6 +12,7 @@ import { stepSlotKey, taskBindingLaunch } from "./project-agents";
 import { stepFillsAnySlot, type SkillProvides } from "./skill-slots";
 import { bringLatest, stepBusy, type ConfirmFn } from "./step-latest";
 import { reworkPrompt, withLatestNote, type ReworkDto } from "./step-loop";
+import { ROUND_CLAUSE, stepKind } from "./step-kind";
 import type { ProjectStepDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
 
 export type Launch = { agentId: string; profileId: string; model: string };
@@ -162,6 +163,7 @@ export async function sendReworkRound(input: ReworkSend, onRestored?: () => void
   const prompt = withLatestNote(
     reworkPrompt(rework, {
       ...litKind(target, input.provides),
+      clause: ROUND_CLAUSE[stepKind(target, input.provides)],
       projectRoot: projectPath,
       date: `${d.getMonth() + 1}-${d.getDate()}`,
     }),

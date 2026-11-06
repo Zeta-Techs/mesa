@@ -34,6 +34,7 @@ export function ReworkDialog({
   initial,
   fromInProgress = false,
   chainOptions = {},
+  chainOff = [],
   busy,
   error,
   onCancel,
@@ -54,6 +55,8 @@ export function ReworkDialog({
   fromInProgress?: boolean;
   /** 按退回目标列出补完后能接着自动跟进的下游步骤（目标之后、已保存的步骤，按顺序）；默认全勾 */
   chainOptions?: Record<string, string[]>;
+  /** 链上默认不勾的步骤（重跑实验花时间、花算力，step-kind.ts chainDefaultOff）：列出来但要人自己勾 */
+  chainOff?: string[];
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -64,10 +67,11 @@ export function ReworkDialog({
   const [topics, setTopics] = useState(initial?.topics ?? prefill[first]?.topics ?? "");
   const [reason, setReason] = useState(initial?.reason ?? prefill[first]?.reason ?? "");
   const [edited, setEdited] = useState(!!initial);
-  const [chain, setChain] = useState<string[]>(chainOptions[first] ?? []);
+  const chainDefault = (t: string) => (chainOptions[t] ?? []).filter((st) => !chainOff.includes(st));
+  const [chain, setChain] = useState<string[]>(chainDefault(first));
   const pickTarget = (next: string) => {
     setTarget(next);
-    setChain(chainOptions[next] ?? []);
+    setChain(chainDefault(next));
     if (!edited) {
       setTopics(prefill[next]?.topics ?? "");
       setReason(prefill[next]?.reason ?? "");
@@ -207,6 +211,7 @@ export function ReworkDialog({
                     onChange={(e) => setChain((cur) => (e.target.checked ? [...cur, st] : cur.filter((x) => x !== st)))}
                   />
                   {st}
+                  {chainOff.includes(st) && <span className="text-l4">（会重跑实验，默认不勾）</span>}
                 </label>
               ))}
             </div>

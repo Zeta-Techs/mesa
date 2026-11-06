@@ -123,7 +123,7 @@ export function parseTopics(text: string): string[] {
  *  否则 AI 照任务书只补速读行（2026-11-05 排查）；精读步没有「主要报告」，不叫它往报告末尾追加。 */
 export function reworkPrompt(
   rework: Pick<ReworkDto, "fromStep" | "topics" | "reason" | "clues" | "scale" | "relPath">,
-  opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string },
+  opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string; clause?: string },
 ): string {
   const lit = opts.isSearch || !!opts.isNotes;
   const lines = [
@@ -156,7 +156,8 @@ export function reworkPrompt(
         ? "单上点名的篇（或这些主题下该精读的篇）写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
           "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。收尾补 references.bib、按新笔记更新 notes/handoff.md 的写作约束，最后在对话里列出补了哪几篇、改了哪些文件。"
         : "在本步已有产物上修改，人确认过的内容不推翻；" +
-          `在本步主要报告末尾追加「## 修改轮（${opts.date}）」一节，写清改了什么、改了哪些文件。`,
+          `在本步主要报告末尾追加「## 修改轮（${opts.date}）」一节，写清改了什么、改了哪些文件。` +
+          (opts.clause ? opts.clause : ""),
     `补料单原件：${joinRoot(opts.projectRoot, rework.relPath)}。`,
     KEEP_WORKING_CLAUSE,
   );
@@ -249,6 +250,8 @@ export function followupPrompt(opts: {
   upstream: string;
   notesIds: string[] | null;
   files: string[];
+  /** 这一类步骤回头时的做法（step-kind.ts ROUND_CLAUSE）；按改动文件跟进时接在后面 */
+  clause?: string;
 }): string {
   const head = `上游「${opts.upstream}」保存过新内容，这一轮只跟进新增的部分，不重做整步。项目里的新内容已经并进本工作区。`;
   if (opts.notesIds) {
@@ -269,6 +272,7 @@ export function followupPrompt(opts: {
     "这些文件在本步上次保存之后改过：",
     ...shown,
     "先读这些改动，只修改受它们影响的部分；本轮之前没做完的（还没问完的问、没写的节）照 TASK.md 接着做；人确认过的内容不推翻。在本步主要产物末尾追加「## 本轮改了什么」一节，逐条写改了哪里、因为上游哪处变化。",
+    ...(opts.clause ? [opts.clause] : []),
     KEEP_WORKING_CLAUSE,
   ].join("\n");
 }

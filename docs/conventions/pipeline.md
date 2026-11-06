@@ -455,6 +455,13 @@
     人点「退回去补」才经 `src/step-round.ts sendReworkRound` 发（步骤卡的退回补料也改走它：找工作副本 → 恢复 → 拦 → 并入 → 写单 → 开轮 → 记轮次）。
     发过记在那一轮的 `dispatched`（mode=resume，回音巡视照常补进展）。手机上只说去桌面点（`assistant-ops` 新增 `rework` = desktop）。
     顺带：派出的活「已保存进项目」只认派出之后的保存（接回已保存步骤时旧的保存时间不算）。
+  - **推到全部科研模板（2026-11-06 用户：「其余的科研步骤也根据这样合适的完善」）**：`src/step-kind.ts stepKind` 按技能槽与专属产物把步骤归成
+    search / notes / outline / clean / design / experiment / analysis / writing / final / other（六套内置模板每步归类由 `tests/step-kind.test.ts` 钉住）；
+    `ROUND_CLAUSE` 给补料轮（非文献目标）与按文件跟进的开场话补一句这一类的做法——清洗改 rules.md 后从原始数据重跑、实验只重跑受影响组合不覆盖旧运行、
+    分析由脚本重出数和图并列「旧 → 新」、设计不为结果改主指标、写作只改受影响段且数字从结果取、定稿重跑核对与渲染；文献两步沿用专门写法。
+    补料链默认不勾 experiment（`chainDefaultOff`，弹窗写「会重跑实验，默认不勾」）。资料全貌按类读文件（`assetFilesFor`）：实验矩阵完成 / 失败 / 没跑、
+    清洗待裁决条数、分析图数与「## 结论条目」条数。任务书「本步骤输入」末尾固定一句：发现上游产物有问题不改上游交的文件（本步预期产物除外），
+    写进报告并提醒人点「退回上一步补料 / 修改…」（`task-md.ts`，各模板任务书长度上限同涨）。项目助手补料单规矩把清洗、实验也列进能回头的事。
   - **⑤ 已落地**：`components/MaterialsOverview.tsx`（ProjectGroup 流程线上方、回路提示之前）+ 纯逻辑 `src/materials-overview.ts`：资料按技能槽 / 交 outline.md 认（`assetKind`），
     现状只从项目根文件机械数（复用 `notes-progress.ts`），对齐按 `staleUpstream`，在途回头按 `reworkLine`（补完且链走完 / 停掉不列，最多 4 条），可「停掉这条链」。
     两步以上开过工才出；有没跟上的或在途的回头时默认展开。**落地与设计不同**：行上不放「跟进」按钮，只点步骤名跳过去——跟进在步骤卡上（主路径唯一）。
