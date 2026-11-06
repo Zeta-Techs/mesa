@@ -1115,6 +1115,8 @@
   复用键 `reader:<项目根>\n<PDF 路径>`（`reader.ts readerReuseKey` ↔ `runs.rs reader_pdf_of_key` 双端镜像），进阅读区时
   `readerSessionFor` 找这篇最近那段（同项目同篇、源文件在、没归档）就 resume 它（带原 Run id、连接按 `resumeProfileChoice`：
   那段自己的优先，同家时精读槽位绑定作候补），找不到才新开；阅读区开着换篇时上一篇的标签照「退出即关」收掉。
+  按会话 / Run 认回已开着的标签时（`adoptExisting`：Run id、会话持有者），那个标签没有复用键就盖上这次请求的键——
+  重开 Mesa / 热更新后恢复出的标签只带 `ws:` 键，不盖的话阅读区认不出它、一直「阅读会话未在运行」（2026-11-06）。
   接回时不发开场简报（`readerResumedKey` → ReaderOverlay `agentResumed`，用户：「有会话记忆了」）；只有新开的那段发。
   **认精读对话只认 Run 记录**（`apply_reader_runs`：task_kind=reader 且登记了会话 → 会话 DTO `reader` / `readerPdf`），
   不按标题——原先 `PROJECT_SESSION_EXCLUDE_HINTS` 的「【阅读上下文】」在自动起名后失效，精读对话漏进侧栏；

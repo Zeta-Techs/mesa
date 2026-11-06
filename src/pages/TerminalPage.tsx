@@ -9406,6 +9406,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       const adoptExisting = (existing: (typeof tabs)[number]) => {
         tabId = existing.id;
         setActiveId(existing.id);
+        // 认回的标签没有复用键（重开 Mesa / 热更新后恢复出的标签不带 reuseKey）：盖上这次请求的键，
+        // 否则按键找标签的入口认不出它——阅读区按篇接回旧对话时认回了恢复出的那个标签，
+        // 右栏却一直「阅读会话未在运行」，点重新启动也只是在那个标签里再拉起（2026-11-06 用户截图）
+        if (pt.reuseKey && !existing.reuseKey) {
+          const key = pt.reuseKey;
+          setTabs((prev) => prev.map((t) => (t.id === existing.id && !t.reuseKey ? { ...t, reuseKey: key } : t)));
+        }
         const prompt = pt.initialPrompt?.trim();
         if (prompt) {
           pendingChatInjectRef.current = { tabId: existing.id, prompt };
