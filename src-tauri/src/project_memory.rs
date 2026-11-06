@@ -382,12 +382,17 @@ fn update_at(
         validate_text(text)?;
     }
     let mut rebound_files = Vec::new();
+    // 修订保留原分类（2026-11-06：改一条「已定」以前会变成「人工维护」，任务书里的分类就丢了）；新加的是人工维护
+    let mut goal_name = "人工维护".to_string();
     if action == "replace" {
         let old = doc
             .entries
             .iter()
             .find(|e| Some(e.meta.id.as_str()) == id && e.meta.state == "active")
             .ok_or("知识条目不存在或已失效")?;
+        if !old.meta.goal_name.trim().is_empty() {
+            goal_name = old.meta.goal_name.clone();
+        }
         let root_canon = crate::paths::canonicalize_plain(root).map_err(|e| e.to_string())?;
         for file in &old.meta.files {
             let path = crate::paths::canonicalize_plain(&root.join(&file.path))
@@ -426,7 +431,7 @@ fn update_at(
                 id: uuid::Uuid::new_v4().to_string(),
                 created_at: crate::sessions::now_iso(),
                 source_version: None,
-                goal_name: "人工维护".into(),
+                goal_name,
                 state: "active".into(),
                 replaces: id.map(str::to_owned),
                 reason: reason.trim().into(),
@@ -610,6 +615,26 @@ mod tests {
         let new = doc.entries.iter().find(|e| e.text.ends_with("B（2015 起）")).unwrap();
         let old = doc.entries.iter().find(|e| e.text.ends_with("A（2021 起）")).unwrap();
         assert_eq!((old.meta.state.as_str(), new.meta.replaces.as_deref()), ("superseded", Some(old.meta.id.as_str())));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn replacing_an_entry_keeps_its_category() {
+        let root = std::env::temp_dir().join(format!("mesa-memory-keep-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        record_human_decision(&root, "不做", "预印本", "不收").unwrap();
+        let doc = read_at(&root).unwrap();
+        let id = doc.entries[0].meta.id.clone();
+        let doc = update_at(&root, &doc.revision, Some(&id), "replace", "预印本 → 不收（含 ChemRxiv）", "补上 ChemRxiv").unwrap();
+        let active: Vec<(&str, &str)> = doc
+            .entries
+            .iter()
+            .filter(|e| e.meta.state == "active")
+            .map(|e| (e.meta.goal_name.as_str(), e.text.as_str()))
+            .collect();
+        assert_eq!(active, [("不做", "预印本 → 不收（含 ChemRxiv）")], "改过仍是「不做」");
+        let doc = update_at(&root, &doc.revision, None, "add", "课题组电解池用 H 型", "组会确认").unwrap();
+        assert!(doc.entries.iter().any(|e| e.meta.goal_name == "人工维护" && e.text == "课题组电解池用 H 型"));
         fs::remove_dir_all(&root).ok();
     }
 }

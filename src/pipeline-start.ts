@@ -11,7 +11,7 @@ import {
 } from "./workspace-resume";
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
-import { ledgerLines } from "./help-requests";
+import { knowledgeLines } from "./help-requests";
 import { openPeerCount } from "./peek";
 import { fanOutSummary, laneReuseKey, lanePrompt, mergePrompt, type FanOutPending } from "./fan-out";
 import { IS_WINDOWS } from "./hotkeys";
@@ -44,6 +44,8 @@ export async function gatherTaskMdExtras(
   decisions: { q: string; answer: string }[];
   upstream: UpstreamAcceptance[];
   ledger: string[];
+  /** 研究档案（跨项目，设置里关掉时为空） */
+  profile: string;
   /** 同项目还开着的其他工作数 */
   peers: number;
 }> {
@@ -88,10 +90,10 @@ export async function gatherTaskMdExtras(
     /* 草稿不可读时跳过「已定方向」段 */
   }
   const upstream = await invoke<UpstreamAcceptance[]>("research_upstream_acceptances", { projectRoot: projectPath, stepName: step.name });
-  // 以前定过的事：人在人工请求卡片上勾「以后同类照此办」记进项目知识的「已定 / 不做」（读失败只是不带这段）
+  // 项目知识：仍有效的全部条目（已定 / 不做 / 人手写 / 目标验收记下的），与问 AI 等入口同一份（读失败只是不带这段）
   let ledger: string[] = [];
   try {
-    ledger = ledgerLines(await invoke<ProjectMemoryDocumentDto>("project_memory_read", { path: projectPath }));
+    ledger = knowledgeLines(await invoke<ProjectMemoryDocumentDto>("project_memory_read", { path: projectPath }));
   } catch {
     /* 项目知识不可读时跳过 */
   }
@@ -103,7 +105,14 @@ export async function gatherTaskMdExtras(
   } catch {
     /* 读不到运行记录时不带这一节 */
   }
-  return { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers };
+  // 研究档案：和开对话附带的长期知识同一份（设置「研究档案」关掉时后端给空串）
+  let profile = "";
+  try {
+    profile = await invoke<string>("research_profile_context");
+  } catch {
+    /* 读不到就不带 */
+  }
+  return { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers, profile };
 }
 
 /** 只读预览用的一步到位拼装（步骤级「预览 TASK.md」入口）：与开工落盘同一出处
@@ -113,12 +122,12 @@ export async function buildTaskMdPreview(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
 ): Promise<string> {
-  const { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers } = await gatherTaskMdExtras(
+  const { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers, profile } = await gatherTaskMdExtras(
     projectPath,
     step,
   );
   return appendUpstreamAcceptance(
-    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger, peers),
+    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger, peers, profile),
     upstream,
   );
 }
@@ -245,7 +254,7 @@ export async function startPipelineStep({
   if (taskMdOverride?.trim()) {
     content = taskMdOverride;
   } else {
-    const { artifacts, skillMeta, providesByName, decisions, ledger, peers } = await gatherTaskMdExtras(
+    const { artifacts, skillMeta, providesByName, decisions, ledger, peers, profile } = await gatherTaskMdExtras(
       projectPath,
       step,
     );
@@ -260,6 +269,7 @@ export async function startPipelineStep({
       IS_WINDOWS,
       ledger,
       peers,
+      profile,
     );
   }
   content = appendUpstreamAcceptance(content, upstream);

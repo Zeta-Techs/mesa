@@ -81,9 +81,12 @@ export function renderTaskMd(
   providesByName?: SkillProvides,
   decisions?: { q: string; answer: string }[],
   isWindows = false,
+  /** 项目知识条目（knowledgeLines）；有才带「项目知识」一节 */
   ledger?: string[],
   /** 同项目还开着的其他工作数（开工时数一次）；有才带「同项目的其他工作」一节 */
   peers = 0,
+  /** 研究档案（跨项目的习惯与偏好；设置里关掉时为空）；有才带一节 */
+  profile = "",
 ): string {
   // 任务包参数（2026-11-03）：文字里的 {param:键} 先换成取值，后面各段照常拼
   const rawParams = step.params ?? [];
@@ -137,10 +140,20 @@ export function renderTaskMd(
   lines.push(...peekSectionLines(peers, isWindows));
   if (ledger && ledger.length > 0) {
     lines.push(
-      "## 以前定过的事",
+      "## 项目知识",
       ...ledger.map((line) => `- ${line}`),
       "",
-      "这些是人在之前的人工请求里定下、要求以后同类照此办的。遇到同类问题直接照办，在本步报告里写明依据哪一条，不要再问；「不做」的不要再提。",
+      "这些是人确认过、整个项目都照办的：标「已定」的遇到同类问题直接照办、不要再问，标「不做」的不要再提，其余是人记下的事实与口径。" +
+        "按其中某条做了决定的，在本步报告里写明依据哪一条。",
+      "",
+    );
+  }
+  if (profile.trim()) {
+    lines.push(
+      "## 研究档案（跨项目）",
+      profile.trim(),
+      "",
+      "这是人在各个项目通用的习惯与偏好，和本步有关的照办；和上面的项目知识或本任务书冲突时，以项目知识和本任务书为准。",
       "",
     );
   }

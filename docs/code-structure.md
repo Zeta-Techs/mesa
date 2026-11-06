@@ -631,7 +631,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekContextLine（项目说明里那一句）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
                              # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL）（tests/peek.test.ts）
   help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
-                             # 任务书「以前定过的事」取数 ledgerLines（项目知识里有效且来源没变的已定 / 不做）（tests/help-requests.test.ts）
+                             # 任务书「项目知识」取数 knowledgeLines（项目知识里全部有效且来源没变的条目，带分类）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
                              # （tests/task-pack-author.test.ts）
   pack-builtin.ts            # 任务包第四期：内置另存为我的版本 basedOnFor、builtinKey、builtinUpdate（当时的内置 vs 现在的内置，标我改没改过；三份步骤须先经后端归一）、
@@ -1990,7 +1990,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底
   research_profile.rs        # 研究档案（2026-11-02）：用户层 research-profile.md（复用 project_memory 的 parse / render / 状态机，goalName=分类，
-                             # 七类固定）、改前留 research-profile-history/；context_text 由 read_project_memory 附在项目知识后（可关、约 1500 字上限）；
+                             # 七类固定）、改前留 research-profile-history/；context_text 由 read_project_memory 附在项目知识后（可关、约 1500 字上限），
+                             # research_profile_context 单给流程步骤任务书「研究档案（跨项目）」一节；
                              # research_profile_papers 只读各注册项目 included.json / notes/index.json 按 DOI / 题名去重；
                              # research_profile_suggestions 找跨项目 / 反复出现的意见（只提议），research_profile_ignore 记忽略
   research_export.rs         # 研究记录查看与三个导出（2026-11-02）：research_record_read；research_export(kind) 写「下载/ccode-exports」——

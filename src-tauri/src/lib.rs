@@ -824,6 +824,7 @@ pub fn run() {
             research_export::research_record_read,
             research_export::research_export,
             research_profile::research_profile_read,
+            research_profile::research_profile_context,
             research_profile::research_profile_update,
             research_profile::research_profile_set_inject,
             research_profile::research_profile_papers,

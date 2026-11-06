@@ -582,14 +582,18 @@ test("TASK.md 决策暂停策略带人工请求文件的用法：固定字段、
   assert.match(md, /条目下出现「已答：」就照办.*再删掉这一条/);
 });
 
-test("TASK.md 带「以前定过的事」：项目知识里的已定 / 不做，同类照办不再问", () => {
+test("TASK.md 带「项目知识」与「研究档案」：已定照办不再问，研究档案冲突时让位", () => {
   const md = renderTaskMd(step(), cfg(), "/tmp/p", undefined, undefined, undefined, undefined, false, [
     "已定：纳入会议论文吗？ → B（期刊 + 顶会）",
     "不做：要不要加预印本？ → 不加",
-  ]);
-  assert.match(md, /## 以前定过的事\n- 已定：纳入会议论文吗？ → B（期刊 \+ 顶会）\n- 不做：要不要加预印本？ → 不加/);
+    "课题组电解池用 H 型",
+  ], 0, "- 写作偏好：段首给结论");
+  assert.match(md, /## 项目知识\n- 已定：纳入会议论文吗？ → B（期刊 \+ 顶会）\n- 不做：要不要加预印本？ → 不加\n- 课题组电解池用 H 型/);
   assert.match(md, /遇到同类问题直接照办/);
-  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/tmp/p"), /以前定过的事/);
+  assert.match(md, /## 研究档案（跨项目）\n- 写作偏好：段首给结论/);
+  assert.match(md, /以项目知识和本任务书为准/);
+  const bare = renderTaskMd(step(), cfg(), "/tmp/p");
+  assert.doesNotMatch(bare, /## 项目知识|## 研究档案/);
 });
 
 test("TASK.md：来自我的任务的步骤先代入参数，并列出「本步参数」", () => {

@@ -283,6 +283,14 @@ pub struct ResearchProfileDto {
     pub categories: Vec<String>,
 }
 
+/** 流程步骤任务书带的研究档案（与开对话附带的同一份；设置里关掉时为空串） */
+#[tauri::command]
+pub async fn research_profile_context() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(context_text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn research_profile_read() -> Result<ResearchProfileDto, String> {
     tauri::async_runtime::spawn_blocking(|| {
