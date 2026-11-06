@@ -115,6 +115,8 @@ components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、视频卡（ChatVideoCard：同 MediaPreview 经 grant_media_url 放行后 asset 流式播放，读不到不出卡）、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
+components/MaterialsOverview.tsx  # 资料全貌（ProjectGroup 流程线上方，2026-11-06）：读项目根 included.json / index.json / outline.md 与 rework_list，一行一步现状 + 对齐，
+                             #   在途补料单可「停掉这条链」（rework_chain_stop）；两步以上开过工才出，没跟上或有在途时默认展开（tests/materials-overview-ui.test.ts）
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
                              #   schematic-forge 渲出的 PPTX：figurePreview 显示同名 PNG，PPTX 更新时标「生成时的预览」
@@ -1081,6 +1083,8 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   session 包按档案卡对话注入三态分叉（off=空串 / custom=模板 / 其余=自动，空模板 fail-open 自动）；
                              #   sessionOverride 只给设置面板预览用（按未保存草稿渲染），开对话一律读盘；
                              #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
+  materials-overview.ts      # 资料全貌纯逻辑（2026-11-06 流程贯通 §7）：assetKind（检索 / 精读按技能槽、交 outline.md 的算大纲）、assetCounts（复用 notes-progress）、
+                             #   overviewRow（状态 + 跟上游对齐没有）、reworkLine（在途补料单与链等谁，补完且链走完不列）、overviewSummary（tests/materials-overview.test.ts）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
                              #   outlineProgress（「定框架记录」答了几问、「覆盖检查」薄几节）与 sectionTableRows（按 ## 标题取表格行，补料单预填共用）；skimRowCount（速读表 notes/skim.md 行数）；
                              #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
@@ -1850,7 +1854,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   probe 经该代理访问 agent_specs RouteProbe 的 cdn-cgi/trace 取 loc 与延迟（无代理显式 no_proxy，SOCKS 不测），
                              #   judge 纯函数判 pass / block / review；结果按 agent|profile 进程内缓存，启动预检传 max_age 300；
                              #   二期：出口记忆 route-history.json（usual_region 纯函数）、route_accept_region、route_proxy_apps / route_open_proxy_app（只开白名单路径）；
-                             #   三期：route_exit_type（完整出口 IP 只在内存 LAST_ADDR，查 ipinfo.io，classify_exit 纯函数）
+                             #   三期：route_exit_type（完整出口 IP 只在内存 LAST_ADDR，查 ipinfo.io，classify_exit 纯函数）；
+                             #   ask_service 不带密钥问服务方（read_anthropic_keyless / read_openai_compliance 纯函数），明确答复优先于地区名单
   runs.rs                    # 一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
                              # 精读对话标记 apply_reader_runs（task_kind=reader 且登记了会话 → 会话列表 reader / readerPdf，2026-11-06）；
                              # 关标签不删行；收件箱 action.run 可恢复；登录标签不建行；

@@ -403,6 +403,10 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 换地区「美国（常用英国）」。探测点加 Grok（x.ai trace，回地区）、Gemini（cloudcode-pa）、Cursor（api2.cursor.sh）——后两家 `reports_region=false`，连得上即通过。
 **出口类型**只在点「查出口类型」时查：最近一次完整出口 IP 只存内存（`LAST_ADDR`，不落盘），发 ipinfo.io（先直连、不通走出网代理），
 `classify_exit` 先认云厂商 / 托管为机房、再认运营商与动态反解名为住宅、都不像说看不出来，按 IP 缓存 24 小时。
+**服务方判定（同日，参考 xykt/IPQuality 的 ChatGPT 判据，只借思路不抄代码——AGPL 与 Apache-2.0 不兼容）**：`RouteProbe.service_check`，测通之后经同一代理不带任何密钥问服务方——
+Claude `POST api.anthropic.com/v1/messages` 回 401 authentication_error = 放行、403 forbidden「Request not allowed」= 地区被拒；
+OpenAI `GET api.openai.com/compliance/cookie_requirements` 带 unsupported_country = 被拒、有 cookie_consent_required = 放行。服务方明确答复以它为准（放行不再按名单拦），
+没答复（网络错、Cloudflare 拦脚本）才用 `AI_UNSUPPORTED_REGIONS` 兜底。不做：抓取第三方站点内嵌密钥查风险分、ip-api 免费版（禁商用）、时区不一致算风险（无证据）。
 **对话太长的慢**：`context-breakdown.ts::longContextHint` 过 30 万 token 在上下文圆环弹层提示新开对话（实测 54 万 token 首字 30–176 秒）。
 Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 

@@ -5,7 +5,7 @@
 //! 二期：出口记忆（配置目录 `route-history.json`，每家最近 20 次的地区 + IP 前缀，不记完整 IP、不记账号）——
 //! 和最近 7 天常用地区不一样就「待你判断」；本机已装的代理软件可一键打开（修复动作）。
 
-use crate::agent_specs::{agent_spec, RouteProbe};
+use crate::agent_specs::{agent_spec, RouteProbe, ServiceCheck};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -59,6 +59,8 @@ pub struct RouteCheckDto {
     pub usual_region_name: Option<String>,
     /// 这次出口地区和常用的不一样（界面给「记为常用出口」）
     pub region_changed: bool,
+    /// 服务方自己的答复：allowed / blocked / unknown；这家没有这项检查时为空
+    pub service_says: Option<ServiceSays>,
     /// unix 秒
     pub checked_at: i64,
 }
@@ -237,6 +239,73 @@ fn write_history(h: &RouteHistory) {
     }
 }
 
+/// 服务方对这个出口的答复（不带密钥问出来的）
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceSays {
+    Allowed,
+    Blocked,
+    Unknown,
+}
+
+/// Anthropic：不带密钥调接口，地区放行时卡在鉴权（401 authentication_error），地区被拒时直接 403 forbidden。
+/// 2026-11-06 实测：英国出口回 401「x-api-key header is required」，国内直连回 403「Request not allowed」
+pub fn read_anthropic_keyless(status: u16, body: &str) -> ServiceSays {
+    match status {
+        401 if body.contains("authentication_error") => ServiceSays::Allowed,
+        403 if body.contains("forbidden") || body.contains("Request not allowed") => ServiceSays::Blocked,
+        _ => ServiceSays::Unknown,
+    }
+}
+
+/// OpenAI：合规接口在被拒地区回 unsupported_country；正常地区回 cookie_consent_required 字段
+pub fn read_openai_compliance(status: u16, body: &str) -> ServiceSays {
+    if body.contains("unsupported_country") {
+        ServiceSays::Blocked
+    } else if status == 200 && body.contains("cookie_consent_required") {
+        ServiceSays::Allowed
+    } else {
+        ServiceSays::Unknown
+    }
+}
+
+fn service_label(check: ServiceCheck) -> &'static str {
+    match check {
+        ServiceCheck::AnthropicKeyless => "Claude",
+        ServiceCheck::OpenAiCompliance => "OpenAI",
+    }
+}
+
+/// 问服务方：与体检同一个代理，不带任何密钥 / Cookie；网络出错当「没答复」，不当被拒
+async fn ask_service(check: ServiceCheck, proxy: Option<&str>) -> ServiceSays {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(4))
+        .timeout(Duration::from_secs(6));
+    builder = match proxy {
+        Some(p) => match reqwest::Proxy::all(p) {
+            Ok(px) => builder.proxy(px),
+            Err(_) => return ServiceSays::Unknown,
+        },
+        None => builder.no_proxy(),
+    };
+    let Ok(client) = builder.build() else { return ServiceSays::Unknown };
+    let req = match check {
+        ServiceCheck::AnthropicKeyless => client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("content-type", "application/json")
+            .header("anthropic-version", "2023-06-01")
+            .body("{}"),
+        ServiceCheck::OpenAiCompliance => client.get("https://api.openai.com/compliance/cookie_requirements"),
+    };
+    let Ok(resp) = req.send().await else { return ServiceSays::Unknown };
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    match check {
+        ServiceCheck::AnthropicKeyless => read_anthropic_keyless(status, &body),
+        ServiceCheck::OpenAiCompliance => read_openai_compliance(status, &body),
+    }
+}
+
 pub struct JudgeInput<'a> {
     pub probe: &'a RouteProbe,
     pub source: ProxySource,
@@ -246,6 +315,8 @@ pub struct JudgeInput<'a> {
     pub outcome: Option<ProbeOutcome>,
     /// 出口记忆里的常用地区
     pub usual: Option<&'a str>,
+    /// 服务方的答复：明确放行 / 被拒时以它为准，没答复才看不支持地区名单
+    pub service: Option<ServiceSays>,
 }
 
 /// 延迟写成「1.0 秒」
@@ -277,6 +348,18 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
         Some(ProbeOutcome::Timeout) => (Verdict::Block, Some(Stage::Reach), unreachable("超时"), None, None),
         Some(ProbeOutcome::Failed(err)) => (Verdict::Block, Some(Stage::Reach), unreachable(err), None, None),
         // 这家本来就不告诉出口地区（Gemini、Cursor）：连得上就算通过
+        Some(ProbeOutcome::Ok { latency_ms, .. }) if input.service == Some(ServiceSays::Blocked) => {
+            let loc = match input.outcome.as_ref() {
+                Some(ProbeOutcome::Ok { loc, .. }) => loc.clone(),
+                _ => None,
+            };
+            let svc = input.probe.service_check.map(service_label).unwrap_or("服务方");
+            let reason = match &loc {
+                Some(l) => format!("{}，{svc} 不让这个地区用", region_name(l)),
+                None => format!("{svc} 不让这个地区用"),
+            };
+            (Verdict::Block, Some(Stage::Region), reason, loc, Some(*latency_ms))
+        }
         Some(ProbeOutcome::Ok { loc: None, latency_ms, .. }) if !input.probe.reports_region => {
             (Verdict::Pass, None, format!("连得上 · {}", secs(*latency_ms)), None, Some(*latency_ms))
         }
@@ -289,7 +372,8 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
         ),
         Some(ProbeOutcome::Ok { loc: Some(loc), latency_ms, .. }) => {
             let name = region_name(loc);
-            let (verdict, stage, reason) = if input.probe.unsupported_regions.contains(&loc.as_str()) {
+            let listed = input.probe.unsupported_regions.contains(&loc.as_str());
+            let (verdict, stage, reason) = if listed && input.service != Some(ServiceSays::Allowed) {
                 (Verdict::Block, Some(Stage::Region), format!("{name}，不支持这个地区"))
             } else if let Some(usual) = input.usual.filter(|u| *u != loc.as_str()) {
                 (Verdict::Review, None, format!("{name}（常用{}）", region_name(usual)))
@@ -416,6 +500,10 @@ pub async fn route_check(
     } else {
         Some(probe(probe_spec.url, proxy.as_deref(), probe_spec.reports_region).await)
     };
+    let service = match (&outcome, probe_spec.service_check) {
+        (Some(ProbeOutcome::Ok { .. }), Some(check)) => Some(ask_service(check, proxy.as_deref()).await),
+        _ => None,
+    };
     let now = now_secs();
     let usual = {
         let _g = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
@@ -442,6 +530,7 @@ pub async fn route_check(
         proxy_down,
         outcome,
         usual: usual.as_deref(),
+        service,
     });
     let region_changed = matches!((&exit_region, &usual), (Some(e), Some(u)) if e != u)
         && verdict == Verdict::Review;
@@ -470,6 +559,7 @@ pub async fn route_check(
         usual_region_name: usual.as_deref().map(region_name),
         usual_region: usual,
         region_changed,
+        service_says: service,
         checked_at: now,
     };
     if let Ok(mut c) = CACHE.lock() {
@@ -671,6 +761,7 @@ mod tests {
         host: "claude.ai",
         reports_region: true,
         unsupported_regions: &["CN", "HK"],
+        service_check: Some(ServiceCheck::AnthropicKeyless),
     };
 
     fn input(outcome: Option<ProbeOutcome>) -> JudgeInput<'static> {
@@ -681,6 +772,7 @@ mod tests {
             proxy_down: None,
             outcome,
             usual: None,
+            service: None,
         }
     }
 
@@ -747,7 +839,7 @@ mod tests {
         assert_eq!(reason, "英国 · 1.0 秒");
         let (v, ..) = judge(&input(Some(ProbeOutcome::Ok { loc: None, ip: None, addr: None, latency_ms: 900 })));
         assert_eq!(v, Verdict::Review);
-        const NO_REGION: RouteProbe = RouteProbe { url: "https://api2.cursor.sh/", host: "api2.cursor.sh", reports_region: false, unsupported_regions: &[] };
+        const NO_REGION: RouteProbe = RouteProbe { url: "https://api2.cursor.sh/", host: "api2.cursor.sh", reports_region: false, unsupported_regions: &[], service_check: None };
         let mut cursor = input(Some(ProbeOutcome::Ok { loc: None, ip: None, addr: None, latency_ms: 1200 }));
         cursor.probe = &NO_REGION;
         assert_eq!(judge(&cursor).0, Verdict::Pass, "本来就不回地区的，连得上就算通过");
@@ -784,6 +876,36 @@ mod tests {
     }
 
     #[test]
+    fn reads_first_party_answers_seen_in_practice() {
+        // 2026-11-06 实测原文
+        let gb = r#"{"type":"error","error":{"type":"authentication_error","message":"x-api-key header is required"}}"#;
+        let cn = r#"{"error":{"type":"forbidden","message":"Request not allowed"}}"#;
+        assert_eq!(read_anthropic_keyless(401, gb), ServiceSays::Allowed);
+        assert_eq!(read_anthropic_keyless(403, cn), ServiceSays::Blocked);
+        assert_eq!(read_anthropic_keyless(403, "<html>Just a moment...</html>"), ServiceSays::Unknown, "Cloudflare 拦脚本不算地区被拒");
+        assert_eq!(read_anthropic_keyless(500, ""), ServiceSays::Unknown);
+        assert_eq!(read_openai_compliance(200, "{\n  \"cookie_consent_required\": true\n}"), ServiceSays::Allowed);
+        assert_eq!(read_openai_compliance(403, r#"{"error":{"code":"unsupported_country"}}"#), ServiceSays::Blocked);
+        assert_eq!(read_openai_compliance(502, ""), ServiceSays::Unknown);
+    }
+
+    #[test]
+    fn service_answer_beats_the_static_region_list() {
+        let ok_hk = || Some(ProbeOutcome::Ok { loc: Some("HK".into()), ip: None, addr: None, latency_ms: 300 });
+        let mut i = input(ok_hk());
+        i.service = Some(ServiceSays::Allowed);
+        assert_eq!(judge(&i).0, Verdict::Pass, "服务方放行就不按名单拦");
+        let mut gb = input(Some(ProbeOutcome::Ok { loc: Some("GB".into()), ip: None, addr: None, latency_ms: 300 }));
+        gb.service = Some(ServiceSays::Blocked);
+        let (v, stage, reason, ..) = judge(&gb);
+        assert_eq!((v, stage), (Verdict::Block, Some(Stage::Region)));
+        assert_eq!(reason, "英国，Claude 不让这个地区用");
+        let mut unknown = input(ok_hk());
+        unknown.service = Some(ServiceSays::Unknown);
+        assert_eq!(judge(&unknown).0, Verdict::Block, "服务方没答复时名单兜底");
+    }
+
+    #[test]
     fn classifies_exit_networks_seen_in_practice() {
         // 2026-11-06 实测过的几种出口
         assert_eq!(classify_exit("AS2856 British Telecommunications Limited", "").1, "住宅");
@@ -808,6 +930,10 @@ mod tests {
         for url in ["https://claude.ai/cdn-cgi/trace", "https://chatgpt.com/cdn-cgi/trace"] {
             let out = tauri::async_runtime::block_on(probe(url, proxy.as_deref(), true));
             println!("{url} via {proxy:?} → {out:?}");
+        }
+        for check in [ServiceCheck::AnthropicKeyless, ServiceCheck::OpenAiCompliance] {
+            println!("{check:?} 经 {proxy:?} → {:?}", tauri::async_runtime::block_on(ask_service(check, proxy.as_deref())));
+            println!("{check:?} 直连 → {:?}", tauri::async_runtime::block_on(ask_service(check, None)));
         }
         println!("本机代理软件 → {:?}", route_proxy_apps());
         let dead = tauri::async_runtime::block_on(probe(PROBE.url, Some("http://127.0.0.1:1"), true));

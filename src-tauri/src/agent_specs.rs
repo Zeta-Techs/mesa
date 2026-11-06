@@ -179,8 +179,19 @@ pub struct RouteProbe {
     pub host: &'static str,
     /// 这个地址会不会回出口地区（Cloudflare trace 会；Gemini、Cursor 的接口不会，只能测通不通）
     pub reports_region: bool,
-    /// 这家服务已知不支持的地区（ISO 3166 两位码）；不在名单里不等于确认支持
+    /// 这家服务已知不支持的地区（ISO 3166 两位码）；不在名单里不等于确认支持。
+    /// 有 service_check 且服务方给出明确答复时以服务方为准，名单只做兜底
     pub unsupported_regions: &'static [&'static str],
+    /// 让服务方自己说这个出口能不能用（不带任何密钥，2026-11-06 实测）
+    pub service_check: Option<ServiceCheck>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceCheck {
+    /// 不带密钥 POST api.anthropic.com/v1/messages：地区放行回 401（缺密钥），地区被拒回 403「Request not allowed」
+    AnthropicKeyless,
+    /// GET api.openai.com/compliance/cookie_requirements：地区被拒时正文带 unsupported_country（IPQuality 同一判据）
+    OpenAiCompliance,
 }
 
 /// Anthropic 与 OpenAI 都不对这些地区提供服务（两家官方支持地区页，2026-11 核对）
@@ -462,6 +473,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
                 host: "claude.ai",
                 reports_region: true,
                 unsupported_regions: AI_UNSUPPORTED_REGIONS,
+                service_check: Some(ServiceCheck::AnthropicKeyless),
             }),
         }),
         model_switch: ModelSwitch::Direct("/model {model}"),
@@ -533,6 +545,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
                 host: "chatgpt.com",
                 reports_region: true,
                 unsupported_regions: AI_UNSUPPORTED_REGIONS,
+                service_check: Some(ServiceCheck::OpenAiCompliance),
             }),
         }),
         model_switch: ModelSwitch::Picker("/model"),
@@ -606,6 +619,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
                 host: "cloudcode-pa.googleapis.com",
                 reports_region: false,
                 unsupported_regions: &[],
+                service_check: None,
             }),
         }),
         model_switch: ModelSwitch::Direct("/model set {model}"),
@@ -950,6 +964,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
                 host: "api2.cursor.sh",
                 reports_region: false,
                 unsupported_regions: &[],
+                service_check: None,
             }),
         }),
         model_switch: ModelSwitch::None,
@@ -1030,6 +1045,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
                 host: "x.ai",
                 reports_region: true,
                 unsupported_regions: AI_UNSUPPORTED_REGIONS,
+                service_check: None,
             }),
         }),
         // Grok 1.0.x supports /model and /effort in the running TUI.

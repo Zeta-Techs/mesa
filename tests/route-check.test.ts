@@ -11,6 +11,7 @@ import {
   routeInboxFields,
   runningOfficialTargets,
   exitTypeText,
+  serviceConfirmText,
   type RouteCheck,
 } from "../src/route-check.ts";
 
@@ -28,6 +29,7 @@ const base: RouteCheck = {
   usualRegion: null,
   usualRegionName: null,
   regionChanged: false,
+  serviceSays: null,
   checkedAt: 0,
 };
 
@@ -104,4 +106,11 @@ test("修复只在代理没在运行时给：设置里的代理优先换成在�
   const msg = preflightFixMessage({ ...base, verdict: "block", reason: "代理 127.0.0.1:7888 没开" }, "Claude Code", sw!);
   assert.match(msg, /7897 在运行/);
   assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited" }), "住宅 · AS2856 British Telecommunications Limited");
+});
+
+test("服务方确认可用才标「官方确认」；没这项检查或没答复不标", () => {
+  assert.equal(serviceConfirmText({ ...base, serviceSays: "allowed" }), "官方确认");
+  assert.equal(serviceConfirmText({ ...base, serviceSays: "unknown" }), null);
+  assert.equal(serviceConfirmText({ ...base, serviceSays: null }), null);
+  assert.equal(serviceConfirmText({ ...base, verdict: "block", serviceSays: "blocked" }), null);
 });

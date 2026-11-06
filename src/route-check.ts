@@ -23,6 +23,8 @@ export interface RouteCheck {
   usualRegionName: string | null;
   /** 这次和常用地区不一样（给「记为常用出口」） */
   regionChanged: boolean;
+  /** 服务方自己的答复（不带密钥问 Claude / OpenAI 这个出口能不能用）；这家没有这项检查时为 null */
+  serviceSays: "allowed" | "blocked" | "unknown" | null;
   /** unix 秒 */
   checkedAt: number;
 }
@@ -93,6 +95,11 @@ export function routeInboxFields(
     return { key, text: `${agentName} 换了出口：${check.reason}`, warn: true };
   }
   return null;
+}
+
+/** 服务方确认可用时在结果后面补一个小标记；其余情况不显示（被拒已经写在原因里） */
+export function serviceConfirmText(check: Pick<RouteCheck, "serviceSays" | "verdict">): string | null {
+  return check.serviceSays === "allowed" && check.verdict !== "block" ? "官方确认" : null;
 }
 
 export interface ExitType {

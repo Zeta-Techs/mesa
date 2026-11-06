@@ -10,6 +10,7 @@ import {
   routeCheckTargets,
   exitTypeText,
   routeFixLabel,
+  serviceConfirmText,
   type ExitType,
   type RouteCheck,
   type RouteFix,
@@ -166,6 +167,14 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
               <span className={`w-16 shrink-0 ${VERDICT_CLASS[r.verdict]}`}>● {VERDICT_LABEL[r.verdict]}</span>
               <span className="min-w-0 flex-1">
                 <span className={r.verdict === "pass" ? "text-l3" : "text-l2"}>{r.reason}</span>
+                {serviceConfirmText(r) && (
+                  <span
+                    className="ml-1.5 text-ok-text"
+                    title="不带任何密钥问了这家服务本身，它回复这个出口所在的地区可以用"
+                  >
+                    {serviceConfirmText(r)}
+                  </span>
+                )}
                 {r.exitRegion &&
                   (exitTypes[t.agent] === undefined ? (
                     <button
