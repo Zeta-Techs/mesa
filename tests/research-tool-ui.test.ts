@@ -83,7 +83,9 @@ test("英文综述设定屏只填全局设定，不问稿件载体或 Blender", 
     assert.match(ui.host.textContent ?? "", /目标期刊（可选）/);
     // 综述深度只能二选一（检索步按原文认「严格检索档」），不给「其他…」
     const others = [...ui.host.querySelectorAll("button")].filter((b: { textContent: string }) => b.textContent === "其他…");
-    assert.equal(others.length, 4);
+    // 文献数据抽取表可点「其他…」自己写列（2026-11-07）
+    assert.equal(others.length, 5);
+    assert.ok([...ui.host.querySelectorAll("button")].some((b: { textContent: string }) => b.textContent.startsWith("让 AI 提议列")));
     assert.doesNotMatch(ui.host.textContent ?? "", /读者预期|系统综述/);
   } finally { await ui.close(); }
 });

@@ -231,10 +231,10 @@ const LIT_NOTES_FANOUT: StepFanOutDto = {
   label: "title",
   per: 8,
   max: 4,
-  own: "notes/<序号>-<短标题>.md（序号照上面给的写；已有同篇笔记的按 lit-notes 技能的配对办法在原文件上续写）。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
+  own: "notes/<序号>-<短标题>.md（序号照上面给的写；已有同篇笔记的按 lit-notes 技能的配对办法在原文件上续写）；要填抽取表的写本路的 notes/extraction-<本路号>.md（表头同 notes/extraction.md）。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
   merge:
     "按 lit-notes 技能收尾：先跑技能目录 scripts/lit_records.py write 出清单，再用它写 references.bib；按各路写好的笔记把 notes/index.json 与 papers/included.json 全部 id 对齐" +
-    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。",
+    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。有各路 notes/extraction-<路号>.md 的合进 notes/extraction.md（一张表），合完删掉各路的。",
 };
 
 /** 综述精读第一轮的分路（2026-11-05 用户拍板改：综述精读 + 研究论文全部速读，design-review-loop.md §7.3）：
@@ -243,7 +243,7 @@ const REVIEW_NOTES_FANOUT: StepFanOutDto = {
   ...LIT_NOTES_FANOUT,
   own:
     "综述写 notes/<序号>-<短标题>.md（按 lit-notes 技能「综述卡」，序号照上面给的写；已有同篇笔记的按技能的配对办法在原文件上续写）；" +
-    "研究论文不写单篇笔记，只在 notes/skim-<本路号>.md 写速读行（表头照技能「速读表」）。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
+    "研究论文不写单篇笔记，只在 notes/skim-<本路号>.md 写速读行（表头照技能「速读表」）；要填抽取表的写本路的 notes/extraction-<本路号>.md。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
   merge:
     LIT_NOTES_FANOUT.merge +
     "把各路 notes/skim-<路号>.md 合进 notes/skim.md（一张表、按主题排），合完删掉各路的。研究论文在 index 记 reviewStatus=pending、skimmed: true。再跑 lit_records.py angles-facts，按本步简报写 notes/angles.md。",
@@ -286,6 +286,11 @@ const REVIEW_DRAFT_FANOUT: StepFanOutDto = {
     "图表编号与交叉引用连续；写 section-status.md；再按任务书渲染与自检。合完删掉 manuscript/sections/。",
 };
 
+/** 文献数据抽取表（2026-11-07 科研流程补全 §3）：定量领域的性能对照表从这张表出，每格带出处 */
+const EXTRACTION_CLAUSE =
+  "文献数据抽取表：项目规则「文献数据抽取表」写了列的，读每篇时往 notes/extraction.md 填一行或几行（一个样品 / 条件一行），列照规则，末两列固定「来源 [@键]」「页码 / 图表」，查不到写「—」，不估，综述里转引的数注明「转引」；" +
+  "写「让 AI 提议列」时先按课题提议 6–10 列（含单位与测试条件），写一条人工请求问用户（属「范围」），答了再填；写「不需要」或没有这一项就不建。\n";
+
 /** 精读简报的共用写法。order = 分批时先写什么后写什么：论文 / 学位论文先精读核心篇再按摘要写其余；
  *  综述模板第一轮只写综述卡与速读表（研究论文不写单篇笔记），不能沿用「核心 / 非核心」的说法（2026-11-05） */
 function litNotesWrite(order: string): string {
@@ -301,7 +306,8 @@ function litNotesWrite(order: string): string {
   "有全文的笔记在可引用点末列可引用图，细到子图、一行一块（Fig. 2c｜这一块画了什么｜可拼或仅引用；整张就是一幅示意图时才按整张登记）。图号和子图内容以 PDF 文本层的题注为准，不要求把页面渲成图片再看。仅摘要写无可引用图，不臆造图号。" +
   "pending 只留给待确认、或摘要和题录都不足以写笔记的篇，不是「先写一批再汇报」的许可。" +
   "included.json 里 decision=excluded 的篇（人在评审里排除的）不建索引行、不写笔记。" +
-  "notes/excerpts.md 是人在 PDF 里摘的选段：精读到对应那篇时把相关选段并进笔记，摘录文件原样保留。\n"
+  "notes/excerpts.md 是人在 PDF 里摘的选段：精读到对应那篇时把相关选段并进笔记，摘录文件原样保留。\n" +
+  EXTRACTION_CLAUSE
   );
 }
 
@@ -557,7 +563,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "3. **覆盖检查**：草图定下后写「## 覆盖检查」表（| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |，两列填篇数），判断写「够」或「薄」；只速读过的篇算仅线索，要写进正文就得精读，薄的在建议里写「补检：要补的方向」或「补读：[@键] [@键]」（已纳入、只速读过的，从速读表里挑撑这一节的）。第⑥问把薄节列成选项；人选不补的，判断改「薄·不补：理由」。" +
       "人选要补的，告诉他在流程线点「退回上一步补料…」（Mesa 按这张表预填，这一版不用先保存）；本轮停在这里，等补料回来——上一步补完、保存进项目后，人点「继续」时 Mesa 先把补来的并进本工作区，再接着往下；\n" +
       "4. 没有未处理的薄节后构造二级逻辑：以第④问选定的骨架为准，没选时以最能回答核心问题、解释证据分歧且适合读者的范式做骨架，核心空白落到具体章节，其余说明未覆盖理由；范式冲突时选更符合核心问题与证据结构的，落选范式的局部优点吸收为节内参考；必要背景/方法/综合章说明其对回答问题的作用，不强迫每章挂 gap；空白无处安放时允许新增章节并在该节标注「空白驱动新增」；\n" +
-      "5. 产出 outline.md：章节结构（引言 / 背景 / 主题各节 / 讨论 / 结论），每节给必要要点、拟引用 bib 键及章节作用（适用时回应空白编号）；拟引用必须分「可写正文 / 仅线索」，初稿按这个等级写。有小节则每小节、否则每章写用图计划：一张拼图对应一个论点，写成「拼 图N（论点一句话）= (a) [@键] Fig.2c + (b) [@键] Fig.3a + …」，至少 2 块子图、至少来自两篇，块数按版面可读性定（9 块排 3×3，一页放不下按子论点拆两张），不把整张多联图并排；凑不成则仅引用一篇的图号；禁止写「初稿待绘制」。需要横向比较几篇的节另写一行表计划「表 N（比什么）= 列：…；行：[@键]…」，数值只取笔记里有出处的。源图只来自笔记可引用图；G 编号只出现在「框架推演」，不要让初稿把 G1 写进正文。篇幅数字只是读者预期，旁注「不是初稿必须凑到的词数」。末尾固定附「## 框架推演」段（空白清单 / 范式卡片 / 融合理由三块）；\n" +
+      "5. 产出 outline.md：章节结构（引言 / 背景 / 主题各节 / 讨论 / 结论），每节给必要要点、拟引用 bib 键及章节作用（适用时回应空白编号）；拟引用必须分「可写正文 / 仅线索」，初稿按这个等级写。有小节则每小节、否则每章写用图计划：一张拼图对应一个论点，写成「拼 图N（论点一句话）= (a) [@键] Fig.2c + (b) [@键] Fig.3a + …」，至少 2 块子图、至少来自两篇，块数按版面可读性定（9 块排 3×3，一页放不下按子论点拆两张），不把整张多联图并排；凑不成则仅引用一篇的图号；禁止写「初稿待绘制」。需要横向比较几篇的节另写一行表计划「表 N（比什么）= 列：…；行：[@键]…」，数值只取笔记里有出处的（有 notes/extraction.md 的先从它取）。源图只来自笔记可引用图；G 编号只出现在「框架推演」，不要让初稿把 G1 写进正文。篇幅数字只是读者预期，旁注「不是初稿必须凑到的词数」。末尾固定附「## 框架推演」段（空白清单 / 范式卡片 / 融合理由三块）；\n" +
       "6. 在 outline.md 附证据综合表：研究对象/设计/结果/局限/支持强度/分歧/原文位置；核心论断逐项做支持性核验，不数赞成论文投票。摘要-only 只可支持摘要实际报告的信息；核心全文未得则收窄结论或阻塞。不得把研究作者的 gap 宣传当已证实事实；记录最邻近反例与检索边界。\n" +
       "7. 只引用 references.bib 中存在的键，不为大纲新造引用。\n" +
       "8. 另交 manuscript/sections.json（正文各节，不含引言与结论，顺序同大纲：[{\"id\":\"S1\",\"title\":\"…\"}]）与 manuscript/style-sheet.md 初版（核心术语与缩写的写法、各在哪一节首次定义、符号与单位）——初稿顺序写或分路写都靠它们对齐。\n" +
@@ -570,7 +576,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "machine:records:manuscript/sections.json::id,title",
     ],
     inputs: ["notes/", "notes/handoff.md", "papers/included.md", "papers/included.json", "references.bib"],
-    optionalInputs: ["notes/angles.md"],
+    optionalInputs: ["notes/angles.md", "notes/extraction.md"],
     skills: ["review-framework"],
     run: [],
     humanTasks: [],
@@ -588,7 +594,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       `写作范围由你按笔记判断：${DRAFT_EVIDENCE_DEFAULT}。人在审阅初稿时拍板，开工前不再问范围。\n` +
       "1. 按 outline.md 用规范学术英文撰写综述初稿，产出 manuscript/draft.md。**词数不是完成标准**（项目/大纲里的篇幅数字是读者预期，禁止改写成「以 N 词为目标」）。某节薄只回 notes/ 对应笔记的方法/结果/可引用点；笔记有来源 PDF 且非仅摘要时打开该 PDF 核对原文位置再补一句可定位证据；没有更多证据就保持短并标 [待核实]。禁止同义复述、空转场、防御性套话为凑字数。中心论点引言一次、结论一次。标题不要手写序号（Quarto 会再编号）；空白编号 G1 不准进稿件。全局设定的「综述深度」为严格检索档时，Methods 须写检索策略（库、日期、式、筛选流程），并如实声明方法类型、单人筛选及实际复核范围，不把严格检索当作系统综述质量证明；\n" +
       "2. 引用一律用 [@bib键] 形式，且只能引用 references.bib 中已存在的键——严禁编造文献、严禁新造键。大纲「仅线索」/摘要级来源：定量句必须 [待核实] 或改成「摘要报告了」；不得把方法段的「32 篇全文」当许可，把其余文献写成已确立。\n" +
-      "3. 对照表用 markdown 真表，有表计划的按它出表，每格回笔记或原文核对，查不到写「—」，不估。先读 outline.md 每一条用图计划，再按 {skill:review-figures} 出图，写正文之前做完。计划写「拼」：按计划逐块从全文 PDF 裁子图（--panel 切不准就 --grid 看坐标再 --box 裁，原图子图字母用 --erase 抹掉，裁完打开看），至少两块裁到才拼成 figures/figN.png，新编号 (a)(b)(c)，一行最多 4 块，第 5 块起用 --rows 分行（9 块排 3×3）；拼板脚本报读不清（退出码 3）就一行少放几块或按子论点拆成两张。裁每块时用 --label 写它在原文里的编号（如 Fig. 2(b)），拼完跑 figure_sources.py 生成 figures/sources.md：每块的原文、DOI、原图编号与 PDF 页码，供作者投稿前换出版社原图、申请转载许可。图注先写论点，再逐块写来源（(a) Adapted from Fig. 2c of [@键]），正文插入该图。某块裁不准就去掉，剩不到两块、题注对不上或会裁成整页：不猜，正文改成「见 [@键] Fig.n」，并在 figures/README.md 写原因。计划写「仅引用」的不插图。禁止「待绘制」「Figure N（待绘制）」和空的图片占位。撑主论点的图没有数据就改口。不臆造图号、不把整页当图、不非等比拉伸。Agent 读图不能代替人看 PNG。\n" +
+      "3. 对照表用 markdown 真表，有表计划的按它出表，有 notes/extraction.md 的先从它取数，每格回笔记或原文核对，查不到写「—」，不估。先读 outline.md 每一条用图计划，再按 {skill:review-figures} 出图，写正文之前做完。计划写「拼」：按计划逐块从全文 PDF 裁子图（--panel 切不准就 --grid 看坐标再 --box 裁，原图子图字母用 --erase 抹掉，裁完打开看），至少两块裁到才拼成 figures/figN.png，新编号 (a)(b)(c)，一行最多 4 块，第 5 块起用 --rows 分行（9 块排 3×3）；拼板脚本报读不清（退出码 3）就一行少放几块或按子论点拆成两张。裁每块时用 --label 写它在原文里的编号（如 Fig. 2(b)），拼完跑 figure_sources.py 生成 figures/sources.md：每块的原文、DOI、原图编号与 PDF 页码，供作者投稿前换出版社原图、申请转载许可。图注先写论点，再逐块写来源（(a) Adapted from Fig. 2c of [@键]），正文插入该图。某块裁不准就去掉，剩不到两块、题注对不上或会裁成整页：不猜，正文改成「见 [@键] Fig.n」，并在 figures/README.md 写原因。计划写「仅引用」的不插图。禁止「待绘制」「Figure N（待绘制）」和空的图片占位。撑主论点的图没有数据就改口。不臆造图号、不把整页当图、不非等比拉伸。Agent 读图不能代替人看 PNG。\n" +
       "4. 没有文献支撑的论断不得下。摘要只放全文撑得住的主张，禁止摘要里出现 [待核实] 或未测的近端动作（operando/软包等放 outlook 并标明是建议）。范围点名的主题后文必须展开，否则从范围删除。结论只写本综述论证了什么。\n" +
       "5. 用本步骤 run 脚本先渲 docx、再渲 PDF（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到定稿步再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "PDF 若 lualatex 无日志空转，按技能停掉改 xelatex，不要空等。产物写入本工作区 output/（评审合并后进项目根）。\n" +
       "6. 交稿前自检：打开 output/draft.pdf 第一页，必须能读出英文标题和段落；乱码、空心方框、目录页码变成字母 = 渲染失败，质量状态不得高于已生成待审，docx 仍交人审。引用键先对 references.bib，笔误键改正文不删句；材料名里的 @ 写成 \\@。正文数字若与笔记不符，按原文改稿并回写该笔记，记入 section-status.md。图裁不到就改成「见 [@键] Fig.n」，禁止用「待绘制」充产出。正文不得留 G1/任务编号、内部清单号。作者「待补」写进验收摘要等人填，不假装齐套。\n" +
@@ -597,7 +603,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "完成标准：manuscript/draft.md 覆盖大纲全部章节；引用键全部可在 references.bib 中解析；扩写能回溯到笔记或原文；不以词数判定完成。用图计划里每一条「拼」要么有 figures/figN.png 且正文插了这张图，要么已改成「见 [@键] Fig.n」并在 figures/README.md 写明原因；正文不得出现「待绘制」。PDF 首页可读或已如实报渲染失败；人尚未审阅初稿前不得进入润色。\n" +
       QUALITY_STATUS,
     inputs: ["outline.md", "notes/", "notes/handoff.md", "references.bib"],
-    optionalInputs: ["papers/*.pdf", "manuscript/style-sheet.md", "manuscript/sections.json"],
+    optionalInputs: ["papers/*.pdf", "manuscript/style-sheet.md", "manuscript/sections.json", "notes/extraction.md"],
     skills: ["review-writing", "review-figures", "quarto-render"],
     expectedArtifacts: ["manuscript/draft.md", "manuscript/section-status.md", "manuscript/style-sheet.md", "manuscript/typeface.md", "manuscript/reference.docx", "figures/README.md", "figures/sources.md", "output/draft.pdf", "output/draft.docx"],
     acceptanceCriteria: [
@@ -2021,6 +2027,7 @@ const BUILTIN_PIPELINE_TEMPLATES: PipelineTemplateDef[] = [
       "读者与文风：（偏同行专家 / 偏入门科普）",
       "目标篇幅：（按期刊要求 / 约 4000 词 / 6000-8000 词 / 10000 词以上）",
       "综述深度：（标准档 / 严格检索档）",
+      "文献数据抽取表：（让 AI 提议列 / 不需要）",
     ],
   },
   {
@@ -2040,6 +2047,7 @@ const BUILTIN_PIPELINE_TEMPLATES: PipelineTemplateDef[] = [
       "目标期刊：（冲高一档 / 求稳妥投；决定字数与格式）",
       "语种：（中文 / 英文）",
       "研究形态：（计算实验 / 其他需自改实验步）",
+      "文献数据抽取表：（让 AI 提议列 / 不需要）",
     ],
   },
   {
@@ -2074,6 +2082,7 @@ const BUILTIN_PIPELINE_TEMPLATES: PipelineTemplateDef[] = [
       "学位类型与学校模板：（如 硕士 / 校内 LaTeX 模板）",
       "学术规范：（学校查重要求、准确归属与引用；不以降重比例代替原创性）",
       "答辩时间：（倒推各章节的截止）",
+      "文献数据抽取表：（让 AI 提议列 / 不需要）",
     ],
   },
   {

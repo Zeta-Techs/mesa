@@ -44,6 +44,12 @@ export const SETTING_NOTES: Record<string, { options: Record<string, string>; cl
     },
     closed: true,
   },
+  文献数据抽取表: {
+    options: {
+      "让 AI 提议列": "精读开工时 AI 按课题提议 6–10 列（含单位与测试条件）问你一次，你定了才开始填。适合要做性能对照表的定量领域",
+      不需要: "不建抽取表，对照表照旧回笔记里找数",
+    },
+  },
 };
 
 /** 选了这个选项时追问的一项（可不填）；填了并进同一行答案，如「投期刊（目标期刊：Chemical Reviews）」 */

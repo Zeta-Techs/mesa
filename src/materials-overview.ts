@@ -13,12 +13,15 @@ import {
   outlineProgressParts,
   searchProgress,
   searchProgressLine,
+  skimRowCount,
 } from "./notes-progress.ts";
 
 /** 资料全貌要读的文件（项目根相对路径；按步骤类型取，读不到的为 null） */
 export interface AssetFiles {
   included?: string | null;
   index?: string | null;
+  /** 文献数据抽取表 notes/extraction.md（2026-11-07） */
+  extraction?: string | null;
   outline?: string | null;
   /** 实验设计的 experiments/matrix.json、实验执行的 results/matrix.json */
   matrix?: string | null;
@@ -39,6 +42,7 @@ export function assetFilesFor(kind: StepKind, expectedArtifacts: readonly string
       return [
         { key: "included", path: "papers/included.json", ledger: true },
         { key: "index", path: "notes/index.json", ledger: true },
+        { key: "extraction", path: "notes/extraction.md" },
       ];
     case "outline":
       return [{ key: "outline", path: "outline.md" }];
@@ -103,7 +107,9 @@ export function assetCounts(kind: StepKind, files: AssetFiles): string | null {
   }
   if (kind === "notes" && files.index) {
     const p = notesProgress(files.index, files.included ? excludedIncludedIds(files.included) : new Set());
-    return p ? notesProgressLine(p) : null;
+    const rows = files.extraction ? skimRowCount(files.extraction) : null;
+    const parts = [p ? notesProgressLine(p) : null, rows ? `抽取表 ${rows} 行` : null].filter(Boolean);
+    return parts.length ? parts.join(" · ") : null;
   }
   if (kind === "outline" && files.outline) {
     const p = outlineProgress(files.outline);

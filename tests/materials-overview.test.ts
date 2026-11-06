@@ -15,6 +15,8 @@ test("资料全貌：按技能槽认资料，机械数现状", () => {
     { id: "c", reviewStatus: "reviewed" },
   ]);
   assert.equal(assetCounts("notes", { included, index }), "已写笔记 1 / 1 篇 · 全文 1 · 只速读 1");
+  const extraction = "| 催化剂 | η10 (mV) | 来源 | 页码 |\n|---|---|---|---|\n| Pt/C | 30 | [@a] | p3 |\n| MoS2 | 180 | [@b] | Fig.2 |";
+  assert.equal(assetCounts("notes", { included, index, extraction }), "已写笔记 1 / 1 篇 · 全文 1 · 只速读 1 · 抽取表 2 行");
   assert.equal(assetCounts("outline", { outline: "# 大纲\n" }), "有大纲");
   assert.equal(assetCounts("search", { included: "坏的" }), null);
   assert.equal(assetCounts("other", {}), null);

@@ -485,6 +485,9 @@
 - **① 已落地**：`pipeline-presets.ts DRAFT_ORDER`（三套初稿 SECTION_STATUS 前一句；初稿都交 `manuscript/style-sheet.md`）；综述大纲第 8 条另交 `manuscript/sections.json`
   （`machine:records` 验 id、title）与写作规范初版；综述初稿 `fanOut: REVIEW_DRAFT_FANOUT`（items = sections.json，每路 2 节、最多 4 路，各路写 `manuscript/sections/`，收尾统稿并删掉分路文件）。
   论文 / 学位论文初稿不声明分路（IMRaD 各节相互依赖；学位论文各章在前面几步已写）。已导出示例课题。
+- **③ 已落地**：三套模板全局设定加「文献数据抽取表：（让 AI 提议列 / 不需要）」（`setting-choices.ts` 有说明卡片、可「其他…」自写列）；
+  `pipeline-presets.ts EXTRACTION_CLAUSE` 接在 `litNotesWrite` 末尾（三套精读都带）；精读分路各写 `notes/extraction-<路号>.md`、收尾合并；综述大纲表计划与初稿对照表先从抽取表取数；
+  资料全貌精读一行「抽取表 N 行」（`materials-overview.ts`，按表格行数）。抽取表不进 expectedArtifacts（选「不需要」时不建）。
 - **② 已落地**：`step-loop.ts searchRefreshHint`（聚焦步骤是 final 类且没保存、它之前的 search 类步骤已完成且保存超 14 天）/ `searchRefreshDraft`；
   TaskCardsSection「AI 干活」行（含还没开工的步骤）给「检索已是 N 天前 · 更新检索…」，打开同一个补料单（`initial` 预填、`fromPending` 说明先跟进完再开始定稿）。
 
