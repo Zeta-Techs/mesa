@@ -3647,6 +3647,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                               update({
                                 input: priceLabel(preview.base!.input),
                                 output: priceLabel(preview.base!.output),
+                                cacheRead: priceLabel(preview.base!.cacheRead),
+                                cacheWrite: priceLabel(preview.base!.cacheWrite),
                               })
                             }
                           >

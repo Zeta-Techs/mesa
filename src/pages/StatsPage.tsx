@@ -1325,7 +1325,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     <PageFrame width="wide">
       <PageHeader
         title="用量"
-        meta="只计经 Mesa 记下归属的会话。费用按公开价估算，≥ 含未计价，~ 无价格。"
+        meta="只计经 Mesa 记下归属的会话。费用按官方价估算，≥ 含未计价，~ 无价格。"
       />
       <PageToolbar>
         <SegTabs variant="boxed" items={RANGES} value={range} onChange={setRange} />
@@ -1993,7 +1993,13 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
                   {fmtCost(stats.cards.costUsd, currency, rate, stats.cards.costPartial)}
                 </span>
-                <span className="text-sm text-l3">按公开价估算</span>
+                {/* 2026-11-07 用户拍板：只按官方价估算，不做中转倍率；口径写明，免得当成实际扣费 */}
+                <span
+                  className="text-sm text-l3"
+                  title="按各厂商官方价（含缓存读写价）估算；经中转站的实际扣费以中转站为准，单次超长上下文的加价未计"
+                >
+                  按官方价估算
+                </span>
               </div>
               <dl className="mt-3 space-y-1 text-sm">
                 {badge && (
@@ -2013,7 +2019,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               </dl>
               {/* 脚注贴卡底：两张卡明细行数不一样，脚注对齐成一条线 */}
               <p className="mt-auto pt-3 text-xs text-l4">
-                官方订阅与 Mesa 内部 AI 的 tokens 统计在内，但不算进费用；≥ 表示含未计价模型。
+                官方订阅与 Mesa 内部 AI 的 tokens 统计在内，但不算进费用；≥ 表示含未计价模型。走中转的实际扣费以中转站为准。
               </p>
             </section>
             <section className="ccode-well ccode-card flex flex-col p-4" aria-label="tokens">

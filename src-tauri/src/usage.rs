@@ -30,7 +30,7 @@ const LIST_CAP: usize = 20;
 // 只清这三家能从会话文件重抽的行（有 seen 标记）和它们的 seen 标记，其余 agent 与重抽不回来的行不动。
 // v10（2026-10-31）：Claude Code 同一次回复拆成几行、每行带整份 usage，原先逐行相加，用量约翻倍；改为按 message.id 合一。
 // 只清 Claude Code 能从会话文件重抽的行和它的 seen 标记；文件已被 CLI 清掉的旧行重抽不回来，保持原数。
-const USAGE_SCHEMA_VERSION: &str = "11";
+const USAGE_SCHEMA_VERSION: &str = "12";
 const SOURCE_CLI: &str = "cli";
 const SOURCE_CCODE_AI: &str = "ccode-ai";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -45,6 +45,10 @@ pub(crate) struct UsageEvent {
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
+    /// cache_write 里按 1 小时缓存写入的部分（只有 Claude 记：usage.cache_creation.ephemeral_1h_input_tokens）。
+    /// 官方价是输入价 2 倍，5 分钟缓存是 1.25 倍。本机实测（2026-11-07，711 份会话）绝大多数是 5 分钟，1 小时约占 3%，
+    /// 但两档差价大，混着按一个价算会偏
+    pub cache_write_1h: u64,
     /// 事件来源由后端运行来源登记决定，不由路径或模型名猜测。
     pub source: String,
     pub internal: bool,
@@ -125,6 +129,11 @@ where
             output: num("output_tokens"),
             cache_read: num("cache_read_input_tokens"),
             cache_write: num("cache_creation_input_tokens"),
+            cache_write_1h: u
+                .get("cache_creation")
+                .and_then(|c| c.get("ephemeral_1h_input_tokens"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0),
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -136,6 +145,7 @@ where
             prev.output = prev.output.max(ev.output);
             prev.cache_read = prev.cache_read.max(ev.cache_read);
             prev.cache_write = prev.cache_write.max(ev.cache_write);
+            prev.cache_write_1h = prev.cache_write_1h.max(ev.cache_write_1h);
             continue;
         }
         if let Some(id) = id {
@@ -184,6 +194,7 @@ where
                     output: num("output_tokens"),
                     cache_read: num("cached_input_tokens"),
                     cache_write: num("cache_write_input_tokens"),
+                    cache_write_1h: 0,
                     source: SOURCE_CLI.into(),
                     internal: false,
                     official: false,
@@ -220,6 +231,7 @@ where
             output: num("output") + num("thoughts"),
             cache_read: num("cached"),
             cache_write: 0,
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -253,6 +265,7 @@ where
             output: num("candidatesTokenCount"),
             cache_read: num("cachedContentTokenCount"),
             cache_write: 0,
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -301,6 +314,7 @@ where
             output: num("output"),
             cache_read: num("inputCacheRead"),
             cache_write: num("inputCacheCreation"),
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -342,6 +356,7 @@ where
             output: num("output_tokens"),
             cache_read: num("cache_read_input_tokens"),
             cache_write: num("cache_creation_input_tokens"),
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -394,6 +409,7 @@ where
             output: nums(&["output_tokens", "outputTokens", "completion_tokens"]),
             cache_read: nums(&["cache_read_input_tokens", "cacheReadInputTokens"]),
             cache_write: nums(&["cache_creation_input_tokens", "cacheCreationInputTokens"]),
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -482,6 +498,7 @@ fn grok_event_from_usage(day: String, model: String, u: &Value) -> Option<UsageE
         output,
         cache_read,
         cache_write,
+        cache_write_1h: 0,
         source: SOURCE_CLI.into(),
         internal: false,
         official: false,
@@ -590,6 +607,7 @@ fn opencode_events(db_path: &Path, session_id: &str) -> Vec<UsageEvent> {
             output: (num("output") + num("reasoning")) as u64,
             cache_read: cnum("read") as u64,
             cache_write: cnum("write") as u64,
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -785,6 +803,7 @@ pub(crate) struct DailyRow {
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
+    pub cache_write_1h: u64,
     pub source: String,
     pub internal: bool,
     /// 官方账号（订阅制）用量：不按量计费，统计页费用栏显示「订阅」
@@ -835,6 +854,7 @@ pub(crate) fn aggregate(contribs: &[SessionContrib]) -> Vec<DailyRow> {
                 output: 0,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
                 source: key.6,
                 internal: key.7,
                 official: key.8,
@@ -843,6 +863,7 @@ pub(crate) fn aggregate(contribs: &[SessionContrib]) -> Vec<DailyRow> {
             row.output += e.output;
             row.cache_read += e.cache_read;
             row.cache_write += e.cache_write;
+            row.cache_write_1h += e.cache_write_1h;
         }
     }
     map.into_values().collect()
@@ -877,6 +898,7 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
           project_path TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '',
           input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,
           cache_read INTEGER NOT NULL DEFAULT 0, cache_write INTEGER NOT NULL DEFAULT 0,
+          cache_write_1h INTEGER NOT NULL DEFAULT 0,
           source TEXT NOT NULL DEFAULT 'cli', internal INTEGER NOT NULL DEFAULT 0,
           workspace TEXT NOT NULL DEFAULT '', official INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY(day, agent, model, project_path, session_id));
@@ -919,6 +941,13 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("升级官方账号标记字段失败: {e}"))?;
     }
+    if !columns.contains("cache_write_1h") {
+        conn.execute(
+            "ALTER TABLE usage_daily ADD COLUMN cache_write_1h INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| format!("升级 1 小时缓存写字段失败: {e}"))?;
+    }
     // provenance 表不在版本重置范围内（登记行要跨重建保留），单独补列
     let provenance_columns = table_columns(conn, "usage_provenance")?;
     if !provenance_columns.contains("official") {
@@ -955,11 +984,12 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         .ok();
     if current.as_deref() != Some(USAGE_SCHEMA_VERSION) {
         // 旧索引没有可靠来源，清空后由会话源重新生成，避免把历史猜测伪装成权威分类。
-        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名：只清这几家能从会话文件重抽的行
+        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名，v11→v12 只是 Claude Code 分出 1 小时缓存写：只清这几家能从会话文件重抽的行
         // （有 seen 标记）和它们的 seen 标记，其它 agent 已建好的日行留着，避免整库重解析；文件已不在的行重抽不回来，
         // 留着（用量历史永久保留）
         let partial: Option<&[&str]> = match current.as_deref() {
-            Some("10") => Some(&["kimi"]),
+            Some("11") => Some(&["claude-code"]),
+            Some("10") => Some(&["claude-code", "kimi"]),
             Some("9") => Some(&["claude-code", "kimi"]),
             Some("8") => Some(&["claude-code", "codex", "gemini", "qwen", "kimi"]),
             Some("7") => Some(&["claude-code", "grok", "codex", "gemini", "qwen", "kimi"]),
@@ -1144,15 +1174,16 @@ pub(crate) fn record_ephemeral_usage(
     for row in aggregate(&[contrib]) {
         conn.execute(
             "INSERT INTO usage_daily(day, agent, model, project_path, session_id,
-                                    input, output, cache_read, cache_write, source, internal, workspace, official)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                    input, output, cache_read, cache_write, cache_write_1h, source, internal, workspace, official)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(day, agent, model, project_path, session_id) DO UPDATE SET
                input=input+excluded.input, output=output+excluded.output,
-               cache_read=cache_read+excluded.cache_read, cache_write=cache_write+excluded.cache_write",
+               cache_read=cache_read+excluded.cache_read, cache_write=cache_write+excluded.cache_write,
+               cache_write_1h=cache_write_1h+excluded.cache_write_1h",
             params![
                 row.day, row.agent, row.model, row.project_path, row.session_id,
                 row.input as i64, row.output as i64, row.cache_read as i64, row.cache_write as i64,
-                row.source, i64::from(row.internal), row.workspace, i64::from(row.official),
+                row.cache_write_1h as i64, row.source, i64::from(row.internal), row.workspace, i64::from(row.official),
             ],
         )
         .map_err(|e| format!("记录内部调用用量失败: {e}"))?;
@@ -1486,17 +1517,18 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         for row in aggregate(&[contrib]) {
             conn.execute(
                 "INSERT INTO usage_daily(day, agent, model, project_path, session_id,
-                                        input, output, cache_read, cache_write, source, internal, workspace, official)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                        input, output, cache_read, cache_write, cache_write_1h, source, internal, workspace, official)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT(day, agent, model, project_path, session_id) DO UPDATE SET
                    input=input+excluded.input, output=output+excluded.output,
                    cache_read=cache_read+excluded.cache_read, cache_write=cache_write+excluded.cache_write,
+               cache_write_1h=cache_write_1h+excluded.cache_write_1h,
                    source=excluded.source, internal=excluded.internal, workspace=excluded.workspace,
                    official=excluded.official",
                 params![
                     row.day, row.agent, row.model, row.project_path, row.session_id,
                     row.input as i64, row.output as i64, row.cache_read as i64, row.cache_write as i64,
-                    row.source, i64::from(row.internal), row.workspace, i64::from(row.official),
+                    row.cache_write_1h as i64, row.source, i64::from(row.internal), row.workspace, i64::from(row.official),
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -1654,23 +1686,44 @@ fn load_rate(override_path: Option<&Path>) -> f64 {
 /// sonnet，低层更长的代际前缀（claude-sonnet-4 旧代价）不挡路
 type PriceChain = [Vec<(String, Price)>; 3];
 
-/// 一个模型的四种单价（美元 / 每百万 token）。内置价目与公共库只有输入 / 输出两价，
-/// 缓存按输入价折算（读 1 折、写全价，spec 未定义写价，取保守全价）；只有自定义价能单独写缓存价
+/// 一个模型的各种单价（美元 / 每百万 token）。公共库与自定义价带缓存读 / 写价，内置价目只有两价；
+/// 缺的缓存价见 [`Price::new`]
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Price {
     input: f64,
     output: f64,
     cache_read: f64,
     cache_write: f64,
+    /// 1 小时缓存写（只有 Claude 分开记）：官方价恒为输入价 2 倍
+    cache_write_1h: f64,
+}
+
+impl Price {
+    /// 数据源没给的缓存价按输入价折算：读 1 折、写全价（spec 未定义写价，取保守全价）
+    fn new(input: f64, output: f64, cache_read: Option<f64>, cache_write: Option<f64>) -> Self {
+        Price {
+            input,
+            output,
+            cache_read: cache_read.unwrap_or(input * 0.1),
+            cache_write: cache_write.unwrap_or(input),
+            cache_write_1h: input * 2.0,
+        }
+    }
 }
 
 impl From<(f64, f64)> for Price {
     fn from((input, output): (f64, f64)) -> Self {
-        Price { input, output, cache_read: input * 0.1, cache_write: input }
+        Price::new(input, output, None, None)
     }
 }
 
-fn price_layer(table: Vec<(String, (f64, f64))>) -> Vec<(String, Price)> {
+impl From<crate::model_registry::DbPrice> for Price {
+    fn from(p: crate::model_registry::DbPrice) -> Self {
+        Price::new(p.input, p.output, p.cache_read, p.cache_write)
+    }
+}
+
+fn price_layer<P: Into<Price>>(table: Vec<(String, P)>) -> Vec<(String, Price)> {
     table.into_iter().map(|(k, v)| (k, v.into())).collect()
 }
 
@@ -1685,12 +1738,7 @@ fn user_price_layer(override_path: Option<&Path>) -> Vec<(String, Price)> {
         .into_iter()
         .map(|(prefix, p)| {
             let k = if p.cny { 1.0 / rate } else { 1.0 };
-            let price = Price {
-                input: p.input * k,
-                output: p.output * k,
-                cache_read: p.cache_read.unwrap_or(p.input * 0.1) * k,
-                cache_write: p.cache_write.unwrap_or(p.input) * k,
-            };
+            let price = Price::new(p.input * k, p.output * k, p.cache_read.map(|v| v * k), p.cache_write.map(|v| v * k));
             (prefix, price)
         })
         .collect()
@@ -1744,13 +1792,17 @@ struct TokenAcc {
     output: u64,
     cache_read: u64,
     cache_write: u64,
+    /// cache_write 里的 1 小时缓存部分
+    cache_write_1h: u64,
 }
 
 fn cost_of(acc: &TokenAcc, price: Price) -> f64 {
+    let write_1h = acc.cache_write_1h.min(acc.cache_write);
     (acc.input as f64 * price.input
         + acc.output as f64 * price.output
         + acc.cache_read as f64 * price.cache_read
-        + acc.cache_write as f64 * price.cache_write)
+        + (acc.cache_write - write_1h) as f64 * price.cache_write
+        + write_1h as f64 * price.cache_write_1h)
         / 1_000_000.0
 }
 
@@ -1780,7 +1832,13 @@ pub(crate) fn events_cost_usd(events: &[UsageEvent]) -> Option<f64> {
     for e in events {
         let price = full_price_of(&e.model, &chain)?;
         total += cost_of(
-            &TokenAcc { input: e.input, output: e.output, cache_read: e.cache_read, cache_write: e.cache_write },
+            &TokenAcc {
+                input: e.input,
+                output: e.output,
+                cache_read: e.cache_read,
+                cache_write: e.cache_write,
+                cache_write_1h: e.cache_write_1h,
+            },
             price,
         );
     }
@@ -1844,12 +1902,14 @@ impl Bucket {
         self.tokens.output += acc.output;
         self.tokens.cache_read += acc.cache_read;
         self.tokens.cache_write += acc.cache_write;
+        self.tokens.cache_write_1h += acc.cache_write_1h;
         self.sessions.insert(session_id.to_string());
         let m = self.by_model.entry(model.to_string()).or_default();
         m.input += acc.input;
         m.output += acc.output;
         m.cache_read += acc.cache_read;
         m.cache_write += acc.cache_write;
+        m.cache_write_1h += acc.cache_write_1h;
     }
 
     /// 部分计价：只累加有价格的模型份额；(费用, 是否含未计价模型用量)。
@@ -1888,6 +1948,7 @@ type StoredUsageRow = (
     bool,
     String, // workspace：工作区名，非工作区会话为 ""
     bool,   // official：官方账号（订阅制）用量，不按量计费
+    i64,    // cache_write_1h：cache_write 里的 1 小时缓存部分
 );
 
 fn build_stats(rows: Vec<StoredUsageRow>, table: &PriceChain, rate_usd_cny: f64) -> UsageStatsDto {
@@ -1910,7 +1971,7 @@ fn build_stats(rows: Vec<StoredUsageRow>, table: &PriceChain, rate_usd_cny: f64)
     let mut by_day: std::collections::BTreeMap<String, Bucket> = Default::default();
     // 每天的可计费桶：token 趋势展示全部用量，费用与总额共用同一计费范围
     let mut by_day_billed: std::collections::BTreeMap<String, Bucket> = Default::default();
-    for (_day, agent, model, project, sid, i, o, cr, cw, source, internal, workspace, official) in
+    for (_day, agent, model, project, sid, i, o, cr, cw, source, internal, workspace, official, cw1h) in
         rows
     {
         let acc = TokenAcc {
@@ -1918,6 +1979,7 @@ fn build_stats(rows: Vec<StoredUsageRow>, table: &PriceChain, rate_usd_cny: f64)
             output: o as u64,
             cache_read: cr as u64,
             cache_write: cw as u64,
+            cache_write_1h: cw1h as u64,
         };
         cards.add(&model, &sid, acc);
         if internal {
@@ -2092,13 +2154,13 @@ fn query_stats(range: &str) -> Result<UsageStatsDto, String> {
     let (sql, cutoff) = match cutoff_day(range) {
         Some(c) => (
             "SELECT day, agent, model, project_path, session_id, input, output, cache_read, cache_write,
-                    source, internal, workspace, official
+                    source, internal, workspace, official, cache_write_1h
              FROM usage_daily WHERE day >= ?1",
             Some(c),
         ),
         None => (
             "SELECT day, agent, model, project_path, session_id, input, output, cache_read, cache_write,
-                    source, internal, workspace, official
+                    source, internal, workspace, official, cache_write_1h
              FROM usage_daily",
             None,
         ),
@@ -2120,6 +2182,7 @@ fn query_stats(range: &str) -> Result<UsageStatsDto, String> {
                 r.get::<_, i64>(10)? != 0,
                 r.get(11)?,
                 r.get::<_, i64>(12)? != 0,
+                r.get(13)?,
             ))
         };
         let collected: rusqlite::Result<Vec<_>> = match &cutoff {
@@ -2286,7 +2349,7 @@ fn session_usage_from(
 ) -> Result<SessionUsageDto, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_write)
+            "SELECT model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(cache_write_1h)
              FROM usage_daily WHERE agent = ?1 AND session_id = ?2 GROUP BY model",
         )
         .map_err(|e| e.to_string())?;
@@ -2298,13 +2361,14 @@ fn session_usage_from(
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
+                r.get::<_, i64>(5)?,
             ))
         })
         .map_err(|e| e.to_string())?;
     let pricing = load_pricing(None);
     let mut out = SessionUsageDto::default();
     for row in rows {
-        let (model, i, o, cr, cw) = row.map_err(|e| e.to_string())?;
+        let (model, i, o, cr, cw, cw1h) = row.map_err(|e| e.to_string())?;
         out.input += i as u64;
         out.output += o as u64;
         out.cache_read += cr as u64;
@@ -2317,6 +2381,7 @@ fn session_usage_from(
                     output: o as u64,
                     cache_read: cr as u64,
                     cache_write: cw as u64,
+                    cache_write_1h: cw1h as u64,
                 },
                 price,
             );
@@ -2409,6 +2474,7 @@ type TrendQueryRow = (
     i64,
     bool, // official
     bool, // internal
+    i64,  // cache_write_1h
 );
 
 fn select_daily_rows(
@@ -2416,10 +2482,12 @@ fn select_daily_rows(
     cutoff: Option<&str>,
 ) -> Result<Vec<TrendQueryRow>, String> {
     let sql = if cutoff.is_some() {
-        "SELECT day, agent, model, project_path, session_id, input, output, cache_read, cache_write, official, internal
+        "SELECT day, agent, model, project_path, session_id, input, output, cache_read, cache_write, official, internal,
+                cache_write_1h
          FROM usage_daily WHERE day >= ?1"
     } else {
-        "SELECT day, agent, model, project_path, session_id, input, output, cache_read, cache_write, official, internal
+        "SELECT day, agent, model, project_path, session_id, input, output, cache_read, cache_write, official, internal,
+                cache_write_1h
          FROM usage_daily"
     };
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
@@ -2436,6 +2504,7 @@ fn select_daily_rows(
             r.get::<_, i64>(8)?,
             r.get::<_, i64>(9)? != 0,
             r.get::<_, i64>(10)? != 0,
+            r.get::<_, i64>(11)?,
         ))
     };
     let collected: rusqlite::Result<Vec<_>> = if let Some(c) = cutoff {
@@ -2465,7 +2534,7 @@ fn usage_trend_from(
     let cutoff = cutoff_day_from(range, today);
     let rows = select_daily_rows(conn, cutoff.as_deref())?;
     let mut by_day: std::collections::BTreeMap<String, DayAgg> = Default::default();
-    for (day, _agent, model, _project, sid, i, o, cr, cw, official, internal) in &rows {
+    for (day, _agent, model, _project, sid, i, o, cr, cw, official, internal, cw1h) in &rows {
         if day.is_empty() || *internal {
             continue;
         }
@@ -2483,6 +2552,7 @@ fn usage_trend_from(
                     output: *o as u64,
                     cache_read: *cr as u64,
                     cache_write: *cw as u64,
+                    cache_write_1h: *cw1h as u64,
                 },
             );
         }
@@ -2554,7 +2624,7 @@ fn top_sessions_from(
     let cutoff = cutoff_day_from(range, today);
     let rows = select_daily_rows(conn, cutoff.as_deref())?;
     let mut by_session: HashMap<(String, String), (Bucket, String)> = HashMap::new();
-    for (_day, agent, model, project, sid, i, o, cr, cw, official, internal) in rows {
+    for (_day, agent, model, project, sid, i, o, cr, cw, official, internal, cw1h) in rows {
         if official || internal || sid.is_empty() {
             continue;
         }
@@ -2573,6 +2643,7 @@ fn top_sessions_from(
                 output: o as u64,
                 cache_read: cr as u64,
                 cache_write: cw as u64,
+                cache_write_1h: cw1h as u64,
             },
         );
     }
@@ -2685,6 +2756,9 @@ pub struct PricingPreviewDto {
 pub struct PricingBaseDto {
     pub input: f64,
     pub output: f64,
+    /// 缓存读 / 写价（数据源没给的已按输入价折算）：「照这个价改」一并带入，自定义一行不丢原有缓存价
+    pub cache_read: f64,
+    pub cache_write: f64,
     /// builtin = 内置价目，db = 公共模型库
     pub source: String,
 }
@@ -2722,6 +2796,8 @@ fn pricing_preview_from(conn: &Connection, prefixes: &[String], chain: &PriceCha
                 .map(|(p, layer)| PricingBaseDto {
                     input: p.input,
                     output: p.output,
+                    cache_read: p.cache_read,
+                    cache_write: p.cache_write,
                     source: if layer == 0 { "builtin" } else { "db" }.into(),
                 });
             let hits: Vec<&UnpricedModelDto> = if key.is_empty() {
@@ -2902,13 +2978,13 @@ fn usage_activity_from(
     // 可计费行（非官方非内部）按天按模型聚合后走既有计价链
     let mut cost_stmt = conn
         .prepare(
-            "SELECT day, model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_write)
+            "SELECT day, model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(cache_write_1h)
              FROM usage_daily
              WHERE day <> '' AND day <= ?1 AND internal=0 AND official=0
              GROUP BY day, model",
         )
         .map_err(|e| e.to_string())?;
-    let cost_rows: Vec<(String, String, i64, i64, i64, i64)> = cost_stmt
+    let cost_rows: Vec<(String, String, i64, i64, i64, i64, i64)> = cost_stmt
         .query_map(params![today_str], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -2917,13 +2993,14 @@ fn usage_activity_from(
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
                 r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
             ))
         })
         .map_err(|e| e.to_string())?
         .collect::<rusqlite::Result<_>>()
         .map_err(|e| e.to_string())?;
     let mut by_day_billed: std::collections::BTreeMap<String, Bucket> = Default::default();
-    for (day, model, i, o, cr, cw) in cost_rows {
+    for (day, model, i, o, cr, cw, cw1h) in cost_rows {
         by_day_billed.entry(day).or_default().add(
             &model,
             "",
@@ -2932,6 +3009,7 @@ fn usage_activity_from(
                 output: o as u64,
                 cache_read: cr as u64,
                 cache_write: cw as u64,
+                cache_write_1h: cw1h as u64,
             },
         );
     }
@@ -3107,11 +3185,13 @@ fn usage_day_detail_from(
 ) -> Result<UsageDayDetailDto, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT agent, model, project_path, session_id, input, output, cache_read, cache_write, internal, official
+            "SELECT agent, model, project_path, session_id, input, output, cache_read, cache_write, internal, official,
+                    cache_write_1h
              FROM usage_daily WHERE day = ?1",
         )
         .map_err(|e| e.to_string())?;
-    let rows: Vec<(String, String, String, String, i64, i64, i64, i64, bool, bool)> = stmt
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, String, String, i64, i64, i64, i64, bool, bool, i64)> = stmt
         .query_map(params![day], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -3124,6 +3204,7 @@ fn usage_day_detail_from(
                 r.get::<_, i64>(7)?,
                 r.get::<_, i64>(8)? != 0,
                 r.get::<_, i64>(9)? != 0,
+                r.get::<_, i64>(10)?,
             ))
         })
         .map_err(|e| e.to_string())?
@@ -3152,12 +3233,13 @@ fn usage_day_detail_from(
     let mut by_agent_tokens: HashMap<String, u64> = HashMap::new();
     let mut by_agent_sessions: HashMap<String, HashSet<String>> = HashMap::new();
 
-    for (agent, model, project, sid, i, o, cr, cw, internal, official) in rows {
+    for (agent, model, project, sid, i, o, cr, cw, internal, official, cw1h) in rows {
         let acc = TokenAcc {
             input: i as u64,
             output: o as u64,
             cache_read: cr as u64,
             cache_write: cw as u64,
+            cache_write_1h: cw1h as u64,
         };
         let four = acc.input + acc.output + acc.cache_read + acc.cache_write;
         let entry = by_session.entry((agent.clone(), sid.clone())).or_default();
@@ -3194,6 +3276,7 @@ fn usage_day_detail_from(
                 m.output += acc.output;
                 m.cache_read += acc.cache_read;
                 m.cache_write += acc.cache_write;
+        m.cache_write_1h += acc.cache_write_1h;
             }
         }
     }
@@ -3479,6 +3562,7 @@ mod tests {
             output,
             cache_read: 0,
             cache_write: 0,
+            cache_write_1h: 0,
             source: SOURCE_CLI.into(),
             internal: false,
             official: false,
@@ -4381,6 +4465,7 @@ mod tests {
                 false,
                 String::new(),
                 false,
+                0,
             ),
             (
                 "2026-08-01".into(),
@@ -4396,6 +4481,7 @@ mod tests {
                 true,
                 String::new(),
                 false,
+                0,
             ),
         ];
         let stats = build_stats(rows, &load_pricing(None), 7.2);
@@ -4443,6 +4529,7 @@ mod tests {
             internal,
             workspace.into(),
             false,
+            0,
         )
     }
 
@@ -4724,7 +4811,7 @@ mod tests {
         let table = load_pricing(Some(&p));
         let a = full_price_of("relay-a-1", &table).unwrap();
         assert_eq!((a.cache_read, a.cache_write), (0.5, 2.5));
-        let acc = TokenAcc { input: 1_000_000, output: 0, cache_read: 1_000_000, cache_write: 1_000_000 };
+        let acc = TokenAcc { input: 1_000_000, output: 0, cache_read: 1_000_000, cache_write: 1_000_000, cache_write_1h: 0 };
         assert!((cost_of(&acc, a) - 5.0).abs() < 1e-9, "2 + 0.5 + 2.5");
         let b = full_price_of("relay-b", &table).unwrap();
         let rate = load_rate(Some(&p));
@@ -4735,6 +4822,20 @@ mod tests {
             "省下的是输入价与缓存读价之差"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_one_hour_cache_write_priced_double_input() {
+        // 1 小时缓存写按输入价 2 倍；5 分钟部分按缓存写价（公共库给的 1.25 倍，没给按全价）
+        let lines = vec![
+            r#"{"type":"assistant","timestamp":"2026-11-01T00:00:00Z","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":300,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200}}}}"#.to_string(),
+        ];
+        let evs = claude_events(&lines, None);
+        assert_eq!((evs[0].cache_write, evs[0].cache_write_1h), (300, 200));
+        let price: Price = crate::model_registry::DbPrice { input: 4.0, output: 20.0, cache_read: Some(0.2), cache_write: Some(5.0) }.into();
+        let acc = TokenAcc { cache_write: 3_000_000, cache_write_1h: 2_000_000, ..Default::default() };
+        assert!((cost_of(&acc, price) - (5.0 + 2.0 * 8.0)).abs() < 1e-9);
+        assert!((price.cache_read - 0.2).abs() < 1e-9, "公共库给的缓存读价照用，不再一律按 1 折");
     }
 
     #[test]
@@ -5128,6 +5229,7 @@ mod tests {
                 false,
                 String::new(),
                 false,
+                0,
             ),
             (
                 "2026-08-01".into(),
@@ -5143,6 +5245,7 @@ mod tests {
                 false,
                 String::new(),
                 false,
+                0,
             ),
             {
                 let mut r = ws_row("/p", "s3", "gpt-5", 0, 0, false, "");
@@ -5170,6 +5273,7 @@ mod tests {
                 output: 1_000_000,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
             },
         );
         assert_eq!(b.cost(&table), (Some(1.25 + 10.0), false));
@@ -5182,6 +5286,7 @@ mod tests {
                 output: 5,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
             },
         );
         let (cost, partial) = b.cost(&table);
@@ -5197,6 +5302,7 @@ mod tests {
                 output: 5,
                 cache_read: 0,
                 cache_write: 0,
+                cache_write_1h: 0,
             },
         );
         assert_eq!(c.cost(&table), (None, true));
@@ -5457,12 +5563,12 @@ fn usage_by_gateway_impl(
 ) -> Result<Vec<GatewayUsageRow>, String> {
     let sql = match cutoff_day(range) {
         Some(_) => "SELECT d.agent, d.model, d.session_id, d.input, d.output, d.cache_read, d.cache_write, d.official,
-                           m.profile_id
+                           m.profile_id, d.cache_write_1h
                     FROM usage_daily d
                     LEFT JOIN session_meta m ON m.agent = d.agent AND m.session_id = d.session_id
                     WHERE d.day >= ?1",
         None => "SELECT d.agent, d.model, d.session_id, d.input, d.output, d.cache_read, d.cache_write, d.official,
-                        m.profile_id
+                        m.profile_id, d.cache_write_1h
                  FROM usage_daily d
                  LEFT JOIN session_meta m ON m.agent = d.agent AND m.session_id = d.session_id",
     };
@@ -5478,6 +5584,7 @@ fn usage_by_gateway_impl(
         i64,
         i64,
         Option<String>,
+        i64,
     )> {
         Ok((
             r.get(0)?,
@@ -5489,6 +5596,7 @@ fn usage_by_gateway_impl(
             r.get(6)?,
             r.get(7)?,
             r.get(8)?,
+            r.get(9)?,
         ))
     };
     let rows: Vec<_> = match &cutoff {
@@ -5517,7 +5625,7 @@ fn usage_by_gateway_impl(
         gid: String,
     }
     let mut accs: HashMap<String, Acc> = HashMap::new();
-    for (agent, model, session_id, input, output, cr, cw, official, profile_id) in rows {
+    for (agent, model, session_id, input, output, cr, cw, official, profile_id, cw1h) in rows {
         let official_row = official != 0;
         let (key, name, kind, gid) = if official_row {
             (
@@ -5590,6 +5698,7 @@ fn usage_by_gateway_impl(
                 output: output as u64,
                 cache_read: cr as u64,
                 cache_write: cw as u64,
+                cache_write_1h: cw1h as u64,
             },
         );
     }
@@ -5691,9 +5800,10 @@ mod gateway_usage_tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE usage_daily(day TEXT, agent TEXT, model TEXT, project_path TEXT, session_id TEXT,
-             input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER, official INTEGER);
+             input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER, official INTEGER,
+             cache_write_1h INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE session_meta(agent TEXT, session_id TEXT, profile_id TEXT);
-             INSERT INTO usage_daily VALUES
+             INSERT INTO usage_daily(day, agent, model, project_path, session_id, input, output, cache_read, cache_write, official) VALUES
              ('2026-08-30','claude-code','m','/p','s-gw',10,1,0,0,0),
              ('2026-08-30','codex','m','/p','s-none',20,2,0,0,0),
              ('2026-08-30','claude-code','m','/p','s-dead',30,3,0,0,0),

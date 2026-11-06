@@ -431,7 +431,7 @@ fn bundled_meta() -> (usize, Option<String>) {
 
 static DB_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, ModelCaps)>>>> =
     std::sync::OnceLock::new();
-static DB_PRICE_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, (f64, f64))>>>> =
+static DB_PRICE_CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Vec<(String, DbPrice)>>>> =
     std::sync::OnceLock::new();
 
 fn load_db() -> Vec<(String, ModelCaps)> {
@@ -470,7 +470,7 @@ fn dedup_keys<T>(table: Vec<(String, T)>) -> Vec<(String, T)> {
 
 /// 公共能力库的定价层（usage.rs 定价链消费：内置表 < 公共库 < 用户 pricing.json）。
 /// 同一份 model-capabilities-db.json 里的 cost 字段；单测不读本机真实文件
-pub(crate) fn db_price_table() -> Vec<(String, (f64, f64))> {
+pub(crate) fn db_price_table() -> Vec<(String, DbPrice)> {
     if cfg!(test) {
         return Vec::new();
     }
@@ -652,8 +652,28 @@ fn parse_models_dev(v: &serde_json::Value) -> Vec<(String, ModelCaps)> {
 
 // ===== 定价提取（2026-08-31）：同一份公共库响应顺带落 cost，usage.rs 定价链消费 =====
 
-/// models.dev 条目的 cost.{input,output}（美元/每百万 token）→ (id, (输入价, 输出价))
-fn parse_models_dev_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
+/// 公共库的一条价（美元 / 每百万 token）。缓存读 / 写价各家差得多（Claude 5 系读 0.5 折、Grok 2.5 折），
+/// 数据源给了就带上，没给为 None、由 usage.rs 按输入价折算（2026-11-07：原先只取两价，Opus 多算约两成、Grok 少算四成）
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DbPrice {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: Option<f64>,
+    pub cache_write: Option<f64>,
+}
+
+impl DbPrice {
+    fn io(input: f64, output: f64) -> Self {
+        DbPrice { input, output, cache_read: None, cache_write: None }
+    }
+}
+
+fn price_num(n: Option<f64>) -> Option<f64> {
+    n.filter(|n| n.is_finite() && *n >= 0.0)
+}
+
+/// models.dev 条目的 cost.{input,output,cache_read,cache_write}（美元/每百万 token）
+fn parse_models_dev_prices(v: &serde_json::Value) -> Vec<(String, DbPrice)> {
     let mut out = Vec::new();
     for (_provider, pv) in models_dev_providers(v) {
         let Some(models) = pv.get("models").and_then(|m| m.as_object()) else {
@@ -664,16 +684,14 @@ fn parse_models_dev_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
                 continue;
             }
             let Some(cost) = mv.get("cost") else { continue };
-            let pair = match (
-                cost.get("input").and_then(|n| n.as_f64()),
-                cost.get("output").and_then(|n| n.as_f64()),
-            ) {
-                (Some(i), Some(o)) if i.is_finite() && i >= 0.0 && o.is_finite() && o >= 0.0 => {
-                    (i, o)
-                }
-                _ => continue,
+            let num = |k: &str| price_num(cost.get(k).and_then(|n| n.as_f64()));
+            let (Some(input), Some(output)) = (num("input"), num("output")) else {
+                continue;
             };
-            out.push((model_key(id), pair));
+            out.push((
+                model_key(id),
+                DbPrice { input, output, cache_read: num("cache_read"), cache_write: num("cache_write") },
+            ));
         }
     }
     dedup_keys(out)
@@ -681,7 +699,7 @@ fn parse_models_dev_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
 
 /// OpenRouter 风格条目的 pricing.{prompt,completion}（每 token 美元，字符串）→
 /// 每百万 token 价格。两家数据源解析进同一形状
-fn parse_openrouter_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
+fn parse_openrouter_prices(v: &serde_json::Value) -> Vec<(String, DbPrice)> {
     let mut out = Vec::new();
     let Some(arr) = v.get("data").and_then(|d| d.as_array()) else {
         return out;
@@ -699,16 +717,25 @@ fn parse_openrouter_prices(v: &serde_json::Value) -> Vec<(String, (f64, f64))> {
                 .filter(|n| n.is_finite() && *n >= 0.0)
                 .map(|n| n * 1_000_000.0)
         };
-        let (Some(i), Some(o)) = (per_million("prompt"), per_million("completion")) else {
+        let (Some(input), Some(output)) = (per_million("prompt"), per_million("completion")) else {
             continue;
         };
-        out.push((normalize(id), (i, o)));
+        out.push((
+            normalize(id),
+            DbPrice {
+                input,
+                output,
+                cache_read: per_million("input_cache_read"),
+                cache_write: per_million("input_cache_write"),
+            },
+        ));
     }
     out
 }
 
-/// 公共库落盘文件里的 cost 字段解析（{"模型": {"cost": [输入价, 输出价], ...}}）
-fn parse_price_map(text: &str) -> Vec<(String, (f64, f64))> {
+/// 公共库落盘文件里的 cost 字段解析（{"模型": {"cost": [输入价, 输出价, 缓存读价?, 缓存写价?], ...}}；
+/// 老文件只有两价，缓存价位置写 null 表示数据源没给）
+fn parse_price_map(text: &str) -> Vec<(String, DbPrice)> {
     let mut out = Vec::new();
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
         return out;
@@ -719,16 +746,18 @@ fn parse_price_map(text: &str) -> Vec<(String, (f64, f64))> {
             if prefix.trim().is_empty() || prefix.starts_with('_') {
                 continue;
             }
-            let Some(pair) = entry.get("cost").and_then(|c| c.as_array()) else {
+            let Some(arr) = entry.get("cost").and_then(|c| c.as_array()) else {
                 continue;
             };
-            if pair.len() != 2 {
+            if !(2..=4).contains(&arr.len()) {
                 continue;
             }
-            if let (Some(i), Some(o)) = (pair[0].as_f64(), pair[1].as_f64()) {
-                if i.is_finite() && i >= 0.0 && o.is_finite() && o >= 0.0 {
-                    out.push((prefix.to_lowercase(), (i, o)));
-                }
+            let at = |i: usize| price_num(arr.get(i).and_then(|n| n.as_f64()));
+            if let (Some(input), Some(output)) = (at(0), at(1)) {
+                out.push((
+                    prefix.to_lowercase(),
+                    DbPrice { input, output, cache_read: at(2), cache_write: at(3) },
+                ));
             }
         }
     }
@@ -860,6 +889,13 @@ fn outbound_proxy() -> Option<String> {
         .map(str::to_string)
 }
 
+fn db_format_of(text: &str) -> i64 {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("_meta")?.get("format")?.as_i64())
+        .unwrap_or(1)
+}
+
 /// 公共库多久算旧：超过就在启动时后台重下（2026-10-28：原先只能手动下载，没下过的用户这一层是空的）
 const DB_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 3600);
 
@@ -868,16 +904,23 @@ pub fn spawn_auto_refresh() {
     if cfg!(test) {
         return;
     }
-    let stale = db_path()
-        .and_then(|p| std::fs::metadata(p).ok())
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.elapsed().ok())
-        .is_none_or(|age| age > DB_MAX_AGE);
-    if stale {
-        tauri::async_runtime::spawn(async {
+    tauri::async_runtime::spawn(async {
+        // 读格式号要解析整份文件（几 MB），放后台线程
+        let stale = tauri::async_runtime::spawn_blocking(|| {
+            let Some(path) = db_path() else { return true };
+            let too_old = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .is_none_or(|age| age > DB_MAX_AGE);
+            too_old || std::fs::read_to_string(&path).map_or(true, |t| db_format_of(&t) < DB_FORMAT)
+        })
+        .await
+        .unwrap_or(false);
+        if stale {
             let _ = download_model_db().await;
-        });
-    }
+        }
+    });
 }
 
 // ===== 公共库数据源（2026-10-28 改）=====
@@ -937,7 +980,7 @@ impl DbSource {
 }
 
 type CapsTable = Vec<(String, ModelCaps)>;
-type PriceTable = Vec<(String, (f64, f64))>;
+type PriceTable = Vec<(String, DbPrice)>;
 
 /// LiteLLM 里的原厂：同一型号还以 bedrock/vertex/openrouter 等前缀各列一次，原厂、不带前缀的先收
 const LITELLM_VENDORS: &[&str] = &[
@@ -978,8 +1021,16 @@ fn parse_litellm(v: &serde_json::Value) -> (CapsTable, PriceTable) {
         let per_million = |k: &str| {
             e.get(k).and_then(|n| n.as_f64()).filter(|n| n.is_finite() && *n >= 0.0).map(|n| n * 1_000_000.0)
         };
-        if let (Some(i), Some(o)) = (per_million("input_cost_per_token"), per_million("output_cost_per_token")) {
-            prices.push((key, (i, o)));
+        if let (Some(input), Some(output)) = (per_million("input_cost_per_token"), per_million("output_cost_per_token")) {
+            prices.push((
+                key,
+                DbPrice {
+                    input,
+                    output,
+                    cache_read: per_million("cache_read_input_token_cost"),
+                    cache_write: per_million("cache_creation_input_token_cost"),
+                },
+            ));
         }
     }
     (dedup_keys(caps), dedup_keys(prices))
@@ -1081,15 +1132,27 @@ async fn fetch_db() -> Result<(CapsTable, PriceTable, Vec<&'static str>), String
     Ok((caps, prices, used))
 }
 
-/// 落盘形状（下载结果与随包快照同一份）：{型号: {thinking, context, output, vision, cost: [输入价, 输出价]}}，
-/// 键已是统一写法；`_meta` 记来源与时间（解析时跳过 `_` 开头的键）
+/// 落盘文件的格式号：2 = cost 带缓存读 / 写价（2026-11-07）。本机下载的旧文件格式号不够时启动就重下，
+/// 不等 14 天——本机那份盖在随包快照之上，旧的两价会一直挡住快照里的缓存价
+const DB_FORMAT: i64 = 2;
+
+fn cost_json(p: &DbPrice) -> serde_json::Value {
+    if p.cache_read.is_none() && p.cache_write.is_none() {
+        serde_json::json!([p.input, p.output])
+    } else {
+        serde_json::json!([p.input, p.output, p.cache_read, p.cache_write])
+    }
+}
+
+/// 落盘形状（下载结果与随包快照同一份）：{型号: {thinking, context, output, vision, cost: [输入价, 输出价, 缓存读价?, 缓存写价?]}}，
+/// 键已是统一写法；`_meta` 记来源、时间与格式号（解析时跳过 `_` 开头的键）
 fn db_json(caps: &CapsTable, prices: &PriceTable, sources: &[&str]) -> Result<String, String> {
-    let price_of_id: std::collections::HashMap<&str, (f64, f64)> =
+    let price_of_id: std::collections::HashMap<&str, DbPrice> =
         prices.iter().map(|(id, p)| (id.as_str(), *p)).collect();
     let mut map = serde_json::Map::new();
     map.insert(
         "_meta".into(),
-        serde_json::json!({ "sources": sources, "generatedAt": chrono::Utc::now().to_rfc3339() }),
+        serde_json::json!({ "sources": sources, "generatedAt": chrono::Utc::now().to_rfc3339(), "format": DB_FORMAT }),
     );
     for (id, c) in caps {
         let mut entry = serde_json::Map::new();
@@ -1103,15 +1166,15 @@ fn db_json(caps: &CapsTable, prices: &PriceTable, sources: &[&str]) -> Result<St
                 entry.insert(k.into(), v);
             }
         }
-        if let Some((i, o)) = price_of_id.get(id.as_str()) {
-            entry.insert("cost".into(), serde_json::json!([i, o]));
+        if let Some(p) = price_of_id.get(id.as_str()) {
+            entry.insert("cost".into(), cost_json(p));
         }
         map.insert(id.clone(), serde_json::Value::Object(entry));
     }
     // 只有定价、没有能力字段的条目也保留（费用估算不需要能力声明）
     for (id, p) in prices {
         if !map.contains_key(id) {
-            map.insert(id.clone(), serde_json::json!({ "cost": [p.0, p.1] }));
+            map.insert(id.clone(), serde_json::json!({ "cost": cost_json(p) }));
         }
     }
     serde_json::to_string(&serde_json::Value::Object(map)).map_err(|e| e.to_string())
@@ -1809,16 +1872,20 @@ mod tests {
     fn parse_models_dev_prices_extracts_cost() {
         let v = serde_json::json!({
             "moonshot": {"models": {
-                "kimi-k3": {"cost": {"input": 3.0, "output": 15.0, "cache_read": 0.3}},
+                "kimi-k3": {"cost": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}},
                 "kimi-free-x": {"cost": {"input": 0, "output": 0}},
                 "kimi-no-cost": {"reasoning": true},
                 "kimi-bad-cost": {"cost": {"input": -1, "output": 2}}
             }}
         });
-        let map: std::collections::HashMap<String, (f64, f64)> =
+        let map: std::collections::HashMap<String, DbPrice> =
             parse_models_dev_prices(&v).into_iter().collect();
-        assert_eq!(map["kimi-k3"], (3.0, 15.0));
-        assert_eq!(map["kimi-free-x"], (0.0, 0.0), "免费模型的如实 0 价保留");
+        assert_eq!(
+            map["kimi-k3"],
+            DbPrice { input: 3.0, output: 15.0, cache_read: Some(0.3), cache_write: Some(3.75) },
+            "缓存读 / 写价一并带上"
+        );
+        assert_eq!(map["kimi-free-x"], DbPrice::io(0.0, 0.0), "免费模型的如实 0 价保留");
         assert!(!map.contains_key("kimi-no-cost"), "无 cost = 这层不知道");
         assert!(!map.contains_key("kimi-bad-cost"), "非法数值丢弃");
     }
@@ -1826,14 +1893,16 @@ mod tests {
     #[test]
     fn parse_openrouter_prices_converts_per_token_to_per_million() {
         let v = serde_json::json!({"data": [
-            {"id": "anthropic/claude-sonnet-5", "pricing": {"prompt": "0.000002", "completion": "0.00001"}},
+            {"id": "anthropic/claude-sonnet-5", "pricing": {"prompt": "0.000002", "completion": "0.00001", "input_cache_read": "0.0000001"}},
             {"id": "openai/gpt-5.2", "pricing": {"prompt": "0.00000175", "completion": "0.000014"}},
             {"id": "bare/no-pricing"}
         ]});
-        let map: std::collections::HashMap<String, (f64, f64)> =
+        let map: std::collections::HashMap<String, DbPrice> =
             parse_openrouter_prices(&v).into_iter().collect();
-        assert_eq!(map["claude-sonnet-5"], (2.0, 10.0));
-        assert_eq!(map["gpt-5.2"], (1.75, 14.0));
+        let s = map["claude-sonnet-5"];
+        assert_eq!((s.input, s.output, s.cache_write), (2.0, 10.0, None));
+        assert!((s.cache_read.unwrap() - 0.1).abs() < 1e-9);
+        assert_eq!(map["gpt-5.2"], DbPrice::io(1.75, 14.0));
         assert!(!map.contains_key("no-pricing"));
     }
 
@@ -1844,13 +1913,17 @@ mod tests {
             "kimi-k3": {"thinking": true, "cost": [3.0, 15.0]},
             "gpt-5": {"thinking": true, "context": 400000},
             "price-only-x": {"cost": [0.5, 1.5]},
+            "claude-x": {"cost": [4.0, 20.0, 0.2, 5.0]},
+            "grok-x": {"cost": [2.0, 6.0, 0.5, null]},
             "": {"cost": [9.0, 9.0]}
         }"#;
-        let map: std::collections::HashMap<String, (f64, f64)> =
+        let map: std::collections::HashMap<String, DbPrice> =
             parse_price_map(text).into_iter().collect();
-        assert_eq!(map.len(), 2);
-        assert_eq!(map["kimi-k3"], (3.0, 15.0));
-        assert_eq!(map["price-only-x"], (0.5, 1.5), "纯定价条目同样入定价层");
+        assert_eq!(map.len(), 4);
+        assert_eq!(map["kimi-k3"], DbPrice::io(3.0, 15.0), "老文件两价照读");
+        assert_eq!(map["price-only-x"], DbPrice::io(0.5, 1.5), "纯定价条目同样入定价层");
+        assert_eq!(map["claude-x"], DbPrice { input: 4.0, output: 20.0, cache_read: Some(0.2), cache_write: Some(5.0) });
+        assert_eq!(map["grok-x"].cache_write, None, "null = 数据源没给");
     }
 
     #[test]
@@ -1937,7 +2010,7 @@ mod tests {
         assert_eq!(caps.len(), 1);
         assert_eq!(caps[0].0, "claude-opus-5-5");
         assert_eq!(caps[0].1.context, Some(1_000_000));
-        assert_eq!(parse_models_dev_prices(&v), vec![("claude-opus-5-5".to_string(), (4.0, 20.0))]);
+        assert_eq!(parse_models_dev_prices(&v), vec![("claude-opus-5-5".to_string(), DbPrice::io(4.0, 20.0))]);
     }
 
     #[test]
@@ -1972,7 +2045,8 @@ mod tests {
             "openrouter/anthropic/claude-opus-5.5": {"mode": "chat", "litellm_provider": "openrouter", "max_input_tokens": 200000,
                 "input_cost_per_token": 0.00001, "output_cost_per_token": 0.00005},
             "claude-opus-5-5": {"mode": "chat", "litellm_provider": "anthropic", "max_input_tokens": 1000000, "max_output_tokens": 128000,
-                "supports_vision": true, "supports_reasoning": true, "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002},
+                "supports_vision": true, "supports_reasoning": true, "input_cost_per_token": 0.000004, "output_cost_per_token": 0.00002,
+                "cache_read_input_token_cost": 0.0000002, "cache_creation_input_token_cost": 0.000005},
             "gpt-image-2": {"mode": "image_generation", "litellm_provider": "openai"}
         });
         let (caps, prices) = parse_litellm(&v);
@@ -1980,14 +2054,21 @@ mod tests {
         assert_eq!(caps[0].1.context, Some(1_000_000));
         assert_eq!(caps[0].1.thinking, Some(true));
         assert_eq!(prices.len(), 1);
-        assert!((prices[0].1 .0 - 4.0).abs() < 1e-9 && (prices[0].1 .1 - 20.0).abs() < 1e-9);
+        let p = prices[0].1;
+        assert!((p.input - 4.0).abs() < 1e-9 && (p.output - 20.0).abs() < 1e-9);
+        assert!((p.cache_read.unwrap() - 0.2).abs() < 1e-9 && (p.cache_write.unwrap() - 5.0).abs() < 1e-9);
     }
 
     #[test]
     fn db_json_roundtrips_and_skips_meta() {
         let caps = vec![("m-1".to_string(), caps(true, Some(5)))];
-        let prices = vec![("m-1".to_string(), (1.0, 2.0)), ("m-2".to_string(), (3.0, 4.0))];
+        let prices = vec![
+            ("m-1".to_string(), DbPrice::io(1.0, 2.0)),
+            ("m-2".to_string(), DbPrice { input: 3.0, output: 4.0, cache_read: Some(0.3), cache_write: None }),
+        ];
         let text = db_json(&caps, &prices, &["models.dev"]).unwrap();
+        assert_eq!(db_format_of(&text), DB_FORMAT);
+        assert_eq!(db_format_of(r#"{"_meta": {"sources": []}}"#), 1, "没写格式号的是老文件");
         let back = parse_caps_map(&text);
         assert_eq!(back.len(), 2); // m-2 只有价格也留着
         assert!(back.iter().all(|(k, _)| !k.starts_with('_')));

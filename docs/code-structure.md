@@ -1238,8 +1238,8 @@ src-tauri/src/
                              # 用户覆盖层有写入通道（2026-09-19）：网关库模型行「能力声明」编辑 →
                              #   set/clear/list_model_capability_override（原子写、前缀归一小写、api_backend
                              #   不进 UI 但往返保留；细则 conventions/profiles.md §6.1）；
-                             # 下载公共库顺带提取定价（models.dev cost / OpenRouter pricing → 条目 cost 字段），
-                             #   db_price_table 供 usage.rs 定价链消费
+                             # 下载公共库顺带提取定价（models.dev cost / LiteLLM / OpenRouter pricing → 条目 cost 字段，
+                             #   DbPrice 带缓存读 / 写价，落盘格式号 DB_FORMAT=2、本机旧文件启动重下），db_price_table 供 usage.rs 定价链消费
   capability_manifest.rs     # 能力写入清单（**不驱动写入**，只做记账与机器检查）：全表 WRITES 记「哪个 agent ×
                              #   哪个目标键 × 该键的 requiredness/completeness/harm × 依据强度」，
                              #   未知时动作**不存**、由 action() 从三个属性推——存下来会与属性漂移，
@@ -1559,7 +1559,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   旧项目级行只回填 created_at 之前已存在的会话，不粘住新会话）；
                              #   session_meta.internal（无头 AI/定时巡检按会话 id 登记）纳入用量索引；
                              # 定价链 PriceChain 三层：用户 pricing.json > 公共能力库 cost > 内置表 BUILTIN_PRICING；
-                             #   每层存四价 Price（内置 / 公共库只有两价，缓存读 = 输入 1 折、缓存写 = 输入全价；人民币自定义价按汇率折美元），
+                             #   每层存 Price（输入 / 输出 / 缓存读 / 缓存写 / 1 小时缓存写；公共库与自定义价带缓存价，缺的按输入折算：读 1 折、写全价，
+                             #   1 小时写恒 2 倍；人民币自定义价按汇率折美元）；Claude 的 1 小时缓存写单列 cache_write_1h，
                              #   usage_pricing_preview 给设置页说「不填时按什么价 · 管到哪些模型」
                              #   （高层任意前缀命中即胜、同层最长前缀优先——用户写短前缀即覆盖低层细分代；
                              #   内置表口径 2026-08-31 各官方页，跨代改价给新代加更长前缀、旧价留给老会话归属）

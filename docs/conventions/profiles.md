@@ -159,6 +159,9 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
   OpenRouter 的 `claude-opus-5.5` 与 Claude Code 的 `claude-opus-5-5` 才对得上。**逐个型号的层（网关实测、公共库）只认同一型号**
   （统一写法后相等，或去掉 8 位日期 / YYYY-MM-DD / latest 快照后缀后相等；四位数是版本号不剥），**不按前缀退到别的型号**；
   按系列写的层（用户覆盖、内置表、内置价目）照旧最长前缀。usage.rs 价目链同口径（`match_in` + `KeyMatch`）。
+  **费用只按官方价估算（2026-11-07 用户拍板）**：不做中转倍率，用量页写明以中转站账单为准。每层价目带缓存读 / 写价——公共库落盘
+  `cost: [输入, 输出, 缓存读?, 缓存写?]`（`_meta.format` = 2，本机旧文件格式号不够启动即重下），数据源没给的才按输入价折算（读 1 折、写全价）；
+  Claude 会话的 1 小时缓存写单列 `usage_daily.cache_write_1h`、恒按输入价 2 倍。长上下文加价不计（日表分不出单次请求大小）。
   反例：曾按前缀把 Opus 5.5 退到 `claude-opus-5`，价格多算约 25%；中转自起名模型拿到别的型号的上下文。
   公共库：models.dev 与 LiteLLM（jsDelivr 镜像，国内直连通常可达）**两家都下、按型号合并**（models.dev 先占，LiteLLM 补缺），
   两家都不通才退 OpenRouter；每家里同一型号原厂优先（`MODELS_DEV_VENDORS` / `LITELLM_VENDORS`）、先到先得，变体不收，LiteLLM 只收 chat / responses。

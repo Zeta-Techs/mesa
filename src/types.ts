@@ -2463,7 +2463,7 @@ export interface UnpricedModelDto {
 /** 自定义定价每行下面那句：不填时按什么价算（美元 / 每百万 token）、用量里会管到哪些模型（usage_pricing_preview） */
 export interface PricingPreviewDto {
   prefix: string;
-  base: { input: number; output: number; source: "builtin" | "db" } | null;
+  base: { input: number; output: number; cacheRead: number; cacheWrite: number; source: "builtin" | "db" } | null;
   matched: UnpricedModelDto[];
   matchedCount: number;
 }
