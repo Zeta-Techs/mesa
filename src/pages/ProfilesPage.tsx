@@ -4259,7 +4259,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         !installed ? (
                           "未安装"
                         ) : outdated ? (
-                          <span className="text-cta" title={`有新版本 ${updateInfo[agent.id]?.latest ?? ""}`}>
+                          // 导航项本身是按钮，徽标不能再套 button：span 接点击并截住冒泡（不切页两次、不触发拖动排序）；
+                          // 点了切到这个 Agent 再开始更新，进度出在右边组头下
+                          <span
+                            role="button"
+                            className="rounded-sm text-cta hover:brightness-125 hover:underline"
+                            title={`有新版本 ${updateInfo[agent.id]?.latest ?? ""}，点击更新`}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectPane(agent.id);
+                              void onUpdate(agent.id);
+                            }}
+                          >
                             新版 · {count}
                           </span>
                         ) : (
