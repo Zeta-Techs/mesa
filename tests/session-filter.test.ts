@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   QUICK_FILTERS,
   applySessionFilters,
-  sessionFilterQuickForSearch,
   groupSearchHitsByArchive,
   SEARCH_ARCHIVED_HEADER,
   buildScopeSuggestions,
@@ -63,21 +62,22 @@ test("默认口径：排除归档与内部会话", () => {
   assert.equal(applySessionFilters(rows, q(), [], NO_LIVE, NOW).length, 1);
 });
 
-test("archived 是放宽不是只看归档", () => {
-  const rows = [s(), s({ archived: true })];
-  assert.equal(
-    applySessionFilters(rows, q("archived"), [], NO_LIVE, NOW).length,
-    2,
+test("archived 快筛只看归档", () => {
+  const rows = [s({ sessionId: "a" }), s({ sessionId: "b", archived: true })];
+  assert.deepEqual(
+    applySessionFilters(rows, q("archived"), [], NO_LIVE, NOW).map((r) => r.sessionId),
+    ["b"],
   );
 });
 
-test("搜索时 quick 放宽归档，未搜索不动", () => {
-  const base = q("today");
-  assert.equal(sessionFilterQuickForSearch(base, false), base);
-  const searching = sessionFilterQuickForSearch(base, true);
-  assert.ok(searching.has("archived"));
-  assert.ok(searching.has("today"));
-  assert.equal(sessionFilterQuickForSearch(q("archived"), true).has("archived"), true);
+test("搜索 includeArchived 归档未归档都留；开着已归档快筛仍只看归档", () => {
+  const rows = [s({ sessionId: "a" }), s({ sessionId: "b", archived: true })];
+  const inc = { includeArchived: true };
+  assert.equal(applySessionFilters(rows, q(), [], NO_LIVE, NOW, inc).length, 2);
+  assert.deepEqual(
+    applySessionFilters(rows, q("archived"), [], NO_LIVE, NOW, inc).map((r) => r.sessionId),
+    ["b"],
+  );
 });
 
 test("搜索命中：未归档在前，已归档沉底挂组头", () => {

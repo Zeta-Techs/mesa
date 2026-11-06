@@ -41,7 +41,6 @@ import {
   QUICK_FILTERS,
   SCOPE_KIND_LABEL,
   applySessionFilters,
-  sessionFilterQuickForSearch,
   groupSearchHitsByArchive,
   SEARCH_ARCHIVED_HEADER,
   buildScopeSuggestions,
@@ -274,22 +273,19 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     keywords: string[];
   } | null>(null);
   const [filter, setFilter] = useState<Filter>({ kind: "all" });
-  const [showArchived, setShowArchived] = useState(false);
   // 一行 chip 快筛 + 搜索建议落成的作用域 chip（v3.88，纯逻辑在 session-filter.ts）
   const [quick, setQuick] = useState<Set<QuickFilterId>>(() => new Set());
+  /** 「已归档」快筛开着 = 只看归档（内部 AI 入口、项目删除计数同口径） */
+  const showArchived = quick.has("archived");
   // 「更多 ▾」收纳的次常用快筛（v3.92 控制区瘦身）：近 7 天 / 内部 AI / 已归档
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const [listScrolled, setListScrolled] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
-  /** 快筛开关统一入口：archived chip 与 showArchived 是同一件事，必须同步两边
-      （此前只有页头按钮同步，单独点 chip 会被 archiveVisible 兜底过滤掉——等于无效） */
   function toggleQuick(id: QuickFilterId) {
     const next = new Set(quick);
-    const on = !next.has(id);
-    if (on) next.add(id);
-    else next.delete(id);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     setQuick(next);
-    if (id === "archived") setShowArchived(on);
   }
   const [scopes, setScopes] = useState<ScopeChip[]>([]);  // 分类筛选折叠收进列表栏（默认收起），展开为单列纵向手风琴：点 Agent 只展开/收起其项目
   // 子列表（不动列表筛选、不关回放）；「全部项目」/单项目行落筛选且**面板保持展开**（v3.43：
@@ -689,8 +685,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     focusTab(tabId);
   }
 
-  // 快筛 + 作用域 chip（v3.88）先过一道；archived/internal 口径由 applySessionFilters 统一裁决，
-  // 下游 archiveVisible 保留原表达式做兜底（showArchived 与 archived chip 已同步）
+  // 快筛 + 作用域 chip（v3.88）先过一道；archived/internal 口径由 applySessionFilters 统一裁决
   const liveKeys = useMemo(
     () => new Set(Object.keys(liveSessions)),
     [liveSessions],
@@ -699,20 +694,16 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     () => applySessionFilters(searched, quick, scopes, liveKeys),
     [searched, quick, scopes, liveKeys],
   );
-  const archiveVisible = useMemo(
-    () => quickFiltered.filter((s) => showArchived || !s.archived),
-    [quickFiltered, showArchived],
-  );
   const regularVisible = useMemo(
-    () => archiveVisible.filter((s) => !sessionLooksInternal(s)),
-    [archiveVisible],
+    () => quickFiltered.filter((s) => !sessionLooksInternal(s)),
+    [quickFiltered],
   );
   // 内部 AI 入口不能吃 applySessionFilters 的默认排除（否则计数恒为 0）。
   // 无头 AI 临时目录在 provenance 过期后 DTO.internal 仍可能是 false。
   const internalVisible = useMemo(
     () =>
       searched.filter(
-        (s) => (showArchived || !s.archived) && sessionLooksInternal(s),
+        (s) => s.archived === showArchived && sessionLooksInternal(s),
       ),
     [searched, showArchived],
   );
@@ -777,12 +768,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       if (filter.kind === "internal") {
         src = searched.filter((s) => sessionLooksInternal(s));
       } else {
-        src = applySessionFilters(
-          searched,
-          sessionFilterQuickForSearch(quick, true),
-          scopes,
-          liveKeys,
-        ).filter((s) => !sessionLooksInternal(s));
+        // 搜索时连已归档一起搜（v3.252）；开着「已归档」快筛则仍只看归档
+        src = applySessionFilters(searched, quick, scopes, liveKeys, Date.now(), {
+          includeArchived: true,
+        }).filter((s) => !sessionLooksInternal(s));
       }
     } else {
       src = filter.kind === "internal" ? internalVisible : regularVisible;
@@ -984,8 +973,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         setOpenSessionReq(null);
         if (hit) {
           setFilter(hit.internal ? { kind: "internal" } : { kind: "all" });
-          // 目标已归档时同步打开归档开关，保证跳转后在列表中可见
-          if (hit.archived) setShowArchived(true);
+          // 「已归档」快筛跟着目标走（只看归档），保证跳转后在列表中可见
+          setQuick((cur) => {
+            if (cur.has("archived") === hit.archived) return cur;
+            const next = new Set(cur);
+            if (hit.archived) next.add("archived");
+            else next.delete("archived");
+            return next;
+          });
           void openSession(hit, null);
         } else {
           setError("未找到该对话，可能尚未写入完成或已被 CLI 清理");
@@ -2112,7 +2107,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                                       const visible = all.filter(
                                         (session) =>
                                           !session.internal &&
-                                          (showArchived || !session.archived),
+                                          session.archived === showArchived,
                                       );
                                       setMenu({
                                         x: e.clientX,
@@ -2533,7 +2528,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   q || filter.kind !== "all"
                     ? "筛选没有命中对话"
                     : showArchived
-                      ? "还没有对话"
+                      ? "没有已归档的对话"
                       : "还没有对话（已归档的被隐藏）"
                 }
                 detail={

@@ -34,7 +34,7 @@ export const QUICK_FILTERS: readonly QuickFilterDef[] = [
   { id: "today", label: "今天", title: "今天有更新的对话" },
   { id: "week", label: "近 7 天", title: "近 7 天有更新的对话" },
   { id: "internal", label: "内部 AI", title: "只看 Mesa 内部 AI 的会话" },
-  { id: "archived", label: "已归档", title: "把已归档的对话也列出来" },
+  { id: "archived", label: "已归档", title: "只看已归档的对话" },
 ];
 
 /** 作用域筛选：搜索建议点选后落成的 chip，可叠加 */
@@ -74,8 +74,8 @@ export function sessionDayKey(s: SessionMetaDto): string | null {
  * 应用快筛 + 作用域 chip。
  *
  * 口径要点：
- * - `archived` 是**放宽**（把归档的也列出来），不是「只看归档」——与既有「显示已归档」开关同义；
- *   没勾时一律排除归档项。
+ * - `archived` 是**只看归档**（用户反馈「选已归档显示的结果有误」：原先是把归档的也列出来，
+ *   勾上后满屏仍是未归档的）；没勾时排除归档项，`includeArchived`（搜索用）时归档与未归档都留。
  * - `internal` 是**收窄**（只看内部 AI）；没勾时排除内部会话，与既有列表口径一致。
  * - `today` / `week` 同时勾选取并集里更宽的那个（week 覆盖 today）。
  * - 作用域 chip 之间**同类取或、异类取与**：两个项目 chip = 这两个项目里的；
@@ -87,6 +87,7 @@ export function applySessionFilters(
   scopes: readonly ScopeChip[],
   liveKeys: ReadonlySet<string>,
   now: number = Date.now(),
+  opts: { includeArchived?: boolean } = {},
 ): SessionMetaDto[] {
   const cutoff = quick.has("week")
     ? dayStart(6, now)
@@ -100,7 +101,8 @@ export function applySessionFilters(
     byKind.set(c.kind, list);
   }
   return sessions.filter((s) => {
-    if (!quick.has("archived") && s.archived) return false;
+    if (quick.has("archived") ? !s.archived : s.archived && !opts.includeArchived)
+      return false;
     if (quick.has("internal") ? !s.internal : s.internal) return false;
     if (quick.has("pinned") && !s.pinned) return false;
     if (quick.has("live") && !s.live && !liveKeys.has(`${s.agent}\n${s.sessionId}`))
@@ -121,17 +123,6 @@ export function applySessionFilters(
     }
     return true;
   });
-}
-
-/** 搜索时把已归档也放进来；未搜索仍排除（除非快筛已开归档）。左侧分类计数不走这条。 */
-export function sessionFilterQuickForSearch(
-  quick: ReadonlySet<QuickFilterId>,
-  searching: boolean,
-): ReadonlySet<QuickFilterId> {
-  if (!searching || quick.has("archived")) return quick;
-  const next = new Set(quick);
-  next.add("archived");
-  return next;
 }
 
 export const SEARCH_ARCHIVED_HEADER = "已归档";
