@@ -50,6 +50,30 @@ pub struct ReworkDraft {
     /// 大致篇数上限；不填为 None
     #[serde(default)]
     pub scale: Option<u32>,
+    /// 补料链（2026-11-06 流程贯通 §6）：退回目标保存后接着自动跟进的下游步骤名，按顺序；空 = 只补这一步
+    #[serde(default)]
+    pub chain: Vec<String>,
+}
+
+/// 补料链上一步「开过」的记录：步骤名、开的时间；skipped = 算出来没有要跟进的（记了 ack，链直接往下走）
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainStart {
+    pub step: String,
+    pub at: String,
+    #[serde(default)]
+    pub skipped: bool,
+}
+
+/// 补料链走到哪：存 `.ccode/rework/chain/<id>.json`（补料单本身只写一次不改；都不进 git）
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainState {
+    #[serde(default)]
+    pub started: Vec<ChainStart>,
+    /// 人点了「停掉这条链」：只停自动往下，补料单与已开的轮不动
+    #[serde(default)]
+    pub stopped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -61,6 +85,9 @@ pub struct ReworkDto {
     pub sent_at: String,
     /// 项目内相对路径（`.ccode/rework/<id>.json`）
     pub rel_path: String,
+    /// 补料链走到哪（列出时从 chain/<id>.json 读上；补料单文件里不写）
+    #[serde(default, skip_deserializing)]
+    pub chain_state: ChainState,
 }
 
 fn compact_stamp(iso: &str) -> String {
@@ -112,8 +139,13 @@ fn create_rework_at(root: &Path, mut draft: ReworkDraft) -> Result<ReworkDto, St
         id,
         draft,
         sent_at,
+        chain_state: ChainState::default(),
     };
-    let text = serde_json::to_string_pretty(&dto).map_err(|e| e.to_string())?;
+    let mut stored = serde_json::to_value(&dto).map_err(|e| e.to_string())?;
+    if let Some(map) = stored.as_object_mut() {
+        map.remove("chainState");
+    }
+    let text = serde_json::to_string_pretty(&stored).map_err(|e| e.to_string())?;
     crate::profiles::atomic_write(&dir.join(format!("{}.json", dto.id)), &text)?;
     Ok(dto)
 }
@@ -128,8 +160,98 @@ fn list_reworks_at(root: &Path) -> Vec<ReworkDto> {
         .filter_map(|e| fs::read_to_string(e.path()).ok())
         .filter_map(|text| serde_json::from_str::<ReworkDto>(&text).ok())
         .collect();
+    for r in &mut out {
+        r.chain_state = read_chain_at(root, &r.id);
+    }
     out.sort_by(|a, b| b.sent_at.cmp(&a.sent_at));
     out
+}
+
+// ===== 补料链（2026-11-06 流程贯通 §6，design-flow-weave.md） =====
+
+fn valid_rework_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 200 && id.chars().all(|c| !matches!(c, '/' | '\\' | '.' | ':') && !c.is_control())
+}
+
+fn chain_path(root: &Path, id: &str) -> PathBuf {
+    rework_dir(root).join("chain").join(format!("{id}.json"))
+}
+
+fn read_chain_at(root: &Path, id: &str) -> ChainState {
+    if !valid_rework_id(id) {
+        return ChainState::default();
+    }
+    fs::read_to_string(chain_path(root, id))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// 在锁里读改写一条链的状态；补料单不存在或 id 不合法报错
+fn update_chain_at<R>(root: &Path, id: &str, f: impl FnOnce(&ReworkDto, &mut ChainState) -> R) -> Result<R, String> {
+    if !valid_rework_id(id) {
+        return Err("补料单 id 不对".into());
+    }
+    let rework = list_reworks_at(root)
+        .into_iter()
+        .find(|r| r.id == id)
+        .ok_or("补料单不在了")?;
+    let dir = rework_dir(root).join("chain");
+    fs::create_dir_all(&dir).map_err(|e| format!("记补料链失败：{e}"))?;
+    let _lock = crate::storage::lock_at(&dir.join(".lock"))?;
+    let mut state = read_chain_at(root, id);
+    let out = f(&rework, &mut state);
+    let text = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
+    crate::profiles::atomic_write(&chain_path(root, id), &text)?;
+    Ok(out)
+}
+
+/// 链上这一步要开了：没停、在链上、还没开过才记下并返回 true——两处同时看到那次保存也只开一次
+fn claim_chain_at(root: &Path, id: &str, step: &str) -> Result<bool, String> {
+    update_chain_at(root, id, |rework, state| {
+        if state.stopped || !rework.draft.chain.iter().any(|s| s == step) || state.started.iter().any(|s| s.step == step) {
+            return false;
+        }
+        state.started.push(ChainStart {
+            step: step.to_string(),
+            at: crate::sessions::now_iso(),
+            skipped: false,
+        });
+        true
+    })
+}
+
+#[tauri::command]
+pub async fn rework_chain_claim(root: String, rework_id: String, step: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || claim_chain_at(&project_root(&root)?, &rework_id, &step))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 链上这一步算出来没有要跟进的（记了 ack）：标 skipped，链从它的上一步接着往下
+#[tauri::command]
+pub async fn rework_chain_skip(root: String, rework_id: String, step: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        update_chain_at(&project_root(&root)?, &rework_id, |_, state| {
+            if let Some(s) = state.started.iter_mut().find(|s| s.step == step) {
+                s.skipped = true;
+            }
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 停掉这条链：只停自动往下，补料单与已开的轮不动
+#[tauri::command]
+pub async fn rework_chain_stop(root: String, rework_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        update_chain_at(&project_root(&root)?, &rework_id, |_, state| {
+            state.stopped = true;
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -540,7 +662,28 @@ mod tests {
             reason: "可写正文只有 2 篇".into(),
             clues: String::new(),
             scale: Some(10),
+            chain: vec!["文献精读与笔记".into(), "综述大纲".into()],
         }
+    }
+
+    #[test]
+    fn chain_claims_each_step_once_and_stop_halts_it() {
+        let dir = project();
+        let r = create_rework_at(dir.path(), draft()).unwrap();
+        // 补料单文件里不写链状态
+        let raw = fs::read_to_string(dir.path().join(&r.rel_path)).unwrap();
+        assert!(!raw.contains("chainState"));
+        assert!(claim_chain_at(dir.path(), &r.id, "文献精读与笔记").unwrap());
+        assert!(!claim_chain_at(dir.path(), &r.id, "文献精读与笔记").unwrap(), "同一步只开一次");
+        assert!(!claim_chain_at(dir.path(), &r.id, "综述初稿").unwrap(), "不在链上的不开");
+        let listed = list_reworks_at(dir.path());
+        assert_eq!(listed[0].draft.chain, vec!["文献精读与笔记".to_string(), "综述大纲".to_string()]);
+        assert_eq!(listed[0].chain_state.started.len(), 1);
+        update_chain_at(dir.path(), &r.id, |_, s| s.stopped = true).unwrap();
+        assert!(!claim_chain_at(dir.path(), &r.id, "综述大纲").unwrap(), "停掉后不再往下");
+        assert!(claim_chain_at(dir.path(), "../x", "综述大纲").is_err());
+        // 链状态文件放在 rework/chain/ 下，列补料单时不会被当成补料单
+        assert_eq!(list_reworks_at(dir.path()).len(), 1);
     }
 
     #[test]

@@ -237,7 +237,7 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
-  components/StepLoop.tsx    # 综述回路二期界面（design-review-loop.md §4/§6）：ReworkDialog 补料单表单（只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数，tests/rework-dialog-ui.test.ts）、
+  components/StepLoop.tsx    # 综述回路二期界面（design-review-loop.md §4/§6）：ReworkDialog 补料单表单（只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数；chainOptions 补完后接着跟进的下游勾选，tests/rework-dialog-ui.test.ts）、
                              #   StepRoundsSection「这一步做过 N 轮」只读列表 + 逐文件看这一版 / 和上一轮比（不回滚；两轮以上或有未保存的一轮才出）
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
@@ -1132,7 +1132,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   step-loop.ts               # 综述回路二期纯逻辑：补料轮 / 跟进轮开场指令（补料单原文写进指令；isSearch / 精读由调用方按技能槽判，引擎不认识检索）、
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
-                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」（2026-11-06 流程贯通）（tests/step-loop.test.ts）
+                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）（tests/step-loop.test.ts）
   step-round.ts              # 在某一步「开一轮」的共同编排（2026-11-06 流程贯通）：pickStepWorkspace / ensureActive（恢复）/ assertRoundable（在忙、有没保存产出不叠一轮）/
                              #   boundStepLaunch / launchRound / recordRound / litKind；sendReworkRound = 退回补料整条路（步骤卡、项目助手补料单共用）。调 invoke，无单测
   step-latest.ts             # 开一轮前并入项目最新内容（流程贯通 §3）：bringLatest = 落后才并（health.behind + workspace_incoming）→ AI 在忙报错 →
@@ -1912,7 +1912,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
   step_loop.rs               # 综述回路二期（design-review-loop.md §4–§6）：补料单 .ccode/rework/<id>.json、开轮起因 .ccode/step-rounds.jsonl（只追加，时间后端写）——
                              #   followed_at（每个工作区最近一次并入的时间：sync / ack / followup / rework，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）；
-                             #   record_sync：workspace_sync_base / 完成解冲突成功后记 kind=sync（只记流程步骤的工作区，不算一轮，2026-11-06）
+                             #   record_sync：workspace_sync_base / 完成解冲突成功后记 kind=sync（只记流程步骤的工作区，不算一轮，2026-11-06）；
+                             #   补料链：ReworkDraft.chain + .ccode/rework/chain/<id>.json（rework_chain_claim 原子认领 / skip / stop，锁里读改写）
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
                              #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写

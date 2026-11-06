@@ -455,6 +455,10 @@
     人点「退回去补」才经 `src/step-round.ts sendReworkRound` 发（步骤卡的退回补料也改走它：找工作副本 → 恢复 → 拦 → 并入 → 写单 → 开轮 → 记轮次）。
     发过记在那一轮的 `dispatched`（mode=resume，回音巡视照常补进展）。手机上只说去桌面点（`assistant-ops` 新增 `rework` = desktop）。
     顺带：派出的活「已保存进项目」只认派出之后的保存（接回已保存步骤时旧的保存时间不算）。
+  - **④ 已落地**：补料单 `chain`（`step_loop.rs ReworkDraft.chain`）+ 链状态 `.ccode/rework/chain/<id>.json`（`ChainState.started[{step, at, skipped}]` / `stopped`，锁里读改写；
+    `rework_chain_claim` 原子认领、`rework_chain_skip`、`rework_chain_stop`；补料单文件本身只写一次不改）。下一步谁跟进由 `step-loop.ts chainNext` 算
+    （上一步「开了之后又保存过」才轮到；skipped 不算上一步），`chainWhere` 给显示用。TaskCardsSection 在 `workspaces` 变化时检查，只认 `SESSION_STARTED_AT` 之后的保存，
+    认领到就 `followUpstream(step, { label })` 自动跟进（不弹规模 / 恢复确认，规模 0 记 ack + skip 往下；出错提示条说停在哪）。链只收目标之后**已完成**的步骤（`stepKeys`），默认全勾。
   - **③ 已落地**：「退回上一步补料…」在步骤开过工后就有（进行中 / 待评审 / 已保存，TaskCardsSection `loopActions`）；补料单弹窗 `fromInProgress` 说明之后点「继续」先并进来。
     「跟进上游的新增」仍只在已保存且待跟进时给；进行中的步骤待跟进只写一句，靠「继续」并入。综述大纲简报第 3 条不再叫人先保存再退回（`pipeline-presets.ts`，已导出示例课题）。
 

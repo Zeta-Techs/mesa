@@ -14,12 +14,73 @@ export interface ReworkDraft {
   reason: string;
   clues: string;
   scale: number | null;
+  /** 补料链（2026-11-06 流程贯通 §6）：退回目标保存后接着自动跟进的下游步骤名，按顺序；空 = 只补这一步 */
+  chain?: string[];
+}
+
+/** 补料链上一步「开过」的记录；skipped = 算出来没有要跟进的（记了 ack），链从它的上一步接着往下 */
+export interface ChainStartDto {
+  step: string;
+  at: string;
+  skipped?: boolean;
 }
 
 export interface ReworkDto extends ReworkDraft {
   id: string;
   sentAt: string;
   relPath: string;
+  /** 链走到哪（rework_list 读上；发单时还没有） */
+  chainState?: { started: ChainStartDto[]; stopped: boolean };
+}
+
+/**
+ * 补料链下一步该谁跟进（纯逻辑，2026-11-06 流程贯通 §6）：从退回目标起往下走，链上每一步要等它的「上一步」
+ * 在开了之后又保存过才轮到它；开过而 skipped 的不算上一步（它没改东西）。轮到谁返回 { step, prev, savedAt }，
+ * 还在等某一步保存 / 链走完 / 停掉 / 没有链返回 null。savedAt：某一步最近一次保存进项目的时间（没保存过 null）。
+ */
+export function chainNext(
+  rework: Pick<ReworkDto, "toStep" | "sentAt" | "chain" | "chainState">,
+  savedAt: (step: string) => string | null,
+): { step: string; prev: string; savedAt: string } | null {
+  if (!rework.chain?.length || rework.chainState?.stopped) return null;
+  let prev = rework.toStep;
+  let since = rework.sentAt;
+  for (const step of rework.chain) {
+    const started = rework.chainState?.started.find((s) => s.step === step);
+    if (started) {
+      if (!started.skipped) {
+        prev = step;
+        since = started.at;
+      }
+      continue;
+    }
+    const saved = savedAt(prev);
+    return saved && Date.parse(saved) > Date.parse(since) ? { step, prev, savedAt: saved } : null;
+  }
+  return null;
+}
+
+/** 链现在卡在哪（资料全貌 / 提示用）：等某一步保存、轮到某一步跟进、走完了、停掉了 */
+export function chainWhere(
+  rework: Pick<ReworkDto, "toStep" | "sentAt" | "chain" | "chainState">,
+  savedAt: (step: string) => string | null,
+): { kind: "none" } | { kind: "stopped" } | { kind: "done" } | { kind: "waiting"; step: string } | { kind: "next"; step: string } {
+  if (!rework.chain?.length) return { kind: "none" };
+  if (rework.chainState?.stopped) return { kind: "stopped" };
+  const next = chainNext(rework, savedAt);
+  if (next) return { kind: "next", step: next.step };
+  let prev = rework.toStep;
+  let since = rework.sentAt;
+  for (const step of rework.chain) {
+    const started = rework.chainState?.started.find((s) => s.step === step);
+    if (!started) return { kind: "waiting", step: prev };
+    if (!started.skipped) {
+      prev = step;
+      since = started.at;
+    }
+  }
+  const saved = savedAt(prev);
+  return saved && Date.parse(saved) > Date.parse(since) ? { kind: "done" } : { kind: "waiting", step: prev };
 }
 
 export type RoundCause = "first" | "rework" | "followup" | "fresh" | "manual";

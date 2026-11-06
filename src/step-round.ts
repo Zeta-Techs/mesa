@@ -16,6 +16,9 @@ import type { ProjectStepDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
 
 export type Launch = { agentId: string; profileId: string; model: string };
 
+/** 这次打开 Mesa 的时间：补料链只在 Mesa 开着、看见那次保存时自动往下走（关着期间保存的不在打开时突然开终端，流程贯通 §6） */
+export const SESSION_STARTED_AT = new Date().toISOString();
+
 /** 这一步的工作副本：正在用的优先；保存过又归档的也认（回路与「几轮」要找得到它） */
 export function pickStepWorkspace(workspaces: readonly WorkspaceDto[], projectPath: string, step: Pick<ProjectStepDto, "workspaceName">): WorkspaceDto | undefined {
   if (!step.workspaceName) return undefined;
@@ -119,6 +122,8 @@ export interface ReworkSend {
   reason: string;
   clues: string;
   scale: number | null;
+  /** 补完保存后接着自动跟进的下游步骤名（补料链，§6）；空 = 只补这一步 */
+  chain?: string[];
   provides: SkillProvides;
   /** 解析不到绑定时用的连接（步骤卡传它那条链）；null 也行，按工作区上次用的预填 */
   launch: Launch | null;
@@ -150,6 +155,7 @@ export async function sendReworkRound(input: ReworkSend, onRestored?: () => void
       reason: input.reason,
       clues: input.clues,
       scale: input.scale,
+      chain: input.chain ?? [],
     },
   });
   const d = new Date();

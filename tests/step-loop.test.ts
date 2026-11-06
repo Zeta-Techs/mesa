@@ -191,3 +191,37 @@ test("latestNote：并进来的新内容附在开场指令后；没有就原样�
   assert.match(many, /- notes\/29\.md\n- …另有 3 个/);
   assert.doesNotMatch(many, /notes\/30\.md/);
 });
+
+test("chainNext / chainWhere：上一步开了之后又保存过才轮到下一步；skipped 不算上一步；停掉不再往下", async () => {
+  const { chainNext, chainWhere } = await import("../src/step-loop.ts");
+  const base = { toStep: "检索", sentAt: "2026-11-06T01:00:00Z", chain: ["精读", "大纲"] };
+  const saved: Record<string, string> = {};
+  const at = (s: string) => saved[s] ?? null;
+  // 检索还没在补料后保存：等检索
+  saved["检索"] = "2026-11-05T00:00:00Z";
+  assert.equal(chainNext({ ...base, chainState: { started: [], stopped: false } }, at), null);
+  assert.deepEqual(chainWhere({ ...base, chainState: { started: [], stopped: false } }, at), { kind: "waiting", step: "检索" });
+  // 检索保存了：轮到精读
+  saved["检索"] = "2026-11-06T02:00:00Z";
+  assert.deepEqual(chainNext({ ...base }, at), { step: "精读", prev: "检索", savedAt: "2026-11-06T02:00:00Z" });
+  // 精读开了还没保存：等精读
+  const s1 = { started: [{ step: "精读", at: "2026-11-06T02:01:00Z" }], stopped: false };
+  assert.equal(chainNext({ ...base, chainState: s1 }, at), null);
+  assert.deepEqual(chainWhere({ ...base, chainState: s1 }, at), { kind: "waiting", step: "精读" });
+  // 精读保存了：轮到大纲
+  saved["精读"] = "2026-11-06T03:00:00Z";
+  assert.equal(chainNext({ ...base, chainState: s1 }, at)?.step, "大纲");
+  // 精读没有要跟进的（skipped）：大纲看检索那次保存，直接轮到
+  delete saved["精读"];
+  const s2 = { started: [{ step: "精读", at: "2026-11-06T02:01:00Z", skipped: true }], stopped: false };
+  assert.deepEqual(chainNext({ ...base, chainState: s2 }, at), { step: "大纲", prev: "检索", savedAt: "2026-11-06T02:00:00Z" });
+  // 停掉：不再往下
+  assert.equal(chainNext({ ...base, chainState: { ...s1, stopped: true } }, at), null);
+  assert.deepEqual(chainWhere({ ...base, chainState: { ...s1, stopped: true } }, at), { kind: "stopped" });
+  // 都开过、最后一步也保存了：走完
+  saved["精读"] = "2026-11-06T03:00:00Z";
+  saved["大纲"] = "2026-11-06T05:00:00Z";
+  const s3 = { started: [{ step: "精读", at: "2026-11-06T02:01:00Z" }, { step: "大纲", at: "2026-11-06T03:01:00Z" }], stopped: false };
+  assert.deepEqual(chainWhere({ ...base, chainState: s3 }, at), { kind: "done" });
+  assert.deepEqual(chainWhere({ toStep: "检索", sentAt: "x", chain: [] }, at), { kind: "none" });
+});

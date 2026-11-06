@@ -21,6 +21,8 @@ export interface ReworkFields {
   reason: string;
   clues: string;
   scale: number | null;
+  /** 补完、保存进项目后接着自动跟进的下游步骤（补料链，2026-11-06 流程贯通 §6） */
+  chain: string[];
 }
 
 export function ReworkDialog({
@@ -31,6 +33,7 @@ export function ReworkDialog({
   litTargets = [],
   initial,
   fromInProgress = false,
+  chainOptions = {},
   busy,
   error,
   onCancel,
@@ -49,6 +52,8 @@ export function ReworkDialog({
   initial?: { target: string; topics: string; reason: string; clues: string; scale: number | null };
   /** 发起的这一步还没保存（做到一半 / 待评审，2026-11-06 流程贯通 §5）：说明它之后怎么接上补来的 */
   fromInProgress?: boolean;
+  /** 按退回目标列出补完后能接着自动跟进的下游步骤（目标之后、已保存的步骤，按顺序）；默认全勾 */
+  chainOptions?: Record<string, string[]>;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -59,8 +64,10 @@ export function ReworkDialog({
   const [topics, setTopics] = useState(initial?.topics ?? prefill[first]?.topics ?? "");
   const [reason, setReason] = useState(initial?.reason ?? prefill[first]?.reason ?? "");
   const [edited, setEdited] = useState(!!initial);
+  const [chain, setChain] = useState<string[]>(chainOptions[first] ?? []);
   const pickTarget = (next: string) => {
     setTarget(next);
+    setChain(chainOptions[next] ?? []);
     if (!edited) {
       setTopics(prefill[next]?.topics ?? "");
       setReason(prefill[next]?.reason ?? "");
@@ -106,6 +113,8 @@ export function ReworkDialog({
                 reason: reason.trim(),
                 clues: clues.trim(),
                 scale: lit && Number.isFinite(scaleNum) && scaleNum > 0 ? scaleNum : null,
+                // 按步骤顺序，只留现在这个目标下列得出来的
+                chain: (chainOptions[target] ?? []).filter((st) => chain.includes(st)),
               })
             }
           >
@@ -174,17 +183,37 @@ export function ReworkDialog({
             onChange={(e) => setClues(e.target.value)}
           />
         </label>
-{lit && (
-        <label className="block space-y-1">
-          <span>大致补多少篇（可选）</span>
-          <input
-            className={`${fieldClass} w-28`}
-            inputMode="numeric"
-            value={scale}
-            onChange={(e) => setScale(e.target.value.replace(/[^\d]/g, ""))}
-            placeholder="不填按需要"
-          />
-        </label>
+        {lit && (
+          <label className="block space-y-1">
+            <span>大致补多少篇（可选）</span>
+            <input
+              className={`${fieldClass} w-28`}
+              inputMode="numeric"
+              value={scale}
+              onChange={(e) => setScale(e.target.value.replace(/[^\d]/g, ""))}
+              placeholder="不填按需要"
+            />
+          </label>
+        )}
+        {(chainOptions[target] ?? []).length > 0 && (
+          <fieldset className="space-y-1">
+            <legend>{lit ? "补" : "改"}完、保存进项目后，接着自动跟进</legend>
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {(chainOptions[target] ?? []).map((st) => (
+                <label key={st} className="inline-flex items-center gap-1 text-l2">
+                  <input
+                    type="checkbox"
+                    checked={chain.includes(st)}
+                    onChange={(e) => setChain((cur) => (e.target.checked ? [...cur, st] : cur.filter((x) => x !== st)))}
+                  />
+                  {st}
+                </label>
+              ))}
+            </div>
+            <p className="text-micro text-l4">
+              上一步保存后，下一步自动开「跟进上游的新增」，只处理新增的部分；每一步照旧要你评审、保存。不勾的到时自己点跟进。
+            </p>
+          </fieldset>
         )}
         {error && <InlineNotice>{error}</InlineNotice>}
       </div>

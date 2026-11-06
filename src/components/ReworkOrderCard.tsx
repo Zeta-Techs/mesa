@@ -36,6 +36,7 @@ export default function ReworkOrderCard({
   onSent: (record: DispatchRecord) => Promise<void>;
 }) {
   const [steps, setSteps] = useState<ProjectStepDto[] | null>(null);
+  const [saved, setSaved] = useState<Set<string>>(new Set());
   const [provides, setProvides] = useState<SkillProvides>(undefined);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -50,6 +51,10 @@ export default function ReworkOrderCard({
       .catch(() => {});
     loadSkillProvides()
       .then((m) => !stale && setProvides(m))
+      .catch(() => {});
+    // 补完后能接着自动跟进的：保存过的步骤（按工作副本名认）
+    invoke<WorkspaceDto[]>("list_workspaces")
+      .then((list) => !stale && setSaved(new Set(list.filter((w) => w.mergedAt && w.status === "active").map((w) => w.name))))
       .catch(() => {});
     return () => {
       stale = true;
@@ -93,6 +98,7 @@ export default function ReworkOrderCard({
         reason: fields.reason,
         clues: fields.clues,
         scale: fields.scale,
+        chain: fields.chain,
         provides,
         launch: null,
         confirm: confirmDialog,
@@ -179,6 +185,12 @@ export default function ReworkOrderCard({
           fromStep={from?.name ?? "项目助手"}
           targets={targets.map((s) => s.name)}
           litTargets={targets.filter((s) => Object.values(litKind(s, provides)).some(Boolean)).map((s) => s.name)}
+          chainOptions={Object.fromEntries(
+            targets.map((t) => {
+              const from = steps.indexOf(t);
+              return [t.name, steps.filter((x, i) => i > from && !!x.workspaceName && saved.has(x.workspaceName)).map((x) => x.name)];
+            }),
+          )}
           initial={{
             target: target.name,
             topics: order.topics.join("\n"),

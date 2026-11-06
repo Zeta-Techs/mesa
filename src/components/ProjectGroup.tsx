@@ -1397,6 +1397,8 @@ export default function ProjectGroup({
       ),
     [cfg, workspaces, health, drift, terminalRunInputs],
   );
+  /** 每步状态键（补料链只把已完成的步骤放进链） */
+  const stepKeys = useMemo(() => stepStatuses.map((st) => st.key), [stepStatuses]);
   /** 按索引取状态；越界回落现算（artifactsStep 等可能指向已删步骤） */
   const statusAt = (i: number) =>
     stepStatuses[i] ??
@@ -2147,6 +2149,7 @@ export default function ProjectGroup({
           focusStep={focusStepName}
           focusStatusText={focusDesc?.statusText ?? null}
           focusRunStatus={focusRunStatus}
+          stepKeys={stepKeys}
           focusAgentAttention={focusAttention}
           focusRunId={runIdForPath(
             terminalRunInputs,

@@ -3,7 +3,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
@@ -34,6 +34,8 @@ import {
   unplacedCoverageDrafts,
   reworkTargets,
   withLatestNote,
+  chainNext,
+  type ReworkDto,
   type FollowupScopeDto,
 } from "../step-loop";
 import { bringLatest } from "../step-latest";
@@ -43,6 +45,7 @@ import {
   pickStepWorkspace,
   recordRound as recordStepRound,
   sendReworkRound,
+  SESSION_STARTED_AT,
 } from "../step-round";
 import { workspaceReuseKey } from "../pipeline-start";
 import {
@@ -120,6 +123,7 @@ export default function TaskCardsSection({
   focusStep,
   focusStatusText,
   focusRunStatus,
+  stepKeys,
   focusAgentAttention,
   focusRunId,
   reviewConflict,
@@ -162,6 +166,8 @@ export default function TaskCardsSection({
   focusStatusText?: string | null;
   /** 聚焦步骤的执行状态（v3.71 流程线用；由父级从工作区派生——健康/漂移数据在本组件外） */
   focusRunStatus?: "pending" | "active" | "review" | "done";
+  /** 每一步此刻的状态（按 steps 顺序；补料链只把已完成的步骤放进链，流程贯通 §6） */
+  stepKeys?: string[];
   /** 聚焦步骤工作区内终端的注意力（stepAttention 口径）：done 时流程线 Agent 节点给「已跑完」提示 */
   focusAgentAttention?: "confirm" | "done" | "working" | null;
   focusRunId?: string | null;
@@ -886,6 +892,7 @@ export default function TaskCardsSection({
           reason: fields.reason,
           clues: fields.clues,
           scale: fields.scale,
+          chain: fields.chain,
           provides: skillProvides,
           launch,
           confirm: confirmDialog,
@@ -909,13 +916,17 @@ export default function TaskCardsSection({
 
   /** 跟进上游的新增（§5）：只读算增量 → 人确认规模 → 并入 → 开一段对话只做增量 → 记轮次。
    *  没有要跟进的也记一笔（ack），「待跟进」就此消掉，不会一直挂着（2026-11-05 排查） */
-  async function followUpstream() {
-    const step = focusStepDto;
+  async function followUpstream(
+    target?: ProjectStepDto,
+    /** 补料链自动往下（流程贯通 §6）：人发补料单时已确认过一次，不再弹规模确认、恢复确认；出错用提示条说，不占聚焦步骤的报错位 */
+    auto?: { label: string },
+  ): Promise<"started" | "skipped" | "stopped"> {
+    const step = target ?? focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
-    if (!step || !found) return;
+    if (!step || !found) return "stopped";
     const upstream = found.staleUpstream ?? "上一步";
     setFollowBusy(true);
-    setError(null);
+    if (!auto) setError(null);
     try {
       const launch = await loopLaunch(step.name);
       // 精读步的增量按项目根的台账算，不用工作副本：收起了也先算、先问，人确认了才恢复（2026-11-05 排查：原先一点就恢复）
@@ -930,15 +941,16 @@ export default function TaskCardsSection({
       let ws = found;
       let files: string[] = [];
       if (!notesIds) {
-        // 按文件算增量要看工作副本：收起了的先问一句再恢复
+        // 按文件算增量要看工作副本：收起了的先问一句再恢复（链上自动跟进时人已同意过）
         if (
           found.status !== "active" &&
+          !auto &&
           !(await confirmDialog(
             `「${step.name}」的工作副本已收起：要先恢复它，才能算出上游有多少新内容要跟进。恢复并检查？`,
             { confirmText: "恢复并检查" },
           ))
         )
-          return;
+          return "stopped";
         ws = await ensureActive(found, step.name);
         const scope = await invoke<FollowupScopeDto>("step_followup_scope", { workspaceId: ws.id });
         files = followupFiles(scope.files);
@@ -949,25 +961,74 @@ export default function TaskCardsSection({
       if (!scale) {
         await recordRound(ws, step.name, "ack");
         onWorkspacesChanged?.();
-        toast("项目里没有这一步还没用上的新内容，不用跟进；「待跟进」已去掉。", "info");
-        return;
+        toast(
+          auto
+            ? `${auto.label}：「${step.name}」没有要跟进的新内容，接着往下。`
+            : "项目里没有这一步还没用上的新内容，不用跟进；「待跟进」已去掉。",
+          "info",
+        );
+        return "skipped";
       }
-      const restoreNote = ws.status !== "active" ? "开始前会先恢复这一步收起的工作副本，再把项目里的新内容并进去。" : "开始前会先把项目里的新内容并进这一步的工作副本。";
-      if (!(await confirmDialog(`${scale}\n${restoreNote}`, { confirmText: "开始跟进" }))) return;
+      if (!auto) {
+        const restoreNote = ws.status !== "active" ? "开始前会先恢复这一步收起的工作副本，再把项目里的新内容并进去。" : "开始前会先把项目里的新内容并进这一步的工作副本。";
+        if (!(await confirmDialog(`${scale}\n${restoreNote}`, { confirmText: "开始跟进" }))) return "stopped";
+      }
       if (ws.status !== "active") {
         ws = await ensureActive(ws, step.name);
         await assertRoundable(ws, step.name);
       }
-      if ((await bringLatest(ws, step.name, confirmDialog, "跟进")) === null) return;
+      if ((await bringLatest(ws, step.name, confirmDialog, "跟进")) === null) return "stopped";
       await launchContinuation(launch, ws, step.name, followupPrompt({ upstream, notesIds, files }));
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
+      if (auto) toast(`${auto.label}：接着跟进「${step.name}」——${scale} 做完照常评审、保存。`, "info");
+      return "started";
     } catch (reason) {
-      setError(String(reason instanceof Error ? reason.message : reason));
+      const text = String(reason instanceof Error ? reason.message : reason);
+      if (auto) toast(`${auto.label}停在「${step.name}」：${text} 处理完到这一步点「跟进上游的新增」，保存后链接着往下。`, "error");
+      else setError(text);
+      return "stopped";
     } finally {
       setFollowBusy(false);
     }
   }
+
+  // 补料链（流程贯通 §6）：链上的上一步保存进项目后，下一步自动开「跟进上游的新增」。只认这次打开 Mesa 之后的保存；
+  // rework_chain_claim 原子地记「这一步开过」，两处同时看到也只开一次；一次只走一步
+  const chainBusyRef = useRef(false);
+  useEffect(() => {
+    if (chainBusyRef.current || steps.length === 0) return;
+    let stale = false;
+    void (async () => {
+      const reworks = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
+      if (stale || chainBusyRef.current) return;
+      const savedAt = (name: string) => {
+        const st = steps.find((x) => x.name === name);
+        return (st && stepWorkspace(st)?.mergedAt) || null;
+      };
+      for (const r of reworks) {
+        const next = chainNext(r, savedAt);
+        if (!next || Date.parse(next.savedAt) <= Date.parse(SESSION_STARTED_AT)) continue;
+        const step = steps.find((x) => x.name === next.step);
+        if (!step) continue;
+        const claimed = await invoke<boolean>("rework_chain_claim", { root: projectPath, reworkId: r.id, step: next.step }).catch(() => false);
+        if (!claimed || stale) continue;
+        chainBusyRef.current = true;
+        try {
+          const chain = r.chain ?? [];
+          const result = await followUpstream(step, { label: `补料链（${r.toStep} 之后第 ${chain.indexOf(next.step) + 1}/${chain.length} 步）` });
+          if (result === "skipped") await invoke("rework_chain_skip", { root: projectPath, reworkId: r.id, step: next.step }).catch(() => {});
+        } finally {
+          chainBusyRef.current = false;
+        }
+        break;
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaces, projectPath]);
 
   /** 这个工作区有没有能接回的上次对话（只看会话列表，不管是哪家）：有才给「新开一轮」 */
   function hasPriorSession(ws: WorkspaceDto | undefined): boolean {
@@ -1670,6 +1731,13 @@ export default function TaskCardsSection({
             .filter((st) => isLitStep(st))
             .map((st) => st.name)}
           fromInProgress={focusRunStatus !== "done"}
+          chainOptions={Object.fromEntries(
+            reworkTargets(steps, focusIdx).map((st) => {
+              // 补完后能接着自动跟进的：目标之后、已保存（已完成）的步骤，按顺序；做到一半的不进链，它点「继续」时自己并进来
+              const from = steps.indexOf(st);
+              return [st.name, steps.filter((_x, i) => i > from && stepKeys?.[i] === "done").map((x) => x.name)];
+            }),
+          )}
           prefill={reworkPrefill}
           unplaced={reworkUnplaced}
           busy={reworkBusy}
