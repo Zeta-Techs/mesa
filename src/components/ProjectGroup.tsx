@@ -58,6 +58,7 @@ import { isTaskMdStub } from "../step-decisions";
 import { userWorkDirtyFiles } from "../git-status-groups";
 import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
+import MaterialsOverview from "./MaterialsOverview";
 import { stepAttention } from "../run-overview";
 import { stepperStatusText } from "../stepper-status";
 import { failureSnippet, latestRunFailure } from "../run-failure";
@@ -1810,6 +1811,18 @@ export default function ProjectGroup({
         </div>
       )}
 
+      {registered && cfg && (
+        // 资料全貌（2026-11-06 流程贯通 §7）：一行一份资料的现状、跟上游对齐没有、在途的回头；两步以上开过工才出
+        <MaterialsOverview
+          projectPath={projectPath}
+          steps={cfg.steps}
+          statuses={stepStatuses}
+          provides={skillProvides}
+          focusIndex={focusIndex}
+          onFocus={focusByIndex}
+          refreshKey={`${refreshToken ?? ""}|${stepStatuses.map((st) => `${st.key}:${st.ws?.mergedAt ?? ""}:${st.ws?.staleUpstream ?? ""}`).join(",")}`}
+        />
+      )}
       {registered && cfg && (() => {
         // 回路进行中「下一步去哪」：前面在补一轮先指它，否则指第一个待跟进的步骤（step-loop.ts loopHint）
         const hint = loopHint(

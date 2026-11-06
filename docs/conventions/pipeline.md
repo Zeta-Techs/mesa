@@ -455,6 +455,9 @@
     人点「退回去补」才经 `src/step-round.ts sendReworkRound` 发（步骤卡的退回补料也改走它：找工作副本 → 恢复 → 拦 → 并入 → 写单 → 开轮 → 记轮次）。
     发过记在那一轮的 `dispatched`（mode=resume，回音巡视照常补进展）。手机上只说去桌面点（`assistant-ops` 新增 `rework` = desktop）。
     顺带：派出的活「已保存进项目」只认派出之后的保存（接回已保存步骤时旧的保存时间不算）。
+  - **⑤ 已落地**：`components/MaterialsOverview.tsx`（ProjectGroup 流程线上方、回路提示之前）+ 纯逻辑 `src/materials-overview.ts`：资料按技能槽 / 交 outline.md 认（`assetKind`），
+    现状只从项目根文件机械数（复用 `notes-progress.ts`），对齐按 `staleUpstream`，在途回头按 `reworkLine`（补完且链走完 / 停掉不列，最多 4 条），可「停掉这条链」。
+    两步以上开过工才出；有没跟上的或在途的回头时默认展开。**落地与设计不同**：行上不放「跟进」按钮，只点步骤名跳过去——跟进在步骤卡上（主路径唯一）。
   - **④ 已落地**：补料单 `chain`（`step_loop.rs ReworkDraft.chain`）+ 链状态 `.ccode/rework/chain/<id>.json`（`ChainState.started[{step, at, skipped}]` / `stopped`，锁里读改写；
     `rework_chain_claim` 原子认领、`rework_chain_skip`、`rework_chain_stop`；补料单文件本身只写一次不改）。下一步谁跟进由 `step-loop.ts chainNext` 算
     （上一步「开了之后又保存过」才轮到；skipped 不算上一步），`chainWhere` 给显示用。TaskCardsSection 在 `workspaces` 变化时检查，只认 `SESSION_STARTED_AT` 之后的保存，
