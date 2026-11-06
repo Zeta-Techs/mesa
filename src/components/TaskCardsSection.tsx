@@ -86,7 +86,7 @@ import type {
 } from "../types";
 import { isSettingPlaceholder } from "../project-context";
 import { upsertPendingSettingsSection } from "../task-md-sections";
-import { researchToolAskFieldsForStep, researchToolsFromSettings } from "../research-tools";
+import { researchToolAskFieldsForStep, researchToolsFromSettings, type ResearchTools } from "../research-tools";
 import { stepFillsAnySlot, useSkillProvides } from "../skill-slots.ts";
 import { statusBadgeTitle, userWorkDirtyFiles } from "../git-status-groups";
 import {
@@ -202,7 +202,7 @@ export default function TaskCardsSection({
   /** 输入准备（v3.86）：透传给流程线「定方向」节点的文献来源选择与就地导入 */
   onSetLitSource?: (value: string) => void | Promise<void>;
   litBusy?: boolean;
-  onSetResearchTool?: (key: "libraryExport" | "plotting" | "illustration" | "manuscript", value: string) => void | Promise<void>;
+  onSetResearchTool?: (key: keyof ResearchTools, value: string) => void | Promise<void>;
   toolBusy?: boolean;
   /** 项目 Agents 页的默认 Agent / 绑定 / 模型；新会话和「跟 AI 商量一下」用这份。 */
   preferredAgent?: string | null;

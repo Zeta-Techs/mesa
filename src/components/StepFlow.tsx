@@ -1914,7 +1914,7 @@ export default function StepFlow({
    *  流程感来自「① → ② → ③」的顺序本身，光靠 ○/● 看不出先后（用户反馈） */
   const mainOrder = new Map(
     flow.nodes
-      .filter((n) => n.section === "main" && n.kind !== "human" && !(n.skipCurrent && n.key !== "tool:manuscript"))
+      .filter((n) => n.section === "main" && n.kind !== "human" && !(n.skipCurrent && n.key !== "tool:manuscript" && n.key !== "tool:experiment"))
       .map((n, i) => [n.key, i + 1] as const),
   );
 

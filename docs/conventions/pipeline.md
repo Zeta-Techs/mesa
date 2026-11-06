@@ -485,6 +485,11 @@
 - **① 已落地**：`pipeline-presets.ts DRAFT_ORDER`（三套初稿 SECTION_STATUS 前一句；初稿都交 `manuscript/style-sheet.md`）；综述大纲第 8 条另交 `manuscript/sections.json`
   （`machine:records` 验 id、title）与写作规范初版；综述初稿 `fanOut: REVIEW_DRAFT_FANOUT`（items = sections.json，每路 2 节、最多 4 路，各路写 `manuscript/sections/`，收尾统稿并删掉分路文件）。
   论文 / 学位论文初稿不声明分路（IMRaD 各节相互依赖；学位论文各章在前面几步已写）。已导出示例课题。
+- **⑤ 已落地**：科研工具字段 `experiment`（`research-tool-fields.ts`：compute / lab，档案卡键 `科研工具/experiment：lab`）。**问在设计步**（交 design.md 的步骤，
+  `stepTakesExperiment`；落地与设计稿不同：设计稿写问在执行步，但实验室实验从设计起就要按样品与对照写），与稿件载体同为开工前提节点（不挡「开始」）。
+  `withResearchTools`：设计步追加合同节（按样品与对照写设计、矩阵每组一个样品 / 条件）；执行步（交 run-manifest 的）追加合同节 + 产物 protocol.md、processing/rules.md
+  + 人工事项（「原始数据放进 data/raw/」during / exists；「核对处理规则与主指标」after / manual），下游文件名不变，切回计算实验原样撤掉。
+  科研论文模板去掉全局设定「研究形态」，项目规则与设计简报改按实验方式说。
 - **④ 已落地**：后端 `docx_comments.rs`（窄口径扫 word/comments.xml 与 document.xml：批注人、日期、文字、被批注原文；范围里没字的点批注退回取所在段；
   只读源文件，清单写进这一步工作副本 `manuscript/comments/<日期>-<文件名>.md`、同名后缀递增不覆盖；表头是与 `step-loop.ts commentReworkDrafts` 的契约）。
   TaskCardsSection `importComments`：写作 / 定稿类步骤开过工就有按钮；已保存的先 `assertRoundable`，做到一半的 AI 在忙则拦；并入最新 → 抽清单 → 提交 → 另开一轮

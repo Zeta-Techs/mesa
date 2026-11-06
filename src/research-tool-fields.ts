@@ -5,15 +5,18 @@ export interface ResearchTools {
   plotting: "python" | "origin";
   illustration: "schematic" | "none" | "blender";
   manuscript: "markdown" | "latex" | "word";
+  /** 实验方式（2026-11-07 科研流程补全 §5）：计算实验 = AI 写代码跑；实验室实验 = 人做，AI 管协议、处理规则、数据登记与质控 */
+  experiment: "compute" | "lab";
 }
 export const DEFAULT_RESEARCH_TOOLS: ResearchTools = {
-  libraryExport: "none", plotting: "python", illustration: "schematic", manuscript: "markdown",
+  libraryExport: "none", plotting: "python", illustration: "schematic", manuscript: "markdown", experiment: "compute",
 };
 export const RESEARCH_TOOL_FIELDS = [
   { key: "libraryExport", label: "文献库", options: [["none", "不使用"], ["zotero", "Zotero"], ["endnote", "EndNote"]] },
   { key: "plotting", label: "数值图", options: [["python", "Python"], ["origin", "Origin（Windows）"]] },
   { key: "illustration", label: "示意图", options: [["schematic", "图纸（PPT / SVG）"], ["blender", "Blender（三维）"], ["none", "不需要"]] },
   { key: "manuscript", label: "稿件载体", options: [["markdown", "Markdown / Quarto"], ["latex", "LaTeX（原生源码）"], ["word", "已有 Word（人工插件验收）"]] },
+  { key: "experiment", label: "实验方式", options: [["compute", "计算实验（AI 写代码跑）"], ["lab", "实验室实验（人做，AI 管记录与数据）"]] },
 ] as const;
 export type ResearchToolField = (typeof RESEARCH_TOOL_FIELDS)[number];
 const PREFIX = "科研工具/";

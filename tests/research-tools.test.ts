@@ -288,3 +288,31 @@ test("多阶段文献库技能：精读步只认通道报告，定稿步只认�
   assert.deepEqual(researchToolStageOutputs(polish)["zotero-sync"], ["output/zotero.docx", "papers/zotero-cite-report.md"]);
   assert.deepEqual(researchToolStageOutputs({ skills: ["data-eda"], workspaceName: "eda" }), {});
 });
+
+test("实验方式：问在设计步；实验室实验给设计与执行加合同节、产物与人工事项，切回计算实验原样撤掉", () => {
+  const steps = template("research-paper").steps;
+  const design = steps.find((s) => s.workspaceName === "exp-design")!;
+  const run = steps.find((s) => s.workspaceName === "exp-run")!;
+  assert.ok(researchToolFieldsForSteps(steps).some((f) => f.key === "experiment"));
+  assert.deepEqual(researchToolAskFieldsForStep(design, steps).map((f) => f.key).filter((k) => k === "experiment"), ["experiment"]);
+  assert.ok(!researchToolAskFieldsForStep(run, steps).some((f) => f.key === "experiment"), "只在第一步（设计）问");
+  assert.ok(!researchToolFieldsForSteps(template("review").steps).some((f) => f.key === "experiment"), "综述没有实验");
+  const lab = { ...DEFAULT_RESEARCH_TOOLS, experiment: "lab" as const };
+  const d = withResearchTools(design, lab);
+  assert.match(d.brief, /实验方式：实验室实验（优先于上文「计算实验」的写法）/);
+  assert.deepEqual(d.expectedArtifacts, design.expectedArtifacts, "设计步只换写法，不加产物");
+  const r = withResearchTools(run, lab);
+  assert.match(r.brief, /实验由人在实验室做/);
+  assert.match(r.brief, /绝不编造、不补全任何测量值/);
+  assert.ok(r.expectedArtifacts.includes("experiments/protocol.md") && r.expectedArtifacts.includes("processing/rules.md"));
+  assert.ok(r.expectedArtifacts.includes("results/run-manifest.json"), "下游要的文件名不变");
+  const raw = r.humanTasks!.find((h) => h.target === "data/raw/")!;
+  assert.equal(raw.timing, "during");
+  assert.equal(raw.completion, "exists");
+  assert.deepEqual(withResearchTools(r, lab), r, "重应用幂等");
+  const back = withResearchTools(r, DEFAULT_RESEARCH_TOOLS);
+  assert.equal(back.brief, run.brief);
+  assert.deepEqual(back.expectedArtifacts, run.expectedArtifacts);
+  assert.deepEqual(back.humanTasks, run.humanTasks);
+  assert.ok(researchToolsFromSettings(["科研工具/experiment：lab"]).experiment === "lab");
+});

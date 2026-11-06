@@ -1122,7 +1122,8 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   research-tool-fields.ts    # 科研工具字段表 / 默认值 / 档案卡键读写与 readableResearchToolSetting（机器键→界面说法）；纯模块不引
                              #   React / Tauri，上下文包从这里取，research-tools.ts 原样转出
   research-tools.ts          # 科研工具注入 withResearchTools；researchToolStageOutputs 给开工提醒的分阶段文件（与挂载同一份表）；定稿步同时挂 output/endnote.docx 与 output/zotero.docx（LaTeX 不挂）；
-                             #   示意图默认「图纸」（illustration=schematic）：实验设计 / 方法步挂 schematic-forge（只挂技能、不设必需）
+                             #   示意图默认「图纸」（illustration=schematic）：实验设计 / 方法步挂 schematic-forge（只挂技能、不设必需）；
+                             #   实验方式 experiment=lab（2026-11-07）：问在设计步，设计与执行两步追加实验室合同节、执行步加协议 / 处理规则产物与两项人工事项
   skill-slots.ts             # 技能位单一出处：{skill:锚名} 占位解析（provides 优先、名字兜底）、行为键判定、provides 映射 hook；锚名闭集见 pipeline.md（tests/skill-slots.test.ts）
                              # 域稿不再挂成定稿步人工事项（入口在完结文件，2026-10-24）；老档案的域稿行不挂文献库同步按钮；来源只认 lit_source
   review-decisions.ts        # 审查报告 R/S 与待核实 V 的拆条、接受/拒绝/修改写回、点完后的继续提示

@@ -135,9 +135,9 @@ export function buildStepFlow(args: {
         runStatus !== "pending",
     });
   }
-  // 0.6 稿件载体会换本步正式稿，是开工前提，排在 Agent 前（与「确定文献来源」同形）。
+  // 0.6 稿件载体会换本步正式稿、实验方式会换设计与执行的写法（2026-11-07），是开工前提，排在 Agent 前（与「确定文献来源」同形）。
   //     Origin / Blender / 库交付不是这一步的主工作，不插在步骤前面。
-  for (const ask of (args.toolAsks ?? []).filter((item) => item.key === "manuscript")) {
+  for (const ask of (args.toolAsks ?? []).filter((item) => item.key === "manuscript" || item.key === "experiment")) {
     nodes.push({
       key: `tool:${ask.key}`,
       kind: "input",
@@ -277,7 +277,7 @@ export function buildStepFlow(args: {
       skipCurrent: true,
     });
   }
-  for (const ask of (args.toolAsks ?? []).filter((item) => item.key !== "manuscript")) {
+  for (const ask of (args.toolAsks ?? []).filter((item) => item.key !== "manuscript" && item.key !== "experiment")) {
     nodes.push({
       key: `tool:${ask.key}`,
       kind: "input",

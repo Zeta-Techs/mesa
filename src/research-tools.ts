@@ -25,6 +25,13 @@ function stepAsksLibraryExport(step: Pick<ProjectStepDto, "skills" | "workspaceN
 function stepTakesPlotting(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): boolean {
   return stepFillsAnySlot(step.skills, ["figure-forge", "data-eda"], providesByName);
 }
+/** 实验方式问在设计步（交 design.md 的步骤，实验室实验要从设计起就按样品与对照写），作用到设计与执行两步（交运行清单的） */
+function stepTakesExperiment(step: Pick<ProjectStepDto, "expectedArtifacts">): boolean {
+  return (step.expectedArtifacts ?? []).some((p) => p === "design.md" || p === "results/run-manifest.json");
+}
+function stepRunsExperiment(step: Pick<ProjectStepDto, "expectedArtifacts">): boolean {
+  return (step.expectedArtifacts ?? []).includes("results/run-manifest.json");
+}
 function stepTakesIllustration(step: Pick<ProjectStepDto, "workspaceName">): boolean {
   return step.workspaceName === "methodology" || step.workspaceName === "exp-design";
 }
@@ -77,6 +84,7 @@ export function researchToolFieldsForSteps(steps: readonly ProjectStepDto[], pro
     if (field.key === "libraryExport") return stepTakesLibraryExport(step, providesByName);
     if (field.key === "plotting") return stepTakesPlotting(step, providesByName);
     if (field.key === "illustration") return stepTakesIllustration(step);
+    if (field.key === "experiment") return stepTakesExperiment(step);
     return stepTakesManuscript(step);
   }));
 }
@@ -84,6 +92,7 @@ function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "na
   if (field.key === "libraryExport") return stepAsksLibraryExport(step, providesByName);
   if (field.key === "plotting") return stepTakesPlotting(step, providesByName);
   if (field.key === "illustration") return stepTakesIllustration(step);
+  if (field.key === "experiment") return stepTakesExperiment(step);
   return stepAsksManuscript(step);
 }
 /** 流程线上问这一项的那一步：整条流程里第一个用得上的步骤。稿件载体只问会换正式稿的步骤。 */
@@ -190,6 +199,35 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
   }
   if (tools.illustration === "blender" && illustration) {
     mount("blender-research", ["analysis/build_scene.py", "figures/blender-manifest.json", "figures/blender-schematic.png", `${outputRoot}/blender/scene.blend`], `Blender：仅用于本步明确的结构/装置/机制示意；不把示意冒充实验观测。先确认真实尺寸、单位、来源/许可与不按比例部分。MCP 无 OS 沙箱，使用新建受控工程；交付脚本、${outputRoot}/blender/scene.blend、figures/blender-schematic.png 和 manifest，后台重建失败非零退出。`, "核对 Blender 结构、比例、来源和示意标注");
+  }
+  // 实验室实验（2026-11-07 科研流程补全 §5）：设计按样品与对照写；执行由人在实验室做，AI 写协议与处理规则、登记原始数据、按规则处理、做质控。
+  // 只追加合同节与产物（可撤回），下游结果分析的输入文件名不变；绝不让 AI 生成或补全测量值
+  if (tools.experiment === "lab" && stepTakesExperiment(step) && !stepRunsExperiment(step)) {
+    notes.push(
+      "实验方式：实验室实验（优先于上文「计算实验」的写法）。design.md 按实验室实验写：样品与对照、制备条件、测试项目与仪器参数、重复次数、判定标准；" +
+        "experiments/matrix.json 每组一个样品 / 条件组合（id 稳定），不写算力与脚本矩阵。",
+    );
+  }
+  if (tools.experiment === "lab" && stepRunsExperiment(step)) {
+    for (const path of ["experiments/protocol.md", "processing/rules.md"]) {
+      if (!step.expectedArtifacts.includes(path)) { step.expectedArtifacts.push(path); added.artifacts.push(path); }
+    }
+    const humanTasks = [
+      { title: "按实验协议做实验，原始数据放进 data/raw/", guidance: "按 experiments/protocol.md 做；仪器导出的原始文件按样品号放进项目 data/raw/<样品号>/，不改名、不改内容。放好后在对话里说一声或点「继续」。", target: "data/raw/", timing: "during", completion: "exists" as const },
+      { title: "核对处理规则与主指标", guidance: "看 processing/rules.md 每条规则的依据，抽几组对照原始曲线核对 results/summary.md 的主指标。", target: "", timing: "after", completion: "manual" as const },
+    ];
+    for (const h of humanTasks) {
+      if (!step.humanTasks.some((x) => x.title === h.title)) { step.humanTasks.push(h); added.human.push(h.title); }
+    }
+    notes.push(
+      "实验方式：实验室实验——实验由人在实验室做，优先于上文「实现实验代码、逐项跑实验矩阵」的写法：" +
+        "① 按 design.md 写 experiments/protocol.md（每组条件的操作步骤、样品编号规则、测试项目与仪器参数、重复次数、对照）和实验记录模板；" +
+        "② 写 processing/rules.md：仪器数据的标准处理（例如 iR 补偿方式与比例、按几何面积或电化学活性面积归一化、取值点、拟合区间、参比电极换算），每条注明依据，人批准前不用于正式结果；" +
+        "③ 写一条人工请求：请人按协议做实验，把仪器导出文件按样品号放进项目 data/raw/<样品号>/（原始文件不改名不改内容），做完点「继续」；" +
+        "④ 数据到了：每个原始文件登记进 results/run-manifest.json（样品号、条件、仪器、日期、hash），按 rules.md 用 experiments/reproduce.py 从原始文件处理出结果；" +
+        "results/matrix.json 每组标 done / failed / not-run，缺数据的组写清缺什么、不补造；results/implementation-check.md 改记数据质控（重复性、对照、异常曲线与处理）；" +
+        "results/summary.md 每组一行主指标与原始文件路径。绝不编造、不补全任何测量值。",
+    );
   }
   if (tools.manuscript !== "markdown" && /论文|初稿|定稿|格式|投稿|回复/.test(step.name)) {
     notes.push(tools.manuscript === "latex"
