@@ -30,7 +30,7 @@ const LIST_CAP: usize = 20;
 // 只清这三家能从会话文件重抽的行（有 seen 标记）和它们的 seen 标记，其余 agent 与重抽不回来的行不动。
 // v10（2026-10-31）：Claude Code 同一次回复拆成几行、每行带整份 usage，原先逐行相加，用量约翻倍；改为按 message.id 合一。
 // 只清 Claude Code 能从会话文件重抽的行和它的 seen 标记；文件已被 CLI 清掉的旧行重抽不回来，保持原数。
-const USAGE_SCHEMA_VERSION: &str = "10";
+const USAGE_SCHEMA_VERSION: &str = "11";
 const SOURCE_CLI: &str = "cli";
 const SOURCE_CCODE_AI: &str = "ccode-ai";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -267,10 +267,21 @@ where
     S: AsRef<str>,
 {
     let mut out = Vec::new();
+    // usage.record 记的是 config.toml 里的模型别名（Mesa 启动合成的 `__kimi_env_model__`、`zetatechs/kimi-k3`），
+    // 同一份文件的 llm.request 行带着 modelAlias → model 真名；不换回来，用量里就是一个查不到价的占位名（2026-11-07）
+    let mut alias_to_model: HashMap<String, String> = HashMap::new();
     for line in lines {
         let Ok(v) = serde_json::from_str::<Value>(line.as_ref()) else {
             continue;
         };
+        if get_str(&v, "type") == Some("llm.request") {
+            if let (Some(alias), Some(model)) = (get_str(&v, "modelAlias"), get_str(&v, "model")) {
+                if !alias.is_empty() && !model.is_empty() {
+                    alias_to_model.insert(alias.to_string(), model.to_string());
+                }
+            }
+            continue;
+        }
         if get_str(&v, "type") != Some("usage.record") {
             continue;
         }
@@ -278,13 +289,14 @@ where
             continue;
         };
         let num = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        let alias = get_str(&v, "model").unwrap_or("");
         out.push(UsageEvent {
             day: v
                 .get("time")
                 .and_then(|t| t.as_i64())
                 .map(day_of_ms)
                 .unwrap_or_default(),
-            model: get_str(&v, "model").unwrap_or("").to_string(),
+            model: alias_to_model.get(alias).map_or(alias, String::as_str).to_string(),
             input: num("inputOther"),
             output: num("output"),
             cache_read: num("inputCacheRead"),
@@ -943,13 +955,14 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         .ok();
     if current.as_deref() != Some(USAGE_SCHEMA_VERSION) {
         // 旧索引没有可靠来源，清空后由会话源重新生成，避免把历史猜测伪装成权威分类。
-        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重：只清这几家能从会话文件重抽的行
+        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名：只清这几家能从会话文件重抽的行
         // （有 seen 标记）和它们的 seen 标记，其它 agent 已建好的日行留着，避免整库重解析；文件已不在的行重抽不回来，
         // 留着（用量历史永久保留）
         let partial: Option<&[&str]> = match current.as_deref() {
-            Some("9") => Some(&["claude-code"]),
-            Some("8") => Some(&["claude-code", "codex", "gemini", "qwen"]),
-            Some("7") => Some(&["claude-code", "grok", "codex", "gemini", "qwen"]),
+            Some("10") => Some(&["kimi"]),
+            Some("9") => Some(&["claude-code", "kimi"]),
+            Some("8") => Some(&["claude-code", "codex", "gemini", "qwen", "kimi"]),
+            Some("7") => Some(&["claude-code", "grok", "codex", "gemini", "qwen", "kimi"]),
             _ => None,
         };
         let reset_sql = match partial {
@@ -5095,6 +5108,13 @@ mod tests {
             ),
             (50, 9, 4, 1)
         );
+        assert_eq!(evs[0].model, "kimi-k2", "没有 llm.request 对照时原样用记下的名字");
+        // Mesa 启动的会话记的是合成别名：按同一份文件 llm.request 的 modelAlias 换回真名
+        let lines = vec![
+            r#"{"type":"llm.request","model":"glm-5.3","modelAlias":"__kimi_env_model__","time":1785307070000}"#.to_string(),
+            r#"{"type":"usage.record","model":"__kimi_env_model__","usage":{"inputOther":5,"output":1},"time":1785307071000}"#.to_string(),
+        ];
+        assert_eq!(kimi_events(&lines)[0].model, "glm-5.3");
         // codebuddy：毫秒 epoch 时间戳；无 usage 字段的行（401 实测样本）不产生事件
         let lines = vec![
             r#"{"type":"message","role":"user","content":[{"type":"input_text","text":"say hi"}],"timestamp":1786005441386}"#.to_string(),
