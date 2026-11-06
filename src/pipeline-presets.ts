@@ -632,7 +632,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "4. 收尾再按 {skill:bib-check} 复核 review-final.md，结论追加进 citation-check.md；\n" +
       "5. " + verificationListClause("review-final.md") + "\n" +
       "6. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能：人还没在流程线「更换引用样式」里换形式时，沿用初稿编号制渲，不因没选样式停渲）。正文字体沿用初稿 manuscript/typeface.md，不要另选字体，也不要重问。Word 套 manuscript/reference.docx：确认 YAML 的 format.docx 有 reference-doc 一行（初稿字体脚本写的，路径相对稿件所在目录；旧稿没有就补上）。同一次再生成 output/endnote.docx 与 output/zotero.docx。产物写入本工作区 output/（评审合并后进项目根）。\n" +
-      "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。\n" +
+      "7. 拼图里的块是从别人论文 PDF 裁的，投稿前作者要换出版社原图、申请转载许可（只能作者本人申请）：按 {skill:review-figures} 跑 figure_permissions.py，写 submission/figure-permissions.md——每块的出版社、许可（Crossref 按 DOI 查）、要不要申请、去哪申请、图注出处写法、状态栏（「待申请」等人改）；没有拼图也写这份并注明无需申请。人把原图放进项目根 papers/figure-originals/ 回来说一声，就按 figures/sources.md 记的同一块从原图重裁（--pdf 给原图文件）、重拼、重渲。验收摘要⑤写还有几块待申请许可。投期刊且目标期刊要图形摘要（TOC / graphical abstract）时按 schematic-forge 技能（装了的话）出一张：先写立意与事实，再写图纸 figure.json，渲成可编辑的 PPTX + SVG（文字是真文字，出图模型只画无字图标）；不要时在清单里写明不需要；\n" +
       "8. 写 submission/declarations.md 空白模板，五节：Authors（作者、单位、通讯作者邮箱）、基金、利益冲突、作者贡献（CRediT）、AI 使用声明，每节写「待填」；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 `.ccode/ai-usage.md`（Mesa 按实际运行统计）为准，那里没有的不添；可按本稿实际用到的 AI 工具与用途起一段草稿，标「待作者核对」，模型名说不准就写「（模型名待作者填写）」，不要默认写成自己以为的模型。不得代填基金号、单位、作者贡献；review-final.md 的 author 保留待补。人填好回来说一声，就把作者、单位写进 YAML，声明并进 review-final.md 文末 Declarations 一节，重渲 PDF、Word 和两份域稿。\n" +
       "完成标准：review-final.md 无语法硬伤、引用键全部可解析；citation-check.md 如实报告；verification-decisions.md 已列全、裁决栏为空等人填；figure-permissions.md 已列全每块拼图；declarations.md 模板已写、待填栏留给人；核心支持性缺口未关闭时仅交待审稿，不标通过；changelog.md 已提交；run 脚本渲染通过。人未逐条裁决前，这一稿不得当定稿。\n" +
       RELEASE_GATE + QUALITY_STATUS,
@@ -1160,7 +1160,7 @@ const DATA_PROCESSING_STEPS: ProjectStepDto[] = [
       "1. 围绕课题主题（见上方「课题主题」段；未填写时仅给描述性摘要，不从结果倒推事先研究问题）组织结论；\n" +
       "2. 产出 analysis-report.md：背景与数据口径 → 主要发现（引用 eda-report.md 条目）→ 结论 → 可执行建议（每条建议对应一条发现，优先级按确定规则排序：有直接数据支撑的排前，间接推断的排后并注明）；\n" +
       "3. 数字一律引用 eda-report.md 中的值，并引用「## 结论条目」的编号；不重新计算、不引入新数据。状态不是已认可的不得写成确证；证据不足的结论标 [待验证]；\n" +
-      "4. 局限单列一节（## 局限）：数据质量、样本偏差、方法局限，不回避。\n" +
+      "4. 局限单列一节（## 局限）：数据质量、样本偏差、方法局限，不回避。主要发现分「探索发现」与「确证结论」两小节：只有事先在 eda-report.md 标了「待确证」、并在留出或新的数据上按事先写好的分析计划检验过的，才进确证结论；其余一律是探索发现，不写成定论。\n" +
       "5. 核对：报告里来自 analysis/summary-stats.json 的数字按 {skill:research-writing}「数字追溯」登记进 analysis/numbers.json（location 指 analysis-report.md:行），跑 num_check --numbers analysis/numbers.json --coverage --files analysis-report.md；按 {skill:stats-check} 跑 stat_check --files analysis-report.md，统计问题写入 analysis/stats-check-report.md。\n" +
       "6. 用本步骤 run 脚本把 analysis-report.md 渲成 Word 与 PDF 给不看 Markdown 的读者（按 {skill:quarto-render} 技能；产物写本工作区 output/，评审合并后进项目根）；渲染报错先按技能补依赖，不绕路。\n" +
       "7. " + verificationListClause("analysis-report.md", { marker: "[待验证]", checkFile: "analysis/stats-check-report.md", list: "analysis/verification-decisions.md", checkItems: "未解决的统计问题", source: "结论条目编号或图表" }) + "\n" +
@@ -1300,6 +1300,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "2. 产出 design.md 实验设计，并写 experiments/matrix.json（每项稳定唯一字符串 id、configuration、status，禁止省略经批准取消项）：对比基线（注明出处）、实验矩阵（按问题预先选定组合，不强制全因子穷举）、预期结果与分析方式；统计设计按 {skill:stats-check} 技能的实验设计口径自查（主要结局及比较明确（共同主结局须说明多重性策略）、样本量有依据、剔除标准事先定义），涉及统计检验的写明检验方法与多重比较校正口径，问题清单写入 analysis/methodology-stats-check.md；\n" +
       "3. 每个方法选择给出依据；与开题报告不一致的改动在 methodology.md 末尾「变更说明」记录原因，不静默改方案；\n" +
       "4. 依赖的资源不可获取时提出替代品及研究对象/结论范围变化，待人批准后才替换；未批准标阻塞。\n" +
+      "5. 论文含几项研究（开题里的几个研究内容各自成章）时：design.md 按「## 研究 1 / 研究 2 …」分节，各写假设、方法、对照与指标；experiments/matrix.json 的 id 带研究前缀（S1-…、S2-…），后面的实验与结果章按研究分组。\n" +
       APPROVED_DESIGN +
       "完成标准：methodology.md 覆盖开题全部研究内容，design.md 实验矩阵可直接执行；analysis/methodology-stats-check.md 各节齐全，关键未决项已处理或明确阻塞，不以猜测填满。\n" +
       DESIGN_GATE + QUALITY_STATUS,
@@ -1328,7 +1329,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     decisionMode: "hard_pause",
     brief:
       "输入：design.md 的实验矩阵、chapters/methodology.md（已随 main 合并在本工作区内）。\n" +
-      "1. 实验代码放入 experiments/（可重复执行，参数集中在文件头或配置文件），逐项跑实验矩阵；\n" +
+      "1. 实验代码放入 experiments/（可重复执行，参数集中在文件头或配置文件），逐项跑实验矩阵（分了几项研究的按研究分组跑，summary.md 按研究分节）；\n" +
       "2. 原始结果与日志写入本工作区产物目录（见上方「产物目录」，相对路径），不进 git，评审合并后自动进项目根同名目录；results/summary.md 逐项记录：配置、指标数值、产物的项目根相对路径；\n" +
       "3. 失败实验在 summary.md 标注原因并按 design.md 的备选方案重跑一次，仍失败则记录后继续；\n" +
       "完成标准：同步写 results/matrix.json，每个计划 id 一条 configuration/status；矩阵每项都有结果或失败记录，experiments/ 与 results/summary.md 已提交，原始结果全部落在本工作区产物目录（评审合并后进项目根）。\n" +
@@ -1369,7 +1370,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
     workspaceName: "thesis-exp-analysis",
     brief:
       "输入：上一步 results/summary.md 与项目根产物目录中的原始结果（项目根相对路径见 summary.md，按项目根绝对路径读取）。\n" +
-      "1. 汇总各实验主指标，与基线逐项对比，产出 chapters/results.md：表格（方法 × 指标，同时报告不确定性；最优值不等于重要或显著）+ 关键图表（figures/ 主交付 SVG 或 PNG，投稿用 PDF 副本写本工作区 output/figures/（合并后进项目根），出图按 {skill:figure-forge} 技能）+ 逐项解读；\n" +
+      "1. 汇总各实验主指标，与基线逐项对比（分了几项研究的每项研究一节，各自的结论分开写），产出 chapters/results.md：表格（方法 × 指标，同时报告不确定性；最优值不等于重要或显著）+ 关键图表（figures/ 主交付 SVG 或 PNG，投稿用 PDF 副本写本工作区 output/figures/（合并后进项目根），出图按 {skill:figure-forge} 技能）+ 逐项解读；\n" +
       "2. 只用 summary.md 中的数字下结论，推测性内容标 [推测]；失败/离群结果单独说明，不删除不美化；涉及统计显著性的表述按 {skill:stats-check} 技能口径（p 值给具体值、附效应量与置信区间），问题清单写入 analysis/thesis-results-stats-check.md；\n" +
       "3. 对照 proposal/proposal.md 的创新点：哪些被结果支撑、哪些要降级或改口，写进 chapters/results.md 末尾；结果不如预期时，先基于实际异常、补实验成本与 design.md 的停止规则写入 .ccode/help-wanted.md 问用户；不得在看到结果前预设换方向。\n" +
       "4. 统计表述写完按 {skill:stats-check} 跑 stat_check（--files chapters/results.md）。" + RESULTS_JSON_CLAUSE +
@@ -1542,7 +1543,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
       REVIEW_FIRST +
       ENDNOTE_SYNC +
       "审查报告写 submission/review-report.md，引用问题同时写入 submission/citation-check.md。这两份先写完并等人决定，再做下面的适配。\n" +
-      "1. 确定目标期刊：项目根已有 submission/target-journal.md 且写了期刊名时直接沿用，不再另给候选；没有则按课题主题给出 2-3 个候选期刊及理由，写入 submission/target-journal.md，等用户确认再做期刊专属适配；未确认只整理通用材料；\n" +
+      "1. 确定目标期刊：项目根已有 submission/target-journal.md 且写了期刊名时直接沿用，不再另给候选；没有则按课题主题给出 2-3 个候选期刊及理由（范围是否契合、影响因子 / 分区、审稿周期、版面费或开放获取费用，依据写出处），写入 submission/target-journal.md，并写一条人工请求请用户选（候选作选项、标推荐，不替人定），等用户确认再做期刊专属适配；未确认只整理通用材料；\n" +
       "2. 获取目标期刊官方作者指南（WebFetch 期刊官网 Guide for Authors；获取失败时只做通用草稿并记录无法核验官方要求，不声称期刊格式通过）；\n" +
       "3. 人决定审查报告之后，按指南逐项适配：章节结构、引用与文献列表格式、图表规范、字数与摘要长度；产出 submission/formatted.md，只改格式与表达，不改学术观点与数据。若相对上游成稿改了数字或结论，必须在 submission/format-notes.md 逐条点名位置、旧值、新值和原因；只改格式与措辞的不写入该节；\n" +
       "4. 字数或摘要超限时不得自行删内容：在 formatted.md 原位标注超出量，把可选裁剪方案（砍哪节、砍多少）逐条写进 submission/format-notes.md 由用户定夺；\n" +
@@ -1628,7 +1629,7 @@ const SUBMISSION_INITIAL_STEPS: ProjectStepDto[] = [
     brief:
       "输入：submission/formatted.md、submission/target-journal.md（已随 main 合并在本工作区内）。\n" +
       "1. 产出 submission/cover-letter.md：编辑称呼占位、研究问题与有证据支持的亮点（不凑数量）、与期刊读者群的契合点、原创性与未一稿多投声明（占位「待填」处不编造）；\n" +
-      "2. 产出 submission/highlights.md：按目标期刊要求与实际贡献写 highlights（目标期刊无此要求时在该文件注明并跳过）；\n" +
+      "2. 产出 submission/highlights.md：按目标期刊要求与实际贡献写 highlights（目标期刊无此要求时在该文件注明并跳过）；目标期刊要图形摘要（TOC / graphical abstract）时按 schematic-forge 技能（装了的话）出一张：先写立意与事实，再写图纸 figure.json，渲成可编辑的 PPTX + SVG（文字是真文字，出图模型只画无字图标）；不要时在清单里写明不需要；\n" +
       "3. 投稿前自查 formatted.md（模拟审稿人视角逐项过）：摘要与结论自洽、正文数字与表格一致、图表 standalone 可读、方法节可复现、局限有交代；问题分三级写入 submission/pre-review.md：## 严重问题（不处理大概率被拒，如数据不一致）/ ## 一般问题（影响评审印象）/ ## 建议（措辞格式），条目编号 R001 起。不预留空的「决定：」行：人在流程线上逐条点接受、拒绝或修改，不得代填决定。严重 / 一般问题还要有修正证据或经人确认撤回受影响主张；无法解决则阻塞，不以说明理由代替解决，建议列出即可；\n" +
       "4. 产出 submission/checklist.md 投稿清单，每项一节「## 小标题」：投稿系统入口（未知标「待填」）、需上传文件清单、作者与单位、利益声明、AI 使用声明、推荐审稿人 2-4 位（只给研究领域与选择理由，具体姓名标「待填」）；AI 使用声明里用过哪些 AI 工具、模型、用在哪一步，以项目根 `.ccode/ai-usage.md`（Mesa 按实际运行统计）为准，那里没有的不添；可按本稿实际用到的 AI 工具与用途起草、标「待作者核对」，模型名说不准写「（模型名待作者填写）」。\n" +
       "上游有 submission/figure-permissions.md、submission/declarations.md 的，把仍写着「待申请」「待填」的项汇总进 checklist.md 对应节。\n" +
@@ -2088,7 +2089,7 @@ const BUILTIN_PIPELINE_TEMPLATES: PipelineTemplateDef[] = [
     id: "submission-rebuttal",
     name: "投稿与返修",
     description:
-      "首投：期刊格式适配 → 投稿材料；返修：按轮次回复审稿意见 → 修订稿 → 再投稿清单",
+      "首投：期刊格式适配 → 投稿材料；返修：按轮次回复审稿意见 → 修订稿 → 再投稿清单。论文是在 Mesa 里写的，在原项目里「＋ 从模板追加」这一套——返修要补分析、补实验时能直接退回原来的结果分析",
     steps: SUBMISSION_INITIAL_STEPS,
     projectRules: [
       "按目标期刊的格式、字数和文风改，不要另起一套。",
@@ -2100,9 +2101,9 @@ const BUILTIN_PIPELINE_TEMPLATES: PipelineTemplateDef[] = [
   },
   {
     id: "latex-paper",
-    name: "LaTeX 论文",
+    name: "LaTeX 排版（已有稿件）",
     description:
-      "把已有成稿转成 LaTeX（也可从笔记从零写）：搭骨架 → 章节写作 → 编译排错 → 定稿导出 PDF",
+      "把已有稿件排成 LaTeX：搭骨架 → 章节写作 → 编译排错 → 定稿导出 PDF。从头写新论文请用「科研论文」或「毕业论文」，把稿件载体选 LaTeX——那两套有文献、分析和数字追溯",
     steps: LATEX_PAPER_STEPS,
     projectRules: [
       "以项目里已有成稿或笔记为准，不要另写一套内容。",

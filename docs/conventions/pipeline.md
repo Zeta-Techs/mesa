@@ -485,6 +485,9 @@
 - **① 已落地**：`pipeline-presets.ts DRAFT_ORDER`（三套初稿 SECTION_STATUS 前一句；初稿都交 `manuscript/style-sheet.md`）；综述大纲第 8 条另交 `manuscript/sections.json`
   （`machine:records` 验 id、title）与写作规范初版；综述初稿 `fanOut: REVIEW_DRAFT_FANOUT`（items = sections.json，每路 2 节、最多 4 路，各路写 `manuscript/sections/`，收尾统稿并删掉分路文件）。
   论文 / 学位论文初稿不声明分路（IMRaD 各节相互依赖；学位论文各章在前面几步已写）。已导出示例课题。
+- **⑥ 已落地**：综述定稿（投期刊时）与投稿材料加图形摘要一句（按 schematic-forge，不设必需技能）；期刊格式适配选刊原已有，补比较维度并改经人工请求问；
+  数据处理分析报告分「探索发现 / 确证结论」（确证只认事先标「待确证」、在留出或新数据上按事先计划检验过的）；学位论文研究方法 / 实验 / 结果章按研究分组
+  （design.md「## 研究 N」、矩阵 id 前缀 S1-…，**不复制步骤**）；投稿模板说明写「在原项目追加」；LaTeX 模板改名「LaTeX 排版（已有稿件）」（id 不变）。
 - **⑤ 已落地**：科研工具字段 `experiment`（`research-tool-fields.ts`：compute / lab，档案卡键 `科研工具/experiment：lab`）。**问在设计步**（交 design.md 的步骤，
   `stepTakesExperiment`；落地与设计稿不同：设计稿写问在执行步，但实验室实验从设计起就要按样品与对照写），与稿件载体同为开工前提节点（不挡「开始」）。
   `withResearchTools`：设计步追加合同节（按样品与对照写设计、矩阵每组一个样品 / 条件）；执行步（交 run-manifest 的）追加合同节 + 产物 protocol.md、processing/rules.md

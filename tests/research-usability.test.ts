@@ -93,7 +93,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 综述初稿声明分路（各路 own / 收尾统稿）。实测 review 32588、论文 40557、学位 39270。
   // 同日科研流程补全③：三套精读加文献数据抽取表一句（项目规则定列、末两列固定出处与页码，没定列先问），分路各写本路抽取表、收尾合并；
   // 综述大纲表计划与初稿对照表先从抽取表取数。实测 review 33113、论文 40975、学位 39768。
-  const before: Record<string, number> = { review: 33200, "research-paper": 41050, "data-processing": 16150, thesis: 39850, "submission-rebuttal": 10550, "latex-paper": 16450 };
+  // 同日科研流程补全⑥：综述定稿与投稿材料加图形摘要一句、格式适配选刊写清比较维度并经人工请求问、数据处理报告分探索 / 确证、
+  // 学位论文研究方法 / 实验 / 结果章支持几项研究分组。实测 review 33258、论文 41007、数据 16148、学位 39960、投稿 10682。
+  const before: Record<string, number> = { review: 33300, "research-paper": 41050, "data-processing": 16250, thesis: 40050, "submission-rebuttal": 10750, "latex-paper": 16450 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);
