@@ -4049,6 +4049,185 @@ fn run_cancel_sync(id: String) -> Result<(), String> {
     crate::process::cancel_capture(&id)
 }
 
+/// 目标无头运行的总时限：目标通常比定时巡检（默认 30 分钟）大，给到 90 分钟；到点杀进程树、按超时失败收尾
+const GOAL_HEADLESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90 * 60);
+
+/// 目标能不能无头跑（2026-11-06 用户拍板：项目助手派出的目标走无头，不开没人看的终端）。
+/// 可写目标看能力表 headless_write（与定时任务同一出处）；只讨论目标只认只读形态有保证的两家
+///（Claude Code `-p` 默认档自动拒绝要批准的操作、Codex `-s read-only`）。返回 None = 可以
+pub(crate) fn goal_headless_block_reason(agent: &str, permission: &str) -> Option<String> {
+    if crate::agents::binary_for(agent).is_none() {
+        return Some(format!("{agent} 不支持无头运行，请在终端里运行这个目标"));
+    }
+    if permission == "write_tree" {
+        let caps = crate::agent_specs::agent_capabilities();
+        let cap = caps.iter().find(|cap| cap.agent == agent)?;
+        return (!cap.headless_write.supported).then(|| {
+            format!(
+                "{agent} 不能无头写文件（{}），请在终端里运行这个目标",
+                cap.headless_write.reason.unwrap_or("未验证")
+            )
+        });
+    }
+    (!matches!(agent, "claude-code" | "codex"))
+        .then(|| "只讨论的目标目前只有 Claude Code / Codex 能无头运行，请在终端里运行".into())
+}
+
+/// 这家 Agent 的可写目标能不能无头跑（前端据此决定派活走无头还是开终端）
+#[tauri::command]
+pub async fn run_headless_supported(agent: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        goal_headless_block_reason(&agent, "write_tree").is_none()
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// 刚由 task_prepare_run 登记、还没起进程的目标 Run（status=created）才能无头启动
+fn headless_goal_target(run_id: &str) -> Result<(RunDto, TaskDto), String> {
+    let conn = db()?;
+    let run = get_run_at(&conn, run_id)?.ok_or("Run 不存在")?;
+    if run.task_id.is_empty()
+        || run.internal
+        || !matches!(run.task_kind.as_str(), "free_research" | "office_doc")
+    {
+        return Err("只有目标的运行可以无头启动".into());
+    }
+    if !matches!(run.runtime.as_str(), "local_cli" | "headless") {
+        return Err("这次运行不是本机 Agent，不能无头启动".into());
+    }
+    if run.closed_at.is_some() || run.status != "created" {
+        return Err("这次运行已经开始或已经结束，不能再无头启动；请重新开工".into());
+    }
+    let task = task_by_id(&conn, &run.task_id)?;
+    if task.archived_at.is_some() {
+        return Err("已归档的目标不能启动，请先恢复".into());
+    }
+    Ok((run, task))
+}
+
+/// 目标无头运行：task_prepare_run 登记好 Run 与隔离副本后调，在副本里用同一连接、目标声明的权限无头跑 Agent。
+/// 起进程后立即返回；收尾与交互终端退出走同一个 close_run_with_result（冻结评审快照、目标进待验收 / 失败）。
+/// 前提不满足（能力不够、连接没了）时报错且不动这条 Run，前端可照旧开终端用它
+#[tauri::command]
+pub async fn task_run_headless(run_id: String, prompt: String) -> Result<RunDto, String> {
+    tauri::async_runtime::spawn_blocking(move || task_run_headless_impl(&run_id, &prompt))
+        .await
+        .map_err(|e| format!("无头启动目标失败：{e}"))?
+}
+
+fn task_run_headless_impl(run_id: &str, prompt: &str) -> Result<RunDto, String> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err("没有要交给 Agent 的内容".into());
+    }
+    let (run, task) = headless_goal_target(run_id)?;
+    if let Some(reason) = goal_headless_block_reason(&run.agent, &run.permission) {
+        return Err(reason);
+    }
+    let profile_id = run
+        .profile_id
+        .clone()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or("这次运行没有绑定连接，不能无头启动")?;
+    let profile = crate::profiles::ProfileStore::new()?.get(&profile_id)?;
+    if profile.agent != run.agent {
+        return Err("连接与这次运行的 Agent 不一致".into());
+    }
+    // 模型：目标钉住的优先；跟随项目默认时用项目给这家点选的模型（同前端 projectAgentLaunch），都没有用名单第一
+    let model = task.model.clone().filter(|m| !m.trim().is_empty()).or_else(|| {
+        let root = run.project_root.as_deref()?;
+        let prefs = crate::projects::project_default_prefs(Path::new(root))?;
+        (prefs.agent == run.agent).then_some(prefs.model).flatten()
+    });
+    let cwd = PathBuf::from(&run.isolation_path);
+    let write = run.permission == "write_tree";
+    let mut text = prompt.to_string();
+    if write {
+        if let Some(note) = crate::scheduler::codex_win_unelevated_note(&run.agent, &cwd) {
+            text.push_str(&note);
+        }
+    }
+    let mut job = crate::ai::build_headless_command(&profile, model.as_deref(), &text, &cwd, write)?;
+    // 看一眼：与交互终端同一对变量，能只读看同项目在做什么
+    if let Some(tool) = crate::image_gen::helper_exe() {
+        job.cmd.env(crate::peek::TOOL_ENV, &tool);
+        job.cmd.env(crate::peek::RUN_ENV, &run.id);
+    }
+    launch_goal_headless(run, job, GOAL_HEADLESS_TIMEOUT)
+}
+
+/// 把 created 的目标 Run 转成无头、认领、在后台线程跑到结束并收尾
+fn launch_goal_headless(
+    run: RunDto,
+    job: crate::ai::HeadlessCommand,
+    timeout: std::time::Duration,
+) -> Result<RunDto, String> {
+    // task_prepare_run 按交互开工登记成 local_cli；转成 headless 后停止走 run_cancel、工作台后台运行能列出它。
+    // internal 不动：仍是人派的目标，照常进目标时间线
+    {
+        let conn = db()?;
+        let changed = conn
+            .execute(
+                "UPDATE runs SET runtime='headless' WHERE id=?1 AND status='created' AND closed_at IS NULL",
+                [&run.id],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed != 1 {
+            return Err("这次运行已经开始或已经结束，不能再无头启动；请重新开工".into());
+        }
+        record_event(&conn, &run.id, "run.headless", None)?;
+    }
+    if let Err(error) = claim_start(&run.id) {
+        // 没认领到就没起进程：退回交互形态，前端还能用这条 Run 开终端
+        if let Ok(conn) = db() {
+            let _ = conn.execute(
+                "UPDATE runs SET runtime='local_cli' WHERE id=?1 AND status='created' AND closed_at IS NULL",
+                [&run.id],
+            );
+        }
+        return Err(error);
+    }
+    if let Err(error) = mark_started(&run.id) {
+        let _ = close_run_with_result(&run.id, None, "failed", None, Some("无头运行登记失败"));
+        return Err(error);
+    }
+    let id = run.id.clone();
+    let agent = run.agent.clone();
+    let spawned = std::thread::Builder::new()
+        .name("goal-headless".into())
+        .spawn(move || {
+            let _awake = crate::scheduler::AwakeGuard::hold();
+            let exit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::ai::run_goal_headless_to_exit(&agent, job, timeout, &id)
+            }))
+            .unwrap_or_else(|_| crate::ai::HeadlessExit {
+                status: "failed",
+                code: None,
+                reason: Some("无头运行内部出错".into()),
+                session: None,
+            });
+            if let Err(error) = close_run_with_result(
+                &id,
+                exit.session.as_deref(),
+                exit.status,
+                exit.code,
+                exit.reason.as_deref(),
+            ) {
+                crate::logbuf::record(
+                    "error",
+                    "runs",
+                    &format!("目标无头运行 {id} 收尾失败：{error}"),
+                );
+            }
+        });
+    if let Err(error) = spawned {
+        let _ = close_run_with_result(&run.id, None, "failed", None, Some("无头运行没能启动"));
+        return Err(format!("无头运行没能启动：{error}"));
+    }
+    run_get_sync(run.id)?.ok_or("Run 不存在".into())
+}
+
 /// 在后台线程收尾：要评审的目标会在这里冻结快照（逐个读产物文件），放主线程上终端会跟着停住
 ///（见 conventions/terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
@@ -5325,5 +5504,207 @@ mod tests {
         assert_eq!(fs::read(target.join("file.md")).unwrap(), b"old");
         assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn goal_headless_capability_gate() {
+        assert!(goal_headless_block_reason("claude-code", "write_tree").is_none());
+        assert!(goal_headless_block_reason("qwen", "write_tree").is_some(), "qwen 无头写盘未验证");
+        assert!(goal_headless_block_reason("codex", "discuss").is_none());
+        assert!(goal_headless_block_reason("gemini", "discuss").is_some(), "只读形态没保证的不无头");
+        assert!(goal_headless_block_reason("no-such-agent", "write_tree").is_some());
+    }
+
+    /// 子进程里跑的端到端用例靠它认出自己是被调起的（直接 `--ignored` 跑不会动真实配置目录）
+    #[cfg(unix)]
+    const GOAL_HEADLESS_E2E_ENV: &str = "MESA_GOAL_HEADLESS_E2E";
+
+    /// 目标无头运行整条后端链路：新建目标 → task_prepare_run → 无头起桩 Agent → 收尾冻结 → 待验收；
+    /// 另含失败、用户停止、同副本接着做。整条链读写 app.db 与任务副本目录，测试进程不能碰真实配置，
+    /// 所以把用例放到 HOME 指向临时目录的子进程里跑（dirs 在 unix 上按 HOME 取配置目录）
+    #[cfg(unix)]
+    #[test]
+    fn goal_headless_end_to_end_in_isolated_home() {
+        let home = std::env::temp_dir().join(format!("mesa-goal-headless-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&home).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "runs::tests::goal_headless_e2e_child",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HOME", &home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("MESA_SANDBOX_HOME")
+            .env(GOAL_HEADLESS_E2E_ENV, "1")
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = fs::remove_dir_all(&home);
+        assert!(output.status.success(), "{text}");
+        assert!(text.contains("1 passed"), "子进程用例没有真正跑到：{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "由 goal_headless_end_to_end_in_isolated_home 在临时 HOME 的子进程里调起"]
+    fn goal_headless_e2e_child() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        if std::env::var_os(GOAL_HEADLESS_E2E_ENV).is_none() {
+            return;
+        }
+        let home = PathBuf::from(std::env::var("HOME").unwrap());
+        let project = home.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("notes.md"), "原始笔记\n").unwrap();
+        let root = validate_existing_dir(&project.to_string_lossy(), "项目根目录").unwrap();
+        tauri::async_runtime::block_on(crate::projects::register_project(root.clone(), "课题".into()))
+            .unwrap();
+        let bin = home.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let stub = |name: &str, body: &str| {
+            let path = bin.join(name);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let goal = |name: &str| {
+            task_create_sync(CreateTaskInput {
+                project_root: root.clone(),
+                kind: "free_research".into(),
+                name: name.into(),
+                description: None,
+                input_paths: vec![".".into()],
+                output_paths: vec![".".into()],
+                permission: Some("write_tree".into()),
+                agent: None,
+                profile_id: None,
+                model: None,
+                skills: vec![],
+            })
+            .unwrap()
+        };
+        let prepare = |task: &TaskDto, reuse: bool| {
+            task_prepare_run_impl(PrepareTaskRunInput {
+                task_id: task.id.clone(),
+                agent: "claude-code".into(),
+                profile_id: "stub-profile".into(),
+                reuse_isolation: Some(reuse),
+                feedback: None,
+                context_text: Some(format!("目标：{}", task.name)),
+            })
+            .unwrap()
+        };
+        // 桩 Agent 代替真实 CLI：在隔离副本里按脚本干活（真实链路里的参数拼装与定时任务共用，另有测试）
+        let launch = |run: &RunDto, script: &Path| {
+            let (run, _) = headless_goal_target(&run.id).unwrap();
+            let mut cmd = crate::process::background_command("/bin/sh");
+            cmd.arg(script).current_dir(&run.isolation_path);
+            let job = crate::ai::HeadlessCommand { cmd, host: None, lock_id: None };
+            launch_goal_headless(run, job, Duration::from_secs(300)).unwrap()
+        };
+        let wait_closed = |id: &str| {
+            let deadline = Instant::now() + Duration::from_secs(120);
+            loop {
+                let run = run_get_sync(id.into()).unwrap().unwrap();
+                if run.closed_at.is_some() {
+                    return run;
+                }
+                assert!(Instant::now() < deadline, "运行一直没收尾：{run:?}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let task_status = |id: &str| task_by_id(&db().unwrap(), id).unwrap().status;
+        let events = |id: &str| run_events_sync(id.into()).unwrap();
+
+        // 一、正常完成：写出成果、退出码 0 → completed，目标待验收，快照列出成果
+        let task = goal("整理报告");
+        let run = prepare(&task, false);
+        assert_eq!(run.runtime, "local_cli");
+        let ok = stub("ok.sh", "printf '# 报告\\n' > report.md\necho 已写好 report.md\necho 进度：完成 >&2\nexit 0");
+        let started = launch(&run, &ok);
+        assert_eq!(started.runtime, "headless", "转成无头：停止走 run_cancel");
+        assert!(!started.internal, "人派的目标不当内部运行");
+        let closed = wait_closed(&run.id);
+        assert_eq!(closed.status, "completed", "{closed:?}");
+        assert_eq!(closed.exit_code, Some(0));
+        assert_eq!(task_status(&task.id), "pending_review");
+        // 冻结在账本收尾之后做（与交互终端同序），宽松等到它落盘
+        let review_dir = task_review_dir(&task.id, &run.id).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let snapshot = loop {
+            if let Some(snapshot) = crate::task_review::load_snapshot(&review_dir).unwrap() {
+                break snapshot;
+            }
+            assert!(Instant::now() < deadline, "收尾应冻结评审快照");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(snapshot.changes.iter().any(|c| c.path == "report.md" && c.kind == "added"), "{:?}", snapshot.changes);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !events(&run.id).iter().any(|e| e.event_type == "task.snapshot_frozen") {
+            assert!(Instant::now() < deadline, "没有记下冻结事件");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(headless_goal_target(&run.id).is_err(), "收尾后不能再无头启动");
+        // 进度按行写进运行记录（后台批量落库，宽松等待）
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let output: String = events(&run.id)
+                .into_iter()
+                .filter(|e| e.event_type == "run.output")
+                .filter_map(|e| e.payload)
+                .collect();
+            if output.contains("已写好") && output.contains("进度：完成") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "运行记录里没有输出：{output}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // 二、同一副本接着做：reuse_isolation 再登记一版、再无头跑，看得到上一版的成果
+        let again = prepare(&task, true);
+        assert_ne!(again.id, run.id);
+        assert_eq!(again.isolation_path, run.isolation_path, "接着做沿用同一副本");
+        let more = stub("more.sh", "test -f report.md || exit 7\necho 补充 >> report.md\necho 接着做完了");
+        launch(&again, &more);
+        let closed = wait_closed(&again.id);
+        assert_eq!(closed.status, "completed", "{closed:?}");
+        assert_eq!(task_status(&task.id), "pending_review");
+        assert!(fs::read_to_string(Path::new(&run.isolation_path).join("report.md")).unwrap().contains("补充"));
+
+        // 三、非零退出且没有成果 → failed，原因写明退出码，目标失败
+        let task = goal("会失败的目标");
+        let run = prepare(&task, false);
+        let bad = stub("bad.sh", "echo 'ERROR: 网关不可用' >&2\nexit 3");
+        launch(&run, &bad);
+        let closed = wait_closed(&run.id);
+        assert_eq!(closed.status, "failed", "{closed:?}");
+        assert_eq!(closed.exit_code, Some(3));
+        let reason = closed.close_reason.unwrap_or_default();
+        assert!(reason.contains("退出码 3") && reason.contains("网关不可用"), "{reason}");
+        assert_eq!(task_status(&task.id), "failed");
+
+        // 四、用户停止：既有 run_cancel 杀进程树，按「用户主动停止」收尾，目标已停止
+        let task = goal("会被停下的目标");
+        let run = prepare(&task, false);
+        let slow = stub("slow.sh", "echo 开始\nsleep 120");
+        launch(&run, &slow);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !crate::process::capture_active(&run.id) {
+            assert!(Instant::now() < deadline, "无头进程一直没登记");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        run_cancel_sync(run.id.clone()).unwrap();
+        let closed = wait_closed(&run.id);
+        assert_eq!(closed.status, "stopped", "{closed:?}");
+        assert_eq!(closed.close_reason.as_deref(), Some("用户主动停止"));
+        assert_eq!(task_status(&task.id), "stopped");
     }
 }

@@ -667,6 +667,8 @@ pub fn run() {
             runs::run_open_custom,
             runs::run_close,
             runs::run_cancel,
+            runs::task_run_headless,
+            runs::run_headless_supported,
             runs::active_background_runs,
             runs::run_attach_session,
             artifacts::run_artifacts,

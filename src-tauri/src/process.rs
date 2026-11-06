@@ -994,7 +994,19 @@ pub(crate) fn capture_command_streaming(
     timeout: std::time::Duration,
     cap: usize,
     run_id: Option<&str>,
+    on_stdout: Option<&mut dyn FnMut(&[u8])>,
+) -> Result<CapturedOutput, String> {
+    capture_command_streaming_both(cmd, timeout, cap, run_id, on_stdout, None)
+}
+
+/// 同 `capture_command_streaming`，stderr 也边跑边交给回调（目标无头运行把两路进度都写进运行记录，2026-11-06）
+pub(crate) fn capture_command_streaming_both(
+    cmd: &mut BackgroundCommand,
+    timeout: std::time::Duration,
+    cap: usize,
+    run_id: Option<&str>,
     mut on_stdout: Option<&mut dyn FnMut(&[u8])>,
+    mut on_stderr: Option<&mut dyn FnMut(&[u8])>,
 ) -> Result<CapturedOutput, String> {
     use std::process::Stdio;
     use std::time::{Duration, Instant};
@@ -1068,9 +1080,14 @@ pub(crate) fn capture_command_streaming(
     let mut failure = None;
     let mut timed_out = false;
     let mut streamed = 0usize;
-    let mut pump = |out: &std::sync::Arc<std::sync::Mutex<CaptureBuffer>>, streamed: &mut usize| {
-        if let Some(cb) = on_stdout.as_mut() {
-            let b = out.lock().unwrap_or_else(|e| e.into_inner());
+    let mut streamed_err = 0usize;
+    fn pump(
+        buffer: &std::sync::Arc<std::sync::Mutex<CaptureBuffer>>,
+        streamed: &mut usize,
+        callback: &mut Option<&mut dyn FnMut(&[u8])>,
+    ) {
+        if let Some(cb) = callback.as_mut() {
+            let b = buffer.lock().unwrap_or_else(|e| e.into_inner());
             if b.bytes.len() > *streamed {
                 let fresh = b.bytes[*streamed..].to_vec();
                 *streamed = b.bytes.len();
@@ -1078,9 +1095,10 @@ pub(crate) fn capture_command_streaming(
                 cb(&fresh);
             }
         }
-    };
+    }
     loop {
-        pump(&out, &mut streamed);
+        pump(&out, &mut streamed, &mut on_stdout);
+        pump(&err, &mut streamed_err, &mut on_stderr);
         if status.is_none() {
             match child.try_wait() {
                 Ok(value) => status = value,
@@ -1102,7 +1120,8 @@ pub(crate) fn capture_command_streaming(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    pump(&out, &mut streamed);
+    pump(&out, &mut streamed, &mut on_stdout);
+    pump(&err, &mut streamed_err, &mut on_stderr);
     let was_cancelled = cancelled.load(std::sync::atomic::Ordering::Acquire);
     if timed_out || was_cancelled || failure.is_some() {
         #[cfg(windows)]

@@ -874,7 +874,7 @@ fn build_task_prompt(skill: &str) -> String {
 
 /// Windows 上 Codex 用非提权沙箱时追加的一句：Codex 0.163 在这种模式下 shell 起在自己的安装目录，命令里的相对路径
 /// 会落到那里被拒（2026-10-20 实测，绝对路径正常），所以要求它写文件用绝对路径（agent_specs::codex_windows_headless_cap）
-fn codex_win_unelevated_note(agent: &str, root: &Path) -> Option<String> {
+pub(crate) fn codex_win_unelevated_note(agent: &str, root: &Path) -> Option<String> {
     if !cfg!(windows) || agent != "codex" {
         return None;
     }
@@ -2084,17 +2084,17 @@ fn run_context_prompt(
 
 // ===== 跑的时候不让电脑睡（2026-10-23） =====
 
-/// 只在一次定时运行期间阻止系统空闲睡眠：macOS 起 caffeinate（-w 绑 Mesa 进程，Mesa 退了它也退），
+/// 只在一次定时运行（或目标无头运行，runs::launch_goal_headless）期间阻止系统空闲睡眠：macOS 起 caffeinate（-w 绑 Mesa 进程，Mesa 退了它也退），
 /// Windows 用 SetThreadExecutionState（只对调用线程生效——execute_one 整轮在同一个阻塞线程上）。
 /// 合盖、手动睡眠照样会睡；也不会把睡着的电脑叫醒。
-struct AwakeGuard {
+pub(crate) struct AwakeGuard {
     #[cfg(target_os = "macos")]
     child: Option<std::process::Child>,
 }
 
 impl AwakeGuard {
     #[cfg(target_os = "macos")]
-    fn hold() -> Self {
+    pub(crate) fn hold() -> Self {
         let mut cmd = crate::process::background_command("/usr/bin/caffeinate");
         cmd.args(["-i", "-w", &std::process::id().to_string()])
             .stdin(std::process::Stdio::null())
@@ -2106,7 +2106,7 @@ impl AwakeGuard {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn hold() -> Self {
+    pub(crate) fn hold() -> Self {
         #[cfg(windows)]
         unsafe {
             use windows_sys::Win32::System::Power::{

@@ -1154,17 +1154,24 @@ pub(crate) fn compose_headless_args(
     }
 }
 
-pub(crate) fn run_agent_task(
+/// 拼好、还没起的无头命令（定时任务与目标无头运行共用一条注入链路）
+pub(crate) struct HeadlessCommand {
+    pub cmd: crate::process::BackgroundCommand,
+    /// 这条连接配的端点 host：401 报错分流用
+    pub host: Option<String>,
+    /// 启动前锁定的会话 id（支持 --session-id 的 CLI），其余为 None、跑完从输出里抠
+    pub lock_id: Option<String>,
+}
+
+/// 无头命令拼装：解析二进制、现取密钥（只进子进程 env）、注入连接、拼 plan + 无头形态参数、定工作目录。
+/// `write` = 要在工作目录里写文件（定时任务 / 可写目标，headless_task_args）；否则只读形态（headless_args）
+pub(crate) fn build_headless_command(
     profile: &Profile,
     model: Option<&str>,
     prompt: &str,
     cwd: &std::path::Path,
-    timeout: Duration,
-    reuse_key: Option<&str>,
-    sentinel: bool,
-    project_root: Option<&std::path::Path>,
-    existing_run_id: Option<&str>,
-) -> Result<(String, String), String> {
+    write: bool,
+) -> Result<HeadlessCommand, String> {
     let binary = agents::binary_for(&profile.agent)
         .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
     let binary_path = agents::resolve_binary(binary)
@@ -1182,17 +1189,15 @@ pub(crate) fn run_agent_task(
         cmd.env(key, value);
     }
     let (lock_id, lock_args) = lock_headless_session(&profile.agent);
-    if let Some(id) = &lock_id {
-        let _ = crate::sessions::mark_session_internal(&profile.agent, id);
-    }
-    for a in compose_headless_args(
-        &profile.agent,
-        &plan.args,
-        &with_codex_win_sandbox(
+    let headless = if write {
+        with_codex_win_sandbox(
             headless_task_args(&profile.agent, prompt),
             codex_win_sandbox_for_run(&profile.agent),
-        ),
-    ) {
+        )
+    } else {
+        headless_args(&profile.agent, prompt)
+    };
+    for a in compose_headless_args(&profile.agent, &plan.args, &headless) {
         cmd.arg(a);
     }
     for a in lock_args {
@@ -1208,7 +1213,29 @@ pub(crate) fn run_agent_task(
         cmd.env(k, v);
     }
     cmd.current_dir(cwd);
-    let host = endpoint_host(profile.base_url.as_deref());
+    Ok(HeadlessCommand {
+        cmd,
+        host: endpoint_host(profile.base_url.as_deref()),
+        lock_id,
+    })
+}
+
+pub(crate) fn run_agent_task(
+    profile: &Profile,
+    model: Option<&str>,
+    prompt: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    reuse_key: Option<&str>,
+    sentinel: bool,
+    project_root: Option<&std::path::Path>,
+    existing_run_id: Option<&str>,
+) -> Result<(String, String), String> {
+    let HeadlessCommand { mut cmd, host, lock_id } =
+        build_headless_command(profile, model, prompt, cwd, true)?;
+    if let Some(id) = &lock_id {
+        let _ = crate::sessions::mark_session_internal(&profile.agent, id);
+    }
     let default_reuse = format!("headless:ai:{}", cwd.display());
     let reuse = reuse_key.unwrap_or(&default_reuse);
     let project_root_owned = project_root.map(|p| p.to_string_lossy().into_owned());
@@ -1276,6 +1303,125 @@ pub(crate) fn run_agent_task(
     );
     closed.map_err(|e| format!("Agent 已退出，但运行状态保存失败：{e}"))?;
     out.map(|text| (text, run.id))
+}
+
+/// 目标无头运行的结局：与交互终端收尾同一组状态（completed / failed / stopped），交给 runs::close_run_with_result
+pub(crate) struct HeadlessExit {
+    pub status: &'static str,
+    pub code: Option<i32>,
+    pub reason: Option<String>,
+    pub session: Option<String>,
+}
+
+/// 目标无头运行（2026-11-06：项目助手派出的目标不再开没人看的终端）：跑到进程结束为止。
+/// stdout / stderr 按行写进运行记录（run.output，脱敏与限量在 runs::record_output）；超时、取消由捕获层杀进程树。
+/// 与定时任务不同，会话不标 internal——目标是人派的活，同交互开工一样算正常对话与用量
+pub(crate) fn run_goal_headless_to_exit(
+    agent: &str,
+    job: HeadlessCommand,
+    timeout: Duration,
+    run_id: &str,
+) -> HeadlessExit {
+    let HeadlessCommand {
+        mut cmd,
+        host,
+        lock_id,
+    } = job;
+    // 锁定了会话 id 的：跑的期间登记，卡住检测据此看会话文件有没有在长（跑完即撤）
+    let _session_reg = lock_id
+        .as_ref()
+        .map(|id| HeadlessSessionReg::new(run_id, agent, id));
+    let record = |line: &str| {
+        let line = strip_known_cli_noise(line);
+        if !line.trim().is_empty() {
+            let _ = crate::runs::record_output(run_id, &format!("{line}\n"));
+        }
+    };
+    let (mut out_pending, mut err_pending) = (Vec::new(), Vec::new());
+    let mut on_out = |bytes: &[u8]| feed_lines(&mut out_pending, bytes, &mut |line| record(line));
+    let mut on_err = |bytes: &[u8]| feed_lines(&mut err_pending, bytes, &mut |line| record(line));
+    let captured = crate::process::capture_command_streaming_both(
+        &mut cmd,
+        timeout,
+        8 * 1024 * 1024,
+        Some(run_id),
+        Some(&mut on_out),
+        Some(&mut on_err),
+    );
+    // 末尾没换行的半行也记上
+    for rest in [&out_pending, &err_pending] {
+        if !rest.is_empty() {
+            record(String::from_utf8_lossy(rest).trim_end());
+        }
+    }
+    let captured = match captured {
+        Ok(captured) => captured,
+        Err(error) => {
+            return HeadlessExit {
+                status: "failed",
+                code: None,
+                reason: Some(format!("Agent 没能启动：{error}")),
+                session: None,
+            }
+        }
+    };
+    let out = strip_known_cli_noise(&String::from_utf8_lossy(&captured.stdout));
+    let err = strip_known_cli_noise(&String::from_utf8_lossy(&captured.stderr));
+    let session = lock_id.or_else(|| extract_headless_session_id(&format!("{out}\n{err}")));
+    let code = captured.status.and_then(|status| status.code());
+    if captured.cancelled {
+        let reason = if crate::process::shutting_down() {
+            "应用退出"
+        } else {
+            "用户主动停止"
+        };
+        return HeadlessExit {
+            status: "stopped",
+            code,
+            reason: Some(reason.into()),
+            session,
+        };
+    }
+    if captured.timed_out {
+        return HeadlessExit {
+            status: "failed",
+            code,
+            reason: Some(format!(
+                "运行超时（超过 {} 分钟仍未结束），已停止",
+                timeout.as_secs() / 60
+            )),
+            session,
+        };
+    }
+    if captured.status.is_some_and(|status| status.success()) {
+        return HeadlessExit {
+            status: "completed",
+            code: Some(0),
+            reason: None,
+            session,
+        };
+    }
+    // stdout 和 stderr 都给摘要（同 run_capture_with）：真正的错误可能在任一路
+    let detail = match (err.trim().is_empty(), out.trim().is_empty()) {
+        (true, _) => out,
+        (false, true) => err,
+        (false, false) => format!("{err}\n{out}"),
+    };
+    let shown = code.map_or_else(|| "被系统结束".to_string(), |code| format!("退出码 {code}"));
+    let reason = if detail.trim().is_empty() {
+        format!("Agent 异常结束（{shown}），没有输出错误信息")
+    } else {
+        format!(
+            "Agent 异常结束（{shown}）：{}",
+            summarize_headless_error(detail.trim(), host.as_deref())
+        )
+    };
+    HeadlessExit {
+        status: "failed",
+        code,
+        reason: Some(reason),
+        session,
+    }
 }
 
 // ===== prompt 构造（纯函数，可测） =====

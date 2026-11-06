@@ -1861,6 +1861,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   ping / 分片重组 / ack 照官方 Go SDK ws 客户端），REST 取 tenant token、发文字与卡片；配置 feishu.json（App ID / 开关 / 绑定的 open_id，0600），
                              #   Secret 进 keys.json「feishu:<app_id>」不回显；配对 6 位码 10 分钟、错 5 次作废；只认绑定人的私聊，按 event_id / message_id 去重；
                              #   事件 feishu-message / feishu-card-action / feishu-status；命令 feishu_config_get / _set / pair_start / unbind / send_text / send_card / test
+  （2026-11-06 目标无头）runs.rs 加 task_run_headless / run_headless_supported、goal_headless_block_reason / headless_goal_target / launch_goal_headless、GOAL_HEADLESS_TIMEOUT（90 分钟），
+                             #   端到端测试 goal_headless_end_to_end_in_isolated_home（子进程 + 临时 HOME + /bin/sh 假 Agent，覆盖成功 / 接着做 / 失败 / 停止）；
+                             #   ai.rs 拆出 build_headless_command（定时任务与目标共用）、run_goal_headless_to_exit；process.rs capture_command_streaming_both（stdout + stderr 都流）
   project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），
                              # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
                              # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；带 images（粘贴目录里的图、≤4）也走这条：

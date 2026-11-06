@@ -150,8 +150,8 @@ async function dispatchAsGoal(
       skills,
     },
   });
-  // 终端页先挂上，才收得下开工请求
-  useAppStore.getState().setPage("terminal");
+  const skipped = missing.length ? `；技能库里没有 ${missing.join("、")}，这次没带` : "";
+  let fallback = "";
   try {
     const { run, prompt } = await prepareGoalRun({
       projectName: project.name,
@@ -161,6 +161,15 @@ async function dispatchAsGoal(
       agent: profile.agent,
       profileId: profile.id,
     });
+    // 根源一（2026-11-06）：派出去的目标在后台无头跑完，不开交互终端——没人盯着时不会卡在信任菜单、终端确认上；
+    // 这家做不了无头写盘（或起不来）时退回终端，同一条 Run
+    const headless = await runHeadless(run.id, prompt);
+    if (headless === true) {
+      return { note: `已记成目标「${task.name}」，在后台开工（不开终端），做完在待验收里${skipped}`, mode: "goal", taskId: task.id };
+    }
+    fallback = `（${headless}，改在终端里跑，没人盯着时可能停在确认上）`;
+    // 终端页先挂上，才收得下开工请求
+    useAppStore.getState().setPage("terminal");
     const taken = await openTerminalInTurn({
       extraEnv: {},
       title: task.name,
@@ -179,8 +188,17 @@ async function dispatchAsGoal(
   } catch (reason) {
     throw new Error(`目标「${task.name}」已记下，但没开起来：${String(reason)}。可以在项目里点「开始」重试`);
   }
-  const skipped = missing.length ? `；技能库里没有 ${missing.join("、")}，这次没带` : "";
-  return { note: `已记成目标「${task.name}」并开工，做完在待验收里${skipped}`, mode: "goal", taskId: task.id };
+  return { note: `已记成目标「${task.name}」并开工，做完在待验收里${skipped}${fallback}`, mode: "goal", taskId: task.id };
+}
+
+/** 后台无头跑一条刚开出来的目标 Run：成了返回 true，做不了返回原因（调用方退回终端） */
+async function runHeadless(runId: string, prompt: string): Promise<true | string> {
+  try {
+    await invoke("task_run_headless", { runId, prompt });
+    return true;
+  } catch (reason) {
+    return String(reason).replace(/^Error:\s*/, "");
+  }
 }
 
 /** 派活记录（存在问答记录那一轮上，后端 DispatchRecordDto） */
@@ -264,7 +282,6 @@ export async function resumeDispatchedGoal(projectPath: string, project: Project
   if (!profile) throw new Error("还没有可用连接：先到连接页配一个");
   const runs = await invoke<RunDto[]>("run_list", { projectRoot: projectPath }).catch(() => [] as RunDto[]);
   const previous = runs.filter((r) => r.taskId === task.id).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
-  useAppStore.getState().setPage("terminal");
   const { run, prompt } = await prepareGoalRun({
     projectName: project.name,
     projectPath,
@@ -274,6 +291,10 @@ export async function resumeDispatchedGoal(projectPath: string, project: Project
     profileId: profile.id,
     reuseIsolation: true,
   });
+  // 同派出：先在后台无头接着做（同一个隔离副本，新开一段会话、带着上次的产物），做不了才退回终端接回上次对话
+  const headless = await runHeadless(run.id, prompt);
+  if (headless === true) return `已让「${task.name}」在后台接着做（接回上次的隔离副本，不开终端），做完在待验收里`;
+  useAppStore.getState().setPage("terminal");
   const taken = await openTerminalInTurn({
     extraEnv: {},
     title: task.name,

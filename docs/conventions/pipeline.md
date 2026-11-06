@@ -1623,6 +1623,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   「派出去」「接着做」一类短句（`im-route.ts quickIntent`）桌面面板与手机都照字面办、不交给 AI；IDENTITY 写明项目助手只会说话、绝不说自己已派 / 已开工 / 已让它接着做。
   「接着做」= `resumeDispatchedGoal`：同项目任务页「重试」，复用上次隔离副本、同家 Agent 时接回上次会话；只接经项目助手派出去、副本没清理的目标；
   停了 / 失败的进展下面（桌面）与手机进展卡片带「接着做」按钮。
+- **派出去的目标走后台无头运行（2026-11-06 根源一）**：`dispatchAsGoal` / `resumeDispatchedGoal` 在 `prepareGoalRun` 之后先 `task_run_headless(runId, prompt)`——
+  同一条 Run 改 runtime=headless、在隔离副本里按定时任务同一套无头写盘参数跑完（`ai::build_headless_command`，Claude 带 bypassPermissions、Codex workspace-write，
+  同 2026-11-01 定时任务口径），经 `close_run_with_result` 收尾、冻结评审、进待验收；超时 90 分钟。做不了（qwen 等无头写盘没验证的、起不来）原 Run 退回终端并在提示里写明原因。
+  「接着做」同样先无头：同一个隔离副本、新开一段会话（不续旧会话，`-p --resume` 没实测）。停止走既有 `run_cancel`。
 - **卡在哪只有一个出处 `run-blocker.ts`（2026-11-06 根源二）**：终端页把信任菜单、等确认、选项菜单、等待屏、启动失败、登录屏、连接问题、
   十分钟没出字（`stalled`）、目标说完一轮（`idle`）归成 `terminalRunInputs.blocker`（按要紧程度只取一个，写清 text 与手机能否直接点）；
   调度台、手机推送只读它。**新增一种卡法只改 run-blocker.ts 与终端页的取值**，不在消费方各自再判。
