@@ -1612,6 +1612,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   回复原路原话转达（`assistant-desk.ts replyDesk`）：人工请求 `help_request_answer` → `deliverHelpPrompt` 经 `sendToWorkspace`（开着留话、关着接回对话）→ 标已送；
   对话里的问题送 `relayText` 原话（只加一行来源）。**转达不经 AI 改写**；等确认的命令只带路回对话。`sendToWorkspace` 与派活单交给第 N 步共用。
 - **动作分级唯一真源 `assistant-ops.ts`**：auto / tap / desktop 三档，手机只做 auto 与 tap；新增项目助手动作必须进这张表。
+- **信任文件夹（2026-11-06 用户拍板「两项都做」）**：终端页把停在启动信任菜单的标签写进 `terminalRunInputs.trust`，调度台列成「等你信任文件夹」（项目根、工作副本与这个项目在跑的隔离副本都认）；
+  点「信任并继续」经 `trustAnswerReq` 交给那个标签原有的读屏核对再回车（`answerTrust`），**仍是人点的那一下，Mesa 不自动信任**。
+  手机上：`trust_folder` 属 tap 档，但**只限经项目助手派出去的活**（派活记录的 taskId / 工作副本对得上，`DeskItem.trust.dispatched`），其余与等确认的命令只推提醒；
+  卡住的（信任 / 等确认）20 秒看一次、同一件只推一次（`pushStuck`）。
 - **飞书通道**：后端 `feishu.rs` 只管长连接收发、配对与密钥；路由与执行全在前端 `im-bridge.ts`（总助手 `im-route.ts`、卡片 `im-cards.ts`），
   手机上问的与桌面同一条 `askProjectAssistant`、同一份问答记录（`where` 写「手机（飞书）」）。总助手判断项目只认点名 / 切到 / 上一次 / 只有一个项目，
   说不清给项目按钮，不靠 AI 猜；「等我的」只看有工作副本、人工请求或等确认的项目（最多 8 个）。推送只推派活回音与新人工请求，同一条只推一次（本机记）。

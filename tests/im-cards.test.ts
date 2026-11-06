@@ -47,3 +47,26 @@ test("等你的事卡片：人工请求给选项按钮，等确认只提示回�
   const pick: any = projectPickCard([project], "出周报");
   assert.deepEqual(buttons(pick)[0].value, { op: "project", p: "/p/a", q: "出周报" });
 });
+
+test("信任文件夹卡片：你派的活给两个按钮，别的只提示回电脑", () => {
+  const trustItem = (dispatched: boolean) => ({
+    key: "trust:t1",
+    kind: "trust" as const,
+    step: null,
+    where: "对话「周报」",
+    question: "停在信任",
+    options: [],
+    recommend: null,
+    detail: [],
+    tabId: "t1",
+    trust: { yes: "Yes", no: "No", path: null, dispatched },
+  });
+  const yes: any = deskCard([{ project, items: [trustItem(true)] }]);
+  assert.deepEqual(buttons(yes).map((b: any) => b.value), [
+    { op: "trust", p: "/p/a", k: "trust:t1", v: "yes" },
+    { op: "trust", p: "/p/a", k: "trust:t1", v: "no" },
+  ]);
+  const no: any = deskCard([{ project, items: [trustItem(false)] }]);
+  assert.equal(buttons(no).length, 0);
+  assert.match(JSON.stringify(no), /信任文件夹要回到电脑上点/);
+});

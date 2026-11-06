@@ -9,7 +9,7 @@ import type { RouteProject } from "./im-route";
 
 /** 按钮回传值：op 动作、p 项目根、t 那一轮的时间、k 等你的事的键、v 选中的值、q 待问的话 */
 export interface CardValue {
-  op: "clarify" | "dispatch" | "remember" | "desk" | "project";
+  op: "clarify" | "dispatch" | "remember" | "desk" | "project" | "trust";
   p: string;
   t?: string;
   k?: string;
@@ -97,7 +97,7 @@ export function deskCard(groups: readonly { project: RouteProject; items: readon
     if (els.length) els.push({ tag: "hr" });
     els.push({ tag: "markdown", content: `**${g.project.name}**` });
     for (const item of g.items.slice(0, 8)) {
-      const kind = item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在问你" : "等你确认";
+      const kind = item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在问你" : item.kind === "trust" ? "等你信任文件夹" : "等你确认";
       els.push({ tag: "markdown", content: `${item.where} · ${kind}\n${item.question}` });
       if (item.kind === "help" && item.options.length) {
         els.push({
@@ -106,6 +106,19 @@ export function deskCard(groups: readonly { project: RouteProject; items: readon
             button(`${o.key}：${o.label}${item.recommend === o.key ? "（建议）" : ""}`, { op: "desk", p: g.project.path, k: item.key, v: `${o.key}：${o.label}` }),
           ),
         });
+      } else if (item.kind === "trust") {
+        // 只有你经项目助手派出去的活，手机上才给信任按钮（2026-11-06 用户拍板）；其余回电脑
+        if (item.trust?.dispatched) {
+          els.push({
+            tag: "action",
+            actions: [
+              button("信任并继续", { op: "trust", p: g.project.path, k: item.key, v: "yes" }, true),
+              button("不信任", { op: "trust", p: g.project.path, k: item.key, v: "no" }),
+            ],
+          });
+        } else {
+          els.push(note("这件不是经项目助手派出去的，信任文件夹要回到电脑上点"));
+        }
       } else if (item.kind === "confirm") {
         els.push(note("确认命令要回到电脑上的对话里做"));
       } else {

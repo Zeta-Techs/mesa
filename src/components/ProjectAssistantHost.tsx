@@ -16,7 +16,7 @@ import {
 } from "../assistant-dock";
 import { readProjectSurfaceTab } from "../project-surface";
 import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
-import { pushNewHelp, startImBridge } from "../im-bridge";
+import { pushNewHelp, pushStuck, startImBridge } from "../im-bridge";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
 function savedWidth(): number {
@@ -53,6 +53,8 @@ export default function ProjectAssistantHost() {
       void pollAssistantEchoes();
       void pushNewHelp();
     }, ECHO_POLL_MS);
+    // 卡住了（信任文件夹 / 等确认）要早点说：20 秒看一次，不跟回音同频
+    const stuckTimer = window.setInterval(() => void pushStuck(), 20_000);
     let stop: (() => void) | null = null;
     let cancelled = false;
     void startImBridge().then((off) => {
@@ -62,6 +64,7 @@ export default function ProjectAssistantHost() {
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.clearInterval(stuckTimer);
       stop?.();
     };
   }, []);

@@ -10602,13 +10602,33 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // inputs 镜像进 store（terminalRunInputs），供工作区首页「待你处理」跨页聚合只读
   // （排序/分类由首页自行用 buildRunOverview 完成）。
   const setTerminalRunInputs = useAppStore((s) => s.setTerminalRunInputs);
+  // 停在信任菜单的标签（2026-11-06）：调度台列成「等你的事」、手机上能点；只按菜单本身变化重算，不跟着对话刷新
+  const trustSig = tabs
+    .map((t) => {
+      const p = sessionByTab[t.id]?.trustPrompt;
+      return p ? `${t.id}\u0001${p.options[p.yesIndex] ?? ""}\u0001${p.options[p.noIndex] ?? ""}\u0001${p.path ?? ""}` : "";
+    })
+    .join("\u0002");
   const runInputs: RunOverviewInput[] = useMemo(
-    () => tabs.map((t) => tabRunInput(t, statuses[t.id])),
-    [tabs, statuses],
+    () =>
+      tabs.map((t) => {
+        const p = sessionByTab[t.id]?.trustPrompt;
+        const input = tabRunInput(t, statuses[t.id]);
+        return p ? { ...input, trust: { yes: p.options[p.yesIndex] ?? "", no: p.options[p.noIndex] ?? "", path: p.path } } : input;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tabs, statuses, trustSig],
   );
   useEffect(() => {
     setTerminalRunInputs(runInputs);
   }, [runInputs, setTerminalRunInputs]);
+  // 别处（调度台、手机上的项目助手）要替人按信任菜单：仍是人点的那一下，只是从别处点；交给那个标签按原来的读屏核对再回车
+  const trustAnswerReq = useAppStore((s) => s.trustAnswerReq);
+  useEffect(() => {
+    if (!trustAnswerReq) return;
+    useAppStore.getState().setTrustAnswerReq(null);
+    tabActionsRef.current.get(trustAnswerReq.tabId)?.answerTrust(trustAnswerReq.accept);
+  }, [trustAnswerReq]);
   // 正看着的标签（分屏时是活跃那一栏）：侧栏项目树据此高亮「正在看的这段对话」、默认展开它的文件夹
   const setTerminalActiveTabId = useAppStore((s) => s.setTerminalActiveTabId);
   useEffect(() => {

@@ -4,7 +4,7 @@
  * 你就地回，Mesa 原路、原话转达（assistant-desk.ts）。纯逻辑，配 tests/assistant-queue.test.ts。
  */
 
-export type DeskKind = "help" | "question" | "confirm";
+export type DeskKind = "help" | "question" | "confirm" | "trust";
 
 export interface DeskItem {
   /** 稳定键：同一件事在桌面与手机上同一个键（手机推送去重、按钮回传都靠它） */
@@ -24,8 +24,10 @@ export interface DeskItem {
   helpItemId?: string;
   /** 这一步的工作副本（转达用） */
   worktreePath?: string | null;
-  /** 等确认的标签（带路用） */
+  /** 等确认 / 停在信任菜单的标签（带路、替人按菜单用） */
   tabId?: string;
+  /** 信任菜单：两项原文；dispatched = 这是你经项目助手派出去的活（手机上才能点信任，2026-11-06 用户拍板） */
+  trust?: { yes: string; no: string; path: string | null; dispatched: boolean };
 }
 
 export interface DeskStep {
@@ -61,6 +63,8 @@ export interface DeskConfirmInput {
   tabId: string;
   title: string;
   step: DeskStep | null;
+  /** 停在启动时的信任菜单（不是命令确认） */
+  trust?: { yes: string; no: string; path: string | null; dispatched: boolean } | null;
 }
 
 /** 最后一段话像在问人：结尾是问号，或用了「要不要 / 是否 / 请确认 / 选哪 / 你希望 / 需要你」这类问法；说「已完成」一类的总结不算 */
@@ -111,22 +115,25 @@ export function buildDeskItems(input: {
   }
   for (const c of input.confirms) {
     out.push({
-      key: `confirm:${c.tabId}`,
-      kind: "confirm",
+      key: `${c.trust ? "trust" : "confirm"}:${c.tabId}`,
+      kind: c.trust ? "trust" : "confirm",
       step: c.step ? c.step.index + 1 : null,
       where: c.step ? stepLabel(c.step) : `对话「${c.title}」`,
-      question: "AI 停下来等你确认一条命令",
+      question: c.trust
+        ? `AI 刚启动，停在「是否信任这个文件夹」${c.trust.path ? `（${c.trust.path}）` : ""}，不选它就一直不干活`
+        : "AI 停下来等你确认一条命令",
       options: [],
       recommend: null,
       detail: [],
       tabId: c.tabId,
       worktreePath: c.step?.worktreePath ?? null,
+      ...(c.trust ? { trust: c.trust } : {}),
     });
   }
   for (const t of input.tails) {
     // 这一步已经有人工请求在等你、或停在等确认：同一件事不说两遍
     if (t.busy || !looksLikeQuestion(t.text)) continue;
-    if (out.some((x) => x.step === t.step.index + 1 && (x.kind === "help" || x.kind === "confirm"))) continue;
+    if (out.some((x) => x.step === t.step.index + 1 && x.kind !== "question")) continue;
     out.push({
       key: `question:${t.step.worktreePath ?? t.step.workspaceName}:${hash(t.text)}`,
       kind: "question",
@@ -162,6 +169,7 @@ export function deskSummary(items: readonly DeskItem[]): string {
     n("help") ? `人工请求 ${n("help")}` : "",
     n("question") ? `对话里在问 ${n("question")}` : "",
     n("confirm") ? `等确认 ${n("confirm")}` : "",
+    n("trust") ? `等信任文件夹 ${n("trust")}` : "",
   ].filter(Boolean);
   return `等你的事 ${items.length} 件：${parts.join(" · ")}`;
 }

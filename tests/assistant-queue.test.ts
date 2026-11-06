@@ -53,3 +53,16 @@ test("等你的事：人工请求、等确认、对话里在问；同一步有�
 test("转达是原话，只加一行来源", () => {
   assert.equal(relayText("  剔除那两孔  "), "【你在项目助手里的回复，Mesa 原话转达】\n剔除那两孔");
 });
+
+test("信任文件夹：单列一类，带两项原文与是否你派的活；同一步不再列对话里的问题", () => {
+  const items = buildDeskItems({
+    steps,
+    help: [],
+    tails: [{ step: steps[2], text: "要不要继续？", busy: false }],
+    confirms: [{ tabId: "t1", title: "周报", step: steps[2], trust: { yes: "Yes, I trust this folder", no: "No, exit", path: "/iso/x", dispatched: true } }],
+  });
+  assert.deepEqual(items.map((i) => [i.kind, i.key]), [["trust", "trust:t1"]]);
+  assert.match(items[0].question, /是否信任这个文件夹」（\/iso\/x）/);
+  assert.equal(items[0].trust?.dispatched, true);
+  assert.equal(deskSummary(items), "等你的事 1 件：等信任文件夹 1");
+});

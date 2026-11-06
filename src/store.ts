@@ -920,6 +920,9 @@ interface AppState {
   /** 项目助手派活单「做成定时任务…」：项目「定时任务」页签打开新建弹层并预填（新建巡检技能） */
   scheduleDraftReq: { projectRoot: string; name: string; intent: string; token: number } | null;
   setScheduleDraftReq: (req: AppState["scheduleDraftReq"]) => void;
+  /** 替人按某个标签的「是否信任这个目录」菜单（调度台 / 手机，2026-11-06）：终端页交给那个标签读屏核对再回车 */
+  trustAnswerReq: { tabId: string; accept: boolean; token: number } | null;
+  setTrustAnswerReq: (req: AppState["trustAnswerReq"]) => void;
   closeAssistant: () => void;
   /** 项目助手此刻是常驻侧栏（不挡页面）：按钮跳转、开任务面板时不用关它（2026-11-05） */
   assistantDocked: boolean;
@@ -1390,6 +1393,8 @@ export const useAppStore = create<AppState>((set, get) => {
   bumpAssistantEchoTick: () => set((st) => ({ assistantEchoTick: st.assistantEchoTick + 1 })),
   scheduleDraftReq: null,
   setScheduleDraftReq: (req) => set({ scheduleDraftReq: req }),
+  trustAnswerReq: null,
+  setTrustAnswerReq: (req) => set({ trustAnswerReq: req }),
   assistantDocked: false,
   setAssistantDocked: (docked) => set({ assistantDocked: docked }),
   workbenchTaskReq: null,

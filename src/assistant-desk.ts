@@ -12,6 +12,7 @@ import { deliverHelpPrompt } from "./help-requests";
 import { sendToWorkspace } from "./assistant-dispatch";
 import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
 import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, WorkspaceDto } from "./types";
+import type { OpenDispatch } from "./assistant-echo";
 
 function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   return p.then((v) => v ?? fallback).catch(() => fallback);
@@ -44,13 +45,22 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
         }),
     )
   ).filter((t): t is { step: DeskStep; text: string; busy: boolean } => !!t);
-  const roots = [projectPath, ...mine.map((w) => w.worktreePath)];
+  // 目标在 Mesa 自己的隔离副本里跑（不在项目目录下）：按这个项目的运行记录认它们
+  const roots = [projectPath, ...mine.map((w) => w.worktreePath), ...runs.filter((r) => !r.closedAt).map((r) => r.isolationPath)];
+  const open = await safe(invoke<OpenDispatch[]>("assistant_open_dispatches"), []);
+  const dispatchedHere = (cwd: string, taskId: string | undefined) =>
+    open.some(
+      (d) =>
+        samePath(d.projectRoot, projectPath, IS_WINDOWS) &&
+        ((!!taskId && d.record.taskId === taskId) || (!!d.record.worktreePath && pathWithin(cwd, d.record.worktreePath, IS_WINDOWS))),
+    );
   const confirms = live
-    .filter((r) => r.running && !r.shell && r.attention === "confirm" && roots.some((root) => pathWithin(r.cwd, root, IS_WINDOWS)))
+    .filter((r) => r.running && !r.shell && (r.attention === "confirm" || !!r.trust) && roots.some((root) => pathWithin(r.cwd, root, IS_WINDOWS)))
     .map((r) => ({
       tabId: r.tabId,
       title: r.title,
       step: steps.find((s) => s.worktreePath && pathWithin(r.cwd, s.worktreePath, IS_WINDOWS)) ?? null,
+      trust: r.trust ? { ...r.trust, dispatched: dispatchedHere(r.cwd, r.taskId) } : null,
     }));
   return buildDeskItems({
     steps,
@@ -91,6 +101,12 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
   if (!ws) throw new Error(`${item.where}的工作副本不在了，送不到`);
   const sent = await sendToWorkspace(projectPath, ws, null, relayText(value));
   return sent.mode === "mail" ? `已原话留给${item.where}的 AI，它空闲时送到` : `已接回${item.where}的对话，把你的话原样送了进去`;
+}
+
+/** 替人按信任菜单（仍是人点的那一下：桌面「等你的事」或手机卡片上点）：交给终端页那个标签读屏核对再回车 */
+export function answerTrust(item: DeskItem, accept: boolean): void {
+  if (!item.tabId) return;
+  useAppStore.getState().setTrustAnswerReq({ tabId: item.tabId, accept, token: Date.now() });
 }
 
 /** 带路去确认：切到那个终端标签（只在桌面） */

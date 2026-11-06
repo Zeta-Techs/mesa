@@ -20,7 +20,7 @@ import {
 } from "./project-assistant";
 import { actionOp, opAllowed } from "./assistant-ops";
 import { dispatchWorkOrder, type DispatchRecord } from "./assistant-dispatch";
-import { addProjectKnowledge, loadDesk, replyDesk } from "./assistant-desk";
+import { addProjectKnowledge, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
 import { IM_HELP_TEXT, routeMessage, type RouteProject } from "./im-route";
 import { answerCard, deskCard, phoneText, projectPickCard, type CardValue } from "./im-cards";
 import type { DeskItem } from "./assistant-queue";
@@ -245,6 +245,14 @@ async function handleCard(value: CardValue): Promise<void> {
         return sendText(`没派出去：${String(reason)}`);
       }
     }
+    case "trust": {
+      const item = (await loadDesk(project.path)).find((i) => i.key === value.k && i.kind === "trust");
+      if (!item?.trust) return sendText("它已经不在信任菜单上了（可能你在电脑上点过了）。");
+      if (!item.trust.dispatched) return sendText("这件不是经项目助手派出去的，信任文件夹要回到电脑上点。");
+      const accept = value.v === "yes";
+      answerTrust(item, accept);
+      return sendText(accept ? `已在电脑上替你选了「${item.trust.yes}」，${item.where}接着干。` : `已在电脑上替你选了「${item.trust.no}」，它会退出。`);
+    }
     case "desk": {
       const items = await loadDesk(project.path);
       const item = items.find((i) => i.key === value.k);
@@ -283,6 +291,36 @@ export async function pushNewHelp(): Promise<void> {
   } catch {
     /* 记不下最多重推一次 */
   }
+}
+
+/** 正在推着的「卡住了」（信任文件夹 / 等确认）：同一件只推一次，它不卡了再卡才再推 */
+const stuckPushed = new Set<string>();
+
+/** 派出去的活停在信任文件夹或等确认：推到手机（信任且是你派的活带按钮；等确认只提醒回电脑） */
+export async function pushStuck(): Promise<void> {
+  const live = useAppStore.getState().terminalRunInputs.filter((r) => r.running && !r.shell && (r.trust || r.attention === "confirm"));
+  const liveKeys = new Set(live.flatMap((r) => [`trust:${r.tabId}`, `confirm:${r.tabId}`]));
+  for (const key of [...stuckPushed]) if (!liveKeys.has(key)) stuckPushed.delete(key);
+  if (!live.length || !(await imReady())) return;
+  const roots = new Set<string>();
+  for (const r of live) {
+    if (!r.runId) continue;
+    const run = await invoke<{ projectRoot: string | null } | null>("run_get", { id: r.runId }).catch(() => null);
+    if (run?.projectRoot) roots.add(run.projectRoot);
+  }
+  const list = await projects();
+  const groups: { project: RouteProject; items: DeskItem[] }[] = [];
+  for (const root of roots) {
+    const p = list.find((x) => samePath(x.path, root, IS_WINDOWS));
+    if (!p) continue;
+    const items = (await loadDesk(p.path).catch(() => [] as DeskItem[])).filter(
+      (i) => (i.kind === "trust" || i.kind === "confirm") && !stuckPushed.has(i.key),
+    );
+    if (items.length) groups.push({ project: asRoute(p), items });
+  }
+  if (!groups.length) return;
+  await sendCard(deskCard(groups));
+  for (const g of groups) for (const i of g.items) stuckPushed.add(i.key);
 }
 
 let chain: Promise<void> = Promise.resolve();

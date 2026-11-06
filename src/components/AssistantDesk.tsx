@@ -4,7 +4,7 @@ import { useAppStore } from "../store";
 import { toast } from "../toast";
 import { optionAnswer } from "../help-requests";
 import { deskSummary, type DeskItem } from "../assistant-queue";
-import { focusConfirm, loadDesk, replyDesk } from "../assistant-desk";
+import { answerTrust, focusConfirm, loadDesk, replyDesk } from "../assistant-desk";
 
 /**
  * 项目助手顶上的「等你的事」（调度台，2026-11-06 docs/design-assistant-dispatch-desk.md §2）：
@@ -62,11 +62,31 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
             return (
               <li key={item.key} className="border-t border-hairline pt-2.5">
                 <p className="text-xs text-l3">
-                  {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : "等你确认"}
+                  {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : item.kind === "trust" ? "等你信任文件夹" : "等你确认"}
                 </p>
                 <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6 text-l1">{item.question}</p>
                 {item.detail.length > 0 && <p className="text-xs leading-5 text-l3">{item.detail.join("；")}</p>}
-                {item.kind === "confirm" ? (
+                {item.kind === "trust" && item.trust ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      className={secondaryActionClass}
+                      title={`在终端菜单里选「${item.trust.yes}」`}
+                      onClick={() => {
+                        answerTrust(item, true);
+                        setItems((list) => list.filter((x) => x.key !== item.key));
+                      }}
+                    >
+                      信任并继续
+                    </button>
+                    <button type="button" className={ghostActionClass} title={`在终端菜单里选「${item.trust.no}」`} onClick={() => answerTrust(item, false)}>
+                      不信任
+                    </button>
+                    <button type="button" className={ghostActionClass} onClick={() => focusConfirm(item)}>
+                      去终端看看
+                    </button>
+                  </div>
+                ) : item.kind === "confirm" ? (
                   <button type="button" className={`${secondaryActionClass} mt-1.5`} onClick={() => focusConfirm(item)}>
                     去对话里确认
                   </button>

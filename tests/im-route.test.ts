@@ -29,6 +29,7 @@ test("动作分级：手机上只做点一下就生效那一档", () => {
   assert.equal(opAllowed("dispatch", "phone"), true);
   assert.equal(opAllowed("help_answer", "phone"), true);
   assert.equal(opAllowed("remember", "phone"), true);
+  assert.equal(opAllowed("trust_folder", "phone"), true, "信任文件夹放到手机上点（只限派出去的活，由调用方再核对）");
   for (const op of ["confirm_command", "adopt_review", "write_back", "delete", "navigate"] as const) {
     assert.equal(opAllowed(op, "phone"), false, op);
     assert.equal(opAllowed(op, "desktop"), true, op);

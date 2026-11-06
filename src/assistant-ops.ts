@@ -18,6 +18,8 @@ export type AssistantOp =
   | "dispatch"
   | "remember"
   | "clarify_answer"
+  /** 信任 Mesa 自建的隔离副本 / 工作副本（只限你经项目助手派出去的活；2026-11-06 用户拍板放到手机上点） */
+  | "trust_folder"
   | "confirm_command"
   | "adopt_review"
   | "write_back"
@@ -35,6 +37,7 @@ export const OP_TIERS: Readonly<Record<AssistantOp, OpTier>> = {
   dispatch: "tap",
   remember: "tap",
   clarify_answer: "tap",
+  trust_folder: "tap",
   confirm_command: "desktop",
   adopt_review: "desktop",
   write_back: "desktop",
