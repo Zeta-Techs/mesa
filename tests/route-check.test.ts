@@ -12,6 +12,7 @@ import {
   runningOfficialTargets,
   exitTypeText,
   serviceConfirmText,
+  serviceConfirmTip,
   routeRowMain,
   latencyText,
   shortOrg,
@@ -112,8 +113,10 @@ test("修复只在代理没在运行时给：设置里的代理优先换成在�
   assert.equal(exitTypeText({ kind: "residential", label: "住宅", org: "AS2856 British Telecommunications Limited" }), "住宅 · British Telecommunications");
 });
 
-test("服务方确认可用才标「官方确认」；没这项检查或没答复不标", () => {
-  assert.equal(serviceConfirmText({ ...base, serviceSays: "allowed" }), "官方确认");
+test("服务方确认可用才标「Claude 支持这个地区」；没这项检查或没答复不标", () => {
+  assert.equal(serviceConfirmText({ ...base, serviceSays: "allowed" }), "Claude 支持这个地区");
+  assert.equal(serviceConfirmText({ ...base, agent: "codex", serviceSays: "allowed" }), "OpenAI 支持这个地区");
+  assert.match(serviceConfirmTip(base), /不代表账号不会被风控/);
   assert.equal(serviceConfirmText({ ...base, serviceSays: "unknown" }), null);
   assert.equal(serviceConfirmText({ ...base, serviceSays: null }), null);
   assert.equal(serviceConfirmText({ ...base, verdict: "block", serviceSays: "blocked" }), null);

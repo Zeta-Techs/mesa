@@ -16,6 +16,7 @@ import {
   routeFixLabel,
   routeRowMain,
   serviceConfirmText,
+  serviceConfirmTip,
   type ExitType,
   type RouteCheck,
   type RouteFix,
@@ -199,6 +200,8 @@ function RouteRow({
 }) {
   const nameRef = useRef<HTMLSpanElement>(null);
   const tip = useHoverTip(nameRef);
+  const confirmRef = useRef<HTMLSpanElement>(null);
+  const confirmTip = useHoverTip(confirmRef);
   const check = row && !("error" in row) ? row : null;
   const tipText = check
     ? `${VERDICT_LABEL[check.verdict]} · 探测 ${check.probeHost}`
@@ -237,9 +240,15 @@ function RouteRow({
     confirm || check.exitRegion || exitType !== undefined ? (
       <span className="flex min-w-0 items-center gap-1.5 text-micro text-l4">
         {confirm && (
-          <span className="inline-flex shrink-0 items-center gap-1 text-l3">
+          <span
+            ref={confirmRef}
+            onMouseEnter={confirmTip.show}
+            onMouseLeave={confirmTip.hide}
+            className="inline-flex shrink-0 cursor-help items-center gap-1 text-l3"
+          >
             <ShieldCheck className="size-3 text-ok-text" aria-hidden="true" />
             {confirm}
+            <HoverTip tip={confirmTip.tip} text={serviceConfirmTip(check)} />
           </span>
         )}
         {confirm && check.exitRegion && <span aria-hidden="true">·</span>}

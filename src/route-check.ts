@@ -124,9 +124,21 @@ export function checkedAgoText(checkedAt: number, nowSecs: number): string {
   return `${Math.floor(mins / 60)} 小时前测过`;
 }
 
-/** 服务方确认可用时在结果后面补一个小标记；其余情况不显示（被拒已经写在原因里） */
-export function serviceConfirmText(check: Pick<RouteCheck, "serviceSays" | "verdict">): string | null {
-  return check.serviceSays === "allowed" && check.verdict !== "block" ? "官方确认" : null;
+/** 会问服务方的那几家，界面上写谁（与后端 ServiceCheck 对应） */
+const SERVICE_NAME: Record<string, string> = { "claude-code": "Claude", codex: "OpenAI" };
+
+/** 服务方确认这个地区可用时补一个小标记「Claude 支持这个地区」；其余情况不显示（被拒已经写在原因里）。
+ *  2026-11-07 用户问「官方确认是啥意思」：改写成谁、确认了什么，和官方「支持的国家和地区」同一说法，
+ *  也不会被读成「账号安全」 */
+export function serviceConfirmText(check: Pick<RouteCheck, "agent" | "serviceSays" | "verdict">): string | null {
+  if (check.serviceSays !== "allowed" || check.verdict === "block") return null;
+  return `${SERVICE_NAME[check.agent] ?? "服务方"} 支持这个地区`;
+}
+
+/** 悬停在那个小标记上的解释：怎么来的、只说明什么 */
+export function serviceConfirmTip(check: Pick<RouteCheck, "agent">): string {
+  const svc = SERVICE_NAME[check.agent] ?? "服务方";
+  return `Mesa 不带任何密钥问了 ${svc} 本身，它回复这个出口所在的地区可以用。只说明地区，不代表账号不会被风控。`;
 }
 
 export interface ExitType {

@@ -355,8 +355,8 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
             };
             let svc = input.probe.service_check.map(service_label).unwrap_or("服务方");
             let reason = match &loc {
-                Some(l) => format!("{}，{svc} 不让这个地区用", region_name(l)),
-                None => format!("{svc} 不让这个地区用"),
+                Some(l) => format!("{}，{svc} 不支持这个地区", region_name(l)),
+                None => format!("{svc} 不支持这个地区"),
             };
             (Verdict::Block, Some(Stage::Region), reason, loc, Some(*latency_ms))
         }
@@ -899,7 +899,7 @@ mod tests {
         gb.service = Some(ServiceSays::Blocked);
         let (v, stage, reason, ..) = judge(&gb);
         assert_eq!((v, stage), (Verdict::Block, Some(Stage::Region)));
-        assert_eq!(reason, "英国，Claude 不让这个地区用");
+        assert_eq!(reason, "英国，Claude 不支持这个地区");
         let mut unknown = input(ok_hk());
         unknown.service = Some(ServiceSays::Unknown);
         assert_eq!(judge(&unknown).0, Verdict::Block, "服务方没答复时名单兜底");
