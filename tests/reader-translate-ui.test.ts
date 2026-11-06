@@ -39,11 +39,11 @@ test("译文浮窗：按原文段摆位、× 关掉不留横条或球、历史�
   const root = createRoot(dom.window.document.getElementById("root")!);
   const entry = (at: string, page: number, translated: string) => ({ original: "orig", translated, page, saved: false, at });
   const history = [entry("2", 3, "第二段译文"), entry("1", 2, "第一段译文")];
-  let closed = 0;
+  const modes: string[] = [];
   let cancelled = 0;
   const shown: Array<string | null> = [];
   const props = (over: Record<string, unknown> = {}) => ({
-    open: true, onClose: () => { closed++; }, latest: history[0], pending: null, history, saving: false, canSave: true,
+    mode: "open", onMode: (m: string) => modes.push(m), latest: history[0], pending: null, history, saving: false, canSave: true,
     bounds: { left: 100, right: 300, top: 40, bottom: 0 },
     place: { key: "sel-1", rect: { top: 200, bottom: 320, left: 300, right: 700 } },
     onRetry() {}, onCancelPending: () => { cancelled++; }, onSaveEntry() {}, onHint() {}, onAsk() {}, canAsk: true,
@@ -71,11 +71,31 @@ test("译文浮窗：按原文段摆位、× 关掉不留横条或球、历史�
     await act(async () => first.click());
     assert.match(win()!.textContent!, /第 2 页/);
     assert.match(win()!.textContent!, /第一段译文/);
+    // — 收成原处的小标记：点它在原处展开（位置不变）
+    await act(async () => (dom.window.document.querySelector('[aria-label="收起译文"]') as HTMLButtonElement).click());
+    assert.equal(modes.at(-1), "min");
+    assert.equal(cancelled, 0, "收起不作废在途翻译");
+    await act(async () => root.render(h(Panel, props({ mode: "min" }))));
+    const marker = dom.window.document.querySelector<HTMLElement>("[data-reader-translate-marker]")!;
+    assert.ok(marker, "收起留一个标记");
+    assert.equal(win(), null);
+    assert.equal(marker.style.left, "300px");
+    assert.equal(marker.style.top, "328px");
+    assert.match(marker.textContent!, /译.*第 2 页/);
+    await act(async () => {
+      marker.dispatchEvent(new dom.window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 5, clientY: 5 }));
+      dom.window.dispatchEvent(new dom.window.PointerEvent("pointerup", { clientX: 5, clientY: 5 }));
+    });
+    assert.equal(modes.at(-1), "open", "点标记展开");
+    // 重开回到原位置（摆位请求没换 key 不挪）
+    await act(async () => root.render(h(Panel, props({ mode: "open" }))));
+    assert.equal(win()!.style.left, "300px");
+    assert.equal(win()!.style.top, "328px");
     // × 彻底关掉：作废在途、交给上层关；上层关了以后什么都不留
     await act(async () => (dom.window.document.querySelector('[aria-label="关掉译文"]') as HTMLButtonElement).click());
-    assert.equal(closed, 1);
+    assert.equal(modes.at(-1), "closed");
     assert.equal(cancelled, 1);
-    await act(async () => root.render(h(Panel, props({ open: false }))));
+    await act(async () => root.render(h(Panel, props({ mode: "closed" }))));
     assert.equal(win(), null);
     assert.equal(dom.window.document.getElementById("root")!.innerHTML, "", "不留横条、不留球");
     assert.equal(shown.at(-1), null, "关掉后撤掉原文段标记");

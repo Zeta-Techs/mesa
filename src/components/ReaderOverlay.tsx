@@ -612,15 +612,17 @@ export default function ReaderOverlay({
     setTlPending(null);
   }, [pdfPath]);
 
-  /** 浮窗开着没有：翻译开始就开，× 关掉（PDF 顶栏「译文」再开）。换文献关掉 */
-  const [tlOpen, setTlOpen] = useState(false);
+  /** 浮窗状态：open 开着 / min 收成原位的小标记（点它展开）/ closed 关掉（PDF 顶栏「译文」再开）。
+   *  翻译开始就开；换文献关掉 */
+  const [tlMode, setTlMode] = useState<"open" | "min" | "closed">("closed");
   useEffect(() => {
-    setTlOpen(false);
+    setTlMode("closed");
   }, [pdfPath]);
   /** 新翻译的摆位请求：划词时量到选区就用选区；没有（⌘+点段落）等原文段标出来再摆。
-   *  placedReqRef = 已按真外框摆过的那次请求，之后翻历史不再挪窗 */
+   *  needPlaceRef = 还等着按原文段摆窗的那次翻译（没量到选区时记下，摆过清掉）；只有它会挪窗——
+   *  × 关掉会作废在途、递增请求号，原先按「请求号对不上」判新翻译，重开时窗被挪回原文段（2026-11-06 用户：不是我上次关的位置） */
   const [tlPlace, setTlPlace] = useState<TlPlace | null>(null);
-  const placedReqRef = useRef(0);
+  const needPlaceRef = useRef<number | null>(null);
 
   /** 面板翻译主链路：在途态 → 纯文本翻译 → 成功入历史（同原文替换置顶）。
       写盘放在 setState updater 里：StrictMode 双跑写同样内容，幂等无副作用 */
@@ -628,7 +630,8 @@ export default function ReaderOverlay({
     async (text: string, page: number) => {
       const my = ++tlReqRef.current;
       setTlPending({ text, page, phase: "loading" });
-      setTlOpen(true);
+      setTlMode("open");
+      needPlaceRef.current = my;
       // 划词翻译时选区还在：按选区外框摆窗（PDF 栏里的选区才算）
       const root = rootRef.current;
       const col = pdfColRef.current;
@@ -638,7 +641,7 @@ export default function ReaderOverlay({
         const c = col.getBoundingClientRect();
         if (r.width > 0 && r.bottom > c.top && r.top < c.bottom && r.left < c.right && r.right > c.left) {
           const rr = root.getBoundingClientRect();
-          placedReqRef.current = my;
+          needPlaceRef.current = null;
           setTlPlace({
             key: `sel-${my}`,
             rect: {
@@ -674,8 +677,12 @@ export default function ReaderOverlay({
   /** PDF 顶栏「译文 N」（memo 住，PdfContinuousView 是 memo） */
   const tlCount = tlHistory.length;
   const tlToolbar = useMemo(
-    () => ({ count: tlCount, open: tlOpen, onToggle: () => setTlOpen((v) => !v) }),
-    [tlCount, tlOpen],
+    () => ({
+      count: tlCount,
+      open: tlMode === "open",
+      onToggle: () => setTlMode((m) => (m === "open" ? "closed" : "open")),
+    }),
+    [tlCount, tlMode],
   );
   /** PDF 栏的翻译触发（稳定引用：PdfContinuousView 是 memo） */
   const translateFromPdf = useCallback(
@@ -1002,12 +1009,12 @@ export default function ReaderOverlay({
   /** 没按选区摆过的这次翻译（⌘+点段落、重试）：原文段标出来后量它的外框，把窗摆到它旁边。
       标记由文本层异步落位，量两次；不跟滚动，翻历史也不挪窗 */
   useEffect(() => {
-    if (!tlSource || placedReqRef.current === tlReqRef.current) return;
-    const req = tlReqRef.current;
+    const req = needPlaceRef.current;
+    if (!tlSource || req == null) return;
     const measure = () => {
       const root = rootRef.current;
       const marks = pdfColRef.current?.querySelectorAll<HTMLElement>('[data-mark-id="tl-source"]');
-      if (!root || !marks || marks.length === 0 || placedReqRef.current === req) return;
+      if (!root || !marks || marks.length === 0 || needPlaceRef.current !== req) return;
       const rr = root.getBoundingClientRect();
       const col = pdfColRef.current!.getBoundingClientRect();
       let top = Infinity;
@@ -1024,7 +1031,7 @@ export default function ReaderOverlay({
         right = Math.max(right, r.right);
       });
       if (!Number.isFinite(top)) return;
-      placedReqRef.current = req;
+      needPlaceRef.current = null;
       setTlPlace({
         key: `src-${req}`,
         rect: {
@@ -1044,8 +1051,8 @@ export default function ReaderOverlay({
   }, [tlSource]);
 
   const tlPanelProps = {
-    open: tlOpen,
-    onClose: () => setTlOpen(false),
+    mode: tlMode,
+    onMode: setTlMode,
     bounds: pdfBounds,
     place: tlPlace,
     onDisplay: setTlShown,

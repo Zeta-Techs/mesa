@@ -39,13 +39,14 @@ const EST_H = 240;
 /**
  * 沉浸阅读的译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球两种摆法）：
  * 和对照窗一个样——挂覆盖层根，只在 PDF 栏里活动；划词翻译时摆到原文段下方（放不下放上方，不压原文段），
- * 拖标题栏换位、拖右下角改大小（尺寸记住，双击复位）；× 彻底关掉，不留球、不留横条，PDF 顶栏「译文 N」重新打开。
- * 表头：译文 · 第 N 页 | 原文 | 存进笔记 | 复制 | ⋯（问这段 / 历史）| ×。
+ * 拖标题栏换位、拖右下角改大小（尺寸记住，双击复位）；「—」收成原位的小标记「译 · 第 N 页」（点它原处展开、拖它换位，
+ * 同日用户：没有悬浮球就收不起来了，要留一个标记）；× 彻底关掉，PDF 顶栏「译文 N」重新打开（都回到关掉时的位置与大小）。
+ * 表头：译文 · 第 N 页 | 原文 | 存进笔记 | 复制 | ⋯（问这段 / 历史）| — | ×。
  * 状态（历史 / 在途 / 开关）由 ReaderOverlay 持有，本组件只管位置、尺寸与面板内 UI 态。
  */
 function ReaderTranslatePanel({
-  open,
-  onClose,
+  mode,
+  onMode,
   latest,
   pending,
   history,
@@ -61,9 +62,9 @@ function ReaderTranslatePanel({
   canAsk,
   onDisplay,
 }: {
-  open: boolean;
-  /** × ：关掉浮窗（上层顺带作废在途翻译） */
-  onClose: () => void;
+  /** open 开着 / min 收成小标记 / closed 关掉 */
+  mode: "open" | "min" | "closed";
+  onMode: (mode: "open" | "min" | "closed") => void;
   /** 最新历史条目（无历史且在途翻译时为 null） */
   latest: TlHistoryEntry | null;
   pending: TlPending | null;
@@ -107,7 +108,8 @@ function ReaderTranslatePanel({
   cardSizeRef.current = cardSize;
 
   const current = viewingAt ? (history.find((e) => e.at === viewingAt) ?? latest) : latest;
-  const visible = open && (current !== null || pending !== null) && bounds !== undefined;
+  const hasContent = current !== null || pending !== null;
+  const visible = mode === "open" && hasContent && bounds !== undefined;
 
   // 新翻译进来（在途开始 / 新条目落地）回到最新条
   const latestAt = latest?.at ?? null;
@@ -284,6 +286,64 @@ function ReaderTranslatePanel({
     };
   }, [displayedAt, showOriginal, pending, visible]);
 
+  /** 小标记：拖着换位（窗再展开就在这儿），没拖动算点击 = 原处展开 */
+  function startMarker(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0 || !bounds || !posRef.current) return;
+    e.preventDefault();
+    const host = hostSize();
+    if (!host) return;
+    const start = posRef.current;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const L = bounds.left + 8;
+    const R = host.width - bounds.right - 8;
+    const T = (bounds.top ?? 0) + 8;
+    const B = host.height - (bounds.bottom ?? 0) - 8;
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      if (!moved && dx * dx + dy * dy < 16) return;
+      moved = true;
+      setPos({ x: Math.max(L, Math.min(start.x + dx, R - 96)), y: Math.max(T, Math.min(start.y + dy, B - 28)) });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (!moved) onMode("open");
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  if (mode === "min" && hasContent && bounds && pos) {
+    const p = (pending ?? current)?.page;
+    return (
+      <div
+        // 同用 rootRef：拖标记要按覆盖层根（offsetParent）算范围，收着时窗不在
+        ref={rootRef}
+        role="button"
+        tabIndex={0}
+        aria-label="展开译文"
+        data-reader-translate-marker
+        title="点一下展开译文；拖着换位置"
+        onPointerDown={startMarker}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onMode("open");
+          }
+        }}
+        style={{ left: pos.x, top: pos.y }}
+        className="ccode-float-surface pointer-events-auto absolute z-30 flex h-7 cursor-grab touch-none select-none items-center gap-1 rounded-full border border-field px-2.5 text-micro text-l2 shadow-md hover:text-l1 active:cursor-grabbing"
+      >
+        {pending?.phase === "loading" ? <span className="inline-block animate-spin">◌</span> : <span className="font-medium">译</span>}
+        {p != null && <span className="text-l4">第 {p} 页</span>}
+      </div>
+    );
+  }
   if (!visible || !bounds) return null;
 
   const bB = bounds.bottom ?? 0;
@@ -414,13 +474,26 @@ function ReaderTranslatePanel({
           </div>
           <button
             type="button"
+            aria-label="收起译文"
+            title="收起成小标记（点它在原处展开）"
+            onClick={() => {
+              setDrawerOpen(false);
+              setMoreOpen(false);
+              onMode("min");
+            }}
+            className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+          >
+            —
+          </button>
+          <button
+            type="button"
             aria-label="关掉译文"
             title="关掉（PDF 顶栏「译文」可再打开）"
             onClick={() => {
               onCancelPending();
               setDrawerOpen(false);
               setMoreOpen(false);
-              onClose();
+              onMode("closed");
             }}
             className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
           >
