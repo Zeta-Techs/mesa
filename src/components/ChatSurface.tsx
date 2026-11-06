@@ -60,7 +60,7 @@ import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { decisionOptionLabels, decisionShowsNumbers, type ChatDecision } from "./ChatDecisionCard";
 import type { MismatchFrom } from "../chat-mismatch";
 import { useCliNewer } from "../cli-verified";
-import { connIssueDecision, grokLoginDecision } from "../chat-decision";
+import { connIssueDecision, grokLoginDecision, replyEndsWithQuestion } from "../chat-decision";
 import { cwdChipLabel } from "../terminal-welcome";
 import { escInterruptSafe } from "../agent-caps";
 import { midTurnSpec, queueSendHint, queuedNote, runningPlaceholder, stopTitle } from "../mid-turn-send";
@@ -940,6 +940,8 @@ export default function ChatSurface({
     ? Object.entries(helpPending).find(([root]) => pathWithin(cwd, root, IS_WINDOWS))
     : undefined;
   const billingNotice = classifierBillingNotice(tuiNotice);
+  // 「等你确认」只因为回复以问句收尾（没有菜单、旁路审批、hooks 说明）：在输入框里回话就行，不出批准卡
+  const onlyAsked = !channelApproval && !confirmDetail && replyEndsWithQuestion(messages);
   const decision: ChatDecision | null =
     failureDecision
       ? failureDecision
@@ -972,12 +974,12 @@ export default function ChatSurface({
           preview,
           options: [],
         }
-      : attention === "confirm" && !menuPrompt && !trustPrompt && waitScreen
+      : attention === "confirm" && !menuPrompt && !trustPrompt && !onlyAsked && waitScreen
       ? // 宽限里先不出卡（菜单多半马上认出来），过了还认不出才出通用卡
         confirmAged
         ? waitDecision(waitScreen, confirmDetail ?? channelApproval?.detail ?? null)
         : null
-      : attention === "confirm" && !menuPrompt && !trustPrompt
+      : attention === "confirm" && !menuPrompt && !trustPrompt && !onlyAsked
       ? {
           key: `approval:${confirmDetail ?? ""}`,
           title: channelApproval ? approvalTitle(channelApproval, agentLabel(agentId)) : `${agentLabel(agentId)} 在等你确认`,

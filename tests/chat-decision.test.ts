@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { connIssueDecision, grokLoginDecision } from "../src/chat-decision.ts";
+import { connIssueDecision, grokLoginDecision, replyEndsWithQuestion } from "../src/chat-decision.ts";
 import type { ConnIssueState } from "../src/pages/TerminalPage.tsx";
 
 function issue(over: Partial<ConnIssueState> = {}): ConnIssueState {
@@ -102,4 +102,18 @@ test("网络不通（官方账号）：先给「去设置出网代理」，同�
   // 没有别的连接时不再出「去添加连接」（换连接帮不上网络问题）
   const bare = connIssueDecision(issue({ kind: "network" }), "Cursor", { onSwitch: () => {}, onDismiss: () => {}, onOpenProfiles: () => {}, onOpenNetwork: () => {} });
   assert.deepEqual(bare.options.map((o) => o.label), ["去设置出网代理", "先不换"]);
+});
+
+test("replyEndsWithQuestion：回复以问句收尾才算，只是问你一句；之后你回过话、末尾有工具调用都不算（2026-11-06 精读对话误出批准卡）", () => {
+  const msg = (role: string, ...blocks: Array<[string, string]>) => ({
+    role, timestamp: null, usage: null,
+    blocks: blocks.map(([kind, text]) => ({ kind, text, toolName: kind === "tool_use" ? "Read" : null })),
+  }) as never;
+  const ask = msg("assistant", ["thinking", "…"], ["text", "都读完了。\n\n你读到哪里了，或者想先聊哪部分？"]);
+  assert.equal(replyEndsWithQuestion([msg("user", ["text", "开始"]), ask]), true);
+  assert.equal(replyEndsWithQuestion([ask, msg("user", ["tool_result", "ok"])]), true, "只有工具回执的 user 行不算你回话");
+  assert.equal(replyEndsWithQuestion([ask, msg("user", ["text", "第二页"])]), false);
+  assert.equal(replyEndsWithQuestion([msg("assistant", ["text", "要删吗?"], ["tool_use", "{}"])]), false);
+  assert.equal(replyEndsWithQuestion([msg("assistant", ["text", "已经写好了。"])]), false);
+  assert.equal(replyEndsWithQuestion([]), false);
 });

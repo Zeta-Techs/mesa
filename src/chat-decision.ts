@@ -3,6 +3,7 @@
  */
 import type { ChatDecision } from "./components/ChatDecisionCard";
 import type { ConnIssueState } from "./pages/TerminalPage";
+import type { ChatMessageDto } from "./types";
 
 /** 没有可换的连接时，按错误种类给的另一条路 */
 const NO_ALT_TAIL: Record<ConnIssueState["kind"], string> = {
@@ -86,4 +87,27 @@ export function connIssueDecision(
       { label: "先不换", title: "这条错误记作看过，同一个错误不再提示", onClick: actions.onDismiss },
     ],
   };
+}
+
+/**
+ * 这一轮只是 AI 在正文末尾问了你一句（会话尾部以问句收尾，sessions.rs ends_with_question），不是终端里有待批准的操作。
+ * 会话尾部的「等你确认」对问句也成立（标签黄点、通知照常提醒你回话），但聊天层不能为它出「批准 / 拒绝」卡——
+ * 那两个键会打进 Claude 的输入框（2026-11-06 用户：精读对话一进去就是「Claude Code 在等你确认」，终端里其实停在输入框）。
+ * 口径同后端：从末尾找最近一条有正文或工具调用的助手消息，它之后没有你发的话、没有工具调用，最后一段正文以 ? / ？ 收尾
+ */
+export function replyEndsWithQuestion(messages: readonly ChatMessageDto[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "user") {
+      if (m.blocks.some((b) => b.kind === "text" || b.kind === "command")) return false;
+      continue;
+    }
+    if (m.role !== "assistant") continue;
+    if (m.blocks.some((b) => b.kind === "tool_use")) return false;
+    const text = [...m.blocks].reverse().find((b) => b.kind === "text")?.text;
+    if (text == null) continue;
+    const t = text.trimEnd();
+    return t.endsWith("?") || t.endsWith("？");
+  }
+  return false;
 }

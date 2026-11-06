@@ -280,6 +280,8 @@
   选择器开着（发了会开选择器的命令到屏上回到输入框，最多 30 秒），或 Agent 静止 4 秒且这家有画面布局表、屏上没有它的输入框；
   看得见输入框或认得出的屏不出摘录。等确认 / 静止时 TerminalView 也扫一次屏（停在菜单上不再出字，没有输出驱动扫屏）。
   Grok 不给 Esc（`escInterruptSafe`）。出卡记一次「聊天层转到终端」计数（原因不变：认不出的确认 / 卡住 / 选择器）。
+  **问句收尾不出批准卡（2026-11-06）**：会话尾部以问句收尾也判 confirm（标签黄点、通知照旧提醒回话），但只因问句（`chat-decision.ts replyEndsWithQuestion`，
+  且没有旁路审批、hooks 说明、认出的菜单）时聊天层不出「在等你确认」卡与通用卡——那几个键会打进输入框；回话走输入框。
   **认得出的通知（2026-11-06，§10 同日条）**：`parseTuiNotice` 认出的「要按回车才继续」通知算 attention=confirm（进收件箱 / 系统通知）。
   其中 Claude「auto mode 分类器计费」说明由 `cli-notices.ts classifierBillingNotice` 认（固定句子 + 取网关名），聊天层出中文卡「不用处理」，
   按钮「知道了，继续」/「以后自动略过」；勾了自动略过（localStorage `ccode.autoSkipClassifierNotice`，设置「AI 与 Agent」可关）后 TerminalView 扫屏认出即替人按回车（3 秒一次），
