@@ -771,7 +771,7 @@ terminal-font.ts           # 终端字体族单一出处（设置页下拉与 xt
                              # 没选过 / "auto" = 跟随主题（themeDefaultPalette：深色 One Dark、暮紫 Catppuccin、浅色 Light+）
                              # （新增调色板须同步 settings.rs KNOWN_PALETTES，否则被静默丢弃，tests/terminal-palettes.test.ts）
   upstream-note.ts           # brew 最新但上游 npm 更高版本的提示
-update-routing.ts          # CLI 自更新路由 interactiveUpdatePrefill（ProfilesPage 消费）：interactiveTui 家（kimi upgrade 这类方向键选择界面）配置页行输入（updater_write 只应答 [y/n]）操作不了，命中时返回预填完整终端的自更新命令（与官方账号登录同款开终端机制）；未命中返回 null 走原 run_streaming_pty 实时终端，普通渠道行为不变（tests/update-routing.test.ts）
+update-routing.ts          # CLI 自更新路由 interactiveUpdatePrefill（ProfilesPage 消费）：interactiveTui 家（opencode upgrade、0.43.0 以前的 kimi upgrade 这类方向键选择界面；本机版本带免确认参数的由后端 unattended_self_update 改跑、不置 interactiveTui）配置页行输入（updater_write 只应答 [y/n]）操作不了，命中时返回预填完整终端的自更新命令（与官方账号登录同款开终端机制）；未命中返回 null 走原 run_streaming_pty 实时终端，普通渠道行为不变（tests/update-routing.test.ts）
   trust-prompt.ts            # 启动「是否信任这个目录」菜单识别（读 xterm 可视区文本；认 Claude / Kimi / CodeBuddy 方框 / Gemini 四种形态，信任只选范围最窄的那项）+ 代答按键序列（方向键挪到目标项再回车）；认不出返回 null，卡住时聊天层出「终端在等你」卡
   chat-style.ts              # 聊天层阅读体验：字号档 / 字体 / 行内代码强调色 / 滚动条四张表（与 settings.rs KNOWN_CHAT_* 逐表镜像）+ 壳上内联变量 chatStyleVars（标准/系统档不写变量）；
                              # 颜色与滚动条行为都在 App.css（data-chat-accent / data-chat-scrollbar / .ccode-chat-scroll / .ccode-chat-user，tests/chat-style.test.ts）

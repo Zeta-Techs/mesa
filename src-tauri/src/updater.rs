@@ -322,10 +322,11 @@ fn version_of(binary: &std::path::Path) -> Option<String> {
 
 /// 配置页「更新」是否应改路由到完整终端：实际将首先执行的更新命令是自更新渠道，
 /// 且规格标记其为方向键选择的交互式 TUI（kimi upgrade；配置页行输入无法应答）。
-/// 命中时返回预填进终端的自更新命令（裸名，由用户登录 shell 的 PATH 解析）
-fn interactive_self_update(agent_id: &str, method: &str, binary_path: &str) -> Option<String> {
+/// 命中时返回预填进终端的自更新命令（裸名，由用户登录 shell 的 PATH 解析）；
+/// 本机版本带免确认参数（kimi upgrade -y）时不改路由，配置页直接跑
+fn interactive_self_update(agent_id: &str, method: &str, binary_path: &str, installed: Option<&str>) -> Option<String> {
     let aspec = agent_spec(agent_id)?;
-    if !aspec.packaging.interactive_tui {
+    if !aspec.packaging.interactive_tui || unattended_self_update(agent_id, installed).is_some() {
         return None;
     }
     let cmds = update_commands(agent_id, method, binary_path);
@@ -339,6 +340,14 @@ fn interactive_self_update(agent_id: &str, method: &str, binary_path: &str) -> O
             .collect::<Vec<_>>()
             .join(" "),
     )
+}
+
+/// 交互式自更新的免确认子命令：本机版本认得出且不低于规格里的 since 才给；版本读不到按老版本处理（走终端）
+fn unattended_self_update(agent_id: &str, installed: Option<&str>) -> Option<&'static [&'static str]> {
+    let u = agent_spec(agent_id)?.packaging.self_update_unattended.as_ref()?;
+    let v = installed?;
+    semver_token(v)?;
+    (!semver_newer(u.since, v)).then_some(u.args)
 }
 
 /// stdout+stderr 合并取尾部 ~30 行
@@ -842,7 +851,12 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
     let resolved = path.canonicalize().unwrap_or_else(|_| path.clone());
     let method = detect_method(&resolved.to_string_lossy());
     let opencode_v2 = opencode_v2_install(agent_id, &resolved.to_string_lossy(), version_before.as_deref());
-    let cmds = update_commands_for(agent_id, method, &path.to_string_lossy(), opencode_v2);
+    let mut cmds = update_commands_for(agent_id, method, &path.to_string_lossy(), opencode_v2);
+    if let Some(args) = unattended_self_update(agent_id, version_before.as_deref()) {
+        for c in cmds.iter_mut().filter(|c| c.method == "self") {
+            c.args = args.iter().map(|a| a.to_string()).collect();
+        }
+    }
     if cmds.is_empty() {
         return Ok(UpdateResultDto {
             ok: false,
@@ -871,6 +885,17 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
     if ok {
         agents::invalidate_detect_cache();
         invalidate_check_cache();
+    }
+    // 自更新装不了时可能只打印手动命令、照样退出 0（kimi upgrade -y 碰上它不支持的装法）：版本没变不报成功
+    if ok && method_used == "self" {
+        if let (Some(before), Some(after)) = (&version_before, &version_after) {
+            if before == after {
+                ok = false;
+                output.push_str(&format!(
+                    "\n\n命令跑完了，版本仍是 {after}。上面要是写着已经是最新，就不用管；否则照上面的提示手动更新。"
+                ));
+            }
+        }
     }
     Ok(UpdateResultDto {
         ok,
@@ -1281,7 +1306,7 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
             let latest = latest_version(agent_id, method, opencode_v2);
             // 与 update_agent 同一套渠道判定：首条命令是交互式 TUI 自更新时给前端改路由
             interactive_update_command =
-                interactive_self_update(agent_id, method, &path.to_string_lossy());
+                interactive_self_update(agent_id, method, &path.to_string_lossy(), installed.as_deref());
             // brew 渠道常滞后于上游 npm（如 gemini-cli brew 0.46 vs npm 0.53）：
             // 已查到 brew 最新版时顺带比一次上游版本，提示复用同一次检查、不新增轮询；
             // npm view 失败 → None → 静默不带提示
@@ -1492,7 +1517,7 @@ mod tests {
         }
         // 非交互自更新不得路由到完整终端（interactive_tui=false）
         assert_eq!(
-            interactive_self_update("cursor", "self", "/Users/x/.local/bin/cursor-agent"),
+            interactive_self_update("cursor", "self", "/Users/x/.local/bin/cursor-agent", None),
             None
         );
     }
@@ -1542,7 +1567,7 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         assert_eq!(cmds[0].method, "npm");
         // 非交互自更新不得路由到完整终端（interactive_tui=false）
         assert_eq!(
-            interactive_self_update("grok", "self", "/Users/x/.grok/bin/grok"),
+            interactive_self_update("grok", "self", "/Users/x/.grok/bin/grok", None),
             None
         );
     }
@@ -1551,42 +1576,46 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
     fn interactive_self_update_routes_tui_self_update_only() {
         // kimi 自装（~/.kimi-code/bin）：唯一更新渠道是交互 TUI 自更新，给出终端预填命令
         assert_eq!(
-            interactive_self_update("kimi", "self", "/Users/x/.kimi-code/bin/kimi"),
+            interactive_self_update("kimi", "self", "/Users/x/.kimi-code/bin/kimi", None),
             Some("kimi upgrade".into())
         );
+        // 0.43.0 起有 upgrade -y：配置页直接跑，不再路由；更老的照旧开终端
+        assert_eq!(
+            interactive_self_update("kimi", "self", "/Users/x/.kimi-code/bin/kimi", Some("2.5.1")),
+            None
+        );
+        assert_eq!(
+            interactive_self_update("kimi", "self", "/Users/x/.kimi-code/bin/kimi", Some("0.42.0")),
+            Some("kimi upgrade".into())
+        );
+        assert_eq!(unattended_self_update("kimi", Some("0.43.0")), Some(&["upgrade", "-y"][..]));
+        assert_eq!(unattended_self_update("kimi", Some("unknown")), None);
+        assert_eq!(unattended_self_update("opencode", Some("9.9.9")), None);
         // kimi 旧版 uv 变体走 uv tool upgrade（非交互），不路由
         assert_eq!(
-            interactive_self_update(
-                "kimi",
-                "uv",
-                "/Users/x/.local/share/uv/tools/kimi-cli/bin/kimi"
-            ),
+            interactive_self_update("kimi", "uv", "/Users/x/.local/share/uv/tools/kimi-cli/bin/kimi", None),
             None
         );
         // opencode 仅「非 brew/npm 安装」命中交互 TUI；brew/npm 渠道行为不变
         assert_eq!(
-            interactive_self_update("opencode", "self", "/usr/local/bin/opencode"),
+            interactive_self_update("opencode", "self", "/usr/local/bin/opencode", None),
             Some("opencode upgrade".into())
         );
         assert_eq!(
-            interactive_self_update("opencode", "brew", "/opt/homebrew/bin/opencode"),
+            interactive_self_update("opencode", "brew", "/opt/homebrew/bin/opencode", None),
             None
         );
         assert_eq!(
-            interactive_self_update(
-                "opencode",
-                "npm",
-                "/Users/x/.local/lib/node_modules/opencode-ai/bin/opencode"
-            ),
+            interactive_self_update("opencode", "npm", "/Users/x/.local/lib/node_modules/opencode-ai/bin/opencode", None),
             None
         );
         // claude update 是普通非交互命令，未标 interactive_tui，不路由
         assert_eq!(
-            interactive_self_update("claude-code", "self", "/usr/local/bin/claude"),
+            interactive_self_update("claude-code", "self", "/usr/local/bin/claude", None),
             None
         );
         // 未知 agent → None
-        assert_eq!(interactive_self_update("nope", "self", "/x"), None);
+        assert_eq!(interactive_self_update("nope", "self", "/x", None), None);
     }
 
     #[test]

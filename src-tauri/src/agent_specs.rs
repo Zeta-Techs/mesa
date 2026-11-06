@@ -293,6 +293,14 @@ pub enum UpdateChannel {
     SelfUpdate,
 }
 
+/// 交互式自更新的免确认参数：本机版本不低于 since 时改跑 args，直接在配置页跑完，不必开终端
+pub struct UnattendedSelfUpdate {
+    /// 免确认的自更新子命令（不含二进制名）
+    pub args: &'static [&'static str],
+    /// 最早带这个参数的版本
+    pub since: &'static str,
+}
+
 /// 新旧双变体（kimi）：同一二进制两个产品，按数据目录探测，旧版走独立更新渠道
 pub struct LegacyVariantSpec {
     /// 新版数据目录（相对 home，存在即新版）
@@ -328,6 +336,8 @@ pub struct PackagingSpec {
     /// 配置页更新的行输入（updater_write，只能应答 [y/n]）无法操作；
     /// 前端据此把更新路由到完整终端执行，不走 run_streaming_pty
     pub interactive_tui: bool,
+    /// 交互式自更新的免确认版本（kimi upgrade -y）；None = 只能开终端
+    pub self_update_unattended: Option<UnattendedSelfUpdate>,
     /// 官方安装脚本（bash -c 内容）
     pub install_script: Option<&'static str>,
     /// Windows 上的官方安装脚本（powershell -Command 内容）；None = Windows 不走脚本渠道
@@ -352,6 +362,7 @@ const NO_PACKAGING: PackagingSpec = PackagingSpec {
     uv: None,
     self_update: None,
     interactive_tui: false,
+    self_update_unattended: None,
     install_script: None,
     install_script_win: None,
     script_latest: None,
@@ -713,6 +724,9 @@ static AGENT_SPECS: &[AgentSpec] = &[
             // kimi upgrade 是方向键选择的交互式 TUI，行输入无法应答（interactive_tui 的注释见 PackagingSpec）
             self_update: Some(&["upgrade"]),
             interactive_tui: true,
+            // 0.43.0 起有 `upgrade -y`（npm 各版本包实查，0.42.0 没有）：跳过选择直接装，配置页的小终端就能跑完；
+            // 装法它自动装不了时只打印手动命令、照样退出 0，由 updater 按版本有没有变判断
+            self_update_unattended: Some(UnattendedSelfUpdate { args: &["upgrade", "-y"], since: "0.43.0" }),
             install_script: Some("curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"),
             update_fallback: &[UpdateChannel::SelfUpdate],
             legacy_variant: Some(LegacyVariantSpec {
