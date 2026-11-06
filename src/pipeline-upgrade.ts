@@ -1,6 +1,7 @@
 import type { PipelineTemplateDef } from "./pipeline-presets";
 import type { ProjectStepDto } from "./types";
 import { canonicalStep } from "./pipeline-step-draft.ts";
+import { settingParts } from "./project-context.ts";
 
 /** 参与比较的字段（资源绑定是项目自己的，不比） */
 export const UPGRADE_FIELDS = ["brief", "expectedArtifacts", "inputs", "optionalInputs", "anyOfInputs", "acceptanceCriteria", "run", "skills", "requiredSkills", "humanTasks", "decisionMode", "decisions", "fanOut", "role"] as const;
@@ -201,4 +202,21 @@ export function describeUpgradeField(field: UpgradeField, current: ProjectStepDt
   const removed = before.filter((x) => !after.includes(x));
   // 只是换了顺序
   return { field, label, kind: "list", removed, added, changed: added.length || removed.length ? [] : ["顺序调整"] };
+}
+
+/** 模板后来新增的全局设定（2026-11-07 HER 实证：「文献数据抽取表」加进模板后，老项目的规则里永远没有这一问，
+ *  简报写「没有这一项就不建」，等于静默关掉）。按问题名比，项目规则里没有的列出来，原样带括号（选项由界面点选）；
+ *  只认像哪套内置模板（同 bestTemplateMatch），不自动写，人点了才进规则 */
+export function missingTemplateSettings(
+  current: ProjectStepDto[],
+  settings: readonly string[] | null | undefined,
+  templates: PipelineTemplateDef[],
+): { templateId: string; templateName: string; lines: { q: string; line: string }[] } | null {
+  const t = bestTemplateMatch(current, templates);
+  if (!t || !t.projectSettings?.length) return null;
+  const have = new Set((settings ?? []).map((line) => settingParts(line.trim()).q));
+  const lines = t.projectSettings
+    .map((line) => ({ q: settingParts(line.trim()).q, line: line.trim() }))
+    .filter((x) => x.q && x.q !== x.line && !have.has(x.q));
+  return lines.length ? { templateId: t.id, templateName: t.name, lines } : null;
 }

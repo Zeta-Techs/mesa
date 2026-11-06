@@ -49,7 +49,9 @@ import {
 import { useAppStore } from "../store";
 import { GitInstallOffer } from "../dep-install";
 import { PIPELINE_TEMPLATES, RESOURCE_TYPE_LABELS, settingsForTemplateApply } from "../pipeline-presets";
-import { templateUpdateNotice } from "../pipeline-upgrade";
+import { missingTemplateSettings, templateUpdateNotice } from "../pipeline-upgrade";
+import { settingParts } from "../project-context";
+import { SETTING_NOTES, parseSettingLine } from "../setting-choices";
 import { loopHint } from "../step-loop";
 import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
@@ -443,6 +445,22 @@ export default function ProjectGroup({
       setNoticeDismissed(null);
     }
   }, [noticeKey]);
+  // 模板后来新增的全局设定（2026-11-07）：老项目规则里没有这一问时点选写进规则；「不用了」按「模板:问题」记住
+  const settingsNotice = useMemo(
+    () => (cfg && cfg.steps.length > 0 ? missingTemplateSettings(cfg.steps, cfg.settings, PIPELINE_TEMPLATES) : null),
+    [cfg],
+  );
+  const settingsDismissKey = project ? `mesa.templateSettings.dismissed:${project.path}` : "";
+  const [dismissedSettings, setDismissedSettings] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const raw = settingsDismissKey ? localStorage.getItem(settingsDismissKey) : null;
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      setDismissedSettings(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : []);
+    } catch {
+      setDismissedSettings([]);
+    }
+  }, [settingsDismissKey]);
   // 新登记的是不是科研项目（决定进页引导里要不要出「初始化 git」）
   const freshResearch = (cfg?.workMode ?? project?.workMode) === "research";
   const depCheck = useAppStore((s) => s.depCheck);
@@ -534,6 +552,23 @@ export default function ProjectGroup({
     } catch (reason) {
       onError(String(reason));
       return false;
+    }
+  }
+
+  /** 把模板新增的一项全局设定写进规则：先读磁盘最新档案卡（规则面板可能刚改过），已有同名问题就不重复加 */
+  async function addTemplateSetting(line: string) {
+    if (!project) return;
+    try {
+      const latest = await invoke<ProjectConfigReadDto>("read_project_config", { path: project.path });
+      const q = settingParts(line).q;
+      const settings = latest.config.settings ?? [];
+      if (settings.some((l) => settingParts(l.trim()).q === q)) {
+        setCfg(latest.config);
+        return;
+      }
+      await saveConfig({ ...latest.config, settings: [...settings, line] });
+    } catch (reason) {
+      onError(String(reason));
     }
   }
 
@@ -1878,6 +1913,49 @@ export default function ProjectGroup({
           </button>
         </div>
       )}
+
+      {registered && settingsNotice &&
+        settingsNotice.lines
+          .filter((x) => !dismissedSettings.includes(`${settingsNotice.templateId}:${x.q}`))
+          .map((x) => {
+            const field = parseSettingLine(x.line);
+            const notes = SETTING_NOTES[x.q]?.options;
+            return (
+              <div key={x.q} className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-l3" role="note">
+                <span>
+                  内置模板「{settingsNotice.templateName}」新增了一项全局设定「{x.q}」，这个项目还没定。
+                  {field.options ? "点一个写进项目规则，以后可在项目设置的规则里改：" : "加上后，用到它的那一步开工时 AI 先问你："}
+                </span>
+                {(field.options ?? [null]).map((opt) => (
+                  <button
+                    key={opt ?? "ask"}
+                    type="button"
+                    className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    title={opt ? notes?.[opt] : undefined}
+                    onClick={() => void addTemplateSetting(opt ? `${x.q}：${opt}` : x.line)}
+                  >
+                    {opt ?? "加上"}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="text-l4 hover:text-l2"
+                  title="这一项不加，以后不再提示；要加可在项目设置的规则里手写"
+                  onClick={() => {
+                    const next = [...dismissedSettings, `${settingsNotice.templateId}:${x.q}`];
+                    try {
+                      localStorage.setItem(settingsDismissKey, JSON.stringify(next));
+                    } catch {
+                      /* 存不下就只在这次隐藏 */
+                    }
+                    setDismissedSettings(next);
+                  }}
+                >
+                  不用了
+                </button>
+              </div>
+            );
+          })}
 
       {/* 研究流程 strip（大圆步进器，v3.46）：状态从绑定工作区派生；
           大圆 = 状态色 + 主推进点击；编辑步骤/产物核验收进步骤 ⋯ 菜单（原圆前/圆后小方块

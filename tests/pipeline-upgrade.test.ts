@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestTemplateMatch, describeUpgradeField, normalizedTemplate, pipelineUpgradeCandidates, templateUpdateNotice, UPGRADE_FIELD_LABELS } from "../src/pipeline-upgrade.ts";
+import { bestTemplateMatch, describeUpgradeField, missingTemplateSettings, normalizedTemplate, pipelineUpgradeCandidates, templateUpdateNotice, UPGRADE_FIELD_LABELS } from "../src/pipeline-upgrade.ts";
 import { canonicalStep } from "../src/pipeline-step-draft.ts";
 import type { PipelineTemplateDef } from "../src/pipeline-presets.ts";
 import type { ProjectStepDto } from "../src/types.ts";
@@ -96,4 +96,23 @@ test("describeUpgradeField：清单列去掉 / 新增，简报只列改了的行
     ["gap:", "same:三", "del:四", "add:四改", "same:五", "gap:"],
   );
   assert.equal(UPGRADE_FIELD_LABELS.acceptanceCriteria, "验收条件");
+});
+
+test("missingTemplateSettings：模板后来新增、项目规则里没有的全局设定按问题名列出", () => {
+  const review = {
+    ...tpl("review", [step("检索", "s"), step("精读", "n")]),
+    projectSettings: ["去向：（投期刊 / 毕业论文一章）", "文献数据抽取表：（让 AI 提议列 / 不需要）", "没有冒号的一行"],
+  } as unknown as PipelineTemplateDef;
+  const cur = [step("检索", "s"), step("精读", "n")];
+  // 已答的（带追问括注的答案也算）不报；没有冒号的行不是设定
+  const got = missingTemplateSettings(cur, ["引用要可追溯。", "去向：投期刊（目标期刊：ACS Catalysis）"], [review]);
+  assert.deepEqual(got, {
+    templateId: "review",
+    templateName: "review",
+    lines: [{ q: "文献数据抽取表", line: "文献数据抽取表：（让 AI 提议列 / 不需要）" }],
+  });
+  // 还带括号没填的也算已有这一问
+  assert.equal(missingTemplateSettings(cur, ["去向：投期刊", "文献数据抽取表：（让 AI 提议列 / 不需要）"], [review]), null);
+  // 认不出模板不提示
+  assert.equal(missingTemplateSettings([step("别的", "z")], [], [review]), null);
 });
