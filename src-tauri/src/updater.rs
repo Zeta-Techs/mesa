@@ -497,7 +497,10 @@ pub(crate) fn strip_ansi_keep_cr(input: &str) -> String {
 /// 改写 ghcr 域名（HOMEBREW_ARTIFACT_DOMAIN）：bottle 实测 6.7MB/s vs ghcr 直连
 /// 73KB/s；非 ghcr URL（tap/cask 的 GitHub Release 等）代理 404 后 brew 自动
 /// 交错回落原地址，无回归。抽成纯函数便于测试镜像开关。
-pub(crate) fn brew_env_pairs(program: &str, mirror: bool) -> Vec<(String, String)> {
+/// 有代理时 bottle 不走南大（proxy=true）：南大没缓存过的新包要现回源，直连只有 ~210KB/s，
+/// 继承来的代理又会把它绕进代理里卡死（2026-11-06 qwen-code 0.26.7 77MB：南大 400 秒没下完，
+/// 经代理直连 ghcr 6.5MB/s、整套 fetch 7.5 秒）；CLI 发版勤，碰上的几乎都是新包
+pub(crate) fn brew_env_pairs(program: &str, mirror: bool, proxy: bool) -> Vec<(String, String)> {
     // Homebrew 7 起 install 默认询问 [y/n]。诊断页和更新没有输入框，
     // 不设 HOMEBREW_NO_ASK 会停在「安装中」直到闲置超时。
     let mut env = vec![
@@ -512,7 +515,7 @@ pub(crate) fn brew_env_pairs(program: &str, mirror: bool) -> Vec<(String, String
                 "https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api".to_string(),
             ));
         }
-        if std::env::var_os("HOMEBREW_ARTIFACT_DOMAIN").is_none() {
+        if !proxy && std::env::var_os("HOMEBREW_ARTIFACT_DOMAIN").is_none() {
             env.push((
                 "HOMEBREW_ARTIFACT_DOMAIN".to_string(),
                 "https://ghcr.nju.edu.cn".to_string(),
@@ -597,7 +600,7 @@ pub(crate) fn run_streaming_pty<F: Fn(&str) + Send + Sync + 'static>(
     }
     let mirror = crate::settings::brew_mirror_enabled();
     let mut extra_no_proxy: Vec<&str> = Vec::new();
-    for (k, v) in brew_env_pairs(program, mirror) {
+    for (k, v) in brew_env_pairs(program, mirror, crate::settings::download_proxy_active()) {
         cmd.env(&k, &v);
     }
     // 出网代理（设置页「网络」）：下载优先走代理；镜像主机直连（见 download_proxy_env）
@@ -1201,7 +1204,11 @@ fn brew_latest(pkg: &str, cask: bool) -> Option<String> {
         c.arg("--cask");
     }
     c.arg(pkg);
-    for (k, v) in brew_env_pairs("brew", crate::settings::brew_mirror_enabled()) {
+    for (k, v) in brew_env_pairs(
+        "brew",
+        crate::settings::brew_mirror_enabled(),
+        crate::settings::download_proxy_active(),
+    ) {
         c.env(k, v);
     }
     for (k, v) in
@@ -1620,12 +1627,16 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
 
     #[test]
     fn brew_mirror_toggle_controls_mirror_domains() {
-        let on = brew_env_pairs("brew", true);
+        let on = brew_env_pairs("brew", true, false);
         assert!(on.iter().any(|(k, _)| k == "HOMEBREW_API_DOMAIN"));
         // bottle 走 ghcr 代理（HOMEBREW_ARTIFACT_DOMAIN），不再注入已停供的平铺镜像
         assert!(on.iter().any(|(k, _)| k == "HOMEBREW_ARTIFACT_DOMAIN"));
         assert!(!on.iter().any(|(k, _)| k == "HOMEBREW_BOTTLE_DOMAIN"));
-        let off = brew_env_pairs("brew", false);
+        // 有代理时 bottle 经代理直连 ghcr，不走南大；元数据照旧走 TUNA
+        let proxied = brew_env_pairs("brew", true, true);
+        assert!(proxied.iter().any(|(k, _)| k == "HOMEBREW_API_DOMAIN"));
+        assert!(!proxied.iter().any(|(k, _)| k == "HOMEBREW_ARTIFACT_DOMAIN"));
+        let off = brew_env_pairs("brew", false, false);
         assert!(
             !off.iter().any(|(k, _)| k == "HOMEBREW_API_DOMAIN"),
             "镜像关闭时不注入镜像域名"
@@ -1644,7 +1655,7 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         assert!(auto_confirm_prompt("Proceed (Y/n)?"));
         assert!(!auto_confirm_prompt("Downloaded bottle manifests"));
         assert!(!auto_confirm_prompt("synonym"));
-        assert!(!brew_env_pairs("npm", true)
+        assert!(!brew_env_pairs("npm", true, false)
             .iter()
             .any(|(k, _)| k == "HOMEBREW_API_DOMAIN"));
     }

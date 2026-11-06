@@ -555,22 +555,32 @@ pub fn download_proxy_env_from(
 /// 生产路径：用户环境已自带任一代理变量（终端手 export 后拉起 Mesa 的场景）时不覆盖；
 /// 单测返回空（避免本机代理污染 PTY/子进程断言）。
 pub fn download_proxy_env(extra_no_proxy: &[&str]) -> Vec<(String, String)> {
-    if cfg!(test) {
+    if cfg!(test) || inherited_proxy() {
         return Vec::new();
     }
-    for key in [
+    download_proxy_env_from(&read_current(), extra_no_proxy)
+}
+
+/// 子进程已从登录 shell 继承了代理变量（这时 download_proxy_env 不再注入）
+fn inherited_proxy() -> bool {
+    [
         "http_proxy",
         "HTTP_PROXY",
         "https_proxy",
         "HTTPS_PROXY",
         "all_proxy",
         "ALL_PROXY",
-    ] {
-        if std::env::var_os(key).is_some_and(|v| !v.to_string_lossy().trim().is_empty()) {
-            return Vec::new();
-        }
+    ]
+    .iter()
+    .any(|key| std::env::var_os(key).is_some_and(|v| !v.to_string_lossy().trim().is_empty()))
+}
+
+/// 下载会不会走代理：继承来的代理变量，或设置页「出网代理」填了有效值
+pub(crate) fn download_proxy_active() -> bool {
+    if cfg!(test) {
+        return false;
     }
-    download_proxy_env_from(&read_current(), extra_no_proxy)
+    inherited_proxy() || !download_proxy_env_from(&read_current(), &[]).is_empty()
 }
 
 // ===== 出网代理自动检测（2026-09-16）=====

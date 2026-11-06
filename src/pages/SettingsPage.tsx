@@ -4002,7 +4002,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           <Row
             label="brew 镜像"
             hint="用 Homebrew 安装/更新时走国内镜像"
-            labelTitle="元数据走 TUNA，包体走南大 ghcr 代理"
+            labelTitle="元数据走 TUNA；包体没配代理时走南大 ghcr 代理，配了代理（这里的出网代理或终端里的代理变量）就经代理直接下"
           >
             <Toggle
               label="brew 镜像"
