@@ -129,6 +129,7 @@ export default function ReaderOverlay({
   notePath: notePathProp,
   hasAgentTab,
   agentTabId,
+  agentResumed = false,
   agentStatus,
   agentSession,
   needsProfile,
@@ -153,6 +154,8 @@ export default function ReaderOverlay({
   hasAgentTab: boolean;
   /** 阅读会话标签 id（遮面重启触发器：每次新派必变，关掉重进/重新启动都重新挂遮面） */
   agentTabId: string | null;
+  /** 右栏接回的是这篇以前那段对话（按篇复用，2026-11-06）：它已有上下文，不再发开场简报 */
+  agentResumed?: boolean;
   /** 阅读会话标签状态（还没建起/未上报为 null） */
   agentStatus: TabStatus | null;
   /** 会话联动数据（状态行的关联状态点用；与终端页右栏同一来源） */
@@ -790,6 +793,11 @@ export default function ReaderOverlay({
   useEffect(() => {
     if (!note || !agentStatus?.running || sessionVeil) return;
     if (briefedRef.current === note.path) return;
+    // 接回的旧会话第一次就带过简报，同一篇、同一份笔记再进来不重发（2026-11-06 用户：有会话记忆了）
+    if (agentResumed) {
+      briefedRef.current = note.path;
+      return;
+    }
     const target = note.path;
     briefedRef.current = target;
     void Promise.resolve(
@@ -800,7 +808,7 @@ export default function ReaderOverlay({
     ).then((err) => {
       if (err && briefedRef.current === target) briefedRef.current = null;
     });
-  }, [note, agentStatus?.running, sessionVeil, pdfPath, onInject]);
+  }, [note, agentStatus?.running, sessionVeil, pdfPath, onInject, agentResumed]);
 
   // ===== 圈选截图去向（批次 B2）：裁好的 PNG 由 PdfContinuousView 交来 =====
 

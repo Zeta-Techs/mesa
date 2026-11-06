@@ -1109,6 +1109,7 @@
   复用键 `reader:<项目根>\n<PDF 路径>`（`reader.ts readerReuseKey` ↔ `runs.rs reader_pdf_of_key` 双端镜像），进阅读区时
   `readerSessionFor` 找这篇最近那段（同项目同篇、源文件在、没归档）就 resume 它（带原 Run id、连接按 `resumeProfileChoice`：
   那段自己的优先，同家时精读槽位绑定作候补），找不到才新开；阅读区开着换篇时上一篇的标签照「退出即关」收掉。
+  接回时不发开场简报（`readerResumedKey` → ReaderOverlay `agentResumed`，用户：「有会话记忆了」）；只有新开的那段发。
   **认精读对话只认 Run 记录**（`apply_reader_runs`：task_kind=reader 且登记了会话 → 会话 DTO `reader` / `readerPdf`），
   不按标题——原先 `PROJECT_SESSION_EXCLUDE_HINTS` 的「【阅读上下文】」在自动起名后失效，精读对话漏进侧栏；
   `sessionExcludedFromProjectList` 因此把 `reader` 一并排除（侧栏、工作台、任务卡同口径）。侧栏只在项目菜单

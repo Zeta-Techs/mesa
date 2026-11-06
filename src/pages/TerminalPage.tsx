@@ -9704,6 +9704,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     ? (tabs.find((t) => t.reuseKey === readerKey)?.id ?? null)
     : null;
   const [readerNeedsProfile, setReaderNeedsProfile] = useState(false);
+  /** 接回的是这篇以前那段对话时记下它的复用键：那段对话本来就知道读的哪篇、笔记在哪，阅读区不再发开场简报 */
+  const [readerResumedKey, setReaderResumedKey] = useState<string | null>(null);
   /** 自动起会话的一次性标记：用户手动关掉阅读会话标签后不连环重建（栏内给「重新启动」入口） */
   const readerTriedRef = useRef<string | null>(null);
   const [readerAgentTick, setReaderAgentTick] = useState(0);
@@ -9819,6 +9821,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         hidden: st.settings?.hiddenProfiles,
       });
       if (choice.profileId || choice.autoLaunchProfileId) {
+        setReaderResumedKey(reuseKey);
         setPendingTerminal({
           cwd: prev.cwd ?? r.projectRoot,
           extraEnv: {},
@@ -9835,6 +9838,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       }
     }
     if (!launch.profileId) return false;
+    setReaderResumedKey(null);
     // 阅读会话按「请求批准」起（本机设成完全访问也收窄）：改笔记以外的文件先问；
     // Claude Code 另由 pty_spawn 预放行 notes/（reuseKey reader: 识别）。没有这一档的 CLI 按本机设置
     setPendingTerminal({
@@ -11914,6 +11918,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           notePath={reader.notePath ?? null}
           hasAgentTab={readerTabId !== null}
           agentTabId={readerTabId}
+          agentResumed={readerKey !== null && readerResumedKey === readerKey}
           agentStatus={readerTabId ? (statuses[readerTabId] ?? null) : null}
           agentSession={
             readerTabId ? (sessionByTab[readerTabId] ?? null) : null
