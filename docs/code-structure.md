@@ -198,6 +198,8 @@ rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N �
                              # shortWhen：列表统一的「什么时候」（7 天内相对、更早「9月10日」、跨年带年份；nowMs 显式传，工作台用）
   project-tree.ts            # 侧栏项目树置顶与组内顺序纯逻辑：togglePin / splitPinned（置顶段按先后、移出原分组）/ parsePins（坏数据当空表）/ applyOrder + reorderGroup（拖动排序，只比同组相对先后）；
                              #   localStorage ccode.projectTreePins；tests/project-tree.test.ts
+  pricing-rows.ts            # 设置页「自定义定价」表格 ↔ pricing.json：parsePricingFile / serializePricingRows（只有两价且美元的行写回老格式
+                             #   [输入, 输出]，填了缓存价或人民币写对象，与 pricing.rs parse_entry 同口径）、pricingRowProblem 行内校验；tests/pricing-rows.test.ts
   usage-dist.ts              # 用量页分布区纯逻辑：shareOf/barWidthPct/sharePctLabel、visibleDistRows（先露 10 行、≤12 行不折）、
                              #   toTsv（复制表格，格内换行/制表符压空格）；tests/usage-dist.test.ts。StatsPage 的 DistList 统一渲染六个页签
   phone-drop.ts              # 从手机添加纯逻辑（docs/design-phone-drop.md）：条目动作可用性（其他文件不放进项目）、放进哪个项目
@@ -1556,7 +1558,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   启动时不知 id 的 agent 由重建索引按 session_meta.profile_id 解析认证方式兜底；
                              #   旧项目级行只回填 created_at 之前已存在的会话，不粘住新会话）；
                              #   session_meta.internal（无头 AI/定时巡检按会话 id 登记）纳入用量索引；
-                             # 定价链 PriceChain 三层：用户 pricing.json > 公共能力库 cost > 内置表 BUILTIN_PRICING
+                             # 定价链 PriceChain 三层：用户 pricing.json > 公共能力库 cost > 内置表 BUILTIN_PRICING；
+                             #   每层存四价 Price（内置 / 公共库只有两价，缓存读 = 输入 1 折、缓存写 = 输入全价；人民币自定义价按汇率折美元），
+                             #   usage_pricing_preview 给设置页说「不填时按什么价 · 管到哪些模型」
                              #   （高层任意前缀命中即胜、同层最长前缀优先——用户写短前缀即覆盖低层细分代；
                              #   内置表口径 2026-08-31 各官方页，跨代改价给新代加更长前缀、旧价留给老会话归属）
   subscription_quota.rs      # 订阅余量查询（用量页「订阅余量」卡，多供应商一张卡可切换，2026-09-19）：
@@ -1614,7 +1618,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   「密钥额度」端点写尾斜杠 /api/usage/token/——不带斜杠该站 301，跟一跳白多一个 RTT；
                              #   改等待结构前先量单请求 TTFB（本机 status ≈1.0–1.5s / self ≈0.8s / token ≈0.7–2.0s），
                              #   慢的是串行 × 网关数，不是某一路慢
-  pricing.rs                 # pricing.json 读写与校验（定价链最高层，原子写）
+  pricing.rs                 # pricing.json 读写与校验（定价链最高层，原子写）；parse_entry / parse_entries 是条目唯一解析口径
+                             #   （老格式 [输入, 输出] 或 {input, output, cacheRead?, cacheWrite?, currency?}），写入校验与 usage.rs 算费共用
   cli_permission.rs          # 各家 CLI 本机默认权限的只读探查（cli_default_permission：Claude permissions.defaultMode、Codex approval_policy/sandbox_mode → 白话一句），返回 {tier, short, detail}（tier = 对应权限菜单哪一档；Codex 因 Mesa 强制 workspace-write 只看 approval_policy），聊天权限菜单标「本机设置」用；不改任何 CLI 设置
   app_icon.rs                # 设置 → 外观「应用图标」：跟随系统 / 深色 / 浅色，只换运行中的程序坞（NSApp）、主窗与托盘图标；图像由 scripts/gen-icons.mjs 生成在 icons/runtime/，打包图标不归这里管
   about.rs                   # 「关于」分区后端：read_third_party_notices（include_str! 嵌随包许可清单）+ build_info（平台/架构/渠道）；清单由 scripts/gen-third-party-notices.mjs 生成，改依赖后必须 npm run gen:notices 再提交

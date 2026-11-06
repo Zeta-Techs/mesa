@@ -93,7 +93,15 @@ import {
   monoFallbackStack,
   terminalFontStack,
 } from "../terminal-font";
-import type { CustomRuntimeDto, StorageEntryDto, UnpricedModelDto } from "../types";
+import type { CustomRuntimeDto, PricingPreviewDto, StorageEntryDto, UnpricedModelDto } from "../types";
+import {
+  emptyPricingRow,
+  parsePricingFile,
+  priceLabel,
+  pricingRowProblem,
+  serializePricingRows,
+  type PricingRow,
+} from "../pricing-rows";
 import { AGENTS } from "../types";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -375,6 +383,10 @@ const rowActionClass = paneOutlineButtonClass;
 const selectSm = `${fieldFixed} w-40 max-w-full`;
 const selectMd = `${fieldFixed} w-64 max-w-full`;
 const selectLg = `${fieldFixed} w-80 max-w-full`;
+
+/** 自定义定价表格的列：前缀 · 币种 · 输入 / 输出 / 缓存读 / 缓存写 · 删除（表头与每行共用） */
+const PRICING_GRID =
+  "grid grid-cols-[minmax(120px,1fr)_6.5rem_repeat(4,4.75rem)_28px] items-center gap-2";
 
 /** 「外部终端」下拉的选项按平台给（navigator.platform 在 WKWebView/Chromium 均可用） */
 const EXTERNAL_TERMINALS: { id: string; label: string }[] = (() => {
@@ -1732,10 +1744,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [proxyCandidates, setProxyCandidates] = useState<
     { url: string; source: string; alive: boolean }[] | null
   >(null);
-  // 自定义定价的表格草稿（保存时序列化为 pricing.json 的 {"前缀":[输入,输出]} 格式，后端校验不变）
-  const [pricingRows, setPricingRows] = useState<
-    { prefix: string; input: string; output: string }[]
-  >([]);
+  // 自定义定价的表格草稿（与 pricing.json 互转见 pricing-rows.ts，后端 pricing.rs 同口径校验）
+  const [pricingRows, setPricingRows] = useState<PricingRow[]>([]);
   // 文件里已有的 _rate 原样保留（汇率主入口是上方「汇率」设置项，这里只为了不丢数据）
   const [pricingRateExtra, setPricingRateExtra] = useState<number | null>(null);
   const [pricingDirty, setPricingDirty] = useState(false);
@@ -1747,6 +1757,18 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     setPricingDirty(d);
   }
   const [savingPricing, setSavingPricing] = useState(false);
+  // 每行「不填时按什么价 · 管到哪些模型」：前缀改了停 300ms 再问后端（同用量页的定价链口径）
+  const [pricingPreview, setPricingPreview] = useState<Record<string, PricingPreviewDto>>({});
+  const pricingPrefixKey = [...new Set(pricingRows.map((r) => r.prefix.trim()).filter(Boolean))].join("\n");
+  useEffect(() => {
+    if (!visible || activeSection !== "stats" || !pricingPrefixKey) return;
+    const timer = setTimeout(() => {
+      invoke<PricingPreviewDto[]>("usage_pricing_preview", { prefixes: pricingPrefixKey.split("\n") })
+        .then((list) => setPricingPreview(Object.fromEntries(list.map((d) => [d.prefix, d]))))
+        .catch(() => {}); // 只是辅助说明，读不到就不显示
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [visible, activeSection, pricingPrefixKey]);
   // 查不到价格的模型（用量页分区可见时拉一次，保存定价后重拉）
   const [unpriced, setUnpriced] = useState<UnpricedModelDto[] | null>(null);
   async function loadUnpriced() {
@@ -1932,29 +1954,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     if (pricingDirtyRef.current) return;
     invoke<string>("read_pricing_file")
       .then((t) => {
-        if (!t.trim()) {
+        try {
+          const { rows, rate } = parsePricingFile(t);
+          setPricingRows(rows);
+          setPricingRateExtra(rate);
+        } catch (e) {
           setPricingRows([]);
           setPricingRateExtra(null);
-        } else {
-          try {
-            const v = JSON.parse(t) as Record<string, unknown>;
-            setPricingRateExtra(
-              typeof v._rate === "number" ? v._rate : null,
-            );
-            setPricingRows(
-              Object.entries(v)
-                .filter(([k, val]) => k !== "_rate" && Array.isArray(val))
-                .map(([prefix, val]) => ({
-                  prefix,
-                  input: String((val as unknown[])[0] ?? ""),
-                  output: String((val as unknown[])[1] ?? ""),
-                })),
-            );
-          } catch (e) {
-            setPricingRows([]);
-            setPricingRateExtra(null);
-            setError(`pricing.json 解析失败（${e}），编辑后保存将覆盖原文件`);
-          }
+          setError(`pricing.json 解析失败（${e}），编辑后保存将覆盖原文件`);
         }
         markPricingDirty(false);
       })
@@ -2325,17 +2332,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     setSavingPricing(true);
     setError(null);
     try {
-      // 表格序列化回 pricing.json 既有格式：{"前缀": [输入价, 输出价]}；空前缀行丢弃
-      const obj: Record<string, unknown> = {};
-      if (pricingRateExtra != null) obj._rate = pricingRateExtra;
-      for (const row of pricingRows) {
-        const prefix = row.prefix.trim();
-        if (!prefix) continue;
-        obj[prefix] = [Number(row.input) || 0, Number(row.output) || 0];
-      }
-      const text = Object.keys(obj).length
-        ? JSON.stringify(obj, null, 2)
-        : "";
+      const problem = pricingRows.map(pricingRowProblem).find(Boolean);
+      if (problem) throw new Error(problem);
+      const text = serializePricingRows(pricingRows, pricingRateExtra);
       await invoke("write_pricing_file", { text });
       markPricingDirty(false);
       setNotice("已保存，用量页下次查询生效");
@@ -3521,10 +3520,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
 
-        {/* 自定义定价：表格编辑（每行 = 模型前缀 + 输入/输出价），保存时序列化为 pricing.json */}
+        {/* 自定义定价：表格编辑（每行 = 模型前缀 + 币种 + 输入 / 输出 / 缓存读 / 缓存写），保存时序列化为 pricing.json。
+            每行下面一句说清「不填时按什么价 · 管到用量里哪些模型」（2026-11-07 用户：原先只有前缀和两价，太简陋） */}
         <Card
           title="自定义定价"
-          hint="按模型名前缀匹配，覆盖内置价目；单位：美元 / 每百万 token"
+          hint="按模型名前缀匹配，盖过公共模型库和内置价目；单位：每百万 token"
           action={
             // 没改动时不放钮：一颗灰着的「已保存」看着像坏了（2026-10-17）
             (pricingDirty || savingPricing) && (
@@ -3541,80 +3541,145 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           {pricingRows.length === 0 && (
             // 空态说一句为什么是空的：内置价目已覆盖常见模型，这里只放例外
             <p className="px-1 py-1 text-xs text-l4">
-              还没有自定义价目。常见模型已有内置价，只有用量页算不出价或价格不对时才需要加
+              还没有自定义价目。常见模型已有内置价，只有用量页算不出价、价格不对（如中转加价、按人民币计费）时才需要加
             </p>
           )}
           {pricingRows.length > 0 && (
-            <div className="mb-1 grid grid-cols-[minmax(140px,1fr)_7rem_7rem_28px] items-center gap-2 px-1 text-xs text-l4">
+            <div className={`${PRICING_GRID} mb-1 px-1 text-xs text-l4`}>
               <span>模型前缀</span>
-              <span>输入价</span>
-              <span>输出价</span>
+              <span>币种</span>
+              <span>输入</span>
+              <span>输出</span>
+              <span title="命中缓存的输入；不填按输入价 1 折">缓存读</span>
+              <span title="写入缓存的输入；不填按输入价">缓存写</span>
               <span />
             </div>
           )}
-          <div className="space-y-1">
-            {pricingRows.map((row, i) => (
-              <div
-                key={i}
-                className="grid grid-cols-[minmax(140px,1fr)_7rem_7rem_28px] items-center gap-2"
-              >
-                <input
-                  className={fieldClass}
-                  placeholder="如 kimi-k3"
-                  value={row.prefix}
-                  onChange={(e) => {
-                    const next = [...pricingRows];
-                    next[i] = { ...row, prefix: e.target.value };
-                    setPricingRows(next);
-                    markPricingDirty(true);
-                  }}
-                />
-                <input
-                  className={fieldClass}
-                  placeholder="2.5"
-                  inputMode="decimal"
-                  value={row.input}
-                  onChange={(e) => {
-                    const next = [...pricingRows];
-                    next[i] = { ...row, input: e.target.value };
-                    setPricingRows(next);
-                    markPricingDirty(true);
-                  }}
-                />
-                <input
-                  className={fieldClass}
-                  placeholder="10"
-                  inputMode="decimal"
-                  value={row.output}
-                  onChange={(e) => {
-                    const next = [...pricingRows];
-                    next[i] = { ...row, output: e.target.value };
-                    setPricingRows(next);
-                    markPricingDirty(true);
-                  }}
-                />
-                <button
-                  type="button"
-                  aria-label={`删除 ${row.prefix || "该行"}`}
-                  className="flex h-7 w-7 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-err-text"
-                  onClick={() => {
-                    setPricingRows(pricingRows.filter((_, j) => j !== i));
-                    markPricingDirty(true);
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+          <div className="space-y-2">
+            {pricingRows.map((row, i) => {
+              const update = (change: Partial<PricingRow>) => {
+                const next = [...pricingRows];
+                next[i] = { ...row, ...change };
+                setPricingRows(next);
+                markPricingDirty(true);
+              };
+              const input = Number(row.input);
+              const hasInput = row.input.trim() !== "" && Number.isFinite(input);
+              const preview = pricingPreview[row.prefix.trim()];
+              const problem = pricingRowProblem(row);
+              return (
+                <div key={i}>
+                  <div className={PRICING_GRID}>
+                    <input
+                      className={fieldClass}
+                      placeholder="如 kimi-k3"
+                      value={row.prefix}
+                      onChange={(e) => update({ prefix: e.target.value })}
+                    />
+                    <select
+                      className={fieldClass}
+                      aria-label="币种"
+                      value={row.currency}
+                      onChange={(e) => update({ currency: e.target.value as PricingRow["currency"] })}
+                    >
+                      <option value="USD">美元 $</option>
+                      <option value="CNY">人民币 ¥</option>
+                    </select>
+                    <input
+                      className={fieldClass}
+                      aria-label="输入价"
+                      inputMode="decimal"
+                      value={row.input}
+                      onChange={(e) => update({ input: e.target.value })}
+                    />
+                    <input
+                      className={fieldClass}
+                      aria-label="输出价"
+                      inputMode="decimal"
+                      value={row.output}
+                      onChange={(e) => update({ output: e.target.value })}
+                    />
+                    <input
+                      className={fieldClass}
+                      aria-label="缓存读价"
+                      inputMode="decimal"
+                      placeholder={hasInput ? priceLabel(input * 0.1) : "输入 1 折"}
+                      value={row.cacheRead}
+                      onChange={(e) => update({ cacheRead: e.target.value })}
+                    />
+                    <input
+                      className={fieldClass}
+                      aria-label="缓存写价"
+                      inputMode="decimal"
+                      placeholder={hasInput ? priceLabel(input) : "同输入"}
+                      value={row.cacheWrite}
+                      onChange={(e) => update({ cacheWrite: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      aria-label={`删除 ${row.prefix || "该行"}`}
+                      className="flex h-7 w-7 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-err-text"
+                      onClick={() => {
+                        setPricingRows(pricingRows.filter((_, j) => j !== i));
+                        markPricingDirty(true);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {problem ? (
+                    <p className="mt-1 px-1 text-xs text-err-text">{problem}</p>
+                  ) : (
+                    preview && (
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 px-1 text-xs text-l4">
+                        <span>
+                          {preview.base
+                            ? `不填时按 $${priceLabel(preview.base.input)} / $${priceLabel(preview.base.output)}（${
+                                preview.base.source === "builtin" ? "内置价目" : "公共模型库"
+                              }）`
+                            : "内置价目和公共模型库里都查不到这个模型"}
+                        </span>
+                        {preview.base && !row.input.trim() && !row.output.trim() && row.currency === "USD" && (
+                          <button
+                            type="button"
+                            className="text-l3 underline-offset-2 hover:text-l1 hover:underline"
+                            onClick={() =>
+                              update({
+                                input: priceLabel(preview.base!.input),
+                                output: priceLabel(preview.base!.output),
+                              })
+                            }
+                          >
+                            照这个价改
+                          </button>
+                        )}
+                        <span>·</span>
+                        <span className="min-w-0 truncate" title={preview.matched.map((m) => m.model).join("、")}>
+                          {preview.matchedCount === 0
+                            ? "用量里还没有这个前缀的模型"
+                            : `管到用量里 ${preview.matched
+                                .slice(0, 3)
+                                .map((m) => m.model)
+                                .join("、")}${preview.matchedCount > 3 ? ` 等 ${preview.matchedCount} 个模型` : ""}`}
+                        </span>
+                        {row.currency === "CNY" && hasInput && (
+                          <>
+                            <span>·</span>
+                            <span>按汇率 {rate || "7.2"} 折成美元记账</span>
+                          </>
+                        )}
+                      </p>
+                    )
+                  )}
+                </div>
+              );
+            })}
           </div>
           <button
             type="button"
             className="mt-2 flex h-7 items-center rounded-sm px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
             onClick={() => {
-              setPricingRows([
-                ...pricingRows,
-                { prefix: "", input: "", output: "" },
-              ]);
+              setPricingRows([...pricingRows, emptyPricingRow()]);
               markPricingDirty(true);
             }}
           >
@@ -3647,10 +3712,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                         type="button"
                         className={`${ghostActionClass} shrink-0`}
                         onClick={() => {
-                          setPricingRows([
-                            ...pricingRows,
-                            { prefix: m.model, input: "", output: "" },
-                          ]);
+                          setPricingRows([...pricingRows, emptyPricingRow(m.model)]);
                           markPricingDirty(true);
                         }}
                       >

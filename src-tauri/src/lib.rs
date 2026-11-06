@@ -1064,6 +1064,7 @@ pub fn run() {
             usage::session_usage,
             usage::usage_by_gateway,
             usage::usage_unpriced_models,
+            usage::usage_pricing_preview,
             usage::model_input_prices,
             usage::usage_activity,
             usage::usage_day_detail,

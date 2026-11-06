@@ -1652,7 +1652,49 @@ fn load_rate(override_path: Option<&Path>) -> f64 {
 /// 查询时从高层往低层找，**高层任意前缀命中即胜**，同层内最长前缀优先——
 /// 与 model_registry 逐字段查询链同语义：用户写「claude-sonnet」就是覆盖全系
 /// sonnet，低层更长的代际前缀（claude-sonnet-4 旧代价）不挡路
-type PriceChain = [Vec<(String, (f64, f64))>; 3];
+type PriceChain = [Vec<(String, Price)>; 3];
+
+/// 一个模型的四种单价（美元 / 每百万 token）。内置价目与公共库只有输入 / 输出两价，
+/// 缓存按输入价折算（读 1 折、写全价，spec 未定义写价，取保守全价）；只有自定义价能单独写缓存价
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Price {
+    input: f64,
+    output: f64,
+    cache_read: f64,
+    cache_write: f64,
+}
+
+impl From<(f64, f64)> for Price {
+    fn from((input, output): (f64, f64)) -> Self {
+        Price { input, output, cache_read: input * 0.1, cache_write: input }
+    }
+}
+
+fn price_layer(table: Vec<(String, (f64, f64))>) -> Vec<(String, Price)> {
+    table.into_iter().map(|(k, v)| (k, v.into())).collect()
+}
+
+/// 用户 pricing.json 层：按人民币填的用汇率折成美元（只在真有人民币条目时才去读汇率）
+fn user_price_layer(override_path: Option<&Path>) -> Vec<(String, Price)> {
+    let entries = override_path
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|text| crate::pricing::parse_entries(&text))
+        .unwrap_or_default();
+    let rate = if entries.iter().any(|(_, p)| p.cny) { load_rate(override_path) } else { 1.0 };
+    entries
+        .into_iter()
+        .map(|(prefix, p)| {
+            let k = if p.cny { 1.0 / rate } else { 1.0 };
+            let price = Price {
+                input: p.input * k,
+                output: p.output * k,
+                cache_read: p.cache_read.unwrap_or(p.input * 0.1) * k,
+                cache_write: p.cache_write.unwrap_or(p.input) * k,
+            };
+            (prefix, price)
+        })
+        .collect()
+}
 
 fn load_pricing(override_path: Option<&Path>) -> PriceChain {
     let builtin: Vec<(String, (f64, f64))> = BUILTIN_PRICING
@@ -1661,48 +1703,36 @@ fn load_pricing(override_path: Option<&Path>) -> PriceChain {
         .collect();
     // 公共能力库层（models.dev/OpenRouter 下载快照，model-capabilities-db.json 的
     // cost 字段）：比内置表新、跟随数据源更新
-    let db = crate::model_registry::db_price_table();
-    let mut user: Vec<(String, (f64, f64))> = Vec::new();
-    if let Some(path) = override_path {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                if let Some(obj) = v.as_object() {
-                    for (prefix, price) in obj {
-                        // 空前缀会匹配一切模型名，视为配置错误直接忽略
-                        if prefix.trim().is_empty() {
-                            continue;
-                        }
-                        if let Some(pair) = price.as_array() {
-                            if pair.len() == 2 {
-                                if let (Some(i), Some(o)) = (pair[0].as_f64(), pair[1].as_f64()) {
-                                    user.push((prefix.to_lowercase(), (i, o)));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let db = price_layer(crate::model_registry::db_price_table());
     // 统一写法（点当横杠、去 :batch 变体）：claude-opus-5.5 与 claude-opus-5-5 才对得上（model_registry::model_key）
     [
-        crate::model_registry::keyed(builtin),
+        crate::model_registry::keyed(price_layer(builtin)),
         db,
-        crate::model_registry::keyed(user),
+        crate::model_registry::keyed(user_price_layer(override_path)),
     ]
 }
 
 
+/// 输入 / 输出两价（一键配置认轻量、待补清单、测试用）；算费走 [`full_price_of`]
 fn price_of(model: &str, chain: &PriceChain) -> Option<(f64, f64)> {
+    full_price_of(model, chain).map(|p| (p.input, p.output))
+}
+
+fn full_price_of(model: &str, chain: &PriceChain) -> Option<Price> {
+    price_with_layer(model, chain).map(|(p, _)| p)
+}
+
+/// 查价并说出是哪一层给的（0 内置、1 公共库、2 自定义），设置页「现在按什么价算」用
+fn price_with_layer(model: &str, chain: &PriceChain) -> Option<(Price, usize)> {
     use crate::model_registry::{match_in, model_key, KeyMatch};
     // 中转/聚合的 provider 前缀（accounts/fireworks/models/x、zetatechs/x）剥掉、统一写法，按末段模型名匹配
     let key = model_key(model);
     // 高层先问：用户覆盖 > 公共库 > 内置。公共库是逐个型号的完整名，只认同一型号——
     // 按前缀退到上一代会算错价（2026-10-28：Opus 5.5 被按 Opus 5 计）；用户覆盖与内置表是前缀
     let how = [KeyMatch::Prefix, KeyMatch::Exact, KeyMatch::Prefix];
-    for (layer, how) in chain.iter().zip(how).rev() {
+    for (i, (layer, how)) in chain.iter().zip(how).enumerate().rev() {
         if let Some(p) = match_in(layer, &key, how) {
-            return Some(*p);
+            return Some((*p, i));
         }
     }
     None
@@ -1716,13 +1746,11 @@ struct TokenAcc {
     cache_write: u64,
 }
 
-/// cache_read 按输入价 1 折算；cache_write 按输入全价（spec 未定义，取保守全价）
-fn cost_of(acc: &TokenAcc, price: (f64, f64)) -> f64 {
-    let (ir, or_) = price;
-    (acc.input as f64 * ir
-        + acc.output as f64 * or_
-        + acc.cache_read as f64 * ir * 0.1
-        + acc.cache_write as f64 * ir)
+fn cost_of(acc: &TokenAcc, price: Price) -> f64 {
+    (acc.input as f64 * price.input
+        + acc.output as f64 * price.output
+        + acc.cache_read as f64 * price.cache_read
+        + acc.cache_write as f64 * price.cache_write)
         / 1_000_000.0
 }
 
@@ -1750,7 +1778,7 @@ pub(crate) fn events_cost_usd(events: &[UsageEvent]) -> Option<f64> {
     let chain = load_pricing(pricing_path.as_deref());
     let mut total = 0.0;
     for e in events {
-        let price = price_of(&e.model, &chain)?;
+        let price = full_price_of(&e.model, &chain)?;
         total += cost_of(
             &TokenAcc { input: e.input, output: e.output, cache_read: e.cache_read, cache_write: e.cache_write },
             price,
@@ -1759,12 +1787,13 @@ pub(crate) fn events_cost_usd(events: &[UsageEvent]) -> Option<f64> {
     Some(total)
 }
 
-/// 缓存读相对「按输入全价」省下的钱：实际按 1 折计，省 9 折。无定价或 0 读则 None。
+/// 缓存读相对「按输入全价」省下的钱（默认缓存读 1 折，省 9 折；自定义了缓存读价按差价）。无定价或 0 读则 None。
 fn cache_savings_usd(model: &str, cache_read: u64, chain: &PriceChain) -> Option<f64> {
     if cache_read == 0 {
         return None;
     }
-    price_of(model, chain).map(|(ir, _)| cache_read as f64 * ir * 0.9 / 1_000_000.0)
+    full_price_of(model, chain)
+        .map(|p| cache_read as f64 * (p.input - p.cache_read).max(0.0) / 1_000_000.0)
 }
 
 fn parse_day(iso: &str) -> Option<NaiveDate> {
@@ -1833,7 +1862,7 @@ impl Bucket {
             if acc.input + acc.output + acc.cache_read + acc.cache_write == 0 {
                 continue;
             }
-            match price_of(model, table) {
+            match full_price_of(model, table) {
                 Some(price) => {
                     has_priced = true;
                     total += cost_of(acc, price);
@@ -2280,7 +2309,7 @@ fn session_usage_from(
         out.output += o as u64;
         out.cache_read += cr as u64;
         out.cache_write += cw as u64;
-        if let Some(price) = price_of(&model, &pricing) {
+        if let Some(price) = full_price_of(&model, &pricing) {
             out.priced = true;
             out.cost_usd += cost_of(
                 &TokenAcc {
@@ -2588,7 +2617,7 @@ fn top_sessions_from(
 
 /// 设置页「自定义定价」的待补清单：用量里出现过、但三层价目都查不到价的模型。
 /// 用户此前只能对着「≥ / ~」猜是哪个模型没价（2026-10-17）。订阅额度（official）不计费，不列
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UnpricedModelDto {
     pub model: String,
@@ -2633,6 +2662,89 @@ pub async fn usage_unpriced_models() -> Result<Vec<UnpricedModelDto>, String> {
         let conn = usage_db()?;
         let (chain, _) = pricing_table_and_rate();
         unpriced_models(&conn, &chain)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 设置页每行自定义价下面那句「不填时按什么价算 · 用量里命中哪些模型」（2026-11-07 用户：自定义定价太简陋，
+/// 填的时候看不到自己在盖掉什么、会管到哪些模型）
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PricingPreviewDto {
+    pub prefix: String,
+    /// 没有这一行时按什么价算（美元 / 每百万 token）；None = 内置与公共库都查不到
+    pub base: Option<PricingBaseDto>,
+    /// 用量里会被这个前缀管到的模型，按 token 多少排，最多 5 个
+    pub matched: Vec<UnpricedModelDto>,
+    pub matched_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PricingBaseDto {
+    pub input: f64,
+    pub output: f64,
+    /// builtin = 内置价目，db = 公共模型库
+    pub source: String,
+}
+
+fn pricing_preview_from(conn: &Connection, prefixes: &[String], chain: &PriceChain) -> Result<Vec<PricingPreviewDto>, String> {
+    use crate::model_registry::model_key;
+    let mut stmt = conn
+        .prepare(
+            "SELECT model, SUM(input + output + cache_read + cache_write), MAX(day)
+             FROM usage_daily WHERE official = 0 AND model <> '' GROUP BY model",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut used: Vec<UnpricedModelDto> = stmt
+        .query_map([], |row| {
+            Ok(UnpricedModelDto {
+                model: row.get(0)?,
+                tokens: row.get::<_, i64>(1)?.max(0) as u64,
+                last_day: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter(|m| m.tokens > 0)
+        .collect();
+    used.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.model.cmp(&b.model)));
+    // 不算用户层：要说的是「没有自定义时」的价
+    let base_chain: PriceChain = [chain[0].clone(), chain[1].clone(), Vec::new()];
+    Ok(prefixes
+        .iter()
+        .map(|prefix| {
+            let key = model_key(prefix);
+            let base = (!key.is_empty())
+                .then(|| price_with_layer(prefix, &base_chain))
+                .flatten()
+                .map(|(p, layer)| PricingBaseDto {
+                    input: p.input,
+                    output: p.output,
+                    source: if layer == 0 { "builtin" } else { "db" }.into(),
+                });
+            let hits: Vec<&UnpricedModelDto> = if key.is_empty() {
+                Vec::new()
+            } else {
+                used.iter().filter(|m| model_key(&m.model).starts_with(&key)).collect()
+            };
+            PricingPreviewDto {
+                prefix: prefix.clone(),
+                base,
+                matched_count: hits.len(),
+                matched: hits.into_iter().take(5).cloned().collect(),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn usage_pricing_preview(prefixes: Vec<String>) -> Result<Vec<PricingPreviewDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = usage_db()?;
+        let (chain, _) = pricing_table_and_rate();
+        pricing_preview_from(&conn, &prefixes, &chain)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -3278,7 +3390,7 @@ mod tests {
             ("gpt-6-luna".to_string(), (0.1, 0.5)),
             ("gpt-6-1-sol".to_string(), (2.0, 10.0)),
         ]);
-        let chain: PriceChain = [Vec::new(), db, Vec::new()];
+        let chain: PriceChain = [Vec::new(), price_layer(db), Vec::new()];
         let p = input_prices(
             &["gpt-6-luna".into(), "gpt-6.1-sol".into(), "zz-no-such-model".into()],
             &chain,
@@ -4492,9 +4604,9 @@ mod tests {
         // 层序契约：高层任意前缀命中即胜（用户写短前缀即覆盖低层长前缀旧价）；
         // 同层内最长前缀优先
         let chain: PriceChain = [
-            vec![("m-x".into(), (1.0, 1.0)), ("m-y-pro".into(), (1.0, 1.0))], // 内置
-            vec![("m-x".into(), (2.0, 2.0))],                                 // 公共能力库
-            vec![("m-x".into(), (3.0, 3.0)), ("m-y".into(), (9.0, 9.0))],     // 用户覆盖
+            price_layer(vec![("m-x".into(), (1.0, 1.0)), ("m-y-pro".into(), (1.0, 1.0))]), // 内置
+            price_layer(vec![("m-x".into(), (2.0, 2.0))]),                                 // 公共能力库
+            price_layer(vec![("m-x".into(), (3.0, 3.0)), ("m-y".into(), (9.0, 9.0))]),     // 用户覆盖
         ];
         assert_eq!(
             price_of("m-x-pro", &chain),
@@ -4507,7 +4619,7 @@ mod tests {
             "高层短前缀覆盖低层长前缀"
         );
         let chain2: PriceChain = [
-            vec![("m-z".into(), (1.0, 1.0)), ("m-z-pro".into(), (2.0, 2.0))],
+            price_layer(vec![("m-z".into(), (1.0, 1.0)), ("m-z-pro".into(), (2.0, 2.0))]),
             vec![],
             vec![],
         ];
@@ -4598,6 +4710,55 @@ mod tests {
     }
 
     #[test]
+    fn custom_price_cache_and_cny_columns() {
+        // 自定义价可单写缓存读 / 写价；按人民币填的按汇率（这里取文件里的 _rate）折成美元
+        let dir = std::env::temp_dir().join(format!("ccode-usage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("pricing.json");
+        std::fs::write(
+            &p,
+            r#"{"relay-a": {"input": 2, "output": 8, "cacheRead": 0.5, "cacheWrite": 2.5},
+                "relay-b": {"input": 8, "output": 32, "currency": "CNY"}}"#,
+        )
+        .unwrap();
+        let table = load_pricing(Some(&p));
+        let a = full_price_of("relay-a-1", &table).unwrap();
+        assert_eq!((a.cache_read, a.cache_write), (0.5, 2.5));
+        let acc = TokenAcc { input: 1_000_000, output: 0, cache_read: 1_000_000, cache_write: 1_000_000 };
+        assert!((cost_of(&acc, a) - 5.0).abs() < 1e-9, "2 + 0.5 + 2.5");
+        let b = full_price_of("relay-b", &table).unwrap();
+        let rate = load_rate(Some(&p));
+        assert!((b.input - 8.0 / rate).abs() < 1e-9 && (b.output - 32.0 / rate).abs() < 1e-9);
+        assert!((b.cache_read - 0.8 / rate).abs() < 1e-9, "缓存读不填按输入价 1 折");
+        assert!(
+            (cache_savings_usd("relay-a", 1_000_000, &table).unwrap() - 1.5).abs() < 1e-9,
+            "省下的是输入价与缓存读价之差"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pricing_preview_says_base_price_and_matched_models() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_usage_schema(&conn).unwrap();
+        insert_daily(&conn, "2026-10-01", "kimi", "kimi-k3", "/p", "s1", 500, 50, 0, false);
+        insert_daily(&conn, "2026-10-02", "kimi", "zetatechs/kimi-k3-turbo", "/p", "s2", 100, 0, 0, false);
+        insert_daily(&conn, "2026-10-02", "codex", "gpt-5", "/p", "s3", 100, 0, 0, false);
+        let chain: PriceChain = [
+            price_layer(vec![("kimi-k3".to_string(), (3.0, 15.0))]),
+            vec![],
+            price_layer(vec![("kimi-k3".to_string(), (1.0, 1.0))]),
+        ];
+        let got = pricing_preview_from(&conn, &["Kimi-K3".into(), "".into(), "nope".into()], &chain).unwrap();
+        let base = got[0].base.as_ref().unwrap();
+        assert_eq!((base.input, base.output, base.source.as_str()), (3.0, 15.0, "builtin"), "不算自定义层本身");
+        assert_eq!(got[0].matched_count, 2, "剥中转前缀后同样按前缀命中");
+        assert_eq!(got[0].matched[0].model, "kimi-k3");
+        assert!(got[1].base.is_none() && got[1].matched.is_empty(), "空前缀什么都不管");
+        assert!(got[2].base.is_none() && got[2].matched_count == 0);
+    }
+
+    #[test]
     fn range_cutoff_days() {
         let today = NaiveDate::from_ymd_opt(2026, 7, 30).unwrap();
         assert_eq!(
@@ -4619,7 +4780,7 @@ mod tests {
     fn unpriced_models_lists_billed_models_without_price() {
         let conn = Connection::open_in_memory().unwrap();
         ensure_usage_schema(&conn).unwrap();
-        let chain: PriceChain = [vec![("gpt-5".to_string(), (1.25, 10.0))], vec![], vec![]];
+        let chain: PriceChain = [price_layer(vec![("gpt-5".to_string(), (1.25, 10.0))]), vec![], vec![]];
         insert_daily(&conn, "2026-10-01", "codex", "gpt-5", "/p", "s1", 100, 10, 0, false);
         insert_daily(&conn, "2026-10-02", "kimi", "kimi-k3", "/p", "s2", 500, 50, 0, false);
         insert_daily(&conn, "2026-10-05", "kimi", "kimi-k3", "/p", "s3", 100, 0, 0, false);
