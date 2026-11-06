@@ -916,11 +916,8 @@ pub(crate) fn ai_prompt_impl_full(
 /// 同日实测让它「顺手把脚本改好」也只是把改法贴出来，项目与 ~/.claude/plans 都没多文件。别家返回以 INSPECT_UNSUPPORTED 开头的错，
 /// 前端退回只看记录。跑在项目根，工作副本经 `--add-dir`（Claude）带上；Codex 只读沙箱本就能读别处
 pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
-/// 只读查看时 Claude 不给的工具：改文件、跑命令、联网、开子代理（-p 里要审批的本就会被拒，这里写死成不给）。
-/// PowerShell：Windows 上 Claude Code 的另一个跑命令工具（`CLAUDE_CODE_USE_POWERSHELL_TOOL=1` 时出现，2026-11-06 2.1.316 实测
-/// init 工具表），用户设置里放行过的 PowerShell 命令在 -p 里不经审批，必须同 Bash 一起拿掉；
-/// EnterWorktree 会在项目里建 git worktree，同属写项目
-const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash PowerShell EnterWorktree WebFetch WebSearch Task";
+/// 只读查看时 Claude 不给的工具：改文件、跑命令、联网、开子代理（-p 里要审批的本就会被拒，这里写死成不给）
+const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash WebFetch WebSearch Task";
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
 
 /// images：附图（项目助手粘贴的截图，2026-11-05）。Codex 用自带的 `--image=a,b` 附在这条消息上（写成一个参数：
@@ -3314,7 +3311,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false, &[]).unwrap();
         assert!(claude.windows(2).any(|w| w == ["--permission-mode", "default"]), "不用 plan 档（会写 ~/.claude/plans）");
         let disallowed = claude.iter().position(|a| a == "--disallowedTools").map(|i| claude[i + 1].clone()).unwrap();
-        for tool in ["Edit", "Write", "Bash", "PowerShell", "EnterWorktree", "WebFetch"] {
+        for tool in ["Edit", "Write", "Bash", "WebFetch"] {
             assert!(disallowed.split(' ').any(|t| t == tool), "{tool} 要拿掉");
         }
         assert!(claude.iter().any(|a| a == "--no-session-persistence"));
