@@ -101,3 +101,12 @@ test("示意图接着改：figures/<图名>/<图名>.png 带上图纸与可编�
   // 图纸行不是图片行：发出去后不会被当成图抽走
   assert.deepEqual(splitImagePaths("改一下\n原图：/p/figures/rads/rads.png\n图纸：/p/figures/rads/figure.json").images, ["/p/figures/rads/rads.png"]);
 });
+
+test("文档路径在列表 / 引用里：剥掉列表符号再认（项目助手派活单里的依据材料，2026-11-06）", () => {
+  const { text, docs } = splitDocPaths(
+    "依据材料：\n- papers/watch-seen.md\n- papers/Rapid preparation of NiFe borides.pdf\n1. data/b.xlsx\n> notes/c.docx",
+  );
+  assert.deepEqual(docs, ["papers/Rapid preparation of NiFe borides.pdf", "data/b.xlsx", "notes/c.docx"]);
+  assert.equal(text, "依据材料：\n- papers/watch-seen.md");
+  assert.equal(docPathFromLine("> - a/b.pdf"), "a/b.pdf");
+});

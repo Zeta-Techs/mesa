@@ -35,7 +35,9 @@ export function splitDocPaths(text: string): { text: string; docs: string[] } {
 }
 
 function localPathFromLine(line: string, ext: RegExp): string | null {
-  const t = line.trim();
+  // 列表 / 引用里的一行（「- papers/x.pdf」「1. a.pdf」「> b.pdf」）：先剥掉列表符号，不然路径带着「- 」去找一个叫「- papers」的文件夹
+  //（2026-11-06 用户：项目助手派的活，对话里 PDF 点开「文件不存在或不可读」）
+  const t = line.trim().replace(/^(?:>\s*(?:(?:[-*+•]|\d{1,3}[.)])\s+)?|(?:[-*+•]|\d{1,3}[.)])\s+)/, "");
   if (!t || URL_SCHEME.test(t)) return null;
   // 剥 shell 引号包裹：单引号含 '\'' 回转，双引号含 "" 回转
   let unquoted = t;

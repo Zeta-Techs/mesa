@@ -8416,12 +8416,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }
 
   /** 进入专注内容（右栏拉到窗口宽的约六成）；已在里面就不动 */
-  function expandRight() {
+  function expandRight(ratio = 0.58) {
     if (rightExpanded) return;
-    normalRightWidthRef.current = rightWidth;
     const total = terminalRootRef.current?.clientWidth ?? window.innerWidth;
+    const target = clampRightWidth(Math.round(total * ratio));
+    // 已经比目标宽（人自己拖宽过）就不动，不把人调好的宽度缩回去
+    if (target <= rightWidth) return;
+    normalRightWidthRef.current = rightWidth;
     setRightExpanded(true);
-    setRightWidth(clampRightWidth(Math.round(total * 0.58)));
+    setRightWidth(target);
   }
 
   function closeRightPanel() {
@@ -9636,7 +9639,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setRightTab("preview");
     setFilesViewPref("preview");
     // PDF 是阅读动作：打开时自动把右栏拉宽（专注内容），用户可随时 ⇲/Esc 还原
-    if (previewReq.path.toLowerCase().endsWith(".pdf")) expandRight();
+    // PDF 是阅读动作，打开时右栏放宽一些——到窗口宽的四成半就够（2026-11-06 用户：原先拉到约六成太宽，对话挤没了）；
+    // 要更宽点「专注内容」（约六成）或自己拖
+    if (previewReq.path.toLowerCase().endsWith(".pdf")) expandRight(0.45);
     setPreview({
       path: previewReq.path,
       name: previewReq.name,
