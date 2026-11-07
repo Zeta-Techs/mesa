@@ -49,6 +49,7 @@
  "qwen": {
   "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",
   "hooks": "不接：已走 Dual Output，回合、审批、边写边显示都有",
+  "program-status": "不接：已走 Dual Output，回合、审批、边写边显示都有，比程序状态全（0.26.9 起探到 OSC 7501，2026-11-07 评估）",
   "server": "不接：qwen serve 是独立的本机 HTTP 守护进程（实验性），已走 Dual Output",
   "stream-json": "用上：Dual Output（--json-file 事件流 + --input-file 反向命令）"
  }
