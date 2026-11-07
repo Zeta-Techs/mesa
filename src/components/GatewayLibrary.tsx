@@ -1762,7 +1762,7 @@ export default function GatewayLibrary({
                   onClick={() => setShowBind((v) => !v)}
                 >
                   <FoldMark open={showBind} />
-                  <span className="flex-1">用这个网关的连接</span>
+                  <span className="flex-1 text-sm">用这个网关的连接</span>
                   <span className="min-w-0 truncate text-micro text-l3">
                     {boundAgents.length ? `${boundAgents.length} 条${showBind ? "" : ` · ${boundAgentSummary}`}` : "还没有"}
                   </span>
@@ -1788,25 +1788,25 @@ export default function GatewayLibrary({
                         )}
                       </button>
                     ))}
-                    {onAddConnection && (
-                      <button type="button" className={secondaryActionClass} onClick={() => void goAddConnection(editing.id)}>
-                        ＋ 为此网关添加连接
+                    {/* 两个建连接的入口并排放在连接区里（原先「一键配置」单独一行、带魔棒图标，和上面的折叠行长得不一样，2026-11-07） */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {onAddConnection && (
+                        <button type="button" className={secondaryActionClass} onClick={() => void goAddConnection(editing.id)}>
+                          ＋ 为此网关添加连接
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={secondaryActionClass}
+                        title="给每个装了的 CLI 各建一条连接"
+                        onClick={() => setAutoConfigFor(editing.id)}
+                      >
+                        一键配置各 CLI…
                       </button>
-                    )}
+                    </div>
                   </div>
                 )}
               </div>
-            )}
-            {editing !== "new" && (
-              <button
-                type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2 hover:text-l1"
-                onClick={() => setAutoConfigFor(editing.id)}
-              >
-                <Wand2 className="size-3.5 shrink-0 text-l3" aria-hidden="true" />
-                <span className="flex-1">一键配置各 CLI…</span>
-                <span className="text-micro text-l3">给每个装了的 CLI 各建一条连接</span>
-              </button>
             )}
             <GroupHeading>高级</GroupHeading>
             <div>
@@ -1816,7 +1816,7 @@ export default function GatewayLibrary({
                 onClick={() => setShowSlots((v) => !v)}
               >
                 <FoldMark open={showSlots} />
-                <span className="flex-1">协议槽</span>
+                <span className="flex-1 text-sm">协议槽</span>
                 <span className="text-micro text-l3">{slotsTogether ? "跟随上面的地址" : "有独立地址"}</span>
               </button>
               {showSlots && (
@@ -1870,7 +1870,7 @@ export default function GatewayLibrary({
                 onClick={() => setShowAdvanced((v) => !v)}
               >
                 <FoldMark open={showAdvanced} />
-                <span className="flex-1">Header 与兼容选项</span>
+                <span className="flex-1 text-sm">Header 与兼容选项</span>
                 {(compatTimeout.trim() || compatNoBetas || compatNoThinking) && !showAdvanced && (
                   <span className="text-micro text-l3">已开兼容选项</span>
                 )}
@@ -1932,7 +1932,7 @@ export default function GatewayLibrary({
                   onClick={() => setShowWallet((v) => !v)}
                 >
                   <FoldMark open={showWallet} />
-                  <span className="flex-1">查余额（New API 站点）</span>
+                  <span className="flex-1 text-sm">查余额（New API 站点）</span>
                   <span className="text-micro text-l3">
                     {walletToken.trim()
                       ? "已填，保存后生效"
