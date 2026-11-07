@@ -1346,7 +1346,8 @@ export function ProfileModal({
                   className={`${fieldClass} flex min-w-0 flex-1 items-center justify-between gap-2 text-left`}
                 >
                   <span className="truncate text-l3">
-                    从网关目录 {pickerModels.length} 个模型中选择…
+                    {/* 只数能对话的（出图、向量等不列），和网关卡上的总数不是一回事，写明 */}
+                    从网关目录 {pickerModels.length} 个可对话模型中选择…
                   </span>
                   <FoldMark open={pickerOpen} />
                 </button>
@@ -1686,17 +1687,6 @@ export function ProfileModal({
             </div>
           );
         })()}
-        {/* 生效预览（2026-10-30）：已保存的连接才有，九家同一块；内容按这家的启动注入与设为全局写入算 */}
-        {initial?.id && (
-          <EffectPreview
-            profileId={initial.id}
-            setGlobalReason={
-              agentCapabilities && !agentCapabilities.setGlobal.supported
-                ? (agentCapabilities.setGlobal.reason ?? "这家不支持设为全局")
-                : null
-            }
-          />
-        )}
         {/* 同时绑到：换 Agent 不必重走一遍「添加连接 → 选网关 → 挑模型」——
             同一份网关和模型名单一次建多条绑定；协议按各家默认推导，保存后可单独调整 */}
         {/* 同时绑到（2026-10-31 简化）：只列协议兼容的几家，做成点选小胶囊；说明与不兼容的原因收进悬停 */}
@@ -1753,12 +1743,32 @@ export function ProfileModal({
           {!initial && !nameTouched && autoName && (
             <span className="mt-1 block text-micro text-l3">按网关和模型自动起的，可以改</span>
           )}
-          {sameNameTaken(effectiveName) && (
-            <span className="mt-1 block text-xs text-warn-text">
-              这个 Agent 下已有同名连接，启动栏里会分不清。建议加上模型或用途，比如「{effectiveName} · {form.models.find((m) => m.trim()) || "flash"}」。
-            </span>
-          )}
         </label>
+        {/* 同名提示带一键改名（原先只给一句建议，要自己照着敲）；放在 label 外，按钮不被当成输入框的标签 */}
+        {sameNameTaken(effectiveName) && (() => {
+          const first = form.models.find((m) => m.trim())?.trim();
+          const suggestion = first ? `${effectiveName} · ${first}` : null;
+          const usable = suggestion && !sameNameTaken(suggestion) ? suggestion : null;
+          return (
+            <p className="-mt-2 mb-3 flex flex-wrap items-center gap-x-2 text-xs text-warn-text">
+              <span>这个 Agent 下已有同名连接，启动栏里会分不清。</span>
+              {usable ? (
+                <button
+                  type="button"
+                  className="font-medium text-l2 hover:text-l1"
+                  onClick={() => {
+                    setNameTouched(true);
+                    setForm({ ...form, name: usable });
+                  }}
+                >
+                  改成「{usable}」
+                </button>
+              ) : (
+                <span>建议加上模型或用途。</span>
+              )}
+            </p>
+          );
+        })()}
         <details
           className="mb-4 border-t border-hairline pt-3"
           onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
@@ -1929,6 +1939,18 @@ export function ProfileModal({
             )}
           </div>
         </details>
+        {/* 生效预览（2026-10-30）：已保存的连接才有，九家同一块；内容按这家的启动注入与设为全局写入算。
+            按已保存的内容算、是改完之后回头核对的：放在表单最后（2026-11-07 由模型和名称中间挪来） */}
+        {initial?.id && (
+          <EffectPreview
+            profileId={initial.id}
+            setGlobalReason={
+              agentCapabilities && !agentCapabilities.setGlobal.supported
+                ? (agentCapabilities.setGlobal.reason ?? "这家不支持设为全局")
+                : null
+            }
+          />
+        )}
         </div>
       </form>
       {realFileOpen && (
