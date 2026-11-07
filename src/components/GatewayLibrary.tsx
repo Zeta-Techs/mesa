@@ -1992,12 +1992,12 @@ export default function GatewayLibrary({
             )}
             {/* 宽的时候拆成几列，给一行列头（原先「没有连接」「—」单看不知道是哪一列）；占位宽度与下面行里各列一一对应 */}
             {gateways.length > 0 && (
-              <li aria-hidden="true" className="hidden items-center gap-3 px-2.5 pb-1 text-micro text-l4 @4xl:flex">
+              <li aria-hidden="true" className="hidden items-center gap-3 px-2.5 pb-1 text-micro text-l4 @4xl:flex @4xl:gap-6">
                 <span className="w-4 shrink-0" />
-                <span className="min-w-0 flex-1">网关</span>
-                <span className="w-56 shrink-0">地址</span>
-                <span className="w-20 shrink-0 text-right">连接</span>
-                <span className="w-32 shrink-0 text-right">近 30 天</span>
+                <span className="w-60 shrink-0">网关</span>
+                <span className="min-w-0 flex-1">地址</span>
+                <span className="w-14 shrink-0 text-right">连接</span>
+                <span className="w-40 shrink-0 text-right">近 30 天</span>
                 <span className="w-28 shrink-0" />
                 <span className="w-4 shrink-0" />
               </li>
@@ -2012,11 +2012,12 @@ export default function GatewayLibrary({
               return (
                 <li
                   key={g.id}
-                  className="group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 hover:bg-hover"
+                  className="group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 hover:bg-hover @4xl:gap-6"
                   onClick={() => openEdit(g)}
                 >
                   <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
-                  <span className="min-w-0 flex-1">
+                  {/* 宽的时候名字列定宽、地址列吃剩余宽度（原先名字列 flex-1，网关和地址之间空一大片、右边几列挤在一起） */}
+                  <span className="min-w-0 flex-1 @4xl:w-60 @4xl:flex-none">
                     <span className="flex items-center gap-2">
                       <button
                         type="button"
@@ -2056,12 +2057,11 @@ export default function GatewayLibrary({
                       )}
                     </span>
                   </span>
-                  {/* 各固定列收窄（地址 w-72→w-56、花费 w-44→w-32），名字列不再被挤成「智谱 Coding P…」 */}
-                  <span className="hidden w-56 shrink-0 truncate text-xs text-l3 @4xl:block" title={row.detail}>
+                  <span className="hidden min-w-0 flex-1 truncate text-xs text-l3 @4xl:block" title={row.detail}>
                     {gatewayHostLine(g, row.detail)}
                   </span>
-                  <span className="hidden w-20 shrink-0 text-right text-xs text-l3 @4xl:block">{n ? `${n} 个` : "—"}</span>
-                  <span className="hidden w-32 shrink-0 truncate text-right text-xs text-l3 @4xl:block">
+                  <span className="hidden w-14 shrink-0 text-right text-xs text-l3 @4xl:block">{n ? `${n} 个` : "—"}</span>
+                  <span className="hidden w-40 shrink-0 truncate text-right text-xs text-l3 @4xl:block">
                     {usage ? (
                       <button
                         type="button"
