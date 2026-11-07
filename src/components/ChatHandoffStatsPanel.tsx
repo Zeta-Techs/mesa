@@ -6,6 +6,8 @@ import { confirmDialog } from "./ConfirmDialog";
 import {
   DECISION_KIND_LABEL,
   HANDOFF_REASON_LABEL,
+  SWITCH_STATE_LABEL,
+  splitSwitchDetail,
   handoffTotals,
   isAutoHandoff,
   type ChatHandoffStat,
@@ -100,7 +102,8 @@ export default function ChatHandoffStatsPanel() {
           {stats.map((s) => {
             const reason =
               HANDOFF_REASON_LABEL[s.reason as HandoffReason] ?? s.reason;
-            const detail = s.detail ? DETAIL_LABEL[s.detail] ?? s.detail : "";
+            const { base, state } = splitSwitchDetail(s.detail);
+            const detail = s.detail ? `${DETAIL_LABEL[base] ?? base}${state ? `，${SWITCH_STATE_LABEL[state]}` : ""}` : "";
             return (
               <div
                 key={`${s.agent}|${s.reason}|${s.detail}`}

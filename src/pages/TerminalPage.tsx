@@ -24,7 +24,7 @@ import {
 } from "../hotkeys";
 import type { TerminalProgress } from "../terminal-notify";
 import { claudeModeTier, forkChatMessages, forkPreviewCovered } from "../chat-handoff";
-import { recordChatHandoff } from "../chat-handoff-log";
+import { recordChatHandoff, switchState } from "../chat-handoff-log";
 import { currentVerifiedVersion } from "../cli-verified";
 import { chatFidelity, tierLabel, versionTrust } from "../chat-fidelity";
 import {
@@ -599,7 +599,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   /** 右上角 >_ 与快捷键同一动作：聊天 ↔ 终端 */
   function toggleSurface(via: "tab-bar" | "hotkey") {
     if (focusedSurfaceMode === "chat") {
-      recordChatHandoff(statuses[focusedId]?.agentId, "user_switch", via);
+      const st = statuses[focusedId];
+      recordChatHandoff(st?.agentId, "user_switch", `${via}-${switchState(st)}`);
     }
     switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
   }

@@ -88,6 +88,28 @@ export const DECISION_KIND_LABEL: Record<string, string> = {
   conn: "连接问题卡",
 };
 
+/** 手动切到终端时聊天里的状态（2026-11-07：手动切换占了九成却看不出为什么切，带上当时状态才知道聊天层缺什么） */
+export type SwitchState = "working" | "confirm" | "done" | "unknown" | "idle";
+
+export const SWITCH_STATE_LABEL: Record<SwitchState, string> = {
+  working: "当时 AI 在干活",
+  confirm: "当时在等你确认",
+  done: "当时 AI 说完了",
+  unknown: "当时状态不明",
+  idle: "当时没在运行",
+};
+
+export function switchState(st: { running: boolean; attention: "done" | "working" | "confirm" | null } | null | undefined): SwitchState {
+  if (!st || !st.running) return "idle";
+  return st.attention ?? "unknown";
+}
+
+/** 细分 = 入口 + 「-」+ 状态（如 tab-bar-working）；老记录只有入口 */
+export function splitSwitchDetail(detail: string): { base: string; state: SwitchState | null } {
+  const m = /^(.+)-(working|confirm|done|unknown|idle)$/.exec(detail);
+  return m ? { base: m[1]!, state: m[2] as SwitchState } : { base: detail, state: null };
+}
+
 /** 与后端 ChatHandoffStat 对应 */
 export interface ChatHandoffStat {
   agent: string;

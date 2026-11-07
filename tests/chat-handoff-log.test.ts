@@ -8,6 +8,8 @@ import {
   handoffTotals,
   isAutoHandoff,
   shouldRecordHandoff,
+  splitSwitchDetail,
+  switchState,
 } from "../src/chat-handoff-log.ts";
 import { readFileSync } from "node:fs";
 
@@ -59,4 +61,17 @@ test("合计与自动露出次数", () => {
     total: 5,
     auto: 3,
   });
+});
+
+test("手动切到终端带上当时状态：没运行算 idle，没认出注意力算 unknown；细分拆回入口与状态", () => {
+  assert.equal(switchState(undefined), "idle");
+  assert.equal(switchState({ running: false, attention: "working" }), "idle");
+  assert.equal(switchState({ running: true, attention: null }), "unknown");
+  assert.equal(switchState({ running: true, attention: "confirm" }), "confirm");
+  assert.deepEqual(splitSwitchDetail("tab-bar-working"), { base: "tab-bar", state: "working" });
+  assert.deepEqual(splitSwitchDetail("tab-bar"), { base: "tab-bar", state: null });
+  // 后端只收小写字母数字与 - _、不超过 24 字
+  for (const via of ["tab-bar", "hotkey"]) for (const st of ["working", "confirm", "done", "unknown", "idle"]) {
+    assert.match(`${via}-${st}`, /^[a-z0-9_-]{1,24}$/);
+  }
 });
