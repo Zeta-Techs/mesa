@@ -42,7 +42,6 @@ export default function WatchRunReview({ run, onClose, locked = false, currentDi
   const [busy, setBusy] = useState(false);
   // 已采纳的运行重开也要呈现定稿状态：locked 来自历史记录的 adopted，本地态只负责本次会话内点击后的即时变化
   const [adopted, setAdopted] = useState(locked);
-  const [adoptedNote, setAdoptedNote] = useState<string | null>(null);
   const [ledgerPending, setLedgerPending] = useState(false);
   const [entries, setEntries] = useState<WatchReviewEntry[] | null>(null);
   const [entryError, setEntryError] = useState<string | null>(null);
@@ -112,9 +111,8 @@ export default function WatchRunReview({ run, onClose, locked = false, currentDi
       await invoke<string[]>("adopt_watch_run", { runId: run.id });
       setAdopted(true);
       setLedgerPending(false);
-      setAdoptedNote(
-        `已采纳：新命中进入项目页「文献雷达」的清单，这次新下的 PDF 进 papers/。被排除的条目没有写入。项目里若有进行中的科研流程，PDF 的资源登记会在流程收尾后自动补记，不会卡它的合并。`,
-      );
+      // 2026-11-07 用户：评审完自动回定时任务页，不停在这里再点一次返回；去向确认框里已经说过
+      onClose();
     } catch (reason) {
       const message = String(reason);
       if (watchLedgerFailed(message)) {
@@ -166,7 +164,6 @@ export default function WatchRunReview({ run, onClose, locked = false, currentDi
           </button>
           <span className="text-l4">排除的不会写进项目；留下是你的标记，未定与留下的一起进项目的雷达收件箱。雷达只是日常积累，不进科研流程的精读清单。</span>
         </div>
-        {adoptedNote && <NoticeBar className="mb-3">{adoptedNote}</NoticeBar>}
         {entryError && <NoticeBar tone="err" className="mb-3">{entryError}</NoticeBar>}
         {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         {entries == null && !entryError && <p className="text-sm text-l3">正在读取这次巡检的命中…</p>}

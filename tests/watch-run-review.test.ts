@@ -24,6 +24,7 @@ test("定时评审：新命中列表、留下/排除、采纳确认与已采纳�
     Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   }
   const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  let closed = 0;
   let legacy = false;
   let ledgerFail = false;
   const entries = [
@@ -61,7 +62,7 @@ test("定时评审：新命中列表、留下/排除、采纳确认与已采纳�
   const buttons = () => Array.from(host.querySelectorAll("button"));
   const button = (text: string) => buttons().find((item) => item.textContent === text)!;
   const render = (id: string, status = "completed", locked = false) => act(async () => {
-    root.render(h("div", null, h(Review, { key: id + String(locked), run: { id, status }, onClose: () => {}, currentDirectory: h("p", null, "实时目录内容"), locked }), h(ConfirmDialogHost)));
+    root.render(h("div", null, h(Review, { key: id + String(locked), run: { id, status }, onClose: () => { closed += 1; }, currentDirectory: h("p", null, "实时目录内容"), locked }), h(ConfirmDialogHost)));
   });
   const decideCalls = () => calls.filter((c) => c.command === "watch_run_decide");
   const adoptCalls = () => calls.filter((c) => c.command === "adopt_watch_run");
@@ -84,15 +85,14 @@ test("定时评审：新命中列表、留下/排除、采纳确认与已采纳�
     await act(async () => buttons().filter((b) => b.textContent === "撤销排除").at(-1)!.click());
     assert.equal(decideCalls().at(-1)!.args?.decision, "");
 
-    // 3) 采纳确认：取消不 invoke；确认后按钮定稿并给出去向说明
+    // 3) 采纳确认：取消不 invoke；确认后自动返回
     await act(async () => button("采纳进项目").click());
     await act(async () => button("取消").click());
     assert.equal(adoptCalls().length, 0);
     await act(async () => button("采纳进项目").click());
     await act(async () => buttons().filter((b) => b.textContent === "采纳进项目").at(-1)!.click());
     assert.equal(adoptCalls().length, 1);
-    assert.ok(button("已采纳").disabled);
-    assert.match(host.textContent!, /文献雷达/);
+    assert.equal(closed, 1, "采纳成功后自动返回，不停在评审页");
 
     // 4) 已采纳重开（locked）：只读回看，无采纳按钮、无留下/排除
     await render("first", "completed", true);
@@ -113,7 +113,7 @@ test("定时评审：新命中列表、留下/排除、采纳确认与已采纳�
     const adoptBeforeRetry = adoptCalls().length;
     await act(async () => button("再记录验收").click());
     assert.equal(adoptCalls().length, adoptBeforeRetry + 1);
-    assert.ok(button("已采纳").disabled);
+    assert.equal(closed, 2, "补记成功同样自动返回");
 
     // 6) 没跑完的运行：不能采纳，空态说明原因
     await render("stopped", "stopped");
