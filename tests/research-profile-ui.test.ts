@@ -121,11 +121,11 @@ async function mount(initial: { inject: boolean; entries: ReturnType<typeof entr
   };
 }
 
-test("空档案：写明 AI 拿不到，区别说明默认展开，没有原文入口；记一条后变成生效并能看原文", async () => {
+test("空档案：写明 AI 拿不到，区别说明默认收起，没有原文入口；记一条后变成生效并能看原文", async () => {
   const ui = await mount({ inject: true, entries: [], context: "" });
   try {
     assert.match(ui.text(), /还没有条目：AI 现在什么也拿不到/);
-    assert.match(ui.text(), /只对一个项目成立/, "档案空着时区别说明默认展开");
+    assert.doesNotMatch(ui.text(), /只对一个项目成立/, "区别说明默认收起，不占篇幅");
     assert.equal(ui.button("看 AI 拿到的原文"), undefined);
     // 分类例句随分类换
     const select = ui.host.querySelector("select") as HTMLSelectElement;
@@ -148,7 +148,7 @@ test("空档案：写明 AI 拿不到，区别说明默认展开，没有原文�
   }
 });
 
-test("有条目：开关关掉写「已关」并调后端，区别说明默认收起；作废的条目不算数", async () => {
+test("有条目：开关关掉写「已关」并调后端，区别说明点开才有；作废的条目不算数", async () => {
   const ui = await mount({
     inject: true,
     entries: [entry("a", "常用方法", "阻抗谱用等效电路拟合"), entry("b", "其他", "旧条目", "revoked")],
@@ -156,15 +156,15 @@ test("有条目：开关关掉写「已关」并调后端，区别说明默认�
   });
   try {
     assert.match(ui.text(), /正在生效：1 条会附给 AI/);
-    assert.doesNotMatch(ui.text(), /只对一个项目成立/, "有条目时区别说明收起");
     const toggle = ui.host.querySelector('[role="switch"]') as HTMLButtonElement;
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     await ui.click(toggle);
     assert.deepEqual(ui.calls.find((c) => c.cmd === "research_profile_set_inject")?.args, { inject: false });
     assert.match(ui.text(), /已关：1 条都不会附给 AI/);
     await ui.click(ui.button("有什么不同"));
-    assert.match(ui.text(), /附在你第一句前面的那段话/);
-    assert.match(ui.text(), /不附给 AI，也不改任何项目/, "文献总表写明只给你查");
+    assert.match(ui.text(), /只对一个项目成立的定论/);
+    assert.match(ui.text(), /开对话时附给 AI 的那段话/);
+    assert.match(ui.text(), /只给你查，不附给 AI/, "文献总表写明只给你查");
   } finally {
     await ui.close();
   }

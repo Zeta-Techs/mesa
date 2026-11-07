@@ -28,8 +28,7 @@ export default function ResearchProfileSection() {
   const [suggestions, setSuggestions] = useState<ProfileSuggestion[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  // 区别说明：档案还空着时默认展开（这时最需要知道该记什么），有条目后收起
-  const [compareOpen, setCompareOpen] = useState<boolean | null>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const load = () =>
     invoke<ResearchProfileDto>("research_profile_read")
@@ -83,7 +82,6 @@ export default function ResearchProfileSection() {
   };
 
   const status = profileStatus(profile);
-  const showCompare = compareOpen ?? status.tone === "empty";
   const setInject = async (on: boolean) => {
     try {
       await invoke("research_profile_set_inject", { inject: on });
@@ -95,11 +93,7 @@ export default function ResearchProfileSection() {
 
   return (
     <div className="space-y-3 text-xs">
-      <p className="text-sm leading-6 text-l2">
-        记你这个人做研究的习惯：方向、常用方法、数据处理口径、写作偏好、导师反复提的意见、试过不再做的方向。记一次，以后每个项目里的 AI 开工时都知道，不用每次从头交代。只收你确认过、写了依据的条目；改和作废都留着原条目。存在本机，不上传。
-      </p>
-
-      {/* 生效状态：回答「AI 现在拿不拿得到、拿到的是什么」 */}
+      {/* 生效状态：回答「AI 现在拿不拿得到、拿到的是什么」（2026-11-07 用户嫌字多：说明压成一句，细节进原文与对比） */}
       <div className="rounded-md border border-hairline px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span
@@ -115,9 +109,7 @@ export default function ResearchProfileSection() {
           </span>
           <Toggle label="附给 AI" checked={profile.settings.inject} onChange={(on) => void setInject(on)} />
         </div>
-        <p className="mt-1 pl-5 leading-5 text-l3">
-          附在三处：项目里开对话时的「项目说明」、流程步骤开工的任务书、项目助手。都标明「是偏好与历史，不是本项目的事实依据」。开关对所有项目生效；只想某个项目的对话不带，在那个项目的「项目说明」里改。
-        </p>
+        <p className="mt-1 pl-5 leading-5 text-l3">开对话、流程步骤开工、项目助手都会带上，只当偏好参考。</p>
         {profile.context && (
           <div className="mt-1.5 pl-5">
             <button
@@ -141,34 +133,26 @@ export default function ResearchProfileSection() {
       <div>
         <button
           type="button"
-          aria-expanded={showCompare}
-          onClick={() => setCompareOpen(!showCompare)}
-          className="flex items-center gap-1.5 font-medium text-l3 hover:text-l1"
+          aria-expanded={compareOpen}
+          onClick={() => setCompareOpen((v) => !v)}
+          className="flex items-center gap-1.5 text-l3 hover:text-l1"
         >
-          <FoldMark open={showCompare} />
-          和「项目长期知识」「项目说明」有什么不同
+          <FoldMark open={compareOpen} />
+          和项目长期知识有什么不同
         </button>
-        {showCompare && (
-          <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 pl-5 leading-5">
-            <dt className="font-medium text-l2">研究档案（这里）</dt>
-            <dd className="text-l3">
-              你这个人的习惯，<strong className="font-medium text-l2">换个课题也成立</strong>。AI 当偏好参考，可以按项目实际情况取舍。在这里记，或从项目长期知识里提升过来。
-            </dd>
-            <dt className="font-medium text-l2">项目长期知识</dt>
-            <dd className="text-l3">
-              <strong className="font-medium text-l2">只对一个项目成立</strong>的已定结论（如「本课题只纳入 2015 年后的文献」），AI 不得违背。在项目设置「项目长期知识」里记。
-            </dd>
-            <dt className="font-medium text-l2">项目说明</dt>
-            <dd className="text-l3">
-              不是一类条目，是开对话时 Mesa <strong className="font-medium text-l2">附在你第一句前面的那段话</strong>（以前叫「对话注入」），里面有课题名、文件、规则，以及上面两样各一段。在项目设置「项目说明」里看全文、改写或关掉。
-            </dd>
+        {compareOpen && (
+          <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 pl-5 leading-5">
+            <dt className="text-l2">研究档案</dt>
+            <dd className="text-l3">你的习惯，换个课题也成立</dd>
+            <dt className="text-l2">项目长期知识</dt>
+            <dd className="text-l3">只对一个项目成立的定论，在项目设置里记，可提升到这里</dd>
+            <dt className="text-l2">项目说明</dt>
+            <dd className="text-l3">开对话时附给 AI 的那段话，上面两样都在里面</dd>
           </dl>
         )}
       </div>
 
-      {groups.length === 0 ? (
-        <p className="text-l4">还没有条目。在下面选分类写第一条；也可以在项目设置「项目长期知识」里，把换个课题也成立的条目点「提升到研究档案」。</p>
-      ) : (
+      {groups.length > 0 && (
         <div className="space-y-2">
           {groups.map((group) => (
             <div key={group.category}>
@@ -369,7 +353,7 @@ export default function ResearchProfileSection() {
           跨项目文献总表
           {papers && <span className="font-normal text-l4">{papers.length}</span>}
         </button>
-        <p className="mt-0.5 pl-5 leading-5 text-l4">只给你查：各项目已纳入的文献合在一起，看哪篇读过、笔记在哪个项目。不附给 AI，也不改任何项目。</p>
+        <p className="mt-0.5 pl-5 leading-5 text-l4">各项目读过的文献合在一起，只给你查，不附给 AI。</p>
         {papersOpen && (
           <div className="mt-1.5 space-y-1.5">
             <input
