@@ -92,6 +92,31 @@ function probeSummaryText(sum: SlotProbeSummary | undefined): string {
   return "✗ 失败";
 }
 
+/** 低频危险的文字钮：平时灰、悬停才红（点了还有确认框） */
+const dangerGhostClass = ghostActionClass.replace("hover:text-l1", "hover:text-err-text");
+
+/** 地址像本机 / 局域网端点（http 明文、localhost、私网 IP、.local）：只有这时才给「无密钥」勾选 */
+function looksLocalEndpoint(raw: string): boolean {
+  const url = raw.trim();
+  if (!url) return false;
+  if (/^http:\/\//i.test(url)) return true;
+  const host = /^[a-z]+:\/\/(\[[^\]]+\]|[^/:?#]+)/i.exec(url)?.[1]?.toLowerCase() ?? "";
+  return (
+    host === "localhost" ||
+    host === "[::1]" ||
+    host.endsWith(".local") ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  );
+}
+
+/** 编辑网关页的分段标题：只用留白和字重分组，不画线不铺底（同设置页 SubHeading 口径） */
+function GroupHeading({ children }: { children: ReactNode }) {
+  return <h3 className="pt-5 text-sm font-semibold text-l1">{children}</h3>;
+}
+
 function ModelClassFilter({
   ids,
   vendor,
@@ -345,6 +370,7 @@ export default function GatewayLibrary({
   const [draftProbes, setDraftProbes] = useState<Record<string, SlotProbeSummary>>({});
   const [showSlots, setShowSlots] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
   const [showBind, setShowBind] = useState(false);
   const [showModels, setShowModels] = useState(false);
   const [policyFilter, setPolicyFilter] = useState("");
@@ -473,6 +499,7 @@ export default function GatewayLibrary({
     setCapPending(null);
     setDraftProbes({});
     setShowAdvanced(false);
+    setShowWallet(false);
     setShowBind(false);
     setShowModels(false);
     setPolicyFilter("");
@@ -1159,6 +1186,11 @@ export default function GatewayLibrary({
     if (editing === null || editing === "new") return [];
     return profiles.filter((p) => p.gatewayId === editing.id);
   }, [editing, profiles]);
+  // 连接区收起时的摘要：用到这个网关的 Agent，去重、最多列三家
+  const boundAgentSummary = useMemo(() => {
+    const labels = [...new Set(boundAgents.map((p) => AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent))];
+    return labels.length > 3 ? `${labels.slice(0, 3).join("、")} 等` : labels.join("、");
+  }, [boundAgents]);
 
   const primarySlot = primaryProbeSlot(
     slots,
@@ -1287,10 +1319,7 @@ export default function GatewayLibrary({
               <input className={`${fieldClass} mt-1 w-full`} value={name} onChange={(e) => setName(e.target.value)} />
             </label>
             <label className="block text-sm text-l2">
-              <span className="flex items-center justify-between gap-2">
-                <span>地址</span>
-                <span className="font-mono text-micro text-l3">{probeSummaryText(primaryProbe)}</span>
-              </span>
+              地址
               <input
                 className={`${fieldClass} mt-1 w-full font-mono text-xs`}
                 value={masterUrl}
@@ -1304,20 +1333,21 @@ export default function GatewayLibrary({
             </label>
             {responsesUrlWarn && <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>}
             {openaiBillingHint && <InlineNotice tone="warn" size="micro">{openaiBillingHint}</InlineNotice>}
-            <Checkbox className="text-sm text-l2" checked={noAuth} onChange={setNoAuth} label="无密钥（本地端点）" />
+            {/* 「无密钥」只对本机 / 局域网端点有意义：远端 https 地址不出这个勾选，免得夹在地址和密钥中间打断（2026-11-07 打磨） */}
+            {(noAuth || looksLocalEndpoint(masterUrl)) && (
+              <Checkbox className="text-sm text-l2" checked={noAuth} onChange={setNoAuth} label="无密钥（本地端点）" />
+            )}
             {/* 先填密钥、再测试：原先「测试」排在密钥框前面，从上往下填会先测出 401 */}
             {noAuth ? (
               <p className="text-micro text-l3">本地端点不需要密钥，测试和启动都不带密钥。</p>
             ) : (
-              // 「清除」是低频危险动作：收成标签行右侧的红色小字，不再单独占一行像主操作（2026-11-01 打磨）。
+              // 「清除」是低频危险动作：标签行右侧灰色小字、悬停才变红，点了还要确认（2026-11-07 由常驻红字降级）。
               // 不能放进 <label> 里：label 会把按钮当成它关联的控件，输入框就没了标签
               <div className="text-sm text-l2">
                 <div className="flex items-center justify-between gap-2">
-                  <label htmlFor={keyInputId}>
-                    {editing === "new" || !editing.keyHint ? "密钥" : `密钥（留空不改，现存 ${editing.keyHint}）`}
-                  </label>
+                  <label htmlFor={keyInputId}>密钥</label>
                   {editing !== "new" && editing.keyHint && (
-                    <button type="button" className={`${ghostActionClass.replace("text-l3", "text-err-text")} -my-1`} onClick={() => void onClearKey()}>
+                    <button type="button" className={`${dangerGhostClass} -my-1`} onClick={() => void onClearKey()}>
                       清除本地密钥
                     </button>
                   )}
@@ -1328,10 +1358,12 @@ export default function GatewayLibrary({
                   type="password"
                   autoComplete="new-password"
                   value={apiKey}
+                  placeholder={editing !== "new" && editing.keyHint ? `已保存 ${editing.keyHint}，输入新密钥即替换` : undefined}
                   onChange={(e) => setApiKey(e.target.value)}
                 />
               </div>
             )}
+            {/* 测试结果就挂在测试钮旁边（原先在地址标签右上角，点完要往上找） */}
             <div className="flex flex-wrap items-center gap-2 pb-2 pt-1">
               <button
                 type="button"
@@ -1351,216 +1383,22 @@ export default function GatewayLibrary({
               >
                 {fetchingCatalog ? "获取中…" : "获取模型"}
               </button>
+              {primaryProbe?.lastOk != null && (
+                <span className={`font-mono text-micro ${primaryProbe.lastOk ? "text-l3" : "text-err-text"}`}>
+                  {probeSummaryText(primaryProbe)}
+                </span>
+              )}
               {editing !== "new" && catalogAge(editing.catalogFetchedAt) && (
                 <span className="text-micro text-l3">
-                  {catalogAge(editing.catalogFetchedAt)}
-                  {editing.catalogFromSlot ? ` · ${editing.catalogFromSlot}` : ""}
+                  模型目录{catalogAge(editing.catalogFetchedAt)}
+                  {editing.catalogFromSlot
+                    ? ` · ${SLOT_LABEL[editing.catalogFromSlot as GatewaySlotName] ?? editing.catalogFromSlot} 协议`
+                    : ""}
                 </span>
               )}
             </div>
-            {showWalletFields && (
-              <div className="mb-2 space-y-3 rounded-md border border-hairline p-3">
-                <div>
-                  <p className="text-sm font-medium text-l2">查余额（New API 站点）</p>
-                  <p className="mt-0.5 text-micro text-l3">
-                    查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
-                  </p>
-                </div>
-                <div className="text-sm text-l2">
-                  <div className="flex items-center justify-between gap-2">
-                    <label htmlFor={walletInputId}>
-                      {editing === "new" || !editing.walletKeyHint ? "系统访问令牌" : "系统访问令牌（留空不改）"}
-                    </label>
-                    {editing !== "new" && editing.walletKeyHint && (
-                      <button type="button" className={`${ghostActionClass.replace("text-l3", "text-err-text")} -my-1`} onClick={() => void onClearWalletToken()}>
-                        清除系统访问令牌
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    id={walletInputId}
-                    className={`${fieldClass} mt-1 w-full`}
-                    type="password"
-                    value={walletToken}
-                    onChange={(e) => setWalletToken(e.target.value)}
-                    placeholder="不是 sk- 推理密钥"
-                  />
-                </div>
-                <label className="block text-sm text-l2">
-                  用户 ID（一般不用填）
-                  <input
-                    className={`${fieldClass} mt-1 w-full font-mono text-xs`}
-                    value={walletUserId}
-                    onChange={(e) => setWalletUserId(e.target.value)}
-                    placeholder="老站点才要"
-                  />
-                </label>
-              </div>
-            )}
-            <div>
-              <button
-                type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                onClick={() => setShowSlots((v) => !v)}
-              >
-                <FoldMark open={showSlots} />
-                <span className="flex-1">协议槽</span>
-                <span className="text-micro text-l3">{slotsTogether ? "跟随上面的地址" : "有独立地址"}</span>
-              </button>
-              {showSlots && (
-                <div className="space-y-2 pt-1">
-                  {SLOT_LABELS.map(({ key, label }) => {
-                    const follows = !slots[key]?.trim() && !!masterUrl.trim();
-                    const testable = key !== "cursor" && key !== "gemini";
-                    return (
-                      <div key={key} className="text-sm text-l2">
-                        <span className="flex items-center justify-between gap-2">
-                          <span>
-                            {label}
-                            {follows && <span className="ml-1.5 text-micro text-l3">跟随上面的地址</span>}
-                          </span>
-                          <span className="font-mono text-micro text-l3">{testable ? probeSummaryText(slotSum(key)) : "不支持测试"}</span>
-                        </span>
-                        {/* 测试钮与输入框同一行（原先各占一行，五个槽拉得很长） */}
-                        <span className="mt-1 flex items-center gap-2">
-                          <input
-                            aria-label={`${label} 地址`}
-                            className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
-                            value={slots[key] ?? ""}
-                            placeholder={follows ? masterUrl : "https://…"}
-                            title={follows ? "留空 = 跟随上面的地址；填入即脱离跟随" : undefined}
-                            onChange={(e) => setSlots((cur) => ({ ...cur, [key]: e.target.value }))}
-                          />
-                          {testable && (
-                            <button
-                              type="button"
-                              className={`${rowActionClass} shrink-0`}
-                              disabled={!!probingSlot || !effectiveSlotUrl(slots, key, masterUrl)}
-                              onClick={() => void probeOne(key, false)}
-                            >
-                              {probingSlot === key ? "测试中…" : "测试"}
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  <button type="button" className={secondaryActionClass} disabled={probingAll} onClick={() => void probeAll()}>
-                    {probingAll ? "测试中…" : "测试全部槽"}
-                  </button>
-                </div>
-              )}
-            </div>
-            <div>
-              <button
-                type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                onClick={() => setShowAdvanced((v) => !v)}
-              >
-                <FoldMark open={showAdvanced} />
-                <span className="flex-1">Header 与兼容选项</span>
-                {(compatTimeout.trim() || compatNoBetas || compatNoThinking) && !showAdvanced && (
-                  <span className="text-micro text-l3">已开兼容选项</span>
-                )}
-              </button>
-              {showAdvanced && (
-                <div className="space-y-2 pt-1 text-sm text-l2">
-                  <label className="block">
-                    Header：名=环境变量名，每行一条
-                    <textarea
-                      className={`${fieldClass} mt-1 h-20 w-full font-mono text-xs`}
-                      value={headerText}
-                      onChange={(e) => setHeaderText(e.target.value)}
-                    />
-                  </label>
-                  {/* 兼容选项：这家中转的毛病跟着网关走，绑到它的 Agent 启动和「设为全局」都会带上 */}
-                  <p className="text-micro text-l3">兼容选项：这家中转有下面的毛病时再开，绑到它的连接启动和设为全局都会带上</p>
-                  <label className="flex items-center gap-2">
-                    <span className="w-28 shrink-0">请求超时</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={3600}
-                      placeholder="默认"
-                      className={`${fieldClass} w-24`}
-                      value={compatTimeout}
-                      onChange={(e) => setCompatTimeout(e.target.value)}
-                    />
-                    <span className="text-micro text-l3">秒。中转慢、长思考常超时时调大（Claude Code、Codex）</span>
-                  </label>
-                  <Checkbox
-                    checked={compatNoBetas}
-                    onChange={setCompatNoBetas}
-                    label={
-                      <span>
-                        不发实验性请求头
-                        <span className="ml-2 text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
-                      </span>
-                    }
-                  />
-                  <Checkbox
-                    checked={compatNoThinking}
-                    onChange={setCompatNoThinking}
-                    label={
-                      <span>
-                        不发思考参数
-                        <span className="ml-2 text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
-                      </span>
-                    }
-                  />
-                </div>
-              )}
-            </div>
-            {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
-                已绑的点一下直接编辑 */}
-            {editing !== "new" && (
-              <div ref={bindSectionRef} className="scroll-mt-4">
-                <button
-                  type="button"
-                  className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                  onClick={() => setShowBind((v) => !v)}
-                >
-                  <FoldMark open={showBind} />
-                  <span className="flex-1">用这个网关的连接</span>
-                  <span className="text-micro text-l3">{boundAgents.length ? `${boundAgents.length} 条` : "还没有"}</span>
-                </button>
-                {showBind && (
-                  <div className="space-y-1 pt-1 text-sm">
-                    {boundAgents.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={!onEditProfile}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-hover"
-                        onClick={() => void goEditProfile(p)}
-                      >
-                        <span className="w-24 shrink-0 truncate text-xs text-l3">
-                          {AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-l1">{p.name}</span>
-                        <span className="truncate font-mono text-micro text-l3">{p.models[0] ?? "未选模型"}</span>
-                      </button>
-                    ))}
-                    {onAddConnection && (
-                      <button type="button" className={secondaryActionClass} onClick={() => void goAddConnection(editing.id)}>
-                        ＋ 为此网关添加连接
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-            {editing !== "new" && (
-              <button
-                type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2 hover:text-l1"
-                onClick={() => setAutoConfigFor(editing.id)}
-              >
-                <Wand2 className="size-3.5 shrink-0 text-l3" aria-hidden="true" />
-                <span className="flex-1">一键配置各 CLI…</span>
-                <span className="text-micro text-l3">给每个装了的 CLI 各建一条连接</span>
-              </button>
-            )}
+            {/* 分三段（2026-11-07）：接入（每次都填）→ 模型与连接（常改）→ 高级（一年碰一次的协议槽、Header、余额令牌，全部折叠） */}
+            <GroupHeading>模型与连接</GroupHeading>
             <div className="text-sm text-l2">
               <button
                 type="button"
@@ -1878,6 +1716,235 @@ export default function GatewayLibrary({
                 </div>
               )}
             </div>
+            {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
+                已绑的点一下直接编辑 */}
+            {editing !== "new" && (
+              <div ref={bindSectionRef} className="scroll-mt-4">
+                <button
+                  type="button"
+                  className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
+                  onClick={() => setShowBind((v) => !v)}
+                >
+                  <FoldMark open={showBind} />
+                  <span className="flex-1">用这个网关的连接</span>
+                  <span className="min-w-0 truncate text-micro text-l3">
+                    {boundAgents.length ? `${boundAgents.length} 条${showBind ? "" : ` · ${boundAgentSummary}`}` : "还没有"}
+                  </span>
+                </button>
+                {showBind && (
+                  <div className="space-y-1 pt-1 text-sm">
+                    {boundAgents.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        disabled={!onEditProfile}
+                        className="group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-hover"
+                        onClick={() => void goEditProfile(p)}
+                      >
+                        <span className="w-24 shrink-0 truncate text-xs text-l3">
+                          {AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-l1">{p.name}</span>
+                        <span className="truncate font-mono text-micro text-l3">{p.models[0] ?? "未选模型"}</span>
+                        {/* 整行可点进编辑：悬停露出箭头，不然看不出能点 */}
+                        {onEditProfile && (
+                          <ChevronRight className="size-3.5 shrink-0 text-l3 opacity-0 group-hover:opacity-100" aria-hidden="true" />
+                        )}
+                      </button>
+                    ))}
+                    {onAddConnection && (
+                      <button type="button" className={secondaryActionClass} onClick={() => void goAddConnection(editing.id)}>
+                        ＋ 为此网关添加连接
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {editing !== "new" && (
+              <button
+                type="button"
+                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2 hover:text-l1"
+                onClick={() => setAutoConfigFor(editing.id)}
+              >
+                <Wand2 className="size-3.5 shrink-0 text-l3" aria-hidden="true" />
+                <span className="flex-1">一键配置各 CLI…</span>
+                <span className="text-micro text-l3">给每个装了的 CLI 各建一条连接</span>
+              </button>
+            )}
+            <GroupHeading>高级</GroupHeading>
+            <div>
+              <button
+                type="button"
+                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
+                onClick={() => setShowSlots((v) => !v)}
+              >
+                <FoldMark open={showSlots} />
+                <span className="flex-1">协议槽</span>
+                <span className="text-micro text-l3">{slotsTogether ? "跟随上面的地址" : "有独立地址"}</span>
+              </button>
+              {showSlots && (
+                <div className="space-y-2 pt-1">
+                  {SLOT_LABELS.map(({ key, label }) => {
+                    const follows = !slots[key]?.trim() && !!masterUrl.trim();
+                    const testable = key !== "cursor" && key !== "gemini";
+                    return (
+                      <div key={key} className="text-sm text-l2">
+                        <span className="flex items-center justify-between gap-2">
+                          <span>
+                            {label}
+                            {follows && <span className="ml-1.5 text-micro text-l3">跟随上面的地址</span>}
+                          </span>
+                          <span className="font-mono text-micro text-l3">{testable ? probeSummaryText(slotSum(key)) : "不支持测试"}</span>
+                        </span>
+                        {/* 测试钮与输入框同一行（原先各占一行，五个槽拉得很长） */}
+                        <span className="mt-1 flex items-center gap-2">
+                          <input
+                            aria-label={`${label} 地址`}
+                            className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
+                            value={slots[key] ?? ""}
+                            placeholder={follows ? masterUrl : "https://…"}
+                            title={follows ? "留空 = 跟随上面的地址；填入即脱离跟随" : undefined}
+                            onChange={(e) => setSlots((cur) => ({ ...cur, [key]: e.target.value }))}
+                          />
+                          {testable && (
+                            <button
+                              type="button"
+                              className={`${rowActionClass} shrink-0`}
+                              disabled={!!probingSlot || !effectiveSlotUrl(slots, key, masterUrl)}
+                              onClick={() => void probeOne(key, false)}
+                            >
+                              {probingSlot === key ? "测试中…" : "测试"}
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <button type="button" className={secondaryActionClass} disabled={probingAll} onClick={() => void probeAll()}>
+                    {probingAll ? "测试中…" : "测试全部槽"}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div>
+              <button
+                type="button"
+                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                <FoldMark open={showAdvanced} />
+                <span className="flex-1">Header 与兼容选项</span>
+                {(compatTimeout.trim() || compatNoBetas || compatNoThinking) && !showAdvanced && (
+                  <span className="text-micro text-l3">已开兼容选项</span>
+                )}
+              </button>
+              {showAdvanced && (
+                <div className="space-y-2 pt-1 text-sm text-l2">
+                  <label className="block">
+                    Header：名=环境变量名，每行一条
+                    <textarea
+                      className={`${fieldClass} mt-1 h-20 w-full font-mono text-xs`}
+                      value={headerText}
+                      onChange={(e) => setHeaderText(e.target.value)}
+                    />
+                  </label>
+                  {/* 兼容选项：这家中转的毛病跟着网关走，绑到它的 Agent 启动和「设为全局」都会带上 */}
+                  <p className="text-micro text-l3">兼容选项：这家中转有下面的毛病时再开，绑到它的连接启动和设为全局都会带上</p>
+                  <label className="flex items-center gap-2">
+                    <span className="w-28 shrink-0">请求超时</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={3600}
+                      placeholder="默认"
+                      className={`${fieldClass} w-24`}
+                      value={compatTimeout}
+                      onChange={(e) => setCompatTimeout(e.target.value)}
+                    />
+                    <span className="text-micro text-l3">秒。中转慢、长思考常超时时调大（Claude Code、Codex）</span>
+                  </label>
+                  <Checkbox
+                    checked={compatNoBetas}
+                    onChange={setCompatNoBetas}
+                    label={
+                      <span>
+                        不发实验性请求头
+                        <span className="ml-2 text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
+                      </span>
+                    }
+                  />
+                  <Checkbox
+                    checked={compatNoThinking}
+                    onChange={setCompatNoThinking}
+                    label={
+                      <span>
+                        不发思考参数
+                        <span className="ml-2 text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
+                      </span>
+                    }
+                  />
+                </div>
+              )}
+            </div>
+            {/* 查余额：设一次就不再动，和协议槽、Header 同样收成折叠行（原先带框常驻，比密钥还显眼） */}
+            {showWalletFields && (
+              <div>
+                <button
+                  type="button"
+                  className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
+                  onClick={() => setShowWallet((v) => !v)}
+                >
+                  <FoldMark open={showWallet} />
+                  <span className="flex-1">查余额（New API 站点）</span>
+                  <span className="text-micro text-l3">
+                    {walletToken.trim()
+                      ? "已填，保存后生效"
+                      : editing !== "new" && editing.walletKeyHint
+                        ? `已设令牌 ${editing.walletKeyHint}`
+                        : "未设置"}
+                  </span>
+                </button>
+                {showWallet && (
+              <div className="space-y-3 pt-1">
+                <p className="text-micro text-l3">
+                  查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
+                </p>
+                <div className="text-sm text-l2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor={walletInputId}>系统访问令牌</label>
+                    {editing !== "new" && editing.walletKeyHint && (
+                      <button type="button" className={`${dangerGhostClass} -my-1`} onClick={() => void onClearWalletToken()}>
+                        清除系统访问令牌
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    id={walletInputId}
+                    className={`${fieldClass} mt-1 w-full`}
+                    type="password"
+                    value={walletToken}
+                    onChange={(e) => setWalletToken(e.target.value)}
+                    placeholder={
+                      editing !== "new" && editing.walletKeyHint
+                        ? `已保存 ${editing.walletKeyHint}，输入新令牌即替换`
+                        : "不是 sk- 推理密钥"
+                    }
+                  />
+                </div>
+                <label className="block text-sm text-l2">
+                  用户 ID（一般不用填）
+                  <input
+                    className={`${fieldClass} mt-1 w-full font-mono text-xs`}
+                    value={walletUserId}
+                    onChange={(e) => setWalletUserId(e.target.value)}
+                    placeholder="老站点才要"
+                  />
+                </label>
+              </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           // 2026-10-31 简化：每个网关一张可点的行卡（点了就是编辑），状态点挨着名字；测试 / 获取模型 / 删除悬停才出（图标钮）。
