@@ -179,7 +179,7 @@ Qwen 官方登录停用都是读文档才发现的）。每次发版前（archit
   只想快速看一家，可按 `scripts/cli-canary/README.md`「全局配置」一行的做法单跑 `e2e_write_global_config` 再手动起 CLI。临时 HOME 建在用户目录下。
 - **双端镜像要同改**：Claude 别名槽（`agents.rs claude_slot_models` ↔ `src/role-models.ts claudeAliasMap`，共读 `tests/fixtures/claude-slots.json`）；
   通道表 `request_policy_support` 的 `persist` 格子与写盘函数由 `policy_channel_table_agrees_with_patch_functions` 互锁，改一边测试会拦。
-- 连接弹层「看实际会拿到什么」（`EffectPreview`）显示的就是 `preview_launch_plan` / `preview_profile_global` 的结果：改完自己打开看一眼对不对。
+- 连接弹层「实际生效的设置」（`EffectPreview`）显示的就是 `preview_launch_plan` / `preview_profile_global` 的结果：改完自己打开看一眼对不对。
 - 用户看得见的变化同步 `CHANGELOG.md` 与 `docs/guide/user-guide.md` 第 9 章。
 
 ## 上游通道雷达

@@ -312,7 +312,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 单色图标集合（currentColor 的要 mask 渲染）；tests/vendor-icon.test.ts
   components/VendorIcon.tsx  # 厂商小图标：单色用 mask 按文字色画、彩色用 img、认不出给首字占位；素材 assets/vendor-icons/（署名见 THIRD-PARTY）
   components/ClaudeModelMapping.tsx # 连接弹层 Claude Code「怎么用这些模型」映射表（角色 → 模型、/model 显示名、1M 就地写能力声明）
-  components/EffectPreview.tsx # 连接弹层底部「看实际会拿到什么」：preview_effect 逐项对照表（启动 vs 设为全局，按已保存的连接算）+ 原始参数折叠行
+  components/EffectPreview.tsx # 连接弹层底部「实际生效的设置」：preview_effect 逐项对照表（启动 vs 设为全局，按已保存的连接算）+ 原始参数折叠行
   components/GatewayLibrary.tsx # 连接页网关库：五槽/密钥/获取模型/按槽体检/逐模型策略三态；
                              # 思考档勾多档，开场默认单选（reasoning-effort.ts）
                              # Base URL 主输入（2026-08-31）：空槽与仍等于旧主值的槽跟随主输入、手改即脱离；
@@ -2045,7 +2045,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   config_editor.rs           # 连接页「编辑配置文件」：config_files_read / config_file_save。密钥换成可还原占位（«已隐藏密钥 ···末4位 #哈希»）才出 Rust，
                              #   保存时重读磁盘按哈希还原、核版本、按格式校验，写盘只经 global_config::write_user_edit（同锁同批次备份）。
                              #   红线：不给前端原值、不加「显示密钥」；可编辑清单 = global_config::editable_config_files（不含 Codex auth.json）
-  effect_preview.rs          # 「看实际会拿到什么」对照表（preview_effect）：拿连接自己的地址 / 模型 / 密钥 / 窗口 / 请求参数去启动计划与设为全局后的文件里找落点，
+  effect_preview.rs          # 「实际生效的设置」对照表（preview_effect）：拿连接自己的地址 / 模型 / 密钥 / 窗口 / 请求参数去启动计划与设为全局后的文件里找落点，
                              #   不按家写映射；值出站前脱敏，密钥只给尾号与取法
   connection_snippet.rs      # 编辑连接弹层「配置」视图：connection_snippet_render / _parse，把一条连接按这家 CLI 格式（JSON / TOML）渲染成片段、解析回连接字段。
                              #   九家映射一张表（原生键 + mesa 小节），只收连接的键、多余的报错指去「编辑配置文件」；纯函数，不读写文件、不碰密钥原值

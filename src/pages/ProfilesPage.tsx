@@ -1025,21 +1025,27 @@ export function ProfileModal({
 
         {/* 编辑时先说清用的是哪个网关（地址、密钥、逐模型参数都在那边改）；有没保存的修改，去之前先问 */}
         {initial?.gatewayId && (
+          // 两行：网关名 / 地址与密钥尾号。协议、模型总数进悬停（原先一整行塞满，模型总数还和下面「N 个可对话模型」打架，2026-11-07）
           <div className="mb-3 flex items-center gap-2 rounded-md border border-hairline px-3 py-2 text-xs">
-            <span className="min-w-0 flex-1">
-              <span className="text-l3">网关 </span>
-              <span className="font-medium text-l1">{editGateway?.name ?? "（已删除）"}</span>
+            <span className="min-w-0 flex-1" title={editGateway ? gatewayPickerRows([editGateway])[0]?.detail : undefined}>
+              <span className="block truncate">
+                <span className="text-l3">网关 </span>
+                <span className="font-medium text-l1">{editGateway?.name ?? "（已删除）"}</span>
+              </span>
               {editGateway && (
-                <span className="text-l3">
-                  {" · "}
-                  {gatewayPickerRows([editGateway])[0]?.detail}
+                <span className="mt-0.5 block truncate text-micro text-l3">
+                  {gatewayHostLine(editGateway, "")}
                   {editGateway.keyHint ? ` · 密钥 ${editGateway.keyHint}` : ""}
                 </span>
               )}
-              <span className="mt-0.5 block text-micro text-l3">地址、密钥和每个模型的思考档 / 温度在网关库改</span>
             </span>
             {onOpenGateway && (
-              <button type="button" className={`${rowActionClass} shrink-0`} onClick={() => void leaveToGateway(initial.gatewayId!)}>
+              <button
+                type="button"
+                className={`${rowActionClass} shrink-0`}
+                title="地址、密钥和每个模型的思考档 / 温度都在网关库里改"
+                onClick={() => void leaveToGateway(initial.gatewayId!)}
+              >
                 在网关库改
               </button>
             )}
@@ -1752,12 +1758,13 @@ export function ProfileModal({
           const suggestion = first ? `${effectiveName} · ${first}` : null;
           const usable = suggestion && !sameNameTaken(suggestion) ? suggestion : null;
           return (
-            <p className="-mt-2 mb-3 flex flex-wrap items-center gap-x-2 text-xs text-warn-text">
-              <span>这个 Agent 下已有同名连接，启动栏里会分不清。</span>
-              {usable ? (
+            // 提示一行、改名按钮另起一行做成正经按钮（原先跟在黄字后面像普通文字，看不出能点）
+            <div className="-mt-2 mb-3 space-y-1.5">
+              <p className="text-xs text-warn-text">这个 Agent 下已有同名连接，启动栏里会分不清{usable ? "。" : "，建议加上模型或用途。"}</p>
+              {usable && (
                 <button
                   type="button"
-                  className="font-medium text-l2 hover:text-l1"
+                  className={rowActionClass}
                   onClick={() => {
                     setNameTouched(true);
                     setForm({ ...form, name: usable });
@@ -1765,10 +1772,8 @@ export function ProfileModal({
                 >
                   改成「{usable}」
                 </button>
-              ) : (
-                <span>建议加上模型或用途。</span>
               )}
-            </p>
+            </div>
           );
         })()}
         <details

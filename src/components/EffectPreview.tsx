@@ -4,7 +4,7 @@ import { FoldMark } from "./PageFrame";
 import type { EffectCellDto, EffectPreviewDto } from "../types";
 
 /**
- * 连接弹层底部「看实际会拿到什么」：默认折叠成一行，展开是逐项对照表（2026-11-01 用户：原来左边命令行原文、
+ * 连接弹层底部「实际生效的设置」（2026-11-07 由「看实际会拿到什么」改名：用户看不懂在说什么）：默认折叠成一行，展开是逐项对照表（2026-11-01 用户：原来左边命令行原文、
  * 右边只列差异，对比看不出什么）。每行一项（地址 / 默认模型 / 密钥 / 上下文窗口 / 请求参数），
  * 左列在 Mesa 里启动时落在哪、右列设为全局后外面直接用时落在哪，两边不一致的行标出来。
  * 数据来自 preview_effect（effect_preview.rs），按**已保存**的连接算；命令行原文与文件改动收在表下折叠行。
@@ -36,8 +36,8 @@ export function EffectPreview({ profileId, setGlobalReason }: { profileId: strin
     >
       <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 text-xs text-l2 [&::-webkit-details-marker]:hidden">
         <FoldMark open={open} />
-        <span>看实际会拿到什么</span>
-        <span className="text-micro text-l3">按已保存的内容算，改了先保存</span>
+        <span>实际生效的设置</span>
+        <span className="min-w-0 truncate text-micro text-l3">在 Mesa 里启动、设为全局后，各用哪个地址、模型和密钥（按已保存的内容算）</span>
       </summary>
       {open &&
         (data === null ? (
