@@ -123,25 +123,32 @@ function ModelClassFilter({
   onVendor,
   filter,
   onFilter,
+  trailing,
 }: {
   ids: string[];
   vendor: string;
   onVendor: (vendor: string) => void;
   filter: string;
   onFilter: (value: string) => void;
+  /** 筛选框右边的动作（网关库的「＋ 手填模型」） */
+  trailing?: ReactNode;
 }) {
   const groups = groupModelsByVendor(ids);
   return (
     <div className="space-y-1">
-      <input
-        className={`${searchFieldClass} w-full`}
-        placeholder="筛选模型名…"
-        value={filter}
-        onChange={(e) => onFilter(e.target.value)}
-      />
+      <div className="flex items-center gap-2">
+        <input
+          className={`${searchFieldClass} min-w-0 flex-1`}
+          placeholder="筛选模型名…"
+          value={filter}
+          onChange={(e) => onFilter(e.target.value)}
+        />
+        {trailing}
+      </div>
+      {/* 厂商分组已按家合并（model-vendors.ts），胶囊直接换行铺开，不再套一个带滚动条的小框 */}
       {groups.length > 1 && (
         <div
-          className="flex max-h-16 flex-wrap gap-1 overflow-auto"
+          className="flex flex-wrap gap-1"
           role="radiogroup"
           aria-label="模型分类"
         >
@@ -220,9 +227,14 @@ function VendorModelSections({
                 <span className="text-micro text-l4">{group.models.length}</span>
               </button>
             )}
-            {open && group.models.map((id) => (
-              <Fragment key={id}>{renderItem(id)}</Fragment>
-            ))}
+            {/* 折叠成厂商组时模型缩进一级，组名和模型名不再同一列（原先分不清哪行是组） */}
+            {open && (
+              <div className={foldVendors ? "pl-4" : undefined}>
+                {group.models.map((id) => (
+                  <Fragment key={id}>{renderItem(id)}</Fragment>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
@@ -362,6 +374,7 @@ export default function GatewayLibrary({
   const [presetName, setPresetName] = useState("");
   // 手填进目录的模型名（拉不到 /models 的端点要靠它）
   const [manualModel, setManualModel] = useState("");
+  const [showManual, setShowManual] = useState(false);
   // 模型区「只看已设置」
   const [onlySet, setOnlySet] = useState(false);
   // 列表行上「测试」进行中的网关
@@ -507,6 +520,7 @@ export default function GatewayLibrary({
     setPolicyOpenVendors(new Set());
     setPresetName("");
     setManualModel("");
+    setShowManual(false);
     setOnlySet(false);
     if (g === "new") {
       setEditing("new");
@@ -1223,6 +1237,28 @@ export default function GatewayLibrary({
     return Boolean(m && modelHasPolicy(m));
   });
 
+  const manualRow = (
+    <div className="flex items-center gap-2">
+      <input
+        aria-label="手填模型名"
+        className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
+        placeholder="手填模型名，如 glm-5.3，回车加入"
+        autoFocus={models.length > 0}
+        value={manualModel}
+        onChange={(e) => setManualModel(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addManualModel();
+          }
+        }}
+      />
+      <button type="button" className={`${rowActionClass} shrink-0`} onClick={addManualModel}>
+        加入
+      </button>
+    </div>
+  );
+
   return (
     // 整页面板（2026-11-01，取代 10-31 的统一弹层）：‹ 返回 / Esc 走 closeLibrary 或回列表（有没保存的修改先问）
     <PagePanel
@@ -1414,25 +1450,9 @@ export default function GatewayLibrary({
               </button>
               {showModels && (
                 <div className="mt-1 space-y-1">
-                  {/* 手填：拉不到 /models 的端点（如智谱 api/v1）靠它建目录 */}
-                  <div className="flex items-center gap-2">
-                    <input
-                      aria-label="手填模型名"
-                      className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
-                      placeholder="手填模型名，如 glm-5.3"
-                      value={manualModel}
-                      onChange={(e) => setManualModel(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addManualModel();
-                        }
-                      }}
-                    />
-                    <button type="button" className={`${rowActionClass} shrink-0`} onClick={addManualModel}>
-                      ＋ 加入
-                    </button>
-                  </div>
+                  {/* 手填：拉不到 /models 的端点（如智谱 api/v1）靠它建目录。目录有模型时收成筛选框旁的「＋ 手填模型」，
+                      常用的筛选放最上面（原先两个输入框叠着，手填在上、样式还不一样，2026-11-07） */}
+                  {models.length === 0 && manualRow}
                   {models.length > 0 && (
                     <>
                       <ModelClassFilter
@@ -1441,7 +1461,18 @@ export default function GatewayLibrary({
                         onVendor={setPolicyVendor}
                         filter={policyFilter}
                         onFilter={setPolicyFilter}
+                        trailing={
+                          <button
+                            type="button"
+                            className={`${ghostActionClass} shrink-0`}
+                            aria-expanded={showManual}
+                            onClick={() => setShowManual((v) => !v)}
+                          >
+                            {showManual ? "收起手填" : "＋ 手填模型"}
+                          </button>
+                        }
                       />
+                      {showManual && manualRow}
                       {models.some(modelHasPolicy) && (
                         <Checkbox className="text-xs text-l3" checked={onlySet} onChange={setOnlySet} label="只看设了参数的" />
                       )}
@@ -1516,25 +1547,26 @@ export default function GatewayLibrary({
                               <span className="ml-2 rounded-full bg-cta-pill px-1.5 py-px font-sans text-micro text-cta-pill-text">已设参数</span>
                             )}
                           </span>
-                          <span className="font-sans text-micro text-l3">
+                          <span className={`font-sans text-micro text-l3 ${m.status === "stale" ? "" : "group-focus-within:hidden group-hover:hidden"}`}>
                             {(cap ?? combo)?.thinking ? "思考" : ""}
                             {(cap ?? combo)?.vision ? " 视觉" : ""}
                             {cap?.context ? ` ${contextLabel(cap.context)}` : ""}
                           </span>
                         </button>
-                        {/* 失效的常驻，其余悬停才出：已绑连接名单里的不受影响 */}
+                        {/* 失效的常驻，其余悬停才出、出来时顶替右边的能力摘要（原先隐形占位，摘要和厂商组的计数对不齐）；已绑连接名单里的不受影响 */}
                         <button
                           type="button"
                           aria-label={`从目录移除 ${m.id}`}
                           title="从这个网关的目录里移除（已绑连接的名单不受影响）；保存网关后生效"
-                          className={`shrink-0 px-1.5 text-micro text-l3 hover:text-err-text ${m.status === "stale" ? "" : "opacity-0 group-hover:opacity-100 focus:opacity-100"}`}
+                          className={`shrink-0 text-micro text-l3 hover:text-err-text ${m.status === "stale" ? "px-1.5" : "hidden group-focus-within:inline group-hover:inline"}`}
                           onClick={() => removeModel(m.id)}
                         >
                           移除
                         </button>
                         </div>
+                        {/* 展开的参数铺一块浅底、缩进到模型名下，和下一行模型分得开 */}
                         {open && (
-                          <div className="mt-1 space-y-1 pl-5">
+                          <div className="mb-1 ml-5 mt-1 space-y-2 rounded-lg ccode-well p-3">
                             {combo?.probeNote && (
                               <InlineNotice tone="warn" size="micro">{combo.probeNote}</InlineNotice>
                             )}
@@ -1561,6 +1593,8 @@ export default function GatewayLibrary({
                                 />
                               </div>
                             )}
+                            {/* 温度 / top_p / 输出上限并成一行三格（原先各占整行，一个模型展开就是一屏） */}
+                            <div className="grid grid-cols-3 gap-2">
                             {tempMode !== "hidden" && (
                               <label className="block text-micro text-l3">
                                 温度
@@ -1580,6 +1614,7 @@ export default function GatewayLibrary({
                                   step="0.1"
                                   min="0"
                                   max="2"
+                                  placeholder="默认"
                                   value={m.temperature ?? ""}
                                   onChange={(e) =>
                                     patchModel(m.id, { temperature: numOrNull(e.target.value) })
@@ -1606,6 +1641,7 @@ export default function GatewayLibrary({
                                   step="0.05"
                                   min="0"
                                   max="1"
+                                  placeholder="默认"
                                   value={m.topP ?? ""}
                                   onChange={(e) => patchModel(m.id, { topP: numOrNull(e.target.value) })}
                                 />
@@ -1628,6 +1664,7 @@ export default function GatewayLibrary({
                                   type="number"
                                   disabled={maxMode === "readonly"}
                                   min="1"
+                                  placeholder="默认"
                                   value={m.maxOutputTokens ?? ""}
                                   onChange={(e) =>
                                     patchModel(m.id, {
@@ -1637,8 +1674,9 @@ export default function GatewayLibrary({
                                 />
                               </label>
                             )}
+                            </div>
                             {/* 能力声明另存：不随「保存网关」，点下面的钮立刻写、对本机所有 Agent 生效——单独成块并写明，免得以为能被「取消」撤回 */}
-                            <div className="mt-2 rounded-md border border-hairline p-2">
+                            <div className="border-t border-hairline pt-2 first:border-t-0 first:pt-0">
                               <p className="text-micro text-l2">
                                 能力声明
                                 <span className="ml-1.5 rounded-full bg-warn px-1.5 py-px text-warn-text">单独保存 · 对所有 Agent 生效</span>
@@ -1651,7 +1689,7 @@ export default function GatewayLibrary({
                                   : "加载中…"}
                                 {capOverrides[m.id] ? " · 已声明（最高优先）" : ""}
                               </p>
-                              <div className="mt-1">
+                              <div className="mt-1 grid grid-cols-3 gap-2">
                                 <label className="block text-micro text-l3">
                                   上下文窗口
                                   <input
@@ -1666,7 +1704,6 @@ export default function GatewayLibrary({
                                     }
                                   />
                                 </label>
-                                <div className="mt-1 grid grid-cols-2 gap-2">
                                   {(["thinking", "vision"] as const).map((field) => (
                                     <div key={field} className="text-micro text-l3">
                                       {field === "thinking" ? "思考" : "看图"}
@@ -1684,7 +1721,6 @@ export default function GatewayLibrary({
                                       </span>
                                     </div>
                                   ))}
-                                </div>
                               </div>
                               <div className="mt-1">
                                 <button

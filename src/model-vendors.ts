@@ -10,16 +10,38 @@ export interface VendorGroup {
 }
 
 /**
+ * 常见模型名前缀 → 厂商分组（2026-11-07：按「字母+数字」前缀分组时 qwen / qwen3、o3 / o4、wan2 / wanx2 各成一组，
+ * 大网关的分类胶囊挤成两三行）。只收前缀确定属于这家的；没收的照旧取前缀字母段。
+ */
+const VENDOR_FAMILIES: [RegExp, string][] = [
+  [/^(gpt|chatgpt|o\d|text-embedding|text-moderation|dall-e|davinci|babbage|whisper|tts|codex|omni-moderation|sora)/i, "openai"],
+  [/^claude/i, "claude"],
+  [/^(gemini|gemma|imagen|veo|learnlm)/i, "gemini"],
+  [/^(qwen|qwq|qvq|wan[x\d.-]|wanx|tongyi)/i, "qwen"],
+  [/^deepseek/i, "deepseek"],
+  [/^(glm|chatglm|cogview|cogvideo|codegeex)/i, "glm"],
+  [/^(kimi|moonshot)/i, "kimi"],
+  [/^(minimax|abab|hailuo)/i, "minimax"],
+  [/^grok/i, "grok"],
+  [/^(doubao|seedream|seedance|seed-)/i, "doubao"],
+  [/^(mistral|mixtral|codestral|magistral|devstral|ministral|pixtral)/i, "mistral"],
+  [/^llama/i, "llama"],
+  [/^(ernie|wenxin)/i, "ernie"],
+  [/^hunyuan/i, "hunyuan"],
+];
+
+/**
  * 从模型 id 推断厂商名（仅用于展示分组，宁粗勿错）：
- * openrouter 风格 "vendor/model" 取斜杠前段；否则取开头「字母+数字」段
- * （gpt-5.6-sol → gpt、o3-pro → o3、Qwen3-32B → qwen3）；完全不匹配归「其他」。
+ * openrouter 风格 "vendor/model" 取斜杠前段；否则先查常见前缀表（gpt-5.6-sol、o3-pro → openai，Qwen3-32B → qwen），
+ * 表外取开头字母段（去掉版本数字）；完全不匹配归「其他」。
  */
 export function vendorOf(model: string): string {
   const m = model.trim();
   if (!m) return "其他";
   const slash = m.indexOf("/");
   if (slash > 0) return m.slice(0, slash).toLowerCase();
-  const match = /^[a-zA-Z]+\d*/.exec(m);
+  for (const [re, vendor] of VENDOR_FAMILIES) if (re.test(m)) return vendor;
+  const match = /^[a-zA-Z]+/.exec(m);
   return match ? match[0].toLowerCase() : "其他";
 }
 

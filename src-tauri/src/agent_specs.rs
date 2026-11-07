@@ -1143,7 +1143,8 @@ fn tier_note(agent: &str) -> &'static str {
 pub(crate) fn policy_channel_note(agent: &str) -> Option<&'static str> {
     match agent {
         // overlay 白名单只放行 [models] 全局默认；逐模型 api_backend/context_window 走设为全局
-        "grok" => Some("策略经 GROK_CONFIG overlay 的 [models] 全局默认注入；api_backend / context_window 需绑定「API 后端」字段 + 设为全局默认写入"),
+        // 界面原样显示给用户：只写白话（2026-11-07 由 overlay / api_backend 等内部词改写）
+        "grok" => Some("Grok：这里的参数在启动时作为 Grok 所有模型的默认值带上；API 后端和上下文窗口要在 Grok 连接里设好，再「设为全局默认」才会写入"),
         _ => None,
     }
 }
