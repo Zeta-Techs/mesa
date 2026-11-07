@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Checkbox, FoldMark, MenuSelect, fieldClass } from "./PageFrame";
+import { Info } from "lucide-react";
 import type { ModelCapabilityDto, ModelCapsOverrideDto, RoleModels } from "../types";
 import { claudeCustomOption, explicitClaudeRoles } from "../role-models";
 import { contextLabel } from "../model-caps-label";
@@ -37,6 +38,13 @@ export function ClaudeModelMapping({
   const [error, setError] = useState<string | null>(null);
   // 显示名很少改：收在表下一行，点开再逐个填（2026-10-31：四列在窄弹层里全被截断）
   const [namesOpen, setNamesOpen] = useState(false);
+  // 别的角色多数时候全跟默认：收成一行，点开才是整张表（2026-11-07，原先六行下拉对第一次用的人太重）。
+  // 有角色指向和默认不同的模型时打开就展开，免得藏住现有设置（旧绑定按名单顺序算出的「= 默认」不算）
+  const [rolesOpen, setRolesOpen] = useState(() => {
+    const r = explicitClaudeRoles(models, roles);
+    const differs = (v: string | null | undefined) => Boolean(v) && v !== models[0];
+    return Object.values(r.slots ?? {}).some(differs) || differs(r.small) || differs(r.subagent);
+  });
   const modelsKey = models.join("\n");
 
   async function loadCaps() {
@@ -96,12 +104,25 @@ export function ClaudeModelMapping({
     { key: "subagent", label: "子 Agent", hint: "主对话派出去的子任务（Agent / Task 工具）", value: explicit.subagent ?? "", onChange: (v) => set({ subagent: v || null }), showsInPicker: false, withFollow: true },
   ];
   const extra = claudeCustomOption(models, explicit, main);
+  // 指向的就是默认那个模型，和「跟默认」看起来一样，摘要里不算单独指定
+  const customRows = rows.slice(1).filter((r) => r.value && r.value !== main);
   const names = explicit.displayNames ?? {};
 
   return (
     <div className="mb-4">
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-xs text-l3">Claude Code 怎么用这些模型</span>
+        <span className="flex items-center gap-1 text-xs text-l3">
+          Claude Code 怎么用这些模型
+          {/* 原先表底一大段说明：收进标题旁的 ⓘ，悬停 / 聚焦才看 */}
+          <span
+            tabIndex={0}
+            className="inline-flex cursor-help text-l4 hover:text-l2 focus:text-l2"
+            title={MAPPING_NOTE}
+            aria-label={MAPPING_NOTE}
+          >
+            <Info className="size-3.5" aria-hidden="true" />
+          </span>
+        </span>
         <button
           type="button"
           className="text-l3 hover:text-l1"
@@ -115,8 +136,8 @@ export function ClaudeModelMapping({
         <div className="grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 text-xs">
           <span className="text-micro text-l3">角色</span>
           <span className="text-micro text-l3">实际请求模型</span>
-          <span className="text-micro text-l3" title="勾上 = 声明这个模型支持 1M 上下文">上下文 · 声明 1M</span>
-          {rows.map((r) => {
+          <span className="text-micro text-l3">上下文</span>
+          {(rolesOpen ? rows : rows.slice(0, 1)).map((r) => {
             const effective = r.value || main;
             const cap = caps[effective];
             const ov = overrides[effective.toLowerCase()] ?? overrides[effective];
@@ -134,27 +155,53 @@ export function ClaudeModelMapping({
                     onChange={r.onChange}
                   />
                 </span>
-                {/* 先写长度、再放「1M」勾选（原先「1M 128K」读起来像两个数） */}
+                {/* 先写长度、再放「1M」勾选（原先「1M 128K」读起来像两个数）。能力库确知不到 1M 的不给勾选——
+                    只在长度未知、已经是 1M 或已声明过时出现，勾选框带可见的「1M」字样（原先每行一个光秃秃的空框） */}
                 <span className="flex items-center justify-end gap-2">
                   <span className="w-10 text-right text-micro text-l3">
                     {contextLabel(cap?.context) ?? (oneM.checked ? "1M" : "未知")}
                   </span>
-                  <Checkbox
-                    checked={oneM.checked}
-                    disabled={oneM.locked || pending === effective}
-                    onChange={(on) => void toggle1M(effective, on)}
-                    label={<span className="sr-only">{`声明 ${effective} 支持 1M 上下文`}</span>}
-                    title={
-                      oneM.locked
-                        ? `能力库确知 ${effective} 有 1M 上下文`
-                        : `声明 ${effective} 支持 1M 上下文：对所有 Agent 生效（网关库「能力声明」同一处）`
-                    }
-                  />
+                  {cap?.context == null || oneM.checked ? (
+                    <Checkbox
+                      className="text-micro text-l3"
+                      checked={oneM.checked}
+                      disabled={oneM.locked || pending === effective}
+                      onChange={(on) => void toggle1M(effective, on)}
+                      label={
+                        <>
+                          <span aria-hidden="true">1M</span>
+                          <span className="sr-only">{`声明 ${effective} 支持 1M 上下文`}</span>
+                        </>
+                      }
+                      title={
+                        oneM.locked
+                          ? `能力库确知 ${effective} 有 1M 上下文`
+                          : `声明 ${effective} 支持 1M 上下文：对所有 Agent 生效（网关库「能力声明」同一处）`
+                      }
+                    />
+                  ) : (
+                    <span className="w-8" aria-hidden="true" />
+                  )}
                 </span>
               </div>
             );
           })}
         </div>
+        <button
+          type="button"
+          className="mt-2 flex w-full items-center gap-1.5 text-left text-l3 hover:text-l1"
+          aria-expanded={rolesOpen}
+          onClick={() => setRolesOpen((v) => !v)}
+        >
+          <FoldMark open={rolesOpen} />
+          <span className="text-xs">
+            {rolesOpen
+              ? "收起其他角色"
+              : customRows.length === 0
+                ? "Sonnet / Opus / Haiku / Fable / 子 Agent 都用默认模型，点开分别指定"
+                : `其他角色：${customRows.map((r) => r.label).join("、")} 已单独指定`}
+          </span>
+        </button>
         {/* /model 菜单里的显示名：只列会出现在菜单里的模型（子 Agent 不进菜单） */}
         <div className="mt-2 border-t border-hairline pt-2">
           <button
@@ -194,14 +241,13 @@ export function ClaudeModelMapping({
         </div>
         <ExtraOptionNote model={extra} />
         {error && <p className="mt-2 text-micro text-err-text">{error}</p>}
-        <p className="mt-2 text-micro leading-4 text-l3">
-          「跟默认」= 启动时选的模型（没选就是「默认」一行）。只作用于 Mesa 启动的会话和「设为全局默认」；你本机 Claude
-          设置里的同名配置在 Mesa 启动时会被盖过。勾 1M 是声明这个模型本身的能力，所有 Agent 共用。
-        </p>
       </div>
     </div>
   );
 }
+
+const MAPPING_NOTE =
+  "「跟默认」= 启动时选的模型（没选就是「默认」一行）。只作用于 Mesa 启动的会话和「设为全局默认」；你本机 Claude 设置里的同名配置在 Mesa 启动时会被盖过。勾 1M 是声明这个模型本身的能力，所有 Agent 共用。";
 
 function ExtraOptionNote({ model: extra }: { model: string | null }) {
   if (!extra) return null;

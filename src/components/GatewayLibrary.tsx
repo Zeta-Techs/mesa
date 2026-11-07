@@ -1990,6 +1990,18 @@ export default function GatewayLibrary({
             {gateways.length === 0 && (
               <li className="py-8 text-center text-sm text-l3">还没有网关。点右上角「＋ 新建网关」，或在添加连接时新建。</li>
             )}
+            {/* 宽的时候拆成几列，给一行列头（原先「没有连接」「—」单看不知道是哪一列）；占位宽度与下面行里各列一一对应 */}
+            {gateways.length > 0 && (
+              <li aria-hidden="true" className="hidden items-center gap-3 px-2.5 pb-1 text-micro text-l4 @4xl:flex">
+                <span className="w-4 shrink-0" />
+                <span className="min-w-0 flex-1">网关</span>
+                <span className="w-56 shrink-0">地址</span>
+                <span className="w-20 shrink-0 text-right">连接</span>
+                <span className="w-32 shrink-0 text-right">近 30 天</span>
+                <span className="w-28 shrink-0" />
+                <span className="w-4 shrink-0" />
+              </li>
+            )}
             {gatewayPickerRows(gateways).map((row) => {
               const g = gateways.find((item) => item.id === row.id);
               if (!g) return null;
@@ -2044,11 +2056,12 @@ export default function GatewayLibrary({
                       )}
                     </span>
                   </span>
-                  <span className="hidden w-72 shrink-0 truncate text-xs text-l3 @4xl:block" title={row.detail}>
+                  {/* 各固定列收窄（地址 w-72→w-56、花费 w-44→w-32），名字列不再被挤成「智谱 Coding P…」 */}
+                  <span className="hidden w-56 shrink-0 truncate text-xs text-l3 @4xl:block" title={row.detail}>
                     {gatewayHostLine(g, row.detail)}
                   </span>
-                  <span className="hidden w-20 shrink-0 text-right text-xs text-l3 @4xl:block">{n ? `${n} 个连接` : "没有连接"}</span>
-                  <span className="hidden w-44 shrink-0 text-right text-xs text-l3 @4xl:block">
+                  <span className="hidden w-20 shrink-0 text-right text-xs text-l3 @4xl:block">{n ? `${n} 个` : "—"}</span>
+                  <span className="hidden w-32 shrink-0 truncate text-right text-xs text-l3 @4xl:block">
                     {usage ? (
                       <button
                         type="button"
@@ -2059,13 +2072,14 @@ export default function GatewayLibrary({
                           onJumpUsage?.(g.id);
                         }}
                       >
-                        {usage}
+                        {/* 列头已写「近 30 天」，格子里不再重复 */}
+                        {usage.replace(/^近 30 天 /, "")}
                       </button>
                     ) : (
                       "—"
                     )}
                   </span>
-                  <span className={`flex shrink-0 items-center ${hoverRevealClass}`} onClick={(e) => e.stopPropagation()}>
+                  <span className={`flex w-28 shrink-0 items-center ${hoverRevealClass}`} onClick={(e) => e.stopPropagation()}>
                     <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
                     <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
                     <RowAction icon={<Wand2 className="size-3.5" />} tip="一键配置各 CLI：每个装了的 CLI 用目录里各家最新的模型" label={`用 ${row.name} 一键配置各 CLI`} onClick={() => setAutoConfigFor(g.id)} />

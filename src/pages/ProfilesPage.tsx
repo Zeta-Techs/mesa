@@ -314,6 +314,8 @@ export function ProfileModal({
     Boolean(opening?.gateway && opening.gateway.models.length > 0),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // 有目录时名单尾部不常驻手填空行（选模型只走上面的面板），点「＋ 手填目录里没有的模型」才出
+  const [manualSlotOpen, setManualSlotOpen] = useState(false);
   const [pickerFilter, setPickerFilter] = useState("");
   const [openVendors, setOpenVendors] = useState<ReadonlySet<string>>(new Set());
   // 模型面板当前看哪个厂商胶囊；空 = 自动（常用 > 第一个已选模型那家 > 全部）
@@ -1331,19 +1333,6 @@ export function ProfileModal({
           {/* 选用已有网关 / 编辑绑定：目录在网关；此处可现拉并写入，不改当前勾选 */}
           {!showGatewayFields && catalogGatewayId && form.accountType === "api" && (
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void refreshExistingCatalog()}
-                disabled={fetching}
-                title="重新拉取这个网关的模型目录并保存；不会改当前已勾选的模型"
-                className={`${rowActionClass} shrink-0 whitespace-nowrap`}
-              >
-                {fetching
-                  ? "获取中…"
-                  : gatewayCatalog && gatewayCatalog.length > 0
-                    ? "刷新目录"
-                    : "获取目录"}
-              </button>
               {gatewayCatalog && gatewayCatalog.length > 0 && (
                 <button
                   type="button"
@@ -1362,6 +1351,20 @@ export function ProfileModal({
                   <FoldMark open={pickerOpen} />
                 </button>
               )}
+              {/* 刷新目录是少用的辅助动作：有目录时降成选择框右边的灰字（原先排在选择框左边像主操作）；没目录时它就是主操作 */}
+              <button
+                type="button"
+                onClick={() => void refreshExistingCatalog()}
+                disabled={fetching}
+                title="重新拉取这个网关的模型目录并保存；不会改当前已勾选的模型"
+                className={`${gatewayCatalog && gatewayCatalog.length > 0 ? ghostActionClass : rowActionClass} shrink-0 whitespace-nowrap`}
+              >
+                {fetching
+                  ? "获取中…"
+                  : gatewayCatalog && gatewayCatalog.length > 0
+                    ? "刷新目录"
+                    : "获取目录"}
+              </button>
               {(!gatewayCatalog || gatewayCatalog.length === 0) && (
                 <span className="text-micro text-l3">
                   还没有目录，点「获取目录」拉取，或在下方手填。
@@ -1493,7 +1496,9 @@ export function ProfileModal({
             const max = MODEL_SWITCH[form.agent]?.max ?? null;
             const filled = form.models.filter((m) => m.trim()).length;
             const slots = [...form.models];
-            if (slots.length === 0 || slots[slots.length - 1].trim() !== "")
+            // 有目录时选模型只走上面的面板，名单这里只管顺序和删除；手填空行点了才出（2026-11-07，原先两处都能加，像两套入口）
+            const manualSlot = pickerModels.length === 0 || manualSlotOpen;
+            if (manualSlot && (slots.length === 0 || slots[slots.length - 1].trim() !== ""))
               slots.push("");
             const firstFilled = slots.findIndex((m) => m.trim());
             // Claude Code 的默认和各别名在下面的映射表里定：名单这里不再标「默认」/「设为默认」，免得两处各改一半
@@ -1558,6 +1563,7 @@ export function ProfileModal({
                       aria-label={`第 ${i + 1} 个模型`}
                       className="min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs text-l2 outline-none placeholder:font-sans placeholder:text-l3"
                       placeholder={!m.trim() && i === slots.length - 1 && filled > 0 ? "再加一个模型" : `添加${modelPlaceholder}`}
+                      autoFocus={manualSlotOpen && !m.trim() && i === slots.length - 1}
                       value={m}
                       onChange={(e) => setModelSlot(i, e.target.value)}
                     />
@@ -1596,7 +1602,16 @@ export function ProfileModal({
                     </button>
                   </div>
                 ))}
-                {max != null && filled >= max && (
+                {!manualSlot && (
+                  <button
+                    type="button"
+                    onClick={() => setManualSlotOpen(true)}
+                    className="px-2 py-1 text-l3 hover:text-l1"
+                  >
+                    <span className="text-xs">＋ 手填目录里没有的模型</span>
+                  </button>
+                )}
+                {max != null && filled >= max && manualSlot && (
                   <button
                     type="button"
                     onClick={() =>
