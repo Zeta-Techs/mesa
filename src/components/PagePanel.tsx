@@ -6,7 +6,7 @@ import { iconActionClass } from "./PageFrame";
 
 /**
  * 整页面板（2026-11-01 用户拍板，取代连接页的添加 / 编辑连接与网关库弹层）：
- * 盖住整个内容区（左侧主导航留着），实底无遮罩，从右侧滑入（ccode-sheet-right，220ms，设计系统侧滑抽屉口径）；
+ * 盖住整个内容区（左侧主导航留着），实底无遮罩，从右侧滑入（ccode-page-in，220ms，只滑不淡——实底整块盖住内容区，淡入等于和底下页面交叉淡化）；
  * 顶部「‹ 标题」返回，内容居中单列滚动，底部操作条常驻（分区目录 2026-11-01 试过，用户：没啥用，撤掉）。Esc = 返回（onBack，由调用方决定要不要先确认）。
  *
  * 定位：连接页容器本身会滚动、内容区 main 没有定位，所以面板 fixed 到 body、按 `.ccode-app-main` 的位置与圆角实时对齐，
@@ -52,11 +52,15 @@ export default function PagePanel({
   const [scrolled, setScrolled] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
 
-  // 打开时把焦点移进面板，关掉还给打开前的元素
+  // 打开时把焦点移进面板，关掉还给打开前的元素。移焦点会强制排版：等第一帧画出来再做，不挤占第一帧
+  // （2026-11-07 WKWebView 实测：聚焦 + 底下设 inert 让第一帧晚 15ms 左右）
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus({ preventScroll: true });
-    return () => prev?.focus?.({ preventScroll: true });
+    const raf = afterFirstPaint(() => panelRef.current?.focus({ preventScroll: true }));
+    return () => {
+      raf.cancel();
+      prev?.focus?.({ preventScroll: true });
+    };
   }, []);
 
   // 底下的页面内容设 inert：Tab 不会跑到被盖住的列表上、读屏也不念（原 Modal 的焦点圈住由它顶替）
@@ -64,9 +68,15 @@ export default function PagePanel({
     if (hidden) return;
     const main = document.querySelector<HTMLElement>(".ccode-app-main");
     if (!main || main.inert) return;
-    main.inert = true;
+    // 设 inert 会让底下整页重算样式（连接页很大），同样放到第一帧之后
+    let set = false;
+    const raf = afterFirstPaint(() => {
+      main.inert = true;
+      set = true;
+    });
     return () => {
-      main.inert = false;
+      raf.cancel();
+      if (set) main.inert = false;
     };
   }, [hidden]);
 
@@ -114,7 +124,7 @@ export default function PagePanel({
       tabIndex={-1}
       aria-label={typeof title === "string" ? title : undefined}
       data-surface="canvas"
-      className={`fixed z-30 flex flex-col overflow-hidden bg-canvas outline-none ${animate ? "ccode-sheet-right" : ""}`}
+      className={`fixed z-30 flex flex-col overflow-hidden bg-canvas outline-none ${animate ? "ccode-page-in" : ""}`}
       style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height, borderRadius: rect.radius }}
     >
       {/* 与 PageHeader 同一套：ccode-page-header 的 0.5px 细线滚动后淡入（data-stuck）、页名 text-lg 粗体、副标题 micro / l4 基线对齐 */}
@@ -157,6 +167,20 @@ export default function PagePanel({
 }
 
 /** `.ccode-app-main` 的位置、大小与圆角；窗口 / 侧栏宽度一变就跟着变 */
+/** 下一帧画出来之后再跑（两层 rAF：第一层在第一帧绘制前，第二层在它画完之后） */
+function afterFirstPaint(fn: () => void): { cancel: () => void } {
+  let inner = 0;
+  const outer = requestAnimationFrame(() => {
+    inner = requestAnimationFrame(fn);
+  });
+  return {
+    cancel: () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    },
+  };
+}
+
 function useMainRect() {
   const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number; radius: string } | null>(
     null,

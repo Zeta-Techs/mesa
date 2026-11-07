@@ -1601,6 +1601,21 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   animation: ccode-sheet-in-right 220ms var(--ccode-motion-spring);
 }
 
+/* 整页面板（PagePanel）入场：只滑不淡。面板是实底、整块盖住内容区，从透明淡入等于和底下页面交叉淡化，
+   第一帧晚到时一出来就是半透明叠着底下页面（2026-11-07 用户：「卡顿、隐现」；WKWebView 实测第一帧已到 0.3–0.4 透明度） */
+@keyframes ccode-page-in {
+  from {
+    transform: translateX(3%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.ccode-page-in {
+  animation: ccode-page-in 220ms var(--ccode-motion-spring);
+}
+
 .ccode-sheet-left {
   animation: ccode-sheet-in-left 220ms var(--ccode-motion-spring);
 }
@@ -2069,6 +2084,7 @@ button.ccode-nav-island-announce:hover {
   :where(.animate-pulse),
   .ccode-float-surface.ccode-exiting,
   .ccode-fade.ccode-exiting,
+  .ccode-page-in,
   .ccode-sheet-right,
   .ccode-sheet-left,
   .ccode-sheet-right.ccode-exiting,

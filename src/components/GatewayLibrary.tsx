@@ -71,7 +71,7 @@ const SLOT_LABELS: { key: keyof ProtocolSlots; label: string }[] = [
 
 /** 上次打开网关库时的「近 30 天」用量：再打开先显示它，新结果回来再换（不让那一列每次从空白弹出来） */
 let monthUsageCache: GatewayUsageRow[] = [];
-/** PagePanel 滑入时长（ccode-sheet-right 220ms）稍多一点：重拉放在它之后 */
+/** PagePanel 滑入时长（ccode-page-in 220ms）稍多一点：重拉放在它之后 */
 const SLIDE_IN_MS = 240;
 
 function emptySlots(): ProtocolSlots {
