@@ -99,7 +99,7 @@ import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { Modal } from "../components/Modal";
-import PagePanel from "../components/PagePanel";
+import PagePanel, { PAGE_PANEL_SLIDE_MS } from "../components/PagePanel";
 // 编辑配置文件弹层带 Monaco，打开时才加载
 const ConfigFileEditorDialog = lazy(() => import("../components/ConfigFileEditorDialog"));
 // 编辑连接的「配置」视图同理：切过去才加载 Monaco
@@ -416,8 +416,10 @@ export function ProfileModal({
   }, [form.agent]);
 
   useEffect(() => {
-    // 编辑绑定也要拿网关目录（模型选择器的数据源），不再仅限新建
-    void loadGateways();
+    // 编辑绑定也要拿网关目录（模型选择器的数据源），不再仅限新建。商店里已有一份可先用；
+    // 重拉回来会让整个连接页跟着重渲染，放到滑入走完再拉（同网关库口径），不在滑入的帧里插活
+    const timer = window.setTimeout(() => void loadGateways(), PAGE_PANEL_SLIDE_MS);
+    return () => window.clearTimeout(timer);
   }, [loadGateways]);
 
   useEffect(() => {

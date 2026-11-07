@@ -12,6 +12,9 @@ import { iconActionClass } from "./PageFrame";
  * 定位：连接页容器本身会滚动、内容区 main 没有定位，所以面板 fixed 到 body、按 `.ccode-app-main` 的位置与圆角实时对齐，
  * 不改 App 外壳。z-30（页内抽屉档）：Modal（z-40）、菜单（z-50）、确认框（z-70）都在它上面。
  */
+/** 滑入时长（ccode-page-in 220ms）稍多一点：打开后要做的重活（聚焦、设 inert、重拉列表）放在它之后，不在滑入的帧里插活 */
+export const PAGE_PANEL_SLIDE_MS = 240;
+
 export default function PagePanel({
   title,
   subtitle,
@@ -52,15 +55,18 @@ export default function PagePanel({
   const [scrolled, setScrolled] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
 
-  // 打开时把焦点移进面板，关掉还给打开前的元素。移焦点会强制排版：等第一帧画出来再做，不挤占第一帧
-  // （2026-11-07 WKWebView 实测：聚焦 + 底下设 inert 让第一帧晚 15ms 左右）
+  // 打开时把焦点移进面板，关掉还给打开前的元素。移焦点会强制排版：等滑入走完再做，不在滑入的帧里插活
+  // （2026-11-07 WKWebView 实测：聚焦 + 底下设 inert 约 15ms，放第一帧拖慢第一帧、放第二帧就卡第二帧）
+  const slideMs = animate ? PAGE_PANEL_SLIDE_MS : 0;
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    const raf = afterFirstPaint(() => panelRef.current?.focus({ preventScroll: true }));
+    const timer = window.setTimeout(() => panelRef.current?.focus({ preventScroll: true }), slideMs);
     return () => {
-      raf.cancel();
+      window.clearTimeout(timer);
       prev?.focus?.({ preventScroll: true });
     };
+    // 只在打开时跑一次；slideMs 是打开那一刻的值
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 底下的页面内容设 inert：Tab 不会跑到被盖住的列表上、读屏也不念（原 Modal 的焦点圈住由它顶替）
@@ -68,14 +74,14 @@ export default function PagePanel({
     if (hidden) return;
     const main = document.querySelector<HTMLElement>(".ccode-app-main");
     if (!main || main.inert) return;
-    // 设 inert 会让底下整页重算样式（连接页很大），同样放到第一帧之后
+    // 设 inert 会让底下整页重算样式（连接页很大），同样等滑入走完；所在页切回来（hidden → false）时不再播动画，立刻设
     let set = false;
-    const raf = afterFirstPaint(() => {
+    const timer = window.setTimeout(() => {
       main.inert = true;
       set = true;
-    });
+    }, slideMs);
     return () => {
-      raf.cancel();
+      window.clearTimeout(timer);
       if (set) main.inert = false;
     };
   }, [hidden]);
@@ -167,20 +173,6 @@ export default function PagePanel({
 }
 
 /** `.ccode-app-main` 的位置、大小与圆角；窗口 / 侧栏宽度一变就跟着变 */
-/** 下一帧画出来之后再跑（两层 rAF：第一层在第一帧绘制前，第二层在它画完之后） */
-function afterFirstPaint(fn: () => void): { cancel: () => void } {
-  let inner = 0;
-  const outer = requestAnimationFrame(() => {
-    inner = requestAnimationFrame(fn);
-  });
-  return {
-    cancel: () => {
-      cancelAnimationFrame(outer);
-      cancelAnimationFrame(inner);
-    },
-  };
-}
-
 function useMainRect() {
   const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number; radius: string } | null>(
     null,

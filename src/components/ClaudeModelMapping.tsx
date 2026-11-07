@@ -35,6 +35,8 @@ export function ClaudeModelMapping({
   const [caps, setCaps] = useState<Record<string, ModelCapabilityDto>>({});
   const [overrides, setOverrides] = useState<Record<string, ModelCapsOverrideDto>>({});
   const [pending, setPending] = useState<string | null>(null);
+  // 能力读回来之前不知道该不该给 1M 勾选：先占位不画，免得先出现再消失
+  const [capsLoaded, setCapsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 显示名很少改：收在表下一行，点开再逐个填（2026-10-31：四列在窄弹层里全被截断）
   const [namesOpen, setNamesOpen] = useState(false);
@@ -55,6 +57,7 @@ export function ClaudeModelMapping({
       ]);
       setCaps(Object.fromEntries(list.map((c) => [c.model, c])));
       setOverrides(Object.fromEntries(ov.map((e) => [e.prefix, e])));
+      setCapsLoaded(true);
     } catch (e) {
       setError(`读不到模型能力：${String(e)}`);
     }
@@ -161,9 +164,10 @@ export function ClaudeModelMapping({
                   <span className="w-10 text-right text-micro text-l3">
                     {contextLabel(cap?.context) ?? (oneM.checked ? "1M" : "未知")}
                   </span>
-                  {cap?.context == null || oneM.checked ? (
+                  {/* 不该给勾选时用 invisible 占住同样的宽，各行对齐、读回能力时不挪位 */}
+                  {(
                     <Checkbox
-                      className="text-micro text-l3"
+                      className={`text-micro text-l3 ${capsLoaded && (cap?.context == null || oneM.checked) ? "" : "invisible"}`}
                       checked={oneM.checked}
                       disabled={oneM.locked || pending === effective}
                       onChange={(on) => void toggle1M(effective, on)}
@@ -179,8 +183,6 @@ export function ClaudeModelMapping({
                           : `声明 ${effective} 支持 1M 上下文：对所有 Agent 生效（网关库「能力声明」同一处）`
                       }
                     />
-                  ) : (
-                    <span className="w-8" aria-hidden="true" />
                   )}
                 </span>
               </div>

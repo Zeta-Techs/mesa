@@ -9,7 +9,7 @@ import VendorIcon from "./VendorIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, quietActionClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, ChevronRight, RefreshCw, Trash2, Wand2 } from "lucide-react";
-import PagePanel from "./PagePanel";
+import PagePanel, { PAGE_PANEL_SLIDE_MS } from "./PagePanel";
 import GatewayAutoConfig from "./GatewayAutoConfig";
 import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
@@ -71,8 +71,6 @@ const SLOT_LABELS: { key: keyof ProtocolSlots; label: string }[] = [
 
 /** 上次打开网关库时的「近 30 天」用量：再打开先显示它，新结果回来再换（不让那一列每次从空白弹出来） */
 let monthUsageCache: GatewayUsageRow[] = [];
-/** PagePanel 滑入时长（ccode-page-in 220ms）稍多一点：重拉放在它之后 */
-const SLIDE_IN_MS = 240;
 
 function emptySlots(): ProtocolSlots {
   return { anthropic: "", openai: "", responses: "", gemini: "", cursor: "" };
@@ -471,7 +469,7 @@ export default function GatewayLibrary({
         void loadGateways().catch((e) => {
           if (live) setError(`网关列表加载失败：${String(e)}`);
         }),
-      animate ? SLIDE_IN_MS : 0,
+      animate ? PAGE_PANEL_SLIDE_MS : 0,
     );
     return () => {
       live = false;
