@@ -147,7 +147,9 @@
     "skillsHash",
     "subagentNames",
     "time",
-    "type"
+    "type",
+    "workspaceAdditionalDirs",
+    "workspacePrimaryByWorkspace"
    ]
   },
   "context.append_loop_event": {
@@ -165,6 +167,14 @@
    "keys": [
     "agentId",
     "message",
+    "time",
+    "type"
+   ]
+  },
+  "environment.set_binding": {
+   "keys": [
+    "agentId",
+    "environmentId",
     "time",
     "type"
    ]
@@ -277,24 +287,6 @@
     "type"
    ]
   },
-  "runtime.set_binding": {
-   "keys": [
-    "agentId",
-    "runtimeId",
-    "time",
-    "type",
-    "workspaceId"
-   ]
-  },
-  "token_counting.measured": {
-   "keys": [
-    "agentId",
-    "length",
-    "time",
-    "tokens",
-    "type"
-   ]
-  },
   "token_counting.turn_recorded": {
    "keys": [
     "agentId",
@@ -302,6 +294,14 @@
     "time",
     "tokens",
     "turnId",
+    "type"
+   ]
+  },
+  "tool_select.initialized": {
+   "keys": [
+    "agentId",
+    "time",
+    "tools",
     "type"
    ]
   },
@@ -337,5 +337,5 @@
    ]
   }
  },
- "version": "2.4.1"
+ "version": "2.5.2"
 }

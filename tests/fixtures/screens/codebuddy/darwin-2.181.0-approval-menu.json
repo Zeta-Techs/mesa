@@ -1,0 +1,55 @@
+{
+ "agent": "codebuddy",
+ "cliVersion": "2.181.0",
+ "platform": "darwin",
+ "source": "chat-capture ask",
+ "note": "跑命令前的审批菜单：问句、选项、默认高亮",
+ "rows": [
+  "│          ████████████████         │ <工作目录> │",
+  "│                                   │                                                                        │",
+  "│                                   │                                                                        │",
+  "╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+  "",
+  "> TRIGGER_SLOW 讲一段",
+  "",
+  "● 第一段：这是一段慢慢流出来的回复。",
+  "",
+  "  - 要点一：终端先画出来",
+  "  - 要点二：会话文件后落盘",
+  "",
+  "  echo mesa",
+  "",
+  "  最后一行：完毕。",
+  "",
+  "✔ Worked for 6s",
+  "",
+  "> TRIGGER_TOOL 跑一下",
+  "",
+  "● Bash(echo mesa > mesa_probe.txt)",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  " Bash command",
+  "",
+  "   echo mesa > mesa_probe.txt",
+  "   写一个探针文件",
+  "",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "",
+  " Do you want to proceed?",
+  "",
+  " > 1. Yes",
+  "   2. Yes, and don't ask again for session (shift + tab)",
+  "   3. No, and tell CodeBuddy what to do differently (escape)"
+ ],
+ "expect": {
+  "menu": {
+   "question": "Do you want to proceed?",
+   "options": [
+    "Yes",
+    "Yes, and don't ask again for session (shift + tab)",
+    "No, and tell CodeBuddy what to do differently (escape)"
+   ],
+   "selected": 0
+  },
+  "inputBox": null
+ }
+}
