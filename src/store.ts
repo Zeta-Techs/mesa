@@ -1018,6 +1018,14 @@ interface AppState {
   bindGateway: (input: BindingInput) => Promise<Profile>;
 }
 
+/**
+ * 重拉回来的列表内容没变就沿用旧数组：换成新引用会让所有读它的组件（连接页、终端页、聊天…）整页重渲染。
+ * 2026-11-07 开发版实测：打开添加连接 / 网关库后重拉网关与连接，数据没变也卡一帧 150–170ms
+ */
+function keepIfUnchanged<T>(prev: T[], next: T[]): T[] {
+  return prev.length === next.length && JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
 export const useAppStore = create<AppState>((set, get) => {
   // 正在删的会话（agent\nsessionId）：删完之前扫描还会看见源文件，刷新回来的列表要把它们滤掉
   const deleting = new Map<string, number>();
@@ -1537,7 +1545,12 @@ export const useAppStore = create<AppState>((set, get) => {
         invoke<DetectResult[]>("detect_agents"),
         invoke<Gateway[]>("list_gateways"),
       ]);
-      set({ profiles, agents, gateways, connectionLoadError: null });
+      set({
+        profiles: keepIfUnchanged(get().profiles, profiles),
+        agents,
+        gateways: keepIfUnchanged(get().gateways, gateways),
+        connectionLoadError: null,
+      });
     } catch (reason) {
       set({ connectionLoadError: String(reason) });
       throw reason;
@@ -1593,7 +1606,7 @@ export const useAppStore = create<AppState>((set, get) => {
       invoke<Gateway[]>("list_gateways"),
       invoke<Profile[]>("list_profiles"),
     ]);
-    set({ gateways, profiles });
+    set({ gateways: keepIfUnchanged(get().gateways, gateways), profiles: keepIfUnchanged(get().profiles, profiles) });
   },
   saveGateway: async (id, input) => {
     const saved = await invoke<Gateway>("save_gateway", { id, input });
