@@ -2323,9 +2323,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         }}
                         title="已保留（点击取消）"
                         aria-label="已保留（点击取消）"
-                        className="flex shrink-0 items-center rounded-sm px-0.5 text-l2 hover:text-cta"
+                        className="flex shrink-0 items-center rounded-sm px-0.5 text-l3 hover:text-cta"
                       >
-                        <Bookmark size={13} strokeWidth={1.8} fill="currentColor" aria-hidden="true" />
+                        {/* 只在已保留的行出现，有就是标记；线框浅灰与「保留」筛选钮同形，实心会成一块黑 */}
+                        <Bookmark size={13} strokeWidth={1.8} aria-hidden="true" />
                       </button>
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium leading-7 text-l1">
