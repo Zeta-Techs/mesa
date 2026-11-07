@@ -57,9 +57,9 @@ jobs:
         # 有变化 / 检查没过的家照旧报红，等人看报告
         run: python -I -X utf8 scripts/cli-canary/canary.py --accept-unchanged --out "$RUNNER_TEMP/canary"
       # OpenCode 2.x（2026-11-04 起两版都支持）：与 1.x 同命令名、不能并存，上面那轮跑完换装 2.x，只跑 opencode2 那份基线。
-      # 先只在 macOS 跑——Windows 还没有 2.x 基线，要在 Windows 上 `npm run canary -- --accept --agents opencode2` 建好再放开
+      # 两个平台都跑（Windows 的 2.x 基线 2026-11-06 在 Windows 本机 --accept 建好）
       - name: 换装 OpenCode 2.x 再跑一轮（opencode2）
-        if: always() && runner.os == 'macOS'
+        if: always()
         shell: bash
         run: |
           npm uninstall -g opencode-ai
