@@ -2411,7 +2411,7 @@ mod tests {
         // 不带 async 的 Tauri 命令跑在主线程上。这几个会等子进程 / 外部应用 / 回收站或冻结快照，
         // 改回同步，等待期间所有终端的输出和按键都会停住（conventions/terminal.md「会等待的命令不占主线程」）。
         // 写 app.db 的命令同理：后台在写库时主线程最多等满 busy_timeout
-        let sources: [(&str, &str, &[&str]); 13] = [
+        let sources: [(&str, &str, &[&str]); 14] = [
             (
                 "pty.rs",
                 include_str!("pty.rs"),
@@ -2480,7 +2480,12 @@ mod tests {
                 &["list_custom_runtimes", "save_custom_runtime", "delete_custom_runtime"],
             ),
             ("profiles.rs", include_str!("profiles.rs"), &["profile_usage_refs", "list_profiles", "list_gateways"]),
-            ("model_registry.rs", include_str!("model_registry.rs"), &["model_db_status"]),
+            ("model_registry.rs", include_str!("model_registry.rs"), &["model_db_status", "model_capabilities"]),
+            (
+                "combo.rs",
+                include_str!("combo.rs"),
+                &["combo_surface_for_gateway", "combo_surface_for_gateway_batch"],
+            ),
             (
                 "projects.rs",
                 include_str!("projects.rs"),

@@ -1536,15 +1536,20 @@ pub fn model_capability_brief(gateway_id: String, model_id: String) -> ModelCapa
     model_capability_for(&model_id, Some(gateway_id.as_str()))
 }
 
+/// 查能力库与网关目录：async 外壳 + 后台线程，不占主线程（连接页、网关库打开时都会调）
 #[tauri::command]
-pub fn model_capabilities(
+pub async fn model_capabilities(
     models: Vec<String>,
     gateway_id: Option<String>,
 ) -> Vec<ModelCapabilityDto> {
-    models
-        .iter()
-        .map(|model| model_capability_for(model, gateway_id.as_deref()))
-        .collect()
+    tauri::async_runtime::spawn_blocking(move || {
+        models
+            .iter()
+            .map(|model| model_capability_for(model, gateway_id.as_deref()))
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[cfg(test)]

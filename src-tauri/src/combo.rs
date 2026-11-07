@@ -395,18 +395,42 @@ pub fn combo_surface(
 }
 
 /// 网关库语境：绑了该网关的所有 Agent 通道取并集。
+/// 读网关文件（带几百 KB 目录）与绑定表：async 外壳 + 后台线程，不占主线程（terminal.md「会等待的命令不占主线程」）
 #[tauri::command]
-pub fn combo_surface_for_gateway(
-    store: tauri::State<'_, crate::profiles::ProfileStore>,
+pub async fn combo_surface_for_gateway(
     gateway_id: String,
     model: String,
 ) -> Result<ComboSurfaceDto, String> {
-    let _ = store;
-    let gw = gateway_store::find_gateway(&gateway_id).ok_or("网关不存在")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        surfaces_for_gateway_sync(&gateway_id, std::iter::once(model))?
+            .pop()
+            .ok_or_else(|| "网关不存在".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 批量版：网关文件与绑定表只读一次（原先逐个模型各读一遍，首屏 24 个模型就是 24 遍）。
+/// 2026-11-07 开发版实测：同步跑在主线程时，网关库点进编辑页第一帧晚到 300–440ms
+#[tauri::command]
+pub async fn combo_surface_for_gateway_batch(
+    gateway_id: String,
+    models: Vec<String>,
+) -> Result<Vec<ComboSurfaceDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || surfaces_for_gateway_sync(&gateway_id, models))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn surfaces_for_gateway_sync(
+    gateway_id: &str,
+    models: impl IntoIterator<Item = String>,
+) -> Result<Vec<ComboSurfaceDto>, String> {
+    let gw = gateway_store::find_gateway(gateway_id).ok_or("网关不存在")?;
     let bindings = gateway_store::load_bindings().unwrap_or_default();
     let agents: Vec<(String, Option<String>)> = bindings
         .iter()
-        .filter(|b| b.gateway_id.as_deref() == Some(gateway_id.as_str()))
+        .filter(|b| b.gateway_id.as_deref() == Some(gateway_id))
         .map(|b| (b.agent.clone(), b.protocol.clone()))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
@@ -415,47 +439,40 @@ pub fn combo_surface_for_gateway(
         .iter()
         .map(|(a, p)| (a.as_str(), p.as_deref()))
         .collect();
-    let gm = gw.models.iter().find(|m| m.id == model);
-    let slot = gm
-        .and_then(|m| m.catalog_slot.as_deref())
-        .and_then(Slot::from_str)
-        .or_else(|| {
-            agents
-                .first()
-                .map(|(a, p)| gateway_store::slot_for_agent(a, p.as_deref()))
-        });
     let binding_models: Vec<String> = bindings
         .iter()
-        .filter(|b| b.gateway_id.as_deref() == Some(gateway_id.as_str()))
+        .filter(|b| b.gateway_id.as_deref() == Some(gateway_id))
         .flat_map(|b| b.models.clone())
         .collect();
-    Ok(surface_for_agents(
-        &agent_refs,
-        &model,
-        Some(&gw),
-        slot,
-        gm.and_then(|m| m.reasoning_effort.as_ref()).is_some(),
-        gm.and_then(|m| m.temperature).is_some(),
-        gm.and_then(|m| m.top_p).is_some(),
-        gm.and_then(|m| m.max_output_tokens).is_some(),
-        &binding_models,
-        false,
-        &gm.and_then(|m| m.reasoning_effort.as_deref())
-            .map(crate::agent_specs::reasoning_effort_levels)
-            .unwrap_or_default(),
-    ))
-}
-
-#[tauri::command]
-pub fn combo_surface_for_gateway_batch(
-    store: tauri::State<'_, crate::profiles::ProfileStore>,
-    gateway_id: String,
-    models: Vec<String>,
-) -> Result<Vec<ComboSurfaceDto>, String> {
-    models
+    Ok(models
         .into_iter()
-        .map(|model| combo_surface_for_gateway(store.clone(), gateway_id.clone(), model))
-        .collect()
+        .map(|model| {
+            let gm = gw.models.iter().find(|m| m.id == model);
+            let slot = gm
+                .and_then(|m| m.catalog_slot.as_deref())
+                .and_then(Slot::from_str)
+                .or_else(|| {
+                    agents
+                        .first()
+                        .map(|(a, p)| gateway_store::slot_for_agent(a, p.as_deref()))
+                });
+            surface_for_agents(
+                &agent_refs,
+                &model,
+                Some(&gw),
+                slot,
+                gm.and_then(|m| m.reasoning_effort.as_ref()).is_some(),
+                gm.and_then(|m| m.temperature).is_some(),
+                gm.and_then(|m| m.top_p).is_some(),
+                gm.and_then(|m| m.max_output_tokens).is_some(),
+                &binding_models,
+                false,
+                &gm.and_then(|m| m.reasoning_effort.as_deref())
+                    .map(crate::agent_specs::reasoning_effort_levels)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect())
 }
 
 #[cfg(test)]
