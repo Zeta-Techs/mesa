@@ -73,7 +73,7 @@ export function answerCard(input: {
       o.deliver ? `交付物：${o.deliver}` : "",
       o.done ? `怎样算做完：${o.done}` : "",
       o.assumptions ? `先定下的假设：${o.assumptions}` : "",
-      o.schedule ? `想定期做：${o.schedule}（做成定时任务要在电脑上点）` : "",
+      o.schedule ? `想定期做：${o.schedule}（建成定时任务要在电脑上点）` : "",
     ].filter(Boolean);
     els.push({ tag: "hr" }, { tag: "markdown", content: lines.join("\n") });
     els.push({ tag: "action", actions: [button("派出去", { op: "dispatch", p, t: input.turnAt }, true)] });

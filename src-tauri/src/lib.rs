@@ -1147,6 +1147,8 @@ pub fn run() {
             scheduler::write_watch_skill_draft,
             scheduler::discard_watch_skill_draft,
             scheduler::commit_watch_skill_draft,
+            scheduler::create_paused_schedule,
+            research_record::last_step_run_cost,
             scheduler::ensure_schedule_skill_distributed,
             scheduler::schedule_memory_read,
             scheduler::schedule_memory_write,

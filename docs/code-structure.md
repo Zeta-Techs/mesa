@@ -99,6 +99,8 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，点开全屏向导）
   components/AgentIcon.tsx   # 九家 Agent 产品图标（src/assets/agent-icons/，lobe-icons MIT）：内联 SVG（currentColor 跟主题）、渐变 id 按实例改前缀、认不出首字占位；连接页左栏与 Agent 节标题用
+  components/OrderScheduleRow.tsx # 派活单「建成定时任务（先不启用）」（2026-11-08）：create_paused_schedule 一键建（Mesa 按单子生成技能、enabled=false），
+                             #   就地「启用 / 停用 / 改一改 / 撤销」与技能全文；按「项目 + 派出时刻」记在 localStorage，定时任务页删掉了就回到可再建
   components/PaperFetchPanel.tsx # 全文代下界面：PaperFetchPanel（设置 → 网络「代下全文」：今日计数、熔断与解除、暂停与继续、
                              #   等你放行 / 交还给你、调上限、浏览器桥安装、出门记录）与 PaperFetchBar（待获取清单「让 Mesa 代下这批」+ 一行进度）；
                              #   听 paper-fetch-changed，另 15 秒拉一次（扩展与 AI 在别的进程里写队列）
@@ -148,6 +150,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/CoachTip.tsx    # 一次性悬浮气泡（2026-10-27 侧栏多选起用）：只管画（标题 / 正文 kbd / 按钮 / ×、小三角朝左 / 下 / 上）；showFloatingCoach = 挂 body 浮在锚点旁（右边或下面，量过自己再摆、同时只有一个、点外面 / Esc / 指定滚动区滚动 / 窗口变大小收起）；何时出由 coach-tips.ts 管；样式 App.css .ccode-coach
   components/shortcut-nudges.tsx # 用鼠标做了本有快捷键的事时提醒快捷键：关对话到第 2 段 → ⌘W / Ctrl+Shift+W（侧栏 × / ⋯ 与对话头 ⋯ 共用一份计数，确认框开着不出）；对话头 >_ 聊天 ↔ 终端点到第 3 下 → 切换快捷键（tests/shortcut-nudges-ui.test.ts）
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：Modal + body portal 管焦点，combobox/listbox 管结果选择；打开由宿主回调，状态与关键词筛选在 rail-search.ts
+  order-schedule.ts          # 派活单「定时」一栏 → 定时任务周期（parseOrderCadence：每周X / 每天 / 工作日 / 每 N 小时 + 时刻，认不出回落每周一 9:00 标 guessed）+ cadenceLabel（tests/order-schedule.test.ts）
   paper-fetch.ts             # 全文代下前端纯逻辑（后端 paper_fetch.rs）：DTO 类型、状态 / 渠道 / 日志结果文案、normalizeDoi、
                              #   fetchableItems（待获取清单里没存且带 DOI 的）、summarizeJobs 一行进度、clampLimits（tests/paper-fetch.test.ts）
   project-add.ts             # 「新项目」三条路单一出处（2026-10-27）：openNewProject / openAddExistingFolder / openDemoProject（切项目页 + 一次性请求）与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
@@ -1772,6 +1775,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   schedule_events.rs         # 事件规则的目录事件源：validate_folder（项目内相对目录、不碰 .git/.ccode）、list_files（跳点开头与符号链接，5000 个 / 6 层上限）、
                              # diff（连着两次 tick 大小+修改时间不变才算落稳）、scan_folder（快照存配置目录 schedule-events/<id>.json，首次只记底）、reset
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
+                             #   2026-11-08 create_paused_schedule：派活单一键建（order_skill_md 按单子生成 SKILL.md、不调 AI，建好 enabled=false）；
                              # 2026-11-02 事件规则：Schedule.event（folder/radar/phone × record/run）+ pending_events；tick 先 scan_event_sources、flush_recorded_events，
                              #   直接跑档进 collect_due，跑起来 take_pending_events；push_project_event 给雷达采纳与手机投递用；RunRecord.origin 记规则版本与文件；
                              #   2026-11-04 每周花费上限 EventRule.weekly_cap_usd：flush_recorded_events 锁外按近 7 天历史会话算花费（usage::sessions_cost_usd），到了 apply_cost_cap 记一行只记录；
@@ -1821,7 +1825,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # journal_metrics_status（含 downloadedAt：两份 CSV 取较新 mtime）+ check_journal_metrics_update
                              # （GitHub commits API 按数据目录查最近 commit，与本地 mtime 比对出 hasUpdate，前端静默失败）
   research_quality.rs        # 科研复现运行记录与验收决定：独立输出 ~/ccode/reproductions/；验收写 .ccode/research-acceptance.json，不替代 Git 合并
-  research_record.rs         # 2026-11-03：核验文件分三种来源 CheckSource（内置脚本固定文件 / pack- 任务包脚本：检查器记成文件名、通过降待判断 / 其余 Agent）；
+  research_record.rs         # 2026-11-08：RunRecord.fetched（代下全文，paper_fetch 日志按 runId 出，ai-usage.md 按渠道计数）；last_step_run_cost（开工弹层「上次做这一步约 $X」，同步骤同连接已结束能计价的最近一次）。
+                             # 2026-11-03：核验文件分三种来源 CheckSource（内置脚本固定文件 / pack- 任务包脚本：检查器记成文件名、通过降待判断 / 其余 Agent）；
                              # 核验记录与研究记录（2026-11-02）：research_checks_read 读 <工作目录>/.ccode/checks/ 顶层 *.jsonl（三档状态，
                              # 认不出的行计 skipped 不猜；runs/ 是存档不读）；record_run_closed 在 Run 关闭后（close_run_with_result /
                              # 崩溃补收）把运行事实追加进项目 .ccode/record.jsonl（runId 去重、record.lock）、核验项存档 checks/runs/<runId>.jsonl、

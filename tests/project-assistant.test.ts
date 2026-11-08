@@ -405,7 +405,7 @@ test("三期：派活单「定时」一栏", async () => {
   const { parseWorkOrder, REQUEST_RULES } = await import("../src/project-assistant.ts");
   const { order } = parseWorkOrder(":::派活\n交给：新目标\n要做：出周报\n定时：每周五 17:00\n:::", 0);
   assert.equal(order!.schedule, "每周五 17:00");
-  assert.match(REQUEST_RULES, /做成定时任务…/);
+  assert.match(REQUEST_RULES, /建成定时任务（先不启用）/);
 });
 
 test("项目助手不能说自己做了动作（2026-11-06 实证：回「让他接着做」被说成已经派出去了）", async () => {

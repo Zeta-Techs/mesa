@@ -2892,7 +2892,7 @@ pub async fn delete_skill(id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
-fn delete_skill_sync(id: String) -> Result<(), String> {
+pub(crate) fn delete_skill_sync(id: String) -> Result<(), String> {
     let store = SkillStore::default_paths()?;
     delete_impl(&store, &agent_dirs(), &backups_root()?, &id)
 }

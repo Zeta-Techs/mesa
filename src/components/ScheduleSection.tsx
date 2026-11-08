@@ -1546,7 +1546,7 @@ export default function ScheduleSection({
     setCreateOpen(true);
   }
 
-  // 项目助手派活单「做成定时任务…」（2026-11-05 接活三期）：打开新建弹层，种类是新建巡检技能，名字与要做的事预填；
+  // 新建弹层预填请求（2026-11-05 接活三期起；派活单 2026-11-08 起改一键建成、不再走这里）：打开新建弹层，种类是新建巡检技能，名字与要做的事预填；
   // 周期由 AI 写技能时按描述建议，落盘前人确认（与空态示例同一条路）
   const scheduleDraftReq = useAppStore((s) => s.scheduleDraftReq);
   const setScheduleDraftReq = useAppStore((s) => s.setScheduleDraftReq);

@@ -1820,6 +1820,14 @@ pub(crate) fn sessions_cost_usd(sessions: &[(String, String)]) -> f64 {
         .sum()
 }
 
+/// 一段会话的花费（美元）；没有一个模型能计价时返回 None（「没记录就不写」，不报 0）
+pub(crate) fn session_cost_priced(agent: &str, session_id: &str) -> Option<f64> {
+    let _ = rebuild_locked();
+    let conn = usage_db().ok()?;
+    let u = session_usage_from(&conn, agent, session_id).ok()?;
+    (u.priced && u.cost_usd > 0.0).then_some(u.cost_usd)
+}
+
 /// 一次不落盘调用的花费（项目助手每条回答下面写，2026-11-04）：同统计页口径（用户 pricing.json > 公共库 > 内置），
 /// 有一个模型查不到价就返回 None（不报半个数）
 pub(crate) fn events_cost_usd(events: &[UsageEvent]) -> Option<f64> {

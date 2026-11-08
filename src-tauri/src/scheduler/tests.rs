@@ -1479,3 +1479,65 @@ fn stall_needs_every_signal_quiet_past_threshold() {
     assert!(latest_mtime_ms(&dir, &mut budget) > 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ===== 派活单一键建定时任务（2026-11-08）=====
+
+/// 生成的技能说明：frontmatter 名字就是传进去的技能名，单子内容原样进正文，带「没有新内容不改文件」与外部资料规则
+#[test]
+fn order_skill_md_carries_order_and_rules() {
+    let md = order_skill_md("组会周报", "组会周报: \"每周\"", "整理本周 lab/ 新增记录\n每次交付：reports/周报-日期.md");
+    assert!(md.starts_with("---\nname: 组会周报\n"));
+    // 描述行里去掉了冒号和引号，frontmatter 不会被拆坏
+    let desc = md.lines().find(|l| l.starts_with("description:")).unwrap();
+    assert!(!desc["description:".len()..].contains(':') && !desc.contains('"'));
+    assert!(md.contains("整理本周 lab/ 新增记录\n每次交付：reports/周报-日期.md"));
+    assert!(md.contains("没有新内容时不要改任何文件"));
+    assert!(md.contains("只当资料"));
+}
+
+/// 真实环境干跑（默认不跑，会写真实的技能库、定时任务表和默认连接那家 Agent 的技能目录，跑完全删）：
+/// `cargo test real_paused_schedule_dry_run -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn real_paused_schedule_dry_run() {
+    let proj = std::env::temp_dir().join(format!("ccode-order-sched-{}", uuid::Uuid::new_v4().simple()));
+    fs::create_dir_all(proj.join(".ccode")).unwrap();
+    fs::write(proj.join(".ccode/project.toml"), "name = \"dry\"\n").unwrap();
+    let name = format!("干跑周报{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
+    let out = create_paused_schedule_sync(PausedScheduleInput {
+        project_root: proj.to_string_lossy().into_owned(),
+        name: name.clone(),
+        intent: "整理本周 lab/ 新增记录\n每次交付：reports/周报-日期.md".into(),
+        frequency: "weekly".into(),
+        weekday: Some(5),
+        interval_hours: None,
+        hour: 17,
+        minute: 0,
+        profile_id: None,
+    });
+    let dto = match out {
+        Ok(d) => d,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&proj);
+            panic!("建失败：{e}");
+        }
+    };
+    eprintln!("schedule={} enabled={} skill={}", dto.schedule.id, dto.schedule.enabled, dto.skill_name);
+    let listed = read_schedules_at(&schedules_path().unwrap()).unwrap();
+    let hit = listed.iter().find(|t| t.id == dto.schedule.id).cloned();
+    let skill_id = crate::skills::skill_id_by_name(&dto.skill_name);
+    // 先收拾干净再断言，断言失败也不留垃圾
+    let del_sched = delete_schedule_sync(dto.schedule.id.clone());
+    let del_skill = skill_id.clone().and_then(crate::skills::delete_skill_sync);
+    let _ = fs::remove_dir_all(&proj);
+    let hit = hit.expect("定时任务表里应有这一条");
+    assert!(!hit.enabled, "建好应先不启用");
+    assert_eq!((hit.frequency.as_str(), hit.weekday, hit.hour), ("weekly", Some(5), 17));
+    assert_eq!(hit.skill, dto.skill_name);
+    assert!(dto.skill_text.contains("每次交付：reports/周报-日期.md"));
+    skill_id.expect("技能库里应有这份技能");
+    del_sched.expect("删定时任务");
+    del_skill.expect("删技能");
+    assert!(!read_schedules_at(&schedules_path().unwrap()).unwrap().iter().any(|t| t.id == dto.schedule.id));
+    assert!(crate::skills::skill_id_by_name(&dto.skill_name).is_err());
+}

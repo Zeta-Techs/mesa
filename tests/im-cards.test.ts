@@ -25,7 +25,7 @@ test("回答卡片：追问选项、派活单、记下各成按钮，按钮回�
   assert.deepEqual(values.map((v: any) => v.op), ["clarify", "clarify", "dispatch", "remember"]);
   assert.deepEqual(values[1], { op: "clarify", p: "/p/a", t: "2026-11-06T10:00:00+08:00", v: "20 分钟" });
   const text = JSON.stringify(card);
-  assert.match(text, /做成定时任务要在电脑上点/);
+  assert.match(text, /建成定时任务要在电脑上点/);
   assert.match(text, /在电脑上还可以：去项目页/);
 });
 

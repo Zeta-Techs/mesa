@@ -927,7 +927,7 @@ interface AppState {
   setRouteAlert: (agent: string, item: InboxItem | null) => void;
   assistantEchoTick: number;
   bumpAssistantEchoTick: () => void;
-  /** 项目助手派活单「做成定时任务…」：项目「定时任务」页签打开新建弹层并预填（新建巡检技能） */
+  /** 打开项目「定时任务」页签的新建弹层并预填（新建巡检技能）。派活单 2026-11-08 起改为一键建成（OrderScheduleRow），这条请求留给别的入口 */
   scheduleDraftReq: { projectRoot: string; name: string; intent: string; token: number } | null;
   setScheduleDraftReq: (req: AppState["scheduleDraftReq"]) => void;
   /** 替人按某个标签的「是否信任这个目录」菜单（调度台 / 手机，2026-11-06）：终端页交给那个标签读屏核对再回车 */

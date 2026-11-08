@@ -96,7 +96,7 @@ export function suggestPackParams(step: Pick<ProjectStepDto, "brief">, inputs: r
   return out;
 }
 
-/** 「做成定时任务…」时填进新建巡检技能的那段描述：要做什么、交什么、怎样算做完、多久一次（AI 据此写技能、建议周期，人确认才落盘） */
+/** 「建成定时任务（先不启用）」时写进技能说明的那段：要做什么、交什么、怎样算做完、多久一次（Mesa 照抄进 SKILL.md，不经 AI 改写） */
 export function workOrderScheduleIntent(order: WorkOrder, method?: string | null): string {
   return [
     order.task.trim(),

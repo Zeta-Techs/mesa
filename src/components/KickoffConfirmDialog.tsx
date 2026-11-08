@@ -363,6 +363,26 @@ export default function KickoffConfirmDialog({
   );
   const agentProfiles = profiles.filter((p) => p.agent === agentId);
   const [profileId, setProfileId] = useState(() => picked?.profileId ?? "");
+  // 这条连接上次做这一步花了多少（2026-11-08）：陈述历史、不预测；没有能计价的记录就不写
+  const [lastCost, setLastCost] = useState<{ usd: number; at: string } | null>(null);
+  useEffect(() => {
+    setLastCost(null);
+    if (!profileId) return;
+    let stale = false;
+    void invoke<{ usd: number; at: string } | null>("last_step_run_cost", {
+      projectRoot: projectPath,
+      stepName: step.name,
+      profileId,
+    }).then(
+      (c) => {
+        if (!stale) setLastCost(c ?? null);
+      },
+      () => {},
+    );
+    return () => {
+      stale = true;
+    };
+  }, [projectPath, step.name, profileId]);
   const [model, setModel] = useState(() => picked?.model ?? "");
   const [editingLaunch, setEditingLaunch] = useState(
     // 任一预填源在（步骤绑定 / 项目默认 / 开工记忆）即折叠成一行 launchLine
@@ -1175,6 +1195,14 @@ export default function KickoffConfirmDialog({
               // 披露（终检钉住）：已有绑定且本次选择偏离时明说，防止「被顶掉」的无知感
               <p className="mt-1 truncate text-micro text-l4" title={`${slotLine}；本次 ${launchLine}`}>
                 已存默认 {slotLine}；本次用 {launchLine}（不勾即不改默认）
+              </p>
+            )}
+            {lastCost && (
+              <p
+                className="mt-1 text-micro text-l4"
+                title="按这条连接上一次做这一步的会话用量、官方价算的；走中转的实际扣费以中转站账单为准"
+              >
+                这条连接上次做这一步约 ${lastCost.usd < 0.01 ? "<0.01" : lastCost.usd.toFixed(2)}（{lastCost.at.slice(5, 10)}，按官方价估算）
               </p>
             )}
           </div>

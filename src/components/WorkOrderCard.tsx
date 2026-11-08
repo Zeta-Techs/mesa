@@ -5,6 +5,7 @@ import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assis
 import { relTime } from "../rel-time";
 import { useAppStore } from "../store";
 import SavePackModal from "./SavePackModal";
+import OrderScheduleRow from "./OrderScheduleRow";
 import { builtinTaskMethod, findBuiltinTask } from "../builtin-tasks";
 import { suggestPackParams, workOrderScheduleIntent, workOrderToStep } from "../work-order-pack";
 import { parseOrderPaths, type WorkOrder } from "../project-assistant";
@@ -108,13 +109,12 @@ export default function WorkOrderCard({
   const step = workOrderToStep(shown, { method, extraSkills: builtin?.skills ?? [] });
   const accepted = status?.phase === "accepted";
 
-  // 「做成定时任务…」（2026-11-05 接活三期）：进这个项目的「定时任务」页签，新建弹层按「新建巡检技能」预填；AI 写技能、人确认才落盘
-  function draftSchedule() {
+  // 定时（2026-11-08 改一键建成、先不启用，OrderScheduleRow）：「改一改」进这个项目的「定时任务」页签
+  function openSchedules() {
     if (!projectPath) return;
     const s = useAppStore.getState();
     s.setSelectProjectReq(projectPath);
     s.setProjectFocusReq({ projectRoot: projectPath, focus: "schedule", token: Date.now() });
-    s.setScheduleDraftReq({ projectRoot: projectPath, name: shown.title, intent: workOrderScheduleIntent(shown, method), token: Date.now() });
     s.setPage("workspaces");
   }
 
@@ -209,7 +209,7 @@ export default function WorkOrderCard({
           </button>
         </div>
       )}
-      {shown.schedule && !record && <p className="mt-1.5 text-xs text-l3">想定期做：{shown.schedule}。先派这一次，满意了再点「做成定时任务…」。</p>}
+      {shown.schedule && !record && <p className="mt-1.5 text-xs text-l3">想定期做：{shown.schedule}。先派这一次，满意了再点「建成定时任务（先不启用）」。</p>}
       {error && <p className="mt-2 break-words text-xs text-err-text">没派出去：{error}</p>}
       <div className="mt-3 flex min-w-0 items-center gap-2">
         {record ? (
@@ -225,10 +225,15 @@ export default function WorkOrderCard({
                     存成我的任务…
                   </button>
                 )}
-                {shown.schedule && (
-                  <button type="button" className={ghostActionClass} onClick={draftSchedule} title={`想${shown.schedule}做一次：去定时任务页，先让 AI 写一个巡检技能，你确认才建`}>
-                    做成定时任务…
-                  </button>
+                {shown.schedule && projectPath && (
+                  <OrderScheduleRow
+                    projectPath={projectPath}
+                    title={shown.title}
+                    intent={workOrderScheduleIntent(shown, method)}
+                    scheduleText={shown.schedule}
+                    storageKey={`ccode.orderSchedule:${projectPath}|${record.at}`}
+                    onOpenSchedules={openSchedules}
+                  />
                 )}
               </div>
             )}

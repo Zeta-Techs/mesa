@@ -558,6 +558,64 @@ fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) ->
     }
 }
 
+/// 开工弹层「这条连接上次做这一步」的花费（2026-11-08，design-autonomy-roadmap.md §8）：陈述历史、不预测。
+/// 只认同一项目、同一步骤、同一连接、已结束且能计价的那一次；没有就是 None，界面不写。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastStepCostDto {
+    pub usd: f64,
+    /// 那一次开始的时间（ISO）
+    pub at: String,
+}
+
+pub(crate) fn last_step_cost_in(
+    runs: &[crate::runs::RunDto],
+    step_name: &str,
+    profile_id: &str,
+    purpose: impl Fn(&crate::runs::RunDto) -> String,
+    cost_of: impl Fn(&crate::runs::RunDto) -> Option<f64>,
+) -> Option<LastStepCostDto> {
+    let want = format!("研究流程：{}", step_name.trim());
+    let mut list: Vec<&crate::runs::RunDto> = runs
+        .iter()
+        .filter(|r| {
+            r.task_kind == "pipeline_step"
+                && !r.internal
+                && r.closed_at.is_some()
+                && r.session_id.is_some()
+                && r.profile_id.as_deref() == Some(profile_id)
+        })
+        .collect();
+    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    list.into_iter()
+        .filter(|r| purpose(r) == want)
+        .find_map(|r| cost_of(r).map(|usd| LastStepCostDto { usd, at: r.created_at.clone() }))
+}
+
+#[tauri::command]
+pub async fn last_step_run_cost(
+    project_root: String,
+    step_name: String,
+    profile_id: String,
+) -> Result<Option<LastStepCostDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if profile_id.trim().is_empty() || step_name.trim().is_empty() {
+            return Ok(None);
+        }
+        let runs = crate::runs::run_list_sync(Some(project_root.clone()))?;
+        let root = Path::new(&project_root);
+        Ok(last_step_cost_in(
+            &runs,
+            &step_name,
+            &profile_id,
+            |r| purpose_of(r, root),
+            |r| r.session_id.as_deref().and_then(|sid| crate::usage::session_cost_priced(&r.agent, sid)),
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Run 结束后调用（best-effort，失败只记日志）：写运行事实、存档核验项、重写 ai-usage.md。
 /// 登录、Mesa 内部的后台调用、没有项目的 Run 不记。
 pub(crate) fn record_run_closed(run_id: &str) {
@@ -594,6 +652,56 @@ pub(crate) fn record_run_closed(run_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    /// 开工弹层「上次花费」：只认同一步骤、同一连接、已结束的；最新一次没计价就往前找能计价的；都没有给 None
+    #[test]
+    fn last_step_cost_picks_latest_priced_same_step_and_profile() {
+        let mk = |id: &str, at: &str, profile: &str, closed: bool| crate::runs::RunDto {
+            id: id.into(),
+            project_root: Some("/p".into()),
+            task_kind: "pipeline_step".into(),
+            task_ref: Some(if id.starts_with("w") { "write".into() } else { "search".into() }),
+            isolation_path: "/iso".into(),
+            runtime: "local_cli".into(),
+            agent: "codex".into(),
+            profile_id: Some(profile.into()),
+            permission: "write_tree".into(),
+            reuse_key: None,
+            session_id: Some(format!("s-{id}")),
+            internal: false,
+            sentinel: false,
+            created_at: at.into(),
+            closed_at: closed.then(|| at.to_string()),
+            status: "done".into(),
+            exit_code: None,
+            close_reason: None,
+            task_id: String::new(),
+            custom_runtime_id: None,
+            project_id: None,
+            capabilities: crate::runtime::capabilities(crate::runtime::RuntimeKind::LocalCli),
+        };
+        let runs = vec![
+            mk("s1", "2026-11-01T10:00:00Z", "p1", true),
+            mk("s2", "2026-11-03T10:00:00Z", "p1", true),
+            mk("s3", "2026-11-04T10:00:00Z", "p1", true),
+            mk("s4", "2026-11-05T10:00:00Z", "p1", false),
+            mk("s5", "2026-11-06T10:00:00Z", "p2", true),
+            mk("w1", "2026-11-07T10:00:00Z", "p1", true),
+        ];
+        let purpose = |r: &crate::runs::RunDto| {
+            if r.task_ref.as_deref() == Some("search") { "研究流程：文献检索".to_string() } else { "研究流程：写作".to_string() }
+        };
+        // s3 没计价（None）→ 用 s2；没结束的 s4、别的连接 s5、别的步骤 w1 都不算
+        let cost = |r: &crate::runs::RunDto| match r.id.as_str() {
+            "s1" => Some(0.1),
+            "s2" => Some(0.42),
+            "s4" | "s5" | "w1" => Some(9.0),
+            _ => None,
+        };
+        let got = last_step_cost_in(&runs, "文献检索", "p1", purpose, cost).unwrap();
+        assert_eq!((got.usd, got.at.as_str()), (0.42, "2026-11-03T10:00:00Z"));
+        assert!(last_step_cost_in(&runs, "文献检索", "p3", purpose, cost).is_none());
+    }
+
     use super::*;
 
     fn temp_root(tag: &str) -> PathBuf {
