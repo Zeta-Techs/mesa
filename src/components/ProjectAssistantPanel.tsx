@@ -85,6 +85,8 @@ const BRIEF_TONE: Record<BriefLine["tone"], string> = {
   warn: "bg-mesa-amber",
   ok: "bg-ok-text",
 };
+/** 上次打开离现在不到这么久就不写「上次打开是…」（刚刚 / 几分钟前不带信息） */
+const BRIEF_SINCE_QUIET_MS = 30 * 60 * 1000;
 
 /** 用户问的话：右侧小气泡 */
 function QuestionBubble({ text, at }: { text: string; at?: string }) {
@@ -121,7 +123,10 @@ export default function ProjectAssistantPanel({
   onDispatch,
   where = "",
   docked = null,
+  hideProjectName = false,
 }: {
+  /** 停在同一个项目的项目页旁边：页头已经写着项目名，标题下不再写一遍 */
+  hideProjectName?: boolean;
   /** 用户此刻在看哪（「项目页 · HER催化综述 ·「定时任务」页签」）：提问时附上，问「这个提示什么意思」时它知道「这个」在哪 */
   where?: string;
   /** 常驻侧栏（宿主够宽时给）；null = 浮层抽屉 */
@@ -616,11 +621,14 @@ export default function ProjectAssistantPanel({
   // 「现在的情况」：Mesa 按记录写，不经 AI；没有要看的事、也没有变化就不出现
   const briefCard =
     brief && brief.lines.length > 0 && !briefOff ? (
-      <section className="rounded-xl border border-hairline px-3 py-2.5" aria-label="现在的情况">
+      <section className="ccode-well rounded-lg px-3 py-2.5" aria-label="现在的情况">
         <div className="mb-1.5 flex items-baseline gap-2">
-          <span className="text-xs font-medium text-l2">现在的情况</span>
+          <span className="text-xs font-medium text-l2" title="Mesa 按项目记录整理，不经 AI">
+            现在的情况
+          </span>
+          {/* 「上次打开是刚刚」不带信息：隔了一阵才写 */}
           <span className="min-w-0 flex-1 truncate text-micro text-l4" title={brief.since ? absTime(brief.since) : undefined}>
-            Mesa 按记录整理{brief.since ? ` · 上次打开是${relTime(brief.since)}` : ""}
+            {brief.since && Date.now() - Date.parse(brief.since) > BRIEF_SINCE_QUIET_MS ? `上次打开是${relTime(brief.since)}` : ""}
           </span>
           <button type="button" className="shrink-0 text-l4 hover:text-l2" onClick={() => setBriefOff(true)}>
             <span className="text-micro">知道了</span>
@@ -630,43 +638,50 @@ export default function ProjectAssistantPanel({
           {brief.lines.map((line) => (
             <li key={line.text} className="flex items-start gap-2 text-xs leading-5">
               <span className={`mt-2 size-1.5 shrink-0 rounded-full ${BRIEF_TONE[line.tone]}`} aria-hidden="true" />
-              <span className="min-w-0 flex-1 break-words text-l1">{line.text}</span>
-              {line.action && (
-                <button
-                  type="button"
-                  className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                  onClick={() => onAction(line.action!, { at: "", question: "", answer: "", connection: "" })}
-                >
-                  <span className="text-xs">{line.action.label}</span>
-                </button>
-              )}
-              {line.ask && (
-                <button
-                  type="button"
-                  className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
-                  disabled={busy}
-                  onClick={() => void send(line.ask!.question, line.ask!.focus, line.ask!.intent)}
-                >
-                  <span className="text-xs">{line.ask.label ?? "问问为什么"}</span>
-                </button>
-              )}
-              {line.kind === "knowledge-draft" && projectPath && (
-                <button
-                  type="button"
-                  className="shrink-0 text-l4 hover:text-l2"
-                  title="这个项目不再提议起草；以后照样可以在回答下面点「记进项目知识」"
-                  onClick={() => {
-                    try {
-                      localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
-                    } catch {
-                      /* 存不了就只是这次收起 */
-                    }
-                    setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
-                  }}
-                >
-                  <span className="text-xs">不用了</span>
-                </button>
-              )}
+              {/* 按钮跟在句子后面另起一行，不挤在右边把正文压成窄列 */}
+              <span className="min-w-0 flex-1 break-words text-l1">
+                {line.text}
+                {(line.action || line.ask || line.kind === "knowledge-draft") && (
+                  <span className="mt-0.5 flex flex-wrap gap-x-3">
+                    {line.action && (
+                      <button
+                        type="button"
+                        className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                        onClick={() => onAction(line.action!, { at: "", question: "", answer: "", connection: "" })}
+                      >
+                        <span className="text-xs">{line.action.label}</span>
+                      </button>
+                    )}
+                    {line.ask && (
+                      <button
+                        type="button"
+                        className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
+                        disabled={busy}
+                        onClick={() => void send(line.ask!.question, line.ask!.focus, line.ask!.intent)}
+                      >
+                        <span className="text-xs">{line.ask.label ?? "问问为什么"}</span>
+                      </button>
+                    )}
+                    {line.kind === "knowledge-draft" && projectPath && (
+                      <button
+                        type="button"
+                        className="shrink-0 text-l4 hover:text-l2"
+                        title="这个项目不再提议起草；以后照样可以在回答下面点「记进项目知识」"
+                        onClick={() => {
+                          try {
+                            localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
+                          } catch {
+                            /* 存不了就只是这次收起 */
+                          }
+                          setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
+                        }}
+                      >
+                        <span className="text-xs">不用了</span>
+                      </button>
+                    )}
+                  </span>
+                )}
+              </span>
             </li>
           ))}
         </ul>
@@ -677,7 +692,7 @@ export default function ProjectAssistantPanel({
     <div className="space-y-2">
       {!busy && summaryDue(turns, summarizedAt) && (
         <p className="flex flex-wrap items-center gap-x-2 text-xs text-l3">
-          <span>聊了一阵了，要不要我把这一阵定下的事整理一下？值得以后照办的会起草出来，你逐条点了才记。</span>
+          <span title="值得以后照办的会起草出来，你逐条点了才记进项目知识">聊了一阵了，要不要整理一下定下的事？</span>
           <button
             type="button"
             className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
@@ -811,19 +826,21 @@ export default function ProjectAssistantPanel({
           <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" className="ccode-send-arrow" />
         </button>
       </form>
+      {/* 照对话输入框：下方右侧只写模型；连接全名与「跟随项目默认」进悬停，点了去 Agent 分工换 */}
       <div className="flex items-center gap-2 text-micro text-l4">
-        <span
-          className="min-w-0 flex-1 truncate"
-          title={conn.bound ? "Agent 分工里给项目助手绑的连接" : "项目助手没单独绑连接，跟随项目默认；可在 Agent 分工里指定"}
-        >
-          {conn.line}
-          {conn.bound ? "" : " · 跟随项目默认"}
-        </span>
         {turns.length > 0 && (
           <button type="button" className="shrink-0 text-l4 hover:text-l2 disabled:opacity-50" disabled={busy} onClick={() => void clear()}>
             <span className="text-micro">清空记录</span>
           </button>
         )}
+        <button
+          type="button"
+          className="ml-auto min-w-0 truncate text-l4 hover:text-l2"
+          title={`${conn.line}${conn.bound ? "（Agent 分工里给项目助手绑的）" : "（跟随项目默认）"}\n点了去 Agent 分工换`}
+          onClick={() => onAction({ kind: "agents", step: null, text: "", label: "去 Agent 分工" }, { at: "", question: "", answer: "", connection: "" })}
+        >
+          <span className="text-micro">{conn.model ?? (conn.profileId ? "默认模型" : "AI 功能的连接")}</span>
+        </button>
       </div>
     </div>
   );
@@ -835,7 +852,7 @@ export default function ProjectAssistantPanel({
       open={open && !!projectPath}
       onClose={onClose}
       title="项目助手"
-      subtitle={projectName}
+      subtitle={hideProjectName ? undefined : projectName}
       titleIcon={empty ? <></> : <MesaBuddy size={34} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
       docked={docked}
@@ -846,19 +863,26 @@ export default function ProjectAssistantPanel({
         <div className="px-1 pt-8">
           <MesaBuddy size={112} pose={mood.greetPose} prop={mood.prop} />
           <h3 className="mt-5 text-lg font-semibold text-l1">{mood.greeting}</h3>
-          <p className="mt-2 text-sm leading-6 text-l3">
-            问这个项目里的事，或直接交代要做的事：我问清楚后起草派活单，你点「派出去」才交给 AI 做。我自己不改文件。
+          <p
+            className="mt-2 text-sm leading-6 text-l3"
+            title="交代要做的事，我问清楚后起草派活单，你点「派出去」才交给 AI 做；我自己不改文件"
+          >
+            问项目里的事，或交代要做的事。
           </p>
           {briefCard && <div className="mt-6">{briefCard}</div>}
-          <ul className="mt-8 border-t border-hairline">
+          {/* 建议问题：行间留白 + 悬停整行浅底，不画横线；记号是淡灰 M▁ 横光标，悬停才亮成琥珀（琥珀只表示「你在这里写 / 轮到你」，常亮会读成三件事在等你） */}
+          <ul className="-mx-2 mt-8 space-y-0.5">
             {asks.map((a) => (
-              <li key={a.q} className="border-b border-hairline">
+              <li key={a.q}>
                 <button
                   type="button"
-                  className="group flex w-full items-center gap-3 py-3 text-left hover:bg-hover"
+                  className="group flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left hover:bg-hover"
                   onClick={() => void send(a.q, a.focus ?? focus)}
                 >
-                  <span className="ml-1 h-[3px] w-3 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
+                  <span
+                    className="ml-1 h-[3px] w-2.5 shrink-0 rounded-sm bg-l4 transition-colors group-hover:bg-mesa-amber group-focus-visible:bg-mesa-amber"
+                    aria-hidden="true"
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm text-l1">{a.q}</span>
                     <span className="block text-xs text-l3">{a.hint}</span>

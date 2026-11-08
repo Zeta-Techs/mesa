@@ -154,6 +154,7 @@ export default function ProjectAssistantHost() {
       project={project}
       stepCount={stepCount}
       where={where}
+      hideProjectName={docked && !!viewing?.samePath}
       docked={
         docked
           ? {

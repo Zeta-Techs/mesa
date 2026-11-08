@@ -135,7 +135,7 @@ export function briefLines(input: BriefInput): BriefLine[] {
     out.push({
       tone: "ok",
       kind: "knowledge-draft",
-      text: "这个项目还没有项目知识（以后每一步 AI 都要照办的规矩）。可以让我从 README、项目规则里起草几条，你逐条点了才记",
+      text: "还没有项目知识（每一步 AI 都照办的规矩），可以从 README、项目规则里起草几条",
       ask: { question: KNOWLEDGE_DRAFT_QUESTION, focus: knowledgeDraftFocus(), label: "起草几条", intent: "project" },
     });
   }

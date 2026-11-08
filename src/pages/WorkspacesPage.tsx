@@ -978,6 +978,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const projectFocusReq = useAppStore((s) => s.projectFocusReq);
   const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
   const openAssistant = useAppStore((s) => s.openAssistant);
+  const closeAssistant = useAppStore((s) => s.closeAssistant);
+  const assistantPath = useAppStore((s) => s.assistantReq?.path ?? null);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   // 产物待核验（后端只读检查，随 refresh 同频次拉取）：绑定步骤的预期产物全部产出且够新
   const [artifactReady, setArtifactReady] = useState<PendingArtifactDto[]>([]);
@@ -1418,6 +1420,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const selectedGroup =
     groups.find((group) => group.key === selectedGroupKey) ?? groups[0] ?? null;
   const selectedProjectPath = selectedGroup?.project?.path ?? null;
+  const assistantOn = !!selectedProjectPath && !!assistantPath && samePath(assistantPath, selectedProjectPath);
   const selectedSurfaceTab: ProjectSurfaceTab =
     selectedProjectPath && selectedGroup?.project
       ? (() => {
@@ -2333,11 +2336,23 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             selectedGroup.project ? (
               <>
                 {/* 项目助手（2026-11-04）：工作台只列进行中的项目，安静的项目从这里问 */}
+                {/* 开关：开着这个项目的项目助手时按钮带选中底色，再点收起（2026-11-08） */}
                 <button
                   type="button"
-                  onClick={() => selectedGroup.project && openAssistant(selectedGroup.project.path)}
-                  title="项目助手：问进度、哪里出错、Mesa 怎么用，也可以交代要做的事——它起草派活单，你点了才派；它自己不改文件"
-                  className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  aria-pressed={assistantOn}
+                  onClick={() => {
+                    if (!selectedGroup.project) return;
+                    if (assistantOn) closeAssistant();
+                    else openAssistant(selectedGroup.project.path);
+                  }}
+                  title={
+                    assistantOn
+                      ? "收起项目助手"
+                      : "项目助手：问进度、哪里出错、Mesa 怎么用，也可以交代要做的事——它起草派活单，你点了才派；它自己不改文件"
+                  }
+                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs transition-colors ${
+                    assistantOn ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+                  }`}
                 >
                   <MesaBuddyIcon size={14} strokeWidth={1.8} aria-hidden="true" />
                   项目助手

@@ -165,8 +165,8 @@ export function SettingsDrawerShell({
     return (
       <>
         {titleIcon ? (
-          // 带形象的抽屉（项目助手）：形象 + 标题，项目名在标题下一行，头下一道细线
-          <header className="flex shrink-0 items-center gap-3 border-b border-hairline px-5 py-3">
+          // 带形象的抽屉（项目助手）：形象 + 标题，项目名在标题下一行；头与内容靠留白分开，不画线（2026-11-08）
+          <header className="flex shrink-0 items-center gap-3 px-5 pb-2 pt-3">
             {titleIcon}
             <div className="min-w-0 flex-1">
               <h2 id={titleId} className="truncate text-base font-semibold leading-5 text-l1">
