@@ -220,6 +220,9 @@ pub struct Schedule {
     /// 还没处理的事件（只记录档在下一个 tick 记完即清；真跑档在跑起来时取走）
     #[serde(default)]
     pub pending_events: Vec<EventHit>,
+    /// 授权范围（2026-11-08，grant.rs）：能不能联网、每次最多花多少；None = 默认（只放行学术网站、不设预算）
+    #[serde(default)]
+    pub grant: Option<crate::grant::Grant>,
 }
 
 /// 前端 DTO（camelCase）
@@ -260,6 +263,8 @@ pub struct ScheduleDto {
     pub pending_events: u32,
     /// 正在跑但这么多分钟没有任何动静（可能卡住）；没卡或没在跑为 None。list_schedules 现算
     pub stalled_minutes: Option<u64>,
+    /// 生效的授权范围（没设过的给默认）
+    pub grant: crate::grant::Grant,
 }
 
 impl From<Schedule> for ScheduleDto {
@@ -291,6 +296,7 @@ impl From<Schedule> for ScheduleDto {
             pending_events: s.pending_events.len() as u32,
             event: s.event,
             stalled_minutes: None,
+            grant: s.grant.unwrap_or_default(),
         }
     }
 }
@@ -329,6 +335,9 @@ pub struct CreateScheduleInput {
     /// 事件规则（有它就不按时间跑；frequency 强制 manual）
     #[serde(default)]
     pub event: Option<EventRule>,
+    /// 授权范围；不传 = 默认
+    #[serde(default)]
+    pub grant: Option<crate::grant::Grant>,
 }
 
 /// 更新补丁：字段全 Option（None = 不改）；profile_id/linked_step 用 Option<Option<String>>，
@@ -364,6 +373,9 @@ pub struct UpdateSchedulePatch {
     /// 事件规则每周花费上限（美元）；0 = 不设
     #[serde(default)]
     pub event_weekly_cap_usd: Option<f64>,
+    /// 授权范围（整份替换）
+    #[serde(default)]
+    pub grant: Option<crate::grant::Grant>,
 }
 
 /// `scheduler-run-done` 事件载荷
@@ -949,6 +961,7 @@ fn create_schedule_at(path: &Path, mut input: CreateScheduleInput) -> Result<Sch
         skip_if_unreviewed: input.skip_if_unreviewed,
         timeout_minutes: input.timeout_minutes,
         event,
+        grant: input.grant.map(normalize_grant).transpose()?,
         ..Default::default()
     };
     // 目录规则先记底再落盘：建规则时已在目录里的文件不算事件；记底失败就不建，免得报错了规则却已经在（2026-11-03 自查）
@@ -961,6 +974,18 @@ fn create_schedule_at(path: &Path, mut input: CreateScheduleInput) -> Result<Sch
     list.push(task.clone());
     write_schedules_at(path, &list)?;
     Ok(task)
+}
+
+/// 授权预算：0 或不填 = 不设；负数、非数字拒收；最多 100 美元一次
+fn normalize_grant(mut g: crate::grant::Grant) -> Result<crate::grant::Grant, String> {
+    g.budget_usd = match g.budget_usd {
+        None => None,
+        Some(v) if !v.is_finite() || v < 0.0 => return Err("每次花费上限要是不小于 0 的数".into()),
+        Some(v) if v == 0.0 => None,
+        Some(v) if v > 100.0 => return Err("每次花费上限最多 100 美元".into()),
+        Some(v) => Some(v),
+    };
+    Ok(g)
 }
 
 /// 事件规则写法收口：种类闭集、目录在项目内、扩展名小写去点、模式缺省只记录
@@ -1103,6 +1128,9 @@ fn update_schedule_at(
     }
     if task.event.is_some() && task.frequency != "manual" {
         return Err("事件规则不按时间跑".into());
+    }
+    if let Some(g) = patch.grant {
+        task.grant = Some(normalize_grant(g)?);
     }
     if let Some(enabled) = patch.enabled {
         if enabled && !task.enabled {
@@ -2408,7 +2436,9 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         }
         task_prompt.push_str(PEEK_NOTE);
         task_prompt.push_str(EXTERNAL_MATERIAL_RULE);
-        crate::ai::run_agent_task(
+        let grant = task.grant.clone().unwrap_or_default();
+        task_prompt.push_str(&grant_note(&grant));
+        crate::ai::run_agent_task_granted(
             &profile,
             model.as_deref(),
             &task_prompt,
@@ -2418,6 +2448,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             false,
             Some(Path::new(&task.project_root)),
             run_id.as_deref(),
+            Some(&grant),
         )
         .and_then(|(output, id)| {
             run_id = Some(id);
@@ -2982,6 +3013,22 @@ fn week_sessions(task: &Schedule, now: chrono::DateTime<chrono::FixedOffset>) ->
         })
         .filter_map(|r| Some((r.agent.clone()?, r.session_id.clone()?)))
         .collect()
+}
+
+/// 授权范围的一句（2026-11-08）：告诉 Agent 这次能做到哪、被拦了怎么办——不绕、记进简报
+fn grant_note(g: &crate::grant::Grant) -> String {
+    let net = match g.network {
+        crate::grant::Network::MesaOnly => "这次运行不能自己联网（命令访问网站会被拦）",
+        crate::grant::Network::Academic => "这次运行只能访问学术检索和开放获取网站（OpenAlex、Crossref、arXiv、PubMed 等），别的网站会被拦",
+        crate::grant::Network::Open => "",
+    };
+    if net.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n\n【这次的授权范围】{net}；只在工作副本里写文件。要下付费墙或别处的全文，交给 \"$MESA_PAPER_TOOL\" paper fetch <DOI>，由 Mesa 去取。\
+         被拦下的事不要换办法绕过，在简报里写一句被拦了什么，由人决定要不要放宽。\n"
+    )
 }
 
 /// 定时运行里看一眼的一句（2026-11-04）：ai::run_agent_task 给属于项目的无头运行注入了 MESA_PEEK_TOOL / MESA_RUN_ID
@@ -3959,6 +4006,7 @@ fn commit_watch_skill_draft_sync(
             skip_if_unreviewed: None,
             timeout_minutes: None,
             event: None,
+            grant: None,
         },
     )?;
     for rel in [watch_draft_rel(&id), watch_schedule_rel(&id)] {
@@ -4073,6 +4121,7 @@ fn create_paused_schedule_sync(input: PausedScheduleInput) -> Result<PausedSched
             skip_if_unreviewed: None,
             timeout_minutes: None,
             event: None,
+            grant: None,
         },
     )?;
     let patch: UpdateSchedulePatch =
@@ -4126,6 +4175,7 @@ pub(crate) fn create_schedule_for_pack(
             skip_if_unreviewed: None,
             timeout_minutes: None,
             event,
+            grant: None,
         },
     )?;
     // 分发会写各家 Agent 的技能目录：单测里不碰本机真实配置

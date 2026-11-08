@@ -140,7 +140,7 @@ export function crossReviewReuseKey(worktreePath: string): string {
 /** 交给复核 Agent 的首条指令 */
 export function crossReviewPrompt(agentId: string, projectRoot: string): string {
   return [
-    "你在做只读的交叉复核：这一步的稿件是另一家模型写的，请换个角度挑问题，不要顺着原作者的思路。",
+    "你在做交叉复核，只写下面第 3 条那一个核验文件，不改稿件和其他任何文件（你改动的文件都会出现在评审改动里，由人逐个看）：这一步的稿件是另一家模型写的，请换个角度挑问题，不要顺着原作者的思路。",
     "",
     "1. 读 manuscript/evidence.json（每处引用的原文摘录与正文位置）和对应正文；摘录不够判断时，打开项目根 " +
       `${projectRoot}/papers/ 下的 PDF 看上下文。没有 evidence.json 时，改读正文里的 [@键] 和 notes/ 下的精读笔记。`,

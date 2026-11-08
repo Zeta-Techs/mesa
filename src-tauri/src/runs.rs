@@ -407,6 +407,23 @@ fn db() -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// 记一条运行事件（模块外用：授权范围 run.grant、到预算停下 run.budget 等）；payload 写入前脱敏
+pub(crate) fn record_run_event(id: &str, kind: &str, payload: &str) -> Result<(), String> {
+    record_event(&db()?, id, kind, Some(payload))
+}
+
+/// 这次 Run 记下的授权范围（run.grant 事件的人话）；没有为 None
+pub(crate) fn run_grant_summary(id: &str) -> Option<String> {
+    let conn = db().ok()?;
+    conn.query_row(
+        "SELECT payload FROM run_events WHERE run_id=?1 AND event_type='run.grant' ORDER BY rowid DESC LIMIT 1",
+        params![id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+}
+
 fn record_event(
     conn: &Connection,
     id: &str,

@@ -2841,7 +2841,7 @@ function LiveWorkspaceReviewView({
                       type="button"
                       disabled={crossBusy || !wsRow}
                       onClick={() => void startCrossReview()}
-                      title={`用 ${reviewerOptionLabel(crossReviewer, crossReviewerLabel)} 读原文摘录与正文，逐条判断支持与否；结论进核验清单，都标「待你判断」。只读，不改稿件`}
+                      title={`用 ${reviewerOptionLabel(crossReviewer, crossReviewerLabel)} 读原文摘录与正文，逐条判断支持与否；结论进核验清单，都标「待你判断」。它只写核验清单这一个文件，不改稿件；要是改了别的文件，会出现在这一步的评审改动里`}
                       className={`rounded-sm px-1 hover:bg-hover hover:text-l1 disabled:opacity-50 ${crossReviewer.sameFamily ? "text-warn-text" : "text-l3"}`}
                     >
                       请 {crossReviewerLabel} 复核

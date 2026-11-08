@@ -2342,6 +2342,15 @@ export interface ScheduleDto {
   pendingEvents?: number;
   /** 正在跑但这么多分钟没有任何动静（可能卡住）；空 = 没卡或没在跑 */
   stalledMinutes?: number | null;
+  /** 授权范围（2026-11-08，grant.rs）：联网档与每次花费上限；没设过的后端给默认（只放行学术网站） */
+  grant?: ScheduleGrant;
+}
+
+export type GrantNetwork = "mesa_only" | "academic" | "open";
+
+export interface ScheduleGrant {
+  network: GrantNetwork;
+  budgetUsd?: number | null;
 }
 
 export interface CreateScheduleInput {

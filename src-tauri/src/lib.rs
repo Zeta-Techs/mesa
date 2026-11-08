@@ -119,6 +119,7 @@ mod codex_continuity;
 mod image_gen;
 mod peek;
 mod paper_fetch;
+mod grant;
 mod svg_render;
 mod project_mail;
 mod split_plan;
@@ -1149,6 +1150,7 @@ pub fn run() {
             scheduler::commit_watch_skill_draft,
             scheduler::create_paused_schedule,
             research_record::last_step_run_cost,
+            grant::grant_preview,
             scheduler::ensure_schedule_skill_distributed,
             scheduler::schedule_memory_read,
             scheduler::schedule_memory_write,

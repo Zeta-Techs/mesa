@@ -1249,6 +1249,11 @@ pub(crate) fn claude_compat_env(c: &crate::profiles::GatewayCompat) -> [(&'stati
 }
 
 /// `--settings` 覆盖文件：含密钥载体，必须 0600 落盘（与 write_external_wrapper 同口径），用完定时清掉
+/// 给授权范围（grant.rs）新建 Claude 设置覆盖文件用：同一目录、同一 0600 写法
+pub(crate) fn write_settings_overlay_file_pub(prefix: &str, body: &str) -> Result<String, String> {
+    write_settings_overlay_file(prefix, body)
+}
+
 fn write_settings_overlay_file(prefix: &str, body: &str) -> Result<String, String> {
     let dir = external_wrapper_dir()?;
     let path = dir.join(format!("{prefix}-{}.json", uuid::Uuid::new_v4()));
@@ -3576,6 +3581,12 @@ fn codex_relay_model_args(cfg: Option<&toml::Value>, model: &str) -> Vec<String>
         }
     }
     out
+}
+
+/// 测试里换掉「用户的 Codex 配置」（真跑测试要用本机真实配置时用）
+#[cfg(test)]
+pub(crate) fn set_test_codex_config(v: Option<toml::Value>) {
+    tests::TEST_CODEX_CONFIG.with(|k| *k.borrow_mut() = v);
 }
 
 fn codex_user_config_for_launch() -> Option<toml::Value> {

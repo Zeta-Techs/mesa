@@ -328,6 +328,9 @@ pub struct RunRecord {
     /// 这次经 Mesa 代下取得的全文（「DOI（经 开放获取 / 学校通道 / 浏览器）」，paper_fetch.rs 日志按 runId 出）
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fetched: Vec<String>,
+    /// 这次按什么授权跑的、这家实际落实了什么（grant.rs，run.grant 事件）；没设授权为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<String>,
 }
 
 pub(crate) fn read_records_at(root: &Path) -> Vec<RunRecord> {
@@ -555,6 +558,7 @@ fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) ->
         task: task_text_of(run).and_then(|(source, text)| archive_task(root, &run.id, source, &text).ok()),
         session_id: run.session_id.clone(),
         fetched: crate::paper_fetch::fetched_for_run(&run.id),
+        grant: crate::runs::run_grant_summary(&run.id),
     }
 }
 

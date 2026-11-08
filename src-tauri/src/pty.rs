@@ -1046,13 +1046,18 @@ fn pty_spawn_sync(
     // 免得每写一篇 PDF 都停下来等提权确认（2026-09-15 用户实测「总是让我授权」）。
     // 只加 papers/ 子目录：派生产物仍必须走工作区 + 评审合并，不开放整个主仓；
     // TOML 基本字符串里 Windows 反斜杠要转义
+    // 代下全文的队列目录（paper_fetch.rs，2026-11-08）同样预授权：Agent 调 `paper fetch` 要往里写排队记录
     if agent_id == "codex" {
-        if let Some(papers) = crate::workspaces::papers_dir_for_worktree(&cwd) {
-            let escaped = papers.replace('\\', "\\\\");
+        let mut roots: Vec<String> = crate::workspaces::papers_dir_for_worktree(&cwd).into_iter().collect();
+        roots.extend(crate::grant::mesa_tool_write_dirs());
+        if !roots.is_empty() {
+            let list = roots
+                .iter()
+                .map(|r| format!("\"{}\"", r.replace('\\', "\\\\")))
+                .collect::<Vec<_>>()
+                .join(",");
             plan.args.push("-c".into());
-            plan.args.push(format!(
-                r#"sandbox_workspace_write.writable_roots=["{escaped}"]"#
-            ));
+            plan.args.push(format!("sandbox_workspace_write.writable_roots=[{list}]"));
         }
     }
     // 预分配 id 的会话在第一条消息前不落盘：上次启动即退出 / 启动即崩时，Run 记着 id、盘上没有

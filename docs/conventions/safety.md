@@ -67,6 +67,15 @@
   **只读、绝不刷新、绝不回写**（刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；令牌不进 DTO / 日志 / 诊断包；
   钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。Codex 重置卡消费（`use_codex_reset_card`）同用卡纪律：显式命令 + 前端确认，
   先重查「此刻能用几张」，为 0 不发请求；`redeem_request_id` 每次新生成，不自动重试。
+- **授权范围（2026-11-08，grant.rs；设计 docs/design-autonomy-roadmap.md §4）**：定时任务按授权跑，不再一律全权限（取代 2026-11-01 定时任务 Claude 加
+  `bypassPermissions` 的做法——当时 acceptEdits 跑不了 curl，现在由沙箱解决）。`plan_for` 是各家「能落实到哪」的唯一出处，界面预览（`grant_preview`）与真正启动同源。
+  Claude Code（非 Windows、联网不是「不限」）：`--settings` 并入 sandbox 段（enabled、autoAllowBashIfSandboxed、allowUnsandboxedCommands=false、
+  network.allowedDomains、filesystem.allowWrite）+ acceptEdits + **`--allowedTools Bash` 整体放行**（命令全在沙箱里；不放行时带查询串的 curl 被权限层要求确认、
+  无人值守即拒，2026-11-08 真跑实证）+ WebFetch 按域名放行 + `--max-budget-usd`。Codex：workspace-write + network_access 开关 + writable_roots。
+  两家沙箱都放行系统临时目录的写；Mesa 工具目录（`<config>/paper-fetch`）进各家可写名单（Codex 交互启动同样加）。其余各家照旧全权限、界面黄字写明；
+  预算能锁会话 id 的由 Mesa 每 30 秒按用量算、到额 `cancel_capture`（Run 记 `run.budget`、状态 stopped），锁不了的只记录不说成会停。
+  每次运行记 `run.grant` 事件，Run 事实 `grant` 字段。真跑核对：`MESA_GR_AGENT=claude-code|codex cargo test grant_sandbox_real_run -- --ignored`（目录外的探针放家目录，不放临时目录）。
+  **未做**：一次性调用（ai_prompt_impl）的七家仍无权限参数——要逐家实测 `-p` 下只读参数后再加；目标无头运行仍全权限。
 - **机构访问会话罐（2026-09-16，inst_access.rs）**：登录窗 Cookie 存 0600 `inst-session.json`（与 keys.json 同
   纪律：原子写、私有临时文件、值绝不出站——状态 DTO 只给域名/条数/时间，不进诊断包/生效配置快照）；损坏保留
   原件报错，不当空罐继续。**绝不存机构账号密码、绝不做无人值守自动登录**（MFA 过不去；脚本式批量下载会被

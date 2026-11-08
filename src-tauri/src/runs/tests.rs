@@ -1233,7 +1233,7 @@ fn goal_headless_e2e_child() {
         let (run, _) = headless_goal_target(&run.id).unwrap();
         let mut cmd = crate::process::background_command("/bin/sh");
         cmd.arg(script).current_dir(&run.isolation_path);
-        let job = crate::ai::HeadlessCommand { cmd, host: None, lock_id: None };
+        let job = crate::ai::HeadlessCommand { cmd, host: None, lock_id: None, grant_summary: None };
         launch_goal_headless(run, job, Duration::from_secs(300)).unwrap()
     };
     let wait_closed = |id: &str| {

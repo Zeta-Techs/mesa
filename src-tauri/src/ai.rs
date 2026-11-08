@@ -394,6 +394,29 @@ pub(crate) fn headless_task_args(agent: &str, prompt: &str) -> Vec<String> {
     }
 }
 
+/// 按授权（grant.rs）给出的定时 / 可写无头参数：形状与 headless_task_args 一致，权限那几个参数换成授权算出的
+pub(crate) fn headless_task_args_granted(agent: &str, prompt: &str, plan: &crate::grant::GrantPlan) -> Vec<String> {
+    match agent {
+        "claude-code" => {
+            let mut args = headless_args(agent, prompt);
+            args.extend(plan.args.iter().cloned());
+            args
+        }
+        "codex" => {
+            let mut args: Vec<String> = vec!["exec".into(), "--skip-git-repo-check".into()];
+            args.extend(plan.args.iter().cloned());
+            args.push(prompt.into());
+            args
+        }
+        "grok" => {
+            let mut args: Vec<String> = vec!["-p".into(), prompt.into(), "--output-format".into(), "json".into()];
+            args.extend(plan.args.iter().cloned());
+            args
+        }
+        other => headless_args(other, prompt),
+    }
+}
+
 // ===== 进程执行（不走 PTY；stdout/stderr 各开线程读，超时 kill 并返回部分输出） =====
 
 /// 这次无头运行要不要给 Codex 加 Windows 沙箱覆盖（只 Windows、只 Codex；用户自己没配、在 Mesa 里确认过才加，
@@ -1176,6 +1199,8 @@ pub(crate) struct HeadlessCommand {
     pub host: Option<String>,
     /// 启动前锁定的会话 id（支持 --session-id 的 CLI），其余为 None、跑完从输出里抠
     pub lock_id: Option<String>,
+    /// 按授权跑时这家实际落实了什么（人话，记进 Run 事件）；没授权为 None
+    pub grant_summary: Option<String>,
 }
 
 /// 无头命令拼装：解析二进制、现取密钥（只进子进程 env）、注入连接、拼 plan + 无头形态参数、定工作目录。
@@ -1186,6 +1211,18 @@ pub(crate) fn build_headless_command(
     prompt: &str,
     cwd: &std::path::Path,
     write: bool,
+) -> Result<HeadlessCommand, String> {
+    build_headless_command_granted(profile, model, prompt, cwd, write, None)
+}
+
+/// `grant`：定时任务按授权范围跑（grant.rs）；None = 照旧（可写的是全权限）
+pub(crate) fn build_headless_command_granted(
+    profile: &Profile,
+    model: Option<&str>,
+    prompt: &str,
+    cwd: &std::path::Path,
+    write: bool,
+    grant: Option<&crate::grant::Grant>,
 ) -> Result<HeadlessCommand, String> {
     let binary = agents::binary_for(&profile.agent)
         .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
@@ -1204,15 +1241,26 @@ pub(crate) fn build_headless_command(
         cmd.env(key, value);
     }
     let (lock_id, lock_args) = lock_headless_session(&profile.agent);
+    let mut grant_plan = None;
     let headless = if write {
-        with_codex_win_sandbox(
-            headless_task_args(&profile.agent, prompt),
-            codex_win_sandbox_for_run(&profile.agent),
-        )
+        let task_args = match grant {
+            Some(g) => {
+                let gp = crate::grant::plan_for(&profile.agent, g, &crate::grant::mesa_tool_write_dirs(), cfg!(windows));
+                let args = headless_task_args_granted(&profile.agent, prompt, &gp);
+                grant_plan = Some(gp);
+                args
+            }
+            None => headless_task_args(&profile.agent, prompt),
+        };
+        with_codex_win_sandbox(task_args, codex_win_sandbox_for_run(&profile.agent))
     } else {
         headless_args(&profile.agent, prompt)
     };
-    for a in compose_headless_args(&profile.agent, &plan.args, &headless) {
+    let mut all_args = compose_headless_args(&profile.agent, &plan.args, &headless);
+    if let Some(extra) = grant_plan.as_ref().and_then(|g| g.claude_settings.as_ref()) {
+        crate::grant::merge_claude_settings(&mut all_args, extra)?;
+    }
+    for a in all_args {
         cmd.arg(a);
     }
     for a in lock_args {
@@ -1232,6 +1280,7 @@ pub(crate) fn build_headless_command(
         cmd,
         host: endpoint_host(profile.base_url.as_deref()),
         lock_id,
+        grant_summary: grant_plan.map(|g| g.summary),
     })
 }
 
@@ -1246,8 +1295,26 @@ pub(crate) fn run_agent_task(
     project_root: Option<&std::path::Path>,
     existing_run_id: Option<&str>,
 ) -> Result<(String, String), String> {
-    let HeadlessCommand { mut cmd, host, lock_id } =
-        build_headless_command(profile, model, prompt, cwd, true)?;
+    run_agent_task_granted(profile, model, prompt, cwd, timeout, reuse_key, sentinel, project_root, existing_run_id, None)
+}
+
+/// 同 run_agent_task，按授权范围跑（grant.rs，定时任务用）：参数按这家能落实的给，Run 上记一条 run.grant；
+/// 设了预算而 CLI 没有原生预算参数、又能锁定会话 id 的，Mesa 每 30 秒按会话用量看一次，到额停掉（run.budget）
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_agent_task_granted(
+    profile: &Profile,
+    model: Option<&str>,
+    prompt: &str,
+    cwd: &std::path::Path,
+    timeout: Duration,
+    reuse_key: Option<&str>,
+    sentinel: bool,
+    project_root: Option<&std::path::Path>,
+    existing_run_id: Option<&str>,
+    grant: Option<&crate::grant::Grant>,
+) -> Result<(String, String), String> {
+    let HeadlessCommand { mut cmd, host, lock_id, grant_summary } =
+        build_headless_command_granted(profile, model, prompt, cwd, true, grant)?;
     if let Some(id) = &lock_id {
         let _ = crate::sessions::mark_session_internal(&profile.agent, id);
     }
@@ -1281,6 +1348,14 @@ pub(crate) fn run_agent_task(
     let _session_reg = lock_id
         .as_ref()
         .map(|id| HeadlessSessionReg::new(&run.id, &profile.agent, id));
+    if let Some(summary) = grant_summary.as_deref() {
+        let _ = crate::runs::record_run_event(&run.id, "run.grant", summary);
+    }
+    let budget_watch = grant
+        .and_then(|g| g.budget_usd)
+        .filter(|_| profile.agent != "claude-code")
+        .zip(lock_id.clone())
+        .map(|(budget, sid)| BudgetWatch::start(run.id.clone(), profile.agent.clone(), sid, budget));
     if let Err(error) = crate::runs::mark_started(&run.id) {
         let _ = crate::runs::close_run_with_result(
             &run.id,
@@ -1303,9 +1378,18 @@ pub(crate) fn run_agent_task(
     // 会话 id 记到 Run 上（定时历史「看过程」据此打开那次后台对话）：
     // 能锁定 id 的 CLI 用启动前锁的，其余用输出里抠到的
     let session = lock_id.or(seen_session);
+    let over_budget = budget_watch.map(BudgetWatch::finish).unwrap_or(false);
+    let out = if over_budget {
+        Err(format!(
+            "到预算停下：这次花费到了授权里设的上限 ${:.2}（按会话用量、官方价算）",
+            grant.and_then(|g| g.budget_usd).unwrap_or_default()
+        ))
+    } else {
+        out
+    };
     let status = if out.is_ok() {
         "completed"
-    } else if out.as_ref().err().is_some_and(|e| e.contains("已取消")) {
+    } else if over_budget || out.as_ref().err().is_some_and(|e| e.contains("已取消")) {
         "stopped"
     } else {
         "failed"
@@ -1315,10 +1399,58 @@ pub(crate) fn run_agent_task(
         session.as_deref(),
         status,
         None,
-        (out.is_err()).then_some("定时/无头 Agent 执行失败"),
+        if over_budget { Some("到授权预算停下") } else { (out.is_err()).then_some("定时/无头 Agent 执行失败") },
     );
     closed.map_err(|e| format!("Agent 已退出，但运行状态保存失败：{e}"))?;
     out.map(|text| (text, run.id))
+}
+
+/// 授权预算的旁路盯梢（CLI 没有原生预算参数时）：每 30 秒按锁定的会话 id 算一次花费，到额就取消这次运行
+struct BudgetWatch {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    hit: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl BudgetWatch {
+    fn start(run_id: String, agent: String, session: String, budget: f64) -> Self {
+        use std::sync::atomic::Ordering;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (s2, h2) = (stop.clone(), hit.clone());
+        let handle = std::thread::Builder::new()
+            .name("grant-budget".into())
+            .spawn(move || {
+                let mut waited = 0u64;
+                while !s2.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_secs(1));
+                    waited += 1;
+                    if waited % 30 != 0 {
+                        continue;
+                    }
+                    if let Some(cost) = crate::usage::session_cost_priced(&agent, &session) {
+                        if cost >= budget {
+                            h2.store(true, Ordering::Relaxed);
+                            let _ = crate::runs::record_run_event(&run_id, "run.budget", &format!("花费 ${cost:.2} 到了预算 ${budget:.2}，Mesa 停掉了这次运行"));
+                            let _ = crate::process::cancel_capture(&run_id);
+                            break;
+                        }
+                    }
+                }
+            })
+            .ok();
+        BudgetWatch { stop, hit, handle }
+    }
+
+    /// 运行结束：停掉盯梢，返回是不是因为到预算才停的
+    fn finish(mut self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+        self.hit.load(Ordering::Relaxed)
+    }
 }
 
 /// 目标无头运行的结局：与交互终端收尾同一组状态（completed / failed / stopped），交给 runs::close_run_with_result
@@ -1342,6 +1474,7 @@ pub(crate) fn run_goal_headless_to_exit(
         mut cmd,
         host,
         lock_id,
+        grant_summary: _,
     } = job;
     // 锁定了会话 id 的：跑的期间登记，卡住检测据此看会话文件有没有在长（跑完即撤）
     let _session_reg = lock_id
@@ -2979,6 +3112,52 @@ mod tests {
             Ok((text, run)) => eprintln!("run={run}\n{}", tail_chars(&text, 3000)),
             Err(e) => eprintln!("失败：{}", tail_chars(&e, 3000)),
         }
+    }
+
+    /// 授权范围真跑（2026-11-08，默认不跑）：MESA_GR_AGENT=claude-code|codex，用这家最近用过的连接，按「只放行学术网站、
+    /// 预算 $0.30」跑一次：让它访问学术接口、访问别的网站、往工作目录外写文件。断言目录外的文件没写成。
+    #[test]
+    #[ignore]
+    fn grant_sandbox_real_run() {
+        let Ok(agent) = std::env::var("MESA_GR_AGENT") else { return };
+        let store = crate::profiles::ProfileStore::new().unwrap();
+        let mut list: Vec<Profile> = store.list().unwrap().into_iter().filter(|p| p.agent == agent).collect();
+        eprintln!("这家的连接：{:?}", list.iter().map(|p| (p.name.clone(), format!("{:?}", p.account_type), p.models.first().cloned())).collect::<Vec<_>>());
+        if let Ok(name) = std::env::var("MESA_GR_PROFILE") {
+            list.retain(|p| p.name == name || p.id == name);
+        }
+        list.sort_by(|a, b| b.last_used_at.cmp(&a.last_used_at));
+        let profile = list.first().expect("这家没有可用连接");
+        // 不放系统临时目录：各家沙箱都放行临时目录的写（装依赖、抽 PDF 文字要用），放那里测不出「目录外」
+        let base = crate::dirs::home_dir().unwrap().join(format!(".ccode-grant-real-{}", uuid::Uuid::new_v4().simple()));
+        let cwd = base.join("work");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("escaped.txt");
+        let prompt = format!(
+            "Run these shell commands one at a time and report each command's exit status and output in one line each. Do not try workarounds if one fails.\n\
+             1) curl -s -o /dev/null -w '%{{http_code}}' --max-time 20 https://api.openalex.org/works\n\
+             1b) curl -s --max-time 20 \"https://api.openalex.org/works?per-page=1\" | head -c 80\n\
+             2) curl -s -o /dev/null -w '%{{http_code}}' --max-time 10 https://example.com\n\
+             3) echo hi > {}\n\
+             4) echo ok > inside.txt",
+            target.display()
+        );
+        let grant = crate::grant::Grant { network: crate::grant::Network::Academic, budget_usd: Some(0.3) };
+        // 测试构建里 Codex 配置读的是空替身；真跑要按本机真实 config.toml 判断渠道有没有 auth
+        crate::agents::set_test_codex_config(crate::agent_specs::codex_user_config());
+        eprintln!("连接：{}", profile.name);
+        let res = run_agent_task_granted(profile, None, &prompt, &cwd, Duration::from_secs(300), None, false, None, None, Some(&grant));
+        match &res {
+            Ok((text, run)) => eprintln!("run={run}\n{}", tail_chars(text, 3000)),
+            Err(e) => eprintln!("失败：{}", tail_chars(e, 3000)),
+        }
+        let escaped = target.exists();
+        let inside = cwd.join("inside.txt").exists();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(!escaped, "工作目录外的文件不该写成");
+        eprintln!("工作目录内写成：{inside}");
     }
 
     use super::*;

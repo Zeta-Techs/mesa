@@ -1684,6 +1684,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   Windows 共用脚本 ccode-hook.ps1 只删回车换行、写日志撞车重试，正文改了启动时替换；
                              #   状态日志 / 备份目录走 storage::config_root（测试可重定向）；
                              #   real_data_dry_run_migrate（ignored）= 对真实配置的拷贝干跑
+  grant.rs                   # 授权范围（2026-11-08，design-autonomy-roadmap.md §4）：Grant（联网档 mesa_only / academic / open + 每次预算）→
+                             #   plan_for 按家给权限参数与人话摘要（Claude sandbox 段 + Bash 整体放行 + WebFetch 按域名 + --max-budget-usd；
+                             #   Codex workspace-write + 联网开关 + writable_roots；其余写明做不到）、merge_claude_settings 并进 --settings 覆盖文件、
+                             #   grant_preview 命令；调用方 ai::run_agent_task_granted（定时任务），预算旁路 ai::BudgetWatch
   paper_fetch.rs             # 全文代下队列（2026-11-08，design-autonomy-roadmap.md §6）：AI 经 `mesa_helper paper fetch|status|pick`
                              #   （MESA_PAPER_TOOL，与 MESA_PEEK_TOOL 同一 helper，按 MESA_RUN_ID 找项目）或人在待获取清单整批交；
                              #   队列 <config>/paper-fetch/queue.json 跨进程持文件锁读改写，后台线程单线程推进：开放获取 → 学校通道

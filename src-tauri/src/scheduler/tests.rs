@@ -333,6 +333,7 @@ fn create_validation_rejects_bad_fields() {
             skip_if_unreviewed: None,
             timeout_minutes: None,
             event: None,
+            grant: None,
             name: None,
             model: None,
             project_root: root.to_string(),
@@ -1417,6 +1418,7 @@ fn folder_rule_end_to_end_records_without_calling_model() {
             minute: 0,
             skip_if_unreviewed: None,
             timeout_minutes: None,
+            grant: None,
             event: Some(EventRule {
                 kind: "folder".into(),
                 folder: Some("data/raw".into()),

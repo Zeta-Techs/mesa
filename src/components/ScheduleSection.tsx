@@ -67,7 +67,7 @@ import {
   scheduleSkillOptionsForEdit,
 } from "../schedule-skill";
 import { beginAskAi } from "./AskAiModal";
-import { AGENTS, type AgentCapabilitiesDto } from "../types";
+import { AGENTS, type AgentCapabilitiesDto, type GrantNetwork } from "../types";
 import type {
   RunRecordDto,
   ScheduleDto,
@@ -976,9 +976,33 @@ function EditScheduleModal({
   const [modelId, setModelId] = useState(schedule.model ?? "");
   const [eventMode, setEventMode] = useState(schedule.event?.mode ?? "record");
   const [weeklyCapEdit, setWeeklyCapEdit] = useState(String(schedule.event?.weeklyCapUsd ?? 0));
+  const [grantNetwork, setGrantNetwork] = useState<GrantNetwork>(schedule.grant?.network ?? "academic");
+  const [grantBudget, setGrantBudget] = useState(schedule.grant?.budgetUsd ? String(schedule.grant.budgetUsd) : "");
+  const [grantPreview, setGrantPreview] = useState<{ summary: string; enforced: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const caps = useAgentCaps();
+  // 这家按这份授权实际能做到什么（与真正启动同一个后端规则，grant.rs plan_for）
+  const previewAgent = profiles.find((p) => p.id === profileId)?.agent ?? null;
+  useEffect(() => {
+    if (!previewAgent) {
+      setGrantPreview(null);
+      return;
+    }
+    let stale = false;
+    void invoke<{ summary: string; enforced: boolean }>("grant_preview", {
+      agent: previewAgent,
+      grant: { network: grantNetwork, budgetUsd: Number(grantBudget) > 0 ? Number(grantBudget) : null },
+    }).then(
+      (p) => {
+        if (!stale) setGrantPreview(p);
+      },
+      () => {},
+    );
+    return () => {
+      stale = true;
+    };
+  }, [previewAgent, grantNetwork, grantBudget]);
 
   useEffect(() => {
     invoke<SkillDto[]>("list_skills")
@@ -1013,6 +1037,7 @@ function EditScheduleModal({
           ...(schedule.event ? { eventMode, eventWeeklyCapUsd: Number(weeklyCapEdit) || 0 } : fields),
           skipIfUnreviewed,
           timeoutMinutes,
+          grant: { network: grantNetwork, budgetUsd: Number(grantBudget) > 0 ? Number(grantBudget) : null },
           // 清空运行配置/模型必须发空串：后端 Option<Option> 语义下显式 null ≡ 缺失 ≡ 不改，
           // 发 null 会让「选回自动」静默失效（行内改口径早已是空串，这里对齐）
           profileId,
@@ -1109,6 +1134,39 @@ function EditScheduleModal({
             跑到上限就停下记「超时」。连续 3 次没跑成（失败或超时）会自动暂停。
           </span>
         </label>
+        <fieldset className="mb-3 block text-sm">
+          <legend className="mb-1 block text-xs text-l3">授权范围</legend>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className={`${fieldClass} w-auto`}
+              aria-label="联网"
+              value={grantNetwork}
+              onChange={(e) => setGrantNetwork(e.target.value as GrantNetwork)}
+            >
+              <option value="academic">只放行学术网站（默认）</option>
+              <option value="mesa_only">不联网，只经 Mesa 出门</option>
+              <option value="open">联网不限（全权限）</option>
+            </select>
+            <label className="flex items-center gap-1 text-xs text-l3">
+              每次最多花 $
+              <input
+                className={`${fieldClass} w-20`}
+                inputMode="decimal"
+                placeholder="不设"
+                value={grantBudget}
+                onChange={(e) => setGrantBudget(e.target.value.replace(/[^0-9.]/g, ""))}
+              />
+            </label>
+          </div>
+          <span className="mt-1 block text-micro text-l4">
+            只在工作副本（和系统临时目录）里写文件；下全文交给 Mesa 代下。被拦下的事 AI 会写进简报，不绕过。
+          </span>
+          {grantPreview && (
+            <span className={`mt-0.5 block text-micro ${grantPreview.enforced ? "text-l3" : "text-warn-text"}`}>
+              {grantPreview.summary}
+            </span>
+          )}
+        </fieldset>
         {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className={secondaryActionClass}>取消</button><button type="submit" disabled={busy} className={primaryActionClass}>{busy ? "保存中…" : "保存"}</button></div>
       </form>
