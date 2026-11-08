@@ -473,6 +473,9 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 Agent 只核对引用位置、出「在 EndNote 里怎么改」的清单，换文献、删多余条目、合并重复记录由人在 EndNote 里做再点 Update。同时把实证写进域格式契约：fldData 必须 CRLF，LF 会被 Word 存盘截断。
 落地为 endnote-bridge 的只读体检脚本 `audit_docx.py`（核验文件 `cite-docx.jsonl` 进内置脚本白名单）。细则：pipeline.md「已有 Word + EndNote 稿只体检、不改写引文域」、endnote-bridge SKILL.md §3 / §6。
 
+同一次审改里用户问「哪些地方过于 AI 化、不像科研人员的话术」，并要求把经验做进内置技能。用户拍板「不像 AI 写的 产品决策冲突吗 只是优化内置 skill」：
+写作规则可以加，**口径只从读者清晰度和数值正确写**（衔接、数值自检、跨体系证据只说一次、虚设对比 / 段尾说教 / 限定语叠加 / 句式重复），不提检测、不打「AI 率」分，与「不做降 AI 率」不冲突。细则：pipeline.md「写作质量规则的口径」、review-writing SKILL.md 阶段三。
+
 ### 2026-11-07 · 对外定位：科研是主线，九家 CLI 控制台是底层
 
 整体评估时核出：GitHub 1 星 0 fork、无外部 issue，README 第一条卖点是「一套密钥，九家 Agent 通用」——这一层已有 AionUi、cc-switch 等多款同类且官方客户端在挤压；
