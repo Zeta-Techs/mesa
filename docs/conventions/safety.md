@@ -72,7 +72,8 @@
   原件报错，不当空罐继续。**绝不存机构账号密码、绝不做无人值守自动登录**（MFA 过不去；脚本式批量下载会被
   出版商风控识别并连坐全校 IP）——只有用户在独立登录窗里自己完成的 SSO 会话可复用，且只由人在 UI 上逐篇触发
   下载，scheduler/无头 Run 不携带该会话。会话只在请求头按域名匹配注入（`cookie_header_for`），不写进任何
-  agent env、不进 shell。
+  agent env、不进 shell。**2026-11-08 起（设计稿 `docs/design-autonomy-roadmap.md` §6，落地后生效）**：AI 与无头 Run 可经 `mesa_helper paper fetch`
+  请 Mesa 代下，会话仍只在 Mesa 进程（或浏览器扩展所在的用户浏览器）里用，Agent 拿到的只是落盘路径；限速、熔断、日志见 pipeline.md「机构访问通道」。
 - **聊天层旁路的秘密与边界（2026-10-20，chat_channel.rs；OpenCode 2.x 2026-11-04）**：OpenCode 服务口令（1.x 给 TUI 自带服务，2.x 给 Mesa 自起的 `opencode serve`，TUI 用 `--server` 连）、Codex app-server 能力令牌每标签随机生成，
   **只经环境变量**交给 CLI（Codex 的 app-server 参数里只有令牌的 SHA-256），不落盘、不进 Run 记录 / 日志 / 诊断包；两者都只监听
   127.0.0.1，无口令 / 错令牌一律 401（已实测）。旁路目录 0700、事件 / 输入文件 0600，标签退出即删。hooks 日志每条 payload 截到 64KB
