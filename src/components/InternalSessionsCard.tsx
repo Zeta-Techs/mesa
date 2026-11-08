@@ -82,14 +82,13 @@ export default function InternalSessionsCard({
           <div className="text-base text-l1">Mesa 内部对话</div>
           <p
             className="mt-0.5 text-sm leading-relaxed text-l3"
-            title="起标题、提交信息、摘要、雷达解读这类后台调用在各家 CLI 目录里留下的对话。只清 Mesa 自己产生的，你项目里的对话、你保留过的对话一条不碰；花费记录永久保留在用量页"
+            title="起标题、提交信息、摘要、雷达解读这类后台调用在各家 Agent 的会话目录里留下的对话。只清 Mesa 自己产生的，你项目里的对话、你保留过的对话一条不碰；花费记录永久保留在用量页"
           >
             后台起名、摘要等调用留下的对话
             {stats === null ? "，统计中…" : `，共 ${stats.total} 条 · ${formatStorageBytes(stats.totalBytes)}`}
             {stats?.oldest ? (
               <span title={absTime(stats.oldest)}>（最早 {relTime(stats.oldest)}）</span>
             ) : null}
-            。项目里的对话不受影响
           </p>
         </div>
         <button
@@ -117,7 +116,7 @@ export default function InternalSessionsCard({
           <p className="mt-0.5 truncate text-sm leading-relaxed text-l3">
             {autoClean
               ? `每天至多一次，删掉超过保留期的${stats?.lastCleanAt ? `；上次 ${relTime(stats.lastCleanAt)}` : ""}`
-              : "已关：内部对话一直留着；右上角手动清理同样只删超过保留期的"}
+              : "已关：内部对话一直留着"}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">

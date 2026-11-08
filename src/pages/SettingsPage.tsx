@@ -454,7 +454,7 @@ const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: s
 /** 「启动时进入」每个去处的一句说明（下次启动生效） */
 const START_PAGE_HINT: Record<StartPageId, string> = {
   workbench: "下次启动生效",
-  "last-chat": "下次启动生效；回到上次正看着的那段，发一句才接着跑；上次都关了就进工作台",
+  "last-chat": "下次启动生效；回到上次正看的对话",
   "last-project": "下次启动生效；回到最后那段对话所在的项目页",
   "new-chat": "下次启动生效；直接开一段空白对话",
 };
@@ -532,7 +532,7 @@ const SETTING_NAV: {
   { id: "terminal", label: "终端", group: "basic", icon: SquareTerminal, description: "内嵌终端的显示、外部终端与自定义运行时" },
   { id: "startup", label: "通用", group: "basic", icon: SlidersHorizontal, description: "启动页面、导航形态、关窗与系统通知" },
   { id: "hotkeys", label: "快捷键", group: "basic", icon: Keyboard, description: "点绑定钮后按下新组合即保存，Esc 取消" },
-  { id: "integration", label: "AI 与 Agent", group: "management", icon: Sparkles, description: "内置 AI 功能用哪份配置、Mesa 对各家 Agent 的约束，以及手机上的项目助手（飞书）" },
+  { id: "integration", label: "AI 与 Agent", group: "management", icon: Sparkles, description: "内置 AI 功能、出图、启动 Agent 时带上的设置，以及手机上的项目助手" },
   { id: "profile", label: "研究档案", group: "management", icon: BookUser, description: "跨项目的研究习惯（AI 开工时带上）与读过的文献总表" },
   { id: "network", label: "网络", group: "management", icon: Globe, description: "出网代理、下载镜像与学校图书馆" },
   { id: "stats", label: "用量", group: "management", icon: ChartColumn, description: "用量页折算费用用的汇率与价目" },
@@ -714,15 +714,33 @@ function SubHeading({ title, hint }: { title: string; hint?: string }) {
   );
 }
 
+/** 标签旁的 ⓘ：说不完的说明挂在它的悬浮上，可聚焦，键盘与读屏也拿得到全文（Row 与 Card 共用） */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span
+      tabIndex={0}
+      role="img"
+      aria-label={text}
+      title={text}
+      className="inline-flex shrink-0 cursor-help rounded-sm text-l4 outline-none hover:text-l2 focus-visible:text-l1 focus-visible:ring-1 focus-visible:ring-field"
+    >
+      <Info aria-hidden="true" className="h-3 w-3" />
+    </span>
+  );
+}
+
 /** 成组编辑器：头 = 标题 + 一句说明 + 右侧动作，下面放 CardRow 或自定义内容（2026-10-29 起不套卡，上下细线收边） */
 function Card({
   title,
   hint,
+  hintTitle,
   action,
   children,
 }: {
   title?: React.ReactNode;
   hint?: React.ReactNode;
+  /** 同 Row 的 labelTitle：一句 hint 说不完的，挂在标题旁的 ⓘ 上 */
+  hintTitle?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -731,7 +749,12 @@ function Card({
       {(title || action) && (
         <div className="mb-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            {title && <div className="text-base font-semibold text-l1">{title}</div>}
+            {title && (
+              <div className="flex items-center gap-1.5 text-base font-semibold text-l1">
+                <span>{title}</span>
+                {hintTitle && <InfoTip text={hintTitle} />}
+              </div>
+            )}
             {hint && <p className="mt-0.5 text-xs leading-5 text-l3">{hint}</p>}
           </div>
           {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
@@ -799,19 +822,7 @@ function Row({
       <div className={`min-w-[12rem] flex-1 ${align === "start" ? "pt-1.5" : ""}`}>
         <div className="flex items-center gap-1.5 text-base text-l1">
           <span>{label}</span>
-          {/* 悬浮说明原先只挂在标签文字上，没有任何视觉提示，等于藏起来了；
-              补一个可聚焦的 ⓘ，键盘与读屏也拿得到全文 */}
-          {labelTitle && (
-            <span
-              tabIndex={0}
-              role="img"
-              aria-label={labelTitle}
-              title={labelTitle}
-              className="inline-flex shrink-0 cursor-help rounded-sm text-l4 outline-none hover:text-l2 focus-visible:text-l1 focus-visible:ring-1 focus-visible:ring-field"
-            >
-              <Info aria-hidden="true" className="h-3 w-3" />
-            </span>
-          )}
+          {labelTitle && <InfoTip text={labelTitle} />}
         </div>
         {hint && <p className="mt-0.5 max-w-2xl text-sm leading-relaxed text-l3">{hint}</p>}
       </div>
@@ -1079,9 +1090,10 @@ function HotkeysSection({
         title="页面快捷键"
         hint={
           pageSwitchOn
-            ? "一键直达下面八个页面，编号同侧栏从上到下；「运行」不占编号，回到对话点侧栏里那一段"
+            ? "一键直达下面八个页面，编号同侧栏从上到下"
             : "已关闭：下面八个绑定暂不生效，仍可先改好"
         }
+        hintTitle="「运行」不占编号，回到对话点侧栏里那一段"
         action={
           <Toggle
             checked={pageSwitchOn}
@@ -1295,7 +1307,7 @@ function TerminalShellRow({
           ? "选的 shell 本机找不到，新开的终端用自动"
           : IS_WINDOWS
             ? "新开的终端生效。自动 = Windows PowerShell；运行脚本固定用 Git Bash"
-            : "新开的终端生效。自动 = 系统默认 shell（$SHELL）"
+            : "新开的终端生效。自动 = 系统默认 shell"
       }
       labelTitle={options.map((o) => `${o.label}：${o.path}`).join("\n") || undefined}
     >
@@ -1513,7 +1525,8 @@ function CustomRuntimeBlock({
   return (
     <Card
       title="自定义运行时"
-      hint="把本机一条命令登记成终端里可选的运行时，当普通终端跑（不注入密钥、不解析会话）；命令写绝对路径或 PATH 里的命令名"
+      hint="把本机一条命令登记成终端里可选的一项"
+      hintTitle="当普通终端跑：不提供密钥、不解析会话。命令写绝对路径，或终端里直接能运行的命令名"
       action={
         !formOpen && (
           <button
@@ -1528,7 +1541,7 @@ function CustomRuntimeBlock({
     >
       {list.length === 0 && !formOpen && (
         <p className="px-1 py-1 text-xs text-l4">
-          还没有登记。需要在终端里直接跑某个本机工具（如自己的脚本、别的 CLI）时再加
+          还没有登记
         </p>
       )}
       {list.length > 0 && (
@@ -1598,7 +1611,7 @@ function CustomRuntimeBlock({
           {/* 表单按「是什么 → 怎么跑 → 在哪跑」排成两列，环境变量多行占整宽 */}
           <div className="grid grid-cols-1 gap-2 @min-[36rem]/settings:grid-cols-2">
             <input
-              className={`${fieldClass} h-8 py-0`}
+              className={`${fieldFixed} w-full`}
               placeholder="名称"
               aria-label="运行时名称"
               autoFocus
@@ -1606,28 +1619,28 @@ function CustomRuntimeBlock({
               onChange={(e) => setName(e.target.value)}
             />
             <input
-              className={`${fieldClass} h-8 py-0 font-mono text-xs`}
-              placeholder="命令（绝对路径或 PATH 里的命令名）"
+              className={`${fieldFixed} w-full font-mono text-xs`}
+              placeholder="命令（绝对路径或命令名）"
               aria-label="命令"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
             />
             <input
-              className={`${fieldClass} h-8 py-0 font-mono text-xs`}
+              className={`${fieldFixed} w-full font-mono text-xs`}
               placeholder="参数（可选，空格分开）"
               aria-label="参数"
               value={args}
               onChange={(e) => setArgs(e.target.value)}
             />
             <input
-              className={`${fieldClass} h-8 py-0 font-mono text-xs`}
+              className={`${fieldFixed} w-full font-mono text-xs`}
               placeholder="默认工作目录（可选，只在没有项目目录时用）"
               aria-label="默认工作目录"
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
             />
             <textarea
-              className={`${fieldClass} py-1.5 font-mono text-micro @min-[36rem]/settings:col-span-2`}
+              className={`${fieldFixed} h-auto w-full py-1.5 font-mono text-xs @min-[36rem]/settings:col-span-2`}
               placeholder={"环境变量（可选，每行 KEY=VALUE）"}
               aria-label="环境变量"
               value={envText}
@@ -2699,7 +2712,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               <p className="mt-0.5 text-xs leading-5 text-l3">
                 {followSystem
                   ? isCustomThemeId(settings?.theme)
-                    ? "自定义配色没有成对的另一套，不随系统切换；选内置主题后才跟随"
+                    ? "自定义配色不随系统切换深浅"
                     : "点任一张只选配色，深浅随系统切换"
                   : "上排深色，下排同名浅色"}
               </p>
@@ -2890,7 +2903,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="侧栏 / 顶栏透明度"
-          hint="百分数是罩色浓度，立即生效；壁纸越花越往「原样」调"
+          hint="立即生效；壁纸越花越往「原样」调"
           labelTitle="原样（100%）是各主题本来的样子，越小越透出桌面磨砂，全透（0%）完全不铺罩色、文字直接压在壁纸上。侧栏选中行的底色也跟着一起变淡，最透时选中只剩文字和图标变色。侧栏、顶栏和四周缝是同一层，一起变；深浅主题各有自己的底色，同一个百分数看起来的浓淡会不同。Mac 全屏时一律不透明，不受这一档影响"
         >
           <SegTabs
@@ -2927,7 +2940,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="聊天字号"
-          hint="立即生效；标准 = 原有大小"
+          hint="立即生效"
           labelTitle="管聊天层和对话回放里的正文（你的提问与 AI 回复）。标题、行内代码跟着按比例变；终端字号在「终端」里单独调"
         >
           <SegTabs
@@ -2986,7 +2999,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="聊天滚动条"
           hint="闲置淡出：鼠标进入或滚动时才显现"
-          labelTitle="两种都比以前更宽、更好抓，悬停到滚动条上还会再粗一点。选「常显」则一直显示"
+          labelTitle="两种都较宽、好抓，悬停到滚动条上还会再粗一点。选「常显」则一直显示"
         >
           <SegTabs
             variant="boxed"
@@ -3033,8 +3046,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="打开对话时先显示"
-          hint="问 AI、开始、商量、继续、精读都按这个；之后每段对话还能自己切"
-          labelTitle="「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
+          hint="之后每段对话还能自己切"
+          labelTitle="问 AI、开始、商量、继续、精读都按这个。「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
         >
           <SegTabs
             variant="boxed"
@@ -3051,7 +3064,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="底部状态栏"
-          hint="关掉后终端底下那条消失；聊天里只收掉分支、改动和用量，权限与模型仍在输入框下面"
+          hint="关掉后终端底下那条消失"
+          labelTitle="聊天里只收掉分支、改动和用量，权限与模型仍在输入框下面"
         >
           <Toggle
             label="底部状态栏"
@@ -3073,7 +3087,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         />
         <Row
           label="终端渲染"
-          hint="重开终端生效。自动用显卡绘制，出字和滚动更顺、框线连贯，显卡用不了时自动改用兼容；兼容按网页排版绘制，画面显示不对时再选"
+          hint="重开终端生效；画面显示不对时选兼容"
+          labelTitle="自动用显卡绘制，出字和滚动更顺、框线连贯，显卡用不了时自动改用兼容；兼容按网页排版逐行绘制"
         >
           {/* 旧设置里存过的 "webgl" 与自动同义（terminal-renderer.ts），显示成自动 */}
           <select
@@ -3315,7 +3330,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {IS_WINDOWS && (
           <Row
             label="向 Agent 告知终端底色"
-            hint="浅色主题下告诉 gemini / qwen 底色，之后新起的终端生效"
+            hint="浅色主题下告诉 Gemini CLI、Qwen Code 底色；新起的终端生效"
           >
             <Toggle
               label="向 Agent 告知终端底色"
@@ -3329,7 +3344,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="外部终端"
           hint="对话页「在外部终端继续」、连接页外部启动用哪个终端；立即生效"
-          labelTitle="对话页「⇗ 外部恢复」使用的终端应用，立即生效。Windows 可在命令提示符和 PowerShell 之间切换：cmd 不经过 PowerShell，通常更快"
+          labelTitle={IS_WINDOWS ? "cmd 不经过 PowerShell，通常更快" : undefined}
         >
           <select
             className={selectLg}
@@ -3349,7 +3364,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
       <Section id="startup" active={activeSection}>
         {/* 2026-10-24 用户：四种去处，不再是九个页面任选（start-page.ts） */}
-        <Row label="启动时进入" hint={START_PAGE_HINT[normalizeStartPage(settings?.startPage)]}>
+        <Row
+          label="启动时进入"
+          hint={START_PAGE_HINT[normalizeStartPage(settings?.startPage)]}
+          labelTitle="上次的对话：只把那段摆出来，发一句才接着跑；上次都关了就进工作台"
+        >
           <select
             className={selectSm}
             value={normalizeStartPage(settings?.startPage)}
@@ -3411,7 +3430,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="系统通知"
           hint="Mesa 在后台、Agent 停下等你确认时弹系统通知"
-          labelTitle="窗口在后台、待你确认时通知，30 秒内不重复"
+          labelTitle="同一件事 30 秒内不重复通知"
         >
           <Toggle
             label="系统通知"
@@ -3424,8 +3443,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           title="顶部灵动岛"
           hint={
             (settings?.hotkeyHideChrome ?? "mod+\\")
-              ? `侧栏隐藏时顶部出现的导航岛：默认导航形态选「完全隐藏」，或运行中按 ${comboLabel(settings?.hotkeyHideChrome ?? "mod+\\")} 临时隐藏`
-              : "侧栏隐藏时顶部出现的导航岛：默认导航形态选「完全隐藏」，或从命令面板临时隐藏侧栏"
+              ? `侧栏隐藏时顶部出现的导航岛；按 ${comboLabel(settings?.hotkeyHideChrome ?? "mod+\\")} 临时隐藏侧栏`
+              : "侧栏隐藏时顶部出现的导航岛"
           }
         />
         <Row
@@ -3450,7 +3469,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="跑完播报"
           hint="Agent 跑完或断开时在岛上报一句，4 秒消失"
-          labelTitle="Agent 跑完一个回合或进程断开时，在休眠态那一行报一句，4 秒后自己消失。只报这两种「刚发生的事」——等待确认、冲突等待处理属于收件箱，岛不重复持有它们的计数"
+          labelTitle="只报跑完一个回合和断开这两种刚发生的事，报在岛收起时那一行；等你确认的事在「待处理」里看"
         >
           <Toggle
             label="顶部岛跑完播报"
@@ -3580,7 +3599,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           {pricingRows.length === 0 && (
             // 空态说一句为什么是空的：内置价目已覆盖常见模型，这里只放例外
             <p className="px-1 py-1 text-xs text-l4">
-              还没有自定义价目。常见模型已有内置价，只有用量页算不出价、价格不对（如中转加价、按人民币计费）时才需要加
+              还没有自定义价目。用量页算不出价或价格不对时再加
             </p>
           )}
           {pricingRows.length > 0 && (
@@ -3610,13 +3629,13 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 <div key={i}>
                   <div className={PRICING_GRID}>
                     <input
-                      className={fieldClass}
+                      className={`${fieldFixed} w-full`}
                       placeholder="如 kimi-k3"
                       value={row.prefix}
                       onChange={(e) => update({ prefix: e.target.value })}
                     />
                     <select
-                      className={fieldClass}
+                      className={`${fieldFixed} w-full`}
                       aria-label="币种"
                       value={row.currency}
                       onChange={(e) => update({ currency: e.target.value as PricingRow["currency"] })}
@@ -3625,21 +3644,21 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                       <option value="CNY">人民币 ¥</option>
                     </select>
                     <input
-                      className={fieldClass}
+                      className={`${fieldFixed} w-full`}
                       aria-label="输入价"
                       inputMode="decimal"
                       value={row.input}
                       onChange={(e) => update({ input: e.target.value })}
                     />
                     <input
-                      className={fieldClass}
+                      className={`${fieldFixed} w-full`}
                       aria-label="输出价"
                       inputMode="decimal"
                       value={row.output}
                       onChange={(e) => update({ output: e.target.value })}
                     />
                     <input
-                      className={fieldClass}
+                      className={`${fieldFixed} w-full`}
                       aria-label="缓存读价"
                       inputMode="decimal"
                       placeholder={hasInput ? priceLabel(input * 0.1) : "输入 1 折"}
@@ -3647,7 +3666,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                       onChange={(e) => update({ cacheRead: e.target.value })}
                     />
                     <input
-                      className={fieldClass}
+                      className={`${fieldFixed} w-full`}
                       aria-label="缓存写价"
                       inputMode="decimal"
                       placeholder={hasInput ? priceLabel(input) : "同输入"}
@@ -3718,7 +3737,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </div>
           <button
             type="button"
-            className="mt-2 flex h-7 items-center rounded-sm px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
+            className={`${rowActionClass} mt-2`}
             onClick={() => {
               setPricingRows([...pricingRows, emptyPricingRow()]);
               markPricingDirty(true);
@@ -3846,8 +3865,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {IS_WINDOWS && (
           <Row
             label="定时任务里 Codex 用 Windows 沙箱"
-            hint="不开时 Codex 在无人值守的定时任务里会拦下所有命令；开之前会先讲清楚它会做什么"
-            labelTitle="只对 Mesa 的定时任务生效，不改 Codex 的配置文件；你在 Codex 里自己开过沙箱时直接用你的设置"
+            hint="不开时定时任务里 Codex 的命令都会被拦下"
+            labelTitle="开之前会先讲清楚它会做什么。只对 Mesa 的定时任务生效，不改 Codex 的配置文件；你在 Codex 里自己开过沙箱时直接用你的设置"
           >
             <Toggle
               label="定时任务里 Codex 用 Windows 沙箱"
@@ -3891,7 +3910,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="环境变量"
           align="start"
-          hint="每行一条，名=值"
+          hint="每行一条，名=值；新开的会话生效"
           labelTitle="和连接无关的设置放这里，比如关遥测 DISABLE_TELEMETRY=1。官方账号启动也带。某条连接的「附加环境变量」里有同名的，以连接的为准。密钥、地址、模型、代理不能放这里：密钥和地址在连接里填，代理在「网络 → 出网代理」"
         >
           <div className="flex max-w-[34rem] flex-col gap-1">
@@ -3918,11 +3937,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   .catch((e) => toast(String(e), "error"));
               }}
             />
-            <p className="text-micro text-l4">改完点别处就保存；新开的会话生效</p>
           </div>
         </Row>
 
-        <SubHeading title="对 Agent 的标记" hint="Mesa 拉起各家 CLI 时额外加的标记" />
+        <SubHeading title="对 Agent 的标记" hint="Mesa 启动各家 Agent 时额外带上的标记" />
 
         {hookSupportError && (
           <div className="mt-3 flex items-center gap-2 text-xs text-err-text">
@@ -3948,7 +3966,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           return (
             <Card
               title="精确注意力标记"
-              hint="由 CLI 自己报告进度、何时停下等你确认，比读终端画面准，审批卡上还能看到要运行的命令和要改的内容"
+              hint="由 Agent 自己报告进度和何时等你确认，比读终端画面准"
+              hintTitle="审批卡上还能看到要运行的命令和要改的内容"
             >
               {auto.length > 0 && (
                 <p className="mb-2 px-2 text-xs leading-5 text-l3">
@@ -3957,7 +3976,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               )}
               {supported.length > 0 && (
                 <p className="mb-1 px-2 text-micro text-l4">
-                  下面几家只认全局配置里的 hooks，开了才有；开启会写入该 CLI 的 hooks 配置，写前自动备份
+                  下面几家要写进它自己的配置文件才有，写前自动备份
                 </p>
               )}
               <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
@@ -3989,7 +4008,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         })()}
         <Row
           label="Claude 计费说明"
-          hint="Claude Code 走第三方网关、用「帮我批准」时每天弹一次的英文说明，弹着时 AI 停着等你按继续。开着就由 Mesa 替你按（只这一条，按继续不改任何设置）"
+          hint="每天弹一次的英文计费说明，由 Mesa 替你按继续"
+          labelTitle="Claude Code 走第三方网关、用「帮我批准」时每天弹一次英文说明，弹着时 AI 停着等你按继续。只替你按这一条，按继续不改任何设置"
         >
           <Toggle
             label="自动略过 Claude 计费说明"
@@ -4012,7 +4032,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           label="出网代理"
           align="start"
           hint="官方登录与更新下载用；空 = 不使用"
-          labelTitle="用于官方账号登录与安装/更新下载（网关启动不走；国内镜像自动直连不绕代理）。空 = 不使用。「检测」探测本机代理（Clash / V2Ray 等），点候选即填。"
+          labelTitle="用于官方账号登录与安装、更新下载；用网关的连接不走它，国内镜像自动直连。能自动找到 Clash、V2Ray 等本机代理"
         >
           <div className="flex max-w-[34rem] flex-col gap-2">
             <div className="flex items-center gap-2">
@@ -4065,7 +4085,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                         <span
                           className={`ml-auto shrink-0 ${c.alive ? "text-ok-text" : "text-l4"}`}
                         >
-                          {c.alive ? "运行中" : "未探到监听"}
+                          {c.alive ? "运行中" : "没在运行"}
                         </span>
                         {outboundProxy.trim() === c.url && (
                           <span className="shrink-0 text-l4">· 当前</span>
@@ -4089,8 +4109,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="不走代理的地址"
-          hint="对应 NO_PROXY；留空默认本机地址"
-          labelTitle="填了出网代理但此项留空时，默认 localhost,127.0.0.1,::1"
+          hint="留空默认本机地址"
+          labelTitle="对应 NO_PROXY。填了出网代理但此项留空时，默认 localhost,127.0.0.1,::1"
         >
           <input
             className={`${fieldFixed} w-72 font-mono text-xs`}
@@ -4116,7 +4136,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           <Row
             label="brew 镜像"
             hint="用 Homebrew 安装/更新时走国内镜像"
-            labelTitle="元数据走 TUNA；包体没配代理时走南大 ghcr 代理，配了代理（这里的出网代理或终端里的代理变量）就经代理直接下"
+            labelTitle="软件信息走清华镜像；下载安装包时没配代理走南京大学镜像，配了代理（这里的出网代理或终端里的代理设置）就经代理直接下"
           >
             <Toggle
               label="brew 镜像"
@@ -4439,8 +4459,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="生效配置快照"
-          hint="当前生效值，排查配置漂移；已脱敏"
-          labelTitle="应用设置、九家配置清单与能力表；不含密钥"
+          hint="Mesa 当前实际用的设置，已脱敏"
+          labelTitle="应用设置、九家 Agent 的配置清单与能力表"
         >
           <button
             onClick={exportEffectiveConfig}
@@ -4555,16 +4575,16 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <ChatHandoffStatsPanel />
         <Card
           title="应用日志"
-          hint="最近 100 条；进程内缓冲，重启即清空"
+          hint="最近 100 条；重启 Mesa 后清空"
           action={
             <>
-              <button onClick={loadLogs} className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50">
+              <button onClick={loadLogs} className={rowActionClass}>
                 刷新
               </button>
               <button
                 onClick={copyLogs}
                 disabled={logs.length === 0}
-                className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                className={rowActionClass}
               >
                 复制全部
               </button>
@@ -4580,14 +4600,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 }}
                 disabled={logs.length === 0}
                 title="导出为 txt 到 ~/Downloads/ccode-exports/，反馈问题时发给开发者"
-                className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                className={rowActionClass}
               >
                 导出
               </button>
               <button
                 onClick={clearLogs}
                 disabled={logs.length === 0}
-                className="rounded-sm px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                className={rowActionClass}
               >
                 清空
               </button>
@@ -4643,10 +4663,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <>
               <SubHeading
                 title="工作副本位置"
-                hint="编程工作树、科研工作副本、定时隔离树都放在这里，用得越多占得越大；Windows 上默认在 C 盘，空间紧就换到别的盘。只管此后新建的，已有的留在原处照常用。"
+                hint="工作副本都放在这里，用得越多占得越大"
               />
               <RowGroup>
-                <Row label="存放位置" hint={customRoot ? rootShown : `${rootShown}（默认）`}>
+                <Row
+                  label="存放位置"
+                  hint={customRoot ? rootShown : `${rootShown}（默认）`}
+                  labelTitle={`编程工作树、科研工作副本、定时任务的隔离目录都在这里。${IS_WINDOWS ? "默认在 C 盘，空间紧就换到别的盘。" : ""}只管此后新建的，已有的留在原处照常用`}
+                >
                   {customRoot && (
                     <button
                       type="button"
@@ -4805,7 +4829,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           <div className="min-w-0 flex-1">
             <div
               className="text-base font-semibold text-l1"
-              title="展示名 Mesa，内部身份 ccode（bundle ID com.ccode.dev，数据在 ~/ccode/）——报障找目录时对得上"
+              title="数据目录：~/ccode/"
             >
               Mesa
             </div>
@@ -4880,7 +4904,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
         <div className="space-y-1 pt-3 text-micro leading-4 text-l4">
-          <p title="API 密钥只存本机（仅本人可读的文件）；各 CLI 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex；从 ISSN 下载期刊词缩写表）、你主动发送的反馈">
+          <p title="API 密钥只存本机（仅本人可读的文件）；各家 Agent 的会话目录只读。会联网的只有：检查更新（向 Mesa 的更新源问版本：发布页或官方镜像）、文献同步 / 下载 / 远查（把 DOI 或刊名发给 JabRef、NLM、ShowJCR、Unpaywall、Crossref、OpenAlex；从 ISSN 下载期刊词缩写表）、你主动发送的反馈">
             隐私：密钥只存本机；除检查更新、文献检索和你发出的反馈外，不上传任何数据。
           </p>
           <p>

@@ -260,7 +260,7 @@ export default function ResearchProfileSection() {
             <span className="font-normal text-l4">{suggestions.length}</span>
           </button>
           {suggestOpen && (
-            <p className="mt-1 text-micro text-l4">在你几个项目里反复出现的意见。只是建议：点「记下」会填进下面的新增栏，你改好、写好依据再记。</p>
+            <p className="mt-1 text-micro text-l4">在你几个项目里反复出现的意见，只是建议；记之前可以改，依据要你写。</p>
           )}
           {suggestOpen && (
             <ul aria-label="建议记下" className="mt-1.5 space-y-1">

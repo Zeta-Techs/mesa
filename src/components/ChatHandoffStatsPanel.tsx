@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AGENTS } from "../types";
-import { InlineNotice, ghostActionClass } from "./PageFrame";
+import { InlineNotice, SegTabs, paneOutlineButtonClass } from "./PageFrame";
 import { confirmDialog } from "./ConfirmDialog";
 import {
   DECISION_KIND_LABEL,
@@ -57,46 +57,47 @@ export default function ChatHandoffStatsPanel() {
 
   const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
   const { total, auto } = handoffTotals(stats ?? []);
-  const rangeBtn = (d: 30 | 0, text: string) => (
-    <button
-      type="button"
-      aria-pressed={days === d}
-      onClick={() => setDays(d)}
-      className={`${ghostActionClass} ${days === d ? "bg-seg-sel text-l1" : ""}`}
-    >
-      {text}
-    </button>
-  );
 
   return (
-    <div className="mt-3 rounded-lg ccode-well p-3">
+    <div className="mt-7">
       <div className="mb-2 flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-sm text-l2">聊天层转到终端</div>
-          <p className="mt-0.5 text-micro leading-4 text-l4">
-            聊天里接不住、要露出或切到终端的次数，按次数排。只记哪家、什么原因，不记屏上文字和对话内容；诊断包里附同一份计数
+          <div className="text-base font-semibold text-l1">聊天层转到终端</div>
+          <p
+            className="mt-0.5 text-xs leading-5 text-l3"
+            title="只记哪家、什么原因，不记屏上文字和对话内容；诊断包里附同一份计数"
+          >
+            聊天里接不住、转到终端的次数，按次数排
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {rangeBtn(30, "近 30 天")}
-          {rangeBtn(0, "全部")}
+        <div className="flex shrink-0 items-center gap-2">
+          <SegTabs
+            variant="boxed"
+            items={[
+              { id: "30", label: "近 30 天" },
+              { id: "0", label: "全部" },
+            ]}
+            value={String(days)}
+            onChange={(id) => setDays(id === "30" ? 30 : 0)}
+          />
           <button
             type="button"
             disabled={!stats?.length}
             onClick={() => void clear()}
-            className={ghostActionClass}
+            className={paneOutlineButtonClass}
           >
             清空
           </button>
         </div>
       </div>
+      <div className="border-t border-hairline pt-1">
       {error && <InlineNotice tone="err">{error}</InlineNotice>}
       {stats && !stats.length && !error && (
-        <p className="px-1 text-xs text-l4">还没有记录：聊天层这段时间都接住了</p>
+        <p className="px-1 py-2 text-xs text-l4">还没有记录：聊天层这段时间都接住了</p>
       )}
       {stats && stats.length > 0 && (
         <>
-          <p className="mb-1 px-1 text-micro text-l4">
+          <p className="mb-1 px-1 pt-1 text-micro text-l4">
             共 {total} 次，其中 Mesa 自动露出 {auto} 次、你自己点开 {total - auto} 次
           </p>
           {stats.map((s) => {
@@ -126,6 +127,7 @@ export default function ChatHandoffStatsPanel() {
           })}
         </>
       )}
+      </div>
     </div>
   );
 }
