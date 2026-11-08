@@ -132,6 +132,8 @@ export default function PetApp() {
 
   // 小窗大小跟着面板走：平时只有小桌那么大；冒话 / 点开时往上、往屏幕里侧长，小桌在屏幕上不动
   const home = useRef<{ x: number; y: number } | null>(null);
+  const panelRef = useRef<Panel>(panel);
+  panelRef.current = panel;
   const [layout, setLayout] = useState<{ side: "left" | "right"; below: boolean }>({ side: "right", below: false });
   const resizing = useRef(false);
   useEffect(() => {
@@ -139,7 +141,9 @@ export default function PetApp() {
     void (async () => {
       const sf = await win.scaleFactor();
       const pos = (await win.outerPosition()).toLogical(sf);
-      if (!home.current || !panel) home.current = { x: pos.x, y: pos.y };
+      // 小桌的「家」只在第一次和拖完时记：收起面板时窗口还是展开的大小，这时读位置会把面板左上角当成家，小桌跳走
+      //（2026-11-09 用户：「点事项面板的关闭 位置会乱动」）
+      if (!home.current) home.current = { x: pos.x, y: pos.y };
       const h0 = home.current;
       resizing.current = true;
       if (!panel) {
@@ -159,7 +163,8 @@ export default function PetApp() {
         await win.setSize(new LogicalSize(W, H));
         await win.setPosition(new LogicalPosition(x, y));
       }
-      window.setTimeout(() => (resizing.current = false), 200);
+      // 系统报「窗口移动了」可能晚到：留够时间，免得把自己挪窗口当成人在拖
+      window.setTimeout(() => (resizing.current = false), 600);
     })();
     return () => {
       stale = true;
@@ -174,7 +179,8 @@ export default function PetApp() {
     let off: (() => void) | null = null;
     void win
       .onMoved(({ payload }) => {
-        if (resizing.current) return;
+        // 面板开着时不能拖（onPetMove 挡了），这时的移动都是展开 / 收起自己挪的
+        if (resizing.current || panelRef.current) return;
         const prev = lastX.current;
         lastX.current = payload.x;
         if (prev !== null && Math.abs(payload.x - prev) > 1) setDrag(payload.x < prev ? "left" : "right");
