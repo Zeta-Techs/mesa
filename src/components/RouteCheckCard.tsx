@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RotateCw, ShieldCheck } from "lucide-react";
-import { ghostActionClass, rowActionClass } from "./PageFrame";
+import { paneOutlineButtonClass } from "./PageFrame";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
@@ -27,7 +27,8 @@ import { toast } from "../toast";
 
 type Row = RouteCheck | { agent: string; error: string };
 
-// 按钮文字的字号写在内层 span：全站 button { font: inherit } 会吞掉按钮自身的 text-*
+// 全站 button { font: inherit } 会吞掉按钮自身的 text-*：细边按钮跟设置页其他按钮一样随外层字号；
+// 行内小字动作（查出口类型）的字号写在内层 span
 
 /** 状态只给圆点上色（design-system：语义色只给点 / 图标，不铺在文字上） */
 const DOT_CLASS = { pass: "bg-ok-text", block: "bg-err-text", review: "bg-warn-text" } as const;
@@ -39,7 +40,8 @@ const ROW_GRID = "grid grid-cols-[0.5rem_8rem_9rem_3.5rem_minmax(0,1fr)_auto] it
  *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测。
  *  二期：换了地区给「记为常用出口」；代理没在运行给一个修复按钮（换成检测到的代理 / 打开代理软件）。
  *  三期：「查出口类型」（要把出口 IP 发给 ipinfo.io，所以只在点了才查）。
- *  2026-11-06 用户嫌粗糙重排：四列对齐、状态只看点、用时单列等宽、确认与出口类型收进第二行小字、探测地址进悬停 */
+ *  2026-11-06 用户嫌粗糙重排：四列对齐、状态只看点、用时单列等宽、确认与出口类型收进第二行小字、探测地址进悬停
+ *  2026-11-08 外形对齐设置页：按钮统一细边、行高同设置页卡内行 */
 export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const profiles = useAppStore((s) => s.profiles);
   const [agents, setAgents] = useState<string[] | null>(null);
@@ -136,7 +138,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   if (agents === null) return null;
   if (!targets.length) {
     return (
-      <p className="text-xs text-l4">还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去。</p>
+      <p className="py-2 text-sm text-l3">还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去</p>
     );
   }
   const checks = targets.map((t) => rows[t.agent]).filter((r): r is RouteCheck => !!r && !("error" in r));
@@ -155,10 +157,10 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
           type="button"
           onClick={() => void run(0)}
           disabled={running}
-          className={`${ghostActionClass} shrink-0 gap-1.5`}
+          className={`${paneOutlineButtonClass} gap-1.5`}
         >
           <RotateCw className={`size-3.5 ${running ? "animate-spin" : ""}`} aria-hidden="true" />
-          <span className="text-xs">{running ? "体检中" : "重测"}</span>
+          {running ? "体检中" : "重测"}
         </button>
       </div>
       <ul className="divide-y divide-hairline border-t border-hairline">
@@ -223,7 +225,7 @@ function RouteRow({
 
   if (!check) {
     return (
-      <li className={`${ROW_GRID} min-h-10 py-2`}>
+      <li className={`${ROW_GRID} min-h-12 py-2`}>
         <span className="size-2 rounded-full bg-l4" />
         {nameCell}
         <span className="col-span-3 truncate text-sm text-l4">
@@ -284,13 +286,13 @@ function RouteRow({
     check.regionChanged || fix ? (
       <span className="flex justify-end gap-2">
         {check.regionChanged && (
-          <button type="button" disabled={busy} onClick={onAccept} className={rowActionClass}>
-            <span className="text-xs">记为常用出口</span>
+          <button type="button" disabled={busy} onClick={onAccept} className={paneOutlineButtonClass}>
+            记为常用出口
           </button>
         )}
         {fix && (
-          <button type="button" disabled={busy} onClick={() => onFix(fix)} className={rowActionClass}>
-            <span className="text-xs">{busy ? "处理中…" : routeFixLabel(fix)}</span>
+          <button type="button" disabled={busy} onClick={() => onFix(fix)} className={paneOutlineButtonClass}>
+            {busy ? "处理中…" : routeFixLabel(fix)}
           </button>
         )}
       </span>
@@ -300,7 +302,7 @@ function RouteRow({
   const blocked = check.verdict === "block";
 
   return (
-    <li className={`${ROW_GRID} min-h-10 py-2`}>
+    <li className={`${ROW_GRID} min-h-12 py-2`}>
       <span className={`size-2 rounded-full ${DOT_CLASS[check.verdict]}`} />
       {nameCell}
       {blocked ? (
