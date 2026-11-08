@@ -1,8 +1,8 @@
 ---
 name: endnote-bridge
-description: EndNote 格式桥接规范。当用户必须把项目文献导入 EndNote 库、收尾存量「Word + EndNote」稿件、或组内流程绑定 EndNote 时使用。本项目不依赖 EndNote 桌面端自动化 API，本技能只做格式桥接（references.bib → EndNote XML/RIS 供一键导入；定稿 Markdown [@键] → 带 ADDIN EN.CITE 域的 Word；EndNote 导出 → 解析回流 references.bib）与人工步骤指引；禁止 CWYW 无人值守（不点 Word 插件、不写假花括号引用）。新稿写作可按需选择 Zotero 线（zotero-sync），两者互补不互斥。
+description: EndNote 格式桥接规范。当用户必须把项目文献导入 EndNote 库、收尾存量「Word + EndNote」稿件、或组内流程绑定 EndNote 时使用。本项目不依赖 EndNote 桌面端自动化 API，本技能只做格式桥接（references.bib → EndNote XML/RIS 供一键导入；定稿 Markdown [@键] → 带 ADDIN EN.CITE 域的 Word；EndNote 导出 → 解析回流 references.bib）、已有 Word + EndNote 稿的只读体检（读标黄 / 修订 / 批注，体检引文域并出 EndNote 修改清单，不改写域）与人工步骤指引；禁止 CWYW 无人值守（不点 Word 插件、不写假花括号引用）。新稿写作可按需选择 Zotero 线（zotero-sync），两者互补不互斥。
 inputs: [references.bib]
-outputs: [papers/endnote-report.json, output/endnote.docx, papers/endnote-cite-report.md]
+outputs: [papers/endnote-report.json, output/endnote.docx, papers/endnote-cite-report.md, output/endnote-audit.md, output/docx-marks.md]
 provides: [endnote-bridge]
 ---
 
@@ -16,6 +16,7 @@ provides: [endnote-bridge]
 ## 何时使用
 
 - 存量稿件用「Word + EndNote（CWYW）」写到一半，需要收尾或继续
+- 审改别人发来的 Word + EndNote 稿：先读标黄 / 修订 / 批注，再体检引文位置（见 §6，只读）
 - 组内/合作方流程绑定 EndNote，文献库必须交付到 EndNote
 - 用户明确要求把 references.bib 导入 EndNote
 - 不存在上述约束时可按需选择 Zotero 线（zotero-sync 仍须遵守用户意图与授权门槛）；本技能是兼容桥，不是默认主路
@@ -25,6 +26,7 @@ provides: [endnote-bridge]
 - **禁止 CWYW 无人值守**：不用 Word COM/VBA 点「插入引文 / Update Citations」，不写 `{Author, Year}` 假临时引用。域稿只走 `scripts/cite_docx.py` 写出真正的 `ADDIN EN.CITE`（带 traveling library），人再点一次 Update。
 - **不做 EndNote 界面自动化**（模拟点击/键鼠脚本）
 - 人工步骤就明说人工步骤（导入库、Update 一次、换 Style），不假装已经刷新过
+- **已有稿件的引文域不改写**（2026-11-08）：人在 EndNote 里维护的稿件，不重编号、不增删引文、不改域数据和参考文献表，只体检、出清单（§6）
 
 ## 随包离线转换器
 
@@ -80,7 +82,7 @@ python3 <技能目录>/scripts/cite_docx.py \
 科研论文用 `manuscript/paper-final.md`，学位论文用 `manuscript/thesis-final.md`。输出必须是新路径，不覆盖 `manuscript/source.docx` 和 Quarto 的 `output/*.docx`。
 
 - 每个 `[@键]` / `[@a; @b]` 写成一条 Word 域：`ADDIN EN.CITE` + traveling library `<record>`（作者/年/题/DOI）。未匹配键 **fail-closed**：写报告、不写 docx、退出码非 0。
-- **域格式契约（2026-10-10 与 EndNote 2025 实稿逐 run 核对定稿）**：每条引文是**嵌套双域**——外层 ` ADDIN EN.CITE `（fldData 装引文 XML，结果区放显示文字），begin 与 separate 之间还嵌一个 ` ADDIN EN.CITE.DATA ` 子域（fldData 同一份 XML，只有 begin→instr→end）。**少了这个子域，CWYW 找不到域数据，Update 会把引文整条报成 `!!! INVALID CITATION !!!`**（2026-10-10 实证）。fldData 是 UTF-8 XML 加末尾 NUL 后的 base64，76 列换行、行尾 CRLF、末行也带 CRLF；组引文是一条载荷里多个 `<Cite>`（每条记录一个，只有第一个带 `<DisplayText>`）；`<record>` 内顺序必须是 `<rec-number>` 在前、`<foreign-keys>` 紧随其后，外键写成 `<key app="EN" db-id="…" timestamp="…">记录号</key><key app="ENWeb" db-id="">0</key>`（timestamp 用库里 `added_to_library`），`<urls>` 在 `<electronic-resource-num>` 之前；文末 REFLIST 是单层域、带空 fldData。库编号取 .enl 里 `misc` 表 code=14 的值，不编造。
+- **域格式契约（2026-10-10 与 EndNote 2025 实稿逐 run 核对定稿）**：每条引文是**嵌套双域**——外层 ` ADDIN EN.CITE `（fldData 装引文 XML，结果区放显示文字），begin 与 separate 之间还嵌一个 ` ADDIN EN.CITE.DATA ` 子域（fldData 同一份 XML，只有 begin→instr→end）。**少了这个子域，CWYW 找不到域数据，Update 会把引文整条报成 `!!! INVALID CITATION !!!`**（2026-10-10 实证）。fldData 是 UTF-8 XML 加末尾 NUL 后的 base64，76 列换行、行尾 CRLF、末行也带 CRLF（Word 自己回写时不带 NUL，同样 CRLF）。**换行写成 LF 的，Word 一保存就把域数据截断**（只剩 `PA==` 或半截），整条引文报废（2026-11-08 实证：35 条引文一存全坏）；组引文是一条载荷里多个 `<Cite>`（每条记录一个，只有第一个带 `<DisplayText>`）；`<record>` 内顺序必须是 `<rec-number>` 在前、`<foreign-keys>` 紧随其后，外键写成 `<key app="EN" db-id="…" timestamp="…">记录号</key><key app="ENWeb" db-id="">0</key>`（timestamp 用库里 `added_to_library`），`<urls>` 在 `<electronic-resource-num>` 之前；文末 REFLIST 是单层域、带空 fldData。库编号取 .enl 里 `misc` 表 code=14 的值，不编造。
 - 生成时只读人指定的一个 EndNote 库。把 `.enl` 的绝对路径单独写一行到 `papers/endnote-library.path`，或运行时加 `--endnote-library`（从项目根跑时还要带 `--project-root`，否则找不到这份指针文件）。不扫磁盘挑库。DOI 去掉网址前缀、空白和末尾句点、上下标/全角数字折回 ASCII 后必须整段相同，并且库里只有一条未进废纸篓的记录，才把记录号和库编号写进域。同一 DOI 多条、库里没有、或没指定库，都不猜，报告「库绑定」点名；这条仍用稿内题录。**没有 DOI 的**（中文期刊常见）按题名（去掉大小写、空白和标点）+ 年份在库里恰好一条才绑，多条或没有照旧不绑（2026-10-24 HER：梁珂明 2020 两边都没 DOI，EndNote 自己 Update 也没对上）。**EndNote X9 及更早的库**（.enl 只是壳，记录在同名 `.Data/rdb` 里，脚本按数据库读会报 file is not a database）：报告写明让人在 EndNote 里 File → Export、保存类型选 XML，库路径改指这份导出的 `.xml`；脚本从 XML 取记录号、库编号（`foreign-keys` 的 db-id）和 DOI 照常绑定（2026-10-24 HER 实证：X9 库直读失败，Word 里 27 条只有 8 条和库挂上）。
 - **域稿绑定的是记录号：库里动过手术（删记录、重新导入）之后，旧域稿的记录号全部作废，Update 会把整篇落进「漫游个人图书馆」。必须在库稳定之后重新生成域稿再 Update（2026-10-11 实证：15:59 重建库、16:00 生成的域稿绑的是被删批次，Update 全文漫游）。生成前用库绑定报告的记录号范围和库里的活记录对一眼账。**
 - 可见文字用 `(Author, year)`，禁止花括号临时引用。**同年同姓消歧**（2026-10-11 定稿审计实证）：第一作者同姓不同人加名首字母（`S. Zhang et al., 2026` / `X. Zhang et al., 2026`），同一第一作者同年多篇加 `2026a/2026b`（按 bib 顺序）；不撞车不加。Update/Refresh 后由输出样式接管重排。正文里的 `{#键}`：键在 bib 里就写成同一条引用域，不在就只留键名。
@@ -123,11 +125,32 @@ Export Traveling Library 在 Word 的 EndNote 菜单里：把嵌在这篇 Word �
   EndNote 侧 Record Number 不当键用，只在对账期内做匹配依据
 - 合并后按 bib-check 口径跑一次引用闭环自查，断键立即报告
 
+### 6. 已有 Word + EndNote 稿的只读体检
+
+别人写好、在 EndNote 里维护的稿件（导师改过的稿、合作者发来的稿、自己以前的稿），Agent 只读不写引文域。改正文文字时只动域外的文字，
+引文域原样留在原位；要换文献、删多余条目、合并重复记录，都写进清单交人在 EndNote 里改，改完点一次 Update Citations and Bibliography。
+
+```bash
+python3 <技能目录>/scripts/audit_docx.py marks <稿件.docx> --root <项目根>
+python3 <技能目录>/scripts/audit_docx.py cites <稿件.docx> --root <项目根>
+```
+
+- `marks`：列出标黄 / 高亮、修订（谁插入、谁删除）、批注（锚定的原文与内容）、文档属性里的作者与最后修改者、修订模式开没开，写 `output/docx-marks.md`。
+  审改前用它读出人标过的地方；交付前对改好的新文件再跑一次，确认修订和批注清零、没留下别人或 AI 工具的名字。同目录有 `~$` 锁文件说明稿件正在 Word 里打开，改动另存新文件名。
+- `cites`：逐条体检引文域，结果写 `.ccode/checks/cite-docx.jsonl`（三档），清单写 `output/endnote-audit.md`（「在 EndNote 里怎么改」）。
+  - 拦下：域数据解不开、被截断、换行是 LF（提示别再在 Word 里保存，从备份恢复或在 EndNote 里删了重插）；句中点名的作者（Smith et al. / Smith and co-workers）
+    在这句所有引文里都找不到——点名后先插一条佐证引文、点名那篇在句子后面的，算对上。
+  - 待你判断：混用多个 EndNote 库（看 `db-id`；同一记录号在两个库里可能是两篇不同的文献）、同一库里的疑似重复记录、一条域里的篇数和显示的编号数不一致、
+    编号不按首次出现（可能改过引用没点 Update，从第一处往后看）、参考文献表条数与正文引用篇数对不上、正文或图注里手写的 `Ref. N`。
+  - 通过：域数据完好、编号顺序一致、点名作者对上——这些是字符串层面的事实；所引文献的内容是否支撑这句话，脚本不判断，交人核对。
+- 体检报告和清单写在项目里，不改原稿，也不另存一份「修好引文」的 docx。
+
 ## 产出格式
 
 - `papers/endnote-import.xml`（或 `.ris`）：EndNote 一键导入文件，条目数与 references.bib 一致
 - `output/endnote.docx`：带 `ADDIN EN.CITE` 的域稿（未匹配则为无此文件）
 - `papers/endnote-cite-report.md`：引用处/唯一键/未匹配清单
+- `output/endnote-audit.md`、`output/docx-marks.md`：已有稿件的体检清单与标记清单（§6，只读）
 - 报告：转换计数（成功 N / 缺字段 M 逐条列出）、附件挂接计数、回流对账差异清单（如有）
 
 ## 完成标准

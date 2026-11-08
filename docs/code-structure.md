@@ -1835,6 +1835,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与
                              #   journal-abbreviations.csv；skills.rs BUILTIN_SUPPORT 给 lit-search 与 lit-notes 各放一份
+  （技能脚本）endnote-bridge/scripts/audit_docx.py  # 已有 Word + EndNote 稿的只读体检（2026-11-08，tests/endnote-audit.test.ts）：marks（标黄 /
+                             #   修订 / 批注 / 文档属性里的名字 / ~$ 锁文件）/ cites（域数据能否解析、截断、LF 换行；点名作者对号按整句找；混用 db-id、
+                             #   库内重复、域内篇数 ≠ 显示编号、编号顺序、文献表条数、手写 Ref. N）。fldData 换行只能看原始字节（XML 解析会折掉 \r）；
+                             #   红线：绝不写 docx，结果写 .ccode/checks/cite-docx.jsonl 与 output/endnote-audit.md 清单；随包带 mesa_checks.py
   endnote.rs                 # EndNote 出库：references.bib 经 endnote-bridge/scripts/bridge.py 生成
                              # library_match.py：定稿域稿只读本机 .enl / zotero.sqlite，DOI 唯一才写入记录号或条目地址
                              # papers/endnote-import.xml、.ris、.enw。RIS 作者一人一行，期刊/缩写/卷/期/页/日期/ISSN/摘要/关键词

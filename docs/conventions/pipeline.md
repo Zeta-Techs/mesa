@@ -105,7 +105,7 @@
   键名全是单词。`status` 只有 `passed`（机器能确定的事实）/ `blocked`（机器确定有问题）/ `needs_human`；要读懂内容的检查（论断是否被来源支持、
   统计方法是否合适）最多 `needs_human`，**永不自动通过**，不汇总成分数。认不出的行计入「读不懂 N 行」，不猜。
 - 检查器每次运行整份重写自己的那一个文件；评审页只读 `.ccode/checks/` 顶层，`runs/` 是存档。
-- **三种来源**（`research_record::check_source`，2026-11-03）：内置五个核验脚本的固定文件里才允许「通过」；`pack-` 开头的是任务包脚本，
+- **三种来源**（`research_record::check_source`，2026-11-03）：内置核验脚本的六个固定文件里才允许「通过」；`pack-` 开头的是任务包脚本，
   检查器一律记成 `pack:<文件名>`（不认脚本自报的，防冒用内置脚本名），「通过」降为待你判断、「拦下」照收；其余文件都是 Agent 的判断（同前）。
 - **研究记录**：Run 关闭时（含崩溃补收）由 Mesa 把运行事实追加进项目 `.ccode/record.jsonl`（只追加、按 runId 去重、持 `record.lock`），
   这次工作目录里的核验项存档到 `.ccode/checks/runs/<runId>.jsonl`，并按记录整份重写 `.ccode/ai-usage.md`。登录、Mesa 内部后台调用、
@@ -115,14 +115,21 @@
 - 这几样与 `acceptance-log.jsonl` 同口径：进 `.gitignore`（`LEDGER_IGNORE_PATHS`）、开工 bootstrap 排除、合并闸门双态豁免（`is_accumulation_ledger`）。
 - **核验脚本一览**（都在技能目录里直接调用，不复制进工作区）：`bib-check/cite_check.py`（引用键、DOI、撤稿、原文摘录逐字）、
   `research-writing/num_check.py`（`manuscript/numbers.json` 数字追溯）、`stats-check/stat_check.py`（p 值与统计量、估计值与 CI）、
-  `figure-forge/fig_check.py`（`figures/manifest.json` 逐张重跑）。脚本只拦确定性的不一致；登记文件（evidence / numbers / manifest）
+  `figure-forge/fig_check.py`（`figures/manifest.json` 逐张重跑）、`endnote-bridge/audit_docx.py cites`（已有 Word + EndNote 稿的引文域体检，
+  写 `cite-docx.jsonl`；见下条）。脚本只拦确定性的不一致；登记文件（evidence / numbers / manifest）
   由干活的 Agent 写，**不得为过核验改结果文件或原文**。拦下的条目进 `verification-decisions.md` 逐条裁决。
+- **已有 Word + EndNote 稿只体检、不改写引文域（2026-11-08 用户拍板）**：别人写好、在 EndNote 里维护的稿件，Agent 只用
+  `endnote-bridge/scripts/audit_docx.py` 读（`marks` 读标黄 / 修订 / 批注与留下的名字，`cites` 体检引文域），**不改写任何 `ADDIN EN.CITE` 域、
+  不重编号、不增删引文、不改参考文献表**；要换文献、删多余条目、合并重复记录，一律写进「在 EndNote 里怎么改」清单交人在 EndNote 里改、点 Update。
+  Agent 改正文文字时只动域外的 run，引文域原样留在原位。体检判定：域数据解不开 / 截断 / 换行是 LF（Word 存盘会截断）拦下；句中点名的作者在
+  这句所有引文里都找不到拦下（点名后先插佐证引文、点名那篇在句后的算对上）；混用多个库、库内重复记录、一条域里篇数与显示编号数不一致、
+  编号不按首次出现、参考文献表条数对不上、手写 `Ref. N` 都交人判断。
 - **跨厂商复核**（`src/cross-review.ts`）：「不同」按**模型族**比（`vendorForModel`，只认模型名不认中转站；官方账号没写模型按 Agent 认），
   写稿方模型取 `research_run_producer`（会话用量 → 启动记录，与研究记录同源），认不出时退回按 Agent 比。默认一等在前、最近用过的连接在前，
   连接里取第一个不同模型族的模型，一等挑不出再看维护级；人可在 ▾ 下拉里改选任一没停用的连接 × 模型（每条最多列 40 个），同模型族、维护级只标注不禁止；
   另开 `cross-review:<工作副本>` 标签（不用 `ws:` 键），只写 `.ccode/checks/cross-review.jsonl`。后端把 `checker` 以 `agent:` 开头的
-  `passed` 一律降成 `needs_human`——Agent 的判断永不自动通过。只有核验脚本的五个固定文件（cite-refs / cite-quotes / num-check / stat-check /
-  fig-check.jsonl）里允许「通过」；其他文件（复核记录等）的条目一律按 Agent 判断收，漏写或冒写检查器的记成 `agent`（2026-11-02 Kimi 真跑漏写 checker）。
+  `passed` 一律降成 `needs_human`——Agent 的判断永不自动通过。只有核验脚本的六个固定文件（cite-refs / cite-quotes / num-check / stat-check /
+  fig-check / cite-docx.jsonl）里允许「通过」；其他文件（复核记录等）的条目一律按 Agent 判断收，漏写或冒写检查器的记成 `agent`（2026-11-02 Kimi 真跑漏写 checker）。
   复核分两层：摘录本身撑不撑得住论断；撑不住再到原文别处找，找到记「摘录不当」并给出真正支撑的原句与页码。
 - **研究档案**（`research_profile.rs`，用户层，配置目录 `research-profile.md`）：沿用项目长期知识的格式与状态机，`goalName` 当分类（七类固定）；
   只收人确认的条目、依据必填、revision 乐观锁、改前留历史副本；Agent 不能写。开对话时由 `read_project_memory` 附在项目知识之后，

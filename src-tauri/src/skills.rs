@@ -459,6 +459,16 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/endnote-bridge/scripts/library_match.py"),
     ),
     (
+        "endnote-bridge",
+        "scripts/audit_docx.py",
+        include_str!("../resources/skills/endnote-bridge/scripts/audit_docx.py"),
+    ),
+    (
+        "endnote-bridge",
+        "scripts/mesa_checks.py",
+        include_str!("../resources/mesa_checks.py"),
+    ),
+    (
         "origin-plot",
         "scripts/plot_origin.py",
         include_str!("../resources/skills/origin-plot/scripts/plot_origin.py"),
