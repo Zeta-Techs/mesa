@@ -70,3 +70,15 @@ test("项目知识还是空的：卡上提议起草几条，按「项目」类�
   assert.match(lines[0].ask!.focus.detail, /不要编/);
   assert.deepEqual(briefLines({ ...base, knowledgeEmpty: false }), []);
 });
+
+test("聊够十轮才提议整理；派活进展不算；整理或「不用」以后重新数", async () => {
+  const { summaryDue, summaryFocus } = await import("../src/assistant-brief.ts");
+  const turns = Array.from({ length: 12 }, (_, i) => ({ at: `2026-11-08T00:${String(i).padStart(2, "0")}:00Z`, question: `问${i}`, answer: `答${i}\n:::记下\nx\n:::` }));
+  assert.equal(summaryDue(turns.slice(0, 9), null), false);
+  assert.equal(summaryDue([...turns.slice(0, 9), { at: "2026-11-08T01:00:00Z", echoOf: "x" }], null), false);
+  assert.equal(summaryDue(turns, null), true);
+  assert.equal(summaryDue(turns, turns[5].at), false, "上次整理之后只有 6 轮");
+  const f = summaryFocus(turns, turns[1].at);
+  assert.match(f.detail, /最近 10 轮/);
+  assert.ok(!f.detail.includes(":::记下\nx"), "旧回答里的标记块不带进去");
+});

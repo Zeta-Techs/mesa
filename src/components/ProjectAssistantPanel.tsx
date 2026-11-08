@@ -36,7 +36,7 @@ import RememberCard from "./RememberCard";
 import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
-import { briefLines, quickAsks, type BriefLine, type QuickAsk } from "../assistant-brief";
+import { briefLines, quickAsks, SUMMARY_QUESTION, summaryDue, summaryFocus, type BriefLine, type QuickAsk } from "../assistant-brief";
 import { assistantDayLabel, sameLocalDay } from "../assistant-dock";
 import {
   askProjectAssistant,
@@ -68,6 +68,8 @@ export interface AssistantAsk {
 
 /** 上次打开项目助手的时间（按项目）：「现在的情况」卡据此列「上次打开以来」的变化 */
 const SEEN_KEY = (path: string) => `ccode.assistant.seen:${path}`;
+/** 上次「整理这一阵定下的事」（或点了「不用」）时最后一轮的时间（按项目记在本机） */
+const SUMMARY_KEY = (path: string) => `ccode.assistant.summarizedAt:${path}`;
 /** 「起草项目知识」这一行点过「不用了」的项目（按项目记在本机） */
 const NO_DRAFT_KEY = (path: string) => `ccode.assistant.noKnowledgeDraft:${path}`;
 function draftDismissed(path: string): boolean {
@@ -204,6 +206,25 @@ export default function ProjectAssistantPanel({
   /** 「现在的情况」卡与按状态换的常用问题（Mesa 按记录算，不调 AI）；briefOff = 这次打开点过「知道了」 */
   const [brief, setBrief] = useState<{ lines: BriefLine[]; asks: QuickAsk[]; since: string | null } | null>(null);
   const [briefOff, setBriefOff] = useState(false);
+  // 聊久了提议整理一次（2026-11-08）：点了才调 AI，起草的条目仍逐条点才记
+  const [summarizedAt, setSummarizedAt] = useState<string | null>(null);
+  useEffect(() => {
+    if (!projectPath) return;
+    try {
+      setSummarizedAt(localStorage.getItem(SUMMARY_KEY(projectPath)));
+    } catch {
+      setSummarizedAt(null);
+    }
+  }, [projectPath]);
+  function markSummarized() {
+    const last = turns[turns.length - 1]?.at ?? new Date().toISOString();
+    setSummarizedAt(last);
+    try {
+      if (projectPath) localStorage.setItem(SUMMARY_KEY(projectPath), last);
+    } catch {
+      /* 存不了就只是这次不再提 */
+    }
+  }
   const asks = brief?.asks ?? quickAsks({ hasFlow: stepCount > 0, steps: [], goals: [], since: null });
 
   // 派活回音补了一条（巡视在 ProjectAssistantHost）：开着就重读记录，新的回音接在最后
@@ -654,6 +675,25 @@ export default function ProjectAssistantPanel({
 
   const composer = (
     <div className="space-y-2">
+      {!busy && summaryDue(turns, summarizedAt) && (
+        <p className="flex flex-wrap items-center gap-x-2 text-xs text-l3">
+          <span>聊了一阵了，要不要我把这一阵定下的事整理一下？值得以后照办的会起草出来，你逐条点了才记。</span>
+          <button
+            type="button"
+            className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
+            onClick={() => {
+              const f = summaryFocus(turns, summarizedAt);
+              markSummarized();
+              void send(SUMMARY_QUESTION, f, "project");
+            }}
+          >
+            <span className="text-xs">整理一下</span>
+          </button>
+          <button type="button" className="text-l4 hover:text-l2" onClick={markSummarized}>
+            <span className="text-xs">不用</span>
+          </button>
+        </p>
+      )}
       {!atEnd && turns.length > 0 && (
         <div className="flex justify-center">
           <button

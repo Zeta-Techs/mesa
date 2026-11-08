@@ -192,3 +192,27 @@ export function quickAsks(input: BriefInput, limit = 3): QuickAsk[] {
   }
   return out.slice(0, limit);
 }
+
+/** 聊了多少轮该提议整理一次（不含派活进展；「不用」也算处理过） */
+export const SUMMARY_EVERY = 10;
+
+/** 上次整理（或点了「不用」）以来的问答轮数够了没有；lastAt 是那时最后一轮的时间 */
+export function summaryDue(turns: readonly { at: string; echoOf?: string | null }[], lastAt: string | null, every = SUMMARY_EVERY): boolean {
+  const qa = turns.filter((t) => !t.echoOf && (!lastAt || t.at > lastAt));
+  return qa.length >= every;
+}
+
+export const SUMMARY_QUESTION = "把这一阵我们定下的事整理一下";
+
+/** 整理这一阵定下的事的重点：附上最近这些轮的问答摘要（只带问题和回答开头），值得以后照办的起草成 :::记下，人逐条点 */
+export function summaryFocus(turns: readonly { at: string; question: string; answer: string; echoOf?: string | null }[], lastAt: string | null): { title: string; detail: string } {
+  const qa = turns.filter((t) => !t.echoOf && (!lastAt || t.at > lastAt)).slice(-16);
+  const lines = qa.map((t) => `- 问：${t.question.replace(/\s+/g, " ").slice(0, 120)}\n  答：${t.answer.replace(/:::[\s\S]*?:::/g, "").replace(/\s+/g, " ").slice(0, 200)}`);
+  return {
+    title: "整理这一阵定下的事",
+    detail:
+      `下面是最近 ${qa.length} 轮问答的摘要。先用三五句话说这一阵定下了什么、还悬着什么；再把其中以后每一步都要照办的决定或偏好` +
+      "（不是一次性的安排、不是进度）起草成 :::记下，一条一块、最多五块，快照「项目知识」里已经有的不重复。没有值得记的就直说。\n" +
+      lines.join("\n"),
+  };
+}
