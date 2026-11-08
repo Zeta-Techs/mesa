@@ -12,6 +12,7 @@ import {
   FolderClosed,
   Info,
   Megaphone,
+  MessageCircleQuestion,
   MessageSquare,
   Palette,
   PanelLeftClose,
@@ -46,7 +47,8 @@ import {
   themeSwatchFor,
   type ThemeSwatch,
 } from "../theme-swatch";
-import { comboLabel, DEFAULT_NEW_CHAT_HOTKEY, DEFAULT_NEW_PROJECT_HOTKEY, PAGE_HOTKEY_DEFS } from "../hotkeys";
+import { comboLabel, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_NEW_CHAT_HOTKEY, DEFAULT_NEW_PROJECT_HOTKEY, PAGE_HOTKEY_DEFS } from "../hotkeys";
+import { toggleProjectAssistant } from "../assistant-actions";
 import { openAddExistingFolder, openNewProject } from "../project-add";
 import { NAV_ICONS } from "../navigation-icons";
 import { SETTINGS_SEARCH_INDEX } from "../settings-search";
@@ -311,6 +313,7 @@ export default function CommandPalette({
   const chromeCombo = settings?.hotkeyHideChrome ?? "mod+\\";
   const newChatCombo = settings?.hotkeyNewChat ?? DEFAULT_NEW_CHAT_HOTKEY;
   const newProjectCombo = settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY;
+  const assistantCombo = settings?.hotkeyAssistant ?? DEFAULT_ASSISTANT_HOTKEY;
   const openExternal = (url: string) =>
     openUrl(url).catch(() => toast("浏览器没打开，稍后再试", "warning"));
 
@@ -328,6 +331,17 @@ export default function CommandPalette({
             },
             icon: icon(NAV_ICONS.quickChat),
             run: onQuickChat,
+          },
+          {
+            cmd: {
+              id: "assistant",
+              title: "问项目助手",
+              group: "快速操作",
+              hint: assistantCombo ? comboLabel(assistantCombo) : undefined,
+              keywords: ["assistant", "助手", "项目助手", "问", "进度", "出错", "派活", "xiangmuzhushou", "xmzs", "zhushou", "zs"],
+            },
+            icon: icon(MessageCircleQuestion),
+            run: toggleProjectAssistant,
           },
           {
             cmd: {

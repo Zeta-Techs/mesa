@@ -623,7 +623,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
   assistant-brief.ts         # 项目助手「现在的情况」卡与按状态换的常用问题（2026-11-08，纯逻辑）：briefLines（出错 / 等确认 / 待评审 / 核验待判断 / 目标待验收与上次打开以来的保存、完成）、quickAsks（出错→为什么、待评审→先帮你过一遍、没流程→想做什么）、reviewPrereadFocus（评审前只读看一遍的重点，评审页同用）；取数在 project-assistant-run gatherBriefInput，不调 AI（tests/assistant-brief.test.ts）
-  assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）（tests/assistant-dock.test.ts）
+  assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）、assistantShortcutTarget（⌘J / 命令面板问哪个项目）、assistantDayLabel / sameLocalDay（问答记录按天分隔）（tests/assistant-dock.test.ts）
   session-tail.ts            # 某一步最近那段对话里 AI 最后说的话（find_session + get_session_conversation_page 最后一页），aiReportsFailure 标出错；30 秒缓存
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
                              # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口；
@@ -1002,7 +1002,7 @@ stats-trend.ts             # 用量页「每日用量」折线的自适应日期
                              #   **重置卡里不写「已用 X%」**（用量已经在上面两个窗口）；
                              #   planLevelLabel 全小写等级首字母大写（智谱实测回 level:"max"）
                              #   （tests/plan-quota.test.ts）
-  hotkeys.ts                 # 快捷键组合串纯逻辑 + 页切清单 PAGE_HOTKEY_DEFS（顺序 / 字同侧栏，10-24 重排）+ 新对话 / 在侧栏里选对话 / 聊天↔终端默认绑定
+  hotkeys.ts                 # 快捷键组合串纯逻辑 + 页切清单 PAGE_HOTKEY_DEFS（顺序 / 字同侧栏，10-24 重排）+ 新对话 / 在侧栏里选对话 / 聊天↔终端 / 项目助手（⌘J，执行在 assistant-actions toggleProjectAssistant）默认绑定
                              # + globalHotkeyAllowed（Win / Linux 焦点在终端里不抢 Ctrl+N 等）+ FIXED_HOTKEYS（设置页只读列出）
   themes.ts                  # 主题清单单一出处 + isLightTheme() 亮暗判定单一出处 + DEFAULT_THEME_ID（首装琥珀，与 settings.rs 同步）（禁另造判定；
 chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–100 六档，100=主题原样也是缺省、0=全透文字直接压壁纸，由 hint 讲明不硬拦）：挡位数是「各主题罩色基数的倍率」不是不透明度；与 settings.rs KNOWN_CHROME_OPACITIES 白名单镜像（前端加选项 Rust 没跟上会被静默落回默认＝选了没反应）；chromeOpacityScale 只出倍率，42/78/28 基数留在 App.css（--ccode-chrome-scale，App.tsx 写入）；挡位不走滑块——能看清文字的下限只能一档一档比出来（App 与设置页消费；tests/chrome-opacity.test.ts）

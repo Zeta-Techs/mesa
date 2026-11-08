@@ -34,6 +34,7 @@ import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
 import ProjectAssistantHost from "./components/ProjectAssistantHost";
+import { toggleProjectAssistant } from "./assistant-actions";
 import {
   HelpAboutDialog,
   HelpDiagnosticsDialog,
@@ -75,6 +76,7 @@ import {
   DEFAULT_NEW_CHAT_HOTKEY,
   DEFAULT_NEW_PROJECT_HOTKEY,
   DEFAULT_RAIL_SEARCH_HOTKEY,
+  DEFAULT_ASSISTANT_HOTKEY,
   globalHotkeyAllowed,
   PAGE_HOTKEY_DEFS,
   IS_MAC,
@@ -930,6 +932,7 @@ function App() {
     const focusRailCombo = settings?.hotkeyFocusRail ?? DEFAULT_FOCUS_RAIL_HOTKEY;
     const newProjectCombo = settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY;
     const railSearchCombo = settings?.hotkeyRailSearch ?? DEFAULT_RAIL_SEARCH_HOTKEY;
+    const assistantCombo = settings?.hotkeyAssistant ?? DEFAULT_ASSISTANT_HOTKEY;
     const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
     const onKey = (e: KeyboardEvent) => {
       if (e.isComposing) return;
@@ -961,6 +964,13 @@ function App() {
         e.preventDefault();
         setPaletteOpen(false);
         openRailSearch();
+        return;
+      }
+      // 项目助手（默认 ⌘J）：开着就收起，没开就问项目页上次看的那个项目
+      if (allowed && eventMatchesCombo(e, assistantCombo)) {
+        e.preventDefault();
+        setPaletteOpen(false);
+        toggleProjectAssistant();
         return;
       }
       // 编辑器里 ⌘0 是「字号还原」（FilePreviewEditor 先 preventDefault），这里让给它，同界面缩放

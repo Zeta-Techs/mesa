@@ -31,6 +31,8 @@ export const DEFAULT_TOGGLE_SURFACE_HOTKEY = "mod+shift+t";
 export const DEFAULT_NEW_PROJECT_HOTKEY = "mod+shift+n";
 /** 搜索对话和项目（标题栏放大镜，2026-10-27）：⌘F 留给终端搜索，⌘K 是命令面板 */
 export const DEFAULT_RAIL_SEARCH_HOTKEY = "mod+shift+f";
+/** 打开 / 收起项目助手（2026-11-08）：问的是项目页上次看的那个项目；同新对话，输入框里也接 */
+export const DEFAULT_ASSISTANT_HOTKEY = "mod+j";
 
 /** 关掉正看着的这段对话（2026-10-26 用户定）：macOS ⌘W（「关闭窗口」挪到 ⇧⌘W，菜单 lib.rs）；
  *  Windows / Linux 用 Ctrl+Shift+W——Ctrl+W 是终端里删前一个词，不能抢（同 Windows Terminal 关标签）。

@@ -61,3 +61,32 @@ export function assistantWhere(input: {
   if (input.viewing.step) parts.push(`聚焦在步骤「${input.viewing.step}」`);
   return parts.join(" · ");
 }
+
+/**
+ * 快捷键 / 命令面板「项目助手」问哪个项目（2026-11-08）：项目页上次看的那个；没看过时只有一个项目就是它；
+ * 都没有返回 null（调用方带人去工作台，那里能挑问哪个项目）
+ */
+export function assistantShortcutTarget(viewing: string | null | undefined, projectPaths: readonly string[]): string | null {
+  if (viewing) return viewing;
+  return projectPaths.length === 1 ? projectPaths[0] : null;
+}
+
+/** 问答记录按天分隔的标签（本机时区）：今天 / 昨天 / 同年「11月6日 周四」/ 跨年带年份 */
+export function assistantDayLabel(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86_400_000);
+  if (diff === 0) return "今天";
+  if (diff === 1) return "昨天";
+  const week = "日一二三四五六"[d.getDay()];
+  const md = `${d.getMonth() + 1}月${d.getDate()}日 周${week}`;
+  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}年${md}`;
+}
+
+/** 两条记录是不是同一天（本机时区）：分隔线只在换天时画 */
+export function sameLocalDay(a: string, b: string): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}

@@ -14,6 +14,7 @@ import { liveRunIn, stepWorkspace } from "./assistant-dispatch";
 import type { AssistantAction } from "./project-assistant";
 import type { AssistantTurn } from "./project-assistant-run";
 import type { ProjectDto } from "./types";
+import { assistantShortcutTarget } from "./assistant-dock";
 
 export async function runAssistantAction(
   action: AssistantAction,
@@ -115,4 +116,20 @@ export async function runAssistantAction(
       return;
     }
   }
+}
+
+/** 快捷键 / 命令面板：开着就收起，没开就打开项目页上次看的那个项目的项目助手；定不下是哪个项目时去工作台挑 */
+export function toggleProjectAssistant(): void {
+  const st = useAppStore.getState();
+  if (st.assistantReq) {
+    st.closeAssistant();
+    return;
+  }
+  const path = assistantShortcutTarget(st.contextLabel?.projectPath ?? null, st.projectPaths);
+  if (path) {
+    st.openAssistant(path);
+    return;
+  }
+  st.setPage("workbench");
+  toast(st.projectPaths.length ? "先挑问哪个项目：点工作台标题行的「项目助手」" : "还没有项目：先添加一个项目，项目助手才有东西可看", "info");
 }

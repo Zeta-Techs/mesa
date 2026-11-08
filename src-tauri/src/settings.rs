@@ -32,6 +32,8 @@ pub const DEFAULT_HOTKEY_TOGGLE_SURFACE: &str = "mod+shift+t";
 /// 新项目（侧栏顶部「新项目」，2026-10-27）与「搜索对话和项目」（标题栏放大镜）
 pub const DEFAULT_HOTKEY_NEW_PROJECT: &str = "mod+shift+n";
 pub const DEFAULT_HOTKEY_RAIL_SEARCH: &str = "mod+shift+f";
+/// 打开 / 收起项目助手（2026-11-08；问的是项目页上次看的那个项目）
+pub const DEFAULT_HOTKEY_ASSISTANT: &str = "mod+j";
 pub const DEFAULT_HOTKEY_PAGE_SWITCH: bool = true;
 pub const DEFAULT_NAV_CAPSULE_HIDE_DELAY_MS: u32 = 1000;
 /// 侧栏 / 顶栏罩色的透明度系数（百分比，100 = 各主题本来的罩色，越小越透）。
@@ -372,6 +374,7 @@ pub struct AppSettingsDto {
     pub hotkey_toggle_surface: Option<String>,
     pub hotkey_new_project: Option<String>,
     pub hotkey_rail_search: Option<String>,
+    pub hotkey_assistant: Option<String>,
     /// ⌘1–⌘9 页切整组总开关（关 = 全部页切绑定不生效）
     pub hotkey_page_switch: Option<bool>,
     /// 页切逐页绑定：键 = 页面 id（前端 hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；
@@ -1034,6 +1037,9 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         hotkey_rail_search: s
             .hotkey_rail_search
             .or_else(|| Some(DEFAULT_HOTKEY_RAIL_SEARCH.to_string())),
+        hotkey_assistant: s
+            .hotkey_assistant
+            .or_else(|| Some(DEFAULT_HOTKEY_ASSISTANT.to_string())),
         hotkey_page_switch: s.hotkey_page_switch.or(Some(DEFAULT_HOTKEY_PAGE_SWITCH)),
         // 逐页绑定不做默认值填充：键缺失即「跟随默认」（同 ai_profiles 口径）
         hotkey_pages: s.hotkey_pages,
@@ -1224,6 +1230,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.hotkey_rail_search.is_some() {
         cur.hotkey_rail_search = patch.hotkey_rail_search;
+    }
+    if patch.hotkey_assistant.is_some() {
+        cur.hotkey_assistant = patch.hotkey_assistant;
     }
     if patch.hotkey_page_switch.is_some() {
         cur.hotkey_page_switch = patch.hotkey_page_switch;

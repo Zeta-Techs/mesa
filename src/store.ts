@@ -207,6 +207,7 @@ export interface AppSettings {
   /** 新项目（默认 mod+shift+n）与搜索对话和项目（默认 mod+shift+f），2026-10-27 */
   hotkeyNewProject?: string;
   hotkeyRailSearch?: string;
+  hotkeyAssistant?: string;
   /** ⌘1–⌘9 页切整组总开关（关 = 全部页切绑定不生效） */
   hotkeyPageSwitch?: boolean;
   /** 页切逐页绑定：键 = 页面 id（hotkeys.ts PAGE_HOTKEY_DEFS），值 = 组合串；

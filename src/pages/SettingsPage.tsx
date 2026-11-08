@@ -53,6 +53,7 @@ import {
   DEFAULT_TOGGLE_SURFACE_HOTKEY,
   DEFAULT_NEW_PROJECT_HOTKEY,
   DEFAULT_RAIL_SEARCH_HOTKEY,
+  DEFAULT_ASSISTANT_HOTKEY,
   DEFAULT_NEW_CHAT_HOTKEY,
   FIXED_HOTKEYS,
   hotkeyClashes,
@@ -1045,6 +1046,7 @@ function HotkeysSection({
   const toggleSurface = settings?.hotkeyToggleSurface ?? DEFAULT_TOGGLE_SURFACE_HOTKEY;
   const newProject = settings?.hotkeyNewProject ?? DEFAULT_NEW_PROJECT_HOTKEY;
   const railSearch = settings?.hotkeyRailSearch ?? DEFAULT_RAIL_SEARCH_HOTKEY;
+  const assistant = settings?.hotkeyAssistant ?? DEFAULT_ASSISTANT_HOTKEY;
   const pageSwitchOn = settings?.hotkeyPageSwitch !== false;
   const pageCombo = (id: string) =>
     settings?.hotkeyPages?.[id] ??
@@ -1059,6 +1061,7 @@ function HotkeysSection({
     { id: "newChat", label: "新对话", combo: newChat },
     { id: "newProject", label: "新项目", combo: newProject },
     { id: "railSearch", label: "搜索对话和项目", combo: railSearch },
+    { id: "assistant", label: "项目助手", combo: assistant },
     { id: "focusRail", label: "在侧栏里选对话", combo: focusRail },
     { id: "toggleSurface", label: "聊天 / 终端", combo: toggleSurface },
     { id: "palette", label: "命令面板", combo: palette },
@@ -1102,6 +1105,7 @@ function HotkeysSection({
                   toggleSurface,
                   newProject,
                   railSearch,
+                  assistant,
                   ...PAGE_HOTKEY_DEFS.filter((x) => x.id !== p.id).map(
                     (x) => pageCombo(x.id),
                   ),
@@ -1136,7 +1140,7 @@ function HotkeysSection({
               value={newChat}
               clashWith={clashes.get("newChat")}
               defaultValue={DEFAULT_NEW_CHAT_HOTKEY}
-              conflictsWith={[palette, chrome, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
+              conflictsWith={[palette, chrome, focusRail, toggleSurface, newProject, railSearch, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyNewChat: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1151,7 +1155,7 @@ function HotkeysSection({
               value={newProject}
               clashWith={clashes.get("newProject")}
               defaultValue={DEFAULT_NEW_PROJECT_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, railSearch, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, railSearch, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyNewProject: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1166,8 +1170,23 @@ function HotkeysSection({
               value={railSearch}
               clashWith={clashes.get("railSearch")}
               defaultValue={DEFAULT_RAIL_SEARCH_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, newProject, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, newProject, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyRailSearch: combo })}
+              capturing={capturing}
+              setCapturing={setCapturing}
+            />
+          </CardRow>
+          <CardRow
+            label="项目助手"
+            title="打开 / 收起项目助手：问的是项目页上次看的那个项目；同命令面板里的「问项目助手」"
+          >
+            <HotkeyCapture
+              id="assistant"
+              value={assistant}
+              clashWith={clashes.get("assistant")}
+              defaultValue={DEFAULT_ASSISTANT_HOTKEY}
+              conflictsWith={[palette, chrome, newChat, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
+              onSave={(combo) => void patch({ hotkeyAssistant: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
             />
@@ -1181,7 +1200,7 @@ function HotkeysSection({
               value={focusRail}
               clashWith={clashes.get("focusRail")}
               defaultValue={DEFAULT_FOCUS_RAIL_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, toggleSurface, newProject, railSearch, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, toggleSurface, newProject, railSearch, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyFocusRail: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1196,7 +1215,7 @@ function HotkeysSection({
               value={toggleSurface}
               clashWith={clashes.get("toggleSurface")}
               defaultValue={DEFAULT_TOGGLE_SURFACE_HOTKEY}
-              conflictsWith={[palette, chrome, newChat, focusRail, newProject, railSearch, ...pageCombos]}
+              conflictsWith={[palette, chrome, newChat, focusRail, newProject, railSearch, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyToggleSurface: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1208,7 +1227,7 @@ function HotkeysSection({
               value={palette}
               clashWith={clashes.get("palette")}
               defaultValue="mod+k"
-              conflictsWith={[chrome, newChat, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
+              conflictsWith={[chrome, newChat, focusRail, toggleSurface, newProject, railSearch, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyPalette: combo })}
               capturing={capturing}
               setCapturing={setCapturing}
@@ -1221,7 +1240,7 @@ function HotkeysSection({
               clashWith={clashes.get("chrome")}
               // JSX 属性里的字符串不认反斜杠转义："mod+\\" 会是两个反斜杠，和真绑定对不上（原先「恢复」常亮、点了还会存坏）
               defaultValue={"mod+\\"}
-              conflictsWith={[palette, newChat, focusRail, toggleSurface, newProject, railSearch, ...pageCombos]}
+              conflictsWith={[palette, newChat, focusRail, toggleSurface, newProject, railSearch, assistant, ...pageCombos]}
               onSave={(combo) => void patch({ hotkeyHideChrome: combo })}
               capturing={capturing}
               setCapturing={setCapturing}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, ArrowUp, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
@@ -37,6 +37,7 @@ import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
 import { briefLines, quickAsks, type BriefLine, type QuickAsk } from "../assistant-brief";
+import { assistantDayLabel, sameLocalDay } from "../assistant-dock";
 import {
   askProjectAssistant,
   assistantConnection,
@@ -254,6 +255,16 @@ export default function ProjectAssistantPanel({
     endRef.current?.scrollIntoView({ block: "end" });
   }, [turns.length, busy, error, liveText, liveStep]);
 
+  // 往上翻过以后底部给「回到最新」：看末尾那个锚点还在不在视野里
+  const [atEnd, setAtEnd] = useState(true);
+  useEffect(() => {
+    const el = endRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([entry]) => setAtEnd(entry.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, [open]);
+
   useEffect(() => {
     if (!busy) return;
     setWaited(0);
@@ -399,6 +410,177 @@ export default function ProjectAssistantPanel({
   }, [freshAt]);
   const headPose = busy ? "think" : error ? "oops" : cheer ? "happy" : mood.restPose;
 
+  /** 一轮问答（或一条派活进展）的样子；换天分隔在调用处画 */
+  function renderTurn(turn: AssistantTurn, i: number) {
+    if (turn.echoOf) {
+      const echo = parseAssistantAnswer(turn.answer, stepCount);
+      // 停了 / 失败的派出去的目标：最新那条进展下面给「接着做」（2026-11-06）
+      const rec = turns.find((t) => t.at === turn.echoOf)?.dispatched;
+      const latestEcho = !turns.slice(i + 1).some((t) => t.echoOf === turn.echoOf);
+      const resumable = latestEcho && rec?.mode === "goal" && !!rec.taskId && (rec.echoed === "stopped" || rec.echoed === "failed");
+      return (
+        <article key={`${turn.at}-${i}`} className="flex flex-col gap-1.5" aria-label="派活进展">
+          <div className="flex items-center gap-2">
+            <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
+            <span className="text-xs text-l3" title={absTime(turn.at)}>
+              项目助手 · 派活进展 · {relTime(turn.at)}
+            </span>
+          </div>
+          <p className="text-sm leading-6 text-l1">{echo.text}</p>
+          {(echo.actions.length > 0 || resumable) && (
+            <div className="flex flex-wrap gap-1.5">
+              {resumable && (
+                <button type="button" className={secondaryActionClass} disabled={busy} onClick={() => void resume(rec!.taskId!)}>
+                  接着做
+                </button>
+              )}
+              {echo.actions.map((action) => (
+                <button key={`${action.kind}-${action.step ?? ""}`} type="button" className={secondaryActionClass} onClick={() => onAction(action, turn)}>
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </article>
+      );
+    }
+    const withMemo = parseRemember(turn.answer);
+    const withAsk = parseClarify(withMemo.text);
+    const withRework = parseReworkOrder(withAsk.text, stepCount);
+    const withOrder = parseWorkOrder(withRework.text, stepCount);
+    const parsed = parseAssistantAnswer(withOrder.text, stepCount);
+    // 只有最后一轮的问题能点选作答（前面的已经答过了）
+    const openAsk = i === turns.length - 1 ? withAsk.ask : null;
+    // 话与事实分开：它声称自己做了动作的句子换成如实说明（根源三，2026-11-06）
+    const { lead, rest } = splitAnswerLead(guardClaims(parsed.text).text);
+    return (
+      <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
+        <QuestionBubble text={turn.question} at={turn.at} />
+        <div>
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
+            <span className="text-xs text-l3" title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}`}>
+              项目助手 · {relTime(turn.at)}
+            </span>
+          </div>
+          {lead && (
+            <p className="mb-2 border-l-2 border-mesa-amber pl-3 text-sm font-medium leading-6 text-l1">{lead}</p>
+          )}
+          {rest && (
+            <div className="text-sm text-l1">
+              <ChatMarkdown text={rest} cwd={projectPath} />
+            </div>
+          )}
+          {withAsk.ask && (
+            <section className="mt-3 rounded-xl border border-hairline p-3" aria-label="要先问你一句">
+              <p className="text-sm font-medium leading-6 text-l1">{withAsk.ask.question}</p>
+              {openAsk ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {openAsk.options.map((o) => (
+                    <button key={o} type="button" className={secondaryActionClass} disabled={busy} onClick={() => void send(o, null)}>
+                      {o}
+                    </button>
+                  ))}
+                  <span className="self-center text-micro text-l4">{openAsk.options.length ? "或者直接在下面打字回答" : "在下面打字回答"}</span>
+                </div>
+              ) : null}
+            </section>
+          )}
+          {withMemo.remember && <RememberCard text={withMemo.remember} projectPath={projectPath} />}
+          {withRework.rework && (
+            <ReworkOrderCard
+              order={withRework.rework}
+              record={turn.dispatched ?? null}
+              projectPath={projectPath}
+              onSent={(record) => saveDispatched(turn.at, record)}
+            />
+          )}
+          {withOrder.order && (
+            <WorkOrderCard
+              order={withOrder.order}
+              record={turn.dispatched ?? null}
+              projectPath={projectPath}
+              onDispatch={(order) => dispatch(turn.at, order)}
+            />
+          )}
+          {parsed.actions.length > 0 && (
+            // 一条回答只一个显眼的按钮：有单子时主按钮是单子上的「派出去」，这里全降成文字按钮；否则第一个是次级按钮
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {parsed.actions.map((action, ai) => (
+                <button
+                  key={`${action.kind}-${action.step ?? ""}`}
+                  type="button"
+                  className={ai === 0 && !withOrder.order && !withRework.rework ? secondaryActionClass : ghostActionClass}
+                  title={action.text || undefined}
+                  onClick={() => onAction(action, turn)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* 依据、花费、换个查法并成一行小字（原来各占一行） */}
+          {(() => {
+            const retry = i === turns.length - 1 && !busy ? retryIntents(turn.basis, turn.connection) : [];
+            if (!turn.basis && turn.costUsd == null && retry.length === 0) return null;
+            const heads = turn.basis ? basisGuideHeadings(turn.basis) : [];
+            const tail = turn.basis ? turn.basis.replace(/^说明书(「[^」]+」)+/, "") : "";
+            const dot = <span aria-hidden="true"> · </span>;
+            return (
+              <p className="mt-2 flex flex-wrap items-center gap-x-1 text-micro text-l4">
+                {turn.basis && (
+                  <span>
+                    依据：
+                    {heads.length === 0 ? (
+                      turn.basis
+                    ) : (
+                      <>
+                        说明书
+                        {heads.map((h) => (
+                          <button
+                            key={h}
+                            type="button"
+                            className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                            title="在应用里打开说明书这一节"
+                            onClick={() => setGuideHeading(h)}
+                          >
+                            <span className="text-micro">「{h}」</span>
+                          </button>
+                        ))}
+                        {tail}
+                      </>
+                    )}
+                  </span>
+                )}
+                {/* 这次调用花了多少（只有 Claude Code / Codex、模型查得到价时有；同用量页口径） */}
+                {turn.costUsd != null && (
+                  <span title="这次问答的花费（用量页同一口径，记在内部活动里）">
+                    {turn.basis && dot}${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}
+                  </span>
+                )}
+                {retry.length > 0 && (
+                  <span>
+                    {(turn.basis || turn.costUsd != null) && dot}没答到点上？
+                    {retry.map((r, ri) => (
+                      <button
+                        key={r.intent}
+                        type="button"
+                        className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                        onClick={() => void send(turn.question, null, r.intent)}
+                      >
+                        <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </p>
+            );
+          })()}
+        </div>
+      </article>
+    );
+  }
+
   // 「现在的情况」：Mesa 按记录写，不经 AI；没有要看的事、也没有变化就不出现
   const briefCard =
     brief && brief.lines.length > 0 && !briefOff ? (
@@ -444,6 +626,17 @@ export default function ProjectAssistantPanel({
 
   const composer = (
     <div className="space-y-2">
+      {!atEnd && turns.length > 0 && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            className="h-6 rounded-full border border-hairline bg-canvas px-2.5 text-l3 hover:bg-hover hover:text-l1"
+            onClick={() => endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })}
+          >
+            <span className="text-xs">回到最新 ↓</span>
+          </button>
+        </div>
+      )}
       {focus && (
         <p className="text-xs text-l3">
           这次重点：{focus.title}
@@ -612,172 +805,20 @@ export default function ProjectAssistantPanel({
       ) : (
         <div className="flex flex-col gap-6">
           {turns.map((turn, i) => {
-            if (turn.echoOf) {
-              const echo = parseAssistantAnswer(turn.answer, stepCount);
-              // 停了 / 失败的派出去的目标：最新那条进展下面给「接着做」（2026-11-06）
-              const rec = turns.find((t) => t.at === turn.echoOf)?.dispatched;
-              const latestEcho = !turns.slice(i + 1).some((t) => t.echoOf === turn.echoOf);
-              const resumable = latestEcho && rec?.mode === "goal" && !!rec.taskId && (rec.echoed === "stopped" || rec.echoed === "failed");
-              return (
-                <article key={`${turn.at}-${i}`} className="flex flex-col gap-1.5" aria-label="派活进展">
-                  <div className="flex items-center gap-2">
-                    <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
-                    <span className="text-xs text-l3" title={absTime(turn.at)}>
-                      项目助手 · 派活进展 · {relTime(turn.at)}
-                    </span>
-                  </div>
-                  <p className="text-sm leading-6 text-l1">{echo.text}</p>
-                  {(echo.actions.length > 0 || resumable) && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {resumable && (
-                        <button type="button" className={secondaryActionClass} disabled={busy} onClick={() => void resume(rec!.taskId!)}>
-                          接着做
-                        </button>
-                      )}
-                      {echo.actions.map((action) => (
-                        <button key={`${action.kind}-${action.step ?? ""}`} type="button" className={secondaryActionClass} onClick={() => onAction(action, turn)}>
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              );
-            }
-            const withMemo = parseRemember(turn.answer);
-            const withAsk = parseClarify(withMemo.text);
-            const withRework = parseReworkOrder(withAsk.text, stepCount);
-            const withOrder = parseWorkOrder(withRework.text, stepCount);
-            const parsed = parseAssistantAnswer(withOrder.text, stepCount);
-            // 只有最后一轮的问题能点选作答（前面的已经答过了）
-            const openAsk = i === turns.length - 1 ? withAsk.ask : null;
-            // 话与事实分开：它声称自己做了动作的句子换成如实说明（根源三，2026-11-06）
-            const { lead, rest } = splitAnswerLead(guardClaims(parsed.text).text);
-            return (
-              <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
-                <QuestionBubble text={turn.question} at={turn.at} />
-                <div>
-                  <div className="mb-1.5 flex items-center gap-2">
-                    <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
-                    <span className="text-xs text-l3" title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}`}>
-                      项目助手 · {relTime(turn.at)}
-                    </span>
-                  </div>
-                  {lead && (
-                    <p className="mb-2 border-l-2 border-mesa-amber pl-3 text-sm font-medium leading-6 text-l1">{lead}</p>
-                  )}
-                  {rest && (
-                    <div className="text-sm text-l1">
-                      <ChatMarkdown text={rest} cwd={projectPath} />
-                    </div>
-                  )}
-                  {withAsk.ask && (
-                    <section className="mt-3 rounded-xl border border-hairline p-3" aria-label="要先问你一句">
-                      <p className="text-sm font-medium leading-6 text-l1">{withAsk.ask.question}</p>
-                      {openAsk ? (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {openAsk.options.map((o) => (
-                            <button key={o} type="button" className={secondaryActionClass} disabled={busy} onClick={() => void send(o, null)}>
-                              {o}
-                            </button>
-                          ))}
-                          <span className="self-center text-micro text-l4">{openAsk.options.length ? "或者直接在下面打字回答" : "在下面打字回答"}</span>
-                        </div>
-                      ) : null}
-                    </section>
-                  )}
-                  {withMemo.remember && <RememberCard text={withMemo.remember} projectPath={projectPath} />}
-                  {withRework.rework && (
-                    <ReworkOrderCard
-                      order={withRework.rework}
-                      record={turn.dispatched ?? null}
-                      projectPath={projectPath}
-                      onSent={(record) => saveDispatched(turn.at, record)}
-                    />
-                  )}
-                  {withOrder.order && (
-                    <WorkOrderCard
-                      order={withOrder.order}
-                      record={turn.dispatched ?? null}
-                      projectPath={projectPath}
-                      onDispatch={(order) => dispatch(turn.at, order)}
-                    />
-                  )}
-                  {parsed.actions.length > 0 && (
-                    // 一条回答只一个显眼的按钮：有单子时主按钮是单子上的「派出去」，这里全降成文字按钮；否则第一个是次级按钮
-                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                      {parsed.actions.map((action, ai) => (
-                        <button
-                          key={`${action.kind}-${action.step ?? ""}`}
-                          type="button"
-                          className={ai === 0 && !withOrder.order && !withRework.rework ? secondaryActionClass : ghostActionClass}
-                          title={action.text || undefined}
-                          onClick={() => onAction(action, turn)}
-                        >
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {/* 依据、花费、换个查法并成一行小字（原来各占一行） */}
-                  {(() => {
-                    const retry = i === turns.length - 1 && !busy ? retryIntents(turn.basis, turn.connection) : [];
-                    if (!turn.basis && turn.costUsd == null && retry.length === 0) return null;
-                    const heads = turn.basis ? basisGuideHeadings(turn.basis) : [];
-                    const tail = turn.basis ? turn.basis.replace(/^说明书(「[^」]+」)+/, "") : "";
-                    const dot = <span aria-hidden="true"> · </span>;
-                    return (
-                      <p className="mt-2 flex flex-wrap items-center gap-x-1 text-micro text-l4">
-                        {turn.basis && (
-                          <span>
-                            依据：
-                            {heads.length === 0 ? (
-                              turn.basis
-                            ) : (
-                              <>
-                                说明书
-                                {heads.map((h) => (
-                                  <button
-                                    key={h}
-                                    type="button"
-                                    className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                                    title="在应用里打开说明书这一节"
-                                    onClick={() => setGuideHeading(h)}
-                                  >
-                                    <span className="text-micro">「{h}」</span>
-                                  </button>
-                                ))}
-                                {tail}
-                              </>
-                            )}
-                          </span>
-                        )}
-                        {/* 这次调用花了多少（只有 Claude Code / Codex、模型查得到价时有；同用量页口径） */}
-                        {turn.costUsd != null && (
-                          <span title="这次问答的花费（用量页同一口径，记在内部活动里）">
-                            {turn.basis && dot}${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}
-                          </span>
-                        )}
-                        {retry.length > 0 && (
-                          <span>
-                            {(turn.basis || turn.costUsd != null) && dot}没答到点上？
-                            {retry.map((r, ri) => (
-                              <button
-                                key={r.intent}
-                                type="button"
-                                className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                                onClick={() => void send(turn.question, null, r.intent)}
-                              >
-                                <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
-                              </button>
-                            ))}
-                          </span>
-                        )}
-                      </p>
-                    );
-                  })()}
+            // 换天时先画一道分隔（本机时区）；同一天的不画
+            const divider =
+              turn.at && (i === 0 || !sameLocalDay(turns[i - 1].at, turn.at)) ? (
+                <div className="flex items-center gap-2 text-micro text-l4" role="separator" aria-label={assistantDayLabel(turn.at)}>
+                  <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+                  {assistantDayLabel(turn.at)}
+                  <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
                 </div>
-              </article>
+              ) : null;
+            return (
+              <Fragment key={`${turn.at}-${i}`}>
+                {divider}
+                {renderTurn(turn, i)}
+              </Fragment>
             );
           })}
           {briefCard}
