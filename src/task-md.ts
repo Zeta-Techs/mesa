@@ -5,6 +5,7 @@ import { decisionPolicyBlock } from "./step-decisions.ts";
 import { RESOURCE_TYPE_LABELS } from "./pipeline-presets.ts";
 import {
   effectiveProjectRules,
+  EXTERNAL_MATERIAL_RULE,
   isSettingPlaceholder,
   readableRuleLines,
   uniqueRuleLines,
@@ -158,6 +159,8 @@ export function renderTaskMd(
     );
   }
   lines.push("## 决策暂停策略", decisionPolicyBlock(step), "");
+  // 固定一节、不随项目规则变（项目规则人能改掉）：分路、退回补料、批注回流都先读 TASK.md，一处覆盖
+  lines.push("## 外部资料", EXTERNAL_MATERIAL_RULE, "");
   const inputs = (step.inputs ?? []).map((x) => x.trim()).filter(Boolean);
   const optionalInputs = (step.optionalInputs ?? [])
     .map((x) => x.trim())

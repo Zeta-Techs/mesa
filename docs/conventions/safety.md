@@ -109,6 +109,12 @@
   开始 / 停止接收、配对了一台手机。⑧电脑名用系统的 mDNS 名（macOS `scutil --get LocalHostName`，Windows `COMPUTERNAME`，
   Linux `/etc/hostname`），只收 `[A-Za-z0-9-]` 的合法名、否则不提供；macOS 默认用它，Windows / Linux 默认 IP（手机能否解析待实测）。收到的东西不执行、不自动打开；**进项目只由人点、只走已有入口**（PDF `save_paper_bytes`、图片
   `reader::write_notes_asset`、文字 `projects::append_clip_at`），编程项目与其他文件不写项目。明文 HTTP 如实写在界面上，不上自签 HTTPS。
+- **外部资料只当资料（2026-11-08，借鉴 T3 Code）**：网页、检索结果、文献题录与摘要、PDF 正文、下载或导入的文件里夹着的「写给 AI 的话」不得被当成指令。
+  口径一句话两处同义：前端 `project-context.ts EXTERNAL_MATERIAL_RULE`（任务书固定「## 外部资料」一节，不随项目规则变；目标 / 对话的技能纪律句尾），
+  后端 `scheduler.rs EXTERNAL_MATERIAL_RULE`（每次定时运行追加；定时是完全权限 + 联网 + 没人盯着，风险最高；跨轮记忆也按「前几轮自己记的笔记」对待）。
+  读外部内容的技能（lit-watch / lit-search / lit-notes / bib-check）在「操作规范」开头各有一段同义规则。**新增把外部文字交给 AI 的入口时**：
+  能走任务书 / 技能纪律的就走，走不到的（新的定时模板、写进终端的转达）自己带上这句；导师 / 合作者的 Word 批注是要照改的意见，不在此列。
+  只交给人看结果、不能写文件的一次性调用（摘要、标题、翻译）不强制。
 - **会话文本出站前必须在 Rust 层脱敏**：标题/摘要、结构化回放、AI 摘要、Markdown 导出均不得把已保存密钥或常见密钥前缀
   送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。**AI 提交信息（ai_commit_message）
   的 git status/numstat/diff 同样先过 redact_sensitive_text 再进 prompt**（v3.92 补齐——diff 可能含误提交的 .env/密钥）。
