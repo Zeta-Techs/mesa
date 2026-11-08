@@ -1827,7 +1827,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   schematic_check.py 三档检查（文字相交 / 出框 / 跨框 / 字号 / 缺字 / 文字出处 / facts 关系 / ppi / 组图子图字号 / 重建一致）；
                              #   asset_sheet.py 出图模型素材板（品红底、按格切、碰格边整板拒绝）；pptx_edit.py 人改过的 PPTX 局部改（改前备份 .history/）；
                              #   measure_text.py / overlay.py 复刻量字号与叠图比对；style_profile.py 从已有图归纳课题组风格；icons/ 73 个矢量图元 + index.json
-  （技能脚本）bib-check/scripts/cite_check.py  # 引用核验固定脚本（2026-11-02，tests/cite-check.test.ts）：refs（引用键 / 重复键；联网查 DOI 指向与
+  （技能脚本）bib-check/scripts/cite_check.py  # 引用核验固定脚本（2026-11-02，tests/cite-check.test.ts）：refs（引用键 / 重复键 / 句中点名作者对号——自解析 author 字段、
+                             #   不走 bridge.parse_bibtex（TeX 重音会整库报错），整句找、离线也做；联网查 DOI 指向与
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
                              #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py
   （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/

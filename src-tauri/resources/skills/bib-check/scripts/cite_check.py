@@ -2,7 +2,8 @@
 """引用核验固定脚本（bib-check 技能随包，2026-11-02）。只读稿件与引文库，结果写成 Mesa 核验项。
 
 两个子命令：
-  refs    引用键能否在 references.bib 里找到、库里有没有重复键；联网时再查 DOI 是否指向这篇、有没有撤稿 / 更正
+  refs    引用键能否在 references.bib 里找到、库里有没有重复键；句中点名的作者（Smith et al.）与所引文献的作者对不对得上（离线也做）；
+          联网时再查 DOI 是否指向这篇、有没有撤稿 / 更正
   quotes  逐条核对 manuscript/evidence.json 里 Agent 给出的原文摘录：到该文献 PDF 全文里逐字找这段话
 
 结果写进 <工作目录>/.ccode/checks/cite-refs.jsonl、cite-quotes.jsonl（每次整份重写），一行一条：
@@ -159,6 +160,159 @@ def norm_title(text):
     return re.sub(r"[^\w]+", " ", text).strip()
 
 
+# ---------------- 点名作者对号 ----------------
+
+# 句中点名：「Smith et al.」「Smith and co-workers」「Smith, Lee and colleagues」
+NAMED = re.compile(
+    r"((?:[A-Z][\w'’\-–]+)(?:\s*,\s*[A-Z][\w'’\-–]+)*(?:\s+[A-Z][\w'’\-–]+)?)\s+"
+    r"(?:and co-workers|and coworkers|and colleagues|et al\.)"
+)
+ABBR = {"al", "fig", "figs", "e.g", "i.e", "ref", "refs", "eq", "eqs", "vs", "ca", "approx", "no", "cf", "etc", "ch", "sec"}
+BRACKET_GROUP = re.compile(r"\[([^\[\]]*@[^\[\]]*)\]")
+
+
+def bib_authors(text):
+    """{键: [作者原串]}。自己解析 author 字段（bridge.parse_bibtex 遇到 TeX 重音会整库报错），只为比姓。"""
+    out = {}
+    for m in re.finditer(r"@(?!comment|string|preamble)[\w-]+\s*\{\s*([^,\s]+)\s*,", text, re.I):
+        nxt = re.search(r"\n\s*@\w", text[m.end():])
+        body = text[m.end(): m.end() + nxt.start()] if nxt else text[m.end():]
+        f = re.search(r"\bauthor\s*=\s*([{\"])", body, re.I)
+        if not f:
+            continue
+        i, depth, buf = f.end(), 1 if f.group(1) == "{" else 0, []
+        while i < len(body):
+            ch = body[i]
+            if f.group(1) == "{":
+                depth += ch == "{"
+                depth -= ch == "}"
+                if depth == 0:
+                    break
+            elif ch == '"' and body[i - 1] != "\\":
+                break
+            buf.append(ch)
+            i += 1
+        raw = re.sub(r"\\i\b", "i", "".join(buf))
+        raw = re.sub(r"\\[A-Za-z]+\s*|\\.", "", raw)
+        out[m.group(1)] = [a.strip() for a in re.split(r"\s+and\s+", raw.replace("{", "").replace("}", "")) if a.strip()]
+    return out
+
+
+def name_norm(s):
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in s.lower() if "a" <= ch <= "z")
+
+
+def surname_tokens(author):
+    """'García Lastra, J. M.' → {'garcialastra','garcia','lastra'}；没有逗号时取最后一个词。"""
+    fam = author.split(",")[0] if "," in author else (author.split() or [""])[-1]
+    toks = {name_norm(fam)} | {name_norm(t) for t in re.split(r"[\s\-–’']+", fam)}
+    return {t for t in toks if len(t) > 1}
+
+
+def sentence_start(text):
+    """text 里最后一个句子的起点（跳过 et al. / Fig. 一类缩写后的句点）。"""
+    start = 0
+    for m in re.finditer(r"[.!?]\s+(?=[A-Z(\[])", text):
+        word = re.search(r"([A-Za-z.]+)$", text[: m.start()])
+        if m.group(0)[0] == "." and word and word.group(1).lower().rstrip(".") in ABBR:
+            continue
+        start = m.end()
+    return start
+
+
+def paragraphs(path):
+    """[(段落文字, [(该行在段内的起点, 行号)])]；代码块跳过，空行分段，行之间用空格接上。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    out, buf, lines, fenced = [], [], [], False
+    def flush():
+        if buf:
+            offsets, pos = [], 0
+            for seg, no in zip(buf, lines):
+                offsets.append((pos, no))
+                pos += len(seg) + 1
+            out.append((" ".join(buf), offsets))
+        buf.clear()
+        lines.clear()
+    for no, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            flush()
+            continue
+        if fenced or not line.strip():
+            flush()
+            continue
+        buf.append(line.strip())
+        lines.append(no)
+    flush()
+    return out
+
+
+def cite_groups(para, latex):
+    """段内引用组 [(起, 止, [键])]：Markdown 只认方括号组（叙述式 @key 本身就是点名），LaTeX 认 \\cite 族。"""
+    groups = []
+    if latex:
+        for m in LATEX_CITE.finditer(para):
+            groups.append((m.start(), m.end(), [k.strip() for k in m.group(1).split(",") if k.strip()]))
+    else:
+        for m in BRACKET_GROUP.finditer(para):
+            keys = [k.rstrip(".:;,?") for k in PANDOC_KEY.findall(m.group(1))]
+            keys = [k for k in keys if k and not k.isdigit() and not k.lower().startswith(CROSSREF_PREFIXES)]
+            if keys:
+                groups.append((m.start(), m.end(), keys))
+    return groups
+
+
+def named_author_checks(root, files, authors):
+    """句中点名的作者在这句的引文里找不到 → 拦下。点名后先插佐证引文、点名那篇在同一句后面的算对上；
+    所引键在库里没有作者的交人看。只比姓的字符串，所引文献是否支持这句话不判断。"""
+    items = []
+    for path in files:
+        rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+        for para, offsets in paragraphs(path):
+            groups = cite_groups(para, path.suffix == ".tex")
+            prev_end = 0
+            for i, (start, end, keys) in enumerate(groups):
+                before = para[prev_end:start]
+                prev_end = end
+                before = before[sentence_start(before):]
+                names = list(NAMED.finditer(before))
+                if not names:
+                    continue
+                m = names[-1]
+                tokens = {name_norm(t) for t in re.split(r"[\s,]+", m.group(1)) if name_norm(t) not in ("", "and")}
+                same = [(start, end, keys)]
+                for nxt in groups[i + 1:]:
+                    if sentence_start(para[same[-1][1]: nxt[0]]):
+                        break
+                    same.append(nxt)
+                line = max(no for pos, no in offsets if pos <= start)
+                hit = next((k for g in same for k in g[2] if any(tokens & surname_tokens(a) for a in authors.get(k, []))), None)
+                sentence_keys = [k for g in same for k in g[2]]
+                iid = f"NAME-{rel}:{line}:{start}"
+                if hit:
+                    items.append(item(iid, "citation_named_author", "passed",
+                                      f"点名 {m.group(1)}，与 [@{hit}] 的作者一致", rel, line, source=hit))
+                elif not any(authors.get(k) for k in sentence_keys):
+                    items.append(item(iid, "citation_named_author", "needs_human",
+                                      f"点名 {m.group(1)}，所引条目在引文库里没有作者，核对不了", rel, line,
+                                      source="; ".join(sentence_keys)))
+                else:
+                    cited = "；".join(f"[@{k}] {', '.join(authors.get(k, [])[:3]) or '无作者'}" for k in sentence_keys)
+                    items.append(item(iid, "citation_named_author", "blocked",
+                                      f"点名 {m.group(1)}，但这句引的文献里没有这位作者", rel, line,
+                                      source="; ".join(sentence_keys), quote=snippet(before, m.start()),
+                                      detail=f"这句所引：{cited}。多半是引错了键，或点名写错了人"))
+    return items
+
+
+def snippet(text, start, width=80):
+    return re.sub(r"\s+", " ", text[start: start + width]).strip()
+
+
 def crossref_checks(B, key, record, where):
     """一条引用的 DOI 与撤稿核验；连不上网返回 None（由调用方统一说一句没核）。"""
     import urllib.error
@@ -242,6 +396,7 @@ def cmd_refs(args):
         else:
             items.append(item(f"REF-{key}", "citation_resolve", "blocked", f"[@{key}] 在引文库里找不到",
                               rel, no, source=key, detail="渲染后会变成问号；补进 references.bib 或改正键名"))
+    items += named_author_checks(root, files, bib_authors(text))
     offline = args.offline or os.environ.get("MESA_LIT_OFFLINE")
     if first and not offline:
         try:

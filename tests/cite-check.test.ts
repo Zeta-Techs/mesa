@@ -182,3 +182,42 @@ test("refs：默认递归 manuscript/（LaTeX 章节在 chapters/ 里），模�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("refs：句中点名的作者对号——整句找、带重音的 bib 也认，对不上拦下，没作者交人（离线也做）", () => {
+  const root = mkdtempSync(join(tmpdir(), "cite-named-"));
+  mkdirSync(join(root, "manuscript"), { recursive: true });
+  writeFileSync(
+    join(root, "references.bib"),
+    "@article{smith2020,\n  author = {Smith, John and Park, Bo},\n  title = {A}\n}\n" +
+      "@article{zhou2001,\n  author = {Zhou, Yi},\n  title = {B}\n}\n" +
+      "@article{lee2021,\n  author = {Lee, Ann},\n  title = {C}\n}\n" +
+      '@article{hacker2025,\n  author = {H{\\"a}cker, Jan and Garc{\\\'\\i}a Lastra, J. M.},\n  title = {D}\n}\n' +
+      "@article{brown2019,\n  author = {Brown, Carl},\n  title = {E}\n}\n" +
+      "@misc{noauth,\n  title = {F}\n}\n",
+  );
+  writeFileSync(
+    join(root, "manuscript/review-draft.md"),
+    "# Intro\n\nSmith et al. showed fast plating [@smith2020]. Lee and co-workers measured\n" +
+      "small clusters [@zhou2001] and assigned them to MgS [@lee2021].\n\n" +
+      "Wang et al. found a new phase [@brown2019]. Häcker and colleagues tracked interfaces [@hacker2025].\n" +
+      "Jones et al. wrote a report [@noauth].\n",
+  );
+  writeFileSync(join(root, "manuscript/ch.tex"), "Brown et al. measured it \\cite{brown2019}. Smith et al. disagreed \\citep{zhou2001}.\n");
+  try {
+    const r = run(["refs", "--root", root], root);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    const named = items(root, "cite-refs.jsonl").filter((i) => i.kind === "citation_named_author");
+    const find = (who: string) => named.find((i) => i.title.startsWith(`点名 ${who}`) && i.target?.file.endsWith(".md"));
+    assert.equal(find("Smith")?.status, "passed");
+    // 点名 Lee，紧跟的是佐证引文 zhou2001，Lee 那篇在同一句后面：算对上
+    assert.equal(find("Lee")?.status, "passed");
+    assert.equal(find("Wang")?.status, "blocked");
+    assert.deepEqual(find("Wang")?.target, { file: "manuscript/review-draft.md", line: 6 });
+    assert.equal(find("Häcker")?.status, "passed");
+    assert.equal(find("Jones")?.status, "needs_human");
+    const tex = named.filter((i) => i.target?.file === "manuscript/ch.tex");
+    assert.deepEqual(tex.map((i) => i.status).sort(), ["blocked", "passed"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
