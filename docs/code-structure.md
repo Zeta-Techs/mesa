@@ -867,6 +867,8 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、
                              # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）；
                              # longContextHint：过 30 万 token 提示回复会变慢、新开对话会快（对话太长的慢别当网络问题）
+  prompt-cache.ts            # 回到长对话时「缓存多半已过期、下一句整段重读」的提示（coldCacheHint / coldCacheAt）：只 Claude Code，订阅约 1 小时、API 密钥约 5 分钟、
+                             # 不足 5 万 token 不提；只提示不改发送（聊天输入框上方「先压缩 / 照常发送」，tests/prompt-cache.test.ts）
   runtime-model-effort.ts    # 运行中切模型 / 思考档的共用 hook（useRuntimeModelEffort）：终端底栏与聊天「模型 · 思考」芯片同用一份；切过的模型名按 ptyId 存模块级表，两处实例同步
   route-check.ts             # 线路体检前端纯逻辑：DTO 与 route_check.rs 对齐、代理来源文案、体检卡目标（每家第一条官方连接）、启动预检确认框文案、
                              #   后台复查目标 runningOfficialTargets、收件箱 net: 文案 routeInboxFields、修复选择 pickRouteFix（tests/route-check.test.ts）

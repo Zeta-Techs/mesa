@@ -7,7 +7,9 @@ import ConversationView from "./ConversationView";
 import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageEditContext } from "./ChatMarkdown";
-import ChatComposer, { useFlashOnSeq, type ComposerSeed } from "./ChatComposer";
+import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } from "./ChatComposer";
+import { coldCacheAt, coldCacheHint, idleLabel, lastMessageAt } from "../prompt-cache";
+import { contextFmtTokens } from "./ContextRing";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
 import MesaThinkingDots from "./MesaThinkingDots";
@@ -1267,6 +1269,45 @@ export default function ChatSurface({
   );
   const contextUsed = lastContextTokens(messages);
 
+  // 回到一段很长的对话、缓存多半已过期：框上方提醒一句「这一发会整段重读，先压缩？」（prompt-cache.ts）。
+  // 只提醒不拦：照常发送就照常发；点过「照常发送」同一轮不再说
+  const compactRun = mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null;
+  const cacheAccount =
+    storeProfiles.find((p) => p.id === runtime?.status?.profileId)?.accountType ?? null;
+  const cacheInput = {
+    agentId: agentId ?? "",
+    accountType: cacheAccount,
+    lastAt: lastMessageAt(messages),
+    tokens: contextUsed,
+  };
+  const coldAt = coldCacheAt(cacheInput);
+  const [, setColdTick] = useState(0);
+  useEffect(() => {
+    if (coldAt === null) return;
+    const wait = coldAt - Date.now();
+    if (wait <= 0) return;
+    const t = window.setTimeout(() => setColdTick((n) => n + 1), wait + 1000);
+    return () => window.clearTimeout(t);
+  }, [coldAt]);
+  const [coldDismissed, setColdDismissed] = useState<string | null>(null);
+  const coldHint =
+    running && !generating && !decision && compactRun
+      ? coldCacheHint({ ...cacheInput, now: Date.now() })
+      : null;
+  const cacheNotice: ComposerNotice | null =
+    coldHint && coldHint.key !== coldDismissed
+      ? {
+          text: `离上一轮已过 ${idleLabel(coldHint.idleMinutes)}，缓存多半已过期：下一句会把约 ${contextFmtTokens(coldHint.tokens)} token 的整段对话重新读一遍`,
+          title:
+            "模型服务端的提示缓存过期后，下一次请求按全价重读整段历史（官方订阅约 1 小时过期，API 密钥约 5 分钟）。" +
+            "先压缩：把历史压成摘要再接着聊，之后每句都便宜；照常发送：保留全文，只这一句贵。",
+          actions: [
+            { label: "先压缩", onClick: compactRun!, primary: true },
+            { label: "照常发送", onClick: () => setColdDismissed(coldHint.key) },
+          ],
+        }
+      : null;
+
   // 输入框下面那一行（2026-10-23 用户：照 Claude 客户端那样简洁）：框里只留 + 和发送，
   // 左边「权限 · 项目」、右边「模型 · 思考」挪到框外；居中空态时紧贴输入框，开聊后挂进底部状态栏同一行
   const metaSlotted = !emptyLayout && Boolean(metaSlots?.left && metaSlots?.right);
@@ -1804,6 +1845,7 @@ export default function ChatSurface({
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn, agentId)}
+        notice={cacheNotice}
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

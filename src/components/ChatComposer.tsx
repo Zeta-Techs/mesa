@@ -58,6 +58,12 @@ export interface ComposerSeed {
   edit?: string;
   quote?: ChatQuote;
 }
+/** 框上方一行提示：一句话 + 几个小按钮（primary = 推荐的那个，描边） */
+export interface ComposerNotice {
+  text: string;
+  title?: string;
+  actions: { label: string; onClick: () => void; primary?: boolean }[];
+}
 /** 文件卡左边没有首页预览时的类型图标（同文件列表的线条图标 + 识别色，不铺色块） */
 function FileKindBlock({ path }: { path: string }) {
   return (
@@ -374,6 +380,7 @@ export default function ChatComposer({
   queueHint = null,
   stopTitle = null,
   suggestion = null,
+  notice = null,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -429,6 +436,8 @@ export default function ChatComposer({
   stopTitle?: string | null;
   /** CLI 猜的下一句（Claude 输入框里那行灰字，prompt-suggestion.ts）：输入框空着时当占位字灰着显示，Tab / → 填入 */
   suggestion?: string | null;
+  /** 框上方一行提示 + 几个小按钮（缓存过期先压缩，prompt-cache.ts）；不改发送行为 */
+  notice?: ComposerNotice | null;
 }) {
   const [value, setValue] = useState("");
   const [quote, setQuote] = useState<ChatQuote | null>(null);
@@ -1223,6 +1232,23 @@ export default function ChatComposer({
               </span>
               <span className="min-w-0">{imageWarning}</span>
             </p>
+          )}
+          {notice && (
+            <div className="flex items-center gap-2 px-4 pt-2 text-micro text-l3" title={notice.title}>
+              <span className="min-w-0 flex-1">{notice.text}</span>
+              {notice.actions.map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  onClick={a.onClick}
+                  className={`shrink-0 cursor-pointer rounded px-1.5 py-0.5 ${
+                    a.primary ? "border border-field text-l1 hover:bg-hover" : "text-l4 hover:text-l2"
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
           )}
           {/* 只在出错时占一行。发送中不再写「正在发送…」（2026-10-24 用户：顶在框上面把框撑高，破坏原本的样子）：
               发送中输入框与发送钮本就是灰的，说明放在发送钮悬停里 */}
