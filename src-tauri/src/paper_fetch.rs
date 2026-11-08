@@ -865,7 +865,11 @@ pub(crate) async fn tick() -> Result<bool, String> {
             }
         },
         Err(e) => {
-            let kind = classify_channel_error(&e);
+            // 只有 Mesa 自己存着学校登录时，停在登录页才算「登录过期」；只填了前缀的停在登录页是常态，直接改在浏览器里下
+            let kind = match classify_channel_error(&e) {
+                ChannelFail::SessionExpired if !channel.has_session() => ChannelFail::Other,
+                k => k,
+            };
             log(
                 "institutional",
                 match kind {
