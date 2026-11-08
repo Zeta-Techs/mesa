@@ -4219,6 +4219,11 @@ select:focus-visible {
   border-left: 1px solid var(--color-field);
   background: var(--color-strip);
 }
+/* 常驻侧栏（项目助手放进主区右边）：与主区同一档圆角卡片，靠行容器的缝分开，不再画左边线 */
+.ccode-docked-panel {
+  border-left: 0;
+  border-radius: var(--ccode-radius-panel);
+}
 /* 拍板队列、项目分组、定时任务：无边框气泡色底块（2026-10-29，原 strip 底 + 细线框） */
 .ccode-workbench-list { background: var(--color-chat-bubble); }
 .ccode-workbench-project-head {

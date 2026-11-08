@@ -103,7 +103,7 @@ export function SettingsDrawerShell({
         aria-labelledby={titleId}
         tabIndex={-1}
         style={{ width: docked.width }}
-        className={`relative flex h-full shrink-0 flex-col border-l border-hairline bg-canvas outline-none ${className}`}
+        className={`ccode-docked-panel relative flex h-full shrink-0 flex-col bg-canvas outline-none ${className}`}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
@@ -137,7 +137,8 @@ export function SettingsDrawerShell({
             docked.onResizeEnd?.();
           }}
         />
-        {inner}
+        {/* 圆角在外层，内容在这里裁圆；拖动条留在外层，能伸进与主区之间的缝 */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">{inner}</div>
       </aside>
     );
   }
