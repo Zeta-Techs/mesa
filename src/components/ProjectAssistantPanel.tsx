@@ -1,11 +1,12 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, ArrowUp, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { ghostActionClass, secondaryActionClass } from "./PageFrame";
 import ChatMarkdown from "./ChatMarkdown";
 import MesaBuddy from "./MesaBuddy";
 import { MesaStatusLead } from "./MesaMark";
+import MesaThinkingDots from "./MesaThinkingDots";
 import { absTime, relTime } from "../rel-time";
 import { toast } from "../toast";
 import { useAppStore } from "../store";
@@ -716,17 +717,6 @@ export default function ProjectAssistantPanel({
           </button>
         </p>
       )}
-      {!atEnd && turns.length > 0 && (
-        <div className="flex justify-center">
-          <button
-            type="button"
-            className="h-6 rounded-full border border-hairline bg-canvas px-2.5 text-l3 hover:bg-hover hover:text-l1"
-            onClick={() => endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })}
-          >
-            <span className="text-xs">回到最新 ↓</span>
-          </button>
-        </div>
-      )}
       {focus && (
         <p className="text-xs text-l3">
           这次重点：{focus.title}
@@ -967,6 +957,39 @@ export default function ProjectAssistantPanel({
               </div>
             </article>
           )}
+        </div>
+      )}
+      {!atEnd && turns.length > 0 && (
+        // 回到最新：照聊天层（ChatSurface）的悬浮圆钮——零高粘底层挂在滚动区里，浮在可视区底边上方、不占版面；
+        // 正在问时是三枚琥珀光标（鼠标移上去换成 ↓），平时只有 ↓。mb-0 盖掉外壳 space-y 给的下边距
+        <div data-scroll-control className="pointer-events-none sticky bottom-3 z-10 mb-0 h-0">
+          <div className="absolute inset-x-0 bottom-0 flex justify-center">
+            <button
+              type="button"
+              onClick={() => endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })}
+              // 光标换队时会探出内容框一点点：Chromium（WebView2）给 button 的 overflow 不是 visible，会冒出滚动条
+              style={{ overflow: "visible" }}
+              aria-label={busy ? "回到最新（正在问）" : "回到最新"}
+              title="回到最新"
+              className="ccode-float-surface group/jump pointer-events-auto relative flex size-8 shrink-0 items-center justify-center rounded-full border border-hairline text-l2 transition-colors hover:border-field hover:text-l1"
+            >
+              {busy ? (
+                <>
+                  <MesaThinkingDots className="absolute inset-0 transition-opacity group-hover/jump:opacity-0 group-focus-visible/jump:opacity-0" />
+                  <span className="relative flex size-3.5 items-center justify-center">
+                    <ArrowDown
+                      size={14}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                      className="absolute opacity-0 transition-opacity group-hover/jump:opacity-100 group-focus-visible/jump:opacity-100"
+                    />
+                  </span>
+                </>
+              ) : (
+                <ArrowDown size={14} strokeWidth={2} aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
       )}
       <div ref={endRefCb} className="h-px" aria-hidden="true" />
