@@ -48,6 +48,14 @@ provides: [research-writing]
 - 运行：`python3 <技能目录>/scripts/num_check.py --root <工作目录> --coverage`。脚本按正文显示的小数位算舍入误差逐条比对，写进 `.ccode/checks/num-check.jsonl`。`--coverage` 默认递归扫 `manuscript/`，正文在别处时加 `--files <文件>`；登记文件不在默认位置时用 `--numbers <路径>`。
 - 处理：拦下的（正文与结果对不上、结果文件取不到值）先回结果文件查原因再改正文，**不得为了过核验改结果文件**；`--coverage` 列出的未登记小数 / 百分数，是结果数就补登记，不是（如引用别人的数）在交付说明里一句带过。
 
+## 投稿前检查（固定脚本，结果进核验清单）
+
+定稿、要交给期刊或导师前，对最终稿（Markdown / Quarto / LaTeX，或人给的 Word）跑一次技能目录里的 `scripts/ms_check.py`（不复制进工作区；`python3` 在 Windows 上换成 `python`）：
+`python3 <技能目录>/scripts/ms_check.py [稿件 ...] --root <工作目录>`，不给稿件就扫 `manuscript/` 下的 md / qmd / tex，Word 稿要点名。
+
+- 查：作者名与邮箱拼写差一点（以邮箱为准）、开了 `number-sections` 又手写标题编号（拦下）、Word 里自动编号与手打编号混用、图注 / 表题编号重复或跳号（拦下）、图注写了 Adapted from 却没有出处、重复词与常见语病、同一单位几种写法、同一对符号连接号不一、英美拼写混用、有没有结论 / 展望节。结果写进 `.ccode/checks/ms-check.jsonl`。
+- 处理：拦下的改正再跑；待你判断的逐条看，期刊有规定的按期刊统一（单位、拼写、连接号），不确定的列进交付说明交人定。脚本只读，不改稿件。
+
 ## 交付自查
 
 - IMRaD 四部分齐全，研究问题与贡献在引言和讨论中一致。

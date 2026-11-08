@@ -1836,6 +1836,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与
                              #   journal-abbreviations.csv；skills.rs BUILTIN_SUPPORT 给 lit-search 与 lit-notes 各放一份
+  （技能脚本）research-writing/scripts/ms_check.py  # 投稿前检查（2026-11-08，tests/ms-check.test.ts）：md / qmd / tex / docx 只读；作者名 ↔ 邮箱（拼音首字母算对上、
+                             #   差一两个字母交人）、标题编号（number-sections + 手写拦下；docx 自动 / 手打混用交人；没有标题样式时按整段加粗短段认标题）、
+                             #   图表编号重复跳号（拦下）、图注出处、重复词与固定语病、单位 / 连接号 / 英美拼写、结论节；写 ms-check.jsonl；
+                             #   skills.rs 给 research-writing 与 review-writing 各放一份
   （技能脚本）endnote-bridge/scripts/audit_docx.py  # 已有 Word + EndNote 稿的只读体检（2026-11-08，tests/endnote-audit.test.ts）：marks（标黄 /
                              #   修订 / 批注 / 文档属性里的名字 / ~$ 锁文件）/ cites（域数据能否解析、截断、LF 换行；点名作者对号按整句找；混用 db-id、
                              #   库内重复、域内篇数 ≠ 显示编号、编号顺序、文献表条数、手写 Ref. N）。fldData 换行只能看原始字节（XML 解析会折掉 \r）；

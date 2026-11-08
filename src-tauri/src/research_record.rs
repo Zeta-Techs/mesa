@@ -102,13 +102,14 @@ fn cap_opt(text: &mut Option<String>) {
 }
 
 /// 核验脚本自己产出的文件（mesa_checks / cite_check 写的固定名）。只有这些文件里允许出现「通过」
-const SCRIPT_CHECK_FILES: [&str; 6] = [
+const SCRIPT_CHECK_FILES: [&str; 7] = [
     "cite-refs.jsonl",
     "cite-quotes.jsonl",
     "num-check.jsonl",
     "stat-check.jsonl",
     "fig-check.jsonl",
     "cite-docx.jsonl",
+    "ms-check.jsonl",
 ];
 
 /// 核验文件出自谁：内置核验脚本的固定文件 / 任务包里的脚本（`pack-<包>-<名>.jsonl`，2026-11-03）/ 其余都算 Agent 的判断

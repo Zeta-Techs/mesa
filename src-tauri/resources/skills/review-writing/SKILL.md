@@ -89,7 +89,7 @@ provides: [review-writing]
    - `[必须修复]`：引用断链（键不可解析）；句中点名的作者与所引文献对不上（bib-check `refs` 拦下的）；同一数值在摘要 / 正文 / 图注不一致或算术不成立；堆砌超标（复跑阶段二第 2 条抽查）；主要结论逐项回原文核验支持范围；次要背景按风险抽查并披露覆盖范围，不符列阻塞或降级处理；摘要含 `[待核实]`；正文出现 G1 这类空白编号；「待绘制」仍当图；大纲标摘要级的定量句未降级。
    - `[建议修复]`：转场空转；防御性套话；各章重复同一立论；图表占位编号不连续；重复句式；第 2、4、5 条查出的衔接与清晰度问题。
 7. 引用闭环核对：事实性论断有适当依据；未用 bib 条目可保留，不为消除未引用条目硬塞引用。发现内容性错误标 `[待核实]`，**不得自行改写事实**。
-8. 产出定稿 `manuscript/review-final.md`，并附 `manuscript/changelog.md` 逐条列出主要修改点。
+8. 产出定稿 `manuscript/review-final.md`，并附 `manuscript/changelog.md` 逐条列出主要修改点。交付前跑一次投稿前检查 `python3 <技能目录>/scripts/ms_check.py manuscript/review-final.md --root <工作目录>`（Windows 用 `python`；Word 稿把路径换成 docx）：作者名与邮箱、标题编号、图表编号、图注出处、重复词与语病、单位 / 连接号 / 英美拼写是否统一、有没有结论节，结果写进 `.ccode/checks/ms-check.jsonl`；拦下的改完再跑，待你判断的按目标期刊统一或交人定。
 9. 文末不要手写文献表。YAML 写 `bibliography` + `csl: citation.csl`。样式按流程线上选定的具体形式；人还没换时沿用稿子已有的 csl。
 
 ## 完成标准

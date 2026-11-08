@@ -409,6 +409,21 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/mesa_checks.py"),
     ),
     (
+        "research-writing",
+        "scripts/ms_check.py",
+        include_str!("../resources/skills/research-writing/scripts/ms_check.py"),
+    ),
+    (
+        "review-writing",
+        "scripts/ms_check.py",
+        include_str!("../resources/skills/research-writing/scripts/ms_check.py"),
+    ),
+    (
+        "review-writing",
+        "scripts/mesa_checks.py",
+        include_str!("../resources/mesa_checks.py"),
+    ),
+    (
         "stats-check",
         "scripts/stat_check.py",
         include_str!("../resources/skills/stats-check/scripts/stat_check.py"),
