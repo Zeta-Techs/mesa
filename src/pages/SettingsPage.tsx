@@ -4188,7 +4188,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="代下全文"
           hint="待获取的文献交给 Mesa 逐篇下载"
-          labelTitle="先找开放获取版本，再经学校订阅下载（校园网里由 Mesa 直接取，或经校外访问链接），最后在你的浏览器里下。按出版商限速；遇到人机验证或被出版商拒绝，这家停 24 小时，那篇交还给你自己下；连续 3 篇没下到，整条暂停。AI 只能交项目文献清单里有的文献。"
+          labelTitle="先找开放获取版本，再用学校账号下载，最后在你的浏览器里下。按出版商限速；遇到人机验证或被出版商拒绝，这家停 24 小时，那篇交还给你自己下；连续 3 篇没下到，整条暂停。AI 只能交项目文献清单里有的文献。"
         >
           {paperFetch.data?.paused ? (
             <>
@@ -4207,7 +4207,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               </button>
             </>
           ) : paperFetch.data ? (
-            <span className="text-sm text-l2 tabular-nums" title="只计经学校订阅下载的篇数">
+            <span className="text-sm text-l2 tabular-nums" title="只计用学校账号下载的篇数">
               今天 {paperFetch.data.totalToday} / {paperFetch.data.limits.totalDaily} 篇
             </span>
           ) : null}
@@ -4215,7 +4215,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="浏览器扩展"
           hint="Wiley、Elsevier 等要在浏览器里下载"
-          labelTitle="「Mesa 文献下载」扩展在你的浏览器里打开文献页、下载 PDF，用的是浏览器里的学校访问（校园网、VPN 或登录过的学校账号）。浏览器要开着。"
+          labelTitle="「Mesa 文献下载」扩展在你的浏览器里打开文献页、下载 PDF，用的是你登录过的学校账号。浏览器要开着。"
           extra={
             bridgeResult ? (
               <div className="max-w-2xl space-y-1 text-sm leading-relaxed text-l3">
@@ -4245,7 +4245,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </>
           )}
         </Row>
-        <Row label="每天上限" hint="只计经学校订阅下载的篇数">
+        <Row label="每天上限" hint="只计用学校账号下载的篇数">
           {paperFetch.data && <LimitPair data={paperFetch.data} pair="daily" inputClass={fieldFixed} onSaved={() => void paperFetch.reload()} />}
         </Row>
         <Row label="下载间隔" hint="同一家出版商两次之间随机等待">

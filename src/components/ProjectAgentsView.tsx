@@ -27,7 +27,7 @@ import { selectHiddenProfiles, useAppStore } from "../store";
 import { toast } from "../toast";
 import { AGENTS, type CodingOverviewDto, type ProjectDto, type ScheduleDto, type TaskDto } from "../types";
 import { ghostActionClass } from "./PageFrame";
-import { MesaBuddyIcon } from "./MesaBuddy";
+import MesaBuddyIcon from "./MesaBuddyIcon";
 import { agentBrand } from "../agent-colors";
 import {
   buildProjectAgentRoster,

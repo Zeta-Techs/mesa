@@ -282,7 +282,7 @@ export function PaperFetchBar({
           type="button"
           className="rounded-sm border border-field px-1.5 py-0.5 hover:bg-hover hover:text-l1 disabled:opacity-50"
           disabled={busy}
-          title="Mesa 逐篇下载：先找开放获取版本，再经学校订阅，最后在你的浏览器里下；按出版商限速，下到的自动标已存"
+          title="Mesa 逐篇下载：先找开放获取版本，再用学校账号，最后在你的浏览器里下；按出版商限速，下到的自动标已存"
           onClick={() => void send()}
         >
           <span className="text-xs">{busy ? "交给 Mesa…" : `让 Mesa 代下这批（${toSend.length} 篇）`}</span>

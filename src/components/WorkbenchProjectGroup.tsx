@@ -12,7 +12,7 @@ import {
   Target,
 } from "lucide-react";
 import RunCaret from "./RunCaret";
-import { MesaBuddyIcon } from "./MesaBuddy";
+import MesaBuddyIcon from "./MesaBuddyIcon";
 import { ghostActionClass } from "./PageFrame";
 import type { RunCaretState } from "../run-caret";
 import ProjectMailRow from "./ProjectMailRow";

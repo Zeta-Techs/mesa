@@ -356,8 +356,9 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ReworkOrderCard.tsx # 项目助手起草的补料单卡片（2026-11-06 流程贯通 §4）：退回到 / 因为 / 要补 / 为什么 / 线索 / 规模，「看一看，退回去补…」打开步骤卡同一个 ReworkDialog（initial 预填），
                              #   发走 step-round.ts sendReworkRound，发过记 dispatched（mode=resume）并每 10 秒看进度；退回大纲 / 初稿叫修改单
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
-  components/MesaBuddy.tsx   # 另导出 MesaBuddyIcon（线条小图标，项目助手入口按钮、Agent 分工卡片用）；项目助手的卡通形象「小桌」（活过来的小工作台，原创）：pose idle / wave / think / happy / oops / sleep（盘腿睡），prop coffee / lamp；
-                             # 深浅主题同一套米白身子 + 墨线；≤40px 只取半身；动作在 App.css .mesa-buddy*，减弱动态效果时静止
+  components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：2026-11-09 起是逐帧精灵图（assets/buddy/xiaozhuo.webp，出图模型孵、scripts/buddy-sprite/ 可重孵），
+                             # 按 buddy-sprite.ts 的帧时长换背景位置；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 只取半身；减弱动态效果时停第一帧；只给项目助手面板用
+  components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions / backdropClassName 可传，工作台任务与审批详情复用，独立设定 400px 宽度与标题栏下沿定位）；
@@ -636,6 +637,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
                              # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口；
                              # v2：依据材料作 inputPaths、技能只留已装的、resolveBasedOn 取内置科研任务 / 我的任务的做法，科研项目附科研通则
+  buddy-sprite.ts            # 小桌精灵图的行表：姿势 + 道具 → 第几行、每帧时长、放几遍、放完回站着还是停住；buddyClip 头像位取半身（tests/buddy-sprite.test.ts 核对图尺寸）
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
@@ -821,6 +823,7 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
    访达双击同款环境另起一个装好的 Mesa.app；smoke.sh 在沙盒里经无障碍接口（ax.swift，按控件文字 AXPress，不动鼠标键盘）
    走第一次打开 → 各页 → 示例课题 → 各类文件预览（深浅主题各一遍）→ 诊断页，查整页报错与应用日志 error，出报告和截图；
    开发版的新用户沙盒是 scripts/dev-sandbox.sh）
+  （scripts/buddy-sprite/：项目助手「小桌」精灵图的重孵材料——基准图、各行描述、帧位排布参考、extract.py 切帧、assemble.py 拼图出联系表；步骤见其 README）
   （scripts/dev-sandbox.sh：新用户沙盒——空家目录跑开发版（17577）或 --app 跑打好的程序；Windows 另设 MESA_SANDBOX_HOME（src-tauri/src/dirs.rs）
    与 USERPROFILE / APPDATA / LOCALAPPDATA，--debug-port 开 WebView2 远程调试）
   （scripts/win-package-smoke/：Windows 打包版自动点验——run.sh 按安装布局摆好 target/release 的程序、make_samples.py 生成各类型样例项目、

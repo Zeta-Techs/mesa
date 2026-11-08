@@ -74,7 +74,7 @@ import { unreadKeyOf } from "../chat-unread";
 import WorkbenchApprovalPanel from "../components/WorkbenchApprovalPanel";
 import WorkbenchProjectGroup from "../components/WorkbenchProjectGroup";
 import ContextMenu from "../components/ContextMenu";
-import { MesaBuddyIcon } from "../components/MesaBuddy";
+import MesaBuddyIcon from "../components/MesaBuddyIcon";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
 import { runFailureReason } from "../run-failure";
 import {

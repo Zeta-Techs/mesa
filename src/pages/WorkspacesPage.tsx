@@ -46,7 +46,7 @@ import ProjectGroup from "../components/ProjectGroup";
 import ArtifactChecklist from "../components/ArtifactChecklist";
 import { REVIEW_SAVE } from "../review-save-copy";
 import ProjectAgentsView from "../components/ProjectAgentsView";
-import { MesaBuddyIcon } from "../components/MesaBuddy";
+import MesaBuddyIcon from "../components/MesaBuddyIcon";
 import ProjectFilesView from "../components/ProjectFilesView";
 import {
   slotPrefs,
