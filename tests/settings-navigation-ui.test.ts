@@ -241,23 +241,24 @@ test("设置保存与错误反馈保持原逻辑；网络输入仍按 Enter 提�
     assert.equal(view.patches.length, 1);
 
     assert.match(view.content().textContent!, /学校图书馆/);
-    assert.ok(view.button("登录学校账号", view.content()));
-    assert.equal(view.content().querySelector('input[placeholder="https://proxy.xxx.edu.cn/login?url="]'), null);
-    assert.equal(
-      Array.from(view.content().querySelectorAll("button")).some((b) => b.textContent?.trim() === "内嵌窗登录"),
-      false,
-    );
-    await view.act(async () => view.button("校外访问与登录入口", view.content()).click());
-    assert.ok(view.content().querySelector('input[placeholder="https://proxy.xxx.edu.cn/login?url="]'));
-    assert.ok(view.content().querySelector('input[placeholder="https://www.carsi.edu.cn/"]'));
-    // 内嵌窗登录 / 浏览器桥 2026-10-31 从设置页撤下，展开后也不出现
-    for (const label of ["内嵌窗登录", "我已登录，保存会话", "安装浏览器桥"]) {
+    // 2026-11-08：学校图书馆改成选访问方式；默认校园网，不出校外访问链接框，也没有「登录学校账号 / 登录好了」
+    const access = view.content().querySelector<HTMLSelectElement>('select[aria-label="怎么访问学校订阅的全文"]')!;
+    assert.ok(access);
+    assert.equal(access.value, "campus");
+    assert.equal(view.content().querySelector('input[aria-label="校外访问链接"]'), null);
+    for (const label of ["登录学校账号", "登录好了", "内嵌窗登录", "我已登录，保存会话"]) {
       assert.equal(
         Array.from(view.content().querySelectorAll("button")).some((b) => b.textContent?.trim() === label),
         false,
         label,
       );
     }
+    view.data.saveError = false;
+    await view.act(async () => {
+      Object.getOwnPropertyDescriptor(view.dom.window.HTMLSelectElement.prototype, "value")!.set!.call(access, "proxy");
+      access.dispatchEvent(new view.dom.window.Event("change", { bubbles: true }));
+    });
+    assert.deepEqual(view.patches.at(-1), { institutionalAccess: "proxy" });
   } finally { await view.close(); }
   const storage = await renderSettings({ request: "storage", storageError: true });
   try {

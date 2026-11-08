@@ -2,16 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canAttemptFulltext,
-  DEFAULT_INST_LOGIN_URL,
   fulltextViaLabel,
   instActiveFrom,
-  instBrowserLoginFresh,
-  instLoginOpenUrl,
-  INST_BROWSER_LOGIN_TTL_MS,
   instOpenTarget,
-  instMorePanelDefaultOpen,
   instSessionLabel,
-  isCustomInstLoginUrl,
 } from "../src/inst-access.ts";
 
 test("instActiveFrom: 前缀或会话任一即通道可用", () => {
@@ -151,39 +145,3 @@ test("instSessionLabel: 入口页会话如实标注「尚未确认机构登录�
   assert.ok(credibleLabel.startsWith("已保存"), credibleLabel);
 });
 
-test("isCustomInstLoginUrl: 空和 CARSI 不算自定义", () => {
-  assert.equal(isCustomInstLoginUrl(""), false);
-  assert.equal(isCustomInstLoginUrl("  "), false);
-  assert.equal(isCustomInstLoginUrl(DEFAULT_INST_LOGIN_URL), false);
-  assert.equal(isCustomInstLoginUrl("https://www.carsi.edu.cn"), false);
-  assert.equal(isCustomInstLoginUrl("https://www.carsi.edu.cn/"), false);
-  assert.equal(isCustomInstLoginUrl("https://lib.uni.edu.cn/login"), true);
-});
-
-test("instMorePanelDefaultOpen: 填过前缀/自定义入口/有存量会话才默认展开", () => {
-  const base = { prefix: "", loginUrl: "", sessionPresent: false };
-  assert.equal(instMorePanelDefaultOpen(base), false);
-  assert.equal(instMorePanelDefaultOpen({ ...base, prefix: "  " }), false);
-  assert.equal(instMorePanelDefaultOpen({ ...base, loginUrl: DEFAULT_INST_LOGIN_URL }), false);
-  assert.equal(instMorePanelDefaultOpen({ ...base, prefix: "https://proxy.uni.edu/login?url=" }), true);
-  assert.equal(instMorePanelDefaultOpen({ ...base, prefixInvalid: true }), true);
-  assert.equal(instMorePanelDefaultOpen({ ...base, loginUrl: "https://lib.uni.edu.cn/" }), true);
-  assert.equal(instMorePanelDefaultOpen({ ...base, sessionPresent: true }), true);
-});
-
-test("instLoginOpenUrl: 登录入口 > 前缀 > 默认 CARSI", () => {
-  assert.equal(instLoginOpenUrl("", ""), DEFAULT_INST_LOGIN_URL);
-  assert.equal(instLoginOpenUrl(null, undefined), DEFAULT_INST_LOGIN_URL);
-  assert.equal(instLoginOpenUrl("  ", "https://proxy.x.edu.cn/login?url="), "https://proxy.x.edu.cn/login?url=");
-  assert.equal(instLoginOpenUrl("https://lib.x.edu.cn/", "https://proxy.x.edu.cn/login?url="), "https://lib.x.edu.cn/");
-});
-
-test("instBrowserLoginFresh: 点过「登录好了」一周内算已登录，过期或没点不算", () => {
-  const now = 1_800_000_000_000;
-  assert.equal(instBrowserLoginFresh(null, now), false);
-  assert.equal(instBrowserLoginFresh(now - 1000, now), true);
-  assert.equal(instBrowserLoginFresh(now - INST_BROWSER_LOGIN_TTL_MS + 1, now), true);
-  assert.equal(instBrowserLoginFresh(now - INST_BROWSER_LOGIN_TTL_MS, now), false);
-  // 系统时间被往回调过：未来的标记不当真
-  assert.equal(instBrowserLoginFresh(now + 60_000, now), false);
-});

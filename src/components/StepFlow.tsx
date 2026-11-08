@@ -105,18 +105,7 @@ import {
   isAcademicMcpTaskTitle,
   type AcademicMcpLogin,
 } from "../academic-mcp";
-import {
-  instActiveFrom,
-  instBrowserLoginDay,
-  instBrowserLoginFresh,
-  instLoginOpenUrl,
-  instOpenTarget,
-  INST_BROWSER_LOGIN_EVENT,
-  readInstBrowserLogin,
-  writeInstBrowserLogin,
-  type FetchedFulltextDto,
-  type InstSessionStatus,
-} from "../inst-access";
+import { instOpenTarget, type FetchedFulltextDto } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
 import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
@@ -912,12 +901,10 @@ export default function StepFlow({
   // 等待收货文案，到期回落；配套独立错误位（旧口径把报错写进 Zotero 结果槽，
   // 渲染在滚动区最底部、语义也错位）
   const [browserOpenErr, setBrowserOpenErr] = useState<string | null>(null);
-  const [instLoggedIn, setInstLoggedIn] = useState(false);
-  // 浏览器里登录的标记（inst-access：Mesa 读不到浏览器会话，只记人点「登录好了」的时间）
-  const [browserLoginAt, setBrowserLoginAt] = useState<number | null>(() => readInstBrowserLogin());
-  const [instLoginOpened, setInstLoginOpened] = useState(false);
   const [instLoginErr, setInstLoginErr] = useState<string | null>(null);
   const appSettings = useAppStore((s) => s.settings);
+  // 学校访问方式（设置 → 网络「学校图书馆」）；老设置没选过：填了校外访问链接按 proxy
+  const instAccess = appSettings?.institutionalAccess ?? ((appSettings?.institutionalPrefix ?? "").trim() ? "proxy" : "campus");
   const [dropNote, setDropNote] = useState<string | null>(null);
   const paywallDropRef = useRef<HTMLDivElement>(null);
   // 点「浏览器」或已存标题后离开，回来要立刻找到刚才那行：主题强调色框，
@@ -1240,45 +1227,24 @@ export default function StepFlow({
   /** 手动关联本地 PDF（2026-09-17）：浏览器手动下载的文件名常是 main(1).pdf 这类
    *  通用名，靠文件名永远对不上清单条目——显式选文件 + 按本行标题登记，行立即亮
    *  「已存 papers/」（拷贝进 papers/，不动源文件） */
-  useEffect(() => {
-    if (!paywallListOpen) return;
-    let stale = false;
-    const load = () =>
-      void invoke<InstSessionStatus>("inst_session_status")
-        .then((status) => {
-          if (!stale) setInstLoggedIn(instActiveFrom(status));
-        })
-        .catch(() => {
-          if (!stale) setInstLoggedIn(false);
-        });
-    load();
-    // 内嵌窗登录存下会话时后端发这个事件；清单开着也要跟上
-    const un = listen("inst-session-captured", load);
-    return () => {
-      stale = true;
-      void un.then((f) => f());
-    };
-  }, [paywallListOpen]);
 
-  useEffect(() => {
-    const sync = () => setBrowserLoginAt(readInstBrowserLogin());
-    window.addEventListener(INST_BROWSER_LOGIN_EVENT, sync);
-    return () => window.removeEventListener(INST_BROWSER_LOGIN_EVENT, sync);
-  }, []);
 
-  /** 付费墙行「登录学校账号」：直接调起浏览器（与设置页同一入口地址），不再先跳设置页 */
+  /** 校外访问链接：在浏览器里打开它登录一次（登录状态在浏览器里，Mesa 不存） */
   async function openInstLogin() {
     setInstLoginErr(null);
+    const url = (appSettings?.institutionalPrefix ?? "").trim();
+    if (!url) {
+      setSettingsSectionReq("network");
+      setPage("settings");
+      return;
+    }
     try {
-      await invoke("inst_browser_open", {
-        url: instLoginOpenUrl(appSettings?.institutionalLoginUrl, appSettings?.institutionalPrefix),
-      });
-      writeInstBrowserLogin(null);
-      setInstLoginOpened(true);
+      await invoke("inst_browser_open", { url });
     } catch (e) {
       setInstLoginErr(String(e));
     }
   }
+
 
   useEffect(() => {
     if (!paywallListOpen || !projectPath) return;
@@ -3329,74 +3295,35 @@ export default function StepFlow({
                       <span className="text-l4">· {paywallList.from}</span>
                     )}
                   </button>
-                  {/* 学校登录跟在清单标题右侧，不单占一行（2026-10-22：单占一行右边整块空着） */}
+                  {/* 学校访问跟在清单标题右侧（2026-11-08 按设置里的访问方式：校外访问链接给登录按钮，CARSI 给一句指路，校园网不加东西） */}
                   {paywallListOpen && (
-                    instLoggedIn || instBrowserLoginFresh(browserLoginAt, Date.now()) ? (
-                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
-                          <span
-                            className="inline-flex rounded-sm border border-done/40 px-1.5 py-0.5 text-xs text-done"
-                            title={
-                              instLoggedIn
-                                ? "学校账号会话已保存。清单里点官网即可下载。"
-                                : `${instBrowserLoginDay(browserLoginAt!)}在浏览器里登录过（你点的「登录好了」，Mesa 看不到浏览器里的登录）。官网又要你登录时点「重新登录」。`
-                            }
-                          >
-                            已登录
-                          </span>
-                          {!instLoggedIn && (
-                            <button
-                              type="button"
-                              onClick={() => void openInstLogin()}
-                              className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
-                            >
-                              重新登录
-                            </button>
-                          )}
+                    <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+                      {instAccess === "proxy" ? (
+                        <button
+                          type="button"
+                          onClick={() => void openInstLogin()}
+                          className="rounded-sm border border-field px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1"
+                          title="在浏览器里打开学校的校外访问链接，用学校账号登录一次"
+                        >
+                          <span className="text-xs">在浏览器里登录</span>
+                        </button>
+                      ) : instAccess === "carsi" ? (
+                        <span className="text-micro text-l3" title="打开文献官网，在出版商页面选「机构登录 → CARSI → 你的学校」，浏览器会记住一段时间">
+                          在官网选「机构登录 → CARSI」
                         </span>
-                      ) : instLoginOpened ? (
-                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
-                          <span className="text-micro text-l3">在浏览器里选学校、登录完，回来点</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              writeInstBrowserLogin(Date.now());
-                              setInstLoginOpened(false);
-                            }}
-                            className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l1 hover:bg-hover"
-                          >
-                            登录好了
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void openInstLogin()}
-                            className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
-                          >
-                            再打开一次
-                          </button>
-                        </span>
-                      ) : (
-                        <span className="ml-auto inline-flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void openInstLogin()}
-                            className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
-                            title="在浏览器里打开学校登录（默认 CARSI 高校联盟）。登录一次后，清单里点官网即可下载"
-                          >
-                            登录学校账号
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSettingsSectionReq("network");
-                              setPage("settings");
-                            }}
-                            className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
-                            title="设置 → 网络：换登录入口，或贴图书馆「校外访问」链接"
-                          >
-                            校外访问
-                          </button>
-                        </span>
-                    )
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsSectionReq("network");
+                          setPage("settings");
+                        }}
+                        className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                        title="设置 → 网络：校园网或学校 VPN / 学校的校外访问链接 / 出版商网站上用学校账号登录"
+                      >
+                        访问方式
+                      </button>
+                    </span>
                   )}
                   </div>
                   {paywallListOpen && (

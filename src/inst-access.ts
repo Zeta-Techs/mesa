@@ -1,37 +1,7 @@
 /** 机构访问（高校/研究所）通道前端纯逻辑：状态镜像、获取按钮可见性、渠道文案。
  *  后端见 src-tauri/src/inst_access.rs（会话 Cookie 0600 不出站，这里只拿到统计态）。
- *  设置页信息架构（2026-10-31）：「学校图书馆」只留登录一条主路径；校外前缀与登录入口
- *  收进一个折叠；内嵌窗登录 / 浏览器桥不再在设置页露出（后端保留）。 */
-
-/** 机构登录的默认入口：CARSI 高校联盟（国内绝大多数高校接入）。
- *  设置页主路径不摆地址框，空登录页即走这里。 */
-export const DEFAULT_INST_LOGIN_URL = "https://www.carsi.edu.cn/";
-
-function normalizeLoginUrl(url: string): string {
-  return url.trim().replace(/\/+$/, "").toLowerCase();
-}
-
-/** 填了且不是默认 CARSI → 算自定义入口（折叠默认展开）。空 = 走默认。 */
-export function isCustomInstLoginUrl(url: string): boolean {
-  const a = normalizeLoginUrl(url);
-  return Boolean(a) && a !== normalizeLoginUrl(DEFAULT_INST_LOGIN_URL);
-}
-
-/** 「校外访问与登录入口」默认展开：已填前缀（或前缀不合法）、自定义登录入口、
- *  或还有存量内嵌会话（要能看见并退出）。 */
-export function instMorePanelDefaultOpen(opts: {
-  prefix: string;
-  prefixInvalid?: boolean;
-  loginUrl: string;
-  sessionPresent: boolean;
-}): boolean {
-  return (
-    Boolean(opts.prefix.trim()) ||
-    Boolean(opts.prefixInvalid) ||
-    isCustomInstLoginUrl(opts.loginUrl) ||
-    opts.sessionPresent
-  );
-}
+ *  设置页「学校图书馆」2026-11-08 起是三种访问方式（校园网 / 校外访问链接 / 出版商网站登录），
+ *  旧的「登录好了 · 已登录」标记与登录入口一并去掉（那只是记点按钮的日期，不是真的登录状态）。 */
 
 /** inst_session_status 的返回（无任何秘密值） */
 export interface InstSessionStatus {
@@ -56,50 +26,6 @@ export interface InstSessionStatus {
 export function instActiveFrom(status: InstSessionStatus | null): boolean {
   if (!status) return false;
   return status.prefixConfigured || (status.sessionPresent && status.sessionCredible !== false);
-}
-
-/** 「登录学校账号」打开的地址：登录入口 > 前缀 > 默认 CARSI（设置页与付费墙行同一口径） */
-export function instLoginOpenUrl(loginUrl?: string | null, prefix?: string | null): string {
-  return (loginUrl ?? "").trim() || (prefix ?? "").trim() || DEFAULT_INST_LOGIN_URL;
-}
-
-/** 浏览器登录标记（2026-10-22）：默认通道在系统浏览器里登录，Mesa 读不到那边的会话，
- *  只能记下人点「登录好了」的时间。只管界面显示「已登录」——不算机构通道可用，
- *  无头取全文仍只认前缀或内嵌会话（instActiveFrom）。 */
-const INST_BROWSER_LOGIN_KEY = "ccode.instBrowserLoginAt";
-/** 设置页与付费墙行都挂着，同一窗口里 storage 事件不触发，改了靠这个互相通知 */
-export const INST_BROWSER_LOGIN_EVENT = "ccode-inst-browser-login";
-/** 学校统一认证的登录多在一周内失效；过了就当没登录，按钮回来 */
-export const INST_BROWSER_LOGIN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-export function instBrowserLoginFresh(at: number | null, now: number): boolean {
-  return at != null && at <= now && now - at < INST_BROWSER_LOGIN_TTL_MS;
-}
-
-export function readInstBrowserLogin(): number | null {
-  try {
-    const at = Number(localStorage.getItem(INST_BROWSER_LOGIN_KEY));
-    return Number.isFinite(at) && at > 0 ? at : null;
-  } catch {
-    return null;
-  }
-}
-
-/** null = 清掉标记 */
-export function writeInstBrowserLogin(at: number | null): void {
-  try {
-    if (at == null) localStorage.removeItem(INST_BROWSER_LOGIN_KEY);
-    else localStorage.setItem(INST_BROWSER_LOGIN_KEY, String(at));
-  } catch {
-    /* 写不进就只靠本次 */
-  }
-  window.dispatchEvent(new Event(INST_BROWSER_LOGIN_EVENT));
-}
-
-/** 「已登录」旁的日期：M月D日 */
-export function instBrowserLoginDay(at: number): string {
-  const d = new Date(at);
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 /** 「获取全文」按钮可见性（不摆装死钮原则）：

@@ -705,8 +705,7 @@ pub async fn inst_browser_open(
     // 前缀改写与内嵌窗同一口径（fetch_via_channel 的 proxy_wrap + 已代理判定）
     let settings = crate::settings::read_current();
     let open_target = settings
-        .institutional_prefix
-        .as_deref()
+        .effective_institutional_prefix()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .filter(|v| crate::inst_access::valid_http_url_pub(v))

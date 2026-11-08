@@ -413,6 +413,20 @@ pub struct AppSettingsDto {
     pub institutional_prefix: Option<String>,
     /// 机构登录窗上次打开的地址（学校图书馆/CARSI 入口或代理登录页），便于一键重开；非密钥
     pub institutional_login_url: Option<String>,
+    /// 怎么访问学校订阅的全文（2026-11-08）：campus（校园网或学校 VPN，不用设置）| proxy（学校的校外访问链接，用上面的前缀）|
+    /// carsi（在出版商网站上用学校账号登录）。没选过（老设置）：填了前缀按 proxy，否则按 campus
+    pub institutional_access: Option<String>,
+}
+
+impl AppSettingsDto {
+    /// 生效的校外访问前缀：只有访问方式是「校外访问链接」时才用（选了校园网 / CARSI 时前缀留着但不生效）
+    pub(crate) fn effective_institutional_prefix(&self) -> Option<&str> {
+        let prefix = self.institutional_prefix.as_deref().map(str::trim).filter(|v| !v.is_empty())?;
+        match self.institutional_access.as_deref() {
+            None | Some("proxy") => Some(prefix),
+            _ => None,
+        }
+    }
 }
 
 pub const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1";
@@ -1053,6 +1067,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         outbound_no_proxy: s.outbound_no_proxy.filter(|v| !v.trim().is_empty()),
         institutional_prefix: s.institutional_prefix.filter(|v| !v.trim().is_empty()),
         institutional_login_url: s.institutional_login_url.filter(|v| !v.trim().is_empty()),
+        institutional_access: s.institutional_access.filter(|v| matches!(v.as_str(), "campus" | "proxy" | "carsi")),
         workspace_root: s.workspace_root.filter(|v| !v.trim().is_empty()),
         workspace_root_history: s.workspace_root_history.filter(|v| !v.is_empty()),
     };
@@ -1264,6 +1279,11 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.institutional_prefix.is_some() {
         cur.institutional_prefix = patch.institutional_prefix.filter(|v| !v.trim().is_empty());
+    }
+    if let Some(mode) = patch.institutional_access {
+        if matches!(mode.as_str(), "campus" | "proxy" | "carsi") {
+            cur.institutional_access = Some(mode);
+        }
     }
     if patch.institutional_login_url.is_some() {
         cur.institutional_login_url = patch
@@ -1709,6 +1729,21 @@ pub async fn detect_outbound_proxy() -> Result<Vec<OutboundProxyCandidateDto>, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 访问方式（2026-11-08）：只有「校外访问链接」用前缀；老设置没选过、填了前缀的照旧生效
+    #[test]
+    fn institutional_prefix_only_used_in_proxy_mode() {
+        let mut s = AppSettingsDto { institutional_prefix: Some(" https://proxy.x.edu.cn/login?url= ".into()), ..Default::default() };
+        assert_eq!(s.effective_institutional_prefix(), Some("https://proxy.x.edu.cn/login?url="));
+        s.institutional_access = Some("campus".into());
+        assert_eq!(s.effective_institutional_prefix(), None);
+        s.institutional_access = Some("carsi".into());
+        assert_eq!(s.effective_institutional_prefix(), None);
+        s.institutional_access = Some("proxy".into());
+        assert!(s.effective_institutional_prefix().is_some());
+        s.institutional_prefix = Some("  ".into());
+        assert_eq!(s.effective_institutional_prefix(), None);
+    }
 
     #[test]
     fn official_proxy_down_only_for_loopback_proxy_not_listening() {

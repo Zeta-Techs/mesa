@@ -228,6 +228,8 @@ export interface AppSettings {
   outboundNoProxy?: string | null;
   /** 机构访问前缀（EZproxy/OpenAthens 式）；空 = 未配置。会话 Cookie 另存后端 0600 文件 */
   institutionalPrefix?: string | null;
+  /** 怎么访问学校订阅的全文：campus 校园网或学校 VPN / proxy 校外访问链接 / carsi 出版商网站登录；没选过为空 */
+  institutionalAccess?: "campus" | "proxy" | "carsi" | null;
   /** 机构登录窗上次打开的地址（图书馆/CARSI 入口），便于一键重开 */
   institutionalLoginUrl?: string | null;
 }

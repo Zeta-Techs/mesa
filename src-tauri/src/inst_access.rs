@@ -107,8 +107,7 @@ impl InstitutionalChannel {
     pub(crate) fn load() -> Self {
         let settings = crate::settings::read_current();
         let prefix = settings
-            .institutional_prefix
-            .as_deref()
+            .effective_institutional_prefix()
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .filter(|v| valid_http_url(v))
@@ -158,8 +157,7 @@ pub struct InstSessionStatusDto {
 fn status_inner() -> Result<InstSessionStatusDto, String> {
     let settings = crate::settings::read_current();
     let prefix = settings
-        .institutional_prefix
-        .as_deref()
+        .effective_institutional_prefix()
         .map(str::trim)
         .filter(|v| !v.is_empty());
     // 口径统一（2026-09-17 审计）：「已配置」必须是通道 load 也认的前缀——
@@ -2134,8 +2132,7 @@ fn spawn_capture_poll(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut last_sig: Option<String> = None;
         let prefix_host = crate::settings::read_current()
-            .institutional_prefix
-            .as_deref()
+            .effective_institutional_prefix()
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .and_then(|p| reqwest::Url::parse(p).ok())
@@ -2250,8 +2247,7 @@ fn capture_from_window(
         return Err("登录窗口里还没有可保存的会话".into());
     }
     let prefix_host = crate::settings::read_current()
-        .institutional_prefix
-        .as_deref()
+        .effective_institutional_prefix()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .and_then(|p| reqwest::Url::parse(p).ok())
