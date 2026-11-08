@@ -50,14 +50,15 @@ export function buddyRow(pose: BuddyPose, prop: BuddyProp): BuddyRow {
 }
 
 /**
- * 画在页面上取格子的哪一块：大图取整格；≤40px（顶栏头像）只取半身——桌面到桌裙，脸才看得清，腿留给大图。
- * x/y/w/h 是精灵图像素，width/height 是页面像素。
+ * 画在页面上取格子的哪一块：大图取整格；≤40px（顶栏头像）只裁掉格子四周的空白、整个人都在
+ * （2026-11-09 用户截图：原先只取半身，盘腿睡时人坐得低，脸被切掉一半）。x/y/w/h 是精灵图像素，width/height 是页面像素。
  */
 export function buddyClip(size: number): { x: number; y: number; w: number; h: number; width: number; height: number } {
   if (size > 40) return { x: 0, y: 0, w: BUDDY_CELL, h: BUDDY_CELL, width: size, height: size };
-  const x = 16;
-  const y = 30;
-  const w = 192;
-  const h = 140;
+  // 所有帧合起来的范围是 x 15–216、y 8–216（跳到最高、台灯、热气都算上），四周各留一两像素
+  const x = 12;
+  const y = 6;
+  const w = 206;
+  const h = 212;
   return { x, y, w, h, width: Math.round((size * w) / h), height: size };
 }

@@ -357,7 +357,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              #   发走 step-round.ts sendReworkRound，发过记 dispatched（mode=resume）并每 10 秒看进度；退回大纲 / 初稿叫修改单
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：2026-11-09 起是逐帧精灵图（assets/buddy/xiaozhuo.webp，出图模型孵、scripts/buddy-sprite/ 可重孵），
-                             # 按 buddy-sprite.ts 的帧时长换背景位置；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 只取半身；减弱动态效果时停第一帧；只给项目助手面板用
+                             # 按 buddy-sprite.ts 的帧时长换背景位置；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口

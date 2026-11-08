@@ -39,10 +39,12 @@ test("挥手和蹦一下放完回到站着，出错停在最后一帧，站着 /
   for (const p of ["idle", "think", "sleep"] as const) assert.equal(buddyRow(p, null).repeat, null);
 });
 
-test("头像位只取半身，大图取整格", () => {
+test("头像位裁掉四周空白、整个人都在，大图取整格", () => {
   const big = buddyClip(112);
   assert.deepEqual([big.width, big.height, big.w, big.h], [112, 112, BUDDY_CELL, BUDDY_CELL]);
   const small = buddyClip(34);
   assert.equal(small.height, 34);
-  assert.ok(small.width > 34 && small.y > 0 && small.y + small.h < BUDDY_CELL);
+  // 所有帧合起来的范围（x 15–216、y 8–216）都在裁切框里：盘腿睡时人坐得低，也不能切掉
+  assert.ok(small.x <= 15 && small.x + small.w >= 216 && small.y <= 8 && small.y + small.h >= 216);
+  assert.ok(small.x + small.w <= BUDDY_CELL && small.y + small.h <= BUDDY_CELL);
 });

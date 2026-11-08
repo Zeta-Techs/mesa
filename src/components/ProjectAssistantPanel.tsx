@@ -850,7 +850,7 @@ export default function ProjectAssistantPanel({
       onClose={onClose}
       title="项目助手"
       subtitle={hideProjectName ? undefined : projectName}
-      titleIcon={empty ? <></> : <MesaBuddy size={34} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
+      titleIcon={empty ? <></> : <MesaBuddy size={40} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
       docked={docked}
     >
