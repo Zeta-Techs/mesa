@@ -105,7 +105,7 @@ import {
   isAcademicMcpTaskTitle,
   type AcademicMcpLogin,
 } from "../academic-mcp";
-import { instOpenTarget, type FetchedFulltextDto } from "../inst-access";
+import { CARSI_URL, instOpenTarget, type FetchedFulltextDto } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
 import ReviewDecisionList from "./ReviewDecisionList";
 import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
@@ -3308,9 +3308,17 @@ export default function StepFlow({
                           <span className="text-xs">在浏览器里登录</span>
                         </button>
                       ) : instAccess === "carsi" ? (
-                        <span className="text-micro text-l3" title="打开文献官网，在出版商页面选「机构登录 → CARSI → 你的学校」，浏览器会记住一段时间">
-                          在官网选「机构登录 → CARSI」
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInstLoginErr(null);
+                            void invoke("inst_browser_open", { url: CARSI_URL }).catch((e) => setInstLoginErr(String(e)));
+                          }}
+                          className="rounded-sm border border-field px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1"
+                          title="在浏览器里打开 CARSI：选你的学校登录，再点进要用的出版商；也可以在文献官网选「机构登录 → CARSI」"
+                        >
+                          <span className="text-xs">登录学校账号</span>
+                        </button>
                       ) : null}
                       <button
                         type="button"

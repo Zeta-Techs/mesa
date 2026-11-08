@@ -3,6 +3,9 @@
  *  设置页「学校图书馆」2026-11-08 起是三种访问方式（校园网 / 校外访问链接 / 出版商网站登录），
  *  旧的「登录好了 · 已登录」标记与登录入口一并去掉（那只是记点按钮的日期，不是真的登录状态）。 */
 
+/** CARSI 高校联盟：选「出版商网站上用学校账号登录」时「登录学校账号」打开这里（选学校登录，再从里面点进出版商） */
+export const CARSI_URL = "https://www.carsi.edu.cn/";
+
 /** inst_session_status 的返回（无任何秘密值） */
 export interface InstSessionStatus {
   prefixConfigured: boolean;

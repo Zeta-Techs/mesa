@@ -132,6 +132,7 @@ import {
 import { THEMES, isCustomThemeId, isLightTheme } from "../themes";
 import { followedTheme } from "../theme-follow";
 import {
+  CARSI_URL,
   instSessionLabel,
   type InstSessionStatus,
 } from "../inst-access";
@@ -2069,6 +2070,20 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   /** 打开机构登录（通道 B）：默认走系统浏览器——真实浏览器干浏览器的事，
    *  登录一次后浏览器 profile 持续有效；文献下载由收货通道/浏览器桥接走 papers/。
    *  什么都不填也行：默认开 CARSI 高校联盟入口（选学校 → 登录 → 顺手点进一个数据库） */
+  /** CARSI：在浏览器里打开，选学校登录（登录状态留在浏览器里，Mesa 看不到也不记） */
+  async function openCarsi() {
+    setInstBusy("login");
+    setError(null);
+    try {
+      await invoke("inst_browser_open", { url: CARSI_URL });
+      setNotice("已在浏览器里打开 CARSI：选你的学校登录，再点进要用的出版商");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setInstBusy(null);
+    }
+  }
+
   /** 校外访问链接：在浏览器里打开它，用学校账号登录一次（登录状态留在浏览器里，Mesa 看不到也不存） */
   async function openInstLogin() {
     const url = institutionalPrefix.trim();
@@ -4095,7 +4110,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             instAccess === "proxy"
               ? "下载经学校的校外访问链接"
               : instAccess === "carsi"
-                ? "在文献官网选「机构登录 → CARSI」登录一次"
+                ? "在 CARSI 或文献官网用学校账号登录"
                 : "在校园网或连着学校 VPN 时不用设置"
           }
           labelTitle="校园网或学校 VPN：出版商按学校的网络认人，Mesa 不用设置。学校的校外访问链接：图书馆「校外访问」给的地址，下载经它转一道。出版商网站上用学校账号登录：打开文献官网，选「机构登录 → CARSI → 你的学校」，浏览器会记住一段时间。学校只提供 WebVPN 的，Mesa 没法经它自动下载，请连学校的 VPN 客户端，或在 WebVPN 里打开文献页手动下载。"
@@ -4110,6 +4125,17 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <option value="proxy">学校的校外访问链接</option>
             <option value="carsi">出版商网站上用学校账号登录</option>
           </select>
+          {instAccess === "carsi" && (
+            <button
+              type="button"
+              className={rowActionClass}
+              disabled={instBusy !== null}
+              title="在浏览器里打开 CARSI：选你的学校登录，再从里面点进要用的出版商；也可以在文献官网选「机构登录 → CARSI」"
+              onClick={() => void openCarsi()}
+            >
+              {instBusy === "login" ? "打开中…" : "登录学校账号"}
+            </button>
+          )}
         </Row>
         {instAccess === "proxy" && (
           <Row
