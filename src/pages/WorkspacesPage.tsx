@@ -337,6 +337,11 @@ function AddProjectModal({
         const next = {
           ...read.config,
           workMode: chosen,
+          // 新科研项目先不套流程（2026-11-08 用户拍板）：落在「目标」上，要写整篇再从项目页套模板（套了自动清这个标记）
+          pipelineOptOut:
+            chosen === "research" && !skipTemplate
+              ? true
+              : read.config.pipelineOptOut,
           resources: [
             ...read.config.resources,
             ...fresh.map((d) => ({
@@ -888,7 +893,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   }, [notice]);
   // 新建工作区弹窗：携带发起分组的仓库路径（入口在各分组的工作区列表头部）
   const [newWsRepoPath, setNewWsRepoPath] = useState<string | null>(null);
-  // 注册成功后的研究流程模板选择层（不使用/稍后再选 = 直接关闭不追加）
+  // 「套一整套流程」选择层：从无流程科研项目的目标空态打开（2026-11-08 起注册后不再自动弹）
   const [templatePick, setTemplatePick] = useState<{
     path: string;
     name: string;
@@ -913,19 +918,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [creatingProject, setCreatingProject] = useState(false);
   // 刚注册的项目路径：对应分组显示一次性 git 初始化引导
   const [freshProjectPath, setFreshProjectPath] = useState<string | null>(null);
-  /** 注册时自动扫到的资源条数：注册后立刻弹模板选择层会盖住页面顶部的 notice，
-   *  所以先存着，等模板层关掉（选了/跳过/不用流程都算）再连同结果一起报 */
-  const [justScanned, setJustScanned] = useState<{
-    added: number;
-    total: number;
-  } | null>(null);
-
-  /** 注册时的扫描结果拼成一句话，接在模板层关闭后的提示里（消费一次即清）。
+  /** 注册时的扫描结果拼成一句话，接在注册提示后面。
    *  0 条也要说——用户得知道「扫过了、确实没有」，而不是以为系统什么都没做 */
-  function scanSuffix(): string {
-    const v = justScanned;
+  function scanSuffix(v: { added: number; total: number } | null): string {
     if (v === null) return "";
-    setJustScanned(null);
     // total = 该项目当前登记的资源总数，added = 本次新登记的。
     // 只看 added 会在「重复添加已有项目」时报「没扫到」，而资源面板明明有一堆——
     // 与项目内的「已自动扫描：N」自相矛盾（v3.88 修）
@@ -2438,6 +2434,14 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             onIdentityAction={requestIdentityChrome}
             onOpenAgents={() => selectProjectSurface("agents")}
             onChromeConsumed={consumeIdentityChrome}
+            onPickTemplate={
+              selectedGroup.project
+                ? () => {
+                    const p = selectedGroup.project!;
+                    setTemplatePick({ path: p.path, name: p.name });
+                  }
+                : undefined
+            }
           >
             {(wsView) => {
             // 聚焦步骤可见性（纯逻辑 src/workspace-visibility.ts）：聚焦 = 绑定该步骤的工作区
@@ -2734,7 +2738,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               s.setPage("terminal");
               toast(
                 mode === "research"
-                  ? `已新建「${project.name}」，在这里接着聊；流程模板可以之后在项目页挑`
+                  ? `已新建「${project.name}」，在这里接着聊；要写整篇综述或论文时，再到项目页套流程`
                   : `已新建「${project.name}」，在这里接着聊`,
                 "success",
               );
@@ -2742,8 +2746,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             }
             useAppStore.getState().setPage("workspaces");
             setFreshProjectPath(project.path);
-            // 新建的是空文件夹，「没扫到文献」是废话；只有添加已有文件夹才报扫描结果
-            setJustScanned(creatingProject ? null : scan);
             // 先落进列表再选中：分组表由 projects 派生，反了会被空表 effect
             // 重置成原来的第一项（示例课题创建已经踩过同一坑）
             const next = { ...project, workMode: mode };
@@ -2760,19 +2762,20 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               ],
             );
             setSelectedGroupKey(`p:${next.path}`);
-            if (mode === "research" && !skipTemplate) {
-              setTemplatePick({ path: next.path, name: next.name });
-            } else {
-              const tail = scan.added
-                ? `；扫到并登记了 ${scan.added} 个文献/数据文件`
-                : "";
-              setNotice(
-                skipTemplate
-                  ? `已更新「${project.name}」${tail}`
+            // 新建的是空文件夹，「没扫到文献」是废话；只有添加已有文件夹才报扫描结果
+            const tail =
+              mode === "research" && !skipTemplate
+                ? scanSuffix(creatingProject ? null : scan)
+                : scan.added
+                  ? `；扫到并登记了 ${scan.added} 个文献/数据文件`
+                  : "";
+            setNotice(
+              skipTemplate
+                ? `已更新「${project.name}」${tail}`
+                : mode === "research"
+                  ? `已添加为科研项目${tail}：在「目标」里写这次想完成什么；要写整篇综述或论文时再套流程`
                   : `已添加为${WORK_MODE_LABEL[mode]}项目${tail}`,
-              );
-              setJustScanned(null);
-            }
+            );
             void refresh();
           }}
         />,
@@ -2782,17 +2785,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         <TemplatePickModal
           projectPath={templatePick.path}
           projectName={templatePick.name}
-          onClose={() => {
-            setTemplatePick(null);
-            const tail = scanSuffix();
-            if (tail) setNotice(`项目已注册${tail}`);
-          }}
-          onOptOut={() => {
-            // 「不使用研究流程」标记已落盘：刷新让分组重读 project.toml（隐藏模板引导）
-            setTemplatePick(null);
-            setNotice(`已记住「不使用研究流程」${scanSuffix()}`);
-            void refresh();
-          }}
+          onClose={() => setTemplatePick(null)}
           onApplied={(result, templateName) => {
             setTemplatePick(null);
             // 全部同名跳过 = 项目本来就有这套流程（多为重复添加已有项目），
@@ -2807,7 +2800,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               result.renamed?.length > 0
                 ? `；${result.renamed.length} 个工作区名冲突，已自动改名`
                 : "";
-            setNotice(`${base}${renamed}${scanSuffix()}`);
+            setNotice(`${base}${renamed}`);
             void refresh();
           }}
         />

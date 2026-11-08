@@ -31,6 +31,7 @@ import {
 import type { ChecksDto } from "./research-checks";
 import { renderProjectMap, type MapEntry } from "./project-map";
 import { builtinTaskCatalogLines } from "./builtin-tasks";
+import { PIPELINE_TEMPLATES } from "./pipeline-presets";
 import { TRIGGER_CATALOG_LINES, workerCapabilityLines } from "./assistant-capabilities";
 import { projectDefaultProfile } from "./split-draft";
 import { resolveTaskModel } from "./project-agents";
@@ -368,6 +369,9 @@ export async function gatherCatalog(project: ProjectDto | null): Promise<string>
     lines.push("", "已装技能（写在「用到的技能」里）：");
     for (const sk of skills) lines.push(`- ${sk.name}：${firstSentence(sk.description)}`);
   }
+  // 整套流程只供指路：写整篇综述 / 论文这种多步活时告诉用户可以套哪套，由他在项目页自己选（2026-11-08）
+  lines.push("", "整套流程模板（写整篇综述、论文、学位论文、投稿返修这类多步活才用；你不套、不写进单子，告诉用户在项目页自己选）：");
+  for (const t of PIPELINE_TEMPLATES) lines.push(`- 「${t.name}」：${firstSentence(t.description)}`);
   if (worker.length) lines.push("", ...worker);
   lines.push("", ...TRIGGER_CATALOG_LINES);
   return lines.join("\n");

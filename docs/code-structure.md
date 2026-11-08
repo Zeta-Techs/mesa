@@ -81,9 +81,8 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   右栏换问题单、不派阅读会话；口径 terminal.md「抽查核对档」）、
                              # SpotCheckPanel（抽查核对档的部件：useSpotCheck 状态 hook（当前篇/已看/解析缓存/问题单）、
                              #   SpotCheckStrip 顶栏下切篇条、SpotAbstractPane 无 PDF 时中栏摘要、SpotCheckPanel 右栏问题单与两个收尾按钮）、
-                             # TemplatePickModal（科研项目注册成功后的研究流程模板选择层：顶部课题主题 +
-                             # 六套内置模板 + 「不使用研究流程」（写 pipeline_opt_out 标记；只读文献走这条）/
-                             # 「稍后再选」（不留痕，已填主题仍落盘）两出口）、
+                             # TemplatePickModal（「套一整套流程」选择层，由无流程科研项目的目标空态经 WorkspacesPage 打开，
+                             # 注册后不再自动弹：顶部课题主题 + 六套内置模板 + 我的任务 + 全局设定屏；唯一出口「先不套」只关、已填主题仍落盘）、
                              # CodingProjectView（编程左分支地图右会话可收：基准作根、工作树/未检出分支经轨道挂主干；工作树事后分组、行内图标动作）、
                              # FuseDraftModal（「◈ 融合进任务书」预览编辑弹层：AI 融合稿可改后确认才写草稿）、
                              # TerminalStatusBar（终端底部常驻状态栏：未启动只留状态点 + 📂 目录胶囊；
@@ -247,7 +246,7 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
                              #   StepRoundsSection「这一步做过 N 轮」只读列表 + 逐文件看这一版 / 和上一轮比（不回滚；两轮以上或有未保存的一轮才出）
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
-components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——注册成功后的首选层是另一个 TemplatePickModal（只列内置）
+components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——目标空态「套一整套流程…」打开的是另一个 TemplatePickModal（带全局设定屏）
   components/MyPacksSection.tsx # 模板库「我的任务」一栏：使用 / 导出 zip / 删除 / 导入…；「内置有更新」展开逐步看内置旧版 → 新版（你改过的附你的版本），勾选后 save_task_pack 带新 based_on
   components/ImportPackDialog.tsx # 导入任务包预览：步骤、参数、触发、检查结果、随包技能与库里同名比对、随包每个文件全文；装进我的任务 / 不装（删暂存）
   components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做

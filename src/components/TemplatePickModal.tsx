@@ -26,12 +26,11 @@ import { Modal } from "./Modal";
 import { SETTING_FOLLOW_UPS, SETTING_NOTES, answerWithFollowUp, parseSettingLine } from "../setting-choices";
 
 /**
- * 添加项目注册成功后的研究流程模板选择层（v3.79）：
+ * 「套一整套流程」选择层（v3.79；2026-11-08 起不在注册后自动弹，由无流程科研项目的目标空态打开）：
  * 选项 = 内置六套模板（名称 + 一句话说明 + 步骤数），选中即把模板步骤追加进
- * project.toml（append_pipeline_steps：重名跳过、全跳过不落盘、顺带清 pipeline_opt_out）；
- * 「不使用研究流程」= 显式写 pipeline_opt_out = true（记住选择，不再显示模板引导），
+ * project.toml（apply_pipeline_template：重名跳过、全跳过不落盘、顺带清 pipeline_opt_out）；
+ * 新科研项目注册时已写 pipeline_opt_out，这里不再给「不使用研究流程」；「先不套」只关闭（已填的课题主题照样落盘）。
  * 课题主题只在本层顶部填（科研流程开工才写进 TASK.md），不在「添加项目」弹窗。
- * 「稍后再选」= 只关闭不留痕；两条路事后都可从项目组 ⋯ 或编辑器「＋ 从模板追加」补。
  *
  * v3.90 第二屏「全局设定」：模板带 projectSettings（贯穿全程的决定）时，
  * 选中模板先进入填写屏——注册当下正是人最有耐心的时刻，只预填空答案等人
@@ -48,19 +47,16 @@ export default function TemplatePickModal({
   projectPath,
   projectName,
   onClose,
-  onOptOut,
   onApplied,
 }: {
   projectPath: string;
   projectName: string;
-  /** 「稍后再选」/遮罩点击：不写流程标记；已填的课题主题会落盘 */
+  /** 「先不套」/遮罩点击：不写流程标记；已填的课题主题会落盘 */
   onClose: () => void;
-  /** 「不使用研究流程」：已把 pipeline_opt_out = true 写进 project.toml，父级关闭并刷新 */
-  onOptOut: () => void;
   /** 模板步骤追加成功：携带结果供页面刷新与成功提示 */
   onApplied: (result: AppendStepsResultDto, templateName: string) => void;
 }) {
-  // 追加中的模板 id（防连击，"__optout__" 为「不使用」写入中）；失败留在弹层内报错可换选/重试
+  // 追加中的模板 id（防连击）；失败留在弹层内报错可换选/重试
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // 第二屏：选中的带全局设定模板 + 逐条答案（下标对齐 tpl.projectSettings）
@@ -211,24 +207,6 @@ export default function TemplatePickModal({
       }
       const res = await addPackToProject({ projectPath, pack, tools, topic, scriptsReviewed: Boolean(note) });
       onApplied({ appended: res.appended, skipped: res.skipped, renamed: res.renamed }, pack.name);
-    } catch (reason) {
-      setError(String(reason));
-      setBusy(null);
-    }
-  }
-
-  /** 「不使用研究流程」：显式写 pipeline_opt_out = true（区别于「稍后再选」的不留痕关闭） */
-  async function optOut() {
-    if (busy) return;
-    setBusy("__optout__");
-    setError(null);
-    try {
-      await persistTopicIfFilled();
-      await invoke("set_pipeline_opt_out", {
-        projectRoot: projectPath,
-        optOut: true,
-      });
-      onOptOut();
     } catch (reason) {
       setError(String(reason));
       setBusy(null);
@@ -478,7 +456,7 @@ export default function TemplatePickModal({
               选择研究流程模板
             </h2>
             <p className="mb-4 text-xs text-l3">
-              「{projectName}」已添加。写论文请挑一套流程；只读文献、写笔记，选下面的「不使用研究流程」。
+              给「{projectName}」套一整套流程：写整篇综述、论文、学位论文或投稿返修时用，步骤排好顺序，每步你评审过再往下走。只做一件件具体的事，用不着套，关掉在「目标」里写就行。
             </p>
             <label className="mb-4 block">
               <span
@@ -565,25 +543,14 @@ export default function TemplatePickModal({
               </>
             )}
             {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            {/* 「不使用」显式写 pipeline_opt_out 标记（隐藏模板引导）；「稍后」只关闭不留痕，
-                两者事后都可从项目组 ⋯「选择研究流程模板」/编辑器「＋ 从模板追加」补 */}
-            <div className="mt-4 flex items-center justify-between">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => void optOut()}
-                title="不挂步进器，只把这个文件夹当文献库：沉浸阅读和笔记都写在这里（记住选择，不再显示模板引导）"
-                className={quietActionClass}
-              >
-                {busy === "__optout__" ? "保存中…" : "不使用研究流程"}
-              </button>
+            <div className="mt-4 flex items-center justify-end">
               <button
                 type="button"
                 onClick={() => void closeLater()}
-                title="之后可从项目组 ⋯「选择研究流程模板」或编辑器「＋ 从模板追加」随时添加"
+                title="之后可从目标空态「套一整套流程…」、项目设置「选择模板」或编辑器「＋ 从模板追加」随时添加"
                 className={secondaryActionClass}
               >
-                稍后再选
+                先不套
               </button>
             </div>
           </>

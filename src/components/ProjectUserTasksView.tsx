@@ -142,6 +142,7 @@ export default function ProjectUserTasksView({
   chromeReq,
   onChromeConsumed,
   onUrgentGoals,
+  onPickTemplate,
 }: {
   project: ProjectDto;
   /** 嵌进无流程科研左栏：不重复项目名、不另开对话栏。 */
@@ -149,7 +150,10 @@ export default function ProjectUserTasksView({
   chromeReq?: { action: string; token: number } | null;
   onChromeConsumed?: () => void;
   onUrgentGoals?: (urgent: boolean) => void;
+  /** 无流程科研项目：空态给「套一整套流程…」（写整篇论文时才用，2026-11-08） */
+  onPickTemplate?: () => void;
 }) {
+  const openAssistant = useAppStore((state) => state.openAssistant);
   const profiles = useAppStore((state) => state.profiles);
   const hiddenProfiles = useAppStore(selectHiddenProfiles);
   const setPage = useAppStore((state) => state.setPage);
@@ -521,16 +525,46 @@ export default function ProjectUserTasksView({
           !loadError && <EmptyState
             compact
             title={archivedTasks.length ? "当前没有目标" : "这次想完成什么？"}
-            detail={archivedTasks.length ? "可以新建目标，或从已归档中恢复。" : "写清要交付的成果，再选择资料和 Agent。"}
+            detail={
+              archivedTasks.length
+                ? "可以新建目标，或从已归档中恢复。"
+                : freeResearch
+                  ? "整理一批数据、读几篇文献出对照表、准备组会、规划实验……一件事一个目标。写清要交付的成果，再选择资料和 Agent；拿不准怎么做，先问项目助手。"
+                  : "写清要交付的成果，再选择资料和 Agent。"
+            }
             action={
-              <button
-                type="button"
-                className={`${primaryActionClass} gap-1.5`}
-                onClick={() => setCreateOpen(true)}
-              >
-                <Plus size={13} aria-hidden="true" />
-                新建目标
-              </button>
+              <div className="flex flex-col items-center gap-3">
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    className={`${primaryActionClass} gap-1.5`}
+                    onClick={() => setCreateOpen(true)}
+                  >
+                    <Plus size={13} aria-hidden="true" />
+                    新建目标
+                  </button>
+                  {freeResearch && (
+                    <button
+                      type="button"
+                      className={secondaryActionClass}
+                      title="说一句想做什么，它帮你理清、起草派活单；你点了才开工"
+                      onClick={() => openAssistant(project.path)}
+                    >
+                      问项目助手
+                    </button>
+                  )}
+                </div>
+                {freeResearch && onPickTemplate && (
+                  <button
+                    type="button"
+                    className="text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
+                    onClick={onPickTemplate}
+                  >
+                    要写整篇综述、论文或学位论文？套一整套流程…
+                  </button>
+                )}
+              </div>
             }
           />
         ) : (

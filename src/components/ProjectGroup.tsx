@@ -378,6 +378,7 @@ export default function ProjectGroup({
   onIdentityAction,
   onOpenAgents,
   onChromeConsumed,
+  onPickTemplate,
 }: {
   /** null = 未注册分组（仅按工作区 repo 归组） */
   project: ProjectDto | null;
@@ -420,6 +421,8 @@ export default function ProjectGroup({
   onOpenAgents?: () => void;
   /** 顶栏 ⋯ 的打开请求消费后清掉，避免切页/切页签后组件重挂又把编辑器打开。 */
   onChromeConsumed?: () => void;
+  /** 无流程科研项目的目标空态「套一整套流程…」：打开页面层的选模板弹层（带全局设定屏） */
+  onPickTemplate?: () => void;
 }) {
   const registered = project !== null;
   const projectPath = project?.path ?? repoPath;
@@ -1797,6 +1800,7 @@ export default function ProjectGroup({
         <ProjectUserTasksView
           project={project}
           embed
+          onPickTemplate={onPickTemplate}
         />
       )}
 
