@@ -52,6 +52,10 @@ AI 越强，卡住科研进度的越不是「AI 干得好不好」，而是三�
 **定时任务与可写的无头目标现在是全权限跑**（`ai.rs` `headless_task_args`：Claude `bypassPermissions`、Codex `workspace-write` 加联网、Grok `--yolo`），
 隔离副本只决定工作目录，除 Codex 外系统层挡不住写到副本外面；保护路径只在合并 / 写回时检查。
 
+另一会话 2026-11-08 排查外来文字时交来的两处缺口，同属授权范围、并进期 3 处理：
+① 一次性调用（`ai.rs` `ai_prompt_impl` 一族）只有 Claude、Codex 带了限制，OpenCode、Kimi 等几家没有任何沙箱 / 权限参数，能不能写文件、跑命令未核实；
+② 跨厂商复核只在提示词里写「只读」，实际开的是可写会话——提示词说的权限与启动参数给的不一致，违反原则 2「能力表说实话」。
+
 ### 3.2 执行层与后端
 
 - `runtime.rs` 只有 `LocalCli / Headless / Custom` 三种，**没有 Runtime 接口**，三种是三条写死的路；agent-workbench.md §6.1 规格里的 `AgentRuntime` 尚未落地。
@@ -217,7 +221,7 @@ Agent ──mesa_helper paper fetch <DOI>──▶ Mesa 下载队列（全局一
 | 0 | 外来文字资料化；Run 事实加授权 / 机器 / 出门记录的字段 | — | 无 | 资料化：另一会话 2026-11-08 在做 |
 | 1 | 全文代下：下载队列 + `mesa_helper paper` + 扩展后台取 PDF + 限速熔断日志 | 0 的资料化 | 已拍板（§6.1），改 pipeline.md / safety.md 机构访问两条 | 可排期 |
 | 2 | 定时任务一键建成、默认暂停；开工弹层写上次花费 | — | 无 | 可排期 |
-| 3 | 授权范围 v1：一等三家（Codex、Claude Code、Kimi）按授权生成参数；定时与无头目标替掉全权限；收尾对照 | 0 | 无（落实既有「人拍板」）；能力表加授权项 | 先调研 Claude 沙箱、Grok `workspace`、Kimi 能做到哪一步 |
+| 3 | 授权范围 v1：一等三家（Codex、Claude Code、Kimi）按授权生成参数；定时与无头目标替掉全权限；一次性调用与跨厂商复核的权限按实际参数对齐（§3.1 两处缺口）；收尾对照 | 0 | 无（落实既有「人拍板」）；能力表加授权项 | 先调研 Claude 沙箱、Grok `workspace`、Kimi 能做到哪一步 |
 | 4 | 越界请求进等你的事、手机「只扩这一次」 | 3 | 改动作分级：新增 tap 档「扩大授权（一次）」 | 动手前拍板 |
 | 5 | SSH 远程执行（先落 `AgentRuntime` 接口） | 3 | 无 | 单独出远程 Runtime 规格 |
 | 6 | 常驻后端 | 5 | §11.5 daemon 化、「Mesa 必须开着」 | 动手前出 §10 决策草案 |
