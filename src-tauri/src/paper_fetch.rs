@@ -1,7 +1,8 @@
 //! 全文代下队列（2026-11-08 拍板，`docs/design-autonomy-roadmap.md` §6）。
 //!
 //! AI（对话、目标、定时）经 `mesa_helper paper fetch <DOI>` 把要下的文献交进来，Mesa 逐篇去取；人也可以在待获取清单里整批交。
-//! 取的顺序：① 开放获取（Unpaywall / OpenAlex 合法副本，不用学校身份）→ ② 学校通道直取（`inst_access::fetch_via_channel`，
+//! 取的顺序：① 开放获取（Unpaywall / OpenAlex 合法副本，不用学校身份）→ ② 学校通道直取（`inst_access::fetch_via_channel`；
+//! 校园网模式不带前缀直接请求，靠学校网络放行；
 //! 按 TLS 指纹拦非浏览器的出版商直接跳过）→ ③ 浏览器扩展在用户自己的浏览器后台标签里取（扩展每分钟来领一篇）。
 //!
 //! 硬边界（Mesa 执行，不靠 AI 自觉）：
@@ -421,7 +422,7 @@ pub(crate) fn fetched_for_run(run_id: &str) -> Vec<String> {
 pub fn level_label(level: &str) -> &'static str {
     match level {
         "oa" => "开放获取",
-        "institutional" => "学校账号",
+        "institutional" => "学校订阅",
         "browser" => "浏览器",
         _ => "其他",
     }
@@ -467,7 +468,7 @@ pub(crate) fn publisher_wait(state: &State, key: &str, now: i64) -> Option<Strin
     }
     let limits = state.limits();
     if state.total >= limits.total_daily {
-        return Some(format!("今天用学校账号已下 {} 篇，到了上限，明天继续", state.total));
+        return Some(format!("今天经学校订阅已下 {} 篇，到了上限，明天继续", state.total));
     }
     if let Some(p) = state.publishers.get(key) {
         if p.blocked_until > now {
@@ -792,7 +793,10 @@ fn take_saved() -> Vec<Job> {
 /// 推进一步；返回有没有变化（有就广播给界面）
 pub(crate) async fn tick() -> Result<bool, String> {
     let channel = crate::inst_access::InstitutionalChannel::load();
-    let channel_active = channel.active();
+    // 校园网或学校 VPN（2026-11-09 用户：「可以 控制频率 别封了学校IP」）：出版商按学校网络放行，Mesa 直接去取
+    // （不带前缀、不带会话），与学校通道同一套按出版商限速、熔断；Wiley / Elsevier 照旧直接交浏览器
+    let campus = crate::settings::read_current().institutional_mode() == "campus";
+    let channel_active = channel.active() || campus;
     let t = now();
     let picked = with_store(|s| {
         let before = s.clone();

@@ -1545,6 +1545,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     - **学校访问方式（2026-11-08 用户拍板，取代下面通道 B 的设置页形态）**：设置 `institutionalAccess` = campus（校园网或学校 VPN，默认）| proxy（校外访问链接）|
       carsi（出版商网站登录）；前缀只在 proxy 时生效（后端一律经 `AppSettingsDto::effective_institutional_prefix`，老设置没选过且填了前缀按 proxy）。
       「登录好了 · 已登录」浏览器登录标记与「登录入口」去掉（只是记点按钮日期，不是真状态）；CARSI 在 carsi.edu.cn 首页登录对出版商无效，指路改为出版商页面「机构登录 → CARSI」。
+      campus 模式下代下全文的学校一级不带前缀、不带会话直接请求出版商（2026-11-09 用户「可以 控制频率 别封了学校IP」），与学校通道同一套按出版商限速与熔断，Wiley / Elsevier 不直取。
       WebVPN 不自动支持，界面如实写明。待获取清单标题右侧：proxy 给「在浏览器里登录」，carsi 给一句指路，campus 不加按钮，三种都带「访问方式」跳设置。
     - **通道 B（浏览器会话复用）**：设置 → 网络「学校图书馆」→ 「登录学校账号」（同
       `inst_browser_open`，无项目语境，默认 CARSI）；浏览器 profile 一次登录持续有效，Mesa

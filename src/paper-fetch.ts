@@ -76,7 +76,7 @@ export function statusLabel(status: string): string {
 
 const VIA_LABEL: Record<string, string> = {
   oa: "开放获取",
-  institutional: "学校账号",
+  institutional: "学校订阅",
   browser: "浏览器",
 };
 

@@ -419,6 +419,15 @@ pub struct AppSettingsDto {
 }
 
 impl AppSettingsDto {
+    /// 生效的访问方式：没选过的老设置填了前缀按 proxy，否则按 campus
+    pub(crate) fn institutional_mode(&self) -> &str {
+        match self.institutional_access.as_deref() {
+            Some(m @ ("campus" | "proxy" | "carsi")) => m,
+            _ if self.institutional_prefix.as_deref().is_some_and(|p| !p.trim().is_empty()) => "proxy",
+            _ => "campus",
+        }
+    }
+
     /// 生效的校外访问前缀：只有访问方式是「校外访问链接」时才用（选了校园网 / CARSI 时前缀留着但不生效）
     pub(crate) fn effective_institutional_prefix(&self) -> Option<&str> {
         let prefix = self.institutional_prefix.as_deref().map(str::trim).filter(|v| !v.is_empty())?;
@@ -1743,6 +1752,13 @@ mod tests {
         assert!(s.effective_institutional_prefix().is_some());
         s.institutional_prefix = Some("  ".into());
         assert_eq!(s.effective_institutional_prefix(), None);
+        assert_eq!(s.institutional_mode(), "proxy");
+        let mut fresh = AppSettingsDto::default();
+        assert_eq!(fresh.institutional_mode(), "campus");
+        fresh.institutional_prefix = Some("https://p/login?url=".into());
+        assert_eq!(fresh.institutional_mode(), "proxy");
+        fresh.institutional_access = Some("carsi".into());
+        assert_eq!(fresh.institutional_mode(), "carsi");
     }
 
     #[test]
