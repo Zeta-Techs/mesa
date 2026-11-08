@@ -77,8 +77,8 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
   {
     id: "project",
     title: "建第一个项目",
-    headline: "开一个课题",
-    summary: "一个课题一个文件夹，文献、数据、稿子和对话都在里面；第一次用先走一遍示例课题。",
+    headline: "你手上现在有什么活？",
+    summary: "一个课题一个文件夹，文献、数据、稿子和对话都在里面。建好先写这次想完成什么，一件件做；要写整篇综述或论文时再套一整套流程。",
   },
 ];
 

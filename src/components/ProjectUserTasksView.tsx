@@ -143,6 +143,7 @@ export default function ProjectUserTasksView({
   onChromeConsumed,
   onUrgentGoals,
   onPickTemplate,
+  hideWhenEmpty = false,
 }: {
   project: ProjectDto;
   /** 嵌进无流程科研左栏：不重复项目名、不另开对话栏。 */
@@ -152,6 +153,8 @@ export default function ProjectUserTasksView({
   onUrgentGoals?: (urgent: boolean) => void;
   /** 无流程科研项目：空态给「套一整套流程…」（写整篇论文时才用，2026-11-08） */
   onPickTemplate?: () => void;
+  /** 有流程的科研项目：步骤线下面只在还有目标（含已归档）时才列，免得套流程前记的目标在项目页上找不到 */
+  hideWhenEmpty?: boolean;
 }) {
   const openAssistant = useAppStore((state) => state.openAssistant);
   const profiles = useAppStore((state) => state.profiles);
@@ -312,6 +315,9 @@ export default function ProjectUserTasksView({
   );
 
   if (!configReady || !eligible) {
+    return null;
+  }
+  if (hideWhenEmpty && (!loaded || (tasks.length === 0 && archivedTasks.length === 0))) {
     return null;
   }
 
@@ -497,6 +503,16 @@ export default function ProjectUserTasksView({
               <span className="text-xs text-l3">{tasks.length} 个</span>
             )}
           </div>
+          {loaded && tasks.length > 0 && freeResearch && onPickTemplate && (
+            <button
+              type="button"
+              className={ghostActionClass}
+              title="要写整篇综述、论文或学位论文时套一整套流程；套上后这里的目标仍列在步骤下面"
+              onClick={onPickTemplate}
+            >
+              套一整套流程…
+            </button>
+          )}
           {loaded && tasks.length > 0 && (
             <button
               type="button"

@@ -1807,20 +1807,24 @@ export default function ProjectGroup({
       {registered && cfg && cfg.steps.length === 0 && !cfg.pipelineOptOut && (
         <div className="ccode-well mb-2 rounded-md p-3">
           <p className="mb-2 text-xs text-l3">
-            还没有研究步骤。写论文请从模板库选一套；只读文献、写笔记，选「不使用研究流程」。
+            还没有研究步骤。写整篇综述、论文或学位论文，套一整套流程；一件件具体的事，选「不使用研究流程」后在目标里写。
           </p>
-          <input
+          {!onPickTemplate && <input
             className={`${fieldSm} mb-2 w-full`}
             value={templateTopic}
             onChange={(e) => setTemplateTopic(e.target.value)}
             placeholder="课题主题（给 Agent 看，随 TASK.md 走）：选模板时填过会显示在这里，可改可留空"
-          />
+          />}
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className={ctaSm}
               disabled={optingOut}
               onClick={() => {
+                if (onPickTemplate) {
+                  onPickTemplate();
+                  return;
+                }
                 // 模板库实例住在项目设置抽屉里（v3.85），这里必须连抽屉一起开，
                 // 否则只翻了 pickerOpen、界面上什么都不会发生
                 setPickerOpen(true);
@@ -2294,6 +2298,11 @@ export default function ProjectGroup({
         />
       )}
 
+      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标：有流程时接在步骤下面，没有就不出现 */}
+      {registered && project && cfg && cfg.steps.length > 0 && (
+        <ProjectUserTasksView key={`goals:${project.path}`} project={project} embed hideWhenEmpty />
+      )}
+
       {/* ───── 项目设置抽屉（右侧滑出，不是页面、不进侧栏、不占路由） ─────
           外壳与「规则与验收」分区走 ProjectSettingsDrawer 的共用件，三种工作方式
           同一入场/退场/Esc/焦点口径；科研独有分区：基本 / 研究流程 / 文献与数据。 */}
@@ -2387,7 +2396,15 @@ export default function ProjectGroup({
                 <button
                   type="button"
                   className={secondaryActionClass}
-                  onClick={() => setPickerOpen((v) => !v)}
+                  onClick={() => {
+                    // 空流程走页面层选择层（带全局设定屏），与目标空态「套一整套流程…」同一个；换模板仍用这里的内联模板库
+                    if (cfg.steps.length === 0 && onPickTemplate) {
+                      setSettingsOpen(false);
+                      onPickTemplate();
+                      return;
+                    }
+                    setPickerOpen((v) => !v);
+                  }}
                   title={
                     cfg.steps.length === 0
                       ? "打开模板库选一套研究流程写入项目"

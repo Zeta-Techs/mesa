@@ -286,7 +286,7 @@ components/ProjectSurfaceTabs.tsx  # 项目面页签条（WorkspacesPage）：�
                              # PDF 行阅读状态（pdfLitState，三份清单 1.5s 防抖重读）、收起文件夹行尾数量（list_dir withCounts）
   components/CloseoutPack.tsx # 项目卡「完结文件」：按脉络列出已写出的文件，点开到文件页
 components/GoalStorageModal.tsx  # 目标「释放副本空间」弹层（ProjectUserTasksView 目标详情）：task_storage_review 只有显式打开才扫磁盘（列表轮询不递归统计副本），task_cleanup 分工作副本/历史冻结两档、危险确认 focusCancel、中断的清理 pending 下次接着办（revision 守卫）；归档不等于清理的口径写在确认文案里（tests/goal-storage-ui.test.ts）
-components/ProjectUserTasksView.tsx  # 项目「目标」页（WorkspacesPage tasks 页签；选了「不使用研究流程」的科研项目由 ProjectGroup embed 同一份）：目标分桶时间线（进行中/待验收/已完成）、新建/编辑/启动/就地停止（2026-10-26：交互运行杀这条 Run 的终端进程、无头发取消，有成果照旧进待验收）、归档与恢复、goal-review-ready 事件即时刷新（否则 2.5s 轮询）；科研目标验收挂 ResearchAcceptancePanel、复现挂 ResearchReproductionPanel、「释放副本空间」进 GoalStorageModal（tests/project-user-tasks-ui.test.ts）
+components/ProjectUserTasksView.tsx  # 项目「目标」页（WorkspacesPage tasks 页签；没套流程的科研项目由 ProjectGroup embed 同一份，空态给「问项目助手」与「套一整套流程…」（onPickTemplate）；有流程的科研项目在步骤下 hideWhenEmpty 再挂一份，只在还有目标时出现）：目标分桶时间线（进行中/待验收/已完成）、新建/编辑/启动/就地停止（2026-10-26：交互运行杀这条 Run 的终端进程、无头发取消，有成果照旧进待验收）、归档与恢复、goal-review-ready 事件即时刷新（否则 2.5s 轮询）；科研目标验收挂 ResearchAcceptancePanel、复现挂 ResearchReproductionPanel、「释放副本空间」进 GoalStorageModal（tests/project-user-tasks-ui.test.ts）
 components/ResourceListSection.tsx  # 项目卡资源面板（ProjectGroup，默认标题「文献」）：FolderGroupedList 按夹分组，文献行带精读状态胶囊（pdfLitState 同一套状态词）、笔记直连（noteLinkForPaper）与「已积累」标（lit-list / lit-watch 纯逻辑）；office 文件点开 OfficePreviewModal，问 AI / 沉浸阅读入口由调用方注入
   internal-sessions.ts       # 设置页「Mesa 内部对话」卡片纯逻辑：保留天数档、体积白话、立即清理确认文案（tests/internal-sessions.test.ts）
   notice-text.ts             # 提示条 / 浮动提示正文分层（首句=结果标题，其余按句成说明行）+ 停留时长（tests/notice-text.test.ts）
@@ -295,7 +295,7 @@ exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感�
                              #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
   onboarding.ts              # 上手引导纯逻辑（2026-10-20；2026-10-29 改三步）：三步表（connect / chat / project）与文案、完成判定（全由数据现算）、connectStage（接上 AI 一屏的子阶段）、
                              #   进度/当前步、新完成集合、首次判定（有连接=老用户收起）、完成提示与「两个小提示」（终端 + 标题，acks 记已讲过，旧存档的终端 / 标题确认沿用）、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
-  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 连接已添加」，连接已添加时每家已装且接好的 Agent 一张 BuiltinSkillsCard（内置技能没装全才出，人点「装给 X」才分发）；切步回顶 / 焦点归还 / 在途锁导航，项目整卡入口与按需聊天说明（tests/onboarding-ui.test.ts）
+  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 连接已添加」，连接已添加时每家已装且接好的 Agent 一张 BuiltinSkillsCard（内置技能没装全才出，人点「装给 X」才分发）；切步回顶 / 焦点归还 / 在途锁导航，项目一屏先问「你手上现在有什么活？」、三张整卡按回答排（已有文件夹 / 新建 / 示例，不标推荐），按需聊天说明（tests/onboarding-ui.test.ts）
   connect-official.ts        # 向导的官方账号接入：probeOfficial（只读 official_account_status，ready / login / none）、connectOfficialAccount（一键加官方连接）、startOfficialLogin（开终端登录标签）
   components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、官方账号探测（窗口回前台再探）、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
 components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染

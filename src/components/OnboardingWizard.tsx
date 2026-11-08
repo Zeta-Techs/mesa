@@ -764,30 +764,31 @@ function ProjectScreen({ done, close }: { done: boolean; close: () => void }) {
     s.setPage("workspaces");
     run(s);
   };
-  // 第一次用的人先走一遍示例课题最快看懂 Mesa 怎么帮你做课题（2026-11-07 定位：科研是主线），排第一并标推荐
+  // 先问手上有什么活，不首推综述示例（2026-11-08 用户拍板「科研项目不先套流程」）：建好的项目先是目标列表，
+  // 示例课题降为「想先看完整流程长什么样」。卡片标题是回答，后面小字是入口原名（说明书照它写）
   const actions = [
-    { label: "创建示例课题", hint: "带好文献和综述流程，照着点一遍，看 AI 怎么检索、精读、写初稿，你怎么评审", icon: FlaskConical, recommended: true, run: (s: ReturnType<typeof useAppStore.getState>) => s.setDemoProjectOpenReq(Date.now()) },
-    { label: "新建项目", hint: "为自己的课题建一个新文件夹，选科研流程模板（综述、论文、数据、毕业论文等）", icon: FolderPlus, recommended: false, run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }) },
-    { label: "添加已有文件夹", hint: "课题资料已经在电脑上了，把那个文件夹加进来", icon: FolderOpen, recommended: false, run: (s: ReturnType<typeof useAppStore.getState>) => s.setAddProjectOpenReq(Date.now()) },
+    { answer: "资料已经在电脑上", label: "添加已有文件夹", hint: "文献、数据或稿子已经在一个文件夹里：加进来，Mesa 自动认出里面的文献和数据，接着写这次想完成什么", icon: FolderOpen, run: (s: ReturnType<typeof useAppStore.getState>) => s.setAddProjectOpenReq(Date.now()) },
+    { answer: "从头开始一个新课题", label: "新建项目", hint: "建一个新文件夹，起名、选位置；建好就能写这次想完成什么", icon: FolderPlus, run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }) },
+    { answer: "还没想好，先看个例子", label: "创建示例课题", hint: "带好文献和英文综述流程的示例课题，照着点一遍，看 AI 怎么检索、精读、写初稿，你怎么评审；随时可以删", icon: FlaskConical, run: (s: ReturnType<typeof useAppStore.getState>) => s.setDemoProjectOpenReq(Date.now()) },
   ];
   return (
     <div className="space-y-3">
       {done && <SuccessCard title="项目建好了" detail="在侧栏「项目」下面点它，就能开始做课题；在它下面开的对话也列在它名下。还想再建，照下面选。" />}
       {actions.map((action, i) => (
-        // aria-label 会盖住按钮里的文字：「推荐」写进名字，说明经 aria-describedby 给读屏
+        // aria-label 会盖住按钮里的文字：回答和入口名一起写进名字，说明经 aria-describedby 给读屏
         <button
           key={action.label}
           type="button"
           onClick={() => go(action.run)}
           className="ccode-well group flex w-full items-center gap-4 rounded-xl p-5 text-left transition-colors hover:bg-hover"
-          aria-label={action.recommended && !done ? `${action.label}（第一次用推荐）` : action.label}
+          aria-label={`${action.answer}：${action.label}`}
           aria-describedby={`onboarding-project-hint-${i}`}
         >
           <action.icon size={20} className="shrink-0 text-l3" aria-hidden="true" />
           <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2 text-sm font-medium text-l1">
-              {action.label}
-              {action.recommended && !done && <span className="rounded-full bg-cta/10 px-2 py-0.5 text-micro font-normal text-cta">第一次用推荐</span>}
+            <span className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium text-l1">
+              {action.answer}
+              <span className="text-xs font-normal text-l3">{action.label}</span>
             </span>
             <span id={`onboarding-project-hint-${i}`} className="mt-1 block text-xs leading-5 text-l3">{action.hint}</span>
           </span>
