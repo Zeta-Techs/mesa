@@ -463,3 +463,14 @@ test("补料单：退回到哪步、补什么、为什么都要有；退回目�
     assert.match(buildAssistantPrompt({ intent, snapshot: "", history: [], question: "x" }), /:::补料/);
   }
 });
+
+test("起草项目知识时一次可记多条：最多五块，去重，飞书卡片仍只用第一块", async () => {
+  const { parseRemember } = await import("../src/project-assistant.ts");
+  const blocks = ["引用一律 [@键]", "图上画原始数据点", "引用一律 [@键]", "不用方法 X", "术语 HER 首次写全称", "温度单位用 °C", "多出来的"]
+    .map((t) => `依据：README.md\n:::记下\n${t}\n:::`)
+    .join("\n\n");
+  const r = parseRemember(`从 README 里找到这些：\n\n${blocks}`);
+  assert.deepEqual(r.remembers, ["引用一律 [@键]", "图上画原始数据点", "不用方法 X", "术语 HER 首次写全称", "温度单位用 °C"]);
+  assert.equal(r.remember, "引用一律 [@键]");
+  assert.ok(!r.text.includes(":::"));
+});

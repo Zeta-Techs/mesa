@@ -4,7 +4,7 @@
  * - quickAsks：常用问题按项目状态换（出错 → 问为什么、待评审 → 先帮你过一遍、没流程 → 想做什么），不再固定三句进度问题
  * 取数在 project-assistant-run.ts gatherBriefInput，这里只算；配 tests/assistant-brief.test.ts。
  */
-import type { AssistantAction } from "./project-assistant.ts";
+import type { AssistantAction, AssistantIntent } from "./project-assistant.ts";
 
 export type BriefStepState = "idle" | "working" | "confirm" | "failed" | "review" | "saved" | "open";
 
@@ -31,6 +31,8 @@ export interface BriefInput {
   goals: BriefGoal[];
   /** 上次打开项目助手的时间；第一次打开为 null（只列现状，不列变化） */
   since: string | null;
+  /** 项目知识一条都还没有（交给 AI 的那一份是空的）：提议从项目文件里起草几条 */
+  knowledgeEmpty?: boolean;
 }
 
 export type BriefTone = "err" | "warn" | "ok";
@@ -40,8 +42,10 @@ export interface BriefLine {
   text: string;
   /** 点了跳到原入口 */
   action?: AssistantAction;
-  /** 点了带着这一句问（附 focus） */
-  ask?: { question: string; focus: { title: string; detail: string } };
+  /** 点了带着这一句问（附 focus）；label 是按钮字，默认「问问为什么」；intent 指定按哪一类问 */
+  ask?: { question: string; focus: { title: string; detail: string }; label?: string; intent?: AssistantIntent };
+  /** 起草项目知识这一行可以「不用了」（按项目记住，不再提） */
+  kind?: "knowledge-draft";
 }
 
 export interface QuickAsk {
@@ -125,7 +129,31 @@ export function briefLines(input: BriefInput): BriefLine[] {
     seen.add(key);
     return true;
   });
-  return merged.slice(0, MAX_LINES);
+  const out = merged.slice(0, MAX_LINES);
+  // 新项目一条项目知识都没有（2026-11-08，学 Copilot 第一次用时提议生成仓库指令）：提议从项目文件里起草，人逐条点了才记
+  if (input.knowledgeEmpty) {
+    out.push({
+      tone: "ok",
+      kind: "knowledge-draft",
+      text: "这个项目还没有项目知识（以后每一步 AI 都要照办的规矩）。可以让我从 README、项目规则里起草几条，你逐条点了才记",
+      ask: { question: KNOWLEDGE_DRAFT_QUESTION, focus: knowledgeDraftFocus(), label: "起草几条", intent: "project" },
+    });
+  }
+  return out;
+}
+
+export const KNOWLEDGE_DRAFT_QUESTION = "从这个项目里起草几条项目知识";
+
+/** 起草项目知识的重点：只读找文件里明确写着的长期约定，一条一块 :::记下，最多五块，不编 */
+export function knowledgeDraftFocus(): { title: string; detail: string } {
+  return {
+    title: "起草项目知识",
+    detail:
+      "用户请你从这个项目里起草几条项目知识：以后每一步干活的 AI 都要照办的长期约定。只读打开 README、项目规则文件（CLAUDE.md、AGENTS.md 一类）、" +
+      "已有的写作规范或笔记说明，挑出文件里明确写着、长期成立的约定（术语和缩写写法、引用格式、数据处理口径、导师或课题组的要求、明确不做的方法）。" +
+      "每条单独一块 :::记下，最多五块；每块前一行写「依据：文件名」。只写文件里写着的，推断不出依据的不要编；一次性的安排、进度不算。" +
+      "什么也没找到就直说，并建议用户以后在项目助手里说「以后都……」时点「记进项目知识」。",
+  };
 }
 
 const FLOW_DEFAULTS: QuickAsk[] = [

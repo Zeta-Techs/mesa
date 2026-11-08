@@ -212,11 +212,11 @@ const IDENTITY = `你是 Mesa 里这个项目的「项目助手」（形象是�
 const STYLE = `说人话：先一句结论（单独成段），再说依据和怎么做，最后才是动作标记。不用表格，不堆术语，三五段以内；界面上的按钮、页面名照原文加粗写。`;
 
 /** 记忆（2026-11-05）：用户说出以后都要照办的偏好时，起草一句交给人确认后记进项目知识 */
-export const REMEMBER_RULES = `记住：用户说出以后都要照办的偏好或决定（「以后组会都讲 15 分钟」「导师要 Word 版」「不要再用某个方法」），在回答末尾加一块（一次最多一块）：
+export const REMEMBER_RULES = `记住：用户说出以后都要照办的偏好或决定（「以后组会都讲 15 分钟」「导师要 Word 版」「不要再用某个方法」），在回答末尾加一块（一次最多一块；用户让你从项目里起草项目知识时最多五块，一条一块）：
 :::记下
 一句话写清以后怎么办，脱离这段对话也看得懂
 :::
-用户点了才记进项目知识「已定 / 不做」，以后干活的 AI 和你都会照着办。快照「已定」里已经有的不再记；一次性的要求（只管这一次）不记；要定期做的事（「每周五出周报」）不记，那走派活单的「定时」一栏。`;
+用户点了才记进项目知识「已定 / 不做」，以后干活的 AI 和你都会照着办。快照「项目知识」里已经有的不再记；一次性的要求（只管这一次）不记；要定期做的事（「每周五出周报」）不记，那走派活单的「定时」一栏。`;
 
 /** 问这个项目：只依据快照 */
 export const PROJECT_RULES = `${IDENTITY}
@@ -692,14 +692,21 @@ export function parseReworkOrder(answer: string, stepCount: number): { text: str
   };
 }
 
-/** 从回答里取出要记进项目知识的那一句（:::记下 块）：正文去掉这一块；空的不要，截到 300 字 */
-export function parseRemember(answer: string): { text: string; remember: string | null } {
-  const m = answer.match(/:::\s*记下\s*\n([\s\S]*?)\n\s*:::/);
-  if (!m) return { text: answer, remember: null };
-  const text = answer.replace(m[0], "").replace(/\n{3,}/g, "\n\n").trim();
-  const one = m[1].replace(/\s*\n\s*/g, " ").trim().slice(0, 300);
-  return { text, remember: one || null };
+/** 从回答里取出要记进项目知识的句子（:::记下 块）：正文去掉这些块；空的不要，每句截到 300 字。
+ *  平时一次一块；起草项目知识时最多五块（remembers 全部，remember 是第一块，飞书卡片只用它） */
+export function parseRemember(answer: string): { text: string; remember: string | null; remembers: string[] } {
+  const re = /:::\s*记下\s*\n([\s\S]*?)\n\s*:::/g;
+  const remembers: string[] = [];
+  let text = answer;
+  for (const m of answer.matchAll(re)) {
+    text = text.replace(m[0], "");
+    const one = m[1].replace(/\s*\n\s*/g, " ").trim().slice(0, 300);
+    if (one && !remembers.includes(one) && remembers.length < MAX_REMEMBERS) remembers.push(one);
+  }
+  if (remembers.length === 0 && text === answer) return { text: answer, remember: null, remembers };
+  return { text: text.replace(/\n{3,}/g, "\n\n").trim(), remember: remembers[0] ?? null, remembers };
 }
+const MAX_REMEMBERS = 5;
 
 // ===== 问清楚（2026-11-05，design-assistant-intake §3.3）：缺关键信息时一次问一个，给可点的选项 =====
 

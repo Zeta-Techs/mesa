@@ -57,3 +57,16 @@ test("没流程没目标的新项目问「想做什么」，不问「到哪了�
   assert.equal(quickAsks({ ...base, hasFlow: false, goals: [{ name: "x", status: "running", updatedAt: "" }] })[0].q, "目标都做到哪了？");
   assert.equal(quickAsks(base)[0].q, "现在到哪了？");
 });
+
+test("项目知识还是空的：卡上提议起草几条，按「项目」类问、带只读重点，不编", async () => {
+  const { KNOWLEDGE_DRAFT_QUESTION } = await import("../src/assistant-brief.ts");
+  const lines = briefLines({ ...base, knowledgeEmpty: true });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].kind, "knowledge-draft");
+  assert.equal(lines[0].ask?.question, KNOWLEDGE_DRAFT_QUESTION);
+  assert.equal(lines[0].ask?.label, "起草几条");
+  assert.equal(lines[0].ask?.intent, "project");
+  assert.match(lines[0].ask!.focus.detail, /最多五块/);
+  assert.match(lines[0].ask!.focus.detail, /不要编/);
+  assert.deepEqual(briefLines({ ...base, knowledgeEmpty: false }), []);
+});

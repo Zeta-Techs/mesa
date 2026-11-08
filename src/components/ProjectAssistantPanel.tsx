@@ -68,6 +68,15 @@ export interface AssistantAsk {
 
 /** 上次打开项目助手的时间（按项目）：「现在的情况」卡据此列「上次打开以来」的变化 */
 const SEEN_KEY = (path: string) => `ccode.assistant.seen:${path}`;
+/** 「起草项目知识」这一行点过「不用了」的项目（按项目记在本机） */
+const NO_DRAFT_KEY = (path: string) => `ccode.assistant.noKnowledgeDraft:${path}`;
+function draftDismissed(path: string): boolean {
+  try {
+    return localStorage.getItem(NO_DRAFT_KEY(path)) === "1";
+  } catch {
+    return false;
+  }
+}
 
 const BRIEF_TONE: Record<BriefLine["tone"], string> = {
   err: "bg-err-text",
@@ -210,7 +219,7 @@ export default function ProjectAssistantPanel({
     // 派出去的活有了进展：卡和常用问题跟着换（since 沿用这次打开时的）
     gatherBriefInput(projectPath, brief?.since ?? null)
       .then((input) => {
-        if (!stale) setBrief({ lines: briefLines(input), asks: quickAsks(input), since: brief?.since ?? null });
+        if (!stale) setBrief({ lines: briefLines({ ...input, knowledgeEmpty: input.knowledgeEmpty && !draftDismissed(projectPath) }), asks: quickAsks(input), since: brief?.since ?? null });
       })
       .catch(() => {});
     return () => {
@@ -236,7 +245,7 @@ export default function ProjectAssistantPanel({
     }
     gatherBriefInput(projectPath, since)
       .then((input) => {
-        if (!stale) setBrief({ lines: briefLines(input), asks: quickAsks(input), since });
+        if (!stale) setBrief({ lines: briefLines({ ...input, knowledgeEmpty: input.knowledgeEmpty && !draftDismissed(projectPath) }), asks: quickAsks(input), since });
       })
       .catch(() => {});
     invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath })
@@ -486,7 +495,9 @@ export default function ProjectAssistantPanel({
               ) : null}
             </section>
           )}
-          {withMemo.remember && <RememberCard text={withMemo.remember} projectPath={projectPath} />}
+          {withMemo.remembers.map((r) => (
+            <RememberCard key={r} text={r} projectPath={projectPath} />
+          ))}
           {withRework.rework && (
             <ReworkOrderCard
               order={withRework.rework}
@@ -613,9 +624,26 @@ export default function ProjectAssistantPanel({
                   type="button"
                   className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
                   disabled={busy}
-                  onClick={() => void send(line.ask!.question, line.ask!.focus)}
+                  onClick={() => void send(line.ask!.question, line.ask!.focus, line.ask!.intent)}
                 >
-                  <span className="text-xs">问问为什么</span>
+                  <span className="text-xs">{line.ask.label ?? "问问为什么"}</span>
+                </button>
+              )}
+              {line.kind === "knowledge-draft" && projectPath && (
+                <button
+                  type="button"
+                  className="shrink-0 text-l4 hover:text-l2"
+                  title="这个项目不再提议起草；以后照样可以在回答下面点「记进项目知识」"
+                  onClick={() => {
+                    try {
+                      localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
+                    } catch {
+                      /* 存不了就只是这次收起 */
+                    }
+                    setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
+                  }}
+                >
+                  <span className="text-xs">不用了</span>
                 </button>
               )}
             </li>
