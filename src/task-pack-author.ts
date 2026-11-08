@@ -96,6 +96,26 @@ mode = "record"      # 事件先写 record（只记录、不叫 AI）。schedule
 }
 
 /** 检查结果的一行说法：「质控：没有验收条件」 */
+/**
+ * 导入确认框里「这一步交给 AI 的说明」全文（2026-11-08）：任务说明、完成标准、要讨论的点原样进 TASK.md，
+ * 是真正指挥 AI 的那段话，装之前要让人看到；只列不改写。
+ */
+export function packStepBriefText(step: {
+  brief: string;
+  acceptanceCriteria?: readonly string[];
+  discussionSeeds?: readonly string[];
+  skills?: readonly string[];
+}): string {
+  const parts: string[] = [step.brief.trim() || "（这一步没写任务说明）"];
+  const done = (step.acceptanceCriteria ?? []).map((x) => x.trim()).filter(Boolean);
+  if (done.length) parts.push(["完成标准：", ...done.map((x) => `- ${x}`)].join("\n"));
+  const seeds = (step.discussionSeeds ?? []).map((x) => x.trim()).filter(Boolean);
+  if (seeds.length) parts.push(["开工前要讨论的：", ...seeds.map((x) => `- ${x}`)].join("\n"));
+  const skills = (step.skills ?? []).filter(Boolean);
+  if (skills.length) parts.push(`用到的技能：${skills.join("、")}`);
+  return parts.join("\n\n");
+}
+
 export function issueLine(issue: PackIssueDto): string {
   return issue.step ? `「${issue.step}」${issue.message}` : issue.message;
 }

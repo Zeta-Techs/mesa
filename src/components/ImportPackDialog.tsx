@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Modal } from "./Modal";
 import { confirmDialog } from "./ConfirmDialog";
 import { InlineNotice, primaryActionClass, secondaryActionClass } from "./PageFrame";
-import { issueLine, splitIssues } from "../task-pack-author";
+import { issueLine, packStepBriefText, splitIssues } from "../task-pack-author";
 import { packMcpNote, triggerSummary } from "../task-packs";
 import type { PackImportPreviewDto, TaskPackDto } from "../types";
 
@@ -15,7 +15,7 @@ const SKILL_STATUS: Record<string, string> = {
 
 /**
  * 导入我的任务（任务包第四期，design-task-packs.md §7.2）：zip 先只读解到暂存区，这里列出会装的技能、
- * 随包每个文件的全文（SKILL.md 是写给 Agent 的指令，脚本会在工作副本里跑，都要人看过）、参数与检查结果；
+ * 每一步交给 AI 的说明全文（会原样进 TASK.md）、随包每个文件的全文（SKILL.md 是写给 Agent 的指令，脚本会在工作副本里跑，都要人看过）、参数与检查结果；
  * 人点「装进我的任务」才装。装好的标「导入」，第一次加进项目前还会再问一次。
  */
 export default function ImportPackDialog({
@@ -33,6 +33,9 @@ export default function ImportPackDialog({
   const { blocks, warns } = splitIssues(preview.issues);
   const pack = preview.pack;
   const file = preview.files.find((f) => f.path === openFile) ?? null;
+  // 每一步交给 AI 的说明：原样进 TASK.md，真正指挥 AI 的是这段话，和随包文件一样点开看全文
+  const [openStep, setOpenStep] = useState(0);
+  const step = pack.steps[openStep] ?? null;
 
   async function discard() {
     await invoke("discard_task_pack_import", { token: preview.token }).catch(() => {});
@@ -137,6 +140,29 @@ export default function ImportPackDialog({
             {file && (
               <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-canvas p-3 font-mono text-micro leading-5 text-l2">
                 {file.text ?? `（${file.size} 字节，不是文本或太大，这里不显示；不认识就别装）`}
+              </pre>
+            )}
+          </div>
+        )}
+        {pack.steps.length > 0 && (
+          <div>
+            <p className="mb-1 text-xs font-medium text-l2">每一步交给 AI 的说明（会原样写进任务书，点开看全文）</p>
+            <div className="flex flex-wrap gap-1">
+              {pack.steps.map((st, i) => (
+                <button
+                  key={`${i}-${st.name}`}
+                  type="button"
+                  aria-pressed={i === openStep}
+                  className={`rounded-sm border px-1.5 py-0.5 text-xs ${i === openStep ? "border-cta-bd text-l1" : "border-field text-l3"}`}
+                  onClick={() => setOpenStep(i)}
+                >
+                  {i + 1}. {st.name || "（没名字）"}
+                </button>
+              ))}
+            </div>
+            {step && (
+              <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-canvas p-3 text-xs leading-5 text-l2">
+                {packStepBriefText(step)}
               </pre>
             )}
           </div>
