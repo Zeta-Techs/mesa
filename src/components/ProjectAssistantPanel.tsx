@@ -961,8 +961,10 @@ export default function ProjectAssistantPanel({
       )}
       {!atEnd && turns.length > 0 && (
         // 回到最新：照聊天层（ChatSurface）的悬浮圆钮——零高粘底层挂在滚动区里，浮在可视区底边上方、不占版面；
-        // 正在问时是三枚琥珀光标（鼠标移上去换成 ↓），平时只有 ↓。mb-0 盖掉外壳 space-y 给的下边距
-        <div data-scroll-control className="pointer-events-none sticky bottom-3 z-10 mb-0 h-0">
+        // 正在问时是三枚琥珀光标（鼠标移上去换成 ↓），平时只有 ↓。mb-0 盖掉外壳 space-y 给的下边距。
+        // 粘底偏移从滚动区内边距里面算起：外壳滚动区自带 pb-6（24px），-bottom-3 才落在可视底边上方 12px，
+        // 与聊天层一样（WKWebView 实测：bottom-3 时离底 36px，2026-11-09 用户「有点高了」）
+        <div data-scroll-control className="pointer-events-none sticky -bottom-3 z-10 mb-0 h-0">
           <div className="absolute inset-x-0 bottom-0 flex justify-center">
             <button
               type="button"
