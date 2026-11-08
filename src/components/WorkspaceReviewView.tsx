@@ -89,6 +89,7 @@ import {
   type DiffLine,
 } from "../diff-view";
 import { selectHiddenProfiles, useAppStore } from "../store";
+import { reviewPrereadFocus, reviewPrereadQuestion } from "../assistant-brief";
 import type {
   CitationHealthDto,
   GitCommitResultDto,
@@ -1072,7 +1073,7 @@ function LiveWorkspaceReviewView({
   onClose: () => void;
 }) {
   const [diff, setDiff] = useState<WorkspaceDiffDto | null>(null);
-  const [researchContext, setResearchContext] = useState<{ root: string; workspace: WorkspaceDto; step: ProjectStepDto; artifactDir: string; hasReproduction: boolean } | null>(null);
+  const [researchContext, setResearchContext] = useState<{ root: string; workspace: WorkspaceDto; step: ProjectStepDto; stepNo: number; artifactDir: string; hasReproduction: boolean } | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
   const [researchError, setResearchError] = useState<string | null>(null);
   const [status, setStatus] = useState<GitStatusDto | null>(null);
@@ -1422,7 +1423,7 @@ function LiveWorkspaceReviewView({
         );
         if (!stale) {
           setResearchError(null);
-          setResearchContext(step ? { root: worktreePath, workspace, step, artifactDir: read.config.artifactDir || "artifacts", hasReproduction: reproductionEntrypoints(step).length > 0 || step.run.some((s) => /reproduc|复现|复算/i.test(s.name)) } : null);
+          setResearchContext(step ? { root: worktreePath, workspace, step, stepNo: read.config.steps.indexOf(step) + 1, artifactDir: read.config.artifactDir || "artifacts", hasReproduction: reproductionEntrypoints(step).length > 0 || step.run.some((s) => /reproduc|复现|复算/i.test(s.name)) } : null);
           setOpening(false);
         }
         if (step) {
@@ -2813,6 +2814,25 @@ function LiveWorkspaceReviewView({
                     }`}
                   >
                     {checkChipText(checks.items)}
+                  </button>
+                )}
+                {researchContext && !mergeDone && (
+                  // 评审前让项目助手只读过一遍（2026-11-08）：列出值得看的地方，不判通过、不打分；人点了才问、才花钱
+                  <button
+                    type="button"
+                    onClick={() =>
+                      useAppStore
+                        .getState()
+                        .openAssistant(
+                          researchContext.workspace.repoPath,
+                          reviewPrereadQuestion(researchContext.stepNo),
+                          reviewPrereadFocus(researchContext.stepNo, researchContext.step.name),
+                        )
+                    }
+                    title="项目助手只读打开这一步交的东西，列出值得你看的地方（缺出处、数字对不上、改动大的段落、待你判断的核验）；不判通过、不打分，采不采纳仍由你定"
+                    className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+                  >
+                    让项目助手先看一遍
                   </button>
                 )}
                 {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && crossReviewer && !mergeDone && (
