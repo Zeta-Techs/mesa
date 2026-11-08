@@ -325,6 +325,9 @@ pub struct RunRecord {
     /// 这次运行对应的会话（过程报告附对话原文时按它找）
     #[serde(default)]
     pub session_id: Option<String>,
+    /// 这次经 Mesa 代下取得的全文（「DOI（经 开放获取 / 学校通道 / 浏览器）」，paper_fetch.rs 日志按 runId 出）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fetched: Vec<String>,
 }
 
 pub(crate) fn read_records_at(root: &Path) -> Vec<RunRecord> {
@@ -420,6 +423,18 @@ pub(crate) fn render_ai_usage(records: &[RunRecord]) -> String {
     }
     if rows.is_empty() {
         text.push_str("| （还没有记录） | | | 0 | |\n");
+    }
+    // 代下全文：AI 经 Mesa 取得的文献，按渠道计数（取得途径本身是复现与声明要交代的事实）
+    let fetched: Vec<&String> = records.iter().flat_map(|r| r.fetched.iter()).collect();
+    if !fetched.is_empty() {
+        let count = |label: &str| fetched.iter().filter(|f| f.contains(label)).count();
+        text.push_str(&format!(
+            "\nAI 经 Mesa 代下的全文：{} 篇（开放获取 {}、学校通道 {}、浏览器 {}）。逐篇见 `.ccode/record.jsonl` 的 fetched 字段。\n",
+            fetched.len(),
+            count("开放获取"),
+            count("学校通道"),
+            count("浏览器")
+        ));
     }
     text
 }
@@ -539,6 +554,7 @@ fn build_record(run: &crate::runs::RunDto, root: &Path, checks: &[CheckItem]) ->
         checks: (!checks.is_empty()).then(|| count_checks(checks)),
         task: task_text_of(run).and_then(|(source, text)| archive_task(root, &run.id, source, &text).ok()),
         session_id: run.session_id.clone(),
+        fetched: crate::paper_fetch::fetched_for_run(&run.id),
     }
 }
 

@@ -1,4 +1,5 @@
 import CoachTip from "./CoachTip";
+import { PaperFetchBar } from "./PaperFetchPanel";
 import { discussNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
 import { discussOpeningPrompt } from "../discuss-prompt";
 import { sanitizeDocumentHtml } from "../document-html";
@@ -3424,6 +3425,13 @@ export default function StepFlow({
                           )}
                           {paywallMetricsLoading && (
                             <p className="mb-1 text-micro text-l4">正在按 DOI 补期刊名，影响因子稍后出现。</p>
+                          )}
+                          {toFetchItems.length > 0 && (
+                            <PaperFetchBar
+                              projectPath={projectPath}
+                              items={toFetchItems}
+                              savedLines={toFetchDone}
+                            />
                           )}
                           {toFetchItems.length > 0 ? (
                             <ul

@@ -1475,7 +1475,7 @@ fn unique_pdf_path(dir: &Path, name: &str) -> PathBuf {
 }
 
 /// 网络段（async）：scheme 白名单 → 状态码 → content-length 预估 → 分块读取超限即中止 → 魔数校验
-async fn fetch_pdf_bytes(url: &str) -> Result<Vec<u8>, String> {
+pub(crate) async fn fetch_pdf_bytes(url: &str) -> Result<Vec<u8>, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("链接无效: {e}"))?;
     match parsed.scheme() {
         "http" | "https" => {}

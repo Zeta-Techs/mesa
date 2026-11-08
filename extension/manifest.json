@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Mesa 文献下载",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "文献页一键把 PDF 存进 Mesa 当前项目 papers/（真实浏览器会话下载，不触发出版商风控）",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtEldTHOxMGxH6T8w5IHhCe1rKoRJdoZ04G2at/pGZ5BQlqtUvuCELNONQG8JNKmpTurZ+lEaukQAKEtk7o8WeUpetngk9sl5IyBWXWILl4xYpcgS40jTutjLmUyr40+JQCsOuljmaR8Kx13QUPxDVuRN4eaxgaPMuMbGlai90eEZH6+zbBt0P+B3KpjGHw6zO+tL1+CBe/D9oEvN/DfShj3cRb6NnKdkZLAjieaQm+zKcOA7P1U0fVoVroUKioRiyjVy/QSKmkrnm2t+PA5QuRuQn4uAkSMxe9PfA/S+gidafjBNeOseeU/xyj/sGp6JEXJGWQybfLlN+cUjD419GwIDAQAB",
-  "permissions": ["activeTab", "nativeMessaging", "webRequest", "downloads", "notifications"],
+  "permissions": ["activeTab", "nativeMessaging", "webRequest", "downloads", "notifications", "alarms"],
   "host_permissions": ["<all_urls>"],
   "icons": {
     "16": "icons/icon16.png",

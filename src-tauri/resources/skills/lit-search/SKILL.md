@@ -103,6 +103,7 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 - **「待确认」不是题录没查全。** `decision=pending` 只表示相关性等人拍板。期刊全称、ISSN、`doi`、`url` 与已纳入同一套：有 DOI 就必须先向 Crossref 取 `container-title` 写入 `venue`，没有再问 OpenAlex。书章没有期刊才把 `venue` 写成「待补」。禁止因为这篇还没拍板，就把 `venue`/`doi`/`url` 整列写成「待补」或留空。
 - **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时写入 `.ccode/help-wanted.md` 请人逐篇纳入或排除（未回复则不把 pending 当已纳入）；人改成 included 后才允许补进 to-fetch。
 - **开放获取失败就停**：只下载接口已经给出的 PDF 直链。连续 3 次 HTTP 403 即停止其余下载，未下到的写入 `to-fetch.md`，不要换链重试。
+- **付费墙交给 Mesa 代下**：`to-fetch.md` 写好后，环境里有 `MESA_PAPER_TOOL`（在 Mesa 里运行）时，把其中各篇的 DOI 一次交出去：`"$MESA_PAPER_TOOL" paper fetch <DOI> <DOI> …`（Windows 上命令工具是 PowerShell 时写 `& $env:MESA_PAPER_TOOL paper fetch …`）。Mesa 按出版商限速逐篇取，先找开放获取版本、再走学校通道、最后在用户浏览器里取，取到的落在项目根 `papers/`。没结束的不用守着、不要重复提交，**不要自己用 curl、脚本或浏览器去出版商网站下付费墙全文**（会连累学校的访问）。命令说「等 AI 指链接」时，从列出的候选里只挑正文 PDF（不挑补充材料）用 `paper pick <DOI> <编号>` 指一个；说「交给人」或「等你放行」的，留在 to-fetch 照常收尾，不换别的办法。没有 `MESA_PAPER_TOOL` 就只写 to-fetch。
 - **开放获取取哪个版本**：先取正式发表版（出版商页面、PMC、开放获取期刊），其次是机构库里作者的已录用稿。预印本服务器（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下；不允许时这篇写入 `to-fetch.md`。接口把 Research Square 标成 acceptedVersion 也照样算预印本——看托管处，不只看版本标签。
 - **排除的不补字段**：期刊全称、卷期页、ISSN、摘要、ISO 4 缩写和两套 RIS 只对最终纳入与待确认各做一次。排除篇留在筛选记录里即可，不向 Crossref 补全。
 

@@ -1273,6 +1273,7 @@ pub(crate) fn run_agent_task(
     if project_root.is_some() {
         if let Some(tool) = crate::image_gen::helper_exe() {
             cmd.env(crate::peek::TOOL_ENV, &tool);
+            cmd.env(crate::paper_fetch::TOOL_ENV, &tool);
             cmd.env(crate::peek::RUN_ENV, &run.id);
         }
     }

@@ -99,6 +99,9 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，点开全屏向导）
   components/AgentIcon.tsx   # 九家 Agent 产品图标（src/assets/agent-icons/，lobe-icons MIT）：内联 SVG（currentColor 跟主题）、渐变 id 按实例改前缀、认不出首字占位；连接页左栏与 Agent 节标题用
+  components/PaperFetchPanel.tsx # 全文代下界面：PaperFetchPanel（设置 → 网络「代下全文」：今日计数、熔断与解除、暂停与继续、
+                             #   等你放行 / 交还给你、调上限、浏览器桥安装、出门记录）与 PaperFetchBar（待获取清单「让 Mesa 代下这批」+ 一行进度）；
+                             #   听 paper-fetch-changed，另 15 秒拉一次（扩展与 AI 在别的进程里写队列）
   components/PageFrame.tsx   # 页面公共件：PageFrame/PageHeader（旧管理页外壳）、按钮类、SegTabs（pill / boxed 分段控件）、Toggle、NoticeBar…；
                              # 2026-10-29 起加管理页借鉴 Claude 设置页的件：PaneSearch（细边搜索）、PaneSplit（左栏 + 内容，内容区窄于 48rem 上下排）、
                              # PaneNav（可拖宽二级栏，宽度按 storageKey 记 localStorage；inline = PaneSplit 里的吸顶左列，narrow 定窄了整宽放上面还是藏起）、PaneNavGroup/Item
@@ -145,6 +148,8 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/CoachTip.tsx    # 一次性悬浮气泡（2026-10-27 侧栏多选起用）：只管画（标题 / 正文 kbd / 按钮 / ×、小三角朝左 / 下 / 上）；showFloatingCoach = 挂 body 浮在锚点旁（右边或下面，量过自己再摆、同时只有一个、点外面 / Esc / 指定滚动区滚动 / 窗口变大小收起）；何时出由 coach-tips.ts 管；样式 App.css .ccode-coach
   components/shortcut-nudges.tsx # 用鼠标做了本有快捷键的事时提醒快捷键：关对话到第 2 段 → ⌘W / Ctrl+Shift+W（侧栏 × / ⋯ 与对话头 ⋯ 共用一份计数，确认框开着不出）；对话头 >_ 聊天 ↔ 终端点到第 3 下 → 切换快捷键（tests/shortcut-nudges-ui.test.ts）
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：Modal + body portal 管焦点，combobox/listbox 管结果选择；打开由宿主回调，状态与关键词筛选在 rail-search.ts
+  paper-fetch.ts             # 全文代下前端纯逻辑（后端 paper_fetch.rs）：DTO 类型、状态 / 渠道 / 日志结果文案、normalizeDoi、
+                             #   fetchableItems（待获取清单里没存且带 DOI 的）、summarizeJobs 一行进度、clampLimits（tests/paper-fetch.test.ts）
   project-add.ts             # 「新项目」三条路单一出处（2026-10-27）：openNewProject / openAddExistingFolder / openDemoProject（切项目页 + 一次性请求）与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
   rail-search.ts             # 搜索弹层纯逻辑（打开请求走 store 的 railSearchReq，不在这里）：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
@@ -1676,6 +1681,13 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   Windows 共用脚本 ccode-hook.ps1 只删回车换行、写日志撞车重试，正文改了启动时替换；
                              #   状态日志 / 备份目录走 storage::config_root（测试可重定向）；
                              #   real_data_dry_run_migrate（ignored）= 对真实配置的拷贝干跑
+  paper_fetch.rs             # 全文代下队列（2026-11-08，design-autonomy-roadmap.md §6）：AI 经 `mesa_helper paper fetch|status|pick`
+                             #   （MESA_PAPER_TOOL，与 MESA_PEEK_TOOL 同一 helper，按 MESA_RUN_ID 找项目）或人在待获取清单整批交；
+                             #   队列 <config>/paper-fetch/queue.json 跨进程持文件锁读改写，后台线程单线程推进：开放获取 → 学校通道
+                             #   （Wiley / Elsevier 直接跳过）→ 浏览器扩展领活（mesa-poll-jobs / mesa-job-report，带 jobId 入任务自己的项目）；
+                             #   经学校身份按出版商限速（间隔 / 每家每天 / 总量，CEILING 封顶）、429 / 验证码 / 浏览器被拒熔断 24h、
+                             #   连续 3 篇失败整条暂停；AI 只能交 project_dois 里的 DOI，清单外 needs_approval；出门日志 log.jsonl 0600 带 runId
+                             #   → research_record RunRecord.fetched。纯规则函数（publisher_wait / claim_in / report_in …）单测直测
   inst_access.rs             # 机构访问通道（2026-09-16）：人登录一次、系统复用会话——登录窗（Tauri WebviewWindow
                              #   label=inst-login）Cookie 落 0600 inst-session.json（值绝不出站，状态 DTO 只有
                              #   域名/条数/时间）；EZproxy/OpenAthens 前缀 ?url= 改写（settings institutional_prefix，

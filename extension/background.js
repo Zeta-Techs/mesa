@@ -265,3 +265,140 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true; // 异步 sendResponse
 });
+
+// ===== 代下队列（2026-11-08，Mesa paper_fetch.rs）=====
+// Mesa 把「要用真浏览器才取得到」的文献排在队里；这里每分钟问一次，有就在后台标签打开落地页，
+// 交给页内脚本取 PDF（带你自己浏览器里的学校会话），取到经 helper 入那件任务的项目，取不到报回原因。
+// 一次只做一篇；限速、每天上限、熔断全在 Mesa 那边定，这里不自己重试。
+const POLL_ALARM = 'mesa-poll-jobs';
+// 后台标签等落地页加载的上限（与 helper 回话超时无关）
+const TAB_LOAD_MS = 60 * 1000;
+chrome.alarms.get(POLL_ALARM, (a) => {
+  if (!a) chrome.alarms.create(POLL_ALARM, { periodInMinutes: 1 });
+});
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a && a.name === POLL_ALARM) void pollJob();
+});
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// 发一条 native 消息、等一条回话（每次一条连接，MV3 不维持长连接）
+function nativeCall(msg, timeoutMs) {
+  return new Promise((resolve) => {
+    let port;
+    try {
+      port = chrome.runtime.connectNative(HOST);
+    } catch (_) {
+      resolve(null);
+      return;
+    }
+    let done = false;
+    const finish = (reply) => {
+      if (done) return;
+      done = true;
+      try { port.disconnect(); } catch (_) {}
+      resolve(reply);
+    };
+    port.onMessage.addListener((reply) => finish(reply || null));
+    port.onDisconnect.addListener(() => finish(null));
+    try {
+      port.postMessage(msg);
+    } catch (_) {
+      finish(null);
+      return;
+    }
+    setTimeout(() => finish(null), timeoutMs);
+  });
+}
+
+function waitTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(onUpd);
+      resolve();
+    };
+    const onUpd = (id, info) => {
+      if (id === tabId && info.status === 'complete') done();
+    };
+    chrome.tabs.onUpdated.addListener(onUpd);
+    setTimeout(done, timeoutMs);
+  });
+}
+
+let jobBusy = false;
+async function pollJob() {
+  if (jobBusy) return;
+  jobBusy = true;
+  try {
+    const reply = await nativeCall({ kind: 'mesa-poll-jobs' }, 10000);
+    const job = reply && reply.job;
+    if (job && job.id && job.url) await runJob(job);
+  } catch (_) {
+    /* 全防御 */
+  } finally {
+    jobBusy = false;
+  }
+}
+
+async function runJob(job) {
+  let tabId = null;
+  let resp = null;
+  try {
+    const tab = await chrome.tabs.create({ url: job.pick || job.url, active: false });
+    tabId = tab.id;
+    await waitTabComplete(tabId, TAB_LOAD_MS);
+    await sleep(3000); // 晚渲染的落地页（SD、Wiley）等它把链接画出来
+    // 落地页直接就是 PDF（Chrome 自带查看器不注内容脚本）：后台带会话取
+    if (pdfTabs.has(tabId)) {
+      resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
+    } else {
+      for (let i = 0; i < 3 && !resp; i++) {
+        try {
+          resp = await chrome.tabs.sendMessage(tabId, { kind: 'mesa-auto-fetch', jobId: job.id });
+        } catch (_) {
+          await sleep(2000);
+        }
+      }
+      if (!resp && pdfTabs.has(tabId)) resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
+    }
+    if (!resp) resp = { ok: false, reason: 'no_pdf', detail: '页面上没有可用的内容脚本', candidates: [] };
+  } catch (e) {
+    resp = { ok: false, reason: 'error', detail: e && e.message ? e.message : String(e) };
+  } finally {
+    if (tabId != null) {
+      try { await chrome.tabs.remove(tabId); } catch (_) {}
+    }
+  }
+  if (resp && !resp.ok) {
+    await nativeCall({
+      kind: 'mesa-job-report',
+      jobId: job.id,
+      reason: resp.reason || 'error',
+      detail: resp.detail || '',
+      candidates: resp.candidates || [],
+    }, 10000);
+  }
+}
+
+async function fetchPdfInBackground(job, url) {
+  try {
+    const r = await fetch(url, { credentials: 'include' });
+    if (r.status === 403 || r.status === 429) return { ok: false, reason: 'blocked', detail: 'HTTP ' + r.status };
+    if (!r.ok) return { ok: false, reason: 'error', detail: 'HTTP ' + r.status };
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (!(bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
+      return { ok: false, reason: 'no_pdf', detail: '拿到的不是 PDF' };
+    }
+    if (bytes.length > 40 * 1024 * 1024) return { ok: false, reason: 'error', detail: '文件超过 40MB，交给人手动下' };
+    const reply = await nativeCall({ kind: 'mesa-save-pdf', jobId: job.id, doi: job.doi, title: '', url, bytesB64: b64(bytes) }, 150000);
+    if (reply && reply.ok) return { ok: true };
+    return { ok: false, reason: 'error', detail: (reply && reply.error) || 'Mesa 未响应' };
+  } catch (e) {
+    return { ok: false, reason: 'error', detail: e && e.message ? e.message : String(e) };
+  }
+}

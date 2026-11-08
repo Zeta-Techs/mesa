@@ -662,6 +662,7 @@ fn pty_agent_env() -> Vec<(String, String)> {
     if let Some(tool) = crate::image_gen::helper_exe() {
         env.push((crate::image_gen::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
         env.push((crate::peek::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
+        env.push((crate::paper_fetch::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
     }
     if let Some(tool) = crate::svg_render::helper_exe() {
         env.push((crate::svg_render::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
@@ -712,6 +713,8 @@ fn spawn_tracked(
         // 看一眼（peek.rs）：同一个 helper；带上这次的 Run，helper 按它找项目、把自己排除在同伴外
         if purpose == PtyPurpose::Agent {
             cmd.env(crate::peek::TOOL_ENV, &tool);
+            // 代下全文（paper_fetch.rs）：同一个 helper，按 Run 找项目
+            cmd.env(crate::paper_fetch::TOOL_ENV, &tool);
             if let Some(id) = run_id.as_deref() {
                 cmd.env(crate::peek::RUN_ENV, id);
             }

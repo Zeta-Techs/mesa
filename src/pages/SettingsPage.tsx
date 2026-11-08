@@ -1,4 +1,5 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
+import { PaperFetchPanel } from "../components/PaperFetchPanel";
 import { classifierNoticeAutoSkip, setClassifierNoticeAutoSkip } from "../cli-notices";
 import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -4235,6 +4236,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               )}
             </SettingsFold>
           </div>
+        </Row>
+        <Row
+          label="代下全文"
+          align="start"
+          hint="AI 或你交给 Mesa，按出版商限速逐篇取"
+          labelTitle="先找开放获取版本，再走学校通道，最后在你的浏览器里取。遇到验证码或被拒这家停 24 小时并交还给你。"
+        >
+          <PaperFetchPanel />
         </Row>
       </Section>
 

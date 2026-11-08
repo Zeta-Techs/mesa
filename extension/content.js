@@ -285,6 +285,73 @@
     return false;
   });
 
+  // ===== 代下队列（2026-11-08）：Mesa 交来的任务，后台标签里自动取一次 =====
+  // 人机验证 / 登录页如实报回（Mesa 据此熔断这家或提示登录），绝不尝试解验证码、不填任何表
+  function challengeKind() {
+    var text = (document.title || '') + ' ' + ((document.body && document.body.innerText) || '').slice(0, 4000);
+    if (/captcha|verify (that )?you are (a )?human|are you a robot|unusual (traffic|activity)|just a moment|人机验证|安全验证|请完成验证/i.test(text)
+      || document.querySelector('iframe[src*="captcha"], #challenge-form, #cf-challenge-running, .g-recaptcha, .h-captcha')) {
+      return 'captcha';
+    }
+    if (document.querySelector('input[type="password"]') && !pageDoi()) return 'login';
+    return '';
+  }
+
+  // 没认出 PDF 时列给 AI 挑的候选：只要同源、像 PDF 或写着 PDF / 全文 / 下载的链接
+  function candidateLinks() {
+    var out = [];
+    var seen = {};
+    var as = document.querySelectorAll('a[href]');
+    for (var i = 0; i < as.length && out.length < 8; i++) {
+      var h = as[i].href || '';
+      var t = (as[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      try { if (new URL(h).origin !== location.origin) continue; } catch (e) { continue; }
+      if (!(PDFISH.test(h) || /pdf|full text|download|全文|下载/i.test(t))) continue;
+      if (/supplement|supporting|\bsi\b|附件|补充/i.test(t + ' ' + h)) continue;
+      if (seen[h]) continue;
+      seen[h] = 1;
+      out.push({ url: h, text: t });
+    }
+    return out;
+  }
+
+  async function autoFetch(jobId) {
+    var ch = challengeKind();
+    if (ch) return { ok: false, reason: ch };
+    var u = pdfUrl();
+    if (!u) return { ok: false, reason: 'no_pdf', candidates: candidateLinks() };
+    var bytes;
+    try {
+      bytes = await fetchBytes(u);
+    } catch (e) {
+      var m = String((e && e.message) || e);
+      if (/HTTP (403|429)/.test(m)) return { ok: false, reason: 'blocked', detail: m };
+      return { ok: false, reason: 'error', detail: m };
+    }
+    if (bytes === null || bytes.length > BIG_BYTES) return { ok: false, reason: 'error', detail: '文件超过 40MB，交给人手动下' };
+    if (!looksLikePdf(bytes)) {
+      return { ok: false, reason: challengeKind() || 'no_pdf', detail: '拿到的不是 PDF', candidates: candidateLinks() };
+    }
+    var reply = await chrome.runtime.sendMessage({
+      kind: 'mesa-save-pdf',
+      jobId: jobId,
+      doi: pageDoi(),
+      title: pageTitle(),
+      url: location.href,
+      bytesB64: b64(bytes)
+    });
+    if (reply && reply.ok) return { ok: true };
+    return { ok: false, reason: 'error', detail: (reply && reply.error) || 'Mesa 未响应' };
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || msg.kind !== 'mesa-auto-fetch' || !msg.jobId) return false;
+    autoFetch(msg.jobId).then(sendResponse, function (e) {
+      sendResponse({ ok: false, reason: 'error', detail: String((e && e.message) || e) });
+    });
+    return true;
+  });
+
   // SPA 换页/晚渲染都能追上
   setInterval(ensureButton, 2000);
   ensureButton();

@@ -99,7 +99,7 @@ fn save_session(store: &InstSessionStore) -> Result<(), String> {
 
 /// 机构通道配置快照：前缀（settings，非秘密）+ 会话罐（0600）
 pub(crate) struct InstitutionalChannel {
-    prefix: Option<String>,
+    pub(crate) prefix: Option<String>,
     session: Option<InstSessionStore>,
 }
 
