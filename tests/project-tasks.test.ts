@@ -403,6 +403,13 @@ test("goalDisplayName prefers the longer description", () => {
   assert.equal(goalDisplayName({ name: "写综述", description: "写综述" }), "写综述");
 });
 
+test("goalDisplayName keeps the title when the description is a whole work order", () => {
+  const order = "进展周报\n\n交付物：output/reports/progress.md\n怎样算做完：每条结论注明出处文件。";
+  assert.equal(goalDisplayName({ name: "进展周报", description: order }), "进展周报");
+  assert.equal(goalDisplayName({ name: "周报", description: "写".repeat(120) }), "周报");
+  assert.equal(goalDisplayName({ name: "", description: order }), order);
+});
+
 test("acceptedGoalOutputs prefers adopted files over whole-project scope", () => {
   assert.deepEqual(acceptedGoalOutputs(["."], ["论文/综述.md"]), ["论文/综述.md"]);
   assert.deepEqual(acceptedGoalOutputs(["notes"], []), ["notes"]);

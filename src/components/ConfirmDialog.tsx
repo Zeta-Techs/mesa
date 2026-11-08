@@ -164,11 +164,12 @@ export function ConfirmDialogHost() {
         aria-modal="true"
         aria-labelledby="ccode-confirm-dialog-title"
         aria-describedby="ccode-confirm-dialog-message"
-        className="w-full max-w-[28rem] rounded-lg border border-hairline ccode-float-surface p-5"
+        // 限高：正文再长也只在框内滚，按钮永远露在窗口里
+        className="flex max-h-full w-full max-w-[28rem] flex-col rounded-lg border border-hairline ccode-float-surface p-5"
         onClick={(e) => e.stopPropagation()}
         tabIndex={-1}
       >
-        <div className="flex items-start gap-3">
+        <div className="-mr-2 flex min-h-0 items-start gap-3 overflow-y-auto pr-2">
           {/* 图标说语气：危险＝警示三角（错误色淡底）、确认＝问号、提示＝信息 */}
           <span
             className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full ${
@@ -236,7 +237,7 @@ export function ConfirmDialogHost() {
             </div>
           </div>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex shrink-0 justify-end gap-2">
           {!req.alert && (
             <button
               ref={cancelRef}

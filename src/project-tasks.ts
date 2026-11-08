@@ -220,9 +220,15 @@ export function goalDisplayName(task: {
 }): string {
   const name = task.name.trim();
   const desc = task.description?.trim() ?? "";
-  if (desc && desc !== name && desc.length > name.length) return desc;
+  // 描述只在是「一句话」时顶替名字（老目标名字是截断的首行）；项目助手派的目标描述是整份任务合同，
+  // 拿它当名字会把卡片标题、归档确认框撑爆（2026-11-09 实证：确认框按钮被挤出窗口，归档点不了）
+  const oneLiner = desc.length <= GOAL_NAME_MAX && !desc.includes("\n");
+  if (desc && desc !== name && desc.length > name.length && (oneLiner || !name)) return desc;
   return name || desc;
 }
+
+/** 描述能当目标名字的上限：再长就是要求正文，不是名字 */
+const GOAL_NAME_MAX = 80;
 
 /** 空列表不再解释按钮；有目标时才说下一步。 */
 export function goalVsChatHint(_workMode?: string | null): string {

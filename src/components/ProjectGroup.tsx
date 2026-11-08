@@ -2298,9 +2298,9 @@ export default function ProjectGroup({
         />
       )}
 
-      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标：有流程时接在步骤下面，没有就不出现 */}
+      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标、流程外的事：有流程时接在步骤下面，一个没有时只留「新建目标」一行 */}
       {registered && project && cfg && cfg.steps.length > 0 && (
-        <ProjectUserTasksView key={`goals:${project.path}`} project={project} embed hideWhenEmpty />
+        <ProjectUserTasksView key={`goals:${project.path}`} project={project} embed compactWhenEmpty />
       )}
 
       {/* ───── 项目设置抽屉（右侧滑出，不是页面、不进侧栏、不占路由） ─────

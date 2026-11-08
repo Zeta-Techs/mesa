@@ -143,7 +143,7 @@ export default function ProjectUserTasksView({
   onChromeConsumed,
   onUrgentGoals,
   onPickTemplate,
-  hideWhenEmpty = false,
+  compactWhenEmpty = false,
 }: {
   project: ProjectDto;
   /** 嵌进无流程科研左栏：不重复项目名、不另开对话栏。 */
@@ -153,8 +153,8 @@ export default function ProjectUserTasksView({
   onUrgentGoals?: (urgent: boolean) => void;
   /** 无流程科研项目：空态给「套一整套流程…」（写整篇论文时才用，2026-11-08） */
   onPickTemplate?: () => void;
-  /** 有流程的科研项目：步骤线下面只在还有目标（含已归档）时才列，免得套流程前记的目标在项目页上找不到 */
-  hideWhenEmpty?: boolean;
+  /** 有流程的科研项目：接在步骤线下面；没记过目标时不铺空态，只留「新建目标」一行入口 */
+  compactWhenEmpty?: boolean;
 }) {
   const openAssistant = useAppStore((state) => state.openAssistant);
   const profiles = useAppStore((state) => state.profiles);
@@ -165,6 +165,8 @@ export default function ProjectUserTasksView({
   const [archivedTasks, setArchivedTasks] = useState<TaskDto[]>([]);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
+  /** 详情里「要求」默认只露开头几行（项目助手派的目标是整份任务合同），点了才全展开 */
+  const [fullReqTaskId, setFullReqTaskId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const chromeConsumed = useRef<number | null>(null);
@@ -317,9 +319,11 @@ export default function ProjectUserTasksView({
   if (!configReady || !eligible) {
     return null;
   }
-  if (hideWhenEmpty && (!loaded || (tasks.length === 0 && archivedTasks.length === 0))) {
+  if (compactWhenEmpty && !loaded) {
     return null;
   }
+  // 有流程、一个目标都没记过：不铺空态，只留一行入口（流程外的事也要有地方记，2026-11-09）
+  const quietEmpty = compactWhenEmpty && tasks.length === 0 && archivedTasks.length === 0;
 
   async function startTask(
     task: TaskDto,
@@ -513,10 +517,10 @@ export default function ProjectUserTasksView({
               套一整套流程…
             </button>
           )}
-          {loaded && tasks.length > 0 && (
+          {loaded && (tasks.length > 0 || quietEmpty) && (
             <button
               type="button"
-              className={`${primaryTaskId ? secondaryActionClass : primaryActionClass} gap-1.5`}
+              className={`${primaryTaskId || quietEmpty ? secondaryActionClass : primaryActionClass} gap-1.5`}
               onClick={() => setCreateOpen(true)}
             >
               <Plus size={13} aria-hidden="true" />
@@ -537,6 +541,8 @@ export default function ProjectUserTasksView({
         {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
         {!loaded ? (
           <p role="status" className={`${projectWellClass} text-xs text-l3`}>正在读取目标…</p>
+        ) : quietEmpty ? (
+          !loadError && <p className="text-xs text-l3">流程步骤之外的事（组会材料、整理一批数据、补一个实验……）记成目标，单独做、单独验收。</p>
         ) : tasks.length === 0 ? (
           !loadError && <EmptyState
             compact
@@ -712,7 +718,22 @@ export default function ProjectUserTasksView({
                               {extraRequirement && (
                                 <div>
                                   <h5 className="text-micro font-medium text-l3">要求</h5>
-                                  <p aria-label={`目标完整要求：${name}`} className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-l1 [overflow-wrap:anywhere]">{fullGoal}</p>
+                                  <p
+                                    id={`goal-req-${task.id}`}
+                                    aria-label={`目标完整要求：${name}`}
+                                    className={`mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-l1 [overflow-wrap:anywhere] ${fullReqTaskId === task.id ? "" : "line-clamp-4"}`}
+                                  >{fullGoal}</p>
+                                  {fullGoal.split("\n").length > 4 || fullGoal.length > 160 ? (
+                                    <button
+                                      type="button"
+                                      className="mt-1 text-xs text-l3 hover:text-l1"
+                                      aria-expanded={fullReqTaskId === task.id}
+                                      aria-controls={`goal-req-${task.id}`}
+                                      onClick={() => setFullReqTaskId(fullReqTaskId === task.id ? null : task.id)}
+                                    >
+                                      {fullReqTaskId === task.id ? "收起" : "展开全部要求"}
+                                    </button>
+                                  ) : null}
                                 </div>
                               )}
                               {task.reviewRequired && outputPaths.length > 0 && (
