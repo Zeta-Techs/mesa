@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, ArrowUp, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
@@ -290,15 +290,22 @@ export default function ProjectAssistantPanel({
     endRef.current?.scrollIntoView({ block: "end" });
   }, [turns.length, busy, error, liveText, liveStep]);
 
-  // 往上翻过以后底部给「回到最新」：看末尾那个锚点还在不在视野里
+  // 往上翻过以后底部给「回到最新」：看末尾那个锚点还在不在视野里。
+  // 锚点挂上才开始看（回调 ref）：外壳打开时晚一帧才渲染内容，按 open 去找锚点会扑空，
+  // 上次关面板时留下的「不在末尾」就一直挂着（2026-11-08 用户截图：翻到底了还显示「回到最新」）
+  const [endEl, setEndEl] = useState<HTMLDivElement | null>(null);
+  const endRefCb = useCallback((el: HTMLDivElement | null) => {
+    endRef.current = el;
+    setEndEl(el);
+  }, []);
   const [atEnd, setAtEnd] = useState(true);
   useEffect(() => {
-    const el = endRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
+    setAtEnd(true);
+    if (!endEl || typeof IntersectionObserver === "undefined") return;
     const io = new IntersectionObserver(([entry]) => setAtEnd(entry.isIntersecting));
-    io.observe(el);
+    io.observe(endEl);
     return () => io.disconnect();
-  }, [open]);
+  }, [endEl]);
 
   useEffect(() => {
     if (!busy) return;
@@ -962,7 +969,7 @@ export default function ProjectAssistantPanel({
           )}
         </div>
       )}
-      <div ref={endRef} />
+      <div ref={endRefCb} className="h-px" aria-hidden="true" />
       <GuideSectionModal heading={guideHeading} onClose={() => setGuideHeading(null)} />
     </SettingsDrawerShell>
   );
