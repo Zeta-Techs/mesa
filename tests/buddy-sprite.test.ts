@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { BUDDY_CELL, BUDDY_COLS, BUDDY_ROWS, buddyClip, buddyRow, type BuddyPose } from "../src/buddy-sprite.ts";
 
-const POSES: BuddyPose[] = ["idle", "wave", "think", "happy", "oops", "sleep"];
+const POSES: BuddyPose[] = ["idle", "wave", "think", "happy", "oops", "sleep", "wait", "walkRight", "walkLeft"];
 
 test("小桌精灵图的尺寸与行表一致（重孵后忘改行表会在这里红）", () => {
   const buf = readFileSync(new URL("../src/assets/buddy/xiaozhuo.webp", import.meta.url));

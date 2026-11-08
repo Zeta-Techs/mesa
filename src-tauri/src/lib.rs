@@ -1,6 +1,7 @@
 use tauri::{Emitter, Manager};
 
 mod about;
+mod desk_pet;
 pub mod dirs;
 mod attach_grants;
 mod agent_specs;
@@ -312,6 +313,8 @@ pub fn run() {
             paper_fetch::start_worker(app.handle().clone());
             // 飞书机器人：开着就在后台连上长连接（读配置也在后台线程）
             feishu::start_at_setup(app.handle().clone());
+            // 桌宠：设置里开着就建小窗（desk_pet.rs）
+            desk_pet::setup(app.handle());
             // 托盘菜单要逐个连接比对磁盘配置（开发版实测 2.5 秒）。Windows 上放后台线程建：setup 占着主线程时
             // WebView2 出不了画面，启动窗口要么一直隐身、要么到点露出一块白（main_window.rs）。
             // 托盘与菜单项 tauri 会自己转到主线程建，托盘页「刷新」也是从后台线程调同一个 rebuild。
@@ -645,6 +648,10 @@ pub fn run() {
             window_close::quit_ack,
             window_close::quit_background_count,
             window_close::show_main_window,
+            desk_pet::desk_pet_sync,
+            desk_pet::desk_pet_save_position,
+            desk_pet::desk_pet_hide,
+            desk_pet::desk_pet_open,
             window_close::confirm_quit,
             window_close::release_single_instance,
             app_icon::apply_app_icon,

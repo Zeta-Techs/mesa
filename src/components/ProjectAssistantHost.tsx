@@ -17,6 +17,7 @@ import {
 import { readProjectSurfaceTab } from "../project-surface";
 import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
 import { pushNewGrants, pushNewHelp, pushStuck, startImBridge } from "../im-bridge";
+import { startDeskPetHost } from "../desk-pet-host";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
 function savedWidth(): number {
@@ -63,11 +64,18 @@ export default function ProjectAssistantHost() {
       if (cancelled) off();
       else stop = off;
     });
+    // 桌宠（2026-11-09）：给桌面上的小桌供清单、办它那边点的事；没开桌宠时只听不取
+    let stopPet: (() => void) | null = null;
+    void startDeskPetHost().then((off) => {
+      if (cancelled) off();
+      else stopPet = off;
+    });
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       window.clearInterval(stuckTimer);
       stop?.();
+      stopPet?.();
     };
   }, []);
   const echoTick = useAppStore((s) => s.assistantEchoTick);

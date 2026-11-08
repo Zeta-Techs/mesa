@@ -1,0 +1,144 @@
+/* 桌宠小窗（PetApp.tsx）：窗口本身透明，只有小桌、角标和点开的卡片有底。
+   卡片同 Mesa 的线条语言：一道细边、圆角、无投影；琥珀只表示「轮到你」（角标、主按钮）。 */
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+* { box-sizing: border-box; }
+button, input { font: inherit; }
+
+.pet-root {
+  --amber: #e39a1c;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 6px;
+}
+.pet-dark {
+  --bg: #26252b;
+  --line: rgba(255, 255, 255, 0.12);
+  --l1: #f3f1ec;
+  --l3: #a9a6a0;
+  --btn: rgba(255, 255, 255, 0.08);
+  --amber: #f5b83d;
+}
+.pet-light {
+  --bg: #fbfaf7;
+  --line: rgba(0, 0, 0, 0.12);
+  --l1: #23222a;
+  --l3: #75726c;
+  --btn: rgba(0, 0, 0, 0.05);
+}
+.pet-side-left { align-items: flex-start; }
+.pet-below { flex-direction: column-reverse; justify-content: flex-end; }
+
+.pet-body {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+.pet-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--amber);
+  color: #1c1b21;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fbf8f1;
+}
+
+.pet-panel { width: 320px; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+.pet-below .pet-panel { justify-content: flex-start; }
+
+.pet-bubble, .pet-card {
+  background: var(--bg);
+  color: var(--l1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.pet-bubble { display: flex; align-items: flex-start; gap: 6px; padding: 10px 10px 10px 12px; }
+.pet-bubble-text {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--l1);
+  text-align: left;
+  line-height: 1.5;
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pet-x {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--l3);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1.5;
+}
+.pet-x:hover { color: var(--l1); }
+
+.pet-card { display: flex; flex-direction: column; max-height: 100%; min-height: 0; }
+.pet-card-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 6px 12px; }
+.pet-card-title { flex: 1; font-weight: 600; }
+.pet-items { list-style: none; margin: 0; padding: 0 12px; overflow: auto; min-height: 0; }
+.pet-item { padding: 8px 0 10px; border-top: 1px solid var(--line); }
+.pet-item-meta { margin: 0; font-size: 12px; color: var(--l3); }
+.pet-item-text { margin: 2px 0 0; line-height: 1.5; word-break: break-word; }
+.pet-item-detail { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--l3); word-break: break-word; }
+.pet-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pet-btn {
+  border: 1px solid var(--line);
+  background: var(--btn);
+  color: var(--l1);
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pet-btn:hover:not(:disabled) { border-color: var(--amber); }
+.pet-btn:disabled { opacity: 0.5; cursor: default; }
+.pet-btn-ghost { background: none; }
+.pet-reply { margin-top: 6px; }
+.pet-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--l1);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font-size: 12px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.pet-input:focus { outline: none; border-color: var(--amber); }
+.pet-ok { margin: 4px 0 0; font-size: 12px; color: var(--l3); }
+.pet-err { margin: 4px 0 0; font-size: 12px; color: #d4583b; }
+.pet-card-foot { padding: 6px 12px 10px; border-top: 1px solid var(--line); }
+.pet-link { border: 0; background: none; padding: 0; color: var(--l3); cursor: pointer; font-size: 12px; }
+.pet-link:hover { color: var(--l1); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

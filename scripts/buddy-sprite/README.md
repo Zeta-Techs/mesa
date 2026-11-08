@@ -1,9 +1,9 @@
 # 小桌精灵图怎么重孵
 
-项目助手的形象「小桌」是一张逐帧精灵图 `src/assets/buddy/xiaozhuo.webp`（每格 224px，8 列 × 8 行），行表在 `src/buddy-sprite.ts`。
+项目助手的形象「小桌」是一张逐帧精灵图 `src/assets/buddy/xiaozhuo.webp`（每格 224px，8 列 × 11 行），行表在 `src/buddy-sprite.ts`。
 2026-11-09 用户觉得矢量版「没有 Codex 的宠物生动」，拍板用出图模型孵。流程借鉴 OpenAI Codex 的 hatch-pet 技能（Apache-2.0）：
 先出一张基准图定长相，每个状态以基准图为参考出一行动作条，再切帧、统一大小和基线、拼成一张图。
-没做 hatch-pet 的 16 个朝向和左右走：小桌只待在项目助手面板里，不在桌面上跟着鼠标走。
+没做 hatch-pet 的 16 个朝向（眼睛跟鼠标）。同日做桌宠时补了「等你回」和被拖着左右走三行（左走由右走镜像）。
 
 ## 文件
 
@@ -26,7 +26,7 @@ D=scripts/buddy-sprite
 mkdir -p /tmp/xz-rows
 ```
 
-各行（行名 / 帧数）：idle 6、waving 4、running 6（在想）、jumping 5（答完蹦）、failed 8（没问成）、sleep 6、idle-coffee 6、idle-lamp 6。每行一条命令，可以并行跑，一条两三分钟：
+各行（行名 / 帧数）：idle 6、waving 4、running 6（在想）、jumping 5（答完蹦）、failed 8（没问成）、sleep 6、idle-coffee 6、idle-lamp 6、waiting 6（桌宠：等你回）、walk-right 8（桌宠：被拖着走，排布参考用 guide-8；walk-left 由它镜像，不另出）。每行一条命令，可以并行跑，一条两三分钟：
 
 ```bash
 $H image --image $D/base.png --image $D/guide-6.png --prompt-file $D/prompts/idle.txt --size 1536x1024 --out /tmp/xz-rows/idle.png

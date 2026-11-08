@@ -119,6 +119,10 @@ export interface AppSettings {
   autoTitleSessions?: boolean;
   /** 关主窗口时留在后台（默认开；Mac 藏窗口、Windows 收进托盘）；false = 关窗口即退出。见 window_close.rs */
   closeToBackground?: boolean;
+  /** 桌宠（2026-11-09，desk_pet.rs）：在桌面上显示小桌；冒话 important | quiet；大小 small | normal | large */
+  deskPetEnabled?: boolean;
+  deskPetSay?: "important" | "quiet";
+  deskPetSize?: "small" | "normal" | "large";
   /** 出图模型（网关 id + 模型 id，同进退；传空串 = 两个一起清空），见 image_gen.rs */
   imageGenGatewayId?: string | null;
   imageGenModel?: string | null;

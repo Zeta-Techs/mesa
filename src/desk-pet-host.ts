@@ -1,0 +1,160 @@
+/**
+ * 桌宠的主窗口一侧（2026-11-09；设计稿 docs/design-desk-pet.md）：
+ * - 取数：每 20 秒（小窗刚开时立刻）跨项目收「等你的事」与「现在的情况」，拼成清单发给桌宠小窗（desk-pet:feed）；
+ *   取数函数与项目助手、手机通道同一份（loadDesk / gatherBriefInput），不另判。
+ * - 转达：小窗上点的选项 / 写的一句 / 放宽授权 / 信任菜单（desk-pet:act）在这里按「等你的事」原路办，办完回一句（desk-pet:act-done）。
+ * - 去看看：Rust desk_pet_open 叫回主窗口后发 desk-pet:open，这里跳到那个地方。
+ * 主窗口关着时只是藏到后台，这里照常跑；退出 Mesa 时桌宠一起走。
+ */
+import { invoke } from "@tauri-apps/api/core";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import { useAppStore } from "./store";
+import { IS_WINDOWS } from "./hotkeys";
+import { pathWithin, samePath } from "./path-utils";
+import { answerGrant, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
+import { gatherBriefInput } from "./project-assistant-run";
+import { runAssistantAction } from "./assistant-actions";
+import { optionAnswer } from "./help-requests";
+import { briefWorking, petItemsFromBrief, petItemsFromDesk, type PetFeed, type PetItem, type PetOpen } from "./desk-pet";
+import type { DeskItem } from "./assistant-queue";
+import type { HelpRequestDto, ProjectDto, TaskDto, WorkspaceDto } from "./types";
+
+const PET_LABEL = "desk-pet";
+const FEED_MS = 20_000;
+/** 跨项目一次最多看几个（同手机「等我的」）：有事的项目优先，不把每个项目都读一遍 */
+const MAX_PROJECTS = 8;
+
+export interface PetAct {
+  reqId: string;
+  projectPath: string;
+  key: string;
+  /** reply：value 是选项键或写的一句；grant / trust：accept */
+  tap: "reply" | "grant" | "trust";
+  value?: string;
+  /** 选项按钮：带上选项文字，写进文件是「B（期刊 + 顶会）」 */
+  optionLabel?: string;
+  accept?: boolean;
+}
+
+function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
+  return p.then((v) => v ?? fallback).catch(() => fallback);
+}
+
+/** 有事的项目：开着工作副本、有人工请求、有终端在等确认，或有目标在跑 / 等验收 / 没做完 */
+async function activeProjects(): Promise<ProjectDto[]> {
+  const [projects, workspaces, help, tasks] = await Promise.all([
+    safe(invoke<ProjectDto[]>("list_projects"), []),
+    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+    safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
+    safe(invoke<TaskDto[]>("task_list", { projectRoot: null, includeArchived: false }), []),
+  ]);
+  const live = useAppStore.getState().terminalRunInputs;
+  const hot = new Set(["running", "pending_review", "failed", "stopped"]);
+  return projects
+    .filter(
+      (p) =>
+        workspaces.some((w) => w.status !== "archived" && samePath(w.repoPath, p.path, IS_WINDOWS)) ||
+        help.some((h) => samePath(h.repoPath, p.path, IS_WINDOWS)) ||
+        live.some((r) => r.attention === "confirm" && pathWithin(r.cwd, p.path, IS_WINDOWS)) ||
+        tasks.some((t) => hot.has(t.status) && !!t.projectRoot && samePath(t.projectRoot, p.path, IS_WINDOWS)),
+    )
+    .slice(0, MAX_PROJECTS);
+}
+
+export async function buildPetFeed(): Promise<PetFeed> {
+  const list = await activeProjects();
+  const now = new Date();
+  const parts = await Promise.all(
+    list.map(async (p) => {
+      const [desk, brief] = await Promise.all([
+        loadDesk(p.path).catch(() => [] as DeskItem[]),
+        gatherBriefInput(p.path, null).catch(() => null),
+      ]);
+      const project = { path: p.path, name: p.name };
+      return {
+        items: [...petItemsFromDesk(project, desk), ...(brief ? petItemsFromBrief(project, brief, now) : [])],
+        working: brief ? briefWorking(brief) : false,
+      };
+    }),
+  );
+  const live = useAppStore.getState().terminalRunInputs;
+  const working = parts.some((p) => p.working) || live.some((r) => r.running && !r.shell && r.attention === "working");
+  return { working, items: parts.flatMap((p) => p.items) };
+}
+
+async function act(a: PetAct): Promise<string> {
+  const items = await loadDesk(a.projectPath);
+  const item = items.find((i) => i.key === a.key);
+  if (!item) throw new Error("这件事已经办过或不在了");
+  if (a.tap === "reply") {
+    const text = a.optionLabel ? optionAnswer(a.value ?? "", a.optionLabel) : (a.value ?? "");
+    return replyDesk(a.projectPath, item, text);
+  }
+  if (a.tap === "grant") return answerGrant(item, !!a.accept);
+  // 信任菜单只替你经项目助手派出去的活按（与手机同档）；其余回电脑上看
+  if (!item.trust?.dispatched) throw new Error("这个文件夹要回到电脑上的终端里确认");
+  answerTrust(item, !!a.accept);
+  return a.accept ? "已信任，接着做" : "已选不信任";
+}
+
+async function openTarget(target: PetOpen | null): Promise<void> {
+  if (!target) return;
+  const st = useAppStore.getState();
+  if (target.kind === "assistant") {
+    st.openAssistant(target.projectPath);
+    return;
+  }
+  if (target.kind === "tab") {
+    st.setFocusTabReq(target.tabId);
+    st.setPage("terminal");
+    return;
+  }
+  const projects = await safe(invoke<ProjectDto[]>("list_projects"), []);
+  const project = projects.find((p) => samePath(p.path, target.projectPath, IS_WINDOWS)) ?? null;
+  await runAssistantAction(target.action, null, { path: target.projectPath, project });
+}
+
+/** App 里挂一次（ProjectAssistantHost）：返回取消函数 */
+export async function startDeskPetHost(): Promise<() => void> {
+  let busy = false;
+  const push = async () => {
+    if (busy || !useAppStore.getState().settings?.deskPetEnabled) return;
+    busy = true;
+    try {
+      const feed = await buildPetFeed();
+      await emitTo(PET_LABEL, "desk-pet:feed", feed).catch(() => {});
+    } finally {
+      busy = false;
+    }
+  };
+  const offs = await Promise.all([
+    listen("desk-pet:ready", () => void push()),
+    listen<PetAct>("desk-pet:act", (e) => {
+      const a = e.payload;
+      void act(a).then(
+        (message) => emitTo(PET_LABEL, "desk-pet:act-done", { reqId: a.reqId, ok: true, message }),
+        (reason) => emitTo(PET_LABEL, "desk-pet:act-done", { reqId: a.reqId, ok: false, message: String(reason instanceof Error ? reason.message : reason) }),
+      ).finally(() => window.setTimeout(() => void push(), 1500));
+    }),
+    listen<PetOpen | { kind: "settings" } | null>("desk-pet:open", (e) => {
+      const t = e.payload;
+      if (t && t.kind === "settings") {
+        const st = useAppStore.getState();
+        st.setSettingsSectionReq("startup");
+        st.setPage("settings");
+        return;
+      }
+      void openTarget(t as PetOpen | null);
+    }),
+    // 桌宠右键「隐藏」、托盘开关：设置页跟着刷新
+    listen("desk-pet:hidden", () => void useAppStore.getState().loadSettings()),
+  ]);
+  const timer = window.setInterval(() => void push(), FEED_MS);
+  void push();
+  return () => {
+    window.clearInterval(timer);
+    offs.forEach((off) => off());
+  };
+}
+
+export type { PetItem };

@@ -67,12 +67,13 @@ function entryGuardPlugin(): Plugin {
     name: "entry-guard",
     apply: "build",
     generateBundle(_options, bundle) {
-      const entry = Object.values(bundle).find(
+      // 2026-11-09 起有两个入口（主窗口 index.html、桌宠 pet.html），每个入口都查
+      const entries = Object.values(bundle).filter(
         (c): c is Rollup.OutputChunk => c.type === "chunk" && c.isEntry,
       );
-      if (!entry) return;
+      if (!entries.length) return;
       const seen = new Set<string>();
-      const stack = [entry.fileName];
+      const stack = entries.map((e) => e.fileName);
       while (stack.length) {
         const file = stack.pop()!;
         if (seen.has(file)) continue;
@@ -124,6 +125,11 @@ export default defineConfig(async () => ({
 
   build: {
     rollupOptions: {
+      // 桌宠小窗单独一个入口：只带小桌和它的话，不载主窗口那一整套
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        pet: fileURLToPath(new URL("./pet.html", import.meta.url)),
+      },
       output: {
         // 大依赖拆独立 vendor chunk：首屏只载 react + 当前页，
         // xterm 随终端页懒加载，monaco 随文件预览懒加载

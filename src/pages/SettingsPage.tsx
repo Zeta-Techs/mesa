@@ -522,7 +522,7 @@ const SETTING_NAV: {
 }[] = [
   { id: "appearance", label: "外观", group: "basic", icon: Palette, description: "主题、透明度与应用图标" },
   { id: "terminal", label: "终端", group: "basic", icon: SquareTerminal, description: "内嵌终端的显示、外部终端与自定义运行时" },
-  { id: "startup", label: "通用", group: "basic", icon: SlidersHorizontal, description: "启动页面、导航形态、关窗与系统通知" },
+  { id: "startup", label: "通用", group: "basic", icon: SlidersHorizontal, description: "启动页面、导航形态、关窗、系统通知与桌宠" },
   { id: "hotkeys", label: "快捷键", group: "basic", icon: Keyboard, description: "点绑定钮后按下新组合即保存，Esc 取消" },
   { id: "integration", label: "AI 与 Agent", group: "management", icon: Sparkles, description: "内置 AI 功能、出图、启动 Agent 时带上的设置，以及手机上的项目助手" },
   { id: "profile", label: "研究档案", group: "management", icon: BookUser, description: "跨项目的研究习惯（AI 开工时带上）与读过的文献总表" },
@@ -3392,6 +3392,43 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             checked={settings?.notificationsEnabled ?? true}
             onChange={(checked) => patch({ notificationsEnabled: checked })}
           />
+        </Row>
+
+        {/* 桌宠（2026-11-09，desk_pet.rs / src/pet/）：与托盘「在桌面上显示小桌」同一项 */}
+        <SubHeading title="桌宠" hint="项目助手小桌待在桌面上，哪个项目有事等你、哪一步跑完了，它来告诉你" />
+        <Row
+          label="在桌面上显示小桌"
+          hint="点它看等你的事；拖动换位置；右键勿扰一小时或隐藏"
+          labelTitle="能就地回答 AI 的提问、放宽一次授权；评审、采纳、确认命令这类要看清楚的，点「去看看」回到 Mesa 里办。托盘菜单里也能开关"
+        >
+          <Toggle
+            label="在桌面上显示小桌"
+            checked={settings?.deskPetEnabled ?? false}
+            onChange={(checked) => patch({ deskPetEnabled: checked })}
+          />
+        </Row>
+        <Row label="小桌说话" hint="新来一件事时在旁边冒一句，几秒后自己收起" disabled={!(settings?.deskPetEnabled ?? false)}>
+          <select
+            className={selectMd}
+            disabled={!(settings?.deskPetEnabled ?? false)}
+            value={settings?.deskPetSay ?? "important"}
+            onChange={(e) => patch({ deskPetSay: e.target.value as "important" | "quiet" })}
+          >
+            <option value="important">有事等你、跑完、出错时说</option>
+            <option value="quiet">不说话，只换样子和数字</option>
+          </select>
+        </Row>
+        <Row label="小桌大小" disabled={!(settings?.deskPetEnabled ?? false)}>
+          <select
+            className={selectMd}
+            disabled={!(settings?.deskPetEnabled ?? false)}
+            value={settings?.deskPetSize ?? "normal"}
+            onChange={(e) => patch({ deskPetSize: e.target.value as "small" | "normal" | "large" })}
+          >
+            <option value="small">小</option>
+            <option value="normal">中</option>
+            <option value="large">大</option>
+          </select>
         </Row>
 
         <SubHeading

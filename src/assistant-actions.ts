@@ -18,7 +18,8 @@ import { assistantShortcutTarget } from "./assistant-dock";
 
 export async function runAssistantAction(
   action: AssistantAction,
-  turn: AssistantTurn,
+  /** 哪一轮问答里的按钮；桌宠「去看看」没有问答，传 null（只有「报告给开发者」要附问答） */
+  turn: AssistantTurn | null,
   ctx: { path: string; project: ProjectDto | null },
 ): Promise<void> {
   const st = useAppStore.getState();
@@ -108,7 +109,7 @@ export async function runAssistantAction(
       const report: MismatchReport = {
         title: action.text,
         detail: `项目助手判断这是 Mesa 的问题。\n你当时在做什么：`,
-        snapshot: `问：${turn.question}\n\n项目助手：${turn.answer}`,
+        snapshot: turn ? `问：${turn.question}\n\n项目助手：${turn.answer}` : "",
         attachLabel: "附上这次问答（项目助手的判断，已去掉密钥）",
         attachHint: "里面可能有你的项目名、文件名和出错原文，不想发就取消勾选。",
       };

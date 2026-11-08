@@ -270,6 +270,15 @@ pub struct AppSettingsDto {
     /// Windows 第一次收进托盘的系统通知发过没有（只提醒一次）。不走 update_settings patch，
     /// 只由 mark_close_hint_shown 写
     pub close_hint_shown: Option<bool>,
+    /// 桌宠「小桌」（2026-11-09，desk_pet.rs）：桌面上置顶的小窗，跨项目报信。默认关
+    pub desk_pet_enabled: Option<bool>,
+    /// 小桌什么时候冒一句话：important（默认：有事等你拍板、一步跑完等评审、出错）| quiet（只换样子和数字，不冒话）
+    pub desk_pet_say: Option<String>,
+    /// 小桌多大：small | normal（默认）| large（desk_pet::pet_px）
+    pub desk_pet_size: Option<String>,
+    /// 小窗上次放的位置（左上角，逻辑像素）。不走 update_settings patch，只由 set_desk_pet_position 写
+    pub desk_pet_x: Option<f64>,
+    pub desk_pet_y: Option<f64>,
     /// 出图模型（2026-10-23；2026-10-24 起编辑处在连接页「出图模型」，设置页只显示现状）：网关 id + 模型 id，
     /// Agent 经 `mesa_helper image` 出图时的默认值（image_gen.rs）。两者同进退，空串 = 清空
     pub image_gen_gateway_id: Option<String>,
@@ -954,6 +963,19 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
             .or(Some(DEFAULT_AUTO_TITLE_SESSIONS)),
         close_to_background: s.close_to_background.or(Some(DEFAULT_CLOSE_TO_BACKGROUND)),
         close_hint_shown: s.close_hint_shown,
+        desk_pet_enabled: s.desk_pet_enabled.or(Some(false)),
+        desk_pet_say: Some(
+            s.desk_pet_say
+                .filter(|v| v == "important" || v == "quiet")
+                .unwrap_or_else(|| "important".into()),
+        ),
+        desk_pet_size: Some(
+            s.desk_pet_size
+                .filter(|v| v == "small" || v == "normal" || v == "large")
+                .unwrap_or_else(|| "normal".into()),
+        ),
+        desk_pet_x: s.desk_pet_x.filter(|v| v.is_finite()),
+        desk_pet_y: s.desk_pet_y.filter(|v| v.is_finite()),
         image_gen_gateway_id: s.image_gen_gateway_id.filter(|v| !v.trim().is_empty()),
         image_gen_model: s.image_gen_model.filter(|v| !v.trim().is_empty()),
         internal_auto_clean: s.internal_auto_clean.or(Some(true)),
@@ -1121,6 +1143,15 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.close_to_background.is_some() {
         cur.close_to_background = patch.close_to_background;
+    }
+    if patch.desk_pet_enabled.is_some() {
+        cur.desk_pet_enabled = patch.desk_pet_enabled;
+    }
+    if patch.desk_pet_say.is_some() {
+        cur.desk_pet_say = patch.desk_pet_say;
+    }
+    if patch.desk_pet_size.is_some() {
+        cur.desk_pet_size = patch.desk_pet_size;
     }
     // 出图模型：网关与模型同进退，任一传空串 = 两个一起清空
     if patch.image_gen_gateway_id.is_some() || patch.image_gen_model.is_some() {
@@ -1595,6 +1626,25 @@ pub(crate) fn mark_close_hint_shown() -> Result<(), String> {
     write_to(&path, &cur)
 }
 
+/// 桌宠拖完记位置（desk_pet.rs）；读-改-写与 update_settings 同锁
+pub(crate) fn set_desk_pet_position(x: f64, y: f64) -> Result<(), String> {
+    let _g = crate::profiles::store_lock()?;
+    let path = settings_path()?;
+    let mut cur = read_checked(&path)?;
+    cur.desk_pet_x = Some(x);
+    cur.desk_pet_y = Some(y);
+    write_to(&path, &cur)
+}
+
+/// 桌宠右键「隐藏桌宠」与托盘开关（desk_pet.rs / tray.rs）
+pub(crate) fn set_desk_pet_enabled(on: bool) -> Result<(), String> {
+    let _g = crate::profiles::store_lock()?;
+    let path = settings_path()?;
+    let mut cur = read_checked(&path)?;
+    cur.desk_pet_enabled = Some(on);
+    write_to(&path, &cur)
+}
+
 pub(crate) fn rate_setting() -> Option<f64> {
     read_current().rate_usd_cny.filter(|r| *r > 0.0)
 }
@@ -1648,6 +1698,7 @@ pub async fn update_settings(
     patch: AppSettingsDto,
 ) -> Result<AppSettingsDto, String> {
     let zoom_changed = patch.ui_zoom.is_some();
+    let pet_changed = patch.desk_pet_enabled.is_some() || patch.desk_pet_size.is_some() || patch.desk_pet_say.is_some();
     let out = {
         // 与 profiles 共用同一把读-改-写锁，防并发 patch 互相覆盖；
         // 本函数持锁期间不再获取其他锁，与全局写入（GLOBAL_CONFIG_MUTEX 内不调 profiles）锁序一致
@@ -1678,6 +1729,11 @@ pub async fn update_settings(
     // 放锁后再碰窗口：存下的值是准的，缩放套不上只记日志
     if zoom_changed {
         crate::ui_zoom::apply_to_main(&app, out.ui_zoom.unwrap_or(crate::ui_zoom::DEFAULT_ZOOM));
+    }
+    // 桌宠开关 / 大小 / 冒话改了：小窗跟着建、关或重排，托盘的勾跟着变
+    if pet_changed {
+        crate::desk_pet::sync(&app);
+        let _ = crate::tray::rebuild(&app);
     }
     Ok(out)
 }

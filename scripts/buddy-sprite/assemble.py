@@ -19,7 +19,12 @@ ROWS = [  # 行名, 帧数, 每帧毫秒
     ("sleep", 6, [420, 380, 380, 380, 380, 520]),
     ("idle-coffee", 6, [280, 110, 110, 140, 140, 320]),
     ("idle-lamp", 6, [280, 110, 110, 140, 140, 320]),
+    # 桌宠用（2026-11-09）：等你回、被拖着往右 / 往左走（左走由右走镜像，不另出）
+    ("waiting", 6, [150] * 5 + [260]),
+    ("walk-right", 8, [120] * 7 + [220]),
+    ("walk-left", 8, [120] * 7 + [220]),
 ]
+MIRROR = {"walk-left": "walk-right"}
 # 同一行内换帧（不跨代拼）：2026-11-09 那一版 idle 第 3 帧眯眼像不高兴，换成第 1 帧；重孵后按联系表重定
 SWAP = {"idle": {2: 0}}
 # 跳起的高度压一点，峰值不出格
@@ -27,8 +32,16 @@ LIFT = {"jumping": 0.72}
 run = Path(sys.argv[1]); out = Path(sys.argv[2])
 mult = {k: float(v) for k, v in (a.split("=") for a in sys.argv[3:])}
 sheet = Image.new("RGBA", (CELL * 8, CELL * len(ROWS)), (0, 0, 0, 0))
+done = {}
 meta = []; problems = []
 for r, (name, n, dur) in enumerate(ROWS):
+    if name in MIRROR:
+        src = done[MIRROR[name]]
+        for i in range(n):
+            cell = sheet.crop((i * CELL, src * CELL, (i + 1) * CELL, (src + 1) * CELL)).transpose(Image.FLIP_LEFT_RIGHT)
+            sheet.alpha_composite(cell, (i * CELL, r * CELL))
+        meta.append(dict(row=r, name=name, frames=n, durations=dur, mirror_of=MIRROR[name])); continue
+    done[name] = r
     p = run / f"{name}.png"
     if not p.exists():
         problems.append(f"{name}: 没有图"); meta.append(None); continue

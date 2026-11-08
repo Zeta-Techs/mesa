@@ -1,15 +1,16 @@
 /**
  * 项目助手「小桌」精灵图的行表（纯逻辑，配 tests/buddy-sprite.test.ts；图在 src/assets/buddy/xiaozhuo.webp）。
  * 2026-11-09 用户拍板改成出图模型孵的逐帧精灵图（借 Codex hatch-pet 的流程，见 MesaBuddy.tsx 文首）。
- * 每格 224px、8 列 × 8 行，人站在格子底部（基线 y≈214），行顺序与帧数必须和图一致——重孵后改这里。
+ * 每格 224px、8 列 × 11 行，人站在格子底部（基线 y≈214），行顺序与帧数必须和图一致——重孵后改这里。
  */
-export type BuddyPose = "idle" | "wave" | "think" | "happy" | "oops" | "sleep";
+/** wait / walkRight / walkLeft 是桌宠用的（2026-11-09）：有事等你回、被拖着往右 / 往左走 */
+export type BuddyPose = "idle" | "wave" | "think" | "happy" | "oops" | "sleep" | "wait" | "walkRight" | "walkLeft";
 /** 桌上多放的一样东西，跟着时间换（buddy-time.ts）：早上一杯冒热气的咖啡，傍晚一盏小台灯 */
 export type BuddyProp = "coffee" | "lamp" | null;
 
 export const BUDDY_CELL = 224;
 export const BUDDY_COLS = 8;
-export const BUDDY_ROWS = 8;
+export const BUDDY_ROWS = 11;
 
 export interface BuddyRow {
   /** 图里第几行 */
@@ -38,6 +39,11 @@ const ROWS: Record<BuddyPose, BuddyRow> = {
   oops: { index: 4, durations: [140, 140, 140, 160, 220, 160, 140, 240], repeat: 1, after: "hold", hold: 7 },
   // 夜深盘腿睡：慢慢一起一伏，z 一个比一个大
   sleep: { index: 5, durations: [520, 420, 420, 420, 420, 620], repeat: null, after: "rest", hold: 0 },
+  // 有事等你：歪头、手抬到肩，问一句「轮到你了？」，等着就一直这样；第一帧停久一点免得一直晃
+  wait: { index: 8, durations: [1200, 150, 150, 150, 150, 260], repeat: null, after: "rest", hold: 0 },
+  // 被拖着走：左走是右走的镜像
+  walkRight: { index: 9, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0 },
+  walkLeft: { index: 10, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0 },
 };
 const COFFEE: BuddyRow = { ...ROWS.idle, index: 6 };
 const LAMP: BuddyRow = { ...ROWS.idle, index: 7 };

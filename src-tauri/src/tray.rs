@@ -109,7 +109,17 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
         MenuItem::with_id(app, "quit", "退出 Mesa", true, None::<&str>).map_err(|e| e.to_string())?;
     let sep = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
 
-    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![Box::new(show)];
+    // 桌宠开关（2026-11-09）：勾上在桌面上显示小桌，与设置 → 通用「桌宠」同一项
+    let pet = CheckMenuItem::with_id(
+        app,
+        "desk-pet",
+        "在桌面上显示小桌",
+        true,
+        settings.desk_pet_enabled.unwrap_or(false),
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![Box::new(show), Box::new(pet)];
     let costs = month_costs();
     let rate = settings.rate_usd_cny.filter(|r| *r > 0.0).unwrap_or(7.2);
     let cc_switch = crate::dirs::home_dir().is_some_and(|h| global_config::cc_switch_dir_present(&h));
@@ -263,6 +273,17 @@ fn open_connections(app: &AppHandle, agent: &str, profile_id: Option<String>) {
 fn handle_menu(app: &AppHandle, id: &str) {
     if id == "show" {
         show_main(app);
+        return;
+    }
+    if id == "desk-pet" {
+        let on = !settings::read_current().desk_pet_enabled.unwrap_or(false);
+        if let Err(e) = settings::set_desk_pet_enabled(on) {
+            crate::logbuf::record("warn", "desk-pet", &format!("托盘开关没存上: {e}"));
+        }
+        crate::desk_pet::sync(app);
+        let _ = rebuild(app);
+        // 设置页开着时跟着刷新
+        let _ = app.emit_to("main", "desk-pet:hidden", ());
         return;
     }
     if id == "quit" {
