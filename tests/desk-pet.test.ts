@@ -119,3 +119,40 @@ test("样子的先后：拖着走 > 反应 > 等你回 > 在想 > 按时间；�
   assert.equal(petPose({ drag: null, reaction: null, waiting: 0, working: false, rest }).pose, "sleep");
   assert.deepEqual(petPose({ drag: null, reaction: null, waiting: 0, working: false, rest: { pose: "idle", prop: "lamp" } }), { pose: "idle", prop: "lamp" });
 });
+
+// —— 第二期 ——
+import { defaultAskProject, deskOnlyNotes, petLean, petSpeaksInstead } from "../src/desk-pet.ts";
+
+test("桌宠开着且会说话时，等确认 / 人工请求不再另弹系统通知；不说话、勿扰、关着照旧弹", () => {
+  const now = 1_000_000;
+  assert.equal(petSpeaksInstead({ deskPetEnabled: true }, 0, now), true);
+  assert.equal(petSpeaksInstead({ deskPetEnabled: true, deskPetSay: "quiet" }, 0, now), false);
+  assert.equal(petSpeaksInstead({ deskPetEnabled: true }, now + 60_000, now), false);
+  assert.equal(petSpeaksInstead({ deskPetEnabled: false }, 0, now), false);
+  assert.equal(petSpeaksInstead(null, 0, now), false);
+});
+
+test("朝鼠标倾身：封顶几度几像素，太近、太远都站正", () => {
+  assert.deepEqual(petLean(0, 10), { rotate: 0, x: 0, y: 0 });
+  assert.deepEqual(petLean(2000, 0), { rotate: 0, x: 0, y: 0 });
+  const right = petLean(600, 0);
+  assert.equal(right.rotate, 6);
+  assert.equal(right.x, 4);
+  const left = petLean(-90, 45);
+  assert.equal(left.rotate, -2);
+  assert.equal(left.x, -1.5);
+  assert.equal(left.y, 0.5);
+});
+
+test("问小桌默认问哪个项目：上次的还在用上次的，否则最上面那件事的项目，再否则第一个", () => {
+  const feed = { working: false, items: [], projects: [{ path: "/a", name: "A" }, { path: "/b", name: "B" }] };
+  assert.equal(defaultAskProject(feed, "/b"), "/b");
+  assert.equal(defaultAskProject(feed, "/gone"), "/a");
+  assert.equal(defaultAskProject({ ...feed, items: [item("x", "help")] }, null), "/p/her");
+  assert.equal(defaultAskProject({ working: false, items: [] }, null), null);
+});
+
+test("回答里要回 Mesa 点的东西只说一句", () => {
+  assert.deepEqual(deskOnlyNotes({ order: true, rework: false, remember: true, actions: 2 }), ["起草了一张派活单", "起草了一条「以后照这样办」", "给了 2 个去处按钮"]);
+  assert.deepEqual(deskOnlyNotes({ order: false, rework: false, remember: false, actions: 0 }), []);
+});

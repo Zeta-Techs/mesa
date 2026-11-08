@@ -21,6 +21,10 @@ import {
   petPose,
   pickBubble,
   waitingCount,
+  petLean,
+  readPetDnd,
+  defaultAskProject,
+  PET_DND_KEY,
   type PetFeed,
   type PetItem,
   type PetOpen,
@@ -34,7 +38,6 @@ const PANEL_W = 320;
 const BUBBLE_H = 96;
 const LIST_H = 400;
 const BUBBLE_MS = 8000;
-const DND_KEY = "ccode.deskPet.dndUntil";
 const SEEN_KEY = "ccode.deskPet.seen";
 
 interface PetSettings {
@@ -45,10 +48,17 @@ interface PetSettings {
 
 type Panel = { kind: "bubble"; item: PetItem; count: number } | { kind: "list" } | null;
 
-function readDnd(): number {
-  const v = Number(localStorage.getItem(DND_KEY) ?? 0);
-  return Number.isFinite(v) ? v : 0;
+const ASK_PROJECT_KEY = "ccode.deskPet.askProject";
+
+interface AskState {
+  reqId: string;
+  projectPath: string;
+  projectName: string;
+  question: string;
+  progress: string | null;
+  done: { ok: boolean; text: string; clarify: { question: string; options: string[] } | null; deskOnly: string[] } | null;
 }
+
 
 export default function PetApp() {
   const win = useMemo(() => getCurrentWindow(), []);
@@ -57,7 +67,7 @@ export default function PetApp() {
   const [panel, setPanel] = useState<Panel>(null);
   const [reaction, setReaction] = useState<"oops" | "happy" | null>(null);
   const [drag, setDrag] = useState<"left" | "right" | null>(null);
-  const [dndUntil, setDndUntil] = useState(readDnd);
+  const [dndUntil, setDndUntil] = useState(readPetDnd);
   const [hour, setHour] = useState(() => new Date().getHours());
   // 上一轮的键：比对新来的；第一次（null）不冒话。存本机，重开小窗不把旧事当新事再冒一遍
   const seen = useRef<Set<string> | null>(null);
@@ -227,7 +237,7 @@ export default function PetApp() {
           text: dnd ? "结束勿扰" : "勿扰一小时",
           action: () => {
             const until = dnd ? 0 : Date.now() + 3_600_000;
-            localStorage.setItem(DND_KEY, String(until));
+            localStorage.setItem(PET_DND_KEY, String(until));
             setDndUntil(until);
             if (!dnd) setPanel(null);
           },
@@ -239,6 +249,28 @@ export default function PetApp() {
     });
     await menu.popup();
   }
+
+  // 朝鼠标倾身：只在面板收着、站着 / 等你 / 在想时，约每 150ms 看一次鼠标；减弱动态效果时不动
+  const [lean, setLean] = useState({ rotate: 0, x: 0, y: 0 });
+  const leanable = !panel && !drag && !reaction;
+  useEffect(() => {
+    if (!leanable || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setLean({ rotate: 0, x: 0, y: 0 });
+      return;
+    }
+    let stop = false;
+    const tick = async () => {
+      const at = await invoke<[number, number] | null>("desk_pet_cursor").catch(() => null);
+      const h = home.current;
+      if (stop) return;
+      setLean(at && h ? petLean(at[0] - (h.x + compact / 2), at[1] - (h.y + compact / 2)) : { rotate: 0, x: 0, y: 0 });
+    };
+    const timer = window.setInterval(() => void tick(), 150);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [leanable, compact]);
 
   const mood = buddyMood(buddyDayPart(hour));
   const waiting = waitingCount(feed.items);
@@ -268,7 +300,15 @@ export default function PetApp() {
       onContextMenu={onContextMenu}
       title={title}
     >
-      <MesaBuddy size={pet} pose={pose} prop={prop} />
+      <div
+        className="pet-lean"
+        style={{
+          // 睡着不转身
+          transform: pose === "sleep" ? undefined : `translate(${lean.x}px, ${lean.y}px) rotate(${lean.rotate}deg)`,
+        }}
+      >
+        <MesaBuddy size={pet} pose={pose} prop={prop} />
+      </div>
       {waiting > 0 && !dnd && <span className="pet-badge">{waiting > 9 ? "9+" : waiting}</span>}
     </div>
   );
@@ -284,7 +324,7 @@ export default function PetApp() {
               onClose={() => setPanel(null)}
             />
           ) : (
-            <ItemList items={feed.items} working={feed.working} onClose={() => setPanel(null)} />
+            <ItemList feed={feed} working={feed.working} onClose={() => setPanel(null)} />
           )}
         </div>
       )}
@@ -310,25 +350,138 @@ function openTarget(target: PetOpen | null) {
   void invoke("desk_pet_open", { target });
 }
 
-function ItemList({ items, working, onClose }: { items: PetItem[]; working: boolean; onClose: () => void }) {
+function ItemList({ feed, working, onClose }: { feed: PetFeed; working: boolean; onClose: () => void }) {
+  const items = feed.items;
+  const [ask, setAsk] = useState<AskState | null>(null);
   return (
     <div className="pet-card">
       <div className="pet-card-head">
-        <span className="pet-card-title">{items.length ? `要你看一眼 · ${items.length}` : working ? "有活在做，没有等你的事" : "没有等你的事"}</span>
+        <span className="pet-card-title">
+          {ask ? "问项目助手" : items.length ? `要你看一眼 · ${items.length}` : working ? "有活在做，没有等你的事" : "没有等你的事"}
+        </span>
+        {ask && (
+          <button type="button" className="pet-link" onClick={() => setAsk(null)}>
+            返回
+          </button>
+        )}
         <button type="button" className="pet-x" onClick={onClose} aria-label="收起">
           ✕
         </button>
       </div>
-      <ol className="pet-items">
-        {items.map((item) => (
-          <PetRow key={item.key} item={item} />
-        ))}
-      </ol>
+      {ask ? (
+        <AskView ask={ask} />
+      ) : (
+        <ol className="pet-items">
+          {items.map((item) => (
+            <PetRow key={item.key} item={item} />
+          ))}
+        </ol>
+      )}
+      <AskBox feed={feed} ask={ask} setAsk={setAsk} />
+    </div>
+  );
+}
+
+/** 问小桌（第二期）：选项目 + 一句话，交给那个项目的项目助手；问答照常记进那个项目，在 Mesa 里也看得到 */
+function AskBox({ feed, ask, setAsk }: { feed: PetFeed; ask: AskState | null; setAsk: (fn: (a: AskState | null) => AskState | null) => void }) {
+  const projects = feed.projects ?? [];
+  const [project, setProject] = useState<string | null>(() => defaultAskProject(feed, localStorage.getItem(ASK_PROJECT_KEY)));
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    if (!project || !projects.some((p) => p.path === project)) setProject(defaultAskProject(feed, localStorage.getItem(ASK_PROJECT_KEY)));
+  }, [feed, project, projects]);
+  const busy = !!ask && !ask.done;
+
+  async function send(question: string) {
+    const q = question.trim();
+    if (!q || !project || busy) return;
+    const name = projects.find((p) => p.path === project)?.name ?? "";
+    localStorage.setItem(ASK_PROJECT_KEY, project);
+    const reqId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setAsk(() => ({ reqId, projectPath: project, projectName: name, question: q, progress: null, done: null }));
+    setDraft("");
+    const offProgress = await listen<{ reqId: string; text: string }>("desk-pet:ask-progress", (e) => {
+      if (e.payload.reqId === reqId) setAsk((a) => (a && a.reqId === reqId ? { ...a, progress: e.payload.text } : a));
+    });
+    const offDone = await listen<{ reqId: string } & NonNullable<AskState["done"]>>("desk-pet:ask-done", (e) => {
+      if (e.payload.reqId !== reqId) return;
+      const { ok, text, clarify, deskOnly } = e.payload;
+      setAsk((a) => (a && a.reqId === reqId ? { ...a, done: { ok, text, clarify, deskOnly } } : a));
+      offProgress();
+      offDone();
+    });
+    await emitTo("main", "desk-pet:ask", { reqId, projectPath: project, question: q });
+  }
+
+  // 它追问时的选项：点了当下一句问回去
+  useEffect(() => {
+    const onPick = (e: Event) => void send((e as CustomEvent<string>).detail);
+    window.addEventListener("pet-ask-pick", onPick);
+    return () => window.removeEventListener("pet-ask-pick", onPick);
+  });
+
+  if (!projects.length) {
+    return (
       <div className="pet-card-foot">
         <button type="button" className="pet-link" onClick={() => openTarget(null)}>
           打开 Mesa
         </button>
       </div>
+    );
+  }
+  return (
+    <form
+      className="pet-ask"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void send(draft);
+      }}
+    >
+      <select className="pet-select" value={project ?? ""} onChange={(e) => setProject(e.target.value)} title="问哪个项目的项目助手" disabled={busy}>
+        {projects.map((p) => (
+          <option key={p.path} value={p.path}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+      <input className="pet-input" value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} placeholder={busy ? "正在想…" : "问项目助手"} />
+    </form>
+  );
+}
+
+function AskView({ ask }: { ask: AskState }) {
+  const d = ask.done;
+  return (
+    <div className="pet-items pet-ask-view">
+      <p className="pet-item-meta">{ask.projectName} · 你问</p>
+      <p className="pet-item-text">{ask.question}</p>
+      <p className="pet-item-meta pet-ask-gap">项目助手</p>
+      {!d && <p className="pet-item-detail">{ask.progress ?? "正在想…"}</p>}
+      {d && <p className={d.ok ? "pet-answer" : "pet-err"}>{d.ok ? d.text : `没问成：${d.text}`}</p>}
+      {d?.clarify && (
+        <>
+          <p className="pet-item-text pet-ask-gap">{d.clarify.question}</p>
+          {d.clarify.options.length > 0 && (
+            <div className="pet-actions">
+              {d.clarify.options.map((o) => (
+                <button key={o} type="button" className="pet-btn" onClick={() => window.dispatchEvent(new CustomEvent("pet-ask-pick", { detail: o }))}>
+                  {o}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {d && d.deskOnly.length > 0 && (
+        <div className="pet-ask-gap">
+          <p className="pet-item-detail">它还{d.deskOnly.join("、")}，要在 Mesa 里点。</p>
+          <div className="pet-actions">
+            <button type="button" className="pet-btn" onClick={() => openTarget({ kind: "assistant", projectPath: ask.projectPath })}>
+              在 Mesa 里看这条回答
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -129,6 +129,7 @@ import {
   type ProjectSurfaceTab,
 } from "../project-surface";
 import ProjectSchedulesView from "../components/ProjectSchedulesView";
+import { petSpeaksInstead, readPetDnd } from "../desk-pet";
 
 /** 保留工作区的合并已完成，且分支尚未产生新的待合并提交。 */
 function isMerged(
@@ -156,6 +157,8 @@ function pathBaseName(path: string): string {
 /** 人工请求新来源的系统通知（权限申请与提示音在 system-notification.ts）。
     复用「长任务 OS 通知」设置开关，不新增设置项。 */
 function fireHelpNotification(sourceCount: number) {
+  // 桌宠开着且会说话：新的人工请求由小桌报，不再另弹系统通知（2026-11-09 桌宠第二期）
+  if (petSpeaksInstead(useAppStore.getState().settings, readPetDnd(), Date.now())) return Promise.resolve();
   return sendSystemNotification({
     title: "人工请求",
     body: `${sourceCount} 个来源有人工请求`,

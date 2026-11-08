@@ -3385,7 +3385,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="系统通知"
           hint="Mesa 在后台、Agent 停下等你确认时弹系统通知"
-          labelTitle="同一件事 30 秒内不重复通知"
+          labelTitle="同一件事 30 秒内不重复通知；开了桌宠并让小桌说话时，等你确认和新的人工请求由小桌说，不再弹系统通知"
         >
           <Toggle
             label="系统通知"

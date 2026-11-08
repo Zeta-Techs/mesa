@@ -132,3 +132,13 @@ pub async fn desk_pet_open(app: AppHandle, target: Option<serde_json::Value>) {
     crate::window_close::show_main(&app);
     let _ = app.emit_to("main", "desk-pet:open", target);
 }
+
+/// 鼠标在屏幕上的位置（逻辑像素，按桌宠小窗所在屏的缩放换算）：小桌朝鼠标那边微微倾身用（第二期）。
+/// 取不到（小窗没开、系统不给）返回 None，小桌就站正
+#[tauri::command]
+pub async fn desk_pet_cursor(app: AppHandle) -> Option<(f64, f64)> {
+    let win = app.get_webview_window(LABEL)?;
+    let p = app.cursor_position().ok()?;
+    let sf = win.scale_factor().ok()?;
+    Some((p.x / sf, p.y / sf))
+}

@@ -264,6 +264,7 @@ import type {
 import { watchDevicePixelRatio } from "../device-pixel-ratio";
 import { pollEvery } from "../polling";
 import { memoWithLatestFunctions } from "../stable-props";
+import { petSpeaksInstead, readPetDnd } from "../desk-pet";
 
 // 每个标签的聊天层 / 状态栏都在本页一起画，回调是内联闭包：换成转发到最新闭包的固定函数后，
 // 别的标签实时预览出一行字不再带着这个标签的整段对话重画（stable-props.ts）
@@ -656,6 +657,8 @@ export function fireAttentionNotification(
   body: string,
   extra: { tabId: string; cwd: string },
 ) {
+  // 桌宠开着且会说话：等你确认由小桌报，不再另弹系统通知（2026-11-09 桌宠第二期）
+  if (petSpeaksInstead(useAppStore.getState().settings, readPetDnd(), Date.now())) return Promise.resolve();
   return sendSystemNotification({ title, body, actionTypeId: "ccode.attention", extra });
 }
 

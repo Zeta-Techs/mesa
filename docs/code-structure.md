@@ -359,7 +359,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：2026-11-09 起是逐帧精灵图（assets/buddy/xiaozhuo.webp，出图模型孵、scripts/buddy-sprite/ 可重孵），
                              # 按 buddy-sprite.ts 的帧时长换背景位置；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
   pet/PetApp.tsx             # 桌宠小窗（pet.html 入口 pet/main.tsx + pet/pet.css，desk_pet.rs 建窗）：小桌 + 琥珀角标 + 冒一句 + 「要你看一眼」小卡片 + 右键系统菜单；
-                             # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动
+                             # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动；
+                             # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
@@ -639,8 +640,9 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
                              # 新目标 → task_create + prepareGoalRun + openTerminalInTurn（项目默认 Agent、隔离副本，编程项目不走）；全走已有入口；
                              # v2：依据材料作 inputPaths、技能只留已装的、resolveBasedOn 取内置科研任务 / 我的任务的做法，科研项目附科研通则
-  desk-pet.ts                # 桌宠报信纯逻辑：等你的事 / 现在的情况 → 桌宠条目（键、能点什么、去看看去哪）、新来的比对、冒哪一句、反应与样子先后（tests/desk-pet.test.ts）
-  desk-pet-host.ts           # 桌宠的主窗口一侧（ProjectAssistantHost 挂）：每 20 秒跨项目（最多 8 个）拼清单发给小窗，按「等你的事」原路办小窗点的事，收 desk-pet:open 跳过去
+  desk-pet.ts                # 桌宠报信纯逻辑：等你的事 / 现在的情况 → 桌宠条目（键、能点什么、去看看去哪）、新来的比对、冒哪一句、反应与样子先后；
+                             # 第二期：petSpeaksInstead（桌宠开着时等确认 / 人工请求不另弹系统通知，勿扰键主窗口与小窗共用）、petLean 朝鼠标倾身、defaultAskProject、deskOnlyNotes（tests/desk-pet.test.ts）
+  desk-pet-host.ts           # 桌宠的主窗口一侧（ProjectAssistantHost 挂）：每 20 秒跨项目（最多 8 个）拼清单发给小窗，按「等你的事」原路办小窗点的事，收 desk-pet:open 跳过去；问小桌（desk-pet:ask）交给那个项目的项目助手，边想边回 ask-progress，答完 ask-done
   buddy-sprite.ts            # 小桌精灵图的行表：姿势 + 道具 → 第几行、每帧时长、放几遍、放完回站着还是停住；buddyClip 头像位取半身（tests/buddy-sprite.test.ts 核对图尺寸）
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
@@ -2072,7 +2074,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   地址，curl 下载后 osascript「with administrator privileges」跑 installer，Mesa 碰不到密码）；
                              #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
   desk_pet.rs                # 桌宠小窗：按设置建 / 关 / 重排（透明无边框置顶、不进任务栏、所有桌面可见、不抢焦点；权限单独 capabilities/desk-pet.json），
-                             # 记位置（拔了外接屏回主屏右下角）、右键隐藏、「去看看」叫回主窗口发 desk-pet:open；建窗命令一律 async；清单不在这里拼（主窗口 desk-pet-host.ts）
+                             # 记位置（拔了外接屏回主屏右下角）、右键隐藏、「去看看」叫回主窗口发 desk-pet:open、desk_pet_cursor 给倾身用的鼠标位置；建窗命令一律 async；清单不在这里拼（主窗口 desk-pet-host.ts）
   window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()；Windows / Linux 单实例回调与更新重启前放锁（release_single_instance）
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底

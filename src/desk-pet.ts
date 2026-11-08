@@ -44,6 +44,15 @@ export interface PetFeed {
   /** 有活在做（步骤或目标在跑、终端里的 AI 在干活） */
   working: boolean;
   items: PetItem[];
+  /** 问小桌时可选的项目（有事的在前）；旧清单没有 */
+  projects?: { path: string; name: string }[];
+}
+
+/** 问小桌默认问哪个项目：上次问的那个还在就用它，否则最上面那件事所在的项目，再否则第一个项目 */
+export function defaultAskProject(feed: PetFeed, last: string | null): string | null {
+  const list = feed.projects ?? [];
+  if (last && list.some((p) => p.path === last)) return last;
+  return feed.items[0]?.projectPath ?? list[0]?.path ?? null;
 }
 
 /** 等你的事 → 桌宠条目（分级同手机：信任菜单只在是你经项目助手派的活时能点） */
@@ -201,4 +210,53 @@ export function petKindLabel(kind: PetKind): string {
     case "failed":
       return "出错了";
   }
+}
+
+/** 勿扰到什么时候（毫秒时间戳）：桌宠右键「勿扰一小时」写，主窗口与小窗同源共用这份本机存储 */
+export const PET_DND_KEY = "ccode.deskPet.dndUntil";
+
+/**
+ * 桌宠此刻会不会替系统通知报这件事（2026-11-09 第二期：桌宠开着时同一件事不重复弹系统通知）。
+ * 只管桌宠本来就报的两类——终端里等你确认、新的人工请求；定时任务跑完、手机发来东西照旧弹。
+ * 桌宠关着、设成不说话、或在勿扰中时，照旧由系统通知报。
+ */
+export function petSpeaksInstead(
+  settings: { deskPetEnabled?: boolean; deskPetSay?: PetSay } | null | undefined,
+  dndUntil: number,
+  now: number,
+): boolean {
+  if (!settings?.deskPetEnabled) return false;
+  if ((settings.deskPetSay ?? "important") === "quiet") return false;
+  return !(Number.isFinite(dndUntil) && now < dndUntil);
+}
+
+export function readPetDnd(): number {
+  try {
+    const v = Number(localStorage.getItem(PET_DND_KEY) ?? 0);
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 小桌朝鼠标那边微微倾身（第二期「眼睛跟鼠标」的做法：出图模型画的看向八方在 112px 下分不出，改成整个身子转向）：
+ *  dx / dy = 鼠标相对小桌中心（逻辑像素）。太远（超过 900px）不理；角度、位移都封顶，只是一点点 */
+export function petLean(dx: number, dy: number): { rotate: number; x: number; y: number } {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) > 900 || Math.hypot(dx, dy) < 24) return { rotate: 0, x: 0, y: 0 };
+  const clamp = (v: number, m: number) => Math.max(-m, Math.min(m, v));
+  return {
+    rotate: Math.round(clamp(dx / 45, 6) * 10) / 10,
+    x: Math.round(clamp(dx / 60, 4) * 10) / 10,
+    y: Math.round(clamp(dy / 90, 3) * 10) / 10,
+  };
+}
+
+/** 回答里要在 Mesa 里点的东西（派活单、补料单、以后照这样办、跳到某一页的按钮）：桌宠上不办，只说一句 */
+export function deskOnlyNotes(parts: { order: boolean; rework: boolean; remember: boolean; actions: number }): string[] {
+  const out: string[] = [];
+  if (parts.order) out.push("起草了一张派活单");
+  if (parts.rework) out.push("起草了一张补料单");
+  if (parts.remember) out.push("起草了一条「以后照这样办」");
+  if (parts.actions) out.push(`给了 ${parts.actions} 个去处按钮`);
+  return out;
 }

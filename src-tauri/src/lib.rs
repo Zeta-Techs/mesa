@@ -652,6 +652,7 @@ pub fn run() {
             desk_pet::desk_pet_save_position,
             desk_pet::desk_pet_hide,
             desk_pet::desk_pet_open,
+            desk_pet::desk_pet_cursor,
             window_close::confirm_quit,
             window_close::release_single_instance,
             app_icon::apply_app_icon,

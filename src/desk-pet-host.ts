@@ -4,6 +4,8 @@
  *   取数函数与项目助手、手机通道同一份（loadDesk / gatherBriefInput），不另判。
  * - 转达：小窗上点的选项 / 写的一句 / 放宽授权 / 信任菜单（desk-pet:act）在这里按「等你的事」原路办，办完回一句（desk-pet:act-done）。
  * - 去看看：Rust desk_pet_open 叫回主窗口后发 desk-pet:open，这里跳到那个地方。
+ * - 问小桌（第二期）：小窗发 desk-pet:ask，这里交给那个项目的项目助手（同手机 askProjectAssistant，问答照常记进那个项目），
+ *   边想边回 desk-pet:ask-progress，答完回 desk-pet:ask-done；起草了派活单 / 补料单 / 规矩的只说一句、带去 Mesa 里看。
  * 主窗口关着时只是藏到后台，这里照常跑；退出 Mesa 时桌宠一起走。
  */
 import { invoke } from "@tauri-apps/api/core";
@@ -15,7 +17,9 @@ import { answerGrant, answerTrust, loadDesk, replyDesk } from "./assistant-desk"
 import { gatherBriefInput } from "./project-assistant-run";
 import { runAssistantAction } from "./assistant-actions";
 import { optionAnswer } from "./help-requests";
-import { briefWorking, petItemsFromBrief, petItemsFromDesk, type PetFeed, type PetItem, type PetOpen } from "./desk-pet";
+import { askProjectAssistant, type AssistantTurn } from "./project-assistant-run";
+import { guardClaims, parseAssistantAnswer, parseClarify, parseRemember, parseReworkOrder, parseWorkOrder } from "./project-assistant";
+import { briefWorking, deskOnlyNotes, petItemsFromBrief, petItemsFromDesk, type PetFeed, type PetItem, type PetOpen } from "./desk-pet";
 import type { DeskItem } from "./assistant-queue";
 import type { HelpRequestDto, ProjectDto, TaskDto, WorkspaceDto } from "./types";
 
@@ -61,6 +65,43 @@ async function activeProjects(): Promise<ProjectDto[]> {
     .slice(0, MAX_PROJECTS);
 }
 
+export interface PetAsk {
+  reqId: string;
+  projectPath: string;
+  question: string;
+}
+
+async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<{ text: string; clarify: { question: string; options: string[] } | null; deskOnly: string[] }> {
+  const projects = await safe(invoke<ProjectDto[]>("list_projects"), []);
+  const project = projects.find((p) => samePath(p.path, a.projectPath, IS_WINDOWS)) ?? null;
+  if (!project) throw new Error("这个项目已经不在 Mesa 里了");
+  const history = (await safe(invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: project.path }), [])).filter((t) => !t.echoOf);
+  const turn = await askProjectAssistant({
+    projectPath: project.path,
+    project,
+    question: a.question,
+    history,
+    focus: null,
+    where: "桌面上的小桌（桌宠）",
+    onStream: (u) => {
+      if (u.step) progress(u.step);
+    },
+  });
+  useAppStore.getState().bumpAssistantEchoTick();
+  const read = await safe(invoke<{ config: { steps: unknown[] } } | null>("read_project_config", { path: project.path }), null);
+  const steps = read?.config.steps.length ?? 0;
+  const memo = parseRemember(turn.answer);
+  const clar = parseClarify(memo.text);
+  const rework = parseReworkOrder(clar.text, steps);
+  const order = parseWorkOrder(rework.text, steps);
+  const parsed = parseAssistantAnswer(order.text, steps);
+  return {
+    text: guardClaims(parsed.text).text,
+    clarify: clar.ask,
+    deskOnly: deskOnlyNotes({ order: !!order.order, rework: !!rework.rework, remember: !!memo.remember, actions: parsed.actions.length }),
+  };
+}
+
 export async function buildPetFeed(): Promise<PetFeed> {
   const list = await activeProjects();
   const now = new Date();
@@ -79,7 +120,10 @@ export async function buildPetFeed(): Promise<PetFeed> {
   );
   const live = useAppStore.getState().terminalRunInputs;
   const working = parts.some((p) => p.working) || live.some((r) => r.running && !r.shell && r.attention === "working");
-  return { working, items: parts.flatMap((p) => p.items) };
+  // 问小桌时可选的项目：有事的排前面，其余按 Mesa 里的顺序
+  const all = await safe(invoke<ProjectDto[]>("list_projects"), []);
+  const askProjects = [...list, ...all.filter((p) => !list.some((q) => samePath(q.path, p.path, IS_WINDOWS)))].map((p) => ({ path: p.path, name: p.name }));
+  return { working, items: parts.flatMap((p) => p.items), projects: askProjects };
 }
 
 async function act(a: PetAct): Promise<string> {
@@ -145,6 +189,14 @@ export async function startDeskPetHost(): Promise<() => void> {
         return;
       }
       void openTarget(t as PetOpen | null);
+    }),
+    listen<PetAsk>("desk-pet:ask", (e) => {
+      const a = e.payload;
+      void askFromPet(a, (text) => void emitTo(PET_LABEL, "desk-pet:ask-progress", { reqId: a.reqId, text })).then(
+        (r) => emitTo(PET_LABEL, "desk-pet:ask-done", { reqId: a.reqId, ok: true, ...r }),
+        (reason) =>
+          emitTo(PET_LABEL, "desk-pet:ask-done", { reqId: a.reqId, ok: false, text: String(reason instanceof Error ? reason.message : reason), clarify: null, deskOnly: [] }),
+      );
     }),
     // 桌宠右键「隐藏」、托盘开关：设置页跟着刷新
     listen("desk-pet:hidden", () => void useAppStore.getState().loadSettings()),
