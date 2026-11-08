@@ -55,12 +55,12 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { per_publisher_daily: 30, total_daily: 80, min_gap_secs: 30, max_gap_secs: 90 }
+        Limits { per_publisher_daily: 30, total_daily: 80, min_gap_secs: 15, max_gap_secs: 45 }
     }
 }
 
 /// 人能调到的最宽：每天的篇数不能再高、间隔不能再短
-pub const CEILING: Limits = Limits { per_publisher_daily: 60, total_daily: 150, min_gap_secs: 20, max_gap_secs: 20 };
+pub const CEILING: Limits = Limits { per_publisher_daily: 60, total_daily: 150, min_gap_secs: 10, max_gap_secs: 10 };
 
 pub(crate) fn clamp_limits(l: Limits) -> Limits {
     let min_gap = l.min_gap_secs.clamp(CEILING.min_gap_secs, 600);
