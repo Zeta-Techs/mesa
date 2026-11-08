@@ -6,9 +6,9 @@
  */
 export type BuddyDayPart = "morning" | "day" | "evening" | "night";
 
-/** 早上 6–11 点、傍晚 18–22 点、夜深 22 点到早上 6 点，其余是白天 */
+/** 早上 6–11 点、晚上 18–24 点（亮台灯）、零点到早上 6 点睡觉，其余是白天（2026-11-08 用户：「22 点后先亮台灯，零点睡觉」） */
 export function buddyDayPart(hour: number): BuddyDayPart {
-  if (hour >= 22 || hour < 6) return "night";
+  if (hour < 6) return "night";
   if (hour < 11) return "morning";
   if (hour >= 18) return "evening";
   return "day";

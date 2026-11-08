@@ -11,7 +11,8 @@ test("小桌按钟点分早上 / 白天 / 傍晚 / 夜深", () => {
   assert.equal(buddyDayPart(17), "day");
   assert.equal(buddyDayPart(18), "evening");
   assert.equal(buddyDayPart(21), "evening");
-  assert.equal(buddyDayPart(22), "night");
+  assert.equal(buddyDayPart(22), "evening");
+  assert.equal(buddyDayPart(23), "evening");
   assert.equal(buddyDayPart(0), "night");
 });
 
