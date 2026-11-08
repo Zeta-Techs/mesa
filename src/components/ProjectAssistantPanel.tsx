@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, ArrowUp, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
-import { secondaryActionClass } from "./PageFrame";
+import { ghostActionClass, secondaryActionClass } from "./PageFrame";
 import ChatMarkdown from "./ChatMarkdown";
 import MesaBuddy from "./MesaBuddy";
 import { MesaStatusLead } from "./MesaMark";
@@ -661,8 +661,6 @@ export default function ProjectAssistantPanel({
                     <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
                     <span className="text-xs text-l3" title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}`}>
                       项目助手 · {relTime(turn.at)}
-                      {/* 这次调用花了多少（只有 Claude Code / Codex、模型查得到价时有；同用量页口径） */}
-                      {turn.costUsd != null && <span title="这次问答的花费（用量页同一口径，记在内部活动里）"> · ${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}</span>}
                     </span>
                   </div>
                   {lead && (
@@ -705,40 +703,14 @@ export default function ProjectAssistantPanel({
                       onDispatch={(order) => dispatch(turn.at, order)}
                     />
                   )}
-                  {turn.basis && (
-                    <p className="mt-2 text-micro text-l4">
-                      依据：
-                      {(() => {
-                        const heads = basisGuideHeadings(turn.basis);
-                        if (heads.length === 0) return turn.basis;
-                        const tail = turn.basis.replace(/^说明书(「[^」]+」)+/, "");
-                        return (
-                          <>
-                            说明书
-                            {heads.map((h) => (
-                              <button
-                                key={h}
-                                type="button"
-                                className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                                title="在应用里打开说明书这一节"
-                                onClick={() => setGuideHeading(h)}
-                              >
-                                <span className="text-micro">「{h}」</span>
-                              </button>
-                            ))}
-                            {tail}
-                          </>
-                        );
-                      })()}
-                    </p>
-                  )}
                   {parsed.actions.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {parsed.actions.map((action) => (
+                    // 一条回答只一个显眼的按钮：有单子时主按钮是单子上的「派出去」，这里全降成文字按钮；否则第一个是次级按钮
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      {parsed.actions.map((action, ai) => (
                         <button
                           key={`${action.kind}-${action.step ?? ""}`}
                           type="button"
-                          className={secondaryActionClass}
+                          className={ai === 0 && !withOrder.order && !withRework.rework ? secondaryActionClass : ghostActionClass}
                           title={action.text || undefined}
                           onClick={() => onAction(action, turn)}
                         >
@@ -747,21 +719,63 @@ export default function ProjectAssistantPanel({
                       ))}
                     </div>
                   )}
-                  {i === turns.length - 1 && !busy && retryIntents(turn.basis, turn.connection).length > 0 && (
-                    <p className="mt-2 flex flex-wrap items-center gap-x-2 text-micro text-l4">
-                      <span>没答到点上？换个查法：</span>
-                      {retryIntents(turn.basis, turn.connection).map((r) => (
-                        <button
-                          key={r.intent}
-                          type="button"
-                          className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                          onClick={() => void send(turn.question, null, r.intent)}
-                        >
-                          <span className="text-micro">{r.label}</span>
-                        </button>
-                      ))}
-                    </p>
-                  )}
+                  {/* 依据、花费、换个查法并成一行小字（原来各占一行） */}
+                  {(() => {
+                    const retry = i === turns.length - 1 && !busy ? retryIntents(turn.basis, turn.connection) : [];
+                    if (!turn.basis && turn.costUsd == null && retry.length === 0) return null;
+                    const heads = turn.basis ? basisGuideHeadings(turn.basis) : [];
+                    const tail = turn.basis ? turn.basis.replace(/^说明书(「[^」]+」)+/, "") : "";
+                    const dot = <span aria-hidden="true"> · </span>;
+                    return (
+                      <p className="mt-2 flex flex-wrap items-center gap-x-1 text-micro text-l4">
+                        {turn.basis && (
+                          <span>
+                            依据：
+                            {heads.length === 0 ? (
+                              turn.basis
+                            ) : (
+                              <>
+                                说明书
+                                {heads.map((h) => (
+                                  <button
+                                    key={h}
+                                    type="button"
+                                    className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                                    title="在应用里打开说明书这一节"
+                                    onClick={() => setGuideHeading(h)}
+                                  >
+                                    <span className="text-micro">「{h}」</span>
+                                  </button>
+                                ))}
+                                {tail}
+                              </>
+                            )}
+                          </span>
+                        )}
+                        {/* 这次调用花了多少（只有 Claude Code / Codex、模型查得到价时有；同用量页口径） */}
+                        {turn.costUsd != null && (
+                          <span title="这次问答的花费（用量页同一口径，记在内部活动里）">
+                            {turn.basis && dot}${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}
+                          </span>
+                        )}
+                        {retry.length > 0 && (
+                          <span>
+                            {(turn.basis || turn.costUsd != null) && dot}没答到点上？
+                            {retry.map((r, ri) => (
+                              <button
+                                key={r.intent}
+                                type="button"
+                                className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                                onClick={() => void send(turn.question, null, r.intent)}
+                              >
+                                <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
+                              </button>
+                            ))}
+                          </span>
+                        )}
+                      </p>
+                    );
+                  })()}
                 </div>
               </article>
             );

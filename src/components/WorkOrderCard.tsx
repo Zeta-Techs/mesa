@@ -55,6 +55,8 @@ export default function WorkOrderCard({
   // 依据材料按一行一个改，存回时同一套规则拆（绝对路径、.. 一律去掉）
   const [inputsText, setInputsText] = useState((order.inputs ?? []).join("\n"));
   const [editing, setEditing] = useState(false);
+  // 默认只露标题、要做的前三行和一行「还有哪几栏」，点开看全部（2026-11-08：一条回答里卡片太长，主次看不出）
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ text: string; tone: DispatchTone; phase?: string } | null>(null);
@@ -161,6 +163,26 @@ export default function WorkOrderCard({
             </label>
           ))}
         </div>
+      ) : !expanded ? (
+        <div className="space-y-1 text-sm leading-6">
+          <p className="font-medium text-l1">{shown.title}</p>
+          <p className="line-clamp-3 whitespace-pre-wrap break-words text-l2">{shown.task}</p>
+          {(() => {
+            const extra = [
+              shown.inputs?.length ? `依据材料 ${shown.inputs.length} 份` : "",
+              ...TEXT_FIELDS.filter((f) => shown[f.key]).map((f) => f.label),
+              shown.basedOn ? `按「${shown.basedOn}」` : "",
+              shown.skills?.length ? `技能 ${shown.skills.length} 个` : "",
+            ].filter(Boolean);
+            const long = shown.task.length > 120 || shown.task.split("\n").length > 3;
+            if (!extra.length && !long) return null;
+            return (
+              <button type="button" className="block max-w-full truncate text-left text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1" onClick={() => setExpanded(true)}>
+                <span className="text-xs">{extra.length ? `还有：${extra.join(" · ")} — 看全部` : "看全部"}</span>
+              </button>
+            );
+          })()}
+        </div>
       ) : (
         <div className="space-y-1.5 text-sm leading-6">
           <p className="font-medium text-l1">{shown.title}</p>
@@ -182,6 +204,9 @@ export default function WorkOrderCard({
               {shown.skills?.length ? <>用技能 {shown.skills.join("、")}</> : null}
             </p>
           )}
+          <button type="button" className="text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1" onClick={() => setExpanded(false)}>
+            <span className="text-xs">收起</span>
+          </button>
         </div>
       )}
       {shown.schedule && !record && <p className="mt-1.5 text-xs text-l3">想定期做：{shown.schedule}。先派这一次，满意了再点「做成定时任务…」。</p>}

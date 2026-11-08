@@ -10,10 +10,11 @@ import { answerTrust, focusConfirm, loadDesk, replyDesk } from "../assistant-des
  * 项目助手顶上的「等你的事」（调度台，2026-11-06 docs/design-assistant-dispatch-desk.md §2）：
  * 人工请求、AI 在对话里问你的话、等你确认的命令，一个地方看齐、就地回；Mesa 原路原话转达，不经 AI 改写。
  * 等确认的命令只带路去对话里确认。没有等你的事时整块不出现。
+ * 2026-11-08：钉在滚动区顶上的一条横条，默认收成「等你的事 N 件：…」一行，点开才展开（限高、内部滚动），不再把对话推到下面。
  */
 export default function AssistantDesk({ projectPath }: { projectPath: string }) {
   const [items, setItems] = useState<DeskItem[]>([]);
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
@@ -48,14 +49,15 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
 
   if (items.length === 0) return null;
   return (
-    <section className="mb-5 rounded-xl border border-hairline p-3" aria-label="等你的事">
-      <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen((v) => !v)}>
+    // 滚动区有 px-5 pt-4：横条拉满宽、贴顶，背景与抽屉同色，滚动时对话从它下面过
+    <section className="sticky top-0 z-10 -mx-5 -mt-4 mb-1 border-b border-hairline bg-canvas px-5 py-2" aria-label="等你的事">
+      <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="h-2 w-2 shrink-0 rounded-full bg-warn-text" aria-hidden="true" />
-        <span className="min-w-0 flex-1 text-sm font-medium text-l1">{deskSummary(items)}</span>
-        <span className="text-xs text-l4">{open ? "收起" : "展开"}</span>
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-l1" title={deskSummary(items)}>{deskSummary(items)}</span>
+        <span className="shrink-0 text-xs text-l4">{open ? "收起" : "展开"}</span>
       </button>
       {open && (
-        <ol className="mt-2 space-y-3">
+        <ol className="mt-2 max-h-[45vh] space-y-3 overflow-auto pb-1">
           {items.map((item) => {
             const draft = drafts[item.key] ?? "";
             const disabled = busy !== null;
