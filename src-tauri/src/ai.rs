@@ -3145,6 +3145,15 @@ mod tests {
             target.display()
         );
         let grant = crate::grant::Grant { network: crate::grant::Network::Academic, budget_usd: Some(0.3) };
+        // MESA_GR_NOTE=1：带上定时任务真实的授权说明，看它会不会按「被拦下：」逐条写出来
+        let prompt = if std::env::var("MESA_GR_NOTE").is_ok() {
+            format!(
+                "Task: download the page https://example.com/ into page.html in the working directory using curl, then report.{}",
+                crate::scheduler::grant_note(&grant)
+            )
+        } else {
+            prompt
+        };
         // 测试构建里 Codex 配置读的是空替身；真跑要按本机真实 config.toml 判断渠道有没有 auth
         crate::agents::set_test_codex_config(crate::agent_specs::codex_user_config());
         eprintln!("连接：{}", profile.name);
@@ -3152,6 +3161,12 @@ mod tests {
         match &res {
             Ok((text, run)) => eprintln!("run={run}\n{}", tail_chars(text, 3000)),
             Err(e) => eprintln!("失败：{}", tail_chars(e, 3000)),
+        }
+        if std::env::var("MESA_GR_NOTE").is_ok() {
+            let text = res.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+            let blocked = crate::scheduler::blocked_lines(&text);
+            eprintln!("认出的被拦下：{blocked:?}");
+            assert!(!blocked.is_empty(), "应按「被拦下：」写出被拦的事");
         }
         let escaped = target.exists();
         let inside = cwd.join("inside.txt").exists();

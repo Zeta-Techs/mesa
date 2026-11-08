@@ -77,3 +77,30 @@ test("派活进展卡片：停了的目标带「接着做」", async () => {
   assert.deepEqual(buttons(card)[0].value, { op: "resume", p: "/p/a", t: "t0" });
   assert.equal(buttons(echoCard(project, "t0", "做完了", false)).length, 0);
 });
+
+test("授权请求卡片：被拦下的事写出来，给「放宽重跑这一次 / 不用」两个按钮", () => {
+  const card: any = deskCard([
+    {
+      project,
+      items: [
+        {
+          key: "grant:s1:2026-11-08T10:00:00",
+          kind: "grant" as const,
+          step: null,
+          where: "定时任务「文献雷达」",
+          question: "上次运行被授权范围拦下，要放宽重跑这一次吗？",
+          options: [],
+          recommend: null,
+          detail: ["example.com 想下一篇全文"],
+          scheduleId: "s1",
+        },
+      ],
+    },
+  ]);
+  assert.match(JSON.stringify(card), /要扩大授权/);
+  assert.match(JSON.stringify(card), /被拦下：example.com 想下一篇全文/);
+  assert.deepEqual(buttons(card).map((b: any) => b.value), [
+    { op: "grant", p: "/p/a", k: "grant:s1:2026-11-08T10:00:00", v: "once" },
+    { op: "grant", p: "/p/a", k: "grant:s1:2026-11-08T10:00:00", v: "no" },
+  ]);
+});

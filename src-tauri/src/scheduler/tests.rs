@@ -1543,3 +1543,14 @@ fn real_paused_schedule_dry_run() {
     assert!(!read_schedules_at(&schedules_path().unwrap()).unwrap().iter().any(|t| t.id == dto.schedule.id));
     assert!(crate::skills::skill_id_by_name(&dto.skill_name).is_err());
 }
+
+/// 授权请求（2026-11-08）：只认以「被拦下：」开头的行（中英文冒号、列表符号都行），限条数
+#[test]
+fn blocked_lines_pick_marked_lines_only() {
+    let s = "做了三件事\n- 被拦下：example.com，想下一篇开放获取全文\n被拦下:  /Users/x/data 想读原始数据\n顺便说一句被拦下：不算\n被拦下：";
+    assert_eq!(
+        blocked_lines(s),
+        vec!["example.com，想下一篇开放获取全文".to_string(), "/Users/x/data 想读原始数据".to_string()]
+    );
+    assert!(blocked_lines("一切正常").is_empty());
+}

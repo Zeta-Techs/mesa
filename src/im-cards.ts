@@ -9,7 +9,7 @@ import type { RouteProject } from "./im-route";
 
 /** 按钮回传值：op 动作、p 项目根、t 那一轮的时间、k 等你的事的键、v 选中的值、q 待问的话 */
 export interface CardValue {
-  op: "clarify" | "dispatch" | "remember" | "desk" | "project" | "trust" | "resume";
+  op: "clarify" | "dispatch" | "remember" | "desk" | "project" | "trust" | "resume" | "grant";
   p: string;
   t?: string;
   k?: string;
@@ -98,14 +98,26 @@ export function deskCard(groups: readonly { project: RouteProject; items: readon
     els.push({ tag: "markdown", content: `**${g.project.name}**` });
     for (const item of g.items.slice(0, 8)) {
       const kind =
-        item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : "等你确认";
-      els.push({ tag: "markdown", content: `${item.where} · ${kind}\n${item.question}` });
+        item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : item.kind === "grant" ? "要扩大授权" : "等你确认";
+      els.push({
+        tag: "markdown",
+        content: `${item.where} · ${kind}\n${item.question}${item.kind === "grant" && item.detail.length ? `\n被拦下：${item.detail.join("；")}` : ""}`,
+      });
       if (item.kind === "help" && item.options.length) {
         els.push({
           tag: "action",
           actions: item.options.slice(0, 4).map((o) =>
             button(`${o.key}：${o.label}${item.recommend === o.key ? "（建议）" : ""}`, { op: "desk", p: g.project.path, k: item.key, v: `${o.key}：${o.label}` }),
           ),
+        });
+      } else if (item.kind === "grant") {
+        // 只放宽这一次（点一下就生效档）；以后都放宽回电脑改定时任务的授权
+        els.push({
+          tag: "action",
+          actions: [
+            button("放宽重跑这一次", { op: "grant", p: g.project.path, k: item.key, v: "once" }, true),
+            button("不用", { op: "grant", p: g.project.path, k: item.key, v: "no" }),
+          ],
         });
       } else if (item.kind === "trust") {
         // 只有你经项目助手派出去的活，手机上才给信任按钮（2026-11-06 用户拍板）；其余回电脑

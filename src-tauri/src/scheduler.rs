@@ -223,6 +223,22 @@ pub struct Schedule {
     /// 授权范围（2026-11-08，grant.rs）：能不能联网、每次最多花多少；None = 默认（只放行学术网站、不设预算）
     #[serde(default)]
     pub grant: Option<crate::grant::Grant>,
+    /// 上一次运行被授权范围拦下的事（Agent 在简报里以「被拦下：」开头写的行）；人答过（放宽重跑一次 / 不用）就清掉
+    #[serde(default)]
+    pub grant_request: Option<GrantRequest>,
+    /// 只对下一次运行生效的放宽（人点「放宽重跑这一次」）；跑起来时取走
+    #[serde(default)]
+    pub grant_once: Option<crate::grant::Grant>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantRequest {
+    pub at: String,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    /// 被拦下的事，一条一行（已脱敏、限长）
+    pub blocked: Vec<String>,
 }
 
 /// 前端 DTO（camelCase）
@@ -265,6 +281,7 @@ pub struct ScheduleDto {
     pub stalled_minutes: Option<u64>,
     /// 生效的授权范围（没设过的给默认）
     pub grant: crate::grant::Grant,
+    pub grant_request: Option<GrantRequest>,
 }
 
 impl From<Schedule> for ScheduleDto {
@@ -297,6 +314,7 @@ impl From<Schedule> for ScheduleDto {
             event: s.event,
             stalled_minutes: None,
             grant: s.grant.unwrap_or_default(),
+            grant_request: s.grant_request,
         }
     }
 }
@@ -2436,7 +2454,11 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         }
         task_prompt.push_str(PEEK_NOTE);
         task_prompt.push_str(EXTERNAL_MATERIAL_RULE);
-        let grant = task.grant.clone().unwrap_or_default();
+        // 人点过「放宽重跑这一次」的：这一次用放宽的，跑起来就取走（下一次回到原授权）
+        let grant = match take_grant_once(id) {
+            Some(g) => g,
+            None => task.grant.clone().unwrap_or_default(),
+        };
         task_prompt.push_str(&grant_note(&grant));
         crate::ai::run_agent_task_granted(
             &profile,
@@ -2584,6 +2606,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     let force_pause = (connection_missing && status == "error").then(|| {
         "绑定的连接已删除，已自动暂停。换一条连接后重新打开开关".to_string()
     });
+    let run_for_request = record.run_id.clone();
     let auto_paused = match record_run(id, record, ctx.slot, force_pause) {
         Ok(paused) => paused,
         Err(e) => {
@@ -2591,6 +2614,14 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             None
         }
     };
+    // 被授权范围拦下的事（2026-11-08，design §4.4）：记在任务上，等你决定放宽重跑一次还是不用
+    let blocked = blocked_lines(&summary);
+    if !blocked.is_empty() {
+        let req = GrantRequest { at: crate::sessions::now_iso(), run_id: run_for_request, blocked };
+        if let Err(e) = mutate_schedule(id, |t| t.grant_request = Some(req)) {
+            crate::logbuf::record("warn", "scheduler", &format!("记授权请求失败: {e}"));
+        }
+    }
     RunDonePayload {
         schedule_id: id.to_string(),
         project_root: task.project_root,
@@ -3015,8 +3046,56 @@ fn week_sessions(task: &Schedule, now: chrono::DateTime<chrono::FixedOffset>) ->
         .collect()
 }
 
+/// 简报里 Agent 写的「被拦下：…」行（中英文冒号都认），最多 8 条、每条限长
+pub(crate) fn blocked_lines(summary: &str) -> Vec<String> {
+    summary
+        .lines()
+        .map(str::trim)
+        .map(|l| l.trim_start_matches(['-', '*', '•', ' ']))
+        .filter_map(|l| l.strip_prefix("被拦下：").or_else(|| l.strip_prefix("被拦下:")))
+        .map(|l| l.trim().chars().take(200).collect::<String>())
+        .filter(|l| !l.is_empty())
+        .take(8)
+        .collect()
+}
+
+fn mutate_schedule(id: &str, f: impl FnOnce(&mut Schedule)) -> Result<Schedule, String> {
+    let _g = sched_lock()?;
+    let path = schedules_path()?;
+    let mut list = read_schedules_at(&path)?;
+    let task = list.iter_mut().find(|t| t.id == id).ok_or_else(|| format!("定时任务不存在: {id}"))?;
+    f(task);
+    let out = task.clone();
+    write_schedules_at(&path, &list)?;
+    Ok(out)
+}
+
+fn take_grant_once(id: &str) -> Option<crate::grant::Grant> {
+    let mut taken = None;
+    let _ = mutate_schedule(id, |t| taken = t.grant_once.take());
+    taken
+}
+
+/// 「放宽重跑这一次」：下一次运行联网不限（预算照原授权），清掉这条请求并立刻跑一次。
+/// 人点的那一下就是批准（桌面或手机的「点一下就生效」档，assistant-ops.ts grant_once）；以后都放宽只在桌面改授权
+#[tauri::command]
+pub fn schedule_grant_once(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    mutate_schedule(&id, |t| {
+        let base = t.grant.clone().unwrap_or_default();
+        t.grant_once = Some(crate::grant::Grant { network: crate::grant::Network::Open, budget_usd: base.budget_usd });
+        t.grant_request = None;
+    })?;
+    run_schedule_now(app, id, Some("你点了「放宽重跑这一次」：这一次联网不限".into()))
+}
+
+/// 「不用」：清掉这条授权请求，授权不变
+#[tauri::command]
+pub fn schedule_grant_dismiss(id: String) -> Result<(), String> {
+    mutate_schedule(&id, |t| t.grant_request = None).map(|_| ())
+}
+
 /// 授权范围的一句（2026-11-08）：告诉 Agent 这次能做到哪、被拦了怎么办——不绕、记进简报
-fn grant_note(g: &crate::grant::Grant) -> String {
+pub(crate) fn grant_note(g: &crate::grant::Grant) -> String {
     let net = match g.network {
         crate::grant::Network::MesaOnly => "这次运行不能自己联网（命令访问网站会被拦）",
         crate::grant::Network::Academic => "这次运行只能访问学术检索和开放获取网站（OpenAlex、Crossref、arXiv、PubMed 等），别的网站会被拦",
@@ -3027,7 +3106,7 @@ fn grant_note(g: &crate::grant::Grant) -> String {
     }
     format!(
         "\n\n【这次的授权范围】{net}；只在工作副本里写文件。要下付费墙或别处的全文，交给 \"$MESA_PAPER_TOOL\" paper fetch <DOI>，由 Mesa 去取。\
-         被拦下的事不要换办法绕过，在简报里写一句被拦了什么，由人决定要不要放宽。\n"
+         被拦下的事不要换办法绕过：在简报里每件单独一行、以「被拦下：」开头，写清是哪个网站或哪个目录、为什么要用，由人决定要不要放宽。\n"
     )
 }
 

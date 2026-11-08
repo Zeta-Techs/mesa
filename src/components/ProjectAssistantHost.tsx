@@ -16,7 +16,7 @@ import {
 } from "../assistant-dock";
 import { readProjectSurfaceTab } from "../project-surface";
 import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
-import { pushNewHelp, pushStuck, startImBridge } from "../im-bridge";
+import { pushNewGrants, pushNewHelp, pushStuck, startImBridge } from "../im-bridge";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
 function savedWidth(): number {
@@ -49,9 +49,11 @@ export default function ProjectAssistantHost() {
   useEffect(() => {
     void pollAssistantEchoes();
     void pushNewHelp();
+    void pushNewGrants();
     const timer = window.setInterval(() => {
       void pollAssistantEchoes();
       void pushNewHelp();
+      void pushNewGrants();
     }, ECHO_POLL_MS);
     // 卡住了（信任文件夹 / 等确认）要早点说：20 秒看一次，不跟回音同频
     const stuckTimer = window.setInterval(() => void pushStuck(), 20_000);

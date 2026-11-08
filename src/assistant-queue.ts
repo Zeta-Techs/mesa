@@ -5,7 +5,7 @@
  */
 import type { RunBlocker } from "./run-blocker";
 
-export type DeskKind = "help" | "question" | "confirm" | "trust" | "blocked";
+export type DeskKind = "help" | "question" | "confirm" | "trust" | "blocked" | "grant";
 
 export interface DeskItem {
   /** 稳定键：同一件事在桌面与手机上同一个键（手机推送去重、按钮回传都靠它） */
@@ -29,6 +29,16 @@ export interface DeskItem {
   tabId?: string;
   /** 信任菜单：两项原文；dispatched = 这是你经项目助手派出去的活（手机上才能点信任，2026-11-06 用户拍板） */
   trust?: { yes: string; no: string; path: string | null; dispatched: boolean };
+  /** 授权请求（2026-11-08）：哪个定时任务上次被授权范围拦下 */
+  scheduleId?: string;
+}
+
+/** 定时任务的授权请求（list_schedules 的 grantRequest） */
+export interface DeskGrantInput {
+  scheduleId: string;
+  name: string;
+  at: string;
+  blocked: readonly string[];
 }
 
 export interface DeskStep {
@@ -94,8 +104,23 @@ export function buildDeskItems(input: {
   help: readonly DeskHelpInput[];
   tails: readonly DeskTailInput[];
   confirms: readonly DeskConfirmInput[];
+  grants?: readonly DeskGrantInput[];
 }): DeskItem[] {
   const out: DeskItem[] = [];
+  for (const g of input.grants ?? []) {
+    if (g.blocked.length === 0) continue;
+    out.push({
+      key: `grant:${g.scheduleId}:${g.at}`,
+      kind: "grant",
+      step: null,
+      where: `定时任务「${g.name}」`,
+      question: "上次运行被授权范围拦下，要放宽重跑这一次吗？",
+      options: [],
+      recommend: null,
+      detail: [...g.blocked],
+      scheduleId: g.scheduleId,
+    });
+  }
   for (const req of input.help) {
     const step = req.workspaceName ? (input.steps.find((s) => s.workspaceName === req.workspaceName) ?? null) : null;
     for (const item of req.items) {

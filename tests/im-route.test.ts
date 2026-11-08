@@ -37,6 +37,9 @@ test("动作分级：手机上只做点一下就生效那一档", () => {
   assert.equal(actionOp("mail"), "relay");
   assert.equal(actionOp("review"), "navigate");
   assert.equal(OP_TIERS.answer, "auto");
+  // 授权请求只放宽这一次：手机上点一下就生效；改授权（以后都放宽）不在这一档
+  assert.equal(OP_TIERS.grant_once, "tap");
+  assert.equal(opAllowed("grant_once", "phone"), true);
 });
 
 test("「派出去」「接着做」照字面认，不交给 AI", async () => {

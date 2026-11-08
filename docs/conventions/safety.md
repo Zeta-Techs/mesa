@@ -75,6 +75,8 @@
   两家沙箱都放行系统临时目录的写；Mesa 工具目录（`<config>/paper-fetch`）进各家可写名单（Codex 交互启动同样加）。其余各家照旧全权限、界面黄字写明；
   预算能锁会话 id 的由 Mesa 每 30 秒按用量算、到额 `cancel_capture`（Run 记 `run.budget`、状态 stopped），锁不了的只记录不说成会停。
   每次运行记 `run.grant` 事件，Run 事实 `grant` 字段。真跑核对：`MESA_GR_AGENT=claude-code|codex cargo test grant_sandbox_real_run -- --ignored`（目录外的探针放家目录，不放临时目录）。
+  **越界请求（2026-11-08）**：授权说明要求 Agent 把每件被拦下的事在简报里单独一行、以「被拦下：」开头；`scheduler::blocked_lines` 认出后记在任务的
+  `grant_request`，等你的事（kind `grant`）与手机卡片给「放宽重跑这一次 / 不用」。放宽只写 `grant_once`（联网不限、预算照旧），下一次运行起跑时取走，不改任务的授权。
   **未做**：一次性调用（ai_prompt_impl）的七家仍无权限参数——要逐家实测 `-p` 下只读参数后再加；目标无头运行仍全权限。
 - **机构访问会话罐（2026-09-16，inst_access.rs）**：登录窗 Cookie 存 0600 `inst-session.json`（与 keys.json 同
   纪律：原子写、私有临时文件、值绝不出站——状态 DTO 只给域名/条数/时间，不进诊断包/生效配置快照）；损坏保留
@@ -96,7 +98,7 @@
   探询只对用这条旁路的标签答，不写任何配置。
 - **飞书通道（2026-11-06；feishu.rs / im-bridge.ts；设计 docs/design-assistant-dispatch-desk.md）**：只出不进——Mesa 主动连飞书长连接，本机不监听端口；
   App Secret 只进 0600 `keys.json`、不回显不进日志；配对要人点「绑定」出 6 位码（10 分钟），只认绑定的那一个人的私聊，别人的消息丢掉；
-  手机上只能做动作分级里 auto / tap 两档（`assistant-ops.ts`），确认命令、评审采纳、写回项目、删除永远不经手机；信任文件夹只对经项目助手派出去的活
+  手机上只能做动作分级里 auto / tap 两档（`assistant-ops.ts`），确认命令、评审采纳、写回项目、删除永远不经手机；定时任务的授权请求只有「放宽重跑这一次」（`grant_once`，tap，2026-11-08）能在手机上点，改授权（以后都放宽）只在桌面；信任文件夹只对经项目助手派出去的活
   可在手机上点（仍是人点、由终端页读屏核对后选上，不自动信任）；发往飞书的文字是项目助手已脱敏的回答与问题原文，不发文件正文与密钥。
 - **从手机添加（2026-10-20；2026-10-21 加「记住这台手机」；phone_drop.rs；设计 docs/design-phone-drop.md）**：这是 Mesa 唯一在非回环地址上监听的口子，
   守住八条：①两种监听，都随应用退出即关（lib.rs ExitRequested 调 `phone_drop::shutdown`）：**主动接收**只在人点了「从手机添加」后开，

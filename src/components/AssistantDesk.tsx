@@ -4,7 +4,7 @@ import { useAppStore } from "../store";
 import { toast } from "../toast";
 import { optionAnswer } from "../help-requests";
 import { deskSummary, type DeskItem } from "../assistant-queue";
-import { answerTrust, focusConfirm, loadDesk, replyDesk } from "../assistant-desk";
+import { answerGrant, answerTrust, focusConfirm, loadDesk, replyDesk } from "../assistant-desk";
 
 /**
  * 项目助手顶上的「等你的事」（调度台，2026-11-06 docs/design-assistant-dispatch-desk.md §2）：
@@ -64,7 +64,7 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
             return (
               <li key={item.key} className="border-t border-hairline pt-2.5">
                 <p className="text-xs text-l3">
-                  {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : "等你确认"}
+                  {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : item.kind === "grant" ? "要扩大授权" : "等你确认"}
                 </p>
                 <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6 text-l1">{item.question}</p>
                 {item.detail.length > 0 && <p className="text-xs leading-5 text-l3">{item.detail.join("；")}</p>}
@@ -86,6 +86,37 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
                     </button>
                     <button type="button" className={ghostActionClass} onClick={() => focusConfirm(item)}>
                       去终端看看
+                    </button>
+                  </div>
+                ) : item.kind === "grant" ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      className={secondaryActionClass}
+                      title="只下一次联网不限，跑完回到原来的授权"
+                      onClick={() => {
+                        void answerGrant(item, true).then(
+                          (msg) => {
+                            toast(msg, "success");
+                            setItems((list) => list.filter((x) => x.key !== item.key));
+                          },
+                          (e) => toast(String(e), "warning"),
+                        );
+                      }}
+                    >
+                      放宽重跑这一次
+                    </button>
+                    <button
+                      type="button"
+                      className={ghostActionClass}
+                      onClick={() => {
+                        void answerGrant(item, false).then(
+                          () => setItems((list) => list.filter((x) => x.key !== item.key)),
+                          (e) => toast(String(e), "warning"),
+                        );
+                      }}
+                    >
+                      不用
                     </button>
                   </div>
                 ) : item.kind === "confirm" || item.kind === "blocked" ? (

@@ -22,11 +22,11 @@ import {
 } from "./project-assistant";
 import { actionOp, opAllowed } from "./assistant-ops";
 import { dispatchWorkOrder, resumeDispatchedGoal, type DispatchRecord } from "./assistant-dispatch";
-import { addProjectKnowledge, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
+import { addProjectKnowledge, answerGrant, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
 import { IM_HELP_TEXT, quickIntent, routeMessage, type RouteProject } from "./im-route";
 import { answerCard, deskCard, echoCard, phoneText, projectPickCard, type CardValue } from "./im-cards";
 import type { DeskItem } from "./assistant-queue";
-import type { HelpRequestDto, ProjectConfigReadDto, ProjectDto, WorkspaceDto } from "./types";
+import type { HelpRequestDto, ProjectConfigReadDto, ProjectDto, ScheduleDto, WorkspaceDto } from "./types";
 
 export interface FeishuConfig {
   enabled: boolean;
@@ -312,6 +312,17 @@ async function handleCard(value: CardValue): Promise<void> {
       answerTrust(item, accept);
       return sendText(accept ? `已在电脑上替你选了「${item.trust.yes}」，${item.where}接着干。` : `已在电脑上替你选了「${item.trust.no}」，它会退出。`);
     }
+    case "grant": {
+      // 只放宽这一次（点一下就生效档，assistant-ops.ts grant_once）；以后都放宽回电脑改
+      if (!opAllowed("grant_once", "phone")) return sendText("这件要回到电脑上处理。");
+      const item = (await loadDesk(project.path)).find((i) => i.key === value.k && i.kind === "grant");
+      if (!item) return sendText("这件已经处理过了（可能你在电脑上点过了）。");
+      try {
+        return sendText(await answerGrant(item, value.v === "once"));
+      } catch (reason) {
+        return sendText(`没办成：${String(reason)}`);
+      }
+    }
     case "desk": {
       const items = await loadDesk(project.path);
       const item = items.find((i) => i.key === value.k);
@@ -347,6 +358,35 @@ export async function pushNewHelp(): Promise<void> {
   for (const h of fresh) for (const i of h.items) pushed.push(`${h.root}:${i.id}`);
   try {
     localStorage.setItem(PUSHED_KEY, JSON.stringify(pushed.slice(-500)));
+  } catch {
+    /* 记不下最多重推一次 */
+  }
+}
+
+const PUSHED_GRANT_KEY = "ccode.imPushedGrant";
+
+/** 定时任务被授权范围拦下：推到手机（同一次请求只推一次，记在本机），带「放宽重跑这一次 / 不用」 */
+export async function pushNewGrants(): Promise<void> {
+  if (!(await imReady())) return;
+  const schedules = await invoke<ScheduleDto[]>("list_schedules").catch(() => [] as ScheduleDto[]);
+  let pushed: string[] = [];
+  try {
+    pushed = JSON.parse(localStorage.getItem(PUSHED_GRANT_KEY) ?? "[]");
+  } catch {
+    pushed = [];
+  }
+  const fresh = schedules.filter((s) => s.grantRequest && !pushed.includes(`${s.id}:${s.grantRequest.at}`));
+  if (!fresh.length) return;
+  const list = await projects();
+  const groups = await Promise.all(
+    list
+      .filter((p) => fresh.some((s) => samePath(s.projectRoot, p.path, IS_WINDOWS)))
+      .map(async (p) => ({ project: asRoute(p), items: (await loadDesk(p.path).catch(() => [] as DeskItem[])).filter((i) => i.kind === "grant") })),
+  );
+  if (groups.some((g) => g.items.length)) await sendCard(deskCard(groups));
+  for (const s of fresh) pushed.push(`${s.id}:${s.grantRequest!.at}`);
+  try {
+    localStorage.setItem(PUSHED_GRANT_KEY, JSON.stringify(pushed.slice(-200)));
   } catch {
     /* 记不下最多重推一次 */
   }

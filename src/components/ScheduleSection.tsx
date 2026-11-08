@@ -1525,6 +1525,18 @@ export default function ScheduleSection({
     }
   }
 
+  // 授权请求（2026-11-08）：放宽重跑这一次（只下一次联网不限）/ 不用；以后都放宽去「编辑任务」改授权
+  async function grantAnswer(s: ScheduleDto, once: boolean) {
+    setError(null);
+    try {
+      await invoke(once ? "schedule_grant_once" : "schedule_grant_dismiss", { id: s.id });
+      await load();
+      onSchedulesChanged?.();
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function runNow(s: ScheduleDto, note?: string) {
     setRunning((cur) => new Set(cur).add(s.id));
     setError(null);
@@ -1961,6 +1973,37 @@ export default function ScheduleSection({
                         不用
                       </button>
                     </p>
+                  )}
+                  {s.grantRequest && s.grantRequest.blocked.length > 0 && (
+                    <div className="mt-0.5 pl-11 text-micro text-warn-text">
+                      <p>上次运行被授权范围拦下：</p>
+                      <ul className="list-disc pl-4">
+                        {s.grantRequest.blocked.map((b) => (
+                          <li key={b} className="break-words">{b}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-0.5 flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className={`${actionBtn} h-auto px-1.5 text-micro`}
+                          title="只下一次联网不限，跑完回到原来的授权"
+                          onClick={() => void grantAnswer(s, true)}
+                        >
+                          放宽重跑这一次
+                        </button>
+                        <button
+                          type="button"
+                          className={`${actionBtn} h-auto px-1.5 text-micro`}
+                          title="改这个任务的授权范围（以后每次都按新的跑）"
+                          onClick={() => setEditSchedule(s)}
+                        >
+                          以后都放宽…
+                        </button>
+                        <button type="button" className={`${actionBtn} h-auto px-1.5 text-micro`} onClick={() => void grantAnswer(s, false)}>
+                          不用
+                        </button>
+                      </p>
+                    </div>
                   )}
                   {!s.enabled && s.pausedReason && (
                     <p className="mt-0.5 pl-11 text-micro text-warn-text">

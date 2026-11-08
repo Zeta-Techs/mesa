@@ -11,7 +11,7 @@ import { stepSessionTail } from "./session-tail";
 import { deliverHelpPrompt } from "./help-requests";
 import { sendToWorkspace } from "./assistant-dispatch";
 import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
-import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, WorkspaceDto } from "./types";
+import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto } from "./types";
 import type { OpenDispatch } from "./assistant-echo";
 
 function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
@@ -19,11 +19,12 @@ function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
 }
 
 export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
-  const [read, workspaces, runs, help] = await Promise.all([
+  const [read, workspaces, runs, help, schedules] = await Promise.all([
     safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
     safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
     safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
     safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
+    safe(invoke<ScheduleDto[]>("list_schedules"), []),
   ]);
   const mine = workspaces.filter((w) => w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS));
   const steps: DeskStep[] = (read?.config.steps ?? []).map((s, index) => ({
@@ -68,7 +69,17 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
     help: help.filter((h) => samePath(h.repoPath, projectPath, IS_WINDOWS)),
     tails,
     confirms,
+    grants: schedules
+      .filter((s) => s.grantRequest && samePath(s.projectRoot, projectPath, IS_WINDOWS))
+      .map((s) => ({ scheduleId: s.id, name: s.name, at: s.grantRequest!.at, blocked: s.grantRequest!.blocked })),
   });
+}
+
+/** 授权请求：放宽重跑这一次 / 不用（桌面与手机共用；「以后都放宽」只在桌面的定时任务编辑里改） */
+export async function answerGrant(item: DeskItem, once: boolean): Promise<string> {
+  if (!item.scheduleId) throw new Error("这件不是授权请求");
+  await invoke(once ? "schedule_grant_once" : "schedule_grant_dismiss", { id: item.scheduleId });
+  return once ? `已放宽，${item.where}这一次联网不限、马上重跑；跑完回到原来的授权。` : `好的，${item.where}的授权不变。`;
 }
 
 async function workspaceFor(path: string | null | undefined): Promise<WorkspaceDto | null> {

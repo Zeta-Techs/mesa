@@ -2344,6 +2344,8 @@ export interface ScheduleDto {
   stalledMinutes?: number | null;
   /** 授权范围（2026-11-08，grant.rs）：联网档与每次花费上限；没设过的后端给默认（只放行学术网站） */
   grant?: ScheduleGrant;
+  /** 上一次运行被授权范围拦下的事；人答过（放宽重跑一次 / 不用）就没了 */
+  grantRequest?: { at: string; runId?: string | null; blocked: string[] } | null;
 }
 
 export type GrantNetwork = "mesa_only" | "academic" | "open";

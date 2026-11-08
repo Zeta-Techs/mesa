@@ -29,7 +29,8 @@ export type AssistantOp =
   | "split"
   | "discuss"
   | "report"
-  | "rework";
+  | "rework"
+  | "grant_once";
 
 export const OP_TIERS: Readonly<Record<AssistantOp, OpTier>> = {
   answer: "auto",
@@ -40,6 +41,8 @@ export const OP_TIERS: Readonly<Record<AssistantOp, OpTier>> = {
   remember: "tap",
   clarify_answer: "tap",
   trust_folder: "tap",
+  // 定时任务被授权范围拦下：放宽重跑这一次（只下一次，2026-11-08）；以后都放宽只在桌面改授权
+  grant_once: "tap",
   confirm_command: "desktop",
   adopt_review: "desktop",
   write_back: "desktop",

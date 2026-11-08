@@ -74,3 +74,21 @@ test("信任文件夹：单列一类，带两项原文与是否你派的活；�
   assert.equal(items[0].trust?.dispatched, true);
   assert.equal(deskSummary(items), "等你的事 1 件：等信任文件夹 1");
 });
+
+test("授权请求：有被拦下的事才成一件「等你的事」，带定时任务 id；没有被拦下的不出", () => {
+  const items = buildDeskItems({
+    steps,
+    help: [],
+    tails: [],
+    confirms: [],
+    grants: [
+      { scheduleId: "s1", name: "雷达", at: "t1", blocked: ["example.com"] },
+      { scheduleId: "s2", name: "空的", at: "t2", blocked: [] },
+    ],
+  });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, "grant");
+  assert.equal(items[0].scheduleId, "s1");
+  assert.equal(items[0].where, "定时任务「雷达」");
+  assert.deepEqual(items[0].detail, ["example.com"]);
+});

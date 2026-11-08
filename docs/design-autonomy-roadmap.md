@@ -222,7 +222,7 @@ Agent ──mesa_helper paper fetch <DOI>──▶ Mesa 下载队列（全局一
 | 1 | 全文代下：下载队列 + `mesa_helper paper` + 扩展后台取 PDF + 限速熔断日志 | 0 的资料化 | 已拍板（§6.1），改 pipeline.md / safety.md 机构访问两条 | **已落地 2026-11-08**（`paper_fetch.rs`；Run 事实 `fetched` 一并落地，期 0 的「出门记录」部分完成；待用户真机走一遍浏览器一级） |
 | 2 | 定时任务一键建成、默认暂停；开工弹层写上次花费 | — | 无 | **已落地 2026-11-08**（`scheduler::create_paused_schedule` + `OrderScheduleRow`；`research_record::last_step_run_cost`） |
 | 3 | 授权范围 v1：定时任务按授权跑；Claude / Codex 系统层落实，其余写明做不到；跨厂商复核说明改成与实际权限一致 | 0 | 取代 11-01「定时任务 Claude 加 bypassPermissions」 | **已落地 2026-11-08**（`grant.rs`；Claude、Codex 真跑核对过：目录外写入被拦、名单外网站被拦（Claude））。**未做**：一次性调用七家的只读参数（要逐家实测）、目标无头运行仍全权限、Kimi 无可用限制手段 |
-| 4 | 越界请求进等你的事、手机「只扩这一次」 | 3 | 改动作分级：新增 tap 档「扩大授权（一次）」 | 动手前拍板 |
+| 4 | 越界请求进等你的事、手机「只扩这一次」 | 3 | 改动作分级：新增 tap 档 `grant_once`（用户 11-08「按顺序全部做完」） | **已落地 2026-11-08**（定时任务；Agent 以「被拦下：」逐条写、Mesa 记成授权请求，真跑核对过）。交互运行的越界仍由各家 CLI 自己的确认菜单处理 |
 | 5 | SSH 远程执行（先落 `AgentRuntime` 接口） | 3 | 无 | 单独出远程 Runtime 规格 |
 | 6 | 常驻后端 | 5 | §11.5 daemon 化、「Mesa 必须开着」 | 动手前出 §10 决策草案 |
 | 7 | 对外 MCP 入口 | 6 | 第一次对外开入口 | 动手前拍板 |

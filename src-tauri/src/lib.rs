@@ -1151,6 +1151,8 @@ pub fn run() {
             scheduler::create_paused_schedule,
             research_record::last_step_run_cost,
             grant::grant_preview,
+            scheduler::schedule_grant_once,
+            scheduler::schedule_grant_dismiss,
             scheduler::ensure_schedule_skill_distributed,
             scheduler::schedule_memory_read,
             scheduler::schedule_memory_write,
