@@ -1007,6 +1007,15 @@ export interface ProjectMemoryDocumentDto {
   }[];
 }
 
+/** 项目知识交给 AI 的那一份（project_memory_for_ai；任务书、开对话、项目助手、设置里的预览同一份） */
+export interface KnowledgeForAiDto {
+  lines: string[];
+  included: number;
+  omitted: number;
+  omittedIds: string[];
+  stale: number;
+}
+
 /** 人工请求里的一个选项（「A：选项 —— 后果」） */
 export interface HelpOptionDto {
   key: string;

@@ -184,32 +184,86 @@ pub(crate) fn read_at(root: &Path) -> Result<MemoryDocument, String> {
     Ok(doc)
 }
 
-pub(crate) fn context_at(root: &Path) -> Result<String, String> {
-    let doc = read_at(root)?;
-    let mut parts = Vec::new();
-    for entry in doc
-        .entries
-        .iter()
-        .rev()
-        .filter(|entry| entry.meta.state == "active")
-    {
-        if entry.stale_paths.is_empty() {
-            parts.push(format!(
-                "- {}（人工确认；来源 {}）",
-                entry.text,
-                entry.meta.source_version.as_deref().unwrap_or("手工确认")
-            ));
-        } else {
-            parts.push(format!("- 待重新确认的知识 {}：来源文件已变化或无法在小文件校验预算内确认（{}）；不得沿用为当前结论。", entry.meta.id, entry.stale_paths.join("、")));
-        }
+/// 交给 AI 的项目知识一次只算一份（2026-11-08）：任务书、开对话的项目说明、目标冻结、项目助手、项目设置里的预览都用它，
+/// 不再各截各的（原来任务书按 30 条、对话按 6000 字、项目助手全带）。只收仍有效、来源没变的条目；
+/// 「已定 / 不做」排前（人明确拍过板的规矩最不能丢），其余在后，各自新的在前；按字数上限装，装不下的记 omitted；
+/// 来源变了的只汇一句「待重新确认」，内容不给；旧知识原文用剩下的预算、最多 1200 字。
+pub(crate) const AI_KNOWLEDGE_CHAR_CAP: usize = 6000;
+const AI_LEGACY_CAP: usize = 1200;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeForAi {
+    /// 一行一条，已带「已定：」「不做：」「「目标」验收时记下：」前缀；最后可能是「待重新确认」与旧知识原文两行
+    pub lines: Vec<String>,
+    /// 装进去的有效条目数
+    pub included: usize,
+    /// 仍有效、来源没变，但超出字数没带上的条目数
+    pub omitted: usize,
+    /// 没带上的那几条的 id（项目设置里在条目上标「没交给 AI」）
+    pub omitted_ids: Vec<String>,
+    /// 来源文件变了、等人重新确认的条目数
+    pub stale: usize,
+}
+
+fn knowledge_label(goal: &str) -> String {
+    match goal {
+        "已定" | "不做" => format!("{goal}："),
+        "" | "人工维护" => String::new(),
+        other => format!("「{other}」验收时记下："),
     }
-    if !doc.legacy_text.is_empty() {
-        parts.push(format!(
-            "旧知识原文（未逐条绑定证据，冲突时以最新人工确认内容为准）：\n{}",
-            doc.legacy_text
+}
+
+pub(crate) fn knowledge_for_ai(doc: &MemoryDocument, cap: usize) -> KnowledgeForAi {
+    let active: Vec<&MemoryEntry> = doc.entries.iter().filter(|e| e.meta.state == "active").collect();
+    let stale: Vec<&MemoryEntry> = active.iter().copied().filter(|e| !e.stale_paths.is_empty()).collect();
+    let mut fresh: Vec<&MemoryEntry> = active.iter().copied().filter(|e| e.stale_paths.is_empty()).collect();
+    fresh.reverse(); // 新的在前
+    // 稳定排序：已定 / 不做 在前，各组内保持新的在前
+    fresh.sort_by_key(|e| !matches!(e.meta.goal_name.as_str(), "已定" | "不做"));
+    let mut lines = Vec::new();
+    let mut used = 0usize;
+    let mut omitted_ids = Vec::new();
+    for e in fresh {
+        let line = format!("{}{}", knowledge_label(&e.meta.goal_name), e.text.split_whitespace().collect::<Vec<_>>().join(" "));
+        let n = line.chars().count();
+        if line.trim().is_empty() {
+            continue;
+        }
+        if used + n > cap {
+            omitted_ids.push(e.meta.id.clone());
+            continue;
+        }
+        used += n;
+        lines.push(line);
+    }
+    let included = lines.len();
+    if !stale.is_empty() {
+        let ids: Vec<&str> = stale.iter().map(|e| e.meta.id.as_str()).collect();
+        lines.push(format!(
+            "待重新确认：另有 {} 条知识的来源文件已变化（{}），不得沿用为当前结论；要用先请人在项目设置「项目长期知识」里重新确认。",
+            stale.len(),
+            ids.join("、")
         ));
     }
-    Ok(parts.join("\n"))
+    let legacy = doc.legacy_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let room = cap.saturating_sub(used).min(AI_LEGACY_CAP);
+    if !legacy.is_empty() && room > 0 {
+        let cut: String = legacy.chars().take(room).collect();
+        let tail = if legacy.chars().count() > room { "…（较长，已截断）" } else { "" };
+        lines.push(format!("旧知识原文（没有逐条确认过，和上面冲突时以上面为准）：{cut}{tail}"));
+    }
+    KnowledgeForAi { lines, included, omitted: omitted_ids.len(), omitted_ids, stale: stale.len() }
+}
+
+pub(crate) fn context_at(root: &Path) -> Result<String, String> {
+    let doc = read_at(root)?;
+    Ok(knowledge_for_ai(&doc, AI_KNOWLEDGE_CHAR_CAP)
+        .lines
+        .iter()
+        .map(|l| format!("- {l}"))
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 fn write_at(root: &Path, before: &str, doc: &MemoryDocument) -> Result<(), String> {
@@ -457,6 +511,19 @@ pub async fn project_memory_read(path: String) -> Result<MemoryDocument, String>
     .map_err(|e| e.to_string())?
 }
 
+/// 项目知识交给 AI 的那一份（任务书、项目助手、项目设置预览共用，口径同 context_at）
+#[tauri::command]
+pub async fn project_memory_for_ai(path: String) -> Result<KnowledgeForAi, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = crate::projects::ensure_task_project_root(Path::new(
+            &crate::sessions::expand_tilde(&path),
+        ))?;
+        Ok(knowledge_for_ai(&read_at(&root)?, AI_KNOWLEDGE_CHAR_CAP))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn project_memory_update(
     path: String,
@@ -535,6 +602,46 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn knowledge_for_ai_puts_decisions_first_and_caps_by_chars() {
+        let entry = |id: &str, goal: &str, text: &str, stale: bool| MemoryEntry {
+            meta: MemoryMeta {
+                id: id.into(),
+                created_at: String::new(),
+                source_version: None,
+                goal_name: goal.into(),
+                state: "active".into(),
+                replaces: None,
+                reason: String::new(),
+                files: Vec::new(),
+            },
+            text: text.into(),
+            stale_paths: if stale { vec!["a.md".into()] } else { Vec::new() },
+        };
+        let doc = MemoryDocument {
+            revision: String::new(),
+            legacy_text: "旧笔记".into(),
+            entries: vec![
+                entry("m1", "不做", "不用方法 X", false),
+                entry("m2", "人工维护", "图上画原始数据点", false),
+                entry("m3", "综述", "精读只读开放全文", true),
+                entry("m4", "已定", "组会讲 15 分钟", false),
+            ],
+        };
+        let k = knowledge_for_ai(&doc, AI_KNOWLEDGE_CHAR_CAP);
+        // 已定 / 不做 在前（各自新的在前），手写的在后；来源变了的只汇一句
+        assert_eq!(k.lines[0], "已定：组会讲 15 分钟");
+        assert_eq!(k.lines[1], "不做：不用方法 X");
+        assert_eq!(k.lines[2], "图上画原始数据点");
+        assert!(k.lines[3].starts_with("待重新确认：另有 1 条") && !k.lines[3].contains("开放全文"));
+        assert!(k.lines[4].contains("旧笔记"));
+        assert_eq!((k.included, k.omitted, k.stale), (3, 0, 1));
+        // 上限装不下的记 omitted，最早定下的「不做」不会被挤掉
+        let small = knowledge_for_ai(&doc, 21);
+        assert_eq!(small.lines[..2], ["已定：组会讲 15 分钟".to_string(), "不做：不用方法 X".to_string()]);
+        assert_eq!((small.omitted, small.omitted_ids.as_slice()), (1, ["m2".to_string()].as_slice()));
+    }
+
     #[test]
     fn confirmed_memory_is_versioned_and_never_silently_revived() {
         let root = std::env::temp_dir().join(format!("mesa-memory-{}", uuid::Uuid::new_v4()));

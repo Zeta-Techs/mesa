@@ -81,7 +81,7 @@ export function renderTaskMd(
   providesByName?: SkillProvides,
   decisions?: { q: string; answer: string }[],
   isWindows = false,
-  /** 项目知识条目（knowledgeLines）；有才带「项目知识」一节 */
+  /** 项目知识条目（project_memory_for_ai 的 lines）；有才带「项目知识」一节 */
   ledger?: string[],
   /** 同项目还开着的其他工作数（开工时数一次）；有才带「同项目的其他工作」一节 */
   peers = 0,

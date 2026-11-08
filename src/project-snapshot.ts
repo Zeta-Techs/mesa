@@ -154,7 +154,8 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
     ...input.deps.map((d) => `- ${d.name}：${d.status === "ok" ? `已就绪${d.version ? ` ${d.version}` : ""}` : `${d.status}${d.note ? `（${d.note}）` : ""}`}`),
     ...input.agents.map((a) => `- ${a.id}：${a.installed ? `已装${a.version ? ` ${a.version}` : ""}` : "没装"}`),
   ];
-  const decidedLines = input.decided.slice(0, 15).map((d) => `- ${clip(d, 160)}`);
+  // 与任务书、开对话同一份（project_memory_for_ai 已筛过失效条目、按字数封顶），这里不再另截
+  const decidedLines = input.decided.map((d) => `- ${d}`);
   const dispatchedLines = (input.dispatched ?? []).slice(0, 6).map((d) => `- ${clip(d, 200)}`);
   const tailLines = (input.stepTails ?? []).map(
     (t) => `- ${t.where}${t.flagged ? "（像是在说出错 / 失败）" : ""}：${clip(t.text, 500)}`,
@@ -191,7 +192,7 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
       section("Mesa 自己在这个项目上出的错（新在后）", mesaLines, "（没有记录）"),
       section("Mesa 诊断日志里和这个项目有关的警告 / 错误", logLines),
       section("环境", depLines),
-      section("项目知识里已定 / 不做的", decidedLines),
+      section("项目知识（人确认过的规矩，不要违背；「已定 / 不做」在前）", decidedLines),
       section("研究档案（这位研究者跨项目的习惯，起草派活单时照顾；不是本项目的事实）", input.profile?.trim() ? [clip(input.profile.trim(), 1800)] : []),
     ]
       .filter(Boolean)

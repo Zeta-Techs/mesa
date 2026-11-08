@@ -641,7 +641,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekContextLine（项目说明里那一句）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
                              # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL，Windows 另附 Git Bash 写法）（tests/peek.test.ts）
   help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
-                             # 任务书「项目知识」取数 knowledgeLines（项目知识里全部有效且来源没变的条目，带分类）（tests/help-requests.test.ts）
+                             # （任务书「项目知识」改由后端 project_memory_for_ai 给，2026-11-08）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
                              # （tests/task-pack-author.test.ts）
   pack-builtin.ts            # 任务包第四期：内置另存为我的版本 basedOnFor、builtinKey、builtinUpdate（当时的内置 vs 现在的内置，标我改没改过；三份步骤须先经后端归一）、
@@ -1373,7 +1373,9 @@ src-tauri/src/
                              # watch-followup/watch-explains/pending-registrations/acceptance-log×2/.ccode/watch/）；
                              # 迁移命令曾实现后按「未发布无用即删」移除（存量已手工迁完，重建序列见 pipeline.md）
   project_memory.rs          # 项目知识 .ccode/memory.md：结构化块只记人工确认（revision 比对 + active/superseded/revoked 状态机；
-                             # 作废/替代条目不注入，Agent 结论不自动采纳；原文历史保留并留备份）
+                             # 作废/替代条目不注入，Agent 结论不自动采纳；原文历史保留并留备份）；
+                             # knowledge_for_ai = 交给 AI 的唯一一份（已定 / 不做优先、6000 字封顶、omittedIds、待重新确认只汇一句），
+                             # context_at（开对话 / 目标冻结）与 project_memory_for_ai（任务书 / 项目助手 / 设置预览）都走它
   pty.rs                     # PtyManager：spawn_tracked 公共拉起，agent/shell 复用；pty_shell_busy = 退回的 shell 里有没有命令在跑（unix 前台进程组 / Windows 子进程）；
                              #   开 PTY 用前端传入的 cols/rows（缺省 24×80），避免 resume 先窄后宽把旧帧留进滚动记录；
                              # terminal_link_target = 终端相对路径点击的终审（cwd 拼 + ~ 展开 + 存在性）；

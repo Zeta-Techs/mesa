@@ -245,7 +245,7 @@ export default function KickoffConfirmDialog({
     /** 已定方向（决策项答案，读自任务书草稿）：渲染进 TASK.md 的「已定方向」段 */
     decisions: { q: string; answer: string }[];
     upstream: UpstreamAcceptance[];
-    /** 项目知识（仍有效的全部条目，knowledgeLines） */
+    /** 项目知识（project_memory_for_ai 的那一份） */
     ledger: string[];
     /** 同项目还开着的其他工作数（有才带「同项目的其他工作」一节） */
     peers: number;

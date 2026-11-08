@@ -11,7 +11,6 @@ import {
 } from "./workspace-resume";
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
 import { renderTaskMd } from "./task-md";
-import { knowledgeLines } from "./help-requests";
 import { openPeerCount } from "./peek";
 import { fanOutSummary, laneReuseKey, lanePrompt, mergePrompt, type FanOutPending } from "./fan-out";
 import { IS_WINDOWS } from "./hotkeys";
@@ -24,7 +23,7 @@ import type {
   BootstrapCommitDto,
   EnsureGitDto,
   ProjectConfigDto,
-  ProjectMemoryDocumentDto,
+  KnowledgeForAiDto,
   FanOutPlanDto,
   ProjectStepDto,
   RunDto,
@@ -90,10 +89,10 @@ export async function gatherTaskMdExtras(
     /* 草稿不可读时跳过「已定方向」段 */
   }
   const upstream = await invoke<UpstreamAcceptance[]>("research_upstream_acceptances", { projectRoot: projectPath, stepName: step.name });
-  // 项目知识：仍有效的全部条目（已定 / 不做 / 人手写 / 目标验收记下的），与问 AI 等入口同一份（读失败只是不带这段）
+  // 项目知识：后端 project_memory_for_ai 算的那一份（已定 / 不做优先、按字数上限），与开对话、项目助手同一份（读失败只是不带这段）
   let ledger: string[] = [];
   try {
-    ledger = knowledgeLines(await invoke<ProjectMemoryDocumentDto>("project_memory_read", { path: projectPath }));
+    ledger = (await invoke<KnowledgeForAiDto>("project_memory_for_ai", { path: projectPath })).lines;
   } catch {
     /* 项目知识不可读时跳过 */
   }

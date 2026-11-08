@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
+import type { KnowledgeForAiDto } from "../types";
 import {
   FoldMark,
   ghostActionClass,
@@ -39,6 +40,17 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
   const [promoting, setPromoting] = useState<string | null>(null);
   const [promoteCategory, setPromoteCategory] = useState("常用方法");
   const [promoted, setPromoted] = useState<string | null>(null);
+  // 交给 AI 的那一份（2026-11-08，后端 project_memory_for_ai，任务书 / 开对话 / 项目助手同一份）：带了几条、几条太长没带上、看原文
+  const [forAi, setForAi] = useState<KnowledgeForAiDto | null>(null);
+  const [rawOpen, setRawOpen] = useState(false);
+  useEffect(() => {
+    if (!doc) return;
+    let stale = false;
+    invoke<KnowledgeForAiDto>("project_memory_for_ai", { path: projectPath })
+      .then((value) => { if (!stale) setForAi(value); })
+      .catch(() => { if (!stale) setForAi(null); });
+    return () => { stale = true; };
+  }, [projectPath, doc]);
   useEffect(() => {
     let stale = false;
     setDoc(null); setError(null); setEditing(null); setText(""); setReason("");
@@ -109,9 +121,27 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
             </p>
             <button type="button" className={`${ghostActionClass} shrink-0`} disabled={busy} onClick={() => setReload((n) => n + 1)}>重新读取</button>
           </div>
+          {forAi && (activeEntries.length > 0 || !!doc?.legacyText) && (
+            <div className="text-xs leading-5">
+              <p className="text-l3">
+                交给 AI：{forAi.included} 条（流程每一步、开对话、项目助手拿到的是同一份；「已定 / 不做」排前）
+                {forAi.omitted > 0 && <span className="text-warn-text">；{forAi.omitted} 条超出字数上限没带上——作废过时的、或把几条合成一条</span>}
+                {forAi.stale > 0 && <span className="text-warn-text">；{forAi.stale} 条来源变了，重新确认前不带</span>}
+                <button type="button" className="ml-2 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1" onClick={() => setRawOpen((v) => !v)}>
+                  <span className="text-xs">{rawOpen ? "收起" : "看 AI 拿到的原文"}</span>
+                </button>
+              </p>
+              {rawOpen && (
+                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md ccode-well p-2 text-xs leading-5 text-l2">
+                  {forAi.lines.length ? forAi.lines.map((l) => `- ${l}`).join("\n") : "（现在没有要交给 AI 的条目）"}
+                </pre>
+              )}
+            </div>
+          )}
           {activeEntries.map((entry) => <article key={entry.meta.id} className="rounded-lg ccode-well p-2">
             <p className="whitespace-pre-wrap text-xs leading-5 text-l2">{entry.text}</p>
             <p className="mt-1 break-all text-micro text-l4">{entry.meta.goalName} · {entry.meta.createdAt} · {entry.meta.sourceVersion ?? "人工确认"}</p>
+            {forAi?.omittedIds.includes(entry.meta.id) && <p className="mt-0.5 text-xs leading-5 text-warn-text">超出字数上限，这条现在没交给 AI</p>}
             {!!entry.stalePaths.length && <p className="mt-0.5 text-xs leading-5 text-warn-text">来源已变化或无法在预算内确认，当前不作为有效结论：{entry.stalePaths.join("、")}</p>}
             <div className="mt-1.5 flex gap-1">
               <button type="button" className={ghostActionClass} disabled={busy} onClick={() => { setEditing(entry.meta.id); setText(entry.text); setReason(""); }}>修订 / 重新确认</button>

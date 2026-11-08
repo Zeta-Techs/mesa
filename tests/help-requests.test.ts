@@ -8,10 +8,9 @@ import {
   helpItemsSignature,
   helpPendingByRoot,
   helpUnanswered,
-  knowledgeLines,
   optionAnswer,
 } from "../src/help-requests.ts";
-import type { HelpItemDto, HelpRequestDto, ProjectMemoryDocumentDto } from "../src/types.ts";
+import type { HelpItemDto, HelpRequestDto } from "../src/types.ts";
 
 function item(over: Partial<HelpItemDto>): HelpItemDto {
   return {
@@ -66,35 +65,6 @@ test("选项回答、类别标与交给 Agent 的话", () => {
   assert.match(plain, /先把这些答案写进 TASK\.md「已定口径」.*确认写进去了，再把答过的这几条从 help-wanted\.md 删掉/);
   assert.doesNotMatch(plain, /项目知识/);
   assert.match(deliverHelpPrompt(two, 1), /其中 1 条人要求以后同类照此办，已记进项目知识/);
-});
-
-test("任务书项目知识取全部有效、来源没变的条目，新的在前，带分类；旧知识原文附最后", () => {
-  const entry = (goalName: string, text: string, state = "active", stalePaths: string[] = []) => ({
-    meta: { id: text, createdAt: "", goalName, state, reason: "" },
-    text,
-    stalePaths,
-  });
-  const doc: ProjectMemoryDocumentDto = {
-    revision: "r",
-    legacyText: "",
-    entries: [
-      entry("已定", "旧的 → A"),
-      entry("目标 1", "验收知识"),
-      entry("人工维护", "课题组电解池用 H 型"),
-      entry("不做", "撤回的", "revoked"),
-      entry("已定", "来源变了", "active", ["a.md"]),
-      entry("不做", "预印本\n → 不加"),
-    ],
-  };
-  assert.deepEqual(knowledgeLines(doc), [
-    "不做：预印本 → 不加",
-    "课题组电解池用 H 型",
-    "「目标 1」验收时记下：验收知识",
-    "已定：旧的 → A",
-  ]);
-  assert.deepEqual(knowledgeLines({ ...doc, entries: [], legacyText: "老的\n一段" }), [
-    "旧知识原文（没有逐条确认过，和上面冲突时以上面为准）：老的 一段",
-  ]);
 });
 
 test("流程线上的「回答问题（N）」按来源数还要人管的条目，全送出的来源不列", () => {

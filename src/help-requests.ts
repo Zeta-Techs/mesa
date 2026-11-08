@@ -2,7 +2,7 @@
  * 人工请求（`.ccode/help-wanted.md`）的前端纯逻辑：哪些条目还要人管、收件箱一行怎么写、交给 Agent 时说什么。
  * 解析在后端（help_requests.rs），这里只看解析结果。
  */
-import type { HelpItemDto, HelpRequestDto, ProjectMemoryDocumentDto } from "./types";
+import type { HelpItemDto, HelpRequestDto } from "./types";
 import { helpPreview } from "./inbox.ts";
 
 /** 还要人管的：没答的，或答了还没交给 Agent 的 */
@@ -59,27 +59,6 @@ export function deliverHelpPrompt(answered: readonly HelpItemDto[], remembered: 
   return `我在 Mesa 里答了 .ccode/help-wanted.md 的 ${answered.length} 条问题：\n${lines}\n${memo}按回答继续：先把这些答案写进 TASK.md「已定口径」（没有这一节就新建）或本步报告，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样，按各自「不回时」处理。然后接着做这一步还没做完的事，不要停下来等我。`;
 }
 
-/** 任务书「项目知识」一节的条目（2026-11-06：以前只带「已定 / 不做」，人在「项目长期知识」里手写或改过的条目
- *  流程步骤看不到，和问 AI、目标等入口带的不是同一份）：仍有效、来源没变的全部条目，新的在前，最多 30 条；
- *  已定 / 不做 带分类，目标验收时记下的带目标名，人手写的不加前缀；还没逐条确认的旧知识原文截断附在最后 */
-export function knowledgeLines(doc: ProjectMemoryDocumentDto): string[] {
-  const label = (goal: string) =>
-    goal === "已定" || goal === "不做" ? `${goal}：` : !goal || goal === "人工维护" ? "" : `「${goal}」验收时记下：`;
-  const lines = doc.entries
-    .filter((e) => e.meta.state === "active" && e.stalePaths.length === 0)
-    .reverse()
-    .slice(0, KNOWLEDGE_CAP)
-    .map((e) => `${label(e.meta.goalName)}${e.text.replace(/\s+/g, " ").trim()}`)
-    .filter((line) => line.trim());
-  const legacy = doc.legacyText.replace(/\s+/g, " ").trim();
-  if (legacy) {
-    const cut = legacy.length > LEGACY_CAP ? `${legacy.slice(0, LEGACY_CAP)}…（较长，已截断）` : legacy;
-    lines.push(`旧知识原文（没有逐条确认过，和上面冲突时以上面为准）：${cut}`);
-  }
-  return lines;
-}
-const KNOWLEDGE_CAP = 30;
-const LEGACY_CAP = 1200;
 
 /** 每个来源还要人管几条（流程线那一步上的「回答问题（N）」）；没有的不列 */
 export function helpPendingByRoot(requests: readonly HelpRequestDto[]): Record<string, number> {

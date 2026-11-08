@@ -707,6 +707,7 @@ pub fn run() {
             runs::task_freeze_large_outputs,
             projects::read_project_memory,
             project_memory::project_memory_read,
+            project_memory::project_memory_for_ai,
             project_memory::project_memory_update,
             projects::read_acceptance_log,
             runs::task_adopt_outputs,
