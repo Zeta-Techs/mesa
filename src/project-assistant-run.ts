@@ -16,6 +16,8 @@ import { AGENTS } from "./types";
 import { buildProjectSnapshot, type SnapshotInput, type SnapshotRun, type SnapshotStep } from "./project-snapshot";
 import {
   basisText,
+  historyKeep,
+  recallOlderTurns,
   buildAssistantPrompt,
   classifyQuestion,
   GUIDE_LIMIT,
@@ -512,7 +514,12 @@ export async function askProjectAssistant(input: {
         profileId,
         model,
         connection,
-        basis: basisText(intent, guideHeads, withInspect),
+        // 翻出了更早的相关问答时依据里写一句，人知道它不只看了最近几轮
+        basis: (() => {
+          const base = basisText(intent, guideHeads, withInspect);
+          const older = intent === "chat" || intent === "general" ? [] : recallOlderTurns(input.history, historyKeep(intent), input.question);
+          return older.length ? `${base}${base ? " · " : ""}翻出 ${older.length} 轮更早的相关问答` : base;
+        })(),
         question: input.question,
         prompt: promptFor(withInspect),
         inspect: withInspect,

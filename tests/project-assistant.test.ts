@@ -474,3 +474,21 @@ test("起草项目知识时一次可记多条：最多五块，去重，飞书�
   assert.equal(r.remember, "引用一律 [@键]");
   assert.ok(!r.text.includes(":::"));
 });
+
+test("更早的相关问答：按词重合翻出，至少两个词、最多两轮，最近几轮不重复，闲聊不翻", async () => {
+  const { recallOlderTurns, buildAssistantPrompt } = await import("../src/project-assistant.ts");
+  const turn = (q: string, a: string, at = "2026-11-01T00:00:00Z") => ({ question: q, answer: a, at });
+  const history = [
+    turn("组会汇报讲多长时间合适？", "导师要求组会汇报控制在 15 分钟。"),
+    turn("references.bib 里重复的条目怎么办？", "用 bib-check 查。"),
+    turn("天气", "不知道"),
+    ...Array.from({ length: 4 }, (_, i) => turn(`最近第 ${i} 问`, "答")),
+  ];
+  const got = recallOlderTurns(history, 4, "下周组会汇报准备几页？");
+  assert.deepEqual(got.map((t) => t.question), ["组会汇报讲多长时间合适？"]);
+  assert.deepEqual(recallOlderTurns(history, 4, "references.bib 又报重复了"), [history[1]]);
+  assert.deepEqual(recallOlderTurns(history, 10, "组会汇报"), [], "都在最近几轮里时不重复带");
+  const prompt = buildAssistantPrompt({ intent: "project", snapshot: "快照", history, question: "下周组会汇报准备几页？" });
+  assert.match(prompt, /更早的相关问答[\s\S]*15 分钟/);
+  assert.doesNotMatch(buildAssistantPrompt({ intent: "chat", history, question: "组会汇报" }), /更早的相关问答/);
+});

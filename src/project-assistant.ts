@@ -293,6 +293,47 @@ export function historyBlock(turns: readonly AssistantHistoryTurn[], keep = 6): 
     .join("\n\n");
 }
 
+/** 问题里的词：英文 / 数字取 3 个字以上的词，中文取相邻两字；常见虚词组合不算 */
+function recallTerms(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().match(/[a-z0-9_.-]{3,}/g) ?? []) out.add(w);
+  for (const run of text.match(/[\u4e00-\u9fff]+/g) ?? []) {
+    for (let i = 0; i + 1 < run.length; i++) {
+      const bi = run.slice(i, i + 2);
+      if (!RECALL_STOP.has(bi)) out.add(bi);
+    }
+  }
+  return out;
+}
+const RECALL_STOP = new Set(["什么", "怎么", "这个", "那个", "一下", "我们", "你们", "可以", "是不", "不是", "现在", "还是", "一个", "为什", "么样", "的话", "我的", "帮我", "看看", "一些", "这里", "哪里", "哪些"]);
+
+/**
+ * 更早问答里和这次问题相关的几轮（2026-11-08 用户「全部修复」：只带最近几轮时，更早问过、定过的助手就不记得了）。
+ * 不调 AI：按词重合挑，至少共有 2 个词才算，最多 2 轮、按时间排；最近 keep 轮已经整段带着的不重复。
+ */
+export function recallOlderTurns<T extends AssistantHistoryTurn>(turns: readonly T[], keep: number, question: string, max = 2): T[] {
+  const older = turns.slice(0, Math.max(0, turns.length - keep));
+  const q = recallTerms(question);
+  if (older.length === 0 || q.size === 0) return [];
+  const scored = older
+    .map((t, i) => {
+      const terms = recallTerms(`${t.question} ${t.answer.slice(0, 800)}`);
+      let hit = 0;
+      for (const w of q) if (terms.has(w)) hit++;
+      return { t, i, hit };
+    })
+    .filter((x) => x.hit >= 2)
+    .sort((a, b) => b.hit - a.hit || b.i - a.i)
+    .slice(0, max)
+    .sort((a, b) => a.i - b.i);
+  return scored.map((x) => x.t);
+}
+
+/** 这次带几轮最近的问答：要做事要连着几轮问答才起草得对，多带两轮 */
+export function historyKeep(intent: AssistantIntent): number {
+  return intent === "chat" || intent === "general" ? 3 : intent === "request" ? 6 : 4;
+}
+
 export interface AssistantMaterials {
   intent: AssistantIntent;
   /** 项目快照（project / mixed） */
@@ -326,8 +367,13 @@ export function buildAssistantPrompt(
         : input.intent === "general"
           ? GENERAL_RULES
           : PROJECT_RULES;
-  // 要做事要连着几轮问答（问了什么、答了什么）才起草得对，多带两轮
-  const history = historyBlock(input.history, input.intent === "chat" || input.intent === "general" ? 3 : input.intent === "request" ? 6 : 4);
+  const keep = historyKeep(input.intent);
+  const history = historyBlock(input.history, keep);
+  // 闲聊不翻旧账；其余按词重合翻出更早相关的几轮（回答截短）
+  const older = input.intent === "chat" || input.intent === "general" ? [] : recallOlderTurns(input.history, keep, input.question);
+  const olderBlock = older.length
+    ? older.map((t) => `${t.at ? `（${t.at.slice(0, 10)}）` : ""}用户：${t.question}\n你：${t.answer.length > 600 ? `${t.answer.slice(0, 600)}…` : t.answer}`).join("\n\n")
+    : "";
   const guide = input.guide?.length
     ? `## 说明书摘录（Mesa 产品说明书，按问题挑的几段）\n${input.guide.map((g) => `### ${g.heading}\n${g.text}`).join("\n\n")}`
     : input.intent === "howto"
@@ -342,6 +388,7 @@ export function buildAssistantPrompt(
     input.map ? `---\n## 项目里有什么（项目地图，只有文件名、大小、修改日期）\n${input.map}` : "",
     input.catalog ? `---\n## Mesa 能用的任务和技能（能力清单）\n${input.catalog}` : "",
     guide ? `---\n${guide}` : "",
+    olderBlock ? `---\n## 更早的相关问答（按这次问题里的词翻出来的，可能已经过时，以项目快照为准）\n${olderBlock}` : "",
     history ? `---\n## 之前的问答（最近几轮）\n${history}` : "",
     `---\n## 这次的问题\n${input.question.trim()}`,
   ]
