@@ -43,9 +43,9 @@ test("summarizeJobs：按状态汇总一行，没有活给空串", () => {
   assert.equal(summarizeJobs([]), "");
   assert.equal(
     summarizeJobs([job("queued"), job("browser"), job("done"), job("failed"), job("needs_approval")]),
-    "代下中 2 · 已存 1 · 交还给你 1 · 等你放行 1",
+    "排队 2 · 已下载 1 · 需要你自己下 1 · 等你确认 1",
   );
-  assert.equal(statusLabel("needs_pick"), "等 AI 指链接");
+  assert.equal(statusLabel("needs_pick"), "等 AI 选链接");
 });
 
 test("clampLimits：调高不过天花板，间隔不短于下限", () => {

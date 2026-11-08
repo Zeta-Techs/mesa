@@ -1,5 +1,6 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
-import { PaperFetchPanel } from "../components/PaperFetchPanel";
+import { BlockedPublishers, FetchLog, JobList, LimitPair, usePaperFetchOverview } from "../components/PaperFetchPanel";
+import { summarizeJobs } from "../paper-fetch";
 import { classifierNoticeAutoSkip, setClassifierNoticeAutoSkip } from "../cli-notices";
 import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -1744,6 +1745,24 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [outboundNoProxy, setOutboundNoProxy] = useState("");
+  // 代下全文（2026-11-08）：设置 → 网络「文献全文」下的几行
+  const paperFetch = usePaperFetchOverview();
+  const [paperFetchJobsShown, setPaperFetchJobsShown] = useState(false);
+  const [paperFetchLogShown, setPaperFetchLogShown] = useState(false);
+  const [bridgeResult, setBridgeResult] = useState<{ dir: string | null; failed: string[] } | null>(null);
+  const paperFetchOpen = (paperFetch.data?.jobs ?? []).filter((j) => !["done", "cancelled"].includes(j.status));
+  const paperFetchBlocked = (paperFetch.data?.publishers ?? []).filter((p) => !!p.blockedUntil);
+  async function installBridge() {
+    try {
+      const lines = await invoke<string[]>("install_browser_bridge");
+      const dirLine = lines.find((l) => l.startsWith("扩展目录已就绪："));
+      const dir = dirLine ? dirLine.slice("扩展目录已就绪：".length).split(" ——")[0].trim() : null;
+      setBridgeResult({ dir, failed: lines.filter((l) => l.includes("✗") || l.startsWith("扩展目录未能就位")) });
+    } catch (e) {
+      setBridgeResult({ dir: null, failed: [String(e)] });
+    }
+  }
+
   // 机构访问（高校/研究所全文通道）：前缀与登录页草稿 + 会话状态（值在后端 0600 文件，这里只有统计态）
   const [institutionalPrefix, setInstitutionalPrefix] = useState("");
   const [institutionalLoginUrl, setInstitutionalLoginUrl] = useState("");
@@ -4237,13 +4256,97 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </SettingsFold>
           </div>
         </Row>
+        {/* 代下全文（2026-11-08）：一行一件事，数字失焦即存，进行中与记录收起（设置页规范 §13 / design-system 设置页细节口径） */}
         <Row
           label="代下全文"
-          align="start"
-          hint="AI 或你交给 Mesa，按出版商限速逐篇取"
-          labelTitle="先找开放获取版本，再走学校通道，最后在你的浏览器里取。遇到验证码或被拒这家停 24 小时并交还给你。"
+          hint="待获取的文献交给 Mesa 逐篇下载"
+          labelTitle="先找开放获取版本，再用学校账号下载，最后在你的浏览器里下。按出版商限速；遇到人机验证或被出版商拒绝，这家停 24 小时，那篇交还给你自己下；连续 3 篇没下到，整条暂停。AI 只能交项目文献清单里有的文献。"
         >
-          <PaperFetchPanel />
+          {paperFetch.data?.paused ? (
+            <>
+              <span className="text-sm text-warn-text" title={paperFetch.data.paused}>
+                已暂停
+              </span>
+              <button type="button" className={rowActionClass} onClick={() => void invoke("paper_fetch_resume").finally(paperFetch.reload)}>
+                继续
+              </button>
+            </>
+          ) : paperFetch.data?.sessionExpired ? (
+            <>
+              <span className="text-sm text-warn-text">学校登录已过期</span>
+              <button type="button" className={rowActionClass} onClick={() => void invoke("paper_fetch_resume").finally(paperFetch.reload)}>
+                已重新登录
+              </button>
+            </>
+          ) : paperFetch.data ? (
+            <span className="text-sm text-l2 tabular-nums" title="只计用学校账号下载的篇数">
+              今天 {paperFetch.data.totalToday} / {paperFetch.data.limits.totalDaily} 篇
+            </span>
+          ) : null}
+        </Row>
+        <Row
+          label="浏览器扩展"
+          hint="Wiley、Elsevier 等要在浏览器里下载"
+          labelTitle="「Mesa 文献下载」扩展在你的浏览器里打开文献页、下载 PDF，用的是你登录过的学校账号。浏览器要开着。"
+          extra={
+            bridgeResult ? (
+              <div className="max-w-2xl space-y-1 text-sm leading-relaxed text-l3">
+                {bridgeResult.failed.map((line) => (
+                  <p key={line} className="break-words text-err-text">{line}</p>
+                ))}
+                <p>
+                  再在 Chrome 或 Edge 打开 chrome://extensions，打开「开发者模式」，点「加载已解压的扩展程序」，选扩展文件夹；装过的点一次「重新加载」。
+                  {bridgeResult.dir && (
+                    <button type="button" className={`${rowActionClass} ml-2 align-middle`} onClick={() => void revealItemInDir(bridgeResult.dir!)}>
+                      定位扩展文件夹
+                    </button>
+                  )}
+                </p>
+              </div>
+            ) : undefined
+          }
+        >
+          {paperFetch.data?.extensionAlive ? (
+            <span className="text-sm text-done">已连接</span>
+          ) : (
+            <>
+              <span className="text-sm text-l3">未连接</span>
+              <button type="button" className={rowActionClass} onClick={() => void installBridge()}>
+                安装…
+              </button>
+            </>
+          )}
+        </Row>
+        <Row label="每天上限" hint="只计用学校账号下载的篇数">
+          {paperFetch.data && <LimitPair data={paperFetch.data} pair="daily" inputClass={fieldFixed} onSaved={() => void paperFetch.reload()} />}
+        </Row>
+        <Row label="下载间隔" hint="同一家出版商两次之间随机等待">
+          {paperFetch.data && <LimitPair data={paperFetch.data} pair="gap" inputClass={fieldFixed} onSaved={() => void paperFetch.reload()} />}
+        </Row>
+        {paperFetchBlocked.length > 0 && (
+          <Row label="暂停的出版商" hint="人机验证或被拒后停 24 小时" align="start">
+            <BlockedPublishers publishers={paperFetchBlocked} buttonClass={rowActionClass} onChanged={() => void paperFetch.reload()} />
+          </Row>
+        )}
+        {paperFetchOpen.length > 0 && (
+          <Row
+            label="进行中"
+            hint={summarizeJobs(paperFetchOpen)}
+            extra={paperFetchJobsShown ? <JobList jobs={paperFetchOpen} onChanged={() => void paperFetch.reload()} /> : undefined}
+          >
+            <button type="button" className={rowActionClass} onClick={() => setPaperFetchJobsShown((v) => !v)}>
+              {paperFetchJobsShown ? "收起" : "查看"}
+            </button>
+          </Row>
+        )}
+        <Row
+          label="下载记录"
+          hint="每次下载的时间、方式和结果"
+          extra={paperFetchLogShown ? <FetchLog /> : undefined}
+        >
+          <button type="button" className={rowActionClass} onClick={() => setPaperFetchLogShown((v) => !v)}>
+            {paperFetchLogShown ? "收起" : "查看"}
+          </button>
         </Row>
       </Section>
 

@@ -1,11 +1,10 @@
-// 全文代下（2026-11-08，docs/design-autonomy-roadmap.md §6）：
-// - PaperFetchPanel：设置 → 网络「代下全文」——今天经学校身份下了多少、哪家暂停了、等你放行 / 交还给你的、调上限、出门日志
-// - PaperFetchBar：待获取清单顶上「让 Mesa 代下这批」与一行进度
+// 代下全文（2026-11-08，docs/design-autonomy-roadmap.md §6）的界面零件。
+// 设置 → 网络「文献全文」按设置页规范一行一件事：SettingsPage 用 Row 排，这里只给数据钩子和行里的小块；
+// 待获取清单顶上的 PaperFetchBar 是次要动作（步骤主按钮只有一个，step-panel R6）。
 // 限速、熔断、范围检查都在后端（paper_fetch.rs），这里只展示与转达人的点击。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
-import { primaryActionClass } from "./PageFrame";
 import {
   clampLimits,
   fetchableItems,
@@ -17,20 +16,21 @@ import {
   type PaperFetchLimits,
   type PaperFetchLogEntry,
   type PaperFetchOverview,
+  type PaperFetchPublisher,
 } from "../paper-fetch";
 
-const smallBtn =
-  "rounded-sm border border-field px-1.5 py-0.5 text-xs text-l1 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50";
+const linkBtn = "text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50";
 
 function hasTauri(): boolean {
   return !!(globalThis as { __TAURI_INTERNALS__?: { transformCallback?: unknown } }).__TAURI_INTERNALS__
     ?.transformCallback;
 }
 
-function useOverview(projectRoot?: string) {
+/** 代下状态：听后端广播，另 15 秒拉一次（扩展与 AI 在别的进程里写队列） */
+export function usePaperFetchOverview(projectRoot?: string) {
   const [data, setData] = useState<PaperFetchOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
+  const reload = useCallback(async () => {
     try {
       setData(await invoke<PaperFetchOverview>("paper_fetch_overview", { projectRoot: projectRoot ?? null }));
       setError(null);
@@ -40,324 +40,207 @@ function useOverview(projectRoot?: string) {
   }, [projectRoot]);
   useEffect(() => {
     if (!hasTauri()) return;
-    void load();
-    const un = listen("paper-fetch-changed", () => void load());
-    // 扩展领活、AI 交活都在别的进程里写队列，后台线程不一定有变化可广播：慢一点再拉一次
-    const timer = window.setInterval(() => void load(), 15000);
+    void reload();
+    const un = listen("paper-fetch-changed", () => void reload());
+    const timer = window.setInterval(() => void reload(), 15000);
     return () => {
       window.clearInterval(timer);
       void un.then((f) => f());
     };
-  }, [load]);
-  return { data, error, reload: load };
+  }, [reload]);
+  return { data, error, reload };
 }
 
-function fmtTime(ts: number): string {
+export function fmtTime(ts: number): string {
   const d = new Date(ts * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function JobRow({ job, onDone }: { job: PaperFetchJob; onDone: () => void }) {
+/** 两个数字框，失焦或回车即存（设置页口径：不另放「保存」）；超过上限按上限存 */
+export function LimitPair({
+  data,
+  pair,
+  inputClass,
+  onSaved,
+}: {
+  data: PaperFetchOverview;
+  pair: "daily" | "gap";
+  inputClass: string;
+  onSaved: () => void;
+}) {
+  const keys: [keyof PaperFetchLimits, keyof PaperFetchLimits] =
+    pair === "daily" ? ["perPublisherDaily", "totalDaily"] : ["minGapSecs", "maxGapSecs"];
+  const [draft, setDraft] = useState<[string, string]>([String(data.limits[keys[0]]), String(data.limits[keys[1]])]);
+  useEffect(() => {
+    setDraft([String(data.limits[keys[0]]), String(data.limits[keys[1]])]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.limits[keys[0]], data.limits[keys[1]]]);
+  async function save() {
+    const next = clampLimits({ ...data.limits, [keys[0]]: Number(draft[0]), [keys[1]]: Number(draft[1]) }, data.ceiling);
+    if (next[keys[0]] === data.limits[keys[0]] && next[keys[1]] === data.limits[keys[1]]) {
+      setDraft([String(next[keys[0]]), String(next[keys[1]])]);
+      return;
+    }
+    try {
+      await invoke("paper_fetch_set_limits", { limits: next });
+    } finally {
+      onSaved();
+    }
+  }
+  const field = (i: 0 | 1, label: string, title: string) => (
+    <input
+      className={`${inputClass} w-16 text-center tabular-nums`}
+      inputMode="numeric"
+      aria-label={label}
+      title={title}
+      value={draft[i]}
+      onChange={(e) => {
+        const v = e.target.value.replace(/[^0-9]/g, "");
+        setDraft(i === 0 ? [v, draft[1]] : [draft[0], v]);
+      }}
+      onBlur={() => void save()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+    />
+  );
+  return pair === "daily" ? (
+    <span className="flex items-center gap-1.5 text-sm text-l2">
+      每家{field(0, "每家出版商每天", `最多 ${data.ceiling.perPublisherDaily} 篇`)}篇
+      <span className="ml-2">共</span>
+      {field(1, "每天总共", `最多 ${data.ceiling.totalDaily} 篇`)}篇
+    </span>
+  ) : (
+    <span className="flex items-center gap-1.5 text-sm text-l2">
+      {field(0, "最短间隔", `不少于 ${data.ceiling.minGapSecs} 秒`)}–{field(1, "最长间隔", "两次之间在这个范围里随机等")}秒
+    </span>
+  );
+}
+
+/** 暂停的出版商：一家一行，解除按钮跟在原因后面 */
+export function BlockedPublishers({
+  publishers,
+  buttonClass,
+  onChanged,
+}: {
+  publishers: PaperFetchPublisher[];
+  /** 与设置页其他行内动作同一个细边按钮 */
+  buttonClass: string;
+  onChanged: () => void;
+}) {
+  return (
+    <ul className="space-y-1.5 text-sm">
+      {publishers.map((p) => (
+        <li key={p.key} className="flex flex-wrap items-center gap-x-2 text-l2">
+          <span className="text-l1">{p.name}</span>
+          <span className="text-xs text-l3">
+            {p.blockedReason}，{fmtTime(p.blockedUntil!)} 后恢复
+          </span>
+          <button
+            type="button"
+            className={buttonClass}
+            title="确认学校的访问没被拦，再提前恢复"
+            onClick={() => void invoke("paper_fetch_unblock", { publisher: p.key }).finally(onChanged)}
+          >
+            提前恢复
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function JobRow({ job, onChanged }: { job: PaperFetchJob; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   async function act(cmd: string) {
     setBusy(true);
-    setErr(null);
     try {
       await invoke(cmd, { id: job.id });
-      onDone();
-    } catch (e) {
-      setErr(String(e));
     } finally {
       setBusy(false);
+      onChanged();
     }
   }
   const name = job.title.trim() || job.doi;
+  const note =
+    job.status === "done" && job.saved
+      ? `papers/${job.saved}（${viaLabel(job.via)}）`
+      : job.status === "needs_approval"
+        ? "不在项目文献清单里，AI 要下需要你确认"
+        : ["queued", "browser"].includes(job.status)
+          ? (job.waiting ?? "")
+          : (job.error ?? "");
   return (
-    <li className="flex min-w-0 flex-col gap-0.5 py-1">
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-        <span className="shrink-0 text-l4">{statusLabel(job.status)}</span>
-        <span className="min-w-0 flex-1 truncate text-l2" title={`${name}\n${job.doi}`}>
+    <li className="py-1.5">
+      <div className="flex min-w-0 items-center gap-2 text-sm">
+        <span className="min-w-0 flex-1 truncate text-l1" title={`${name}\n${job.doi}`}>
           {name}
         </span>
-        {job.requester === "agent" && <span className="shrink-0 text-micro text-l4">AI 交的</span>}
+        <span className="shrink-0 text-xs text-l3">{statusLabel(job.status)}</span>
         {job.status === "needs_approval" && (
           <>
-            <button type="button" className={smallBtn} disabled={busy} onClick={() => void act("paper_fetch_approve")}>
-              放行
+            <button type="button" className={linkBtn} disabled={busy} onClick={() => void act("paper_fetch_approve")}>
+              下载
             </button>
-            <button type="button" className={smallBtn} disabled={busy} onClick={() => void act("paper_fetch_cancel")}>
+            <button type="button" className={linkBtn} disabled={busy} onClick={() => void act("paper_fetch_cancel")}>
               不下
             </button>
           </>
         )}
         {(job.status === "failed" || job.status === "needs_pick") && (
-          <button type="button" className={smallBtn} disabled={busy} onClick={() => void act("paper_fetch_retry")}>
+          <button type="button" className={linkBtn} disabled={busy} onClick={() => void act("paper_fetch_retry")}>
             重试
           </button>
         )}
         {["queued", "browser"].includes(job.status) && (
-          <button type="button" className={smallBtn} disabled={busy} onClick={() => void act("paper_fetch_cancel")}>
+          <button type="button" className={linkBtn} disabled={busy} onClick={() => void act("paper_fetch_cancel")}>
             取消
           </button>
         )}
       </div>
-      {job.status === "done" && job.saved && (
-        <p className="text-micro text-l4">
-          papers/{job.saved} · 经{viaLabel(job.via)}
-        </p>
-      )}
-      {job.waiting && ["queued", "browser"].includes(job.status) && (
-        <p className="text-micro text-l4">{job.waiting}</p>
-      )}
-      {job.error && job.status !== "done" && <p className="text-micro text-l4">{job.error}</p>}
-      {job.status === "needs_approval" && (
-        <p className="text-micro text-l4">这篇不在项目的文献清单里，AI 要下需要你点放行</p>
-      )}
-      {err && <p className="text-micro text-err-text">{err}</p>}
+      {note && <p className="truncate text-xs text-l3" title={note}>{note}</p>}
     </li>
   );
 }
 
-/** 设置 → 网络「代下全文」 */
-export function PaperFetchPanel() {
-  const { data, error, reload } = useOverview();
-  const [limits, setLimits] = useState<PaperFetchLimits | null>(null);
-  const [bridge, setBridge] = useState<string[] | null>(null);
-  const [log, setLog] = useState<PaperFetchLogEntry[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [actErr, setActErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (data && !limits) setLimits(data.limits);
-  }, [data, limits]);
-
-  async function run(cmd: string, args?: Record<string, unknown>) {
-    setBusy(true);
-    setActErr(null);
-    try {
-      await invoke(cmd, args);
-      await reload();
-    } catch (e) {
-      setActErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveLimits() {
-    if (!data || !limits) return;
-    const next = clampLimits(limits, data.ceiling);
-    setBusy(true);
-    try {
-      setLimits(await invoke<PaperFetchLimits>("paper_fetch_set_limits", { limits: next }));
-      await reload();
-    } catch (e) {
-      setActErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (error) return <p className="text-micro text-err-text">代下状态读不到：{error}</p>;
-  if (!data) return <p className="text-micro text-l4">加载中…</p>;
-
-  const open = data.jobs.filter((j) => !["done", "cancelled"].includes(j.status));
-  const recentDone = data.jobs.filter((j) => j.status === "done").slice(0, 5);
-  const numField =
-    "h-7 w-16 rounded-md border border-field bg-transparent px-1.5 text-xs text-l1 focus:outline-none focus:ring-1 focus:ring-cta-bd";
-
+/** 还没结束的与最近下到的几篇 */
+export function JobList({ jobs, onChanged }: { jobs: PaperFetchJob[]; onChanged: () => void }) {
   return (
-    <div className="flex max-w-[34rem] flex-col gap-2">
-      <p className="text-micro text-l4">
-        AI 和你都可以把待获取的文献交给 Mesa，它按出版商限速逐篇去取：先找开放获取版本，再走学校通道，最后在你的浏览器里取。
-        遇到验证码或被拒，这家停 24 小时并交还给你；连续 3 篇没取到，整条暂停。
-      </p>
-
-      {data.paused && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-err-text">
-          <span>已暂停：{data.paused}</span>
-          <button type="button" className={smallBtn} disabled={busy} onClick={() => void run("paper_fetch_resume")}>
-            继续
-          </button>
-        </div>
-      )}
-      {data.sessionExpired && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-l2">
-          <span>学校会话过期，学校通道先停用（浏览器那一级照常）。重新登录后点</span>
-          <button type="button" className={smallBtn} disabled={busy} onClick={() => void run("paper_fetch_resume")}>
-            已重新登录
-          </button>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2 text-xs text-l2">
-        <span>
-          浏览器扩展：{data.extensionAlive ? <span className="text-done">在线</span> : "最近 5 分钟没来领活"}
-        </span>
-        {!data.extensionAlive && (
-          <button
-            type="button"
-            className={smallBtn}
-            disabled={busy}
-            onClick={() => {
-              void invoke<string[]>("install_browser_bridge").then(setBridge, (e) => setBridge([`✗ ${String(e)}`]));
-            }}
-          >
-            安装浏览器桥
-          </button>
-        )}
-      </div>
-      {bridge && (
-        <div className="text-micro text-l4">
-          {bridge.map((line) => (
-            <p key={line} className="break-all">
-              {line}
-            </p>
-          ))}
-          <p>
-            然后在 Chrome / Edge 打开 chrome://extensions，开「开发者模式」，点「加载已解压的扩展程序」，选上面写的 extension
-            文件夹；已装过的点一次「重新加载」。浏览器开着、登录过学校账号，扩展每分钟来领一篇。
-          </p>
-        </div>
-      )}
-
-      <div className="text-xs text-l2">
-        今天经学校身份 {data.totalToday} / {data.limits.totalDaily} 篇
-        {data.publishers.length > 0 && "："}
-        <ul className="mt-0.5 flex flex-col gap-0.5">
-          {data.publishers.map((p) => (
-            <li key={p.key} className="flex flex-wrap items-center gap-1.5">
-              <span>
-                {p.name} {p.count} / {data.limits.perPublisherDaily}
-              </span>
-              {p.blockedUntil && (
-                <>
-                  <span className="text-micro text-l4">
-                    暂停到 {fmtTime(p.blockedUntil)}（{p.blockedReason}）
-                  </span>
-                  <button
-                    type="button"
-                    className={smallBtn}
-                    disabled={busy}
-                    title="确认这家没有拦学校的访问再解除"
-                    onClick={() => void run("paper_fetch_unblock", { publisher: p.key })}
-                  >
-                    解除
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {limits && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-l2">
-          <label className="flex items-center gap-1">
-            每家每天
-            <input
-              type="number"
-              className={numField}
-              value={limits.perPublisherDaily}
-              max={data.ceiling.perPublisherDaily}
-              min={1}
-              onChange={(e) => setLimits({ ...limits, perPublisherDaily: Number(e.target.value) })}
-            />
-            篇
-          </label>
-          <label className="flex items-center gap-1">
-            总共每天
-            <input
-              type="number"
-              className={numField}
-              value={limits.totalDaily}
-              max={data.ceiling.totalDaily}
-              min={1}
-              onChange={(e) => setLimits({ ...limits, totalDaily: Number(e.target.value) })}
-            />
-            篇
-          </label>
-          <label className="flex items-center gap-1">
-            同一家间隔
-            <input
-              type="number"
-              className={numField}
-              value={limits.minGapSecs}
-              min={data.ceiling.minGapSecs}
-              onChange={(e) => setLimits({ ...limits, minGapSecs: Number(e.target.value) })}
-            />
-            –
-            <input
-              type="number"
-              className={numField}
-              value={limits.maxGapSecs}
-              min={limits.minGapSecs}
-              onChange={(e) => setLimits({ ...limits, maxGapSecs: Number(e.target.value) })}
-            />
-            秒
-          </label>
-          <button type="button" className={smallBtn} disabled={busy} onClick={() => void saveLimits()}>
-            保存
-          </button>
-          <span className="w-full text-micro text-l4">
-            可以调低；调高最多每家 {data.ceiling.perPublisherDaily} 篇、总共 {data.ceiling.totalDaily} 篇，间隔不少于{" "}
-            {data.ceiling.minGapSecs} 秒
-          </span>
-        </div>
-      )}
-
-      {open.length > 0 && (
-        <div>
-          <p className="text-xs text-l2">还没结束的（{summarizeJobs(open)}）</p>
-          <ul className="max-h-72 overflow-auto">
-            {open.map((j) => (
-              <JobRow key={j.id} job={j} onDone={() => void reload()} />
-            ))}
-          </ul>
-        </div>
-      )}
-      {recentDone.length > 0 && (
-        <div>
-          <p className="text-xs text-l2">最近取到的</p>
-          <ul>
-            {recentDone.map((j) => (
-              <JobRow key={j.id} job={j} onDone={() => void reload()} />
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div>
-        <button
-          type="button"
-          className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
-          onClick={() => {
-            if (log) setLog(null);
-            else void invoke<PaperFetchLogEntry[]>("paper_fetch_log", { limit: 200 }).then(setLog, () => setLog([]));
-          }}
-        >
-          {log ? "收起出门记录" : "出门记录（每次去取都记一行）"}
-        </button>
-        {log && (
-          <ul className="mt-1 max-h-60 overflow-auto font-mono text-micro text-l4">
-            {log.length === 0 && <li>还没有记录</li>}
-            {log.map((e, i) => (
-              <li key={`${e.at}-${i}`} className="truncate" title={e.doi}>
-                {fmtTime(e.at)} · {viaLabel(e.level)} · {e.publisher} · {logResultLabel(e.result)} · {e.doi}
-                {e.runId ? " · AI" : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      {actErr && <p className="text-micro text-err-text">{actErr}</p>}
-    </div>
+    <ul className="max-h-72 divide-y divide-hairline overflow-auto">
+      {jobs.map((j) => (
+        <JobRow key={j.id} job={j} onChanged={onChanged} />
+      ))}
+    </ul>
   );
 }
 
-/** 待获取清单顶上：「让 Mesa 代下这批」与一行进度 */
+/** 下载记录：每次去下载一行 */
+export function FetchLog() {
+  const [log, setLog] = useState<PaperFetchLogEntry[] | null>(null);
+  useEffect(() => {
+    void invoke<PaperFetchLogEntry[]>("paper_fetch_log", { limit: 200 }).then(setLog, () => setLog([]));
+  }, []);
+  if (!log) return <p className="text-xs text-l3">读取中…</p>;
+  if (log.length === 0) return <p className="text-xs text-l3">还没有下载过</p>;
+  return (
+    <ul className="max-h-60 overflow-auto text-xs leading-5 text-l3">
+      {log.map((e, i) => (
+        <li key={`${e.at}-${i}`} className="flex gap-2" title={e.doi}>
+          <span className="shrink-0 tabular-nums">{fmtTime(e.at)}</span>
+          <span className="shrink-0">{viaLabel(e.level)}</span>
+          <span className="shrink-0 text-l2">{logResultLabel(e.result)}</span>
+          <span className="min-w-0 truncate">
+            {e.doi}
+            {e.runId ? " · AI 交的" : ""}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** 待获取清单顶上：次要动作「让 Mesa 代下这批」与一行进度（主按钮仍是这一步的开始 / 评审） */
 export function PaperFetchBar({
   projectPath,
   items,
@@ -367,7 +250,7 @@ export function PaperFetchBar({
   items: { title: string; url: string; done: boolean; line: number }[];
   savedLines: Record<number, string>;
 }) {
-  const { data, reload } = useOverview(projectPath);
+  const { data, reload } = usePaperFetchOverview(projectPath);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const pending = fetchableItems(items, savedLines);
@@ -382,7 +265,7 @@ export function PaperFetchBar({
     setNote(null);
     try {
       const n = await invoke<number>("paper_fetch_enqueue", { projectRoot: projectPath, items: toSend });
-      setNote(`已交给 Mesa ${n} 篇，按出版商限速逐篇取，取到的会自动标成已存`);
+      setNote(`已交给 Mesa ${n} 篇`);
       await reload();
     } catch (e) {
       setNote(String(e));
@@ -393,19 +276,19 @@ export function PaperFetchBar({
 
   if (!hasTauri() || (toSend.length === 0 && !summary)) return null;
   return (
-    <div className="mb-1 flex flex-wrap items-center gap-2 text-micro text-l4">
+    <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-l3">
       {toSend.length > 0 && (
         <button
           type="button"
-          className={`${primaryActionClass} h-7 px-2`}
+          className="rounded-sm border border-field px-1.5 py-0.5 hover:bg-hover hover:text-l1 disabled:opacity-50"
           disabled={busy}
-          title="先找开放获取版本，再走学校通道，最后在你的浏览器里取；按出版商限速，不会连累学校的访问"
+          title="Mesa 逐篇下载：先找开放获取版本，再用学校账号，最后在你的浏览器里下；按出版商限速，下到的自动标已存"
           onClick={() => void send()}
         >
-          {busy ? "交给 Mesa…" : `让 Mesa 代下这批（${toSend.length} 篇）`}
+          <span className="text-xs">{busy ? "交给 Mesa…" : `让 Mesa 代下这批（${toSend.length} 篇）`}</span>
         </button>
       )}
-      {summary && <span title="细节在 设置 → 网络 → 代下全文">代下：{summary}</span>}
+      {summary && <span title="细节在 设置 → 网络 → 代下全文">{summary}</span>}
       {note && <span>{note}</span>}
     </div>
   );

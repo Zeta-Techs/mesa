@@ -1134,39 +1134,39 @@ function EditScheduleModal({
             跑到上限就停下记「超时」。连续 3 次没跑成（失败或超时）会自动暂停。
           </span>
         </label>
-        <fieldset className="mb-3 block text-sm">
-          <legend className="mb-1 block text-xs text-l3">授权范围</legend>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              className={`${fieldClass} w-auto`}
-              aria-label="联网"
-              value={grantNetwork}
-              onChange={(e) => setGrantNetwork(e.target.value as GrantNetwork)}
-            >
-              <option value="academic">只放行学术网站（默认）</option>
-              <option value="mesa_only">不联网，只经 Mesa 出门</option>
-              <option value="open">联网不限（全权限）</option>
-            </select>
-            <label className="flex items-center gap-1 text-xs text-l3">
-              每次最多花 $
-              <input
-                className={`${fieldClass} w-20`}
-                inputMode="decimal"
-                placeholder="不设"
-                value={grantBudget}
-                onChange={(e) => setGrantBudget(e.target.value.replace(/[^0-9.]/g, ""))}
-              />
-            </label>
-          </div>
-          <span className="mt-1 block text-micro text-l4">
-            只在工作副本（和系统临时目录）里写文件；下全文交给 Mesa 代下。被拦下的事 AI 会写进简报，不绕过。
+        <div className="mb-3 block text-sm">
+          <span className="mb-1 block text-xs text-l3">能访问的网站</span>
+          <select
+            className={fieldClass}
+            value={grantNetwork}
+            onChange={(e) => setGrantNetwork(e.target.value as GrantNetwork)}
+          >
+            <option value="academic">只访问学术网站（默认）</option>
+            <option value="mesa_only">不联网</option>
+            <option value="open">不限制</option>
+          </select>
+          <span
+            className="mt-1 block text-micro text-l4"
+            title="学术网站：OpenAlex、Crossref、arXiv、PubMed、Unpaywall 等检索与开放获取站点。付费墙全文由 Mesa 代下，不受这里限制。"
+          >
+            被拦下的事会列在这个任务下面，由你决定要不要放宽。
           </span>
           {grantPreview && (
             <span className={`mt-0.5 block text-micro ${grantPreview.enforced ? "text-l3" : "text-warn-text"}`}>
               {grantPreview.summary}
             </span>
           )}
-        </fieldset>
+        </div>
+        <label className="mb-3 block text-sm">
+          <span className="mb-1 block text-xs text-l3">每次最多花（美元，按官方价）</span>
+          <input
+            className={`${fieldClass} w-28`}
+            inputMode="decimal"
+            placeholder="不限"
+            value={grantBudget}
+            onChange={(e) => setGrantBudget(e.target.value.replace(/[^0-9.]/g, ""))}
+          />
+        </label>
         {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2"><button type="button" onClick={onClose} className={secondaryActionClass}>取消</button><button type="submit" disabled={busy} className={primaryActionClass}>{busy ? "保存中…" : "保存"}</button></div>
       </form>

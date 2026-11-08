@@ -432,10 +432,10 @@ pub(crate) fn render_ai_usage(records: &[RunRecord]) -> String {
     if !fetched.is_empty() {
         let count = |label: &str| fetched.iter().filter(|f| f.contains(label)).count();
         text.push_str(&format!(
-            "\nAI 经 Mesa 代下的全文：{} 篇（开放获取 {}、学校通道 {}、浏览器 {}）。逐篇见 `.ccode/record.jsonl` 的 fetched 字段。\n",
+            "\nAI 经 Mesa 代下的全文：{} 篇（开放获取 {}、学校账号 {}、浏览器 {}）。逐篇见 `.ccode/record.jsonl` 的 fetched 字段。\n",
             fetched.len(),
             count("开放获取"),
-            count("学校通道"),
+            count("学校账号"),
             count("浏览器")
         ));
     }

@@ -153,7 +153,7 @@ export default function OrderScheduleRow({
       <p className="text-l2">
         定时任务「{title}」：{when} · {enabled === true ? <span className="text-ok-text">已启用</span> : "还没启用"}
       </p>
-      <p className="text-l3">在隔离副本里跑，结果经你评审才进项目；连接用定时任务的默认连接。</p>
+      <p className="text-l3">在隔离副本里跑，结果经你评审才进项目。</p>
       {cadence.guessed && (
         <p className="text-warn-text">
           没认出「{scheduleText}」是多久一次，先按 {when} 建的；启用前点「改一改」改周期。

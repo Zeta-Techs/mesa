@@ -421,7 +421,7 @@ pub(crate) fn fetched_for_run(run_id: &str) -> Vec<String> {
 pub fn level_label(level: &str) -> &'static str {
     match level {
         "oa" => "开放获取",
-        "institutional" => "学校通道",
+        "institutional" => "学校账号",
         "browser" => "浏览器",
         _ => "其他",
     }
@@ -467,18 +467,18 @@ pub(crate) fn publisher_wait(state: &State, key: &str, now: i64) -> Option<Strin
     }
     let limits = state.limits();
     if state.total >= limits.total_daily {
-        return Some(format!("今天经学校身份已下 {} 篇，到了每天上限，明天继续", state.total));
+        return Some(format!("今天用学校账号已下 {} 篇，到了上限，明天继续", state.total));
     }
     if let Some(p) = state.publishers.get(key) {
         if p.blocked_until > now {
             return Some(format!("{} 暂停到 {}（{}）", publisher_name(key), fmt_time(p.blocked_until), p.blocked_reason));
         }
         if p.count >= limits.per_publisher_daily {
-            return Some(format!("{} 今天已下 {} 篇，到了每天上限，明天继续", publisher_name(key), p.count));
+            return Some(format!("{} 今天已下 {} 篇，到了上限，明天继续", publisher_name(key), p.count));
         }
         let ready_at = p.last_at + p.next_gap as i64;
         if p.last_at > 0 && ready_at > now {
-            return Some(format!("{} 两次请求要隔一会儿，约 {} 秒后", publisher_name(key), ready_at - now));
+            return Some(format!("{} 下一篇约 {} 秒后开始", publisher_name(key), ready_at - now));
         }
     }
     None
@@ -507,7 +507,7 @@ pub(crate) fn note_outcome(state: &mut State, ok: bool) {
     }
     state.fails_in_row += 1;
     if state.fails_in_row >= MAX_FAILS_IN_ROW && state.paused.is_none() {
-        state.paused = Some(format!("连续 {MAX_FAILS_IN_ROW} 篇没取到，先停下来看看原因"));
+        state.paused = Some(format!("连续 {MAX_FAILS_IN_ROW} 篇没下到"));
     }
 }
 
@@ -683,36 +683,36 @@ pub(crate) fn report_in(store: &mut Store, id: &str, kind: &str, detail: &str, c
             "captcha" | "blocked" => {
                 job.status = STATUS_FAILED.into();
                 job.error = Some(if kind == "captcha" {
-                    "出版商要人机验证：已交还给你，这家先停 24 小时".into()
+                    "出版商要人机验证，这篇请你自己下；这家停 24 小时".into()
                 } else {
-                    format!("浏览器里也被出版商拒绝（{detail}）：已交还给你，这家先停 24 小时")
+                    format!("出版商拒绝了下载（{detail}），这篇请你自己下；这家停 24 小时")
                 });
                 ok_outcome = Some(false);
             }
             "login" => {
                 job.status = STATUS_FAILED.into();
-                job.error = Some("浏览器里没登录学校账号：在浏览器里登录后点「重试」".into());
+                job.error = Some("浏览器里没登录学校账号，登录后点「重试」".into());
                 ok_outcome = Some(false);
             }
             "no_pdf" if !candidates.is_empty() && job.pick.is_none() => {
                 job.status = STATUS_NEEDS_PICK.into();
                 job.candidates = candidates.into_iter().take(8).collect();
-                job.error = Some("落地页上没认出 PDF 链接，列出了几个候选".into());
+                job.error = Some("页面上没认出 PDF，已把几个候选链接交给 AI 选".into());
             }
             "no_pdf" => {
                 job.status = STATUS_FAILED.into();
-                job.error = Some("落地页上没找到 PDF（可能不在学校订阅范围）：交给你人工获取".into());
+                job.error = Some("页面上没找到 PDF，可能不在学校订阅范围，这篇请你自己下".into());
                 ok_outcome = Some(false);
             }
             _ => {
                 job.status = STATUS_FAILED.into();
-                job.error = Some(if detail.is_empty() { "浏览器里没取到".into() } else { format!("浏览器里没取到：{detail}") });
+                job.error = Some(if detail.is_empty() { "浏览器里没下到".into() } else { format!("浏览器里没下到：{detail}") });
                 ok_outcome = Some(false);
             }
         }
     }
     if matches!(kind, "captcha" | "blocked") {
-        trip(&mut store.state, &key, now, if kind == "captcha" { "要人机验证" } else { "浏览器里也被拒" });
+        trip(&mut store.state, &key, now, if kind == "captcha" { "要人机验证" } else { "下载被拒" });
     }
     if let Some(ok) = ok_outcome {
         note_outcome(&mut store.state, ok);
@@ -741,7 +741,7 @@ pub(crate) fn expire_browser(store: &mut Store, now: i64) -> bool {
     for job in store.jobs.iter_mut() {
         if job.status == STATUS_BROWSER && job.claimed_at.is_none() && now - job.stage_at > BROWSER_GIVEUP_SECS && !alive {
             job.status = STATUS_FAILED.into();
-            job.error = Some("要用浏览器取，但 30 分钟里浏览器扩展没来领（浏览器没开，或没装 Mesa 文献下载扩展）：交给你人工获取，装好扩展后可点「重试」".into());
+            job.error = Some("要在浏览器里下，但 30 分钟里浏览器扩展都没连上（浏览器没开，或扩展没装好）。装好后点「重试」，或自己下这篇".into());
             job.updated_at = now;
             changed = true;
         }
@@ -836,7 +836,7 @@ pub(crate) async fn tick() -> Result<bool, String> {
             }
             Some(Err(e)) => {
                 log("oa", "save_failed");
-                finish(&job.id, Err(format!("取到了开放获取版本，但存进项目失败：{e}")))?;
+                finish(&job.id, Err(format!("下到了开放获取版本，但存进项目失败：{e}")))?;
             }
             None => {
                 with_store(|s| {
@@ -861,7 +861,7 @@ pub(crate) async fn tick() -> Result<bool, String> {
             }
             Err(e) => {
                 log("institutional", "save_failed");
-                finish(&job.id, Err(format!("取到了全文，但存进项目失败：{e}")))?;
+                finish(&job.id, Err(format!("下到了全文，但存进项目失败：{e}")))?;
             }
         },
         Err(e) => {
@@ -877,7 +877,7 @@ pub(crate) async fn tick() -> Result<bool, String> {
             with_store(|s| {
                 let t = now();
                 match kind {
-                    ChannelFail::Throttled => trip(&mut s.state, &key, t, "出版商限流（429）"),
+                    ChannelFail::Throttled => trip(&mut s.state, &key, t, "出版商限流"),
                     ChannelFail::SessionExpired => s.state.session_expired = true,
                     ChannelFail::Other => {}
                 }
@@ -1424,14 +1424,14 @@ mod tests {
         st.limits = Some(Limits { per_publisher_daily: 2, total_daily: 3, min_gap_secs: 30, max_gap_secs: 30 });
         assert!(publisher_wait(&st, "acs", 1000).is_none());
         note_request(&mut st, "acs", 1000);
-        assert!(publisher_wait(&st, "acs", 1010).unwrap().contains("隔一会儿"));
+        assert!(publisher_wait(&st, "acs", 1010).unwrap().contains("秒后开始"));
         assert!(publisher_wait(&st, "acs", 1031).is_none());
         note_request(&mut st, "acs", 1031);
-        assert!(publisher_wait(&st, "acs", 2000).unwrap().contains("每天上限"));
+        assert!(publisher_wait(&st, "acs", 2000).unwrap().contains("到了上限"));
         // 别家还能去，到总量上限才都停
         assert!(publisher_wait(&st, "rsc", 2000).is_none());
         note_request(&mut st, "rsc", 2000);
-        assert!(publisher_wait(&st, "nature", 3000).unwrap().contains("每天上限"));
+        assert!(publisher_wait(&st, "nature", 3000).unwrap().contains("到了上限"));
         // 跨天清零计数，熔断不清
         trip(&mut st, "rsc", 3000, "要人机验证");
         roll_day(&mut st, "2099-01-01");
@@ -1515,7 +1515,7 @@ mod tests {
         assert_eq!(first.doi, "10.1002/x");
         // 同一家到上限，第二篇不给
         assert!(claim_in(&mut s, 200).is_none());
-        assert!(s.jobs[1].waiting.as_deref().unwrap().contains("上限"));
+        assert!(s.jobs[1].waiting.as_deref().unwrap().contains("到了上限"));
         // 验证码：熔断这家、这篇交还给人
         let j = report_in(&mut s, &first.id, "captcha", "", vec![], 150).unwrap();
         assert_eq!(j.status, STATUS_FAILED);

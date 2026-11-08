@@ -62,9 +62,9 @@ impl Grant {
 
     pub fn network_label(&self) -> &'static str {
         match self.network {
-            Network::MesaOnly => "不联网（只经 Mesa 出门）",
-            Network::Academic => "只放行学术网站",
-            Network::Open => "不限",
+            Network::MesaOnly => "不联网",
+            Network::Academic => "只访问学术网站",
+            Network::Open => "不限制",
         }
     }
 }
@@ -112,11 +112,11 @@ pub fn grant_preview(agent: String, grant: Grant) -> GrantPreviewDto {
 fn budget_note(g: &Grant, agent: &str) -> String {
     let Some(b) = g.budget_usd else { return String::new() };
     if agent == "claude-code" {
-        format!("；预算 ${b:.2}（CLI 自己到额即停）")
+        format!("；花到 ${b:.2} 自己停")
     } else if crate::agent_specs::agent_spec(agent).is_some_and(|s| s.fixed_session_id) {
-        format!("；预算 ${b:.2}（Mesa 每 30 秒按会话用量算一次，到额停掉）")
+        format!("；花到 ${b:.2} 由 Mesa 停下")
     } else {
-        format!("；预算 ${b:.2} 只记录：这家跑的时候 Mesa 算不出花费，不能中途停")
+        format!("；这家跑的时候算不出花费，${b:.2} 的上限只记录、不会中途停")
     }
 }
 
@@ -138,13 +138,13 @@ pub fn plan_for(agent: &str, g: &Grant, write_dirs: &[String], windows: bool) ->
             }
             let net_text = match g.network {
                 Network::MesaOnly => "不联网",
-                Network::Academic => "联网（Codex 只能整体开或关，学术清单按开）",
-                Network::Open => "联网",
+                Network::Academic => "联网不限（Codex 只能整体开关联网，没法只放学术网站）",
+                Network::Open => "联网不限",
             };
             GrantPlan {
                 args,
                 claude_settings: None,
-                summary: format!("Codex 沙箱：只写工作副本和系统临时目录，{net_text}{}", budget_note(g, agent)),
+                summary: format!("Codex 会拦住工作副本以外的写入；{net_text}{}", budget_note(g, agent)),
                 enforced: true,
             }
         }
@@ -188,8 +188,8 @@ pub fn plan_for(agent: &str, g: &Grant, write_dirs: &[String], windows: bool) ->
                 args,
                 claude_settings: Some(settings),
                 summary: format!(
-                    "Claude Code 沙箱：只写工作副本和系统临时目录，{}{}",
-                    if g.network == Network::Academic { "命令只能访问学术网站" } else { "命令不联网" },
+                    "Claude Code 会拦住工作副本以外的写入，{}{}",
+                    if g.network == Network::Academic { "也拦住学术网站以外的访问" } else { "也不让联网" },
                     budget_note(g, agent)
                 ),
                 enforced: true,
@@ -201,23 +201,23 @@ pub fn plan_for(agent: &str, g: &Grant, write_dirs: &[String], windows: bool) ->
                 args.extend(["--max-budget-usd".into(), format!("{b:.2}")]);
             }
             let why = if windows && g.network != Network::Open {
-                "Windows 上 Claude Code 的沙箱不可用，按全权限跑"
+                "Claude Code 在 Windows 上拦不住，这次不加限制"
             } else {
-                "联网不限，按全权限跑"
+                "Claude Code 不加限制"
             };
-            GrantPlan { args, claude_settings: None, summary: format!("Claude Code：{why}{}", budget_note(g, agent)), enforced: false }
+            GrantPlan { args, claude_settings: None, summary: format!("{why}{}", budget_note(g, agent)), enforced: false }
         }
         "grok" => GrantPlan {
             args: vec!["--yolo".into()],
             claude_settings: None,
-            summary: format!("Grok Build：沙箱档还没实测，按全权限跑{}", budget_note(g, agent)),
+            summary: format!("Grok Build 的限制办法还没核对过，这次不加限制{}", budget_note(g, agent)),
             enforced: false,
         },
         other => GrantPlan {
             args: Vec::new(),
             claude_settings: None,
             summary: format!(
-                "{}：没有可用的写入与联网限制，按这家无头运行的默认权限跑{}",
+                "{} 没有可用的限制办法，这次不加限制{}",
                 crate::agent_specs::agent_spec(other).map(|s| s.display_name.to_string()).unwrap_or_else(|| other.to_string()),
                 budget_note(g, agent)
             ),
@@ -263,9 +263,9 @@ mod tests {
         assert!(p.enforced);
         let p = plan_for("codex", &Grant::default(), &dirs(), false);
         assert!(p.args.contains(&"sandbox_workspace_write.network_access=true".to_string()));
-        assert!(p.summary.contains("学术清单按开"));
+        assert!(p.summary.contains("没法只放学术网站"));
         let p = plan_for("codex", &Grant { network: Network::Academic, budget_usd: Some(1.0) }, &dirs(), false);
-        assert!(p.summary.contains("只记录"), "Codex 不能预先锁定会话 id，预算不能说成会中途停");
+        assert!(p.summary.contains("不会中途停"), "Codex 不能预先锁定会话 id，预算不能说成会中途停");
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn other_agents_say_what_they_cannot_do() {
         let p = plan_for("kimi", &Grant::default(), &dirs(), false);
-        assert!(!p.enforced && p.args.is_empty() && p.summary.contains("没有可用的写入与联网限制"));
+        assert!(!p.enforced && p.args.is_empty() && p.summary.contains("没有可用的限制办法"));
         assert!(plan_for("grok", &Grant::default(), &dirs(), false).args.contains(&"--yolo".to_string()));
     }
 

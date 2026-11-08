@@ -61,12 +61,12 @@ export interface PaperFetchLogEntry {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  needs_approval: "等你放行",
+  needs_approval: "等你确认",
   queued: "排队中",
-  browser: "等浏览器取",
-  needs_pick: "等 AI 指链接",
-  done: "已存",
-  failed: "交还给你",
+  browser: "等浏览器下载",
+  needs_pick: "等 AI 选链接",
+  done: "已下载",
+  failed: "需要你自己下",
   cancelled: "已取消",
 };
 
@@ -76,7 +76,7 @@ export function statusLabel(status: string): string {
 
 const VIA_LABEL: Record<string, string> = {
   oa: "开放获取",
-  institutional: "学校通道",
+  institutional: "学校账号",
   browser: "浏览器",
 };
 
@@ -85,15 +85,15 @@ export function viaLabel(via: string | null | undefined): string {
 }
 
 const RESULT_LABEL: Record<string, string> = {
-  ok: "取到",
-  fallback: "直取不行，转浏览器",
-  throttled: "被限流",
-  session_expired: "学校会话过期",
+  ok: "下载成功",
+  fallback: "改在浏览器里下",
+  throttled: "出版商限流",
+  session_expired: "学校登录已过期",
   save_failed: "存进项目失败",
   captcha: "要人机验证",
-  blocked: "被拒",
-  login: "没登录",
-  no_pdf: "没认出 PDF",
+  blocked: "被出版商拒绝",
+  login: "浏览器没登录学校账号",
+  no_pdf: "页面上没找到 PDF",
   error: "出错",
 };
 
@@ -126,7 +126,7 @@ export function fetchableItems(
   return out;
 }
 
-/** 一行进度：「代下中 3 · 已存 5 · 交还给你 1 · 等你放行 2」；没有活就空串 */
+/** 一行进度：「排队 3 · 已下载 5 · 需要你自己下 1 · 等你确认 2」；没有就空串 */
 export function summarizeJobs(jobs: PaperFetchJob[]): string {
   const count = (pred: (j: PaperFetchJob) => boolean) => jobs.filter(pred).length;
   const parts: string[] = [];
@@ -134,10 +134,10 @@ export function summarizeJobs(jobs: PaperFetchJob[]): string {
   const done = count((j) => j.status === "done");
   const failed = count((j) => j.status === "failed");
   const approval = count((j) => j.status === "needs_approval");
-  if (active) parts.push(`代下中 ${active}`);
-  if (done) parts.push(`已存 ${done}`);
-  if (failed) parts.push(`交还给你 ${failed}`);
-  if (approval) parts.push(`等你放行 ${approval}`);
+  if (active) parts.push(`排队 ${active}`);
+  if (done) parts.push(`已下载 ${done}`);
+  if (failed) parts.push(`需要你自己下 ${failed}`);
+  if (approval) parts.push(`等你确认 ${approval}`);
   return parts.join(" · ");
 }
 
