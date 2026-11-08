@@ -993,7 +993,9 @@ function OptimizeModal({
           )}
         </div>
         {mode === "terminal" ? (
-          <p className="mb-3 text-xs text-l3">开终端让 Agent 按你的意见改写这个技能；改完记得审查。</p>
+          <p className="mb-3 text-xs text-l3">
+            开终端让 Agent 按你的意见直接改这个技能。改之前 Mesa 先留一份底，改完回到技能页点这一行的「看优化改动」，保留或撤回。
+          </p>
         ) : (
           <>
             <p className="mb-3 text-xs text-l3">
@@ -1060,6 +1062,74 @@ function OptimizeModal({
           </button>
         </div>
     </Modal>
+  );
+}
+
+/** 技能文件逐个对照（内置技能「本机与新版」、◈ 优化「改前与改后」共用）：只画改了的行，可展开两份全文。 */
+function SkillFileDiffList({
+  files,
+  beforeLabel,
+  afterLabel,
+}: {
+  files: { path: string; before: string; after: string; opaque?: boolean }[];
+  beforeLabel: string;
+  afterLabel: string;
+}) {
+  return (
+    <div className="mt-2 space-y-1.5">
+      {files.map((file) => {
+        // 只画改了的行（「有差异」三个字看不出改了哪；换行符不同不算改动）
+        const diff = skillFileDiff(file.before, file.after);
+        const same = !file.opaque && diff.added + diff.removed === 0;
+        return (
+          <details key={file.path} className="rounded-md border border-hairline bg-canvas">
+            <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-l2 hover:bg-hover">
+              <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
+              <span className={same ? "text-l4" : "text-warn-text"}>
+                {file.opaque
+                  ? "改过（不是文本或太大，不显示内容）"
+                  : same
+                    ? "未变"
+                    : !file.before
+                      ? `新增文件 ${diff.added} 行`
+                      : !file.after
+                        ? `删掉的文件 ${diff.removed} 行`
+                        : `${afterLabel} +${diff.added} 行 −${diff.removed} 行`}
+              </span>
+            </summary>
+            {!same && !file.opaque && (
+              <div className="border-t border-hairline p-2">
+                <p className="mb-1 text-micro text-l4">
+                  绿底是{afterLabel}加上的，红底是{afterLabel}去掉的；没改的段落折成 ⋯
+                </p>
+                <DiffView lines={diff.lines} />
+              </div>
+            )}
+            {!file.opaque && (
+              <details className="border-t border-hairline">
+                <summary className="cursor-pointer px-2.5 py-1 text-micro text-l4 hover:text-l2">
+                  对照两份全文
+                </summary>
+                <div className="grid grid-cols-2 gap-2 border-t border-hairline p-2">
+                  <div className="min-w-0">
+                    <div className="mb-1 text-micro text-l4">{beforeLabel}</div>
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm ccode-well p-2 font-mono text-l3">
+                      {file.before || "（尚无）"}
+                    </pre>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="mb-1 text-micro text-l4">{afterLabel}</div>
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm ccode-well p-2 font-mono text-l2">
+                      {file.after || "（已删除）"}
+                    </pre>
+                  </div>
+                </div>
+              </details>
+            )}
+          </details>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1352,6 +1422,13 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   // 内置技能新版提示：加载时 best-effort 检测；更新失败行内报错（按技能名记录）
   const [builtinUpdates, setBuiltinUpdates] = useState<string[]>([]);
+  // ◈ 优化原地改的改前改后对照（技能行「看优化改动」打开）
+  const [optimizeReview, setOptimizeReview] = useState<{
+    skill: SkillDto;
+    startedAt: string;
+    files: { path: string; before: string; after: string; opaque: boolean }[];
+  } | null>(null);
+  const [optimizeFinishing, setOptimizeFinishing] = useState(false);
   const [builtinPreview, setBuiltinPreview] = useState<{ name: string; revision: string; files: { path: string; current: string; proposed: string }[] } | null>(null);
   const [builtinApplying, setBuiltinApplying] = useState<string | null>(null);
   const [builtinErrors, setBuiltinErrors] = useState<Record<string, string>>(
@@ -1709,21 +1786,62 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** ◈ 优化：以技能库目录为 cwd 开终端，预填「阅读 + 按意见优化」指令（Agent 直接改写库文件） */
+  /** ◈ 优化：先给库里这份留底（改完能对照、能撤回），再以技能库目录为 cwd 开终端，
+   *  预填「阅读 + 按意见优化」指令（Agent 直接改写库文件）。留底失败不开终端。 */
   async function confirmOptimize(skill: SkillDto, opinion: string) {
     try {
-      const target = await invoke<SkillPathDto>("skill_md_path", {
+      const target = await invoke<SkillPathDto>("begin_skill_optimize", {
         id: skill.id,
       });
       setPendingTerminal({
         cwd: target.dir,
         extraEnv: {},
         title: `优化技能 ${skill.name}`,
-        initialPrompt: `阅读 ${target.mdPath}，按以下意见优化它：\n${opinion}`,
+        initialPrompt: `阅读 ${target.mdPath}，按以下意见优化它：\n${opinion}\n\n改完列一下改了哪些地方。`,
       });
       setPage("terminal");
     } catch (e) {
       setError(`打开技能优化终端失败：${String(e)}`);
+    }
+  }
+
+  /** ◈ 优化原地改的验收：打开改前改后对照 */
+  async function openOptimizeReview(skill: SkillDto) {
+    try {
+      const dto = await invoke<{
+        startedAt: string;
+        files: { path: string; before: string; after: string; opaque: boolean }[];
+      }>("skill_optimize_review", { id: skill.id });
+      setOptimizeReview({ skill, ...dto });
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  /** 保留改动（顺带同步复制件）或撤回到改前（改后的版本进备份） */
+  async function finishOptimize(skill: SkillDto, keep: boolean) {
+    if (
+      !keep &&
+      !(await confirmDialog(
+        `把「${skill.name}」退回到这次优化之前的样子？改后的版本会放进技能备份，需要时还能找回。`,
+        { confirmText: "撤回" },
+      ))
+    ) {
+      return;
+    }
+    setOptimizeFinishing(true);
+    try {
+      const agents = await invoke<string[]>("finish_skill_optimize", { id: skill.id, keep });
+      const synced = agents.length ? `，已同步给 ${agents.join("、")}` : "";
+      setNotice(keep ? `已保留「${skill.name}」的优化${synced}` : `已撤回「${skill.name}」的优化${synced}`);
+      setOptimizeReview(null);
+      setError(null);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setOptimizeFinishing(false);
     }
   }
 
@@ -1928,6 +2046,50 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
               </>
             }
           />
+          {optimizeReview && (
+            <section
+              className="mb-3 rounded-md ccode-well p-3 text-xs"
+              aria-label="技能优化改动"
+            >
+              <h3 className="text-sm font-medium text-l1">
+                {optimizeReview.skill.name}：这次优化改了什么
+              </h3>
+              <p className="mt-0.5 text-l4">
+                开终端优化前 Mesa 留了一份改前的样子。保留就用改后的版本，并同步给已启用这项技能的 Agent；
+                撤回就退回改前，改后的版本放进技能备份。
+              </p>
+              {optimizeReview.files.length ? (
+                <SkillFileDiffList files={optimizeReview.files} beforeLabel="改前" afterLabel="改后" />
+              ) : (
+                <p className="mt-2 text-l3">只有换行符不同，内容没变。</p>
+              )}
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className={secondaryActionClass}
+                  onClick={() => setOptimizeReview(null)}
+                >
+                  稍后再看
+                </button>
+                <button
+                  type="button"
+                  className={secondaryActionClass}
+                  disabled={optimizeFinishing}
+                  onClick={() => void finishOptimize(optimizeReview.skill, false)}
+                >
+                  撤回这次优化
+                </button>
+                <button
+                  type="button"
+                  className={primaryActionClass}
+                  disabled={optimizeFinishing}
+                  onClick={() => void finishOptimize(optimizeReview.skill, true)}
+                >
+                  {optimizeFinishing ? "处理中…" : "保留改动"}
+                </button>
+              </div>
+            </section>
+          )}
           {builtinPreview && (
             <section
               className="mb-3 rounded-md ccode-well p-3 text-xs"
@@ -1940,57 +2102,11 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                 不会自动覆盖。采用新版前会先备份本机文件；你自己改过的内容不会自动合并。
                 采用后会顺带把新版拷给已启用这项技能的 Agent（它们用的是复制件），不用再点「同步副本」。
               </p>
-              <div className="mt-2 space-y-1.5">
-                {builtinPreview.files.map((file) => {
-                  // 只画改了的行（「有差异」三个字看不出改了哪；换行符不同不算改动）
-                  const diff = skillFileDiff(file.current, file.proposed);
-                  const same = diff.added + diff.removed === 0;
-                  return (
-                    <details
-                      key={file.path}
-                      className="rounded-md border border-hairline bg-canvas"
-                    >
-                      <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-l2 hover:bg-hover">
-                        <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
-                        <span className={same ? "text-l4" : "text-warn-text"}>
-                          {same
-                            ? "未变"
-                            : !file.current
-                              ? `新增文件 ${diff.added} 行`
-                              : `新版 +${diff.added} 行 −${diff.removed} 行`}
-                        </span>
-                      </summary>
-                      {!same && (
-                        <div className="border-t border-hairline p-2">
-                          <p className="mb-1 text-micro text-l4">
-                            绿底是新版加上的，红底是新版去掉的；没改的段落折成 ⋯
-                          </p>
-                          <DiffView lines={diff.lines} />
-                        </div>
-                      )}
-                      <details className="border-t border-hairline">
-                        <summary className="cursor-pointer px-2.5 py-1 text-micro text-l4 hover:text-l2">
-                          对照两份全文
-                        </summary>
-                      <div className="grid grid-cols-2 gap-2 border-t border-hairline p-2">
-                        <div className="min-w-0">
-                          <div className="mb-1 text-micro text-l4">本机</div>
-                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm ccode-well p-2 font-mono text-l3">
-                            {file.current || "（尚无）"}
-                          </pre>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="mb-1 text-micro text-l4">新版</div>
-                          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm ccode-well p-2 font-mono text-l2">
-                            {file.proposed}
-                          </pre>
-                        </div>
-                      </div>
-                      </details>
-                    </details>
-                  );
-                })}
-              </div>
+              <SkillFileDiffList
+                files={builtinPreview.files.map((f) => ({ path: f.path, before: f.current, after: f.proposed }))}
+                beforeLabel="本机"
+                afterLabel="新版"
+              />
               <div className="mt-3 flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -2245,6 +2361,19 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                         className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
                                       >
                                         同步副本
+                                      </button>
+                                    )}
+                                    {skill.optimizeReview?.changed && (
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void openOptimizeReview(skill);
+                                        }}
+                                        title="终端里的 Agent 改过这个技能：看改前改后，保留或撤回"
+                                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-warn-text hover:bg-hover"
+                                      >
+                                        看优化改动
                                       </button>
                                     )}
                                   </div>

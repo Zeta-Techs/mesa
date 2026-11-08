@@ -1793,3 +1793,97 @@ fn real_skill_dir_unlink_dry_run() {
         assert!(!link.is_some_and(|l| crate::paths::path_within_path(&l, &lib)));
     }
 }
+
+// ===== ◈ 优化原地改：留底 / 对照 / 保留 / 撤回 =====
+
+fn edit_lib_skill(fx: &Fx, name: &str, body: &str) {
+    let dir = fx.store.skill_dir(name);
+    fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: 改过的简介\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+fn listed(fx: &Fx, id: &str) -> SkillDto {
+    list_skills_impl(&fx.store, &fx.agents)
+        .into_iter()
+        .find(|s| s.id == id)
+        .unwrap()
+}
+
+#[test]
+fn optimize_snapshot_marks_changed_only_after_edit() {
+    let fx = Fx::new();
+    let skill = fx.add_lib_skill("mine", "原简介");
+    assert!(listed(&fx, &skill.id).optimize_review.is_none());
+    let path = optimize_review::begin_impl(&fx.store, &skill.id).unwrap();
+    assert!(path.md_path.ends_with("SKILL.md"));
+    let state = listed(&fx, &skill.id).optimize_review.unwrap();
+    assert!(!state.changed, "还没改就不该提示验收");
+    edit_lib_skill(&fx, "mine", "新正文");
+    fs::write(fx.store.skill_dir("mine").join("extra.md"), "附加").unwrap();
+    assert!(listed(&fx, &skill.id).optimize_review.unwrap().changed);
+    // 再开一轮不重拍底稿：对照仍从最早那份算起
+    optimize_review::begin_impl(&fx.store, &skill.id).unwrap();
+    let review = optimize_review::review_impl(&fx.store, &skill.id).unwrap();
+    let paths = serde_json::to_value(&review).unwrap()["files"].as_array().unwrap().clone();
+    assert_eq!(paths[0]["path"], "SKILL.md");
+    assert!(paths[0]["before"].as_str().unwrap().contains("body"));
+    assert!(paths[0]["after"].as_str().unwrap().contains("新正文"));
+    assert_eq!(paths[1]["path"], "extra.md");
+    assert_eq!(paths[1]["before"], "");
+    assert_eq!(paths.len(), 2);
+}
+
+#[test]
+fn optimize_keep_clears_snapshot_and_refreshes_description() {
+    let fx = Fx::new();
+    let skill = fx.add_lib_skill("mine", "原简介");
+    optimize_review::begin_impl(&fx.store, &skill.id).unwrap();
+    edit_lib_skill(&fx, "mine", "新正文");
+    optimize_review::finish_impl(&fx.store, &fx.agents, &skill.id, true).unwrap();
+    let after = listed(&fx, &skill.id);
+    assert!(after.optimize_review.is_none());
+    assert_eq!(after.description, "改过的简介");
+    let md = fs::read_to_string(fx.store.skill_dir("mine").join("SKILL.md")).unwrap();
+    assert!(md.contains("新正文"));
+    assert!(optimize_review::finish_impl(&fx.store, &fx.agents, &skill.id, true).is_err());
+}
+
+#[test]
+fn optimize_revert_restores_snapshot_and_backs_up_edited_version() {
+    let fx = Fx::new();
+    let skill = fx.add_lib_skill("mine", "原简介");
+    optimize_review::begin_impl(&fx.store, &skill.id).unwrap();
+    edit_lib_skill(&fx, "mine", "新正文");
+    fs::write(fx.store.skill_dir("mine").join("extra.md"), "附加").unwrap();
+    optimize_review::finish_impl(&fx.store, &fx.agents, &skill.id, false).unwrap();
+    let dir = fx.store.skill_dir("mine");
+    let md = fs::read_to_string(dir.join("SKILL.md")).unwrap();
+    assert!(md.contains("body") && !md.contains("新正文"));
+    assert!(!dir.join("extra.md").exists(), "Agent 新加的文件随撤回一起退掉");
+    assert!(listed(&fx, &skill.id).optimize_review.is_none());
+    // 改后的版本进了 skill-backups，撤回本身也能反悔
+    let backups: Vec<_> = fs::read_dir(fx.dir.join("skill-backups"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("mine."))
+        .collect();
+    assert_eq!(backups.len(), 1);
+    let kept = fs::read_to_string(backups[0].path().join("SKILL.md")).unwrap();
+    assert!(kept.contains("新正文"));
+}
+
+#[test]
+fn optimize_snapshot_of_deleted_skill_does_not_leak_to_new_same_name() {
+    let fx = Fx::new();
+    let old = fx.add_lib_skill("mine", "原简介");
+    optimize_review::begin_impl(&fx.store, &old.id).unwrap();
+    // 手动删登记 + 目录，模拟删除后同名再建（留底按 id 认，不串）
+    fs::remove_dir_all(fx.store.skill_dir("mine")).unwrap();
+    fx.store.write(&[]).unwrap();
+    let new = fx.add_lib_skill("mine", "新技能");
+    assert!(listed(&fx, &new.id).optimize_review.is_none());
+    assert!(optimize_review::review_impl(&fx.store, &new.id).is_err());
+}

@@ -1197,9 +1197,11 @@ export interface SkillDto {
   interfaceInferred?: boolean;
   /** 库目录内容摘要（list 时现算）：执行快照/项目上下文按它记录技能版本 */
   contentDigest?: string | null;
+  /** ◈ 优化「原地改」留了底、还没验收（list 时现算）：changed = Agent 已改过、可看对照 */
+  optimizeReview?: { startedAt: string; changed: boolean } | null;
 }
 
-/** skill_md_path 返回：SKILL.md 绝对路径 + 技能库目录（◈ 优化开终端的 cwd） */
+/** begin_skill_optimize 返回（先留底）：SKILL.md 绝对路径 + 技能库目录（◈ 优化开终端的 cwd） */
 export interface SkillPathDto {
   mdPath: string;
   dir: string;

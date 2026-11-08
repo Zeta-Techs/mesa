@@ -401,7 +401,7 @@
   repo/ref/subdir 重下并只覆盖同名技能（`import_zip_impl` 的 `only` 过滤，同仓库其他技能不新增不覆盖，走同一覆盖+备份
   路径），上游改名/移动时明确报错并引导手动重新导入；手动重新导入仍走冲突确认。新建/编辑
   走 `create_skill`/`update_skill_content`：重名拒绝并引导改用「编辑内容」；编辑经临时目录走既有覆盖路径（覆盖前备份、
-  辅助文件保留、source/repo 不改写）；◈ 优化开终端让 Agent 直改库文件，备份兜底仍靠保存/覆盖路径。**内置技能更新**
+  辅助文件保留、source/repo 不改写）；◈ 优化开终端让 Agent 直改库文件前必先留底（`begin_skill_optimize`，留底失败不开终端），改后只经人点「保留 / 撤回」收口：撤回先把改后版本备份进 skill-backups 再退回底稿，两者都要 resync 复制件（`skills/optimize_review.rs`）。**内置技能更新**
   （`apply_builtin_skill_update`）= 先预览 SKILL.md 与随包脚本并绑定目录摘要，再持进程/OS 锁确认摘要未变；全部原件备份后写入，失败恢复本批文件。保留同目录 `.bak-<yyyymmdd>`（重名追加后缀）供人工恢复，辅助文件不能静默漏更新。
 - **技能清单 skills.json 读改写持锁、读坏不覆盖**（2026-10-31）：凡读-改-写 skills.json 的入口整段持 `SkillStore::lock`
   （进程锁＋`locks/skills.lock` 文件锁，同线程可重入，持锁段内不得跨 await）；`write` 前先确认盘上那份能解析，解析不了就拒写并报出

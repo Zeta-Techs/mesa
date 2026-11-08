@@ -92,6 +92,9 @@ pub struct SkillDto {
     /// 项目上下文与执行快照以此记录「本次用的是技能的哪个版本」（审计 §4.9）。
     #[serde(default)]
     pub content_digest: Option<String>,
+    /// ◈ 优化「原地改」留了底、还没验收（list 时现算，不入库文件；见 skills/optimize_review.rs）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimize_review: Option<optimize_review::OptimizeReviewState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -255,6 +258,7 @@ fn new_skill(
         derived_from: None,
         interface_inferred: false,
         content_digest: None,
+        optimize_review: None,
     }
 }
 
@@ -2114,7 +2118,9 @@ fn delete_impl(
         }
     }
     skills.remove(pos);
-    store.write(&skills)
+    store.write(&skills)?;
+    optimize_review::discard_snapshot(store, &name);
+    Ok(())
 }
 
 // ===== ZIP 导入（安全三件套：预算 / 路径穿越 / symlink 物化） =====
@@ -2686,6 +2692,7 @@ fn list_skills_impl(store: &SkillStore, dirs: &HashMap<String, PathBuf>) -> Vec<
         }
         // 版本摘要：执行快照与项目上下文按它记录技能版本（与漂移检测同一哈希口径，只算一次）
         s.content_digest = dir_manifest_hash(&store.skill_dir(&s.name));
+        s.optimize_review = optimize_review::review_state(store, s, s.content_digest.as_deref());
         s.stale_copies = stale_agents_against(dirs, s, s.content_digest.as_deref());
         s.app_modes = app_modes(dirs, s);
         // SKILL.md 只读一次：MCP 提及、frontmatter、正文推断共用
@@ -3493,7 +3500,7 @@ fn update_content_impl(
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillPathDto {
-    /// SKILL.md 绝对路径（◈ 优化指令引用）
+    /// SKILL.md 绝对路径（◈ 优化指令引用；begin_skill_optimize 留底后返回）
     pub md_path: String,
     /// 技能库目录（◈ 优化开终端的 cwd）
     pub dir: String,
@@ -3944,23 +3951,7 @@ fn rewrite_frontmatter_name(full_md: &str, name: &str) -> String {
     body
 }
 
-#[tauri::command]
-pub async fn skill_md_path(id: String) -> Result<SkillPathDto, String> {
-    let store = SkillStore::default_paths()?;
-    let skills = store.read();
-    let skill = skills
-        .iter()
-        .find(|s| s.id == id)
-        .ok_or_else(|| format!("技能不存在: {id}"))?;
-    let dir = store.skill_dir(&skill.name);
-    if !dir.is_dir() {
-        return Err(format!("库目录缺失: {}", dir.display()));
-    }
-    Ok(SkillPathDto {
-        md_path: dir.join("SKILL.md").to_string_lossy().into_owned(),
-        dir: dir.to_string_lossy().into_owned(),
-    })
-}
+pub mod optimize_review;
 
 #[cfg(test)]
 mod tests;

@@ -1497,6 +1497,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 漂移检测 resync、create_skill/update_skill_content；provides 解析（frontmatter 闭集位声明，
                              #   compose_skill_md 重写链保留——曾在这里剥过字段）；「AI 优化另存」两阶段命令
                              #   （optimize_skills_draft 多源合成出稿不写盘 + create_user_skill 权威名落库带 derivedFrom 溯源）；
+                             #   skills/optimize_review.rs = ◈ 优化「原地改」留底与验收：begin_skill_optimize 开终端前把库目录
+                             #   拷进 <config>/ccode/skill-optimize/<名>/（按技能 id 认，未验收再开一轮沿用最早底稿），list 现算
+                             #   optimizeReview；skill_optimize_review 出改前改后对照；finish_skill_optimize 保留 / 撤回（撤回先把
+                             #   改后版本进 skill-backups），两者都按 SKILL.md 刷简介并 resync 复制件；删技能顺手清底稿；
                              #   apps 表是创建时快照，
                              #   list 时现算补齐注册表新 agent 的缺键（否则一键应用永远漏新 agent，不写盘）；
                              #   contentDigest = 库目录清单哈希（与漂移检测同口径），项目上下文/执行快照按它记技能版本；内置技能种子（seed_builtin_skills：
