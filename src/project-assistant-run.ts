@@ -37,6 +37,8 @@ import { projectDefaultProfile } from "./split-draft";
 import { resolveTaskModel } from "./project-agents";
 import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
 import { stepSessionTail } from "./session-tail";
+import type { BriefInput, BriefStep } from "./assistant-brief";
+import { declaredTaskKindsForMode, visibleDeclaredTasks } from "./project-tasks";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
 import type {
@@ -284,6 +286,50 @@ const SNAPSHOT_TTL_MS = 90_000;
 const snapshotCache = new Map<string, { at: number; text: string }>();
 
 /** 面板一打开就先把项目记录整理好（你打字时已经取完，问的时候不再等这一两秒）；失败不管 */
+/** 「现在的情况」卡与常用问题的取数（assistant-brief.ts 只算）：步骤状态与 gatherSnapshot 同口径，但不读对话尾巴、不拼文字 */
+export async function gatherBriefInput(projectPath: string, since: string | null): Promise<BriefInput> {
+  const [read, workspaces, runs, tasks, projects] = await Promise.all([
+    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
+    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
+    safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
+    safe(invoke<ProjectDto[]>("list_projects"), []),
+  ]);
+  const cfg = read?.config ?? null;
+  const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
+  const live = useAppStore.getState().terminalRunInputs;
+  const steps: BriefStep[] = await Promise.all(
+    (cfg?.steps ?? []).map(async (s, index): Promise<BriefStep> => {
+      const ws = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
+      const n = index + 1;
+      if (!ws) return { n, name: s.name, state: s.seedComplete ? "saved" : "idle", needsHuman: 0 };
+      const [health, checks] = await Promise.all([
+        safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
+        safe(invoke<ChecksDto>("research_checks_read", { path: ws.worktreePath }), null as ChecksDto | null),
+      ]);
+      const attention = stepAttention(ws, live, IS_WINDOWS);
+      const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
+      const state: BriefStep["state"] =
+        attention === "working"
+          ? "working"
+          : attention === "confirm"
+            ? "confirm"
+            : ws.mergedAt && health?.ahead === 0
+              ? "saved"
+              : failure
+                ? "failed"
+                : (health?.ahead ?? 0) > 0 || health?.conflict
+                  ? "review"
+                  : "open";
+      const needsHuman = (checks?.items ?? []).filter((c) => c.status === "needs_human").length;
+      return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman };
+    }),
+  );
+  const workMode = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS))?.workMode;
+  const goals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(workMode)).map((t) => ({ name: t.name, status: t.status, updatedAt: t.updatedAt }));
+  return { hasFlow: steps.length > 0, steps, goals, since };
+}
+
 export function prefetchSnapshot(projectPath: string): void {
   void cachedSnapshot(projectPath, null).catch(() => {});
 }

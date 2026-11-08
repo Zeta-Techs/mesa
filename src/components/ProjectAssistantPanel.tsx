@@ -25,7 +25,6 @@ import {
   parseRemember,
   parseReworkOrder,
   parseWorkOrder,
-  QUICK_QUESTIONS,
   splitAnswerLead,
   type AssistantAction,
   type AssistantIntent,
@@ -37,9 +36,11 @@ import RememberCard from "./RememberCard";
 import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
+import { briefLines, quickAsks, type BriefLine, type QuickAsk } from "../assistant-brief";
 import {
   askProjectAssistant,
   assistantConnection,
+  gatherBriefInput,
   planAsk,
   prefetchSnapshot,
   type AssistantFocus,
@@ -64,8 +65,14 @@ export interface AssistantAsk {
   nonce: number;
 }
 
-/** 三个常用问题各配一句说明（空状态里排成列表） */
-const QUICK_HINTS = ["每一步走到哪、还剩什么", "出错、卡住的地方，是谁的问题", "接下来该点哪里"] as const;
+/** 上次打开项目助手的时间（按项目）：「现在的情况」卡据此列「上次打开以来」的变化 */
+const SEEN_KEY = (path: string) => `ccode.assistant.seen:${path}`;
+
+const BRIEF_TONE: Record<BriefLine["tone"], string> = {
+  err: "bg-err-text",
+  warn: "bg-mesa-amber",
+  ok: "bg-ok-text",
+};
 
 /** 用户问的话：右侧小气泡 */
 function QuestionBubble({ text, at }: { text: string; at?: string }) {
@@ -184,6 +191,10 @@ export default function ProjectAssistantPanel({
     }
   }
   const mood = buddyMood(buddyDayPart(new Date().getHours()));
+  /** 「现在的情况」卡与按状态换的常用问题（Mesa 按记录算，不调 AI）；briefOff = 这次打开点过「知道了」 */
+  const [brief, setBrief] = useState<{ lines: BriefLine[]; asks: QuickAsk[]; since: string | null } | null>(null);
+  const [briefOff, setBriefOff] = useState(false);
+  const asks = brief?.asks ?? quickAsks({ hasFlow: stepCount > 0, steps: [], goals: [], since: null });
 
   // 派活回音补了一条（巡视在 ProjectAssistantHost）：开着就重读记录，新的回音接在最后
   const echoTick = useAppStore((s) => s.assistantEchoTick);
@@ -195,9 +206,16 @@ export default function ProjectAssistantPanel({
         if (!stale) setTurns(list);
       })
       .catch(() => {});
+    // 派出去的活有了进展：卡和常用问题跟着换（since 沿用这次打开时的）
+    gatherBriefInput(projectPath, brief?.since ?? null)
+      .then((input) => {
+        if (!stale) setBrief({ lines: briefLines(input), asks: quickAsks(input), since: brief?.since ?? null });
+      })
+      .catch(() => {});
     return () => {
       stale = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [echoTick, open, projectPath]);
 
   useEffect(() => {
@@ -207,6 +225,19 @@ export default function ProjectAssistantPanel({
     setFreshAt(null);
     // 一打开就先把项目记录整理好，问项目类问题时不再等这一段
     prefetchSnapshot(projectPath);
+    setBriefOff(false);
+    let since: string | null = null;
+    try {
+      since = localStorage.getItem(SEEN_KEY(projectPath));
+      localStorage.setItem(SEEN_KEY(projectPath), new Date().toISOString());
+    } catch {
+      /* 存不了就只列现状 */
+    }
+    gatherBriefInput(projectPath, since)
+      .then((input) => {
+        if (!stale) setBrief({ lines: briefLines(input), asks: quickAsks(input), since });
+      })
+      .catch(() => {});
     invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath })
       .then((list) => {
         if (!stale) setTurns(list);
@@ -368,6 +399,49 @@ export default function ProjectAssistantPanel({
   }, [freshAt]);
   const headPose = busy ? "think" : error ? "oops" : cheer ? "happy" : mood.restPose;
 
+  // 「现在的情况」：Mesa 按记录写，不经 AI；没有要看的事、也没有变化就不出现
+  const briefCard =
+    brief && brief.lines.length > 0 && !briefOff ? (
+      <section className="rounded-xl border border-hairline px-3 py-2.5" aria-label="现在的情况">
+        <div className="mb-1.5 flex items-baseline gap-2">
+          <span className="text-xs font-medium text-l2">现在的情况</span>
+          <span className="min-w-0 flex-1 truncate text-micro text-l4" title={brief.since ? absTime(brief.since) : undefined}>
+            Mesa 按记录整理{brief.since ? ` · 上次打开是${relTime(brief.since)}` : ""}
+          </span>
+          <button type="button" className="shrink-0 text-l4 hover:text-l2" onClick={() => setBriefOff(true)}>
+            <span className="text-micro">知道了</span>
+          </button>
+        </div>
+        <ul className="space-y-1">
+          {brief.lines.map((line) => (
+            <li key={line.text} className="flex items-start gap-2 text-xs leading-5">
+              <span className={`mt-2 size-1.5 shrink-0 rounded-full ${BRIEF_TONE[line.tone]}`} aria-hidden="true" />
+              <span className="min-w-0 flex-1 break-words text-l1">{line.text}</span>
+              {line.action && (
+                <button
+                  type="button"
+                  className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  onClick={() => onAction(line.action!, { at: "", question: "", answer: "", connection: "" })}
+                >
+                  <span className="text-xs">{line.action.label}</span>
+                </button>
+              )}
+              {line.ask && (
+                <button
+                  type="button"
+                  className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
+                  disabled={busy}
+                  onClick={() => void send(line.ask!.question, line.ask!.focus)}
+                >
+                  <span className="text-xs">问问为什么</span>
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+    ) : null;
+
   const composer = (
     <div className="space-y-2">
       {focus && (
@@ -380,16 +454,17 @@ export default function ProjectAssistantPanel({
       )}
       {!empty && (
         <div className="flex flex-wrap gap-1.5">
-          {QUICK_QUESTIONS.map((q) => (
+          {asks.map((a) => (
             <button
-              key={q}
+              key={a.q}
               type="button"
-              className="h-6 rounded-full border border-hairline px-2.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              className="h-6 max-w-full truncate rounded-full border border-hairline px-2.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
               disabled={busy}
-              onClick={() => void send(q, focus)}
+              title={a.hint}
+              onClick={() => void send(a.q, a.focus ?? focus)}
             >
               {/* 字号写内层：全站 button { font: inherit } 会吞掉按钮上的 text-* */}
-              <span className="text-xs">{q}</span>
+              <span className="text-xs">{a.q}</span>
             </button>
           ))}
         </div>
@@ -514,18 +589,19 @@ export default function ProjectAssistantPanel({
             我看得到每一步的状态、出错原因、核验和退回意见、Mesa 自己出过的错，还有项目里有哪些文件。有事要做（整理记录、画图、写报告、规划实验……）直接交代给我：我先问清楚，再起草一张派活单，你点「派出去」才交给 AI 做，做完照常评审。我自己不改文件。
             想和 AI 边聊边改课题内容，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」或项目里的「新对话」。
           </p>
+          {briefCard && <div className="mt-6">{briefCard}</div>}
           <ul className="mt-8 border-t border-hairline">
-            {QUICK_QUESTIONS.map((q, i) => (
-              <li key={q} className="border-b border-hairline">
+            {asks.map((a) => (
+              <li key={a.q} className="border-b border-hairline">
                 <button
                   type="button"
                   className="group flex w-full items-center gap-3 py-3 text-left hover:bg-hover"
-                  onClick={() => void send(q, focus)}
+                  onClick={() => void send(a.q, a.focus ?? focus)}
                 >
                   <span className="ml-1 h-[3px] w-3 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm text-l1">{q}</span>
-                    <span className="block text-xs text-l3">{QUICK_HINTS[i]}</span>
+                    <span className="block text-sm text-l1">{a.q}</span>
+                    <span className="block text-xs text-l3">{a.hint}</span>
                   </span>
                   <ArrowRight size={14} className="mr-1 shrink-0 text-l4 group-hover:text-l2" aria-hidden="true" />
                 </button>
@@ -690,6 +766,7 @@ export default function ProjectAssistantPanel({
               </article>
             );
           })}
+          {briefCard}
           {busy && (
             <article className="flex flex-col gap-3">
               {pending && <QuestionBubble text={pending} />}

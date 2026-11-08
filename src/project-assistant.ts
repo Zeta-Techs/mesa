@@ -375,9 +375,6 @@ export function guideAnchor(heading: string): string {
     .replace(/\s/g, "-");
 }
 
-/** 面板上点选即问的几句 */
-export const QUICK_QUESTIONS = ["现在到哪了？", "哪里出问题了？", "我下一步该做什么？"] as const;
-
 /**
  * 回答的第一句结论单独拎出来（面板里加粗、左边一道琥珀竖线）：规矩要求「先一句结论」。
  * 只在第一段是短短一段普通文字时拎（不超过 120 字、不是列表 / 标题 / 代码 / 引用），否则整段照常排。
