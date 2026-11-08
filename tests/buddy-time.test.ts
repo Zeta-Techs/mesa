@@ -15,17 +15,17 @@ test("小桌按钟点分早上 / 白天 / 傍晚 / 夜深", () => {
   assert.equal(buddyDayPart(0), "night");
 });
 
-test("夜深睡着、早上一杯咖啡、傍晚一盏台灯、白天挥手", () => {
+test("早上一杯咖啡、傍晚和夜深一盏台灯、白天挥手；夜深不睡觉", () => {
   assert.deepEqual(
     (["morning", "day", "evening", "night"] as const).map((p) => [buddyMood(p).greetPose, buddyMood(p).restPose, buddyMood(p).prop]),
     [
       ["idle", "idle", "coffee"],
       ["wave", "idle", null],
       ["idle", "idle", "lamp"],
-      ["sleep", "sleep", null],
+      ["idle", "idle", "lamp"],
     ],
   );
-  assert.match(buddyMood("night").greeting, /问我就醒/);
+  assert.doesNotMatch(buddyMood("night").greeting, /眯|睡/);
 });
 
 test("回答的第一句结论单独拎出来，长段、列表不拎", () => {

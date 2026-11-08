@@ -92,7 +92,7 @@ function QuestionBubble({ text, at }: { text: string; at?: string }) {
 /**
  * 项目助手（2026-11-04，docs/design-project-assistant.md）：工作台右侧抽屉，与任务面板同一位置。
  * 形象是卡通小工作台「小桌」（MesaBuddy.tsx；同日用户几轮拍板：要生动的卡通形象、深色同浅色一套、按时间换样子）：
- * 没问过时正文是大图小桌（按时段打招呼 / 端咖啡 / 亮台灯 / 盘腿睡觉）+ 三个常用问题细线列表，顶栏只有名字；
+ * 没问过时正文是大图小桌（按时段打招呼 / 端咖啡 / 亮台灯；2026-11-08 起夜深也亮台灯、不睡觉）+ 三个常用问题细线列表，顶栏只有名字；
  * 问过以后小桌只在顶栏一个，跟着状态变：问着托腮想、刚答完举手、没问成皱眉；回答前只一道琥珀短线 + 名字，等待那一行用聊天层的 M▁ 状态头，
  * 多段回答的第一句结论加粗带琥珀竖线，按钮在下。
  * 输入框钉在底部，连接与「清空记录」在输入框下一行小字。
@@ -707,7 +707,7 @@ export default function ProjectAssistantPanel({
           rows={1}
           value={draft}
           maxLength={2000}
-          placeholder={mood.restPose === "sleep" ? "问点什么，它就醒…" : "问点什么…（可以粘贴截图）"}
+          placeholder="问点什么…（可以粘贴截图）"
           aria-label="问项目助手"
           onPaste={(event) => {
             // 剪贴板里有图就接管（存成附图），纯文字照常粘贴
@@ -779,8 +779,7 @@ export default function ProjectAssistantPanel({
           <MesaBuddy size={112} pose={mood.greetPose} prop={mood.prop} />
           <h3 className="mt-5 text-lg font-semibold text-l1">{mood.greeting}</h3>
           <p className="mt-2 text-sm leading-6 text-l3">
-            我看得到每一步的状态、出错原因、核验和退回意见、Mesa 自己出过的错，还有项目里有哪些文件。有事要做（整理记录、画图、写报告、规划实验……）直接交代给我：我先问清楚，再起草一张派活单，你点「派出去」才交给 AI 做，做完照常评审。我自己不改文件。
-            想和 AI 边聊边改课题内容，用步骤上的「跟 AI 商量一下」、文件上的「问 AI」或项目里的「新对话」。
+            问这个项目里的事，或直接交代要做的事：我问清楚后起草派活单，你点「派出去」才交给 AI 做。我自己不改文件。
           </p>
           {briefCard && <div className="mt-6">{briefCard}</div>}
           <ul className="mt-8 border-t border-hairline">
