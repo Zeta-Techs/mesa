@@ -10,14 +10,17 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { Menu } from "@tauri-apps/api/menu";
+import { ArrowUp, ChevronDown, ChevronRight, X } from "lucide-react";
 import MesaBuddy from "../components/MesaBuddy";
 import { buddyDayPart, buddyMood } from "../buddy-time";
 import { isLightTheme } from "../themes";
 import {
   arrivalReaction,
-  bubbleText,
+  bubbleParts,
+  groupByProject,
+  petMeta,
+  petTone,
   newArrivals,
-  petKindLabel,
   petPose,
   pickBubble,
   waitingCount,
@@ -34,9 +37,9 @@ import {
 type Size = "small" | "normal" | "large";
 const PET_PX: Record<Size, number> = { small: 80, normal: 112, large: 144 };
 const PAD = 12;
-const PANEL_W = 320;
-const BUBBLE_H = 96;
-const LIST_H = 400;
+const PANEL_W = 340;
+const BUBBLE_H = 112;
+const LIST_H = 420;
 const BUBBLE_MS = 8000;
 const SEEN_KEY = "ccode.deskPet.seen";
 
@@ -83,6 +86,12 @@ export default function PetApp() {
   const pet = PET_PX[size];
   const compact = pet + PAD * 2;
   const light = isLightTheme(settings.theme);
+  // 用主窗口同一套主题令牌（App.css）：内置主题直接挂；自定义主题没有现成的类，按深浅退回沉浸黑 / 沉浸黑 · 浅
+  useEffect(() => {
+    const id = settings.theme;
+    const builtIn = !!id && !id.startsWith("custom");
+    document.documentElement.dataset.theme = builtIn ? id : light ? "midnight-light" : "midnight";
+  }, [settings.theme, light]);
 
   const loadSettings = useCallback(async () => {
     const s = await invoke<PetSettings>("get_settings").catch(() => ({}) as PetSettings);
@@ -314,15 +323,14 @@ export default function PetApp() {
   );
 
   return (
-    <div className={`pet-root ${light ? "pet-light" : "pet-dark"} ${layout.side === "left" ? "pet-side-left" : "pet-side-right"} ${layout.below ? "pet-below" : ""}`}>
+    <div
+      className={`pet-root ${layout.side === "left" ? "pet-side-left" : "pet-side-right"} ${layout.below ? "pet-below" : ""}`}
+      style={{ ["--pet-tail" as string]: `${compact / 2}px` }}
+    >
       {panel && (
         <div className="pet-panel" onMouseEnter={() => (hovering.current = true)} onMouseLeave={() => (hovering.current = false)}>
           {panel.kind === "bubble" ? (
-            <Bubble
-              text={bubbleText(panel.item, panel.count)}
-              onOpen={() => setPanel({ kind: "list" })}
-              onClose={() => setPanel(null)}
-            />
+            <Bubble item={panel.item} count={panel.count} onOpen={() => setPanel({ kind: "list" })} onClose={() => setPanel(null)} />
           ) : (
             <ItemList feed={feed} working={feed.working} onClose={() => setPanel(null)} />
           )}
@@ -333,14 +341,20 @@ export default function PetApp() {
   );
 }
 
-function Bubble({ text, onOpen, onClose }: { text: string; onOpen: () => void; onClose: () => void }) {
+function Bubble({ item, count, onOpen, onClose }: { item: PetItem; count: number; onOpen: () => void; onClose: () => void }) {
+  const b = bubbleParts(item, count);
   return (
-    <div className="pet-bubble" role="status">
-      <button type="button" className="pet-bubble-text" onClick={onOpen} title="点开看">
-        {text}
+    <div className="pet-surface pet-bubble" role="status">
+      <button type="button" className="pet-bubble-body" onClick={onOpen} title="点开看">
+        <span className="pet-bubble-head">
+          <span className={`pet-dot pet-tone-${petTone(item.kind)}`} aria-hidden="true" />
+          {b.project}
+          {b.more && <span className="pet-bubble-more">{b.more}</span>}
+        </span>
+        <span className="pet-bubble-text">{b.text}</span>
       </button>
-      <button type="button" className="pet-x" onClick={onClose} aria-label="知道了">
-        ✕
+      <button type="button" className="pet-icon-btn pet-bubble-x" onClick={onClose} aria-label="知道了">
+        <X size={14} strokeWidth={2} />
       </button>
     </div>
   );
@@ -353,30 +367,44 @@ function openTarget(target: PetOpen | null) {
 function ItemList({ feed, working, onClose }: { feed: PetFeed; working: boolean; onClose: () => void }) {
   const items = feed.items;
   const [ask, setAsk] = useState<AskState | null>(null);
+  const groups = groupByProject(items);
   return (
-    <div className="pet-card">
-      <div className="pet-card-head">
-        <span className="pet-card-title">
-          {ask ? "问项目助手" : items.length ? `要你看一眼 · ${items.length}` : working ? "有活在做，没有等你的事" : "没有等你的事"}
-        </span>
+    <div className="pet-surface pet-card">
+      <header className="pet-card-head">
+        <span className="pet-mark" aria-hidden="true" />
+        <span className="pet-card-title">{ask ? "问项目助手" : "要你看一眼"}</span>
+        {!ask && items.length > 0 && <span className="pet-count">{items.length}</span>}
+        <span className="pet-grow" />
         {ask && (
-          <button type="button" className="pet-link" onClick={() => setAsk(null)}>
+          <button type="button" className="pet-text-btn" onClick={() => setAsk(null)}>
             返回
           </button>
         )}
-        <button type="button" className="pet-x" onClick={onClose} aria-label="收起">
-          ✕
+        <button type="button" className="pet-icon-btn" onClick={onClose} aria-label="收起">
+          <X size={14} strokeWidth={2} />
         </button>
+      </header>
+      <div className="pet-scroll">
+        {ask ? (
+          <AskView ask={ask} />
+        ) : items.length === 0 ? (
+          <div className="pet-empty">
+            <p className="pet-empty-title">都处理完了</p>
+            <p className="pet-empty-sub">{working ? "有活在做，做完了我告诉你。" : "有新的事我会冒一句。"}</p>
+          </div>
+        ) : (
+          groups.map((g) => (
+            <section key={g.projectPath} className="pet-group">
+              <h3 className="pet-group-name">{g.projectName}</h3>
+              <ol className="pet-items">
+                {g.items.map((item) => (
+                  <PetRow key={item.key} item={item} />
+                ))}
+              </ol>
+            </section>
+          ))
+        )}
       </div>
-      {ask ? (
-        <AskView ask={ask} />
-      ) : (
-        <ol className="pet-items">
-          {items.map((item) => (
-            <PetRow key={item.key} item={item} />
-          ))}
-        </ol>
-      )}
       <AskBox feed={feed} ask={ask} setAsk={setAsk} />
     </div>
   );
@@ -422,13 +450,14 @@ function AskBox({ feed, ask, setAsk }: { feed: PetFeed; ask: AskState | null; se
 
   if (!projects.length) {
     return (
-      <div className="pet-card-foot">
-        <button type="button" className="pet-link" onClick={() => openTarget(null)}>
+      <footer className="pet-card-foot">
+        <button type="button" className="pet-text-btn" onClick={() => openTarget(null)}>
           打开 Mesa
         </button>
-      </div>
+      </footer>
     );
   }
+  const current = projects.find((p) => p.path === project);
   return (
     <form
       className="pet-ask"
@@ -437,14 +466,21 @@ function AskBox({ feed, ask, setAsk }: { feed: PetFeed; ask: AskState | null; se
         void send(draft);
       }}
     >
-      <select className="pet-select" value={project ?? ""} onChange={(e) => setProject(e.target.value)} title="问哪个项目的项目助手" disabled={busy}>
-        {projects.map((p) => (
-          <option key={p.path} value={p.path}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <input className="pet-input" value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} placeholder={busy ? "正在想…" : "问项目助手"} />
+      <label className="pet-project" title="问哪个项目的项目助手">
+        <span className="pet-project-name">{current?.name ?? "选项目"}</span>
+        <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+        <select value={project ?? ""} onChange={(e) => setProject(e.target.value)} disabled={busy} aria-label="问哪个项目">
+          {projects.map((p) => (
+            <option key={p.path} value={p.path}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <input className="pet-ask-input" value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} placeholder={busy ? "正在想…" : "问项目助手"} />
+      <button type="submit" className="pet-send" disabled={busy || !draft.trim()} aria-label="问">
+        <ArrowUp size={14} strokeWidth={2.4} />
+      </button>
     </form>
   );
 }
@@ -452,36 +488,42 @@ function AskBox({ feed, ask, setAsk }: { feed: PetFeed; ask: AskState | null; se
 function AskView({ ask }: { ask: AskState }) {
   const d = ask.done;
   return (
-    <div className="pet-items pet-ask-view">
-      <p className="pet-item-meta">{ask.projectName} · 你问</p>
-      <p className="pet-item-text">{ask.question}</p>
-      <p className="pet-item-meta pet-ask-gap">项目助手</p>
-      {!d && <p className="pet-item-detail">{ask.progress ?? "正在想…"}</p>}
-      {d && <p className={d.ok ? "pet-answer" : "pet-err"}>{d.ok ? d.text : `没问成：${d.text}`}</p>}
-      {d?.clarify && (
-        <>
-          <p className="pet-item-text pet-ask-gap">{d.clarify.question}</p>
-          {d.clarify.options.length > 0 && (
-            <div className="pet-actions">
-              {d.clarify.options.map((o) => (
-                <button key={o} type="button" className="pet-btn" onClick={() => window.dispatchEvent(new CustomEvent("pet-ask-pick", { detail: o }))}>
-                  {o}
-                </button>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-      {d && d.deskOnly.length > 0 && (
-        <div className="pet-ask-gap">
-          <p className="pet-item-detail">它还{d.deskOnly.join("、")}，要在 Mesa 里点。</p>
-          <div className="pet-actions">
-            <button type="button" className="pet-btn" onClick={() => openTarget({ kind: "assistant", projectPath: ask.projectPath })}>
+    <div className="pet-qa">
+      <div className="pet-q">
+        <span className="pet-q-project">{ask.projectName}</span>
+        <p>{ask.question}</p>
+      </div>
+      <div className="pet-a">
+        <span className="pet-a-who">
+          <span className="pet-mark" aria-hidden="true" />
+          项目助手
+        </span>
+        {!d && <p className="pet-thinking">{ask.progress ?? "正在想…"}</p>}
+        {d && <p className={d.ok ? "pet-answer" : "pet-error"}>{d.ok ? d.text : `没问成：${d.text}`}</p>}
+        {d?.clarify && (
+          <>
+            <p className="pet-answer pet-gap">{d.clarify.question}</p>
+            {d.clarify.options.length > 0 && (
+              <div className="pet-chips">
+                {d.clarify.options.map((o) => (
+                  <button key={o} type="button" className="pet-chip" onClick={() => window.dispatchEvent(new CustomEvent("pet-ask-pick", { detail: o }))}>
+                    {o}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        {d && d.deskOnly.length > 0 && (
+          <div className="pet-note">
+            <span>它还{d.deskOnly.join("、")}，要在 Mesa 里点。</span>
+            <button type="button" className="pet-go" onClick={() => openTarget({ kind: "assistant", projectPath: ask.projectPath })}>
               在 Mesa 里看这条回答
+              <ChevronRight size={13} strokeWidth={2} />
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -506,60 +548,81 @@ function PetRow({ item }: { item: PetItem }) {
   }
 
   const done = result?.ok;
+  const [writing, setWriting] = useState(false);
+  const chips =
+    item.tap === "reply"
+      ? item.options.map((o) => ({ key: o.key, label: `${o.key}：${o.label}`, hint: item.recommend === o.key ? "建议" : null, primary: item.recommend === o.key, run: () => act({ tap: "reply", value: o.key, optionLabel: o.label }) }))
+      : item.tap === "grant"
+        ? [
+            { key: "once", label: "放宽重跑这一次", hint: null, primary: true, run: () => act({ tap: "grant", accept: true }) },
+            { key: "no", label: "不用", hint: null, primary: false, run: () => act({ tap: "grant", accept: false }) },
+          ]
+        : item.tap === "trust"
+          ? [
+              { key: "yes", label: "信任并继续", hint: null, primary: true, run: () => act({ tap: "trust", accept: true }) },
+              { key: "no", label: "不信任", hint: null, primary: false, run: () => act({ tap: "trust", accept: false }) },
+            ]
+          : [];
+  // 整行点了就是「去看看」；选项、写一句这些自己的按钮不往上冒
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const meta = petMeta(item);
   return (
-    <li className="pet-item">
-      <p className="pet-item-meta">
-        {item.projectName} · {petKindLabel(item.kind)}
-      </p>
-      <p className="pet-item-text">{item.kind === "help" || item.kind === "question" ? `${item.where}：${item.text}` : item.text}</p>
-      {item.detail && <p className="pet-item-detail">{item.detail}</p>}
-      {!done && (
-        <div className="pet-actions">
-          {item.tap === "reply" &&
-            item.options.map((o) => (
-              <button key={o.key} type="button" className="pet-btn" disabled={busy} onClick={() => void act({ tap: "reply", value: o.key, optionLabel: o.label })}>
-                {o.key}：{o.label}
-                {item.recommend === o.key ? "（建议）" : ""}
+    <li
+      className={`pet-item ${done ? "pet-item-done" : ""}`}
+      role="button"
+      tabIndex={0}
+      title="去看看"
+      onClick={() => openTarget(item.open)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") openTarget(item.open);
+      }}
+    >
+      <span className={`pet-dot pet-tone-${petTone(item.kind)}`} aria-hidden="true" />
+      <div className="pet-item-main">
+        <p className="pet-item-text">{item.text}</p>
+        {item.kind !== "review" && item.kind !== "failed" && <p className="pet-item-meta">{meta}</p>}
+        {item.detail && <p className="pet-item-detail">{item.detail}</p>}
+        {!done && (chips.length > 0 || item.tap === "reply") && (
+          <div className="pet-chips" onClick={stop}>
+            {chips.map((c) => (
+              <button key={c.key} type="button" className={`pet-chip ${c.primary ? "pet-chip-primary" : ""}`} disabled={busy} onClick={() => void c.run()}>
+                {c.label}
+                {c.hint && <span className="pet-chip-hint">{c.hint}</span>}
               </button>
             ))}
-          {item.tap === "grant" && (
-            <>
-              <button type="button" className="pet-btn" disabled={busy} title="只下一次联网不限，跑完回到原来的授权" onClick={() => void act({ tap: "grant", accept: true })}>
-                放宽重跑这一次
+            {item.tap === "reply" && !writing && (
+              <button type="button" className="pet-chip pet-chip-ghost" disabled={busy} onClick={() => setWriting(true)}>
+                写一句…
               </button>
-              <button type="button" className="pet-btn pet-btn-ghost" disabled={busy} onClick={() => void act({ tap: "grant", accept: false })}>
-                不用
-              </button>
-            </>
-          )}
-          {item.tap === "trust" && (
-            <>
-              <button type="button" className="pet-btn" disabled={busy} onClick={() => void act({ tap: "trust", accept: true })}>
-                信任并继续
-              </button>
-              <button type="button" className="pet-btn pet-btn-ghost" disabled={busy} onClick={() => void act({ tap: "trust", accept: false })}>
-                不信任
-              </button>
-            </>
-          )}
-          <button type="button" className="pet-btn pet-btn-ghost" onClick={() => openTarget(item.open)}>
-            去看看
-          </button>
-        </div>
-      )}
-      {item.tap === "reply" && !done && (
-        <form
-          className="pet-reply"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (draft.trim()) void act({ tap: "reply", value: draft.trim() });
-          }}
-        >
-          <input className="pet-input" value={draft} disabled={busy} onChange={(e) => setDraft(e.target.value)} placeholder="写一句送过去" />
-        </form>
-      )}
-      {busy && <p className="pet-item-detail">送出去…</p>}
-      {result && <p className={result.ok ? "pet-ok" : "pet-err"}>{result.message}</p>}
+            )}
+          </div>
+        )}
+        {item.tap === "reply" && writing && !done && (
+          <form
+            className="pet-reply"
+            onClick={stop}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (draft.trim()) void act({ tap: "reply", value: draft.trim() });
+            }}
+          >
+            <input
+              className="pet-reply-input"
+              autoFocus
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setWriting(false);
+              }}
+              placeholder="写一句送过去，回车"
+            />
+          </form>
+        )}
+        {busy && <p className="pet-thinking">送出去…</p>}
+        {result && <p className={result.ok ? "pet-result" : "pet-error"}>{result.message}</p>}
+      </div>
+      <ChevronRight className="pet-row-go" size={14} strokeWidth={2} aria-hidden="true" />
     </li>
   );
 }

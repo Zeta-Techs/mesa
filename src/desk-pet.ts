@@ -155,9 +155,36 @@ export function pickBubble(arrivals: readonly PetItem[], say: PetSay): PetItem |
 
 /** 冒的那句话：「HER催化综述：第 3 步「精读」做完了，等你评审」；一次来了好几件加「（还有 N 件）」 */
 export function bubbleText(item: PetItem, arrivals: number): string {
-  const head = item.kind === "help" || item.kind === "question" ? `${item.where}在问你：${item.text}` : item.text;
-  const more = arrivals > 1 ? `（还有 ${arrivals - 1} 件）` : "";
-  return `${item.projectName}：${head}${more}`;
+  const b = bubbleParts(item, arrivals);
+  return `${b.project}：${b.text}${b.more ? `（${b.more}）` : ""}`;
+}
+
+/** 冒话分三段画：项目名（小字）、那句话、「还有 N 件」 */
+export function bubbleParts(item: PetItem, arrivals: number): { project: string; text: string; more: string | null } {
+  const text = item.kind === "help" || item.kind === "question" ? `${item.where}在问你：${item.text}` : item.text;
+  return { project: item.projectName, text, more: arrivals > 1 ? `还有 ${arrivals - 1} 件` : null };
+}
+
+/** 一件事的语气：轮到你（琥珀）/ 出错（红）/ 做完（绿），卡片上那颗小圆点用 */
+export function petTone(kind: PetKind): "turn" | "err" | "ok" {
+  return kind === "failed" ? "err" : kind === "review" ? "ok" : "turn";
+}
+
+/** 卡片里那一行的小字：类别，等你的事再带上是哪一步（做完 / 出错那句话里已经写了哪一步） */
+export function petMeta(item: PetItem): string {
+  const kind = petKindLabel(item.kind);
+  return item.kind === "review" || item.kind === "failed" ? kind : `${kind} · ${item.where}`;
+}
+
+/** 按项目分组（清单原本就按项目排，保持先后） */
+export function groupByProject(items: readonly PetItem[]): { projectPath: string; projectName: string; items: PetItem[] }[] {
+  const out: { projectPath: string; projectName: string; items: PetItem[] }[] = [];
+  for (const i of items) {
+    const g = out.find((x) => x.projectPath === i.projectPath);
+    if (g) g.items.push(i);
+    else out.push({ projectPath: i.projectPath, projectName: i.projectName, items: [i] });
+  }
+  return out;
 }
 
 /** 新来的事让小桌做个反应：出错垂头丧气、做完蹦一下，其余不额外动 */

@@ -360,7 +360,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 按 buddy-sprite.ts 的帧时长换背景位置；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
   pet/PetApp.tsx             # 桌宠小窗（pet.html 入口 pet/main.tsx + pet/pet.css，desk_pet.rs 建窗）：小桌 + 琥珀角标 + 冒一句 + 「要你看一眼」小卡片 + 右键系统菜单；
                              # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动；
-                             # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身
+                             # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身；
+                             # 先载 App.css 用主窗口同一套主题令牌（挂 data-theme，自定义主题按深浅退回沉浸黑），卡片带指向小桌的尾巴、按项目分组、整行点了去看看
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
