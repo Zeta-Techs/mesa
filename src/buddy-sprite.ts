@@ -22,28 +22,38 @@ export interface BuddyRow {
   /** 放完之后：rest = 回到平常站着的样子，hold = 停在 hold 帧不动 */
   after: "rest" | "hold";
   hold: number;
+  /** 安静档（桌宠默认，2026-11-09 用户「一直在动，有没有安静一点的」）放一遍后停在哪一帧：选最能说明状态的那帧（在想 = 托腮、等你 = 抬手） */
+  calmHold: number;
+}
+
+/** 动作档：lively = 一直循环（项目助手面板、桌宠「活泼」）；calm = 换状态时放一遍、停在说明状态的那帧，隔一阵眨一下；still = 不动，停在那帧 */
+export type BuddyMotion = "lively" | "calm" | "still";
+
+/** 安静档隔多久再动一下（毫秒）：35–50 秒之间随机，几只小桌不会同时眨眼 */
+export function calmPause(rand: number): number {
+  return 35_000 + Math.round(Math.max(0, Math.min(1, rand)) * 15_000);
 }
 
 // 平常站着：第一帧停久一点，眨眼和轻晃隔一会儿才来一次，不抢眼
 const IDLE = [1800, 160, 160, 120, 160, 260];
 
 const ROWS: Record<BuddyPose, BuddyRow> = {
-  idle: { index: 0, durations: IDLE, repeat: null, after: "rest", hold: 0 },
+  idle: { index: 0, durations: IDLE, repeat: null, after: "rest", hold: 0, calmHold: 0 },
   // 打招呼挥两遍，然后站着
-  wave: { index: 1, durations: [160, 160, 160, 320], repeat: 2, after: "rest", hold: 0 },
+  wave: { index: 1, durations: [160, 160, 160, 320], repeat: 2, after: "rest", hold: 0, calmHold: 0 },
   // 在想：托腮、抬眼，问着就一直想
-  think: { index: 2, durations: [220, 200, 200, 260, 200, 320], repeat: null, after: "rest", hold: 0 },
+  think: { index: 2, durations: [220, 200, 200, 260, 200, 320], repeat: null, after: "rest", hold: 0, calmHold: 3 },
   // 答完蹦一下
-  happy: { index: 3, durations: [120, 130, 160, 130, 260], repeat: 1, after: "rest", hold: 0 },
+  happy: { index: 3, durations: [120, 130, 160, 130, 260], repeat: 1, after: "rest", hold: 0, calmHold: 0 },
   // 出错：垂头丧气一遍，停在最后那帧（皱眉）
-  oops: { index: 4, durations: [140, 140, 140, 160, 220, 160, 140, 240], repeat: 1, after: "hold", hold: 7 },
+  oops: { index: 4, durations: [140, 140, 140, 160, 220, 160, 140, 240], repeat: 1, after: "hold", hold: 7, calmHold: 7 },
   // 夜深盘腿睡：慢慢一起一伏，z 一个比一个大
-  sleep: { index: 5, durations: [520, 420, 420, 420, 420, 620], repeat: null, after: "rest", hold: 0 },
+  sleep: { index: 5, durations: [520, 420, 420, 420, 420, 620], repeat: null, after: "rest", hold: 0, calmHold: 0 },
   // 有事等你：歪头、手抬到肩，问一句「轮到你了？」，等着就一直这样；第一帧停久一点免得一直晃
-  wait: { index: 8, durations: [1200, 150, 150, 150, 150, 260], repeat: null, after: "rest", hold: 0 },
+  wait: { index: 8, durations: [1200, 150, 150, 150, 150, 260], repeat: null, after: "rest", hold: 0, calmHold: 3 },
   // 被拖着走：左走是右走的镜像
-  walkRight: { index: 9, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0 },
-  walkLeft: { index: 10, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0 },
+  walkRight: { index: 9, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+  walkLeft: { index: 10, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0, calmHold: 0 },
 };
 const COFFEE: BuddyRow = { ...ROWS.idle, index: 6 };
 const LAMP: BuddyRow = { ...ROWS.idle, index: 7 };

@@ -9,7 +9,7 @@
 import type { DeskItem } from "./assistant-queue.ts";
 import type { BriefInput } from "./assistant-brief.ts";
 import type { AssistantAction } from "./project-assistant.ts";
-import type { BuddyPose, BuddyProp } from "./buddy-sprite.ts";
+import type { BuddyMotion, BuddyPose, BuddyProp } from "./buddy-sprite.ts";
 
 /** 桌宠上的一件事。help / question / confirm / trust / blocked / grant 同「等你的事」；review = 做完等你评审 / 验收；failed = 出错 / 没做完 */
 export type PetKind = DeskItem["kind"] | "review" | "failed";
@@ -286,4 +286,11 @@ export function deskOnlyNotes(parts: { order: boolean; rework: boolean; remember
   if (parts.remember) out.push("起草了一条「以后照这样办」");
   if (parts.actions) out.push(`给了 ${parts.actions} 个去处按钮`);
   return out;
+}
+
+/** 小桌怎么动（2026-11-09 用户「一直在动，有没有安静一点的」）：拖着走一直走；活泼档一直动；
+ *  安静档换状态时动一下就停住，Mesa 窗口在前台（你正看着 Mesa）或勿扰中时干脆不动 */
+export function petMotion(input: { dragging: boolean; lively: boolean; mainFocused: boolean; dnd: boolean }): BuddyMotion {
+  if (input.dragging || input.lively) return "lively";
+  return input.mainFocused || input.dnd ? "still" : "calm";
 }

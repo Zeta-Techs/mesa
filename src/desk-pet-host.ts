@@ -10,6 +10,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "./store";
 import { IS_WINDOWS } from "./hotkeys";
 import { pathWithin, samePath } from "./path-utils";
@@ -172,7 +173,12 @@ export async function startDeskPetHost(): Promise<() => void> {
     }
   };
   const offs = await Promise.all([
-    listen("desk-pet:ready", () => void push()),
+    listen("desk-pet:ready", () => {
+      void push();
+      void emitTo(PET_LABEL, "desk-pet:main-focus", document.hasFocus() && !document.hidden).catch(() => {});
+    }),
+    // Mesa 窗口在前台（你正看着）时小桌安静档不动：把前台 / 后台的变化告诉小窗
+    getCurrentWindow().onFocusChanged(({ payload }) => void emitTo(PET_LABEL, "desk-pet:main-focus", payload).catch(() => {})),
     listen<PetAct>("desk-pet:act", (e) => {
       const a = e.payload;
       void act(a).then(

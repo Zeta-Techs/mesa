@@ -11,7 +11,7 @@ import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { Menu } from "@tauri-apps/api/menu";
 import { ArrowUp, ChevronDown, ChevronRight, X } from "lucide-react";
-import MesaBuddy from "../components/MesaBuddy";
+import MesaBuddy, { type BuddyMotion } from "../components/MesaBuddy";
 import { buddyDayPart, buddyMood } from "../buddy-time";
 import { isLightTheme } from "../themes";
 import {
@@ -25,6 +25,7 @@ import {
   pickBubble,
   waitingCount,
   petLean,
+  petMotion,
   readPetDnd,
   defaultAskProject,
   PET_DND_KEY,
@@ -47,6 +48,7 @@ interface PetSettings {
   theme?: string;
   deskPetSay?: PetSay;
   deskPetSize?: Size;
+  deskPetMotion?: "calm" | "lively";
 }
 
 type Panel = { kind: "bubble"; item: PetItem; count: number } | { kind: "list" } | null;
@@ -72,6 +74,8 @@ export default function PetApp() {
   const [drag, setDrag] = useState<"left" | "right" | null>(null);
   const [dndUntil, setDndUntil] = useState(readPetDnd);
   const [hour, setHour] = useState(() => new Date().getHours());
+  // Mesa 窗口在不在前台：在前台说明你正看着 Mesa，安静档下小桌不动（主窗口发 desk-pet:main-focus）
+  const [mainFocused, setMainFocused] = useState(false);
   // 上一轮的键：比对新来的；第一次（null）不冒话。存本机，重开小窗不把旧事当新事再冒一遍
   const seen = useRef<Set<string> | null>(null);
   if (seen.current === null) {
@@ -129,12 +133,15 @@ export default function PetApp() {
       }
     }).then((u) => (off = u));
     void listen("desk-pet:settings", () => void loadSettings()).then((u) => (offSettings = u));
+    let offFocus: (() => void) | null = null;
+    void listen<boolean>("desk-pet:main-focus", (e) => setMainFocused(!!e.payload)).then((u) => (offFocus = u));
     // 告诉主窗口小窗起来了，马上发一份清单
     void emitTo("main", "desk-pet:ready", null);
     const tick = window.setInterval(() => setHour(new Date().getHours()), 60_000);
     return () => {
       off?.();
       offSettings?.();
+      offFocus?.();
       window.clearInterval(tick);
     };
   }, [loadSettings]);
@@ -261,7 +268,9 @@ export default function PetApp() {
 
   // 朝鼠标倾身：只在面板收着、站着 / 等你 / 在想时，约每 150ms 看一次鼠标；减弱动态效果时不动
   const [lean, setLean] = useState({ rotate: 0, x: 0, y: 0 });
-  const leanable = !panel && !drag && !reaction;
+  const lively = settings.deskPetMotion === "lively";
+  // 倾身是一直在动的：只在「活泼」档
+  const leanable = lively && !panel && !drag && !reaction;
   useEffect(() => {
     if (!leanable || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       setLean({ rotate: 0, x: 0, y: 0 });
@@ -291,6 +300,8 @@ export default function PetApp() {
     rest: { pose: mood.restPose, prop: mood.prop },
   });
   const dnd = Date.now() < dndUntil;
+  // 怎么动：拖着走一直走；活泼档一直动；安静档换状态时动一下就停住，Mesa 在前台（你正看着）或勿扰中时不动
+  const motion: BuddyMotion = petMotion({ dragging: !!drag, lively, mainFocused, dnd });
   const title = dnd
     ? "勿扰中（右键结束）"
     : waiting
@@ -316,7 +327,7 @@ export default function PetApp() {
           transform: pose === "sleep" ? undefined : `translate(${lean.x}px, ${lean.y}px) rotate(${lean.rotate}deg)`,
         }}
       >
-        <MesaBuddy size={pet} pose={pose} prop={prop} />
+        <MesaBuddy size={pet} pose={pose} prop={prop} motion={motion} pokeable={false} />
       </div>
       {waiting > 0 && !dnd && <span className="pet-badge">{waiting > 9 ? "9+" : waiting}</span>}
     </div>

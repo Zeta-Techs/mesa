@@ -156,3 +156,14 @@ test("回答里要回 Mesa 点的东西只说一句", () => {
   assert.deepEqual(deskOnlyNotes({ order: true, rework: false, remember: true, actions: 2 }), ["起草了一张派活单", "起草了一条「以后照这样办」", "给了 2 个去处按钮"]);
   assert.deepEqual(deskOnlyNotes({ order: false, rework: false, remember: false, actions: 0 }), []);
 });
+
+// —— 安静档 ——
+import { petMotion } from "../src/desk-pet.ts";
+
+test("小桌怎么动：拖着走、活泼档一直动；安静档平时动一下就停，Mesa 在前台或勿扰时不动", () => {
+  assert.equal(petMotion({ dragging: true, lively: false, mainFocused: true, dnd: true }), "lively");
+  assert.equal(petMotion({ dragging: false, lively: true, mainFocused: true, dnd: false }), "lively");
+  assert.equal(petMotion({ dragging: false, lively: false, mainFocused: false, dnd: false }), "calm");
+  assert.equal(petMotion({ dragging: false, lively: false, mainFocused: true, dnd: false }), "still");
+  assert.equal(petMotion({ dragging: false, lively: false, mainFocused: false, dnd: true }), "still");
+});

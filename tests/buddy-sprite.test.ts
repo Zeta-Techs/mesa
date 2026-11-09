@@ -48,3 +48,17 @@ test("头像位裁掉四周空白、整个人都在，大图取整格", () => {
   assert.ok(small.x <= 15 && small.x + small.w >= 216 && small.y <= 8 && small.y + small.h >= 216);
   assert.ok(small.x + small.w <= BUDDY_CELL && small.y + small.h <= BUDDY_CELL);
 });
+
+import { calmPause } from "../src/buddy-sprite.ts";
+
+test("安静档：每行停的那帧在帧数以内；在想停在托腮、等你停在抬手（不是第一帧）；隔 35–50 秒再动", () => {
+  for (const p of POSES) {
+    const r = buddyRow(p, null);
+    assert.ok(r.calmHold >= 0 && r.calmHold < r.durations.length, p);
+  }
+  assert.notEqual(buddyRow("think", null).calmHold, 0);
+  assert.notEqual(buddyRow("wait", null).calmHold, 0);
+  assert.equal(calmPause(0), 35_000);
+  assert.equal(calmPause(1), 50_000);
+  assert.equal(calmPause(7), 50_000);
+});

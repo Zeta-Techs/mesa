@@ -123,6 +123,8 @@ export interface AppSettings {
   deskPetEnabled?: boolean;
   deskPetSay?: "important" | "quiet";
   deskPetSize?: "small" | "normal" | "large";
+  /** 小桌怎么动：calm（默认，换状态时动一下就停住，Mesa 在前台时不动）| lively（一直动） */
+  deskPetMotion?: "calm" | "lively";
   /** 出图模型（网关 id + 模型 id，同进退；传空串 = 两个一起清空），见 image_gen.rs */
   imageGenGatewayId?: string | null;
   imageGenModel?: string | null;

@@ -3418,6 +3418,25 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <option value="quiet">不说话，只换样子和数字</option>
           </select>
         </Row>
+        <Row
+          label="小桌动作"
+          hint={
+            (settings?.deskPetMotion ?? "calm") === "calm"
+              ? "换状态时动一下就停住；你在 Mesa 里时它不动"
+              : "一直动，还会朝鼠标那边侧身"
+          }
+          disabled={!(settings?.deskPetEnabled ?? false)}
+        >
+          <select
+            className={selectMd}
+            disabled={!(settings?.deskPetEnabled ?? false)}
+            value={settings?.deskPetMotion ?? "calm"}
+            onChange={(e) => patch({ deskPetMotion: e.target.value as "calm" | "lively" })}
+          >
+            <option value="calm">安静</option>
+            <option value="lively">活泼</option>
+          </select>
+        </Row>
         <Row label="小桌大小" disabled={!(settings?.deskPetEnabled ?? false)}>
           <select
             className={selectMd}

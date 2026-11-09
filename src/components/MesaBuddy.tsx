@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import sheetUrl from "../assets/buddy/xiaozhuo.webp";
-import { BUDDY_CELL, BUDDY_COLS, BUDDY_ROWS, buddyClip, buddyRow, type BuddyPose, type BuddyProp } from "../buddy-sprite";
+import { BUDDY_CELL, BUDDY_COLS, BUDDY_ROWS, buddyClip, buddyRow, calmPause, type BuddyMotion, type BuddyPose, type BuddyProp } from "../buddy-sprite";
 
-export type { BuddyPose, BuddyProp };
+export type { BuddyMotion, BuddyPose, BuddyProp };
 
 /**
  * 项目助手的卡通形象「小桌」（原创：Mesa 是西班牙语「桌子」，项目助手是一张活过来的小工作台——桌面像顶帽子，桌裙是脸，
@@ -12,17 +12,24 @@ export type { BuddyPose, BuddyProp };
  * 不做 16 个朝向（小桌只在面板里，不在桌面上跟鼠标走）。精灵图 `src/assets/buddy/xiaozhuo.webp`，每格 224px、8 列，
  * 行与帧时长在 buddy-sprite.ts；怎么重孵见 docs/design-project-assistant.md §11。
  * 深浅主题同一张：外圈烤了一道米白贴纸边，深底上墨线和脚不会隐掉。减弱动态效果时停在第一帧。
+ * motion（2026-11-09 桌宠「一直在动」）：lively 一直循环（项目助手面板用）；calm 换状态时放一遍、停在说明状态的那帧（calmHold），
+ * 隔 35–50 秒再放一遍；still 不动、停在那帧（桌宠在 Mesa 窗口在前台时）。
  */
 export default function MesaBuddy({
   size = 32,
   pose = "idle",
   prop = null,
   className = "",
+  motion = "lively",
+  pokeable: allowPoke = true,
 }: {
   size?: number;
   pose?: BuddyPose;
   prop?: BuddyProp;
   className?: string;
+  motion?: BuddyMotion;
+  /** 点大图蹦一下（桌宠上点它是开卡片，关掉） */
+  pokeable?: boolean;
 }) {
   // 点一下大图会蹦一下（只在站着时）
   const [poke, setPoke] = useState(0);
@@ -35,8 +42,14 @@ export default function MesaBuddy({
   const row = restedFor === key ? buddyRow("idle", prop) : buddyRow(playing, prop);
   const [frame, setFrame] = useState(0);
   useEffect(() => {
+    if (motion === "still") {
+      setFrame(row.calmHold);
+      return;
+    }
     setFrame(0);
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    // 安静档：每次只放一遍（挥手也只挥一遍）
+    const repeat = motion === "calm" ? 1 : row.repeat;
     let i = 0;
     let loops = 0;
     let timer = 0;
@@ -45,10 +58,20 @@ export default function MesaBuddy({
         i += 1;
         if (i >= row.durations.length) {
           loops += 1;
-          if (row.repeat !== null && loops >= row.repeat) {
-            if (row.after === "hold") setFrame(row.hold);
-            else if (poke) setPoke(0);
-            else setRestedFor(key);
+          if (repeat !== null && loops >= repeat) {
+            if (row.after === "hold" && row.repeat !== null) setFrame(row.hold);
+            else if (row.repeat !== null && poke) setPoke(0);
+            else if (row.repeat !== null) setRestedFor(key);
+            else {
+              // 安静档的循环行（站着 / 在想 / 等你 / 睡着）：停在说明状态的那帧，过一阵再放一遍
+              setFrame(row.calmHold);
+              timer = window.setTimeout(() => {
+                i = 0;
+                loops = 0;
+                setFrame(0);
+                tick();
+              }, calmPause(Math.random()));
+            }
             return;
           }
           i = 0;
@@ -59,11 +82,11 @@ export default function MesaBuddy({
     };
     tick();
     return () => window.clearTimeout(timer);
-    // 换了行就从头放（row 由 key 与 restedFor 决定）
+    // 换了行或换了动作档就从头放（row 由 key 与 restedFor 决定）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row.index, key]);
+  }, [row.index, key, motion]);
 
-  const pokeable = size > 40 && pose === "idle";
+  const pokeable = allowPoke && size > 40 && pose === "idle";
   const clip = buddyClip(size);
   const k = clip.height / clip.h; // 屏幕像素 / 精灵图像素
   return (

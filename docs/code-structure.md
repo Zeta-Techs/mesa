@@ -357,7 +357,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              #   发走 step-round.ts sendReworkRound，发过记 dispatched（mode=resume）并每 10 秒看进度；退回大纲 / 初稿叫修改单
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：2026-11-09 起是逐帧精灵图（assets/buddy/xiaozhuo.webp，出图模型孵、scripts/buddy-sprite/ 可重孵），
-                             # 按 buddy-sprite.ts 的帧时长换背景位置；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
+                             # 按 buddy-sprite.ts 的帧时长换背景位置；motion 三档 lively（面板）/ calm（桌宠安静档：放一遍停 calmHold、隔 35–50 秒再动）/ still（Mesa 在前台）；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
   pet/PetApp.tsx             # 桌宠小窗（pet.html 入口 pet/main.tsx + pet/pet.css，desk_pet.rs 建窗）：小桌 + 琥珀角标 + 冒一句 + 「要你看一眼」小卡片 + 右键系统菜单；
                              # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动；
                              # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身；
@@ -644,7 +644,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   desk-pet.ts                # 桌宠报信纯逻辑：等你的事 / 现在的情况 → 桌宠条目（键、能点什么、去看看去哪）、新来的比对、冒哪一句、反应与样子先后；
                              # 第二期：petSpeaksInstead（桌宠开着时等确认 / 人工请求不另弹系统通知，勿扰键主窗口与小窗共用）、petLean 朝鼠标倾身、defaultAskProject、deskOnlyNotes（tests/desk-pet.test.ts）
   desk-pet-host.ts           # 桌宠的主窗口一侧（ProjectAssistantHost 挂）：每 20 秒跨项目（最多 8 个）拼清单发给小窗，按「等你的事」原路办小窗点的事，收 desk-pet:open 跳过去；问小桌（desk-pet:ask）交给那个项目的项目助手，边想边回 ask-progress，答完 ask-done
-  buddy-sprite.ts            # 小桌精灵图的行表：姿势 + 道具 → 第几行、每帧时长、放几遍、放完回站着还是停住；buddyClip 头像位取半身（tests/buddy-sprite.test.ts 核对图尺寸）
+  buddy-sprite.ts            # 小桌精灵图的行表：姿势 + 道具 → 第几行、每帧时长、放几遍、放完回站着还是停住、安静档停哪帧（calmHold）；buddyClip 头像位取半身（tests/buddy-sprite.test.ts 核对图尺寸）
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
