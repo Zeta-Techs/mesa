@@ -38,19 +38,19 @@ test("summarizeJobs：按状态汇总一行，没有活给空串", () => {
     stage: "oa",
     createdAt: 0,
     updatedAt: 0,
-    candidates: [],
   });
   assert.equal(summarizeJobs([]), "");
   assert.equal(
     summarizeJobs([job("queued"), job("manual"), job("done"), job("failed"), job("needs_approval")]),
     "找免费版 1 · 已下载 1 · 点官网下 1 · 没下到 1 · 等你点开始 1",
   );
-  assert.equal(statusLabel("needs_pick"), "等 AI 选链接");
+  // 旧的浏览器一级状态已撤，认不出的原样显示
+  assert.equal(statusLabel("needs_pick"), "needs_pick");
 });
 
 test("rowJobLabel：每行写 Mesa 到哪了；没有免费版的指去官网", () => {
   const job = (status: string): PaperFetchJob => ({
-    id: status, doi: "10.1/x", projectRoot: "/p", title: "", requester: "agent", status, stage: "oa", createdAt: 0, updatedAt: 0, candidates: [],
+    id: status, doi: "10.1/x", projectRoot: "/p", title: "", requester: "agent", status, stage: "oa", createdAt: 0, updatedAt: 0,
   });
   assert.equal(rowJobLabel(undefined), null);
   assert.deepEqual(rowJobLabel(job("queued")), { text: "Mesa 找免费版", warn: false });

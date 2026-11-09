@@ -92,19 +92,9 @@ pub fn helper_paper(args: &[String]) -> i32 {
     paper_fetch::helper_paper_cli(args)
 }
 
-/// 浏览器扩展来领一件要用浏览器取的代下任务（JSON：{id, doi, url, pick}），没有返回 None
-pub fn helper_claim_paper_task() -> Option<serde_json::Value> {
-    paper_fetch::helper_claim_browser_task().and_then(|t| serde_json::to_value(t).ok())
-}
-
-/// 扩展按任务交回 PDF：入任务自己的项目。返回 (文件名, 是否重复, 项目根)
-pub fn helper_save_paper_task(id: &str, bytes: &[u8]) -> Result<(String, bool, String), String> {
-    paper_fetch::helper_save_for_task(id, bytes)
-}
-
-/// 扩展取不到时回话（no_pdf / captcha / login / blocked / error）
-pub fn helper_report_paper_task(id: &str, kind: &str, detail: &str, candidates: Vec<(String, String)>) -> Result<(), String> {
-    paper_fetch::helper_report_task(id, kind, detail, candidates)
+/// 浏览器扩展定时打招呼：只记「来过」（设置页「已连接」），2026-11-09 起不再发代下任务
+pub fn helper_extension_ping() {
+    paper_fetch::helper_extension_ping()
 }
 
 /// helper 科研做图（`mesa_helper svg-render --in 图纸.svg --out 图.png|图.pdf`）：Agent 经 MESA_FIGURE_TOOL 调用，返回退出码
@@ -1186,9 +1176,6 @@ pub fn run() {
             paper_fetch::paper_fetch_retry,
             paper_fetch::paper_fetch_retry_all,
             paper_fetch::paper_fetch_cancel,
-            paper_fetch::paper_fetch_resume,
-            paper_fetch::paper_fetch_unblock,
-            paper_fetch::paper_fetch_set_limits,
             paper_fetch::paper_fetch_log,
             lit_watch::match_dropped_paper,
             lit_watch::to_fetch_progress,

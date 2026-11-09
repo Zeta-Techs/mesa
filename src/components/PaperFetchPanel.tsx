@@ -1,7 +1,7 @@
 // 代下全文（2026-11-08，docs/design-autonomy-roadmap.md §6）的界面零件。
 // 设置 → 网络「文献全文」按设置页规范一行一件事：SettingsPage 用 Row 排，这里只给数据钩子和行里的小块；
 // 待获取清单顶上的 PaperFetchBar 是次要动作（步骤主按钮只有一个，step-panel R6）。
-// 限速、熔断、范围检查都在后端（paper_fetch.rs），这里只展示与转达人的点击。
+// 范围检查与队列推进都在后端（paper_fetch.rs），这里只展示与转达人的点击。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
@@ -73,8 +73,8 @@ function JobRow({ job, onChanged }: { job: PaperFetchJob; onChanged: () => void 
       ? `papers/${job.saved}（${viaLabel(job.via)}）`
       : job.status === "needs_approval"
         ? "还不在项目文献清单里，AI 要下需要你确认；这一步保存进项目后会自动开始"
-        : ["queued", "browser"].includes(job.status)
-          ? (job.waiting ?? "")
+        : job.status === "queued"
+          ? ""
           : (job.error ?? "");
   return (
     <li className="py-1.5">
@@ -93,12 +93,12 @@ function JobRow({ job, onChanged }: { job: PaperFetchJob; onChanged: () => void 
             </button>
           </>
         )}
-        {(job.status === "failed" || job.status === "needs_pick") && (
+        {job.status === "failed" && (
           <button type="button" className={linkBtn} disabled={busy} onClick={() => void act("paper_fetch_retry")}>
             重试
           </button>
         )}
-        {["queued", "browser"].includes(job.status) && (
+        {job.status === "queued" && (
           <button type="button" className={linkBtn} disabled={busy} onClick={() => void act("paper_fetch_cancel")}>
             取消
           </button>
@@ -170,15 +170,15 @@ export function PaperFetchBar({
   const [note, setNote] = useState<string | null>(null);
   const pending = fetchableItems(items, savedLines);
   const activeDois = new Set(
-    (data?.jobs ?? []).filter((j) => ["queued", "browser", "needs_pick"].includes(j.status)).map((j) => j.doi),
+    (data?.jobs ?? []).filter((j) => j.status === "queued").map((j) => j.doi),
   );
   const toSend = pending.filter((p) => !activeDois.has(p.doi));
-  // 按钮已写「代下这批（N 篇）」：按钮能交的、正等你点的不再在进度里重复数（2026-11-09 用户：说明简洁一点）
+  // 按钮已写「让 Mesa 找免费版（N 篇）」：按钮能交的、正等你点的不再在进度里重复数（2026-11-09 用户：说明简洁一点）
   const sendable = new Set(toSend.map((p) => p.doi));
   const summary = summarizeJobs(
     (data?.jobs ?? []).filter((j) => j.status !== "cancelled" && !(j.status === "needs_approval" && sendable.has(j.doi))),
   );
-  const failed = (data?.jobs ?? []).filter((j) => j.status === "failed" || j.status === "needs_pick").length;
+  const failed = (data?.jobs ?? []).filter((j) => j.status === "failed").length;
   // 清单里还有没存的篇才出（真画出来才记「出过」）
   const showTip = tipOpen && pending.length > 0;
   useEffect(() => {

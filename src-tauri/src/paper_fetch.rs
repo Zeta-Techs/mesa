@@ -1,18 +1,15 @@
-//! 全文代下队列（2026-11-08 拍板，`docs/design-autonomy-roadmap.md` §6）。
+//! 全文代下队列（2026-11-08 拍板，`docs/design-autonomy-roadmap.md` §6；2026-11-09 收窄为只找开放获取）。
 //!
-//! AI（对话、目标、定时）经 `mesa_helper paper fetch <DOI>` 把要下的文献交进来，Mesa 逐篇去取；人也可以在待获取清单里整批交。
-//! 取的顺序：① 开放获取（Unpaywall / OpenAlex 合法副本，不用学校身份）→ ② 学校通道直取（`inst_access::fetch_via_channel`；
-//! 校园网模式不带前缀直接请求，靠学校网络放行；
-//! 按 TLS 指纹拦非浏览器的出版商直接跳过）→ ③ 浏览器扩展在用户自己的浏览器后台标签里取（扩展每分钟来领一篇）。
+//! AI（对话、目标、定时）经 `mesa_helper paper fetch <DOI>` 把要下的文献交进来，人也可以在待获取清单里整批交；
+//! Mesa 只去找合法的开放获取版本（Unpaywall / OpenAlex，不用学校身份），找到就存进项目 `papers/`，
+//! 找不到的记成「交给人在官网下」（`STATUS_MANUAL`）。学校通道直取与浏览器扩展后台取已撤（HER 实测出版商按指纹 / IP 拦）。
 //!
 //! 硬边界（Mesa 执行，不靠 AI 自觉）：
-//! - 全局一条队列：后台线程单线程推进，扩展一次只领一篇；跨进程（helper / 主程序）共用 `<config>/paper-fetch/queue.json`，读改写持文件锁。
-//! - 经学校身份（②③）的请求按出版商限速：间隔随机、每出版商每天上限、总量每天上限；人可调低，调高有上限（`CEILING`）。
-//! - 遇限流 / 验证码 / 真浏览器也被拒：该出版商熔断 24 小时；连续 3 篇失败整条队列暂停，人点「继续」才恢复。
-//! - AI 只能下项目清单里有的 DOI（`project_dois`），清单外的等人放行；学校会话不进 Agent 环境，Agent 只拿到落盘文件名。
-//! - 每次出门记一行日志（`log.jsonl`，0600），带 runId，Run 事实按它写「这次经哪一级取得了哪些文献」。
+//! - 全局一条队列：后台线程单线程推进；跨进程（helper / 主程序）共用 `<config>/paper-fetch/queue.json`，读改写持文件锁。
+//! - AI 只能下项目清单里有的 DOI（`project_dois`），清单外的等人放行；保存进项目后清单里有了就自动放行。
+//! - 每次出门记一行日志（`log.jsonl`，0600），带 runId，Run 事实按它写「这次取得了哪些文献」。
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,11 +17,7 @@ use std::path::{Path, PathBuf};
 /// Agent 环境里 helper 的路径（与 MESA_PEEK_TOOL 指向同一个 helper）
 pub const TOOL_ENV: &str = "MESA_PAPER_TOOL";
 
-const BLOCK_SECS: i64 = 24 * 3600;
-const MAX_FAILS_IN_ROW: u32 = 3;
-/// 扩展领走后多久没回话就当它没做完，放回去让下一次来领
-const BROWSER_CLAIM_SECS: i64 = 4 * 60;
-/// 扩展多久内来领过一次算「在」
+/// 扩展多久内来打过招呼算「在」
 const EXTENSION_ALIVE_SECS: i64 = 5 * 60;
 const KEEP_FINISHED: usize = 400;
 const LOG_CAP: u64 = 2 * 1024 * 1024;
@@ -32,8 +25,6 @@ const TICK_SECS: u64 = 5;
 
 pub const STATUS_NEEDS_APPROVAL: &str = "needs_approval";
 pub const STATUS_QUEUED: &str = "queued";
-pub const STATUS_BROWSER: &str = "browser";
-pub const STATUS_NEEDS_PICK: &str = "needs_pick";
 pub const STATUS_DONE: &str = "done";
 pub const STATUS_FAILED: &str = "failed";
 pub const STATUS_CANCELLED: &str = "cancelled";
@@ -42,44 +33,6 @@ pub const STATUS_CANCELLED: &str = "cancelled";
 pub const STATUS_MANUAL: &str = "manual";
 
 const STAGE_OA: &str = "oa";
-const STAGE_PUBLISHER: &str = "publisher";
-const STAGE_BROWSER: &str = "browser";
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Limits {
-    pub per_publisher_daily: u32,
-    pub total_daily: u32,
-    pub min_gap_secs: u32,
-    pub max_gap_secs: u32,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Limits { per_publisher_daily: 30, total_daily: 80, min_gap_secs: 15, max_gap_secs: 45 }
-    }
-}
-
-/// 人能调到的最宽：每天的篇数不能再高、间隔不能再短
-pub const CEILING: Limits = Limits { per_publisher_daily: 60, total_daily: 150, min_gap_secs: 10, max_gap_secs: 10 };
-
-pub(crate) fn clamp_limits(l: Limits) -> Limits {
-    let min_gap = l.min_gap_secs.clamp(CEILING.min_gap_secs, 600);
-    Limits {
-        per_publisher_daily: l.per_publisher_daily.clamp(1, CEILING.per_publisher_daily),
-        total_daily: l.total_daily.clamp(1, CEILING.total_daily),
-        min_gap_secs: min_gap,
-        max_gap_secs: l.max_gap_secs.clamp(min_gap, 1800),
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Candidate {
-    pub url: String,
-    #[serde(default)]
-    pub text: String,
-}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -108,18 +61,9 @@ pub struct Job {
     pub via: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
-    #[serde(default)]
-    pub candidates: Vec<Candidate>,
-    #[serde(default)]
-    pub pick: Option<String>,
-    #[serde(default)]
-    pub claimed_at: Option<i64>,
-    /// 出版商名（只在给界面的概览里填，队列文件里留空）：「先登录这几家」按出版商列
+    /// 出版商名（只在给界面的概览里填，队列文件里留空）
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub publisher: String,
-    /// 还在排队时为什么没动（等间隔 / 到上限 / 熔断 / 暂停），给人和 AI 看
-    #[serde(default)]
-    pub waiting: Option<String>,
 }
 
 impl Job {
@@ -130,44 +74,10 @@ impl Job {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct PubState {
-    #[serde(default)]
-    pub count: u32,
-    #[serde(default)]
-    pub last_at: i64,
-    #[serde(default)]
-    pub next_gap: u32,
-    #[serde(default)]
-    pub blocked_until: i64,
-    #[serde(default)]
-    pub blocked_reason: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct State {
-    #[serde(default)]
-    pub day: String,
-    #[serde(default)]
-    pub total: u32,
-    #[serde(default)]
-    pub publishers: BTreeMap<String, PubState>,
-    #[serde(default)]
-    pub fails_in_row: u32,
-    #[serde(default)]
-    pub paused: Option<String>,
-    #[serde(default)]
-    pub session_expired: bool,
-    #[serde(default)]
-    pub limits: Option<Limits>,
+    /// 浏览器扩展最近一次打招呼（设置页「已连接」）；旧队列文件里的计数 / 熔断 / 暂停字段读时忽略
     #[serde(default)]
     pub extension_seen_at: i64,
-}
-
-impl State {
-    pub fn limits(&self) -> Limits {
-        clamp_limits(self.limits.unwrap_or_default())
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -207,9 +117,6 @@ const PUBLISHERS: &[(&str, &str, &str)] = &[
     ("10.1146", "annualreviews", "Annual Reviews"),
 ];
 
-/// 非浏览器客户端一律 403（按 TLS 指纹判，带完整会话也一样，pipeline.md 机构访问通道条）——学校通道直取白白耗配额，直接交浏览器
-const BROWSER_ONLY: &[&str] = &["wiley", "elsevier"];
-
 /// 出版商键：已知前缀归到同一家（Wiley 有两个前缀），其余按 DOI 前缀
 pub fn publisher_key(doi: &str) -> String {
     let prefix = doi.split('/').next().unwrap_or("").to_ascii_lowercase();
@@ -226,10 +133,6 @@ pub fn publisher_name(key: &str) -> String {
         .find(|(_, k, _)| *k == key)
         .map(|(_, _, n)| n.to_string())
         .unwrap_or_else(|| key.to_string())
-}
-
-fn browser_only(key: &str) -> bool {
-    BROWSER_ONLY.contains(&key)
 }
 
 // ===== DOI =====
@@ -440,88 +343,6 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-fn today() -> String {
-    chrono::Local::now().format("%Y-%m-%d").to_string()
-}
-
-fn jitter(min: u32, max: u32) -> u32 {
-    if max <= min {
-        return min;
-    }
-    let r = u32::from_le_bytes(uuid::Uuid::new_v4().as_bytes()[..4].try_into().unwrap_or([0; 4]));
-    min + r % (max - min + 1)
-}
-
-// ===== 纯规则（单测直测）=====
-
-/// 跨天清零当天计数（熔断与暂停不随日子清）
-pub(crate) fn roll_day(state: &mut State, day: &str) {
-    if state.day != day {
-        state.day = day.to_string();
-        state.total = 0;
-        for p in state.publishers.values_mut() {
-            p.count = 0;
-        }
-    }
-}
-
-/// 经学校身份去这家出版商要等什么；None = 现在就能去
-pub(crate) fn publisher_wait(state: &State, key: &str, now: i64) -> Option<String> {
-    if let Some(why) = &state.paused {
-        return Some(format!("代下已暂停：{why}"));
-    }
-    let limits = state.limits();
-    if state.total >= limits.total_daily {
-        return Some(format!("今天经学校订阅已下 {} 篇，到了上限，明天继续", state.total));
-    }
-    if let Some(p) = state.publishers.get(key) {
-        if p.blocked_until > now {
-            return Some(format!("{} 暂停到 {}（{}）", publisher_name(key), fmt_time(p.blocked_until), p.blocked_reason));
-        }
-        if p.count >= limits.per_publisher_daily {
-            return Some(format!("{} 今天已下 {} 篇，到了上限，明天继续", publisher_name(key), p.count));
-        }
-        let ready_at = p.last_at + p.next_gap as i64;
-        if p.last_at > 0 && ready_at > now {
-            return Some(format!("{} 下一篇约 {} 秒后开始", publisher_name(key), ready_at - now));
-        }
-    }
-    None
-}
-
-pub(crate) fn note_request(state: &mut State, key: &str, now: i64) {
-    let limits = state.limits();
-    state.total += 1;
-    let p = state.publishers.entry(key.to_string()).or_default();
-    p.count += 1;
-    p.last_at = now;
-    p.next_gap = jitter(limits.min_gap_secs, limits.max_gap_secs);
-}
-
-pub(crate) fn trip(state: &mut State, key: &str, now: i64, reason: &str) {
-    let p = state.publishers.entry(key.to_string()).or_default();
-    p.blocked_until = now + BLOCK_SECS;
-    p.blocked_reason = reason.to_string();
-}
-
-/// 记一篇的结局：成功清零；失败累计，到 3 篇整条暂停
-pub(crate) fn note_outcome(state: &mut State, ok: bool) {
-    if ok {
-        state.fails_in_row = 0;
-        return;
-    }
-    state.fails_in_row += 1;
-    if state.fails_in_row >= MAX_FAILS_IN_ROW && state.paused.is_none() {
-        state.paused = Some(format!("连续 {MAX_FAILS_IN_ROW} 篇没下到"));
-    }
-}
-
-fn fmt_time(ts: i64) -> String {
-    chrono::DateTime::from_timestamp(ts, 0)
-        .map(|t| t.with_timezone(&chrono::Local).format("%m-%d %H:%M").to_string())
-        .unwrap_or_default()
-}
-
 fn new_job(root: &str, doi: &str, title: &str, run_id: Option<String>, requester: &str, now: i64) -> Job {
     Job {
         id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
@@ -547,10 +368,6 @@ fn requeue(job: &mut Job, now: i64) {
     job.error = None;
     job.saved = None;
     job.via = None;
-    job.candidates.clear();
-    job.pick = None;
-    job.claimed_at = None;
-    job.waiting = None;
 }
 
 /// 交进一篇。`allowed` = AI 可请求的范围（人交的不查）。同一项目同一 DOI 已有没结束的，原样返回那条；
@@ -613,162 +430,19 @@ pub(crate) fn release_listed(store: &mut Store, listed: impl Fn(&str) -> HashSet
     changed
 }
 
-/// 下一件能推进的活：先开放获取（不占学校配额），再学校通道（这家现在能去的）。返回 (下标, 要不要计一次学校请求)
-pub(crate) fn pick_next(store: &mut Store, now: i64, channel_active: bool) -> Option<(usize, bool)> {
-    // 学校通道用不上的先转浏览器（不计数，扩展来领时才计），再挑开放获取：原先开放获取排着时这些篇一直停在
-    // 「经学校订阅」，界面写「Mesa 经学校订阅下」，其实这台电脑走不了学校订阅（2026-11-09 HER，CARSI 未装扩展）
-    let session_expired = store.state.session_expired;
-    for job in store.jobs.iter_mut().filter(|j| j.status == STATUS_QUEUED && j.stage == STAGE_PUBLISHER) {
-        if !channel_active || browser_only(&publisher_key(&job.doi)) || session_expired {
-            job.status = STATUS_BROWSER.into();
-            job.stage = STAGE_BROWSER.into();
-            job.stage_at = now;
-            job.updated_at = now;
-            job.waiting = None;
-        }
-    }
-    if let Some(i) = store.jobs.iter().position(|j| j.status == STATUS_QUEUED && j.stage == STAGE_OA) {
-        return Some((i, false));
-    }
-    for i in 0..store.jobs.len() {
-        if !(store.jobs[i].status == STATUS_QUEUED && store.jobs[i].stage == STAGE_PUBLISHER) {
-            continue;
-        }
-        let key = publisher_key(&store.jobs[i].doi);
-        match publisher_wait(&store.state, &key, now) {
-            Some(why) => store.jobs[i].waiting = Some(why),
-            None => {
-                store.jobs[i].waiting = None;
-                return Some((i, true));
-            }
-        }
-    }
-    None
-}
-
-/// 扩展领一篇：这家能去才给，并计一次学校请求
-pub(crate) fn claim_in(store: &mut Store, now: i64) -> Option<Job> {
-    store.state.extension_seen_at = now;
-    for i in 0..store.jobs.len() {
-        let j = &store.jobs[i];
-        if j.status != STATUS_BROWSER {
-            continue;
-        }
-        if j.claimed_at.map(|c| now - c < BROWSER_CLAIM_SECS).unwrap_or(false) {
-            continue;
-        }
-        let key = publisher_key(&j.doi);
-        if let Some(why) = publisher_wait(&store.state, &key, now) {
-            store.jobs[i].waiting = Some(why);
-            continue;
-        }
-        note_request(&mut store.state, &key, now);
-        let job = &mut store.jobs[i];
-        job.claimed_at = Some(now);
-        job.waiting = None;
-        job.updated_at = now;
-        return Some(job.clone());
-    }
-    None
-}
-
-/// 浏览器一级的回话（扩展取不到时）
-pub(crate) fn report_in(store: &mut Store, id: &str, kind: &str, detail: &str, candidates: Vec<Candidate>, now: i64) -> Option<Job> {
-    let i = store.jobs.iter().position(|j| j.id == id && j.status == STATUS_BROWSER)?;
-    let key = publisher_key(&store.jobs[i].doi);
-    let mut ok_outcome = None;
-    {
-        let job = &mut store.jobs[i];
-        job.claimed_at = None;
-        job.updated_at = now;
-        match kind {
-            "captcha" | "blocked" => {
-                job.status = STATUS_FAILED.into();
-                job.error = Some(if kind == "captcha" {
-                    "出版商要人机验证，这篇请你自己下；这家停 24 小时".into()
-                } else {
-                    format!("出版商拒绝了下载（{detail}），这篇请你自己下；这家停 24 小时")
-                });
-                ok_outcome = Some(false);
-            }
-            "login" => {
-                job.status = STATUS_FAILED.into();
-                job.error = Some("浏览器里没登录学校账号，登录后点「重试」".into());
-                ok_outcome = Some(false);
-            }
-            "no_pdf" if !candidates.is_empty() && job.pick.is_none() => {
-                job.status = STATUS_NEEDS_PICK.into();
-                job.candidates = candidates.into_iter().take(8).collect();
-                job.error = Some("页面上没认出 PDF，已把几个候选链接交给 AI 选".into());
-            }
-            "no_pdf" => {
-                job.status = STATUS_FAILED.into();
-                job.error = Some("页面上没找到 PDF，可能不在学校订阅范围，这篇请你自己下".into());
-                ok_outcome = Some(false);
-            }
-            _ => {
-                job.status = STATUS_FAILED.into();
-                job.error = Some(if detail.is_empty() { "浏览器里没下到".into() } else { format!("浏览器里没下到：{detail}") });
-                ok_outcome = Some(false);
-            }
-        }
-    }
-    if matches!(kind, "captcha" | "blocked") {
-        trip(&mut store.state, &key, now, if kind == "captcha" { "要人机验证" } else { "下载被拒" });
-    }
-    if let Some(ok) = ok_outcome {
-        note_outcome(&mut store.state, ok);
-    }
-    Some(store.jobs[i].clone())
-}
-
-/// 扩展取到并入库后记成完成
-pub(crate) fn complete_in(store: &mut Store, id: &str, saved: &str, now: i64) -> Option<Job> {
-    let job = store.jobs.iter_mut().find(|j| j.id == id && !j.finished())?;
-    job.status = STATUS_DONE.into();
-    job.saved = Some(saved.to_string());
-    job.via = Some("browser".into());
-    job.error = None;
-    job.claimed_at = None;
-    job.updated_at = now;
-    let out = job.clone();
-    note_outcome(&mut store.state, true);
-    Some(out)
-}
-
-/// 浏览器一级等太久：放弃交给人（扩展没装、浏览器没开）
-/// 没有开放获取版本：交给人在官网下（不再走学校通道直取、不再交浏览器扩展后台去取）
+/// 没有开放获取版本：交给人在官网下
 fn to_manual(j: &mut Job, now: i64) {
     j.status = STATUS_MANUAL.into();
     j.stage = STAGE_OA.into();
     j.updated_at = now;
-    j.waiting = None;
     j.error = None;
-    j.claimed_at = None;
-    j.candidates.clear();
 }
 
-/// 改口径前排进学校通道 / 浏览器一级的篇，以及在那两级没下到的，一律转「交给人在官网下」
-pub(crate) fn settle_manual(store: &mut Store, now: i64) -> bool {
-    let mut changed = false;
-    for j in store.jobs.iter_mut() {
-        let later_stage = j.stage == STAGE_PUBLISHER || j.stage == STAGE_BROWSER;
-        let stuck = (j.status == STATUS_QUEUED && later_stage)
-            || j.status == STATUS_BROWSER
-            || (matches!(j.status.as_str(), STATUS_FAILED | STATUS_NEEDS_PICK) && later_stage);
-        if stuck {
-            to_manual(j, now);
-            changed = true;
-        }
-    }
-    changed
-}
-
-/// 这个项目没下到的（失败、等你指链接的）一起重排：人点「全部重试」
+/// 这个项目没下到的一起重排：人点「全部重试」
 pub(crate) fn retry_failed_in(store: &mut Store, root: &str, now: i64) -> usize {
     let mut n = 0;
     for job in store.jobs.iter_mut().filter(|j| {
-        crate::paths::same_path(&j.project_root, root) && matches!(j.status.as_str(), STATUS_FAILED | STATUS_NEEDS_PICK)
+        crate::paths::same_path(&j.project_root, root) && j.status == STATUS_FAILED
     }) {
         requeue(job, now);
         job.requester = "human".into();
@@ -791,7 +465,7 @@ pub fn start_worker(app: tauri::AppHandle) {
                 Ok(true) => {
                     use tauri::Emitter;
                     let _ = app.emit("paper-fetch-changed", ());
-                    // 后台直接存下的（开放获取 / 学校通道）与扩展存下的同一个广播：待获取清单就地翻「已存」
+                    // 后台存下的与扩展「存到 Mesa」同一个广播：待获取清单就地翻「已存」
                     for job in take_saved() {
                         let _ = app.emit(
                             "inst-papers-changed",
@@ -821,22 +495,10 @@ fn take_saved() -> Vec<Job> {
 pub(crate) async fn tick() -> Result<bool, String> {
     let t = now();
     let picked = with_store(|s| {
-        let before = s.clone();
-        roll_day(&mut s.state, &today());
-        let expired = settle_manual(s, t);
-        if s.jobs.iter().any(|j| j.status == STATUS_NEEDS_APPROVAL) {
-            release_listed(s, |root| project_dois(Path::new(root)), t);
-        }
-        let next = pick_next(s, t, false);
-        if let Some((i, count)) = next {
-            if count {
-                let key = publisher_key(&s.jobs[i].doi);
-                note_request(&mut s.state, &key, t);
-            }
-        }
-        let job = next.map(|(i, _)| s.jobs[i].clone());
-        let dirty = *s != before;
-        ((job, expired || dirty), dirty)
+        let released = s.jobs.iter().any(|j| j.status == STATUS_NEEDS_APPROVAL)
+            && release_listed(s, |root| project_dois(Path::new(root)), t);
+        let job = s.jobs.iter().find(|j| j.status == STATUS_QUEUED).cloned();
+        ((job, released), released)
     })?;
     let (job, changed) = picked;
     let Some(job) = job else { return Ok(changed) };
@@ -852,30 +514,28 @@ pub(crate) async fn tick() -> Result<bool, String> {
             project: project_name(&job.project_root),
         })
     };
-    if job.stage == STAGE_OA {
-        let got = match crate::inst_access::oa_pdf_url_for(&job.doi).await {
-            Some((url, _)) => crate::lit_watch::fetch_pdf_bytes(&url).await.ok(),
-            None => None,
-        };
-        let saved = got.as_ref().map(|bytes| ingest(&job, bytes));
-        match saved {
-            Some(Ok(name)) => {
-                log("oa", "ok");
-                finish(&job.id, Ok((name, "oa")))?;
-            }
-            Some(Err(e)) => {
-                log("oa", "save_failed");
-                finish(&job.id, Err(format!("下到了开放获取版本，但存进项目失败：{e}")))?;
-            }
-            None => {
-                log("oa", "no_oa");
-                with_store(|s| {
-                    if let Some(j) = s.jobs.iter_mut().find(|j| j.id == job.id && j.status == STATUS_QUEUED) {
-                        to_manual(j, now());
-                    }
-                    ((), true)
-                })?;
-            }
+    let got = match crate::inst_access::oa_pdf_url_for(&job.doi).await {
+        Some((url, _)) => crate::lit_watch::fetch_pdf_bytes(&url).await.ok(),
+        None => None,
+    };
+    let saved = got.as_ref().map(|bytes| ingest(&job, bytes));
+    match saved {
+        Some(Ok(name)) => {
+            log("oa", "ok");
+            finish(&job.id, Ok((name, "oa")))?;
+        }
+        Some(Err(e)) => {
+            log("oa", "save_failed");
+            finish(&job.id, Err(format!("下到了开放获取版本，但存进项目失败：{e}")))?;
+        }
+        None => {
+            log("oa", "no_oa");
+            with_store(|s| {
+                if let Some(j) = s.jobs.iter_mut().find(|j| j.id == job.id && j.status == STATUS_QUEUED) {
+                    to_manual(j, now());
+                }
+                ((), true)
+            })?;
         }
     }
     Ok(true)
@@ -899,7 +559,6 @@ fn ingest(job: &Job, bytes: &[u8]) -> Result<String, String> {
 fn finish(id: &str, result: Result<(String, &str), String>) -> Result<(), String> {
     with_store(|s| {
         let t = now();
-        let ok = result.is_ok();
         if let Some(j) = s.jobs.iter_mut().find(|j| j.id == id) {
             match &result {
                 Ok((name, via)) => {
@@ -914,92 +573,32 @@ fn finish(id: &str, result: Result<(String, &str), String>) -> Result<(), String
                 }
             }
             j.updated_at = t;
-            if ok {
+            if result.is_ok() {
                 if let Ok(mut v) = SAVED.lock() {
                     v.push(j.clone());
                 }
             }
         }
-        note_outcome(&mut s.state, ok);
         ((), true)
     })
 }
 
 // ===== 扩展（经 helper 的 native messaging）=====
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BrowserTask {
-    pub id: String,
-    pub doi: String,
-    pub url: String,
-    /// 只认这个来源下的链接（AI 指定候选时校验同源）
-    pub pick: Option<String>,
-}
-
-/// 扩展每分钟来领一次
-pub fn helper_claim_browser_task() -> Option<BrowserTask> {
+/// 扩展定时来打招呼（`mesa-poll-jobs`，2026-11-09 起不再发活）：只记「来过」，设置页据此显示「已连接」
+pub fn helper_extension_ping() {
     let t = now();
-    let job = with_store(|s| {
-        roll_day(&mut s.state, &today());
-        let j = claim_in(s, t);
-        (j, true)
-    })
-    .ok()??;
-    let target = format!("https://doi.org/{}", job.doi);
-    let ch = crate::inst_access::InstitutionalChannel::load();
-    let url = match ch.prefix.as_deref() {
-        Some(p) if !p.trim().is_empty() => crate::inst_access::proxy_wrap_pub(p, &target),
-        _ => target,
-    };
-    Some(BrowserTask { id: job.id, doi: job.doi, url, pick: job.pick })
-}
-
-/// 扩展取到 PDF：按任务入它自己的项目（不看 helper-context）。返回 (文件名, 是否重复, 项目根)
-pub fn helper_save_for_task(id: &str, bytes: &[u8]) -> Result<(String, bool, String), String> {
-    let job = with_store(|s| (s.jobs.iter().find(|j| j.id == id && !j.finished()).cloned(), false))?
-        .ok_or("这件代下任务已经结束或不存在")?;
-    let (name, dedup) = save_for_job(&job, bytes)?;
-    append_log(&LogEntry {
-        at: now(),
-        doi: job.doi.clone(),
-        publisher: publisher_key(&job.doi),
-        level: "browser".into(),
-        result: "ok".into(),
-        run_id: job.run_id.clone(),
-        project: project_name(&job.project_root),
+    let _ = with_store(|s| {
+        s.state.extension_seen_at = t;
+        ((), true)
     });
-    with_store(|s| (complete_in(s, id, &name, now()), true))?;
-    Ok((name, dedup, job.project_root))
-}
-
-/// 扩展取不到时回话：kind = no_pdf / captcha / login / blocked / error
-pub fn helper_report_task(id: &str, kind: &str, detail: &str, candidates: Vec<(String, String)>) -> Result<(), String> {
-    let cands: Vec<Candidate> = candidates.into_iter().map(|(url, text)| Candidate { url, text }).collect();
-    let job = with_store(|s| {
-        let j = report_in(s, id, kind, detail, cands, now());
-        (j, true)
-    })?;
-    if let Some(job) = job {
-        append_log(&LogEntry {
-            at: now(),
-            doi: job.doi.clone(),
-            publisher: publisher_key(&job.doi),
-            level: "browser".into(),
-            result: kind.into(),
-            run_id: job.run_id.clone(),
-            project: project_name(&job.project_root),
-        });
-    }
-    Ok(())
 }
 
 // ===== Agent 用的命令行（mesa_helper paper …）=====
 
 const USAGE: &str = "用法（Windows PowerShell 把 \"$MESA_PAPER_TOOL\" 写成 & $env:MESA_PAPER_TOOL）：
   \"$MESA_PAPER_TOOL\" paper fetch <DOI> [<DOI> …] [--wait 秒]   交给 Mesa 代下全文（默认最多等 60 秒）
-  \"$MESA_PAPER_TOOL\" paper status [<DOI>]                       看这个项目代下到哪了
-  \"$MESA_PAPER_TOOL\" paper pick <DOI> <编号>                    落地页上没认出 PDF 时，从列出的候选里指一个";
+  \"$MESA_PAPER_TOOL\" paper status [<DOI>]                       看这个项目代下到哪了";
 
 fn resolve_project() -> Result<(String, Option<String>), String> {
     let run_id = std::env::var(crate::peek::RUN_ENV).ok().filter(|s| !s.trim().is_empty());
@@ -1018,28 +617,16 @@ fn describe(job: &Job) -> String {
             level_label(job.via.as_deref().unwrap_or(""))
         ),
         STATUS_NEEDS_APPROVAL => format!("{}：还不在项目文献清单里，等人放行；这一步保存进项目后会自动开始。先做别的，别自己去出版商网站下", job.doi),
-        STATUS_NEEDS_PICK => {
-            let mut s = format!("{}：落地页上没认出 PDF，候选链接如下，用 paper pick {} <编号> 指一个（只选正文 PDF，不选补充材料）：", job.doi, job.doi);
-            for (i, c) in job.candidates.iter().enumerate() {
-                s.push_str(&format!("\n  {}. {}  {}", i + 1, c.text.trim(), c.url));
-            }
-            s
-        }
         STATUS_FAILED => format!("{}：没取到——{}。这篇交给人获取，不要重试、不要换别的办法去下", job.doi, job.error.as_deref().unwrap_or("原因不明")),
         STATUS_MANUAL => format!("{}：没有开放获取版本，交给人在出版商官网下；留在 to-fetch 照常收尾，不要自己去出版商网站下", job.doi),
         STATUS_CANCELLED => format!("{}：人取消了这篇的代下", job.doi),
-        STATUS_BROWSER => format!("{}：排队等浏览器取（Mesa 文献下载扩展每分钟来领一篇）{}", job.doi, job.waiting.as_deref().map(|w| format!("；{w}")).unwrap_or_default()),
-        _ => format!(
-            "{}：排队中{}",
-            job.doi,
-            job.waiting.as_deref().map(|w| format!("（{w}）")).unwrap_or_default()
-        ),
+        _ => format!("{}：排队找开放获取版本", job.doi),
     }
 }
 
 pub fn helper_paper_cli(args: &[String]) -> i32 {
     let sub = args.first().map(String::as_str).unwrap_or("");
-    // 主程序找 helper 时试跑：认得 paper（与扩展的代下轮询 mesa-poll-jobs 同一批加入）才算新版
+    // 主程序找 helper 时试跑：认得 paper 才算新版
     if sub == "--probe" {
         println!("ok");
         return 0;
@@ -1087,7 +674,7 @@ pub fn helper_paper_cli(args: &[String]) -> i32 {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait);
             let jobs = loop {
                 let jobs: Vec<Job> = with_store(|s| (s.jobs.iter().filter(|j| ids.contains(&j.id)).cloned().collect(), false)).unwrap_or_default();
-                let settled = jobs.iter().all(|j| j.finished() || matches!(j.status.as_str(), STATUS_NEEDS_APPROVAL | STATUS_NEEDS_PICK));
+                let settled = jobs.iter().all(|j| j.finished() || j.status == STATUS_NEEDS_APPROVAL);
                 if settled || std::time::Instant::now() >= deadline {
                     break jobs;
                 }
@@ -1097,7 +684,7 @@ pub fn helper_paper_cli(args: &[String]) -> i32 {
                 println!("{}", describe(j));
             }
             if jobs.iter().any(|j| !j.finished()) {
-                println!("还没结束的不用守着：Mesa 会按出版商限速逐篇取，稍后用 paper status 查；不要重复提交，也不要自己去出版商网站下（会连累学校的访问）。");
+                println!("还没结束的不用守着：Mesa 逐篇找开放获取版本，稍后用 paper status 查；不要重复提交，也不要自己去出版商网站下（会连累学校的访问）。");
             }
             0
         }
@@ -1123,42 +710,6 @@ pub fn helper_paper_cli(args: &[String]) -> i32 {
             }
             0
         }
-        "pick" => {
-            let (Some(doi), Some(n)) = (args.get(1).and_then(|d| normalize_doi(d)), args.get(2).and_then(|n| n.parse::<usize>().ok())) else {
-                eprintln!("{USAGE}");
-                return 2;
-            };
-            let res = with_store(|s| {
-                let Some(job) = s
-                    .jobs
-                    .iter_mut()
-                    .rev()
-                    .find(|j| j.doi == doi && crate::paths::same_path(&j.project_root, &root) && j.status == STATUS_NEEDS_PICK)
-                else {
-                    return (Err("这篇现在不需要指候选".to_string()), false);
-                };
-                let Some(c) = n.checked_sub(1).and_then(|i| job.candidates.get(i)).cloned() else {
-                    return (Err(format!("没有第 {n} 个候选")), false);
-                };
-                job.pick = Some(c.url.clone());
-                job.status = STATUS_BROWSER.into();
-                job.stage = STAGE_BROWSER.into();
-                job.stage_at = now();
-                job.updated_at = now();
-                job.error = None;
-                (Ok(c.url), true)
-            });
-            match res {
-                Ok(Ok(url)) => {
-                    println!("已指定 {url}，浏览器下次来领时取这一个；稍后用 paper status {doi} 查");
-                    0
-                }
-                Ok(Err(e)) | Err(e) => {
-                    eprintln!("{e}");
-                    1
-                }
-            }
-        }
         _ => {
             eprintln!("{USAGE}");
             2
@@ -1170,23 +721,7 @@ pub fn helper_paper_cli(args: &[String]) -> i32 {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PublisherDto {
-    pub key: String,
-    pub name: String,
-    pub count: u32,
-    pub blocked_until: Option<i64>,
-    pub blocked_reason: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct OverviewDto {
-    pub limits: Limits,
-    pub ceiling: Limits,
-    pub total_today: u32,
-    pub publishers: Vec<PublisherDto>,
-    pub paused: Option<String>,
-    pub session_expired: bool,
     pub extension_alive: bool,
     /// 扩展连上过（装好了）：没连上时界面说「浏览器没开着？」而不是再叫人安装
     pub extension_ever_seen: bool,
@@ -1194,20 +729,7 @@ pub struct OverviewDto {
 }
 
 fn overview_of(store: &Store, root: Option<&str>, t: i64) -> OverviewDto {
-    let mut state = store.state.clone();
-    roll_day(&mut state, &today());
-    let publishers = state
-        .publishers
-        .iter()
-        .filter(|(_, p)| p.count > 0 || p.blocked_until > t)
-        .map(|(k, p)| PublisherDto {
-            key: k.clone(),
-            name: publisher_name(k),
-            count: p.count,
-            blocked_until: (p.blocked_until > t).then_some(p.blocked_until),
-            blocked_reason: p.blocked_reason.clone(),
-        })
-        .collect();
+    let state = &store.state;
     let mut jobs: Vec<Job> = store
         .jobs
         .iter()
@@ -1220,12 +742,6 @@ fn overview_of(store: &Store, root: Option<&str>, t: i64) -> OverviewDto {
         j.publisher = publisher_name(&publisher_key(&j.doi));
     }
     OverviewDto {
-        limits: state.limits(),
-        ceiling: CEILING,
-        total_today: state.total,
-        publishers,
-        paused: state.paused.clone(),
-        session_expired: state.session_expired,
         extension_alive: t - state.extension_seen_at < EXTENSION_ALIVE_SECS,
         extension_ever_seen: state.extension_seen_at > 0,
         jobs,
@@ -1299,7 +815,7 @@ pub async fn paper_fetch_approve(id: String) -> Result<(), String> {
 pub async fn paper_fetch_retry(id: String) -> Result<(), String> {
     blocking(move || {
         update_job(id, |j, t| {
-            if !matches!(j.status.as_str(), STATUS_FAILED | STATUS_CANCELLED | STATUS_NEEDS_PICK) {
+            if !matches!(j.status.as_str(), STATUS_FAILED | STATUS_CANCELLED) {
                 return Err("这篇还在进行中".into());
             }
             requeue(j, t);
@@ -1327,55 +843,8 @@ pub async fn paper_fetch_cancel(id: String) -> Result<(), String> {
                 return Err("这篇已经结束".into());
             }
             j.status = STATUS_CANCELLED.into();
-            j.claimed_at = None;
             j.updated_at = t;
             Ok(())
-        })
-    })
-    .await
-}
-
-/// 「继续」：解除整条暂停、清连续失败、当作已重新登录
-#[tauri::command]
-pub async fn paper_fetch_resume() -> Result<(), String> {
-    blocking(|| {
-        with_store(|s| {
-            s.state.paused = None;
-            s.state.fails_in_row = 0;
-            s.state.session_expired = false;
-            // 暂停时写在各篇上的「代下已暂停：…」一并清掉，不然点了继续清单里还挂着（2026-11-09 HER 实测）
-            for j in s.jobs.iter_mut() {
-                if j.waiting.as_deref().is_some_and(|w| w.starts_with("代下已暂停")) {
-                    j.waiting = None;
-                }
-            }
-            ((), true)
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn paper_fetch_unblock(publisher: String) -> Result<(), String> {
-    blocking(move || {
-        with_store(|s| {
-            if let Some(p) = s.state.publishers.get_mut(&publisher) {
-                p.blocked_until = 0;
-                p.blocked_reason.clear();
-            }
-            ((), true)
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn paper_fetch_set_limits(limits: Limits) -> Result<Limits, String> {
-    blocking(move || {
-        with_store(|s| {
-            let l = clamp_limits(limits);
-            s.state.limits = Some(l);
-            (l, true)
         })
     })
     .await
@@ -1414,51 +883,6 @@ mod tests {
         assert_eq!(publisher_key("10.1111/abc"), "wiley");
         assert_eq!(publisher_key("10.1002/abc"), "wiley");
         assert_eq!(publisher_key("10.9999/abc"), "10.9999");
-        assert!(browser_only("elsevier"));
-    }
-
-    #[test]
-    fn limits_cannot_exceed_ceiling() {
-        let l = clamp_limits(Limits { per_publisher_daily: 999, total_daily: 999, min_gap_secs: 1, max_gap_secs: 0 });
-        assert_eq!(l.per_publisher_daily, CEILING.per_publisher_daily);
-        assert_eq!(l.total_daily, CEILING.total_daily);
-        assert_eq!(l.min_gap_secs, CEILING.min_gap_secs);
-        assert!(l.max_gap_secs >= l.min_gap_secs);
-    }
-
-    #[test]
-    fn caps_gap_and_breaker() {
-        let mut st = State::default();
-        st.limits = Some(Limits { per_publisher_daily: 2, total_daily: 3, min_gap_secs: 30, max_gap_secs: 30 });
-        assert!(publisher_wait(&st, "acs", 1000).is_none());
-        note_request(&mut st, "acs", 1000);
-        assert!(publisher_wait(&st, "acs", 1010).unwrap().contains("秒后开始"));
-        assert!(publisher_wait(&st, "acs", 1031).is_none());
-        note_request(&mut st, "acs", 1031);
-        assert!(publisher_wait(&st, "acs", 2000).unwrap().contains("到了上限"));
-        // 别家还能去，到总量上限才都停
-        assert!(publisher_wait(&st, "rsc", 2000).is_none());
-        note_request(&mut st, "rsc", 2000);
-        assert!(publisher_wait(&st, "nature", 3000).unwrap().contains("到了上限"));
-        // 跨天清零计数，熔断不清
-        trip(&mut st, "rsc", 3000, "要人机验证");
-        roll_day(&mut st, "2099-01-01");
-        assert!(publisher_wait(&st, "acs", 4000).is_none());
-        assert!(publisher_wait(&st, "rsc", 4000).unwrap().contains("暂停到"));
-        assert!(publisher_wait(&st, "rsc", 3000 + BLOCK_SECS + 1).is_none());
-    }
-
-    #[test]
-    fn three_failures_pause_everything() {
-        let mut st = State::default();
-        note_outcome(&mut st, false);
-        note_outcome(&mut st, true);
-        note_outcome(&mut st, false);
-        note_outcome(&mut st, false);
-        assert!(st.paused.is_none());
-        note_outcome(&mut st, false);
-        assert!(st.paused.is_some());
-        assert!(publisher_wait(&st, "acs", 0).unwrap().contains("暂停"));
     }
 
     #[test]
@@ -1503,66 +927,16 @@ mod tests {
     }
 
     #[test]
-    fn browser_claim_respects_limits_and_reports() {
-        let mut s = Store::default();
-        s.state.limits = Some(Limits { per_publisher_daily: 1, total_daily: 10, min_gap_secs: 30, max_gap_secs: 30 });
-        for d in ["10.1002/x", "10.1002/y"] {
-            let mut j = new_job("/p", d, "", None, "agent", 1);
-            j.status = STATUS_BROWSER.into();
-            j.stage = STAGE_BROWSER.into();
-            s.jobs.push(j);
-        }
-        let first = claim_in(&mut s, 100).unwrap();
-        assert_eq!(first.doi, "10.1002/x");
-        // 同一家到上限，第二篇不给
-        assert!(claim_in(&mut s, 200).is_none());
-        assert!(s.jobs[1].waiting.as_deref().unwrap().contains("到了上限"));
-        // 验证码：熔断这家、这篇交还给人
-        let j = report_in(&mut s, &first.id, "captcha", "", vec![], 150).unwrap();
-        assert_eq!(j.status, STATUS_FAILED);
-        assert!(s.state.publishers["wiley"].blocked_until > 150);
-        // 没认出 PDF 但有候选 → 等 AI 指一个
-        s.jobs[1].claimed_at = Some(1);
-        let second = s.jobs[1].id.clone();
-        let r = report_in(&mut s, &second, "no_pdf", "", vec![Candidate { url: "https://x/pdf".into(), text: "PDF".into() }], 300).unwrap();
-        assert_eq!(r.status, STATUS_NEEDS_PICK);
-    }
-
-    #[test]
-    fn settle_manual_moves_publisher_and_browser_jobs_to_human() {
-        let mut s = Store::default();
-        for (doi, st, stage) in [
-            ("10.1/oa", STATUS_QUEUED, STAGE_OA),
-            ("10.1/pub", STATUS_QUEUED, STAGE_PUBLISHER),
-            ("10.1/br", STATUS_BROWSER, STAGE_BROWSER),
-            ("10.1/f", STATUS_FAILED, STAGE_BROWSER),
-            ("10.1/oafail", STATUS_FAILED, STAGE_OA),
-            ("10.1/done", STATUS_DONE, STAGE_BROWSER),
-        ] {
-            let mut j = new_job("/p", doi, "", None, "agent", 0);
-            j.status = st.into();
-            j.stage = stage.into();
-            j.waiting = Some("x".into());
-            s.jobs.push(j);
-        }
-        assert!(settle_manual(&mut s, 5));
-        let st: Vec<&str> = s.jobs.iter().map(|j| j.status.as_str()).collect();
-        assert_eq!(st, vec![STATUS_QUEUED, STATUS_MANUAL, STATUS_MANUAL, STATUS_MANUAL, STATUS_FAILED, STATUS_DONE]);
-        assert!(s.jobs[1].waiting.is_none() && s.jobs[1].finished());
-        assert!(!settle_manual(&mut s, 6));
-    }
-
-    #[test]
     fn retry_all_requeues_only_this_projects_failed() {
         let mut s = Store::default();
-        for (root, doi, st) in [("/p", "10.1/a", STATUS_FAILED), ("/p", "10.1/b", STATUS_NEEDS_PICK), ("/p", "10.1/c", STATUS_DONE), ("/q", "10.1/d", STATUS_FAILED)] {
+        for (root, doi, st) in [("/p", "10.1/a", STATUS_FAILED), ("/p", "10.1/b", STATUS_MANUAL), ("/p", "10.1/c", STATUS_DONE), ("/q", "10.1/d", STATUS_FAILED)] {
             let mut j = new_job(root, doi, "", None, "agent", 0);
             j.status = st.into();
             s.jobs.push(j);
         }
-        assert_eq!(retry_failed_in(&mut s, "/p", 5), 2);
+        assert_eq!(retry_failed_in(&mut s, "/p", 5), 1);
         let st: Vec<&str> = s.jobs.iter().map(|j| j.status.as_str()).collect();
-        assert_eq!(st, vec![STATUS_QUEUED, STATUS_QUEUED, STATUS_DONE, STATUS_FAILED]);
+        assert_eq!(st, vec![STATUS_QUEUED, STATUS_MANUAL, STATUS_DONE, STATUS_FAILED]);
     }
 
     /// 联网干跑（默认不跑）：临时项目 + 重定向配置目录，交一篇开放获取论文，队列真的去取、存进 papers/、记日志与 Run 事实口径。
@@ -1598,9 +972,6 @@ mod tests {
         let saved = proj.join("papers").join(job.saved.unwrap());
         assert!(fs::read(&saved).unwrap().starts_with(b"%PDF-"));
         assert_eq!(fetched_for_run("run-dry"), vec![format!("{doi}（经开放获取）")]);
-        // 开放获取不占学校配额
-        let st = with_store(|s| (s.state.clone(), false)).unwrap();
-        assert_eq!(st.total, 0);
         let _ = fs::remove_dir_all(&base);
     }
 

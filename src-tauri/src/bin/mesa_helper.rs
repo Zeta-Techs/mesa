@@ -230,20 +230,10 @@ fn main() {
             }
             continue;
         }
-        // 代下队列（paper_fetch.rs）：扩展每分钟来领一件要用浏览器取的；取不到时回话
+        // 扩展定时打招呼（消息名沿用旧的代下轮询；2026-11-09 起不再发活，只记「来过」）
         if msg.get("kind").and_then(|k| k.as_str()) == Some("mesa-poll-jobs") {
-            let reply = match ccode_lib::helper_claim_paper_task() {
-                Some(task) => serde_json::json!({"ok": true, "job": task}),
-                None => serde_json::json!({"ok": true}),
-            };
-            if write_frame(&mut stdout, &reply).is_err() {
-                break;
-            }
-            continue;
-        }
-        if msg.get("kind").and_then(|k| k.as_str()) == Some("mesa-job-report") {
-            let reply = handle_job_report(&msg);
-            if write_frame(&mut stdout, &reply).is_err() {
+            ccode_lib::helper_extension_ping();
+            if write_frame(&mut stdout, &serde_json::json!({"ok": true})).is_err() {
                 break;
             }
             continue;
@@ -314,30 +304,6 @@ fn handle_report_download(msg: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({"ok": true})
 }
 
-fn handle_job_report(msg: &serde_json::Value) -> serde_json::Value {
-    let id = msg.get("jobId").and_then(|v| v.as_str()).unwrap_or("");
-    let kind = msg.get("reason").and_then(|v| v.as_str()).unwrap_or("error");
-    let detail = msg.get("detail").and_then(|v| v.as_str()).unwrap_or("");
-    let candidates: Vec<(String, String)> = msg
-        .get("candidates")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|c| {
-                    let url = c.get("url")?.as_str()?.to_string();
-                    let text = c.get("text").and_then(|t| t.as_str()).unwrap_or("").chars().take(120).collect();
-                    Some((url, text))
-                })
-                .take(8)
-                .collect()
-        })
-        .unwrap_or_default();
-    match ccode_lib::helper_report_paper_task(id, kind, detail, candidates) {
-        Ok(()) => serde_json::json!({"ok": true}),
-        Err(e) => serde_json::json!({"ok": false, "error": e}),
-    }
-}
-
 fn handle(msg: &serde_json::Value) -> serde_json::Value {
     let bytes_b64 = msg.get("bytesB64").and_then(|v| v.as_str()).unwrap_or("");
     let bytes = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, bytes_b64)
@@ -350,19 +316,6 @@ fn handle(msg: &serde_json::Value) -> serde_json::Value {
     }
     if !bytes.starts_with(b"%PDF-") {
         return serde_json::json!({"ok": false, "error": "内容不是有效 PDF"});
-    }
-    // 代下任务：入任务自己的项目（不看 helper-context，那是人上次「浏览器打开」留下的语境）
-    if let Some(job_id) = msg.get("jobId").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-        return match ccode_lib::helper_save_paper_task(job_id, &bytes) {
-            Ok((saved, dedup, root)) => {
-                let project = std::path::Path::new(&root)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                serde_json::json!({"ok": true, "saved": saved, "dedup": dedup, "project": project, "projectRoot": root})
-            }
-            Err(e) => serde_json::json!({"ok": false, "error": e}),
-        };
     }
     let ctx = match load_helper_ctx() {
         Ok(c) => c,

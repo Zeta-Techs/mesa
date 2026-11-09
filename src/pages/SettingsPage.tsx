@@ -4245,18 +4245,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           hint="待获取的文献，Mesa 先找免费版"
           labelTitle="Mesa 只找合法的开放获取版本，找到就存进 papers/；找不到的在待获取清单里点「官网」自己下（2026-11-09 起不再经学校订阅或浏览器扩展在后台自动下：出版商会拦）。AI 只能交项目文献清单里有的文献。"
         >
-          {paperFetch.data?.paused ? (
-            <>
-              <span className="text-sm text-warn-text" title={paperFetch.data.paused}>
-                已暂停
-              </span>
-              <button type="button" className={rowActionClass} onClick={() => void invoke("paper_fetch_resume").finally(paperFetch.reload)}>
-                继续
-              </button>
-            </>
-          ) : paperFetch.data ? (
-            <span className="text-sm text-l3">开着</span>
-          ) : null}
+          {paperFetch.data ? <span className="text-sm text-l3">开着</span> : null}
         </Row>
         <Row
           label="浏览器扩展"
@@ -4303,7 +4292,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             <span className="text-sm text-done">已连接</span>
           ) : paperFetch.data?.extensionEverSeen && !bridgeResult ? (
             <>
-              <span className="text-sm text-l3" title="扩展装过，这几分钟没来领任务：浏览器开着它就会连上">没连上，浏览器开着吗</span>
+              <span className="text-sm text-l3" title="扩展装过，这几分钟没来打招呼：浏览器开着它就会连上">没连上，浏览器开着吗</span>
               <button type="button" className={rowActionClass} onClick={() => void installBridge()}>
                 重新安装…
               </button>

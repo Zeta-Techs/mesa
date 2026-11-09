@@ -1,17 +1,5 @@
 // 全文代下队列的前端纯逻辑（后端 src-tauri/src/paper_fetch.rs，设计稿 docs/design-autonomy-roadmap.md §6）。
-// 状态与出版商限速都在后端；这里只管人话文案、从待获取清单挑出能交的 DOI、汇总一行进度。
-
-export interface PaperFetchLimits {
-  perPublisherDaily: number;
-  totalDaily: number;
-  minGapSecs: number;
-  maxGapSecs: number;
-}
-
-export interface PaperFetchCandidate {
-  url: string;
-  text: string;
-}
+// 队列状态在后端；这里只管人话文案、从待获取清单挑出能交的 DOI、汇总一行进度。
 
 export interface PaperFetchJob {
   id: string;
@@ -27,27 +15,11 @@ export interface PaperFetchJob {
   saved?: string | null;
   via?: string | null;
   error?: string | null;
-  candidates: PaperFetchCandidate[];
-  waiting?: string | null;
   /** 出版商名（概览里由后端填） */
   publisher?: string;
 }
 
-export interface PaperFetchPublisher {
-  key: string;
-  name: string;
-  count: number;
-  blockedUntil?: number | null;
-  blockedReason: string;
-}
-
 export interface PaperFetchOverview {
-  limits: PaperFetchLimits;
-  ceiling: PaperFetchLimits;
-  totalToday: number;
-  publishers: PaperFetchPublisher[];
-  paused?: string | null;
-  sessionExpired: boolean;
   extensionAlive: boolean;
   /** 扩展连上过（装好了），此刻没连上多半是浏览器没开 */
   extensionEverSeen?: boolean;
@@ -67,8 +39,6 @@ export interface PaperFetchLogEntry {
 const STATUS_LABEL: Record<string, string> = {
   needs_approval: "等你确认",
   queued: "排队中",
-  browser: "等浏览器下载",
-  needs_pick: "等 AI 选链接",
   done: "已下载",
   failed: "没下到",
   manual: "点官网自己下",
@@ -79,6 +49,7 @@ export function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
 }
 
+// 学校订阅 / 浏览器两种来源与下面的浏览器类结果 2026-11-09 起不再产生，留着给旧的下载记录显示
 const VIA_LABEL: Record<string, string> = {
   oa: "开放获取",
   institutional: "学校订阅",
@@ -114,7 +85,7 @@ export function normalizeDoi(raw: string): string | null {
   return /^10\.\d{4,9}\/\S+$/.test(t) ? t : null;
 }
 
-/** 待获取清单里还没存、带 DOI 的条目：人点「让 Mesa 代下这批」时交这些 */
+/** 待获取清单里还没存、带 DOI 的条目：人点「让 Mesa 找免费版」时交这些 */
 export function fetchableItems(
   items: { title: string; url: string; done: boolean; line: number }[],
   savedLines: Record<number, string>,
@@ -139,7 +110,7 @@ export function summarizeJobs(jobs: PaperFetchJob[]): string {
   const oa = count((j) => j.status === "queued");
   const done = count((j) => j.status === "done");
   const manual = count((j) => j.status === "manual");
-  const failed = count((j) => j.status === "failed" || j.status === "needs_pick");
+  const failed = count((j) => j.status === "failed");
   const approval = count((j) => j.status === "needs_approval");
   if (oa) parts.push(`找免费版 ${oa}`);
   if (done) parts.push(`已下载 ${done}`);
@@ -159,7 +130,6 @@ export function rowJobLabel(job: PaperFetchJob | undefined): { text: string; war
       return { text: "没有免费版，点官网", warn: false };
     case "needs_approval":
       return { text: "等你点开始", warn: true };
-    case "needs_pick":
     case "failed":
       return { text: "Mesa 没下到", warn: true };
     default:
