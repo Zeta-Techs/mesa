@@ -273,6 +273,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 const POLL_ALARM = 'mesa-poll-jobs';
 // 后台标签等落地页加载的上限（与 helper 回话超时无关）
 const TAB_LOAD_MS = 60 * 1000;
+// 过渡页（Just a moment…）最多等多久再认定是真的人机验证
+const CHALLENGE_WAIT_MS = 30 * 1000;
 chrome.alarms.get(POLL_ALARM, (a) => {
   if (!a) chrome.alarms.create(POLL_ALARM, { periodInMinutes: 1 });
 });
@@ -369,6 +371,23 @@ async function runJob(job) {
         }
       }
       if (!resp && pdfTabs.has(tabId)) resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
+    }
+    // 「Just a moment…」这类过渡页（Cloudflare 等）真浏览器里几秒后自己跳走：先等它过去再判，
+    // 不把过渡页当人机验证报回（2026-11-09 HER 实测：Wiley / Elsevier / RSC 各一篇开页十几秒就被判验证，三家停 24 小时）
+    const challengeDeadline = Date.now() + CHALLENGE_WAIT_MS;
+    while (resp && resp.reason === 'captcha' && Date.now() < challengeDeadline) {
+      await sleep(3000);
+      // 过渡页跳走后等新页面加载完（没跳就最多等 3 秒）
+      await waitTabComplete(tabId, 3000);
+      if (pdfTabs.has(tabId)) {
+        resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
+        break;
+      }
+      try {
+        resp = await chrome.tabs.sendMessage(tabId, { kind: 'mesa-auto-fetch', jobId: job.id });
+      } catch (_) {
+        /* 正在跳转，内容脚本还没到：下一轮再问 */
+      }
     }
     if (!resp) resp = { ok: false, reason: 'no_pdf', detail: '页面上没有可用的内容脚本', candidates: [] };
   } catch (e) {
