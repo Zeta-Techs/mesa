@@ -633,6 +633,18 @@ pub(crate) fn release_listed(store: &mut Store, listed: impl Fn(&str) -> HashSet
 
 /// 下一件能推进的活：先开放获取（不占学校配额），再学校通道（这家现在能去的）。返回 (下标, 要不要计一次学校请求)
 pub(crate) fn pick_next(store: &mut Store, now: i64, channel_active: bool) -> Option<(usize, bool)> {
+    // 学校通道用不上的先转浏览器（不计数，扩展来领时才计），再挑开放获取：原先开放获取排着时这些篇一直停在
+    // 「经学校订阅」，界面写「Mesa 经学校订阅下」，其实这台电脑走不了学校订阅（2026-11-09 HER，CARSI 未装扩展）
+    let session_expired = store.state.session_expired;
+    for job in store.jobs.iter_mut().filter(|j| j.status == STATUS_QUEUED && j.stage == STAGE_PUBLISHER) {
+        if !channel_active || browser_only(&publisher_key(&job.doi)) || session_expired {
+            job.status = STATUS_BROWSER.into();
+            job.stage = STAGE_BROWSER.into();
+            job.stage_at = now;
+            job.updated_at = now;
+            job.waiting = None;
+        }
+    }
     if let Some(i) = store.jobs.iter().position(|j| j.status == STATUS_QUEUED && j.stage == STAGE_OA) {
         return Some((i, false));
     }
@@ -641,16 +653,6 @@ pub(crate) fn pick_next(store: &mut Store, now: i64, channel_active: bool) -> Op
             continue;
         }
         let key = publisher_key(&store.jobs[i].doi);
-        if !channel_active || browser_only(&key) || store.state.session_expired {
-            // 学校通道用不上：直接交浏览器，不计数（扩展来领时才计）
-            let job = &mut store.jobs[i];
-            job.status = STATUS_BROWSER.into();
-            job.stage = STAGE_BROWSER.into();
-            job.stage_at = now;
-            job.updated_at = now;
-            job.waiting = None;
-            continue;
-        }
         match publisher_wait(&store.state, &key, now) {
             Some(why) => store.jobs[i].waiting = Some(why),
             None => {
@@ -1560,11 +1562,12 @@ mod tests {
         a.stage = STAGE_PUBLISHER.into();
         let o = new_job("/p", "10.1038/o", "", None, "agent", 1);
         s.jobs = vec![w, a, o];
+        // 先挑开放获取；Wiley 只能浏览器，这一下就转过去（不等开放获取排完），ACS 留着等学校通道
         assert_eq!(pick_next(&mut s, 10, true), Some((2, false)));
-        s.jobs[2].status = STATUS_DONE.into();
-        // Wiley 只能浏览器：转浏览器不计数；ACS 能直取
-        assert_eq!(pick_next(&mut s, 10, true), Some((1, true)));
         assert_eq!(s.jobs[0].status, STATUS_BROWSER);
+        assert_eq!(s.jobs[1].status, STATUS_QUEUED);
+        s.jobs[2].status = STATUS_DONE.into();
+        assert_eq!(pick_next(&mut s, 10, true), Some((1, true)));
         // 学校通道没配：都走浏览器
         s.jobs[1].status = STATUS_QUEUED.into();
         assert_eq!(pick_next(&mut s, 10, false), None);
