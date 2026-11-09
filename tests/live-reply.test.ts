@@ -458,6 +458,43 @@ test("Claude 转圈下「⎿  Tip:」折行的续行不进预览", () => {
   ]);
 });
 
+// 2026-11-09 用户截图（Claude Code 2.1.311，带 API Key 启动）：进行中的折叠行「Thinking for 10s, reading 1 file…」
+// 和 CLI 直接写进 stderr 的告警（顶格、折行也顶格）都被当成回复
+test("Claude 2.1.311：进行中的折叠行与 stderr 告警不进预览", () => {
+  const rows = [
+    "❯ 我们一起敲定任务书",
+    "",
+    "⏺ Thinking for 10s, reading 1 file…",
+    "",
+    "⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude",
+    ".ai login · Unset it to load your organization's connectors",
+    "",
+    RULE,
+    "❯",
+    RULE,
+  ];
+  assert.equal(extractLiveReply(rows, "claude-code"), null);
+  const blink = rows.map((l) => l.replace(/^⏺ Thinking/, "  Thinking"));
+  assert.equal(extractLiveReply(blink, "claude-code"), null);
+  const later = [
+    "❯ 我们一起敲定任务书",
+    "",
+    "  Thought for 10s, read 1 file",
+    "",
+    "⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY is set",
+    "",
+    "⏺ 先问第一个问题：",
+    "  你想回答什么？",
+    "",
+    "  Reading 2 files…",
+    "",
+    RULE,
+    "❯",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(later, "claude-code")?.lines, ["先问第一个问题：", "你想回答什么？"]);
+});
+
 // 聊天层据此认「审批已经答过」（chat-channel.ts hooksApprovalAnswered）：Claude 的审批菜单顶掉输入框，
 // 答完输入框回来（菜单样本同 tests/tui-menu.test.ts，Claude Code 2.1.292 PTY 实录）
 test("Claude：审批菜单挂着时屏上没有输入框，答完回到输入框", () => {

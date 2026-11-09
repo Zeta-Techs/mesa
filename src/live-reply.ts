@@ -36,6 +36,12 @@ interface Layout {
    */
   wrapSkip?: RegExp;
   /**
+   * CLI 绕过界面直接写进终端的告警（顶格），折下来的行也顶格。它和下面顶格、不带行首符号的行跳过，到空行为止。
+   * Claude Code 2.1.311 带 API Key 启动时往 stderr 写「⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY …」，
+   * 夹在这一轮中间被当成回复（2026-11-09 用户截图）
+   */
+  stderrNotice?: RegExp;
+  /**
    * 思考框的头一行：它和下面行首是「│」的行整块不进回复预览，另由 {@link extractLiveThinking} 读出、照原样（去掉竖线与头一行）显示在聊天层。
    * Grok 1.0.70 思考时画「┃  ◆ Thinking…」（简化字形下是「│  ♦」：pywinpty 抓屏是这套，Mesa 终端里是前一套，2026-10-26 实录），
    * 下面竖线框里滚动显示思考原文（开头折成「┃  …」），想完收成一行
@@ -93,6 +99,10 @@ const CLAUDE_STATUS =
 // Claude 2.1.x 把工具调用折成一行摘要：Read 1 file、Ran 2 commands、Searched for 3 patterns…
 const TOOL_SUMMARY =
   /^\s*(?:Read|Ran|Searched|Listed|Wrote|Edited|Updated|Fetched|Called|Created|Deleted|Found)\b.*\b(?:files?|commands?|patterns?|director(?:y|ies)|lines?|tools?|pages?|results?)\b/;
+// 2.1.311 起折叠行连着思考用时：做完「Thought for 10s, read 1 file」，进行中「Thinking for 10s, reading 1 file…」
+// 「Reading 2 files…」，进行中行首的 ⏺ 一闪一灭（灭时是两格空白）。原先进行中的写法认不出，当成回复显示（2026-11-09 用户截图）
+const CLAUDE_GROUP =
+  /^(?:[⏺●]\s+|\s*)(?:(?:Thinking|Thought) for \d|(?:Reading|Searching for|Listing|Editing|Running|Calling|Recalling|Writing|Making) \d)/;
 const TOOL_VERB =
   "(?:Ran|Running|Explored|Exploring|Edited|Editing|Read|Reading|Wrote|Writing|Searched|Searching|Listed|Updated|Called|Calling|Waited|Waiting|Added|Deleted|Applied|Applying|Fetched|Fetching|Used|Using)";
 
@@ -114,9 +124,10 @@ const LAYOUTS: Record<string, Layout> = {
     lead: /^[⏺●]\s?/,
     // 工具名可以是两个词：「Web Search(…)」「Notebook Edit(…)」（旧写法 [A-Za-z]* 漏掉带空格的，整行被当成正文）；
     // 括号必须紧跟字母，「⏺ Note (important)…」这种正文不会误判
-    tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}`),
+    tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}|${CLAUDE_GROUP.source}`),
     skip: CLAUDE_STATUS,
     wrapSkip: /^\s*⎿/,
+    stderrNotice: /^⚠\s/,
     indent: 2,
   },
   codex: {
@@ -508,6 +519,7 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
   const out: string[] = [];
   let inTool = false;
   let inWrapSkip = false;
+  let inNotice = false;
   let inThink = false;
   for (let at = start; at < region.length; at++) {
     const raw0 = region[at];
@@ -524,6 +536,12 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
       continue;
     }
     if (BORDER.test(t) || SPINNER.test(raw)) continue;
+    if (layout.stderrNotice?.test(raw)) {
+      inNotice = true;
+      continue;
+    }
+    if (inNotice && t && !/^\s/.test(raw) && !layout.lead?.test(raw)) continue;
+    inNotice = false;
     if (layout.tool.test(raw)) {
       // 有行首符号的几家：工具块一直到下一段正文；Grok 没有行首符号，只跳这一行
       inTool = layout.lead !== null;
