@@ -493,6 +493,9 @@ test("Claude 2.1.311：进行中的折叠行与 stderr 告警不进预览", () =
     RULE,
   ];
   assert.deepEqual(extractLiveReply(later, "claude-code")?.lines, ["先问第一个问题：", "你想回答什么？"]);
+  // 写进来时光标不在行首（落在缩进里）：按原文认
+  const shifted = later.map((l) => (l.startsWith("⚠") ? "  " + l : l));
+  assert.deepEqual(extractLiveReply(shifted, "claude-code")?.lines, ["先问第一个问题：", "你想回答什么？"]);
 });
 
 // 2026-11-09 用户截图：终端获得焦点、剪贴板里有图时，输入框上方右对齐冒「Image in clipboard · ctrl+v to paste」

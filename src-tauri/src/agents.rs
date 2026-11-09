@@ -1587,10 +1587,17 @@ pub fn launch_plan(
                     }
                     // 槽位注册（/model 选择器列出绑定的模型）、空槽补齐、子 agent / 上下文窗口防全局泄漏：
                     // 与 --settings 覆盖层同一份（claude_model_env）。进程 env 也写一份，给不读 settings 的子进程用
-                    for (k, v) in claude_model_env(profile, model, &claude_user_settings_env_keys(profile)) {
+                    let user_keys = claude_user_settings_env_keys(profile);
+                    for (k, v) in claude_model_env(profile, model, &user_keys) {
                         if k != "ANTHROPIC_MODEL" {
                             plan.env.push((k, v));
                         }
+                    }
+                    // 带密钥启动时 claude.ai 连接器本来就不加载（密钥优先于官方登录），可 2.1.311 起本机登录过 claude.ai 的
+                    // 会往 stderr 直接写一句「⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY …」，
+                    // 夹进终端画面、被聊天层读成回复（2026-11-09 用户截图）。明说不加载，它就不写；用户自己设过就不动
+                    if key.is_some() && !user_keys.iter().any(|k| k == "ENABLE_CLAUDEAI_MCP_SERVERS") {
+                        plan.env.push(("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "0".into()));
                     }
                 }
                 SpecialLaunch::CodexInlineProvider {

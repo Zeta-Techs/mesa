@@ -133,7 +133,7 @@ const LAYOUTS: Record<string, Layout> = {
     tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}|${CLAUDE_GROUP.source}`),
     skip: CLAUDE_STATUS,
     wrapSkip: /^\s*⎿/,
-    stderrNotice: /^⚠\s/,
+    stderrNotice: /^⚠\s|⚠ claude\.ai connectors are disabled/,
     footNote: 24,
     indent: 2,
   },

@@ -4,7 +4,7 @@
 
 ## 未发布
 
-- 修复：Claude Code 2.1.311 起，聊天里 AI 正在干活时会把终端里的「Thinking for 10s, reading 1 file…」和启动时那条英文告警「claude.ai connectors are disabled because ANTHROPIC_API_KEY…」当成回复显示。终端输入框上方右侧的提示（如复制了图片后冒出的「Image in clipboard · ctrl+v to paste」）也会挂在聊天里。现在这些行只留在终端里，聊天只显示 AI 真正写的话。
+- 修复：Claude Code 2.1.311 起，聊天里 AI 正在干活时会把终端里的「Thinking for 10s, reading 1 file…」和启动时那条英文告警「claude.ai connectors are disabled because ANTHROPIC_API_KEY…」当成回复显示。终端输入框上方右侧的提示（如复制了图片后冒出的「Image in clipboard · ctrl+v to paste」）也会挂在聊天里。现在这些行只留在终端里，聊天只显示 AI 真正写的话；用 API 连接启动 Claude Code 时 Mesa 也让它不再写那条告警，终端里同样不出现。
 - 改进：新项目「目标」空着时的页面理顺了：**新建目标**、**问项目助手** 和下面「套一整套流程…」那行字以前比标题还大，现在退回正常字号；说明分成两行，不再把半句话甩到下一行；这一块挪到页面上部正中，左边那截半路断掉的竖线也去掉了。
 - 修复：项目助手「现在的情况」对只有文献和笔记的项目也提议「起草几条」项目知识，点了只能答「一条也没找到」，而且答完还一直挂着。现在项目里有 README、写作规范一类文件才提议，点过一次就收起。
 - 修复：检索还没开工时，「核对待确认篇目」就亮着并挂出空的文献清单，看着像开工前要先做。现在开工前它和「下载付费墙文献全文」一样压暗，开工后才挂清单。

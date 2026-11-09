@@ -536,6 +536,8 @@ fn claude_plan_sets_only_present_fields() {
     assert_eq!(settings["env"]["ANTHROPIC_BASE_URL"], "https://relay.example.com");
     assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-secret");
     assert!(!plan.env.iter().any(|(k, _)| k == "ANTHROPIC_MODEL"));
+    // 带密钥时 claude.ai 连接器本来不加载，明说不加载，免得 CLI 往 stderr 写告警夹进画面
+    assert!(plan.env.contains(&("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "0".into())));
 }
 
 #[test]
