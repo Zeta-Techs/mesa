@@ -276,6 +276,7 @@ export function PaperFetchBar({
   const summary = summarizeJobs((data?.jobs ?? []).filter((j) => j.status !== "cancelled"));
   const failed = (data?.jobs ?? []).filter((j) => j.status === "failed" || j.status === "needs_pick").length;
   const noExtension = needsExtension(data?.jobs ?? [], data?.extensionAlive ?? false);
+  const waitingRelease = (data?.jobs ?? []).filter((j) => j.status === "needs_approval").length;
   // 清单里还有没存的篇才出（真画出来才记「出过」）
   const showTip = tipOpen && pending.length > 0;
   useEffect(() => {
@@ -334,6 +335,11 @@ export function PaperFetchBar({
       )}
       {note && <span>{note}</span>}
     </div>
+    {waitingRelease > 0 && (
+      <p className="mt-0.5 text-micro text-l3">
+        有 {waitingRelease} 篇是 AI 交给 Mesa 的，清单还没保存进项目，先等着：这一步保存进项目后自动开始；现在就要下，点「让 Mesa 代下这批」。
+      </p>
+    )}
     {noExtension && (
       <p className="mt-0.5 text-micro text-caution-text">
         浏览器扩展没连上：Wiley、Elsevier 这类要在浏览器里下的，等它连上才会接着下。

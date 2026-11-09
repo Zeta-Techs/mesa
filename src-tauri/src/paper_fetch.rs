@@ -595,7 +595,8 @@ pub(crate) fn enqueue_in(
                 .as_deref()
                 .map(|n| !Path::new(root).join("papers").join(n).exists())
                 .unwrap_or(true);
-        let human_retry = requester == "human" && matches!(job.status.as_str(), STATUS_FAILED | STATUS_CANCELLED);
+        // 人亲手交 = 放行：AI 先交的、还在等放行的也一起排上（2026-11-09 HER：检索步保存前点「让 Mesa 代下这批」原样跳过，46 篇没动）
+        let human_retry = requester == "human" && matches!(job.status.as_str(), STATUS_FAILED | STATUS_CANCELLED | STATUS_NEEDS_APPROVAL);
         if saved_gone || human_retry {
             requeue(job, now);
             if requester == "human" {
@@ -1528,6 +1529,11 @@ mod tests {
         assert_eq!(b3.status, STATUS_FAILED);
         let b4 = enqueue_in(&mut s, "/p", "10.1021/b", "", None, "human", None, 3);
         assert_eq!(b4.status, STATUS_QUEUED);
+        // AI 交的清单外的篇在等放行，人再交一遍 = 放行
+        let a2 = enqueue_in(&mut s, "/p", "10.1021/a", "", None, "human", None, 4);
+        assert_eq!(a2.id, a.id);
+        assert_eq!(a2.status, STATUS_QUEUED);
+        assert_eq!(a2.requester, "human");
     }
 
     #[test]
