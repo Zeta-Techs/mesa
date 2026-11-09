@@ -370,11 +370,26 @@ export function PaperFetchBar({
         onClose={closeTip}
         // 浮在清单上面，不占位置把清单挤下去（2026-11-09 用户）
         className="absolute top-full left-0 mt-2 w-[min(28rem,100%)] text-xs leading-5 shadow-lg"
-        actions={[{ label: "知道了", onClick: closeTip }]}
+        // 扩展没连上时主按钮直接跳去装（2026-11-09 用户：「去安装」放进气泡里直接跳转）
+        actions={
+          data?.extensionAlive
+            ? [{ label: "知道了", onClick: closeTip }]
+            : [
+                { label: "知道了", onClick: closeTip },
+                {
+                  label: "去装扩展",
+                  onClick: () => {
+                    closeTip();
+                    setSettingsSectionReq("network");
+                    setPage("settings");
+                  },
+                },
+              ]
+        }
       >
         <ul className="list-disc space-y-0.5 pl-4">
           <li>
-            <b>让 Mesa 代下这批</b>：Mesa 一篇篇去下——先找免费版，再经学校订阅，最后在你的浏览器里下（要装 Mesa 文献下载扩展）。不用守着，每篇后面写它走到哪了。
+            <b>让 Mesa 代下这批</b>：Mesa 一篇篇去下——先找免费版，再经学校订阅，最后在你的浏览器里下（要装 Mesa 文献下载扩展{data?.extensionAlive ? "，已连接" : "，还没连上"}）。不用守着，每篇后面写它走到哪了。
           </li>
           <li>
             每篇的 <b>官网</b>：你自己去出版商网站下。PDF 存进「下载」文件夹，会自动收进 papers/；存到别处的点 <b>关联</b>。
