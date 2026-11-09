@@ -12,6 +12,7 @@ import {
   clampLimits,
   fetchableItems,
   logResultLabel,
+  loginTargets,
   needsExtension,
   statusLabel,
   summarizeJobs,
@@ -244,6 +245,17 @@ export function FetchLog() {
   );
 }
 
+/** 在浏览器里点开过登录的出版商（登录状态在浏览器里，按浏览器记、不分项目） */
+const LOGIN_OPENED_KEY = "mesa.paperFetch.loginOpened";
+function readLoginOpened(): string[] {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(LOGIN_OPENED_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** 待获取清单顶上：次要动作「让 Mesa 代下这批」与一行进度（主按钮仍是这一步的开始 / 评审） */
 export function PaperFetchBar({
   projectPath,
@@ -280,6 +292,24 @@ export function PaperFetchBar({
   );
   const failed = (data?.jobs ?? []).filter((j) => j.status === "failed" || j.status === "needs_pick").length;
   const noExtension = needsExtension(data?.jobs ?? [], data?.extensionAlive ?? false);
+  // 第一次在浏览器里下之前，每家出版商要在浏览器里用学校账号登一次（2026-11-09 用户：「你也没给用户操作方式啊」）
+  const logins = loginTargets(data?.jobs ?? []);
+  const [loginOpened, setLoginOpened] = useState<string[]>(readLoginOpened);
+  async function openLogin(t: { publisher: string; doi: string }) {
+    setNote(null);
+    try {
+      await invoke("inst_browser_open", { url: `https://doi.org/${t.doi}`, projectRoot: projectPath, title: null, doi: t.doi });
+      const next = Array.from(new Set([...loginOpened, t.publisher]));
+      setLoginOpened(next);
+      try {
+        localStorage.setItem(LOGIN_OPENED_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只是下次不打勾 */
+      }
+    } catch (e) {
+      setNote(`打开浏览器失败：${String(e)}`);
+    }
+  }
   // 清单里还有没存的篇才出（真画出来才记「出过」）
   const showTip = tipOpen && pending.length > 0;
   useEffect(() => {
@@ -344,6 +374,24 @@ export function PaperFetchBar({
       )}
       {note && <span>{note}</span>}
     </div>
+    {logins.length > 0 && (
+      <p className="mt-0.5 text-micro text-l3">
+        要在浏览器里下的，先在浏览器里用学校账号登录这几家（每家一次）：
+        {logins.map((t) => (
+          <button
+            key={t.publisher}
+            type="button"
+            className="ml-1.5 underline decoration-dotted underline-offset-2 hover:text-l1"
+            title={`在浏览器里打开 ${t.publisher} 的一篇文章。页面上点「Institutional login / 机构登录」（Elsevier 写「Access through your institution」），选 CARSI 或你的学校，用学校账号登录；登好了这家以后不用再登。`}
+            onClick={() => void openLogin(t)}
+          >
+            {t.publisher}
+            {loginOpened.includes(t.publisher) ? " ✓" : ""}
+          </button>
+        ))}
+        <span className="ml-1.5 text-l4">（文章页点「机构登录」→ CARSI → 你的学校）</span>
+      </p>
+    )}
     {noExtension && (
       <p className="mt-0.5 text-micro text-caution-text">
         浏览器扩展没连上：Wiley、Elsevier 这类要在浏览器里下的，等它连上才会接着下。

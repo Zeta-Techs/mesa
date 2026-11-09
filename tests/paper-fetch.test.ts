@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   clampLimits,
   fetchableItems,
+  loginTargets,
   needsExtension,
   normalizeDoi,
   rowJobLabel,
@@ -75,4 +76,23 @@ test("rowJobLabel / needsExtension：每行写 Mesa 走到哪；有篇在浏览�
   assert.equal(needsExtension([job("browser", "browser")], false), true);
   assert.equal(needsExtension([job("browser", "browser")], true), false);
   assert.equal(needsExtension([job("queued")], false), false);
+});
+
+test("loginTargets：要在浏览器里下的按出版商各挑一篇，没走到浏览器的不列", () => {
+  const job = (doi: string, status: string, stage: string, publisher: string): PaperFetchJob => ({
+    id: doi, doi, projectRoot: "/p", title: "", requester: "agent", status, stage, createdAt: 0, updatedAt: 0, candidates: [], publisher,
+  });
+  assert.deepEqual(
+    loginTargets([
+      job("10.1002/a", "browser", "browser", "Wiley"),
+      job("10.1002/b", "browser", "browser", "Wiley"),
+      job("10.1016/c", "failed", "browser", "Elsevier"),
+      job("10.1021/d", "queued", "oa", "ACS"),
+      job("10.1039/e", "done", "browser", "RSC"),
+    ]),
+    [
+      { publisher: "Wiley", doi: "10.1002/a" },
+      { publisher: "Elsevier", doi: "10.1016/c" },
+    ],
+  );
 });

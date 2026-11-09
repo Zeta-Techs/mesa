@@ -4303,7 +4303,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                     )}
                   </li>
                   <li>以前装过的，在「Mesa 文献下载」那张卡上点一次重新加载（↻）。</li>
-                  <li>装好或重新加载后，这里十几秒内变成「已连接」。之后用学校账号登录一次要下的出版商。</li>
+                  <li>装好或重新加载后，这里十几秒内变成「已连接」。再到步骤卡的待获取清单，按顶上「先在浏览器里用学校账号登录这几家」逐家点开登录一次。</li>
                 </ol>
               </div>
             ) : undefined

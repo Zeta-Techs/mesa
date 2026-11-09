@@ -29,6 +29,8 @@ export interface PaperFetchJob {
   error?: string | null;
   candidates: PaperFetchCandidate[];
   waiting?: string | null;
+  /** 出版商名（概览里由后端填） */
+  publisher?: string;
 }
 
 export interface PaperFetchPublisher {
@@ -167,6 +169,20 @@ export function rowJobLabel(job: PaperFetchJob | undefined): { text: string; war
     default:
       return null;
   }
+}
+
+/** 要在浏览器里下的篇（含被拦下没下到的）按出版商各挑一篇：「先登录这几家」每家一个按钮，打开那篇的文章页去登录 */
+export function loginTargets(jobs: PaperFetchJob[]): { publisher: string; doi: string }[] {
+  const out: { publisher: string; doi: string }[] = [];
+  const seen = new Set<string>();
+  for (const j of jobs) {
+    const inBrowser = j.status === "browser" || ((j.status === "failed" || j.status === "needs_pick") && j.stage === "browser");
+    const name = (j.publisher ?? "").trim();
+    if (!inBrowser || !name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ publisher: name, doi: j.doi });
+  }
+  return out;
 }
 
 /** 有篇停在浏览器一级、扩展又没连上：清单顶上要提示去装扩展 */

@@ -114,6 +114,9 @@ pub struct Job {
     pub pick: Option<String>,
     #[serde(default)]
     pub claimed_at: Option<i64>,
+    /// 出版商名（只在给界面的概览里填，队列文件里留空）：「先登录这几家」按出版商列
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub publisher: String,
     /// 还在排队时为什么没动（等间隔 / 到上限 / 熔断 / 暂停），给人和 AI 看
     #[serde(default)]
     pub waiting: Option<String>,
@@ -1277,6 +1280,9 @@ fn overview_of(store: &Store, root: Option<&str>, t: i64) -> OverviewDto {
         .collect();
     jobs.reverse();
     jobs.truncate(200);
+    for j in &mut jobs {
+        j.publisher = publisher_name(&publisher_key(&j.doi));
+    }
     OverviewDto {
         limits: state.limits(),
         ceiling: CEILING,
