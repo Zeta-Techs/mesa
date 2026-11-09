@@ -21,13 +21,16 @@ export function criterionText(raw: string): CriterionText {
     return { machine: true, text: `${m[1]} 至少 ${m[2]} 个${except ? `（不算 ${except.split(",").join("、")}）` : ""}` };
   }
   if ((m = /^file:(.+)$/.exec(head))) return { machine: true, text: `有 ${m[1]}` };
+  // 文件要有、可以是空的（没有付费墙文献时待获取 RIS 就是空的）
+  if ((m = /^optional-empty:(.+)$/.exec(head))) return { machine: true, text: `有 ${m[1]}（可以是空的）` };
   if ((m = /^glob:(.+)$/.exec(head))) return { machine: true, text: `有符合 ${m[1]} 的文件` };
   if ((m = /^contains:(.+)$/.exec(head))) {
     return { machine: true, text: !tail || tail === "—" ? `${m[1]} 不是空的` : `${m[1]} 里写了「${tail}」` };
   }
   if ((m = /^not-contains:(.+)$/.exec(head))) return { machine: true, text: `${m[1]} 里没有「${tail}」` };
-  if ((m = /^records:(.+)$/.exec(head))) {
-    return { machine: true, text: `${m[1]} 每一条都有 ${tail.split(",").join("、")}` };
+  if ((m = /^records(-allow-empty)?:(.+)$/.exec(head))) {
+    const fields = tail.split(",").join("、");
+    return { machine: true, text: `${m[2]} 每一条都有 ${fields}${m[1] ? "（可以一条都没有）" : ""}` };
   }
   if ((m = /^same-ids:(.+)$/.exec(head))) return { machine: true, text: `${m[1]} 与 ${tail} 的条目一一对应` };
   return { machine: true, text: rule };

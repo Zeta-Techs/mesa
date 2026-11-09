@@ -14,6 +14,12 @@ test("criterionText：machine 条目翻成白话，人工条件原样", () => {
   assert.equal(t("machine:contains:papers/included.md::—"), "papers/included.md 不是空的");
   assert.equal(t("machine:not-contains:a.md::TODO"), "a.md 里没有「TODO」");
   assert.equal(t("machine:records:notes/index.json::id,bibKey"), "notes/index.json 每一条都有 id、bibKey");
+  // 2026-11-09 用户截图：这两种原样露出了内部写法
+  assert.equal(t("machine:optional-empty:papers/to-fetch.ris"), "有 papers/to-fetch.ris（可以是空的）");
+  assert.equal(
+    t("machine:records-allow-empty:papers/included.json::id,title,decision,reason"),
+    "papers/included.json 每一条都有 id、title、decision、reason（可以一条都没有）",
+  );
   assert.equal(t("machine:same-ids:papers/included.json::notes/index.json"), "papers/included.json 与 notes/index.json 的条目一一对应");
   assert.equal(t("machine:future-rule:x"), "future-rule:x");
 });
