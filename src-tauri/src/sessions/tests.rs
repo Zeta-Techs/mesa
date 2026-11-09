@@ -913,6 +913,22 @@ fn claude_turn_end_after_sees_interrupt_and_ignores_older_turns() {
     let done = [send_now[0], send_now[1], send_now[2], send_now[3], r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-11-09T07:05:31.598Z"}"#];
     std::fs::write(&f, done.join("\n") + "\n").unwrap();
     assert_eq!(claude_turn_end_after(&f, ms("2026-11-09T07:05:03.500Z")), Some("end_turn"));
+    // 2026-11-09 排队：上一段说完写了 turn_duration，排着的那句还没取出 → 不算收尾；取出后当新一轮，说完才算
+    let queued = [
+        r#"{"type":"user","timestamp":"2026-11-09T07:40:00.000Z","message":{"role":"user","content":"做检索"}}"#,
+        r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-09T07:51:26.055Z","content":"我在 Mesa 里答了"}"#,
+        r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-11-09T07:51:35.641Z"}"#,
+        r#"{"type":"queue-operation","operation":"dequeue","timestamp":"2026-11-09T07:51:35.772Z"}"#,
+        r#"{"type":"user","timestamp":"2026-11-09T07:51:35.989Z","message":{"role":"user","content":"我在 Mesa 里答了"}}"#,
+        r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-11-09T07:54:14.431Z"}"#,
+    ];
+    let start = ms("2026-11-09T07:40:00.000Z");
+    std::fs::write(&f, queued[..3].join("\n") + "\n").unwrap();
+    assert_eq!(claude_turn_end_after(&f, start), None, "排着的还没取出");
+    std::fs::write(&f, queued[..5].join("\n") + "\n").unwrap();
+    assert_eq!(claude_turn_end_after(&f, start), None, "取出来当新一轮在跑");
+    std::fs::write(&f, queued.join("\n") + "\n").unwrap();
+    assert_eq!(claude_turn_end_after(&f, start), Some("end_turn"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

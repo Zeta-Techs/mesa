@@ -579,6 +579,7 @@ idle → working → idle 一次，不是在回答问题）。Kimi 2.4.0 起也�
 **生成中再发一句（2026-10-22，聊天层排队 / 立即发送，`src/mid-turn-send.ts`）**：本机假网关逐家实测（`chat-capture.py` 的 `QUEUE_*` 一幕：先让它跑一条
 `sleep 9` 命令，第 4–6 秒打一句回车，看这句出现在假网关哪个请求里；`QUEUE_THEN` 再按一个键看能不能让它马上处理）。「下一步」= 和工具结果同一个请求，
 插进这一轮；「轮后」= 这一轮说完后新起的请求。纯文字回复（这一轮没有工具调用）时「下一步」几家也是等说完再发。
+Claude 的 hooks（2.1.311，2026-11-09 用户会话 + hooks 日志实证）：`UserPromptSubmit` 在**排进队时**就发，真被处理时不再发；会话文件记 `queue-operation` enqueue / dequeue（插进这一轮记 `attachment.queued_command`，轮后处理记成上一轮 `turn_duration` 之后的一句 user）。轮后那种紧跟上一轮的 `Stop` 开始、没有开始事件，Mesa 的旁路因此在一轮里又收到开始时记下「有排着的」，之后第一个收尾不认、交会话文件核对（队里还有没取出的不算收尾，`chat_channel.rs` Tracker.prompt_queued、`sessions/claude.rs claude_turn_end_after`）。
 
 | CLI（实测版本） | 回车之后终端里的样子 | 落在哪 | 别的键 | 让它马上处理 |
 |---|---|---|---|---|

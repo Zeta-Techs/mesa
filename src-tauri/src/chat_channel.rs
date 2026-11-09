@@ -216,6 +216,11 @@ pub(crate) struct Tracker {
     running: Vec<(Option<String>, ActivityDto)>,
     /// 这一轮已经结束的工具 id：后台 hook 的结束可能比开始先到，晚到的开始不再算在跑
     finished: std::collections::HashSet<String>,
+    /// hooks 家的 Claude 在一轮进行中又来一句（排队）：UserPromptSubmit 在排进队时就发，等它真被处理时不再发——
+    /// 它要么插进这一轮（下一步工具调用时），要么这一轮说完后当新一轮处理。后一种紧跟着上一轮的 Stop 开始，
+    /// 原先 Stop 把回合收掉，新的一轮一直没人点亮，聊天层停着、终端在跑（2026-11-09 用户实测，2.1.311 hooks 日志实证）。
+    /// 所以之后的第一个收尾不认，交给会话文件核对（chat_channel_settle_from_transcript：队里还有没取出的不算收尾）
+    prompt_queued: bool,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -259,6 +264,7 @@ impl Tracker {
         self.snap.thinking = None;
         self.snap.status_line = None;
         self.snap.retry = None;
+        self.prompt_queued = false;
     }
 
     /// 带请求 id 的审批（Codex / Qwen / OpenCode）：撤卡只认「已处理」事件、它自己那个工具结束、这一轮结束
@@ -561,6 +567,8 @@ impl Tracker {
                 self.snap.retry = None;
                 if !is_open(&self.snap.turn) {
                     self.start_turn(now);
+                } else if self.snap.kind == "hooks" && self.snap.agent == "claude-code" {
+                    self.prompt_queued = true;
                 }
             }
             ChannelEvent::ToolStart {
@@ -691,6 +699,10 @@ impl Tracker {
                     Some("interrupted" | "cancelled" | "aborted") => "cancelled",
                     _ => "completed",
                 };
+                if self.prompt_queued && status != "failed" && is_open(&self.snap.turn) {
+                    self.prompt_queued = false;
+                    return;
+                }
                 if self.snap.turn.is_none() && status != "completed" { self.start_turn(now); }
                 if let Some(t) = self.snap.turn.as_mut() {
                     // idle 可能先到，随后具体的失败 / 中断结果仍要兑现；普通 idle 不能盖掉异常。
@@ -3609,6 +3621,31 @@ mod tests {
         assert_eq!(turn.ended_at, Some(11));
         // 重复的结束不再改动
         assert!(!t.apply(ChannelEvent::TurnEnd { reason: None }, 12));
+    }
+
+    /// 2026-11-09 hooks 日志实证（Claude 2.1.311）：一轮进行中又发一句，UserPromptSubmit 在排进队时就到；
+    /// 上一轮的 Stop 之后它当新一轮处理，不再发 UserPromptSubmit。第一个收尾不认，交给会话文件核对后再收
+    #[test]
+    fn hooks_queued_prompt_keeps_turn_open_past_first_stop() {
+        let mut t = tracker();
+        let feed_line = |t: &mut Tracker, l: &str, now: i64| {
+            for ev in map_hook(&rec(l)) {
+                t.apply(ev, now);
+            }
+        };
+        feed_line(&mut t, r#"1794210600 tab-1 {"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"做检索"}"#, 1);
+        feed_line(&mut t, r#"1794210686 tab-1 {"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"我在 Mesa 里答了"}"#, 2);
+        feed_line(&mut t, r#"1794210695 tab-1 {"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false}"#, 3);
+        let turn = t.snap.turn.clone().unwrap();
+        assert_eq!((turn.seq, turn.status), (1, "running"), "排着的那句接着处理，这一轮不收");
+        // 会话文件核对说收尾了（chat_channel_settle_from_transcript）→ 收
+        t.apply(ChannelEvent::TurnEnd { reason: Some("end_turn".into()) }, 4);
+        assert_eq!(t.snap.turn.as_ref().unwrap().status, "completed");
+        // 没排过的轮次照常一个 Stop 就收
+        feed_line(&mut t, r#"1794210800 tab-1 {"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"下一句"}"#, 5);
+        feed_line(&mut t, r#"1794210810 tab-1 {"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false}"#, 6);
+        let turn = t.snap.turn.clone().unwrap();
+        assert_eq!((turn.seq, turn.status), (2, "completed"));
     }
 
     /// 带请求 id 的审批（Codex / Qwen / OpenCode）：同一回复里并行的另一个工具开始、结束都不撤卡，

@@ -317,6 +317,31 @@ pub(crate) fn claude_turn_end_after(path: &Path, after_ms: i64) -> Option<&'stat
     let (head, tail) = read_head_tail(path, 64 * 1024)?;
     // 小文件整份在头窗里、尾窗为空
     let tail = if tail.is_empty() { head } else { tail };
+    let line_ms = |v: &Value| {
+        get_str(v, "timestamp")
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.timestamp_millis())
+    };
+    // 这一轮里排进队的话还没全取出来（enqueue 多于 dequeue / remove，popAll 清空）：它说完会接着处理排着的那句，
+    // 上一段的 turn_duration 不算收尾（2.1.311：排着的那句在 Stop 之后约 0.3 秒才取出，2026-11-09 用户会话实证）
+    let mut queued = 0i32;
+    for line in tail.iter() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if get_str(&v, "type") != Some("queue-operation") || line_ms(&v).is_none_or(|ts| ts < after_ms) {
+            continue;
+        }
+        match get_str(&v, "operation") {
+            Some("enqueue") => queued += 1,
+            Some("dequeue" | "remove") => queued = (queued - 1).max(0),
+            Some("popAll") => queued = 0,
+            _ => {}
+        }
+    }
+    if queued > 0 {
+        return None;
+    }
     let mut ended = None;
     for line in tail.iter().rev() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
