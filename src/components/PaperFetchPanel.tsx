@@ -314,7 +314,7 @@ export function PaperFetchBar({
 
   if (!hasTauri() || (toSend.length === 0 && !summary)) return null;
   return (
-    <div className="mb-1">
+    <div className="relative mb-1">
     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-l3">
       {toSend.length > 0 && (
         <button
@@ -367,7 +367,8 @@ export function PaperFetchBar({
         arrowAt={40}
         title="两种下法，可以一起用"
         onClose={closeTip}
-        className="relative mt-2 w-full max-w-md text-xs leading-5"
+        // 浮在清单上面，不占位置把清单挤下去（2026-11-09 用户）
+        className="absolute top-full left-0 mt-2 w-[min(28rem,100%)] text-xs leading-5 shadow-lg"
         actions={[{ label: "知道了", onClick: closeTip }]}
       >
         <ul className="list-disc space-y-0.5 pl-4">
