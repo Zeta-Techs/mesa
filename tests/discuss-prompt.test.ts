@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { DISCUSS_FOCUS, discussFocus, discussOpeningPrompt } from "../src/discuss-prompt.ts";
 import { PIPELINE_TEMPLATES } from "../src/pipeline-presets.ts";
 
-test("开场是苏格拉底式：一次一问、复述确认、不问模板已定的流程", () => {
+test("开场是苏格拉底式：一次一问、答清楚直接记下接着问、不问模板已定的流程", () => {
   const p = discussOpeningPrompt({ stepName: "文献检索与筛选", relPath: ".ccode/drafts/x.md", workspaceName: "lit-search" });
   assert.match(p, /一次只问一个问题/);
-  assert.match(p, /复述给我确认/);
+  assert.match(p, /不要停下来等我确认/);
+  assert.doesNotMatch(p, /复述给我确认/);
   assert.match(p, /不要拿来问我/);
   assert.match(p, /## 已定方向/);
   assert.match(p, /## 待拍板/);
