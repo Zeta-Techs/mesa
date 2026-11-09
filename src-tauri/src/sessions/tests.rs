@@ -901,6 +901,18 @@ fn claude_turn_end_after_sees_interrupt_and_ignores_older_turns() {
     let normal = [lines[1], lines[4]];
     std::fs::write(&f, normal.join("\n") + "\n").unwrap();
     assert_eq!(claude_turn_end_after(&f, ms("2026-10-21T02:49:22.000Z")), Some("end_turn"));
+    // 2026-11-09「立即发送」：打断标记后 15ms 就是新提问，新一轮开始的时刻早于标记也不算这一轮被打断；它说完才收
+    let send_now = [
+        r#"{"type":"user","timestamp":"2026-11-09T07:04:48.774Z","message":{"role":"user","content":"好的"}}"#,
+        r#"{"type":"user","timestamp":"2026-11-09T07:05:03.543Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#,
+        r#"{"type":"user","timestamp":"2026-11-09T07:05:03.558Z","message":{"role":"user","content":"检索不满意 我可以回来修改吗"}}"#,
+        r#"{"type":"assistant","timestamp":"2026-11-09T07:05:25.965Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"…"}]}}"#,
+    ];
+    std::fs::write(&f, send_now.join("\n") + "\n").unwrap();
+    assert_eq!(claude_turn_end_after(&f, ms("2026-11-09T07:05:03.500Z")), None);
+    let done = [send_now[0], send_now[1], send_now[2], send_now[3], r#"{"type":"system","subtype":"turn_duration","timestamp":"2026-11-09T07:05:31.598Z"}"#];
+    std::fs::write(&f, done.join("\n") + "\n").unwrap();
+    assert_eq!(claude_turn_end_after(&f, ms("2026-11-09T07:05:03.500Z")), Some("end_turn"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

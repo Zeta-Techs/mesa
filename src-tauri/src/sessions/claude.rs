@@ -337,15 +337,22 @@ pub(crate) fn claude_turn_end_after(path: &Path, after_ms: i64) -> Option<&'stat
             }
             Some("user") => {
                 let content = v.get("message").and_then(|m| m.get("content"));
-                let interrupted = match content {
-                    Some(Value::String(s)) => is_claude_interrupt_marker(s),
-                    Some(Value::Array(arr)) => arr.iter().any(|b| {
-                        get_str(b, "type") == Some("text") && get_str(b, "text").is_some_and(is_claude_interrupt_marker)
-                    }),
-                    _ => false,
+                let texts: Vec<&str> = match content {
+                    Some(Value::String(s)) => vec![s.as_str()],
+                    Some(Value::Array(arr)) => arr
+                        .iter()
+                        .filter(|b| get_str(b, "type") == Some("text"))
+                        .filter_map(|b| get_str(b, "text"))
+                        .collect(),
+                    _ => Vec::new(),
                 };
-                if interrupted {
+                if texts.iter().any(|t| is_claude_interrupt_marker(t)) {
                     return Some("interrupted");
+                }
+                // 打断标记之后又有一句提问 = 那个标记是上一轮的：「立即发送」打断上一轮、排着的那句马上交，
+                // 标记与新提问只差十几毫秒，新一轮开始的时刻可能早于标记，原先把新一轮也收成 interrupted（2026-11-09 用户会话实证）
+                if texts.iter().any(|t| !t.trim().is_empty()) {
+                    break;
                 }
             }
             _ => {}
