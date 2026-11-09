@@ -11,9 +11,9 @@
 //!    值绝不出站到前端（状态 DTO 只暴露域名/条数/时间），不进诊断包；
 //! 3. 失败即回落 papers/to-fetch.md / watch-followup.md 人工获取，不自动重试轰炸。
 //!
-//! 下载阶梯本体在 lit_watch.rs `fetch_fulltext_bytes`（直链 → DOI 开放副本 → 本通道），
-//! 本模块只提供通道件。前缀式（EZproxy/OpenAthens `?url=` 改写）先行；深信服类 WebVPN
-//! 的各校私有重写规则不做泛化。
+//! 2026-11-09 起 Mesa 不再程序化取全文（代下队列与 `fetch_paper_fulltext` 阶梯都已撤掉，出版商按指纹 / IP 拦）：
+//! 本模块只剩登录窗、会话罐与「官网」按钮的前缀改写（`proxy_wrap_pub`）。前缀式（EZproxy/OpenAthens `?url=` 改写）
+//! 先行；深信服类 WebVPN 的各校私有重写规则不做泛化。
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -29,14 +29,9 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 /// 登录窗轮询间隔（窗口存活期间持续增量捕获，不设总时长上限）
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const LOGIN_WINDOW_LABEL: &str = "inst-login";
-/// OA 查证（Unpaywall/OpenAlex）单独收紧超时：best-effort，慢网不拖累整条阶梯
-const OA_TIMEOUT: Duration = Duration::from_secs(10);
-const UA: &str = "Mesa lit-watch (https://github.com/Zeta-Techs/mesa)";
 /// 登录窗拦下的 PDF 用浏览器 UA：CDN（mdpi-res.com 等）按页面自己的下载发，
-/// 不带 Mesa 爬虫 UA。程序化阶梯（fetch_via_session）仍用上面的礼貌 UA。
+/// 不带 Mesa 爬虫 UA。
 const WINDOW_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
-/// Unpaywall 要求带联系邮箱（礼貌参数，非鉴权）
-const OA_EMAIL: &str = "hong.tongzhou@zetatechs.com";
 
 // ===== 会话罐（0600，值不出站） =====
 
@@ -95,36 +90,6 @@ fn save_session(store: &InstSessionStore) -> Result<(), String> {
     let path = session_path()?;
     let body = serde_json::to_vec_pretty(store).map_err(|e| format!("序列化机构会话失败: {e}"))?;
     crate::storage::atomic_write(&path, &body, true)
-}
-
-/// 机构通道配置快照：前缀（settings，非秘密）+ 会话罐（0600）
-pub(crate) struct InstitutionalChannel {
-    pub(crate) prefix: Option<String>,
-    session: Option<InstSessionStore>,
-}
-
-impl InstitutionalChannel {
-    pub(crate) fn load() -> Self {
-        let settings = crate::settings::read_current();
-        let prefix = settings
-            .effective_institutional_prefix()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .filter(|v| valid_http_url(v))
-            .map(str::to_string);
-        let session = load_session().unwrap_or_else(|e| {
-            crate::logbuf::record("error", "inst-access", &e);
-            None
-        });
-        Self { prefix, session }
-    }
-
-    /// 通道可用：有前缀（含校园 IP 经代理直通）或已有**可信**会话（校园 IP 直连
-    /// 模式）——只有入口页 pre-auth Cookie 的罐子不算可用（真取时只会报会话
-    /// 过期，2026-09-17 审计；旧文件 serde default true 不回归既有保存态）
-    pub(crate) fn active(&self) -> bool {
-        self.prefix.is_some() || self.session.as_ref().is_some_and(|s| s.credible)
-    }
 }
 
 // ===== DTO =====
@@ -541,42 +506,13 @@ fn extract_attr(tag: &str, attr: &str) -> Option<String> {
     None
 }
 
-/// 登录页探测（宽进：命中即提示重新登录，不作为硬判定——页脚登录挂件也会命中，
-/// 调用方应先提候选链接、提不出来时才把它当会话过期口径）
-pub(crate) fn html_needs_login(html: &str) -> bool {
-    let lower = html.to_ascii_lowercase();
-    lower.split('<').any(|line| {
-        let l = line.trim_start();
-        (l.starts_with("input") || l.starts_with("button"))
-            && extract_attr(l, "type").is_some_and(|t| t.trim().eq_ignore_ascii_case("password"))
-    })
-}
-
-/// SAML 中继页探测：隐藏的 SAMLRequest/SAMLResponse 自动提交表单（或 onload
-/// 自动提交的隐藏域）。EZproxy/OpenAthens 会话过期而学校 IdP 还在线时，重定向
-/// 链会停在这种中间页——没有 password 输入，html_needs_login 看不见它，
-/// 旧口径误报「不在订阅范围」
-pub(crate) fn saml_relay(html: &str) -> bool {
-    let lower = html.to_ascii_lowercase();
-    (lower.contains("samlrequest") || lower.contains("samlresponse"))
-        && (lower.contains("<form") || lower.contains("<input"))
-}
-
 // ===== 网络件 =====
 
 /// 会话取字节：手动逐跳跟随重定向（每跳按目标 host 重算 Cookie 头——reqwest 自动
 /// Cookie 头在跨域跳转会被剥，EZproxy 链路恰好依赖每跳都带），60MB 流式中止
 pub(crate) struct ChannelFetch {
     pub bytes: Vec<u8>,
-    pub final_url: String,
     pub content_type: String,
-}
-
-pub(crate) async fn fetch_via_session(
-    url: &str,
-    session: Option<&InstSessionStore>,
-) -> Result<ChannelFetch, String> {
-    fetch_via_session_ex(url, session, UA, None).await
 }
 
 async fn fetch_via_session_ex(
@@ -639,200 +575,10 @@ async fn fetch_via_session_ex(
         }
         return Ok(ChannelFetch {
             bytes,
-            final_url: current.to_string(),
             content_type,
         });
     }
     Err("重定向次数过多".into())
-}
-
-/// 机构通道取全文：经前缀改写（有配置且目标不是代理形态时）取落地页/直链 →
-/// PDF 魔数过了即返回；HTML 则按本篇 DOI 提取候选逐个再取。调用方（lit_watch
-/// 阶梯）已保证 url 是 http(s)
-pub(crate) async fn fetch_via_channel(
-    target: &str,
-    ch: &InstitutionalChannel,
-) -> Result<Vec<u8>, String> {
-    let prefix_host = ch
-        .prefix
-        .as_deref()
-        .and_then(|p| reqwest::Url::parse(p).ok())
-        .and_then(|u| u.host_str().map(str::to_string));
-    let start = ch
-        .prefix
-        .as_deref()
-        .map(|p| {
-            // 已是代理形态（用户粘贴 login?url=… 完整链 / 通配 DNS 改写域）不得
-            // 再包一层——双重代理 404 / 重定向成环（2026-09-17 审计）
-            if target_already_proxied(target, p) {
-                target.to_string()
-            } else {
-                proxy_wrap(p, target)
-            }
-        })
-        .unwrap_or_else(|| target.to_string());
-    let fetched = fetch_via_session(&start, ch.session.as_ref()).await?;
-    if crate::lit_watch::looks_like_pdf(&fetched.bytes) {
-        return Ok(fetched.bytes);
-    }
-    let html = String::from_utf8_lossy(&fetched.bytes).to_string();
-    let looks_html = fetched
-        .content_type
-        .to_ascii_lowercase()
-        .contains("text/html")
-        || html.to_ascii_lowercase().contains("<html")
-        || html.contains("citation_pdf_url");
-    if !looks_html {
-        return Err("机构通道返回的不是 PDF 也不是落地页".into());
-    }
-    let base =
-        reqwest::Url::parse(&fetched.final_url).map_err(|e| format!("落地页地址无效: {e}"))?;
-    let prefix_host = prefix_host.unwrap_or_default();
-    let page_doi = doi_from_url(target);
-    let cands = pdf_link_candidates_for(&html, &base, page_doi.as_deref());
-    if cands.is_empty() {
-        // 候选提不出来才回落登录态判定（页脚登录挂件会让 password 探测误命中，
-        // 提前掐断本可解析的落地页——2026-09-17 审计双向失准修正）
-        if saml_relay(&html) {
-            return Err(
-                "停在机构身份认证中间页（SAML）——会话可能已过期，请到设置 → 网络 → 学校图书馆 重新登录"
-                    .into(),
-            );
-        }
-        if html_needs_login(&html) {
-            return Err(
-                "停在机构登录页——会话可能已过期，请到设置 → 网络 → 学校图书馆 重新登录".into(),
-            );
-        }
-        return Err(
-            "已到达落地页但没识别出本篇的 PDF 链接（可能是列表/检索页，或该文献不在订阅范围）"
-                .into(),
-        );
-    }
-    for cand in cands.into_iter().take(3) {
-        // 前缀模式下候选链接已被 EZproxy 改写成代理域（前缀主机或其子域，通配
-        // DNS 形态 host 不等于前缀主机但仍是代理形态）就不再包一层
-        let cand_host = reqwest::Url::parse(&cand)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_string))
-            .unwrap_or_default();
-        let url_to_try = if !prefix_host.is_empty()
-            && !domain_matches(&cand_host, &prefix_host)
-            && ch.prefix.is_some()
-        {
-            proxy_wrap(ch.prefix.as_deref().unwrap_or(""), &cand)
-        } else {
-            cand
-        };
-        if let Ok(f2) = fetch_via_session(&url_to_try, ch.session.as_ref()).await {
-            if crate::lit_watch::looks_like_pdf(&f2.bytes) {
-                return Ok(f2.bytes);
-            }
-        }
-    }
-    if html_needs_login(&html) {
-        return Err("停在机构登录页——会话可能已过期，请到设置 → 网络 → 学校图书馆 重新登录".into());
-    }
-    Err("已到达落地页但没找到可下载的 PDF 链接（该文献可能不在订阅范围）".into())
-}
-
-/// DOI → 合法开放副本直链（绿 OA/预印本/仓储副本）：Unpaywall 优先，OpenAlex 回落。
-/// best-effort：任一环节失败继续回落，全落空才返回 None，不阻塞后续机构通道
-pub(crate) async fn oa_pdf_url_for(doi: &str) -> Option<(String, &'static str)> {
-    let client = reqwest::Client::builder()
-        .timeout(OA_TIMEOUT)
-        .user_agent(UA)
-        .build()
-        .ok()?;
-    // Unpaywall 传输层失败（超时/DNS——国内访问 api.unpaywall.org 常见）只当「没查到」
-    // 继续回落 OpenAlex；旧 `.ok()?` 在这里把整个函数提前弹空，回落永远走不到
-    let upw: Option<serde_json::Value> = match client
-        .get(format!(
-            "https://api.unpaywall.org/v2/{}?email={OA_EMAIL}",
-            encode_query_value(doi)
-        ))
-        .send()
-        .await
-    {
-        Ok(r) => r.json().await.ok(),
-        Err(_) => None,
-    };
-    if let Some(hit) = oa_pick_unpaywall(upw.as_ref()) {
-        return Some(hit);
-    }
-    // OpenAlex: works/doi:<doi>（mailto 进 polite pool，共享池被打满时限流更缓）
-    let oax: Option<serde_json::Value> = match client
-        .get(format!(
-            "https://api.openalex.org/works/https://doi.org/{}?mailto={OA_EMAIL}",
-            encode_query_value(doi)
-        ))
-        .send()
-        .await
-    {
-        Ok(r) => r.json().await.ok(),
-        Err(_) => None,
-    };
-    oa_pick_openalex(oax.as_ref())
-}
-
-/// Unpaywall 选址（纯逻辑供单测）：best_oa_location 直链优先、url 仅在长得像 PDF
-/// 时用；best 之外线性扫 oa_locations——最优位置是仓储落地页（无直链）时，另一
-/// 位置的直链副本不该跟着陪葬
-fn oa_pick_unpaywall(v: Option<&serde_json::Value>) -> Option<(String, &'static str)> {
-    let v = v?;
-    let loc_pdf = |loc: &serde_json::Value| -> Option<String> {
-        if let Some(pdf) = loc
-            .get("url_for_pdf")
-            .and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            return Some(pdf.to_string());
-        }
-        loc.get("url")
-            .and_then(|x| x.as_str())
-            .filter(|u| u.to_ascii_lowercase().contains(".pdf"))
-            .map(str::to_string)
-    };
-    if let Some(hit) = v.get("best_oa_location").and_then(loc_pdf) {
-        return Some((hit, "unpaywall"));
-    }
-    v.get("oa_locations")
-        .and_then(|arr| arr.as_array())
-        .and_then(|locs| {
-            locs.iter()
-                .find_map(|l| loc_pdf(l).map(|u| (u, "unpaywall")))
-        })
-}
-
-/// OpenAlex 选址（纯逻辑供单测）：best_oa_location.pdf_url 优先，locations[] 兜底
-fn oa_pick_openalex(v: Option<&serde_json::Value>) -> Option<(String, &'static str)> {
-    let v = v?;
-    let pdf = |l: &serde_json::Value| -> Option<String> {
-        l.get("pdf_url")
-            .and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-    };
-    if let Some(hit) = v.get("best_oa_location").and_then(|l| pdf(l)) {
-        return Some((hit, "openalex"));
-    }
-    v.get("locations")
-        .and_then(|arr| arr.as_array())
-        .and_then(|locs| locs.iter().find_map(|l| pdf(l).map(|u| (u, "openalex"))))
-}
-
-/// 机构通道失败的分流提示：反爬墙（HTTP 403/429，Wiley/Elsevier 等对非浏览器客户端
-/// 一律拦截——2026-09-16 实证带全量会话+浏览器 UA 仍 403，与登录无关）给「浏览器
-/// 打开」出口；其余按会话过期/订阅范围口径。文案对齐现行三按钮口径：自动获取 /
-/// 浏览器打开（90 秒收货）/ 关联本地 PDF（2026-09-17 审计——旧文案指向已下线的
-/// 「在机构窗口打开」按钮）
-pub(crate) fn institutional_failure_hint(err: &str) -> String {
-    if err.contains("HTTP 403") || err.contains("HTTP 429") {
-        return format!(
-            "出版商反爬墙拒绝了程序化下载（{err}）——Wiley/Elsevier 等出版商拦截一切非浏览器客户端，与登录状态无关。点这一篇的「浏览器打开」，在浏览器里点站方下载，90 秒内落下的 PDF 会自动收进项目 papers/；没收到的用「关联本地 PDF」导入"
-        );
-    }
-    format!("机构通道未取到全文：{err}。可到设置 → 网络 → 学校图书馆 重新登录后重试，或点「浏览器打开」在浏览器里下载（90 秒内自动收进 papers/），再不行用「关联本地 PDF」手动导入")
 }
 
 // ===== 登录窗 =====
@@ -3210,29 +2956,6 @@ mod tests {
     }
 
     #[test]
-    fn html_needs_login_detects_password_input() {
-        assert!(html_needs_login(
-            r#"<form><input type="password" name="pass"></form>"#
-        ));
-        assert!(html_needs_login(r#"<INPUT TYPE='password'>"#));
-        assert!(!html_needs_login("<html><body>article body</body></html>"));
-    }
-
-    #[test]
-    fn failure_hint_splits_bot_wall_from_session_issues() {
-        let walled = institutional_failure_hint("HTTP 403 Forbidden");
-        assert!(walled.contains("浏览器打开"), "{walled}");
-        assert!(
-            !walled.contains("在机构窗口打开"),
-            "旧口径指向已下线的按钮: {walled}"
-        );
-        let expired = institutional_failure_hint("停在机构登录页——会话可能已过期");
-        assert!(expired.contains("重新登录"), "{expired}");
-        assert!(!expired.contains("在机构窗口打开"));
-        assert!(expired.contains("关联本地 PDF"), "{expired}");
-    }
-
-    #[test]
     fn domain_matches_suffix_and_exact() {
         assert!(domain_matches("onlinelibrary.wiley.com", "wiley.com"));
         assert!(domain_matches(
@@ -3412,19 +3135,6 @@ mod tests {
     }
 
     #[test]
-    fn saml_relay_detected_by_hidden_form() {
-        assert!(saml_relay(
-            r#"<form method="post" action="https://idp.edu.edu/idp/profile/SAML2/POST/SSO"><input type="hidden" name="SAMLRequest" value="x"/></form>"#
-        ));
-        assert!(saml_relay(
-            r#"<body onload="document.forms[0].submit()"><input type="hidden" name="SAMLResponse" value="y">"#
-        ));
-        assert!(!saml_relay("<html><body>article</body></html>"));
-        // 正文里偶然提到 SAMLRequest 一词、没有 form：不算
-        assert!(!saml_relay("<p>The SAMLRequest parameter is used by…</p>"));
-    }
-
-    #[test]
     fn proxy_wrap_strips_qurl_and_case_insensitive() {
         // qurl 形态：旧口径剥 url= 剩 login?q，拼出 login?q&url=… 坏链
         assert_eq!(
@@ -3460,49 +3170,6 @@ mod tests {
             prefix
         ));
         assert!(!target_already_proxied("https://a.com/x", ""));
-    }
-
-    #[test]
-    fn oa_pick_unpaywall_falls_back_to_oa_locations() {
-        // best 是仓储落地页（无直链、url 不含 .pdf）但 oa_locations 里有直链副本
-        let v: serde_json::Value = serde_json::json!({
-            "best_oa_location": { "url_for_pdf": null, "url": "https://repo.edu/handle/1234" },
-            "oa_locations": [
-                { "url_for_pdf": "https://repo.edu/bitstream/1234/article.pdf", "url": "https://repo.edu/handle/1234" }
-            ]
-        });
-        assert_eq!(
-            oa_pick_unpaywall(Some(&v)),
-            Some((
-                "https://repo.edu/bitstream/1234/article.pdf".into(),
-                "unpaywall"
-            ))
-        );
-        // best 自带直链：最优先
-        let b: serde_json::Value = serde_json::json!({
-            "best_oa_location": { "url_for_pdf": "https://pub.com/x.pdf" }
-        });
-        assert_eq!(
-            oa_pick_unpaywall(Some(&b)),
-            Some(("https://pub.com/x.pdf".into(), "unpaywall"))
-        );
-        assert_eq!(oa_pick_unpaywall(None), None);
-    }
-
-    #[test]
-    fn oa_pick_openalex_scans_locations_array() {
-        let v: serde_json::Value = serde_json::json!({
-            "best_oa_location": { "landing_page_url": "https://repo.edu/x" },
-            "locations": [
-                { "landing_page_url": "https://a.edu/x" },
-                { "pdf_url": "https://a.edu/x/article.pdf" }
-            ]
-        });
-        assert_eq!(
-            oa_pick_openalex(Some(&v)),
-            Some(("https://a.edu/x/article.pdf".into(), "openalex"))
-        );
-        assert_eq!(oa_pick_openalex(None), None);
     }
 
     #[test]
@@ -3602,141 +3269,6 @@ mod tests {
         // %%EOF 后带少量空白（正常写法）仍在 2KB 窗口内
         full.extend_from_slice(b"\n\n");
         assert!(pdf_tail_complete(&full));
-    }
-
-    /// 本地 mock HTTP 上游：routes = (路径前缀, 响应) 逐请求匹配；accept_count 次
-    /// 后关闸。2026-09-17 审计：全仓没有一个异步测试，网络状态机（重定向/落地页
-    /// 候选/登录页分流）此前零覆盖
-    fn mock_http_server(routes: Vec<(String, String)>) -> std::net::SocketAddr {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            for (path_prefix, body) in routes {
-                let Ok((mut sock, _)) = listener.accept() else {
-                    return;
-                };
-                let mut buf = [0u8; 4096];
-                let n = sock.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
-                assert!(
-                    req.contains(&path_prefix.to_ascii_lowercase()),
-                    "请求 {req:?} 应命中路由 {path_prefix:?}"
-                );
-                let _ = sock.write_all(body.as_bytes());
-                let _ = sock.shutdown(std::net::Shutdown::Write);
-            }
-        });
-        addr
-    }
-
-    fn http_resp(status_line: &str, headers: &[(&str, &str)], body: &str) -> String {
-        let mut out = format!("HTTP/1.1 {status_line}\r\n");
-        for (k, v) in headers {
-            out.push_str(&format!("{k}: {v}\r\n"));
-        }
-        out.push_str("Connection: close\r\n\r\n");
-        out.push_str(body);
-        out
-    }
-
-    #[test]
-    fn fetch_via_channel_follows_redirect_to_pdf() {
-        let addr = mock_http_server(vec![
-            (
-                "get /start".into(),
-                http_resp("302 Found", &[("Location", "/pdf")], ""),
-            ),
-            (
-                "get /pdf".into(),
-                http_resp(
-                    "200 OK",
-                    &[("Content-Type", "application/pdf")],
-                    "%PDF-1.7 redirect target %%EOF\n",
-                ),
-            ),
-        ]);
-        let ch = InstitutionalChannel {
-            prefix: None,
-            session: None,
-        };
-        let bytes =
-            tauri::async_runtime::block_on(fetch_via_channel(&format!("http://{addr}/start"), &ch))
-                .expect("重定向到直链 PDF 必须取到");
-        assert!(crate::lit_watch::looks_like_pdf(&bytes));
-    }
-
-    #[test]
-    fn fetch_via_channel_landing_page_resolves_candidate() {
-        let landing = r#"<html><head>
-        <meta name="citation_pdf_url" content="/pdf?md5=a&amp;pid=1">
-        </head><body>article</body></html>"#;
-        let addr = mock_http_server(vec![
-            (
-                "get /page".into(),
-                http_resp("200 OK", &[("Content-Type", "text/html")], landing),
-            ),
-            (
-                "get /pdf".into(),
-                http_resp(
-                    "200 OK",
-                    &[("Content-Type", "application/pdf")],
-                    "%PDF-1.7 landing candidate %%EOF\n",
-                ),
-            ),
-        ]);
-        let ch = InstitutionalChannel {
-            prefix: None,
-            session: None,
-        };
-        let bytes =
-            tauri::async_runtime::block_on(fetch_via_channel(&format!("http://{addr}/page"), &ch))
-                .expect("落地页 citation_pdf_url 候选必须解析并取到");
-        assert!(crate::lit_watch::looks_like_pdf(&bytes));
-    }
-
-    #[test]
-    fn fetch_via_channel_list_page_and_login_page_error_kinds() {
-        // 列表/检索页：多条不同 pdfish 锚链、无 meta 无 DOI——不猜，报「没识别出本篇」
-        let listy = r#"<html><body>
-        <a href="/a1.pdf">1</a> <a href="/a2.pdf">2</a>
-        </body></html>"#;
-        let addr = mock_http_server(vec![(
-            "get /list".into(),
-            http_resp("200 OK", &[("Content-Type", "text/html")], listy),
-        )]);
-        let ch = InstitutionalChannel {
-            prefix: None,
-            session: None,
-        };
-        let err =
-            tauri::async_runtime::block_on(fetch_via_channel(&format!("http://{addr}/list"), &ch))
-                .unwrap_err();
-        assert!(err.contains("没识别出本篇"), "{err}");
-
-        // 登录页：提不出候选 + password 输入——报「停在机构登录页」
-        let login = r#"<html><body><form><input type="password" name="pass"></form></body></html>"#;
-        let addr2 = mock_http_server(vec![(
-            "get /login".into(),
-            http_resp("200 OK", &[("Content-Type", "text/html")], login),
-        )]);
-        let err2 = tauri::async_runtime::block_on(fetch_via_channel(
-            &format!("http://{addr2}/login"),
-            &ch,
-        ))
-        .unwrap_err();
-        assert!(err2.contains("停在机构登录页"), "{err2}");
-
-        // SAML 中继页：无 password、有 SAMLRequest 隐藏表单——报「身份认证中间页」
-        let saml = r#"<html><body onload="document.forms[0].submit()"><form method="post"><input type="hidden" name="SAMLRequest" value="x"></form></body></html>"#;
-        let addr3 = mock_http_server(vec![(
-            "get /saml".into(),
-            http_resp("200 OK", &[("Content-Type", "text/html")], saml),
-        )]);
-        let err3 =
-            tauri::async_runtime::block_on(fetch_via_channel(&format!("http://{addr3}/saml"), &ch))
-                .unwrap_err();
-        assert!(err3.contains("SAML"), "{err3}");
     }
 
     #[test]

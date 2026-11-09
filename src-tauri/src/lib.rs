@@ -1161,7 +1161,6 @@ pub fn run() {
             lit_watch::freeze_reading_list_intake,
             lit_watch::download_paper_pdf,
             lit_watch::attach_paper_pdf,
-            lit_watch::fetch_paper_fulltext,
             browser_bridge::browser_bridge_status,
             lit_watch::match_dropped_paper,
             lit_watch::to_fetch_progress,

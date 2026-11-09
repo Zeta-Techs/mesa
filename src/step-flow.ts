@@ -439,7 +439,7 @@ export interface ToFetchItem {
   /** 行号（1 起，条目身份键） */
   line: number;
   title: string;
-  /** 末段的 DOI/链接（能逐篇「获取全文」的条目才有值） */
+  /** 末段的 DOI/链接（「官网」按钮按它打开文章页；没有链接的条目为空） */
   url: string;
   /** 已补齐（编号后有 ✓） */
   done: boolean;

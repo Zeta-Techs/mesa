@@ -31,26 +31,6 @@ export function instActiveFrom(status: InstSessionStatus | null): boolean {
   return status.prefixConfigured || (status.sessionPresent && status.sessionCredible !== false);
 }
 
-/** 「获取全文」按钮可见性（不摆装死钮原则）：
- *  - 裸 DOI / doi.org 链接：可查合法开放副本（Unpaywall/OpenAlex），离线也值得试；
- *  - 其余 http(s) 落地页：仅机构通道可用时才给（后端会走前缀改写 + 落地页提取）；
- *  - 空串/非链接：不给。 */
-export function canAttemptFulltext(rawUrl: string, instActive: boolean): boolean {
-  const u = rawUrl.trim();
-  if (!u) return false;
-  if (/^(?:doi:\s*)?10\.\d{4,9}\/\S+$/i.test(u)) return true;
-  if (/^https?:\/\/(?:dx\.)?doi\.org\//i.test(u)) return true;
-  if (/^https?:\/\//i.test(u)) return instActive;
-  return false;
-}
-
-/** fetch_paper_fulltext 的 via → toast 前缀（渠道对人可见，失败提示才有方向） */
-export function fulltextViaLabel(via: string): string {
-  if (via === "oa") return "已获取（开放副本）：";
-  if (via === "institutional") return "已获取（机构通道）：";
-  return "已下载：";
-}
-
 /** 会话状态行的白话摘要（设置页/雷达卡共用）。只有入口页 Cookie 的罐子如实
  *  标注「尚未确认机构登录」——用户没真登录时不说「已保存可取全文」 */
 export function instSessionLabel(status: InstSessionStatus | null): string {
@@ -68,7 +48,7 @@ export function instSessionLabel(status: InstSessionStatus | null): string {
   return `已保存 ${status.cookieCount} 条会话（${domains}）· ${time}`;
 }
 
-/** fetch_paper_fulltext 的返回：落盘信息 + 实际命中渠道（direct/oa/institutional） */
+/** 关联本地 PDF / 拖入认篇（attach_paper_pdf、match_dropped_paper）的返回：落盘信息 */
 export interface FetchedFulltextDto {
   path: string;
   name: string;

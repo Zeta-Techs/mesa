@@ -1700,11 +1700,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   inst_access.rs             # 机构访问通道（2026-09-16）：人登录一次、系统复用会话——登录窗（Tauri WebviewWindow
                              #   label=inst-login）Cookie 落 0600 inst-session.json（值绝不出站，状态 DTO 只有
                              #   域名/条数/时间）；EZproxy/OpenAthens 前缀 ?url= 改写（settings institutional_prefix，
-                             #   书签式前缀自动剥尾部 url=）；DOI→合法开放副本查证（Unpaywall best_oa_location
-                             #   .url_for_pdf 优先、OpenAlex 回落）；落地页 citation_pdf_url meta + 常见 PDF 链接
-                             #   形态提取；fetch_via_session 手动逐跳跟重定向（每跳按 host 重算 Cookie 头）。
-                             #   硬边界：不存机构账号密码/不做无人值守自动登录；scheduler/无头不携带会话；
-                             #   只由人 UI 逐篇触发（lit_watch::fetch_paper_fulltext 阶梯调用），不做批量。
+                             #   书签式前缀自动剥尾部 url=，「官网」按钮经 proxy_wrap_pub 套前缀）；落地页 citation_pdf_url meta + 常见 PDF 链接
+                             #   形态提取；fetch_via_session_ex 手动逐跳跟重定向（每跳按 host 重算 Cookie 头，登录窗取 PDF 用）。
+                             #   硬边界：不存机构账号密码/不做无人值守自动登录；scheduler/无头不携带会话。
+                             #   2026-11-09 程序化取全文整条撤掉（fetch_paper_fulltext 阶梯、fetch_via_channel、oa_pdf_url_for、代下队列）。
                              #   登录窗轮询走独立线程（Windows cookie API 在主线程同步调用会死锁）。
                              #   窗内 PDF 落盘走**单一下载漏斗**（2026-09-16 终局，勿再加拦截层/页→本机回传）：
                              #   builder 注册 on_download（Requested 把落点改写 <config>/ccode/tmp/inst-dl/、

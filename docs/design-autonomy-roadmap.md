@@ -66,7 +66,7 @@ AI 越强，卡住科研进度的越不是「AI 干得好不好」，而是三�
 
 ### 3.3 全文获取
 
-- 自动阶梯 `fetch_fulltext_bytes`（`lit_watch.rs`：开放直链 → Unpaywall / OpenAlex 合法副本 → 机构通道）**仍在后端，但界面已不调用**；
+- （2026-11-09 已删）自动阶梯 `fetch_fulltext_bytes`（`lit_watch.rs`：开放直链 → Unpaywall / OpenAlex 合法副本 → 机构通道）**仍在后端，但界面已不调用**；
   现行入口全是人逐篇点：在系统浏览器打开（`inst_browser_open`）由下载目录接住，或浏览器扩展的「存到 Mesa」（`extension/` + native messaging → `mesa_helper` 入库）。
 - **Mesa 里没有任何频率限制**：无按出版商计数、间隔、每日上限、熔断、请求日志；只有超时、60MB 上限、6 跳重定向。技能脚本 `lit_records.py` 有 429 / 5xx 退避与「连续 3 篇 403 全停」。
 - Wiley、Elsevier 对非浏览器客户端一律 403（按 TLS 指纹判），Wiley / ACS 的 epdf 是图片阅读器，Nature / Springer 对 urllib 给验证页——**真浏览器才下得动**，扩展路线正好是真浏览器。

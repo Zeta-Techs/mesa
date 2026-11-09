@@ -2039,8 +2039,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         } else {
           setNotice(
             e.payload?.credible === false
-              ? "已检测到入口页会话——完成机构登录后会自动更新，届时才能逐篇「获取全文」"
-              : "机构登录会话已保存，可以在文献清单里逐篇「获取全文」了",
+              ? "已检测到入口页会话——完成机构登录后会自动更新"
+              : "机构登录会话已保存",
           );
         }
         void loadInstStatus();

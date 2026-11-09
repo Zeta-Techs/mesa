@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  canAttemptFulltext,
-  fulltextViaLabel,
   instActiveFrom,
   instOpenTarget,
   instSessionLabel,
@@ -46,35 +44,6 @@ test("instActiveFrom: 前缀或会话任一即通道可用", () => {
     }),
     true,
   );
-});
-
-test("canAttemptFulltext: DOI 必给、落地页仅机构通道可用时给", () => {
-  // 裸 DOI / doi.org：离线也能查开放副本，恒可试
-  assert.equal(canAttemptFulltext("10.1038/s41586-024-1", false), true);
-  assert.equal(canAttemptFulltext("doi: 10.1002/adma.202304268", false), true);
-  assert.equal(
-    canAttemptFulltext("https://doi.org/10.1016/j.nano.2023.07.011", false),
-    true,
-  );
-  // 普通落地页：无机构通道不摆装死钮
-  assert.equal(
-    canAttemptFulltext("https://www.sciencedirect.com/science/article/pii/X", false),
-    false,
-  );
-  assert.equal(
-    canAttemptFulltext("https://www.sciencedirect.com/science/article/pii/X", true),
-    true,
-  );
-  // 空串/非链接：不给
-  assert.equal(canAttemptFulltext("", true), false);
-  assert.equal(canAttemptFulltext("无链接", true), false);
-});
-
-test("fulltextViaLabel: 渠道文案三分", () => {
-  assert.equal(fulltextViaLabel("direct"), "已下载：");
-  assert.equal(fulltextViaLabel("oa"), "已获取（开放副本）：");
-  assert.equal(fulltextViaLabel("institutional"), "已获取（机构通道）：");
-  assert.equal(fulltextViaLabel("weird"), "已下载：");
 });
 
 test("instOpenTarget：裸 DOI 补 doi.org，http(s) 原样", () => {
