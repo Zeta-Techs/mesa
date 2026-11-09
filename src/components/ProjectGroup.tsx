@@ -1688,7 +1688,8 @@ export default function ProjectGroup({
 
 
       {/* 分组主体：左侧 1px 缩进线 + 透明度分层，保持原 p-4 留白节奏 */}
-      <div className="border-l border-white/5 pb-4 pl-3 pr-1">
+      {/* 只有目标、没有步骤时不画缩进线：线只到内容底就断，空项目上看着像一截残边 */}
+      <div className={`${liteResearch ? "" : "border-l border-white/5 "}pb-4 pl-3 pr-1`}>
 
       {packDrafts && project && cfg && (
         <PackDraftsDialog

@@ -544,14 +544,15 @@ export default function ProjectUserTasksView({
         ) : quietEmpty ? (
           !loadError && <p className="text-xs text-l3">流程步骤之外的事（组会材料、整理一批数据、补一个实验……）记成目标，单独做、单独验收。</p>
         ) : tasks.length === 0 ? (
-          !loadError && <EmptyState
+          // 无流程科研项目整页只有这一块：放到页面上部视觉中心，不贴着标题行留下大半屏空白
+          !loadError && <div className={freeResearch ? "flex min-h-[55vh] flex-col justify-center" : undefined}><EmptyState
             compact
             title={archivedTasks.length ? "当前没有目标" : "这次想完成什么？"}
             detail={
               archivedTasks.length
                 ? "可以新建目标，或从已归档中恢复。"
                 : freeResearch
-                  ? "整理一批数据、读几篇文献出对照表、准备组会、规划实验……一件事一个目标，写清要交付的成果。"
+                  ? <>整理一批数据、读几篇文献出对照表、准备组会、规划实验……<br />一件事一个目标，写清要交付的成果。</>
                   : "写清要交付的成果，再选择资料和 Agent。"
             }
             action={
@@ -589,7 +590,7 @@ export default function ProjectUserTasksView({
                 )}
               </div>
             }
-          />
+          /></div>
         ) : (
           <div className="space-y-4">
             {visibleBuckets.map((bucket) => {
