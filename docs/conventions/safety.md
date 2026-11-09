@@ -72,7 +72,7 @@
   Claude Code（非 Windows、联网不是「不限」）：`--settings` 并入 sandbox 段（enabled、autoAllowBashIfSandboxed、allowUnsandboxedCommands=false、
   network.allowedDomains、filesystem.allowWrite）+ acceptEdits + **`--allowedTools Bash` 整体放行**（命令全在沙箱里；不放行时带查询串的 curl 被权限层要求确认、
   无人值守即拒，2026-11-08 真跑实证）+ WebFetch 按域名放行 + `--max-budget-usd`。Codex：workspace-write + network_access 开关 + writable_roots。
-  两家沙箱都放行系统临时目录的写；Mesa 工具目录（`<config>/paper-fetch`）进各家可写名单（Codex 交互启动同样加）。其余各家照旧全权限、界面黄字写明；
+  两家沙箱都放行系统临时目录的写（2026-11-09 起 Mesa 不再有要 Agent 写的工具目录，代下队列已撤）。其余各家照旧全权限、界面黄字写明；
   预算能锁会话 id 的由 Mesa 每 30 秒按用量算、到额 `cancel_capture`（Run 记 `run.budget`、状态 stopped），锁不了的只记录不说成会停。
   每次运行记 `run.grant` 事件，Run 事实 `grant` 字段。真跑核对：`MESA_GR_AGENT=claude-code|codex cargo test grant_sandbox_real_run -- --ignored`（目录外的探针放家目录，不放临时目录）。
   **越界请求（2026-11-08）**：授权说明要求 Agent 把每件被拦下的事在简报里单独一行、以「被拦下：」开头；`scheduler::blocked_lines` 认出后记在任务的
@@ -83,8 +83,8 @@
   原件报错，不当空罐继续。**绝不存机构账号密码、绝不做无人值守自动登录**（MFA 过不去；脚本式批量下载会被
   出版商风控识别并连坐全校 IP）——只有用户在独立登录窗里自己完成的 SSO 会话可复用，且只由人在 UI 上逐篇触发
   下载，scheduler/无头 Run 不携带该会话。会话只在请求头按域名匹配注入（`cookie_header_for`），不写进任何
-  agent env、不进 shell。**2026-11-08 起（设计稿 `docs/design-autonomy-roadmap.md` §6，已落地 `paper_fetch.rs`）**：AI 与无头 Run 可经 `mesa_helper paper fetch`
-  请 Mesa 代下，会话仍只在 Mesa 进程（或浏览器扩展所在的用户浏览器）里用，Agent 拿到的只是落盘路径；限速、熔断、日志见 pipeline.md「机构访问通道」。
+  agent env、不进 shell。~~2026-11-08 起 AI 与无头 Run 可经 `mesa_helper paper fetch` 请 Mesa 代下~~（2026-11-09 代下队列整个撤掉，见 pipeline.md「机构访问通道」同日条）：
+  Agent 不拿到任何代下入口，付费墙全文只由人下。
 - **聊天层旁路的秘密与边界（2026-10-20，chat_channel.rs；OpenCode 2.x 2026-11-04）**：OpenCode 服务口令（1.x 给 TUI 自带服务，2.x 给 Mesa 自起的 `opencode serve`，TUI 用 `--server` 连）、Codex app-server 能力令牌每标签随机生成，
   **只经环境变量**交给 CLI（Codex 的 app-server 参数里只有令牌的 SHA-256），不落盘、不进 Run 记录 / 日志 / 诊断包；两者都只监听
   127.0.0.1，无口令 / 错令牌一律 401（已实测）。旁路目录 0700、事件 / 输入文件 0600，标签退出即删。hooks 日志每条 payload 截到 64KB

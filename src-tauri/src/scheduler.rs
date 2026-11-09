@@ -3105,7 +3105,7 @@ pub(crate) fn grant_note(g: &crate::grant::Grant) -> String {
         return String::new();
     }
     format!(
-        "\n\n【这次的授权范围】{net}；只在工作副本里写文件。要下全文，交给 \"$MESA_PAPER_TOOL\" paper fetch <DOI>：Mesa 找开放获取版本，找不到的交给人，不要自己去出版商网站下。\
+        "\n\n【这次的授权范围】{net}；只在工作副本里写文件。付费墙全文不要自己去出版商网站下，写进待获取清单交给人。\
          被拦下的事不要换办法绕过：在简报里每件单独一行、以「被拦下：」开头，写清是哪个网站或哪个目录、为什么要用，由人决定要不要放宽。\n"
     )
 }

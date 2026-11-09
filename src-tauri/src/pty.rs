@@ -662,7 +662,6 @@ fn pty_agent_env() -> Vec<(String, String)> {
     if let Some(tool) = crate::image_gen::helper_exe() {
         env.push((crate::image_gen::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
         env.push((crate::peek::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
-        env.push((crate::paper_fetch::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
     }
     if let Some(tool) = crate::svg_render::helper_exe() {
         env.push((crate::svg_render::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
@@ -713,8 +712,6 @@ fn spawn_tracked(
         // 看一眼（peek.rs）：同一个 helper；带上这次的 Run，helper 按它找项目、把自己排除在同伴外
         if purpose == PtyPurpose::Agent {
             cmd.env(crate::peek::TOOL_ENV, &tool);
-            // 代下全文（paper_fetch.rs）：同一个 helper，按 Run 找项目
-            cmd.env(crate::paper_fetch::TOOL_ENV, &tool);
             if let Some(id) = run_id.as_deref() {
                 cmd.env(crate::peek::RUN_ENV, id);
             }
@@ -1046,10 +1043,8 @@ fn pty_spawn_sync(
     // 免得每写一篇 PDF 都停下来等提权确认（2026-09-15 用户实测「总是让我授权」）。
     // 只加 papers/ 子目录：派生产物仍必须走工作区 + 评审合并，不开放整个主仓；
     // TOML 基本字符串里 Windows 反斜杠要转义
-    // 代下全文的队列目录（paper_fetch.rs，2026-11-08）同样预授权：Agent 调 `paper fetch` 要往里写排队记录
     if agent_id == "codex" {
-        let mut roots: Vec<String> = crate::workspaces::papers_dir_for_worktree(&cwd).into_iter().collect();
-        roots.extend(crate::grant::mesa_tool_write_dirs());
+        let roots: Vec<String> = crate::workspaces::papers_dir_for_worktree(&cwd).into_iter().collect();
         if !roots.is_empty() {
             let list = roots
                 .iter()

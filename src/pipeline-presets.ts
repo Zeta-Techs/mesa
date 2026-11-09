@@ -383,7 +383,7 @@ function paywallPdfTask(timing: "after" | "during" = "after"): HumanTaskDto {
     // 首句动作导向（2026-09-15 用户实测原首句「拿到全文后…」让人不知从哪下手）：
     // 第一步是看清单，入口就挂在本行（StepFlow 的「待获取」折叠就地展开）
     guidance:
-      "只补已纳入、缺 PDF 的篇目，落到项目根 papers/。先在待获取清单顶上点「让 Mesa 找免费版」；行尾写「没有免费版」的，点「官网」自己下。待确认先拍板，不要先下。可以跳过，但没全文的篇目精读时只能按摘要记，初稿里相关论述会标待核实——补得越全，成稿越扎实。",
+      "只补已纳入、缺 PDF 的篇目，落到项目根 papers/。在待获取清单里逐篇点「官网」，用学校账号下，存进「下载」文件夹会收进来。待确认先拍板，不要先下。可以跳过，但没全文的篇目精读时只能按摘要记，初稿里相关论述会标待核实——补得越全，成稿越扎实。",
     target: "papers/*.pdf",
     timing,
     optional: true,
@@ -425,9 +425,8 @@ const LIT_RECORDS_SCRIPT =
   "enrich 点名的期刊缩写待补，按期刊官网或 ISO 4 手填进 json；其余待补是登记库里没有，不编。" +
   "两份 RIS 是同一批已纳入且缺全文的篇目、与 to-fetch.md 同序；pending 只留 included.json。check 不通过不算完成。";
 
-/** 检索步：待获取交给 Mesa（2026-11-08，paper_fetch.rs；2026-11-09 起只找开放获取）——AI 不自己去出版商网站或学校通道 */
-const PAYWALL_HANDOFF =
-  "写好后有 $MESA_PAPER_TOOL 就把这些 DOI 一次交给 \"$MESA_PAPER_TOOL\" paper fetch <DOI> …（Mesa 只找开放获取版，不用守着），没有就等用户提供；不要自己去出版商网站或学校通道下。";
+/** 检索步：付费墙全文由人下（2026-11-09 代下队列整个撤掉）——AI 不自己去出版商网站或学校通道 */
+const PAYWALL_HANDOFF = "写好后等用户提供全文；不要自己去出版商网站或学校通道下。";
 
 /** 检索步：pending 必须先经人确认，才能进 to-fetch / 下载全文。 */
 const LIT_PENDING_BEFORE_FETCH =

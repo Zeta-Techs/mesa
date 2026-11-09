@@ -177,10 +177,13 @@ fn main() {
     // `mesa_helper codex-token <网关 id>`：Codex 渠道定义块的 `auth.command`，现取 keys.json 里的密钥打到 stdout，
     // config.toml 里不落明文（Codex 客户端续 Mesa 开的对话靠它）
     // `mesa_helper peek agents|runs|changes`：同项目的 Agent 只读看彼此（经 MESA_PEEK_TOOL 调用，peek.rs）
-    // `mesa_helper paper fetch|status|pick`：Agent 把要下的文献交给 Mesa 的代下队列（经 MESA_PAPER_TOOL 调用，paper_fetch.rs）；
-    // 学校会话不经这里，helper 只排队、等结果、报落盘文件名
-    if args.get(1).map(String::as_str) == Some("paper") {
-        std::process::exit(ccode_lib::helper_paper(&args[2..]));
+    // `mesa_helper browser-bridge --probe`：主程序装浏览器桥前试跑，认得它才是会记扩展心跳的新版 helper（browser_bridge.rs）
+    if args.get(1).map(String::as_str) == Some("browser-bridge") {
+        if args.get(2).map(String::as_str) == Some("--probe") {
+            println!("ok");
+            std::process::exit(0);
+        }
+        std::process::exit(2);
     }
     if args.get(1).map(String::as_str) == Some("peek") {
         std::process::exit(ccode_lib::helper_peek(&args[2..]));
@@ -230,7 +233,7 @@ fn main() {
             }
             continue;
         }
-        // 扩展定时打招呼（消息名沿用旧的代下轮询；2026-11-09 起不再发活，只记「来过」）
+        // 扩展定时打招呼（消息名沿用旧的代下轮询）：只记「来过」，设置页据此显示「已连接」
         if msg.get("kind").and_then(|k| k.as_str()) == Some("mesa-poll-jobs") {
             ccode_lib::helper_extension_ping();
             if write_frame(&mut stdout, &serde_json::json!({"ok": true})).is_err() {

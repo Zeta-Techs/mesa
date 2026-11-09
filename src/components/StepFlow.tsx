@@ -1,6 +1,4 @@
 import CoachTip from "./CoachTip";
-import { PaperFetchBar, usePaperFetchOverview } from "./PaperFetchPanel";
-import { normalizeDoi, rowJobLabel, type PaperFetchJob } from "../paper-fetch";
 import { discussNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
 import { discussOpeningPrompt } from "../discuss-prompt";
 import { sanitizeDocumentHtml } from "../document-html";
@@ -706,15 +704,6 @@ export default function StepFlow({
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
-  // 代下全文的队列：清单顶上一行进度，每一行写 Mesa 走到哪（同一 DOI 取最新一件，取消的不算）
-  const paperFetch = usePaperFetchOverview(projectPath);
-  const fetchJobByDoi = useMemo(() => {
-    const map = new Map<string, PaperFetchJob>();
-    for (const j of paperFetch.data?.jobs ?? []) {
-      if (j.status !== "cancelled" && !map.has(j.doi)) map.set(j.doi, j);
-    }
-    return map;
-  }, [paperFetch.data]);
   // 这一步的工作副本里 AI 问了还没处理完的（2026-11-02）：动作前面给「回答问题」，点了弹全局卡片
   const asking = useAppStore((s) => (ws ? (s.helpPending[ws.worktreePath] ?? 0) : 0));
   const setHelpViewReq = useAppStore((s) => s.setHelpViewReq);
@@ -3374,14 +3363,6 @@ export default function StepFlow({
                           {paywallMetricsLoading && (
                             <p className="mb-1 text-micro text-l4">正在按 DOI 补期刊名，影响因子稍后出现。</p>
                           )}
-                          {toFetchItems.length > 0 && (
-                            <PaperFetchBar
-                              projectPath={projectPath}
-                              items={toFetchItems}
-                              savedLines={toFetchDone}
-                              overview={paperFetch}
-                            />
-                          )}
                           {toFetchItems.length > 0 ? (
                             <ul
                               ref={toFetchListRef}
@@ -3441,18 +3422,6 @@ export default function StepFlow({
                                       {displayCitationTitle(item.title)}
                                     </button>
                                     <JournalPills metric={paywallMetrics.get(item.line)} />
-                                    {!done && (() => {
-                                      const doi = normalizeDoi(item.url);
-                                      const label = rowJobLabel(doi ? fetchJobByDoi.get(doi) : undefined);
-                                      return label ? (
-                                        <span
-                                          className={`shrink-0 text-micro ${label.warn ? "text-caution-text" : "text-l4"}`}
-                                          title="这篇交给 Mesa 在下；也可以点「官网」自己下，哪边先下到都算"
-                                        >
-                                          {label.text}
-                                        </span>
-                                      ) : null;
-                                    })()}
                                     {done ? (
                                       <span
                                         className={`shrink-0 text-micro ${doneName ? "text-done" : "text-l4"}`}

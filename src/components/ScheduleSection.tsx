@@ -1147,7 +1147,7 @@ function EditScheduleModal({
           </select>
           <span
             className="mt-1 block text-micro text-l4"
-            title="学术网站：OpenAlex、Crossref、arXiv、PubMed、Unpaywall 等检索与开放获取站点。付费墙全文由 Mesa 代下，不受这里限制。"
+            title="学术网站：OpenAlex、Crossref、arXiv、PubMed、Unpaywall 等检索与开放获取站点。付费墙全文由你在待获取清单里点「官网」下。"
           >
             被拦下的事会列在这个任务下面，由你决定要不要放宽。
           </span>

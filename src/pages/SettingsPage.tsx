@@ -1,6 +1,4 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
-import { FetchLog, JobList, usePaperFetchOverview } from "../components/PaperFetchPanel";
-import { summarizeJobs } from "../paper-fetch";
 import { classifierNoticeAutoSkip, setClassifierNoticeAutoSkip } from "../cli-notices";
 import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -1722,12 +1720,24 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [outboundNoProxy, setOutboundNoProxy] = useState("");
-  // 代下全文（2026-11-08）：设置 → 网络「文献全文」下的几行
-  const paperFetch = usePaperFetchOverview();
-  const [paperFetchJobsShown, setPaperFetchJobsShown] = useState(false);
-  const [paperFetchLogShown, setPaperFetchLogShown] = useState(false);
+  // 浏览器扩展（可选）：扩展每分钟经 helper 打一次招呼；网络分区开着时 15 秒读一次（browser_bridge.rs）
+  const [bridgeStatus, setBridgeStatus] = useState<{ extensionAlive: boolean; extensionEverSeen: boolean } | null>(null);
   const [bridgeResult, setBridgeResult] = useState<{ dir: string | null; failed: string[] } | null>(null);
-  const paperFetchOpen = (paperFetch.data?.jobs ?? []).filter((j) => !["done", "cancelled"].includes(j.status));
+  useEffect(() => {
+    if (!visible || activeSection !== "network") return;
+    let alive = true;
+    const read = () =>
+      void invoke<{ extensionAlive: boolean; extensionEverSeen: boolean }>("browser_bridge_status").then(
+        (st) => alive && setBridgeStatus(st),
+        () => {},
+      );
+    read();
+    const timer = window.setInterval(read, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [visible, activeSection]);
   async function installBridge() {
     try {
       const lines = await invoke<string[]>("install_browser_bridge");
@@ -4239,14 +4249,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </button>
           </Row>
         )}
-        {/* 代下全文（2026-11-08）：一行一件事，数字失焦即存，进行中与记录收起（设置页规范 §13 / design-system 设置页细节口径） */}
-        <Row
-          label="代下全文"
-          hint="待获取的文献，Mesa 先找免费版"
-          labelTitle="Mesa 只找合法的开放获取版本，找到就存进 papers/；找不到的在待获取清单里点「官网」自己下（2026-11-09 起不再经学校订阅或浏览器扩展在后台自动下：出版商会拦）。AI 只能交项目文献清单里有的文献。"
-        >
-          {paperFetch.data ? <span className="text-sm text-l3">开着</span> : null}
-        </Row>
         <Row
           label="浏览器扩展"
           hint="可选：文献页上一键「存到 Mesa」"
@@ -4288,9 +4290,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             ) : undefined
           }
         >
-          {paperFetch.data?.extensionAlive ? (
+          {bridgeStatus?.extensionAlive ? (
             <span className="text-sm text-done">已连接</span>
-          ) : paperFetch.data?.extensionEverSeen && !bridgeResult ? (
+          ) : bridgeStatus?.extensionEverSeen && !bridgeResult ? (
             <>
               <span className="text-sm text-l3" title="扩展装过，这几分钟没来打招呼：浏览器开着它就会连上">没连上，浏览器开着吗</span>
               <button type="button" className={rowActionClass} onClick={() => void installBridge()}>
@@ -4305,26 +4307,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               </button>
             </>
           )}
-        </Row>
-        {paperFetchOpen.length > 0 && (
-          <Row
-            label="进行中"
-            hint={summarizeJobs(paperFetchOpen)}
-            extra={paperFetchJobsShown ? <JobList jobs={paperFetchOpen} onChanged={() => void paperFetch.reload()} /> : undefined}
-          >
-            <button type="button" className={rowActionClass} onClick={() => setPaperFetchJobsShown((v) => !v)}>
-              {paperFetchJobsShown ? "收起" : "查看"}
-            </button>
-          </Row>
-        )}
-        <Row
-          label="下载记录"
-          hint="每次下载的时间、方式和结果"
-          extra={paperFetchLogShown ? <FetchLog /> : undefined}
-        >
-          <button type="button" className={rowActionClass} onClick={() => setPaperFetchLogShown((v) => !v)}>
-            {paperFetchLogShown ? "收起" : "查看"}
-          </button>
         </Row>
       </Section>
 

@@ -8,7 +8,7 @@
 //!   Windows 上它的沙箱不可用 → 退回全权限并如实写明。
 //! - 其余各家：没有可用的限制手段 → 照旧全权限，写明「这家做不到」。
 //!
-//! 真正要紧的门（学校会话、密钥）不靠这里：凭证只在 Mesa 手里，AI 经 `mesa_helper` 出门（paper_fetch.rs）。
+//! 真正要紧的门（学校会话、密钥）不靠这里：凭证只在 Mesa 手里，不进 Agent 环境。
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -80,18 +80,6 @@ pub struct GrantPlan {
     pub summary: String,
     /// 系统层是否真的限住了写与联网
     pub enforced: bool,
-}
-
-/// Mesa 自己的工具要写的目录（代下队列）：放进各家沙箱的可写名单，不然 AI 交不了代下
-pub fn mesa_tool_write_dirs() -> Vec<String> {
-    crate::storage::config_root()
-        .map(|d| {
-            let dir = d.join("paper-fetch");
-            // 沙箱放行的目录得先存在（有的 CLI 对不存在的可写根直接报错）
-            let _ = std::fs::create_dir_all(&dir);
-            vec![dir.to_string_lossy().into_owned()]
-        })
-        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,14 +240,14 @@ mod tests {
     use super::*;
 
     fn dirs() -> Vec<String> {
-        vec!["/cfg/paper-fetch".to_string()]
+        vec!["/cfg/mesa-tool".to_string()]
     }
 
     #[test]
     fn codex_network_follows_grant_and_tool_dir_is_writable() {
         let p = plan_for("codex", &Grant { network: Network::MesaOnly, budget_usd: None }, &dirs(), false);
         assert!(p.args.contains(&"sandbox_workspace_write.network_access=false".to_string()));
-        assert!(p.args.iter().any(|a| a.contains("writable_roots=[\"/cfg/paper-fetch\"]")));
+        assert!(p.args.iter().any(|a| a.contains("writable_roots=[\"/cfg/mesa-tool\"]")));
         assert!(p.enforced);
         let p = plan_for("codex", &Grant::default(), &dirs(), false);
         assert!(p.args.contains(&"sandbox_workspace_write.network_access=true".to_string()));
@@ -281,7 +269,7 @@ mod tests {
         assert_eq!(s["sandbox"]["enabled"], true);
         assert_eq!(s["sandbox"]["allowUnsandboxedCommands"], false);
         assert!(s["sandbox"]["network"]["allowedDomains"].as_array().unwrap().iter().any(|d| d == "api.crossref.org"));
-        assert_eq!(s["sandbox"]["filesystem"]["allowWrite"][0], "/cfg/paper-fetch");
+        assert_eq!(s["sandbox"]["filesystem"]["allowWrite"][0], "/cfg/mesa-tool");
         // 不联网：WebFetch / WebSearch 也拿掉，命令一个域名都不放
         let p = plan_for("claude-code", &Grant { network: Network::MesaOnly, budget_usd: None }, &dirs(), false);
         assert!(p.args.windows(3).any(|w| w == ["--disallowedTools", "WebFetch", "WebSearch"]));

@@ -101,9 +101,6 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
   components/AgentIcon.tsx   # 九家 Agent 产品图标（src/assets/agent-icons/，lobe-icons MIT）：内联 SVG（currentColor 跟主题）、渐变 id 按实例改前缀、认不出首字占位；连接页左栏与 Agent 节标题用
   components/OrderScheduleRow.tsx # 派活单「建成定时任务（先不启用）」（2026-11-08）：create_paused_schedule 一键建（Mesa 按单子生成技能、enabled=false），
                              #   就地「启用 / 停用 / 改一改 / 撤销」与技能全文；按「项目 + 派出时刻」记在 localStorage，定时任务页删掉了就回到可再建
-  components/PaperFetchPanel.tsx # 全文代下界面零件：usePaperFetchOverview、JobList（设置 → 网络「进行中」：等你放行 / 重试 / 取消）、FetchLog（下载记录）
-                             #   与 PaperFetchBar（待获取清单「让 Mesa 找免费版」+ 一行进度）；
-                             #   听 paper-fetch-changed，另 15 秒拉一次（扩展与 AI 在别的进程里写队列）
   components/PageFrame.tsx   # 页面公共件：PageFrame/PageHeader（旧管理页外壳）、按钮类、SegTabs（pill / boxed 分段控件）、Toggle、NoticeBar…；
                              # 2026-10-29 起加管理页借鉴 Claude 设置页的件：PaneSearch（细边搜索）、PaneSplit（左栏 + 内容，内容区窄于 48rem 上下排）、
                              # PaneNav（可拖宽二级栏，宽度按 storageKey 记 localStorage；inline = PaneSplit 里的吸顶左列，narrow 定窄了整宽放上面还是藏起）、PaneNavGroup/Item
@@ -151,8 +148,6 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/shortcut-nudges.tsx # 用鼠标做了本有快捷键的事时提醒快捷键：关对话到第 2 段 → ⌘W / Ctrl+Shift+W（侧栏 × / ⋯ 与对话头 ⋯ 共用一份计数，确认框开着不出）；对话头 >_ 聊天 ↔ 终端点到第 3 下 → 切换快捷键（tests/shortcut-nudges-ui.test.ts）
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：Modal + body portal 管焦点，combobox/listbox 管结果选择；打开由宿主回调，状态与关键词筛选在 rail-search.ts
   order-schedule.ts          # 派活单「定时」一栏 → 定时任务周期（parseOrderCadence：每周X / 每天 / 工作日 / 每 N 小时 + 时刻，认不出回落每周一 9:00 标 guessed）+ cadenceLabel（tests/order-schedule.test.ts）
-  paper-fetch.ts             # 全文代下前端纯逻辑（后端 paper_fetch.rs）：DTO 类型、状态 / 渠道 / 日志结果文案、normalizeDoi、
-                             #   fetchableItems（待获取清单里没存且带 DOI 的）、summarizeJobs 一行进度、rowJobLabel（tests/paper-fetch.test.ts）
   project-add.ts             # 「新项目」三条路单一出处（2026-10-27）：openNewProject / openAddExistingFolder / openDemoProject（切项目页 + 一次性请求）与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
   rail-search.ts             # 搜索弹层纯逻辑（打开请求走 store 的 railSearchReq，不在这里）：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
@@ -1702,11 +1697,6 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   plan_for 按家给权限参数与人话摘要（Claude sandbox 段 + Bash 整体放行 + WebFetch 按域名 + --max-budget-usd；
                              #   Codex workspace-write + 联网开关 + writable_roots；其余写明做不到）、merge_claude_settings 并进 --settings 覆盖文件、
                              #   grant_preview 命令；调用方 ai::run_agent_task_granted（定时任务），预算旁路 ai::BudgetWatch
-  paper_fetch.rs             # 全文代下队列（2026-11-08，design-autonomy-roadmap.md §6；2026-11-09 收窄为只找开放获取）：AI 经 `mesa_helper paper fetch|status`
-                             #   （MESA_PAPER_TOOL，与 MESA_PEEK_TOOL 同一 helper，按 MESA_RUN_ID 找项目）或人在待获取清单整批交；
-                             #   队列 <config>/paper-fetch/queue.json 跨进程持文件锁读改写，后台线程单线程推进：只找开放获取，找不到的记 manual 交人点「官网」；
-                             #   AI 只能交 project_dois 里的 DOI，清单外 needs_approval（保存进项目后 release_listed 自动放行）；出门日志 log.jsonl 0600 带 runId
-                             #   → research_record RunRecord.fetched。扩展心跳 mesa-poll-jobs 只记 extension_seen_at，不发活
   inst_access.rs             # 机构访问通道（2026-09-16）：人登录一次、系统复用会话——登录窗（Tauri WebviewWindow
                              #   label=inst-login）Cookie 落 0600 inst-session.json（值绝不出站，状态 DTO 只有
                              #   域名/条数/时间）；EZproxy/OpenAthens 前缀 ?url= 改写（settings institutional_prefix，
@@ -1771,7 +1761,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   2026-11-03 起另有 `peek agents|runs|changes` 看一眼模式：调 ccode_lib::helper_peek，只读 app.db，见 peek.rs；
                              #   2026-11-05 起另有 `svg-render` 科研做图模式：调 ccode_lib::helper_svg_render，图纸 SVG 转 PNG / PDF，不联网不读密钥，见 svg_render.rs）
                              #   + browser_bridge.rs（装 NativeMessagingHosts
-                             #   清单）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
+                             #   清单；扩展心跳 mesa-poll-jobs 经 helper 记进 <config>/browser-bridge-seen，browser_bridge_status 读出「已连接」）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
   ai.rs                      # 2026-11-04：ai_prompt_impl_full（项目助手：effort 只压已设的思考档 lower_effort、on_line 逐行回调；Claude 走 claude_stream_args 的 stream-json）、feed_lines 切行；
                              # 2026-11-02：run_agent_task 跑的期间登记锁定的会话（headless_session_of，跑完即撤），卡住检测据此看会话文件有没有在长；
@@ -1841,7 +1831,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # journal_metrics_status（含 downloadedAt：两份 CSV 取较新 mtime）+ check_journal_metrics_update
                              # （GitHub commits API 按数据目录查最近 commit，与本地 mtime 比对出 hasUpdate，前端静默失败）
   research_quality.rs        # 科研复现运行记录与验收决定：独立输出 ~/ccode/reproductions/；验收写 .ccode/research-acceptance.json，不替代 Git 合并
-  research_record.rs         # 2026-11-08：RunRecord.fetched（代下全文，paper_fetch 日志按 runId 出，ai-usage.md 按渠道计数）；last_step_run_cost（开工弹层「上次做这一步约 $X」，同步骤同连接已结束能计价的最近一次）。
+  research_record.rs         # 2026-11-08：last_step_run_cost（开工弹层「上次做这一步约 $X」，同步骤同连接已结束能计价的最近一次）。
                              # 2026-11-03：核验文件分三种来源 CheckSource（内置脚本固定文件 / pack- 任务包脚本：检查器记成文件名、通过降待判断 / 其余 Agent）；
                              # 核验记录与研究记录（2026-11-02）：research_checks_read 读 <工作目录>/.ccode/checks/ 顶层 *.jsonl（三档状态，
                              # 认不出的行计 skipped 不猜；runs/ 是存档不读）；record_run_closed 在 Run 关闭后（close_run_with_result /

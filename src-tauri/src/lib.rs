@@ -87,14 +87,9 @@ pub fn helper_peek(args: &[String]) -> i32 {
     peek::helper_peek_cli(args)
 }
 
-/// helper 代下全文（`mesa_helper paper fetch|status|pick`）：Agent 经 MESA_PAPER_TOOL 调用，交给 Mesa 的代下队列，返回退出码
-pub fn helper_paper(args: &[String]) -> i32 {
-    paper_fetch::helper_paper_cli(args)
-}
-
-/// 浏览器扩展定时打招呼：只记「来过」（设置页「已连接」），2026-11-09 起不再发代下任务
+/// 浏览器扩展定时打招呼：只记「来过」（设置页「已连接」）
 pub fn helper_extension_ping() {
-    paper_fetch::helper_extension_ping()
+    browser_bridge::note_extension_seen()
 }
 
 /// helper 科研做图（`mesa_helper svg-render --in 图纸.svg --out 图.png|图.pdf`）：Agent 经 MESA_FIGURE_TOOL 调用，返回退出码
@@ -109,7 +104,6 @@ pub fn helper_codex_token(args: &[String]) -> i32 {
 mod codex_continuity;
 mod image_gen;
 mod peek;
-mod paper_fetch;
 mod grant;
 mod svg_render;
 mod project_mail;
@@ -299,8 +293,6 @@ pub fn run() {
             // 扩展「存到 Mesa」的回执监听：helper 是独立进程不发 Tauri 事件，
             // 这里把收货回执变成 inst-papers-changed 广播给清单/雷达
             browser_bridge::spawn_receipts_watch(app.handle().clone());
-            // 全文代下队列：单线程逐篇推进，按出版商限速（paper_fetch.rs）
-            paper_fetch::start_worker(app.handle().clone());
             // 飞书机器人：开着就在后台连上长连接（读配置也在后台线程）
             feishu::start_at_setup(app.handle().clone());
             // 桌宠：设置里开着就建小窗（desk_pet.rs）
@@ -1170,13 +1162,7 @@ pub fn run() {
             lit_watch::download_paper_pdf,
             lit_watch::attach_paper_pdf,
             lit_watch::fetch_paper_fulltext,
-            paper_fetch::paper_fetch_overview,
-            paper_fetch::paper_fetch_enqueue,
-            paper_fetch::paper_fetch_approve,
-            paper_fetch::paper_fetch_retry,
-            paper_fetch::paper_fetch_retry_all,
-            paper_fetch::paper_fetch_cancel,
-            paper_fetch::paper_fetch_log,
+            browser_bridge::browser_bridge_status,
             lit_watch::match_dropped_paper,
             lit_watch::to_fetch_progress,
             inst_access::inst_session_status,

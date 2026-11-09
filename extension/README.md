@@ -40,11 +40,8 @@ fetch PDF 字节，经 native messaging 送给 Mesa 的 helper 落进当前项�
   Mesa 对目标项目点一次「浏览器打开」，防止隔几天点的文件静默落进旧项目；
   每次收货在 `ccode/helper-receipts.jsonl`（0600）追加一条回执供报障归因。
 
-## 代下队列（0.1.3 起）
+## 心跳（0.1.7 起）
 
-Mesa 的「代下全文」（`src-tauri/src/paper_fetch.rs`）把要用真浏览器才取得到的文献排在队里。扩展每分钟经
-native messaging 问一次（`mesa-poll-jobs`），有就在**后台标签**打开那篇的落地页，页内脚本按上面同一套取链规则取 PDF，
-带任务号交回（`mesa-save-pdf` + `jobId`，入那件任务自己的项目，不看 helper-context）；取不到时报回原因
-（`mesa-job-report`：captcha / login / blocked / no_pdf 附同源候选链接 / error），标签随即关掉。
-一次只做一篇；间隔、每天上限、熔断都由 Mesa 定，扩展不自己重试，**不解人机验证、不填任何表**。
-升级后在 `chrome://extensions` 点一次「重新加载」，新加的 alarms 权限才生效。
+扩展每分钟经 native messaging 打一次招呼（`mesa-poll-jobs`，消息名沿用 0.1.3–0.1.6 的代下轮询），helper 只把时间
+记进配置目录的 `browser-bridge-seen`，设置 → 网络「浏览器扩展」据此显示「已连接」。2026-11-09 起 Mesa 不再让扩展
+在后台标签替人下文献（出版商按指纹 / IP 拦，HER 实测走不通），扩展只做文献页「存到 Mesa」与收别处的下载。

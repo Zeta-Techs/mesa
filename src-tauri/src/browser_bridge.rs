@@ -15,10 +15,10 @@ pub(crate) const HOST_NAME: &str = "dev.ccode.mesa";
 const EXT_ID: &str = "dmjplopfhbdamkihimfllomdmkfainnn";
 
 fn helper_exe_path() -> Result<std::path::PathBuf, String> {
-    // 先走统一查找口（AGENTS.md：找随包 helper 一律走 find_bundled_helper）并试跑 `paper --probe`：
-    // 开发态 target/debug/mesa_helper 会被 binaries/ 里上次打包的旧 helper 覆盖，旧的不认扩展的代下轮询，
-    // 装上后扩展永远「未连接」（2026-11-09 HER 实测：11-07 的 helper 写进了浏览器桥清单）
-    if let Some(p) = crate::image_gen::find_bundled_helper("paper") {
+    // 先走统一查找口（AGENTS.md：找随包 helper 一律走 find_bundled_helper）并试跑 `browser-bridge --probe`：
+    // 开发态 target/debug/mesa_helper 会被 binaries/ 里上次打包的旧 helper 覆盖，旧的不会把扩展心跳记进
+    // 心跳文件，装上后扩展永远「未连接」（2026-11-09 HER 实测：11-07 的 helper 写进了浏览器桥清单）
+    if let Some(p) = crate::image_gen::find_bundled_helper("browser-bridge") {
         return Ok(p);
     }
     let exe = std::env::current_exe().map_err(|e| format!("定位当前程序失败: {e}"))?;
@@ -307,6 +307,51 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String>
     Ok(())
 }
 
+/// 扩展多久内来打过招呼算「已连接」（扩展每分钟一次）
+const EXTENSION_ALIVE_SECS: i64 = 5 * 60;
+
+fn seen_path() -> Option<std::path::PathBuf> {
+    crate::storage::config_root().map(|d| d.join("browser-bridge-seen"))
+}
+
+/// helper 收到扩展的心跳（`mesa-poll-jobs`）时记一下时间：只写一个时间戳文件，不碰别的
+pub fn note_extension_seen() {
+    let Some(path) = seen_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, chrono::Utc::now().timestamp().to_string());
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeStatusDto {
+    /// 几分钟内来过：「已连接」
+    pub extension_alive: bool,
+    /// 来过（装好了）：没连上时说「浏览器开着吗」，不再叫人重装
+    pub extension_ever_seen: bool,
+}
+
+fn bridge_status_at(seen: Option<i64>, now: i64) -> BridgeStatusDto {
+    BridgeStatusDto {
+        extension_alive: seen.is_some_and(|t| now - t < EXTENSION_ALIVE_SECS),
+        extension_ever_seen: seen.is_some(),
+    }
+}
+
+/// 设置 → 网络「浏览器扩展」一行的状态
+#[tauri::command]
+pub async fn browser_bridge_status() -> Result<BridgeStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let seen = seen_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| t.trim().parse::<i64>().ok());
+        bridge_status_at(seen, chrono::Utc::now().timestamp())
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// 安装浏览器桥：写 NativeMessagingHosts 清单（Chrome/Edge/Chromium）+ 把扩展
 /// 目录就位到配置目录。返回各浏览器的安装结果（人话），前端直接展示
 #[tauri::command]
@@ -370,6 +415,17 @@ pub fn install_browser_bridge() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn extension_status_from_last_ping() {
+        let st = super::bridge_status_at(None, 1000);
+        assert!(!st.extension_alive && !st.extension_ever_seen);
+        let st = super::bridge_status_at(Some(900), 1000);
+        assert!(st.extension_alive && st.extension_ever_seen);
+        let st = super::bridge_status_at(Some(1000 - super::EXTENSION_ALIVE_SECS - 1), 1000);
+        assert!(!st.extension_alive && st.extension_ever_seen);
+    }
+
     use super::*;
 
     #[test]

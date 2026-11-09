@@ -1245,7 +1245,7 @@ pub(crate) fn build_headless_command_granted(
     let headless = if write {
         let task_args = match grant {
             Some(g) => {
-                let gp = crate::grant::plan_for(&profile.agent, g, &crate::grant::mesa_tool_write_dirs(), cfg!(windows));
+                let gp = crate::grant::plan_for(&profile.agent, g, &[], cfg!(windows));
                 let args = headless_task_args_granted(&profile.agent, prompt, &gp);
                 grant_plan = Some(gp);
                 args
@@ -1340,7 +1340,6 @@ pub(crate) fn run_agent_task_granted(
     if project_root.is_some() {
         if let Some(tool) = crate::image_gen::helper_exe() {
             cmd.env(crate::peek::TOOL_ENV, &tool);
-            cmd.env(crate::paper_fetch::TOOL_ENV, &tool);
             cmd.env(crate::peek::RUN_ENV, &run.id);
         }
     }
