@@ -1100,6 +1100,11 @@ fn describe(job: &Job) -> String {
 
 pub fn helper_paper_cli(args: &[String]) -> i32 {
     let sub = args.first().map(String::as_str).unwrap_or("");
+    // 主程序找 helper 时试跑：认得 paper（与扩展的代下轮询 mesa-poll-jobs 同一批加入）才算新版
+    if sub == "--probe" {
+        println!("ok");
+        return 0;
+    }
     let (root, run_id) = match resolve_project() {
         Ok(v) => v,
         Err(e) => {

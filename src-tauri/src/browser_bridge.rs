@@ -15,6 +15,12 @@ pub(crate) const HOST_NAME: &str = "dev.ccode.mesa";
 const EXT_ID: &str = "dmjplopfhbdamkihimfllomdmkfainnn";
 
 fn helper_exe_path() -> Result<std::path::PathBuf, String> {
+    // 先走统一查找口（AGENTS.md：找随包 helper 一律走 find_bundled_helper）并试跑 `paper --probe`：
+    // 开发态 target/debug/mesa_helper 会被 binaries/ 里上次打包的旧 helper 覆盖，旧的不认扩展的代下轮询，
+    // 装上后扩展永远「未连接」（2026-11-09 HER 实测：11-07 的 helper 写进了浏览器桥清单）
+    if let Some(p) = crate::image_gen::find_bundled_helper("paper") {
+        return Ok(p);
+    }
     let exe = std::env::current_exe().map_err(|e| format!("定位当前程序失败: {e}"))?;
     let dir = exe.parent().ok_or_else(|| "定位程序目录失败".to_string())?;
     // 无后缀名在前：dev 下 target/debug/mesa_helper 是真实构建（tauri dev 会把
