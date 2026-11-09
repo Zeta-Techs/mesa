@@ -177,10 +177,15 @@ pub fn stage_extension_files() -> Result<std::path::PathBuf, String> {
         candidates.push(cwd.join("../../extension"));
         candidates.push(cwd.join("extension-src"));
     }
+    // 取版本最高的那份（同版本按候选顺序）：dev 下 exe 旁的 extension-src 是构建时只拷一次的旧副本，
+    // 排在前面会把旧版装进配置目录（2026-11-09 HER 实测：仓库 0.1.3 有代下轮询，装进去的却是 0.1.2，扩展永远连不上）
+    let mut best: Option<Vec<u64>> = None;
     for c in candidates {
-        if c.join("manifest.json").is_file() {
+        let Ok(text) = std::fs::read_to_string(c.join("manifest.json")) else { continue };
+        let version = manifest_version(&text);
+        if best.as_ref().map(|b| version > *b).unwrap_or(true) {
+            best = Some(version);
             source = Some(c);
-            break;
         }
     }
     let Some(source) = source else {
@@ -188,6 +193,15 @@ pub fn stage_extension_files() -> Result<std::path::PathBuf, String> {
     };
     copy_tree(&source, &target)?;
     Ok(target)
+}
+
+/// manifest.json 的 "version"（"0.1.3" → [0,1,3]），认不出给空（排最后）
+fn manifest_version(text: &str) -> Vec<u64> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(str::to_string))
+        .map(|v| v.split('.').map(|p| p.trim().parse().unwrap_or(0)).collect())
+        .unwrap_or_default()
 }
 
 /// helper 收货回执监听（常驻轻量线程，2026-09-17 用户实测三连修）：扩展「存到
@@ -351,6 +365,13 @@ pub fn install_browser_bridge() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_version_orders_numerically() {
+        assert!(manifest_version(r#"{"version":"0.1.10"}"#) > manifest_version(r#"{"version":"0.1.3"}"#));
+        assert!(manifest_version(r#"{"version":"0.1.3"}"#) > manifest_version(r#"{"version":"0.1.2"}"#));
+        assert!(manifest_version("坏的") < manifest_version(r#"{"version":"0.0.1"}"#));
+    }
 
     #[test]
     fn host_manifest_locks_extension_id() {
