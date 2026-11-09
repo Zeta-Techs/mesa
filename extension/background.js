@@ -29,11 +29,24 @@ function badge(tabId, text, color) {
 // 后台代取的同源门禁（纯函数，tests/extension.test.ts 直测）：只允许代取与
 // 发起页同源的地址——页面可伪造 citation_pdf_url 指向内网/第三方需登录接口，
 // 跨源代取等于用浏览器凭据替页面发起它自己（受 CORS）发不了的请求
+// 同一个站点（注册域相同，https）才代取：Wiley 学会刊的落地页在 chemistry-europe.onlinelibrary.wiley.com，
+// PDF 在 onlinelibrary.wiley.com，严格同源会被挡（2026-11-09 HER 实测「跨源地址不代取」）
+function siteOf(host) {
+  var parts = host.toLowerCase().split('.');
+  var n = parts.length;
+  if (n <= 2) return host.toLowerCase();
+  // co.uk / ac.cn / com.cn 这类二级后缀多取一段
+  var second = parts[n - 2];
+  var take = parts[n - 1].length === 2 && /^(co|ac|com|edu|org|gov|net)$/.test(second) ? 3 : 2;
+  return parts.slice(n - take).join('.');
+}
 function allowedFetchTarget(targetUrl, senderUrl) {
   try {
     var target = new URL(targetUrl);
     var page = senderUrl ? new URL(senderUrl) : null;
-    return !!page && target.origin === page.origin;
+    if (!page) return false;
+    if (target.origin === page.origin) return true;
+    return target.protocol === 'https:' && page.protocol === 'https:' && siteOf(target.hostname) === siteOf(page.hostname);
   } catch (_) {
     return false;
   }

@@ -1407,6 +1407,12 @@ pub async fn paper_fetch_resume() -> Result<(), String> {
             s.state.paused = None;
             s.state.fails_in_row = 0;
             s.state.session_expired = false;
+            // 暂停时写在各篇上的「代下已暂停：…」一并清掉，不然点了继续清单里还挂着（2026-11-09 HER 实测）
+            for j in s.jobs.iter_mut() {
+                if j.waiting.as_deref().is_some_and(|w| w.starts_with("代下已暂停")) {
+                    j.waiting = None;
+                }
+            }
             ((), true)
         })
     })
