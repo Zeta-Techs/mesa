@@ -2264,7 +2264,7 @@ export const TerminalView = memo(function TerminalView({
   // 按了 Esc（聊天层停止按钮 / 终端里）之后收旁路的回合：Claude 还没出字就被打断时把这句退回输入框，会话文件里只留这句提问——
   // 没有打断标记、没有 turn_duration，也不发 Stop，旁路回合一直「在回复」，聊天层停下后过一会又被它点亮成「思考中」
   // （2026-10-26 用户 Windows 实测；e2e_channel E2E_INTERRUPT_MS 核对过 Esc 1.5 秒后回合仍是 running）。
-  // 屏上连着两次看不到「esc to interrupt」= 真停了，才收；还在跑（Esc 被菜单之类吃掉）就不动，最多看 4.5 秒
+  // 屏上连着两次看不到「esc to interrupt」和转圈行（claudeTurnActiveOnScreen）= 真停了，才收；还在跑（Esc 被菜单之类吃掉）就不动，最多看 4.5 秒
   const escSettleTimerRef = useRef<number | null>(null);
   function settleAfterEsc() {
     if (launchAgentRef.current !== "claude-code") return;

@@ -240,10 +240,14 @@ export function liveReplySupported(agentId: string): boolean {
 
 /**
  * Claude Code 这一轮还在跑：输入框下面的提示行带「esc to interrupt」（2.1.310 抓屏：「⏸ manual mode on · esc to interrupt」，
- * 按 Esc 打断后只剩「⏸ manual mode on」）。打断后看屏确认回合真停了再收旁路的回合（TerminalPage settleAfterEsc）
+ * 按 Esc 打断后只剩「⏸ manual mode on」）。打断后看屏确认回合真停了再收旁路的回合（TerminalPage settleAfterEsc）。
+ * 2.1.311 起提示行不再写「esc to interrupt」（只剩「⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent」），
+ * 另认转圈行「✶ Sprouting… (50s · deep in thought …)」：做完收成「✻ Cooked for 57s · done」，不带「…(」。
+ * 原先只认提示行，「立即发送」（Esc 打断、排着的那句马上交）之后新开的一轮被当成已打断收掉，
+ * 聊天层写「这一轮已中断」、终端还在想（2026-11-09 用户截图）
  */
 export function claudeTurnActiveOnScreen(lines: readonly string[]): boolean {
-  return lines.some((l) => /\besc to interrupt\b/i.test(l));
+  return lines.some((l) => /\besc to interrupt\b/i.test(l) || /^\s*[^\s\w]\s+[^\s…]+…\s*\(/u.test(l));
 }
 
 /**

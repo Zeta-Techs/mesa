@@ -1047,6 +1047,20 @@ test("Claude 这一轮还在跑：看输入框下面的「esc to interrupt」", 
   ];
   assert.equal(claudeTurnActiveOnScreen(running), true);
   assert.equal(claudeTurnActiveOnScreen(interrupted), false);
+  // 2.1.311 提示行不再写「esc to interrupt」：认转圈行（2026-11-09 用户截图）；做完那行不算
+  const running311 = [
+    "❯ 之后的问题都按照你推荐的来",
+    "",
+    "✶ Sprouting… (50s · deep in thought with high effort)",
+    "  ⎿  Tip: Did you know you can drag and drop image files into your terminal?",
+    RULE,
+    "❯",
+    RULE,
+    "  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent",
+  ];
+  assert.equal(claudeTurnActiveOnScreen(running311), true);
+  const done311 = ["✻ Cooked for 57s · done 2:27 PM", "", RULE, "❯", RULE, "  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent"];
+  assert.equal(claudeTurnActiveOnScreen(done311), false);
 });
 
 // Kimi 2.3.2 ThinkingComponent：思考中画「⠋ thinking…」，下面缩进两格只留思考原文的最后两行；想完收成斜体浅字的「● 第一行 / 续行 /
