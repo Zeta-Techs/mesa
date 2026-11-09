@@ -145,7 +145,7 @@ export function summarizeJobs(jobs: PaperFetchJob[]): string {
   if (browser) parts.push(`在浏览器里下 ${browser}`);
   if (done) parts.push(`已下载 ${done}`);
   if (failed) parts.push(`没下到 ${failed}`);
-  if (approval) parts.push(`等放行 ${approval}`);
+  if (approval) parts.push(`等你点开始 ${approval}`);
   return parts.join(" · ");
 }
 
@@ -158,7 +158,7 @@ export function rowJobLabel(job: PaperFetchJob | undefined): { text: string; war
     case "browser":
       return job.waiting === WAIT_EXTENSION ? { text: "Mesa 等扩展连上", warn: true } : { text: "Mesa 在浏览器里下", warn: false };
     case "needs_approval":
-      return { text: "Mesa 等放行", warn: true };
+      return { text: "等你点开始", warn: true };
     case "needs_pick":
     case "failed":
       return { text: "Mesa 没下到", warn: true };

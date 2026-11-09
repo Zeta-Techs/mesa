@@ -46,7 +46,7 @@ test("summarizeJobs：按状态汇总一行，没有活给空串", () => {
   assert.equal(summarizeJobs([]), "");
   assert.equal(
     summarizeJobs([job("queued"), job("browser"), job("done"), job("failed"), job("needs_approval")]),
-    "找免费版 1 · 在浏览器里下 1 · 已下载 1 · 没下到 1 · 等放行 1",
+    "找免费版 1 · 在浏览器里下 1 · 已下载 1 · 没下到 1 · 等你点开始 1",
   );
   assert.equal(statusLabel("needs_pick"), "等 AI 选链接");
 });

@@ -342,8 +342,9 @@ export function PaperFetchBar({
       {note && <span>{note}</span>}
     </div>
     {waitingRelease > 0 && (
+      // 这一节是让人在这里下文献的：先说点什么，「保存后也会自动开始」只作补充（2026-11-09 用户）
       <p className="mt-0.5 text-micro text-l3">
-        有 {waitingRelease} 篇是 AI 交给 Mesa 的，清单还没保存进项目，先等着：这一步保存进项目后自动开始；现在就要下，点「让 Mesa 代下这批」。
+        AI 已把 {waitingRelease} 篇交给 Mesa，点「让 Mesa 代下这批」就开始下；不点的话，这一步保存进项目后也会自动开始。
       </p>
     )}
     {noExtension && (
