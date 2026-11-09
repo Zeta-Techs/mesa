@@ -125,7 +125,7 @@
     tauri-build 拿 `binaries/` 里的 sidecar 覆盖 `target/debug/mesa_helper`——没打过包是 0 字节占位，打过包是那次的旧 release
     （开发版会一直用着旧 helper）；macOS / Linux 上 deps/ 里的真身名字带哈希（`mesa_helper-<哈希>`）。所以开发态（debug 构建）
     先按修改时间找 deps/ 里 cargo 建的那份，`cargo test` 的同名测试壳试跑 `--probe` 认不出来自动跳过。
-    浏览器桥（`browser_bridge::helper_exe_path`，写进 NativeMessagingHosts 清单）同样先走它、试跑 `browser-bridge --probe`（2026-11-09：
+    ~~浏览器桥（`browser_bridge::helper_exe_path`，写进 NativeMessagingHosts 清单）同样先走它、试跑 `browser-bridge --probe`~~（2026-11-09 浏览器扩展与桥整个撤掉；当日记录：
     旧口径直接取 target/debug/mesa_helper，装进浏览器的是 11-07 打包的旧 helper，扩展永远「未连接」；同日代下队列撤掉后探针从 `paper` 改为 `browser-bridge`，认的是会把扩展心跳记进 `browser-bridge-seen` 的新版）；
     开发态改了 helper 或扩展后：`cargo build --bin mesa_helper`，再到设置点一次「安装…」、浏览器扩展卡上点一次重新加载。
     写进全局配置的三家（Gemini / Kimi / Grok）用拷到 `hooks-state/ccode-hook.exe` 的那份、程序路径**不加引号、用正斜杠**——

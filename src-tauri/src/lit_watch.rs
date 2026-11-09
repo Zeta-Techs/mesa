@@ -1312,51 +1312,6 @@ pub(crate) fn is_usable_paper_title(title: &str) -> bool {
     true
 }
 
-fn resolved_doi(doi: &str, url: &str) -> String {
-    let d = doi.trim();
-    if !d.is_empty() {
-        if let Some(x) = crate::inst_access::doi_from_url(d) {
-            return x;
-        }
-    }
-    if !url.trim().is_empty() {
-        if let Some(x) = crate::inst_access::doi_from_url(url) {
-            return x;
-        }
-    }
-    String::new()
-}
-
-/// 扩展落盘文件名挑选：页上正经标题 → Mesa「浏览器打开」记下的标题（同篇或
-/// 页上匿名）→ 页/语境 DOI。空串由 sanitize 回落 paper.pdf。
-pub(crate) fn pick_paper_name_hint(
-    page_title: &str,
-    page_doi: &str,
-    page_url: &str,
-    ctx_title: &str,
-    ctx_doi: &str,
-) -> String {
-    let page_doi_norm = resolved_doi(page_doi, page_url);
-    let ctx_doi_norm = resolved_doi(ctx_doi, "");
-    if is_usable_paper_title(page_title) {
-        return page_title.trim().to_string();
-    }
-    let same_paper = !page_doi_norm.is_empty()
-        && !ctx_doi_norm.is_empty()
-        && page_doi_norm.eq_ignore_ascii_case(&ctx_doi_norm);
-    let page_anonymous = page_doi_norm.is_empty();
-    if is_usable_paper_title(ctx_title) && (same_paper || page_anonymous) {
-        return ctx_title.trim().to_string();
-    }
-    if !page_doi_norm.is_empty() {
-        return page_doi_norm.replace(['/', ':'], "_");
-    }
-    if !ctx_doi_norm.is_empty() && page_anonymous {
-        return ctx_doi_norm.replace(['/', ':'], "_");
-    }
-    String::new()
-}
-
 /// 文件名 sanitize：去路径分隔符/控制字符/Windows 非法字符（三平台口径），
 /// 去首尾空白与点，主干限长，非 .pdf 结尾补 .pdf；清完为空回落 "paper.pdf"
 fn sanitize_pdf_name(hint: &str) -> String {
@@ -1672,30 +1627,6 @@ fn register_pdf(
         name: display,
         dedup: false,
     })
-}
-
-/// 扩展落盘后主程序回执监听调用：把打开那篇的标题/DOI 写到资源，通用文件名
-/// （paper-5.pdf）改成标题。返回最终文件名供清单立刻显示。
-pub(crate) fn stamp_paper_identity(
-    root: &str,
-    saved: &str,
-    title: &str,
-    doi: &str,
-) -> Option<String> {
-    if root.trim().is_empty() || saved.trim().is_empty() {
-        return None;
-    }
-    let root = Path::new(root);
-    let name = saved.trim();
-    let fname = if name.to_ascii_lowercase().ends_with(".pdf") {
-        name.to_string()
-    } else {
-        format!("{name}.pdf")
-    };
-    if !root.join("papers").join(&fname).is_file() {
-        return None;
-    }
-    Some(apply_title_filename(root, &fname, title, doi))
 }
 
 /// 勘误/更正单页：Wiley 等把 CORRECTION 打在首页正文之前。
@@ -2330,35 +2261,6 @@ pub(crate) fn save_paper_bytes(
     bytes: &[u8],
 ) -> Result<DownloadedPaperDto, String> {
     save_and_register_pdf(root, file_name_hint, bytes)
-}
-
-/// 扩展入库：文件名 hint 可空/通用，identity/doi 是清单认「已存」的依据
-pub(crate) fn save_paper_bytes_ident(
-    root: &Path,
-    file_name_hint: &str,
-    identity: &str,
-    doi: &str,
-    bytes: &[u8],
-) -> Result<DownloadedPaperDto, String> {
-    let hint = if is_usable_paper_title(identity) {
-        identity
-    } else {
-        file_name_hint
-    };
-    let papers = papers_dir(root)?;
-    if let Some(dup) = find_duplicate_pdf(&papers, bytes) {
-        let path = rename_generic_duplicate(root, &papers, &dup, hint)?.unwrap_or(dup);
-        let mut existing = register_pdf(root, &path, identity, doi)?;
-        existing.dedup = true;
-        return Ok(existing);
-    }
-    if let Some(path) = replace_correction_with_article(&papers, bytes) {
-        return register_pdf(root, &path, identity, doi);
-    }
-    let name = sanitize_pdf_name(hint);
-    let target = unique_pdf_path(&papers, &name);
-    fs::write(&target, bytes).map_err(|e| format!("写入 PDF 失败: {e}"))?;
-    register_pdf(root, &target, identity, doi)
 }
 
 /// 拖进待获取清单的 PDF：文件名、DOI、PDF 内标题都试。多篇命中时不猜。
@@ -3155,25 +3057,6 @@ mod tests {
             "{:?}",
             cfg.resources
         );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn stamp_paper_identity_renames_generic_file() {
-        let dir = tmpdir("stamp-rename");
-        let papers = dir.join("papers");
-        fs::create_dir_all(&papers).unwrap();
-        fs::write(papers.join("paper-5.pdf"), b"%PDF-1.4 stub").unwrap();
-        let got = super::stamp_paper_identity(
-            dir.to_str().unwrap(),
-            "paper-5",
-            "Development of a chloride-free dual-salt electrolyte",
-            "10.1016/j.jallcom.2026.190140",
-        )
-        .unwrap();
-        assert!(got.contains("chloride-free"), "{got}");
-        assert!(!papers.join("paper-5.pdf").exists());
-        assert!(papers.join(&got).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -4128,54 +4011,6 @@ lone keyword
         assert!(looks_like_pdf(&v));
         assert!(!looks_like_pdf(b"<html>not a pdf</html>"));
         assert!(!looks_like_pdf(b""));
-    }
-
-    #[test]
-    fn pick_paper_name_hint_skips_generic_page_title() {
-        // PDF 阅读器常见空/站名/paper-5：用 Mesa 打开时记下的标题，清单才能对上已存
-        assert!(!is_usable_paper_title(""));
-        assert!(!is_usable_paper_title("paper"));
-        assert!(!is_usable_paper_title("paper-5"));
-        assert!(!is_usable_paper_title("paper-5.pdf"));
-        assert!(!is_usable_paper_title("ScienceDirect"));
-        assert!(!is_usable_paper_title(
-            "https://www.sciencedirect.com/science/article/pii/S1"
-        ));
-        assert!(is_usable_paper_title(
-            "Development of a chloride-free dual-salt electrolyte"
-        ));
-        assert_eq!(
-            pick_paper_name_hint(
-                "paper-5",
-                "",
-                "https://www.sciencedirect.com/science/article/pii/S092583882604209X/pdfft",
-                "Development of a chloride-free dual-salt electrolyte",
-                "10.1016/j.jallcom.2026.190140",
-            ),
-            "Development of a chloride-free dual-salt electrolyte"
-        );
-        // 页上有正经标题：不拿语境那篇顶替（用户可能另开了一篇）
-        assert_eq!(
-            pick_paper_name_hint(
-                "Another Real Article Title Here",
-                "10.1002/adma.202304268",
-                "",
-                "Development of a chloride-free dual-salt electrolyte",
-                "10.1016/j.jallcom.2026.190140",
-            ),
-            "Another Real Article Title Here"
-        );
-        // 页上没标题但 URL 带 DOI：用 DOI 当文件名（to_fetch_progress 认 DOI）
-        assert_eq!(
-            pick_paper_name_hint(
-                "ScienceDirect",
-                "",
-                "https://onlinelibrary.wiley.com/doi/pdf/10.1002/adma.202304268",
-                "",
-                "",
-            ),
-            "10.1002_adma.202304268"
-        );
     }
 
     #[test]

@@ -20,8 +20,6 @@ pub struct UninstallResultDto {
     pub trashed: Vec<String>,
     /// 本来就不存在，跳过
     pub missing: Vec<String>,
-    /// 浏览器桥清单已删
-    pub bridge_removed: Vec<String>,
     /// 某一步失败，其余继续
     pub errors: Vec<String>,
     /// Mesa 运行期间被自身占用、只能退出后再删的目录（Windows 的 WebView2 网页数据）。
@@ -83,56 +81,6 @@ fn webview_data_dirs() -> Vec<PathBuf> {
     out
 }
 
-fn bridge_manifests() -> Vec<PathBuf> {
-    crate::browser_bridge::native_host_dirs()
-        .into_iter()
-        .map(|(_browser, dir)| dir.join(format!("{}.json", crate::browser_bridge::HOST_NAME)))
-        .collect()
-}
-
-/// 注册表键是否存在：只看 `reg query` 退出码（0 在 / 1 不在）。不匹配 reg 的输出文本——
-/// 中文 Windows 上那是 GBK，按 UTF-8 解出来是乱码，「找不到」永远匹配不上，
-/// 曾把「键本来就没有」误报成「浏览器桥注册表未删除」。None = reg 本身跑不起来。
-fn reg_key_exists(key: &str) -> Option<bool> {
-    crate::process::background_command("reg")
-        .args(["query", key])
-        .output()
-        .ok()
-        .map(|out| out.status.success())
-}
-
-fn remove_windows_bridge_keys() -> Vec<String> {
-    if !cfg!(windows) {
-        return Vec::new();
-    }
-    let mut errors = Vec::new();
-    for (browser, _dir) in crate::browser_bridge::native_host_dirs() {
-        let Some(key) = crate::browser_bridge::windows_bridge_reg_key(browser) else {
-            continue;
-        };
-        match reg_key_exists(&key) {
-            Some(false) => continue, // 键本来就没有：不算失败
-            None => {
-                errors.push(format!("浏览器桥注册表未删除（{key}）：无法运行 reg"));
-                continue;
-            }
-            Some(true) => {}
-        }
-        let deleted = crate::process::background_command("reg")
-            .args(["delete", &key, "/f"])
-            .output();
-        // 以删后复查为准：退出码之外不读任何本地化输出
-        if reg_key_exists(&key) != Some(false) {
-            let detail = match deleted {
-                Err(e) => format!("：{e}"),
-                Ok(_) => String::new(),
-            };
-            errors.push(format!("浏览器桥注册表未删除（{key}）{detail}"));
-        }
-    }
-    errors
-}
-
 /// 某个数据根这次怎么处理（纯判定，便于测试）
 #[derive(Debug, PartialEq, Eq)]
 enum RootPlan {
@@ -166,20 +114,6 @@ fn trash_dir(path: &Path, result: &mut UninstallResultDto) {
         Err(e) => result
             .errors
             .push(format!("{} 没能移入回收站：{e}", path.display())),
-    }
-}
-
-fn remove_file(path: &Path, result: &mut UninstallResultDto) {
-    if !path.exists() {
-        return;
-    }
-    match std::fs::remove_file(path) {
-        Ok(()) => result
-            .bridge_removed
-            .push(path.to_string_lossy().into_owned()),
-        Err(e) => result
-            .errors
-            .push(format!("{} 没能删除：{e}", path.display())),
     }
 }
 
@@ -219,14 +153,9 @@ pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
         let mut result = UninstallResultDto {
             trashed: Vec::new(),
             missing: Vec::new(),
-            bridge_removed: Vec::new(),
             errors: Vec::new(),
             deferred: Vec::new(),
         };
-        for path in bridge_manifests() {
-            remove_file(&path, &mut result);
-        }
-        result.errors.extend(remove_windows_bridge_keys());
         // 数据目录移走之前先收回指向它们的东西，否则各家 CLI 里留下断掉的技能链接与 hook 命令
         result.errors.extend(crate::skills::unlink_distributed_for_uninstall());
         result.errors.extend(crate::hooks::retract_all_for_uninstall());
@@ -245,9 +174,8 @@ pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
             "info",
             "uninstall",
             &format!(
-                "卸载：回收站 {} 项，桥清单 {} 项，失败 {} 项，退出后待删 {} 项",
+                "卸载：回收站 {} 项，失败 {} 项，退出后待删 {} 项",
                 result.trashed.len(),
-                result.bridge_removed.len(),
                 result.errors.len(),
                 result.deferred.len()
             ),
@@ -284,18 +212,4 @@ mod tests {
         assert_eq!(plan_root(true, false, 0), RootPlan::Trash);
     }
 
-    #[test]
-    fn bridge_manifests_match_install_side() {
-        let expected: Vec<PathBuf> = crate::browser_bridge::native_host_dirs()
-            .into_iter()
-            .map(|(_browser, dir)| {
-                dir.join(format!("{}.json", crate::browser_bridge::HOST_NAME))
-            })
-            .collect();
-        assert_eq!(bridge_manifests(), expected);
-        assert!(
-            !expected.is_empty(),
-            "安装侧没有清单目录时，卸载侧也不该另写一份"
-        );
-    }
 }

@@ -1720,34 +1720,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [outboundNoProxy, setOutboundNoProxy] = useState("");
-  // 浏览器扩展（可选）：扩展每分钟经 helper 打一次招呼；网络分区开着时 15 秒读一次（browser_bridge.rs）
-  const [bridgeStatus, setBridgeStatus] = useState<{ extensionAlive: boolean; extensionEverSeen: boolean } | null>(null);
-  const [bridgeResult, setBridgeResult] = useState<{ dir: string | null; failed: string[] } | null>(null);
-  useEffect(() => {
-    if (!visible || activeSection !== "network") return;
-    let alive = true;
-    const read = () =>
-      void invoke<{ extensionAlive: boolean; extensionEverSeen: boolean }>("browser_bridge_status").then(
-        (st) => alive && setBridgeStatus(st),
-        () => {},
-      );
-    read();
-    const timer = window.setInterval(read, 15000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [visible, activeSection]);
-  async function installBridge() {
-    try {
-      const lines = await invoke<string[]>("install_browser_bridge");
-      const dirLine = lines.find((l) => l.startsWith("扩展目录已就绪："));
-      const dir = dirLine ? dirLine.slice("扩展目录已就绪：".length).split(" ——")[0].trim() : null;
-      setBridgeResult({ dir, failed: lines.filter((l) => l.includes("✗") || l.startsWith("扩展目录未能就位")) });
-    } catch (e) {
-      setBridgeResult({ dir: null, failed: [String(e)] });
-    }
-  }
+
 
   // 机构访问（高校/研究所全文通道）：前缀与登录页草稿 + 会话状态（值在后端 0600 文件，这里只有统计态）
   const [institutionalPrefix, setInstitutionalPrefix] = useState("");
@@ -4249,65 +4222,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </button>
           </Row>
         )}
-        <Row
-          label="浏览器扩展"
-          hint="可选：文献页上一键「存到 Mesa」"
-          labelTitle="「Mesa 文献下载」扩展：在文献页上加「存到 Mesa」按钮；你在官网下 PDF 时，存到「下载」以外的文件夹也能收进 papers/。不装也能用：点官网下载存进「下载」文件夹，Mesa 照样收。"
-          extra={
-            bridgeResult ? (
-              <div className="max-w-2xl space-y-1 text-sm leading-relaxed text-l3">
-                {bridgeResult.failed.map((line) => (
-                  <p key={line} className="break-words text-err-text">{line}</p>
-                ))}
-                {/* 一步一行（2026-11-09 HER 实测：用户问「这一块怎么安装啊、说明对吗」——原先一整句；扩展文件夹在隐藏的
-                    资源库 / AppData 里，选择窗口里找不到，要给路径和粘贴办法；装好后多久变「已连接」也没说） */}
-                <p>Mesa 这边已就绪，再到浏览器里装上扩展：</p>
-                <ol className="list-decimal space-y-0.5 pl-5">
-                  <li>在 Chrome 地址栏输入 chrome://extensions（Edge 是 edge://extensions），打开「开发者模式」。</li>
-                  <li>
-                    点「加载已解压的扩展程序」，选扩展文件夹。它在隐藏文件夹里：先点
-                    {bridgeResult.dir && (
-                      <button
-                        type="button"
-                        className={`${rowActionClass} mx-1 align-middle`}
-                        onClick={() => void navigator.clipboard.writeText(bridgeResult.dir!).catch(() => {})}
-                        title={bridgeResult.dir}
-                      >
-                        复制路径
-                      </button>
-                    )}
-                    ，在选择窗口里{IS_MAC ? "按 ⌘⇧G 粘贴、回车" : "粘到上面的地址栏、回车"}，再点「选择」。
-                    {bridgeResult.dir && (
-                      <button type="button" className={`${rowActionClass} ml-1 align-middle`} onClick={() => void revealItemInDir(bridgeResult.dir!)}>
-                        在{IS_MAC ? "访达" : "文件夹"}里看
-                      </button>
-                    )}
-                  </li>
-                  <li>以前装过的，在「Mesa 文献下载」那张卡上点一次重新加载（↻）。</li>
-                  <li>装好或重新加载后，这里十几秒内变成「已连接」。</li>
-                </ol>
-              </div>
-            ) : undefined
-          }
-        >
-          {bridgeStatus?.extensionAlive ? (
-            <span className="text-sm text-done">已连接</span>
-          ) : bridgeStatus?.extensionEverSeen && !bridgeResult ? (
-            <>
-              <span className="text-sm text-l3" title="扩展装过，这几分钟没来打招呼：浏览器开着它就会连上">没连上，浏览器开着吗</span>
-              <button type="button" className={rowActionClass} onClick={() => void installBridge()}>
-                重新安装…
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="text-sm text-l3">未连接</span>
-              <button type="button" className={rowActionClass} onClick={() => void installBridge()}>
-                安装…
-              </button>
-            </>
-          )}
-        </Row>
       </Section>
 
       <Section

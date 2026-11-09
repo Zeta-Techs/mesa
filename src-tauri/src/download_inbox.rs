@@ -365,38 +365,6 @@ pub(crate) fn catch_idents() -> Vec<CatchIdent> {
     out
 }
 
-/// 扩展「存到 Mesa」：页上 DOI 对上 pending 时用那篇的标题/项目，不拿最后一次打开的
-pub(crate) struct PendingIdent {
-    pub title: String,
-    pub doi: String,
-    pub project_root: String,
-}
-
-pub(crate) fn pending_for_doi(doi: &str) -> Option<PendingIdent> {
-    let doi_n = crate::inst_access::doi_from_url(doi)?.to_ascii_lowercase();
-    if doi_n.len() < 8 {
-        return None;
-    }
-    let now = std::time::SystemTime::now();
-    load_pendings()
-        .into_iter()
-        .filter(|p| {
-            now.duration_since(p.opened_at)
-                .map(|d| d <= PENDING_TTL)
-                .unwrap_or(false)
-        })
-        .find(|p| {
-            crate::inst_access::doi_from_url(&p.doi)
-                .map(|d| d.eq_ignore_ascii_case(&doi_n))
-                .unwrap_or(false)
-        })
-        .map(|p| PendingIdent {
-            title: p.title,
-            doi: p.doi,
-            project_root: p.project_root,
-        })
-}
-
 fn helper_context_ident() -> Option<CatchIdent> {
     let path = crate::dirs::config_dir()?
         .join("ccode")
@@ -649,27 +617,6 @@ fn consume_pending_index(
     }
 }
 
-/// 通道 C 入库成功：主程序回执监听调用，出队落盘（helper 是另一进程，动不了
-/// 本进程 PENDING 内存）
-pub(crate) fn consume_pending_after_helper(project_root: &str, doi: &str, title: &str) {
-    let Ok(mut q) = PENDING.lock() else {
-        return;
-    };
-    let disk = load_pendings();
-    for p in disk {
-        if !q.iter().any(|x| {
-            x.open_url == p.open_url && x.title == p.title && x.project_root == p.project_root
-        }) {
-            q.push(p);
-        }
-    }
-    let now = std::time::SystemTime::now();
-    if let Some(i) = consume_pending_index(&q, project_root, doi, title, now) {
-        q.remove(i);
-        save_pendings(&q);
-    }
-}
-
 /// 打开后不想下了：把这篇从收货登记里拿掉。之后别的 PDF 不会再兜底挂到它上面。
 #[tauri::command]
 pub async fn inst_browser_cancel(
@@ -915,20 +862,7 @@ fn release_seen(path: &Path) {
     }
 }
 
-/// dl-reports 游标（持久化到 dl-reports.cursor——进程内偏移重启归零会把全部
-/// 历史上报行当「新下载」重放，旧 PDF 被兜底归属误收进刚打开的篇目，终检二轮
-/// 高危）。helper 截尾（文件变短）时跳到当前末尾：截尾保留的都是旧行。
-static DL_REPORT_OFFSET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static DL_CURSOR_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// 只消费「进程启动之后」写入的上报行：cursor 缺失/损坏时兜底，避免全量重放
-static PROCESS_STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
-    std::sync::LazyLock::new(std::time::SystemTime::now);
-
-fn dl_report_paths() -> Option<(PathBuf, PathBuf)> {
-    crate::dirs::config_dir().map(|d| (d.join("dl-reports.jsonl"), d.join("dl-reports.cursor")))
-}
-
-/// 近期已处理过的文件（notify 与 dl-report 双通道去重 + 同文件重复上报去重）
+/// 近期已处理过的文件（同一文件 notify 多次事件去重）
 static RECENT_CONSIDERED: std::sync::LazyLock<
     Mutex<std::collections::HashMap<PathBuf, std::time::Instant>>,
 > = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
@@ -951,91 +885,6 @@ fn mark_considered(path: &Path) {
         }
         m.insert(path.to_path_buf(), std::time::Instant::now());
     }
-}
-
-/// 消费扩展上报的下载路径（helper 写 `<config>/ccode/dl-reports.jsonl`，每行
-/// {at, path}）：新行里的 PDF 直接送 consider_file——绕过「监听目录 == 系统
-/// Downloads」的假定（Chrome 改过下载位置/每下载询问时，notify 侧零事件）
-fn drain_dl_reports(app: &tauri::AppHandle) {
-    let Some((file, cursor_file)) = dl_report_paths() else {
-        return;
-    };
-    if !DL_CURSOR_LOADED.swap(true, std::sync::atomic::Ordering::AcqRel) {
-        let saved = std::fs::read_to_string(&cursor_file)
-            .ok()
-            .and_then(|t| t.trim().parse::<u64>().ok());
-        // cursor 缺失/损坏：从文件当前末尾起步（历史行不再重放——丢失的只是
-        // Mesa 关闭期间的上报，那段时间本也没有 pending 在等）
-        let start =
-            saved.unwrap_or_else(|| std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0) as u64);
-        DL_REPORT_OFFSET.store(start, std::sync::atomic::Ordering::Relaxed);
-    }
-    let Ok(text) = std::fs::read_to_string(&file) else {
-        return;
-    };
-    let mut offset = DL_REPORT_OFFSET.load(std::sync::atomic::Ordering::Relaxed) as usize;
-    if text.len() < offset {
-        // helper 截尾过：跳到末尾（保留行是旧记录）
-        offset = text.len();
-    }
-    if text.len() <= offset {
-        return;
-    }
-    // 只处理完整行（末尾残行等下一次）；对齐字符边界（截尾重写瞬间可能切在
-    // 多字节字符中间——String 切片越界会 panic，终检二轮高危）
-    let end = fresh_end(text.as_bytes(), offset);
-    if end <= offset {
-        return;
-    }
-    let complete = &text[offset..end];
-    for line in complete.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        // 行时间戳早于进程启动的旧记录不消费（截尾重放兜底）
-        let started_secs = PROCESS_STARTED_AT
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let fresh_line = v
-            .get("at")
-            .and_then(|a| a.as_str())
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-            .map(|t| t.timestamp() > started_secs as i64)
-            .unwrap_or(false);
-        if !fresh_line {
-            continue;
-        }
-        let Some(path) = v.get("path").and_then(|p| p.as_str()).map(str::to_string) else {
-            continue;
-        };
-        let p = PathBuf::from(&path);
-        if !p.is_absolute() || !is_pdf_path(&p) || !p.exists() || already_considered(&p) {
-            continue;
-        }
-        dinbox_log(&format!("扩展上报下载: {path}"));
-        consider_file_guarded(app, &p);
-    }
-    DL_REPORT_OFFSET.store(end as u64, std::sync::atomic::Ordering::Relaxed);
-    let _ = std::fs::write(&cursor_file, end.to_string());
-}
-
-/// 从 offset 起取末尾为完整行的长度（对齐 UTF-8 字符边界与最后一个换行）
-fn fresh_end(bytes: &[u8], offset: usize) -> usize {
-    let mut end = bytes.len();
-    if bytes.last() != Some(&b'\n') {
-        end = bytes[..end]
-            .iter()
-            .rposition(|&b| b == b'\n')
-            .map(|i| i + 1)
-            .unwrap_or(offset);
-    }
-    // 回退到字符边界（offset 起点的边界由「offset 总在 \n 后或文件尾」保证，
-    // 截尾竞态下仍可能落在多字节中间——保守回退）
-    while end > offset && end < bytes.len() && (bytes[end] & 0xC0) == 0x80 {
-        end -= 1;
-    }
-    end
 }
 
 fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
@@ -1064,10 +913,6 @@ fn watcher_loop(app: tauri::AppHandle, dirs: Vec<PathBuf>) {
     let mut last_event = std::time::Instant::now();
     beat();
     loop {
-        // 扩展上报的下载（浏览器下载位置不在系统 Downloads 时目录监听看不见，
-        // 2026-09-17 审计 #17）：helper 落 dl-reports.jsonl，这里增量消费——
-        // 路径直接走 consider_file，不受监听目录限定
-        drain_dl_reports(&app);
         // 无 pending 且静默满 IDLE_STOP → 退出（watcher 随之 drop）
         let pending_empty = PENDING
             .lock()

@@ -1,14 +1,11 @@
-// 打包前置：把 mesa_helper 编成 release 并按 Tauri sidecar 约定改名落位；
-// 同时把仓库 extension/ 复制进 src-tauri/extension-src（bundle.resources 带
-// 进安装包，运行期 stage_extension_files 再落到 <config>/ccode/extension——
-// 装 DMG 的用户没有仓库，「加载已解压的扩展程序」需要本机可点的目录）。
+// 打包前置：把 mesa_helper 编成 release 并按 Tauri sidecar 约定改名落位。
 // bundle.externalBin 需要 src-tauri/binaries/mesa_helper-<triple>[.exe]——
 // 同 crate 的 cargo 多 bin 不会自动进 bundle（2026-09-17 实测：打包版装了浏览器桥
 // 却报「找不到 helper」，开发模式能跑纯粹因为 target/debug 里恰好有它）。
 // 挂在 beforeBuildCommand 里（npm run build && node scripts/stage-sidecar.mjs），
 // 只影响打包，不改 dev 流程（dev 用 target/debug/mesa_helper，README 有说明）。
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -79,10 +76,3 @@ const dst = join(outDir, `mesa_helper-${target}${ext}`);
 copyFileSync(src, dst);
 chmodSync(dst, 0o755); // copyFile 虽随源模式，显式钉一遍防 umask 环境差异
 console.log(`[stage-sidecar] ${dst}`);
-
-// 扩展资源：bundle.resources 用相对 tauri.conf.json 的路径，仓库根目录不在
-// 打包根内——复制一份进 src-tauri（extension-src 已 gitignore）
-const extDst = join(tauriDir, "extension-src");
-rmSync(extDst, { recursive: true, force: true });
-cpSync(join(root, "extension"), extDst, { recursive: true });
-console.log(`[stage-sidecar] ${extDst}`);

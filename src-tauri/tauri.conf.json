@@ -52,7 +52,6 @@
       "binaries/mesa_helper"
     ],
     "resources": [
-      "extension-src/**/*",
       "resources/third-party-notices.md"
     ],
     "icon": [

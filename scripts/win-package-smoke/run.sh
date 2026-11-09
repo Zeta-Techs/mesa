@@ -20,11 +20,10 @@ if netstat -ano | grep -q ":$PORT .*LISTENING"; then
   exit 2
 fi
 
-# 安装包装出来的就是这几样：主程序、随包 helper、浏览器扩展、第三方声明（见 tauri.conf.json bundle）
+# 安装包装出来的就是这几样：主程序、随包 helper、第三方声明（见 tauri.conf.json bundle）
 rm -rf "$APP"
 mkdir -p "$APP/resources"
 cp "$REL/ccode.exe" "$REL/mesa_helper.exe" "$APP/"
-cp -r "$REPO/src-tauri/extension-src" "$APP/"
 cp "$REL/resources/third-party-notices.md" "$APP/resources/"
 
 rm -rf "$HOME/.ccode-sandbox/home" "$OUT"

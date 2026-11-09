@@ -1173,7 +1173,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              # webglLetterSpacing = WebGL 单元格宽就近取整的补位（tests/terminal-renderer.test.ts）
   store.ts                   # zustand 状态。applyTheme 同步原生窗口外观；Windows 上同时把整窗 Mica 切到 micaDark/micaLight
 src-tauri/
-  build.rs                   # 构建脚本：mesa_helper 占位、extension-src 预拷贝、tauri-build；MSVC 下应用 manifest 改由链接器嵌进
+  build.rs                   # 构建脚本：mesa_helper 占位、tauri-build；MSVC 下应用 manifest 改由链接器嵌进
                              #   所有链接产物（含 lib 测试 exe，否则 cargo test 报 0xc0000139），别退回 tauri_build::build()
   windows-app-manifest.xml   # Windows 应用 manifest（Common-Controls 6.0，与 tauri-build 默认相同），build.rs 交给链接器
 src-tauri/src/
@@ -1751,16 +1751,13 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   兜底关联（文件名没对上号）原件留在下载夹并弹 inst-pdf-attention 横幅；
                              #   终端只印启动/失败/收货结果，不去重跳过刷屏——macOS 一次落盘连发多条
                              #   FSEvent）；B 浏览器会话复用
-                             #   （设置页「学校图书馆」主路径「登录学校账号」，内嵌窗留回落）；C extension/（MV3，ID 固定
-                             #   dmjplopfhbdamkihimfllomdmkfainnn）+ bin/mesa_helper.rs（native messaging，读 helper-context.json
-                             #   当前项目+打开篇标题/DOI 调 ccode_lib::helper_ingest；PDF 阅读器空标题不得落 paper-5.pdf；
-                             #   工具栏图标优先走页内「存到 Mesa」，chrome.downloads 只作无 content script 末路；
-                             #   2026-10-20 起另有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs；
+                             #   （设置页「学校图书馆」主路径「登录学校账号」，内嵌窗留回落）；~~C 浏览器扩展 + native messaging~~ 2026-11-09 撤掉
+                             #   （extension/、browser_bridge.rs、helper 的消息循环一并删除）。bin/mesa_helper.rs 现只按子命令分派：
+                             #   2026-10-20 起有 `hook <日志> <截断字节>` 模式：Windows 上给 CLI hooks 写状态日志，只用标准库，见 hooks.rs；
                              #   2026-10-23 起另有 `image …` 出图模式：调 ccode_lib::helper_image，唯一会读 keys.json 的模式，见 image_gen.rs；
                              #   2026-11-03 起另有 `peek agents|runs|changes` 看一眼模式：调 ccode_lib::helper_peek，只读 app.db，见 peek.rs；
                              #   2026-11-05 起另有 `svg-render` 科研做图模式：调 ccode_lib::helper_svg_render，图纸 SVG 转 PNG / PDF，不联网不读密钥，见 svg_render.rs）
-                             #   + browser_bridge.rs（装 NativeMessagingHosts
-                             #   清单；扩展心跳 mesa-poll-jobs 经 helper 记进 <config>/browser-bridge-seen，browser_bridge_status 读出「已连接」）。内嵌窗漏斗保留为过渡，通道 C 稳定后退役——细则见 pipeline.md ⑧
+                             #   内嵌窗漏斗保留——细则见 pipeline.md ⑧
   fonts.rs                   # 终端字体打包与 brew 一键安装（Maple/Sarasa/Iosevka）
   ai.rs                      # 2026-11-04：ai_prompt_impl_full（项目助手：effort 只压已设的思考档 lower_effort、on_line 逐行回调；Claude 走 claude_stream_args 的 stream-json）、feed_lines 切行；
                              # 2026-11-02：run_agent_task 跑的期间登记锁定的会话（headless_session_of，跑完即撤），卡住检测据此看会话文件有没有在长；
@@ -2038,8 +2035,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   直接写 dirs:: 编译不过）；Windows 上设了 MESA_SANDBOX_HOME 就全换到它下面（新用户沙盒，生产构建同样认）
   ui_zoom.rs                 # 界面缩放 + 最小窗口尺寸：webview 原生 zoom（改 devicePixelRatio，画布重画才清楚，不用 CSS zoom）；最小尺寸 = 网页 720×480 × 缩放，封顶最小屏可用区 90%；update_settings 带 uiZoom 时与开机 setup 调
   uninstall.rs               # 一键卸载：Mesa 独占目录（配置 ccode/、~/ccode/、本机数据 ccode/、
-                             #   com.ccode.dev 的网页数据）移入回收站；浏览器桥清单与 Windows
-                             #   注册表键复用 browser_bridge 的目录表。课题文件夹与各 CLI 数据不动；移目录前先收回
+                             #   com.ccode.dev 的网页数据）移入回收站。课题文件夹与各 CLI 数据不动；移目录前先收回
                              #   各家技能目录里指向技能库的软链（skills）与全局配置里带标记的 hook 条目（hooks）
   updater.rs                 # CLI 安装/更新（brew TUNA、npm_for 同目录 npm、Windows winget 渠道：claude/codex/opencode/kimi/grok 五家有官方包）+ 应用自身 Tauri updater；
                              #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线

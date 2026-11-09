@@ -1347,7 +1347,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     **同日再拍板：代下队列整个撤掉**（HER 46 篇交给队列只多下到 1 篇，还是检索技能按「来源级别」故意不下的投稿版；能免费下的检索步 `lit_records.py fetch` 已经下过）。
     `paper_fetch.rs`、`mesa_helper paper`、`MESA_PAPER_TOOL`、待获取清单「让 Mesa 找免费版」、设置「代下全文 / 进行中 / 下载记录」、Run 事实 `fetched` 一并删除；
     上面 2026-11-08 放宽与本日收窄两条、以及下面「已落地（`paper_fetch.rs`）」的队列说明作废。付费墙全文由人在待获取清单逐篇点「官网」下、经下载收货链进 `papers/`；
-    AI（含定时）不自己去出版商网站下，写进 to-fetch 交给人。浏览器扩展只做「存到 Mesa」与收别处的下载，心跳由 helper 记进 `<config>/browser-bridge-seen`（`browser_bridge.rs`）。
+    AI（含定时）不自己去出版商网站下，写进 to-fetch 交给人。~~浏览器扩展只做「存到 Mesa」与收别处的下载~~（同日再撤：扩展、浏览器桥、helper 的 native messaging 一并删除，见下「通道 C」条）。
     同批删掉更早的人逐篇触发阶梯 `fetch_paper_fulltext`（界面早已不调用）与只给它用的 `fetch_via_channel`、`oa_pdf_url_for`、`institutional_failure_hint`、
     前端 `canAttemptFulltext`：本条上面「机构访问通道（2026-09-16）」里的阶梯、获取按钮与分流提示口径作废，登录窗、会话罐、前缀改写照旧。
     开放获取一级不用学校身份、不计配额。「不存密码、不自动登录、会话不进 Agent env」与失败回落人工照旧。**已落地（`paper_fetch.rs`，2026-11-08）**：队列 `<config>/ccode/paper-fetch/queue.json` 跨进程持文件锁读改写，后台线程每 5 秒推进一步；Wiley / Elsevier（按 TLS 指纹拦非浏览器）直接交浏览器一级、不耗学校通道配额；学校通道遇 429 熔断、停在登录 / SAML 页记会话过期（只停学校通道，浏览器一级照常）；扩展 30 分钟没来领的交还给人；人交的不查清单范围（人点即放行）。出门日志 `log.jsonl` 0600，带 runId，Run 事实 `fetched` 字段与 ai-usage.md 按它写。「安装浏览器桥」按钮随「代下全文」一块回到设置 → 网络（用户 11-08「怎么方便怎么设计」）。前缀式先行，深信服类 WebVPN 私有
@@ -1561,7 +1561,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
       **内嵌窗登录、保存会话、安装浏览器桥 2026-10-31 从设置页撤下**（用户：这一块太复杂；拍板只藏不删）：
       后端命令 `inst_open_login` / `inst_capture_session` / `install_browser_bridge` 与无头阶梯
       fetch_via_channel、桥的启动自愈都保留；存量内嵌会话在折叠里仍显示状态和「退出」。要重新露出先拍板。
-    - **通道 C（浏览器扩展 + native messaging，`extension/` + `bin/mesa_helper.rs`
+    - **2026-11-09 用户拍板：通道 C 整个撤掉**（实际只用过两次；「存到 Mesa」与点「官网」后在浏览器里下载等价，扩展报告的别处下载由收货链读浏览器设置覆盖，
+      装扩展要开开发者模式、写各浏览器清单，维护成本远大于用处）。`extension/`、`browser_bridge.rs`、`mesa_helper` 的消息循环、收货链的 `dl-reports`、
+      卸载时删桥清单、打包带扩展目录一并删除；付费墙全文只走「官网」→ 浏览器下载 → 收货链 / 「关联」。下面通道 C 各条作废，留作记录。
+    - ~~**通道 C（浏览器扩展 + native messaging，`extension/` + `bin/mesa_helper.rs`~~
       + `browser_bridge.rs`）**：扩展（MV3，ID 固定 `dmjplopfhbdamkihimfllomdmkfainnn`，manifest
       内置 key）在文献页（有 citation_doi）插「存到 Mesa」——页内 fetch
       （citation_pdf_url → 唯一 pdfish 链 → pdfish 内嵌；>40MB 改道浏览器下载栈

@@ -36,47 +36,6 @@ mod grok_login;
 mod handoff;
 mod hooks;
 
-/// 浏览器桥 helper（bin/mesa_helper.rs）的入库公共接口：同一套落盘口径
-/// （注册项目根校验 + papers/ + 资源登记）。hint 用文献标题（回落 DOI）；
-/// 返回 (落盘文件名, 是否字节级去重命中——扩展侧据此提示「已有同一份」)
-pub fn helper_ingest(
-    project_root: &str,
-    hint: &str,
-    bytes: &[u8],
-) -> Result<(String, bool), String> {
-    helper_ingest_ident(project_root, hint, hint, "", bytes)
-}
-
-/// 扩展入库：identity/doi 写进资源登记，待获取清单按标题认「已存」，不靠文件名
-pub fn helper_ingest_ident(
-    project_root: &str,
-    file_hint: &str,
-    identity: &str,
-    doi: &str,
-    bytes: &[u8],
-) -> Result<(String, bool), String> {
-    let root = projects::ensure_task_project_root(std::path::Path::new(project_root))?;
-    let dto = lit_watch::save_paper_bytes_ident(&root, file_hint, identity, doi, bytes)?;
-    Ok((dto.name, dto.dedup))
-}
-
-/// 扩展落盘文件名：页上标题优先；PDF 阅读器/站名等空标题回落 Mesa
-/// 「浏览器打开」记下的那篇，再回落 DOI。空串则入库层用 paper.pdf。
-pub fn helper_paper_name_hint(
-    page_title: &str,
-    page_doi: &str,
-    page_url: &str,
-    ctx_title: &str,
-    ctx_doi: &str,
-) -> String {
-    lit_watch::pick_paper_name_hint(page_title, page_doi, page_url, ctx_title, ctx_doi)
-}
-
-/// 扩展按页上 DOI 找回「浏览器打开」登记的那篇（标题, DOI, 项目根）
-pub fn helper_pending_for_doi(doi: &str) -> Option<(String, String, String)> {
-    download_inbox::pending_for_doi(doi).map(|p| (p.title, p.doi, p.project_root))
-}
-
 /// helper 出图子命令（`mesa_helper image …`）：Agent 经 MESA_IMAGE_TOOL 调用，返回退出码
 pub fn helper_image(args: &[String]) -> i32 {
     image_gen::helper_image_cli(args)
@@ -85,11 +44,6 @@ pub fn helper_image(args: &[String]) -> i32 {
 /// helper 看一眼（`mesa_helper peek agents|runs|changes`）：Agent 经 MESA_PEEK_TOOL 调用，只读看同项目的其他工作，返回退出码
 pub fn helper_peek(args: &[String]) -> i32 {
     peek::helper_peek_cli(args)
-}
-
-/// 浏览器扩展定时打招呼：只记「来过」（设置页「已连接」）
-pub fn helper_extension_ping() {
-    browser_bridge::note_extension_seen()
 }
 
 /// helper 科研做图（`mesa_helper svg-render --in 图纸.svg --out 图.png|图.pdf`）：Agent 经 MESA_FIGURE_TOOL 调用，返回退出码
@@ -112,7 +66,6 @@ mod project_assistant;
 mod fan_out;
 mod feishu;
 
-mod browser_bridge;
 mod capability_golden;
 mod capability_manifest;
 mod download_inbox;
@@ -283,16 +236,6 @@ pub fn run() {
             model_registry::spawn_auto_refresh();
             // 收货监听：启动即恢复（盘上登记在重启前留下的也要有人接）
             download_inbox::ensure_watcher_at_startup(app.handle());
-            // 浏览器桥自愈：清单写死的是安装当时的 helper 绝对路径，应用被移动
-            // （DMG → /Applications）后 path 失效——启动时发现不一致就重写；
-            // 扩展目录同步就位到 <config>/ccode/extension（打包用户可点的路径）
-            browser_bridge::selfheal_bridge_manifests();
-            if let Err(e) = browser_bridge::stage_extension_files() {
-                logbuf::record("warn", "browser-bridge", &format!("扩展目录就位失败: {e}"));
-            }
-            // 扩展「存到 Mesa」的回执监听：helper 是独立进程不发 Tauri 事件，
-            // 这里把收货回执变成 inst-papers-changed 广播给清单/雷达
-            browser_bridge::spawn_receipts_watch(app.handle().clone());
             // 飞书机器人：开着就在后台连上长连接（读配置也在后台线程）
             feishu::start_at_setup(app.handle().clone());
             // 桌宠：设置里开着就建小窗（desk_pet.rs）
@@ -1161,11 +1104,9 @@ pub fn run() {
             lit_watch::freeze_reading_list_intake,
             lit_watch::download_paper_pdf,
             lit_watch::attach_paper_pdf,
-            browser_bridge::browser_bridge_status,
             lit_watch::match_dropped_paper,
             lit_watch::to_fetch_progress,
             inst_access::inst_session_status,
-            browser_bridge::install_browser_bridge,
             download_inbox::inst_browser_open,
             download_inbox::inst_browser_cancel,
             inst_access::inst_open_login,

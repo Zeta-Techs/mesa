@@ -251,7 +251,7 @@
      `ccode/`（目标副本），以及打包身份 `com.ccode.dev` 的网页数据（macOS 的
      `~/Library/WebKit/<身份>`、Caches、Saved Application State；Windows 的
      `%LOCALAPPDATA%\<身份>\EBWebView`）。进程退出前的最后一次写入可能把网页数据再建出来。
-     浏览器收货桥清单走 `browser_bridge::native_host_dirs` 同一份目录（Windows 再删对应
+     ~~浏览器收货桥清单走 `browser_bridge::native_host_dirs` 同一份目录~~（2026-11-09 浏览器桥撤掉，卸载不再碰浏览器目录；原 Windows 再删对应
      HKCU 注册表键）。前端在卸载命令移走目录后清掉 WebView localStorage 里的 `ccode.*`
      界面记忆键，兜住进程退出前的最后一次写入；**移走过任何目录就必须退出**，部分失败也只列出失败项、
      不留在原处（配置可能已进回收站），一个目录都没移走才不退出（2026-10-26）。课题文件夹、论文、各 CLI 的配置与会话
