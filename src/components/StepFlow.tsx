@@ -221,7 +221,7 @@ function PublisherOpenButton({
       <button
         type="button"
         className={`${inlineActionClass} shrink-0`}
-        title="去出版商官网打开这篇。点站方下载，或 PDF 在浏览器里打开后点保存、存进「下载」文件夹。PDF 里带本篇 DOI 的，30 分钟内存下都能收进 papers/。没收到就把文件拖进清单，或用「关联」"
+        title="你自己下：在浏览器里打开这篇的出版商官网。点站方下载，或 PDF 在浏览器里打开后点保存、存进「下载」文件夹。PDF 里带本篇 DOI 的，30 分钟内存下都能收进 papers/。没收到就把文件拖进清单，或用「关联」"
         onClick={() => {
           onError("");
           void invoke("inst_browser_open", {

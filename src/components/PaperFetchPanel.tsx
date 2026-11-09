@@ -328,6 +328,12 @@ export function PaperFetchBar({
         </button>
       )}
       {summary && <span title="Mesa 代下到哪了；细节在 设置 → 网络 → 代下全文">Mesa：{summary}</span>}
+      {/* 气泡只自动出一次；之后随时点这里再看（2026-11-09 用户问「两种下载方式说清楚了吗」：热更新时气泡闪过即记已出，人没看到） */}
+      {pending.length > 0 && !showTip && (
+        <button type="button" className={linkBtn} onClick={() => setTipOpen(true)}>
+          两种下法
+        </button>
+      )}
       {failed > 0 && (
         <button type="button" className={linkBtn} disabled={busy} title="没下到的这几篇让 Mesa 从头再试一遍" onClick={() => void retryAll()}>
           全部重试（{failed}）
