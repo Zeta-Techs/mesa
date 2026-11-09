@@ -167,7 +167,7 @@ function JobRow({ job, onChanged }: { job: PaperFetchJob; onChanged: () => void 
     job.status === "done" && job.saved
       ? `papers/${job.saved}（${viaLabel(job.via)}）`
       : job.status === "needs_approval"
-        ? "不在项目文献清单里，AI 要下需要你确认"
+        ? "还不在项目文献清单里，AI 要下需要你确认；这一步保存进项目后会自动开始"
         : ["queued", "browser"].includes(job.status)
           ? (job.waiting ?? "")
           : (job.error ?? "");

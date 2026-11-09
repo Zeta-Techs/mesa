@@ -614,6 +614,21 @@ pub(crate) fn enqueue_in(
     job
 }
 
+/// AI 交的、还在等放行的篇：DOI 后来出现在项目文献清单里（人把这一步评审、保存进项目 = 认了这份清单）就自动放行。
+/// 2026-11-09 HER 实测：检索步在工作区里交 46 篇时清单还没进项目，全部卡在「等你确认」，要人逐篇点
+pub(crate) fn release_listed(store: &mut Store, listed: impl Fn(&str) -> HashSet<String>, now: i64) -> bool {
+    let mut cache: std::collections::HashMap<String, HashSet<String>> = std::collections::HashMap::new();
+    let mut changed = false;
+    for job in store.jobs.iter_mut().filter(|j| j.status == STATUS_NEEDS_APPROVAL) {
+        let set = cache.entry(job.project_root.clone()).or_insert_with(|| listed(&job.project_root));
+        if set.contains(&job.doi) {
+            requeue(job, now);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// 下一件能推进的活：先开放获取（不占学校配额），再学校通道（这家现在能去的）。返回 (下标, 要不要计一次学校请求)
 pub(crate) fn pick_next(store: &mut Store, now: i64, channel_active: bool) -> Option<(usize, bool)> {
     if let Some(i) = store.jobs.iter().position(|j| j.status == STATUS_QUEUED && j.stage == STAGE_OA) {
@@ -802,6 +817,9 @@ pub(crate) async fn tick() -> Result<bool, String> {
         let before = s.clone();
         roll_day(&mut s.state, &today());
         let expired = expire_browser(s, t);
+        if s.jobs.iter().any(|j| j.status == STATUS_NEEDS_APPROVAL) {
+            release_listed(s, |root| project_dois(Path::new(root)), t);
+        }
         let next = pick_next(s, t, channel_active);
         if let Some((i, count)) = next {
             if count {
@@ -1044,7 +1062,7 @@ fn describe(job: &Job) -> String {
             job.saved.as_deref().unwrap_or(""),
             level_label(job.via.as_deref().unwrap_or(""))
         ),
-        STATUS_NEEDS_APPROVAL => format!("{}：不在项目文献清单里，已交给人放行；先做别的，别自己去出版商网站下", job.doi),
+        STATUS_NEEDS_APPROVAL => format!("{}：还不在项目文献清单里，等人放行；这一步保存进项目后会自动开始。先做别的，别自己去出版商网站下", job.doi),
         STATUS_NEEDS_PICK => {
             let mut s = format!("{}：落地页上没认出 PDF，候选链接如下，用 paper pick {} <编号> 指一个（只选正文 PDF，不选补充材料）：", job.doi, job.doi);
             for (i, c) in job.candidates.iter().enumerate() {
@@ -1487,6 +1505,21 @@ mod tests {
         assert_eq!(b3.status, STATUS_FAILED);
         let b4 = enqueue_in(&mut s, "/p", "10.1021/b", "", None, "human", None, 3);
         assert_eq!(b4.status, STATUS_QUEUED);
+    }
+
+    #[test]
+    fn listed_after_save_releases_waiting_jobs() {
+        let mut s = Store::default();
+        enqueue_in(&mut s, "/p", "10.1021/a", "", None, "agent", Some(&allowed(&[])), 1);
+        enqueue_in(&mut s, "/p", "10.1021/z", "", None, "agent", Some(&allowed(&[])), 1);
+        enqueue_in(&mut s, "/q", "10.1021/a", "", None, "agent", Some(&allowed(&[])), 1);
+        // 清单还没进项目：不动
+        assert!(!release_listed(&mut s, |_| allowed(&[]), 2));
+        // /p 保存进项目后清单里有 a：只放行 /p 的 a；z 不在清单、/q 是别的项目，照旧等
+        assert!(release_listed(&mut s, |root| if root == "/p" { allowed(&["10.1021/a"]) } else { allowed(&[]) }, 3));
+        let st: Vec<&str> = s.jobs.iter().map(|j| j.status.as_str()).collect();
+        assert_eq!(st, vec![STATUS_QUEUED, STATUS_NEEDS_APPROVAL, STATUS_NEEDS_APPROVAL]);
+        assert_eq!(s.jobs[0].requester, "agent");
     }
 
     #[test]
