@@ -665,7 +665,18 @@ export default function ProjectAssistantPanel({
                         type="button"
                         className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
                         disabled={busy}
-                        onClick={() => void send(line.ask!.question, line.ask!.focus, line.ask!.intent)}
+                        onClick={() => {
+                          // 起草项目知识问过一次就收起（2026-11-09 HER 实测：答完「一条也没找到」这行还挂着）；起草出的在回答里逐条点「记下」
+                          if (line.kind === "knowledge-draft" && projectPath) {
+                            try {
+                              localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
+                            } catch {
+                              /* 存不了就只是这次收起 */
+                            }
+                            setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
+                          }
+                          void send(line.ask!.question, line.ask!.focus, line.ask!.intent);
+                        }}
                       >
                         <span className="text-xs">{line.ask.label ?? "问问为什么"}</span>
                       </button>

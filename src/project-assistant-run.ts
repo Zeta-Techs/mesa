@@ -40,6 +40,8 @@ import { resolveTaskModel } from "./project-agents";
 import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
 import { stepSessionTail } from "./session-tail";
 import type { BriefInput, BriefStep } from "./assistant-brief";
+import { hasKnowledgeSources } from "./assistant-brief";
+import type { DirEntryDto } from "./components/FileTree";
 import { declaredTaskKindsForMode, visibleDeclaredTasks } from "./project-tasks";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
@@ -290,13 +292,14 @@ const snapshotCache = new Map<string, { at: number; text: string }>();
 /** 面板一打开就先把项目记录整理好（你打字时已经取完，问的时候不再等这一两秒）；失败不管 */
 /** 「现在的情况」卡与常用问题的取数（assistant-brief.ts 只算）：步骤状态与 gatherSnapshot 同口径，但不读对话尾巴、不拼文字 */
 export async function gatherBriefInput(projectPath: string, since: string | null): Promise<BriefInput> {
-  const [read, workspaces, runs, tasks, projects, knowledge] = await Promise.all([
+  const [read, workspaces, runs, tasks, projects, knowledge, topLevel] = await Promise.all([
     safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
     safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
     safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
     safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
     safe(invoke<ProjectDto[]>("list_projects"), []),
     safe(invoke<KnowledgeForAiDto | null>("project_memory_for_ai", { path: projectPath }), null),
+    safe(invoke<DirEntryDto[]>("list_dir", { path: projectPath, showHidden: false }), [] as DirEntryDto[]),
   ]);
   const cfg = read?.config ?? null;
   const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
@@ -330,8 +333,9 @@ export async function gatherBriefInput(projectPath: string, since: string | null
   );
   const workMode = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS))?.workMode;
   const goals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(workMode)).map((t) => ({ name: t.name, status: t.status, updatedAt: t.updatedAt }));
-  // 读不到项目知识时不提议（宁可不提，也别对已有知识的项目说「还没有」）
-  const knowledgeEmpty = !!knowledge && knowledge.lines.length === 0 && knowledge.stale === 0;
+  // 读不到项目知识时不提议（宁可不提，也别对已有知识的项目说「还没有」）；项目根没有约定文件也不提议（起草了也是「一条没找到」）
+  const knowledgeEmpty =
+    !!knowledge && knowledge.lines.length === 0 && knowledge.stale === 0 && hasKnowledgeSources(topLevel.filter((e) => !e.isDir).map((e) => e.name));
   return { hasFlow: steps.length > 0, steps, goals, since, knowledgeEmpty };
 }
 

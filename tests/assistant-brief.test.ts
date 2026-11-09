@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { briefLines, quickAsks, reviewPrereadFocus, type BriefInput } from "../src/assistant-brief.ts";
+import { briefLines, hasKnowledgeSources, quickAsks, reviewPrereadFocus, type BriefInput } from "../src/assistant-brief.ts";
 
 const base: BriefInput = { hasFlow: true, steps: [], goals: [], since: null };
 
@@ -81,4 +81,18 @@ test("聊够十轮才提议整理；派活进展不算；整理或「不用」�
   const f = summaryFocus(turns, turns[1].at);
   assert.match(f.detail, /最近 10 轮/);
   assert.ok(!f.detail.includes(":::记下\nx"), "旧回答里的标记块不带进去");
+});
+
+test("hasKnowledgeSources：项目根有 README / CLAUDE / AGENTS / 写作规范一类才提议起草项目知识", () => {
+  // HER 实测：只有文献与笔记，没有约定文件，不提议
+  assert.equal(hasKnowledgeSources([".gitignore", "references.bib"]), false);
+  assert.equal(hasKnowledgeSources([]), false);
+  assert.equal(hasKnowledgeSources(["README.md"]), true);
+  assert.equal(hasKnowledgeSources(["readme"]), true);
+  assert.equal(hasKnowledgeSources(["CLAUDE.md"]), true);
+  assert.equal(hasKnowledgeSources(["AGENTS.md"]), true);
+  assert.equal(hasKnowledgeSources(["style-sheet.md"]), true);
+  assert.equal(hasKnowledgeSources(["写作规范.docx"]), true);
+  // 名字里带这些词但不是约定文件的不算
+  assert.equal(hasKnowledgeSources(["readme-figures.png", "agents-notes.txt"]), false);
 });

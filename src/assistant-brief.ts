@@ -31,7 +31,7 @@ export interface BriefInput {
   goals: BriefGoal[];
   /** 上次打开项目助手的时间；第一次打开为 null（只列现状，不列变化） */
   since: string | null;
-  /** 项目知识一条都还没有（交给 AI 的那一份是空的）：提议从项目文件里起草几条 */
+  /** 项目知识一条都还没有（交给 AI 的那一份是空的），且项目根有可起草的约定文件（见 hasKnowledgeSources）：提议起草几条 */
   knowledgeEmpty?: boolean;
 }
 
@@ -135,11 +135,17 @@ export function briefLines(input: BriefInput): BriefLine[] {
     out.push({
       tone: "ok",
       kind: "knowledge-draft",
-      text: "还没有项目知识（每一步 AI 都照办的规矩），可以从 README、项目规则里起草几条",
+      text: "还没有项目知识（每一步 AI 都照办的规矩），可以从项目里的 README、写作规范一类文件起草几条",
       ask: { question: KNOWLEDGE_DRAFT_QUESTION, focus: knowledgeDraftFocus(), label: "起草几条", intent: "project" },
     });
   }
   return out;
+}
+
+/** 项目根有没有能起草项目知识的约定文件（2026-11-09 HER 实测：只有 papers/、notes/ 的项目也提议起草，点了答「一条也没找到」）。
+ *  项目规则（档案卡 settings）每次派活本来就写进任务书，不算来源；只看顶层的 README / CLAUDE / AGENTS / CONTRIBUTING / 写作规范一类 */
+export function hasKnowledgeSources(topLevelNames: readonly string[]): boolean {
+  return topLevelNames.some((name) => /^(readme|claude|agents|contributing|style[-_ ]?(sheet|guide)|写作规范|课题组规范)(\.[a-z]+)?$/i.test(name.trim()));
 }
 
 export const KNOWLEDGE_DRAFT_QUESTION = "从这个项目里起草几条项目知识";
