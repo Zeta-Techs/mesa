@@ -718,6 +718,8 @@ export default function StepFlow({
    *  分叉就会出现「压暗的行里躺着可点的按钮」 */
   const afterReady = (h: { expectedCount?: number }) =>
     stepNodeReady(runStatus, agentAttention, h);
+  /** 「核对待确认篇目」开工后就挂清单（检索中途写出的待确认也能先点）；没开工时还没有清单，同其他收尾事项一样压暗（2026-11-09 HER 实测） */
+  const pendingRowLive = runStatus !== "pending";
 
   // ===== 决策项（可枚举的拍板点）：点一下就答完，不开会话 =====
   // 答案存在草稿的「已定方向」小节里（草稿是开工合同，不另立一份状态），选中态由它回填
@@ -2217,7 +2219,7 @@ export default function StepFlow({
           human?.timing === "after" &&
           !afterReady(human) &&
           !node.done &&
-          !isPendingConfirmTaskTitle(human.title) &&
+          !(isPendingConfirmTaskTitle(human.title) && pendingRowLive) &&
           !isInlineDecisionTaskTitle(human.title)
             ? "opacity-45"
             : ""
@@ -3115,6 +3117,7 @@ export default function StepFlow({
         {node.kind === "human" &&
           human &&
           isPendingConfirmTaskTitle(human.title) &&
+          pendingRowLive &&
           !dense && (
             <div className="mt-1 pl-9 text-micro leading-5 text-l4">
               {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走，提醒移出的后果 */}
