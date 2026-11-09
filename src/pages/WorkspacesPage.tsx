@@ -1421,7 +1421,12 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       })),
   ];
   const selectedGroup =
-    groups.find((group) => group.key === selectedGroupKey) ?? groups[0] ?? null;
+    groups.find((group) => group.key === selectedGroupKey) ??
+    (selectedGroupKey
+      ? groups.find((group) => samePath(group.repoPath, selectedGroupKey.replace(/^[pr]:/, "")))
+      : undefined) ??
+    groups[0] ??
+    null;
   const selectedProjectPath = selectedGroup?.project?.path ?? null;
   const assistantOn = !!selectedProjectPath && !!assistantPath && samePath(assistantPath, selectedProjectPath);
   const selectedSurfaceTab: ProjectSurfaceTab =
@@ -1520,7 +1525,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       return;
     }
     if (!groups.some((group) => group.key === selectedGroupKey)) {
-      setSelectedGroupKey(groups[0].key);
+      // 选中的分组换了键（启动时工作区先到、项目表后到：先选上的 r:<路径> 变成 p:<路径>）：按同一路径接上，
+      // 找不到才退回第一个。原先直接退回第一个（最近打开的项目），点 HER 催化综述跳到了刚建的聊天层测试（2026-11-09 用户）
+      const prevPath = selectedGroupKey?.replace(/^[pr]:/, "") ?? null;
+      const same = prevPath ? groups.find((group) => samePath(group.repoPath, prevPath)) : undefined;
+      setSelectedGroupKey((same ?? groups[0]).key);
     }
   }, [groupKeySignature, selectedGroupKey]);
   // 切项目（含分组表重算后的被动切换）时收起所有产物清单
