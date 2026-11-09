@@ -376,20 +376,19 @@ export function PaperFetchBar({
     </div>
     {logins.length > 0 && (
       <p className="mt-0.5 text-micro text-l3">
-        要在浏览器里下的，先在浏览器里用学校账号登录这几家（每家一次）：
+        先点开这几家，登录学校账号、过人机验证（每家一次）：
         {logins.map((t) => (
           <button
             key={t.publisher}
             type="button"
             className="ml-1.5 underline decoration-dotted underline-offset-2 hover:text-l1"
-            title={`在浏览器里打开 ${t.publisher} 的一篇文章。页面上点「Institutional login / 机构登录」（Elsevier 写「Access through your institution」），选 CARSI 或你的学校，用学校账号登录；登好了这家以后不用再登。`}
+            title={`在浏览器里打开 ${t.publisher} 的一篇文章：有验证先过验证，再点「机构登录 / Institutional login」→ CARSI → 你的学校`}
             onClick={() => void openLogin(t)}
           >
             {t.publisher}
             {loginOpened.includes(t.publisher) ? " ✓" : ""}
           </button>
         ))}
-        <span className="ml-1.5 text-l4">（文章页点「机构登录」→ CARSI → 你的学校）</span>
       </p>
     )}
     {noExtension && (
