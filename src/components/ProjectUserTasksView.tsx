@@ -551,11 +551,12 @@ export default function ProjectUserTasksView({
               archivedTasks.length
                 ? "可以新建目标，或从已归档中恢复。"
                 : freeResearch
-                  ? "整理一批数据、读几篇文献出对照表、准备组会、规划实验……一件事一个目标。写清要交付的成果，再选择资料和 Agent；拿不准怎么做，先问项目助手。"
+                  ? "整理一批数据、读几篇文献出对照表、准备组会、规划实验……一件事一个目标，写清要交付的成果。"
                   : "写清要交付的成果，再选择资料和 Agent。"
             }
             action={
-              <div className="flex flex-col items-center gap-3">
+              // text-xs 写在外层：全站 button { font: inherit } 会吞掉按钮自己的 text-xs，不给外层字号按钮就跟页面走成 14px、比标题还抢眼
+              <div className="flex flex-col items-center gap-4 text-xs">
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
                     type="button"
@@ -579,7 +580,7 @@ export default function ProjectUserTasksView({
                 {freeResearch && onPickTemplate && (
                   <button
                     type="button"
-                    className="text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    className="text-l3 underline decoration-dotted underline-offset-4 hover:text-l1"
                     title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
                     onClick={onPickTemplate}
                   >
