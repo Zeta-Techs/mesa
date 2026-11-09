@@ -279,6 +279,10 @@ chrome.alarms.get(POLL_ALARM, (a) => {
 chrome.alarms.onAlarm.addListener((a) => {
   if (a && a.name === POLL_ALARM) void pollJob();
 });
+// 装好 / 重新加载、浏览器启动时立刻问一次，不等第一次闹钟（2026-11-09 用户：「为什么要等一分钟左右」）：
+// Mesa 设置里的「已连接」就是看扩展来问过没有
+chrome.runtime.onInstalled.addListener(() => void pollJob());
+chrome.runtime.onStartup.addListener(() => void pollJob());
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
