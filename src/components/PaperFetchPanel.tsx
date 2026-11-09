@@ -273,10 +273,13 @@ export function PaperFetchBar({
     (data?.jobs ?? []).filter((j) => ["queued", "browser", "needs_pick"].includes(j.status)).map((j) => j.doi),
   );
   const toSend = pending.filter((p) => !activeDois.has(p.doi));
-  const summary = summarizeJobs((data?.jobs ?? []).filter((j) => j.status !== "cancelled"));
+  // 按钮已写「代下这批（N 篇）」：按钮能交的、正等你点的不再在进度里重复数（2026-11-09 用户：说明简洁一点）
+  const sendable = new Set(toSend.map((p) => p.doi));
+  const summary = summarizeJobs(
+    (data?.jobs ?? []).filter((j) => j.status !== "cancelled" && !(j.status === "needs_approval" && sendable.has(j.doi))),
+  );
   const failed = (data?.jobs ?? []).filter((j) => j.status === "failed" || j.status === "needs_pick").length;
   const noExtension = needsExtension(data?.jobs ?? [], data?.extensionAlive ?? false);
-  const waitingRelease = (data?.jobs ?? []).filter((j) => j.status === "needs_approval").length;
   // 清单里还有没存的篇才出（真画出来才记「出过」）
   const showTip = tipOpen && pending.length > 0;
   useEffect(() => {
@@ -321,7 +324,7 @@ export function PaperFetchBar({
           type="button"
           className="rounded-sm border border-field px-1.5 py-0.5 hover:bg-hover hover:text-l1 disabled:opacity-50"
           disabled={busy}
-          title="Mesa 逐篇下载：先找开放获取版本，再经学校订阅，最后在你的浏览器里下；按出版商限速，下到的自动标已存"
+          title="Mesa 逐篇下载：先找开放获取版本，再经学校订阅，最后在你的浏览器里下；按出版商限速，下到的自动标已存。AI 交过的篇不点也行，这一步保存进项目后自动开始"
           onClick={() => void send()}
         >
           <span className="text-xs">{busy ? "交给 Mesa…" : `让 Mesa 代下这批（${toSend.length} 篇）`}</span>
@@ -341,12 +344,6 @@ export function PaperFetchBar({
       )}
       {note && <span>{note}</span>}
     </div>
-    {waitingRelease > 0 && (
-      // 这一节是让人在这里下文献的：先说点什么，「保存后也会自动开始」只作补充（2026-11-09 用户）
-      <p className="mt-0.5 text-micro text-l3">
-        AI 已把 {waitingRelease} 篇交给 Mesa，点「让 Mesa 代下这批」就开始下；不点的话，这一步保存进项目后也会自动开始。
-      </p>
-    )}
     {noExtension && (
       <p className="mt-0.5 text-micro text-caution-text">
         浏览器扩展没连上：Wiley、Elsevier 这类要在浏览器里下的，等它连上才会接着下。
