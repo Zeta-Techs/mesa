@@ -24,9 +24,6 @@ const BLOCK_SECS: i64 = 24 * 3600;
 const MAX_FAILS_IN_ROW: u32 = 3;
 /// 扩展领走后多久没回话就当它没做完，放回去让下一次来领
 const BROWSER_CLAIM_SECS: i64 = 4 * 60;
-/// 扩展没连上时，浏览器一级的篇写这句等着（2026-11-09 HER 实测：原先 30 分钟没来领就整批标失败，
-/// 扩展还没装的人一保存就是几十篇「需要你自己下」、要逐篇重试；改成留在队里，扩展连上自动接着下）
-pub const WAIT_EXTENSION: &str = "等浏览器扩展连上";
 /// 扩展多久内来领过一次算「在」
 const EXTENSION_ALIVE_SECS: i64 = 5 * 60;
 const KEEP_FINISHED: usize = 400;
@@ -40,6 +37,9 @@ pub const STATUS_NEEDS_PICK: &str = "needs_pick";
 pub const STATUS_DONE: &str = "done";
 pub const STATUS_FAILED: &str = "failed";
 pub const STATUS_CANCELLED: &str = "cancelled";
+/// 没有开放获取版本，交给人在官网下（2026-11-09 用户拍板：浏览器后台自动下被 Wiley / RSC 拒、Elsevier 封 IP，
+/// 「根本不可行」——代下只找开放获取，付费墙一律人点「官网」自己下）
+pub const STATUS_MANUAL: &str = "manual";
 
 const STAGE_OA: &str = "oa";
 const STAGE_PUBLISHER: &str = "publisher";
@@ -124,7 +124,7 @@ pub struct Job {
 
 impl Job {
     fn finished(&self) -> bool {
-        matches!(self.status.as_str(), STATUS_DONE | STATUS_FAILED | STATUS_CANCELLED)
+        matches!(self.status.as_str(), STATUS_DONE | STATUS_FAILED | STATUS_CANCELLED | STATUS_MANUAL)
     }
 }
 
@@ -516,27 +516,6 @@ pub(crate) fn note_outcome(state: &mut State, ok: bool) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChannelFail {
-    /// 出版商限流（429）：熔断这家
-    Throttled,
-    /// 停在学校登录 / SAML 页：会话过期
-    SessionExpired,
-    /// 其他（含 TLS 指纹 403、找不到 PDF 链接）：交给浏览器一级
-    Other,
-}
-
-pub(crate) fn classify_channel_error(err: &str) -> ChannelFail {
-    let lower = err.to_ascii_lowercase();
-    if lower.contains("429") || lower.contains("too many") {
-        ChannelFail::Throttled
-    } else if err.contains("登录页") || err.contains("SAML") || err.contains("会话可能已过期") {
-        ChannelFail::SessionExpired
-    } else {
-        ChannelFail::Other
-    }
-}
-
 fn fmt_time(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
         .map(|t| t.with_timezone(&chrono::Local).format("%m-%d %H:%M").to_string())
@@ -758,14 +737,27 @@ pub(crate) fn complete_in(store: &mut Store, id: &str, saved: &str, now: i64) ->
 }
 
 /// 浏览器一级等太久：放弃交给人（扩展没装、浏览器没开）
-/// 浏览器一级、还没被领走的篇：扩展没连上就写「等浏览器扩展连上」留在队里，连上了清掉这句（不再超时标失败）
-pub(crate) fn note_browser_wait(store: &mut Store, now: i64) -> bool {
-    let alive = now - store.state.extension_seen_at < EXTENSION_ALIVE_SECS;
+/// 没有开放获取版本：交给人在官网下（不再走学校通道直取、不再交浏览器扩展后台去取）
+fn to_manual(j: &mut Job, now: i64) {
+    j.status = STATUS_MANUAL.into();
+    j.stage = STAGE_OA.into();
+    j.updated_at = now;
+    j.waiting = None;
+    j.error = None;
+    j.claimed_at = None;
+    j.candidates.clear();
+}
+
+/// 改口径前排进学校通道 / 浏览器一级的篇，以及在那两级没下到的，一律转「交给人在官网下」
+pub(crate) fn settle_manual(store: &mut Store, now: i64) -> bool {
     let mut changed = false;
-    for job in store.jobs.iter_mut().filter(|j| j.status == STATUS_BROWSER && j.claimed_at.is_none()) {
-        let want = (!alive).then(|| WAIT_EXTENSION.to_string());
-        if job.waiting.as_deref() != want.as_deref() && (want.is_some() || job.waiting.as_deref() == Some(WAIT_EXTENSION)) {
-            job.waiting = want;
+    for j in store.jobs.iter_mut() {
+        let later_stage = j.stage == STAGE_PUBLISHER || j.stage == STAGE_BROWSER;
+        let stuck = (j.status == STATUS_QUEUED && later_stage)
+            || j.status == STATUS_BROWSER
+            || (matches!(j.status.as_str(), STATUS_FAILED | STATUS_NEEDS_PICK) && later_stage);
+        if stuck {
+            to_manual(j, now);
             changed = true;
         }
     }
@@ -827,20 +819,15 @@ fn take_saved() -> Vec<Job> {
 
 /// 推进一步；返回有没有变化（有就广播给界面）
 pub(crate) async fn tick() -> Result<bool, String> {
-    let channel = crate::inst_access::InstitutionalChannel::load();
-    // 校园网或学校 VPN（2026-11-09 用户：「可以 控制频率 别封了学校IP」）：出版商按学校网络放行，Mesa 直接去取
-    // （不带前缀、不带会话），与学校通道同一套按出版商限速、熔断；Wiley / Elsevier 照旧直接交浏览器
-    let campus = crate::settings::read_current().institutional_mode() == "campus";
-    let channel_active = channel.active() || campus;
     let t = now();
     let picked = with_store(|s| {
         let before = s.clone();
         roll_day(&mut s.state, &today());
-        let expired = note_browser_wait(s, t);
+        let expired = settle_manual(s, t);
         if s.jobs.iter().any(|j| j.status == STATUS_NEEDS_APPROVAL) {
             release_listed(s, |root| project_dois(Path::new(root)), t);
         }
-        let next = pick_next(s, t, channel_active);
+        let next = pick_next(s, t, false);
         if let Some((i, count)) = next {
             if count {
                 let key = publisher_key(&s.jobs[i].doi);
@@ -881,70 +868,18 @@ pub(crate) async fn tick() -> Result<bool, String> {
                 finish(&job.id, Err(format!("下到了开放获取版本，但存进项目失败：{e}")))?;
             }
             None => {
+                log("oa", "no_oa");
                 with_store(|s| {
                     if let Some(j) = s.jobs.iter_mut().find(|j| j.id == job.id && j.status == STATUS_QUEUED) {
-                        j.stage = STAGE_PUBLISHER.into();
-                        j.stage_at = now();
-                        j.updated_at = now();
+                        to_manual(j, now());
                     }
                     ((), true)
                 })?;
             }
         }
-        return Ok(true);
-    }
-    // 学校通道直取
-    let target = format!("https://doi.org/{}", job.doi);
-    match crate::inst_access::fetch_via_channel(&target, &channel).await {
-        Ok(bytes) => match ingest(&job, &bytes) {
-            Ok(name) => {
-                log("institutional", "ok");
-                finish(&job.id, Ok((name, "institutional")))?;
-            }
-            Err(e) => {
-                log("institutional", "save_failed");
-                finish(&job.id, Err(format!("下到了全文，但存进项目失败：{e}")))?;
-            }
-        },
-        Err(e) => {
-            // 只有 Mesa 自己存着学校登录时，停在登录页才算「登录过期」；只填了前缀的停在登录页是常态，直接改在浏览器里下
-            let kind = match classify_channel_error(&e) {
-                ChannelFail::SessionExpired if !channel.has_session() => ChannelFail::Other,
-                k => k,
-            };
-            log(
-                "institutional",
-                match kind {
-                    ChannelFail::Throttled => "throttled",
-                    ChannelFail::SessionExpired => "session_expired",
-                    ChannelFail::Other => "fallback",
-                },
-            );
-            with_store(|s| {
-                let t = now();
-                match kind {
-                    ChannelFail::Throttled => trip(&mut s.state, &key, t, "出版商限流"),
-                    ChannelFail::SessionExpired => s.state.session_expired = true,
-                    ChannelFail::Other => {}
-                }
-                if let Some(j) = s.jobs.iter_mut().find(|j| j.id == job.id && j.status == STATUS_QUEUED) {
-                    if kind == ChannelFail::Throttled {
-                        // 限流：这家已熔断，这篇留在队里等明天，不再往浏览器推（同一家同一个 IP）
-                        j.waiting = Some(format!("{} 限流，暂停 24 小时", publisher_name(&key)));
-                    } else {
-                        j.status = STATUS_BROWSER.into();
-                        j.stage = STAGE_BROWSER.into();
-                        j.stage_at = t;
-                    }
-                    j.updated_at = t;
-                }
-                ((), true)
-            })?;
-        }
     }
     Ok(true)
 }
-
 /// 入那件任务自己的项目（与扩展「存到 Mesa」同一套落盘与登记）；返回 papers/ 里的真实文件名（不是条目显示名）与是否重复
 fn save_for_job(job: &Job, bytes: &[u8]) -> Result<(String, bool), String> {
     let hint = if job.title.trim().is_empty() { job.doi.clone() } else { job.title.clone() };
@@ -1091,6 +1026,7 @@ fn describe(job: &Job) -> String {
             s
         }
         STATUS_FAILED => format!("{}：没取到——{}。这篇交给人获取，不要重试、不要换别的办法去下", job.doi, job.error.as_deref().unwrap_or("原因不明")),
+        STATUS_MANUAL => format!("{}：没有开放获取版本，交给人在出版商官网下；留在 to-fetch 照常收尾，不要自己去出版商网站下", job.doi),
         STATUS_CANCELLED => format!("{}：人取消了这篇的代下", job.doi),
         STATUS_BROWSER => format!("{}：排队等浏览器取（Mesa 文献下载扩展每分钟来领一篇）{}", job.doi, job.waiting.as_deref().map(|w| format!("；{w}")).unwrap_or_default()),
         _ => format!(
@@ -1526,13 +1462,6 @@ mod tests {
     }
 
     #[test]
-    fn channel_errors_classified() {
-        assert_eq!(classify_channel_error("下载失败：HTTP 429 Too Many Requests"), ChannelFail::Throttled);
-        assert_eq!(classify_channel_error("停在机构登录页——会话可能已过期"), ChannelFail::SessionExpired);
-        assert_eq!(classify_channel_error("HTTP 403"), ChannelFail::Other);
-    }
-
-    #[test]
     fn agent_outside_list_needs_approval_human_does_not() {
         let mut s = Store::default();
         let a = enqueue_in(&mut s, "/p", "10.1021/a", "", None, "agent", Some(&allowed(&["10.1021/b"])), 1);
@@ -1574,27 +1503,6 @@ mod tests {
     }
 
     #[test]
-    fn pick_next_prefers_oa_then_ready_publishers_and_routes_browser_only() {
-        let mut s = Store::default();
-        let mut w = new_job("/p", "10.1002/w", "", None, "agent", 1);
-        w.stage = STAGE_PUBLISHER.into();
-        let mut a = new_job("/p", "10.1021/a", "", None, "agent", 1);
-        a.stage = STAGE_PUBLISHER.into();
-        let o = new_job("/p", "10.1038/o", "", None, "agent", 1);
-        s.jobs = vec![w, a, o];
-        // 先挑开放获取；Wiley 只能浏览器，这一下就转过去（不等开放获取排完），ACS 留着等学校通道
-        assert_eq!(pick_next(&mut s, 10, true), Some((2, false)));
-        assert_eq!(s.jobs[0].status, STATUS_BROWSER);
-        assert_eq!(s.jobs[1].status, STATUS_QUEUED);
-        s.jobs[2].status = STATUS_DONE.into();
-        assert_eq!(pick_next(&mut s, 10, true), Some((1, true)));
-        // 学校通道没配：都走浏览器
-        s.jobs[1].status = STATUS_QUEUED.into();
-        assert_eq!(pick_next(&mut s, 10, false), None);
-        assert_eq!(s.jobs[1].status, STATUS_BROWSER);
-    }
-
-    #[test]
     fn browser_claim_respects_limits_and_reports() {
         let mut s = Store::default();
         s.state.limits = Some(Limits { per_publisher_daily: 1, total_daily: 10, min_gap_secs: 30, max_gap_secs: 30 });
@@ -1621,22 +1529,27 @@ mod tests {
     }
 
     #[test]
-    fn browser_jobs_wait_for_extension_instead_of_failing() {
+    fn settle_manual_moves_publisher_and_browser_jobs_to_human() {
         let mut s = Store::default();
-        let mut j = new_job("/p", "10.1002/x", "", None, "agent", 0);
-        j.status = STATUS_BROWSER.into();
-        j.stage_at = 0;
-        s.jobs.push(j);
-        // 扩展没连上：写一句等着，过多久都不标失败
-        // 扩展从没来过（seen_at = 0），时间按真实 unix 秒
-        assert!(note_browser_wait(&mut s, 3600));
-        assert!(!note_browser_wait(&mut s, 10 * 3600));
-        assert_eq!(s.jobs[0].status, STATUS_BROWSER);
-        assert_eq!(s.jobs[0].waiting.as_deref(), Some(WAIT_EXTENSION));
-        // 扩展连上了：清掉这句
-        s.state.extension_seen_at = 10 * 3600;
-        assert!(note_browser_wait(&mut s, 10 * 3600 + 5));
-        assert_eq!(s.jobs[0].waiting, None);
+        for (doi, st, stage) in [
+            ("10.1/oa", STATUS_QUEUED, STAGE_OA),
+            ("10.1/pub", STATUS_QUEUED, STAGE_PUBLISHER),
+            ("10.1/br", STATUS_BROWSER, STAGE_BROWSER),
+            ("10.1/f", STATUS_FAILED, STAGE_BROWSER),
+            ("10.1/oafail", STATUS_FAILED, STAGE_OA),
+            ("10.1/done", STATUS_DONE, STAGE_BROWSER),
+        ] {
+            let mut j = new_job("/p", doi, "", None, "agent", 0);
+            j.status = st.into();
+            j.stage = stage.into();
+            j.waiting = Some("x".into());
+            s.jobs.push(j);
+        }
+        assert!(settle_manual(&mut s, 5));
+        let st: Vec<&str> = s.jobs.iter().map(|j| j.status.as_str()).collect();
+        assert_eq!(st, vec![STATUS_QUEUED, STATUS_MANUAL, STATUS_MANUAL, STATUS_MANUAL, STATUS_FAILED, STATUS_DONE]);
+        assert!(s.jobs[1].waiting.is_none() && s.jobs[1].finished());
+        assert!(!settle_manual(&mut s, 6));
     }
 
     #[test]

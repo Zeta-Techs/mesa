@@ -279,29 +279,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // 异步 sendResponse
 });
 
-// ===== 代下队列（2026-11-08，Mesa paper_fetch.rs）=====
-// Mesa 把「要用真浏览器才取得到」的文献排在队里；这里每分钟问一次，有就在后台标签打开落地页，
-// 交给页内脚本取 PDF（带你自己浏览器里的学校会话），取到经 helper 入那件任务的项目，取不到报回原因。
-// 一次只做一篇；限速、每天上限、熔断全在 Mesa 那边定，这里不自己重试。
+// ===== 跟 Mesa 打招呼（2026-11-09 改）=====
+// Mesa 设置里的「已连接」看扩展来问过没有：每分钟问一次，装好 / 重新加载 / 浏览器启动时立刻问一次。
+// 不再在后台标签替人取付费墙全文（2026-11-09 用户拍板：Wiley / RSC 拒脚本请求、Elsevier 封 IP，「根本不可行」）——
+// 付费墙由人点 Mesa 里的「官网」自己下，扩展只管「存到 Mesa」按钮和把下载落盘路径报给 Mesa。
 const POLL_ALARM = 'mesa-poll-jobs';
-// 后台标签等落地页加载的上限（与 helper 回话超时无关）
-const TAB_LOAD_MS = 60 * 1000;
-// 过渡页（Just a moment…）最多等多久再认定是真的人机验证
-const CHALLENGE_WAIT_MS = 30 * 1000;
 chrome.alarms.get(POLL_ALARM, (a) => {
   if (!a) chrome.alarms.create(POLL_ALARM, { periodInMinutes: 1 });
 });
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a && a.name === POLL_ALARM) void pollJob();
+  if (a && a.name === POLL_ALARM) void ping();
 });
-// 装好 / 重新加载、浏览器启动时立刻问一次，不等第一次闹钟（2026-11-09 用户：「为什么要等一分钟左右」）：
-// Mesa 设置里的「已连接」就是看扩展来问过没有
-chrome.runtime.onInstalled.addListener(() => void pollJob());
-chrome.runtime.onStartup.addListener(() => void pollJob());
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+chrome.runtime.onInstalled.addListener(() => void ping());
+chrome.runtime.onStartup.addListener(() => void ping());
 
 // 发一条 native 消息、等一条回话（每次一条连接，MV3 不维持长连接）
 function nativeCall(msg, timeoutMs) {
@@ -332,109 +322,10 @@ function nativeCall(msg, timeoutMs) {
   });
 }
 
-function waitTabComplete(tabId, timeoutMs) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      chrome.tabs.onUpdated.removeListener(onUpd);
-      resolve();
-    };
-    const onUpd = (id, info) => {
-      if (id === tabId && info.status === 'complete') done();
-    };
-    chrome.tabs.onUpdated.addListener(onUpd);
-    setTimeout(done, timeoutMs);
-  });
-}
-
-let jobBusy = false;
-async function pollJob() {
-  if (jobBusy) return;
-  jobBusy = true;
+async function ping() {
   try {
-    const reply = await nativeCall({ kind: 'mesa-poll-jobs' }, 10000);
-    const job = reply && reply.job;
-    if (job && job.id && job.url) await runJob(job);
+    await nativeCall({ kind: 'mesa-poll-jobs' }, 10000);
   } catch (_) {
     /* 全防御 */
-  } finally {
-    jobBusy = false;
-  }
-}
-
-async function runJob(job) {
-  let tabId = null;
-  let resp = null;
-  try {
-    const tab = await chrome.tabs.create({ url: job.pick || job.url, active: false });
-    tabId = tab.id;
-    await waitTabComplete(tabId, TAB_LOAD_MS);
-    await sleep(3000); // 晚渲染的落地页（SD、Wiley）等它把链接画出来
-    // 落地页直接就是 PDF（Chrome 自带查看器不注内容脚本）：后台带会话取
-    if (pdfTabs.has(tabId)) {
-      resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
-    } else {
-      for (let i = 0; i < 3 && !resp; i++) {
-        try {
-          resp = await chrome.tabs.sendMessage(tabId, { kind: 'mesa-auto-fetch', jobId: job.id });
-        } catch (_) {
-          await sleep(2000);
-        }
-      }
-      if (!resp && pdfTabs.has(tabId)) resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
-    }
-    // 「Just a moment…」这类过渡页（Cloudflare 等）真浏览器里几秒后自己跳走：先等它过去再判，
-    // 不把过渡页当人机验证报回（2026-11-09 HER 实测：Wiley / Elsevier / RSC 各一篇开页十几秒就被判验证，三家停 24 小时）
-    const challengeDeadline = Date.now() + CHALLENGE_WAIT_MS;
-    while (resp && resp.reason === 'captcha' && Date.now() < challengeDeadline) {
-      await sleep(3000);
-      // 过渡页跳走后等新页面加载完（没跳就最多等 3 秒）
-      await waitTabComplete(tabId, 3000);
-      if (pdfTabs.has(tabId)) {
-        resp = await fetchPdfInBackground(job, pdfTabs.get(tabId));
-        break;
-      }
-      try {
-        resp = await chrome.tabs.sendMessage(tabId, { kind: 'mesa-auto-fetch', jobId: job.id });
-      } catch (_) {
-        /* 正在跳转，内容脚本还没到：下一轮再问 */
-      }
-    }
-    if (!resp) resp = { ok: false, reason: 'no_pdf', detail: '页面上没有可用的内容脚本', candidates: [] };
-  } catch (e) {
-    resp = { ok: false, reason: 'error', detail: e && e.message ? e.message : String(e) };
-  } finally {
-    if (tabId != null) {
-      try { await chrome.tabs.remove(tabId); } catch (_) {}
-    }
-  }
-  if (resp && !resp.ok) {
-    await nativeCall({
-      kind: 'mesa-job-report',
-      jobId: job.id,
-      reason: resp.reason || 'error',
-      detail: resp.detail || '',
-      candidates: resp.candidates || [],
-    }, 10000);
-  }
-}
-
-async function fetchPdfInBackground(job, url) {
-  try {
-    const r = await fetch(url, { credentials: 'include' });
-    if (r.status === 403 || r.status === 429) return { ok: false, reason: 'blocked', detail: 'HTTP ' + r.status };
-    if (!r.ok) return { ok: false, reason: 'error', detail: 'HTTP ' + r.status };
-    const bytes = new Uint8Array(await r.arrayBuffer());
-    if (!(bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
-      return { ok: false, reason: 'no_pdf', detail: '拿到的不是 PDF' };
-    }
-    if (bytes.length > 40 * 1024 * 1024) return { ok: false, reason: 'error', detail: '文件超过 40MB，交给人手动下' };
-    const reply = await nativeCall({ kind: 'mesa-save-pdf', jobId: job.id, doi: job.doi, title: '', url, bytesB64: b64(bytes) }, 150000);
-    if (reply && reply.ok) return { ok: true };
-    return { ok: false, reason: 'error', detail: (reply && reply.error) || 'Mesa 未响应' };
-  } catch (e) {
-    return { ok: false, reason: 'error', detail: e && e.message ? e.message : String(e) };
   }
 }

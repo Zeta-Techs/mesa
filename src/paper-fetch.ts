@@ -71,6 +71,7 @@ const STATUS_LABEL: Record<string, string> = {
   needs_pick: "等 AI 选链接",
   done: "已下载",
   failed: "没下到",
+  manual: "点官网自己下",
   cancelled: "已取消",
 };
 
@@ -130,37 +131,32 @@ export function fetchableItems(
   return out;
 }
 
-/** 与后端 paper_fetch::WAIT_EXTENSION 同一句：浏览器一级的篇在等扩展连上 */
-export const WAIT_EXTENSION = "等浏览器扩展连上";
-
-/** 一行进度，按 Mesa 走到哪一条路分（2026-11-09 HER 实测「下载这块有点乱」）：
- *  「找免费版 3 · 经学校订阅 2 · 在浏览器里下 30 · 已下载 5 · 没下到 1 · 等你确认 2」；没有就空串 */
+/** 一行进度：「找免费版 3 · 已下载 5 · 点官网下 30 · 没下到 1 · 等你点开始 2」；没有就空串。
+ *  2026-11-09 起代下只找开放获取，找不到的（manual）交给人点「官网」 */
 export function summarizeJobs(jobs: PaperFetchJob[]): string {
   const count = (pred: (j: PaperFetchJob) => boolean) => jobs.filter(pred).length;
   const parts: string[] = [];
-  const oa = count((j) => j.status === "queued" && j.stage === "oa");
-  const inst = count((j) => j.status === "queued" && j.stage !== "oa");
-  const browser = count((j) => j.status === "browser");
+  const oa = count((j) => j.status === "queued");
   const done = count((j) => j.status === "done");
+  const manual = count((j) => j.status === "manual");
   const failed = count((j) => j.status === "failed" || j.status === "needs_pick");
   const approval = count((j) => j.status === "needs_approval");
   if (oa) parts.push(`找免费版 ${oa}`);
-  if (inst) parts.push(`经学校订阅 ${inst}`);
-  if (browser) parts.push(`在浏览器里下 ${browser}`);
   if (done) parts.push(`已下载 ${done}`);
+  if (manual) parts.push(`点官网下 ${manual}`);
   if (failed) parts.push(`没下到 ${failed}`);
   if (approval) parts.push(`等你点开始 ${approval}`);
   return parts.join(" · ");
 }
 
-/** 待获取清单每一行：Mesa 在管这篇时写它走到哪了（下到了由行本身标「已存」，这里不写） */
+/** 待获取清单每一行：Mesa 在管这篇时写它到哪了（下到了由行本身标「已存」，这里不写） */
 export function rowJobLabel(job: PaperFetchJob | undefined): { text: string; warn: boolean } | null {
   if (!job) return null;
   switch (job.status) {
     case "queued":
-      return { text: job.stage === "oa" ? "Mesa 找免费版" : "Mesa 经学校订阅下", warn: false };
-    case "browser":
-      return job.waiting === WAIT_EXTENSION ? { text: "Mesa 等扩展连上", warn: true } : { text: "Mesa 在浏览器里下", warn: false };
+      return { text: "Mesa 找免费版", warn: false };
+    case "manual":
+      return { text: "没有免费版，点官网", warn: false };
     case "needs_approval":
       return { text: "等你点开始", warn: true };
     case "needs_pick":
@@ -171,32 +167,3 @@ export function rowJobLabel(job: PaperFetchJob | undefined): { text: string; war
   }
 }
 
-/** 要在浏览器里下的篇（含被拦下没下到的）按出版商各挑一篇：「先登录这几家」每家一个按钮，打开那篇的文章页去登录 */
-export function loginTargets(jobs: PaperFetchJob[]): { publisher: string; doi: string }[] {
-  const out: { publisher: string; doi: string }[] = [];
-  const seen = new Set<string>();
-  for (const j of jobs) {
-    const inBrowser = j.status === "browser" || ((j.status === "failed" || j.status === "needs_pick") && j.stage === "browser");
-    const name = (j.publisher ?? "").trim();
-    if (!inBrowser || !name || seen.has(name)) continue;
-    seen.add(name);
-    out.push({ publisher: name, doi: j.doi });
-  }
-  return out;
-}
-
-/** 有篇停在浏览器一级、扩展又没连上：清单顶上要提示去装扩展 */
-export function needsExtension(jobs: PaperFetchJob[], extensionAlive: boolean): boolean {
-  return !extensionAlive && jobs.some((j) => j.status === "browser");
-}
-
-/** 人改上限：只能在后端给的天花板以内（后端也会再夹一次） */
-export function clampLimits(l: PaperFetchLimits, ceiling: PaperFetchLimits): PaperFetchLimits {
-  const minGap = Math.min(600, Math.max(ceiling.minGapSecs, Math.round(l.minGapSecs) || ceiling.minGapSecs));
-  return {
-    perPublisherDaily: Math.min(ceiling.perPublisherDaily, Math.max(1, Math.round(l.perPublisherDaily) || 1)),
-    totalDaily: Math.min(ceiling.totalDaily, Math.max(1, Math.round(l.totalDaily) || 1)),
-    minGapSecs: minGap,
-    maxGapSecs: Math.min(1800, Math.max(minGap, Math.round(l.maxGapSecs) || minGap)),
-  };
-}

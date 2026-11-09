@@ -5,23 +5,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
-import { useAppStore } from "../store";
 import { canShowCoachTip, markCoachTipShown, markCoachTipSeen } from "../coach-tips";
 import CoachTip from "./CoachTip";
 import {
-  clampLimits,
   fetchableItems,
   logResultLabel,
-  loginTargets,
-  needsExtension,
   statusLabel,
   summarizeJobs,
   viaLabel,
   type PaperFetchJob,
-  type PaperFetchLimits,
   type PaperFetchLogEntry,
   type PaperFetchOverview,
-  type PaperFetchPublisher,
 } from "../paper-fetch";
 
 const linkBtn = "text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50";
@@ -60,100 +54,6 @@ export function fmtTime(ts: number): string {
   const d = new Date(ts * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** 两个数字框，失焦或回车即存（设置页口径：不另放「保存」）；超过上限按上限存 */
-export function LimitPair({
-  data,
-  pair,
-  inputClass,
-  onSaved,
-}: {
-  data: PaperFetchOverview;
-  pair: "daily" | "gap";
-  inputClass: string;
-  onSaved: () => void;
-}) {
-  const keys: [keyof PaperFetchLimits, keyof PaperFetchLimits] =
-    pair === "daily" ? ["perPublisherDaily", "totalDaily"] : ["minGapSecs", "maxGapSecs"];
-  const [draft, setDraft] = useState<[string, string]>([String(data.limits[keys[0]]), String(data.limits[keys[1]])]);
-  useEffect(() => {
-    setDraft([String(data.limits[keys[0]]), String(data.limits[keys[1]])]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.limits[keys[0]], data.limits[keys[1]]]);
-  async function save() {
-    const next = clampLimits({ ...data.limits, [keys[0]]: Number(draft[0]), [keys[1]]: Number(draft[1]) }, data.ceiling);
-    if (next[keys[0]] === data.limits[keys[0]] && next[keys[1]] === data.limits[keys[1]]) {
-      setDraft([String(next[keys[0]]), String(next[keys[1]])]);
-      return;
-    }
-    try {
-      await invoke("paper_fetch_set_limits", { limits: next });
-    } finally {
-      onSaved();
-    }
-  }
-  const field = (i: 0 | 1, label: string, title: string) => (
-    <input
-      className={`${inputClass} w-16 text-center tabular-nums`}
-      inputMode="numeric"
-      aria-label={label}
-      title={title}
-      value={draft[i]}
-      onChange={(e) => {
-        const v = e.target.value.replace(/[^0-9]/g, "");
-        setDraft(i === 0 ? [v, draft[1]] : [draft[0], v]);
-      }}
-      onBlur={() => void save()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-      }}
-    />
-  );
-  return pair === "daily" ? (
-    <span className="flex items-center gap-1.5 text-sm text-l2">
-      每家{field(0, "每家出版商每天", `最多 ${data.ceiling.perPublisherDaily} 篇`)}篇
-      <span className="ml-2">共</span>
-      {field(1, "每天总共", `最多 ${data.ceiling.totalDaily} 篇`)}篇
-    </span>
-  ) : (
-    <span className="flex items-center gap-1.5 text-sm text-l2">
-      {field(0, "最短间隔", `不少于 ${data.ceiling.minGapSecs} 秒`)}–{field(1, "最长间隔", "两次之间在这个范围里随机等")}秒
-    </span>
-  );
-}
-
-/** 暂停的出版商：一家一行，解除按钮跟在原因后面 */
-export function BlockedPublishers({
-  publishers,
-  buttonClass,
-  onChanged,
-}: {
-  publishers: PaperFetchPublisher[];
-  /** 与设置页其他行内动作同一个细边按钮 */
-  buttonClass: string;
-  onChanged: () => void;
-}) {
-  return (
-    <ul className="space-y-1.5 text-sm">
-      {publishers.map((p) => (
-        <li key={p.key} className="flex flex-wrap items-center gap-x-2 text-l2">
-          <span className="text-l1">{p.name}</span>
-          <span className="text-xs text-l3">
-            {p.blockedReason}，{fmtTime(p.blockedUntil!)} 后恢复
-          </span>
-          <button
-            type="button"
-            className={buttonClass}
-            title="确认学校的访问没被拦，再提前恢复"
-            onClick={() => void invoke("paper_fetch_unblock", { publisher: p.key }).finally(onChanged)}
-          >
-            提前恢复
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 function JobRow({ job, onChanged }: { job: PaperFetchJob; onChanged: () => void }) {
@@ -245,18 +145,8 @@ export function FetchLog() {
   );
 }
 
-/** 在浏览器里点开过登录的出版商（登录状态在浏览器里，按浏览器记、不分项目） */
-const LOGIN_OPENED_KEY = "mesa.paperFetch.loginOpened";
-function readLoginOpened(): string[] {
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(LOGIN_OPENED_KEY) ?? "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-/** 待获取清单顶上：次要动作「让 Mesa 代下这批」与一行进度（主按钮仍是这一步的开始 / 评审） */
+/** 待获取清单顶上：次要动作「让 Mesa 找免费版」与一行进度（主按钮仍是这一步的开始 / 评审）。
+ *  2026-11-09 用户拍板：浏览器后台自动下被出版商拦，「根本不可行」——Mesa 只找开放获取，付费墙由人点每篇「官网」 */
 export function PaperFetchBar({
   projectPath,
   items,
@@ -270,9 +160,7 @@ export function PaperFetchBar({
   overview: { data: PaperFetchOverview | null; reload: () => Promise<void> };
 }) {
   const { data, reload } = overview;
-  const setPage = useAppStore((s) => s.setPage);
-  const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
-  // 两种下法的一次性气泡（2026-11-09 用户：「用户点官网下和 Mesa 来下载得表现明白」）；例外于「不首次即弹」：清单第一次有可下的篇就出
+  // 怎么下的一次性气泡（2026-11-09 用户：「用户点官网下和 Mesa 来下载得表现明白」）；例外于「不首次即弹」：清单第一次有可下的篇就出
   const [tipOpen, setTipOpen] = useState(() => canShowCoachTip("fetchWays", true));
   const closeTip = () => {
     markCoachTipSeen("fetchWays");
@@ -291,25 +179,6 @@ export function PaperFetchBar({
     (data?.jobs ?? []).filter((j) => j.status !== "cancelled" && !(j.status === "needs_approval" && sendable.has(j.doi))),
   );
   const failed = (data?.jobs ?? []).filter((j) => j.status === "failed" || j.status === "needs_pick").length;
-  const noExtension = needsExtension(data?.jobs ?? [], data?.extensionAlive ?? false);
-  // 第一次在浏览器里下之前，每家出版商要在浏览器里用学校账号登一次（2026-11-09 用户：「你也没给用户操作方式啊」）
-  const logins = loginTargets(data?.jobs ?? []);
-  const [loginOpened, setLoginOpened] = useState<string[]>(readLoginOpened);
-  async function openLogin(t: { publisher: string; doi: string }) {
-    setNote(null);
-    try {
-      await invoke("inst_browser_open", { url: `https://doi.org/${t.doi}`, projectRoot: projectPath, title: null, doi: t.doi });
-      const next = Array.from(new Set([...loginOpened, t.publisher]));
-      setLoginOpened(next);
-      try {
-        localStorage.setItem(LOGIN_OPENED_KEY, JSON.stringify(next));
-      } catch {
-        /* 存不下只是下次不打勾 */
-      }
-    } catch (e) {
-      setNote(`打开浏览器失败：${String(e)}`);
-    }
-  }
   // 清单里还有没存的篇才出（真画出来才记「出过」）
   const showTip = tipOpen && pending.length > 0;
   useEffect(() => {
@@ -354,92 +223,44 @@ export function PaperFetchBar({
           type="button"
           className="rounded-sm border border-field px-1.5 py-0.5 hover:bg-hover hover:text-l1 disabled:opacity-50"
           disabled={busy}
-          title="Mesa 逐篇下载：先找开放获取版本，再经学校订阅，最后在你的浏览器里下；按出版商限速，下到的自动标已存。AI 交过的篇不点也行，这一步保存进项目后自动开始"
+          title="Mesa 逐篇找合法的开放获取版本，找到就存进 papers/、标已存；找不到的写「没有免费版，点官网」。AI 交过的篇不点也行，这一步保存进项目后自动开始"
           onClick={() => void send()}
         >
-          <span className="text-xs">{busy ? "交给 Mesa…" : `让 Mesa 代下这批（${toSend.length} 篇）`}</span>
+          <span className="text-xs">{busy ? "交给 Mesa…" : `让 Mesa 找免费版（${toSend.length} 篇）`}</span>
         </button>
       )}
-      {summary && <span title="Mesa 代下到哪了；细节在 设置 → 网络 → 代下全文">Mesa：{summary}</span>}
+      {summary && <span title="细节在 设置 → 网络 → 代下全文">Mesa：{summary}</span>}
       {/* 气泡只自动出一次；之后随时点这里再看（2026-11-09 用户问「两种下载方式说清楚了吗」：热更新时气泡闪过即记已出，人没看到） */}
       {pending.length > 0 && !showTip && (
         <button type="button" className={linkBtn} onClick={() => setTipOpen(true)}>
-          两种下法
+          怎么下
         </button>
       )}
       {failed > 0 && (
-        <button type="button" className={linkBtn} disabled={busy} title="没下到的这几篇让 Mesa 从头再试一遍" onClick={() => void retryAll()}>
+        <button type="button" className={linkBtn} disabled={busy} title="没下到的这几篇让 Mesa 再找一遍免费版" onClick={() => void retryAll()}>
           全部重试（{failed}）
         </button>
       )}
       {note && <span>{note}</span>}
     </div>
-    {logins.length > 0 && (
-      <p className="mt-0.5 text-micro text-l3">
-        先点开这几家，登录学校账号、过人机验证（每家一次）：
-        {logins.map((t) => (
-          <button
-            key={t.publisher}
-            type="button"
-            className="ml-1.5 underline decoration-dotted underline-offset-2 hover:text-l1"
-            title={`在浏览器里打开 ${t.publisher} 的一篇文章：有验证先过验证，再点「机构登录 / Institutional login」→ CARSI → 你的学校`}
-            onClick={() => void openLogin(t)}
-          >
-            {t.publisher}
-            {loginOpened.includes(t.publisher) ? " ✓" : ""}
-          </button>
-        ))}
-      </p>
-    )}
-    {noExtension && (
-      <p className="mt-0.5 text-micro text-caution-text">
-        浏览器扩展没连上：Wiley、Elsevier 这类要在浏览器里下的，等它连上才会接着下。
-        <button
-          type="button"
-          className="ml-1 underline decoration-dotted underline-offset-2 hover:text-l1"
-          onClick={() => {
-            setSettingsSectionReq("network");
-            setPage("settings");
-          }}
-        >
-          去安装
-        </button>
-      </p>
-    )}
     {showTip && (
       <CoachTip
         arrow="up"
         arrowAt={40}
-        title="两种下法，可以一起用"
+        title="怎么下全文"
         onClose={closeTip}
         // 浮在清单上面，不占位置把清单挤下去（2026-11-09 用户）
         className="absolute top-full left-0 mt-2 w-[min(28rem,100%)] text-xs leading-5 shadow-lg"
-        // 扩展没连上时主按钮直接跳去装（2026-11-09 用户：「去安装」放进气泡里直接跳转）
-        actions={
-          data?.extensionAlive
-            ? [{ label: "知道了", onClick: closeTip }]
-            : [
-                { label: "知道了", onClick: closeTip },
-                {
-                  label: "去装扩展",
-                  onClick: () => {
-                    closeTip();
-                    setSettingsSectionReq("network");
-                    setPage("settings");
-                  },
-                },
-              ]
-        }
+        actions={[{ label: "知道了", onClick: closeTip }]}
       >
         <ul className="list-disc space-y-0.5 pl-4">
           <li>
-            <b>让 Mesa 代下这批</b>：Mesa 一篇篇去下——先找免费版，再经学校订阅，最后在你的浏览器里下（要装 Mesa 文献下载扩展{data?.extensionAlive ? "，已连接" : "，还没连上"}）。不用守着，每篇后面写它走到哪了。
+            <b>让 Mesa 找免费版</b>：Mesa 去找合法的开放获取版本，找到就存进 papers/。
           </li>
           <li>
-            每篇的 <b>官网</b>：你自己去出版商网站下。PDF 存进「下载」文件夹，会自动收进 papers/；存到别处的点 <b>关联</b>。
+            找不到的（行尾写「没有免费版，点官网」）：点这一篇的 <b>官网</b>，在浏览器里下 PDF，存进「下载」文件夹会自动收进 papers/；存到别处的点 <b>关联</b>。
           </li>
         </ul>
-        <p className="mt-1 opacity-80">不管哪种下到的，这一篇都标「已存」。</p>
       </CoachTip>
     )}
     </div>

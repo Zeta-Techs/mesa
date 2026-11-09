@@ -1,5 +1,5 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
-import { BlockedPublishers, FetchLog, JobList, LimitPair, usePaperFetchOverview } from "../components/PaperFetchPanel";
+import { FetchLog, JobList, usePaperFetchOverview } from "../components/PaperFetchPanel";
 import { summarizeJobs } from "../paper-fetch";
 import { classifierNoticeAutoSkip, setClassifierNoticeAutoSkip } from "../cli-notices";
 import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
@@ -1728,7 +1728,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const [paperFetchLogShown, setPaperFetchLogShown] = useState(false);
   const [bridgeResult, setBridgeResult] = useState<{ dir: string | null; failed: string[] } | null>(null);
   const paperFetchOpen = (paperFetch.data?.jobs ?? []).filter((j) => !["done", "cancelled"].includes(j.status));
-  const paperFetchBlocked = (paperFetch.data?.publishers ?? []).filter((p) => !!p.blockedUntil);
   async function installBridge() {
     try {
       const lines = await invoke<string[]>("install_browser_bridge");
@@ -4243,8 +4242,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {/* 代下全文（2026-11-08）：一行一件事，数字失焦即存，进行中与记录收起（设置页规范 §13 / design-system 设置页细节口径） */}
         <Row
           label="代下全文"
-          hint="待获取的文献交给 Mesa 逐篇下载"
-          labelTitle="先找开放获取版本，再经学校订阅下载（校园网里由 Mesa 直接取，或经校外访问链接），最后在你的浏览器里下。按出版商限速；遇到人机验证或被出版商拒绝，这家停 24 小时，那篇交还给你自己下；连续 3 篇没下到，整条暂停。AI 只能交项目文献清单里有的文献。"
+          hint="待获取的文献，Mesa 先找免费版"
+          labelTitle="Mesa 只找合法的开放获取版本，找到就存进 papers/；找不到的在待获取清单里点「官网」自己下（2026-11-09 起不再经学校订阅或浏览器扩展在后台自动下：出版商会拦）。AI 只能交项目文献清单里有的文献。"
         >
           {paperFetch.data?.paused ? (
             <>
@@ -4255,23 +4254,14 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 继续
               </button>
             </>
-          ) : paperFetch.data?.sessionExpired ? (
-            <>
-              <span className="text-sm text-warn-text">学校登录已过期</span>
-              <button type="button" className={rowActionClass} onClick={() => void invoke("paper_fetch_resume").finally(paperFetch.reload)}>
-                已重新登录
-              </button>
-            </>
           ) : paperFetch.data ? (
-            <span className="text-sm text-l2 tabular-nums" title="只计经学校订阅下载的篇数">
-              今天 {paperFetch.data.totalToday} / {paperFetch.data.limits.totalDaily} 篇
-            </span>
+            <span className="text-sm text-l3">开着</span>
           ) : null}
         </Row>
         <Row
           label="浏览器扩展"
-          hint="Wiley、Elsevier 等要在浏览器里下载"
-          labelTitle="「Mesa 文献下载」扩展在你的浏览器里打开文献页、下载 PDF，用的是浏览器里的学校访问（校园网、VPN 或登录过的学校账号）。浏览器要开着。"
+          hint="可选：文献页上一键「存到 Mesa」"
+          labelTitle="「Mesa 文献下载」扩展：在文献页上加「存到 Mesa」按钮；你在官网下 PDF 时，存到「下载」以外的文件夹也能收进 papers/。不装也能用：点官网下载存进「下载」文件夹，Mesa 照样收。"
           extra={
             bridgeResult ? (
               <div className="max-w-2xl space-y-1 text-sm leading-relaxed text-l3">
@@ -4303,7 +4293,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                     )}
                   </li>
                   <li>以前装过的，在「Mesa 文献下载」那张卡上点一次重新加载（↻）。</li>
-                  <li>装好或重新加载后，这里十几秒内变成「已连接」。再到待获取清单顶上，逐家点开、登录学校账号、过人机验证。</li>
+                  <li>装好或重新加载后，这里十几秒内变成「已连接」。</li>
                 </ol>
               </div>
             ) : undefined
@@ -4327,17 +4317,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </>
           )}
         </Row>
-        <Row label="每天上限" hint="只计经学校订阅下载的篇数">
-          {paperFetch.data && <LimitPair data={paperFetch.data} pair="daily" inputClass={fieldFixed} onSaved={() => void paperFetch.reload()} />}
-        </Row>
-        <Row label="下载间隔" hint="同一家出版商两次之间随机等待">
-          {paperFetch.data && <LimitPair data={paperFetch.data} pair="gap" inputClass={fieldFixed} onSaved={() => void paperFetch.reload()} />}
-        </Row>
-        {paperFetchBlocked.length > 0 && (
-          <Row label="暂停的出版商" hint="人机验证或被拒后停 24 小时" align="start">
-            <BlockedPublishers publishers={paperFetchBlocked} buttonClass={rowActionClass} onChanged={() => void paperFetch.reload()} />
-          </Row>
-        )}
         {paperFetchOpen.length > 0 && (
           <Row
             label="进行中"

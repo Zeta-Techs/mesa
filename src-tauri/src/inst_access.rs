@@ -125,12 +125,6 @@ impl InstitutionalChannel {
     pub(crate) fn active(&self) -> bool {
         self.prefix.is_some() || self.session.as_ref().is_some_and(|s| s.credible)
     }
-
-    /// Mesa 自己存着可信的学校登录（旧的内嵌登录窗留下的）。只填了前缀时 Mesa 手里没有登录，
-    /// 直取停在登录页是常态，不能当「登录过期」报给人（代下全文，2026-11-08）
-    pub(crate) fn has_session(&self) -> bool {
-        self.session.as_ref().is_some_and(|s| s.credible)
-    }
 }
 
 // ===== DTO =====
