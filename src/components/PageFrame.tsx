@@ -379,10 +379,9 @@ export function SegTabs<T extends string>({
           role="tab"
           aria-selected={value === item.id}
           tabIndex={tabStopIndex(index, selectedIndex)}
+          // 只认点击与方向键：原先 onFocus 也选一次，鼠标按下先聚焦、再 click，同一下选两回；
+          // 选中要先确认的（开工弹层「完全访问」）就弹两次确认（2026-11-09 HER 实测）
           onClick={() => onChange(item.id)}
-          onFocus={() => {
-            if (value !== item.id) onChange(item.id);
-          }}
           className={
             boxed
               ? "ccode-seg-boxed-item flex items-center whitespace-nowrap text-xs transition-colors"
