@@ -47,6 +47,8 @@ export interface PaperFetchOverview {
   paused?: string | null;
   sessionExpired: boolean;
   extensionAlive: boolean;
+  /** 扩展连上过（装好了），此刻没连上多半是浏览器没开 */
+  extensionEverSeen?: boolean;
   jobs: PaperFetchJob[];
 }
 

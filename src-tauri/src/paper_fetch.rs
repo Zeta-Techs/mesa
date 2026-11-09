@@ -1244,6 +1244,8 @@ pub struct OverviewDto {
     pub paused: Option<String>,
     pub session_expired: bool,
     pub extension_alive: bool,
+    /// 扩展连上过（装好了）：没连上时界面说「浏览器没开着？」而不是再叫人安装
+    pub extension_ever_seen: bool,
     pub jobs: Vec<Job>,
 }
 
@@ -1278,6 +1280,7 @@ fn overview_of(store: &Store, root: Option<&str>, t: i64) -> OverviewDto {
         paused: state.paused.clone(),
         session_expired: state.session_expired,
         extension_alive: t - state.extension_seen_at < EXTENSION_ALIVE_SECS,
+        extension_ever_seen: state.extension_seen_at > 0,
         jobs,
     }
 }

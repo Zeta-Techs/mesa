@@ -4278,20 +4278,46 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 {bridgeResult.failed.map((line) => (
                   <p key={line} className="break-words text-err-text">{line}</p>
                 ))}
-                <p>
-                  再在 Chrome 或 Edge 打开 chrome://extensions，打开「开发者模式」，点「加载已解压的扩展程序」，选扩展文件夹；装过的点一次「重新加载」。
-                  {bridgeResult.dir && (
-                    <button type="button" className={`${rowActionClass} ml-2 align-middle`} onClick={() => void revealItemInDir(bridgeResult.dir!)}>
-                      定位扩展文件夹
-                    </button>
-                  )}
-                </p>
+                {/* 一步一行（2026-11-09 HER 实测：用户问「这一块怎么安装啊、说明对吗」——原先一整句；扩展文件夹在隐藏的
+                    资源库 / AppData 里，选择窗口里找不到，要给路径和粘贴办法；装好后多久变「已连接」也没说） */}
+                <p>Mesa 这边已就绪，再到浏览器里装上扩展：</p>
+                <ol className="list-decimal space-y-0.5 pl-5">
+                  <li>在 Chrome 地址栏输入 chrome://extensions（Edge 是 edge://extensions），打开「开发者模式」。</li>
+                  <li>
+                    点「加载已解压的扩展程序」，选扩展文件夹。它在隐藏文件夹里：先点
+                    {bridgeResult.dir && (
+                      <button
+                        type="button"
+                        className={`${rowActionClass} mx-1 align-middle`}
+                        onClick={() => void navigator.clipboard.writeText(bridgeResult.dir!).catch(() => {})}
+                        title={bridgeResult.dir}
+                      >
+                        复制路径
+                      </button>
+                    )}
+                    ，在选择窗口里{IS_MAC ? "按 ⌘⇧G 粘贴、回车" : "粘到上面的地址栏、回车"}，再点「选择」。
+                    {bridgeResult.dir && (
+                      <button type="button" className={`${rowActionClass} ml-1 align-middle`} onClick={() => void revealItemInDir(bridgeResult.dir!)}>
+                        在{IS_MAC ? "访达" : "文件夹"}里看
+                      </button>
+                    )}
+                  </li>
+                  <li>以前装过的，在「Mesa 文献下载」那张卡上点一次重新加载（↻）。</li>
+                  <li>浏览器开着，一分钟内这里变成「已连接」。之后用学校账号登录一次要下的出版商。</li>
+                </ol>
               </div>
             ) : undefined
           }
         >
           {paperFetch.data?.extensionAlive ? (
             <span className="text-sm text-done">已连接</span>
+          ) : paperFetch.data?.extensionEverSeen && !bridgeResult ? (
+            <>
+              <span className="text-sm text-l3" title="扩展装过，这几分钟没来领任务：浏览器开着它就会连上">没连上，浏览器开着吗</span>
+              <button type="button" className={rowActionClass} onClick={() => void installBridge()}>
+                重新安装…
+              </button>
+            </>
           ) : (
             <>
               <span className="text-sm text-l3">未连接</span>
