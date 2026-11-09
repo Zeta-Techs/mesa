@@ -82,6 +82,12 @@ interface Layout {
    * 翻上去时输入框上方出「↓ Back to bottom · esc」（2026-10-26 用户 Windows 截图：预览里是前两轮的回复，连这行提示一起）
    */
   scrolledAway?: RegExp;
+  /**
+   * 输入框正上方（隔着空行）缩进到这么深的行是这家右对齐的提示栏，不是回复。Claude 2.1.311 终端获得焦点、剪贴板里有图时
+   * 在那里冒「Image in clipboard · ctrl+v to paste」，还有「Conversation compacted」、tmux 提示等，字样不固定、按位置认
+   * （2026-11-09 用户截图：这句挂在聊天层生成提示上）
+   */
+  footNote?: number;
 }
 
 // 思考框左边那条竖线（Grok：Mesa 终端里是粗线 ┃，简化字形下是 │）
@@ -128,6 +134,7 @@ const LAYOUTS: Record<string, Layout> = {
     skip: CLAUDE_STATUS,
     wrapSkip: /^\s*⎿/,
     stderrNotice: /^⚠\s/,
+    footNote: 24,
     indent: 2,
   },
   codex: {
@@ -396,6 +403,7 @@ export function extractLiveReply(
   const away = layout.scrolledAway;
   if (away && rows.slice(Math.max(0, boxTop - 3), boxTop).some((l) => l.trim() !== "" && away.test(l.trim()))) return null;
   const region0 = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
+  if (layout.footNote) dropFootNotes(region0, layout.footNote);
   // 收起的思考（斜体）换成空行：行号不变，下面照常认回显、行首与段落
   const region = layout.thinkItalic && italicRow ? region0.map((l, i) => (l.trim() && italicRow(i) ? "" : l)) : region0;
   // 最后一条用户回显之后才是这一轮的回复；回显滚出屏幕时从第一段助手行首起
@@ -431,6 +439,16 @@ export function extractLiveReply(
   const firstText = region.find((l) => l.trim() && !BORDER.test(l.trim()));
   if (firstText !== undefined && firstText.length - firstText.trimStart().length < 2) return null;
   return readReply(layout, region, 0, false);
+}
+
+/** 输入框正上方右对齐的提示行换成空行（从下往上，跳过空行，遇到不够深的行为止） */
+function dropFootNotes(region: string[], depth: number): void {
+  for (let i = region.length - 1; i >= 0; i--) {
+    const l = region[i];
+    if (!l.trim()) continue;
+    if (l.length - l.trimStart().length < depth) return;
+    region[i] = "";
+  }
 }
 
 /** 去掉顶格圆角框（╭ … ╰ 整块，含框里的行），换成空行保持行距 */

@@ -495,6 +495,17 @@ test("Claude 2.1.311：进行中的折叠行与 stderr 告警不进预览", () =
   assert.deepEqual(extractLiveReply(later, "claude-code")?.lines, ["先问第一个问题：", "你想回答什么？"]);
 });
 
+// 2026-11-09 用户截图：终端获得焦点、剪贴板里有图时，输入框上方右对齐冒「Image in clipboard · ctrl+v to paste」
+test("Claude：输入框正上方右对齐的提示行不进预览，正文里深缩进的代码行照常", () => {
+  const hint = " ".repeat(60) + "Image in clipboard · ctrl+v to paste";
+  const rows = ["❯ 整个 HER 领域", "", "✻ Musing… (3s · ↓ 20 tokens)", hint, RULE, "❯", RULE];
+  assert.equal(extractLiveReply(rows, "claude-code"), null);
+  const withReply = ["❯ 整个 HER 领域", "", "⏺ 好，那下一个问题：", "", hint, "", RULE, "❯", RULE];
+  assert.deepEqual(extractLiveReply(withReply, "claude-code")?.lines, ["好，那下一个问题："]);
+  const code = ["❯ 写段代码", "", "⏺ 如下：", "  ```", " ".repeat(30) + "deep()", "  ```", "", RULE, "❯", RULE];
+  assert.ok(extractLiveReply(code, "claude-code")?.lines.some((l) => l.includes("deep()")));
+});
+
 // 聊天层据此认「审批已经答过」（chat-channel.ts hooksApprovalAnswered）：Claude 的审批菜单顶掉输入框，
 // 答完输入框回来（菜单样本同 tests/tui-menu.test.ts，Claude Code 2.1.292 PTY 实录）
 test("Claude：审批菜单挂着时屏上没有输入框，答完回到输入框", () => {
