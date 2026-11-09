@@ -22,6 +22,9 @@ export const COACH_TIP_KEYS = {
    *  （2026-11-05 用户点名要，例外于「不首次即弹」与「一次打开只出一条」：行内操作平时藏在悬停里，
    *  不提示就不知道命中出来以后该干什么）。点了「加入积累」也算学会 */
   radarNext: "ccode.coachRadarNextSeen",
+  /** 待获取清单第一次有可下的篇：说清「让 Mesa 代下」和每行「官网」各是谁去下（2026-11-09 用户点名要，
+   *  例外于「不首次即弹」：两种入口挨在一起，不说清就分不出哪篇是 Mesa 在下、哪篇要自己下）。点了「让 Mesa 代下这批」也算学会 */
+  fetchWays: "ccode.coachFetchWaysSeen",
 } as const;
 export type CoachTipId = keyof typeof COACH_TIP_KEYS;
 

@@ -1184,6 +1184,7 @@ pub fn run() {
             paper_fetch::paper_fetch_enqueue,
             paper_fetch::paper_fetch_approve,
             paper_fetch::paper_fetch_retry,
+            paper_fetch::paper_fetch_retry_all,
             paper_fetch::paper_fetch_cancel,
             paper_fetch::paper_fetch_resume,
             paper_fetch::paper_fetch_unblock,

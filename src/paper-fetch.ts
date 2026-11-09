@@ -66,7 +66,7 @@ const STATUS_LABEL: Record<string, string> = {
   browser: "等浏览器下载",
   needs_pick: "等 AI 选链接",
   done: "已下载",
-  failed: "需要你自己下",
+  failed: "没下到",
   cancelled: "已取消",
 };
 
@@ -126,19 +126,50 @@ export function fetchableItems(
   return out;
 }
 
-/** 一行进度：「排队 3 · 已下载 5 · 需要你自己下 1 · 等你确认 2」；没有就空串 */
+/** 与后端 paper_fetch::WAIT_EXTENSION 同一句：浏览器一级的篇在等扩展连上 */
+export const WAIT_EXTENSION = "等浏览器扩展连上";
+
+/** 一行进度，按 Mesa 走到哪一条路分（2026-11-09 HER 实测「下载这块有点乱」）：
+ *  「找免费版 3 · 经学校订阅 2 · 在浏览器里下 30 · 已下载 5 · 没下到 1 · 等你确认 2」；没有就空串 */
 export function summarizeJobs(jobs: PaperFetchJob[]): string {
   const count = (pred: (j: PaperFetchJob) => boolean) => jobs.filter(pred).length;
   const parts: string[] = [];
-  const active = count((j) => ["queued", "browser", "needs_pick"].includes(j.status));
+  const oa = count((j) => j.status === "queued" && j.stage === "oa");
+  const inst = count((j) => j.status === "queued" && j.stage !== "oa");
+  const browser = count((j) => j.status === "browser");
   const done = count((j) => j.status === "done");
-  const failed = count((j) => j.status === "failed");
+  const failed = count((j) => j.status === "failed" || j.status === "needs_pick");
   const approval = count((j) => j.status === "needs_approval");
-  if (active) parts.push(`排队 ${active}`);
+  if (oa) parts.push(`找免费版 ${oa}`);
+  if (inst) parts.push(`经学校订阅 ${inst}`);
+  if (browser) parts.push(`在浏览器里下 ${browser}`);
   if (done) parts.push(`已下载 ${done}`);
-  if (failed) parts.push(`需要你自己下 ${failed}`);
+  if (failed) parts.push(`没下到 ${failed}`);
   if (approval) parts.push(`等你确认 ${approval}`);
   return parts.join(" · ");
+}
+
+/** 待获取清单每一行：Mesa 在管这篇时写它走到哪了（下到了由行本身标「已存」，这里不写） */
+export function rowJobLabel(job: PaperFetchJob | undefined): { text: string; warn: boolean } | null {
+  if (!job) return null;
+  switch (job.status) {
+    case "queued":
+      return { text: job.stage === "oa" ? "Mesa 找免费版" : "Mesa 经学校订阅下", warn: false };
+    case "browser":
+      return job.waiting === WAIT_EXTENSION ? { text: "Mesa 等扩展连上", warn: true } : { text: "Mesa 在浏览器里下", warn: false };
+    case "needs_approval":
+      return { text: "Mesa 等你确认", warn: true };
+    case "needs_pick":
+    case "failed":
+      return { text: "Mesa 没下到", warn: true };
+    default:
+      return null;
+  }
+}
+
+/** 有篇停在浏览器一级、扩展又没连上：清单顶上要提示去装扩展 */
+export function needsExtension(jobs: PaperFetchJob[], extensionAlive: boolean): boolean {
+  return !extensionAlive && jobs.some((j) => j.status === "browser");
 }
 
 /** 人改上限：只能在后端给的天花板以内（后端也会再夹一次） */

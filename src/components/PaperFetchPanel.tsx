@@ -5,10 +5,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
+import { useAppStore } from "../store";
+import { canShowCoachTip, markCoachTipShown, markCoachTipSeen } from "../coach-tips";
+import CoachTip from "./CoachTip";
 import {
   clampLimits,
   fetchableItems,
   logResultLabel,
+  needsExtension,
   statusLabel,
   summarizeJobs,
   viaLabel,
@@ -245,12 +249,23 @@ export function PaperFetchBar({
   projectPath,
   items,
   savedLines,
+  overview,
 }: {
   projectPath: string;
   items: { title: string; url: string; done: boolean; line: number }[];
   savedLines: Record<number, string>;
+  /** 由清单所在的步骤卡取（每一行也要用它写 Mesa 走到哪） */
+  overview: { data: PaperFetchOverview | null; reload: () => Promise<void> };
 }) {
-  const { data, reload } = usePaperFetchOverview(projectPath);
+  const { data, reload } = overview;
+  const setPage = useAppStore((s) => s.setPage);
+  const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
+  // 两种下法的一次性气泡（2026-11-09 用户：「用户点官网下和 Mesa 来下载得表现明白」）；例外于「不首次即弹」：清单第一次有可下的篇就出
+  const [tipOpen, setTipOpen] = useState(() => canShowCoachTip("fetchWays", true));
+  const closeTip = () => {
+    markCoachTipSeen("fetchWays");
+    setTipOpen(false);
+  };
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const pending = fetchableItems(items, savedLines);
@@ -259,8 +274,30 @@ export function PaperFetchBar({
   );
   const toSend = pending.filter((p) => !activeDois.has(p.doi));
   const summary = summarizeJobs((data?.jobs ?? []).filter((j) => j.status !== "cancelled"));
+  const failed = (data?.jobs ?? []).filter((j) => j.status === "failed" || j.status === "needs_pick").length;
+  const noExtension = needsExtension(data?.jobs ?? [], data?.extensionAlive ?? false);
+  // 清单里还有没存的篇才出（真画出来才记「出过」）
+  const showTip = tipOpen && pending.length > 0;
+  useEffect(() => {
+    if (showTip) markCoachTipShown("fetchWays", true);
+  }, [showTip]);
+
+  async function retryAll() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const n = await invoke<number>("paper_fetch_retry_all", { projectRoot: projectPath });
+      setNote(`重新排上 ${n} 篇`);
+      await reload();
+    } catch (e) {
+      setNote(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function send() {
+    closeTip();
     setBusy(true);
     setNote(null);
     try {
@@ -276,7 +313,8 @@ export function PaperFetchBar({
 
   if (!hasTauri() || (toSend.length === 0 && !summary)) return null;
   return (
-    <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-l3">
+    <div className="mb-1">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-micro text-l3">
       {toSend.length > 0 && (
         <button
           type="button"
@@ -288,8 +326,49 @@ export function PaperFetchBar({
           <span className="text-xs">{busy ? "交给 Mesa…" : `让 Mesa 代下这批（${toSend.length} 篇）`}</span>
         </button>
       )}
-      {summary && <span title="细节在 设置 → 网络 → 代下全文">{summary}</span>}
+      {summary && <span title="Mesa 代下到哪了；细节在 设置 → 网络 → 代下全文">Mesa：{summary}</span>}
+      {failed > 0 && (
+        <button type="button" className={linkBtn} disabled={busy} title="没下到的这几篇让 Mesa 从头再试一遍" onClick={() => void retryAll()}>
+          全部重试（{failed}）
+        </button>
+      )}
       {note && <span>{note}</span>}
+    </div>
+    {noExtension && (
+      <p className="mt-0.5 text-micro text-caution-text">
+        浏览器扩展没连上：Wiley、Elsevier 这类要在浏览器里下的，等它连上才会接着下。
+        <button
+          type="button"
+          className="ml-1 underline decoration-dotted underline-offset-2 hover:text-l1"
+          onClick={() => {
+            setSettingsSectionReq("network");
+            setPage("settings");
+          }}
+        >
+          去安装
+        </button>
+      </p>
+    )}
+    {showTip && (
+      <CoachTip
+        arrow="up"
+        arrowAt={40}
+        title="两种下法，可以一起用"
+        onClose={closeTip}
+        className="relative mt-2 w-full max-w-md text-xs leading-5"
+        actions={[{ label: "知道了", onClick: closeTip }]}
+      >
+        <ul className="list-disc space-y-0.5 pl-4">
+          <li>
+            <b>让 Mesa 代下这批</b>：Mesa 一篇篇去下——先找免费版，再经学校订阅，最后在你的浏览器里下（要装 Mesa 文献下载扩展）。不用守着，每篇后面写它走到哪了。
+          </li>
+          <li>
+            每篇的 <b>官网</b>：你自己去出版商网站下。PDF 存进「下载」文件夹，会自动收进 papers/；存到别处的点 <b>关联</b>。
+          </li>
+        </ul>
+        <p className="mt-1 opacity-80">不管哪种下到的，这一篇都标「已存」。</p>
+      </CoachTip>
+    )}
     </div>
   );
 }

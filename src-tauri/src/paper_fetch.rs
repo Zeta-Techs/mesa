@@ -24,8 +24,9 @@ const BLOCK_SECS: i64 = 24 * 3600;
 const MAX_FAILS_IN_ROW: u32 = 3;
 /// 扩展领走后多久没回话就当它没做完，放回去让下一次来领
 const BROWSER_CLAIM_SECS: i64 = 4 * 60;
-/// 进了浏览器一级、扩展一直没来领：放弃，交给人
-const BROWSER_GIVEUP_SECS: i64 = 30 * 60;
+/// 扩展没连上时，浏览器一级的篇写这句等着（2026-11-09 HER 实测：原先 30 分钟没来领就整批标失败，
+/// 扩展还没装的人一保存就是几十篇「需要你自己下」、要逐篇重试；改成留在队里，扩展连上自动接着下）
+pub const WAIT_EXTENSION: &str = "等浏览器扩展连上";
 /// 扩展多久内来领过一次算「在」
 const EXTENSION_ALIVE_SECS: i64 = 5 * 60;
 const KEEP_FINISHED: usize = 400;
@@ -751,18 +752,31 @@ pub(crate) fn complete_in(store: &mut Store, id: &str, saved: &str, now: i64) ->
 }
 
 /// 浏览器一级等太久：放弃交给人（扩展没装、浏览器没开）
-pub(crate) fn expire_browser(store: &mut Store, now: i64) -> bool {
+/// 浏览器一级、还没被领走的篇：扩展没连上就写「等浏览器扩展连上」留在队里，连上了清掉这句（不再超时标失败）
+pub(crate) fn note_browser_wait(store: &mut Store, now: i64) -> bool {
     let alive = now - store.state.extension_seen_at < EXTENSION_ALIVE_SECS;
     let mut changed = false;
-    for job in store.jobs.iter_mut() {
-        if job.status == STATUS_BROWSER && job.claimed_at.is_none() && now - job.stage_at > BROWSER_GIVEUP_SECS && !alive {
-            job.status = STATUS_FAILED.into();
-            job.error = Some("要在浏览器里下，但 30 分钟里浏览器扩展都没连上（浏览器没开，或扩展没装好）。装好后点「重试」，或自己下这篇".into());
-            job.updated_at = now;
+    for job in store.jobs.iter_mut().filter(|j| j.status == STATUS_BROWSER && j.claimed_at.is_none()) {
+        let want = (!alive).then(|| WAIT_EXTENSION.to_string());
+        if job.waiting.as_deref() != want.as_deref() && (want.is_some() || job.waiting.as_deref() == Some(WAIT_EXTENSION)) {
+            job.waiting = want;
             changed = true;
         }
     }
     changed
+}
+
+/// 这个项目没下到的（失败、等你指链接的）一起重排：人点「全部重试」
+pub(crate) fn retry_failed_in(store: &mut Store, root: &str, now: i64) -> usize {
+    let mut n = 0;
+    for job in store.jobs.iter_mut().filter(|j| {
+        crate::paths::same_path(&j.project_root, root) && matches!(j.status.as_str(), STATUS_FAILED | STATUS_NEEDS_PICK)
+    }) {
+        requeue(job, now);
+        job.requester = "human".into();
+        n += 1;
+    }
+    n
 }
 
 // ===== 后台推进（主程序）=====
@@ -816,7 +830,7 @@ pub(crate) async fn tick() -> Result<bool, String> {
     let picked = with_store(|s| {
         let before = s.clone();
         roll_day(&mut s.state, &today());
-        let expired = expire_browser(s, t);
+        let expired = note_browser_wait(s, t);
         if s.jobs.iter().any(|j| j.status == STATUS_NEEDS_APPROVAL) {
             release_listed(s, |root| project_dois(Path::new(root)), t);
         }
@@ -1344,6 +1358,15 @@ pub async fn paper_fetch_retry(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn paper_fetch_retry_all(project_root: String) -> Result<usize, String> {
+    blocking(move || with_store(|s| {
+        let n = retry_failed_in(s, &project_root, now());
+        (n, n > 0)
+    }))
+    .await
+}
+
+#[tauri::command]
 pub async fn paper_fetch_cancel(id: String) -> Result<(), String> {
     blocking(move || {
         update_job(id, |j, t| {
@@ -1569,15 +1592,35 @@ mod tests {
     }
 
     #[test]
-    fn browser_jobs_expire_when_extension_absent() {
+    fn browser_jobs_wait_for_extension_instead_of_failing() {
         let mut s = Store::default();
         let mut j = new_job("/p", "10.1002/x", "", None, "agent", 0);
         j.status = STATUS_BROWSER.into();
         j.stage_at = 0;
         s.jobs.push(j);
-        assert!(!expire_browser(&mut s, 60));
-        assert!(expire_browser(&mut s, BROWSER_GIVEUP_SECS + 1));
-        assert_eq!(s.jobs[0].status, STATUS_FAILED);
+        // 扩展没连上：写一句等着，过多久都不标失败
+        // 扩展从没来过（seen_at = 0），时间按真实 unix 秒
+        assert!(note_browser_wait(&mut s, 3600));
+        assert!(!note_browser_wait(&mut s, 10 * 3600));
+        assert_eq!(s.jobs[0].status, STATUS_BROWSER);
+        assert_eq!(s.jobs[0].waiting.as_deref(), Some(WAIT_EXTENSION));
+        // 扩展连上了：清掉这句
+        s.state.extension_seen_at = 10 * 3600;
+        assert!(note_browser_wait(&mut s, 10 * 3600 + 5));
+        assert_eq!(s.jobs[0].waiting, None);
+    }
+
+    #[test]
+    fn retry_all_requeues_only_this_projects_failed() {
+        let mut s = Store::default();
+        for (root, doi, st) in [("/p", "10.1/a", STATUS_FAILED), ("/p", "10.1/b", STATUS_NEEDS_PICK), ("/p", "10.1/c", STATUS_DONE), ("/q", "10.1/d", STATUS_FAILED)] {
+            let mut j = new_job(root, doi, "", None, "agent", 0);
+            j.status = st.into();
+            s.jobs.push(j);
+        }
+        assert_eq!(retry_failed_in(&mut s, "/p", 5), 2);
+        let st: Vec<&str> = s.jobs.iter().map(|j| j.status.as_str()).collect();
+        assert_eq!(st, vec![STATUS_QUEUED, STATUS_QUEUED, STATUS_DONE, STATUS_FAILED]);
     }
 
     /// 联网干跑（默认不跑）：临时项目 + 重定向配置目录，交一篇开放获取论文，队列真的去取、存进 papers/、记日志与 Run 事实口径。
