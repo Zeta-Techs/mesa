@@ -2416,7 +2416,16 @@ function LiveWorkspaceReviewView({
       return;
     }
     if (!diff || !status || !health) return;
-    const commitFiles = commitWorthyFiles(status.files);
+    // 点按钮这一刻重读工作区状态：打开评审后在清单里移出 / 恢复写的改动不在旧快照里，按旧快照会漏提交，
+    // 提交完照样报「任务里还有没保存的改动」（2026-11-10 HER 实测）
+    let current = status;
+    try {
+      current = await invoke<GitStatusDto>("git_status", { cwd: worktreePath });
+      setStatus(current);
+    } catch {
+      /* 读不到就按已有快照 */
+    }
+    const commitFiles = commitWorthyFiles(current.files);
     const shouldCommit = commitFiles.length > 0;
     const shouldMerge = mode === "merge" || mode === "merge-archive";
     if (shouldMerge && !deliveryReviewRef.current) { setError(REVIEW_SAVE.needDelivery); return; }
