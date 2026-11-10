@@ -424,6 +424,7 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
     invoke: async (cmd: string) => {
       if (cmd === "workspace_env_for") return [];
       if (cmd === "list_sessions") return [];
+      if (cmd === "cli_default_permission") return { tier: null };
       throw new Error(`测试未预期的命令：${cmd}`);
     },
   };
@@ -459,6 +460,21 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
     assert.equal(req4.permission, "write_tree");
     assert.equal(req4.permissionMode, "auto");
     assert.equal(req3.permissionMode, undefined);
+    // ⑤ 不经开工弹层的自动拉起（继续 / 跟进 / 派活）按开工弹层同一口径预选（2026-11-10 HER：Kimi「继续」每条命令都问）
+    api.wireWorkspaceLaunchGuard(() => ({
+      profiles: [{ id: "p-live", models: ["m2"] }],
+      hiddenProfiles: [],
+      permissionModes: { codex: ["ask", "auto", "full"] },
+    }));
+    store["ccode.wsLast./p/.mesa/ws-data-clean"] = JSON.stringify({ agentId: "codex", profileId: "p-live", model: "m2" });
+    const req5 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
+    assert.equal(req5.permissionMode, "auto", "没记过、本机没设：帮我批准");
+    assert.equal(req5.permission, "write_tree");
+    store["ccode.kickoffPerm./p"] = "ask";
+    const req6 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
+    assert.equal(req6.permissionMode, "ask", "本项目上次开工选的档优先");
+    const req7 = await api.buildWorkspaceTerminalRequest(ws, undefined, {});
+    assert.equal(req7.permissionMode, undefined, "不自动拉起的（去终端看看）不预选，启动栏照本机设置");
   } finally {
     if (lsPrev === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
     else (globalThis as { localStorage?: unknown }).localStorage = lsPrev;

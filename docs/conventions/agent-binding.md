@@ -48,6 +48,9 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
   预选 `pickKickoffPermission`：本项目上次（`ccode.kickoffPerm.<root>`，只记 ask / auto）> CLI 本机设置（`cli_default_permission`）> auto > ask。
   完全访问走 `confirmPermissionChoice` 二次确认、不记成项目默认。值经 `KickoffLaunch.permissionMode` → `buildWorkspaceTerminalRequest` 标签种子
   （`permission: write_tree` + `permissionMode`；同一工作区复用的闲置标签 reseed 时一并换上）→ pty_spawn 只加在这次命令行，不写 CLI 配置。分路各路同一档。
+  不经开工弹层、自动拉起的步骤入口（继续、跟进更新、派活、退回修改：`buildWorkspaceTerminalRequest` 带 `autoStart` 且没传 `launch.permissionMode`）
+  按同一 `pickKickoffPermission` 预选（2026-11-10 HER：Kimi「继续」不带档，落回 CLI 默认每条命令都问），完全访问照样不带过来；
+  不自动拉起的（「去终端看看」）不预选，启动栏按本机设置。各家档表经 `wireWorkspaceLaunchGuard` 的 `permissionModes` 接进来。
 
 - **开工弹层两态勾选**「存为本步骤默认」：勾=写槽；不勾=槽原样不动（临时换一次不毁绑定）；清槽唯一入口在 Agents 页步骤组行内。勾选框初值=槽存在且当前选择==槽值；偏离时自动摘勾并披露「已存默认 X；本次用 Y」。
 - **开工记忆拆键**：确认无条件写项目级 `ccode.kickoffLast.<projectRoot>`（预填+折叠判定 `!(stepBinding || preferredAgent || kickoffLast)`）；弹层停写 ccode.askAi（那是 AskAiModal 自管的键）。kickoffLast 缺失时只读回落 askAi 记忆做首跑预填（不回写）。

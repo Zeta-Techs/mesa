@@ -283,6 +283,7 @@ wireWorkspaceLaunchGuard(() => {
   return {
     profiles: s.profiles.map((p) => ({ id: p.id, models: p.models })),
     hiddenProfiles: s.settings?.hiddenProfiles ?? [],
+    permissionModes: Object.fromEntries(s.agents.map((a) => [a.id, a.permissionModes ?? []])),
   };
 });
 
