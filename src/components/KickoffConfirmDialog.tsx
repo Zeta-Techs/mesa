@@ -165,10 +165,9 @@ export default function KickoffConfirmDialog({
     launch: KickoffLaunch | null,
     decisionPauseAcknowledged: boolean,
     intake?: IntakeBridgeDecision,
-    /** 勾了「分几路同时跑」（步骤声明了 fanOut、数据够两路才有这个勾，默认不勾） */
+    /** 勾了「分几路同时跑」（步骤声明了 fanOut、数据够两路才有这个勾，默认不勾；勾了就是人批准，
+     *  不另设花费上限——2026-11-10 用户：「这个花费我觉得没必要放」） */
     fanOut?: boolean,
-    /** 分路时这一步的花费上限（美元，2026-11-04）；空 = 不设 */
-    fanOutCapUsd?: number | null,
   ) => void;
   /** 技能区增删写回 project.toml 后同步父级 cfg（保持步进器/下次打开一致） */
   onCfgChange?: (cfg: ProjectConfigDto) => void;
@@ -189,7 +188,6 @@ export default function KickoffConfirmDialog({
   const [fanOutPlan, setFanOutPlan] = useState<FanOutPlanDto | null>(null);
   const [fanOutOn, setFanOutOn] = useState(false);
   /** 分路花费上限（美元）：空 = 不设；各路合计到了就停掉没做完的路、不自动开收尾 */
-  const [fanOutCap, setFanOutCap] = useState("");
   const fanOutSpec = stepNow.fanOut ?? null;
   useEffect(() => {
     if (!fanOutSpec) {
@@ -920,7 +918,6 @@ export default function KickoffConfirmDialog({
       gate.needsAck && !needsDecisionAck,
       intakeDecision,
       fanOutChosen,
-      fanOutChosen ? Number(fanOutCap) || null : null,
     );
   }
   return (
@@ -1296,22 +1293,6 @@ export default function KickoffConfirmDialog({
                   onChange={setFanOutOn}
                   label={<span className="text-xs text-l2">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>}
                 />
-                {fanOutOn && (
-                  <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-l2">
-                    这一步最多花 $
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.5}
-                      className={`${compactFieldClass} h-7 w-20 py-0`}
-                      value={fanOutCap}
-                      placeholder="不设"
-                      aria-label="这一步的花费上限（美元）"
-                      onChange={(e) => setFanOutCap(e.target.value)}
-                    />
-                    <span className="text-micro text-l4">各路合计到了，没做完的路停下、收尾不自动开；空着不设</span>
-                  </span>
-                )}
               </div>
             ) : (
               <span className="text-xs text-l3">{fanOutSummary(fanOutPlan.total, fanOutPlan.lanes.length)}</span>

@@ -45,12 +45,3 @@ test("收尾一路与弹层那一行、到齐判定", () => {
   assert.ok(!allLanesDone([1, 3], 3));
   assert.ok(!allLanesDone([], 0));
 });
-
-test("花费上限：停没写做完标记的路，提示里写清花了多少、怎么接着做", async () => {
-  const { lanesToStop, capStopNote } = await import("../src/fan-out.ts");
-  assert.deepEqual(lanesToStop([2], 4), [1, 3, 4]);
-  assert.deepEqual(lanesToStop([1, 2, 3], 3), []);
-  const note = capStopNote("精读", 5.234, 5, 2, 4);
-  assert.match(note, /已花 \$5\.23，上限 \$5\.00/);
-  assert.match(note, /没做完的 2 路已停下（共 4 路），收尾一路没开/);
-});

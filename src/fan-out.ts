@@ -59,27 +59,11 @@ export interface FanOutPending {
   mergeStarted: boolean;
   /** 记下的时间（ms）：超过 FANOUT_EXPIRE_MS 还没到齐的不再等（工作区可能已归档） */
   createdAt?: number;
-  /** 这一步的花费上限（美元，2026-11-04）：各路合计到了就停掉没做完的路、不自动开收尾；空 = 不设 */
-  capUsd?: number | null;
-  /** 各路标签的复用键（第 k 路 = laneKeys[k-1]），到上限时按它找要停的路 */
-  laneKeys?: string[];
 }
 
 export const FANOUT_EXPIRE_MS = 3 * 24 * 3600 * 1000;
 
 export const FANOUT_STORAGE_PREFIX = "ccode.fanout.";
-
-/** 到上限了要停哪几路：还没写做完标记的（k 从 1 起） */
-export function lanesToStop(done: readonly number[], lanes: number): number[] {
-  const out: number[] = [];
-  for (let k = 1; k <= lanes; k += 1) if (!done.includes(k)) out.push(k);
-  return out;
-}
-
-/** 到上限时给人的那句话 */
-export function capStopNote(stepName: string, spent: number, cap: number, stopped: number, lanes: number): string {
-  return `「${stepName}」分路花到了上限：已花 $${spent.toFixed(2)}，上限 $${cap.toFixed(2)}。没做完的 ${stopped} 路已停下（共 ${lanes} 路），收尾一路没开。做完的条目文件都在这一步的工作副本里；要接着做，回对话页把停下的那几路接回来，或回项目页接着做这一步。`;
-}
 
 /** 到齐了没：1..lanes 都有标记 */
 export function allLanesDone(done: readonly number[], lanes: number): boolean {

@@ -688,7 +688,6 @@ export default function ProjectGroup({
     decisionPauseAcknowledged = false,
     intakeBridge?: IntakeBridgeDecision,
     fanOut = false,
-    fanOutCapUsd: number | null = null,
   ) {
     if (!project || !cfg) return;
     const step = cfg.steps[index];
@@ -703,7 +702,6 @@ export default function ProjectGroup({
         launch,
         intakeBridge,
         fanOut,
-        fanOutCapUsd,
         onError,
         // 分几路：各路标签依次开，收尾一路记进 localStorage，终端页数到各路做完标记后开
         onOpenLanes: async (lanes, pending) => {
@@ -718,7 +716,7 @@ export default function ProjectGroup({
           for (const req of lanes) if (await openTerminalInTurn(req)) opened += 1;
           toast(
             opened === lanes.length
-              ? `「${step.name}」分成 ${lanes.length} 路同时做，各路做完 Mesa 会再开一路收尾${pending.capUsd ? `；合计花到 $${pending.capUsd} 就停` : ""}。`
+              ? `「${step.name}」分成 ${lanes.length} 路同时做，各路做完 Mesa 会再开一路收尾。`
               : `「${step.name}」分 ${lanes.length} 路，只开起来 ${opened} 路；没开的那几路到对话页重新开工这一步再勾分路。`,
             opened === lanes.length ? "info" : "warning",
           );
@@ -2837,10 +2835,10 @@ export default function ProjectGroup({
           originCardId={kickoff.originCardId}
           busy={starting !== null}
           onCancel={() => setKickoff(null)}
-          onConfirm={(taskMd, launch, decisionPauseAcknowledged, intake, fanOut, fanOutCapUsd) => {
+          onConfirm={(taskMd, launch, decisionPauseAcknowledged, intake, fanOut) => {
             const index = kickoff.index;
             setKickoff(null);
-            void runStartStep(index, taskMd, launch, decisionPauseAcknowledged, intake, fanOut, fanOutCapUsd ?? null);
+            void runStartStep(index, taskMd, launch, decisionPauseAcknowledged, intake, fanOut);
           }}
           onCfgChange={(next) => setCfg(next)}
           unsavedUpstream={unsavedUpstreamSteps(cfg.steps, kickoff.index, (i) => {

@@ -154,7 +154,6 @@ export async function startPipelineStep({
   decisionPauseAcknowledged = false,
   intakeBridge,
   fanOut = false,
-  fanOutCapUsd = null,
   onOpenLanes,
 }: {
   projectPath: string;
@@ -178,8 +177,6 @@ export async function startPipelineStep({
   intakeBridge?: IntakeBridgeDecision;
   /** 开工弹层勾了「分几路同时跑」（步骤声明了 fanOut 才有这个勾） */
   fanOut?: boolean;
-  /** 分路时这一步的花费上限（美元）；空 = 不设 */
-  fanOutCapUsd?: number | null;
   /** 分路时的终端交接：依次开各路标签，并把收尾一路记下等各路做完（ProjectGroup 实现） */
   onOpenLanes?: (lanes: PendingTerminal[], pending: FanOutPending) => Promise<void>;
 }): Promise<void> {
@@ -329,8 +326,6 @@ export async function startPipelineStep({
         merge: { ...merge, title: `${step.name} · 收尾`, parallelLane: true },
         mergeStarted: false,
         createdAt: Date.now(),
-        capUsd: fanOutCapUsd && fanOutCapUsd > 0 ? fanOutCapUsd : null,
-        laneKeys: lanes.map((l) => l.reuseKey ?? ""),
       });
       return;
     }

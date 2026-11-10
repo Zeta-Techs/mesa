@@ -139,27 +139,6 @@ pub async fn fan_out_done(dir: String) -> Result<Vec<usize>, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// 这个工作副本里、开工以来各段对话一共花了多少（分路每步花费上限用，2026-11-04）：按运行库里落在这个目录、
-/// 这之后开的运行合计（各路与收尾都在同一个工作副本里）；查不到价的不计
-pub(crate) fn spent_in(runs: &[crate::runs::RunDto], dir: &Path, since_ms: i64) -> Vec<(String, String)> {
-    runs.iter()
-        .filter(|r| !r.internal && crate::paths::path_within_path(Path::new(&r.isolation_path), dir))
-        .filter(|r| chrono::DateTime::parse_from_rfc3339(&r.created_at).is_ok_and(|t| t.timestamp_millis() >= since_ms))
-        .filter_map(|r| Some((r.agent.clone(), r.session_id.clone()?)))
-        .collect()
-}
-
-#[tauri::command]
-pub async fn fan_out_spent(dir: String, since_ms: i64) -> Result<f64, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let dir = std::path::PathBuf::from(crate::sessions::expand_tilde(&dir));
-        let runs = crate::runs::run_list_sync(None)?;
-        Ok(crate::usage::sessions_cost_usd(&spent_in(&runs, &dir, since_ms)))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
