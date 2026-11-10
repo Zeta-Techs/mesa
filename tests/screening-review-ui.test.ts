@@ -123,6 +123,60 @@ test("逐篇纳入后那一行原地改显结果，下面的篇目不往上窜",
   }
 });
 
+test("已纳入里移出一篇，那一行原地写「已移出」，下面的篇目不往上窜", async () => {
+  const bundle = await build({
+    stdin: { contents: `export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as List} from './src/components/PendingConfirmList';`, resolveDir: process.cwd(), loader: "tsx" },
+    bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
+    external: ["react", "react-dom/client", "react/jsx-runtime", "@tauri-apps/api/core", "@tauri-apps/plugin-opener"],
+  });
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  const pending = JSON.stringify(["Alpha paper", "Beta paper", "Gamma paper"].map((title, i) => (
+    { id: `doi:${i}`, title, decision: "included", reason: "纳入（主线）" }
+  )));
+  let rev = 0;
+  Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
+    if (command === "list_dir") return [];
+    if (command === "journal_metrics_status") return { available: false, journalCount: 0 };
+    if (command === "save_research_ledger") return `r${++rev}`;
+    if (command !== "read_research_ledger") throw new Error(command);
+    if (String(args.path).endsWith("included.json")) return { text: pending, truncated: false, revision: "j1" };
+    if (String(args.path).endsWith("to-fetch.md")) return { text: TO_FETCH, truncated: false, revision: "t1" };
+    throw new Error(String(args.path));
+  } } });
+  const mod = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports);
+  const { createElement: h, act, createRoot, List } = mod.exports;
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  const firstList = () => [...host.querySelector("ul")!.children].map((li) => li.textContent ?? "");
+  try {
+    await act(async () => root.render(h(List, { projectRoot: "/project" })));
+    const before = firstList();
+    assert.equal(before.length, 3);
+    const beta = host.querySelector("ul")!.children[1]!;
+    const remove = [...beta.querySelectorAll("button")].find((b) => b.textContent === "移出")!;
+    await act(async () => remove.click());
+    const after = firstList();
+    assert.equal(after.length, 3, "移出的那篇还留在原位");
+    assert.match(after[0]!, /Alpha paper/);
+    assert.match(after[1]!, /Beta paper.*已移出/);
+    assert.match(after[2]!, /Gamma paper/);
+    assert.match(host.textContent!, /已纳入 2/);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, d] of restore) {
+      if (d) Object.defineProperty(globalThis, key, d);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
 test("检索步评审先出待确认与筛选决定，不重复摊 included.md", async () => {
   const bundle = await build({
     stdin: { contents: `export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as Review} from './src/components/WorkspaceReviewView';`, resolveDir: process.cwd(), loader: "tsx" },

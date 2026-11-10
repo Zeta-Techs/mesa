@@ -118,6 +118,8 @@ export default forwardRef<PendingConfirmHandle, {
   /** 这次展开里逐篇拍过板的篇目，原地留在待确认里改显结果：一抽走，下面每篇都往上窜一行，
    *  连着点时点到的就不是想点的那篇。值是拍板前那一行（理由会加前缀变长，显示用旧的保持行高）。 */
   const [settled, setSettled] = useState<Map<string, IncludedRecord>>(new Map());
+  // 这次在「已纳入」里点了移出的：留在原位置、压暗写「已移出」，不让下面的行顶上来（2026-11-10 HER 审阅：移出时顺序跳变）
+  const [removedHere, setRemovedHere] = useState<Set<string>>(new Set());
   // 这次动作写过项目根的哪些台账（commitToProject 时动作收尾一并提交）
   const touchedRef = useRef<Set<string>>(new Set());
   const onClearedRef = useRef(onCleared);
@@ -126,6 +128,7 @@ export default forwardRef<PendingConfirmHandle, {
   async function load() {
     setError(null);
     setSettled(new Map());
+    setRemovedHere(new Set());
     const json = await readFirst(roots, "papers/included.json");
     if (!json) {
       setRecords([]);
@@ -367,6 +370,7 @@ export default forwardRef<PendingConfirmHandle, {
       setJsonRevision(nextJsonRev);
       const nextRecords = parseIncludedRecords(nextJson);
       setRecords(nextRecords);
+      if (row.decision === "included") setRemovedHere((prev) => new Set(prev).add(key));
       setMetrics((prev) => {
         const copy = new Map(prev);
         if (!copy.has(key)) copy.set(key, null);
@@ -612,10 +616,14 @@ export default forwardRef<PendingConfirmHandle, {
     records.filter((row) => row.decision === "pending" || settled.has(includedRecordKey(row))),
   );
   const includedShown = shown(included);
+  // 实际画的行：已纳入 + 这次原地移出的（顺序不变）
+  const includedView = shown(
+    records.filter((row) => row.decision === "included" || removedHere.has(includedRecordKey(row))),
+  );
   // 已纳入一长串（191 条）平铺会把下面的「去评审」挤出视野（2026-11-02 体验审查）：多了只先列前一截，点了再全展开；
   // 全选 / 移出所选仍按全部已纳入算
-  const includedFolded = !includedAllOpen && includedShown.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK;
-  const includedVisible = includedFolded ? includedShown.slice(0, INCLUDED_PREVIEW) : includedShown;
+  const includedFolded = !includedAllOpen && includedView.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK;
+  const includedVisible = includedFolded ? includedView.slice(0, INCLUDED_PREVIEW) : includedView;
   const excludedShown = shown(excluded);
   const pickedRows = pending.filter((row) => picked.has(includedRecordKey(row)));
   const pickedIncludedRows = included.filter((row) => pickedIncluded.has(includedRecordKey(row)));
@@ -926,6 +934,15 @@ export default forwardRef<PendingConfirmHandle, {
           <ul className="space-y-2">
             {includedVisible.map((row) => {
               const key = includedRecordKey(row);
+              if (row.decision !== "included") {
+                return rowBody(
+                  row,
+                  <div className="mt-1 text-micro text-l3">已移出（要放回来，在下面「已排除」里点恢复）</div>,
+                  null,
+                  false,
+                  true,
+                );
+              }
               return rowBody(
                 row,
                 <button
@@ -942,14 +959,14 @@ export default forwardRef<PendingConfirmHandle, {
               );
             })}
           </ul>
-          {includedShown.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK && (
+          {includedView.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK && (
             <button
               type="button"
               onClick={() => setIncludedAllOpen((open) => !open)}
               aria-expanded={includedAllOpen}
               className="mt-1 text-micro text-l3 hover:text-l1"
             >
-              {includedAllOpen ? `收起，只看前 ${INCLUDED_PREVIEW} 篇` : `展开其余 ${includedShown.length - INCLUDED_PREVIEW} 篇`}
+              {includedAllOpen ? `收起，只看前 ${INCLUDED_PREVIEW} 篇` : `展开其余 ${includedView.length - INCLUDED_PREVIEW} 篇`}
             </button>
           )}
         </section>
