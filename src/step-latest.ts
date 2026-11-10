@@ -9,6 +9,7 @@ import { useAppStore } from "./store";
 import { IS_WINDOWS } from "./hotkeys";
 import { stepAttention } from "./run-overview";
 import { followupFiles } from "./step-loop";
+import { commitWorthyFiles } from "./git-status-groups";
 import type { GitFileDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
 
 export type ConfirmFn = (message: string, opts: { confirmText: string }) => Promise<boolean>;
@@ -30,11 +31,13 @@ export async function incomingFor(ws: WorkspaceDto): Promise<string[] | null> {
 /** 并入前工作副本必须干净（git merge 拒绝脏树）：有没提交的文件点名问一句，一起提交进这一步再继续。返回 false = 人取消了 */
 export async function commitLeftovers(ws: WorkspaceDto, stepName: string, confirm: ConfirmFn, next = "开新一轮"): Promise<boolean> {
   const status = await invoke<{ files: GitFileDto[] }>("git_status", { cwd: ws.worktreePath });
-  if (status.files.length === 0) return true;
-  const shown = status.files.slice(0, 6).map((f) => `· ${f.path}`);
-  if (status.files.length > 6) shown.push(`· …另有 ${status.files.length - 6} 个`);
+  // 评审退回意见只留在工作副本、不进提交（git_commit 同口径）：只剩它时不问也不提交，否则人点了「一起提交」反倒报「没有需要提交的改动」（2026-11-10 HER）
+  const files = commitWorthyFiles(status.files);
+  if (files.length === 0) return true;
+  const shown = files.slice(0, 6).map((f) => `· ${f.path}`);
+  if (files.length > 6) shown.push(`· …另有 ${files.length - 6} 个`);
   const ok = await confirm(
-    `「${stepName}」的工作副本里有 ${status.files.length} 个文件改了还没提交：\n${shown.join("\n")}\n\n` +
+    `「${stepName}」的工作副本里有 ${files.length} 个文件改了还没提交：\n${shown.join("\n")}\n\n` +
       `多半是上一轮 AI 写了没提交。一起提交进这一步再${next}？这一轮评审时会一起看到，不想要的到时退回或勾掉。`,
     { confirmText: "一起提交，继续" },
   );

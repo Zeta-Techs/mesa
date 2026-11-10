@@ -54,9 +54,9 @@ test("退回弹层：退回文献步骤叫补料问篇数，退回大纲叫修�
     await act(async () => { setValue(area, "§3 先讲机理"); setValue(input, "读者看不出取舍"); });
     await act(async () => button("退回去改")!.click());
     assert.deepEqual(sent.at(-1), { target: "综述大纲", topics: ["§3 先讲机理"], reason: "读者看不出取舍", clues: "", scale: null, chain: [] });
-    // 换到检索：叫补料、问篇数
+    // 换到检索：叫补充文献、问篇数
     await act(async () => setValue(dom.window.document.querySelector("select")!, "文献检索与筛选"));
-    assert.match(body(), /退回上一步补料/);
+    assert.match(body(), /补充文献/);
     assert.match(body(), /大致补多少篇/);
     assert.ok(button("退回去补"));
     // 做到一半发起：说明之后点「继续」会先并进来，不用先保存

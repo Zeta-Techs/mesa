@@ -91,7 +91,7 @@ export function ReworkDialog({
       open
       size="md"
       layer="overlay"
-      title={lit ? "退回上一步补料" : "退回上一步修改"}
+      title={lit ? "补充文献" : "退回上一步修改"}
       description={
         (lit
           ? `从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，`

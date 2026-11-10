@@ -641,7 +641,7 @@ export default function StepFlow({
   bare?: boolean;
   /** agent 节点内嵌内容（如「预览 TASK.md」——TASK.md 是 Agent 的合同，属于这个节点） */
   agentContent?: React.ReactNode;
-  /** 已保存 / 待评审步骤「AI 干活」行尾的回路动作：退回上一步补料、跟进上游的新增（design-review-loop.md §4/§5） */
+  /** 「AI 干活」下一行的回路动作：补充文献 / 退回上一步修改、跟进上游的新增（design-review-loop.md §4/§5） */
   loopActions?: React.ReactNode;
   /** 「这一步做过 N 轮」折叠区，挂在 AI 干活节点下（§6） */
   roundsContent?: React.ReactNode;
@@ -3041,7 +3041,7 @@ export default function StepFlow({
             rel="outline.md"
             read={readResearchFile}
             line={figurePlanCountLine}
-            title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「退回上一步补料…」，Mesa 按这张表预填）；用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
+            title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「补充文献…」，Mesa 按这张表预填）；用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
           />
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。

@@ -1568,23 +1568,20 @@ export default function TaskCardsSection({
               const targets = upstreamSteps.map((s) => s.name);
               // 默认退回最近的上一步：它是找 / 读文献的就叫「补料」，大纲、初稿这类叫「修改」
               const nearestLit = !!upstreamSteps[0] && isLitStep(upstreamSteps[0]);
-              // 前面一句说什么时候用（step-panel R5：孤立按钮自带上下文）
+              // 按钮名自己说清做什么（step-panel R5）：上一步是找 / 读文献的叫「补充文献…」（2026-11-10 用户：「退回上一步补料」看不懂）
               const reworkButton = targets.length > 0 && (
-                <span className="flex shrink-0 items-center gap-1 text-xs text-l4">
-                {nearestLit ? "缺文献时：" : "上一步要改时："}
                 <button
                   type="button"
                   onClick={() => void openRework()}
                   title={
                     nearestLit
-                      ? "这一步的结果显示上游缺东西（比如大纲某节文献不够）：写清补什么，交给上一步另开一轮去补。这一步做到一半也可以，不用先保存"
+                      ? "缺文献时用（比如某个方向一篇都没有、大纲某节文献不够）：写清补什么，交给上一步另开一轮去找或去读。这一步做到一半也可以，不用先保存"
                       : "做这一步时发现上游要改（比如大纲某节的顺序撑不住）：写清改什么，交给上一步另开一轮去改。这一步做到一半也可以，不用先保存"
                   }
                   className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
                 >
-                  {nearestLit ? "退回上一步补料…" : "退回上一步修改…"}
+                  {nearestLit ? "补充文献…" : "退回上一步修改…"}
                 </button>
-                </span>
               );
               // 定稿前更新检索（科研流程补全 §2）：检索那一步保存超过 14 天，定稿还没保存过时给入口，点了走退回补料
               const refresh = searchRefreshHint(
