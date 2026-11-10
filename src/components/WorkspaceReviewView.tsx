@@ -3106,7 +3106,9 @@ function LiveWorkspaceReviewView({
           验收（acceptance）本来没有页签、整页显示，这次重构才给它加了「结果/过程/文件」——
           若按 showGitFiles 走，它会在打开时的「结果」页签上凭空消失，
           而「保存进项目」按钮在顶栏、每个页签都在，清单不该跟着页签隐掉。 */}
-      {!diff?.reviewOnly && (showGitFiles || !paneTabs || reviewProfile.kind === "acceptance") && deliveryFiles.length > 0 && <section aria-label="非 Git 产物评审" className={`${deliveryOpen ? "max-h-48 overflow-auto" : ""} shrink-0 border-b border-hairline px-3 py-1.5 text-xs`}>
+      {/* 冲突时不出：这时只该选边（2026-11-10 HER：冲突页顶上一大块截图清单看着像要处理）。主按钮直接保存时附带文件按已勾的带回
+          （默认全勾）；要逐个勾掉，下拉选「仅保存解决结果」，回到评审再勾 */}
+      {!diff?.reviewOnly && !conflictMode && !health?.conflict && (showGitFiles || !paneTabs || reviewProfile.kind === "acceptance") && deliveryFiles.length > 0 && <section aria-label="非 Git 产物评审" className={`${deliveryOpen ? "max-h-48 overflow-auto" : ""} shrink-0 border-b border-hairline px-3 py-1.5 text-xs`}>
         {/* 2026-10-24 用户：这一块占地方，而且不懂编程的人不知道该带什么。默认收成一行摘要；
             展开后「流程要用」的锁定带回，其余是 AI 过程中留的文件，给一句白话和「只带流程要用的」 */}
         {(() => {
