@@ -1887,7 +1887,7 @@ fn merge_impl_with_guard(
         log.push('\n');
         log.push_str(&salvage_note);
     }
-    let auto_manifest = register_expected_artifacts_at(&repo, &w.name);
+    let auto_manifest = register_expected_artifacts_at(&repo, &w.name, &salvage.copied);
     if !auto_manifest.is_empty() {
         log.push('\n');
         log.push_str(&auto_manifest);
@@ -2773,9 +2773,11 @@ pub(crate) fn glob_files_at(root: &Path, pattern: &str) -> Vec<PathBuf> {
     }
 }
 
-/// 合并后按本步 expected_artifacts 扫项目根，命中且未被 git 跟踪的文件自动登记提货单。
+/// 合并后把这次评审带回项目、又落在本步 expected_artifacts 里的文件登记进提货单，登记有变就随手提交清单。
+/// 只认这次带回的（delivered，项目根相对路径）：按模式扫整个项目根会把别处写的未跟踪文件记成本步产物——
+/// 2026-11-10 HER：`notes/*.md` 扫到雷达台账 notes/inbox.md，每次保存改一遍登记时间又不提交，主文件夹总有没保存的改动。
 /// 已跟踪的（笔记、源稿）跳过——它们随分支走。失败单条跳过，不阻断合并。
-fn register_expected_artifacts_at(repo: &Path, workspace_name: &str) -> String {
+fn register_expected_artifacts_at(repo: &Path, workspace_name: &str, delivered: &[String]) -> String {
     let cfg = crate::projects::read_config_at(repo).config;
     let Some(step) = cfg
         .steps
@@ -2787,9 +2789,19 @@ fn register_expected_artifacts_at(repo: &Path, workspace_name: &str) -> String {
     if step.expected_artifacts.is_empty() {
         return String::new();
     }
+    if delivered.is_empty() {
+        return String::new();
+    }
+    let before = fs::read_to_string(repo.join(ARTIFACTS_FILE)).ok();
     let mut n = 0usize;
     for pattern in &step.expected_artifacts {
         for file in glob_files_at(repo, pattern) {
+            if !delivered
+                .iter()
+                .any(|d| crate::paths::same_path(&repo.join(d).to_string_lossy(), &file.to_string_lossy()))
+            {
+                continue;
+            }
             let name = file
                 .file_name()
                 .map(|x| x.to_string_lossy().into_owned())
@@ -2800,10 +2812,25 @@ fn register_expected_artifacts_at(repo: &Path, workspace_name: &str) -> String {
         }
     }
     if n == 0 {
-        String::new()
-    } else {
-        format!("已自动登记 {n} 个产物进提货单")
+        return String::new();
     }
+    if fs::read_to_string(repo.join(ARTIFACTS_FILE)).ok() != before {
+        if let Err(e) = commit_manifest_at(repo) {
+            return format!("已自动登记 {n} 个产物进提货单；提货单没能自动提交（{e}），在改动面板里提交一下");
+        }
+    }
+    format!("已自动登记 {n} 个产物进提货单")
+}
+
+/// 提货单单独提交（pathspec 只带它，用户暂存的别的文件不动）；清单被 gitignore 时 add 失败，原样报回
+fn commit_manifest_at(repo: &Path) -> Result<(), String> {
+    const T: Duration = Duration::from_secs(30);
+    run_git(repo, &["add", "--", ARTIFACTS_FILE], T)?;
+    let ident = crate::git_info::commit_identity_args(repo);
+    let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false"];
+    args.extend(ident.iter().map(String::as_str));
+    args.extend(["commit", "-m", "Mesa: 登记产物进提货单", "--", ARTIFACTS_FILE]);
+    run_git(repo, &args, T).map(|_| ())
 }
 
 /// 落点检测：root 下是否已有交付物。
@@ -5529,6 +5556,15 @@ fn register_artifact_impl(
         .iter_mut()
         .find(|e| crate::paths::same_path(&e.path, &entry.path))
     {
+        // 内容、名字、出处都没变：不重写登记时间，清单文件一个字节不动（否则每次保存都留一处改动）
+        Some(slot)
+            if slot.hash == entry.hash
+                && slot.name == entry.name
+                && slot.produced_by == entry.produced_by
+                && slot.path == entry.path =>
+        {
+            return Ok(slot.clone());
+        }
         Some(slot) => *slot = entry.clone(),
         None => entries.push(entry.clone()),
     }

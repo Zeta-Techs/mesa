@@ -2280,11 +2280,50 @@ fn register_expected_artifacts_skips_tracked_and_fills_yaml() {
         "[[steps]]\nname = \"出图\"\nworkspace_name = \"art\"\nexpected_artifacts = [\"papers/*.pdf\", \"notes.md\"]\n",
     )
     .unwrap();
-    let note = register_expected_artifacts_at(&fx.repo, "art");
+    let delivered = vec!["papers/a.pdf".to_string(), "notes.md".to_string()];
+    let note = register_expected_artifacts_at(&fx.repo, "art", &delivered);
     assert!(note.contains("1 个产物"), "{note}");
     let entries = read_artifacts_manifest_impl(&fx.repo);
     assert_eq!(entries.len(), 1, "{entries:?}");
     assert!(entries[0].path.replace('\\', "/").ends_with("papers/a.pdf"));
+}
+
+/// 2026-11-10 HER：保存精读后主文件夹总有 artifacts.yaml 没保存——`notes/*.md` 扫到雷达台账 notes/inbox.md，
+/// 每次改一遍登记时间又不提交。只登记这次带回的文件；登记有变随手提交；同一文件没变不重写
+#[test]
+fn register_expected_artifacts_only_delivered_and_leaves_tree_clean() {
+    let Some(fx) = Fixture::new() else { return };
+    fs::create_dir_all(fx.repo.join("notes")).unwrap();
+    fs::write(fx.repo.join(".gitignore"), "/notes/inbox.md\n/notes/big.md\n").unwrap();
+    fs::create_dir_all(fx.repo.join(".ccode")).unwrap();
+    fs::write(
+        fx.repo.join(".ccode/project.toml"),
+        "[[steps]]\nname = \"精读\"\nworkspace_name = \"lit-notes\"\nexpected_artifacts = [\"notes/*.md\"]\n",
+    )
+    .unwrap();
+    sh(&fx.repo, &["add", ".gitignore"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "ignore"]);
+    fs::write(fx.repo.join("notes/inbox.md"), b"radar hits").unwrap();
+    fs::write(fx.repo.join("notes/big.md"), b"delivered").unwrap();
+    let status = |repo: &Path| {
+        run_git(repo, &["status", "--porcelain", "--", ARTIFACTS_FILE], Duration::from_secs(10)).unwrap()
+    };
+
+    assert_eq!(register_expected_artifacts_at(&fx.repo, "lit-notes", &[]), "", "这次没带回文件就不登记");
+    assert!(!fx.repo.join(ARTIFACTS_FILE).exists());
+
+    let delivered = vec!["notes/big.md".to_string()];
+    let note = register_expected_artifacts_at(&fx.repo, "lit-notes", &delivered);
+    assert!(note.contains("1 个产物"), "{note}");
+    let entries = read_artifacts_manifest_impl(&fx.repo);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert!(entries[0].path.replace('\\', "/").ends_with("notes/big.md"), "雷达台账不记成本步产物");
+    assert_eq!(status(&fx.repo).trim(), "", "提货单登记后已提交，主文件夹没有遗留改动");
+
+    let bytes = fs::read(fx.repo.join(ARTIFACTS_FILE)).unwrap();
+    register_expected_artifacts_at(&fx.repo, "lit-notes", &delivered);
+    assert_eq!(fs::read(fx.repo.join(ARTIFACTS_FILE)).unwrap(), bytes, "同一文件没变，不重写登记时间");
+    assert_eq!(status(&fx.repo).trim(), "");
 }
 
 #[test]
