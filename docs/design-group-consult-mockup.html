@@ -1,0 +1,443 @@
+<!doctype html><meta charset="utf-8"><title>会诊：同一个问题请几家 AI 一起看（2026-11-11 界面稿）</title><style>
+/* 极简灰蓝（首装默认主题）令牌，取自 src/App.css [data-theme="neutral"] */
+:root{--rail:#0d0d0d;--rail2:#161616;--sel:#262626;--strip:#1c1c1c;--canvas:#111111;--inset:#212121;--raised:#272727;
+--hair:#2c2c2c;--field:#383838;--l1:#e5e5e5;--l2:#c2c2c2;--l3:#989898;--l4:#6e6e6e;
+--cta:#0169cc;--cta-t:#eaf4ff;--pill:#0d2d4d;--pill-t:#63a9ef;
+--ok:#10331f;--ok-t:#4cc38a;--err:#381e24;--err-t:#f07070;--warn:#37300f;--warn-t:#f0c010;
+--bubble:color-mix(in oklab,#111111,#e5e5e5 4.5%);--well:color-mix(in srgb,#111111 65%,#272727);
+--claude:#D97757;--codex:#8B7EC8;--kimi:#0D9488}
+*{box-sizing:border-box}
+body{margin:0;padding:20px 24px 48px;background:#6f6f6f;font:13px -apple-system,"PingFang SC",sans-serif;color:#111}
+h1{font-size:17px;margin:0 0 6px}.lead{margin:0 0 12px;max-width:1300px;line-height:1.7}
+.seg{display:inline-flex;background:#e2e2e2;border-radius:7px;padding:2px;margin:0 0 12px;gap:2px}
+.seg button{border:0;background:none;padding:4px 12px;border-radius:5px;font:12px -apple-system,"PingFang SC";cursor:pointer;color:#333}
+.seg button.on{background:#fff;color:#000;box-shadow:0 0 0 1px #c9c9c9}
+.wrap{display:grid;grid-template-columns:1320px 340px;gap:16px;align-items:start}
+aside.notes{background:#f4f4f4;border-radius:10px;padding:14px 16px;line-height:1.65;font-size:12.5px;color:#222}
+aside.notes h3{font-size:13px;margin:14px 0 4px}aside.notes h3:first-child{margin-top:0}
+aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,monospace;background:#e6e6e6;padding:0 3px;border-radius:3px}
+
+/* 应用外壳 */
+.app{position:relative;display:flex;border-radius:10px;overflow:hidden;background:var(--canvas);color:var(--l2);height:900px}
+.nav{width:170px;flex-shrink:0;background:var(--rail);padding:12px 8px;font-size:12.5px;display:flex;flex-direction:column;gap:2px}
+.nav .logo{color:var(--l1);font-weight:700;padding:2px 8px 12px}
+.nav .it{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:6px;color:var(--l3)}
+.nav .it.on{background:var(--sel);color:var(--l1);box-shadow:inset 2px 0 0 var(--cta)}
+.nav .ic{width:13px;height:13px;border-radius:3px;border:1.4px solid currentColor;opacity:.7}
+.list{width:330px;flex-shrink:0;background:var(--rail2);border-right:1px solid var(--hair);padding:14px 10px;display:flex;flex-direction:column}
+.list .hd{display:flex;align-items:center;gap:8px;padding:0 6px 4px}
+.list .hd .t{color:var(--l1);font-size:14px;font-weight:500;flex:1}
+.list .sub{font-size:11px;color:var(--l4);padding:0 6px 10px}
+.split{display:inline-flex;border:1px solid var(--field);border-radius:6px;position:relative}
+.split span{height:24px;display:flex;align-items:center;padding:0 9px;font-size:11.5px;color:var(--l1)}
+.split span+span{border-left:1px solid var(--field);padding:0 6px;color:var(--l3)}
+.menu{position:absolute;right:0;top:28px;z-index:20;background:var(--raised);border:1px solid var(--hair);border-radius:8px;padding:4px;width:200px;box-shadow:0 8px 24px rgb(0 0 0/.45);display:none}
+.menu .mi{display:flex;flex-direction:column;padding:6px 8px;border-radius:5px;font-size:12.5px;color:var(--l1)}
+.menu .mi small{font-size:11px;color:var(--l3);margin-top:1px}
+.menu .mi.hl{background:var(--sel)}
+.search{height:28px;border-radius:6px;background:var(--inset);border:1px solid var(--hair);color:var(--l4);font-size:12px;display:flex;align-items:center;padding:0 9px;margin:0 2px 10px}
+.row{padding:7px 8px;border-radius:7px;margin-bottom:1px}
+.row.on{background:var(--sel)}
+.row .a{display:flex;align-items:center;gap:6px}
+.row .tt{flex:1;color:var(--l1);font-size:12.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.row .age{font-size:11px;color:var(--l4)}
+.row .m{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:var(--l3)}
+.badge{font-size:10.5px;padding:0 6px;border-radius:4px;line-height:17px}
+.stack{display:inline-flex}.stack i{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--rail2);margin-left:-4px;font-style:normal;font-size:8px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600}
+.stack i:first-child{margin-left:0}
+.row.on .stack i{border-color:var(--sel)}
+
+/* 会诊视图 */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:46px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 18px;border-bottom:1px solid var(--hair)}
+.top .ti{color:var(--l1);font-size:13.5px;font-weight:500;margin-right:6px;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:11px;background:var(--inset);font-size:11.5px;color:var(--l2);white-space:nowrap}
+.chip .d{width:7px;height:7px;border-radius:50%}
+.chip small{color:var(--l4);font-size:10.5px}
+.grow{flex:1}
+.cost{font-size:11px;color:var(--l3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border-radius:6px;font:12px -apple-system,"PingFang SC";cursor:pointer;border:1px solid var(--field);background:transparent;color:var(--l1);white-space:nowrap}
+.btn.pri{background:var(--cta);border-color:var(--cta);color:var(--cta-t);font-weight:500}
+.btn.gh{border-color:transparent;color:var(--l3)}
+.btn.sm{height:22px;padding:0 7px;font-size:11.5px}
+.btn.stop{border-color:color-mix(in srgb,var(--err-t) 45%,transparent);color:var(--err-t)}
+.scroll{flex:1;overflow:auto;padding:18px 26px 10px}
+.inner{max-width:900px;margin:0 auto}
+.q{background:var(--bubble);border-radius:14px;padding:12px 14px;margin-left:auto;max-width:640px}
+.q .who{font-size:11px;color:var(--l4);margin-bottom:4px}
+.q .tx{color:var(--l1);line-height:1.65}
+.mats{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.mat{font:11.5px ui-monospace,Menlo,monospace;color:var(--l2);background:var(--inset);border-radius:5px;padding:2px 7px}
+.mat em{font-style:normal;color:var(--l4);font-family:-apple-system,"PingFang SC"}
+.lbl{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--l4);margin:22px 0 8px;letter-spacing:.04em}
+.lbl::after{content:"";flex:1;height:1px;background:var(--hair)}
+.lbl b{font-weight:500;color:var(--l3)}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.card{background:var(--well);border:1px solid var(--hair);border-radius:10px;padding:10px 12px 12px;display:flex;flex-direction:column;min-height:120px}
+.card .h{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.card .h .n{color:var(--l1);font-weight:500;font-size:12.5px}
+.card .h .md{font-size:11px;color:var(--l3)}
+.tier{font-size:10.5px;color:var(--l4);border:1px solid var(--hair);border-radius:4px;padding:0 5px;line-height:16px;margin-left:auto;white-space:nowrap}
+.tier.lim{color:var(--warn-t);border-color:color-mix(in srgb,var(--warn-t) 35%,transparent)}
+.card .body{font-size:12.5px;line-height:1.7;color:var(--l2)}
+.card .body p{margin:0 0 6px}
+.tail{border-top:1px solid var(--hair);margin-top:8px;padding-top:7px;font-size:12px;line-height:1.65}
+.tail>div{display:flex;gap:6px}.tail>div>span:first-child{color:var(--l4);flex-shrink:0;width:52px}
+.tail .v{color:var(--l1)}
+.ref{font:11.5px ui-monospace,Menlo,monospace;color:var(--pill-t)}
+.ref.miss{color:var(--warn-t);text-decoration:underline dotted}
+.miss-n{font-size:10.5px;color:var(--warn-t);margin-left:4px}
+.wait{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--l3);font-size:12px;text-align:center}
+.wait .big{font-size:12.5px;color:var(--l2)}
+.prog{font-size:11.5px;color:var(--l3);line-height:1.8}
+.prog code{font:11px ui-monospace,Menlo,monospace;color:var(--l2)}
+.caret{display:inline-block;width:7px;height:2.5px;border-radius:1px;background:var(--ok-t);vertical-align:middle;animation:br 2.4s ease-in-out infinite;margin-right:5px}
+@keyframes br{50%{opacity:.22}}
+.okdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok-t);margin-right:5px}
+.cmp{background:var(--well);border:1px solid var(--hair);border-radius:10px;margin-top:10px;overflow:hidden}
+.cmp .hd{display:flex;align-items:center;padding:7px 12px;font-size:11px;color:var(--l4);border-bottom:1px solid var(--hair)}
+.cmp .r{display:grid;grid-template-columns:96px 1fr;gap:10px;padding:8px 12px;font-size:12.5px;line-height:1.6}
+.cmp .r+.r{border-top:1px solid var(--hair)}
+.cmp .r .w{display:flex;align-items:flex-start;gap:6px;color:var(--l1)}
+.cmp .r .w .d{width:7px;height:7px;border-radius:50%;margin-top:6px}
+.cmp .r .c{color:var(--l2)}
+.cmp .r .x{display:block;font-size:11px;color:var(--l4);margin-top:2px}
+.msg{margin:14px 0}
+.msg .h{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px}
+.msg .h .n{color:var(--l1);font-weight:500}.msg .h .md{color:var(--l4);font-size:11px}
+.msg .h .to{font-size:11px;color:var(--l3)}
+.msg .b{color:var(--l2);line-height:1.75;font-size:13px;padding-left:13px}
+.at{color:var(--pill-t);background:var(--pill);border-radius:4px;padding:0 4px}
+.uq{margin:16px 0 14px auto;max-width:560px;background:var(--bubble);border-radius:14px;padding:9px 13px;color:var(--l1);line-height:1.6;width:fit-content}
+.acts{display:flex;gap:2px;padding-left:9px;margin-top:4px}
+.acts span{font-size:11px;color:var(--l3);padding:2px 6px;border-radius:5px}
+.acts span.on{background:var(--sel);color:var(--l1)}
+.sys{text-align:center;font-size:11.5px;color:var(--l4);margin:14px 0}
+.comp{flex-shrink:0;padding:6px 26px 14px}
+.comp .inner{max-width:900px}
+.comp .hint{font-size:11px;color:var(--l4);margin:0 4px 6px;display:flex;gap:8px}
+.box{border:1px solid var(--field);border-radius:12px;background:var(--strip);padding:10px 12px 8px}
+.box .ph{color:var(--l4);font-size:13px;min-height:22px}
+.box .ph .at{color:var(--pill-t)}
+.box .bar{display:flex;align-items:center;gap:6px;margin-top:8px}
+.ico{width:26px;height:26px;border-radius:13px;display:flex;align-items:center;justify-content:center;color:var(--l3);font-size:14px}
+.send{width:28px;height:28px;border-radius:14px;background:var(--l1);color:var(--canvas);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
+.send.stop{background:var(--err-t);color:#fff;font-size:10px}
+.atmenu{position:absolute;bottom:92px;left:calc(170px + 330px + 50px);width:230px;background:var(--raised);border:1px solid var(--hair);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgb(0 0 0/.45);display:none}
+.atmenu .mi{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:5px;font-size:12.5px;color:var(--l1)}
+.atmenu .mi small{margin-left:auto;color:var(--l4);font-size:11px}
+.atmenu .mi.hl{background:var(--sel)}
+.atmenu .d{width:7px;height:7px;border-radius:50%}
+
+/* 弹层 */
+.veil{position:absolute;inset:0;background:rgb(0 0 0/.55);display:none;align-items:flex-start;justify-content:center;padding-top:70px}
+.dlg{width:600px;background:var(--raised);border:1px solid var(--hair);border-radius:12px;box-shadow:0 18px 48px rgb(0 0 0/.55);padding:18px 20px 16px;color:var(--l2)}
+.dlg h2{margin:0 0 4px;font-size:15px;color:var(--l1);font-weight:600}
+.dlg .s{font-size:12px;color:var(--l3);margin-bottom:14px;line-height:1.6}
+.f{margin-bottom:14px}
+.f .fl{font-size:12px;color:var(--l1);margin-bottom:6px;display:flex;align-items:baseline;gap:8px}
+.f .fl small{color:var(--l4);font-size:11px}
+.ta{background:var(--canvas);border:1px solid var(--field);border-radius:8px;padding:9px 11px;color:var(--l1);font-size:13px;line-height:1.6}
+.mrow{display:flex;align-items:center;gap:8px;background:var(--canvas);border:1px solid var(--hair);border-radius:7px;padding:5px 8px;margin-bottom:5px;font-size:12px}
+.mrow code{font:11.5px ui-monospace,Menlo,monospace;color:var(--l1)}
+.mrow .x{margin-left:auto;color:var(--l4)}
+.addm{font-size:12px;color:var(--pill-t)}
+.mems{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.mem{border:1px solid var(--hair);background:var(--canvas);border-radius:8px;padding:8px 9px;font-size:12px;position:relative}
+.mem.on{border-color:var(--cta);box-shadow:inset 0 0 0 1px var(--cta)}
+.mem .n{display:flex;align-items:center;gap:6px;color:var(--l1);font-weight:500}
+.mem .md{font-size:11px;color:var(--l3);margin-top:3px}
+.mem .tg{font-size:10.5px;color:var(--l4);margin-top:5px}
+.mem .tg.lim{color:var(--warn-t)}
+.mem.add{display:flex;align-items:center;justify-content:center;color:var(--l3);border-style:dashed}
+.ck{position:absolute;right:7px;top:7px;width:13px;height:13px;border-radius:3px;border:1.4px solid var(--l4)}
+.mem.on .ck{background:var(--cta);border-color:var(--cta)}
+.segc{display:inline-flex;background:var(--canvas);border:1px solid var(--hair);border-radius:7px;padding:2px;gap:2px}
+.segc span{padding:3px 12px;border-radius:5px;font-size:12px;color:var(--l3)}
+.segc span.on{background:var(--sel);color:var(--l1)}
+.foot{display:flex;align-items:center;gap:8px;margin-top:6px;padding-top:12px;border-top:1px solid var(--hair)}
+.foot .est{font-size:11.5px;color:var(--l3);flex:1}
+.remember{position:absolute;right:26px;top:200px;width:420px;background:var(--raised);border:1px solid var(--hair);border-radius:12px;box-shadow:0 18px 48px rgb(0 0 0/.55);padding:14px 16px;display:none}
+.remember h4{margin:0 0 4px;font-size:13.5px;color:var(--l1)}
+.remember .s{font-size:11.5px;color:var(--l3);margin-bottom:10px;line-height:1.6}
+.remember .from{font-size:11px;color:var(--l4);margin:8px 0 12px}
+.sumenu{position:absolute;right:62px;top:40px;width:230px;background:var(--raised);border:1px solid var(--hair);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgb(0 0 0/.45);display:none}
+.sumenu .mi{padding:6px 8px;border-radius:5px;font-size:12.5px;color:var(--l1)}
+.sumenu .mi small{display:block;color:var(--l4);font-size:11px;margin-top:1px}
+.sumenu .mi.hl{background:var(--sel)}
+.sumenu hr{border:0;border-top:1px solid var(--hair);margin:4px 2px}
+
+/* 状态切换 */
+.r1-only,.done-only,.close-only{display:none}
+.app.s-close .close-only{display:flex}
+.app.s-open .veil{display:flex}
+.app.s-open .menu{display:block}
+.app.s-r1 .r1-only{display:block}.app.s-r1 .card.r1-only{display:flex}
+.app.s-r1 .done-only,.app.s-r1 .after-r1{display:none!important}
+.app:not(.s-r1) .done-only{display:block}.app:not(.s-r1) .card.done-only{display:flex}
+.app.s-open .done-only,.app.s-open .after-r1{display:none!important}.app.s-open .r1-only{display:block}.app.s-open .card.r1-only{display:flex}
+.app.s-open .main{visibility:hidden}.app.s-open .dlg{margin-left:320px}
+.app.s-close .remember,.app.s-close .sumenu{display:block}
+.app.s-main .atmenu{display:block}
+.stopbtn{display:none}.app.s-r1 .stopbtn{display:inline-flex}.app.s-r1 .send{display:none}.app.s-r1 .send.stop{display:flex}
+.send.stop{display:none}
+</style>
+
+<h1>会诊：同一个问题请几家 AI 一起看（2026-11-11 界面稿 · 待拍板）</h1>
+<p class="lead">设计稿 <code>docs/design-group-consult.md</code>。四个画面按顺序：开会诊 → 第一轮各答各的（进行中）→ 亮答案、交叉、追问 → 收尾记进项目知识。
+主题按首装默认「极简灰蓝」深色，颜色全取 <code>src/App.css</code> 令牌；成员色点走 <code>AGENT_BRAND</code>。示例课题、模型名与数字都是虚构的。</p>
+<div class="seg" id="seg">
+ <button data-s="open">① 开会诊</button>
+ <button data-s="r1">② 第一轮进行中</button>
+ <button data-s="main" class="on">③ 亮答案 · 交叉 · 追问</button>
+ <button data-s="close">④ 收尾</button>
+</div>
+
+<div class="wrap">
+<div class="app s-main" id="app">
+ <nav class="nav">
+  <div class="logo">Mesa</div>
+  <div class="it"><i class="ic"></i>工作台</div>
+  <div class="it"><i class="ic"></i>项目</div>
+  <div class="it on"><i class="ic"></i>对话</div>
+  <div class="it"><i class="ic"></i>连接</div>
+  <div class="it"><i class="ic"></i>技能</div>
+  <div class="it"><i class="ic"></i>用量</div>
+ </nav>
+
+ <section class="list">
+  <div class="hd"><span class="t">对话</span>
+   <span class="split"><span>＋ 新对话</span><span>▾</span>
+    <div class="menu">
+     <div class="mi">新对话<small>和一家 Agent 聊</small></div>
+     <div class="mi hl">会诊…<small>同一个问题请几家一起看</small></div>
+    </div>
+   </span>
+  </div>
+  <div class="sub">当前 3 · 总计 214</div>
+  <div class="search">搜索对话</div>
+  <div class="row on">
+   <div class="a"><span class="tt">1111|研究|亚组按测序平台还是按地区</span><span class="age">刚刚</span></div>
+   <div class="m"><span class="stack"><i style="background:var(--claude)">C</i><i style="background:var(--codex)">X</i><i style="background:var(--kimi)">K</i></span>会诊 · 3 家 · 菌群与抑郁 meta</div>
+  </div>
+  <div class="row">
+   <div class="a"><span class="tt">1111|研究|森林图配色与亚组排序</span><span class="age">40 分钟</span></div>
+   <div class="m"><span class="badge" style="color:var(--codex);background:color-mix(in srgb,var(--codex) 12%,transparent)">Codex</span>菌群与抑郁 meta</div>
+  </div>
+  <div class="row">
+   <div class="a"><span class="tt">1110|研究|数据抽取表加「测序区域」列</span><span class="age">昨天</span></div>
+   <div class="m"><span class="badge" style="color:var(--claude);background:color-mix(in srgb,var(--claude) 12%,transparent)">Claude Code</span>菌群与抑郁 meta</div>
+  </div>
+  <div class="row">
+   <div class="a"><span class="tt">1110|研究|审稿意见 2.3 接受还是反驳</span><span class="age">昨天</span></div>
+   <div class="m"><span class="stack"><i style="background:var(--claude)">C</i><i style="background:var(--codex)">X</i></span>会诊 · 2 家 · 菌群与抑郁 meta</div>
+  </div>
+  <div class="row">
+   <div class="a"><span class="tt">1109|研究|检索式补 MeSH 词</span><span class="age">2 天</span></div>
+   <div class="m"><span class="badge" style="color:var(--kimi);background:color-mix(in srgb,var(--kimi) 12%,transparent)">Kimi</span>菌群与抑郁 meta</div>
+  </div>
+ </section>
+
+ <section class="main">
+  <div class="top">
+   <span class="ti">亚组按测序平台还是按地区</span>
+   <span class="chip"><i class="d" style="background:var(--claude)"></i>Claude<small>Opus 5.5</small></span>
+   <span class="chip"><i class="d" style="background:var(--codex)"></i>Codex<small>GPT-6.1</small></span>
+   <span class="chip"><i class="d" style="background:var(--kimi)"></i>Kimi<small>K2.6 · 只看材料</small></span>
+   <span class="grow"></span>
+   <span class="cost r1-only">已花 ¥0.31 · 3 次</span>
+   <span class="cost done-only">已花 ¥1.12 · 8 次</span>
+   <span class="btn sm stopbtn stop">全部停止</span>
+   <span class="btn sm done-only">收尾 ▾</span>
+   <span class="btn gh sm">⋯</span>
+   <div class="sumenu">
+    <div class="mi hl">记进项目知识…<small>挑一条结论，改写后记进「已定 / 不做」</small></div>
+    <div class="mi">起草派活单<small>交给项目助手，派不派你在那边点</small></div>
+    <hr>
+    <div class="mi">复制全部（Markdown）</div>
+   </div>
+  </div>
+
+  <div class="scroll"><div class="inner">
+   <div class="q">
+    <div class="who">你 · 11:02</div>
+    <div class="tx">随机效应模型 I² = 78%。现在的亚组是按测序平台（16S / 宏基因组）分的，这样分站得住吗？还是该改回按地区？</div>
+    <div class="mats">
+     <span class="mat">analysis/meta-results.md <em>全文</em></span>
+     <span class="mat">notes/extraction.md <em>第 1–60 行</em></span>
+     <span class="mat">manuscript/methods.md <em>§2.4</em></span>
+    </div>
+   </div>
+
+   <div class="lbl"><b>第一轮 · 各答各的</b>彼此看不见</div>
+   <div class="cards">
+    <!-- 进行中：Claude 已答完但不展开 -->
+    <div class="card r1-only">
+     <div class="h"><i class="okdot"></i><span class="n">Claude</span><span class="md">Opus 5.5</span><span class="tier">能看项目</span></div>
+     <div class="wait"><span class="big">已答完 · 等其他几家</span>全部回来后一起展开，免得先读的影响后读的</div>
+    </div>
+    <div class="card r1-only">
+     <div class="h"><i class="caret"></i><span class="n">Codex</span><span class="md">GPT-6.1</span><span class="tier">能看项目</span></div>
+     <div class="prog">读了 <code>analysis/meta-results.md</code><br>读了 <code>manuscript/methods.md</code><br>正在找 <code>loo</code> 相关的文件…</div>
+     <div style="flex:1"></div>
+     <div style="display:flex;justify-content:space-between;align-items:center"><span class="cost">1 分 12 秒</span><span class="btn sm gh">停止</span></div>
+    </div>
+    <div class="card r1-only">
+     <div class="h"><i class="caret"></i><span class="n">Kimi</span><span class="md">K2.6</span><span class="tier lim">只看材料</span></div>
+     <div class="prog">看不到项目文件，只看附上的三份摘录</div>
+     <div style="flex:1"></div>
+     <div style="display:flex;justify-content:space-between;align-items:center"><span class="cost">48 秒</span><span class="btn sm gh">停止</span></div>
+    </div>
+
+    <!-- 亮答案后 -->
+    <div class="card done-only">
+     <div class="h"><span class="n">Claude</span><span class="md">Opus 5.5</span><span class="tier">能看项目</span></div>
+     <div class="body"><p>按平台分站不住：抽取表里 11 篇 16S 研究有 9 篇来自东亚，宏基因组的 6 篇全在欧美，平台和地区几乎完全重叠，亚组差异分不清是哪个造成的。</p><p>建议做 meta 回归，两个变量一起放，看哪个还显著。</p></div>
+     <div class="tail">
+      <div><span>结论</span><span class="v">平台与地区重叠，按平台分亚组解释不了异质性来源</span></div>
+      <div><span>依据</span><span><span class="ref">notes/extraction.md:14-38</span> · <span class="ref">analysis/meta-results.md「亚组」</span></span></div>
+      <div><span>没把握</span><span>两篇没写测序区域</span></div>
+     </div>
+    </div>
+    <div class="card done-only">
+     <div class="h"><span class="n">Codex</span><span class="md">GPT-6.1</span><span class="tier">能看项目</span></div>
+     <div class="body"><p>亚组可以留，但只能算探索性。I² 高主要来自 Chen 2024 一篇，去掉它降到 41%。主分析更该报告预测区间。</p></div>
+     <div class="tail">
+      <div><span>结论</span><span class="v">保留亚组但标探索性；补预测区间</span></div>
+      <div><span>依据</span><span><span class="ref">analysis/meta-results.md:52</span> · <span class="ref miss">analysis/loo.csv</span><span class="miss-n">找不到这处</span></span></div>
+      <div><span>没把握</span><span>—</span></div>
+     </div>
+    </div>
+    <div class="card done-only">
+     <div class="h"><span class="n">Kimi</span><span class="md">K2.6</span><span class="tier lim">只看材料</span></div>
+     <div class="body"><p>方法 §2.4 预先登记的是按地区分亚组。换成按平台属于事后分析，正文要写明，不能当成预设分析报告。</p></div>
+     <div class="tail">
+      <div><span>结论</span><span class="v">按平台是事后分析，主亚组应回到预先登记的地区</span></div>
+      <div><span>依据</span><span><span class="ref">manuscript/methods.md §2.4</span></span></div>
+      <div><span>没把握</span><span>没看到注册号对应的原始方案</span></div>
+     </div>
+    </div>
+   </div>
+
+   <div class="cmp done-only">
+    <div class="hd">各家结论（原话，Mesa 只排在一起，不判谁对）</div>
+    <div class="r"><span class="w"><i class="d" style="background:var(--claude)"></i>Claude</span><span class="c">平台与地区重叠，按平台分亚组解释不了异质性来源<span class="x">交叉：补充了留一法的数字</span></span></div>
+    <div class="r"><span class="w"><i class="d" style="background:var(--codex)"></i>Codex</span><span class="c">保留亚组但标探索性；补预测区间<span class="x">交叉：改成只放地区，平台作敏感性分析 · 依据里 1 处找不到</span></span></div>
+    <div class="r"><span class="w"><i class="d" style="background:var(--kimi)"></i>Kimi</span><span class="c">按平台是事后分析，主亚组应回到预先登记的地区<span class="x">交叉：没补充</span></span></div>
+   </div>
+
+   <div class="after-r1">
+    <div class="lbl"><b>交叉 · 1 轮</b>每家看了别家第一轮的回答</div>
+    <div class="msg">
+     <div class="h"><i class="okdot" style="background:var(--codex)"></i><span class="n">Codex</span><span class="to">回应 <span class="at">@Claude</span></span></div>
+     <div class="b">同意平台和地区重叠。但 k = 17 时 meta 回归放两个变量偏多，建议只放地区，平台写成敏感性分析；这也和 Kimi 说的预先登记一致。</div>
+    </div>
+    <div class="msg">
+     <div class="h"><i class="okdot" style="background:var(--claude)"></i><span class="n">Claude</span><span class="to">回应 <span class="at">@Codex</span></span></div>
+     <div class="b">项目里没有 <span class="ref">analysis/loo.csv</span>。留一法的结果在 <span class="ref">analysis/meta-results.md:60</span>，去掉 Chen 2024 后 I² 是 46%，不是 41%。</div>
+     <div class="acts"><span>记进项目知识</span><span>起草派活单</span><span>复制</span></div>
+    </div>
+
+    <div class="uq"><span class="at">@Codex</span> 41% 是哪来的？</div>
+    <div class="msg">
+     <div class="h"><i class="okdot" style="background:var(--codex)"></i><span class="n">Codex</span></div>
+     <div class="b">是我按 meta-results.md 第 60 行附近的森林图估的，没找到 loo.csv。以 Claude 给的 46% 为准，结论不变：主亚组按地区，平台作敏感性分析。</div>
+     <div class="acts close-only"><span class="on">记进项目知识</span><span>起草派活单</span><span>复制</span></div>
+    </div>
+   </div>
+  </div></div>
+
+  <div class="comp"><div class="inner">
+   <div class="hint"><span>你不说话时，它们最多再互相叫 2 次</span><span class="grow"></span><span>不 @ 就是问所有人</span></div>
+   <div class="box">
+    <div class="ph"><span class="after-r1">@</span><span class="r1-only">第一轮还在答，可以先写下一句</span></div>
+    <div class="bar"><span class="ico">＋</span><span class="ico">@</span><span class="grow"></span><span class="send">↑</span><span class="send stop">■</span></div>
+   </div>
+  </div></div>
+ </section>
+
+ <div class="atmenu">
+  <div class="mi hl"><i class="d" style="background:var(--codex)"></i>Codex<small>GPT-6.1</small></div>
+  <div class="mi"><i class="d" style="background:var(--claude)"></i>Claude<small>Opus 5.5</small></div>
+  <div class="mi"><i class="d" style="background:var(--kimi)"></i>Kimi<small>只看材料</small></div>
+  <div class="mi" style="color:var(--l2)">所有人</div>
+ </div>
+
+ <div class="remember">
+  <h4>记进项目知识</h4>
+  <div class="s">写进项目的「已定 / 不做」，以后这个项目里的 AI 都会照着办。可以改写，只记你认可的那句。</div>
+  <div class="ta">主分析的亚组按预先登记的地区；按测序平台只作敏感性分析。留一法去掉 Chen 2024 后 I² 写 46%（analysis/meta-results.md 第 60 行）。</div>
+  <div class="from">取自：Codex 第 3 条回答，你改写过 · 会诊「亚组按测序平台还是按地区」</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn gh">取消</span><span class="btn pri">记进项目知识</span></div>
+ </div>
+
+ <div class="veil">
+  <div class="dlg">
+   <h2>会诊</h2>
+   <div class="s">同一个问题请几家一起看：先各答各的，再看别家的答案补充或反驳。它们只看不改，不跑命令。</div>
+   <div class="f"><div class="fl">问题</div>
+    <div class="ta">随机效应模型 I² = 78%。现在的亚组是按测序平台（16S / 宏基因组）分的，这样分站得住吗？还是该改回按地区？</div></div>
+   <div class="f"><div class="fl">材料<small>项目里的文件，可以只选几行或某一节</small></div>
+    <div class="mrow"><code>analysis/meta-results.md</code><span style="color:var(--l4)">全文</span><span class="x">✕</span></div>
+    <div class="mrow"><code>notes/extraction.md</code><span style="color:var(--l4)">第 1–60 行</span><span class="x">✕</span></div>
+    <div class="mrow"><code>manuscript/methods.md</code><span style="color:var(--l4)">§2.4</span><span class="x">✕</span></div>
+    <span class="addm">＋ 加文件或截图</span></div>
+   <div class="f"><div class="fl">请谁<small>二到四家；「只看材料」的看不到项目，只看上面这几份的摘录</small></div>
+    <div class="mems">
+     <div class="mem on"><i class="ck"></i><div class="n"><i class="okdot" style="background:var(--claude);margin:0"></i>Claude</div><div class="md">Opus 5.5</div><div class="tg">能看项目</div></div>
+     <div class="mem on"><i class="ck"></i><div class="n"><i class="okdot" style="background:var(--codex);margin:0"></i>Codex</div><div class="md">GPT-6.1</div><div class="tg">能看项目</div></div>
+     <div class="mem on"><i class="ck"></i><div class="n"><i class="okdot" style="background:var(--kimi);margin:0"></i>Kimi</div><div class="md">K2.6</div><div class="tg lim">只看材料</div></div>
+     <div class="mem add">＋ 再请一家</div>
+    </div></div>
+   <div class="f" style="display:flex;align-items:center;gap:12px"><div class="fl" style="margin:0">看完别家后再答</div>
+    <div class="segc"><span>不用</span><span class="on">1 轮</span><span>2 轮</span></div></div>
+   <div class="foot"><span class="est">大约 6 次调用，按上次的花费估 ¥0.9 左右</span><span class="btn gh">取消</span><span class="btn pri">开始会诊</span></div>
+  </div>
+ </div>
+</div>
+
+<aside class="notes">
+ <div class="n" data-n="open">
+  <h3>① 开会诊</h3>
+  <p>入口在对话页「新对话」旁的 ▾ 里（左上角展开的那个菜单）。另两个入口不在这屏：对话回放 ⋯「请几家会诊这个问题」、项目助手回答里的「找几家会诊」按钮，都会预填问题和材料。</p>
+  <p><b>请谁</b>默认三家：「问 AI / 聊想法」那家 + 两家模型族不同的一等 Agent，记住上次的选择。卡片下小字写清「能看项目」还是「只看材料」——后者看不到项目，只看 Mesa 贴进去的摘录。</p>
+  <p>两家同一个模型族时卡片上标「同一家模型，意见可能雷同」，不拦。</p>
+  <p><b>看完别家后再答</b>就是交叉轮，默认 1 轮。</p>
+  <p>预估花费只显示、不拦。</p>
+  <h3>不放在这里的</h3>
+  <p>步骤卡不加按钮（主路径唯一）；没有「放手干」档位可选，会诊永远只读。</p>
+ </div>
+ <div class="n" data-n="r1">
+  <h3>② 第一轮进行中</h3>
+  <p>三家同时开跑。Claude 先答完，但卡片<b>只写「已答完 · 等其他几家」</b>，不展开内容——防止你先读了一家，带着它的看法读别家（待拍板 §11-2）。</p>
+  <p>进行中的卡片只给读了哪些文件，不给内容；每张卡有「停止」，顶栏有「全部停止」。单家 240 秒没答完按超时处理，不挡别家。</p>
+  <p>Kimi 卡上标黄「只看材料」：一期 Kimi 的只读无头还没实测，先走临时目录 + 摘录；实测通过后改成「能看项目」。</p>
+  <p>输入框此时也能打字，发出去的话等第一轮结束后再叫人。</p>
+ </div>
+ <div class="n" data-n="main">
+  <h3>③ 亮答案 · 交叉 · 追问</h3>
+  <p><b>每条回答固定尾段</b>：结论 / 依据 / 没把握。Mesa 把各家「结论」原话排成下面的对照条，<b>只排版、不判谁对、不投票、不出共识</b>。</p>
+  <p><b>依据核对</b>：Codex 写的 <code>analysis/loo.csv</code> 项目里没有，标黄「找不到这处」；交叉轮里 Claude 也指出了这一处——这是会诊该有的样子。</p>
+  <p><b>交叉轮</b>自动跑 1 轮，每家看别家第一轮的回答，只写补充、反驳或改判。Kimi 回了 [PASS]，聊天流里不显示，对照条写「交叉：没补充」。</p>
+  <p><b>追问</b>：<code>@Codex</code> 只叫那一家；不 @ 就是问所有人。画面下方展开的是输入 @ 时的成员菜单。</p>
+  <p>输入框上方一行小字说明接力上限：你不说话时它们最多再互相叫 2 次，到了就停，写一句「先停一下，等你发话」。</p>
+  <p>左栏会诊行用成员头像叠代替 Agent 胶囊，meta 写「会诊 · 3 家」；标题照 <code>MMDD|类型|主题</code>。</p>
+ </div>
+ <div class="n" data-n="close">
+  <h3>④ 收尾</h3>
+  <p>顶栏「收尾 ▾」或每条回答悬停时的动作：</p>
+  <p><b>记进项目知识</b>：项目助手同一张卡，预填这条回答的结论，你改写后点了才写进「已定 / 不做」。一次一条，不批量采纳。</p>
+  <p><b>起草派活单</b>：把问题、对照条和你选中的回答交给项目助手作为本次重点，它起草派活单，派不派你在项目助手里点。会诊自己不出派活单，派活单只有一个出处。</p>
+  <p>会诊不用「关闭」：没有调用在跑时它就是一份记录，随时能接着追问。记录在项目 <code>.ccode/consults/</code>，不进 git。</p>
+ </div>
+</aside>
+</div>
+
+<script>
+const app=document.getElementById('app');
+function show(s){app.className='app s-'+s;document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+ document.querySelectorAll('.notes .n').forEach(n=>n.style.display=n.dataset.n===s?'block':'none');
+ const sc=document.querySelector('.scroll');sc.scrollTop=(s==='main'||s==='close')?sc.scrollHeight:0;}
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>show(b.dataset.s));
+show(['open','r1','main','close'].includes(location.hash.slice(1))?location.hash.slice(1):'main');
+</script>
