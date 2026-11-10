@@ -3,7 +3,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
@@ -125,6 +125,30 @@ function launchBarAgent(): string {
  * 行主动作 = 聊想法（未绑工作区）/ 开工（挂步骤的卡，走一键开步链路）/ 继续（已绑工作区，开终端预填 CONTINUE_STEP_PROMPT）。
  * 展开手风琴按卡片 id 记忆在本组件内——ProjectGroup 以项目 key 挂载，切项目自然清空。
  */
+/** 「AI 干活」下一行的回头入口（2026-11-10 用户：「补充文献和跟进按钮挤在一块，看着很乱」）：一律同一种文字链接、中间点隔开，
+ *  不再一个下划线虚线、一个带框按钮混排；眼下有事可做的（跟进、补读）排前面、字重一点，随时可用的工具在后 */
+const LOOP_TOOL = "shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-50";
+const LOOP_PENDING = "shrink-0 rounded-sm text-xs font-medium text-l1 underline-offset-2 hover:underline disabled:opacity-50";
+
+function loopRow(items: ReactNode[]): ReactNode {
+  const list = items.filter(Boolean);
+  if (list.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      {list.map((el, i) => (
+        <Fragment key={i}>
+          {i > 0 && (
+            <span aria-hidden="true" className="text-xs text-l4">
+              ·
+            </span>
+          )}
+          {el}
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
 export default function TaskCardsSection({
   projectPath,
   steps,
@@ -436,7 +460,7 @@ export default function TaskCardsSection({
     };
   }, [catchUpStep, projectPath, refreshToken, catchUpTick]);
   /** 精读还没读的新纳入篇（项目里的纳入清单 vs 这一步工作副本的索引）。「待跟进」只看有没有并入：解冲突、「继续」并入后
-   *  标记就消了，AI 却没读新篇（2026-11-10 HER：解完冲突「待跟进」没了，新加的 2 篇没人读）。有就照样给「跟进上游的新增」 */
+   *  标记就消了，AI 却没读新篇（2026-11-10 HER：解完冲突「待跟进」没了，新加的 2 篇没人读）。有就照样给「跟进更新」 */
   const [unreadNew, setUnreadNew] = useState(0);
   const unreadStep =
     focusStepDto && (focusRunStatus === "done" || focusRunStatus === "review") && stepFillsAnySlot(focusStepDto.skills, ["lit-notes"], skillProvides)
@@ -1042,7 +1066,7 @@ export default function TaskCardsSection({
     }
   }
 
-  /** 跟进上游的新增（§5）：只读算增量 → 人确认规模 → 并入 → 开一段对话只做增量 → 记轮次。
+  /** 跟进更新（§5）：只读算增量 → 人确认规模 → 并入 → 开一段对话只做增量 → 记轮次。
    *  没有要跟进的也记一笔（ack），「待跟进」就此消掉，不会一直挂着（2026-11-05 排查） */
   async function followUpstream(
     target?: ProjectStepDto,
@@ -1129,7 +1153,7 @@ export default function TaskCardsSection({
       return "started";
     } catch (reason) {
       const text = String(reason instanceof Error ? reason.message : reason);
-      if (auto) toast(`${auto.label}停在「${step.name}」：${text} 处理完到这一步点「跟进上游的新增」，保存后链接着往下。`, "error");
+      if (auto) toast(`${auto.label}停在「${step.name}」：${text} 处理完到这一步点「跟进更新」，保存后链接着往下。`, "error");
       else setError(text);
       return "stopped";
     } finally {
@@ -1137,7 +1161,7 @@ export default function TaskCardsSection({
     }
   }
 
-  /** 补读：只让 AI 读这几篇新到的全文、在原笔记上续写。已保存的步骤开新一轮，同「跟进上游的新增」的拦法 */
+  /** 补读：只让 AI 读这几篇新到的全文、在原笔记上续写。已保存的步骤开新一轮，同「跟进更新」的拦法 */
   async function catchUpReads() {
     const step = focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
@@ -1164,7 +1188,7 @@ export default function TaskCardsSection({
     }
   }
 
-  // 补料链（流程贯通 §6）：链上的上一步保存进项目后，下一步自动开「跟进上游的新增」。只认这次打开 Mesa 之后的保存；
+  // 补料链（流程贯通 §6）：链上的上一步保存进项目后，下一步自动开「跟进更新」。只认这次打开 Mesa 之后的保存；
   // rework_chain_claim 原子地记「这一步开过」，两处同时看到也只开一次；一次只走一步
   const chainBusyRef = useRef(false);
   useEffect(() => {
@@ -1598,7 +1622,7 @@ export default function TaskCardsSection({
             onContinueStep={() => continueFocusedStep()}
             loopActions={(() => {
               // 退回上一步补料（design-review-loop.md §4）：这一步开过工就有——做到一半、待评审、已保存都能回头（2026-11-06 流程贯通 §5；
-              // 原先只在已保存时给，因为没并入就保存会把「待跟进」盖掉，§3 改判定后这个顾虑没了）。跟进上游的新增（§5）只在已保存且待跟进时给
+              // 原先只在已保存时给，因为没并入就保存会把「待跟进」盖掉，§3 改判定后这个顾虑没了）。跟进更新（§5）只在已保存且待跟进时给
               const upstreamSteps = reworkTargets(steps, focusIdx);
               const targets = upstreamSteps.map((s) => s.name);
               // 默认退回最近的上一步：它是找 / 读文献的就叫「补料」，大纲、初稿这类叫「修改」
@@ -1613,7 +1637,7 @@ export default function TaskCardsSection({
                       ? "缺文献时用（比如某个方向一篇都没有、大纲某节文献不够）：写清补什么，交给上一步另开一轮去找或去读。这一步做到一半也可以，不用先保存"
                       : "做这一步时发现上游要改（比如大纲某节的顺序撑不住）：写清改什么，交给上一步另开一轮去改。这一步做到一半也可以，不用先保存"
                   }
-                  className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  className={LOOP_TOOL}
                 >
                   {nearestLit ? "补充文献…" : "退回上一步修改…"}
                 </button>
@@ -1635,9 +1659,9 @@ export default function TaskCardsSection({
                   type="button"
                   onClick={() => void openRework({ target: refresh.step, ...searchRefreshDraft(refresh.savedAt) })}
                   title={`「${refresh.step}」上次保存是 ${refresh.days} 天前：投稿前按原检索式补一轮这段时间新发表的文献，再顺着精读、大纲、初稿跟进`}
-                  className="shrink-0 rounded-sm px-1 text-xs text-warn-text underline decoration-dotted underline-offset-2 hover:text-l1"
+                  className="shrink-0 rounded-sm text-xs text-warn-text underline-offset-2 hover:underline"
                 >
-                  检索已是 {refresh.days} 天前 · 更新检索…
+                  更新检索（已 {refresh.days} 天）…
                 </button>
               );
               // 导入 Word 批注（科研流程补全 §4）：写作 / 定稿类步骤开过工就有
@@ -1647,43 +1671,41 @@ export default function TaskCardsSection({
                   type="button"
                   onClick={() => void importComments()}
                   title="选一份导师 / 合作者批注过的 Word：Mesa 抽出每条批注（批注人、原文、意见）写成意见清单，这一步另开一轮逐条处理；要前面步骤做的，退回单会按清单预填"
-                  className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  className={LOOP_TOOL}
                 >
                   导入 Word 批注…
                 </button>
               );
-              if ((focusRunStatus ?? "pending") === "pending") return refreshButton || null;
+              if ((focusRunStatus ?? "pending") === "pending") return refreshButton ? loopRow([refreshButton]) : null;
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
                 if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton && !commentsButton) return null;
-                return (
-                  <span className="flex shrink-0 items-center gap-1.5">
-                    {refreshButton}
-                    {commentsButton}
-                    {reworkButton}
-                    {/* 待评审时也能跟进：确认框里选「接着做，一起评审」，两轮合在一起评审（2026-11-10 用户拍板） */}
-                    {(live?.staleUpstream || unreadNew > 0) && focusRunStatus === "review" && (
-                      <button
-                        type="button"
-                        disabled={followBusy}
-                        onClick={() => void followUpstream()}
-                        title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `上游「${live?.staleUpstream}」保存过新内容，这一版还没用上`}：只处理新增的部分，接在没保存的这一轮后面做，做完两轮一起评审（先告诉你有多少再开始）`}
-                        className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
-                      >
-                        {followBusy ? "正在算新增…" : "跟进上游的新增"}
-                      </button>
-                    )}
-                    {live?.staleUpstream && focusRunStatus === "active" && (
-                      <span
-                        className="shrink-0 text-xs text-warn-text"
-                        title="这一步的工作副本还没并入上游这次保存的内容。点「继续」会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
-                      >
-                        上游「{live.staleUpstream}」有新内容，继续时会先并进来
-                      </span>
-                    )}
-                  </span>
-                );
+                return loopRow([
+                  // 待评审时也能跟进：确认框里选「接着做，一起评审」，两轮合在一起评审（2026-11-10 用户拍板）
+                  (live?.staleUpstream || unreadNew > 0) && focusRunStatus === "review" && (
+                    <button
+                      type="button"
+                      disabled={followBusy}
+                      onClick={() => void followUpstream()}
+                      title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `「${live?.staleUpstream}」保存过新内容，这一版还没用上`}：只处理新增的部分，做完和没保存的这一轮一起评审`}
+                      className={LOOP_PENDING}
+                    >
+                      {followBusy ? "正在算…" : "跟进更新"}
+                    </button>
+                  ),
+                  live?.staleUpstream && focusRunStatus === "active" && (
+                    <span
+                      className="shrink-0 text-xs text-warn-text"
+                      title="点「继续」会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
+                    >
+                      「{live.staleUpstream}」有更新，继续时会并进来
+                    </span>
+                  ),
+                  refreshButton,
+                  commentsButton,
+                  reworkButton,
+                ]);
               }
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
@@ -1693,31 +1715,29 @@ export default function TaskCardsSection({
                   type="button"
                   disabled={followBusy}
                   onClick={() => void catchUpReads()}
-                  title={`原来没有全文、现在 papers/ 里有了的：${catchUp.map((h) => h.probe.bibKey || h.probe.id).join("、")}。点了让 AI 只补读这几篇，在原笔记上续写（先告诉你是哪几篇再开始）`}
-                  className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                  title={`原来没有全文、现在 papers/ 里有了的：${catchUp.map((h) => h.probe.bibKey || h.probe.id).join("、")}。AI 只补读这几篇，在原笔记上续写`}
+                  className={LOOP_PENDING}
                 >
-                  {catchUp.length} 篇已补到全文 · 补读
+                  补读 {catchUp.length} 篇新到的全文
                 </button>
               );
               if (!follow && !catchUpButton && targets.length === 0 && !commentsButton) return null;
-              return (
-                <span className="flex shrink-0 items-center gap-1.5">
-                  {commentsButton}
-                  {reworkButton}
-                  {catchUpButton}
-                  {follow && (
-                    <button
-                      type="button"
-                      disabled={followBusy}
-                      onClick={() => void followUpstream()}
-                      title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `上游「${ws?.staleUpstream}」保存过新内容，这一步还没并进来`}：只处理新增的部分，已有的不重做（先告诉你有多少再开始）`}
-                      className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
-                    >
-                      {followBusy ? "正在算新增…" : "跟进上游的新增"}
-                    </button>
-                  )}
-                </span>
-              );
+              return loopRow([
+                follow && (
+                  <button
+                    type="button"
+                    disabled={followBusy}
+                    onClick={() => void followUpstream()}
+                    title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `「${ws?.staleUpstream}」保存过新内容，这一步还没用上`}：只处理新增的部分，已有的不重做`}
+                    className={LOOP_PENDING}
+                  >
+                    {followBusy ? "正在算…" : "跟进更新"}
+                  </button>
+                ),
+                catchUpButton,
+                commentsButton,
+                reworkButton,
+              ]);
             })()}
             roundsContent={(() => {
               const ws = stepWorkspace(focusStepDto);

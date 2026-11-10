@@ -130,7 +130,7 @@ export default function MaterialsOverview({
   async function stopChain(id: string) {
     try {
       await invoke("rework_chain_stop", { root: projectPath, reworkId: id });
-      toast("这条链停了：补完的照旧在，后面的步骤到时自己点「跟进上游的新增」。", "info");
+      toast("这条链停了：补完的照旧在，后面的步骤到时自己点「跟进更新」。", "info");
       setTick((n) => n + 1);
     } catch (reason) {
       toast(`没停成：${String(reason)}`, "error");
@@ -181,7 +181,7 @@ export default function MaterialsOverview({
                     <button
                       type="button"
                       className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                      title="只停自动往下：补料单和已经开的轮不动，后面的步骤到时自己点「跟进上游的新增」"
+                      title="只停自动往下：补料单和已经开的轮不动，后面的步骤到时自己点「跟进更新」"
                       onClick={() => void stopChain(r.id)}
                     >
                       停掉这条链

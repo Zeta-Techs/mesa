@@ -186,7 +186,7 @@ fn stale_upstream_rules() {
         stale_upstream_for(&steps, &ws, 1, &std::collections::HashMap::new()).as_deref(),
         Some("查文献")
     );
-    // 人点过「跟进上游的新增」且晚于上游合并（跟进轮还没保存、或没有要跟进的）→ 不再报
+    // 人点过「跟进更新」且晚于上游合并（跟进轮还没保存、或没有要跟进的）→ 不再报
     let mut followed = std::collections::HashMap::new();
     followed.insert(ws[1].id.clone(), "2026-08-05T00:00:00Z".to_string());
     assert_eq!(stale_upstream_for(&steps, &ws, 1, &followed), None);

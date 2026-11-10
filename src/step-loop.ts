@@ -342,11 +342,11 @@ export function followupPrompt(opts: {
 export function followupScale(opts: { upstream: string; notesIds: string[] | null; files: string[] }): string {
   if (opts.notesIds) {
     return opts.notesIds.length > 0
-      ? `上游「${opts.upstream}」有新内容：新纳入 ${opts.notesIds.length} 篇，AI 只处理这 ${opts.notesIds.length} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读。`
+      ? `「${opts.upstream}」有更新：新纳入 ${opts.notesIds.length} 篇，AI 只处理这 ${opts.notesIds.length} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读。`
       : "";
   }
   return opts.files.length > 0
-    ? `上游「${opts.upstream}」有新内容：项目里 ${opts.files.length} 个文件在这一步上次保存之后改过，AI 只改受影响的部分。`
+    ? `「${opts.upstream}」有更新：项目里 ${opts.files.length} 个文件在这一步上次保存之后改过，AI 只改受影响的部分。`
     : "";
 }
 
@@ -449,7 +449,7 @@ export function unplacedCoverageDrafts(drafts: CoverageDraft[], has: { search: b
 
 /** 回路进行中「下一步去哪」（2026-11-05，用户反馈「跑完一个节点就不会弄了」）：流程进度条上方一行。
  *  ① 前面某步在补一轮（进行中 / 待评审 / 有冲突），后面已有做完的步骤 → 先把它做完、评审保存；
- *  ② 否则第一个「已完成但上游又保存过」的步骤 → 去那一步点「跟进上游的新增」。
+ *  ② 否则第一个「已完成但上游又保存过」的步骤 → 去那一步点「跟进更新」。
  *  都不是返回 null。只认状态，不认模板。 */
 export function loopHint(
   steps: { name: string }[],
@@ -472,7 +472,7 @@ export function loopHint(
   const i = statuses.findIndex((s) => s.key === "done" && !!s.staleUpstream);
   if (i >= 0) {
     const name = steps[i]?.name ?? "";
-    return { index: i, text: `上游「${statuses[i].staleUpstream}」保存了新内容：下一步到「${name}」点「跟进上游的新增」。` };
+    return { index: i, text: `「${statuses[i].staleUpstream}」有更新：下一步到「${name}」点「跟进更新」。` };
   }
   return null;
 }

@@ -46,7 +46,7 @@ test("退回弹层：退回文献步骤叫补料问篇数，退回大纲叫修�
       onCancel() {}, onSend: (f: Record<string, unknown>) => sent.push(f),
     })));
     assert.match(body(), /退回上一步修改/);
-    assert.match(body(), /再点「跟进上游的新增」接上/, "已保存的步骤发起：之后点跟进");
+    assert.match(body(), /再点「跟进更新」接上/, "已保存的步骤发起：之后点跟进");
     assert.match(body(), /要改的地方/);
     assert.doesNotMatch(body(), /补多少篇/);
     const area = dom.window.document.querySelector("textarea")!;

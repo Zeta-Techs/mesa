@@ -100,7 +100,7 @@ export function ReworkDialog({
           ? `下面勾上的步骤跟进完、保存进项目后，再开始「${fromStep}」，它开工时用的就是更新后的内容。`
           : fromInProgress
             ? `之后在「${fromStep}」点「继续」，会先把${lit ? "补" : "改"}来的并进来再接着做（这一步不用先保存）。`
-            : `之后「${fromStep}」再点「跟进上游的新增」接上。`)
+            : `之后「${fromStep}」再点「跟进更新」接上。`)
       }
       dismissOnBackdrop={!busy}
       onClose={() => {
@@ -221,7 +221,7 @@ export function ReworkDialog({
               ))}
             </div>
             <p className="text-micro text-l4">
-              上一步保存后，下一步自动开「跟进上游的新增」，只处理新增的部分；每一步照旧要你评审、保存。不勾的到时自己点跟进。
+              上一步保存后，下一步自动开「跟进更新」，只处理新增的部分；每一步照旧要你评审、保存。不勾的到时自己点跟进。
             </p>
           </fieldset>
         )}

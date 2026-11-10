@@ -635,7 +635,7 @@ export default function StepFlow({
   bare?: boolean;
   /** agent 节点内嵌内容（如「预览 TASK.md」——TASK.md 是 Agent 的合同，属于这个节点） */
   agentContent?: React.ReactNode;
-  /** 「AI 干活」下一行的回路动作：补充文献 / 退回上一步修改、跟进上游的新增（design-review-loop.md §4/§5） */
+  /** 「AI 干活」下一行的回路动作：跟进更新、补读、补充文献 / 退回上一步修改（design-review-loop.md §4/§5） */
   loopActions?: React.ReactNode;
   /** 「这一步做过 N 轮」折叠区，挂在 AI 干活节点下（§6） */
   roundsContent?: React.ReactNode;
@@ -3025,7 +3025,7 @@ export default function StepFlow({
         )}
         {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
         {node.kind === "agent" && loopActions && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-9">{loopActions}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-9">{loopActions}</div>
         )}
         {node.kind === "agent" && roundsContent}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (

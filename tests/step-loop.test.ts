@@ -179,7 +179,7 @@ test("loopHint：前面在补一轮先指它；否则指第一个待跟进；正
   // 检索保存了，精读、大纲待跟进 → 先指精读
   const b = loopHint(steps, [{ key: "done" }, { key: "done", staleUpstream: "检索" }, { key: "done", staleUpstream: "检索" }, { key: "pending" }]);
   assert.equal(b?.index, 1);
-  assert.match(b!.text, /到「精读」点「跟进上游的新增」/);
+  assert.match(b!.text, /到「精读」点「跟进更新」/);
   // 精读在跟进（进行中），大纲已完成 → 指精读
   assert.equal(loopHint(steps, [{ key: "done" }, { key: "active" }, { key: "done", staleUpstream: "检索" }, { key: "pending" }])?.index, 1);
 });

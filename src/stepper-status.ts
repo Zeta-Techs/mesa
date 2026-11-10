@@ -65,7 +65,7 @@ export function stepperStatusText(
         ? {
             text: "待跟进",
             tone: "text-warn-text",
-            title: `上游「${opts.staleUpstream}」保存过新内容，这一步还没并进来、可能没用上；到这一步点「跟进上游的新增」，或不管它直接往下走`,
+            title: `「${opts.staleUpstream}」有更新，这一步可能还没用上；到这一步点「跟进更新」，或不管它直接往下走`,
           }
         : { text: "已完成", tone: "text-l3" };
   }
