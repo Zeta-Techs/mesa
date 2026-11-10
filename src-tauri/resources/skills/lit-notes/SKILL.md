@@ -109,7 +109,7 @@ provides: [lit-notes]
 
 **写法**：叙述用中文（把读到的内容说清楚），不要整段粘贴英文摘要或 PDF 抽取原文。材料名、离子、电解液、方法缩写、图/表编号等惯用英文原词直接写，不强翻。有 PDF 的篇精读时读正文再写，页码/图表来自正文。按摘要记的篇根据摘要消化来写，开头标「仅摘要」——不是把摘要原文粘贴交差。
 
-**全文不可得时**，按摘要 + 可见元数据写笔记，开头标注「仅摘要」。无实际 PDF 不伪造来源锚点，改记 DOI/URL 及访问日期。无法核实的页码、方法细节、数值和因果主张写不可核验，不凑齐八段。核心结论依赖全文时暂停该结论或缩窄范围；获取全文后复核并记录影响的大纲/稿件。
+**全文不可得时**，按摘要 + 可见元数据写笔记，开头标注「仅摘要」，**不为缺全文写人工请求**（缺的篇已在待获取清单里，由人在官网下；本步报告写清缺哪几篇、补到后影响哪些结论）。无实际 PDF 不伪造来源锚点，改记 DOI/URL 及访问日期。无法核实的页码、方法细节、数值和因果主张写不可核验，不凑齐八段。核心结论依赖全文时暂停该结论或缩窄范围；获取全文后复核并记录影响的大纲/稿件。
 
 在 `notes/index.json` 写与 `papers/included.json` 全部 id 对应的记录（包括 pending；`decision=excluded` 的排除篇不建行）：`id`、`bibKey`、`fulltextStatus`、`reviewStatus`；已写笔记才填 `notePath`；`included.json` 标了 `kind` 的照抄 `kind`，综述再写 `cutoffYear`。TASK.md 让研究论文这一轮只速读时，它们记 `reviewStatus=pending`、`skimmed: true`，只进速读表、不写单篇笔记，不算没做完。`fulltextStatus` 为 fulltext/abstract-only/unavailable，`reviewStatus` 为 pending/blocked/reviewed；未读完不得写 reviewed。不能靠文件存在冒充读完。独立运行未有 included.json 时从清单建立稳定 id 并记录来源。
 

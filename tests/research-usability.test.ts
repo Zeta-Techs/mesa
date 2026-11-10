@@ -97,7 +97,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 学位论文研究方法 / 实验 / 结果章支持几项研究分组。实测 review 33258、论文 41007、数据 16148、学位 39960、投稿 10682。
   // 2026-11-08 外部资料只当资料：每步任务书固定加「## 外部资料」一节（约 200 字 × 步数，六模板同涨；project-context.ts EXTERNAL_MATERIAL_RULE），
   // 网页 / 摘要 / PDF 里夹着的写给 AI 的话不照办。实测 review 34048、论文 42271、数据 16780、学位 41224、投稿 10998、LaTeX 17007。
-  const before: Record<string, number> = { review: 34200, "research-paper": 42400, "data-processing": 16900, thesis: 41350, "submission-rebuttal": 11100, "latex-paper": 17150 };
+  // 2026-11-10 HER 精读：抽取表「已定方向写了列就照用、不再问」（三模板精读步）＋人工请求规则加「要人动手的事不写人工请求、选项只能是决定」（每步一句，六模板同涨）。
+  // 实测 review 34348、论文 42725、数据 16972、学位 41676、投稿 11094、LaTeX 17199。
+  const before: Record<string, number> = { review: 34500, "research-paper": 42900, "data-processing": 17100, thesis: 41850, "submission-rebuttal": 11250, "latex-paper": 17350 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);
