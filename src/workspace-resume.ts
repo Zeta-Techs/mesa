@@ -87,7 +87,7 @@ export function workspaceCarrySource(
 
 /** 步骤「继续」走哪条路（2026-10-22 用户拍板：同一家 Agent 默认接回原会话）。
  *  resume = 上次的工作区对话就是这家，接回它；carry = 上次是另一家，先问要不要带接力简报；
- *  fresh = 没有可接的，或人点了「新开一轮」（也不问带不带）。挑选口径同 pickWorkspaceResume。 */
+ *  fresh = 人点了「新开一轮」（也不问带不带）；first = 工作区里一段可接的对话都没有。挑选口径同 pickWorkspaceResume。 */
 export function continueRoute(
   sessions: SessionMetaDto[],
   workspaceName: string,
@@ -97,12 +97,15 @@ export function continueRoute(
 ):
   | { kind: "resume"; sessionId: string }
   | { kind: "carry"; source: NonNullable<ReturnType<typeof workspaceCarrySource>> }
-  | { kind: "fresh" } {
+  | { kind: "fresh" }
+  | { kind: "first" } {
   if (fresh) return { kind: "fresh" };
   const prior = pickWorkspaceResume(sessions, workspaceName, repoPath);
   if (prior && prior.agentId === agentId.trim()) return { kind: "resume", sessionId: prior.sessionId };
   const source = workspaceCarrySource(sessions, workspaceName, repoPath, agentId);
-  return source ? { kind: "carry", source } : { kind: "fresh" };
+  // first：工作区建好了，里面却一段对话都没有（开工那次 AI 没收到指令就被关掉，2026-11-10 HER 大纲 Kimi）——
+  // 接着做的其实是第一轮，要发完整开工指令，不是「继续」那句
+  return source ? { kind: "carry", source } : { kind: "first" };
 }
 
 /** 这个工作区里还在跑的那条对话（CLI 进程活着）。「去终端看看 / 回答」用它找持有的标签，

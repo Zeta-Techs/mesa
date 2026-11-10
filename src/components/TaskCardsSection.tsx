@@ -69,6 +69,7 @@ import {
 } from "../task-cards";
 import { buildTaskMdPreview, buildWorkspaceTerminalRequest } from "../pipeline-start";
 import { CONTINUE_RESUME_PROMPT, CONTINUE_STEP_PROMPT, continueWithBriefPrompt, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
+import { DEFAULT_KICKOFF_PROMPT } from "../pipeline-presets";
 import { continueRoute, pickWorkspaceResume } from "../workspace-resume";
 import { filterProjectSessions } from "../project-status";
 import { pickDiscussResume } from "../step-flow";
@@ -683,9 +684,10 @@ export default function TaskCardsSection({
   }
 
   /** 继续：上次的工作区对话是同一家 Agent 就接回它（2026-10-22 用户拍板，进度与上下文不丢），预填 CONTINUE_RESUME_PROMPT；
-   *  没有可接的、或 fresh（「新开一轮」）才在工作树里新开，预填 CONTINUE_STEP_PROMPT。上次是另一家先问要不要带接力简报。
+   *  没有可接的、或 fresh（「新开一轮」）才在工作树里新开，预填 CONTINUE_STEP_PROMPT；工作区里一段对话都没有时预填开工指令。
+   *  上次是另一家先问要不要带接力简报。
    *  配置现读数据库 step:步骤名，失败再走 props（步骤槽 > discuss > 项目默认）。
-   *  kimi 无启动注入参数：启动栏保留指令文本由用户手动发送（pty_spawn promptDropped 既有处理） */
+   *  kimi 无启动注入参数：终端等输入框就绪后自动写入（TerminalView launch 的 promptDropped 分支） */
   async function openStepContinuation(
     stepName: string | null | undefined,
     ws: WorkspaceDto,
@@ -758,7 +760,9 @@ export default function TaskCardsSection({
       return;
     }
     try {
-      await launchContinuation(launch, ws, title, withLatestNote(CONTINUE_STEP_PROMPT, incoming), card);
+      // 工作区里一段对话都没有：上次开工 AI 没收到指令，这次发完整开工指令（写作红线、MCP 盘点、不读 CLI 配置都在里面）
+      const prompt = route.kind === "first" ? DEFAULT_KICKOFF_PROMPT : CONTINUE_STEP_PROMPT;
+      await launchContinuation(launch, ws, title, withLatestNote(prompt, incoming), card);
       // 「这一步的几轮」要知道这一轮是人点的新开一轮：真开起来了才记（没连接、接力框取消都不记）
       if (fresh && stepName) void recordRound(ws, stepName, "fresh");
     } catch (reason) {

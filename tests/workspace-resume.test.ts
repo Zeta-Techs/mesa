@@ -183,9 +183,9 @@ test("步骤「继续」：上次是同一家 Agent 就接回原会话，另一�
   assert.equal(carry.kind, "carry");
   assert.equal(carry.kind === "carry" && carry.source.sessionId, "s-last");
   assert.deepEqual(continueRoute(sessions, "lit-search", "/repo", "claude-code", true), { kind: "fresh" });
-  assert.deepEqual(continueRoute([], "lit-search", "/repo", "claude-code"), { kind: "fresh" });
+  assert.deepEqual(continueRoute([], "lit-search", "/repo", "claude-code"), { kind: "first" }, "工作区一段对话都没有：发开工指令");
   // 别的工作区的会话不算
-  assert.deepEqual(continueRoute(sessions, "lit-notes", "/repo", "claude-code"), { kind: "fresh" });
+  assert.deepEqual(continueRoute(sessions, "lit-notes", "/repo", "claude-code"), { kind: "first" });
 });
 
 test("去终端看看 / 回答：这一步有对话还在跑时认出它（交给终端页找持有的标签），不 resume 更早的那条", () => {
