@@ -822,6 +822,24 @@ interface AppState {
   /** 侧栏项目树项目「全部 N 条」→ 对话页只列这个目录的（跨 Agent，消费并清空） */
   sessionsProjectPathReq: string | null;
   setSessionsProjectPathReq: (path: string | null) => void;
+  /** 发起研讨（项目助手按钮、评审页「请几家研讨」）：对话页打开发起弹层并预填（消费并清空；consult.ts） */
+  consultReq: {
+    projectRoot: string;
+    question?: string;
+    materials?: { path: string; range: string }[];
+    /** 成员读文件的地方（评审页：这一步的工作副本）与给人看的说明 */
+    readRoot?: string;
+    readLabel?: string;
+    nonce: number;
+  } | null;
+  openConsult: (req: {
+    projectRoot: string;
+    question?: string;
+    materials?: { path: string; range: string }[];
+    readRoot?: string;
+    readLabel?: string;
+  }) => void;
+  clearConsultReq: () => void;
   /** 侧栏「对话管理」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
   sessionsSearchFocusReq: number;
   requestSessionsSearchFocus: () => void;
@@ -1238,6 +1256,9 @@ export const useAppStore = create<AppState>((set, get) => {
   setSessionsScratchReq: (on) => set({ sessionsScratchReq: on }),
   sessionsProjectPathReq: null,
   setSessionsProjectPathReq: (path) => set({ sessionsProjectPathReq: path }),
+  consultReq: null,
+  openConsult: (req) => set({ consultReq: { ...req, nonce: Date.now() }, page: "sessions" }),
+  clearConsultReq: () => set({ consultReq: null }),
   sessionsSearchFocusReq: 0,
   requestSessionsSearchFocus: () =>
     set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),

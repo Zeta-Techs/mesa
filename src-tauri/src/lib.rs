@@ -72,6 +72,7 @@ mod svg_render;
 mod project_mail;
 mod split_plan;
 mod project_assistant;
+mod consult;
 mod fan_out;
 mod feishu;
 
@@ -962,6 +963,14 @@ pub fn run() {
             project_assistant::assistant_log_read,
             project_assistant::assistant_log_clear,
             project_assistant::project_assistant_ask,
+            consult::consult_create,
+            consult::consult_read,
+            consult::consult_list,
+            consult::consult_send,
+            consult::consult_stop,
+            consult::consult_retry,
+            consult::consult_rename,
+            consult::consult_delete,
             project_assistant::assistant_review_notes,
             project_assistant::assistant_guide_search,
             project_assistant::assistant_log_append,

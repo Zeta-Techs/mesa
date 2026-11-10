@@ -347,6 +347,9 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              #   （点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮，ROW_GRID 定宽列对齐，拦下原因跨三列），探测主机进 HoverTip；出网代理保存后自动重测
   components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、测试连接、绑定 6 位码、解绑
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
+  components/ConsultView.tsx  # 研讨回放（2026-11-11）：useConsult（consult_read + consult-event 事件：started/done/idle 重读、step/text 只更新进行中）；第一轮并排卡片（有人还在答时只写「已答完 · 等其他几家」）、各家结论对照条（原话、不判谁对）、交叉与追问流、点名胶囊输入框；记进项目知识复用 RememberCard，起草派活单经 openAssistant 交给项目助手；MemberAvatar = 成员所选模型的厂商图标
+  components/ConsultStartDialog.tsx # 发起研讨弹层：问题 / 材料（search_files，项目内相对路径，≤8）/ 请谁（默认 pickDefaultMembers：discuss 槽连接打头、模型族不同、同族优先能看项目；按项目记住上次）/ 交叉轮数；评审页入口带 readRoot（工作副本）时成员读那里
+  components/ConsultListSection.tsx # 对话页列表顶上「研讨」一组：不混进会话行（键、↑↓、批量勾选只认会话），成员模型图标叠
   components/SavePackModal.tsx # 弹层版另存为我的任务（挂 body，表单里不嵌表单）：派活单验收后「存成我的任务…」、内置科研任务「另存为我的版本…」共用，里面是 SavePackForm
   components/ReworkOrderCard.tsx # 项目助手起草的补料单卡片（2026-11-06 流程贯通 §4）：退回到 / 因为 / 要补 / 为什么 / 线索 / 规模，「看一看，退回去补…」打开步骤卡同一个 ReworkDialog（initial 预填），
                              #   发走 step-round.ts sendReworkRound，发过记 dispatched（mode=resume）并每 10 秒看进度；退回大纲 / 初稿叫修改单
@@ -1125,6 +1128,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   已完成后上游又保存过（WorkspaceDto.staleUpstream）写橙字「待跟进」，只提醒不阻断；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单（镜像 agent_specs.rs TIER1_AGENTS，测试逐字比对）、modelFamily / producerFamilies（按模型族判「另一家」）、reviewerOptions（连接 × 模型全部可选项，标同模型族与维护级）、pickCrossReviewer（默认挑哪一个）、复核标签键与首条指令（tests/cross-review.test.ts）
+  consult.ts                 # 研讨纯逻辑（2026-11-11）：DTO 类型、INSPECT_AGENTS（镜像 consult.rs）、memberOptions（能看项目按 CLI 外壳定）、pickDefaultMembers（先保证模型族不同）、memberNames（按模型族起名，同族加短模型名）、contrastRows / round1Revealed / toProjectRel（tests/consult.test.ts）
   research-profile.ts        # 研究档案纯逻辑（有效条目按分类分组、生效状态、分类例句、文献总表筛选，tests/research-profile.test.ts）
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法；不汇总打分，tests/research-checks.test.ts）
@@ -1966,6 +1970,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   端到端测试 goal_headless_end_to_end_in_isolated_home（子进程 + 临时 HOME + /bin/sh 假 Agent，覆盖成功 / 接着做 / 失败 / 停止）；
                              #   ai.rs 拆出 build_headless_command（定时任务与目标共用）、run_goal_headless_to_exit；process.rs capture_command_streaming_both（stdout + stderr 都流）
   project_assistant.rs       # 项目助手（2026-11-04）：Mesa 出错记录 mesa_error_record / mesa_errors_read（同处错 10 分钟内只加次数、30 天 / 500 条）、问答记录 assistant_log_read / _clear（200 轮），
+  consult.rs                 # 研讨（2026-11-11）：记录 .ccode/consults/<id>.jsonl（meta / msg / title 行，同 id 消息后写覆盖、人改的标题不被自动覆盖）；回答尾段解析（结论 / 依据 / 没把握的）、依据路径核对（ok / missing / unseen）、@ 解析、[PASS]、提示词（第一轮看不到别人）；调度：每位每次一次性只读无头调用（Claude Code / Codex 走 ai_inspect_readonly，其余 ai_prompt 临时目录 + 材料摘录），第一轮并发 → 交叉 N 轮 → 人追问后按 @ 接力（人不说话时 relay_limit 次封顶）；停单家经 ai::with_run_hook 拿 Run id 再 process::cancel_capture；read_root = 评审页发起时成员读的工作副本
                              # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
                              # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；带 images（粘贴目录里的图、≤4）也走这条：
                              #   Codex `--image=a,b`、Claude 图所在目录 --add-dir + 提示词点名让它用 Read 打开（ai::image_prompt_note），别家明说换连接；

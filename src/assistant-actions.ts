@@ -105,6 +105,11 @@ export async function runAssistantAction(
         ...slotPrefs(st.profiles, project, DISCUSS_BINDING_SLOT),
       });
       return;
+    case "consult":
+      // 研讨（2026-11-11）：去对话页打开发起弹层，问题预填；请谁、材料由人在弹层里定
+      leave();
+      st.openConsult({ projectRoot: path, question: action.text });
+      return;
     case "report": {
       const report: MismatchReport = {
         title: action.text,

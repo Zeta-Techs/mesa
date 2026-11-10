@@ -600,6 +600,28 @@ impl Drop for HeadlessSessionReg {
     }
 }
 
+thread_local! {
+    /// 本线程下一次无头调用登记好 Run 后回调一次 Run id（研讨要能停单家：`process::cancel_capture` 认 Run id）。
+    /// 线程局部，不改各调用点签名；只有 `with_run_hook` 里设，出来就清
+    static RUN_STARTED_HOOK: std::cell::RefCell<Option<Box<dyn Fn(&str)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 在 f 里发生的无头调用（`ai_prompt_impl_full` / `ai_inspect_readonly`）登记 Run 后调 hook(run_id)
+pub(crate) fn with_run_hook<T>(hook: Box<dyn Fn(&str)>, f: impl FnOnce() -> T) -> T {
+    RUN_STARTED_HOOK.with(|h| *h.borrow_mut() = Some(hook));
+    let out = f();
+    RUN_STARTED_HOOK.with(|h| *h.borrow_mut() = None);
+    out
+}
+
+fn notify_run_started(run_id: &str) {
+    RUN_STARTED_HOOK.with(|h| {
+        if let Some(cb) = h.borrow().as_ref() {
+            cb(run_id);
+        }
+    });
+}
+
 /// 正在跑的无头运行锁定的会话（agent, 会话 id）
 pub(crate) fn headless_session_of(run_id: &str) -> Option<(String, String)> {
     headless_sessions().lock().unwrap_or_else(|e| e.into_inner()).get(run_id).cloned()
@@ -870,6 +892,7 @@ pub(crate) fn ai_prompt_impl_full(
             return Err(error);
         }
     }
+    notify_run_started(&run.id);
     let mut on_line = on_line;
     let mut pending: Vec<u8> = Vec::new();
     let mut feed = |bytes: &[u8]| {
@@ -1108,6 +1131,7 @@ pub(crate) fn ai_inspect_readonly(
         let _ = crate::runs::close_run_with_result(&run.id, None, "failed", None, Some("无头 Run 状态登记失败"));
         return Err(error);
     }
+    notify_run_started(&run.id);
     let mut on_line = on_line;
     let mut pending: Vec<u8> = Vec::new();
     let mut feed = |bytes: &[u8]| {

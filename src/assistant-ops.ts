@@ -67,6 +67,7 @@ export function actionOp(kind: AssistantActionKind): AssistantOp {
     case "split":
       return "split";
     case "discuss":
+    case "consult":
       return "discuss";
     case "report":
       return "report";

@@ -51,6 +51,7 @@ export function isAccumulationLedgerPath(path: string, status: string): boolean 
     p === ".ccode/step-rounds.jsonl" ||
     (p.startsWith("notes/") && p.endsWith(".md")) ||
     p.startsWith(".ccode/rework/") ||
+    p.startsWith(".ccode/consults/") ||
     p.startsWith(".ccode/checks/") ||
     p.startsWith(".ccode/record/") ||
     p.startsWith("notes/assets/") ||

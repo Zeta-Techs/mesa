@@ -15,6 +15,7 @@ export type AssistantActionKind =
   | "mail"
   | "split"
   | "discuss"
+  | "consult"
   | "report";
 
 export interface AssistantAction {
@@ -37,11 +38,12 @@ const KIND_WORDS: Record<string, AssistantActionKind> = {
   留话: "mail",
   拆分: "split",
   商量: "discuss",
+  研讨: "consult",
   报告: "report",
 };
 
 const NEEDS_STEP = new Set<AssistantActionKind>(["step", "review", "mail"]);
-const NEEDS_TEXT = new Set<AssistantActionKind>(["mail", "split", "discuss", "report"]);
+const NEEDS_TEXT = new Set<AssistantActionKind>(["mail", "split", "discuss", "consult", "report"]);
 export const MAX_ACTIONS = 3;
 
 export function actionLabel(kind: AssistantActionKind, step: number | null): string {
@@ -64,6 +66,8 @@ export function actionLabel(kind: AssistantActionKind, step: number | null): str
       return "拆成几个目标同时做…";
     case "discuss":
       return "去跟 AI 商量";
+    case "consult":
+      return "找几家研讨";
     case "report":
       return "报告给开发者";
   }
@@ -202,6 +206,7 @@ const ACTION_MARKS = `你不能动手：不能改文件、不能开工、不能�
    [[留话:N|要留的话]]  给正在做第 N 步的 AI 留一句话（只填草稿，发不发用户定）
    [[拆分|一句话说要做什么]]  把一件大事拆成几个目标同时做（只填需求，方案要用户批准）
    [[商量|要商量的问题]]  课题内容上的问题（方法怎么写、数据怎么处理）交给能看文件的 AI 对话去聊
+   [[研讨|要研讨的问题]]  需要几家各自判断的内容问题（方法站不站得住、结论有没有说过头、审稿意见接不接受）请几家不同模型的 AI 一起看
    [[报告|一句话标题]]  判断是 Mesa 的问题时，报告给开发者（预填反馈表，用户看过再发）
    一次最多三个，只写用得上的；用不上就不写。`;
 
@@ -233,7 +238,7 @@ export const PROJECT_RULES = `${IDENTITY}
 3. 只解释、只建议，不替用户拍板：人工请求、开工前的决定、评审采纳一律只讲清选项和后果，不替他选。
 4. ${ACTION_MARKS}
 5. ${STYLE}
-6. 用户问的是课题内容本身（这段方法怎么写、这批数据怎么清），那不归你做，回答要点并给 [[商量|…]]。
+6. 用户问的是课题内容本身（这段方法怎么写、这批数据怎么清），那不归你做，回答要点并给 [[商量|…]]；要几家各自判断的给 [[研讨|…]]。
 7. 附了「说明书摘录」时，讲到怎么操作照摘录说，摘录没写的操作不要编。
 8. ${REMEMBER_RULES}`;
 

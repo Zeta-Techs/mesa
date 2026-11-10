@@ -24,9 +24,15 @@ import {
   ChevronDown,
   Trash2,
   Upload,
+  Users,
   WandSparkles,
   X,
 } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import ConsultView from "../components/ConsultView";
+import ConsultStartDialog from "../components/ConsultStartDialog";
+import ConsultListSection from "../components/ConsultListSection";
+import type { ConsultEvent, ConsultListItem, ConsultMaterial } from "../consult";
 import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { toast } from "../toast";
 import { IS_WINDOWS } from "../hotkeys";
@@ -307,6 +313,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   const [confirmBatch, setConfirmBatch] = useState(false);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [selected, setSelected] = useState<SessionMetaDto | null>(null);
+  // 研讨（2026-11-11）：不是 CLI 会话，单独成组、单独选中；选中研讨时会话回放让位
+  const [consults, setConsults] = useState<ConsultListItem[]>([]);
+  const [selectedConsult, setSelectedConsult] = useState<{ projectRoot: string; id: string } | null>(null);
+  const [consultDialog, setConsultDialog] = useState<{
+    projectRoot?: string | null;
+    question?: string;
+    materials?: ConsultMaterial[];
+    readRoot?: string;
+    readLabel?: string;
+  } | null>(null);
+  const consultReq = useAppStore((s) => s.consultReq);
+  const clearConsultReq = useAppStore((s) => s.clearConsultReq);
   const [registeredProjectPaths, setRegisteredProjectPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -405,6 +423,44 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       cancelled = true;
     };
   }, [visible]);
+
+  // 研讨列表：已添加项目里的 .ccode/consults；开始 / 答完 / 一段结束时重读
+  const reloadConsults = useCallback(() => {
+    const roots = [...registeredProjectPaths];
+    if (!roots.length) {
+      setConsults([]);
+      return;
+    }
+    void invoke<ConsultListItem[]>("consult_list", { projectRoots: roots })
+      .then(setConsults)
+      .catch(() => {});
+  }, [registeredProjectPaths]);
+  useEffect(() => {
+    if (!visible) return;
+    reloadConsults();
+    let t: number | null = null;
+    const un = listen<ConsultEvent>("consult-event", (e) => {
+      if (e.payload.kind === "step" || e.payload.kind === "text") return;
+      if (t) window.clearTimeout(t);
+      t = window.setTimeout(reloadConsults, 300);
+    });
+    return () => {
+      if (t) window.clearTimeout(t);
+      void un.then((f) => f());
+    };
+  }, [visible, reloadConsults]);
+  // 别处要发起研讨（项目助手按钮、评审页）：打开发起弹层并预填（消费并清空）
+  useEffect(() => {
+    if (!consultReq) return;
+    setConsultDialog({
+      projectRoot: consultReq.projectRoot,
+      question: consultReq.question,
+      materials: consultReq.materials,
+      readRoot: consultReq.readRoot,
+      readLabel: consultReq.readLabel,
+    });
+    clearConsultReq();
+  }, [consultReq, clearConsultReq]);
 
   const q = query.trim().toLowerCase();
   // 工作区页「会话」跳转：接管搜索词（消费并清空）
@@ -833,6 +889,16 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     filter,
   ]);
 
+  // 研讨按范围过滤：全部 → 全部；限定项目 → 只这个项目；Agent / 内部 / 随手聊等范围不列（研讨不属于某一家）
+  const visibleConsults = useMemo(() => {
+    const scoped = projectScopePath(filter);
+    if (filter.kind !== "all" && scoped == null) return [];
+    if (scopes.length > 0 || quick.size > 0) return [];
+    return consults.filter(
+      (c) => (scoped == null || samePath(c.projectRoot, scoped, IS_WINDOWS)) && (!q || c.title.toLowerCase().includes(q)),
+    );
+  }, [consults, filter, scopes, quick, q]);
+
   // 项目筛选下按话题分组（对话归入卡片；无卡片的收「未归置」恒在最前，与原「无工作区会话
   // 排最前」同口径）：组内保持时间降序，组按各自最近活跃排序；其余筛选保持纯时间序（跨项目分组无意义）。
   // header 只挂在每组首条上，渲染时据此插组名小标题。
@@ -1036,6 +1102,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
     // 选中具体会话 = 浏览结束：收起分类下拉（筛选过程中的点选不收起，见 v3.43）
     setTreeOpen(false);
+    setSelectedConsult(null);
     setSelected(s);
     setReplayTab("chat");
     setSearchFocus(focus);
@@ -1733,6 +1800,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 {/* 「显示已归档」已并入快筛 chip（toggleQuick 单控点，v3.92），页头不再重复 */}
                 <button
                   type="button"
+                  onClick={() =>
+                    setConsultDialog({ projectRoot: projectScopePath(filter) ?? selected?.projectPath ?? selectedConsult?.projectRoot ?? null })
+                  }
+                  className={paneHeadButtonClass}
+                  title="同一个问题请几家 AI 一起看：先各答各的，再互相补充或反驳；只看不改"
+                >
+                  <Users size={14} strokeWidth={1.8} aria-hidden="true" />
+                  研讨
+                </button>
+                <button
+                  type="button"
                   onClick={() => setImportOpen(true)}
                   className={paneHeadButtonClass}
                   title="从另一台机器导入会话包"
@@ -2188,6 +2266,15 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
             progressive.onScroll(e.currentTarget);
           }}
         >
+            <ConsultListSection
+              items={visibleConsults}
+              activeId={selectedConsult?.id ?? null}
+              onSelect={(c) => {
+                setSelected(null);
+                setSelectedConsult({ projectRoot: c.projectRoot, id: c.id });
+              }}
+              projectLabel={projectScopePath(filter) ? null : (path) => sessionProjectLabel(path, projectNames, IS_WINDOWS)}
+            />
             {shownSessionRows.map(({ header, s }) => {
               const isEditing =
                 editing?.agent === s.agent && editing.sessionId === s.sessionId;
@@ -2581,7 +2668,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
 
       {/* 回放区（canvas 底）：与列表栏并列常驻，未选中显示空态 */}
       <div className="flex min-w-0 flex-1 flex-col bg-canvas">
-        {selected ? (
+        {selectedConsult ? (
+          <ConsultView
+            key={`${selectedConsult.projectRoot}#${selectedConsult.id}`}
+            projectRoot={selectedConsult.projectRoot}
+            id={selectedConsult.id}
+            projectName={projectNames.get(selectedConsult.projectRoot) ?? null}
+            onDeleted={() => {
+              setSelectedConsult(null);
+              reloadConsults();
+            }}
+          />
+        ) : selected ? (
           <div className="flex min-h-0 flex-1 flex-col">
             {/* 回放头部两行：上行「这是哪条对话 + 能做什么」，下行「谁、在哪个项目、多久前」+ 页签。
                 原先一行 flex-wrap，页签被挤到第二行最左、agent 名在头部和底栏各写一遍 */}
@@ -3249,6 +3347,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           ]}
         />
       )}
+      <ConsultStartDialog
+        open={consultDialog !== null}
+        onClose={() => setConsultDialog(null)}
+        projects={[...registeredProjectPaths].map((path) => ({ path, name: projectNames.get(path) ?? basename(path) }))}
+        initial={consultDialog}
+        onCreated={(projectRoot, id) => {
+          setConsultDialog(null);
+          setSelected(null);
+          setSelectedConsult({ projectRoot, id });
+          reloadConsults();
+        }}
+      />
       {importOpen && (
         <SessionImportModal
           registeredPaths={[...registeredProjectPaths]}

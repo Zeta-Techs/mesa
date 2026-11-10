@@ -2899,6 +2899,30 @@ function LiveWorkspaceReviewView({
                     </span>
                   </span>
                 )}
+                {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && !mergeDone && (
+                  // 请几家研讨（2026-11-11）：与「请 X 复核」分工——复核是一家逐条核对引用、结论进核验清单；
+                  // 研讨是几家不同模型只读各给判断再互相补充，结论由你记。成员读这一步的工作副本（产物还没带回项目根）
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      useAppStore.getState().openConsult({
+                        projectRoot: researchContext.root,
+                        question: `第 ${researchContext.stepNo} 步「${researchContext.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
+                        materials: researchContext.step.expectedArtifacts
+                          .filter((a) => a && !/[*?]/.test(a) && !a.endsWith("/"))
+                          .slice(0, 8)
+                          .map((path) => ({ path, range: "" })),
+                        readRoot: researchContext.workspace.worktreePath,
+                        readLabel: `第 ${researchContext.stepNo} 步 · ${researchContext.step.name}的工作副本`,
+                      });
+                    }}
+                    title="请几家不同模型只读这一步交的东西，各自给判断，再看别家的补充或反驳；不改稿件、不判通过，记下什么由你定"
+                    className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+                  >
+                    请几家研讨
+                  </button>
+                )}
                 {citations && citations.bibFound && citations.totalRefs > 0 && (
                   <button
                     type="button"

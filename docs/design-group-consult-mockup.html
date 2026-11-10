@@ -1,4 +1,4 @@
-<!doctype html><meta charset="utf-8"><title>会诊：同一个问题请几家 AI 一起看（2026-11-11 界面稿）</title><style>
+<!doctype html><meta charset="utf-8"><title>研讨：同一个问题请几家 AI 一起看（2026-11-11 界面稿）</title><style>
 /* 极简灰蓝（首装默认主题）令牌，取自 src/App.css [data-theme="neutral"] */
 :root{--rail:#0d0d0d;--rail2:#161616;--sel:#262626;--strip:#1c1c1c;--canvas:#111111;--inset:#212121;--raised:#272727;
 --hair:#2c2c2c;--field:#383838;--l1:#e5e5e5;--l2:#c2c2c2;--l3:#989898;--l4:#6e6e6e;
@@ -47,7 +47,7 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
 .stack i:first-child{margin-left:0}
 .row.on .stack i{border-color:var(--sel)}
 
-/* 会诊视图 */
+/* 研讨视图 */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
 .top{height:46px;flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 14px;border-bottom:1px solid var(--hair)}
 .top .ti{color:var(--l1);font-size:13.5px;font-weight:500;margin-right:6px;white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
@@ -184,11 +184,11 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
 .send.stop{display:none}
 </style>
 
-<h1>会诊：同一个问题请几家 AI 一起看（2026-11-11 界面稿 · 待拍板）</h1>
-<p class="lead">设计稿 <code>docs/design-group-consult.md</code>。四个画面按顺序：开会诊 → 第一轮各答各的（进行中）→ 亮答案、交叉、追问 → 收尾记进项目知识。
+<h1>研讨：同一个问题请几家 AI 一起看（2026-11-11 界面稿 · 待拍板）</h1>
+<p class="lead">设计稿 <code>docs/design-group-consult.md</code>。四个画面按顺序：发起研讨 → 第一轮各答各的（进行中）→ 亮答案、交叉、追问 → 收尾记进项目知识。
 主题按首装默认「极简灰蓝」深色，颜色全取 <code>src/App.css</code> 令牌；成员标记示意 <code>vendor-icon</code> 的厂商图标——按模型族，不按 CLI。示例课题、模型名与数字都是虚构的。</p>
 <div class="seg" id="seg">
- <button data-s="open">① 开会诊</button>
+ <button data-s="open">① 发起研讨</button>
  <button data-s="r1">② 第一轮进行中</button>
  <button data-s="main" class="on">③ 亮答案 · 交叉 · 追问</button>
  <button data-s="close">④ 收尾</button>
@@ -211,7 +211,7 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
    <span class="split"><span>＋ 新对话</span><span>▾</span>
     <div class="menu">
      <div class="mi">新对话<small>和一家 Agent 聊</small></div>
-     <div class="mi hl">会诊…<small>同一个问题请几家一起看</small></div>
+     <div class="mi hl">研讨…<small>同一个问题请几家一起看</small></div>
     </div>
    </span>
   </div>
@@ -219,7 +219,7 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
   <div class="search">搜索对话</div>
   <div class="row on">
    <div class="a"><span class="tt">1111|研究|亚组按测序平台还是按地区</span><span class="age">刚刚</span></div>
-   <div class="m"><span class="stack"><i style="background:var(--claude)">C</i><i style="background:var(--gpt)">G</i><i style="background:var(--kimi)">K</i></span>会诊 · 3 家 · 菌群与抑郁 meta</div>
+   <div class="m"><span class="stack"><i style="background:var(--claude)">C</i><i style="background:var(--gpt)">G</i><i style="background:var(--kimi)">K</i></span>研讨 · 3 家 · 菌群与抑郁 meta</div>
   </div>
   <div class="row">
    <div class="a"><span class="tt">1111|研究|森林图配色与亚组排序</span><span class="age">40 分钟</span></div>
@@ -231,7 +231,7 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
   </div>
   <div class="row">
    <div class="a"><span class="tt">1110|研究|审稿意见 2.3 接受还是反驳</span><span class="age">昨天</span></div>
-   <div class="m"><span class="stack"><i style="background:var(--claude)">C</i><i style="background:var(--gpt)">G</i></span>会诊 · 2 家 · 菌群与抑郁 meta</div>
+   <div class="m"><span class="stack"><i style="background:var(--claude)">C</i><i style="background:var(--gpt)">G</i></span>研讨 · 2 家 · 菌群与抑郁 meta</div>
   </div>
   <div class="row">
    <div class="a"><span class="tt">1109|研究|检索式补 MeSH 词</span><span class="age">2 天</span></div>
@@ -368,13 +368,13 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
   <h4>记进项目知识</h4>
   <div class="s">写进项目的「已定 / 不做」，以后这个项目里的 AI 都会照着办。可以改写，只记你认可的那句。</div>
   <div class="ta">主分析的亚组按预先登记的地区；按测序平台只作敏感性分析。留一法去掉 Chen 2024 后 I² 写 46%（analysis/meta-results.md 第 60 行）。</div>
-  <div class="from">取自：GPT 第 3 条回答，你改写过 · 会诊「亚组按测序平台还是按地区」</div>
+  <div class="from">取自：GPT 第 3 条回答，你改写过 · 研讨「亚组按测序平台还是按地区」</div>
   <div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn gh">取消</span><span class="btn pri">记进项目知识</span></div>
  </div>
 
  <div class="veil">
   <div class="dlg">
-   <h2>会诊</h2>
+   <h2>研讨</h2>
    <div class="s">同一个问题请几家一起看：先各答各的，再看别家的答案补充或反驳。它们只看不改，不跑命令。</div>
    <div class="f"><div class="fl">问题</div>
     <div class="ta">随机效应模型 I² = 78%。现在的亚组是按测序平台（16S / 宏基因组）分的，这样分站得住吗？还是该改回按地区？</div></div>
@@ -393,22 +393,22 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
     <div class="dnote">Claude·Sonnet 和 Claude 是同一家模型，没放进默认 · <span class="addm">＋ 再请一位</span></div></div>
    <div class="f" style="display:flex;align-items:center;gap:12px"><div class="fl" style="margin:0">看完别家后再答</div>
     <div class="segc"><span>不用</span><span class="on">1 轮</span><span>2 轮</span></div></div>
-   <div class="foot"><span class="est">大约 6 次调用，按上次的花费估 ¥0.9 左右</span><span class="btn gh">取消</span><span class="btn pri">开始会诊</span></div>
+   <div class="foot"><span class="est">大约 6 次调用，按上次的花费估 ¥0.9 左右</span><span class="btn gh">取消</span><span class="btn pri">开始研讨</span></div>
   </div>
  </div>
 </div>
 
 <aside class="notes">
  <div class="n" data-n="open">
-  <h3>① 开会诊</h3>
-  <p>入口在对话页「新对话」旁的 ▾ 里（左上角展开的那个菜单）。另两个入口不在这屏：对话回放 ⋯「请几家会诊这个问题」、项目助手回答里的「找几家会诊」按钮，都会预填问题和材料。</p>
+  <h3>① 发起研讨</h3>
+  <p>入口在对话页「新对话」旁的 ▾ 里（左上角展开的那个菜单）。另两个入口不在这屏：对话回放 ⋯「请几家研讨这个问题」、项目助手回答里的「找几家研讨」按钮，都会预填问题和材料。</p>
   <p><b>请谁</b>按模型族挑，不按 CLI：第一位是「问 AI / 聊想法」那条连接；之后每位先保证模型族和已选的不同，同族里优先外壳能看项目的（Claude Code、Codex）。记住上次的选择。</p>
   <p>这里 Kimi 这位是 <b>Claude Code 外壳接 Kimi 模型</b>的连接，所以「能看项目」——档位看 CLI，不看模型。Gemini 走 Gemini CLI，只能「只看材料」，默认没勾。</p>
   <p>Claude·Sonnet 和 Claude 同族，不进默认；手动加上时卡片标「同一家模型，意见可能雷同」，不拦。</p>
   <p><b>看完别家后再答</b>就是交叉轮，默认 1 轮。</p>
   <p>预估花费只显示、不拦。</p>
   <h3>不放在这里的</h3>
-  <p>步骤卡不加按钮（主路径唯一）；没有「放手干」档位可选，会诊永远只读。</p>
+  <p>步骤卡不加按钮（主路径唯一）；没有「放手干」档位可选，研讨永远只读。</p>
  </div>
  <div class="n" data-n="r1">
   <h3>② 第一轮进行中</h3>
@@ -420,18 +420,18 @@ aside.notes .n{display:none}aside.notes code{font:11.5px ui-monospace,Menlo,mono
  <div class="n" data-n="main">
   <h3>③ 亮答案 · 交叉 · 追问</h3>
   <p><b>每条回答固定尾段</b>：结论 / 依据 / 没把握。Mesa 把各家「结论」原话排成下面的对照条，<b>只排版、不判谁对、不投票、不出共识</b>。</p>
-  <p><b>依据核对</b>：GPT 写的 <code>analysis/loo.csv</code> 项目里没有，标黄「找不到这处」；交叉轮里 Claude 也指出了这一处——这是会诊该有的样子。</p>
+  <p><b>依据核对</b>：GPT 写的 <code>analysis/loo.csv</code> 项目里没有，标黄「找不到这处」；交叉轮里 Claude 也指出了这一处——这是研讨该有的样子。</p>
   <p><b>交叉轮</b>自动跑 1 轮，每家看别家第一轮的回答，只写补充、反驳或改判。Kimi 回了 [PASS]，聊天流里不显示，对照条写「交叉：没补充」。</p>
   <p><b>追问</b>：<code>@GPT</code> 只叫那一家；不 @ 就是问所有人。画面下方展开的是输入 @ 时的成员菜单。</p>
   <p>输入框上方一行小字说明接力上限：你不说话时它们最多再互相叫 2 次，到了就停，写一句「先停一下，等你发话」。</p>
-  <p>左栏会诊行用成员的厂商图标叠代替 Agent 胶囊，meta 写「会诊 · 3 家」；标题照 <code>MMDD|类型|主题</code>。</p>
+  <p>左栏研讨行用成员的厂商图标叠代替 Agent 胶囊，meta 写「研讨 · 3 家」；标题照 <code>MMDD|类型|主题</code>。</p>
  </div>
  <div class="n" data-n="close">
   <h3>④ 收尾</h3>
   <p>顶栏「收尾 ▾」或每条回答悬停时的动作：</p>
   <p><b>记进项目知识</b>：项目助手同一张卡，预填这条回答的结论，你改写后点了才写进「已定 / 不做」。一次一条，不批量采纳。</p>
-  <p><b>起草派活单</b>：把问题、对照条和你选中的回答交给项目助手作为本次重点，它起草派活单，派不派你在项目助手里点。会诊自己不出派活单，派活单只有一个出处。</p>
-  <p>会诊不用「关闭」：没有调用在跑时它就是一份记录，随时能接着追问。记录在项目 <code>.ccode/consults/</code>，不进 git。</p>
+  <p><b>起草派活单</b>：把问题、对照条和你选中的回答交给项目助手作为本次重点，它起草派活单，派不派你在项目助手里点。研讨自己不出派活单，派活单只有一个出处。</p>
+  <p>研讨不用「关闭」：没有调用在跑时它就是一份记录，随时能接着追问。记录在项目 <code>.ccode/consults/</code>，不进 git。</p>
  </div>
 </aside>
 </div>
