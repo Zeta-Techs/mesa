@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  catchUpProbes,
+  catchUpPrompt,
   followupFiles,
   followupPrompt,
   followupScale,
@@ -274,4 +276,34 @@ test("意见回流：处理意见的开场话；按「去向：退回」归成�
   assert.equal(drafts["文献检索与筛选"].topics, "C001 补 2023 年后原位 Raman / XAS");
   assert.equal(drafts["文献精读与笔记"].topics, "C003 这几篇要精读", "处理空着用意见");
   assert.match(drafts["文献检索与筛选"].reason, /C001/);
+});
+
+test("catchUpProbes：只挑索引里 abstract-only 的篇，带上纳入清单的标题与 DOI；读不懂给 null", () => {
+  const included = JSON.stringify([
+    { id: "a", title: "Paper A", doi: "10.1/a", decision: "included" },
+    { id: "b", title: "Paper B", doi: "https://doi.org/10.1/B", decision: "included" },
+    { id: "c", title: "Paper C", url: "https://x.org/c", decision: "included" },
+  ]);
+  const index = JSON.stringify([
+    { id: "a", bibKey: "A2020", fulltextStatus: "fulltext", notePath: "notes/a.md" },
+    { id: "b", bibKey: "B2021", fulltextStatus: "abstract-only", notePath: "notes/b.md" },
+    { id: "c", bibKey: "C2022", fulltextStatus: "unavailable", notePath: "notes/c.md" },
+  ]);
+  assert.deepEqual(catchUpProbes(included, index), [
+    { id: "b", bibKey: "B2021", notePath: "notes/b.md", title: "Paper B", url: "https://doi.org/10.1/B" },
+    { id: "c", bibKey: "C2022", notePath: "notes/c.md", title: "Paper C", url: "https://x.org/c" },
+  ]);
+  assert.equal(catchUpProbes("{", index), null);
+  assert.deepEqual(catchUpProbes(included, JSON.stringify({ records: [] })), []);
+});
+
+test("catchUpPrompt：点名篇与全文文件，在原笔记上续写、人写的原样保留、收尾改 fulltextStatus", () => {
+  const text = catchUpPrompt([
+    { probe: { id: "b", bibKey: "B2021", notePath: "notes/b.md", title: "Paper B", url: "" }, pdf: "Paper B.pdf" },
+  ]);
+  assert.match(text, /有 1 篇原来没有全文/);
+  assert.match(text, /B2021（b，笔记 notes\/b\.md）：全文 papers\/Paper B\.pdf/);
+  assert.match(text, /在原笔记上续写（没有笔记的按技能新写），不另起平行笔记/);
+  assert.match(text, /「我的想法」与人手写的内容原样保留/);
+  assert.match(text, /fulltextStatus 改成 fulltext/);
 });

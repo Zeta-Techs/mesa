@@ -40,6 +40,9 @@ import {
   commentsPrompt,
   searchRefreshDraft,
   searchRefreshHint,
+  catchUpProbes,
+  catchUpPrompt,
+  type CatchUpProbe,
   type ReworkDto,
   type FollowupScopeDto,
 } from "../step-loop";
@@ -395,6 +398,40 @@ export default function TaskCardsSection({
   const focusIdx = focusStepDto
     ? steps.findIndex((s) => s.name === focusStepDto.name)
     : -1;
+  /** 补读（2026-11-10）：已保存的精读步里原来没有全文、papers/ 后来有了的篇。下载多在浏览器里做，回到窗口时再对一次 */
+  const [catchUp, setCatchUp] = useState<{ probe: CatchUpProbe; pdf: string }[]>([]);
+  const [catchUpTick, setCatchUpTick] = useState(0);
+  const catchUpStep =
+    focusStepDto && focusRunStatus === "done" && stepFillsAnySlot(focusStepDto.skills, ["lit-notes"], skillProvides)
+      ? focusStepDto.name
+      : null;
+  useEffect(() => {
+    if (!catchUpStep) return;
+    const onFocus = () => setCatchUpTick((n) => n + 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [catchUpStep]);
+  useEffect(() => {
+    setCatchUp([]);
+    if (!catchUpStep) return;
+    let stale = false;
+    void (async () => {
+      const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
+      const idx = await readResearchLedger(projectPath, "notes/index.json").catch(() => null);
+      if (!inc || inc.truncated || !idx || idx.truncated) return;
+      const probes = catchUpProbes(inc.text, idx.text) ?? [];
+      if (probes.length === 0) return;
+      const names = await invoke<(string | null)[]>("to_fetch_progress", {
+        projectRoot: projectPath,
+        items: probes.map((p) => ({ title: p.title, url: p.url })),
+      }).catch(() => [] as (string | null)[]);
+      if (stale) return;
+      setCatchUp(probes.flatMap((probe, i) => (names[i] ? [{ probe, pdf: names[i] as string }] : [])));
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [catchUpStep, projectPath, refreshToken, catchUpTick]);
   const dirtyBlocked = historySaveBlockedReason(dirtyFiles, dirtyMerging);
   /** 想法区零态入口（「＋ 话题」）是否常显：有卡 → 常现（管理已有讨论）；
    *  无卡 → 仅 role=you 的步骤常显（人主导的步骤开放讨论最有价值，如综述大纲聊角度/创新点）。
@@ -815,7 +852,7 @@ export default function TaskCardsSection({
     void openStepContinuation(focusStepDto.name, ws, focusStepDto.name, null, fresh);
   }
 
-  function recordRound(ws: WorkspaceDto, step: string, kind: "rework" | "followup" | "fresh" | "ack" | "comments", reworkId?: string) {
+  function recordRound(ws: WorkspaceDto, step: string, kind: "rework" | "followup" | "fresh" | "ack" | "comments" | "catchup", reworkId?: string) {
     // 真开了新一轮（不是 ack）：这一步手动打的勾清掉，回到按落点检测，新一轮的条目与面板才会出来
     return recordStepRound(projectPath, ws, step, kind, reworkId).then(() => onHumanChanged?.());
   }
@@ -1055,6 +1092,38 @@ export default function TaskCardsSection({
       if (auto) toast(`${auto.label}停在「${step.name}」：${text} 处理完到这一步点「跟进上游的新增」，保存后链接着往下。`, "error");
       else setError(text);
       return "stopped";
+    } finally {
+      setFollowBusy(false);
+    }
+  }
+
+  /** 补读：只让 AI 读这几篇新到的全文、在原笔记上续写。已保存的步骤开新一轮，同「跟进上游的新增」的拦法 */
+  async function catchUpReads() {
+    const step = focusStepDto;
+    const found = step ? stepWorkspace(step) : undefined;
+    if (!step || !found || catchUp.length === 0) return;
+    const hits = catchUp;
+    const names = hits.map((h) => h.probe.bibKey || h.probe.id).join("、");
+    setFollowBusy(true);
+    setError(null);
+    try {
+      const launch = await loopLaunch(step.name);
+      const restoreNote = found.status !== "active" ? "开始前会先恢复这一步收起的工作副本。" : "";
+      if (
+        !(await confirmDialog(
+          `${hits.length} 篇原来没有全文的现在有了：${names}。\nAI 只补读这 ${hits.length} 篇，在原笔记上续写，别的篇不动，做完照常评审、保存。${restoreNote}`,
+          { confirmText: "开始补读" },
+        ))
+      )
+        return;
+      const ws = await ensureActive(found, step.name);
+      await assertRoundable(ws, step.name);
+      if ((await bringLatest(ws, step.name, confirmDialog, "补读")) === null) return;
+      await launchContinuation(launch, ws, step.name, catchUpPrompt(hits));
+      await recordRound(ws, step.name, "catchup");
+      onWorkspacesChanged?.();
+    } catch (reason) {
+      setError(String(reason instanceof Error ? reason.message : reason));
     } finally {
       setFollowBusy(false);
     }
@@ -1571,11 +1640,23 @@ export default function TaskCardsSection({
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
               const follow = !!ws?.staleUpstream;
-              if (!follow && targets.length === 0 && !commentsButton) return null;
+              const catchUpButton = catchUp.length > 0 && (
+                <button
+                  type="button"
+                  disabled={followBusy}
+                  onClick={() => void catchUpReads()}
+                  title={`原来没有全文、现在 papers/ 里有了的：${catchUp.map((h) => h.probe.bibKey || h.probe.id).join("、")}。点了让 AI 只补读这几篇，在原笔记上续写（先告诉你是哪几篇再开始）`}
+                  className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                >
+                  {catchUp.length} 篇已补到全文 · 补读
+                </button>
+              );
+              if (!follow && !catchUpButton && targets.length === 0 && !commentsButton) return null;
               return (
                 <span className="flex shrink-0 items-center gap-1.5">
                   {commentsButton}
                   {reworkButton}
+                  {catchUpButton}
                   {follow && (
                     <button
                       type="button"

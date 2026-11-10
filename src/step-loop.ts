@@ -83,7 +83,7 @@ export function chainWhere(
   return saved && Date.parse(saved) > Date.parse(since) ? { kind: "done" } : { kind: "waiting", step: prev };
 }
 
-export type RoundCause = "first" | "rework" | "followup" | "fresh" | "manual" | "comments";
+export type RoundCause = "first" | "rework" | "followup" | "fresh" | "manual" | "comments" | "catchup";
 
 export interface StepRoundDto {
   index: number;
@@ -213,6 +213,67 @@ function recordsOf(parsed: unknown): unknown[] | null {
   return null;
 }
 
+/** 补读候选（2026-11-10 HER 实测：缺全文的篇按摘要写了笔记，人后来在官网下到了全文，没有入口让 AI 回头补读）：
+ *  索引里 fulltextStatus 为 abstract-only / unavailable 的篇，带上纳入清单里的标题与 DOI，交 to_fetch_progress 对照 papers/ 有没有全文。
+ *  读不懂的 JSON 返回 null（不给入口） */
+export interface CatchUpProbe {
+  id: string;
+  bibKey: string;
+  notePath: string;
+  title: string;
+  url: string;
+}
+
+export function catchUpProbes(includedText: string, indexText: string): CatchUpProbe[] | null {
+  let index: unknown[] | null;
+  let included: unknown[] | null;
+  try {
+    index = recordsOf(JSON.parse(indexText));
+    included = recordsOf(JSON.parse(includedText));
+  } catch {
+    return null;
+  }
+  if (!index || !included) return null;
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const row of included) {
+    const r = row as Record<string, unknown>;
+    if (typeof r.id === "string") byId.set(r.id, r);
+  }
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const out: CatchUpProbe[] = [];
+  for (const row of index) {
+    const r = row as Record<string, unknown>;
+    if (!["abstract-only", "unavailable"].includes(str(r.fulltextStatus)) || !str(r.id)) continue;
+    const paper = byId.get(str(r.id));
+    const doi = str(paper?.doi);
+    out.push({
+      id: str(r.id),
+      bibKey: str(r.bibKey),
+      notePath: str(r.notePath),
+      title: str(paper?.title),
+      url: doi ? `https://doi.org/${doi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")}` : str(paper?.url),
+    });
+  }
+  return out;
+}
+
+/** 补读轮的开场指令：只补读这几篇，在原笔记上续写 */
+export function catchUpPrompt(hits: { probe: CatchUpProbe; pdf: string }[]): string {
+  const lines = hits.map(({ probe, pdf }) => {
+    const name = probe.bibKey || probe.id;
+    const note = probe.notePath ? `，笔记 ${probe.notePath}` : "";
+    return `- ${name}（${probe.id}${note}）：全文 papers/${pdf}`;
+  });
+  return [
+    `有 ${hits.length} 篇原来没有全文（notes/index.json 里 fulltextStatus 是 abstract-only 或 unavailable），现在 papers/ 里有了：`,
+    ...lines,
+    "这一轮只补读这几篇，别的篇一字不动。先跑 lit_records.py write 认 PDF，再读全文。",
+    "在原笔记上续写（没有笔记的按技能新写），不另起平行笔记：按全文补齐、改正各段，原来凭摘要写的判断逐条核对，改了的在该段写明「按全文改」；「标注」「译段」「我的想法」与人手写的内容原样保留。",
+    "收尾把这几篇在 notes/index.json 里的 fulltextStatus 改成 fulltext；有数据抽取表的补这几篇的行（出处与页码按全文填）；可写点清单受影响的在 notes/angles.md 补一句；notes/handoff.md 记一句补读了哪几篇、改了哪些结论。",
+    KEEP_WORKING_CLAUSE,
+  ].join("\n");
+}
+
 /** 跟进只看课题产物：Mesa 自己的过程文件、积累台账不算「上游新增」 */
 export function followupFiles(files: string[]): string[] {
   return files.filter(
@@ -303,6 +364,8 @@ export function roundCauseLabel(cause: RoundCause): string {
       return "接着改";
     case "comments":
       return "意见轮";
+    case "catchup":
+      return "补读轮";
   }
 }
 

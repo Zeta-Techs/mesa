@@ -278,7 +278,7 @@ pub struct RoundStart {
     pub step: String,
     /// rework | followup | fresh；ack = 点了「跟进上游的新增」但没有要跟进的（只用来清「待跟进」，不算一轮）；
     /// sync = 把项目最新内容并进了这一步的工作副本（workspace_sync_base 成功时后端自己记，不算一轮）；
-    /// comments = 导入 Word 批注后处理意见的一轮（2026-11-07）
+    /// comments = 导入 Word 批注后处理意见的一轮（2026-11-07）；catchup = 精读步补读原来只有摘要、后来补到全文的篇（2026-11-10）
     pub kind: String,
     #[serde(default)]
     pub rework_id: Option<String>,
@@ -287,7 +287,7 @@ pub struct RoundStart {
 }
 
 fn record_round_at(root: &Path, mut entry: RoundStart) -> Result<(), String> {
-    if !matches!(entry.kind.as_str(), "rework" | "followup" | "fresh" | "ack" | "sync" | "comments") {
+    if !matches!(entry.kind.as_str(), "rework" | "followup" | "fresh" | "ack" | "sync" | "comments" | "catchup") {
         return Err(format!("不认识的轮次类型：{}", entry.kind));
     }
     entry.at = crate::sessions::now_iso();
@@ -366,7 +366,7 @@ pub struct StepRoundDto {
     pub index: usize,
     /// 保存进项目的时间
     pub saved_at: String,
-    /// first | rework | followup | fresh | manual（没记起因、人在原对话里接着改的）
+    /// first | rework | followup | fresh | comments | catchup | manual（没记起因、人在原对话里接着改的）
     pub cause: String,
     /// 补料轮的补料单（主题与原因给界面写一句）
     pub rework: Option<ReworkDto>,
@@ -759,6 +759,9 @@ mod tests {
         let read = read_rounds_at(dir.path());
         assert_eq!(read.len(), 1);
         assert!(!read[0].at.is_empty(), "时间由后端写，不信前端");
+        let catchup = RoundStart { workspace_id: "w".into(), step: "s".into(), kind: "catchup".into(), rework_id: None, at: String::new() };
+        record_round_at(dir.path(), catchup).unwrap();
+        assert_eq!(step_rounds_at(dir.path(), "w").open_cause.as_deref(), Some("catchup"));
     }
 
     #[test]

@@ -1162,6 +1162,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
                              #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）、
+                             #   catchUpProbes / catchUpPrompt：精读补读轮（索引里没全文的篇 → to_fetch_progress 对 papers/，2026-11-10）、
                              #   searchRefreshHint / searchRefreshDraft 定稿前更新检索的入口判定与补料单预填、commentsPrompt / commentReworkDrafts 意见回流（2026-11-07）（tests/step-loop.test.ts）
   step-round.ts              # 在某一步「开一轮」的共同编排（2026-11-06 流程贯通）：pickStepWorkspace / ensureActive（恢复）/ assertRoundable（在忙、有没保存产出不叠一轮）/
                              #   boundStepLaunch / launchRound / recordRound / litKind；sendReworkRound = 退回补料整条路（步骤卡、项目助手补料单共用）。调 invoke，无单测
@@ -1971,7 +1972,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
                              # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
   step_loop.rs               # 综述回路二期（design-review-loop.md §4–§6）：补料单 .ccode/rework/<id>.json、开轮起因 .ccode/step-rounds.jsonl（只追加，时间后端写）——
-                             #   followed_at（每个工作区最近一次并入的时间：sync / ack / followup / rework，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮）；
+                             #   followed_at（每个工作区最近一次并入的时间：sync / ack / followup / rework，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮；
+                             #   comments / catchup 是一轮但不算并入）；
                              #   record_sync：workspace_sync_base / 完成解冲突成功后记 kind=sync（只记流程步骤的工作区，不算一轮，2026-11-06）；
                              #   补料链：ReworkDraft.chain + .ccode/rework/chain/<id>.json（rework_chain_claim 原子认领 / skip / stop，锁里读改写）
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
