@@ -3552,6 +3552,14 @@ fn delivery_hash(path: &Path) -> Result<(u64, String), String> {
     Ok((size, format!("{:x}", hash.finalize())))
 }
 
+/// 两份产物内容一样（都是普通文件、指纹相同）。读不了、是链接、超预算都当不一样，走原来的冲突口径
+fn same_delivery_content(a: &Path, b: &Path) -> bool {
+    match (delivery_hash(a), delivery_hash(b)) {
+        (Ok((_, x)), Ok((_, y))) => x == y,
+        _ => false,
+    }
+}
+
 fn copy_delivery_snapshot(source: &Path, dest: &Path) -> Result<(u64, String), String> {
     let mut input = fs::File::open(source).map_err(|e| e.to_string())?;
     fs::create_dir_all(dest.parent().ok_or("冻结目录无效")?).map_err(|e| e.to_string())?;
@@ -3792,7 +3800,9 @@ fn freeze_deliverables_at(
             };
             if crate::projects::path_is_protected(&path, &protected) {
                 file.disposition = "protected".into();
-            } else if repo.join(&path).exists() {
+            } else if repo.join(&path).exists() && !same_delivery_content(&source, &repo.join(&path)) {
+                // 项目里同名且内容一样的不算冲突：照常冻结，带回时 apply 见到同指纹直接认作已到
+                // （2026-11-10 HER：检索第二轮保存，上一轮已带回、一字未改的 artifacts/worklist.md 报「同名文件未覆盖」，挡了归档）
                 file.disposition = "conflict".into();
             } else if size > 1024 * 1024 * 1024
                 || total.saturating_add(size) > 4 * 1024 * 1024 * 1024

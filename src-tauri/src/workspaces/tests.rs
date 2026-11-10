@@ -2712,6 +2712,27 @@ fn copy_untracked_deliverables_skips_existing_and_stays_in_tree() {
 }
 
 #[test]
+fn same_name_same_content_deliverable_is_not_a_conflict() {
+    // 上一轮已带回、这一轮一字未改的产物（HER 检索第二轮 artifacts/worklist.md）：不报「同名未覆盖」、不挡归档
+    let dir = std::env::temp_dir().join(format!("ccode-salvage-same-{}", uuid::Uuid::new_v4()));
+    let wt = dir.join("wt");
+    let repo = dir.join("repo");
+    fs::create_dir_all(wt.join("artifacts")).unwrap();
+    fs::create_dir_all(repo.join("artifacts")).unwrap();
+    fs::write(wt.join("artifacts/worklist.md"), b"same").unwrap();
+    fs::write(repo.join("artifacts/worklist.md"), b"same").unwrap();
+    sh(&wt, &["init", "-b", "main"]);
+    let review =
+        freeze_deliverables_at(&uuid::Uuid::new_v4().to_string(), &wt, &repo, &[]).unwrap();
+    assert_eq!(review.files[0].disposition, "copy");
+    let report = apply_delivery_review(&review, &repo, &[]);
+    assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(fs::read(repo.join("artifacts/worklist.md")).unwrap(), b"same");
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn copy_untracked_deliverables_skips_protected_paths() {
     let dir = std::env::temp_dir().join(format!("ccode-salvage-prot-{}", uuid::Uuid::new_v4()));
     let wt = dir.join("wt");
