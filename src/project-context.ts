@@ -77,11 +77,24 @@ export type ProjectContextInput = {
    *  单独成段，不放进「不要与之矛盾」的项目知识段 */
   profile?: string | null;
   skills?: readonly ProjectSkillPack[];
-  /** Windows 上补「本机 Python」提示（纯模块不读平台，调用方显式传） */
+  /** 「本机 Python」提示按平台给写法（纯模块不读平台，调用方显式传） */
   isWindows?: boolean;
   /** 同项目还开着的其他工作数（开对话时数一次）；有才带「看一眼」那一句 */
   peers?: number;
 };
+
+/** 跑 Python 用 Mesa 注入的 MESA_PYTHON（dep_check::agent_python_env）：Agent 经登录 shell 跑命令，macOS 的 path_helper
+ *  把系统目录排到最前，裸 `python3` 落到系统自带、没装 PyMuPDF 等库的那个（2026-11-10 HER 实测）。PATH 救不回来，只能给绝对路径 */
+export function pythonHints(isWindows: boolean): string[] {
+  return isWindows
+    ? [
+        "跑 Python 用 `MESA_PYTHON`（PowerShell 写 `& $env:MESA_PYTHON`，Git Bash 写 `\"$MESA_PYTHON\"`；技能里的 `python3 …` 也换成它）：装好 PyMuPDF 等库的是它；它为空才用 `python`。",
+        ...WINDOWS_PYTHON_HINTS,
+      ]
+    : [
+        "跑 Python 用 `\"$MESA_PYTHON\"`（技能里的 `python3 …` 也换成它）：装好 PyMuPDF 等库的是它，裸 `python3` 常是系统自带、没装库的那个；它为空才用 `python3`。",
+      ];
+}
 
 /** Windows 本机 Python 的两条提示：开工任务书（task-md）与项目说明共用这一处。
  *  Mesa 补的 PYTHONIOENCODING 遇 -I / -E 失效，中文系统回落 GBK（2026-10-22 实测）。 */
@@ -398,9 +411,7 @@ function packSections(input: ProjectContextInput): PackSections {
       ? "权限：只改当前工作目录。完成后不要修改项目原目录；改动会交给人验收再写回。"
       : "",
     peers: peekContextLine(input.peers ?? 0, Boolean(input.isWindows)),
-    python: input.isWindows
-      ? ["本机 Python（Windows）：", ...WINDOWS_PYTHON_HINTS.map((line) => `- ${line}`)].join("\n")
-      : "",
+    python: ["本机 Python：", ...pythonHints(Boolean(input.isWindows)).map((line) => `- ${line}`)].join("\n"),
   };
 }
 

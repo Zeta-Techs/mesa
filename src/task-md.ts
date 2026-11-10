@@ -9,7 +9,7 @@ import {
   isSettingPlaceholder,
   readableRuleLines,
   uniqueRuleLines,
-  WINDOWS_PYTHON_HINTS,
+  pythonHints,
 } from "./project-context.ts";
 import { stripOptionalTitlePrefix } from "./step-flow.ts";
 import { resolveSkillRefs, type SkillProvides } from "./skill-slots.ts";
@@ -245,24 +245,15 @@ export function renderTaskMd(
     step.skills.some((s) => s === "lit-notes" || s === "review-figures") ||
     [...(step.inputs ?? []), ...(step.optionalInputs ?? [])].some((p) => /pdf/i.test(p)) ||
     stepResources(step, cfg).some((r) => r.path.toLowerCase().endsWith(".pdf"));
+  // 跑 Python 用 MESA_PYTHON（各平台，project-context.ts pythonHints）；Windows 另有两条：
   // Mesa 补的 PYTHONIOENCODING 遇 -I / -E 失效（隔离模式忽略全部 PYTHON* 环境变量），
   // 中文系统回落 GBK，打印 Č、² 即 UnicodeEncodeError（2026-10-22 实测：Claude Code 读外部数据时习惯加 -I）
-  if (isWindows) {
+  lines.push("", "## 本机 Python", ...pythonHints(isWindows).map((line) => `- ${line}`));
+  if (readsPdf) {
     lines.push(
-      "",
-      "## 本机 Python（Windows）",
-      ...WINDOWS_PYTHON_HINTS.map((line) => `- ${line}`),
-    );
-    if (readsPdf) {
-      lines.push(
-        "- 读 PDF：这台机器多半没装 poppler，直接读 PDF 文件会报 `pdftoppm is not installed`。文字用 PyMuPDF 抽（`import pymupdf`，`page.get_text()`）；要看图，先把那一页存成图片（`page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")`）再读这张图，不要只凭图注写图里的内容。",
-      );
-    }
-  } else if (readsPdf) {
-    lines.push(
-      "",
-      "## 读 PDF",
-      "- 读 PDF 报 `pdftoppm is not installed`（没装 poppler）时改用 PyMuPDF：`page.get_text()` 抽字；看图先 `page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")` 存成图片再读，不要只凭图注写图里的内容。",
+      isWindows
+        ? "- 读 PDF：这台机器多半没装 poppler，直接读 PDF 文件会报 `pdftoppm is not installed`。文字用 PyMuPDF 抽（`import pymupdf`，`page.get_text()`）；要看图，先把那一页存成图片（`page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")`）再读这张图，不要只凭图注写图里的内容。"
+        : "- 读 PDF 报 `pdftoppm is not installed`（没装 poppler）时改用 PyMuPDF：`page.get_text()` 抽字；看图先 `page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")` 存成图片再读，不要只凭图注写图里的内容。",
     );
   }
   if ((step.decisions?.length ?? 0) > 0) {

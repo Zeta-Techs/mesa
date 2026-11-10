@@ -530,23 +530,24 @@ test("TASK.md 本步骤脚本：只在 Windows、只列简报点名的 run 脚�
   assert.doesNotMatch(win, /没有给 PowerShell 写法的条目/);
 });
 
-test("TASK.md 本机 Python：只在 Windows 给出，-I 隔离模式要配 -X utf8", () => {
+test("TASK.md 本机 Python：各平台都叫用 MESA_PYTHON；Windows 另给 python 命令名与 -X utf8", () => {
   const win = renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
-  assert.match(win, /## 本机 Python（Windows）/);
+  assert.match(win, /## 本机 Python\n- 跑 Python 用 `MESA_PYTHON`（PowerShell 写 `& \$env:MESA_PYTHON`/);
   assert.match(win, /不要用 `python3`/);
   assert.match(win, /`-I` 或 `-E`[^\n]*`-X utf8`/);
-  assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /## 本机 Python/);
+  const mac = renderTaskMd(step(), cfg(), "/p");
+  assert.match(mac, /## 本机 Python\n- 跑 Python 用 `"\$MESA_PYTHON"`（技能里的 `python3 …` 也换成它）/);
+  assert.doesNotMatch(mac, /-X utf8|不要用 `python3`/);
 });
 
-test("TASK.md 读 PDF 的步骤提示用 PyMuPDF 抽字、转页图看图（Windows 在本机 Python 节，macOS 单列）", () => {
+test("TASK.md 读 PDF 的步骤提示用 PyMuPDF 抽字、转页图看图（都在本机 Python 节）", () => {
   const notes = step({ skills: ["lit-notes"] });
   const win = renderTaskMd(notes, cfg(), "C:\\p", undefined, undefined, undefined, undefined, true);
   assert.match(win, /pdftoppm is not installed[^\n]*get_pixmap/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "C:\\p", undefined, undefined, undefined, undefined, true), /pdftoppm/, "不读 PDF 的步骤不带");
-  // macOS 默认也没有 poppler：单列「读 PDF」一节，写成报错时改用，不进 Windows 的本机 Python 节
+  // macOS 默认也没有 poppler：写成报错时改用
   const mac = renderTaskMd(notes, cfg(), "/p");
-  assert.match(mac, /## 读 PDF\n[^\n]*pdftoppm is not installed[^\n]*get_pixmap/);
-  assert.doesNotMatch(mac, /## 本机 Python/);
+  assert.match(mac, /## 本机 Python\n- [^\n]*MESA_PYTHON[^\n]*\n- 读 PDF 报 `pdftoppm is not installed`[^\n]*get_pixmap/);
   assert.doesNotMatch(renderTaskMd(step(), cfg(), "/p"), /pdftoppm/, "不读 PDF 的步骤不带");
   // 大纲步一类：输入里写着要读原文 PDF，或项目资源挂着 PDF
   const outline = step({ inputs: ["17 篇主线批原文 PDF（路径见「项目资源」，只读）"] });

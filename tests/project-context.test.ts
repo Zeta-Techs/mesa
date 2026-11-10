@@ -13,6 +13,7 @@ import {
   projectHomeHint,
   projectShowsProtectedPaths,
   projectUsesSkillPool,
+  pythonHints,
   renderProjectContextPack,
   renderSessionInjection,
   splitLaunchPrompt,
@@ -209,18 +210,20 @@ test("session pack says where new files go and does not repeat the follow-the-us
   assert.doesNotMatch(coding, /output\//);
 });
 
-test("Windows adds the local Python hints to auto and custom packs", () => {
+test("local Python hints: MESA_PYTHON on every platform, Windows adds python / -X utf8", () => {
   const base = { ...FULL_SESSION_INPUT, isWindows: true };
   const auto = renderProjectContextPack(base);
-  assert.match(auto, /本机 Python（Windows）：\n- 命令名用 `python`/);
+  assert.match(auto, /本机 Python：\n- 跑 Python 用 `MESA_PYTHON`[^\n]*\n- 命令名用 `python`/);
   assert.match(auto, /-X utf8/);
-  assert.match(renderSessionInjection("{{课题主题}}", base), /^课题主题：[\s\S]*本机 Python（Windows）/);
+  assert.match(renderSessionInjection("{{课题主题}}", base), /^课题主题：[\s\S]*本机 Python：/);
   assert.equal(renderSessionInjection(DEFAULT_SESSION_TEMPLATE, base), auto);
-  assert.doesNotMatch(renderProjectContextPack(FULL_SESSION_INPUT), /本机 Python/);
+  const mac = renderProjectContextPack(FULL_SESSION_INPUT);
+  assert.match(mac, /本机 Python：\n- 跑 Python 用 `"\$MESA_PYTHON"`/);
+  assert.doesNotMatch(mac, /-X utf8/);
 });
 
 test("retired 人的决定 placeholder renders empty in old custom templates", () => {
-  assert.equal(renderSessionInjection("A\n\n{{人的决定}}\n\nB", FULL_SESSION_INPUT), "A\n\nB");
+  assert.equal(renderSessionInjection("A\n\n{{人的决定}}\n\nB", FULL_SESSION_INPUT), "A\n\nB" + PY);
   assert.equal(isSessionTemplateKey("人的决定"), true);
   assert.doesNotMatch(DEFAULT_SESSION_TEMPLATE, /人的决定/);
 });
@@ -394,7 +397,8 @@ test("custom template fills placeholders and collapses empty sections", () => {
   );
   assert.match(rendered, /^课题主题：\n镁硫电池/);
   assert.match(rendered, /项目规则：\n1\. 优先使用项目里已有的/);
-  assert.match(rendered, /回答先给结论。$/);
+  // 本机 Python 是环境事实，自定义模板之后也补上
+  assert.match(rendered, /回答先给结论。\n\n本机 Python：/);
   // 有内容的相邻段之间恰好一个空行（空段不留多余空行）
   assert.doesNotMatch(rendered, /\n{3,}/);
   // 空段整段省略：没有 settings 时项目规则段不出现
@@ -402,7 +406,7 @@ test("custom template fills placeholders and collapses empty sections", () => {
     "A\n\n{{项目规则}}\n\nB",
     { ...FULL_SESSION_INPUT, settings: [] },
   );
-  assert.equal(noRules, "A\n\nB");
+  assert.equal(noRules, "A\n\nB" + PY);
 });
 
 test("custom template keeps unknown placeholders verbatim", () => {
@@ -423,7 +427,7 @@ test("prototype-chain names are not placeholders", () => {
   );
   assert.equal(
     rendered,
-    "A {{constructor}} B {{__proto__}} C {{toString}} D",
+    "A {{constructor}} B {{__proto__}} C {{toString}} D" + PY,
   );
   assert.doesNotMatch(rendered, /native code/);
   assert.equal(isSessionTemplateKey("constructor"), false);
@@ -437,10 +441,13 @@ test("spaced placeholders share one criterion between renderer and panel", () =>
     "A {{ 项目名 }} B",
     FULL_SESSION_INPUT,
   );
-  assert.equal(rendered, "A 综述流程测试 B");
+  assert.equal(rendered, "A 综述流程测试 B" + PY);
   assert.equal(isSessionTemplateKey(tokenInner("{{ 项目名 }}")), true);
   assert.equal(isSessionTemplateKey(tokenInner("{{ 真未知 }}")), false);
 });
+
+/** 非 Windows 的「本机 Python」一节：自定义模板渲染完也补在末尾 */
+const PY = `\n\n本机 Python：\n- ${pythonHints(false)[0]}`;
 
 function tokenInner(token: string): string {
   return token.slice(2, -2);
@@ -464,7 +471,7 @@ test("memory cap applies inside the placeholder block", () => {
     memory: long,
   });
   assert.match(rendered, /已按最新有效知识优先/);
-  assert.ok(rendered.length < 6200);
+  assert.ok(rendered.length < 6200 + PY.length);
 });
 
 test("第一句里的项目说明和人说的话分开：气泡与取回只认人说的", () => {

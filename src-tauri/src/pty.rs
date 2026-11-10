@@ -656,7 +656,7 @@ fn pty_size_from(cols: Option<u16>, rows: Option<u16>) -> PtySize {
     }
 }
 
-/// PTY 里的 Agent 另外拿到的变量（出图工具路径、Windows 的 Python 输出编码），给不经 PTY 跑命令的进程（Codex app-server）补齐
+/// PTY 里的 Agent 另外拿到的变量（出图工具路径、Windows 的 Python 输出编码、MESA_PYTHON），给不经 PTY 跑命令的进程（Codex app-server）补齐
 fn pty_agent_env() -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(tool) = crate::image_gen::helper_exe() {
@@ -671,6 +671,9 @@ fn pty_agent_env() -> Vec<(String, String)> {
     }
     if let Some((k, v)) = crate::process::agent_python_io_env() {
         env.push((k.to_string(), v.to_string()));
+    }
+    if let Some((k, v)) = crate::dep_check::agent_python_env() {
+        env.push((k.to_string(), v));
     }
     env
 }
@@ -705,6 +708,12 @@ fn spawn_tracked(
     // PWD 跟工作目录一致：否则子进程继承的是 Mesa 启动时那个 shell 的 PWD，按 PWD 取目录的 CLI（opencode run）
     // 会跑到别处干活（process::background_command 同一条，那边是删掉）
     cmd.env("PWD", cwd);
+    // 体检认出、一键安装装进去的 Python（dep_check::agent_python_env）：Agent 经登录 shell 跑裸 python3 会落到系统自带的
+    if purpose == PtyPurpose::Agent {
+        if let Some((key, value)) = crate::dep_check::agent_python_env() {
+            cmd.env(key, value);
+        }
+    }
     // 科研做图：图纸 SVG 转 PNG / PDF（svg_render.rs）；单独试跑 svg-render，旧 helper 不认就不注入
     if let Some(tool) = crate::svg_render::helper_exe() {
         cmd.env(crate::svg_render::TOOL_ENV, &tool);
@@ -1347,7 +1356,7 @@ fn pty_spawn_sync(
 }
 
 /// conda / mamba 的「当前激活了哪个环境」变量（`CONDA_PREFIX_1` 之类是嵌套激活留下的）
-fn is_conda_activation_var(key: &str) -> bool {
+pub(crate) fn is_conda_activation_var(key: &str) -> bool {
     matches!(key, "CONDA_SHLVL" | "CONDA_PREFIX" | "CONDA_DEFAULT_ENV" | "CONDA_PROMPT_MODIFIER")
         || key
             .strip_prefix("CONDA_PREFIX_")

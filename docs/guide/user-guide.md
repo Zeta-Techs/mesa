@@ -2683,6 +2683,8 @@ Undermind 这类远程 MCP 要用你自己的账号授权（OAuth）。登录凭
 | **导出诊断包** | 出问题时导出、附到「反馈与提需求」里。包里没有密钥；附上面「聊天层转到终端」的次数；Windows 上额外含系统 / WebView2 / 显卡 / 输入法信息 |
 | **生效配置快照** | 点 **导出生效配置快照**，看当前到底用了哪条连接（已脱敏） |
 
+这三行后面显示的 Python 路径，就是 AI 干活时跑 Python 用的那一个：电脑上装了好几个 Python（比如系统自带一个、conda 又装一个）也不会用错。
+
 一键安装：PyMuPDF、Pillow 是综述拼图用的两个 PDF 图片处理库，python-pptx 用来把示意图出成能在 PPT 里改的文件（见 [10.2](#102-做科研图示意图出成能在-ppt-里改的文件)），点任一行的「一键安装」会三个一起装好；电脑上还没有 Python 3 时，这三行写「还缺 Python 3」，一键安装会先替你装好 Python 3（Windows 用 winget 装给这台电脑的所有用户，会弹一次管理员确认，点「是」——这样 Codex 的沙箱里也能用上这个 Python；接着装两个库时还会再弹一次，同样点「是」，库才装进这个 Python 里，Codex 里写的脚本也能用；点了「否」就装到你自己的用户目录，Mesa 照常能用，只是 Codex 的沙箱里用不了；Mac 有 Homebrew 用 Homebrew，没有就下载 python.org 的官方安装包），再接着装这三个库，整个过程几分钟，你不需要自己弄懂 Python。Windows 没有 winget 时按行内提示去 python.org 装好 Python 3 再点「重新检测」（Windows 自带的 `python` 只是应用商店的占位程序，不算装了）。
 
 **Mac 没装 Homebrew 也能一键装**：Git 弹系统安装窗口（Xcode 命令行工具）；Node.js、Python 3、Quarto 下载各自官网的 macOS 安装包（`.pkg`），下载完系统会弹一个窗口要你输入开机密码——这是 macOS 自己的授权框，Mesa 看不到密码，装到 `/usr/local` 需要它；TeX 由 Quarto 安装 TinyTeX（所以先装 Quarto，再装 TeX，不用密码）。下载走 **设置 → 网络** 里的出网代理，连不上官网时行内会提示。有 Homebrew 时照旧用 Homebrew，TeX 装 Tectonic。Windows 的 TeX 也由 Quarto 安装 TinyTeX；其余用 winget，没有 winget 就按行内提示去官网下，装完点「重新检测」。Linux 给 `sudo apt install …` 命令（Quarto 需去 quarto.org 下）。TeX 有 xelatex、tectonic、pdflatex 任一个就算 ✓。安装过程的输出里，下载进度条只显示最新一帧，不会刷满一屏。

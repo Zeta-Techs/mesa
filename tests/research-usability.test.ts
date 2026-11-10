@@ -99,7 +99,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 网页 / 摘要 / PDF 里夹着的写给 AI 的话不照办。实测 review 34048、论文 42271、数据 16780、学位 41224、投稿 10998、LaTeX 17007。
   // 2026-11-10 HER 精读：抽取表「已定方向写了列就照用、不再问」（三模板精读步）＋人工请求规则加「要人动手的事不写人工请求、选项只能是决定」（每步一句，六模板同涨）。
   // 实测 review 34348、论文 42725、数据 16972、学位 41676、投稿 11094、LaTeX 17199。
-  const before: Record<string, number> = { review: 34500, "research-paper": 42900, "data-processing": 17100, thesis: 41850, "submission-rebuttal": 11250, "latex-paper": 17350 };
+  // 同日「本机 Python」一节各平台都给（原先只 Windows）：跑 Python 用 MESA_PYTHON（Codex 经登录 shell，path_helper 让裸 python3 落到系统自带），每步约 100 字。
+  // 实测 review 34953、论文 43731、数据 17480、学位 42682、投稿 11348、LaTeX 17707。
+  const before: Record<string, number> = { review: 35100, "research-paper": 43900, "data-processing": 17600, thesis: 42850, "submission-rebuttal": 11500, "latex-paper": 17850 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

@@ -95,6 +95,25 @@ fn shell_args(shell: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// 去掉本进程继承的 conda「已激活」状态（起线程前调，从终端启动的开发版也要做）。子进程里凡是会读 rc 的
+/// shell——内置终端、Codex / Claude Code 跑命令时的 shell 快照——都会自己跑 conda 初始化：继承来的「已激活」让它跳过激活，
+/// 而 /etc/zprofile 的 path_helper 已把系统目录排到 PATH 最前，`python3` 就落到 /usr/bin 那个没装库的
+/// （2026-11-10 HER 实测：Codex 分路精读报 No module named 'fitz'；带着这几个变量复现、去掉即好）。
+/// conda 本体位置（CONDA_EXE 等）留着，rc 里的初始化要用
+pub fn clear_conda_activation() {
+    let keys: Vec<OsString> = std::env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| key.to_str().is_some_and(crate::pty::is_conda_activation_var))
+        .collect();
+    if keys.is_empty() {
+        return;
+    }
+    for key in &keys {
+        std::env::remove_var(key);
+    }
+    crate::logbuf::record("info", "shell_env", &format!("去掉继承的 conda 激活状态：{} 个变量", keys.len()));
+}
+
 /// 跑一次登录 shell 并把环境写进本进程；从终端启动（已有 SHLVL）、读失败、超时都不改，
 /// 只在应用日志里记一行（用时与变量个数，不记名字和值）
 pub fn import_login_shell_env() {

@@ -2061,7 +2061,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   拼图库问 python 能否导入）
                              #   + install_dependency（quarto 走 brew --cask / winget Posit.Quarto；tex 装 tectonic；
                              #   pymupdf/pillow 走 python -m pip，externally-managed 再加 --user；Linux 只给指引）；
-                             #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）；
+                             #   缺 git 走收件箱 dep: 类别常驻提醒（不造横幅）；agent_python_env：起 Agent 注入 MESA_PYTHON（同体检那个 Python，2026-11-10）；
                              #   2026-10-20：macOS 没有 Homebrew 时 Node.js / Python / Quarto 走官方 .pkg（mac_pkg_url 从各家版本索引挑
                              #   地址，curl 下载后 osascript「with administrator privileges」跑 installer，Mesa 碰不到密码）；
                              #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
@@ -2098,7 +2098,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 整份出站前过 sessions::redact_sensitive_text；设置页「诊断」区「生效配置快照」卡片消费
   shell_env.rs               # unix：从访达打开时读一次登录 shell 环境写进本进程（$SHELL -i -l -c + env -0 夹标记，5 秒超时回落；
                              #   SHLVL 已有＝从终端启动不读）；凭据类 / shell 自身 / Mesa 自管的键不带（should_import，单测钉住 agent_specs 净化表）；
-                             #   各家配置目录搬迁变量（CODEX_HOME 等）与会话目录变量（OPENCODE_DB / QWEN_RUNTIME_DIR / CURSOR_DATA_DIR）照带
+                             #   各家配置目录搬迁变量（CODEX_HOME 等）与会话目录变量（OPENCODE_DB / QWEN_RUNTIME_DIR / CURSOR_DATA_DIR）照带；
+                             #   clear_conda_activation：启动时去掉继承的 conda 激活变量，子进程 shell 才会重新激活（2026-11-10）
   process.rs                 # 2026-11-04：capture_command_streaming（等待循环里把 stdout 新到的字节交给回调，完整输出照旧返回；capture_command_for 是它不带回调的版本）；
                              # 2026-11-02：捕获登记带 activity（读到 stdout / stderr 即记 Unix 毫秒），capture_last_activity_ms 给定时任务卡住检测用；
                              # 后台子进程统一创建（Windows CREATE_NO_WINDOW 防 conhost 闪窗；三平台都删掉继承的 PWD——

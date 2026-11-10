@@ -248,7 +248,9 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   `python.exe`，`python3` 在 Windows 上永远先命中应用商店占位。给 Agent 的指令 / 技能里写 `python3` 时同时注明
   「Windows 上改用 `python`」。**Agent 起的 Python（PTY 子进程与无头运行）在 Windows 由 `process::agent_python_io_env`
   补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。Agent 加 `-I` / `-E` 时该变量失效
-  （中文系统回落 GBK），Windows 任务书固定带「本机 Python（Windows）」节提示改加 `-X utf8`（2026-10-22，`task-md.ts`）。
+  （中文系统回落 GBK），Windows 任务书固定带「本机 Python」节提示改加 `-X utf8`（2026-10-22，`task-md.ts`）。
+  **Agent 跑 Python 用 `MESA_PYTHON`**（2026-11-10）：起 Agent 时注入体检认出、一键安装装进去的那个 Python 的绝对路径，
+  任务书与项目说明各平台都写「跑 Python 用它」；Mesa 启动时去掉继承的 conda「已激活」变量。只调 PATH 不够，细则 environment.md 同名条。
 - **检索 / 精读的题录只经 `lit-search/scripts/lit_records.py` 从 `papers/included.json` 出**（2026-10-22）：included.md、to-fetch.md、
   两份 RIS、references.bib 都是它生成，简报与技能不得再让 Agent 手写或自写补字段脚本；RIS 拼法与 `screening-review.ts risBody`
   双端镜像（`tests/lit-records.test.ts` 逐条比对），改一边两边同改；「待补」「待核」「无期号」不得进任何 RIS / 文献库字段（「无期号」= Crossref 有卷没期，不是缺口，2026-10-23）。

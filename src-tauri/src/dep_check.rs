@@ -252,13 +252,36 @@ fn is_python_stub_candidate(os: HostOs, path: &Path) -> bool {
 pub(crate) fn usable_python() -> Option<PathBuf> {
     let os = current_os();
     let mut stub_blocked: Option<bool> = None;
-    ["python3", "python"]
+    let found = ["python3", "python"]
         .into_iter()
         .flat_map(agents::resolve_binary_all)
         .filter(|p| {
             !is_python_stub_candidate(os, p) || !*stub_blocked.get_or_insert_with(clt_missing)
         })
-        .find(|p| run_python(p, "import sys").is_some())
+        .find(|p| run_python(p, "import sys").is_some());
+    if let Ok(mut cached) = AGENT_PYTHON.lock() {
+        *cached = Some(found.clone());
+    }
+    found
+}
+
+/// 交给 Agent 的 Python 环境变量：体检显示、一键安装装进去的就是它
+pub const PYTHON_ENV: &str = "MESA_PYTHON";
+
+/// 上次找到的可用 Python（外层 None = 还没找过）。体检、一键安装每次重找都会刷新它
+static AGENT_PYTHON: std::sync::Mutex<Option<Option<PathBuf>>> = std::sync::Mutex::new(None);
+
+/// 起 Agent 时注入 `MESA_PYTHON`：Agent 跑命令多经登录 shell（Codex 是 `zsh -lc`），macOS 的
+/// /etc/zprofile 里 path_helper 把系统目录挪到 PATH 最前，裸 `python3` 落到 /usr/bin 那个没装库的
+/// （2026-11-10 HER 实测：PyMuPDF 装在 conda 的 Python 里，分路精读报 No module named 'fitz'）。
+/// PATH 怎么排都会被重排，所以给绝对路径，任务书与项目说明叫 Agent 用它（project-context.ts PYTHON_HINTS）
+pub(crate) fn agent_python_env() -> Option<(&'static str, String)> {
+    let cached = AGENT_PYTHON.lock().ok().and_then(|c| c.clone());
+    let path = match cached {
+        Some(found) => found,
+        None => usable_python(),
+    }?;
+    Some((PYTHON_ENV, path.to_string_lossy().into_owned()))
 }
 
 /// 没有 Python 时一键补齐用哪条渠道装它（纯函数）：Windows 走 winget；macOS 有 Homebrew 走 brew，

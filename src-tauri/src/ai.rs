@@ -1240,6 +1240,9 @@ pub(crate) fn build_headless_command_granted(
     if let Some((key, value)) = crate::process::agent_python_io_env() {
         cmd.env(key, value);
     }
+    if let Some((key, value)) = crate::dep_check::agent_python_env() {
+        cmd.env(key, value);
+    }
     let (lock_id, lock_args) = lock_headless_session(&profile.agent);
     let mut grant_plan = None;
     let headless = if write {

@@ -26,7 +26,15 @@
   （submit 的任务退出会被拉起）。启动 Agent 子进程等新调用点不需另做什么，继承进程环境即可。
   **内置终端的交互 shell 启动前清掉 conda 激活状态**（`CONDA_SHLVL` / `CONDA_PREFIX[_n]` / `CONDA_DEFAULT_ENV` / `CONDA_PROMPT_MODIFIER`，
   `pty.rs is_conda_activation_var`）：shell 自己会跑 rc 的 conda 初始化，继承的「已激活」让它跳过激活，而 `/etc/zprofile` 的 path_helper
-  已把 PATH 重排，终端里 python3 就落到 /usr/bin（2026-10-27 实测）。Agent 与后台命令不经 rc，照旧继承。
+  已把 PATH 重排，终端里 python3 就落到 /usr/bin（2026-10-27 实测）。~~Agent 与后台命令不经 rc，照旧继承。~~
+  **2026-11-10 改到 Mesa 启动时整进程去掉**（`shell_env::clear_conda_activation`，起线程前、读登录 shell 之后；开发版从终端启动也做）：
+  Codex 跑命令用登录 shell 加 rc 快照，同样跳过激活、`python3` 落到 /usr/bin，HER 分路精读报 No module named 'fitz'
+  （`codex exec` 带这四个变量复现、去掉即落回 conda）。conda 本体位置（`CONDA_EXE` 等）不去。
+- **Agent 跑 Python 用 `MESA_PYTHON`**（2026-11-10）：只排 PATH 救不回来——Agent 经登录 shell 跑命令，`/etc/zprofile` 的 path_helper
+  把 `/etc/paths` 里的系统目录挪到最前，继承来的顺序全被打乱。所以起 Agent（PTY、无头运行、Codex app-server）时注入
+  `MESA_PYTHON` = `dep_check::agent_python_env`（与体检显示、一键安装同一个 Python，`usable_python` 每次重找都刷新缓存），
+  任务书与项目说明的「本机 Python」节各平台都写「跑 Python 用它、技能里的 `python3 …` 也换」（`project-context.ts pythonHints`），
+  为空才退回 `python3` / `python`。技能文本不改（技能在 Mesa 外也用）。
 - **Windows 装 Agent 走 winget 的三个坑**（2026-10-31 本机实证 + winget 源码核对）：
   ①**没开开发者模式就没有 Links 链接**：winget portable 包本该在 `%LOCALAPPDATA%\Microsoft\WinGet\Links` 建符号链接，
   普通用户（开发者模式关、非管理员，新用户的默认状态）建不了，winget 改把 `WinGet\Packages\<包>_…` 写进用户 PATH
