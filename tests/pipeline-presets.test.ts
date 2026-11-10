@@ -704,9 +704,20 @@ test("同步到文献库只在三套模板的初稿任务书里提，精读任�
 });
 
 // 2026-10-23 HER 精读步：按简报把项目根 9 个 PDF 改了名，流程期间暂缓的资源登记全指向旧名
-test("精读步不改 PDF 名：认 PDF、打 ✓ 交给 lit_records.py write，to-fetch.md 不手改", () => {
+test("精读步不改 PDF 名、不写检索的清单：只读认 PDF（lit_records.py pdfs），不跑 write（2026-11-10）", () => {
   const step = PIPELINE_TEMPLATES.find((t) => t.id === "review")!.steps.find((s) => s.workspaceName === "lit-notes")!;
-  assert.match(step.brief, /lit_records\.py write --root/);
+  assert.match(step.brief, /lit_records\.py pdfs --root/);
+  assert.match(step.brief, /归检索那一步，这一步只读不改/);
+  assert.ok(!step.expectedArtifacts?.includes("papers/to-fetch.md"), "to-fetch.md 不是精读的产物");
+  // 三套模板的精读步都不再叫 AI 更新 to-fetch.md、跑 write
+  for (const t of PIPELINE_TEMPLATES) {
+    for (const st of t.steps.filter((x) => (x.skills ?? []).includes("lit-notes"))) {
+      assert.doesNotMatch(st.brief, /更新 to-fetch|lit_records\.py write --root|给 to-fetch\.md 对应行打/, `${t.id}/${st.name}`);
+    }
+  }
+  const notesSkill = readFileSync("src-tauri/resources/skills/lit-notes/SKILL.md", "utf8");
+  assert.match(notesSkill, /精读只读不改/);
+  assert.doesNotMatch(notesSkill, /追加 `papers\/to-fetch\.md`/);
   assert.match(step.brief, /一律不改名、不移动/);
   assert.doesNotMatch(step.brief, /重命名|按第 1 步改名|PDF 改名/);
   for (const name of ["lit-notes", "lit-search"]) {

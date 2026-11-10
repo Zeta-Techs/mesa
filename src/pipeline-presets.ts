@@ -236,10 +236,10 @@ const LIT_NOTES_FANOUT: StepFanOutDto = {
   label: "title",
   per: 8,
   max: 4,
-  own: "notes/<序号>-<短标题>.md（序号照上面给的写；已有同篇笔记的按 lit-notes 技能的配对办法在原文件上续写）；要填抽取表的写本路的 notes/extraction-<本路号>.md（表头同 notes/extraction.md）。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
+  own: "notes/<序号>-<短标题>.md（序号照上面给的写；已有同篇笔记的按 lit-notes 技能的配对办法在原文件上续写）；要填抽取表的写本路的 notes/extraction-<本路号>.md（表头同 notes/extraction.md）。不跑 lit_records.py write、不改 papers/ 下的清单（归检索那一步）",
   merge:
-    "按 lit-notes 技能收尾：先跑技能目录 scripts/lit_records.py write 出清单，再用它写 references.bib；按各路写好的笔记把 notes/index.json 与 papers/included.json 全部 id 对齐" +
-    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。有各路 notes/extraction-<路号>.md 的合进 notes/extraction.md（一张表，来源列统一写成 [@键]：各路有的写成 @键 少了方括号），合完删掉各路的。",
+    "按 lit-notes 技能收尾：用技能目录 scripts/lit_records.py bib 写 references.bib（papers/ 下的清单归检索，不跑 write、不改）；按各路写好的笔记把 notes/index.json 与 papers/included.json 全部 id 对齐" +
+    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；写 notes/handoff.md 与本步验收摘要。有各路 notes/extraction-<路号>.md 的合进 notes/extraction.md（一张表，来源列统一写成 [@键]：各路有的写成 @键 少了方括号），合完删掉各路的。",
 };
 
 /** 综述精读第一轮的分路（2026-11-05 用户拍板改：综述精读 + 研究论文全部速读，design-review-loop.md §7.3）：
@@ -248,7 +248,7 @@ const REVIEW_NOTES_FANOUT: StepFanOutDto = {
   ...LIT_NOTES_FANOUT,
   own:
     "综述写 notes/<序号>-<短标题>.md（按 lit-notes 技能「综述卡」，序号照上面给的写；已有同篇笔记的按技能的配对办法在原文件上续写）；" +
-    "研究论文不写单篇笔记，只在 notes/skim-<本路号>.md 写速读行（表头照技能「速读表」）；要填抽取表的写本路的 notes/extraction-<本路号>.md。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
+    "研究论文不写单篇笔记，只在 notes/skim-<本路号>.md 写速读行（表头照技能「速读表」）；要填抽取表的写本路的 notes/extraction-<本路号>.md。不跑 lit_records.py write、不改 papers/ 下的清单（归检索那一步）",
   merge:
     LIT_NOTES_FANOUT.merge +
     "把各路 notes/skim-<路号>.md 合进 notes/skim.md（一张表、按主题排），合完删掉各路的。研究论文在 index 记 reviewStatus=pending、skimmed: true。再跑 lit_records.py angles-facts，按本步简报写 notes/angles.md。",
@@ -302,7 +302,7 @@ function litNotesWrite(order: string): string {
   return (
   "写法见 {skill:lit-notes} 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻。" +
   "禁止整段粘贴英文摘要或 PDF 抽取原文。未读完只在 notes/index.json 记 reviewStatus=pending、notePath 可空，禁止生成八段占位文件（文件存在会被标成已读）。" +
-  "可逆准备只含认 PDF（lit_records.py write）、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
+  "可逆准备只含认 PDF（lit_records.py pdfs，只读）、index 骨架、bib 对账、合法 OA 尝试，不包括批量生成笔记正文。" +
   OA_VERSION_CLAUSE +
   "references.bib 用 {skill:lit-notes} 技能目录里的 scripts/lit_records.py bib 从 papers/included.json 写（检索步已查全，不再向 Crossref 另查一遍；已有条目不改键、只补空的或写着待补的字段），输出的 id → 键写进 notes/index.json 的 bibKey；included.json 里没有的待跟进引用才按技能口径手写。" +
   "「按摘要记」= 根据摘要消化来写并标「仅摘要」，不是贴英文。" +
@@ -519,24 +519,25 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       REVIEW_LIT_NOTES_WRITE +
       "篇数以 papers/included.json 的 decision 为准。included.md 开头若写着「终判纳入 N 篇 / 待确认 M 篇」而和 json 不一致，那是检索时的旧句子，人在 Mesa 里改过判定后以 json 为准，改掉那一句再继续，不要因此停步。\n" +
       "若后续提交把 included.json 从「纳入+待确认」改成「纳入+排除」、并把部分行移出 included.md，那是人在 Mesa 里做的筛选，不是定稿被退回。help-wanted.md 里列出的待确认是提问当时的名单，json 里已经没有 pending 就不要再当成未决。\n" +
-      "to-fetch.md 是还没拿到全文的名单，不手改：开工先跑一次 {skill:lit-notes} 技能目录里的 scripts/lit_records.py write --root <项目根>，它按 DOI、标题认出项目根 papers/ 里已有的 PDF（文件名随意），在 included.json 记 pdf 路径、给 to-fetch.md 对应行打 ✓、重算篇数。references.bib 没有就用脚本 bib 从 included.json 建，不要把缺库当成检索失败。\n" +
-      "1. 项目根 papers/ 里的 PDF 一律不改名、不移动（见上方「项目根」，含未进本工作区的文件，按绝对路径读）：Mesa 的资源登记、沉浸阅读的标注和笔记都按路径认文件，改了名就对不上。哪篇对哪个文件以 included.json 的 pdf 字段为准（上面的 write 写的）；write 没认出、你按内容能确定归属的，把相对路径写进那篇的 pdf 字段再跑一次 write，拿不准的不写、在报告里列出。然后按 included.md 处理已确认纳入项（清单缺失或为空时在报告中说明并停止，不要自行换题或自行补清单）；\n" +
+      "papers/ 下的清单（included.json、included.md、to-fetch.md、两份 RIS）归检索那一步，这一步只读不改，也不跑 lit_records.py write：精读一改，补文献时两步会在同几份文件上冲突。" +
+      "开工先跑一次 {skill:lit-notes} 技能目录里的 scripts/lit_records.py pdfs --root <项目根>（只读），它按 DOI、标题认出项目根 papers/ 里每篇已有的 PDF（文件名随意）。references.bib 没有就用脚本 bib 从 included.json 建，不要把缺库当成检索失败。\n" +
+      "1. 项目根 papers/ 里的 PDF 一律不改名、不移动（见上方「项目根」，含未进本工作区的文件，按绝对路径读）：Mesa 的资源登记、沉浸阅读的标注和笔记都按路径认文件，改了名就对不上。哪篇对哪个文件以上面 pdfs 的结果为准；没认出、你按内容能确定归属的，写进那篇笔记头的「来源 PDF」行，拿不准的不写、在报告里列出。然后按 included.md 处理已确认纳入项（清单缺失或为空时在报告中说明并停止，不要自行换题或自行补清单）；\n" +
       "2. 第一轮：综述（included.json 里 kind=review）精读，按技能「综述卡」写，没 PDF 的按摘要写短记并标「仅摘要·待全文」，摘要也拿不到的标「题录·待全文」，不编正文；" +
       "研究论文（kind=other 的同样处理）**全部速读**，不写单篇笔记，每篇在 notes/skim.md（技能「速读表」）写一行：研究问题、方法、主要结论各一句，归哪个主题，相对已有综述新在哪，有无全文。速读主要看 included.json 里的摘要，有全文的再扫引言和结论。" +
       "研究论文在 notes/index.json 记 reviewStatus=pending、skimmed: true——要不要精读、精读哪几篇，等大纲覆盖检查按章节点名（会退回补料「补读」），不算没做完。一篇都没标 kind 时按旧口径：有全文的全部精读，不写速读表与可写点，并在验收摘要写明。\n" +
-      "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（按 included.json 的 pdf 字段，文件名不改）→ 开放获取补下到项目根 papers/（版本规则见上）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
+      "3. 全文来源优先级（写死）：项目资源里、路径不在项目根 papers/ 的 PDF（如 Zotero 附件，只读，不改名、不复制）→ 项目根 papers/ 已有 PDF（按 pdfs 认出的，文件名不改）→ 开放获取补下到项目根 papers/（版本规则见上）→ 仍缺按摘要写笔记并标注「仅摘要·待全文」，不得装作读过全文；\n" +
       "4. 上下文写不下可分批，提交后立刻继续，直到综述都写成综述卡、研究论文都进了速读表。index pending 只留给待确认或题录都不足以写的篇。有实际 PDF 时笔记开头记来源锚点行「> 来源 PDF：<项目内相对路径或已登记只读资源绝对路径>.pdf」，无 PDF 改记 DOI/URL，不造虚假路径。笔记、index、references.bib 写在本工作区；临时脚本和接口缓存放本工作区 artifacts/，不写项目根。\n" +
       "5. 引文库按上面那句用脚本 bib 写；脚本报的「待补」保持待补，不得编造，不得用卷或页填空着的期。已有条目只补空字段，不改键、不覆盖人改过的作者和标题；\n" +
       "6. 收尾前复查：notes/ 中「仅摘要」笔记对应的全文若已出现在项目根 papers/（人工补投），重读全文并更新该笔记、去掉标记；仍未补的保持标注并在报告末尾计数说明。\n" +
       "7. " + NOTES_HANDOFF +
-      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。RIS 只随 write 重出，不手改。\n" +
+      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。\n" +
       "9. 可写点：综述卡写完后，把每篇综述文献截至的年份写进 notes/index.json 那篇的 cutoffYear，跑 {skill:lit-notes} 技能目录 scripts/lit_records.py angles-facts，输出原样贴进 notes/angles.md 的「## 时效对照（脚本算）」。" +
       "再按技能写候选角度，一条一个：一句话、已有综述覆盖到哪、之后的新工作（引上表的键，并从速读表写它们各说了什么、分成哪几个方向）、和已有综述的重合度（高 / 中 / 低，最像哪篇哪节）、撑起来还缺什么文献、风险。只给证据，不判断能不能写，重合度高的照列；不写「必须创新」一类的话。\n" +
       "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认、无法按摘要写、或只速读过的研究论文 notePath 可空）；综述都写成综述卡，纳入的研究论文与 other 都在 notes/skim.md（表头含「新在哪」）里有一行，notes/angles.md 有时效对照与候选角度（走旧口径的改为有全文的都已精读）；已写笔记符合 {skill:lit-notes} 写法；综述没写完或有研究论文还没进速读表，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
       QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf"],
-    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md", "notes/handoff.md", "notes/angles.md", "notes/skim.md"],
+    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "notes/handoff.md", "notes/angles.md", "notes/skim.md"],
     acceptanceCriteria: [
       // handoff.md 是必交产物、glossary/excerpts 是人写的，都不算「写了笔记」；skim.md 算——
       // 一篇综述都没有时只有速读表。速读表「新在哪」、可写点「时效对照」只在标了 kind 时才有（没标走旧口径全量精读），
@@ -721,7 +722,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
     brief:
       "输入：上一步的 papers/included.md、papers/to-fetch.md 与 references.bib。按 {skill:lit-notes} 技能完成精读与笔记。\n" +
       LIT_NOTES_WRITE +
-      "先整理项目根 papers/ 里的人工补投并更新 to-fetch.md；已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。全文缺失时按摘要写笔记并标注「仅摘要·待全文」。\n" +
+      "先跑 {skill:lit-notes} 技能目录里的 scripts/lit_records.py pdfs --root <项目根>（只读）认出项目根 papers/ 里每篇的全文；papers/ 下的清单归检索那一步，不改、不跑 write。已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。全文缺失时按摘要写笔记并标注「仅摘要·待全文」。\n" +
       NOTES_READ_ALL +
       "在已写笔记基础上按主题归纳研究现状写入 survey/literature.md，提炼有实质差别的候选研究问题（无合理备选可只留一个）并逐一分析现有工作的 gap，写入 survey/gap-analysis.md。先把候选、每个 gap 的证据与我建议的研究问题写入 .ccode/help-wanted.md 问用户一句（未回复只保留候选，不替人确定研究问题），写完只做无依赖、可逆的准备。摘要-only 不得支撑需要全文的 gap。\n" +
       "已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。\n" +
@@ -737,7 +738,6 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "survey/literature.md",
       "survey/gap-analysis.md",
       "references.bib",
-      "papers/to-fetch.md",
       "notes/handoff.md",
     ],
     acceptanceCriteria: [...NOTES_MACHINE_CHECKS, LIT_NOTES_INDEX_RECORDS, "machine:same-ids:papers/included.json::notes/index.json", "machine:contains:survey/gap-analysis.md::已批准问题与范围"],
@@ -1245,14 +1245,14 @@ const THESIS_STEPS: ProjectStepDto[] = [
     brief:
       "输入：papers/included.md 与 papers/to-fetch.md。全程按 {skill:lit-notes} 技能。已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。\n" +
       LIT_NOTES_WRITE +
-      "1. 整理项目根 papers/ 人工补投并更新 to-fetch.md；\n" +
+      "1. 跑 {skill:lit-notes} 技能目录里的 scripts/lit_records.py pdfs --root <项目根>（只读）认出项目根 papers/ 里每篇的全文；papers/ 下的清单归检索那一步，不改、不跑 write；\n" +
       "2. " + NOTES_READ_ALL +
       "3. " + NOTES_HANDOFF +
       "4. 已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。\n" +
       "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法。有 PDF 的还没全部写成精读、或按摘要记的还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf", "notes/", "references.bib"],
-    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "papers/to-fetch.md", "notes/handoff.md"],
+    expectedArtifacts: ["notes/*.md", "notes/index.json", "references.bib", "notes/handoff.md"],
     acceptanceCriteria: [...NOTES_MACHINE_CHECKS, LIT_NOTES_INDEX_RECORDS, "machine:same-ids:papers/included.json::notes/index.json"],
     skills: ["lit-notes"],
     run: [],

@@ -257,7 +257,7 @@
   统一去重当进料口，不回写、不清空积累账。**任务书写入是启动前置（2026-09-08）**：`write_workspace_task_md` 失败时保留已创建工作区并报错，不写后续 run 配置、不打开/自动启动 Agent；修复本轮任务书后方可继续。不得无合同启动以兜底旧命令缺失。**TASK.md 不进 git**：落盘时自动追加进
   `.git/info/exclude`（`exclude_task_md`，全 worktree 与主仓生效，best-effort 不阻断）——TASK.md 是开步脚手架而非任务产物。
 - **分路声明（2026-11-03 协作四期）**：`[steps.fan_out]` 写在步骤合同里（与 checks 同级），英文综述 / 毕业论文的「文献精读与笔记」带 `LIT_NOTES_FANOUT`
-  （`pipeline-presets.ts`：included.json 纳入的篇、每路 8 篇、最多 4 路；`own` 点名开头不跑 `lit_records.py write`，`merge` 写清收尾要出的共享文件）。
+  （`pipeline-presets.ts`：included.json 纳入的篇、每路 8 篇、最多 4 路；`own` 点名不跑 `lit_records.py write`；`merge` 写清收尾要出的共享文件，同样不跑 write、不改 papers/ 下的清单）。
   不进任务书正文（各路开场另给），不占长度预算。改英文综述模板后照旧跑 `scripts/export-review-template.ts` 同步示例课题 JSON。
   **数据清洗（2026-11-04）**：数据处理模板「数据登记与检查」多交 `data/datasets.json`（id、name、path，机器验收 records），「清洗与整理」带 `DATA_CLEAN_FANOUT`
   （每个数据集一路、最多 4 路）。各路只写 `cleaning/batches/<序号>-<名>/`，不写 help-wanted 与 cleaning/ 顶层文件；**各路问不了人，关键规则（去重、剔除、插补、合表、
@@ -854,8 +854,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   UI 显示「已见到 N 个文件 / 清单共 M 篇」的进度感；**仍是存在性检测，不做逐篇对账**（标题匹配脆弱；
   逐篇对齐靠精读步 agent 收尾复查的简报约定）。
 - **人工补投的 PDF 不改名，对账交给固定脚本（v3.97 拍板；2026-10-23 改：不再重命名）**：人工补投的 PDF 文件名随意，
-  精读步（lit-notes）开工第一条 = 跑 `lit_records.py write --root <项目根>`，按 DOI、标题认出已有 PDF，在 included.json
-  记 `pdf`、给 to-fetch.md 打 ✓、重算篇数；脚本没认出的由 agent 按内容写 `pdf` 再跑，拿不准的列进报告。**项目根
+  ~~精读步开工第一条 = 跑 `lit_records.py write`，在 included.json 记 `pdf`、给 to-fetch.md 打 ✓~~（2026-11-10 用户拍板改：
+  **papers/ 下的清单只归检索，精读只读不改**——精读改它们，补文献时两步在同几份文件上冲突，手改 JSON 还贴错过记录）。
+  精读开工跑只读的 `lit_records.py pdfs --root <项目根>` 认出每篇的 PDF；脚本没认出、按内容能定归属的写进那篇笔记头「来源 PDF」，拿不准的列进报告；
+  精读中发现的待跟进文献写在笔记「疑问与待跟进」，要进库由人「补充文献…」交给检索。哪篇已有全文，界面一律按 papers/ 里实际文件认（`to_fetch_progress`）。**项目根
   papers/ 的 PDF 一律不改名不移动**——资源登记（含流程期间暂缓的 `.ccode/pending-registrations.json`）、沉浸阅读
   标注与笔记都按路径认文件（2026-10-23 HER 实证：精读步改名 9 个，暂缓登记全指向旧名）。模板 guidance 必须写明
   「文件名随意」，不得暗示用户要自己整理命名。

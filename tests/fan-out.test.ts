@@ -25,7 +25,7 @@ test("每一路的开场：全局序号、只写自己的、共享文件留给�
   assert.ok(p.startsWith("这一步按数据分成 3 路同时做，你是第 2 路"));
   assert.ok(p.includes("- 09 | 10.1/x | Boride HER") && p.includes("- 10 | 10.1/y"));
   assert.ok(p.includes("notes/<序号>-<短标题>.md"));
-  assert.ok(p.includes("开头不跑 lit_records.py write"), "2026-11-03 Codex 干跑实证：不点名它会先跑、写出共享清单");
+  assert.ok(p.includes("不跑 lit_records.py write"), "2026-11-03 Codex 干跑实证：不点名它会先跑、写出共享清单");
   assert.ok(p.includes("一律不写") && p.includes("也不跑，这些都留给最后的收尾一路") && p.includes("不跑 git 提交"));
   assert.ok(p.includes("`.ccode/fanout/lane-2.done`"));
   assert.ok(lanePrompt(spec, items, 1, 2, true).includes("& $env:MESA_PEEK_TOOL peek agents"));

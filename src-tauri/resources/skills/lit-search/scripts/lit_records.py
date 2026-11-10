@@ -893,6 +893,24 @@ def fetch_list(records, root, previous):
     return out
 
 
+def cmd_pdfs(args):
+    """精读步只读认全文：每篇已纳入的在项目里有没有全文、是哪个文件。不写任何文件——
+    included.json、included.md、to-fetch.md 与两份 RIS 归检索那一步（2026-11-10：精读改它们，补文献时两步冲突，手改还贴错过记录）。"""
+    root = project_root(args.root)
+    included = [r for r in read_records(Path(args.json)) if decision_of(r) == "included"]
+    found, missing = [], []
+    for rec in included:
+        have = existing_pdf(rec, root)
+        item = {"id": as_text(rec.get("id")), "title": as_text(rec.get("title"))}
+        if have:
+            found.append({**item, "pdf": have})
+        else:
+            missing.append(item)
+    print(json.dumps({"found": found, "missing": missing}, ensure_ascii=False, indent=1))
+    print(f"已纳入 {len(included)} 篇：认出全文 {len(found)} 篇，没有全文 {len(missing)} 篇（只读，没改任何文件）。", file=sys.stderr)
+    return 0
+
+
 def cmd_write(args):
     path = Path(args.json)
     root = project_root(args.root)
@@ -1344,6 +1362,8 @@ def main():
     sp.add_argument("--allow-preprint", action="store_true", help="来源级别允许预印本时才加")
     sp = sub.add_parser("write", help="从 included.json 生成 included.md、to-fetch.md 与两份 RIS")
     common(sp)
+    sp = sub.add_parser("pdfs", help="精读步：只读列出每篇已纳入的全文文件（不写 included.json 与清单）")
+    common(sp)
     sp = sub.add_parser("check", help="校验 json、清单与两份 RIS 是否一致")
     common(sp)
     sp = sub.add_parser("bib", help="精读步：把 included.json 的题录写进 references.bib（已有条目只补空字段）")
@@ -1362,7 +1382,7 @@ def main():
     Net.refresh = a.refresh
     Net.offline = a.offline
     try:
-        return {"enrich": cmd_enrich, "fetch": cmd_fetch, "write": cmd_write, "check": cmd_check, "bib": cmd_bib, "impact": cmd_impact, "angles-facts": cmd_angles_facts}[a.cmd](a)
+        return {"enrich": cmd_enrich, "fetch": cmd_fetch, "write": cmd_write, "pdfs": cmd_pdfs, "check": cmd_check, "bib": cmd_bib, "impact": cmd_impact, "angles-facts": cmd_angles_facts}[a.cmd](a)
     except (OSError, ValueError, json.JSONDecodeError) as err:
         print(f"✗ {err}", file=sys.stderr)
         return 1
