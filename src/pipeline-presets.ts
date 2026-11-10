@@ -234,7 +234,7 @@ const LIT_NOTES_FANOUT: StepFanOutDto = {
   own: "notes/<序号>-<短标题>.md（序号照上面给的写；已有同篇笔记的按 lit-notes 技能的配对办法在原文件上续写）；要填抽取表的写本路的 notes/extraction-<本路号>.md（表头同 notes/extraction.md）。开头不跑 lit_records.py write（它会写 included.md、to-fetch 清单和 RIS，归收尾一路）",
   merge:
     "按 lit-notes 技能收尾：先跑技能目录 scripts/lit_records.py write 出清单，再用它写 references.bib；按各路写好的笔记把 notes/index.json 与 papers/included.json 全部 id 对齐" +
-    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。有各路 notes/extraction-<路号>.md 的合进 notes/extraction.md（一张表），合完删掉各路的。",
+    "（id、bibKey、fulltextStatus、reviewStatus、notePath）；更新 papers/to-fetch.md；写 notes/handoff.md 与本步验收摘要。有各路 notes/extraction-<路号>.md 的合进 notes/extraction.md（一张表，来源列统一写成 [@键]：各路有的写成 @键 少了方括号），合完删掉各路的。",
 };
 
 /** 综述精读第一轮的分路（2026-11-05 用户拍板改：综述精读 + 研究论文全部速读，design-review-loop.md §7.3）：
