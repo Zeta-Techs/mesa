@@ -371,6 +371,67 @@ fn resolve_metrics(tables: &MetricsTables, venue: &str, issn: &str) -> Option<Jo
     lookup_issn_in(tables, issn)
 }
 
+// ===== helper：给 Agent 查影响因子（2026-11-10 HER：人按「IF ≥ 10」退回，AI 手里没有影响因子只能凭记忆估） =====
+
+/// 注入 Agent 进程的变量名：值是 helper 路径，检索技能的 `lit_records.py impact` 按它查
+pub const TOOL_ENV: &str = "MESA_JOURNAL_TOOL";
+
+/// 认得 `journal` 的随包 helper（试跑 `journal --probe`；旧 helper 不认就不注入）
+pub fn helper_exe() -> Option<PathBuf> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHE.get_or_init(|| crate::image_gen::find_bundled_helper("journal")).clone()
+}
+
+/// 按 included.json 每条的 venue / issn 查，与评审清单徽章同一套匹配（resolve_metrics，不联网）。
+/// 输出 `{ "<id>": {"impactFactor": "9.5", "casQuartile": 1, "top": true} | null }`；表没装返回 Err
+fn journal_lookup_json(text: &str, tables: &MetricsTables) -> Result<String, String> {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(text).map_err(|e| format!("included.json 解析失败：{e}"))?;
+    let mut out = serde_json::Map::new();
+    for row in &rows {
+        let Some(id) = row.get("id").and_then(|v| v.as_str()) else { continue };
+        let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let hit = resolve_metrics(tables, &field("venue"), &field("issn"));
+        out.insert(id.to_string(), serde_json::to_value(hit).unwrap_or(serde_json::Value::Null));
+    }
+    serde_json::to_string(&out).map_err(|e| e.to_string())
+}
+
+/// `mesa_helper journal <papers/included.json>`：只读、不改文件，结果打到标准输出（lit_records.py impact 合进 json）。
+/// 退出码：0 成功、2 参数错、3 期刊指标表没装或读不了
+pub fn helper_journal_cli(args: &[String]) -> i32 {
+    let Some(path) = args.first() else {
+        eprintln!("用法：mesa_helper journal <papers/included.json>");
+        return 2;
+    };
+    if path == "--probe" {
+        println!("ok");
+        return 0;
+    }
+    let tables = table();
+    if tables.by_name.is_empty() {
+        eprintln!("期刊指标表还没下载：在 Mesa 的检索清单顶上点「下载期刊指标表」后再查；影响因子不要凭记忆估");
+        return 3;
+    }
+    let text = match fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("读不了 {path}：{e}");
+            return 2;
+        }
+    };
+    match journal_lookup_json(&text, &tables) {
+        Ok(json) => {
+            println!("{json}");
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            2
+        }
+    }
+}
+
 /// 本地表的下载时间：两份 CSV 的 mtime 取较新者（原子落盘即刷新 mtime，无需另记 meta）
 fn local_downloaded_at() -> Option<String> {
     let dir = metrics_dir()?;
@@ -688,6 +749,33 @@ pub async fn check_journal_metrics_update() -> Result<JournalMetricsUpdateDto, S
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn journal_lookup_json_matches_by_venue_then_issn_and_nulls_misses() {
+        let mut by_name = HashMap::new();
+        by_name.insert(
+            crate::lit_watch::normalize_title("Chemical Reviews"),
+            JournalMetricsDto { impact_factor: Some("55.8".into()), cas_quartile: Some(1), top: true },
+        );
+        by_name.insert(
+            crate::lit_watch::normalize_title("Fuel"),
+            JournalMetricsDto { impact_factor: Some("7.5".into()), cas_quartile: Some(2), top: false },
+        );
+        let mut issn_to_name = HashMap::new();
+        issn_to_name.insert("00162361".to_string(), crate::lit_watch::normalize_title("Fuel"));
+        let tables = MetricsTables { by_name, issn_to_name };
+        let text = r#"[
+            {"id":"a","venue":"Chemical Reviews","issn":"0009-2665"},
+            {"id":"b","venue":"燃料（错写的刊名）","issn":"0016-2361"},
+            {"id":"c","venue":"Unknown Journal","issn":"待补"}
+        ]"#;
+        let out: serde_json::Value = serde_json::from_str(&journal_lookup_json(text, &tables).unwrap()).unwrap();
+        assert_eq!(out["a"]["impactFactor"], "55.8");
+        assert_eq!(out["a"]["top"], true);
+        assert_eq!(out["b"]["impactFactor"], "7.5");
+        assert!(out["c"].is_null());
+    }
+
     use super::*;
 
     const JCR_SAMPLE: &str = "\

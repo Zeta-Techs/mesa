@@ -666,6 +666,9 @@ fn pty_agent_env() -> Vec<(String, String)> {
     if let Some(tool) = crate::svg_render::helper_exe() {
         env.push((crate::svg_render::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
     }
+    if let Some(tool) = crate::journal_metrics::helper_exe() {
+        env.push((crate::journal_metrics::TOOL_ENV.to_string(), tool.to_string_lossy().into_owned()));
+    }
     if let Some((k, v)) = crate::process::agent_python_io_env() {
         env.push((k.to_string(), v.to_string()));
     }
@@ -705,6 +708,10 @@ fn spawn_tracked(
     // 科研做图：图纸 SVG 转 PNG / PDF（svg_render.rs）；单独试跑 svg-render，旧 helper 不认就不注入
     if let Some(tool) = crate::svg_render::helper_exe() {
         cmd.env(crate::svg_render::TOOL_ENV, &tool);
+    }
+    // 检索按影响因子筛：lit_records.py impact 经它查 Mesa 的期刊指标表（journal_metrics.rs）
+    if let Some(tool) = crate::journal_metrics::helper_exe() {
+        cmd.env(crate::journal_metrics::TOOL_ENV, &tool);
     }
     // 出图：告诉 Agent 随包 helper 在哪（技能 image-gen 按它调）；密钥不进环境变量，helper 出图时自己取
     if let Some(tool) = crate::image_gen::helper_exe() {

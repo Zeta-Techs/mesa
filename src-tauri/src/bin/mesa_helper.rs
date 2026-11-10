@@ -80,6 +80,10 @@ fn main() {
     }
     // `mesa_helper svg-render --in 图纸.svg --out 图.png --out 图.pdf`：科研做图把图纸 SVG 转 PNG / PDF
     // （经 MESA_FIGURE_TOOL 调用，svg_render.rs）；不联网、不读密钥
+    // `mesa_helper journal papers/included.json`：按 Mesa 的期刊指标表查影响因子与分区（经 MESA_JOURNAL_TOOL，journal_metrics.rs）；只读
+    if args.get(1).map(String::as_str) == Some("journal") {
+        std::process::exit(ccode_lib::helper_journal(&args[2..]));
+    }
     if args.get(1).map(String::as_str) == Some("svg-render") {
         std::process::exit(ccode_lib::helper_svg_render(&args[2..]));
     }
@@ -90,6 +94,6 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("codex-token") {
         std::process::exit(ccode_lib::helper_codex_token(&args[2..]));
     }
-    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|codex-token …（由 Mesa 调用，不单独使用）");
+    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token …（由 Mesa 调用，不单独使用）");
     std::process::exit(2);
 }

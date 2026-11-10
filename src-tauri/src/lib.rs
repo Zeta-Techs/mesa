@@ -46,6 +46,11 @@ pub fn helper_peek(args: &[String]) -> i32 {
     peek::helper_peek_cli(args)
 }
 
+/// helper 查期刊影响因子 / 分区（`mesa_helper journal <papers/included.json>`）：检索技能经 MESA_JOURNAL_TOOL 调用，返回退出码
+pub fn helper_journal(args: &[String]) -> i32 {
+    journal_metrics::helper_journal_cli(args)
+}
+
 /// helper 科研做图（`mesa_helper svg-render --in 图纸.svg --out 图.png|图.pdf`）：Agent 经 MESA_FIGURE_TOOL 调用，返回退出码
 pub fn helper_svg_render(args: &[String]) -> i32 {
     svg_render::helper_svg_render_cli(args)

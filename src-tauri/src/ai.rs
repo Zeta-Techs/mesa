@@ -1342,6 +1342,9 @@ pub(crate) fn run_agent_task_granted(
             cmd.env(crate::peek::TOOL_ENV, &tool);
             cmd.env(crate::peek::RUN_ENV, &run.id);
         }
+        if let Some(tool) = crate::journal_metrics::helper_exe() {
+            cmd.env(crate::journal_metrics::TOOL_ENV, &tool);
+        }
     }
     // 锁定了会话 id 的：跑的期间登记，卡住检测据此看会话文件有没有在长（跑完即撤）
     let _session_reg = lock_id

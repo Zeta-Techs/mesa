@@ -1238,6 +1238,55 @@ def cmd_angles_facts(args):
     return 0
 
 
+NO_METRIC = "表中无此刊"
+
+
+def merge_impact(records, found):
+    """把 Mesa 期刊指标表的查询结果合进记录：impactFactor（JCR 原样字符串）、casQuartile（中科院大类 1-4）、casTop；
+    查不到的写「表中无此刊」，不估、不留旧值。只在 json 里，不进 RIS 与引文库。返回 (查到篇数, 没查到篇数)。"""
+    hit = miss = 0
+    for rec in records:
+        rid = rec.get("id")
+        if not isinstance(rid, str) or rid not in found:
+            continue
+        m = found[rid]
+        for k in ("impactFactor", "casQuartile", "casTop"):
+            rec.pop(k, None)
+        if not m or not m.get("impactFactor"):
+            rec["impactFactor"] = NO_METRIC
+            miss += 1
+        else:
+            rec["impactFactor"] = str(m["impactFactor"])
+            hit += 1
+        if m and m.get("casQuartile"):
+            rec["casQuartile"] = int(m["casQuartile"])
+        if m and m.get("top"):
+            rec["casTop"] = True
+    return hit, miss
+
+
+def cmd_impact(args):
+    """按 Mesa 的期刊指标表（JCR 2025 影响因子、中科院分区）给每条写 impactFactor / casQuartile / casTop。
+    影响因子只从这里来：AI 不凭记忆估，表里没有的写「表中无此刊」（2026-11-10 HER：人按 IF ≥ 10 退回）。
+    查表由 Mesa 的随包 helper 做（$MESA_JOURNAL_TOOL journal），与 Mesa 评审清单上的影响因子同一套匹配。"""
+    import subprocess
+    tool = os.environ.get("MESA_JOURNAL_TOOL", "").strip()
+    if not tool:
+        print("✗ 没有 MESA_JOURNAL_TOOL（不在 Mesa 里运行，或 Mesa 版本太旧）：查不了影响因子。不要凭记忆估，请人在 Mesa 的检索清单里看影响因子。", file=sys.stderr)
+        return 2
+    path = Path(args.json)
+    proc = subprocess.run([tool, "journal", str(path)], capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        print(f"✗ {proc.stderr.strip() or '查影响因子失败'}", file=sys.stderr)
+        return proc.returncode or 1
+    found = json.loads(proc.stdout or "{}")
+    records = read_records(path)
+    hit, miss = merge_impact(records, found)
+    write_json(path, records)
+    print(f"已写影响因子：查到 {hit} 篇，表中无此刊 {miss} 篇（JCR 2025；分区为中科院大类）。")
+    return 0
+
+
 def main():
     utf8_stdio()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1267,6 +1316,8 @@ def main():
     sp.add_argument("--bib", default="references.bib")
     sp.add_argument("--ids", default="", help="只写这些 id（逗号分隔）")
     sp.add_argument("--with-pending", action="store_true")
+    sp = sub.add_parser("impact", help="按 Mesa 的期刊指标表给每条写影响因子与中科院分区（不估，查不到写「表中无此刊」）")
+    common(sp, root=False)
     sp = sub.add_parser("angles-facts", help="精读步：纳入综述的时效对照表（截至年份、之后纳入的研究论文），贴进 notes/angles.md")
     common(sp, root=False)
     sp.add_argument("--index", default="notes/index.json")
@@ -1276,7 +1327,7 @@ def main():
     Net.refresh = a.refresh
     Net.offline = a.offline
     try:
-        return {"enrich": cmd_enrich, "fetch": cmd_fetch, "write": cmd_write, "check": cmd_check, "bib": cmd_bib, "angles-facts": cmd_angles_facts}[a.cmd](a)
+        return {"enrich": cmd_enrich, "fetch": cmd_fetch, "write": cmd_write, "check": cmd_check, "bib": cmd_bib, "impact": cmd_impact, "angles-facts": cmd_angles_facts}[a.cmd](a)
     except (OSError, ValueError, json.JSONDecodeError) as err:
         print(f"✗ {err}", file=sys.stderr)
         return 1

@@ -4233,6 +4233,9 @@ fn task_run_headless_impl(run_id: &str, prompt: &str) -> Result<RunDto, String> 
         job.cmd.env(crate::peek::TOOL_ENV, &tool);
         job.cmd.env(crate::peek::RUN_ENV, &run.id);
     }
+    if let Some(tool) = crate::journal_metrics::helper_exe() {
+        job.cmd.env(crate::journal_metrics::TOOL_ENV, &tool);
+    }
     launch_goal_headless(run, job, GOAL_HEADLESS_TIMEOUT)
 }
 

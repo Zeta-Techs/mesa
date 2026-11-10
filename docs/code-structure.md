@@ -1817,7 +1817,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # .ccode/handoff-lit-intake.md（best-effort、agent 读定格副本不回写活文件）+ PDF 资源登记相位感知
                              # （register_pdf 遇 active/creating 工作区不写 project.toml，改记 .ccode/pending-registrations.json
                              # 按 path 覆盖去重；replay_pending_registrations 在项目打开/工作区归档时回放登记）
-  journal_metrics.rs         # 期刊指标表（雷达徽章数据源）：config_dir/ccode/journal-metrics/ 下 JCR2025-UTF8.csv +
+  journal_metrics.rs         # 期刊指标表（雷达徽章、评审清单影响因子、检索技能按 IF 筛的唯一数据源；helper `journal` 子命令 +
+                             # MESA_JOURNAL_TOOL 给 lit_records.py impact 用，同一套 resolve_metrics，不在 Python 另写匹配）：config_dir/ccode/journal-metrics/ 下 JCR2025-UTF8.csv +
                              # FQBJCR2025-UTF8.csv（来源 github.com/hitfyd/ShowJCR，用户本机下载、禁内置分发）合并成
                              # HashMap（normalize_title 规范化精确匹配，miss 时剥末尾出版商括号尾巴（「(Wiley)」「（ACS）」可多级）
                              # 重试，仍 miss = None 不虚构；前端 lit-watch.ts sourceDisplayName 同口径剥尾，两处同步），RwLock 进程内缓存；
@@ -1855,7 +1856,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   不走 bridge.parse_bibtex（TeX 重音会整库报错），整句找、离线也做；联网查 DOI 指向与
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
                              #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py
-  （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
+  （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：impact（经 $MESA_JOURNAL_TOOL 查 Mesa 期刊指标表写 impactFactor / casQuartile / casTop，
+                                                 # 查不到写「表中无此刊」，不估）/ enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
                              #   check 拦 kind 不是 review/research/other；angles-facts（2026-11-05）= 纳入综述的时效对照表（截至年取 index cutoffYear，没写按发表年）
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与

@@ -501,3 +501,40 @@ test("kind 只在 json 里：不进 RIS；写错值 check 拦；angles-facts 按
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("impact：影响因子只从 Mesa 的期刊指标表来，查不到写「表中无此刊」，没有工具就不写、报错退出", { skip: process.platform === "win32" }, () => {
+  const root = mkdtempSync(join(tmpdir(), "lit-impact-"));
+  try {
+    mkdirSync(join(root, "papers"));
+    const json = join(root, "papers", "included.json");
+    writeFileSync(json, JSON.stringify([
+      { id: "a", title: "A", decision: "included", reason: "纳入", venue: "Chemical Reviews", impactFactor: "99" },
+      { id: "b", title: "B", decision: "included", reason: "纳入", venue: "Unknown" },
+      { id: "c", title: "C", decision: "excluded", reason: "排除", venue: "Fuel" },
+    ], null, 2));
+    // 没有 MESA_JOURNAL_TOOL：退出 2，不动文件
+    const env = { ...process.env };
+    delete env.MESA_JOURNAL_TOOL;
+    const before = readFileSync(json, "utf8");
+    const none = spawnSync(python, [script, "impact"], { cwd: root, encoding: "utf8", env, timeout: 30_000 });
+    assert.equal(none.status, 2);
+    assert.match(none.stderr, /不要凭记忆估/);
+    assert.equal(readFileSync(json, "utf8"), before);
+    // 假 helper：按 Mesa 的输出格式回一份结果
+    const tool = join(root, "fake-helper.sh");
+    writeFileSync(tool, `#!/bin/sh\necho '{"a":{"impactFactor":"55.8","casQuartile":1,"top":true},"b":null,"c":{"impactFactor":"7.5","casQuartile":2,"top":false}}'\n`, { mode: 0o755 });
+    const r = spawnSync(python, [script, "impact"], { cwd: root, encoding: "utf8", env: { ...env, MESA_JOURNAL_TOOL: tool }, timeout: 30_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /查到 2 篇，表中无此刊 1 篇/);
+    const rows = JSON.parse(readFileSync(json, "utf8"));
+    assert.deepEqual(rows.map((x: any) => x.id), ["a", "b", "c"], "顺序不变");
+    assert.equal(rows[0].impactFactor, "55.8", "旧的手填值被表里的覆盖");
+    assert.equal(rows[0].casQuartile, 1);
+    assert.equal(rows[0].casTop, true);
+    assert.equal(rows[1].impactFactor, "表中无此刊");
+    assert.equal(rows[1].casQuartile, undefined);
+    assert.equal(rows[2].casTop, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

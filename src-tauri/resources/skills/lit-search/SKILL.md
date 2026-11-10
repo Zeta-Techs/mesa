@@ -101,6 +101,7 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 - 每篇给出纳入/排除及理由；排除理由从固定枚举里选：**年份不符 / 语言不符 / 来源级别不符 / 主题无关 / 重复 / 非实证研究**，都不沾边才写自由理由；
 - **拿不准相关性的一律保留候选，并标注「待确认」**——不允许自行裁掉，也不能冒充最终纳入；「多源命中」不等于证据更强。全文未得的判定及其对覆盖的影响单列。
 - **开头那句篇数从 included.json 现数来。** 「终判纳入 N 篇」「另有待确认 M 篇」必须等于 json 里 `decision=included` / `pending` 的条数。后来改了判定，先改这句再交。不要留检索当时的旧数字。
+- **按影响因子 / 分区筛（人提了 IF 门槛，或标准里有这一条）**：先跑 `python3 <技能目录>/scripts/lit_records.py impact`（Windows 上用 `python`），它按 Mesa 的期刊指标表（JCR 2025 影响因子、中科院大类分区，与 Mesa 评审清单上显示的是同一份）给每条写 `impactFactor` / `casQuartile` / `casTop`。**影响因子只认这一列，不凭记忆估、不从网页抄**。写「表中无此刊」的既不算达标、也不当不达标排除：放进待确认，理由写「表中无此刊，影响因子待人核」。命令报「没有 MESA_JOURNAL_TOOL」或「期刊指标表还没下载」时不按影响因子筛，写一条人工请求说明原因。新补进的篇写进 json 后再跑一次；screening.md 的门槛写明「影响因子按 Mesa 期刊指标表（JCR 2025）」。
 - **「待确认」不是题录没查全。** `decision=pending` 只表示相关性等人拍板。期刊全称、ISSN、`doi`、`url` 与已纳入同一套：有 DOI 就必须先向 Crossref 取 `container-title` 写入 `venue`，没有再问 OpenAlex。书章没有期刊才把 `venue` 写成「待补」。禁止因为这篇还没拍板，就把 `venue`/`doi`/`url` 整列写成「待补」或留空。
 - **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时写入 `.ccode/help-wanted.md` 请人逐篇纳入或排除（未回复则不把 pending 当已纳入）；人改成 included 后才允许补进 to-fetch。
 - **开放获取失败就停**：只下载接口已经给出的 PDF 直链。连续 3 次 HTTP 403 即停止其余下载，未下到的写入 `to-fetch.md`，不要换链重试。

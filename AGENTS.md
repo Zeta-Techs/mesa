@@ -252,6 +252,8 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
 - **检索 / 精读的题录只经 `lit-search/scripts/lit_records.py` 从 `papers/included.json` 出**（2026-10-22）：included.md、to-fetch.md、
   两份 RIS、references.bib 都是它生成，简报与技能不得再让 Agent 手写或自写补字段脚本；RIS 拼法与 `screening-review.ts risBody`
   双端镜像（`tests/lit-records.test.ts` 逐条比对），改一边两边同改；「待补」「待核」「无期号」不得进任何 RIS / 文献库字段（「无期号」= Crossref 有卷没期，不是缺口，2026-10-23）。
+  **影响因子 / 分区只经 `lit_records.py impact` 从 Mesa 期刊指标表出**（2026-11-10）：查表由 helper `journal`（`journal_metrics::resolve_metrics`，与评审清单徽章同一套）做，
+  经 `MESA_JOURNAL_TOOL` 注入；AI 不凭记忆估，查不到写「表中无此刊」进待确认，不进 RIS / 引文库。
 - **`quarto render` 命令（模板 run 脚本与技能）统一 `--output-dir ../output`、不带 `--output`**（`--output-dir` 相对稿件所在目录解析；稿件在一级目录时写 `../output`，唯一例外是项目根的稿件写 `output`——2026-11-02 数据处理报告，macOS 实测同样落项目根 `output/`；更深的目录不放稿件）（2026-10-21 Windows 实测：写 `output`
   落进 `manuscript/output/` 且后一次渲染清掉前一次）；项目根不放 `_quarto.yml`；存量项目的 run 命令存在各自 `.ccode/project.toml`，
   改模板不会自动更新，要手工处理。PDF 走 xelatex 时 header 必须带 ActualText 开关（`manuscript_font.py` 写），否则分号文本层变 U+037E。
