@@ -826,6 +826,37 @@ def read_previous_fetch(path):
     return order
 
 
+ADDED_NOTE = re.compile(r"^(\d{4}-\d{2}-\d{2}) 新加：第 (.+) 篇。$")
+
+
+def number_ranges(numbers):
+    """[50, 51, 52, 55] → 「50–52、55」（与 Mesa step-flow.ts parseAddedNotes 同一写法）"""
+    out, nums = [], sorted(set(numbers))
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        out.append(str(nums[i]) if i == j else f"{nums[i]}–{nums[j]}")
+        i = j + 1
+    return "、".join(out)
+
+
+def added_notes(path, previous, rows):
+    """「某天新加：第 x–y 篇」：上一版已有的说明照留（带日期，过后也不会说错），这次接在后面编号的新篇另起一行。
+    上一版没有编号（首次生成）时不写——全都是新的（2026-11-10 HER：退回修改后分不出哪些是意见新增的）。"""
+    keep = []
+    if path.is_file():
+        keep = [l for l in path.read_text(encoding="utf-8", errors="replace").splitlines() if ADDED_NOTE.match(l.strip())]
+    if previous:
+        top = max(n for n, _, _ in previous)
+        fresh = [n for n, _, _ in rows if n > top]
+        if fresh:
+            import datetime
+            keep.append(f"{datetime.date.today().isoformat()} 新加：第 {number_ranges(fresh)} 篇。")
+    return keep
+
+
 def fetch_list(records, root, previous):
     """待获取：已纳入且没有全文的。上一版里有的按原编号排前面；新进的接在后面。"""
     want = [r for r in records if decision_of(r) == "included" and not existing_pdf(r, root)]
@@ -885,10 +916,14 @@ def cmd_write(args):
     md += ["", "## 待确认清单", ""]
     md += [md_line(r) for r in pending] or ["（无）"]
     atomic_write(out_dir / "included.md", "\n".join(md) + "\n")
-    rows = fetch_list(records, root, read_previous_fetch(out_dir / "to-fetch.md"))
+    previous = read_previous_fetch(out_dir / "to-fetch.md")
+    rows = fetch_list(records, root, previous)
+    notes = added_notes(out_dir / "to-fetch.md", previous, rows)
     if rows:
         fetch = ["# 待获取全文", "",
                  f"已纳入、还没有全文的 {sum(1 for _, _, d in rows if not d)} 篇。顺序与 papers/to-fetch.ris、papers/endnote-import.ris 一致；补到全文后在编号后加 ✓，编号不重排。", ""]
+        if notes:
+            fetch += notes + [""]
         for n, rec, done in rows:
             doi = record_doi(rec)
             ident = doi or (as_text(rec.get("url")) if meaningful(rec.get("url")) else as_text(rec.get("id")))

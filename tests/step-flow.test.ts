@@ -652,3 +652,22 @@ test("parseToFetchItems：「[已补 …]」前缀记已补齐、标题不带它
   // 条目开始前的分隔线不截断
   assert.equal(parseToFetchItems("说明\n\n---\n\n1. T — 10.1/x\n").length, 1);
 });
+
+test("parseToFetchItems：开头「某天新加：第 x–y 篇」点到的篇带 addedOn，说明行本身不算条目", () => {
+  const text = [
+    "# 待获取全文",
+    "",
+    "已纳入、还没有全文的 3 篇。",
+    "",
+    "2026-11-10 新加：第 3–4、6 篇。",
+    "",
+    "1. ✓ Alpha — 10.1/a",
+    "3. Gamma — 10.1/c",
+    "4. Delta — 10.1/d",
+    "5. Epsilon — 10.1/e",
+    "6. Zeta — 10.1/f",
+  ].join("\n");
+  const items = parseToFetchItems(text);
+  assert.equal(items.length, 5);
+  assert.deepEqual(items.map((i) => i.addedOn ?? null), [null, "2026-11-10", "2026-11-10", null, "2026-11-10"]);
+});

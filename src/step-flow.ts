@@ -445,6 +445,26 @@ export interface ToFetchItem {
   done: boolean;
   /** 行里写出的期刊全称。DOI 后面再挂刊名、缩写时从这里取，不进 url。 */
   venue: string;
+  /** 清单开头「YYYY-MM-DD 新加：第 x–y 篇」点到的篇：哪天新加的（lit_records.py added_notes，2026-11-10） */
+  addedOn?: string;
+}
+
+const ADDED_NOTE = /^(\d{4}-\d{2}-\d{2}) 新加：第 (.+) 篇。$/;
+
+/** 「第 50–52、55 篇」→ 编号 → 日期（与 lit_records.py number_ranges 同一写法） */
+function parseAddedNotes(lines: readonly string[]): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const raw of lines) {
+    const m = ADDED_NOTE.exec(raw.trim());
+    if (!m) continue;
+    for (const part of (m[2] ?? "").split("、")) {
+      const [a, b] = part.split("–").map((x) => Number(x.trim()));
+      if (!Number.isInteger(a)) continue;
+      const end = Number.isInteger(b) ? (b as number) : (a as number);
+      for (let n = a as number; n <= end && n - (a as number) < 500; n += 1) out.set(n, m[1]!);
+    }
+  }
+  return out;
 }
 
 /** 从一段里取出能打开的 DOI 或 http 链接。刊名、缩写、OA 标记留在后面。 */
@@ -485,13 +505,18 @@ const TO_FETCH_DONE_PREFIX = /^(?:\[|【)\s*已补[^\]】]*(?:\]|】)\s*/;
 export function parseToFetchItems(text: string): ToFetchItem[] {
   const out: ToFetchItem[] = [];
   const lines = text.split("\n");
+  const added = parseAddedNotes(lines);
   for (let i = 0; i < lines.length; i += 1) {
     const line = (lines[i] ?? "").trim();
     // 条目开始后的分隔线（---）之后是别的内容（如精读汇总的「待跟进引用线索」），不是待获取
     //（2026-10-18 实测：42 条待获取 + 66 条线索被数成 108）
     if (out.length > 0 && /^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) break;
     const item = parseToFetchLine(line, i);
-    if (item) out.push(item);
+    if (item) {
+      const num = /^(\d+)[.、)]/.exec(line)?.[1];
+      const on = num ? added.get(Number(num)) : undefined;
+      out.push(on ? { ...item, addedOn: on } : item);
+    }
   }
   return out;
 }

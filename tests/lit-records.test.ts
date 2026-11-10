@@ -538,3 +538,26 @@ test("impact：影响因子只从 Mesa 的期刊指标表来，查不到写「�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("write：接着上一版编号的新篇，开头写「某天新加：第 x–y 篇」；上一版的说明照留；首次生成不写", () => {
+  const root = mkdtempSync(join(tmpdir(), "lit-added-"));
+  try {
+    mkdirSync(join(root, "papers"));
+    const rec = (id: string, title: string) => ({ id, title, decision: "included", reason: "纳入", doi: id, authors: ["A, B"], year: "2020", venue: "J", url: `https://doi.org/${id}` });
+    writeFileSync(join(root, "papers", "included.json"), JSON.stringify([rec("10.1/a", "Alpha"), rec("10.1/b", "Beta")], null, 2));
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    const first = readFileSync(join(root, "papers", "to-fetch.md"), "utf8");
+    assert.doesNotMatch(first, /新加/);
+    writeFileSync(join(root, "papers", "to-fetch.md"), first.replace("2. Beta", "2. ✓ Beta"));
+    writeFileSync(join(root, "papers", "included.json"), JSON.stringify([rec("10.1/a", "Alpha"), rec("10.1/b", "Beta"), rec("10.1/c", "Gamma"), rec("10.1/d", "Delta")], null, 2));
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    const second = readFileSync(join(root, "papers", "to-fetch.md"), "utf8");
+    assert.match(second, /^\d{4}-\d{2}-\d{2} 新加：第 3–4 篇。$/m);
+    assert.match(second, /^2\. ✓ Beta/m, "上一版的 ✓ 照留");
+    // 再跑一次：没有新篇，说明照留
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    assert.match(readFileSync(join(root, "papers", "to-fetch.md"), "utf8"), /新加：第 3–4 篇。/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

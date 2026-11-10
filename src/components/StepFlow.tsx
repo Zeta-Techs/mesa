@@ -3421,6 +3421,14 @@ export default function StepFlow({
                                     >
                                       {displayCitationTitle(item.title)}
                                     </button>
+                                    {item.addedOn && (
+                                      <span
+                                        className="shrink-0 rounded-sm bg-raised px-1 text-micro text-l3"
+                                        title={`${item.addedOn} 这一轮新加进待获取的（编号接在上一版后面）`}
+                                      >
+                                        新加 {item.addedOn.slice(5)}
+                                      </span>
+                                    )}
                                     <JournalPills metric={paywallMetrics.get(item.line)} />
                                     {done ? (
                                       <span

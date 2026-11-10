@@ -1857,7 +1857,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；
                              #   结果写 .ccode/checks/cite-*.jsonl 三档核验项，只证「原文有这段话」，支持与否永远交人；随包带 bridge.py
   （技能脚本）lit-search/scripts/lit_records.py  # 题录固定脚本：impact（经 $MESA_JOURNAL_TOOL 查 Mesa 期刊指标表写 impactFactor / casQuartile / casTop，
-                                                 # 查不到写「表中无此刊」，不估）/ enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
+                                                 # 查不到写「表中无此刊」，不估）/ write 接着上一版编号的新篇在 to-fetch.md 开头记「某天新加：第 x–y 篇」
+                                                 # （step-flow.ts parseToFetchItems 读成 addedOn，步骤卡标「新加」）/ enrich（Crossref 为准 + OpenAlex 关键词 + ISO 4，接口缓存在系统临时目录）/
                              #   check 拦 kind 不是 review/research/other；angles-facts（2026-11-05）= 纳入综述的时效对照表（截至年取 index cutoffYear，没写按发表年）
                              #   fetch（开放获取只取正式版或已录用稿，预印本服务器按来源级别）/ write（included.md、to-fetch.md、两份 RIS 只从 json 出）/
                              #   check / bib（精读步从 json 写 references.bib，不另查）。依赖同目录 bridge.py（endnote-bridge 那一份）与
