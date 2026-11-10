@@ -405,44 +405,6 @@ pub async fn build_session_digest(
     .map_err(|e| format!("提炼接力简报失败: {e}"))?
 }
 
-// ===== 提炼简报人工定稿：DigestPicker 编辑后的写回 =====
-// 任务书结论统一走 .ccode/drafts/ 草稿（append_step_draft），不再有「钉卡」中间层；
-// 这里只负责把人改完的提炼简报写回它自己的过程文件（.ccode/handoff-*.md，不进版本库）。
-
-/// 提炼简报写回：path 必须已存在（它是 build_session_digest 的产物），
-/// canonicalize 后必须位于 .ccode/ 目录内且文件名以 handoff- 开头（防逃逸/防误覆盖其他文件）；
-/// 内容过 redact_and_cap 脱敏截断后原子覆盖写。
-#[tauri::command]
-pub async fn finalize_digest_brief(path: String, content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || finalize_digest_brief_at(&path, &content))
-        .await
-        .map_err(|e| format!("写回提炼简报失败: {e}"))?
-}
-
-fn finalize_digest_brief_at(path: &str, content: &str) -> Result<(), String> {
-    if content.trim().is_empty() {
-        return Err("简报内容为空，无法保存".into());
-    }
-    let p = PathBuf::from(sessions::expand_tilde(path));
-    // canonicalize 要求文件已存在，顺带解开符号链接（逃逸链接解析后落在 .ccode 之外即拒）
-    let canon = fs::canonicalize(&p).map_err(|e| format!("简报文件不存在或不可读: {e}"))?;
-    if !canon.is_file() {
-        return Err("目标不是文件，拒绝覆盖".into());
-    }
-    let in_ccode = canon
-        .parent()
-        .and_then(|d| d.file_name())
-        .is_some_and(|n| n == ".ccode");
-    let is_handoff = canon
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with("handoff-"));
-    if !in_ccode || !is_handoff {
-        return Err("只能写回 .ccode/ 下的 handoff-*.md 提炼简报".into());
-    }
-    crate::profiles::atomic_write(&canon, &redact_and_cap(content))
-}
-
 /// 旧版「定稿简报」残留扫描（迁移提示用）：列项目根 .ccode/ 下 brief-*.md，
 /// 返回相对项目根的正斜杠路径列表（文件名带时间戳，字典序即时间序）。
 /// list 口径无写门槛（同 read_task_draft）：仅要求 project_root 是有效目录。
@@ -873,50 +835,7 @@ mod tests {
         conn
     }
 
-    // ===== 提炼简报写回（finalize_digest_brief）与遗留简报扫描（list_legacy_briefs） =====
-
-    /// 写回：内容覆盖原 handoff-*.md 且脱敏；非 handoff- 前缀、.ccode 之外、不存在路径一律拒绝
-    #[test]
-    fn finalize_digest_brief_overwrites_redacted_and_rejects_foreign_paths() {
-        let root = std::env::temp_dir().join(format!("ccode-finalize-{}", uuid::Uuid::new_v4()));
-        let ccode = root.join(".ccode");
-        fs::create_dir_all(&ccode).unwrap();
-        let target = ccode.join("handoff-20260814T000000Z.md");
-        fs::write(&target, "# 旧内容").unwrap();
-
-        // 正常覆盖写 + 脱敏
-        let secret = "sk-ant-api03-abcdef123456";
-        finalize_digest_brief_at(
-            target.to_str().unwrap(),
-            &format!("# 定稿\n\n密钥 {secret}"),
-        )
-        .unwrap();
-        let text = fs::read_to_string(&target).unwrap();
-        assert!(!text.contains("旧内容"), "应整份覆盖: {text}");
-        assert!(!text.contains(secret), "落盘必须脱敏: {text}");
-        assert!(text.contains("已隐藏密钥"));
-
-        // 空内容拒绝且不破坏原文件
-        assert!(finalize_digest_brief_at(target.to_str().unwrap(), "   ").is_err());
-        assert_eq!(fs::read_to_string(&target).unwrap(), text);
-
-        // 同目录但非 handoff- 前缀：拒绝（防误覆盖草稿/档案卡等）
-        let other = ccode.join("project.toml");
-        fs::write(&other, "x").unwrap();
-        let err = finalize_digest_brief_at(other.to_str().unwrap(), "# x").unwrap_err();
-        assert!(err.contains("handoff-"), "{err}");
-
-        // .ccode 之外的路径：拒绝（防逃逸）
-        let outside = root.join("handoff-outside.md");
-        fs::write(&outside, "x").unwrap();
-        assert!(finalize_digest_brief_at(outside.to_str().unwrap(), "# x").is_err());
-
-        // 不存在的路径：拒绝（写回载体必须是已生成的 handoff 文件）
-        let missing = ccode.join("handoff-missing.md");
-        assert!(finalize_digest_brief_at(missing.to_str().unwrap(), "# x").is_err());
-        assert!(!missing.exists(), "拒绝时不得顺手新建文件");
-        std::fs::remove_dir_all(&root).ok();
-    }
+    // ===== 遗留简报扫描（list_legacy_briefs） =====
 
     /// 遗留简报扫描：只收 .ccode/brief-*.md，按时间（文件名）排序；无 .ccode 目录返回空
     #[test]

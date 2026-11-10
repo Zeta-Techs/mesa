@@ -22,7 +22,7 @@ interface FuseDraftDto {
  *
  * 为什么是追加而不是覆盖：想法卡是发散的头脑风暴，用它重写一份已定好的任务书方向就反了；
  * 且覆盖时唯一的防线只有这个 textarea（没有 diff、没有备份）。追加不可能删掉已有内容。
- * AI profile 沿用设置页「提炼接力/评审沉淀」（digest 功能键），未配/失败行内中文报错可重试。
+ * AI profile 沿用设置页「结论提炼」（digest 功能键），未配/失败行内中文报错可重试。
  */
 export default function FuseDraftModal({
   projectPath,

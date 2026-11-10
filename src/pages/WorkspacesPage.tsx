@@ -963,8 +963,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
   // 收件箱条目数镜像给侧栏「工作区」徽标 + 标题栏收件箱（本页唯一写入方，签名变更才写）
   const setInboxItems = useAppStore((s) => s.setInboxItems);
-  // 「◈ 提炼接力」后台任务（store）：ready 未消费 → 收件箱「待发送」
-  const digestJob = useAppStore((s) => s.digestJob);
   const skillAdaptJobs = useAppStore((s) => s.skillAdaptJobs);
   // profile 三层验证失败镜像（ProfilesPage 写入），收件箱只读；已删除的 profile 惰性剔除
   const profileIssues = useAppStore((s) => s.profileIssues);
@@ -1771,18 +1769,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         dismissSignature: helpItemsSignature(h.items),
         action: { type: "help" as const, projectRoot: h.root },
       })),
-    // 接力简报已生成待发送：提炼在后台完成，交接链断在人这里
-    ...(digestJob && digestJob.status === "ready" && !digestJob.consumed
-      ? [
-          {
-            key: "digest",
-            dot: "bg-ok-text",
-            text: inboxTaskLine(digestJob.title || "对话", "待发送"),
-            actionLabel: "去发送",
-            action: { type: "digest" as const },
-          },
-        ]
-      : []),
     ...Object.values(skillAdaptJobs)
       .filter((job) => job.status !== "running" && !job.opened)
       .map((job) => ({

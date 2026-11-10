@@ -19,7 +19,6 @@ test("inboxCategoryOf：key 前缀推导类别，confirm: 与 live: 合并为待
   assert.equal(inboxCategoryOf("live:claude:s-1"), "confirm");
   assert.equal(inboxCategoryOf("ready:ws-2"), "ready");
   assert.equal(inboxCategoryOf("artifacts:ws-3"), "artifacts");
-  assert.equal(inboxCategoryOf("digest"), "digest");
   assert.equal(inboxCategoryOf("skill:lit-search"), "skill");
   assert.equal(inboxCategoryOf("profile:p-1"), "profile");
   assert.equal(inboxCategoryOf("help:/repo/root"), "help");
@@ -68,7 +67,6 @@ test("inboxCategoryLabel：类别中文标签齐备（更新在依赖之后、�
       "lit",
       "ready",
       "artifacts",
-      "digest",
       "profile",
       "help",
     ].map((c) => inboxCategoryLabel(c as Parameters<typeof inboxCategoryLabel>[0])),
@@ -80,7 +78,6 @@ test("inboxCategoryLabel：类别中文标签齐备（更新在依赖之后、�
       "文献",
       "可合并",
       "待核验",
-      "待发送",
       "配置失效",
       "人工请求",
     ],

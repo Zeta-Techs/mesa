@@ -754,11 +754,11 @@
   那条否决的是新增垂直占用，而这条栏在 Overlay 模式下恒占 40px 且不可省（红绿灯靠 `pl-[78px]` 让位），
   这里是利用既有空间。`chromeHidden` 执行态下左中两段隐藏，只留让位与收件箱。
 - **首页「待你处理」收件箱（v3.39；v3.42 起横跨项目导航与详情两栏之上；v3.59 起文档流单行 strip + macOS 收进自绘标题栏；v3.60 扩四类新来源）**：聚合工作区冲突/可合并
-  + 终端注意力（仅待确认），固定顺序 冲突 > 待确认 > 依赖 > 更新 > 文献 > 可合并 > 待核验 > 待发送 > 技能 > 配置失效 > 人工请求（`INBOX_CATEGORIES`），为空整块不渲染；条目为可序列化 `InboxItem`（action 描述非闭包），
-  由 WorkspacesPage 签名去抖镜像进 store（唯一写入方），点击统一走 `runInboxAction` 派发（review/tab/session/digest/artifacts/profiles 都走 store 一次性请求）。
+  + 终端注意力（仅待确认），固定顺序 冲突 > 待确认 > 依赖 > 更新 > 文献 > 可合并 > 待核验 > 技能 > 配置失效 > 人工请求（`INBOX_CATEGORIES`），为空整块不渲染；条目为可序列化 `InboxItem`（action 描述非闭包），
+  由 WorkspacesPage 签名去抖镜像进 store（唯一写入方），点击统一走 `runInboxAction` 派发（review/tab/session/artifacts/profiles 都走 store 一次性请求）。
   **v3.60 新来源（全部过「是否阻塞人的决策」闸）**：**产物待核验**（后端 `pending_artifact_checks`：活跃工作区绑定步骤的
   expectedArtifacts 全部产出且 mtime ≥ 工作区创建时间，可合并/冲突已覆盖的不重复报——产物多为 gitignore 的 *.pdf，git 状态看不见，
-  不提醒就是黑洞；action `artifacts` → 选中项目 + 展开任务行产物清单）；**接力待发送**（digestJob ready 未消费）；**配置失效**
+  不提醒就是黑洞；action `artifacts` → 选中项目 + 展开任务行产物清单）；~~接力待发送~~（2026-11-11 随对话页提炼接力删除）；**配置失效**
   （`profileIssues`：只镜像用户触发的三层验证/设为全局复检失败，验证通过或 profile 删除即摘除，**不新增后台网络轮询**）；
   **冲突升级文案**：`WsHealthDto.stale_base`（MERGE_HEAD ≠ 基准 tip，health_impl 内仅 merge 进行中多一次 rev-parse）命中时
   冲突条目改「基准已前进——需重新同步」，动作仍走 resolve-conflict（评审层自动以当前基准 tip 重备两侧）。

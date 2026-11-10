@@ -15,7 +15,7 @@ import type { ChannelApproval } from "./chat-channel.ts";
 export type QueueTier = "blocking" | "decide" | "notice";
 
 const BLOCKING: ReadonlySet<InboxCategory> = new Set(["confirm", "help", "conflict", "dep", "profile"]);
-const NOTICE: ReadonlySet<InboxCategory> = new Set(["lit", "digest", "phone", "skill"]);
+const NOTICE: ReadonlySet<InboxCategory> = new Set(["lit", "phone", "skill"]);
 
 export function queueTier(key: string): QueueTier {
   const category = inboxCategoryOf(key);

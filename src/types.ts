@@ -763,12 +763,6 @@ export interface HandoffTargetDto {
   nativeFork: boolean;
 }
 
-/** build_handoff_brief 返回：简报文件路径 + 一句话概述 */
-export interface HandoffBriefDto {
-  filePath: string;
-  summary: string;
-}
-
 export interface BlockDto {
   /** command / command_output：Claude 斜杠命令、! 命令及其本地输出（sessions.rs claude_command_block） */
   kind: "text" | "thinking" | "tool_use" | "tool_result" | "command" | "command_output";

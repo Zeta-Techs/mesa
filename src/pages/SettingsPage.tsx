@@ -413,7 +413,7 @@ function externalTerminalSelectValue(stored: string | undefined): string {
 }
 
 /** 内置 AI 功能按功能独立配置的行（key 与后端 ai.rs FN_* 常量对应）。
- *  按用在哪里分三组，每行一句说明——「提炼接力」「雷达解读」这类名字不说用在哪，新用户无从判断要不要单配 */
+ *  按用在哪里分三组，每行一句说明——「雷达解读」这类名字不说用在哪，新用户无从判断要不要单配 */
 const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: string }[] }[] = [
   {
     title: "编程",
@@ -427,7 +427,7 @@ const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: s
     title: "对话与技能",
     rows: [
       { key: "summarize", label: "会话摘要 / 起名", hint: "对话列表的标题与摘要" },
-      { key: "digest", label: "接力与评审提炼", hint: "交接给下一个 Agent、评审结论沉淀" },
+      { key: "digest", label: "结论提炼", hint: "步骤带上上次的结论、评审沉淀、融合任务书" },
       { key: "distill", label: "沉淀为技能", hint: "把一段对话整理成技能" },
       { key: "skill-optimize", label: "优化合成技能", hint: "合并、改写已有技能" },
     ],

@@ -17,7 +17,6 @@ export type InboxCategory =
   | "schedule"
   | "ready"
   | "artifacts"
-  | "digest"
   | "phone"
   | "skill"
   | "profile"
@@ -45,7 +44,6 @@ export const INBOX_CATEGORIES: readonly InboxCategoryMeta[] = [
   { id: "schedule", label: "定时任务" },
   { id: "ready", label: "可合并" },
   { id: "artifacts", label: "待核验" },
-  { id: "digest", label: "待发送" },
   { id: "phone", label: "手机" },
   { id: "skill", label: "技能" },
   { id: "profile", label: "配置失效" },
@@ -64,7 +62,6 @@ export function inboxCategoryOf(key: string): InboxCategory {
   if (key.startsWith("sched:")) return "schedule";
   if (key.startsWith("ready:")) return "ready";
   if (key.startsWith("artifacts:")) return "artifacts";
-  if (key.startsWith("digest")) return "digest";
   if (key.startsWith("phone:")) return "phone";
   if (key.startsWith("skill:")) return "skill";
   if (key.startsWith("profile:")) return "profile";
@@ -101,7 +98,6 @@ export const BULK_READABLE: ReadonlySet<InboxCategory> = new Set([
   "lit",
   "ready",
   "artifacts",
-  "digest",
   "phone",
   "skill",
   // 项目助手派活回音（2026-11-05）：只是通报进展，验收 / 评审仍在原处做，批量消掉不藏决策

@@ -22,7 +22,7 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
   components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup、ArtifactChecklist（文本类产物就地预览层；pdf/docx/表格/图同页弹层 +
                              # md 笔记「⛶ 沉浸阅读」入口（v3.98：pdf_for_note 配对后发 readerReq 带 notePath 进阅读区）+
                              # 拖出手柄（GripVertical）经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
-                             # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、DigestPicker、RelayPicker（换 Agent 那组两层选择：先一家一行，再怎么接 + 按连接分组的模型；聊天模型屏与对话页回放头部共用）、ChatRelayCard（聊天里接力那句前面的卡：前面由谁做 / 你离开期间谁做了几轮，点开摆前一段交出前的几轮、看交接简报）、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
+                             # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、RelayPicker（换 Agent 那组两层选择：先一家一行，再怎么接 + 按连接分组的模型；聊天模型屏与对话页回放头部共用）、ChatRelayCard（聊天里接力那句前面的卡：前面由谁做 / 你离开期间谁做了几轮，点开摆前一段交出前的几轮、看交接简报）、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
                              #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程；PdfPageView 页内标记层 marks
                              #   （查找/标注/跳转一闪：按摘句重定位、页内百分比矩形、文本层之前不接指针，scrollTo nonce 居中）、
@@ -1914,8 +1914,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 截断文件名按 ≥24 字前缀认；新建档笔记标题同口径）；门槛 = gated_root 注册项目根 + canonicalize + 原子写
   citation.rs                # 引用健康检查：.md 引用键（[@key]/多键/[-@key]）对照 references.bib（白名单同 pdf.rs 口径）；
                              # cite_lookup：聊天引用胶囊按键取作者姓 / 年份 / 题名（会话目录往上到白名单根找 bib，只读，8MB 上限）
-  handoff.rs                 # 接力（§11.3 机制四）：简报生成（脱敏+64KB）、提炼接力（build_session_digest AI 蒸馏全会话 +
-                             # finalize_digest_brief 初稿写回）、handoff_links 接力链登记/固化；
+  handoff.rs                 # 接力（§11.3 机制四）：简报生成（脱敏+64KB）、结论提炼（build_session_digest AI 写「要接上的结论」，只给步骤卡「带上上次的结论」用；
+                             # 对话页提炼接力 2026-11-11 已删）、handoff_links 接力链登记/固化；
                              # build_handoff_brief 的 until_text = 聊天层「从这里分叉」，按正文截到那条助手回复（cut_messages_at，认不出报错不给全文）
                              # 2026-11-10 起简报写法统一走 relay_brief（render_handoff_brief 只是薄包装），时间线连同接力过的前几家（relay::timeline_from_messages）
   relay.rs                   # 聊天里换一家 Agent 接着做（docs/design-chat-relay.md）：relay_links 按简报文件名记接力关系（parent 交到第几条、child 认出后补）；

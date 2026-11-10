@@ -62,7 +62,6 @@ import type {
   DetectResult,
   Gateway,
   GatewayInput,
-  HandoffBriefDto,
   Profile,
   ProfileInput,
   RepoDto,
@@ -457,7 +456,6 @@ export interface InboxItem {
       intent?: "pr" | "archive" | "resolve-conflict";
       }
     | { type: "session"; agent: string; sessionId: string }
-    | { type: "digest" }
     | { type: "skillAdapt"; skillId: string }
     | { type: "artifacts"; workspaceId: string }
     | { type: "project"; projectRoot: string }
@@ -519,21 +517,6 @@ export function visibleInboxItems(
     ],
     dismissed,
   );
-}
-
-/** 「◈ 提炼接力」后台任务（v3.60）：AI 蒸馏与 DigestPicker 解耦——picker 可关可开，
-    同一会话复用结果不重复发起；ready 且未消费时进收件箱「待发送」 */
-export interface DigestJob {
-  agent: string;
-  sessionId: string;
-  filePath: string;
-  cwd: string;
-  title: string | null;
-  status: "running" | "ready" | "error";
-  brief?: HandoffBriefDto;
-  error?: string;
-  /** 已选定发送目标/用户丢弃：从收件箱摘除（简报文件仍在磁盘，重开 picker 复用） */
-  consumed: boolean;
 }
 
 /** 「◈ 适配到流水线」后台成稿。opened 后从收件箱摘掉，稿还在，再点该技能直接打开。 */
@@ -614,9 +597,6 @@ export function runInboxAction(item: InboxItem) {
       agent: item.action.agent,
       sessionId: item.action.sessionId,
     });
-    s.setPage("sessions");
-  } else if (item.action.type === "digest") {
-    s.setDigestOpenReq(Date.now());
     s.setPage("sessions");
   } else if (item.action.type === "skillAdapt") {
     s.setSkillAdaptOpenId(item.action.skillId);
@@ -876,24 +856,6 @@ interface AppState {
   setSkillDraftReq: (
     r: { name: string; description: string; content: string } | null,
   ) => void;
-  /** 「◈ 提炼接力」后台任务（生成与 picker 解耦；收件箱「待发送」只读） */
-  digestJob: DigestJob | null;
-  /** 发起提炼；同一会话 running/ready 时复用不重复发起，force 用于失败后重试 */
-  startDigestJob: (
-    src: {
-      agent: string;
-      sessionId: string;
-      filePath: string;
-      cwd: string;
-      title: string | null;
-    },
-    force?: boolean,
-  ) => void;
-  /** 已选定发送目标/用户丢弃：从收件箱摘除（简报文件保留，重开 picker 复用） */
-  consumeDigestJob: () => void;
-  /** 收件箱「去发送」→ 对话页重开 DigestPicker 的一次性请求（nonce 触发） */
-  digestOpenReq: number | null;
-  setDigestOpenReq: (n: number | null) => void;
   /** 「◈ 适配到流水线」后台成稿，按技能 id。打开成稿后 opened=true，收件箱摘掉。 */
   skillAdaptJobs: Record<string, SkillAdaptJob>;
   startSkillAdapt: (skill: { id: string; name: string }, force?: boolean) => void;
@@ -1301,7 +1263,6 @@ export const useAppStore = create<AppState>((set, get) => {
   setRelayPickReq: (r) => set({ relayPickReq: r ? { ...r, token: Date.now() } : null }),
   skillDraftReq: null,
   setSkillDraftReq: (r) => set({ skillDraftReq: r }),
-  digestJob: null,
   skillAdaptJobs: {},
   startSkillAdapt: (skill, force) => {
     const cur = get().skillAdaptJobs[skill.id];
@@ -1370,42 +1331,6 @@ export const useAppStore = create<AppState>((set, get) => {
   },
   skillAdaptOpenId: null,
   setSkillAdaptOpenId: (id) => set({ skillAdaptOpenId: id }),
-  startDigestJob: (src, force) => {
-    const cur = get().digestJob;
-    const same =
-      cur &&
-      cur.agent === src.agent &&
-      cur.sessionId === src.sessionId &&
-      cur.filePath === src.filePath;
-    // 同一会话已有结果/正在跑：直接复用，不因 picker 重开而重复提炼（费 token 且慢）
-    if (same && !force && cur.status !== "error") return;
-    set({ digestJob: { ...src, status: "running", consumed: false } });
-    invoke<HandoffBriefDto>("build_session_digest", {
-      agent: src.agent,
-      sessionId: src.sessionId,
-      filePath: src.filePath,
-      cwd: src.cwd,
-      title: src.title,
-      targetPath: null,
-    })
-      .then((brief) => {
-        const j = get().digestJob;
-        // 期间用户已发起另一会话的提炼：本次结果作废，不回写
-        if (j && j.agent === src.agent && j.sessionId === src.sessionId)
-          set({ digestJob: { ...j, status: "ready", brief } });
-      })
-      .catch((e) => {
-        const j = get().digestJob;
-        if (j && j.agent === src.agent && j.sessionId === src.sessionId)
-          set({ digestJob: { ...j, status: "error", error: String(e) } });
-      });
-  },
-  consumeDigestJob: () => {
-    const j = get().digestJob;
-    if (j) set({ digestJob: { ...j, consumed: true } });
-  },
-  digestOpenReq: null,
-  setDigestOpenReq: (n) => set({ digestOpenReq: n }),
   artifactCheckReq: null,
   setArtifactCheckReq: (id) => set({ artifactCheckReq: id }),
   contextLabel: null,

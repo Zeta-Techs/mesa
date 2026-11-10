@@ -749,7 +749,7 @@ export default function ProjectTree({
       {
         label: "在对话页查看",
         icon: MessagesSquare,
-        title: "看完整过程，导出、提炼接力这些也在那里",
+        title: "看完整过程、导出",
         onSelect: () => {
           const st = useAppStore.getState();
           st.setOpenSessionReq({ agent: s.agent, sessionId: s.sessionId });

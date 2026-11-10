@@ -17,7 +17,7 @@ import {
   Pin,
   PinOff,
   Scissors,
-  ScrollText,
+  ArrowLeftRight,
   SquareArrowOutUpRight,
   SquareStack,
   SquareTerminal,
@@ -81,7 +81,6 @@ import { unreadKeyOf } from "../chat-unread";
 import GitPanel from "../components/GitPanel";
 import RelayPicker from "../components/RelayPicker";
 import type { RelayOptionDto, RelayTarget } from "../chat-relay";
-import DigestPicker from "../components/DigestPicker";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { conversationRestFor, openConversation, openQuickChat } from "../quick-chat-launch";
 import { isScratchCwd } from "../quick-chat";
@@ -1579,23 +1578,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       cancelled = true;
     };
   }, [selected?.agent, selected?.filePath, selected?.alive, selected?.internal, slimTick]);
-  // 「◈ 提炼接力…」目标选择器（AI 蒸馏简报；回放头部下拉与行内 ⋯ 菜单进入）
-  const [digestFor, setDigestFor] = useState<SessionMetaDto | null>(null);
-
-  // 收件箱「接力简报待发送 → 去发送」：按后台任务定位会话并重开 DigestPicker（复用已生成简报）
-  const digestOpenReq = useAppStore((s) => s.digestOpenReq);
-  const setDigestOpenReq = useAppStore((s) => s.setDigestOpenReq);
-  const digestJob = useAppStore((s) => s.digestJob);
-  useEffect(() => {
-    if (!digestOpenReq) return;
-    setDigestOpenReq(null);
-    if (!digestJob) return;
-    const hit = sessions.find(
-      (s) => s.agent === digestJob.agent && s.sessionId === digestJob.sessionId,
-    );
-    if (hit) setDigestFor(hit);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [digestOpenReq]);
 
   /** 移到卡片 / 移出卡片：assign_session_task 落库后刷新列表（store 动作内完成） */
   async function assignTask(s: SessionMetaDto, taskId: string | null) {
@@ -2664,14 +2646,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     换 Agent
                   </button>
                   <button
-                    onClick={() => setDigestFor(selected)}
-                    disabled={!selected.alive && !selected.pinned}
-                    className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
-                    title="提炼成紧凑简报，供新会话继续"
-                  >
-                    ◈ 提炼简报
-                  </button>
-                  <button
                     onClick={() => void onExport()}
                     disabled={exporting || (!selected.alive && !selected.pinned)}
                     className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
@@ -3025,14 +2999,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 disabled: aiSummarizing || !readable,
                 onSelect: () => void onSummarize(),
               },
-              {
-                label: "提炼接力…",
-                icon: ScrollText,
-                hint: "AI",
-                disabled: !readable,
-                title: "AI 提炼全会话成紧凑简报，新会话读简报续作（不带旧上下文）",
-                onSelect: () => setDigestFor(selected),
-              },
               { separator: true },
               ...(slimMenuAvailable(slimInspect)
                 ? [
@@ -3112,19 +3078,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
 
       {clientOpen.dialog}
 
-      {/* 「◈ 提炼接力…」目标选择器（AI 蒸馏简报，三路径续作） */}
-      {digestFor && (
-        <DigestPicker
-          source={{
-            agent: digestFor.agent,
-            sessionId: digestFor.sessionId,
-            filePath: digestFor.filePath,
-            cwd: digestFor.projectPath,
-            title: digestFor.customTitle || digestFor.title,
-          }}
-          onClose={() => setDigestFor(null)}
-        />
-      )}
 
       {/* 右键菜单：会话 = 整理 / 继续 / 删除三组（v3.88 分组口径不变，改走共用菜单）；项目 = 删除全部 */}
       {menu && (
@@ -3225,11 +3178,13 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         onSelect: () => openInClient(ss, c.clientId),
                       })),
                       {
-                        label: "提炼接力…",
-                        icon: ScrollText,
-                        hint: "AI",
-                        title: "AI 提炼全会话成紧凑简报，新会话读简报续作（不带旧上下文）",
-                        onSelect: () => setDigestFor(ss),
+                        label: "换 Agent…",
+                        icon: ArrowLeftRight,
+                        title: "下一句交给另一家 Agent 接着做",
+                        onSelect: () => {
+                          setRelayOptions([]);
+                          setRelayMenu({ x: menu.x, y: menu.y, s: ss });
+                        },
                       },
                     );
                   }

@@ -411,36 +411,6 @@ pub async fn relay_prepare(
     .map_err(|e| format!("生成交接简报失败: {e}"))?
 }
 
-/// 提炼接力（DigestPicker）发给另一家时登记：简报已由 build_session_digest 写好
-#[tauri::command]
-pub async fn relay_register_brief(brief_path: String, source: RelaySource) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let name = Path::new(&brief_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|n| relay_brief::brief_name_in(n).as_deref() == Some(*n))
-            .ok_or("简报文件名不对")?
-            .to_string();
-        let conn = sessions::open_db()?;
-        insert_link(
-            &conn,
-            &RelayLink {
-                brief_name: name.clone(),
-                parent_agent: source.agent.clone(),
-                parent_session: source.session_id.clone(),
-                parent_through: sessions::conversation_impl(&source.agent, &source.file_path).len(),
-                child_agent: None,
-                child_session: None,
-                kind: "full".into(),
-                created_at: sessions::now_iso(),
-            },
-        )?;
-        Ok(relay_brief::full_framing(&source.agent, &source.session_id, &format!(".ccode/{name}"), false))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// 接手那段认出来了（标签认出自己的会话、看到第一句带接力抬头时）
 #[tauri::command]
 pub async fn relay_attach(brief_name: String, agent: String, session_id: String) -> Result<bool, String> {
