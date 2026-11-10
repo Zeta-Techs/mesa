@@ -224,16 +224,28 @@ fn parse_porcelain(text: &str) -> (String, u32, u32, Vec<(String, String)>) {
     (branch, ahead, behind, files)
 }
 
-/// 解析 `git diff --numstat HEAD`：path → (add, del)；二进制行（-\t-）跳过
+/// 解析 `git diff --numstat -z`：path → (add, del)；改名按新名记；二进制行（-\t-）跳过。
+/// 必须带 -z：不带时改名写成 `notes/{旧名 => 新名}`，被当成一个路径，评审里点开是「文件不存在」
+/// （2026-11-10 HER：精读把笔记从中文名改成论文原标题）。-z 下改名是 `增\t删\t` 后跟旧名、新名两段
 fn parse_numstat(text: &str) -> HashMap<String, (u64, u64)> {
     let mut map = HashMap::new();
-    for line in text.lines() {
-        let mut parts = line.splitn(3, '\t');
+    let mut fields = text.split('\0');
+    while let Some(head) = fields.next() {
+        let mut parts = head.splitn(3, '\t');
         let (Some(a), Some(d), Some(p)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
+        let path = if p.is_empty() {
+            let _old = fields.next();
+            match fields.next() {
+                Some(new) => new,
+                None => break,
+            }
+        } else {
+            p
+        };
         if let (Ok(a), Ok(d)) = (a.parse::<u64>(), d.parse::<u64>()) {
-            map.insert(p.to_string(), (a, d));
+            map.insert(path.to_string(), (a, d));
         }
     }
     map
@@ -304,7 +316,7 @@ pub(crate) fn git_status_sync(cwd: &str) -> Result<GitStatusDto, String> {
     let (branch, ahead, behind, raw_files) =
         parse_porcelain(&String::from_utf8_lossy(&status_out.stdout));
     // 空仓库（无 HEAD）numstat 会失败，此时 tracked 增量拿不到，按 None 处理
-    let numstat = run_git(&cwd, &["diff", "--numstat", "HEAD"])
+    let numstat = run_git(&cwd, &["diff", "--numstat", "-z", "HEAD"])
         .ok()
         .filter(|o| o.status.success())
         .map(|o| parse_numstat(&String::from_utf8_lossy(&o.stdout)))
@@ -1284,7 +1296,7 @@ fn review_diff_for_run(wt: &str, run: &crate::runs::RunDto) -> Result<WorkspaceD
     let mut files = Vec::new();
     let mut total_add = 0;
     let mut total_del = 0;
-    if let Ok(out) = run_git(wt, &["diff", "--numstat", "HEAD"]) {
+    if let Ok(out) = run_git(wt, &["diff", "--numstat", "-z", "HEAD"]) {
         if out.status.success() {
             for (path, (a, d)) in parse_numstat(&String::from_utf8_lossy(&out.stdout)) {
                 total_add += a;
@@ -1402,7 +1414,7 @@ fn workspace_diff_with_rows(
     let merge_base = String::from_utf8_lossy(&mb.stdout).trim().to_string();
     // 三次 git 互不依赖，并行跑（Windows 上每起一个 git 要 100–150ms，打开评审要等它）
     let (numstat, ns, porc) = std::thread::scope(|s| {
-        let numstat = s.spawn(|| run_git(&wt, &["diff", "--numstat", &merge_base]));
+        let numstat = s.spawn(|| run_git(&wt, &["diff", "--numstat", "-z", &merge_base]));
         let ns = s.spawn(|| run_git(&wt, &["diff", "--name-status", &merge_base]));
         let porc =
             s.spawn(|| run_git(&wt, &["status", "--porcelain=v1", "--untracked-files=all"]));
@@ -2173,6 +2185,50 @@ mod tests {
         assert_eq!(files6[0], ("U".to_string(), "conflict.rs".to_string()));
         assert_eq!(files6[1], ("U".to_string(), "both.rs".to_string()));
         assert_eq!(files6[2], ("U".to_string(), "deleted.rs".to_string()));
+    }
+
+    #[test]
+    fn numstat_z_keys_renames_by_new_path() {
+        let m = parse_numstat("1\t1\tnotes/a.md\0-\t-\tfig.png\03\t0\t\0notes/旧名.md\0notes/New Name.md\0");
+        assert_eq!(m.get("notes/a.md"), Some(&(1, 1)));
+        assert_eq!(m.get("notes/New Name.md"), Some(&(3, 0)));
+        assert!(!m.contains_key("fig.png"), "二进制不计行数");
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn workspace_diff_lists_renamed_file_by_new_path() {
+        if !git_available() {
+            return;
+        }
+        let dir = tmpdir("wsdiff-rename");
+        let repo = dir.join("repo");
+        git(&dir, &["init", "-b", "main", "repo"]);
+        git(&repo, &["config", "user.email", "t@t.dev"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::create_dir_all(repo.join("notes")).unwrap();
+        fs::write(repo.join("notes/22-非晶OER综述.md"), "l1\nl2\nl3\nl4\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "init"]);
+        let wt = dir.join("wt");
+        git(&repo, &["worktree", "add", wt.to_str().unwrap(), "-b", "ccode/t1", "main"]);
+        git(&wt, &["mv", "notes/22-非晶OER综述.md", "notes/22-Amorphous-OER.md"]);
+        fs::write(wt.join("notes/22-Amorphous-OER.md"), "l1\nl2\nl3\nl4\nl5\n").unwrap();
+        git(&wt, &["add", "."]);
+        git(&wt, &["commit", "-m", "rename"]);
+        let rows = vec![crate::workspaces::WorktreeRow {
+            id: "ws-1".into(),
+            worktree_path: wt.to_string_lossy().into_owned(),
+            repo_path: repo.to_string_lossy().into_owned(),
+            name: "t1".into(),
+            branch: "ccode/t1".into(),
+            base_branch: "main".into(),
+        }];
+        let d = workspace_diff_with_rows(wt.to_str().unwrap(), &rows).unwrap();
+        let paths: Vec<&str> = d.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["notes/22-Amorphous-OER.md"], "改名按新名列出，不是 {{旧 => 新}}");
+        assert_eq!(d.files[0].status, "R");
+        assert!(wt.join(&d.files[0].path).is_file(), "列出的路径点得开");
     }
 
     #[test]
