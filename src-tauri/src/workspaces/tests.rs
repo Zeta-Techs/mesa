@@ -1239,6 +1239,29 @@ fn incoming_lists_files_base_changed_since_branching() {
 }
 
 #[test]
+fn sync_ignores_review_notes_but_not_other_dirt() {
+    let Some(fx) = Fixture::new() else { return };
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "notes-sync").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    commit_all_in_worktree(&wt, "夹具复制进来的 .env");
+    fs::write(fx.repo.join("outline.md"), "# 大纲\n").unwrap();
+    sh(&fx.repo, &["add", "outline.md"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "大纲"]);
+    // 只有退回意见：照常并入，意见原样留着
+    fs::create_dir_all(wt.join(".ccode")).unwrap();
+    fs::write(wt.join(REVIEW_NOTES_FILE), "补自支撑电极\n").unwrap();
+    sync_base_impl(&wt, "main", false).expect("退回意见不挡并入");
+    assert!(wt.join("outline.md").exists());
+    assert_eq!(fs::read_to_string(wt.join(REVIEW_NOTES_FILE)).unwrap(), "补自支撑电极\n");
+    // 别的没提交的照旧拦
+    fs::write(fx.repo.join("more.md"), "x\n").unwrap();
+    sh(&fx.repo, &["add", "more.md"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "more"]);
+    fs::write(wt.join("draft.md"), "未提交\n").unwrap();
+    assert!(sync_base_impl(&wt, "main", false).unwrap_err().contains("未提交改动"));
+}
+
+#[test]
 fn stale_conflict_restarts_against_latest_base() {
     let Some(fx) = Fixture::new() else { return };
     sh(&fx.repo, &["add", ".env", ".envrc"]);

@@ -4778,7 +4778,10 @@ fn sync_base_impl(wt: &Path, base_branch: &str, restart: bool) -> Result<String,
             .map_err(|e| format!("放弃旧冲突现场失败，请先手动执行 git merge --abort：{e}"))?;
     }
     // 工作树有未提交改动时 git 会拒绝合并，先说清楚。restart 已先 abort，避免把冲突状态误判为普通脏文件。
-    if !run_git(wt, &["status", "--porcelain"], Duration::from_secs(30))?.is_empty() {
+    // 评审退回意见只留在工作树、从不进提交，并入也碰不到它，不算未提交改动（2026-11-10 HER：补充文献时卡在这里）
+    // 逐个列未跟踪文件：.ccode/ 整个没被跟踪时 git 只报 `?? .ccode/`，认不出里面只有退回意见
+    let porcelain = run_git(wt, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30))?;
+    if porcelain_has_changes(&porcelain) {
         return Err("工作区有未提交改动，请先在「改动」面板提交，再并入主分支".into());
     }
     // 干净并入会产生 merge commit，同样要绕过用户全局 commit.gpgsign
