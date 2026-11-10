@@ -2826,7 +2826,10 @@ function LiveWorkspaceReviewView({
                         .openAssistant(
                           researchContext.workspace.repoPath,
                           reviewPrereadQuestion(researchContext.stepNo),
-                          reviewPrereadFocus(researchContext.stepNo, researchContext.step.name),
+                          reviewPrereadFocus(researchContext.stepNo, researchContext.step.name, {
+                            worktree: researchContext.workspace.worktreePath,
+                            artifacts: researchContext.step.expectedArtifacts,
+                          }),
                         )
                     }
                     title="项目助手只读打开这一步交的东西，列出值得你看的地方（缺出处、数字对不上、改动大的段落、待你判断的核验）；不判通过、不打分，采不采纳仍由你定"

@@ -66,13 +66,24 @@ function after(at: string | null | undefined, since: string | null): boolean {
 }
 
 /** 评审前先看一遍的重点（面板「常用问题」与评审页「让项目助手先看一遍」同一句，只读、不判通过） */
-export function reviewPrereadFocus(n: number, name: string): { title: string; detail: string } {
+/** 由清单脚本生成、与 included.json 同源的文件：先看一遍时不读（2026-11-10 HER：把 6 个文件 5600 行挨个通读，两分钟还没答） */
+const GENERATED_ARTIFACT = /(^|\/)(included\.md|to-fetch\.md|[^/]*\.ris|references\.bib)$/i;
+
+export function reviewPrereadFocus(
+  n: number,
+  name: string,
+  where?: { worktree?: string; artifacts?: readonly string[] },
+): { title: string; detail: string } {
+  const read = (where?.artifacts ?? []).filter((a) => !GENERATED_ARTIFACT.test(a));
+  const skipped = (where?.artifacts ?? []).filter((a) => GENERATED_ARTIFACT.test(a));
   return {
     title: `评审前先看一遍：第 ${n} 步「${name}」`,
     detail:
-      `用户马上要评审第 ${n} 步交的东西。只读打开这一步工作副本里这一轮的改动和交付物，列出值得人看的地方：` +
+      `用户马上要评审第 ${n} 步交的东西。只读打开这一步${where?.worktree ? `工作副本（${where.worktree}）` : "工作副本"}里的交付物，列出值得人看的地方：` +
       "结论缺出处或出处对不上、数字前后或与数据不一致、和上一版差别大的段落、核验里待你判断的条目、交付物缺了哪样。" +
-      "每条写到文件和位置。不判断能不能通过、不打分、不替人决定采不采纳；没发现问题就直说没看出明显问题，并说明看了哪些文件。",
+      "每条写到文件和位置。不判断能不能通过、不打分、不替人决定采不采纳；没发现问题就直说没看出明显问题，并说明看了哪些文件。" +
+      `读法（两分钟内答完）：${read.length ? `只看 ${read.join("、")}，` : ""}最多打开 5 个文件；先读主报告开头的验收摘要，再用搜索定位可疑处，不整份通读；` +
+      `大的 JSON 只搜关键字段${skipped.length ? `；${skipped.join("、")} 由脚本从清单生成，不读` : "；脚本生成的清单、RIS、bib 不读"}；不读 PDF。`,
   };
 }
 

@@ -96,3 +96,14 @@ test("hasKnowledgeSources：项目根有 README / CLAUDE / AGENTS / 写作规范
   // 名字里带这些词但不是约定文件的不算
   assert.equal(hasKnowledgeSources(["readme-figures.png", "agents-notes.txt"]), false);
 });
+
+test("reviewPrereadFocus：给出工作副本与要看的交付物，脚本生成的清单 / RIS 点名不读", () => {
+  const f = reviewPrereadFocus(1, "文献检索与筛选", {
+    worktree: "/w/lit-search",
+    artifacts: ["papers/screening.md", "papers/included.md", "papers/included.json", "papers/to-fetch.md", "papers/to-fetch.ris", "papers/endnote-import.ris"],
+  });
+  assert.match(f.detail, /工作副本（\/w\/lit-search）/);
+  assert.match(f.detail, /只看 papers\/screening\.md、papers\/included\.json，/);
+  assert.match(f.detail, /papers\/included\.md、papers\/to-fetch\.md、papers\/to-fetch\.ris、papers\/endnote-import\.ris 由脚本从清单生成，不读/);
+  assert.match(f.detail, /最多打开 5 个文件/);
+});
