@@ -332,3 +332,91 @@ test("已纳入一长串只先列前 20 篇，点「展开其余」才全列；�
     }
   }
 });
+
+test("评审面板里移出 / 恢复：清单不重装，影响因子排序、展开的已排除都还在，行原地写结果", async () => {
+  const bundle = await build({
+    stdin: { contents: `export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as Panel} from './src/components/ScreeningReviewPanel';`, resolveDir: process.cwd(), loader: "tsx" },
+    bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
+    external: ["react", "react-dom/client", "react/jsx-runtime", "@tauri-apps/api/core", "@tauri-apps/plugin-opener"],
+  });
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  let json = JSON.stringify([
+    { id: "doi:a", title: "Alpha paper", decision: "included", reason: "纳入（主线）", source: "J A" },
+    { id: "doi:b", title: "Beta paper", decision: "included", reason: "纳入（主线）", source: "J B" },
+    { id: "doi:c", title: "Gamma paper", decision: "included", reason: "纳入（主线）", source: "J C" },
+    { id: "doi:x", title: "Xi paper", decision: "excluded", reason: "排除：主题无关", source: "J X" },
+    { id: "doi:y", title: "Ypsilon paper", decision: "excluded", reason: "排除：主题无关", source: "J Y" },
+  ]);
+  const ifs: Record<string, string> = { "J A": "3", "J B": "9", "J C": "6", "J X": "1", "J Y": "2" };
+  let rev = 0;
+  Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
+    if (command === "list_dir") return [];
+    if (command === "journal_metrics_status") return { available: true, journalCount: 5 };
+    if (command === "check_journal_metrics_update") return { upstreamUpdatedAt: null, hasUpdate: false };
+    if (command === "lookup_journal_metrics") return (args.items ?? args.queries ?? args.names ?? []).map((q: any) => {
+      const name = typeof q === "string" ? q : (q.source ?? q.name ?? q.journal ?? "");
+      return ifs[name] ? { impactFactor: ifs[name], quartile: null, top: false } : null;
+    });
+    if (command === "save_research_ledger") {
+      if (String(args.path ?? args.rel ?? "").endsWith("included.json") || String(args.text ?? "").trim().startsWith("[")) json = args.text;
+      return `r${++rev}`;
+    }
+    if (command !== "read_research_ledger") return null;
+    if (String(args.path).endsWith("included.json")) return { text: json, truncated: false, revision: `j${rev}` };
+    if (String(args.path).endsWith("to-fetch.md")) return { text: TO_FETCH, truncated: false, revision: "t1" };
+    throw new Error(String(args.path));
+  } } });
+  const mod = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports);
+  const { createElement: h, act, createRoot, Panel } = mod.exports;
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  const lists = () => [...host.querySelectorAll("ul")].map((ul) => [...ul.children].map((li) => li.textContent ?? ""));
+  try {
+    await act(async () => root.render(h(Panel, { root: "/tree", projectRoot: "/project", stepName: "文献检索与筛选", pane: "list" })));
+    const select = host.querySelector("select") as HTMLSelectElement | null;
+    assert.ok(select, "有排序下拉");
+    {
+      await act(async () => {
+        select!.value = "if-desc";
+        select!.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      });
+    }
+    const excludedToggle = [...host.querySelectorAll("button")].find((b) => /展开已排除/.test(b.textContent ?? ""))!;
+    await act(async () => excludedToggle.click());
+    const before = lists();
+    const includedBefore = before[0]!;
+    assert.equal(includedBefore.length, 3);
+    // 移出第二行
+    const second = host.querySelectorAll("ul")[0]!.children[1]!;
+    const remove = [...second.querySelectorAll("button")].find((b) => b.textContent === "移出")!;
+    await act(async () => remove.click());
+    await act(async () => {});
+    const afterRemove = lists();
+    assert.equal(afterRemove[0]!.length, 3, "清单没被重装：移出的那篇还在原位");
+    assert.match(afterRemove[0]![1]!, /已移出/);
+    assert.deepEqual(afterRemove[0]!.map((t) => t.replace(/已移出.*/, "").slice(0, 12)), includedBefore.map((t) => t.slice(0, 12)), "顺序不变");
+    assert.equal((host.querySelector("select") as HTMLSelectElement).value, "if-desc", "排序还在");
+    assert.ok([...host.querySelectorAll("button")].some((b) => /收起已排除/.test(b.textContent ?? "")), "已排除还展开着");
+    // 在已排除里恢复一篇
+    const excludedList = host.querySelectorAll("ul")[host.querySelectorAll("ul").length - 1]!;
+    const firstExcluded = [...excludedList.children].find((li) => /Xi paper/.test(li.textContent ?? ""))!;
+    const restoreBtn = [...firstExcluded.querySelectorAll("button")].find((b) => b.textContent === "恢复为待确认")!;
+    await act(async () => restoreBtn.click());
+    await act(async () => {});
+    const lastList = [...host.querySelectorAll("ul")].at(-1)!;
+    assert.ok([...lastList.children].some((li) => /Xi paper.*已恢复为待确认/.test(li.textContent ?? "")), "恢复的那篇原地写结果");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, d] of restore) {
+      if (d) Object.defineProperty(globalThis, key, d);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

@@ -99,7 +99,24 @@ export default forwardRef<PendingConfirmHandle, {
   const [includingAll, setIncludingAll] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [pickedIncluded, setPickedIncluded] = useState<Set<string>>(new Set());
-  const [sortMode, setSortMode] = useState<ScreeningSort>("listed");
+  // 排序按项目记在本机：人设好影响因子排序后，移出 / 恢复 / 重开评审都不该回到默认（2026-11-10 HER）
+  const sortKey = `mesa.screeningSort:${projectRoot ?? worktreePath ?? ""}`;
+  const [sortMode, setSortModeState] = useState<ScreeningSort>(() => {
+    try {
+      const v = localStorage.getItem(sortKey);
+      return v === "if-desc" || v === "if-asc" ? v : "listed";
+    } catch {
+      return "listed";
+    }
+  });
+  const setSortMode = (next: ScreeningSort) => {
+    setSortModeState(next);
+    try {
+      localStorage.setItem(sortKey, next);
+    } catch {
+      /* 存不下只是这次有效 */
+    }
+  };
   const [records, setRecords] = useState<IncludedRecord[] | null>(null);
   const [jsonRoot, setJsonRoot] = useState(projectRoot);
   const [jsonText, setJsonText] = useState("");
@@ -120,6 +137,8 @@ export default forwardRef<PendingConfirmHandle, {
   const [settled, setSettled] = useState<Map<string, IncludedRecord>>(new Map());
   // 这次在「已纳入」里点了移出的：留在原位置、压暗写「已移出」，不让下面的行顶上来（2026-11-10 HER 审阅：移出时顺序跳变）
   const [removedHere, setRemovedHere] = useState<Set<string>>(new Set());
+  // 这次在「已排除」里恢复为待确认的：同样留在原位写结果，不让已排除列表跳
+  const [restoredHere, setRestoredHere] = useState<Set<string>>(new Set());
   // 这次动作写过项目根的哪些台账（commitToProject 时动作收尾一并提交）
   const touchedRef = useRef<Set<string>>(new Set());
   const onClearedRef = useRef(onCleared);
@@ -129,6 +148,7 @@ export default forwardRef<PendingConfirmHandle, {
     setError(null);
     setSettled(new Map());
     setRemovedHere(new Set());
+    setRestoredHere(new Set());
     const json = await readFirst(roots, "papers/included.json");
     if (!json) {
       setRecords([]);
@@ -410,6 +430,13 @@ export default forwardRef<PendingConfirmHandle, {
       setJsonText(nextJson);
       setJsonRevision(nextJsonRev);
       setRecords(parseIncludedRecords(nextJson));
+      setRestoredHere((prev) => new Set(prev).add(key));
+      setRemovedHere((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
       if (mdText != null && mdRevision) {
         const nextMd = syncIncludedSummary(
           patchIncludedMd(mdText, row.title, "pending", includedMdLine(row)),
@@ -624,7 +651,9 @@ export default forwardRef<PendingConfirmHandle, {
   // 全选 / 移出所选仍按全部已纳入算
   const includedFolded = !includedAllOpen && includedView.length > INCLUDED_PREVIEW + INCLUDED_FOLD_SLACK;
   const includedVisible = includedFolded ? includedView.slice(0, INCLUDED_PREVIEW) : includedView;
-  const excludedShown = shown(excluded);
+  const excludedShown = shown(
+    records.filter((row) => row.decision === "excluded" || restoredHere.has(includedRecordKey(row))),
+  );
   const pickedRows = pending.filter((row) => picked.has(includedRecordKey(row)));
   const pickedIncludedRows = included.filter((row) => pickedIncluded.has(includedRecordKey(row)));
 
@@ -902,7 +931,7 @@ export default forwardRef<PendingConfirmHandle, {
           </ul>
         </section>
       )}
-      {included.length > 0 && (
+      {includedView.length > 0 && (
         <section>
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-micro text-l3">已纳入 {includedShown.length}{includedShown.length === included.length ? "" : ` / ${included.length}`}</p>
@@ -971,7 +1000,7 @@ export default forwardRef<PendingConfirmHandle, {
           )}
         </section>
       )}
-      {excluded.length > 0 && (
+      {excludedShown.length > 0 && (
         <section>
           <button
             type="button"
@@ -985,6 +1014,17 @@ export default forwardRef<PendingConfirmHandle, {
             <ul className="mt-1 space-y-2">
               {excludedShown.map((row) => {
                 const key = includedRecordKey(row);
+                if (row.decision !== "excluded") {
+                  return rowBody(
+                    row,
+                    <div className="mt-1 text-micro text-l3">
+                      {row.decision === "pending" ? "已恢复为待确认（在上面「待确认」里拍板）" : "已纳入"}
+                    </div>,
+                    null,
+                    false,
+                    true,
+                  );
+                }
                 return rowBody(
                   row,
                   <button

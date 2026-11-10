@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode, useRef } from "react";
 import { readResearchLedger } from "../research-report-load";
 import {
   parseIncludedRecords,
@@ -37,11 +37,15 @@ export default function ScreeningReviewPanel({
   const [toFetch, setToFetch] = useState(0);
   const [searchLog, setSearchLog] = useState("");
   const [truncated, setTruncated] = useState(false);
+  const shownRoot = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    setRecords(null);
+    // 只有换了一份清单才清空重读；同一份改一处（移出、恢复、纳入）后重读计数时不卸下面的清单——
+    // 一卸，排序、展开的「已排除」、原地留着的行、滚动位置全没了（2026-11-10 HER 审阅实测）
+    if (shownRoot.current !== root) setRecords(null);
+    shownRoot.current = root;
     void (async () => {
       try {
         const [json, fetchMd, screening] = await Promise.all([
