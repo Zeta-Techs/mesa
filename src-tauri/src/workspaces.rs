@@ -5130,7 +5130,10 @@ pub async fn workspace_resolve_file(
 }
 
 /// 完成并入提交的实现（worktree 直给，便于测试）
-fn finish_merge_impl(wt: &Path) -> Result<String, String> {
+/// 完成并入提交，返回新的 HEAD。expect_head：评审页冻结的已审版本——并入前的 HEAD 必须就是它，
+/// 这样新提交只多了人逐个选边的结果，评审页可以把新 HEAD 当作已审版本直接保存
+/// （2026-11-10 HER：解完冲突点保存报「你看过之后工作区又有新提交」，因为已审版本还停在并入前）
+fn finish_merge_impl(wt: &Path, expect_head: Option<&str>) -> Result<String, String> {
     let st = unmerged_impl(wt)?;
     if !st.merging {
         return Err("当前没有进行中的并入".into());
@@ -5138,17 +5141,23 @@ fn finish_merge_impl(wt: &Path) -> Result<String, String> {
     if !st.files.is_empty() {
         return Err(format!("还有未解决的冲突文件：{}", st.files.join("、")));
     }
+    if let Some(expect) = expect_head.map(str::trim).filter(|e| !e.is_empty()) {
+        let head = run_git(wt, &["rev-parse", "HEAD"], Duration::from_secs(10))?;
+        if head.trim() != expect {
+            return Err("你看过之后工作区又有新提交，请刷新评审、重新过一遍再保存（冲突解决结果还没提交）".into());
+        }
+    }
     // 与 merge 路径一致：应用内自动提交绕过用户全局 commit.gpgsign
     let ident = crate::git_info::commit_identity_args(wt);
     let mut args: Vec<&str> = ident.iter().map(String::as_str).collect();
     args.extend(["-c", "commit.gpgsign=false", "commit", "--no-edit"]);
     run_git(wt, &args, Duration::from_secs(60))?;
-    Ok("冲突解决完成，已提交并入".to_string())
+    run_git(wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).map(|h| h.trim().to_string())
 }
 
 /// 全部冲突解决完后完成并入提交（--no-edit 用 git 生成的 merge 信息）
 #[tauri::command]
-pub async fn workspace_finish_merge(id: String) -> Result<String, String> {
+pub async fn workspace_finish_merge(id: String, expect_head: Option<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db()?;
         let w = get_workspace(&conn, &id)?;
@@ -5156,7 +5165,7 @@ pub async fn workspace_finish_merge(id: String) -> Result<String, String> {
         if unmerged_with_base(&wt, &w.base_branch)?.stale_base {
             return Err(format!("{} 已更新，请先重新同步最新基准", w.base_branch));
         }
-        let out = finish_merge_impl(&wt)?;
+        let out = finish_merge_impl(&wt, expect_head.as_deref())?;
         // 解完冲突也是一次并入（评审页「完成解决并合并」）：记下，「待跟进」才按它判
         crate::step_loop::record_sync(&w);
         Ok(out)

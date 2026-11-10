@@ -2332,7 +2332,12 @@ function LiveWorkspaceReviewView({
     setMergeDone(false);
     let resolvedCommitted = false;
     try {
-      await invoke<string>("workspace_finish_merge", { id: diff.workspaceId });
+      // 并入前 HEAD 必须是已审版本；新提交只多了人选边的结果，拿它的 HEAD 当已审版本保存
+      // （原先不传，保存时报「你看过之后工作区又有新提交」，2026-11-10 HER）
+      const head = await invoke<string>("workspace_finish_merge", {
+        id: diff.workspaceId,
+        expectHead: reviewedShaRef.current ?? null,
+      });
       resolvedCommitted = true;
       if (!mergeAfter) {
         setResult("冲突解决结果已提交，可稍后继续审阅并保存进项目");
@@ -2341,6 +2346,7 @@ function LiveWorkspaceReviewView({
       }
       await mergeIntoProject(false, {
         healthFail: (reasons) => reasons,
+        committedHash: head,
       });
       await refresh();
     } catch (reason) {

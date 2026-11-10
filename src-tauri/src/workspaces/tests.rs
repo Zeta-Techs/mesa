@@ -1155,7 +1155,7 @@ fn resolve_flow_sync_conflict_pick_side_finish() {
     let archive_err = archive_impl(&fx.conn, &w.id).unwrap_err();
     assert!(archive_err.contains("合并或冲突"), "{archive_err}");
     assert!(wt.exists(), "冲突未解决时归档不得移除工作树");
-    assert!(finish_merge_impl(&wt).unwrap_err().contains("未解决"));
+    assert!(finish_merge_impl(&wt, None).unwrap_err().contains("未解决"));
     // 选分支版（ours）→ 清单清空，文件内容是分支版（Windows 上 checkout 落盘为 CRLF，断言归一化）
     let st = resolve_file_impl(&wt, "feature.txt", "ours").unwrap();
     assert!(st.files.is_empty());
@@ -1165,8 +1165,15 @@ fn resolve_flow_sync_conflict_pick_side_finish() {
             .replace("\r\n", "\n"),
         "branch\n"
     );
-    // finish → merge 提交完成，健康检查通过后可直接合入主仓库
-    finish_merge_impl(&wt).unwrap();
+    // finish：并入前 HEAD 对不上已审版本就拒绝、不提交；对上了返回新 HEAD，评审页拿它当已审版本直接保存
+    let before = run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).unwrap();
+    assert!(finish_merge_impl(&wt, Some("0000000000000000000000000000000000000000"))
+        .unwrap_err()
+        .contains("新提交"));
+    assert!(unmerged_impl(&wt).unwrap().merging, "拒绝时不得提交");
+    let head = finish_merge_impl(&wt, Some(before.trim())).unwrap();
+    assert_eq!(head, run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).unwrap().trim());
+    assert_ne!(head, before.trim());
     assert!(!unmerged_impl(&wt).unwrap().merging);
     let (conflict, _) = conflict_probe(&wt, "main", "HEAD");
     assert_eq!(conflict, Some(false));
@@ -1786,7 +1793,7 @@ fn auto_merge_and_commit_bypass_gpgsign_config() {
     );
     assert!(sync_base_impl(&wt, "main", false).is_err());
     resolve_file_impl(&wt, "feature.txt", "ours").unwrap();
-    finish_merge_impl(&wt).expect("完成并入的提交应绕过 gpgsign");
+    finish_merge_impl(&wt, None).expect("完成并入的提交应绕过 gpgsign");
     // 最终 merge --no-ff 进主仓库也绕过 gpgsign
     let out = merge_impl(&fx.conn, &w.id, false).unwrap();
     assert!(out.merged, "{}", out.message);
@@ -1841,7 +1848,7 @@ fn resolve_modify_delete_conflict_picks_deleted_side() {
     let st = resolve_file_impl(&wt, "feature.txt", "theirs").unwrap();
     assert!(st.files.is_empty());
     assert!(!wt.join("feature.txt").exists());
-    finish_merge_impl(&wt).unwrap();
+    finish_merge_impl(&wt, None).unwrap();
     assert!(
         run_git(
             &wt,
