@@ -261,7 +261,8 @@
   `.git/info/exclude`（`exclude_task_md`，全 worktree 与主仓生效，best-effort 不阻断）——TASK.md 是开步脚手架而非任务产物。
 - **分路声明（2026-11-03 协作四期）**：`[steps.fan_out]` 写在步骤合同里（与 checks 同级），英文综述 / 毕业论文的「文献精读与笔记」带 `LIT_NOTES_FANOUT`
   （`pipeline-presets.ts`：included.json 纳入的篇、每路 8 篇、最多 4 路；`own` 点名不跑 `lit_records.py write`；`merge` 写清收尾要出的共享文件，同样不跑 write、不改 papers/ 下的清单）。
-  不进任务书正文（各路开场另给），不占长度预算。改英文综述模板后照旧跑 `scripts/export-review-template.ts` 同步示例课题 JSON。
+  不进任务书正文（各路开场另给），不占长度预算。各路开场（`fan-out.ts lanePrompt`，所有分路通用）写明读材料的中间文件（抽出的文字、页面截图、临时脚本）放系统临时目录、不放进工作区（2026-11-10 HER：第 4 路的 OCR 截图和 swift 脚本放在 artifacts/，评审后带回了项目）；
+  收尾一路合表照搬各路写好的行、只调顺序和格式，各路漏在产物目录里的中间文件删掉。改英文综述模板后照旧跑 `scripts/export-review-template.ts` 同步示例课题 JSON。
   **数据清洗（2026-11-04）**：数据处理模板「数据登记与检查」多交 `data/datasets.json`（id、name、path，机器验收 records），「清洗与整理」带 `DATA_CLEAN_FANOUT`
   （每个数据集一路、最多 4 路）。各路只写 `cleaning/batches/<序号>-<名>/`，不写 help-wanted 与 cleaning/ 顶层文件；**各路问不了人，关键规则（去重、剔除、插补、合表、
   单位编码）只写草案、脚本里默认不执行**，收尾一路问过人再按裁决打开。Codex 干跑实证：不写这句时 glm-5.2 一路自己把去重做了。
