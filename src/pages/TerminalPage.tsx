@@ -1659,6 +1659,26 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forkSessionReq]);
 
+  // 对话页「换 Agent」：那边已打开这段对话，这里等持有它的标签挂好，把接力目标挂上（发下一句时才交接）
+  const relayPickReq = useAppStore((s) => s.relayPickReq);
+  useEffect(() => {
+    if (!relayPickReq) return;
+    if (Date.now() - relayPickReq.token > 15_000) {
+      useAppStore.getState().setRelayPickReq(null);
+      return;
+    }
+    const holder = tabs.find(
+      (t) =>
+        t.resumeSessionId === relayPickReq.sessionId ||
+        (sessionByTab[t.id]?.agentId === relayPickReq.agent &&
+          sessionByTab[t.id]?.sessionId === relayPickReq.sessionId),
+    );
+    const actions = holder ? tabActionsRef.current.get(holder.id) : undefined;
+    if (!holder || !actions) return;
+    useAppStore.getState().setRelayPickReq(null);
+    actions.pickRelay(relayPickReq.target);
+  }, [relayPickReq, tabs, sessionByTab]);
+
   /** 工作树「在此打开新终端」：新建标签并预填 cwd，用户选 agent/profile 后启动 */
   // 「在此打开新终端」：开一个纯终端（shell），侧栏所属文件夹下多一行「终端」；不是一段新对话
   const openTerminalAt = useCallback(

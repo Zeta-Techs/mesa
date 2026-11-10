@@ -3,7 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import type { HandoffBriefDto, HandoffTargetDto } from "../types";
-import type { HandoffSource } from "./HandoffPicker";
+/** 提炼接力的来源会话（对话页回放 / 终端标签共用） */
+export interface HandoffSource {
+  agent: string;
+  sessionId: string;
+  filePath: string;
+  cwd: string;
+  title: string | null;
+}
 import { relativeUnder } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 import { hoverRevealClass } from "./PageFrame";

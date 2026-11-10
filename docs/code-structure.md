@@ -22,7 +22,7 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
   components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup、ArtifactChecklist（文本类产物就地预览层；pdf/docx/表格/图同页弹层 +
                              # md 笔记「⛶ 沉浸阅读」入口（v3.98：pdf_for_note 配对后发 readerReq 带 notePath 进阅读区）+
                              # 拖出手柄（GripVertical）经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
-                             # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、HandoffPicker/DigestPicker、ChatRelayCard（聊天里接力那句前面的卡：前面由谁做 / 你离开期间谁做了几轮，点开摆前一段交出前的几轮、看交接简报）、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
+                             # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、DigestPicker、RelayPicker（换 Agent 那组两层选择：先一家一行，再怎么接 + 按连接分组的模型；聊天模型屏与对话页回放头部共用）、ChatRelayCard（聊天里接力那句前面的卡：前面由谁做 / 你离开期间谁做了几轮，点开摆前一段交出前的几轮、看交接简报）、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
                              #   read_pdf_bytes IPC+atob+解析三程，骨架期只剩 pdf.js 解析一程；PdfPageView 页内标记层 marks
                              #   （查找/标注/跳转一闪：按摘句重定位、页内百分比矩形、文本层之前不接指针，scrollTo nonce 居中）、

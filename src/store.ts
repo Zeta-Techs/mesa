@@ -40,6 +40,7 @@ import {
   type AppUpdateStatus,
 } from "./app-update";
 import type { RunOverviewInput } from "./run-overview";
+import type { RelayTarget } from "./chat-relay";
 import type { DepCheckDto } from "./dep-check";
 import type { AskAiFile } from "./ask-ai";
 import type { SpotCheckSession } from "./spot-check";
@@ -866,6 +867,9 @@ interface AppState {
   /** 请求对话页打开指定会话（终端页「⤴对话」跳转用） */
   openSessionReq: { agent: string; sessionId: string } | null;
   setOpenSessionReq: (r: { agent: string; sessionId: string } | null) => void;
+  /** 对话页「换 Agent」：打开这段对话后把接力目标挂到它的标签上（运行页按会话找到标签后消费） */
+  relayPickReq: { agent: string; sessionId: string; target: RelayTarget; token: number } | null;
+  setRelayPickReq: (r: { agent: string; sessionId: string; target: RelayTarget } | null) => void;
   setSessionsQuery: (q: string | null) => void;
   /** 选段「✦ 沉淀为技能」→ 技能页的一次性草稿交接（技能页可见时打开新建 modal 预填并清空） */
   skillDraftReq: { name: string; description: string; content: string } | null;
@@ -1267,6 +1271,7 @@ export const useAppStore = create<AppState>((set, get) => {
   sessionsQuery: null,
   sessionsScratchReq: false,
   openSessionReq: null,
+  relayPickReq: null,
   setSessionsQuery: (q) => set({ sessionsQuery: q }),
   setSessionsScratchReq: (on) => set({ sessionsScratchReq: on }),
   sessionsProjectPathReq: null,
@@ -1293,6 +1298,7 @@ export const useAppStore = create<AppState>((set, get) => {
   railPeekOpen: false,
   setRailPeekOpen: (open) => set({ railPeekOpen: open }),
   setOpenSessionReq: (r) => set({ openSessionReq: r }),
+  setRelayPickReq: (r) => set({ relayPickReq: r ? { ...r, token: Date.now() } : null }),
   skillDraftReq: null,
   setSkillDraftReq: (r) => set({ skillDraftReq: r }),
   digestJob: null,

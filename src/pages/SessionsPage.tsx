@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -10,7 +10,6 @@ import {
   Download,
   FileText,
   Bookmark,
-  Forward,
   GitFork,
   Package,
   MoreHorizontal,
@@ -80,7 +79,8 @@ import RunCaret from "../components/RunCaret";
 import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import GitPanel from "../components/GitPanel";
-import HandoffPicker from "../components/HandoffPicker";
+import RelayPicker from "../components/RelayPicker";
+import type { RelayOptionDto, RelayTarget } from "../chat-relay";
 import DigestPicker from "../components/DigestPicker";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { conversationRestFor, openConversation, openQuickChat } from "../quick-chat-launch";
@@ -563,6 +563,40 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
 
   /** A. 会话恢复：进运行页这段对话（记录先摆出来、能直接写，发第一句才接回；同侧栏项目树） */
   function resumeInTerminal(s: SessionMetaDto) {
+    openConversation(s);
+  }
+
+  // 「换 Agent」：回放头部「继续」旁的选择（同聊天里那组），选好后打开这段对话、把接力目标挂到它的标签上
+  const [relayMenu, setRelayMenu] = useState<{ x: number; y: number; s: SessionMetaDto } | null>(null);
+  const [relayOptions, setRelayOptions] = useState<RelayOptionDto[]>([]);
+  /** 换 Agent：进这组时取这段接力对话里用过哪几家、能不能接回 */
+  const relayMenuSession = relayMenu?.s ?? null;
+  const loadRelayOptions = useCallback(() => {
+    const s = relayMenuSession;
+    if (!s) return;
+    const targets = AGENTS.filter((a) => a.id !== s.agent).map((a) => {
+      const remembered = localStorage.getItem(`ccode.lastProfile.${a.id}`);
+      const prof = profiles.find((p) => p.id === remembered && p.agent === a.id) ?? profiles.find((p) => p.agent === a.id);
+      return { agent: a.id, model: prof?.models[0] ?? null };
+    });
+    invoke<RelayOptionDto[]>("relay_options", {
+      source: {
+        agent: s.agent,
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+        cwd: s.cwd ?? s.projectPath,
+        title: s.customTitle || s.title,
+      },
+      targets,
+    })
+      .then(setRelayOptions)
+      .catch(() => setRelayOptions([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relayMenuSession]);
+
+  /** 选好接力目标：在运行页打开这段对话，标签挂好后把目标挂上去（输入框上方「下一句交给 …」，发下一句才交接） */
+  function pickRelayFor(s: SessionMetaDto, target: RelayTarget) {
+    useAppStore.getState().setRelayPickReq({ agent: s.agent, sessionId: s.sessionId, target });
     openConversation(s);
   }
 
@@ -1545,8 +1579,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       cancelled = true;
     };
   }, [selected?.agent, selected?.filePath, selected?.alive, selected?.internal, slimTick]);
-  // 「◈ 接力到…」目标选择器（回放头部 ⋯ 菜单进入）
-  const [handoffFor, setHandoffFor] = useState<SessionMetaDto | null>(null);
   // 「◈ 提炼接力…」目标选择器（AI 蒸馏简报；回放头部下拉与行内 ⋯ 菜单进入）
   const [digestFor, setDigestFor] = useState<SessionMetaDto | null>(null);
 
@@ -2620,6 +2652,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     继续
                   </button>
                   <button
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setRelayOptions([]);
+                      setRelayMenu({ x: Math.max(8, r.right - 288), y: r.bottom + 4, s: selected });
+                    }}
+                    disabled={!selected.alive}
+                    className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
+                    title="下一句交给另一家 Agent 接着做"
+                  >
+                    换 Agent
+                  </button>
+                  <button
                     onClick={() => setDigestFor(selected)}
                     disabled={!selected.alive && !selected.pinned}
                     className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
@@ -2982,14 +3026,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 onSelect: () => void onSummarize(),
               },
               {
-                label: "接力到…",
-                icon: Forward,
-                hint: "AI",
-                disabled: !readable,
-                title: "把这段对话交给另一个 Agent 接着做",
-                onSelect: () => setHandoffFor(selected),
-              },
-              {
                 label: "提炼接力…",
                 icon: ScrollText,
                 hint: "AI",
@@ -3049,18 +3085,29 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         />
       )}
 
-      {/* 「◈ 接力到…」目标选择器 */}
-      {handoffFor && (
-        <HandoffPicker
-          source={{
-            agent: handoffFor.agent,
-            sessionId: handoffFor.sessionId,
-            filePath: handoffFor.filePath,
-            cwd: handoffFor.projectPath,
-            title: handoffFor.customTitle || handoffFor.title,
-          }}
-          onClose={() => setHandoffFor(null)}
-        />
+      {/* 「换 Agent」选择（同聊天里模型菜单那一组） */}
+      {relayMenu && (
+        <div className="fixed inset-0 z-50" onMouseDown={() => setRelayMenu(null)}>
+          <div
+            className="absolute flex max-h-[min(460px,70vh)] w-72 flex-col overflow-y-auto overscroll-contain rounded-xl border border-field ccode-float-surface p-1 text-sm"
+            style={{ left: relayMenu.x, top: relayMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <RelayPicker
+              currentAgent={relayMenu.s.agent}
+              relay={{
+                state: { pick: null, options: relayOptions, blocked: null },
+                onLoad: loadRelayOptions,
+                onPick: (target) => {
+                  const s = relayMenu.s;
+                  setRelayMenu(null);
+                  if (target) pickRelayFor(s, target);
+                },
+              }}
+              onPicked={() => setRelayMenu(null)}
+            />
+          </div>
+        </div>
       )}
 
       {clientOpen.dialog}
