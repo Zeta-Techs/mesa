@@ -101,7 +101,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 实测 review 34348、论文 42725、数据 16972、学位 41676、投稿 11094、LaTeX 17199。
   // 同日「本机 Python」一节各平台都给（原先只 Windows）：跑 Python 用 MESA_PYTHON（Codex 经登录 shell，path_helper 让裸 python3 落到系统自带），每步约 100 字。
   // 实测 review 34953、论文 43731、数据 17480、学位 42682、投稿 11348、LaTeX 17707。
-  const before: Record<string, number> = { review: 35100, "research-paper": 43900, "data-processing": 17600, thesis: 42850, "submission-rebuttal": 11500, "latex-paper": 17850 };
+  // 同日精读交棒只留现行约束：三模板精读步的 handoff 说明加一句「条件变了就改或删那条，不记改动经过」，约 55 字。
+  // 实测 review 35011、论文 43909、数据 17489、学位 42862、投稿 11354、LaTeX 17719。
+  const before: Record<string, number> = { review: 35100, "research-paper": 44000, "data-processing": 17600, thesis: 42950, "submission-rebuttal": 11500, "latex-paper": 17850 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

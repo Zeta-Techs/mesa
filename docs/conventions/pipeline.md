@@ -190,7 +190,10 @@
   **合并闸门台账豁免（2026-10-13 双台账重写，`review_contract::is_untracked_ledger_file`，merge 闸门/开工脏文件点名/编程改动计数三处共用；迁移前置调用方随迁移命令移除）**：日常积累面**任何 git 状态**都不算主仓脏、不阻塞合并、不计入「改动未存入历史」——`notes/*.md`（用户笔记；`notes/index.json` 是流程正典，不豁免）、`notes/assets/`（沉浸阅读截图，2026-10-17 补入：未提交截图曾拦住所有工作区合并；开工接驳同口径把它随笔记带进基准）、`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、`.ccode/acceptance-log.jsonl/.lock`、`.ccode/watch/`（雷达订阅目录）；**只豁免未跟踪（??）态**：`papers/reading-list.md`、`.ccode/watch-explains.json`、`.ccode/pending-registrations.json`——reading-list 只豁免 ?? 是防呆设计，agent 违规把积累账提交进工作区分支后它变 tracked，后续写入的 M 态仍会拦合并并点名。旧口径「已跟踪的账本改动仍算」对上述积累面作废；闸门只负责提前拦，git merge 自身的脏文件保护仍会拒绝任何真覆盖。
   开工时，本步要读的未存文件由「记下并开始」先提交再开工，不再二次确认。与本步输入无关的改动不开工弹层里提醒。
   任务书工具合同只在所选工具变了时挡住开始。产物名单增减不挡。技能预期读入若已是本步预期产物，不报上游缺失。
-  精读收尾写 `notes/handoff.md`：写作约束给大纲遵守，补全文和登录留在 help-wanted，不进下一步任务书。大纲输入含这份文件。`handoff.md` 是 Agent 交的产物。「沉淀到下一步」是人在审阅里另写的一段，追加进下一步任务书草稿，不代替 handoff。help-wanted 在步骤保存后仍进收件箱，直到人忽略或文件清空。
+  精读收尾写 `notes/handoff.md`：写作约束给大纲遵守，补全文和登录留在 help-wanted，不进下一步任务书。大纲输入含这份文件。`handoff.md` 是 Agent 交的产物。
+  **handoff 只留现行约束（2026-11-10）**：每轮（跟进、补读、退回补料）都把写作约束改到现在成立的样子——补到全文删「仅摘要」那条、结论改了改那条、篇被排除删提到它的条目，不记改动经过。
+  精读跟进除新纳入的篇外，也算检索后来排除、精读这边索引或引文库里还留着的篇（`step-loop.ts notesDroppedIds`），交 AI 从写作约束、`angles.md`、`index.json` 撤掉，笔记文件留着；
+  `lit_records.py bib` 每次都把 `decision=excluded` 的篇移出 `references.bib`（DOI 为准，没 DOI 按标题），`citedBy` 点名大纲 / `manuscript/` / `chapters/` 里还在引的文件，写进验收摘要交人，精读不改稿件。「沉淀到下一步」是人在审阅里另写的一段，追加进下一步任务书草稿，不代替 handoff。help-wanted 在步骤保存后仍进收件箱，直到人忽略或文件清空。
   精读不再先问「建议核心 K 篇」：有 PDF 的全部八段精读，没有的按摘要写短记。可引用图认 PDF 文本层的图注，不要求把页面渲成图片。临时脚本和接口缓存只放工作区 artifacts/。
   综述初稿按大纲用图计划出图：计划写「拼」则交 `figures/figN.png` 并插入正文；裁不到则正文改「见 [@键] Fig.n」，原因写入 `figures/README.md`。`machine:not-contains:manuscript/draft.md::待绘制` 不通过则这一步不算产出完成。已有课题在流程编辑器保存后才带上新标准。
   已跟踪版本及 `.ccode/project.toml`、知识、草稿等用户改动不豁免。

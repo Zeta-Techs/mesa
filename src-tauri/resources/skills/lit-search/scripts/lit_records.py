@@ -1173,6 +1173,7 @@ def cmd_bib(args):
     if args.ids:
         keep = {x.strip() for x in args.ids.split(",") if x.strip()}
         wanted = [r for r in wanted if as_text(r.get("id")) in keep]
+    text, removed = prune_excluded(text, records)
     spans = entry_spans(text)
     taken = {k.lower() for k, _, _ in spans}
     by_doi, by_title = {}, {}
@@ -1244,10 +1245,66 @@ def cmd_bib(args):
         by_title[title_key] = key
     if appended:
         text = (text.rstrip() + "\n\n" if text.strip() else "") + "\n".join(appended)
-    if added or filled:
+    if added or filled or removed:
         atomic_write(bib_path, text if text.endswith("\n") else text + "\n")
-    print(json.dumps({"keys": keys, "added": added, "filled": filled}, ensure_ascii=False, indent=2))
+    out = {"keys": keys, "added": added, "filled": filled}
+    if removed:
+        out["removed"] = removed
+        cited = cited_by(bib_path.resolve().parent, removed)
+        if cited:
+            out["citedBy"] = cited
+    print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
+
+
+def prune_excluded(text, records):
+    """检索那一步排除了的篇（decision=excluded）移出引文库：按 DOI 认，没有 DOI 的按标题认。
+    排除是人在检索步拍板的，精读这边不留它的条目，免得下游照引（2026-11-10 用户拍板）。返回 (新文本, 移出的键)。"""
+    dois, titles = set(), set()
+    for rec in records:
+        if decision_of(rec) != "excluded":
+            continue
+        doi = record_doi(rec)
+        if doi:
+            dois.add(doi)
+        else:
+            t = re.sub(r"\W+", "", ris_value(rec.get("title")).casefold())
+            if len(t) >= 8:
+                titles.add(t)
+    if not dois and not titles:
+        return text, []
+    removed, cuts = [], []
+    for key, start, end in entry_spans(text):
+        fields = bib_fields_of(text[start:end])
+        doi = bare_doi(fields.get("doi", ("",))[0])
+        title = re.sub(r"\W+", "", re.sub(r"[{}]", "", fields.get("title", ("",))[0]).casefold())
+        if (doi and doi in dois) or (not doi and title and title in titles):
+            removed.append(key)
+            cuts.append((start, end))
+    for start, end in reversed(cuts):
+        tail = end
+        while tail < len(text) and text[tail] in "\r\n":
+            tail += 1
+        text = text[:start] + text[tail:]
+    return text, removed
+
+
+def cited_by(root, keys):
+    """移出的键还有哪些稿件在引：大纲、manuscript/、chapters/ 下的 md / qmd / tex。只读，交人处理。"""
+    files = [root / "outline.md"]
+    for sub in ("manuscript", "chapters"):
+        d = root / sub
+        if d.is_dir():
+            files += [f for f in d.rglob("*") if f.suffix.lower() in (".md", ".qmd", ".tex")]
+    out = {}
+    for f in files:
+        if not f.is_file():
+            continue
+        body = f.read_text(encoding="utf-8", errors="replace")
+        for key in keys:
+            if re.search(r"(?<![\w@])@" + re.escape(key) + r"(?![\w:-])", body) or re.search(r"\\cite\w*\{[^}]*\b" + re.escape(key) + r"\b", body):
+                out.setdefault(key, []).append(f.relative_to(root).as_posix())
+    return out
 
 
 def year_of(value):
@@ -1366,7 +1423,7 @@ def main():
     common(sp)
     sp = sub.add_parser("check", help="校验 json、清单与两份 RIS 是否一致")
     common(sp)
-    sp = sub.add_parser("bib", help="精读步：把 included.json 的题录写进 references.bib（已有条目只补空字段）")
+    sp = sub.add_parser("bib", help="精读步：把 included.json 的题录写进 references.bib（已有条目只补空字段；检索排除了的篇移出）")
     common(sp, root=False)
     sp.add_argument("--bib", default="references.bib")
     sp.add_argument("--ids", default="", help="只写这些 id（逗号分隔）")

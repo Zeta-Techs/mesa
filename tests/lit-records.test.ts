@@ -324,6 +324,41 @@ test("bib：精读步从 included.json 写引文库——已有条目不改键�
   }
 });
 
+test("bib：检索排除了的篇移出引文库（按 DOI，没 DOI 按标题），点名还在引它的稿件；重跑不变", () => {
+  // 2026-11-10 HER：检索补料轮排除了 Kawashima2023，精读跟进后引文库、交棒约束、可写点清单里都还留着
+  const root = mkdtempSync(join(tmpdir(), "mesa-lit-prune-"));
+  try {
+    mkdirSync(join(root, "papers"), { recursive: true });
+    mkdirSync(join(root, "manuscript"), { recursive: true });
+    writeFileSync(join(root, "papers/included.json"), JSON.stringify([
+      { id: "K", title: "A Review of Transition Metal Boride Water Oxidation Electrocatalysts", decision: "excluded", reason: "排除：人工移出", doi: "10.1021/acs.chemrev.3c00005" },
+      { id: "T", title: "Removed borate review without any identifier", decision: "excluded", reason: "排除：人工移出" },
+      { id: "G", title: "Amorphous cobalt boride", decision: "included", reason: "纳入", doi: "10.1002/anie.201601234", authors: ["Gupta, S."], year: 2016 },
+    ]));
+    const bib = join(root, "references.bib");
+    writeFileSync(bib,
+      "@article{Kawashima2023,\n  title = {A Review},\n  doi = {https://doi.org/10.1021/ACS.CHEMREV.3C00005}\n}\n\n" +
+      "@article{Cui2020,\n  title = {Removed {borate} review without any identifier},\n  year = {2020}\n}\n\n" +
+      "@article{Gupta2016,\n  title = {Amorphous cobalt boride},\n  doi = {10.1002/anie.201601234}\n}\n");
+    writeFileSync(join(root, "outline.md"), "## 1\n见 [@Kawashima2023; @Gupta2016]。\n");
+    writeFileSync(join(root, "manuscript/draft.md"), "As reviewed [@Gupta2016], email a@Cui2020x.\n");
+    let r = spawnSync(python, [script, "bib"], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const out = JSON.parse(r.stdout);
+    assert.deepEqual(out.removed, ["Kawashima2023", "Cui2020"]);
+    assert.deepEqual(out.citedBy, { Kawashima2023: ["outline.md"] });
+    const text = readFileSync(bib, "utf8");
+    assert.ok(text.startsWith("@article{Gupta2016,"), text);
+    assert.doesNotMatch(text, /Kawashima2023|Cui2020/);
+    assert.equal((text.match(/^@article/gm) ?? []).length, 1);
+    r = spawnSync(python, [script, "bib"], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    assert.equal(JSON.parse(r.stdout).removed, undefined);
+    assert.equal(readFileSync(bib, "utf8"), text, "重跑不变");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("不分期的刊：Crossref 有卷无期记「无期号」，不进 RIS、引文库不写 number，早先写的 number = {待补} 拿掉", () => {
   // 2026-10-23 HER 精读步：Appl. Catal. B / Chin. J. Catal. 只按卷编排，期号「待补」永远补不上，渲染出「(待补)」
   const root = mkdtempSync(join(tmpdir(), "mesa-lit-noissue-"));

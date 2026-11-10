@@ -151,7 +151,7 @@ provides: [lit-notes]
 python3 <技能目录>/scripts/lit_records.py bib --json papers/included.json --bib references.bib
 ```
 
-它按 DOI（其次标题）匹配已有条目：已有的**不改键、不覆盖已有值**，只补空着的或写着「待补」的字段；没有的按「第一作者姓 + 年份」起键追加（重名加 a、b）。输出的 `keys` 是 included.json 的 id → bib 键，照着写进 `notes/index.json` 的 `bibKey`。待确认的默认不进引文库（人纳入后再跑一次）。included.json 里没有、只能从别处补的篇（精读中发现的待跟进引用），才按下面的口径手写一条，有 DOI 时先向 Crossref 取正式发表版（不用 preprint 顶替）。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；一词刊名不缩。不要用 NLM 的 ISSN 缩写，不要自己编。脚本写出的条目带这些字段：
+它按 DOI（其次标题）匹配已有条目：已有的**不改键、不覆盖已有值**，只补空着的或写着「待补」的字段；没有的按「第一作者姓 + 年份」起键追加（重名加 a、b）。输出的 `keys` 是 included.json 的 id → bib 键，照着写进 `notes/index.json` 的 `bibKey`。待确认的默认不进引文库（人纳入后再跑一次）。检索那一步排除了的篇（`decision=excluded`）它会从引文库移出，输出的 `removed` 是移出的键；`citedBy` 点名大纲、`manuscript/`、`chapters/` 里还在引它们的文件——精读不改这些稿件，写进本步验收摘要交人处理；`notes/handoff.md` 写作约束、`notes/angles.md` 里提到它们的条目一并删掉或改写，`notes/index.json` 删掉那几行，笔记文件留着。included.json 里没有、只能从别处补的篇（精读中发现的待跟进引用），才按下面的口径手写一条，有 DOI 时先向 Crossref 取正式发表版（不用 preprint 顶替）。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；一词刊名不缩。不要用 NLM 的 ISSN 缩写，不要自己编。脚本写出的条目带这些字段：
 
 - `author`：全名，`and` 分隔；「名 姓」翻成 `姓, 名`；被截成前三人或同一人重复的名单，改用 Crossref 完整名单
 - `year`、`title`、`journal`、`doi`

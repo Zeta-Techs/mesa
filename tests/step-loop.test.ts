@@ -12,6 +12,7 @@ import {
   isLedgerFile,
   catchUpConfirmText,
   notesFollowupIds,
+  notesDroppedIds,
   parseTopics,
   reworkPrompt,
   latestNote,
@@ -78,6 +79,7 @@ test("reworkPrompt：退回精读的点名篇写成完整笔记，不照任务�
   assert.doesNotMatch(notes, /主要报告/);
   assert.match(notes, /按这些去读/);
   assert.doesNotMatch(notes, /引用扩展/);
+  assert.match(notes, /写作约束按新笔记改到现在成立的样子（新补的约束加上，不再成立的删掉），不记改动经过/);
 });
 
 test("notesFollowupIds：纳入里索引还没有的（上游新加的）；索引记了 pending 的留待按章节读、不算；排除与待确认不算", () => {
@@ -92,6 +94,43 @@ test("notesFollowupIds：纳入里索引还没有的（上游新加的）；索�
   assert.deepEqual(notesFollowupIds(included, index), ["b"]);
   assert.deepEqual(notesFollowupIds(included, null), ["a", "b", "e"]);
   assert.equal(notesFollowupIds("{坏", index), null);
+});
+
+test("notesDroppedIds：检索后来排除、精读这边索引或引文库里还留着的篇", () => {
+  const included = JSON.stringify([
+    { id: "a", decision: "included" },
+    { id: "10.1021/acs.chemrev.3c00005", doi: "10.1021/acs.chemrev.3c00005", decision: "excluded" },
+    { id: "W9", doi: "https://doi.org/10.1002/X.1", decision: "excluded" },
+    { id: "gone", decision: "excluded" },
+  ]);
+  const index = JSON.stringify([{ id: "a" }, { id: "gone" }]);
+  const bib = "@article{Kawashima2023,\n  doi = {10.1021/acs.chemrev.3c00005},\n}\n@article{X,\n  doi = {10.1002/x.1}\n}\n";
+  assert.deepEqual(notesDroppedIds(included, index, bib), ["10.1021/acs.chemrev.3c00005", "W9", "gone"]);
+  assert.deepEqual(notesDroppedIds(included, index, null), ["gone"]);
+  assert.deepEqual(notesDroppedIds(included, null, ""), []);
+  assert.deepEqual(notesDroppedIds("{坏", index, bib), []);
+});
+
+test("跟进时撤下排除的篇：写作约束、可写点、索引撤掉，引文库交 bib 移出，笔记留着；只有排除也开一轮", () => {
+  const both = followupPrompt({ upstream: "文献检索与筛选", notesIds: ["n1"], droppedIds: ["d1"], files: [] });
+  assert.match(both, /新加了 1 篇/);
+  assert.match(both, /后来排除了 1 篇，精读这边还留着：d1/);
+  assert.match(both, /handoff\.md 写作约束里提到它们的条目删掉或改写/);
+  assert.match(both, /笔记文件留着不删/);
+  assert.match(both, /收尾跑 lit_records\.py bib/);
+  assert.match(both, /只留现在仍成立的写作约束/);
+  const onlyDropped = followupPrompt({ upstream: "x", notesIds: [], droppedIds: ["d1", "d2"], files: [] });
+  assert.doesNotMatch(onlyDropped, /新加了/);
+  assert.match(onlyDropped, /后来排除了 2 篇/);
+  assert.match(followupScale({ upstream: "x", notesIds: [], droppedIds: ["d1"], files: [] }), /后来排除 1 篇/);
+  assert.equal(followupScale({ upstream: "x", notesIds: [], droppedIds: [], files: [] }), "");
+  assert.equal(
+    followupConfirmText({ notesIds: [], droppedIds: ["d1"], files: [], unsaved: false }),
+    "撤下后来排除的 1 篇？\n\nAI 把它们从写作约束和引文库撤掉，笔记留着。",
+  );
+  assert.match(followupConfirmText({ notesIds: ["a"], droppedIds: ["d1"], files: [], unsaved: false }), /^跟进新纳入的 1 篇、撤下后来排除的 1 篇？/);
+  // 按文件跟进时不管排除
+  assert.match(followupConfirmText({ notesIds: null, droppedIds: ["d1"], files: ["x.md"], unsaved: false }), /^跟进上游改过的 1 个文件？/);
 });
 
 test("followupFiles：Mesa 过程文件与积累台账不算上游新增", () => {
@@ -311,6 +350,11 @@ test("catchUpPrompt：点名篇与全文文件，在原笔记上续写、人写�
   assert.match(text, /在原笔记上续写（没有笔记的按技能新写），不另起平行笔记/);
   assert.match(text, /「我的想法」与人手写的内容原样保留/);
   assert.match(text, /fulltextStatus 改成 fulltext/);
+  // 交棒只留现行约束：删掉「仅摘要」那条，不记补读经过；精读不跑 write
+  assert.match(text, /handoff\.md 写作约束里这几篇「仅摘要 \/ 题录」的那条删掉/);
+  assert.doesNotMatch(text, /记一句补读了哪几篇/);
+  assert.match(text, /lit_records\.py pdfs/);
+  assert.doesNotMatch(text, /lit_records\.py write/);
 });
 
 test("跟进 / 补读确认框：问句标题 + 一两句后果；上一轮没保存只加一条注意", () => {

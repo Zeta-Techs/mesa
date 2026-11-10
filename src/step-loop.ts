@@ -203,7 +203,7 @@ export function reworkPrompt(
           `在 papers/screening.md 末尾追加「## 补料轮（${opts.date}）」一节：补了什么、检索式、候选数与纳入数、没拿到全文的原因。`
       : opts.isNotes
         ? "单上点名的篇（或这些主题下该精读的篇）写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
-          "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。收尾补 references.bib、按新笔记更新 notes/handoff.md 的写作约束，最后在对话里列出补了哪几篇、改了哪些文件。"
+          "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。收尾跑 lit_records.py bib 补 references.bib；notes/handoff.md 的写作约束按新笔记改到现在成立的样子（新补的约束加上，不再成立的删掉），不记改动经过；最后在对话里列出补了哪几篇、改了哪些文件。"
         : "在本步已有产物上修改，人确认过的内容不推翻；" +
           `在本步主要报告末尾追加「## 修改轮（${opts.date}）」一节，写清改了什么、改了哪些文件。` +
           (opts.clause ? opts.clause : ""),
@@ -249,6 +249,45 @@ export function notesFollowupIds(includedText: string, indexText: string | null)
     if (typeof r.id === "string" && !listed.has(r.id)) out.push(r.id);
   }
   return out;
+}
+
+/** 精读这边还留着、检索那边已经排除的篇（2026-11-10 用户拍板「从根本上改对」）：笔记索引里还有它，
+ *  或引文库里还有它的 DOI。跟进时交给 AI 从写作约束、可写点清单、索引里撤掉（引文库由 lit_records.py bib 移出）。 */
+export function notesDroppedIds(includedText: string, indexText: string | null, bibText: string | null): string[] {
+  let rows: unknown[] | null = null;
+  try {
+    rows = recordsOf(JSON.parse(includedText));
+  } catch {
+    return [];
+  }
+  if (!rows) return [];
+  const listed = new Set<string>();
+  if (indexText) {
+    try {
+      for (const row of recordsOf(JSON.parse(indexText)) ?? []) {
+        const r = row as Record<string, unknown>;
+        if (typeof r.id === "string") listed.add(r.id);
+      }
+    } catch {
+      /* 索引坏了：只按引文库认 */
+    }
+  }
+  const bib = (bibText ?? "").toLowerCase();
+  const out: string[] = [];
+  for (const row of rows) {
+    const r = row as Record<string, unknown>;
+    const decision = typeof r.decision === "string" ? r.decision.trim().toLowerCase() : "";
+    if (decision !== "excluded" && decision !== "exclude") continue;
+    if (typeof r.id !== "string") continue;
+    const doi = bareDoi(typeof r.doi === "string" && r.doi ? r.doi : r.id);
+    if (listed.has(r.id) || (doi && bib.includes(doi))) out.push(r.id);
+  }
+  return out;
+}
+
+function bareDoi(raw: string): string {
+  const m = /10\.\d{4,9}\/[^\s"<>{}]+/.exec(raw.toLowerCase());
+  return m ? m[0].replace(/[.,;)]+$/, "") : "";
 }
 
 function recordsOf(parsed: unknown): unknown[] | null {
@@ -316,9 +355,9 @@ export function catchUpPrompt(hits: { probe: CatchUpProbe; pdf: string }[]): str
   return [
     `有 ${hits.length} 篇原来没有全文（notes/index.json 里 fulltextStatus 是 abstract-only 或 unavailable），现在 papers/ 里有了：`,
     ...lines,
-    "这一轮只补读这几篇，别的篇一字不动。先跑 lit_records.py write 认 PDF，再读全文。",
+    "这一轮只补读这几篇，别的篇一字不动。先跑 lit_records.py pdfs 认 PDF（精读只读清单，不跑 write），再读全文。",
     "在原笔记上续写（没有笔记的按技能新写），不另起平行笔记：按全文补齐、改正各段，原来凭摘要写的判断逐条核对，改了的在该段写明「按全文改」；「标注」「译段」「我的想法」与人手写的内容原样保留。",
-    "收尾把这几篇在 notes/index.json 里的 fulltextStatus 改成 fulltext；有数据抽取表的补这几篇的行（出处与页码按全文填）；可写点清单受影响的在 notes/angles.md 补一句；notes/handoff.md 记一句补读了哪几篇、改了哪些结论。",
+    "收尾把这几篇在 notes/index.json 里的 fulltextStatus 改成 fulltext；有数据抽取表的补这几篇的行（出处与页码按全文填）；可写点清单受影响的在 notes/angles.md 补一句；notes/handoff.md 写作约束里这几篇「仅摘要 / 题录」的那条删掉，按全文改了结论、要下游照着写的，把那条约束改成新结论，不记补读经过。",
     KEEP_WORKING_CLAUSE,
   ].join("\n");
 }
@@ -355,25 +394,46 @@ export function withLatestNote(prompt: string, files: string[]): string {
   return note ? `${prompt}\n\n${note}` : prompt;
 }
 
+/** 检索后来排除的篇在精读这边怎么撤：写作约束、可写点清单、索引撤掉；笔记文件是读过的记录，留着不删 */
+function droppedClause(ids: string[]): string {
+  const shown = ids.slice(0, ID_CAP).join("、");
+  const more = ids.length > ID_CAP ? ` 等 ${ids.length} 篇（以 papers/included.json 里 decision=excluded 为准）` : "";
+  return (
+    `检索那一步后来排除了 ${ids.length} 篇，精读这边还留着：${shown}${more}。这些篇不再进综述：` +
+    "从 notes/index.json 里删掉它们那几行；notes/handoff.md 写作约束里提到它们的条目删掉或改写；notes/angles.md 里拿它们当依据的句子改掉或删掉；" +
+    "references.bib 里的条目由 lit_records.py bib 移出，它点名了哪些稿件还在引用这些键的，写进本步验收摘要交人处理，本步不改稿件。笔记文件留着不删。"
+  );
+}
+
 /** 跟进轮的开场指令。notesIds 非 null = 精读步：只给这些篇写笔记；否则按改动文件说。 */
 export function followupPrompt(opts: {
   upstream: string;
   notesIds: string[] | null;
+  /** 精读步：检索后来排除、精读这边还留着的篇（notesDroppedIds） */
+  droppedIds?: string[];
   files: string[];
   /** 这一类步骤回头时的做法（step-kind.ts ROUND_CLAUSE）；按改动文件跟进时接在后面 */
   clause?: string;
 }): string {
   const head = `上游「${opts.upstream}」保存过新内容，这一轮只跟进新增的部分，不重做整步。项目里的新内容已经并进本工作区。`;
   if (opts.notesIds) {
-    const shown = opts.notesIds.slice(0, ID_CAP).join("、");
-    const more = opts.notesIds.length > ID_CAP ? ` 等 ${opts.notesIds.length} 篇（以 papers/included.json 为准）` : "";
-    return [
-      head,
-      `纳入清单里新加了 ${opts.notesIds.length} 篇，笔记索引里还没有：${shown}${more}。`,
-      "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py write 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
-      "收尾更新 notes/index.json、references.bib 与 notes/handoff.md；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句。",
+    const lines = [head];
+    if (opts.notesIds.length > 0) {
+      const shown = opts.notesIds.slice(0, ID_CAP).join("、");
+      const more = opts.notesIds.length > ID_CAP ? ` 等 ${opts.notesIds.length} 篇（以 papers/included.json 为准）` : "";
+      lines.push(
+        `纳入清单里新加了 ${opts.notesIds.length} 篇，笔记索引里还没有：${shown}${more}。`,
+        "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py pdfs 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
+      );
+    }
+    const dropped = opts.droppedIds ?? [];
+    if (dropped.length > 0) lines.push(droppedClause(dropped));
+    lines.push(
+      "收尾跑 lit_records.py bib 更新 references.bib，再更新 notes/index.json 与 notes/handoff.md（只留现在仍成立的写作约束）" +
+        (opts.notesIds.length > 0 ? "；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句。" : "。"),
       KEEP_WORKING_CLAUSE,
-    ].join("\n");
+    );
+    return lines.join("\n");
   }
   const shown = opts.files.slice(0, FILE_CAP).map((f) => `- ${f}`);
   if (opts.files.length > FILE_CAP) shown.push(`- …另有 ${opts.files.length - FILE_CAP} 个`);
@@ -388,11 +448,16 @@ export function followupPrompt(opts: {
 }
 
 /** 跟进确认框里的一句规模话 */
-export function followupScale(opts: { upstream: string; notesIds: string[] | null; files: string[] }): string {
+export function followupScale(opts: { upstream: string; notesIds: string[] | null; droppedIds?: string[]; files: string[] }): string {
   if (opts.notesIds) {
-    return opts.notesIds.length > 0
-      ? `「${opts.upstream}」有更新：新纳入 ${opts.notesIds.length} 篇，AI 只处理这 ${opts.notesIds.length} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读。`
-      : "";
+    const n = opts.notesIds.length;
+    const d = opts.droppedIds?.length ?? 0;
+    if (n === 0 && d === 0) return "";
+    const parts = [
+      n > 0 ? `新纳入 ${n} 篇，AI 只处理这 ${n} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读` : "",
+      d > 0 ? `后来排除 ${d} 篇，AI 把它们从交棒的写作约束、可写点清单、索引和引文库里撤掉，笔记留着` : "",
+    ].filter(Boolean);
+    return `「${opts.upstream}」有更新：${parts.join("；")}。`;
   }
   return opts.files.length > 0
     ? `「${opts.upstream}」有更新：项目里 ${opts.files.length} 个文件在这一步上次保存之后改过，AI 只改受影响的部分。`
@@ -401,11 +466,22 @@ export function followupScale(opts: { upstream: string; notesIds: string[] | nul
 
 /** 跟进确认框（确认框文案要短，design-system.md）：问句标题 + 一两句后果。并入、恢复这类机制不写；
  *  上一轮没保存时只写「一起评审、不能只退回一轮」这个后果（2026-11-10 用户：弹窗文案尽可能简洁） */
-export function followupConfirmText(opts: { notesIds: string[] | null; files: string[]; unsaved: boolean }): string {
+export function followupConfirmText(opts: {
+  notesIds: string[] | null;
+  droppedIds?: string[];
+  files: string[];
+  unsaved: boolean;
+}): string {
+  const n = opts.notesIds?.length ?? 0;
+  const d = opts.notesIds ? (opts.droppedIds?.length ?? 0) : 0;
   const head =
-    opts.notesIds && opts.notesIds.length > 0
-      ? `跟进新纳入的 ${opts.notesIds.length} 篇？\n\nAI 只读这 ${opts.notesIds.length} 篇，已有笔记不动。`
-      : `跟进上游改过的 ${opts.files.length} 个文件？\n\nAI 只改受影响的部分。`;
+    n > 0 && d > 0
+      ? `跟进新纳入的 ${n} 篇、撤下后来排除的 ${d} 篇？\n\nAI 只读新纳入的，排除的从写作约束和引文库撤掉，已有笔记不动。`
+      : n > 0
+        ? `跟进新纳入的 ${n} 篇？\n\nAI 只读这 ${n} 篇，已有笔记不动。`
+        : d > 0
+          ? `撤下后来排除的 ${d} 篇？\n\nAI 把它们从写作约束和引文库撤掉，笔记留着。`
+          : `跟进上游改过的 ${opts.files.length} 个文件？\n\nAI 只改受影响的部分。`;
   return opts.unsaved ? `${head}\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。` : head;
 }
 

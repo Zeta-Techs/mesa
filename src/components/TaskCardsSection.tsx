@@ -34,6 +34,7 @@ import {
   followupConfirmText,
   catchUpConfirmText,
   notesFollowupIds,
+  notesDroppedIds,
   unplacedCoverageDrafts,
   reworkTargets,
   withLatestNote,
@@ -1084,6 +1085,7 @@ export default function TaskCardsSection({
       const launch = await loopLaunch(step.name);
       // 精读步的增量按项目根的台账算，不用工作副本：收起了也先算、先问，人确认了才恢复（2026-11-05 排查：原先一点就恢复）
       let notesIds: string[] | null = null;
+      let droppedIds: string[] = [];
       if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
         const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
         // 这一步读过哪些篇看工作副本的索引：待评审、没保存时项目根还是旧索引（甚至没有），按它算会把全部篇当新增
@@ -1092,8 +1094,20 @@ export default function TaskCardsSection({
             ? await readResearchLedger(found.worktreePath, "notes/index.json").catch(() => null)
             : null) ?? (await readResearchLedger(projectPath, "notes/index.json").catch(() => null));
         notesIds = inc && !inc.truncated ? notesFollowupIds(inc.text, idx && !idx.truncated ? idx.text : null) : null;
-        // 没有新篇要读、但上游改了别的（清单、待获取）：按文件跟进
-        if (notesIds && notesIds.length === 0) notesIds = null;
+        // 检索后来排除、精读这边还留着的篇（索引或引文库里还有）：跟进时一并撤掉（2026-11-10）
+        if (notesIds) {
+          const bib =
+            (found.status === "active"
+              ? await readResearchLedger(found.worktreePath, "references.bib").catch(() => null)
+              : null) ?? (await readResearchLedger(projectPath, "references.bib").catch(() => null));
+          droppedIds = notesDroppedIds(
+            inc!.text,
+            idx && !idx.truncated ? idx.text : null,
+            bib && !bib.truncated ? bib.text : null,
+          );
+        }
+        // 没有新篇要读、也没有要撤的，但上游改了别的（清单、待获取）：按文件跟进
+        if (notesIds && notesIds.length === 0 && droppedIds.length === 0) notesIds = null;
       }
       let ws = found;
       let files: string[] = [];
@@ -1116,7 +1130,7 @@ export default function TaskCardsSection({
       // 选「接着做，一起评审」（2026-11-10 用户拍板）；补料链自动往下时照旧停下，等人先保存
       const unsaved = ws.status === "active" && (await hasUnsavedRound(ws));
       if (ws.status === "active") await assertRoundable(ws, step.name, { allowUnsaved: !auto });
-      const scale = followupScale({ upstream, notesIds, files });
+      const scale = followupScale({ upstream, notesIds, droppedIds, files });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
         onWorkspacesChanged?.();
@@ -1130,7 +1144,7 @@ export default function TaskCardsSection({
       }
       if (!auto) {
         if (
-          !(await confirmDialog(followupConfirmText({ notesIds, files, unsaved }), {
+          !(await confirmDialog(followupConfirmText({ notesIds, droppedIds, files, unsaved }), {
             confirmText: unsaved ? "接着做，一起评审" : "开始跟进",
           }))
         )
@@ -1145,7 +1159,7 @@ export default function TaskCardsSection({
         launch,
         ws,
         step.name,
-        followupPrompt({ upstream, notesIds, files, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
+        followupPrompt({ upstream, notesIds, droppedIds, files, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
       );
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
