@@ -1129,6 +1129,8 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
   research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
+                             #   + 全文篇数对照 papers/：searchCountLineWithFiles / missingToFetchWithFiles（经 to_fetch_progress，
+                             #   步骤卡、资料全貌、评审清单三处同一口径，台账 pdf 字段只在脚本跑时写、不能单靠它）
   screening-review.ts        # 检索/筛选评审主面：计数/待拍板/筛选决定、表默认 pending、文件分组；included.md/json 不与表并列摊 diff；
                              #   IncludedRecord.kind（综述回路三期，只在 json、不进 RIS）；patchIncludedKind 只动 kind；KIND_LABEL / nextKind
                              #   displayCitationTitle 只改清单显示（苹果字符、拆开的化学式），不回写 json

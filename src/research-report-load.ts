@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { extractResearchSections, researchAbsolutePath, researchRelativePath, type ResearchReport, type ResearchReportKind } from "./research-report";
 import type { DirEntryDto } from "./components/FileTree";
+import { searchPdfProbes, searchProgress, searchProgressLine } from "./notes-progress";
+import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
 export interface ResearchReportLoad { reports: ResearchReport[]; warnings: string[]; scanned: number; files: string[] }
@@ -18,6 +20,36 @@ export async function readResearchLedger(root: string, path: string): Promise<Re
   const value = await invoke<ReportPreview>("read_research_ledger", { root, path: researchAbsolutePath(root, path) });
   if (value.readOnlyReason && !value.truncated) throw new Error(value.readOnlyReason);
   return value;
+}
+
+/** 对照项目 papers/ 里实际有没有这些篇的 PDF（to_fetch_progress，与待获取清单「已存」同一口径）。对不上或出错都当没有 */
+async function probePapers(projectRoot: string, items: { title: string; url: string }[]): Promise<(string | null)[]> {
+  if (items.length === 0) return [];
+  const names = await invoke<(string | null)[] | null>("to_fetch_progress", {
+    projectRoot,
+    items: items.map((it) => ({ title: it.title, url: it.url })),
+  }).catch(() => null);
+  return Array.isArray(names) ? names : [];
+}
+
+/** 检索篇数一行：台账没记 pdf、但 papers/ 里已经有的也算已有全文（PDF 下在项目根，所以对照 projectRoot） */
+export async function searchCountLineWithFiles(projectRoot: string, includedText: string): Promise<string | null> {
+  const probes = searchPdfProbes(includedText);
+  const names = await probePapers(projectRoot, probes);
+  const found = new Set(probes.flatMap((p, i) => (names[i] ? [p.id] : [])));
+  const p = searchProgress(includedText, found);
+  return p ? searchProgressLine(p) : null;
+}
+
+/** 待获取还缺几篇：去掉已勾 ✓ 的和 papers/ 里已经有的（不是清单总条数） */
+export async function missingToFetchWithFiles(projectRoot: string, toFetchText: string): Promise<number> {
+  const items = parseToFetchItems(toFetchText).filter((it) => !it.done);
+  const names = await probePapers(projectRoot, items);
+  const doneByLine: Record<number, string> = {};
+  items.forEach((it, i) => {
+    if (names[i]) doneByLine[it.line] = names[i] as string;
+  });
+  return missingToFetchCount(toFetchText, doneByLine);
 }
 
 /** 台账整份写回：带读取时的版本，磁盘已被 Agent 改过就拒绝。返回新版本。 */

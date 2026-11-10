@@ -151,7 +151,9 @@ export function spotCheckPicks(indexText: string, count = 3): SpotCheckPick[] {
 
 /** 检索步「AI 干活」行下的篇数（papers/included.json）：纳入 / 待确认 / 已有全文 / 缺全文。
  *  数字由 Mesa 从台账数，不靠 AI 在报告里自述——用户担心 AI 选择性下载，缺多少要摆在明处
- *  （2026-11-05 综述回路设计稿 §12）。全文按 pdf 字段认（lit_records.py write 认出项目里的 PDF 后写）。 */
+ *  （2026-11-05 综述回路设计稿 §12）。全文先认 pdf 字段（lit_records.py write 认出项目里的 PDF 后写）；
+ *  pdf 字段只在脚本跑那一刻写，之后人下进 papers/ 的不会补上，所以调用方再拿 searchPdfProbes 去对照 papers/，
+ *  对上的 id 经 foundIds 传进来（2026-11-10 HER：PDF 都下好了，资料全貌仍写「缺全文 8」，待获取清单里却只剩 1 篇）。 */
 export interface SearchProgress {
   included: number;
   pending: number;
@@ -160,7 +162,7 @@ export interface SearchProgress {
   reviews?: number;
 }
 
-export function searchProgress(includedText: string): SearchProgress | null {
+export function searchProgress(includedText: string, foundIds?: ReadonlySet<string>): SearchProgress | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(includedText);
@@ -176,10 +178,31 @@ export function searchProgress(includedText: string): SearchProgress | null {
     if (decision !== "included" && decision !== "include") continue;
     out.included += 1;
     const pdf = (row as Record<string, unknown>).pdf;
-    if (typeof pdf === "string" && pdf.trim()) out.withPdf += 1;
+    const id = (row as Record<string, unknown>).id;
+    if ((typeof pdf === "string" && pdf.trim()) || (typeof id === "string" && foundIds?.has(id))) out.withPdf += 1;
     if (field(row, "kind") === "review") out.reviews = (out.reviews ?? 0) + 1;
   }
   return out.included + out.pending > 0 ? out : null;
+}
+
+/** 纳入了、台账里还没记 pdf 的篇：拿去 to_fetch_progress 对照项目 papers/（与待获取清单「已存」同一口径） */
+export function searchPdfProbes(includedText: string): { id: string; title: string; url: string }[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(includedText);
+  } catch {
+    return [];
+  }
+  const out: { id: string; title: string; url: string }[] = [];
+  for (const row of records(parsed) ?? []) {
+    const r = (row ?? {}) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    const decision = field(row, "decision");
+    if ((decision !== "included" && decision !== "include") || str(r.pdf) || !str(r.id)) continue;
+    const doi = str(r.doi).replace(/^https?:\/\/(dx\.)?doi\.org\//i, "");
+    out.push({ id: str(r.id), title: str(r.title), url: doi ? `https://doi.org/${doi}` : str(r.url) });
+  }
+  return out;
 }
 
 /** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9」。没有的分项不出。 */

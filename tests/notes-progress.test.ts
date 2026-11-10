@@ -6,6 +6,7 @@ import {
   figurePlanLine,
   notesProgress,
   notesProgressLine,
+  searchPdfProbes,
   searchProgress,
   searchProgressLine,
 } from "../src/notes-progress.ts";
@@ -103,6 +104,21 @@ test("检索篇数：纳入按 pdf 字段分有无全文，待确认单列，排
   assert.equal(searchProgress("[]"), null);
   assert.equal(searchProgress(JSON.stringify([{ id: "x", decision: "excluded" }])), null);
   assert.equal(searchProgress("{坏"), null);
+});
+
+test("检索篇数：台账没记 pdf、papers/ 里对上了的也算已有全文；探针只给纳入且没记 pdf 的", () => {
+  const json = JSON.stringify([
+    { id: "a", decision: "included", pdf: "papers/a.pdf", title: "A" },
+    { id: "b", decision: "included", title: "B", doi: "10.1/b" },
+    { id: "c", decision: "included", title: "C", url: "https://x/c" },
+    { id: "d", decision: "excluded", title: "D" },
+  ]);
+  assert.deepEqual(searchPdfProbes(json), [
+    { id: "b", title: "B", url: "https://doi.org/10.1/b" },
+    { id: "c", title: "C", url: "https://x/c" },
+  ]);
+  assert.equal(searchProgressLine(searchProgress(json, new Set(["b"]))!), "纳入 3 篇 · 已有全文 2 · 缺全文 1");
+  assert.deepEqual(searchPdfProbes("{坏"), []);
 });
 
 test("用图计划：拼图按编号去重，仅引用只数真引用，技能样例里的备选不算", () => {

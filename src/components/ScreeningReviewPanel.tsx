@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode, useRef } from "react";
-import { readResearchLedger } from "../research-report-load";
+import { missingToFetchWithFiles, readResearchLedger } from "../research-report-load";
+import { missingToFetchCount } from "../step-flow";
 import {
   parseIncludedRecords,
   screeningCountLine,
@@ -7,7 +8,6 @@ import {
   screeningSearchLog,
   type IncludedRecord,
 } from "../screening-review";
-import { countToFetchEntries } from "../step-flow";
 import PendingConfirmList from "./PendingConfirmList";
 import { InlineNotice } from "./PageFrame";
 
@@ -61,7 +61,14 @@ export default function ScreeningReviewPanel({
           setRecords(parseIncludedRecords(json.text));
           if (json.truncated) setTruncated(true);
         }
-        setToFetch(fetchMd ? countToFetchEntries(fetchMd.text) : 0);
+        // 待获取 = 还缺全文的：清单总条数里多数已勾 ✓（2026-11-10 HER 评审写「待获取 28」，实际只缺 3 篇）。
+        // 先按 ✓ 数，再对照项目根 papers/（PDF 下在那里）补去已下好的；对照不挡清单出来
+        setToFetch(fetchMd ? missingToFetchCount(fetchMd.text, {}) : 0);
+        if (fetchMd) {
+          void missingToFetchWithFiles(projectRoot ?? root, fetchMd.text).then((n) => {
+            if (!cancelled) setToFetch(n);
+          });
+        }
         setSearchLog(screening ? screeningSearchLog(screening.text) : "");
         if (screening?.truncated) setTruncated(true);
       } catch (reason) {
@@ -74,7 +81,7 @@ export default function ScreeningReviewPanel({
     return () => {
       cancelled = true;
     };
-  }, [root, reload]);
+  }, [root, projectRoot, reload]);
 
   const counts = useMemo(
     () => screeningCounts(records ?? [], toFetch),

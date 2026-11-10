@@ -52,7 +52,7 @@ import {
   type ResearchTools,
 } from "../research-tools";
 import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
-import { readResearchFile, readResearchLedger } from "../research-report-load";
+import { readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
 import {
   excludedIncludedIds,
   figurePlan,
@@ -61,8 +61,6 @@ import {
   notesProgressLine,
   outlineProgress,
   outlineProgressParts,
-  searchProgress,
-  searchProgressLine,
   spotCheckPicks,
   type SpotCheckPick,
 } from "../notes-progress";
@@ -346,7 +344,7 @@ function LedgerCountLine({
   roots: string[];
   live: boolean;
   rel: string;
-  line: (text: string) => string | null;
+  line: (text: string) => string | null | Promise<string | null>;
   title: string;
   /** 台账白名单外的文件（outline.md）走只读预览通道：白名单同时管写回，不为计数放宽 */
   read?: (root: string, rel: string) => Promise<{ text: string; truncated: boolean }>;
@@ -362,7 +360,7 @@ function LedgerCountLine({
         try {
           const file = await read(root, rel);
           if (file.truncated) continue;
-          const out = lineRef.current(file.text);
+          const out = await lineRef.current(file.text);
           if (!stale) setText(out);
           return;
         } catch {
@@ -389,10 +387,6 @@ function LedgerCountLine({
   );
 }
 
-const searchCountLine = (text: string) => {
-  const p = searchProgress(text);
-  return p ? searchProgressLine(p) : null;
-};
 /** 大纲一行：定框架几问、薄几节（综述回路三期）+ 用图计划 */
 const figurePlanCountLine = (text: string) => {
   const o = outlineProgress(text);
@@ -3025,8 +3019,8 @@ export default function StepFlow({
             roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
             rel="papers/included.json"
-            line={searchCountLine}
-            title="按 papers/included.json 数：纳入的篇里有 pdf 字段的算已有全文；缺全文的精读时只能按摘要记"
+            line={(text) => searchCountLineWithFiles(projectPath, text)}
+            title="按 papers/included.json 数：纳入的篇里项目 papers/ 有 PDF 的算已有全文；缺全文的精读时只能按摘要记"
           />
         )}
         {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}

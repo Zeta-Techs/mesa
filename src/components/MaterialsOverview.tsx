@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FoldMark } from "./PageFrame";
-import { readResearchFile, readResearchLedger } from "../research-report-load";
+import { readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
 import { toast } from "../toast";
 import type { SkillProvides } from "../skill-slots";
 import type { ReworkDto } from "../step-loop";
@@ -85,8 +85,13 @@ export default function MaterialsOverview({
             if (text) files.reports!.push(text);
           } else files[f.key] = text;
         }
-        next[p.name] = assetCounts(p.kind, files);
+        // 检索那一行的全文数要对照 papers/ 里实际的 PDF（台账 pdf 字段只在脚本跑时写），与步骤卡同一口径
+        next[p.name] =
+          p.kind === "search" && files.included
+            ? await searchCountLineWithFiles(projectPath, files.included)
+            : assetCounts(p.kind, files);
       }
+      if (stale) return;
       setCounts(next);
       setReworks(list);
     })();
