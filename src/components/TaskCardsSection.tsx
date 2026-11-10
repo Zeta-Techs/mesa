@@ -433,6 +433,32 @@ export default function TaskCardsSection({
       stale = true;
     };
   }, [catchUpStep, projectPath, refreshToken, catchUpTick]);
+  /** 精读还没读的新纳入篇（项目里的纳入清单 vs 这一步工作副本的索引）。「待跟进」只看有没有并入：解冲突、「继续」并入后
+   *  标记就消了，AI 却没读新篇（2026-11-10 HER：解完冲突「待跟进」没了，新加的 2 篇没人读）。有就照样给「跟进上游的新增」 */
+  const [unreadNew, setUnreadNew] = useState(0);
+  const unreadStep =
+    focusStepDto && (focusRunStatus === "done" || focusRunStatus === "review") && stepFillsAnySlot(focusStepDto.skills, ["lit-notes"], skillProvides)
+      ? focusStepDto
+      : null;
+  const unreadWorktree = unreadStep ? pickStepWorkspace(workspaces, projectPath, unreadStep) : undefined;
+  const unreadRoot = unreadWorktree?.status === "active" ? unreadWorktree.worktreePath : null;
+  useEffect(() => {
+    setUnreadNew(0);
+    if (!unreadStep) return;
+    let stale = false;
+    void (async () => {
+      const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
+      const idx =
+        (unreadRoot ? await readResearchLedger(unreadRoot, "notes/index.json").catch(() => null) : null) ??
+        (await readResearchLedger(projectPath, "notes/index.json").catch(() => null));
+      // 没有索引（还没开读）不算：那是第一轮，不是跟进
+      if (stale || !inc || inc.truncated || !idx || idx.truncated) return;
+      setUnreadNew(notesFollowupIds(inc.text, idx.text)?.length ?? 0);
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [unreadStep?.name, unreadRoot, projectPath, refreshToken, catchUpTick]);
   const dirtyBlocked = historySaveBlockedReason(dirtyFiles, dirtyMerging);
   /** 想法区零态入口（「＋ 话题」）是否常显：有卡 → 常现（管理已有讨论）；
    *  无卡 → 仅 role=you 的步骤常显（人主导的步骤开放讨论最有价值，如综述大纲聊角度/创新点）。
@@ -1024,7 +1050,8 @@ export default function TaskCardsSection({
     const step = target ?? focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
     if (!step || !found) return "stopped";
-    const upstream = found.staleUpstream ?? "上一步";
+    // 解冲突、「继续」并入后「待跟进」已消、但新篇还没读时，staleUpstream 为空：写最近的上一步名
+    const upstream = found.staleUpstream ?? steps[steps.findIndex((s) => s.name === step.name) - 1]?.name ?? "上一步";
     setFollowBusy(true);
     if (!auto) setError(null);
     try {
@@ -1631,19 +1658,19 @@ export default function TaskCardsSection({
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
-                if (!live?.staleUpstream && !reworkButton && !refreshButton && !commentsButton) return null;
+                if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton && !commentsButton) return null;
                 return (
                   <span className="flex shrink-0 items-center gap-1.5">
                     {refreshButton}
                     {commentsButton}
                     {reworkButton}
                     {/* 待评审时也能跟进：确认框里选「接着做，一起评审」，两轮合在一起评审（2026-11-10 用户拍板） */}
-                    {live?.staleUpstream && focusRunStatus === "review" && (
+                    {(live?.staleUpstream || unreadNew > 0) && focusRunStatus === "review" && (
                       <button
                         type="button"
                         disabled={followBusy}
                         onClick={() => void followUpstream()}
-                        title={`上游「${live.staleUpstream}」保存过新内容，这一版还没用上：只处理新增的部分，接在没保存的这一轮后面做，做完两轮一起评审（先告诉你有多少再开始）`}
+                        title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `上游「${live?.staleUpstream}」保存过新内容，这一版还没用上`}：只处理新增的部分，接在没保存的这一轮后面做，做完两轮一起评审（先告诉你有多少再开始）`}
                         className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
                       >
                         {followBusy ? "正在算新增…" : "跟进上游的新增"}
@@ -1662,7 +1689,7 @@ export default function TaskCardsSection({
               }
               if (focusRunStatus !== "done") return null;
               const ws = stepWorkspace(focusStepDto);
-              const follow = !!ws?.staleUpstream;
+              const follow = !!ws?.staleUpstream || unreadNew > 0;
               const catchUpButton = catchUp.length > 0 && (
                 <button
                   type="button"
@@ -1685,7 +1712,7 @@ export default function TaskCardsSection({
                       type="button"
                       disabled={followBusy}
                       onClick={() => void followUpstream()}
-                      title={`上游「${ws?.staleUpstream}」保存过新内容，这一步还没并进来：只处理新增的部分，已有的不重做（先告诉你有多少再开始）`}
+                      title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `上游「${ws?.staleUpstream}」保存过新内容，这一步还没并进来`}：只处理新增的部分，已有的不重做（先告诉你有多少再开始）`}
                       className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
                     >
                       {followBusy ? "正在算新增…" : "跟进上游的新增"}
