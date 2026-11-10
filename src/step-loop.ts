@@ -350,6 +350,21 @@ export function followupScale(opts: { upstream: string; notesIds: string[] | nul
     : "";
 }
 
+/** 跟进确认框（确认框文案要短，design-system.md）：问句标题 + 一两句后果。并入、恢复这类机制不写；
+ *  上一轮没保存时只写「一起评审、不能只退回一轮」这个后果（2026-11-10 用户：弹窗文案尽可能简洁） */
+export function followupConfirmText(opts: { notesIds: string[] | null; files: string[]; unsaved: boolean }): string {
+  const head =
+    opts.notesIds && opts.notesIds.length > 0
+      ? `跟进新纳入的 ${opts.notesIds.length} 篇？\n\nAI 只读这 ${opts.notesIds.length} 篇，已有笔记不动。`
+      : `跟进上游改过的 ${opts.files.length} 个文件？\n\nAI 只改受影响的部分。`;
+  return opts.unsaved ? `${head}\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。` : head;
+}
+
+/** 补读确认框：问句标题 + 哪几篇 */
+export function catchUpConfirmText(names: string[]): string {
+  return `补读 ${names.length} 篇新到的全文？\n\nAI 在原笔记上续写：${names.join("、")}。别的篇不动。`;
+}
+
 export function roundCauseLabel(cause: RoundCause): string {
   switch (cause) {
     case "first":

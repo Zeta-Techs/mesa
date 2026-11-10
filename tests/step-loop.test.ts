@@ -6,6 +6,8 @@ import {
   followupFiles,
   followupPrompt,
   followupScale,
+  followupConfirmText,
+  catchUpConfirmText,
   notesFollowupIds,
   parseTopics,
   reworkPrompt,
@@ -306,4 +308,13 @@ test("catchUpPrompt：点名篇与全文文件，在原笔记上续写、人写�
   assert.match(text, /在原笔记上续写（没有笔记的按技能新写），不另起平行笔记/);
   assert.match(text, /「我的想法」与人手写的内容原样保留/);
   assert.match(text, /fulltextStatus 改成 fulltext/);
+});
+
+test("跟进 / 补读确认框：问句标题 + 一两句后果；上一轮没保存只加一条注意", () => {
+  const t = followupConfirmText({ notesIds: ["a", "b"], files: [], unsaved: false });
+  assert.equal(t, "跟进新纳入的 2 篇？\n\nAI 只读这 2 篇，已有笔记不动。");
+  const u = followupConfirmText({ notesIds: ["a", "b"], files: [], unsaved: true });
+  assert.match(u, /\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。$/);
+  assert.match(followupConfirmText({ notesIds: null, files: ["x.md"], unsaved: false }), /^跟进上游改过的 1 个文件？/);
+  assert.equal(catchUpConfirmText(["Kim2025", "Li2018"]), "补读 2 篇新到的全文？\n\nAI 在原笔记上续写：Kim2025、Li2018。别的篇不动。");
 });

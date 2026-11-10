@@ -31,6 +31,8 @@ import {
   followupFiles,
   followupPrompt,
   followupScale,
+  followupConfirmText,
+  catchUpConfirmText,
   notesFollowupIds,
   unplacedCoverageDrafts,
   reworkTargets,
@@ -1103,11 +1105,12 @@ export default function TaskCardsSection({
         return "skipped";
       }
       if (!auto) {
-        const restoreNote = ws.status !== "active" ? "开始前会先恢复这一步收起的工作副本，再把项目里的新内容并进去。" : "开始前会先把项目里的新内容并进这一步的工作副本。";
-        const unsavedNote = unsaved
-          ? "\n这一步上一轮还没保存进项目：这一轮接在它后面做，做完两轮合在一起评审、一起保存，不能只退回其中一轮。想分开评审就点取消，先去评审保存上一轮。"
-          : "";
-        if (!(await confirmDialog(`${scale}\n${restoreNote}${unsavedNote}`, { confirmText: unsaved ? "接着做，一起评审" : "开始跟进" }))) return "stopped";
+        if (
+          !(await confirmDialog(followupConfirmText({ notesIds, files, unsaved }), {
+            confirmText: unsaved ? "接着做，一起评审" : "开始跟进",
+          }))
+        )
+          return "stopped";
       }
       if (ws.status !== "active") {
         ws = await ensureActive(ws, step.name);
@@ -1140,17 +1143,12 @@ export default function TaskCardsSection({
     const found = step ? stepWorkspace(step) : undefined;
     if (!step || !found || catchUp.length === 0) return;
     const hits = catchUp;
-    const names = hits.map((h) => h.probe.bibKey || h.probe.id).join("、");
     setFollowBusy(true);
     setError(null);
     try {
       const launch = await loopLaunch(step.name);
-      const restoreNote = found.status !== "active" ? "开始前会先恢复这一步收起的工作副本。" : "";
       if (
-        !(await confirmDialog(
-          `${hits.length} 篇原来没有全文的现在有了：${names}。\nAI 只补读这 ${hits.length} 篇，在原笔记上续写，别的篇不动，做完照常评审、保存。${restoreNote}`,
-          { confirmText: "开始补读" },
-        ))
+        !(await confirmDialog(catchUpConfirmText(hits.map((h) => h.probe.bibKey || h.probe.id)), { confirmText: "开始补读" }))
       )
         return;
       const ws = await ensureActive(found, step.name);
