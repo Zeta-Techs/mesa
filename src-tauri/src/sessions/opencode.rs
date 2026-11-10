@@ -260,6 +260,7 @@ pub(super) fn opencode_scan_db(db_path: &Path) -> Vec<SessionMetaDto> {
             reader: false,
             reader_pdf: None,
             step_meta: Default::default(),
+            relay: Default::default(),
             title_by_user: false,
         });
     }
@@ -927,6 +928,7 @@ pub(super) fn opencode_scan_legacy(storage: &Path) -> Vec<SessionMetaDto> {
             reader: false,
             reader_pdf: None,
             step_meta: Default::default(),
+            relay: Default::default(),
             title_by_user: false,
         });
     }

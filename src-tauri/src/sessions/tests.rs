@@ -1145,6 +1145,7 @@ fn grok_parent_session_merges_resume_chain() {
                 reader: false,
                 reader_pdf: None,
                 step_meta: Default::default(),
+                relay: Default::default(),
                 title_by_user: false,
             },
             None,
@@ -1706,6 +1707,7 @@ fn codex_meta(id: &str, updated: &str, fork: Option<&str>) -> (SessionMetaDto, O
             reader: false,
             reader_pdf: None,
             step_meta: Default::default(),
+            relay: Default::default(),
             title_by_user: false,
         },
         fork.map(String::from),
@@ -2854,6 +2856,7 @@ fn live_meta(agent: &str, updated_at: Option<&str>, live: bool) -> SessionMetaDt
         reader: false,
         reader_pdf: None,
         step_meta: Default::default(),
+        relay: Default::default(),
         title_by_user: false,
     }
 }
@@ -3304,6 +3307,7 @@ fn claim_test_session(agent: &str, id: &str, path: &str, updated: &str) -> Sessi
         reader: false,
         reader_pdf: None,
         step_meta: Default::default(),
+        relay: Default::default(),
         title_by_user: false,
     }
 }

@@ -12,12 +12,11 @@ use std::path::{Path, PathBuf};
 
 use crate::agent_specs::{self, PromptInject};
 use crate::git_info::GitStatusDto;
+use crate::relay_brief;
 use crate::sessions::{self, ChatMessageDto, SessionMetaDto};
 
 /// 简报全文上限（同 inbox 追加口径）
 const BRIEF_CAP: usize = 64 * 1024;
-/// 单条消息原文上限。超过才截断并标明，避免一条工具回显把整份简报撑满。
-const MSG_VERBATIM_CAP: usize = 4_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,27 +58,6 @@ fn handoff_targets_sync() -> Vec<HandoffTargetDto> {
         .collect()
 }
 
-/// 保留原文（不折叠空白、不改写）。超长只截这一条并标明。
-fn verbatim(text: &str) -> String {
-    let t = text.trim();
-    if t.chars().count() <= MSG_VERBATIM_CAP {
-        return t.to_string();
-    }
-    format!(
-        "{}…（本条超过 {MSG_VERBATIM_CAP} 字，后部已截断）",
-        t.chars().take(MSG_VERBATIM_CAP).collect::<String>()
-    )
-}
-
-fn quote_block(index: usize, text: &str) -> String {
-    let body = verbatim(text)
-        .lines()
-        .map(|line| format!("> {line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{index}.\n{body}\n")
-}
-
 /// 消息正文：只取 text 块（thinking/工具调用不进要点）
 fn message_text(m: &ChatMessageDto) -> String {
     m.blocks
@@ -88,75 +66,6 @@ fn message_text(m: &ChatMessageDto) -> String {
         .map(|b| b.text.as_str())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// 共用段：任务信息（agent/cwd/标题/会话 ID）
-fn render_task_info(out: &mut String, agent: &str, session_id: &str, cwd: &str, title: &str) {
-    out.push_str("## 任务信息\n\n");
-    out.push_str(&format!("- 来源 Agent：{agent}\n"));
-    out.push_str(&format!("- 项目目录：{cwd}\n"));
-    out.push_str(&format!("- 会话标题：{title}\n"));
-    out.push_str(&format!("- 会话 ID：{session_id}\n\n"));
-}
-
-/// 共用段：当前 git 状态（非仓库时注明）
-fn render_git_status(out: &mut String, git: Option<&GitStatusDto>) {
-    out.push_str("## 当前 git 状态\n\n");
-    match git {
-        Some(g) if g.is_repo => {
-            out.push_str(&format!(
-                "- 分支：{}（领先 {} / 落后 {}）\n",
-                if g.branch.is_empty() {
-                    "（未命名）"
-                } else {
-                    &g.branch
-                },
-                g.ahead,
-                g.behind
-            ));
-            if g.files.is_empty() {
-                out.push_str("- 工作区干净，无未提交改动\n");
-            } else {
-                out.push_str(&format!(
-                    "- 改动 {} 个文件（+{} -{}）：\n",
-                    g.files.len(),
-                    g.total_add,
-                    g.total_del
-                ));
-                for f in &g.files {
-                    let stat = match (f.additions, f.deletions) {
-                        (Some(a), Some(d)) => format!("（+{a} -{d}）"),
-                        _ => "（二进制或新增）".to_string(),
-                    };
-                    out.push_str(&format!("  - {} {} {}\n", f.status, f.path, stat));
-                }
-            }
-        }
-        _ => out.push_str("- （项目目录不是 git 仓库）\n"),
-    }
-}
-
-/// 共用段：接力说明（用户原话不改写；助手正文供核对）
-fn render_handoff_note(out: &mut String, agent: &str) {
-    out.push_str("\n## 接力说明\n\n");
-    out.push_str(&format!(
-        "- 本简报由 Mesa 从 {agent} 会话生成。用户原话已按时间全部列出，必须照原话理解，不要改写。\n"
-    ));
-    out.push_str("- 助手正文在文末，不含工具调用。源会话仍留在原 Agent。\n");
-    out.push_str("- 简报里没有的细节不要编。不确定时先读列出的文件和当前 git 状态。\n");
-}
-
-fn brief_title(session_id: &str, title: Option<&str>) -> String {
-    title
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(|t| t.to_string())
-        .unwrap_or_else(|| {
-            format!(
-                "未命名对话 · {}",
-                session_id.chars().take(8).collect::<String>()
-            )
-        })
 }
 
 /// 某一角色的正文，按时间。空正文跳过。工具调用不在 text 块里，不会进来。
@@ -169,92 +78,30 @@ fn role_quotes(messages: &[ChatMessageDto], role: &str) -> Vec<String> {
         .collect()
 }
 
-fn render_quotes(out: &mut String, heading: &str, empty: &str, quotes: &[String]) {
-    out.push_str(heading);
-    out.push_str("\n\n");
-    if quotes.is_empty() {
-        out.push_str(empty);
-        out.push_str("\n\n");
-        return;
-    }
-    for (i, text) in quotes.iter().enumerate() {
-        out.push_str(&quote_block(i + 1, text));
-        out.push('\n');
-    }
-}
-
-/// 组装简报。用户原话与助手正文都按时间逐条收录，不抽样、不改写。
-/// 助手正文放在文末：超过 64KB 时先截助手部分，用户原话保留。
-/// git 为 None 或 is_repo=false 时注明非仓库。
+/// 组装简报（2026-11-10 起与聊天里换 Agent 接力同一写法，relay_brief.rs）：用户原话全部原文；
+/// 最近几轮原文，更早的一轮一行，末尾写明省了什么；每轮改了哪些文件、跑了什么命令。
+/// rounds 是整条时间线（这段对话之前接过力的，前面几家也在里面）
 pub(crate) fn render_handoff_brief(
+    kind: relay_brief::BriefKind,
     agent: &str,
     session_id: &str,
     cwd: &str,
     title: Option<&str>,
-    messages: &[ChatMessageDto],
+    rounds: &[relay_brief::Round],
     git: Option<&GitStatusDto>,
+    ai_conclusions: Option<&str>,
 ) -> String {
-    let title = brief_title(session_id, title);
-    let mut out = String::new();
-    out.push_str(&format!("# 接力简报：{title}\n\n"));
-    out.push_str(&format!(
-        "> 本简报由 Mesa 从 {agent} 会话生成（{}）。用户原话逐条原文列出，不要改写。助手正文在文末，不含工具调用。这不是原会话文件。\n\n",
-        sessions::now_iso()
-    ));
-    render_task_info(&mut out, agent, session_id, cwd, &title);
-    render_quotes(
-        &mut out,
-        "## 用户原话（全部，按时间）",
-        "- （没有用户原话）",
-        &role_quotes(messages, "user"),
-    );
-    render_git_status(&mut out, git);
-    render_handoff_note(&mut out, agent);
-    render_quotes(
-        &mut out,
-        "## 助手正文（全部，按时间，供核对）",
-        "- （没有助手正文）",
-        &role_quotes(messages, "assistant"),
-    );
-    out
-}
-
-/// 「◈ 提炼接力」：用户原话仍逐条原文。AI 只写「要接上的结论」，不能代替原话。
-pub(crate) fn render_digest_brief(
-    agent: &str,
-    session_id: &str,
-    cwd: &str,
-    title: Option<&str>,
-    messages: &[ChatMessageDto],
-    ai_body: &str,
-    git: Option<&GitStatusDto>,
-) -> String {
-    let title = brief_title(session_id, title);
-    let mut out = String::new();
-    out.push_str(&format!("# 接力简报（AI 提炼）：{title}\n\n"));
-    out.push_str(&format!(
-        "> 本简报由 Mesa 从 {agent} 会话生成（{}）。用户原话逐条原文列出，不要改写。下面的结论只帮助接上助手做过的事，不能覆盖用户原话。助手正文在文末供核对。\n\n",
-        sessions::now_iso()
-    ));
-    render_task_info(&mut out, agent, session_id, cwd, &title);
-    render_quotes(
-        &mut out,
-        "## 用户原话（全部，按时间）",
-        "- （没有用户原话）",
-        &role_quotes(messages, "user"),
-    );
-    out.push_str("## 要接上的结论（从助手正文提炼，不能代替用户原话）\n\n");
-    out.push_str(ai_body.trim());
-    out.push_str("\n\n");
-    render_git_status(&mut out, git);
-    render_handoff_note(&mut out, agent);
-    render_quotes(
-        &mut out,
-        "## 助手正文（全部，按时间，供核对）",
-        "- （没有助手正文）",
-        &role_quotes(messages, "assistant"),
-    );
-    out
+    relay_brief::render(&relay_brief::BriefInput {
+        kind,
+        title: title.unwrap_or(""),
+        from_agent: agent,
+        from_session: session_id,
+        cwd,
+        rounds,
+        first_no: 1,
+        git,
+        ai_conclusions,
+    })
 }
 
 /// 全文脱敏后按 64KB 上限截断（字符边界对齐），超限追加截断标记
@@ -277,7 +124,7 @@ pub(crate) fn redact_and_cap(text: &str) -> String {
 /// 接力简报是过程文件而非任务产物（默认 .gitignore 规则的存量仓库补丁）：
 /// 写简报时顺手把 `.ccode/handoff-*.md` 补进仓库 .gitignore。best-effort——
 /// 非 git 仓库/读取失败静默跳过；已有规则不重复追加。
-fn ensure_handoff_ignored(project_root: &Path) {
+pub(crate) fn ensure_handoff_ignored(project_root: &Path) {
     if crate::workspaces::run_git(
         project_root,
         &["rev-parse", "--is-inside-work-tree"],
@@ -325,7 +172,9 @@ fn handoff_target_path(cwd: &str, target_path: Option<&str>) -> Result<PathBuf, 
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric())
                 .collect();
-            Ok(root.join(".ccode").join(format!("handoff-{stamp}.md")))
+            // 加 4 位随机：同一秒两份不撞（接力关系按简报文件名记，relay.rs）
+            let rand: String = uuid::Uuid::new_v4().simple().to_string().chars().take(4).collect();
+            Ok(root.join(".ccode").join(format!("handoff-{stamp}-{rand}.md")))
         }
         Some(p) => {
             let expanded = sessions::expand_tilde(p);
@@ -396,14 +245,17 @@ fn build_handoff_brief_impl(
     target_path: Option<&str>,
     until_text: Option<&str>,
 ) -> Result<HandoffBriefDto, String> {
-    // 全文解析。用户原话与助手正文都逐条写入，不抽样。
+    // 全文解析（接力过的连同前面几家）。用户原话逐条写入，不抽样。
     let messages = sessions::conversation_impl(agent, file_path);
+    let forking = until_text.is_some();
     let messages = match until_text {
         Some(text) => cut_messages_at(messages, text)?,
         None => messages,
     };
+    let rounds = crate::relay::timeline_from_messages(agent, session_id, &messages);
     let git = crate::git_info::git_status_sync(cwd).ok();
-    let brief = render_handoff_brief(agent, session_id, cwd, title, &messages, git.as_ref());
+    let kind = if forking { relay_brief::BriefKind::Fork } else { relay_brief::BriefKind::Full };
+    let brief = render_handoff_brief(kind, agent, session_id, cwd, title, &rounds, git.as_ref(), None);
     let text = redact_and_cap(&brief);
     let path = handoff_target_path(cwd, target_path)?;
     if let Some(parent) = path.parent() {
@@ -500,14 +352,16 @@ fn build_session_digest_impl(
         crate::ai::build_digest_prompt(&assistant),
     )?;
     let git = crate::git_info::git_status_sync(cwd).ok();
-    let brief = render_digest_brief(
+    let rounds = crate::relay::timeline_from_messages(agent, session_id, &messages);
+    let brief = render_handoff_brief(
+        relay_brief::BriefKind::Full,
         agent,
         session_id,
         cwd,
         title,
-        &messages,
-        &ai_body,
+        &rounds,
         git.as_ref(),
+        Some(&ai_body),
     );
     // AI 输出再过一次脱敏（与规则式简报同一口径），随后 64KB 上限
     let text = redact_and_cap(&brief);
@@ -760,7 +614,7 @@ pub(crate) fn apply_handoff(conn: &Connection, sessions: &mut [SessionMetaDto]) 
 
 /// 供测试与调用方共用的会话 DTO 构造（字段随 sessions.rs 演进，集中一处）
 #[cfg(test)]
-fn test_session(
+pub(crate) fn test_session(
     agent: &str,
     session_id: &str,
     project_path: &str,
@@ -799,6 +653,7 @@ fn test_session(
         reader: false,
         reader_pdf: None,
         step_meta: Default::default(),
+        relay: Default::default(),
         title_by_user: false,
     }
 }
@@ -872,7 +727,12 @@ mod tests {
         }
     }
 
-    /// 简报结构：任务信息 / 对话要点（最近用户消息 + 最后助手回复）/ git 状态 / 接力说明
+    fn render(messages: &[ChatMessageDto], ai: Option<&str>, git: Option<&GitStatusDto>) -> String {
+        let rounds = relay_brief::split_rounds("codex", "sess-12345678", messages);
+        render_handoff_brief(relay_brief::BriefKind::Full, "codex", "sess-12345678", "/tmp/proj", Some("RAG 调研"), &rounds, git, ai)
+    }
+
+    /// 简报结构：抬头 / 阅读约定 / 用户原话 / 最近几轮 / 文件状态 / 没写进来的
     #[test]
     fn brief_structure_sections() {
         let messages = vec![
@@ -881,27 +741,17 @@ mod tests {
             msg("user", "重点关注召回率指标"),
             msg("assistant", "已完成初稿，结论如下……"),
         ];
-        let brief = render_handoff_brief(
-            "codex",
-            "sess-12345678",
-            "/tmp/proj",
-            Some("RAG 调研"),
-            &messages,
-            Some(&git_dto()),
-        );
-        assert!(brief.contains("# 接力简报：RAG 调研"));
-        assert!(brief.contains("- 来源 Agent：codex"));
-        assert!(brief.contains("- 项目目录：/tmp/proj"));
-        assert!(brief.contains("- 会话 ID：sess-12345678"));
+        let brief = render(&messages, None, Some(&git_dto()));
+        assert!(brief.contains("# 〔Mesa 交接简报〕RAG 调研"));
+        assert!(brief.contains("来自 Codex（会话 sess-12345678）"));
+        assert!(brief.contains("## 怎么读这份简报"));
         assert!(brief.contains("> 帮我调研 RAG 评测方案"));
         assert!(brief.contains("> 重点关注召回率指标"));
-        assert!(brief.contains("> 好的，我先读一下代码"));
-        assert!(brief.contains("> 已完成初稿，结论如下……"));
+        assert!(brief.contains("好的，我先读一下代码"));
+        assert!(brief.contains("已完成初稿，结论如下……"));
         assert!(brief.contains("- 分支：main（领先 2 / 落后 0）"));
         assert!(brief.contains("  - M src/a.rs （+10 -3）"));
-        assert!(brief.contains("不要改写"));
-        assert!(brief.contains("## 用户原话（全部，按时间）"));
-        assert!(brief.contains("## 助手正文（全部，按时间，供核对）"));
+        assert!(brief.contains("## 没写进来的"));
     }
 
     /// 中段的用户原话也逐条在，不因为靠后才保留
@@ -912,64 +762,36 @@ mod tests {
             messages.push(msg("user", &format!("后续第 {i} 条")));
             messages.push(msg("assistant", "收到"));
         }
-        let brief = render_handoff_brief("codex", "s-long", "/tmp/p", Some("检索"), &messages, None);
+        let brief = render(&messages, None, None);
         assert!(brief.contains("> 课题是比较三种检索式的召回"));
         assert!(brief.contains("> 后续第 0 条"));
         assert!(brief.contains("> 后续第 19 条"));
-        assert!(!brief.contains("中间省略"));
     }
 
     /// 空会话与非 git 目录的兜底文案
     #[test]
     fn brief_empty_conversation_and_non_repo() {
-        let brief = render_handoff_brief("kimi", "abc", "/tmp/x", None, &[], None);
+        let brief = render_handoff_brief(relay_brief::BriefKind::Full, "kimi", "abc", "/tmp/x", None, &[], None, None);
         assert!(brief.contains("未命名对话 · abc"));
         assert!(brief.contains("（没有用户原话）"));
-        assert!(brief.contains("（没有助手正文）"));
-        assert!(brief.contains("（项目目录不是 git 仓库）"));
+        assert!(brief.contains("项目目录不是 git 仓库"));
     }
 
-    /// 提炼简报结构：AI 提炼标题 + 共用任务信息/git 段 + AI 正文 + 接力声明
+    /// 提炼简报：多一段 AI 结论，用户原话照旧原文
     #[test]
     fn digest_brief_structure_sections() {
-        let ai_body = "## 任务目标\n做提炼接力\n\n## 下一步建议\n先写后端";
-        let messages = vec![msg("user", "不要改纳入标准")];
-        let brief = render_digest_brief(
-            "claude-code",
-            "sess-12345678",
-            "/tmp/proj",
-            Some("提炼接力"),
-            &messages,
-            ai_body,
-            Some(&git_dto()),
-        );
-        assert!(brief.contains("# 接力简报（AI 提炼）：提炼接力"));
-        assert!(brief.contains("- 来源 Agent：claude-code"));
-        assert!(brief.contains("- 项目目录：/tmp/proj"));
-        assert!(brief.contains("- 分支：main（领先 2 / 落后 0）"));
-        assert!(brief.contains("> 不要改纳入标准"));
+        let ai_body = "## 任务目标\n做提炼接力";
+        let brief = render(&[msg("user", "不要改纳入标准")], Some(ai_body), Some(&git_dto()));
         assert!(brief.contains("## 要接上的结论"));
         assert!(brief.contains("## 任务目标\n做提炼接力"));
-        assert!(brief.contains("不要改写"));
-        // 未命名回落与规则式简报一致
-        let brief = render_digest_brief("kimi", "abc", "/tmp/x", None, &[], "正文", None);
-        assert!(brief.contains("未命名对话 · abc"));
-        assert!(brief.contains("（项目目录不是 git 仓库）"));
+        assert!(brief.contains("> 不要改纳入标准"));
     }
 
     /// 提炼简报同样过脱敏：AI 正文里的已知前缀密钥不得落盘
     #[test]
     fn digest_brief_redacts_ai_output() {
         let secret = "sk-ant-api03-abcdef123456";
-        let brief = render_digest_brief(
-            "codex",
-            "s1",
-            "/tmp/p",
-            None,
-            &[],
-            &format!("密钥是 {secret}"),
-            None,
-        );
+        let brief = render(&[], Some(&format!("密钥是 {secret}")), None);
         let text = redact_and_cap(&brief);
         assert!(!text.contains(secret), "AI 输出必须脱敏: {text}");
         assert!(text.contains("已隐藏密钥"));
@@ -979,8 +801,7 @@ mod tests {
     #[test]
     fn brief_redacts_known_secret_tokens() {
         let secret = "sk-ant-api03-abcdef123456";
-        let messages = vec![msg("user", &format!("用这个密钥调试 {secret} 看看"))];
-        let brief = render_handoff_brief("claude-code", "s1", "/tmp/p", None, &messages, None);
+        let brief = render(&[msg("user", &format!("用这个密钥调试 {secret} 看看"))], None, None);
         let text = redact_and_cap(&brief);
         assert!(!text.contains(secret), "密钥必须脱敏: {text}");
         assert!(text.contains("已隐藏密钥"));

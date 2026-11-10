@@ -1915,6 +1915,13 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   handoff.rs                 # 接力（§11.3 机制四）：简报生成（脱敏+64KB）、提炼接力（build_session_digest AI 蒸馏全会话 +
                              # finalize_digest_brief 初稿写回）、handoff_links 接力链登记/固化；
                              # build_handoff_brief 的 until_text = 聊天层「从这里分叉」，按正文截到那条助手回复（cut_messages_at，认不出报错不给全文）
+                             # 2026-11-10 起简报写法统一走 relay_brief（render_handoff_brief 只是薄包装），时间线连同接力过的前几家（relay::timeline_from_messages）
+  relay.rs                   # 聊天里换一家 Agent 接着做（docs/design-chat-relay.md）：relay_links 按简报文件名记接力关系（parent 交到第几条、child 认出后补）；
+                             #   timeline 认接力抬头往回追前几家拼整条时间线；relay_prepare 写整份 / 补充简报回抬头，relay_options 算换回是接回还是建议新开，
+                             #   relay_segment 给聊天里展开前一段，apply_relay_chains 让一段接力对话在列表只占一行（代表 = 最后接手那段，其余进 relaySegments）
+  relay_brief.rs             # 交接简报写法（整份 / 补充 / 分叉共用）：按轮切、用户原话全收、最近几轮原文、更早的一轮一行再并区间、「没写进来的」账目；
+                             #   记录围栏、阅读约定；接力抬头 RELAY_HEAD 拼与拆（前端 chat-relay.ts 镜像，共读 tests/fixtures/relay-prompts.json）
+  relay_facts.rs             # 每轮改了哪些文件、跑了什么命令：按家认工具名（只核实 Claude Code / Codex / Kimi），失败命令附最后 20 行，碰凭据文件的输出不附
   route_check.rs             # 官方账号线路体检（design-outbound-route.md 一期）：resolve_proxy 按启动注入顺序定代理来源（连接 extra_env > 设置 > 登录 shell 继承），
                              #   probe 经该代理访问 agent_specs RouteProbe 的 cdn-cgi/trace 取 loc 与延迟（无代理显式 no_proxy，SOCKS 不测），
                              #   judge 纯函数判 pass / block / review；结果按 agent|profile 进程内缓存，启动预检传 max_age 300；

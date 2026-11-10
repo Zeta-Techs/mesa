@@ -244,6 +244,7 @@ mod tests {
             reader: false,
             reader_pdf: None,
             step_meta: Default::default(),
+            relay: Default::default(),
             title_by_user: false,
         }
     }

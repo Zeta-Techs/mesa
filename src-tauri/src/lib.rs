@@ -35,6 +35,9 @@ mod git_info;
 mod global_config;
 mod grok_login;
 mod handoff;
+mod relay;
+mod relay_brief;
+mod relay_facts;
 mod hooks;
 
 /// helper 出图子命令（`mesa_helper image …`）：Agent 经 MESA_IMAGE_TOOL 调用，返回退出码
@@ -746,6 +749,11 @@ pub fn run() {
             handoff::finalize_digest_brief,
             handoff::list_legacy_briefs,
             handoff::mark_handoff,
+            relay::relay_prepare,
+            relay::relay_register_brief,
+            relay::relay_attach,
+            relay::relay_options,
+            relay::relay_segment,
             logbuf::get_app_log,
             logbuf::clear_app_log,
             logbuf::export_app_log,

@@ -145,9 +145,32 @@ pub struct SessionMetaDto {
     /// 流程对话在这一步里是哪一段（侧栏按步骤分组、按角色起行名用，apply_step_meta 回填）
     #[serde(flatten, default)]
     pub step_meta: SessionStepMeta,
+    /// 接力对话（relay.rs apply_relay_chains）：先后经过的几家与各段；不是接力对话为空。拍平出线
+    #[serde(flatten, default)]
+    pub relay: SessionRelayMeta,
     /// 标题是人手改的（session_meta.title_source=user）：侧栏照写人起的名字，不换成角色名
     #[serde(default)]
     pub title_by_user: bool,
+}
+
+/// 一段接力对话在列表里只占一行（代表 = 最后接手的那段）：用过的几家（按出现先后）与各段（docs/design-chat-relay.md §3.6）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRelayMeta {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay_agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relay_segments: Vec<RelaySegmentRef>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelaySegmentRef {
+    pub agent: String,
+    pub session_id: String,
+    pub title: Option<String>,
+    pub file_path: String,
+    pub updated_at: Option<String>,
 }
 
 /// 流程对话的步骤位置与角色（只用于显示，不写任何会话文件）。拍平进 SessionMetaDto 出线
@@ -395,9 +418,20 @@ fn is_generic_greeting(text: &str) -> bool {
 
 /// Mesa 在项目里开对话时塞在第一句前面的项目上下文包（前端 project-context.ts composeLaunchPrompt / splitLaunchPrompt 镜像）：
 /// 不是人话。列表标题与自动起名只认分隔（单独一行 ----）后面你说的；只有包没有分隔的整条返回空串。
-/// 只认默认包头，自定义模板的包头认不出，照旧当人话
+/// 只认默认包头，自定义模板的包头认不出，照旧当人话。
+/// 接力抬头（relay_brief::RELAY_HEAD，换一家接着做时 Mesa 写在那句话前面）同样不是人话，一并剥掉
 pub(crate) fn strip_mesa_launch_pack(text: &str) -> &str {
-    if !text.trim_start().starts_with("你正在项目「") {
+    let text = strip_before_separator(text, "你正在项目「");
+    strip_before_separator(text, crate::relay_brief::RELAY_HEAD)
+}
+
+/// 只剥项目说明，接力抬头留着（relay.rs 认抬头用）
+pub(crate) fn strip_project_pack(text: &str) -> &str {
+    strip_before_separator(text, "你正在项目「")
+}
+
+fn strip_before_separator<'a>(text: &'a str, head: &str) -> &'a str {
+    if !text.trim_start().starts_with(head) {
         return text;
     }
     let mut offset = 0;
@@ -1852,6 +1886,7 @@ fn opencode_snapshot_meta(path: &Path, session_id: &str) -> Option<SessionMetaDt
         reader: false,
         reader_pdf: None,
         step_meta: Default::default(),
+        relay: Default::default(),
         title_by_user: false,
     })
 }
@@ -2850,6 +2885,7 @@ pub(crate) fn list_sessions_sync() -> Vec<SessionMetaDto> {
         apply_meta(&mut sessions, &scan.chain_members, &meta);
         apply_provenance(&conn, &mut sessions, &scan.provenance_paths);
         crate::handoff::apply_handoff(&conn, &mut sessions);
+        crate::relay::apply_relay_chains(&conn, &mut sessions);
         apply_card_claims(&conn, &mut sessions);
         apply_step_claims(&conn, &mut sessions);
         crate::runs::apply_reader_runs(&conn, &mut sessions, &scan.chain_members);

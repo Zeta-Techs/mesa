@@ -107,6 +107,7 @@ pub(super) fn codebuddy_file_meta(path: &Path, alive: bool) -> Option<SessionMet
         reader: false,
         reader_pdf: None,
         step_meta: Default::default(),
+        relay: Default::default(),
         title_by_user: false,
     })
 }
