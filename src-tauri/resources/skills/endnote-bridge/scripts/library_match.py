@@ -94,7 +94,7 @@ def _legacy_note(path: Path) -> str:
         return (
             "这是 EndNote X9 及更早版本的库（记录在 .Data/rdb 里），脚本直接读不了。"
             "在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存成项目里的 papers/endnote-library.xml，"
-            "再在 Mesa 精读步「同步到文献库」那一行「选这个 EndNote 库」里选这份 XML，重出 EndNote 版 Word。"
+            "再在 Mesa 初稿步「同步到文献库」那一行「选这个 EndNote 库」里选这份 XML，重出 EndNote 版 Word。"
         )
     return ""
 

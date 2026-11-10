@@ -1885,6 +1885,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # papers/endnote-import.xml、.ris、.enw。RIS 作者一人一行，期刊/缩写/卷/期/页/日期/ISSN/摘要/关键词
                              # 随 bib 字段写入；没有的不编造。按钮「同步到 EndNote」把 RIS 放到下载并 open -a 交给 EndNote。
                              # endnote_library_choices：「选这个 EndNote 库」的候选（Windows 读 EndNote 最近打开的库登记、macOS 问 Spotlight 家目录里的 .enl（打开过的按上次打开排前）+ 文稿/桌面顶层 .enl），只列不挑
+  library_attach.rs          # 「同步到文献库」三档（只导条目 / 带 PDF / 带 PDF 和笔记，2026-11-10）：按引文库每条的键找全文（included.json 的 pdf 字段 →
+                             #   lit_watch::match_papers_pdfs_readonly，待获取清单同口径的只读版）与精读笔记（notes/index.json 的 bibKey 或 id），
+                             #   写临时 JSON 交 bridge.py / zotero_rtf.py --attach 写 L1（全文）、N1（Zotero 笔记 HTML）、RN（EndNote 研究笔记，摊成一段）；
+                             #   排除篇不找。红线：只读项目文件，不改名、不登记资源
   research_tools.rs          # 科研外部工具开工 preflight（research_tool_preflight）：Zotero 本地只读接口（只管 AI 现查库，导入与「同步到 Zotero」不走它）/ Origin 平台门槛
                              #   （只做 Windows 实机，非 Windows 必需技能=阻塞）/ Blender 探测 / EndNote 桥 /
                              #   Quarto 能否真跑（quarto-render 步骤预报，不阻塞，dep_check::probe_quarto）；

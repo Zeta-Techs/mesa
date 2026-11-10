@@ -54,7 +54,7 @@
 - **检索步先拍 pending 再下载全文**：Agent 筛完后 `to-fetch` 与开放获取只针对 `decision=included`；pending 禁止进待获取。人工事项顺序为「核对待确认篇目」先于「下载付费墙文献全文」。有 pending 时写入 help-wanted，未回复不把 pending 当已纳入。已有项目不静默改档案卡，需在流程编辑器补该事项或本次评审先拍 pending。
 - **待获取清单拖入按 PDF 内标题匹配（2026-10-10）**：拖进展开的待获取清单时，先对文件名和 DOI，对不上再读 PDF 前 256KB 的可见文字。只命中一篇才复制进 papers/。命中多篇或零篇不猜，提示用该行「关联」。学校账号按钮在可信会话已保存时显示「已登录」。
   **2026-10-22 补 PDF 元数据段的 DOI**（`pdf_meta_dois`：开头 256KB + 结尾 512KB 里**元数据字段**后的本篇 DOI——XMP dc:identifier / prism:doi / crossmark:DOI / pdfx:doi、文档信息 /doi；ACS 在开头、Elsevier 线性化 PDF 在结尾；认 PDF 字符串里转义的括号 `S1872-2067\(24\)60067-7`；只认与条目**完整相等**；不扫正文里的 DOI——ACS 的参考文献 DOI 以链接注释明文出现，9 份实测全文都只认出本篇一条）：拖入时先于正文标题认（ACS cs2c00851.pdf 的 /Title 是插图的；结尾段的 /Title 也读）；清单进度（每 2 秒）对文件名对不上的 papers/*.pdf 也读这两段，按路径 + mtime + 大小缓存，不重复读——正文标题仍只在拖入时读。
-- **精读用已下载 PDF 校正引文库（2026-10-10）**：精读只改 references.bib。项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页；标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 改 bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在精读步重写 RIS。人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件。检索步的 to-fetch.ris 与 endnote-import.ris 仍是全文还没到时的导入清单。
+- **精读用已下载 PDF 校正引文库（2026-10-10）**：精读只改 references.bib。项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页；标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 改 bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在精读步重写 RIS。初稿保存后人点「同步到文献库」时，Mesa 按这份 bib 生成导入文件（2026-11-10 从精读挪到初稿，见下「同步到文献库挂在初稿步」）。检索步的 to-fetch.ris 与 endnote-import.ris 仍是全文还没到时的导入清单。
 - **标准档发现不空转（2026-10-09）**：发现只用 OpenAlex 一条主检索式，先看命中数再取回；单复数与近义词不另开式子。Consensus / Undermind 各一轮。Semantic Scholar、Crossref 标题检索、不允许预印本时的 arXiv 不做发现；429 记覆盖缺口，不重试。Crossref 只按 DOI 补字段。标准档不做引文扩展。开放获取只下已有 PDF 直链，连续 3 次 403 即停。期刊缩写与两套 RIS 只给最终纳入和待确认各做一次，排除的不补。已有项目的任务书不自动改写。
 - **待确认拍完自动勾上**：`papers/included.json` 里已有篇目，且每篇 `decision` 都是 `included` 或 `excluded` 时，「核对待确认篇目」自动记为完成。空清单、空白判定或解析失败不算拍完。人手取消过（`explicitCancel`）的不覆盖。步骤卡清单和检索评审清单同一口径。已有项目改任务书后才带上新说明，勾选本身不依赖档案卡改写。
   **勾上后清单不收走（2026-10-22 用户反馈）**：已纳入的仍能移出，所以勾上后「文献清单」照留，说明换成 `PENDING_DONE_HINT`（移出会从纳入清单、待获取、两份 RIS 拿掉，笔记和引文留到精读步清）；当场清完的保持展开不跳，进来时已勾上的默认收起。
@@ -874,6 +874,20 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   算（`bridge.py iso4_compute`，同日用户拍板「所有刊都做」），Mesa 兜底表第三列人工值优先；和主缩写只差标点大小写的不给。EndNote 进 XML 缩写 2 与期刊术语表
   `papers/endnote-journals.txt`（gitignored），Zotero 进 M2（「其他」）；同步前 `bridge.py --enrich` 只给缺字段、有 DOI 的条目
   补全到临时副本（字段齐的不联网；bridge 接口缓存与 lit_records 共用 mesa-lit-cache）。
+- **同步到文献库挂在初稿步、三档由人选（2026-11-10 用户拍板）**：
+  - 位置：三套模板的初稿步（综述 `draft`、科研论文 `paper-draft`、毕业论文 `thesis-draft`）保存后，另有期刊格式、投稿材料、返修；精读步不再有
+    （StepFlow `endnoteStep`）。理由：每次同步都是整份导入；定稿的 `output/zotero.docx` / `output/endnote.docx` 只在库里该 DOI 恰好一条时绑定，
+    所以在文献基本定下后、定稿开工前同步一次——大纲后还会「补充文献…」，精读时同步太早。任务书只在初稿步提一句（`LIBRARY_SYNC_AT_DRAFT`），精读步不提。
+  - 三档：只导条目（默认）/ 带 PDF / 带 PDF 和笔记，前端 `LIBRARY_SYNC_ATTACH` 经 `attach` 传给 `zotero_open_import` / `endnote_export_xml`；
+    后端 `library_attach.rs` 按引文库每条的键找全文（included.json 的 `pdf` 字段优先，其次待获取清单同一口径的只读版
+    `lit_watch::match_papers_pdfs_readonly`，不改名、不登记）与笔记（notes/index.json 的 bibKey，或经 id 回 included.json），
+    写临时 JSON 交 `bridge.py` / `zotero_rtf.py --attach`。排除的篇不找、不导。
+  - 写法（2026-11-10 两家测试库实测）：全文 `L1  - <绝对路径>`（原样，不折空白）。Zotero 经 `-url` / Apple 事件导入只弹确认、不问复制还是链接，
+    一律复制进 storage（linkMode=0）；EndNote 复制进库的 .Data/PDF。笔记 Zotero 走 `N1` 一行 HTML（标题 / 列表 / 表格保留，成子笔记）；
+    EndNote 走 `RN`（研究笔记）：RIS 里的换行（续行、空行、单独 CR）EndNote 一律并成空格，U+2028 原样存但 Windows 上显示不明，
+    所以摊成一段、小标题【】、列表 ·（`bridge.py note_flat`）。
+  - 笔记副本的问题只告知、不替人解决：选带笔记时界面一句（`LIBRARY_SYNC_NOTES_CAVEAT`）写明是副本、Mesa 里再改库里不跟着变、
+    再同步一次会多一份；不做增量同步、不替人去重（用户原话：「告知用户这个问题就行了，至于怎么解决让用户自己决定」）。
 - **to-fetch.ris 给 Zotero，endnote-import.ris 给 EndNote（2026-09-23 分标签）**：检索步同时写两份 RIS 2004、CRLF。已生成的旧文件不改写。
   Zotero 的 `papers/to-fetch.ris`：期刊全称只写 `T2`，缩写只写 `J2`，页只写 `SP`/`EP`。不写 `JO`（Zotero 会把它放进期刊缩写）、不写 `N1`（会进笔记）、不写 `M1`。
   EndNote 2025 RefMan 的 `papers/endnote-import.ris`：全称 `T2`、缩写 `J2`、页 `SP`、起始页码 `M2`、结束页 `EP`、文章类型 `M3`。不写 `JO`/`M1`（`M1` 不进格子）。

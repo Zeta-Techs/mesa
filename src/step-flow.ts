@@ -259,7 +259,7 @@ export function buildStepFlow(args: {
       section: "optional",
       label: "同步到文献库",
       hint: runStatus === "done"
-        ? "按引文库重写后打开。已有同一 DOI 的不要再导入。PDF 拖到库里那一条上。"
+        ? "每点一次都整份再导一遍，同一个库同步一次就够。"
         : "先保存进项目，才可以同步。",
       done: false,
       skipCurrent: true,
@@ -300,6 +300,18 @@ export function buildStepFlow(args: {
   );
   return { nodes, currentKey: current?.key ?? null };
 }
+
+/** 「同步到文献库」导入哪些（2026-11-10 用户拍板三档，人选，默认只导条目）。
+ *  id 与后端 library_attach::AttachMode::parse 对齐；全文与笔记由 Mesa 按引文库在 papers/、notes/ 里找 */
+export type LibrarySyncAttach = "items" | "pdf" | "notes";
+export const LIBRARY_SYNC_ATTACH: { id: LibrarySyncAttach; label: string; title: string }[] = [
+  { id: "items", label: "只导条目", title: "只导题录。PDF 自己从 papers 拖到库里那一条上" },
+  { id: "pdf", label: "带 PDF", title: "papers 里对得上的全文一起导入，文献软件会复制一份进库" },
+  { id: "notes", label: "带 PDF 和笔记", title: "再把精读笔记导成那一条下面的笔记" },
+];
+/** 选了带笔记才出现：只告知，不替人解决（用户原话：「告知用户这个问题就行了，至于怎么解决让用户自己决定」） */
+export const LIBRARY_SYNC_NOTES_CAVEAT =
+  "笔记导进去的是副本：之后在 Mesa 里改笔记，库里那份不跟着变；再同步一次，笔记也会多出一份。";
 
 /** 能接回本步上次商量会话时改「继续讨论」，否则「跟 AI 商量一下」。 */
 export function discussChatLabel(discussed: boolean): string {

@@ -105,7 +105,8 @@ test("定稿同时交 EndNote 与 Zotero 两份域稿，不看文献库选项", 
   assert.equal(withResearchTools(notes, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" }).expectedArtifacts.includes("output/zotero.docx"), false);
   const notesEndnote = withResearchTools(notes, { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "endnote" });
   assert.ok(notesEndnote.skills.includes("endnote-bridge"));
-  assert.match(notesEndnote.brief, /按这份 references\.bib 生成导入文件/);
+  // 2026-11-10 同步到文献库挪到初稿：精读这句只说初稿保存后再同步
+  assert.match(notesEndnote.brief, /初稿保存后人点「同步到文献库」/);
   assert.equal(notesEndnote.expectedArtifacts.includes("papers/endnote-import.ris"), false);
   for (const id of ["research-paper", "thesis", "submission-rebuttal"]) {
     const finals = template(id).steps.filter((s) =>

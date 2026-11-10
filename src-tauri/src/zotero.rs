@@ -1546,12 +1546,15 @@ pub async fn zotero_open_papers(project_root: String) -> Result<(), String> {
 /// 检索时排除的不交。返回 (RIS 路径, 条数+库体检提示)：都由 zotero_rtf --library-ris 打到 stdout。
 /// 一条都没有时返回 None——零记录的 RIS 不是合法导入文件（Zotero 报「不支持所选文件的格式」），
 /// 调用方直接把提示当反馈，不拉起 Zotero。
-pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, String), String> {
+pub fn refresh_library_ris(
+    project_root: &Path,
+    mode: crate::library_attach::AttachMode,
+) -> Result<(Option<PathBuf>, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
     let bib = root.join("references.bib");
     if !bib.is_file() {
-        return Err("还没有 references.bib。精读保存进项目后才能同步。".into());
+        return Err("还没有 references.bib。初稿保存进项目后再同步。".into());
     }
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
@@ -1613,6 +1616,21 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
             bib.clone()
         }
     };
+    // 带 PDF / 笔记：按引文库算出每条挂什么（只读），写临时 JSON 交给脚本写 L1 / N1
+    let attach_file = std::env::temp_dir().join(format!("ccode-zotero-attach-{stamp}.json"));
+    let attach = crate::library_attach::write_plan(&root, &bib, mode, &attach_file);
+    let attach = match attach {
+        Ok(plan) => plan,
+        Err(e) => {
+            if source != bib {
+                let _ = std::fs::remove_file(&source);
+            }
+            for f in [&script, &bridge, &matcher, &abbr] {
+                let _ = std::fs::remove_file(f);
+            }
+            return Err(e);
+        }
+    };
     let mut cmd = crate::process::background_command(&py);
     cmd.arg(&script)
         .arg("--library-ris")
@@ -1626,7 +1644,11 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     if included.is_file() {
         cmd.arg("--skip-excluded").arg(&included);
     }
+    if let Some(plan) = &attach {
+        cmd.arg("--attach").arg(&plan.file);
+    }
     let out = cmd.output().map_err(|e| format!("无法生成 Zotero RIS: {e}"));
+    let _ = std::fs::remove_file(&attach_file);
     if source != bib {
         let _ = std::fs::remove_file(&source);
     }
@@ -1650,7 +1672,12 @@ pub fn refresh_library_ris(project_root: &Path) -> Result<(Option<PathBuf>, Stri
     if health.contains("交给 Zotero 0 条") {
         return Ok((None, health));
     }
-    let health = if filled.is_empty() { health } else { format!("{filled}\n{health}") };
+    let attached = attach.as_ref().map(|p| p.summary(mode)).unwrap_or_default();
+    let health = [filled, attached, health]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     Ok((Some(ris), health))
 }
 
@@ -1790,7 +1817,12 @@ fn zotero_exe() -> Option<PathBuf> {
 
 /// 用 Zotero 打开 RIS/BibTeX/CSL JSON（原生导入，不需要 Better BibTeX）。
 #[tauri::command]
-pub async fn zotero_open_import(path: String, root: String) -> Result<String, String> {
+pub async fn zotero_open_import(
+    path: String,
+    root: String,
+    attach: Option<String>,
+) -> Result<String, String> {
+    let mode = crate::library_attach::AttachMode::parse(attach.as_deref());
     // 重写 RIS 和打开 Zotero 都在后台线程。按钮立刻显示「正在按引文库生成」。
     tauri::async_runtime::spawn_blocking(move || {
         let root_exp = crate::sessions::expand_tilde(&root);
@@ -1798,7 +1830,7 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
         let root_c = crate::paths::canonicalize_plain(std::path::Path::new(&root_exp))
             .map_err(|e| format!("目录无效: {e}"))?;
         let (open_path, health) = if root_c.join("references.bib").is_file() {
-            refresh_library_ris(&root_c)?
+            refresh_library_ris(&root_c, mode)?
         } else {
             (Some(std::path::PathBuf::from(&path_exp)), String::new())
         };
@@ -1808,7 +1840,7 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
             None => return Ok(health),
         };
         let path_c = crate::paths::canonicalize_plain(&open_path)
-            .map_err(|_| "找不到 papers/zotero-library.ris（精读保存后会按引文库生成）".to_string())?;
+            .map_err(|_| "找不到 papers/zotero-library.ris（同步时会按引文库生成）".to_string())?;
         if !crate::paths::path_within_path(&path_c, &root_c) {
             return Err("导入文件不在项目目录内".into());
         }
@@ -1836,8 +1868,13 @@ pub async fn zotero_open_import(path: String, root: String) -> Result<String, St
             }
         }
         hand_file_to_zotero(&path_c)?;
-        let mut message =
-            "已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".to_string();
+        let mut message = if mode == crate::library_attach::AttachMode::Items {
+            "已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".to_string()
+        } else {
+            "已交给 Zotero。确认导入后，全文复制进 Zotero 自己的存储，挂在对应条目下。\
+             没带上全文的篇，点「打开 papers」把 PDF 拖到对应条目上。"
+                .to_string()
+        };
         if !health.is_empty() {
             message.push_str("\n\n");
             message.push_str(&health);

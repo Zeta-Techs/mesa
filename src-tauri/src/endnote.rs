@@ -75,10 +75,11 @@ fn run_bridge_args(
     root: &Path,
     enrich: bool,
 ) -> Result<String, String> {
-    run_bridge_terms(py, script, bib, papers, stamp, kind, dest, report, root, enrich, None)
+    run_bridge_terms(py, script, bib, papers, stamp, kind, dest, report, root, enrich, None, None)
 }
 
-/// 同 run_bridge_args，另可让 bridge 顺手写一份 EndNote 期刊术语表（`--journal-terms`）
+/// 同 run_bridge_args，另可让 bridge 顺手写一份 EndNote 期刊术语表（`--journal-terms`），
+/// 并按 library_attach 写的那份 JSON 给条目挂全文与笔记（`--attach`，「同步到文献库」三档）
 fn run_bridge_terms(
     py: &Path,
     script: &Path,
@@ -91,6 +92,7 @@ fn run_bridge_terms(
     root: &Path,
     enrich: bool,
     terms: Option<&Path>,
+    attach: Option<&Path>,
 ) -> Result<String, String> {
     let out_tmp = papers.join(format!(".ccode-endnote-{stamp}.{kind}"));
     let report_tmp = papers.join(format!(".ccode-endnote-{stamp}-{kind}.json"));
@@ -110,6 +112,9 @@ fn run_bridge_terms(
     let included = papers.join("included.json");
     if let Some(terms) = terms {
         cmd.arg("--journal-terms").arg(terms);
+    }
+    if let Some(attach) = attach {
+        cmd.arg("--attach").arg(attach);
     }
     if included.is_file() {
         cmd.arg("--skip-excluded").arg(&included);
@@ -159,7 +164,10 @@ fn endnote_library_pointer(root: &Path) -> Option<PathBuf> {
 /// 那份是 lit_records.py / Mesa 纳入时维护的纳入篇题录，进 git；同步整份改写它，主仓就带着
 /// 一个改了没提交的清单文件，开下一步时被开工确认拦下（2026-10-23 HER 实证）。
 /// 返回 (RIS 路径, 提示)：排除不导的篇数、库体检（检出旧版导出的脏记录时提示先删再导）。
-pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String> {
+pub fn export_ris_only(
+    project_root: &Path,
+    mode: crate::library_attach::AttachMode,
+) -> Result<(PathBuf, String), String> {
     let root =
         crate::paths::canonicalize_plain(project_root).map_err(|e| format!("项目目录无效: {e}"))?;
     let bib = root.join("references.bib");
@@ -193,13 +201,39 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
         }
     };
     let terms = papers.join(JOURNAL_TERMS);
+    // 带 PDF / 笔记：按引文库算出每条挂什么（只读），写临时 JSON 交给 bridge
+    let attach_file = std::env::temp_dir().join(format!("ccode-endnote-attach-{stamp}.json"));
+    let attach = match crate::library_attach::write_plan(&root, &bib, mode, &attach_file) {
+        Ok(plan) => plan,
+        Err(e) => {
+            let _ = std::fs::remove_file(&script);
+            let _ = std::fs::remove_file(&abbr);
+            if source != bib {
+                let _ = std::fs::remove_file(&source);
+            }
+            return Err(e);
+        }
+    };
     let dropped = run_bridge_terms(
-        &py, &script, &source, &papers, &stamp, "ris", &ris, &report, &root, false, Some(&terms),
+        &py,
+        &script,
+        &source,
+        &papers,
+        &stamp,
+        "ris",
+        &ris,
+        &report,
+        &root,
+        false,
+        Some(&terms),
+        attach.as_ref().map(|p| p.file.as_path()),
     );
+    let _ = std::fs::remove_file(&attach_file);
     if source != bib {
         let _ = std::fs::remove_file(&source);
     }
     let dropped = dropped?;
+    let attached = attach.as_ref().map(|p| p.summary(mode)).unwrap_or_default();
     // 库体检（只读）：人指定了库就顺手查一遍旧版导出的脏记录，并进按钮反馈
     let mut health = String::new();
     if let Some(enl) = endnote_library_pointer(&root) {
@@ -248,7 +282,7 @@ pub fn export_ris_only(project_root: &Path) -> Result<(PathBuf, String), String>
     } else {
         String::new()
     };
-    let note = [filled, dropped, terms_note, health]
+    let note = [filled, dropped, attached, terms_note, health]
         .into_iter()
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
@@ -818,14 +852,18 @@ fn spotlight_libraries(text: &str, home: &Path) -> (Vec<String>, Vec<String>) {
 }
 
 #[tauri::command]
-pub async fn endnote_export_xml(project_root: String) -> Result<String, String> {
+pub async fn endnote_export_xml(
+    project_root: String,
+    attach: Option<String>,
+) -> Result<String, String> {
+    let mode = crate::library_attach::AttachMode::parse(attach.as_deref());
     // 转换和打开 EndNote 都在后台线程，不占界面。
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
-        // 精读之后同步：有引文库就按它生成整库 RIS（endnote-library.ris）；还没有引文库（检索步）才交检索清单那份。
+        // 有引文库就按它生成整库 RIS（endnote-library.ris，初稿步同步时）；还没有引文库（检索步）才交检索清单那份。
         let (ris, health) = if root_path.join("references.bib").is_file() {
-            export_ris_only(root_path)?
+            export_ris_only(root_path, mode)?
         } else {
             let Some(ris) = find_import_ris(root_path) else {
                 return Err(
@@ -849,9 +887,14 @@ pub async fn endnote_export_xml(project_root: String) -> Result<String, String> 
             // 每次同步都是整份导入：同一个库点两次就是两份（2026-10-24 HER：27 篇里 18 篇在库里有 3 条，
             // Word 里 Update 后只有 8 条挂上库）。导完提醒去重，并引向「选这个 EndNote 库」
             Ok(()) => Ok(format!(
-                "已交给 EndNote，导入当前打开的库。PDF 用「打开 papers」拖到对应条目。\
+                "已交给 EndNote，导入当前打开的库。{pdf_note}\
                  每次同步都会把全部文献再导一遍：同一个库以前导过的，导完在 EndNote 用 References → Find Duplicates 去重，\
-                 不然定稿的 EndNote 版 Word 对不上这些条目。导完点下面「选这个 EndNote 库」指一下用的是哪个库。{health_note}"
+                 不然定稿的 EndNote 版 Word 对不上这些条目。导完点下面「选这个 EndNote 库」指一下用的是哪个库。{health_note}",
+                pdf_note = if mode == crate::library_attach::AttachMode::Items {
+                    "PDF 用「打开 papers」拖到对应条目。"
+                } else {
+                    "没带上全文的篇，PDF 用「打开 papers」拖到对应条目。"
+                },
             )),
             Err(e) => Ok(format!(
                 "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
@@ -942,7 +985,7 @@ mod tests {
             "@article{c,\n  title = {镁电池穿梭效应研究},\n  author = {张, 三},\n  year = {2025},\n  journal = {化学学报},\n}\n",
         )
         .unwrap();
-        let ris = export_ris_only(&dir);
+        let ris = export_ris_only(&dir, crate::library_attach::AttachMode::Items);
         let text = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let _ = std::fs::remove_dir_all(&dir);
         if ris.as_ref().is_err_and(|e| e.contains("找不到 python")) {
@@ -970,7 +1013,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("papers/endnote-import.ris"), "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n").unwrap();
-        let out = export_ris_only(&dir);
+        let out = export_ris_only(&dir, crate::library_attach::AttachMode::Items);
         let library = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
         let terms = std::fs::read_to_string(dir.join("papers/endnote-journals.txt")).ok();
         let canonical = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).unwrap();

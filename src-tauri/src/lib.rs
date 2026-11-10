@@ -79,6 +79,7 @@ mod endnote;
 mod gateway_balance;
 mod inst_access;
 mod journal_metrics;
+mod library_attach;
 mod lit_watch;
 mod logbuf;
 mod main_window;

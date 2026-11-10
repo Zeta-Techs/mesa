@@ -169,7 +169,7 @@ test("after 事项未完成时卡在 after 节点（评审之前）", () => {
   assert.equal(flow.currentKey, "human:下载付费");
 });
 
-test("EndNote 交差在精读开工前就列出，不挡开工、不靠项目设置", () => {
+test("同步到文献库开工前就列出，不挡开工、不靠项目设置；保存后提示同一个库同步一次", () => {
   const pending = buildStepFlow({
     step: step({}),
     states: [],
@@ -190,32 +190,32 @@ test("EndNote 交差在精读开工前就列出，不挡开工、不靠项目设
   const endnote = done.nodes.find((n) => n.key === "endnote-export");
   assert.equal(endnote?.label, "同步到文献库");
   assert.equal(endnote?.section, "optional");
+  assert.match(endnote?.hint ?? "", /同一个库同步一次/);
   assert.ok(
     done.nodes.findIndex((n) => n.kind === "review") <
       done.nodes.findIndex((n) => n.key === endnote?.key),
   );
 });
 
-test("继续精读笔记在 EndNote 底下，开工前也列出，不挡开工", () => {
+test("继续精读笔记不靠「同步到文献库」（2026-11-10 同步挪到初稿），开工前也列出，不挡开工", () => {
   const pending = buildStepFlow({
     step: step({ skills: ["lit-notes"] }),
     states: [],
     hasDraft: false,
     runStatus: "pending",
-    endnoteExport: true,
     continueNotes: true,
   });
+  assert.equal(pending.nodes.some((n) => n.key === "endnote-export"), false);
   assert.equal(pending.nodes.find((n) => n.key === "continue-notes")?.section, "optional");
   const done = buildStepFlow({
     step: step({ skills: ["lit-notes"] }),
     states: [],
     hasDraft: true,
     runStatus: "done",
-    endnoteExport: true,
     continueNotes: true,
   });
   const keys = done.nodes.filter((n) => n.section === "optional").map((n) => n.key);
-  assert.deepEqual(keys.slice(0, 2), ["endnote-export", "continue-notes"]);
+  assert.equal(keys[0], "continue-notes");
   assert.equal(done.nodes.find((n) => n.key === "continue-notes")?.skipCurrent, true);
 });
 

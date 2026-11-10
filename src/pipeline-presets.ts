@@ -106,6 +106,11 @@ const DRAFT_ORDER =
 const SECTION_STATUS =
   "动笔前写 manuscript/section-status.md，不另建章节任务。文首「## 允许集」列出 references.bib 的键、状态为已认可的结论编号、结果表里出现过的数字。每一节再写：要回答什么、用哪些材料或结论编号、还缺什么、审核状态（已生成待审 / 有条件接受 / 证据通过（限定范围） / 阻塞）。正文新出现的键、结论或数字必须在允许集中，否则标 [待核实] 或 [待补实验]。\n";
 
+/** 「同步到文献库」挂在三套模板的初稿步（2026-11-10 用户拍板从精读挪来）：大纲后还会补文献，初稿保存后清单才基本定；
+ *  定稿出的两份带引用域的 Word 要库里每篇恰好一条，所以在定稿开工前同步一次。Agent 只管把引文库写对 */
+const LIBRARY_SYNC_AT_DRAFT =
+  "引文库以 references.bib 为准：这一步保存后，人点「同步到文献库」，Mesa 按它生成导入文件。你不写 RIS，也不往 Zotero、EndNote 里导。\n";
+
 /** 会改已有成稿的步骤：先报告，人决定后才改。 */
 const REVIEW_FIRST =
   "本步分两轮，禁止边查边改已有成稿。第一轮只写审查报告，不改稿件正文。报告用三节：## 严重问题、## 一般问题、## 建议。每条从 R001 编号，单独成段，写明位置、问题、类别（事实/引用/逻辑/数据/写作）。没有的节写无。人在流程线「逐条决定审查报告」那一行逐条点接受、拒绝或修改，Mesa 写进该条末尾一行「决定：接受」「决定：拒绝」或「决定：修改：<说明>」，报告里不要预留空的「决定：」行。写完报告就停，告诉人去流程线那一行点，不要让人手改报告文件；人点完 Mesa 会接回这段对话。看不到这些决定就不写出定稿。第二轮只改接受或要求修改的条目。数字、因果、样本、结论范围的改动写入 changelog 的「科学改动」；措辞另列。未接受的条目不得改科学内容。\n";
@@ -524,7 +529,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "5. 引文库按上面那句用脚本 bib 写；脚本报的「待补」保持待补，不得编造，不得用卷或页填空着的期。已有条目只补空字段，不改键、不覆盖人改过的作者和标题；\n" +
       "6. 收尾前复查：notes/ 中「仅摘要」笔记对应的全文若已出现在项目根 papers/（人工补投），重读全文并更新该笔记、去掉标记；仍未补的保持标注并在报告末尾计数说明。\n" +
       "7. " + NOTES_HANDOFF +
-      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。RIS 只随 write 重出，不手改。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
+      "8. 项目根 papers/ 里已对上 DOI 的 PDF，读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。RIS 只随 write 重出，不手改。\n" +
       "9. 可写点：综述卡写完后，把每篇综述文献截至的年份写进 notes/index.json 那篇的 cutoffYear，跑 {skill:lit-notes} 技能目录 scripts/lit_records.py angles-facts，输出原样贴进 notes/angles.md 的「## 时效对照（脚本算）」。" +
       "再按技能写候选角度，一条一个：一句话、已有综述覆盖到哪、之后的新工作（引上表的键，并从速读表写它们各说了什么、分成哪几个方向）、和已有综述的重合度（高 / 中 / 低，最像哪篇哪节）、撑起来还缺什么文献、风险。只给证据，不判断能不能写，重合度高的照列；不写「必须创新」一类的话。\n" +
       "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认、无法按摘要写、或只速读过的研究论文 notePath 可空）；综述都写成综述卡，纳入的研究论文与 other 都在 notes/skim.md（表头含「新在哪」）里有一行，notes/angles.md 有时效对照与候选角度（走旧口径的改为有全文的都已精读）；已写笔记符合 {skill:lit-notes} 写法；综述没写完或有研究论文还没进速读表，则不得结束本轮等人，验收摘要写明剩余篇数，质量状态不得高于已生成待审。清单全有文件不等于完成。\n" +
@@ -547,7 +552,8 @@ const REVIEW_STEPS: ProjectStepDto[] = [
     run: [],
     humanTasks: [notesSpotCheckTask()],
     // 「继续精读笔记」不再是人工事项（2026-09-19 撤主干收尾）。保存进项目后，
-    // 可选区在「同步到文献库」旁边给出入口（2026-09-20），进沉浸阅读；改完开大纲走未存进历史软门。
+    // 可选区给出入口（2026-09-20），进沉浸阅读；改完开大纲走未存进历史软门。
+    // 「同步到文献库」2026-11-10 挪到初稿步（LIBRARY_SYNC_AT_DRAFT）。
     // 「精读力度怎么分」卡片已移除（v3.97，用户拍板）：力度要看到清单规模和全文到位率才定得了，
     // 开工前点卡片等于让人盲猜——与 v3.89 移除「纳入标准定多严」同一道理。
     // 改为 Agent 粗读清单后带着数字经 help-wanted.md 按需问（见上方简报第 2 条）。
@@ -603,6 +609,7 @@ const REVIEW_STEPS: ProjectStepDto[] = [
       "6. 交稿前自检：打开 output/draft.pdf 第一页，必须能读出英文标题和段落；乱码、空心方框、目录页码变成字母 = 渲染失败，质量状态不得高于已生成待审，docx 仍交人审。引用键先对 references.bib，笔误键改正文不删句；材料名里的 @ 写成 \\@。正文数字若与笔记不符，按原文改稿并回写该笔记，记入 section-status.md。图裁不到就改成「见 [@键] Fig.n」，禁止用「待绘制」充产出。正文不得留 G1/任务编号、内部清单号。作者「待补」写进验收摘要等人填，不假装齐套。\n" +
       DRAFT_ORDER +
       SECTION_STATUS +
+      LIBRARY_SYNC_AT_DRAFT +
       "完成标准：manuscript/draft.md 覆盖大纲全部章节；引用键全部可在 references.bib 中解析；扩写能回溯到笔记或原文；不以词数判定完成。用图计划里每一条「拼」要么有 figures/figN.png 且正文插了这张图，要么已改成「见 [@键] Fig.n」并在 figures/README.md 写明原因；正文不得出现「待绘制」。PDF 首页可读或已如实报渲染失败；人尚未审阅初稿前不得进入润色。\n" +
       QUALITY_STATUS,
     inputs: ["outline.md", "notes/", "notes/handoff.md", "references.bib"],
@@ -717,7 +724,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "先整理项目根 papers/ 里的人工补投并更新 to-fetch.md；已有 notes/ 先核对原文版本、全文状态和问题范围；有效则复用，变化则保留人写内容并更新受影响项。全文缺失时按摘要写笔记并标注「仅摘要·待全文」。\n" +
       NOTES_READ_ALL +
       "在已写笔记基础上按主题归纳研究现状写入 survey/literature.md，提炼有实质差别的候选研究问题（无合理备选可只留一个）并逐一分析现有工作的 gap，写入 survey/gap-analysis.md。先把候选、每个 gap 的证据与我建议的研究问题写入 .ccode/help-wanted.md 问用户一句（未回复只保留候选，不替人确定研究问题），写完只做无依赖、可逆的准备。摘要-only 不得支撑需要全文的 gap。\n" +
-      "已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
+      "已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。\n" +
       APPROVED_QUESTION +
       NOTES_HANDOFF +
       "完成标准：notes/index.json 与 included.json 全部 id 对齐（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法；survey/literature.md 与 survey/gap-analysis.md 齐全；研究问题的候选/人批准状态与取舍理由可追溯。有 PDF 的还没全部写成精读、或按摘要记的还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" +
@@ -922,6 +929,7 @@ const RESEARCH_PAPER_STEPS: ProjectStepDto[] = [
       "4. 图表只引用 figures/ 已有文件（「Figure 1: …」），图片文件不复制进 manuscript/；缺图写明缺哪项分析并标 [待补实验]，不写「待绘制」占位；\n" +
       "4b. 结果、摘要、讨论里来自 analysis/results.json 的数字按 {skill:research-writing}「数字追溯」登记进 manuscript/numbers.json 并跑 num_check，拦下的先回结果查原因再改正文；先读 notes/handoff.md「写作约束」（有就读）；\n" +
       "5. 用本步骤 run 脚本渲染 PDF/docx（按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「润色与投稿准备」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "产物写入本工作区 output/（评审合并后进项目根）。\n" +
+      LIBRARY_SYNC_AT_DRAFT +
       "完成标准：manuscript/draft.md 覆盖大纲各节，引用键全部可在 references.bib 解析，数字与结论条目、results-table.md 一致，run 脚本渲染通过。\n" +
       QUALITY_STATUS,
     inputs: [
@@ -1240,7 +1248,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "1. 整理项目根 papers/ 人工补投并更新 to-fetch.md；\n" +
       "2. " + NOTES_READ_ALL +
       "3. " + NOTES_HANDOFF +
-      "4. 已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。人点「同步到文献库」时，Mesa 按这份 references.bib 生成导入文件。\n" +
+      "4. 已对上 DOI 的 PDF 读首页和摘要页。标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 为准改 references.bib 的 title 和 abstract。抽不出字或对不上 DOI 的保持原字段。不在这一步重写 RIS。\n" +
       "完成标准：notes/index.json 保留 included.json 的全部 id（仅待确认或无法按摘要写的篇 notePath 可空）；已写笔记符合 {skill:lit-notes} 写法。有 PDF 的还没全部写成精读、或按摘要记的还没写完，则不得结束本轮等人，质量状态不得高于已生成待审。\n" + QUALITY_STATUS,
     inputs: ["papers/included.md", "papers/included.json", "papers/to-fetch.md"],
     optionalInputs: ["papers/*.pdf", "notes/", "references.bib"],
@@ -1414,6 +1422,7 @@ const THESIS_STEPS: ProjectStepDto[] = [
       "4. 图表只引用 figures/ 已有文件（「图 3-1：…」），缺图写明缺哪项分析并标 [待补实验]，不写「待绘制」占位；数字与 chapters/results.md 一致，不一致处以结果章节为准并在修订记录标注；来自 analysis/results.json 的数字按 {skill:research-writing}「数字追溯」登记进 manuscript/numbers.json 并跑 num_check；先读 notes/handoff.md「写作约束」（有就读）；\n" +
       "5. 产出 manuscript/revision-notes.md：组装过程中的取舍与待确认项；\n" +
       "6. 渲染验证：用本步骤 run 脚本渲染 PDF/docx（环境检查、编号引用 YAML、产物登记按 {skill:quarto-render} 技能）。**初稿固定用编号制（方括号 [1]）渲，不要问人要哪种引用格式**：YAML 写 `csl: citation.csl` 并放随包的 ieee.csl。引用格式到「格式与定稿」再问：沿用这份编号，或改成目标期刊。" + DRAFT_TYPEFACE + "中文稿的中文用宋体。渲染报错先按技能指引补依赖，不绕路。\n" +
+      LIBRARY_SYNC_AT_DRAFT +
       "完成标准：thesis-draft.md 章节齐全、引用闭环、revision-notes.md 已提交、run 脚本渲染通过。\n" +
       QUALITY_STATUS,
     expectedArtifacts: [

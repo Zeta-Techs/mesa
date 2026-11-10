@@ -689,6 +689,20 @@ test("检索与精读的开放获取只取正式版，预印本服务器的版�
   }
 });
 
+// 2026-11-10 用户拍板：同步到文献库从精读挪到初稿（大纲后还会补文献；定稿的两份域稿要库里每篇恰好一条）
+test("同步到文献库只在三套模板的初稿任务书里提，精读任务书不提", () => {
+  const steps = PIPELINE_TEMPLATES.flatMap((t) => t.steps.map((s) => ({ t: t.id, s })));
+  for (const name of ["draft", "paper-draft", "thesis-draft"]) {
+    const hit = steps.find(({ s }) => s.workspaceName === name)!;
+    assert.match(hit.s.brief, /这一步保存后，人点「同步到文献库」/, name);
+  }
+  for (const name of ["lit-notes", "lit-survey-gap"]) {
+    for (const { t, s } of steps.filter(({ s }) => s.workspaceName === name)) {
+      assert.doesNotMatch(s.brief, /同步到文献库/, `${t}/${name}`);
+    }
+  }
+});
+
 // 2026-10-23 HER 精读步：按简报把项目根 9 个 PDF 改了名，流程期间暂缓的资源登记全指向旧名
 test("精读步不改 PDF 名：认 PDF、打 ✓ 交给 lit_records.py write，to-fetch.md 不手改", () => {
   const step = PIPELINE_TEMPLATES.find((t) => t.id === "review")!.steps.find((s) => s.workspaceName === "lit-notes")!;

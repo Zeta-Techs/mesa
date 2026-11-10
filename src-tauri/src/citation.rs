@@ -365,6 +365,33 @@ fn bib_entry_dto(entry: &str) -> Option<CiteEntryDto> {
     Some(CiteEntryDto { key, authors, year, title })
 }
 
+/// 引文库每条的键、DOI、标题（「同步到文献库」按它给每条找 PDF 与笔记，2026-11-10）。注释类条目不列
+pub(crate) fn bib_key_doi_title(text: &str) -> Vec<(String, Option<String>, Option<String>)> {
+    let mut out: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+    let mut flush = |chunk: &str| {
+        let Some(e) = bib_entry_dto(chunk) else { return };
+        if out.iter().any(|(k, _, _)| *k == e.key) {
+            return;
+        }
+        let doi = bib_field(chunk, "doi")
+            .map(|d| bib_plain(&d))
+            .filter(|d| !d.is_empty());
+        let title = bib_field(chunk, "title").map(|t| bib_plain(&t)).filter(|t| !t.is_empty());
+        out.push((e.key, doi, title));
+    };
+    let mut current = String::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with('@') && !current.is_empty() {
+            flush(&current);
+            current.clear();
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    flush(&current);
+    out
+}
+
 /// 在会话目录及其上级（到白名单根为止）找 references.bib，取所问各键的条目。
 /// 目录不在注册项目 / 工作区内时不读，bib_found=false（与引用健康检查同一白名单）
 fn cite_lookup_in(dir: &Path, roots: &[PathBuf], keys: &[String]) -> CiteLookupDto {

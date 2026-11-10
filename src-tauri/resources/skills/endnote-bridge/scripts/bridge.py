@@ -57,6 +57,162 @@ def drop_excluded(records, included_json):
     return kept, len(records) - len(kept)
 
 
+# 「同步到文献库」三档（2026-11-10 用户拍板：只导条目 / 带 PDF / 带 PDF 和笔记，由人选）。
+# Mesa（library_attach.rs）按引文库每条的键找好全文 PDF 与精读笔记的绝对路径，写成 {键: {pdf, note}} 交来；
+# 这里只照着挂：全文进 L1（Zotero 复制进自己的 storage，EndNote 复制进库的 .Data/PDF；2026-11-10 两家测试库实测），
+# 笔记 Zotero 走 N1（HTML，成一条子笔记），EndNote 走 RN（研究笔记）。导进去的都是副本，Mesa 里再改笔记库里不跟着变。
+def load_attach_plan(path):
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _note_inline_html(text):
+    out = html.escape(text, quote=False)
+    out = re.sub(r'`([^`]+)`', r'<code>\1</code>', out)
+    out = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', out)
+    out = re.sub(r'(?<![\w*])\*(?!\s)([^*]+?)(?<!\s)\*(?![\w*])', r'<em>\1</em>', out)
+    out = re.sub(r'\[([^\]]+)\]\((https?://[^)\s]+)\)', r'<a href="\2">\1</a>', out)
+    return out
+
+
+_MD_LIST = re.compile(r'^\s*(?:[-*+]|(\d+)[.)])\s+(.*)$')
+_MD_HEAD = re.compile(r'^(#{1,6})\s+(.*?)\s*#*\s*$')
+
+
+def note_html(markdown):
+    """精读笔记 Markdown → 一行 HTML（Zotero 子笔记）。只认标题、引用、列表、表格、代码块和行内粗斜体 / 代码 / 链接。"""
+    lines = markdown.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    parts = []
+    para = []
+    lst = None  # 'ul' / 'ol'
+    table = []
+    fence = None
+
+    def close_para():
+        if para:
+            parts.append('<p>' + '<br/>'.join(_note_inline_html(x) for x in para) + '</p>')
+            para.clear()
+
+    def close_list():
+        nonlocal lst
+        if lst:
+            parts.append(f'</{lst}>')
+            lst = None
+
+    def close_table():
+        if table:
+            rows = []
+            for row in table:
+                cells = [c.strip() for c in row.strip().strip('|').split('|')]
+                if all(re.fullmatch(r':?-{2,}:?', c) for c in cells if c):
+                    continue
+                rows.append('<tr>' + ''.join(f'<td>{_note_inline_html(c)}</td>' for c in cells) + '</tr>')
+            parts.append('<table>' + ''.join(rows) + '</table>')
+            table.clear()
+
+    for line in lines:
+        if fence is not None:
+            if line.strip().startswith('```'):
+                parts.append('<pre>' + html.escape('\n'.join(fence), quote=False).replace('\n', '<br/>') + '</pre>')
+                fence = None
+            else:
+                fence.append(line)
+            continue
+        stripped = line.strip()
+        if stripped.startswith('```'):
+            close_para(); close_list(); close_table()
+            fence = []
+            continue
+        if stripped.startswith('|'):
+            close_para(); close_list()
+            table.append(stripped)
+            continue
+        close_table()
+        if not stripped:
+            close_para(); close_list()
+            continue
+        head = _MD_HEAD.match(stripped)
+        if head:
+            close_para(); close_list()
+            level = len(head.group(1))
+            parts.append(f'<h{level}>{_note_inline_html(head.group(2))}</h{level}>')
+            continue
+        item = _MD_LIST.match(line)
+        if item:
+            close_para()
+            kind = 'ol' if item.group(1) else 'ul'
+            if lst != kind:
+                close_list()
+                parts.append(f'<{kind}>')
+                lst = kind
+            parts.append(f'<li>{_note_inline_html(item.group(2))}</li>')
+            continue
+        if stripped.startswith('>'):
+            close_para(); close_list()
+            parts.append('<blockquote><p>' + _note_inline_html(stripped.lstrip('>').strip()) + '</p></blockquote>')
+            continue
+        close_list()
+        para.append(stripped)
+    if fence is not None:
+        parts.append('<pre>' + html.escape('\n'.join(fence), quote=False).replace('\n', '<br/>') + '</pre>')
+    close_para(); close_list(); close_table()
+    return ''.join(parts)
+
+
+def note_flat(markdown):
+    """精读笔记 Markdown → 一段纯文字（EndNote 研究笔记）。EndNote 从 RIS 导入时把换行一律并成空格
+    （2026-11-10 EndNote 2025 实测：续行、空行、单独 CR 都成了空格），所以小标题写成【】、列表项前加 ·，靠记号分段。"""
+    out = []
+    for line in markdown.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('```'):
+            continue
+        if stripped.startswith('|'):
+            cells = [c.strip() for c in stripped.strip('|').split('|')]
+            if all(re.fullmatch(r':?-{2,}:?', c) for c in cells if c):
+                continue
+            stripped = ' | '.join(cells)
+        head = _MD_HEAD.match(stripped)
+        if head:
+            text = head.group(2).strip()
+            stripped = text if len(head.group(1)) == 1 else f'【{text}】'
+        else:
+            item = _MD_LIST.match(line)
+            if item:
+                stripped = ('· ' if not item.group(1) else f'{item.group(1)}. ') + item.group(2).strip()
+            elif stripped.startswith('>'):
+                stripped = stripped.lstrip('>').strip()
+        stripped = re.sub(r'\*\*(.+?)\*\*', r'\1', stripped).replace('`', '')
+        out.append(stripped)
+    return ' '.join(' '.join(out).split())
+
+
+def attach_records(records, plan, html_notes):
+    """按 Mesa 给的 {键: {pdf, note}} 给记录挂全文与笔记。文件不在了的不挂。返回 (挂上全文几篇, 挂上笔记几篇)。"""
+    pdfs = notes = 0
+    for r in records:
+        item = plan.get(r.get('id'))
+        if not isinstance(item, dict):
+            continue
+        pdf = item.get('pdf')
+        if isinstance(pdf, str) and pdf and Path(pdf).is_file():
+            r['attachPdf'] = pdf
+            pdfs += 1
+        note = item.get('note')
+        if isinstance(note, str) and note:
+            try:
+                text = Path(note).read_text(encoding='utf-8')
+            except OSError:
+                text = ''
+            if text.strip():
+                r['attachNote'] = note_html(text) if html_notes else note_flat(text)
+                notes += 1
+    return pdfs, notes
+
+
 def decode_bib_text(value):
     # Preserve escaped literals; strip only TeX grouping, reject macros requiring a real TeX parser.
     out = []
@@ -736,6 +892,11 @@ def render(records, suffix):
                 result.append(f'UR  - {plain_id(r["url"])}')
             for attachment in r.get('attachments', []):
                 result.append(f'L1  - {plain_id(attachment)}')
+            # 「同步到文献库」带 PDF / 笔记：路径原样写（文件名里的双空格不能折），笔记已是一行
+            if r.get('attachPdf'):
+                result.append(f'L1  - {r["attachPdf"]}')
+            if r.get('attachNote'):
+                result.append(f'RN  - {r["attachNote"]}')
             result.append('ER  - ')
             result.append('')
         # EndNote 认 CRLF。不要加 BOM：带 BOM 时不认 TY 行，会跳过格式选择、静默导入 0 条。
@@ -808,6 +969,7 @@ def main():
     p.add_argument('--check-endnote-library',type=Path,dest='check_endnote_library')
     p.add_argument('--skip-excluded',type=Path,dest='skip_excluded',help='papers/included.json：其中排除的篇不进输出')
     p.add_argument('--journal-terms',type=Path,dest='journal_terms',help='另写一份 EndNote 期刊术语表（全称、缩写 1/2/3）')
+    p.add_argument('--attach',type=Path,help='Mesa 写的 {键: {pdf, note}}：RIS 给条目挂全文（L1）与笔记（RN）')
     a=p.parse_args()
     if a.check_endnote_library is not None:
         # 库体检（同步按钮用）：只读列出旧版导出的污染记录，永远成功退出
@@ -829,6 +991,8 @@ def main():
         if a.skip_excluded:
             records,dropped=drop_excluded(records,a.skip_excluded)
             if dropped: print(f'检索时排除的 {dropped} 篇不导。')
+        if a.attach:
+            attach_records(records, load_attach_plan(a.attach), html_notes=False)
         if a.journal_terms:
             a.journal_terms.write_text(journal_terms(records), encoding='utf-8', newline='')
         for dest in (a.output,a.report):
@@ -854,7 +1018,7 @@ def main():
             changes.append({'id':raw,'identity':key,'status':'changed' if prior and delta else 'unchanged' if prior else 'new','fields':delta})
             for field in ('year','authors','doi'):
                 if not r.get(field):warnings.append({'id':raw,'missing':field})
-            supported={'id','type','title','authors','journal','journalAbbreviation','booktitle','year','date','epubDate','doi','volume','number','pages','url','isbn','issn','abstract','keywords','notes','articleType','language','attachments','sourceRecordNumber','risFields'}
+            supported={'id','type','title','authors','journal','journalAbbreviation','booktitle','year','date','epubDate','doi','volume','number','pages','url','isbn','issn','abstract','keywords','notes','articleType','language','attachments','sourceRecordNumber','risFields','attachPdf','attachNote'}
             extras={k:v for k,v in r.items() if k not in supported}
             if extras: warnings.append({'id':raw,'notMappedFields':extras})
             if a.output.suffix.lower()=='.bib' and r.get('attachments'):warnings.append({'id':raw,'attachmentsInReportOnly':r['attachments']})

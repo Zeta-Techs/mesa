@@ -135,18 +135,24 @@ def rtf_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
 
 
-def write_library_ris(bib_text: str, dest: Path, skip_excluded: Path | None = None) -> tuple[int, int, int]:
+def write_library_ris(
+    bib_text: str, dest: Path, skip_excluded: Path | None = None, attach: Path | None = None
+) -> tuple[int, int, int]:
     """整份 bib 写成 Zotero RIS。用 bridge 解析，避免花括号和括号把作者、标题截断。
 
     库里已有同一 DOI 的照样交（2026-10-23 用户拍板，改 2026-10-11 的「按 DOI 差量」）：Mesa 出的题录字段是全的，
     导进去后人在 Zotero「重复条目」里自己挑着合并，比跳过、留着库里那条旧的缺字段记录好。这里只数一下有几条重复，进反馈。
     检索时人排除的篇（included.json 的 decision=excluded）不交。
+    attach（「同步到文献库」带 PDF / 笔记，2026-11-10）：Mesa 写的 {键: {pdf, note}}，全文进 L1、笔记转 HTML 进 N1
+    （Zotero 导入成条目下的附件和子笔记，全文复制进 Zotero 的 storage，不问复制还是链接；2026-11-10 Zotero 10 实测）。
     文件里不写注释行：RIS 没有注释语法，各家导入器认不认没保证。
     返回 (写入条数, 其中库里已有同一 DOI 的条数, 排除不导条数)。
     """
     bridge = load_bridge()
     match = load_library_match()
     records, dropped = bridge.drop_excluded(bridge.parse_bibtex(bib_text), skip_excluded)
+    if attach is not None:
+        bridge.attach_records(records, bridge.load_attach_plan(attach), html_notes=True)
     known_dois: set[str] = set()
     db = match.zotero_db_path()
     if db is not None:
@@ -204,6 +210,11 @@ def write_library_ris(bib_text: str, dest: Path, skip_excluded: Path | None = No
             lines.append(f"KW  - {word}")
         if rec.get("abstract"):
             lines.append(f"AB  - {bridge.clean(rec['abstract'])}")
+        # 只在人选了带全文 / 笔记时才有：路径原样写，笔记已是一行 HTML（上面「不写 N1」说的是题录里的 note 字段）
+        if rec.get("attachPdf"):
+            lines.append(f"L1  - {rec['attachPdf']}")
+        if rec.get("attachNote"):
+            lines.append(f"N1  - {rec['attachNote']}")
         lines.append("ER  - ")
         lines.append("")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -224,12 +235,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ris", required=True)
     parser.add_argument("--report")
     parser.add_argument("--skip-excluded", help="papers/included.json：其中排除的篇不导")
+    parser.add_argument("--attach", help="Mesa 写的 {键: {pdf, note}}：给条目挂全文（L1）与笔记（N1）")
     args = parser.parse_args(argv)
     if args.library_ris:
         written, duplicated, dropped = write_library_ris(
             Path(args.bib).read_text(encoding="utf-8"),
             Path(args.ris),
             Path(args.skip_excluded) if args.skip_excluded else None,
+            Path(args.attach) if args.attach else None,
         )
         # 「交给 Zotero 0 条」是调用方的判据：零记录的 RIS 不是合法导入文件，不拉起 Zotero
         print(

@@ -36,12 +36,15 @@ import {
   isPaywallTaskTitle,
   isPendingConfirmTaskTitle,
   isSpotCheckTaskTitle,
+  LIBRARY_SYNC_ATTACH,
+  LIBRARY_SYNC_NOTES_CAVEAT,
   missingToFetchCount,
   parseToFetchItems,
   recalledToFetchDone,
   rememberToFetchDone,
   toFetchPaperRel,
   toFetchSavedCount,
+  type LibrarySyncAttach,
   type StepFlowNode,
   type ToFetchItem,
 } from "../step-flow";
@@ -853,6 +856,8 @@ export default function StepFlow({
     detail?: string;
   } | null>(null);
   const [endnoteSyncing, setEndnoteSyncing] = useState(false);
+  /** 同步到文献库导入哪些：只导条目 / 带 PDF / 带 PDF 和笔记，默认只导条目 */
+  const [syncAttach, setSyncAttach] = useState<LibrarySyncAttach>("items");
   const [endnoteSyncResult, setEndnoteSyncResult] = useState<string | null>(null);
   /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
   const [endnoteLib, setEndnoteLib] = useState<
@@ -1091,6 +1096,7 @@ export default function StepFlow({
       const line = await invoke<string>("zotero_open_import", {
         path: `${projectPath.replace(/[\\/]+$/, "")}/papers/to-fetch.ris`,
         root: projectPath,
+        attach: syncAttach,
       });
       setZoteroSyncResult({ line });
     } catch (e) {
@@ -1111,9 +1117,13 @@ export default function StepFlow({
   // EndNote 在 Word 里只认库里的记录号：同步把题录导进了「当前打开的库」，可 Mesa 不知道那是哪个 .enl。
   // 人在这里指一次，后面定稿出的 EndNote 版 Word 就按这个库绑记录号，在 Word 里点 Update 即和库里条目对上
   // （2026-10-24 用户：精读那步同步过，后续域稿应该直接关联好）。Zotero 不用指：脚本直接读默认数据目录。
-  /** 这一步有「同步到文献库」那一行（精读、期刊格式、投稿材料、返修） */
+  /** 这一步有「同步到文献库」那一行（三套模板的初稿、期刊格式、投稿材料、返修）。
+   *  2026-11-10 从精读挪到初稿：大纲后还会补文献，初稿保存后清单才基本定；定稿出的两份域稿要库里每篇恰好一条，
+   *  所以在定稿开工前同步一次（每次同步都是整份导入，早同步、多同步只会多出重复条目） */
   const endnoteStep =
-    step.workspaceName === "lit-notes" ||
+    step.workspaceName === "draft" ||
+    step.workspaceName === "paper-draft" ||
+    step.workspaceName === "thesis-draft" ||
     step.workspaceName === "journal-format" ||
     step.workspaceName === "submission-materials" ||
     /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
@@ -1193,6 +1203,7 @@ export default function StepFlow({
     try {
       const msg = await invoke<string>("endnote_export_xml", {
         projectRoot: projectPath,
+        attach: syncAttach,
       });
       setEndnoteSyncResult(msg);
     } catch (e) {
@@ -2519,6 +2530,31 @@ export default function StepFlow({
               ? [zoteroSyncResult?.line, endnoteSyncResult].filter(Boolean).join(" ")
               : node.hint}
           </p>
+        )}
+        {!dense && node.key === "endnote-export" && runStatus === "done" && (
+          <div className="mt-1 ml-9">
+            <div className="flex flex-wrap items-center gap-1">
+              {LIBRARY_SYNC_ATTACH.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  title={option.title}
+                  aria-pressed={syncAttach === option.id}
+                  onClick={() => setSyncAttach(option.id)}
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    syncAttach === option.id
+                      ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
+                      : "bg-inset text-l3 hover:bg-hover hover:text-l1"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {syncAttach === "notes" && (
+              <p className="mt-1 text-micro leading-5 text-l4">{LIBRARY_SYNC_NOTES_CAVEAT}</p>
+            )}
+          </div>
         )}
         {!dense && node.key === "endnote-export" && endnoteLib && (
           <p className="mt-0.5 pl-9 text-micro leading-5 text-l4">

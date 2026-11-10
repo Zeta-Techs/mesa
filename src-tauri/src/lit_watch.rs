@@ -2100,6 +2100,28 @@ fn to_fetch_progress_with(
     items: &[ToFetchProbe],
     catches: &[crate::download_inbox::CatchIdent],
 ) -> Vec<Option<String>> {
+    match_papers_pdfs(root, items, catches, true)
+}
+
+/// 「同步到文献库」带 PDF 时找全文用（2026-11-10）：与待获取清单同一口径，但只读——不改文件名、不登记资源
+pub(crate) fn match_papers_pdfs_readonly(root: &Path, items: &[ToFetchProbe]) -> Vec<Option<String>> {
+    match_papers_pdfs(root, items, &crate::download_inbox::catch_idents(), false)
+}
+
+/// apply = true 时命中的通用文件名按标题改名并登记资源（清单刷新）；false 只报文件名
+fn match_papers_pdfs(
+    root: &Path,
+    items: &[ToFetchProbe],
+    catches: &[crate::download_inbox::CatchIdent],
+    apply: bool,
+) -> Vec<Option<String>> {
+    let finish = |filename: &str, title: &str, doi: &str| {
+        if apply {
+            apply_title_filename(root, filename, title, doi)
+        } else {
+            filename.to_string()
+        }
+    };
     let papers = root.join("papers");
     let cfg = crate::projects::read_config_at(root).config;
     let mut pdfs: Vec<PdfFact> = std::fs::read_dir(&papers)
@@ -2151,8 +2173,7 @@ fn to_fetch_progress_with(
             match hit {
                 Some(pos) => {
                     taken.insert(pdfs[pos].filename.clone());
-                    Some(apply_title_filename(
-                        root,
+                    Some(finish(
                         &pdfs[pos].filename,
                         &it.title,
                         &it.url,
@@ -2177,7 +2198,7 @@ fn to_fetch_progress_with(
         });
         if let Some(pos) = hit {
             taken.insert(pdfs[pos].filename.clone());
-            out[i] = Some(apply_title_filename(root, &pdfs[pos].filename, &it.title, &it.url));
+            out[i] = Some(finish(&pdfs[pos].filename, &it.title, &it.url));
         }
     }
     // 清单刷新只对文件名和 DOI（含 PDF 开头的 DOI）。读 PDF 正文标题只发生在人把文件拖进清单时。
@@ -2244,8 +2265,7 @@ fn to_fetch_progress_with(
             .copied()
             .unwrap_or(*cands.last().unwrap());
         taken.insert(pick.filename.clone());
-        out[i] = Some(apply_title_filename(
-            root,
+        out[i] = Some(finish(
             &pick.filename,
             &it.title,
             &it.url,
