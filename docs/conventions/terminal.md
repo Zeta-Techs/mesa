@@ -669,7 +669,9 @@
   运行方式不变（PTY + TUI，终端是事实来源），`pty_spawn` 起进程前按家改启动参数接 CLI 自带的结构化旁路，快照以
   `chat-channel-<tabId>` 推给前端（150ms 合并）；**任一旁路起不来就照旧启动、不接**，聊天层退回会话文件 + 读屏。逐家：
   Claude Code / CodeBuddy = `--settings` 带 hooks（`hooks::launch_hooks_value`，与用户 hooks 合并）；Qwen = Dual Output；
-  OpenCode = `--port` + `OPENCODE_SERVER_PASSWORD`；Codex = 私有 app-server（ws + 能力令牌）+ TUI `--remote`；开了全局开关的
+  OpenCode = `--port` + `OPENCODE_SERVER_PASSWORD`；Codex = 私有 app-server（ws + 能力令牌）+ TUI `--remote`
+  （unix 上 app-server 在自己的进程组，Mesa 被强行结束时不跟着走：旁路目录记「进程号 启动时间」，下次启动清理主人已不在的目录时
+  两者都对上才结束它，2026-11-10 实测挂了 11 个、最早 6 天；Windows 靠任务组）；开了全局开关的
   Gemini / Kimi / Grok = 同一份状态日志按标签号过滤；**没有别的旁路、CLI 支持程序状态的家 = OSC 7501（2026-10-22，`program_status.rs`，
   旁路 kind `program-status`）**：Grok ≥1.0.60、Kimi ≥2.4.0（2026-11-04；两家都是没开全局 hooks 时）、Claude Code ≥2.1.295（hooks 起不来时）；**Windows 不接**
   （2026-10-25：ConPTY 两个方向都吞 OSC，同下文「OSC 底色握手」那条——本机 Grok 1.0.67 经 ConPTY 的输出里只剩 OSC 0 / 12，探询与报告都过不来，

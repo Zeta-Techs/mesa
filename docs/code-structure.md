@@ -1435,7 +1435,8 @@ src-tauri/src/
                              #   还没出字就打断时会话文件也不留收尾）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；
                              #   Windows 专属（terminal.md 旁路条⑦–⑪）：官方账号 hooks 写 settings.json 传路径、Claude hooks 后台跑时
-                             #   Tracker::async_hooks 按身份对账（apply_async_tool）、app-server spawn_tied_to_app、收旁路先杀后删
+                             #   Tracker::async_hooks 按身份对账（apply_async_tool）、app-server spawn_tied_to_app、收旁路先杀后删；
+                             #   app-server 在旁路目录记 codex-server.pid（进程号 + 启动时间），prune_channel_dirs 启动时按它收主人已不在的服务（2026-11-10）
   terminal_replay.rs         # 终端画面回放：<config>/ccode/terminal-replay/replay-<标签>.txt，
                              # 单份 256KB、出站先 redact_sensitive_text、0600；重启占位标签读回，不是会话档案；
                              # prune_terminal_replays 启动后只留当前标签集合（清崩溃残留孤儿）

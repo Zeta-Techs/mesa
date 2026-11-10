@@ -2034,26 +2034,61 @@ fn private_file(path: &Path) -> std::io::Result<()> {
 /// 启动时清掉上次没收尾的旁路目录（崩溃残留；只收进程已不在的，另一个 Mesa 实例的不动），顺手给 hooks 状态日志瘦身
 pub(crate) fn prune_on_startup() {
     if let Some(root) = channels_root() {
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            let mut sys = sysinfo::System::new();
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                let pid = name.split('-').next().and_then(|p| p.parse::<u32>().ok());
-                let alive = pid.is_some_and(|pid| {
-                    let pid = sysinfo::Pid::from_u32(pid);
-                    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
-                    sys.process(pid).is_some()
-                });
-                if !alive {
-                    let _ = std::fs::remove_dir_all(e.path());
-                }
-            }
-        }
+        prune_channel_dirs(&root);
     }
     for agent in ["claude-code", "codebuddy", "qwen", "gemini", "kimi", "grok", "codex"] {
         if let Some(log) = crate::hooks::log_path_for(agent) {
             crate::hooks::rotate_log_if_large(&log);
         }
+    }
+}
+
+/// 收已经不在的 Mesa 进程留下的旁路目录。目录里记着的 Codex app-server 先结束再删目录：
+/// Mesa 被强行结束（开发版改 Rust 自动重启、崩溃、强制退出）时 close_channel 没跑，unix 上 app-server
+/// 在自己的进程组里不会跟着走，原先只删目录、服务一直挂着（2026-11-10 本机实测：11 个，最早的挂了 6 天）
+fn prune_channel_dirs(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let mut sys = sysinfo::System::new();
+    let mut alive = |pid: u32| {
+        let pid = sysinfo::Pid::from_u32(pid);
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+        sys.process(pid).map(|p| p.start_time())
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let owner = name.split('-').next().and_then(|p| p.parse::<u32>().ok());
+        if owner.is_some_and(|pid| alive(pid).is_some()) {
+            continue;
+        }
+        // 进程号会被复用：启动时间也对得上才是当初那个服务
+        if let Some((pid, started)) = std::fs::read_to_string(e.path().join(SERVER_PID_FILE))
+            .ok()
+            .and_then(|text| parse_server_pid(&text))
+        {
+            if alive(pid) == Some(started) {
+                crate::pty::kill_process_tree(pid);
+            }
+        }
+        let _ = std::fs::remove_dir_all(e.path());
+    }
+}
+
+/// 旁路目录里记 app-server 的「进程号 启动时间」，供下次启动收拾
+const SERVER_PID_FILE: &str = "codex-server.pid";
+
+fn parse_server_pid(text: &str) -> Option<(u32, u64)> {
+    let mut parts = text.split_whitespace();
+    let pid = parts.next()?.parse().ok()?;
+    let started = parts.next()?.parse().ok()?;
+    Some((pid, started))
+}
+
+fn record_server_pid(dir: &Path, pid: u32) {
+    let mut sys = sysinfo::System::new();
+    let spid = sysinfo::Pid::from_u32(pid);
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
+    if let Some(p) = sys.process(spid) {
+        let _ = std::fs::write(dir.join(SERVER_PID_FILE), format!("{pid} {}", p.start_time()));
     }
 }
 
@@ -2332,6 +2367,8 @@ fn start_codex_server(
         }
         std::thread::sleep(Duration::from_millis(30));
     }
+    // Mesa 被强行结束时 close_for_pty 跑不到：记下来，下次启动 prune_channel_dirs 收
+    record_server_pid(dir, pid);
     // 回收进程（退出后不留僵尸）；结束由 close_for_pty 按进程组杀
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -3384,6 +3421,39 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_kills_recorded_server_of_dead_owner_only_when_start_time_matches() {
+        use std::os::unix::process::CommandExt;
+        let root_dir = std::env::temp_dir().join(format!("cc-prune-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&root_dir).unwrap();
+        let root = &root_dir;
+        let spawn = || {
+            let mut cmd = std::process::Command::new("sleep");
+            cmd.arg("30").process_group(0);
+            cmd.spawn().unwrap()
+        };
+        // 主人不在（目录名开头不是进程号）、记录对得上：结束并删目录
+        let mut orphan = spawn();
+        let gone = root.join("nopid-tab-aaaa");
+        std::fs::create_dir_all(&gone).unwrap();
+        record_server_pid(&gone, orphan.id());
+        // 记录的启动时间对不上（进程号被复用）：不碰
+        let mut other = spawn();
+        let reused = root.join("nopid-tab-bbbb");
+        std::fs::create_dir_all(&reused).unwrap();
+        std::fs::write(reused.join(SERVER_PID_FILE), format!("{} 1", other.id())).unwrap();
+        prune_channel_dirs(root);
+        assert!(!orphan.wait().unwrap().success(), "记录对得上的服务被结束");
+        assert!(other.try_wait().unwrap().is_none(), "启动时间对不上的不碰");
+        assert!(!gone.exists() && !reused.exists());
+        let _ = other.kill();
+        let _ = other.wait();
+        assert_eq!(parse_server_pid("123 456\n"), Some((123, 456)));
+        assert_eq!(parse_server_pid("123"), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn tracker() -> Tracker {
         Tracker::new("tab-1", "claude-code", "hooks")
