@@ -1582,8 +1582,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         forkSource: { agent: source.agentId, sessionId: source.sessionId },
         autoStart: true,
       });
-      // 不支持启动注入的 CLI（当前为 Kimi）必须直接落到终端，避免把“已启动”
-      // 误呈现成聊天已发送；用户可在终端粘贴已复制的分叉指令。
+      // 不支持启动注入的 CLI（当前为 Kimi）直接落到终端：分叉指令由终端等输入框就绪后自动写进去，
+      // 写不进去会复制并在终端报错，留在终端面上看得见。
       setSurfaceModeByTab((prev) => ({
         ...prev,
         [forkTabId]: promptSupported === false ? "terminal" : "chat",

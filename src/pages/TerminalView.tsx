@@ -5748,13 +5748,22 @@ export const TerminalView = memo(function TerminalView({
         setAdvancedLaunchOpen(false);
         setBarExpanded(false);
       } else if (res.promptDropped && !isResume) {
-        disarmPtyWorking();
-        setPendingReply(false);
-        // 栏高保持测量时的样子。指令留在错误行，收缩行因 error 会显示出来。
-        void navigator.clipboard
-          .writeText(launchPrompt)
-          .catch(() => {});
-        setError("该 CLI 不支持启动注入：指令已复制，请在终端里粘贴发送");
+        // Kimi 没有带首条指令进交互界面的参数（-p 是一次性非交互）：等输入框就绪后照普通消息写进去，
+        // 与聊天发送同一条路；写不进去才退回复制（2026-11-10 用户：开步换成 Kimi 只给「已复制，请粘贴」）
+        if (armWorking) setPendingReply(true);
+        setPromptText("");
+        setShowPrompt(false);
+        setAdvancedLaunchOpen(false);
+        setBarExpanded(false);
+        const droppedPty = res.ptyId;
+        void writeChatMessage(droppedPty, launchPrompt).then((sent) => {
+          if (!sent.error || !mountedRef.current || ptyIdRef.current !== droppedPty) return;
+          disarmPtyWorking();
+          setPendingReply(false);
+          void navigator.clipboard.writeText(launchPrompt).catch(() => {});
+          setError(`首条指令没能自动发出（${sent.error}）：已复制，请在终端里粘贴发送`);
+          setBarExpanded(true);
+        });
       } else {
         // 注入首轮也走「等回复」：切到聊天要立刻有进行中/正在回复，
         // 不能等会话文件落盘或用户再发一条才亮。

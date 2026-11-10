@@ -48,11 +48,6 @@ export default function DigestPicker({
   const [writtenBack, setWrittenBack] = useState(false);
   // 外部命令/指令的已复制反馈（按目标 Agent 区分）
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  // kimi 无启动注入：简报就绪后停留展示手动发送提示
-  const [ready, setReady] = useState<{
-    target: HandoffTargetDto;
-    prompt: string;
-  } | null>(null);
 
   // 依赖原始字段而非 source 对象：调用方在 JSX 里内联构造 source，
   // 父级任何重渲染都会换新对象身份，若按对象依赖会反复重新提炼
@@ -207,14 +202,8 @@ export default function DigestPicker({
       const prompt = promptFor(brief);
       // 已选定发送目标：简报任务标记已消费，收件箱「待发送」摘除
       consumeDigestJob();
-      if (t.promptSupported) {
-        goTerminal(t, prompt);
-      } else {
-        // 无交互注入参数（目前仅 kimi）：复制指令文本，停留展示提示，由用户确认后前往
-        await navigator.clipboard.writeText(prompt).catch(() => {});
-        setReady({ target: t, prompt });
-        setBusy(null);
-      }
+      // 没有启动注入参数的（Kimi）由终端等输入框就绪后自动写进去，不再停在这里让人复制
+      goTerminal(t, prompt);
     } catch (e) {
       setLocalError(String(e));
       setBusy(null);
@@ -346,45 +335,21 @@ export default function DigestPicker({
               placeholder={draft === null ? "读取初稿中…" : ""}
               onChange={(e) => setDraft(e.target.value)}
             />
-            {!ready && (
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={saving || busy !== null}
-                  onClick={() => void dismiss()}
-                  title="不发送；有改动会先写回简报文件，收件箱「待发送」摘除"
-                  className="rounded-sm px-2.5 py-1 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                >
-                  {saving ? "写回中…" : "暂不发送"}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        {/* 发送目标：brief ready 即显示，一律发送简报文件本身（有改动发送前已写回） */}
-        {brief &&
-          (ready ? (
-          <div className="px-3 pb-1">
-            <p className="text-xs text-warn-text">
-              {agentLabel(ready.target.id)}{" "}
-              不支持启动注入：简报指令已复制，启动后请手动发送（终端启动栏会保留该指令文本）。
-            </p>
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex items-center gap-2">
               <button
-                className="rounded-sm border border-cta-bd bg-cta px-2.5 py-1 text-xs text-cta-text hover:brightness-110"
-                onClick={() => goTerminal(ready.target, ready.prompt)}
+                type="button"
+                disabled={saving || busy !== null}
+                onClick={() => void dismiss()}
+                title="不发送；有改动会先写回简报文件，收件箱「待发送」摘除"
+                className="rounded-sm px-2.5 py-1 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
               >
-                前往终端启动
-              </button>
-              <button
-                className="rounded-sm px-2.5 py-1 text-xs text-l3 hover:bg-hover hover:text-l1"
-                onClick={onClose}
-              >
-                取消
+                {saving ? "写回中…" : "暂不发送"}
               </button>
             </div>
           </div>
-        ) : (
+        )}
+        {/* 发送目标：brief ready 即显示，一律发送简报文件本身（有改动发送前已写回） */}
+        {brief && (
           <div className="pb-1">
             {targets === null && !error && (
               <p className="px-3 py-1 text-xs text-l4">检测目标 Agent…</p>
@@ -414,9 +379,6 @@ export default function DigestPicker({
                 </span>
                 {!t.installed && (
                   <span className="shrink-0 text-xs text-l4">未安装</span>
-                )}
-                {t.installed && !t.promptSupported && (
-                  <span className="shrink-0 text-xs text-l4">需手动发送</span>
                 )}
                 {t.installed && (
                   <span className={`flex shrink-0 items-center gap-1 ${hoverRevealClass} focus-within:opacity-100`}>
@@ -457,7 +419,7 @@ export default function DigestPicker({
               </div>
             ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
