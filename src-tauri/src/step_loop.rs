@@ -313,6 +313,16 @@ fn read_rounds_at(root: &Path) -> Vec<RoundStart> {
         .collect()
 }
 
+/// 开了对话的那几种轮（工作区 id, 起因, 时间）：侧栏按它把流程对话写成「补料轮 / 跟进轮 …」（runs::apply_step_runs）。
+/// sync / ack 不开对话，不在此列
+pub(crate) fn round_starts(root: &Path) -> Vec<(String, String, String)> {
+    read_rounds_at(root)
+        .into_iter()
+        .filter(|s| matches!(s.kind.as_str(), "rework" | "followup" | "fresh" | "comments" | "catchup"))
+        .map(|s| (s.workspace_id, s.kind, s.at))
+        .collect()
+}
+
 /// 每个工作区最近一次「并入过」的时间：上游漂移判断用，见 workspaces::stale_upstream_for。
 /// 认 sync（并入成功，2026-11-06 起后端自己记）、ack（人点跟进而没有要跟进的）、followup / rework
 /// （这两种轮开之前都先并入；早于 sync 记录的旧数据靠它们）

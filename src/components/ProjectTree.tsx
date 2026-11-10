@@ -1449,7 +1449,7 @@ export default function ProjectTree({
         {groups.map((g) => {
           const gKey = `${folderKey}\n${g.step}`;
           const open = stepOpen[gKey] ?? g.step === openByDefault;
-          const all = [...g.rows, ...(g.lanes?.rows ?? [])];
+          const all = [...g.rows, ...(g.lanes?.rows ?? []), ...g.after];
           const dot = open ? null : caretOf(all);
           const lKey = `${gKey}\nlanes`;
           const lanesOpen = stepOpen[lKey] ?? true;
@@ -1467,7 +1467,6 @@ export default function ProjectTree({
                 <span className="ccode-rail-text min-w-0 flex-1 truncate">
                   {circledIndex(g.index)} {g.step}
                 </span>
-                <span className="shrink-0 text-micro text-l4">{all.length} 段</span>
                 {dot && <RunCaret state={dot} />}
               </button>
               {open && (
@@ -1494,6 +1493,7 @@ export default function ProjectTree({
                       {lanesOpen && <div className="space-y-[3px] pl-3">{g.lanes.rows.map(line)}</div>}
                     </div>
                   )}
+                  {g.after.map(line)}
                 </div>
               )}
             </div>

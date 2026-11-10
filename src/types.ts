@@ -603,8 +603,10 @@ export interface SessionMetaDto {
   readerPdf?: string | null;
   /** 流程对话：这一步在档案卡里排第几（1 起，后端 apply_step_index；2026-11-10 侧栏按步骤分组） */
   stepIndex?: number | null;
-  /** 流程对话在这一步里是哪一段（后端照 Run 复用键认）：discuss / work / lane / merge；认不出为空 */
-  stepRole?: "discuss" | "work" | "lane" | "merge" | null;
+  /** 流程对话在这一步里是哪一段（后端照 Run 复用键认）：discuss / work / lane / merge / round（某次开轮开的）；认不出为空 */
+  stepRole?: "discuss" | "work" | "lane" | "merge" | "round" | null;
+  /** round 的起因（.ccode/step-rounds.jsonl）：rework / followup / fresh / comments / catchup */
+  roundKind?: string | null;
   /** 分路的第几路（1 起） */
   laneNo?: number | null;
   /** 这一路写了做完标记 */

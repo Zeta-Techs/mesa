@@ -936,7 +936,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # 「显示更多」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关；多选一起钉 pinPicked，10-27）、项目内置顶（PROJECT_CHAT_PINS_KEY / parseProjectChatPins / isProjectPinned / toggleProjectChatPin / splitProjectPinned：stepName 非空的流程对话自动钉、人手取消记 dropped，别的人手钉记 pinned；课题最上面全列、不进 chatQuotas 限额，11-05）、分叉挂在原对话下面（forkParentKey 认 forkedFrom 与同家接力 handoffFrom*、nestForks 一家子按最近那段排、foldForks 收起不列但留正看着的，FORK_FOLDS_KEY，10-31）、多选（nextPicked：⌘ 点加减、⇧ 点从起点整段换上，10-27）、
                              # 流程对话按步骤分组（groupStepChats / stepRoleLabel / circledIndex / defaultOpenStep，2026-11-10：组头「② 步骤名」，
-                             #   行名按角色「商量任务书 / 执行任务书 / 第 k 路 / 收尾」，分路收进「分 N 路 · x/N 做完」子组，同角色多段接「 · MM-DD」，人改过名的照写标题）、
+                             #   行名按角色「商量任务书 / 执行任务书 / 第 k 路 / 收尾」，开轮开的按起因写「补料轮 / 跟进轮…」（后端 runs::round_kind_of 按 step-rounds.jsonl 认），分路后开的排在子组下面，分路收进「分 N 路 · x/N 做完」子组，同角色多段接「 · MM-DD」，人改过名的照写标题）、
                              # 侧栏键盘走（railNavIndex，10-24）、多选提醒贴哪（nudgeAnchor，10-27；何时出在 coach-tips.ts）
                              # （tests/sidebar-chats.test.ts；界面 ProjectTree，tests/project-tree-chats-ui.test.ts）
   coach-tips.ts              # 一次性提醒气泡的登记与规矩（2026-10-27）：各条出过记 localStorage、一次打开 Mesa 最多主动出一条（followUp 不占）；

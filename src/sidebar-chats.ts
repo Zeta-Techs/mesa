@@ -10,6 +10,7 @@ import { sessionExcludedFromProjectList } from "./session-filter.ts";
 import { caretOfAttention, strongestCaret, withUnread, type RunCaretState } from "./run-caret.ts";
 import { unreadKeyOf } from "./chat-unread.ts";
 import { tidySessionTitle } from "./session-title.ts";
+import { roundCauseLabel, type RoundCause } from "./step-loop.ts";
 
 /** 每个文件夹下最多列几段，更早的走「全部 N 条」进对话页 */
 export const SIDEBAR_CHAT_LIMIT = 5;
@@ -625,7 +626,7 @@ export function railNavIndex(key: string, current: number, count: number): numbe
 
 // ===== 流程对话按步骤分组（2026-11-10 用户拍板：长标题 + 行尾步骤名一窄就截断、分路几段认不出是第几路）=====
 
-/** 一行流程对话：label = 侧栏写的角色名（商量任务书 / 执行任务书 / 第 k 路 / 收尾）；null = 认不出角色或人改过名，照旧写标题 */
+/** 一行流程对话：label = 侧栏写的角色名（商量任务书 / 执行任务书 / 第 k 路 / 收尾 / 补料轮、跟进轮…）；null = 认不出角色或人改过名，照旧写标题 */
 export interface StepChatRow {
   row: ForkRow;
   label: string | null;
@@ -637,10 +638,12 @@ export interface StepChatGroup {
   step: string;
   /** 第几步（1 起）；档案卡里已经没有这一步时为 null，排最后 */
   index: number | null;
-  /** 分路外的行：商量在前，其余按开的先后 */
+  /** 分路外、开分路之前的行：商量在前，其余按开的先后 */
   rows: StepChatRow[];
   /** 分路子组：各路按路号，收尾放最后；没开过分路为 null */
   lanes: { rows: StepChatRow[]; total: number; done: number } | null;
+  /** 分路之后才开的行（补料轮、跟进轮…），画在分路子组下面，保持先后顺序 */
+  after: StepChatRow[];
 }
 
 // 「执行任务书」与「商量任务书」成对（2026-11-10 用户：「名字叫干活太草率了吧」）
@@ -651,10 +654,14 @@ function mmdd(at: string | null | undefined): string {
   return m ? `${m[1]}-${m[2]}` : "";
 }
 
-/** 一段流程对话在侧栏写什么：人改过名的照写（null），分路写「第 k 路」，其余按角色；认不出的 null */
+const ROUND_CAUSES = new Set<string>(["rework", "followup", "fresh", "comments", "catchup"]);
+
+/** 一段流程对话在侧栏写什么：人改过名的照写（null），分路写「第 k 路」，开轮开的写起因（同「这一步的几轮」：补料轮 / 跟进轮…），
+ *  其余按角色；认不出的 null（2026-11-10 用户：解冲突后的跟进轮写成第二个「收尾」，「名字还叫收尾吗」） */
 export function stepRoleLabel(s: SessionMetaDto): string | null {
   if (s.titleByUser) return null;
   if (s.stepRole === "lane") return s.laneNo ? `第 ${s.laneNo} 路` : null;
+  if (s.stepRole === "round") return s.roundKind && ROUND_CAUSES.has(s.roundKind) ? roundCauseLabel(s.roundKind as RoundCause) : null;
   return (s.stepRole && ROLE_NAME[s.stepRole]) || null;
 }
 
@@ -693,10 +700,14 @@ export function groupStepChats(rows: readonly ForkRow[]): { groups: StepChatGrou
     const laneNos = new Set(lanesRaw.map((r) => r.s.laneNo));
     const doneNos = new Set(lanesRaw.filter((r) => r.s.laneDone).map((r) => r.s.laneNo));
     const index = list.map((r) => r.s.stepIndex).find((i): i is number => typeof i === "number") ?? null;
+    // 分路之后开的（补料轮、跟进轮…）画在分路子组下面，不然排在「分 N 路」上面，先后颠倒
+    const firstLane = lanesRaw.length > 0 ? lanesRaw.map(created).sort()[0] : null;
+    const isAfter = (r: ForkRow) => firstLane !== null && r.s.stepRole !== "discuss" && created(r) > firstLane;
     groups.push({
       step,
       index,
-      rows: rest.map(toRow),
+      rows: rest.filter((r) => !isAfter(r)).map(toRow),
+      after: rest.filter(isAfter).map(toRow),
       lanes:
         lanesRaw.length > 0
           ? { rows: [...lanesRaw, ...merges].map(toRow), total: laneNos.size, done: doneNos.size }
@@ -718,7 +729,7 @@ export function defaultOpenStep(
   groups: readonly StepChatGroup[],
   isHot: (s: SessionMetaDto) => boolean,
 ): string | null {
-  const all = (g: StepChatGroup) => [...g.rows, ...(g.lanes?.rows ?? [])].map((r) => r.row.s);
+  const all = (g: StepChatGroup) => [...g.rows, ...(g.lanes?.rows ?? []), ...g.after].map((r) => r.row.s);
   const hot = groups.find((g) => all(g).some(isHot));
   if (hot) return hot.step;
   let best: { step: string; at: string } | null = null;

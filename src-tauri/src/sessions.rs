@@ -157,9 +157,12 @@ pub struct SessionStepMeta {
     /// 这一步在项目档案卡 steps 里排第几（1 起）；步骤已删 / 不是流程对话为 None
     #[serde(default)]
     pub step_index: Option<u32>,
-    /// discuss（商量任务书）| work（干活）| lane（分路的一路）| merge（分路后的收尾）；认不出为 None
+    /// discuss（商量任务书）| work（干活）| lane（分路的一路）| merge（分路后的收尾）| round（某次开轮开的，起因见 round_kind）；认不出为 None
     #[serde(default)]
     pub step_role: Option<String>,
+    /// round 的起因：rework | followup | fresh | comments | catchup（`.ccode/step-rounds.jsonl`）
+    #[serde(default)]
+    pub round_kind: Option<String>,
     /// 分路的第几路（1 起），只 lane 有
     #[serde(default)]
     pub lane_no: Option<u32>,

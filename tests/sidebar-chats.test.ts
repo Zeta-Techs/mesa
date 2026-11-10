@@ -557,6 +557,8 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
     row({ sessionId: "n-l3", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "lane", laneNo: 3, laneDone: true, createdAt: "2026-11-10T10:59:20Z" }),
     row({ sessionId: "n-l2", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "lane", laneNo: 2, laneDone: false, createdAt: "2026-11-10T10:59:19Z" }),
     row({ sessionId: "n-d", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "discuss", createdAt: "2026-11-10T10:32:00Z" }),
+    row({ sessionId: "n-follow", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "round", roundKind: "followup", createdAt: "2026-11-10T16:08:00Z" }),
+    row({ sessionId: "s-rework", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "round", roundKind: "rework", createdAt: "2026-11-10T14:31:00Z" }),
     row({ sessionId: "s-w1", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "work", createdAt: "2026-11-09T15:20:00Z" }),
     row({ sessionId: "s-w2", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "work", createdAt: "2026-11-10T09:39:00Z" }),
     row({ sessionId: "s-user", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "discuss", titleByUser: true, createdAt: "2026-11-09T13:00:00Z" }),
@@ -567,13 +569,17 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
   assert.deepEqual(manual.map((r) => r.s.sessionId), ["pin"]);
   assert.deepEqual(groups.map((g) => [g.index, g.step]), [[1, "文献检索与筛选"], [2, "文献精读与笔记"]]);
   // 检索：人改过名的照写标题（null），认不出角色的 null；两段「执行任务书」各接日期
-  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "执行任务书 · 11-09", "执行任务书 · 11-10"]);
+  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "执行任务书 · 11-09", "执行任务书 · 11-10", "补料轮"]);
   assert.equal(groups[0].lanes, null);
+  assert.deepEqual(groups[0].after, []);
   // 精读：商量在外面，分路子组按路号、收尾最后，做完几路
   assert.deepEqual(groups[1].rows.map((r) => r.label), ["商量任务书"]);
   assert.deepEqual(groups[1].lanes!.rows.map((r) => [r.label, r.done]), [["第 2 路", false], ["第 3 路", true], ["收尾", false]]);
   assert.equal(groups[1].lanes!.total, 2);
   assert.equal(groups[1].lanes!.done, 1);
+  // 分路之后开的跟进轮写起因、画在分路子组下面（不是第二个「收尾」）
+  assert.deepEqual(groups[1].after.map((r) => r.label), ["跟进轮"]);
+  assert.equal(stepRoleLabel(session({ stepRole: "round", roundKind: "bogus" })), null);
   assert.equal(stepRoleLabel(session({ stepRole: "lane", laneNo: null })), null);
   assert.equal(circledIndex(2), "②");
   assert.equal(circledIndex(21), "21.");

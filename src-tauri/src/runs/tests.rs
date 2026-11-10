@@ -1365,6 +1365,19 @@ fn step_role_reads_discuss_lane_work_and_merge_from_reuse_keys() {
 }
 
 #[test]
+fn round_kind_matches_same_worktree_within_window() {
+    let run = step_run("ws:/w", "/w", "2026-11-10T16:08:48+08:00");
+    let hit = |w: &str, kind: &str, at: &str| RoundHit { worktree: w.into(), kind: kind.into(), at: at.into() };
+    let rounds = vec![
+        hit("/other", "rework", "2026-11-10T08:08:50Z"),
+        hit("/w", "catchup", "2026-11-10T07:00:00Z"),
+        hit("/w", "followup", "2026-11-10T08:09:00Z"),
+    ];
+    assert_eq!(round_kind_of(&run, &rounds), Some("followup"));
+    assert_eq!(round_kind_of(&run, &rounds[..2]), None, "别的工作树、一小时前的轮次都不算");
+}
+
+#[test]
 fn step_role_compares_times_across_offsets() {
     // 同一时刻不同时区写法：按真实先后比，不按字符串
     let all = vec![
@@ -1389,6 +1402,7 @@ fn apply_step_runs_marks_sessions_and_lane_done_from_marks() {
         ("l1", format!("ws:{ws}#lane-1"), "2026-11-10T10:00:00+08:00"),
         ("l2", format!("ws:{ws}#lane-2"), "2026-11-10T10:00:01+08:00"),
         ("m", format!("ws:{ws}"), "2026-11-10T11:00:00+08:00"),
+        ("f", format!("ws:{ws}"), "2026-11-10T16:08:48+08:00"),
     ] {
         conn.execute(
             "INSERT INTO runs VALUES('codex', ?1, ?2, ?3, ?4, 0)",
@@ -1396,7 +1410,7 @@ fn apply_step_runs_marks_sessions_and_lane_done_from_marks() {
         )
         .unwrap();
     }
-    let mut sessions: Vec<crate::sessions::SessionMetaDto> = ["l1", "l2", "m", "other"]
+    let mut sessions: Vec<crate::sessions::SessionMetaDto> = ["l1", "l2", "m", "other", "f"]
         .iter()
         .map(|sid| {
             let mut s: crate::sessions::SessionMetaDto = serde_json::from_value(serde_json::json!({
@@ -1409,8 +1423,13 @@ fn apply_step_runs_marks_sessions_and_lane_done_from_marks() {
             s
         })
         .collect();
-    apply_step_runs(&conn, &mut sessions, &HashMap::new());
+    // 跟进轮：Run 建好后十几秒记的轮次（UTC 写法）；收尾那段没有对应轮次
+    let rounds = vec![RoundHit { worktree: ws.clone(), kind: "followup".into(), at: "2026-11-10T08:09:02Z".into() }];
+    apply_step_runs_with(&conn, &mut sessions, &HashMap::new(), &rounds);
     let meta = |i: usize| sessions[i].step_meta.clone();
+    assert_eq!(meta(4).step_role.as_deref(), Some("round"), "解冲突后的跟进轮不是第二个收尾");
+    assert_eq!(meta(4).round_kind.as_deref(), Some("followup"));
+    assert_eq!(meta(2).round_kind, None);
     assert_eq!(meta(0).step_role.as_deref(), Some("lane"));
     assert_eq!(meta(0).lane_no, Some(1));
     assert!(meta(0).lane_done);

@@ -204,12 +204,63 @@ pub(crate) fn step_role_of(run: &StepRunRow, all: &[StepRunRow]) -> Option<(&'st
     Some((if lane_before { "merge" } else { "work" }, None))
 }
 
+/// 一次开轮记录（`.ccode/step-rounds.jsonl`，工作区 id 已换成工作树路径）
+#[derive(Debug, Clone)]
+pub(crate) struct RoundHit {
+    pub worktree: String,
+    pub kind: String,
+    pub at: String,
+}
+
+/// 这条 Run 是不是某次开轮开的（补料轮 / 跟进轮 / 补读轮 / 意见轮 / 新开一轮）：同一工作树、轮次记录在 Run 建好后
+/// 10 分钟内（前端先开对话再记轮次，记录略晚；前后各留余量），取最近的一条。认不出返回 None
+pub(crate) fn round_kind_of<'a>(run: &StepRunRow, rounds: &'a [RoundHit]) -> Option<&'a str> {
+    let me = run_time(&run.created_at)?;
+    rounds
+        .iter()
+        .filter(|r| crate::paths::same_path(&r.worktree, &run.isolation_path))
+        .filter_map(|r| {
+            let gap = (run_time(&r.at)? - me).num_seconds();
+            (-10..=600).contains(&gap).then_some((gap.abs(), r.kind.as_str()))
+        })
+        .min_by_key(|(gap, _)| *gap)
+        .map(|(_, kind)| kind)
+}
+
+/// 各项目的开轮记录，工作区 id 换成工作树路径（侧栏起名用；读不到的项目当没有）
+fn round_hits() -> Vec<RoundHit> {
+    let rows = crate::workspaces::worktree_rows();
+    let mut roots: Vec<&str> = rows.iter().map(|w| w.repo_path.as_str()).collect();
+    roots.sort();
+    roots.dedup();
+    let mut out = Vec::new();
+    for root in roots {
+        for (ws_id, kind, at) in crate::step_loop::round_starts(Path::new(root)) {
+            if let Some(w) = rows.iter().find(|w| w.id == ws_id) {
+                out.push(RoundHit { worktree: w.worktree_path.clone(), kind, at });
+            }
+        }
+    }
+    out
+}
+
 /// 给会话列表标上流程对话的角色（商量 / 干活 / 第几路 / 收尾），照 Run 记录认，不猜标题。
 /// 每次列表一次查询；做完标记只给分路的会话查文件。一段会话登记过多次取最后一条认得出的
 pub(crate) fn apply_step_runs(
     conn: &Connection,
     sessions: &mut [crate::sessions::SessionMetaDto],
     chain_members: &HashMap<String, Vec<String>>,
+) {
+    apply_step_runs_with(conn, sessions, chain_members, &round_hits());
+}
+
+/// 同上，开轮记录由调用方给（单测不读本机注册表）。干活 / 收尾那几种 `ws:` Run 是某次开轮开的，
+/// 角色写 round、带起因：不然解冲突后的跟进轮也会落成第二个「收尾」（2026-11-10 HER 侧栏）
+pub(crate) fn apply_step_runs_with(
+    conn: &Connection,
+    sessions: &mut [crate::sessions::SessionMetaDto],
+    chain_members: &HashMap<String, Vec<String>>,
+    rounds: &[RoundHit],
 ) {
     let Ok(mut stmt) = conn.prepare(
         "SELECT agent, session_id, reuse_key, isolation_path, created_at FROM runs
@@ -236,10 +287,15 @@ pub(crate) fn apply_step_runs(
         return;
     }
     let all: Vec<StepRunRow> = rows.iter().map(|(_, _, r)| r.clone()).collect();
-    let mut found: HashMap<(String, String), (&'static str, Option<u32>, String)> = HashMap::new();
+    let mut found: HashMap<(String, String), (&'static str, Option<u32>, String, Option<String>)> = HashMap::new();
     for (agent, sid, run) in &rows {
         if let Some((role, lane)) = step_role_of(run, &all) {
-            found.insert((agent.clone(), sid.clone()), (role, lane, run.isolation_path.clone()));
+            let round = matches!(role, "work" | "merge")
+                .then(|| round_kind_of(run, rounds))
+                .flatten()
+                .map(str::to_string);
+            let role = if round.is_some() { "round" } else { role };
+            found.insert((agent.clone(), sid.clone()), (role, lane, run.isolation_path.clone(), round));
         }
     }
     for s in sessions.iter_mut() {
@@ -250,10 +306,11 @@ pub(crate) fn apply_step_runs(
                     .find_map(|id| found.get(&(s.agent.clone(), id.clone())))
             })
         });
-        let Some((role, lane, isolation)) = hit else {
+        let Some((role, lane, isolation, round)) = hit else {
             continue;
         };
         s.step_meta.step_role = Some((*role).to_string());
+        s.step_meta.round_kind = round.clone();
         s.step_meta.lane_no = *lane;
         s.step_meta.lane_done = lane.is_some_and(|k| {
             Path::new(isolation)
