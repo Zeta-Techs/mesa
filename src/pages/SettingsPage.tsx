@@ -427,7 +427,7 @@ const AI_FN_GROUPS: { title: string; rows: { key: string; label: string; hint: s
     title: "对话与技能",
     rows: [
       { key: "summarize", label: "会话摘要 / 起名", hint: "对话列表的标题与摘要" },
-      { key: "digest", label: "结论提炼", hint: "步骤带上上次的结论、评审沉淀、融合任务书" },
+      { key: "digest", label: "结论提炼", hint: "评审沉淀、融合任务书" },
       { key: "distill", label: "沉淀为技能", hint: "把一段对话整理成技能" },
       { key: "skill-optimize", label: "优化合成技能", hint: "合并、改写已有技能" },
     ],

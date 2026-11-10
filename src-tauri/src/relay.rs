@@ -329,7 +329,6 @@ fn prepare_impl(
                 rounds: after,
                 first_no: w + 2,
                 git: git.as_ref(),
-                ai_conclusions: None,
             });
             let path = write_brief(&source.cwd, &name, &text)?;
             insert_link(
@@ -368,7 +367,6 @@ fn prepare_impl(
         rounds: &rounds,
         first_no: 1,
         git: git.as_ref(),
-        ai_conclusions: None,
     });
     let path = write_brief(&source.cwd, &name, &text)?;
     insert_link(
@@ -814,8 +812,7 @@ mod tests {
             rounds: &rounds,
             first_no: 1,
             git: None,
-            ai_conclusions: None,
-        }));
+            }));
         println!("{text}");
         println!("=== {} 轮 · {} 字节", rounds.len(), text.len());
     }

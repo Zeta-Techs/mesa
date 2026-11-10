@@ -432,10 +432,6 @@ export const CONTINUE_STEP_PROMPT =
 export const CONTINUE_RESUME_PROMPT =
   `接着上次停下的地方继续，做到 TASK.md 的完成标准（任务书若有改动以新版为准）。停哪些见「决策暂停策略」。${KEEP_WORKING_CLAUSE}`;
 
-/** 换 Agent 继续：先读接力简报，再按完成标准往下做。简报不是原会话。 */
-export function continueWithBriefPrompt(briefRel: string): string {
-  return `读 ${briefRel} 接力简报，按这份简报接着做。${CONTINUE_STEP_PROMPT}`;
-}
 
 export function decisionPolicyText(mode: string | undefined): string {
   if (mode === "hard_pause") {

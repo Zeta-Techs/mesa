@@ -745,7 +745,6 @@ pub fn run() {
             session_transfer::import_sessions_apply,
             handoff::handoff_targets,
             handoff::build_handoff_brief,
-            handoff::build_session_digest,
             handoff::list_legacy_briefs,
             handoff::mark_handoff,
             relay::relay_prepare,

@@ -1,4 +1,4 @@
-//! 交接简报的写法（docs/design-chat-relay.md §3.5 / §4.3）：整份交接与补充简报共用。
+//! 交接简报的写法（docs/design-chat-relay.md §3.5 / §4.3）：整份交接、补充简报、分叉共用。
 //!
 //! 一段接力对话可能先后经过好几家（timeline 由 relay.rs 拼好），这里只管按「轮」排版与截长：
 //! 用户原话全部原文、永不压缩；最近几轮原文；更早的一轮一行；再放不下的并成区间；末尾「没写进来的」
@@ -188,8 +188,6 @@ pub(crate) struct BriefInput<'a> {
     /// rounds[0] 在整条时间线里是第几轮（1 起）
     pub first_no: usize,
     pub git: Option<&'a GitStatusDto>,
-    /// 提炼接力：AI 从回答里提炼的结论
-    pub ai_conclusions: Option<&'a str>,
 }
 
 fn cap_chars(text: &str, cap: usize) -> String {
@@ -487,12 +485,6 @@ pub(crate) fn render(input: &BriefInput) -> String {
     let mut user_block: Vec<String> = said.iter().map(|(i, r)| quote_of(*i, r)).collect();
     let mut dropped_users = 0usize;
 
-    let mut mid = String::new();
-    if let Some(ai) = input.ai_conclusions {
-        mid.push_str("## 要接上的结论（AI 从回答里提炼，不能代替用户原话）\n\n");
-        mid.push_str(ai.trim());
-        mid.push_str("\n\n");
-    }
     let mut files = String::new();
     if delta {
         let changed: Vec<String> = rounds
@@ -515,7 +507,7 @@ pub(crate) fn render(input: &BriefInput) -> String {
 
     const LEDGER_RESERVE: usize = 2 * 1024;
     let fixed = |users: &[String]| {
-        head.len() + user_heading.len() + users.iter().map(String::len).sum::<usize>() + mid.len() + files.len() + LEDGER_RESERVE
+        head.len() + user_heading.len() + users.iter().map(String::len).sum::<usize>() + files.len() + LEDGER_RESERVE
     };
     // 用户原话也放不下硬上限（极少）：从最早的截，记进账目
     while !user_block.is_empty() && fixed(&user_block) + MIN_RECENT > HARD_CAP {
@@ -577,7 +569,6 @@ pub(crate) fn render(input: &BriefInput) -> String {
         ));
     }
     out.push_str(&user_block.concat());
-    out.push_str(&mid);
     out.push_str(if delta { "## 你离开期间的几轮（原文）\n\n" } else { "## 最近几轮（原文）\n\n" });
     if recent.is_empty() {
         out.push_str("- （没有可写的轮次）\n\n");
@@ -667,7 +658,6 @@ mod tests {
             rounds,
             first_no: 1,
             git: None,
-            ai_conclusions: None,
         }
     }
 

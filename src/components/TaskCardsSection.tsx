@@ -68,13 +68,13 @@ import {
   unstartedSeeds,
 } from "../task-cards";
 import { buildTaskMdPreview, buildWorkspaceTerminalRequest } from "../pipeline-start";
-import { CONTINUE_RESUME_PROMPT, CONTINUE_STEP_PROMPT, continueWithBriefPrompt, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
+import { CONTINUE_RESUME_PROMPT, CONTINUE_STEP_PROMPT, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
 import { DEFAULT_KICKOFF_PROMPT } from "../pipeline-presets";
 import { continueRoute, pickWorkspaceResume } from "../workspace-resume";
 import { filterProjectSessions } from "../project-status";
 import { pickDiscussResume } from "../step-flow";
 import { IS_WINDOWS } from "../hotkeys";
-import { normSep, relativeUnder } from "../path-utils";
+import { composeRelayPrompt } from "../chat-relay";
 import { AGENTS } from "../types";
 import {
   projectAgentLaunch,
@@ -817,44 +817,28 @@ export default function TaskCardsSection({
     setPage("terminal");
   }
 
-  function digestReady(): boolean {
-    const settings = useAppStore.getState().settings;
-    return Boolean(
-      settings?.aiProfiles?.digest?.trim() || settings?.aiProfileId?.trim(),
-    );
-  }
-
-  function briefRel(worktreePath: string, filePath: string): string {
-    // 工作树外的原样路径也统一正斜杠（写进给 Agent 的指令，沿用旧口径）
-    return normSep(relativeUnder(filePath, worktreePath, IS_WINDOWS));
-  }
-
+  /** 带上上次对话：走聊天里「换 Agent」同一套接力（relay_prepare 写交接简报、按简报文件名记接力关系），
+   *  第一句 = 接力抬头 + 这一步的完成标准；聊天里有「前面由谁做」那张卡，侧栏并成一行 */
   async function carryAndContinue() {
     const ask = carryAsk;
     if (!ask || carryBusy) return;
     setCarryBusy(true);
     setCarryError(null);
     try {
-      const args = {
-        agent: ask.fromAgent,
-        sessionId: ask.fromSessionId,
-        filePath: ask.filePath,
-        cwd: ask.ws.worktreePath,
-        title: ask.sessionTitle,
-        targetPath: null,
-      };
-      // 配了提炼才走 AI；没配就用规则简报。配了但调用失败不悄悄降级，留在框里重试或改走不带。
-      const brief = await invoke<{ filePath: string }>(
-        digestReady() ? "build_session_digest" : "build_handoff_brief",
-        args,
-      );
-      await invoke("mark_handoff", {
+      const prepared = await invoke<{ framing: string | null }>("relay_prepare", {
+        source: {
+          agent: ask.fromAgent,
+          sessionId: ask.fromSessionId,
+          filePath: ask.filePath,
+          cwd: ask.ws.worktreePath,
+          title: ask.sessionTitle,
+        },
         targetAgent: ask.launch.agentId,
-        targetCwd: ask.ws.repoPath,
-        fromAgent: ask.fromAgent,
-        fromSessionId: ask.fromSessionId,
+        resumeSession: null,
+        withWords: true,
       });
-      const prompt = withLatestNote(continueWithBriefPrompt(briefRel(ask.ws.worktreePath, brief.filePath)), ask.incoming);
+      if (!prepared.framing) throw new Error("没能写出交接简报");
+      const prompt = composeRelayPrompt(prepared.framing, withLatestNote(CONTINUE_STEP_PROMPT, ask.incoming));
       await launchContinuation(ask.launch, ask.ws, ask.title, prompt, ask.card);
       setCarryAsk(null);
     } catch (reason) {
@@ -2026,7 +2010,7 @@ export default function TaskCardsSection({
           open
           size="sm"
           layer="overlay"
-          title={`上次是 ${AGENTS.find((a) => a.id === carryAsk.fromAgent)?.label ?? carryAsk.fromAgent}`}
+          title="换了 Agent"
           // 整理在途时 Esc / 点遮罩都不关，避免关框后后台还在写
           dismissOnBackdrop={!carryBusy}
           onClose={() => {
@@ -2048,19 +2032,15 @@ export default function TaskCardsSection({
                 onClick={() => void carryAndContinue()}
                 className={primaryActionClass}
               >
-                {carryBusy ? "正在整理…" : "带上上次对话"}
+                {carryBusy ? "正在整理…" : "带上，接着做"}
               </button>
             </>
           }
         >
             <p className="text-sm leading-6 text-l2">
-              这次用 {AGENTS.find((a) => a.id === carryAsk.launch.agentId)?.label ?? carryAsk.launch.agentId} 开新一轮。要不要把上次对话里的用户原话逐条带上？原话不改写，助手正文附在后面供核对。旧对话还留在原来那家。
+              这一步上次是 {AGENTS.find((a) => a.id === carryAsk.fromAgent)?.label ?? carryAsk.fromAgent} 做的。带上它的对话记录，让{" "}
+              {AGENTS.find((a) => a.id === carryAsk.launch.agentId)?.label ?? carryAsk.launch.agentId} 接着做？
             </p>
-            {!digestReady() && (
-              <p className="mt-2 text-xs text-l4">
-                还没配提炼模型，这次用规则简报（对话尾部和改动文件），不调用 AI。
-              </p>
-            )}
             {carryError && (
               <p className="mt-2 text-xs text-err-text" role="alert">
                 {carryError}

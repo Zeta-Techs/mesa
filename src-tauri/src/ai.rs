@@ -24,7 +24,7 @@ pub const FN_PR: &str = "pr"; // ai_draft_pr（PR 描述起草）
 pub const FN_DISTILL: &str = "distill"; // ai_distill_skill（✦ 沉淀为技能）
 pub const FN_SKILL_OPTIMIZE: &str = "skill-optimize"; // optimize_skills_draft（◈ 优化另存：多源合成出稿）
 pub const FN_CONFLICT: &str = "conflict"; // ai_conflict_advice（冲突选侧建议）
-pub const FN_DIGEST: &str = "digest"; // build_session_digest（◈ 提炼接力）+ ai_distill_review（评审沉淀起草）
+pub const FN_DIGEST: &str = "digest"; // 设置里「结论提炼」：ai_distill_review（评审沉淀起草）+ 融合任务书
                                       // 「translate」由 JS 侧（技能页翻译）作为 ai_prompt 的 fnKey 显式传入，Rust 无字面引用
 #[allow(dead_code)]
 pub const FN_TRANSLATE: &str = "translate";
@@ -1635,22 +1635,6 @@ fn build_summary_prompt(conversation: &str) -> String {
     format!(
         "用 3-5 行中文概括下面这个编程会话：目标是什么、做了哪些关键改动、结果如何。\
          不要逐条复述工具调用，不要客套话，直接给概括。\n\n{conversation}"
-    )
-}
-
-/// 「◈ 提炼接力」：模型只整理助手正文里要接上的结论。
-/// 用户原话由简报逐条原文附上，这里禁止改写或复述。
-pub(crate) fn build_digest_prompt(assistant_text: &str) -> String {
-    format!(
-        "下面只有上一轮助手回复的正文，工具调用已经去掉。\
-         用户的每一句原话由系统逐条写进简报，你不要复述、不要改写、不要翻译用户的话。\n\
-         请只根据这些助手正文，列出下一个全新会话接着做时必须知道、而用户原话未必已经写明的信息。\
-         只输出中文 markdown 正文（不要解释、不要用代码块包裹全文），按以下小节，没有就写「（无）」：\n\
-         ## 已完成并有依据的结论\n## 涉及的文件与路径\n## 已否决或明确不做的\n\
-         ## 还没做完的\n## 下一步建议\n\
-         每条都必须能在助手正文里找到依据。正文没写的不要编，不要补文献、DOI、页码或数据。\
-         不要寒暄，不要复述工具调用。\n\n\
-         ## 助手正文\n{assistant_text}"
     )
 }
 
@@ -3819,23 +3803,6 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let list = parse_conflict_advice("我不知道", &files);
         assert_eq!(list.len(), 2);
         assert!(list.iter().all(|a| a.choice == "manual"));
-    }
-
-    #[test]
-    fn digest_prompt_has_sections_and_constraints() {
-        let p = build_digest_prompt("[用户] 做一个提炼接力功能");
-        for section in [
-            "已完成并有依据的结论",
-            "涉及的文件与路径",
-            "已否决或明确不做的",
-            "还没做完的",
-            "下一步建议",
-        ] {
-            assert!(p.contains(section), "缺小节 {section}");
-        }
-        assert!(p.contains("不要改写"), "用户原话不得由模型改写");
-        assert!(p.contains("不要复述工具调用"));
-        assert!(p.contains("[用户] 做一个提炼接力功能"));
     }
 
     #[test]

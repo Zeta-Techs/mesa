@@ -68,16 +68,6 @@ fn message_text(m: &ChatMessageDto) -> String {
         .join("\n")
 }
 
-/// 某一角色的正文，按时间。空正文跳过。工具调用不在 text 块里，不会进来。
-fn role_quotes(messages: &[ChatMessageDto], role: &str) -> Vec<String> {
-    messages
-        .iter()
-        .filter(|m| m.role == role)
-        .map(|m| message_text(m))
-        .filter(|t| !t.trim().is_empty())
-        .collect()
-}
-
 /// 组装简报（2026-11-10 起与聊天里换 Agent 接力同一写法，relay_brief.rs）：用户原话全部原文；
 /// 最近几轮原文，更早的一轮一行，末尾写明省了什么；每轮改了哪些文件、跑了什么命令。
 /// rounds 是整条时间线（这段对话之前接过力的，前面几家也在里面）
@@ -89,7 +79,6 @@ pub(crate) fn render_handoff_brief(
     title: Option<&str>,
     rounds: &[relay_brief::Round],
     git: Option<&GitStatusDto>,
-    ai_conclusions: Option<&str>,
 ) -> String {
     relay_brief::render(&relay_brief::BriefInput {
         kind,
@@ -100,7 +89,6 @@ pub(crate) fn render_handoff_brief(
         rounds,
         first_no: 1,
         git,
-        ai_conclusions,
     })
 }
 
@@ -255,7 +243,7 @@ fn build_handoff_brief_impl(
     let rounds = crate::relay::timeline_from_messages(agent, session_id, &messages);
     let git = crate::git_info::git_status_sync(cwd).ok();
     let kind = if forking { relay_brief::BriefKind::Fork } else { relay_brief::BriefKind::Full };
-    let brief = render_handoff_brief(kind, agent, session_id, cwd, title, &rounds, git.as_ref(), None);
+    let brief = render_handoff_brief(kind, agent, session_id, cwd, title, &rounds, git.as_ref());
     let text = redact_and_cap(&brief);
     let path = handoff_target_path(cwd, target_path)?;
     if let Some(parent) = path.parent() {
@@ -304,105 +292,6 @@ pub async fn build_handoff_brief(
     })
     .await
     .map_err(|e| format!("生成接力简报失败: {e}"))?
-}
-
-/// 「◈ 提炼接力」送入 AI 的助手正文上限。用户原话不进这段输入，避免被中间截断改写。
-const DIGEST_CAP: usize = 24 * 1024;
-
-/// 只拼助手正文。超限时中间省略并明确告知模型，简报文末仍保留助手正文供核对。
-fn assistant_digest_input(messages: &[ChatMessageDto]) -> String {
-    let quotes = role_quotes(messages, "assistant");
-    if quotes.is_empty() {
-        return "（没有助手正文）".into();
-    }
-    let joined = quotes
-        .iter()
-        .enumerate()
-        .map(|(i, text)| format!("[{}]\n{text}", i + 1))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    if joined.len() <= DIGEST_CAP {
-        return joined;
-    }
-    format!(
-        "注意：助手正文超过提炼输入上限，中间有一段没有送给你。不要把没看到的部分写成结论。简报文末仍附有助手正文。\n{}",
-        crate::ai::cap_text_middle(&joined, DIGEST_CAP)
-    )
-}
-
-fn build_session_digest_impl(
-    profiles: Vec<crate::profiles::Profile>,
-    agent: &str,
-    session_id: &str,
-    file_path: &str,
-    cwd: &str,
-    title: Option<&str>,
-    target_path: Option<&str>,
-) -> Result<HandoffBriefDto, String> {
-    // 用户原话由简报逐条原文写入，不交给模型改写。模型只看助手正文，抽出要接上的结论。
-    let messages = sessions::conversation_impl(agent, file_path);
-    let assistant = assistant_digest_input(&messages);
-    if role_quotes(&messages, "user").is_empty() && assistant.trim().is_empty() {
-        return Err("会话内容为空，无法提炼".into());
-    }
-    let ai_body = crate::ai::ai_prompt_impl(
-        profiles,
-        None,
-        Some(crate::ai::FN_DIGEST),
-        crate::ai::build_digest_prompt(&assistant),
-    )?;
-    let git = crate::git_info::git_status_sync(cwd).ok();
-    let rounds = crate::relay::timeline_from_messages(agent, session_id, &messages);
-    let brief = render_handoff_brief(
-        relay_brief::BriefKind::Full,
-        agent,
-        session_id,
-        cwd,
-        title,
-        &rounds,
-        git.as_ref(),
-        Some(&ai_body),
-    );
-    // AI 输出再过一次脱敏（与规则式简报同一口径），随后 64KB 上限
-    let text = redact_and_cap(&brief);
-    let path = handoff_target_path(cwd, target_path)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建 .ccode 目录失败: {e}"))?;
-    }
-    // 简报落 .ccode/ 即确保仓库忽略 handoff-*.md（存量仓库的默认规则补齐）
-    ensure_handoff_ignored(Path::new(cwd));
-    crate::profiles::atomic_write(&path, &text)?;
-    Ok(HandoffBriefDto {
-        file_path: path.to_string_lossy().into_owned(),
-        summary: format!("AI 提炼全会话 {} 条消息（已脱敏）", messages.len()),
-    })
-}
-
-/// 「◈ 提炼接力」：AI 蒸馏全会话成结构化简报并原子写入目标路径（需设置页可用的 AI profile）
-#[tauri::command]
-pub async fn build_session_digest(
-    store: tauri::State<'_, crate::profiles::ProfileStore>,
-    agent: String,
-    session_id: String,
-    file_path: String,
-    cwd: String,
-    title: Option<String>,
-    target_path: Option<String>,
-) -> Result<HandoffBriefDto, String> {
-    let profiles = store.list()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        build_session_digest_impl(
-            profiles,
-            &agent,
-            &session_id,
-            &file_path,
-            &cwd,
-            title.as_deref(),
-            target_path.as_deref(),
-        )
-    })
-    .await
-    .map_err(|e| format!("提炼接力简报失败: {e}"))?
 }
 
 /// 旧版「定稿简报」残留扫描（迁移提示用）：列项目根 .ccode/ 下 brief-*.md，
@@ -689,9 +578,9 @@ mod tests {
         }
     }
 
-    fn render(messages: &[ChatMessageDto], ai: Option<&str>, git: Option<&GitStatusDto>) -> String {
+    fn render(messages: &[ChatMessageDto], git: Option<&GitStatusDto>) -> String {
         let rounds = relay_brief::split_rounds("codex", "sess-12345678", messages);
-        render_handoff_brief(relay_brief::BriefKind::Full, "codex", "sess-12345678", "/tmp/proj", Some("RAG 调研"), &rounds, git, ai)
+        render_handoff_brief(relay_brief::BriefKind::Full, "codex", "sess-12345678", "/tmp/proj", Some("RAG 调研"), &rounds, git)
     }
 
     /// 简报结构：抬头 / 阅读约定 / 用户原话 / 最近几轮 / 文件状态 / 没写进来的
@@ -703,7 +592,7 @@ mod tests {
             msg("user", "重点关注召回率指标"),
             msg("assistant", "已完成初稿，结论如下……"),
         ];
-        let brief = render(&messages, None, Some(&git_dto()));
+        let brief = render(&messages, Some(&git_dto()));
         assert!(brief.contains("# 〔Mesa 交接简报〕RAG 调研"));
         assert!(brief.contains("来自 Codex（会话 sess-12345678）"));
         assert!(brief.contains("## 怎么读这份简报"));
@@ -724,7 +613,7 @@ mod tests {
             messages.push(msg("user", &format!("后续第 {i} 条")));
             messages.push(msg("assistant", "收到"));
         }
-        let brief = render(&messages, None, None);
+        let brief = render(&messages, None);
         assert!(brief.contains("> 课题是比较三种检索式的召回"));
         assert!(brief.contains("> 后续第 0 条"));
         assert!(brief.contains("> 后续第 19 条"));
@@ -733,37 +622,17 @@ mod tests {
     /// 空会话与非 git 目录的兜底文案
     #[test]
     fn brief_empty_conversation_and_non_repo() {
-        let brief = render_handoff_brief(relay_brief::BriefKind::Full, "kimi", "abc", "/tmp/x", None, &[], None, None);
+        let brief = render_handoff_brief(relay_brief::BriefKind::Full, "kimi", "abc", "/tmp/x", None, &[], None);
         assert!(brief.contains("未命名对话 · abc"));
         assert!(brief.contains("（没有用户原话）"));
         assert!(brief.contains("项目目录不是 git 仓库"));
-    }
-
-    /// 提炼简报：多一段 AI 结论，用户原话照旧原文
-    #[test]
-    fn digest_brief_structure_sections() {
-        let ai_body = "## 任务目标\n做提炼接力";
-        let brief = render(&[msg("user", "不要改纳入标准")], Some(ai_body), Some(&git_dto()));
-        assert!(brief.contains("## 要接上的结论"));
-        assert!(brief.contains("## 任务目标\n做提炼接力"));
-        assert!(brief.contains("> 不要改纳入标准"));
-    }
-
-    /// 提炼简报同样过脱敏：AI 正文里的已知前缀密钥不得落盘
-    #[test]
-    fn digest_brief_redacts_ai_output() {
-        let secret = "sk-ant-api03-abcdef123456";
-        let brief = render(&[], Some(&format!("密钥是 {secret}")), None);
-        let text = redact_and_cap(&brief);
-        assert!(!text.contains(secret), "AI 输出必须脱敏: {text}");
-        assert!(text.contains("已隐藏密钥"));
     }
 
     /// 脱敏生效：已知前缀密钥（sk- 开头 ≥12 字符）不得原样进简报
     #[test]
     fn brief_redacts_known_secret_tokens() {
         let secret = "sk-ant-api03-abcdef123456";
-        let brief = render(&[msg("user", &format!("用这个密钥调试 {secret} 看看"))], None, None);
+        let brief = render(&[msg("user", &format!("用这个密钥调试 {secret} 看看"))], None);
         let text = redact_and_cap(&brief);
         assert!(!text.contains(secret), "密钥必须脱敏: {text}");
         assert!(text.contains("已隐藏密钥"));
