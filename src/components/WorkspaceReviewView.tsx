@@ -1985,7 +1985,9 @@ function LiveWorkspaceReviewView({
   );
   const contentReview = Boolean(paneTabs) && !conflictMode && !health?.conflict;
   const contentReady = !opening && contentReview && diff != null;
-  const showGitFiles = contentReady && reviewPane === "files";
+  // 没有内容页签（普通评审）或正处在冲突里（contentReview 为假）时，Git 对照 / 冲突区就是主区，必须显示；
+  // 有内容页签的只在内容就绪后切到「文件」才显示（打开中不闪）。2026-11-10 HER：精读评审撞上冲突，主区一片空白
+  const showGitFiles = !contentReview || (contentReady && reviewPane === "files");
   const deliveryPaths =
     reviewPane === "process"
       ? deliveryProcessPaths(displayedPaths)
@@ -2568,9 +2570,8 @@ function LiveWorkspaceReviewView({
                     ? void finish("commit")
                     : void startConflictResolution()
                 }
-                disabled={
-                  conflictBusy || busy || (hasUncommitted && !message.trim())
-                }
+                // 提交信息可留空（同 finish 的口径）：留空走默认信息，不因空信息变灰
+                disabled={conflictBusy || busy}
                 title="两边改了同一个地方，需要你逐个文件选一边"
                 className={primaryActionClass}
               >
