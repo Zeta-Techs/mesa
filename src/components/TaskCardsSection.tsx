@@ -50,6 +50,7 @@ import { bringLatest, stepBusy } from "../step-latest";
 import { ROUND_CLAUSE, chainDefaultOff, stepKind } from "../step-kind";
 import {
   assertRoundable,
+  hasUnsavedRound,
   ensureActive,
   pickStepWorkspace,
   recordRound as recordStepRound,
@@ -1032,7 +1033,11 @@ export default function TaskCardsSection({
       let notesIds: string[] | null = null;
       if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
         const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
-        const idx = await readResearchLedger(projectPath, "notes/index.json").catch(() => null);
+        // 这一步读过哪些篇看工作副本的索引：待评审、没保存时项目根还是旧索引（甚至没有），按它算会把全部篇当新增
+        const idx =
+          (found.status === "active"
+            ? await readResearchLedger(found.worktreePath, "notes/index.json").catch(() => null)
+            : null) ?? (await readResearchLedger(projectPath, "notes/index.json").catch(() => null));
         notesIds = inc && !inc.truncated ? notesFollowupIds(inc.text, idx && !idx.truncated ? idx.text : null) : null;
         // 没有新篇要读、但上游改了别的（清单、待获取）：按文件跟进
         if (notesIds && notesIds.length === 0) notesIds = null;
@@ -1054,8 +1059,10 @@ export default function TaskCardsSection({
         const scope = await invoke<FollowupScopeDto>("step_followup_scope", { workspaceId: ws.id });
         files = followupFiles(scope.files);
       }
-      // AI 正在干活 / 有没保存的产出：先拦，别让人确认完才知道开不了（收起了的恢复后再查）
-      if (ws.status === "active") await assertRoundable(ws, step.name);
+      // AI 正在干活：先拦，别让人确认完才知道开不了（收起了的恢复后再查）。上一轮还没保存的，人点开时在确认框里
+      // 选「接着做，一起评审」（2026-11-10 用户拍板）；补料链自动往下时照旧停下，等人先保存
+      const unsaved = ws.status === "active" && (await hasUnsavedRound(ws));
+      if (ws.status === "active") await assertRoundable(ws, step.name, { allowUnsaved: !auto });
       const scale = followupScale({ upstream, notesIds, files });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
@@ -1070,7 +1077,10 @@ export default function TaskCardsSection({
       }
       if (!auto) {
         const restoreNote = ws.status !== "active" ? "开始前会先恢复这一步收起的工作副本，再把项目里的新内容并进去。" : "开始前会先把项目里的新内容并进这一步的工作副本。";
-        if (!(await confirmDialog(`${scale}\n${restoreNote}`, { confirmText: "开始跟进" }))) return "stopped";
+        const unsavedNote = unsaved
+          ? "\n这一步上一轮还没保存进项目：这一轮接在它后面做，做完两轮合在一起评审、一起保存，不能只退回其中一轮。想分开评审就点取消，先去评审保存上一轮。"
+          : "";
+        if (!(await confirmDialog(`${scale}\n${restoreNote}${unsavedNote}`, { confirmText: unsaved ? "接着做，一起评审" : "开始跟进" }))) return "stopped";
       }
       if (ws.status !== "active") {
         ws = await ensureActive(ws, step.name);
@@ -1627,12 +1637,24 @@ export default function TaskCardsSection({
                     {refreshButton}
                     {commentsButton}
                     {reworkButton}
-                    {live?.staleUpstream && (
+                    {/* 待评审时也能跟进：确认框里选「接着做，一起评审」，两轮合在一起评审（2026-11-10 用户拍板） */}
+                    {live?.staleUpstream && focusRunStatus === "review" && (
+                      <button
+                        type="button"
+                        disabled={followBusy}
+                        onClick={() => void followUpstream()}
+                        title={`上游「${live.staleUpstream}」保存过新内容，这一版还没用上：只处理新增的部分，接在没保存的这一轮后面做，做完两轮一起评审（先告诉你有多少再开始）`}
+                        className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover disabled:opacity-50"
+                      >
+                        {followBusy ? "正在算新增…" : "跟进上游的新增"}
+                      </button>
+                    )}
+                    {live?.staleUpstream && focusRunStatus === "active" && (
                       <span
                         className="shrink-0 text-xs text-warn-text"
-                        title="这一步的工作副本还没并入上游这次保存的内容。点「继续」（待评审时在评审里退回修改）会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
+                        title="这一步的工作副本还没并入上游这次保存的内容。点「继续」会先把项目最新内容并进来，并告诉 AI 新进来了哪些文件"
                       >
-                        上游「{live.staleUpstream}」有新内容，{focusRunStatus === "review" ? "这一版还没用上" : "继续时会先并进来"}
+                        上游「{live.staleUpstream}」有新内容，继续时会先并进来
                       </span>
                     )}
                   </span>

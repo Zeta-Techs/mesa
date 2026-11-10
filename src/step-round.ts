@@ -42,15 +42,23 @@ export async function ensureActive(ws: WorkspaceDto, stepName: string): Promise<
 }
 
 /** 开一轮之前的共同检查：AI 正在干活 / 等确认、有没保存的产出都不叠一轮。
- *  只是开着、停在提示符上的标签不拦：新一轮按工作区复用键就地换掉它 */
-export async function assertRoundable(ws: WorkspaceDto, stepName: string): Promise<void> {
+ *  只是开着、停在提示符上的标签不拦：新一轮按工作区复用键就地换掉它。
+ *  allowUnsaved：人已在确认框里选了「接着做，和上一轮一起评审」（跟进，2026-11-10 用户拍板），只拦正在干活的 */
+export async function assertRoundable(ws: WorkspaceDto, stepName: string, opts: { allowUnsaved?: boolean } = {}): Promise<void> {
   if (stepBusy(ws)) {
     throw new Error(`「${stepName}」的 AI 正在干活或等你确认：等它这一轮做完（或在侧栏那段对话的 ⋯ 里停下这一步），再开这一轮。`);
   }
-  const h = await invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id });
-  if (h.ahead > 0) {
+  if (opts.allowUnsaved) return;
+  if (await hasUnsavedRound(ws)) {
     throw new Error(`「${stepName}」还有没保存进项目的产出：先去那一步评审，保存或退回修改后再开这一轮。`);
   }
+}
+
+/** 这一步还有 AI 交付了、没保存进项目的产出（工作副本领先项目） */
+export async function hasUnsavedRound(ws: WorkspaceDto): Promise<boolean> {
+  if (ws.status !== "active") return false;
+  const h = await invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id });
+  return h.ahead > 0;
 }
 
 /** 这一步在 Agent 分工里绑的连接；没绑返回 null（开对话时按这个工作区上次用的预填） */
