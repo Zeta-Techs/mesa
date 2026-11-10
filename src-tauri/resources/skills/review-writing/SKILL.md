@@ -30,7 +30,7 @@ provides: [review-writing]
 ## 动笔前
 
 - 确认综述类型：独立综述（默认本规范）/ 学位论文综述章 / 引言 mini 综述（1-3 页，CARS 三 Move：确立领域 → 指出 gap → 占据位置）；任务书未指明时按独立综述。
-- 通读 `notes/` 全部笔记与 `references.bib`；笔记缺失时在报告中说明并停止，不自造内容。
+- 通读 `notes/` 全部笔记与 `references.bib`；笔记缺失时在报告中说明并停止，不自造内容。`papers/included.json` 里 `decision=excluded` 的篇（人在评审里移出的）笔记与引文条目照旧留着，但不用：不引用它的键。
 
 ## 三阶段要点
 

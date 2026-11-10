@@ -14,7 +14,7 @@ provides: [review-framework]
 - 综述流水线中的「综述大纲」步骤（简报会指向本技能）
 - 用户要求为综述或论文设计章节框架、讨论「这篇综述该怎么搭结构」时
 
-前置条件：`notes/` 下已有精读笔记（含「局限」「可引用点」字段），`papers/included.md` 中已有纳入文献清单，`references.bib` 引文库可用。
+前置条件：`notes/` 下已有精读笔记（含「局限」「可引用点」字段），`papers/included.md` 中已有纳入文献清单，`references.bib` 引文库可用。`papers/included.json` 里 `decision=excluded` 的篇（人在评审里移出的）笔记与引文条目照旧留着，但不用：不算进覆盖声明的篇数、不引用它的键。
 
 ### 对话里聊结构（轻量模式）
 
