@@ -1230,6 +1230,13 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   min-height: 100%;
 }
 
+/* 项目页签（科研任务 / 定时任务 / 文件 / Agent 分工）共用的滚动区（ProjectSurfaceTabs）。全局 ::-webkit-scrollbar
+   定了 6px 宽，WebKit 下这种滚动条占版面宽度；切到异步加载的页签时内容先短后长，滚动条冒出来把整块挤窄 6px，
+   看上去抖一下（2026-11-10 用户反馈科研任务、定时任务两页）。固定留出滚动条位置，有没有滚动条宽度都一样 */
+[data-project-main-scroll] {
+  scrollbar-gutter: stable;
+}
+
 .ccode-page-header {
   /* 玻璃页头（Linear 式沉浸）：背景透明，由 ::before 承载磨砂——内容滚动时从页头下穿过，
      静止时与画布融为一体。模糊放在伪元素层，页头文字/控件留在上层不参与栅格化
