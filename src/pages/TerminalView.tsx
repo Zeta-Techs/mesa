@@ -3257,7 +3257,7 @@ export const TerminalView = memo(function TerminalView({
   const relayState = useMemo<RelayPickState>(
     () => ({
       available: relayAvailable,
-      blocked: attention === "working" || pendingReply ? "这一轮还在生成，等它结束再交给别家" : null,
+      blocked: attention === "working" || pendingReply ? "等这一轮结束再换" : null,
       pick: relayPick,
       options: relayOptions,
     }),
@@ -6343,13 +6343,13 @@ export const TerminalView = memo(function TerminalView({
     const source = relaySource();
     if (!source) {
       setRelayPick(null);
-      return { error: "这段对话还没有记录，直接换 Agent 开聊即可" };
+      return { error: "这段对话还没有记录，直接换 Agent 即可" };
     }
     if (attention === "working" || pendingReplyRef.current) {
-      return { error: "等这一轮结束再交给别家" };
+      return { error: "等这一轮结束再换" };
     }
     if (!profiles.some((p) => p.id === target.profileId)) {
-      return { error: `${agentLabel(target.agentId)} 的这条连接已不在，去换配置层重选` };
+      return { error: `${agentLabel(target.agentId)} 的这条连接已不在，请重选` };
     }
     const early = showEarlyBubble(message);
     let prepared: RelayPrepareDto;
@@ -6401,7 +6401,7 @@ export const TerminalView = memo(function TerminalView({
       setModel(source.model);
       relayBackRef.current = source.sessionId;
       return {
-        error: `${agentLabel(target.agentId)} 没起来（${why}）。已回到 ${agentLabel(source.agentId)}，这句没发出，再发一次会接回原来那段`,
+        error: `${agentLabel(target.agentId)} 没起来（${why}），已回到 ${agentLabel(source.agentId)}，再发一次即可`,
       };
     };
     if (prepared.kind === "full" && prepared.framing) {

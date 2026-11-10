@@ -47,8 +47,8 @@ test("接力卡与输入框上的说法", () => {
   const delta = splitRelayPrompt(cases.find((c) => c.relay?.delta)!.text)!;
   assert.equal(relayCardText(delta), "你离开期间 Codex 做了 2 轮、Kimi Code 做了 1 轮");
   const t = { agentId: "codex", profileId: "p", model: "", mode: "new" as const, resumeSession: null };
-  assert.equal(relayChipText(t, "Codex"), "接力给 Codex · 发送时带上前面的内容");
-  assert.match(relayChipText({ ...t, mode: "resume", resumeSession: "s" }, "Codex"), /^接回 Codex 原来那段/);
+  assert.equal(relayChipText(t, "Codex"), "下一句交给 Codex");
+  assert.equal(relayChipText({ ...t, mode: "resume", resumeSession: "s" }, "Codex"), "下一句接回 Codex 原来那段");
 });
 
 const agents = [
@@ -101,7 +101,7 @@ test("用过的家：默认接回在前；建议新开时新开在前并写原�
     lastProfile: () => null,
   }).find((r) => r.agentId === "codex")!;
   assert.equal(row.used?.priorSession, "B");
-  assert.deepEqual(relayModeRows(opt({})).map((m) => m.label), ["接回原来那段（补 3 轮）", "新开一段（整份交接）"]);
+  assert.deepEqual(relayModeRows(opt({})).map((m) => m.label), ["接回原来那段 · 补 3 轮", "新开一段"]);
   const rec = relayModeRows(opt({ recommendNew: true, reason: "原来那段上下文已用 82%" }));
   assert.equal(rec[0].mode, "new");
   assert.equal(rec[0].note, "原来那段上下文已用 82%");

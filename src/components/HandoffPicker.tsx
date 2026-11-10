@@ -141,7 +141,7 @@ export default function HandoffPicker({
         <div className="px-3 pb-2">
           <p className="font-medium text-l1">◈ 接力到…</p>
           <p className="mt-1 text-xs text-l4">
-            选中后才生成。你说过的话逐条原文带上，最近几轮的回答原文、更早的压成一行，每轮改了哪些文件也写上。要一份「该接上什么」的结论，用「提炼接力」。
+            选中后才生成交接简报。要 AI 先提炼结论，用「提炼接力」。
           </p>
         </div>
         {error && <InlineNotice tone="err" className="px-3 pb-1">{error}</InlineNotice>}

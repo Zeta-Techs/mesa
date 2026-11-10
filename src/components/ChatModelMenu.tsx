@@ -115,9 +115,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const [open, setOpen] = useState(false);
   // 主屏只有思考强度（2026-11-05 用户：点开先只看思考档）；模型、Agent / 连接逐层点进去
   const [view, setView] = useState<"main" | "model" | "who" | "beta" | "relay">("main");
-  const [customModel, setCustomModel] = useState("");
-  // 手填的是出图 / 向量等不能对话的模型：不收，原因写在输入框下
-  const [customErr, setCustomErr] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useMenuKeyNav(menuRef, open, view);
@@ -555,14 +552,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     <button
       type="button"
       onClick={() => setView("relay")}
-      title="换一家 Agent 接着做：发下一句时 Mesa 写交接简报，换成那家接着做"
+      title="下一句交给另一家 Agent，对话留在这里"
       className="mt-1 flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg border-t border-hairline px-2 text-left text-l2 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
     >
       <ArrowLeftRight size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
       <span className="min-w-0 flex-1 truncate">
         {relayPicked
           ? `接力给 ${AGENTS.find((a) => a.id === relayPicked.agentId)?.label ?? relayPicked.agentId}`
-          : "换一家 Agent 接着做"}
+          : "换 Agent"}
       </span>
       <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
     </button>
@@ -786,7 +783,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   type="button"
                   className="flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
                   onClick={() => setView("who")}
-                  title={launch.pick.resumePick ? "换配置（换 Agent 用下面的「换一家 Agent 接着做」）" : "换 Agent 或配置"}
+                  title={launch.pick.resumePick ? "换配置" : "换 Agent 或配置"}
                 >
                   <AgentMark agentId={agentId} />
                   <span className="truncate font-medium">{agentLabel}</span>
@@ -799,7 +796,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               ) : (
                 <div
                   className="flex h-8 shrink-0 items-center gap-1.5 px-2 text-l1"
-                  title={props.relay?.state.available ? "换 Agent 用下面的「换一家 Agent 接着做」" : "换 Agent 或配置请新开一段对话"}
+                  title={props.relay?.state.available ? undefined : "换 Agent 或配置请新开一段对话"}
                 >
                   {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
                   <span className="truncate font-medium">{agentLabel}</span>
@@ -815,38 +812,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 )}
                 {!launch && rt.combo?.mixedModelsNote && <p className={note}>{rt.combo.mixedModelsNote}</p>}
               </div>
-              {launch && (
-                // 名单里没有的模型照样能用（与启动栏模型输入框同口径：按原样注入）；钉在名单下面，名单再长也不用滚下去找
-                <form
-                  // 全站 input { font: inherit } 会吞掉 input 自己的 text-*：字号挂在外层
-                  className="mx-1 mb-1 mt-1 shrink-0 text-xs"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const m = customModel.trim();
-                    if (!m) return;
-                    const blocked = nonChatReason(m);
-                    if (blocked) {
-                      setCustomErr(blocked);
-                      return;
-                    }
-                    launch.onModel(m);
-                    setCustomModel("");
-                    afterModelPick();
-                  }}
-                >
-                  <input
-                    value={customModel}
-                    onChange={(e) => {
-                      setCustomModel(e.target.value);
-                      setCustomErr(null);
-                    }}
-                    placeholder="其他模型，输入后回车"
-                    aria-label="输入其他模型"
-                    className="h-7 w-full rounded-lg border border-hairline bg-transparent px-2 text-l2 outline-none placeholder:text-l4 focus:border-field"
-                  />
-                  {customErr && <p className="mt-1 px-0.5 leading-4 text-caution-text">{customErr}</p>}
-                </form>
-              )}
               {relayRow}
               {footerNote}
               {/* 没有思考档可调的组合直接打开这一屏，测试版那一行跟过来 */}
@@ -928,13 +893,7 @@ function WhoView({
           </>
         )}
         <h4 className={section}>配置</h4>
-        {pick.resumePick && (
-          <p className={note}>
-            {relay
-              ? "这里只换这家的配置；换 Agent 回上一屏点「换一家 Agent 接着做」。"
-              : "这段对话还没有记录可交接；要换 Agent 请新开一段对话。"}
-          </p>
-        )}
+        {pick.resumePick && !relay && <p className={note}>要换 Agent 请新开一段对话。</p>}
         <ul>
           {pick.profiles.length === 0 && (
             <li className={note}>这个 Agent 还没有配置，去「连接」页添加</li>
@@ -1019,7 +978,7 @@ function RelaySection({
         onPicked();
       }}
     >
-      <span className="text-l3">不换了，还用 {AGENTS.find((a) => a.id === currentAgent)?.label ?? currentAgent}</span>
+      <span className="text-l3">不换了</span>
     </button>
   );
 
@@ -1049,7 +1008,7 @@ function RelaySection({
           className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
         >
           <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
-          <span className="text-xs">换一家</span>
+          <span className="text-xs">换 Agent</span>
         </button>
         <div className="flex items-center gap-1.5 px-2 pb-1 pt-0.5 font-medium text-l1">
           <AgentMark agentId={row.agentId} />
@@ -1071,14 +1030,14 @@ function RelaySection({
                     <span className="min-w-0 flex-1 truncate">{m.label}</span>
                     {mark(chosenMode === m.mode)}
                   </button>
-                  {m.note && <p className={`${note} -mt-0.5`}>建议新开：{m.note}</p>}
+                  {m.note && <p className={`${note} -mt-0.5`}>{m.note}</p>}
                 </li>
               ))}
             </ul>
             <div className="mx-1 my-1 h-px bg-hairline" />
           </>
         )}
-        <h4 className={section}>用哪个模型</h4>
+        <h4 className={section}>模型</h4>
         <ul>
           {row.profiles.map((p) => {
             const models = connectionModels(p.models, readModelHistory(row.agentId, p.id));
@@ -1121,10 +1080,10 @@ function RelaySection({
   // —— 第一层：一家一行 ——
   return (
     <>
-      <h4 className={section}>换一家接着做（接力）</h4>
-      <p className={note}>选好后发下一句时才交接：Mesa 写一份交接简报，换成那家接着做，这段对话照常在这里。</p>
+      <h4 className={section}>换 Agent</h4>
+      <p className={note}>发下一句时交接，对话留在这里。</p>
       {relay.state.blocked && <p className={note}>{relay.state.blocked}</p>}
-      {rows.length === 0 && <p className={note}>没有别的已安装、有连接的 Agent；去「连接」页添加。</p>}
+      {rows.length === 0 && <p className={note}>没有别的可用 Agent</p>}
       <ul>
         {rows.map((r) => {
           const selected = picked?.agentId === r.agentId;
@@ -1142,7 +1101,7 @@ function RelaySection({
                 <AgentMark agentId={r.agentId} />
                 <span className="min-w-0 flex-1 truncate">{r.label}</span>
                 {r.used && (
-                  <span className="shrink-0 text-micro text-l4">{r.used.resumable ? "用过 · 可接回" : "用过"}</span>
+                  <span className="shrink-0 text-micro text-l4">用过</span>
                 )}
                 {selected && mark(true)}
                 <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />

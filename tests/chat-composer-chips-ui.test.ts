@@ -325,7 +325,6 @@ test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一�
     assert.match(ui.el.textContent ?? "", /默认思考强度/);
     assert.match(ui.el.textContent ?? "", /GLM-flash · glm-5\.3/);
     assert.doesNotMatch(ui.el.textContent ?? "", /200K · 思考/);
-    assert.equal(ui.el.querySelector('input[aria-label="输入其他模型"]'), null);
     const range = ui.el.querySelector<HTMLInputElement>('input[type="range"][aria-label="思考强度"]');
     assert.equal(range?.getAttribute("aria-valuetext"), "默认");
     assert.equal(range?.max, "3", "默认 + low / medium / high 四个刻度");
@@ -342,7 +341,7 @@ test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一�
     assert.match(ui.el.textContent ?? "", /配置/);
     await ui.click("官方");
     assert.deepEqual(calls.at(-1), "profile:p2");
-    assert.ok(ui.el.querySelector('input[aria-label="输入其他模型"]'), "回到模型屏");
+    assert.match(ui.el.textContent ?? "", /200K · 思考/, "回到模型屏");
     // 选了模型回到思考强度那一屏
     await ui.click("glm-5.2");
     assert.deepEqual(calls.at(-1), "model:glm-5.2");
@@ -387,7 +386,7 @@ test("模型菜单接回旧对话（还没发第一句）：那一行写「接�
     assert.doesNotMatch(ui.el.textContent ?? "", /发第一句时/);
     await openModels(ui);
     await ui.click("换配置");
-    assert.match(ui.el.textContent ?? "", /还没有记录可交接/);
+    assert.match(ui.el.textContent ?? "", /要换 Agent 请新开一段对话/);
     assert.doesNotMatch(ui.el.textContent ?? "", /Codex/, "不列别家 Agent");
   } finally {
     await ui.close();

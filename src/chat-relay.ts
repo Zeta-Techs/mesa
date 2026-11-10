@@ -52,7 +52,7 @@ export function composeRelayPrompt(framing: string, words: string): string {
 
 /** 接力卡上的一行字 */
 export function relayCardText(p: RelayPrompt): string {
-  if (p.delta) return p.roundsBy ? `你离开期间 ${p.roundsBy}` : "你离开期间别家接着做了几轮";
+  if (p.delta) return p.roundsBy ? `你离开期间 ${p.roundsBy}` : "你离开期间别家做了几轮";
   return p.from ? `前面由 ${p.from} 做` : "前面由另一家 Agent 做";
 }
 
@@ -130,12 +130,12 @@ export interface RelayModeRow {
 export function relayModeRows(used: RelayOptionDto): RelayModeRow[] {
   const resume: RelayModeRow = {
     mode: "resume",
-    label: used.deltaRounds > 0 ? `接回原来那段（补 ${used.deltaRounds} 轮）` : "接回原来那段",
+    label: used.deltaRounds > 0 ? `接回原来那段 · 补 ${used.deltaRounds} 轮` : "接回原来那段",
     note: null,
   };
   const fresh: RelayModeRow = {
     mode: "new",
-    label: "新开一段（整份交接）",
+    label: "新开一段",
     note: used.recommendNew ? used.reason : null,
   };
   if (!used.resumable) return [fresh];
@@ -144,7 +144,5 @@ export function relayModeRows(used: RelayOptionDto): RelayModeRow[] {
 
 /** 输入框上那枚「接力给 …」 */
 export function relayChipText(t: RelayTarget, agentLabel: string): string {
-  return t.mode === "resume"
-    ? `接回 ${agentLabel} 原来那段 · 发送时补上它离开后的内容`
-    : `接力给 ${agentLabel} · 发送时带上前面的内容`;
+  return t.mode === "resume" ? `下一句接回 ${agentLabel} 原来那段` : `下一句交给 ${agentLabel}`;
 }

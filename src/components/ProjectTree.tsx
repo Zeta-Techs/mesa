@@ -644,9 +644,9 @@ export default function ProjectTree({
         .map((seg) => {
           const who = AGENTS.find((a) => a.id === seg.agent)?.label ?? seg.agent;
           return {
-            label: `打开接力前那段：${who}`,
+            label: `打开 ${who} 那段`,
             icon: ArrowLeftRight,
-            title: `${seg.title ?? "（没有标题）"}\n这段接力对话里 ${who} 做的那段，单独打开接着看或接着聊`,
+            title: seg.title ?? undefined,
             onSelect: () =>
               openChat(
                 {

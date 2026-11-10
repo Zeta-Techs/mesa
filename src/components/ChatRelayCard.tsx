@@ -54,7 +54,7 @@ export default function ChatRelayCard({
         <button
           type="button"
           onClick={toggle}
-          title={prompt.delta ? "看看你离开期间那一段交出前的几轮" : "看看前面那一段交出前的几轮"}
+          title="展开前面那段"
           className="flex min-w-0 items-center gap-0.5 hover:text-l2"
         >
           <span className="truncate">{relayCardText(prompt)}</span>
@@ -66,7 +66,7 @@ export default function ChatRelayCard({
             <button
               type="button"
               className="shrink-0 underline decoration-dotted underline-offset-2 hover:text-l2"
-              title={`${briefPath}\nMesa 写给接手那家的说明（不进 git）`}
+              title={briefPath}
               onClick={() => setPreviewReq({ path: briefPath, name: prompt.briefName ?? "", root: cwd ?? "" })}
             >
               {prompt.delta ? "补充简报" : "交接简报"}
@@ -76,16 +76,14 @@ export default function ChatRelayCard({
       </div>
       {open && (
         <div className="mt-1.5 max-h-[28rem] overflow-auto rounded-lg border border-hairline px-3 py-2">
-          {loading && <p>正在读前面那一段…</p>}
-          {seg === "missing" && <p>前面那一段的记录找不到了（可能已删除或不在本机）。</p>}
+          {loading && <p>读取中…</p>}
+          {seg === "missing" && <p>前面那段的记录找不到了</p>}
           {seg && seg !== "missing" && (
             <>
               <p className="mb-1">
-                {label(seg.parentAgent)}
-                {seg.parentTitle ? ` · ${seg.parentTitle}` : ""} · 交出前的最后 {seg.messages.length} 条
-                {seg.moreBefore ? "（更早的在对话页）" : ""}
+                {label(seg.parentAgent)} 交出前的最后 {seg.messages.length} 条
               </p>
-              {seg.messages.length === 0 ? <p>那一段没有可显示的记录。</p> : renderMessages(seg.messages)}
+              {seg.messages.length === 0 ? <p>没有可显示的记录</p> : renderMessages(seg.messages)}
             </>
           )}
         </div>

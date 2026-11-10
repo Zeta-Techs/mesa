@@ -1315,7 +1315,7 @@ export default function ChatSurface({
   const relayNotice: ComposerNotice | null = relay?.pick
     ? {
         text: relayChipText(relay.pick, agentLabel(relay.pick.agentId)),
-        title: "发下一句时 Mesa 写一份交接简报（存在项目 .ccode/ 下，不进 git），换成那家接着做；这段对话照常在这里",
+        title: "Mesa 写一份交接简报（项目 .ccode/ 下）交给它",
         actions: [{ label: "不换了", onClick: () => relayPickStable(null) }],
       }
     : null;
