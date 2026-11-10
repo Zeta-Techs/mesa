@@ -160,6 +160,111 @@ pub(crate) fn apply_reader_runs(
     }
 }
 
+/// 认流程对话角色用的那几列 Run 记录
+#[derive(Debug, Clone)]
+pub(crate) struct StepRunRow {
+    pub reuse_key: String,
+    pub isolation_path: String,
+    pub created_at: String,
+}
+
+/// 复用键里的分路号：`ws:<工作树>#lane-<k>`（src/fan-out.ts laneReuseKey 同口径）
+fn lane_of_key(key: &str) -> Option<u32> {
+    let (_, rest) = key.rsplit_once("#lane-")?;
+    rest.parse().ok().filter(|k| *k > 0)
+}
+
+fn run_time(at: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(at).ok()
+}
+
+/// 这条 Run 在它那一步里是哪一段（纯逻辑，侧栏按角色起行名）：
+/// `discuss:` 开头 = 商量任务书；带 `#lane-<k>` = 第 k 路；`ws:` 不带 `#` 的，同一工作区里更早开过分路的 = 收尾，否则 = 干活。
+/// 别的复用键认不出返回 None（前端回落短标题）
+pub(crate) fn step_role_of(run: &StepRunRow, all: &[StepRunRow]) -> Option<(&'static str, Option<u32>)> {
+    let key = run.reuse_key.as_str();
+    if key.starts_with("discuss:") {
+        return Some(("discuss", None));
+    }
+    if let Some(k) = lane_of_key(key) {
+        return Some(("lane", Some(k)));
+    }
+    if !key.starts_with("ws:") || key.contains('#') {
+        return None;
+    }
+    let me = run_time(&run.created_at);
+    let lane_before = all.iter().any(|r| {
+        lane_of_key(&r.reuse_key).is_some()
+            && crate::paths::same_path(&r.isolation_path, &run.isolation_path)
+            && match (run_time(&r.created_at), me) {
+                (Some(a), Some(b)) => a < b,
+                _ => r.created_at < run.created_at,
+            }
+    });
+    Some((if lane_before { "merge" } else { "work" }, None))
+}
+
+/// 给会话列表标上流程对话的角色（商量 / 干活 / 第几路 / 收尾），照 Run 记录认，不猜标题。
+/// 每次列表一次查询；做完标记只给分路的会话查文件。一段会话登记过多次取最后一条认得出的
+pub(crate) fn apply_step_runs(
+    conn: &Connection,
+    sessions: &mut [crate::sessions::SessionMetaDto],
+    chain_members: &HashMap<String, Vec<String>>,
+) {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT agent, session_id, reuse_key, isolation_path, created_at FROM runs
+         WHERE session_id IS NOT NULL AND internal=0 AND (reuse_key LIKE 'discuss:%' OR reuse_key LIKE 'ws:%')
+         ORDER BY created_at",
+    ) else {
+        return;
+    };
+    let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            StepRunRow {
+                reuse_key: row.get(2)?,
+                isolation_path: row.get(3)?,
+                created_at: row.get(4)?,
+            },
+        ))
+    }) else {
+        return;
+    };
+    let rows: Vec<(String, String, StepRunRow)> = rows.flatten().collect();
+    if rows.is_empty() {
+        return;
+    }
+    let all: Vec<StepRunRow> = rows.iter().map(|(_, _, r)| r.clone()).collect();
+    let mut found: HashMap<(String, String), (&'static str, Option<u32>, String)> = HashMap::new();
+    for (agent, sid, run) in &rows {
+        if let Some((role, lane)) = step_role_of(run, &all) {
+            found.insert((agent.clone(), sid.clone()), (role, lane, run.isolation_path.clone()));
+        }
+    }
+    for s in sessions.iter_mut() {
+        let hit = found.get(&(s.agent.clone(), s.session_id.clone())).or_else(|| {
+            chain_members.get(&s.session_id).and_then(|members| {
+                members
+                    .iter()
+                    .find_map(|id| found.get(&(s.agent.clone(), id.clone())))
+            })
+        });
+        let Some((role, lane, isolation)) = hit else {
+            continue;
+        };
+        s.step_meta.step_role = Some((*role).to_string());
+        s.step_meta.lane_no = *lane;
+        s.step_meta.lane_done = lane.is_some_and(|k| {
+            Path::new(isolation)
+                .join(".ccode")
+                .join("fanout")
+                .join(format!("lane-{k}.done"))
+                .exists()
+        });
+    }
+}
+
 fn infer_project_root(reuse: &str, isolation: &str) -> Option<String> {
     if let Some(rest) = reuse.strip_prefix("reader:") {
         let root = rest.split_once(READER_KEY_SEP).map_or(rest, |(root, _)| root);

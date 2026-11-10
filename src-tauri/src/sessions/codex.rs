@@ -207,6 +207,8 @@ pub(super) fn codex_file_meta(
             forked_from: None,
             reader: false,
             reader_pdf: None,
+            step_meta: Default::default(),
+            title_by_user: false,
         },
         forked_from_id,
     ))

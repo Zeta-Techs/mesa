@@ -548,3 +548,37 @@ test("精读对话开关按课题记、坏值不炸", () => {
   assert.deepEqual(toggleReaderChatsShown(["/a"], "/b"), ["/a", "/b"]);
   assert.deepEqual(toggleReaderChatsShown(["/a", "/b"], "/a"), ["/b"]);
 });
+
+test("groupStepChats：按步骤分组、按角色起行名，分路收进子组（2026-11-10）", async () => {
+  const { groupStepChats, stepRoleLabel, circledIndex, defaultOpenStep } = await import("../src/sidebar-chats.ts");
+  const row = (over: Partial<SessionMetaDto>) => ({ s: session(over), depth: 0, forks: 0 });
+  const rows = [
+    row({ sessionId: "n-merge", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "merge", createdAt: "2026-11-10T11:34:00Z" }),
+    row({ sessionId: "n-l3", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "lane", laneNo: 3, laneDone: true, createdAt: "2026-11-10T10:59:20Z" }),
+    row({ sessionId: "n-l2", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "lane", laneNo: 2, laneDone: false, createdAt: "2026-11-10T10:59:19Z" }),
+    row({ sessionId: "n-d", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "discuss", createdAt: "2026-11-10T10:32:00Z" }),
+    row({ sessionId: "s-w1", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "work", createdAt: "2026-11-09T15:20:00Z" }),
+    row({ sessionId: "s-w2", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "work", createdAt: "2026-11-10T09:39:00Z" }),
+    row({ sessionId: "s-user", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "discuss", titleByUser: true, createdAt: "2026-11-09T13:00:00Z" }),
+    row({ sessionId: "s-unknown", stepName: "文献检索与筛选", stepIndex: 1, createdAt: "2026-11-09T12:00:00Z" }),
+    row({ sessionId: "pin", createdAt: "2026-11-01T00:00:00Z" }),
+  ];
+  const { groups, manual } = groupStepChats(rows);
+  assert.deepEqual(manual.map((r) => r.s.sessionId), ["pin"]);
+  assert.deepEqual(groups.map((g) => [g.index, g.step]), [[1, "文献检索与筛选"], [2, "文献精读与笔记"]]);
+  // 检索：人改过名的照写标题（null），认不出角色的 null；两段「干活」各接日期
+  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "干活 · 11-09", "干活 · 11-10"]);
+  assert.equal(groups[0].lanes, null);
+  // 精读：商量在外面，分路子组按路号、收尾最后，做完几路
+  assert.deepEqual(groups[1].rows.map((r) => r.label), ["商量任务书"]);
+  assert.deepEqual(groups[1].lanes!.rows.map((r) => [r.label, r.done]), [["第 2 路", false], ["第 3 路", true], ["收尾", false]]);
+  assert.equal(groups[1].lanes!.total, 2);
+  assert.equal(groups[1].lanes!.done, 1);
+  assert.equal(stepRoleLabel(session({ stepRole: "lane", laneNo: null })), null);
+  assert.equal(circledIndex(2), "②");
+  assert.equal(circledIndex(21), "21.");
+  assert.equal(circledIndex(null), "");
+  // 默认开：在跑的那组；没有在跑的开最近动过的
+  assert.equal(defaultOpenStep(groups, (s) => s.sessionId === "s-w1"), "文献检索与筛选");
+  assert.equal(defaultOpenStep(groups, () => false), "文献精读与笔记");
+});

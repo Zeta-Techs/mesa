@@ -935,6 +935,8 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「显示更多」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
                              # 置顶对话（CHAT_PINS_KEY / parseChatPins / toggleChatPin / pinnedChats，10-24，localStorage，与「保留」快照无关；多选一起钉 pinPicked，10-27）、项目内置顶（PROJECT_CHAT_PINS_KEY / parseProjectChatPins / isProjectPinned / toggleProjectChatPin / splitProjectPinned：stepName 非空的流程对话自动钉、人手取消记 dropped，别的人手钉记 pinned；课题最上面全列、不进 chatQuotas 限额，11-05）、分叉挂在原对话下面（forkParentKey 认 forkedFrom 与同家接力 handoffFrom*、nestForks 一家子按最近那段排、foldForks 收起不列但留正看着的，FORK_FOLDS_KEY，10-31）、多选（nextPicked：⌘ 点加减、⇧ 点从起点整段换上，10-27）、
+                             # 流程对话按步骤分组（groupStepChats / stepRoleLabel / circledIndex / defaultOpenStep，2026-11-10：组头「② 步骤名」，
+                             #   行名按角色「商量任务书 / 干活 / 第 k 路 / 收尾」，分路收进「分 N 路 · x/N 做完」子组，同角色多段接「 · MM-DD」，人改过名的照写标题）、
                              # 侧栏键盘走（railNavIndex，10-24）、多选提醒贴哪（nudgeAnchor，10-27；何时出在 coach-tips.ts）
                              # （tests/sidebar-chats.test.ts；界面 ProjectTree，tests/project-tree-chats-ui.test.ts）
   coach-tips.ts              # 一次性提醒气泡的登记与规矩（2026-10-27）：各条出过记 localStorage、一次打开 Mesa 最多主动出一条（followUp 不占）；
@@ -1440,7 +1442,8 @@ src-tauri/src/
                              # 50MB 上限 + 每次顺带清理 7 天前残留（机制约定见 conventions/terminal.md「输入侧」）；is_pasted_image（项目助手只收这里的图，2026-11-05）；
                              # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
-  sessions.rs                # 会话浏览：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
+  sessions.rs                # 会话浏览（2026-11-10 起 SessionMetaDto 拍平带 SessionStepMeta：stepIndex 按档案卡步骤顺序 apply_step_index、
+                             #   stepRole / laneNo / laneDone 由 runs::apply_step_runs 照 Run 复用键认；titleByUser = title_source=user）：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
                              # 各家会话根目录唯一入口 SessionRoots（配置根经 agent_specs::agent_config_root_with 认搬迁变量，
                              #   另认 QWEN_RUNTIME_DIR / runtimeOutputDir、CURSOR_DATA_DIR；扫描、删除白名单、导入、瘦身同源，禁写 home.join(".xxx")，2026-11-01）、
                              #   各家会话文件的解析一家一个子模块 sessions/{claude,codex,gemini,qwen,kimi,codebuddy,cursor,grok,opencode}.rs
@@ -1908,7 +1911,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   二期：出口记忆 route-history.json（usual_region 纯函数）、route_accept_region、route_proxy_apps / route_open_proxy_app（只开白名单路径）；
                              #   三期：route_exit_type（完整出口 IP 只在内存 LAST_ADDR，查 ipinfo.io，classify_exit 纯函数）；
                              #   ask_service 不带密钥问服务方（read_anthropic_keyless / read_openai_compliance 纯函数），明确答复优先于地区名单
-  runs.rs                    # 一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
+  runs.rs                    # （2026-11-10 step_role_of / apply_step_runs：discuss: = 商量、#lane-k = 第 k 路、ws: 同工作区更早开过分路 = 收尾否则干活，
+                             #   分路做完看 .ccode/fanout/lane-k.done；只供侧栏显示）一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
                              # 精读对话标记 apply_reader_runs（task_kind=reader 且登记了会话 → 会话列表 reader / readerPdf，2026-11-06）；
                              # 关标签不删行；收件箱 action.run 可恢复；登录标签不建行；
                              # Run 可以没有 Goal（2026-09-09，§4.7）：scratch/reader/办公文件闲聊

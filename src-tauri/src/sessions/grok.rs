@@ -136,6 +136,8 @@ pub(super) fn grok_file_meta(path: &Path, alive: bool) -> Option<(SessionMetaDto
             forked_from: None,
             reader: false,
             reader_pdf: None,
+            step_meta: Default::default(),
+            title_by_user: false,
         },
         parent,
     ))

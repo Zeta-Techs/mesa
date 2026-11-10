@@ -217,6 +217,8 @@ pub(super) fn claude_file_meta_lineage(path: &Path, alive: bool) -> Option<(Sess
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     };
     Some((meta, lineage))
 }

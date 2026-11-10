@@ -205,6 +205,8 @@ pub(super) fn qwen_file_meta(path: &Path, alive: bool, archived: bool) -> Option
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     })
 }
 

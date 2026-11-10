@@ -601,6 +601,16 @@ export interface SessionMetaDto {
   reader?: boolean;
   /** 精读对话读的哪篇 PDF；按项目一个的旧精读对话为 null（认不出篇目） */
   readerPdf?: string | null;
+  /** 流程对话：这一步在档案卡里排第几（1 起，后端 apply_step_index；2026-11-10 侧栏按步骤分组） */
+  stepIndex?: number | null;
+  /** 流程对话在这一步里是哪一段（后端照 Run 复用键认）：discuss / work / lane / merge；认不出为空 */
+  stepRole?: "discuss" | "work" | "lane" | "merge" | null;
+  /** 分路的第几路（1 起） */
+  laneNo?: number | null;
+  /** 这一路写了做完标记 */
+  laneDone?: boolean;
+  /** 标题是人手改的：侧栏照写，不换成角色名 */
+  titleByUser?: boolean;
 }
 
 /** 会话瘦身检测结果（session_slim.rs，只读估算；level 由后端按请求体大小判定） */

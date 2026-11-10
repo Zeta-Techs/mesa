@@ -1291,12 +1291,12 @@ test("分叉标签还没认出新会话时挂在原对话下面，标题去掉�
   }
 });
 
-test("项目内置顶：流程步骤的对话按开工先后钉在课题最上面、行尾写步骤名、不占段数；⋯ 能取消，普通对话能人手钉进来（2026-11-05）", async () => {
+test("项目内置顶：流程对话按步骤分组、每行写角色，组头开合；⋯ 能取消，普通对话能人手钉进来（2026-11-10，取代 11-05 行尾写步骤名）", async () => {
   const view = await renderTree({
     sessions: [
       ...reviewChats,
-      session({ sessionId: "st2", customTitle: "1101|研究|综述大纲", stepName: "综述大纲", createdAt: "2026-10-02T00:00:00Z", updatedAt: "2026-10-02T00:00:00Z" }),
-      session({ sessionId: "st1", customTitle: "1101|研究|文献检索", stepName: "文献检索", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-03T00:00:00Z" }),
+      session({ sessionId: "st2", customTitle: "1101|研究|综述大纲", stepName: "综述大纲", stepIndex: 2, stepRole: "discuss", createdAt: "2026-10-02T00:00:00Z", updatedAt: "2026-10-02T00:00:00Z" }),
+      session({ sessionId: "st1", customTitle: "1101|研究|文献检索", stepName: "文献检索", stepIndex: 1, stepRole: "work", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-03T00:00:00Z" }),
     ],
   });
   try {
@@ -1304,17 +1304,26 @@ test("项目内置顶：流程步骤的对话按开工先后钉在课题最上�
       Array.from(view.chatGroup("综述流程测试")!.querySelectorAll("[data-chat-key]")).map((b) => b.textContent?.trim());
     const pinnedTitles = () =>
       Array.from(view.host.querySelectorAll('[aria-label="综述流程测试 里置顶的对话"] [data-chat-key]')).map((b) => b.textContent?.trim());
-    // 两段流程对话最旧，按最近活动早被挤进「显示更多」；钉在最上面后下面照旧列 5 段
-    assert.deepEqual(pinnedTitles(), ["文献检索", "综述大纲"]);
-    assert.equal(titles().length, 7);
-    assert.equal(view.button("文献检索").parentElement?.querySelector("[data-chat-origin]")?.textContent, "文献检索", "行尾写步骤名");
-    await view.act(async () => view.button("「文献检索」的更多操作").click());
+    const header = (step: string) =>
+      Array.from(view.host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")).find((b) => b.textContent?.includes(step))!;
+    // 组头写第几步和步骤名；默认只开最近动过的那一组，行名写角色、不写长标题与行尾步骤名
+    assert.match(header("文献检索").textContent ?? "", /①\s*文献检索\s*1 段/);
+    assert.match(header("综述大纲").textContent ?? "", /②\s*综述大纲/);
+    assert.equal(header("综述大纲").getAttribute("aria-expanded"), "false");
+    assert.deepEqual(pinnedTitles(), ["干活"]);
+    assert.ok(view.button("干活").getAttribute("title")?.includes("文献检索"), "完整标题留在悬停里");
+    assert.equal(view.host.querySelector('[aria-label="综述流程测试 里置顶的对话"] [data-chat-origin]'), null, "不再挂行尾步骤名");
+    await view.act(async () => header("综述大纲").click());
+    assert.deepEqual(pinnedTitles(), ["干活", "商量任务书"]);
+    assert.equal(titles().length, 7, "两组都开着：2 段流程对话 + 下面照旧列 5 段");
+    assert.deepEqual(JSON.parse(localStorage.getItem("ccode.railStepGroups")!), { "/work/review\n综述大纲": true });
+    await view.act(async () => view.button("「干活」的更多操作").click());
     await view.act(async () => view.button("取消项目内置顶").click());
-    assert.deepEqual(pinnedTitles(), ["综述大纲"]);
+    assert.deepEqual(pinnedTitles(), ["商量任务书"]);
     assert.deepEqual(JSON.parse(localStorage.getItem("ccode.projectChatPins")!), { pinned: [], dropped: ["claude-code\nst1"] });
     await view.act(async () => view.button("「镁硫电池第5篇精读」的更多操作").click());
     await view.act(async () => view.button("在项目里置顶").click());
-    assert.deepEqual(pinnedTitles(), ["综述大纲", "镁硫电池第5篇精读"]);
+    assert.deepEqual(pinnedTitles(), ["商量任务书", "镁硫电池第5篇精读"]);
     assert.ok(view.button("镁硫电池第5篇精读").parentElement?.querySelector("[data-project-pin]"), "人手钉的行尾一枚图钉");
   } finally {
     await view.close();

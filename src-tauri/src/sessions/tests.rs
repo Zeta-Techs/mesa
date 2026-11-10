@@ -1144,6 +1144,8 @@ fn grok_parent_session_merges_resume_chain() {
                 forked_from: None,
                 reader: false,
                 reader_pdf: None,
+                step_meta: Default::default(),
+                title_by_user: false,
             },
             None,
         ),
@@ -1703,6 +1705,8 @@ fn codex_meta(id: &str, updated: &str, fork: Option<&str>) -> (SessionMetaDto, O
             forked_from: None,
             reader: false,
             reader_pdf: None,
+            step_meta: Default::default(),
+            title_by_user: false,
         },
         fork.map(String::from),
     )
@@ -1920,6 +1924,7 @@ fn meta_written_for_chain_member_applies_to_rep() {
             profile_id: None,
             project_path: None,
             internal: false,
+            title_by_user: false,
         },
     );
     apply_meta(&mut merged, &members, &meta);
@@ -2848,6 +2853,8 @@ fn live_meta(agent: &str, updated_at: Option<&str>, live: bool) -> SessionMetaDt
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     }
 }
 
@@ -3296,6 +3303,8 @@ fn claim_test_session(agent: &str, id: &str, path: &str, updated: &str) -> Sessi
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     }
 }
 
@@ -4207,4 +4216,12 @@ fn session_watch_targets_opencode_db_includes_wal_but_filters_other_files() {
         &[PathBuf::from("/tmp/ccode/opencode.db-shm")],
         &targets
     ));
+}
+
+#[test]
+fn step_index_is_one_based_position_by_name() {
+    let order = vec!["文献检索与筛选".to_string(), "文献精读与笔记".to_string()];
+    assert_eq!(step_index_in(&order, "文献检索与筛选"), Some(1));
+    assert_eq!(step_index_in(&order, "文献精读与笔记"), Some(2));
+    assert_eq!(step_index_in(&order, "已删的步骤"), None);
 }

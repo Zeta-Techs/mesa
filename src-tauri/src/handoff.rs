@@ -798,6 +798,8 @@ fn test_session(
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     }
 }
 

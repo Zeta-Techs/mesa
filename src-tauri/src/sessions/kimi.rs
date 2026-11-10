@@ -184,6 +184,8 @@ pub(super) fn kimi_wire_file_meta(
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     })
 }
 
@@ -466,6 +468,8 @@ pub(super) fn kimi_legacy_file_meta(
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     })
 }
 

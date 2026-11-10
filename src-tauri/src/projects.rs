@@ -2092,6 +2092,11 @@ pub(crate) fn step_names_at(project: &Path) -> std::collections::HashMap<String,
         .collect()
 }
 
+/// 档案卡里的步骤名，按流程顺序（侧栏按步骤分组时算「第几步」用；读不到配置为空）
+pub(crate) fn step_order_at(project: &Path) -> Vec<String> {
+    read_config_at(project).config.steps.into_iter().map(|s| s.name).collect()
+}
+
 /// 生成写入文本：以现有文件为底用 toml_edit 打补丁（同 global_config.rs 的 TOML 补丁风格），
 /// 只全量替换 topic/artifact_dir/resources/steps 四个已知部分，其余未知键、注释、格式原样保留。
 /// 现有文件无法解析时停止写入并报错，宁可让用户手工修复也不覆盖未知内容。

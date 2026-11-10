@@ -622,3 +622,110 @@ export function railNavIndex(key: string, current: number, count: number): numbe
   if (key === "ArrowUp") return current < 0 ? count - 1 : Math.max(0, current - 1);
   return null;
 }
+
+// ===== 流程对话按步骤分组（2026-11-10 用户拍板：长标题 + 行尾步骤名一窄就截断、分路几段认不出是第几路）=====
+
+/** 一行流程对话：label = 侧栏写的角色名（商量任务书 / 干活 / 第 k 路 / 收尾）；null = 认不出角色或人改过名，照旧写标题 */
+export interface StepChatRow {
+  row: ForkRow;
+  label: string | null;
+  done: boolean;
+}
+
+export interface StepChatGroup {
+  /** 分组键：步骤名 */
+  step: string;
+  /** 第几步（1 起）；档案卡里已经没有这一步时为 null，排最后 */
+  index: number | null;
+  /** 分路外的行：商量在前，其余按开的先后 */
+  rows: StepChatRow[];
+  /** 分路子组：各路按路号，收尾放最后；没开过分路为 null */
+  lanes: { rows: StepChatRow[]; total: number; done: number } | null;
+}
+
+const ROLE_NAME: Record<string, string> = { discuss: "商量任务书", work: "干活", merge: "收尾" };
+
+function mmdd(at: string | null | undefined): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(at ?? "");
+  return m ? `${m[1]}-${m[2]}` : "";
+}
+
+/** 一段流程对话在侧栏写什么：人改过名的照写（null），分路写「第 k 路」，其余按角色；认不出的 null */
+export function stepRoleLabel(s: SessionMetaDto): string | null {
+  if (s.titleByUser) return null;
+  if (s.stepRole === "lane") return s.laneNo ? `第 ${s.laneNo} 路` : null;
+  return (s.stepRole && ROLE_NAME[s.stepRole]) || null;
+}
+
+/** 项目内置顶里的流程对话按步骤分组（输入：splitProjectPinned 的 pinned 套上 ForkRow）；没有步骤名的（人手钉的）原样留在 manual。
+ *  同一步里同一种角色不止一段（退回后重写、商量了两回）的，各自后面接开的日期「 · MM-DD」 */
+export function groupStepChats(rows: readonly ForkRow[]): { groups: StepChatGroup[]; manual: ForkRow[] } {
+  const byStep = new Map<string, ForkRow[]>();
+  const manual: ForkRow[] = [];
+  for (const r of rows) {
+    const step = r.s.stepName;
+    if (!step) {
+      manual.push(r);
+      continue;
+    }
+    byStep.set(step, [...(byStep.get(step) ?? []), r]);
+  }
+  const created = (r: ForkRow) => r.s.createdAt ?? r.s.updatedAt ?? "";
+  const groups: StepChatGroup[] = [];
+  for (const [step, list] of byStep) {
+    const lanesRaw = list.filter((r) => r.s.stepRole === "lane" && r.s.laneNo);
+    const merges = lanesRaw.length > 0 ? list.filter((r) => r.s.stepRole === "merge") : [];
+    const rest = list.filter((r) => !lanesRaw.includes(r) && !merges.includes(r));
+    const roleCount = new Map<string, number>();
+    for (const r of rest) {
+      const l = stepRoleLabel(r.s);
+      if (l) roleCount.set(l, (roleCount.get(l) ?? 0) + 1);
+    }
+    const toRow = (r: ForkRow): StepChatRow => {
+      const l = stepRoleLabel(r.s);
+      const dated = l && (roleCount.get(l) ?? 0) > 1 && mmdd(created(r)) ? `${l} · ${mmdd(created(r))}` : l;
+      return { row: r, label: dated, done: r.s.stepRole === "lane" && Boolean(r.s.laneDone) };
+    };
+    const order = (r: ForkRow) => (r.s.stepRole === "discuss" ? 0 : 1);
+    rest.sort((a, b) => order(a) - order(b) || (created(a) < created(b) ? -1 : created(a) > created(b) ? 1 : 0));
+    lanesRaw.sort((a, b) => (a.s.laneNo ?? 0) - (b.s.laneNo ?? 0) || (created(a) < created(b) ? -1 : 1));
+    const laneNos = new Set(lanesRaw.map((r) => r.s.laneNo));
+    const doneNos = new Set(lanesRaw.filter((r) => r.s.laneDone).map((r) => r.s.laneNo));
+    const index = list.map((r) => r.s.stepIndex).find((i): i is number => typeof i === "number") ?? null;
+    groups.push({
+      step,
+      index,
+      rows: rest.map(toRow),
+      lanes:
+        lanesRaw.length > 0
+          ? { rows: [...lanesRaw, ...merges].map(toRow), total: laneNos.size, done: doneNos.size }
+          : null,
+    });
+  }
+  groups.sort((a, b) => (a.index ?? 1e9) - (b.index ?? 1e9) || a.step.localeCompare(b.step));
+  return { groups, manual };
+}
+
+/** 圈号：1–20 用 ①…⑳，再往后写数字 */
+export function circledIndex(n: number | null): string {
+  if (n == null) return "";
+  return n >= 1 && n <= 20 ? String.fromCodePoint(0x2460 + n - 1) : `${n}.`;
+}
+
+/** 步骤组的默认开合：看着的那段或在跑的那段所在的组开着；都没有时开最近动过的那一组 */
+export function defaultOpenStep(
+  groups: readonly StepChatGroup[],
+  isHot: (s: SessionMetaDto) => boolean,
+): string | null {
+  const all = (g: StepChatGroup) => [...g.rows, ...(g.lanes?.rows ?? [])].map((r) => r.row.s);
+  const hot = groups.find((g) => all(g).some(isHot));
+  if (hot) return hot.step;
+  let best: { step: string; at: string } | null = null;
+  for (const g of groups) {
+    for (const s of all(g)) {
+      const at = s.updatedAt ?? s.createdAt ?? "";
+      if (!best || at > best.at) best = { step: g.step, at };
+    }
+  }
+  return best?.step ?? null;
+}

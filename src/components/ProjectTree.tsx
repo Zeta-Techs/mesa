@@ -100,6 +100,10 @@ import {
   isProjectPinned,
   toggleProjectChatPin,
   splitProjectPinned,
+  groupStepChats,
+  circledIndex,
+  defaultOpenStep,
+  type StepChatRow,
   READER_CHATS_SHOWN_KEY,
   parseReaderChatsShown,
   toggleReaderChatsShown,
@@ -133,6 +137,8 @@ const GROUPS_KEY = "ccode.projectTreeGroups";
 /** 各文件夹（项目 / 随手聊）对话展开与否：人手开关过的才记，没碰过的只展开正在聊的那个（sidebar-chats.ts folderOpen） */
 const CHAT_OPEN_KEY = "ccode.projectTreeChats";
 const COLLAPSED_SECTIONS_KEY = "ccode.railCollapsedSections";
+/** 课题下流程对话的步骤组、分路子组人手开合过的（键 = 文件夹键\n步骤名[\n分路]，值 = 开着）；没点过的按 defaultOpenStep */
+const STEP_GROUPS_KEY = "ccode.railStepGroups";
 type RailSection = "pinned" | "other";
 /** 侧栏里的分节标签（「项目」「置顶」「其他打开的」）：小一号、灰、字距拉开；项目是标签，置顶与其他打开的是折叠按钮（2026-10-24 侧栏三层） */
 // 分节标题（置顶 / 其他打开的 / 项目）：同对话 13px、加粗、l2（2026-10-28 用户：照 Claude 客户端，标题是骨架不是注脚）
@@ -475,6 +481,25 @@ export default function ProjectTree({
       return Array.isArray(value) ? value.filter((key): key is RailSection => key === "pinned" || key === "other") : [];
     } catch { return []; }
   });
+  const [stepOpen, setStepOpen] = useState<Record<string, boolean>>(() => {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem(STEP_GROUPS_KEY) ?? "{}");
+      return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
+  function toggleStepGroup(key: string, open: boolean) {
+    setStepOpen((prev) => {
+      const next = { ...prev, [key]: open };
+      try {
+        localStorage.setItem(STEP_GROUPS_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只是这次有效 */
+      }
+      return next;
+    });
+  }
   function toggleSection(key: RailSection) {
     const collapsing = !collapsedSections.includes(key);
     setCollapsedSections((prev) => {
@@ -1082,11 +1107,13 @@ export default function ProjectTree({
     fork?: ForkRow,
     /** 人手在项目里置顶的（流程对话行尾写步骤名，不另标）：行尾一枚小图钉 */
     projectPinMark = false,
+    /** 流程对话按步骤分组后写的角色名（商量任务书 / 干活 / 第 k 路 / 收尾）：替掉标题，完整标题留在悬停里 */
+    label?: string | null,
   ) {
     const key = chatKey(s);
     const full = tidySessionTitle(s).title;
     // 挂在课题下时去掉开头重复的课题名（置顶一节不给，那里看不出属于谁）
-    const short = sidebarChatTitle(full, folderName);
+    const short = label || sidebarChatTitle(full, folderName);
     const runDot = chatDot(s, terminalRunInputs);
     const selected = key === highlightChatKey;
     // 跑完了没看：标题亮到 l1（同正看着的那段的字色，但不铺底）、行尾蓝光标，点开就消
@@ -1393,6 +1420,95 @@ export default function ProjectTree({
     );
   }
 
+  /** 课题里的流程对话按步骤分组画（groupStepChats）：组头「② 文献精读与笔记」+ 几段 + 组里最要紧的光标，点组头开合；
+   *  分路收进「分 N 路 · x/N 做完」子组；人手钉的（没有步骤名）照旧一行一段、行尾图钉 */
+  function renderStepGroups(
+    pinnedRows: ForkRow[],
+    project: ProjectDto | null,
+    name: string,
+    folderKey: string,
+    forkOpenOf: Map<string, OpenTabRow[]>,
+  ) {
+    const { groups, manual } = groupStepChats(pinnedRows);
+    const hot = (s: SessionMetaDto) => {
+      const d = chatDot(s, terminalRunInputs);
+      return chatKey(s) === highlightChatKey || d === "working" || d === "confirm";
+    };
+    const openByDefault = defaultOpenStep(groups, hot);
+    const headCls = "flex h-7 w-full items-center gap-1.5 rounded-md pl-1.5 pr-2 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
+    const line = (r: StepChatRow) => (
+      <Fragment key={chatKey(r.row.s)}>
+        {renderChat(r.row.s, project, name, null, false, r.row, false, r.label ? `${r.label}${r.done ? " ✓" : ""}` : null)}
+        {(forkOpenOf.get(chatKey(r.row.s)) ?? []).map((o) => renderOpenRow(o, r.row.depth + 1, name))}
+      </Fragment>
+    );
+    const caretOf = (rows: StepChatRow[]) =>
+      strongestCaret(rows.map((r) => withUnread(chatDot(r.row.s, terminalRunInputs), unreadSet.has(chatKey(r.row.s)))));
+    return (
+      <>
+        {groups.map((g) => {
+          const gKey = `${folderKey}\n${g.step}`;
+          const open = stepOpen[gKey] ?? g.step === openByDefault;
+          const all = [...g.rows, ...(g.lanes?.rows ?? [])];
+          const dot = open ? null : caretOf(all);
+          const lKey = `${gKey}\nlanes`;
+          const lanesOpen = stepOpen[lKey] ?? true;
+          return (
+            <div key={gKey} role="group" aria-label={g.step}>
+              <button
+                type="button"
+                data-rail-nav
+                aria-expanded={open}
+                onClick={() => toggleStepGroup(gKey, !open)}
+                className={headCls}
+                title={open ? `收起「${g.step}」的对话` : `展开「${g.step}」的对话`}
+              >
+                {open ? <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" /> : <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" />}
+                <span className="ccode-rail-text min-w-0 flex-1 truncate">
+                  {circledIndex(g.index)} {g.step}
+                </span>
+                <span className="shrink-0 text-micro text-l4">{all.length} 段</span>
+                {dot && <RunCaret state={dot} />}
+              </button>
+              {open && (
+                <div className="space-y-[3px] pl-3">
+                  {g.rows.map(line)}
+                  {g.lanes && (
+                    <div role="group" aria-label={`分 ${g.lanes.total} 路`}>
+                      <button
+                        type="button"
+                        data-rail-nav
+                        aria-expanded={lanesOpen}
+                        onClick={() => toggleStepGroup(lKey, !lanesOpen)}
+                        className={headCls}
+                      >
+                        {lanesOpen ? <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" /> : <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" />}
+                        <span className="ccode-rail-text min-w-0 flex-1 truncate">
+                          分 {g.lanes.total} 路 · {g.lanes.done}/{g.lanes.total} 做完
+                        </span>
+                        {!lanesOpen && (() => {
+                          const d = caretOf(g.lanes.rows);
+                          return d ? <RunCaret state={d} /> : null;
+                        })()}
+                      </button>
+                      {lanesOpen && <div className="space-y-[3px] pl-3">{g.lanes.rows.map(line)}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {manual.map((r) => (
+          <Fragment key={chatKey(r.s)}>
+            {renderChat(r.s, project, name, null, true, r, true)}
+            {(forkOpenOf.get(chatKey(r.s)) ?? []).map((o) => renderOpenRow(o, r.depth + 1, name))}
+          </Fragment>
+        ))}
+      </>
+    );
+  }
+
   /** 文件夹展开后的那一串：列几段由 chatQuotas 按侧栏空位算（至少 5 段），没列完的点「展开更多」在原地多列 10 段；
    *  点过展开更多的给「收起」回到按空位列。要看全部、搜、整理，去对话页（节头 ⋯ 里有入口） */
   function renderChats(
@@ -1427,15 +1543,11 @@ export default function ProjectTree({
     return (
       <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
         {opened.map((r) => renderOpenRow(r))}
-        {/* 项目内置顶（2026-11-05）：流程步骤的对话按流程顺序、行尾写步骤名；人手钉的行尾一枚图钉。和下面按最近活动的隔开一点 */}
+        {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
+            每行写角色（商量任务书 / 干活 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
         {pinnedRows.length > 0 && (
           <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 ? "pb-1.5" : ""}`}>
-            {pinnedRows.map((r) => (
-              <Fragment key={chatKey(r.s)}>
-                {renderChat(r.s, project, name, r.s.stepName ?? null, true, r, !r.s.stepName)}
-                {(forkOpenOf.get(chatKey(r.s)) ?? []).map((o) => renderOpenRow(o, r.depth + 1, name))}
-              </Fragment>
-            ))}
+            {renderStepGroups(pinnedRows, project, name, folderKey, forkOpenOf)}
           </div>
         )}
         {chats.length === 0 ? (

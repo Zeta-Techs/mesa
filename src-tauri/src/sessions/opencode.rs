@@ -259,6 +259,8 @@ pub(super) fn opencode_scan_db(db_path: &Path) -> Vec<SessionMetaDto> {
             forked_from: None,
             reader: false,
             reader_pdf: None,
+            step_meta: Default::default(),
+            title_by_user: false,
         });
     }
     // OpenCode 新会话常暂存为 "New Session"：只对占位标题的会话惰性补标题——
@@ -924,6 +926,8 @@ pub(super) fn opencode_scan_legacy(storage: &Path) -> Vec<SessionMetaDto> {
             forked_from: None,
             reader: false,
             reader_pdf: None,
+            step_meta: Default::default(),
+            title_by_user: false,
         });
     }
     out

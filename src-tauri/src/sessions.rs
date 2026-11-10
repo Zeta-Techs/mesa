@@ -142,6 +142,30 @@ pub struct SessionMetaDto {
     /// 精读对话读的哪篇 PDF（复用键按篇之后才有；旧的按项目一个的为 None）：再点这篇精读时接回它
     #[serde(default)]
     pub reader_pdf: Option<String>,
+    /// 流程对话在这一步里是哪一段（侧栏按步骤分组、按角色起行名用，apply_step_meta 回填）
+    #[serde(flatten, default)]
+    pub step_meta: SessionStepMeta,
+    /// 标题是人手改的（session_meta.title_source=user）：侧栏照写人起的名字，不换成角色名
+    #[serde(default)]
+    pub title_by_user: bool,
+}
+
+/// 流程对话的步骤位置与角色（只用于显示，不写任何会话文件）。拍平进 SessionMetaDto 出线
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStepMeta {
+    /// 这一步在项目档案卡 steps 里排第几（1 起）；步骤已删 / 不是流程对话为 None
+    #[serde(default)]
+    pub step_index: Option<u32>,
+    /// discuss（商量任务书）| work（干活）| lane（分路的一路）| merge（分路后的收尾）；认不出为 None
+    #[serde(default)]
+    pub step_role: Option<String>,
+    /// 分路的第几路（1 起），只 lane 有
+    #[serde(default)]
+    pub lane_no: Option<u32>,
+    /// 这一路的做完标记（`.ccode/fanout/lane-<k>.done`）在不在
+    #[serde(default)]
+    pub lane_done: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1824,6 +1848,8 @@ fn opencode_snapshot_meta(path: &Path, session_id: &str) -> Option<SessionMetaDt
         forked_from: None,
         reader: false,
         reader_pdf: None,
+        step_meta: Default::default(),
+        title_by_user: false,
     })
 }
 
@@ -2043,12 +2069,14 @@ struct MetaRow {
     project_path: Option<String>,
     /// 无头 AI（雷达解读 / 定时巡检）按会话 id 标记，避免把整个项目路径标成 internal
     internal: bool,
+    /// title_source=user：人手改的标题（旧数据没有这一列的不算）
+    title_by_user: bool,
 }
 
 fn read_all_meta(conn: &Connection) -> HashMap<(String, String), MetaRow> {
     let mut map = HashMap::new();
     let Ok(mut stmt) = conn
-        .prepare("SELECT agent, session_id, pinned, archived, custom_title, tags, summary, handoff_from_agent, handoff_from_session, task_id, step_name, profile_id, project_path, internal FROM session_meta")
+        .prepare("SELECT agent, session_id, pinned, archived, custom_title, tags, summary, handoff_from_agent, handoff_from_session, task_id, step_name, profile_id, project_path, internal, title_source FROM session_meta")
     else {
         return map;
     };
@@ -2068,6 +2096,7 @@ fn read_all_meta(conn: &Connection) -> HashMap<(String, String), MetaRow> {
             r.get::<_, Option<String>>(11)?,
             r.get::<_, Option<String>>(12)?,
             r.get::<_, i64>(13).unwrap_or(0),
+            r.get::<_, Option<String>>(14).unwrap_or(None),
         ))
     });
     if let Ok(rows) = rows {
@@ -2086,6 +2115,7 @@ fn read_all_meta(conn: &Connection) -> HashMap<(String, String), MetaRow> {
             profile_id,
             project_path,
             internal,
+            title_source,
         ) in rows.flatten()
         {
             map.insert(
@@ -2102,6 +2132,7 @@ fn read_all_meta(conn: &Connection) -> HashMap<(String, String), MetaRow> {
                     profile_id,
                     project_path,
                     internal: internal != 0,
+                    title_by_user: title_source.as_deref() == Some("user"),
                 },
             );
         }
@@ -2704,6 +2735,7 @@ fn apply_meta(
             // 扫描侧已标归档的（Codex archived_sessions 目录）不能被 db 行覆盖掉
             s.archived = s.archived || row.archived;
             s.custom_title = row.custom_title.clone();
+            s.title_by_user = row.title_by_user && row.custom_title.is_some();
             s.tags = row.tags.clone();
             s.summary = row.summary.clone();
             if let Some((hf_agent, hf_session)) = &row.handoff_from {
@@ -2740,6 +2772,28 @@ fn apply_task_names(sessions: &mut [SessionMetaDto]) {
             .or_insert_with(|| crate::projects::task_names_at(Path::new(&s.project_path)));
         s.task_name = names.get(&task_id).cloned();
     }
+}
+
+/// 流程对话排第几步：按步骤名在档案卡 steps 里的位置（1 起）。商量任务书的会话在项目根、不在工作区里，
+/// 步骤名来自持久列，所以统一按名字查；每个项目根每轮列表只读一次 project.toml
+fn apply_step_index(sessions: &mut [SessionMetaDto]) {
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    for s in sessions.iter_mut() {
+        let Some(name) = s.step_name.as_deref() else {
+            continue;
+        };
+        let order = cache
+            .entry(s.project_path.clone())
+            .or_insert_with(|| crate::projects::step_order_at(Path::new(&s.project_path)));
+        s.step_meta.step_index = step_index_in(order, name);
+    }
+}
+
+pub(crate) fn step_index_in(order: &[String], name: &str) -> Option<u32> {
+    order
+        .iter()
+        .position(|n| n == name)
+        .and_then(|i| u32::try_from(i + 1).ok())
 }
 
 fn apply_provenance(
@@ -2796,8 +2850,10 @@ pub(crate) fn list_sessions_sync() -> Vec<SessionMetaDto> {
         apply_card_claims(&conn, &mut sessions);
         apply_step_claims(&conn, &mut sessions);
         crate::runs::apply_reader_runs(&conn, &mut sessions, &scan.chain_members);
+        crate::runs::apply_step_runs(&conn, &mut sessions, &scan.chain_members);
     }
     apply_task_names(&mut sessions);
+    apply_step_index(&mut sessions);
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     redact_session_meta(&mut sessions);
     sessions

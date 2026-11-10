@@ -1333,3 +1333,95 @@ fn goal_headless_e2e_child() {
     assert_eq!(closed.close_reason.as_deref(), Some("用户主动停止"));
     assert_eq!(task_status(&task.id), "stopped");
 }
+
+// ===== 侧栏流程对话角色（2026-11-10）=====
+
+fn step_run(key: &str, iso: &str, at: &str) -> StepRunRow {
+    StepRunRow { reuse_key: key.into(), isolation_path: iso.into(), created_at: at.into() }
+}
+
+#[test]
+fn step_role_reads_discuss_lane_work_and_merge_from_reuse_keys() {
+    let ws = "/ws/HER/lit-notes";
+    let all = vec![
+        step_run("discuss:/p/HER:.ccode/drafts/lit-notes.md", "/p/HER", "2026-11-10T10:32:39+08:00"),
+        step_run("ws:/ws/HER/lit-search", "/ws/HER/lit-search", "2026-11-09T15:20:03+08:00"),
+        step_run(&format!("ws:{ws}#lane-2"), ws, "2026-11-10T10:59:19+08:00"),
+        step_run(&format!("ws:{ws}#lane-12"), ws, "2026-11-10T10:59:21+08:00"),
+        step_run(&format!("ws:{ws}"), ws, "2026-11-10T11:34:53+08:00"),
+        step_run(&format!("ws:{ws}"), ws, "2026-11-10T09:00:00+08:00"),
+        step_run("research:/p/HER:project:x", "/p/HER", "2026-11-10T11:12:00+08:00"),
+        step_run("ws:/ws/HER/lit-notes#lane-x", ws, "2026-11-10T11:00:00+08:00"),
+    ];
+    let role = |i: usize| step_role_of(&all[i], &all);
+    assert_eq!(role(0), Some(("discuss", None)));
+    assert_eq!(role(1), Some(("work", None)), "别的工作区开过分路不算");
+    assert_eq!(role(2), Some(("lane", Some(2))));
+    assert_eq!(role(3), Some(("lane", Some(12))));
+    assert_eq!(role(4), Some(("merge", None)), "同一工作区里更早开过分路 = 收尾");
+    assert_eq!(role(5), Some(("work", None)), "分路之前开的那段是干活");
+    assert_eq!(role(6), None, "认不出的复用键不起角色");
+    assert_eq!(role(7), None, "分路号不是数字的不认");
+}
+
+#[test]
+fn step_role_compares_times_across_offsets() {
+    // 同一时刻不同时区写法：按真实先后比，不按字符串
+    let all = vec![
+        step_run("ws:/w#lane-1", "/w", "2026-11-10T03:00:00Z"),
+        step_run("ws:/w", "/w", "2026-11-10T10:30:00+08:00"),
+    ];
+    assert_eq!(step_role_of(&all[1], &all), Some(("work", None)), "10:30+08 早于 03:00Z");
+}
+
+#[test]
+fn apply_step_runs_marks_sessions_and_lane_done_from_marks() {
+    let dir = std::env::temp_dir().join(format!("mesa-step-roles-{}", uuid::Uuid::new_v4()));
+    let ws = dir.to_string_lossy().into_owned();
+    std::fs::create_dir_all(dir.join(".ccode").join("fanout")).unwrap();
+    std::fs::write(dir.join(".ccode").join("fanout").join("lane-1.done"), "").unwrap();
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE runs(agent TEXT, session_id TEXT, reuse_key TEXT, isolation_path TEXT, created_at TEXT, internal INTEGER)",
+    )
+    .unwrap();
+    for (sid, key, at) in [
+        ("l1", format!("ws:{ws}#lane-1"), "2026-11-10T10:00:00+08:00"),
+        ("l2", format!("ws:{ws}#lane-2"), "2026-11-10T10:00:01+08:00"),
+        ("m", format!("ws:{ws}"), "2026-11-10T11:00:00+08:00"),
+    ] {
+        conn.execute(
+            "INSERT INTO runs VALUES('codex', ?1, ?2, ?3, ?4, 0)",
+            params![sid, key, ws, at],
+        )
+        .unwrap();
+    }
+    let mut sessions: Vec<crate::sessions::SessionMetaDto> = ["l1", "l2", "m", "other"]
+        .iter()
+        .map(|sid| {
+            let mut s: crate::sessions::SessionMetaDto = serde_json::from_value(serde_json::json!({
+                "agent": "codex", "sessionId": sid, "projectPath": ws, "title": null, "createdAt": null,
+                "updatedAt": null, "filePath": "/f", "tokenUsage": null, "cliVersion": null, "pinned": false,
+                "archived": false, "customTitle": null, "tags": [], "alive": true, "chainCount": 1, "workspace": null,
+            }))
+            .unwrap();
+            s.session_id = sid.to_string();
+            s
+        })
+        .collect();
+    apply_step_runs(&conn, &mut sessions, &HashMap::new());
+    let meta = |i: usize| sessions[i].step_meta.clone();
+    assert_eq!(meta(0).step_role.as_deref(), Some("lane"));
+    assert_eq!(meta(0).lane_no, Some(1));
+    assert!(meta(0).lane_done);
+    assert_eq!(meta(1).lane_no, Some(2));
+    assert!(!meta(1).lane_done, "没有做完标记");
+    assert_eq!(meta(2).step_role.as_deref(), Some("merge"));
+    assert_eq!(meta(3), Default::default());
+    let wire = serde_json::to_value(&sessions[0]).unwrap();
+    assert_eq!(wire["stepRole"], "lane");
+    assert_eq!(wire["laneNo"], 1);
+    assert_eq!(wire["laneDone"], true);
+    assert!(wire.get("stepMeta").is_none(), "拍平出线，不嵌一层");
+    let _ = std::fs::remove_dir_all(&dir);
+}
