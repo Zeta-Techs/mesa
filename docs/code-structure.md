@@ -1326,6 +1326,8 @@ src-tauri/src/
   cli_verified.rs            # 已核对 CLI 版本联网前移：include_str! 随包本平台金丝雀基线，半天一次取 main 上的基线，指纹（除 version/checks）
                              #   一样才认更新的版本；缓存 <config>/ccode/cli-verified-cache.json，按 Mesa 版本作废；
                              #   只在部分平台有基线的（opencode2，暂只有 darwin）放 BUNDLED_EXTRA
+  conflict_hint.rs           # 文献台账冲突的机械比对：included.json 按篇三方比（共同祖先 / 这一步 / 项目里），一边已含另一边全部改动就建议选它并白话说多了什么；
+                             #   由它生成的 included.md / to-fetch.md / 两份 RIS 跟它选同一边；只建议不选边（workspaces::conflict_content_impl 调用）
   client_open.rs             # 客户端接力（设计 docs/design-client-handoff.md）：Mesa 的一条对话/一个项目交给该 agent 的 GUI 客户端接着做。
                              # 探测（macOS 读 Info.plist 的 URL scheme + 版本，Windows 查 HKCR 的 scheme、版本取当前用户应用包仓库的
                              #   MSIX 包全名（两家 Windows 客户端都是 MSIX，2026-10-20 本机核实），30 秒缓存）→ 纯函数 build_plan 预检

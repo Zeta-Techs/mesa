@@ -144,12 +144,16 @@ interface ConflictContentDto {
   theirs: string | null;
   diff: string;
   truncated: boolean;
+  /** 文献台账的机械比对建议（后端 conflict_hint.rs）：哪边已包含另一边的全部改动 */
+  suggest?: { choice: "ours" | "theirs" | "manual"; reason: string } | null;
 }
 
 interface ConflictAdviceDto {
   path: string;
   choice: "ours" | "theirs" | "manual";
   reason: string;
+  /** Mesa 按台账逐篇比出来的（不是 AI 猜的）：不挂 ◈ */
+  byMesa?: boolean;
 }
 
 type ConflictChoice = "ours" | "theirs";
@@ -797,16 +801,16 @@ function ConflictFileSection({
         </div>
         {advice && (
           <div className="flex min-h-8 items-center gap-2 border-t border-hairline bg-inset px-3 py-1 text-xs">
-            <span className="shrink-0 text-l1">◈</span>
+            {!advice.byMesa && <span className="shrink-0 text-l1">◈</span>}
             <span className="shrink-0 text-l2">
               {advice.choice === "ours"
-                ? "建议任务版"
+                ? "建议任务版（这一步的版本）"
                 : advice.choice === "theirs"
-                  ? `建议 ${baseBranch}`
+                  ? `建议 ${baseBranch}（项目里的版本）`
                   : "建议手选"}
             </span>
             <span
-              className="min-w-0 flex-1 truncate text-l4"
+              className={`min-w-0 flex-1 text-l4 ${advice.byMesa ? "" : "truncate"}`}
               title={advice.reason}
             >
               {advice.reason}
@@ -1220,6 +1224,14 @@ function LiveWorkspaceReviewView({
   const [conflictAdvice, setConflictAdvice] = useState<
     Record<string, ConflictAdviceDto>
   >({});
+  // 文献台账冲突打开就带 Mesa 的逐篇比对建议，压过 AI 建议（比对是确定的；2026-11-10 用户：「用户怎么知道选哪一个」）
+  const effectiveAdvice = useMemo(() => {
+    const out: Record<string, ConflictAdviceDto> = { ...conflictAdvice };
+    for (const [path, content] of Object.entries(conflictContents)) {
+      if (content.suggest) out[path] = { path, ...content.suggest, byMesa: true };
+    }
+    return out;
+  }, [conflictAdvice, conflictContents]);
   const [conflictBusy, setConflictBusy] = useState(false);
   const [adviceBusy, setAdviceBusy] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
@@ -2209,7 +2221,7 @@ function LiveWorkspaceReviewView({
   async function applyConflictAdvice() {
     if (!diff) return;
     const choices = unresolvedFiles
-      .map((path) => [path, conflictAdvice[path]?.choice] as const)
+      .map((path) => [path, effectiveAdvice[path]?.choice] as const)
       .filter(
         (entry): entry is readonly [string, ConflictChoice] =>
           entry[1] === "ours" || entry[1] === "theirs",
@@ -2739,7 +2751,7 @@ function LiveWorkspaceReviewView({
                 >
                   {adviceBusy ? "◈ 分析中…" : "◈ AI 建议"}
                 </button>
-                {Object.keys(conflictAdvice).length > 0 && (
+                {Object.keys(effectiveAdvice).length > 0 && (
                   <button
                     type="button"
                     onClick={() => void applyConflictAdvice()}
@@ -3491,7 +3503,7 @@ function LiveWorkspaceReviewView({
                     baseBranch={diff.baseBranch}
                     unresolved={unresolvedSet.has(path)}
                     choice={conflictChoices[path]}
-                    advice={conflictAdvice[path]}
+                    advice={effectiveAdvice[path]}
                     busy={conflictBusy || staleBase}
                     register={registerSection}
                     onChoose={(file, choice) =>

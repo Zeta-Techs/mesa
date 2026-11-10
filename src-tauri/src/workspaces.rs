@@ -4896,6 +4896,8 @@ pub struct ConflictContentDto {
     /// ours → theirs 的全文件 unified diff，供双栏审阅复用
     pub diff: String,
     pub truncated: bool,
+    /// 文献台账的机械比对建议（conflict_hint.rs）：哪边已包含另一边的全部改动；不是台账、比不出时为 None
+    pub suggest: Option<crate::conflict_hint::ConflictHintDto>,
 }
 
 const CONFLICT_PREVIEW_CAP: usize = 512 * 1024;
@@ -5022,11 +5024,16 @@ fn conflict_content_impl(wt: &Path, path: &str) -> Result<ConflictContentDto, St
         None => (None, false),
     };
     let (diff, diff_cut) = cap_conflict_text(raw_diff);
+    // 比对读全文（不受预览截断影响）。included.json 自己没冲突时没有 stage 2/3，读不到就不给建议
+    let suggest = crate::conflict_hint::ledger_hint(path, |stage, p| {
+        run_git_raw(wt, &["show", &format!(":{stage}:{p}")]).ok()
+    });
     Ok(ConflictContentDto {
         ours,
         theirs,
         diff,
         truncated: ours_cut || theirs_cut || diff_cut,
+        suggest,
     })
 }
 

@@ -1,6 +1,7 @@
 use tauri::{Emitter, Manager};
 
 mod about;
+mod conflict_hint;
 mod desk_pet;
 pub mod dirs;
 mod attach_grants;
