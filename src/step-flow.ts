@@ -187,7 +187,8 @@ export function buildStepFlow(args: {
     key: "agent",
     kind: "agent",
     section: "main",
-    label: `AI 干活：${step.name}`,
+    // 步骤名已在卡片头上，这里不再重复（step-panel R3）
+    label: "AI 干活",
     hint: undefined,
     done: runStatus === "review" || runStatus === "done",
   });

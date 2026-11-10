@@ -67,7 +67,7 @@ test("节点顺序：种子 → before → agent → during → after → 评审
     [
       "discuss:先定几件事",
       "human:补文献",
-      "agent:AI 干活：检索筛选",
+      "agent:AI 干活",
       "human:补检索词",
       "human:下载付费",
       "review:你核对后，保存进项目",

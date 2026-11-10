@@ -63,7 +63,6 @@ import {
   outlineProgressParts,
   searchProgress,
   searchProgressLine,
-  skimRowCount,
   spotCheckPicks,
   type SpotCheckPick,
 } from "../notes-progress";
@@ -327,7 +326,7 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
   return (
     <p
       className="mt-1 pl-9 text-micro tabular-nums text-l4"
-      title="按 notes/index.json 数：标成已读完的才算写完；仅摘要的篇目补到全文后再精读"
+      title="按 notes/index.json 数：标成已读完的才算写完；仅摘要的篇目补到全文后再精读。只速读的是研究论文，每篇在速读表 notes/skim.md 里一行，大纲定了按章节点名精读"
     >
       {line}
     </p>
@@ -390,10 +389,6 @@ function LedgerCountLine({
   );
 }
 
-const skimCountLine = (text: string) => {
-  const n = skimRowCount(text);
-  return n === null ? null : `速读表 ${n} 篇（研究论文先速读，大纲定了按章节点名精读）`;
-};
 const searchCountLine = (text: string) => {
   const p = searchProgress(text);
   return p ? searchProgressLine(p) : null;
@@ -2368,7 +2363,6 @@ export default function StepFlow({
             </span>
           )}
           {nodeActions(node)}
-          {node.kind === "agent" && loopActions}
         </div>
         {node.kind === "human" && isCitationStyleTask(human?.title) && ws && (
           <div className="ml-9 mt-1.5">
@@ -3026,16 +3020,6 @@ export default function StepFlow({
             live={runStatus === "active"}
           />
         )}
-        {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
-          <LedgerCountLine
-            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
-            live={runStatus === "active"}
-            rel="notes/skim.md"
-            read={readResearchFile}
-            line={skimCountLine}
-            title="按 notes/skim.md 数：每篇研究论文一行（研究问题、方法、结论、主题、新在哪），是整批文献的大局；要写进正文的篇，大纲覆盖检查会点名退回精读"
-          />
-        )}
         {node.kind === "agent" && searchStep && (ws || runStatus === "done") && (
           <LedgerCountLine
             roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
@@ -3044,6 +3028,10 @@ export default function StepFlow({
             line={searchCountLine}
             title="按 papers/included.json 数：纳入的篇里有 pdf 字段的算已有全文；缺全文的精读时只能按摘要记"
           />
+        )}
+        {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
+        {node.kind === "agent" && loopActions && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-9">{loopActions}</div>
         )}
         {node.kind === "agent" && roundsContent}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
