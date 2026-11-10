@@ -29,6 +29,11 @@ function resourceTypeOf(rel: string): string {
  *  提交交付 = 系统对话框选文件 或 把文件拖到条目上（webview 窗口级 drag-drop 事件，
  *  落点判定用 elementFromPoint 命中带 data-human-task 的行元素；取不到命中时静默忽略）。
  *  containerRef 指向包裹所有 [data-human-task] 行的容器（ul/div 均可） */
+/** 上一次读到的整个项目的事项状态（list_human_task_states 本来就返回全部步骤）。StepFlow 按步骤名重新挂载，
+ *  没有这份时每次切步骤都先 states = null、整块流程线不渲染再冒出来（2026-11-10 用户：切步骤画面闪一下）；
+ *  有就先用它画，挂载时照旧重取 */
+const lastStatesByProject = new Map<string, HumanTaskStateDto[]>();
+
 export function useHumanTasks({
   projectPath,
   stepName,
@@ -42,7 +47,9 @@ export function useHumanTasks({
   onChanged?: () => void;
   onStates?: (states: HumanTaskStateDto[]) => void;
 }) {
-  const [states, setStates] = useState<HumanTaskStateDto[] | null>(null);
+  const [states, setStates] = useState<HumanTaskStateDto[] | null>(
+    () => lastStatesByProject.get(projectPath)?.filter((s) => s.step === stepName) ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busyTitle, setBusyTitle] = useState<string | null>(null);
@@ -59,6 +66,7 @@ export function useHumanTasks({
       const all = await invoke<HumanTaskStateDto[]>("list_human_task_states", {
         projectRoot: projectPath,
       });
+      lastStatesByProject.set(projectPath, all);
       const mine = all.filter((s) => s.step === stepName);
       setStates(mine);
       onStates?.(mine);
@@ -73,6 +81,7 @@ export function useHumanTasks({
       projectRoot: projectPath,
     })
       .then((all) => {
+        lastStatesByProject.set(projectPath, all);
         if (stale) return;
         const mine = all.filter((s) => s.step === stepName);
         setStates(mine);

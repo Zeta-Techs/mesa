@@ -650,12 +650,15 @@ export default function ProjectGroup({
   // （清单本体在 useHumanTasks 里自取自刷），这里连同 list_human_task_states 一次调用一并去掉
   // 聚焦步骤的任务书草稿（v3.72）：聚焦头部「待开始」情境文案（describeStep）与卡片区流程线
   // 共用这一份加载（TaskCardsSection 经 focusDraft prop 接收，不重复请求）；effect 在 focusStepName 之后
-  const [focusDraft, setFocusDraft] = useState<{
+  // 按步骤名留住读到过的每一份（2026-11-10）：只存聚焦那一份时，切步骤到新草稿读回来之间草稿是「空」，
+  // 决策项先显示「N 项待定」、TASK.md 按钮换个样再变回来，画面闪一下。切过去先用留着的画，聚焦时照旧重读
+  const [drafts, setDrafts] = useState<
+    Record<string, { relPath: string; text: string | null }>
+  >({});
+  const [focusDraftError, setFocusDraftError] = useState<{
     stepName: string;
-    relPath: string;
-    text: string | null;
+    message: string;
   } | null>(null);
-  const [focusDraftError, setFocusDraftError] = useState<string | null>(null);
   const [pipelineSaving, setPipelineSaving] = useState(false);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [optingOut, setOptingOut] = useState(false);
@@ -1521,9 +1524,9 @@ export default function ProjectGroup({
               ...base,
               // 情境化引导（顺序引导 A）：任务书草稿已起草 = 想法聊透了；
               // 没有则建议先点种子——不阻断，「开始」始终可用。
-              // （草稿只加载聚焦步骤那一份；statusText 仅经 focusDesc 展示，即聚焦步骤）
+              // （草稿按步骤留在 drafts 里，进项目时各步都读一遍；statusText 仅经 focusDesc 展示，即聚焦步骤）
               statusText:
-                focusDraft?.stepName === step.name && focusDraft.text?.trim()
+                drafts[step.name]?.text?.trim()
                   ? "TASK.md 已就位，可以开始"
                   : "待开始",
               actionLabel: "开始",
@@ -1619,29 +1622,55 @@ export default function ProjectGroup({
   // 「◈ 沉淀进任务书」落盘后经 onDraftChanged 回调即刻重读（不等页面刷新）
   function loadFocusDraft() {
     if (!project || !focusStepName) {
-      setFocusDraft(null);
       setFocusDraftError(null);
       return;
     }
+    const stepName = focusStepName;
     invoke<{ relPath: string; text: string | null }>("read_task_draft", {
       projectRoot: project.path,
-      stepName: focusStepName,
+      stepName,
     })
       .then((d) => {
-        setFocusDraftError(null);
-        setFocusDraft({ stepName: focusStepName, ...d });
+        setFocusDraftError((cur) => (cur?.stepName === stepName ? null : cur));
+        setDrafts((cur) => ({ ...cur, [stepName]: d }));
       })
       .catch((reason) => {
-        setFocusDraft(null);
-        setFocusDraftError(
-          `任务书没加载出来：${String(reason)}。「跟 AI 商量一下」和「TASK.md」先不能用。`,
-        );
+        setDrafts((cur) => {
+          const next = { ...cur };
+          delete next[stepName];
+          return next;
+        });
+        setFocusDraftError({
+          stepName,
+          message: `任务书没加载出来：${String(reason)}。「跟 AI 商量一下」和「TASK.md」先不能用。`,
+        });
       });
   }
   useEffect(() => {
     loadFocusDraft();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, focusStepName, refreshToken]);
+  // 进项目先把各步草稿都读一遍：第一次切到某步也不经过「草稿为空」的那一帧。失败的步骤留空，聚焦时再读
+  const draftStepsKey = (cfg?.steps ?? []).map((st) => st.name).join("\n");
+  useEffect(() => {
+    if (!project || !draftStepsKey) return;
+    let stale = false;
+    for (const stepName of draftStepsKey.split("\n")) {
+      invoke<{ relPath: string; text: string | null }>("read_task_draft", {
+        projectRoot: project.path,
+        stepName,
+      })
+        .then((d) => {
+          if (!stale) setDrafts((cur) => (stepName in cur ? cur : { ...cur, [stepName]: d }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.path, draftStepsKey]);
+  const focusDraft = focusStepName ? drafts[focusStepName] ?? null : null;
   // 聚焦步骤的执行状态（流程线 agent/评审节点用）：deriveStepStatus 六态映射到流程线四态
   const focusRunStatus = (() => {
     if (!cfg || !focusStepName) return undefined;
@@ -2254,15 +2283,10 @@ export default function ProjectGroup({
             focusAttention ? (focusDesc?.st.ws?.worktreePath ?? "") : "",
             IS_WINDOWS,
           )}
-          focusDraft={
-            focusDraft && focusDraft.stepName === focusStepName
-              ? focusDraft
-              : null
-          }
+          focusDraft={focusDraft}
           focusDraftError={
-            focusDraftError &&
-            !(focusDraft && focusDraft.stepName === focusStepName)
-              ? focusDraftError
+            focusDraftError && focusDraftError.stepName === focusStepName && !focusDraft
+              ? focusDraftError.message
               : null
           }
           onDraftChanged={loadFocusDraft}
