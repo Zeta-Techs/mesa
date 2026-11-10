@@ -5,7 +5,8 @@ import {
   composeRelayPrompt,
   relayCardText,
   relayChipText,
-  relayMenuRows,
+  relayAgentRows,
+  relayModeRows,
   splitRelayPrompt,
   type RelayOptionDto,
 } from "../src/chat-relay.ts";
@@ -64,8 +65,8 @@ const profiles = [
   { id: "g1", agent: "gemini", name: "x", models: [] },
 ];
 
-test("没用过的家：每条连接一行，上次用的在前；当前这家、没装的、停用连接不列", () => {
-  const rows = relayMenuRows({
+test("第一层一家一行：当前这家、没装的、没有可用连接的不列；上次用的连接排前", () => {
+  const rows = relayAgentRows({
     currentAgent: "claude-code",
     agents,
     profiles,
@@ -73,9 +74,10 @@ test("没用过的家：每条连接一行，上次用的在前；当前这家�
     options: [],
     lastProfile: (a) => (a === "codex" ? "c2" : null),
   });
-  assert.deepEqual(rows.map((r) => r.key), ["codex:c2", "codex:c1", "kimi:k1"]);
-  assert.equal(rows[0].detail, "中转 · gpt-5.5-mini");
-  assert.ok(rows.every((r) => r.target.mode === "new"));
+  assert.deepEqual(rows.map((r) => r.agentId), ["codex", "kimi"]);
+  assert.deepEqual(rows[0].profiles.map((p) => p.id), ["c2", "c1"]);
+  assert.deepEqual(rows[1].profiles.map((p) => p.id), ["k1"]);
+  assert.equal(rows[0].used, null);
 });
 
 test("用过的家：默认接回在前；建议新开时新开在前并写原因；接不回只给新开", () => {
@@ -90,17 +92,18 @@ test("用过的家：默认接回在前；建议新开时新开在前并写原�
     reason: null,
     ...o,
   });
-  const base = { currentAgent: "kimi", agents, profiles, hiddenProfiles: [], lastProfile: () => null };
-  let rows = relayMenuRows({ ...base, options: [opt({})] }).filter((r) => r.target.agentId === "codex");
-  assert.deepEqual(rows.map((r) => r.mode), ["接回原来那段（补 3 轮）", "新开一段（整份交接）"]);
-  assert.equal(rows[0].target.resumeSession, "B");
-  rows = relayMenuRows({ ...base, options: [opt({ recommendNew: true, reason: "原来那段上下文已用 82%" })] }).filter(
-    (r) => r.target.agentId === "codex",
-  );
-  assert.equal(rows[0].target.mode, "new");
-  assert.equal(rows[0].note, "原来那段上下文已用 82%");
-  rows = relayMenuRows({ ...base, options: [opt({ resumable: false, recommendNew: true, reason: "原来那段的记录已不在" })] }).filter(
-    (r) => r.target.agentId === "codex",
-  );
-  assert.deepEqual(rows.map((r) => r.target.mode), ["new"]);
+  const row = relayAgentRows({
+    currentAgent: "kimi",
+    agents,
+    profiles,
+    hiddenProfiles: [],
+    options: [opt({})],
+    lastProfile: () => null,
+  }).find((r) => r.agentId === "codex")!;
+  assert.equal(row.used?.priorSession, "B");
+  assert.deepEqual(relayModeRows(opt({})).map((m) => m.label), ["接回原来那段（补 3 轮）", "新开一段（整份交接）"]);
+  const rec = relayModeRows(opt({ recommendNew: true, reason: "原来那段上下文已用 82%" }));
+  assert.equal(rec[0].mode, "new");
+  assert.equal(rec[0].note, "原来那段上下文已用 82%");
+  assert.deepEqual(relayModeRows(opt({ resumable: false, recommendNew: true, reason: "原来那段的记录已不在" })).map((m) => m.mode), ["new"]);
 });

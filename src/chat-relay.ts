@@ -78,18 +78,6 @@ export interface RelayOptionDto {
   reason: string | null;
 }
 
-export interface RelayMenuRow {
-  key: string;
-  target: RelayTarget;
-  agentLabel: string;
-  /** 连接名 · 模型 */
-  detail: string;
-  /** 「接回原来那段（补 3 轮）」/「新开一段（整份交接）」；这家还没用过为 null */
-  mode: string | null;
-  /** 建议新开的原因（只写在新开那一行下） */
-  note: string | null;
-}
-
 export interface RelayProfile {
   id: string;
   agent: string;
@@ -97,11 +85,21 @@ export interface RelayProfile {
   models: string[];
 }
 
+/** 接力那组第一层：一家一行 */
+export interface RelayAgentRow {
+  agentId: string;
+  label: string;
+  /** 这家在这段接力对话里用过（能接回原来那段）；没用过为 null */
+  used: RelayOptionDto | null;
+  /** 能用的连接，上次用的在前 */
+  profiles: RelayProfile[];
+}
+
 /**
- * 换配置层「换一家接着做」那组的行：别的已装、有可用连接的几家，每条连接一行；
- * 这段对话里已经用过的那家先给「接回原来那段」与「新开一段」两行（建议新开时新开在前），只用它常用的那条连接。
+ * 换配置层「换一家接着做」第一层（2026-11-10 用户：先列 Agent，点进去再选连接和模型，一次全摊开太长）：
+ * 别的已装、有可用连接的几家，一家一行，按 AGENTS 顺序；这段接力对话里用过的那家标出来
  */
-export function relayMenuRows(input: {
+export function relayAgentRows(input: {
   currentAgent: string;
   agents: { id: string; label: string; installed: boolean }[];
   profiles: RelayProfile[];
@@ -109,49 +107,39 @@ export function relayMenuRows(input: {
   options: RelayOptionDto[];
   /** 这家上次用的连接（ccode.lastProfile.<agent>） */
   lastProfile: (agent: string) => string | null;
-}): RelayMenuRow[] {
-  const rows: RelayMenuRow[] = [];
+}): RelayAgentRow[] {
+  const rows: RelayAgentRow[] = [];
   for (const a of input.agents) {
     if (a.id === input.currentAgent || !a.installed) continue;
     const usable = input.profiles.filter((p) => p.agent === a.id && !input.hiddenProfiles.includes(p.id));
     if (usable.length === 0) continue;
-    const preferred = usable.find((p) => p.id === input.lastProfile(a.id)) ?? usable[0];
-    const detailOf = (p: RelayProfile) => [p.name, p.models[0]].filter(Boolean).join(" · ");
-    const opt = input.options.find((o) => o.agent === a.id);
-    if (opt) {
-      const resume: RelayMenuRow = {
-        key: `${a.id}:resume`,
-        target: { agentId: a.id, profileId: preferred.id, model: preferred.models[0] ?? "", mode: "resume", resumeSession: opt.priorSession },
-        agentLabel: a.label,
-        detail: detailOf(preferred),
-        mode: opt.deltaRounds > 0 ? `接回原来那段（补 ${opt.deltaRounds} 轮）` : "接回原来那段",
-        note: null,
-      };
-      const fresh: RelayMenuRow = {
-        key: `${a.id}:new`,
-        target: { agentId: a.id, profileId: preferred.id, model: preferred.models[0] ?? "", mode: "new", resumeSession: null },
-        agentLabel: a.label,
-        detail: detailOf(preferred),
-        mode: "新开一段（整份交接）",
-        note: opt.recommendNew ? opt.reason : null,
-      };
-      if (!opt.resumable) rows.push(fresh);
-      else if (opt.recommendNew) rows.push(fresh, resume);
-      else rows.push(resume, fresh);
-      continue;
-    }
-    for (const p of [preferred, ...usable.filter((x) => x.id !== preferred.id)]) {
-      rows.push({
-        key: `${a.id}:${p.id}`,
-        target: { agentId: a.id, profileId: p.id, model: p.models[0] ?? "", mode: "new", resumeSession: null },
-        agentLabel: a.label,
-        detail: detailOf(p),
-        mode: null,
-        note: null,
-      });
-    }
+    const last = input.lastProfile(a.id);
+    const profiles = [...usable.filter((p) => p.id === last), ...usable.filter((p) => p.id !== last)];
+    rows.push({ agentId: a.id, label: a.label, used: input.options.find((o) => o.agent === a.id) ?? null, profiles });
   }
   return rows;
+}
+
+/** 第二层「怎么接」：用过的那家才有。默认接回在前；建议新开时新开在前并带原因；接不回只给新开 */
+export interface RelayModeRow {
+  mode: "new" | "resume";
+  label: string;
+  note: string | null;
+}
+
+export function relayModeRows(used: RelayOptionDto): RelayModeRow[] {
+  const resume: RelayModeRow = {
+    mode: "resume",
+    label: used.deltaRounds > 0 ? `接回原来那段（补 ${used.deltaRounds} 轮）` : "接回原来那段",
+    note: null,
+  };
+  const fresh: RelayModeRow = {
+    mode: "new",
+    label: "新开一段（整份交接）",
+    note: used.recommendNew ? used.reason : null,
+  };
+  if (!used.resumable) return [fresh];
+  return used.recommendNew ? [fresh, resume] : [resume, fresh];
 }
 
 /** 输入框上那枚「接力给 …」 */

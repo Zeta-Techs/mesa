@@ -676,7 +676,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # 记数点：标签栏与 /terminal 切终端（TerminalPage），ChatSurface 出「终端在等你」卡（认不出的确认 / 卡住 / 选择器）、卡片与「看实时输出」按钮；
                              # 查看在 components/ChatHandoffStatsPanel.tsx（设置「诊断」）
   chat-relay.ts              # 聊天里换一家接着做（design-chat-relay.md）：接力抬头拆分（splitRelayPrompt / userSaid，与 relay_brief.rs 共读 tests/fixtures/relay-prompts.json）、
-                             #   换配置层接力组的行（relayMenuRows：用过的那家「接回 / 新开」两行）、输入框上那条 notice 文案
+                             #   换配置层接力组两层（relayAgentRows 一家一行 → relayModeRows 用过的那家「接回 / 新开」）、输入框上那条 notice 文案
   chat-handoff.ts            # 聊天⇄终端交接：等确认有没有精确状态（confirmHandoffEvent）、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠会不会打开选择器、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；

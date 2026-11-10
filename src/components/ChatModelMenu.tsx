@@ -19,7 +19,7 @@ import { agentBrand } from "../agent-colors";
 import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
 import { ChatBetaNotes, useChatBeta } from "./ChatBetaBadge";
-import { relayMenuRows, type RelayTarget } from "../chat-relay";
+import { relayAgentRows, relayModeRows, type RelayTarget } from "../chat-relay";
 import type {
   LaunchPickState,
   NativePermissionMode,
@@ -982,8 +982,9 @@ function WhoView({
 }
 
 /**
- * 「换一家接着做（接力）」那组（docs/design-chat-relay.md §3.1 / §4.2）：别的已装、有连接的几家；
- * 这段接力对话里已用过的那家给「接回原来那段 / 新开一段」两行。选中只挂在输入框上，发下一句时才交接
+ * 「换一家接着做（接力）」那组（docs/design-chat-relay.md §3.1 / §4.2）。两层（2026-11-10 用户：一次全摊开太长）：
+ * 先一家一行，点进去再选怎么接（用过的那家：接回原来那段 / 新开一段）和用哪条连接的哪个模型。
+ * 选中只挂在输入框上，发下一句时才交接
  */
 function RelaySection({
   relay,
@@ -1009,7 +1010,10 @@ function RelaySection({
   useEffect(() => {
     onLoad();
   }, [onLoad]);
-  const rows = relayMenuRows({
+  const picked = relay.state.pick;
+  const [open, setOpen] = useState<string | null>(null);
+  const [mode, setMode] = useState<"new" | "resume" | null>(null);
+  const rows = relayAgentRows({
     currentAgent,
     agents: AGENTS.map((a) => ({
       id: a.id,
@@ -1021,13 +1025,117 @@ function RelaySection({
     options: relay.state.options,
     lastProfile: (agent) => localStorage.getItem(`ccode.lastProfile.${agent}`),
   });
-  const picked = relay.state.pick;
-  const same = (t: RelayTarget) =>
-    picked != null &&
-    picked.agentId === t.agentId &&
-    picked.profileId === t.profileId &&
-    picked.mode === t.mode;
-  let lastAgent = "";
+  const blocked = Boolean(relay.state.blocked);
+  const row = open ? rows.find((r) => r.agentId === open) : null;
+  const cancelRow = picked && (
+    <button
+      type="button"
+      className={item(false)}
+      onClick={() => {
+        relay.onPick(null);
+        onPicked();
+      }}
+    >
+      <span className="text-l3">不换了，还用 {AGENTS.find((a) => a.id === currentAgent)?.label ?? currentAgent}</span>
+    </button>
+  );
+
+  // —— 第二层：这家怎么接、用哪条连接的哪个模型 ——
+  if (row) {
+    const modes = row.used ? relayModeRows(row.used) : [];
+    const chosenMode =
+      mode ?? (picked?.agentId === row.agentId ? picked.mode : (modes[0]?.mode ?? "new"));
+    const pick = (profileId: string, model: string) => {
+      relay.onPick({
+        agentId: row.agentId,
+        profileId,
+        model,
+        mode: chosenMode,
+        resumeSession: chosenMode === "resume" ? (row.used?.priorSession ?? null) : null,
+      });
+      onPicked();
+    };
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(null);
+            setMode(null);
+          }}
+          className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+        >
+          <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+          <span className="text-xs">换一家</span>
+        </button>
+        <div className="flex items-center gap-1.5 px-2 pb-1 pt-0.5 font-medium text-l1">
+          <AgentMark agentId={row.agentId} />
+          {row.label}
+        </div>
+        {relay.state.blocked && <p className={note}>{relay.state.blocked}</p>}
+        {modes.length > 0 && (
+          <>
+            <h4 className={section}>怎么接</h4>
+            <ul>
+              {modes.map((m) => (
+                <li key={m.mode}>
+                  <button
+                    type="button"
+                    data-selected={chosenMode === m.mode}
+                    className={item(chosenMode === m.mode)}
+                    onClick={() => setMode(m.mode)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{m.label}</span>
+                    {mark(chosenMode === m.mode)}
+                  </button>
+                  {m.note && <p className={`${note} -mt-0.5`}>建议新开：{m.note}</p>}
+                </li>
+              ))}
+            </ul>
+            <div className="mx-1 my-1 h-px bg-hairline" />
+          </>
+        )}
+        <h4 className={section}>用哪个模型</h4>
+        <ul>
+          {row.profiles.map((p) => {
+            const models = connectionModels(p.models, readModelHistory(row.agentId, p.id));
+            const list = models.length > 0 ? models : [""];
+            return (
+              <li key={p.id}>
+                <div className="px-2 pb-0.5 pt-1.5 text-micro text-l4">{p.name}</div>
+                <ul>
+                  {list.map((m) => {
+                    const selected =
+                      picked?.agentId === row.agentId &&
+                      picked.profileId === p.id &&
+                      picked.model === m &&
+                      picked.mode === chosenMode;
+                    return (
+                      <li key={m || "default"}>
+                        <button
+                          type="button"
+                          disabled={blocked}
+                          data-selected={selected}
+                          className={`${item(selected)} disabled:opacity-40`}
+                          onClick={() => pick(p.id, m)}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{m || "按连接默认"}</span>
+                          {mark(selected)}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+        {cancelRow}
+      </>
+    );
+  }
+
+  // —— 第一层：一家一行 ——
   return (
     <>
       <h4 className={section}>换一家接着做（接力）</h4>
@@ -1036,51 +1144,31 @@ function RelaySection({
       {rows.length === 0 && <p className={note}>没有别的已安装、有连接的 Agent；去「连接」页添加。</p>}
       <ul>
         {rows.map((r) => {
-          const header = r.target.agentId !== lastAgent ? r.agentLabel : null;
-          lastAgent = r.target.agentId;
-          const selected = same(r.target);
+          const selected = picked?.agentId === r.agentId;
           return (
-            <li key={r.key}>
-              {header && (
-                <div className="flex items-center gap-1.5 px-2 pb-0.5 pt-1.5 text-micro text-l4">
-                  <AgentMark agentId={r.target.agentId} />
-                  {header}
-                </div>
-              )}
+            <li key={r.agentId}>
               <button
                 type="button"
-                disabled={Boolean(relay.state.blocked)}
                 data-selected={selected}
-                className={`${item(selected)} disabled:opacity-40`}
-                title={r.note ?? undefined}
+                className={item(selected)}
                 onClick={() => {
-                  relay.onPick(selected ? null : r.target);
-                  onPicked();
+                  setOpen(r.agentId);
+                  setMode(null);
                 }}
               >
-                <span className="min-w-0 flex-1 truncate">
-                  {r.mode ? `${r.mode} · ` : ""}
-                  <span className="text-l3">{r.detail}</span>
-                </span>
-                {mark(selected)}
+                <AgentMark agentId={r.agentId} />
+                <span className="min-w-0 flex-1 truncate">{r.label}</span>
+                {r.used && (
+                  <span className="shrink-0 text-micro text-l4">{r.used.resumable ? "用过 · 可接回" : "用过"}</span>
+                )}
+                {selected && mark(true)}
+                <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
               </button>
-              {r.note && <p className={`${note} -mt-0.5`}>建议新开：{r.note}</p>}
             </li>
           );
         })}
       </ul>
-      {picked && (
-        <button
-          type="button"
-          className={item(false)}
-          onClick={() => {
-            relay.onPick(null);
-            onPicked();
-          }}
-        >
-          <span className="text-l3">不换了，还用 {AGENTS.find((a) => a.id === currentAgent)?.label ?? currentAgent}</span>
-        </button>
-      )}
+      {cancelRow}
     </>
   );
 }
