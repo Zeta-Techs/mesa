@@ -57,6 +57,10 @@ export interface FanOutPending {
   /** 收尾一路的终端请求（PendingTerminal，开工时就拼好） */
   merge: unknown;
   mergeStarted: boolean;
+  /** 各路的终端请求（第 k 路 = laneRequests[k-1]）：开工时没起来的路由终端页补开（2026-11-10 HER：第 1 路标签凭空没了，收尾永远等不齐） */
+  laneRequests?: unknown[];
+  /** 已补开过的路，每路只补一次 */
+  healed?: number[];
   /** 记下的时间（ms）：超过 FANOUT_EXPIRE_MS 还没到齐的不再等（工作区可能已归档） */
   createdAt?: number;
 }
@@ -64,6 +68,25 @@ export interface FanOutPending {
 export const FANOUT_EXPIRE_MS = 3 * 24 * 3600 * 1000;
 
 export const FANOUT_STORAGE_PREFIX = "ccode.fanout.";
+
+/** 要补开的路：没写做完标记、没有标签、也从没起过运行（起过又被人关掉的不补），每路只补一次 */
+export function lanesToHeal(input: {
+  lanes: number;
+  done: readonly number[];
+  laneKeys: readonly (string | undefined)[];
+  openKeys: ReadonlySet<string>;
+  ranKeys: ReadonlySet<string>;
+  healed: readonly number[];
+}): number[] {
+  const out: number[] = [];
+  for (let k = 1; k <= input.lanes; k += 1) {
+    const key = input.laneKeys[k - 1];
+    if (!key || input.done.includes(k) || input.healed.includes(k)) continue;
+    if (input.openKeys.has(key) || input.ranKeys.has(key)) continue;
+    out.push(k);
+  }
+  return out;
+}
 
 /** 到齐了没：1..lanes 都有标记 */
 export function allLanesDone(done: readonly number[], lanes: number): boolean {

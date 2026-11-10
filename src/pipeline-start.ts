@@ -326,6 +326,7 @@ export async function startPipelineStep({
         merge: { ...merge, title: `${step.name} · 收尾`, parallelLane: true },
         mergeStarted: false,
         createdAt: Date.now(),
+        laneRequests: lanes,
       });
       return;
     }

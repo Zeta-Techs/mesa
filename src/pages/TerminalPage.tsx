@@ -70,7 +70,7 @@ import { runLayout } from "../run-layout";
 import { sidebarChatTitle } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
-import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, type FanOutPending } from "../fan-out";
+import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, lanesToHeal, type FanOutPending } from "../fan-out";
 import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
 import { organizePdfExcerpt as organizePdfExcerptShared } from "../pdf-organize";
@@ -303,6 +303,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   statusesRef.current = statuses;
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  // 活跃标签兜底：关标签按渲染时的列表挑邻居，同一拍又加了标签时可能挑到已不在的 id，落到最后一个标签上
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.some((t) => t.id === activeId)) setActiveId(tabs[tabs.length - 1].id);
+  }, [tabs, activeId]);
   // 分屏：splitTabId 非空即开启——左 pane 固定活跃标签，右 pane 为下拉选择的对照标签。
   // 状态只在内存（重启不恢复分屏），仅分隔比例像右栏宽度一样本地记忆。
   const [splitTabId, setSplitTabId] = useState<string | null>(null);
@@ -2742,6 +2746,28 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         }
         const done = await invoke<number[]>("fan_out_done", { dir: pending.worktreePath }).catch(() => null);
         if (!done) continue;
+        // 开工时没起来的路补开一次：没做完、没标签、也从没起过运行（2026-11-10 HER：第 1 路的标签被同一拍收标签抹掉，收尾永远等不齐）
+        if (!allLanesDone(done, pending.lanes) && pageVisibleRef.current && pending.laneRequests?.length) {
+          const reqs = pending.laneRequests as PendingTerminal[];
+          const runs = await invoke<RunDto[]>("run_list", { projectRoot: null }).catch(() => null);
+          if (runs) {
+            const heal = lanesToHeal({
+              lanes: pending.lanes,
+              done,
+              laneKeys: reqs.map((r) => r.reuseKey),
+              openKeys: new Set(tabsRef.current.map((t) => t.reuseKey).filter((k): k is string => !!k)),
+              ranKeys: new Set(runs.map((r) => r.reuseKey).filter((k): k is string => !!k)),
+              healed: pending.healed ?? [],
+            });
+            for (const k of heal) {
+              if (await openTerminalInTurn(reqs[k - 1]!)) {
+                pending.healed = [...(pending.healed ?? []), k];
+                localStorage.setItem(key, JSON.stringify(pending));
+                toast(`「${pending.stepName}」第 ${k} 路刚才没开起来，已补开。`, "info");
+              }
+            }
+          }
+        }
         if (!allLanesDone(done, pending.lanes)) continue;
         // 终端页不在前台时收不下开工请求：等人回到对话页再开，记录留着（2026-11-03 自查：原先先删记录再交请求，没收下就丢了收尾）
         if (!pageVisibleRef.current) continue;
@@ -2984,24 +3010,27 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }, [visible]);
 
   function doCloseTab(id: string) {
-    const idx = tabs.findIndex((t) => t.id === id);
-    const next = tabs.filter((t) => t.id !== id);
+    // 按最新的标签列表算、用函数式更新提交：自动收标签（空闲 / 已退出 / 空白新对话）和新开标签同一拍发生时，
+    // 拿当次渲染的旧列表 setTabs(next) 会把刚加的标签一起抹掉（2026-11-10 HER：Mesa 重启后首次开工分 4 路，第 1 路的标签凭空没了）
+    const latest = tabsRef.current;
+    const idx = latest.findIndex((t) => t.id === id);
+    const remaining = latest.filter((t) => t.id !== id);
+    const fresh: Tab = {
+      id: crypto.randomUUID(),
+      skipSeed: true,
+    };
     let nextActiveId = activeId;
-    if (next.length === 0) {
+    setTabs((prev) => {
+      const next = prev.filter((t) => t.id !== id);
       // 至少保留一个标签
-      const fresh: Tab = {
-        id: crypto.randomUUID(),
-        skipSeed: true,
-      };
+      return next.length > 0 ? next : [fresh];
+    });
+    if (remaining.length === 0) {
       nextActiveId = fresh.id;
-      setTabs([fresh]);
       setActiveId(fresh.id);
-    } else {
-      setTabs(next);
-      if (id === activeId) {
-        nextActiveId = next[Math.max(0, idx - 1)].id;
-        setActiveId(nextActiveId);
-      }
+    } else if (id === activeId) {
+      nextActiveId = remaining[Math.max(0, idx - 1)].id;
+      setActiveId(nextActiveId);
     }
     // 分屏修正：被关的是右 pane 标签，或关闭后活跃标签与右 pane 撞车时退出分屏
     if (splitTabId === id || splitTabId === nextActiveId) {

@@ -599,7 +599,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # defaultScheduleKind / scheduleExamples：按工作方式给新建默认种类与空态示例
                              # （value 用目录名不是 UUID；tests/schedule-skill.test.ts）
   fan-out.ts                 # 分几路纯逻辑：laneReuseKey（ws:<工作树>#lane-<k>）、lanePrompt（只做这几条、不碰共享文件与会写它的命令、做完写标记）、
-                             # mergePrompt、fanOutSummary（开工弹层那一行）、FanOutPending / allLanesDone（终端页 20 秒一轮，到齐开收尾）（tests/fan-out.test.ts）
+                             # mergePrompt、fanOutSummary（开工弹层那一行）、FanOutPending / allLanesDone（终端页 20 秒一轮，到齐开收尾）、
+                             # lanesToHeal（2026-11-10：没做完、没标签、从没起过运行的路补开一次，FanOutPending.laneRequests 存各路请求）（tests/fan-out.test.ts）
   terminal-queue.ts          # openTerminalInTurn：一次开几个标签时交一个、等终端页收下再交下一个（拆分方案批准、分几路共用）
   split-plan.ts              # 拆分方案纯逻辑：buildSplitPrompt（无头一次的提示词，含让它改）/ readSplitReply（去围栏前言；方案 / 不拆 / 没按格式）、parseSplitPlan（不认识的字段记备注、等 / 依赖 / 前置）、planIssues（拦下 / 提醒）、
                              # laneGoalText（一路变一条目标的要求原文）、laneWaits（tests/split-plan.test.ts）

@@ -45,3 +45,23 @@ test("收尾一路与弹层那一行、到齐判定", () => {
   assert.ok(!allLanesDone([1, 3], 3));
   assert.ok(!allLanesDone([], 0));
 });
+
+test("lanesToHeal：只补没做完、没标签、从没起过运行、还没补过的路", async () => {
+  const { lanesToHeal } = await import("../src/fan-out.ts");
+  const keys = ["k1", "k2", "k3", "k4"];
+  assert.deepEqual(
+    lanesToHeal({ lanes: 4, done: [], laneKeys: keys, openKeys: new Set(["k2", "k3", "k4"]), ranKeys: new Set(["k2", "k3", "k4"]), healed: [] }),
+    [1],
+    "第 1 路标签没了、也没起过运行：补",
+  );
+  assert.deepEqual(
+    lanesToHeal({ lanes: 4, done: [], laneKeys: keys, openKeys: new Set(["k2"]), ranKeys: new Set(["k1", "k2", "k3", "k4"]), healed: [] }),
+    [],
+    "起过运行又被人关掉的不补",
+  );
+  assert.deepEqual(
+    lanesToHeal({ lanes: 4, done: [1], laneKeys: keys, openKeys: new Set(), ranKeys: new Set(), healed: [2] }),
+    [3, 4],
+    "做完的、补过的不再补",
+  );
+});
