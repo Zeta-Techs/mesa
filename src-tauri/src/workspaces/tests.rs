@@ -2970,3 +2970,11 @@ fn pipeline_recovery_finds_original_merge_after_crash_before_commit_id_was_saved
     );
     assert!(read_delivery_pending(&w.id).unwrap().is_none());
 }
+
+#[test]
+fn review_notes_alone_is_not_an_unsaved_change() {
+    assert!(!porcelain_has_changes(""));
+    assert!(!porcelain_has_changes("?? .ccode/review-notes.md\n"));
+    assert!(porcelain_has_changes("?? .ccode/review-notes.md\n M papers/to-fetch.md\n"));
+    assert!(porcelain_has_changes(" M .ccode/review-notes.md.bak\n"));
+}

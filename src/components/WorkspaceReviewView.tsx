@@ -1163,6 +1163,9 @@ function LiveWorkspaceReviewView({
   const [wsRow, setWsRow] = useState<WorkspaceDto | null>(null);
   const [writingHits, setWritingHits] = useState<WritingReviewHit[]>([]);
   const [reviewNotes, setReviewNotes] = useState("");
+  // 上次退回的意见（.ccode/review-notes.md）：只读显示一行，不再预填进意见框——AI 改完再进评审时，
+  // 框里还是上次那段，像没发出去、又容易原样再发一遍（2026-11-10 HER）；要沿用点「沿用」
+  const [lastNotes, setLastNotes] = useState("");
   // 退回意见框默认收成一行（常开时每个页签都被它占掉一大块）；有字时自己展开
   const [notesOpen, setNotesOpen] = useState(false);
   const [returnBusy, setReturnBusy] = useState(false);
@@ -1499,16 +1502,17 @@ function LiveWorkspaceReviewView({
     };
   }, [diff, worktreePath]);
 
-  // 上次退回意见只在打开这一步时读一次。文件列表刷新不得把正在删的字填回去。
+  // 上次退回意见只在打开这一步时读一次，显示在意见框上面，不填进框里。
   useEffect(() => {
     let stale = false;
     setReviewNotes("");
+    setLastNotes("");
     void invoke<{ text: string }>("read_file_preview", {
       path: `${worktreePath.replace(/[\\/]+$/, "")}/.ccode/review-notes.md`,
       root: worktreePath,
     })
       .then((preview) => {
-        if (!stale) setReviewNotes(preview.text);
+        if (!stale) setLastNotes(preview.text.trim());
       })
       .catch(() => {});
     return () => {
@@ -2948,6 +2952,26 @@ function LiveWorkspaceReviewView({
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
                   缺失引用键：{citations.missing.join("、")}
+                </p>
+              )}
+              {contentReview && !mergeDone && lastNotes && (
+                <p className="mt-1 flex min-w-0 items-center gap-2 text-micro text-l4">
+                  <span className="min-w-0 truncate" title={lastNotes}>
+                    上次退回的意见：{lastNotes.replace(/\s+/g, " ")}
+                  </span>
+                  {!reviewNotes.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReviewNotes(lastNotes);
+                        setNotesOpen(true);
+                      }}
+                      className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                      title="把上次的意见填进意见框，改一改再退回"
+                    >
+                      沿用
+                    </button>
+                  )}
                 </p>
               )}
               {contentReview && !mergeDone && (notesOpen || reviewNotes.trim() !== "") && (

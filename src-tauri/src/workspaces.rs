@@ -1389,7 +1389,9 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
                 joined(gitdir_detached.join()),
             )
         });
-    let uncommitted = !uncommitted??.is_empty();
+    // 退回意见 .ccode/review-notes.md 按设计只留在工作区、不进提交（git_info 提交时撤掉），不算「没保存的改动」：
+    // 算上它，提交完照样报「任务里还有没保存的改动」、保存不进项目（2026-11-10 HER 实测）
+    let uncommitted = porcelain_has_changes(&uncommitted??);
     let counts = counts??;
     let mut parts = counts.split_whitespace();
     let behind = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
@@ -4219,6 +4221,14 @@ pub async fn import_human_deliverable(
 }
 
 pub(crate) const REVIEW_NOTES_FILE: &str = ".ccode/review-notes.md";
+
+/// `git status --porcelain` 里除了退回意见文件还有没有别的改动
+pub(crate) fn porcelain_has_changes(porcelain: &str) -> bool {
+    porcelain.lines().any(|line| {
+        let path = line.get(3..).unwrap_or("").trim().trim_matches('"');
+        !line.trim().is_empty() && path != REVIEW_NOTES_FILE
+    })
+}
 
 /// 人在评审里写下的退回意见。只写本工作树 `.ccode/review-notes.md`。
 #[tauri::command]
