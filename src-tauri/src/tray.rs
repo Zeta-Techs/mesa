@@ -280,8 +280,8 @@ fn handle_menu(app: &AppHandle, id: &str) {
         if let Err(e) = settings::set_desk_pet_enabled(on) {
             crate::logbuf::record("warn", "desk-pet", &format!("托盘开关没存上: {e}"));
         }
-        crate::desk_pet::sync(app);
-        let _ = rebuild(app);
+        // 放后台：这里在主线程，建窗本身要主线程，同步锁也不能在主线程上等
+        crate::desk_pet::sync_in_background(app.clone());
         // 设置页开着时跟着刷新
         let _ = app.emit_to("main", "desk-pet:hidden", ());
         return;

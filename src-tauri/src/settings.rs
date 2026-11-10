@@ -1741,10 +1741,10 @@ pub async fn update_settings(
     if zoom_changed {
         crate::ui_zoom::apply_to_main(&app, out.ui_zoom.unwrap_or(crate::ui_zoom::DEFAULT_ZOOM));
     }
-    // 桌宠开关 / 大小 / 冒话改了：小窗跟着建、关或重排，托盘的勾跟着变
+    // 桌宠开关 / 大小 / 冒话改了：小窗跟着建、关或重排，托盘的勾跟着变。
+    // 建窗要等主线程把网页视图建好，放后台做，设置先回给前端——开关当场翻过去，不等小窗出来
     if pet_changed {
-        crate::desk_pet::sync(&app);
-        let _ = crate::tray::rebuild(&app);
+        crate::desk_pet::sync_in_background(app.clone());
     }
     Ok(out)
 }

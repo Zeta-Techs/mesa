@@ -26,8 +26,20 @@ pub(crate) fn pet_px(size: &str) -> f64 {
     }
 }
 
+/// 几次 sync 排队做：连点开关时不会两路同时看见「没有小窗」而各建一个
+static SYNC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 设置页改了桌宠设置：后台按最新设置同步小窗与托盘，不让设置命令等建窗
+pub fn sync_in_background(app: AppHandle) {
+    tauri::async_runtime::spawn_blocking(move || {
+        sync(&app);
+        let _ = crate::tray::rebuild(&app);
+    });
+}
+
 /// 按设置建 / 显示 / 关掉小窗。开机、改设置、托盘点开关时都走这里
 pub fn sync(app: &AppHandle) {
+    let _g = SYNC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let s = crate::settings::current_with_defaults();
     let on = s.desk_pet_enabled.unwrap_or(false);
     let existing = app.get_webview_window(LABEL);
