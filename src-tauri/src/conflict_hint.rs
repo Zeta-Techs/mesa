@@ -1,4 +1,4 @@
-//! 文献台账冲突的机械比对（2026-11-10 HER：精读评审撞上 included.json / to-fetch.md 冲突，用户问「怎么知道选哪一个」）。
+//! 文献台账的机械比对（冲突时建议选哪边；「看这一轮」里两版纳入清单改了什么）。原为冲突专用（2026-11-10 HER：精读评审撞上 included.json / to-fetch.md 冲突，用户问「怎么知道选哪一个」）。
 //!
 //! 两步各自跑过 `lit_records.py`，同一份台账两边都改了，Git 只会说「两边改了同一个地方」。
 //! 这里按篇（id）比对 `papers/included.json` 两侧：一边已经包含另一边的全部改动时，建议选包含的那边，
@@ -182,6 +182,65 @@ pub fn ledger_hint(
     })
 }
 
+/// 「这一步做过几轮 → 看这一轮」：两版纳入清单之间改了什么，一句白话（2026-11-10 用户：别把 Git 原始差异摆给人看）。
+/// old 为 None = 第一轮，全部纳入都算新加。解析不了返回 None（界面退回逐行比）
+pub fn ledger_change_summary(old: Option<&str>, new: &str) -> Option<String> {
+    let new = by_id(rows(new)?)?;
+    let old = match old {
+        Some(text) => by_id(rows(text)?)?,
+        None => Ledger::new(),
+    };
+    let included = |row: &Map<String, Value>| {
+        matches!(row.get("decision").and_then(Value::as_str).map(str::trim), Some("included" | "include"))
+    };
+    let label = |row: &Map<String, Value>| {
+        let first = row
+            .get("authors")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
+            .map(|a| a.split(',').next().unwrap_or(a).trim().to_string())
+            .filter(|a| !a.is_empty());
+        let year = row.get("year").and_then(|y| y.as_str().map(str::to_string).or_else(|| y.as_i64().map(|n| n.to_string())));
+        match (first, year) {
+            (Some(a), Some(y)) => format!("{a} {y}"),
+            (Some(a), None) => a,
+            _ => row.get("title").and_then(Value::as_str).unwrap_or("").chars().take(24).collect(),
+        }
+    };
+    let names = |list: Vec<String>| {
+        let n = list.len();
+        let shown: Vec<String> = list.into_iter().take(6).collect();
+        if n > shown.len() { format!("{} 等 {n} 篇", shown.join("、")) } else { shown.join("、") }
+    };
+    let mut ids: Vec<&String> = new.keys().chain(old.keys()).collect();
+    ids.sort();
+    ids.dedup();
+    let (mut added, mut removed, mut filled) = (Vec::new(), Vec::new(), 0usize);
+    for id in ids {
+        let (n, o) = (new.get(id), old.get(id));
+        let now = n.is_some_and(|r| included(r));
+        let before = o.is_some_and(|r| included(r));
+        match (before, now) {
+            (false, true) => added.push(label(n.unwrap())),
+            (true, false) => removed.push(label(o.or(n).unwrap())),
+            (true, true) if n != o => filled += 1,
+            _ => {}
+        }
+    }
+    let mut parts = Vec::new();
+    if !added.is_empty() {
+        parts.push(format!("新加 {} 篇：{}", added.len(), names(added)));
+    }
+    if !removed.is_empty() {
+        parts.push(format!("移出 {} 篇：{}", removed.len(), names(removed)));
+    }
+    if filled > 0 {
+        parts.push(format!("{filled} 篇补了信息（如影响因子、全文位置）"));
+    }
+    Some(if parts.is_empty() { "纳入的篇没变".into() } else { parts.join("；") })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +276,19 @@ mod tests {
         let h = included_hint(ours, theirs, Some(base)).unwrap();
         assert_eq!(h.choice, "manual");
         assert!(h.reason.contains("这一步：1 篇补了信息"), "{}", h.reason);
+    }
+
+    #[test]
+    fn change_summary_names_added_and_removed_papers() {
+        let old = r#"[{"id":"a","decision":"included","authors":["Kawashima, K."],"year":"2023"},{"id":"b","decision":"included","authors":["Li, Y."],"year":2018}]"#;
+        let new = r#"[{"id":"a","decision":"excluded","authors":["Kawashima, K."],"year":"2023"},{"id":"b","decision":"included","authors":["Li, Y."],"year":2018,"impactFactor":"9"},{"id":"c","decision":"included","authors":["Miao, Qi"],"year":"2024"}]"#;
+        assert_eq!(
+            ledger_change_summary(Some(old), new).unwrap(),
+            "新加 1 篇：Miao 2024；移出 1 篇：Kawashima 2023；1 篇补了信息（如影响因子、全文位置）"
+        );
+        assert_eq!(ledger_change_summary(Some(new), new).unwrap(), "纳入的篇没变");
+        assert!(ledger_change_summary(None, new).unwrap().starts_with("新加 2 篇"));
+        assert!(ledger_change_summary(None, "{坏").is_none());
     }
 
     #[test]

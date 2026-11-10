@@ -384,6 +384,8 @@ pub struct StepRoundDto {
     pub sha: String,
     /// 这一轮带回项目的文件
     pub paths: Vec<String>,
+    /// 与 paths 一一对应：added | modified | deleted；比不出（不在 Git 里的产物、老记录）为空串
+    pub changes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -438,6 +440,7 @@ fn step_rounds_at(root: &Path, workspace_id: &str) -> StepRoundsDto {
             rework: start.and_then(rework_of),
             sha: save.reviewed_sha.clone().unwrap_or_default(),
             paths: save.paths.clone(),
+            changes: round_changes(root, &save.version_id, save.reviewed_sha.as_deref(), &save.paths),
         });
         prev = save.decided_at.clone();
     }
@@ -454,6 +457,41 @@ pub async fn step_rounds(root: String, workspace_id: String) -> Result<StepRound
     tauri::async_runtime::spawn_blocking(move || Ok(step_rounds_at(&project_root(&root)?, &workspace_id)))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// 这一轮每个文件相对保存前的项目是新加、改了还是删了：保存那次合并提交的第一父（保存前的项目）比所审版本。
+/// 版本不全或 git 失败时全给空串（界面不标）
+fn round_changes(root: &Path, version_id: &str, reviewed: Option<&str>, paths: &[String]) -> Vec<String> {
+    let blank = vec![String::new(); paths.len()];
+    let Some(reviewed) = reviewed.filter(|s| valid_sha(s)) else {
+        return blank;
+    };
+    if !valid_sha(version_id) || paths.is_empty() {
+        return blank;
+    }
+    let base = format!("{version_id}^1");
+    let mut args = vec!["diff", "--no-color", "--no-renames", "--name-status", base.as_str(), reviewed, "--"];
+    let rels: Vec<String> = paths.iter().filter(|p| valid_rel(p)).map(|p| p.replace('\\', "/")).collect();
+    args.extend(rels.iter().map(String::as_str));
+    let Ok(out) = crate::workspaces::run_git_raw(root, &args) else {
+        return blank;
+    };
+    let mut kind = std::collections::HashMap::new();
+    for line in out.lines() {
+        let mut it = line.splitn(2, '\t');
+        let (Some(code), Some(path)) = (it.next(), it.next()) else { continue };
+        let k = match code.chars().next() {
+            Some('A') => "added",
+            Some('D') => "deleted",
+            Some('M') | Some('T') => "modified",
+            _ => continue,
+        };
+        kind.insert(path.trim().to_string(), k);
+    }
+    paths
+        .iter()
+        .map(|p| kind.get(&p.replace('\\', "/")).copied().unwrap_or("").to_string())
+        .collect()
 }
 
 // ===== 看某一版 / 两轮之间比 =====
@@ -522,6 +560,33 @@ fn round_diff_at(root: &Path, from: &str, to: &str, path: &str) -> Result<RoundT
         &["diff", "--no-color", "--no-ext-diff", from, to, "--", &rel],
     )?;
     capped(text)
+}
+
+/// 「看这一轮」里文献清单类文件：两版纳入清单之间改了什么，一句白话（conflict_hint::ledger_change_summary）。
+/// from 为空 = 第一轮。读不到 / 解析不了返回 None，界面退回逐行比
+fn round_ledger_at(root: &Path, from: Option<&str>, to: &str) -> Result<Option<String>, String> {
+    if !valid_sha(to) || from.is_some_and(|f| !valid_sha(f)) {
+        return Err("版本不对".into());
+    }
+    let show = |sha: &str| crate::workspaces::run_git_raw(root, &["show", &format!("{sha}:papers/included.json")]).ok();
+    let Some(new) = show(to) else { return Ok(None) };
+    let old = match from {
+        Some(f) => match show(f) {
+            Some(text) => Some(text),
+            None => return Ok(None),
+        },
+        None => None,
+    };
+    Ok(crate::conflict_hint::ledger_change_summary(old.as_deref(), &new))
+}
+
+#[tauri::command]
+pub async fn step_round_ledger(root: String, from: Option<String>, to: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        round_ledger_at(&project_root(&root)?, from.as_deref().filter(|f| !f.is_empty()), &to)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

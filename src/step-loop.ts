@@ -92,6 +92,55 @@ export interface StepRoundDto {
   rework: ReworkDto | null;
   sha: string;
   paths: string[];
+  /** 与 paths 一一对应：added / modified / deleted；比不出为空串（老后端没有这个字段） */
+  changes?: string[];
+}
+
+/** 「看这一轮」文件前的小标签 */
+export function roundChangeLabel(kind: string | undefined): string {
+  return kind === "added" ? "新加" : kind === "deleted" ? "删了" : kind === "modified" ? "改了" : "";
+}
+
+/** 由纳入清单生成的文献台账：「看这一轮」里不逐行比，改看一句白话（后端 step_round_ledger） */
+const LEDGER_FILES = new Set([
+  "papers/included.json",
+  "papers/included.md",
+  "papers/to-fetch.md",
+  "papers/to-fetch.ris",
+  "papers/endnote-import.ris",
+]);
+export function isLedgerFile(path: string): boolean {
+  return LEDGER_FILES.has(path.replace(/\\/g, "/"));
+}
+
+export type DiffLine = { kind: "add" | "del" | "ctx" | "gap"; text: string };
+
+/** Git 差异去掉给程序看的行（diff --git / index / --- / +++ / 文件模式），@@ 段头换成一条分隔，增删行去掉开头的 +/-、按颜色区分
+ *  （2026-11-10 用户：「看这一轮」把 Git 原始差异摆给人看） */
+export function readableDiff(text: string): DiffLine[] {
+  const out: DiffLine[] = [];
+  let started = false;
+  // 文件头只在每个文件第一个 @@ 之前：段里删掉的「-- 」开头的行不能当文件头丢掉
+  let inHunk = false;
+  for (const line of text.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk && !line.startsWith("@@")) continue;
+    if (line.startsWith("@@")) {
+      if (started) out.push({ kind: "gap", text: "" });
+      started = true;
+      inHunk = true;
+      continue;
+    }
+    if (line.startsWith("\\ No newline")) continue;
+    if (line.startsWith("+")) out.push({ kind: "add", text: line.slice(1) });
+    else if (line.startsWith("-")) out.push({ kind: "del", text: line.slice(1) });
+    else out.push({ kind: "ctx", text: line.startsWith(" ") ? line.slice(1) : line });
+  }
+  while (out.length > 0 && out[out.length - 1].kind === "ctx" && !out[out.length - 1].text) out.pop();
+  return out;
 }
 
 export interface StepRoundsDto {

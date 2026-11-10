@@ -7,6 +7,9 @@ import {
   followupPrompt,
   followupScale,
   followupConfirmText,
+  readableDiff,
+  roundChangeLabel,
+  isLedgerFile,
   catchUpConfirmText,
   notesFollowupIds,
   parseTopics,
@@ -317,4 +320,33 @@ test("跟进 / 补读确认框：问句标题 + 一两句后果；上一轮没�
   assert.match(u, /\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。$/);
   assert.match(followupConfirmText({ notesIds: null, files: ["x.md"], unsaved: false }), /^跟进上游改过的 1 个文件？/);
   assert.equal(catchUpConfirmText(["Kim2025", "Li2018"]), "补读 2 篇新到的全文？\n\nAI 在原笔记上续写：Kim2025、Li2018。别的篇不动。");
+});
+
+test("看这一轮：差异去掉文件头、段头换分隔、增删去掉 +/-；台账文件与标签", () => {
+  const diff = [
+    "diff --git a/notes/a.md b/notes/a.md",
+    "index 1690b6b..5d35784 100644",
+    "--- a/notes/a.md",
+    "+++ b/notes/a.md",
+    "@@ -1,3 +1,3 @@",
+    " # 标题",
+    "-旧的一句",
+    "+新的一句",
+    "@@ -10,2 +10,2 @@",
+    "--- 删掉的分隔线",
+    " 末尾",
+    "",
+  ].join("\n");
+  assert.deepEqual(readableDiff(diff), [
+    { kind: "ctx", text: "# 标题" },
+    { kind: "del", text: "旧的一句" },
+    { kind: "add", text: "新的一句" },
+    { kind: "gap", text: "" },
+    { kind: "del", text: "-- 删掉的分隔线" },
+    { kind: "ctx", text: "末尾" },
+  ]);
+  assert.equal(roundChangeLabel("added"), "新加");
+  assert.equal(roundChangeLabel(""), "");
+  assert.ok(isLedgerFile("papers/to-fetch.md"));
+  assert.ok(!isLedgerFile("papers/screening.md"));
 });

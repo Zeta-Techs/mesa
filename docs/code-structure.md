@@ -1986,7 +1986,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   record_sync：workspace_sync_base / 完成解冲突成功后记 kind=sync（只记流程步骤的工作区，不算一轮，2026-11-06）；
                              #   补料链：ReworkDraft.chain + .ccode/rework/chain/<id>.json（rework_chain_claim 原子认领 / skip / stop，锁里读改写）
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
-                             #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；
+                             #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；每轮文件的新加 / 改了 / 删了按保存那次合并的第一父比所审版本（round_changes）；
+                             #   step_round_ledger 两版纳入清单的白话摘要（conflict_hint::ledger_change_summary）；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
                              #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear

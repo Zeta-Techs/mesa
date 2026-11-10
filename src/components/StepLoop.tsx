@@ -7,8 +7,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { Modal } from "./Modal";
 import { fieldClass, InlineNotice, primaryActionClass, secondaryActionClass } from "./PageFrame";
 import {
+  isLedgerFile,
   parseTopics,
+  readableDiff,
   roundCauseLabel,
+  roundChangeLabel,
   roundTime,
   type RoundTextDto,
   type StepRoundDto,
@@ -325,6 +328,22 @@ function RoundViewer({
   const [mode, setMode] = useState<"diff" | "file">(canCompare ? "diff" : "file");
   const [body, setBody] = useState<RoundTextDto | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 文献台账比上一轮：一句白话（「新加 2 篇：…；移出 1 篇：…」）；null = 比不出，退回逐行 */
+  const [ledger, setLedger] = useState<string | null>(null);
+  const ledgerMode = mode === "diff" && !!previous?.sha && isLedgerFile(path);
+  useEffect(() => {
+    if (!ledgerMode) {
+      setLedger(null);
+      return;
+    }
+    let stale = false;
+    invoke<string | null>("step_round_ledger", { root: projectPath, from: previous?.sha ?? null, to: round.sha })
+      .then((t) => !stale && setLedger(t))
+      .catch(() => !stale && setLedger(null));
+    return () => {
+      stale = true;
+    };
+  }, [ledgerMode, projectPath, previous?.sha, round.sha]);
   useEffect(() => {
     if (!path) return;
     let stale = false;
@@ -356,20 +375,26 @@ function RoundViewer({
     >
       <div className="flex min-h-[50vh] gap-3 text-xs">
         <ul className="w-56 shrink-0 space-y-0.5 overflow-y-auto">
-          {round.paths.map((p) => (
-            <li key={p}>
-              <button
-                type="button"
-                onClick={() => setPath(p)}
-                className={`w-full truncate rounded-sm px-1.5 py-0.5 text-left ${
-                  p === path ? "bg-hover text-l1" : "text-l3 hover:bg-hover hover:text-l1"
-                }`}
-                title={p}
-              >
-                {p}
-              </button>
-            </li>
-          ))}
+          {round.paths.map((p, i) => {
+            const tag = roundChangeLabel(round.changes?.[i]);
+            return (
+              <li key={p}>
+                <button
+                  type="button"
+                  onClick={() => setPath(p)}
+                  className={`flex w-full min-w-0 items-baseline gap-1.5 rounded-sm px-1.5 py-0.5 text-left ${
+                    p === path ? "bg-hover text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+                  }`}
+                  title={p}
+                >
+                  {tag && (
+                    <span className={`shrink-0 text-micro ${tag === "新加" ? "text-add" : tag === "删了" ? "text-del" : "text-l4"}`}>{tag}</span>
+                  )}
+                  <span className="min-w-0 truncate">{p}</span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
         <div className="min-w-0 flex-1">
           <div className="mb-1.5 flex items-center gap-1">
@@ -390,7 +415,12 @@ function RoundViewer({
               看这一版
             </button>
           </div>
-          {error ? (
+          {ledgerMode && ledger ? (
+            <div className="space-y-1.5 rounded-sm bg-inset p-3 text-l2">
+              <p className="leading-relaxed">{ledger}</p>
+              {path !== "papers/included.json" && <p className="text-micro text-l4">这份由纳入清单生成，跟着它变。原文点「看这一版」。</p>}
+            </div>
+          ) : error ? (
             <InlineNotice>{error}</InlineNotice>
           ) : !body ? (
             <p className="text-l4">读取中…</p>
@@ -399,22 +429,22 @@ function RoundViewer({
           ) : (
             <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-sm bg-inset p-2 font-mono text-micro text-l2">
               {mode === "diff"
-                ? body.text.split("\n").map((line, i) => (
-                    <span
-                      key={i}
-                      className={
-                        line.startsWith("+") && !line.startsWith("+++")
-                          ? "block text-add"
-                          : line.startsWith("-") && !line.startsWith("---")
-                            ? "block text-del"
-                            : line.startsWith("@@")
-                              ? "block text-l4"
-                              : "block"
-                      }
-                    >
-                      {line || " "}
-                    </span>
-                  ))
+                ? readableDiff(body.text).map((line, i) =>
+                    line.kind === "gap" ? (
+                      <span key={i} aria-hidden="true" className="my-1 block text-l4">
+                        ⋯
+                      </span>
+                    ) : (
+                      <span
+                        key={i}
+                        className={
+                          line.kind === "add" ? "block bg-add/10 text-add" : line.kind === "del" ? "block bg-del/10 text-del" : "block"
+                        }
+                      >
+                        {line.text || " "}
+                      </span>
+                    ),
+                  )
                 : body.text}
               {body.truncated && "\n…（太长，只显示前 512 KB）"}
             </pre>
