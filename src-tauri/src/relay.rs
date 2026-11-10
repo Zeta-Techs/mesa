@@ -267,6 +267,8 @@ pub struct RelayPrepareDto {
     pub framing: Option<String>,
     /// 接回哪段（delta / resume_only）
     pub resume_session_id: Option<String>,
+    /// 接回那段的 model_provider（Codex 内联渠道要按它挑连接注入）
+    pub resume_provider: Option<String>,
     pub summary: String,
 }
 
@@ -314,6 +316,7 @@ fn prepare_impl(
                     brief_name: None,
                     framing: None,
                     resume_session_id: Some(resume.to_string()),
+                    resume_provider: session_meta(target_agent, resume).and_then(|m| m.provider),
                     summary: "离开后没有新的轮次，直接接回".into(),
                 });
             }
@@ -349,6 +352,7 @@ fn prepare_impl(
                 brief_name: Some(name),
                 framing: Some(relay_brief::delta_framing(&by, &rel)),
                 resume_session_id: Some(resume.to_string()),
+                resume_provider: session_meta(target_agent, resume).and_then(|m| m.provider),
                 summary: format!("补充简报：{by}"),
             });
         }
@@ -386,6 +390,7 @@ fn prepare_impl(
         brief_name: Some(name),
         framing: Some(relay_brief::full_framing(&source.agent, &source.session_id, &rel, with_words)),
         resume_session_id: None,
+        resume_provider: None,
         summary: format!("交接简报：共 {} 轮", rounds.len()),
     })
 }
@@ -820,6 +825,29 @@ mod tests {
         assert!(attach_at(&conn, "handoff-9-dddd.md", "kimi", "K").unwrap());
         assert!(!attach_at(&conn, "handoff-9-dddd.md", "kimi", "K2").unwrap());
         assert_eq!(link_by_brief(&conn, "handoff-9-dddd.md").unwrap().child_session.as_deref(), Some("K"));
+    }
+
+    /// 干跑：拿本机一段真实会话渲一份整份交接简报看（不写文件、不动库）。
+    /// RELAY_DRY_AGENT=codex RELAY_DRY_FILE=… cargo test relay_dry_run -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn relay_dry_run() {
+        let agent = std::env::var("RELAY_DRY_AGENT").unwrap();
+        let file = std::env::var("RELAY_DRY_FILE").unwrap();
+        let rounds = timeline(None, &agent, "dry", &file, None);
+        let text = crate::handoff::redact_and_cap(&relay_brief::render(&BriefInput {
+            kind: BriefKind::Full,
+            title: "干跑",
+            from_agent: &agent,
+            from_session: "dry",
+            cwd: "/tmp",
+            rounds: &rounds,
+            first_no: 1,
+            git: None,
+            ai_conclusions: None,
+        }));
+        println!("{text}");
+        println!("=== {} 轮 · {} 字节", rounds.len(), text.len());
     }
 
     #[test]

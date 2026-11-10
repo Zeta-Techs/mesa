@@ -316,10 +316,11 @@ fn facts_lines(r: &Round) -> String {
         out.push_str(&format!("- 改了文件：{}\n", file_list(&r.facts.files)));
     }
     if let Some(c) = &r.facts.last_command {
-        let result = match (c.exit, c.failed) {
-            (Some(code), _) => format!("退出码 {code}"),
-            (None, true) => "出错".to_string(),
-            (None, false) => "没有记下退出码".to_string(),
+        let result = match (c.exit, c.failed, c.has_result) {
+            (Some(code), _, _) => format!("退出码 {code}"),
+            (None, true, _) => "出错".to_string(),
+            (None, false, true) => "没报错".to_string(),
+            (None, false, false) => "记录里没有结果（可能被打断）".to_string(),
         };
         let lead = if r.facts.commands > 1 {
             format!("跑了 {} 条命令，最后一条", r.facts.commands)
@@ -700,6 +701,40 @@ mod tests {
         let p = split_relay_prompt(&full_framing("kimi", "z", ".ccode/handoff-q.md", false)).unwrap();
         assert_eq!(p.said, "");
         assert!(split_relay_prompt("普通一句").is_none());
+    }
+
+    /// 前端 chat-relay.ts 同读这份样例：抬头怎么拼、怎么拆两端一致
+    #[test]
+    fn relay_prompts_fixture_matches_frontend() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../tests/fixtures/relay-prompts.json")).unwrap();
+        for c in cases {
+            let name = c["name"].as_str().unwrap();
+            let text = c["text"].as_str().unwrap();
+            if let Some(f) = c["framing"].as_object() {
+                let s = |k: &str| f[k].as_str().unwrap();
+                let framing = if s("kind") == "delta" {
+                    delta_framing(s("roundsBy"), s("briefRel"))
+                } else {
+                    full_framing(s("fromAgent"), s("fromSession"), s("briefRel"), f["withWords"].as_bool().unwrap())
+                };
+                assert!(text.starts_with(&framing), "{name}: 抬头拼法变了");
+            }
+            let parsed = split_relay_prompt(sessions::strip_project_pack(text));
+            match c["relay"].as_object() {
+                None => {
+                    assert!(parsed.is_none(), "{name}");
+                    assert_eq!(user_words(text), text.trim(), "{name}");
+                }
+                Some(r) => {
+                    let p = parsed.unwrap_or_else(|| panic!("{name}: 没认出抬头"));
+                    assert_eq!(p.brief_name.as_deref(), r["briefName"].as_str(), "{name}");
+                    assert_eq!(p.delta, r["delta"].as_bool().unwrap(), "{name}");
+                    assert_eq!(p.said, r["said"].as_str().unwrap(), "{name}");
+                    assert_eq!(user_words(text), r["said"].as_str().unwrap(), "{name}");
+                }
+            }
+        }
     }
 
     #[test]

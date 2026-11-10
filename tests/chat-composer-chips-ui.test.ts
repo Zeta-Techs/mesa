@@ -387,7 +387,7 @@ test("模型菜单接回旧对话（还没发第一句）：那一行写「接�
     assert.doesNotMatch(ui.el.textContent ?? "", /发第一句时/);
     await openModels(ui);
     await ui.click("换配置");
-    assert.match(ui.el.textContent ?? "", /只能用原来那家 Agent/);
+    assert.match(ui.el.textContent ?? "", /还没有记录可交接/);
     assert.doesNotMatch(ui.el.textContent ?? "", /Codex/, "不列别家 Agent");
   } finally {
     await ui.close();

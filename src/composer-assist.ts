@@ -5,7 +5,7 @@
  *   下半组才是写进终端的 CLI 命令
  * - ↑ 取回上一句：输入框为空时按 ↑，把自己上一句放回来改
  */
-import { splitLaunchPrompt } from "./project-context.ts";
+import { userSaid } from "./chat-relay.ts";
 
 const isAt = (ch: string | undefined) => ch === "@" || ch === "＠";
 
@@ -83,10 +83,10 @@ export function userTextHistory(
   for (let i = messages.length - 1; i >= 0 && out.length < limit; i--) {
     const m = messages[i];
     if (m.role !== "user") continue;
-    // 第一句前面 Mesa 塞的项目说明不是你说的，取回时只要你那句
+    // 第一句前面 Mesa 塞的项目说明、接力抬头不是你说的，取回时只要你那句
     const text = m.blocks
       .filter((b) => b.kind === "text")
-      .map((b) => splitLaunchPrompt(b.text).said)
+      .map((b) => userSaid(b.text))
       .join("\n")
       .trim();
     if (text && out[out.length - 1] !== text) out.push(text);
@@ -103,7 +103,7 @@ export function lastUserText(
     if (m.role !== "user") continue;
     const text = m.blocks
       .filter((b) => b.kind === "text")
-      .map((b) => splitLaunchPrompt(b.text).said)
+      .map((b) => userSaid(b.text))
       .join("\n")
       .trim();
     if (text) return text;

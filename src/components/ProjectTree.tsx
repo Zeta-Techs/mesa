@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState 
 import {
   AppWindow,
   Archive,
+  ArrowLeftRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -31,6 +32,7 @@ import { createPortal } from "react-dom";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
+import { agentBrand } from "../agent-colors";
 import {
   groupByWorkMode,
   normalizeWorkMode,
@@ -636,6 +638,34 @@ export default function ProjectTree({
         title: "正看着的那段留在左边，这段放右边对照",
         onSelect: () => openChat(s, project, true),
       },
+      // 接力对话：列表里只留最后接手那段，前面各段从这里打开（docs/design-chat-relay.md §3.6）
+      ...(s.relaySegments ?? [])
+        .filter((seg) => !(seg.agent === s.agent && seg.sessionId === s.sessionId))
+        .map((seg) => {
+          const who = AGENTS.find((a) => a.id === seg.agent)?.label ?? seg.agent;
+          return {
+            label: `打开接力前那段：${who}`,
+            icon: ArrowLeftRight,
+            title: `${seg.title ?? "（没有标题）"}\n这段接力对话里 ${who} 做的那段，单独打开接着看或接着聊`,
+            onSelect: () =>
+              openChat(
+                {
+                  ...s,
+                  agent: seg.agent,
+                  sessionId: seg.sessionId,
+                  filePath: seg.filePath,
+                  title: seg.title,
+                  customTitle: null,
+                  updatedAt: seg.updatedAt,
+                  provider: null,
+                  profileId: null,
+                  relayAgents: undefined,
+                  relaySegments: undefined,
+                },
+                project,
+              ),
+          };
+        }),
       {
         label: "分叉成新对话",
         icon: GitFork,
@@ -1174,6 +1204,9 @@ export default function ProjectTree({
     const depth = fork?.depth ?? 0;
     const forks = fork?.forks ?? 0;
     const forkFolded = forks > 0 && forkFoldSet.has(key);
+    // 接力对话：用过的几家按先后叠几个色点（悬停写全）
+    const relayAgents = (s.relayAgents?.length ?? 0) > 1 ? s.relayAgents! : null;
+    const relayPath = relayAgents?.map((a) => AGENTS.find((x) => x.id === a)?.label ?? a).join(" → ") ?? null;
     const isPicked = picked.has(key);
     // 选了好几段时，在其中一段上右键 / 点 ⋯ 出的是对这几段的菜单
     const forPicked = isPicked && picked.size > 1;
@@ -1228,7 +1261,7 @@ export default function ProjectTree({
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
-          title={`${full}\n${depth > 0 ? "分叉出来的对话 · " : ""}${projectPinMark ? "在项目里置顶 · " : ""}${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊，双击改名`}
+          title={`${full}\n${relayPath ? `接力对话：${relayPath} · ` : ""}${depth > 0 ? "分叉出来的对话 · " : ""}${projectPinMark ? "在项目里置顶 · " : ""}${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊，双击改名`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             "text-l1"
           }`}
@@ -1244,6 +1277,13 @@ export default function ProjectTree({
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 对话管理」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色一律 l1（2026-10-28 用户照 Claude 客户端，推翻 10-24「标题不用全亮着」）：正看着的靠底色，未读靠行尾蓝色光标，不靠变亮 */}
+          {relayAgents && (
+            <span aria-label={`接力对话：${relayPath}`} className="flex shrink-0 items-center -space-x-0.5" data-relay-agents>
+              {relayAgents.map((a) => (
+                <span key={a} className="h-1.5 w-1.5 rounded-full ring-1 ring-canvas" style={{ background: agentBrand(a) }} />
+              ))}
+            </span>
+          )}
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
           {isPicked && <Check size={13} strokeWidth={2} aria-hidden="true" data-pick-mark className="shrink-0 text-l2" />}
         </button>

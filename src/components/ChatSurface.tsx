@@ -7,6 +7,7 @@ import ConversationView from "./ConversationView";
 import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageEditContext } from "./ChatMarkdown";
+import { relayChipText, type RelayTarget } from "../chat-relay";
 import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } from "./ChatComposer";
 import { coldCacheAt, coldCacheHint, idleLabel, lastMessageAt } from "../prompt-cache";
 import { contextFmtTokens } from "./ContextRing";
@@ -29,6 +30,7 @@ import type {
   ConnIssueState,
   LaunchPickState,
   NativePermissionMode,
+  RelayPickState,
   TabStatus,
 } from "../pages/TerminalPage";
 import type { MenuAnswer, TuiMenu } from "../tui-menu";
@@ -126,6 +128,9 @@ export default function ChatSurface({
   onAnswerTrust,
   ptyQuiet = false,
   launchPick = null,
+  relay = null,
+  onRelayPick,
+  onRelayLoad,
   recordPending = false,
   onPickLaunch,
   onRestore,
@@ -214,6 +219,10 @@ export default function ChatSurface({
   ptyQuiet?: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与终端启动栏同一份；进程起来后不再显示） */
   launchPick?: LaunchPickState | null;
+  /** 聊天里换一家接着做（docs/design-chat-relay.md）：这段对话有记录才可用 */
+  relay?: RelayPickState | null;
+  onRelayPick?: (target: RelayTarget | null) => void;
+  onRelayLoad?: () => void;
   /** 接一段旧对话的标签刚开、状态还没报上来：记录在路上，不画空态 */
   recordPending?: boolean;
   onPickLaunch?: {
@@ -1294,6 +1303,22 @@ export default function ChatSurface({
     running && !generating && !decision && compactRun
       ? coldCacheHint({ ...cacheInput, now: Date.now() })
       : null;
+  // 接力：换配置层选了「换一家接着做」，发下一句时才交接——输入框上挂一行说清楚，可撤
+  const relayLoadRef = useRef(onRelayLoad);
+  relayLoadRef.current = onRelayLoad;
+  const relayPickRef = useRef(onRelayPick);
+  relayPickRef.current = onRelayPick;
+  const relayLoad = useCallback(() => relayLoadRef.current?.(), []);
+  const relayPickStable = useCallback((t: RelayTarget | null) => relayPickRef.current?.(t), []);
+  const relayMenu =
+    relay?.available && onRelayPick ? { state: relay, onPick: relayPickStable, onLoad: relayLoad } : null;
+  const relayNotice: ComposerNotice | null = relay?.pick
+    ? {
+        text: relayChipText(relay.pick, agentLabel(relay.pick.agentId)),
+        title: "发下一句时 Mesa 写一份交接简报（存在项目 .ccode/ 下，不进 git），换成那家接着做；这段对话照常在这里",
+        actions: [{ label: "不换了", onClick: () => relayPickStable(null) }],
+      }
+    : null;
   const cacheNotice: ComposerNotice | null =
     coldHint && coldHint.key !== coldDismissed
       ? {
@@ -1405,6 +1430,7 @@ export default function ChatSurface({
           combos={combos}
           combosWhere={cwdLabel || null}
           onCombo={onPickLaunch.combo}
+          relay={launchPick?.resumePick ? relayMenu : null}
           imageKind={imageKind}
           onImageWarning={setImageWarning}
           onOpenTerminal={openTerminalFromBeta}
@@ -1427,6 +1453,7 @@ export default function ChatSurface({
         showRing={!metaSlotted}
         onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
         onRelaunch={runtime.onRelaunch}
+        relay={relayMenu}
         imageKind={imageKind}
         onImageWarning={setImageWarning}
         onOpenTerminal={openTerminalFromBeta}
@@ -1845,7 +1872,7 @@ export default function ChatSurface({
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn, agentId)}
-        notice={cacheNotice}
+        notice={relayNotice ?? cacheNotice}
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

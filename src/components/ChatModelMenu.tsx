@@ -19,9 +19,11 @@ import { agentBrand } from "../agent-colors";
 import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
 import { ChatBetaNotes, useChatBeta } from "./ChatBetaBadge";
+import { relayMenuRows, type RelayTarget } from "../chat-relay";
 import type {
   LaunchPickState,
   NativePermissionMode,
+  RelayPickState,
   TabStatus,
 } from "../pages/TerminalPage";
 
@@ -51,7 +53,17 @@ type LaunchProps = {
   onCombo?: (combo: LaunchCombo) => void;
 } & SharedProps;
 
+/** 聊天里换一家接着做（chat-relay.ts）：这段对话有记录才给 */
+export interface RelayMenuProps {
+  state: RelayPickState;
+  onPick: (target: RelayTarget | null) => void;
+  /** 进接力那组时取一次：这段接力对话里已用过的几家能不能接回 */
+  onLoad: () => void;
+}
+
 type SharedProps = {
+  /** 换一家接着做；没有记录（新对话）或自定义运行时不传 */
+  relay?: RelayMenuProps | null;
   channel?: ChatChannelSnapshot | null;
   live?: boolean;
   /** 输入框里有要模型看的图（plain = 普通图片附件；marks = 接着改的图上画了标注）：看不了图的模型在名单里标出来，
@@ -85,6 +97,9 @@ type RuntimeProps = {
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
 } & SharedProps;
 
+/** 没有停用连接时的缺省（模块级常量：store 选择器里不新建对象） */
+const NO_HIDDEN: string[] = [];
+
 /** 菜单最高多少（px）：大屏上也不一路拉长，名单多了在中间那段里滚 */
 const MENU_CAP = 460;
 
@@ -99,7 +114,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const runtime = props.kind === "runtime" ? props : null;
   const [open, setOpen] = useState(false);
   // 主屏只有思考强度（2026-11-05 用户：点开先只看思考档）；模型、Agent / 连接逐层点进去
-  const [view, setView] = useState<"main" | "model" | "who" | "beta">("main");
+  const [view, setView] = useState<"main" | "model" | "who" | "beta" | "relay">("main");
   const [customModel, setCustomModel] = useState("");
   // 手填的是出图 / 向量等不能对话的模型：不收，原因写在输入框下
   const [customErr, setCustomErr] = useState<string | null>(null);
@@ -593,6 +608,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             <WhoView
               pick={launch.pick}
               agents={agents}
+              relay={props.relay?.state.available ? props.relay : null}
+              onRelayPicked={() => setOpen(false)}
               onBack={() => setView("model")}
               onAgent={(id) => {
                 launch.onAgent(id);
@@ -619,6 +636,29 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               section={section}
               note={note}
             />
+          ) : view === "relay" && props.relay ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setView("model")}
+                className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+              >
+                <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span className="text-xs">模型</span>
+              </button>
+              <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
+              <div ref={bodyRef} className={scrollBody}>
+                <RelaySection
+                  relay={props.relay}
+                  currentAgent={agentId}
+                  onPicked={() => setOpen(false)}
+                  item={item}
+                  mark={mark}
+                  section={section}
+                  note={note}
+                />
+              </div>
+            </>
           ) : view === "beta" ? (
             <>
               <button
@@ -728,25 +768,49 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   type="button"
                   className="flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
                   onClick={() => setView("who")}
-                  title={launch.pick.resumePick ? "换配置（Agent 跟着这段对话，不能换）" : "换 Agent 或配置"}
+                  title={
+                    launch.pick.resumePick
+                      ? props.relay?.state.available
+                        ? "换配置，或换一家 Agent 接着做（接力）"
+                        : "换配置（这段对话还没有记录可交接）"
+                      : "换 Agent 或配置"
+                  }
                 >
                   <AgentMark agentId={agentId} />
                   <span className="truncate font-medium">{agentLabel}</span>
                   {profileId && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
                   <span className="ml-auto flex shrink-0 items-center gap-0.5 text-xs text-l4">
-                    {launch.pick.resumePick ? "换配置" : "换"}
+                    {launch.pick.resumePick ? (props.relay?.state.available ? "换配置 · 换一家" : "换配置") : "换"}
                     <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </button>
               ) : (
-                <div
-                  className="flex h-8 shrink-0 items-center gap-1.5 px-2 text-l1"
-                  title="换 Agent 或配置请新开一段对话"
-                >
-                  {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
-                  <span className="truncate font-medium">{agentLabel}</span>
-                  {profileLabel && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
-                </div>
+                props.relay?.state.available ? (
+                  <button
+                    type="button"
+                    className="flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
+                    onClick={() => setView("relay")}
+                    title="换一家 Agent 接着做（接力）"
+                  >
+                    <AgentMark agentId={agentId} />
+                    {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
+                    <span className="truncate font-medium">{agentLabel}</span>
+                    {profileLabel && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
+                    <span className="ml-auto flex shrink-0 items-center gap-0.5 text-xs text-l4">
+                      换一家
+                      <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                    </span>
+                  </button>
+                ) : (
+                  <div
+                    className="flex h-8 shrink-0 items-center gap-1.5 px-2 text-l1"
+                    title="换 Agent 或配置请新开一段对话"
+                  >
+                    {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
+                    <span className="truncate font-medium">{agentLabel}</span>
+                    {profileLabel && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
+                  </div>
+                )
               )}
               {divider}
               <h4 className={`${section} shrink-0`}>模型</h4>
@@ -803,6 +867,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
 function WhoView({
   pick,
   agents,
+  relay,
+  onRelayPicked,
   onBack,
   onAgent,
   onProfile,
@@ -815,6 +881,8 @@ function WhoView({
 }: {
   pick: LaunchPickState;
   agents: DetectResult[];
+  relay: RelayMenuProps | null;
+  onRelayPicked: () => void;
   onBack: () => void;
   onAgent: (id: string) => void;
   onProfile: (id: string) => void;
@@ -867,8 +935,8 @@ function WhoView({
           </>
         )}
         <h4 className={section}>配置</h4>
-        {pick.resumePick && (
-          <p className={note}>接着这段对话只能用原来那家 Agent；要换 Agent 请新开一段对话。</p>
+        {pick.resumePick && !relay && (
+          <p className={note}>这段对话还没有记录可交接；要换 Agent 请新开一段对话。</p>
         )}
         <ul>
           {pick.profiles.length === 0 && (
@@ -894,7 +962,125 @@ function WhoView({
             );
           })}
         </ul>
+        {pick.resumePick && relay && (
+          <>
+            <div className="mx-1 my-1 h-px bg-hairline" />
+            <RelaySection
+              relay={relay}
+              currentAgent={pick.agentId}
+              onPicked={onRelayPicked}
+              item={item}
+              mark={mark}
+              section={section}
+              note={note}
+            />
+          </>
+        )}
       </div>
+    </>
+  );
+}
+
+/**
+ * 「换一家接着做（接力）」那组（docs/design-chat-relay.md §3.1 / §4.2）：别的已装、有连接的几家；
+ * 这段接力对话里已用过的那家给「接回原来那段 / 新开一段」两行。选中只挂在输入框上，发下一句时才交接
+ */
+function RelaySection({
+  relay,
+  currentAgent,
+  onPicked,
+  item,
+  mark,
+  section,
+  note,
+}: {
+  relay: RelayMenuProps;
+  currentAgent: string;
+  onPicked: () => void;
+  item: (selected: boolean) => string;
+  mark: (selected: boolean) => ReactNode;
+  section: string;
+  note: string;
+}) {
+  const agents = useAppStore((s) => s.agents);
+  const profiles = useAppStore((s) => s.profiles);
+  const hidden = useAppStore((s) => s.settings?.hiddenProfiles) ?? NO_HIDDEN;
+  const { onLoad } = relay;
+  useEffect(() => {
+    onLoad();
+  }, [onLoad]);
+  const rows = relayMenuRows({
+    currentAgent,
+    agents: AGENTS.map((a) => ({
+      id: a.id,
+      label: a.label,
+      installed: agents.find((x) => x.id === a.id)?.binaryPath != null,
+    })),
+    profiles: profiles.map((p) => ({ id: p.id, agent: p.agent, name: p.name, models: p.models })),
+    hiddenProfiles: hidden,
+    options: relay.state.options,
+    lastProfile: (agent) => localStorage.getItem(`ccode.lastProfile.${agent}`),
+  });
+  const picked = relay.state.pick;
+  const same = (t: RelayTarget) =>
+    picked != null &&
+    picked.agentId === t.agentId &&
+    picked.profileId === t.profileId &&
+    picked.mode === t.mode;
+  let lastAgent = "";
+  return (
+    <>
+      <h4 className={section}>换一家接着做（接力）</h4>
+      <p className={note}>选好后发下一句时才交接：Mesa 写一份交接简报，换成那家接着做，这段对话照常在这里。</p>
+      {relay.state.blocked && <p className={note}>{relay.state.blocked}</p>}
+      {rows.length === 0 && <p className={note}>没有别的已安装、有连接的 Agent；去「连接」页添加。</p>}
+      <ul>
+        {rows.map((r) => {
+          const header = r.target.agentId !== lastAgent ? r.agentLabel : null;
+          lastAgent = r.target.agentId;
+          const selected = same(r.target);
+          return (
+            <li key={r.key}>
+              {header && (
+                <div className="flex items-center gap-1.5 px-2 pb-0.5 pt-1.5 text-micro text-l4">
+                  <AgentMark agentId={r.target.agentId} />
+                  {header}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={Boolean(relay.state.blocked)}
+                data-selected={selected}
+                className={`${item(selected)} disabled:opacity-40`}
+                title={r.note ?? undefined}
+                onClick={() => {
+                  relay.onPick(selected ? null : r.target);
+                  onPicked();
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {r.mode ? `${r.mode} · ` : ""}
+                  <span className="text-l3">{r.detail}</span>
+                </span>
+                {mark(selected)}
+              </button>
+              {r.note && <p className={`${note} -mt-0.5`}>建议新开：{r.note}</p>}
+            </li>
+          );
+        })}
+      </ul>
+      {picked && (
+        <button
+          type="button"
+          className={item(false)}
+          onClick={() => {
+            relay.onPick(null);
+            onPicked();
+          }}
+        >
+          <span className="text-l3">不换了，还用 {AGENTS.find((a) => a.id === currentAgent)?.label ?? currentAgent}</span>
+        </button>
+      )}
     </>
   );
 }

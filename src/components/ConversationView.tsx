@@ -33,6 +33,8 @@ import ChatSelectionBar from "./ChatSelectionBar";
 import { rangePlainText } from "../chat-copy";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import { splitLaunchPrompt } from "../project-context";
+import { splitRelayPrompt } from "../chat-relay";
+import ChatRelayCard from "./ChatRelayCard";
 import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
 import {
@@ -335,7 +337,8 @@ export default function ConversationView({
   ) {
     const text = m.blocks
       .filter((b) => b.kind === "text")
-      .map((b) => b.text)
+      // 用户那句前面的接力抬头不复制、不放回输入框
+      .map((b) => (m.role === "user" ? (splitRelayPrompt(b.text)?.said ?? b.text) : b.text))
       .join("\n\n")
       .trim();
     if (!text) return null;
@@ -520,7 +523,10 @@ export default function ConversationView({
     // text（用户消息同样截断：超大粘贴不全量渲染）；
     // 整行是图片路径的行剥离成内嵌图片卡（粘贴/拖拽图片在会话里就是一行路径文本）。
     // 用户消息开头 Mesa 塞的项目说明（项目里「＋ 新对话」发第一句时附上）不当人话显示，折成一行（2026-10-24 用户）
-    const { pack, said } = isUser ? splitLaunchPrompt(b.text) : { pack: null, said: b.text };
+    const { pack, said: afterPack } = isUser ? splitLaunchPrompt(b.text) : { pack: null, said: b.text };
+    // 接力抬头（换一家接着做时 Mesa 写在这句前面）不当人话：卡画在气泡外面（ChatRelayCard），这里只留人话
+    const relay = isUser ? splitRelayPrompt(b.text) : null;
+    const said = relay ? relay.said : afterPack;
     const { text: bodyText, images } = splitImagePaths(said);
     const imageRow = images.map((p) => (
       <ChatImageCard key={p} path={p} cwd={base} />
@@ -924,6 +930,8 @@ export default function ConversationView({
             </div>
           );
         }
+        const relayHead =
+          m.role === "user" ? splitRelayPrompt(m.blocks.find((b) => b.kind === "text")?.text ?? "") : null;
         return m.role === "user" ? (
           // 用户消息：右对齐圆角气泡（bubble 令牌底，max-w 70%）
           <div
@@ -933,6 +941,16 @@ export default function ConversationView({
             // 每个新问题前留大空、连着发的几句不拉开（App.css .ccode-chat-user-row）；大圆角气泡（原 6px 像一张卡片）
             className={"group/msg mb-7 flex flex-col items-end ccode-chat-user-row"}
           >
+            {relayHead && (
+              <div className="w-full">
+                <ChatRelayCard
+                  prompt={relayHead}
+                  cwd={cwd}
+                  renderMessages={(msgs) => <ConversationView messages={msgs} cwd={cwd} />}
+                />
+              </div>
+            )}
+            {(!relayHead || relayHead.said || m.blocks.some((b) => b.kind !== "text")) && (
             <div
               className={`relative max-w-[70%] bg-chat-bubble ccode-chat-user rounded-2xl px-3.5 py-2 ${
                 hit ? "ring-1 ring-cta-bd" : ""
@@ -941,6 +959,7 @@ export default function ConversationView({
               {renderBlocks(m, mk, true, hit)}
               {!m.queued && messageActions(m, mk, "right")}
             </div>
+            )}
             {m.queued && (
               // 上一轮还在生成时发的：已写进终端、由 CLI 处理（Mesa 不另设队列，所以没有撤回钮）。
               // 写法按这家 CLI 的真实行为（下一步就交 / 这一轮说完再交），能「立即发送」的给一个钮

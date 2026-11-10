@@ -97,6 +97,7 @@ import { resolveCustomRuntimeCwd } from "../custom-runtime";
 import { pathWithin as pathWithinDialect, samePath } from "../path-utils";
 import { compareRunIdentity, isTaskReuseKey, type RunIdentity } from "../run-model";
 import { composeLaunchPrompt } from "../project-context";
+import { composeRelayPrompt, splitRelayPrompt, type RelayOptionDto, type RelayTarget } from "../chat-relay";
 import { loadProjectContextPack } from "../project-context-load";
 import { normalizeWorkMode } from "../work-mode";
 import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
@@ -437,6 +438,10 @@ export interface FocusTabActions {
   pickDir: (pick: DirPick) => void;
   /** 「新建项目…」：去项目页建，建好回到这个标签 */
   newProject: () => void;
+  /** 换配置层「换一家接着做」：选中接力目标（null = 取消）；发下一句时才交接 */
+  pickRelay: (target: RelayTarget | null) => void;
+  /** 打开接力那组时取：这段接力对话里已经用过哪几家、换回是接回还是建议新开 */
+  loadRelayOptions: () => void;
   /** 「最近用过」的一套搭配：Agent + 连接 + 模型一起换（思考档是标签级，由父级写） */
   applyLaunchCombo: (combo: { agentId: string; profileId: string; model: string }) => void;
   /** 写一条 TUI 命令并盯屏 5 秒，CLI 弹确认菜单时上报 menuPrompt（切模型 / 思考档用） */
@@ -506,6 +511,26 @@ export interface LaunchPickState {
   permissionNote: CliPermissionNote | null;
   /** 刚按项目默认换了 Agent / 连接（选项目时）：输入框上短暂写一句「按项目默认」，几秒后清掉 */
   autoNote: string | null;
+}
+
+/** 聊天里换一家接着做：这段对话有记录才能接力；生成中换不了 */
+export interface RelayPickState {
+  available: boolean;
+  blocked: string | null;
+  pick: RelayTarget | null;
+  options: RelayOptionDto[];
+}
+
+/** 后端 relay_prepare：写好的简报与接力抬头 */
+interface RelayPrepareDto {
+  kind: "full" | "delta" | "resume_only";
+  briefPath: string | null;
+  briefName: string | null;
+  framing: string | null;
+  resumeSessionId: string | null;
+  /** 接回那段的 model_provider（Codex 内联渠道要按它挑连接注入） */
+  resumeProvider: string | null;
+  summary: string;
 }
 
 /** 聊天权限菜单的原生档：ask 请求批准 / auto 帮我批准 / full 完全访问（agent_specs permission_args） */
@@ -600,6 +625,8 @@ export interface SessionLinkState {
   stalled: boolean;
   /** 开聊前的 Agent / 配置 / 模型选择（与启动栏同一份） */
   launchPick: LaunchPickState;
+  /** 聊天里换一家 Agent 接着做（docs/design-chat-relay.md） */
+  relay: RelayPickState;
   /** 当前 Agent 可从聊天界面直接调用的技能 / MCP 资源。 */
   skills: SkillDto[];
   mcps: McpServerDto[];
@@ -1790,6 +1817,57 @@ export const TerminalView = memo(function TerminalView({
     setModel(c.model);
     setModelKept(false);
     setLaunchAutoNote(null);
+  }
+  // —— 聊天里换一家接着做（docs/design-chat-relay.md）：选了目标先挂着，发下一句时才交接 ——
+  const [relayPick, setRelayPick] = useState<RelayTarget | null>(null);
+  const relayPickRef = useRef<RelayTarget | null>(null);
+  relayPickRef.current = relayPick;
+  const [relayOptions, setRelayOptions] = useState<RelayOptionDto[]>([]);
+  /** 换好 Agent 之后才能按新那家启动（launch 读的是这一帧的 agentId / profileId）：挂在这里，下一帧的 effect 接着跑 */
+  const relayJobRef = useRef<{
+    target: RelayTarget;
+    prepared: RelayPrepareDto;
+    message: string;
+    source: { agentId: string; profileId: string; model: string; sessionId: string };
+    early: { reRegister: () => void; retract: () => void };
+    resolve: (r: ChatSendResult) => void;
+  } | null>(null);
+  const [relayTick, setRelayTick] = useState(0);
+  /** 接手那家没起来、退回原来那家后：下一句接回原来那段，不另开 */
+  const relayBackRef = useRef<string | null>(null);
+  /** 这段对话的来源（接力要有记录）：在跑的取认领到的会话，只看没接的取摆着的那段 */
+  function relaySource() {
+    if (customRuntimeId) return null;
+    const ctx = linkCtxRef.current;
+    const sessionId =
+      ctx?.sessionId ?? linkedSessionId ?? relayBackRef.current ?? (running ? null : resumeSessionId) ?? null;
+    const filePath = ctx?.filePath ?? sessionFile ?? previewFilePath ?? null;
+    if (!sessionId || !filePath) return null;
+    return {
+      agent: ctx?.agentId ?? agentId,
+      sessionId,
+      filePath,
+      cwd,
+      title: linkedSessionTitle ?? null,
+    };
+  }
+  function pickRelay(target: RelayTarget | null) {
+    setRelayPick(target);
+  }
+  function loadRelayOptions() {
+    const source = relaySource();
+    if (!source) return;
+    const targets = launchAgents
+      .filter((a) => a.id !== source.agent && a.binaryPath)
+      .map((a) => {
+        const remembered = localStorage.getItem(`ccode.lastProfile.${a.id}`);
+        const prof =
+          profiles.find((p) => p.id === remembered && p.agent === a.id) ?? profiles.find((p) => p.agent === a.id);
+        return { agent: a.id, model: prof?.models[0] ?? null };
+      });
+    invoke<RelayOptionDto[]>("relay_options", { source, targets })
+      .then(setRelayOptions)
+      .catch(() => setRelayOptions([]));
   }
   /**
    * 开聊前换目录（聊天项目弹层、把文件夹拖进来、终端空态卡的目录菜单）。随手聊目录可能还没建：与快速开聊同一个后端入口创建。
@@ -3174,6 +3252,17 @@ export const TerminalView = memo(function TerminalView({
     onStatus,
   ]);
 
+  // 接力那一份：有记录才能换给别家；生成中换不了
+  const relayAvailable = Boolean(relaySource());
+  const relayState = useMemo<RelayPickState>(
+    () => ({
+      available: relayAvailable,
+      blocked: attention === "working" || pendingReply ? "这一轮还在生成，等它结束再交给别家" : null,
+      pick: relayPick,
+      options: relayOptions,
+    }),
+    [relayAvailable, attention, pendingReply, relayPick, relayOptions],
+  );
   // 当前会话数据镜像给页面级主工作区聊天层
   useEffect(() => {
     onSessionUpdate(tabId, {
@@ -3207,6 +3296,7 @@ export const TerminalView = memo(function TerminalView({
       ptyQuiet,
       stalled,
       launchPick,
+      relay: relayState,
       skills: agentSkills,
       mcps: agentMcps,
       channel,
@@ -3242,6 +3332,7 @@ export const TerminalView = memo(function TerminalView({
     ptyQuiet,
     stalled,
     launchPick,
+    relayState,
     agentSkills,
     agentMcps,
     channel,
@@ -5345,7 +5436,14 @@ export const TerminalView = memo(function TerminalView({
     /** typeDroppedPrompt：CLI 没有启动注入参数（Kimi）时由调用方等 TUI 就绪后把指令打进输入框，
         这里按「已发出」收起启动栏、不复制不报错 */
     /** freshRun：不沿用标签上的旧 Run，另开一条（换权限重开：旧 Run 刚被停下、权限也变了，沿用会被身份校验拒掉） */
-    options?: { prompt?: string; readonly?: boolean; typeDroppedPrompt?: boolean; freshRun?: boolean },
+    /** relay：聊天里换一家接着做——Agent 已换成接手那家，resume = 接回它原来那段（null = 新开），不沿用标签上旧那家的会话 */
+    options?: {
+      prompt?: string;
+      readonly?: boolean;
+      typeDroppedPrompt?: boolean;
+      freshRun?: boolean;
+      relay?: { resume: string | null; provider: string | null };
+    },
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
     setNotice(null);
@@ -5501,9 +5599,14 @@ export const TerminalView = memo(function TerminalView({
     const freshRun = Boolean(options?.freshRun) || identityChange !== "same";
     const sessionMoved = identityChange === "agent" || identityChange === "cwd";
     const leftTaskDir = identityChange === "cwd";
-    const resumeFrom = sessionMoved ? undefined : (resumeId ?? resumeSessionId);
+    const relayLaunch = options?.relay;
+    const resumeFrom = relayLaunch
+      ? (relayLaunch.resume ?? undefined)
+      : sessionMoved
+        ? undefined
+        : (resumeId ?? resumeSessionId);
     // 原生分叉只在第一次启动用（launch 成功即从标签清掉）；换了目录 / Agent 分不了原会话
-    const forkFrom = resumeFrom || sessionMoved ? undefined : forkSessionId;
+    const forkFrom = relayLaunch || resumeFrom || sessionMoved ? undefined : forkSessionId;
     const isResume = Boolean(resumeFrom);
     const chrome = launchChromeBeforeMeasure({
       resume: isResume,
@@ -5626,7 +5729,7 @@ export const TerminalView = memo(function TerminalView({
         // 会话恢复（无则全新会话）；换了目录 / Agent 不再接原会话
         resumeSessionId: resumeFrom ?? null,
         forkSessionId: forkFrom ?? null,
-        resumeProvider: sessionMoved ? null : (resumeProvider ?? null),
+        resumeProvider: relayLaunch ? relayLaunch.provider : sessionMoved ? null : (resumeProvider ?? null),
         // 一键开步的首条指令（恢复会话由后端忽略注入）
         initialPrompt: (options?.prompt ?? promptText).trim() || null,
         linkClaimId: tabId,
@@ -6110,6 +6213,8 @@ export const TerminalView = memo(function TerminalView({
   async function sendMessage(text: string): Promise<ChatSendResult> {
     const message = text.trim();
     if (!message) return { error: null };
+    const relayTarget = relayPickRef.current;
+    if (relayTarget) return relaySend(message, relayTarget);
     // 发送链路以 PTY ref 为准，不依赖 running/activePtyId 的异步镜像状态。
     // 聊天层与终端层共享这个 PTY；刚启动或刚从 shell 回落时，React 状态可能尚未完成一帧更新。
     const currentPtyId = ptyIdRef.current;
@@ -6156,19 +6261,22 @@ export const TerminalView = memo(function TerminalView({
     }
 
     // 恢复占位（重启后留下、还没接回的标签）与只看没接的对话（列表里点开的）：先按原会话恢复，再把这句写进去。
-    // 恢复启动会忽略首条指令注入，直接带 prompt 启动这句话会被吞掉
-    if (!running && !shellActive && resumeSessionId && !customRuntimeId) {
+    // 恢复启动会忽略首条指令注入，直接带 prompt 启动这句话会被吞掉。
+    // 接力时接手那家没起来、退回了原来那家：同样接回原来那段（relayBackRef）
+    const backTo = relayBackRef.current;
+    if (!running && !shellActive && (resumeSessionId || backTo) && !customRuntimeId) {
       if (!selectedProfile) {
         return { error: "上次使用的配置已不存在，切到终端在启动栏重新选择" };
       }
       // 摆着的记录在接回途中不清掉：接上之后由会话文件刷新接替，不闪回空态（showEarlyBubble 一并管）
       const early = showEarlyBubble(message);
       liveHoldRef.current = true;
-      const res = await launch(undefined, { prompt: "" }).finally(endEarlyBubbleLaunch);
+      const res = await launch(backTo ?? undefined, { prompt: "" }).finally(endEarlyBubbleLaunch);
       if (!res) {
         early.retract();
         return { error: launchCancelRef.current ?? error ?? "恢复会话失败，请切到终端检查" };
       }
+      relayBackRef.current = null;
       early.reRegister();
       await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current) return { error: null };
@@ -6227,6 +6335,132 @@ export const TerminalView = memo(function TerminalView({
   }
 
   /**
+   * 聊天里换一家接着做（docs/design-chat-relay.md §3.3 / §4.4）：写好简报、停下原来那家，同一个标签换成接手那家——
+   * 新开一段时第一句 =「接力抬头 + ---- + 这句原话」；接回它原来那段时先接回，再把「补充抬头 + 原话」作为这一轮发出。
+   * 任一步失败停在原处报原因：写简报失败什么都不动；接手那家没起来就退回原来那家，下一句接回原来那段
+   */
+  async function relaySend(message: string, target: RelayTarget): Promise<ChatSendResult> {
+    const source = relaySource();
+    if (!source) {
+      setRelayPick(null);
+      return { error: "这段对话还没有记录，直接换 Agent 开聊即可" };
+    }
+    if (attention === "working" || pendingReplyRef.current) {
+      return { error: "等这一轮结束再交给别家" };
+    }
+    if (!profiles.some((p) => p.id === target.profileId)) {
+      return { error: `${agentLabel(target.agentId)} 的这条连接已不在，去换配置层重选` };
+    }
+    const early = showEarlyBubble(message);
+    let prepared: RelayPrepareDto;
+    try {
+      prepared = await invoke<RelayPrepareDto>("relay_prepare", {
+        source,
+        targetAgent: target.agentId,
+        resumeSession: target.mode === "resume" ? target.resumeSession : null,
+        withWords: true,
+      });
+    } catch (e) {
+      early.retract();
+      endEarlyBubbleLaunch();
+      return { error: `没能交给 ${agentLabel(target.agentId)}：${String(e)}` };
+    }
+    const targetDet = launchAgents.find((a) => a.id === target.agentId);
+    return new Promise<ChatSendResult>((resolve) => {
+      relayJobRef.current = {
+        target,
+        prepared,
+        message,
+        source: { agentId: source.agent, profileId, model, sessionId: source.sessionId },
+        early,
+        resolve,
+      };
+      agentPickedByHandRef.current = true;
+      setRelayPick(null);
+      setRelayOptions([]);
+      setAgentId(target.agentId);
+      setProfileId(target.profileId);
+      setModel(target.model);
+      setModelKept(false);
+      // 思考档跟着换家回到默认；接手那家没有当前这档原生权限就回到「按本机设置」
+      onPatchLaunch?.(tabId, {
+        effort: null,
+        ...(permissionMode && !targetDet?.permissionModes?.includes(permissionMode) ? { permissionMode: null } : {}),
+      });
+      setRelayTick((n) => n + 1);
+      // 原来那家还在跑：先停（同换连接），回落 shell 后下面的 effect 再按接手那家起
+      if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
+    });
+  }
+  async function runRelayJob(job: NonNullable<typeof relayJobRef.current>): Promise<ChatSendResult> {
+    const { target, prepared, message, early, source } = job;
+    const backToSource = (why: string): ChatSendResult => {
+      early.retract();
+      setAgentId(source.agentId);
+      setProfileId(source.profileId);
+      setModel(source.model);
+      relayBackRef.current = source.sessionId;
+      return {
+        error: `${agentLabel(target.agentId)} 没起来（${why}）。已回到 ${agentLabel(source.agentId)}，这句没发出，再发一次会接回原来那段`,
+      };
+    };
+    if (prepared.kind === "full" && prepared.framing) {
+      const pack = await projectPackFor(cwd);
+      const body = composeRelayPrompt(prepared.framing, message);
+      const firstPrompt = pack ? composeLaunchPrompt(pack, body) : body;
+      setPromptText(firstPrompt);
+      setShowPrompt(true);
+      const res = await launch(undefined, {
+        prompt: firstPrompt,
+        typeDroppedPrompt: true,
+        freshRun: true,
+        relay: { resume: null, provider: null },
+      }).finally(endEarlyBubbleLaunch);
+      if (!res) return backToSource(launchCancelRef.current ?? error ?? "启动失败");
+      early.reRegister();
+      lastSentRef.current = firstPrompt;
+      if (res.promptDropped) {
+        if (!mountedRef.current) return { error: null };
+        if (ptyIdRef.current !== res.ptyId) {
+          early.retract();
+          return { error: "终端已重新启动，这句没有发出，请再发一次" };
+        }
+        armPtyWorking();
+        const result = await writeChatMessage(res.ptyId, firstPrompt);
+        if (result.error) {
+          disarmPtyWorking();
+          early.retract();
+        }
+        return result;
+      }
+      return { error: null };
+    }
+    // 接回原来那段：接回不能在启动参数里带话（pty.rs），接上之后照普通一句发
+    liveHoldRef.current = true;
+    const res = await launch(prepared.resumeSessionId ?? undefined, {
+      prompt: "",
+      freshRun: true,
+      relay: { resume: prepared.resumeSessionId, provider: prepared.resumeProvider },
+    }).finally(endEarlyBubbleLaunch);
+    if (!res) return backToSource(launchCancelRef.current ?? error ?? "接回失败");
+    early.reRegister();
+    await new Promise((r) => setTimeout(r, 1200));
+    if (!mountedRef.current) return { error: null };
+    if (ptyIdRef.current !== res.ptyId) {
+      early.retract();
+      return { error: "终端已重新启动，这句没有发出，请再发一次" };
+    }
+    const text = prepared.kind === "delta" && prepared.framing ? composeRelayPrompt(prepared.framing, message) : message;
+    armPtyWorking();
+    const result = await writeChatMessage(res.ptyId, text);
+    if (result.error) {
+      disarmPtyWorking();
+      early.retract();
+    }
+    return result;
+  }
+
+  /**
    * 要先启动 / 接回 Agent 的发送（几秒）：气泡先出。launch 开头的 resetLink 会清对话和待确认列表——
    * 期间置 keepPreviewConvRef 让画面上的（连同这条气泡）留着，launch 回来马上重新登记成待确认，接上后会话文件刷新不把它冲掉
    * （2026-10-25 用户：输入框清空了，聊天里却过几秒才出来）
@@ -6279,6 +6513,34 @@ export const TerminalView = memo(function TerminalView({
     setPage("sessions");
   }
 
+  // 接力：Agent 换好、这一帧的 launch 已经是接手那家，再起（relaySend 挂的活）
+  useEffect(() => {
+    const job = relayJobRef.current;
+    if (!job || agentId !== job.target.agentId || profileId !== job.target.profileId || running) return;
+    relayJobRef.current = null;
+    void runRelayJob(job).then(job.resolve);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relayTick, agentId, profileId, running]);
+  // 接手那段认出来了：第一句带着接力抬头，按简报文件名补记「接手的是这段」（对话页 ⋯ 入口开的也走这里）
+  const relayAttachedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!linkedSessionId || linkState !== "linked") return;
+    const owner = linkCtxRef.current?.agentId ?? agentId;
+    for (const m of conv.slice(0, 3)) {
+      if (m.role !== "user") continue;
+      const text = m.blocks.find((b) => b.kind === "text")?.text ?? "";
+      const name = splitRelayPrompt(text)?.briefName;
+      const key = `${name}\n${linkedSessionId}`;
+      if (!name || relayAttachedRef.current.has(key)) continue;
+      relayAttachedRef.current.add(key);
+      invoke<boolean>("relay_attach", { briefName: name, agent: owner, sessionId: linkedSessionId })
+        .then((changed) => {
+          if (changed) void useAppStore.getState().loadSessions(true);
+        })
+        .catch(() => {});
+    }
+  }, [conv, linkedSessionId, linkState, agentId]);
+
   // 动作表：actionsRef 每次渲染更新为最新闭包；挂载时只注册一次稳定转发对象，
   // 父级查找/聊天发送等调用时穿透 ref，不会拿到首次渲染的陈旧 agent/profile/model/cwd
   const actionsRef = useRef<FocusTabActions>({
@@ -6302,6 +6564,8 @@ export const TerminalView = memo(function TerminalView({
     pickLaunchAgent: () => {},
     pickLaunchProfile: () => {},
     pickLaunchModel: () => {},
+    pickRelay: () => {},
+    loadRelayOptions: () => {},
     restoreHere: () => {},
     openDirMenu: () => {},
     pickDir: () => {},
@@ -6374,6 +6638,8 @@ export const TerminalView = memo(function TerminalView({
     pickLaunchAgent,
     pickLaunchProfile,
     pickLaunchModel,
+    pickRelay,
+    loadRelayOptions,
     restoreHere: () => void restoreTask(),
     openDirMenu: (x, y) => setWelcomeDirMenu({ x, y }),
     pickDir: (pick) => void pickDir(pick),
@@ -6420,6 +6686,8 @@ export const TerminalView = memo(function TerminalView({
       pickLaunchAgent: (id) => actionsRef.current.pickLaunchAgent(id),
       pickLaunchProfile: (id) => actionsRef.current.pickLaunchProfile(id),
       pickLaunchModel: (m) => actionsRef.current.pickLaunchModel(m),
+      pickRelay: (t) => actionsRef.current.pickRelay(t),
+      loadRelayOptions: () => actionsRef.current.loadRelayOptions(),
       restoreHere: () => actionsRef.current.restoreHere(),
       openDirMenu: (x, y) => actionsRef.current.openDirMenu(x, y),
       pickDir: (pick) => actionsRef.current.pickDir(pick),

@@ -193,13 +193,27 @@ export default function DigestPicker({
     setLocalError(null);
     try {
       await writeBackIfChanged();
-      await invoke("mark_handoff", {
-        targetAgent: t.id,
-        targetCwd: source.cwd,
-        fromAgent: source.agent,
-        fromSessionId: source.sessionId,
-      });
-      const prompt = promptFor(brief);
+      let prompt = promptFor(brief);
+      if (t.id !== source.agent) {
+        // 换一家：按简报文件名记接力关系（relay.rs），第一句带接力抬头，聊天里画成「前面由谁做」的卡
+        prompt = await invoke<string>("relay_register_brief", {
+          briefPath: brief.filePath,
+          source: {
+            agent: source.agent,
+            sessionId: source.sessionId,
+            filePath: source.filePath,
+            cwd: source.cwd,
+            title: source.title,
+          },
+        });
+      } else {
+        await invoke("mark_handoff", {
+          targetAgent: t.id,
+          targetCwd: source.cwd,
+          fromAgent: source.agent,
+          fromSessionId: source.sessionId,
+        });
+      }
       // 已选定发送目标：简报任务标记已消费，收件箱「待发送」摘除
       consumeDigestJob();
       // 没有启动注入参数的（Kimi）由终端等输入框就绪后自动写进去，不再停在这里让人复制

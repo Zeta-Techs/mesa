@@ -1,0 +1,72 @@
+[
+ {
+  "name": "整份交接",
+  "framing": {
+   "kind": "full",
+   "fromAgent": "codex",
+   "fromSession": "abc-123",
+   "briefRel": ".ccode/handoff-20261110T120000Z-ab12.md",
+   "withWords": true
+  },
+  "text": "〔Mesa 接力〕这段对话之前由 Codex（会话 abc-123）做，交接简报在 .ccode/handoff-20261110T120000Z-ab12.md。先读完它，再按 ---- 下面我这句话做；不要复述简报。\n----\n接着把测试修好",
+  "relay": {
+   "briefName": "handoff-20261110T120000Z-ab12.md",
+   "delta": false,
+   "said": "接着把测试修好",
+   "from": "Codex",
+   "roundsBy": null
+  }
+ },
+ {
+  "name": "对话页入口没有人话",
+  "framing": {
+   "kind": "full",
+   "fromAgent": "kimi",
+   "fromSession": "k-9",
+   "briefRel": ".ccode/handoff-20261110T1-cd34.md",
+   "withWords": false
+  },
+  "text": "〔Mesa 接力〕这段对话之前由 Kimi Code（会话 k-9）做，交接简报在 .ccode/handoff-20261110T1-cd34.md。先读完它，再按简报接着做；不要复述简报。",
+  "relay": {
+   "briefName": "handoff-20261110T1-cd34.md",
+   "delta": false,
+   "said": "",
+   "from": "Kimi Code",
+   "roundsBy": null
+  }
+ },
+ {
+  "name": "换回补充",
+  "framing": {
+   "kind": "delta",
+   "roundsBy": "Codex 做了 2 轮、Kimi Code 做了 1 轮",
+   "briefRel": ".ccode/handoff-20261110T2-ef56.md"
+  },
+  "text": "〔Mesa 接力 · 补充〕你离开后，Codex 做了 2 轮、Kimi Code 做了 1 轮，补充简报在 .ccode/handoff-20261110T2-ef56.md。先读完它，再按 ---- 下面我这句话做；简报和工作区比你记得的新。\n----\n回来了，接着写第三节",
+  "relay": {
+   "briefName": "handoff-20261110T2-ef56.md",
+   "delta": true,
+   "said": "回来了，接着写第三节",
+   "from": null,
+   "roundsBy": "Codex 做了 2 轮、Kimi Code 做了 1 轮"
+  }
+ },
+ {
+  "name": "项目说明在前",
+  "framing": null,
+  "text": "你正在项目「X」里。\n----\n〔Mesa 接力〕这段对话之前由 Codex（会话 abc-123）做，交接简报在 .ccode/handoff-20261110T120000Z-ab12.md。先读完它，再按 ---- 下面我这句话做；不要复述简报。\n----\n多行\n第二行",
+  "relay": {
+   "briefName": "handoff-20261110T120000Z-ab12.md",
+   "delta": false,
+   "said": "多行\n第二行",
+   "from": "Codex",
+   "roundsBy": null
+  }
+ },
+ {
+  "name": "普通一句",
+  "framing": null,
+  "text": "〔Mesa 不是接力〕普通一句",
+  "relay": null
+ }
+]

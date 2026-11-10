@@ -161,6 +161,7 @@ export type {
   FocusTabActions,
   LaunchPickState,
   NativePermissionMode,
+  RelayPickState,
   SessionLinkState,
   TabLaunchPatch,
   TabStatus,
@@ -3715,6 +3716,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         trustPrompt={sessionByTab[t.id]?.trustPrompt ?? null}
                         ptyQuiet={sessionByTab[t.id]?.ptyQuiet ?? false}
                         launchPick={sessionByTab[t.id]?.launchPick ?? null}
+                        relay={sessionByTab[t.id]?.relay ?? null}
+                        onRelayPick={(target) => tabActionsRef.current.get(t.id)?.pickRelay(target)}
+                        onRelayLoad={() => tabActionsRef.current.get(t.id)?.loadRelayOptions()}
                         recordPending={Boolean(t.resumeSessionId && !t.customRuntimeId && !sessionByTab[t.id])}
                         onRestore={() => tabActionsRef.current.get(t.id)?.restoreHere()}
                         onDraftChange={(has) => reportDraft(t.id, has)}

@@ -80,21 +80,40 @@ export default function HandoffPicker({
     setBusy(t.id);
     setError(null);
     try {
-      const brief = await invoke<HandoffBriefDto>("build_handoff_brief", {
-        agent: source.agent,
-        sessionId: source.sessionId,
-        filePath: source.filePath,
-        cwd: source.cwd,
-        title: source.title,
-        targetPath: null,
-      });
-      await invoke("mark_handoff", {
-        targetAgent: t.id,
-        targetCwd: source.cwd,
-        fromAgent: source.agent,
-        fromSessionId: source.sessionId,
-      });
-      const prompt = `读 ${relPath(brief.filePath)} 接力简报，按这份简报接着做`;
+      // 换一家：relay_prepare 写交接简报并按简报文件名记接力关系；同一家另开照旧（不算接力）
+      let prompt: string;
+      if (t.id !== source.agent) {
+        const prepared = await invoke<{ framing: string | null }>("relay_prepare", {
+          source: {
+            agent: source.agent,
+            sessionId: source.sessionId,
+            filePath: source.filePath,
+            cwd: source.cwd,
+            title: source.title,
+          },
+          targetAgent: t.id,
+          resumeSession: null,
+          withWords: false,
+        });
+        if (!prepared.framing) throw new Error("没能写出交接简报");
+        prompt = prepared.framing;
+      } else {
+        const brief = await invoke<HandoffBriefDto>("build_handoff_brief", {
+          agent: source.agent,
+          sessionId: source.sessionId,
+          filePath: source.filePath,
+          cwd: source.cwd,
+          title: source.title,
+          targetPath: null,
+        });
+        await invoke("mark_handoff", {
+          targetAgent: t.id,
+          targetCwd: source.cwd,
+          fromAgent: source.agent,
+          fromSessionId: source.sessionId,
+        });
+        prompt = `读 ${relPath(brief.filePath)} 接力简报，按这份简报接着做`;
+      }
       // 没有启动注入参数的（Kimi）由终端等输入框就绪后自动写进去，不再停在这里让人复制
       goTerminal(t, prompt);
     } catch (e) {
@@ -122,7 +141,7 @@ export default function HandoffPicker({
         <div className="px-3 pb-2">
           <p className="font-medium text-l1">◈ 接力到…</p>
           <p className="mt-1 text-xs text-l4">
-            选中后才生成。用户原话逐条原文带上，助手正文附在文末供核对。要一份「该接上什么」的结论，用「提炼接力」。
+            选中后才生成。你说过的话逐条原文带上，最近几轮的回答原文、更早的压成一行，每轮改了哪些文件也写上。要一份「该接上什么」的结论，用「提炼接力」。
           </p>
         </div>
         {error && <InlineNotice tone="err" className="px-3 pb-1">{error}</InlineNotice>}

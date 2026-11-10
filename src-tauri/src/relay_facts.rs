@@ -62,6 +62,8 @@ pub(crate) struct CommandFact {
     pub tail: Option<String>,
     /// 命令涉及凭据类文件：输出不附
     pub sensitive: bool,
+    /// 记录里有这条命令的结果（没有 = 被打断或还在跑）
+    pub has_result: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -308,7 +310,7 @@ fn command_fact(input: &str, result: Option<(&String, bool)>) -> CommandFact {
         (true, false, Some(t)) => Some(output_tail(t)),
         _ => None,
     };
-    CommandFact { line, exit, failed, tail, sensitive }
+    CommandFact { line, exit, failed, tail, sensitive, has_result: text.is_some() }
 }
 
 fn output_tail(text: &str) -> String {

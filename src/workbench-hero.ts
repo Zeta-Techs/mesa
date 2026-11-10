@@ -12,7 +12,7 @@ import {
   pickRecoverableRun,
 } from "./run-model.ts";
 import { goalBucket } from "./project-tasks.ts";
-import { splitLaunchPrompt } from "./project-context.ts";
+import { userSaid } from "./chat-relay.ts";
 import { projectNowLine } from "./project-status.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
 import {
@@ -800,9 +800,9 @@ const LAST_SAID_INJECTED_RE = /^(?:<[a-z][\w-]*[\s>]|caveat:)/i;
 const LAST_SAID_INTERRUPT_RE =
   /\[?\s*request interrupted by user[^\]]*\]?|请求(?:已)?中断|被用户中断/gi;
 
-/** Mesa 开对话时把项目上下文包塞在第一句话前面（composeLaunchPrompt）：包不是人话，只留你说的（splitLaunchPrompt） */
+/** Mesa 开对话时把项目上下文包、接力抬头塞在那句话前面：都不是人话，只留你说的（chat-relay.ts userSaid） */
 function stripProjectPack(text: string): string {
-  return splitLaunchPrompt(text).said;
+  return userSaid(text);
 }
 
 function clampLastSaid(text: string): string {
