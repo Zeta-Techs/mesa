@@ -1107,7 +1107,7 @@ export default function ProjectTree({
     fork?: ForkRow,
     /** 人手在项目里置顶的（流程对话行尾写步骤名，不另标）：行尾一枚小图钉 */
     projectPinMark = false,
-    /** 流程对话按步骤分组后写的角色名（商量任务书 / 干活 / 第 k 路 / 收尾）：替掉标题，完整标题留在悬停里 */
+    /** 流程对话按步骤分组后写的角色名（商量任务书 / 执行任务书 / 第 k 路 / 收尾）：替掉标题，完整标题留在悬停里 */
     label?: string | null,
   ) {
     const key = chatKey(s);
@@ -1544,7 +1544,7 @@ export default function ProjectTree({
       <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
         {opened.map((r) => renderOpenRow(r))}
         {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
-            每行写角色（商量任务书 / 干活 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
+            每行写角色（商量任务书 / 执行任务书 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
         {pinnedRows.length > 0 && (
           <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 ? "pb-1.5" : ""}`}>
             {renderStepGroups(pinnedRows, project, name, folderKey, forkOpenOf)}

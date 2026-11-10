@@ -566,8 +566,8 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
   const { groups, manual } = groupStepChats(rows);
   assert.deepEqual(manual.map((r) => r.s.sessionId), ["pin"]);
   assert.deepEqual(groups.map((g) => [g.index, g.step]), [[1, "文献检索与筛选"], [2, "文献精读与笔记"]]);
-  // 检索：人改过名的照写标题（null），认不出角色的 null；两段「干活」各接日期
-  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "干活 · 11-09", "干活 · 11-10"]);
+  // 检索：人改过名的照写标题（null），认不出角色的 null；两段「执行任务书」各接日期
+  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "执行任务书 · 11-09", "执行任务书 · 11-10"]);
   assert.equal(groups[0].lanes, null);
   // 精读：商量在外面，分路子组按路号、收尾最后，做完几路
   assert.deepEqual(groups[1].rows.map((r) => r.label), ["商量任务书"]);

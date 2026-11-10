@@ -625,7 +625,7 @@ export function railNavIndex(key: string, current: number, count: number): numbe
 
 // ===== 流程对话按步骤分组（2026-11-10 用户拍板：长标题 + 行尾步骤名一窄就截断、分路几段认不出是第几路）=====
 
-/** 一行流程对话：label = 侧栏写的角色名（商量任务书 / 干活 / 第 k 路 / 收尾）；null = 认不出角色或人改过名，照旧写标题 */
+/** 一行流程对话：label = 侧栏写的角色名（商量任务书 / 执行任务书 / 第 k 路 / 收尾）；null = 认不出角色或人改过名，照旧写标题 */
 export interface StepChatRow {
   row: ForkRow;
   label: string | null;
@@ -643,7 +643,8 @@ export interface StepChatGroup {
   lanes: { rows: StepChatRow[]; total: number; done: number } | null;
 }
 
-const ROLE_NAME: Record<string, string> = { discuss: "商量任务书", work: "干活", merge: "收尾" };
+// 「执行任务书」与「商量任务书」成对（2026-11-10 用户：「名字叫干活太草率了吧」）
+const ROLE_NAME: Record<string, string> = { discuss: "商量任务书", work: "执行任务书", merge: "收尾" };
 
 function mmdd(at: string | null | undefined): string {
   const m = /^\d{4}-(\d{2})-(\d{2})/.exec(at ?? "");

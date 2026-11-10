@@ -1310,14 +1310,14 @@ test("项目内置顶：流程对话按步骤分组、每行写角色，组头�
     assert.match(header("文献检索").textContent ?? "", /①\s*文献检索\s*1 段/);
     assert.match(header("综述大纲").textContent ?? "", /②\s*综述大纲/);
     assert.equal(header("综述大纲").getAttribute("aria-expanded"), "false");
-    assert.deepEqual(pinnedTitles(), ["干活"]);
-    assert.ok(view.button("干活").getAttribute("title")?.includes("文献检索"), "完整标题留在悬停里");
+    assert.deepEqual(pinnedTitles(), ["执行任务书"]);
+    assert.ok(view.button("执行任务书").getAttribute("title")?.includes("文献检索"), "完整标题留在悬停里");
     assert.equal(view.host.querySelector('[aria-label="综述流程测试 里置顶的对话"] [data-chat-origin]'), null, "不再挂行尾步骤名");
     await view.act(async () => header("综述大纲").click());
-    assert.deepEqual(pinnedTitles(), ["干活", "商量任务书"]);
+    assert.deepEqual(pinnedTitles(), ["执行任务书", "商量任务书"]);
     assert.equal(titles().length, 7, "两组都开着：2 段流程对话 + 下面照旧列 5 段");
     assert.deepEqual(JSON.parse(localStorage.getItem("ccode.railStepGroups")!), { "/work/review\n综述大纲": true });
-    await view.act(async () => view.button("「干活」的更多操作").click());
+    await view.act(async () => view.button("「执行任务书」的更多操作").click());
     await view.act(async () => view.button("取消项目内置顶").click());
     assert.deepEqual(pinnedTitles(), ["商量任务书"]);
     assert.deepEqual(JSON.parse(localStorage.getItem("ccode.projectChatPins")!), { pinned: [], dropped: ["claude-code\nst1"] });
