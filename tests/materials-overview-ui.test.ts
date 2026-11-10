@@ -65,14 +65,17 @@ test("资料全貌：一行一份资料、落后写清、在途补料单可停�
     ], "2");
     const text = host.textContent ?? "";
     assert.match(text, /资料全貌/);
-    assert.match(text, /3 步开过工 · 1 步没跟上上游 · 1 张补料单在途/);
+    // 折起行直接说哪一步没对齐、为什么（精读：纳入 2 篇、索引里只有 1 篇 → 新纳入 1 篇没读，压过「落后于」），旁边「去这一步」
+    assert.match(text, /「文献精读与笔记」新纳入 1 篇没读 · 1 张补料单在途去这一步/);
     assert.match(text, /文献检索与筛选 · 文献库进行中纳入 2 篇 · 已有全文 1 · 缺全文 1/);
     assert.match(text, /已写笔记 1 \/ 1 篇/);
-    assert.match(text, /落后于「文献检索与筛选」，还没跟进/);
+    assert.doesNotMatch(text, /已对齐/, "对齐时不写字");
     assert.match(text, /补料单「综述大纲」→「文献检索与筛选」（11-0[67] 发出）：在补 · 补完保存后接着跟进「文献精读与笔记」/);
     // 点步骤名跳过去
     await act(async () => ([...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("文献精读与笔记")) as HTMLButtonElement).click());
     assert.deepEqual(focused, [1]);
+    await act(async () => ([...host.querySelectorAll("button")].find((b) => b.textContent === "去这一步") as HTMLButtonElement).click());
+    assert.deepEqual(focused, [1, 1]);
     // 停掉这条链
     await act(async () => ([...host.querySelectorAll("button")].find((b) => b.textContent === "停掉这条链") as HTMLButtonElement).click());
     assert.ok(invokes.includes("rework_chain_stop"));

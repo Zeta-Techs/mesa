@@ -118,8 +118,8 @@ components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、视频卡（ChatVideoCard：同 MediaPreview 经 grant_media_url 放行后 asset 流式播放，读不到不出卡）、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
-components/MaterialsOverview.tsx  # 资料全貌（ProjectGroup 流程线上方，2026-11-06）：读项目根 included.json / index.json / outline.md 与 rework_list，一行一步现状 + 对齐，
-                             #   在途补料单可「停掉这条链」（rework_chain_stop）；两步以上开过工才出，没跟上或有在途时默认展开（tests/materials-overview-ui.test.ts）
+components/MaterialsOverview.tsx  # 资料全貌（ProjectGroup 流程线上方，2026-11-06）：读 included.json / index.json / outline.md（已保存的读项目根、没保存的读它的工作副本）与 rework_list，一行一步现状 + 没对齐的原因，
+                             #   精读步另算没读的新纳入篇（notesFollowupIds，同步骤卡「跟进更新」）；折起行直接说哪一步没对齐 + 「去这一步」；在途补料单可「停掉这条链」，有在途时默认展开（tests/materials-overview-ui.test.ts）
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
                              #   schematic-forge 渲出的 PPTX：figurePreview 显示同名 PNG，PPTX 更新时标「生成时的预览」

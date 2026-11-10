@@ -169,6 +169,8 @@ export function overviewRow(input: {
   staleUpstream?: string | null;
   mergedAt?: string | null;
   counts: string | null;
+  /** 精读步：纳入清单里有、这一步还没读的篇数。「待跟进」只看有没有并入，解冲突并入后就消了，篇却没读（2026-11-10 HER） */
+  unreadNew?: number;
 }): OverviewRow | null {
   const state =
     input.key === "done"
@@ -182,11 +184,13 @@ export function overviewRow(input: {
             : null;
   if (!state) return null;
   const stale = input.staleUpstream;
-  const align: OverviewRow["align"] = stale
-    ? { text: input.key === "done" ? `落后于「${stale}」，还没跟进` : `「${stale}」有新内容还没并进来`, tone: "warn" }
-    : input.key === "done"
-      ? { text: "已对齐", tone: "ok" }
-      : { text: "", tone: "idle" };
+  // 对齐时不写字（2026-11-10 用户：一件事别说两遍），只在没对齐时用橙字写原因
+  const align: OverviewRow["align"] =
+    (input.unreadNew ?? 0) > 0
+      ? { text: `新纳入 ${input.unreadNew} 篇没读`, tone: "warn" }
+      : stale
+        ? { text: input.key === "done" ? `落后于「${stale}」，还没跟进` : `「${stale}」有更新还没并进来`, tone: "warn" }
+        : { text: "", tone: "idle" };
   return { name: input.name, asset: input.asset, state, counts: input.counts, align };
 }
 
@@ -207,11 +211,13 @@ export function reworkLine(
   return { text: parts.join(" · "), chainActive: where.kind === "waiting" || where.kind === "next" };
 }
 
-/** 折起时那一行：几份资料、几份没对齐、几张补料单在途；都对齐、没在途时说「都对齐了」 */
+/** 折起时那一行：只有一步没对齐就直接说是哪一步、为什么（旁边给「去这一步」）；几步没对齐说几步；都对齐说「都对齐了」；
+ *  再接在途的补料单。不写「N 步开过工」（2026-11-10 用户：资料全貌平时只留一行，有事才说事） */
 export function overviewSummary(rows: readonly OverviewRow[], inFlight: number): string {
-  const behind = rows.filter((r) => r.align.tone === "warn").length;
-  const parts = [`${rows.length} 步开过工`];
-  parts.push(behind > 0 ? `${behind} 步没跟上上游` : "都对齐了");
+  const behind = rows.filter((r) => r.align.tone === "warn");
+  const parts = [
+    behind.length === 1 ? `「${behind[0].name}」${behind[0].align.text}` : behind.length > 1 ? `${behind.length} 步没跟上` : "都对齐了",
+  ];
   if (inFlight > 0) parts.push(`${inFlight} 张补料单在途`);
   return parts.join(" · ");
 }

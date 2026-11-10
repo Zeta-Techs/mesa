@@ -4,7 +4,7 @@ import { FoldMark } from "./PageFrame";
 import { readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
 import { toast } from "../toast";
 import type { SkillProvides } from "../skill-slots";
-import type { ReworkDto } from "../step-loop";
+import { notesFollowupIds, type ReworkDto } from "../step-loop";
 import {
   assetCounts,
   assetFilesFor,
@@ -47,40 +47,58 @@ export default function MaterialsOverview({
 }) {
   /** 每一步的机械计数（按步骤名；读不到的没有） */
   const [counts, setCounts] = useState<Record<string, string | null>>({});
+  /** 精读步还没读的新纳入篇数（按步骤名） */
+  const [unread, setUnread] = useState<Record<string, number>>({});
   const [reworks, setReworks] = useState<ReworkDto[]>([]);
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [tick, setTick] = useState(0);
 
   const kinds = steps.map((st) => stepKind(st, provides));
   // 开过工的步骤要读哪些文件：同一份文件只读一次（检索和精读都要 included.json）
+  // 还没保存的（进行中 / 待评审）从它的工作副本里数：项目里那份还是上一版，甚至没有（2026-11-10 HER 精读待评审那行是空的）
   const plan = steps
-    .map((st, i) => ({ st, kind: kinds[i], started: !!statuses[i]?.key && statuses[i].key !== "pending" }))
+    .map((st, i) => ({ st, kind: kinds[i], status: statuses[i], started: !!statuses[i]?.key && statuses[i].key !== "pending" }))
     .filter((x) => x.started)
-    .map((x) => ({ name: x.st.name, kind: x.kind, files: assetFilesFor(x.kind, x.st.expectedArtifacts ?? []) }));
-  const planKey = plan.map((p) => `${p.name}:${p.kind}:${p.files.map((f) => f.path).join("+")}`).join("|");
+    .map((x) => ({
+      name: x.st.name,
+      kind: x.kind,
+      files: assetFilesFor(x.kind, x.st.expectedArtifacts ?? []),
+      root: (x.status?.key !== "done" && x.status?.ws?.status === "active" && x.status.ws.worktreePath) || projectPath,
+      liveRoot: (x.status?.ws?.status === "active" && x.status.ws.worktreePath) || null,
+    }));
+  const planKey = plan.map((p) => `${p.name}:${p.kind}:${p.root}:${p.liveRoot ?? ""}:${p.files.map((f) => f.path).join("+")}`).join("|");
 
   useEffect(() => {
     let stale = false;
-    const read = async (path: string, ledger?: boolean) => {
+    const read = async (root: string, path: string, ledger?: boolean) => {
       try {
-        const f = ledger ? await readResearchLedger(projectPath, path) : await readResearchFile(projectPath, path);
+        const f = ledger ? await readResearchLedger(root, path) : await readResearchFile(root, path);
         return f.truncated ? null : f.text;
       } catch {
         return null;
       }
     };
     void (async () => {
-      const paths = new Map<string, { ledger?: boolean }>();
-      for (const p of plan) for (const f of p.files) paths.set(f.path, { ledger: f.ledger });
+      const paths = new Map<string, { root: string; path: string; ledger?: boolean }>();
+      for (const p of plan) for (const f of p.files) paths.set(`${p.root}\n${f.path}`, { root: p.root, path: f.path, ledger: f.ledger });
       const texts = new Map<string, string | null>();
-      await Promise.all([...paths].map(async ([path, o]) => texts.set(path, await read(path, o.ledger))));
+      await Promise.all([...paths].map(async ([key, o]) => texts.set(key, await read(o.root, o.path, o.ledger))));
+      // 精读步：项目里的纳入清单 vs 这一步工作副本的索引，没读的新纳入篇（同步骤卡「跟进更新」的判断）
+      const unreadNext: Record<string, number> = {};
+      const included = plan.some((p) => p.kind === "notes") ? await read(projectPath, "papers/included.json", true) : null;
+      for (const p of plan) {
+        if (p.kind !== "notes" || !included) continue;
+        const index = (p.liveRoot ? await read(p.liveRoot, "notes/index.json", true) : null) ?? (await read(projectPath, "notes/index.json", true));
+        const n = index ? (notesFollowupIds(included, index)?.length ?? 0) : 0;
+        if (n > 0) unreadNext[p.name] = n;
+      }
       const list = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
       if (stale) return;
       const next: Record<string, string | null> = {};
       for (const p of plan) {
         const files: AssetFiles = { reports: [] };
         for (const f of p.files) {
-          const text = texts.get(f.path) ?? null;
+          const text = texts.get(`${p.root}\n${f.path}`) ?? null;
           if (f.key === "reports") {
             if (text) files.reports!.push(text);
           } else files[f.key] = text;
@@ -93,6 +111,7 @@ export default function MaterialsOverview({
       }
       if (stale) return;
       setCounts(next);
+      setUnread(unreadNext);
       setReworks(list);
     })();
     return () => {
@@ -116,6 +135,7 @@ export default function MaterialsOverview({
       staleUpstream: s.ws?.staleUpstream ?? null,
       mergedAt: s.ws?.mergedAt ?? null,
       counts: counts[st.name] ?? null,
+      unreadNew: unread[st.name],
     });
     if (row) rows.push({ index: i, row });
   });
@@ -124,7 +144,9 @@ export default function MaterialsOverview({
     .filter((x): x is { r: ReworkDto; line: { text: string; chainActive: boolean } } => !!x.line)
     .slice(0, 4);
   if (rows.length < 2) return null;
-  const autoOpen = inFlight.length > 0 || rows.some((x) => x.row.align.tone === "warn");
+  // 平时折成一行；没对齐的那一步写在这一行上、旁边给「去这一步」，不为它展开。补料单在途（有「停掉这条链」）才自动展开
+  const autoOpen = inFlight.length > 0;
+  const behind = rows.filter((x) => x.row.align.tone === "warn");
   const open = userOpen ?? autoOpen;
 
   async function stopChain(id: string) {
@@ -139,17 +161,30 @@ export default function MaterialsOverview({
 
   return (
     <section aria-label="资料全貌" className="mb-2">
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-center gap-1.5 text-left"
-        onClick={() => setUserOpen(!open)}
-        aria-expanded={open}
-        title="前面几步轮流打磨同几份资料：每份现在什么样、跟上游对齐没有、有没有在途的回头"
-      >
-        <FoldMark open={open} />
-        <span className="shrink-0 text-xs font-medium text-l3">资料全貌</span>
-        <span className="min-w-0 flex-1 truncate text-micro text-l4">{overviewSummary(rows.map((x) => x.row), inFlight.length)}</span>
-      </button>
+      <div className="flex min-w-0 items-center">
+        <button
+          type="button"
+          className="flex min-w-0 items-center gap-1.5 text-left"
+          onClick={() => setUserOpen(!open)}
+          aria-expanded={open}
+          title="前面几步轮流打磨同几份资料：每份现在什么样、跟上游对齐没有、有没有在途的回头"
+        >
+          <FoldMark open={open} />
+          <span className="shrink-0 text-xs font-medium text-l3">资料全貌</span>
+          <span className={`min-w-0 truncate text-micro ${behind.length > 0 ? "text-warn-text" : "text-l4"}`}>
+            {overviewSummary(rows.map((x) => x.row), inFlight.length)}
+          </span>
+        </button>
+        {behind.length > 0 && focusIndex !== behind[0].index && (
+          <button
+            type="button"
+            className="ml-2 shrink-0 text-micro text-l3 underline-offset-2 hover:text-l1 hover:underline"
+            onClick={() => onFocus(behind[0].index)}
+          >
+            去这一步
+          </button>
+        )}
+      </div>
       {open && (
         <div className="mt-1.5 rounded-lg ccode-well px-3 py-2 text-xs">
           <ul className="space-y-1">

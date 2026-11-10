@@ -26,14 +26,19 @@ test("资料全貌：一步一行，没开工不出；落后写清落后于谁",
   assert.equal(overviewRow({ name: "初稿", asset: "", key: "pending", counts: null }), null);
   const done = overviewRow({ name: "精读", asset: "笔记", key: "done", mergedAt: "2026-11-06T03:00:00Z", counts: "已写笔记 3 / 3 篇" })!;
   assert.match(done.state, /^已保存 11-0[67]$/);
-  assert.deepEqual(done.align, { text: "已对齐", tone: "ok" });
+  assert.deepEqual(done.align, { text: "", tone: "idle" }, "对齐时不写字");
   const behind = overviewRow({ name: "大纲", asset: "大纲", key: "done", staleUpstream: "精读", counts: null })!;
   assert.deepEqual(behind.align, { text: "落后于「精读」，还没跟进", tone: "warn" });
   const live = overviewRow({ name: "大纲", asset: "大纲", key: "active", staleUpstream: "检索", counts: null })!;
   assert.equal(live.state, "进行中");
-  assert.deepEqual(live.align, { text: "「检索」有新内容还没并进来", tone: "warn" });
-  assert.equal(overviewSummary([done, behind], 1), "2 步开过工 · 1 步没跟上上游 · 1 张补料单在途");
-  assert.equal(overviewSummary([done], 0), "1 步开过工 · 都对齐了");
+  assert.deepEqual(live.align, { text: "「检索」有更新还没并进来", tone: "warn" });
+  assert.equal(overviewSummary([done, behind], 1), "「大纲」落后于「精读」，还没跟进 · 1 张补料单在途");
+  assert.equal(overviewSummary([done, behind, live], 0), "2 步没跟上");
+  assert.equal(overviewSummary([done], 0), "都对齐了");
+  // 精读解冲突并入后「待跟进」消了，但新纳入的篇没读：照样算没对齐
+  const unread = overviewRow({ name: "精读", asset: "笔记", key: "review", counts: null, unreadNew: 2 })!;
+  assert.deepEqual(unread.align, { text: "新纳入 2 篇没读", tone: "warn" });
+  assert.equal(overviewSummary([done, unread], 0), "「精读」新纳入 2 篇没读");
 });
 
 test("资料全貌：在途的补料单写清补到哪、链等谁；补完且链走完就不列", () => {
