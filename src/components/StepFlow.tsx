@@ -1970,6 +1970,7 @@ export default function StepFlow({
               type="button"
               disabled={!action.enabled || endnoteSyncing}
               onClick={() => void openEndnoteImport()}
+              title="导入 EndNote 当前打开的库；开着几个库时进最前面那个，同步前只开着要导入的那个"
               className={`${outline} disabled:opacity-50`}
             >
               {endnoteSyncing ? "打开中…" : "同步到 EndNote"}
@@ -2585,7 +2586,7 @@ export default function StepFlow({
                 <button type="button" onClick={() => void pickEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
                   选这个 EndNote 库（.enl）
                 </button>
-                ：定稿出的 EndNote 版 Word 才能和库里的条目对上。不选也能用，只是条目算在 Word 自带的漫游库里。Zotero 不用选。
+                ：定稿出的 EndNote 版 Word 才能和库里的条目对上。不选也能用，只是条目只在这份 Word 文件自带的漫游库里，不连着你的库。Zotero 不用选。
               </>
             )}
             {endnoteLibNote && <span className="ml-1 text-err-text">{endnoteLibNote}</span>}

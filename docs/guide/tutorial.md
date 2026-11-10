@@ -615,7 +615,7 @@ AI 交付后、保存进项目前，人工事项 **抽查 3 篇笔记** 下面�
 
 检索时排除的篇三档都不导，它的 PDF 和笔记也不带。
 
-**每次同步都是整份导入**：库里已有同一 DOI 的照样导，提示里会写有几条重复——Zotero 导完在「重复条目」里合并，EndNote 导完用 **References → Find Duplicates** 去重。同一个库别反复点，重复条目会让定稿的带引用域 Word 对不上库。Zotero 会弹「导入文件」确认，点「确定」才进库。用 EndNote 的，导完在同一行点 **选这个 EndNote 库（.enl）**：下面列出 EndNote 最近打开过的库，点你导入的那个；EndNote X9 及更早版本的库会标「X9 库，需导出 XML」，按提示在 EndNote 里 File → Export 存成 XML 再 **选导出的 XML**。指定了库，定稿出的 EndNote 版 Word 在 Word 里点 Update 就和库里的条目对上；Zotero 不用选。两个同步按钮都会先只读体检你的库：发现以前导出的脏记录（DOI 带下标、标题格式坏）会点名列出，照提示先删再导即可。
+**每次同步都是整份导入**：库里已有同一 DOI 的照样导，提示里会写有几条重复——Zotero 导完在「重复条目」里合并，EndNote 导完用 **References → Find Duplicates** 去重。同一个库别反复点，重复条目会让定稿的带引用域 Word 对不上库。Zotero 会弹「导入文件」确认，点「确定」才进库。用 EndNote 的，同步前在 EndNote 里只开着要导入的那个库（开着几个库时导进最前面那个），导完在同一行点 **选这个 EndNote 库（.enl）**：下面列出 EndNote 最近打开过的库，点你导入的那个；EndNote X9 及更早版本的库会标「X9 库，需导出 XML」，按提示在 EndNote 里 File → Export 存成 XML 再 **选导出的 XML**。指定了库，定稿出的 EndNote 版 Word 在 Word 里点 Update 就和库里的条目对上；Zotero 不用选。两个同步按钮都会先只读体检你的库：发现以前导出的脏记录（DOI 带下标、标题格式坏）会点名列出，照提示先删再导即可。
 
 ---
 
