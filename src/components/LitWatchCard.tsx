@@ -1033,7 +1033,10 @@ export default function LitWatchCard({
   const skillProvides = useSkillProvides();
   const [entries, setEntries] = useState<WatchEntryDto[] | null>(null);
   const [, setFollowups] = useState<WatchFollowupDto[]>([]);
-  const [subs, setSubs] = useState<WatchSubscriptionDto[] | null>(null);
+  /** 关键词连同「是哪几条巡检的」一起记（key = radarKey）。巡检列表晚到时 key 先是空串、记成「一条都没有」，
+   *  列表到了 key 变了、关键词还在路上——拿旧的空表判会先闪一下黄字「还没有订阅关键词」（2026-11-10 用户实测），
+   *  所以 key 对不上当前巡检的一律当「还没拉到」 */
+  const [subsState, setSubsState] = useState<{ key: string; list: WatchSubscriptionDto[] } | null>(null);
   /** 每条巡检自己的关键词。空态和弹层按任务取，不再用项目级一份 */
   const [subsBySchedule, setSubsBySchedule] = useState<
     Record<string, WatchSubscriptionDto[]>
@@ -1282,12 +1285,14 @@ export default function LitWatchCard({
     resolveSkillSlot(LIT_WATCH_SLOT, [s.skill], skillProvides) !== null,
   );
   const radarKey = radarSchedules.map((s) => s.id).join("\n");
+  /** 当前这几条巡检的关键词；null = 还没拉到（含巡检列表刚变、新的还在路上） */
+  const subs = subsState && subsState.key === radarKey ? subsState.list : null;
 
   // 每条巡检自己的关键词。空表 = 一条都没有；null = 还没拉到。
   useEffect(() => {
     const ids = radarKey ? radarKey.split("\n") : [];
     if (ids.length === 0) {
-      setSubs([]);
+      setSubsState({ key: radarKey, list: [] });
       return;
     }
     let stale = false;
@@ -1304,7 +1309,7 @@ export default function LitWatchCard({
         const next: Record<string, WatchSubscriptionDto[]> = {};
         for (const [id, list] of pairs) next[id] = list;
         setSubsBySchedule(next);
-        setSubs(pairs.flatMap(([, list]) => list));
+        setSubsState({ key: radarKey, list: pairs.flatMap(([, list]) => list) });
       })
       .catch(() => {});
     return () => {
