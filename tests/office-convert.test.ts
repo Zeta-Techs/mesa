@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { docxDroppedSummary } from "../src/office-convert.ts";
-import { artifactPreviewSurface, projectFilePreviewKind } from "../src/project-files.ts";
+import { projectFilePreviewKind } from "../src/project-files.ts";
 
 const none = {
   equations: 0,
@@ -29,5 +29,4 @@ test("幻灯与旧版 Office 的预览分流", () => {
   assert.equal(projectFilePreviewKind("/p/old.ppt"), "legacy-doc");
   assert.equal(projectFilePreviewKind("/p/a.odt"), "legacy-doc");
   assert.equal(projectFilePreviewKind("/p/a.rtf"), "legacy-doc");
-  assert.equal(artifactPreviewSurface("/p/talk.pptx"), "media");
 });

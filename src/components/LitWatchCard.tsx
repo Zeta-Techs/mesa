@@ -53,6 +53,7 @@ import { useAppStore } from "../store";
 import { relTime } from "../rel-time";
 import { schedulesForProject } from "../schedule-tasks";
 import { IS_WINDOWS } from "../hotkeys";
+import { showProjectFile } from "../project-file-open";
 import {
   dismissLitEntry,
   filterLitDismissed,
@@ -1097,7 +1098,6 @@ export default function LitWatchCard({
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setPage = useAppStore((s) => s.setPage);
   const setReaderReq = useAppStore((s) => s.setReaderReq);
-  const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );
@@ -1553,7 +1553,7 @@ export default function LitWatchCard({
         { projectRoot, pdfPath: abs },
       );
       refreshNoteLinks();
-      setFilePreviewReq({ projectRoot, path: note.path, token: Date.now() });
+      void showProjectFile({ projectRoot, path: note.path, from: "文献雷达" });
       if (note.created) {
         showToast("笔记已建档（八段骨架）；精读时在沉浸阅读里接着写");
       }
@@ -1569,7 +1569,7 @@ export default function LitWatchCard({
     const rel = `papers/${name}`;
     const root = projectRoot.replace(/[\\/]+$/, "");
     const abs = /^([a-zA-Z]:[\\/]|\/)/.test(rel) ? rel : `${root}/${rel}`;
-    setFilePreviewReq({ projectRoot, path: abs, token: Date.now() });
+    void showProjectFile({ projectRoot, path: abs, from: "文献雷达" });
   }
 
   /** 抽屉里移除一条积累：删 reading-list.md 对应行并重拉清单（不动正典 included.md） */

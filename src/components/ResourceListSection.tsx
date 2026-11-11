@@ -12,8 +12,7 @@ import { FileTypeGlyph } from "./FileTypeMark";
 import { RESOURCE_TYPE_LABELS } from "../pipeline-presets";
 import { officePreviewMode } from "../work-mode";
 import { absoluteResourcePath } from "./ArtifactChecklist";
-import OfficePreviewModal from "./OfficePreviewModal";
-import { useAppStore } from "../store";
+import { showProjectFile } from "../project-file-open";
 import {
   displayFileTitle,
   ledgerFileDisplayName,
@@ -78,11 +77,7 @@ export default function ResourceListSection({
   /** 分组时剥掉的默认目录（文献 papers、数据 data），避免整表套一层默认夹 */
   stripPrefix?: string;
 }) {
-  const setPage = useAppStore((s) => s.setPage);
-  const setReaderReq = useAppStore((s) => s.setReaderReq);
   const [open, setOpen] = useState(defaultOpen);
-  const [preview, setPreview] = useState<ProjectResourceDto | null>(null);
-  const [notePreview, setNotePreview] = useState<string | null>(null);
   const [noteLinks, setNoteLinks] = useState<PaperNoteLink[]>([]);
   const [included, setIncluded] = useState<IncludedEntryDto[]>([]);
   const [readingList, setReadingList] = useState<IncludedEntryDto[]>([]);
@@ -117,25 +112,6 @@ export default function ResourceListSection({
       cancelled = true;
     };
   }, [showLitStatus, projectPath, resources.length]);
-
-  async function openNoteImmersive(notePath: string) {
-    try {
-      const r = await invoke<{
-        projectRoot: string;
-        pdfPath: string;
-        notePath: string;
-      }>("reader_for_note", { notePath });
-      setReaderReq({
-        pdfPath: r.pdfPath,
-        projectRoot: r.projectRoot,
-        notePath: r.notePath,
-      });
-      setPage("terminal");
-      setNotePreview(null);
-    } catch {
-      setNotePreview(notePath);
-    }
-  }
 
   const rows = useMemo(() => {
     return resources
@@ -180,20 +156,29 @@ export default function ResourceListSection({
     [rows, stripPrefix],
   );
 
+  // 「查看」「笔记」开在项目页右侧文件栏（2026-11-11 用户拍板项目页文件统一从侧边打开）；清单顺序给栏头 ↑↓
   function openPreview(r: ProjectResourceDto) {
     const abs = absoluteResourcePath(projectPath, r.path);
     if (officePreviewMode(abs) === "external") {
       void invoke("open_in_system", { path: abs, root: projectPath });
       return;
     }
-    setPreview(r);
-  }
-
-  function movePreview(offset: number) {
-    if (!preview) return;
-    const index = rows.findIndex((row) => row.r.path === preview.path);
-    const next = rows[index + offset]?.r;
-    if (next) setPreview(next);
+    const list = rows
+      .map((row) => ({ path: absoluteResourcePath(projectPath, row.r.path), name: row.r.name }))
+      .filter((f) => officePreviewMode(f.path) !== "external");
+    void showProjectFile({
+      projectRoot: projectPath,
+      path: abs,
+      name: r.name,
+      list,
+      from: title,
+      askAi: onAskAi
+        ? (p) => {
+            const hit = rows.find((row) => absoluteResourcePath(projectPath, row.r.path) === p)?.r;
+            if (hit) onAskAi(hit);
+          }
+        : undefined,
+    });
   }
 
   return (
@@ -363,7 +348,9 @@ export default function ResourceListSection({
                       <button
                         type="button"
                         className={actionBtn}
-                        onClick={() => setNotePreview(note.notePath)}
+                        onClick={() =>
+                          void showProjectFile({ projectRoot: projectPath, path: note.notePath, from: "精读笔记" })
+                        }
                       >
                         笔记
                       </button>
@@ -377,42 +364,6 @@ export default function ResourceListSection({
         )}
         </div>
       ) : null}
-      {preview && (
-        <OfficePreviewModal
-          path={absoluteResourcePath(projectPath, preview.path)}
-          root={projectPath}
-          onClose={() => setPreview(null)}
-          onAskAi={onAskAi ? () => onAskAi(preview) : undefined}
-          onPrevious={() => movePreview(-1)}
-          onNext={() => movePreview(1)}
-          hasPrevious={
-            rows.findIndex((row) => row.r.path === preview.path) > 0
-          }
-          hasNext={
-            rows.findIndex((row) => row.r.path === preview.path) >= 0 &&
-            rows.findIndex((row) => row.r.path === preview.path) < rows.length - 1
-          }
-          extraAction={
-            isPdf(preview.path) && onImmerse
-              ? {
-                  label: "⛶ 沉浸阅读",
-                  onClick: () => onImmerse(preview),
-                }
-              : undefined
-          }
-        />
-      )}
-      {notePreview && (
-        <OfficePreviewModal
-          path={notePreview}
-          root={projectPath}
-          onClose={() => setNotePreview(null)}
-          extraAction={{
-            label: "⛶ 沉浸阅读",
-            onClick: () => void openNoteImmersive(notePreview),
-          }}
-        />
-      )}
     </section>
   );
 }

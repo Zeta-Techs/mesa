@@ -22,6 +22,8 @@ export function SettingsDrawerShell({
   className = "",
   backdropClassName = "",
   docked = null,
+  headerExtra,
+  fillBody = false,
   children,
 }: {
   open: boolean;
@@ -41,6 +43,10 @@ export function SettingsDrawerShell({
   /** 常驻在页面右侧（项目助手，2026-11-05 用户拍板「右侧常驻侧栏」）：不压暗、不锁滚动、不困住焦点，页面照常能点；
    *  宽度由宿主给，左缘可拖。不给就是原来的浮层抽屉 */
   docked?: { width: number; onResize: (width: number) => void; onResizeEnd?: () => void } | null;
+  /** 标题行里、关闭钮前面的小控件（停靠位「项目助手 / 文件」轮流切换，2026-11-11）；其他抽屉不传 */
+  headerExtra?: ReactNode;
+  /** 内容区交给子元素撑满（文件栏的预览自己滚动）：不加段间距、不在外层滚 */
+  fillBody?: boolean;
   children: ReactNode;
 }) {
   const titleId = useId();
@@ -178,6 +184,7 @@ export function SettingsDrawerShell({
                 </p>
               )}
             </div>
+            {headerExtra}
             <button type="button" className={inlineActionClass} onClick={onClose} aria-label={`关闭${title}`}>
               ✕
             </button>
@@ -196,6 +203,7 @@ export function SettingsDrawerShell({
               {subtitle}
             </span>
           )}
+          {headerExtra}
           <button
             type="button"
             className={inlineActionClass}
@@ -208,9 +216,13 @@ export function SettingsDrawerShell({
         </header>
         )}
         {headerActions && <div className="shrink-0 border-b border-hairline px-5 pb-3">{headerActions}</div>}
-        <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions || titleIcon ? "pt-4" : ""}`}>
-          {children}
-        </div>
+        {fillBody ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-2">{children}</div>
+        ) : (
+          <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions || titleIcon ? "pt-4" : ""}`}>
+            {children}
+          </div>
+        )}
         {footer && <div className="shrink-0 border-t border-hairline px-5 pb-4 pt-3">{footer}</div>}
       </>
     );

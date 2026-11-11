@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import ProjectAssistantPanel from "./ProjectAssistantPanel";
+import { DockSwitch } from "./ProjectFilePaneHost";
+import { dockOccupant } from "../project-file-pane";
 import { useAppStore } from "../store";
 import { samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
@@ -135,6 +137,11 @@ export default function ProjectAssistantHost() {
     return () => ro.disconnect();
   }, [width]);
   const docked = !!req && roomy && !!dockEl;
+  // 与项目页文件栏同一位置轮流（2026-11-11）：轮到文件时只藏起来，问到一半的不丢
+  const filePaneOpen = useAppStore((s) => !!s.projectFilePane) && page === "workspaces";
+  const dockFront = useAppStore((s) => s.dockFront);
+  const setDockFront = useAppStore((s) => s.setDockFront);
+  const behind = !!req && dockOccupant(dockFront, true, filePaneOpen) !== "assistant";
   const setAssistantDocked = useAppStore((s) => s.setAssistantDocked);
   useEffect(() => {
     setAssistantDocked(docked);
@@ -155,8 +162,9 @@ export default function ProjectAssistantHost() {
 
   const panel = (
     <ProjectAssistantPanel
-      open={!!req}
+      open={!!req && (docked || !behind)}
       onClose={closeAssistant}
+      dockSwitch={filePaneOpen ? <DockSwitch front="assistant" onSwitch={setDockFront} /> : undefined}
       projectPath={path}
       projectName={project?.name ?? path?.split(/[\\/]/).filter(Boolean).pop() ?? ""}
       project={project}
@@ -190,5 +198,7 @@ export default function ProjectAssistantHost() {
       }}
     />
   );
-  return docked && dockEl ? createPortal(panel, dockEl) : panel;
+  return docked && dockEl
+    ? createPortal(<div className={behind ? "hidden" : "contents"}>{panel}</div>, dockEl)
+    : panel;
 }

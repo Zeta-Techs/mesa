@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useAppStore } from "../store";
 import { IS_WINDOWS } from "../hotkeys";
 import { pathWithin } from "../path-utils";
 import { readResearchFile } from "../research-report-load";
@@ -22,6 +21,7 @@ import {
   type CloseoutNoteIndex,
   type CloseoutNoteSource,
 } from "../closeout-pack";
+import { showProjectFile } from "../project-file-open";
 
 function relFromRoot(root: string, abs: string): string {
   const base = root.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -59,8 +59,6 @@ export default function CloseoutPack({
   worktrees: readonly string[];
   entries: readonly string[];
 }) {
-  const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
-  const setPage = useAppStore((s) => s.setPage);
   const [files, setFiles] = useState<CloseoutFile[] | null>(null);
   const [index, setIndex] = useState<CloseoutNoteIndex[]>([]);
   const [pdfs, setPdfs] = useState<CloseoutFile[]>([]);
@@ -153,8 +151,9 @@ export default function CloseoutPack({
       openExternal(file);
       return;
     }
-    setFilePreviewReq({ projectRoot, path: file.abs, token: Date.now() });
-    setPage("workspaces");
+    const roots = [projectRoot, ...worktrees];
+    const root = roots.find((r) => pathWithin(file.abs, r, IS_WINDOWS)) ?? projectRoot;
+    void showProjectFile({ projectRoot, root, path: file.abs, from: "完结文件" });
   }
 
   const finals = byId.get("final")?.files ?? [];

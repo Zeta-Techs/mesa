@@ -56,6 +56,7 @@ import {
   type OnboardingState,
 } from "./onboarding";
 import type { ProjectSurfaceTab } from "./project-surface";
+import type { DockFront, ProjectFilePaneReq } from "./project-file-pane";
 import { quietStoppedSessions } from "./run-caret";
 import type {
   BindingInput,
@@ -940,6 +941,13 @@ interface AppState {
   /** 待获取清单等：切到文件页并打开这篇 PDF */
   filePreviewReq: { projectRoot: string; path: string; token: number } | null;
   setFilePreviewReq: (req: AppState["filePreviewReq"]) => void;
+  /** 项目页文件栏（2026-11-11 用户拍板「项目页的文件统一从侧边打开」）：本步文件、步骤卡与收尾包里的文件都开在
+   *  右侧停靠位，与项目助手同一位置轮流（dockFront 说谁在前），App 里的 ProjectFilePaneHost 唯一消费 */
+  projectFilePane: ProjectFilePaneReq | null;
+  openProjectFile: (req: Omit<ProjectFilePaneReq, "nonce">) => void;
+  closeProjectFile: () => void;
+  dockFront: DockFront;
+  setDockFront: (front: DockFront) => void;
   /** 收件箱人工请求「去回答」的一次性请求（来源根路径）：全局 HelpRequestDialog 原地弹出卡片（2026-11-02 起不跳页） */
   helpViewReq: string | null;
   setHelpViewReq: (path: string | null) => void;
@@ -1371,7 +1379,7 @@ export const useAppStore = create<AppState>((set, get) => {
   setProjectSurfaceReq: (tab) => set({ projectSurfaceReq: tab }),
   assistantReq: null,
   openAssistant: (path, question, focus) =>
-    set((st) => ({ assistantReq: { path, question, focus: focus ?? null, nonce: (st.assistantReq?.nonce ?? 0) + 1 } })),
+    set((st) => ({ assistantReq: { path, question, focus: focus ?? null, nonce: (st.assistantReq?.nonce ?? 0) + 1 }, dockFront: "assistant" })),
   closeAssistant: () => set({ assistantReq: null }),
   assistantEchoes: [],
   setAssistantEchoes: (items) => set({ assistantEchoes: items }),
@@ -1398,6 +1406,12 @@ export const useAppStore = create<AppState>((set, get) => {
   setWorkbenchTaskReq: (req) => set({ workbenchTaskReq: req }),
   filePreviewReq: null,
   setFilePreviewReq: (req) => set({ filePreviewReq: req }),
+  projectFilePane: null,
+  openProjectFile: (req) =>
+    set((st) => ({ projectFilePane: { ...req, nonce: (st.projectFilePane?.nonce ?? 0) + 1 }, dockFront: "file" })),
+  closeProjectFile: () => set({ projectFilePane: null, dockFront: "assistant" }),
+  dockFront: "assistant",
+  setDockFront: (front) => set({ dockFront: front }),
   helpViewReq: null,
   setHelpViewReq: (path) => set({ helpViewReq: path }),
   helpRefreshTick: 0,

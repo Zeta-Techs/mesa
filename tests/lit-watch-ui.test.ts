@@ -219,11 +219,15 @@ test("加入积累：书标双态两表并集，已积累书标定位抽屉，�
       setup(b) {
         b.onResolve({ filter: /^\.\.\/store$/ }, () => ({ path: "store", namespace: "stub" }));
         b.onResolve({ filter: /^\.\/FilePreviewEditor$/ }, () => ({ path: "editor", namespace: "stub" }));
+        // 打开文件走项目页右侧文件栏（2026-11-11）：记下请求即可
+        b.onResolve({ filter: /^\.\.\/project-file-open$/ }, () => ({ path: "file-open", namespace: "stub" }));
         b.onLoad({ filter: /.*/, namespace: "stub" }, ({ path }) => ({
           loader: "js",
           contents: path === "store"
             ? "export const useAppStore = select => select({setPage(){},setReaderReq(){},setWorkspaceReviewRequest(){},setFilePreviewReq(r){globalThis.__filePreviewReqs.push(r);},setProjectSurfaceReq(){}});"
-            : "export default function Editor(){return null;}",
+            : path === "file-open"
+              ? "export const showProjectFile = async (r) => { globalThis.__filePreviewReqs.push(r); };"
+              : "export default function Editor(){return null;}",
         }));
       },
     }],

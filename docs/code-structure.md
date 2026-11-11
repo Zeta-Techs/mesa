@@ -19,8 +19,7 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              # 定时任务不是侧栏页（2026-09-13 用户移除）：只是项目「定时任务」页签；
                              #   页切快捷键（hotkeys.ts PAGE_HOTKEY_DEFS）、设置页「启动时进入」与 settings.rs KNOWN_PAGES 同为九页清单，
                              #   全局 page id schedules 仅作旧值重定向（App.tsx 转项目定时任务页签），SchedulesPage.tsx 已删
-  components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup、ArtifactChecklist（文本类产物就地预览层；pdf/docx/表格/图同页弹层 +
-                             # md 笔记「⛶ 沉浸阅读」入口（v3.98：pdf_for_note 配对后发 readerReq 带 notePath 进阅读区）+
+  components/                # WorkspaceReviewView、PipelineEditor（含「＋ 从模板追加」）、ProjectGroup、ArtifactChecklist（本步文件清单：点文件一律经 showProjectFile 开在项目页右侧文件栏（2026-11-11，取代就地弹层 / 跳运行页）+
                              # 拖出手柄（GripVertical）经 tauri-plugin-drag 做 OS 级文件拖出——WebView HTML5 拖拽出不了窗口）、TaskCardsSection、FileTree、
                              # FilePreviewEditor、PdfPreview/DocxPreview/XlsxPreview/ImagePreview、ImagePairView、GitPanel、RelayPicker（换 Agent 那组两层选择：先一家一行，再怎么接 + 按连接分组的模型；聊天模型屏与对话页回放头部共用）、ChatRelayCard（聊天里接力那句前面的卡：前面由谁做 / 你离开期间谁做了几轮，点开摆前一段交出前的几轮、看交接简报）、SessionSlimDialog（会话瘦身确认弹层：先讲清动什么、结果页给备份位置与「客户端里需归档再恢复」提醒；提示条与菜单项在 SessionsPage 回放头部）、
                              #   PDF 字节模块级 LRU 缓存（loadPdfBytes，上限 8 份）：预览⇄阅读区重挂载不再重走
@@ -338,6 +337,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
   components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置，SettingsDrawerShell 的 titleIcon / footer）：顶栏小桌 + 名字 + 项目名；空状态大图小桌按时段换样子 + 三个常用问题细线列表；
                              # 回答首句经 splitAnswerLead 加粗带琥珀竖线、动作按钮经 parseAssistantAnswer；输入框钉底，连接与清空记录在下一行小字；带问题打开按 nonce 只问一次
+  components/ProjectFilePaneHost.tsx # 项目页文件栏宿主（2026-11-11，App 挂一份）：读 store.projectFilePane，与项目助手同用 #ccode-assistant-dock、按 dockFront 轮流（轮到别人只藏不卸载）；
+                             # 标题行一排：↑↓ 换清单里的文件、问 AI、外部打开、沉浸阅读、在文件页签里看、「项目助手 / 文件」切换（DockSwitch，助手宿主也用）；预览 lazy 加载（启动包不带 pdfjs）
   components/ProjectAssistantHost.tsx # 项目助手唯一宿主（App 挂一份）：读 store.assistantReq，补项目条目与步骤数，按钮交 assistant-actions、派活交 assistant-dispatch；
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
@@ -634,6 +635,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
   assistant-brief.ts         # 项目助手「现在的情况」卡与按状态换的常用问题（2026-11-08，纯逻辑）：briefLines（出错 / 等确认 / 待评审 / 核验待判断 / 目标待验收与上次打开以来的保存、完成）、quickAsks（出错→为什么、待评审→先帮你过一遍、没流程→想做什么）、reviewPrereadFocus（评审前只读看一遍的重点，评审页同用）、knowledgeDraftFocus（项目知识还是空的时提议从项目文件起草，最多五条 :::记下，人逐条点）、summaryDue / summaryFocus（聊满 10 轮提议整理定下的事，点了才调 AI）；取数在 project-assistant-run gatherBriefInput，不调 AI（tests/assistant-brief.test.ts）
+  project-file-open.ts       # 项目页打开文件的唯一入口 showProjectFile（2026-11-11）：本步文件、步骤卡、收尾包、文献雷达、资料列表都调它；有没保存的改动先问；轻模块，调用方不必拉进预览组件
+  project-file-pane.ts       # 文件栏纯逻辑：宽度 360–960、dockOccupant（与项目助手轮流谁在前）、neighborFile（↑↓）、filePaneShouldClose（只在项目页换项目时收、脏不收）（tests/project-file-pane.test.ts）
   assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）、assistantShortcutTarget（⌘J / 命令面板问哪个项目）、assistantDayLabel / sameLocalDay（问答记录按天分隔）（tests/assistant-dock.test.ts）
   session-tail.ts            # 某一步最近那段对话里 AI 最后说的话（find_session + get_session_conversation_page 最后一页），aiReportsFailure 标出错；30 秒缓存
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
@@ -844,7 +847,7 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
   office-convert.ts          # LibreOffice 转换器探测（进程内只问一次）/ 转 PDF / docxDroppedSummary（tests/office-convert.test.ts）
   file-ops.ts                # 文件页 / 文件树文件操作：名字输入行（新建文件 / 文件夹 / 重命名）、复制一份、移动到…（系统选文件夹）、拖入复制与落点判定（tests/file-ops.test.ts）
   file-watch.ts              # 预览跟随磁盘变化：fileStamp（file_stamp 大小+修改时间）/ stampKey / useFileVersion（watch_file 单文件监听，改一次加一）（tests/file-watch.test.ts）
-file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / ArtifactChecklist 共用）：previewSaveCompletion 保存期间继续输入只更新磁盘基线、dirty 按当前内容重算（后输入不得标成已保存）；非 UTF-8 认出的编码（GBK/Big5/UTF-16LE…）保存按它写回，encodingLabel 给人话名（gb18030/GBK 都叫 GBK）（tests/file-preview.test.ts）
+file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用）：previewSaveCompletion 保存期间继续输入只更新磁盘基线、dirty 按当前内容重算（后输入不得标成已保存）；非 UTF-8 认出的编码（GBK/Big5/UTF-16LE…）保存按它写回，encodingLabel 给人话名（gb18030/GBK 都叫 GBK）（tests/file-preview.test.ts）
   image-view.ts              # 图片预览纯计算：imageFitScale（适应窗口，小图不放大）/ formatBytes（tests/image-view.test.ts）
   file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），

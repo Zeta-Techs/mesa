@@ -34,6 +34,7 @@ import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
 import ProjectAssistantHost from "./components/ProjectAssistantHost";
+import ProjectFilePaneHost from "./components/ProjectFilePaneHost";
 import ConsultHost from "./components/ConsultHost";
 import { toggleProjectAssistant } from "./assistant-actions";
 import {
@@ -2467,7 +2468,7 @@ function App() {
                 )}
               </div>
             </main>
-            {/* 项目助手常驻侧栏的位置（2026-11-05）：ProjectAssistantHost 够宽时把面板放进这里，主区让出宽度；不够宽仍是浮层抽屉 */}
+            {/* 右侧停靠位（2026-11-05 项目助手；2026-11-11 项目页文件栏同一位置轮流）：够宽时面板放进这里，主区让出宽度；不够宽仍是浮层抽屉 */}
             <div id="ccode-assistant-dock" className="flex h-full min-h-0 shrink-0" />
           </div>
           {paletteOpen && (
@@ -2483,6 +2484,7 @@ function App() {
           <PhoneDropDialog />
           <HelpRequestDialog />
           <ProjectAssistantHost />
+          <ProjectFilePaneHost />
           <ConsultHost />
           <PromptManager />
           <FeedbackModal

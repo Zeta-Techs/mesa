@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ancestorDirsToReveal,
-  artifactPreviewSurface,
   batchAskPrompt,
   fileMatchesProjectFilter,
   flattenVisibleFiles,
@@ -26,15 +25,6 @@ test("research and coding files preview in-pane, including source", () => {
   assert.equal(projectFilePreviewKind("data.tsv"), "xlsx");
   assert.equal(projectFilePreviewKind("draft.docx"), "docx");
   assert.equal(projectFilePreviewKind("old.doc"), "legacy-doc");
-});
-
-test("产物核验：pdf/docx 就地预览，不跳运行页", () => {
-  assert.equal(artifactPreviewSurface("output/draft.pdf"), "media");
-  assert.equal(artifactPreviewSurface("output/draft.docx"), "media");
-  assert.equal(artifactPreviewSurface("figures/fig1.png"), "media");
-  assert.equal(artifactPreviewSurface("manuscript/draft.md"), "text");
-  assert.equal(artifactPreviewSurface("papers/to-fetch.ris"), "text");
-  assert.equal(artifactPreviewSurface("main.bin"), "jump");
 });
 
 test("沉浸阅读入口的判据统一：.markdown 与 .md 同等对待", () => {

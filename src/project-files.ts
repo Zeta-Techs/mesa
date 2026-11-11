@@ -150,30 +150,6 @@ export function projectFilePreviewKind(path: string): ProjectFilePreviewKind {
   return "text";
 }
 
-const ARTIFACT_TEXT_EXTS = new Set(["md", "markdown", "txt", "ris", "bib"]);
-
-/** 产物核验点开：文本走编辑弹层，pdf/docx/表格/图就地预览，其余才跳运行页。 */
-export function artifactPreviewSurface(
-  path: string,
-): "text" | "media" | "jump" {
-  const name = path.split(/[\\/]/).pop() ?? path;
-  const ext = name.includes(".")
-    ? name.slice(name.lastIndexOf(".") + 1).toLowerCase()
-    : "";
-  if (ARTIFACT_TEXT_EXTS.has(ext)) return "text";
-  const kind = projectFilePreviewKind(path);
-  if (
-    kind === "pdf" ||
-    kind === "docx" ||
-    kind === "xlsx" ||
-    kind === "image" ||
-    kind === "slides"
-  ) {
-    return "media";
-  }
-  return "jump";
-}
-
 /** 收起的文件夹行尾写里面有几项：0 写「空」，封顶（后端数到 1000 停）写「999+」；没数（旧数据 / 读不了）不写 */
 export function folderCountLabel(count: number | null | undefined): string | null {
   if (count == null) return null;

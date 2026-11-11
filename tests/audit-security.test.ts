@@ -31,7 +31,8 @@ test("构建配置以 TS 为显式唯一入口，不受旧生成 JS 遮蔽", () 
 });
 
 test("所有保存预览入口都传读取版本；只讨论恢复不跳过参数约束", () => {
-  for (const path of ["src/components/FilePreviewEditor.tsx", "src/components/ArtifactChecklist.tsx"]) assert.ok(read(path).includes("expectedRevision:"));
+  // 本步文件 2026-11-11 起开在项目页文件栏，保存只经 FilePreviewEditor 一处
+  for (const path of ["src/components/FilePreviewEditor.tsx"]) assert.ok(read(path).includes("expectedRevision:"));
   const pty = read("src-tauri/src/pty.rs");
   assert.ok(!pty.includes("discuss && resume_session_id.is_none()"));
   assert.match(pty, /if discuss \{[\s\S]*?readonly_launch_args/);

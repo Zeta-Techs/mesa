@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowDown, ArrowRight, ArrowUp, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
@@ -124,6 +124,7 @@ export default function ProjectAssistantPanel({
   onDispatch,
   where = "",
   docked = null,
+  dockSwitch,
   hideProjectName = false,
 }: {
   /** 停在同一个项目的项目页旁边：页头已经写着项目名，标题下不再写一遍 */
@@ -132,6 +133,8 @@ export default function ProjectAssistantPanel({
   where?: string;
   /** 常驻侧栏（宿主够宽时给）；null = 浮层抽屉 */
   docked?: { width: number; onResize: (width: number) => void; onResizeEnd?: () => void } | null;
+  /** 与项目页文件栏同一位置轮流时，标题行里的「项目助手 / 文件」切换（2026-11-11） */
+  dockSwitch?: ReactNode;
   open: boolean;
   onClose: () => void;
   projectPath: string | null;
@@ -864,6 +867,7 @@ export default function ProjectAssistantPanel({
       titleIcon={empty ? <></> : <MesaBuddy size={40} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
       docked={docked}
+      headerExtra={dockSwitch}
     >
       {/* 调度台：这个项目里等你的事，就地回、原路转达（2026-11-06） */}
       {projectPath && <AssistantDesk projectPath={projectPath} />}
