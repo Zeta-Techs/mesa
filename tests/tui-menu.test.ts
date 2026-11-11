@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { menuAnswerKeys, menuEchoesText, parseTuiMenu, pickerTargetIndex, sameTuiMenu } from "../src/tui-menu.ts";
+import { menuAnswerKeys, menuEchoesText, parseKimiEffortPicker, parseTuiMenu, pickerTargetIndex, sameTuiMenu } from "../src/tui-menu.ts";
 
 test("认出切换确认菜单：问句、选项、当前高亮", () => {
   const menu = parseTuiMenu([
@@ -498,4 +498,28 @@ test("会话内换权限：对不上就不选——工具审批菜单、少一�
     "说明行被认成一项：格数会算错",
   );
   assert.equal(pickerTargetIndex({ ...picker, options: ["Always Ask", "Ask When NeededX", "Never Ask"] }, kimi, "Never Ask"), null);
+});
+
+test("Kimi 思考档横排选择器：方括号是当前高亮，标题下的按键提示与 Note 行跳过", () => {
+  // 2026-11-11 Kimi 2.5.3 生成中发 /effort 的屏
+  const screen = [
+    " ⠏ thinking…",
+    " ──────────────────────────────────────────────",
+    "  Select thinking effort",
+    "  ←→ switch · Enter select · Alt+S session-only · Esc cancel",
+    "  Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.",
+    "   [ On ]    Off",
+    " ──────────────────────────────────────────────",
+  ];
+  assert.deepEqual(parseKimiEffortPicker(screen), { options: ["On", "Off"], selected: 0 });
+  assert.deepEqual(parseKimiEffortPicker(screen.map((l) => l.replace("[ On ]    Off", "On    [ Off ]"))), {
+    options: ["On", "Off"],
+    selected: 1,
+  });
+  assert.deepEqual(parseKimiEffortPicker(["  Select thinking effort", "   low  [ medium ]  high"]), {
+    options: ["low", "medium", "high"],
+    selected: 1,
+  });
+  assert.equal(parseKimiEffortPicker(screen.slice(3)), null, "没有标题不认");
+  assert.equal(parseKimiEffortPicker(["  Select thinking effort", "   [ On ]  [ Off ]"]), null, "两个高亮不认");
 });

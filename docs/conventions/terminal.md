@@ -323,8 +323,12 @@
   Mesa 自己列连接里的模型。**Codex ≥0.164 改回中途切**（2026-11-04，`switch-strategy.ts inSessionSwitchCommand`）：`/model <id>`、
   `/model --reasoning <档>` 带参数只改本段（屏上「for this session only」、config.toml 不动；--remote 经 app-server 时请求的模型 / effort 照换，
   e2e_channel `E2E_BEFORE` 核对），菜单直接列连接里的模型；读不到版本按老版本重开。**生成中同样不让换**（`modelWaitsForTurn` /
-  `effortWaitsForTurn`）：Codex 生成中不收斜杠命令（「'/model' is disabled while a task is in progress」，0.166 二进制），写进去会被拒、
-  芯片白等 20 秒。Kimi 2.5（canary）起生成中也能 /model、/effort、下一轮生效，转正后再按版本放开。
+  `effortWaitsForTurn`）：Codex 0.163–0.165 生成中不收斜杠命令（「'/model' is disabled while a task is in progress」），写进去会被拒、
+  芯片白等 20 秒。**0.166 起生成中也收**（0.166.0-alpha.6、0.167.1 实测，2026-11-11），`inSessionSwitchMidTurn` 放开，菜单写「下一轮起生效」。
+  **Kimi ≥2.5.3 思考档会话内切**（`inSessionSwitchCommand` 返回内部写法 `/effort {level}`，`runTuiCommand` 拦下改走 `pickKimiEffort`：
+  发不带参数的 /effort → `parseKimiEffortPicker` 认横排「[ On ]  Off」→ ←→ 挪 → 读屏核对方括号停对 → Alt+S 的 CSI-u `\x1b[115;3u`；
+  核对不上按 Esc）。带参数的 /effort、选择器里回车都会写 config.toml thinking，禁止；没有 `runTuiCommand` 的调用方（直接写终端）不给 Kimi 会话内切换。
+  生成中也收、下一轮生效。
 - **聊天里发的斜杠命令收成「命令 + 结果」（2026-11-11，`chat-handoff.ts` slashResultLines / slashSettlesAtTurnEnd）**：不把斜杠命令写进会话文件的家，
   命令在本机处理完就留成一条只在这次打开的聊天里有的记录。收尾看三样，任一出现即收，不再要求终端静下来：① 它唤出的选择器在聊天卡上答完
   （记「选了：<原文>」+ 结果行）；② 屏上出现这条命令新的结果行（按家按命令登记，实测文案见 matrix「会话内换权限 / 思考档」；与发出那一刻的屏比，

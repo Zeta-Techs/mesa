@@ -4,7 +4,13 @@ import { KIMI_CSI_U_ENTER } from "./terminal-input";
 import { EFFORT_SEEN_DEFAULT, currentEffort, modelReadbackSupported } from "./reasoning-effort";
 import type { ComboSurfaceDto, DetectResult } from "./types";
 import type { TabStatus } from "./pages/TerminalPage";
-import { inSessionSwitchCommand, switchByRelaunch, switchPersists } from "./switch-strategy";
+import {
+  KIMI_EFFORT_PICK,
+  inSessionSwitchCommand,
+  inSessionSwitchMidTurn,
+  switchByRelaunch,
+  switchPersists,
+} from "./switch-strategy";
 import { useAppStore } from "./store";
 
 /** 切模型命令发出后的待确认记录：baseline = 发命令时屏上读到的模型，屏上读回值一变就以读回为准 */
@@ -44,7 +50,11 @@ export function useRuntimeModelEffort(opts: {
   const cliVersion = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
   /** 新版 Codex 等：会话里直接切、不写全局配置的命令（switch-strategy.ts） */
   const sessionModelCmd = inSessionSwitchCommand(agentId, "model", cliVersion);
-  const sessionEffortCmd = inSessionSwitchCommand(agentId, "effort", cliVersion);
+  // Kimi 的会话内切换要经标签动作 runTuiCommand 改走选择器；没有它（直接写终端）就不能用，否则带参数的 /effort 会存成默认
+  const sessionEffortRaw = inSessionSwitchCommand(agentId, "effort", cliVersion);
+  const sessionEffortCmd = sessionEffortRaw === KIMI_EFFORT_PICK && !send ? null : sessionEffortRaw;
+  /** 生成中也收会话内切换命令、下一轮生效（Codex 0.166+、Kimi 2.5.3）：不必等这一轮结束 */
+  const midTurnOk = inSessionSwitchMidTurn(agentId, cliVersion);
   /** 换模型走重开接回（Mesa 自己列连接里的模型，不唤 CLI 的选择器、不写 CLI 的全局配置） */
   const modelByRelaunch = Boolean(relaunch) && switchByRelaunch(agentId, "model", true, cliVersion);
   /** 能带参直切（写一条命令就换到指定模型）：菜单直接列连接里的模型，不唤 CLI 的选择器 */
@@ -101,7 +111,7 @@ export function useRuntimeModelEffort(opts: {
       relaunch?.({ model: m });
       return;
     }
-    if (sessionModelCmd && relaunchBlocked) return;
+    if (sessionModelCmd && relaunchBlocked && !midTurnOk) return;
     const template = sessionModelCmd ?? (modelSwitch?.kind === "direct" ? modelSwitch.command : null);
     if (!template) return;
     // kimi 的 /model 参数是 config.toml 的 [models.*] 别名（非法字符清洗为 _，
@@ -188,7 +198,7 @@ export function useRuntimeModelEffort(opts: {
       relaunch?.({ effort: level });
       return;
     }
-    if (sessionEffort && relaunchBlocked) return;
+    if (sessionEffort && relaunchBlocked && !midTurnOk) return;
     if (effortLive) writeCmd(effortLive.command.replace("{level}", level));
   }
   function commitEffort() {
@@ -219,8 +229,10 @@ export function useRuntimeModelEffort(opts: {
     modelDirect,
     effortByRelaunch,
     /** 生成中不能换（重开会打断；或 CLI 生成中不收切换命令）：菜单置灰、写明等这一轮结束 */
-    modelWaitsForTurn: modelByRelaunch || Boolean(sessionModelCmd),
-    effortWaitsForTurn: effortByRelaunch || Boolean(sessionEffort),
+    modelWaitsForTurn: modelByRelaunch || (Boolean(sessionModelCmd) && !midTurnOk),
+    effortWaitsForTurn: effortByRelaunch || (Boolean(sessionEffort) && !midTurnOk),
+    /** 正在生成、换了下一轮才生效（会话内切换在生成中也收的家）：菜单写一句 */
+    nextTurnOnly: relaunchBlocked && midTurnOk && (Boolean(sessionModelCmd) || Boolean(sessionEffort)),
     effortSwitchable,
     effortPersistsViaCommand,
     relaunchBlocked,

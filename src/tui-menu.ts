@@ -418,6 +418,32 @@ export function menuReadyToConfirm(before: TuiMenu, target: number, now: TuiMenu
 }
 
 /**
+ * Kimi 2.5 的思考档选择器（/effort 不带参数，2026-11-11 实测 2.5.3）：标题「Select thinking effort」下面一行横排，
+ * 当前高亮的那一档带方括号——「[ On ]    Off」「low  [ medium ]  high」。←→ 挪，Alt+S 只改本段、回车存成默认
+ */
+export function parseKimiEffortPicker(lines: readonly string[]): { options: string[]; selected: number } | null {
+  let head = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim() === "Select thinking effort") {
+      head = i;
+      break;
+    }
+  }
+  if (head < 0) return null;
+  for (let i = head + 1; i < Math.min(lines.length, head + 6); i++) {
+    const t = lines[i].trim();
+    if (!/^(?:\[\s*[^\]\s]+\s*\]|[^\s[\]]+)(?:\s+(?:\[\s*[^\]\s]+\s*\]|[^\s[\]]+))+$/.test(t)) continue;
+    const tokens = t.match(/\[\s*[^\]\s]+\s*\]|[^\s[\]]+/g) ?? [];
+    const selected = tokens.findIndex((x) => x.startsWith("["));
+    // 标题下面先是按键提示、Note 两行（都是不带方括号的词）：跳过，找带方括号的那一行
+    if (selected < 0) continue;
+    if (tokens.length < 2 || tokens.filter((x) => x.startsWith("[")).length !== 1) return null;
+    return { options: tokens.map((x) => x.replace(/[[\]\s]/g, "")), selected };
+  }
+  return null;
+}
+
+/**
  * 期待中的选择器（会话内换权限，switch-strategy inSessionPermissionSwitch）：屏上这张菜单的项数与登记的原文一样多、
  * 每个原文恰好对上一项（项文字就是原文，或原文后面跟空白 / 括号 / ←——「(current)」「← current」、同一行的说明），
  * 才返回 pick 那一项的序号；否则 null（不按任何键，卡片交给人点）。不做包含匹配：「Ask When Needed」与「Always Ask」都含 Ask

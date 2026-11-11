@@ -150,6 +150,7 @@ import { autoTitleMilestone } from "../session-title";
 import {
   menuMoveKeys,
   menuReadyToConfirm,
+  parseKimiEffortPicker,
   pickerTargetIndex,
   menuEchoesText,
   parseTuiMenu,
@@ -157,7 +158,7 @@ import {
   type MenuAnswer,
   type TuiMenu,
 } from "../tui-menu";
-import { inSessionPermissionSwitch } from "../switch-strategy";
+import { inSessionPermissionSwitch, kimiEffortPickLevel } from "../switch-strategy";
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
@@ -3092,10 +3093,55 @@ export const TerminalView = memo(function TerminalView({
     scanMenuSoon();
     return true;
   }
+  /**
+   * Kimi 2.5.3 会话内换思考档（2026-11-11 实测）：发不带参数的 /effort 唤出横排选择器，←→ 挪到要的档，读屏核对方括号停在它上面，
+   * 再按 Alt+S（只改本段、下一轮生效；回车会存成默认）。Kimi 开着 kitty 键盘，Alt+S 只认 CSI-u 写法，传统 ESC s 无效。
+   * 选择器没出来、没有这一档、核对对不上：按 Esc 退出，什么都不改
+   */
+  function pickKimiEffort(id: string, level: string) {
+    const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
+    const esc = submitCsiU ? "\x1b[27u" : "\x1b";
+    writeInteractivePty(id, `/effort${enter}`);
+    const want = level.toLowerCase();
+    const cancel = () => {
+      if (ptyIdRef.current === id && parseKimiEffortPicker(screenLines())) writeInteractivePty(id, esc);
+    };
+    const confirm = (target: number, tries: number) => {
+      if (ptyIdRef.current !== id) return;
+      const now = parseKimiEffortPicker(screenLines());
+      if (now && now.selected === target && now.options[target]?.toLowerCase() === want) {
+        writeInteractivePty(id, submitCsiU ? "\x1b[115;3u" : "\x1bs");
+        return;
+      }
+      if (tries < 3) window.setTimeout(() => confirm(target, tries + 1), 150);
+      else cancel();
+    };
+    const wait = (tries: number) => {
+      if (ptyIdRef.current !== id) return;
+      const picker = parseKimiEffortPicker(screenLines());
+      if (!picker) {
+        if (tries < 15) window.setTimeout(() => wait(tries + 1), 120);
+        return;
+      }
+      const target = picker.options.findIndex((o) => o.toLowerCase() === want);
+      if (target < 0) return cancel();
+      const delta = target - picker.selected;
+      const keys = Array.from({ length: Math.abs(delta) }, () => (delta > 0 ? "\x1b[C" : "\x1b[D"));
+      const done = keys.length ? queuePtyKeys(id, keys) : Date.now();
+      window.setTimeout(() => confirm(target, 0), Math.max(0, done - Date.now()) + 150);
+    };
+    window.setTimeout(() => wait(0), 150);
+  }
   /** 写一条 TUI 命令（聊天层 / 底栏切模型、思考档），随后盯 5 秒屏幕看 CLI 有没有弹确认 */
   function runTuiCommand(cmd: string) {
     const id = ptyIdRef.current;
     if (!id) return;
+    // Kimi 换思考档：带参数的 /effort 会存成默认，改走选择器只改本段（switch-strategy kimiEffortPickLevel）
+    const kimiLevel = kimiEffortPickLevel(launchAgentRef.current ?? "", launchAgentDetRef.current?.version, cmd);
+    if (kimiLevel) {
+      pickKimiEffort(id, kimiLevel);
+      return;
+    }
     const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
     menuBaselineRef.current = screenMenu();
     writeInteractivePty(id, `${cmd}${enter}`);

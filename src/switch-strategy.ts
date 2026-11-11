@@ -21,6 +21,10 @@
 import { parseVersion } from "./chat-fidelity.ts";
 
 const CODEX_SESSION_SWITCH_MIN: [number, number, number] = [0, 164, 0];
+/** Codex 0.166 起生成中也收 /model --reasoning（0.166.0-alpha.6、0.167.1 实测，回显「for this session only」，下一轮生效） */
+const CODEX_MID_TURN_MIN: [number, number, number] = [0, 166, 0];
+/** Kimi 2.5.3：/effort 选择器里 Alt+S 只改本段（带参数的 /effort 会存成默认，不用）；生成中也能切，下一轮生效 */
+const KIMI_SESSION_EFFORT_MIN: [number, number, number] = [2, 5, 3];
 
 function atLeast(version: string | null | undefined, min: [number, number, number]): boolean {
   const v = parseVersion(version);
@@ -38,7 +42,27 @@ export function inSessionSwitchCommand(
   if (agentId === "codex" && atLeast(version, CODEX_SESSION_SWITCH_MIN)) {
     return kind === "model" ? "/model {model}" : "/model --reasoning {level}";
   }
+  // Kimi 的 /effort <档> 只是 Mesa 内部的写法：TerminalView runTuiCommand 认出它，改成「唤选择器 → 挪到这一档 → 核对 → Alt+S」，
+  // 不把带参数的命令写进终端（那样会存成默认，matrix「会话内换权限 / 思考档」）
+  if (agentId === "kimi" && kind === "effort" && atLeast(version, KIMI_SESSION_EFFORT_MIN)) return KIMI_EFFORT_PICK;
   return null;
+}
+
+/** Kimi 会话内切思考档的内部命令前缀（runTuiCommand 拦下改走选择器，见 kimiEffortPickLevel） */
+export const KIMI_EFFORT_PICK = "/effort {level}";
+
+/** 这条命令是不是要改走 Kimi 思考档选择器：是就返回要切到的档 */
+export function kimiEffortPickLevel(agentId: string, version: string | null | undefined, cmd: string): string | null {
+  if (agentId !== "kimi" || !atLeast(version, KIMI_SESSION_EFFORT_MIN)) return null;
+  const m = /^\/effort\s+(\S+)\s*$/.exec(cmd.trim());
+  return m ? m[1] : null;
+}
+
+/** 会话内切换在生成中也收、下一轮生效（不必等这一轮结束） */
+export function inSessionSwitchMidTurn(agentId: string, version: string | null | undefined): boolean {
+  if (agentId === "codex") return atLeast(version, CODEX_MID_TURN_MIN);
+  if (agentId === "kimi") return atLeast(version, KIMI_SESSION_EFFORT_MIN);
+  return false;
 }
 
 export const SWITCH_PERSISTS: Record<string, { model?: boolean; effort?: boolean }> = {

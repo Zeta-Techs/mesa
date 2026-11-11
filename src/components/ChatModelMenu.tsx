@@ -497,6 +497,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 ? `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}要停下 ${agentLabel} 再接回这段对话，正在生成时换会打断这一轮。`
                 : `${agentLabel} 正在生成时不接受切换命令，等这一轮结束再换。`,
           }
+        : rt.nextTurnOnly && !rt.modelByRelaunch && !rt.effortByRelaunch
+          ? {
+              short: "正在生成，现在换从下一轮起生效，只管这一段对话。",
+              full: `${agentLabel} 正在生成时也收切换，这一轮照旧用原来的设置，下一轮起换成新的；只管这一段对话，不改它的全局配置。`,
+            }
         : rt.modelByRelaunch || rt.effortByRelaunch
           ? {
               short: `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}会停下 ${agentLabel}，用新设置接回这段对话（要几秒），不改它的全局配置。`,
