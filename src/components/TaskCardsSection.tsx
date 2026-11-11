@@ -40,6 +40,7 @@ import {
   withLatestNote,
   chainNext,
   commentReworkDrafts,
+  pendingChainReads,
   commentsPrompt,
   searchRefreshDraft,
   searchRefreshHint,
@@ -1012,6 +1013,12 @@ export default function TaskCardsSection({
     return pickStepWorkspace(workspaces, projectPath, step);
   }
 
+  /** 某一步最近一次保存进项目的时间（补料链按它判轮到谁） */
+  function stepSavedAt(name: string): string | null {
+    const st = steps.find((x) => x.name === name);
+    return (st && stepWorkspace(st)?.mergedAt) || null;
+  }
+
   /** 退回上一步补料（§4）：恢复 / 并入项目最新内容 → 写补料单 → 记轮次 → 在上游工作区另开一段对话（step-round.ts 同一条路） */
   async function sendRework(fields: ReworkFields) {
     if (!focusStepDto) return;
@@ -1034,6 +1041,7 @@ export default function TaskCardsSection({
           clues: fields.clues,
           scale: fields.scale,
           chain: fields.chain,
+          reads: fields.reads,
           provides: skillProvides,
           launch,
           confirm: confirmDialog,
@@ -1059,8 +1067,9 @@ export default function TaskCardsSection({
    *  没有要跟进的也记一笔（ack），「待跟进」就此消掉，不会一直挂着（2026-11-05 排查） */
   async function followUpstream(
     target?: ProjectStepDto,
-    /** 补料链自动往下（流程贯通 §6）：人发补料单时已确认过一次，不再弹规模确认、恢复确认；出错用提示条说，不占聚焦步骤的报错位 */
-    auto?: { label: string },
+    /** 补料链自动往下（流程贯通 §6）：人发补料单时已确认过一次，不再弹规模确认、恢复确认；出错用提示条说，不占聚焦步骤的报错位。
+     *  reads：那张补文献单上「精读已有的」几条（按大纲的节转回路①），精读这一轮一起做 */
+    auto?: { label: string; reads?: string[] },
   ): Promise<"started" | "skipped" | "stopped"> {
     const step = target ?? focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
@@ -1074,7 +1083,18 @@ export default function TaskCardsSection({
       // 精读步的增量按项目根的台账算，不用工作副本：收起了也先算、先问，人确认了才恢复（2026-11-05 排查：原先一点就恢复）
       let notesIds: string[] | null = null;
       let droppedIds: string[] = [];
+      let reads: string[] = [];
+      // 人手动点跟进时，轮到这一步的补文献单上的精读几条也带上，并记链上这一步已开（链不再自动重开）
+      let claimIds: string[] = [];
       if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
+        if (auto) {
+          reads = auto.reads ?? [];
+        } else {
+          const reworks = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
+          const pending = pendingChainReads(reworks, step.name, stepSavedAt);
+          reads = pending.flatMap((p) => p.reads);
+          claimIds = pending.map((p) => p.id);
+        }
         const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
         // 这一步读过哪些篇看工作副本的索引：待评审、没保存时项目根还是旧索引（甚至没有），按它算会把全部篇当新增
         const idx =
@@ -1095,7 +1115,7 @@ export default function TaskCardsSection({
           );
         }
         // 没有新篇要读、也没有要撤的，但上游改了别的（清单、待获取）：按文件跟进
-        if (notesIds && notesIds.length === 0 && droppedIds.length === 0) notesIds = null;
+        if (notesIds && notesIds.length === 0 && droppedIds.length === 0 && reads.length === 0) notesIds = null;
       }
       let ws = found;
       let files: string[] = [];
@@ -1118,7 +1138,7 @@ export default function TaskCardsSection({
       // 选「接着做，一起评审」（2026-11-10 用户拍板）；补料链自动往下时照旧停下，等人先保存
       const unsaved = ws.status === "active" && (await hasUnsavedRound(ws));
       if (ws.status === "active") await assertRoundable(ws, step.name, { allowUnsaved: !auto });
-      const scale = followupScale({ upstream, notesIds, droppedIds, files });
+      const scale = followupScale({ upstream, notesIds, droppedIds, files, reads });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
         onWorkspacesChanged?.();
@@ -1132,7 +1152,7 @@ export default function TaskCardsSection({
       }
       if (!auto) {
         if (
-          !(await confirmDialog(followupConfirmText({ notesIds, droppedIds, files, unsaved }), {
+          !(await confirmDialog(followupConfirmText({ notesIds, droppedIds, files, unsaved, reads }), {
             confirmText: unsaved ? "接着做，一起评审" : "开始跟进",
           }))
         )
@@ -1143,11 +1163,14 @@ export default function TaskCardsSection({
         await assertRoundable(ws, step.name);
       }
       if ((await bringLatest(ws, step.name, confirmDialog, "跟进")) === null) return "stopped";
+      for (const id of claimIds) {
+        await invoke("rework_chain_claim", { root: projectPath, reworkId: id, step: step.name }).catch(() => false);
+      }
       await launchContinuation(
         launch,
         ws,
         step.name,
-        followupPrompt({ upstream, notesIds, droppedIds, files, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
+        followupPrompt({ upstream, notesIds, droppedIds, files, reads, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
       );
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
@@ -1199,12 +1222,8 @@ export default function TaskCardsSection({
     void (async () => {
       const reworks = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
       if (stale || chainBusyRef.current) return;
-      const savedAt = (name: string) => {
-        const st = steps.find((x) => x.name === name);
-        return (st && stepWorkspace(st)?.mergedAt) || null;
-      };
       for (const r of reworks) {
-        const next = chainNext(r, savedAt);
+        const next = chainNext(r, stepSavedAt);
         if (!next || Date.parse(next.savedAt) <= Date.parse(SESSION_STARTED_AT)) continue;
         const step = steps.find((x) => x.name === next.step);
         if (!step) continue;
@@ -1213,7 +1232,10 @@ export default function TaskCardsSection({
         chainBusyRef.current = true;
         try {
           const chain = r.chain ?? [];
-          const result = await followUpstream(step, { label: `补料链（${r.toStep} 之后第 ${chain.indexOf(next.step) + 1}/${chain.length} 步）` });
+          const result = await followUpstream(step, {
+            label: `补料链（${r.toStep} 之后第 ${chain.indexOf(next.step) + 1}/${chain.length} 步）`,
+            reads: r.reads,
+          });
           if (result === "skipped") await invoke("rework_chain_skip", { root: projectPath, reworkId: r.id, step: next.step }).catch(() => {});
         } finally {
           chainBusyRef.current = false;
@@ -1629,19 +1651,20 @@ export default function TaskCardsSection({
               const targets = upstreamSteps.map((s) => s.name);
               // 默认退回最近的上一步：它是找 / 读文献的就叫「补料」，大纲、初稿这类叫「修改」
               const nearestLit = !!upstreamSteps[0] && isLitStep(upstreamSteps[0]);
-              // 按钮名自己说清做什么（step-panel R5）：上一步是找 / 读文献的叫「补充文献…」（2026-11-10 用户：「退回上一步补料」看不懂）
+              // 按钮名自己说清做什么（step-panel R5）：上一步是找 / 读文献的叫「补文献…」（2026-11-10 用户：「退回上一步补料」看不懂；
+              // 2026-11-11「补充文献」听着只是找新的，改成一张单两栏「找新文献 / 精读已有的」，design-outline-loop.md）
               const reworkButton = targets.length > 0 && (
                 <button
                   type="button"
                   onClick={() => void openRework()}
                   title={
                     nearestLit
-                      ? "缺文献时用（比如某个方向一篇都没有、大纲某节文献不够）：写清补什么，交给上一步另开一轮去找或去读。这一步做到一半也可以，不用先保存"
+                      ? "大纲某节文献不够时用：一张单子按节写，分「找新文献」和「精读已有的」，Mesa 交给检索、精读按顺序做。这一步做到一半也可以，不用先保存"
                       : "做这一步时发现上游要改（比如大纲某节的顺序撑不住）：写清改什么，交给上一步另开一轮去改。这一步做到一半也可以，不用先保存"
                   }
                   className={LOOP_TOOL}
                 >
-                  {nearestLit ? "补充文献…" : "退回上一步修改…"}
+                  {nearestLit ? "补文献…" : "退回上一步修改…"}
                 </button>
               );
               // 定稿前更新检索（科研流程补全 §2）：检索那一步保存超过 14 天，定稿还没保存过时给入口，点了走退回补料
@@ -1983,9 +2006,8 @@ export default function TaskCardsSection({
         <ReworkDialog
           fromStep={focusStepDto.name}
           targets={reworkTargets(steps, focusIdx).map((st) => st.name)}
-          litTargets={reworkTargets(steps, focusIdx)
-            .filter((st) => isLitStep(st))
-            .map((st) => st.name)}
+          searchTarget={reworkTargets(steps, focusIdx).find((st) => stepFillsAnySlot(st.skills, ["lit-search"], skillProvides))?.name}
+          notesTarget={reworkTargets(steps, focusIdx).find((st) => stepFillsAnySlot(st.skills, ["lit-notes"], skillProvides))?.name}
           fromInProgress={focusRunStatus !== "done"}
           fromPending={(focusRunStatus ?? "pending") === "pending"}
           initial={reworkInitial ?? undefined}

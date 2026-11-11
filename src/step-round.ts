@@ -1,6 +1,6 @@
 /**
  * 在某一步「开一轮」的共同编排（2026-11-06 流程贯通，design-flow-weave.md）：找工作副本 → 收起了就恢复 →
- * 拦在忙的 / 有没保存产出的 → 并入项目最新内容 → 开对话 → 记轮次。步骤卡上的「补充文献… / 退回上一步修改…」「跟进更新」、
+ * 拦在忙的 / 有没保存产出的 → 并入项目最新内容 → 开对话 → 记轮次。步骤卡上的「补文献… / 退回上一步修改…」「跟进更新」、
  * 项目助手的补料单、补料链自动往下跟进都走这里，不各写一套。调 invoke，无单测（纯逻辑在 step-loop.ts）。
  */
 import { invoke } from "@tauri-apps/api/core";
@@ -133,6 +133,8 @@ export interface ReworkSend {
   scale: number | null;
   /** 补完保存后接着自动跟进的下游步骤名（补料链，§6）；空 = 只补这一步 */
   chain?: string[];
+  /** 同一张补文献单上「精读已有的」那几条（退回检索时随单存，链上精读跟进时一起做）；只退回精读时为空 */
+  reads?: string[];
   provides: SkillProvides;
   /** 解析不到绑定时用的连接（步骤卡传它那条链）；null 也行，按工作区上次用的预填 */
   launch: Launch | null;
@@ -165,6 +167,7 @@ export async function sendReworkRound(input: ReworkSend, onRestored?: () => void
       clues: input.clues,
       scale: input.scale,
       chain: input.chain ?? [],
+      reads: input.reads ?? [],
     },
   });
   const d = new Date();

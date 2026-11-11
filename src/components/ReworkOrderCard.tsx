@@ -100,6 +100,7 @@ export default function ReworkOrderCard({
         clues: fields.clues,
         scale: fields.scale,
         chain: fields.chain,
+        reads: fields.reads,
         provides,
         launch: null,
         confirm: confirmDialog,
@@ -185,7 +186,8 @@ export default function ReworkOrderCard({
         <ReworkDialog
           fromStep={from?.name ?? "项目助手"}
           targets={targets.map((s) => s.name)}
-          litTargets={targets.filter((s) => Object.values(litKind(s, provides)).some(Boolean)).map((s) => s.name)}
+          searchTarget={targets.find((s) => litKind(s, provides).isSearch)?.name}
+          notesTarget={targets.find((s) => litKind(s, provides).isNotes)?.name}
           chainOff={steps.filter((st) => chainDefaultOff(stepKind(st, provides))).map((st) => st.name)}
           chainOptions={Object.fromEntries(
             targets.map((t) => {

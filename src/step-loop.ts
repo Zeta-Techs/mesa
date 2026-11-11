@@ -16,6 +16,8 @@ export interface ReworkDraft {
   scale: number | null;
   /** 补料链（2026-11-06 流程贯通 §6）：退回目标保存后接着自动跟进的下游步骤名，按顺序；空 = 只补这一步 */
   chain?: string[];
+  /** 同一张补文献单上「精读已有的」那几条（2026-11-11 按大纲的节转回路①）：退回检索时随单存，链上的精读跟进时一起做 */
+  reads?: string[];
 }
 
 /** 补料链上一步「开过」的记录；skipped = 算出来没有要跟进的（记了 ack），链从它的上一步接着往下 */
@@ -58,6 +60,18 @@ export function chainNext(
     return saved && Date.parse(saved) > Date.parse(since) ? { step, prev, savedAt: saved } : null;
   }
   return null;
+}
+
+/** 轮到 step 跟进、且单上带着「精读已有的」的补文献单（按大纲的节转回路①）：人手动点「跟进更新」时也要带上，
+ *  别让链自动那一路才认。只认轮到它的（检索还没保存时不提前读） */
+export function pendingChainReads(
+  reworks: Pick<ReworkDto, "id" | "toStep" | "sentAt" | "chain" | "chainState" | "reads">[],
+  step: string,
+  savedAt: (step: string) => string | null,
+): { id: string; reads: string[] }[] {
+  return reworks
+    .filter((r) => (r.reads?.length ?? 0) > 0 && chainNext(r, savedAt)?.step === step)
+    .map((r) => ({ id: r.id, reads: r.reads ?? [] }));
 }
 
 /** 链现在卡在哪（资料全貌 / 提示用）：等某一步保存、轮到某一步跟进、走完了、停掉了 */
@@ -167,11 +181,40 @@ export function parseTopics(text: string): string[] {
     .filter(Boolean);
 }
 
+/** 补文献单（按大纲的节转回路①）两栏怎么发：有「找新文献」就退回检索，「精读已有的」随单存、链上强制带精读；
+ *  只有精读已有的就退回精读。链按 chainOptions 的步骤顺序，只留人勾的（强制的精读除外）。两栏都空或目标不存在返回 null */
+export function litOrder(opts: {
+  search?: string;
+  notes?: string;
+  searchRows: string[];
+  readRows: string[];
+  chainOptions: Record<string, string[]>;
+  picked: string[];
+}): { target: string; topics: string[]; reads: string[]; chain: string[] } | null {
+  const { search, notes, searchRows, readRows, chainOptions, picked } = opts;
+  if (search && searchRows.length > 0) {
+    const reads = notes ? readRows : [];
+    const options = chainOptions[search] ?? [];
+    let chain = options.filter((st) => picked.includes(st) || (reads.length > 0 && st === notes));
+    if (reads.length > 0 && notes && !chain.includes(notes)) chain = [notes, ...chain];
+    return { target: search, topics: searchRows, reads, chain };
+  }
+  if (notes && readRows.length > 0) {
+    return { target: notes, topics: readRows, reads: [], chain: (chainOptions[notes] ?? []).filter((st) => picked.includes(st)) };
+  }
+  return null;
+}
+
 /** 补料轮的开场指令：补料单原文写进去（不靠 AI 去读项目根的文件），只补单上的。
  *  isNotes = 退回精读（「补读」）：点名的篇写成完整精读笔记——任务书里「研究论文只速读、不写单篇笔记」对它们不适用，
  *  否则 AI 照任务书只补速读行（2026-11-05 排查）；精读步没有「主要报告」，不叫它往报告末尾追加。 */
+/** 点名精读的篇写成完整笔记（补料轮与链上跟进共用） */
+const FULL_NOTES_CLAUSE =
+  "写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
+  "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。";
+
 export function reworkPrompt(
-  rework: Pick<ReworkDto, "fromStep" | "topics" | "reason" | "clues" | "scale" | "relPath">,
+  rework: Pick<ReworkDto, "fromStep" | "topics" | "reason" | "clues" | "scale" | "relPath" | "reads">,
   opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string; clause?: string },
 ): string {
   const lit = opts.isSearch || !!opts.isNotes;
@@ -194,6 +237,11 @@ export function reworkPrompt(
         "，大纲和可写点清单本轮不改。",
     );
   }
+  if (opts.isSearch && (rework.reads?.length ?? 0) > 0) {
+    lines.push(
+      `单上另有 ${rework.reads!.length} 条要精读已有的文献，不在这一轮做：这一步保存进项目后，精读那一步把新纳入的和这几条一起读。`,
+    );
+  }
   if (opts.isSearch) {
     lines.push("线索里点名了种子文献（例如某几篇综述）的，按技能「引用扩展」从它们的参考文献和被引里找，只收和单上主题对得上的。");
   }
@@ -202,8 +250,7 @@ export function reworkPrompt(
       ? "已纳入、已判定的文献不重筛、不改判定；新找到的按原纳入标准筛，纳入的追加进 papers/included.json，再按技能跑 lit_records.py write 重出清单。" +
           `在 papers/screening.md 末尾追加「## 补料轮（${opts.date}）」一节：补了什么、检索式、候选数与纳入数、没拿到全文的原因。`
       : opts.isNotes
-        ? "单上点名的篇（或这些主题下该精读的篇）写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
-          "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。收尾跑 lit_records.py bib 补 references.bib；notes/handoff.md 的写作约束按新笔记改到现在成立的样子（新补的约束加上，不再成立的删掉），不记改动经过；最后在对话里列出补了哪几篇、改了哪些文件。"
+        ? `单上点名的篇（或这些主题下该精读的篇）${FULL_NOTES_CLAUSE}收尾跑 lit_records.py bib 补 references.bib；notes/handoff.md 的写作约束按新笔记改到现在成立的样子（新补的约束加上，不再成立的删掉），不记改动经过；最后在对话里列出补了哪几篇、改了哪些文件。`
         : "在本步已有产物上修改，人确认过的内容不推翻；" +
           `在本步主要报告末尾追加「## 修改轮（${opts.date}）」一节，写清改了什么、改了哪些文件。` +
           (opts.clause ? opts.clause : ""),
@@ -414,6 +461,8 @@ export function followupPrompt(opts: {
   files: string[];
   /** 这一类步骤回头时的做法（step-kind.ts ROUND_CLAUSE）；按改动文件跟进时接在后面 */
   clause?: string;
+  /** 精读步：补文献单上点名「精读已有的」（pendingChainReads），和新纳入的一起做 */
+  reads?: string[];
 }): string {
   const head = `上游「${opts.upstream}」保存过新内容，这一轮只跟进新增的部分，不重做整步。项目里的新内容已经并进本工作区。`;
   if (opts.notesIds) {
@@ -426,11 +475,19 @@ export function followupPrompt(opts: {
         "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py pdfs 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
       );
     }
+    const reads = opts.reads ?? [];
+    if (reads.length > 0) {
+      lines.push(
+        "补文献单上还点名精读这些（和上面新纳入的一起做）：",
+        ...reads.map((t, i) => `${i + 1}. ${t}`),
+        `这几条点到的篇（或这些节下该精读的篇）${FULL_NOTES_CLAUSE}`,
+      );
+    }
     const dropped = opts.droppedIds ?? [];
     if (dropped.length > 0) lines.push(droppedClause(dropped));
     lines.push(
       "收尾跑 lit_records.py bib 更新 references.bib，再更新 notes/index.json 与 notes/handoff.md（只留现在仍成立的写作约束）" +
-        (opts.notesIds.length > 0 ? "；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句。" : "。"),
+        (opts.notesIds.length > 0 || reads.length > 0 ? "；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句。" : "。"),
       KEEP_WORKING_CLAUSE,
     );
     return lines.join("\n");
@@ -448,13 +505,21 @@ export function followupPrompt(opts: {
 }
 
 /** 跟进确认框里的一句规模话 */
-export function followupScale(opts: { upstream: string; notesIds: string[] | null; droppedIds?: string[]; files: string[] }): string {
+export function followupScale(opts: {
+  upstream: string;
+  notesIds: string[] | null;
+  droppedIds?: string[];
+  files: string[];
+  reads?: string[];
+}): string {
   if (opts.notesIds) {
     const n = opts.notesIds.length;
     const d = opts.droppedIds?.length ?? 0;
-    if (n === 0 && d === 0) return "";
+    const r = opts.reads?.length ?? 0;
+    if (n === 0 && d === 0 && r === 0) return "";
     const parts = [
       n > 0 ? `新纳入 ${n} 篇，AI 只处理这 ${n} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读` : "",
+      r > 0 ? `补文献单上点名精读 ${r} 条，写成完整笔记` : "",
       d > 0 ? `后来排除 ${d} 篇，AI 把它们从交棒的写作约束、可写点清单、索引和引文库里撤掉，笔记留着` : "",
     ].filter(Boolean);
     return `「${opts.upstream}」有更新：${parts.join("；")}。`;
@@ -471,17 +536,22 @@ export function followupConfirmText(opts: {
   droppedIds?: string[];
   files: string[];
   unsaved: boolean;
+  reads?: string[];
 }): string {
   const n = opts.notesIds?.length ?? 0;
   const d = opts.notesIds ? (opts.droppedIds?.length ?? 0) : 0;
-  const head =
+  const r = opts.notesIds ? (opts.reads?.length ?? 0) : 0;
+  const body =
     n > 0 && d > 0
       ? `跟进新纳入的 ${n} 篇、撤下后来排除的 ${d} 篇？\n\nAI 只读新纳入的，排除的从写作约束和引文库撤掉，已有笔记不动。`
       : n > 0
         ? `跟进新纳入的 ${n} 篇？\n\nAI 只读这 ${n} 篇，已有笔记不动。`
         : d > 0
           ? `撤下后来排除的 ${d} 篇？\n\nAI 把它们从写作约束和引文库撤掉，笔记留着。`
-          : `跟进上游改过的 ${opts.files.length} 个文件？\n\nAI 只改受影响的部分。`;
+          : r > 0
+            ? `精读补文献单上点名的 ${r} 条？\n\nAI 把这几条写成完整笔记，已有笔记不动。`
+            : `跟进上游改过的 ${opts.files.length} 个文件？\n\nAI 只改受影响的部分。`;
+  const head = r > 0 && (n > 0 || d > 0) ? `${body}\n\n补文献单上点名精读的 ${r} 条也一起做，写成完整笔记。` : body;
   return opts.unsaved ? `${head}\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。` : head;
 }
 

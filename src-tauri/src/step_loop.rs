@@ -53,6 +53,10 @@ pub struct ReworkDraft {
     /// 补料链（2026-11-06 流程贯通 §6）：退回目标保存后接着自动跟进的下游步骤名，按顺序；空 = 只补这一步
     #[serde(default)]
     pub chain: Vec<String>,
+    /// 同一张补文献单上「精读已有的」那几条（2026-11-11 按大纲的节转回路①）：退回检索时随单存，链上第一步精读跟进时一起做；
+    /// 只退回精读时写在 topics 里、这里为空
+    #[serde(default)]
+    pub reads: Vec<String>,
 }
 
 /// 补料链上一步「开过」的记录：步骤名、开的时间；skipped = 算出来没有要跟进的（记了 ack，链直接往下走）
@@ -103,6 +107,12 @@ fn create_rework_at(root: &Path, mut draft: ReworkDraft) -> Result<ReworkDto, St
         .collect();
     draft.reason = draft.reason.trim().to_string();
     draft.clues = draft.clues.trim().to_string();
+    draft.reads = draft
+        .reads
+        .iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
     if draft.topics.is_empty() {
         return Err("补料单至少写一条要补的主题或章节".into());
     }
@@ -111,6 +121,10 @@ fn create_rework_at(root: &Path, mut draft: ReworkDraft) -> Result<ReworkDto, St
     }
     if draft.to_step.trim().is_empty() || draft.to_workspace_id.trim().is_empty() {
         return Err("补料单没有退回到的步骤".into());
+    }
+    // 精读那几条靠链交到精读步：链是空的就没人做
+    if !draft.reads.is_empty() && draft.chain.is_empty() {
+        return Err("补文献单里有要精读的，但补完之后没有接着跟进的精读步骤".into());
     }
     let sent_at = crate::sessions::now_iso();
     let name = crate::paths::sanitize_fs_name(&draft.to_workspace_name).unwrap_or_else(|_| "step".into());
@@ -739,6 +753,7 @@ mod tests {
             clues: String::new(),
             scale: Some(10),
             chain: vec!["文献精读与笔记".into(), "综述大纲".into()],
+            reads: Vec::new(),
         }
     }
 
@@ -777,6 +792,22 @@ mod tests {
         assert_eq!(a.draft.topics, vec!["§3.2 失活机理".to_string()]);
         assert!(a.rel_path.starts_with(".ccode/rework/"));
         assert_eq!(list_reworks_at(dir.path()).len(), 2);
+    }
+
+    #[test]
+    fn rework_reads_ride_on_the_chain() {
+        let dir = project();
+        let mut d = draft();
+        d.reads = vec![" 4.3：[@Su2025] ".into(), " ".into()];
+        let r = create_rework_at(dir.path(), d.clone()).unwrap();
+        assert_eq!(r.draft.reads, vec!["4.3：[@Su2025]".to_string()]);
+        assert_eq!(list_reworks_at(dir.path())[0].draft.reads, r.draft.reads);
+        d.chain.clear();
+        assert!(create_rework_at(dir.path(), d).is_err(), "有要精读的却没有链，不发");
+        // 旧单没有 reads 这一栏，按空读
+        let old = r#"{"id":"x","fromStep":"a","toStep":"b","toWorkspaceId":"w","toWorkspaceName":"n","topics":["t"],"reason":"r","sentAt":"2026-11-05T00:00:00Z","relPath":".ccode/rework/x.json"}"#;
+        let dto: ReworkDto = serde_json::from_str(old).unwrap();
+        assert!(dto.draft.reads.is_empty());
     }
 
     #[test]

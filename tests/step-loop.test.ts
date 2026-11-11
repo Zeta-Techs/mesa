@@ -397,3 +397,55 @@ test("看这一轮：差异去掉文件头、段头换分隔、增删去掉 +/-�
   assert.ok(isLedgerFile("papers/to-fetch.md"));
   assert.ok(!isLedgerFile("papers/screening.md"));
 });
+
+test("litOrder：有找新文献退回检索、精读几条随单走并锁进链；只精读退回精读；两栏空不发", async () => {
+  const { litOrder } = await import("../src/step-loop.ts");
+  const chainOptions = { 检索: ["精读", "大纲"], 精读: ["大纲"] };
+  const base = { search: "检索", notes: "精读", chainOptions };
+  assert.deepEqual(litOrder({ ...base, searchRows: ["4.3 新工作"], readRows: ["4.3：[@Su2025]"], picked: ["大纲"] }), {
+    target: "检索", topics: ["4.3 新工作"], reads: ["4.3：[@Su2025]"], chain: ["精读", "大纲"],
+  });
+  // 精读那一步不在可选链里（还没保存）也要带上，排在最前
+  assert.deepEqual(litOrder({ ...base, chainOptions: { 检索: ["大纲"] }, searchRows: ["a"], readRows: ["b"], picked: [] })?.chain, ["精读"]);
+  // 只找新文献：链只留人勾的
+  assert.deepEqual(litOrder({ ...base, searchRows: ["a"], readRows: [], picked: [] }), { target: "检索", topics: ["a"], reads: [], chain: [] });
+  assert.deepEqual(litOrder({ ...base, searchRows: [], readRows: ["b"], picked: ["大纲"] }), { target: "精读", topics: ["b"], reads: [], chain: ["大纲"] });
+  assert.equal(litOrder({ ...base, searchRows: [], readRows: [], picked: [] }), null);
+  // 上游没有精读：精读那栏不随单走
+  assert.deepEqual(litOrder({ search: "检索", chainOptions, searchRows: ["a"], readRows: ["b"], picked: [] })?.reads, []);
+});
+
+test("pendingChainReads：轮到精读跟进时才带上单上的精读几条；检索还没保存、已开过、停掉的不带", async () => {
+  const { pendingChainReads } = await import("../src/step-loop.ts");
+  const r = { id: "r1", toStep: "检索", sentAt: "2026-11-11T01:00:00Z", chain: ["精读"], reads: ["4.3：[@Su2025]"] };
+  const saved: Record<string, string> = {};
+  const at = (s: string) => saved[s] ?? null;
+  assert.deepEqual(pendingChainReads([r], "精读", at), [], "检索还没保存");
+  saved["检索"] = "2026-11-11T03:00:00Z";
+  assert.deepEqual(pendingChainReads([r], "精读", at), [{ id: "r1", reads: ["4.3：[@Su2025]"] }]);
+  assert.deepEqual(pendingChainReads([r], "大纲", at), []);
+  assert.deepEqual(pendingChainReads([{ ...r, reads: [] }], "精读", at), []);
+  assert.deepEqual(pendingChainReads([{ ...r, chainState: { started: [{ step: "精读", at: "2026-11-11T04:00:00Z" }], stopped: false } }], "精读", at), []);
+  assert.deepEqual(pendingChainReads([{ ...r, chainState: { started: [], stopped: true } }], "精读", at), []);
+});
+
+test("精读跟进带上补文献单的精读几条：开场列出、写完整笔记；没有新篇也照样开；确认框与规模写明", () => {
+  const p = followupPrompt({ upstream: "文献检索与筛选", notesIds: ["n1"], files: [], reads: ["4.3：[@Su2025]"] });
+  assert.match(p, /纳入清单里新加了 1 篇/);
+  assert.match(p, /补文献单上还点名精读这些（和上面新纳入的一起做）：\n1\. 4\.3：\[@Su2025\]/);
+  assert.match(p, /写成完整精读笔记/);
+  assert.match(p, /「研究论文只速读、不写单篇笔记」对这几篇不适用/);
+  const only = followupPrompt({ upstream: "文献检索与筛选", notesIds: [], files: [], reads: ["4.3：[@Su2025]"] });
+  assert.doesNotMatch(only, /纳入清单里新加了/);
+  assert.match(only, /补文献单上还点名精读这些/);
+  assert.match(followupScale({ upstream: "检索", notesIds: [], files: [], reads: ["a", "b"] }), /补文献单上点名精读 2 条/);
+  assert.equal(followupScale({ upstream: "检索", notesIds: [], files: [] }), "");
+  assert.match(followupConfirmText({ notesIds: [], files: [], unsaved: false, reads: ["a"] }), /^精读补文献单上点名的 1 条？/);
+  assert.match(followupConfirmText({ notesIds: ["n1"], files: [], unsaved: false, reads: ["a"] }), /跟进新纳入的 1 篇？[\s\S]*点名精读的 1 条也一起做/);
+});
+
+test("退回检索的补料轮：单上有精读几条时说明不在这一轮做", () => {
+  const rework = { fromStep: "综述大纲", topics: ["4.3 新工作"], reason: "薄", clues: "", scale: null, relPath: ".ccode/rework/x.json", reads: ["4.3：[@Su2025]"] };
+  assert.match(reworkPrompt(rework, { isSearch: true, projectRoot: "/p", date: "11-11" }), /单上另有 1 条要精读已有的文献，不在这一轮做/);
+  assert.doesNotMatch(reworkPrompt({ ...rework, reads: [] }, { isSearch: true, projectRoot: "/p", date: "11-11" }), /单上另有/);
+});

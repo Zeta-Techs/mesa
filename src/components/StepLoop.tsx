@@ -8,6 +8,7 @@ import { Modal } from "./Modal";
 import { fieldClass, InlineNotice, primaryActionClass, secondaryActionClass } from "./PageFrame";
 import {
   isLedgerFile,
+  litOrder,
   parseTopics,
   readableDiff,
   roundCauseLabel,
@@ -26,14 +27,20 @@ export interface ReworkFields {
   scale: number | null;
   /** 补完、保存进项目后接着自动跟进的下游步骤（补料链，2026-11-06 流程贯通 §6） */
   chain: string[];
+  /** 补文献单上「精读已有的」那几条，随退回检索的单子交给链上的精读（按大纲的节转回路①）；其余情况为空 */
+  reads: string[];
 }
+
+/** 下拉里「补文献」这一项的值：检索、精读两步并成一项，按两栏分派（按大纲的节转回路①） */
+const LIT = "\u0000lit";
 
 export function ReworkDialog({
   fromStep,
   targets,
   prefill = {},
   unplaced = [],
-  litTargets = [],
+  searchTarget,
+  notesTarget,
   initial,
   fromInProgress = false,
   fromPending = false,
@@ -51,8 +58,9 @@ export function ReworkDialog({
   prefill?: Record<string, { topics: string; reason: string }>;
   /** 覆盖检查里归不到退回目标的薄节（建议没写补检 / 补读）：单列提示，人自己决定抄进哪一步 */
   unplaced?: string[];
-  /** 退回目标里找文献 / 读文献的步骤（检索、精读）：退回它们叫「补料」、问篇数；退回大纲、初稿这类叫「修改」（2026-11-06） */
-  litTargets?: string[];
+  /** 上游里找文献、读文献的步骤（lit-search / lit-notes 槽，最近的那个）：两步并成下拉里的「补文献」，分「找新文献 / 精读已有的」两栏 */
+  searchTarget?: string;
+  notesTarget?: string;
   /** 整张单子预填（项目助手起草的补料单，2026-11-06）：给了就不按 prefill 换主题 */
   initial?: { target: string; topics: string; reason: string; clues: string; scale: number | null };
   /** 发起的这一步还没保存（做到一半 / 待评审，2026-11-06 流程贯通 §5）：说明它之后怎么接上补来的 */
@@ -68,33 +76,78 @@ export function ReworkDialog({
   onCancel: () => void;
   onSend: (fields: ReworkFields) => void;
 }) {
-  const first = (initial && targets.includes(initial.target) ? initial.target : null) ?? targets.find((t) => prefill[t]) ?? targets[0] ?? "";
-  const [target, setTarget] = useState(first);
-  const [topics, setTopics] = useState(initial?.topics ?? prefill[first]?.topics ?? "");
-  const [reason, setReason] = useState(initial?.reason ?? prefill[first]?.reason ?? "");
+  const isLit = (t: string) => t === searchTarget || t === notesTarget;
+  // 下拉：检索、精读并成一项「补文献」，放在两者里靠前那个的位置；其余步骤照旧一项一步
+  const options = targets.reduce<string[]>((acc, t) => {
+    const v = isLit(t) ? LIT : t;
+    return acc.includes(v) ? acc : [...acc, v];
+  }, []);
+  const litPrefill = (searchTarget && prefill[searchTarget]) || (notesTarget && prefill[notesTarget]);
+  const first =
+    (initial && targets.includes(initial.target) ? (isLit(initial.target) ? LIT : initial.target) : null) ??
+    (litPrefill ? LIT : null) ??
+    options.find((t) => prefill[t]) ??
+    options[0] ??
+    "";
+  const [mode, setMode] = useState(first);
+  const lit = mode === LIT;
+  const litReason = [searchTarget && prefill[searchTarget]?.reason, notesTarget && prefill[notesTarget]?.reason].filter(Boolean).join("；");
+  const [searchText, setSearchText] = useState(
+    initial ? (initial.target === searchTarget ? initial.topics : "") : (searchTarget && prefill[searchTarget]?.topics) || "",
+  );
+  const [readText, setReadText] = useState(
+    initial ? (initial.target === notesTarget ? initial.topics : "") : (notesTarget && prefill[notesTarget]?.topics) || "",
+  );
+  // 非文献步骤（修改单）只有一栏
+  const [topics, setTopics] = useState(initial && !isLit(initial.target) ? initial.topics : first !== LIT ? (prefill[first]?.topics ?? "") : "");
+  const [reason, setReason] = useState(initial?.reason ?? (first === LIT ? litReason : (prefill[first]?.reason ?? "")));
   const [edited, setEdited] = useState(!!initial);
+  const searchRows = parseTopics(searchText);
+  const readRows = parseTopics(readText);
+  // 补文献时这张单子实际退回哪一步：有找新文献就是检索，否则精读
+  const litTarget = searchTarget && (searchRows.length > 0 || !notesTarget) ? searchTarget : (notesTarget ?? "");
+  const target = lit ? litTarget : mode;
+  // 两栏都写了：精读那几条靠链交过去，链上必须有精读
+  const notesLocked = lit && !!searchTarget && !!notesTarget && searchRows.length > 0 && readRows.length > 0;
+  const chainFor = (t: string) => {
+    const list = chainOptions[t] ?? [];
+    return notesLocked && t === searchTarget && notesTarget && !list.includes(notesTarget) ? [notesTarget, ...list] : list;
+  };
   const chainDefault = (t: string) => (chainOptions[t] ?? []).filter((st) => !chainOff.includes(st));
-  const [chain, setChain] = useState<string[]>(chainDefault(first));
-  const pickTarget = (next: string) => {
-    setTarget(next);
-    setChain(chainDefault(next));
+  const [chain, setChain] = useState<string[]>(chainDefault(first === LIT ? litTarget : first));
+  // 补文献栏从「只精读」变成「也找新的」（或反过来）时，退回目标跟着换，链按新目标重给默认
+  const [chainOf, setChainOf] = useState(target);
+  if (chainOf !== target) {
+    setChainOf(target);
+    setChain(chainDefault(target));
+  }
+  const pickMode = (next: string) => {
+    setMode(next);
     if (!edited) {
-      setTopics(prefill[next]?.topics ?? "");
-      setReason(prefill[next]?.reason ?? "");
+      if (next === LIT) {
+        setReason(litReason);
+      } else {
+        setTopics(prefill[next]?.topics ?? "");
+        setReason(prefill[next]?.reason ?? "");
+      }
     }
   };
   const [clues, setClues] = useState(initial?.clues ?? "");
   const [scale, setScale] = useState(initial?.scale ? String(initial.scale) : "");
   const parsed = parseTopics(topics);
-  const ready = !!target && parsed.length > 0 && reason.trim().length > 0 && !busy;
+  const order = lit
+    ? litOrder({ search: searchTarget, notes: notesTarget, searchRows, readRows, chainOptions, picked: chain })
+    : null;
+  const ready = (lit ? !!order : !!target && parsed.length > 0) && reason.trim().length > 0 && !busy;
   const scaleNum = Number.parseInt(scale, 10);
-  const lit = litTargets.includes(target);
+  const searching = lit && !!searchTarget;
+  const chainList = chainFor(target);
   return (
     <Modal
       open
       size="md"
       layer="overlay"
-      title={lit ? "补充文献" : "退回上一步修改"}
+      title={lit ? "补文献" : "退回上一步修改"}
       description={
         (lit
           ? `从「${fromStep}」退回。AI 只补你列的这些，已有的不重做；做完照常去评审、保存进项目，`
@@ -118,17 +171,26 @@ export function ReworkDialog({
             type="button"
             className={primaryActionClass}
             disabled={!ready}
-            onClick={() =>
+            onClick={() => {
+              const base = { reason: reason.trim(), clues: clues.trim() };
+              if (order) {
+                onSend({
+                  ...base,
+                  ...order,
+                  scale: order.target === searchTarget && Number.isFinite(scaleNum) && scaleNum > 0 ? scaleNum : null,
+                });
+                return;
+              }
               onSend({
+                ...base,
                 target,
                 topics: parsed,
-                reason: reason.trim(),
-                clues: clues.trim(),
-                scale: lit && Number.isFinite(scaleNum) && scaleNum > 0 ? scaleNum : null,
+                scale: null,
                 // 按步骤顺序，只留现在这个目标下列得出来的
                 chain: (chainOptions[target] ?? []).filter((st) => chain.includes(st)),
-              })
-            }
+                reads: [],
+              });
+            }}
           >
             {busy ? "正在交给上一步…" : lit ? "退回去补" : "退回去改"}
           </button>
@@ -144,35 +206,75 @@ export function ReworkDialog({
                 · {u}
               </span>
             ))}
-            要补的话选好退回到哪一步，抄进下面的主题里。
+            要补的话抄进下面对应的一栏。
           </InlineNotice>
         )}
-        {targets.length > 1 && (
+        {options.length > 1 && (
           <label className="block space-y-1">
             <span>退回到</span>
-            <select className={fieldClass} value={target} onChange={(e) => pickTarget(e.target.value)}>
-              {targets.map((t) => (
+            <select className={fieldClass} value={mode} onChange={(e) => pickMode(e.target.value)}>
+              {options.map((t) => (
                 <option key={t} value={t}>
-                  {t}
-                  {prefill[t] ? "（大纲覆盖检查里有要补的）" : ""}
+                  {t === LIT ? "补文献（找新文献 / 精读已有的）" : t}
+                  {(t === LIT ? litPrefill : prefill[t]) ? "（大纲覆盖检查里有要补的）" : ""}
                 </option>
               ))}
             </select>
           </label>
         )}
-        <label className="block space-y-1">
-          <span>{lit ? "要补的主题或章节（一行一条）" : "要改的地方（一行一条）"}</span>
-          <textarea
-            className={`${fieldClass} min-h-20 resize-y`}
-            value={topics}
-            onChange={(e) => {
-              setEdited(true);
-              setTopics(e.target.value);
-            }}
-            placeholder={lit ? "例：§3.2 催化剂失活机理：近三年原位表征工作" : "例：§3 先讲机理、再讲材料体系"}
-            autoFocus
-          />
-        </label>
+        {lit ? (
+          <>
+            {searchTarget && (
+              <label className="block space-y-1">
+                <span>找新文献（交给「{searchTarget}」）：主题或章节，一行一条</span>
+                <textarea
+                  className={`${fieldClass} min-h-16 resize-y`}
+                  value={searchText}
+                  onChange={(e) => {
+                    setEdited(true);
+                    setSearchText(e.target.value);
+                  }}
+                  placeholder="例：4.3 界面稳定性：2024 年以后的高电流工作"
+                  autoFocus={!readText}
+                />
+              </label>
+            )}
+            {notesTarget && (
+              <label className="block space-y-1">
+                <span>精读已有的（交给「{notesTarget}」）：节和要精读的篇，一行一条</span>
+                <textarea
+                  className={`${fieldClass} min-h-16 resize-y`}
+                  value={readText}
+                  onChange={(e) => {
+                    setEdited(true);
+                    setReadText(e.target.value);
+                  }}
+                  placeholder="例：4.3：[@Su2025] [@Xu2019]"
+                  autoFocus={!!readText && !searchText}
+                />
+              </label>
+            )}
+            {notesLocked && (
+              <p className="text-micro text-l4">
+                先交给「{searchTarget}」找，保存进项目后「{notesTarget}」把新纳入的和要精读的这几条一起读。
+              </p>
+            )}
+          </>
+        ) : (
+          <label className="block space-y-1">
+            <span>要改的地方（一行一条）</span>
+            <textarea
+              className={`${fieldClass} min-h-20 resize-y`}
+              value={topics}
+              onChange={(e) => {
+                setEdited(true);
+                setTopics(e.target.value);
+              }}
+              placeholder="例：§3 先讲机理、再讲材料体系"
+              autoFocus
+            />
+          </label>
+        )}
         <label className="block space-y-1">
           <span>{lit ? "为什么要补（一句话）" : "为什么要改（一句话）"}</span>
           <input
@@ -195,9 +297,9 @@ export function ReworkDialog({
             onChange={(e) => setClues(e.target.value)}
           />
         </label>
-        {lit && (
+        {searching && (
           <label className="block space-y-1">
-            <span>大致补多少篇（可选）</span>
+            <span>找新文献大致补多少篇（可选）</span>
             <input
               className={`${fieldClass} w-28`}
               inputMode="numeric"
@@ -207,21 +309,26 @@ export function ReworkDialog({
             />
           </label>
         )}
-        {(chainOptions[target] ?? []).length > 0 && (
+        {chainList.length > 0 && (
           <fieldset className="space-y-1">
             <legend>{lit ? "补" : "改"}完、保存进项目后，接着自动跟进</legend>
             <div className="flex flex-wrap gap-x-3 gap-y-1">
-              {(chainOptions[target] ?? []).map((st) => (
-                <label key={st} className="inline-flex items-center gap-1 text-l2">
-                  <input
-                    type="checkbox"
-                    checked={chain.includes(st)}
-                    onChange={(e) => setChain((cur) => (e.target.checked ? [...cur, st] : cur.filter((x) => x !== st)))}
-                  />
-                  {st}
-                  {chainOff.includes(st) && <span className="text-l4">（会重跑实验，默认不勾）</span>}
-                </label>
-              ))}
+              {chainList.map((st) => {
+                const locked = notesLocked && st === notesTarget;
+                return (
+                  <label key={st} className="inline-flex items-center gap-1 text-l2">
+                    <input
+                      type="checkbox"
+                      checked={locked || chain.includes(st)}
+                      disabled={locked}
+                      onChange={(e) => setChain((cur) => (e.target.checked ? [...cur, st] : cur.filter((x) => x !== st)))}
+                    />
+                    {st}
+                    {locked && <span className="text-l4">（要精读的几条在这一步做）</span>}
+                    {!locked && chainOff.includes(st) && <span className="text-l4">（会重跑实验，默认不勾）</span>}
+                  </label>
+                );
+              })}
             </div>
             <p className="text-micro text-l4">
               上一步保存后，下一步自动开「跟进更新」，只处理新增的部分；每一步照旧要你评审、保存。不勾的到时自己点跟进。
