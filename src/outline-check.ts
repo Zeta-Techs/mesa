@@ -8,7 +8,7 @@
  * included.json 里 decision=excluded 的篇不计数。纯逻辑，配 tests/outline-check.test.ts。
  */
 import type { CheckItem, ChecksDto } from "./research-checks.ts";
-import { sectionTableRows } from "./notes-progress.ts";
+import { isReviewedRow, sectionTableRows } from "./notes-progress.ts";
 
 /** 核验项的检查器名：评审页据此写来源「Mesa 核对」 */
 export const MESA_CHECKER = "mesa";
@@ -72,11 +72,8 @@ function parseJson(text: string | null | undefined): unknown {
   }
 }
 
-const REVIEWED = new Set(["reviewed", "done", "read", "complete", "completed", "已读", "已完成"]);
-
 function rowTier(row: Record<string, unknown>): NoteTier {
-  const review = str(row.reviewStatus).toLowerCase();
-  if (REVIEWED.has(review)) return str(row.fulltextStatus).toLowerCase() === "fulltext" ? "fulltext" : "abstract";
+  if (isReviewedRow(row)) return str(row.fulltextStatus).toLowerCase() === "fulltext" ? "fulltext" : "abstract";
   if (row.skimmed === true) return "skim";
   return "pending";
 }

@@ -40,9 +40,11 @@ function field(row: unknown, key: string): string {
 /** 「写完了」的同义写法：技能现行口径是 reviewed，旧轮次的索引写过 done / read / complete
  *  （2026-10-18「综述流程测试」72 篇全是 done，进度行显示「已写 0 / 72」）。 */
 const REVIEWED = new Set(["reviewed", "done", "read", "complete", "completed", "已读", "已完成"]);
-function isReviewed(row: unknown): boolean {
+/** 索引一行算不算「写完了」：进度行、大纲核对、精读核对共用这一份判断（2026-11-11） */
+export function isReviewedRow(row: unknown): boolean {
   return REVIEWED.has(field(row, "reviewStatus"));
 }
+const isReviewed = isReviewedRow;
 
 /** papers/included.json 里人在评审中排除的篇（decision=excluded）的 id。
  *  旧索引可能给它们建过行：进度不算它们，免得「已写 40 / 45」永远写不满。 */

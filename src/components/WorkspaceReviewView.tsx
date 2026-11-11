@@ -111,13 +111,13 @@ import type {
   WorkspacePrResultDto,
 } from "../types";
 import { usePolling } from "../polling";
-import { CHECK_BATCH_LEAD, checkBatchNote, checkChipText, checkConsultSeed, checkNoted, checkReviewNote, countChecks, type ChecksDto } from "../research-checks";
+import { CHECK_BATCH_LEAD, checkBatchNote, checkChipText, checkConsultSeed, checkNoted, checkReviewNote, countChecks, type CheckItem, type ChecksDto } from "../research-checks";
 import ReviewAskAiMenu, { type ReviewAskAiItem } from "./ReviewAskAiMenu";
 import CoachTip from "./CoachTip";
 import CheckList from "./CheckList";
 import OutlineCoverageCompare from "./OutlineCoverageCompare";
 import { mergeMesaChecks, type OutlineCheckResult } from "../outline-check";
-import { loadOutlineCheck } from "../research-report-load";
+import { loadNotesCheck, loadOutlineCheck } from "../research-report-load";
 import { stepKind } from "../step-kind";
 import {
   crossReviewPrompt,
@@ -1240,6 +1240,28 @@ function LiveWorkspaceReviewView({
       stale = true;
     };
   }, [outlineRoots, revision]);
+  // 精读 / 初稿 / 定稿的 Mesa 核对（2026-11-11）：同大纲核对，打开评审时现算、合并进核验清单，不写文件
+  const [stepMesaChecks, setStepMesaChecks] = useState<CheckItem[]>([]);
+  const mesaStep = researchContext ? `${stepKind(researchContext.step, undefined)}\n${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}` : null;
+  useEffect(() => {
+    const [kind, ...roots] = mesaStep?.split("\n") ?? [];
+    const load = kind === "notes" ? loadNotesCheck(roots) : null;
+    if (!load) {
+      setStepMesaChecks([]);
+      return;
+    }
+    let stale = false;
+    load
+      .then((value) => {
+        if (!stale) setStepMesaChecks(value);
+      })
+      .catch(() => {
+        if (!stale) setStepMesaChecks([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [mesaStep, revision]);
   const [artifacts, setArtifacts] = useState<{
     produced: number;
     total: number;
@@ -1251,8 +1273,8 @@ function LiveWorkspaceReviewView({
   // 核验清单 = 核验文件 + Mesa 自己查的（大纲核对、写作扫描；2026-11-11 写作扫描不再单独占一段黄字）
   const writingFile = useMemo(() => writingScanSourcePath((diff?.files ?? []).map((file) => file.path)), [diff]);
   const checks = useMemo(
-    () => mergeMesaChecks(fileChecks, [...(outlineCheck?.items ?? []), ...writingHitChecks(writingHits, writingFile ?? "")]),
-    [fileChecks, outlineCheck, writingHits, writingFile],
+    () => mergeMesaChecks(fileChecks, [...(outlineCheck?.items ?? []), ...stepMesaChecks, ...writingHitChecks(writingHits, writingFile ?? "")]),
+    [fileChecks, outlineCheck, stepMesaChecks, writingHits, writingFile],
   );
   // 退回意见：按工作副本记在本机（2026-11-11 用户：评审看了一半关掉，写的意见别丢）；退回或保存进项目后清掉
   const [reviewNotes, setReviewNotes] = useState("");

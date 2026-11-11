@@ -4,6 +4,8 @@ import type { DirEntryDto } from "./components/FileTree";
 import { searchPdfProbes, searchProgress, searchProgressLine } from "./notes-progress";
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
+import { checkNotes, type NoteFile } from "./notes-check";
+import type { CheckItem } from "./research-checks";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
 export interface ResearchReportLoad { reports: ResearchReport[]; warnings: string[]; scanned: number; files: string[] }
@@ -85,6 +87,61 @@ export async function loadOutlineCheck(roots: readonly string[]): Promise<Outlin
     Promise.all([...roots].reverse().map((r) => readOptional(r, "papers/included.json"))),
   ]);
   return checkOutline({ outline, indexes, bibs, included: includeds.find((t) => t != null) ?? null });
+}
+
+/** 第一处读得到的预览文件（不在台账白名单里的：抽取表、速读表、笔记） */
+async function readFirst(roots: readonly string[], rel: string): Promise<string | null> {
+  for (const root of roots) {
+    try {
+      const file = await readResearchFile(root, rel);
+      if (!file.truncated) return file.text;
+    } catch {
+      /* 这一处没有，试下一处 */
+    }
+  }
+  return null;
+}
+
+async function firstOptional(roots: readonly string[], rel: string): Promise<string | null> {
+  for (const root of roots) {
+    const text = await readOptional(root, rel);
+    if (text != null) return text;
+  }
+  return null;
+}
+
+/** 精读核对的取数（notes-check.ts 只算）：工作副本和项目根都读、以工作副本为准（同 notes-progress 口径）；
+ *  notes/ 下的文件两处取并集，笔记内容按文件先工作副本后项目根读。roots 首位是工作副本。没有笔记索引返回空 */
+const NOTE_FILE_CAP = 400;
+export async function loadNotesCheck(roots: readonly string[]): Promise<CheckItem[]> {
+  const index = await firstOptional(roots, "notes/index.json");
+  if (index == null) return [];
+  const listings = await Promise.all(
+    roots.map((root) =>
+      invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(root, "notes"), showHidden: false, root }).catch(() => [] as DirEntryDto[]),
+    ),
+  );
+  const names = [...new Set(listings.flat().filter((e) => !e.isDir).map((e) => e.name))];
+  const md = names.filter((n) => /\.md$/i.test(n)).slice(0, NOTE_FILE_CAP);
+  const [bib, included, extraction, notes, skims] = await Promise.all([
+    firstOptional(roots, "references.bib"),
+    firstOptional(roots, "papers/included.json"),
+    readFirst(roots, "notes/extraction.md"),
+    Promise.all(md.map(async (n): Promise<NoteFile | null> => {
+      const text = await readFirst(roots, `notes/${n}`);
+      return text == null ? null : { path: `notes/${n}`, text };
+    })),
+    Promise.all(md.filter((n) => /^skim.*\.md$/i.test(n)).map((n) => readFirst(roots, `notes/${n}`))),
+  ]);
+  return checkNotes({
+    index,
+    files: names.map((n) => `notes/${n}`),
+    notes: notes.filter((n): n is NoteFile => !!n),
+    bib,
+    included,
+    extraction,
+    skim: skims.filter(Boolean).join("\n"),
+  });
 }
 
 /** 大纲步骤卡计数行的「薄几节」：大纲里判薄的节，补料（补读点名的篇、为这一节补检来的新篇）到了的另算 */

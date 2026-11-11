@@ -105,6 +105,11 @@
   键名全是单词。`status` 只有 `passed`（机器能确定的事实）/ `blocked`（机器确定有问题）/ `needs_human`；要读懂内容的检查（论断是否被来源支持、
   统计方法是否合适）最多 `needs_human`，**永不自动通过**，不汇总成分数。认不出的行计入「读不懂 N 行」，不猜。
 - 检查器每次运行整份重写自己的那一个文件；评审页只读 `.ccode/checks/` 顶层，`runs/` 是存档。
+- **Mesa 核对**（2026-11-11，第四种来源，`checker=mesa`）：数得清的事实由 Mesa 在评审页打开时现算、`mergeMesaChecks` 合并进清单，**不写 `.ccode/checks/` 文件**、
+  不靠 AI 跑脚本；只出拦下 / 待你判断，不出通过；项目助手（`project-assistant-run.ts stepChecks`）按同一函数再算一遍。按 `stepKind` 分：大纲 `outline-check.ts`
+  （见「按大纲的节转回路」③）；精读 `notes-check.ts`——工作副本与项目根都读、以工作副本为准，「写完了」与进度行同一份判断（`isReviewedRow`），
+  完整笔记 = 八段标题（lit-notes 技能）出现 6 段以上，不看文件大小；已排除篇留下的笔记（文件名或 # 标题对上 included.json 里 excluded 的题名）不报「没有索引指向」；
+  只查长得像单篇笔记的文件（八段出现 3 段以上）。检索暂缓（检索评审页已有待确认清单）。
 - **三种来源**（`research_record::check_source`，2026-11-03）：内置核验脚本的七个固定文件里才允许「通过」；`pack-` 开头的是任务包脚本，
   检查器一律记成 `pack:<文件名>`（不认脚本自报的，防冒用内置脚本名），「通过」降为待你判断、「拦下」照收；其余文件都是 Agent 的判断（同前）。
 - **研究记录**：Run 关闭时（含崩溃补收）由 Mesa 把运行事实追加进项目 `.ccode/record.jsonl`（只追加、按 runId 去重、持 `record.lock`），

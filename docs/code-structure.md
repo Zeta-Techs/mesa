@@ -1127,6 +1127,8 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   （outline.md「拼 图N」去重 +「仅引用 [@键] Fig」+ 表计划「表 N（」去重，技能样例里的「凑不成则仅引用」与「附表」不算），StepFlow LedgerCountLine 显示；
                              #   outline.md 不在台账白名单（白名单同时管写回），走 read_file_preview 只读；
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
+  notes-check.ts             # 精读核对（2026-11-11）：笔记索引 ↔ 笔记文件 / 引文库 / 纳入清单 / 抽取表 / 速读表对不上的 → 核验项（checker=mesa，只拦下 / 待你判断）；
+                             #   完整笔记按八段标题数（FULL_NOTE_MIN=6），「写完了」用 notes-progress isReviewedRow 同一份判断（tests/notes-check.test.ts）
   outline-check.ts           # 大纲核对（2026-11-11 综述回路三期）：outline.md + 笔记索引 + 引文库 + 纳入清单 → 覆盖检查每节 Mesa 数的可写正文 / 仅线索 / 最新年份
                              #   （与 AI 写的并排）与核验项（键不在引文库、引了已排除的 = 拦下；分档与笔记不符、重复列键、同块子图两用、篇数对不上 = 待你判断；不出通过，
                              #   checker=mesa）；outlineThinStatus = 步骤卡「薄 n 节 / 补料已到」；mergeMesaChecks 把核对项排进核验清单前面。只算不读文件（tests/outline-check.test.ts）
@@ -1141,7 +1143,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法、checkConsultSeed（待你判断一条带进研讨的问题与材料）；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
-  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger；loadOutlineCheck / outlineThinWithNotes 给大纲核对取数
+  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger；loadOutlineCheck / outlineThinWithNotes 给大纲核对取数，loadNotesCheck 给精读核对取数（notes/ 两处取并集、工作副本优先）
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
                              #   + 全文篇数对照 papers/：searchCountLineWithFiles / missingToFetchWithFiles（经 to_fetch_progress，
                              #   步骤卡、评审清单两处同一口径，台账 pdf 字段只在脚本跑时写、不能单靠它）
