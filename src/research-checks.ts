@@ -79,3 +79,27 @@ export function checkQuoteLine(item: CheckItem): string {
 
 export const CHECK_DISCLAIMER =
   "通过只表示机器能确定的事实成立（如键能解析、原文里有这段话、DOI 指向这篇）；这段话是否支持论断，仍要你判断。";
+
+/**
+ * 「请几家研讨这一条」（2026-11-11 研讨二期）：核验清单里待你判断的一条带进研讨——标题、落点、摘录、说明原样写进问题；
+ * 落点文件取前后各 15 行作材料，来源若是项目里的文件也进材料（存不存在由调用方再筛）。研讨只给意见，判断仍由人定
+ */
+export function checkConsultSeed(item: CheckItem): { question: string; materials: { path: string; range: string }[] } {
+  const lines = [`核验清单里这一条要我判断：${item.title}`];
+  const where = checkLocation(item);
+  if (where) lines.push(`位置：${where}`);
+  const quote = checkQuoteLine(item);
+  if (quote) lines.push(`原文摘录：${quote}`);
+  if (item.evidence?.detail) lines.push(`说明：${item.evidence.detail}`);
+  if (item.evidence?.source) lines.push(`来源：${item.evidence.source}`);
+  lines.push("", "这一处的论断有没有被摘录或原文撑住？要不要改、怎么改？各自说理由；判断由我来定。");
+  const materials: { path: string; range: string }[] = [];
+  const file = item.target?.file?.trim();
+  if (file) {
+    const line = item.target?.line;
+    materials.push({ path: file, range: line ? `${Math.max(1, line - 15)}-${line + 15}` : "" });
+  }
+  const src = item.evidence?.source?.trim();
+  if (src && /\.[A-Za-z0-9]{1,8}$/.test(src) && !/^[a-z]+:\/\//i.test(src) && src !== file) materials.push({ path: src, range: "" });
+  return { question: lines.join("\n"), materials };
+}

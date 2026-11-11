@@ -5,6 +5,7 @@ import {
   checkLocation,
   checkQuoteLine,
   groupChecks,
+  type CheckItem,
   type CheckStatus,
   type ChecksDto,
 } from "../research-checks";
@@ -16,7 +17,14 @@ const STATUS_TONE: Record<CheckStatus, string> = {
 };
 
 /** 评审页「基础检查」行展开的核验清单：按 拦下 / 待你判断 / 通过 分组，通过默认收起 */
-export default function CheckList({ checks }: { checks: ChecksDto }) {
+export default function CheckList({
+  checks,
+  onConsult,
+}: {
+  checks: ChecksDto;
+  /** 待你判断的一条「请几家研讨这一条」（研讨二期）；不给就不出按钮 */
+  onConsult?: (item: CheckItem) => void;
+}) {
   const [showPassed, setShowPassed] = useState(false);
   const groups = groupChecks(checks.items);
   return (
@@ -44,6 +52,16 @@ export default function CheckList({ checks }: { checks: ChecksDto }) {
                     <li key={`${item.id}-${where}`} className="text-micro leading-snug">
                       <span className={STATUS_TONE[item.status]}>{item.title}</span>
                       {where && <span className="ml-1.5 font-mono text-l4">{where}</span>}
+                      {onConsult && item.status === "needs_human" && (
+                        <button
+                          type="button"
+                          onClick={() => onConsult(item)}
+                          title="拿不准时请几家不同模型的 AI 只读看看这一处，各给意见、再互相补充；判断仍由你定"
+                          className="ml-1.5 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+                        >
+                          <span className="text-micro">请几家研讨这一条</span>
+                        </button>
+                      )}
                       {quote && <p className="mt-0.5 break-words text-l3">{quote}</p>}
                       {item.evidence?.detail && <p className="break-words text-l4">{item.evidence.detail}</p>}
                     </li>

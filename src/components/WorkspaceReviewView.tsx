@@ -109,7 +109,7 @@ import type {
   WorkspacePrResultDto,
 } from "../types";
 import { usePolling } from "../polling";
-import { checkChipText, countChecks, type ChecksDto } from "../research-checks";
+import { checkChipText, checkConsultSeed, countChecks, type ChecksDto } from "../research-checks";
 import CheckList from "./CheckList";
 import {
   crossReviewPrompt,
@@ -3007,7 +3007,33 @@ function LiveWorkspaceReviewView({
                   </div>
                 )}
               </div>
-              {checksExpanded && checks && <CheckList checks={checks} />}
+              {checksExpanded && checks && (
+                <CheckList
+                  checks={checks}
+                  onConsult={
+                    researchContext && !mergeDone
+                      ? (item) => {
+                          // 待你判断的一条带进研讨（研讨二期）：成员读这一步的工作副本，只预填已存在的文件
+                          const ctx = researchContext;
+                          const readRoot = ctx.workspace.worktreePath;
+                          const seed = checkConsultSeed(item);
+                          void invoke<string[]>("consult_existing_files", { root: readRoot, paths: seed.materials.map((m) => m.path) })
+                            .catch(() => [] as string[])
+                            .then((existing) => {
+                              onClose();
+                              useAppStore.getState().openConsult({
+                                projectRoot: ctx.root,
+                                question: seed.question,
+                                materials: seed.materials.filter((m) => existing.includes(m.path)),
+                                readRoot,
+                                readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
+                              });
+                            });
+                        }
+                      : undefined
+                  }
+                />
+              )}
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
                   缺失引用键：{citations.missing.join("、")}
