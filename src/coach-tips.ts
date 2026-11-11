@@ -105,26 +105,42 @@ export function noteChatOpen(
  *  商量能把人的想法问进任务书、成稿更贴他的判断，所以每个项目第一次走到还没开工、也没商量过的步骤就出；
  *  点了商量、点「先不了」或 × 都记下，这个项目不再出。按项目路径记 */
 const DISCUSS_NUDGE_KEY = "ccode.coachDiscussNudgeProjects";
+/** 同一个气泡里「请几家研讨（可选）」那一句另记（2026-11-11 用户：第一次同时出现商量和研讨两个按钮时就该提示）：
+ *  研讨是后加的，以前关掉的气泡里没有这一句；研讨链接也只在要人拿主意的步骤上有（role 为 you / both，模板里大多数步骤）。
+ *  关掉的气泡没带研讨那句时只记商量，到第一个带研讨链接、没开工没商量过的步骤再出一次；在带研讨链接的步骤上关掉两笔都记 */
+const CONSULT_NUDGE_KEY = "ccode.coachConsultNudgeProjects";
 
-function discussNudgeProjects(): string[] {
+function nudgeProjects(key: string): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(DISCUSS_NUDGE_KEY) ?? "[]");
+    const raw = JSON.parse(localStorage.getItem(key) ?? "[]");
     return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
   } catch {
     return [];
   }
 }
 
-export function discussNudgeSeen(projectPath: string): boolean {
-  return discussNudgeProjects().includes(projectPath);
-}
-
-export function markDiscussNudgeSeen(projectPath: string) {
-  const list = discussNudgeProjects();
+function markNudgeProject(key: string, projectPath: string) {
+  const list = nudgeProjects(key);
   if (list.includes(projectPath)) return;
   try {
-    localStorage.setItem(DISCUSS_NUDGE_KEY, JSON.stringify([...list, projectPath].slice(-200)));
+    localStorage.setItem(key, JSON.stringify([...list, projectPath].slice(-200)));
   } catch {
     /* 存不下只是下次可能再出一次 */
   }
+}
+
+export function discussNudgeSeen(projectPath: string): boolean {
+  return nudgeProjects(DISCUSS_NUDGE_KEY).includes(projectPath);
+}
+
+export function markDiscussNudgeSeen(projectPath: string) {
+  markNudgeProject(DISCUSS_NUDGE_KEY, projectPath);
+}
+
+export function consultNudgeSeen(projectPath: string): boolean {
+  return nudgeProjects(CONSULT_NUDGE_KEY).includes(projectPath);
+}
+
+export function markConsultNudgeSeen(projectPath: string) {
+  markNudgeProject(CONSULT_NUDGE_KEY, projectPath);
 }

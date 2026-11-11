@@ -1,5 +1,5 @@
 import CoachTip from "./CoachTip";
-import { discussNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
+import { consultNudgeSeen, discussNudgeSeen, markConsultNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
 import { discussOpeningPrompt } from "../discuss-prompt";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
@@ -1634,14 +1634,23 @@ export default function StepFlow({
   }
 
   const [discussNudgeOpen, setDiscussNudgeOpen] = useState(() => !discussNudgeSeen(projectPath));
+  const [consultNudgeOpen, setConsultNudgeOpen] = useState(() => !consultNudgeSeen(projectPath));
   useEffect(() => {
     setDiscussNudgeOpen(!discussNudgeSeen(projectPath));
+    setConsultNudgeOpen(!consultNudgeSeen(projectPath));
   }, [projectPath]);
+  /** 这一步有「请几家研讨」：气泡带研讨那一句，关掉时两笔都记；没有就只记商量（到第一个带研讨链接的步骤再出一次） */
+  const nudgeWithConsult = Boolean(discussInline);
   function dismissDiscussNudge() {
     markDiscussNudgeSeen(projectPath);
     setDiscussNudgeOpen(false);
+    if (nudgeWithConsult) {
+      markConsultNudgeSeen(projectPath);
+      setConsultNudgeOpen(false);
+    }
   }
-  const showDiscussNudge = discussNudgeOpen && Boolean(draft) && !ws && !discussed && !draftHasBody;
+  const showDiscussNudge =
+    (discussNudgeOpen || (nudgeWithConsult && consultNudgeOpen)) && Boolean(draft) && !ws && !discussed && !draftHasBody;
 
   /** topic：预置话题 / 决策项「开聊」带进来的问题（2026-11-11 话题收进商量：不再建话题卡，就这个问题开商量）。
    *  carry：研讨结论「带回商量」——照原路接回 / 新开商量，这段话放进聊天输入框、不发送，人改了再发 */
@@ -3064,7 +3073,7 @@ export default function StepFlow({
                 >
                   AI 会一次问你一个问题，帮你把这一步想要什么说清楚，写进任务书；再点「开始」，做出来的东西更贴你的想法。
                   {/* 研讨是可选的一步（2026-11-11 用户）：只在这一步有「请几家研讨」时补一句，不另起气泡、不放按钮 */}
-                  {discussInline && (
+                  {nudgeWithConsult && (
                     <p className="mt-1.5">商量完还有拿不准的判断，可以再点右边的「请几家研讨」（可选），听几家 AI 各自的看法，认同的结论带回商量。</p>
                   )}
                 </CoachTip>

@@ -5,7 +5,8 @@ import { createRequire } from "node:module";
 import { JSDOM } from "jsdom";
 import { PIPELINE_TEMPLATES } from "../src/pipeline-presets.ts";
 
-// 商量引导气泡：没开工、没商量、任务书没改过时出；点「先不了」后这个项目不再出（按项目记在 localStorage）
+// 商量引导气泡：没开工、没商量、任务书没改过时出；点「先不了」后这个项目不再出（按项目记在 localStorage）。
+// 研讨那一句另记：第一个带「请几家研讨」的步骤再出一次
 test("商量引导气泡：每个项目第一次出，关掉后不再出", async () => {
   const compiled = await build({
     stdin: { contents: `export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client'; export { default as StepFlow } from './src/components/StepFlow';`, resolveDir: process.cwd(), loader: "tsx" },
@@ -64,19 +65,32 @@ test("商量引导气泡：每个项目第一次出，关掉后不再出", async
     onSeed() {}, onStart() {}, onDraftChanged() {},
   };
   try {
+    const tip = "开始前，先跟 AI 聊几句？";
+    const consultLine = "可以再点右边的「请几家研讨」（可选）";
+    const withConsult = { ...props, discussInline: h("button", null, "请几家研讨") };
     await act(async () => root.render(h(StepFlow, props)));
-    assert.ok(host.textContent!.includes("开始前，先跟 AI 聊几句？"), "第一次应出气泡");
-    assert.ok(!host.textContent!.includes("（可选）"), "这一步没有研讨链接时气泡不提研讨");
-    await act(async () => root.render(h(StepFlow, { ...props, discussInline: h("button", null, "请几家研讨") })));
-    assert.ok(host.textContent!.includes("可以再点右边的「请几家研讨」（可选）"), "有研讨链接时补一句可选的研讨");
+    assert.ok(host.textContent!.includes(tip), "第一次应出气泡");
+    assert.ok(!host.textContent!.includes(consultLine), "这一步没有研讨链接时气泡不提研讨");
     await act(async () => button("先不了")!.click());
-    assert.ok(!host.textContent!.includes("开始前，先跟 AI 聊几句？"));
+    assert.ok(!host.textContent!.includes(tip));
     await act(async () => root.unmount());
     root = createRoot(host);
     await act(async () => root.render(h(StepFlow, props)));
-    assert.ok(!host.textContent!.includes("开始前，先跟 AI 聊几句？"), "同一项目关掉后不再出");
+    assert.ok(!host.textContent!.includes(tip), "同一项目关掉后不再出");
+    // 第一次走到带「请几家研讨」的步骤：两个按钮第一次一起出现，气泡再出一次、带上研讨那句（2026-11-11 用户）
+    await act(async () => root.render(h(StepFlow, withConsult)));
+    assert.ok(host.textContent!.includes(tip), "第一个带研讨链接的步骤再出一次");
+    assert.ok(host.textContent!.includes(consultLine));
+    await act(async () => button("先不了")!.click());
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => root.render(h(StepFlow, withConsult)));
+    assert.ok(!host.textContent!.includes(tip), "带研讨那句的也关过了，不再出");
+    await act(async () => root.render(h(StepFlow, { ...withConsult, projectPath: "/research/other" })));
+    assert.ok(host.textContent!.includes(tip) && host.textContent!.includes(consultLine), "换个项目照样出");
+    await act(async () => button("先不了")!.click());
     await act(async () => root.render(h(StepFlow, { ...props, projectPath: "/research/other" })));
-    assert.ok(host.textContent!.includes("开始前，先跟 AI 聊几句？"), "换个项目照样出");
+    assert.ok(!host.textContent!.includes(tip), "在带研讨链接的步骤上关掉，两笔都记，没研讨链接的步骤也不再出");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
