@@ -139,6 +139,8 @@ export type StepNodeAction =
   | { kind: "start"; readPaper: boolean; readPaperPrimary: boolean }
   /** agent 进行中：去终端看看 */
   | { kind: "go-terminal"; agentDone: boolean }
+  /** 待评审：回到这一步干活的那段对话（只切过去 / 接回，不替人发话；2026-11-11） */
+  | { kind: "back-to-chat" }
   /** 去评审（含阻塞——阻塞也走评审入口） */
   | { kind: "go-review"; conflict: boolean };
 
@@ -243,6 +245,8 @@ export function stepNodeAction(
       if (ctx.runStatus === "active") {
         return { kind: "go-terminal", agentDone: agentAttention === "done" };
       }
+      // 待评审（点了停下、或 AI 说完关了对话）：右缘给「回到对话」，去评审那一行的强调色仍是主路径
+      if (ctx.runStatus === "review" && ctx.hasWorkspace) return { kind: "back-to-chat" };
       return null;
     }
     case "review": {

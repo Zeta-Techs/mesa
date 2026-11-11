@@ -319,8 +319,10 @@ test("agent：进行中给「去终端看看」，会话跑完附完成提示", 
     stepNodeAction(node("agent"), ctx({ runStatus: "active", agentAttention: "done" })),
     { kind: "go-terminal", agentDone: true },
   );
-  // 待评审 / 已保存：动作交给评审节点，agent 行不再给钮
-  assert.equal(stepNodeAction(node("agent"), ctx({ runStatus: "review" })), null);
+  // 待评审：agent 行右缘只给「回到对话」（2026-11-11 用户：点了停下找不到对话），主路径仍是评审节点；没工作区不给
+  assert.deepEqual(stepNodeAction(node("agent"), ctx({ runStatus: "review", hasWorkspace: true })), { kind: "back-to-chat" });
+  assert.equal(stepNodeAction(node("agent"), ctx({ runStatus: "review", hasWorkspace: false })), null);
+  // 已保存：agent 行不给钮
   assert.equal(stepNodeAction(node("agent"), ctx({ runStatus: "done" })), null);
 });
 
