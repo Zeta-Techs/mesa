@@ -335,7 +335,7 @@
   `ccode-anchor-top`（命令面板）——面板从触发器一侧长出来，不从中心凭空浮现；新增菜单类弹层必须带其一。
   focus 环 `outline: 1px solid var(--color-l3)`（field 色太弱，l3 提亮不换色相）。
   **页面切换与按压反馈（2026-09-13 沉浸感批）**：九个页面容器都是 `.ccode-app-main` 的直接子级，切页入场统一走
-  `ccode-page-in`（160ms 淡入 + 3px 上浮；容器 `hidden`→显示时重播；reduced-motion 一并关闭）——新页面不加自己的入场动画；
+  `ccode-page-in`（160ms 淡入 + 3px 上浮；容器 `hidden`→显示时重播；reduced-motion 一并关闭）——新页面不加自己的入场动画；对话页与研讨页是聊天层同一格，两者互切不放（`ccode-page-quiet`，2026-11-11：侧栏点对话 / 研讨画面动一下，对话之间切不动）；
   主/次按钮按下 `scale(0.98)`（`.ccode-action-*` 的 unlayered 规则已把 transform 纳入过渡表，压过 utilities 层）。
 - **粘性页头玻璃化（2026-09-13）**：`.ccode-page-header` 背景透明，磨砂由 `::before`（`z-index:-1`）承载——
   底色 `color-mix(--ccode-surface-base 74%, transparent)`（自动跟随所在 PageFrame 表面，项目工作面为 rail2）+

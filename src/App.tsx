@@ -135,6 +135,8 @@ const TerminalPage = lazy(() => import("./pages/TerminalPage"));
 const WorkspacesPage = lazy(() => import("./pages/WorkspacesPage"));
 const WorkbenchPage = lazy(() => import("./pages/WorkbenchPage"));
 const ConsultPage = lazy(() => import("./pages/ConsultPage"));
+/** 聊天层那一格的两页：互切不放切页入场 */
+const CHAT_PANE_PAGES: ReadonlySet<string> = new Set(["terminal", "consult"]);
 // 启动后空闲时依次先载进来的大块（idle-preload.ts）：运行页、项目页最常去，文件预览编辑器（monaco）与 PDF 阅读第一次打开最慢
 const IDLE_PRELOADS = [
   () => import("./pages/TerminalPage"),
@@ -863,6 +865,13 @@ function App() {
   useEffect(() => {
     setVisited((v) => (v.has(page) ? v : new Set(v).add(page)));
   }, [page]);
+  // 对话页与研讨页是聊天层同一格：两者互切不放切页入场（淡入 + 上浮 3px），否则侧栏点对话 / 研讨画面动一下，
+  // 对话之间切却不动。随页面切换时一并定下、停在该页期间不变——中途摘掉 animation:none 会补播一次
+  const [pageEnter, setPageEnter] = useState({ page, quiet: false });
+  if (pageEnter.page !== page) {
+    setPageEnter({ page, quiet: CHAT_PANE_PAGES.has(page) && CHAT_PANE_PAGES.has(pageEnter.page) });
+  }
+  const pageQuiet = pageEnter.quiet ? " ccode-page-quiet" : "";
   // 项目页是收件箱条目与顶栏项目上下文的唯一写入方：首屏画出后就隐藏挂上，
   // 否则停在默认首页（工作台）时「待你处理」与顶栏待处理恒空（2026-10-17 修）
   useEffect(() => {
@@ -2418,7 +2427,7 @@ function App() {
                   </Suspense>
                 )}
               </div>
-              <div className={page === "terminal" ? "h-full" : "hidden"}>
+              <div className={page === "terminal" ? `h-full${pageQuiet}` : "hidden"}>
                 {visited.has("terminal") && (
                   <Suspense fallback={<PageLoading />}>
                     <TerminalPage visible={page === "terminal"} />
@@ -2433,7 +2442,7 @@ function App() {
                 )}
               </div>
               {/* 研讨页：不在导航里，侧栏课题下的研讨行 / 「去看看」/ 工作台经 showConsult 打开（2026-11-11） */}
-              <div className={page === "consult" ? "h-full" : "hidden"}>
+              <div className={page === "consult" ? `h-full${pageQuiet}` : "hidden"}>
                 {visited.has("consult") && (
                   <Suspense fallback={<PageLoading />}>
                     <ConsultPage visible={page === "consult"} />
