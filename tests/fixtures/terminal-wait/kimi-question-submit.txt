@@ -1,0 +1,19 @@
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+question
+
+ (✓) 骨架选择   Submit
+
+Review your answer before submit
+
+  Q  定框架④/ 共六问：以哪篇综述的结构为骨架，或不照搬？
+  →  A: 不照搬，自构三级主线（推荐）
+
+Ready to submit your answers?
+
+ → [1] Submit
+   [2] Cancel
+
+ ↑↓ select  1/2 choose  ↵ confirm  ←/→/tab switch  esc cancel
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Ask When Needed  GLM · glm-5.3 thinking  …/workspaces/HER催化综述/outline  ccode/outline [±]   ctrl+o expand
+                                                                                       context: 10% (94.9k/1M)

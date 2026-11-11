@@ -430,3 +430,13 @@ test("Kimi 2.5 提问面板：「→ [1] A: …」读成菜单，说明接在选
   // 别家不按这个读
   assert.equal(parseTuiMenu(lines, undefined, "claude-code"), null);
 });
+
+test("Kimi 2.5 提问面板的确认页：问句取「Ready to submit…?」，答过的题作说明", () => {
+  const lines = readFileSync(new URL("./fixtures/terminal-wait/kimi-question-submit.txt", import.meta.url), "utf8").split("\n");
+  const menu = parseTuiMenu(lines, undefined, "kimi");
+  assert.ok(menu);
+  assert.equal(menu.question, "Ready to submit your answers?");
+  assert.equal(menu.detail, "定框架④/ 共六问：以哪篇综述的结构为骨架，或不照搬？ → A: 不照搬，自构三级主线（推荐）");
+  assert.deepEqual(menu.options, ["Submit", "Cancel"]);
+  assert.equal(menu.selected, 0);
+});
