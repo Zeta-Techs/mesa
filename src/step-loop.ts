@@ -618,6 +618,12 @@ export interface CoverageDraft {
   reason: string;
 }
 
+/** 篇数格里只取数：AI 常把键列进括号（「3（@a @b @c）」），整格搬进原因会把补料单的「为什么」撑成一大段（2026-11-11 HER） */
+function countCell(cell: string): string {
+  const n = cell.match(/^\s*(\d+)/);
+  return n ? n[1] : cell.replace(/[（(][^）)]*[）)]/g, "").trim();
+}
+
 export function coverageReworkDrafts(outlineText: string): CoverageDraft[] {
   const rows = sectionTableRows(outlineText, "覆盖检查") ?? [];
   const out: CoverageDraft[] = [];
@@ -631,19 +637,22 @@ export function coverageReworkDrafts(outlineText: string): CoverageDraft[] {
     out.push({
       target,
       topic: `${section}${what ? `：${what}` : ""}`,
-      reason: `覆盖检查：这一节可写正文 ${body || "?"} 篇、仅线索 ${hint || "?"} 篇，最新一篇 ${latest || "?"}`,
+      reason: `覆盖检查：这一节可写正文 ${countCell(body) || "?"} 篇、仅线索 ${countCell(hint) || "?"} 篇，最新一篇 ${latest || "?"}`,
     });
   }
   return out;
 }
 
-/** 预填按退回目标分组：主题一行一条，原因取第一条（其余节的原因并进主题后面） */
+/** 预填按退回目标分组：主题一行一条；一节时原因写它的篇数，几节时只列是哪几节（各节篇数在大纲表里，补料单上写一句就够） */
 export function groupCoverageDrafts(drafts: CoverageDraft[], target: CoverageDraft["target"]): { topics: string; reason: string } | null {
   const picked = drafts.filter((d) => d.target === target);
   if (picked.length === 0) return null;
   return {
     topics: picked.map((d) => d.topic).join("\n"),
-    reason: picked.length === 1 ? picked[0].reason : `大纲覆盖检查里这 ${picked.length} 节是薄的（${picked.map((d) => d.reason.replace(/^覆盖检查：这一节/, "")).join("；")}）`,
+    reason:
+      picked.length === 1
+        ? picked[0].reason
+        : `大纲覆盖检查里这 ${picked.length} 节是薄的：${picked.map((d) => d.topic.split("：")[0].match(/^[\d.]+/)?.[0] ?? d.topic.split("：")[0]).join("、")}`,
   };
 }
 

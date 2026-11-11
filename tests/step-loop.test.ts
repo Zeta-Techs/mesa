@@ -177,16 +177,21 @@ test("coverageReworkDrafts：只取没处理的薄节，补检 / 补读分到检
     "|---|---|---|---|---|---|",
     "| 3.2 失活机理 | 2 | 3 | 2020 | 薄 | 补检：近三年原位表征工作 |",
     "| 3.3 动力学 | 1 | 0 | 2023 | 薄 | 补读：[@Wu2023] [@Li2024] |",
+    "| 3.5 界面 | 2（@Huang2027 @Hong2025） | 5（@Su2025 @Xu2019） | 2027 | 薄 | 补读：[@Su2025] |",
     "| 3.4 成本 | 0 | 1 | 2019 | 薄·不补：不是本综述重点 | 补检：技术经济分析 |",
     "| 4 展望 | 6 | 2 | 2025 | 够 | |",
     "## 框架推演",
     "| 3.9 | 0 | 0 | 2000 | 薄 | 补检：不在本节 |",
   ].join("\n");
   const drafts = coverageReworkDrafts(outline);
-  assert.deepEqual(drafts.map((d) => d.target), ["search", "read"]);
+  assert.deepEqual(drafts.map((d) => d.target), ["search", "read", "read"]);
   assert.equal(drafts[0].topic, "3.2 失活机理：近三年原位表征工作");
   assert.match(drafts[0].reason, /可写正文 2 篇、仅线索 3 篇，最新一篇 2020/);
-  assert.deepEqual(groupCoverageDrafts(drafts, "read"), { topics: "3.3 动力学：[@Wu2023] [@Li2024]", reason: drafts[1].reason });
+  assert.match(drafts[2].reason, /可写正文 2 篇、仅线索 5 篇，最新一篇 2027$/, "篇数格里括号列的键不进原因");
+  assert.deepEqual(groupCoverageDrafts(drafts, "read"), {
+    topics: "3.3 动力学：[@Wu2023] [@Li2024]\n3.5 界面：[@Su2025]",
+    reason: "大纲覆盖检查里这 2 节是薄的：3.3、3.5",
+  });
   assert.equal(groupCoverageDrafts(drafts, "other"), null);
   assert.deepEqual(coverageReworkDrafts("# 没有覆盖检查"), []);
 });
