@@ -1595,13 +1595,13 @@ export default function ProjectTree({
                 className={headCls}
                 title={open ? `收起「${g.step}」的对话` : `展开「${g.step}」的对话`}
               >
-                <span className="ccode-rail-text min-w-0 flex-1 truncate">
-                  {circledIndex(g.index)} {g.step}
-                </span>
+                {/* 步骤号占定宽一格，组里的对话缩进 = 这一格 + 间距，对话标题与步骤名的字左对齐（2026-11-11 用户） */}
+                <span className="ccode-rail-text w-4 shrink-0">{circledIndex(g.index)}</span>
+                <span className="ccode-rail-text min-w-0 flex-1 truncate">{g.step}</span>
                 {trail(open, dot)}
               </button>
               {open && (
-                <div className="space-y-[3px] pl-3">
+                <div className="space-y-[3px] pl-[1.125rem]">
                   {g.rows.map(line)}
                   {g.lanes && (
                     <div role="group" aria-label={`分 ${g.lanes.total} 路`}>
