@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, BookmarkPlus, Copy, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Copy, Library, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
 import VendorIcon from "./VendorIcon";
 import RememberCard from "./RememberCard";
@@ -15,6 +15,7 @@ import {
   mentionedNames,
   REF_NOTE,
   round1Messages,
+  adoptionReason,
   round1Revealed,
   STATUS_TEXT,
   streamMessages,
@@ -25,6 +26,7 @@ import {
   type ConsultRef,
 } from "../consult";
 import { AGENTS } from "../types";
+import { CATEGORY_EXAMPLES } from "../research-profile";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 
@@ -198,6 +200,7 @@ export default function ConsultView({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [remembering, setRemembering] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -335,6 +338,17 @@ export default function ConsultView({
         <Send size={12} strokeWidth={1.8} aria-hidden="true" />
         <span className="text-micro">起草派活单</span>
       </button>
+      {m.conclusion && (
+        <button
+          type="button"
+          onClick={() => setPromoting(promoting === m.id ? null : m.id)}
+          className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+          title="这条结论适用于你所有项目时，提升到设置里的「研究档案」；依据写明这场研讨和参与的几家，项目研究记录里也记下它们"
+        >
+          <Library size={12} strokeWidth={1.8} aria-hidden="true" />
+          <span className="text-micro">提升到研究档案</span>
+        </button>
+      )}
       <button
         type="button"
         onClick={() => void navigator.clipboard.writeText(copyText(m, nameOf(m.member))).then(() => toast("已复制"))}
@@ -435,6 +449,14 @@ export default function ConsultView({
             <Tail m={msg} />
             {actions(msg)}
             {remembering === msg.id && <RememberCard text={msg.conclusion ?? ""} projectPath={projectRoot} />}
+            {promoting === msg.id && (
+              <PromoteCard
+                text={msg.conclusion ?? ""}
+                reason={adoptionReason(record, msg, agentLabel, projectName ?? projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? projectRoot)}
+                projectRoot={projectRoot}
+                consultId={id}
+              />
+            )}
           </div>
         )}
       </div>
@@ -602,6 +624,14 @@ export default function ConsultView({
                           <Tail m={m} compact />
                           {actions(m)}
                           {remembering === m.id && <RememberCard text={m.conclusion ?? ""} projectPath={projectRoot} />}
+                          {promoting === m.id && (
+                            <PromoteCard
+                              text={m.conclusion ?? ""}
+                              reason={adoptionReason(record, m, agentLabel, projectName ?? projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? projectRoot)}
+                              projectRoot={projectRoot}
+                              consultId={id}
+                            />
+                          )}
                         </>
                       )}
                     </div>
@@ -724,5 +754,87 @@ function SectionLabel({ title, note }: { title: string; note?: string }) {
       {note && <span>{note}</span>}
       <span className="h-px flex-1 bg-hairline" />
     </div>
+  );
+}
+
+/**
+ * 研讨结论提升到研究档案（三期）：人选分类、可改写，点了才写（research_profile_update add，与项目知识页「提升到研究档案」同一个口子）；
+ * 依据写明这场研讨与参与的几家；写成后把答成过的成员各记一条进项目研究记录（consult_record_adoption）
+ */
+function PromoteCard({ text, reason, projectRoot, consultId }: { text: string; reason: string; projectRoot: string; consultId: string }) {
+  const categories = Object.keys(CATEGORY_EXAMPLES);
+  const [draft, setDraft] = useState(text);
+  const [category, setCategory] = useState(categories.includes("常用方法") ? "常用方法" : categories[0] ?? "其他");
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const [note, setNote] = useState<string | null>(null);
+  async function save() {
+    const line = draft.trim();
+    if (!line || state !== "idle") return;
+    setState("busy");
+    setNote(null);
+    try {
+      const profile = await invoke<{ doc: { revision: string } }>("research_profile_read");
+      await invoke("research_profile_update", {
+        expectedRevision: profile.doc.revision,
+        id: null,
+        action: "add",
+        category,
+        text: line,
+        reason,
+      });
+      const n = await invoke<number>("consult_record_adoption", { projectRoot, id: consultId }).catch(() => 0);
+      setState("done");
+      setNote(n > 0 ? `研究记录里记下了参与的 ${n} 位` : "研究记录里已经记过这场研讨");
+    } catch (reason) {
+      setState("idle");
+      setNote(String(reason));
+    }
+  }
+  return (
+    <section className="mt-3 rounded-xl border border-hairline p-3" aria-label="提升到研究档案">
+      <div className="mb-1.5 flex items-center gap-2 text-xs text-l3">
+        <Library size={13} strokeWidth={1.8} aria-hidden="true" />
+        <span className="font-medium text-l2">提升到研究档案</span>
+        <span className="text-micro text-l4">适用于你所有项目时才提升；依据会写明这场研讨和参与的几家</span>
+      </div>
+      {state === "done" ? (
+        <p className="text-xs text-ok-text">已提升到研究档案（{category}）。{note}</p>
+      ) : (
+        <>
+          <div className="mb-1.5 flex items-center gap-2 text-xs">
+            <span className="text-l4">分类</span>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="h-7 rounded-lg border border-field bg-canvas px-2 text-xs text-l2 outline-none"
+            >
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+          <textarea
+            value={draft}
+            maxLength={300}
+            onChange={(e) => setDraft(e.target.value)}
+            className="min-h-12 w-full resize-y rounded-lg border border-field bg-canvas px-2 py-1.5 text-xs text-l2 outline-none focus:border-l4"
+          />
+          <p className="mt-1 text-micro leading-5 text-l4">依据：{reason}</p>
+          <div className="mt-1.5 flex items-center justify-end gap-2">
+            {note && <span className="min-w-0 flex-1 truncate text-micro text-err-text" title={note}>{note}</span>}
+            <button
+              type="button"
+              disabled={!draft.trim() || state === "busy"}
+              onClick={() => void save()}
+              className="inline-flex h-7 items-center rounded-lg border border-cta-bd bg-cta px-2.5 text-cta-text disabled:opacity-50"
+            >
+              <span className="text-xs">{state === "busy" ? "写入中…" : "提升到研究档案"}</span>
+            </button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }

@@ -458,6 +458,46 @@ pub(crate) fn append_run_record_at(root: &Path, record: &RunRecord) -> Result<bo
     Ok(true)
 }
 
+/// 研讨结论被人采用（提升到研究档案）时记进研究记录（2026-11-11 研讨三期）：参与这场研讨、答成过的每一位一条，
+/// task_kind = consult、用途「研讨：标题」，写明哪家 CLI、哪条连接、哪个模型——AI 使用声明与过程报告据此列出这条判断经过了谁。
+/// run_id 用 `consult-<研讨 id>-<成员 id>`，同一场再提升不重复记。返回新写入几条
+pub(crate) fn record_consult_members(root: &Path, consult: &crate::consult::Consult) -> Result<usize, String> {
+    let _lock = crate::storage::lock_at(&record_lock_path(root))?;
+    let closed = chrono::Local::now().to_rfc3339();
+    let mut written = 0;
+    for m in &consult.meta.members {
+        let answered = consult
+            .messages
+            .iter()
+            .any(|x| x.member.as_deref() == Some(m.id.as_str()) && x.status == "ok" && !x.pass);
+        if !answered {
+            continue;
+        }
+        let record = RunRecord {
+            v: 1,
+            kind: "run".into(),
+            run_id: format!("consult-{}-{}", consult.meta.id, m.id),
+            task_kind: "consult".into(),
+            purpose: format!("研讨：{}", consult.meta.title),
+            agent: m.agent.clone(),
+            profile_id: Some(m.profile_id.clone()),
+            models: if m.model.trim().is_empty() { Vec::new() } else { vec![m.model.clone()] },
+            created_at: consult.meta.created_at.clone(),
+            closed_at: Some(closed.clone()),
+            status: "completed".into(),
+            exit_code: None,
+            checks: None,
+            task: None,
+            session_id: None,
+            grant: None,
+        };
+        if append_run_record_at(root, &record)? {
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
 const TASK_ARCHIVE_CAP: usize = 512 * 1024;
 
 /// 存这次的任务书：流程步骤读工作目录的 TASK.md，目标读冻结的上下文快照；指纹按原文算，存档脱敏、超长截断

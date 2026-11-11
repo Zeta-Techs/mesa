@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  adoptionReason,
   contrastRows,
   estimateCost,
   memberNames,
@@ -177,4 +178,18 @@ test("花费预估：同连接同模型按它的均值，没记录的按全体�
   assert.equal(r.guessed, 1);
   assert.ok(Math.abs((r.usd ?? 0) - (0.1 + 0.2) * 2) < 1e-9);
   assert.deepEqual(estimateCost([{ profileId: "a", model: "m" }], 0, []), { calls: 1, usd: null, guessed: 0 });
+});
+
+test("提升到研究档案的依据：哪场研讨、谁的结论、经过哪几家", () => {
+  const rec = record([
+    m({ id: "a", member: "m1", conclusion: "平台站不住" }),
+    m({ id: "b", member: "m2", status: "error" }),
+    m({ id: "c", member: "m3", phase: "cross", round: 1, conclusion: "回到地区" }),
+  ]);
+  const reason = adoptionReason(rec, rec.messages[2], (a) => (a === "claude-code" ? "Claude Code" : a), "菌群 meta");
+  assert.match(reason, /研讨「t」/);
+  assert.match(reason, /采用 Kimi（默认模型 · kimi）的结论/);
+  assert.match(reason, /参与：Claude（默认模型 · Claude Code）、Kimi（默认模型 · kimi）/);
+  assert.doesNotMatch(reason, /GPT/);
+  assert.match(reason, /\.ccode\/consults\/c\.jsonl/);
 });

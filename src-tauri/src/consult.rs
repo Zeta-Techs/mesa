@@ -1690,6 +1690,18 @@ pub async fn consult_cost_stats(project_roots: Vec<String>) -> Result<Vec<CostSt
     .map_err(|e| e.to_string())?
 }
 
+/// 研讨结论提升到研究档案后（三期）：把答成过的成员各记一条进项目研究记录（research_record.rs record_consult_members）
+#[tauri::command]
+pub async fn consult_record_adoption(project_root: String, id: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = root_of(&project_root);
+        let c = read_at(&root, &id)?;
+        crate::research_record::record_consult_members(&root, &c)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 预填材料前筛一遍：只留 root 下真实存在的文件（项目内相对路径；目录、通配、越界的丢掉）。
 /// 步骤卡 / 评审页按 expectedArtifacts 预填时用，免得弹层里列一堆还没产出的文件
 #[tauri::command]
@@ -2212,6 +2224,26 @@ mod tests {
         assert_eq!(stats.len(), 1);
         assert_eq!((stats[0].profile_id.as_str(), stats[0].calls), ("p", 2));
         assert!((stats[0].avg_usd - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn adoption_records_answered_members_once() {
+        let dir = std::env::temp_dir().join(format!("consult-rec2-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(dir.join(".ccode")).unwrap();
+        let mut m = meta(vec![member("m1", "Claude", true), member("m2", "GPT", true)]);
+        m.members[0].model = "glm-5.3".into();
+        let mut ok = msg("a", "member", Some("m1"), "r1", "答了");
+        ok.conclusion = Some("x".into());
+        let mut err = msg("b", "member", Some("m2"), "r1", "");
+        err.status = "error".into();
+        let c = Consult { meta: m, messages: vec![ok, err] };
+        assert_eq!(crate::research_record::record_consult_members(&dir, &c).unwrap(), 1);
+        assert_eq!(crate::research_record::record_consult_members(&dir, &c).unwrap(), 0, "同一场不重复记");
+        let recs = crate::research_record::read_records_at(&dir);
+        assert_eq!(recs.len(), 1);
+        assert_eq!((recs[0].task_kind.as_str(), recs[0].models.clone()), ("consult", vec!["glm-5.3".to_string()]));
+        assert!(recs[0].purpose.starts_with("研讨："));
+        let _ = fs::remove_dir_all(&dir);
     }
 
 }

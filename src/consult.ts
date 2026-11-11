@@ -351,3 +351,26 @@ export function estimateCost(
   }
   return { calls, usd: usd * rounds, guessed };
 }
+
+/**
+ * 研讨结论提升到研究档案（三期）时写进「依据」的那句：哪场研讨、谁的结论、经过哪几家（模型 · 经哪个 CLI）。
+ * 研究档案只收人确认过的内容，依据要能回查：研讨记录在项目 .ccode/consults/<id>.jsonl
+ */
+export function adoptionReason(
+  record: ConsultRecord,
+  from: ConsultMessage,
+  agentLabel: (agent: string) => string,
+  projectName: string,
+): string {
+  const who = (m: ConsultMember) => `${m.name}（${m.model || "默认模型"} · ${agentLabel(m.agent)}）`;
+  const answered = record.meta.members.filter((m) =>
+    record.messages.some((x) => x.member === m.id && x.status === "ok" && !x.pass),
+  );
+  const speaker = record.meta.members.find((m) => m.id === from.member);
+  return [
+    `项目「${projectName}」的研讨「${record.meta.title}」`,
+    speaker ? `采用 ${who(speaker)}的结论` : "采用其中一条结论",
+    `参与：${answered.map(who).join("、") || "（无）"}`,
+    `记录：.ccode/consults/${record.meta.id}.jsonl`,
+  ].join("；");
+}
