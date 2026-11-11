@@ -130,8 +130,8 @@ export function writingReturnPrompt(input: {
   const notes = input.notes.trim();
   const lines = [
     input.rewrite
-      ? "人在评审里要求按意见重写本步稿件。读 TASK.md、outline.md、notes/ 和 `.ccode/review-notes.md`。保留已核对的论点和可解析引用键，不要另起无关结构，不要凑字数。"
-      : "人在评审里退回本步。读 TASK.md 和 `.ccode/review-notes.md`，按意见改现有产物，不要整篇从零重写，不要凑字数。",
+      ? "用户在评审里要求按意见重写本步稿件。读 TASK.md、outline.md、notes/ 和 `.ccode/review-notes.md`。保留已核对的论点和可解析引用键，不要另起无关结构，不要凑字数。"
+      : "用户在评审里退回本步。读 TASK.md 和 `.ccode/review-notes.md`，按意见改现有产物，不要整篇从零重写，不要凑字数。",
   ];
   if (input.hits.length > 0) {
     lines.push(`机械红线：${input.hits.map((h) => h.label).join("；")}。`);

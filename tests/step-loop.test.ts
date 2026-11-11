@@ -57,7 +57,7 @@ test("reworkPrompt：补料单原文进指令；检索步与其他步写法不�
   const other = reworkPrompt({ ...rework, clues: "Zhang 2024", scale: 8 }, { isSearch: false, projectRoot: "C:\\p", date: "11-05" });
   assert.match(other, /线索：Zhang 2024/);
   assert.match(other, /不超过 8 篇/);
-  assert.match(other, /人确认过的内容不推翻/);
+  assert.match(other, /用户确认过的内容不推翻/);
   assert.match(other, /C:\\p\\\.ccode\\rework\\1-lit-search\.json/);
   assert.doesNotMatch(other, /outline\.md|引用扩展/, "退回大纲 / 初稿等不加文献类的指引");
   assert.match(other, /这是一轮修改.*只改下面列的/);
@@ -240,7 +240,7 @@ test("latestNote：并进来的新内容附在开场指令后；没有就原样�
   const one = withLatestNote("接着做", ["outline.md", "notes/12-wang.md"]);
   assert.match(one, /^接着做\n\n项目里有这一步还没用上的新内容/);
   assert.match(one, /- outline\.md\n- notes\/12-wang\.md/);
-  assert.match(one, /人确认过的内容不推翻/);
+  assert.match(one, /用户确认过的内容不推翻/);
   const many = latestNote(Array.from({ length: 33 }, (_, i) => `notes/${i}.md`));
   assert.match(many, /- notes\/29\.md\n- …另有 3 个/);
   assert.doesNotMatch(many, /notes\/30\.md/);
@@ -349,14 +349,14 @@ test("catchUpProbes：只挑索引里 abstract-only 的篇，带上纳入清单�
   assert.deepEqual(catchUpProbes(included, JSON.stringify({ records: [] })), []);
 });
 
-test("catchUpPrompt：点名篇与全文文件，在原笔记上续写、人写的原样保留、收尾改 fulltextStatus", () => {
+test("catchUpPrompt：点名篇与全文文件，在原笔记上续写、用户写的原样保留、收尾改 fulltextStatus", () => {
   const text = catchUpPrompt([
     { probe: { id: "b", bibKey: "B2021", notePath: "notes/b.md", title: "Paper B", url: "" }, pdf: "Paper B.pdf" },
   ]);
   assert.match(text, /有 1 篇原来没有全文/);
   assert.match(text, /B2021（b，笔记 notes\/b\.md）：全文 papers\/Paper B\.pdf/);
   assert.match(text, /在原笔记上续写（没有笔记的按技能新写），不另起平行笔记/);
-  assert.match(text, /「我的想法」与人手写的内容原样保留/);
+  assert.match(text, /「我的想法」与用户手写的内容原样保留/);
   assert.match(text, /fulltextStatus 改成 fulltext/);
   // 交棒只留现行约束：删掉「仅摘要」那条，不记补读经过；精读不跑 write
   assert.match(text, /handoff\.md 写作约束里这几篇「仅摘要 \/ 题录」的那条删掉/);

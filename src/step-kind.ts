@@ -46,12 +46,12 @@ export const ROUND_CLAUSE: Record<StepKind, string> = {
     "改 design.md 时写明改了什么、为什么、是在看到结果之前还是之后；不为了结果改主指标或停止规则；experiments/matrix.json 同步改，已有组合不改 id，新增先进计划。",
   experiment:
     "只重跑受上游改动影响的组合，新输出放独立目录、不覆盖旧运行；results/run-manifest.json 与 results/matrix.json 逐 id 对账（取消的记 not-run 和依据）；" +
-    "results/summary.md 标出这一轮重跑了哪些 id。要超出已批准的资源预算时先问人。",
+    "results/summary.md 标出这一轮重跑了哪些 id。要超出已批准的资源预算时先问用户。",
   analysis:
     "数和图都由脚本重新生成：在新的输入上重跑分析与出图脚本（reproduce.py、figures/ 的生成脚本），不手改图和表里的数；" +
     "变了的数在本轮记录里列「旧 → 新」，结论因此要改的明说，不悄悄改口。",
   writing:
-    "正文只改受上游影响的段落，人确认过的段落不重写；数字一律从分析结果（results.json、numbers.json 一类）取，变了的逐处改，在章节状态里标「本轮改过」。",
+    "正文只改受上游影响的段落，用户确认过的段落不重写；数字一律从分析结果（results.json、numbers.json 一类）取，变了的逐处改，在章节状态里标「本轮改过」。",
   final: "上游改了，引用核对、统计核对和渲染都按新稿重跑一遍，旧的核对报告不沿用。",
   other: "",
 };
