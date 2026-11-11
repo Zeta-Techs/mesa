@@ -11,6 +11,7 @@ import { imageExtFromMime } from "../terminal-input";
 import { DISCUSS_BINDING_SLOT, slotPrefs } from "../project-agents";
 import {
   DEFAULT_CROSS_ROUNDS,
+  estimateCost,
   MAX_IMAGES,
   familyName,
   MAX_MATERIALS,
@@ -23,6 +24,7 @@ import {
   toProjectRel,
   type ConsultDto,
   type ConsultMaterial,
+  type CostStat,
   type MemberOption,
 } from "../consult";
 import { AGENTS, type ProjectDto } from "../types";
@@ -86,6 +88,22 @@ export default function ConsultStartDialog({
   const qRef = useRef<HTMLTextAreaElement>(null);
   const readRoot = initial?.readRoot || null;
   const fileRoot = readRoot ?? root;
+  /** 以往研讨每位每次的平均花费（各已添加项目合起来）：打开弹层时读一次 */
+  const [costStats, setCostStats] = useState<CostStat[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let stale = false;
+    void invoke<CostStat[]>("consult_cost_stats", { projectRoots: projects.map((p) => p.path) })
+      .then((s) => {
+        if (!stale) setCostStats(s);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+    // 只在打开时读
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // 打开时按入口预填；成员按上次选的，没有就按默认挑法
   useEffect(() => {
@@ -150,7 +168,9 @@ export default function ConsultStartDialog({
 
   const names = memberNames(picked);
   const dupFamilies = sameFamilies(picked);
-  const calls = picked.length * (1 + cross);
+  const est = estimateCost(picked, cross, costStats);
+  const estMoney =
+    est.usd != null ? `，按以往研讨约 $${est.usd.toFixed(2)}${est.guessed ? `（${est.guessed} 位没有记录，按平均估）` : ""}` : "";
   const canStart = !!root && question.trim().length > 0 && picked.length >= MIN_MEMBERS && !busy;
   const allSame = picked.length >= 2 && new Set(picked.map((p) => p.family ?? p.key)).size === 1;
 
@@ -210,7 +230,9 @@ export default function ConsultStartDialog({
       footer={
         <div className="flex w-full items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-micro text-l4">
-            {picked.length >= MIN_MEMBERS ? `大约 ${calls} 次调用（${picked.length} 位 × ${1 + cross} 轮）` : `至少请 ${MIN_MEMBERS} 位`}
+            {picked.length >= MIN_MEMBERS
+              ? `大约 ${est.calls} 次调用（${picked.length} 位 × ${1 + cross} 轮）${estMoney}，追问另算`
+              : `至少请 ${MIN_MEMBERS} 位`}
           </span>
           <button type="button" onClick={onClose} className={quietActionClass}>
             取消

@@ -1641,6 +1641,55 @@ pub async fn consult_attach_session(project_root: String, agent: String, session
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CostStat {
+    pub profile_id: String,
+    pub model: String,
+    /// 有花费记录的调用次数
+    pub calls: u32,
+    pub avg_usd: f64,
+}
+
+/// 以往研讨每位每次调用的平均花费（二期「按历史估金额」）：按 连接 × 模型 分组，只算答成了、记到了花费的那几次
+pub(crate) fn cost_stats(records: &[Consult]) -> Vec<CostStat> {
+    let mut acc: Vec<(String, String, u32, f64)> = Vec::new();
+    for c in records {
+        for m in c.messages.iter().filter(|m| m.role == "member" && m.status == "ok") {
+            let (Some(usd), Some(mid)) = (m.cost_usd, m.member.as_deref()) else { continue };
+            let Some(me) = c.meta.members.iter().find(|x| x.id == mid) else { continue };
+            match acc.iter_mut().find(|a| a.0 == me.profile_id && a.1 == me.model) {
+                Some(a) => {
+                    a.2 += 1;
+                    a.3 += usd;
+                }
+                None => acc.push((me.profile_id.clone(), me.model.clone(), 1, usd)),
+            }
+        }
+    }
+    acc.into_iter()
+        .map(|(profile_id, model, calls, sum)| CostStat { profile_id, model, calls, avg_usd: sum / calls as f64 })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn consult_cost_stats(project_roots: Vec<String>) -> Result<Vec<CostStat>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut records = Vec::new();
+        for r in project_roots {
+            let root = root_of(&r);
+            for s in list_at(&root) {
+                if let Ok(c) = read_at(&root, &s.id) {
+                    records.push(c);
+                }
+            }
+        }
+        Ok(cost_stats(&records))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 预填材料前筛一遍：只留 root 下真实存在的文件（项目内相对路径；目录、通配、越界的丢掉）。
 /// 步骤卡 / 评审页按 expectedArtifacts 预填时用，免得弹层里列一堆还没产出的文件
 #[tauri::command]
@@ -2144,6 +2193,25 @@ mod tests {
         let open = opening(&m, &m.members[0], &dir, None);
         assert!(open.contains("figs/a.PNG（图片）"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cost_stats_average_per_profile_and_model() {
+        let mut a = meta(vec![member("m1", "Claude", true), member("m2", "GPT", true)]);
+        a.members[1].profile_id = "q".into();
+        let mut x = msg("1", "member", Some("m1"), "r1", "x");
+        x.cost_usd = Some(0.2);
+        let mut y = msg("2", "member", Some("m1"), "cross", "y");
+        y.cost_usd = Some(0.4);
+        let mut z = msg("3", "member", Some("m2"), "r1", "z");
+        z.cost_usd = None;
+        let mut e = msg("4", "member", Some("m2"), "r1", "");
+        e.status = "error".into();
+        e.cost_usd = Some(9.0);
+        let stats = cost_stats(&[Consult { meta: a, messages: vec![x, y, z, e] }]);
+        assert_eq!(stats.len(), 1);
+        assert_eq!((stats[0].profile_id.as_str(), stats[0].calls), ("p", 2));
+        assert!((stats[0].avg_usd - 0.3).abs() < 1e-9);
     }
 
 }

@@ -972,6 +972,7 @@ pub fn run() {
             consult::consult_rename,
             consult::consult_existing_files,
             consult::consult_attach_session,
+            consult::consult_cost_stats,
             consult::consult_delete,
             project_assistant::assistant_review_notes,
             project_assistant::assistant_guide_search,

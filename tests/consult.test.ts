@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   contrastRows,
+  estimateCost,
   memberNames,
   memberOptions,
   mentionedNames,
@@ -164,4 +165,16 @@ test("材料路径转项目内相对路径", () => {
   assert.equal(toProjectRel("C:\\p\\notes\\x.md", "C:\\p"), "notes/x.md");
   assert.equal(toProjectRel("/Users/b/other.md", "/Users/a/proj"), null);
   assert.equal(toProjectRel("../x.md", "/Users/a/proj"), null);
+});
+
+test("花费预估：同连接同模型按它的均值，没记录的按全体均值，一条记录都没有只给次数", () => {
+  const stats = [
+    { profileId: "a", model: "m", calls: 2, avgUsd: 0.1 },
+    { profileId: "b", model: "n", calls: 2, avgUsd: 0.3 },
+  ];
+  const r = estimateCost([{ profileId: "a", model: "m" }, { profileId: "c", model: "x" }], 1, stats);
+  assert.equal(r.calls, 4);
+  assert.equal(r.guessed, 1);
+  assert.ok(Math.abs((r.usd ?? 0) - (0.1 + 0.2) * 2) < 1e-9);
+  assert.deepEqual(estimateCost([{ profileId: "a", model: "m" }], 0, []), { calls: 1, usd: null, guessed: 0 });
 });

@@ -316,3 +316,38 @@ export function toProjectRel(path: string, root: string): string | null {
   const lr = r.toLowerCase();
   return lp.startsWith(`${lr}/`) ? p.slice(r.length + 1) : null;
 }
+
+export interface CostStat {
+  profileId: string;
+  model: string;
+  calls: number;
+  avgUsd: number;
+}
+
+/**
+ * 发起前的花费预估（二期）：每位按以往研讨里同一条连接 × 模型的平均每次花费，没有记录的按全部记录的平均估；
+ * 一条记录都没有就只给次数。次数 = 成员数 ×（1 + 交叉轮数），追问另算
+ */
+export function estimateCost(
+  picked: readonly Pick<MemberOption, "profileId" | "model">[],
+  crossRounds: number,
+  stats: readonly CostStat[],
+): { calls: number; usd: number | null; guessed: number } {
+  const rounds = 1 + crossRounds;
+  const calls = picked.length * rounds;
+  const total = stats.reduce((a, s) => a + s.avgUsd * s.calls, 0);
+  const n = stats.reduce((a, s) => a + s.calls, 0);
+  if (n === 0) return { calls, usd: null, guessed: 0 };
+  const mean = total / n;
+  let usd = 0;
+  let guessed = 0;
+  for (const p of picked) {
+    const hit = stats.find((s) => s.profileId === p.profileId && s.model === p.model);
+    if (hit) usd += hit.avgUsd;
+    else {
+      usd += mean;
+      guessed += 1;
+    }
+  }
+  return { calls, usd: usd * rounds, guessed };
+}
