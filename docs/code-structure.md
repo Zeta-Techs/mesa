@@ -1983,7 +1983,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 都在配置目录 project-assistant/<项目路径哈希>/，不写项目；project_assistant_ask 出站前整段脱敏、按绑定连接与模型无头一次（ai::ai_prompt_impl_model）再落记录；
                              # project_assistant_ask 带 inspect 时走 ai::ai_inspect_readonly（项目根只读、不落盘，只 Claude Code / Codex）；带 images（粘贴目录里的图、≤4）也走这条：
                              #   Codex `--image=a,b`、Claude 图所在目录 --add-dir + 提示词点名让它用 Read 打开（ai::image_prompt_note），别家明说换连接；
-                             # 边生成边推：StreamState 读 Claude stream-json / Codex --json 行，emit assistant-stream-<id>（整段脱敏后的回答 + 正在做的一步，文字 120ms 一推）；
+                             # 边生成边推：StreamState 读 Claude stream-json / Codex --json 行，emit assistant-stream-<id>（整段脱敏后的回答 + 正在做的一步，文字 120ms 一推；和上一步相同的不再推；shell 命令经 command_step 说成「读 a.md、b.md」「搜「…」」「列项目文件」，认不出的才照原样写「查看：…」，研讨卡片同用）；
                              # 派活回音（2026-11-05）：trim_log 超上限只丢普通问答（派过活的轮次与回音留着）；派活时写 root.txt 记项目；assistant_open_dispatches 各项目还在跟的派活（14 天内、未验收）；
                              #   assistant_echo 同一阶段只补一次回音（echo_of，accepted 只记不说）；
                              # project_file_map（2026-11-05 接活）：项目根下文件清单（路径、大小、修改时间），不读内容，跳隐藏 / 依赖目录 / 符号链接，4000 条 8 层封顶；

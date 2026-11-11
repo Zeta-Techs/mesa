@@ -665,17 +665,18 @@ pub struct StreamUpdate {
 /// Claude `stream-json`：`stream_event` 里的 text_delta 逐字攒，新一条消息开始（message_start）清空——中途读文件前的
 /// 「我先看看」不留在最终显示里；`assistant` 消息里的 tool_use 变成一步。Codex `--json`：agent_message 整段、
 /// command_execution / reasoning 变成一步。整段每次都整体脱敏再推（逐字片段单独脱敏会漏掉被拆开的密钥），
-/// 文字更新最多 120ms 推一次，步骤立刻推
+/// 文字更新最多 120ms 推一次，步骤立刻推；和上一步一模一样的不再推（Codex 一条命令开始、结束各报一次）
 pub(crate) struct StreamState {
     root: String,
     text: String,
     secrets: Vec<String>,
     last_text_emit: Option<std::time::Instant>,
+    last_step: Option<String>,
 }
 
 impl StreamState {
     pub(crate) fn new(root: String) -> Self {
-        Self { root, text: String::new(), secrets: crate::profiles::stored_secrets(), last_text_emit: None }
+        Self { root, text: String::new(), secrets: crate::profiles::stored_secrets(), last_text_emit: None, last_step: None }
     }
 
     fn short_path(&self, p: &str) -> String {
@@ -693,7 +694,50 @@ impl StreamState {
             "Grep" => format!("搜「{}」", clip(s("pattern"))),
             "Glob" => format!("找文件 {}", clip(s("pattern"))),
             "LS" => format!("看目录 {}", self.short_path(&s("path"))),
+            "Bash" => self.command_step(&s("command")),
             other => format!("用 {other}"),
+        }
+    }
+
+    /// 一条 shell 命令说成白话：读了哪几份文件 / 搜了什么 / 列了哪个目录；认不出的照原命令写「查看：…」。
+    /// 只为显示，不做安全判断
+    fn command_step(&self, cmd: &str) -> String {
+        let clip = |t: &str| t.chars().take(60).collect::<String>();
+        let inner = unwrap_shell(cmd);
+        let mut reads: Vec<String> = Vec::new();
+        let mut search: Option<String> = None;
+        let mut list: Option<String> = None;
+        for seg in command_segments(&inner) {
+            match describe_segment(&seg) {
+                Some(CmdKind::Read(files)) => {
+                    for f in files {
+                        let f = self.short_path(&f);
+                        if !reads.contains(&f) {
+                            reads.push(f);
+                        }
+                    }
+                }
+                Some(CmdKind::Search(p)) => {
+                    search.get_or_insert(p);
+                }
+                Some(CmdKind::List(dir)) => {
+                    list.get_or_insert_with(|| dir.map(|d| self.short_path(&d)).unwrap_or_default());
+                }
+                Some(CmdKind::Noise) => {}
+                None => return format!("查看：{}", clip(&inner)),
+            }
+        }
+        if !reads.is_empty() {
+            let shown = reads.iter().take(3).cloned().collect::<Vec<_>>().join("、");
+            return if reads.len() > 3 { format!("读 {shown} 等 {} 份", reads.len()) } else { format!("读 {shown}") };
+        }
+        if let Some(p) = search {
+            return format!("搜「{}」", clip(&p));
+        }
+        match list {
+            Some(d) if !d.is_empty() && d != "." && d != "./" => format!("看目录 {d}"),
+            Some(_) => "列项目文件".to_string(),
+            None => format!("查看：{}", clip(&inner)),
         }
     }
 
@@ -749,9 +793,7 @@ impl StreamState {
                     // 有的版本只发 item.completed：开始、结束都当一步（重复推同一步无妨）
                     Some("command_execution") => {
                         let cmd = item.get("command").and_then(|t| t.as_str()).unwrap_or("");
-                        // codex 把命令包在 `/bin/zsh -lc '…'` 里：取引号里的那段
-                        let inner = cmd.split_once("-lc ").map(|(_, r)| r.trim_matches(['\'', '"'])).unwrap_or(cmd);
-                        step = Some(format!("查看：{}", inner.chars().take(60).collect::<String>()));
+                        step = Some(self.command_step(cmd));
                     }
                     Some("reasoning") if kind == "item.completed" => {
                         let t = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
@@ -764,6 +806,11 @@ impl StreamState {
                 }
             }
             _ => {}
+        }
+        if step.is_some() && step == self.last_step {
+            step = None;
+        } else if step.is_some() {
+            self.last_step = step.clone();
         }
         let now = std::time::Instant::now();
         let text_due = text_changed
@@ -781,6 +828,195 @@ impl StreamState {
             text: text_due.then(|| self.redacted(&self.text)),
             step: step.map(|s| self.redacted(&s)),
         })
+    }
+}
+
+enum CmdKind {
+    Read(Vec<String>),
+    Search(String),
+    List(Option<String>),
+    /// echo / sort 这类只是拼接输出的，不算一步
+    Noise,
+}
+
+/// 按 shell 规则切词：引号去掉、`| || && ; &` 单独成词、重定向（含 `2>/dev/null`、`2>&1`）连同目标一起丢掉
+fn shell_words(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut has = false;
+    let mut skip_next = false;
+    let mut chars = s.chars().peekable();
+    let flush = |cur: &mut String, has: &mut bool, out: &mut Vec<String>, skip: &mut bool| {
+        if *has {
+            if *skip {
+                *skip = false;
+            } else {
+                out.push(std::mem::take(cur));
+            }
+        }
+        cur.clear();
+        *has = false;
+    };
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                has = true;
+                for d in chars.by_ref() {
+                    if d == '\'' {
+                        break;
+                    }
+                    cur.push(d);
+                }
+            }
+            '"' => {
+                has = true;
+                while let Some(d) = chars.next() {
+                    match d {
+                        '"' => break,
+                        '\\' => {
+                            if let Some(e) = chars.next() {
+                                cur.push(e);
+                            }
+                        }
+                        _ => cur.push(d),
+                    }
+                }
+            }
+            '\\' => {
+                has = true;
+                if let Some(e) = chars.next() {
+                    cur.push(e);
+                }
+            }
+            '>' | '<' => {
+                // 紧贴在前面的纯数字是文件描述符（2>），一起丢
+                if has && cur.chars().all(|d| d.is_ascii_digit()) {
+                    cur.clear();
+                    has = false;
+                }
+                flush(&mut cur, &mut has, &mut out, &mut skip_next);
+                while matches!(chars.peek(), Some('>') | Some('&')) {
+                    chars.next();
+                }
+                skip_next = true;
+            }
+            '|' | '&' | ';' => {
+                flush(&mut cur, &mut has, &mut out, &mut skip_next);
+                let mut op = c.to_string();
+                if chars.peek() == Some(&c) && c != ';' {
+                    op.push(c);
+                    chars.next();
+                }
+                out.push(op);
+            }
+            c if c.is_whitespace() => flush(&mut cur, &mut has, &mut out, &mut skip_next),
+            _ => {
+                has = true;
+                cur.push(c);
+            }
+        }
+    }
+    flush(&mut cur, &mut has, &mut out, &mut skip_next);
+    out
+}
+
+/// 剥掉 `/bin/zsh -lc '…'`、`bash -c "…"` 这层外壳（Codex 与部分模型都这么包）
+fn unwrap_shell(cmd: &str) -> String {
+    let words = shell_words(cmd);
+    let is_shell = words.first().is_some_and(|w| {
+        let base = w.rsplit(['/', '\\']).next().unwrap_or(w);
+        matches!(base, "sh" | "bash" | "zsh")
+    });
+    if is_shell {
+        if let Some(i) = words.iter().position(|w| w.starts_with('-') && !w.starts_with("--") && w.contains('c')) {
+            if let Some(body) = words.get(i + 1) {
+                return body.trim().to_string();
+            }
+        }
+    }
+    cmd.trim().to_string()
+}
+
+fn command_segments(cmd: &str) -> Vec<Vec<String>> {
+    let mut segs = vec![Vec::new()];
+    for w in shell_words(cmd) {
+        if matches!(w.as_str(), "|" | "||" | "&&" | ";" | "&") {
+            segs.push(Vec::new());
+        } else {
+            segs.last_mut().unwrap().push(w);
+        }
+    }
+    segs.retain(|s| !s.is_empty());
+    segs
+}
+
+/// 一段命令是干什么的；认不出返回 None（整条照原样写）
+fn describe_segment(seg: &[String]) -> Option<CmdKind> {
+    let prog = seg.first()?;
+    let prog = prog.rsplit(['/', '\\']).next().unwrap_or(prog);
+    let args = &seg[1..];
+    // 不带值的开关之外，下一词是开关值的那些（-n 20、-g '!.git'）
+    let takes_value = |prog: &str, flag: &str| match prog {
+        "head" | "tail" => matches!(flag, "-n" | "-c"),
+        "rg" | "grep" => matches!(
+            flag,
+            "-g" | "--glob" | "-t" | "--type" | "-T" | "--type-not" | "-m" | "--max-count" | "-A" | "-B" | "-C" | "--context" | "--max-depth" | "-d"
+        ),
+        "nl" => matches!(flag, "-b" | "-w" | "-s"),
+        _ => false,
+    };
+    let operands = |prog: &str| {
+        let mut v = Vec::new();
+        let mut skip = false;
+        for a in args {
+            if skip {
+                skip = false;
+                continue;
+            }
+            if a.starts_with('-') && a.len() > 1 {
+                skip = takes_value(prog, a);
+                continue;
+            }
+            v.push(a.clone());
+        }
+        v
+    };
+    match prog {
+        "cat" | "head" | "tail" | "nl" | "less" | "more" | "bat" | "wc" => {
+            let files = operands(prog);
+            Some(if files.is_empty() { CmdKind::Noise } else { CmdKind::Read(files) })
+        }
+        "sed" | "awk" => {
+            // 第一个非开关参数是脚本，后面才是文件；没文件就是在管道里加工别人的输出
+            let mut ops = operands(prog);
+            if !ops.is_empty() {
+                ops.remove(0);
+            }
+            Some(if ops.is_empty() { CmdKind::Noise } else { CmdKind::Read(ops) })
+        }
+        "rg" | "grep" => {
+            if args.iter().any(|a| a == "--files") {
+                return Some(CmdKind::List(operands(prog).into_iter().next()));
+            }
+            if let Some(i) = args.iter().position(|a| a == "-e" || a == "--regexp") {
+                return args.get(i + 1).map(|p| CmdKind::Search(p.clone()));
+            }
+            let ops = operands(prog);
+            // 前面接着管道的 grep 也算在搜
+            ops.first().map(|p| CmdKind::Search(p.clone())).or(Some(CmdKind::Noise))
+        }
+        "ls" | "tree" | "fd" => Some(CmdKind::List(operands(prog).into_iter().next())),
+        "find" => {
+            if let Some(i) = args.iter().position(|a| a == "-name" || a == "-iname") {
+                if let Some(p) = args.get(i + 1) {
+                    return Some(CmdKind::Search(p.clone()));
+                }
+            }
+            Some(CmdKind::List(args.first().filter(|a| !a.starts_with('-')).cloned()))
+        }
+        "git" if args.first().is_some_and(|a| a == "ls-files") => Some(CmdKind::List(None)),
+        "echo" | "printf" | "sort" | "uniq" | "true" | "cd" | "pwd" | "tr" | "cut" | "xargs" => Some(CmdKind::Noise),
+        _ => None,
     }
 }
 
@@ -1220,7 +1456,7 @@ mod tests {
 
     #[test]
     fn stream_state_collects_claude_text_and_steps() {
-        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None };
+        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
         let start = r#"{"type":"stream_event","event":{"type":"message_start"}}"#;
         assert!(st.handle_line(start).is_none());
         let d1 = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"我先看看"}}}"#;
@@ -1242,13 +1478,43 @@ mod tests {
 
     #[test]
     fn stream_state_reads_codex_events() {
-        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None };
+        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
         let cmd = r#"{"type":"item.started","item":{"type":"command_execution","command":"/bin/zsh -lc 'cat -n scripts/clean.py'"}}"#;
-        assert_eq!(st.handle_line(cmd).unwrap().step.as_deref(), Some("查看：cat -n scripts/clean.py"));
+        assert_eq!(st.handle_line(cmd).unwrap().step.as_deref(), Some("读 scripts/clean.py"));
+        // 同一条命令结束时再报一次：不重复推
+        let done = r#"{"type":"item.completed","item":{"type":"command_execution","command":"/bin/zsh -lc 'cat -n scripts/clean.py'"}}"#;
+        assert!(st.handle_line(done).is_none());
         let msg = r#"{"type":"item.completed","item":{"type":"agent_message","text":"报错出在第 3 行"}}"#;
         assert_eq!(st.handle_line(msg).unwrap().text.as_deref(), Some("报错出在第 3 行"));
-        let secret = StreamState { root: "/".into(), text: String::new(), secrets: vec!["sk-abcdefgh12345678".into()], last_text_emit: None };
+        let secret = StreamState { root: "/".into(), text: String::new(), secrets: vec!["sk-abcdefgh12345678".into()], last_text_emit: None, last_step: None };
         assert!(!secret.redacted("key sk-abcdefgh12345678 here").contains("abcdefgh12345678"));
+    }
+
+    #[test]
+    fn shell_commands_read_as_plain_words() {
+        let st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let say = |c: &str| st.command_step(c);
+        assert_eq!(say(r#"/bin/zsh -lc "find . -maxdepth 3 -type f | sed 's|^\./||' | sort""#), "列项目文件");
+        assert_eq!(say("/bin/zsh -lc \"rg --files --hidden -g '!.git'\""), "列项目文件");
+        assert_eq!(
+            say("/bin/zsh -lc 'cat .ccode/drafts/lit-search.md && cat .ccode/project.toml'"),
+            "读 .ccode/drafts/lit-search.md、.ccode/project.toml"
+        );
+        assert_eq!(
+            say("/bin/zsh -c 'cat .ccode/ai-usage.md; echo ---; cat .ccode/help-wanted.md'"),
+            "读 .ccode/ai-usage.md、.ccode/help-wanted.md"
+        );
+        assert_eq!(say("/bin/zsh -c \"sed -n '1,120p' .ccode/drafts/lit-search.md\""), "读 .ccode/drafts/lit-search.md");
+        assert_eq!(say("head -n 40 /p/x/notes/a.md 2>/dev/null"), "读 notes/a.md");
+        assert_eq!(say("rg -n -g '*.md' \"Mg-S\" notes"), "搜「Mg-S」");
+        assert_eq!(say("grep -rn -e 'polysulfide' papers"), "搜「polysulfide」");
+        assert_eq!(say("find papers -name '*.pdf'"), "搜「*.pdf」");
+        assert_eq!(say("ls -la notes"), "看目录 notes");
+        assert_eq!(say("ls"), "列项目文件");
+        assert_eq!(say("cat a.md b.md c.md d.md"), "读 a.md、b.md、c.md 等 4 份");
+        // 认不出的照原样
+        assert_eq!(say("/bin/zsh -lc 'python3 scripts/check.py'"), "查看：python3 scripts/check.py");
+        assert_eq!(say("cat a.md | python3 x.py"), "查看：cat a.md | python3 x.py");
     }
 
     #[test]
