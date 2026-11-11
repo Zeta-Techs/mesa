@@ -288,7 +288,17 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           ? `${shown}\n已发送切换；这家 CLI 不回显当前模型，以终端里显示的为准`
           : `${agentLabel} · ${shown}${via}\n换模型或思考强度`;
   }
-  const pendingMark = !launch && !next && rt.modelState !== "confirmed";
+  // 选了换 Agent（接力）：芯片当场换成接手那家和它的模型（2026-11-11 用户：别等发第一句才变），思考档回默认不写
+  const relayPicked = props.relay?.state.pick ?? null;
+  const chipAgent = relayPicked ? relayPicked.agentId : agentId;
+  if (relayPicked) {
+    const who = AGENTS.find((a) => a.id === relayPicked.agentId)?.label ?? relayPicked.agentId;
+    const conn = profiles.find((p) => p.id === relayPicked.profileId)?.name;
+    label = relayPicked.model || who;
+    chipEffort = null;
+    title = `${who}${conn ? ` · ${conn}` : ""}${relayPicked.model ? ` · ${relayPicked.model}` : ""}\n下一句交给它接着做`;
+  }
+  const pendingMark = !relayPicked && !launch && !next && rt.modelState !== "confirmed";
 
   // 行的样子与左下权限菜单同一套（2026-10-18 用户：切换卡片审美再好一点）：选中只靠行尾的勾和字色，
   // 不再整行铺底色；悬停 / 键盘焦点才铺 bg-hover。模型名不用等宽字体——它是名字，不是代码
@@ -536,7 +546,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   );
 
   // 换一家 Agent 接着做（接力）：模型那一屏里一行，点进「relay」屏（2026-11-10 用户：放在模型这一屏，不藏在换配置里）
-  const relayPicked = props.relay?.state.pick ?? null;
   const relayRow = props.relay?.state.available ? (
     <button
       type="button"
@@ -563,7 +572,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   return (
     <div ref={rootRef} className="relative flex min-w-0 items-center gap-1">
       {/* 上下文圆环在模型芯片左边（2026-10-27 用户）；窗口大小不知道的家（如 Grok）不画 */}
-      {ctxRatio !== null && ctxWindow && ctxUsed && (
+      {!relayPicked && ctxRatio !== null && ctxWindow && ctxUsed && (
         <ContextRing
           showPercent
           ratio={ctxRatio}
@@ -587,7 +596,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       >
         {/* 品牌色 M（2026-10-22 用户：圆点换成各家品牌色的 M）：Mesa 标志里那个 M，染成这家 Agent 的品牌色——
             颜色就说明用的是哪家，不再写 Agent 名；M 的形状固定，思考档写在后面的文字里 */}
-        {agentId && <AgentMark agentId={agentId} />}
+        {chipAgent && <AgentMark agentId={chipAgent} />}
         {/* 模型与档名同一段文字：间距与「Agent · 模型」一致，太长时一起截断 */}
         <span className={`truncate ${pendingMark ? "italic" : ""}`}>
           {label}
