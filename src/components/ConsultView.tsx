@@ -692,7 +692,7 @@ export default function ConsultView({
               {asked.length ? `只问 ${asked.join("、")}` : "不 @ 就是问所有人"} · 你不说话时它们最多再互相叫 {record.meta.relayLimit} 次
             </span>
           </div>
-          <div className="flex items-end gap-2 rounded-2xl border border-field bg-strip px-3 py-2 focus-within:border-l4">
+          <div className="ccode-consult-composer flex items-end gap-2 rounded-2xl border border-field bg-strip px-3 py-2 focus-within:border-l4">
             <textarea
               ref={taRef}
               rows={1}
