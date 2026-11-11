@@ -142,6 +142,7 @@ export default function ProjectUserTasksView({
   chromeReq,
   onChromeConsumed,
   onUrgentGoals,
+  onCount,
   onPickTemplate,
   compactWhenEmpty = false,
 }: {
@@ -151,6 +152,8 @@ export default function ProjectUserTasksView({
   chromeReq?: { action: string; token: number } | null;
   onChromeConsumed?: () => void;
   onUrgentGoals?: (urgent: boolean) => void;
+  /** 读完后报目标条数（项目页「流程之外」那一行写「目标 N」，2026-11-11） */
+  onCount?: (count: number) => void;
   /** 无流程科研项目：空态给「套一整套流程…」（写整篇论文时才用，2026-11-08） */
   onPickTemplate?: () => void;
   /** 有流程的科研项目：接在步骤线下面；没记过目标时不铺空态，只留「新建目标」一行入口 */
@@ -305,6 +308,10 @@ export default function ProjectUserTasksView({
   useEffect(() => {
     onUrgentGoals?.(urgentGoals);
   }, [onUrgentGoals, urgentGoals]);
+
+  useEffect(() => {
+    if (loaded) onCount?.(tasks.length);
+  }, [onCount, loaded, tasks.length]);
 
   const visibleProfiles = useMemo(
     () =>

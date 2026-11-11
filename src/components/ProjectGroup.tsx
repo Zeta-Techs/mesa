@@ -1358,6 +1358,30 @@ export default function ProjectGroup({
     cfg?.pipelineOptOut &&
     (cfg.steps?.length ?? 0) === 0
   );
+  // 有流程的科研项目：目标与工作区折进「流程之外」一行（2026-11-11 项目页减法）。展开与否按项目记在本机；
+  // 没手动开合过时，有要你出场的目标就自动展开
+  const flowFold = registered && !!cfg && cfg.steps.length > 0;
+  const outsideKey = `mesa.outsideFlowOpen:${projectPath}`;
+  const [outsideOpen, setOutsideOpenState] = useState<boolean | null>(() => {
+    try {
+      const v = localStorage.getItem(outsideKey);
+      return v === "1" ? true : v === "0" ? false : null;
+    } catch {
+      return null;
+    }
+  });
+  const setOutsideOpen = (open: boolean) => {
+    setOutsideOpenState(open);
+    try {
+      localStorage.setItem(outsideKey, open ? "1" : "0");
+    } catch {
+      /* 存不下就只在这次有效 */
+    }
+  };
+  const [goalCount, setGoalCount] = useState<number | null>(null);
+  const [urgentGoals, setUrgentGoals] = useState(false);
+  const outsideShown = outsideOpen ?? urgentGoals;
+  const activeWorkspaces = workspaces.filter((w) => w.status === "active");
   useEffect(() => {
     if (liteResearch) void loadTaskCards(projectPath);
   }, [liteResearch, projectPath, loadTaskCards]);
@@ -2394,9 +2418,40 @@ export default function ProjectGroup({
         />
       )}
 
-      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标、流程外的事：有流程时接在步骤下面，一个没有时只留「新建目标」一行 */}
-      {registered && project && cfg && cfg.steps.length > 0 && (
-        <ProjectUserTasksView key={`goals:${project.path}`} project={project} embed compactWhenEmpty />
+      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标、流程外的事，连同工作区列表：
+          有流程时折进「流程之外」一行（2026-11-11 项目页减法），工作区卡的「可评审」与步骤卡「去评审」是同一件事。
+          折起时照样挂着（hidden），目标条数、要不要自动展开才读得到 */}
+      {flowFold && project && cfg && (
+        <section className="mt-2" aria-label="流程之外">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-micro text-l4 hover:text-l2"
+            aria-expanded={outsideShown}
+            onClick={() => setOutsideOpen(!outsideShown)}
+            title="流程步骤之外的事（目标）与各步骤的工作区"
+          >
+            <FoldMark open={outsideShown} />
+            <span>
+              流程之外：目标 {goalCount ?? "…"} · 工作区 {activeWorkspaces.length}
+              {urgentGoals ? " · 有目标等你" : ""}
+            </span>
+          </button>
+          <div hidden={!outsideShown} className="mt-2">
+            <ProjectUserTasksView
+              key={`goals:${project.path}`}
+              project={project}
+              embed
+              compactWhenEmpty
+              onCount={setGoalCount}
+              onUrgentGoals={setUrgentGoals}
+            />
+            {!liteResearch &&
+              children({
+                focusStepName,
+                steps: cfg.steps,
+              })}
+          </div>
+        </section>
       )}
 
       {/* ───── 项目设置抽屉（右侧滑出，不是页面、不进侧栏、不占路由） ─────
@@ -2802,6 +2857,7 @@ export default function ProjectGroup({
       {/* ───── 项目设置抽屉结束 ───── */}
 
       {!liteResearch &&
+        !flowFold &&
         children({
           focusStepName,
           steps: cfg?.steps ?? [],
