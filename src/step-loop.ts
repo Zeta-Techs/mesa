@@ -476,6 +476,9 @@ export function followupPrompt(opts: {
           ? [
               "这些篇是大纲为下面几节补检来的：",
               ...opts.sections!.map((t, i) => `${i + 1}. ${t}`),
+              ...(opts.sections!.some((t) => !/^\s*§?\d/.test(t))
+                ? ["上面没写节号的，按 papers/included.json 里这几篇的纳入理由和大纲判断它撑哪几节。"]
+                : []),
               `只处理这些篇（先跑 lit_records.py pdfs 认 PDF）：综述写综述卡；研究论文也直接${FULL_NOTES_CLAUSE}` +
                 "每篇在 notes/index.json 记 forSections（它撑的是上面哪几节，写节号）。没全文的按摘要写并标「仅摘要·待全文」。",
             ].join("\n")

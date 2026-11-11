@@ -226,7 +226,7 @@ export function ReworkDialog({
           <>
             {searchTarget && (
               <label className="block space-y-1">
-                <span>找新文献（交给「{searchTarget}」）：主题或章节，一行一条</span>
+                <span>找新文献（交给「{searchTarget}」）：为哪一节找、找什么，一行一条</span>
                 <textarea
                   className={`${fieldClass} min-h-16 resize-y`}
                   value={searchText}
@@ -234,7 +234,7 @@ export function ReworkDialog({
                     setEdited(true);
                     setSearchText(e.target.value);
                   }}
-                  placeholder="例：4.3 界面稳定性：2024 年以后的高电流工作"
+                  placeholder="例：4.3：2024 年以后界面稳定性的高电流工作"
                   autoFocus={!readText}
                 />
               </label>

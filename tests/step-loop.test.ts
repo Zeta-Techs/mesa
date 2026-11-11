@@ -464,3 +464,9 @@ test("退回检索的补料轮：单上有精读几条时说明不在这一轮�
   assert.match(reworkPrompt(rework, { isSearch: true, projectRoot: "/p", date: "11-11" }), /单上另有 1 条要精读已有的文献，不在这一轮做/);
   assert.doesNotMatch(reworkPrompt({ ...rework, reads: [] }, { isSearch: true, projectRoot: "/p", date: "11-11" }), /单上另有/);
 });
+
+test("为大纲补检来的新篇：补检那行没写节号时，叫 AI 按纳入理由和大纲判断", () => {
+  const p = followupPrompt({ upstream: "检索", notesIds: ["n1"], files: [], sections: ["背景再找5篇文献"] });
+  assert.match(p, /没写节号的，按 papers\/included\.json 里这几篇的纳入理由和大纲判断它撑哪几节/);
+  assert.doesNotMatch(followupPrompt({ upstream: "检索", notesIds: ["n1"], files: [], sections: ["4.3：新工作"] }), /没写节号的/);
+});
