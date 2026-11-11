@@ -2108,10 +2108,12 @@ export default function StepFlow({
           </span>
         );
       case "go-terminal": {
-        // 这一行只留一个主入口。会话还在出字或等确认：回去看。否则「继续」接回这一步上次的对话
-        // （同一家 Agent，2026-10-22），用这一步的绑定；「新开一轮」是次要出口，只在有能接回的对话时跟在前面。
+        // 这一行只留一个主入口。会话还在出字或等确认：回去看。AI 没在干活、但这一步的对话还开着：「回到对话」只切过去，
+        // 不替人发话（2026-11-11 用户：AI 说完了再点继续，会往说完的对话里发「接着做到完成标准」）。
+        // 对话已关：「继续」接回这一步上次的对话（同一家 Agent，2026-10-22），用这一步的绑定；「新开一轮」是次要出口。
         const live =
           agentAttention === "working" || agentAttention === "confirm";
+        const idleOpen = !live && Boolean(stopTabId);
         return (
           <span className="flex shrink-0 items-center gap-1.5">
             {askBtn}
@@ -2126,14 +2128,18 @@ export default function StepFlow({
                 新开一轮
               </button>
             )}
-            {live || !onContinueStep ? (
+            {live || idleOpen || !onContinueStep ? (
               <button
                 type="button"
                 onClick={goTerminal}
-                title="回到这一步正在进行的对话"
+                title={
+                  idleOpen
+                    ? "这一步的对话还开着：切过去看 AI 说了什么，不替你发话；要它接着做或改哪里，在对话里说"
+                    : "回到这一步正在进行的对话"
+                }
                 className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
               >
-                去终端看看
+                {idleOpen ? "回到对话" : "去终端看看"}
               </button>
             ) : (
               <button
