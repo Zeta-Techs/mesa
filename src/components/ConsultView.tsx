@@ -19,6 +19,7 @@ import {
   round1Revealed,
   STATUS_TEXT,
   streamMessages,
+  usdText,
   type ConsultDto,
   type ConsultEvent,
   type ConsultMember,
@@ -117,7 +118,7 @@ function elapsed(startedAt: string): string {
 function costText(messages: ConsultMessage[]): string {
   const calls = messages.filter((m) => m.role === "member").length;
   const usd = messages.reduce((a, m) => a + (m.costUsd ?? 0), 0);
-  return usd > 0 ? `$${usd.toFixed(2)} · ${calls} 次` : `${calls} 次`;
+  return usd > 0 ? `${usdText(usd)} · ${calls} 次` : `${calls} 次`;
 }
 
 function copyText(m: ConsultMessage, name: string): string {
@@ -524,9 +525,9 @@ export default function ConsultView({
             >
               <MemberAvatar member={m} size={20} />
               <span className="shrink-0">{m.name}</span>
-              <span className="truncate text-micro text-l4">
-                {m.model || "默认"} · {agentLabel(m.agent)}
-              </span>
+              {/* 模型名太长只截模型名，经哪个 CLI 总能看见 */}
+              <span className="min-w-0 truncate text-micro text-l4">{m.model || "默认"}</span>
+              <span className="shrink-0 text-micro text-l4">· {agentLabel(m.agent)}</span>
               {!m.canReadProject && <span className="shrink-0 text-micro text-warn-text">只看材料</span>}
               {hasImages && !m.seesImages && <span className="shrink-0 text-micro text-l4">图没给它看</span>}
             </span>

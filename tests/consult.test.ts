@@ -16,6 +16,7 @@ import {
   shortModel,
   streamMessages,
   toProjectRel,
+  usdText,
   type ConsultMessage,
   type ConsultRecord,
   type MemberOption,
@@ -208,4 +209,11 @@ test("工作台露出的研讨：有人在答或等你发话，24 小时没动�
   assert.equal(liveConsultState({ busy: true, answering: 3, awaiting: false }), "3 家在答");
   assert.equal(liveConsultState({ busy: true, answering: 0, awaiting: false }), "在答");
   assert.equal(liveConsultState({ busy: false, answering: 0, awaiting: true }), "等你发话");
+});
+
+test("研讨花费：不到一分钱不显示成 $0.00", () => {
+  assert.equal(usdText(0.00205771), "不到 $0.01");
+  assert.equal(usdText(0.0703), "$0.07");
+  assert.equal(usdText(1.234), "$1.23");
+  assert.equal(usdText(0), "$0.00");
 });

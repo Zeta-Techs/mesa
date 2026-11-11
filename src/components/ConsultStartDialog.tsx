@@ -26,6 +26,7 @@ import {
   pickDefaultMembers,
   sameFamilies,
   toProjectRel,
+  usdText,
   type ConsultDto,
   type ConsultMaterial,
   type CostStat,
@@ -176,7 +177,7 @@ export default function ConsultStartDialog({
   const dupFamilies = sameFamilies(picked);
   const est = estimateCost(picked, cross, costStats);
   const estMoney =
-    est.usd != null ? `，按以往研讨约 $${est.usd.toFixed(2)}${est.guessed ? `（${est.guessed} 位没有记录，按平均估）` : ""}` : "";
+    est.usd != null ? `，按以往研讨约 ${usdText(est.usd)}${est.guessed ? `（${est.guessed} 位没有记录，按平均估）` : ""}` : "";
   const canStart = !!root && question.trim().length > 0 && picked.length >= MIN_MEMBERS && !busy;
   const allSame = picked.length >= 2 && new Set(picked.map((p) => p.family ?? p.key)).size === 1;
 

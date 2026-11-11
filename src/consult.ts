@@ -328,6 +328,11 @@ export interface CostStat {
   avgUsd: number;
 }
 
+/** 研讨花费：不到一分钱写「不到 $0.01」——单次只读调用常只有几厘，按两位小数会显示成 $0.00，像没记上 */
+export function usdText(usd: number): string {
+  return usd > 0 && usd < 0.01 ? "不到 $0.01" : `$${usd.toFixed(2)}`;
+}
+
 /**
  * 发起前的花费预估（二期）：每位按以往研讨里同一条连接 × 模型的平均每次花费，没有记录的按全部记录的平均估；
  * 一条记录都没有就只给次数。次数 = 成员数 ×（1 + 交叉轮数），追问另算
