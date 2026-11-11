@@ -26,7 +26,7 @@ test("精读进度：reviewed 才算写完，按全文/摘要分开数", () => {
 
 test("精读进度：包在对象里的记录也认；空表与坏 JSON 不出这一行", () => {
   const wrapped = JSON.stringify({ records: [{ id: "a", reviewStatus: "REVIEWED", fulltextStatus: "fulltext" }] });
-  assert.equal(notesProgressLine(notesProgress(wrapped)!), "已写笔记 1 / 1 篇 · 全文 1");
+  assert.equal(notesProgressLine(notesProgress(wrapped)!), "已写笔记 1 篇 · 全文 1", "写满了不写分母");
   assert.equal(notesProgress("[]"), null);
   assert.equal(notesProgress("{ not json"), null);
   assert.equal(notesProgress(JSON.stringify({ version: 1 })), null);

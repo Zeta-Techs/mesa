@@ -96,10 +96,11 @@ export function notesProgress(
 }
 
 /** 一行摘要：「已写笔记 42 / 199 篇 · 全文 30 · 仅摘要 12 · 卡住 3 · 只速读 60」。没写的分项不出。
- *  只速读的篇不在分母里，单列在末尾；全都只速读时不出「0 / 0」。 */
+ *  只速读的篇不在分母里，单列在末尾；全都只速读时不出「0 / 0」。
+ *  写满了只写「已写笔记 23 篇」：分母等于分子时「23 / 23」只是噪音（2026-11-11 项目页减法） */
 export function notesProgressLine(p: NotesProgress): string {
   if (p.total === 0) return `只速读 ${p.skimmed} 篇，还没有要写单篇笔记的`;
-  const parts = [`已写笔记 ${p.reviewed} / ${p.total} 篇`];
+  const parts = [p.reviewed === p.total ? `已写笔记 ${p.total} 篇` : `已写笔记 ${p.reviewed} / ${p.total} 篇`];
   if (p.fulltext > 0) parts.push(`全文 ${p.fulltext}`);
   if (p.abstractOnly > 0) parts.push(`仅摘要 ${p.abstractOnly}`);
   if (p.blocked > 0) parts.push(`卡住 ${p.blocked}`);
