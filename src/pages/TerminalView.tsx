@@ -4243,15 +4243,28 @@ export const TerminalView = memo(function TerminalView({
     const timer = window.setTimeout(() => {
       if (autoLaunchedRef.current) return;
       autoLaunchedRef.current = true;
+      // 带着开场话自动启动（开始 / 继续 / 退回修改 / 跟进更新…）：那句先在聊天里出气泡，和输入框里发第一句同一套
+      // （2026-11-11 用户：退回修改跳到聊天层，消息要等一会才出来——CLI 起来、接回长对话、话写进会话文件之前一片空白）。
+      // 启动没成就收回；成了照常等会话文件记下后替换
+      const opening = !restored && !customRuntimeId ? promptText.trim() : "";
+      const early = opening ? showEarlyBubble(opening) : null;
       // launch 内部 try 只包住 pty_spawn 起的后半段；前置段（目录检查/清理/官方账号
       // 确认）抛错时 void 吞掉就是「自动启动没反应」。落到错误面并展开启动栏，
       // 让用户（和我们）看得到失败原因。Promise.resolve 兜 launch 返回 null 的分支。
-      Promise.resolve(restored && !customRuntimeId ? restoreTask() : launch()).catch(
-        (e) => {
+      Promise.resolve(restored && !customRuntimeId ? restoreTask() : launch())
+        .then((res) => {
+          if (!early) return;
+          if (res) early.reRegister();
+          else early.retract();
+        })
+        .catch((e) => {
+          early?.retract();
           setError(`自动启动失败：${String(e)}`);
           setBarExpanded(true);
-        },
-      );
+        })
+        .finally(() => {
+          if (early) endEarlyBubbleLaunch();
+        });
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
