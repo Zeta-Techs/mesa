@@ -98,6 +98,7 @@ import {
   openTabRows,
   nestForks,
   foldForks,
+  interleaveByRecent,
   FORK_FOLDS_KEY,
   PROJECT_CHAT_PINS_KEY,
   parseProjectChatPins,
@@ -1451,7 +1452,6 @@ export default function ProjectTree({
           title={`${c.title}\n研讨 · ${c.members.length} 家${state ? ` · ${state}` : ""}`}
           className="flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 text-l1"
         >
-          <Users size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(c.title, folderName)}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
@@ -1460,6 +1460,9 @@ export default function ProjectTree({
               <RunCaret state={caret} />
             </span>
           )}
+          <span className="flex h-6 w-6 items-center justify-center text-l4" aria-hidden="true">
+            <Users size={13} strokeWidth={1.8} />
+          </span>
         </div>
       </div>
     );
@@ -1553,7 +1556,13 @@ export default function ProjectTree({
       return chatKey(s) === highlightChatKey || d === "working" || d === "confirm";
     };
     const openByDefault = defaultOpenStep(groups, hot);
-    const headCls = "flex h-7 w-full items-center gap-1.5 rounded-md pl-1.5 pr-2 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
+    const headCls = "flex h-7 w-full items-center gap-0.5 rounded-md pl-2 pr-0.5 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
+    // 开合箭头在行尾（2026-11-11 用户：步骤组头、研讨、对话的字都顶格对齐，图标挪到行尾），和对话行的状态光标同一列
+    const chevron = (open: boolean) => (
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center" aria-hidden="true">
+        {open ? <ChevronDown size={13} strokeWidth={1.8} /> : <ChevronRight size={13} strokeWidth={1.8} />}
+      </span>
+    );
     const line = (r: StepChatRow) => (
       <Fragment key={chatKey(r.row.s)}>
         {renderChat(r.row.s, project, name, null, false, r.row, false, r.label ? `${r.label}${r.done ? " ✓" : ""}` : null)}
@@ -1581,11 +1590,15 @@ export default function ProjectTree({
                 className={headCls}
                 title={open ? `收起「${g.step}」的对话` : `展开「${g.step}」的对话`}
               >
-                {open ? <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" /> : <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" />}
                 <span className="ccode-rail-text min-w-0 flex-1 truncate">
                   {circledIndex(g.index)} {g.step}
                 </span>
-                {dot && <RunCaret state={dot} />}
+                {dot && (
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                    <RunCaret state={dot} />
+                  </span>
+                )}
+                {chevron(open)}
               </button>
               {open && (
                 <div className="space-y-[3px] pl-3">
@@ -1599,14 +1612,18 @@ export default function ProjectTree({
                         onClick={() => toggleStepGroup(lKey, !lanesOpen)}
                         className={headCls}
                       >
-                        {lanesOpen ? <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" /> : <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" />}
                         <span className="ccode-rail-text min-w-0 flex-1 truncate">
                           分 {g.lanes.total} 路 · {g.lanes.done}/{g.lanes.total} 做完
                         </span>
                         {!lanesOpen && (() => {
                           const d = caretOf(g.lanes.rows);
-                          return d ? <RunCaret state={d} /> : null;
+                          return d ? (
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                              <RunCaret state={d} />
+                            </span>
+                          ) : null;
                         })()}
+                        {chevron(lanesOpen)}
                       </button>
                       {lanesOpen && <div className="space-y-[3px] pl-3">{g.lanes.rows.map(line)}</div>}
                     </div>
@@ -1658,7 +1675,8 @@ export default function ProjectTree({
     const opened = openedAll.filter((r) => !(r.forkParentKey && listedHere.has(r.forkParentKey)));
     const remaining = chats.length - visible.length;
     const more = remaining > 0;
-    // 研讨挂在最上面（开着的对话之前）：进行中的、最近几天的，更早的在对话管理
+    // 研讨（进行中的、最近几天的，更早的在对话管理）并进下面按最近活动的那一列，只靠人形图标认（2026-11-11 用户：
+    // 原先挂在最上面，研讨一出一没就把下面的步骤组整排顶着挪）
     const projectPath = project?.path;
     const consultRows = projectPath
       ? sidebarConsults(
@@ -1669,7 +1687,6 @@ export default function ProjectTree({
       : [];
     return (
       <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
-        {consultRows.map((c) => renderConsultRow(c, name))}
         {opened.map((r) => renderOpenRow(r))}
         {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
             每行写角色（商量任务书 / 执行任务书 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
@@ -1678,15 +1695,19 @@ export default function ProjectTree({
             {renderStepGroups(pinnedRows, project, name, folderKey, forkOpenOf)}
           </div>
         )}
-        {chats.length === 0 ? (
-          opened.length === 0 && pinnedRows.length === 0 && consultRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
+        {chats.length === 0 && consultRows.length === 0 ? (
+          opened.length === 0 && pinnedRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
-          visible.map((r) => (
-            <Fragment key={chatKey(r.s)}>
-              {renderChat(r.s, project, name, undefined, true, r)}
-              {(forkOpenOf.get(chatKey(r.s)) ?? []).map((o) => renderOpenRow(o, r.depth + 1, name))}
-            </Fragment>
-          ))
+          interleaveByRecent(visible, consultRows, (c) => c.updatedAt).map((e) =>
+            "extra" in e ? (
+              renderConsultRow(e.extra, name)
+            ) : (
+              <Fragment key={chatKey(e.row.s)}>
+                {renderChat(e.row.s, project, name, undefined, true, e.row)}
+                {(forkOpenOf.get(chatKey(e.row.s)) ?? []).map((o) => renderOpenRow(o, e.row.depth + 1, name))}
+              </Fragment>
+            ),
+          )
         )}
         {(more || folded) && (
           <div className="flex items-center">
