@@ -10,6 +10,7 @@
 import type { CheckItem } from "./research-checks.ts";
 import { excludedKeys, MESA_CHECKER, noteStates } from "./outline-check.ts";
 import { placeholderFigureLines, writingScanSourcePath } from "./draft-review.ts";
+import { isManuscriptHelper } from "./manuscript-files.ts";
 
 // ---------- 从脚本移植的正则（改这里先改脚本，对照测试会拦） ----------
 
@@ -450,14 +451,12 @@ export function styleAbbreviations(text: string): { abbr: string; full: string; 
   return out;
 }
 
-/** 过程文件不是稿件（cite_check SKIP_MANUSCRIPT ∪ ms_check SKIP，另加字体说明 typeface.md、README）；写作规范 style-sheet.md 也不是 */
-const NOT_MANUSCRIPT = /(citation-check|citation-style|review-report|verification-decisions|declarations|checklist|evidence|section-status|changelog|numbers|revision-notes|outline|typeface|readme|style-sheet)/i;
-
 /** 这一步的主稿：步骤要交的 manuscript/ 下 md / qmd 排前，再是工作副本 manuscript/ 里列出来的；只取真在的，
  *  按 writingScanSourcePath 同口径挑（draft.md / manuscript/ 优先）。挑不出返回 null */
 export function pickManuscript(artifacts: readonly string[], listed: readonly string[]): string | null {
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
-  const ok = (p: string) => /^manuscript\/.+\.(md|qmd)$/i.test(p) && !/[*?]/.test(p) && !NOT_MANUSCRIPT.test(p.split("/").pop() ?? "");
+  // 过程文件、写作规范这类写作配套文件不是稿件：名单只在 manuscript-files.ts（与核验脚本同一份）
+  const ok = (p: string) => /^manuscript\/.+\.(md|qmd)$/i.test(p) && !/[*?]/.test(p) && !isManuscriptHelper(p);
   const have = new Set(listed.map(norm));
   const ordered = [...new Set([...artifacts.map(norm), ...listed.map(norm)])].filter((p) => ok(p) && have.has(p));
   return writingScanSourcePath(ordered);

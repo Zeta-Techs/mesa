@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import {
   isManuscriptBody,
   isManuscriptHelper,
@@ -59,4 +59,16 @@ test("挑主稿按名字，不按传进来的顺序；没有正文时退回大�
   assert.equal(manuscriptSourcePath(["manuscript/style-sheet.md", "manuscript/sections.json", "outline.md"]), "outline.md");
   assert.equal(manuscriptSourcePath(["manuscript/sections/02-b.md", "manuscript/sections/01-a.md"]), "manuscript/sections/01-a.md");
   assert.equal(manuscriptSourcePath(["papers/screening.md", "TASK.md"]), null);
+});
+
+test("前端不再另写名单：除 manuscript-files.ts 外，没有把几种配套文件名拼成一条正则的", () => {
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((name) => {
+      const p = `${dir}/${name}`;
+      return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(name) ? [p] : [];
+    });
+  const offenders = walk("src").filter(
+    (p) => !p.endsWith("manuscript-files.ts") && /section-status\|changelog|changelog\|numbers|style-sheet\)/.test(readFileSync(p, "utf8")),
+  );
+  assert.deepEqual(offenders, []);
 });
