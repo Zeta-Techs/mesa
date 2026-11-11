@@ -54,6 +54,12 @@ for rel in [] if CLEAN else COPY:
     if os.path.exists(src):
         dst = os.path.join(home, rel); os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy2(src, dst)
 work = os.path.join(home, "work"); os.makedirs(work)
+# CAP_HOME_FROM=<上次 CAP_KEEP 留下的目录>：整份搬进来（接回上次的会话，配 CAP_ARGS="-S <id>"；CAP_WORK=<上次的工作目录> 让 cwd 对上）
+if os.environ.get("CAP_HOME_FROM"):
+    shutil.copytree(os.environ["CAP_HOME_FROM"], home, symlinks=True, dirs_exist_ok=True, ignore_dangling_symlinks=True)
+    if os.environ.get("CAP_WORK"):
+        work = os.environ["CAP_WORK"]; os.makedirs(work, exist_ok=True)
+a += [x for x in os.environ.get("CAP_ARGS", "").split(" ") if x]
 if CLEAN:
     json.dump({"hasCompletedOnboarding": True, "projects": {}}, open(os.path.join(home, ".claude.json"), "w"))
 # Gemini：Mesa 只在本机设置选的是 API Key 登录时才放行第三方连接（gemini_auth_blocker），临时 HOME 里照这个口径改
@@ -254,6 +260,139 @@ record["scenes"]["ready"] = [{"t": 0, "lines": lines()}]
 # CAP_FOCUS=out / in：开场后告诉 CLI 终端失焦 / 得焦（Mesa 聊天层盖住终端时 xterm.js 的输入区是失焦的），看它还出不出「猜下一句」
 if os.environ.get("CAP_FOCUS") and focus[0]:
     pty_write(b"\x1b[O" if os.environ["CAP_FOCUS"] == "out" else b"\x1b[I"); pump(0.5)
+
+def tree_state():
+    """临时 HOME 里除工作目录外每个文件的 (大小, 修改时间)：比对 CLI 换档后动了哪些文件（不限于 COPY 清单）"""
+    st = {}
+    for root, dirs, files in os.walk(home):
+        if os.path.abspath(root) == os.path.abspath(work):
+            dirs[:] = []; continue
+        for name in files:
+            p = os.path.join(root, name)
+            try: s = os.stat(p); st[os.path.relpath(p, home)] = (s.st_size, s.st_mtime_ns)
+            except OSError: pass
+    return st
+
+
+def text_of(rel):
+    try:
+        p = os.path.join(home, rel)
+        return open(p, encoding="utf-8", errors="replace").read() if os.path.getsize(p) < 200_000 else None
+    except OSError:
+        return None
+
+
+# 会话内换档（2026-11-11，docs/design-chat-inline-switch.md）：先发 MID_FIRST 让它干活（默认慢慢想再调工具，配合
+# E2E_THINK_FILE / E2E_THINK_CHUNK / E2E_THINK_DELAY 拉长思考），MID_AFTER 秒后在生成中发 MID_CMD（斜杠命令，回车提交）
+# 或 MID_KEYS（原始按键，| 分开逐个写，如 ⇧Tab 写 \x1b[Z）；弹出选择器时 MID_PICK=<选项原文> 按屏上原文挪高亮，
+# 再按 MID_CONFIRM（默认回车；Kimi「只这一段」写 alt+s）。拍 MID_SECS 秒，记下：屏幕、探针（工具调用这一轮问没问人）、
+# 发命令前后临时 HOME 里变动的文件（配置类给出差异）、会话文件新增的行。MID_THEN 再发一轮（看思考档下一轮的请求参数）
+if os.environ.get("MID_CMD") or os.environ.get("MID_KEYS"):
+    send(os.environ.get("MID_FIRST", "TRIGGER_THINK TRIGGER_TOOL 跑一下"))
+    record["scenes"]["mid_before"] = film(float(os.environ.get("MID_AFTER", "2.5")), 0.3)
+    snap_state = tree_state()
+    snap_text = {rel: text_of(rel) for rel in snap_state if rel.endswith((".toml", ".json", ".yaml", ".yml"))}
+    t_cmd = time.time()
+    if os.environ.get("MID_CMD"):
+        send(os.environ["MID_CMD"])
+    else:
+        for key in os.environ["MID_KEYS"].split("|"):
+            try: pty_write(key.encode().decode("unicode_escape").encode())
+            except OSError: break
+            pump(float(os.environ.get("MID_KEY_GAP", "0.3")))
+            record["scenes"].setdefault("mid_keys", []).append({"t": key, "lines": lines()})
+    record["scenes"]["mid_cmd"] = film(1.8, 0.3)
+    pick = os.environ.get("MID_PICK")
+    # MID_LABELS：这张选择器全部选项的原文（| 分开、按屏上顺序）——选项下面常有一行说明，不能按行数算格数
+    labels = [x for x in os.environ.get("MID_LABELS", "").split("|") if x]
+
+    def picker_state():
+        """(各选项所在行, 高亮停在第几项)；选项不全在屏上返回 None。MID_TITLE 给了就只在标题行到按键提示行之间找
+        （Kimi 换档后底栏也写「Never Ask」，Codex 选项后面同一行跟着说明）"""
+        rows = lines()
+        lo, hi = 0, len(rows)
+        title = os.environ.get("MID_TITLE")
+        if title:
+            tops = [i for i, r in enumerate(rows) if title in r]
+            if not tops: return None
+            lo = tops[-1]
+            ends = [i for i in range(lo + 1, len(rows)) if re.search(r"\besc\b", rows[i], re.I)]
+            hi = ends[0] if ends else len(rows)
+        where = []
+        for lab in labels:
+            pat = re.compile(re.escape(lab) + r"(?:\s*\(current\)|\s*←.*)?(?:\s{2,}\S.*)?$")
+            hit = [i for i in range(lo, hi) if pat.match(re.sub(r"^[\s❯›>▶●○◉•\d.()]*", "", rows[i]).strip())]
+            if len(hit) != 1: return None
+            where.append(hit[0])
+        cur = [k for k, i in enumerate(where) if re.match(r"^\s*(?:[❯›▶>●◉•]|\d+\s+\([●•◉]\))", rows[i])]
+        return where, (cur[0] if len(cur) == 1 else None)
+
+    if pick and labels and alive[0]:
+        st = picker_state()
+        record["mid_pick"] = {"want": pick, "state": st}
+        if st and st[1] is not None and pick in labels:
+            delta = labels.index(pick) - st[1]
+            try:
+                for _ in range(abs(delta)):
+                    pty_write(b"\x1b[B" if delta > 0 else b"\x1b[A"); pump(0.2)
+                pump(0.3)
+                record["scenes"]["mid_moved"] = [{"t": 0, "lines": lines()}]
+                again = picker_state()
+                record["mid_pick"]["recheck"] = again
+                # 同 Mesa menuReadyToConfirm：还是这张选择器、高亮正停在目标上才按确认键，否则 Esc 退出，绝不回车
+                if again and again[1] == labels.index(pick):
+                    conf = os.environ.get("MID_CONFIRM", "enter")
+                    pty_write({"enter": b"\x1b[13u" if kitty[0] else b"\r",
+                               "alt+s": b"\x1b[115;3u" if kitty[0] else b"\x1bs"}.get(conf, conf.encode().decode("unicode_escape").encode()))
+                    record["mid_pick"]["confirmed"] = conf
+                    # MID_POSTKEYS：确认后还有一层的（Codex 完全访问「Enable full access?」）再按这串键，| 分开
+                    for key in filter(None, os.environ.get("MID_POSTKEYS", "").split("|")):
+                        pump(0.8)
+                        record["scenes"].setdefault("mid_post", []).append({"t": 0, "lines": lines()})
+                        pty_write(key.encode().decode("unicode_escape").encode())
+                else:
+                    pty_write(b"\x1b[27u" if kitty[0] else b"\x1b")
+                    record["mid_pick"]["confirmed"] = None
+            except OSError:
+                alive[0] = False
+    record["scenes"]["mid_after"] = film(float(os.environ.get("MID_SECS", "20")), 0.5)
+    record["probe_created"] = os.path.exists(os.path.join(work, "mesa_probe.txt"))
+    if os.environ.get("MID_THEN") and alive[0]:
+        send(os.environ["MID_THEN"])
+        record["scenes"]["mid_then"] = film(float(os.environ.get("MID_THEN_SECS", "12")), 0.5)
+    pump(1.5)
+    import difflib
+    now_state = tree_state()
+    touched = sorted(rel for rel in set(now_state) | set(snap_state)
+                     if now_state.get(rel) != snap_state.get(rel))
+    record["files_touched"] = touched
+    diffs, appended = {}, {}
+    for rel in touched:
+        if rel.endswith((".toml", ".json", ".yaml", ".yml")) and rel in now_state:
+            new = text_of(rel)
+            if new is not None:
+                diffs[rel] = "".join(difflib.unified_diff((snap_text.get(rel) or "").splitlines(True), new.splitlines(True), n=0))[:2500]
+        elif rel.endswith(".jsonl") and rel in now_state:
+            try:
+                with open(os.path.join(home, rel), "rb") as fh:
+                    fh.seek(snap_state.get(rel, (0, 0))[0]); tail = fh.read().decode("utf-8", "replace")
+            except OSError:
+                continue
+            hits = [ln[:400] for ln in tail.splitlines()
+                    if re.search(r"mode|permission|approval|effort|thinking|reasoning|sandbox", ln, re.I)
+                    and not re.search(r'"type":\s*"(assistant|tool_result)"', ln)]
+            if hits: appended[rel] = hits[:12]
+    record["config_diffs"] = diffs; record["session_lines"] = appended
+    record["kitty"] = kitty[0]; record["alive"] = alive[0]; record["cmd_at"] = round(t_cmd - _t0, 1)
+    json.dump(record, open(out_path, "w"), ensure_ascii=False, indent=1)
+    try: proc.terminate(force=True) if WIN else os.kill(pid, signal.SIGKILL)
+    except OSError: pass
+    if os.environ.get("CAP_KEEP"):
+        shutil.copytree(home, os.environ["CAP_KEEP"], symlinks=True, dirs_exist_ok=True, ignore_dangling_symlinks=True)
+    shutil.rmtree(home, ignore_errors=True)
+    print(f"{agent}/{tier}: mid probe_created={record['probe_created']} kitty={kitty[0]} alive={alive[0]} "
+          f"touched={len(touched)} config_diffs={list(diffs)} session_lines={ {k: len(v) for k, v in appended.items()} }")
+    sys.exit(0)
 
 # 生成中再发一句（2026-10-22，聊天层「排队 / 立即发送」）：先发 QUEUE_FIRST 让它干活（默认 TRIGGER_TOOL，配合
 # E2E_PROBE_CMD="sleep 8; …" 让工具跑久一点），过 QUEUE_AFTER 秒再打 QUEUE_PROMPT、按 QUEUE_KEY（默认回车；Codex 的 Tab 写 \t），

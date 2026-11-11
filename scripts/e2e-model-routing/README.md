@@ -57,6 +57,16 @@ TOOL_PROMPT="TRIGGER_TOOL TRIGGER_ESC 跑一下" PYTE_DIR=/tmp/pyte python3 -I s
 REPLY_PROMPT="你好" TOOL_PROMPT="TRIGGER_PLAN 写个方案" PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code discuss /tmp/cap/claude-plan.json
 # 比一屏还长的回复（60 行，看开头滚出屏后预览接不接得上）：第一幕换成 TRIGGER_LONG、拍久一点
 REPLY_PROMPT="TRIGGER_LONG 写长一点" REPLY_SECS=25 PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json codex ask /tmp/cap/codex-long.json
+# 会话内换权限 / 思考档（2026-11-11，结论见 matrix「会话内换权限 / 思考档」节）：假网关起时加
+# E2E_THINK_FILE=<一段几百字的文件> E2E_THINK_CHUNK=20 E2E_THINK_DELAY=1.2，让第一轮慢慢想二十多秒再调工具；想的时候发命令。
+# MID_LABELS 是选择器全部选项原文（按屏上顺序），MID_TITLE 是选择器标题；回车前读屏核对高亮停在 MID_PICK 上才按，否则 Esc。
+# 输出里 probe_created = 同一轮的工具调用没问人；files_touched / config_diffs = 发命令前后临时 HOME 的变动；session_lines = 会话文件新增行
+MID_CMD="/permission" MID_TITLE="Select permission mode" MID_LABELS="Always Ask|Ask When Needed|Never Ask" MID_PICK="Never Ask" \
+  PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json kimi base /tmp/cap/kimi-perm.json
+# 按键型（⇧Tab 写 \x1b[Z，| 分开逐个按，每按一下记一帧）；Codex 完全访问的第二层确认用 MID_POSTKEYS='\r'；
+# 思考档下一轮的请求参数看 MID_THEN 那一轮在假网关日志里的 params。Kimi 选择器 Alt+S 只认 kitty 写法：MID_KEYS='/effort|\x1b[13u|\x1b[C|\x1b[115;3u'
+MID_KEYS='\x1b[Z' MID_KEY_GAP=0.8 PYTE_DIR=/tmp/pyte python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code auto /tmp/cap/claude-cycle.json
+# 接回上次的会话：CAP_KEEP 留下的目录用 CAP_HOME_FROM 搬回来，CAP_WORK=<那次的工作目录> CAP_ARGS="-S <会话 id>"
 ```
 
 **出图 / 改图逐家核对（2026-10-25）**：假网关起的时候设 `E2E_PROBE_CMD='"$MESA_IMAGE_TOOL" image --image <图> --prompt x --out edited.png'`、

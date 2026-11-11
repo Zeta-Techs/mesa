@@ -105,7 +105,7 @@
 | 会话存储 | `~/.kimi-code/session_index.jsonl`（枚举入口：sessionId/sessionDir/**workDir**）+ `sessions/<wd_*>/<id>/agents/main/wire.jsonl`；**目录名规则（2026-10-21 kimi.exe 源码 + 本机实证）**：`wd_<末段slug>_<sha256(路径，反斜杠先换成斜杠、去尾斜杠)[:12]>`，slug=小写、非 `[a-z0-9._-]` 连续段并成 `-`、去首尾 `-`、截 40，空记 `workspace`；wire.jsonl 的 `runtime.set_binding.workspaceId` 必须等于所在目录名，否则恢复报「runtime binding workspace … does not match」 | `~/.kimi/sessions/<md5(workDir)>/<uuid>/context.jsonl`（无时间戳；时间戳在 `wire.jsonl`，标题在 `state.json`）；项目映射读 `~/.kimi/kimi.json` 的 `work_dirs[]`。根目录随 `KIMI_CODE_HOME` 搬家（旧版 `~/.kimi` 随 `KIMI_SHARE_DIR`），Mesa 扫描 / 删除 / 导入都认（2026-11-01，`sessions::SessionRoots`） |
 | 会话格式 | wire.jsonl：版本化 record（`metadata` / `turn.prompt`（用户输入）/ `context.append_message`（assistant/tool）/ `usage.record`（token）），协议 v1.0→v1.4 有迁移 | context.jsonl：`{role, content, tool_calls, tool_call_id}`；`_` 开头的 role 是内部记录（跳过）；content 可能是字符串或 parts 数组；tool_calls.arguments 是 JSON 字符串 |
 | 坑 | 密钥在 config.toml 里是明文；旧版 1.47+ 会催用户升级新版；模型选择器按 `[models.*]` 别名列出（注入模式的 KIMI_MODEL_* 合成通道是单模型设计，多模型需走全局写入）。**合成模型只当新会话的默认**：它注册成别名 `__kimi_env_model__`，`-S <id>` 续聊仍按会话里存的模型别名走（2.3.3 实证：换连接后续聊照打旧连接的 key）；Ccode 注入合成通道时一并传 `-m __kimi_env_model__`，新开与续聊都按当前连接走，点名后该会话再续聊也沿用（旧版 Python CLI 无此别名，不传）。运行中切换（0.36.1 pty 探针实证）：`/model <别名>` 与 `/effort <档>` 带参直切（/model 吃的是别名不是模型 id；档位随模型，K3 等布尔模型只有 on/off）；**kitty 键盘协议坑**：TUI 启动 push flags（`\x1b[>7u`）后只认 CSI-u 的 Enter（`\x1b[13u`），普通 `\r` 不提交——xterm.js 不支持该协议，Ccode 在 xterm 键盘层与写入链路两处改写（注册表 `submit_csi_u`） | 正在被新版替代，安装新版会迁移其数据（不改旧数据） |
-| 发版复核（2026-11-04） | 正式版仍是 2.4.1（另有 2.5.0-canary.20261102）。**已接**：程序状态旁路（§14）、温度 / top_p / 输出上限 / 请求头四个变量（§9）。2.5 待转正后看：生成中也能 `/model`、`/effort`（下一轮生效，terminal.md 同日条）；custom registry 模型 400「Invalid max_tokens」的修复（可考虑注 `KIMI_MODEL_MAX_OUTPUT_SIZE`，I）；openai / anthropic 编码器也读 sampling（I）。无影响：2.5 删 `KIMI_SECONDARY_MODEL/EFFORT` 与 `[secondary_model] force`（Mesa 没用）；Mesa 用到的变量 2.5 canary 都在 |
+| 发版复核（2026-11-04） | 正式版仍是 2.4.1（另有 2.5.0-canary.20261102）。**已接**：程序状态旁路（§14）、温度 / top_p / 输出上限 / 请求头四个变量（§9）。生成中 `/model`、`/effort` 2.5.3 已实测（下一轮生效；带参数 `/effort` 仍写 config.toml，选择器 Alt+S 只改本段，见「会话内换权限 / 思考档」节）；custom registry 模型 400「Invalid max_tokens」的修复（可考虑注 `KIMI_MODEL_MAX_OUTPUT_SIZE`，I）；openai / anthropic 编码器也读 sampling（I）。无影响：2.5 删 `KIMI_SECONDARY_MODEL/EFFORT` 与 `[secondary_model] force`（Mesa 没用）；Mesa 用到的变量 2.5 canary 都在 |
 | 发版复核（2026-11-01） | 核到 2.4.1（另看 2.5.0 canary）。**已接（2026-11-04）**：2.4.0 起经 OSC 7501 报会话状态，kimi 已进 `chat_channel::PROGRAM_STATUS_MIN`（见 §14 Kimi 行）；温度 / top_p / 输出上限 / 请求头四个变量 2026-11-04 实测三种协议都认，已接（§9）。留意：2.4.0 Agent 不能自己进计划模式（`--plan` 仍在，不影响只讨论）；2.5.0 canary 工作区 id 多了 `wm_<uuid>` 形（Mesa 按 `session_index.jsonl` 枚举不受影响）；wire `protocol_version` 已是 1.5 |
 
 **兼容端点（2026-08-05 核实）**：`KIMI_MODEL_PROVIDER_TYPE=openai` 可接任意 OpenAI 兼容端点（如智谱 `https://open.bigmodel.cn/api/paas/v4`、DeepSeek `https://api.deepseek.com/v1`）；`=anthropic` 理论上可接 §1 附注的 Anthropic 兼容端点，未实测。
@@ -249,6 +249,7 @@
      `model` 与 `model_reasoning_effort`（回显「• Model changed to gpt-6.1-sol low」，选择器列官方模型不列自定义 provider 的 catalog）；
      Grok 1.0.62 `/model x` → config.toml `[models] default`；Qwen 0.25 `/effort l` → settings.json `reasoningEffort`；Kimi 2.2 `/effort off` →
      config.toml thinking `enabled = false`。不写的：Gemini 0.64 `/model set x`（只管这一段）、Grok `/effort`。Mesa 据此改为重开接回（switch-strategy.ts）。
+     2026-11-11 按本机新版本重测，见「会话内换权限 / 思考档」节（Claude 2.1.311 `/effort` 仍写、不再弹确认；Codex 0.166 生成中也收 `/model --reasoning`；Kimi 2.5.3 选择器 Alt+S 只改本段）。
    **Claude 2.1.292 中途 `/model X`、`/effort L` 都先弹确认菜单**（「Switch model? / Change effort level?」，▔ 边框 + ❯ 1. Yes / 2. No），
    确认后回显「Set model to X and saved as your default for new sessions」（写 settings.json 的 model；effort max 是 this session only）。
 7. **模型能力元数据统一走 `model_registry.rs`**（2026-08-17 起；2026-08-26 扩为分层数据源）：**逐字段**查询链 =
@@ -372,6 +373,34 @@
    配套防护（2026-08-28）：Anthropic 通道 Base URL 以 `/v1` 结尾会被 SDK 拼成 `/v1/v1/messages` 404
    （实测），且「获取模型」走 OpenAI 风格 `{base}/models` 照样成功、极具迷惑性——profile 校验给提醒
    （不阻断保存），配置弹层 Base URL 行内同步警示。
+
+## 会话内换权限 / 思考档（2026-11-11 实测；设计 docs/design-chat-inline-switch.md）
+
+先查二进制 / 随包文档里的命令表，再用 `chat-capture.py` 的 `MID_CMD` / `MID_KEYS` 一幕实跑：临时 HOME + 假网关，第一轮先慢慢想
+（`TRIGGER_THINK`，`E2E_THINK_FILE` + `E2E_THINK_CHUNK=20` + `E2E_THINK_DELAY=1.2` 拉到二十多秒）再调工具，**想的时候**发命令或按键；
+同一轮随后的工具调用问不问人 = 是否这一轮生效，`MID_THEN` 下一轮的请求参数 = 思考档何时生效；发命令前后比对临时 HOME 整棵目录
+（配置类给差异）与会话文件新增行。「写全局」只算设置 / 配置文件的**语义**变化，计数、输入历史、MRU、缓存、启动时自己装插件不算。
+
+| 家 · 本机版本 | 会话内换权限 | 生成中 | 写全局 | 会话文件里的换档记录 | 思考档 | 生成中 | 写全局 |
+|---|---|---|---|---|---|---|---|
+| Claude Code 2.1.311 | ⇧Tab 轮换：default → acceptEdits → plan → auto → manual(=default) → …（不是 bypass 启动的轮不到 bypass；从 bypass 按一下到 auto）；`/permissions` 只管允许 / 拒绝规则 | 能按，**这一轮生效**（auto→manual 后同一轮的工具改成问人） | 否（`.claude.json` 只动计数与 `lastPlanModeUse`） | `{"type":"permission-mode","permissionMode":…}` | `/effort <档>`；⇧↑/⇧↓ 生成中按无反应 | 能发，不再弹确认，回显「saved as your default for new sessions」，下一轮生效 | **是**：settings.json 该模型的 `effortLevel` |
+| Codex 0.166.0-alpha.6（ChatGPT.app 自带；本机 npm 版缺 `@openai/codex-darwin-arm64` 起不来） | `/permissions` 选择器「Update Model Permissions」：1. Ask for approval / 2. Approve for me / 3. Full Access / 4. Read Only；选 Full Access 还要再答一层「Enable full access? › 1. Yes, continue anyway」 | 能发、选择器照弹（**不再拒收**），**下一轮生效**（这一轮余下的工具仍按原档） | 否（只动会话文件与 `history.jsonl`） | `event_msg` `thread_settings_applied{thread_settings.approval_policy}`，下一轮 `turn_context` 也带 | `/model <模型> --reasoning <档>` | 能发，回显「Model changed to … for this session only」，下一轮请求 effort 即新档 | 否 |
+| Kimi Code 2.5.3 | `/permission` 选择器「Select permission mode」：Always Ask(manual) / Ask When Needed(yolo) / Never Ask(auto)，每项下面一行说明；`/yolo`、`/auto` 已在别档时打开同一选择器并预选，不直切 | 能发（命令表 `availability:"always"`），**这一轮生效**（切到 Never Ask 后同一轮的工具直接跑） | 否（只动本会话 `state.json` 与缓存） | `wire.jsonl` `{"type":"permission.set_mode","mode":…,"time":…}`；非默认档启动时开头就有一条；**不带参数接回旧会话时沿用会话里存的档、不再写一条**——以最后一条为准 | `/effort` 横排选择器「[ On ]  Off」，←→ 切，**Alt+S 只改本段**；带参数 `/effort off` 存成默认 | 能发，回显「Takes effect from the next turn.」 | 带参数 / 选择器回车：**是**（config.toml thinking `enabled`）；**Alt+S：否**（回显「… for this session only」）。Alt+S 只认 kitty 写法 `\x1b[115;3u`，传统 `ESC s` 无效 |
+| Qwen Code 0.26.7 | `/approval-mode <plan\|default\|auto-edit\|auto\|yolo>`；⇧Tab 轮换 default → auto-accept edits → Auto mode → YOLO mode | 斜杠命令**排队**（「⏳ 1 queued」），这一轮结束后执行；⇧Tab **这一轮生效** | 否 | 未见换档事件（斜杠命令原文记成 user 行） | `/effort <档>` | 排队，结束后执行 | **是**：settings.json `model.reasoningEffort` |
+| Gemini CLI 0.68.0 | ⇧Tab 轮换 manual → auto-accept edits → plan → manual（无 yolo）；Ctrl+Y 开关 YOLO；`/permissions` 是目录信任 | ⇧Tab / Ctrl+Y 能按；Ctrl+Y **立刻生效**（挂着的审批被自动放行） | 否 | 无（离开 plan 时会话里记一句「User has manually exited Plan Mode…」） | 无命令 | — | — |
+| Grok Build 1.0.77 | ⇧Tab 轮换 default → plan → auto-review → always-approve；`/always-approve`、`/auto` 是开关（对已在的档再发一次回 ask） | 能发 / 能按，**这一轮生效** | 否（`config.toml` 启动时会被 Grok 重排格式，语义不变；`slash-mru.json` 记最近用的命令） | `events.jsonl` 每轮 `turn_started` 带 `yolo_mode`，无单独换档事件 | `/effort <档>` | 未实证：假网关模型没声明思考档（「current model does not support reasoning effort」）；1.0.62 时不写配置 | 未实证 |
+| OpenCode 1.19.5 | 无权限档；Tab / ⇧Tab 换代理（Build / Plan） | — | — | — | Ctrl+T 轮换模型变体 | 未实证：假网关模型没有变体 | 未实证 |
+| CodeBuddy Code 2.182.0 | 只有 ⇧Tab 轮换：default → **bypassPermissions** → acceptEdits → auto → plan → delegate | 能按，**这一轮生效**；从 default 按一下就是 bypass | 否 | 未见 | 无 `/effort`（Tab 切思考，文档说部分支持） | — | — |
+| Cursor CLI 2026.11.10 | `/run-everything`；`/settings` 的 Approval mode（Allowlist / Auto-review / Run Everything）；⇧Tab 换的是 Agent / Plan / Ask / Debug | 未实证：只认 cursor.com 账号，假网关起不来 | 未实证 | 会话元数据存 `approvalMode` | 未见命令 | — | — |
+
+要点：
+
+- **替人按键要防竞态**：生成中开着权限选择器时，工具调用的审批菜单会顶上来。第一次实跑按行数算方向键格数（Kimi 每项下面一行说明，多挪了两格），
+  挪的时候审批菜单出现，最后那下回车**批准了工具调用**、换档没换成。Mesa 只能按选项原文算格数，回车前再读屏核对仍是这张选择器、高亮停在目标上
+  （`tui-menu.ts menuReadyToConfirm` 的口径），对不上就 Esc，绝不回车。
+- 结果行（聊天层收「命令 + 结果」用）：Kimi「Permission mode: <档>」/「Permission mode unchanged: <档>」/「Thinking set to <档>[ for this session only]. Takes effect from the next turn.」；
+  Codex「Model changed to … for this session only」，换权限后底栏档位变；Qwen 底栏「YOLO mode (shift + tab to cycle)」；Grok 输入框下沿「· always-approve」与「⚠ Always-approve ON: …」。
+- 轮换型（⇧Tab、开关命令）只能从「当前是哪一档」推下一档，CodeBuddy 第二档就是 bypass，Grok / Gemini 的开关对已在的档再按一次会切回去——不适合替人按。
 
 ## 10. MCP 配置分发调研（2026-08-10，八家经官方文档/源码/本机实测核实；grok 为 2026-08 源码调研，首版只读不分发）
 
