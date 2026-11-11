@@ -7,6 +7,7 @@
   "kind": "codex",
   "statuses": [
    "-",
+   "running",
    "awaiting_approval",
    "completed"
   ]
@@ -339,5 +340,5 @@
    ]
   }
  },
- "version": "0.167.0"
+ "version": "0.167.1"
 }
