@@ -64,6 +64,8 @@ import {
   shouldRelaunchResumeTab,
 } from "../terminal-resume";
 import { toast } from "../toast";
+import { CROSS_REVIEW_KEY_PREFIX, crossReviewDoneText } from "../cross-review";
+import type { ChecksDto } from "../research-checks";
 import { EXITED_GRACE_MS, exitedCollectPass, idleStopPass, isExitedAgentTab } from "../idle-stop";
 import { closeAsksFirst } from "../run-caret";
 import { runLayout } from "../run-layout";
@@ -2658,6 +2660,37 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (prev === undefined || prev === "done" || s.attention !== "done") continue;
       if (!s.runId) continue;
       invoke("task_freeze_turn", { runId: s.runId }).catch(() => {});
+    }
+  }, [statuses]);
+
+  // 交叉复核说完（2026-11-11 用户：用 Codex 复核完只看到对话结束，不知道结果在哪）：复核标签这一轮说完时读一遍
+  // 这一步的核验清单，右下角报它记了几条，点「去评审看」打开这一步的评审
+  const crossPrevRef = useRef(new Map<string, TabStatus["attention"]>());
+  useEffect(() => {
+    for (const id of [...crossPrevRef.current.keys()]) {
+      if (!(id in statuses)) crossPrevRef.current.delete(id);
+    }
+    for (const [tabId, s] of Object.entries(statuses)) {
+      const key = tabsRef.current.find((t) => t.id === tabId)?.reuseKey;
+      if (!key?.startsWith(CROSS_REVIEW_KEY_PREFIX)) continue;
+      const prev = crossPrevRef.current.get(tabId);
+      crossPrevRef.current.set(tabId, s.attention);
+      if (prev === undefined || prev === "done" || s.attention !== "done") continue;
+      const worktreePath = key.slice(CROSS_REVIEW_KEY_PREFIX.length);
+      void invoke<ChecksDto>("research_checks_read", { path: worktreePath })
+        .catch(() => ({ items: [], files: [], skipped: 0 }) as ChecksDto)
+        .then((dto) => {
+          toast(crossReviewDoneText(dto.items), "info", {
+            actions: [
+              {
+                label: "去评审看",
+                primary: true,
+                onClick: () =>
+                  useAppStore.getState().setWorkspaceReviewRequest({ worktreePath, requestId: crypto.randomUUID() }),
+              },
+            ],
+          });
+        });
     }
   }, [statuses]);
 

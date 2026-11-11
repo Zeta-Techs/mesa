@@ -128,13 +128,30 @@ export function reviewerOptionKey(o: Pick<CrossReviewer, "profileId" | "model">)
  *  在那里复核 Agent 找不到稿件只能空转（2026-11-02 体验审查：文献检索步也挂了复核按钮） */
 export function stepHasClaims(expectedArtifacts: readonly string[] | null | undefined): boolean {
   return (expectedArtifacts ?? []).some(
-    (path) => /^(manuscript|proposal|chapters)\/.+\.(md|qmd|tex)$/.test(path) || /(^|\/)[^/]*report\.md$/.test(path),
+    (path) =>
+      // 写作规范 manuscript/style-sheet.md 不是稿件：大纲那步就交它，原先因此给大纲也挂了复核，
+      // 复核方找不到正文只能记一条「无法判断」（2026-11-11 HER 大纲）
+      (/^(manuscript|proposal|chapters)\/.+\.(md|qmd|tex)$/.test(path) && !/(^|\/)style-sheet\.md$/.test(path)) ||
+      /(^|\/)[^/]*report\.md$/.test(path),
   );
 }
 
 /** 复核标签与干活的标签分开，不复用同一个（不用 ws: 前缀：那是工作区标签的持久化键） */
+export const CROSS_REVIEW_KEY_PREFIX = "cross-review:";
+
 export function crossReviewReuseKey(worktreePath: string): string {
-  return `cross-review:${worktreePath}`;
+  return `${CROSS_REVIEW_KEY_PREFIX}${worktreePath}`;
+}
+
+/** 复核标签这一轮说完时右下角那句（2026-11-11 用户：复核跑完只看到对话结束，不知道结果在哪）：
+ *  数复核方写进核验清单的条目（kind=claim_support、checker=agent:…），都是待你判断 */
+export function crossReviewDoneText(items: readonly { kind: string; checker?: string; title: string }[]): string {
+  const mine = items.filter((item) => item.kind === "claim_support" && (item.checker ?? "").startsWith("agent:"));
+  if (mine.length === 0) return "复核说完了，没往核验清单里记东西：可能没找到要核的地方，去对话里看它怎么说";
+  const unsure = mine.filter((item) => item.title.startsWith("无法判断")).length;
+  return unsure === mine.length
+    ? `复核说完了：记了 ${mine.length} 条「无法判断」，多半是没找到能核的正文，去评审看原因`
+    : `复核说完了：核验清单里多了 ${mine.length} 条待你判断`;
 }
 
 /** 交给复核 Agent 的首条指令 */

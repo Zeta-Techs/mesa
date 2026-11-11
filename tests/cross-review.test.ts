@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   crossReviewPrompt,
+  crossReviewDoneText,
   crossReviewReuseKey,
   modelFamily,
   pickCrossReviewer,
@@ -107,4 +108,14 @@ test("复核按钮只挂在写带引用正文的步骤上：稿件、开题、�
   assert.equal(stepHasClaims(["notes/*.md", "notes/index.json", "references.bib"]), false);
   assert.equal(stepHasClaims(["data-dictionary.md", "data/fields.json"]), false);
   assert.equal(stepHasClaims(undefined), false);
+  // 大纲步一并交写作规范：它不是稿件，大纲不挂复核
+  assert.equal(stepHasClaims(["outline.md", "manuscript/sections.json", "manuscript/style-sheet.md"]), false);
+});
+
+test("复核说完的提示：数复核方记的条目，全是无法判断时点明多半没找到正文", () => {
+  const x = (title: string) => ({ kind: "claim_support", checker: "agent:codex", title });
+  assert.match(crossReviewDoneText([]), /没往核验清单里记东西/);
+  assert.match(crossReviewDoneText([{ kind: "outline-coverage", checker: "mesa", title: "t" }]), /没往核验清单里记东西/);
+  assert.match(crossReviewDoneText([x("无法判断：未找到正文")]), /1 条「无法判断」/);
+  assert.equal(crossReviewDoneText([x("[@A] 不支持：…"), x("无法判断：…")]), "复核说完了：核验清单里多了 2 条待你判断");
 });
