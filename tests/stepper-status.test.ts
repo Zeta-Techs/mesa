@@ -44,8 +44,8 @@ test("已完成之后上游又保存过：写「待跟进」并在悬停里点�
   assert.equal(t?.text, "待跟进");
   assert.match(t?.title ?? "", /「文献检索与筛选」/);
   assert.equal(stepperStatusText("done", { staleUpstream: null })?.text, "已完成");
-  // 只认已完成：进行中的步骤上游变了不改状态字
-  assert.equal(stepperStatusText("review", { staleUpstream: "x" })?.text, "待评审");
+  // 进行中的步骤上游变了不改状态字（点「继续」时本来就会并进来）；待评审的 2026-11-11 起也写待跟进，见下一条
+  assert.equal(stepperStatusText("active", { staleUpstream: "x" })?.text, "进行中");
 });
 
 test("等补料：待评审 / 进行中且没在干活时写等补料；AI 在干活或等确认照旧", async () => {
@@ -55,4 +55,11 @@ test("等补料：待评审 / 进行中且没在干活时写等补料；AI 在�
   assert.equal(stepperStatusText("active", { awaitingRework: true, attention: "working" })?.text, "进行中");
   assert.equal(stepperStatusText("active", { awaitingRework: true, attention: "confirm" })?.text, "等你确认");
   assert.equal(stepperStatusText("done", { awaitingRework: true })?.text, "已完成");
+});
+
+test("待评审但上游有这一版没用上的新内容：写待跟进；等补料优先", async () => {
+  const { stepperStatusText } = await import("../src/stepper-status.ts");
+  assert.equal(stepperStatusText("review", { staleUpstream: "文献精读与笔记" })?.text, "待跟进");
+  assert.equal(stepperStatusText("review", {})?.text, "待评审");
+  assert.equal(stepperStatusText("review", { staleUpstream: "精读", awaitingRework: true })?.text, "等补料");
 });

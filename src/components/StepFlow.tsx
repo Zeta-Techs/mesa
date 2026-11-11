@@ -552,6 +552,7 @@ export default function StepFlow({
   loopActions,
   onRestore,
   reviewConflict,
+  nudge,
   onDraftChanged,
   onSeedDraft,
   draftLoadError,
@@ -646,6 +647,9 @@ export default function StepFlow({
   onRestore?: () => void;
   /** 合并冲突阻塞：评审节点入口改为「去处理冲突」（直达冲突解决意图） */
   reviewConflict?: boolean;
+  /** 「AI 干活」下第一行的下一步提示（2026-11-11 用户：新用户看不出要点「跟进更新」）：一句发生了什么 + 唯一一颗强调色按钮；
+   *  有它时「去评审」降成线框，一屏只剩一个强调色主动作（step-panel R6） */
+  nudge?: { text: string; action: React.ReactNode } | null;
   /** 本步骤工作区内终端的注意力（ProjectGroup stepAttention 同一口径）：
    *  working/confirm = 正在出字或等确认，藏「去评审」；
    *  done = 跑完在等你——active 态的「去终端看看」旁给出完成提示 */
@@ -2162,7 +2166,7 @@ export default function StepFlow({
         return (
           <span className="flex shrink-0 items-center gap-1.5">
             {askBtn}
-            <button type="button" onClick={goReview} className={askBtn ? outline : primary}>
+            <button type="button" onClick={goReview} className={askBtn || nudge ? outline : primary}>
               {action.conflict ? "去处理冲突" : "去评审"}
             </button>
           </span>
@@ -2720,6 +2724,13 @@ export default function StepFlow({
             </div>
             </>
             )}
+          </div>
+        )}
+        {node.kind === "agent" && nudge && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-9" role="note">
+            <span aria-hidden="true" className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" />
+            <span className="min-w-0 text-xs text-l1">{nudge.text}</span>
+            {nudge.action}
           </div>
         )}
         {/* 想法区与「跟 AI 商量」：discuss 节点存在时挂它，否则挂 Agent 节点（v3.89）——

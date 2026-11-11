@@ -72,7 +72,14 @@ export function stepperStatusText(
       if (opts.attention === "done") return { text: "等你查看", tone: "text-cta" };
       return { text: "进行中", tone: "text-cta" };
     case "review":
-      return { text: "待评审", tone: "text-cta-pill-text" };
+      // 待评审但上游又保存了这一版没用上的内容（2026-11-11 HER 大纲补料回来）：先跟进再评审，写「待跟进」
+      return opts.staleUpstream
+        ? {
+            text: "待跟进",
+            tone: "text-warn-text",
+            title: `「${opts.staleUpstream}」保存了新内容，这一版还没用上；到这一步点「跟进更新」，做完和这一轮一起评审`,
+          }
+        : { text: "待评审", tone: "text-cta-pill-text" };
     case "blocked":
       return { text: "有冲突", tone: "text-warn-text" };
     case "done":

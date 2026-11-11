@@ -584,6 +584,39 @@ export default function TaskCardsSection({
     setPage("terminal");
   }
 
+  /** 「AI 干活」第一行的下一步提示（2026-11-11 用户：新用户看不出要点「跟进更新」，回头链接一排纯文字分不出哪个要点）：
+   *  上游保存了这一步还没用上的新内容（staleUpstream），或精读有新纳入的篇没读时，写一句发生了什么 + 唯一一颗强调色「跟进更新」。
+   *  进行中的步骤不给：点「继续」时本来就会先并进来（回头链接行里写着一句） */
+  function followNudge(): { text: string; action: ReactNode } | null {
+    const step = focusStepDto;
+    if (!step || (focusRunStatus !== "review" && focusRunStatus !== "done")) return null;
+    const ws = stepWorkspace(step);
+    const upstream = ws?.staleUpstream ?? null;
+    if (!upstream && unreadNew === 0) return null;
+    // 一句只说发生了什么（2026-11-11 用户：按钮前的文案要简洁）；怎么做、做完怎样放按钮悬停
+    const text = unreadNew > 0 ? `有 ${unreadNew} 篇新纳入的还没读` : `「${upstream}」有新内容，还没并进来`;
+    const title =
+      unreadNew > 0
+        ? "只读这几篇，已有的笔记不动"
+        : focusRunStatus === "review"
+          ? "只处理新增的部分，做完和这一轮一起评审"
+          : "只处理新增的部分；不管它也能往下走";
+    return {
+      text,
+      action: (
+        <button
+          type="button"
+          disabled={followBusy}
+          title={title}
+          onClick={() => void followUpstream()}
+          className="shrink-0 rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
+        >
+          {followBusy ? "正在算…" : "跟进更新"}
+        </button>
+      ),
+    };
+  }
+
   /** 研讨（2026-11-11）只上人要拍板的步骤：role 为 you / both；检索、清洗这类 role=ai 的不出 */
   const consultEligible = focusStepDto?.role === "you" || focusStepDto?.role === "both";
 
@@ -1637,6 +1670,7 @@ export default function TaskCardsSection({
               )
             }
             onContinueStep={() => continueFocusedStep()}
+            nudge={followNudge()}
             loopActions={(() => {
               // 回头入口与「这一步做过几轮」同一行（2026-11-11 项目页减法）：有工作副本时由几轮那一栏把入口排在前面
               const lead = (() => {
@@ -1702,18 +1736,7 @@ export default function TaskCardsSection({
                 const live = stepWorkspace(focusStepDto);
                 if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton && !commentsButton) return null;
                 return loopRow([
-                  // 待评审时也能跟进：确认框里选「接着做，一起评审」，两轮合在一起评审（2026-11-10 用户拍板）
-                  (live?.staleUpstream || unreadNew > 0) && focusRunStatus === "review" && (
-                    <button
-                      type="button"
-                      disabled={followBusy}
-                      onClick={() => void followUpstream()}
-                      title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `「${live?.staleUpstream}」保存过新内容，这一版还没用上`}：只处理新增的部分，做完和没保存的这一轮一起评审`}
-                      className={LOOP_PENDING}
-                    >
-                      {followBusy ? "正在算…" : "跟进更新"}
-                    </button>
-                  ),
+                  // 待评审时的「跟进更新」在「AI 干活」第一行的下一步提示里（followNudge），这里不再重复一颗
                   live?.staleUpstream && focusRunStatus === "active" && (
                     <span
                       className="shrink-0 text-xs text-warn-text"
@@ -1728,8 +1751,6 @@ export default function TaskCardsSection({
                 ]);
               }
               if (focusRunStatus !== "done") return null;
-              const ws = stepWorkspace(focusStepDto);
-              const follow = !!ws?.staleUpstream || unreadNew > 0;
               const catchUpButton = catchUp.length > 0 && (
                 <button
                   type="button"
@@ -1741,19 +1762,9 @@ export default function TaskCardsSection({
                   补读 {catchUp.length} 篇新到的全文
                 </button>
               );
-              if (!follow && !catchUpButton && targets.length === 0 && !commentsButton) return null;
+              if (!catchUpButton && targets.length === 0 && !commentsButton) return null;
+              // 已保存步骤的「跟进更新」同样在下一步提示里（followNudge）
               return loopRow([
-                follow && (
-                  <button
-                    type="button"
-                    disabled={followBusy}
-                    onClick={() => void followUpstream()}
-                    title={`${unreadNew > 0 ? `纳入清单里有 ${unreadNew} 篇这一步还没读` : `「${ws?.staleUpstream}」保存过新内容，这一步还没用上`}：只处理新增的部分，已有的不重做`}
-                    className={LOOP_PENDING}
-                  >
-                    {followBusy ? "正在算…" : "跟进更新"}
-                  </button>
-                ),
                 catchUpButton,
                 commentsButton,
                 reworkButton,
