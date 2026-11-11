@@ -123,7 +123,7 @@ export default function HelpRequestDialog() {
         <>
           <button
             type="button"
-            title="忽略此来源（问题或回答变化后会重新出现）"
+            title="这一处的问题先不提醒：步骤卡、聊天层、收件箱、桌宠和手机都收起；问题或回答变了会重新出现"
             onClick={() => {
               dismissHelpRequest(view.root, helpItemsSignature(view.items));
               close();

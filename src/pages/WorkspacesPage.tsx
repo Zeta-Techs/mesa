@@ -40,6 +40,7 @@ import { confirmDialog } from "../components/ConfirmDialog";
 import {
   helpInboxLine,
   helpItemsSignature,
+  helpNotDismissed,
   helpPendingByRoot,
 } from "../help-requests";
 import ProjectGroup from "../components/ProjectGroup";
@@ -1009,8 +1010,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const helpRefreshTick = useAppStore((s) => s.helpRefreshTick);
   const setHelpPending = useAppStore((s) => s.setHelpPending);
   useEffect(() => {
-    setHelpPending(helpPendingByRoot(helpRequests));
-  }, [helpRequests, setHelpPending]);
+    setHelpPending(helpPendingByRoot(helpNotDismissed(helpRequests, helpDismissed)));
+  }, [helpRequests, helpDismissed, setHelpPending]);
   useEffect(() => {
     if (helpRefreshTick === 0) return;
     invoke<HelpRequestDto[]>("list_help_requests")

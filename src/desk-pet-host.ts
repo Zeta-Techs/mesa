@@ -17,7 +17,8 @@ import { pathWithin, samePath } from "./path-utils";
 import { answerGrant, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
 import { gatherBriefInput } from "./project-assistant-run";
 import { runAssistantAction } from "./assistant-actions";
-import { optionAnswer } from "./help-requests";
+import { helpNotDismissed, optionAnswer } from "./help-requests";
+import { loadHelpDismissed } from "./inbox";
 import { askProjectAssistant, type AssistantTurn } from "./project-assistant-run";
 import { guardClaims, parseAssistantAnswer, parseClarify, parseRemember, parseReworkOrder, parseWorkOrder } from "./project-assistant";
 import { briefWorking, deskOnlyNotes, petItemsFromBrief, petItemsFromDesk, type PetFeed, type PetItem, type PetOpen } from "./desk-pet";
@@ -50,7 +51,7 @@ async function activeProjects(): Promise<ProjectDto[]> {
   const [projects, workspaces, help, tasks] = await Promise.all([
     safe(invoke<ProjectDto[]>("list_projects"), []),
     safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
-    safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
+    safe(invoke<HelpRequestDto[]>("list_help_requests"), []).then((list) => helpNotDismissed(list, loadHelpDismissed())),
     safe(invoke<TaskDto[]>("task_list", { projectRoot: null, includeArchived: false }), []),
   ]);
   const live = useAppStore.getState().terminalRunInputs;

@@ -61,6 +61,18 @@ export function deliverHelpPrompt(answered: readonly HelpItemDto[], remembered: 
 
 
 /** 每个来源还要人管几条（流程线那一步上的「回答问题（N）」）；没有的不列 */
+/**
+ * 去掉人点过「忽略此来源」、内容也没变的那几份（签名同收件箱，屏蔽表在 inbox.ts loadHelpDismissed）。
+ * 步骤卡「回答问题」、聊天层底部、评审页、收件箱、调度台 / 桌宠 / 手机都先过这一道（2026-11-11 用户：忽略了步骤卡上还在）；
+ * 问题或回答变了签名就不同，各处一起重新出现
+ */
+export function helpNotDismissed(
+  requests: readonly HelpRequestDto[],
+  dismissed: Record<string, string>,
+): HelpRequestDto[] {
+  return requests.filter((r) => dismissed[r.root] !== helpItemsSignature(r.items));
+}
+
 export function helpPendingByRoot(requests: readonly HelpRequestDto[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const r of requests) {

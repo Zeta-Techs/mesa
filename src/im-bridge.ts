@@ -26,6 +26,8 @@ import { addProjectKnowledge, answerGrant, answerTrust, loadDesk, replyDesk } fr
 import { IM_HELP_TEXT, quickIntent, routeMessage, type RouteProject } from "./im-route";
 import { answerCard, deskCard, echoCard, phoneText, projectPickCard, type CardValue } from "./im-cards";
 import type { DeskItem } from "./assistant-queue";
+import { helpNotDismissed } from "./help-requests";
+import { loadHelpDismissed } from "./inbox";
 import type { HelpRequestDto, ProjectConfigReadDto, ProjectDto, ScheduleDto, WorkspaceDto } from "./types";
 
 export interface FeishuConfig {
@@ -140,7 +142,9 @@ async function ask(project: ProjectDto, question: string): Promise<void> {
 async function busyProjects(list: ProjectDto[]): Promise<ProjectDto[]> {
   const [workspaces, help] = await Promise.all([
     invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[]),
-    invoke<HelpRequestDto[]>("list_help_requests").catch(() => [] as HelpRequestDto[]),
+    invoke<HelpRequestDto[]>("list_help_requests")
+      .catch(() => [] as HelpRequestDto[])
+      .then((list) => helpNotDismissed(list, loadHelpDismissed())),
   ]);
   const live = useAppStore.getState().terminalRunInputs;
   return list
@@ -339,7 +343,10 @@ async function handleCard(value: CardValue): Promise<void> {
 /** 新出现的人工请求推到手机（同一条只推一次，记在本机）；派活回音由 assistant-echo-watch 推 */
 export async function pushNewHelp(): Promise<void> {
   if (!(await imReady())) return;
-  const help = await invoke<HelpRequestDto[]>("list_help_requests").catch(() => [] as HelpRequestDto[]);
+  const help = helpNotDismissed(
+    await invoke<HelpRequestDto[]>("list_help_requests").catch(() => [] as HelpRequestDto[]),
+    loadHelpDismissed(),
+  );
   let pushed: string[] = [];
   try {
     pushed = JSON.parse(localStorage.getItem(PUSHED_KEY) ?? "[]");

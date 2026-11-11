@@ -6,6 +6,7 @@ import {
   helpCategoryTag,
   helpInboxLine,
   helpItemsSignature,
+  helpNotDismissed,
   helpPendingByRoot,
   helpUnanswered,
   optionAnswer,
@@ -71,4 +72,14 @@ test("流程线上的「回答问题（N）」按来源数还要人管的条目�
   const a = request([item({ id: "1" }), item({ id: "2", answer: "A" }), item({ id: "3", answer: "B", sent: "t" })]);
   const b = { ...request([item({ id: "4", answer: "A", sent: "t" })]), root: "/w2" };
   assert.deepEqual(helpPendingByRoot([a, b]), { "/w": 2 });
+});
+
+test("忽略此来源：签名没变的那份各处都不算，问题或回答变了重新算", () => {
+  const a = request([item({ id: "1", question: "第⑤问：章节草图？" })]);
+  const dismissed = { "/w": helpItemsSignature(a.items) };
+  assert.deepEqual(helpPendingByRoot(helpNotDismissed([a], dismissed)), {});
+  const changed = request([item({ id: "1", question: "第⑤问：章节草图？", answer: "A" })]);
+  assert.deepEqual(helpPendingByRoot(helpNotDismissed([changed], dismissed)), { "/w": 1 });
+  const other = { ...request([item({ id: "2" })]), root: "/w2" };
+  assert.deepEqual(helpNotDismissed([a, other], dismissed), [other]);
 });

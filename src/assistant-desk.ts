@@ -8,7 +8,8 @@ import { useAppStore } from "./store";
 import { IS_WINDOWS } from "./hotkeys";
 import { pathWithin, samePath } from "./path-utils";
 import { stepSessionTail } from "./session-tail";
-import { deliverHelpPrompt } from "./help-requests";
+import { deliverHelpPrompt, helpNotDismissed } from "./help-requests";
+import { loadHelpDismissed } from "./inbox";
 import { sendToWorkspace } from "./assistant-dispatch";
 import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
 import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto } from "./types";
@@ -66,7 +67,7 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
     }));
   return buildDeskItems({
     steps,
-    help: help.filter((h) => samePath(h.repoPath, projectPath, IS_WINDOWS)),
+    help: helpNotDismissed(help, loadHelpDismissed()).filter((h) => samePath(h.repoPath, projectPath, IS_WINDOWS)),
     tails,
     confirms,
     grants: schedules
