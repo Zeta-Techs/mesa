@@ -1452,6 +1452,7 @@ export default function ProjectTree({
           title={`${c.title}\n研讨 · ${c.members.length} 家${state ? ` · ${state}` : ""}`}
           className="flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 text-l1"
         >
+          <Users size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(c.title, folderName)}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
@@ -1460,9 +1461,6 @@ export default function ProjectTree({
               <RunCaret state={caret} />
             </span>
           )}
-          <span className="flex h-6 w-6 items-center justify-center text-l4" aria-hidden="true">
-            <Users size={13} strokeWidth={1.8} />
-          </span>
         </div>
       </div>
     );

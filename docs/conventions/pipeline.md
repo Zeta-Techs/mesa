@@ -1852,7 +1852,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   **工作台露出**：有人在答（`answering`）或停在「等你发话」（`awaiting`）、24 小时内动过的研讨，挂在工作台「正在进行」它所属项目下单列一行（`consult.ts workbenchLiveConsults`），也算项目有活；点了打开研讨页；随工作台现有重读时机与 `consult-event` 读，不轮询、不进收件箱。
   步骤卡与评审页预填材料只留已存在的文件（`consult_existing_files`）；步骤开着工作副本时读工作副本。研讨在对话页列表单独成组，不混进会话行。
 - **研讨页与侧栏**（2026-11-11 用户：研讨放在聊天层那一格，推翻同日「家在对话管理」）：主区有研讨页（`page = "consult"`，不在导航里，`ConsultPage` 读 store `consultOpen`），
-  `showConsult` 一律打开它；侧栏课题对话列表挂研讨行，与对话一起按最近活动排（`sidebar-chats.ts interleaveByRecent`，分叉一家子不拆开；2026-11-11 晚用户改，原挂最上面、一出一没把步骤组整排顶着挪），只靠行尾人形图标认（`consult.ts sidebarConsults`：有人在答 / 等你发话的全列，其余 3 天内动过的补到 3 场，正打开的那场总在），
+  `showConsult` 一律打开它；侧栏课题对话列表挂研讨行，与对话一起按最近活动排（`sidebar-chats.ts interleaveByRecent`，分叉一家子不拆开；2026-11-11 晚用户改，原挂最上面、一出一没把步骤组整排顶着挪），只靠标题前的人形图标认（`consult.ts sidebarConsults`：有人在答 / 等你发话的全列，其余 3 天内动过的补到 3 场，正打开的那场总在），
   行尾光标 `consultCaret`（在答 working、等你发话 idle、答完不挂）；看研讨时以它的项目为「现在在哪」，那个课题默认展开。不做成终端标签（没有进程，标签存档 / 键盘 / 分屏都按进程设计）。
   对话管理里研讨一组保留作翻历史，在那里点开仍就地看。
 - **图片材料**（2026-11-11 二期）：粘贴 / 拖进来的图先走 `save_clipboard_image`，`consult_create` 校验是 Mesa 粘贴目录里的图后拷进项目 `.ccode/consults/attachments/`（粘贴目录只留 7 天）；项目里的图片文件按扩展名记 kind=image。
