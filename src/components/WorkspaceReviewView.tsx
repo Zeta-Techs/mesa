@@ -2914,7 +2914,7 @@ function LiveWorkspaceReviewView({
                       void invoke<string[]>("consult_existing_files", { root: readRoot, paths: ctx.step.expectedArtifacts })
                         .catch(() => [] as string[])
                         .then((existing) => {
-                          onClose();
+                          // 原地打开（弹层压在评审覆盖层上），看完回来接着评审
                           useAppStore.getState().openConsult({
                             projectRoot: ctx.root,
                             question: `第 ${ctx.stepNo} 步「${ctx.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
@@ -3020,7 +3020,6 @@ function LiveWorkspaceReviewView({
                           void invoke<string[]>("consult_existing_files", { root: readRoot, paths: seed.materials.map((m) => m.path) })
                             .catch(() => [] as string[])
                             .then((existing) => {
-                              onClose();
                               useAppStore.getState().openConsult({
                                 projectRoot: ctx.root,
                                 question: seed.question,

@@ -346,6 +346,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、测试连接、绑定 6 位码、解绑
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
   components/ConsultView.tsx  # 研讨回放（2026-11-11）：useConsult（consult_read + consult-event 事件：started/done/idle 重读、step/text 只更新进行中）；第一轮并排卡片（有人还在答时只写「已答完 · 等其他几家」）、各家结论对照条（原话、不判谁对）、交叉与追问流、点名胶囊输入框；记进项目知识复用 RememberCard，起草派活单经 openAssistant 交给项目助手；MemberAvatar = 成员所选模型的厂商图标
+  components/ConsultHost.tsx  # 研讨发起弹层的唯一挂载处（挂 App，仿 ProjectAssistantHost）：消费 consultReq 原地打开、不跳页；开始后提示「研讨开始了，N 家在答」+「去看看」（showConsult → consultSelectReq，SessionsPage 消费选中）
   components/ConsultStartDialog.tsx # 发起研讨弹层：问题 / 材料（search_files，项目内相对路径，≤8）/ 请谁（默认 pickDefaultMembers：discuss 槽连接打头、模型族不同、同族优先能看项目；按项目记住上次）/ 交叉轮数；评审页入口带 readRoot（工作副本）时成员读那里
   components/ConsultListSection.tsx # 对话页列表顶上「研讨」一组：不混进会话行（键、↑↓、批量勾选只认会话），成员模型图标叠
   components/SavePackModal.tsx # 弹层版另存为我的任务（挂 body，表单里不嵌表单）：派活单验收后「存成我的任务…」、内置科研任务「另存为我的版本…」共用，里面是 SavePackForm

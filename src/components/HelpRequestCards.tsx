@@ -16,15 +16,12 @@ export default function HelpRequestCards({
   request,
   onAnswered,
   onRemembered,
-  onConsult,
 }: {
   request: HelpRequestDto;
   /** 回答写进文件后：外层据此刷新列表 */
   onAnswered: (item: HelpItemDto) => void;
   /** 这一条记进了项目知识（交给 Agent 时告诉它） */
   onRemembered: (id: string) => void;
-  /** 点了「请几家研讨这一问」、要去对话页之前：外层据此收起弹层 */
-  onConsult?: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,14 +64,13 @@ export default function HelpRequestCards({
   }
 
   /** 请几家研讨这一问（2026-11-11）：问题原文、选项后果、依据原样带进研讨弹层；依据里点到的、存在的文件进材料。
-   *  来源是工作副本时成员读工作副本，记录写项目根。研讨不替人答：答案仍在这张卡上点 */
+   *  来源是工作副本时成员读工作副本，记录写项目根。研讨不替人答：答案仍在这张卡上点，所以这个弹窗不关、研讨弹层压在上面 */
   async function consult(item: HelpItemDto) {
     const seed = helpConsultSeed(item);
     const readRoot = samePath(request.root, request.repoPath, IS_WINDOWS) ? undefined : request.root;
     const existing = seed.paths.length
       ? await invoke<string[]>("consult_existing_files", { root: request.root, paths: seed.paths }).catch(() => [] as string[])
       : [];
-    onConsult?.();
     useAppStore.getState().openConsult({
       projectRoot: request.repoPath,
       question: seed.question,

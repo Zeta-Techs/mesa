@@ -30,9 +30,8 @@ import {
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import ConsultView from "../components/ConsultView";
-import ConsultStartDialog from "../components/ConsultStartDialog";
 import ConsultListSection from "../components/ConsultListSection";
-import type { ConsultEvent, ConsultListItem, ConsultMaterial } from "../consult";
+import type { ConsultEvent, ConsultListItem } from "../consult";
 import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { toast } from "../toast";
 import { IS_WINDOWS } from "../hotkeys";
@@ -316,15 +315,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   // 研讨（2026-11-11）：不是 CLI 会话，单独成组、单独选中；选中研讨时会话回放让位
   const [consults, setConsults] = useState<ConsultListItem[]>([]);
   const [selectedConsult, setSelectedConsult] = useState<{ projectRoot: string; id: string } | null>(null);
-  const [consultDialog, setConsultDialog] = useState<{
-    projectRoot?: string | null;
-    question?: string;
-    materials?: ConsultMaterial[];
-    readRoot?: string;
-    readLabel?: string;
-  } | null>(null);
-  const consultReq = useAppStore((s) => s.consultReq);
-  const clearConsultReq = useAppStore((s) => s.clearConsultReq);
+  // 发起弹层全局只有一个（ConsultHost）；这里只消费「去看看」选中某场研讨的一次性请求
+  const openConsult = useAppStore((s) => s.openConsult);
+  const consultSelectReq = useAppStore((s) => s.consultSelectReq);
+  const clearConsultSelectReq = useAppStore((s) => s.clearConsultSelectReq);
   const [registeredProjectPaths, setRegisteredProjectPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -449,18 +443,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       void un.then((f) => f());
     };
   }, [visible, reloadConsults]);
-  // 别处要发起研讨（项目助手按钮、评审页）：打开发起弹层并预填（消费并清空）
+  // 研讨开始后提示里点「去看看」、工作台点进行中的研讨：选中这一场（消费并清空）
   useEffect(() => {
-    if (!consultReq) return;
-    setConsultDialog({
-      projectRoot: consultReq.projectRoot,
-      question: consultReq.question,
-      materials: consultReq.materials,
-      readRoot: consultReq.readRoot,
-      readLabel: consultReq.readLabel,
-    });
-    clearConsultReq();
-  }, [consultReq, clearConsultReq]);
+    if (!consultSelectReq) return;
+    setSelected(null);
+    setSelectedConsult({ projectRoot: consultSelectReq.projectRoot, id: consultSelectReq.id });
+    clearConsultSelectReq();
+    reloadConsults();
+  }, [consultSelectReq, clearConsultSelectReq, reloadConsults]);
 
   /** 这段对话属于哪个已添加的项目（研讨记录写项目里，不属于的不给入口） */
   function consultProjectOf(s: SessionMetaDto): string | null {
@@ -478,7 +468,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         .reverse()
         .find((m) => m.role === "user" && m.blocks.some((b) => b.kind === "text" && b.text?.trim()));
       const said = lastUser?.blocks.find((b) => b.kind === "text")?.text?.trim() ?? "";
-      setConsultDialog({
+      openConsult({
         projectRoot: root,
         question: said ? `${said.slice(0, 3500)}\n\n（这是我在一段对话里最后问的；整段对话在材料里）` : "",
         materials: [{ path: rel, range: "" }],
@@ -1827,7 +1817,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 <button
                   type="button"
                   onClick={() =>
-                    setConsultDialog({ projectRoot: projectScopePath(filter) ?? selected?.projectPath ?? selectedConsult?.projectRoot ?? null })
+                    openConsult({ projectRoot: projectScopePath(filter) ?? selected?.projectPath ?? selectedConsult?.projectRoot ?? null })
                   }
                   className={paneHeadButtonClass}
                   title="同一个问题请几家 AI 一起看：先各答各的，再互相补充或反驳；只看不改"
@@ -3382,18 +3372,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           ]}
         />
       )}
-      <ConsultStartDialog
-        open={consultDialog !== null}
-        onClose={() => setConsultDialog(null)}
-        projects={[...registeredProjectPaths].map((path) => ({ path, name: projectNames.get(path) ?? basename(path) }))}
-        initial={consultDialog}
-        onCreated={(projectRoot, id) => {
-          setConsultDialog(null);
-          setSelected(null);
-          setSelectedConsult({ projectRoot, id });
-          reloadConsults();
-        }}
-      />
       {importOpen && (
         <SessionImportModal
           registeredPaths={[...registeredProjectPaths]}

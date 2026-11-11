@@ -34,6 +34,7 @@ import { clampRailWidth, parseRailWidth, RAIL_DEFAULT_REM, RAIL_WIDTH_KEY } from
 import AskAiModal from "./components/AskAiModal";
 import FeedbackModal from "./components/FeedbackModal";
 import ProjectAssistantHost from "./components/ProjectAssistantHost";
+import ConsultHost from "./components/ConsultHost";
 import { toggleProjectAssistant } from "./assistant-actions";
 import {
   HelpAboutDialog,
@@ -2482,6 +2483,7 @@ function App() {
           <PhoneDropDialog />
           <HelpRequestDialog />
           <ProjectAssistantHost />
+          <ConsultHost />
           <PromptManager />
           <FeedbackModal
             open={feedbackOpen}

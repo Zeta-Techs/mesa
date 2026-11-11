@@ -6,6 +6,8 @@ import { compactFieldClass, fieldClass, primaryActionClass, quietActionClass } f
 import { MemberAvatar } from "./ConsultView";
 import type { SearchResultDto } from "./FileTree";
 import { useAppStore, selectHiddenProfiles } from "../store";
+import { samePath } from "../path-utils";
+import { IS_WINDOWS } from "../hotkeys";
 import { saveClipboardImage } from "../clipboard-image";
 import { imageExtFromMime } from "../terminal-input";
 import { DISCUSS_BINDING_SLOT, slotPrefs } from "../project-agents";
@@ -54,7 +56,8 @@ export default function ConsultStartDialog({
     readRoot?: string;
     readLabel?: string;
   } | null;
-  onCreated: (projectRoot: string, id: string) => void;
+  /** members：几家在答（开始后的提示里写） */
+  onCreated: (projectRoot: string, id: string, members: number) => void;
 }) {
   const profiles = useAppStore((s) => s.profiles);
   const hidden = useAppStore(selectHiddenProfiles);
@@ -108,7 +111,10 @@ export default function ConsultStartDialog({
   // 打开时按入口预填；成员按上次选的，没有就按默认挑法
   useEffect(() => {
     if (!open) return;
-    const r = initial?.projectRoot ?? projects[0]?.path ?? "";
+    // 入口给的目录不是已添加的项目（随手聊一类）时退回第一个项目；工作副本发起的照入口给的
+    const asked = initial?.projectRoot ?? null;
+    const known = asked && (initial?.readRoot || projects.some((p) => samePath(p.path, asked, IS_WINDOWS)));
+    const r = (known ? asked : null) ?? projects[0]?.path ?? "";
     setRoot(r);
     setQuestion(initial?.question ?? "");
     setMaterials(initial?.materials?.slice(0, MAX_MATERIALS) ?? []);
@@ -208,7 +214,7 @@ export default function ConsultStartDialog({
         images: images.map((i) => i.path),
       });
       localStorage.setItem(LAST_KEY(root), JSON.stringify(picked.map((p) => p.key)));
-      onCreated(root, dto.consult.meta.id);
+      onCreated(root, dto.consult.meta.id, dto.consult.meta.members.length);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -221,6 +227,8 @@ export default function ConsultStartDialog({
 
   return (
     <Modal
+      // 评审覆盖层（z-50）上也能打开：压在最上层
+      layer="overlay"
       open={open}
       onClose={onClose}
       size="lg"

@@ -5,6 +5,9 @@ import { useExitRender } from "../exit-animation";
 
 type ModalSize = "sm" | "md" | "lg" | "xl";
 
+/** 正开着的对话框 / 抽屉，后开的在后：叠着开时（人工请求弹窗上再开研讨）只有最上面那个接 Esc / Tab */
+const openStack: symbol[] = [];
+
 const sizes: Record<ModalSize, string> = {
   sm: "max-w-sm",
   md: "max-w-lg",
@@ -61,7 +64,10 @@ export function Modal({
     const previous = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const me = Symbol("modal");
+    openStack.push(me);
     const onKeyDown = (event: KeyboardEvent) => {
+      if (openStack[openStack.length - 1] !== me) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onCloseRef.current();
@@ -92,6 +98,7 @@ export function Modal({
       (initialFocusRef?.current ?? first ?? panelRef.current)?.focus();
     });
     return () => {
+      openStack.splice(openStack.indexOf(me) >>> 0, 1);
       cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
@@ -166,7 +173,10 @@ export function Sheet({
     const previous = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const me = Symbol("modal");
+    openStack.push(me);
     const onKeyDown = (event: KeyboardEvent) => {
+      if (openStack[openStack.length - 1] !== me) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onCloseRef.current();
@@ -197,6 +207,7 @@ export function Sheet({
       (first ?? panelRef.current)?.focus();
     });
     return () => {
+      openStack.splice(openStack.indexOf(me) >>> 0, 1);
       cancelAnimationFrame(frame);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;

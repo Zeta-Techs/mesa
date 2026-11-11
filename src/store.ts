@@ -822,9 +822,10 @@ interface AppState {
   /** 侧栏项目树项目「全部 N 条」→ 对话页只列这个目录的（跨 Agent，消费并清空） */
   sessionsProjectPathReq: string | null;
   setSessionsProjectPathReq: (path: string | null) => void;
-  /** 发起研讨（项目助手按钮、评审页「请几家研讨」）：对话页打开发起弹层并预填（消费并清空；consult.ts） */
+  /** 发起研讨（各入口）：全局的 ConsultHost 原地打开发起弹层并预填，不跳页（2026-11-11 用户：别跳到对话管理；消费并清空） */
   consultReq: {
-    projectRoot: string;
+    /** 空 = 让人在弹层里选项目（对话管理栏头没限定项目时） */
+    projectRoot: string | null;
     question?: string;
     materials?: { path: string; range: string }[];
     /** 成员读文件的地方（评审页：这一步的工作副本）与给人看的说明 */
@@ -833,13 +834,17 @@ interface AppState {
     nonce: number;
   } | null;
   openConsult: (req: {
-    projectRoot: string;
+    projectRoot: string | null;
     question?: string;
     materials?: { path: string; range: string }[];
     readRoot?: string;
     readLabel?: string;
   }) => void;
   clearConsultReq: () => void;
+  /** 「去看看」某场研讨：对话页选中它（一次性，SessionsPage 消费并清空） */
+  consultSelectReq: { projectRoot: string; id: string; nonce: number } | null;
+  showConsult: (projectRoot: string, id: string) => void;
+  clearConsultSelectReq: () => void;
   /** 侧栏「对话管理」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
   sessionsSearchFocusReq: number;
   requestSessionsSearchFocus: () => void;
@@ -1257,8 +1262,11 @@ export const useAppStore = create<AppState>((set, get) => {
   sessionsProjectPathReq: null,
   setSessionsProjectPathReq: (path) => set({ sessionsProjectPathReq: path }),
   consultReq: null,
-  openConsult: (req) => set({ consultReq: { ...req, nonce: Date.now() }, page: "sessions" }),
+  openConsult: (req) => set({ consultReq: { ...req, nonce: Date.now() } }),
   clearConsultReq: () => set({ consultReq: null }),
+  consultSelectReq: null,
+  showConsult: (projectRoot, id) => set({ consultSelectReq: { projectRoot, id, nonce: Date.now() }, page: "sessions" }),
+  clearConsultSelectReq: () => set({ consultSelectReq: null }),
   sessionsSearchFocusReq: 0,
   requestSessionsSearchFocus: () =>
     set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),

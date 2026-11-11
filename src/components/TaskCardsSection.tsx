@@ -1798,9 +1798,10 @@ export default function TaskCardsSection({
                   type="button"
                   onClick={() => void openStepConsult()}
                   title="拿不准一个判断时，请几家不同模型的 AI 只读看看这一步的任务书和产物，各给意见、再互相补充；它们不改文件，记下什么由你定。只想和一家 AI 聊着改任务书，用左边的商量"
-                  className="shrink-0 rounded-sm px-1 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l2"
+                  className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 hover:bg-hover hover:text-l2"
                 >
-                  请几家研讨
+                  {/* 全站 button { font: inherit } 会吞掉按钮上的字号，字号写内层；与同一行的 TASK.md 一样 text-xs */}
+                  <span className="text-xs">请几家研讨</span>
                 </button>
               ) : null
             }
