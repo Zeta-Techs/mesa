@@ -4,6 +4,7 @@ import {
   deliverHelpPrompt,
   helpAnsweredUnsent,
   helpCategoryTag,
+  helpConsultSeed,
   helpInboxLine,
   helpItemsSignature,
   helpNotDismissed,
@@ -82,4 +83,30 @@ test("忽略此来源：签名没变的那份各处都不算，问题或回答�
   assert.deepEqual(helpPendingByRoot(helpNotDismissed([changed], dismissed)), { "/w": 1 });
   const other = { ...request([item({ id: "2" })]), root: "/w2" };
   assert.deepEqual(helpNotDismissed([a, other], dismissed), [other]);
+});
+
+test("请几家研讨这一问：问题、选项后果、建议、兜底、依据原样带上；依据里的文件进材料", () => {
+  const seed = helpConsultSeed({
+    id: "a",
+    question: "纳入标准要不要放宽到 2015 年以后？",
+    detail: ["现在只有 9 篇"],
+    recommend: "B",
+    options: [
+      { key: "A", label: "维持 2018", effect: "篇数不够做亚组" },
+      { key: "B", label: "放宽到 2015", effect: null },
+    ],
+    fallback: "按 A 继续",
+    category: "范围",
+    refs: "papers/screening.md 第 12 行；notes/张三2016.md、https://example.com/x.html",
+    answer: null,
+    sent: null,
+  });
+  assert.match(seed.question, /纳入标准要不要放宽/);
+  assert.match(seed.question, /A\. 维持 2018——篇数不够做亚组/);
+  assert.match(seed.question, /B\. 放宽到 2015（它建议）/);
+  assert.match(seed.question, /我不回时它会：按 A 继续/);
+  assert.match(seed.question, /我自己在卡片上作答/);
+  assert.deepEqual(seed.paths.slice(0, 2), ["papers/screening.md", "notes/张三2016.md"]);
+  const bare = helpConsultSeed({ id: "b", question: "继续吗？", detail: [], recommend: null, options: [], fallback: null, category: "一般", refs: null, answer: null, sent: null });
+  assert.deepEqual(bare.paths, []);
 });

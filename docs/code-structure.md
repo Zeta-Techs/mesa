@@ -250,7 +250,7 @@ components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查�
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——目标空态「套一整套流程…」打开的是另一个 TemplatePickModal（带全局设定屏）
   components/MyPacksSection.tsx # 模板库「我的任务」一栏：使用 / 导出 zip / 删除 / 导入…；「内置有更新」展开逐步看内置旧版 → 新版（你改过的附你的版本），勾选后 save_task_pack 带新 based_on
   components/ImportPackDialog.tsx # 导入任务包预览：步骤、参数、触发、检查结果、随包技能与库里同名比对、随包每个文件全文；装进我的任务 / 不装（删暂存）
-  components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做
+  components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做；「请几家研讨这一问」（helpConsultSeed 预填、只开研讨弹层，不回填答案）
   components/HelpRequestDialog.tsx # 人工请求弹层（全局挂在 App，消费 store.helpViewReq）：收件箱 / 工作台队列 / 流程线「回答问题」/ 对话页那一行都原地弹；
                              # 「交给 Agent 继续」走 buildWorkspaceTerminalRequest，建成后 help_request_mark_sent；答过送过 bumpHelpRefresh 让工作区页重拉收件箱数据源
   components/PackDraftsDialog.tsx # 跟 AI 写我的任务：new 起头表单（建草稿 + beginAskAi 开对话）；list 草稿检查（拦下 / 提醒）、按默认参数预览每一步任务书、
@@ -653,7 +653,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （与 task_packs.rs steps_for_project 同口径）+ adaptPack（按项目研究工具设置 withResearchTools，项目设定套工具行）（tests/pack-add.test.ts）
   peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekContextLine（项目说明里那一句）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
                              # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL，Windows 另附 Git Bash 写法）（tests/peek.test.ts）
-  help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、
+  help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、helpConsultSeed（这一问带进研讨的问题与材料）、
                              # （任务书「项目知识」改由后端 project_memory_for_ai 给，2026-11-08）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
                              # （tests/task-pack-author.test.ts）

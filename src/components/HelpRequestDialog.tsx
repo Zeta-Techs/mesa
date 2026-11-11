@@ -152,6 +152,7 @@ export default function HelpRequestDialog() {
         request={view}
         onAnswered={() => void reload(view.root)}
         onRemembered={(id) => setRemembered((prev) => new Set(prev).add(id))}
+        onConsult={close}
       />
     </Modal>
   );

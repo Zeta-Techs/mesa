@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HelpItemDto, HelpRequestDto } from "../types";
-import { helpCategoryTag, optionAnswer } from "../help-requests";
+import { helpCategoryTag, helpConsultSeed, optionAnswer } from "../help-requests";
 import { InlineNotice } from "./PageFrame";
+import { useAppStore } from "../store";
+import { samePath } from "../path-utils";
+import { IS_WINDOWS } from "../hotkeys";
+import { MAX_MATERIALS as CONSULT_MAX_MATERIALS } from "../consult";
 
 /**
  * 人工请求卡片（2026-11-02）：Agent 写的「票拟」——问题、建议、选项与后果、不回时怎么办；人点一下就是批红。
@@ -12,12 +16,15 @@ export default function HelpRequestCards({
   request,
   onAnswered,
   onRemembered,
+  onConsult,
 }: {
   request: HelpRequestDto;
   /** 回答写进文件后：外层据此刷新列表 */
   onAnswered: (item: HelpItemDto) => void;
   /** 这一条记进了项目知识（交给 Agent 时告诉它） */
   onRemembered: (id: string) => void;
+  /** 点了「请几家研讨这一问」、要去对话页之前：外层据此收起弹层 */
+  onConsult?: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +64,23 @@ export default function HelpRequestCards({
 
   if (items.length === 0) {
     return <p className="text-sm text-l3">这里的问题都已交给 Agent。</p>;
+  }
+
+  /** 请几家研讨这一问（2026-11-11）：问题原文、选项后果、依据原样带进研讨弹层；依据里点到的、存在的文件进材料。
+   *  来源是工作副本时成员读工作副本，记录写项目根。研讨不替人答：答案仍在这张卡上点 */
+  async function consult(item: HelpItemDto) {
+    const seed = helpConsultSeed(item);
+    const readRoot = samePath(request.root, request.repoPath, IS_WINDOWS) ? undefined : request.root;
+    const existing = seed.paths.length
+      ? await invoke<string[]>("consult_existing_files", { root: request.root, paths: seed.paths }).catch(() => [] as string[])
+      : [];
+    onConsult?.();
+    useAppStore.getState().openConsult({
+      projectRoot: request.repoPath,
+      question: seed.question,
+      materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
+      ...(readRoot ? { readRoot, readLabel: `${request.workspaceName ?? "这一步"}的工作副本` } : {}),
+    });
   }
 
   return (
@@ -188,6 +212,15 @@ export default function HelpRequestCards({
                     <span className="text-l4">（答的时候一并记进项目知识）</span>
                   </span>
                 )}
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => void consult(item)}
+                  title="拿不准时请几家不同模型的 AI 只读看看这一问，各给意见、再互相补充；它们不替你答，答案还在这张卡上点"
+                  className="ml-auto rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                >
+                  <span className="text-micro">请几家研讨这一问</span>
+                </button>
               </div>
             </li>
           );

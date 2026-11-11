@@ -81,3 +81,30 @@ export function helpPendingByRoot(requests: readonly HelpRequestDto[]): Record<s
   }
   return out;
 }
+
+/**
+ * 「请几家研讨这一问」（2026-11-11）：把这一问原样带进研讨——问题原文、补充说明、各选项和后果、建议、不回时怎么办都写进问题，
+ * 依据里点到的项目文件进材料（只取像文件路径的片段，项目外 / 越界的丢掉；存不存在由调用方再筛）。
+ * 研讨不替人答：只把它们的意见摆出来，答案仍由人在卡片上点
+ */
+export function helpConsultSeed(item: HelpItemDto): { question: string; paths: string[] } {
+  const lines = [`AI 干到一半问我：${item.question}`];
+  if (item.detail.length) lines.push(...item.detail);
+  if (item.options.length) {
+    lines.push("", "它给的选项：");
+    for (const o of item.options) {
+      const rec = item.recommend === o.key ? "（它建议）" : "";
+      lines.push(`${o.key}. ${o.label}${o.effect ? `——${o.effect}` : ""}${rec}`);
+    }
+  }
+  if (item.fallback) lines.push(`我不回时它会：${item.fallback}`);
+  if (item.refs) lines.push(`它给的依据：${item.refs}`);
+  lines.push("", "你们看该怎么选？各自说理由；我自己在卡片上作答。");
+  const paths: string[] = [];
+  for (const m of (item.refs ?? "").matchAll(/[\p{L}\p{N}_\-./]+\.[A-Za-z0-9]{1,8}/gu)) {
+    const p = m[0].replace(/^\.\//, "").replace(/[.]+$/, "");
+    if (!p || p.startsWith("/") || p.startsWith("..") || p.includes("//") || !p.includes(".")) continue;
+    if (!paths.includes(p)) paths.push(p);
+  }
+  return { question: lines.join("\n"), paths };
+}
