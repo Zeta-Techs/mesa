@@ -29,7 +29,7 @@ CHECKER = "script:cite_check"
 # 过程文件不是正文：检查报告、审查 / 裁决清单、状态与修改记录（2026-11-02 真实项目干跑：section-status.md 里的「@500 mA」被当成引用）
 SKIP_MANUSCRIPT = re.compile(
     r"(citation-check|citation-style|review-report|verification-decisions|declarations|checklist|evidence|"
-    r"section-status|changelog|numbers)", re.I
+    r"section-status|changelog|numbers|style-sheet)", re.I
 )
 CROSSREF_PREFIXES = ("fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-")
 RETRACT_TYPES = {"retraction", "withdrawal", "removal"}

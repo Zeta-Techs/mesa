@@ -45,7 +45,7 @@ C = load_common()
 CHECKER = "script:ms_check"
 CHECK_FILE = "ms-check.jsonl"
 SKIP = re.compile(r"(citation-check|review-report|verification-decisions|declarations|checklist|evidence|numbers|"
-                  r"section-status|changelog|revision-notes|outline)", re.I)
+                  r"section-status|changelog|revision-notes|outline|style-sheet)", re.I)
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")

@@ -55,9 +55,12 @@ test("Markdown 稿：重复编号、手写标题编号、作者名拼错、图�
       "Done.",
     ].join("\n"),
   );
+  // 写作规范不是稿件（大纲那步就交）：它的「## 1 核心术语」、重复词一律不扫
+  writeFileSync(join(root, "manuscript/style-sheet.md"), "## 1 核心术语\n\n- 引用一律 [@bib键]。The the rule.\n");
   try {
     const r = run(["--root", root], root);
     assert.equal(r.status, 1, r.stderr + r.stdout);
+    assert.ok(!readFileSync(join(root, ".ccode/checks/ms-check.jsonl"), "utf8").includes("style-sheet"), "写作规范不进扫描");
     const list = items(root);
     const authors = find(list, "AUTHOR-");
     assert.equal(authors.length, 1, "拼音首字母 haozx 算对上，只点 Ling / shenglin");

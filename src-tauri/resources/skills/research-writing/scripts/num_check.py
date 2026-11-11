@@ -33,7 +33,7 @@ def load_common():
 
 C = load_common()
 CHECKER = "script:num_check"
-SKIP = re.compile(r"(citation-check|review-report|verification-decisions|declarations|checklist|evidence|numbers)", re.I)
+SKIP = re.compile(r"(citation-check|review-report|verification-decisions|declarations|checklist|evidence|numbers|style-sheet)", re.I)
 NUMBER = re.compile(r"(?<![\w.])[-−]?\d[\d,]*\.\d+%?|(?<![\w.])[-−]?\d[\d,]*%")
 
 

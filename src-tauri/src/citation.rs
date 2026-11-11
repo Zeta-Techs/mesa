@@ -80,10 +80,11 @@ pub(crate) fn extract_bib_keys(text: &str) -> BTreeSet<String> {
     keys
 }
 
-/// 任务书/人工请求里的「[@bib键]」是写法说明，不是正文引用。
+/// 任务书/人工请求/写作规范里的「[@bib键]」是写法说明，不是正文引用。
+/// style-sheet.md 是大纲那步一并交的写作规范（2026-11-11 HER：「引用一律 [@bib键]」被数成缺一个键 `bib`，评审页显示「引用 33/34 · 缺 1」）
 fn skip_citation_md(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    n == "task.md" || n == "help-wanted.md" || n == "review-notes.md"
+    n == "task.md" || n == "help-wanted.md" || n == "review-notes.md" || n == "style-sheet.md"
 }
 
 /// 递归收集 .md 文件：跳过隐藏目录（.git 等）与 node_modules，数量/单文件大小有界
@@ -539,6 +540,8 @@ mod tests {
         )
         .unwrap();
         fs::write(dir.join("manuscript").join("draft.md"), "[@doe2020]\n").unwrap();
+        // 写作规范里的写法说明同样不算
+        fs::write(dir.join("manuscript").join("style-sheet.md"), "- 引用一律 [@bib键]，键以 references.bib 为准。\n").unwrap();
         fs::write(dir.join("references.bib"), "@article{doe2020, title={X}}\n").unwrap();
         let dto = check_citation_health_in(&dir, std::slice::from_ref(&dir)).unwrap();
         assert_eq!(dto.missing, Vec::<String>::new());
