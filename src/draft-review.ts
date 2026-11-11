@@ -25,7 +25,8 @@ function bodyWithoutFramework(text: string): string {
 
 export function scanWritingReview(
   text: string,
-  opts?: { allowGapIds?: boolean },
+  /** 大纲两样都放行：空白编号本就在大纲里推演；大纲不渲染，章节号是给人看结构的（2026-11-11 HER 大纲误报「标题里写了序号」） */
+  opts?: { allowGapIds?: boolean; allowNumberedHeadings?: boolean },
 ): WritingReviewHit[] {
   const hits: WritingReviewHit[] = [];
   const abstract = abstractBlock(text);
@@ -40,7 +41,7 @@ export function scanWritingReview(
   if (drawn > 0) {
     hits.push({ id: "placeholder-fig", label: `${drawn} 处「待绘制」` });
   }
-  if (/^#{1,6}\s+\d+(\.\d+)*[.\s]/m.test(body)) {
+  if (!opts?.allowNumberedHeadings && /^#{1,6}\s+\d+(\.\d+)*[.\s]/m.test(body)) {
     hits.push({ id: "manual-numbers", label: "标题里写了序号，渲染时会再自动编号" });
   }
   return hits;
@@ -58,10 +59,11 @@ export function sortWritingPreviewPaths(paths: readonly string[]): string[] {
   return [...paths].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, "zh"));
 }
 
-/** 只扫稿件和大纲。检索记录、纳入清单、任务书里的编号标题不是稿件问题。 */
+/** 只扫稿件和大纲。检索记录、纳入清单、任务书里的编号标题不是稿件问题。
+ *  写作规范 manuscript/style-sheet.md 不是稿件（大纲那步就交，2026-11-11 HER：它的「## 1 核心术语」被当成稿件报「标题里写了序号」） */
 export function writingScanSourcePath(paths: readonly string[]): string | null {
-  const md = paths.filter((p) => /\.(md|qmd)$/i.test(p.replace(/\\/g, "/")));
   const norm = (p: string) => p.replace(/\\/g, "/");
+  const md = paths.filter((p) => /\.(md|qmd)$/i.test(norm(p)) && !/(^|\/)style-sheet\.md$/i.test(norm(p)));
   const draft = md.find((p) => /draft\.md$/i.test(p) || /manuscript\//i.test(norm(p)));
   if (draft) return draft;
   return md.find((p) => /(^|\/)outline\.md$/i.test(norm(p))) ?? null;

@@ -54,6 +54,14 @@ test("稿件页：源稿优先，Word 先于 PDF", () => {
     writingScanSourcePath(["papers/screening.md", "papers/included.md", "TASK.md"]),
     null,
   );
+  // 大纲的章节号不报（大纲不渲染）；稿件照报
+  assert.deepEqual(scanWritingReview("### 1 引言\n", { allowGapIds: true, allowNumberedHeadings: true }), []);
+  assert.equal(scanWritingReview("### 1 引言\n")[0]?.id, "manual-numbers");
+  // 大纲步也交写作规范：它不是稿件，扫的是 outline.md
+  assert.equal(
+    writingScanSourcePath(["manuscript/sections.json", "manuscript/style-sheet.md", "outline.md"]),
+    "outline.md",
+  );
 });
 
 test("空划选不开批注，有文字才记住选段", () => {

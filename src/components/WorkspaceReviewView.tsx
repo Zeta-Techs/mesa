@@ -1542,10 +1542,9 @@ function LiveWorkspaceReviewView({
       })
         .then((preview) => {
           if (stale) return;
+          const isOutline = /(^|\/)outline\.md$/i.test(rel.replace(/\\/g, "/"));
           setWritingHits(
-            scanWritingReview(preview.text, {
-              allowGapIds: /(^|\/)outline\.md$/i.test(rel.replace(/\\/g, "/")),
-            }),
+            scanWritingReview(preview.text, { allowGapIds: isOutline, allowNumberedHeadings: isOutline }),
           );
         })
         .catch(() => {
