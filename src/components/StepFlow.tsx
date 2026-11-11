@@ -1869,6 +1869,21 @@ export default function StepFlow({
     })();
   }
 
+  // 待评审时回到这一步干活的那段对话（2026-11-11 用户：点了停下之后找不到入口）：只切过去 / 接回，不替人发话；
+  // 在对话里改的照样落在工作副本，回来评审、保存。主路径仍是「去评审」里写意见退回修改（会记成一轮）
+  const backToChat =
+    runStatus === "review" && ws ? (
+      <button
+        type="button"
+        onClick={goTerminal}
+        title="回到这一步 AI 干活的那段对话，不替你发话。在对话里让它改的，改完照样回这里评审、保存；想留下修改记录，用「去评审」写意见退回修改"
+        className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 hover:bg-hover hover:text-l2"
+      >
+        {/* 全站 button { font: inherit } 会吞掉按钮上的字号，字号写内层 */}
+        <span className="text-xs">回到对话</span>
+      </button>
+    ) : null;
+
   function goReview() {
     if (!ws) return;
     setWorkspaceReviewRequest({
@@ -2962,6 +2977,7 @@ export default function StepFlow({
                     TASK.md
                   </button>
                   {discussInline}
+                  {backToChat}
                 </div>
                 {chatOpen && (
                   <div className="flex flex-wrap items-center gap-2 pl-4">
@@ -3011,6 +3027,7 @@ export default function StepFlow({
                   TASK.md
                 </button>
                 {discussInline}
+                {backToChat}
               </div>
             )}
               {showDiscussNudge && (
