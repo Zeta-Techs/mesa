@@ -406,11 +406,14 @@ function SpotCheckPicks({
   stepName,
   taskTitle,
   refreshKey,
+  hint,
 }: {
   projectPath: string;
   ws: WorkspaceDto | undefined;
   stepName: string;
   taskTitle: string;
+  /** 怎么抽查的说明：挂在这一行的悬停上，不在行下另写一段（2026-11-11 项目页减法） */
+  hint?: string;
   /** 步骤状态变了就重读：挂载时索引还没写出来、补读一轮后换了篇，都要跟上（2026-11-05 排查） */
   refreshKey: string;
 }) {
@@ -441,8 +444,7 @@ function SpotCheckPicks({
   }, [rootsKey, refreshKey]);
   if (!picks) return null;
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-      <span className="text-micro text-l4">抽这几篇：</span>
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1" title={hint}>
       {picks.items.map((pick, index) => {
         const rel = pick.notePath.replace(/\\/g, "/");
         const name = rel.split("/").pop() ?? rel;
@@ -549,7 +551,6 @@ export default function StepFlow({
   draft,
   agentContent,
   loopActions,
-  roundsContent,
   onRestore,
   reviewConflict,
   onDraftChanged,
@@ -638,10 +639,9 @@ export default function StepFlow({
   bare?: boolean;
   /** agent 节点内嵌内容（如「预览 TASK.md」——TASK.md 是 Agent 的合同，属于这个节点） */
   agentContent?: React.ReactNode;
-  /** 「AI 干活」下一行的回路动作：跟进更新、补读、补文献 / 退回上一步修改（design-review-loop.md §4/§5） */
+  /** 「AI 干活」下一行的回路动作：跟进更新、补读、补文献 / 退回上一步修改（design-review-loop.md §4/§5），
+   *  「这一步做过 N 轮」（§6）也排在这一行（2026-11-11 项目页减法） */
   loopActions?: React.ReactNode;
-  /** 「这一步做过 N 轮」折叠区，挂在 AI 干活节点下（§6） */
-  roundsContent?: React.ReactNode;
   /** 步骤工作区已归档时 Agent 节点的主入口（替代「开始」）：恢复工作区 */
   onRestore?: () => void;
   /** 合并冲突阻塞：评审节点入口改为「去处理冲突」（直达冲突解决意图） */
@@ -1940,17 +1940,14 @@ export default function StepFlow({
       ) : null;
     switch (action.kind) {
       case "continue-notes":
+        // 保存进项目之前不画灰按钮：行下那句「保存进项目后可用」已经说了（2026-11-11 项目页减法）
+        if (!action.enabled) return null;
         return (
           <button
             type="button"
-            disabled={!action.enabled}
             onClick={openContinueNotes}
-            title={
-              action.enabled
-                ? "到文件页打开 notes/，自己点要读的那篇"
-                : "先保存进项目，再去笔记夹"
-            }
-            className={`ml-auto ${outline} disabled:opacity-50`}
+            title="到文件页打开 notes/，自己点要读的那篇"
+            className={`ml-auto ${outline}`}
           >
             去笔记夹
           </button>
@@ -3061,10 +3058,10 @@ export default function StepFlow({
           />
         )}
         {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
+        {/* empty:hidden：回头入口和「做过几轮」都没有时组件渲染为空，不留一截空白 */}
         {node.kind === "agent" && loopActions && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-9">{loopActions}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-9 empty:hidden">{loopActions}</div>
         )}
-        {node.kind === "agent" && roundsContent}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
           <LedgerCountLine
             roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
@@ -3272,7 +3269,7 @@ export default function StepFlow({
                 <p>{PAYWALL_HINT}</p>
               ) : isPendingConfirmTaskTitle(human.title) ? (
                 <p>{PENDING_HINT}</p>
-              ) : (
+              ) : isSpotCheckTaskTitle(human.title) && !node.done ? null : (
                 <>
                   <p className="whitespace-pre-wrap">{guidanceShort}</p>
                   {guidanceShort !== guidance && (
@@ -3294,6 +3291,7 @@ export default function StepFlow({
                   refreshKey={ledgerRefreshKey}
                   stepName={step.name}
                   taskTitle={human.title}
+                  hint={guidance}
                 />
               )}
               {/* 付费墙：清单就是入口。折叠标题带缺篇数；做法进行内按钮 title，

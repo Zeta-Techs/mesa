@@ -273,7 +273,7 @@ export function buildStepFlow(args: {
       label: "继续精读笔记",
       hint: runStatus === "done"
         ? "到文件页打开 notes/。点一篇笔记进沉浸阅读；开大纲前没存进历史的改动会再问你一次。"
-        : "先保存进项目，笔记才会进主文件夹。",
+        : "保存进项目后可用。",
       done: false,
       skipCurrent: true,
     });

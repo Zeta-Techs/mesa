@@ -1653,6 +1653,8 @@ export default function TaskCardsSection({
             }
             onContinueStep={() => continueFocusedStep()}
             loopActions={(() => {
+              // 回头入口与「这一步做过几轮」同一行（2026-11-11 项目页减法）：有工作副本时由几轮那一栏把入口排在前面
+              const lead = (() => {
               // 退回上一步补料（design-review-loop.md §4）：这一步开过工就有——做到一半、待评审、已保存都能回头（2026-11-06 流程贯通 §5；
               // 原先只在已保存时给，因为没并入就保存会把「待跟进」盖掉，§3 改判定后这个顾虑没了）。跟进更新（§5）只在已保存且待跟进时给
               const upstreamSteps = reworkTargets(steps, focusIdx);
@@ -1771,16 +1773,18 @@ export default function TaskCardsSection({
                 commentsButton,
                 reworkButton,
               ]);
-            })()}
-            roundsContent={(() => {
-              const ws = stepWorkspace(focusStepDto);
-              return ws ? (
+              })();
+              const roundsWs = stepWorkspace(focusStepDto);
+              return roundsWs ? (
                 <StepRoundsSection
                   projectPath={projectPath}
-                  workspaceId={ws.id}
+                  workspaceId={roundsWs.id}
                   refreshKey={`${focusRunStatus ?? ""}|${refreshToken}`}
+                  lead={lead}
                 />
-              ) : null;
+              ) : (
+                lead
+              );
             })()}
             onContinueFresh={
               hasPriorSession(

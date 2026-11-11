@@ -2,7 +2,7 @@
  *  - ReworkDialog：补料单表单。只收字段，发出（恢复 / 并入 / 写单 / 开对话）由 TaskCardsSection 编排。
  *  - StepRoundsSection：「这一步的几轮」，只读——看每一轮带回了哪些文件、和上一轮比，不提供回到旧一轮（§13-5）。 */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Modal } from "./Modal";
 import { fieldClass, InlineNotice, primaryActionClass, secondaryActionClass } from "./PageFrame";
@@ -341,16 +341,19 @@ export function ReworkDialog({
   );
 }
 
-/** 「这一步的几轮」：折叠的一行，展开列每一轮；点一轮看它带回的文件，可和上一轮比。 */
+/** 「这一步的几轮」：和「补文献…」等回头入口排在同一行文字链接里（2026-11-11 项目页减法），展开在下面列每一轮；
+ *  点一轮看它带回的文件，可和上一轮比。lead = 同一行排在它前面的回头入口（loopRow），没有几轮可看时只画它 */
 export function StepRoundsSection({
   projectPath,
   workspaceId,
   refreshKey,
+  lead,
 }: {
   projectPath: string;
   workspaceId: string;
   /** 步骤状态变了就重读（保存进项目后多一轮） */
   refreshKey: string;
+  lead?: ReactNode;
 }) {
   const [data, setData] = useState<StepRoundsDto | null>(null);
   const [open, setOpen] = useState(false);
@@ -369,22 +372,31 @@ export function StepRoundsSection({
     };
   }, [projectPath, workspaceId, refreshKey]);
   // 只保存过一次、也没开新一轮时不出：一轮没什么可比的
-  if (!data || (data.rounds.length < 2 && !data.openCause)) return null;
+  if (!data || (data.rounds.length < 2 && !data.openCause)) return lead ? <>{lead}</> : null;
   const rounds = [...data.rounds].reverse();
   return (
-    <div className="mt-1 pl-9 text-micro text-l4">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className="hover:text-l2"
-        title="每次保存进项目算一轮：看每一轮带回了哪些文件、和上一轮比改了什么"
-      >
-        {open ? "▾" : "▸"} 这一步做过 {data.rounds.length} 轮
-        {data.openCause ? ` · 第 ${data.rounds.length + 1} 轮（${roundCauseLabel(data.openCause)}）还没保存` : ""}
-      </button>
+    <>
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {lead}
+        {lead && (
+          <span aria-hidden="true" className="text-xs text-l4">
+            ·
+          </span>
+        )}
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className="shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline"
+          title={`每次保存进项目算一轮：看每一轮带回了哪些文件、和上一轮比改了什么${
+            data.openCause ? `\n第 ${data.rounds.length + 1} 轮（${roundCauseLabel(data.openCause)}）还没保存` : ""
+          }`}
+        >
+          这一步做过 {data.rounds.length} 轮{data.openCause ? `，第 ${data.rounds.length + 1} 轮还没保存` : ""}
+        </button>
+      </span>
       {open && (
-        <ul className="mt-1 space-y-0.5">
+        <ul className="basis-full space-y-0.5 text-micro text-l4">
           {rounds.map((r) => (
             <li key={r.index} className="flex items-center gap-2 tabular-nums">
               <span className="text-l3">第 {r.index} 轮</span>
@@ -415,7 +427,7 @@ export function StepRoundsSection({
           onClose={() => setViewing(null)}
         />
       )}
-    </div>
+    </>
   );
 }
 
