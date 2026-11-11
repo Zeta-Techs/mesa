@@ -458,6 +458,14 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-11 · 步骤里问人只走人工请求，不用 CLI 自带提问面板
+
+HER 大纲第①问：Kimi 写了人工请求，又弹自带的 question 面板问同一句，人在 Mesa 里答的那句排在面板后面送不进去。用户问要不要改成让 Agent
+直接在终端里提问；核过九家里至少八家都带提问工具（Claude / Qwen / CodeBuddy / Grok 的 AskUserQuestion、Kimi / OpenCode 的 question、
+Codex 的 request_user_input 限 Plan 模式、Cursor 的 AskQuestion），用户定「按你推荐」：步骤里问人只走 `.ccode/help-wanted.md`——
+九家一套卡片、收件箱 / 手机 / 桌宠都能答、问的时候这一轮不卡住；任务书规则写明不用自带提问工具问同一件事。各家面板仍按碰到的补聊天层读法
+（不进步骤的对话里它们照样会弹）。细则 pipeline.md「人工请求」。
+
 ### 2026-11-11 · 研讨：同一个问题请几家 AI 只读作答（借鉴 ClawChat 群聊）
 
 用户问「ClawChat 的哪些 Mesa 可以借鉴，创建群组？」。对照后不照搬「什么都能干的群」（11-03 协调对话已因另开对话没必要并回工作台；

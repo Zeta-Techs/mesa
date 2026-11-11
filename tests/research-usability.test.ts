@@ -103,7 +103,9 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 实测 review 34953、论文 43731、数据 17480、学位 42682、投稿 11348、LaTeX 17707。
   // 同日精读交棒只留现行约束：三模板精读步的 handoff 说明加一句「条件变了就改或删那条，不记改动经过」，约 55 字。
   // 实测 review 35011、论文 43909、数据 17489、学位 42862、投稿 11354、LaTeX 17719。
-  const before: Record<string, number> = { review: 35100, "research-paper": 44000, "data-processing": 17600, thesis: 42950, "submission-rebuttal": 11500, "latex-paper": 17850 };
+  // 2026-11-11 人工请求规则加「只经这份文件问，不另用 CLI 自带的提问工具问人」（每步一句，六模板同涨）。
+  // 实测 review 35141、论文 44117、数据 17593、学位 43070、投稿 11406、LaTeX 17823。
+  const before: Record<string, number> = { review: 35250, "research-paper": 44250, "data-processing": 17700, thesis: 43200, "submission-rebuttal": 11550, "latex-paper": 17950 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);
