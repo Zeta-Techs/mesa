@@ -7,6 +7,7 @@ import {
   sidebarConsults,
   workbenchLiveConsults,
   contrastRows,
+  discussCarryText,
   estimateCost,
   memberNames,
   memberOptions,
@@ -249,4 +250,31 @@ test("步骤卡研讨问题：没有任务书文件时说预览，不提 TASK.md
   assert.ok(!pv.includes("TASK.md"), pv);
   assert.match(pv, /现在拟的任务书（预览/);
   assert.ok(!stepConsultQuestion(4, "综述初稿", null).includes("TASK.md"));
+});
+
+test("步骤卡研讨问题：还有没答的决策项时点名列出、问各自怎么定；全答完退回泛问", () => {
+  const q = stepConsultQuestion(4, "综述初稿", "preview", ["章节顺序按机理还是按材料体系", " 图表用量 "]);
+  assert.match(q, /^第 4 步「综述初稿」还没定的几件：① 章节顺序按机理还是按材料体系 ② 图表用量。/);
+  assert.match(q, /照这一步现在拟的任务书（预览，还没开工，见材料），这几件各自怎么定、依据是什么？最该先定哪一件？$/);
+  assert.equal(stepConsultQuestion(4, "综述初稿", "file", []), stepConsultQuestion(4, "综述初稿", "file"));
+});
+
+test("带回商量：写明哪场研讨、谁的结论，自带「我认同、请改任务书」，依据只带核对得上的", () => {
+  const rec = record([]);
+  const text = discussCarryText(
+    rec,
+    m({
+      member: "m2",
+      conclusion: "第二节证据太薄，先补两篇再写",
+      refs: [
+        { raw: "notes/a.md §2", path: "notes/a.md", loc: "§2", state: "ok" },
+        { raw: "notes/gone.md", path: "notes/gone.md", loc: "", state: "missing" },
+        { raw: "outline.md 12-40", path: "outline.md", loc: "12-40", state: "unseen" },
+      ],
+    }),
+  );
+  const lines = text.split("\n");
+  assert.equal(lines[0], "研讨「t」里 GPT 的结论（我认同，请据此改进任务书，改了哪里告诉我）：第二节证据太薄，先补两篇再写");
+  assert.equal(lines[1], "依据：notes/a.md §2；outline.md 12-40");
+  assert.equal(discussCarryText(rec, m({ member: "m1", conclusion: "x" })).split("\n").length, 1, "没依据不写空行");
 });

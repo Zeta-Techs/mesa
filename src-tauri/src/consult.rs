@@ -150,6 +150,10 @@ pub struct Meta {
     /// 给人看的说明：「第 3 步 · 论文初稿的工作副本」
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_label: Option<String>,
+    /// 从步骤卡发起时是哪一步（步骤名）：研讨页结论下面才有「带回商量」（2026-11-11）。研讨自己不写任务书，
+    /// 认同的结论经这一步的「继续讨论」由那家 AI 改
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
 }
 
 /// 成员读文件的根：read_root 在就用它，否则项目根
@@ -1348,6 +1352,7 @@ pub(crate) fn build_meta(
         relay_limit: relay_limit.unwrap_or(DEFAULT_RELAY_LIMIT),
         read_label: read_root.as_ref().and(read_label.map(|l| clip(l.trim(), 80))),
         read_root,
+        step: None,
     };
     validate_meta(&meta)?;
     Ok(meta)
@@ -1368,6 +1373,7 @@ pub async fn consult_create(
     read_root: Option<String>,
     read_label: Option<String>,
     images: Option<Vec<String>>,
+    step: Option<String>,
 ) -> Result<ConsultDto, String> {
     let profiles = store.list()?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -1397,6 +1403,7 @@ pub async fn consult_create(
             materials.push(Material { path: rel, range: String::new(), kind: "image".into() });
         }
         let mut meta = build_meta(&question, materials, members, cross_rounds, relay_limit, read_root, read_label)?;
+        meta.step = step.map(|s| clip(s.trim(), 80)).filter(|s| !s.is_empty());
         for m in meta.members.iter_mut() {
             let profile = profiles.iter().find(|p| p.id == m.profile_id);
             let vision = if m.model.trim().is_empty() {
@@ -1823,6 +1830,7 @@ mod tests {
             relay_limit: 2,
             read_root: None,
             read_label: None,
+            step: None,
         }
     }
 
@@ -2055,6 +2063,19 @@ mod tests {
         assert_eq!(read_root_of(&m, root), wt);
         m.read_root = Some("/nonexistent/worktree".into());
         assert_eq!(read_root_of(&m, root), root, "工作副本没了就退回项目根");
+    }
+
+    #[test]
+    fn meta_step_roundtrips_and_old_records_read() {
+        let mut m = meta(vec![member("m1", "Claude", true), member("m2", "GPT", true)]);
+        let old = serde_json::to_value(&m).unwrap();
+        assert!(old.get("step").is_none(), "没有步骤不出这个键");
+        let back: Meta = serde_json::from_value(old).unwrap();
+        assert_eq!(back.step, None);
+        m.step = Some("综述初稿".into());
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["step"], "综述初稿");
+        assert_eq!(serde_json::from_value::<Meta>(v).unwrap().step.as_deref(), Some("综述初稿"));
     }
 
     #[test]

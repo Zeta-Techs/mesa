@@ -11,6 +11,7 @@ type Initial = {
   materials?: ConsultMaterial[];
   readRoot?: string;
   readLabel?: string;
+  step?: string;
 };
 
 /**
@@ -32,6 +33,7 @@ export default function ConsultHost() {
       materials: req.materials,
       readRoot: req.readRoot,
       readLabel: req.readLabel,
+      step: req.step,
     };
     clearReq();
     void invoke<{ path: string; name: string }[]>("list_projects")

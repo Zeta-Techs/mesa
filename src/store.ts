@@ -361,6 +361,9 @@ export interface PendingTerminal {
   autoStart?: boolean;
   /** 一键开步预填的首条指令：启动时注入 CLI，启动成功后清除（一次性） */
   initialPrompt?: string;
+  /** 放进聊天输入框、**不发送**的一段话（研讨结论「带回商量」，2026-11-11）：人改了再发；连点几次累加在输入框里。
+      配 surface: "chat"（输入框在聊天层） */
+  composerInsert?: string;
   /** 打开后右栏直接落到指定页签（如卡片区「主仓改动」提醒跳到改动面板） */
   rightTab?: "git";
   /** 「最干净的终端」：落地即收起工作树与右栏（走既有文件树/成果面板开关，不再进专注终端）。
@@ -832,6 +835,8 @@ interface AppState {
     /** 成员读文件的地方（评审页：这一步的工作副本）与给人看的说明 */
     readRoot?: string;
     readLabel?: string;
+    /** 步骤卡发起：记下是哪一步，研讨页结论才能「带回商量」 */
+    step?: string;
     nonce: number;
   } | null;
   openConsult: (req: {
@@ -840,7 +845,12 @@ interface AppState {
     materials?: { path: string; range: string }[];
     readRoot?: string;
     readLabel?: string;
+    step?: string;
   }) => void;
+  /** 研讨结论「带回商量」（2026-11-11）：进那个项目、聚焦那一步，由步骤卡照「继续讨论」原路接回商量，
+   *  text 放进聊天输入框、不发送（人改了再发）。StepFlow 认步骤名消费并清空 */
+  discussCarryReq: { projectRoot: string; stepName: string; text: string; token: number } | null;
+  setDiscussCarryReq: (req: { projectRoot: string; stepName: string; text: string; token: number } | null) => void;
   clearConsultReq: () => void;
   /** 研讨页正打开的那一场（2026-11-11 用户：研讨放在聊天层那一格，侧栏点了就到，不再进对话管理）。
    *  侧栏研讨行、「去看看」、工作台进行中的研讨都经 showConsult 打开它并切到研讨页 */
@@ -1273,6 +1283,8 @@ export const useAppStore = create<AppState>((set, get) => {
   consultReq: null,
   openConsult: (req) => set({ consultReq: { ...req, nonce: Date.now() } }),
   clearConsultReq: () => set({ consultReq: null }),
+  discussCarryReq: null,
+  setDiscussCarryReq: (req) => set({ discussCarryReq: req }),
   consultOpen: null,
   showConsult: (projectRoot, id) => set({ consultOpen: { projectRoot, id }, page: "consult" }),
   closeConsult: () => set({ consultOpen: null }),

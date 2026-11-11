@@ -58,6 +58,8 @@ export default function ConsultStartDialog({
     /** 评审页发起：成员读这一步的工作副本（产物还没带回项目根），记录照样写在项目里 */
     readRoot?: string;
     readLabel?: string;
+    /** 步骤卡发起：是哪一步（换了项目就不带） */
+    step?: string;
   } | null;
   /** members：几家在答（开始后的提示里写） */
   onCreated: (projectRoot: string, id: string, members: number) => void;
@@ -213,6 +215,7 @@ export default function ConsultStartDialog({
         readRoot,
         readLabel: initial?.readLabel ?? null,
         images: images.map((i) => i.path),
+        step: initial?.step && initial.projectRoot === root ? initial.step : null,
       });
       localStorage.setItem(LAST_KEY(root), JSON.stringify(picked.map((p) => p.key)));
       onCreated(root, dto.consult.meta.id, dto.consult.meta.members.length);

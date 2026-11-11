@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, BookmarkPlus, Copy, Library, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Copy, CornerDownLeft, Library, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
 import VendorIcon from "./VendorIcon";
 import RememberCard from "./RememberCard";
@@ -11,6 +11,7 @@ import { toast } from "../toast";
 import type { VendorId } from "../vendor-icon";
 import {
   contrastRows,
+  discussCarryText,
   memberOf,
   mentionedNames,
   REF_NOTE,
@@ -26,7 +27,7 @@ import {
   type ConsultMessage,
   type ConsultRef,
 } from "../consult";
-import { AGENTS } from "../types";
+import { AGENTS, type ProjectConfigReadDto } from "../types";
 import { CATEGORY_EXAMPLES } from "../research-profile";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
@@ -292,6 +293,25 @@ export default function ConsultView({
     });
   }
 
+  /** 「带回商量」（步骤卡发起的研讨才有）：进这个项目、聚焦那一步，照「继续讨论」原路接回商量，
+   *  结论放进输入框不发送——研讨自己不写任务书，由商量那家 AI 改，你当场看到改了什么 */
+  async function carryToDiscuss(m: ConsultMessage) {
+    const stepName = record!.meta.step;
+    if (!stepName) return;
+    const cfg = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectRoot }).catch(() => null);
+    const stepIndex = cfg?.config.steps.findIndex((s) => s.name === stepName) ?? -1;
+    if (stepIndex < 0) {
+      toast(`项目里已经没有「${stepName}」这一步了，复制结论自己贴过去吧`, "warning");
+      return;
+    }
+    const s = useAppStore.getState();
+    const token = Date.now();
+    s.setDiscussCarryReq({ projectRoot, stepName, text: discussCarryText(record!, m), token });
+    s.setSelectProjectReq(projectRoot);
+    s.setProjectFocusReq({ projectRoot, focus: "step", stepIndex, token });
+    s.setPage("workspaces");
+  }
+
   function mention(name: string) {
     setDraft((d) => {
       const tag = `@${name} `;
@@ -323,6 +343,17 @@ export default function ConsultView({
 
   const actions = (m: ConsultMessage) => (
     <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
+      {m.conclusion && record.meta.step && (
+        <button
+          type="button"
+          onClick={() => void carryToDiscuss(m)}
+          className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+          title={`回到「${record.meta.step}」的商量，这条结论放进输入框、不发送；你改好再发，由商量的 AI 改任务书`}
+        >
+          <CornerDownLeft size={12} strokeWidth={1.8} aria-hidden="true" />
+          <span className="text-micro">带回商量</span>
+        </button>
+      )}
       {m.conclusion && (
         <button
           type="button"

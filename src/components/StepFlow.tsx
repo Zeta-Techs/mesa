@@ -19,6 +19,7 @@ import { renderMathInto } from "../md-math";
 import { useAppStore } from "../store";
 import { stepStopTab } from "../run-overview";
 import { IS_WINDOWS } from "../hotkeys";
+import { samePath } from "../path-utils";
 import { absoluteResourcePath } from "./ArtifactChecklist";
 import { confirmDialog } from "./ConfirmDialog";
 import {
@@ -1642,8 +1643,9 @@ export default function StepFlow({
   }
   const showDiscussNudge = discussNudgeOpen && Boolean(draft) && !ws && !discussed && !draftHasBody;
 
-  /** topic：预置话题 / 决策项「开聊」带进来的问题（2026-11-11 话题收进商量：不再建话题卡，就这个问题开商量） */
-  async function chatDraft(topic?: string) {
+  /** topic：预置话题 / 决策项「开聊」带进来的问题（2026-11-11 话题收进商量：不再建话题卡，就这个问题开商量）。
+   *  carry：研讨结论「带回商量」——照原路接回 / 新开商量，这段话放进聊天输入框、不发送，人改了再发 */
+  async function chatDraft(topic?: string, carry?: string) {
     if (!draft || chatBusy) return;
     dismissDiscussNudge();
     setChatBusy(true);
@@ -1694,9 +1696,22 @@ export default function StepFlow({
           }),
       // 同一步骤的任务书讨论是同一个对话：再点切回已有标签；没有标签才按上面 resume / 新开会话
       reuseKey: `discuss:${projectPath}:${draft.relPath}`,
+      ...(carry ? { composerInsert: carry, surface: "chat" as const } : {}),
     });
     setPage("terminal");
   }
+
+  // 研讨结论「带回商量」（2026-11-11）：研讨页发请求、项目页聚焦到这一步后在这里接住。
+  // 等草稿读到再消费（chatDraft 没有 draft 不开聊），用完清空；不是这一步的不动
+  const carryReq = useAppStore((s) => s.discussCarryReq);
+  useEffect(() => {
+    if (!carryReq || !draft || chatBusy) return;
+    if (carryReq.stepName !== step.name || !samePath(carryReq.projectRoot, projectPath, IS_WINDOWS)) return;
+    useAppStore.getState().setDiscussCarryReq(null);
+    void chatDraft(undefined, carryReq.text);
+    // chatDraft 每次渲染重建，只按请求令牌与草稿就位翻转
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carryReq?.token, Boolean(draft), chatBusy, step.name, projectPath]);
 
   /** TASK.md 就地预览/编辑（本页弹层，v3.90 起与「预览 TASK.md」入口合一——不再有「草稿」概念）：
    *  内容经 onLoadTaskMd 加载：已有编辑内容读文件，否则给模板拼装（只读展示不落盘，纯看不留痕，

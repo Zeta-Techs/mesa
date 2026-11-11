@@ -18,14 +18,45 @@ export const MAX_IMAGES = 4;
 
 /**
  * 步骤卡「请几家研讨」的问题（2026-11-11）：任务书是项目里的文件（工作副本里的 TASK.md、有正文的草稿）时照名字问；
- * 没开工也没草稿时，带进去的是现拼的预览（存进研讨附件、不当草稿），问题就说「现在拟的任务书（预览）」，别让人以为有份 TASK.md
+ * 没开工也没草稿时，带进去的是现拼的预览（存进研讨附件、不当草稿），问题就说「现在拟的任务书（预览）」，别让人以为有份 TASK.md。
+ * 这一步还有没答的决策项时把它们点名列出、问各自怎么定——几家答同一组问题，对照才有意义，结论带回商量也正好对上某一项；
+ * 全答完了退回泛问
  */
-export function stepConsultQuestion(stepNo: number, stepName: string, taskMd: "file" | "preview" | null): string {
-  const head = `第 ${stepNo} 步「${stepName}」：`;
-  const tail = "哪些方向或判断站不住、还没想清楚？最该先定的是哪一件？";
-  if (taskMd === "preview") return `${head}照这一步现在拟的任务书（预览，还没开工，见材料）做下去，${tail}`;
-  if (taskMd === "file") return `${head}照现在的 TASK.md 做下去，${tail}`;
-  return `${head}照现在的安排做下去，${tail}`;
+export function stepConsultQuestion(
+  stepNo: number,
+  stepName: string,
+  taskMd: "file" | "preview" | null,
+  pending: readonly string[] = [],
+): string {
+  const head = `第 ${stepNo} 步「${stepName}」`;
+  const basis =
+    taskMd === "preview"
+      ? "照这一步现在拟的任务书（预览，还没开工，见材料）"
+      : taskMd === "file"
+        ? "照现在的 TASK.md"
+        : "照现在的安排";
+  const open = pending.map((q) => q.trim()).filter(Boolean);
+  if (open.length > 0) {
+    const list = open.map((q, i) => `${CIRCLED[i] ?? `${i + 1}.`} ${q}`).join(" ");
+    return `${head}还没定的几件：${list}。${basis}，这几件各自怎么定、依据是什么？最该先定哪一件？`;
+  }
+  // 「TASK.md」后接汉字留一个空格（中英文之间）
+  return `${head}：${basis}${taskMd === "file" ? " " : ""}做下去，哪些方向或判断站不住、还没想清楚？最该先定的是哪一件？`;
+}
+
+const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+
+/**
+ * 研讨结论「带回商量」放进商量输入框的一段（2026-11-11）：哪场研讨、谁的结论、依据，自带一句「我认同，请据此改任务书」——
+ * 连点几条时每段各自成立；人在输入框里可以改成「部分同意，改成……」再发。依据只带核对得上的（missing 的不带）
+ */
+export function discussCarryText(record: ConsultRecord, msg: ConsultMessage): string {
+  const who = memberOf(record, msg.member)?.name ?? "其中一位";
+  const refs = msg.refs.filter((r) => r.state !== "missing").map((r) => r.raw.trim()).filter(Boolean);
+  return [
+    `研讨「${record.meta.title}」里 ${who} 的结论（我认同，请据此改进任务书，改了哪里告诉我）：${(msg.conclusion ?? "").trim()}`,
+    ...(refs.length > 0 ? [`依据：${refs.join("；")}`] : []),
+  ].join("\n");
 }
 
 export function isImagePath(p: string): boolean {
@@ -93,6 +124,8 @@ export interface ConsultMeta {
   /** 成员读文件的地方（评审页发起时是工作副本）；空 = 项目根 */
   readRoot?: string | null;
   readLabel?: string | null;
+  /** 从步骤卡发起时是哪一步：结论下面才有「带回商量」 */
+  step?: string | null;
 }
 
 export interface ConsultRecord {

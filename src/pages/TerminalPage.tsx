@@ -1988,6 +1988,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (launchedTabId && nextSurface) {
         setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: nextSurface }));
       }
+      // 放进聊天输入框不发送（研讨结论「带回商量」）：新开的标签聊天层挂上时照样消费（ChatSurface 按令牌处理一次）
+      const carry = pt.composerInsert?.trim();
+      if (launchedTabId && carry) {
+        setChatInsertByTab((prev) => ({ ...prev, [launchedTabId]: { text: carry, send: false, token: Date.now() } }));
+      }
       // run 脚本标签：登记 nonconcurrent 互斥追踪
       if (pt.wsId && tabId) setRunningScript(pt.wsId, tabId);
       // 「快速开聊」：落到最干净的终端——收起右栏，只剩标签条 + 终端。

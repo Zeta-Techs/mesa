@@ -69,7 +69,14 @@ import {
   unstartedSeeds,
 } from "../task-cards";
 import { buildTaskMdPreview, buildWorkspaceTerminalRequest } from "../pipeline-start";
-import { CONTINUE_RESUME_PROMPT, CONTINUE_STEP_PROMPT, isTaskMdStub, resolveTaskMdSource } from "../step-decisions";
+import {
+  CONTINUE_RESUME_PROMPT,
+  CONTINUE_STEP_PROMPT,
+  isTaskMdStub,
+  parseDecisions,
+  resolveTaskMdSource,
+  unansweredDecisions,
+} from "../step-decisions";
 import { DEFAULT_KICKOFF_PROMPT } from "../pipeline-presets";
 import { continueRoute, pickWorkspaceResume } from "../workspace-resume";
 import { filterProjectSessions } from "../project-status";
@@ -652,9 +659,12 @@ export default function TaskCardsSection({
     }
     const hasFile = !!taskMdFile && existing.includes(taskMdFile);
     const paths = preview ? [preview, ...existing] : existing;
+    // 还没答的决策项点名进问题（答案在草稿「已定方向」里，同步骤卡决策区的读法）
+    const pending = unansweredDecisions(step.decisions ?? [], parseDecisions(focusDraft?.text ?? "")).map((d) => d.q);
     useAppStore.getState().openConsult({
       projectRoot: projectPath,
-      question: stepConsultQuestion(stepNo, step.name, preview ? "preview" : hasFile ? "file" : null),
+      step: step.name,
+      question: stepConsultQuestion(stepNo, step.name, preview ? "preview" : hasFile ? "file" : null, pending),
       materials: paths.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
       ...(readRoot ? { readRoot, readLabel: `第 ${stepNo} 步 · ${step.name}的工作副本` } : {}),
     });
