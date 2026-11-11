@@ -138,9 +138,10 @@ export default function CheckList({
                             title={expanded ? "收起" : "看全文"}
                             className="mt-0.5 block w-full text-left text-micro leading-snug text-l3 hover:text-l2"
                           >
-                            {quote && <span className={`block break-words ${expanded ? "" : "line-clamp-1"}`}>{quote}</span>}
+                            {/* line-clamp 自带 display:-webkit-box，不能再叠 block（后者盖掉前者，截断失效、全文铺开） */}
+                            {quote && <span className={`break-words ${expanded ? "block" : "line-clamp-1"}`}>{quote}</span>}
                             {item.evidence?.detail && (
-                              <span className={`block break-words ${expanded ? "" : "line-clamp-1"}`}>{item.evidence.detail}</span>
+                              <span className={`break-words ${expanded ? "block" : "line-clamp-1"}`}>{item.evidence.detail}</span>
                             )}
                           </button>
                         )}
