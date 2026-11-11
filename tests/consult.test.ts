@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   adoptionReason,
+  liveConsultState,
+  workbenchLiveConsults,
   contrastRows,
   estimateCost,
   memberNames,
@@ -192,4 +194,18 @@ test("提升到研究档案的依据：哪场研讨、谁的结论、经过哪�
   assert.match(reason, /参与：Claude（默认模型 · Claude Code）、Kimi（默认模型 · kimi）/);
   assert.doesNotMatch(reason, /GPT/);
   assert.match(reason, /\.ccode\/consults\/c\.jsonl/);
+});
+
+test("工作台露出的研讨：有人在答或等你发话，24 小时没动静的不列", () => {
+  const now = Date.parse("2026-11-11T12:00:00Z");
+  const items = [
+    { id: "a", busy: true, awaiting: false, updatedAt: "2026-11-11T11:59:00Z" },
+    { id: "b", busy: false, awaiting: true, updatedAt: "2026-11-11T08:00:00Z" },
+    { id: "c", busy: false, awaiting: false, updatedAt: "2026-11-11T11:00:00Z" },
+    { id: "d", busy: false, awaiting: true, updatedAt: "2026-11-10T10:00:00Z" },
+  ];
+  assert.deepEqual(workbenchLiveConsults(items, now).map((x) => x.id), ["a", "b"]);
+  assert.equal(liveConsultState({ busy: true, answering: 3, awaiting: false }), "3 家在答");
+  assert.equal(liveConsultState({ busy: true, answering: 0, awaiting: false }), "在答");
+  assert.equal(liveConsultState({ busy: false, answering: 0, awaiting: true }), "等你发话");
 });

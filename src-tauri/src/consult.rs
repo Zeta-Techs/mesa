@@ -193,6 +193,9 @@ pub struct ConsultSummary {
     pub created_at: String,
     pub updated_at: String,
     pub message_count: usize,
+    /// 停在「先停一下，等你发话」（接力到上限）：最后一条是 Mesa 的提示（工作台「正在进行」据此露出）
+    #[serde(default)]
+    pub awaiting: bool,
 }
 
 // ───────────────────────── 文件 ─────────────────────────
@@ -310,6 +313,7 @@ pub(crate) fn summary_of(root: &Path, c: &Consult, updated_at: String) -> Consul
         created_at: c.meta.created_at.clone(),
         updated_at,
         message_count: c.messages.iter().filter(|m| !m.pass && m.role != "system" && m.status != "running").count(),
+        awaiting: c.messages.iter().rev().find(|m| m.status != "running").is_some_and(|m| m.role == "system"),
     }
 }
 
@@ -1433,6 +1437,8 @@ pub struct ConsultListItem {
     #[serde(flatten)]
     pub summary: ConsultSummary,
     pub busy: bool,
+    /// 此刻在答的成员数（工作台「N 家在答」）
+    pub answering: usize,
 }
 
 /// 列几个项目的研讨（对话页按范围传项目根）
@@ -1442,8 +1448,8 @@ pub async fn consult_list(project_roots: Vec<String>) -> Result<Vec<ConsultListI
         let mut out: Vec<ConsultListItem> = Vec::new();
         for r in project_roots {
             for s in list_at(&root_of(&r)) {
-                let busy = running_of(&s.id).1;
-                out.push(ConsultListItem { summary: s, busy });
+                let (running, busy) = running_of(&s.id);
+                out.push(ConsultListItem { summary: s, busy, answering: running.len() });
             }
         }
         out.sort_by(|a, b| b.summary.updated_at.cmp(&a.summary.updated_at));
@@ -2244,6 +2250,18 @@ mod tests {
         assert_eq!((recs[0].task_kind.as_str(), recs[0].models.clone()), ("consult", vec!["glm-5.3".to_string()]));
         assert!(recs[0].purpose.starts_with("研讨："));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn summary_marks_awaiting_after_relay_cap_note() {
+        let dir = std::env::temp_dir().join(format!("consult-await-{}", uuid::Uuid::new_v4().simple()));
+        let m = meta(vec![member("m1", "Claude", true), member("m2", "GPT", true)]);
+        let mut note = msg("s", "system", None, "chat", "先停一下，等你发话。");
+        note.role = "system".into();
+        let c = Consult { meta: m.clone(), messages: vec![msg("a", "member", Some("m1"), "chat", "x"), note] };
+        assert!(summary_of(&dir, &c, String::new()).awaiting);
+        let c2 = Consult { meta: m, messages: vec![msg("a", "member", Some("m1"), "chat", "x")] };
+        assert!(!summary_of(&dir, &c2, String::new()).awaiting);
     }
 
 }

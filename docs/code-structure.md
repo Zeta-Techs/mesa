@@ -331,7 +331,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/SplitPlanDialog.tsx # 拆分方案卡：按什么拆 / 共享文件 / 拦下与提醒 / 逐路可勾 /「让它改」（带上一版与意见整份重写）；批准 = task_create 每路（整仓、write_tree）→ split_plan_close approved →
                              # 不等的用项目默认 Agent 依次 prepareGoalRun 开工（等终端页收下一个再交下一个），写了「等」的只记下；只在无流程科研 / 工作项目可开
   components/ProjectMailRow.tsx # 工作台项目分组下「留话 N 条」（Agent 之间的与你在任务面板留的）：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；来回到上限停送的给「接着送」（mail_release）；7 天内没有就不画
-  components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 实际导航落点 / 外开）+ 缩进任务行（按容器宽度调整名称 / 状态 / 时间，点开任务面板，花费在详情），项目支持收起 + 组末插槽
+  components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 实际导航落点 / 外开）+ 缩进任务行（按容器宽度调整名称 / 状态 / 时间，点开任务面板，花费在详情），项目支持收起 + 组末插槽；进行中的研讨单列一行（consults / onOpenConsult，WorkbenchPage 按 consult_list + consult-event 读、workbenchLiveConsults 过滤）
                              # 2026-11-04：项目头「项目助手」按钮、头下卡点一行（project-blockers.ts，组内读 mesa_errors_read）
   components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时具名时间项（同分钟聚合展开）+ 一行一个任务（时间 / 名称与项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只导航回队列
   components/WorkbenchTaskPanel.tsx # 工作台任务面板（右侧抽屉，借 SettingsDrawerShell）：按目标 / 步骤 / 分支 / 定时 / 对话显示详情与「过程」，动作固定在标题下、只带路不另起流程
@@ -1125,7 +1125,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   已完成后上游又保存过（WorkspaceDto.staleUpstream）写橙字「待跟进」，只提醒不阻断；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单（镜像 agent_specs.rs TIER1_AGENTS，测试逐字比对）、modelFamily / producerFamilies（按模型族判「另一家」）、reviewerOptions（连接 × 模型全部可选项，标同模型族与维护级）、pickCrossReviewer（默认挑哪一个）、复核标签键与首条指令（tests/cross-review.test.ts）
-  consult.ts                 # 研讨纯逻辑（2026-11-11）：DTO 类型、INSPECT_AGENTS（镜像 consult.rs）、memberOptions（能看项目按 CLI 外壳定）、pickDefaultMembers（先保证模型族不同）、memberNames（按模型族起名，同族加短模型名）、contrastRows / round1Revealed / toProjectRel / estimateCost / adoptionReason（提升到研究档案的依据）（tests/consult.test.ts）
+  consult.ts                 # 研讨纯逻辑（2026-11-11）：DTO 类型、INSPECT_AGENTS（镜像 consult.rs）、memberOptions（能看项目按 CLI 外壳定）、pickDefaultMembers（先保证模型族不同）、memberNames（按模型族起名，同族加短模型名）、contrastRows / round1Revealed / toProjectRel / estimateCost / adoptionReason（提升到研究档案的依据）/ workbenchLiveConsults + liveConsultState（工作台露出）（tests/consult.test.ts）
   research-profile.ts        # 研究档案纯逻辑（有效条目按分类分组、生效状态、分类例句、文献总表筛选，tests/research-profile.test.ts）
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法、checkConsultSeed（待你判断一条带进研讨的问题与材料）；不汇总打分，tests/research-checks.test.ts）

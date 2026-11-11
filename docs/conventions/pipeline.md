@@ -1823,6 +1823,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **入口**：对话页栏头「研讨」、对话回放 ⋯「请几家研讨这个问题」（最后一句人话作问题，整段对话经 `consult_attach_session` 存成 `.ccode/consults/attachments/` 里的材料；只给属于已添加项目的对话）、项目助手动作 `[[研讨|问题]]`、评审页「请几家研讨」、步骤卡「继续讨论 · TASK.md · 请几家研讨」同一行（2026-11-11 用户拍板推翻「不上步骤卡」：要人拍板的步骤正是研讨最有用的地方，只占一个文字链接、不抢右缘主动作；只在 role 为 you / both 的步骤出，role=ai 不出）。
   **原地打开**（2026-11-11 用户在 Mesa Dev 里点出来的）：发起弹层全局只有一个 `ConsultHost`（挂 App，消费 `consultReq`），`openConsult` 不改页面；弹层 `layer="overlay"` 压得住评审覆盖层；人工请求弹窗不关（看完研讨回卡片作答）；
   开始后不跳页，提示「研讨开始了，N 家在答」+「去看看」→ `showConsult` 才切对话管理并选中（一次性 `consultSelectReq`）。对话管理栏头「研讨」也走这一个弹层。
+  **工作台露出**：有人在答（`answering`）或停在「等你发话」（`awaiting`）、24 小时内动过的研讨，挂在工作台「正在进行」它所属项目下单列一行（`consult.ts workbenchLiveConsults`），也算项目有活；点了去对话管理选中。家仍在对话管理；随工作台现有重读时机与 `consult-event` 读，不轮询、不进收件箱。
   步骤卡与评审页预填材料只留已存在的文件（`consult_existing_files`）；步骤开着工作副本时读工作副本。研讨在对话页列表单独成组，不混进会话行。
 - **图片材料**（2026-11-11 二期）：粘贴 / 拖进来的图先走 `save_clipboard_image`，`consult_create` 校验是 Mesa 粘贴目录里的图后拷进项目 `.ccode/consults/attachments/`（粘贴目录只留 7 天）；项目里的图片文件按扩展名记 kind=image。
   只给 `sees_images` 的成员（外壳能看项目 + 能力库认得模型能看图；官方账号没写模型按能看），Codex 走 `--image`、Claude Code 点名路径自己 Read（工作副本发起时把 attachments 目录 `--add-dir`）；其余成员提示词里说有几张图看不到、别猜，摘录里图片写「看不到」不读字节。

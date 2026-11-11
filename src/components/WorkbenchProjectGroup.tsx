@@ -10,7 +10,9 @@ import {
   MessageSquare,
   SquareArrowOutUpRight,
   Target,
+  Users,
 } from "lucide-react";
+import { liveConsultState, type ConsultListItem } from "../consult";
 import RunCaret from "./RunCaret";
 import MesaBuddyIcon from "./MesaBuddyIcon";
 import { ghostActionClass } from "./PageFrame";
@@ -90,6 +92,8 @@ export default function WorkbenchProjectGroup({
   footerExpanded = false,
   runs,
   onAskAssistant,
+  consults = [],
+  onOpenConsult,
 }: {
   card: ProjectCard;
   /** 右侧任务面板正开着的那一行 */
@@ -117,6 +121,9 @@ export default function WorkbenchProjectGroup({
   runs: readonly RunFailureInput[];
   /** 打开项目助手；带问题时直接问（卡点里 Mesa 出错那条）。只有登记过的项目有 */
   onAskAssistant: ((question?: string) => void) | null;
+  /** 这个项目里进行中的研讨（有人在答 / 停下等你发话）：单列一行，点了去对话管理打开（2026-11-11，家仍在对话管理） */
+  consults?: readonly ConsultListItem[];
+  onOpenConsult?: (c: ConsultListItem) => void;
 }) {
   const contentsId = useId();
   const [collapsed, setCollapsed] = useState(false);
@@ -330,6 +337,36 @@ export default function WorkbenchProjectGroup({
                 </button>
               </li>
             )}
+          </ul>
+        )}
+        {!collapsed && consults.length > 0 && (
+          <ul className="pb-1.5" aria-label="进行中的研讨">
+            {consults.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  className="ccode-workbench-task w-full text-left hover:bg-hover"
+                  title="去对话管理打开这场研讨"
+                  onClick={() => onOpenConsult?.(c)}
+                >
+                  <span className="ccode-workbench-task-dot flex items-center justify-center text-l3" title="研讨">
+                    <Users size={13} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
+                  <span className="ccode-workbench-task-main min-w-0">
+                    <span className="ccode-workbench-task-name min-w-0 text-sm text-l1" title={c.title}>
+                      {c.title}
+                    </span>
+                    <span className={`ccode-workbench-task-state min-w-0 text-xs ${c.busy ? "text-l3" : "text-warn-text"}`}>
+                      研讨 · {liveConsultState(c)}
+                    </span>
+                    {c.busy && <RunCaret state="working" decorative className="shrink-0 text-micro" />}
+                  </span>
+                  <span className="ccode-workbench-task-time min-w-0 text-micro tabular-nums text-l3" title={absTime(c.updatedAt)}>
+                    {shortWhen(c.updatedAt)}
+                  </span>
+                </button>
+              </li>
+            ))}
           </ul>
         )}
         {!collapsed && <ProjectMailRow projectPath={card.path} />}

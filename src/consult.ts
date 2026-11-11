@@ -110,6 +110,10 @@ export interface ConsultListItem {
   updatedAt: string;
   messageCount: number;
   busy: boolean;
+  /** 此刻在答的成员数 */
+  answering?: number;
+  /** 停在「先停一下，等你发话」 */
+  awaiting?: boolean;
 }
 
 export interface ConsultEvent {
@@ -373,4 +377,22 @@ export function adoptionReason(
     `参与：${answered.map(who).join("、") || "（无）"}`,
     `记录：.ccode/consults/${record.meta.id}.jsonl`,
   ].join("；");
+}
+
+/** 工作台「正在进行」里露出的研讨（2026-11-11：家在对话管理，进行中的在工作台露一行）：有人在答，或停下等你发话；
+ *  答完、停掉、或 24 小时没动静的不列 */
+export const LIVE_CONSULT_STALE_MS = 24 * 3600 * 1000;
+
+export function workbenchLiveConsults<T extends Pick<ConsultListItem, "busy" | "awaiting" | "updatedAt">>(items: readonly T[], nowMs: number): T[] {
+  return items.filter((c) => {
+    const at = Date.parse(c.updatedAt);
+    if (!Number.isFinite(at) || nowMs - at > LIVE_CONSULT_STALE_MS) return false;
+    return c.busy || !!c.awaiting;
+  });
+}
+
+export function liveConsultState(c: Pick<ConsultListItem, "busy" | "answering" | "awaiting">): string {
+  if (c.answering && c.answering > 0) return `${c.answering} 家在答`;
+  if (c.busy) return "在答";
+  return c.awaiting ? "等你发话" : "";
 }

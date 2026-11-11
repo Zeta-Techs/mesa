@@ -123,6 +123,7 @@ import { isScratchCwd } from "../quick-chat";
 import { PROJECT_ORDER_KEY, PROJECT_PINS_KEY, parsePins } from "../project-tree";
 import WorkbenchSchedules from "../components/WorkbenchSchedules";
 import { fmtCost } from "../stats-insight";
+import { workbenchLiveConsults, type ConsultListItem } from "../consult";
 
 /** 不参与工作台「需要你」判定的自动登记任务类（见 nowSeeds 里的过滤注释） */
 const WORKBENCH_AUTO_TASK_KINDS = new Set(["pipeline_step", "coding_lane", "watch"]);
@@ -171,6 +172,7 @@ function SectionHeading({
 
 function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setPage = useAppStore((s) => s.setPage);
+  const showConsult = useAppStore((s) => s.showConsult);
   const contextLabel = useAppStore((s) => s.contextLabel);
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
   const unreadChats = useAppStore((s) => s.unreadChats);
@@ -376,6 +378,40 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     // projects 由 projectsSig 代表：轻量重拉换了数组引用但内容没变时不重跑 git
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, projectsSig, runDoneSig, reloadToken, recordRead]);
+
+  // 进行中的研讨（2026-11-11：家在对话管理，有人在答 / 停下等你发话的在这里露一行）。随项目集合、运行跑完、
+  // 回到本页、重试，以及后端的研讨事件（开始 / 答完一位 / 一段结束）重读；不另开轮询，不进收件箱
+  const [liveConsults, setLiveConsults] = useState<ConsultListItem[]>([]);
+  useEffect(() => {
+    if (!visible || projects.length === 0) {
+      setLiveConsults([]);
+      return;
+    }
+    let stale = false;
+    const roots = projects.map((p) => p.path);
+    const load = () => {
+      void invoke<ConsultListItem[]>("consult_list", { projectRoots: roots })
+        .then((list) => {
+          if (!stale) setLiveConsults(workbenchLiveConsults(list, Date.now()));
+        })
+        .catch(() => {});
+    };
+    load();
+    let t: number | null = null;
+    const un = listen<{ kind: string }>("consult-event", (e) => {
+      if (e.payload.kind === "step" || e.payload.kind === "text") return;
+      if (t) window.clearTimeout(t);
+      t = window.setTimeout(load, 300);
+    });
+    return () => {
+      stale = true;
+      if (t) window.clearTimeout(t);
+      void un.then((f) => f());
+    };
+    // projects 由 projectsSig 代表
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, projectsSig, runDoneSig, reloadToken]);
+  const consultsFor = (path: string) => liveConsults.filter((c) => samePath(c.projectRoot, path, IS_WINDOWS));
 
   const nowSeeds = useMemo((): WorkbenchNowSeed[] => {
     // 「活着」只算真有交互活的运行：白名单（登录/定时巡检/无头不算）之上，
@@ -1095,7 +1131,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const now = Date.now();
     const active = cards.filter((card) => {
       const at = lastActiveOf(card.path);
-      return cardIsActive(card, at ? Date.parse(at) : null, now);
+      // 有进行中的研讨也算有活：挂在它所属项目下面露出来
+      return cardIsActive(card, at ? Date.parse(at) : null, now) || liveConsults.some((c) => samePath(c.projectRoot, card.path, IS_WINDOWS));
     });
     const rank = (path: string) => {
       const i = nowRows.findIndex((row) => samePath(row.path, path, IS_WINDOWS));
@@ -1107,7 +1144,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     if (out.length === 0 && hero) out.push(hero.path);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards, nowRows, hero, lastActiveByPath])
+  }, [cards, nowRows, hero, lastActiveByPath, liveConsults])
   const [cardFilter, setCardFilter] = useState<CardFilter>("active");
   // 顺序跟侧栏（置顶 > 拖动排序 > 其余按最近活动），和左边项目树对得上（2026-10-27）
   function orderLikeSidebarSafe<T extends ProjectCard>(list: readonly T[]): T[] {
@@ -1792,6 +1829,8 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                         setOpenTask({ path: card.path, taskId: task.id });
                       }}
                       runs={allRuns}
+                      consults={consultsFor(card.path)}
+                      onOpenConsult={(c) => showConsult(c.projectRoot, c.id)}
                       onAskAssistant={card.registered ? (question) => openAssistant(card.path, question) : null}
                       onOpenProject={
                         card.registered
