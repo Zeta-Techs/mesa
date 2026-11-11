@@ -52,6 +52,10 @@ test("留话：工作台摘要与每条状态字", async () => {
   assert.equal(mailStatusText(mails[1]), "对方已结束，送不到");
   assert.equal(mailStatusText(mails[2]), "已送到");
   assert.equal(mailSummary([mails[2]]), "留话 1 条");
+  // 两段工作来回到上限：压住的那条写清等你看一眼，摘要点明
+  const held = { status: "pending" as const, toOpen: true, held: true };
+  assert.equal(mailStatusText(held), "它们已经来回了 4 次，等你看一眼");
+  assert.equal(mailSummary([held, mails[2]]), "留话 2 条，有两段工作来回了 4 次，停下等你看一眼");
   assert.ok(peekSectionLines(1, false).join("\n").includes('tell --to 名字 "要说的话"'));
 });
 

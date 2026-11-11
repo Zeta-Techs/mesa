@@ -952,6 +952,7 @@ pub fn run() {
             project_mail::mail_take,
             project_mail::mail_requeue,
             project_mail::mail_withdraw,
+            project_mail::mail_release,
             project_mail::mail_send,
             peek::peek_changes,
             split_plan::split_plan_read,

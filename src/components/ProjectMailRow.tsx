@@ -40,6 +40,23 @@ export default function ProjectMailRow({ projectPath }: { projectPath: string })
                 </span>
                 {m.text.length > 80 ? `${m.text.slice(0, 80)}…` : m.text}
               </span>
+              {m.status === "pending" && m.held && (
+                <button
+                  type="button"
+                  className={inlineActionClass}
+                  title="看过它们的往来、觉得该让它们接着聊：从现在起重新数，下一条在对方空闲时送进去"
+                  onClick={async () => {
+                    try {
+                      await invoke("mail_release", { a: m.fromRun, b: m.toRun });
+                      await load();
+                    } catch (reason) {
+                      toast(String(reason), "error");
+                    }
+                  }}
+                >
+                  <span className="text-xs">接着送</span>
+                </button>
+              )}
               {m.status === "pending" && (
                 <button
                   type="button"

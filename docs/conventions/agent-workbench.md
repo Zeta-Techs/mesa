@@ -540,7 +540,7 @@ Headless 支持取消但不承诺会话恢复；定时任务行显示「停止�
 - **跨项目不直连**：只经「提升到研究档案」或人转发。
 - **项目内传话**（二期，已落地）：自动送达，全部留记录、工作台可见、可撤回。`mesa_helper tell --to 名 "…"` 写**发话方自己工作目录**的
   `.ccode/outbox.jsonl`（沙箱只让写工作目录）；Mesa 汇总时只认 from 的工作目录确实在此、to 是同项目 Run；送达只在收话方 Agent 开着、不是 shell、
-  不在干活 / 等确认、输入框没有草稿时经它自己的 sendMessage（TerminalPage），送不出退回；状态记配置目录 `mail-state.json`；一条最多 2000 字、7 天内。**人也能留话**：工作台任务面板「给它留话」由 Mesa 记进 `mail-state.json` 的 `from_you`，同一条送达 / 撤回链路；
+  不在干活 / 等确认、输入框没有草稿时经它自己的 sendMessage（TerminalPage），送不出退回；状态记配置目录 `mail-state.json`；一条最多 2000 字、7 天内。**来回上限**（2026-11-11，借 ClawChat 接力上限）：同一对工作之间 AI 发给 AI 的，从你最后一次插手（给其中一方留话、或点「接着送」= `mail_release`，记 `released`）之后送满 `RELAY_CAP`=4 条，这一对还没送的标 `held` 不送，工作台写明等你看一眼；不自动放行。**人也能留话**：工作台任务面板「给它留话」由 Mesa 记进 `mail-state.json` 的 `from_you`，同一条送达 / 撤回链路；
   任务面板同时列这段工作改了哪些文件（`peek_changes`）。**拆分方案**（三期，2026-11-03 同日去掉协调对话）：项目分组下「拆成几路做…」写一句，
   带项目概况（`split_plan_context`）无头调用一次 AI（项目默认连接，不支持无头时退回 AI 功能连接），方案写项目根 `.ccode/split-plan.md`（格式与检查见 `split-plan.ts`，读写与留底 `split_plan.rs`），
   方案卡可「让它改」整份重写；AI 拆不开只回「不拆：理由」、不存。

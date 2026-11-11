@@ -1648,6 +1648,8 @@ export interface ProjectMailDto {
   deliveredAt: string | null;
   /** 收话方还开着 */
   toOpen: boolean;
+  /** 两段工作你没插手时已来回到上限（project_mail.rs RELAY_CAP）：先不送，等你点「接着送」 */
+  held?: boolean;
 }
 
 /** 导入任务包预览（preview_task_pack_import）：人看过、确认才装 */

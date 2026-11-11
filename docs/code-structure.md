@@ -330,7 +330,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 2026-11-04 批准过的几批按 task_list 写进度、都收场时弹一次提示留汇总行（去验收 / 知道了，split-batch.ts）
   components/SplitPlanDialog.tsx # 拆分方案卡：按什么拆 / 共享文件 / 拦下与提醒 / 逐路可勾 /「让它改」（带上一版与意见整份重写）；批准 = task_create 每路（整仓、write_tree）→ split_plan_close approved →
                              # 不等的用项目默认 Agent 依次 prepareGoalRun 开工（等终端页收下一个再交下一个），写了「等」的只记下；只在无流程科研 / 工作项目可开
-  components/ProjectMailRow.tsx # 工作台项目分组下「留话 N 条」（Agent 之间的与你在任务面板留的）：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；7 天内没有就不画
+  components/ProjectMailRow.tsx # 工作台项目分组下「留话 N 条」（Agent 之间的与你在任务面板留的）：20 秒拉一次 mail_list，展开逐条（谁 → 谁 · 状态：原文），没送的能撤回；来回到上限停送的给「接着送」（mail_release）；7 天内没有就不画
   components/WorkbenchProjectGroup.tsx # 工作台项目分组（2026-10-27 由卡片改为分组列表）：项目头（名称 / 方式 / 几个数 / 科研进度条 / 最近活动 / 实际导航落点 / 外开）+ 缩进任务行（按容器宽度调整名称 / 状态 / 时间，点开任务面板，花费在详情），项目支持收起 + 组末插槽
                              # 2026-11-04：项目头「项目助手」按钮、头下卡点一行（project-blockers.ts，组内读 mesa_errors_read）
   components/WorkbenchSchedules.tsx # 工作台「定时任务」总览：今后 24 小时具名时间项（同分钟聚合展开）+ 一行一个任务（时间 / 名称与项目 / 频率 / 状态）+ 行内停止 / 重跑 / 重新打开 / 现在跑；在拍板队列里的只导航回队列
@@ -648,7 +648,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   mesa-error-capture.ts      # Mesa 出错记录的安装（main.tsx 启动时一次）：tauri-core-shim 的失败钩子按项目记 mesa_error_record，3 秒内的红色提示补到同一条；归不到项目的不记；同一处 10 分钟内只送一次
   tauri-core-shim.ts         # `@tauri-apps/api/core` 的薄包装（vite.config.ts 精确别名指到这里）：invoke 失败先通知出错记录再原样抛出，其余导出原样转出；rawInvoke 不经钩子。
                              # Tauri 注入的 __TAURI_INTERNALS__.invoke 不可改写，只能在导入层包；node / esbuild 测试不走别名
-  project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
+  project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行；held 写「来回了 4 次，等你看一眼」，MAIL_RELAY_CAP 镜像后端）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
   pack-add.ts                # 我的任务加进项目的唯一出处 addPackToProject（编辑器 / 模板库 / 新项目选择层 / 草稿试跑共用）：packStepsForProject
                              # （与 task_packs.rs steps_for_project 同口径）+ adaptPack（按项目研究工具设置 withResearchTools，项目设定套工具行）（tests/pack-add.test.ts）
   peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekContextLine（项目说明里那一句）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
@@ -1977,7 +1977,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # assistant_log_append 记本地现答的寒暄；assistant_mark_dispatched 把派活记到那一轮；assistant_guide_section 说明书一节原文；回答带 costUsd；assistant_review_notes 只读工作副本 .ccode/review-notes.md（16KB、脱敏）。没有改项目文件、派活、传话的口子。
                              # assistant_guide_search：说明书编译期读进来（include_str docs/guide/user-guide.md），按段切、汉字两两字组 + idf 打分，
                              # GUIDE_TOPICS 把常问的「怎么用」指到对应小节（锚点有测试守着，改说明书标题记得同步）
-  project_mail.rs            # 项目内传话（2026-11-03 二期）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run
+  project_mail.rs            # 项目内传话（2026-11-03 二期；2026-11-11 来回上限 RELAY_CAP + mark_held + mail_release）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run
                              # 的发件箱（from 须是工作目录在此的 Run、to 须同项目、7 天内），送达 / 撤回记配置目录 mail-state.json；mail_list / mail_take（取走并记已送）/
                              # mail_requeue / mail_withdraw / mail_send（人在任务面板留话，记 mail-state.json from_you，from = you）；delivery_text 是送进对话的那段话（你的在前）
   peek.rs                    # 看一眼（2026-11-03 项目内协作一期，design-project-coordination.md）：mesa_helper peek agents / runs / changes / mail，tell（二期，写发件箱），

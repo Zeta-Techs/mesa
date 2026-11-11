@@ -24,6 +24,8 @@ const KEEP_DAYS: i64 = 7;
 const OUTBOX_CAP: u64 = 512 * 1024;
 /// 人在工作台留的话：from 写这个
 pub const FROM_YOU: &str = "you";
+/// 两段工作之间、你没插手时最多连续自动送几条（2026-11-11 借自 ClawChat 接力上限）：到了就停送，等你在工作台点「接着送」
+pub const RELAY_CAP: usize = 4;
 
 /// 发件箱里的一行（helper 写）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +46,9 @@ struct MailState {
     /// 人在工作台留的话（from = FROM_YOU，project 记在 to 那个 Run 上）
     #[serde(default)]
     from_you: Vec<OutboxLine>,
+    /// 你点过「接着送」的那一对工作（键 = 两个 Run id 排序后用 | 连）→ 时间：从这之后重新数
+    #[serde(default)]
+    released: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -62,6 +67,48 @@ pub struct MailDto {
     pub delivered_at: Option<String>,
     /// 收话方还开着（结束了的送不到，留在列表里给人看）
     pub to_open: bool,
+    /// 两段工作你没插手时已经来回了 RELAY_CAP 条：这条先不送，等你点「接着送」
+    #[serde(default)]
+    pub held: bool,
+}
+
+pub(crate) fn pair_key(a: &str, b: &str) -> String {
+    if a <= b {
+        format!("{a}|{b}")
+    } else {
+        format!("{b}|{a}")
+    }
+}
+
+/// 标出要压住的留话：同一对工作之间（AI 发给 AI 的），从「你最后一次插手」（给其中一方留话、或点了接着送）之后
+/// 已经送了 RELAY_CAP 条，那这一对还没送的就先不送
+pub(crate) fn mark_held(mails: &mut [MailDto], released: &BTreeMap<String, String>) {
+    let mut pairs: Vec<String> = Vec::new();
+    for m in mails.iter().filter(|m| m.from_run != FROM_YOU) {
+        let k = pair_key(&m.from_run, &m.to_run);
+        if !pairs.contains(&k) {
+            pairs.push(k);
+        }
+    }
+    for key in pairs {
+        let (a, b) = key.split_once('|').unwrap_or((key.as_str(), ""));
+        let mut since = released.get(&key).cloned().unwrap_or_default();
+        for m in mails.iter().filter(|m| m.from_run == FROM_YOU && (m.to_run == a || m.to_run == b)) {
+            if m.at > since {
+                since = m.at.clone();
+            }
+        }
+        let in_pair = |m: &MailDto| m.from_run != FROM_YOU && pair_key(&m.from_run, &m.to_run) == key;
+        let sent = mails
+            .iter()
+            .filter(|m| in_pair(m) && m.delivered_at.as_deref().is_some_and(|d| d > since.as_str()))
+            .count();
+        if sent >= RELAY_CAP {
+            for m in mails.iter_mut().filter(|m| in_pair(m) && m.status == "pending") {
+                m.held = true;
+            }
+        }
+    }
 }
 
 fn state_path() -> Result<PathBuf, String> {
@@ -83,6 +130,7 @@ fn prune(state: &mut MailState) {
     state.delivered.retain(|_, at| keep(at));
     state.withdrawn.retain(|_, at| keep(at));
     state.from_you.retain(|l| keep(&l.at));
+    state.released.retain(|_, at| keep(at));
 }
 
 fn write_state(state: &MailState) -> Result<(), String> {
@@ -157,6 +205,7 @@ fn collect_with(root: &Path, runs: &[RunDto], state: &MailState, now: chrono::Da
                 id: line.id,
                 at: line.at,
                 text: crate::sessions::redact_sensitive_text(&line.text),
+                held: false,
             });
         }
     }
@@ -177,8 +226,10 @@ fn collect_with(root: &Path, runs: &[RunDto], state: &MailState, now: chrono::Da
             id: line.id.clone(),
             at: line.at.clone(),
             text: line.text.clone(),
+            held: false,
         });
     }
+    mark_held(&mut out, &state.released);
     out.sort_by(|a, b| b.at.cmp(&a.at));
     out
 }
@@ -278,7 +329,7 @@ pub(crate) fn take_at(run_id: &str) -> Result<Vec<MailDto>, String> {
     let mut state = read_state();
     let taken: Vec<MailDto> = collect_with(&root, &runs, &state, chrono::Utc::now())
         .into_iter()
-        .filter(|m| m.to_run == run_id && m.status == "pending")
+        .filter(|m| m.to_run == run_id && m.status == "pending" && !m.held)
         .collect();
     if taken.is_empty() {
         return Ok(taken);
@@ -349,6 +400,19 @@ pub async fn mail_send(to_run: String, text: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 两段工作来回到上限停送后，人在工作台点「接着送」：从现在起重新数
+#[tauri::command]
+pub async fn mail_release(a: String, b: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lock = crate::storage::config_lock("project-mail")?;
+        let mut state = read_state();
+        state.released.insert(pair_key(&a, &b), crate::sessions::now_iso());
+        write_state(&state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 人撤回一条还没送的留话
 #[tauri::command]
 pub async fn mail_withdraw(id: String) -> Result<(), String> {
@@ -368,6 +432,50 @@ pub async fn mail_withdraw(id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mail(id: &str, from: &str, to: &str, at: &str, delivered: Option<&str>) -> MailDto {
+        MailDto {
+            id: id.into(),
+            at: at.into(),
+            from_run: from.into(),
+            from_label: from.into(),
+            from_agent: String::new(),
+            to_run: to.into(),
+            to_label: to.into(),
+            text: "x".into(),
+            status: if delivered.is_some() { "delivered".into() } else { "pending".into() },
+            delivered_at: delivered.map(String::from),
+            to_open: true,
+            held: false,
+        }
+    }
+
+    #[test]
+    fn relay_cap_holds_pair_until_human_steps_in() {
+        let mut ms: Vec<MailDto> = (0..RELAY_CAP)
+            .map(|i| {
+                let (f, t) = if i % 2 == 0 { ("a", "b") } else { ("b", "a") };
+                mail(&format!("d{i}"), f, t, &format!("2026-11-11T10:0{i}:00Z"), Some(&format!("2026-11-11T10:0{i}:30Z")))
+            })
+            .collect();
+        ms.push(mail("p", "a", "b", "2026-11-11T10:09:00Z", None));
+        ms.push(mail("other", "c", "b", "2026-11-11T10:09:00Z", None));
+        let mut held = ms.clone();
+        mark_held(&mut held, &BTreeMap::new());
+        assert!(held.iter().find(|m| m.id == "p").unwrap().held, "a↔b 已来回 4 条，下一条压住");
+        assert!(!held.iter().find(|m| m.id == "other").unwrap().held, "别的一对不受影响");
+        // 点了接着送：从那之后重新数
+        let mut rel = BTreeMap::new();
+        rel.insert(pair_key("b", "a"), "2026-11-11T10:05:00Z".to_string());
+        let mut after = ms.clone();
+        mark_held(&mut after, &rel);
+        assert!(!after.iter().find(|m| m.id == "p").unwrap().held);
+        // 你给其中一方留过话也算插手
+        let mut with_you = ms.clone();
+        with_you.push(mail("y", FROM_YOU, "a", "2026-11-11T10:08:00Z", Some("2026-11-11T10:08:10Z")));
+        mark_held(&mut with_you, &BTreeMap::new());
+        assert!(!with_you.iter().find(|m| m.id == "p").unwrap().held);
+    }
 
     fn run(id: &str, iso: &str, closed: bool) -> RunDto {
         RunDto {
