@@ -903,12 +903,18 @@ export default function ProjectTree({
       })),
     [rows, worktreesOf],
   );
-  // 看着研讨时（研讨页）以研讨所在的项目为「现在在哪」：它的文件夹默认展开，研讨行找得到
-  const currentCwd = page === "consult" && consultOpen ? consultOpen.projectRoot : activeRun?.cwd;
   const currentKey = useMemo(
-    () => currentFolderKey(currentCwd, folders, projectPaths, IS_WINDOWS),
-    [currentCwd, folders, projectPaths],
+    () => currentFolderKey(activeRun?.cwd, folders, projectPaths, IS_WINDOWS),
+    [activeRun?.cwd, folders, projectPaths],
   );
+  // 看着研讨时（研讨页）研讨所在的项目也默认展开，研讨行找得到；正聊着的那个照旧展开，不因切到研讨收起（否则侧栏整列跳一下）
+  const consultRoot = page === "consult" && consultOpen ? consultOpen.projectRoot : null;
+  const consultKey = useMemo(
+    () => (consultRoot ? currentFolderKey(consultRoot, folders, projectPaths, IS_WINDOWS) : null),
+    [consultRoot, folders, projectPaths],
+  );
+  const isFolderOpen = (key: string) =>
+    folderOpen(key, chatOpenPrefs, currentKey) || (chatOpenPrefs[key] === undefined && key === consultKey);
   // 弹出列表里正聊着的那个项目整块提到最上面（2026-10-25 用户：展开的侧栏点击不动，只改弹出列表）；
   // 随手聊里的对话不提（随手聊本来就在项目前面）
   const currentRow = useMemo(
@@ -1128,12 +1134,12 @@ export default function ProjectTree({
     const open: { key: string; count: number }[] = [];
     // 项目内置顶的全列，不进限额，只当固定高度扣掉（每段一行，块下多垫 6px）
     let projectPinnedCount = 0;
-    if (folderOpen(SCRATCH_FOLDER_KEY, chatOpenPrefs, currentKey)) {
+    if (isFolderOpen(SCRATCH_FOLDER_KEY)) {
       open.push({ key: SCRATCH_FOLDER_KEY, count: chatRowsOf.get(SCRATCH_FOLDER_KEY)?.length ?? 0 });
     }
     for (const r of sections) {
       const k = pathKey(r.repoPath, IS_WINDOWS);
-      if (folderOpen(k, chatOpenPrefs, currentKey)) {
+      if (isFolderOpen(k)) {
         open.push({ key: k, count: chatRowsOf.get(k)?.length ?? 0 });
         projectPinnedCount += projectPinnedRowsOf.get(k)?.length ?? 0;
       }
@@ -1158,7 +1164,7 @@ export default function ProjectTree({
       slots,
     });
     return new Map(open.map((o, i) => [o.key, shown[i]]));
-  }, [grouped, chatOpenPrefs, currentKey, chatRowsOf, projectPinnedRowsOf, listHeight, chatExtra, pinnedList.length, collapsedSections, openByFolder]);
+  }, [grouped, chatOpenPrefs, currentKey, consultKey, chatRowsOf, projectPinnedRowsOf, listHeight, chatExtra, pinnedList.length, collapsedSections, openByFolder]);
 
   /** 一段对话（2026-10-23 照 Claude 客户端侧栏）：与所属文件夹的名字左对齐、不再缩进，只写主题（去掉「MMDD|类型|」，
    *  完整标题放悬停），状态点放行尾；右键改名 / 归档 / 去对话页 */
@@ -2068,7 +2074,7 @@ export default function ProjectTree({
     const selected =
       selectedRoot != null && samePath(selectedRoot, row.repoPath, IS_WINDOWS);
     const fkey = pathKey(row.repoPath, IS_WINDOWS);
-    const open = folderOpen(fkey, chatOpenPrefs, currentKey);
+    const open = isFolderOpen(fkey);
     // 收着、里面有跑完没看的：课题名亮到 l1（展开时各段自己亮）
     const unreadInside = !open && folderHasUnread(fkey, chatsByRoot.get(fkey) ?? []);
     // 收着时节头行尾报状态（这个课题里最要紧的那个：等确认 > 做完没看 > 在干活 > 闲着）
@@ -2084,7 +2090,7 @@ export default function ProjectTree({
       inSection && !isSource ? tabDragShift(inSection.slots, inSection.from, inSection.target, index) : 0;
     // 节与节之间：收着的课题一行挨一行（只隔 1px，2026-10-27 用户：收起的文件夹太高）；
     // 自己或上一节展开着才留 pt-3，节头读作分节标题，不和上一节的对话挤成一串
-    const prevOpen = index > 0 && folderOpen(pathKey(paths[index - 1], IS_WINDOWS), chatOpenPrefs, currentKey);
+    const prevOpen = index > 0 && isFolderOpen(pathKey(paths[index - 1], IS_WINDOWS));
     const gap = index === 0 ? "" : open || prevOpen ? "pt-3" : "pt-[3px]";
     return (
       <div
@@ -2175,7 +2181,7 @@ export default function ProjectTree({
 
   /** 随手聊：不挂在项目下的对话，排在最上面。没有项目页，点名字也只开合 */
   function renderScratch() {
-    const open = folderOpen(SCRATCH_FOLDER_KEY, chatOpenPrefs, currentKey);
+    const open = isFolderOpen(SCRATCH_FOLDER_KEY);
     const unreadInside = !open && folderHasUnread(SCRATCH_FOLDER_KEY, scratchList);
     const dot = strongestCaret([scratchDot(terminalRunInputs, IS_WINDOWS), unreadInside ? "unread" : null]);
     const toggle = () => toggleFolder(SCRATCH_FOLDER_KEY, open);
@@ -2704,7 +2710,7 @@ export default function ProjectTree({
               // 同点课题行：进项目页并展开它的对话
               const fkey = pathKey(p.path, IS_WINDOWS);
               onSelect(p.path);
-              if (!folderOpen(fkey, chatOpenPrefs, currentKey)) toggleFolder(fkey, false);
+              if (!isFolderOpen(fkey)) toggleFolder(fkey, false);
             }}
           />
         );

@@ -191,11 +191,15 @@ export default function ConsultView({
   id,
   projectName,
   onDeleted,
+  inChatPane = false,
 }: {
   projectRoot: string;
   id: string;
   projectName?: string | null;
   onDeleted: () => void;
+  /** 开在聊天层那一格（研讨页）：头部照对话头的位置（外 px-2、行内 px-1.5），从对话切过来标题不左右跳；
+   *  不给 = 对话管理的回放区，照对话回放头 */
+  inChatPane?: boolean;
 }) {
   const { dto, error, live, reload, setDto } = useConsult(projectRoot, id);
   const [draft, setDraft] = useState("");
@@ -469,10 +473,10 @@ export default function ConsultView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 头部：标题行 + 成员行，与对话回放头同高同字 */}
-      <div className="px-3 pb-2">
-        <div className="flex h-9 min-w-0 items-center gap-2">
-          <Users size={14} strokeWidth={1.8} className="ml-1 shrink-0 text-l4" aria-hidden="true" />
+      {/* 头部：标题行 + 成员行，与对话回放头（对话管理）/ 对话头（研讨页）同高同字同位置 */}
+      <div className={inChatPane ? "px-2 pb-2" : "px-3 pb-2"}>
+        <div className={`flex h-9 min-w-0 items-center ${inChatPane ? "gap-1.5 pl-1.5" : "gap-2"}`}>
+          <Users size={14} strokeWidth={1.8} className={`shrink-0 text-l4 ${inChatPane ? "" : "ml-1"}`} aria-hidden="true" />
           {renaming !== null ? (
             <input
               autoFocus

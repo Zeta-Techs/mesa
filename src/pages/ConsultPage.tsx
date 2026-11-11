@@ -32,7 +32,7 @@ export default function ConsultPage({ visible }: { visible: boolean }) {
 
   if (!open) {
     return (
-      <div className="flex h-full items-center justify-center bg-canvas">
+      <div className="relative -mt-px flex h-full items-center justify-center bg-canvas">
         <EmptyState
           title="没有打开的研讨"
           detail="在侧栏项目的 ⋯ 里点「请几家研讨…」发起一场；进行中和最近几天的研讨挂在侧栏项目下面，更早的在对话管理里。"
@@ -50,8 +50,10 @@ export default function ConsultPage({ visible }: { visible: boolean }) {
     );
   }
   return (
-    <div className="flex h-full min-w-0 flex-col bg-canvas">
+    // 同对话页主区向上盖 1px（挡住顶栏透出的那条窗口黑缝）：两页来回切时内容不上下跳一下
+    <div className="relative -mt-px flex h-full min-w-0 flex-col bg-canvas">
       <ConsultView
+        inChatPane
         key={`${open.projectRoot}#${open.id}`}
         projectRoot={open.projectRoot}
         id={open.id}
