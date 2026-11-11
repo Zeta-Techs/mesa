@@ -6,7 +6,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { researchToolsFromSettings, settingsWithResearchTools, withResearchTools, type ResearchTools } from "../research-tools";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IS_WINDOWS } from "../hotkeys";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -52,7 +52,8 @@ import { PIPELINE_TEMPLATES, RESOURCE_TYPE_LABELS, settingsForTemplateApply } fr
 import { missingTemplateSettings, templateUpdateNotice } from "../pipeline-upgrade";
 import { settingParts } from "../project-context";
 import { SETTING_NOTES, parseSettingLine } from "../setting-choices";
-import { loopHint, reworkWaiting, type ReworkDto } from "../step-loop";
+import { loopHint, reworkPath, reworkWaiting, type ReworkDto } from "../step-loop";
+import { stepKind } from "../step-kind";
 import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
 import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md-sections";
@@ -60,7 +61,6 @@ import { isTaskMdStub } from "../step-decisions";
 import { userWorkDirtyFiles } from "../git-status-groups";
 import { demoReadPaperResource } from "../step-flow";
 import { useSkillProvides } from "../skill-slots.ts";
-import MaterialsOverview from "./MaterialsOverview";
 import { stepAttention } from "../run-overview";
 import { stepperStatusText } from "../stepper-status";
 import { failureSnippet, latestRunFailure } from "../run-failure";
@@ -1905,18 +1905,6 @@ export default function ProjectGroup({
         </div>
       )}
 
-      {registered && cfg && (
-        // 资料全貌（2026-11-06 流程贯通 §7）：一行一份资料的现状、跟上游对齐没有、在途的回头；两步以上开过工才出
-        <MaterialsOverview
-          projectPath={projectPath}
-          steps={cfg.steps}
-          statuses={stepStatuses}
-          provides={skillProvides}
-          focusIndex={focusIndex}
-          onFocus={focusByIndex}
-          refreshKey={`${refreshToken ?? ""}|${stepStatuses.map((st) => `${st.key}:${st.ws?.mergedAt ?? ""}:${st.ws?.staleUpstream ?? ""}`).join(",")}`}
-        />
-      )}
       {registered && cfg && (() => {
         // 回路进行中「下一步去哪」：前面在补一轮先指它，否则指第一个待跟进的步骤（step-loop.ts loopHint）
         const hint = loopHint(
@@ -2251,6 +2239,63 @@ export default function ProjectGroup({
               步骤较多，可左右滚动查看后续步骤 →
             </p>
           )}
+          {/* 在途的补文献 / 退回修改走到哪（2026-11-11 用户拍板去掉资料全貌，只留它独有的这一件）：没有在途的不出 */}
+          {reworks
+            .map((r) => ({ r, path: reworkPath(r, stepSavedAt, (name) => stepStatuses[cfg.steps.findIndex((st) => st.name === name)]?.key) }))
+            .filter((x): x is { r: ReworkDto; path: NonNullable<ReturnType<typeof reworkPath>> } => !!x.path)
+            .slice(0, 2)
+            .map(({ r, path }) => {
+              const target = cfg.steps.find((st) => st.name === r.toStep);
+              const lit = !!target && ["search", "notes"].includes(stepKind(target, skillProvides));
+              return (
+                <p
+                  key={r.id}
+                  className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 border-t border-hairline pt-2 text-micro text-l3"
+                  title={`${r.fromStep} ${r.sentAt.slice(5, 10)} 发出：${r.topics.join("；")}`}
+                >
+                  <span>{lit ? "补文献" : "退回修改"}：</span>
+                  {path.steps.map((p, i) => {
+                    const index = cfg.steps.findIndex((st) => st.name === p.name);
+                    return (
+                      <Fragment key={p.name}>
+                        {i > 0 && (
+                          <span aria-hidden className="text-l4">
+                            →
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className={`hover:underline ${p.state === "now" ? "text-l1" : "text-l3"}`}
+                          onClick={() => index >= 0 && focusByIndex(index)}
+                          title="去这一步"
+                        >
+                          {p.name}
+                          <span className={p.state === "done" ? "text-ok-text" : p.state === "now" ? "text-l2" : "text-l4"}> {p.note}</span>
+                        </button>
+                      </Fragment>
+                    );
+                  })}
+                  {path.chainActive && (
+                    <button
+                      type="button"
+                      className="ml-auto text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                      title="只停自动往下：补料单和已经开的轮不动，后面的步骤到时自己点「跟进更新」"
+                      onClick={() => {
+                        void invoke("rework_chain_stop", { root: projectPath, reworkId: r.id })
+                          .then(() => {
+                            toast("这条链停了：补完的照旧在，后面的步骤到时自己点「跟进更新」。", "info");
+                            return invoke<ReworkDto[]>("rework_list", { root: projectPath });
+                          })
+                          .then((list) => setReworks(list))
+                          .catch((reason) => toast(`没停成：${String(reason)}`, "error"));
+                      }}
+                    >
+                      停掉这条链
+                    </button>
+                  )}
+                </p>
+              );
+            })}
         </div>
       )}
 

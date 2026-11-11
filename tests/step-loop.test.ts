@@ -487,3 +487,33 @@ test("reworkWaiting：发单的步骤在退回目标补完、链走完之前算�
   assert.equal(reworkWaiting([{ ...r, chainState: { started: [], stopped: true } }], "大纲", at), false, "链停了、目标已补完");
   assert.equal(reworkWaiting([{ ...r, chain: [] }], "大纲", at), false);
 });
+
+test("reworkPath：退回目标 → 链上各步 → 发起步，各走到哪；补完且链走完不列", async () => {
+  const { reworkPath } = await import("../src/step-loop.ts");
+  const saved: Record<string, string> = {};
+  const keys: Record<string, string> = { 检索: "active", 精读: "done", 大纲: "review" };
+  const at = (s: string) => saved[s] ?? null;
+  const key = (s: string) => keys[s];
+  const r = { fromStep: "大纲", toStep: "检索", sentAt: "2026-11-11T02:28:01Z", chain: ["精读"] };
+  const show = (p: ReturnType<typeof reworkPath>) => p?.steps.map((s) => `${s.name}:${s.note}`).join(" → ");
+  assert.equal(show(reworkPath(r, at, key)), "检索:在做 → 精读:之后跟进 → 大纲:之后点继续");
+  saved["检索"] = "2026-11-11T02:54:38Z";
+  keys["检索"] = "done";
+  assert.equal(show(reworkPath(r, at, key)), "检索:✓ → 精读:轮到跟进 → 大纲:之后点继续");
+  const started = { started: [{ step: "精读", at: "2026-11-11T02:56:28Z" }], stopped: false };
+  keys["精读"] = "review";
+  const waiting = reworkPath({ ...r, chainState: started }, at, key)!;
+  assert.equal(show(waiting), "检索:✓ → 精读:等你评审 → 大纲:之后点继续");
+  assert.equal(waiting.chainActive, true);
+  saved["精读"] = "2026-11-11T04:00:00Z";
+  assert.equal(reworkPath({ ...r, chainState: started }, at, key), null, "补完、链走完：不列");
+  // 只退回精读、没有链：精读在做，大纲之后点继续；精读保存后不列
+  const read = { fromStep: "大纲", toStep: "精读", sentAt: "2026-11-11T05:00:00Z", chain: [] };
+  keys["精读"] = "active";
+  assert.equal(show(reworkPath(read, at, key)), "精读:在做 → 大纲:之后点继续");
+  assert.equal(reworkPath(read, at, key)!.chainActive, false);
+  // 链停了、目标没补完：只剩目标和发起步
+  delete saved["检索"];
+  keys["检索"] = "review";
+  assert.equal(show(reworkPath({ ...r, chainState: { started: [], stopped: true } }, at, key)), "检索:等你评审 → 大纲:之后点继续");
+});

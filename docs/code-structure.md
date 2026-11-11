@@ -118,8 +118,6 @@ components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、视频卡（ChatVideoCard：同 MediaPreview 经 grant_media_url 放行后 asset 流式播放，读不到不出卡）、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
-components/MaterialsOverview.tsx  # 资料全貌（ProjectGroup 流程线上方，2026-11-06）：读 included.json / index.json / outline.md（已保存的读项目根、没保存的读它的工作副本）与 rework_list，一行一步现状 + 没对齐的原因，
-                             #   精读步另算没读的新纳入篇（notesFollowupIds，同步骤卡「跟进更新」）；折起行直接说哪一步没对齐 + 「去这一步」；在途补料单可「停掉这条链」，有在途时默认展开（tests/materials-overview-ui.test.ts）
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
                              #   schematic-forge 渲出的 PPTX：figurePreview 显示同名 PNG，PPTX 更新时标「生成时的预览」
@@ -1111,9 +1109,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   sessionOverride 只给设置面板预览用（按未保存草稿渲染），开对话一律读盘；
                              #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
   step-kind.ts               # 步骤类型（2026-11-06 流程贯通推到全部模板）：stepKind 按技能槽与专属产物归 search / notes / outline / clean / design / experiment / analysis /
-                             #   writing / final / other；KIND_ASSET 资料名、ROUND_CLAUSE 回头 / 跟进开场话按类补的做法、chainDefaultOff（实验默认不进链）（tests/step-kind.test.ts）
-  materials-overview.ts      # 资料全貌纯逻辑（2026-11-06 流程贯通 §7）：assetFilesFor（按步骤类型读哪些文件）、assetCounts（复用 notes-progress；实验矩阵 matrixCounts、清洗待裁决、分析图与结论条目）、
-                             #   overviewRow（状态 + 跟上游对齐没有）、reworkLine（在途补料单与链等谁，补完且链走完不列）、overviewSummary（tests/materials-overview.test.ts）
+                             #   writing / final / other；ROUND_CLAUSE 回头 / 跟进开场话按类补的做法、chainDefaultOff（实验默认不进链）（tests/step-kind.test.ts）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，
                              #   outlineProgress（「定框架记录」答了几问、「覆盖检查」薄几节）与 sectionTableRows（按 ## 标题取表格行，补料单预填共用）；skimRowCount（速读表 notes/skim.md 行数）；
                              #   StepFlow 精读步「AI 干活」行下一行进度（工作区优先、项目根兜底）；spotCheckPicks =
@@ -1136,7 +1132,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
                              #   + 全文篇数对照 papers/：searchCountLineWithFiles / missingToFetchWithFiles（经 to_fetch_progress，
-                             #   步骤卡、资料全貌、评审清单三处同一口径，台账 pdf 字段只在脚本跑时写、不能单靠它）
+                             #   步骤卡、评审清单两处同一口径，台账 pdf 字段只在脚本跑时写、不能单靠它）
   screening-review.ts        # 检索/筛选评审主面：计数/待拍板/筛选决定、表默认 pending、文件分组；included.md/json 不与表并列摊 diff；
                              #   IncludedRecord.kind（综述回路三期，只在 json、不进 RIS）；patchIncludedKind 只动 kind；KIND_LABEL / nextKind
                              #   displayCitationTitle 只改清单显示（苹果字符、拆开的化学式），不回写 json
@@ -1169,7 +1165,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   step-loop.ts               # 综述回路二期纯逻辑：补料轮 / 跟进轮开场指令（补料单原文写进指令；isSearch / 精读由调用方按技能槽判，引擎不认识检索）、
                              #   coverageReworkDrafts / groupCoverageDrafts：大纲覆盖检查薄节 → 补料单预填（补检→检索、补读→精读）
                              #   notesFollowupIds（纳入里没写完笔记的 id）、followupFiles（剔 .ccode 与积累台账）、轮次起因说法、可退回的上游、
-                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）、
+                             #   latestNote / withLatestNote 开场话尾附「新并进来的文件」、chainNext / chainWhere 补料链下一步谁跟进（2026-11-06 流程贯通）、reworkPath（步进器卡底部补料链那一行）/ reworkWaiting（发单步骤写「等补料」）、
                              #   catchUpProbes / catchUpPrompt：精读补读轮（索引里没全文的篇 → to_fetch_progress 对 papers/，2026-11-10）、
                              #   searchRefreshHint / searchRefreshDraft 定稿前更新检索的入口判定与补料单预填、commentsPrompt / commentReworkDrafts 意见回流（2026-11-07）（tests/step-loop.test.ts）
   step-round.ts              # 在某一步「开一轮」的共同编排（2026-11-06 流程贯通）：pickStepWorkspace / ensureActive（恢复）/ assertRoundable（在忙、有没保存产出不叠一轮）/

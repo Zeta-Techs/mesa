@@ -484,10 +484,11 @@
     search / notes / outline / clean / design / experiment / analysis / writing / final / other（六套内置模板每步归类由 `tests/step-kind.test.ts` 钉住）；
     `ROUND_CLAUSE` 给补料轮（非文献目标）与按文件跟进的开场话补一句这一类的做法——清洗改 rules.md 后从原始数据重跑、实验只重跑受影响组合不覆盖旧运行、
     分析由脚本重出数和图并列「旧 → 新」、设计不为结果改主指标、写作只改受影响段且数字从结果取、定稿重跑核对与渲染；文献两步沿用专门写法。
-    补料链默认不勾 experiment（`chainDefaultOff`，弹窗写「会重跑实验，默认不勾」）。资料全貌按类读文件（`assetFilesFor`）：实验矩阵完成 / 失败 / 没跑、
-    清洗待裁决条数、分析图数与「## 结论条目」条数。任务书「本步骤输入」末尾固定一句：发现上游产物有问题不改上游交的文件（本步预期产物除外），
+    补料链默认不勾 experiment（`chainDefaultOff`，弹窗写「会重跑实验，默认不勾」）。~~资料全貌按类读文件（实验矩阵、清洗待裁决、分析图数与结论条目）~~（2026-11-11 随资料全貌撤掉）。任务书「本步骤输入」末尾固定一句：发现上游产物有问题不改上游交的文件（本步预期产物除外），
     写进报告并提醒人点「退回上一步补料 / 修改…」（`task-md.ts`，各模板任务书长度上限同涨）。项目助手补料单规矩把清洗、实验也列进能回头的事。
-  - **⑤ 已落地**：`components/MaterialsOverview.tsx`（ProjectGroup 流程线上方、回路提示之前）+ 纯逻辑 `src/materials-overview.ts`：资料按技能槽 / 交 outline.md 认（`assetKind`），
+  - **⑤ 2026-11-11 撤掉**（用户：项目页「很杂乱、非常多的小字」，拍板在原样式上做减法）：资料全貌整块删除，计数只留在各步骤卡「AI 干活」下那一行，
+    独有的在途补料链改成步进器卡底部一行（`step-loop.ts reworkPath`，ProjectGroup），补完且链走完不出；发出补料单的步骤在进度条写「等补料」（`reworkWaiting`）。以下为当时的落地记录：
+    `components/MaterialsOverview.tsx`（ProjectGroup 流程线上方、回路提示之前）+ 纯逻辑 `src/materials-overview.ts`：资料按技能槽 / 交 outline.md 认（`assetKind`），
     现状只从项目根文件机械数（复用 `notes-progress.ts`），对齐按 `staleUpstream`，在途回头按 `reworkLine`（补完且链走完 / 停掉不列，最多 4 条），可「停掉这条链」。
     两步以上开过工才出；有没跟上的或在途的回头时默认展开。**落地与设计不同**：行上不放「跟进」按钮，只点步骤名跳过去——跟进在步骤卡上（主路径唯一）。
   - **④ 已落地**：补料单 `chain`（`step_loop.rs ReworkDraft.chain`）+ 链状态 `.ccode/rework/chain/<id>.json`（`ChainState.started[{step, at, skipped}]` / `stopped`，锁里读改写；
@@ -500,7 +501,7 @@
   ①一张补文献单两栏「找新文献 / 精读已有的」，一行一条按节写；有找新文献时退回检索、精读那几条随单存 `reads`，链上强制带精读，精读那一轮把新纳入的与 `reads` 一起做
   （人手动跟进也带上并记链已开）；只有精读已有的直接退回精读。按钮叫「补文献…」。一次点击一张单、一条链，不按节拆多张。
   ②从大纲补检来的新篇（补料单发起步有 outline.md 覆盖检查）精读跟进直接写完整笔记；第一轮「研究论文全部速读」与非大纲来源的新篇照旧速读。
-  ③覆盖检查「可写正文 / 仅线索 / 最新年份」由 Mesa 按大纲各节键与 `notes/index.json` 数，AI 只判够 / 薄；资料全貌写薄节数。
+  ③覆盖检查「可写正文 / 仅线索 / 最新年份」由 Mesa 按大纲各节键与 `notes/index.json` 数，AI 只判够 / 薄；薄节数写在大纲步骤卡计数行（资料全貌已撤）。
   ④积累清单可挂到大纲的节，补文献单自动带上。不做：AI 自己发单、合并检索与精读、自动保存。
   - **① 已落地**：`ReworkDialog` 下拉把检索、精读并成一项「补文献（找新文献 / 精读已有的）」（`searchTarget` / `notesTarget` 按 lit-search / lit-notes 槽取最近的上游），
     两栏怎么发由 `step-loop.ts litOrder` 定；补料单 `reads`（`step_loop.rs ReworkDraft.reads`，有 reads 而链空则拒发）。精读跟进带 reads：链自动那一路由调用方传，
@@ -538,7 +539,7 @@
   干跑：2026-11-07 用一份真实返修稿（33 条批注）的副本跑通，31 条带原文，2 条批在图上无原文。
 - **③ 已落地**：三套模板全局设定加「文献数据抽取表：（让 AI 提议列 / 不需要）」（`setting-choices.ts` 有说明卡片、可「其他…」自写列）；
   `pipeline-presets.ts EXTRACTION_CLAUSE` 接在 `litNotesWrite` 末尾（三套精读都带）；精读分路各写 `notes/extraction-<路号>.md`、收尾合并；综述大纲表计划与初稿对照表先从抽取表取数；
-  资料全貌精读一行「抽取表 N 行」（`materials-overview.ts`，按表格行数）。抽取表不进 expectedArtifacts（选「不需要」时不建）。
+  ~~资料全貌精读一行「抽取表 N 行」~~（2026-11-11 随资料全貌撤掉）。抽取表不进 expectedArtifacts（选「不需要」时不建）。
 - **② 已落地**：`step-loop.ts searchRefreshHint`（聚焦步骤是 final 类且没保存、它之前的 search 类步骤已完成且保存超 14 天）/ `searchRefreshDraft`；
   TaskCardsSection「AI 干活」行（含还没开工的步骤）给「检索已是 N 天前 · 更新检索…」，打开同一个补料单（`initial` 预填、`fromPending` 说明先跟进完再开始定稿）。
 

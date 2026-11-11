@@ -1,7 +1,7 @@
 /**
  * 步骤属于哪一类活（2026-11-06 流程贯通推到其余科研步骤）：回头 / 跟进时各类该怎么改不一样——
  * 清洗改规则重跑、实验只重跑受影响的组合、分析由脚本重出数和图、写作只改受影响的段……
- * 引擎不认模板：只按技能槽（provides）与步骤交的产物认。资料全貌、补料轮 / 跟进轮开场话、补料链默认勾选共用这一份。
+ * 引擎不认模板：只按技能槽（provides）与步骤交的产物认。补料轮 / 跟进轮开场话、补料链默认勾选、补料链那一行的说法共用这一份。
  * 纯逻辑，配 tests/step-kind.test.ts。
  */
 import { stepFillsAnySlot, type SkillProvides } from "./skill-slots.ts";
@@ -30,20 +30,6 @@ export function stepKind(
   if (has(["research-writing", "review-writing", "proposal-writer", "rebuttal-crafter"]) || has(["bib-check"])) return "writing";
   return "other";
 }
-
-/** 资料全貌里这一步管的资料叫什么（空 = 按步骤名叫） */
-export const KIND_ASSET: Record<StepKind, string> = {
-  search: "文献库",
-  notes: "笔记",
-  outline: "大纲",
-  clean: "清洗规则与数据",
-  design: "实验设计",
-  experiment: "实验结果",
-  analysis: "分析与图",
-  writing: "稿件",
-  final: "定稿",
-  other: "",
-};
 
 /**
  * 退回到 / 跟进这一类步骤时，开场话里补的一句做法（文献两步另有专门写法，不走这里）。

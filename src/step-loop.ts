@@ -88,7 +88,52 @@ export function reworkWaiting(
   });
 }
 
-/** 链现在卡在哪（资料全貌 / 提示用）：等某一步保存、轮到某一步跟进、走完了、停掉了 */
+/** 步进器卡底部「补文献：检索 ✓ → 精读 等你评审 → 大纲 之后点继续」那一行（2026-11-11 用户拍板去掉资料全貌，只留它独有的这件）：
+ *  退回目标、链上各步、发起步各走到哪。补完且链走完 / 停掉 / 没有链时返回 null，不列。
+ *  keyOf：某一步的状态键（review / active / checking / blocked / done / pending） */
+export interface ReworkPathStep {
+  name: string;
+  state: "done" | "now" | "later";
+  note: string;
+}
+
+export function reworkPath(
+  r: Pick<ReworkDto, "fromStep" | "toStep" | "sentAt" | "chain" | "chainState">,
+  savedAt: (step: string) => string | null,
+  keyOf: (step: string) => string | undefined,
+): { steps: ReworkPathStep[]; chainActive: boolean } | null {
+  const saved = savedAt(r.toStep);
+  const targetDone = !!saved && Date.parse(saved) > Date.parse(r.sentAt);
+  const where = chainWhere(r, savedAt);
+  if (targetDone && (where.kind === "none" || where.kind === "done" || where.kind === "stopped")) return null;
+  const chain = where.kind === "stopped" ? [] : (r.chain ?? []);
+  const seq = [r.toStep, ...chain.filter((st) => st !== r.toStep)];
+  if (!seq.includes(r.fromStep)) seq.push(r.fromStep);
+  const current = !targetDone ? r.toStep : where.kind === "waiting" || where.kind === "next" ? where.step : r.toStep;
+  const at = seq.indexOf(current);
+  const nowNote = (name: string) => {
+    if (where.kind === "next" && where.step === name) return "轮到跟进";
+    switch (keyOf(name)) {
+      case "review":
+        return "等你评审";
+      case "active":
+      case "checking":
+        return "在做";
+      case "blocked":
+        return "有冲突";
+      default:
+        return "在补";
+    }
+  };
+  const steps = seq.map((name, i): ReworkPathStep => {
+    if (i < at) return { name, state: "done", note: "✓" };
+    if (i === at) return { name, state: "now", note: nowNote(name) };
+    return { name, state: "later", note: name === r.fromStep && !chain.includes(name) ? "之后点继续" : "之后跟进" };
+  });
+  return { steps, chainActive: where.kind === "waiting" || where.kind === "next" };
+}
+
+/** 链现在卡在哪（补料链那一行 / 等补料判定用）：等某一步保存、轮到某一步跟进、走完了、停掉了 */
 export function chainWhere(
   rework: Pick<ReworkDto, "toStep" | "sentAt" | "chain" | "chainState">,
   savedAt: (step: string) => string | null,
