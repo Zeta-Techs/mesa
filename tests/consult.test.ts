@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   adoptionReason,
   liveConsultState,
+  consultCaret,
+  sidebarConsults,
   workbenchLiveConsults,
   contrastRows,
   estimateCost,
@@ -216,4 +218,26 @@ test("研讨花费：不到一分钱不显示成 $0.00", () => {
   assert.equal(usdText(0.0703), "$0.07");
   assert.equal(usdText(1.234), "$1.23");
   assert.equal(usdText(0), "$0.00");
+});
+
+test("侧栏挂哪几场研讨：进行中的全列，其余 3 天内的补到 3 场，正打开的补在最后", () => {
+  const now = Date.parse("2026-11-11T12:00:00Z");
+  const ago = (h: number) => new Date(now - h * 3600_000).toISOString();
+  const items = [
+    { id: "old", busy: false, awaiting: false, updatedAt: ago(24 * 10) },
+    { id: "r1", busy: false, awaiting: false, updatedAt: ago(1) },
+    { id: "r2", busy: false, awaiting: false, updatedAt: ago(2) },
+    { id: "r3", busy: false, awaiting: false, updatedAt: ago(3) },
+    { id: "r4", busy: false, awaiting: false, updatedAt: ago(4) },
+    { id: "live", busy: true, awaiting: false, updatedAt: ago(5) },
+    { id: "wait", busy: false, awaiting: true, updatedAt: ago(6) },
+  ];
+  assert.deepEqual(sidebarConsults(items, now).map((c) => c.id), ["r1", "r2", "r3", "live", "wait"]);
+  assert.deepEqual(sidebarConsults(items, now, "old").map((c) => c.id), ["r1", "r2", "r3", "live", "wait", "old"]);
+  assert.deepEqual(sidebarConsults(items, now, "r1").map((c) => c.id), ["r1", "r2", "r3", "live", "wait"]);
+  assert.equal(consultCaret(items[5], now), "working");
+  assert.equal(consultCaret(items[6], now), "idle");
+  assert.equal(consultCaret(items[1], now), null);
+  // 停下等你发话但 24 小时没动静：不再挂光标
+  assert.equal(consultCaret({ busy: false, awaiting: true, updatedAt: ago(30) }, now), null);
 });

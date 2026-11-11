@@ -135,6 +135,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
+  pages/ConsultPage.tsx      # 研讨页（2026-11-11）：不在导航里的主区页，只放 store.consultOpen 那一场的 ConsultView；showConsult（侧栏研讨行、「去看看」、工作台进行中的研讨）打开它；没打开的给空态与「请几家研讨…」
   components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（只报计数、只数课题，2026-10-26 挪进滚动区、排在随手聊下面；添加入口 2026-10-27 挪到侧栏顶部「新项目」）与课题；
                              #   store 的 railSearchReq（标题栏放大镜 / ⇧⌘F 置位，挂载时也领——探出层的树比请求晚挂；2026-10-27 起树里不再占一行）开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
                              #   不受「展开更多」限额），树本身不再就地筛。树滚动区顶 6px / 底 12px 渐隐（底部留 12px 内边距），项目标签左缘对齐导航图标；置顶 / 其他打开的标题前置折叠箭头。`liftCurrent`（只 App 里探出层传）时正聊着的课题（currentKey 对应行）整块提到随手聊上面、不参与拖动排序；展开侧栏不提（2026-10-25 用户）。分三层（2026-10-24）：分节标签 RAIL_SECTION_LABEL / 课题行最前
@@ -152,6 +153,7 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   与 projectPaths 签名变化）。行点击=onSelect(repoPath)（App 侧 setSelectProjectReq+setPage）；
                              #   行右键=重命名/复制路径/从 Mesa 移除/清除痕迹/删除目录，动作自持（invoke+confirmDialog+toast），
                              #   完成后 loadProjects+bumpProjectsVersion 通知本树与项目页重拉；
+                             #   课题对话列表最上面挂研讨行（2026-11-11，consult_list + consult-event 重读，挂哪几场 consult.ts sidebarConsults、光标 consultCaret，点了 showConsult）；课题 ⋯「请几家研讨…」→ openConsult；研讨页时 currentKey 取研讨所在项目
                              #   2026-10-23 挂对话（纯逻辑 sidebar-chats.ts）：最上面「随手聊」、节头名字后的箭头开合对话（默认只展开运行页
                              #   正看着的那个，人手开关记 ccode.projectTreeChats）、展开按侧栏空位列（至少 5 段）+ 「显示更多 / 收起」（不写段数，10-31），行尾运行状态光标（RunCaret，收着也报）；
                              #   点对话 openConversation（只看不起进程）；点课题名进项目页并展开它的对话（10-24）；行尾悬停 ＋（startProjectChat / openQuickChat）与 ⋯ 平时不占宽（随手聊的 ⋯：对话页看全部随手聊 / 归档 7 天没动的，2026-10-26）；置顶一节的对话行尾小字写所属课题（originOfChat，悬停让位给 ⋯）；收着的课题之间只隔 1px、展开的那节上下留 pt-3（10-27）；对话多选（⌘/Ctrl 点、⇧ 点、⇧↑↓，选中铺 .ccode-rail-picked，树底「已选 N 段」条 + 选中行右键同一份批量菜单：置顶 / 归档，10-27；一段段归档 / 置顶到第 2 次贴下一段出 CoachTip 提醒、第一次选上一段时条上面教怎么接着选，各一次）；来回点两段提醒 ⌃Tab（noteSwitch）、⋯ 关对话计入 ⌘W 提醒（shortcut-nudges）；

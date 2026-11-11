@@ -842,10 +842,11 @@ interface AppState {
     readLabel?: string;
   }) => void;
   clearConsultReq: () => void;
-  /** 「去看看」某场研讨：对话页选中它（一次性，SessionsPage 消费并清空） */
-  consultSelectReq: { projectRoot: string; id: string; nonce: number } | null;
+  /** 研讨页正打开的那一场（2026-11-11 用户：研讨放在聊天层那一格，侧栏点了就到，不再进对话管理）。
+   *  侧栏研讨行、「去看看」、工作台进行中的研讨都经 showConsult 打开它并切到研讨页 */
+  consultOpen: { projectRoot: string; id: string } | null;
   showConsult: (projectRoot: string, id: string) => void;
-  clearConsultSelectReq: () => void;
+  closeConsult: () => void;
   /** 侧栏「对话管理」→ 对话页把光标放进搜索框（递增令牌，对话页见新值就聚焦） */
   sessionsSearchFocusReq: number;
   requestSessionsSearchFocus: () => void;
@@ -1272,9 +1273,9 @@ export const useAppStore = create<AppState>((set, get) => {
   consultReq: null,
   openConsult: (req) => set({ consultReq: { ...req, nonce: Date.now() } }),
   clearConsultReq: () => set({ consultReq: null }),
-  consultSelectReq: null,
-  showConsult: (projectRoot, id) => set({ consultSelectReq: { projectRoot, id, nonce: Date.now() }, page: "sessions" }),
-  clearConsultSelectReq: () => set({ consultSelectReq: null }),
+  consultOpen: null,
+  showConsult: (projectRoot, id) => set({ consultOpen: { projectRoot, id }, page: "consult" }),
+  closeConsult: () => set({ consultOpen: null }),
   sessionsSearchFocusReq: 0,
   requestSessionsSearchFocus: () =>
     set((s) => ({ sessionsSearchFocusReq: s.sessionsSearchFocusReq + 1 })),

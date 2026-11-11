@@ -26,11 +26,13 @@ import {
   SquarePen,
   SquareTerminal,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import { agentBrand } from "../agent-colors";
 import {
@@ -130,6 +132,7 @@ import { startProjectChat } from "./AskAiModal";
 import { imeBlocksEnter } from "../ime-guard";
 import { relTime } from "../rel-time";
 import RailSearchPalette from "./RailSearchPalette";
+import { consultCaret, liveConsultState, sidebarConsults, type ConsultListItem } from "../consult";
 import type { RailSearchChat, RailSearchProject } from "../rail-search";
 import { usePolling } from "../polling";
 import { useClientOpen } from "./ClientOpenDialog";
@@ -534,6 +537,38 @@ export default function ProjectTree({
   // 侧栏常驻，会话列表要自己保鲜（App 聚焦时不拉会话，见 App.tsx 那段约定）：窗口看得见时每分钟拉一次。
   // Mesa 里开的对话不靠它：终端页接上 / 停下时就强刷了
   usePolling(() => useAppStore.getState().loadSessions(), 60_000);
+  // 课题下挂的研讨（2026-11-11 用户：研讨放在聊天层那一格，从对话切过去不用进对话管理）：随项目集合与研讨事件
+  // （开始 / 答完一位 / 一段结束）重读，不另开轮询；挂哪几场由 sidebarConsults 定
+  const consultOpen = useAppStore((s) => s.consultOpen);
+  const [consults, setConsults] = useState<ConsultListItem[]>([]);
+  const consultRootsSig = projectPaths.join("\n");
+  useEffect(() => {
+    const roots = consultRootsSig ? consultRootsSig.split("\n") : [];
+    if (roots.length === 0) {
+      setConsults([]);
+      return;
+    }
+    let stale = false;
+    const load = () => {
+      void invoke<ConsultListItem[]>("consult_list", { projectRoots: roots })
+        .then((list) => {
+          if (!stale) setConsults(list);
+        })
+        .catch(() => {});
+    };
+    load();
+    let t: number | null = null;
+    const un = listen<{ kind: string }>("consult-event", (e) => {
+      if (e.payload.kind === "step" || e.payload.kind === "text") return;
+      if (t) window.clearTimeout(t);
+      t = window.setTimeout(load, 300);
+    });
+    return () => {
+      stale = true;
+      if (t) window.clearTimeout(t);
+      void un.then((f) => f());
+    };
+  }, [consultRootsSig, consultOpen?.id]);
   const [chatMenu, setChatMenu] = useState<{
     x: number;
     y: number;
@@ -868,9 +903,11 @@ export default function ProjectTree({
       })),
     [rows, worktreesOf],
   );
+  // 看着研讨时（研讨页）以研讨所在的项目为「现在在哪」：它的文件夹默认展开，研讨行找得到
+  const currentCwd = page === "consult" && consultOpen ? consultOpen.projectRoot : activeRun?.cwd;
   const currentKey = useMemo(
-    () => currentFolderKey(activeRun?.cwd, folders, projectPaths, IS_WINDOWS),
-    [activeRun?.cwd, folders, projectPaths],
+    () => currentFolderKey(currentCwd, folders, projectPaths, IS_WINDOWS),
+    [currentCwd, folders, projectPaths],
   );
   // 弹出列表里正聊着的那个项目整块提到最上面（2026-10-25 用户：展开的侧栏点击不动，只改弹出列表）；
   // 随手聊里的对话不提（随手聊本来就在项目前面）
@@ -1387,6 +1424,41 @@ export default function ProjectTree({
     );
   }
 
+  /** 课题下的一场研讨：点了在主区研讨页打开（同点对话一下就到）；Users 小图标和对话行区分，行尾光标——有人在答 working、
+   *  停下等你发话 idle，答完了不挂。标题同对话行去掉「MMDD|类型|」，完整标题与几家在悬停里 */
+  function renderConsultRow(c: ConsultListItem, folderName: string) {
+    const selected = page === "consult" && consultOpen?.id === c.id && samePath(consultOpen.projectRoot, c.projectRoot, IS_WINDOWS);
+    const caret = consultCaret(c, Date.now());
+    const state = liveConsultState(c);
+    return (
+      <div
+        key={`consult:${c.id}`}
+        className={`group/chat relative grid h-8 grid-cols-[1fr_auto] items-center rounded-md transition-colors ${
+          selected ? "ccode-rail-active bg-rail-sel" : "hover:bg-hover"
+        }`}
+      >
+        <button
+          type="button"
+          data-rail-nav
+          onClick={() => useAppStore.getState().showConsult(c.projectRoot, c.id)}
+          aria-current={selected ? "true" : undefined}
+          title={`${c.title}\n研讨 · ${c.members.length} 家${state ? ` · ${state}` : ""}`}
+          className="flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 text-l1"
+        >
+          <Users size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
+          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(c.title, folderName)}</span>
+        </button>
+        <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+          {caret && (
+            <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
+              <RunCaret state={caret} />
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   /** 开着、但列表里还没有的一行（openTabRows）：点了切过去，行尾 × 关掉（在跑的会先问）。
    *  新对话 / 纯终端前面带个小图标，和对话行区分开；不缩进同 renderChat */
   function renderOpenRow(r: OpenTabRow, depth = 0, folderName?: string) {
@@ -1580,8 +1652,18 @@ export default function ProjectTree({
     const opened = openedAll.filter((r) => !(r.forkParentKey && listedHere.has(r.forkParentKey)));
     const remaining = chats.length - visible.length;
     const more = remaining > 0;
+    // 研讨挂在最上面（开着的对话之前）：进行中的、最近几天的，更早的在对话管理
+    const projectPath = project?.path;
+    const consultRows = projectPath
+      ? sidebarConsults(
+          consults.filter((c) => samePath(c.projectRoot, projectPath, IS_WINDOWS)),
+          Date.now(),
+          consultOpen && samePath(consultOpen.projectRoot, projectPath, IS_WINDOWS) ? consultOpen.id : null,
+        )
+      : [];
     return (
       <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
+        {consultRows.map((c) => renderConsultRow(c, name))}
         {opened.map((r) => renderOpenRow(r))}
         {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
             每行写角色（商量任务书 / 执行任务书 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
@@ -1591,7 +1673,7 @@ export default function ProjectTree({
           </div>
         )}
         {chats.length === 0 ? (
-          opened.length === 0 && pinnedRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
+          opened.length === 0 && pinnedRows.length === 0 && consultRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
           visible.map((r) => (
             <Fragment key={chatKey(r.s)}>
@@ -1841,6 +1923,16 @@ export default function ProjectTree({
           st.setPage("sessions");
         },
       },
+      ...(row.project
+        ? [
+            {
+              label: "请几家研讨…",
+              icon: Users,
+              title: "同一个问题请二到四家不同模型的 AI 只读作答、互相补充，结论由你记；进行中和最近几天的挂在这个项目下面",
+              onSelect: () => useAppStore.getState().openConsult({ projectRoot: row.repoPath }),
+            },
+          ]
+        : []),
       ...(hasReaderChats(sessions, row.repoPath, IS_WINDOWS)
         ? [
             {

@@ -15,7 +15,7 @@ type Initial = {
 
 /**
  * 研讨发起弹层的唯一挂载处（2026-11-11 用户：从步骤卡、人工请求、评审页点进来别跳页）：仿 ProjectAssistantHost 挂在 App，
- * 消费 store.consultReq 原地打开；对话管理栏头的「研讨」也走这里。开始后不跳页，提示一句、点「去看看」才去对话管理选中这场
+ * 消费 store.consultReq 原地打开；对话管理栏头的「研讨」也走这里。开始后不跳页，提示一句、点「去看看」才打开研讨页（侧栏这个项目下也多一行）
  */
 export default function ConsultHost() {
   const req = useAppStore((s) => s.consultReq);

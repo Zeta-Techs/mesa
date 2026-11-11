@@ -315,10 +315,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   // 研讨（2026-11-11）：不是 CLI 会话，单独成组、单独选中；选中研讨时会话回放让位
   const [consults, setConsults] = useState<ConsultListItem[]>([]);
   const [selectedConsult, setSelectedConsult] = useState<{ projectRoot: string; id: string } | null>(null);
-  // 发起弹层全局只有一个（ConsultHost）；这里只消费「去看看」选中某场研讨的一次性请求
+  // 发起弹层全局只有一个（ConsultHost）；「去看看」与侧栏研讨行打开的是研讨页（consultOpen），这里只是翻历史的地方
   const openConsult = useAppStore((s) => s.openConsult);
-  const consultSelectReq = useAppStore((s) => s.consultSelectReq);
-  const clearConsultSelectReq = useAppStore((s) => s.clearConsultSelectReq);
   const [registeredProjectPaths, setRegisteredProjectPaths] = useState<Set<string>>(
     () => new Set(),
   );
@@ -443,14 +441,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       void un.then((f) => f());
     };
   }, [visible, reloadConsults]);
-  // 研讨开始后提示里点「去看看」、工作台点进行中的研讨：选中这一场（消费并清空）
-  useEffect(() => {
-    if (!consultSelectReq) return;
-    setSelected(null);
-    setSelectedConsult({ projectRoot: consultSelectReq.projectRoot, id: consultSelectReq.id });
-    clearConsultSelectReq();
-    reloadConsults();
-  }, [consultSelectReq, clearConsultSelectReq, reloadConsults]);
 
   /** 这段对话属于哪个已添加的项目（研讨记录写项目里，不属于的不给入口） */
   function consultProjectOf(s: SessionMetaDto): string | null {

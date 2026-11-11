@@ -111,7 +111,7 @@ async function renderTree(
   store: Record<string, unknown> = {},
   /** 换掉 list_workspaces 的返回（第几次调用 → 结果）；不给 = 一直空 */
   workspaces?: (call: number) => unknown[],
-  opts: { liftCurrent?: boolean; storage?: Record<string, string> } = {},
+  opts: { liftCurrent?: boolean; storage?: Record<string, string>; consults?: unknown[] } = {},
 ) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
   for (const [key, value] of Object.entries(opts.storage ?? {})) dom.window.localStorage.setItem(key, value);
@@ -186,6 +186,7 @@ async function renderTree(
       },
       ...store,
     },
+    __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
     __TAURI_INTERNALS__: {
       transformCallback: () => 0,
       invoke: async (command: string, args?: unknown) => {
@@ -194,6 +195,10 @@ async function renderTree(
           return null;
         }
         if (command === "list_projects") return [PROJECT, { path: "/work/code", name: "Ccode", workMode: "coding" }];
+        // 研讨列表与研讨事件（课题下挂研讨行，2026-11-11）
+        if (command === "consult_list") return opts.consults ?? [];
+        if (command === "plugin:event|listen") return 0;
+        if (command === "plugin:event|unlisten") return null;
         if (command === "list_workspaces") {
           wsCalls += 1;
           return workspaces ? workspaces(wsCalls) : [];
@@ -1326,6 +1331,55 @@ test("项目内置顶：流程对话按步骤分组、每行写角色，组头�
     await view.act(async () => view.button("在项目里置顶").click());
     assert.deepEqual(pinnedTitles(), ["商量任务书", "镁硫电池第5篇精读"]);
     assert.ok(view.button("镁硫电池第5篇精读").parentElement?.querySelector("[data-project-pin]"), "人手钉的行尾一枚图钉");
+  } finally {
+    await view.close();
+  }
+});
+
+test("课题下挂研讨：进行中的在最上面带光标，点了打开研讨页；节头 ⋯ 能「请几家研讨…」", async () => {
+  const now = Date.now();
+  const consult = (id: string, title: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    projectRoot: PROJECT.path,
+    title,
+    members: [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+    createdAt: new Date(now - 3600_000).toISOString(),
+    updatedAt: new Date(now - 60_000).toISOString(),
+    messageCount: 3,
+    busy: false,
+    ...extra,
+  });
+  const opened: unknown[] = [];
+  const asked: unknown[] = [];
+  const view = await renderTree(
+    {
+      consultOpen: null,
+      showConsult: (root: string, id: string) => opened.push([root, id]),
+      openConsult: (req: unknown) => asked.push(req),
+    },
+    undefined,
+    {
+      consults: [
+        consult("c1", "1111|研究|先有鸡还是先有蛋", { busy: true, answering: 3 }),
+        consult("c2", "1101|研究|很久以前的研讨", { updatedAt: new Date(now - 10 * 24 * 3600_000).toISOString() }),
+      ],
+    },
+  );
+  try {
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const group = view.chatGroup("综述流程测试")!;
+    const first = Array.from(group.querySelectorAll("button")).find((b) => b.textContent?.trim())!;
+    assert.equal(first.textContent?.trim(), "先有鸡还是先有蛋", "研讨挂在最上面，标题去掉日期类型前缀");
+    assert.match(first.title, /研讨 · 3 家 · 3 家在答/);
+    assert.equal(first.parentElement?.querySelector("[data-run-slot] .ccode-run-caret")?.getAttribute("data-state"), "working");
+    assert.ok(!group.textContent?.includes("很久以前的研讨"), "10 天前答完的不挂，去对话管理翻");
+    await view.act(async () => first.click());
+    assert.deepEqual(opened, [[PROJECT.path, "c1"]]);
+    await view.act(async () => view.button("综述流程测试 的更多操作").click());
+    await view.act(async () => view.button("请几家研讨…").click());
+    assert.deepEqual(asked, [{ projectRoot: PROJECT.path }]);
   } finally {
     await view.close();
   }

@@ -134,6 +134,7 @@ const StatsPage = lazy(() => import("./pages/StatsPage"));
 const TerminalPage = lazy(() => import("./pages/TerminalPage"));
 const WorkspacesPage = lazy(() => import("./pages/WorkspacesPage"));
 const WorkbenchPage = lazy(() => import("./pages/WorkbenchPage"));
+const ConsultPage = lazy(() => import("./pages/ConsultPage"));
 // 启动后空闲时依次先载进来的大块（idle-preload.ts）：运行页、项目页最常去，文件预览编辑器（monaco）与 PDF 阅读第一次打开最慢
 const IDLE_PRELOADS = [
   () => import("./pages/TerminalPage"),
@@ -2428,6 +2429,14 @@ function App() {
                 {visited.has("sessions") && (
                   <Suspense fallback={<PageLoading />}>
                     <SessionsPage visible={page === "sessions"} />
+                  </Suspense>
+                )}
+              </div>
+              {/* 研讨页：不在导航里，侧栏课题下的研讨行 / 「去看看」/ 工作台经 showConsult 打开（2026-11-11） */}
+              <div className={page === "consult" ? "h-full" : "hidden"}>
+                {visited.has("consult") && (
+                  <Suspense fallback={<PageLoading />}>
+                    <ConsultPage visible={page === "consult"} />
                   </Suspense>
                 )}
               </div>

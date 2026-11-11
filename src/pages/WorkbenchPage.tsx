@@ -379,7 +379,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, projectsSig, runDoneSig, reloadToken, recordRead]);
 
-  // 进行中的研讨（2026-11-11：家在对话管理，有人在答 / 停下等你发话的在这里露一行）。随项目集合、运行跑完、
+  // 进行中的研讨（2026-11-11：有人在答 / 停下等你发话的在这里露一行，点了打开研讨页）。随项目集合、运行跑完、
   // 回到本页、重试，以及后端的研讨事件（开始 / 答完一位 / 一段结束）重读；不另开轮询，不进收件箱
   const [liveConsults, setLiveConsults] = useState<ConsultListItem[]>([]);
   useEffect(() => {

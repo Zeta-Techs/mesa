@@ -384,7 +384,7 @@ export function adoptionReason(
   ].join("；");
 }
 
-/** 工作台「正在进行」里露出的研讨（2026-11-11：家在对话管理，进行中的在工作台露一行）：有人在答，或停下等你发话；
+/** 工作台「正在进行」里露出的研讨（2026-11-11）：有人在答，或停下等你发话；点了打开研讨页（showConsult）；
  *  答完、停掉、或 24 小时没动静的不列 */
 export const LIVE_CONSULT_STALE_MS = 24 * 3600 * 1000;
 
@@ -400,4 +400,34 @@ export function liveConsultState(c: Pick<ConsultListItem, "busy" | "answering" |
   if (c.answering && c.answering > 0) return `${c.answering} 家在答`;
   if (c.busy) return "在答";
   return c.awaiting ? "等你发话" : "";
+}
+
+/** 侧栏课题下挂几场研讨（2026-11-11 用户：研讨放在聊天层那一格，从对话切过去不用进对话管理）：
+ *  有人在答 / 等你发话的全列，其余 3 天内动过的补到 3 场，按最近活动排；正打开的那场排不进也补在最后
+ *  （侧栏要找得到「现在在哪」）。更早的去对话管理翻 */
+export const SIDEBAR_CONSULT_RECENT_MS = 3 * 24 * 3600 * 1000;
+export const SIDEBAR_CONSULT_LIMIT = 3;
+
+export function sidebarConsults<T extends Pick<ConsultListItem, "id" | "busy" | "awaiting" | "updatedAt">>(
+  items: readonly T[],
+  nowMs: number,
+  openId?: string | null,
+): T[] {
+  const live = new Set(workbenchLiveConsults(items, nowMs).map((c) => c.id));
+  const at = (c: T) => Date.parse(c.updatedAt) || 0;
+  const sorted = [...items].sort((a, b) => at(b) - at(a));
+  const out: T[] = [];
+  for (const c of sorted) {
+    if (live.has(c.id)) out.push(c);
+    else if (out.length < SIDEBAR_CONSULT_LIMIT && nowMs - at(c) <= SIDEBAR_CONSULT_RECENT_MS) out.push(c);
+  }
+  const open = openId ? sorted.find((c) => c.id === openId) : undefined;
+  if (open && !out.includes(open)) out.push(open);
+  return out;
+}
+
+/** 研讨行的运行光标：有人在答 = working；停下等你发话 = idle（开着、等你下一句）；答完了不挂光标 */
+export function consultCaret(c: Pick<ConsultListItem, "busy" | "awaiting" | "updatedAt">, nowMs: number): "working" | "idle" | null {
+  if (c.busy) return "working";
+  return workbenchLiveConsults([c], nowMs).length > 0 ? "idle" : null;
 }
