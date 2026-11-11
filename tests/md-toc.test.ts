@@ -5,6 +5,7 @@ import {
   headingsFromElement,
   MD_TOC_MIN,
   revealMdHeading,
+  sectionAnchorForLine,
   slugifyHeading,
 } from "../src/md-toc.ts";
 
@@ -45,4 +46,13 @@ test("revealMdHeading 展开祖先 details", () => {
 
 test("目录门槛是 3", () => {
   assert.equal(MD_TOC_MIN, 3);
+});
+
+test("源文件某行落在哪一节：往上找最近的标题或独占一行的加粗小节名", () => {
+  const md = ["# 综述大纲", "", "### 1 引言", "- 要点", "", "**2.1 碱性 HER 动力学**", "- 拟引用——可写正文：[@A]", "## 覆盖检查", "| 节 |"].join("\n");
+  assert.equal(sectionAnchorForLine(md, 4), "1 引言");
+  assert.equal(sectionAnchorForLine(md, 7), "2.1 碱性 HER 动力学");
+  assert.equal(sectionAnchorForLine(md, 9), "覆盖检查");
+  assert.equal(sectionAnchorForLine(md, 1), "综述大纲");
+  assert.equal(sectionAnchorForLine("正文\n没有标题", 2), null);
 });

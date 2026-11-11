@@ -35,6 +35,8 @@ export default function CheckList({
   onAddNote,
   onAddAll,
   isNoted,
+  onLocate,
+  bare = false,
   children,
 }: {
   checks: ChecksDto;
@@ -46,6 +48,10 @@ export default function CheckList({
   onAddAll?: (items: CheckItem[]) => void;
   /** 这一条是否已经在意见里（按钮显示「已加入」） */
   isNoted?: (item: CheckItem) => boolean;
+  /** 点位置跳到稿件里那一处（评审页：清单在左、稿件在右对照看） */
+  onLocate?: (item: CheckItem) => void;
+  /** 放在侧栏里时不画上分隔线 */
+  bare?: boolean;
   /** 列表下面、说明上面挂的一块（大纲：覆盖检查对照） */
   children?: ReactNode;
 }) {
@@ -62,10 +68,10 @@ export default function CheckList({
       return next;
     });
   return (
-    <section aria-label="核验清单" className="mt-1.5 border-t border-hairline pt-1.5">
+    <section aria-label="核验清单" className={bare ? "" : "mt-1.5 border-t border-hairline pt-1.5"}>
       {onAddAll && open.length > 1 && (
-        <div className="mb-1 flex items-center gap-2 text-micro text-l4">
-          <span>拦下和待你判断的，可以一起交给 AI 逐条判断：该改的改，不用改的说明理由。</span>
+        <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 px-2 text-micro text-l4">
+          <span className="min-w-0 flex-1">可以一起交给 AI 逐条判断：该改的改，不用改的说明理由。</span>
           <button
             type="button"
             disabled={pending.length === 0}
@@ -106,7 +112,19 @@ export default function CheckList({
                       <div className="min-w-0 flex-1">
                         <p className="text-xs leading-snug text-l1">{item.title}</p>
                         <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-micro text-l4">
-                          {where && <span className="font-mono">{where}</span>}
+                          {where &&
+                            (onLocate ? (
+                              <button
+                                type="button"
+                                onClick={() => onLocate(item)}
+                                title="在右边的稿件里跳到这一处所在的那一节"
+                                className="font-mono text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                              >
+                                {where}
+                              </button>
+                            ) : (
+                              <span className="font-mono">{where}</span>
+                            ))}
                           {where && <span aria-hidden="true">·</span>}
                           <span title={item.checker === "mesa" ? "Mesa 自己按文件数出来的，不经 AI" : undefined}>
                             {checkSourceLabel(item)}

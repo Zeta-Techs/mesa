@@ -130,6 +130,8 @@ import {
   TIER1_AGENTS,
 } from "../cross-review";
 import AgentModelPicker from "./AgentModelPicker";
+import { toast } from "../toast";
+import { revealSectionText, sectionAnchorForLine } from "../md-toc";
 import { AGENTS } from "../types";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
@@ -2763,6 +2765,82 @@ function LiveWorkspaceReviewView({
     }
   }
   const canReturn = contentReview && !mergeDone && !conflictMode;
+  // 核验清单（2026-11-11 用户：展开后压在稿件上面，稿件只剩一小块没法对照）：内容页签时放左侧一栏，点位置跳到右边稿件那一节
+  const checkListNode = checks ? (
+        <CheckList
+          bare={contentReady}
+          onLocate={contentReady ? locateCheck : undefined}
+          checks={checks}
+          onAddNote={contentReview && !mergeDone ? addCheckNote : undefined}
+          onAddAll={
+            contentReview && !mergeDone
+              ? (items) => {
+                  setReviewNotes((notes) => {
+                    const block = checkBatchNote(items.filter((item) => !checkNoted(notes, item)));
+                    // 开头那句「请逐条判断」已经在了就不再写一遍
+                    return appendReviewLine(
+                      notes,
+                      notes.includes(CHECK_BATCH_LEAD) ? block.split("\n").slice(1).join("\n") : block,
+                    );
+                  });
+                  setNotesOpen(true);
+                }
+              : undefined
+          }
+          isNoted={(item) => checkNoted(reviewNotes, item)}
+          onConsult={
+            researchContext && !mergeDone
+              ? (item) => {
+                  // 待你判断的一条带进研讨（研讨二期）：成员读这一步的工作副本，只预填已存在的文件
+                  const ctx = researchContext;
+                  const readRoot = ctx.workspace.worktreePath;
+                  const seed = checkConsultSeed(item);
+                  void invoke<string[]>("consult_existing_files", { root: readRoot, paths: seed.materials.map((m) => m.path) })
+                    .catch(() => [] as string[])
+                    .then((existing) => {
+                      useAppStore.getState().openConsult({
+                        projectRoot: ctx.root,
+                        question: seed.question,
+                        materials: seed.materials.filter((m) => existing.includes(m.path)),
+                        readRoot,
+                        readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
+                      });
+                    });
+                }
+              : undefined
+          }
+        >
+          {outlineCheck && outlineCheck.rows.length > 0 && (
+            <OutlineCoverageCompare rows={outlineCheck.rows} onJump={jumpToOutlineSection} compact={contentReady} />
+          )}
+        </CheckList>
+  ) : null;
+  /** 核验清单点位置：切到稿件页签、打开那个文件，读源文件找这一行落在哪一节，等预览渲染出来跳过去 */
+  function locateCheck(item: { target?: { file: string; line?: number } }) {
+    const file = item.target?.file?.replace(/\\/g, "/");
+    if (!file) return;
+    if (!deliveryContentPaths(displayedPaths).includes(file)) {
+      toast(`${file} 不在稿件页签里，到「文件」页签看`, "info");
+      return;
+    }
+    setReviewPane("content");
+    userPickedRef.current = true;
+    setActivePath(file);
+    const line = item.target?.line;
+    if (!line) return;
+    void invoke<{ text: string }>("read_file_preview", { path: absUnderRoot(worktreePath, file), root: worktreePath })
+      .then((preview) => {
+        const anchor = sectionAnchorForLine(preview.text, line);
+        if (!anchor) return;
+        let tries = 0;
+        const attempt = () => {
+          if (revealSectionText(document.querySelector("[data-review-doc]"), anchor) || ++tries > 20) return;
+          window.setTimeout(attempt, 100);
+        };
+        window.setTimeout(attempt, 50);
+      })
+      .catch(() => {});
+  }
   /** 覆盖检查对照里点节名：切到 outline.md、稿件页签，等预览渲染出来再跳到那一节 */
   function jumpToOutlineSection(label: string) {
     setReviewPane("content");
@@ -3218,53 +3296,7 @@ function LiveWorkspaceReviewView({
                   </div>
                 )}
               </div>
-              {checksExpanded && checks && (
-                <CheckList
-                  checks={checks}
-                  onAddNote={contentReview && !mergeDone ? addCheckNote : undefined}
-                  onAddAll={
-                    contentReview && !mergeDone
-                      ? (items) => {
-                          setReviewNotes((notes) => {
-                            const block = checkBatchNote(items.filter((item) => !checkNoted(notes, item)));
-                            // 开头那句「请逐条判断」已经在了就不再写一遍
-                            return appendReviewLine(
-                              notes,
-                              notes.includes(CHECK_BATCH_LEAD) ? block.split("\n").slice(1).join("\n") : block,
-                            );
-                          });
-                          setNotesOpen(true);
-                        }
-                      : undefined
-                  }
-                  isNoted={(item) => checkNoted(reviewNotes, item)}
-                  onConsult={
-                    researchContext && !mergeDone
-                      ? (item) => {
-                          // 待你判断的一条带进研讨（研讨二期）：成员读这一步的工作副本，只预填已存在的文件
-                          const ctx = researchContext;
-                          const readRoot = ctx.workspace.worktreePath;
-                          const seed = checkConsultSeed(item);
-                          void invoke<string[]>("consult_existing_files", { root: readRoot, paths: seed.materials.map((m) => m.path) })
-                            .catch(() => [] as string[])
-                            .then((existing) => {
-                              useAppStore.getState().openConsult({
-                                projectRoot: ctx.root,
-                                question: seed.question,
-                                materials: seed.materials.filter((m) => existing.includes(m.path)),
-                                readRoot,
-                                readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
-                              });
-                            });
-                        }
-                      : undefined
-                  }
-                >
-                  {outlineCheck && outlineCheck.rows.length > 0 && (
-                    <OutlineCoverageCompare rows={outlineCheck.rows} onJump={jumpToOutlineSection} />
-                  )}
-                </CheckList>
-              )}
+              {checksExpanded && checks && !contentReady && checkListNode}
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
                   找不到的引用键：{citations.missing.join("、")}
@@ -3609,6 +3641,22 @@ function LiveWorkspaceReviewView({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
+        {checksExpanded && contentReady && checkListNode && (
+          // 核验清单在左、稿件在右（2026-11-11 用户：清单铺在稿件上面就没法对照看了）
+          <aside aria-label="核验清单" className="flex w-96 shrink-0 flex-col border-r border-hairline bg-strip">
+            <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline px-3 text-xs">
+              <span className="text-l2">{checks ? checkChipText(checks.items) : "核验"}</span>
+              <button
+                type="button"
+                onClick={() => setChecksExpanded(false)}
+                className="ml-auto rounded-sm px-1 text-micro text-l4 hover:bg-hover hover:text-l1"
+              >
+                收起
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto px-1 py-2">{checkListNode}</div>
+          </aside>
+        )}
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {opening && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas text-sm text-l4">

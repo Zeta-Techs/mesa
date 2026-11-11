@@ -7,8 +7,11 @@ import type { CoverageRowCheck } from "../outline-check";
 export default function OutlineCoverageCompare({
   rows,
   onJump,
+  compact = false,
 }: {
   rows: readonly CoverageRowCheck[];
+  /** 放在窄侧栏里：只留节和两列篇数，年份与 AI 的判断进悬停 */
+  compact?: boolean;
   /** 跳到大纲里这一节（传节名，如「5.3 器件出口…」） */
   onJump?: (label: string) => void;
 }) {
@@ -44,15 +47,19 @@ export default function OutlineCoverageCompare({
             <thead>
               <tr className="text-l4">
                 <th className="px-1.5 py-0.5 text-left font-normal">节</th>
-                <th className="px-1.5 py-0.5 text-right font-normal">可写正文 AI / Mesa</th>
-                <th className="px-1.5 py-0.5 text-right font-normal">仅线索 AI / Mesa</th>
-                <th className="px-1.5 py-0.5 text-right font-normal">最新一篇</th>
-                <th className="px-1.5 py-0.5 text-left font-normal">AI 的判断</th>
+                <th className="px-1.5 py-0.5 text-right font-normal">{compact ? "可写" : "可写正文 AI / Mesa"}</th>
+                <th className="px-1.5 py-0.5 text-right font-normal">{compact ? "线索" : "仅线索 AI / Mesa"}</th>
+                {!compact && <th className="px-1.5 py-0.5 text-right font-normal">最新一篇</th>}
+                {!compact && <th className="px-1.5 py-0.5 text-left font-normal">AI 的判断</th>}
               </tr>
             </thead>
             <tbody>
               {shown.map((r) => (
-                <tr key={r.label} className={r.mismatch && all ? "bg-strip" : undefined}>
+                <tr
+                  key={r.label}
+                  className={r.mismatch && all ? "bg-strip" : undefined}
+                  title={compact ? `AI 写 / Mesa 数。最新一篇 ${r.ai.latest || "?"} / ${r.mesa?.latest ?? "—"}；AI 的判断：${r.ai.verdict || "—"}` : undefined}
+                >
                   <td className="max-w-[16rem] px-1.5 py-0.5">
                     {onJump ? (
                       <button
@@ -71,14 +78,18 @@ export default function OutlineCoverageCompare({
                   </td>
                   {cell(r.ai.writable, r.mesa?.writable.length)}
                   {cell(r.ai.hint, r.mesa?.hint.length)}
-                  <td className="px-1.5 py-0.5 text-right tabular-nums text-l3">
-                    {r.ai.latest || "?"}
-                    <span className="text-l4"> / </span>
-                    {r.mesa?.latest ?? "—"}
-                  </td>
-                  <td className="max-w-[12rem] truncate px-1.5 py-0.5 text-l3" title={r.ai.verdict}>
-                    {r.ai.verdict}
-                  </td>
+                  {!compact && (
+                    <td className="px-1.5 py-0.5 text-right tabular-nums text-l3">
+                      {r.ai.latest || "?"}
+                      <span className="text-l4"> / </span>
+                      {r.mesa?.latest ?? "—"}
+                    </td>
+                  )}
+                  {!compact && (
+                    <td className="max-w-[12rem] truncate px-1.5 py-0.5 text-l3" title={r.ai.verdict}>
+                      {r.ai.verdict}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
