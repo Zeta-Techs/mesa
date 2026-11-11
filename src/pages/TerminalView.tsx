@@ -61,6 +61,7 @@ import {
   hasAssistantText,
   mergeConversationPages,
   slidOutOfWindow,
+  localCommandOutput,
   localCommandRecord,
   mergeLocalRecords,
   messageKey,
@@ -68,7 +69,10 @@ import {
   placePendingUsers,
   sentUserRecorded,
   slashCommandRecorded,
+  SLASH_LOCAL_SETTLE_MS,
+  slashResultLines,
   slashSettledLocally,
+  slashSettlesAtTurnEnd,
 } from "../chat-handoff";
 import { useCliNewer } from "../cli-verified";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
@@ -2489,6 +2493,44 @@ export const TerminalView = memo(function TerminalView({
   const permBaselineRef = useRef<{ file: string; mode: string } | null>(null);
   // 本机处理完、会话文件里没有的斜杠命令记录（只在这次打开的聊天里；换了会话文件就清）
   const localRecordsRef = useRef<{ file: string; records: ChatMessageDto[] }>({ file: "", records: [] });
+  // 斜杠命令发出那一刻的屏（认这次新出的结果行，slashResultLines）；最近一条斜杠命令（它唤出的选择器答完就收尾）
+  const slashBaselineRef = useRef(new WeakMap<ChatMessageDto, string[]>());
+  const slashMenuOwnerRef = useRef<{ sent: ChatMessageDto; at: number } | null>(null);
+  /** 斜杠命令在本机收尾：留成「命令 + 结果」、从待落盘里拿掉（只在这次打开的聊天里有，会话文件里没有） */
+  function settleSlashLocally(pu: ChatMessageDto, output: string[]) {
+    if (!pendingUsersRef.current.includes(pu)) return;
+    const file = linkCtxRef.current?.filePath ?? "";
+    if (localRecordsRef.current.file !== file) localRecordsRef.current = { file, records: [] };
+    localRecordsRef.current.records.push(localCommandOutput(pu, output));
+    pendingUsersRef.current = pendingUsersRef.current.filter((m) => m !== pu);
+    if (slashMenuOwnerRef.current?.sent === pu) slashMenuOwnerRef.current = null;
+    void fetchConversation(true);
+  }
+  /** 这条斜杠命令这次新出的结果行（屏上认得出的） */
+  function slashResultNow(pu: ChatMessageDto): string[] {
+    return slashResultLines(
+      launchAgentRef.current ?? "",
+      pu.blocks[0]?.text ?? "",
+      screenLines(),
+      slashBaselineRef.current.get(pu) ?? null,
+    );
+  }
+  /**
+   * 这一轮结束了：生成中发的、还没收尾的斜杠命令直接留成记录（结果行认得出就带上），不再挂着等终端静下来——
+   * 原先挂到这一轮的状态翻过去就和待落盘一起清掉，聊天里什么都没留下（2026-11-11 用户 Kimi /permission）。
+   * 开着选择器 / 面板时不收：命令还没答完
+   */
+  function flushSlashAtTurnEnd() {
+    if (menuPromptRef.current || tuiPanelRef.current) return;
+    const agent = launchAgentRef.current ?? "";
+    const now = Date.now();
+    for (const pu of [...pendingUsersRef.current]) {
+      if (!pu.queued || !slashSettlesAtTurnEnd(agent, pu)) continue;
+      if (now - Date.parse(pu.timestamp ?? "") < SLASH_LOCAL_SETTLE_MS) continue;
+      const result = slashResultNow(pu);
+      settleSlashLocally(pu, result.length ? result : [`已发给 ${agentLabel(agent)}，结果以终端为准`]);
+    }
+  }
   const [cliModeSwitch, setCliModeSwitch] = useState<{ mode: string; seq: number } | null>(null);
   // 终端里开着的面板（tui-panel.ts）：跟菜单同一次扫屏认；开着时一直扫到它关掉
   const [tuiPanel, setTuiPanel] = useState(false);
@@ -3012,10 +3054,21 @@ export const TerminalView = memo(function TerminalView({
       window.setTimeout(() => {
         if (ptyIdRef.current === id) writeInteractivePty(id, data);
       }, ms);
+    // 这张菜单是聊天里刚发的斜杠命令唤出来的（/permission、/effort…）：答完就把那条命令收成「命令 + 选了哪一项 + 结果行」
+    const owner = slashMenuOwnerRef.current;
+    const picked = menu.options[index] ?? null;
+    const settleOwner = (after: number) => {
+      if (!owner || Date.now() - owner.at > 60_000 || !picked) return;
+      window.setTimeout(() => {
+        if (ptyIdRef.current !== id) return;
+        settleSlashLocally(owner.sent, [`选了：${picked}`, ...slashResultNow(owner.sent)]);
+      }, after + 900);
+    };
     const submit = (): number => {
       onDone?.();
       if (!text) {
         writeInteractivePty(id, enter);
+        settleOwner(0);
         return 0;
       }
       const lead = openFirst ? 400 : 0;
@@ -4773,9 +4826,21 @@ export const TerminalView = memo(function TerminalView({
         localRecordsRef.current = { file: ctx.filePath, records: [] };
       }
       const now = Date.now();
+      // 认得出结果行的（Kimi「Permission mode: …」等）：当场收尾，不必等终端静下来
+      const byResult = new Map<ChatMessageDto, string[]>();
+      for (const pu of pendingUsers) {
+        if (isRecorded(pu) || !/^[/!]\S/.test((pu.blocks[0]?.text ?? "").trim())) continue;
+        const result = slashResultNow(pu);
+        if (result.length) byResult.set(pu, result);
+      }
+      for (const [pu, result] of byResult) {
+        localRecordsRef.current.records.push(localCommandOutput(pu, result));
+        if (slashMenuOwnerRef.current?.sent === pu) slashMenuOwnerRef.current = null;
+      }
       const settledLocal = pendingUsers.filter(
         (pu) =>
           !isRecorded(pu) &&
+          !byResult.has(pu) &&
           slashSettledLocally({
             agentId: ctx.agentId,
             sent: pu,
@@ -4787,7 +4852,9 @@ export const TerminalView = memo(function TerminalView({
       for (const pu of settledLocal) {
         localRecordsRef.current.records.push(localCommandRecord(pu, liveReplyRef.current));
       }
-      const missing = pendingUsers.filter((pu) => !isRecorded(pu) && !settledLocal.includes(pu));
+      const missing = pendingUsers.filter(
+        (pu) => !isRecorded(pu) && !settledLocal.includes(pu) && !byResult.has(pu),
+      );
       pendingUsersRef.current = missing;
       const mergedMessages = placePendingUsers(
         mergeLocalRecords(parsedMessages, localRecordsRef.current.records),
@@ -4893,6 +4960,7 @@ export const TerminalView = memo(function TerminalView({
       // 回合确定结束、且刚发的用户消息都已落盘（不是上一轮残留的收尾标记）：
       // 等回复就此结束，不再靠逐条比对正文（正文比对有漏判就会一直挂着「等待回复」）
       let pendingNow = pendingReplyRef.current;
+      if (fileSaysOver && pendingNow) flushSlashAtTurnEnd();
       if (state === "settled" && pendingNow && pendingUsersRef.current.length === 0) {
         pendingNow = false;
         setPendingReply(false);
@@ -5195,6 +5263,7 @@ export const TerminalView = memo(function TerminalView({
           if (linkCtxRef.current !== endedCtx) return;
           void fetchConversation(true).then(() => {
             if (linkCtxRef.current !== endedCtx || !pendingReplyRef.current) return;
+            flushSlashAtTurnEnd();
             pendingUsersRef.current = pendingAfterTurn(pendingUsersRef.current, turn.startedAt);
             if (pendingUsersRef.current.length > 0) return;
             setPendingReply(false);
@@ -6238,6 +6307,10 @@ export const TerminalView = memo(function TerminalView({
       // 气泡先出、再往终端里写（要等 CLI 能收键、多行正文还要等 0.65 秒才按提交）：输入框一清空，这句就在对话里了，
       // 不留一段「哪儿都看不见」的空当（2026-10-25 用户：发送不够丝滑）。没写进去再撤掉
       const shown = showOptimisticUserMessage(message, queued);
+      if (/^[/!]\S/.test(message)) {
+        slashBaselineRef.current.set(shown, screenLines());
+        slashMenuOwnerRef.current = { sent: shown, at: Date.now() };
+      }
       const result = await writeChatMessage(currentPtyId, message);
       if (result.error) {
         disarmPtyWorking();

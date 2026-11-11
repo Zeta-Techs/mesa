@@ -13,6 +13,7 @@ import {
   placePendingUsers,
   hasAssistantText,
   kimiModelArg,
+  localCommandOutput,
   localCommandRecord,
   mergeLocalRecords,
   mergeConversationPages,
@@ -21,7 +22,9 @@ import {
   pendingAfterTurn,
   sentUserRecorded,
   slashCommandRecorded,
+  slashResultLines,
   slashSettledLocally,
+  slashSettlesAtTurnEnd,
   slashHandoff,
   userTextRecorded,
   forkChatMessages,
@@ -390,4 +393,44 @@ test("forkChatMessages：新会话记录读到原对话内容之前一直垫着�
   assert.deepEqual(ids(forkChatMessages([m("n")], preview)), ["p1", "p2", "n"], "只有刚发的那句 / Codex 分叉记录：垫着");
   assert.deepEqual(ids(forkChatMessages([m("p1"), m("p2", "assistant"), m("n")], preview)), ["p1", "p2", "n"], "抄了历史：只画新会话");
   assert.deepEqual(ids(forkChatMessages([m("n")], undefined)), ["n"]);
+});
+
+test("斜杠命令的结果行（2026-11-11 实测屏）：认得出就收尾，发出前屏上已有的同一行不算这次的", () => {
+  const kimi = ["   Permission mode: Never Ask"];
+  assert.deepEqual(slashResultLines("kimi", "/permission", kimi, []), ["Permission mode: Never Ask"]);
+  assert.deepEqual(slashResultLines("kimi", "/permission", kimi, kimi), [], "上一次换档留在屏上的那行");
+  assert.deepEqual(
+    slashResultLines("kimi", "/permission", [...kimi, "   Permission mode unchanged: Never Ask."], kimi),
+    ["Permission mode unchanged: Never Ask."],
+  );
+  assert.deepEqual(
+    slashResultLines("kimi", "/effort", ["   Thinking set to off for this session only. Takes effect from the next turn."], null),
+    ["Thinking set to off for this session only. Takes effect from the next turn."],
+  );
+  assert.deepEqual(
+    slashResultLines("codex", "/model e2e-picked --reasoning low", ["• Model changed to e2e-picked low for this session only"], null),
+    ["Model changed to e2e-picked low for this session only"],
+  );
+  assert.deepEqual(slashResultLines("kimi", "/status", kimi, null), [], "没登记的命令不认");
+  assert.deepEqual(slashResultLines("grok", "/permission", kimi, null), [], "没登记的家不认");
+  assert.deepEqual(slashResultLines("kimi", "/permission", ["AI 正文里写了 Permission mode: Never Ask 这几个字"], null), []);
+});
+
+test("这一轮结束时直接留记录的只有实测不排队、不写会话文件的家，且只认斜杠 / ! 命令", () => {
+  const slash = cmdMsg("user", "text", "/permission", null);
+  assert.equal(slashSettlesAtTurnEnd("kimi", slash), true);
+  assert.equal(slashSettlesAtTurnEnd("codex", slash), true);
+  assert.equal(slashSettlesAtTurnEnd("qwen", slash), false, "Qwen 生成中发的命令排队，这一轮结束后才执行");
+  assert.equal(slashSettlesAtTurnEnd("claude-code", slash), false, "Claude 把命令写进会话文件");
+  assert.equal(slashSettlesAtTurnEnd("kimi", cmdMsg("user", "text", "你好", null)), false);
+});
+
+test("本机命令记录可只带挑好的几行（选了哪一项 + 结果行）", () => {
+  const sent = cmdMsg("user", "text", "/permission", "2026-11-11T06:42:00.000Z");
+  const rec = localCommandOutput(sent, ["选了：Never Ask", "Permission mode: Never Ask"]);
+  assert.deepEqual(
+    rec.blocks.map((b) => [b.kind, b.text]),
+    [["command", "/permission"], ["command_output", "选了：Never Ask\nPermission mode: Never Ask"]],
+  );
+  assert.equal(localCommandOutput(sent, []).blocks.length, 1);
 });

@@ -190,16 +190,87 @@ export function localCommandRecord(
   if (echo >= 0) lines = lines.slice(echo + 1);
   while (lines.length && !lines[0].trim()) lines.shift();
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-  const output = lines.slice(0, 80).join("\n");
+  return localCommandOutput(sent, lines.slice(0, 80));
+}
+
+/** 「命令 + 结果」，结果是调用方挑好的几行（生成中屏上后面全是 AI 的字，不能按回显之后整段抄） */
+export function localCommandOutput(
+  sent: Pick<ChatMessageDto, "blocks" | "timestamp">,
+  output: readonly string[],
+): ChatMessageDto {
+  const text = (sent.blocks[0]?.text ?? "").trim();
+  const body = output.join("\n");
   return {
     role: "user",
     blocks: [
       { kind: "command", text, toolName: null },
-      ...(output ? [{ kind: "command_output" as const, text: output, toolName: null }] : []),
+      ...(body ? [{ kind: "command_output" as const, text: body, toolName: null }] : []),
     ],
     timestamp: sent.timestamp,
     usage: null,
   };
+}
+
+/**
+ * 本机处理的斜杠命令在终端里留下的结果行（2026-11-11 实测，matrix「会话内换权限 / 思考档」节）。认得出这一行就收尾，
+ * 不必等终端静下来：AI 一直在出字时终端永远不静，原先这条命令挂到这一轮结束就被清掉了（2026-11-11 用户 Kimi /permission）
+ */
+const SLASH_RESULT_LINES: Record<string, { cmd: RegExp; line: RegExp }[]> = {
+  kimi: [
+    { cmd: /^\/(?:permission|yolo|auto)\b/, line: /^Permission mode(?: unchanged)?: \S/ },
+    {
+      cmd: /^\/(?:effort|thinking|model)\b/,
+      line: /^(?:Thinking set to |Switched to |Already using |Saved .+ as default\.)/,
+    },
+  ],
+  codex: [
+    { cmd: /^\/model\b/, line: /^Model changed to / },
+    { cmd: /^\/permissions\b/, line: /^Permissions updated to / },
+  ],
+  qwen: [{ cmd: /^\/approval-mode\b/, line: /^Approval mode set to / }],
+};
+
+/** 屏上一行去掉行首的装饰（● • ⎿ ℹ ✓ 与缩进）再比 */
+function bareLine(line: string): string {
+  return line.replace(/^[\s●•⎿ℹ✓✔·]+/u, "").trimEnd();
+}
+
+/**
+ * 这条斜杠命令新出现的结果行：屏上认得出、且比发出那一刻屏上同样的行多出来的（之前换过一次，那行还留在屏上，不能算这次的）
+ */
+export function slashResultLines(
+  agentId: string,
+  command: string,
+  screen: readonly string[],
+  baseline: readonly string[] | null,
+): string[] {
+  const cmd = command.trim();
+  const rule = SLASH_RESULT_LINES[agentId]?.find((r) => r.cmd.test(cmd));
+  if (!rule) return [];
+  const seen = new Map<string, number>();
+  for (const line of baseline ?? []) {
+    const bare = bareLine(line);
+    if (rule.line.test(bare)) seen.set(bare, (seen.get(bare) ?? 0) + 1);
+  }
+  const out: string[] = [];
+  for (const line of screen) {
+    const bare = bareLine(line);
+    if (!rule.line.test(bare)) continue;
+    const left = seen.get(bare) ?? 0;
+    if (left > 0) seen.set(bare, left - 1);
+    else out.push(bare);
+  }
+  return out;
+}
+
+/**
+ * 这一轮结束时还没收尾的斜杠命令，这几家直接留成记录、不再挂着（实测过不写会话文件、发出就执行，不排队）。
+ * 排队的家（Qwen 生成中发的命令这一轮结束后才执行）、会把命令写进会话文件的家不在里面
+ */
+const SLASH_SETTLES_AT_TURN_END = new Set(["kimi", "codex"]);
+export function slashSettlesAtTurnEnd(agentId: string, sent: Pick<ChatMessageDto, "blocks">): boolean {
+  if (!SLASH_SETTLES_AT_TURN_END.has(agentId)) return false;
+  return /^[/!]\S/.test((sent.blocks[0]?.text ?? "").trim());
 }
 
 /** 本机命令记录按时间插回解析结果（插在第一条比它晚的消息前；都比它早就接在最后） */
