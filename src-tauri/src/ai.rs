@@ -263,11 +263,13 @@ pub(crate) fn parse_oneshot_output(
     };
     match agent {
         "claude-code" => {
+            // 取最后一条 result：Claude Code 2.1.3xx 的 stream-json 在 result 之后还会吐一行
+            // {"type":"system","subtype":"task_summary"}（2026-11-11 研讨真跑实证），只看最后一行会误报失败
             let v: Value = raw
                 .lines()
                 .rev()
-                .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-                .filter(|v| v.get("type").and_then(Value::as_str) == Some("result"))
+                .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+                .find(|v| v.get("type").and_then(Value::as_str) == Some("result"))
                 .ok_or_else(|| tail_chars(raw.trim(), 240))?;
             let text = v.get("result").and_then(Value::as_str).unwrap_or("").trim().to_string();
             if v.get("is_error").and_then(Value::as_bool) == Some(true) {
@@ -3562,6 +3564,14 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             parse_oneshot_output("claude-code", err, None, "d").unwrap_err(),
             "Not logged in · Please run /login"
         );
+        // stream-json 在 result 之后还有一行 task_summary（2.1.3xx 实录，2026-11-11）：仍取 result
+        let stream = format!(
+            "{}\n{}\n{}",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"好"}]}}"#,
+            ok,
+            r#"{"type":"system","subtype":"task_summary","detail":null,"uuid":"u","session_id":"s"}"#
+        );
+        assert_eq!(parse_oneshot_output("claude-code", &stream, Some("glm-5.3"), "d").unwrap().0, "好的");
     }
 
     #[test]
