@@ -221,6 +221,7 @@
   都是按路径增量读整份文件（换档记录只在换的那一刻写，尾窗读不到）。**Kimi 的 auto 是 Never Ask = 完全访问**，yolo 才是帮我批准。
   以最后一条为准，但带参数启动时早于这次启动 3 秒的那条不算（这次会再写一条）；Kimi 不带参数接回旧会话时沿用会话里存的档、不再写，那条照算。
   读到的档放 `launchPick.observedTier` 给徽标显示（不加「已选 ·」）；只有这家能用启动参数指定的档才上报 `cliModeSwitch` 改标签的选择（Kimi 的 manual 只显示）。
+  **实际档与所选不一致时只显示、不替人改回**（2026-11-11 用户拍板）：如 Kimi 不带参数接回一段切过 Never Ask 的对话，徽标写完全访问，Mesa 不自动发 /permission；要改由人点徽标换。
 - **会话内换权限（2026-11-11，`switch-strategy.ts inSessionPermissionSwitch`、`tui-menu.ts pickerTargetIndex`、TerminalView `switchPermissionInSession`）**：
   Kimi ≥2.5.3（/permission）、Codex ≥0.166（/permissions，完全访问再答「Enable full access? › Yes, continue anyway」）走选择器，Qwen ≥0.26.7 走
   `/approval-mode <default|auto|yolo>` 带参数；不重开，回复中也能点（徽标 `inline`）。命令按聊天里发的斜杠命令走（留「命令 + 结果」）。选择器认法：
