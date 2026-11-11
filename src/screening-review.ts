@@ -1172,6 +1172,27 @@ export function arrangeScreeningRows<T>(
     .map((item) => item.row);
 }
 
+/** 这一轮新加进清单的篇（2026-11-11 HER 补料评审：新加的排在第 66 篇、被折在「展开其余」后面找不到）：
+ *  评审看的是工作副本，项目根还是上一轮保存的清单——工作副本里有、项目根里没有的就是这一轮新加的。
+ *  项目根读不到（第一轮、还没有清单）时返回空：整份都是新的，标了也没意义。 */
+export function newRecordKeys(current: Pick<IncludedRecord, "id" | "title">[], baseText: string | null): Set<string> {
+  if (!baseText) return new Set();
+  let base: IncludedRecord[];
+  try {
+    base = parseIncludedRecords(baseText);
+  } catch {
+    return new Set();
+  }
+  if (base.length === 0) return new Set();
+  const had = new Set(base.map((row) => includedRecordKey(row)));
+  return new Set(current.map((row) => includedRecordKey(row)).filter((key) => !had.has(key)));
+}
+
+/** 新加的排前面，其余顺序不变（各自仍按选定的排序） */
+export function newFirst<T>(rows: T[], isNew: (row: T) => boolean): T[] {
+  return [...rows.filter(isNew), ...rows.filter((row) => !isNew(row))];
+}
+
 /** 一次把全部 pending 改成纳入。reason 按每条原理由生成。 */
 export function includeAllPendingJson(text: string): string {
   const data = JSON.parse(text) as unknown;

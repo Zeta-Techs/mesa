@@ -605,3 +605,22 @@ test("patchIncludedKind：只动 kind，其余字段原样；nextKind 循环", a
   assert.throws(() => patchIncludedKind(text, "zzz", "review"), /找不到/);
   assert.deepEqual([nextKind(undefined), nextKind("review"), nextKind("research"), nextKind("other")], ["review", "research", "other", "review"]);
 });
+
+test("newRecordKeys / newFirst：工作副本里有、项目根里没有的算本轮新增，排在最前；项目根读不到时不标", async () => {
+  const { newRecordKeys, newFirst } = await import("../src/screening-review.ts");
+  const base = JSON.stringify([
+    { id: "10.1/a", title: "A", decision: "included", reason: "r" },
+    { id: "10.1/b", title: "B", decision: "excluded", reason: "r" },
+  ]);
+  const current = [
+    { id: "10.1/a", title: "A" },
+    { id: "10.1/b", title: "B" },
+    { id: "10.1/c", title: "C" },
+  ];
+  const keys = newRecordKeys(current, base);
+  assert.deepEqual([...keys], ["10.1/c"]);
+  assert.deepEqual(newRecordKeys(current, null).size, 0, "第一轮没有上一份清单");
+  assert.deepEqual(newRecordKeys(current, "[]").size, 0);
+  assert.deepEqual(newRecordKeys(current, "不是 JSON").size, 0);
+  assert.deepEqual(newFirst(current, (r) => keys.has(r.id)).map((r) => r.id), ["10.1/c", "10.1/a", "10.1/b"]);
+});

@@ -43,6 +43,8 @@ import {
   KIND_LABEL,
   nextKind,
   patchIncludedKind,
+  newFirst,
+  newRecordKeys,
 } from "../screening-review";
 import { InlineNotice } from "./PageFrame";
 
@@ -118,6 +120,8 @@ export default forwardRef<PendingConfirmHandle, {
     }
   };
   const [records, setRecords] = useState<IncludedRecord[] | null>(null);
+  // 这一轮新加的篇：评审的工作副本里有、项目根（上一轮保存的）里没有；标「本轮新增」并排前面
+  const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const [jsonRoot, setJsonRoot] = useState(projectRoot);
   const [jsonText, setJsonText] = useState("");
   const [jsonRevision, setJsonRevision] = useState<string | null>(null);
@@ -159,6 +163,10 @@ export default forwardRef<PendingConfirmHandle, {
     setJsonText(json.file.text);
     setJsonRevision(json.file.revision);
     setRecords(parseIncludedRecords(json.file.text));
+    const base = sameRoot(json.root, projectRoot)
+      ? null
+      : await readResearchLedger(projectRoot, "papers/included.json").catch(() => null);
+    setNewKeys(newRecordKeys(parseIncludedRecords(json.file.text), base && !base.truncated ? base.text : null));
     const md = await readFirst([json.root, ...roots], "papers/included.md");
     setMdText(md?.file.text ?? null);
     setMdRevision(md?.file.revision ?? null);
@@ -262,11 +270,9 @@ export default forwardRef<PendingConfirmHandle, {
 
   const pending = (records ?? []).filter((row) => row.decision === "pending");
   function shown(rows: IncludedRecord[]) {
-    return arrangeScreeningRows(
-      rows,
-      (row) => metrics.get(includedRecordKey(row)),
-      sortMode,
-      null,
+    return newFirst(
+      arrangeScreeningRows(rows, (row) => metrics.get(includedRecordKey(row)), sortMode, null),
+      (row) => newKeys.has(includedRecordKey(row)),
     );
   }
   const included = (records ?? []).filter((row) => row.decision === "included");
@@ -774,6 +780,14 @@ export default forwardRef<PendingConfirmHandle, {
           <p className="text-xs leading-5 text-l1">{title}</p>
         )}
         <p className="mt-0.5 flex flex-wrap items-center gap-1 text-micro text-l4">
+          {newKeys.has(key) && (
+            <span
+              className="rounded-sm border border-mesa-amber/40 bg-mesa-amber/15 px-1 text-l1"
+              title="这一轮新加进清单的（项目里上一次保存的清单还没有它）"
+            >
+              本轮新增
+            </span>
+          )}
           {meta && <span title={row.authors || undefined}>{meta}</span>}
           <JournalBadges metric={metric} tableReady={metricsReady} loading={metricsLoading} />
           {/* 有全文只占一个小记号，不再单起一行（标题本身就是打开入口） */}
@@ -934,7 +948,13 @@ export default forwardRef<PendingConfirmHandle, {
       {includedView.length > 0 && (
         <section>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-micro text-l3">已纳入 {includedShown.length}{includedShown.length === included.length ? "" : ` / ${included.length}`}</p>
+            <p className="text-micro text-l3">
+              已纳入 {includedShown.length}
+              {includedShown.length === included.length ? "" : ` / ${included.length}`}
+              {included.some((row) => newKeys.has(includedRecordKey(row)))
+                ? ` · 本轮新增 ${included.filter((row) => newKeys.has(includedRecordKey(row))).length}（排在最前）`
+                : ""}
+            </p>
             <button
               type="button"
               disabled={includingAll}
