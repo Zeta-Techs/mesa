@@ -34,7 +34,7 @@ import {
 } from "./project-assistant";
 import type { CheckItem, ChecksDto } from "./research-checks";
 import { mergeMesaChecks } from "./outline-check";
-import { loadOutlineCheck } from "./research-report-load";
+import { loadDraftCheck, loadNotesCheck, loadOutlineCheck } from "./research-report-load";
 import { stepKind } from "./step-kind";
 import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
 import { renderProjectMap, type MapEntry } from "./project-map";
@@ -112,11 +112,22 @@ async function stepChecks(
   worktree: string,
   projectPath: string,
 ): Promise<CheckItem[]> {
-  const [file, outline] = await Promise.all([
+  // 大纲、精读、初稿、定稿另有 Mesa 核对（2026-11-11）：与评审页同一个函数现算
+  const kind = stepKind(step, undefined);
+  const roots = [worktree, projectPath];
+  const mesa: Promise<CheckItem[]> =
+    kind === "outline"
+      ? loadOutlineCheck(roots).then((r) => r?.items ?? [])
+      : kind === "notes"
+        ? loadNotesCheck(roots)
+        : kind === "writing" || kind === "final"
+          ? loadDraftCheck(roots, kind, step.expectedArtifacts ?? [])
+          : Promise.resolve([]);
+  const [file, own] = await Promise.all([
     safe(invoke<ChecksDto>("research_checks_read", { path: worktree }), null as ChecksDto | null),
-    stepKind(step, undefined) === "outline" ? loadOutlineCheck([worktree, projectPath]).catch(() => null) : Promise.resolve(null),
+    mesa.catch(() => [] as CheckItem[]),
   ]);
-  return mergeMesaChecks(file, outline?.items ?? [])?.items ?? [];
+  return mergeMesaChecks(file, own)?.items ?? [];
 }
 
 function eventLine(e: RunEventDto): string {

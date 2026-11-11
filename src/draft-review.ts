@@ -24,6 +24,15 @@ function bodyWithoutFramework(text: string): string {
   return i >= 0 ? text.slice(0, i) : text;
 }
 
+/** 图的占位：「待绘制」和空路径的图片 `![…]()`。写作扫描数处数、定稿核对按行拦下，共用这一份（2026-11-11） */
+export function placeholderFigureLines(text: string): number[] {
+  const out: number[] = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (/待绘制|!\[[^\]]*\]\(\s*\)/.test(line)) out.push(i + 1);
+  });
+  return out;
+}
+
 export function scanWritingReview(
   text: string,
   /** 大纲两样都放行：空白编号本就在大纲里推演；大纲不渲染，章节号是给人看结构的（2026-11-11 HER 大纲误报「标题里写了序号」） */
@@ -38,7 +47,7 @@ export function scanWritingReview(
   if (!opts?.allowGapIds && /\bG\d+\b/.test(body)) {
     hits.push({ id: "gap-ids", label: "正文含空白编号（G1…）" });
   }
-  const drawn = body.match(/待绘制/g)?.length ?? 0;
+  const drawn = placeholderFigureLines(body).length;
   if (drawn > 0) {
     hits.push({ id: "placeholder-fig", label: `${drawn} 处「待绘制」` });
   }

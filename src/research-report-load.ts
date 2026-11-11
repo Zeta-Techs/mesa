@@ -5,6 +5,7 @@ import { searchPdfProbes, searchProgress, searchProgressLine } from "./notes-pro
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 import { checkNotes, type NoteFile } from "./notes-check";
+import { checkDraft, imageRefs, pickManuscript, type DraftStepKind } from "./draft-check";
 import type { CheckItem } from "./research-checks";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
@@ -142,6 +143,42 @@ export async function loadNotesCheck(roots: readonly string[]): Promise<CheckIte
     extraction,
     skim: skims.filter(Boolean).join("\n"),
   });
+}
+
+/** 初稿 / 定稿核对的取数（draft-check.ts 只算）：主稿只在工作副本里找（这一步的产物），台账、写作规范、大纲先工作副本后项目根；
+ *  稿件引的图按所在目录列一次，看在不在。找不到主稿返回空 */
+export async function loadDraftCheck(roots: readonly string[], kind: DraftStepKind, artifacts: readonly string[]): Promise<CheckItem[]> {
+  const [work] = roots;
+  if (!work) return [];
+  const listing = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(work, "manuscript"), showHidden: false, root: work }).catch(() => [] as DirEntryDto[]);
+  const file = pickManuscript(artifacts, listing.filter((e) => !e.isDir).map((e) => `manuscript/${e.name}`));
+  if (!file) return [];
+  const text = await readFirst([work], file);
+  if (text == null) return [];
+  const dirs = [...new Set(imageRefs(text, file).map((r) => r.path.split("/").slice(0, -1).join("/")).filter((d) => d.startsWith("figures")))];
+  const existing = new Set<string>();
+  let listed = true;
+  for (const dir of dirs) {
+    const rows = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(work, dir), showHidden: false, root: work }).catch(() => null);
+    if (rows === null) {
+      // 目录本身不在：里面引的图都不在；列不出来的别的原因当没查
+      const exists = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(work, dir.split("/").slice(0, -1).join("/") || "."), showHidden: false, root: work })
+        .then((up) => up.some((e) => e.isDir && e.name === dir.split("/").pop()))
+        .catch(() => null);
+      if (exists !== false) listed = false;
+      continue;
+    }
+    for (const e of rows) if (!e.isDir) existing.add(`${dir}/${e.name}`);
+  }
+  const [bib, included, index, sections, styleSheet, outline] = await Promise.all([
+    firstOptional(roots, "references.bib"),
+    firstOptional(roots, "papers/included.json"),
+    firstOptional(roots, "notes/index.json"),
+    readFirst(roots, "manuscript/sections.json"),
+    readFirst(roots, "manuscript/style-sheet.md"),
+    readFirst(roots, "outline.md"),
+  ]);
+  return checkDraft({ kind, file, text, bib, included, index, sections, styleSheet, outline, existingImages: listed ? existing : null });
 }
 
 /** 大纲步骤卡计数行的「薄几节」：大纲里判薄的节，补料（补读点名的篇、为这一节补检来的新篇）到了的另算 */

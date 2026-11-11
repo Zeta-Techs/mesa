@@ -110,6 +110,11 @@
   （见「按大纲的节转回路」③）；精读 `notes-check.ts`——工作副本与项目根都读、以工作副本为准，「写完了」与进度行同一份判断（`isReviewedRow`），
   完整笔记 = 八段标题（lit-notes 技能）出现 6 段以上，不看文件大小；已排除篇留下的笔记（文件名或 # 标题对上 included.json 里 excluded 的题名）不报「没有索引指向」；
   只查长得像单篇笔记的文件（八段出现 3 段以上）。检索暂缓（检索评审页已有待确认清单）。
+  初稿 / 定稿 `draft-check.ts`：主稿只在工作副本找（步骤要交的 manuscript/ 下 md / qmd 排前，过程文件与 style-sheet.md 不算，`writingScanSourcePath` 同口径挑；LaTeX 不查）。
+  **从脚本移植的几条规则与脚本一致**：`cite_check.py refs` 的键解析（PANDOC_KEY、去尾标点、纯数字与 @fig- 一类不算）与库里重复键、`ms_check.py` 的 number-sections 下手写编号、
+  图注 / 表题编号重复跳号、图注「Adapted from」无引文——改规则先改脚本，`tests/draft-check.test.ts` 拿同一份样例跑两边对照。联网核 DOI、重跑出图、对原文摘录不移植。
+  定稿另拦图的占位（与写作扫描共用 `draft-review.ts placeholderFigureLines`）；同一件事只报一次（`supersededWritingIds` 去掉写作扫描的那条）。
+  大纲的拼图计划只认「拼图 N（论点）= …」写法，「拼图 7 张」一类小结不算；稿件里的图按 `figures/figN` 与图注编号认。
 - **三种来源**（`research_record::check_source`，2026-11-03）：内置核验脚本的七个固定文件里才允许「通过」；`pack-` 开头的是任务包脚本，
   检查器一律记成 `pack:<文件名>`（不认脚本自报的，防冒用内置脚本名），「通过」降为待你判断、「拦下」照收；其余文件都是 Agent 的判断（同前）。
 - **研究记录**：Run 关闭时（含崩溃补收）由 Mesa 把运行事实追加进项目 `.ccode/record.jsonl`（只追加、按 runId 去重、持 `record.lock`），

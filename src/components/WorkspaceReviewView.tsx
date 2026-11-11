@@ -117,7 +117,8 @@ import CoachTip from "./CoachTip";
 import CheckList from "./CheckList";
 import OutlineCoverageCompare from "./OutlineCoverageCompare";
 import { mergeMesaChecks, type OutlineCheckResult } from "../outline-check";
-import { loadNotesCheck, loadOutlineCheck } from "../research-report-load";
+import { loadDraftCheck, loadNotesCheck, loadOutlineCheck } from "../research-report-load";
+import { supersededWritingIds } from "../draft-check";
 import { stepKind } from "../step-kind";
 import {
   crossReviewPrompt,
@@ -1245,7 +1246,9 @@ function LiveWorkspaceReviewView({
   const mesaStep = researchContext ? `${stepKind(researchContext.step, undefined)}\n${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}` : null;
   useEffect(() => {
     const [kind, ...roots] = mesaStep?.split("\n") ?? [];
-    const load = kind === "notes" ? loadNotesCheck(roots) : null;
+    const artifacts = researchContext?.step.expectedArtifacts ?? [];
+    const load =
+      kind === "notes" ? loadNotesCheck(roots) : kind === "writing" || kind === "final" ? loadDraftCheck(roots, kind, artifacts) : null;
     if (!load) {
       setStepMesaChecks([]);
       return;
@@ -1273,7 +1276,12 @@ function LiveWorkspaceReviewView({
   // 核验清单 = 核验文件 + Mesa 自己查的（大纲核对、写作扫描；2026-11-11 写作扫描不再单独占一段黄字）
   const writingFile = useMemo(() => writingScanSourcePath((diff?.files ?? []).map((file) => file.path)), [diff]);
   const checks = useMemo(
-    () => mergeMesaChecks(fileChecks, [...(outlineCheck?.items ?? []), ...stepMesaChecks, ...writingHitChecks(writingHits, writingFile ?? "")]),
+    () => {
+      // 同一件事只报一次：定稿占位、number-sections 下手写编号由核对拦下，写作扫描那条去掉
+      const superseded = supersededWritingIds(stepMesaChecks);
+      const writing = writingHitChecks(writingHits, writingFile ?? "").filter((c) => !superseded.has(c.id));
+      return mergeMesaChecks(fileChecks, [...(outlineCheck?.items ?? []), ...stepMesaChecks, ...writing]);
+    },
     [fileChecks, outlineCheck, stepMesaChecks, writingHits, writingFile],
   );
   // 退回意见：按工作副本记在本机（2026-11-11 用户：评审看了一半关掉，写的意见别丢）；退回或保存进项目后清掉
