@@ -584,7 +584,7 @@ function DeliveryReviewPane({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="找笔记"
+              placeholder="找文件"
               className="min-w-0 flex-1 rounded-sm border border-field bg-inset px-2 py-0.5 text-xs text-l1"
             />
             <button
@@ -1283,6 +1283,9 @@ function LiveWorkspaceReviewView({
   const [adviceBusy, setAdviceBusy] = useState(false);
   const [fileQuery, setFileQuery] = useState("");
   const [activePath, setActivePath] = useState<string | null>(null);
+  /** 人在这次评审里亲手点过文件（之后不再自动改选）；自动选时用的评审类型 */
+  const userPickedRef = useRef(false);
+  const autoPickKindRef = useRef<string | null>(null);
   const readOnlyRunReview = diff?.reviewOnly === true;
 
   const refresh = useCallback(
@@ -1417,6 +1420,8 @@ function LiveWorkspaceReviewView({
     setConflictAdvice({});
     setFileQuery("");
     setActivePath(null);
+    userPickedRef.current = false;
+    autoPickKindRef.current = null;
     setRepoPath(null);
     setMainCommitOpen(false);
     initialActionRef.current = null;
@@ -2069,11 +2074,21 @@ function LiveWorkspaceReviewView({
       if (activePath && !displayedPaths.includes(activePath)) setActivePath(null);
       return;
     }
-    if (activePath && displayedPaths.includes(activePath)) return;
+    // 自动选的那份按「当时的评审类型」选：刚打开时还不知道是哪一步（researchContext 没回来），按 git 顺序先选了
+    // manuscript/sections.json；步骤认出来、换成稿件排序后它还在列表里，就一直停在它上面（2026-11-11 HER 大纲评审，
+    // 点别的再进来还是它）。类型变了、人又没亲手点过，就按新类型重选
+    if (
+      activePath &&
+      displayedPaths.includes(activePath) &&
+      (userPickedRef.current || autoPickKindRef.current === reviewProfile.kind)
+    ) {
+      return;
+    }
     const preferred =
       reviewProfile.kind === "files"
         ? preferredDeliveryPath(displayedPaths)
         : displayedPaths[0];
+    autoPickKindRef.current = reviewProfile.kind;
     setActivePath(preferred ?? displayedPaths[0]);
   }, [activePath, displayedPaths, reviewProfile.hideListDiffs, reviewProfile.kind]);
 
@@ -2086,6 +2101,7 @@ function LiveWorkspaceReviewView({
   );
 
   function selectFile(path: string) {
+    userPickedRef.current = true;
     setActivePath(path);
     suppressTrackRef.current = true;
     if (suppressTrackTimerRef.current !== null)
@@ -3556,7 +3572,10 @@ function LiveWorkspaceReviewView({
             root={worktreePath}
             paths={deliveryPaths}
             activePath={activePath}
-            onSelect={setActivePath}
+            onSelect={(path) => {
+              userPickedRef.current = true;
+              setActivePath(path);
+            }}
             above={(path) =>
               outlineCheck && outlineCheck.rows.length > 0 && path.replace(/\\/g, "/") === "outline.md" ? (
                 <OutlineCoverageCompare rows={outlineCheck.rows} />

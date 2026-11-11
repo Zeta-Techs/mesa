@@ -542,14 +542,14 @@ export function checkOutline(input: OutlineCheckInput): OutlineCheckResult {
     const mismatch = countOff || keyNotes.length > 0;
     rows.push({ label, ai, mesa, mismatch });
     if (mismatch) {
-      const short = label.slice(0, 30);
+      const short = shortLabel(label);
       items.push({
         id: `outline-count-${nums.join("_")}`,
         kind: "outline-coverage",
         status: "needs_human",
         title: countOff
           ? `覆盖检查「${short}」篇数对不上：AI 写 ${ai.writable ?? "?"} / ${ai.hint ?? "?"}，Mesa 数 ${writable.length} / ${hint.length}`
-          : `覆盖检查「${short}」列的键和拟引用对不上`,
+          : `覆盖检查「${short}」${keyNotes.join("；")}`,
         target: target(rowLine(label) || coverageLine || mine[0].line),
         evidence: {
           detail:
@@ -562,6 +562,18 @@ export function checkOutline(input: OutlineCheckInput): OutlineCheckResult {
     }
   }
   return { rows, items };
+}
+
+/** 节名太长时截短：不截在英文单词中间（「reverse electron trans」），截了补「…」 */
+function shortLabel(label: string, max = 24): string {
+  const t = label.trim();
+  if (t.length <= max) return t;
+  let cut = t.slice(0, max);
+  if (/[A-Za-z]/.test(t[max] ?? "") && /[A-Za-z]$/.test(cut)) {
+    const sp = cut.lastIndexOf(" ");
+    if (sp > 0) cut = cut.slice(0, sp);
+  }
+  return `${cut.trimEnd()}…`;
 }
 
 /** 覆盖检查里判「薄」、还没处理的节，以及其中补料已经到了的（建议里点名补读的篇都有了全文精读笔记，

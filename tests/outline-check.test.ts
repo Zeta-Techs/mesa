@@ -124,6 +124,19 @@ test("覆盖检查：Mesa 按笔记状态数、上级节号合并下级，与 AI
   assert.equal(count.target?.line, 25);
 });
 
+test("篇数对得上、键不对时标题直接写哪篇；长节名不截在英文单词中间", () => {
+  const outline = [
+    "**3.1 非晶系 reverse electron transfer 模型**",
+    "- 拟引用——可写正文：[@Ann2020]；仅线索：[@Dee2024] [@Eve2018]。",
+    "## 覆盖检查",
+    "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+    "|---|---|---|---|---|---|",
+    "| 3.1 非晶系 reverse electron transfer 模型 | 1 | 2（@Dee2024 @Dee2024） | 2024 | 够 | |",
+  ].join("\n");
+  const item = checkOutline({ outline, indexes: [INDEX], bibs: [BIB] }).items.find((i) => i.id === "outline-count-3.1")!;
+  assert.equal(item.title, "覆盖检查「3.1 非晶系 reverse electron…」仅线索一格：@Dee2024 写了两次，漏了 @Eve2018");
+});
+
 test("薄节：补读点名的篇都有了全文笔记就算补料已到；补检看新笔记的 forSections", () => {
   assert.deepEqual(outlineThinStatus(OUTLINE, [INDEX]), { thin: 1, arrived: 0 });
   const later = JSON.stringify([{ bibKey: "Eve2018", reviewStatus: "reviewed", fulltextStatus: "fulltext" }]);
