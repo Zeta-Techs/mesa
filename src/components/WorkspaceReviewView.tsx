@@ -1883,7 +1883,9 @@ function LiveWorkspaceReviewView({
   const allConflictContentsLoaded =
     conflictFiles.length > 0 &&
     conflictFiles.every((path) => !!conflictContents[path]);
-  const hasUncommitted = (status?.files.length ?? 0) > 0;
+  // 与「保存进项目」实际提交的同口径：退回意见 review-notes.md 不进提交，只剩它时不算有未提交改动
+  // （2026-11-11 HER：保存成功后按钮仍是「提交并保存进项目」，再点报「健康检查未通过」）
+  const hasUncommitted = commitWorthyFiles(status?.files ?? []).length > 0;
   const hasCommitted = (health?.ahead ?? 0) > 0;
   const hasTaskChanges = (diff?.files.length ?? 0) > 0;
   const hardBlocked = blockers.length > 0;
