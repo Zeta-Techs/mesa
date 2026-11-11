@@ -6,6 +6,7 @@ import {
   breakdownSupported,
   contextView,
   fmtRatio,
+  imageWeightNote,
   longContextHint,
   type ContextBreakdown,
   type ContextBreakdownRequest,
@@ -81,6 +82,7 @@ export default function ContextRing({
   className = "",
   extra = [],
   showPercent = false,
+  imageBytes = null,
 }: {
   ratio: number;
   used: number;
@@ -99,10 +101,13 @@ export default function ContextRing({
   extra?: string[];
   /** 聊天层直接显示比例，圆环与原有输入控件的位置不变。 */
   showPercent?: boolean;
+  /** Codex 会话里存的图（字节，session_image_bytes）：到 8MB 圆环变橙并在悬停 / 浮层里说明（2026-11-11） */
+  imageBytes?: number | null;
 }) {
   const r = 6;
   const c = 2 * Math.PI * r;
-  const warn = ratio >= 0.8;
+  const heavy = imageWeightNote(imageBytes);
+  const warn = ratio >= 0.8 || heavy !== null;
   const stroke = warn ? warnColor : color;
   const pct = Math.round(ratio * 100);
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
@@ -226,6 +231,9 @@ export default function ContextRing({
                   {line}
                 </div>
               ))}
+              {heavy && (
+                <div className={`mt-1 leading-[18px] ${heavy.level === "stuck" ? "text-err-text" : "text-warn-text"}`}>{heavy.text}</div>
+              )}
               {/* 只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
               <div className="mt-1 leading-[18px] text-l4">首轮的用量已包含 {label} 的系统提示、技能清单和工具定义</div>
               <div className="mt-0.5 leading-[18px] text-l4">点一下看分类{onCompact ? "，也能在里面压缩" : ""}</div>
@@ -253,6 +261,9 @@ export default function ContextRing({
                   {contextFmtTokens(used)} / {contextFmtTokens(win)}（{pct}%）
                 </span>
               </div>
+              {heavy && (
+                <p className={`mt-1.5 leading-[18px] ${heavy.level === "stuck" ? "text-err-text" : "text-warn-text"}`}>{heavy.text}</p>
+              )}
               <div className="relative mt-2 h-1.5">
                 {/* 段与段之间留 2px 底色缝，相邻两色不糊在一起 */}
                 <div className="flex h-full gap-0.5 overflow-hidden rounded-full bg-field">

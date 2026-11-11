@@ -101,6 +101,26 @@ const MENU_CAP = 460;
 export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const launch = props.kind === "launch" ? props : null;
   const runtime = props.kind === "runtime" ? props : null;
+  // Codex 会话里存的图（2026-11-11）：上下文圆环到 8MB 变橙并说明；每轮用量变了再读一次（后端按文件大小与修改时间缓存）
+  const [imageBytes, setImageBytes] = useState<number | null>(null);
+  const imgAgent = runtime?.status?.agentId ?? null;
+  const imgSession = runtime?.status?.sessionId ?? null;
+  const imgTick = runtime?.contextUsed ?? null;
+  useEffect(() => {
+    if (imgAgent !== "codex" || !imgSession) {
+      setImageBytes(null);
+      return;
+    }
+    let stale = false;
+    void invoke<number>("session_image_bytes", { agent: imgAgent, sessionId: imgSession })
+      .then((b) => {
+        if (!stale) setImageBytes(b);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [imgAgent, imgSession, imgTick]);
   const [open, setOpen] = useState(false);
   // 主屏只有思考强度（2026-11-05 用户：点开先只看思考档）；模型、Agent / 连接逐层点进去
   const [view, setView] = useState<"main" | "model" | "who" | "beta" | "relay">("main");
@@ -581,6 +601,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           agentId={agentId}
           breakdown={breakdownRequest(runtime?.status ?? null)}
           onCompact={runtime?.onCompact}
+          imageBytes={imageBytes}
         />
       )}
       <button

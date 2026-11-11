@@ -4015,6 +4015,56 @@ pub(crate) fn session_markdown(agent: &str, session_id: &str) -> Option<String> 
     Some(redact_sensitive_text(&render_markdown(agent, session_id, &redact_sensitive_text(&title), &msgs)))
 }
 
+/// 一行里内嵌图片的字节数（2026-11-11，借 ClawChat 实测）：Codex 把看过的每张图以 `data:image/…;base64,…` 原样存进会话、
+/// 每轮整个重发；按 base64 长度 × 3/4 估原始字节
+pub(crate) fn inline_image_bytes(line: &str) -> u64 {
+    let mut total = 0u64;
+    let mut rest = line;
+    while let Some(i) = rest.find("data:image/") {
+        let after = &rest[i..];
+        let Some(b) = after.find(";base64,") else { break };
+        let payload = &after[b + 8..];
+        let end = payload.find(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')).unwrap_or(payload.len());
+        total += (end as u64) * 3 / 4;
+        rest = &payload[end..];
+    }
+    total
+}
+
+/// Codex 会话里累计存了多少图片（字节）：按文件大小 + 修改时间缓存，文件不变不重读
+#[tauri::command]
+pub async fn session_image_bytes(agent: String, session_id: String) -> Result<u64, String> {
+    use std::io::BufRead;
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, (u64, std::time::SystemTime, u64)>>> =
+        std::sync::OnceLock::new();
+    tauri::async_runtime::spawn_blocking(move || {
+        if agent != "codex" {
+            return Ok(0);
+        }
+        let Some(meta) = cached_scan().sessions.into_iter().find(|s| s.agent == agent && s.session_id == session_id) else {
+            return Ok(0);
+        };
+        let path = std::path::PathBuf::from(&meta.file_path);
+        let stat = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        let (size, mtime) = (stat.len(), stat.modified().unwrap_or(std::time::UNIX_EPOCH));
+        let cache = CACHE.get_or_init(Default::default);
+        if let Some((s, m, b)) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&meta.file_path) {
+            if *s == size && *m == mtime {
+                return Ok(*b);
+            }
+        }
+        let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        let mut bytes = 0u64;
+        for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+            bytes += inline_image_bytes(&line);
+        }
+        cache.lock().unwrap_or_else(|e| e.into_inner()).insert(meta.file_path.clone(), (size, mtime, bytes));
+        Ok(bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 导出当前会话为 Markdown 到 ~/Downloads/ccode-exports/，返回导出文件路径
 #[tauri::command]
 pub async fn export_session_markdown(
@@ -5390,3 +5440,12 @@ mod tests;
 
 #[cfg(test)]
 mod wal_mode_tests;
+#[cfg(test)]
+mod inline_image_tests {
+    #[test]
+    fn counts_base64_payloads() {
+        let line = r#"{"content":[{"type":"input_image","image_url":"data:image/png;base64,AAAABBBB"},{"t":"data:image/jpeg;base64,QUJD"}]}"#;
+        assert_eq!(super::inline_image_bytes(line), 6 + 3);
+        assert_eq!(super::inline_image_bytes("没有图"), 0);
+    }
+}

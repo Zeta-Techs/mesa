@@ -134,3 +134,13 @@ test("上下文过 30 万提示回复会变慢、新开对话会快（54 万 tok
   assert.equal(longContextHint(120_000), null);
   assert.equal(longContextHint(545_023), "对话已有 55 万 token，回复会变慢，新开对话会快");
 });
+
+test("Codex 会话图片过重：8MB 起提醒变慢，13MB 起提醒随时卡住", async () => {
+  const { imageWeightNote, IMAGE_SLOW_BYTES, IMAGE_STUCK_BYTES } = await import("../src/context-breakdown.ts");
+  assert.equal(imageWeightNote(null), null);
+  assert.equal(imageWeightNote(IMAGE_SLOW_BYTES - 1), null);
+  assert.equal(imageWeightNote(IMAGE_SLOW_BYTES)?.level, "slow");
+  const stuck = imageWeightNote(IMAGE_STUCK_BYTES + 1);
+  assert.equal(stuck?.level, "stuck");
+  assert.match(stuck?.text ?? "", /13\.0 MB 图片/);
+});

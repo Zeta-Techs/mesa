@@ -878,9 +878,9 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor / A
   client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs
   switch-strategy.ts         # 运行中换模型 / 思考档走命令还是重开接回：SWITCH_PERSISTS 记哪几家的切换命令会写回自己的全局配置（实测表），
                              # 会写回且启动时注得进的改走 relaunchWith（runtime-model-effort.ts 消费；tests/switch-strategy.test.ts）
-  components/ContextRing.tsx # 上下文用量圆环：模型芯片左边（状态栏在时由状态栏聊天变体画）与终端底栏右区共用（终端底栏传 xterm 调色板颜色）；悬停可加 extra 行（本段 token · 经连接）；点开是上下文浮层
+  components/ContextRing.tsx # 上下文用量圆环：模型芯片左边（状态栏在时由状态栏聊天变体画）与终端底栏右区共用（终端底栏传 xterm 调色板颜色）；悬停可加 extra 行（本段 token · 经连接）；点开是上下文浮层；imageBytes（Codex 会话里存的图）到 8MB 变橙、13MB 红字说明（context-breakdown imageWeightNote）
                              # （总量 + 分类色横条 + 分类列表 + 离自动压缩还有多少 + 压缩上下文），同一轮的分类明细模块级缓存
-  context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、
+  context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、；imageWeightNote（Codex 会话图片 8MB 变慢 / 13MB 可能卡住，借 ClawChat 实测）
                              # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）；
                              # longContextHint：过 30 万 token 提示回复会变慢、新开对话会快（对话太长的慢别当网络问题）
   prompt-cache.ts            # 回到长对话时「缓存多半已过期、下一句整段重读」的提示（coldCacheHint / coldCacheAt）：只 Claude Code，订阅约 1 小时、API 密钥约 5 分钟、
@@ -1451,7 +1451,7 @@ src-tauri/src/
                              # 50MB 上限 + 每次顺带清理 7 天前残留（机制约定见 conventions/terminal.md「输入侧」）；is_pasted_image（项目助手只收这里的图，2026-11-05）；
                              # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
-  sessions.rs                # 会话浏览（2026-11-10 起 SessionMetaDto 拍平带 SessionStepMeta：stepIndex 按档案卡步骤顺序 apply_step_index、
+  sessions.rs                # 会话浏览（2026-11-10 起 SessionMetaDto 拍平带 SessionStepMeta：stepIndex 按档案卡步骤顺序 apply_step_index、；session_image_bytes（Codex 会话里内嵌图片累计字节，按文件大小与修改时间缓存）
                              #   stepRole / laneNo / laneDone 由 runs::apply_step_runs 照 Run 复用键认；titleByUser = title_source=user）：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
                              # 各家会话根目录唯一入口 SessionRoots（配置根经 agent_specs::agent_config_root_with 认搬迁变量，
                              #   另认 QWEN_RUNTIME_DIR / runtimeOutputDir、CURSOR_DATA_DIR；扫描、删除白名单、导入、瘦身同源，禁写 home.join(".xxx")，2026-11-01）、

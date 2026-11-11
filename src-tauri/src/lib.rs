@@ -740,6 +740,7 @@ pub fn run() {
             sessions::session_tail_state,
             sessions::session_permission_mode,
             sessions::export_session_markdown,
+            sessions::session_image_bytes,
             session_slim::session_slim_inspect,
             session_slim::session_slim_apply,
             session_transfer::export_sessions,

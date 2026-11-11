@@ -193,3 +193,21 @@ export const LONG_CONTEXT_TOKENS = 300_000;
 export function longContextHint(used: number): string | null {
   return used >= LONG_CONTEXT_TOKENS ? `对话已有 ${Math.round(used / 10_000)} 万 token，回复会变慢，新开对话会快` : null;
 }
+
+/** Codex 会话里存的图（2026-11-11，借 ClawChat 实测）：每轮整个重发，8MB 起变慢、13MB 以上随时可能慢到像卡住 */
+export const IMAGE_SLOW_BYTES = 8 * 1024 * 1024;
+export const IMAGE_STUCK_BYTES = 13 * 1024 * 1024;
+
+export function imageWeightNote(bytes: number | null | undefined): { level: "slow" | "stuck"; text: string } | null {
+  if (!bytes || bytes < IMAGE_SLOW_BYTES) return null;
+  const mb = (bytes / 1024 / 1024).toFixed(1);
+  return bytes >= IMAGE_STUCK_BYTES
+    ? {
+        level: "stuck",
+        text: `这段会话里存了 ${mb} MB 图片，Codex 每轮都要整个重发，随时可能慢到像卡住。建议现在另开一段新对话接着做（开头说一句做到哪了），或用「换 Agent」交给别家。`,
+      }
+    : {
+        level: "slow",
+        text: `这段会话里存了 ${mb} MB 图片，Codex 每轮都要整个重发，已经开始变慢。这批图做完后另开一段新对话接着做。`,
+      };
+}
