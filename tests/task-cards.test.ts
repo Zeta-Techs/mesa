@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   bucketCardsByStep,
-  ideaTopicPlaceholder,
   topicCardsForStep,
   unstartedSeeds,
   groupSessionsByTask,
@@ -189,18 +188,6 @@ test("预置话题 chips：开聊过的不再出 chip（已在话题清单里）
   assert.deepEqual(unstartedSeeds(cards, "写综述", seeds), seeds);
   // 无卡时全部未开聊
   assert.deepEqual(unstartedSeeds([], "读文献", seeds), seeds);
-});
-
-test("话题输入框例子跟当前步骤走：综述大纲不出现对照实验", () => {
-  const outline = ideaTopicPlaceholder("综述大纲");
-  assert.match(outline, /这一章先写机制还是先写应用/);
-  assert.doesNotMatch(outline, /对照实验/);
-  assert.match(ideaTopicPlaceholder("实验设计"), /要不要加对照实验/);
-  assert.match(ideaTopicPlaceholder("审稿意见回复（第2轮）"), /这条意见接受到哪一步/);
-  const fallback = ideaTopicPlaceholder("文献检索与筛选");
-  assert.match(fallback, /这一步先定哪一件/);
-  assert.doesNotMatch(fallback, /对照实验/);
-  assert.match(ideaTopicPlaceholder(null), /这一步先定哪一件/);
 });
 
 test("预置话题比对忽略首尾空白；空种子剔除", () => {

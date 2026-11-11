@@ -118,33 +118,6 @@ export function topicCardsForStep(
   return sortCards(cards.filter((c) => c.step === stepName));
 }
 
-/** 「＋ 话题」输入框的例子。必须像这一步会聊的事——写死「对照实验」会在综述大纲上串戏。
- *  未列出的步骤用中性例子，避免再拿实验设计的问法去套写作步骤。 */
-const IDEA_TOPIC_EXAMPLES: Record<string, string> = {
-  综述大纲: "这一章先写机制还是先写应用",
-  综述初稿: "这一节证据够不够写实",
-  润色与定稿: "这句结论要不要收窄",
-  论文大纲: "结果章按发现还是按假设排",
-  论文初稿: "讨论里先回哪条发现",
-  润色与投稿准备: "这句结论要不要收窄",
-  实验设计: "要不要加对照实验",
-  实验执行: "这组对照还要不要补一轮",
-  研究方法: "要不要加对照实验",
-  开题报告与综述: "技术路线先写哪一条",
-  格式与定稿: "这句结论要不要收窄",
-  投稿材料: "给编辑先强调哪一点",
-  定稿导出: "这句结论要不要收窄",
-};
-
-export function ideaTopicPlaceholder(stepName: string | null | undefined): string {
-  const example =
-    (stepName && IDEA_TOPIC_EXAMPLES[stepName]) ||
-    (stepName?.startsWith("审稿意见回复")
-      ? "这条意见接受到哪一步"
-      : "这一步先定哪一件");
-  return `话题名，如 ${example}（回车开聊）`;
-}
-
 /** 还没开聊过的预置话题（讨论种子 + 决策项问题）：已经建了卡的不再出 chip，
  *  它已经以话题行的形式躺在清单里了——两处都显示会让人以为是两个东西 */
 export function unstartedSeeds(

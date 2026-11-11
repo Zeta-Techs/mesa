@@ -64,7 +64,6 @@ import {
 import { workspaceReuseKey } from "../pipeline-start";
 import {
   bucketCardsByStep,
-  ideaTopicPlaceholder,
   topicCardsForStep,
   unstartedSeeds,
 } from "../task-cards";
@@ -366,8 +365,6 @@ export default function TaskCardsSection({
   } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   // 想法区（聚焦态专属）：新建内联表单 + 沉淀弹层目标卡
-  const [ideaFormOpen, setIdeaFormOpen] = useState(false);
-  const [ideaName, setIdeaName] = useState("");
   const [fusing, setFusing] = useState<TaskCardDto | null>(null);
 
   useEffect(() => {
@@ -489,11 +486,6 @@ export default function TaskCardsSection({
     };
   }, [unreadStep?.name, unreadRoot, projectPath, refreshToken, catchUpTick]);
   const dirtyBlocked = historySaveBlockedReason(dirtyFiles, dirtyMerging);
-  /** 想法区零态入口（「＋ 话题」）是否常显：有卡 → 常现（管理已有讨论）；
-   *  无卡 → 仅 role=you 的步骤常显（人主导的步骤开放讨论最有价值，如综述大纲聊角度/创新点）。
-   *  纯执行步骤（检索/清洗等 role≠you 且无卡）不显示——多个没约束对象的入口只会让人问「这是干嘛的」；
-   *  那些步骤要么有种子 chip 建首卡，要么真不需要想法（2026-08-20 两轮实测拍板） */
-  const showIdeaEntry = ideaCards.length > 0 || focusStepDto?.role === "you";
   /** 还没开聊过的预置话题（讨论种子）：开过的已经在话题清单里，不再出 chip */
   const openSeeds = focusStepDto
     ? unstartedSeeds(
@@ -509,26 +501,10 @@ export default function TaskCardsSection({
     if (!name) return;
     setError(null);
     try {
-      // 未挂步骤的卡无步骤语境，只建卡归档（挂步骤的话题从流程线「＋ 自定义话题」走 onSeed 口径）
+      // 未挂步骤的卡无步骤语境，只建卡归档
       await createCard(projectPath, name, null);
       setCreatingIn(null);
       setDraftName("");
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
-
-  /** 想法区「＋ 聊个话题」：kind=idea、挂当前聚焦步骤；不开聊，只建卡 */
-  async function submitCreateIdea(e: React.FormEvent) {
-    e.preventDefault();
-    if (!focusStep) return;
-    const name = ideaName.trim();
-    if (!name) return;
-    setError(null);
-    try {
-      await createCard(projectPath, name, focusStep, "idea");
-      setIdeaFormOpen(false);
-      setIdeaName("");
     } catch (reason) {
       setError(String(reason));
     }
@@ -616,22 +592,6 @@ export default function TaskCardsSection({
     void Promise.resolve(onStartStep(index, card.id))
       .catch(() => {})
       .finally(() => setBusyId(null));
-  }
-
-  /** 开聊一个话题（种子 chip / 决策项「开聊」/ 手动加的话题共用；已有同名卡则续聊）。
-   *  与「聊想法」同一口径：**只读开聊**，结论不由 Agent 直接落盘，
-   *  聊完走「◈ 沉淀进任务书」提炼后追加——讨论入口只此一条，
-   *  「让 Agent 直接改草稿」由 discuss 节点的「跟 Agent 聊任务书」单独承担，两者不再重叠 */
-  async function onSeed(stepName: string, seed: string, topic?: string) {
-    setError(null);
-    try {
-      const existing = (cards ?? []).find((c) => c.name === seed);
-      const card =
-        existing ?? (await createCard(projectPath, seed, stepName, "idea"));
-      onDiscuss(card, topic);
-    } catch (reason) {
-      setError(String(reason));
-    }
   }
 
   /** 要看 diff 才去运行页改动面板；一键存进历史不走这里。 */
@@ -1439,7 +1399,7 @@ export default function TaskCardsSection({
           ) : canStart ? (
             <button
               type="button"
-              onClick={() => void onSeed(card.step!, card.name)}
+              onClick={() => onDiscuss(card)}
               title="继续这张卡的讨论，结论直接写进 TASK.md；新会话自动归入本卡"
               className={`${actionBtn} shrink-0`}
             >
@@ -1795,77 +1755,16 @@ export default function TaskCardsSection({
                 ? () => continueFocusedStep(true)
                 : undefined
             }
-            discussInline={
-              // 还没聊过话题：「＋ 话题」跟在「继续讨论 · TASK.md」同一行，不另占一行（2026-11-11 项目页减法）
-              showIdeaEntry && ideaCards.length === 0 && !ideaFormOpen ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdeaName("");
-                    setIdeaFormOpen(true);
-                  }}
-                  title="自己起个话题和 AI 只读地聊（如综述角度、创新点）；聊完点卡片上的「◈ 写入任务书」才追加进 TASK.md。要直接改任务书用「继续讨论」"
-                  className="shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline"
-                >
-                  ＋ 话题
-                </button>
-              ) : null
-            }
+            discussInline={null}
             discussContent={
-              // 零态且非人主导步骤：整个想法区不渲染（没有入口也没有约束对象）；还没聊过的零态入口在上面同一行（discussInline）
-              (!showIdeaEntry && !ideaFormOpen) || (ideaCards.length === 0 && !ideaFormOpen) ? null : (
+              // 话题 2026-11-11 收进商量（和商量是同一家 AI 聊同一步，只差改不改稿）：不再新建话题卡；
+              // 已有的老话题卡照样列在这里，能接着聊、能「◈ 写入任务书」，数据不迁移
+              ideaCards.length === 0 ? null : (
               <div className="mt-1">
-                {/* 想法区（v3.80）：自由想法卡（kind=idea）——只读纯聊 + ◈ 沉淀进任务书；
-                    「想法期只读保护」开关 2026-10-26 已收掉，聊想法固定只读开聊（TaskCardsSection 顶部 guard 提示）。
-                    与「跟 AI 商量一下」是两层东西，文案对仗点破：商量=边聊边改 TASK.md（改合同），
-                    想法=先聊不改稿、点 ◈ 沉淀才进任务书（先发散后收编） */}
                 <div className="group flex flex-wrap items-center gap-2">
-                  {ideaCards.length > 0 && (
-                    <span className="text-xs text-l4">
-                      聊过的（{ideaCards.length}）
-                    </span>
-                  )}
-                  {/* 「＋ 话题」零态可见性见上方 showIdeaEntry（R5：唯一入口不能消失，
-                      但没约束对象的入口也不白占一行） */}
-                  {ideaFormOpen ? (
-                    <form
-                      onSubmit={(e) => void submitCreateIdea(e)}
-                      className="flex min-w-0 flex-1 items-center gap-1"
-                    >
-                      <input
-                        className={`${fieldSm} min-w-0 flex-1`}
-                        value={ideaName}
-                        onChange={(e) => setIdeaName(e.target.value)}
-                        placeholder={ideaTopicPlaceholder(focusStepDto?.name)}
-                        autoFocus
-                        required
-                      />
-                      <button type="submit" className={actionBtn}>
-                        确定
-                      </button>
-                      <button
-                        type="button"
-                        className={actionBtn}
-                        onClick={() => setIdeaFormOpen(false)}
-                      >
-                        取消
-                      </button>
-                    </form>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIdeaName("");
-                        setIdeaFormOpen(true);
-                      }}
-                      title="自己起个话题开聊（如综述角度、创新点）；聊完点卡片上的「◈ 写入任务书」才追加进 TASK.md。要直接改任务书用「跟 AI 商量一下」"
-                      className={`${actionBtn} ${ideaCards.length === 0 ? "text-l3" : `text-l4 ${hoverRevealClass}`} hover:text-l1`}
-                    >
-                      ＋ 话题
-                    </button>
-                  )}
+                  <span className="text-xs text-l4">聊过的话题（{ideaCards.length}）</span>
                   {/* 聊想法固定只读开聊：当前 Agent 做不到只读时启动会被拒，先如实说一句（开关已收掉，2026-10-26） */}
-                  {ideaCards.length > 0 && !guardHard && (
+                  {!guardHard && (
                     <span
                       className="ml-auto shrink-0 text-micro text-warn-text"
                       title={`${guardAgentLabel} 没有只读启动参数（或本机版本太旧），聊想法开不起来：换一家 Agent，或更新 CLI`}
@@ -1874,11 +1773,9 @@ export default function TaskCardsSection({
                     </span>
                   )}
                 </div>
-                {ideaCards.length > 0 && (
-                  <ul className="mt-1 space-y-0.5">
-                    {ideaCards.map(renderIdeaCard)}
-                  </ul>
-                )}
+                <ul className="mt-1 space-y-0.5">
+                  {ideaCards.map(renderIdeaCard)}
+                </ul>
               </div>
               )
             }
@@ -1917,7 +1814,6 @@ export default function TaskCardsSection({
             )}
             reviewConflict={reviewConflict}
             onRestore={onRestoreWorkspace}
-            onSeed={(seed) => void onSeed(focusStepDto.name, seed)}
             openSeeds={openSeeds}
             onStart={() =>
               void onStartStep(

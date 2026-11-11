@@ -542,7 +542,6 @@ export default function StepFlow({
   runStatus,
   hasDraft,
   ws,
-  onSeed,
   openSeeds,
   onStart,
   onReadPaper,
@@ -585,8 +584,6 @@ export default function StepFlow({
   hasDraft: boolean;
   /** 本步骤绑定的活跃工作区（无 = 未开始） */
   ws: WorkspaceDto | undefined;
-  /** 讨论种子点击（由卡片区已有逻辑承载：建卡 + 聊想法） */
-  onSeed: (seed: string) => void;
   /** 还没开聊过的预置话题 chips（开过的已在话题清单里，不再重复出 chip） */
   openSeeds?: string[];
   /** agent 节点「开始」= 打开开工确认弹层 */
@@ -618,9 +615,9 @@ export default function StepFlow({
     provider?: string | null;
     cwd?: string | null;
   } | null;
-  /** discuss 节点内嵌内容（想法区）：讨论的事全归这个节点，不在流程线外另立并列区块 */
+  /** discuss 节点内嵌内容：只剩老话题卡（kind=idea）的清单，新话题 2026-11-11 起不再新建 */
   discussContent?: React.ReactNode;
-  /** 跟在「继续讨论 · TASK.md」同一行的讨论入口（还没聊过话题时的「＋ 话题」，2026-11-11 项目页减法：同类入口不另占一行） */
+  /** 跟在「继续讨论 · TASK.md」同一行的入口（「请几家研讨」，2026-11-11 项目页减法：同类入口不另占一行） */
   discussInline?: React.ReactNode;
   /** 项目的文献来源（project.toml lit_source）：zotero/folder 时，落点在 papers/ 的人工事项
    *  不该再劝人往 papers/ 里塞 PDF——那会造出第二个文献存放处，与已有库各自漂移 */
@@ -1632,7 +1629,8 @@ export default function StepFlow({
   }
   const showDiscussNudge = discussNudgeOpen && Boolean(draft) && !ws && !discussed && !draftHasBody;
 
-  async function chatDraft() {
+  /** topic：预置话题 / 决策项「开聊」带进来的问题（2026-11-11 话题收进商量：不再建话题卡，就这个问题开商量） */
+  async function chatDraft(topic?: string) {
     if (!draft || chatBusy) return;
     dismissDiscussNudge();
     setChatBusy(true);
@@ -1666,15 +1664,18 @@ export default function StepFlow({
             },
             autoLaunchProfileId: projectLaunch?.profileId,
             autoStart: true,
+            // 接回后再送一句（TerminalPage：resume + initialPrompt = 接上后注入）
+            ...(topic ? { initialPrompt: `接着聊这个问题：${topic}` } : {}),
           }
         : {
-            initialPrompt: discussOpeningPrompt({
-              stepName: step.name,
-              relPath: draft.relPath,
-              workspaceName: step.workspaceName,
-              openSettings,
-              seeds,
-            }),
+            initialPrompt:
+              discussOpeningPrompt({
+                stepName: step.name,
+                relPath: draft.relPath,
+                workspaceName: step.workspaceName,
+                openSettings,
+                seeds,
+              }) + (topic ? `\n\n先从这个问题聊起：${topic}` : ""),
             ...(projectLaunch ?? {}),
             autoStart: Boolean(projectLaunch?.profileId),
           }),
@@ -2898,9 +2899,9 @@ export default function StepFlow({
                       onClick={() => {
                         const q = writeOwn.q;
                         setWriteOwn(null);
-                        onSeed(q);
+                        void chatDraft(q);
                       }}
-                      title="拿不准？就这个问题开终端和 Agent 聊（自动建卡，结论写进草稿）"
+                      title="拿不准？就这个问题跟 AI 商量，聊定了它直接写进 TASK.md"
                       className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l2"
                     >
                       开聊
@@ -3017,11 +3018,8 @@ export default function StepFlow({
             {!draft && draftLoadError && (
               <p className="text-micro text-err-text">{draftLoadError}</p>
             )}
-            {/* 预置话题 chips：只列还没开聊过的——开过的已经以话题行躺在下面的清单里，
-                两处都显示会让人以为是两个东西。点击 = 只读开聊（同话题清单口径），
-                「让 Agent 直接改草稿」是上面那颗「跟 Agent 聊任务书」的活，两者不重叠 */}
-            {/* 预置话题：不再是独立一区，而是「跟 AI 商量」的现成话头。
-                前缀「聊聊：」让它一眼看出是同一件事的快捷入口，不是第三个功能 */}
+            {/* 预置话题：「跟 AI 商量」的现成话头，点了就带着这个问题开商量（2026-11-11 起不再建话题卡）。
+                只列还没开聊过的（老话题卡已在下面的清单里） */}
             {(openSeeds ?? []).length > 0 && (
               <div className="flex flex-wrap items-center gap-1">
                 <span className="text-xs text-l4">或直接聊：</span>
@@ -3029,8 +3027,8 @@ export default function StepFlow({
                   <button
                     key={seed}
                     type="button"
-                    onClick={() => onSeed(seed)}
-                    title="就这个问题开聊，结论可以写入任务书"
+                    onClick={() => void chatDraft(seed)}
+                    title="就这个问题跟 AI 商量，聊定了它直接写进 TASK.md"
                     className="rounded-full bg-strip px-2 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
                   >
                     {seed}
@@ -3038,9 +3036,7 @@ export default function StepFlow({
                 ))}
               </div>
             )}
-            {/* 想法区（v3.80）：自由想法卡，讨论的最松散一档，排在种子之后。
-                由卡片区经 discussContent 传入——与 agentContent 同一范式，
-                收进本节点是为了让「一步 = 一条线」，不在流程线旁边另立并列区块 */}
+            {/* 老话题卡（kind=idea）：2026-11-11 起不再新建，已有的照样列出、能接着聊、能写入任务书 */}
             {discussContent}
           </div>
         )}
