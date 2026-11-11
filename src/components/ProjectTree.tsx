@@ -1756,7 +1756,8 @@ export default function ProjectTree({
         // 图标上按下不起拖
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onToggle}
-        className={`relative ml-1 flex size-6 shrink-0 items-center justify-center rounded text-l4 hover:text-l1 ${
+        // ml-0.5：文件夹图标左缘与课题下步骤号 / 研讨人形同一列、课题名与步骤名同起笔（2026-11-11 用户；ml-1 时整行靠右 1.5px）
+        className={`relative ml-0.5 flex size-6 shrink-0 items-center justify-center rounded text-l4 hover:text-l1 ${
           kind === "unregistered" ? "opacity-70" : ""
         }`}
       >
