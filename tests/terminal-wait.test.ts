@@ -145,3 +145,12 @@ test("启动被拦：认出 Gemini 认证方式那句", () => {
   assert.deepEqual(launchBlockOf(`Error: ${msg}`), { kind: "gemini-auth", message: msg });
   assert.equal(launchBlockOf("未找到 gemini"), null);
 });
+
+// Kimi 2.5.2 question 面板（2026-11-11 用户截图转写）：最后一条横线下面是状态栏，在等你的是上面那块
+test("通用卡跳过横线下的状态栏，标题取 Kimi 提问面板「? 」那句", () => {
+  const w = waitScreenOf(screen("kimi-question"));
+  assert.ok(w);
+  assert.match(w.title, /^定框架①\/ 共六问：本综述的中心问题用哪个口径？/);
+  assert.equal(w.lines[0], "question");
+  assert.ok(!w.lines.some((l) => l.includes("Ask When Needed")));
+});

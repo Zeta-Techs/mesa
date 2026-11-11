@@ -95,6 +95,10 @@ export function parseTuiMenu(
       ? { marked: MARKED_NO_DOT, numbered: NUMBERED_NO_DOT }
       : { marked: MARKED, numbered: NUMBERED };
   const lines = raw.map(unbox);
+  if (agent === "kimi") {
+    const asked = kimiQuestion(lines);
+    if (asked) return asked;
+  }
   for (let i = 0; i < lines.length; i++) {
     const m = marks.marked.exec(lines[i]);
     // 「❯ /model xxx」是对话记录里回显的用户命令，不是菜单高亮
@@ -103,6 +107,56 @@ export function parseTuiMenu(
     if (menu) return menu;
   }
   return cellsOf ? colorMarkedMenu(lines, marks, cellsOf) : null;
+}
+
+// Kimi 2.5 的提问面板（question 工具，2026-11-11 用户截图 2.5.2）。两条横线中间：
+//   question / 题签「中心问题  Submit」（当前题靠底色）/ 「? 问句」（长了折行缩进）/ 空 /
+//   「→ [1] A: …」（→ = 光标）+ 缩进的说明行 / 「  [2] …」… 最后一项「Other」/ 空 / 「↑↓ select  1-4 / ↵ choose  ←/→/tab switch  esc cancel」
+// 选项不带 ❯、也不是「1.」写法，通用认法认不出，原先落成「终端在等你」通用卡
+const KIMI_ASK_HEAD = /^\s*question\s*$/;
+const KIMI_ASK_OPTION = /^\s*(→\s+)?\[(\d+)\]\s+(\S.*?)\s*$/;
+const KIMI_ASK_HINT = /↵ choose/;
+
+function kimiQuestion(lines: readonly string[]): TuiMenu | null {
+  const hint = lines.findIndex((l) => KIMI_ASK_HINT.test(l));
+  if (hint < 0) return null;
+  let head = -1;
+  for (let i = hint - 1; i >= 0; i--) {
+    if (KIMI_ASK_HEAD.test(lines[i])) {
+      head = i;
+      break;
+    }
+  }
+  if (head < 0) return null;
+  const question: string[] = [];
+  const options: string[] = [];
+  let selected = -1;
+  let inQuestion = false;
+  for (let i = head + 1; i < hint; i++) {
+    const t = lines[i].trim();
+    const opt = KIMI_ASK_OPTION.exec(lines[i]);
+    if (opt) {
+      if (Number(opt[2]) !== options.length + 1) return null;
+      if (opt[1]) selected = options.length;
+      options.push(opt[3]);
+      inQuestion = false;
+    } else if (/^\?\s/.test(t)) {
+      question.push(t.replace(/^\?\s+/, ""));
+      inQuestion = true;
+    } else if (!t) {
+      inQuestion = false;
+    } else if (inQuestion) {
+      question.push(t);
+    } else if (options.length) {
+      // 选项下面缩进的说明：接在这一项后面
+      options[options.length - 1] += ` ${t}`;
+    }
+  }
+  if (options.length < 2 || options.length > 9 || selected < 0 || !question.length) return null;
+  // 折行接回：汉字前后不加空格
+  const wide = /[\p{Script=Han}，。、；：？！（）「」]/u;
+  const text = question.reduce((acc, l) => (wide.test(acc.slice(-1)) || wide.test(l.charAt(0)) ? acc + l : `${acc} ${l}`));
+  return { question: text, detail: null, options, selected };
 }
 
 const NUMBERED_ROW = /^(\s*)(\d+)[.)]\s+\S/;

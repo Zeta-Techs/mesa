@@ -59,11 +59,21 @@ export function waitScreenOf(raw: readonly string[]): WaitScreen | null {
   // 框的下沿、底部空行与字符画都不算内容
   while (end >= 0 && (!lines[end].trim() || isArt(lines[end]) || SOLID_RULE.test(lines[end]))) end--;
   if (end < 0) return null;
-  let start = 0;
-  for (let i = end; i >= 0; i--) {
-    if (SOLID_RULE.test(lines[i]) || isArt(lines[i])) {
-      start = i + 1;
-      break;
+  const segmentStart = (from: number) => {
+    for (let i = from; i >= 0; i--) if (SOLID_RULE.test(lines[i]) || isArt(lines[i])) return i + 1;
+    return 0;
+  };
+  let start = segmentStart(end);
+  // 最后一条横线下面只有一两行、不像在问的是状态栏（Kimi 2.5：「Ask When Needed  GLM · glm-5.3 …」「context: 9%」），
+  // 在等你的那块在它上面（2026-11-11 用户截图：卡片标题成了状态栏）
+  const tail = lines.slice(start, end + 1).filter((l) => l.trim());
+  const asks = (l: string) => QUESTION_END.test(l.trim()) || ASK.test(l.trim()) || NUMBERED_LINE.test(l) || /https?:\/\//.test(l) || TYPE_IN.test(l);
+  if (start > 0 && tail.length <= 3 && !tail.some(asks)) {
+    let above = start - 2;
+    while (above >= 0 && (!lines[above].trim() || SOLID_RULE.test(lines[above]))) above--;
+    if (above >= 0) {
+      end = above;
+      start = segmentStart(end);
     }
   }
   const block: string[] = [];
@@ -89,8 +99,10 @@ export function waitScreenOf(raw: readonly string[]): WaitScreen | null {
 function titleOf(text: readonly string[]): string {
   const clean = (l: string) => l.replace(/^\s*[❯›>▶●]\s*/, "").trim();
   const filled = text.map(clean).filter((l) => l && !/^https?:\/\//.test(l));
+  // Kimi 提问面板的问句以「? 」开头（长了折行，不以问号结尾）
+  const marked = filled.find((l) => /^\?\s+\S/.test(l))?.replace(/^\?\s+/, "");
   const question =
-    filled.find((l) => QUESTION_END.test(l) && l.length <= 120) ?? filled.find((l) => ASK.test(l));
+    marked ?? filled.find((l) => QUESTION_END.test(l) && l.length <= 120) ?? filled.find((l) => ASK.test(l));
   const pick = question ?? filled[0] ?? "";
   return pick.length > 80 ? `${pick.slice(0, 79)}…` : pick;
 }

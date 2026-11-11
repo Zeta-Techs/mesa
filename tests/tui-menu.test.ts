@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { menuAnswerKeys, menuEchoesText, parseTuiMenu, sameTuiMenu } from "../src/tui-menu.ts";
 
 test("认出切换确认菜单：问句、选项、当前高亮", () => {
@@ -412,4 +413,20 @@ test("Claude 输入框里的多行草稿不是菜单：上下紧贴两条横线�
   // 有问句的带框菜单照认（上方是问句不是横线）
   const real = parseTuiMenu([rule, "Select effort", "  low", "❯ medium", "  high", rule]);
   assert.deepEqual(real?.options, ["low", "medium", "high"]);
+});
+
+test("Kimi 2.5 提问面板：「→ [1] A: …」读成菜单，说明接在选项后，问句折行接回", () => {
+  const lines = readFileSync(new URL("./fixtures/terminal-wait/kimi-question.txt", import.meta.url), "utf8").split("\n");
+  const menu = parseTuiMenu(lines, undefined, "kimi");
+  assert.ok(menu);
+  assert.equal(
+    menu.question,
+    "定框架①/ 共六问：本综述的中心问题用哪个口径？（screening.md 落点是「工程化差距清单」；TASK.md 已定方向是「机制→设计策略→性能/条件评估」三级主线，核心争议为非晶-晶态界面活性-稳定性耦合）",
+  );
+  assert.equal(menu.options.length, 4);
+  assert.equal(menu.options[0], "A: TASK.md 三级主线（推荐） 机制证据推出策略取舍，条件化性能证据判断策略有效性。");
+  assert.equal(menu.options[3], "Other");
+  assert.equal(menu.selected, 0);
+  // 别家不按这个读
+  assert.equal(parseTuiMenu(lines, undefined, "claude-code"), null);
 });

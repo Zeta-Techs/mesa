@@ -77,6 +77,7 @@
   多行提问认成菜单，必须带序号 / 下方有按键提示（Enter to confirm…，该行本身不算选项）/ 上方有边框三者之一。
   菜单问句取选项上方那段说明（到 ▔/─ 边框为止）的第一行，其余进 `detail`（Claude 2.1.292 实录「Switch model? / Your next
   response will be slower…」；本机假 API + PTY 抓屏得来，样本在 tests/tui-menu.test.ts）。
+  **Kimi 2.5 的提问面板（question 工具，2026-11-11）按菜单读**（`tui-menu.ts kimiQuestion`，只在 Kimi 屏上试）：`question` 头行到「↵ choose」按键提示之间，「? 」开头的是问句（折行接回），「→ [N]」/「[N]」是选项（→ = 光标），缩进说明接在选项后；答走通用菜单的方向键 + 回车。通用卡摘录时，最后一条横线下面不超过三行、不像在问的当状态栏跳过，摘它上面那块；标题优先取「? 」开头的那句（`terminal-wait.ts waitScreenOf`）。
   **Claude 的提问表单（AskUserQuestion，2026-10-22）按表单读、按表单答**（`src/tui-ask.ts`）：扫菜单时 Claude 先试 `parseClaudeAsk`，
   认出就以 `askMenu` 摘要顶 `menuPrompt`、表单挂在 `menuPrompt.ask` 上，卡片照表单画（`ChatDecisionCard` 的 AskCard），答走
   `answerAsk` → `askAnswerKeys`。认法：表单上沿横线下一行是题签（一题「 ☐ 颜色」，多题「←  ☒ 颜色  ☐ 水果  ✔ Submit  →」，☒ = 答过，
