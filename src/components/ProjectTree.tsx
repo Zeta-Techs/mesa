@@ -1451,9 +1451,10 @@ export default function ProjectTree({
           title={`${c.title}\n研讨 · ${c.members.length} 家${state ? ` · ${state}` : ""}`}
           className="flex h-8 min-w-0 items-center gap-0.5 rounded-md pl-2 pr-1 text-l1"
         >
-          {/* 人形占步骤号那样的定宽一格：研讨标题与上面步骤名的字左对齐（2026-11-11 用户） */}
+          {/* 人形占步骤号那样的定宽一格：研讨标题与上面步骤名的字左对齐（2026-11-11 用户）；
+              图标自带内边距、比顶格的 ① 靠右 1px，-ml-px 拉齐左缘 */}
           <span className="flex w-4 shrink-0 items-center">
-            <Users size={13} strokeWidth={1.8} aria-hidden="true" className="text-l4" />
+            <Users size={13} strokeWidth={1.8} aria-hidden="true" className="-ml-px text-l4" />
           </span>
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(c.title, folderName)}</span>
         </button>
