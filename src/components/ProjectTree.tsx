@@ -1556,11 +1556,19 @@ export default function ProjectTree({
       return chatKey(s) === highlightChatKey || d === "working" || d === "confirm";
     };
     const openByDefault = defaultOpenStep(groups, hot);
-    const headCls = "flex h-7 w-full items-center gap-0.5 rounded-md pl-2 pr-0.5 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
-    // 开合箭头在行尾（2026-11-11 用户：步骤组头、研讨、对话的字都顶格对齐，图标挪到行尾），和对话行的状态光标同一列
-    const chevron = (open: boolean) => (
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center" aria-hidden="true">
-        {open ? <ChevronDown size={13} strokeWidth={1.8} /> : <ChevronRight size={13} strokeWidth={1.8} />}
+    const headCls = "group/step flex h-7 w-full items-center gap-0.5 rounded-md pl-2 pr-0.5 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
+    // 行尾一格（2026-11-11 用户：步骤组头、研讨、对话的字都顶格对齐，图标挪到行尾；开合箭头平时藏起来）：
+    // 平时只有收着时组里最要紧的光标，悬停 / 聚焦时开合箭头原地换掉它（同对话行 ⋯ 换光标）；展开时组里各段自己报，不挂光标
+    const trail = (open: boolean, dot: ChatDot | null) => (
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+        {dot && (
+          <span className="flex group-hover/step:hidden group-focus-visible/step:hidden">
+            <RunCaret state={dot} />
+          </span>
+        )}
+        <span className="hidden group-hover/step:flex group-focus-visible/step:flex" aria-hidden="true">
+          {open ? <ChevronDown size={13} strokeWidth={1.8} /> : <ChevronRight size={13} strokeWidth={1.8} />}
+        </span>
       </span>
     );
     const line = (r: StepChatRow) => (
@@ -1593,12 +1601,7 @@ export default function ProjectTree({
                 <span className="ccode-rail-text min-w-0 flex-1 truncate">
                   {circledIndex(g.index)} {g.step}
                 </span>
-                {dot && (
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                    <RunCaret state={dot} />
-                  </span>
-                )}
-                {chevron(open)}
+                {trail(open, dot)}
               </button>
               {open && (
                 <div className="space-y-[3px] pl-3">
@@ -1615,15 +1618,7 @@ export default function ProjectTree({
                         <span className="ccode-rail-text min-w-0 flex-1 truncate">
                           分 {g.lanes.total} 路 · {g.lanes.done}/{g.lanes.total} 做完
                         </span>
-                        {!lanesOpen && (() => {
-                          const d = caretOf(g.lanes.rows);
-                          return d ? (
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                              <RunCaret state={d} />
-                            </span>
-                          ) : null;
-                        })()}
-                        {chevron(lanesOpen)}
+                        {trail(lanesOpen, lanesOpen ? null : caretOf(g.lanes.rows))}
                       </button>
                       {lanesOpen && <div className="space-y-[3px] pl-3">{g.lanes.rows.map(line)}</div>}
                     </div>
