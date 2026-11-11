@@ -200,13 +200,16 @@ test("unplacedCoverageDrafts：建议没写补检 / 补读的、或对应上游�
     "| 3.2 失活 | 2 | 3 | 2020 | 薄 | 补检：原位表征 |",
     "| 3.5 稳定性 | 1 | 1 | 2022 | 薄 | 找课题组要数据 |",
     "| 3.3 动力学 | 1 | 0 | 2023 | 薄 | 补读：[@Wu2023] |",
+    "| 6 讨论 | 5 | 5 | 2027 | 薄 | 补读同 3.3（不重复计） |",
   ].join("\n");
   const drafts = coverageReworkDrafts(outline);
   assert.equal(drafts.find((d) => d.target === "other")?.topic, "3.5 稳定性：找课题组要数据");
+  assert.equal(drafts.at(-1)?.target, "read");
+  assert.equal(drafts.at(-1)?.topic, "6 讨论：同 3.3（不重复计）");
   assert.deepEqual(unplacedCoverageDrafts(drafts, { search: true, read: true }), [
     "3.5 稳定性：找课题组要数据（这一节可写正文 1 篇、仅线索 1 篇，最新一篇 2022）",
   ]);
-  assert.equal(unplacedCoverageDrafts(drafts, { search: true, read: false }).length, 2);
+  assert.equal(unplacedCoverageDrafts(drafts, { search: true, read: false }).length, 3);
 });
 
 test("loopHint：前面在补一轮先指它；否则指第一个待跟进；正常往下走时不出", async () => {

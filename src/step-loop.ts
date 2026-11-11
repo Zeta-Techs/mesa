@@ -542,7 +542,8 @@ export function coverageReworkDrafts(outlineText: string): CoverageDraft[] {
   for (const row of rows) {
     const [section = "", body = "", hint = "", latest = "", verdict = "", advice = ""] = row;
     if (!/^薄/.test(verdict) || /不补/.test(verdict)) continue;
-    const m = advice.match(/^(补检|补读)\s*[：:]\s*(.*)$/);
+    // 冒号可省：HER 大纲实测写成「补读同 4.3/5.2（不重复计）」，不认就掉进「归不到」让人另选
+    const m = advice.match(/^(补检|补读)\s*[：:]?\s*(.*)$/);
     const target = m ? (m[1] === "补检" ? "search" : "read") : "other";
     const what = (m ? m[2] : advice).trim();
     out.push({
