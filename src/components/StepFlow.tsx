@@ -109,6 +109,7 @@ import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmL
 import ReviewDecisionList from "./ReviewDecisionList";
 import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
 import ProjectFilePreview from "./ProjectFilePreview";
+import { showProjectFile } from "../project-file-open";
 import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
@@ -1869,6 +1870,21 @@ export default function StepFlow({
     })();
   }
 
+  // 待评审时回到这一步干活的那段对话（2026-11-11 用户：点了停下之后找不到入口）：只切过去 / 接回，不替人发话；
+  // 在对话里改的照样落在工作副本，回来评审、保存。主路径仍是「去评审」里写意见退回修改（会记成一轮）
+  const backToChat =
+    runStatus === "review" && ws ? (
+      <button
+        type="button"
+        onClick={goTerminal}
+        title="回到这一步 AI 干活的那段对话，不替你发话。在对话里让它改的，改完照样回这里评审、保存；想留下修改记录，用「去评审」写意见退回修改"
+        className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 hover:bg-hover hover:text-l2"
+      >
+        {/* 全站 button { font: inherit } 会吞掉按钮上的字号，字号写内层 */}
+        <span className="text-xs">回到对话</span>
+      </button>
+    ) : null;
+
   function goReview() {
     if (!ws) return;
     setWorkspaceReviewRequest({
@@ -2168,19 +2184,6 @@ export default function StepFlow({
           </span>
         );
       }
-      case "back-to-chat":
-        // 待评审（点了停下、或 AI 说完关了对话）：回到这一步干活的那段对话，和「去终端看看」同一条路，不替人发话。
-        // 主路径仍是下面「去评审」（强调色）；在对话里改的照样回来评审、保存（2026-11-11 用户：放右边）
-        return (
-          <button
-            type="button"
-            onClick={goTerminal}
-            title="回到这一步 AI 干活的那段对话，不替你发话。在对话里让它改的，改完照样去评审、保存；想留下修改记录，用评审里的「写意见退回修改」"
-            className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
-          >
-            回到对话
-          </button>
-        );
       case "go-review":
         return (
           <span className="flex shrink-0 items-center gap-1.5">
@@ -2975,6 +2978,7 @@ export default function StepFlow({
                     TASK.md
                   </button>
                   {discussInline}
+                  {backToChat}
                 </div>
                 {chatOpen && (
                   <div className="flex flex-wrap items-center gap-2 pl-4">
@@ -3024,6 +3028,7 @@ export default function StepFlow({
                   TASK.md
                 </button>
                 {discussInline}
+                {backToChat}
               </div>
             )}
               {showDiscussNudge && (
@@ -3204,11 +3209,7 @@ export default function StepFlow({
                       projectRoot={projectPath}
                       commitToProject={runStatus === "done"}
                       onOpenPdf={(path) =>
-                        setFilePreviewReq({
-                          projectRoot: projectPath,
-                          path,
-                          token: Date.now(),
-                        })
+                        void showProjectFile({ projectRoot: projectPath, path, from: "待确认的文献" })
                       }
                       onChanged={() => {
                         onChanged?.();
@@ -3447,7 +3448,7 @@ export default function StepFlow({
                                       }`}
                                       title={
                                         doneName
-                                          ? `在文件页打开 papers/${doneName}`
+                                          ? `在右侧打开 papers/${doneName}`
                                           : item.url
                                             ? "用右侧「官网」打开这篇的出版商页面"
                                             : item.title
@@ -3457,13 +3458,13 @@ export default function StepFlow({
                                         if (doneName) {
                                           const rel = toFetchPaperRel(doneName);
                                           if (!rel) return;
-                                          setFilePreviewReq({
+                                          void showProjectFile({
                                             projectRoot: projectPath,
                                             path: absoluteResourcePath(
                                               projectPath,
                                               rel,
                                             ),
-                                            token: Date.now(),
+                                            from: "待获取清单",
                                           });
                                         }
                                       }}
