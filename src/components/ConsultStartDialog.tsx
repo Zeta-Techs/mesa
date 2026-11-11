@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Plus, X } from "lucide-react";
 import { Modal } from "./Modal";
+import AgentModelPicker from "./AgentModelPicker";
 import { compactFieldClass, fieldClass, primaryActionClass, quietActionClass } from "./PageFrame";
 import { MemberAvatar } from "./ConsultView";
 import type { SearchResultDto } from "./FileTree";
@@ -16,6 +17,7 @@ import {
   estimateCost,
   MAX_IMAGES,
   familyName,
+  INSPECT_AGENTS,
   MAX_MATERIALS,
   MAX_MEMBERS,
   MIN_MEMBERS,
@@ -71,7 +73,6 @@ export default function ConsultStartDialog({
   const [error, setError] = useState<string | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [hits, setHits] = useState<SearchResultDto[]>([]);
-  const [adding, setAdding] = useState(false);
   /** 粘贴 / 拖进来的图（二期）：先落 Mesa 的粘贴目录，开始研讨时后端拷进项目 attachments */
   const [images, setImages] = useState<{ path: string; url: string }[]>([]);
   const [imageNote, setImageNote] = useState<string | null>(null);
@@ -121,7 +122,6 @@ export default function ConsultStartDialog({
     setCross(DEFAULT_CROSS_ROUNDS);
     setError(null);
     setFileQuery("");
-    setAdding(false);
     setImages([]);
     setImageNote(null);
     // projects 每次渲染是新数组，只在打开 / 换入口时重置
@@ -396,38 +396,30 @@ export default function ConsultStartDialog({
                 </button>
               </div>
             ))}
-            {picked.length < MAX_MEMBERS &&
-              (adding ? (
-                <select
-                  autoFocus
-                  value=""
-                  onBlur={() => setAdding(false)}
-                  onChange={(e) => {
-                    const o = options.find((x) => x.key === e.target.value);
-                    if (o) setPicked((ps) => [...ps, o]);
-                    setAdding(false);
-                  }}
-                  className={`${compactFieldClass} h-auto min-h-[4.5rem] w-full`}
-                >
-                  <option value="">选一条连接和模型…</option>
-                  {options
-                    .filter((o) => !picked.some((p) => p.key === o.key))
-                    .map((o) => (
-                      <option key={o.key} value={o.key}>
-                        {optionLabel(o)}
-                      </option>
-                    ))}
-                </select>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setAdding(true)}
-                  className="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-lg border border-dashed border-field text-xs text-l3 hover:bg-hover hover:text-l1"
-                >
-                  <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
-                  <span className="text-xs">再请一位</span>
-                </button>
-              ))}
+            {picked.length < MAX_MEMBERS && (
+              // 两层小菜单（先一家、再连接 · 模型），同聊天层换 Agent；原生下拉一次摊开几十行太长（2026-11-11 用户）
+              <AgentModelPicker
+                options={options
+                  .filter((o) => !picked.some((p) => p.key === o.key))
+                  .map((o) => {
+                    const dup = o.family ? picked.find((p) => p.family === o.family) : undefined;
+                    return dup ? { ...o, warn: `与 ${names[picked.indexOf(dup)]} 同一家模型` } : o;
+                  })}
+                onPick={(o) => setPicked((ps) => [...ps, o])}
+                title="再请一位"
+                hint="模型最好和已请的不是同一家。"
+                agentNote={(id) =>
+                  INSPECT_AGENTS.includes(id)
+                    ? null
+                    : { short: "只看材料", long: "只看材料：这家看不到项目，只看上面这几份的摘录", warn: true }
+                }
+                ariaLabel="再请一位"
+                triggerClassName="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-lg border border-dashed border-field text-xs text-l3 hover:bg-hover hover:text-l1"
+              >
+                <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
+                <span className="text-xs">再请一位</span>
+              </AgentModelPicker>
+            )}
           </div>
           {options.length === 0 && <div className="mt-1.5 text-micro text-warn-text">还没有能用的连接，先到连接页加一条。</div>}
           {allSame && <div className="mt-1.5 text-micro text-warn-text">请的都是同一家模型，研讨意义不大；换一位不同家的会更有用。</div>}

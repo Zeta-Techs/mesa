@@ -123,7 +123,9 @@ import {
   reviewerOptionLabel,
   reviewerOptions,
   stepHasClaims,
+  TIER1_AGENTS,
 } from "../cross-review";
+import AgentModelPicker from "./AgentModelPicker";
 import { AGENTS } from "../types";
 
 const OfficePreviewModal = lazy(() => import("./OfficePreviewModal"));
@@ -2927,22 +2929,29 @@ function LiveWorkspaceReviewView({
                     >
                       请 {crossReviewerLabel} 复核
                     </button>
-                    {/* 换复核方：默认挑模型族不同的一家；同模型族、维护级的标在选项里，不禁止 */}
-                    <span className="relative flex h-5 w-4 items-center justify-center rounded-sm text-micro text-l4 hover:bg-hover hover:text-l1" title="换一个复核的 Agent、连接或模型">
-                      ▾
-                    <select
-                      aria-label="换复核方"
-                      value={reviewerOptionKey(crossReviewer)}
-                      onChange={(e) => setReviewerKey(e.target.value)}
-                      className="absolute inset-0 cursor-pointer opacity-0"
+                    {/* 换复核方：默认挑模型族不同的一家；同模型族、维护级的标在选项里，不禁止。
+                        两层小菜单（先一家、再连接 · 模型），同聊天层换 Agent，不再一次摊开几十行（2026-11-11 用户） */}
+                    <AgentModelPicker
+                      options={reviewerChoices.map((o) => ({
+                        ...o,
+                        key: reviewerOptionKey(o),
+                        warn: o.sameFamily ? "与写稿同一模型族" : undefined,
+                      }))}
+                      selectedKey={reviewerOptionKey(crossReviewer)}
+                      onPick={(o) => setReviewerKey(o.key)}
+                      title="换复核方"
+                      hint="默认挑与写稿不同模型族的一家。"
+                      agentNote={(id) =>
+                        (TIER1_AGENTS as readonly string[]).includes(id)
+                          ? null
+                          : { short: "维护级", long: "维护级：复核指令未在这家验证过", warn: true }
+                      }
+                      ariaLabel="换复核方"
+                      triggerTitle="换一个复核的 Agent、连接或模型"
+                      triggerClassName="flex h-5 w-4 items-center justify-center rounded-sm text-micro text-l4 hover:bg-hover hover:text-l1"
                     >
-                      {reviewerChoices.map((o) => (
-                        <option key={reviewerOptionKey(o)} value={reviewerOptionKey(o)}>
-                          {reviewerOptionLabel(o, agentLabelOf(o.agentId))}
-                        </option>
-                      ))}
-                    </select>
-                    </span>
+                      ▾
+                    </AgentModelPicker>
                   </span>
                 )}
                 {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && !mergeDone && (

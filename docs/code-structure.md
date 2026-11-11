@@ -882,6 +882,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
                              #   claude_custom_option 双端镜像（共读 tests/fixtures/claude-slots.json）；explicitClaudeRoles 把旧绑定按名单顺序转成显式映射
   help-links.ts              # 仓库与使用手册外链（REPO_URL / userGuideUrl）；仓库转 org 时与 updater endpoint、README 同步改
   popover-side.ts            # 聊天输入框小弹层往哪边开（pickPopoverSide：下面放得下就往下，贴底时往上）
+  agent-model-groups.ts      # 「选 Agent · 连接 · 模型」两层菜单的分组 groupByAgent（先按 Agent 再按连接，保持传入顺序；tests/agent-model-groups.test.ts）；UI 在 components/AgentModelPicker.tsx（复核方 ▾、研讨「再请一位」共用，行样子同 RelayPicker，弹层挂 body 用 fixed 定位不被工具条 / 弹层裁）
   client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs
   switch-strategy.ts         # 运行中换模型 / 思考档走命令还是重开接回：SWITCH_PERSISTS 记哪几家的切换命令会写回自己的全局配置（实测表），
                              # 会写回且启动时注得进的改走 relaunchWith（runtime-model-effort.ts 消费；tests/switch-strategy.test.ts）
