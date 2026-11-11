@@ -510,6 +510,16 @@
   - **② 已落地**：「从大纲发起」= 补料单 fromStep 的 `stepKind` 为 outline、toStep 为 search（TaskCardsSection `outlineSearchRework`）。精读跟进按 `chainTurns`
     （链上正轮到这一步的单，链自动那一路传 `auto.rework`）取出这类单的 topics 作 `sections`，`followupPrompt` 换成「为大纲这几节补检来的，研究论文也直接写完整笔记、index 记 forSections」，
     `followupScale` 同步改说法。人手动跟进时链上轮到它的单一律 `rework_chain_claim`（含不带 reads 的），保存后链不再自动重开一遍。
+  - **③ 已落地（大纲核对）**：`src/outline-check.ts` 只算（输入 outline.md、notes/index.json、references.bib、included.json 的文本），
+    `research-report-load.ts loadOutlineCheck` 取数：大纲取工作副本、笔记索引与引文库工作副本和项目根都读按键取最靠前的状态（精读保存进项目不等并入就数得到）、纳入清单以项目根为准。
+    **数的口径**：每节「拟引用」的键（「拟引用——可写正文：…；仅线索：…」或分两行「拟引用（可写）/（线索）」，档名后可带括号说明）按笔记状态分档，
+    reviewed + fulltext 算可写正文，仅摘要 / 只速读 / 没写完 / 没笔记算仅线索，已排除的不算；覆盖检查行的节号合并下级节（「5.3」含 5.3.1、5.3.2，「1 / 7」取两节并集）。
+    **核验项只出拦下 / 待你判断，不出通过**：键不在引文库、引了已排除的（裸写 `@键` 也算，改动记录一节不查；没进过引文库的已排除篇按 `lit_records.py bib_key` 拼法推键，
+    推出的键在引文库或笔记里有就不算）→ 拦下；分档与笔记状态不符、同一节重复列键、同一块子图（同键同图号含子图字母，`1b/f`、`5d–e` 展开后有重叠）进了两张拼图、
+    覆盖检查篇数对不上（格子里括号全列了键时再逐个对重复 / 漏 / 多）→ 待你判断。检查器记 `mesa`，界面标「Mesa 核对」，不给「请几家研讨这一条」。
+    **评审页打开时算好合并进核验清单，不写 `.ccode/checks/` 文件**（理由见 architecture §10 同日条）；同一份结果给大纲预览上方「覆盖检查：AI 写的 / Mesa 数的」并排表。
+    大纲步骤卡「薄 n 节待补料」：薄节仍是 AI 判断；补读点名的篇都有全文笔记、或补检来的新篇笔记 forSections 记了这一节，就改算「补料已到、等大纲重看」（`outlineThinStatus`）。
+    任务书与 review-framework 技能改口：篇数以 Mesa 数的为准、对不上下一轮按它改表，AI 只判够 / 薄并写理由。
 
 ## 科研流程补全（2026-11-07 拍板，design-research-completion.md）
 

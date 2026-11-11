@@ -111,6 +111,10 @@ import type {
 import { usePolling } from "../polling";
 import { checkChipText, checkConsultSeed, countChecks, type ChecksDto } from "../research-checks";
 import CheckList from "./CheckList";
+import OutlineCoverageCompare from "./OutlineCoverageCompare";
+import { mergeMesaChecks, type OutlineCheckResult } from "../outline-check";
+import { loadOutlineCheck } from "../research-report-load";
+import { stepKind } from "../step-kind";
 import {
   crossReviewPrompt,
   crossReviewReuseKey,
@@ -539,6 +543,7 @@ function DeliveryReviewPane({
   onSelect,
   empty,
   onAnnotate,
+  above,
 }: {
   root: string;
   paths: readonly string[];
@@ -551,6 +556,8 @@ function DeliveryReviewPane({
     fileName: string,
     comment: string,
   ) => string | null;
+  /** 预览上方挂的一块（大纲：覆盖检查 AI 写的 / Mesa 数的并排），按正在看的文件给 */
+  above?: (path: string) => React.ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const [listOpen, setListOpen] = useState(true);
@@ -608,6 +615,7 @@ function DeliveryReviewPane({
         </aside>
       )}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none">
+        {above?.(current)}
         <ProjectFilePreview
           key={current}
           path={absUnderRoot(root, current)}
@@ -1157,8 +1165,32 @@ function LiveWorkspaceReviewView({
   const [citations, setCitations] = useState<CitationHealthDto | null>(null);
   const [citeExpanded, setCiteExpanded] = useState(false);
   // 核验清单（.ccode/checks/，2026-11-02）：没有核验记录时整颗按钮不出现
-  const [checks, setChecks] = useState<ChecksDto | null>(null);
+  const [fileChecks, setChecks] = useState<ChecksDto | null>(null);
   const [checksExpanded, setChecksExpanded] = useState(false);
+  // 大纲核对（综述回路三期）：大纲那一步打开评审时 Mesa 自己数、自己查，合并进核验清单（不写文件、不靠 AI 跑脚本）
+  const [outlineCheck, setOutlineCheck] = useState<OutlineCheckResult | null>(null);
+  const checks = useMemo(() => mergeMesaChecks(fileChecks, outlineCheck?.items ?? []), [fileChecks, outlineCheck]);
+  const outlineRoots =
+    researchContext && stepKind(researchContext.step, undefined) === "outline"
+      ? `${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}`
+      : null;
+  useEffect(() => {
+    if (!outlineRoots) {
+      setOutlineCheck(null);
+      return;
+    }
+    let stale = false;
+    loadOutlineCheck(outlineRoots.split("\n"))
+      .then((value) => {
+        if (!stale) setOutlineCheck(value);
+      })
+      .catch(() => {
+        if (!stale) setOutlineCheck(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [outlineRoots, revision]);
   const [artifacts, setArtifacts] = useState<{
     produced: number;
     total: number;
@@ -2839,7 +2871,7 @@ function LiveWorkspaceReviewView({
                     type="button"
                     aria-expanded={checksExpanded}
                     onClick={() => setChecksExpanded((v) => !v)}
-                    title="核验脚本查过的每一项：拦下的、要你判断的、机器确认成立的"
+                    title="查过的每一项：拦下的、要你判断的、机器确认成立的；每条标了是谁查的（Mesa 核对、核验脚本、AI 判断）"
                     className={`shrink-0 rounded-sm px-1 hover:bg-hover ${
                       countChecks(checks.items).blocked > 0
                         ? "text-err-text"
@@ -3505,6 +3537,11 @@ function LiveWorkspaceReviewView({
             paths={deliveryPaths}
             activePath={activePath}
             onSelect={setActivePath}
+            above={(path) =>
+              outlineCheck && outlineCheck.rows.length > 0 && path.replace(/\\/g, "/") === "outline.md" ? (
+                <OutlineCoverageCompare rows={outlineCheck.rows} />
+              ) : null
+            }
             empty={
               reviewPane === "process"
                 ? "这一步没有需要看的过程记录。脚本和配置在「文件」。"

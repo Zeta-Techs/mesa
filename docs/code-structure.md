@@ -261,7 +261,8 @@ components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；Pr
 components/ResearchAcceptancePanel.tsx  # 科研验收决定表单（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView 共用；检索步 screening 变体换措辞）：接受/有条件接受/退回三档，research_source 锁证据版本——上游变了列 stale 点名重验，research_save_acceptance 落验收账，可勾「关联本次复现记录」（版本不一致提示重跑，不把运行结束当科学通过）（tests/research-acceptance-panel.test.ts）
 components/ResearchProfileSection.tsx  # 设置「研究档案」分区：生效状态 + 附带开关 + AI 拿到的原文预览、与项目长期知识 / 项目说明的区别、按分类列条目（修改 / 作废都要依据）、新增栏、跨项目文献总表
 components/ResearchRecordPanel.tsx  # 项目设置「规则与验收」里的研究记录：有记录才出现、展开列最近 30 次运行、三颗导出按钮（research_export），导完点文件名在访达里显示（tests/research-record.test.ts）
-components/CheckList.tsx   # 评审页「基础检查」行展开的核验清单（2026-11-02）：按 拦下 / 待你判断 / 通过 分组，通过默认收起；末尾固定写「通过≠论断被支持」（tests/research-review-ui.test.ts）；待你判断的条目可「请几家研讨这一条」（onConsult，评审页传入）
+components/OutlineCoverageCompare.tsx  # 评审页大纲预览上方「覆盖检查：AI 写的 / Mesa 数的」逐节并排，对不上的节标黄、默认展开（outline-check.ts 的 rows）
+components/CheckList.tsx   # 评审页「基础检查」行展开的核验清单（2026-11-02）：按 拦下 / 待你判断 / 通过 分组，通过默认收起；每条标来源（checkSourceLabel：Mesa 核对 / 核验脚本 / 任务包脚本 / AI 判断）；末尾固定写「通过≠论断被支持」（tests/research-review-ui.test.ts）；待你判断的条目可「请几家研讨这一条」（onConsult，评审页传入）
 components/ResearchReproductionPanel.tsx  # 复现运行面板（评审页 WorkspaceReviewView 与目标页 ProjectUserTasksView）：从报告抽复现约定（parseReproductionContract：MESA_REPRODUCE / reproduce 子命令）+ 项目脚本拼可运行清单，research_run_reproduce 在工作区执行——确认框写明不是只读沙箱、约定输出写 ~/ccode/reproductions/；入口版本变了拒跑要求重新审阅（tests/research-panels.test.ts）
 components/UpstreamResearchAcceptance.tsx  # 开工弹层「上游已确认的结论范围」（KickoffConfirmDialog）：research_upstream_acceptances 列上游验收行（白话 upstreamAcceptanceNote），有效行一键「引用依据，当前仅允许准备」写 prepare 答案并绑当前证据版本——引用既有依据不自动批准本步；上游文件变了标「需重验」
 components/WatchRunReview.tsx  # 定时雷达单次运行评审（WorkspaceReviewView 里 taskKind=watch 的运行，历史行「去评审」进入）：watch_run_snapshot 只看冻结证据（before/initial/after）、watch_run_entries 只列该次新命中、逐条留下/排除（watch_run_decide）后采纳把留下的并进项目（排除的不写、已收过不重复加）；locked=已采纳只读重开，决定文件坏了 fail-closed 点名（tests/watch-run-review.test.ts）
@@ -1119,6 +1120,9 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   （outline.md「拼 图N」去重 +「仅引用 [@键] Fig」+ 表计划「表 N（」去重，技能样例里的「凑不成则仅引用」与「附表」不算），StepFlow LedgerCountLine 显示；
                              #   outline.md 不在台账白名单（白名单同时管写回），走 read_file_preview 只读；
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
+  outline-check.ts           # 大纲核对（2026-11-11 综述回路三期）：outline.md + 笔记索引 + 引文库 + 纳入清单 → 覆盖检查每节 Mesa 数的可写正文 / 仅线索 / 最新年份
+                             #   （与 AI 写的并排）与核验项（键不在引文库、引了已排除的 = 拦下；分档与笔记不符、重复列键、同块子图两用、篇数对不上 = 待你判断；不出通过，
+                             #   checker=mesa）；outlineThinStatus = 步骤卡「薄 n 节 / 补料已到」；mergeMesaChecks 把核对项排进核验清单前面。只算不读文件（tests/outline-check.test.ts）
   spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、
                              #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；最近一次运行出错且没人在干活写「出错了」、原因放 title；
@@ -1130,7 +1134,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法、checkConsultSeed（待你判断一条带进研讨的问题与材料）；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
-  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger
+  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger；loadOutlineCheck / outlineThinWithNotes 给大纲核对取数
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
                              #   + 全文篇数对照 papers/：searchCountLineWithFiles / missingToFetchWithFiles（经 to_fetch_progress，
                              #   步骤卡、评审清单两处同一口径，台账 pdf 字段只在脚本跑时写、不能单靠它）

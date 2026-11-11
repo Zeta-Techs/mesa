@@ -4,6 +4,7 @@ import {
   CHECK_STATUS_LABEL,
   checkLocation,
   checkQuoteLine,
+  checkSourceLabel,
   groupChecks,
   type CheckItem,
   type CheckStatus,
@@ -52,7 +53,14 @@ export default function CheckList({
                     <li key={`${item.id}-${where}`} className="text-micro leading-snug">
                       <span className={STATUS_TONE[item.status]}>{item.title}</span>
                       {where && <span className="ml-1.5 font-mono text-l4">{where}</span>}
-                      {onConsult && item.status === "needs_human" && (
+                      <span
+                        className="ml-1.5 text-l4"
+                        title={item.checker === "mesa" ? "Mesa 按大纲、笔记索引、引文库和纳入清单自己数的，不经 AI" : undefined}
+                      >
+                        {checkSourceLabel(item)}
+                      </span>
+                      {/* Mesa 核对的是数得清的事，不必请几家研讨 */}
+                      {onConsult && item.status === "needs_human" && item.checker !== "mesa" && (
                         <button
                           type="button"
                           onClick={() => onConsult(item)}

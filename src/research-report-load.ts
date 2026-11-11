@@ -3,6 +3,7 @@ import { extractResearchSections, researchAbsolutePath, researchRelativePath, ty
 import type { DirEntryDto } from "./components/FileTree";
 import { searchPdfProbes, searchProgress, searchProgressLine } from "./notes-progress";
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
+import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
 export interface ResearchReportLoad { reports: ResearchReport[]; warnings: string[]; scanned: number; files: string[] }
@@ -50,6 +51,46 @@ export async function missingToFetchWithFiles(projectRoot: string, toFetchText: 
     if (names[i]) doneByLine[it.line] = names[i] as string;
   });
   return missingToFetchCount(toFetchText, doneByLine);
+}
+
+/** 大纲核对的取数（outline-check.ts 只算）：outline.md 取第一处有的（工作副本优先）；笔记索引、引文库几处都读、按键合并
+ *  （精读保存进项目后，大纲这边不等并入就数得到）；纳入清单以项目根为准。roots 末位是项目根。读不到大纲返回 null */
+async function readOptional(root: string, rel: string): Promise<string | null> {
+  try {
+    const file = await readResearchLedger(root, rel);
+    return file.truncated ? null : file.text;
+  } catch {
+    return null;
+  }
+}
+
+async function readOutline(roots: readonly string[]): Promise<string | null> {
+  for (const root of roots) {
+    try {
+      const file = await readResearchFile(root, "outline.md");
+      if (!file.truncated) return file.text;
+    } catch {
+      /* 这一处没有大纲，试下一处 */
+    }
+  }
+  return null;
+}
+
+export async function loadOutlineCheck(roots: readonly string[]): Promise<OutlineCheckResult | null> {
+  const outline = await readOutline(roots);
+  if (outline == null) return null;
+  const [indexes, bibs, includeds] = await Promise.all([
+    Promise.all(roots.map((r) => readOptional(r, "notes/index.json"))),
+    Promise.all(roots.map((r) => readOptional(r, "references.bib"))),
+    Promise.all([...roots].reverse().map((r) => readOptional(r, "papers/included.json"))),
+  ]);
+  return checkOutline({ outline, indexes, bibs, included: includeds.find((t) => t != null) ?? null });
+}
+
+/** 大纲步骤卡计数行的「薄几节」：大纲里判薄的节，补料（补读点名的篇、为这一节补检来的新篇）到了的另算 */
+export async function outlineThinWithNotes(roots: readonly string[], outline: string) {
+  const indexes = await Promise.all(roots.map((r) => readOptional(r, "notes/index.json")));
+  return outlineThinStatus(outline, indexes);
 }
 
 /** 台账整份写回：带读取时的版本，磁盘已被 Agent 改过就拒绝。返回新版本。 */

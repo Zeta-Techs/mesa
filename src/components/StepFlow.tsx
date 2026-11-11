@@ -55,7 +55,7 @@ import {
   type ResearchTools,
 } from "../research-tools";
 import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
-import { readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
+import { outlineThinWithNotes, readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
 import {
   excludedIncludedIds,
   figurePlan,
@@ -344,6 +344,7 @@ function LedgerCountLine({
   line,
   title,
   read = readResearchLedger,
+  refreshKey = "",
 }: {
   roots: string[];
   live: boolean;
@@ -352,6 +353,8 @@ function LedgerCountLine({
   title: string;
   /** 台账白名单外的文件（outline.md）走只读预览通道：白名单同时管写回，不为计数放宽 */
   read?: (root: string, rel: string) => Promise<{ text: string; truncated: boolean }>;
+  /** 变了就重读（大纲那行：上游保存后要跟着变） */
+  refreshKey?: string;
 }) {
   const [text, setText] = useState<string | null>(null);
   const rootsKey = roots.join("\n");
@@ -382,7 +385,7 @@ function LedgerCountLine({
       window.removeEventListener("focus", onFocus);
       unpoll?.();
     };
-  }, [rootsKey, live, rel, read]);
+  }, [rootsKey, live, rel, read, refreshKey]);
   if (!text) return null;
   return (
     <p className="mt-1 pl-9 text-micro tabular-nums text-l4" title={title}>
@@ -391,11 +394,16 @@ function LedgerCountLine({
   );
 }
 
-/** 大纲一行：定框架几问、薄几节（综述回路三期）+ 用图计划 */
-const figurePlanCountLine = (text: string) => {
+/** 大纲一行：定框架几问、薄几节（综述回路三期）+ 用图计划。薄节由大纲判，补料到没到由 Mesa 按笔记索引数
+ *  （工作副本与项目根都读：精读保存进项目后这里立刻变，不等大纲那一步并入） */
+const outlineCountLine = (roots: readonly string[]) => async (text: string) => {
   const o = outlineProgress(text);
   const p = figurePlan(text);
-  const parts = [...(o ? outlineProgressParts(o) : []), ...(p ? [figurePlanLine(p)] : [])];
+  const thin = await outlineThinWithNotes(roots, text).catch(() => null);
+  const parts = [
+    ...(o ? (thin ? outlineProgressParts({ ...o, thin: thin.thin }, thin.arrived) : outlineProgressParts(o)) : []),
+    ...(p ? [figurePlanLine(p)] : []),
+  ];
   return parts.length ? parts.join(" · ") : null;
 };
 
@@ -3100,8 +3108,9 @@ export default function StepFlow({
             live={runStatus === "active"}
             rel="outline.md"
             read={readResearchFile}
-            line={figurePlanCountLine}
-            title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「补文献…」，Mesa 按这张表预填）；用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
+            line={outlineCountLine(dataWs ? [dataWs.worktreePath, projectPath] : [projectPath])}
+            refreshKey={`${ledgerRefreshKey}|${nudge?.text ?? ""}`}
+            title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「补文献…」，Mesa 按这张表预填）；补读点名的篇精读完、为这一节补检来的新篇写好笔记，就算补料已到，够不够等大纲那一步重新判断。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
           />
         )}
         {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}

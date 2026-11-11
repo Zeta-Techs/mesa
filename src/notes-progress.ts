@@ -309,9 +309,15 @@ export function outlineProgress(text: string): OutlineProgress | null {
   return { answered, thin };
 }
 
-export function outlineProgressParts(p: OutlineProgress): string[] {
+/** arrived：判薄的节里补料已经到了的（outline-check.ts outlineThinStatus 按笔记索引数，不再算进「待补料」），
+ *  够不够等大纲那一步重新判断 */
+export function outlineProgressParts(p: OutlineProgress, arrived = 0): string[] {
   const parts: string[] = [];
   if (p.answered !== null) parts.push(`定框架 ${p.answered}/6 问`);
-  if (p.thin !== null) parts.push(p.thin > 0 ? `薄 ${p.thin} 节待补料` : "覆盖检查没有薄节");
+  if (p.thin !== null) {
+    if (p.thin > 0) parts.push(`薄 ${p.thin} 节待补料`);
+    if (arrived > 0) parts.push(`${arrived} 节补料已到、等大纲重看`);
+    if (p.thin === 0 && arrived === 0) parts.push("覆盖检查没有薄节");
+  }
   return parts;
 }

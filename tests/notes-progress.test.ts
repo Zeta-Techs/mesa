@@ -165,6 +165,9 @@ test("检索篇数标了类型时括号里写综述几篇；大纲定框架几�
   const p = outlineProgress(outline)!;
   assert.deepEqual(p, { answered: 2, thin: 1 });
   assert.deepEqual(outlineProgressParts(p), ["定框架 2/6 问", "薄 1 节待补料"]);
+  // 补料到了的节不再算待补料，单写一句
+  assert.deepEqual(outlineProgressParts({ answered: 6, thin: 0 }, 1), ["定框架 6/6 问", "1 节补料已到、等大纲重看"]);
+  assert.deepEqual(outlineProgressParts({ answered: 6, thin: 0 }), ["定框架 6/6 问", "覆盖检查没有薄节"]);
   assert.equal(outlineProgress("# 旧大纲\n用图：拼 图1"), null);
 });
 

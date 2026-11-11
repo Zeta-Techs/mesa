@@ -77,6 +77,15 @@ export function checkQuoteLine(item: CheckItem): string {
   return item.evidence?.page ? `「${quote}」（标注 p.${item.evidence.page}）` : `「${quote}」`;
 }
 
+/** 这一项是谁查的（2026-11-11 大纲核对）：Mesa 自己数的 / 内置核验脚本 / 任务包脚本 / AI 的判断——机器数清楚的和要读懂内容的分开看 */
+export function checkSourceLabel(item: CheckItem): string {
+  const c = item.checker ?? "";
+  if (c === "mesa") return "Mesa 核对";
+  if (c.startsWith("pack:")) return "任务包脚本";
+  if (c.startsWith("agent")) return "AI 判断";
+  return "核验脚本";
+}
+
 export const CHECK_DISCLAIMER =
   "通过只表示机器能确定的事实成立（如键能解析、原文里有这段话、DOI 指向这篇）；这段话是否支持论断，仍要你判断。";
 
