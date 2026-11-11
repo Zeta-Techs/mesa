@@ -2697,8 +2697,12 @@ function LiveWorkspaceReviewView({
           }),
         ),
     });
-    if (contentReview && stepHasClaims(ctx.step.expectedArtifacts)) {
-      if (crossReviewer) {
+    const claims = contentReview && stepHasClaims(ctx.step.expectedArtifacts);
+    // 研讨：写正文的步骤，加上大纲这种要人拿主意的一步（2026-11-11：复核不挂大纲后研讨被一起挡掉了，菜单只剩一项）；
+    // 复核只给写正文的步骤——它逐条核对正文引用，大纲没有正文可核
+    const consultable = claims || (contentReview && outlineRoots !== null);
+    if (consultable) {
+      if (claims && crossReviewer) {
         askAiItems.push({
           key: "cross",
           label: `请 ${crossReviewerLabel} 复核引用`,
@@ -2746,7 +2750,9 @@ function LiveWorkspaceReviewView({
             .then((existing) => {
               useAppStore.getState().openConsult({
                 projectRoot: ctx.root,
-                question: `第 ${ctx.stepNo} 步「${ctx.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
+                question: claims
+                  ? `第 ${ctx.stepNo} 步「${ctx.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`
+                  : `第 ${ctx.stepNo} 步「${ctx.step.name}」这一版的框架和取舍里，哪些章节安排站不住？哪几节的证据最薄、最需要我亲自看？`,
                 materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
                 readRoot,
                 readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
