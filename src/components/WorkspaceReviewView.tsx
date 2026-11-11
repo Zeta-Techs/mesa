@@ -111,7 +111,7 @@ import type {
   WorkspacePrResultDto,
 } from "../types";
 import { usePolling } from "../polling";
-import { checkChipText, checkConsultSeed, checkReviewNote, countChecks, type ChecksDto } from "../research-checks";
+import { CHECK_BATCH_LEAD, checkBatchNote, checkChipText, checkConsultSeed, checkNoted, checkReviewNote, countChecks, type ChecksDto } from "../research-checks";
 import ReviewAskAiMenu, { type ReviewAskAiItem } from "./ReviewAskAiMenu";
 import CoachTip from "./CoachTip";
 import CheckList from "./CheckList";
@@ -3222,6 +3222,22 @@ function LiveWorkspaceReviewView({
                 <CheckList
                   checks={checks}
                   onAddNote={contentReview && !mergeDone ? addCheckNote : undefined}
+                  onAddAll={
+                    contentReview && !mergeDone
+                      ? (items) => {
+                          setReviewNotes((notes) => {
+                            const block = checkBatchNote(items.filter((item) => !checkNoted(notes, item)));
+                            // 开头那句「请逐条判断」已经在了就不再写一遍
+                            return appendReviewLine(
+                              notes,
+                              notes.includes(CHECK_BATCH_LEAD) ? block.split("\n").slice(1).join("\n") : block,
+                            );
+                          });
+                          setNotesOpen(true);
+                        }
+                      : undefined
+                  }
+                  isNoted={(item) => checkNoted(reviewNotes, item)}
                   onConsult={
                     researchContext && !mergeDone
                       ? (item) => {

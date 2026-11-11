@@ -63,8 +63,8 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     assert.doesNotMatch(host.textContent!,/编的句子/);
     await act(async()=>chip.click());
     const list=host.querySelector('section[aria-label="核验清单"]')!;
-    assert.match(list.textContent!,/拦下（1）.*原文里找不到这段摘录.*manuscript\/draft.md:4.*「编的句子」/s);
-    assert.match(list.textContent!,/待你判断（1）/);assert.match(list.textContent!,/通过（1） 展开/);
+    assert.match(list.textContent!,/拦下 1.*原文里找不到这段摘录.*manuscript\/draft.md:4.*「编的句子」/s);
+    assert.match(list.textContent!,/待你判断 1/);assert.match(list.textContent!,/通过 1 · 展开/);
     assert.doesNotMatch(list.textContent!,/在引文库里/);
     assert.match(list.textContent!,/另有 1 行核验记录读不懂/);
     // 跨厂商复核（2026-11-02）：只挂在写带引用正文的步骤上；实验运行步不写稿件，不给按钮（正例见 cross-review.test.ts stepHasClaims）

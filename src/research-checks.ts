@@ -72,8 +72,26 @@ export function checkLocation(item: CheckItem): string {
 
 /** 核验清单一条「加进意见」：写成交给 AI 能照着改的一句（2026-11-11 评审页意见栏） */
 export function checkReviewNote(item: CheckItem): string {
+  return `${checkNoteBase(item)}：请改`;
+}
+
+function checkNoteBase(item: CheckItem): string {
   const where = checkLocation(item);
-  return `- ${item.title}${where ? `（${where}）` : ""}：请改`;
+  return `- ${item.title}${where ? `（${where}）` : ""}`;
+}
+
+/** 「全部加进意见」：拦下与待你判断的一并交给 AI，让它逐条判断——该改的改，不用改的说明理由，不照单全改（2026-11-11 用户） */
+export const CHECK_BATCH_LEAD = "核验清单里的这几条请逐条判断：确实有问题的改掉；判断不用改的，在回复里写明理由，不要硬改。";
+
+export function checkBatchNote(items: readonly CheckItem[]): string {
+  const open = items.filter((item) => item.status !== "passed");
+  if (open.length === 0) return "";
+  return [CHECK_BATCH_LEAD, ...open.map(checkNoteBase)].join("\n");
+}
+
+/** 这一条是否已经在意见里（按标题认，单条加和批量加的写法都算） */
+export function checkNoted(notes: string, item: CheckItem): boolean {
+  return notes.includes(`- ${item.title}`);
 }
 
 /** 摘录后面跟的页码说明：p.N 来自 Agent 标注，实际在哪页写在 detail 里 */

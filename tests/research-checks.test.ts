@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkChipText, checkConsultSeed, checkReviewNote, checkLocation, checkQuoteLine, countChecks, groupChecks, type CheckItem } from "../src/research-checks.ts";
+import { checkBatchNote, checkChipText, checkConsultSeed, checkNoted, checkReviewNote, checkLocation, checkQuoteLine, countChecks, groupChecks, type CheckItem } from "../src/research-checks.ts";
 
 const mk = (id: string, status: CheckItem["status"], extra: Partial<CheckItem> = {}): CheckItem => ({
   id,
@@ -57,4 +57,20 @@ test("核验一条加进意见：标题 + 位置，写成能照着改的一句",
     "- 可写正文里列了只速读的 @Moloudi2022（outline.md:96）：请改",
   );
   assert.equal(checkReviewNote({ id: "b", kind: "k", status: "blocked", title: "缺键" }), "- 缺键：请改");
+});
+
+test("全部加进意见：只带拦下和待你判断，开头一句要 AI 逐条判断、不照单全改；按标题认已加过", () => {
+  const items: CheckItem[] = [
+    { id: "a", kind: "k", status: "blocked", title: "缺键 @A", target: { file: "outline.md", line: 4 } },
+    { id: "b", kind: "k", status: "needs_human", title: "重复 @B" },
+    { id: "c", kind: "k", status: "passed", title: "通过的" },
+  ];
+  const note = checkBatchNote(items);
+  assert.equal(note.split("\n").length, 3);
+  assert.match(note.split("\n")[0], /逐条判断/);
+  assert.ok(note.includes("- 缺键 @A（outline.md:4）") && note.includes("- 重复 @B") && !note.includes("通过的"));
+  assert.equal(checkBatchNote([items[2]]), "");
+  assert.ok(checkNoted(note, items[0]));
+  assert.ok(checkNoted(checkReviewNote(items[1]), items[1]));
+  assert.ok(!checkNoted(note, items[2]));
 });
