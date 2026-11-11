@@ -1313,7 +1313,10 @@ test("项目内置顶：流程对话按步骤分组、每行写角色，组头�
       Array.from(view.host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")).find((b) => b.textContent?.includes(step))!;
     // 组头写第几步和步骤名；默认只开最近动过的那一组，行名写角色、不写长标题与行尾步骤名
     // 组头只写圈号和步骤名，不写段数（2026-11-10 用户：「3 段 6 段删了」）
-    assert.equal((header("文献检索").textContent ?? "").trim(), "① 文献检索");
+    // 2026-11-11 起步骤号单占定宽一格、步骤名另一格（组里对话标题与步骤名的字左对齐），两格之间不再有空格字符
+    const head1 = Array.from(header("文献检索").querySelectorAll("span")).map((s) => s.textContent?.trim()).filter(Boolean);
+    assert.deepEqual(head1.slice(0, 2), ["①", "文献检索"]);
+    assert.equal((header("文献检索").textContent ?? "").trim(), "①文献检索", "组头只有圈号和步骤名，不写段数");
     assert.match(header("综述大纲").textContent ?? "", /②\s*综述大纲/);
     assert.equal(header("综述大纲").getAttribute("aria-expanded"), "false");
     assert.deepEqual(pinnedTitles(), ["执行任务书"]);
