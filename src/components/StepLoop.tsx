@@ -371,8 +371,8 @@ export function StepRoundsSection({
       stale = true;
     };
   }, [projectPath, workspaceId, refreshKey]);
-  // 只保存过一次、也没开新一轮时不出：一轮没什么可比的
-  if (!data || (data.rounds.length < 2 && !data.openCause)) return lead ? <>{lead}</> : null;
+  // 只保存过一次、也没开新一轮时不出：一轮没什么可比的；一轮都没保存过（只开了轮）也不出——没东西可看，「做过 0 轮」只是噪音
+  if (!data || data.rounds.length === 0 || (data.rounds.length < 2 && !data.openCause)) return lead ? <>{lead}</> : null;
   const rounds = [...data.rounds].reverse();
   return (
     <>
