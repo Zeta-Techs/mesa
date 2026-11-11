@@ -1023,6 +1023,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.ptyQuiet === s.ptyQuiet &&
         cur.stalled === s.stalled &&
         cur.launchPick === s.launchPick &&
+        // 换 Agent 选中的接力目标：不比它，选了之后输入框上方那行和模型芯片要等别的字段变（发第一句）才刷新
+        cur.relay === s.relay &&
         cur.skills === s.skills &&
         cur.mcps === s.mcps &&
         cur.channel === s.channel
