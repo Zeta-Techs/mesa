@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Users } from "lucide-react";
 import { useAppStore } from "../store";
 import type { ProjectDto } from "../types";
 import { IS_WINDOWS } from "../hotkeys";
+import { samePath } from "../path-utils";
 import {
   PROJECT_STARTER_LIMIT,
   recentProjectStarters,
@@ -29,6 +31,7 @@ export default function ChatEmptyStart({
   onRestore,
   onShowScreen,
   onPickProject,
+  onConsult,
 }: {
   cwd: string | null | undefined;
   homeDir: string;
@@ -40,6 +43,8 @@ export default function ChatEmptyStart({
   onShowScreen?: () => void;
   /** 把这段还没开始的对话换到某个项目目录（不给就不出「接着做」） */
   onPickProject?: (path: string) => void;
+  /** 「请几家研讨」：给的是这段对话所在的已添加项目（不在项目里给 null，弹层里再选）；不给就不出 */
+  onConsult?: (projectRoot: string | null) => void;
 }) {
   const projectsVersion = useAppStore((s) => s.projectsVersion);
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -71,6 +76,8 @@ export default function ChatEmptyStart({
     0,
     STARTER_PROMPTS[context].length - projectStarters.length,
   );
+  // 研讨记录写在项目里：目录正好是已添加的项目才预选它
+  const consultRoot = projects.find((p) => samePath(p.path, dir, IS_WINDOWS))?.path ?? null;
   const link =
     "rounded-sm px-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1";
 
@@ -100,6 +107,19 @@ export default function ChatEmptyStart({
             {p.label}
           </button>
         ))}
+        {/* 2026-11-11 用户：新对话页加一个简单的研讨入口。和起手提示不同，它不往输入框填字，而是打开发起弹层，
+            输入框里已写的话带过去当问题；恢复占位标签上不出 */}
+        {onConsult && !resumeSessionId && (
+          <button
+            type="button"
+            onClick={() => onConsult(consultRoot)}
+            title="同一个问题请二到四家不同模型的 AI 只读作答、互相补充，结论由你记；输入框里写的话会带过去当问题"
+            className="flex items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l3 transition-colors hover:border-field hover:bg-hover hover:text-l1"
+          >
+            <Users size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+            请几家研讨
+          </button>
+        )}
       </div>
       {resumeSessionId && onRestore && (
         <p className="flex flex-wrap items-center gap-x-1 text-xs text-l3">

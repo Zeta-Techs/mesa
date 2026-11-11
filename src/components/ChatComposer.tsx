@@ -376,6 +376,7 @@ export default function ChatComposer({
   imageWarning = null,
   onImagesChange,
   onDraftChange,
+  draftTextRef,
   onImageStageChange,
   queueHint = null,
   stopTitle = null,
@@ -428,6 +429,8 @@ export default function ChatComposer({
   onImagesChange?: (kind: "plain" | "marks" | null) => void;
   /** 输入框里有没有没发的字或附件 */
   onDraftChange?: (hasDraft: boolean) => void;
+  /** 输入框里当前的字，随打随写进这个 ref（不触发调用方重画）；空态「请几家研讨」读它当问题 */
+  draftTextRef?: { current: string };
   /** 看图标注台开 / 关（调用方据此把居中空态换成输入框在底部，让图有地方放） */
   onImageStageChange?: (open: boolean) => void;
   /** 生成中停止块旁那组的字：这家 CLI 是「下一步交给它」还是「排队」（mid-turn-send.ts queueSendHint）；不传写「排队」 */
@@ -511,6 +514,7 @@ export default function ChatComposer({
   }, [imageKind]);
   // 有没有没发出去的东西（字或附件）：调用方据此决定切走时能不能把这个标签顺手收掉
   const hasDraft = value.trim() !== "" || attachments.length > 0 || quote !== null;
+  if (draftTextRef) draftTextRef.current = value;
   useEffect(() => {
     onDraftChange?.(hasDraft);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -352,6 +352,8 @@ export default function ChatSurface({
   const [atEnd, setAtEnd] = useState(true);
   const [stuckWaiting, setStuckWaiting] = useState(false);
   const [seedInsert, setSeedInsert] = useState<string | ComposerSeed | null>(null);
+  // 输入框当前的字（不进 state，打字不重画）：空态「请几家研讨」带过去当问题
+  const draftTextRef = useRef("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [composerFocus, setComposerFocus] = useState(0);
   const [focus, setFocus] = useState<{ identity: string; fromEnd: number; query: string; seq: number } | null>(null);
@@ -1878,6 +1880,7 @@ export default function ChatSurface({
         imageWarning={imageWarning}
         onImagesChange={setImageKind}
         onDraftChange={onDraftChange}
+        draftTextRef={draftTextRef}
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn, agentId)}
@@ -1900,6 +1903,9 @@ export default function ChatSurface({
                   : undefined
               }
               onShowScreen={onOpenTerminal}
+              onConsult={(projectRoot) =>
+                useAppStore.getState().openConsult({ projectRoot, question: draftTextRef.current.trim() || undefined })
+              }
             />
           </div>
         </div>
