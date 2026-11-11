@@ -322,33 +322,6 @@ export function nestForks(chats: readonly SessionMetaDto[]): ForkRow[] {
   return out;
 }
 
-/** 课题下的研讨并进对话那一列（2026-11-11 用户：研讨和普通对话一起按最近活动排，只靠图标认，不单占最上面）：
- *  对话按分叉一家子整体走（一家子的时间取其中最近动过的那段，同 nestForks），研讨排在比它旧的第一家之前；
- *  时间读不出的当最旧 */
-export function interleaveByRecent<C>(
-  rows: readonly ForkRow[],
-  extras: readonly C[],
-  timeOf: (c: C) => string | null | undefined,
-): ({ row: ForkRow } | { extra: C })[] {
-  const at = (t: string | null | undefined) => (t ? Date.parse(t) || 0 : 0);
-  const families: { at: number; rows: ForkRow[] }[] = [];
-  for (const r of rows) {
-    const last = families[families.length - 1];
-    if (r.depth > 0 && last) {
-      last.rows.push(r);
-      last.at = Math.max(last.at, at(r.s.updatedAt));
-    } else families.push({ at: at(r.s.updatedAt), rows: [r] });
-  }
-  const pending = [...extras].sort((a, b) => at(timeOf(b)) - at(timeOf(a)));
-  const out: ({ row: ForkRow } | { extra: C })[] = [];
-  for (const f of families) {
-    while (pending.length > 0 && at(timeOf(pending[0])) > f.at) out.push({ extra: pending.shift()! });
-    for (const r of f.rows) out.push({ row: r });
-  }
-  for (const c of pending) out.push({ extra: c });
-  return out;
-}
-
 /** 收起分叉的那几段底下的不列；keep（正看着的那段）被收在里面时照样列出来，不然侧栏里找不到「现在在哪」 */
 export function foldForks(rows: readonly ForkRow[], folded: ReadonlySet<string>, keep: string | null = null): ForkRow[] {
   const out: ForkRow[] = [];

@@ -98,7 +98,6 @@ import {
   openTabRows,
   nestForks,
   foldForks,
-  interleaveByRecent,
   FORK_FOLDS_KEY,
   PROJECT_CHAT_PINS_KEY,
   parseProjectChatPins,
@@ -1668,8 +1667,8 @@ export default function ProjectTree({
     const opened = openedAll.filter((r) => !(r.forkParentKey && listedHere.has(r.forkParentKey)));
     const remaining = chats.length - visible.length;
     const more = remaining > 0;
-    // 研讨（进行中的、最近几天的，更早的在对话管理）并进下面按最近活动的那一列，只靠人形图标认（2026-11-11 用户：
-    // 原先挂在最上面，研讨一出一没就把下面的步骤组整排顶着挪）
+    // 研讨（进行中的、最近几天的，更早的在对话管理）排在步骤组下面、普通对话上面（2026-11-11 用户：原先挂在最上面，
+    // 研讨一出一没就把步骤组整排顶着挪；并进对话按时间排试过，又改回单列一段）
     const projectPath = project?.path;
     const consultRows = projectPath
       ? sidebarConsults(
@@ -1684,23 +1683,20 @@ export default function ProjectTree({
         {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
             每行写角色（商量任务书 / 执行任务书 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
         {pinnedRows.length > 0 && (
-          <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 ? "pb-1.5" : ""}`}>
+          <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 || consultRows.length > 0 ? "pb-1.5" : ""}`}>
             {renderStepGroups(pinnedRows, project, name, folderKey, forkOpenOf)}
           </div>
         )}
-        {chats.length === 0 && consultRows.length === 0 ? (
-          opened.length === 0 && pinnedRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
+        {consultRows.map((c) => renderConsultRow(c, name))}
+        {chats.length === 0 ? (
+          opened.length === 0 && pinnedRows.length === 0 && consultRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
-          interleaveByRecent(visible, consultRows, (c) => c.updatedAt).map((e) =>
-            "extra" in e ? (
-              renderConsultRow(e.extra, name)
-            ) : (
-              <Fragment key={chatKey(e.row.s)}>
-                {renderChat(e.row.s, project, name, undefined, true, e.row)}
-                {(forkOpenOf.get(chatKey(e.row.s)) ?? []).map((o) => renderOpenRow(o, e.row.depth + 1, name))}
-              </Fragment>
-            ),
-          )
+          visible.map((r) => (
+            <Fragment key={chatKey(r.s)}>
+              {renderChat(r.s, project, name, undefined, true, r)}
+              {(forkOpenOf.get(chatKey(r.s)) ?? []).map((o) => renderOpenRow(o, r.depth + 1, name))}
+            </Fragment>
+          ))
         )}
         {(more || folded) && (
           <div className="flex items-center">

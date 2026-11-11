@@ -32,7 +32,6 @@ import {
   sidebarChatTitle,
   staleScratchChats,
   hasReaderChats,
-  interleaveByRecent,
   parseReaderChatsShown,
   toggleReaderChatsShown,
   type ChatRunInput,
@@ -588,24 +587,4 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
   // 默认开：在跑的那组；没有在跑的开最近动过的
   assert.equal(defaultOpenStep(groups, (s) => s.sessionId === "s-w1"), "文献检索与筛选");
   assert.equal(defaultOpenStep(groups, () => false), "文献精读与笔记");
-});
-
-test("interleaveByRecent：研讨按最近活动插进对话列，分叉一家子不拆开", () => {
-  const rows = nestForks([
-    session({ sessionId: "b", forkedFrom: "a", updatedAt: "2026-11-11T10:00:00Z" }),
-    session({ sessionId: "x", updatedAt: "2026-11-11T08:00:00Z" }),
-    session({ sessionId: "a", updatedAt: "2026-11-11T06:00:00Z" }),
-  ]);
-  const consults = [
-    { id: "old", updatedAt: "2026-11-10T00:00:00Z" },
-    { id: "new", updatedAt: "2026-11-11T12:00:00+08:00" },
-    { id: "mid", updatedAt: "2026-11-11T09:00:00Z" },
-  ];
-  const ids = interleaveByRecent(rows, consults, (c) => c.updatedAt).map((e) => ("row" in e ? e.row.s.sessionId : `研讨:${e.extra.id}`));
-  // 「new」是北京时间中午 = 04:00Z，比一家子 a/b（最近 10:00Z）旧、比 x 新；a 与分叉 b 连在一起
-  assert.deepEqual(ids, ["a", "b", "研讨:mid", "x", "研讨:new", "研讨:old"]);
-  assert.deepEqual(
-    interleaveByRecent([], consults, (c) => c.updatedAt).map((e) => ("extra" in e ? e.extra.id : "")),
-    ["mid", "new", "old"],
-  );
 });
