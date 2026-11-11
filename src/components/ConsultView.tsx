@@ -235,6 +235,7 @@ export default function ConsultView({
   const members = record.meta.members;
   // 文件链接按成员读文件的地方解析（评审页发起时是工作副本）
   const readCwd = record.meta.readRoot || projectRoot;
+  const hasImages = record.meta.materials.some((m) => m.kind === "image");
   const nameOf = (mid: string | null) => memberOf(record, mid)?.name ?? "成员";
 
   async function send() {
@@ -505,6 +506,7 @@ export default function ConsultView({
                 {m.model || "默认"} · {agentLabel(m.agent)}
               </span>
               {!m.canReadProject && <span className="shrink-0 text-micro text-warn-text">只看材料</span>}
+              {hasImages && !m.seesImages && <span className="shrink-0 text-micro text-l4">图没给它看</span>}
             </span>
           ))}
           {projectName && <span className="ml-1 truncate text-micro text-l4">{projectName}</span>}
@@ -523,7 +525,7 @@ export default function ConsultView({
                   {record.meta.materials.map((m) => (
                     <span key={`${m.path}#${m.range}`} className="rounded-md bg-inset px-1.5 py-0.5 font-mono text-micro text-l2">
                       {m.path}
-                      <span className="ml-1 font-sans text-l4">{m.range || "全文"}</span>
+                      <span className="ml-1 font-sans text-l4">{m.kind === "image" ? "图片" : m.range || "全文"}</span>
                     </span>
                   ))}
                 </div>

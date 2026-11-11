@@ -6,9 +6,12 @@ import { compactFieldClass, fieldClass, primaryActionClass, quietActionClass } f
 import { MemberAvatar } from "./ConsultView";
 import type { SearchResultDto } from "./FileTree";
 import { useAppStore, selectHiddenProfiles } from "../store";
+import { saveClipboardImage } from "../clipboard-image";
+import { imageExtFromMime } from "../terminal-input";
 import { DISCUSS_BINDING_SLOT, slotPrefs } from "../project-agents";
 import {
   DEFAULT_CROSS_ROUNDS,
+  MAX_IMAGES,
   familyName,
   MAX_MATERIALS,
   MAX_MEMBERS,
@@ -64,6 +67,22 @@ export default function ConsultStartDialog({
   const [fileQuery, setFileQuery] = useState("");
   const [hits, setHits] = useState<SearchResultDto[]>([]);
   const [adding, setAdding] = useState(false);
+  /** 粘贴 / 拖进来的图（二期）：先落 Mesa 的粘贴目录，开始研讨时后端拷进项目 attachments */
+  const [images, setImages] = useState<{ path: string; url: string }[]>([]);
+  const [imageNote, setImageNote] = useState<string | null>(null);
+  async function addImageFile(file: File) {
+    if (images.length >= MAX_IMAGES) {
+      setImageNote(`一次最多附 ${MAX_IMAGES} 张图`);
+      return;
+    }
+    try {
+      const path = await saveClipboardImage(await file.arrayBuffer(), imageExtFromMime(file.type));
+      setImages((cur) => (cur.length >= MAX_IMAGES ? cur : [...cur, { path, url: URL.createObjectURL(file) }]));
+      setImageNote(null);
+    } catch (reason) {
+      setImageNote(`图没贴上：${String(reason)}`);
+    }
+  }
   const qRef = useRef<HTMLTextAreaElement>(null);
   const readRoot = initial?.readRoot || null;
   const fileRoot = readRoot ?? root;
@@ -79,6 +98,8 @@ export default function ConsultStartDialog({
     setError(null);
     setFileQuery("");
     setAdding(false);
+    setImages([]);
+    setImageNote(null);
     // projects 每次渲染是新数组，只在打开 / 换入口时重置
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial]);
@@ -164,6 +185,7 @@ export default function ConsultStartDialog({
         relayLimit: null,
         readRoot,
         readLabel: initial?.readLabel ?? null,
+        images: images.map((i) => i.path),
       });
       localStorage.setItem(LAST_KEY(root), JSON.stringify(picked.map((p) => p.key)));
       onCreated(root, dto.consult.meta.id);
@@ -199,7 +221,24 @@ export default function ConsultStartDialog({
         </div>
       }
     >
-      <div className="space-y-4">
+      <div
+        className="space-y-4"
+        onPaste={(e) => {
+          const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+          if (!files.length) return;
+          e.preventDefault();
+          for (const f of files) void addImageFile(f);
+        }}
+        onDragOver={(e) => {
+          if (Array.from(e.dataTransfer.items).some((it) => it.type.startsWith("image/"))) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+          if (!files.length) return;
+          e.preventDefault();
+          for (const f of files) void addImageFile(f);
+        }}
+      >
         {readRoot && (
           <div className="rounded-lg bg-inset px-3 py-2 text-xs text-l2">
             看的是 <span className="text-l1">{initial?.readLabel ?? "工作副本"}</span>：这一步交的东西还没带回项目，成员读这一份；记录照样存在项目里。
@@ -229,7 +268,7 @@ export default function ConsultStartDialog({
           />
         </Field>
 
-        <Field label="材料" hint="项目里的文件，可以只写几行（12-40）或某一节（§2.4）">
+        <Field label="材料" hint="项目里的文件，可以只写几行（12-40）或某一节（§2.4）；截图直接粘贴或拖进来">
           <div className="space-y-1.5">
             {materials.map((m, i) => (
               <div key={m.path} className="flex items-center gap-2 rounded-lg border border-hairline bg-canvas px-2 py-1">
@@ -252,6 +291,25 @@ export default function ConsultStartDialog({
                 </button>
               </div>
             ))}
+            {images.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-0.5" aria-label="附的图">
+                {images.map((img, i) => (
+                  <span key={img.path} className="group relative">
+                    <img src={img.url} alt={`图 ${i + 1}`} className="size-12 rounded-md border border-hairline object-cover" />
+                    <button
+                      type="button"
+                      aria-label={`去掉图 ${i + 1}`}
+                      onClick={() => setImages((cur) => cur.filter((x) => x.path !== img.path))}
+                      className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-raised text-l3 ring-1 ring-hairline hover:text-l1"
+                    >
+                      <X size={10} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+                <span className="text-micro text-l4">只给能看项目、模型又能看图的成员看；其余成员会被告知有图但看不到</span>
+              </div>
+            )}
+            {imageNote && <div className="text-micro text-warn-text">{imageNote}</div>}
             {materials.length < MAX_MATERIALS && (
               <div className="relative">
                 <input

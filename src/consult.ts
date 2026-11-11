@@ -13,6 +13,12 @@ export const MAX_MEMBERS = 4;
 export const MAX_MATERIALS = 8;
 export const DEFAULT_CROSS_ROUNDS = 1;
 export const DEFAULT_RELAY_LIMIT = 2;
+/** 一次研讨最多附几张图（与后端 consult.rs MAX_IMAGES 镜像） */
+export const MAX_IMAGES = 4;
+
+export function isImagePath(p: string): boolean {
+  return /\.(png|jpe?g|gif|webp)$/i.test(p);
+}
 
 // ── 与后端 DTO 同形（camelCase） ──
 
@@ -24,11 +30,15 @@ export interface ConsultMember {
   profileId: string;
   model: string;
   canReadProject: boolean;
+  /** 能看材料里的图（外壳能看项目且模型能看图） */
+  seesImages?: boolean;
 }
 
 export interface ConsultMaterial {
   path: string;
   range: string;
+  /** image = 图片材料（二期）；空 = 文字文件 */
+  kind?: string;
 }
 
 export interface ConsultRef {

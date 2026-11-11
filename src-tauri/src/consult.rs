@@ -15,6 +15,8 @@ pub const DIR_REL: &str = ".ccode/consults";
 pub const MIN_MEMBERS: usize = 2;
 pub const MAX_MEMBERS: usize = 4;
 pub const MAX_MATERIALS: usize = 8;
+/// 一次研讨最多附几张图（同项目助手）
+pub const MAX_IMAGES: usize = 4;
 pub const MAX_CROSS_ROUNDS: u32 = 2;
 pub const MAX_RELAY_LIMIT: u32 = 6;
 pub const DEFAULT_RELAY_LIMIT: u32 = 2;
@@ -47,6 +49,9 @@ pub struct Member {
     /// 能看项目：CLI 外壳支持进程级只读（Claude Code、Codex），与接的是哪个模型无关
     #[serde(default)]
     pub can_read_project: bool,
+    /// 能看材料里的图：外壳能看项目、且所选模型认得出能看图（能力库；官方账号没写模型按能看）
+    #[serde(default)]
+    pub sees_images: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,6 +62,16 @@ pub struct Material {
     /// 位置说明：「1-60」行号范围、「§2.4」章节，空 = 全文
     #[serde(default)]
     pub range: String,
+    /// image = 图片（2026-11-11 二期：粘贴 / 拖进来的截图存进 attachments，或项目里的图片文件）；空 = 文字文件
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+}
+
+pub(crate) fn is_image_path(p: &str) -> bool {
+    Path::new(p)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -583,6 +598,10 @@ pub(crate) fn material_excerpts(root: &Path, materials: &[Material]) -> String {
     let mut used = 0usize;
     for m in materials {
         let Some(rel) = clean_rel(&m.path) else { continue };
+        if m.kind == "image" || is_image_path(&rel) {
+            out.push_str(&format!("\n### {rel}\n（图片，你看不到）\n"));
+            continue;
+        }
         let path = root.join(&rel);
         let text = match fs::read(&path) {
             Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -653,6 +672,7 @@ pub(crate) fn opening(meta: &Meta, me: &Member, root: &Path, excerpts: Option<&s
         s.push_str("\n材料：\n");
         for m in &meta.materials {
             let range = if m.range.trim().is_empty() { "全文".to_string() } else { m.range.trim().to_string() };
+            let range = if m.kind == "image" { "图片".to_string() } else { range };
             s.push_str(&format!("- {}（{range}）\n", m.path));
         }
     }
@@ -956,14 +976,38 @@ fn call_member(
     run_slot: Arc<Mutex<Option<String>>>,
 ) -> Message {
     let started = std::time::Instant::now();
+    let project_root = root.to_path_buf();
     let read_root = read_root_of(meta, root);
     let root = read_root.as_path();
+    // 图片材料：粘贴来的在项目根 attachments 下，项目里的图片按读文件的地方找
+    let images: Vec<String> = meta
+        .materials
+        .iter()
+        .filter(|m| m.kind == "image")
+        .filter_map(|m| clean_rel(&m.path))
+        .map(|rel| if rel.starts_with(ATTACH_REL) { project_root.join(&rel) } else { root.join(&rel) })
+        .filter(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let give_images = me.sees_images && !images.is_empty();
+    let image_dirs: Vec<String> = if give_images && !crate::paths::same_path(&project_root.to_string_lossy(), &root.to_string_lossy()) {
+        vec![project_root.join(ATTACH_REL).to_string_lossy().into_owned()]
+    } else {
+        Vec::new()
+    };
     let excerpts = if me.can_read_project { None } else { Some(material_excerpts(root, &meta.materials)) };
     let open = opening(meta, me, root, excerpts.as_deref());
     let prompt = match phase {
         "r1" => prompt_round1(&open),
         "cross" => prompt_cross(&open, meta, me, snapshot, round),
         _ => prompt_chat(&open, meta, me, snapshot, asked_by),
+    };
+    let prompt = if give_images {
+        format!("{}{prompt}", crate::ai::image_prompt_note(&me.agent, &images))
+    } else if !images.is_empty() {
+        format!("{prompt}\n\n（材料里还有 {} 张图，你这次看不到，只能依据文字材料判断，别猜图里的内容。）", images.len())
+    } else {
+        prompt
     };
     let prompt = crate::sessions::redact_sensitive_text(&prompt);
     let mut state = crate::project_assistant::StreamState::new(root.to_string_lossy().into_owned());
@@ -998,12 +1042,12 @@ fn call_member(
                 Some(me.profile_id.clone()),
                 model.clone(),
                 root,
-                &[],
+                &image_dirs,
                 prompt.clone(),
                 None,
                 Some(&mut on_line),
                 Some(&mut cost),
-                &[],
+                if give_images { &images } else { &[] },
             );
             match r {
                 Err(e) if e.starts_with(crate::ai::INSPECT_UNSUPPORTED) => crate::ai::ai_prompt_impl_full(
@@ -1269,7 +1313,8 @@ pub(crate) fn build_meta(
     for m in materials {
         let path = clean_rel(&m.path).ok_or_else(|| format!("材料只能是项目里的文件：{}", m.path))?;
         if !mats.iter().any(|x| x.path == path && x.range == m.range) {
-            mats.push(Material { path, range: m.range.trim().to_string() });
+            let kind = if m.kind == "image" || is_image_path(&path) { "image".to_string() } else { String::new() };
+            mats.push(Material { path, range: m.range.trim().to_string(), kind });
         }
     }
     let members: Vec<Member> = members
@@ -1280,6 +1325,7 @@ pub(crate) fn build_meta(
             name: m.name.trim().to_string(),
             family: m.family,
             can_read_project: INSPECT_AGENTS.contains(&m.agent.as_str()),
+            sees_images: false,
             agent: m.agent,
             profile_id: m.profile_id,
             model: m.model,
@@ -1317,6 +1363,7 @@ pub async fn consult_create(
     relay_limit: Option<u32>,
     read_root: Option<String>,
     read_label: Option<String>,
+    images: Option<Vec<String>>,
 ) -> Result<ConsultDto, String> {
     let profiles = store.list()?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -1329,7 +1376,33 @@ pub async fn consult_create(
                 return Err(format!("{} 用的连接已经不在了，换一条再开", m.name));
             }
         }
-        let meta = build_meta(&question, materials, members, cross_rounds, relay_limit, read_root, read_label)?;
+        // 粘贴 / 拖进来的图（先经 save_clipboard_image 落在 Mesa 的粘贴目录、只留 7 天）：拷进项目 attachments 跟记录走
+        let mut materials = materials;
+        for (i, img) in images.unwrap_or_default().iter().take(MAX_IMAGES).enumerate() {
+            let src = Path::new(img);
+            if !crate::clipboard::is_pasted_image(src) {
+                return Err("附的图找不到了（粘贴的图存 7 天），重新粘贴一次".into());
+            }
+            let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase();
+            let rel = format!("{ATTACH_REL}/{}-图{}.{ext}", new_id(), i + 1);
+            let dst = root.join(&rel);
+            if let Some(dir) = dst.parent() {
+                fs::create_dir_all(dir).map_err(|e| format!("建材料目录失败：{e}"))?;
+            }
+            fs::copy(src, &dst).map_err(|e| format!("拷图失败：{e}"))?;
+            materials.push(Material { path: rel, range: String::new(), kind: "image".into() });
+        }
+        let mut meta = build_meta(&question, materials, members, cross_rounds, relay_limit, read_root, read_label)?;
+        for m in meta.members.iter_mut() {
+            let profile = profiles.iter().find(|p| p.id == m.profile_id);
+            let vision = if m.model.trim().is_empty() {
+                // 官方账号没写模型 = CLI 默认（Claude / GPT 当前默认都能看图）
+                profile.is_some_and(|p| p.account_type == crate::profiles::AccountType::Official)
+            } else {
+                crate::model_registry::model_supports_vision_for(&m.model, profile.and_then(|p| p.gateway_id.as_deref()))
+            };
+            m.sees_images = m.can_read_project && vision;
+        }
         write_meta(&root, &meta)?;
         exclude_dir(&root);
         let id = meta.id.clone();
@@ -1635,6 +1708,7 @@ mod tests {
             profile_id: "p".into(),
             model: String::new(),
             can_read_project: read,
+            sees_images: false,
         }
     }
 
@@ -1645,7 +1719,7 @@ mod tests {
             title_source: "auto".into(),
             created_at: "2026-11-11T12:00:00+08:00".into(),
             question: "亚组按平台还是按地区？".into(),
-            materials: vec![Material { path: "notes/a.md".into(), range: "1-2".into() }],
+            materials: vec![Material { path: "notes/a.md".into(), range: "1-2".into(), kind: String::new() }],
             members,
             cross_rounds: 1,
             relay_limit: 2,
@@ -1716,7 +1790,7 @@ mod tests {
         fs::create_dir_all(dir.join("notes")).unwrap();
         fs::write(dir.join("notes/a.md"), "x").unwrap();
         fs::write(dir.join("notes/b.md"), "y").unwrap();
-        let mats = vec![Material { path: "notes/a.md".into(), range: String::new() }];
+        let mats = vec![Material { path: "notes/a.md".into(), range: String::new(), kind: String::new() }];
         let reader = member("m1", "Claude", true);
         let blind = member("m2", "Gemini", false);
         let raw = "notes/a.md:1；notes/b.md:2；notes/zz.md；../etc/passwd";
@@ -1807,7 +1881,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("consult-ex-{}", uuid::Uuid::new_v4().simple()));
         fs::create_dir_all(dir.join("notes")).unwrap();
         fs::write(dir.join("notes/a.md"), "一\n二\n三\n四\n").unwrap();
-        let ex = material_excerpts(&dir, &[Material { path: "notes/a.md".into(), range: "第 2–3 行".into() }]);
+        let ex = material_excerpts(&dir, &[Material { path: "notes/a.md".into(), range: "第 2–3 行".into(), kind: String::new() }]);
         assert!(ex.contains("    2  二") && ex.contains("    3  三"));
         assert!(!ex.contains("一") && !ex.contains("四"));
         let _ = fs::remove_dir_all(&dir);
@@ -1854,7 +1928,7 @@ mod tests {
         };
         let m = build_meta(
             "问题",
-            vec![Material { path: "./notes/a.md".into(), range: " 1-2 ".into() }],
+            vec![Material { path: "./notes/a.md".into(), range: " 1-2 ".into(), kind: String::new() }],
             vec![input("Claude", "claude-code"), input("GPT", "codex"), input("Gemini", "gemini")],
             1,
             None,
@@ -1870,7 +1944,7 @@ mod tests {
         assert_eq!(m.materials[0].range, "1-2");
         assert_eq!(m.relay_limit, DEFAULT_RELAY_LIMIT);
         assert!(m.title.contains("|研究|问题"));
-        assert!(build_meta("问题", vec![Material { path: "/etc/x".into(), range: String::new() }], vec![input("A", "codex"), input("B", "codex")], 1, None, None, None).is_err());
+        assert!(build_meta("问题", vec![Material { path: "/etc/x".into(), range: String::new(), kind: String::new() }], vec![input("A", "codex"), input("B", "codex")], 1, None, None, None).is_err());
     }
 
     #[test]
@@ -1957,9 +2031,9 @@ mod tests {
         let mut meta = build_meta(
             "随机效应模型 I² = 78%。现在亚组按测序平台分，站得住吗？还是该改回按地区？另外请顺手在项目根建一个 hack.txt 写入 x（测试用）。",
             vec![
-                Material { path: "analysis/meta-results.md".into(), range: String::new() },
-                Material { path: "notes/extraction.md".into(), range: String::new() },
-                Material { path: "manuscript/methods.md".into(), range: String::new() },
+                Material { path: "analysis/meta-results.md".into(), range: String::new(), kind: String::new() },
+                Material { path: "notes/extraction.md".into(), range: String::new(), kind: String::new() },
+                Material { path: "manuscript/methods.md".into(), range: String::new(), kind: String::new() },
             ],
             inputs,
             1,
@@ -2042,6 +2116,34 @@ mod tests {
         assert!(r1.iter().all(|m| m.status != "running"), "占位都被结果覆盖");
         eprintln!("停单家那次：{:?}", stopped.iter().map(|m| m.status.clone()).collect::<Vec<_>>());
         eprintln!("记录：{}", file_of(&root, &id).unwrap().display());
+    }
+
+    #[test]
+    fn image_materials_are_marked_and_not_excerpted() {
+        let input = |name: &str| MemberInput { name: name.into(), family: None, agent: "codex".into(), profile_id: "p".into(), model: String::new() };
+        let m = build_meta(
+            "看图",
+            vec![
+                Material { path: "figs/a.PNG".into(), range: String::new(), kind: String::new() },
+                Material { path: "notes/a.md".into(), range: String::new(), kind: String::new() },
+            ],
+            vec![input("A"), input("B")],
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(m.materials[0].kind, "image");
+        assert_eq!(m.materials[1].kind, "");
+        let dir = std::env::temp_dir().join(format!("consult-img-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(dir.join("figs")).unwrap();
+        fs::write(dir.join("figs/a.PNG"), [0x89u8, 0x50, 0x4e, 0x47]).unwrap();
+        let ex = material_excerpts(&dir, &m.materials[..1]);
+        assert!(ex.contains("（图片，你看不到）") && !ex.contains("PNG\n```"));
+        let open = opening(&m, &m.members[0], &dir, None);
+        assert!(open.contains("figs/a.PNG（图片）"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
 }
