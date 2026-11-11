@@ -1795,9 +1795,25 @@ export default function TaskCardsSection({
                 ? () => continueFocusedStep(true)
                 : undefined
             }
+            discussInline={
+              // 还没聊过话题：「＋ 话题」跟在「继续讨论 · TASK.md」同一行，不另占一行（2026-11-11 项目页减法）
+              showIdeaEntry && ideaCards.length === 0 && !ideaFormOpen ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIdeaName("");
+                    setIdeaFormOpen(true);
+                  }}
+                  title="自己起个话题和 AI 只读地聊（如综述角度、创新点）；聊完点卡片上的「◈ 写入任务书」才追加进 TASK.md。要直接改任务书用「继续讨论」"
+                  className="shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline"
+                >
+                  ＋ 话题
+                </button>
+              ) : null
+            }
             discussContent={
-              // 零态且非人主导步骤：整个想法区不渲染（没有入口也没有约束对象）
-              !showIdeaEntry && !ideaFormOpen ? null : (
+              // 零态且非人主导步骤：整个想法区不渲染（没有入口也没有约束对象）；还没聊过的零态入口在上面同一行（discussInline）
+              (!showIdeaEntry && !ideaFormOpen) || (ideaCards.length === 0 && !ideaFormOpen) ? null : (
               <div className="mt-1">
                 {/* 想法区（v3.80）：自由想法卡（kind=idea）——只读纯聊 + ◈ 沉淀进任务书；
                     「想法期只读保护」开关 2026-10-26 已收掉，聊想法固定只读开聊（TaskCardsSection 顶部 guard 提示）。

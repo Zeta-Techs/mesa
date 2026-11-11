@@ -560,6 +560,7 @@ export default function StepFlow({
   discussed = false,
   discussResume = null,
   discussContent,
+  discussInline,
   litSource,
   openSettings,
   onOpenResources,
@@ -619,6 +620,8 @@ export default function StepFlow({
   } | null;
   /** discuss 节点内嵌内容（想法区）：讨论的事全归这个节点，不在流程线外另立并列区块 */
   discussContent?: React.ReactNode;
+  /** 跟在「继续讨论 · TASK.md」同一行的讨论入口（还没聊过话题时的「＋ 话题」，2026-11-11 项目页减法：同类入口不另占一行） */
+  discussInline?: React.ReactNode;
   /** 项目的文献来源（project.toml lit_source）：zotero/folder 时，落点在 papers/ 的人工事项
    *  不该再劝人往 papers/ 里塞 PDF——那会造出第二个文献存放处，与已有库各自漂移 */
   litSource?: string;
@@ -2940,6 +2943,7 @@ export default function StepFlow({
                   >
                     TASK.md
                   </button>
+                  {discussInline}
                 </div>
                 {chatOpen && (
                   <div className="flex flex-wrap items-center gap-2 pl-4">
@@ -2988,6 +2992,7 @@ export default function StepFlow({
                 >
                   TASK.md
                 </button>
+                {discussInline}
               </div>
             )}
               {showDiscussNudge && (
@@ -3057,11 +3062,7 @@ export default function StepFlow({
             title="按 papers/included.json 数：纳入的篇里项目 papers/ 有 PDF 的算已有全文；缺全文的精读时只能按摘要记"
           />
         )}
-        {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
-        {/* empty:hidden：回头入口和「做过几轮」都没有时组件渲染为空，不留一截空白 */}
-        {node.kind === "agent" && loopActions && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-9 empty:hidden">{loopActions}</div>
-        )}
+        {/* 计数在上、回头入口在下，各步骤同一顺序（2026-11-11：大纲的计数原先排在回头入口下面） */}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
           <LedgerCountLine
             roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
@@ -3071,6 +3072,11 @@ export default function StepFlow({
             line={figurePlanCountLine}
             title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「补文献…」，Mesa 按这张表预填）；用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
           />
+        )}
+        {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
+        {/* empty:hidden：回头入口和「做过几轮」都没有时组件渲染为空，不留一截空白 */}
+        {node.kind === "agent" && loopActions && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-9 empty:hidden">{loopActions}</div>
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。
             非当前节点的说明挂在行的 title 上（悬停可见），信息不丢。
