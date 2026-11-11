@@ -116,6 +116,7 @@ export default function ChatPermissionBadge({
   editable,
   onPermission,
   live = null,
+  observed = null,
   context = "general",
   cycleHint = false,
   flash = false,
@@ -134,6 +135,8 @@ export default function ChatPermissionBadge({
   onPermission?: (permission: Permission, mode?: NativePermissionMode | null) => void;
   /** Agent 正在运行：换权限要重开（busy = 这一轮还在生成，等它结束再换） */
   live?: { busy: boolean; onRestart: () => void } | null;
+  /** 从会话文件读到的实际档（Kimi / Codex）：有就写它，不加「已选 ·」 */
+  observed?: "ask" | "auto" | "full" | null;
   /** 这段对话在哪类项目里：菜单拿哪件事举例 */
   context?: StarterContext;
   /** 输入框里 ⇧Tab 能轮换（开聊前）：菜单底部提一句 */
@@ -180,10 +183,11 @@ export default function ChatPermissionBadge({
   }, [interactive]);
 
   const followsLocal = permission !== "discuss" && mode === null;
-  const current = effectivePermissionTier(permission, mode, note);
+  const current = observed ?? effectivePermissionTier(permission, mode, note);
   const available = (id: Tier) => (id === "discuss" ? readonlySupported : modes.includes(id));
   const cur = PERMISSION_TIERS.find((t) => t.id === current) ?? null;
-  const selectedOnly = Boolean(live && agentId && agentId !== "claude-code");
+  // 读得到实际档的家（Claude 跟会话文件、Kimi / Codex 读到了）不加「已选 ·」；读不到的写 Mesa 记录的选择
+  const selectedOnly = Boolean(live && agentId && agentId !== "claude-code" && !observed);
   const label = `${selectedOnly ? "已选 · " : ""}${cur?.label ?? (followsLocal && note ? note.short : "默认权限")}`;
   const loud = current === "full";
   const settingExplain = followsLocal && note ? note.detail : (cur?.desc ?? `按 ${agentLabel} 自己的权限设置`);

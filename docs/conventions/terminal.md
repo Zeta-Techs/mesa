@@ -216,6 +216,11 @@
   并发一次 scroll，聊天层不认这次；`useReadingAnchor` 记下最后看得见时的位置，切回来跟底的贴底、没跟底的放回原处。
   改聊天区（`ChatSurface` / `ConversationView` / `ChatMarkdown` / `virtual-window.ts` / `reading-anchor.ts`）或加晚到的内容后跑
   `scripts/chat-layout-measure/run.sh`（本机真实对话、真 WKWebView、逐帧看画上屏的字），`visibleMoves` / `contentJumps` 应为 0。
+- **徽标读会话里的实际档（2026-11-11，`sessions.rs session_permission_mode`、`chat-handoff.ts sessionModeTier`）**：Claude 照旧（首读作基线、变了才跟）；
+  Kimi 读 `wire.jsonl` 最后一条 `permission.set_mode`、Codex 读最后一条 `thread_settings_applied` / `turn_context`（后端换算成 ask / auto / full / read-only），
+  都是按路径增量读整份文件（换档记录只在换的那一刻写，尾窗读不到）。**Kimi 的 auto 是 Never Ask = 完全访问**，yolo 才是帮我批准。
+  以最后一条为准，但带参数启动时早于这次启动 3 秒的那条不算（这次会再写一条）；Kimi 不带参数接回旧会话时沿用会话里存的档、不再写，那条照算。
+  读到的档放 `launchPick.observedTier` 给徽标显示（不加「已选 ·」）；只有这家能用启动参数指定的档才上报 `cliModeSwitch` 改标签的选择（Kimi 的 manual 只显示）。
 - **运行中换权限（2026-10-17 用户：发完消息权限就改不了了）**：各家权限都在启动参数里，换 = 父级先写标签 permission /
   permissionMode，下一拍调标签动作 `restartWithPermission`：停下 Agent，回落 shell 后 effect 用最新 props
   `launch(lastResume)` 按原会话恢复，对话不丢；**接回期间置 `keepPreviewConvRef`**，`launch` 开头的 `resetLink` 不清聊天，接上后会话文件刷新整份替换（换模型 / 换连接同口径；原先先清空再出现，用户看着像整页刷新，2026-10-25）。权限徽标确认框写明「会重开」，正在生成时只显示不可点。

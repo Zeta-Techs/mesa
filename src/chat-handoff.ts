@@ -148,6 +148,23 @@ export function claudeModeTier(mode: string | null | undefined): "ask" | "auto" 
   }
 }
 
+/** 会话文件里读得到实际权限档的家（sessions.rs session_permission_mode）：徽标写实际档，不加「已选 ·」 */
+export const READS_SESSION_TIER = new Set(["claude-code", "kimi", "codex"]);
+
+/**
+ * 会话文件里的权限档 → 聊天徽标的档，按家换算（2026-11-11 实测，matrix「会话内换权限 / 思考档」节）。
+ * **Kimi 的 auto 是 Never Ask = Mesa 的完全访问**，yolo（Ask When Needed）才是帮我批准；Codex 后端已换算成 ask / auto / full。
+ * 对不上的（Codex 只读、Claude plan / acceptEdits）返回 null，不动徽标
+ */
+export function sessionModeTier(agentId: string, mode: string | null | undefined): "ask" | "auto" | "full" | null {
+  if (agentId === "claude-code") return claudeModeTier(mode);
+  if (agentId === "kimi") {
+    return mode === "manual" ? "ask" : mode === "yolo" ? "auto" : mode === "auto" ? "full" : null;
+  }
+  if (agentId === "codex") return mode === "ask" || mode === "auto" || mode === "full" ? mode : null;
+  return null;
+}
+
 /** 会把斜杠命令记进会话文件的家（slashCommandRecorded 认得出）：不在本机提前收尾，免得同一条记两遍 */
 const RECORDS_SLASH_COMMANDS = new Set(["claude-code"]);
 /** 发出后至少这么久、终端至少静了这么久，才算本机已经处理完 */

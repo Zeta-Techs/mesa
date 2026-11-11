@@ -25,6 +25,7 @@ import {
   slashResultLines,
   slashSettledLocally,
   slashSettlesAtTurnEnd,
+  sessionModeTier,
   slashHandoff,
   userTextRecorded,
   forkChatMessages,
@@ -433,4 +434,15 @@ test("本机命令记录可只带挑好的几行（选了哪一项 + 结果行�
     [["command", "/permission"], ["command_output", "选了：Never Ask\nPermission mode: Never Ask"]],
   );
   assert.equal(localCommandOutput(sent, []).blocks.length, 1);
+});
+
+test("会话文件里的权限档按家换算：Kimi 的 auto 是 Never Ask = 完全访问，yolo 才是帮我批准", () => {
+  assert.equal(sessionModeTier("kimi", "manual"), "ask");
+  assert.equal(sessionModeTier("kimi", "yolo"), "auto");
+  assert.equal(sessionModeTier("kimi", "auto"), "full");
+  assert.equal(sessionModeTier("codex", "full"), "full");
+  assert.equal(sessionModeTier("codex", "read-only"), null, "只读不动徽标");
+  assert.equal(sessionModeTier("claude-code", "auto"), "auto");
+  assert.equal(sessionModeTier("claude-code", "bypassPermissions"), "full");
+  assert.equal(sessionModeTier("grok", "auto"), null, "没接的家不认");
 });

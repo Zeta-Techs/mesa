@@ -996,6 +996,61 @@ fn claude_permission_mode_reads_latest_switch() {
 }
 
 #[test]
+fn kimi_and_codex_permission_mode_lines() {
+    // 2026-11-11 实测样本（Kimi 2.5.3 wire.jsonl、Codex 0.167.1 rollout）
+    let k = kimi_mode_line(r#"{"type":"permission.set_mode","agentId":"main","mode":"auto","time":1794381140663}"#).unwrap();
+    assert_eq!((k.mode.as_str(), k.at_ms), ("auto", Some(1794381140663)));
+    assert_eq!(kimi_mode_line(r#"{"type":"usage.record","agentId":"main"}"#), None);
+    // 正文里提到这几个字不算
+    assert_eq!(
+        kimi_mode_line(r#"{"type":"context.append_message","message":{"content":"\"permission.set_mode\""}}"#),
+        None
+    );
+    let ts = |settings: &str| {
+        format!(
+            r#"{{"timestamp":"2026-11-11T07:22:21.323Z","type":"event_msg","payload":{{"type":"thread_settings_applied","thread_settings":{settings}}}}}"#
+        )
+    };
+    let mode = |line: String| codex_mode_line(&line).map(|m| m.mode);
+    assert_eq!(mode(ts(r#"{"approval_policy":"on-request","approvals_reviewer":"user"}"#)).as_deref(), Some("ask"));
+    assert_eq!(mode(ts(r#"{"approval_policy":"on-request","approvals_reviewer":"auto_review"}"#)).as_deref(), Some("auto"));
+    assert_eq!(mode(ts(r#"{"approval_policy":"never","approvals_reviewer":"user"}"#)).as_deref(), Some("full"));
+    assert_eq!(
+        mode(ts(r#"{"approval_policy":"on-request","approvals_reviewer":"user","active_permission_profile":{"id":":read-only"}}"#)).as_deref(),
+        Some("read-only")
+    );
+    let tc = r#"{"timestamp":"2026-11-11T07:22:42.057Z","type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}"#;
+    let m = codex_mode_line(tc).unwrap();
+    assert_eq!(m.mode, "full");
+    assert_eq!(m.at_ms, Some(chrono::DateTime::parse_from_rfc3339("2026-11-11T07:22:42.057Z").unwrap().timestamp_millis()));
+}
+
+#[test]
+fn permission_mode_scan_is_incremental_and_takes_the_last_switch() {
+    let dir = std::env::temp_dir().join(format!("mesa-mode-scan-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("wire.jsonl");
+    let p = path.to_string_lossy().to_string();
+    let write = |text: &str| {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new().create(true).append(true).open(&path).unwrap();
+        f.write_all(text.as_bytes()).unwrap();
+    };
+    write("{\"type\":\"permission.set_mode\",\"mode\":\"auto\",\"time\":1}\n{\"type\":\"x\"}\n");
+    assert_eq!(scan_mode_incremental(&p, kimi_mode_line).map(|m| m.mode).as_deref(), Some("auto"));
+    // 后面没有新的换档：仍是上一档；半行先不认
+    write("{\"type\":\"y\"}\n{\"type\":\"permission.set_mode\",\"mode\":\"man");
+    assert_eq!(scan_mode_incremental(&p, kimi_mode_line).map(|m| m.mode).as_deref(), Some("auto"));
+    write("ual\",\"time\":2}\n");
+    assert_eq!(scan_mode_incremental(&p, kimi_mode_line).map(|m| m.mode).as_deref(), Some("manual"));
+    // 文件被重写变短：从头读
+    fs::write(&path, "{\"type\":\"permission.set_mode\",\"mode\":\"yolo\",\"time\":3}\n").unwrap();
+    assert_eq!(scan_mode_incremental(&p, kimi_mode_line).map(|m| m.mode).as_deref(), Some("yolo"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn claude_interrupt_marker_is_not_a_user_bubble() {
     let lines = s(&[
         r#"{"type":"user","message":{"role":"user","content":"运行 rm 一下"}}"#,

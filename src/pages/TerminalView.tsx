@@ -73,6 +73,8 @@ import {
   slashResultLines,
   slashSettledLocally,
   slashSettlesAtTurnEnd,
+  READS_SESSION_TIER,
+  sessionModeTier,
 } from "../chat-handoff";
 import { useCliNewer } from "../cli-verified";
 import { AGENTS, type CustomRuntimeDto, type OfficialAccountStatusDto } from "../types";
@@ -513,6 +515,8 @@ export interface LaunchPickState {
   readonlySupported: boolean;
   /** 这家 CLI 本机默认权限（short 上徽标、detail 整句；如 Claude「完全访问」）；默认档为 null */
   permissionNote: CliPermissionNote | null;
+  /** 从会话文件读到的实际权限档（Kimi / Codex，sessionModeTier）；读不到为 null，徽标按 Mesa 记录的选择写 */
+  observedTier: "ask" | "auto" | "full" | null;
   /** 刚按项目默认换了 Agent / 连接（选项目时）：输入框上短暂写一句「按项目默认」，几秒后清掉 */
   autoNote: string | null;
 }
@@ -596,7 +600,7 @@ export interface SessionLinkState {
   menuPrompt: TuiMenu | null;
   /** 运行中在终端里换了权限模式（Claude 审批菜单里「切到 auto」、Shift+Tab）：会话文件记下的新模式 + 序号，
    *  父级按序号只应用一次到标签的权限档（聊天徽标跟上）；没换过为 null */
-  cliModeSwitch: { mode: string; seq: number } | null;
+  cliModeSwitch: { agent: string; mode: string; seq: number } | null;
   /** 终端里开着一个只能在终端看、按 Esc 关的面板（/cost、/usage 的 Settings 面板等，tui-panel.ts） */
   tuiPanel: boolean;
   /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行；没有为 null */
@@ -1937,6 +1941,15 @@ export const TerminalView = memo(function TerminalView({
     };
   }, [running, profileId, effectiveLaunchModel]);
   const launchAgentDet = launchAgents.find((a) => a.id === agentId);
+  const launchAgentDetRef = useRef(launchAgentDet);
+  launchAgentDetRef.current = launchAgentDet;
+  // 这次运行用的权限（读会话里的实际档时判断「上一次运行留下的那条算不算」）
+  const permissionRef = useRef(permission);
+  permissionRef.current = permission;
+  const permissionModeRef = useRef(permissionMode);
+  permissionModeRef.current = permissionMode;
+  // 从会话文件读到的实际权限档（Kimi / Codex）：徽标写它，不加「已选 ·」
+  const [observedTier, setObservedTier] = useState<"ask" | "auto" | "full" | null>(null);
   const launchEffortLevels = useMemo(
     () => {
       const levels = launchAgentDet?.effort?.levels;
@@ -1985,6 +1998,7 @@ export const TerminalView = memo(function TerminalView({
       permissionModes: launchAgentDet?.permissionModes ?? [],
       readonlySupported: launchAgentDet?.readonlySupported ?? false,
       permissionNote: cliPermissionNote,
+      observedTier,
       autoNote: launchAutoNote,
     }),
     // profileMenuOptions 每次渲染新建，按其内容签名判等
@@ -2009,6 +2023,7 @@ export const TerminalView = memo(function TerminalView({
       launchAgentDet?.readonlySupported,
       launchAgentDet?.permissionModes?.join(","),
       cliPermissionNote,
+      observedTier,
       launchAutoNote,
     ],
   );
@@ -2531,7 +2546,7 @@ export const TerminalView = memo(function TerminalView({
       settleSlashLocally(pu, result.length ? result : [`已发给 ${agentLabel(agent)}，结果以终端为准`]);
     }
   }
-  const [cliModeSwitch, setCliModeSwitch] = useState<{ mode: string; seq: number } | null>(null);
+  const [cliModeSwitch, setCliModeSwitch] = useState<{ agent: string; mode: string; seq: number } | null>(null);
   // 终端里开着的面板（tui-panel.ts）：跟菜单同一次扫屏认；开着时一直扫到它关掉
   const [tuiPanel, setTuiPanel] = useState(false);
   const tuiPanelRef = useRef(false);
@@ -4623,6 +4638,7 @@ export const TerminalView = memo(function TerminalView({
     }
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
+    setObservedTier(null);
     liveReplyRef.current = null;
     setLiveReply(null);
     liveTokensRef.current = null;
@@ -4925,18 +4941,37 @@ export const TerminalView = memo(function TerminalView({
     }
     // 权限模式跟随：这个会话文件第一次读到的模式是基线，之后变了才上报（终端里切过）。
     // 2026-10-19 用户：审批时点了「切换」，终端已是 auto，聊天层徽标还是「请求批准」
-    if (ctx.agentId === "claude-code") {
-      const mode = await invoke<string | null>("session_permission_mode", {
+    if (READS_SESSION_TIER.has(ctx.agentId)) {
+      const got = await invoke<{ mode: string; atMs: number | null } | null>("session_permission_mode", {
         agent: ctx.agentId,
         filePath: ctx.filePath,
       }).catch(() => null);
       if (linkCtxRef.current !== ctx) return;
+      const mode = got?.mode ?? null;
+      const report = (m: string) =>
+        setCliModeSwitch((prev) => ({ agent: ctx.agentId, mode: m, seq: (prev?.seq ?? 0) + 1 }));
       const base = permBaselineRef.current;
-      if (mode && (!base || base.file !== ctx.filePath)) {
-        permBaselineRef.current = { file: ctx.filePath, mode };
-      } else if (mode && base && mode !== base.mode) {
-        permBaselineRef.current = { file: ctx.filePath, mode };
-        setCliModeSwitch((prev) => ({ mode, seq: (prev?.seq ?? 0) + 1 }));
+      if (ctx.agentId === "claude-code") {
+        if (mode && (!base || base.file !== ctx.filePath)) {
+          permBaselineRef.current = { file: ctx.filePath, mode };
+        } else if (mode && base && mode !== base.mode) {
+          permBaselineRef.current = { file: ctx.filePath, mode };
+          report(mode);
+        }
+      } else if (got && mode) {
+        // Kimi / Codex 以最后一条为准（2026-11-11 实测）。上一次运行留下的那条不算——带参数启动时这次会再写一条新的；
+        // 只有 Kimi 不带参数（按本机设置）接回旧会话时沿用会话里存的档、不再写，那条就是实际档（用「请求批准」接回一段
+        // 切过 Never Ask 的对话，实际仍是 Never Ask）
+        const flagged =
+          ctx.agentId !== "kimi" || permissionRef.current === "discuss" || permissionModeRef.current !== null;
+        const stale = flagged && got.atMs != null && got.atMs < linkStartedAtRef.current - 3000;
+        const tier = stale ? null : sessionModeTier(ctx.agentId, mode);
+        if (!stale) setObservedTier(tier);
+        if (tier && (!base || base.file !== ctx.filePath || base.mode !== mode)) {
+          permBaselineRef.current = { file: ctx.filePath, mode };
+          // 标签记下的选择只跟到这家能用启动参数指定的档（Kimi 没有「请求批准」的参数：manual 只显示、不改选择）
+          if ((launchAgentDetRef.current?.permissionModes ?? []).includes(tier)) report(mode);
+        }
       }
     }
     // P3c：同一路径顺带轮询会话尾部状态（done/working/confirm/unknown）
@@ -5481,6 +5516,7 @@ export const TerminalView = memo(function TerminalView({
     setTuiNoticeLines(null);
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
+    setObservedTier(null);
     liveReplyRef.current = null;
     setLiveReply(null);
     liveTokensRef.current = null;

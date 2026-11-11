@@ -3359,14 +3359,114 @@ fn claude_permission_mode(lines: &[String]) -> Option<String> {
     None
 }
 
-#[tauri::command]
-pub async fn session_permission_mode(agent: String, file_path: String) -> Option<String> {
-    if agent != "claude-code" {
+/// 会话里记下的权限档：mode 是这家自己的写法（Claude `default` / `auto`…，Kimi `manual` / `yolo` / `auto`，
+/// Codex 换算成 `ask` / `auto` / `full` / `read-only`），at_ms 是那一条的时间（Claude 不带）。前端按家换算成徽标的档
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPermissionMode {
+    pub mode: String,
+    pub at_ms: Option<i64>,
+}
+
+/// Kimi `wire.jsonl` 的一行：`{"type":"permission.set_mode","mode":"auto","time":1794381140663}`（2.5.3 实测：
+/// 会话里 /permission 换档、非默认档启动时各写一条；不带参数接回旧会话时沿用会话里存的档、不再写——以最后一条为准）
+fn kimi_mode_line(line: &str) -> Option<SessionPermissionMode> {
+    if !line.contains("\"permission.set_mode\"") {
         return None;
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    let v: Value = serde_json::from_str(line).ok()?;
+    if get_str(&v, "type") != Some("permission.set_mode") {
+        return None;
+    }
+    Some(SessionPermissionMode {
+        mode: get_str(&v, "mode")?.to_string(),
+        at_ms: v.get("time").and_then(|t| t.as_i64()),
+    })
+}
+
+/// Codex 会话文件的 `thread_settings_applied`（启动、会话里 /permissions 换档时写）与每轮的 `turn_context`
+/// （0.167.1 实测）：只读 → `read-only`；`approval_policy` never → `full`；on-request 且 `approvals_reviewer` auto_review → `auto`；
+/// 其余要你批准的 → `ask`
+fn codex_mode_line(line: &str) -> Option<SessionPermissionMode> {
+    if !line.contains("\"thread_settings_applied\"") && !line.contains("\"turn_context\"") {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    let payload = v.get("payload")?;
+    let settings = match (get_str(&v, "type"), get_str(payload, "type")) {
+        (Some("turn_context"), _) => payload,
+        (Some("event_msg"), Some("thread_settings_applied")) => payload.get("thread_settings")?,
+        _ => return None,
+    };
+    let read_only = settings
+        .get("active_permission_profile")
+        .and_then(|p| get_str(p, "id"))
+        == Some(":read-only")
+        || settings.get("sandbox_policy").and_then(|p| get_str(p, "type")) == Some("read-only");
+    let approval = get_str(settings, "approval_policy")?;
+    let mode = if read_only {
+        "read-only"
+    } else if approval == "never" {
+        "full"
+    } else if get_str(settings, "approvals_reviewer") == Some("auto_review") {
+        "auto"
+    } else {
+        "ask"
+    };
+    let at_ms = get_str(&v, "timestamp")
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.timestamp_millis());
+    Some(SessionPermissionMode { mode: mode.into(), at_ms })
+}
+
+/// 增量读：换档记录只在换的那一刻写一条，长会话里离文件尾很远，尾窗读不到；按路径记下读到哪儿、最近一档，每次只读新增的整行。
+/// 文件变短（被重写）就从头读
+static MODE_SCAN: OnceLock<Mutex<HashMap<String, (u64, Option<SessionPermissionMode>)>>> = OnceLock::new();
+
+fn scan_mode_incremental(
+    file_path: &str,
+    parse: fn(&str) -> Option<SessionPermissionMode>,
+) -> Option<SessionPermissionMode> {
+    let cache = MODE_SCAN.get_or_init(|| Mutex::new(HashMap::new()));
+    let len = fs::metadata(file_path).ok()?.len();
+    let (mut offset, mut last) = cache
+        .lock()
+        .ok()
+        .and_then(|m| m.get(file_path).cloned())
+        .unwrap_or((0, None));
+    if len < offset {
+        offset = 0;
+        last = None;
+    }
+    if len > offset {
+        let mut f = fs::File::open(file_path).ok()?;
+        f.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buf = Vec::new();
+        f.take(len - offset).read_to_end(&mut buf).ok()?;
+        // 只认整行：最后一个换行之后的半行留到下次
+        let end = buf.iter().rposition(|b| *b == b'\n').map(|i| i + 1).unwrap_or(0);
+        for line in String::from_utf8_lossy(&buf[..end]).lines() {
+            if let Some(m) = parse(line) {
+                last = Some(m);
+            }
+        }
+        offset += end as u64;
+        if let Ok(mut m) = cache.lock() {
+            m.insert(file_path.to_string(), (offset, last.clone()));
+        }
+    }
+    last
+}
+
+#[tauri::command]
+pub async fn session_permission_mode(agent: String, file_path: String) -> Option<SessionPermissionMode> {
+    tauri::async_runtime::spawn_blocking(move || match agent.as_str() {
         // Claude 每轮可能写一行几百 KB 的附件，窗口放宽些；permission-mode 行每轮都会再写
-        claude_permission_mode(&last_lines(Path::new(&file_path), 512 * 1024))
+        "claude-code" => claude_permission_mode(&last_lines(Path::new(&file_path), 512 * 1024))
+            .map(|mode| SessionPermissionMode { mode, at_ms: None }),
+        "kimi" => scan_mode_incremental(&file_path, kimi_mode_line),
+        "codex" => scan_mode_incremental(&file_path, codex_mode_line),
+        _ => None,
     })
     .await
     .ok()

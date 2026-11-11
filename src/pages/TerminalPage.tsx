@@ -23,7 +23,7 @@ import {
   eventMatchesCombo,
 } from "../hotkeys";
 import type { TerminalProgress } from "../terminal-notify";
-import { claudeModeTier, forkChatMessages, forkPreviewCovered } from "../chat-handoff";
+import { forkChatMessages, forkPreviewCovered, sessionModeTier } from "../chat-handoff";
 import { recordChatHandoff, switchState } from "../chat-handoff-log";
 import { currentVerifiedVersion } from "../cli-verified";
 import { chatFidelity, tierLabel, versionTrust } from "../chat-fidelity";
@@ -763,7 +763,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       const sw = snap?.cliModeSwitch;
       if (!sw || appliedModeSwitchRef.current[tabId] === sw.seq) continue;
       appliedModeSwitchRef.current[tabId] = sw.seq;
-      const tier = claudeModeTier(sw.mode);
+      const tier = sessionModeTier(sw.agent, sw.mode);
       if (tier) updates[tabId] = tier;
     }
     if (Object.keys(updates).length === 0) return;

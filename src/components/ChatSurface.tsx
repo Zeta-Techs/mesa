@@ -1351,6 +1351,7 @@ export default function ChatSurface({
           modes={launchPick.permissionModes}
           readonlySupported={launchPick.readonlySupported}
           note={launchPick.permissionNote}
+          observed={running ? launchPick.observedTier : null}
           // 开聊前、只看没接、或 Agent 停了还能接着聊：改的是下次启动的参数；运行中：换 = 重开接回
           editable={launchPickOpen || resumePickOpen || (!running && canResume)}
           onPermission={pickPermission}
