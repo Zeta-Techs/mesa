@@ -1543,6 +1543,31 @@ pub async fn consult_retry(
     .map_err(|e| e.to_string())?
 }
 
+pub(crate) const ATTACH_REL: &str = ".ccode/consults/attachments";
+
+/// 对话回放 ⋯「请几家研讨这个问题」（2026-11-11 二期）：把这段对话渲成 Markdown（session_markdown，已整份脱敏）
+/// 存进项目 `.ccode/consults/attachments/`，返回项目内相对路径当研讨材料。对话不是项目文件，研讨又只认项目里的文件
+#[tauri::command]
+pub async fn consult_attach_session(project_root: String, agent: String, session_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = root_of(&project_root);
+        if !root.is_dir() {
+            return Err("项目目录不在了".into());
+        }
+        let md = crate::sessions::session_markdown(&agent, &session_id).ok_or("读不到这段对话的记录")?;
+        let rel = format!("{ATTACH_REL}/{}-对话.md", new_id());
+        let path = root.join(&rel);
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("建材料目录失败：{e}"))?;
+        }
+        fs::write(&path, md).map_err(|e| format!("写对话材料失败：{e}"))?;
+        exclude_dir(&root);
+        Ok(rel)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 预填材料前筛一遍：只留 root 下真实存在的文件（项目内相对路径；目录、通配、越界的丢掉）。
 /// 步骤卡 / 评审页按 expectedArtifacts 预填时用，免得弹层里列一堆还没产出的文件
 #[tauri::command]

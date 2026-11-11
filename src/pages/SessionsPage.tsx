@@ -462,6 +462,32 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     clearConsultReq();
   }, [consultReq, clearConsultReq]);
 
+  /** 这段对话属于哪个已添加的项目（研讨记录写项目里，不属于的不给入口） */
+  function consultProjectOf(s: SessionMetaDto): string | null {
+    return [...registeredProjectPaths].find((p) => samePath(p, s.projectPath, IS_WINDOWS)) ?? null;
+  }
+
+  /** 对话回放 ⋯「请几家研讨这个问题」（研讨二期）：最后一句你说的话作问题，这段对话存成项目里的材料文件；
+   *  与步骤卡、评审页同一个发起弹层 */
+  async function consultFromSession(s: SessionMetaDto) {
+    const root = consultProjectOf(s);
+    if (!root) return;
+    try {
+      const rel = await invoke<string>("consult_attach_session", { projectRoot: root, agent: s.agent, sessionId: s.sessionId });
+      const lastUser = [...messagesRef.current]
+        .reverse()
+        .find((m) => m.role === "user" && m.blocks.some((b) => b.kind === "text" && b.text?.trim()));
+      const said = lastUser?.blocks.find((b) => b.kind === "text")?.text?.trim() ?? "";
+      setConsultDialog({
+        projectRoot: root,
+        question: said ? `${said.slice(0, 3500)}\n\n（这是我在一段对话里最后问的；整段对话在材料里）` : "",
+        materials: [{ path: rel, range: "" }],
+      });
+    } catch (reason) {
+      toast(String(reason), "error");
+    }
+  }
+
   const q = query.trim().toLowerCase();
   // 工作区页「会话」跳转：接管搜索词（消费并清空）
   useEffect(() => {
@@ -3096,6 +3122,15 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 hint: "AI",
                 disabled: aiSummarizing || !readable,
                 onSelect: () => void onSummarize(),
+              },
+              {
+                label: "请几家研讨这个问题",
+                icon: Users,
+                disabled: !readable || !consultProjectOf(selected),
+                title: consultProjectOf(selected)
+                  ? "你最后说的那句作问题、这段对话作材料，请几家不同模型的 AI 只读各给意见"
+                  : "研讨记录存在项目里：这段对话不属于已添加的项目，先在项目页添加它所在的文件夹",
+                onSelect: () => void consultFromSession(selected),
               },
               { separator: true },
               ...(slimMenuAvailable(slimInspect)
