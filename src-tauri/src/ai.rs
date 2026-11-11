@@ -608,6 +608,19 @@ thread_local! {
     static RUN_STARTED_HOOK: std::cell::RefCell<Option<Box<dyn Fn(&str)>>> = const { std::cell::RefCell::new(None) };
 }
 
+thread_local! {
+    /// 本线程下一次只读查看要分叉的会话 id（只对 Claude Code 生效，见 ai_inspect_readonly）
+    static FORK_SESSION: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// 在 f 里发生的只读查看接上 session_id 的记忆另起一份（不落盘、不改原会话）
+pub(crate) fn with_fork_session<T>(session_id: String, f: impl FnOnce() -> T) -> T {
+    FORK_SESSION.with(|h| *h.borrow_mut() = Some(session_id));
+    let out = f();
+    FORK_SESSION.with(|h| *h.borrow_mut() = None);
+    out
+}
+
 /// 在 f 里发生的无头调用（`ai_prompt_impl_full` / `ai_inspect_readonly`）登记 Run 后调 hook(run_id)
 pub(crate) fn with_run_hook<T>(hook: Box<dyn Fn(&str)>, f: impl FnOnce() -> T) -> T {
     RUN_STARTED_HOOK.with(|h| *h.borrow_mut() = Some(hook));
@@ -1086,9 +1099,16 @@ pub(crate) fn ai_inspect_readonly(
     }
     let prompt = format!("{}{}", image_prompt_note(&profile.agent, images), prompt);
     let claude_version = (profile.agent == "claude-code").then(|| agents::cli_version("claude-code")).flatten();
-    let Some(args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some(), images, claude_version) else {
+    let Some(mut args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some(), images, claude_version) else {
         return Err(format!("{INSPECT_UNSUPPORTED}: {}", profile.agent));
     };
+    // 问它一句（不打断，2026-11-11）：Claude Code 原生分叉——接上那段会话的记忆另起一份，配 --no-session-persistence 不落盘，
+    // 原会话一个字不动；只认 Claude Code（Codex 的 fork 只有交互形态，exec resume 会写回原会话）
+    if profile.agent == "claude-code" {
+        if let Some(sid) = FORK_SESSION.with(|f| f.borrow().clone()) {
+            args.extend(["--resume".to_string(), sid, "--fork-session".into()]);
+        }
+    }
     let binary = agents::binary_for(&profile.agent)
         .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
     let binary_path = agents::resolve_binary(binary)

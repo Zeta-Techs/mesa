@@ -73,6 +73,7 @@ mod project_mail;
 mod split_plan;
 mod project_assistant;
 mod consult;
+mod ask_aside;
 mod fan_out;
 mod feishu;
 
@@ -975,6 +976,7 @@ pub fn run() {
             consult::consult_attach_session,
             consult::consult_cost_stats,
             consult::consult_record_adoption,
+            ask_aside::run_ask_aside,
             consult::consult_delete,
             project_assistant::assistant_review_notes,
             project_assistant::assistant_guide_search,

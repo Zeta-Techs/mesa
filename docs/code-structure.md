@@ -359,7 +359,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身；
                              # 先载 App.css 用主窗口同一套主题令牌（挂 data-theme，自定义主题按深浅退回沉浸黑），卡片带指向小桌的尾巴、按项目分组、整行点了去看看
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
-  components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）与你留过的几条状态
+  components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）+ 问它一句（不打断，run_ask_aside，只给 Claude Code / Codex）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
   components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions / backdropClassName 可传，工作台任务与审批详情复用，独立设定 400px 宽度与标题栏下沿定位）；
                              # docked（2026-11-05 项目助手）= 不压暗不困焦点的常驻 aside，左缘拖动条
@@ -1203,6 +1203,7 @@ src-tauri/src/
                              #   只认二进制/配置 schema 实证，调研录 matrix §9 第 8 条；agents.rs
                              #   apply_request_policy_env 按表注入启动 env，未实证一律不注）；
                              #   resolve_binary 兜底候选目录 binary_candidate_dirs 同在本模块（macOS 含 /Library/TeX/texbin、/Applications/quarto/bin；Linux /opt/quarto/bin；Windows Program Files\Quarto\bin）
+  ask_aside.rs               # 问它一句（不打断，2026-11-11）：run_ask_aside——Claude Code 经 ai::with_fork_session 原生分叉只读回答（不落盘）、Codex 用 session_markdown 记忆副本；fork_real_run 真跑钉住原会话不变
   agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底；Windows 最后再查注册表 PATH，接住 winget 无开发者模式时只改 PATH 的安装；resolve_binary_all 列全部候选给占位程序场景）+ readonly_launch_args（聊想法只读注入）；
                              # 官方账号 Codex：apply_official_inject 必带 -c model_provider="openai"（内置 ChatGPT 渠道；磁盘
                              #   config.toml 的网关默认会盖过订阅，不得省略；只影响本进程、不写 model_providers 块）；

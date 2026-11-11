@@ -163,7 +163,7 @@ export default function WorkbenchTaskPanel({
           </div>
           {live}
           {/* 开着的工作：改了哪些文件、给它留话（2026-11-03 协调对话并进工作台）；定时任务的无头运行不收留话 */}
-          {task.live?.runId && card && task.ref.kind !== "schedule" && <TaskPanelPeek runId={task.live.runId} projectPath={card.path} draft={mailDraft} />}
+          {task.live?.runId && card && task.ref.kind !== "schedule" && <TaskPanelPeek runId={task.live.runId} projectPath={card.path} draft={mailDraft} agentId={task.live.agentId} />}
 
           {goal && (
             <Section title="目标">
