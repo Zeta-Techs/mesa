@@ -7,6 +7,7 @@ status 只有 passed（机器能确定的事实）/ blocked（机器确定有问
 """
 import datetime
 import json
+import re
 import os
 import sys
 from pathlib import Path
@@ -70,6 +71,14 @@ def split_location(loc):
 # manuscript/ 下这些子目录不是正文：学校 / 期刊模板、Quarto 扩展与缓存、渲染输出、图
 SKIP_DIRS = {"template", "templates", "_extensions", "_freeze", ".quarto", "output", "figures", "assets"}
 TEXT_EXT = (".md", ".qmd", ".tex")
+# 写作配套文件（文件名含这些词的不是正文稿件，默认扫 manuscript/ 时跳过）。三处各一份——这里、
+# Mesa 的 src/manuscript-files.ts、bib-check 的 cite_check.py——内容以 tests/fixtures/manuscript-helpers.json 为准，测试逐条比对
+MANUSCRIPT_HELPERS = (
+    "citation-check", "citation-style", "review-report", "verification-decisions", "declarations",
+    "checklist", "evidence", "section-status", "changelog", "numbers",
+    "revision-notes", "outline", "typeface", "readme", "style-sheet",
+)
+MANUSCRIPT_HELPER_RE = re.compile("(" + "|".join(MANUSCRIPT_HELPERS) + ")", re.I)
 
 
 def manuscript_files(root, skip_pattern=None, explicit=None):

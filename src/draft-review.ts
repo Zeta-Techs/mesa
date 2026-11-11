@@ -1,5 +1,6 @@
 /** 写作步评审：机械红线扫描 + 退回给 Agent 的提示词。不解释学术对错。 */
 import type { CheckItem } from "./research-checks.ts";
+import { manuscriptSourcePath } from "./manuscript-files.ts";
 
 export interface WritingReviewHit {
   id: string;
@@ -72,11 +73,8 @@ export function sortWritingPreviewPaths(paths: readonly string[]): string[] {
 /** 只扫稿件和大纲。检索记录、纳入清单、任务书里的编号标题不是稿件问题。
  *  写作规范 manuscript/style-sheet.md 不是稿件（大纲那步就交，2026-11-11 HER：它的「## 1 核心术语」被当成稿件报「标题里写了序号」） */
 export function writingScanSourcePath(paths: readonly string[]): string | null {
-  const norm = (p: string) => p.replace(/\\/g, "/");
-  const md = paths.filter((p) => /\.(md|qmd)$/i.test(norm(p)) && !/(^|\/)style-sheet\.md$/i.test(norm(p)));
-  const draft = md.find((p) => /draft\.md$/i.test(p) || /manuscript\//i.test(norm(p)));
-  if (draft) return draft;
-  return md.find((p) => /(^|\/)outline\.md$/i.test(norm(p))) ?? null;
+  // 哪份是主稿、哪些是写作配套文件，统一按 manuscript-files.ts（写作规范、章节状态、修改记录等不当稿件扫）
+  return manuscriptSourcePath(paths);
 }
 
 /** 划选批注的单行上限。整段引用会把意见框撑满，退回时 Agent 也读不清改哪一句。 */

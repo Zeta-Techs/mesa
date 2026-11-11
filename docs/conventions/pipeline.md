@@ -105,6 +105,12 @@
   键名全是单词。`status` 只有 `passed`（机器能确定的事实）/ `blocked`（机器确定有问题）/ `needs_human`；要读懂内容的检查（论断是否被来源支持、
   统计方法是否合适）最多 `needs_human`，**永不自动通过**，不汇总成分数。认不出的行计入「读不懂 N 行」，不猜。
 - 检查器每次运行整份重写自己的那一个文件；评审页只读 `.ccode/checks/` 顶层，`runs/` 是存档。
+- **正文与写作配套文件只有一份名单**（2026-11-11，一天三处「写作规范当稿件」误报后定）：文件名含 citation-check、section-status、changelog、
+  style-sheet、typeface、outline 等 15 个词的是写作配套文件，不是正文——写作扫描挑主稿、复核入口、初稿 / 定稿核对、cite_check / ms_check / num_check
+  默认扫 `manuscript/` 一律跳过。名单内容以 `tests/fixtures/manuscript-helpers.json` 为准，代码里只有三份：`src/manuscript-files.ts`（前端唯一出处，
+  挑主稿 `manuscriptSourcePath` 按主稿名优先、不按传入顺序）、`mesa_checks.py` 的 `MANUSCRIPT_HELPERS`（随包脚本共用）、`cite_check.py`（单独分发，自带一份），
+  `tests/manuscript-files.test.ts` 逐条比对。**新增写作配套文件先加 fixture**，不在调用处各写正则。
+  引用计数（`citation.rs`）是另一回事：只跳过含写法说明「[@bib键]」的文件（TASK.md、help-wanted、review-notes、style-sheet），其余 md 里的引用照数。
 - **Mesa 核对**（2026-11-11，第四种来源，`checker=mesa`）：数得清的事实由 Mesa 在评审页打开时现算、`mergeMesaChecks` 合并进清单，**不写 `.ccode/checks/` 文件**、
   不靠 AI 跑脚本；只出拦下 / 待你判断，不出通过；项目助手（`project-assistant-run.ts stepChecks`）按同一函数再算一遍。按 `stepKind` 分：大纲 `outline-check.ts`
   （见「按大纲的节转回路」③）；精读 `notes-check.ts`——工作副本与项目根都读、以工作副本为准，「写完了」与进度行同一份判断（`isReviewedRow`），

@@ -1,0 +1,20 @@
+{
+  "_说明": "写作配套文件名单（2026-11-11）：文件名里含这些词的不是正文稿件——写作扫描、复核入口、初稿 / 定稿核对、cite_check / ms_check / num_check 默认扫 manuscript/ 时都跳过。唯一出处：src/manuscript-files.ts、src-tauri/resources/mesa_checks.py、bib-check/scripts/cite_check.py 三处各一份，tests/manuscript-files.test.ts 逐条比对。新增写作配套文件（报告、清单、规范一类）先加这里。",
+  "helpers": [
+    "citation-check",
+    "citation-style",
+    "review-report",
+    "verification-decisions",
+    "declarations",
+    "checklist",
+    "evidence",
+    "section-status",
+    "changelog",
+    "numbers",
+    "revision-notes",
+    "outline",
+    "typeface",
+    "readme",
+    "style-sheet"
+  ]
+}

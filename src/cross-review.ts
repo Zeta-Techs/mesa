@@ -6,6 +6,7 @@
  */
 
 import { vendorForModel, vendorForOfficialAgent } from "./vendor-icon.ts";
+import { isManuscriptHelper } from "./manuscript-files.ts";
 
 /** 一等支持的 Agent（AGENTS.md「CLI 支持分级」，2026-11-02）；默认复核先从这几家挑 */
 export const TIER1_AGENTS = ["claude-code", "codex", "kimi"] as const;
@@ -131,7 +132,8 @@ export function stepHasClaims(expectedArtifacts: readonly string[] | null | unde
     (path) =>
       // 写作规范 manuscript/style-sheet.md 不是稿件：大纲那步就交它，原先因此给大纲也挂了复核，
       // 复核方找不到正文只能记一条「无法判断」（2026-11-11 HER 大纲）
-      (/^(manuscript|proposal|chapters)\/.+\.(md|qmd|tex)$/.test(path) && !/(^|\/)style-sheet\.md$/.test(path)) ||
+      // 写作配套文件（写作规范、章节状态、修改记录…）不算，名单见 manuscript-files.ts
+      (/^(manuscript|proposal|chapters)\/.+\.(md|qmd|tex)$/.test(path) && !isManuscriptHelper(path)) ||
       /(^|\/)[^/]*report\.md$/.test(path),
   );
 }

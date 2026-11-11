@@ -33,7 +33,8 @@ def load_common():
 
 C = load_common()
 CHECKER = "script:num_check"
-SKIP = re.compile(r"(citation-check|review-report|verification-decisions|declarations|checklist|evidence|numbers|style-sheet)", re.I)
+# 写作配套文件不当稿件扫（章节状态里记着「用到的关键数」，原先会被当成没登记的数字）：名单只在 mesa_checks.py
+SKIP = C.MANUSCRIPT_HELPER_RE
 NUMBER = re.compile(r"(?<![\w.])[-−]?\d[\d,]*\.\d+%?|(?<![\w.])[-−]?\d[\d,]*%")
 
 

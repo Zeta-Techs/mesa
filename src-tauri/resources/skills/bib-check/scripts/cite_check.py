@@ -27,9 +27,15 @@ from pathlib import Path
 
 CHECKER = "script:cite_check"
 # 过程文件不是正文：检查报告、审查 / 裁决清单、状态与修改记录（2026-11-02 真实项目干跑：section-status.md 里的「@500 mA」被当成引用）
+# 写作配套文件不当稿件扫。本脚本单独分发、不带 mesa_checks.py，名单在这里另放一份，
+# 与 mesa_checks.MANUSCRIPT_HELPERS、Mesa 的 manuscript-files.ts 以 tests/fixtures/manuscript-helpers.json 为准逐条比对
+MANUSCRIPT_HELPERS = (
+    "citation-check", "citation-style", "review-report", "verification-decisions", "declarations",
+    "checklist", "evidence", "section-status", "changelog", "numbers",
+    "revision-notes", "outline", "typeface", "readme", "style-sheet",
+)
 SKIP_MANUSCRIPT = re.compile(
-    r"(citation-check|citation-style|review-report|verification-decisions|declarations|checklist|evidence|"
-    r"section-status|changelog|numbers|style-sheet)", re.I
+    "(" + "|".join(MANUSCRIPT_HELPERS) + ")", re.I
 )
 CROSSREF_PREFIXES = ("fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-")
 RETRACT_TYPES = {"retraction", "withdrawal", "removal"}
