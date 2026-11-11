@@ -415,18 +415,28 @@ test("litOrder：有找新文献退回检索、精读几条随单走并锁进链
   assert.deepEqual(litOrder({ search: "检索", chainOptions, searchRows: ["a"], readRows: ["b"], picked: [] })?.reads, []);
 });
 
-test("pendingChainReads：轮到精读跟进时才带上单上的精读几条；检索还没保存、已开过、停掉的不带", async () => {
-  const { pendingChainReads } = await import("../src/step-loop.ts");
+test("chainTurns：链上正轮到这一步的补料单；检索还没保存、已开过、停掉的不算", async () => {
+  const { chainTurns } = await import("../src/step-loop.ts");
   const r = { id: "r1", toStep: "检索", sentAt: "2026-11-11T01:00:00Z", chain: ["精读"], reads: ["4.3：[@Su2025]"] };
   const saved: Record<string, string> = {};
   const at = (s: string) => saved[s] ?? null;
-  assert.deepEqual(pendingChainReads([r], "精读", at), [], "检索还没保存");
+  assert.deepEqual(chainTurns([r], "精读", at), [], "检索还没保存");
   saved["检索"] = "2026-11-11T03:00:00Z";
-  assert.deepEqual(pendingChainReads([r], "精读", at), [{ id: "r1", reads: ["4.3：[@Su2025]"] }]);
-  assert.deepEqual(pendingChainReads([r], "大纲", at), []);
-  assert.deepEqual(pendingChainReads([{ ...r, reads: [] }], "精读", at), []);
-  assert.deepEqual(pendingChainReads([{ ...r, chainState: { started: [{ step: "精读", at: "2026-11-11T04:00:00Z" }], stopped: false } }], "精读", at), []);
-  assert.deepEqual(pendingChainReads([{ ...r, chainState: { started: [], stopped: true } }], "精读", at), []);
+  assert.deepEqual(chainTurns([r], "精读", at).map((x) => x.id), ["r1"]);
+  assert.deepEqual(chainTurns([{ ...r, reads: [] }], "精读", at).length, 1, "没带精读几条的也算（手动跟进同样要记链已开）");
+  assert.deepEqual(chainTurns([r], "大纲", at), []);
+  assert.deepEqual(chainTurns([{ ...r, chainState: { started: [{ step: "精读", at: "2026-11-11T04:00:00Z" }], stopped: false } }], "精读", at), []);
+  assert.deepEqual(chainTurns([{ ...r, chainState: { started: [], stopped: true } }], "精读", at), []);
+});
+
+test("为大纲补检来的新篇：精读跟进列出节、研究论文也写完整笔记、记 forSections；规模话写明", () => {
+  const p = followupPrompt({ upstream: "文献检索与筛选", notesIds: ["n1", "n2"], files: [], sections: ["4.3 界面稳定性：2024 年以后"] });
+  assert.match(p, /这些篇是大纲为下面几节补检来的：\n1\. 4\.3 界面稳定性/);
+  assert.match(p, /研究论文也直接写成完整精读笔记/);
+  assert.match(p, /forSections/);
+  assert.doesNotMatch(p, /就在 notes\/skim\.md 补行/);
+  assert.match(followupPrompt({ upstream: "检索", notesIds: ["n1"], files: [] }), /就在 notes\/skim\.md 补行/, "不是大纲来的照旧速读");
+  assert.match(followupScale({ upstream: "检索", notesIds: ["n1"], files: [], sections: ["4.3"] }), /新纳入 1 篇是为大纲补检来的，AI 把它们都写成完整笔记/);
 });
 
 test("精读跟进带上补文献单的精读几条：开场列出、写完整笔记；没有新篇也照样开；确认框与规模写明", () => {

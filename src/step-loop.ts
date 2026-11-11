@@ -62,16 +62,14 @@ export function chainNext(
   return null;
 }
 
-/** 轮到 step 跟进、且单上带着「精读已有的」的补文献单（按大纲的节转回路①）：人手动点「跟进更新」时也要带上，
- *  别让链自动那一路才认。只认轮到它的（检索还没保存时不提前读） */
-export function pendingChainReads(
-  reworks: Pick<ReworkDto, "id" | "toStep" | "sentAt" | "chain" | "chainState" | "reads">[],
+/** 链上正轮到 step 跟进的补料单（按大纲的节转回路①②）：人手动点「跟进更新」时也要按单做——带上「精读已有的」几条、
+ *  为大纲补检来的新篇直接精读——并记链已开，别等保存后链自动又开一遍。只认轮到它的（检索还没保存时不提前读） */
+export function chainTurns<R extends Pick<ReworkDto, "id" | "toStep" | "sentAt" | "chain" | "chainState">>(
+  reworks: R[],
   step: string,
   savedAt: (step: string) => string | null,
-): { id: string; reads: string[] }[] {
-  return reworks
-    .filter((r) => (r.reads?.length ?? 0) > 0 && chainNext(r, savedAt)?.step === step)
-    .map((r) => ({ id: r.id, reads: r.reads ?? [] }));
+): R[] {
+  return reworks.filter((r) => chainNext(r, savedAt)?.step === step);
 }
 
 /** 链现在卡在哪（资料全貌 / 提示用）：等某一步保存、轮到某一步跟进、走完了、停掉了 */
@@ -461,8 +459,10 @@ export function followupPrompt(opts: {
   files: string[];
   /** 这一类步骤回头时的做法（step-kind.ts ROUND_CLAUSE）；按改动文件跟进时接在后面 */
   clause?: string;
-  /** 精读步：补文献单上点名「精读已有的」（pendingChainReads），和新纳入的一起做 */
+  /** 精读步：补文献单上点名「精读已有的」（chainTurns），和新纳入的一起做 */
   reads?: string[];
+  /** 精读步：这次新纳入的是为大纲这几节补检来的（退回检索的单子从大纲发起，按大纲的节转回路②）：研究论文也直接精读 */
+  sections?: string[];
 }): string {
   const head = `上游「${opts.upstream}」保存过新内容，这一轮只跟进新增的部分，不重做整步。项目里的新内容已经并进本工作区。`;
   if (opts.notesIds) {
@@ -472,7 +472,14 @@ export function followupPrompt(opts: {
       const more = opts.notesIds.length > ID_CAP ? ` 等 ${opts.notesIds.length} 篇（以 papers/included.json 为准）` : "";
       lines.push(
         `纳入清单里新加了 ${opts.notesIds.length} 篇，笔记索引里还没有：${shown}${more}。`,
-        "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py pdfs 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
+        (opts.sections ?? []).length > 0
+          ? [
+              "这些篇是大纲为下面几节补检来的：",
+              ...opts.sections!.map((t, i) => `${i + 1}. ${t}`),
+              `只处理这些篇（先跑 lit_records.py pdfs 认 PDF）：综述写综述卡；研究论文也直接${FULL_NOTES_CLAUSE}` +
+                "每篇在 notes/index.json 记 forSections（它撑的是上面哪几节，写节号）。没全文的按摘要写并标「仅摘要·待全文」。",
+            ].join("\n")
+          : "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py pdfs 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
       );
     }
     const reads = opts.reads ?? [];
@@ -511,6 +518,7 @@ export function followupScale(opts: {
   droppedIds?: string[];
   files: string[];
   reads?: string[];
+  sections?: string[];
 }): string {
   if (opts.notesIds) {
     const n = opts.notesIds.length;
@@ -518,7 +526,11 @@ export function followupScale(opts: {
     const r = opts.reads?.length ?? 0;
     if (n === 0 && d === 0 && r === 0) return "";
     const parts = [
-      n > 0 ? `新纳入 ${n} 篇，AI 只处理这 ${n} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读` : "",
+      n > 0
+        ? (opts.sections?.length ?? 0) > 0
+          ? `新纳入 ${n} 篇是为大纲补检来的，AI 把它们都写成完整笔记，已有笔记和速读行不动`
+          : `新纳入 ${n} 篇，AI 只处理这 ${n} 篇（按任务书精读或补速读行），已有笔记和速读行不动、只速读过的不顺带精读`
+        : "",
       r > 0 ? `补文献单上点名精读 ${r} 条，写成完整笔记` : "",
       d > 0 ? `后来排除 ${d} 篇，AI 把它们从交棒的写作约束、可写点清单、索引和引文库里撤掉，笔记留着` : "",
     ].filter(Boolean);

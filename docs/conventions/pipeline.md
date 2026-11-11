@@ -435,7 +435,7 @@
 - **轮次只看不回滚**：「这一步的几轮」按保存提交列出，可看可比；轮次类型记 `.ccode/step-rounds.jsonl`（不进 git）。
 - **综述模板精读第一轮：综述精读 + 研究论文全部速读**（改写 2026-09-24 全量精读在综述模板上的口径；论文、学位论文模板不动；同日先定的「只读综述 + 核心篇」已否决）：
   研究论文一篇一行进 `notes/skim.md`（速读表即整批文献的大局），不建单篇笔记（单篇文件在，阅读区就当读过）、index 记 pending + `skimmed: true`。
-  **不标「核心」**：要写进正文的篇由大纲覆盖检查「补读」点名退回精读；只速读过的篇在大纲里一律算「仅线索」。`kind` 只在 json，**不进任何 RIS / 引文库**。
+  **不标「核心」**：要写进正文的篇由大纲覆盖检查「补读」点名退回精读；只速读过的篇在大纲里一律算「仅线索」。从大纲补检来的新篇例外，直接精读（见下「按大纲的节转回路」②）。`kind` 只在 json，**不进任何 RIS / 引文库**。
   综述用综述卡，读完交 `notes/angles.md`；可写点「之后的新工作」从速读表写。
 - **可写点 `notes/angles.md`：AI 只给证据，不判「能不能写」**；重合度高照列并标最像哪篇；年份与「之后新工作几篇」由脚本算；
   指令里不得写「不能和已有综述重合 / 必须创新」（逼 AI 编造差异）。
@@ -506,6 +506,9 @@
     两栏怎么发由 `step-loop.ts litOrder` 定；补料单 `reads`（`step_loop.rs ReworkDraft.reads`，有 reads 而链空则拒发）。精读跟进带 reads：链自动那一路由调用方传，
     人手动点「跟进更新」按 `pendingChainReads`（只认轮到这一步的单）取并 `rework_chain_claim` 记链已开；`followupPrompt` / `followupScale` / `followupConfirmText` 写明点名精读几条、写完整笔记。
     退回检索的开场话写明单上的精读几条不在这一轮做。覆盖检查建议的冒号可省（「补读同 4.3」也归精读）。
+  - **② 已落地**：「从大纲发起」= 补料单 fromStep 的 `stepKind` 为 outline、toStep 为 search（TaskCardsSection `outlineSearchRework`）。精读跟进按 `chainTurns`
+    （链上正轮到这一步的单，链自动那一路传 `auto.rework`）取出这类单的 topics 作 `sections`，`followupPrompt` 换成「为大纲这几节补检来的，研究论文也直接写完整笔记、index 记 forSections」，
+    `followupScale` 同步改说法。人手动跟进时链上轮到它的单一律 `rework_chain_claim`（含不带 reads 的），保存后链不再自动重开一遍。
 
 ## 科研流程补全（2026-11-07 拍板，design-research-completion.md）
 

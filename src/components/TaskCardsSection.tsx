@@ -40,7 +40,7 @@ import {
   withLatestNote,
   chainNext,
   commentReworkDrafts,
-  pendingChainReads,
+  chainTurns,
   commentsPrompt,
   searchRefreshDraft,
   searchRefreshHint,
@@ -1013,6 +1013,13 @@ export default function TaskCardsSection({
     return pickStepWorkspace(workspaces, projectPath, step);
   }
 
+  /** 退回检索、从大纲发起的补料单：新纳入的是为大纲某几节补检来的，精读跟进直接写完整笔记（按大纲的节转回路②） */
+  function outlineSearchRework(r: Pick<ReworkDto, "fromStep" | "toStep">): boolean {
+    const from = steps.find((x) => x.name === r.fromStep);
+    const to = steps.find((x) => x.name === r.toStep);
+    return !!from && !!to && stepKind(from, skillProvides) === "outline" && stepKind(to, skillProvides) === "search";
+  }
+
   /** 某一步最近一次保存进项目的时间（补料链按它判轮到谁） */
   function stepSavedAt(name: string): string | null {
     const st = steps.find((x) => x.name === name);
@@ -1068,8 +1075,8 @@ export default function TaskCardsSection({
   async function followUpstream(
     target?: ProjectStepDto,
     /** 补料链自动往下（流程贯通 §6）：人发补料单时已确认过一次，不再弹规模确认、恢复确认；出错用提示条说，不占聚焦步骤的报错位。
-     *  reads：那张补文献单上「精读已有的」几条（按大纲的节转回路①），精读这一轮一起做 */
-    auto?: { label: string; reads?: string[] },
+     *  rework：链所属的那张补料单——精读这一轮按它带上「精读已有的」几条、为大纲补检来的新篇直接精读（按大纲的节转回路①②） */
+    auto?: { label: string; rework?: ReworkDto },
   ): Promise<"started" | "skipped" | "stopped"> {
     const step = target ?? focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
@@ -1084,17 +1091,18 @@ export default function TaskCardsSection({
       let notesIds: string[] | null = null;
       let droppedIds: string[] = [];
       let reads: string[] = [];
-      // 人手动点跟进时，轮到这一步的补文献单上的精读几条也带上，并记链上这一步已开（链不再自动重开）
+      let sections: string[] = [];
+      // 人手动点跟进时，链上正轮到这一步的补料单照样按单做，并记链上这一步已开（保存后链不再自动重开一遍）
       let claimIds: string[] = [];
       if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
-        if (auto) {
-          reads = auto.reads ?? [];
-        } else {
-          const reworks = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
-          const pending = pendingChainReads(reworks, step.name, stepSavedAt);
-          reads = pending.flatMap((p) => p.reads);
-          claimIds = pending.map((p) => p.id);
-        }
+        const turns = auto
+          ? auto.rework
+            ? [auto.rework]
+            : []
+          : chainTurns(await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]), step.name, stepSavedAt);
+        if (!auto) claimIds = turns.map((r) => r.id);
+        reads = turns.flatMap((r) => r.reads ?? []);
+        sections = turns.filter((r) => outlineSearchRework(r)).flatMap((r) => r.topics);
         const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
         // 这一步读过哪些篇看工作副本的索引：待评审、没保存时项目根还是旧索引（甚至没有），按它算会把全部篇当新增
         const idx =
@@ -1138,7 +1146,7 @@ export default function TaskCardsSection({
       // 选「接着做，一起评审」（2026-11-10 用户拍板）；补料链自动往下时照旧停下，等人先保存
       const unsaved = ws.status === "active" && (await hasUnsavedRound(ws));
       if (ws.status === "active") await assertRoundable(ws, step.name, { allowUnsaved: !auto });
-      const scale = followupScale({ upstream, notesIds, droppedIds, files, reads });
+      const scale = followupScale({ upstream, notesIds, droppedIds, files, reads, sections });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
         onWorkspacesChanged?.();
@@ -1170,7 +1178,7 @@ export default function TaskCardsSection({
         launch,
         ws,
         step.name,
-        followupPrompt({ upstream, notesIds, droppedIds, files, reads, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
+        followupPrompt({ upstream, notesIds, droppedIds, files, reads, sections, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
       );
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
@@ -1234,7 +1242,7 @@ export default function TaskCardsSection({
           const chain = r.chain ?? [];
           const result = await followUpstream(step, {
             label: `补料链（${r.toStep} 之后第 ${chain.indexOf(next.step) + 1}/${chain.length} 步）`,
-            reads: r.reads,
+            rework: r,
           });
           if (result === "skipped") await invoke("rework_chain_skip", { root: projectPath, reworkId: r.id, step: next.step }).catch(() => {});
         } finally {
