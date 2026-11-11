@@ -52,7 +52,7 @@ import { PIPELINE_TEMPLATES, RESOURCE_TYPE_LABELS, settingsForTemplateApply } fr
 import { missingTemplateSettings, templateUpdateNotice } from "../pipeline-upgrade";
 import { settingParts } from "../project-context";
 import { SETTING_NOTES, parseSettingLine } from "../setting-choices";
-import { loopHint } from "../step-loop";
+import { loopHint, reworkWaiting, type ReworkDto } from "../step-loop";
 import { startPipelineStep, type IntakeBridgeDecision } from "../pipeline-start";
 import type { KickoffLaunch } from "../kickoff-launch";
 import { upsertLitSourceSection, upsertPendingSettingsSection } from "../task-md-sections";
@@ -1469,6 +1469,28 @@ export default function ProjectGroup({
   const artMerged = artSt?.key === "done";
   // 每步完成态（带级虚线链按列区间着色）+ 末端菱形：全部步骤完成才点亮（与完成圆同一 done 绿）
   const stepDoneFlags = stepStatuses.map((st) => st.key === "done");
+  // 补料单（.ccode/rework/）：步进器写「等补料」、卡底写补料链走到哪；步骤状态一变（保存、开轮）就重读
+  const [reworks, setReworks] = useState<ReworkDto[]>([]);
+  const reworkSig = stepStatuses.map((st) => `${st.key}:${st.ws?.mergedAt ?? ""}`).join(",");
+  useEffect(() => {
+    if (!project) return;
+    let stale = false;
+    invoke<ReworkDto[]>("rework_list", { root: project.path })
+      .then((list) => {
+        if (!stale) setReworks(list);
+      })
+      .catch(() => {
+        if (!stale) setReworks([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [project, refreshToken, reworkSig]);
+  const stepSavedAt = (name: string) => {
+    const i = (cfg?.steps ?? []).findIndex((st) => st.name === name);
+    return stepStatuses[i]?.ws?.mergedAt ?? null;
+  };
+  const awaitingRework = (cfg?.steps ?? []).map((st) => reworkWaiting(reworks, st.name, stepSavedAt));
   // 圆下状态小字（2026-10-17 用户拍板）：圆只有颜色，待评审/进行中一眼分不清；
   // 进行中再按终端注意力细分「等你确认 / 等你查看」。待开始与检查中不写
   // 出错有两个来源：运行出错退出（运行库），或这一步的 AI 在对话里自己说失败了 / 报错了（交互对话不进运行记录，读会话尾巴）。
@@ -1489,6 +1511,7 @@ export default function ProjectGroup({
       failure: stepFailures[i]?.reason ?? null,
       failureFromAi: stepFailures[i]?.fromAi ?? false,
       staleUpstream: st.key === "done" ? (st.ws?.staleUpstream ?? null) : null,
+      awaitingRework: awaitingRework[i],
     }),
   );
   const openAssistant = useAppStore((s) => s.openAssistant);
@@ -2107,7 +2130,9 @@ export default function ProjectGroup({
                     const statusLabel =
                       st.key === "pending" && st.ws
                         ? "已归档"
-                        : STEP_STATUS_LABEL[st.key];
+                        : stepperTexts[i]?.text === "等补料"
+                          ? "等补料"
+                          : STEP_STATUS_LABEL[st.key];
                     const activeWs =
                       st.ws && st.ws.status === "active" ? st.ws : undefined;
                     const last = activeWs
@@ -2137,7 +2162,10 @@ export default function ProjectGroup({
                     return (
                       <StepperCell
                         key={`${i}-${step.name}`}
-                        circleClass={stepCircleClass(st.key)}
+                        circleClass={
+                          // 等补料：空心强调色环（不是实心「待评审 / 进行中」，也不是灰色「已完成」）
+                          stepperTexts[i]?.text === "等补料" ? "border-[1.5px] border-cta bg-transparent" : stepCircleClass(st.key)
+                        }
                         circleTitle={circleTitle}
                         circleWarn={
                           st.ws?.staleUpstream

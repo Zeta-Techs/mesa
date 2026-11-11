@@ -47,3 +47,12 @@ test("已完成之后上游又保存过：写「待跟进」并在悬停里点�
   // 只认已完成：进行中的步骤上游变了不改状态字
   assert.equal(stepperStatusText("review", { staleUpstream: "x" })?.text, "待评审");
 });
+
+test("等补料：待评审 / 进行中且没在干活时写等补料；AI 在干活或等确认照旧", async () => {
+  const { stepperStatusText } = await import("../src/stepper-status.ts");
+  assert.equal(stepperStatusText("review", { awaitingRework: true })?.text, "等补料");
+  assert.equal(stepperStatusText("active", { awaitingRework: true })?.text, "等补料");
+  assert.equal(stepperStatusText("active", { awaitingRework: true, attention: "working" })?.text, "进行中");
+  assert.equal(stepperStatusText("active", { awaitingRework: true, attention: "confirm" })?.text, "等你确认");
+  assert.equal(stepperStatusText("done", { awaitingRework: true })?.text, "已完成");
+});

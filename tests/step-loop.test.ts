@@ -470,3 +470,20 @@ test("为大纲补检来的新篇：补检那行没写节号时，叫 AI 按纳�
   assert.match(p, /没写节号的，按 papers\/included\.json 里这几篇的纳入理由和大纲判断它撑哪几节/);
   assert.doesNotMatch(followupPrompt({ upstream: "检索", notesIds: ["n1"], files: [], sections: ["4.3：新工作"] }), /没写节号的/);
 });
+
+test("reworkWaiting：发单的步骤在退回目标补完、链走完之前算等补料；链停掉只看目标补完没有", async () => {
+  const { reworkWaiting } = await import("../src/step-loop.ts");
+  const r = { fromStep: "大纲", toStep: "检索", sentAt: "2026-11-11T02:28:01Z", chain: ["精读"] };
+  const saved: Record<string, string> = {};
+  const at = (s: string) => saved[s] ?? null;
+  assert.equal(reworkWaiting([r], "大纲", at), true, "检索还没补完");
+  assert.equal(reworkWaiting([r], "精读", at), false, "只认发单的那一步");
+  saved["检索"] = "2026-11-11T02:54:38Z";
+  assert.equal(reworkWaiting([r], "大纲", at), true, "链还等精读开、评审保存");
+  const started = { started: [{ step: "精读", at: "2026-11-11T02:56:28Z" }], stopped: false };
+  assert.equal(reworkWaiting([{ ...r, chainState: started }], "大纲", at), true);
+  saved["精读"] = "2026-11-11T04:00:00Z";
+  assert.equal(reworkWaiting([{ ...r, chainState: started }], "大纲", at), false, "精读保存了：补料到了");
+  assert.equal(reworkWaiting([{ ...r, chainState: { started: [], stopped: true } }], "大纲", at), false, "链停了、目标已补完");
+  assert.equal(reworkWaiting([{ ...r, chain: [] }], "大纲", at), false);
+});

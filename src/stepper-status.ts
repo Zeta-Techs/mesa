@@ -31,6 +31,8 @@ export function stepperStatusText(
     failureFromAi?: boolean;
     /** 已完成之后上游又保存过（WorkspaceDto.staleUpstream）：写「待跟进」（综述回路 §5.1，只提醒不阻断） */
     staleUpstream?: string | null;
+    /** 这一步发出的补料还没补完（step-loop.ts reworkWaiting）：写「等补料」，不让中途存档的提交显示成「待评审」 */
+    awaitingRework?: boolean;
   } = {},
 ): StepperStatusText | null {
   // 出错了（2026-11-04 项目助手一期）：这一步最近一次运行出错收场、此刻又没有 AI 在干活 / 等确认时写出来，
@@ -45,6 +47,19 @@ export function stepperStatusText(
       text: "出错了",
       tone: "text-err-text",
       title: opts.failureFromAi ? `这一步的 AI 在对话里说：${opts.failure}` : `最近一次运行出错：${opts.failure}`,
+    };
+  }
+  // 等补料（2026-11-11 HER 大纲）：大纲停下等补料前做了中途存档提交，按提交判成了「待评审」；AI 正在干活或等确认时仍写那两种
+  if (
+    opts.awaitingRework &&
+    (key === "review" || key === "active") &&
+    opts.attention !== "working" &&
+    opts.attention !== "confirm"
+  ) {
+    return {
+      text: "等补料",
+      tone: "text-l3",
+      title: "这一步发出的补料还没补完：前面的步骤补完、保存进项目后，回到这一步点「继续」",
     };
   }
   switch (key) {

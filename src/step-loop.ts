@@ -72,6 +72,22 @@ export function chainTurns<R extends Pick<ReworkDto, "id" | "toStep" | "sentAt" 
   return reworks.filter((r) => chainNext(r, savedAt)?.step === step);
 }
 
+/** 这一步发出的补料单还没走完（2026-11-11 HER：大纲中途存档的提交让它显示「待评审」，其实在等补料）：
+ *  退回目标还没在发单之后保存，或链还在等某一步评审保存 / 轮到某一步跟进。链停掉的只看退回目标补完没有 */
+export function reworkWaiting(
+  reworks: Pick<ReworkDto, "fromStep" | "toStep" | "sentAt" | "chain" | "chainState">[],
+  step: string,
+  savedAt: (step: string) => string | null,
+): boolean {
+  return reworks.some((r) => {
+    if (r.fromStep !== step) return false;
+    const saved = savedAt(r.toStep);
+    if (!saved || Date.parse(saved) <= Date.parse(r.sentAt)) return true;
+    const where = chainWhere(r, savedAt);
+    return where.kind === "waiting" || where.kind === "next";
+  });
+}
+
 /** 链现在卡在哪（资料全貌 / 提示用）：等某一步保存、轮到某一步跟进、走完了、停掉了 */
 export function chainWhere(
   rework: Pick<ReworkDto, "toStep" | "sentAt" | "chain" | "chainState">,
