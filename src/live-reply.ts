@@ -274,7 +274,11 @@ export function extractLiveThinking(lines: readonly string[], agentId: string): 
   }
   if (at < 0) return null;
   const body: string[] = [];
-  for (let i = at + 1; i < boxTop && gutter.test(rows[i]); i++) {
+  // Kimi 2.5 在「thinking…」和思考原文之间空一行（2026-11-11 用户截图：聊天层一会只有「思考中」、一会带内容）；
+  // 框里的行不含转圈和提示（还没出原文时，空行下面就是缩进的「⠏ Working…」）
+  let i = at + 1;
+  while (i < boxTop && !rows[i].trim()) i++;
+  for (; i < boxTop && gutter.test(rows[i]) && !SPINNER.test(rows[i]) && !layout.skip.test(rows[i]); i++) {
     const text = rows[i].replace(gutter, "");
     if (text.trim() !== "…") body.push(text);
   }
@@ -543,15 +547,22 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
   let inWrapSkip = false;
   let inNotice = false;
   let inThink = false;
+  let thinkBody = false;
   for (let at = start; at < region.length; at++) {
     const raw0 = region[at];
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
     const t = raw.trim();
     if (layout.thinkBlock?.test(raw)) {
       inThink = true;
+      thinkBody = false;
       continue;
     }
-    if (inThink && (layout.thinkGutter ?? THINK_GUTTER).test(raw)) continue;
+    // 头一行下面紧跟的空行还在框里（Kimi 2.5，同 extractLiveThinking）
+    if (inThink && !t && !thinkBody) continue;
+    if (inThink && !SPINNER.test(raw) && (layout.thinkGutter ?? THINK_GUTTER).test(raw)) {
+      thinkBody = true;
+      continue;
+    }
     inThink = false;
     if (table[at]) {
       if (!inTool) out.push(dedent(raw));

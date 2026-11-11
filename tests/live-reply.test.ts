@@ -1091,6 +1091,29 @@ test("Kimi 思考中：「⠋ thinking…」下面两行读成思考，不进回
   assert.deepEqual(extractLiveReply(done, "kimi")?.lines, ["今天晴，22°C。"]);
 });
 
+test("Kimi 2.5：「thinking…」和思考原文之间空一行也读得出来，原文不漏进回复预览", () => {
+  // 2026-11-11 用户截图（2.5.2）：聊天层一会只有「思考中」、一会带内容，终端一直有
+  const screen = [
+    " ❯ 定一下中心问题",
+    "",
+    " ⠇ thinking…",
+    "",
+    "   Honestly, I think there's a defensible middle path that respects both: treat",
+    "",
+    "   ⠇ Working… · Tip: ctrl-s to add guidance without waiting for the turn to finish",
+    "",
+    ...KIMI_BOX,
+  ];
+  assert.deepEqual(extractLiveThinking(screen, "kimi"), [
+    "Honestly, I think there's a defensible middle path that respects both: treat",
+  ]);
+  assert.equal(extractLiveReply(screen, "kimi"), null);
+  // 还没出原文：空行下面就是转圈，不当成思考
+  const empty = [" ❯ 定一下中心问题", "", " ⠇ thinking…", "", "   ⠇ Working…", "", ...KIMI_BOX];
+  assert.equal(extractLiveThinking(empty, "kimi"), null);
+  assert.equal(extractLiveReply(empty, "kimi"), null);
+});
+
 test("Kimi 收起的思考是斜体：调用方标出斜体行时不当成回复的开头", () => {
   const screen = [
     " ❯ 今天天气怎么样",
