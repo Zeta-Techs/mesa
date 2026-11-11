@@ -63,3 +63,66 @@ export function switchByRelaunch(
 ): boolean {
   return switchPersists(agentId, kind, version) && injectableAtLaunch;
 }
+
+type InlineTier = "ask" | "auto" | "full";
+
+/**
+ * 会话里直接换权限、不用重开（2026-11-11 实测，matrix「会话内换权限 / 思考档」节；docs/design-chat-inline-switch.md 2.A）。
+ * 只登记「会话里能换、又不写全局配置、且能精确落到某一档」的家：
+ *   Kimi 2.5.3：/permission 选择器（Always Ask / Ask When Needed / Never Ask），生成中也能换、这一轮就生效
+ *   Codex 0.166+：/permissions 选择器（另有 Read Only 一项），选完全访问还要再答一层「Enable full access?」；生成中能发、下一轮生效
+ *   Qwen 0.26.7：/approval-mode <档> 带参数直切；生成中发的排队，这一轮结束后执行
+ * Claude、Gemini、Grok、CodeBuddy 只能用快捷键轮着换（CodeBuddy 从 default 按一下就是 bypass），Mesa 不替人轮，维持重开接回。
+ * 选择器的原文与顺序照屏上抄：替人选之前逐项核对（tui-menu pickerTargetIndex），对不上就不按、交给人点
+ */
+export interface InSessionPermission {
+  command: string;
+  /** 带参数直切的家：每档跟在命令后面的参数 */
+  args?: Partial<Record<InlineTier, string>>;
+  /** 选择器的家：全部选项原文（按屏上顺序）与每档对应哪一项；完全访问还要再答一层的，那一层的原文与要选的项 */
+  picker?: {
+    options: string[];
+    tiers: Partial<Record<InlineTier, string>>;
+    fullConfirm?: { options: string[]; pick: string };
+  };
+  /** 回复中换：now = 这一轮就生效；next = 下一轮生效；queued = CLI 把命令排到这一轮结束后执行 */
+  midTurn: "now" | "next" | "queued";
+}
+
+const KIMI_INLINE_PERMISSION_MIN: [number, number, number] = [2, 5, 3];
+const CODEX_INLINE_PERMISSION_MIN: [number, number, number] = [0, 166, 0];
+const QWEN_INLINE_PERMISSION_MIN: [number, number, number] = [0, 26, 7];
+
+export function inSessionPermissionSwitch(
+  agentId: string,
+  version: string | null | undefined,
+): InSessionPermission | null {
+  if (agentId === "kimi" && atLeast(version, KIMI_INLINE_PERMISSION_MIN)) {
+    return {
+      command: "/permission",
+      picker: {
+        options: ["Always Ask", "Ask When Needed", "Never Ask"],
+        tiers: { ask: "Always Ask", auto: "Ask When Needed", full: "Never Ask" },
+      },
+      midTurn: "now",
+    };
+  }
+  if (agentId === "codex" && atLeast(version, CODEX_INLINE_PERMISSION_MIN)) {
+    return {
+      command: "/permissions",
+      picker: {
+        options: ["Ask for approval", "Approve for me", "Full Access", "Read Only"],
+        tiers: { ask: "Ask for approval", auto: "Approve for me", full: "Full Access" },
+        fullConfirm: { options: ["Yes, continue anyway", "Cancel"], pick: "Yes, continue anyway" },
+      },
+      midTurn: "next",
+    };
+  }
+  if (agentId === "qwen" && atLeast(version, QWEN_INLINE_PERMISSION_MIN)) {
+    return { command: "/approval-mode", args: { ask: "default", auto: "auto", full: "yolo" }, midTurn: "queued" };
+  }
+  return null;
+}
+
+/** 在对话里只能用快捷键轮着换档的家（实测）：换权限要重开接回，菜单里写一句原因 */
+export const PERMISSION_CYCLE_ONLY = new Set(["claude-code", "gemini", "grok", "codebuddy"]);

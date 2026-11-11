@@ -19,6 +19,7 @@ import { useAutoLoadOlder, wasPrepended } from "../auto-load-older";
 import { useReadingAnchor } from "../reading-anchor";
 import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-start";
 import { useAppStore } from "../store";
+import { inSessionPermissionSwitch, PERMISSION_CYCLE_ONLY } from "../switch-strategy";
 import { isLightTheme } from "../themes";
 import { MesaCaret, MesaMark, MesaStatusLead } from "./MesaMark";
 import ChatModelMenu from "./ChatModelMenu";
@@ -151,6 +152,7 @@ export default function ChatSurface({
   liveThinking = null,
   promptSuggestion = null,
   onRestartPermission,
+  onInlinePermission,
   mesaCommands = [],
   externalInsert = null,
   onExternalInsertConsumed,
@@ -280,6 +282,8 @@ export default function ChatSurface({
   promptSuggestion?: string | null;
   /** 运行中换权限：停下 Agent、带新权限接回原会话（标签动作 restartWithPermission） */
   onRestartPermission?: () => void;
+  /** 会话里直接换权限（Kimi / Codex / Qwen，不重开）：发这家的换档命令 */
+  onInlinePermission?: (tier: "ask" | "auto" | "full") => void;
   /** 斜杠面板上半组「Mesa」操作（新对话、压缩、分叉、看改动、导出、打开终端） */
   mesaCommands?: MesaCommand[];
   /** 外部送进来的一段话（终端选中文字「引用到输入框 / 问 AI」）：send=true 直接发，否则填进输入框 */
@@ -1232,6 +1236,8 @@ export default function ChatSurface({
 
   // 权限写在输入框身上：切到完全访问时上沿细线亮一下、只讨论虚线框（其余档不加东西）
   const launchAgentLabel = AGENTS.find((a) => a.id === launchPick?.agentId)?.label ?? "这家 CLI";
+  const launchAgentVersion = useAppStore((s) => s.agents.find((a) => a.id === launchPick?.agentId)?.version ?? null);
+  const inlinePermission = launchPick ? inSessionPermissionSwitch(launchPick.agentId, launchAgentVersion) : null;
   const permTier =
     launchPick && !readOnly
       ? effectivePermissionTier(launchPick.permission, launchPick.permissionMode, launchPick.permissionNote)
@@ -1356,6 +1362,8 @@ export default function ChatSurface({
           editable={launchPickOpen || resumePickOpen || (!running && canResume)}
           onPermission={pickPermission}
           live={running && onRestartPermission ? { busy: generating, onRestart: onRestartPermission } : null}
+          inline={running && inlinePermission && onInlinePermission ? { spec: inlinePermission, onSwitch: onInlinePermission } : null}
+          cycleOnly={PERMISSION_CYCLE_ONLY.has(launchPick.agentId)}
           flash={toneFlash}
         />
       )}

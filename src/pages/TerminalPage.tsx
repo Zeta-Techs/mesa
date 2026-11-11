@@ -3886,6 +3886,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                             0,
                           )
                         }
+                        onInlinePermission={(tier) => {
+                          void tabActionsRef.current.get(t.id)?.switchPermissionInSession(tier);
+                        }}
                         onAnswerMenu={(i, opts) => {
                           tabActionsRef.current.get(t.id)?.answerMenu(i, opts);
                         }}

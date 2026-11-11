@@ -5,6 +5,7 @@ import { clipBounds, pickPopoverSide } from "../popover-side";
 import { permissionExample } from "../chat-permission";
 import type { StarterContext } from "../chat-empty-start";
 import type { CliPermissionNote, NativePermissionMode } from "../pages/TerminalPage";
+import type { InSessionPermission } from "../switch-strategy";
 
 type Permission = "discuss" | "write_tree";
 export type PermissionTier = "discuss" | NativePermissionMode;
@@ -116,6 +117,8 @@ export default function ChatPermissionBadge({
   editable,
   onPermission,
   live = null,
+  inline = null,
+  cycleOnly = false,
   observed = null,
   context = "general",
   cycleHint = false,
@@ -135,6 +138,10 @@ export default function ChatPermissionBadge({
   onPermission?: (permission: Permission, mode?: NativePermissionMode | null) => void;
   /** Agent 正在运行：换权限要重开（busy = 这一轮还在生成，等它结束再换） */
   live?: { busy: boolean; onRestart: () => void } | null;
+  /** 这家这个版本能在会话里直接换权限（switch-strategy inSessionPermissionSwitch）：不重开，回复中也能换；onSwitch 发命令 */
+  inline?: { spec: InSessionPermission; onSwitch: (tier: "ask" | "auto" | "full") => void } | null;
+  /** 这家在对话里只能用快捷键轮着换档（Claude / Gemini / Grok / CodeBuddy）：菜单底部说一句为什么要重开 */
+  cycleOnly?: boolean;
   /** 从会话文件读到的实际档（Kimi / Codex）：有就写它，不加「已选 ·」 */
   observed?: "ask" | "auto" | "full" | null;
   /** 这段对话在哪类项目里：菜单拿哪件事举例 */
@@ -176,15 +183,20 @@ export default function ChatPermissionBadge({
     };
   }, [open]);
 
-  // 变成只显示（开始生成 / 不可改）时收起弹层，免得恢复可点时弹层带着旧状态冒出来
-  const interactive = !live?.busy && (editable || Boolean(live));
+  // 变成只显示（开始生成 / 不可改）时收起弹层，免得恢复可点时弹层带着旧状态冒出来。
+  // 能在会话里直接换的家回复中也能点（2026-11-11 用户：AI 回复期间权限菜单不能点）
+  const inSession = live && inline ? inline : null;
+  const interactive = Boolean(inSession) || (!live?.busy && (editable || Boolean(live)));
   useEffect(() => {
     if (!interactive) setOpen(false);
   }, [interactive]);
 
   const followsLocal = permission !== "discuss" && mode === null;
   const current = observed ?? effectivePermissionTier(permission, mode, note);
-  const available = (id: Tier) => (id === "discuss" ? readonlySupported : modes.includes(id));
+  // 会话里能换的档（Kimi 的请求批准没有启动参数，但会话里能换）；先出方案总要重开，回复中不能换
+  const inlineOk = (id: Tier) => id !== "discuss" && Boolean(inSession?.spec.picker?.tiers[id] ?? inSession?.spec.args?.[id]);
+  const available = (id: Tier) =>
+    inlineOk(id) || (!(live?.busy) && (id === "discuss" ? readonlySupported : modes.includes(id)));
   const cur = PERMISSION_TIERS.find((t) => t.id === current) ?? null;
   // 读得到实际档的家（Claude 跟会话文件、Kimi / Codex 读到了）不加「已选 ·」；读不到的写 Mesa 记录的选择
   const selectedOnly = Boolean(live && agentId && agentId !== "claude-code" && !observed);
@@ -195,12 +207,29 @@ export default function ChatPermissionBadge({
     ? `Mesa 记录的权限选择。暂不能持续读取这家 CLI 的当前权限；在终端里改过后，以终端显示为准。\n${settingExplain}`
     : settingExplain;
   const ex = permissionExample(context, agentId);
+  // 菜单底部那句：会话里直接换的家说什么时候生效；要重开的家说为什么
+  const switchNote = !live
+    ? ""
+    : inSession
+      ? live.busy && inSession.spec.midTurn !== "now"
+        ? "这一轮结束后生效；先出方案要重开。"
+        : "不用重开；先出方案要重开。"
+      : cycleOnly
+        ? `${agentLabel} 在对话里只能轮着换档，换权限会重开并接回。`
+        : "开聊后换会重开并接回。";
 
   async function choose(id: Tier) {
     setOpen(false);
     if (id === current) {
       // 点的就是本机设置对应的那档：改成用参数固定（以后本机设置变了这段对话也不跟着变）；生效的权限没变，不重开
       if (followsLocal && id !== "discuss") onPermission?.("write_tree", id);
+      return;
+    }
+    if (inSession && inlineOk(id) && id !== "discuss") {
+      // 会话里直接换：不重开，完全访问照旧二次确认。能用启动参数指定的档顺带记进这次的选择（之后停下再接着聊按它启动）
+      if (!(await confirmPermissionChoice(agentLabel, id, false))) return;
+      if (modes.includes(id)) onPermission?.("write_tree", id);
+      inSession.onSwitch(id);
       return;
     }
     if (!(await confirmPermissionChoice(agentLabel, id, Boolean(live)))) return;
@@ -235,7 +264,9 @@ export default function ChatPermissionBadge({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         title={
-          live
+          inSession
+            ? `${explain}\n点击换权限（不用重开）`
+            : live
             ? `${explain}\n点击换权限（会停下 Agent，再带新权限接回这段对话）`
             : `${explain}\n点击选择这次的权限${cycleHint ? "（输入框里 ⇧Tab 也能换）" : ""}`
         }
@@ -282,16 +313,20 @@ export default function ChatPermissionBadge({
                   <span className="shrink-0 rounded-sm bg-inset px-1 text-micro leading-4 text-l3">本机设置</span>
                 )}
                 <span className={`ml-auto min-w-0 truncate text-xs ${selected ? "text-l3" : "text-l4"}`}>
-                  {ok ? ex.outcomes[t.id] : `${agentLabel} 没有这一档`}
+                  {ok
+                    ? ex.outcomes[t.id]
+                    : live?.busy && (t.id === "discuss" ? readonlySupported : modes.includes(t.id))
+                      ? "这一轮结束后再换"
+                      : `${agentLabel} 没有这一档`}
                 </span>
               </button>
             );
           })}
           <p className="mx-1 mt-1 flex items-start justify-between gap-2 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4">
             <span>
-              {followsLocal && note && !note.tier
+              {followsLocal && note && !note.tier && !live
                 ? `现在按本机设置：${note.detail}。选一档只管这一段对话。`
-                : `只管这一段对话，不改 ${agentLabel} 的设置。${live ? "开聊后换会重开并接回。" : ""}`}
+                : `只管这一段对话，不改 ${agentLabel} 的设置。${switchNote}`}
             </span>
             {cycleHint && !live && (
               <span className="shrink-0 whitespace-nowrap">

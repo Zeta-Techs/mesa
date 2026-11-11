@@ -277,16 +277,19 @@ function menuAround(
   { marked: MARKED, numbered: NUMBERED }: Marks,
   cellsOf?: (row: number) => readonly ScreenCell[],
 ): TuiMenu | null {
-  const isOption = (line: string) => !KEY_HINT.test(line) && (MARKED.test(line) || PLAIN.test(line));
+  // 带序号的菜单里，序号行与缩进更深的折行不限缩进（Codex 0.167 /permissions 的说明折到第 33 列、完全访问确认整块缩进 26 格，
+  // 原先只认缩进 1–8 格，块在折行处断开、整张菜单认不出，2026-11-11）
+  const numbered = NUMBERED.test(lines[markIdx]);
+  const deep = (line: string) => numbered && (NUMBERED.test(line) || /^\s{9,}[^\s─━═│┃╭╮╰╯▔▁⎿]/.test(line));
+  const isOption = (line: string) => !KEY_HINT.test(line) && (MARKED.test(line) || PLAIN.test(line) || deep(line));
   let start = markIdx;
   while (start > 0 && isOption(lines[start - 1]) && !MARKED.test(lines[start - 1])) start--;
   let end = markIdx;
   while (end + 1 < lines.length && isOption(lines[end + 1]) && !MARKED.test(lines[end + 1])) end++;
-  const textOf = (line: string) => (MARKED.exec(line) ?? PLAIN.exec(line))![1];
+  const textOf = (line: string) => (MARKED.exec(line) ?? PLAIN.exec(line))?.[1] ?? line.trim().replace(/^\d+[.)]\s+/, "");
   const indent = (line: string) => line.length - line.trimStart().length;
   // 带序号的菜单：只有带序号的行是选项；第一项之前的无序号行归问句，某项之后、缩进到选项文字那一列的无序号行
   // 是那一项的折行；缩进更浅的（Qwen「⠏ Waiting for user confirmation...」）说明菜单到此为止
-  const numbered = NUMBERED.test(lines[markIdx]);
   const lead: string[] = [];
   const options: string[] = [];
   let selected = -1;
@@ -412,6 +415,25 @@ export function menuReadyToConfirm(before: TuiMenu, target: number, now: TuiMenu
   if (!now || now.ask || before.ask) return false;
   if (now.options.join("\n") !== before.options.join("\n")) return false;
   return now.selected === target;
+}
+
+/**
+ * 期待中的选择器（会话内换权限，switch-strategy inSessionPermissionSwitch）：屏上这张菜单的项数与登记的原文一样多、
+ * 每个原文恰好对上一项（项文字就是原文，或原文后面跟空白 / 括号 / ←——「(current)」「← current」、同一行的说明），
+ * 才返回 pick 那一项的序号；否则 null（不按任何键，卡片交给人点）。不做包含匹配：「Ask When Needed」与「Always Ask」都含 Ask
+ */
+export function pickerTargetIndex(menu: TuiMenu, options: readonly string[], pick: string): number | null {
+  if (menu.ask || menu.options.length !== options.length) return null;
+  const hits = options.map((label) =>
+    menu.options
+      .map((o, i) => ({ o: o.trim(), i }))
+      .filter(({ o }) => o === label || (o.startsWith(label) && /^[\s(←]/.test(o.slice(label.length))))
+      .map(({ i }) => i),
+  );
+  if (hits.some((h) => h.length !== 1)) return null;
+  if (new Set(hits.map((h) => h[0])).size !== options.length) return null;
+  const at = options.indexOf(pick);
+  return at < 0 ? null : hits[at][0];
 }
 
 /** 菜单的每一项都出现在 text 里：多半是用户刚发的编号清单的回显，不是 CLI 在问。

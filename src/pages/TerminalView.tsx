@@ -150,12 +150,14 @@ import { autoTitleMilestone } from "../session-title";
 import {
   menuMoveKeys,
   menuReadyToConfirm,
+  pickerTargetIndex,
   menuEchoesText,
   parseTuiMenu,
   sameTuiMenu,
   type MenuAnswer,
   type TuiMenu,
 } from "../tui-menu";
+import { inSessionPermissionSwitch } from "../switch-strategy";
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
@@ -458,6 +460,8 @@ export interface FocusTabActions {
   answerAsk: (action: AskAction) => void;
   /** 运行中换权限：停下 Agent，带着新权限接回原来那段对话（权限在启动参数里，只能重开兑现） */
   restartWithPermission: () => void;
+  /** 会话里直接换权限、不重开（Kimi / Codex / Qwen，switch-strategy inSessionPermissionSwitch）；false = 这家这个版本不能 */
+  switchPermissionInSession: (tier: "ask" | "auto" | "full") => Promise<boolean>;
   /** 停下 Agent，带着新模型 / 思考档接回原来那段对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   relaunchWith: (patch: { model?: string; effort?: string | null }) => void;
   /** 换一条连接接着这段对话：停下 Agent，换成 profileId 那条连接（模型按新连接的名单），再按原会话接回 */
@@ -2705,6 +2709,17 @@ export const TerminalView = memo(function TerminalView({
     }
     // 换到了另一道题：上一下不是最后一题，之后人自己点到确认页时不替人交
     if (ask?.kind === "question") askAutoConfirmUntilRef.current = 0;
+    // 会话内换权限唤出的选择器：逐项核对原文，认准了替人选（answerMenu 挪完高亮再读屏核对才回车）；对不上不按，卡片给人点
+    const expected = expectedPickerRef.current;
+    if (next && expected) {
+      const index = Date.now() < expected.until ? pickerTargetIndex(next, expected.options, expected.pick) : null;
+      expectedPickerRef.current = index !== null && expected.then ? { ...expected.then, until: Date.now() + 6000 } : null;
+      if (index !== null) {
+        menuPromptRef.current = next;
+        answerMenu(index);
+        return;
+      }
+    }
     if (sameTuiMenu(menuPromptRef.current, next)) return;
     menuPromptRef.current = next;
     setMenuPrompt(next);
@@ -3038,6 +3053,44 @@ export const TerminalView = memo(function TerminalView({
     setGrokLoginStuck(false);
     grokLogoutPendingRef.current = true;
     if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
+  }
+  // 会话内换权限时期待的选择器（switch-strategy inSessionPermissionSwitch）：原文、要选的项、有效期；then = 完全访问的第二层确认
+  const expectedPickerRef = useRef<{
+    options: string[];
+    pick: string;
+    until: number;
+    then?: { options: string[]; pick: string };
+  } | null>(null);
+  /**
+   * 会话里直接换权限、不重开（2026-11-11，docs/design-chat-inline-switch.md 2.A）：带参数直切的家（Qwen）发一条命令；
+   * 选择器的家（Kimi、Codex）发命令后等选择器出来，逐项核对原文再替人选。命令照聊天里发的斜杠命令走，留「命令 + 结果」记录。
+   * 返回 false = 这家这个版本不能在会话里换
+   */
+  async function switchPermissionInSession(tier: "ask" | "auto" | "full"): Promise<boolean> {
+    const spec = inSessionPermissionSwitch(launchAgentRef.current ?? "", launchAgentDetRef.current?.version);
+    if (!spec || !ptyIdRef.current) return false;
+    if (spec.args) {
+      const arg = spec.args[tier];
+      if (!arg) return false;
+      return !(await sendMessage(`${spec.command} ${arg}`)).error;
+    }
+    const pick = spec.picker?.tiers[tier];
+    if (!spec.picker || !pick) return false;
+    const confirm = tier === "full" ? spec.picker.fullConfirm : undefined;
+    expectedPickerRef.current = {
+      options: spec.picker.options,
+      pick,
+      until: Date.now() + 8000,
+      ...(confirm ? { then: { options: confirm.options, pick: confirm.pick } } : {}),
+    };
+    const sent = await sendMessage(spec.command);
+    if (sent.error) {
+      expectedPickerRef.current = null;
+      return false;
+    }
+    menuWatchUntilRef.current = Math.max(menuWatchUntilRef.current, Date.now() + 6000);
+    scanMenuSoon();
+    return true;
   }
   /** 写一条 TUI 命令（聊天层 / 底栏切模型、思考档），随后盯 5 秒屏幕看 CLI 有没有弹确认 */
   function runTuiCommand(cmd: string) {
@@ -6697,6 +6750,7 @@ export const TerminalView = memo(function TerminalView({
     answerMenu: () => {},
     answerAsk: () => {},
     restartWithPermission: () => {},
+    switchPermissionInSession: async () => false,
     relaunchWith: () => {},
     switchConnection: () => {},
     dismissConnIssue: () => {},
@@ -6771,6 +6825,7 @@ export const TerminalView = memo(function TerminalView({
     answerMenu,
     answerAsk,
     restartWithPermission,
+    switchPermissionInSession,
     relaunchWith,
     switchConnection,
     dismissConnIssue,
@@ -6819,6 +6874,7 @@ export const TerminalView = memo(function TerminalView({
       answerMenu: (i, opts) => actionsRef.current.answerMenu(i, opts),
       answerAsk: (a) => actionsRef.current.answerAsk(a),
       restartWithPermission: () => actionsRef.current.restartWithPermission(),
+      switchPermissionInSession: (tier) => actionsRef.current.switchPermissionInSession(tier),
       relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
       switchConnection: (id) => actionsRef.current.switchConnection(id),
       dismissConnIssue: () => actionsRef.current.dismissConnIssue(),

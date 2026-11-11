@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { menuAnswerKeys, menuEchoesText, parseTuiMenu, sameTuiMenu } from "../src/tui-menu.ts";
+import { menuAnswerKeys, menuEchoesText, parseTuiMenu, pickerTargetIndex, sameTuiMenu } from "../src/tui-menu.ts";
 
 test("认出切换确认菜单：问句、选项、当前高亮", () => {
   const menu = parseTuiMenu([
@@ -439,4 +439,63 @@ test("Kimi 2.5 提问面板的确认页：问句取「Ready to submit…?」，�
   assert.equal(menu.detail, "定框架④/ 共六问：以哪篇综述的结构为骨架，或不照搬？ → A: 不照搬，自构三级主线（推荐）");
   assert.deepEqual(menu.options, ["Submit", "Cancel"]);
   assert.equal(menu.selected, 0);
+});
+
+// 2026-11-11 Codex 0.167.1 生成中发 /permissions 的整屏（chat-capture.py MID_CMD），会话内换权限按原文核对再选
+const CODEX_PERMISSIONS = [
+  "",
+  "  Update Model Permissions",
+  "",
+  "",
+  "› 1. Ask for approval (current)  Read and edit workspace files and run commands, with approval required for internet",
+  "                                 access or edits outside the workspace",
+  "  2. Approve for me              Only ask for actions detected as potentially unsafe",
+  "  3. Full Access                 Use with caution: Codex can edit files outside this workspace and access the internet",
+  "                                 without approval",
+  "  4. Read Only                   Read workspace files, with approval required for edits or internet access",
+  "  enter select · esc back",
+];
+const CODEX_OPTIONS = ["Ask for approval", "Approve for me", "Full Access", "Read Only"];
+
+test("会话内换权限：Codex /permissions 选择器按原文认项，说明折行不算一项", () => {
+  const menu = parseTuiMenu(CODEX_PERMISSIONS, undefined, "codex");
+  assert.ok(menu);
+  assert.equal(pickerTargetIndex(menu, CODEX_OPTIONS, "Full Access"), 2);
+  assert.equal(pickerTargetIndex(menu, CODEX_OPTIONS, "Ask for approval"), 0);
+  assert.equal(pickerTargetIndex(menu, CODEX_OPTIONS, "Approve for me"), 1);
+  const confirm = parseTuiMenu(
+    [
+      "                          Enable full access?",
+      "                          When Codex runs with full access, it can edit any file on your",
+      "",
+      "                        › 1. Yes, continue anyway  Apply full access for this session",
+      "                          2. Cancel                Go back without enabling full access",
+      "                          enter select · esc back",
+    ],
+    undefined,
+    "codex",
+  );
+  assert.ok(confirm);
+  assert.equal(pickerTargetIndex(confirm, ["Yes, continue anyway", "Cancel"], "Yes, continue anyway"), 0);
+});
+
+test("会话内换权限：对不上就不选——工具审批菜单、少一项、多一项、原文只是开头像", () => {
+  // 生成中开着权限选择器时顶上来的工具审批（2026-11-11 实跑里回车批准了它）
+  const approval = {
+    question: "Run this command?",
+    detail: null,
+    options: ["Approve once", "Approve for this session", "Reject", "Reject with feedback"],
+    selected: 0,
+  };
+  const kimi = ["Always Ask", "Ask When Needed", "Never Ask"];
+  assert.equal(pickerTargetIndex(approval, kimi, "Never Ask"), null);
+  const picker = { question: "Select permission mode", detail: null, options: ["Always Ask ← current", "Ask When Needed", "Never Ask"], selected: 0 };
+  assert.equal(pickerTargetIndex(picker, kimi, "Never Ask"), 2);
+  assert.equal(pickerTargetIndex({ ...picker, options: picker.options.slice(0, 2) }, kimi, "Ask When Needed"), null, "少一项");
+  assert.equal(
+    pickerTargetIndex({ ...picker, options: [...picker.options, "Routine edits and commands run automatically"] }, kimi, "Never Ask"),
+    null,
+    "说明行被认成一项：格数会算错",
+  );
+  assert.equal(pickerTargetIndex({ ...picker, options: ["Always Ask", "Ask When NeededX", "Never Ask"] }, kimi, "Never Ask"), null);
 });

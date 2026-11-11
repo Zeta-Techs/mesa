@@ -221,6 +221,13 @@
   都是按路径增量读整份文件（换档记录只在换的那一刻写，尾窗读不到）。**Kimi 的 auto 是 Never Ask = 完全访问**，yolo 才是帮我批准。
   以最后一条为准，但带参数启动时早于这次启动 3 秒的那条不算（这次会再写一条）；Kimi 不带参数接回旧会话时沿用会话里存的档、不再写，那条照算。
   读到的档放 `launchPick.observedTier` 给徽标显示（不加「已选 ·」）；只有这家能用启动参数指定的档才上报 `cliModeSwitch` 改标签的选择（Kimi 的 manual 只显示）。
+- **会话内换权限（2026-11-11，`switch-strategy.ts inSessionPermissionSwitch`、`tui-menu.ts pickerTargetIndex`、TerminalView `switchPermissionInSession`）**：
+  Kimi ≥2.5.3（/permission）、Codex ≥0.166（/permissions，完全访问再答「Enable full access? › Yes, continue anyway」）走选择器，Qwen ≥0.26.7 走
+  `/approval-mode <default|auto|yolo>` 带参数；不重开，回复中也能点（徽标 `inline`）。命令按聊天里发的斜杠命令走（留「命令 + 结果」）。选择器认法：
+  项数与登记的原文一样多、每个原文恰好对上一项（原文后只能跟空白 / 括号 / ←，不做包含匹配），认准了才交 `answerMenu`（挪完读屏核对才回车）；
+  对不上不按、卡片给人点——生成中开着权限选择器时工具审批会顶上来，2026-11-11 实跑按错格的回车批准了工具调用。完全访问照旧二次确认（不带「会重开」）；
+  能用启动参数指定的档顺带写进标签的选择，Kimi 的请求批准只在会话里换、不写。先出方案、只能轮着换档的家（`PERMISSION_CYCLE_ONLY`：Claude / Gemini / Grok /
+  CodeBuddy）维持重开，回复中不能点，菜单底部写原因。带序号的菜单里序号行与深缩进折行不限缩进（`menuAround`，Codex 说明折到第 33 列、确认块缩进 26 格）。
 - **运行中换权限（2026-10-17 用户：发完消息权限就改不了了）**：各家权限都在启动参数里，换 = 父级先写标签 permission /
   permissionMode，下一拍调标签动作 `restartWithPermission`：停下 Agent，回落 shell 后 effect 用最新 props
   `launch(lastResume)` 按原会话恢复，对话不丢；**接回期间置 `keepPreviewConvRef`**，`launch` 开头的 `resetLink` 不清聊天，接上后会话文件刷新整份替换（换模型 / 换连接同口径；原先先清空再出现，用户看着像整页刷新，2026-10-25）。权限徽标确认框写明「会重开」，正在生成时只显示不可点。
