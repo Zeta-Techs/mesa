@@ -66,6 +66,9 @@ test("商量引导气泡：每个项目第一次出，关掉后不再出", async
   try {
     await act(async () => root.render(h(StepFlow, props)));
     assert.ok(host.textContent!.includes("开始前，先跟 AI 聊几句？"), "第一次应出气泡");
+    assert.ok(!host.textContent!.includes("（可选）"), "这一步没有研讨链接时气泡不提研讨");
+    await act(async () => root.render(h(StepFlow, { ...props, discussInline: h("button", null, "请几家研讨") })));
+    assert.ok(host.textContent!.includes("可以再点右边的「请几家研讨」（可选）"), "有研讨链接时补一句可选的研讨");
     await act(async () => button("先不了")!.click());
     assert.ok(!host.textContent!.includes("开始前，先跟 AI 聊几句？"));
     await act(async () => root.unmount());
