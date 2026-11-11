@@ -50,7 +50,8 @@ export interface ConsultMessage {
   refs: ConsultRef[];
   unsure: string | null;
   pass: boolean;
-  status: "ok" | "error" | "timeout" | "stopped";
+  /** interrupted：Mesa 中途关掉时还没答完（后端出线时由占位换来） */
+  status: "ok" | "error" | "timeout" | "stopped" | "interrupted";
   error: string | null;
   mentions: string[];
   costUsd: number | null;
@@ -285,6 +286,7 @@ export const STATUS_TEXT: Record<Exclude<ConsultMessage["status"], "ok">, string
   error: "出错，没答",
   timeout: "超时，没答",
   stopped: "你停了",
+  interrupted: "被打断了：Mesa 关掉时还没答完",
 };
 
 export const REF_NOTE: Record<Exclude<ConsultRef["state"], "ok">, string> = {
