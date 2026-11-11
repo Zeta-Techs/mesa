@@ -16,6 +16,18 @@ export const DEFAULT_RELAY_LIMIT = 2;
 /** 一次研讨最多附几张图（与后端 consult.rs MAX_IMAGES 镜像） */
 export const MAX_IMAGES = 4;
 
+/**
+ * 步骤卡「请几家研讨」的问题（2026-11-11）：任务书是项目里的文件（工作副本里的 TASK.md、有正文的草稿）时照名字问；
+ * 没开工也没草稿时，带进去的是现拼的预览（存进研讨附件、不当草稿），问题就说「现在拟的任务书（预览）」，别让人以为有份 TASK.md
+ */
+export function stepConsultQuestion(stepNo: number, stepName: string, taskMd: "file" | "preview" | null): string {
+  const head = `第 ${stepNo} 步「${stepName}」：`;
+  const tail = "哪些方向或判断站不住、还没想清楚？最该先定的是哪一件？";
+  if (taskMd === "preview") return `${head}照这一步现在拟的任务书（预览，还没开工，见材料）做下去，${tail}`;
+  if (taskMd === "file") return `${head}照现在的 TASK.md 做下去，${tail}`;
+  return `${head}照现在的安排做下去，${tail}`;
+}
+
 export function isImagePath(p: string): boolean {
   return /\.(png|jpe?g|gif|webp)$/i.test(p);
 }

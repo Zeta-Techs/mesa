@@ -1647,6 +1647,37 @@ pub async fn consult_attach_session(project_root: String, agent: String, session
     .map_err(|e| e.to_string())?
 }
 
+/// 步骤卡「请几家研讨」（2026-11-11）：没开工、也没有任务书草稿时，人点「TASK.md」看到的那份是现拼的、不在项目里，
+/// 研讨又只认项目里的文件——把它存进 attachments 当材料。**不存进 `.ccode/drafts/`**：完整预览一旦成了草稿，
+/// 以后开工就用草稿全文、不再按模板重拼，项目里的新变化（已定方向、项目知识、产物名单）都跟不进去
+pub(crate) fn attach_text_at(root: &Path, label: &str, content: &str) -> Result<String, String> {
+    if content.trim().is_empty() {
+        return Err("材料是空的".into());
+    }
+    let name = crate::paths::sanitize_fs_name(&clip(label.trim(), 60))?;
+    let rel = format!("{ATTACH_REL}/{}-{name}.md", new_id());
+    let path = root.join(&rel);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("建材料目录失败：{e}"))?;
+    }
+    fs::write(&path, crate::sessions::redact_sensitive_text(content)).map_err(|e| format!("写材料失败：{e}"))?;
+    exclude_dir(root);
+    Ok(rel)
+}
+
+#[tauri::command]
+pub async fn consult_attach_text(project_root: String, label: String, content: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = root_of(&project_root);
+        if !root.is_dir() {
+            return Err("项目目录不在了".into());
+        }
+        attach_text_at(&root, &label, &content)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CostStat {
@@ -2024,6 +2055,21 @@ mod tests {
         assert_eq!(read_root_of(&m, root), wt);
         m.read_root = Some("/nonexistent/worktree".into());
         assert_eq!(read_root_of(&m, root), root, "工作副本没了就退回项目根");
+    }
+
+    #[test]
+    fn attach_text_lands_in_attachments_not_drafts() {
+        let dir = std::env::temp_dir().join(format!("consult-at-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        let rel = attach_text_at(&dir, "第 4 步任务书预览（未开工）", "# 任务书\n做综述初稿").unwrap();
+        assert!(rel.starts_with(&format!("{ATTACH_REL}/")), "{rel}");
+        assert!(rel.ends_with("-第 4 步任务书预览（未开工）.md"), "{rel}");
+        assert_eq!(fs::read_to_string(dir.join(&rel)).unwrap(), "# 任务书\n做综述初稿");
+        assert!(!dir.join(".ccode/drafts").exists(), "预览不能落成任务书草稿");
+        assert!(attach_text_at(&dir, "x", "  ").is_err());
+        let odd = attach_text_at(&dir, "a/b:c", "x").unwrap();
+        assert!(!odd.trim_start_matches(&format!("{ATTACH_REL}/")).contains('/'), "{odd}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

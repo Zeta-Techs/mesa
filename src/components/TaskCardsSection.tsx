@@ -21,7 +21,7 @@ import StepEvidenceChip from "./StepEvidenceChip";
 import StepFlow from "./StepFlow";
 import FuseDraftModal from "./FuseDraftModal";
 import { useAppStore } from "../store";
-import { MAX_MATERIALS as CONSULT_MAX_MATERIALS } from "../consult";
+import { MAX_MATERIALS as CONSULT_MAX_MATERIALS, stepConsultQuestion } from "../consult";
 import { stepAttention } from "../run-overview";
 import { toast } from "../toast";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
@@ -620,23 +620,42 @@ export default function TaskCardsSection({
   /** 研讨（2026-11-11）只上人要拍板的步骤：role 为 you / both；检索、清洗这类 role=ai 的不出 */
   const consultEligible = focusStepDto?.role === "you" || focusStepDto?.role === "both";
 
-  /** 「请几家研讨」：问题按这一步预填，材料 = 这一步的 TASK.md + 已经存在的主要产物（按弹层上限截）。
-   *  步骤开着工作副本时成员读工作副本（产物还没带回项目根，同评审页 readRoot 口径），记录照样写项目根 */
+  /** 「请几家研讨」：问题按这一步预填，材料 = 这一步的任务书 + 已经存在的主要产物（按弹层上限截）。
+   *  步骤开着工作副本时成员读工作副本（产物还没带回项目根，同评审页 readRoot 口径），记录照样写项目根。
+   *  没开工、草稿也还没正文（空 / 只点了决策项）时，任务书是现拼的预览：存进研讨附件当材料，**不存成草稿**——
+   *  完整预览一旦成了草稿，以后开工就用草稿全文、不再按模板重拼（商量开聊的播种是人选了要接着改，才落草稿） */
   async function openStepConsult() {
     const step = focusStepDto;
     if (!step) return;
     const ws = pickStepWorkspace(workspaces, projectPath, step);
     const readRoot = ws?.status === "active" ? ws.worktreePath : undefined;
     const stepNo = steps.findIndex((s) => s.name === step.name) + 1;
-    const taskMd = readRoot ? "TASK.md" : focusDraft?.text?.trim() ? focusDraft.relPath : null;
-    const candidates = [taskMd, ...(step.expectedArtifacts ?? [])].filter((x): x is string => !!x);
+    const draftText = focusDraft?.text?.trim() ?? "";
+    const draftIsReal = !!draftText && !isTaskMdStub(draftText);
+    const taskMdFile = readRoot ? "TASK.md" : draftIsReal ? focusDraft!.relPath : null;
+    const candidates = [taskMdFile, ...(step.expectedArtifacts ?? [])].filter((x): x is string => !!x);
     const existing = await invoke<string[]>("consult_existing_files", { root: readRoot ?? projectPath, paths: candidates }).catch(
       () => [] as string[],
     );
+    let preview: string | null = null;
+    if (!taskMdFile) {
+      const text = await loadTaskMdForStep()
+        .then((r) => r.text)
+        .catch(() => "");
+      if (text.trim()) {
+        preview = await invoke<string>("consult_attach_text", {
+          projectRoot: projectPath,
+          label: `第 ${stepNo} 步任务书预览（未开工）`,
+          content: text,
+        }).catch(() => null);
+      }
+    }
+    const hasFile = !!taskMdFile && existing.includes(taskMdFile);
+    const paths = preview ? [preview, ...existing] : existing;
     useAppStore.getState().openConsult({
       projectRoot: projectPath,
-      question: `第 ${stepNo} 步「${step.name}」：照现在的 TASK.md 做下去，哪些方向或判断站不住、还没想清楚？最该先定的是哪一件？`,
-      materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
+      question: stepConsultQuestion(stepNo, step.name, preview ? "preview" : hasFile ? "file" : null),
+      materials: paths.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
       ...(readRoot ? { readRoot, readLabel: `第 ${stepNo} 步 · ${step.name}的工作副本` } : {}),
     });
   }

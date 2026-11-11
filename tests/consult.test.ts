@@ -16,6 +16,7 @@ import {
   round1Revealed,
   sameFamilies,
   shortModel,
+  stepConsultQuestion,
   streamMessages,
   toProjectRel,
   usdText,
@@ -240,4 +241,12 @@ test("侧栏挂哪几场研讨：进行中的全列，其余 3 天内的补到 3
   assert.equal(consultCaret(items[1], now), null);
   // 停下等你发话但 24 小时没动静：不再挂光标
   assert.equal(consultCaret({ busy: false, awaiting: true, updatedAt: ago(30) }, now), null);
+});
+
+test("步骤卡研讨问题：没有任务书文件时说预览，不提 TASK.md", () => {
+  assert.match(stepConsultQuestion(4, "综述初稿", "file"), /^第 4 步「综述初稿」：照现在的 TASK\.md 做下去/);
+  const pv = stepConsultQuestion(4, "综述初稿", "preview");
+  assert.ok(!pv.includes("TASK.md"), pv);
+  assert.match(pv, /现在拟的任务书（预览/);
+  assert.ok(!stepConsultQuestion(4, "综述初稿", null).includes("TASK.md"));
 });
