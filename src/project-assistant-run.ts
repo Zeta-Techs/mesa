@@ -24,13 +24,19 @@ import {
   inspectRules,
   INSPECT_AGENTS,
   intentEffort,
+  isReviewAsk,
+  mentionedStep,
   previousTurnHint,
   SNAPSHOT_MAX_CHARS,
   wantsInspect,
   type AssistantHistoryTurn,
   type AssistantIntent,
 } from "./project-assistant";
-import type { ChecksDto } from "./research-checks";
+import type { CheckItem, ChecksDto } from "./research-checks";
+import { mergeMesaChecks } from "./outline-check";
+import { loadOutlineCheck } from "./research-report-load";
+import { stepKind } from "./step-kind";
+import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
 import { renderProjectMap, type MapEntry } from "./project-map";
 import { builtinTaskCatalogLines } from "./builtin-tasks";
 import { PIPELINE_TEMPLATES } from "./pipeline-presets";
@@ -100,6 +106,19 @@ function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   return p.then((v) => v ?? fallback).catch(() => fallback);
 }
 
+/** 一步的核验项：核验文件里的 + 大纲那一步 Mesa 自己核对的（与评审页同一个纯函数，评审页不写文件，这里再算一遍） */
+async function stepChecks(
+  step: { skills?: readonly string[]; expectedArtifacts?: readonly string[] },
+  worktree: string,
+  projectPath: string,
+): Promise<CheckItem[]> {
+  const [file, outline] = await Promise.all([
+    safe(invoke<ChecksDto>("research_checks_read", { path: worktree }), null as ChecksDto | null),
+    stepKind(step, undefined) === "outline" ? loadOutlineCheck([worktree, projectPath]).catch(() => null) : Promise.resolve(null),
+  ]);
+  return mergeMesaChecks(file, outline?.items ?? [])?.items ?? [];
+}
+
 function eventLine(e: RunEventDto): string {
   return `${e.createdAt} ${e.eventType}${e.payload ? ` ${e.payload}` : ""}`;
 }
@@ -163,7 +182,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       }
       const [health, checks, reviewNotes] = await Promise.all([
         safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
-        safe(invoke<ChecksDto>("research_checks_read", { path: ws.worktreePath }), null as ChecksDto | null),
+        stepChecks(s, ws.worktreePath, projectPath),
         safe(invoke<string | null>("assistant_review_notes", { worktreePath: ws.worktreePath }), null),
       ]);
       const attention = stepAttention(ws, live, IS_WINDOWS);
@@ -177,7 +196,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       else if ((health?.ahead ?? 0) > 0) stateText = "做完了等你评审、保存进项目";
       else if (attention === "done") stateText = "AI 这一轮说完了，等你看";
       else stateText = health?.uncommitted ? "进行中，工作副本里有没保存的改动" : "进行中";
-      return { ...base, state: stateText, failure, checks: checks?.items ?? [], reviewNotes };
+      return { ...base, state: stateText, failure, checks, reviewNotes };
     }),
   );
 
@@ -311,7 +330,7 @@ export async function gatherBriefInput(projectPath: string, since: string | null
       if (!ws) return { n, name: s.name, state: s.seedComplete ? "saved" : "idle", needsHuman: 0 };
       const [health, checks] = await Promise.all([
         safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
-        safe(invoke<ChecksDto>("research_checks_read", { path: ws.worktreePath }), null as ChecksDto | null),
+        stepChecks(s, ws.worktreePath, projectPath),
       ]);
       const attention = stepAttention(ws, live, IS_WINDOWS);
       const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
@@ -327,7 +346,7 @@ export async function gatherBriefInput(projectPath: string, since: string | null
                 : (health?.ahead ?? 0) > 0 || health?.conflict
                   ? "review"
                   : "open";
-      const needsHuman = (checks?.items ?? []).filter((c) => c.status === "needs_human").length;
+      const needsHuman = checks.filter((c) => c.status === "needs_human").length;
       return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman };
     }),
   );
@@ -452,6 +471,33 @@ export function planAsk(
 
 const INSPECT_UNSUPPORTED = "INSPECT_UNSUPPORTED";
 
+/** 问「这一轮怎么样 / 有没有问题 / 帮我看看」时看哪一步：问题里点名的，没点名就是评审页正开着的那一步。
+ *  找到且开过工的，带上这一步的核验项（含 Mesa 核对）做成这次的重点，只读打开它的主要产物；找不到返回 null，照原来的问法走 */
+async function reviewAskFocus(projectPath: string, question: string): Promise<AssistantFocus | null> {
+  const [read, workspaces] = await Promise.all([
+    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
+    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+  ]);
+  const steps = read?.config.steps ?? [];
+  if (!steps.length) return null;
+  const open = reviewingStep();
+  const viewing = open && samePath(open.projectRoot, projectPath, IS_WINDOWS) ? open : null;
+  const n = mentionedStep(question, steps.map((s) => ({ name: s.name, kind: stepKind(s, undefined) }))) ?? viewing?.n ?? null;
+  const step = n ? steps[n - 1] : undefined;
+  if (!n || !step) return null;
+  const ws = workspaces.find((w) => w.name === step.workspaceName && w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS));
+  if (!ws) return null;
+  const checks = await stepChecks(step, ws.worktreePath, projectPath);
+  return reviewRoundFocus(n, step.name, { worktree: ws.worktreePath, artifacts: step.expectedArtifacts }, checks);
+}
+
+/** 评审页开着时，「用户此刻在看哪」补一句正在评审哪一步（评审覆盖层挂在对话页上，页面名只写得出「对话页」） */
+function withReviewing(where: string | undefined, projectPath: string): string | undefined {
+  const open = reviewingStep();
+  if (!open || !samePath(open.projectRoot, projectPath, IS_WINDOWS)) return where;
+  return `${where ? `${where} · ` : ""}正在评审第 ${open.n} 步「${open.name}」`;
+}
+
 /** 问一次：先分流（classifyQuestion），按类取材料 → 拼提示词 → 后端脱敏后无头调用、落记录。
  *  问出错类问题且连接支持时，在项目根只读跑一次，让它自己打开文件核对；不支持就只看记录。
  *  项目默认那家不支持无头调用时退回「AI 功能」的连接 */
@@ -470,7 +516,10 @@ export async function askProjectAssistant(input: {
   /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
   onStream?: (update: { text?: string; step?: string }) => void;
 }): Promise<AssistantTurn> {
-  const planned = planAsk(input.question, !!input.focus, input.project, undefined, input.history);
+  // 问一轮怎么样：没带重点进来时，按点名的步骤或评审页开着的那一步补上重点（带核验项、只读打开产物）
+  const focus = input.focus ?? (isReviewAsk(input.question) ? await reviewAskFocus(input.projectPath, input.question).catch(() => null) : null);
+  const where = withReviewing(input.where, input.projectPath);
+  const planned = planAsk(input.question, !!focus, input.project, undefined, input.history);
   const intent = input.intent ?? planned.intent;
   const inspect = input.inspect ?? planned.inspect;
   const conn = assistantConnection(input.project);
@@ -478,7 +527,7 @@ export async function askProjectAssistant(input: {
   const needGuide = intent === "howto" || intent === "mixed";
   const request = intent === "request";
   const [snapshot, guide, worktrees, map, catalog] = await Promise.all([
-    needSnapshot ? cachedSnapshot(input.projectPath, input.focus) : Promise.resolve(null),
+    needSnapshot ? cachedSnapshot(input.projectPath, focus) : Promise.resolve(null),
     needGuide
       ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? GUIDE_LIMIT.mixed : GUIDE_LIMIT.howto }), [])
       : Promise.resolve([] as { heading: string; text: string }[]),
@@ -501,7 +550,7 @@ export async function askProjectAssistant(input: {
       context: intent === "howto" || intent === "general" || intent === "chat" ? projectContext(input.projectPath, input.project, conn.line) : null,
       history: input.history,
       question: input.question,
-      where: input.where || null,
+      where: where || null,
       map,
       catalog,
     });

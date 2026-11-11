@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { briefLines, hasKnowledgeSources, quickAsks, reviewPrereadFocus, type BriefInput } from "../src/assistant-brief.ts";
+import { briefLines, hasKnowledgeSources, quickAsks, reviewPrereadFocus, reviewRoundFocus, reviewingStep, setReviewingStep, type BriefInput } from "../src/assistant-brief.ts";
 
 const base: BriefInput = { hasFlow: true, steps: [], goals: [], since: null };
 
@@ -106,4 +106,35 @@ test("reviewPrereadFocus：给出工作副本与要看的交付物，脚本生�
   assert.match(f.detail, /只看 papers\/screening\.md、papers\/included\.json，/);
   assert.match(f.detail, /papers\/included\.md、papers\/to-fetch\.md、papers\/to-fetch\.ris、papers\/endnote-import\.ris 由脚本从清单生成，不读/);
   assert.match(f.detail, /最多打开 5 个文件/);
+});
+
+test("reviewRoundFocus：带上这一步的核验项（拦下在前、标来源），要它解释、给下一步、起草派活单和评审意见", () => {
+  const f = reviewRoundFocus(
+    3,
+    "综述大纲",
+    { worktree: "/w/outline", artifacts: ["outline.md", "manuscript/sections.json", "references.bib"] },
+    [
+      { id: "a", kind: "outline-coverage", status: "needs_human", title: "覆盖检查「3.1」篇数对不上", target: { file: "outline.md", line: 137 }, checker: "mesa", evidence: { detail: "Mesa 数 3 / 5" } },
+      { id: "b", kind: "outline-cite", status: "blocked", title: "引了已排除的文献 @Zed2023", target: { file: "outline.md", line: 4 }, checker: "mesa" },
+      { id: "c", kind: "x", status: "passed", title: "通过的不列" },
+    ],
+  );
+  assert.equal(f.title, "这一轮怎么样：第 3 步「综述大纲」");
+  assert.match(f.detail, /工作副本（\/w\/outline）里的主要产物（outline\.md、manuscript\/sections\.json）/);
+  assert.ok(f.detail.indexOf("@Zed2023") < f.detail.indexOf("3.1"), "拦下的在前");
+  assert.match(f.detail, /- \[拦下·Mesa 核对\] 引了已排除的文献 @Zed2023（outline\.md:4）/);
+  assert.match(f.detail, /\[待你判断·Mesa 核对\] 覆盖检查「3\.1」篇数对不上（outline\.md:137）：Mesa 数 3 \/ 5/);
+  assert.doesNotMatch(f.detail, /通过的不列/);
+  assert.match(f.detail, /派活单/);
+  assert.match(f.detail, /引用块/);
+  assert.match(f.detail, /不替人选/);
+  const none = reviewRoundFocus(2, "精读", { worktree: "/w/n" }, []);
+  assert.match(none.detail, /没有拦下或待你判断的核验项/);
+});
+
+test("评审页开着的那一步：打开设、关掉清", () => {
+  setReviewingStep({ projectRoot: "/p", n: 3, name: "综述大纲", worktree: "/w/outline", artifacts: ["outline.md"] });
+  assert.equal(reviewingStep()?.n, 3);
+  setReviewingStep(null);
+  assert.equal(reviewingStep(), null);
 });

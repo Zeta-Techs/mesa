@@ -7,6 +7,9 @@ import {
   buildAssistantPrompt,
   classifyQuestion,
   guideAnchor,
+  isReviewAsk,
+  mentionedStep,
+  wantsInspect as wantsInspectFn,
   historyBlock,
   parseAssistantAnswer,
 } from "../src/project-assistant.ts";
@@ -76,7 +79,7 @@ test("问题分流：怎么用 / 问项目 / 两样都沾 / 打招呼", () => {
   assert.equal(classifyQuestion("第3步出错了怎么办"), "mixed");
   assert.equal(classifyQuestion("你好"), "chat");
   assert.equal(classifyQuestion("谢谢！"), "chat");
-  assert.equal(classifyQuestion("综述写得怎么样"), "howto");
+  assert.equal(classifyQuestion("综述写得怎么样"), "project", "问写得怎么样是要看这个项目的产物，不是问怎么用（2026-11-11）");
   assert.equal(classifyQuestion("帮我看看"), "general");
   assert.equal(classifyQuestion("现在几点"), "general", "判不出的不去看项目记录、翻说明书");
   assert.equal(classifyQuestion("你好", true), "project", "带着某次运行进来的一律问项目");
@@ -160,7 +163,7 @@ function input(over: Partial<SnapshotInput> = {}): SnapshotInput {
 test("快照写清每步状态、出错原因、核验、退回意见与 Mesa 出错", () => {
   const text = buildProjectSnapshot(input());
   assert.match(text, /### 第 1 步「文献检索」：出错了\n最近一次运行出错：PTY 启动失败/);
-  assert.match(text, /\[拦下\] 引用缺 DOI/);
+  assert.match(text, /\[拦下·核验脚本\] 引用缺 DOI/);
   assert.match(text, /评审退回意见：\n图 2 标注不清/);
   assert.match(text, /Mesa 上次异常退出.*Mesa 的问题，不是这一步的/);
   assert.match(text, /save_step 失败（10 分钟内 2 次）/);
@@ -491,4 +494,65 @@ test("更早的相关问答：按词重合翻出，至少两个词、最多两�
   const prompt = buildAssistantPrompt({ intent: "project", snapshot: "快照", history, question: "下周组会汇报准备几页？" });
   assert.match(prompt, /更早的相关问答[\s\S]*15 分钟/);
   assert.doesNotMatch(buildAssistantPrompt({ intent: "chat", history, question: "组会汇报" }), /更早的相关问答/);
+});
+
+test("问一轮怎么样（2026-11-11 大纲核对）：按问项目走、只读查看；说了要改的按要做事；问 Mesa 里怎么检查的两样都看", () => {
+  assert.equal(classifyQuestion("大纲这轮怎么样"), "project");
+  assert.equal(classifyQuestion("帮我看看有没有问题"), "project", "原来被「帮我」当成要做事");
+  assert.equal(classifyQuestion("第 3 步合不合格"), "project");
+  assert.equal(classifyQuestion("核对一下大纲"), "project");
+  assert.equal(classifyQuestion("检查一下引用并改掉"), "request");
+  assert.equal(classifyQuestion("怎么核对引用"), "mixed");
+  assert.equal(classifyQuestion("帮我看看"), "general", "什么都没说的仍判不出");
+  assert.equal(wantsInspectFn("大纲这轮怎么样", "project"), true);
+  assert.equal(wantsInspectFn("帮我看看有没有问题", "project"), true);
+  assert.equal(isReviewAsk("帮我看看"), true, "在评审页只说一句也算，看评审页开着的那一步");
+  assert.equal(isReviewAsk("检查一下引用并改掉"), false);
+  assert.equal(isReviewAsk("现在到哪了"), false);
+});
+
+test("问的是哪一步：第 N 步、步骤名、按类型的叫法（同类取最后一步）", () => {
+  const steps = [
+    { name: "文献检索与筛选", kind: "search" },
+    { name: "文献精读与笔记", kind: "notes" },
+    { name: "综述大纲", kind: "outline" },
+    { name: "综述初稿", kind: "writing" },
+  ];
+  assert.equal(mentionedStep("第 2 步怎么样", steps), 2);
+  assert.equal(mentionedStep("第三步合不合格", steps), 3);
+  assert.equal(mentionedStep("第 9 步", steps), null);
+  assert.equal(mentionedStep("综述初稿有没有问题", steps), 4);
+  assert.equal(mentionedStep("大纲这轮怎么样", steps), 3);
+  assert.equal(mentionedStep("笔记帮我看看", steps), 2);
+  assert.equal(mentionedStep("这轮怎么样", steps), null);
+});
+
+test("快照里 Mesa 核对的项带位置和说明，拦下的排前面", () => {
+  const text = buildProjectSnapshot(
+    input({
+      steps: [
+        {
+          index: 0,
+          name: "综述大纲",
+          state: "做完了等你评审、保存进项目",
+          brief: "",
+          expectedArtifacts: ["outline.md"],
+          acceptanceCriteria: [],
+          worktreePath: "/w/outline",
+          failure: null,
+          reviewNotes: null,
+          checks: [
+            { id: "a", kind: "outline-figure", status: "needs_human", title: "同一块子图用了两次", target: { file: "outline.md", line: 83 }, checker: "mesa", evidence: { detail: "第 45 行与第 83 行" } },
+            { id: "b", kind: "outline-cite", status: "blocked", title: "引了已排除的文献 @Zed2023", target: { file: "outline.md", line: 4 }, checker: "mesa" },
+            { id: "c", kind: "cite", status: "needs_human", title: "AI 说这句撑不住", target: { file: "outline.md", line: 9 }, checker: "agent" },
+          ],
+        },
+      ],
+    }),
+  );
+  const block = text.slice(text.indexOf("核验："));
+  assert.ok(block.indexOf("@Zed2023") < block.indexOf("子图"), "拦下的在前");
+  assert.match(block, /- \[拦下·Mesa 核对\] 引了已排除的文献 @Zed2023（outline\.md:4）/);
+  assert.match(block, /\[待你判断·Mesa 核对\] 同一块子图用了两次（outline\.md:83）：第 45 行与第 83 行/);
+  assert.match(block, /\[待你判断·AI 判断\] AI 说这句撑不住（outline\.md）/);
 });

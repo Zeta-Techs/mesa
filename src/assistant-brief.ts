@@ -5,6 +5,7 @@
  * 取数在 project-assistant-run.ts gatherBriefInput，这里只算；配 tests/assistant-brief.test.ts。
  */
 import type { AssistantAction, AssistantIntent } from "./project-assistant.ts";
+import { CHECK_STATUS_LABEL, checkLocation, checkSourceLabel, type CheckItem } from "./research-checks.ts";
 
 export type BriefStepState = "idle" | "working" | "confirm" | "failed" | "review" | "saved" | "open";
 
@@ -84,6 +85,40 @@ export function reviewPrereadFocus(
       "每条写到文件和位置。不判断能不能通过、不打分、不替人决定采不采纳；没发现问题就直说没看出明显问题，并说明看了哪些文件。" +
       `读法（两分钟内答完）：${read.length ? `只看 ${read.join("、")}，` : ""}最多打开 5 个文件；先读主报告开头的验收摘要，再用搜索定位可疑处，不整份通读；` +
       `大的 JSON 只搜关键字段${skipped.length ? `；${skipped.join("、")} 由脚本从清单生成，不读` : "；脚本生成的清单、RIS、bib 不读"}；不读 PDF。`,
+  };
+}
+
+/**
+ * 问「这一轮怎么样」（2026-11-11 大纲核对）：在评审页问、或问题里点名了某一步时，项目助手只读打开这一步的主要产物，
+ * 对着这一步的核验项（含 Mesa 核对）逐条解释、判断要不要改、说清下一步点哪；要改时起草派活单、给一段能贴进评审意见的话。
+ * 不判通过、不替人拍板。核验项原样带进来：Mesa 核对的是数出来的事实，Claude Code 只读时跑不了脚本，不要它自己再数
+ */
+export function reviewRoundFocus(
+  n: number,
+  name: string,
+  where: { worktree?: string; artifacts?: readonly string[] },
+  checks: readonly CheckItem[],
+): { title: string; detail: string } {
+  const read = (where.artifacts ?? []).filter((a) => !GENERATED_ARTIFACT.test(a));
+  const flagged = [...checks].filter((c) => c.status !== "passed").sort((a, b) => Number(a.status !== "blocked") - Number(b.status !== "blocked"));
+  const lines = flagged.slice(0, 16).map((c) => {
+    const at = checkLocation(c);
+    const detail = c.evidence?.detail ? `：${c.evidence.detail.slice(0, 220)}` : "";
+    return `- [${CHECK_STATUS_LABEL[c.status]}·${checkSourceLabel(c)}] ${c.title}${at ? `（${at}）` : ""}${detail}`;
+  });
+  return {
+    title: `这一轮怎么样：第 ${n} 步「${name}」`,
+    detail:
+      `用户在问第 ${n} 步这一轮做得怎么样。只读打开这一步${where.worktree ? `工作副本（${where.worktree}）` : "工作副本"}里的主要产物` +
+      `${read.length ? `（${read.join("、")}）` : ""}，用搜索定位到下面各项说的位置核对，最多打开 5 个文件，不整份通读、不读 PDF。\n` +
+      (lines.length
+        ? `这一步的核验项（「Mesa 核对」是 Mesa 按大纲、笔记索引、引文库、纳入清单数出来的，当事实用，不用你再数；「AI 判断」只是另一家的意见）：\n${lines.join("\n")}` +
+          (flagged.length > lines.length ? `\n（另有 ${flagged.length - lines.length} 项没列出，在评审页核验清单里）` : "")
+        : "这一步现在没有拦下或待你判断的核验项；照样看一遍主要产物，没看出问题就直说，并说明看了哪些文件。") +
+      "\n回答：先一句结论（几处必须改、几处要你定）；再逐条讲每个核验项是什么、要不要改、为什么（拦下的必须改；待你判断的说清两种选择的后果，不替人选）；" +
+      "然后说下一步去哪点（评审页「写意见退回修改…」、步骤卡「补文献…」、改完的「提交并保存进项目」）。" +
+      "要改的写一张派活单交给这一步（交给：第 N 步），「要做」一条一行、写到文件和位置、能直接照做；" +
+      "另给一段能原样贴进评审意见框、配合「退回修改」用的文字（放在引用块里）。不判能不能通过、不打分。",
   };
 }
 
@@ -232,4 +267,23 @@ export function summaryFocus(turns: readonly { at: string; question: string; ans
       "（不是一次性的安排、不是进度）起草成 :::记下，一条一块、最多五块，快照「项目知识」里已经有的不重复。没有值得记的就直说。\n" +
       lines.join("\n"),
   };
+}
+
+/** 评审页此刻打开的是哪一步（WorkspaceReviewView 打开时设、关掉时清）：项目助手问「这轮怎么样」「帮我看看」时默认看这一步 */
+export interface ReviewingStep {
+  projectRoot: string;
+  n: number;
+  name: string;
+  worktree: string;
+  artifacts: readonly string[];
+}
+
+let reviewing: ReviewingStep | null = null;
+
+export function setReviewingStep(step: ReviewingStep | null): void {
+  reviewing = step;
+}
+
+export function reviewingStep(): ReviewingStep | null {
+  return reviewing;
 }

@@ -133,6 +133,14 @@ const HOWTO_RE =
 const REQUEST_RE =
   /帮我|给我|替我|麻烦你?|请你|我要|我想要|我需要|^(请)?(整理|总结|汇总|画|做|写|准备|规划|设计|分析|统计|生成|对比|合并|改|重画|重做|列|起草|汇报)|(准备|做|出).{0,8}(组会|汇报|答辩|周报|月报|报告|幻灯片|PPT|海报)/i;
 
+/** 问一轮做得怎么样（2026-11-11 大纲核对）：「这轮怎么样」「帮我看看有没有问题」「核对一下」——要打开这一步的产物、对着核验项看，
+ *  按问项目走并只读查看。原来「怎么样」被当成问怎么用（「怎么」），「帮我看看有没有问题」被当成要做事 */
+export const REVIEW_RE = /怎么样|如何了|有没有问题|有问题吗|有什么问题|帮我看看|帮我看一下|帮我瞧瞧|检查|核对|评审|审一下|合不合格|合格吗|行不行|靠不靠谱|过得了吗|能不能过/;
+/** 说了要改的不算只看（「检查一下引用并改掉」按要做事走，起草派活单） */
+const EDIT_RE = /改|重写|重做|补上|补齐|删掉|加上|换成/;
+/** 问的是 Mesa 里怎么检查（「怎么核对引用」「在哪评审」）：说明书和项目都看 */
+const REVIEW_HOWTO_RE = /(怎么|如何|在哪)(去|才能|能)?(检查|核对|评审)/;
+
 /** 以后都要照办的偏好或决定（记忆，2026-11-05） */
 const PREFERENCE_RE = /以后|今后|往后|每次都|一律|我们组|课题组|导师(要|要求|喜欢|习惯)|不要再|别再|记住/;
 
@@ -158,6 +166,12 @@ export function classifyQuestion(question: string, hasFocus = false, prev?: Prev
   // 上一轮问了它一个问题：这一句多半是在回答（「20 分钟」「上周的」），接着起草
   if (prev?.asked && !(q.length <= 12 && CHAT_RE.test(q))) return "request";
   if (q.length <= 12 && CHAT_RE.test(q)) return "chat";
+  if (REVIEW_RE.test(q) && !VAGUE_RE.test(q)) {
+    if (REVIEW_HOWTO_RE.test(q)) return "mixed";
+    // 查了还要改（「检查一下引用并改掉」）：要做事，起草派活单
+    if (EDIT_RE.test(q)) return INSPECT_RE.test(q) ? "project" : "request";
+    return "project";
+  }
   if (REQUEST_RE.test(q) && !INSPECT_RE.test(q) && !VAGUE_RE.test(q)) return "request";
   // 说的是以后都要照办的偏好（「以后组会都讲 15 分钟」「导师要 Word 版」）：按问项目走，快照里带着已记的知识，好判断要不要记
   if (PREFERENCE_RE.test(q) && !HOWTO_RE.test(q)) return "project";
@@ -181,7 +195,44 @@ export function wantsInspect(question: string, intent: AssistantIntent, hasFocus
   // 要做事：起草前打开相关文件看一眼，单子才写得出依据（2026-11-05 放宽，原来只用于查错）
   if (intent === "request") return true;
   if (intent !== "project" && intent !== "mixed") return false;
-  return hasFocus || INSPECT_RE.test(question);
+  return hasFocus || INSPECT_RE.test(question) || REVIEW_RE.test(question);
+}
+
+/** 这一问是不是在问一轮做得怎么样：「这轮怎么样」「有没有问题」，或在评审页只说了句「帮我看看」 */
+export function isReviewAsk(question: string): boolean {
+  const q = question.trim();
+  return (REVIEW_RE.test(q) && !EDIT_RE.test(q)) || VAGUE_RE.test(q);
+}
+
+/** 问一轮怎么样时问的是哪一步：「第 N 步」、步骤名原样出现，或按步骤类型的叫法（「大纲」「精读」「初稿」）。
+ *  同类有几步时取最后一步（回头补的轮次在前面，问「大纲」多半问最新那一版）。认不出返回 null */
+const STEP_KIND_WORDS: Record<string, RegExp> = {
+  search: /检索|纳入清单|文献清单|筛选/,
+  notes: /精读|笔记|速读/,
+  outline: /大纲|覆盖检查|拼图|用图计划/,
+  clean: /清洗/,
+  design: /实验设计|方案/,
+  experiment: /实验/,
+  analysis: /分析|出图|作图/,
+  writing: /初稿|稿子|正文/,
+  final: /定稿|润色|终稿/,
+};
+
+export function mentionedStep(question: string, steps: readonly { name: string; kind: string }[]): number | null {
+  const n = question.match(/第\s*([一二三四五六七八九十\d]+)\s*步/)?.[1];
+  if (n) {
+    const num = /^\d+$/.test(n) ? Number(n) : "一二三四五六七八九十".indexOf(n) + 1;
+    return num >= 1 && num <= steps.length ? num : null;
+  }
+  let hit: number | null = null;
+  steps.forEach((s, i) => {
+    if (s.name && question.includes(s.name)) hit = i + 1;
+  });
+  if (hit) return hit;
+  steps.forEach((s, i) => {
+    if (STEP_KIND_WORDS[s.kind]?.test(question)) hit = i + 1;
+  });
+  return hit;
 }
 
 /** 目前能只读查看项目文件的 Agent：不落盘 + 进程级只读两样都有的（后端 ai::inspect_readonly_args 同口径） */

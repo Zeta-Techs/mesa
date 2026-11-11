@@ -3,7 +3,7 @@
  * 纯函数，数据由 project-assistant-run.ts 用已有命令取齐后传进来；这里只管挑什么、怎么写、写多长。
  * 不放文献 / 数据 / 稿件正文，不放密钥（出站前后端还会整段脱敏），不放别的项目的东西。
  */
-import { CHECK_STATUS_LABEL, type CheckItem } from "./research-checks.ts";
+import { CHECK_STATUS_LABEL, checkSourceLabel, type CheckItem } from "./research-checks.ts";
 import { mesaErrorLine, type MesaErrorRecord } from "./mesa-errors.ts";
 import { isAppCrashClose, runFailureReason, type RunFailureInput } from "./run-failure.ts";
 
@@ -129,14 +129,19 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
     if (s.brief) parts.push(`要做：${clip(s.brief, 300)}`);
     if (s.expectedArtifacts.length) parts.push(`应交：${s.expectedArtifacts.slice(0, 8).join("、")}`);
     if (s.acceptanceCriteria.length) parts.push(`怎样算做完：${s.acceptanceCriteria.slice(0, 5).map((c) => clip(c, 120)).join("；")}`);
-    const flagged = s.checks.filter((c) => c.status !== "passed");
+    // 拦下的在前；Mesa 核对的是数出来的事实，带上位置和说明（2026-11-11 大纲核对），其余只写标题
+    const flagged = s.checks
+      .filter((c) => c.status !== "passed")
+      .sort((a, b) => Number(a.status !== "blocked") - Number(b.status !== "blocked"));
     if (flagged.length) {
-      parts.push(
-        `核验：${flagged
-          .slice(0, 8)
-          .map((c) => `[${CHECK_STATUS_LABEL[c.status]}] ${clip(c.title, 120)}${c.target ? `（${c.target.file}）` : ""}`)
-          .join("；")}`,
-      );
+      const shown = flagged.slice(0, 12).map((c) => {
+        const mesa = c.checker === "mesa";
+        const at = c.target ? `（${c.target.file}${mesa && c.target.line ? `:${c.target.line}` : ""}）` : "";
+        const detail = mesa && c.evidence?.detail ? `：${clip(c.evidence.detail, 160)}` : "";
+        return `[${CHECK_STATUS_LABEL[c.status]}·${checkSourceLabel(c)}] ${clip(c.title, 120)}${at}${detail}`;
+      });
+      if (flagged.length > shown.length) shown.push(`另有 ${flagged.length - shown.length} 项`);
+      parts.push(`核验：\n${shown.map((l) => `- ${l}`).join("\n")}`);
     }
     if (s.reviewNotes) parts.push(`评审退回意见：\n${clip(s.reviewNotes, 800)}`);
     return parts.join("\n");

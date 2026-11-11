@@ -615,6 +615,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   project-assistant.ts       # 项目助手纯逻辑（2026-11-04，docs/design-project-assistant.md）：classifyQuestion 本地分流 howto / project / mixed / chat / general / request（2026-11-05 接活，previousTurnHint 接着上一轮）；
                              # 接活：REQUEST_RULES（六种去向、问清楚、派活单）、parseClarify（:::问 块）、派活单 v2 字段与 parseOrderPaths、RESEARCH_ORDER_RULES（科研通则唯一出处）、OrderTextOptions；
                              # 补料单（2026-11-06）：REWORK_RULES / parseReworkOrder（:::补料 块，退回目标须在「从」之前）；
+                             # 问一轮怎么样（2026-11-11）：REVIEW_RE / isReviewAsk 按问项目走并只读查看，mentionedStep 按第 N 步 / 步骤名 / 类型叫法认是哪一步；
                              # 三套规矩 PROJECT_RULES / HOWTO_RULES / CHAT_RULES，wantsInspect / inspectRules（只读查看项目文件），WORK_ORDER_RULES / parseWorkOrder / workOrderMessage（派活单），buildAssistantPrompt 按分流带快照 / 说明书摘录 / 项目概况，basisText（依据一行）、
                              # assistantErrorText（没问成译白话）、splitAnswerLead、intentEffort / localReply / SNAPSHOT_MAX_CHARS / GUIDE_LIMIT（提速）、parseAssistantAnswer（[[看这一步:N]] 等动作标记只认白名单、按钮文字前端生成、最多三个）（tests/project-assistant.test.ts）
   project-map.ts             # 项目地图（2026-11-05 接活）：renderProjectMap 把 project_file_map 的文件清单拼成给项目助手看的一段——小目录逐个列、大目录折成摘要列最新几个、「最近改动」标上次问以来的「新」，超长截断；只有文件名不读内容（tests/project-map.test.ts）
@@ -631,10 +632,11 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   assistant-capabilities.ts  # 接活二期能力清单的两块：workerCapabilityLines（干活的连接能做到哪一步——支持程度、看图、出图、能否定时，数据来自 agent_capabilities / model_capabilities / 设置出图模型 / image_gen_status）、TRIGGER_CATALOG_LINES（定时与事件只说明不建）（tests/assistant-capabilities.test.ts）
   builtin-tasks.ts           # 内置科研任务（2026-11-05；11-08 加审改已有稿件，引文域只体检）：组会汇报 / 进展周报 / 实验规划 / 审改已有稿件的做法数据；不是流程模板、不进 pipeline-presets。findBuiltinTask、builtinTaskCatalogLines（能力清单）、builtinTaskMethod（派活单附上的做法）、builtinTaskGoalText（新建目标当模板）（tests/builtin-tasks.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定 / 研究档案），超长先砍事件与日志（同上测试）
-  project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
+  project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过（各步核验 = 核验文件 + 大纲那步现算的 Mesa 核对，stepChecks）；
+                             # 问一轮怎么样时 reviewAskFocus 按点名或评审页开着的那一步做重点（reviewRoundFocus）；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
-  assistant-brief.ts         # 项目助手「现在的情况」卡与按状态换的常用问题（2026-11-08，纯逻辑）：briefLines（出错 / 等确认 / 待评审 / 核验待判断 / 目标待验收与上次打开以来的保存、完成）、quickAsks（出错→为什么、待评审→先帮你过一遍、没流程→想做什么）、reviewPrereadFocus（评审前只读看一遍的重点，评审页同用）、knowledgeDraftFocus（项目知识还是空的时提议从项目文件起草，最多五条 :::记下，人逐条点）、summaryDue / summaryFocus（聊满 10 轮提议整理定下的事，点了才调 AI）；取数在 project-assistant-run gatherBriefInput，不调 AI（tests/assistant-brief.test.ts）
+  assistant-brief.ts         # 项目助手「现在的情况」卡与按状态换的常用问题（2026-11-08，纯逻辑；reviewRoundFocus「这一轮怎么样」的重点、setReviewingStep 评审页开着哪一步）：briefLines（出错 / 等确认 / 待评审 / 核验待判断 / 目标待验收与上次打开以来的保存、完成）、quickAsks（出错→为什么、待评审→先帮你过一遍、没流程→想做什么）、reviewPrereadFocus（评审前只读看一遍的重点，评审页同用）、knowledgeDraftFocus（项目知识还是空的时提议从项目文件起草，最多五条 :::记下，人逐条点）、summaryDue / summaryFocus（聊满 10 轮提议整理定下的事，点了才调 AI）；取数在 project-assistant-run gatherBriefInput，不调 AI（tests/assistant-brief.test.ts）
   project-file-open.ts       # 项目页打开文件的唯一入口 showProjectFile（2026-11-11）：本步文件、步骤卡、收尾包、文献雷达、资料列表都调它；有没保存的改动先问；轻模块，调用方不必拉进预览组件
   project-file-pane.ts       # 文件栏纯逻辑：宽度 360–960、dockOccupant（与项目助手轮流谁在前）、neighborFile（↑↓）、filePaneShouldClose（只在项目页换项目时收、脏不收）（tests/project-file-pane.test.ts）
   assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）、assistantShortcutTarget（⌘J / 命令面板问哪个项目）、assistantDayLabel / sameLocalDay（问答记录按天分隔）（tests/assistant-dock.test.ts）

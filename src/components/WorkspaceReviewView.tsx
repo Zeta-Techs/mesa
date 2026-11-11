@@ -90,7 +90,7 @@ import {
 } from "../diff-view";
 import { selectHiddenProfiles, useAppStore } from "../store";
 import { MAX_MATERIALS as CONSULT_MAX_MATERIALS } from "../consult";
-import { reviewPrereadFocus, reviewPrereadQuestion } from "../assistant-brief";
+import { reviewPrereadFocus, reviewPrereadQuestion, setReviewingStep } from "../assistant-brief";
 import type {
   CitationHealthDto,
   GitCommitResultDto,
@@ -1170,6 +1170,18 @@ function LiveWorkspaceReviewView({
   // 大纲核对（综述回路三期）：大纲那一步打开评审时 Mesa 自己数、自己查，合并进核验清单（不写文件、不靠 AI 跑脚本）
   const [outlineCheck, setOutlineCheck] = useState<OutlineCheckResult | null>(null);
   const checks = useMemo(() => mergeMesaChecks(fileChecks, outlineCheck?.items ?? []), [fileChecks, outlineCheck]);
+  // 告诉项目助手评审页正开着哪一步：这时问「这轮怎么样」「帮我看看」默认看这一步（关掉评审就清）
+  useEffect(() => {
+    if (!researchContext) return;
+    setReviewingStep({
+      projectRoot: researchContext.workspace.repoPath,
+      n: researchContext.stepNo,
+      name: researchContext.step.name,
+      worktree: researchContext.workspace.worktreePath,
+      artifacts: researchContext.step.expectedArtifacts,
+    });
+    return () => setReviewingStep(null);
+  }, [researchContext]);
   const outlineRoots =
     researchContext && stepKind(researchContext.step, undefined) === "outline"
       ? `${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}`
