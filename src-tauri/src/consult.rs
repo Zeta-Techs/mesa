@@ -1543,6 +1543,29 @@ pub async fn consult_retry(
     .map_err(|e| e.to_string())?
 }
 
+/// 预填材料前筛一遍：只留 root 下真实存在的文件（项目内相对路径；目录、通配、越界的丢掉）。
+/// 步骤卡 / 评审页按 expectedArtifacts 预填时用，免得弹层里列一堆还没产出的文件
+#[tauri::command]
+pub async fn consult_existing_files(root: String, paths: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = root_of(&root);
+        let mut out: Vec<String> = Vec::new();
+        for p in paths {
+            if p.contains(['*', '?']) {
+                continue;
+            }
+            if let Some(rel) = clean_rel(&p) {
+                if base.join(&rel).is_file() && !out.contains(&rel) {
+                    out.push(rel);
+                }
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn consult_rename(project_root: String, id: String, title: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {

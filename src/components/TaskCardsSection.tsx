@@ -21,6 +21,7 @@ import StepEvidenceChip from "./StepEvidenceChip";
 import StepFlow from "./StepFlow";
 import FuseDraftModal from "./FuseDraftModal";
 import { useAppStore } from "../store";
+import { MAX_MATERIALS as CONSULT_MAX_MATERIALS } from "../consult";
 import { stepAttention } from "../run-overview";
 import { toast } from "../toast";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
@@ -581,6 +582,30 @@ export default function TaskCardsSection({
       autoStart: Boolean(discussLaunch?.profileId),
     });
     setPage("terminal");
+  }
+
+  /** 研讨（2026-11-11）只上人要拍板的步骤：role 为 you / both；检索、清洗这类 role=ai 的不出 */
+  const consultEligible = focusStepDto?.role === "you" || focusStepDto?.role === "both";
+
+  /** 「请几家研讨」：问题按这一步预填，材料 = 这一步的 TASK.md + 已经存在的主要产物（按弹层上限截）。
+   *  步骤开着工作副本时成员读工作副本（产物还没带回项目根，同评审页 readRoot 口径），记录照样写项目根 */
+  async function openStepConsult() {
+    const step = focusStepDto;
+    if (!step) return;
+    const ws = pickStepWorkspace(workspaces, projectPath, step);
+    const readRoot = ws?.status === "active" ? ws.worktreePath : undefined;
+    const stepNo = steps.findIndex((s) => s.name === step.name) + 1;
+    const taskMd = readRoot ? "TASK.md" : focusDraft?.text?.trim() ? focusDraft.relPath : null;
+    const candidates = [taskMd, ...(step.expectedArtifacts ?? [])].filter((x): x is string => !!x);
+    const existing = await invoke<string[]>("consult_existing_files", { root: readRoot ?? projectPath, paths: candidates }).catch(
+      () => [] as string[],
+    );
+    useAppStore.getState().openConsult({
+      projectRoot: projectPath,
+      question: `第 ${stepNo} 步「${step.name}」：照现在的 TASK.md 做下去，哪些方向或判断站不住、还没想清楚？最该先定的是哪一件？`,
+      materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
+      ...(readRoot ? { readRoot, readLabel: `第 ${stepNo} 步 · ${step.name}的工作副本` } : {}),
+    });
   }
 
   /** 开工：挂步骤的卡打开开工确认弹层（TASK.md 预览编辑，草稿优先），确认后才建工作区 */
@@ -1755,7 +1780,19 @@ export default function TaskCardsSection({
                 ? () => continueFocusedStep(true)
                 : undefined
             }
-            discussInline={null}
+            discussInline={
+              // 「继续讨论 · TASK.md · 请几家研讨」同一行（2026-11-11 拍板：研讨上步骤卡，只占一个文字链接、不抢右缘主动作）
+              consultEligible ? (
+                <button
+                  type="button"
+                  onClick={() => void openStepConsult()}
+                  title="拿不准一个判断时，请几家不同模型的 AI 只读看看这一步的任务书和产物，各给意见、再互相补充；它们不改文件，记下什么由你定。只想和一家 AI 聊着改任务书，用左边的商量"
+                  className="shrink-0 rounded-sm px-1 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l2"
+                >
+                  请几家研讨
+                </button>
+              ) : null
+            }
             discussContent={
               // 话题 2026-11-11 收进商量（和商量是同一家 AI 聊同一步，只差改不改稿）：不再新建话题卡；
               // 已有的老话题卡照样列在这里，能接着聊、能「◈ 写入任务书」，数据不迁移

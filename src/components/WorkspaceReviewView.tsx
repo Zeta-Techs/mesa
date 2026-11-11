@@ -89,6 +89,7 @@ import {
   type DiffLine,
 } from "../diff-view";
 import { selectHiddenProfiles, useAppStore } from "../store";
+import { MAX_MATERIALS as CONSULT_MAX_MATERIALS } from "../consult";
 import { reviewPrereadFocus, reviewPrereadQuestion } from "../assistant-brief";
 import type {
   CitationHealthDto,
@@ -2907,17 +2908,21 @@ function LiveWorkspaceReviewView({
                   <button
                     type="button"
                     onClick={() => {
-                      onClose();
-                      useAppStore.getState().openConsult({
-                        projectRoot: researchContext.root,
-                        question: `第 ${researchContext.stepNo} 步「${researchContext.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
-                        materials: researchContext.step.expectedArtifacts
-                          .filter((a) => a && !/[*?]/.test(a) && !a.endsWith("/"))
-                          .slice(0, 8)
-                          .map((path) => ({ path, range: "" })),
-                        readRoot: researchContext.workspace.worktreePath,
-                        readLabel: `第 ${researchContext.stepNo} 步 · ${researchContext.step.name}的工作副本`,
-                      });
+                      const ctx = researchContext;
+                      const readRoot = ctx.workspace.worktreePath;
+                      // 只预填已经产出的文件（同步骤卡「请几家研讨」口径）
+                      void invoke<string[]>("consult_existing_files", { root: readRoot, paths: ctx.step.expectedArtifacts })
+                        .catch(() => [] as string[])
+                        .then((existing) => {
+                          onClose();
+                          useAppStore.getState().openConsult({
+                            projectRoot: ctx.root,
+                            question: `第 ${ctx.stepNo} 步「${ctx.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
+                            materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
+                            readRoot,
+                            readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
+                          });
+                        });
                     }}
                     title="请几家不同模型只读这一步交的东西，各自给判断，再看别家的补充或反驳；不改稿件、不判通过，记下什么由你定"
                     className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
