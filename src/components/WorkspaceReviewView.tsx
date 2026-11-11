@@ -20,7 +20,9 @@ import {
 import { resolveStepReviewProfile, reviewPaneTabs, type ReviewPane } from "../step-review";
 import {
   appendReviewAnnotation,
+  appendReviewLine,
   scanWritingReview,
+  writingHitChecks,
   writingReturnPrompt,
   writingScanSourcePath,
   type WritingReviewHit,
@@ -109,7 +111,9 @@ import type {
   WorkspacePrResultDto,
 } from "../types";
 import { usePolling } from "../polling";
-import { checkChipText, checkConsultSeed, countChecks, type ChecksDto } from "../research-checks";
+import { checkChipText, checkConsultSeed, checkReviewNote, countChecks, type ChecksDto } from "../research-checks";
+import ReviewAskAiMenu, { type ReviewAskAiItem } from "./ReviewAskAiMenu";
+import CoachTip from "./CoachTip";
 import CheckList from "./CheckList";
 import OutlineCoverageCompare from "./OutlineCoverageCompare";
 import { mergeMesaChecks, type OutlineCheckResult } from "../outline-check";
@@ -538,6 +542,40 @@ function ChangeTree({
   );
 }
 
+const NOTES_KEY = (worktreePath: string) => `mesa.reviewNotes:${worktreePath}`;
+/** 第一次进评审的说明气泡看过没有（每台电脑一次；点「基础检查 ⓘ」可再看） */
+const REVIEW_COACH_KEY = "mesa.reviewCoach.v1";
+
+function readStoredNotes(worktreePath: string): string {
+  try {
+    return localStorage.getItem(NOTES_KEY(worktreePath)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function storeNotes(worktreePath: string, notes: string) {
+  try {
+    if (notes.trim()) localStorage.setItem(NOTES_KEY(worktreePath), notes);
+    else localStorage.removeItem(NOTES_KEY(worktreePath));
+  } catch {
+    /* 存不了只是关掉后不留，不影响退回 */
+  }
+}
+
+/** 跳到预览里以这个节号开头的标题（大纲的小节常写成加粗段落，不在目录里，所以连 strong 一起找） */
+function jumpToSection(host: HTMLElement | null, label: string): boolean {
+  const num = label.trim().match(/^\d+(?:\.\d+)*/)?.[0];
+  if (!host || !num) return false;
+  const hit = [...host.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6, strong")].find((el) => {
+    const text = (el.textContent ?? "").trim();
+    return text === num || text.startsWith(`${num} `);
+  });
+  if (!hit) return false;
+  hit.scrollIntoView({ behavior: "smooth", block: "start" });
+  return true;
+}
+
 function DeliveryReviewPane({
   root,
   paths,
@@ -545,7 +583,6 @@ function DeliveryReviewPane({
   onSelect,
   empty,
   onAnnotate,
-  above,
 }: {
   root: string;
   paths: readonly string[];
@@ -558,8 +595,6 @@ function DeliveryReviewPane({
     fileName: string,
     comment: string,
   ) => string | null;
-  /** 预览上方挂的一块（大纲：覆盖检查 AI 写的 / Mesa 数的并排），按正在看的文件给 */
-  above?: (path: string) => React.ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const [listOpen, setListOpen] = useState(true);
@@ -611,13 +646,12 @@ function DeliveryReviewPane({
               </li>
             ))}
             {shown.length === 0 && (
-              <li className="px-2 py-1 text-xs text-l4">没有匹配的笔记。</li>
+              <li className="px-2 py-1 text-xs text-l4">没有匹配的文件。</li>
             )}
           </ul>
         </aside>
       )}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none">
-        {above?.(current)}
+      <div data-review-doc className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none">
         <ProjectFilePreview
           key={current}
           path={absUnderRoot(root, current)}
@@ -627,8 +661,8 @@ function DeliveryReviewPane({
               <button
                 type="button"
                 onClick={() => setListOpen(true)}
-                title="展开笔记列表"
-                aria-label="展开笔记列表"
+                title="展开文件列表"
+                aria-label="展开文件列表"
                 className="-ml-1 shrink-0 px-1 text-micro text-l3 hover:text-l1"
               >
                 ›
@@ -1171,7 +1205,6 @@ function LiveWorkspaceReviewView({
   const [checksExpanded, setChecksExpanded] = useState(false);
   // 大纲核对（综述回路三期）：大纲那一步打开评审时 Mesa 自己数、自己查，合并进核验清单（不写文件、不靠 AI 跑脚本）
   const [outlineCheck, setOutlineCheck] = useState<OutlineCheckResult | null>(null);
-  const checks = useMemo(() => mergeMesaChecks(fileChecks, outlineCheck?.items ?? []), [fileChecks, outlineCheck]);
   // 告诉项目助手评审页正开着哪一步：这时问「这轮怎么样」「帮我看看」默认看这一步（关掉评审就清）
   useEffect(() => {
     if (!researchContext) return;
@@ -1213,6 +1246,13 @@ function LiveWorkspaceReviewView({
   const [humanClosing, setHumanClosing] = useState<string[] | null>(null);
   const [wsRow, setWsRow] = useState<WorkspaceDto | null>(null);
   const [writingHits, setWritingHits] = useState<WritingReviewHit[]>([]);
+  // 核验清单 = 核验文件 + Mesa 自己查的（大纲核对、写作扫描；2026-11-11 写作扫描不再单独占一段黄字）
+  const writingFile = useMemo(() => writingScanSourcePath((diff?.files ?? []).map((file) => file.path)), [diff]);
+  const checks = useMemo(
+    () => mergeMesaChecks(fileChecks, [...(outlineCheck?.items ?? []), ...writingHitChecks(writingHits, writingFile ?? "")]),
+    [fileChecks, outlineCheck, writingHits, writingFile],
+  );
+  // 退回意见：按工作副本记在本机（2026-11-11 用户：评审看了一半关掉，写的意见别丢）；退回或保存进项目后清掉
   const [reviewNotes, setReviewNotes] = useState("");
   // 上次退回的意见（.ccode/review-notes.md）：只读显示一行，不再预填进意见框——AI 改完再进评审时，
   // 框里还是上次那段，像没发出去、又容易原样再发一遍（2026-11-10 HER）；要沿用点「沿用」
@@ -1220,6 +1260,15 @@ function LiveWorkspaceReviewView({
   // 退回意见框默认收成一行（常开时每个页签都被它占掉一大块）；有字时自己展开
   const [notesOpen, setNotesOpen] = useState(false);
   const [returnBusy, setReturnBusy] = useState(false);
+  // 意见属于哪个工作副本：换工作副本时先读回那一份，不把上一份写进新键
+  const notesPathRef = useRef(worktreePath);
+  // 读回之前不写：挂载时这个 effect 先于下面的读回运行，会把存着的那份当空的删掉
+  const notesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (notesLoadedRef.current) storeNotes(notesPathRef.current, reviewNotes);
+  }, [reviewNotes]);
+  // 第一次进评审的说明气泡：0 状态标签 → 1 请 AI 看看 → 2 意见与保存；null = 不显示
+  const [coachStep, setCoachStep] = useState<number | null>(null);
   // 上游漂移提醒：上游步骤晚于本步最后推进时间合并 → 产物可能过期（list_workspaces 顺带取回）
   const [staleUpstream, setStaleUpstream] = useState<string | null>(null);
   const setPage = useAppStore((s) => s.setPage);
@@ -1409,7 +1458,9 @@ function LiveWorkspaceReviewView({
     setArtifacts(null);
     setWsRow(null);
     setWritingHits([]);
-    setReviewNotes("");
+    notesPathRef.current = worktreePath;
+    notesLoadedRef.current = true;
+    setReviewNotes(readStoredNotes(worktreePath));
     setStaleUpstream(null);
     setDistillDraftError(null);
     setUnmerged(null);
@@ -1713,10 +1764,17 @@ function LiveWorkspaceReviewView({
       setReviewNotes((notes) =>
         appendReviewAnnotation(notes, { fileName, excerpt: quote, comment }),
       );
+      setNotesOpen(true);
       return null;
     },
     [],
   );
+
+  /** 核验清单一条加进意见（写成能照着改的一句），并打开意见栏 */
+  const addCheckNote = useCallback((item: Parameters<typeof checkReviewNote>[0]) => {
+    setReviewNotes((notes) => appendReviewLine(notes, checkReviewNote(item)));
+    setNotesOpen(true);
+  }, []);
 
   async function returnToAgent(rewrite: boolean) {
     if (!wsRow || returnBusy) return;
@@ -1770,6 +1828,9 @@ function LiveWorkspaceReviewView({
         ),
       );
       setPage("terminal");
+      // 意见已经写进 .ccode/review-notes.md 交出去了：本机草稿清掉，下次进来显示成「上次退回的意见」
+      setReviewNotes("");
+      setNotesOpen(false);
       onClose();
     } catch (reason) {
       setError(String(reason));
@@ -2050,6 +2111,27 @@ function LiveWorkspaceReviewView({
   );
   const contentReview = Boolean(paneTabs) && !conflictMode && !health?.conflict;
   const contentReady = !opening && contentReview && diff != null;
+  // 保存进项目了：这一轮的意见草稿不再需要
+  useEffect(() => {
+    if (mergeDone) storeNotes(worktreePath, "");
+  }, [mergeDone, worktreePath]);
+  useEffect(() => {
+    if (!contentReady || mergeDone) return;
+    try {
+      if (localStorage.getItem(REVIEW_COACH_KEY)) return;
+    } catch {
+      return;
+    }
+    setCoachStep((step) => step ?? 0);
+  }, [contentReady, mergeDone]);
+  const finishCoach = () => {
+    setCoachStep(null);
+    try {
+      localStorage.setItem(REVIEW_COACH_KEY, "1");
+    } catch {
+      /* 存不了下次再出一遍 */
+    }
+  };
   // 没有内容页签（普通评审）或正处在冲突里（contentReview 为假）时，Git 对照 / 冲突区就是主区，必须显示；
   // 有内容页签的只在内容就绪后切到「文件」才显示（打开中不闪）。2026-11-10 HER：精读评审撞上冲突，主区一片空白
   const showGitFiles = !contentReview || (contentReady && reviewPane === "files");
@@ -2596,6 +2678,100 @@ function LiveWorkspaceReviewView({
     }
   }
 
+  // 「请 AI 看看 ▾」的三样（2026-11-11 收进一个菜单；条件与原来三个按钮一致）
+  const askAiItems: ReviewAskAiItem[] = [];
+  if (researchContext && !mergeDone) {
+    const ctx = researchContext;
+    // 评审前让项目助手只读过一遍（2026-11-08）：列出值得看的地方，不判通过、不打分；人点了才问、才花钱
+    askAiItems.push({
+      key: "assistant",
+      label: "让项目助手先看一遍",
+      desc: "只读这一步交的东西，列出值得你细看的地方：缺出处、数字对不上、改动大的段落。",
+      onClick: () =>
+        useAppStore.getState().openAssistant(
+          ctx.workspace.repoPath,
+          reviewPrereadQuestion(ctx.stepNo),
+          reviewPrereadFocus(ctx.stepNo, ctx.step.name, {
+            worktree: ctx.workspace.worktreePath,
+            artifacts: ctx.step.expectedArtifacts,
+          }),
+        ),
+    });
+    if (contentReview && stepHasClaims(ctx.step.expectedArtifacts)) {
+      if (crossReviewer) {
+        askAiItems.push({
+          key: "cross",
+          label: `请 ${crossReviewerLabel} 复核引用`,
+          // 说明第一句写清这次用哪条连接、哪个模型（原来写在按钮悬停里）
+          desc: `${reviewerOptionLabel(crossReviewer, crossReviewerLabel)}。对照原文摘录逐条核对，结论进核验清单，都标「待你判断」；只写核验清单，不改稿件。`,
+          warn: crossReviewer.sameFamily,
+          disabled: crossBusy || !wsRow,
+          onClick: () => void startCrossReview(),
+          // 换复核方：默认挑模型族不同的一家；同模型族、维护级的标在选项里，不禁止（两层小菜单，同聊天层换 Agent）
+          trailing: (
+            <AgentModelPicker
+              options={reviewerChoices.map((o) => ({
+                ...o,
+                key: reviewerOptionKey(o),
+                warn: o.sameFamily ? "与写稿同一模型族" : undefined,
+              }))}
+              selectedKey={reviewerOptionKey(crossReviewer)}
+              onPick={(o) => setReviewerKey(o.key)}
+              title="换复核方"
+              hint="默认挑与写稿不同模型族的一家。"
+              agentNote={(id) =>
+                (TIER1_AGENTS as readonly string[]).includes(id)
+                  ? null
+                  : { short: "维护级", long: "维护级：复核指令未在这家验证过", warn: true }
+              }
+              ariaLabel="换复核方"
+              triggerTitle="换一个复核的 Agent、连接或模型"
+              triggerClassName="rounded-sm px-1 text-micro text-l4 hover:bg-hover hover:text-l1"
+            >
+              换一家
+            </AgentModelPicker>
+          ),
+        });
+      }
+      // 请几家研讨（2026-11-11）：与复核分工——复核是一家逐条核对引用；研讨是几家不同模型只读各给判断再互相补充，结论由你记
+      askAiItems.push({
+        key: "consult",
+        label: "请几家研讨",
+        desc: "几家不同模型的 AI 各自给判断，再互相补充或反驳；记下什么由你定。",
+        onClick: () => {
+          const readRoot = ctx.workspace.worktreePath;
+          // 只预填已经产出的文件（同步骤卡「请几家研讨」口径）；原地打开，看完回来接着评审
+          void invoke<string[]>("consult_existing_files", { root: readRoot, paths: ctx.step.expectedArtifacts })
+            .catch(() => [] as string[])
+            .then((existing) => {
+              useAppStore.getState().openConsult({
+                projectRoot: ctx.root,
+                question: `第 ${ctx.stepNo} 步「${ctx.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
+                materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
+                readRoot,
+                readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
+              });
+            });
+        },
+      });
+    }
+  }
+  const canReturn = contentReview && !mergeDone && !conflictMode;
+  /** 覆盖检查对照里点节名：切到 outline.md、稿件页签，等预览渲染出来再跳到那一节 */
+  function jumpToOutlineSection(label: string) {
+    setReviewPane("content");
+    userPickedRef.current = true;
+    setActivePath("outline.md");
+    let tries = 0;
+    const attempt = () => {
+      const host = document.querySelector<HTMLElement>("[data-review-doc]");
+      if (jumpToSection(host, label) || ++tries > 20) return;
+      window.setTimeout(attempt, 100);
+    };
+    window.setTimeout(attempt, 50);
+  }
+
+
   return (
     <div data-surface="canvas" className="absolute inset-0 z-30 flex min-h-0 flex-col bg-canvas">
       <header className="shrink-0 border-b border-hairline bg-strip">
@@ -2644,6 +2820,34 @@ function LiveWorkspaceReviewView({
               />
             </button>
 
+            {canReturn && (
+              <span className="relative">
+                <button
+                  type="button"
+                  aria-expanded={notesOpen}
+                  onClick={() => setNotesOpen((v) => !v)}
+                  title="写下要改的地方交回给 AI：在正文里划一段、或在核验清单里点「加进意见」也会收到这里。不会保存进项目"
+                  className="flex h-8 items-center gap-1 rounded-sm border border-field px-2.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                >
+                  退回修改…
+                  {reviewNotes.trim() && (
+                    <span className="tabular-nums text-l4">{reviewNotes.trim().split("\n").filter((l) => l.trim()).length}</span>
+                  )}
+                </button>
+                {coachStep === 2 && (
+                  <CoachTip
+                    arrow="up"
+                    arrowAt={268}
+                    title="满意就保存，不满意就退回"
+                    onClose={finishCoach}
+                    className="absolute top-full right-0 z-50 mt-2 w-80"
+                    actions={[{ label: "知道了", onClick: finishCoach }]}
+                  >
+                    在正文里划一段，或在核验清单里点「加进意见」，意见都收在右边一栏；点「退回修改」交给原来的 AI 接着改。满意就点「保存进项目」。
+                  </CoachTip>
+                )}
+              </span>
+            )}
             {diff && health?.conflict && !conflictMode ? (
               <button
                 type="button"
@@ -2884,24 +3088,45 @@ function LiveWorkspaceReviewView({
             (artifacts && artifacts.total > 0) ||
             (humanClosing && humanClosing.length > 0)) && (
             <div className="border-t border-hairline px-3 py-1.5 text-xs">
-              <div className="flex min-h-6 items-center gap-3">
-                <span
-                  className="shrink-0 cursor-help text-l4"
-                  title={
-                    reviewProfile.showReportDisclaimer
-                      ? "只查引用键能不能解析、产物有没有产出。文件已产出、引用键可解析不代表内容已通过审查；接受改动前仍须核对证据与未决事项"
-                      : "仅检查引用键和产物；不验证内容正确性或结论是否成立"
-                  }
-                >
-                  基础检查 ⓘ
+              {/* 2026-11-11 评审页整理：查出来的状态（核验 / 引用 / 产物）、请 AI 帮看（一个菜单）、页签各成一组；
+                  退回意见挪到右侧意见栏，「退回修改…」上了右上角，和「保存进项目」放在一起 */}
+              <div className="flex min-h-6 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setCoachStep(0)}
+                    className="text-l4 hover:text-l1"
+                    title={`${
+                      reviewProfile.showReportDisclaimer
+                        ? "只查机器数得清的事：引用键能不能解析、产物有没有产出、Mesa 和脚本的核对。这些都对，不代表内容已经通过；保存前仍要你核对证据与未决事项"
+                        : "只查引用键和产物，不判断内容对不对、结论成不成立"
+                    }\n点一下，再看一遍这一页怎么用`}
+                  >
+                    基础检查 ⓘ
+                  </button>
+                  {coachStep === 0 && (
+                    <CoachTip
+                      arrow="up"
+                      arrowAt={28}
+                      title="先看这几个标签"
+                      onClose={finishCoach}
+                      className="absolute top-full left-0 z-50 mt-2 w-80"
+                      actions={[
+                        { label: "跳过", onClick: finishCoach },
+                        { label: "下一条", onClick: () => setCoachStep(1) },
+                      ]}
+                    >
+                      核验、引用、产物是 Mesa 和脚本查出来的。红色「拦下」要先处理，黄色「待你判断」要你看一眼再定；点开核验能看每一条，觉得要改就点「加进意见」。
+                    </CoachTip>
+                  )}
                 </span>
                 {checks && (
                   <button
                     type="button"
                     aria-expanded={checksExpanded}
                     onClick={() => setChecksExpanded((v) => !v)}
-                    title="查过的每一项：拦下的、要你判断的、机器确认成立的；每条标了是谁查的（Mesa 核对、核验脚本、AI 判断）"
-                    className={`shrink-0 rounded-sm px-1 hover:bg-hover ${
+                    title="点开看每一条：拦下的、要你判断的、确认无误的；每条标了是谁查的（Mesa 核对、核验脚本、AI 判断）"
+                    className={`shrink-0 rounded-full border border-hairline px-2 hover:bg-hover ${
                       countChecks(checks.items).blocked > 0
                         ? "text-err-text"
                         : countChecks(checks.items).needsHuman > 0 || checks.skipped > 0
@@ -2912,92 +3137,6 @@ function LiveWorkspaceReviewView({
                     {checkChipText(checks.items)}
                   </button>
                 )}
-                {researchContext && !mergeDone && (
-                  // 评审前让项目助手只读过一遍（2026-11-08）：列出值得看的地方，不判通过、不打分；人点了才问、才花钱
-                  <button
-                    type="button"
-                    onClick={() =>
-                      useAppStore
-                        .getState()
-                        .openAssistant(
-                          researchContext.workspace.repoPath,
-                          reviewPrereadQuestion(researchContext.stepNo),
-                          reviewPrereadFocus(researchContext.stepNo, researchContext.step.name, {
-                            worktree: researchContext.workspace.worktreePath,
-                            artifacts: researchContext.step.expectedArtifacts,
-                          }),
-                        )
-                    }
-                    title="项目助手只读打开这一步交的东西，列出值得你看的地方（缺出处、数字对不上、改动大的段落、待你判断的核验）；不判通过、不打分，采不采纳仍由你定"
-                    className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
-                  >
-                    让项目助手先看一遍
-                  </button>
-                )}
-                {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && crossReviewer && !mergeDone && (
-                  <span className="flex shrink-0 items-center">
-                    <button
-                      type="button"
-                      disabled={crossBusy || !wsRow}
-                      onClick={() => void startCrossReview()}
-                      title={`用 ${reviewerOptionLabel(crossReviewer, crossReviewerLabel)} 读原文摘录与正文，逐条判断支持与否；结论进核验清单，都标「待你判断」。它只写核验清单这一个文件，不改稿件；要是改了别的文件，会出现在这一步的评审改动里`}
-                      className={`rounded-sm px-1 hover:bg-hover hover:text-l1 disabled:opacity-50 ${crossReviewer.sameFamily ? "text-warn-text" : "text-l3"}`}
-                    >
-                      请 {crossReviewerLabel} 复核
-                    </button>
-                    {/* 换复核方：默认挑模型族不同的一家；同模型族、维护级的标在选项里，不禁止。
-                        两层小菜单（先一家、再连接 · 模型），同聊天层换 Agent，不再一次摊开几十行（2026-11-11 用户） */}
-                    <AgentModelPicker
-                      options={reviewerChoices.map((o) => ({
-                        ...o,
-                        key: reviewerOptionKey(o),
-                        warn: o.sameFamily ? "与写稿同一模型族" : undefined,
-                      }))}
-                      selectedKey={reviewerOptionKey(crossReviewer)}
-                      onPick={(o) => setReviewerKey(o.key)}
-                      title="换复核方"
-                      hint="默认挑与写稿不同模型族的一家。"
-                      agentNote={(id) =>
-                        (TIER1_AGENTS as readonly string[]).includes(id)
-                          ? null
-                          : { short: "维护级", long: "维护级：复核指令未在这家验证过", warn: true }
-                      }
-                      ariaLabel="换复核方"
-                      triggerTitle="换一个复核的 Agent、连接或模型"
-                      triggerClassName="flex h-5 w-4 items-center justify-center rounded-sm text-micro text-l4 hover:bg-hover hover:text-l1"
-                    >
-                      ▾
-                    </AgentModelPicker>
-                  </span>
-                )}
-                {contentReview && researchContext && stepHasClaims(researchContext.step.expectedArtifacts) && !mergeDone && (
-                  // 请几家研讨（2026-11-11）：与「请 X 复核」分工——复核是一家逐条核对引用、结论进核验清单；
-                  // 研讨是几家不同模型只读各给判断再互相补充，结论由你记。成员读这一步的工作副本（产物还没带回项目根）
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const ctx = researchContext;
-                      const readRoot = ctx.workspace.worktreePath;
-                      // 只预填已经产出的文件（同步骤卡「请几家研讨」口径）
-                      void invoke<string[]>("consult_existing_files", { root: readRoot, paths: ctx.step.expectedArtifacts })
-                        .catch(() => [] as string[])
-                        .then((existing) => {
-                          // 原地打开（弹层压在评审覆盖层上），看完回来接着评审
-                          useAppStore.getState().openConsult({
-                            projectRoot: ctx.root,
-                            question: `第 ${ctx.stepNo} 步「${ctx.step.name}」交的东西里，哪些论断站不住或说过头了？哪些地方最需要我亲自看？`,
-                            materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
-                            readRoot,
-                            readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
-                          });
-                        });
-                    }}
-                    title="请几家不同模型只读这一步交的东西，各自给判断，再看别家的补充或反驳；不改稿件、不判通过，记下什么由你定"
-                    className="shrink-0 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
-                  >
-                    请几家研讨
-                  </button>
-                )}
                 {citations && citations.bibFound && citations.totalRefs > 0 && (
                   <button
                     type="button"
@@ -3005,29 +3144,25 @@ function LiveWorkspaceReviewView({
                     onClick={() => setCiteExpanded((v) => !v)}
                     title={
                       citations.missing.length > 0
-                        ? "点击查看缺失的引用键"
-                        : "文中引用键均能在 references.bib 中找到"
+                        ? `${citations.missing.length} 个引用键在 references.bib 里找不到，点开看是哪几个`
+                        : "正文里的引用键都能在 references.bib 里找到"
                     }
-                    className={`shrink-0 rounded-sm px-1 ${
-                      citations.missing.length > 0
-                        ? "text-warn-text hover:bg-hover"
-                        : "text-l3"
+                    className={`shrink-0 rounded-full border border-hairline px-2 ${
+                      citations.missing.length > 0 ? "text-warn-text hover:bg-hover" : "text-l3"
                     } disabled:cursor-default`}
                   >
-                    引用 {citations.resolved}/{citations.totalRefs} 可解析
-                    {citations.missing.length > 0 &&
-                      `（缺 ${citations.missing.length}）`}
+                    引用 {citations.resolved}/{citations.totalRefs}
+                    {citations.missing.length > 0 && ` · 缺 ${citations.missing.length}`}
                   </button>
                 )}
                 {artifacts && artifacts.total > 0 && (
                   <span
-                    className={`shrink-0 ${
-                      artifacts.produced < artifacts.total
-                        ? "text-warn-text"
-                        : "text-l3"
+                    title="任务书要交的文件，交了几份"
+                    className={`shrink-0 rounded-full border border-hairline px-2 ${
+                      artifacts.produced < artifacts.total ? "text-warn-text" : "text-l3"
                     }`}
                   >
-                    产物 {artifacts.produced}/{artifacts.total} 已产出
+                    产物 {artifacts.produced}/{artifacts.total}
                   </span>
                 )}
                 {humanClosing && humanClosing.length > 0 && (
@@ -3038,26 +3173,28 @@ function LiveWorkspaceReviewView({
                     收尾：{humanClosing.join("、")}
                   </span>
                 )}
-                {writingHits.length > 0 && (
-                  <span
-                    className="min-w-0 truncate text-warn-text"
-                    title={writingHits.map((hit) => hit.label).join("；")}
-                  >
-                    审阅时核对：{writingHits.map((hit) => hit.label).join("；")}
+                {askAiItems.length > 0 && (
+                  <span className="relative ml-1 shrink-0">
+                    <ReviewAskAiMenu items={askAiItems} />
+                    {coachStep === 1 && (
+                      <CoachTip
+                        arrow="up"
+                        arrowAt={28}
+                        title="拿不准，请 AI 帮你看"
+                        onClose={finishCoach}
+                        className="absolute top-full left-0 z-50 mt-2 w-80"
+                        actions={[
+                          { label: "跳过", onClick: finishCoach },
+                          { label: "下一条", onClick: () => setCoachStep(2) },
+                        ]}
+                      >
+                        让项目助手先过一遍，或请另一家 AI 核对引用、请几家一起研讨。它们只看不改，结论由你定。
+                      </CoachTip>
+                    )}
                   </span>
                 )}
-                {contentReview && !mergeDone && !notesOpen && !reviewNotes.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => setNotesOpen(true)}
-                    className={`${paneTabs ? "ml-auto" : ""} shrink-0 rounded-sm px-1 py-0.5 text-l3 hover:bg-hover hover:text-l1`}
-                    title="写下意见退回给 Agent 改，或按意见整份重写；也可以在稿件里划一段点「加进意见」。不会保存进项目"
-                  >
-                    写意见退回修改…
-                  </button>
-                )}
                 {contentReview && paneTabs && (
-                  <div className={`${!mergeDone && !notesOpen && !reviewNotes.trim() ? "" : "ml-auto"} flex shrink-0 gap-1`}>
+                  <div className="ml-auto flex shrink-0 gap-1">
                     {paneTabs.map((tab) => (
                       <button
                         key={tab.id}
@@ -3078,6 +3215,7 @@ function LiveWorkspaceReviewView({
               {checksExpanded && checks && (
                 <CheckList
                   checks={checks}
+                  onAddNote={contentReview && !mergeDone ? addCheckNote : undefined}
                   onConsult={
                     researchContext && !mergeDone
                       ? (item) => {
@@ -3099,74 +3237,16 @@ function LiveWorkspaceReviewView({
                         }
                       : undefined
                   }
-                />
+                >
+                  {outlineCheck && outlineCheck.rows.length > 0 && (
+                    <OutlineCoverageCompare rows={outlineCheck.rows} onJump={jumpToOutlineSection} />
+                  )}
+                </CheckList>
               )}
               {citeExpanded && citations && citations.missing.length > 0 && (
                 <p className="mt-1 break-all font-mono text-micro text-warn-text">
-                  缺失引用键：{citations.missing.join("、")}
+                  找不到的引用键：{citations.missing.join("、")}
                 </p>
-              )}
-              {contentReview && !mergeDone && lastNotes && (
-                <p className="mt-1 flex min-w-0 items-center gap-2 text-micro text-l4">
-                  <span className="min-w-0 truncate" title={lastNotes}>
-                    上次退回的意见：{lastNotes.replace(/\s+/g, " ")}
-                  </span>
-                  {!reviewNotes.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setReviewNotes(lastNotes);
-                        setNotesOpen(true);
-                      }}
-                      className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                      title="把上次的意见填进意见框，改一改再退回"
-                    >
-                      沿用
-                    </button>
-                  )}
-                </p>
-              )}
-              {contentReview && !mergeDone && (notesOpen || reviewNotes.trim() !== "") && (
-                <div className="mt-2 border-t border-hairline pt-2">
-                  <p className="mb-1 text-micro text-l4">
-                    写下意见，或在稿件里划一段点「加进意见」。退回后交给 Agent。不会保存进项目。
-                  </p>
-                  <textarea
-                    value={reviewNotes}
-                    onChange={(e) => setReviewNotes(e.target.value)}
-                    rows={3}
-                    autoFocus={notesOpen && !reviewNotes}
-                    placeholder="例如：摘要去掉未核实句；删 G1；空图改成见 Fig.n；不要凑字数。"
-                    className="w-full resize-y rounded-sm border border-field bg-canvas px-2 py-1.5 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
-                  />
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={returnBusy || !wsRow}
-                      onClick={() => void returnToAgent(false)}
-                      className="rounded-sm border border-field px-2 py-1 text-xs text-l2 hover:bg-hover disabled:opacity-50"
-                    >
-                      {returnBusy ? "交接中…" : "退回修改"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={returnBusy || !wsRow}
-                      onClick={() => void returnToAgent(true)}
-                      className="rounded-sm border border-field px-2 py-1 text-xs text-l2 hover:bg-hover disabled:opacity-50"
-                    >
-                      按意见重写
-                    </button>
-                    {!reviewNotes.trim() && (
-                      <button
-                        type="button"
-                        onClick={() => setNotesOpen(false)}
-                        className="ml-auto rounded-sm px-1 py-0.5 text-micro text-l4 hover:text-l2"
-                      >
-                        收起
-                      </button>
-                    )}
-                  </div>
-                </div>
               )}
             </div>
           )}
@@ -3506,7 +3586,8 @@ function LiveWorkspaceReviewView({
           {error ?? "无法加载工作区审阅数据"}
         </div>
       ) : (
-        <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         {opening && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas text-sm text-l4">
             正在打开…
@@ -3576,11 +3657,6 @@ function LiveWorkspaceReviewView({
               userPickedRef.current = true;
               setActivePath(path);
             }}
-            above={(path) =>
-              outlineCheck && outlineCheck.rows.length > 0 && path.replace(/\\/g, "/") === "outline.md" ? (
-                <OutlineCoverageCompare rows={outlineCheck.rows} />
-              ) : null
-            }
             empty={
               reviewPane === "process"
                 ? "这一步没有需要看的过程记录。脚本和配置在「文件」。"
@@ -3842,6 +3918,71 @@ function LiveWorkspaceReviewView({
             </button>
           </aside>
         </div>
+        </div>
+        {canReturn && notesOpen && (
+          // 意见栏（2026-11-11）：划选「加进意见」、核验清单「加进意见」都收到这里，也能直接写；
+          // 一条一行，改、删都在框里。按工作副本存在本机，关掉评审页再进来还在
+          <aside aria-label="退回意见" className="flex w-80 shrink-0 flex-col border-l border-hairline bg-strip">
+            <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline px-3 text-xs">
+              <span className="text-l2">退回意见</span>
+              <button
+                type="button"
+                onClick={() => setNotesOpen(false)}
+                title="收起意见栏，写的意见留着"
+                className="ml-auto rounded-sm px-1 text-micro text-l4 hover:bg-hover hover:text-l1"
+              >
+                收起
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+              <p className="text-micro leading-snug text-l4">
+                在正文里划一段、或在核验清单里点「加进意见」，都会加到这里；也可以直接写。一条一行。
+              </p>
+              {lastNotes && (
+                <p className="flex min-w-0 items-center gap-2 text-micro text-l4">
+                  <span className="min-w-0 truncate" title={lastNotes}>
+                    上次退回：{lastNotes.replace(/\s+/g, " ")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setReviewNotes((notes) => appendReviewLine(notes, lastNotes))}
+                    className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    title="把上次退回的意见加进来，改一改再退回"
+                  >
+                    沿用
+                  </button>
+                </p>
+              )}
+              <textarea
+                value={reviewNotes}
+                onChange={(e) => setReviewNotes(e.target.value)}
+                autoFocus={!reviewNotes}
+                placeholder={"例如：\n- 5.3 覆盖检查里 @Lu2017 写了两次，换成漏掉的 @Masa2017\n- 拼图 9 换一块不重复的子图"}
+                className="min-h-0 w-full flex-1 resize-none rounded-sm border border-field bg-canvas px-2 py-1.5 text-xs leading-relaxed text-l2 outline-none placeholder:text-l4 focus:border-l4"
+              />
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={returnBusy || !wsRow}
+                  onClick={() => void returnToAgent(false)}
+                  title="接回原来那段对话，让 AI 按意见改现在这一版；不会保存进项目"
+                  className="rounded-sm border border-field px-2.5 py-1 text-xs text-l1 hover:bg-hover disabled:opacity-50"
+                >
+                  {returnBusy ? "交接中…" : "退回修改"}
+                </button>
+                <button
+                  type="button"
+                  disabled={returnBusy || !wsRow}
+                  onClick={() => void returnToAgent(true)}
+                  title="新开一段对话，按大纲和笔记把这一步整份重写；改动大、现稿方向不对时用"
+                  className="rounded-sm px-1.5 py-1 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                >
+                  按意见重写
+                </button>
+              </div>
+            </div>
+          </aside>
+        )}
         </div>
       )}
 

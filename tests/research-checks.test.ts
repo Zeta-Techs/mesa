@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkChipText, checkConsultSeed, checkLocation, checkQuoteLine, countChecks, groupChecks, type CheckItem } from "../src/research-checks.ts";
+import { checkChipText, checkConsultSeed, checkReviewNote, checkLocation, checkQuoteLine, countChecks, groupChecks, type CheckItem } from "../src/research-checks.ts";
 
 const mk = (id: string, status: CheckItem["status"], extra: Partial<CheckItem> = {}): CheckItem => ({
   id,
@@ -49,4 +49,12 @@ test("请几家研讨这一条：标题、落点、摘录、说明进问题；�
   ]);
   const web = checkConsultSeed(mk("c2", "needs_human", { evidence: { source: "https://doi.org/x.pdf" } }));
   assert.deepEqual(web.materials, []);
+});
+
+test("核验一条加进意见：标题 + 位置，写成能照着改的一句", () => {
+  assert.equal(
+    checkReviewNote({ id: "a", kind: "k", status: "needs_human", title: "可写正文里列了只速读的 @Moloudi2022", target: { file: "outline.md", line: 96 } }),
+    "- 可写正文里列了只速读的 @Moloudi2022（outline.md:96）：请改",
+  );
+  assert.equal(checkReviewNote({ id: "b", kind: "k", status: "blocked", title: "缺键" }), "- 缺键：请改");
 });

@@ -1,4 +1,5 @@
 /** 写作步评审：机械红线扫描 + 退回给 Agent 的提示词。不解释学术对错。 */
+import type { CheckItem } from "./research-checks.ts";
 
 export interface WritingReviewHit {
   id: string;
@@ -89,6 +90,28 @@ function oneLineQuote(excerpt: string): string {
  * 人还没写批注时先占一行「（待补）」，退回前可以改。
  * 同一段、同一句批注不重复追加。
  */
+/** 扫描结果并进核验清单（2026-11-11 评审页整理：不再单独占一段黄字），算 Mesa 自己查的、只到「待你判断」 */
+export function writingHitChecks(hits: readonly WritingReviewHit[], file: string): CheckItem[] {
+  return hits.map((hit) => ({
+    id: `writing-${hit.id}`,
+    kind: "writing-scan",
+    status: "needs_human",
+    title: hit.label,
+    target: { file },
+    checker: "mesa",
+  }));
+}
+
+/** 意见里追加一行；同一行已经有了就不重复加 */
+export function appendReviewLine(notes: string, line: string): string {
+  const existing = notes.trim();
+  const next = line.trim();
+  if (!next) return existing;
+  if (!existing) return next;
+  if (existing.split("\n").some((row) => row.trim() === next)) return existing;
+  return `${existing}\n${next}`;
+}
+
 export function appendReviewAnnotation(
   notes: string,
   input: { fileName: string; excerpt: string; comment?: string },
@@ -96,11 +119,7 @@ export function appendReviewAnnotation(
   const quote = oneLineQuote(input.excerpt);
   if (!quote) return notes;
   const comment = (input.comment ?? "").replace(/\s+/g, " ").trim() || "（待补）";
-  const line = `- 「${quote}」（${input.fileName}）：${comment}`;
-  const existing = notes.trim();
-  if (!existing) return line;
-  if (existing.split("\n").some((row) => row.trim() === line)) return existing;
-  return `${existing}\n${line}`;
+  return appendReviewLine(notes, `- 「${quote}」（${input.fileName}）：${comment}`);
 }
 
 export function writingReturnPrompt(input: {

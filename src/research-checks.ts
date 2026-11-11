@@ -70,6 +70,12 @@ export function checkLocation(item: CheckItem): string {
   return item.target.line ? `${item.target.file}:${item.target.line}` : item.target.file;
 }
 
+/** 核验清单一条「加进意见」：写成交给 AI 能照着改的一句（2026-11-11 评审页意见栏） */
+export function checkReviewNote(item: CheckItem): string {
+  const where = checkLocation(item);
+  return `- ${item.title}${where ? `（${where}）` : ""}：请改`;
+}
+
 /** 摘录后面跟的页码说明：p.N 来自 Agent 标注，实际在哪页写在 detail 里 */
 export function checkQuoteLine(item: CheckItem): string {
   const quote = item.evidence?.quote?.trim();

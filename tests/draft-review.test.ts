@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  appendReviewLine,
+  writingHitChecks,
   annotationDraftFromSelection,
   appendReviewAnnotation,
   scanWritingReview,
@@ -106,4 +108,19 @@ test("退回提示词带上意见和红线", () => {
   assert.match(prompt, /删 G1/);
   assert.match(prompt, /空白编号/);
   assert.match(writingReturnPrompt({ notes: "", hits: [], rewrite: true }), /重写本步稿件/);
+});
+
+test("意见追加一行不重复；扫描结果并进核验清单只到待你判断", () => {
+  assert.equal(appendReviewLine("", "- a"), "- a");
+  assert.equal(appendReviewLine("- a", "- a"), "- a");
+  assert.equal(appendReviewLine("- a\n", "- b"), "- a\n- b");
+  const items = writingHitChecks([{ id: "gap-ids", label: "正文含空白编号（G1…）" }], "manuscript/draft.md");
+  assert.deepEqual(items[0], {
+    id: "writing-gap-ids",
+    kind: "writing-scan",
+    status: "needs_human",
+    title: "正文含空白编号（G1…）",
+    target: { file: "manuscript/draft.md" },
+    checker: "mesa",
+  });
 });

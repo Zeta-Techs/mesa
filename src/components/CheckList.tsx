@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   CHECK_DISCLAIMER,
   CHECK_STATUS_LABEL,
@@ -21,10 +21,16 @@ const STATUS_TONE: Record<CheckStatus, string> = {
 export default function CheckList({
   checks,
   onConsult,
+  onAddNote,
+  children,
 }: {
   checks: ChecksDto;
   /** 待你判断的一条「请几家研讨这一条」（研讨二期）；不给就不出按钮 */
   onConsult?: (item: CheckItem) => void;
+  /** 拦下 / 待你判断的一条加进退回意见（2026-11-11 评审页意见栏）；不给就不出按钮 */
+  onAddNote?: (item: CheckItem) => void;
+  /** 列表下面、说明上面挂的一块（大纲：覆盖检查对照） */
+  children?: ReactNode;
 }) {
   const [showPassed, setShowPassed] = useState(false);
   const groups = groupChecks(checks.items);
@@ -55,10 +61,20 @@ export default function CheckList({
                       {where && <span className="ml-1.5 font-mono text-l4">{where}</span>}
                       <span
                         className="ml-1.5 text-l4"
-                        title={item.checker === "mesa" ? "Mesa 按大纲、笔记索引、引文库和纳入清单自己数的，不经 AI" : undefined}
+                        title={item.checker === "mesa" ? "Mesa 自己按文件数出来的，不经 AI" : undefined}
                       >
                         {checkSourceLabel(item)}
                       </span>
+                      {onAddNote && item.status !== "passed" && (
+                        <button
+                          type="button"
+                          onClick={() => onAddNote(item)}
+                          title="把这一条写成一句修改意见，加到右边的意见栏；退回时交给 AI 照着改"
+                          className="ml-1.5 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+                        >
+                          <span className="text-micro">加进意见</span>
+                        </button>
+                      )}
                       {/* Mesa 核对的是数得清的事，不必请几家研讨 */}
                       {onConsult && item.status === "needs_human" && item.checker !== "mesa" && (
                         <button
@@ -80,6 +96,7 @@ export default function CheckList({
           </div>
         );
       })}
+      {children}
       {checks.skipped > 0 && (
         <p className="text-micro text-warn-text">另有 {checks.skipped} 行核验记录读不懂，没有列出</p>
       )}
