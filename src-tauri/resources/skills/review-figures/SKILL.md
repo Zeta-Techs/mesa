@@ -90,16 +90,11 @@ python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --input
 
 ## 自绘示意图
 
-计划要自绘的概念图（设计准则框架、流程示意）用可重跑脚本生成，不含任何实验数字，图注写 schematic。文字多的图最容易互相压住：画完先程序化检查**任意两段文字的外框不相交**，并且都在各自的框里，不过就调字号、换行或挪位置再画（只查「文字在框内」不够——2026-10-23 HER 图 7 斜体标注仍压在正文上）。matplotlib 写法：
+计划写「自绘」的总结图、机理图、框架图、流程示意，一律按 schematic-forge 技能画（2026-11-12 用户拍板：HER 初稿 Agent 照本节旧写法用脚本拼字符串 / matplotlib 出 SVG，几个方框加 Arial 字，粗糙到不能用）：写立意与事实 → 构思 → 图纸 `figure.json` → 随包脚本渲成 `figures/<图名>/` 下可编辑的 PPTX + SVG 与 PNG，图标用内置图元或出图模型素材板，文字重叠、出框由它的检查脚本拦。**不要**自己写 matplotlib / SVG 字符串脚本画示意图，也不要用 `/tmp` 下的临时脚本——画不出来就照实说缺什么。
 
-```python
-fig.canvas.draw()
-r = fig.canvas.get_renderer()
-texts = [t for t in fig.findobj(matplotlib.text.Text) if t.get_visible() and t.get_text().strip()]
-boxes = [(t, t.get_window_extent(r).expanded(1.02, 1.05)) for t in texts]
-clash = [(a.get_text(), b.get_text()) for i, (a, ba) in enumerate(boxes) for b, bb in boxes[i + 1:] if ba.overlaps(bb)]
-assert not clash, clash
-```
+- 动手前先定风格参照：用户点名的期刊图、项目里已有的图，或 `figures/style-profile.json`；都没有就在定档那句里问一句「照哪张图的风格」，用户说不用再按默认配色。同一篇综述的几张示意图用同一套 theme。
+- schematic-forge 没装或跑不起来（缺 python-pptx 等）：不退回手写脚本，写进 `figures/README.md` 和报告，请用户在 Mesa「设置 → 依赖」补装后再画；正文暂改「见 [@键] Fig.n」，不留空占位。
+- 不含任何实验数字；图注写 schematic / 示意与 Summarized from [@键]。
 
 ## 写进初稿与复查
 

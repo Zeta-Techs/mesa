@@ -16,9 +16,11 @@ provides: [schematic-forge]
 - `python3 -c "import PIL, pptx"`：缺 python-pptx 时请用户在 Mesa「设置 → 依赖」装，或 `python3 -m pip install python-pptx`。
 - `$MESA_FIGURE_TOOL` 不为空：PNG / PDF 由它从 SVG 转；为空时脚本退用 LibreOffice，都没有就只出 SVG / PPTX——照实告诉用户。
 
-## 1. 定档（第一句回复就写，不先问）
+## 1. 定档（第一句回复就写；只有综述图缺风格参照时问一句）
 
 一行写清你按什么定的：用途（`journal` 期刊示意图 / `graphical-abstract` 图形摘要 / `roadmap` 技术路线 / `slide` 组会 / `poster`；**用户给了物理尺寸就按尺寸选**：183 / 89 mm 这类栏宽用 graphical-abstract 或 journal，`slide` 只配 16:9 整页，它的字号下限是 14 pt）、成品尺寸（单栏 89 mm、双栏 183 mm、16:9 幻灯片 254×143 mm、期刊 TOC 规格按作者指南）、语言、深度（**草稿**：一个构思、检查通过即交；**标准**：2–3 个构思让人挑、加冷读与事实逐条核对；用户没说按标准）、风格参照（用户给的图，或项目里已有的图——有 `figures/style-profile.json` 就照它）。
+
+**综述 / 论文里的示意图先要风格参照**（2026-11-12 用户拍板：没有参照画出来是通用蓝橙方框，达不到期刊综述机理图的观感）：用户给了参照图、项目里有已发表风格的图或 `figures/style-profile.json` 就照它；都没有，定档那句之后**问一句**「照哪张图的风格（可给期刊图或项目里的图）」，用户说不用才按默认配色。给的是期刊图：拿它定配色、字号、线宽、留白与主角占比（可 `style_profile.py` 归纳），只学版式与审美，不照搬内容。同一篇的几张示意图共用一套 theme。
 
 ## 2. 立意 `figures/<图名>/brief.md`
 
@@ -35,7 +37,7 @@ provides: [schematic-forge]
 
 ## 4. 构思
 
-- 草稿档一个，标准档 2–3 个**布局真不一样**的方案：各写一份 `figures/<图名>/concepts/c1.json`（图纸格式同下，可先只放框和关键字；`name` 各写成 `<图名>-c1`、`-c2`…，同名会互相覆盖），`python3 scripts/render_figure.py figures/<图名>/concepts/c1.json --formats svg,png --no-record` 出缩略图，把几张 PNG 路径一起给用户，**停下等用户挑一个**（这是本技能唯一的停点）。
+- 草稿档一个，标准档 2–3 个**布局真不一样**的方案：各写一份 `figures/<图名>/concepts/c1.json`（图纸格式同下，可先只放框和关键字；`name` 各写成 `<图名>-c1`、`-c2`…，同名会互相覆盖），`python3 scripts/render_figure.py figures/<图名>/concepts/c1.json --formats svg,png --no-record` 出缩略图，把几张 PNG 路径一起给用户，**停下等用户挑一个**（除定档时缺风格参照那一问外，这是本技能唯一的停点）。
 - 用户想先看风格时，才用出图模型出 1–2 张「效果参考图」（按 image-gen 技能），明确说「只看风格，字不算数」，**永远不当成品交付**。
 
 ## 5. 图纸 `figures/<图名>/figure.json`
