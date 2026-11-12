@@ -3755,6 +3755,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         syncState={sessionByTab[t.id]?.sync ?? "waiting"}
                         loading={sessionByTab[t.id]?.pendingReply ?? false}
                         cwd={statuses[t.id]?.cwd ?? t.initialCwd ?? null}
+                        discussKey={t.reuseKey?.startsWith("discuss:") ? t.reuseKey : null}
+                        discussStepName={t.stepName ?? null}
                         running={statuses[t.id]?.running ?? false}
                         canResume={statuses[t.id]?.canResume ?? false}
                         attention={statuses[t.id]?.attention ?? null}

@@ -448,7 +448,8 @@ human-task-completion.ts   # 人工事项完成判定闭集与落点兼容（Pip
                              # 保护文件夹勾选（验收写回保持原样，不是另存副本；tests/project-tasks.test.ts）
   project-agents.ts          # 项目 Agents 名册：每家默认配置 / 项目选用的模型 / 项目默认 / 声明步骤归属
                              # （不自动分派；tests/project-agents.test.ts）
-  discuss-prompt.ts          # 「跟 AI 商量一下」的开场指令（苏格拉底式：一次一问、答清楚直接记下接着问、不问模板已定的流程）与按步骤工作区名的提问方向 DISCUSS_FOCUS（只进开场指令，不上步骤卡）
+  discuss-prompt.ts          # 「跟 AI 商量一下」的开场指令（苏格拉底式：一次一问、答清楚直接记下接着问、不问模板已定的流程）与按步骤工作区名的提问方向 DISCUSS_FOCUS（只进开场指令，不上步骤卡）；商量对话的标签复用键 discussReuseKey / parseDiscussReuseKey（单一出处）
+  discuss-step-start.ts      # 商量对话回复里的「开始」点了 → 按复用键认项目与任务书、反查步骤，经 stepStartReq 让 StepFlow 打开开工确认（不替人开工）
   setting-choices.ts         # 模板全局设定的填写形态：短选项判定为点选（parseSettingLine）、选项白话说明与小字注、选某项时的追问并进同一行答案
   project-context.ts         # 项目环境包：名称/规则/顶层文件地图（启动注入）；包与第一句的拼接 composeLaunchPrompt / 拆开 splitLaunchPrompt
                              #   （气泡折「已附项目说明」、↑ 取回、工作台「上次停在」只认人话；Rust 镜像 sessions.rs strip_mesa_launch_pack）；
@@ -749,7 +750,7 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              # 排队气泡与占位字的写法；依据 matrix §14「生成中再发一句」逐家实测（tests/mid-turn-send.test.ts）
   chat-cite.ts               # 聊天回复里的 [@key] 引用段（与 citation.rs extract_cite_keys 同口径）、胶囊字样 citeLabel、cite_lookup 30 秒缓存
   chat-inline-refs.ts        # 回复上屏后的就地加工：文件路径 → .md-file-link（existing_files 核实、15 秒缓存）、引用键 → .md-cite-item
-                             # （先键名占位再换作者年份）；只动 DOM，sanitize 之后做（tests/chat-inline-refs.test.ts）
+                             # （先键名占位再换作者年份）、商量对话里的「开始」→ .md-step-start（linkStepStart，只在商量对话调）；只动 DOM，sanitize 之后做（tests/chat-inline-refs.test.ts）
   code-highlight.ts          # 代码块语法高亮：highlight.js 核心 + 二十几种语言按需 import，只认围栏写明的语言；颜色在 App.css .hljs-*
   paste-guard.ts             # 终端粘贴防线：剪收尾回车、shell 多行先确认、备用屏原样（tests/paste-guard.test.ts）
   terminal-links.ts          # 终端行绝对/相对路径与行列号（`:行:列`、句尾标点不吞、lookbehind 起点

@@ -851,6 +851,10 @@ interface AppState {
    *  text 放进聊天输入框、不发送（人改了再发）。StepFlow 认步骤名消费并清空 */
   discussCarryReq: { projectRoot: string; stepName: string; text: string; token: number } | null;
   setDiscussCarryReq: (req: { projectRoot: string; stepName: string; text: string; token: number } | null) => void;
+  /** 商量任务书的对话里点「开始」（2026-11-12）：进那个项目、聚焦那一步，步骤卡照「开始」按钮打开开工确认。
+   *  StepFlow 认步骤名消费并清空；这一步已经开工了就只聚焦，不另开 */
+  stepStartReq: { projectRoot: string; stepName: string; token: number } | null;
+  setStepStartReq: (req: { projectRoot: string; stepName: string; token: number } | null) => void;
   clearConsultReq: () => void;
   /** 研讨页正打开的那一场（2026-11-11 用户：研讨放在聊天层那一格，侧栏点了就到，不再进对话管理）。
    *  侧栏研讨行、「去看看」、工作台进行中的研讨都经 showConsult 打开它并切到研讨页 */
@@ -1285,6 +1289,8 @@ export const useAppStore = create<AppState>((set, get) => {
   clearConsultReq: () => set({ consultReq: null }),
   discussCarryReq: null,
   setDiscussCarryReq: (req) => set({ discussCarryReq: req }),
+  stepStartReq: null,
+  setStepStartReq: (req) => set({ stepStartReq: req }),
   consultOpen: null,
   showConsult: (projectRoot, id) => set({ consultOpen: { projectRoot, id }, page: "consult" }),
   closeConsult: () => set({ consultOpen: null }),
