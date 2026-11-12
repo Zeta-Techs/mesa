@@ -142,10 +142,9 @@ export default function TerminalStatusBar({
     knownEffort,
     effortSeenDefault,
     effortIdx,
-    setDraftIdx,
     effortLabel,
-    commitEffort,
   } = rt;
+  const [effortMenuOpen, setEffortMenuOpen] = useState(false);
   function pickModel(m: string) {
     setModelMenuOpen(false);
     rt.pickModel(m);
@@ -478,7 +477,7 @@ export default function TerminalStatusBar({
                 }
                 className={`rounded-full border-0 px-2 py-0.5 font-mono${narrow ? " max-w-[8rem] truncate align-middle" : ""}`}
                 style={{
-                  color: chat ? dim : colors.blue,
+                  color: chat ? dim : fg,
                   background: `${fg}0f`,
                   opacity: status?.ptyId ? 1 : 0.5,
                   cursor: status?.ptyId ? "pointer" : "default",
@@ -504,8 +503,8 @@ export default function TerminalStatusBar({
                   aria-expanded={modelMenuOpen}
                   className={`rounded-full border-0 px-2 py-0.5 font-mono${narrow ? " max-w-[8rem] truncate align-middle" : ""}`}
                   style={{
-                    // chat 变体去掉蓝色强调：与目录胶囊同一套灰调语法（蓝色只留给状态点）
-                    color: chat ? dim : colors.blue,
+                    // 不用蓝色强调：与目录胶囊同一套灰调语法（彩色只留给状态点与增删数）
+                    color: chat ? dim : fg,
                     background: chat && modelMenuOpen ? `${fg}1a` : `${fg}0f`,
                     opacity: status?.ptyId ? 1 : 0.5,
                     cursor: status?.ptyId ? "pointer" : "default",
@@ -559,68 +558,60 @@ export default function TerminalStatusBar({
             换模请重开
           </span>
         )}
+        {/* 思考档：与模型同款胶囊，点开列档位、点一下即切（2026-11-12 用户嫌内嵌渐变滑块丑，改菜单）。
+            只写命令 / 重开、不先点亮，以屏上回显为准（同输入框芯片 setEffortLevel） */}
         {!chat && !narrow && rt.effortSwitchable && running && (
-          <span
-            className="ml-1 flex items-center gap-1.5 rounded-full px-2 py-0.5"
-            style={{ background: `${fg}0f` }}
-            title={
-              knownEffort
-                ? `思考档位：${effortLabel}（${levels.join(" / ")}；松手即写入终端生效）`
-                : `启动时没有指定思考档，用的是 CLI 自己的默认（${levels.join(" / ")}；拖动松手即写入终端生效）`
-            }
-          >
-            <span style={{ color: faint }}>◈</span>
-            <span className="relative block h-5 w-24">
-              {/* 轨道 */}
-              <span
-                className="absolute top-1/2 left-0 h-1 w-full -translate-y-1/2 rounded-full"
-                style={{ background: `${fg}26` }}
-              />
-              {/* 已选段蓝紫渐变 */}
-              <span
-                className="absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full"
-                style={{
-                  width: `${(Math.max(0, effortIdx) / (levels.length - 1)) * 100}%`,
-                  background: "linear-gradient(90deg, #3b82f6, #8b5cf6)",
-                }}
-              />
-              {/* 档位节点：选中带微光 */}
-              {levels.map((lv, i) => (
-                <span
-                  key={lv}
-                  className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-                  style={{
-                    left: `${(i / (levels.length - 1)) * 100}%`,
-                    width: i === effortIdx ? 9 : 6,
-                    height: i === effortIdx ? 9 : 6,
-                    background: i <= effortIdx ? "#8b5cf6" : `${fg}4d`,
-                    boxShadow:
-                      i === effortIdx
-                        ? "0 0 6px 1px rgba(139, 92, 246, 0.65)"
-                        : "none",
-                  }}
-                />
-              ))}
-              {/* 隐形原生滑块：拖动/键盘无障碍全包 */}
-              <input
-                type="range"
-                min={0}
-                max={levels.length - 1}
-                step={1}
-                value={Math.max(0, effortIdx)}
-                onChange={(e) => setDraftIdx(Number(e.target.value))}
-                onPointerUp={commitEffort}
-                onKeyUp={commitEffort}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                aria-label="思考档位"
-              />
-            </span>
-            <span
-              className="font-mono"
-              style={{ color: effortIdx >= 0 ? colors.blue : faint }}
+          <span className="relative">
+            <button
+              type="button"
+              onClick={() => setEffortMenuOpen((v) => !v)}
+              aria-expanded={effortMenuOpen}
+              title={
+                knownEffort
+                  ? `思考强度：${effortLabel}（点开换档，选中即写入终端生效）`
+                  : "启动时没有指定思考强度，用的是 CLI 自己的默认（点开换档）"
+              }
+              className="rounded-full border-0 px-2 py-0.5 font-mono"
+              style={{
+                color: dim,
+                background: effortMenuOpen ? `${fg}1a` : `${fg}0f`,
+                cursor: "pointer",
+              }}
             >
-              {effortLabel}
-            </span>
+              思考 <span style={{ color: effortIdx >= 0 ? fg : faint }}>{effortLabel}</span> ▾
+            </button>
+            {effortMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setEffortMenuOpen(false)} />
+                <ul
+                  className="absolute bottom-full left-0 z-50 mb-1 min-w-32 rounded-md border p-1"
+                  style={{ background: floatBg, borderColor: `${fg}33` }}
+                >
+                  {levels.map((lv, i) => (
+                    <li key={lv}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEffortMenuOpen(false);
+                          if (i !== effortIdx) rt.setEffortLevel(lv);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left font-mono text-micro"
+                        style={{ color: i === effortIdx ? fg : dim }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = `${fg}1a`;
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "transparent";
+                        }}
+                      >
+                        <span className="min-w-0 flex-1">{lv}</span>
+                        <span className="w-3 shrink-0 text-right">{i === effortIdx ? "✓" : ""}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </span>
         )}
         {!chat && !narrow && effortLive && running && levels.length <= 1 && (
@@ -632,10 +623,10 @@ export default function TerminalStatusBar({
                 ? `思考档位：${knownEffort}（点开终端里的选择器切换）`
                 : "切换思考档位（在终端里打开选择器）"
             }
-            className="ml-1 cursor-pointer border-0 bg-transparent p-0 font-mono"
-            style={{ color: colors.blue }}
+            className="cursor-pointer rounded-full border-0 px-2 py-0.5 font-mono"
+            style={{ color: dim, background: `${fg}0f` }}
           >
-            ◈ {knownEffort ?? "思考"} ▾
+            思考 <span style={{ color: knownEffort ? fg : faint }}>{knownEffort ?? "默认"}</span> ▾
           </button>
         )}
         {/* 底栏不能切档的 CLI（Codex / OpenCode / CodeBuddy…）也如实写出当前档：
@@ -648,15 +639,15 @@ export default function TerminalStatusBar({
           combo?.thinking &&
           (knownEffort || effortSeenDefault) && (
             <span
-              className="ml-1 font-mono"
-              style={{ color: knownEffort ? colors.blue : faint }}
+              className="font-mono"
+              style={{ color: faint }}
               title={
                 knownEffort
                   ? `思考档位：${knownEffort}（这个客户端在 Mesa 底栏不能切换，到它自己的模型/思考设置里改）`
                   : "客户端显示没有指定思考档，用的是它自己的默认"
               }
             >
-              ◈ {knownEffort ?? "默认"}
+              思考 <span style={{ color: knownEffort ? dim : faint }}>{knownEffort ?? "默认"}</span>
             </span>
           )}
       </span>
@@ -840,17 +831,13 @@ export default function TerminalStatusBar({
                 style={{
                   background:
                     phase === "idle"
-                      ? `linear-gradient(90deg, ${colors.green}cc, #10b981)`
+                      ? `${colors.green}d9`
                       : phase === "review"
                         ? `${colors.yellow}cc`
                         : phase === "pushing"
                           ? `${colors.blue}cc`
                           : `${colors.green}55`,
                   color: colors.background,
-                  boxShadow:
-                    phase === "generating"
-                      ? `0 0 8px 1px ${colors.green}66`
-                      : "none",
                 }}
               >
                 {phase === "generating" ? (
@@ -900,8 +887,10 @@ export default function TerminalStatusBar({
                 aria-expanded={splitOpen}
                 className="flex cursor-pointer items-center border-0 px-1.5 font-mono disabled:opacity-50"
                 style={{
-                  background: `linear-gradient(90deg, #10b981, ${colors.green}cc)`,
+                  background: `${colors.green}d9`,
                   color: colors.background,
+                  // 主区与 ▾ 之间一道细缝，纯色后靠它分出两个按钮
+                  borderLeft: `1px solid ${colors.background}40`,
                 }}
               >
                 ▾
