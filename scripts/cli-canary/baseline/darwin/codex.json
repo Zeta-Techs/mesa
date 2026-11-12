@@ -9,6 +9,7 @@
    "-",
    "running",
    "awaiting_approval",
+   "running",
    "completed"
   ]
  },
@@ -340,5 +341,5 @@
    ]
   }
  },
- "version": "0.167.1"
+ "version": "0.167.2"
 }
