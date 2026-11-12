@@ -39,14 +39,23 @@ provides: [review-figures]
 ```bash
 python3 scripts/extract_figure.py --pdf <来源PDF> --fig 3 --out figures/src/<bibKey>-fig3.png
 python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --panel f --out figures/src/<bibKey>-fig2f.png
-python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --grid --out artifacts/<bibKey>-fig2-grid.png
+python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --grid --out artifacts/<bibKey>-fig2-grid.jpg
 python3 scripts/extract_figure.py --pdf <来源PDF> --fig 2 --box 0.505,0,1,0.49 --erase 0,0,0.11,0.1 --label "Fig. 2(b)" --out figures/src/<bibKey>-fig2b.png
+python3 scripts/contact_sheet.py --out artifacts/check-fig3.jpg figures/src/<键1>-fig2b.png figures/src/<键2>-fig3a.png
 ```
+
+**看图只看小图（2026-11-12）**：图每读一次都整张留在对话里，之后每一步都要带着它重发。原尺寸 PNG 看上二三十张，模型每回一句就要等几分钟，最后断流（当日 HER 初稿实证：27 张约 34 MB，回话从 90 秒涨到 380 秒）。所以：
+
+- `--grid` 预览写 `.jpg`：脚本已缩到长边 1400 像素，坐标是比例，缩小不影响读数。
+- 裁完的块不逐张打开原图核对：用 `contact_sheet.py` 把这一张拼图要用的几块缩成一张联系表，一次看完；哪块要重裁，重裁后只把那几块再出一张联系表。拼好的 `figN.png` 也同样出联系表看。
+- 题注、页面位置能从 PDF 文本查到的先用文本查，不靠打开整页图去找。一次只看当前要裁的那一张图，不要先把整篇每页都出预览看一遍。
+- 同一张预览看过就把读到的坐标写进 README，不反复打开。
+- 联系表和预览只用来看，放 `artifacts/` 或临时目录，不进 `figures/`；裁切、拼板、成品一律用原图。
 
 **裁子图的顺序**：
 
-1. `--panel c`：按白缝把整张切成格子、按行数第几块。子图之间没有白缝（坐标轴贴着）就切不出，退出码 6。切出来也要打开看一眼是不是那一块——排版不规整时行优先的顺序和原图字母对不上。
-2. 切不出或切错：`--grid` 出一张叠了 0–1 坐标格的整图预览（红线每 0.1 一条，带刻度），看图读出这一块的左上、右下坐标，用 `--box x0,y0,x1,y1` 裁。裁完**打开看**：带进了邻块的坐标轴或字母、截掉了自己的轴标题，就微调坐标再裁，直到干净。
+1. `--panel c`：按白缝把整张切成格子、按行数第几块。子图之间没有白缝（坐标轴贴着）就切不出，退出码 6。切出来也要在联系表里看一眼是不是那一块——排版不规整时行优先的顺序和原图字母对不上。
+2. 切不出或切错：`--grid` 出一张叠了 0–1 坐标格的整图预览（红线每 0.1 一条，带刻度），看图读出这一块的左上、右下坐标，用 `--box x0,y0,x1,y1` 裁。裁完**出联系表看**（见下「看图只看小图」）：带进了邻块的坐标轴或字母、截掉了自己的轴标题，就微调坐标再裁，直到干净。
 3. 原图的子图字母（左上角的 (b)、e）用 `--erase` 抹白（相对这一块的坐标，只许在左上 / 右上角的小框，超过 2% 面积脚本拒绝；邻块字母的残边被带进来时可以再给一个 `--erase`）。拼图只留新编号 (a)(b)(c)。抹之前放大看清字母的范围，别抹到刻度数字和框线。字母压在坐标轴里抹不掉就保留，图注写清新旧对应。
 4. 题注认不出（矢量图退出码 5、扫描版没有文本层退出码 3）：`--page <页码> --grid` 看整页，`--box` 框出那一块（框住大半页会被拒绝）。
 5. 读坐标读不准、反复裁不干净：这一块去掉，别把整张塞进来。

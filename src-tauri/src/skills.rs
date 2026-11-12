@@ -518,6 +518,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/review-figures/scripts/figure_permissions.py"),
     ),
     (
+        "review-figures",
+        "scripts/contact_sheet.py",
+        include_str!("../resources/skills/review-figures/scripts/contact_sheet.py"),
+    ),
+    (
         "figure-forge",
         "scripts/fig_lint.py",
         include_str!("../resources/skills/figure-forge/scripts/fig_lint.py"),

@@ -360,14 +360,23 @@ def sub_rect(clip, box):
     )
 
 
+GRID_MAX_SIDE = 1400
+
+
 def grid_preview(pix, out: Path) -> None:
-    """在图上叠 0–1 坐标格（每 0.1 一条线，0.05 一条虚一点的线），给 Agent 读出子图的框。"""
+    """在图上叠 0–1 坐标格（每 0.1 一条线，0.05 一条虚一点的线），给 Agent 读出子图的框。
+
+    预览只给模型看：先缩到长边 GRID_MAX_SIDE 再画格，--out 写 .jpg 存 JPEG。坐标是比例，
+    缩小不影响读数；原尺寸 PNG 每看一次都整张进对话，二三十张后每步要等几分钟
+    （2026-11-12 HER 初稿实证：27 张约 34 MB，回话从 90 秒涨到 380 秒后断流）。
+    """
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
         print("需要 Pillow：pip install pillow", file=sys.stderr)
         sys.exit(2)
     im = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    im.thumbnail((GRID_MAX_SIDE, GRID_MAX_SIDE))
     draw = ImageDraw.Draw(im, "RGBA")
     size = max(12, min(im.width, im.height) // 45)
     try:
@@ -387,7 +396,10 @@ def grid_preview(pix, out: Path) -> None:
             draw.text((min(x + 2, im.width - size * 2), 2), label, fill=(200, 0, 0, 255), font=font)
             draw.text((2, min(y + 2, im.height - size - 2)), label, fill=(200, 0, 0, 255), font=font)
     out.parent.mkdir(parents=True, exist_ok=True)
-    im.save(out)
+    if out.suffix.lower() in (".jpg", ".jpeg"):
+        im.save(out, quality=80)
+    else:
+        im.save(out)
     print(out)
 
 

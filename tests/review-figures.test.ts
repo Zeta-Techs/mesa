@@ -59,10 +59,16 @@ test("裁子图：--panel 按白缝切到第二块；--box 按比例裁；--eras
     assert.equal(r.status, 0, r.stderr);
     const b = probe(join(dir, "b.png"));
     assert.deepEqual(b.center.map((v) => Math.round(v / 40)), [0, 4, 0], "第二块是绿色");
-    // --grid：整图预览，不裁
+    // --grid：整图预览，不裁；写 .jpg 存 JPEG，长边不超过 1400（预览只给模型看，原尺寸会撑爆对话）
     r = run(["--pdf", pdf, "--fig", "1", "--grid", "--out", join(dir, "grid.png")]);
     assert.equal(r.status, 0, r.stderr);
     assert.ok(existsSync(join(dir, "grid.png")));
+    r = run(["--pdf", pdf, "--fig", "1", "--grid", "--dpi", "600", "--out", join(dir, "grid.jpg")]);
+    assert.equal(r.status, 0, r.stderr);
+    const g = spawnSync(python, ["-c", "import sys; from PIL import Image; im = Image.open(sys.argv[1]); print(im.format, max(im.size))", join(dir, "grid.jpg")], { encoding: "utf8" });
+    const [fmt, side] = g.stdout.trim().split(" ");
+    assert.equal(fmt, "JPEG");
+    assert.ok(Number(side) <= 1400, `长边 ${side}`);
     // --box 左下那块（蓝），--erase 抹掉它左上角的黑块
     r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0.5,0.5,1", "--erase", "0,0,0.12,0.12", "--dpi", "144", "--out", join(dir, "c.png")]);
     assert.equal(r.status, 0, r.stderr);
@@ -226,6 +232,28 @@ test("裁图也收期刊下载的原图图片：整张就是这张图，按它�
     const side = JSON.parse(readFileSync(join(dir, "b.json"), "utf8"));
     assert.equal(side.label, "Fig. 2(b)");
     assert.equal(side.key, "Orig2020");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 2026-11-12：联系表把几块缩小拼成一张 JPEG，给 Agent 一次看完，不逐张读原图
+const sheetScript = resolve("src-tauri/resources/skills/review-figures/scripts/contact_sheet.py");
+
+test("联系表：几块缩成一张 JPEG，长边有上限；--out 不是 .jpg 拒绝", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-sheet-"));
+  try {
+    const mk = spawnSync(python, ["-c", "import sys; from PIL import Image\nfor i, p in enumerate(sys.argv[1:]): Image.new('RGB', (2400, 1800), (40 * i, 120, 200)).save(p)", ...["a", "b", "c", "d"].map((n) => join(dir, `${n}.png`))], { encoding: "utf8" });
+    assert.equal(mk.status, 0, mk.stderr);
+    const inputs = ["a", "b", "c", "d"].map((n) => join(dir, `${n}.png`));
+    let r = spawnSync(python, [sheetScript, "--out", join(dir, "sheet.jpg"), ...inputs], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    assert.equal(r.status, 0, r.stderr);
+    const g = spawnSync(python, ["-c", "import sys; from PIL import Image; im = Image.open(sys.argv[1]); print(im.format, max(im.size))", join(dir, "sheet.jpg")], { encoding: "utf8" });
+    const [fmt, side] = g.stdout.trim().split(" ");
+    assert.equal(fmt, "JPEG");
+    assert.ok(Number(side) <= 1600, `长边 ${side}`);
+    r = spawnSync(python, [sheetScript, "--out", join(dir, "sheet.png"), ...inputs], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    assert.notEqual(r.status, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
