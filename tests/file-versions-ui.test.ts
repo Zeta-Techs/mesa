@@ -11,6 +11,8 @@ async function mount() {
   }));
   const file = { path: "outline.md", exists: true, tracked: false, versions };
   const files = [file];
+  let exportTarget: string | null = "/chosen/outline-copy.md";
+  let exportError: string | null = null;
   const bundle = await build({
     stdin: { contents: "export {createElement, act} from 'react'; export {createRoot} from 'react-dom/client'; export {FileVersionsButton, FileVersionsPanel} from './src/components/FileVersions';", resolveDir: process.cwd(), loader: "tsx" },
     bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
@@ -38,7 +40,7 @@ async function mount() {
       if (command === "file_versions") return { root: "/project", files: args.path ? files.filter((file) => args.path === file.path || args.path === `/project/${file.path}`) : files };
       if (command === "file_version_preview") return `/cache/${args.versionId}/outline.md`;
       if (command === "file_version_diff") return { before: "old paragraph", after: "new paragraph" };
-      if (command === "file_version_export") return "/project/outline-副本.md";
+      if (command === "file_version_export") { if (exportError) throw new Error(exportError); return exportTarget; }
       if (command === "file_version_update") {
         if (args.action === "track") file.tracked = true;
         if (args.action === "untrack") file.tracked = false;
@@ -58,6 +60,8 @@ async function mount() {
   const document = dom.window.document;
   return {
     createElement, act, root, FileVersionsButton, FileVersionsPanel, calls, document, file, files,
+    setExportTarget: (value: string | null) => { exportTarget = value; },
+    setExportError: (value: string | null) => { exportError = value; },
     body: () => document.body.textContent ?? "",
     button: (label: string) => [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === label)!,
     setValue(element: HTMLInputElement | HTMLSelectElement, value: string) {
@@ -99,10 +103,9 @@ test("步骤卡只显示短入口并打开已有文件侧栏；不创建弹窗�
     await mounted.act(async () => mounted.setValue(compare, "old"));
     assert.match(mounted.body(), /- old paragraph/); assert.match(mounted.body(), /\+ new paragraph/);
     await mounted.act(async () => mounted.button("另存为副本…").click());
-    const target = mounted.document.querySelector<HTMLInputElement>('input[aria-label="副本路径"]')!;
-    assert.equal(target.value, "outline-副本.md");
-    await mounted.act(async () => mounted.button("另存").click());
-    assert.equal(mounted.calls.find((call) => call.command === "file_version_export")?.args.target, "outline-副本.md");
+    assert.equal(mounted.document.querySelector('input[aria-label="副本路径"]'), null);
+    assert.deepEqual(mounted.calls.find((call) => call.command === "file_version_export")?.args, { root: "/project", versionId: "new" });
+    assert.match(mounted.body(), /chosen\/outline-copy.md/);
     assert.match(mounted.body(), /当前文件未替换/);
     assert.ok(!mounted.calls.some((call) => /merge_workspace|workspace_sync|step_round_record|pty_write|task_launch/.test(call.command)));
   } finally { await mounted.cleanup(); }
@@ -177,7 +180,30 @@ test("版本工具栏仅保留版本选择与主要操作，菜单脱离裁切�
     assert.ok(exportButton && !exportButton.disabled);
     assert.equal(exportButton.closest('[role="menu"]'), null);
     await mounted.act(async () => exportButton.click());
-    assert.ok(mounted.document.querySelector('input[aria-label="副本路径"]'));
+    assert.equal(mounted.document.querySelector('input[aria-label="副本路径"]'), null);
+    assert.match(mounted.body(), /已另存/);
     assert.ok(!mounted.calls.some((call) => call.command === "file_version_update"));
+  } finally { await mounted.cleanup(); }
+});
+
+test("系统另存取消不报成功、不写版本或触发流程，失败保留原预览并可以重试", async () => {
+  const mounted = await mount(); mounted.setExportTarget(null);
+  try {
+    await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsPanel, { root: "/project", path: "/project/outline.md" })));
+    await mounted.act(async () => mounted.setValue(mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!, "old"));
+    await mounted.act(async () => mounted.button("另存为副本…").click());
+    assert.doesNotMatch(mounted.body(), /已另存/);
+    assert.ok(mounted.document.querySelector('[data-preview="/cache/old/outline.md"]'));
+    assert.ok(!mounted.button("另存为副本…").disabled);
+    mounted.setExportError("这个文件名已存在，请换一个名字；现稿未覆盖");
+    await mounted.act(async () => mounted.button("另存为副本…").click());
+    assert.match(mounted.body(), /现稿未覆盖/);
+    assert.doesNotMatch(mounted.body(), /已另存/);
+    assert.ok(mounted.document.querySelector('[data-preview="/cache/old/outline.md"]'));
+    mounted.setExportError(null);
+    mounted.setExportTarget("/another-folder/result.md");
+    await mounted.act(async () => mounted.button("另存为副本…").click());
+    assert.match(mounted.body(), /another-folder\/result.md/);
+    assert.ok(!mounted.calls.some((call) => /file_version_update|merge_workspace|pty_write/.test(call.command)));
   } finally { await mounted.cleanup(); }
 });

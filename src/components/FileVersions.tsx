@@ -66,7 +66,7 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   const [diff, setDiff] = useState<{ before: string; after: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState<"snapshot" | "rename" | "export" | null>(null);
+  const [form, setForm] = useState<"snapshot" | "rename" | null>(null);
   const [value, setValue] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -135,18 +135,20 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
     await update("delete");
   }
   async function submit() {
-    if (form !== "export") { await update(form ?? "snapshot", value); return; }
+    await update(form ?? "snapshot", value);
+  }
+  async function exportVersion() {
     if (!version || !data) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setNotice(null);
     try {
-      const target = await invoke<string>("file_version_export", { root: data.root, versionId: version.id, target: value.trim() });
-      setNotice(`已另存：${target}。当前文件未替换。`); setForm(null);
+      const target = await invoke<string | null>("file_version_export", { root: data.root, versionId: version.id });
+      if (target) setNotice(`已另存：${target}。当前文件未替换。`);
     } catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
-  function openForm(next: "snapshot" | "rename" | "export") {
+  function openForm(next: "snapshot" | "rename") {
     setForm(next);
-    setValue(next === "export" ? chosen.replace(/(\.[^/.]+)?$/, "-副本$1") : next === "rename" ? version?.note ?? "" : "");
+    setValue(next === "rename" ? version?.note ?? "" : "");
   }
   const menuItems: ContextMenuItem[] = file ? [
     {
@@ -180,7 +182,7 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
             {file.exists && <option value="">当前文件</option>}
             {file.versions.map((item) => <option key={item.id} value={item.id}>{item.note || roundTime(item.savedAt)} · {item.source}</option>)}
           </select>
-          {version && <button type="button" className={`${LINK} h-7 px-1 text-l2`} disabled={busy} onClick={() => openForm("export")}>另存为副本…</button>}
+          {version && <button type="button" className={`${LINK} h-7 px-1 text-l2`} disabled={busy} onClick={() => void exportVersion()}>另存为副本…</button>}
           <button ref={menuButton} type="button" className={`${LINK} h-7 px-1`} aria-haspopup="menu" aria-expanded={!!menu} disabled={busy} onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             setMenu((current) => current ? null : { x: rect.right, y: rect.bottom });
@@ -197,8 +199,8 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
         </div>
         {!file.exists && !file.versions.length && <p className="py-2 text-xs text-l4">当前路径没有文件，也没有可读取的历史；留存不能找回已清理的内容。</p>}
         {form && <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <input autoFocus aria-label={form === "export" ? "副本路径" : "版本备注"} className={`${fieldClass} min-w-0 flex-1`} maxLength={form === "export" ? undefined : 200} value={value} onChange={(event) => setValue(event.target.value)} placeholder={form === "export" ? "项目内新文件名，不覆盖已有文件" : "备注（可选）"} />
-          <button type="submit" className={secondaryActionClass} disabled={busy || (form === "export" && !value.trim())}>{form === "export" ? "另存" : "保存"}</button>
+          <input autoFocus aria-label="版本备注" className={`${fieldClass} min-w-0 flex-1`} maxLength={200} value={value} onChange={(event) => setValue(event.target.value)} placeholder="备注（可选）" />
+          <button type="submit" className={secondaryActionClass} disabled={busy}>保存</button>
           <button type="button" className={LINK} disabled={busy} onClick={() => setForm(null)}>取消</button>
         </form>}
       </>}

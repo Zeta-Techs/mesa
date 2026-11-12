@@ -820,34 +820,99 @@ pub async fn file_version_diff(
 
 #[tauri::command]
 pub async fn file_version_export(
+    window: tauri::Window,
     root: String,
     version_id: String,
-    target: String,
-) -> Result<String, String> {
+) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    use tauri_plugin_dialog::DialogExt;
     tauri::async_runtime::spawn_blocking(move || {
         let (root, _, _) = location(&root, None)?;
-        with_lock(&root, || export_at(&root, &version_id, &target))
+        let version = with_lock(&root, || selected(&root, &version_id))?;
+        let (directory, name) = export_default(&root, &version.path)?;
+        let picked = window
+            .app_handle()
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("另存为副本（不覆盖已有文件）")
+            .set_directory(directory)
+            .set_file_name(name)
+            .blocking_save_file();
+        let Some(picked) = picked else {
+            return Ok(None);
+        };
+        let target = picked.into_path().map_err(|error| error.to_string())?;
+        with_lock(&root, || {
+            export_to_path(&root, &version_id, &target).map(Some)
+        })
     })
     .await
     .map_err(|error| error.to_string())?
 }
 
+fn export_default(root: &Path, path: &str) -> Result<(PathBuf, String), String> {
+    let original = root.join(relative(path)?);
+    let stem = original.file_stem().ok_or("文件名无效")?.to_string_lossy();
+    let extension = original
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    let name = format!("{stem}-副本{extension}");
+    crate::paths::validate_fs_name(&name)?;
+    let mut directory = original.parent().ok_or("文件目录无效")?.to_path_buf();
+    while !directory.is_dir() {
+        directory = directory.parent().ok_or("找不到保存目录")?.to_path_buf();
+    }
+    Ok((directory, name))
+}
+
+fn export_to_path(root: &Path, version_id: &str, target: &Path) -> Result<String, String> {
+    let canonical_root =
+        crate::paths::canonicalize_plain(root).map_err(|error| error.to_string())?;
+    if !target.is_absolute() {
+        return Err("保存位置必须由系统窗口选择".into());
+    }
+    let name = target.file_name().ok_or("文件名无效")?.to_string_lossy();
+    crate::paths::validate_fs_name(&name)?;
+    let parent = crate::paths::canonicalize_plain(target.parent().ok_or("目标目录无效")?)
+        .map_err(|error| format!("保存目录不可用：{error}"))?;
+    let dest = parent.join(name.as_ref());
+    if dest.components().any(|component| matches!(component, std::path::Component::Normal(name) if name.to_string_lossy().eq_ignore_ascii_case(".ccode") || name.to_string_lossy().eq_ignore_ascii_case(".git"))) {
+        return Err("不能把副本写进项目内部记录或 Git 目录".into());
+    }
+    match fs::symlink_metadata(&dest) {
+        Ok(_) => return Err("这个文件名已存在，请换一个名字；现稿未覆盖".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    if crate::paths::path_within_path(&dest, &canonical_root) {
+        let rel = dest
+            .strip_prefix(&canonical_root)
+            .map_err(|_| "目标路径无效")?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if crate::projects::path_is_protected(&rel, &crate::projects::protected_paths_at(root)?) {
+            return Err("目标在项目保护范围内，未写入".into());
+        }
+    }
+    let version = selected(root, version_id)?;
+    publish_copy(root, &version, &dest, false)?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
 fn export_at(root: &Path, version_id: &str, target: &str) -> Result<String, String> {
     let target = relative(target)?;
     for name in target.split('/') {
         crate::paths::validate_fs_name(name)?;
     }
-    let version = selected(root, version_id)?;
     let dest = safe_path(&root, &target)?;
     if dest.exists() {
         return Err("这个文件名已存在，请换一个名字；现稿未覆盖".into());
     }
-    if crate::projects::path_is_protected(&target, &crate::projects::protected_paths_at(&root)?) {
-        return Err("目标在项目保护范围内，未写入".into());
-    }
     fs::create_dir_all(dest.parent().ok_or("目标目录无效")?).map_err(|error| error.to_string())?;
-    publish_copy(root, &version, &dest, false)?;
-    Ok(dest.to_string_lossy().into_owned())
+    export_to_path(root, version_id, &dest)
 }
 
 #[cfg(test)]
@@ -1121,6 +1186,93 @@ mod tests {
     }
 
     #[test]
+    fn system_save_defaults_next_to_original_and_allows_selected_external_directory() {
+        let fixture = Fixture::new();
+        fixture.write("manuscript/draft.docx", b"draft\0bytes");
+        fixture
+            .update("manuscript/draft.docx", "snapshot", None, "")
+            .unwrap();
+        let version = load(&fixture.root).unwrap().versions.remove(0);
+        let (directory, name) = export_default(&fixture.root, &version.path).unwrap();
+        assert_eq!(directory, fixture.root.join("manuscript"));
+        assert_eq!(name, "draft-副本.docx");
+        let outside = fixture
+            .root
+            .parent()
+            .unwrap()
+            .join(format!("mesa-export-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&outside).unwrap();
+        let dest = outside.join("chosen.docx");
+        let exported = export_to_path(&fixture.root, &version.id, &dest).unwrap();
+        assert_eq!(fs::read(&exported).unwrap(), b"draft\0bytes");
+        assert_eq!(
+            fs::read(fixture.root.join("manuscript/draft.docx")).unwrap(),
+            b"draft\0bytes"
+        );
+        assert!(export_to_path(&fixture.root, &version.id, &dest).is_err());
+        assert!(export_to_path(
+            &fixture.root,
+            &version.id,
+            &fixture.root.join("manuscript/draft.docx")
+        )
+        .is_err());
+        assert!(export_to_path(&fixture.root, &version.id, Path::new("relative.docx")).is_err());
+        assert!(export_to_path(
+            &fixture.root,
+            &version.id,
+            &fixture.root.join(".ccode/secret.docx")
+        )
+        .is_err());
+        fixture.write(
+            ".ccode/project.toml",
+            b"name = 'project'\nprotected_paths = ['manuscript']\n",
+        );
+        assert!(export_to_path(
+            &fixture.root,
+            &version.id,
+            &fixture.root.join("manuscript/protected.docx")
+        )
+        .is_err());
+        assert!(!fixture.root.join("manuscript/protected.docx").exists());
+        assert_eq!(load(&fixture.root).unwrap().versions.len(), 1);
+        fs::remove_file(fixture.root.join("manuscript/draft.docx")).unwrap();
+        fs::remove_dir(fixture.root.join("manuscript")).unwrap();
+        assert_eq!(
+            export_default(&fixture.root, &version.path).unwrap().0,
+            fixture.root
+        );
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_selected_dest_cannot_replace_a_dangling_link_or_enter_internal_metadata() {
+        let fixture = Fixture::new();
+        fixture.write("draft.md", b"draft");
+        fixture.update("draft.md", "snapshot", None, "").unwrap();
+        let id = load(&fixture.root).unwrap().versions[0].id.clone();
+        let link = fixture.root.join("dangling.md");
+        std::os::unix::fs::symlink(fixture.root.join("missing.md"), &link).unwrap();
+        assert!(export_to_path(&fixture.root, &id, &link).is_err());
+        std::os::unix::fs::symlink(
+            fixture.root.join(".ccode"),
+            fixture.root.join("metadata-link"),
+        )
+        .unwrap();
+        assert!(export_to_path(
+            &fixture.root,
+            &id,
+            &fixture.root.join("metadata-link/copy.md")
+        )
+        .is_err());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!fixture.root.join(".ccode/copy.md").exists());
+    }
+
+    #[test]
     fn manually_kept_drafts_remain_in_the_step_before_any_acceptance() {
         let fixture = Fixture::new();
         fixture.write("draft.md", b"unaccepted draft");
@@ -1179,15 +1331,25 @@ mod tests {
         crate::projects::append_acceptance_log_at(&fixture.root, &first_save).unwrap();
         fixture.write("outline.md", b"second accepted version");
         let second = fixture.commit("outline.md");
-        crate::projects::append_acceptance_log_at(&fixture.root, &save("outline.md", &second)).unwrap();
+        crate::projects::append_acceptance_log_at(&fixture.root, &save("outline.md", &second))
+            .unwrap();
         fs::remove_file(fixture.root.join("outline.md")).unwrap();
-        let result = view(&fixture.root, load(&fixture.root).unwrap(), Some("outline.md"), Some("step")).unwrap();
+        let result = view(
+            &fixture.root,
+            load(&fixture.root).unwrap(),
+            Some("outline.md"),
+            Some("step"),
+        )
+        .unwrap();
         assert!(!result.files[0].exists);
         assert!(!result.files[0].tracked);
         assert_eq!(result.files[0].versions.len(), 2);
         assert!(!fixture.root.join(".ccode/versions/index.json").exists());
         let newest = selected(&fixture.root, &result.files[0].versions[0].id).unwrap();
-        assert_eq!(content(&fixture.root, &newest).unwrap(), b"second accepted version");
+        assert_eq!(
+            content(&fixture.root, &newest).unwrap(),
+            b"second accepted version"
+        );
         let exported = export_at(&fixture.root, &newest.id, "outline-copy.md").unwrap();
         assert_eq!(fs::read(exported).unwrap(), b"second accepted version");
         assert!(!fixture.root.join(".ccode/versions/index.json").exists());
