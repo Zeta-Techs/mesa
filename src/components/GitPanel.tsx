@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Maximize2, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type {
   ArtifactEntryDto,
@@ -24,7 +25,8 @@ import { defaultCommitMessage } from "../git-commit-message";
 import { GitInstallOffer } from "../dep-install";
 import { FileTypeGlyph } from "./FileTypeMark";
 import { groupFilesByStatus, statusBadgeTitle } from "../git-status-groups";
-import { IS_MAC } from "../hotkeys";
+import { IS_MAC, IS_WINDOWS } from "../hotkeys";
+import { revealFolderLabel } from "../path-utils";
 import { diffLineNumbers, hunkLabel, pairIntraline, parseHunkHeader } from "../diff-intraline";
 import { usePolling } from "../polling";
 
@@ -481,7 +483,7 @@ function GitPanel({
     const selected = await open({
       multiple: false,
       directory: false,
-      title: "选择要登记的产物文件",
+      title: "选择要交给下一步的文件",
     });
     if (typeof selected !== "string") return;
     setRegistering(true);
@@ -493,7 +495,7 @@ function GitPanel({
         name,
         artifactPath: selected,
       });
-      showToast(`已登记产物「${entry.name}」`);
+      showToast(`已加入「${entry.name}」`);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -1021,11 +1023,12 @@ function GitPanel({
         )}
       </div>
 
-      {/* 产物区（提货单，仅工作区任务视图）：产物本身不进 git，清单 artifacts.yaml 会随提交传递 */}
+      {/* 交给下一步的文件（内部叫提货单 artifacts.yaml，仅工作区任务视图）：产物本身不进 git，
+          清单随提交传递，下一步开工时列进任务书。界面不露 md5 / 工作区名，收进悬停 */}
       {inWs && (
         <div className="shrink-0 border-t border-hairline p-2">
           <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-xs text-l3">产物（提货单）</span>
+            <span className="text-xs text-l3">交给下一步的文件</span>
             {!readOnly && (
               <button
                 type="button"
@@ -1033,24 +1036,25 @@ function GitPanel({
                 disabled={registering}
                 className="shrink-0 rounded-sm px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
               >
-                {registering ? "登记中…" : "登记产物"}
+                {registering ? "加入中…" : "加入文件…"}
               </button>
             )}
           </div>
           {artifacts.length === 0 ? (
             <p className="text-xs text-l4">
-              暂无登记产物；产物本身不进 git，清单 artifacts.yaml 会随提交传递
+              PDF、Word 等成品不在上面的改动里，加到这里下一步的 AI 才读得到
             </p>
           ) : (
             <ul className="max-h-32 overflow-auto">
               {artifacts.map((a) => (
                 <li
                   key={a.path}
-                  title={`${a.path}\nmd5 ${a.hash} · ${formatSize(a.size)} · 来自「${a.producedBy}」`}
+                  title={`${a.path}\n${formatSize(a.size)} · 来自工作区「${a.producedBy}」 · 校验值 ${a.hash.slice(0, 8)}`}
                   className="px-1 py-0.5 text-xs"
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="min-w-0 flex-1 truncate text-l2">{a.name}</span>
+                    <span className="shrink-0 text-l4">{formatSize(a.size)}</span>
                     {/\.pdf$/i.test(a.path) && (
                       <button
                         type="button"
@@ -1058,19 +1062,22 @@ function GitPanel({
                           setPreviewReq({ path: a.path, name: a.name });
                           setPage("terminal");
                         }}
-                        title="在终端页内嵌预览该 PDF"
+                        title="在 Mesa 里预览这份 PDF"
                         className="shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
                       >
                         查看
                       </button>
                     )}
-                    <span className="shrink-0 font-mono text-l4">
-                      {a.hash.slice(0, 8)}
-                    </span>
-                    <span className="shrink-0 text-l4">{formatSize(a.size)}</span>
-                    <span className="shrink-0 text-l4">← {a.producedBy}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void revealItemInDir(a.path).catch((e) => setError(String(e)))
+                      }
+                      className="shrink-0 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                    >
+                      {revealFolderLabel(IS_MAC, IS_WINDOWS)}
+                    </button>
                   </div>
-                  <div className="truncate font-mono text-micro text-l4">{a.path}</div>
                 </li>
               ))}
             </ul>
