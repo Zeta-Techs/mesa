@@ -1822,16 +1822,16 @@ export default function TaskCardsSection({
                 : undefined
             }
             discussInline={
-              // 「继续讨论 · TASK.md · 请几家研讨」同一行（2026-11-11 拍板：研讨上步骤卡，只占一个文字链接、不抢右缘主动作）
+              // 「继续讨论 · TASK.md · 方案研讨」同一行（2026-11-11 拍板：研讨上步骤卡，只占一个文字链接、不抢右缘主动作）
               consultEligible ? (
                 <button
                   type="button"
                   onClick={() => void openStepConsult()}
                   title="拿不准一个判断时，请几家不同模型的 AI 只读看看这一步的任务书和产物，各给意见、再互相补充；它们不改文件，记下什么由你定。只想和一家 AI 聊着改任务书，用左边的商量"
-                  className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l4 hover:bg-hover hover:text-l2"
+                  className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
                 >
-                  {/* 全站 button { font: inherit } 会吞掉按钮上的字号，字号写内层；与同一行的 TASK.md 一样 text-xs */}
-                  <span className="text-xs">请几家研讨</span>
+                  {/* 2026-11-12 用户：改名「方案研讨」，样式与同一行的「继续讨论」按钮一致 */}
+                  方案研讨
                 </button>
               ) : null
             }

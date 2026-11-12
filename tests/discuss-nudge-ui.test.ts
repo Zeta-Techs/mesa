@@ -66,7 +66,7 @@ test("商量引导气泡：每个项目第一次出，关掉后不再出", async
   };
   try {
     const tip = "开始前，先跟 AI 聊几句？";
-    const consultLine = "可以再点右边的「请几家研讨」（可选）";
+    const consultLine = "可以再点右边的「方案研讨」（可选）";
     const withConsult = { ...props, discussInline: h("button", null, "请几家研讨") };
     await act(async () => root.render(h(StepFlow, props)));
     assert.ok(host.textContent!.includes(tip), "第一次应出气泡");
