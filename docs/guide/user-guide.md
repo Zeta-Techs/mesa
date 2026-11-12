@@ -3051,7 +3051,7 @@ macOS 用户还会在屏幕顶部的应用菜单里看到 About Mesa——系统
 | `notes/assets/` | 图片：沉浸阅读里的截图、手机发来后 **放进项目** 的照片 | 你（经界面） |
 | `notes/` | 精读笔记、`index.json`、`handoff.md` | AI |
 | `references.bib` | 引文库，正文只用 `[@键]` 引用 | AI 追加 |
-| `manuscript/` | 大纲、初稿、定稿、审查报告、`typeface.md`；`reference.docx` 是 Word 的字体样式模板（不是稿件，出 Word 时自动套用）；`references.lua` 在渲染时整理参考文献表：标题照原样大小写（不会把 Ru、Ni-Mo-B 改成小写）、去掉题名前人手加的编号、「待补」不印出来、文末补 References 标题，引文库本身不改 | AI |
+| `manuscript/` | 大纲、初稿、定稿、审查报告、`typeface.md`；`reference.docx` 是 Word 的字体样式模板（不是稿件，出 Word 时自动套用）；`references.lua` 在渲染时整理参考文献表：标题照原样大小写（不会把 Ru、Ni-Mo-B 改成小写）、去掉题名前人手加的编号、「待补」不印出来、文末补 References 标题，引文库本身不改；它还把 H₂、cm⁻² 这类上下标排成真正的上下标（正文字体没有这些字，不处理会印成空方块），并让 PDF 里的宽表按内容分列宽 | AI |
 | `figures/` | 拼图：一张图对应一个论点，从几篇**研究论文**里各取撑这个论点的那一块子图拼成，新编号 (a)(b)(c)，图注逐块写来源（别人综述里的总结图不直接拿来拼，大纲写成「自绘」的由 AI 参考着自己画一张，出成能在 PPT 里改的文件，放在 `figures/figN/`）；`figures/src/` 是裁出的子图，`figures/README.md` 记每块从哪篇哪张图来、怎么裁的，等你看过确认；`figures/sources.md` 是来源清单——每块的原文（作者、年份、期刊卷页）、DOI 链接、在原文里是第几张图哪一块、PDF 第几页。这些图是从 PDF 裁的，投稿前按这张清单去期刊下载高清原图重新拼，并向出版社申请转载许可 | AI |
 | `output/` | 渲染产物（PDF / Word / 两份域稿），不进 git | AI |
 | `submission/` | 目标期刊等投稿材料 | AI |

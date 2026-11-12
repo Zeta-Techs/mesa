@@ -238,7 +238,7 @@ test("参考文献过滤器：YAML 挂上 filters，已挂不重复，行内写�
   assert.match(inline.stdout, /filters:\n  - other\.lua\n  - references\.lua\nformat: docx/);
 });
 
-const luaFilter = resolve("src-tauri/resources/skills/quarto-render/scripts/references.lua");
+const luaFilter = process.env.MESA_LUA_FILTER ?? resolve("src-tauri/resources/skills/quarto-render/scripts/references.lua");
 
 test("参考文献过滤器：标题保住大小写、去人手编号、「待补」不印、补 References 标题", { skip: !quartoWorks() }, () => {
   const root = mkdtempSync(join(tmpdir(), "mesa-refs-lua-"));
@@ -256,6 +256,44 @@ test("参考文献过滤器：标题保住大小写、去人手编号、「待�
     assert.match(out, /Single atom Ru doping 2H-MoS2 on Si/);
     assert.doesNotMatch(out, /【74】|19~|19 \.|待补|无期号/);
     assert.match(out, /## References \{#references \.unnumbered\}/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 2026-11-12 HER 初稿：Times New Roman 没有 Unicode 上下标码位，xelatex 把 H₂、cm⁻²、V₀.₃ 印成空方块（全文 294 处），表格五列等宽、长词压到隔壁列
+test("参考文献过滤器：Unicode 上下标换成真上下标（正文与引文库题名），下标里的小数点跟着走", { skip: !quartoWorks() }, () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-refs-script-"));
+  try {
+    writeFileSync(join(root, "refs.bib"), "@article{a,\n  title = {Se Incorporation in NbB₂ Nanorods},\n  author = {Burse, S},\n  year = {2026},\n  journal = {Adv. Sci.},\n}\n");
+    writeFileSync(join(root, "doc.md"), "---\nbibliography: refs.bib\n---\n\nV₀.₃Mo₀.₇B₂ at 1 A cm⁻² gives H₂ [@a]. Done ₁.\n");
+    const r = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "--citeproc", "-t", "native"], { cwd: root, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const out = r.stdout;
+    assert.match(out, /Str "V"\s*, Subscript \[ Str "0\.3" \]/);
+    assert.match(out, /Str "cm"\s*, Superscript \[ Str "\\8722\\&2" \]/, "上标减号换成普通减号 U+2212");
+    assert.match(out, /Str "NbB"\s*, Subscript \[ Str "2" \]/, "引文库题名里的下标也换");
+    assert.doesNotMatch(out, /[₀-₉⁻]/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("参考文献过滤器：PDF 里宽表按内容分列宽、单元格开头可断词、小一号字；窄表与 Word 不动", { skip: !quartoWorks() }, () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-refs-table-"));
+  try {
+    const wide = "| System | Current density and duration | Protocol | iR and FE status | Half-cell or device |\n|---|---|---|---|---|\n" +
+      "| a-Ni/c-MoO2 | 500 mA cm-2, 600 h with an extended stability hold | chronoamperometry + CV | iR not stated; no FE | three-electrode |\n";
+    writeFileSync(join(root, "doc.md"), `${wide}\n| a | b |\n|---|---|\n| 1 | 2 |\n`);
+    const tex = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "-t", "latex"], { cwd: root, encoding: "utf8" });
+    assert.equal(tex.status, 0, tex.stderr);
+    assert.match(tex.stdout, /\\begingroup\\small/);
+    assert.match(tex.stdout, /\\hspace\{0pt\}chronoamperometry/);
+    const widths = [...tex.stdout.matchAll(/\(\\linewidth - \d+\\tabcolsep\) \* \\real\{([\d.]+)\}/g)].map((m) => Number(m[1]));
+    assert.equal(widths.length, 5, "只有宽表给列宽");
+    assert.ok(widths[1] > widths[4] && widths[2] > 0.1, `按内容分：${widths.join(", ")}`);
+    const docx = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "-t", "native"], { cwd: root, encoding: "utf8" });
+    assert.doesNotMatch(docx.stdout, /begingroup|hspace/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
