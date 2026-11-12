@@ -8,6 +8,7 @@ import {
   mergeMesaChecks,
   MESA_CHECKER,
   noteStates,
+  reviewKeys,
   outlineThinStatus,
 } from "../src/outline-check.ts";
 
@@ -156,4 +157,29 @@ test("笔记合并取最靠前的状态；Mesa 核对排在核验文件前面", 
   const out = mergeMesaChecks({ items: [{ id: "x", kind: "k", status: "passed", title: "t" }], files: ["a.jsonl"], skipped: 1 }, mesa)!;
   assert.equal(out.items[0], mesa[0]);
   assert.equal(out.skipped, 1);
+});
+
+test("拼图里用了综述的图：按笔记 bibKey 或引文库 DOI 认出 kind=review 的篇，一张拼图报一条；仅引用、研究论文不报", () => {
+  const included = JSON.stringify([
+    { id: "10.1/rev", kind: "review", title: "一篇综述" },
+    { id: "10.1/acc", kind: "review", title: "一篇 Account" },
+    { id: "10.1/res", kind: "research", title: "研究论文" },
+    { id: "10.1/old", kind: "review", decision: "excluded", title: "排除的综述" },
+  ]);
+  const indexes = [JSON.stringify([{ id: "10.1/rev", bibKey: "Gupta2019" }, { id: "10.1/res", bibKey: "Kim2025" }])];
+  const bibs = ["@article{Lee2021,\n doi = {10.1/ACC},\n year={2021}}\n@article{Kim2025,\n doi={10.1/res}}"];
+  assert.deepEqual([...reviewKeys(included, indexes, bibs)].sort(), ["gupta2019", "lee2021"]);
+  const outline = [
+    "- 用图计划：拼图 1（论点）= (a) [@Gupta2019] Fig.1 + (b) [@Kim2025] Fig.3c",
+    "- 用图计划：拼图 2（论点）= (a) [@Lee2021] Fig.2 + (b) [@Gupta2019] Fig.20 + (c) [@Kim2025] Fig.4",
+    "- 用图计划：仅引用 [@Gupta2019] Fig.6a–b",
+    "- 用图计划：拼图 3（论点）= (a) [@Kim2025] Fig.1a + (b) [@Kim2025] Fig.2b",
+  ].join("\n");
+  const fig = checkOutline({ outline, bibs, indexes, included }).items.filter((i) => i.id.startsWith("outline-review-figure-"));
+  assert.deepEqual(fig.map((i) => i.title), [
+    "拼图 1 用了综述里的图：@Gupta2019 Fig.1",
+    "拼图 2 用了综述里的图：@Lee2021 Fig.2、@Gupta2019 Fig.20",
+  ]);
+  assert.ok(fig.every((i) => i.status === "needs_human" && i.checker === MESA_CHECKER));
+  assert.equal(fig[1].target?.line, 2);
 });

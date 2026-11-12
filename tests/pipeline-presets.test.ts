@@ -118,7 +118,7 @@ test("空落点人工事项必须使用 manual，且推荐技能存在于内置�
     "bib-check", "blender-research", "data-clean", "data-eda", "endnote-bridge", "figure-forge",
     "lit-notes", "lit-search", "lit-watch", "origin-plot", "proposal-writer", "quarto-render",
     "rebuttal-crafter", "research-writing", "review-figures", "review-framework", "review-writing",
-    "slides-deck", "stats-check", "zotero-sync",
+    "schematic-forge", "slides-deck", "stats-check", "zotero-sync",
   ]);
   for (const template of PIPELINE_TEMPLATES) {
     for (const step of template.steps) {

@@ -166,6 +166,34 @@ export function excludedKeys(
   return { sure: out, derived };
 }
 
+/** 综述类（含 Account）篇能对上的键（小写）：included.json 里 kind=review 的篇，按笔记索引 bibKey 或引文库 DOI 对。
+ *  拼图只取研究论文的子图（2026-11-12 用户拍板），这里给核对用；对不上的不猜 */
+export function reviewKeys(
+  includedText: string | null | undefined,
+  indexTexts: readonly (string | null | undefined)[] = [],
+  bibTexts: readonly (string | null | undefined)[] = [],
+): Set<string> {
+  const out = new Set<string>();
+  const reviews = new Set<string>();
+  for (const row of records(parseJson(includedText))) {
+    if (str(row.kind).toLowerCase() !== "review" || /^exclude/.test(str(row.decision).toLowerCase())) continue;
+    for (const id of [row.id, row.doi]) if (str(id)) reviews.add(str(id).toLowerCase());
+  }
+  if (reviews.size === 0) return out;
+  for (const text of indexTexts) {
+    for (const row of records(parseJson(text))) {
+      if (reviews.has(str(row.id).toLowerCase()) && str(row.bibKey)) out.add(str(row.bibKey).toLowerCase());
+    }
+  }
+  for (const text of bibTexts) {
+    for (const m of (text ?? "").matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,([\s\S]*?)(?=\n@|$)/g)) {
+      const doi = m[2].match(/\bdoi\s*=\s*[{"]\s*([^}"]+)/i)?.[1]?.trim().toLowerCase();
+      if (doi && reviews.has(doi)) out.add(m[1].toLowerCase());
+    }
+  }
+  return out;
+}
+
 // ---------- 大纲结构 ----------
 
 interface Section {
@@ -495,6 +523,27 @@ export function checkOutline(input: OutlineCheckInput): OutlineCheckResult {
       });
     }
   });
+
+  // ③b 拼图里用了综述的图（2026-11-12 用户拍板：拼图只取研究论文的子图，综述的总结图参考着自绘）
+  const reviews = reviewKeys(input.included, input.indexes ?? [], bibs);
+  const reviewHits = new Map<string, Panel[]>();
+  for (const p of panels) {
+    if (!reviews.has(p.key.toLowerCase())) continue;
+    reviewHits.set(p.composite, [...(reviewHits.get(p.composite) ?? []), p]);
+  }
+  for (const [composite, hits] of reviewHits) {
+    items.push({
+      id: `outline-review-figure-${composite}-${hits.map((h) => `${h.key}_${h.fig}`).join("-")}`,
+      kind: "outline-figure",
+      status: "needs_human",
+      title: `拼图 ${composite} 用了综述里的图：${hits.map((h) => `@${h.key} Fig.${h.fig}`).join("、")}`,
+      target: target(hits[0].line),
+      evidence: {
+        detail: "综述的总结图多半本身是转引，照搬显不出你的综合。要原始数据就换成它引的那篇研究论文的子图；要总结思路就改成「自绘 图N（论点）= 参考 [@键] Fig.n」，初稿自己画。",
+      },
+      checker: MESA_CHECKER,
+    });
+  }
 
   // ④ 覆盖检查：Mesa 数的与 AI 写的并排
   const rows: CoverageRowCheck[] = [];

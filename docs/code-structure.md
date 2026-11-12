@@ -1137,7 +1137,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   notes-check.ts             # 精读核对（2026-11-11）：笔记索引 ↔ 笔记文件 / 引文库 / 纳入清单 / 抽取表 / 速读表对不上的 → 核验项（checker=mesa，只拦下 / 待你判断）；
                              #   完整笔记按八段标题数（FULL_NOTE_MIN=6），「写完了」用 notes-progress isReviewedRow 同一份判断（tests/notes-check.test.ts）
   outline-check.ts           # 大纲核对（2026-11-11 综述回路三期）：outline.md + 笔记索引 + 引文库 + 纳入清单 → 覆盖检查每节 Mesa 数的可写正文 / 仅线索 / 最新年份
-                             #   （与 AI 写的并排）与核验项（键不在引文库、引了已排除的 = 拦下；分档与笔记不符、重复列键、同块子图两用、篇数对不上 = 待你判断；不出通过，
+                             #   （与 AI 写的并排）与核验项（键不在引文库、引了已排除的 = 拦下；分档与笔记不符、重复列键、同块子图两用、拼图用了综述的图（reviewKeys 按 kind=review）、篇数对不上 = 待你判断；不出通过，
                              #   checker=mesa）；outlineThinStatus = 步骤卡「薄 n 节 / 补料已到」；mergeMesaChecks 把核对项排进核验清单前面。只算不读文件（tests/outline-check.test.ts）
   spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、
                              #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
