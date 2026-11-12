@@ -5,9 +5,10 @@ import { Modal } from "./Modal";
 import HelpRequestCards from "./HelpRequestCards";
 import { primaryActionClass, quietActionClass } from "./PageFrame";
 import { buildWorkspaceTerminalRequest, resolveStepLaunchByWorkspace } from "../pipeline-start";
-import { deliverHelpPrompt, helpAnsweredUnsent, helpItemsSignature } from "../help-requests";
+import { helpAnsweredUnsent, helpItemsSignature } from "../help-requests";
+import { confirmDialog } from "./ConfirmDialog";
 import { toast } from "../toast";
-import type { HelpRequestDto, WorkspaceDto } from "../types";
+import type { HelpRequestDto, RunDto, WorkspaceDto } from "../types";
 
 /**
  * 人工请求卡片弹层（2026-11-02 起全局挂在 App）：工作台拍板队列、标题栏收件箱、项目页点「去回答」都原地弹出，不跳页。
@@ -22,8 +23,6 @@ export default function HelpRequestDialog() {
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setPage = useAppStore((s) => s.setPage);
   const [view, setView] = useState<HelpRequestDto | null>(null);
-  // 这次弹层里勾了「以后同类照此办」的条目：交给 Agent 时告诉它已记进项目知识
-  const [remembered, setRemembered] = useState<Set<string>>(new Set());
 
   async function load(root: string): Promise<HelpRequestDto | null> {
     const list = await invoke<HelpRequestDto[]>("list_help_requests");
@@ -37,7 +36,6 @@ export default function HelpRequestDialog() {
     load(root)
       .then((found) => {
         if (found) {
-          setRemembered(new Set());
           setView(found);
         } else {
           toast("这条人工请求已经处理完了", "info");
@@ -58,14 +56,27 @@ export default function HelpRequestDialog() {
 
   function close() {
     setView(null);
-    setRemembered(new Set());
   }
 
-  /** 打开人工请求对应的对话；带 prompt 时是「交给 Agent 继续」：先建好请求再标「已送」，建不成不标 */
-  async function openTerminal(target: HelpRequestDto, prompt?: string) {
+  async function openTerminal(target: HelpRequestDto, itemIds?: string[]) {
     let req: Parameters<typeof setPendingTerminal>[0];
     try {
+      let deliveryRun: RunDto | null = null;
+      if (itemIds?.length) {
+        try {
+          deliveryRun = await invoke<RunDto>("help_delivery_prepare", { root: target.root, itemIds, retry: false });
+        } catch (reason) {
+          if (!String(reason).includes("可能已发出")) throw reason;
+          if (!(await confirmDialog("回答可能已经送到。请先核对原对话；只有确认没有送到，才重新发送，重复发送可能让 AI 重做业务。", { confirmText: "确认没送到，重发", danger: true }))) return;
+          deliveryRun = await invoke<RunDto>("help_delivery_prepare", { root: target.root, itemIds, retry: true });
+        }
+      }
       const workspaces = await invoke<WorkspaceDto[]>("list_workspaces");
+      if (deliveryRun?.runtime === "headless") {
+        toast("回答已保存，后台按原连接与授权继续；做完照常等你评审。", "info");
+        bumpHelpRefresh();
+        return;
+      }
       const ws =
         workspaces.find((w) => w.id === target.workspaceId) ??
         workspaces.find((w) => w.worktreePath === target.root);
@@ -75,8 +86,8 @@ export default function HelpRequestDialog() {
         const stepL = await resolveStepLaunchByWorkspace(ws, useAppStore.getState().profiles);
         req = await buildWorkspaceTerminalRequest(
           ws,
-          prompt,
-          prompt
+          undefined,
+          itemIds?.length
             ? { autoStart: true, resumeSession: true, stepLaunch: stepL ?? undefined }
             : { stepLaunch: stepL ?? undefined },
         );
@@ -85,25 +96,24 @@ export default function HelpRequestDialog() {
           cwd: target.root,
           extraEnv: {},
           title: target.workspaceName ?? target.repoName,
-          ...(prompt ? { initialPrompt: prompt } : {}),
         };
+      }
+      if (deliveryRun) {
+        req.runId = deliveryRun.id;
+        req.taskId = deliveryRun.taskId || undefined;
+        req.agentId = deliveryRun.agent;
+        req.profileId = deliveryRun.profileId ?? undefined;
+        req.focusSession = undefined;
+        req.resume = deliveryRun.sessionId ? { agentId: deliveryRun.agent, sessionId: deliveryRun.sessionId } : undefined;
+        req.autoStart = Boolean(deliveryRun.profileId);
       }
     } catch (reason) {
       // 弹层已关、不落错误面就等于点了没反应（workspace_env_for 失败等后端异常会走到这里）
       toast(`打不开终端：${String(reason)}`, "error");
       return;
     }
-    // 只有接回原对话且自动发出的才算「已送」（2026-11-03 自查）：主仓根来的请求、要重选连接的，
-    // 回答只是填进新标签的输入里，人没点启动就关掉会丢——不标已送，收件箱继续提醒
-    if (prompt && req.autoStart) {
-      try {
-        await invoke<number>("help_request_mark_sent", { root: target.root });
-      } catch (reason) {
-        toast(`回答已送出，但没能标记为已送：${String(reason)}`, "warning");
-      }
-      bumpHelpRefresh();
-    } else if (prompt) {
-      toast("回答已填进对话的输入里，启动发出后才算送到；送到前待处理里会一直留着这一条。", "info");
+    if (itemIds?.length) {
+      toast("回答已排队，原对话空闲时发送；送到前仍保留在待处理里。", "info");
     }
     setPendingTerminal(req);
     setPage("terminal");
@@ -137,9 +147,8 @@ export default function HelpRequestDialog() {
             title={answered > 0 ? "把回答交给这一步原来的对话，让 Agent 接着干" : "打开该步骤终端，直接回答这些请求"}
             onClick={() => {
               const target = view;
-              const count = target.items.filter((i) => remembered.has(i.id)).length;
               close();
-              void openTerminal(target, answered > 0 ? deliverHelpPrompt(answeredItems, count) : undefined);
+              void openTerminal(target, answered > 0 ? answeredItems.map((item) => item.id) : undefined);
             }}
             className={primaryActionClass}
           >
@@ -151,7 +160,7 @@ export default function HelpRequestDialog() {
       <HelpRequestCards
         request={view}
         onAnswered={() => void reload(view.root)}
-        onRemembered={(id) => setRemembered((prev) => new Set(prev).add(id))}
+        onRemembered={() => {}}
       />
     </Modal>
   );

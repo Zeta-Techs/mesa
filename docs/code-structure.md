@@ -257,7 +257,7 @@ components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；Pr
   components/ImportPackDialog.tsx # 导入任务包预览：步骤、参数、触发、检查结果、随包技能与库里同名比对、随包每个文件全文；装进我的任务 / 不装（删暂存）
   components/HelpRequestCards.tsx # 人工请求卡片：问题、类别、选项按钮（带后果与「建议」）、自由回答、「以后同类照此办」记为已定 / 不做；「请几家研讨这一问」（helpConsultSeed 预填、只开研讨弹层，不回填答案）
   components/HelpRequestDialog.tsx # 人工请求弹层（全局挂在 App，消费 store.helpViewReq）：收件箱 / 工作台队列 / 流程线「回答问题」/ 对话页那一行都原地弹；
-                             # 「交给 Agent 继续」走 buildWorkspaceTerminalRequest，建成后 help_request_mark_sent；答过送过 bumpHelpRefresh 让工作区页重拉收件箱数据源
+                             # 「交给 Agent 继续」先 help_delivery_prepare 存问答快照，再按原 Run/Agent/会话接回；不明发送只能人核对后确认重发
   components/PackDraftsDialog.tsx # 跟 AI 写我的任务：new 起头表单（建草稿 + beginAskAi 开对话）；list 草稿检查（拦下 / 提醒）、按默认参数预览每一步任务书、
                              # 回对话接着改、装进我的任务、装进并加到这个项目试跑、丢弃
   components/SavePackForm.tsx # 另存为我的任务（项目设置 → 研究流程）：选步骤、加参数（显示命中几处、选类型，原文不合类型不让存）、同名覆盖先确认，保存走 save_task_pack
@@ -632,6 +632,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   run-blocker.ts             # 一件活「卡在哪」的唯一出处（2026-11-06）：runBlocker 把信任 / 等确认 / 菜单 / 等待屏 / 启动失败 / 登录 / 连接 / 十分钟没出字 / 目标说完一轮归成一个，按要紧程度取一，写手机能否直接点；终端页写进 terminalRunInputs.blocker（tests/run-blocker.test.ts）
   assistant-queue.ts         # 调度台「等你的事」纯逻辑（2026-11-06）：buildDeskItems（人工请求 / 对话里在问 / 等确认，looksLikeQuestion）、relayText（原话转达只加一行来源）、deskSummary（tests/assistant-queue.test.ts）
   assistant-desk.ts          # 调度台取数与转达（调 invoke）：loadDesk、replyDesk（人工请求写回作答再交给那一步；对话问题原话送进去）、focusConfirm、addProjectKnowledge（记规矩，桌面卡片与飞书共用）
+  help-delivery.ts           # 人工回答投递发送链：领取持久快照、聊天发送成功才确认；失败/终端人工操作/确认失败不重发（tests/help-delivery.test.ts）
   assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp；rework（发补料单）= desktop（tests/im-route.test.ts）
   im-route.ts                # 总助手路由：帮助 / 项目 / 等我的 / 切到 / 点名项目 / 回第 N 步 / 默认项目 / 说不清给项目按钮；只认点名不猜（tests/im-route.test.ts）
   im-cards.ts                # 飞书卡片 JSON：answerCard（追问选项、派出去、记进项目知识按钮）、deskCard、projectPickCard、phoneText（tests/im-cards.test.ts）
@@ -670,7 +671,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （与 task_packs.rs steps_for_project 同口径）+ adaptPack（按项目研究工具设置 withResearchTools，项目设定套工具行）（tests/pack-add.test.ts）
   peek.ts                    # 看一眼前端纯逻辑：openPeerCount（开工时数同项目开着的其他工作）、peekContextLine（项目说明里那一句）、peekSectionLines（有才带任务书「同项目的其他工作」一节，
                              # 按平台写 "$MESA_PEEK_TOOL" / & $env:MESA_PEEK_TOOL，Windows 另附 Git Bash 写法）（tests/peek.test.ts）
-  help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、交给 Agent 的那句话、helpConsultSeed（这一问带进研讨的问题与材料）、
+  help-requests.ts           # 人工请求纯逻辑：要人管的条目（没答 / 答了未送）、收件箱一行、忽略签名、helpConsultSeed（这一问带进研讨的问题与材料）、
                              # （任务书「项目知识」改由后端 project_memory_for_ai 给，2026-11-08）（tests/help-requests.test.ts）
   task-pack-author.ts        # 跟 AI 写的种子提示词 buildPackAuthorPrompt（包格式与闭集的唯一真源）、检查结果 splitIssues / issueLine / buildPackFixPrompt
                              # （tests/task-pack-author.test.ts）
@@ -1815,6 +1816,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   schedule_events.rs         # 事件规则的目录事件源：validate_folder（项目内相对目录、不碰 .git/.ccode）、list_files（跳点开头与符号链接，5000 个 / 6 层上限）、
                              # diff（连着两次 tick 大小+修改时间不变才算落稳）、scan_folder（快照存配置目录 schedule-events/<id>.json，首次只记底）、reset
   scheduler.rs               # 定时雷达（v3.75；v3.79 起技能可选；v3.218 新建巡检技能：草稿 .ccode/drafts/watch-*，确认才入库分发）：
+                             # 分轮跟进：任务级授权/持久初始评审基线/waiting/later，原身份续跑、不播种半成品、失败暂停；核心与桌面复用同一执行路径
+                             # 2026-11-12 在途事件批次与 pending 同次落盘，调 CLI 前关联 Run、收尾同次写历史；不明执行保留事件并暂停，未执行批次退回
                              #   2026-11-08 create_paused_schedule：派活单一键建（order_skill_md 按单子生成 SKILL.md、不调 AI，建好 enabled=false）；
                              # 2026-11-02 事件规则：Schedule.event（folder/radar/phone × record/run）+ pending_events；tick 先 scan_event_sources、flush_recorded_events，
                              #   直接跑档进 collect_due，跑起来 take_pending_events；push_project_event 给雷达采纳与手机投递用；RunRecord.origin 记规则版本与文件；
@@ -1838,6 +1841,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 跨轮记忆 .ccode/watch/<id>/memory.md（seed_memory 新者为准、adopt_memory 采纳带回、schedule_memory_read/write）；
                              # run_schedule_now(note)；每任务 timeout_minutes；草稿 .schedule.json 周期建议（read_schedule_suggestion 闭集校验，
                              # commit_watch_skill_draft 收人确认的周期）
+  followup.rs                # 跟进授权限额与 mesa-receipt 闭集校验、仅补闭合 fence 的确定性格式修补，不调 AI 或执行工具
+  background_core.rs         # 同二进制 --mesa-core 无窗口独立定时核心：默认关闭、OS 单实例锁、私有启停/手动启动/取消记录，退出等执行与调度收尾
   lit_watch.rs               # 文献雷达应用层（v3.95）：巡检产物解析 DTO（notes/inbox.md 有效文献块含 watch-run 批次标记日期、上限 500 条；
                              # 漏写批次时 stamp_undated_inbox 只插入标记行：冻结前按本次完成日、打开雷达时按最近已采纳成功巡检；
                              # repair_watch_batch_dates 供空态「按巡检日补记」，已有任一条带日期则不写；
@@ -2015,7 +2020,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   走 runs::live_copy_changes（与评审页没冻结时现算同口径、只读），改过的记 NO_LINES「~」不给行数；无头 / 定时运行的注入在 ai::run_agent_task
   help_requests.rs           # 人工请求（.ccode/help-wanted.md）：固定字段解析（建议 / A–D 选项与后果 / 不回时 / 类别 / 依据；单行旧写法照读）、
                              # list_help_requests 扫未归档工作树 + 主仓根（出站脱敏，id 按原文算）、help_request_answer 写「已答：」行
-                             # （可同时记进项目知识「已定 / 不做」）、help_request_mark_sent 写「已送：」行；文件锁放 Mesa 配置目录（放 .ccode/ 会被 Agent 提交）
+                             # （可同时记进项目知识「已定 / 不做」）；help_delivery_prepare/take/ack 持久问答快照与原执行身份、实际发送后逐条标「已送」，重启不盲目重发；文件锁放 Mesa 配置目录
   step_loop.rs               # 综述回路二期（design-review-loop.md §4–§6）：补料单 .ccode/rework/<id>.json、开轮起因 .ccode/step-rounds.jsonl（只追加，时间后端写）——
                              #   followed_at（每个工作区最近一次并入的时间：sync / ack / followup / rework，stale_upstream_for 用；ack = 点了跟进但没要跟进的，不算一轮；
                              #   comments / catchup 是一轮但不算并入）；

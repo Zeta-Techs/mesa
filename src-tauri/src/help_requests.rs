@@ -284,6 +284,12 @@ fn sources() -> Vec<Source> {
             });
         }
     }
+    for (root, repo_path) in crate::scheduler::headless_help_sources() {
+        if !out.iter().any(|source| crate::paths::same_path(&source.root, &root)) {
+            let repo_name = Path::new(&repo_path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            out.push(Source { root, repo_path, repo_name, workspace_id: None, workspace_name: Some("后台跟进".into()) });
+        }
+    }
     out
 }
 
@@ -387,9 +393,21 @@ fn known_source(root: &str) -> Result<Source, String> {
 }
 
 pub(crate) fn answer_at(root: &Path, item_id: &str, answer: &str) -> Result<HelpItemDto, String> {
+    let _delivery_lock = crate::storage::config_lock("help-deliveries")?;
     let answer = one_line(answer);
     if answer.is_empty() {
         return Err("回答不能为空".into());
+    }
+    if read_deliveries()?.iter().any(|delivery| {
+        crate::paths::same_path(&delivery.root, &root.to_string_lossy())
+            && matches!(delivery.state.as_str(), "queued" | "sending")
+            && delivery.items.iter().any(|item| item.id == item_id)
+    }) {
+        let text = fs::read_to_string(root.join(HELP_WANTED_FILE)).map_err(|error| error.to_string())?;
+        if let Some(item) = parse_items(&text).into_iter().find(|item| item.id == item_id && item.answer.as_deref() == Some(answer.as_str())) {
+            return Ok(item);
+        }
+        return Err("这条回答已经排队或正在发送，不能改答；先核对原对话再继续".into());
     }
     let mut found = None;
     edit_file(root, |_, blocks| {
@@ -411,12 +429,13 @@ pub(crate) fn answer_at(root: &Path, item_id: &str, answer: &str) -> Result<Help
     Ok(item)
 }
 
-pub(crate) fn mark_sent_at(root: &Path, when: &str) -> Result<usize, String> {
+fn mark_selected_sent_at(root: &Path, items: &[DeliveryAnswer], when: &str) -> Result<usize, String> {
     let mut count = 0;
+    let secrets = crate::profiles::stored_secrets();
     edit_file(root, |_, blocks| {
         let changes: Vec<_> = blocks
             .iter()
-            .filter(|b| b.item.answer.is_some() && b.item.sent.is_none())
+            .filter(|block| block.item.sent.is_none() && items.iter().any(|item| item.id == block.item.id && block.item.answer.as_ref().is_some_and(|answer| crate::sessions::redact_sensitive_text_with(answer, &secrets) == item.answer)))
             .map(|b| (b.last_line, Some(format!("  已送：{when}"))))
             .collect();
         count = changes.len();
@@ -453,21 +472,265 @@ pub async fn help_request_answer(
     .map_err(|e| e.to_string())?
 }
 
-/// 交给 Agent 之前把已答未送的条目标上「已送」，收件箱不再提醒；返回标了几条
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+struct DeliveryAnswer {
+    id: String,
+    question: String,
+    answer: String,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HelpDelivery {
+    id: String,
+    root: String,
+    run_id: String,
+    agent: String,
+    session_id: Option<String>,
+    items: Vec<DeliveryAnswer>,
+    state: String,
+    claim_run: Option<String>,
+}
+
+fn deliveries_path() -> Result<std::path::PathBuf, String> {
+    Ok(crate::storage::config_root().ok_or("无法确定配置目录")?.join("help-deliveries.json"))
+}
+
+fn read_deliveries() -> Result<Vec<HelpDelivery>, String> {
+    match fs::read_to_string(deliveries_path()?) {
+        Ok(text) => serde_json::from_str(&text).map_err(|error| format!("回答投递记录损坏，未继续发送：{error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("读取回答投递记录失败：{error}")),
+    }
+}
+
+fn write_deliveries(deliveries: &[HelpDelivery]) -> Result<(), String> {
+    let path = deliveries_path()?;
+    fs::create_dir_all(path.parent().ok_or("无法确定投递目录")?).map_err(|error| error.to_string())?;
+    crate::storage::atomic_write(&path, &serde_json::to_vec(deliveries).map_err(|error| error.to_string())?, true)
+}
+
+fn delivery_matches(delivery: &HelpDelivery, run: &crate::runs::RunDto) -> bool {
+    crate::paths::same_path(&delivery.root, &run.isolation_path)
+        && delivery.agent == run.agent
+        && run.permission == "write_tree"
+        && match delivery.session_id.as_ref() {
+            Some(session) => run.session_id.as_ref() == Some(session),
+            None => delivery.run_id == run.id,
+        }
+}
+
+fn prepare_delivery_at(root: &Path, item_ids: &[String], run: &crate::runs::RunDto, retry: bool) -> Result<HelpDelivery, String> {
+    if item_ids.is_empty() || item_ids.len() > MAX_ITEMS {
+        return Err("请选择要交给 Agent 的回答".into());
+    }
+    if !crate::paths::same_path(&root.to_string_lossy(), &run.isolation_path) || run.permission != "write_tree" {
+        return Err("回答只能送回发问目录的可写对话".into());
+    }
+    let text = fs::read_to_string(root.join(HELP_WANTED_FILE)).map_err(|error| error.to_string())?;
+    let current = parse_items(&text);
+    let secrets = crate::profiles::stored_secrets();
+    let mut items = Vec::new();
+    for id in item_ids {
+        let item = current.iter().find(|item| &item.id == id && item.sent.is_none()).ok_or("问题已经变了或已送出，刷新后再看")?;
+        let answer = item.answer.as_ref().ok_or("这条问题还没有回答")?;
+        if items.iter().any(|item: &DeliveryAnswer| &item.id == id) { continue }
+        items.push(DeliveryAnswer { id: id.clone(), question: crate::sessions::redact_sensitive_text_with(&item.question, &secrets), answer: crate::sessions::redact_sensitive_text_with(answer, &secrets) });
+    }
+    let mut deliveries = read_deliveries()?;
+    if let Some(existing) = deliveries.iter_mut().find(|delivery| {
+        crate::paths::same_path(&delivery.root, &root.to_string_lossy()) && matches!(delivery.state.as_str(), "queued" | "sending")
+    }) {
+        if existing.items.iter().any(|old| items.iter().any(|item| item.id == old.id && item.answer != old.answer)) {
+            return Err("已有另一批回答等待送达，请先核对原对话".into());
+        }
+        if existing.state == "sending" && !retry {
+            return Err("回答可能已发出，先核对原对话；确认没有送到后再重发".into());
+        }
+        if retry {
+            existing.state = "queued".into();
+            existing.claim_run = None;
+            existing.run_id = run.id.clone();
+            existing.agent = run.agent.clone();
+            existing.session_id = run.session_id.clone();
+        } else if !delivery_matches(existing, run) {
+            return Err("回答仍在等待原对话，不会自动交给另一家 Agent 或另一段会话".into());
+        }
+        for item in items {
+            if !existing.items.iter().any(|old| old.id == item.id) {
+                existing.items.push(item);
+            }
+        }
+        let prepared = existing.clone();
+        write_deliveries(&deliveries)?;
+        return Ok(prepared);
+    }
+    let delivery = HelpDelivery { id: uuid::Uuid::new_v4().to_string(), root: root.to_string_lossy().into_owned(), run_id: run.id.clone(), agent: run.agent.clone(), session_id: run.session_id.clone(), items, state: "queued".into(), claim_run: None };
+    deliveries.push(delivery.clone());
+    write_deliveries(&deliveries)?;
+    Ok(delivery)
+}
+
 #[tauri::command]
-pub async fn help_request_mark_sent(root: String) -> Result<usize, String> {
+pub async fn help_delivery_prepare(root: String, item_ids: Vec<String>, retry: bool) -> Result<crate::runs::RunDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let source = known_source(&root)?;
-        let when = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        mark_sent_at(Path::new(&source.root), &when)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        let runs = crate::runs::run_list_sync(Some(source.repo_path.clone()))?;
+        let run = runs.iter().filter(|run| crate::paths::same_path(&run.isolation_path, &source.root) && run.permission == "write_tree")
+            .max_by_key(|run| (run.closed_at.is_none(), run.created_at.clone())).ok_or("没有找到发问的对话，请先接回原对话再交给 Agent")?;
+        if run.runtime == "headless" { return Ok(run.clone()); }
+        let _lock = crate::storage::config_lock("help-deliveries")?;
+        prepare_delivery_at(Path::new(&source.root), &item_ids, run, retry)?;
+        Ok(run.clone())
+    }).await.map_err(|error| error.to_string())?
+}
+
+fn take_delivery_at(run: &crate::runs::RunDto) -> Result<Option<(String, String)>, String> {
+    let mut deliveries = read_deliveries()?;
+    let Some(delivery) = deliveries.iter_mut().find(|delivery| delivery.state == "queued" && delivery_matches(delivery, run)) else { return Ok(None) };
+    let file = fs::read_to_string(Path::new(&delivery.root).join(HELP_WANTED_FILE)).map_err(|error| error.to_string())?;
+    let items = parse_items(&file);
+    let secrets = crate::profiles::stored_secrets();
+    if delivery.items.iter().any(|saved| !items.iter().any(|item| item.id == saved.id && item.sent.is_none() && item.answer.as_ref().is_some_and(|answer| crate::sessions::redact_sensitive_text_with(answer, &secrets) == saved.answer))) {
+        delivery.state = "superseded".into();
+        write_deliveries(&deliveries)?;
+        return Err("排队后的问题或回答已变化，未自动发送，请核对原对话".into());
+    }
+    delivery.state = "sending".into();
+    delivery.claim_run = Some(run.id.clone());
+    let lines = delivery.items.iter().map(|item| format!("{} → {}", item.question, item.answer)).collect::<Vec<_>>().join("\n");
+    let result = (delivery.id.clone(), format!("我在 Mesa 里答了 .ccode/help-wanted.md 的问题：\n{lines}\n按回答继续：先把这些答案写进 TASK.md「已定口径」或本步报告，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样。接着做剩下的事，不重做已完成的业务，不扩大原有授权，做完照常交给我评审。"));
+    write_deliveries(&deliveries)?;
+    Ok(Some(result))
+}
+
+#[tauri::command]
+pub async fn help_delivery_take(run_id: String) -> Result<Option<(String, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let run = crate::runs::run_get_sync(run_id)?.ok_or("找不到原对话")?;
+        if run.closed_at.is_some() { return Ok(None) }
+        let _lock = crate::storage::config_lock("help-deliveries")?;
+        take_delivery_at(&run)
+    }).await.map_err(|error| error.to_string())?
+}
+
+fn acknowledge_delivery_at(id: &str, run: &crate::runs::RunDto) -> Result<(), String> {
+    let mut deliveries = read_deliveries()?;
+    let delivery = deliveries.iter_mut().find(|delivery| delivery.id == id).ok_or("找不到回答投递记录")?;
+    if !delivery_matches(delivery, run) || delivery.claim_run.as_deref() != Some(run.id.as_str()) { return Err("回答不属于这段对话".into()) }
+    if delivery.state == "delivered" { return Ok(()) }
+    if delivery.state != "sending" { return Err("回答还没有进入发送链".into()) }
+    let root = Path::new(&delivery.root);
+    if root.join(HELP_WANTED_FILE).exists() {
+        mark_selected_sent_at(root, &delivery.items, &crate::sessions::now_iso())?;
+    }
+    delivery.state = "delivered".into();
+    write_deliveries(&deliveries)
+}
+
+#[tauri::command]
+pub async fn help_delivery_ack(id: String, run_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let run = crate::runs::run_get_sync(run_id)?.ok_or("找不到原对话")?;
+        let _lock = crate::storage::config_lock("help-deliveries")?;
+        acknowledge_delivery_at(&id, &run)
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn delivery_run(root: &Path) -> crate::runs::RunDto {
+        crate::runs::RunDto {
+            id: "original".into(), project_root: Some(root.to_string_lossy().into_owned()),
+            task_kind: "pipeline_step".into(), task_ref: None, isolation_path: root.to_string_lossy().into_owned(),
+            runtime: "local_cli".into(), agent: "codex".into(), profile_id: None, permission: "write_tree".into(),
+            reuse_key: None, session_id: Some("original-session".into()), internal: false, sentinel: false,
+            created_at: "2026-11-12T00:00:00Z".into(), closed_at: None, status: "running".into(),
+            exit_code: None, close_reason: None, task_id: "task".into(), custom_runtime_id: None, project_id: None,
+            capabilities: crate::runtime::capabilities(crate::runtime::RuntimeKind::LocalCli),
+        }
+    }
+
+    #[test]
+    fn delivery_persists_claim_and_only_acknowledges_selected_answer() {
+        let dir = std::env::temp_dir().join(format!("mesa-help-delivery-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join(".ccode")).unwrap();
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let file = dir.join(HELP_WANTED_FILE);
+        fs::write(&file, "- 第一问\n  已答：甲\n- 第二问\n  已答：乙\n").unwrap();
+        let items = parse_items(&fs::read_to_string(&file).unwrap());
+        let run = delivery_run(&dir);
+        let ids = vec![items[0].id.clone()];
+        let delivery = prepare_delivery_at(&dir, &ids, &run, false).unwrap();
+        assert_eq!(prepare_delivery_at(&dir, &ids, &run, false).unwrap().id, delivery.id);
+        assert_eq!(read_deliveries().unwrap().len(), 1);
+        let (id, prompt) = take_delivery_at(&run).unwrap().unwrap();
+        assert!(prompt.contains("第一问 → 甲"));
+        assert!(!prompt.contains("第二问"));
+        assert!(take_delivery_at(&run).unwrap().is_none());
+        assert!(prepare_delivery_at(&dir, &ids, &run, false).unwrap_err().contains("可能已发出"));
+        assert!(answer_at(&dir, &ids[0], "丙").is_err());
+        assert!(answer_at(&dir, &ids[0], "甲").is_ok());
+        let mut wrong = run.clone();
+        wrong.session_id = Some("other-session".into());
+        assert!(acknowledge_delivery_at(&id, &wrong).is_err());
+        wrong = run.clone(); wrong.agent = "kimi".into();
+        assert!(acknowledge_delivery_at(&id, &wrong).is_err());
+        wrong = run.clone(); wrong.isolation_path = dir.join("other").to_string_lossy().into_owned();
+        assert!(acknowledge_delivery_at(&id, &wrong).is_err());
+        acknowledge_delivery_at(&id, &run).unwrap();
+        acknowledge_delivery_at(&id, &run).unwrap();
+        let after = parse_items(&fs::read_to_string(&file).unwrap());
+        assert!(after[0].sent.is_some());
+        assert!(after[1].sent.is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn delivery_combines_new_answers_before_claim_without_losing_existing_ones() {
+        let dir = std::env::temp_dir().join(format!("mesa-help-combine-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join(".ccode")).unwrap();
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        fs::write(dir.join(HELP_WANTED_FILE), "- 第一问\n  已答：甲\n- 第二问\n  已答：乙\n").unwrap();
+        let items = parse_items(&fs::read_to_string(dir.join(HELP_WANTED_FILE)).unwrap());
+        let run = delivery_run(&dir);
+        let first = prepare_delivery_at(&dir, &[items[0].id.clone()], &run, false).unwrap();
+        let combined = prepare_delivery_at(&dir, &[items[0].id.clone(), items[1].id.clone()], &run, false).unwrap();
+        assert_eq!(first.id, combined.id);
+        assert_eq!(combined.items.len(), 2);
+        let (_, prompt) = take_delivery_at(&run).unwrap().unwrap();
+        assert!(prompt.contains("第一问 → 甲"));
+        assert!(prompt.contains("第二问 → 乙"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(deliveries_path().unwrap()).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn delivery_explicit_retry_and_external_edit_do_not_mark_new_answer() {
+        let dir = std::env::temp_dir().join(format!("mesa-help-retry-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join(".ccode")).unwrap();
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let file = dir.join(HELP_WANTED_FILE);
+        fs::write(&file, "- 第一问\n  已答：甲\n").unwrap();
+        let ids = vec![parse_items(&fs::read_to_string(&file).unwrap())[0].id.clone()];
+        let run = delivery_run(&dir);
+        prepare_delivery_at(&dir, &ids, &run, false).unwrap();
+        take_delivery_at(&run).unwrap().unwrap();
+        prepare_delivery_at(&dir, &ids, &run, true).unwrap();
+        let (id, _) = take_delivery_at(&run).unwrap().unwrap();
+        fs::write(&file, "- 第一问\n  已答：新答案\n").unwrap();
+        acknowledge_delivery_at(&id, &run).unwrap();
+        assert!(parse_items(&fs::read_to_string(&file).unwrap())[0].sent.is_none());
+        fs::write(deliveries_path().unwrap(), "broken").unwrap();
+        assert!(read_deliveries().unwrap_err().contains("未继续发送"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn legacy_bullets_still_parse_and_records_are_skipped() {
@@ -520,14 +783,15 @@ mod tests {
         let text = fs::read_to_string(&file).unwrap();
         assert_eq!(text.matches("已答").count(), 1, "{text}");
         assert!(text.contains("  B：乙\r\n  已答：B （乙）\r\n- 第二问\r\n"), "{text:?}");
-        assert_eq!(mark_sent_at(&dir, "2026-11-02 10:00").unwrap(), 1);
+        let selected = vec![DeliveryAnswer { id: id.clone(), question: item.question, answer: item.answer.unwrap() }];
+        assert_eq!(mark_selected_sent_at(&dir, &selected, "2026-11-02 10:00").unwrap(), 1);
         let items = parse_items(&fs::read_to_string(&file).unwrap());
         assert_eq!(items[0].sent.as_deref(), Some("2026-11-02 10:00"));
         assert!(items[1].answer.is_none());
         // 已送的不能再改；找不到的报错不覆盖
         assert!(answer_at(&dir, &id, "A").unwrap_err().contains("已经交给 Agent"));
         assert!(answer_at(&dir, "nope", "A").is_err());
-        assert_eq!(mark_sent_at(&dir, "x").unwrap(), 0);
+        assert_eq!(mark_selected_sent_at(&dir, &selected, "x").unwrap(), 0);
         fs::remove_dir_all(&dir).ok();
     }
 

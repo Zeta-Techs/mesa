@@ -574,7 +574,12 @@ pub(crate) fn extract_headless_session_id(detail: &str) -> Option<String> {
 }
 
 fn remember_headless_session(agent: &str, out: &str, err: &str) -> Option<String> {
-    let id = extract_headless_session_id(&format!("{out}\n{err}"))?;
+    let id = extract_headless_session_id(&format!("{out}\n{err}")).or_else(|| {
+        out.lines().find_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            value.get("session_id").or_else(|| value.get("sessionId")).or_else(|| value.get("thread_id"))?.as_str().map(str::to_owned)
+        })
+    })?;
     let _ = crate::sessions::mark_session_internal(agent, &id);
     Some(id)
 }
@@ -644,12 +649,35 @@ pub(crate) fn headless_session_of(run_id: &str) -> Option<(String, String)> {
 
 /// 支持 --session-id 的 CLI：无头启动前锁死文件名并立刻标 internal。
 fn lock_headless_session(agent: &str) -> (Option<String>, Vec<String>) {
+    if let Some(session) = FOLLOWUP_SESSION.with(|value| value.borrow().clone()) {
+        let (_, args) = crate::agents::resume_args(agent, &session);
+        return (Some(session), if agent == "codex" { Vec::new() } else { args });
+    }
     let supported = crate::agent_specs::agent_spec(agent).is_some_and(|s| s.fixed_session_id);
     if !supported {
         return (None, Vec::new());
     }
     let id = uuid::Uuid::new_v4().to_string();
     (Some(id.clone()), vec!["--session-id".into(), id])
+}
+
+thread_local! {
+    static FOLLOWUP_SESSION: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static FOLLOWUP_OUTPUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn with_followup_round<T>(session: Option<String>, work: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FOLLOWUP_SESSION.with(|value| *value.borrow_mut() = None);
+            FOLLOWUP_OUTPUT.with(|value| value.set(false));
+        }
+    }
+    FOLLOWUP_SESSION.with(|value| *value.borrow_mut() = session);
+    FOLLOWUP_OUTPUT.with(|value| value.set(true));
+    let _reset = Reset;
+    work()
 }
 
 /// CLI 输出里的已知良性噪音行：不影响结果，混进任务摘要会冒充错误正文。
@@ -1305,6 +1333,9 @@ pub(crate) fn build_headless_command_granted(
     } else {
         headless_args(&profile.agent, prompt)
     };
+    let headless = if FOLLOWUP_OUTPUT.with(|value| value.get()) {
+        followup_args(&profile.agent, headless, FOLLOWUP_SESSION.with(|value| value.borrow().clone()))?
+    } else { headless };
     let mut all_args = compose_headless_args(&profile.agent, &plan.args, &headless);
     if let Some(extra) = grant_plan.as_ref().and_then(|g| g.claude_settings.as_ref()) {
         crate::grant::merge_claude_settings(&mut all_args, extra)?;
@@ -1331,6 +1362,61 @@ pub(crate) fn build_headless_command_granted(
         lock_id,
         grant_summary: grant_plan.map(|g| g.summary),
     })
+}
+
+fn followup_args(agent: &str, mut args: Vec<String>, session: Option<String>) -> Result<Vec<String>, String> {
+    if !crate::agent_specs::headless_followup_cap(agent).supported {
+        return Err("该 Agent 不支持分轮无头续跑".into());
+    }
+    match agent {
+        "claude-code" => {
+            if let Some(index) = args.iter().position(|value| value == "--output-format") { args[index + 1] = "json".into(); }
+        }
+        "codex" => {
+            if let Some(session) = session {
+                let mut index = 0;
+                while index + 1 < args.len() {
+                    if args[index] == "-s" || args[index] == "--sandbox" {
+                        let sandbox = args[index + 1].clone();
+                        args.splice(index..index + 2, ["-c".into(), format!("sandbox_mode=\"{sandbox}\"")]);
+                    }
+                    index += 1;
+                }
+                args.insert(1, "resume".into());
+                let prompt = args.pop().ok_or("没有提示词")?;
+                args.push(session);
+                args.push(prompt);
+            }
+            args.insert(1, "--json".into());
+        }
+        "kimi" => args.extend(["--output-format".into(), "stream-json".into()]),
+        _ => return Err("该 Agent 不支持分轮无头续跑".into()),
+    }
+    Ok(args)
+}
+
+pub(crate) fn followup_text(agent: &str, raw: &str) -> Result<String, String> {
+    match agent {
+        "claude-code" | "codex" => parse_oneshot_output(agent, raw, None, "").map(|(text, _)| text),
+        "kimi" => {
+            let mut parts = Vec::new();
+            for line in raw.lines() {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                if value.get("role").and_then(|value| value.as_str()) == Some("assistant") {
+                    if let Some(text) = value.get("content").and_then(|value| value.as_str()) { parts.push(text.to_string()); }
+                }
+                if let Some(text) = value.get("text").and_then(|value| value.as_str()) { parts.push(text.to_string()); }
+                if let Some(text) = value.get("content").and_then(|value| value.get("text")).and_then(|value| value.as_str()) { parts.push(text.to_string()); }
+                if value.get("type").and_then(|value| value.as_str()) == Some("assistant") {
+                    if let Some(content) = value.get("message").and_then(|value| value.get("content")).and_then(|value| value.as_array()) {
+                        for part in content { if let Some(text) = part.get("text").and_then(|value| value.as_str()) { parts.push(text.to_string()); } }
+                    }
+                }
+            }
+            if parts.is_empty() { Err("没有可读的 Kimi 回执文本".into()) } else { Ok(parts.join("")) }
+        }
+        _ => Err("没有该 Agent 的分轮输出解析器".into()),
+    }
 }
 
 pub(crate) fn run_agent_task(
@@ -1402,11 +1488,11 @@ pub(crate) fn run_agent_task_granted(
     if let Some(summary) = grant_summary.as_deref() {
         let _ = crate::runs::record_run_event(&run.id, "run.grant", summary);
     }
+    let budget_session = std::sync::Arc::new(std::sync::Mutex::new(lock_id.clone()));
     let budget_watch = grant
         .and_then(|g| g.budget_usd)
         .filter(|_| profile.agent != "claude-code")
-        .zip(lock_id.clone())
-        .map(|(budget, sid)| BudgetWatch::start(run.id.clone(), profile.agent.clone(), sid, budget));
+        .map(|budget| BudgetWatch::start(run.id.clone(), profile.agent.clone(), budget_session.clone(), budget));
     if let Err(error) = crate::runs::mark_started(&run.id) {
         let _ = crate::runs::close_run_with_result(
             &run.id,
@@ -1418,13 +1504,25 @@ pub(crate) fn run_agent_task_granted(
         return Err(error);
     }
     let mut seen_session = None;
-    let out = run_capture_for(
+    let mut pending = Vec::new();
+    let mut on_output = |bytes: &[u8]| feed_lines(&mut pending, bytes, &mut |line| {
+        if FOLLOWUP_OUTPUT.with(|value| value.get()) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(session) = value.get("session_id").or_else(|| value.get("sessionId")).or_else(|| value.get("thread_id")).and_then(|value| value.as_str()) {
+                    *budget_session.lock().unwrap_or_else(|error| error.into_inner()) = Some(session.into());
+                    let _ = crate::runs::attach_session_impl(&run.id, session);
+                }
+            }
+        }
+    });
+    let out = run_capture_with(
         Some(&profile.agent),
         host.as_deref(),
         &mut cmd,
         timeout,
         Some(&run.id),
         &mut seen_session,
+        Some(&mut on_output),
     );
     // 会话 id 记到 Run 上（定时历史「看过程」据此打开那次后台对话）：
     // 能锁定 id 的 CLI 用启动前锁的，其余用输出里抠到的
@@ -1464,11 +1562,12 @@ struct BudgetWatch {
 }
 
 impl BudgetWatch {
-    fn start(run_id: String, agent: String, session: String, budget: f64) -> Self {
+    fn start(run_id: String, agent: String, session: std::sync::Arc<std::sync::Mutex<Option<String>>>, budget: f64) -> Self {
         use std::sync::atomic::Ordering;
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let hit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (s2, h2) = (stop.clone(), hit.clone());
+        let baseline = if FOLLOWUP_OUTPUT.with(|value| value.get()) { session.lock().unwrap_or_else(|error| error.into_inner()).as_deref().and_then(|session| crate::usage::session_cost_priced(&agent, session)).unwrap_or(0.0) } else { 0.0 };
         let handle = std::thread::Builder::new()
             .name("grant-budget".into())
             .spawn(move || {
@@ -1479,8 +1578,9 @@ impl BudgetWatch {
                     if waited % 30 != 0 {
                         continue;
                     }
-                    if let Some(cost) = crate::usage::session_cost_priced(&agent, &session) {
-                        if cost >= budget {
+                    let current = session.lock().unwrap_or_else(|error| error.into_inner()).clone();
+                    if let Some(cost) = current.as_deref().and_then(|session| crate::usage::session_cost_priced(&agent, session)) {
+                        if cost - baseline >= budget {
                             h2.store(true, Ordering::Relaxed);
                             let _ = crate::runs::record_run_event(&run_id, "run.budget", &format!("花费 ${cost:.2} 到了预算 ${budget:.2}，Mesa 停掉了这次运行"));
                             let _ = crate::process::cancel_capture(&run_id);
@@ -3238,6 +3338,64 @@ mod tests {
             model_sync_note: None,
             provider_override: None,
         }
+    }
+
+    #[test]
+    fn followup_args_keep_resume_and_sandbox_without_restarting_business() {
+        let args = followup_args("codex", headless_task_args("codex", "接着做"), Some("session".into())).unwrap();
+        assert!(args.contains(&"resume".into()));
+        assert!(args.contains(&"sandbox_mode=\"workspace-write\"".into()));
+        assert!(!args.contains(&"-s".into()));
+        assert_eq!(args.last().unwrap(), "接着做");
+        assert_eq!(args[args.len() - 2], "session");
+        assert!(followup_args("gemini", vec![], None).is_err());
+        with_followup_round(Some("original".into()), || {
+            let (session, args) = lock_headless_session("claude-code");
+            assert_eq!(session.as_deref(), Some("original"));
+            assert_eq!(args, ["-r", "original"]);
+        });
+        assert!(!FOLLOWUP_OUTPUT.with(|value| value.get()));
+    }
+
+    #[test]
+    #[ignore]
+    fn followup_real_cli_roundtrip_local_gateway() {
+        let endpoint = std::env::var("MESA_FOLLOWUP_ENDPOINT").expect("local gateway endpoint");
+        assert!(endpoint.starts_with("http://127.0.0.1:"));
+        let agent = std::env::var("MESA_FOLLOWUP_AGENT").unwrap_or_else(|_| "codex".into());
+        let dir = std::env::temp_dir().join(format!("mesa-followup-cli-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let _config = crate::storage::redirect_config_root(&dir.join("config"));
+        let mut profile = profile("local-probe", &agent, None);
+        profile.no_auth = true;
+        profile.protocol = Some(if agent == "claude-code" { "anthropic" } else { "openai" }.into());
+        profile.base_url = Some(endpoint);
+        let model = if agent == "claude-code" { "claude-sonnet-4-5" } else { "gpt-5" };
+        profile.models = vec![model.into()];
+        let mut prior_session = None;
+        for round in 0..2 {
+            let job = with_followup_round(prior_session.clone(), || build_headless_command_granted(&profile, Some(model), "TRIGGER_LONG 只返回给定文本，不做其他事", &dir, true, Some(&crate::grant::Grant::legacy_open()))).unwrap();
+            let HeadlessCommand { mut cmd, lock_id, .. } = job;
+            let home = dir.join("home"); fs::create_dir_all(&home).unwrap();
+            for name in ["codex", "claude", "kimi"] { fs::create_dir_all(home.join(name)).unwrap(); }
+            cmd.env("HOME", &home).env("CODEX_HOME", home.join("codex")).env("CLAUDE_CONFIG_DIR", home.join("claude")).env("KIMI_CODE_HOME", home.join("kimi"));
+            cmd.env("CODEX_API_KEY", "local-test-placeholder").env("ANTHROPIC_API_KEY", "local-test-placeholder").env("KIMI_MODEL_API_KEY", "local-test-placeholder");
+            if agent == "codex" { cmd.arg("--ignore-user-config"); }
+            if agent == "claude-code" { cmd.args(["--strict-mcp-config", "--tools", "Read"]); }
+            let result = crate::process::capture_command(&mut cmd, Duration::from_secs(90), 1024 * 1024).unwrap();
+            let out = String::from_utf8_lossy(&result.stdout).into_owned();
+            let err = String::from_utf8_lossy(&result.stderr).into_owned();
+            fs::write(dir.join(format!("round-{round}.jsonl")), &out).unwrap();
+            assert!(result.status.is_some_and(|status| status.success()), "{agent}: {out}\n{err}");
+            let text = followup_text(&agent, &out).unwrap();
+            assert!(text.contains("mesa-receipt"), "{text}");
+            prior_session = lock_id.or_else(|| out.lines().find_map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                value.get("session_id").or_else(|| value.get("sessionId")).or_else(|| value.get("thread_id"))?.as_str().map(str::to_owned)
+            }));
+            assert!(prior_session.is_some(), "no session: {out}");
+        }
+        eprintln!("CLI_PROBE={agent} two rounds preserved session, output={}", dir.display());
     }
 
     #[test]

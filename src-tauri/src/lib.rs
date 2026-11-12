@@ -129,6 +129,8 @@ mod runs;
 mod scan_persist;
 mod runtime;
 mod scheduler;
+mod followup;
+pub mod background_core;
 mod session_search;
 mod session_slim;
 mod session_transfer;
@@ -183,6 +185,7 @@ fn shutdown_for_exit(app: &tauri::AppHandle) {
 /// Windows 上更新插件拉起安装包后直接 process::exit——两条路都等不到 ExitRequested 里的收尾线程
 #[tauri::command]
 async fn prepare_app_exit(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(background_core::stop).await.map_err(|error| error.to_string())??;
     if EXIT_STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return Ok(()); // 已在收尾（正常退出进行中或已收过）
     }
@@ -245,7 +248,10 @@ pub fn run() {
                 logbuf::record("warn", "skills", &format!("内置技能播种失败: {e}"));
             }
             // 定时雷达：60s tick 调度，启动首 tick 自动补跑关闭期间漏掉的任务
-            scheduler::start_scheduler(app.handle().clone());
+            tauri::async_runtime::spawn_blocking(|| {
+                if let Err(error) = background_core::start_if_enabled() { logbuf::record("error", "background", &error); }
+            });
+            scheduler::start_scheduler(Some(app.handle().clone()));
             // 内部对话保留期清理：开机两分钟后起，每天至多一次（设置页可关 / 改天数）
             internal_sessions::spawn_auto_cleanup();
             // 公共模型能力库：没下过或超过 14 天就后台下一次（失败不打扰，连接页 ⋯ 照旧能手动下）
@@ -880,7 +886,11 @@ pub fn run() {
             workspaces::import_human_deliverable,
             help_requests::list_help_requests,
             help_requests::help_request_answer,
-            help_requests::help_request_mark_sent,
+            help_requests::help_delivery_prepare,
+            help_requests::help_delivery_take,
+            help_requests::help_delivery_ack,
+            background_core::background_core_status,
+            background_core::background_core_set,
             workspaces::write_review_notes,
             workspaces::workspace_drift,
             workspaces::workspace_repair_remount,

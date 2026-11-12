@@ -122,6 +122,7 @@ import type {
 import type { PdfActionResult } from "../components/PdfPreview";
 import { FileVersionsButton } from "../components/FileVersions";
 import { FileVersionsPanel } from "../components/FileVersions";
+import { sendHelpDelivery } from "../help-delivery";
 import {
   TerminalView,
   agentLabel,
@@ -2789,6 +2790,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             continue;
           const action = tabActionsRef.current.get(tabId);
           if (!action) continue;
+          let helpSent = false;
+          const helpError = await sendHelpDelivery(
+            st.runId,
+            (runId) => invoke<[string, string] | null>("help_delivery_take", { runId }),
+            (text) => { helpSent = true; return action.sendMessage(text); },
+            (id, runId) => invoke<void>("help_delivery_ack", { id, runId }),
+          ).catch((error) => `回答队列读取失败，未发送：${String(error)}`);
+          if (helpError) toast(helpError, "warning");
+          if (helpSent || helpError) continue;
           const got = await invoke<[string[], string] | null>("mail_take", { runId: st.runId }).catch(() => null);
           if (!got) continue;
           const [ids, text] = got;

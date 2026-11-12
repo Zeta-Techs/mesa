@@ -978,6 +978,11 @@ function EditScheduleModal({
   const [weeklyCapEdit, setWeeklyCapEdit] = useState(String(schedule.event?.weeklyCapUsd ?? 0));
   const [grantNetwork, setGrantNetwork] = useState<GrantNetwork>(schedule.grant?.network ?? "academic");
   const [grantBudget, setGrantBudget] = useState(schedule.grant?.budgetUsd ? String(schedule.grant.budgetUsd) : "");
+  const [followupEnabled, setFollowupEnabled] = useState(Boolean(schedule.followup));
+  const [followupRounds, setFollowupRounds] = useState(schedule.followup?.maxRounds ?? 4);
+  const [followupDays, setFollowupDays] = useState(schedule.followup?.days ?? 7);
+  const [followupBudget, setFollowupBudget] = useState(schedule.followup?.budgetUsd ?? 2);
+  const [followupProbe, setFollowupProbe] = useState(schedule.followup?.probe ?? "");
   const [grantPreview, setGrantPreview] = useState<{ summary: string; enforced: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1036,6 +1041,7 @@ function EditScheduleModal({
           // 事件规则不按时间跑：不改周期，只改模式
           ...(schedule.event ? { eventMode, eventWeeklyCapUsd: Number(weeklyCapEdit) || 0 } : fields),
           skipIfUnreviewed,
+          ...(followupEnabled ? { followup: { maxRounds: followupRounds, days: followupDays, budgetUsd: followupBudget, probe: followupProbe.trim() || null } } : { disableFollowup: true }),
           timeoutMinutes,
           grant: { network: grantNetwork, budgetUsd: Number(grantBudget) > 0 ? Number(grantBudget) : null },
           // 清空运行配置/模型必须发空串：后端 Option<Option> 语义下显式 null ≡ 缺失 ≡ 不改，
@@ -1134,6 +1140,16 @@ function EditScheduleModal({
             跑到上限就停下记「超时」。连续 3 次没跑成（失败或超时）会自动暂停。
           </span>
         </label>
+        <label className="mb-3 flex items-start gap-2 text-xs text-l2">
+          <input type="checkbox" checked={followupEnabled} onChange={(event) => setFollowupEnabled(event.target.checked)} />
+          <span>允许接着跟进：等我回答时释放进程，回答后续跑；可预约复查，成果仍由我评审。支持 Claude Code、Codex、Kimi。</span>
+        </label>
+        {followupEnabled && <div className="mb-3 grid grid-cols-3 gap-2 text-xs text-l3">
+          <label>最多轮数<input className={fieldClass} type="number" min={2} max={20} value={followupRounds} onChange={(event) => setFollowupRounds(Number(event.target.value))} /></label>
+          <label>最多天数<input className={fieldClass} type="number" min={1} max={30} value={followupDays} onChange={(event) => setFollowupDays(Number(event.target.value))} /></label>
+          <label>累计预算 $<input className={fieldClass} type="number" min={0.01} max={100} step={0.01} value={followupBudget} onChange={(event) => setFollowupBudget(Number(event.target.value))} /></label>
+          <label className="col-span-3">机械探测脚本（项目内 .py；退出 0 才叫 AI，1 表示继续等）<input className={fieldClass} value={followupProbe} onChange={(event) => setFollowupProbe(event.target.value)} placeholder="scripts/check_ready.py" /></label>
+        </div>}
         <div className="mb-3 block text-sm">
           <span className="mb-1 block text-xs text-l3">能访问的网站</span>
           <select
@@ -1438,6 +1454,7 @@ export default function ScheduleSection({
           }),
       );
       setSchedules(mine);
+      setRunning((current) => new Set([...current].filter((id) => mine.some((task) => task.id === id && task.runningRunId))));
       setDrafts(pending);
       setSkills(skillList);
       setSubCounts((cur) => {
@@ -1488,7 +1505,9 @@ export default function ScheduleSection({
     listen("watch-run-adopted", onDone)
       .then((u) => (unlistenAdopt = u))
       .catch(() => {});
+    const poll = window.setInterval(reload, 15_000);
     return () => {
+      window.clearInterval(poll);
       stale = true;
       unlisten?.();
       unlistenAdopt?.();
@@ -1780,6 +1799,7 @@ export default function ScheduleSection({
                         已自动暂停
                       </span>
                     )}
+                    {s.followupState && <span className="text-micro text-l3" title={s.followupAbout ?? undefined}>{s.followupState === "waiting" ? "等你回答 · 未占进程" : s.followupState === "later" ? `预约复查 ${s.followupAt ?? ""}` : s.followupState === "uncertain" ? "上次结果不明，等你核对" : "正在接着跟进"}</span>}
                     {s.queued && !s.runningRunId && !running.has(s.id) && !needsKeywords && (
                       <span
                         className="shrink-0 text-micro text-l3"

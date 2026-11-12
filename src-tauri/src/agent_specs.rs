@@ -1111,6 +1111,7 @@ pub struct AgentCapabilitiesDto {
     pub readonly: CapabilityFlagDto,
     /// 无头/定时写盘：未实证则 supported=false 或 reason 写人话（qwen 禁选、grok 标无沙箱）
     pub headless_write: CapabilityFlagDto,
+    pub headless_followup: CapabilityFlagDto,
     /// 执行形态：九家均为 local_cli + headless；cloud 不预研
     pub runtime_kinds: Vec<&'static str>,
     /// 支持分级（2026-11-02 用户拍板，AGENTS.md「CLI 支持分级」）：1 = 一等，新功能先在这几家做全；2 = 维护级
@@ -1364,6 +1365,10 @@ fn headless_write_cap(agent: &str) -> CapabilityFlagDto {
     }
 }
 
+pub(crate) fn headless_followup_cap(agent: &str) -> CapabilityFlagDto {
+    flag(TIER1_AGENTS.contains(&agent), (!TIER1_AGENTS.contains(&agent)).then_some("分轮无头续跑只支持 Claude Code、Codex、Kimi；其他家仍可单轮执行"))
+}
+
 /// Windows 上 Codex 的 workspace-write 靠它自己的 Windows 沙箱（~/.codex/config.toml 的 `[windows] sandbox`）。
 /// 2026-10-20 本机实测（无头 exec + 假网关，工作目录是 git 工作树，同定时任务的隔离副本）：
 /// - 没配沙箱：命令一律「blocked by policy」被拦下，无头运行没人能批准——定时雷达跑不了检索命令；
@@ -1485,6 +1490,7 @@ pub fn agent_capabilities() -> Vec<AgentCapabilitiesDto> {
             effort_options: effort_options(s.id),
             readonly: readonly_cap(s),
             headless_write: headless_write_cap(s.id),
+            headless_followup: headless_followup_cap(s.id),
             runtime_kinds: vec!["local_cli", "headless"],
             support_tier: support_tier(s.id),
             tier_note: tier_note(s.id),

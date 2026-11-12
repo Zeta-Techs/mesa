@@ -1280,6 +1280,145 @@ fn event_task(mode: &str) -> Schedule {
     }
 }
 
+fn followup_task(root: &Path) -> Schedule {
+    let mut task = sample_task("followup", &root.to_string_lossy());
+    task.followup = Some(crate::followup::FollowupPolicy { max_rounds: 4, days: 7, budget_usd: 2.0, probe: None });
+    task.continuation = Some(Continuation {
+        state: "waiting".into(), about: "完成剩余部分".into(), at: None, profile_id: "profile".into(), agent: "codex".into(), model: None,
+        session_id: Some("session".into()), rounds: 1, spent: 0.2, deadline: (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339(),
+        authority: followup_authority(&task), connection: "test".into(), isolation: root.to_string_lossy().into_owned(),
+        evidence: crate::watch_review::WatchSnapshot { run_id: "run".into(), project_root: root.to_string_lossy().into_owned(), files: Vec::new(), pdfs_initial: None, pdfs_after: None }, probe_hash: None,
+    });
+    task
+}
+
+#[test]
+fn followup_waiting_reads_real_answers_and_limits_reject_changed_authority() {
+    let dir = tmp_schedules_path("followup");
+    fs::create_dir_all(dir.join(".ccode")).unwrap();
+    let _config = crate::storage::redirect_config_root(&dir.join("config"));
+    let mut task = followup_task(&dir);
+    let path = dir.join(crate::help_requests::HELP_WANTED_FILE);
+    fs::write(&path, "- 按哪个口径\n").unwrap();
+    assert!(!continuation_ready(&task));
+    fs::write(&path, "- 按哪个口径\n  已答：按原口径\n").unwrap();
+    assert!(continuation_ready(&task));
+    assert!(continuation_answers(&task).contains("按哪个口径 → 按原口径"));
+    assert!(prepare_continuation(&task).unwrap());
+    task.model = Some("another-model".into());
+    assert!(prepare_continuation(&task).is_err());
+    task.model = None;
+    task.continuation.as_mut().unwrap().rounds = 4;
+    assert!(prepare_continuation(&task).is_err());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn followup_connection_fingerprint_ignores_environment_map_order() {
+    let mut first = test_profile("profile", "codex", &["model"]);
+    first.extra_env.insert("ONE".into(), "a".into());
+    first.extra_env.insert("TWO".into(), "b".into());
+    let mut second = first.clone();
+    second.extra_env.clear();
+    second.extra_env.insert("TWO".into(), "b".into());
+    second.extra_env.insert("ONE".into(), "a".into());
+    assert_eq!(followup_connection(&first), followup_connection(&second));
+    second.extra_env.insert("TWO".into(), "changed".into());
+    assert_ne!(followup_connection(&first), followup_connection(&second));
+}
+
+#[test]
+fn followup_probe_rejects_changed_script_and_symlink_escape() {
+    let dir = tmp_schedules_path("probe");
+    fs::create_dir_all(&dir).unwrap();
+    let _config = crate::storage::redirect_config_root(&dir.join("config"));
+    fs::write(dir.join("probe.py"), "raise SystemExit(0)\n").unwrap();
+    let original = probe_fingerprint(&dir, "probe.py").unwrap();
+    fs::write(dir.join("probe.py"), "raise SystemExit(1)\n").unwrap();
+    assert_ne!(original, probe_fingerprint(&dir, "probe.py").unwrap());
+    #[cfg(unix)] {
+        let outside = tmp_schedules_path("outside"); fs::write(&outside, "pass").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("escape.py")).unwrap();
+        assert!(probe_fingerprint(&dir, "escape.py").is_err());
+        fs::remove_file(outside).unwrap();
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn followup_mechanical_probe_waits_without_launching_agent() {
+    let dir = tmp_schedules_path("probe-wait");
+    fs::create_dir_all(&dir).unwrap();
+    let _config = crate::storage::redirect_config_root(&dir.join("config"));
+    fs::write(dir.join("probe.py"), "raise SystemExit(1)\n").unwrap();
+    let mut task = followup_task(&dir);
+    task.followup.as_mut().unwrap().probe = Some("probe.py".into());
+    task.followup_probe_hash = Some(probe_fingerprint(&dir, "probe.py").unwrap());
+    let authority = followup_authority(&task);
+    let continuation = task.continuation.as_mut().unwrap();
+    continuation.state = "later".into();
+    continuation.at = Some(chrono::Utc::now().to_rfc3339());
+    continuation.probe_hash = task.followup_probe_hash.clone();
+    continuation.authority = authority;
+    write_schedules_at(&schedules_path().unwrap(), &[task.clone()]).unwrap();
+    assert!(!prepare_continuation(&task).unwrap());
+    let saved = read_schedules_at(&schedules_path().unwrap()).unwrap().remove(0);
+    assert!(saved.history.is_empty());
+    assert_eq!(saved.continuation.as_ref().unwrap().state, "later");
+    assert!(chrono::DateTime::parse_from_rfc3339(saved.continuation.as_ref().unwrap().at.as_deref().unwrap()).unwrap() > chrono::Utc::now());
+    task.continuation.as_mut().unwrap().state = "uncertain".into();
+    assert!(prepare_continuation(&task).is_err());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[ignore]
+fn followup_real_scheduler_wait_answer_resume() {
+    let endpoint = std::env::var("MESA_FOLLOWUP_ENDPOINT").expect("local gateway");
+    let home = crate::dirs::home_dir().unwrap();
+    assert!(home.to_string_lossy().contains("mesa-scheduler-smoke"), "must use isolated HOME");
+    let config = crate::storage::config_root().unwrap();
+    let store = crate::profiles::ProfileStore::new_for_test(&config);
+    let profile = store.create(serde_json::from_value(serde_json::json!({
+        "agent":"claude-code", "name":"local probe", "protocol":"anthropic", "baseUrl":endpoint,
+        "models":["claude-sonnet-4-5"], "apiKey":"local-test-placeholder"
+    })).unwrap()).unwrap();
+    let project = home.join("project"); fs::create_dir_all(&project).unwrap();
+    crate::workspaces::run_git(&project, &["init"], Duration::from_secs(15)).unwrap();
+    crate::workspaces::run_git(&project, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial"], Duration::from_secs(15)).unwrap();
+    let mut task = sample_task(&uuid::Uuid::new_v4().to_string(), &project.to_string_lossy());
+    task.profile_id = Some(profile.id);
+    task.model = Some("claude-sonnet-4-5".into());
+    task.grant = Some(crate::grant::Grant::legacy_open());
+    task.followup = Some(crate::followup::FollowupPolicy { max_rounds: 4, days: 7, budget_usd: 2.0, probe: None });
+    write_schedules_at(&schedules_path().unwrap(), &[task.clone()]).unwrap();
+    let isolation = schedule_isolation(&task).unwrap();
+    fs::create_dir_all(isolation.join(".ccode")).unwrap();
+    fs::write(isolation.join(crate::help_requests::HELP_WANTED_FILE), "- 按哪个口径？\n  A：原口径\n  B：新口径\n").unwrap();
+    let first = execute_one(&task.id, RunContext::manual(Some("TRIGGER_LONG".into())));
+    assert_eq!(first.status, "waiting", "{}", first.summary);
+    let mut saved = read_schedules_at(&schedules_path().unwrap()).unwrap().remove(0);
+    assert_eq!(saved.continuation.as_ref().unwrap().state, "waiting");
+    assert_eq!(crate::process::capture_count(), 0);
+    let session = saved.continuation.as_ref().unwrap().session_id.clone();
+    let items = crate::help_requests::parse_items(&fs::read_to_string(isolation.join(crate::help_requests::HELP_WANTED_FILE)).unwrap());
+    crate::help_requests::answer_at(&isolation, &items[0].id, "A（原口径）").unwrap();
+    assert!(continuation_ready(&saved));
+    assert!(prepare_continuation(&saved).unwrap());
+    std::env::var("MESA_FOLLOWUP_REPLY_FILE").map(|file| fs::write(file, "做完了。\n```mesa-receipt\n{\"state\":\"done\"}\n```\n").unwrap()).unwrap();
+    saved.continuation.as_mut().unwrap().state = "running".into();
+    write_schedules_at(&schedules_path().unwrap(), &[saved]).unwrap();
+    let second = execute_one(&task.id, RunContext { trigger: "followup".into(), ..Default::default() });
+    assert_eq!(second.status, "ok", "{}", second.summary);
+    let saved = read_schedules_at(&schedules_path().unwrap()).unwrap().remove(0);
+    assert!(saved.continuation.is_none());
+    assert_eq!(saved.history.len(), 2);
+    assert_eq!(saved.history[0].session_id, session);
+    let run = saved.history[0].run_id.as_ref().unwrap();
+    assert!(crate::watch_review::load_at(&crate::watch_review::review_dir().unwrap(), run).is_ok());
+    eprintln!("SCHEDULER_SMOKE waiting -> answer -> original session -> frozen review; root={}", home.display());
+}
+
 fn hit(kind: &str, objects: &[&str]) -> EventHit {
     EventHit {
         at: "t".into(),
@@ -1287,6 +1426,59 @@ fn hit(kind: &str, objects: &[&str]) -> EventHit {
         objects: objects.iter().map(|o| o.to_string()).collect(),
         summary: event_summary(kind, Some("data/raw")),
     }
+}
+
+#[test]
+fn event_batch_durable_claim_recovery_and_receipt_are_idempotent() {
+    let dir = tmp_schedules_path("event-batch");
+    fs::create_dir_all(&dir).unwrap();
+    let _config = crate::storage::redirect_config_root(&dir);
+    let path = schedules_path().unwrap();
+    let mut task = event_task("run");
+    add_pending(&mut task, hit("folder", &["data/raw/a.csv"]));
+    write_schedules_at(&path, &[task]).unwrap();
+    take_pending_events_with_hits("ev").unwrap();
+    let mut task = read_schedules_at(&path).unwrap().remove(0);
+    assert!(task.pending_events.is_empty());
+    assert!(task.event_inflight.is_some());
+    add_pending(&mut task, hit("folder", &["data/raw/b.csv"]));
+    assert!(recover_event_batch(&mut task));
+    assert!(task.enabled);
+    assert_eq!(task.pending_events.len(), 2);
+    assert!(!recover_event_batch(&mut task));
+    write_schedules_at(&path, &[task]).unwrap();
+    take_pending_events_with_hits("ev").unwrap();
+    let mut task = read_schedules_at(&path).unwrap().remove(0);
+    task.event_inflight.as_mut().unwrap().run_id = Some("run".into());
+    let record = RunRecord { run_id: Some("run".into()), trigger: Some("event".into()), status: "error".into(), at: "now".into(), ..Default::default() };
+    apply_run_record(&mut task, record.clone(), None, None);
+    apply_run_record(&mut task, record, None, None);
+    assert_eq!(task.history.len(), 1);
+    assert_eq!(task.consecutive_failures, 1);
+    assert_eq!(task.pending_events.len(), 2);
+    assert!(task.event_inflight.is_none());
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn event_batch_unknown_execution_pauses_and_success_only_consumes_claimed_batch() {
+    let mut task = event_task("run");
+    let hits = vec![hit("folder", &["data/raw/a.csv"])];
+    let batch = EventBatch { origin: origin_from(&task, hits.clone()), hits, run_id: Some("run".into()) };
+    task.event_inflight = Some(batch.clone());
+    assert!(recover_event_batch(&mut task));
+    assert!(!task.enabled);
+    assert!(task.paused_reason.as_deref().unwrap().contains("未自动重跑"));
+    assert_eq!(task.pending_events.len(), 1);
+    task = event_task("run");
+    task.event_inflight = Some(batch);
+    add_pending(&mut task, hit("folder", &["data/raw/b.csv"]));
+    apply_run_record(&mut task, RunRecord { run_id: Some("run".into()), trigger: Some("event".into()), status: "ok".into(), ..Default::default() }, None, None);
+    assert!(task.event_inflight.is_none());
+    assert_eq!(task.pending_events[0].objects, ["data/raw/b.csv"]);
+    apply_run_record(&mut task, RunRecord { run_id: Some("manual-run".into()), trigger: Some("manual".into()), status: "cancelled".into(), ..Default::default() }, None, None);
+    assert!(!task.enabled);
+    assert_eq!(task.pending_events[0].objects, ["data/raw/b.csv"]);
 }
 
 #[test]

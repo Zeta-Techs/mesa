@@ -4287,6 +4287,9 @@ fn run_cancel_sync(id: String) -> Result<(), String> {
     if run.runtime != "headless" {
         return Err("交互终端请使用终端停止按钮".into());
     }
+    if crate::background_core::enabled() && !crate::process::capture_active(&id) && run.closed_at.is_none() {
+        return crate::background_core::cancel_run(&id);
+    }
     crate::process::cancel_capture(&id)
 }
 

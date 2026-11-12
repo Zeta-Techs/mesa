@@ -20,6 +20,9 @@ export default function ProjectSchedulesView({
 }) {
   const research = normalizeWorkMode(project.workMode) === "research";
   const [cfg, setCfg] = useState<ProjectConfigDto | null>(null);
+  const [core, setCore] = useState<{ enabled: boolean; running: boolean } | null>(null);
+  const [coreBusy, setCoreBusy] = useState(false);
+  useEffect(() => { void invoke<{ enabled: boolean; running: boolean }>("background_core_status").then(setCore).catch((error) => onError?.(String(error))); }, []);
   /** 任务列表增删改的版本号：新建/删除不发 scheduler-run-done（那只管跑完），
    *  雷达卡的空态行与「立即跑」靠这座桥就地翻新，不用切页回来 */
   const [schedulesVersion, setSchedulesVersion] = useState(0);
@@ -54,6 +57,15 @@ export default function ProjectSchedulesView({
 
   return (
     <div className="space-y-6">
+      {core && <label className="flex items-start gap-2 text-xs text-l2">
+        <input type="checkbox" checked={core.enabled} disabled={coreBusy} onChange={async (event) => {
+          setCoreBusy(true);
+          try { setCore(await invoke("background_core_set", { enabled: event.target.checked })); }
+          catch (error) { onError?.(`独立后台切换失败：${String(error)}`); }
+          finally { setCoreBusy(false); }
+        }} />
+        <span>独立后台：退出桌面后继续运行已授权的定时任务。{core.running ? "后台正在运行。" : "后台未运行。"}电脑关机或睡眠时不运行；交互对话不在此范围，成果仍回桌面评审。</span>
+      </label>}
       {research && cfg && (
         <LitWatchCard
           projectRoot={project.path}

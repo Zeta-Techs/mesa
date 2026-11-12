@@ -220,6 +220,8 @@ pub struct Schedule {
     /// 还没处理的事件（只记录档在下一个 tick 记完即清；真跑档在跑起来时取走）
     #[serde(default)]
     pub pending_events: Vec<EventHit>,
+    #[serde(default)]
+    event_inflight: Option<EventBatch>,
     /// 授权范围（2026-11-08，grant.rs）：能不能联网、每次最多花多少；None = 默认（只放行学术网站、不设预算）
     #[serde(default)]
     pub grant: Option<crate::grant::Grant>,
@@ -229,6 +231,42 @@ pub struct Schedule {
     /// 只对下一次运行生效的放宽（人点「放宽重跑这一次」）；跑起来时取走
     #[serde(default)]
     pub grant_once: Option<crate::grant::Grant>,
+    #[serde(default)]
+    pub followup: Option<crate::followup::FollowupPolicy>,
+    #[serde(default)]
+    followup_probe_hash: Option<String>,
+    #[serde(default)]
+    continuation: Option<Continuation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Continuation {
+    state: String,
+    about: String,
+    at: Option<String>,
+    profile_id: String,
+    agent: String,
+    model: Option<String>,
+    session_id: Option<String>,
+    rounds: u32,
+    spent: f64,
+    deadline: String,
+    authority: String,
+    #[serde(default)]
+    connection: String,
+    isolation: String,
+    evidence: crate::watch_review::WatchSnapshot,
+    #[serde(default)]
+    probe_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EventBatch {
+    hits: Vec<EventHit>,
+    origin: RunOrigin,
+    run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -282,6 +320,10 @@ pub struct ScheduleDto {
     /// 生效的授权范围（没设过的给默认）
     pub grant: crate::grant::Grant,
     pub grant_request: Option<GrantRequest>,
+    pub followup: Option<crate::followup::FollowupPolicy>,
+    pub followup_state: Option<String>,
+    pub followup_at: Option<String>,
+    pub followup_about: Option<String>,
 }
 
 impl From<Schedule> for ScheduleDto {
@@ -315,6 +357,10 @@ impl From<Schedule> for ScheduleDto {
             stalled_minutes: None,
             grant: s.grant.unwrap_or_default(),
             grant_request: s.grant_request,
+            followup_state: s.continuation.as_ref().map(|continuation| continuation.state.clone()),
+            followup_at: s.continuation.as_ref().and_then(|continuation| continuation.at.clone()),
+            followup_about: s.continuation.as_ref().map(|continuation| continuation.about.clone()),
+            followup: s.followup,
         }
     }
 }
@@ -394,6 +440,10 @@ pub struct UpdateSchedulePatch {
     /// 授权范围（整份替换）
     #[serde(default)]
     pub grant: Option<crate::grant::Grant>,
+    #[serde(default)]
+    pub followup: Option<crate::followup::FollowupPolicy>,
+    #[serde(default)]
+    pub disable_followup: Option<bool>,
 }
 
 /// `scheduler-run-done` 事件载荷
@@ -575,6 +625,9 @@ fn unmark_running(id: &str) {
 /// tick 已拉起、还在跑的运行数（并发上限计数）；spawn 线程结束时递减，所有出口都走
 /// spawn_blocking 的 await 收尾，不会泄漏
 static TICK_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+static MANUAL_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn active_schedule_count() -> usize { TICK_INFLIGHT.load(Ordering::SeqCst) + MANUAL_INFLIGHT.load(Ordering::SeqCst) }
 
 /// 文件锁在进程退出时由 OS 释放，防双实例同时改同一巡检工作目录。
 fn execution_lock_at(dir: &Path, id: &str) -> Result<fs::File, String> {
@@ -1048,6 +1101,9 @@ fn update_schedule_at(
     id: &str,
     patch: UpdateSchedulePatch,
 ) -> Result<Schedule, String> {
+    if with_running(|running| running.contains(id)) || crate::background_core::enabled() && crate::runs::schedule_open_run(id).is_some() {
+        return Err("任务还在运行，请先停止再修改授权或跟进设置".into());
+    }
     let _g = sched_lock()?;
     let mut list = read_schedules_at(path)?;
     let task = list
@@ -1102,6 +1158,18 @@ fn update_schedule_at(
     }
     if let Some(model) = patch.model {
         task.model = model.filter(|v| !v.trim().is_empty());
+    }
+    if patch.disable_followup == Some(true) {
+        task.followup = None;
+        task.followup_probe_hash = None;
+        task.continuation = None;
+    } else if let Some(policy) = patch.followup {
+        policy.validate()?;
+        task.followup_probe_hash = policy.probe.as_deref().map(|probe| probe_fingerprint(Path::new(&task.project_root), probe)).transpose()?;
+        if task.continuation.as_ref().is_some_and(|continuation| continuation.state == "uncertain") {
+            return Err("上次结果不明；请核对后先关闭跟进，再重新批准，不能直接接回".into());
+        }
+        task.followup = Some(policy);
     }
     if let Some(linked_step) = patch.linked_step {
         task.linked_step = linked_step
@@ -1188,6 +1256,7 @@ fn record_run(
     rec: RunRecord,
     slot: Option<NaiveDateTime>,
     force_pause: Option<String>,
+    continuation: Option<Continuation>,
 ) -> Result<Option<String>, String> {
     let _g = sched_lock()?;
     let path = schedules_path()?;
@@ -1197,6 +1266,7 @@ fn record_run(
         .find(|t| t.id == id)
         .ok_or_else(|| format!("定时任务不存在: {id}"))?;
     let paused = apply_run_record(task, rec, slot, force_pause);
+    task.continuation = continuation;
     write_schedules_at(&path, &list)?;
     Ok(paused)
 }
@@ -1225,6 +1295,18 @@ fn apply_run_record(
     slot: Option<NaiveDateTime>,
     force_pause: Option<String>,
 ) -> Option<String> {
+    if rec.run_id.as_ref().is_some_and(|id| task.history.iter().any(|old| old.run_id.as_ref() == Some(id))) {
+        return None;
+    }
+    if rec.trigger.as_deref() == Some("event") {
+        if let Some(batch) = task.event_inflight.take() {
+            if !matches!(rec.status.as_str(), "ok" | "waiting") {
+                let mut hits = batch.hits;
+                hits.append(&mut task.pending_events);
+                task.pending_events = hits;
+            }
+        }
+    }
     task.last_run_at = Some(rec.at.clone());
     task.last_status = Some(rec.status.clone());
     if let Some(slot) = slot {
@@ -1237,6 +1319,9 @@ fn apply_run_record(
         _ => {}
     }
     let reason = force_pause.or_else(|| {
+        if task.event.is_some() && rec.status == "cancelled" {
+            return Some("你已停止这次事件任务，事件已保留；重新开启前请核对原对话与产物".into());
+        }
         (task.consecutive_failures >= AUTO_PAUSE_AFTER_FAILURES).then(|| {
             format!(
                 "连续 {} 次没跑成，已自动暂停。最后一次：{}",
@@ -2244,7 +2329,9 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     }
     // 新增条目计数仅对 lit-watch 类任务有意义（只有它往 notes/inbox.md 追加条目）
     let is_lit_watch = task.skill == "lit-watch";
-    let scheduled_isolation = schedule_isolation(&task).and_then(|path| {
+    let scheduled_isolation = if let Some(continuation) = &task.continuation {
+        Ok(PathBuf::from(&continuation.isolation))
+    } else { schedule_isolation(&task).and_then(|path| {
         seed_watch_isolation(Path::new(&task.project_root), &path)?;
         if task.skill == "lit-watch" {
             let subs = crate::lit_watch::read_schedule_subscriptions(
@@ -2256,7 +2343,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             seed_memory(Path::new(&task.project_root), &path, &task.id)?;
         }
         Ok(path)
-    });
+    }) };
     // 事件规则：把这次涉及的文件复制进隔离副本同一位置（多是没进 git 的新文件，worktree 里没有）。
     // 复制在记初始快照之前，Agent 不改它们就不算产物
     if let (Ok(iso), Some(origin)) = (&scheduled_isolation, ctx.event.as_ref()) {
@@ -2294,6 +2381,8 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     let mut connection_missing = false;
     // 冻结证据里这轮改了几个可采纳文件（通用巡检据此判「无新内容」）
     let mut changed_files: Option<usize> = None;
+    let mut followup_next: Option<Continuation> = None;
+    let mut suspended = false;
     let timeout = Duration::from_secs(u64::from(effective_timeout_minutes(&task)) * 60);
     let result: Result<String, String> = (|| {
         let root = scheduled_isolation.as_ref().map_err(Clone::clone)?;
@@ -2309,7 +2398,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        let pinned = task.profile_id.clone().filter(|v| !v.trim().is_empty());
+        let pinned = task.continuation.as_ref().map(|previous| previous.profile_id.clone()).or_else(|| task.profile_id.clone()).filter(|v| !v.trim().is_empty());
         if let Some(pid) = pinned.as_deref() {
             connection_missing = !profiles.iter().any(|p| p.id == pid);
         }
@@ -2357,6 +2446,14 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
                 }
             }
         };
+        if let Some(previous) = &task.continuation {
+            if previous.profile_id != profile.id || previous.agent != profile.agent || previous.authority != followup_authority(&task) || previous.connection != followup_connection(&profile) {
+                return Err("连接、模型或授权已变化，未按旧授权继续；请关闭跟进并重新批准".into());
+            }
+        }
+        if task.followup.is_some() && !crate::agent_specs::headless_followup_cap(&profile.agent).supported {
+            return Err("这家 Agent 不支持分轮跟进，请关闭跟进或选择一等 Agent".into());
+        }
         // 无头写盘 fail-loud：手动列表的禁选只在 UI 层，选「自动」时回落解析可能落到
         // 未验证无头写盘的 agent（如 qwen）；执行链对最终 agent 按能力表再拦一次——
         // 不静默换别家，也不带未验证权限照跑。与解析失败同口径：留失败 Run，原因进运行历史。
@@ -2386,10 +2483,19 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             "write_tree",
         )?;
         run_id = Some(run.id.clone());
+        if ctx.event.is_some() {
+            mutate_schedule(id, |task| {
+                if let Some(batch) = task.event_inflight.as_mut() {
+                    batch.run_id = Some(run.id.clone());
+                }
+            })?;
+        }
         // 可采纳契约 = 四类文献台账 + 该技能声明的产出（§4.9 后半）
         let patterns = watch_adopt_patterns_for(&task.skill);
-        let evidence =
-            crate::watch_review::prepare(&run.id, Path::new(&task.project_root), root, &patterns)?;
+        let evidence = match &task.continuation {
+            Some(previous) => { let mut evidence = previous.evidence.clone(); evidence.run_id = run.id.clone(); evidence },
+            None => crate::watch_review::prepare(&run.id, Path::new(&task.project_root), root, &patterns)?,
+        };
         // 自定义巡检靠技能目录里的 SKILL.md；未分发则无头跑找不到规范。
         // lit-watch 的 prompt 自带完整口径，不拦存量任务。
         if task.skill != "lit-watch" {
@@ -2400,9 +2506,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         // 未钉走既有档位链（dedicated 命中取 settings.ai_model，否则名单第一）。
         // model_note 是 &mut String 借用——闭包写、闭包外 summary 读
         // 模型与配置独立生效（设计拍板）：自动解析出的连接也校验任务模型，在名单即用
-        let pinned_model = task
-            .model
-            .clone()
+        let pinned_model = task.continuation.as_ref().and_then(|previous| previous.model.clone()).or_else(|| task.model.clone())
             .filter(|m| !m.trim().is_empty());
         let model = if let Some(want) = pinned_model.as_deref() {
             let models = &profile.models;
@@ -2438,7 +2542,15 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             )
             .map(str::to_string)
         };
-        let mut task_prompt = build_task_prompt(&task.skill);
+        if task.continuation.as_ref().is_some_and(|previous| previous.model != model) {
+            return Err("跟进时模型发生变化，未接回旧会话；请重新批准".into());
+        }
+        let mut task_prompt = match &task.continuation {
+            Some(previous) => format!("接着原任务的剩余工作，不重做已经完成的业务：{}", previous.about),
+            None => build_task_prompt(&task.skill),
+        };
+        task_prompt.push_str(&continuation_answers(&task));
+        if let Some(policy) = &task.followup { task_prompt.push_str(&crate::followup::prompt_note(policy)); }
         if !is_lit_watch {
             if let Some(line) = memory_prompt_line(root, &task.id) {
                 task_prompt.push_str(&line);
@@ -2460,7 +2572,22 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             None => task.grant.clone().unwrap_or_default(),
         };
         task_prompt.push_str(&grant_note(&grant));
-        crate::ai::run_agent_task_granted(
+        let grant = if let Some(policy) = &task.followup {
+            let remaining = policy.budget_usd - task.continuation.as_ref().map(|previous| previous.spent).unwrap_or(0.0);
+            if remaining <= 0.0 { return Err("跟进已到累计预算，未继续执行".into()); }
+            crate::grant::Grant { budget_usd: Some(grant.budget_usd.map(|budget| budget.min(remaining)).unwrap_or(remaining)), ..grant }
+        } else { grant };
+        let cost_before = task.continuation.as_ref().and_then(|previous| previous.session_id.as_deref()).and_then(|session| crate::usage::session_cost_priced(&profile.agent, session)).unwrap_or(0.0);
+        if let Some(policy) = &task.followup {
+            let probe_hash = policy.probe.as_ref().map(|probe| probe_fingerprint(Path::new(&task.project_root), probe)).transpose()?;
+            if probe_hash != task.followup_probe_hash { return Err("批准后的探测脚本发生变化，请重新批准，未执行".into()); }
+            let initial = task.continuation.clone().unwrap_or(Continuation {
+                state: "running".into(), about: "执行已授权任务".into(), at: None, profile_id: profile.id.clone(), agent: profile.agent.clone(), model: model.clone(), session_id: None,
+                rounds: 0, spent: 0.0, deadline: (chrono::Utc::now() + chrono::Duration::days(i64::from(policy.days))).to_rfc3339(), authority: followup_authority(&task), connection: followup_connection(&profile), isolation: root.to_string_lossy().into_owned(), evidence: evidence.clone(), probe_hash,
+            });
+            mutate_schedule(id, |task| task.continuation = Some(initial))?;
+        }
+        let call = || crate::ai::run_agent_task_granted(
             &profile,
             model.as_deref(),
             &task_prompt,
@@ -2471,9 +2598,51 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             Some(Path::new(&task.project_root)),
             run_id.as_deref(),
             Some(&grant),
-        )
-        .and_then(|(output, id)| {
+        );
+        let result = if task.followup.is_some() {
+            crate::ai::with_followup_round(task.continuation.as_ref().and_then(|previous| previous.session_id.clone()), call)
+        } else { call() };
+        result.and_then(|(output, id)| {
             run_id = Some(id);
+            if let Some(policy) = &task.followup {
+                let now = chrono::Utc::now();
+                let deadline = task.continuation.as_ref().and_then(|previous| chrono::DateTime::parse_from_rfc3339(&previous.deadline).ok()).map(|time| time.with_timezone(&chrono::Utc))
+                    .unwrap_or(now + chrono::Duration::days(i64::from(policy.days)));
+                let text = crate::ai::followup_text(&profile.agent, &output)?;
+                let receipt_path = crate::storage::config_root().ok_or("无法确定配置目录")?.join("receipts").join(format!("{}.txt", run_id.as_deref().unwrap()));
+                fs::create_dir_all(receipt_path.parent().unwrap()).map_err(|error| error.to_string())?;
+                crate::storage::atomic_write(&receipt_path, crate::sessions::redact_sensitive_text(&text).as_bytes(), true)?;
+                let receipt = match crate::followup::read_receipt(&text, now, deadline) {
+                    Ok(receipt) => receipt,
+                    Err(problem) => {
+                        let _ = crate::runs::record_run_event(run_id.as_deref().unwrap(), "run.receipt-repair", &problem);
+                        let repaired = crate::followup::repair_format(&text).map_err(|error| format!("{problem}；{error}；已保留原业务结果，不自动重做"))?;
+                        crate::followup::read_receipt(&repaired, now, deadline)?
+                    }
+                };
+                if receipt.state != "done" {
+                    let session_id = crate::runs::run_get_sync(run_id.as_ref().unwrap().clone())?.and_then(|run| run.session_id);
+                    let rounds = task.continuation.as_ref().map(|previous| previous.rounds).unwrap_or(0) + 1;
+                    let spent = task.continuation.as_ref().map(|previous| previous.spent).unwrap_or(0.0)
+                        + session_id.as_ref().and_then(|session| crate::usage::session_cost_priced(&profile.agent, session)).map(|cost| (cost - cost_before).max(0.0)).unwrap_or(policy.budget_usd);
+                    if receipt.state == "waiting" {
+                        let requests = fs::read_to_string(root.join(crate::help_requests::HELP_WANTED_FILE)).unwrap_or_default();
+                        if !crate::help_requests::parse_items(&requests).iter().any(|item| item.answer.is_none()) {
+                            return Err("回执说等你回答，却没有人工请求；保留业务结果待核对".into());
+                        }
+                    }
+                    if session_id.is_none() || rounds >= policy.max_rounds || spent >= policy.budget_usd {
+                        return Err("跟进到授权上限或没有可恢复会话，保留业务结果待核对".into());
+                    }
+                    let probe_hash = task.followup_probe_hash.clone();
+                    followup_next = Some(Continuation {
+                        state: receipt.state, about: receipt.about, at: receipt.at, profile_id: profile.id.clone(), agent: profile.agent.clone(), model: model.clone(), session_id,
+                        rounds, spent, deadline: deadline.to_rfc3339(), authority: followup_authority(&task), connection: followup_connection(&profile), isolation: root.to_string_lossy().into_owned(), evidence, probe_hash,
+                    });
+                    suspended = true;
+                    return Ok(text);
+                }
+            }
             // 模型漏写 <!-- watch-run --> 时，在冻结前用本次完成日（上海）补上。
             // 只补还没有批次的条目；已有标记不动（忽略 id 按标题+原注释日期算）。
             // 补不上不挡冻结：趋势仍可在打开雷达时再补。
@@ -2497,7 +2666,7 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
             )
             .map_err(|e| format!("任务执行完成，但冻结产物证据失败，未开放自动采纳：{e}"))?;
             changed_files = Some(changed);
-            Ok(output)
+            if task.followup.is_some() { crate::ai::followup_text(&profile.agent, &output) } else { Ok(output) }
         })
     })();
     // Run 已创建但在 CLI 进入 ai.rs 前失败（例如技能未分发）时，补齐失败终态。
@@ -2577,7 +2746,8 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
     } else {
         summary
     };
-    let noop = status == "ok" && is_noop(is_lit_watch, new_entries, changed_files);
+    let status = if suspended { "waiting" } else { status };
+    let noop = suspended || (status == "ok" && is_noop(is_lit_watch, new_entries, changed_files));
     // 这次的后台对话（看过程用）：Run 收尾时由 ai.rs 记下会话 id
     let (agent, session_id) = run_id
         .as_deref()
@@ -2603,15 +2773,17 @@ fn execute_one(id: &str, ctx: RunContext) -> RunDonePayload {
         origin: ctx.event.clone(),
         ..Default::default()
     };
-    let force_pause = (connection_missing && status == "error").then(|| {
+    let force_pause = if task.followup.is_some() && matches!(status, "error" | "timeout" | "cancelled") {
+        Some(format!("跟进已暂停，保留原业务结果，未自动重做：{summary}"))
+    } else { (connection_missing && status == "error").then(|| {
         "绑定的连接已删除，已自动暂停。换一条连接后重新打开开关".to_string()
-    });
+    }) };
     let run_for_request = record.run_id.clone();
-    let auto_paused = match record_run(id, record, ctx.slot, force_pause) {
+    let auto_paused = match record_run(id, record, ctx.slot, force_pause, followup_next) {
         Ok(paused) => paused,
         Err(e) => {
             crate::logbuf::record("error", "scheduler", &format!("回填运行历史失败: {e}"));
-            None
+            return error_payload(id, format!("运行已经结束，但保存回执失败；未重复执行：{e}"));
         }
     };
     // 被授权范围拦下的事（2026-11-08，design §4.4）：记在任务上，等你决定放宽重跑一次还是不用
@@ -2691,6 +2863,10 @@ fn schedule_brief(id: &str) -> Option<(String, String)> {
 /// 排队中 = 到点该跑（enabled 且 due）但当前没有在跑的 Run。等的是并发上限或同项目
 /// 互斥，闸门一过下一 tick 自动接上。list_schedules 出口用，纯函数可测。
 fn queued_for_list(s: &Schedule, now: NaiveDateTime, running: bool) -> bool {
+    if let Some(continuation) = &s.continuation {
+        return s.enabled && !running && (continuation.state == "waiting" && continuation_ready(s)
+            || continuation.state == "later" && continuation.at.as_deref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).is_some_and(|at| at <= chrono::Utc::now()));
+    }
     s.enabled
         && !running
         && (due_slot(Cadence::of(s), last_handled(s), now).is_some()
@@ -2762,6 +2938,14 @@ fn collect_due() -> Vec<DuePlan> {
         if !alive || with_running(|s| s.contains(&t.id)) {
             continue;
         }
+        if let Some(continuation) = &t.continuation {
+            if continuation.state == "waiting" && continuation_ready(t)
+                || continuation.state == "later" && continuation.at.as_deref().and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok()).is_some_and(|at| at <= chrono::Utc::now())
+                || chrono::DateTime::parse_from_rfc3339(&continuation.deadline).is_ok_and(|deadline| deadline <= chrono::Utc::now()) {
+                out.push(DuePlan { id: t.id.clone(), slot: now, missed: 0, event: false });
+            }
+            continue;
+        }
         if let Some(rule) = &t.event {
             // 真跑档攒着事件才跑；上一轮还没评审就接着攒，评审完一并处理（不记跳过，免得刷屏）
             if rule.mode == "run"
@@ -2790,6 +2974,88 @@ fn collect_due() -> Vec<DuePlan> {
         });
     }
     out
+}
+
+fn followup_authority(task: &Schedule) -> String {
+    let value = serde_json::to_vec(&(&task.profile_id, &task.model, &task.skill, &task.project_root, &task.grant, &task.followup, &task.followup_probe_hash)).unwrap_or_default();
+    format!("{:x}", md5::compute(value))
+}
+
+fn followup_connection(profile: &crate::profiles::Profile) -> String {
+    let value = serde_json::to_value((&profile.id, &profile.agent, &profile.base_url, &profile.protocol, &profile.models, &profile.request_policy, &profile.key_hint, &profile.extra_env, &profile.account_type, &profile.no_auth)).unwrap_or_default();
+    let value = serde_json::to_vec(&value).unwrap_or_default();
+    format!("{:x}", md5::compute(value))
+}
+
+fn continuation_answers(task: &Schedule) -> String {
+    let Some(previous) = task.continuation.as_ref() else { return String::new() };
+    let text = fs::read_to_string(Path::new(&previous.isolation).join(crate::help_requests::HELP_WANTED_FILE)).unwrap_or_default();
+    let answers: Vec<_> = crate::help_requests::parse_items(&text).into_iter().filter_map(|item| item.answer.map(|answer| format!("{} → {}", item.question, answer))).collect();
+    if answers.is_empty() { String::new() } else { format!("\n【人已回答】\n{}\n先把问答记进本步报告，确认记好了再删除已答条目。", answers.join("\n")) }
+}
+
+fn continuation_ready(task: &Schedule) -> bool {
+    let Some(continuation) = &task.continuation else { return false };
+    let text = fs::read_to_string(Path::new(&continuation.isolation).join(crate::help_requests::HELP_WANTED_FILE)).unwrap_or_default();
+    let items = crate::help_requests::parse_items(&text);
+    !items.is_empty() && items.iter().all(|item| item.answer.is_some())
+}
+
+fn probe_fingerprint(root: &Path, rel: &str) -> Result<String, String> {
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let file = root.join(rel).canonicalize().map_err(|error| error.to_string())?;
+    if !file.starts_with(&root) || fs::metadata(&file).map_err(|error| error.to_string())?.len() > 1024 * 1024 {
+        return Err("探测脚本越界或超过 1 MB，未执行".into());
+    }
+    Ok(format!("{:x}", md5::compute(fs::read(file).map_err(|error| error.to_string())?)))
+}
+
+fn prepare_continuation(task: &Schedule) -> Result<bool, String> {
+    let Some(continuation) = &task.continuation else { return Ok(true) };
+    let policy = task.followup.as_ref().ok_or("没有跟进授权")?;
+    let deadline = chrono::DateTime::parse_from_rfc3339(&continuation.deadline).map_err(|error| error.to_string())?;
+    if deadline <= chrono::Utc::now() || continuation.rounds >= policy.max_rounds || continuation.spent >= policy.budget_usd
+        || continuation.authority != followup_authority(task) || continuation.session_id.is_none() {
+        return Err("跟进授权已到期、到上限或发生变化，未继续；请核对后重新批准".into());
+    }
+    if !matches!(continuation.state.as_str(), "waiting" | "later") { return Err("上次跟进没有完整回执，结果不明，未自动重做".into()); }
+    if continuation.state == "later" {
+        if let Some(probe) = policy.probe.as_deref() {
+            if continuation.probe_hash.as_deref() != Some(probe_fingerprint(Path::new(&task.project_root), probe)?.as_str()) {
+                return Err("人批准的探测脚本已变化，请重新批准".into());
+            }
+            let python = crate::dep_check::usable_python().ok_or("未找到可用 Python")?;
+            let mut command = crate::process::background_command(python);
+            let source = Path::new(&task.project_root).join(probe).canonicalize().map_err(|error| error.to_string())?;
+            let script = fs::read(&source).map_err(|error| error.to_string())?;
+            if continuation.probe_hash.as_deref() != Some(format!("{:x}", md5::compute(&script)).as_str()) {
+                return Err("探测脚本在启动前变化，未执行".into());
+            }
+            let snapshot = crate::storage::config_root().ok_or("无法确定配置目录")?.join("probe-snapshots").join(format!("{}.py", uuid::Uuid::new_v4()));
+            fs::create_dir_all(snapshot.parent().unwrap()).map_err(|error| error.to_string())?;
+            crate::storage::atomic_write(&snapshot, &script, true)?;
+            command.arg(&snapshot).current_dir(&continuation.isolation);
+            for (name, _) in std::env::vars() {
+                if crate::profiles::sensitive_env_name(&name) { command.env_remove(name); }
+            }
+            let result = crate::process::capture_command(&mut command, Duration::from_secs(30), 16 * 1024);
+            let _ = fs::remove_file(snapshot);
+            let result = result?;
+            if result.timed_out { return Err("机械探测超时，未调用 AI".into()); }
+            if result.status.and_then(|status| status.code()) == Some(1) {
+                mutate_schedule(&task.id, |task| { if let Some(continuation) = task.continuation.as_mut() { continuation.at = Some((chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339()); } })?;
+                return Ok(false);
+            }
+            if !result.status.is_some_and(|status| status.success()) { return Err("探测脚本失败，未调用 AI".into()); }
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn headless_help_sources() -> Vec<(String, String)> {
+    let Ok(_guard) = sched_lock() else { return Vec::new() };
+    read_schedules_at(&match schedules_path() { Ok(path) => path, Err(_) => return Vec::new() }).unwrap_or_default().into_iter()
+        .filter_map(|task| task.continuation.filter(|continuation| continuation.state == "waiting").map(|continuation| (continuation.isolation, task.project_root))).collect()
 }
 
 // ===== 卡住检测（2026-11-02，design-attention-dispatch §6.2） =====
@@ -3190,24 +3456,64 @@ fn take_pending_events_with_hits(id: &str) -> Option<(RunOrigin, Vec<EventHit>)>
     let path = schedules_path().ok()?;
     let mut list = read_schedules_at(&path).ok()?;
     let t = list.iter_mut().find(|t| t.id == id)?;
-    if t.pending_events.is_empty() {
+    if t.pending_events.is_empty() || t.event_inflight.is_some() {
         return None;
     }
     let hits = std::mem::take(&mut t.pending_events);
     let origin = origin_from(t, hits.clone());
+    t.event_inflight = Some(EventBatch { hits: hits.clone(), origin: origin.clone(), run_id: None });
     write_schedules_at(&path, &list).ok()?;
     Some((origin, hits))
 }
 
 /// 事件真跑没跑成（出错或被跳过）：取走的事件放回队首，下一轮重试（连续失败照旧自动暂停，不会无限重跑；2026-11-03 自查）
-fn restore_pending_events(id: &str, mut hits: Vec<EventHit>) {
-    let Ok(_g) = sched_lock() else { return };
-    let Ok(path) = schedules_path() else { return };
-    let Ok(mut list) = read_schedules_at(&path) else { return };
-    let Some(t) = list.iter_mut().find(|t| t.id == id) else { return };
-    hits.append(&mut t.pending_events);
-    t.pending_events = hits;
-    let _ = write_schedules_at(&path, &list);
+fn recover_event_batch(task: &mut Schedule) -> bool {
+    let Some(batch) = task.event_inflight.as_ref().cloned() else { return false };
+    if let Some(run_id) = batch.run_id {
+        let reason = format!("上次事件任务没有完整回执，未自动重跑。请核对原对话和产物后再开启：{}", batch.origin.summary);
+        apply_run_record(task, RunRecord {
+            at: crate::sessions::now_iso(), status: "error".into(), summary: reason.clone(),
+            run_id: Some(run_id), trigger: Some("event".into()), origin: Some(batch.origin),
+            ..Default::default()
+        }, None, Some(reason));
+    } else {
+        task.event_inflight = None;
+        let mut hits = batch.hits;
+        hits.append(&mut task.pending_events);
+        task.pending_events = hits;
+    }
+    true
+}
+
+fn recover_event_batches() -> Result<(), String> {
+    let path = schedules_path()?;
+    let ids: Vec<String> = {
+        let _guard = sched_lock()?;
+        read_schedules_at(&path)?.into_iter().filter(|task| task.event_inflight.is_some() || task.continuation.as_ref().is_some_and(|continuation| continuation.state == "running")).map(|task| task.id).collect()
+    };
+    for id in ids {
+        if with_running(|running| running.contains(&id)) { continue }
+        let Ok(_execution) = execution_lock(&id) else { continue };
+        let project = {
+            let _guard = sched_lock()?;
+            let Some(task) = read_schedules_at(&path)?.into_iter().find(|task| task.id == id) else { continue };
+            task.project_root
+        };
+        let Ok(_project) = project_lock(&project) else { continue };
+        let _guard = sched_lock()?;
+        let mut list = read_schedules_at(&path)?;
+        if let Some(task) = list.iter_mut().find(|task| task.id == id) {
+            let mut changed = recover_event_batch(task);
+            if let Some(continuation) = task.continuation.as_mut().filter(|continuation| continuation.state == "running") {
+                continuation.state = "uncertain".into();
+                task.enabled = false;
+                task.paused_reason = Some("上次跟进结果不明，保留了原任务与产物，未自动重做；请核对后重新批准".into());
+                changed = true;
+            }
+            if changed { write_schedules_at(&path, &list)?; }
+        }
+    }
+    Ok(())
 }
 
 fn claim_due_after_lock(id: &str, due: &[DuePlan]) -> bool {
@@ -3221,7 +3527,7 @@ fn claim_due_after_lock(id: &str, due: &[DuePlan]) -> bool {
 /// 两个闸门没过的任务保持 due，下一 tick 自动重试（界面呈「排队中」）。
 /// 用 spawn_blocking + thread::sleep（参照 diagnostics 后台循环），不为一个 sleep 引入 tokio 依赖。
 /// 记住本次启动时刻与上一个 tick：应跑时刻早于启动 = 应用没开；两次 tick 隔太久 = 电脑睡过。
-pub fn start_scheduler(app: tauri::AppHandle) {
+pub fn start_scheduler(app: Option<tauri::AppHandle>) {
     let app_started = Local::now().naive_local();
     tauri::async_runtime::spawn_blocking(move || {
         let mut prev_tick: Option<NaiveDateTime> = None;
@@ -3229,7 +3535,16 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             if crate::process::shutting_down() {
                 break;
             }
+            if !crate::background_core::is_core() && crate::background_core::enabled() {
+                std::thread::sleep(Duration::from_secs(1));
+                continue;
+            }
             let now = Local::now().naive_local();
+            if let Err(error) = recover_event_batches() {
+                crate::logbuf::record("error", "scheduler", &format!("恢复在途事件失败：{error}"));
+                std::thread::sleep(Duration::from_secs(60));
+                continue;
+            }
             scan_event_sources();
             flush_recorded_events();
             for plan in collect_due() {
@@ -3262,14 +3577,28 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                         continue;
                     }
                 };
-                let mut taken_hits: Option<Vec<EventHit>> = None;
-                let ctx = if plan.event {
+                let followup_task = {
+                    let _guard = match sched_lock() { Ok(guard) => guard, Err(_) => { unmark_running(&id); continue } };
+                    read_schedules_at(&match schedules_path() { Ok(path) => path, Err(_) => { unmark_running(&id); continue } }).ok().and_then(|tasks| tasks.into_iter().find(|task| task.id == id))
+                };
+                if let Some(task) = followup_task.as_ref().filter(|task| task.continuation.is_some()) {
+                    match prepare_continuation(task) {
+                        Ok(true) => {}
+                        Ok(false) => { unmark_running(&id); continue }
+                        Err(error) => { let _ = mutate_schedule(&id, |task| { task.enabled = false; task.paused_reason = Some(error); }); unmark_running(&id); continue }
+                    }
+                }
+                let ctx = if followup_task.as_ref().is_some_and(|task| task.continuation.is_some()) {
+                    if let Err(error) = mutate_schedule(&id, |task| { if let Some(continuation) = task.continuation.as_mut() { continuation.state = "running".into(); } }) {
+                        crate::logbuf::record("error", "scheduler", &error); unmark_running(&id); continue;
+                    }
+                    RunContext { trigger: "followup".into(), ..Default::default() }
+                } else if plan.event {
                     // 跑起来才取走攒着的事件；被别处取空了就算了
-                    let Some((origin, hits)) = take_pending_events_with_hits(&id) else {
+                    let Some((origin, _)) = take_pending_events_with_hits(&id) else {
                         unmark_running(&id);
                         continue;
                     };
-                    taken_hits = Some(hits);
                     RunContext { trigger: "event".into(), event: Some(origin), ..Default::default() }
                 } else {
                     let (trigger, reason) = classify_trigger(plan.slot, app_started, prev_tick, now);
@@ -3293,7 +3622,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 TICK_INFLIGHT.fetch_add(1, Ordering::SeqCst);
                 let app2 = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    emit_started(&app2, started);
+                    if let Some(app) = &app2 { emit_started(app, started); }
                     let id2 = id.clone();
                     let outcome = tauri::async_runtime::spawn_blocking(move || {
                         let _lease = lease;
@@ -3302,15 +3631,9 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                     })
                     .await;
                     TICK_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
-                    if let (Some(hits), Ok(payload)) = (taken_hits, outcome.as_ref()) {
-                        // 状态只有 ok / error / skipped：没跑成（出错、被跳过）的都放回去
-                        if payload.status != "ok" {
-                            restore_pending_events(&id, hits);
-                        }
-                    }
                     unmark_running(&id);
                     match outcome {
-                        Ok(payload) => emit_done(&app2, payload),
+                        Ok(payload) => { if let Some(app) = &app2 { emit_done(app, payload); } },
                         Err(e) => {
                             crate::logbuf::record(
                                 "error",
@@ -3368,7 +3691,7 @@ fn list_schedules_sync() -> Result<Vec<ScheduleDto>, String> {
             let running = runs.iter().any(|r| {
                 r.task_ref.as_deref() == Some(&schedule.id)
                     && r.task_kind == "watch"
-                    && crate::process::capture_active(&r.id)
+                    && (crate::process::capture_active(&r.id) || crate::background_core::enabled() && r.closed_at.is_none() && matches!(r.status.as_str(), "starting" | "running"))
             });
             let queued = queued_for_list(&schedule, now, running);
             let next = schedule
@@ -3382,7 +3705,7 @@ fn list_schedules_sync() -> Result<Vec<ScheduleDto>, String> {
                 let run = runs.iter().find(|r| {
                     r.task_ref.as_deref() == Some(&dto.id)
                         && r.task_kind == "watch"
-                        && crate::process::capture_active(&r.id)
+                        && (crate::process::capture_active(&r.id) || crate::background_core::enabled() && r.closed_at.is_none() && matches!(r.status.as_str(), "starting" | "running"))
                 });
                 dto.running_run_id = run.map(|r| r.id.clone());
                 dto.stalled_minutes =
@@ -3563,6 +3886,11 @@ pub async fn cancel_schedule_run(id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 fn cancel_schedule_run_sync(id: String) -> Result<(), String> {
+    if crate::background_core::enabled() && !crate::background_core::is_core() {
+        if let Some(run_id) = crate::runs::schedule_open_run(&id) {
+            return crate::background_core::cancel_run(&run_id);
+        }
+    }
     for run_id in crate::process::active_capture_ids() {
         if let Some(run) = crate::runs::run_get_sync(run_id.clone())? {
             if run.task_ref.as_deref() == Some(&id) && run.task_kind == "watch" {
@@ -3587,6 +3915,13 @@ pub fn run_schedule_now(
     id: String,
     note: Option<String>,
 ) -> Result<(), String> {
+    if crate::background_core::enabled() && !crate::background_core::is_core() {
+        return crate::background_core::request_manual(&id, note);
+    }
+    run_schedule_now_impl(Some(app), id, note)
+}
+
+pub(crate) fn run_schedule_now_impl(app: Option<tauri::AppHandle>, id: String, note: Option<String>) -> Result<(), String> {
     let note = note
         .map(|n| n.trim().chars().take(NOTE_CAP).collect::<String>())
         .filter(|n| !n.is_empty());
@@ -3620,6 +3955,29 @@ pub fn run_schedule_now(
             return Err("这个项目已有雷达在跑，等它结束或先停止它".into());
         }
     };
+    let recovered = (|| -> Result<bool, String> {
+        let _guard = sched_lock()?;
+        let path = schedules_path()?;
+        let mut tasks = read_schedules_at(&path)?;
+        let task = tasks.iter_mut().find(|task| task.id == id).ok_or("定时任务不存在")?;
+        if task.continuation.is_some() {
+            return Err("这条任务正在等回答或预约复查；请按原卡片回答，或关闭跟进后重新开工，不能绕过原授权手动重做".into());
+        }
+        let uncertain = task.event_inflight.as_ref().is_some_and(|batch| batch.run_id.is_some());
+        if recover_event_batch(task) { write_schedules_at(&path, &tasks)?; }
+        Ok(uncertain)
+    })();
+    match recovered {
+        Ok(false) => {}
+        Ok(true) => {
+            unmark_running(&id);
+            return Err("上次事件执行结果不明，已保留事件并暂停；核对原对话和产物后再试".into());
+        }
+        Err(error) => {
+            unmark_running(&id);
+            return Err(error);
+        }
+    }
     let started = RunStartedPayload {
         schedule_id: id.clone(),
         schedule_name: name,
@@ -3628,8 +3986,9 @@ pub fn run_schedule_now(
         scheduled_for: None,
         missed: 0,
     };
+    MANUAL_INFLIGHT.fetch_add(1, Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
-        emit_started(&app, started);
+        if let Some(app) = &app { emit_started(app, started); }
         let id2 = id.clone();
         let outcome = tauri::async_runtime::spawn_blocking(move || {
             let _lease = lease;
@@ -3637,9 +3996,10 @@ pub fn run_schedule_now(
             execute_one(&id2, RunContext::manual(note))
         })
         .await;
+        MANUAL_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
         unmark_running(&id);
         match outcome {
-            Ok(payload) => emit_done(&app, payload),
+            Ok(payload) => { if let Some(app) = &app { emit_done(app, payload); } },
             Err(e) => {
                 crate::logbuf::record("error", "scheduler", &format!("任务执行线程异常: {e}"))
             }

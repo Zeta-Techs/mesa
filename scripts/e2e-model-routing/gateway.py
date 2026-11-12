@@ -231,6 +231,8 @@ class H(BaseHTTPRequestHandler):
             mode = "done" if has_tool_result(body, raw) else ("tool" if pick_shell(tools) else "notool")
         elif tools and b"TRIGGER_LONG" in raw:
             mode = "long"
+            if os.environ.get("E2E_LONG_FILE"):
+                LONG_LINES[:] = open(os.environ["E2E_LONG_FILE"], encoding="utf-8").read().rstrip("\n").split("\n")
         elif tools and b"TRIGGER_SLOW" in raw:
             mode = "slow"
         log(method="POST", path=self.path.split("?")[0], model=model, stream=bool(body.get("stream")), params=params,

@@ -8,9 +8,10 @@ import { useAppStore } from "./store";
 import { IS_WINDOWS } from "./hotkeys";
 import { pathWithin, samePath } from "./path-utils";
 import { stepSessionTail } from "./session-tail";
-import { deliverHelpPrompt, helpNotDismissed } from "./help-requests";
+import { helpNotDismissed } from "./help-requests";
+import { buildWorkspaceTerminalRequest } from "./pipeline-start";
 import { loadHelpDismissed } from "./inbox";
-import { sendToWorkspace } from "./assistant-dispatch";
+import { liveRunIn, sendToWorkspace } from "./assistant-dispatch";
 import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
 import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto } from "./types";
 import type { OpenDispatch } from "./assistant-echo";
@@ -105,10 +106,22 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
       remember: null,
     });
     const ws = (await workspaceFor(item.worktreePath)) ?? (await workspaceFor(item.helpRoot));
+    const deliveryRun = await invoke<RunDto>("help_delivery_prepare", { root: item.helpRoot, itemIds: [saved.id], retry: false });
+    if (deliveryRun.runtime === "headless") return "回答已保存；后台按原连接与授权继续，做完照常等你评审";
     if (!ws) return "已记下你的回答；这条来自项目根，回到那段对话里点「交给 Agent」才送得到";
-    const sent = await sendToWorkspace(projectPath, ws, null, deliverHelpPrompt([saved], 0));
-    await invoke<number>("help_request_mark_sent", { root: item.helpRoot }).catch(() => 0);
-    return sent.mode === "mail" ? `已记下，并留话给${item.where}的 AI，它空闲时按你的决定继续` : `已记下，并接回${item.where}的对话按你的决定继续`;
+    if (!liveRunIn(ws.worktreePath)) {
+      const request = await buildWorkspaceTerminalRequest(ws, undefined, { autoStart: true, resumeSession: true });
+      request.runId = deliveryRun.id;
+      request.taskId = deliveryRun.taskId || undefined;
+      request.agentId = deliveryRun.agent;
+      request.profileId = deliveryRun.profileId ?? undefined;
+      request.focusSession = undefined;
+      request.resume = deliveryRun.sessionId ? { agentId: deliveryRun.agent, sessionId: deliveryRun.sessionId } : undefined;
+      request.autoStart = Boolean(deliveryRun.profileId);
+      useAppStore.getState().setPendingTerminal(request);
+      useAppStore.getState().setPage("terminal");
+    }
+    return `已记下，回答已排队；${item.where}的 AI 空闲时送到，送到前仍保留在待处理里`;
   }
   const ws = await workspaceFor(item.worktreePath);
   if (!ws) throw new Error(`${item.where}的工作副本不在了，送不到`);

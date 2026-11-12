@@ -47,19 +47,6 @@ export function helpCategoryTag(category: string): string | null {
   return category && category !== "一般" ? category : null;
 }
 
-/** 交给 Agent 继续的那句话。问答原文直接写在话里：进了对话记录，Agent 中途出错把文件那一条先删了也不丢
- *  （2026-11-02 Codex 干跑实证：先删条目、追加「已定口径」的补丁没打上就收尾，回答两头都没了）。
- *  顺序写死：先记、确认记上了再删 */
-export function deliverHelpPrompt(answered: readonly HelpItemDto[], remembered: number): string {
-  const lines = answered.map((item, i) => `${i + 1}. ${item.question} → ${item.answer ?? ""}`).join("\n");
-  const memo =
-    remembered > 0
-      ? `其中 ${remembered} 条人要求以后同类照此办，已记进项目知识，后面遇到同类问题不要再问。`
-      : "";
-  return `我在 Mesa 里答了 .ccode/help-wanted.md 的 ${answered.length} 条问题：\n${lines}\n${memo}按回答继续：先把这些答案写进 TASK.md「已定口径」（没有这一节就新建）或本步报告，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样，按各自「不回时」处理。然后接着做这一步还没做完的事，不要停下来等我。`;
-}
-
-
 /** 每个来源还要人管几条（流程线那一步上的「回答问题（N）」）；没有的不列 */
 /**
  * 去掉人点过「忽略此来源」、内容也没变的那几份（签名同收件箱，屏蔽表在 inbox.ts loadHelpDismissed）。

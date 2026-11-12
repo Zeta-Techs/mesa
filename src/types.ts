@@ -2121,6 +2121,7 @@ export interface AgentCapabilitiesDto {
   readonly: CapabilityFlagDto;
   /** 无头/定时写盘：不支持则禁选；支持但有 reason 则当附注（grok 无沙箱） */
   headlessWrite: CapabilityFlagDto;
+  headlessFollowup?: CapabilityFlagDto;
   /** local_cli / headless；cloud 不预研 */
   runtimeKinds: string[];
   /** 支持分级（2026-11-02）：1 一等 / 2 维护级；tierNote 是悬停人话 */
@@ -2398,6 +2399,10 @@ export interface ScheduleDto {
   grant?: ScheduleGrant;
   /** 上一次运行被授权范围拦下的事；人答过（放宽重跑一次 / 不用）就没了 */
   grantRequest?: { at: string; runId?: string | null; blocked: string[] } | null;
+  followup?: { maxRounds: number; days: number; budgetUsd: number; probe?: string | null } | null;
+  followupState?: string | null;
+  followupAt?: string | null;
+  followupAbout?: string | null;
 }
 
 export type GrantNetwork = "mesa_only" | "academic" | "open";

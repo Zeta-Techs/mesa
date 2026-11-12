@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  deliverHelpPrompt,
   helpAnsweredUnsent,
   helpCategoryTag,
   helpConsultSeed,
@@ -54,19 +53,10 @@ test("忽略签名只看还要人管的条目与回答：答了或换题就复�
   assert.notEqual(base, helpItemsSignature([item({ id: "b" })]));
 });
 
-test("选项回答、类别标与交给 Agent 的话", () => {
+test("选项回答与类别标", () => {
   assert.equal(optionAnswer("B", "期刊 + 顶会"), "B（期刊 + 顶会）");
   assert.equal(helpCategoryTag("一般"), null);
   assert.equal(helpCategoryTag("范围"), "范围");
-  const two = [
-    item({ id: "a", question: "会议论文要不要纳入？", answer: "A（只要期刊）" }),
-    item({ id: "b", question: "SI 要不要下？", answer: "先不下" }),
-  ];
-  const plain = deliverHelpPrompt(two, 0);
-  assert.match(plain, /答了 \.ccode\/help-wanted\.md 的 2 条问题：\n1\. 会议论文要不要纳入？ → A（只要期刊）\n2\. SI 要不要下？ → 先不下/);
-  assert.match(plain, /先把这些答案写进 TASK\.md「已定口径」.*确认写进去了，再把答过的这几条从 help-wanted\.md 删掉/);
-  assert.doesNotMatch(plain, /项目知识/);
-  assert.match(deliverHelpPrompt(two, 1), /其中 1 条人要求以后同类照此办，已记进项目知识/);
 });
 
 test("流程线上的「回答问题（N）」按来源数还要人管的条目，全送出的来源不列", () => {
