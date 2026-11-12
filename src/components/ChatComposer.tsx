@@ -1445,7 +1445,7 @@ export default function ChatComposer({
             placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息"}
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌。
             // 平时封顶九行，「展开」后至少占四成窗口高（App.css .ccode-composer-text：滚动条滚时才出、上下沿渐隐）
-            className={`ccode-composer-text block w-full resize-none bg-transparent px-1.5 py-[5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${
+            className={`ccode-composer-text block w-full resize-none bg-transparent px-1.5 pb-[6.5px] pt-[3.5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${
               expanded ? "max-h-[min(60vh,40rem)] min-h-[min(40vh,24rem)]" : "max-h-[13.5rem]"
             } ${ghost ? "pr-20" : stacked && (fade.overflow || expanded) ? "pr-8" : ""}`}
           />
@@ -1473,7 +1473,7 @@ export default function ChatComposer({
               onMouseDown={(e) => e.preventDefault()}
               onClick={acceptSuggestion}
               title={`灰字是它猜你下一句想说的话，按 Tab 填进输入框，改完再发`}
-              className="absolute right-0 top-[5px] flex h-6 items-center gap-1 rounded-md px-1.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
+              className="absolute right-0 top-[3.5px] flex h-6 items-center gap-1 rounded-md px-1.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
             >
               {/* 字号写在里层（全站 button { font: inherit } 会吞掉按钮自己的 text-*） */}
               <kbd className="rounded border border-hairline px-1 font-sans text-micro leading-4">Tab</kbd>
