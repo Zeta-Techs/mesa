@@ -21,6 +21,7 @@ import { resolveStepReviewProfile, reviewPaneTabs, type ReviewPane } from "../st
 import {
   appendReviewAnnotation,
   appendReviewLine,
+  FRESH_RETURN_LEAD,
   scanWritingReview,
   writingHitChecks,
   writingReturnPrompt,
@@ -1309,6 +1310,9 @@ function LiveWorkspaceReviewView({
   // 跨厂商复核：这一步是谁写的、用过哪些模型（有 runId 才知道）；默认挑模型族不同的一家，人可在下拉里改
   const [producer, setProducer] = useState<{ agent: string; profileId: string | null; models: string[] } | null>(null);
   const [reviewerKey, setReviewerKey] = useState<string | null>(null);
+  /** 退回修改交给谁（2026-11-12 HER 初稿）：空 = 接回原来那段对话；选了连接 = 新开一段对话在现稿上改。
+   *  原对话太长（换模型接回要把几十万 token 重读一遍）、或原模型做不了（看不了图却要补拼图）时用 */
+  const [returnByKey, setReturnByKey] = useState("");
   const [crossBusy, setCrossBusy] = useState(false);
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
@@ -1852,11 +1856,15 @@ function LiveWorkspaceReviewView({
           /* 读不到按未绑定回落 */
         }
       }
+      const fresh = rewrite ? undefined : reviewerChoices.find((o) => reviewerOptionKey(o) === returnByKey);
+      const prompt = writingReturnPrompt({ notes: stored, hits: writingHits, rewrite });
       setPendingTerminal(
         await buildWorkspaceTerminalRequest(
           wsRow,
-          withLatestNote(writingReturnPrompt({ notes: stored, hits: writingHits, rewrite }), incoming),
-          { autoStart: true, resumeSession: !rewrite, stepLaunch: stepL ?? undefined },
+          withLatestNote(fresh ? `${FRESH_RETURN_LEAD}\n${prompt}` : prompt, incoming),
+          fresh
+            ? { autoStart: true, resumeSession: false, launch: { agentId: fresh.agentId, profileId: fresh.profileId, model: fresh.model } }
+            : { autoStart: true, resumeSession: !rewrite, stepLaunch: stepL ?? undefined },
         ),
       );
       setPage("terminal");
@@ -1880,6 +1888,7 @@ function LiveWorkspaceReviewView({
     (reviewerKey ? reviewerChoices.find((o) => reviewerOptionKey(o) === reviewerKey) : undefined) ??
     pickCrossReviewer(profiles ?? [], hiddenProfiles, producerInfo);
   const crossReviewerLabel = crossReviewer ? agentLabelOf(crossReviewer.agentId) : "";
+  const returnBy = returnByKey ? reviewerChoices.find((o) => reviewerOptionKey(o) === returnByKey) ?? null : null;
 
   /** 请另一家复核：同一工作副本里另开一个标签，用另一家 Agent 只读复核，结果写进核验清单 */
   async function startCrossReview() {
@@ -4060,12 +4069,36 @@ function LiveWorkspaceReviewView({
                 placeholder={"例如：\n- 5.3 覆盖检查里 @Lu2017 写了两次，换成漏掉的 @Masa2017\n- 拼图 9 换一块不重复的子图"}
                 className="min-h-0 w-full flex-1 resize-none rounded-sm border border-field bg-canvas px-2 py-1.5 text-xs leading-relaxed text-l2 outline-none placeholder:text-l4 focus:border-l4"
               />
+              <p className="flex min-w-0 shrink-0 items-center gap-1.5 text-micro text-l3">
+                <span className="shrink-0">谁来改</span>
+                <AgentModelPicker
+                  options={reviewerChoices.map((o) => ({ ...o, key: reviewerOptionKey(o) }))}
+                  selectedKey={returnByKey || null}
+                  onPick={(o) => setReturnByKey(o.key)}
+                  title="谁来改"
+                  hint="选一家就新开一段对话，读任务书、意见和现稿，在现稿上改。原对话太长，或原模型做不了这件事（比如看不了图）时用。"
+                  ariaLabel="选谁来改"
+                  triggerTitle="默认接回原来那段对话；换一家就新开一段对话改"
+                  triggerClassName="min-w-0 truncate rounded-sm px-1 text-micro text-l2 hover:bg-hover hover:text-l1"
+                >
+                  {returnBy ? `${agentLabelOf(returnBy.agentId)} · ${returnBy.profileName} · ${returnBy.model || "默认模型"}（新开对话）` : "原来那段对话"}
+                </AgentModelPicker>
+                {returnBy && (
+                  <button
+                    type="button"
+                    onClick={() => setReturnByKey("")}
+                    className="shrink-0 text-l4 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  >
+                    改回原对话
+                  </button>
+                )}
+              </p>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <button
                   type="button"
                   disabled={returnBusy || !wsRow}
                   onClick={() => void returnToAgent(false)}
-                  title="接回原来那段对话，让 AI 按意见改现在这一版；不会保存进项目"
+                  title={returnBy ? "新开一段对话，按意见改现在这一版；不会保存进项目" : "接回原来那段对话，让 AI 按意见改现在这一版；不会保存进项目"}
                   className="rounded-sm border border-field px-2.5 py-1 text-xs text-l1 hover:bg-hover disabled:opacity-50"
                 >
                   {returnBusy ? "交接中…" : "退回修改"}

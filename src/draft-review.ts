@@ -129,6 +129,10 @@ export function appendReviewAnnotation(
   return appendReviewLine(notes, `- 「${quote}」（${input.fileName}）：${comment}`);
 }
 
+/** 评审「退回修改」选了另一家：新开的一段对话不知道这一步做过什么，先交代它从哪读起 */
+export const FRESH_RETURN_LEAD =
+  "你是新开的一段对话，接手这一步的返修（原来那段对话没有接回）。先读 TASK.md、`.ccode/review-notes.md` 和现有产物（稿件、figures/README.md、本步报告），在现稿上按意见改，不要从零重写。";
+
 export function writingReturnPrompt(input: {
   notes: string;
   hits: readonly WritingReviewHit[];
