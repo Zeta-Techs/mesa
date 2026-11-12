@@ -1,6 +1,7 @@
 import CoachTip from "./CoachTip";
 import { consultNudgeSeen, discussNudgeSeen, markConsultNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
-import { discussOpeningPrompt } from "../discuss-prompt";
+import { discussOpeningPrompt, discussReuseKey } from "../discuss-prompt";
+import { toast } from "../toast";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -1708,7 +1709,7 @@ export default function StepFlow({
             autoStart: Boolean(projectLaunch?.profileId),
           }),
       // 同一步骤的任务书讨论是同一个对话：再点切回已有标签；没有标签才按上面 resume / 新开会话
-      reuseKey: `discuss:${projectPath}:${draft.relPath}`,
+      reuseKey: discussReuseKey(projectPath, draft.relPath),
       ...(carry ? { composerInsert: carry, surface: "chat" as const } : {}),
     });
     setPage("terminal");
@@ -1725,6 +1726,19 @@ export default function StepFlow({
     // chatDraft 每次渲染重建，只按请求令牌与草稿就位翻转
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [carryReq?.token, Boolean(draft), chatBusy, step.name, projectPath]);
+
+  // 商量对话里点「开始」（2026-11-12）：项目页聚焦到这一步后在这里接住，走和右缘「开始」同一条路（开工确认弹层）。
+  // 只有这一行此刻真给「开始」时才开；已经开工 / 要恢复工作区的只聚焦，按钮就在眼前
+  const startReq = useAppStore((s) => s.stepStartReq);
+  useEffect(() => {
+    if (!startReq) return;
+    if (startReq.stepName !== step.name || !samePath(startReq.projectRoot, projectPath, IS_WINDOWS)) return;
+    useAppStore.getState().setStepStartReq(null);
+    if (runStatus === "pending" && !onRestore) onStart();
+    else toast(`「${step.name}」已经开过工了，接着看这一步的按钮`, "info");
+    // onStart 每次渲染重建，只按请求令牌翻转
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startReq?.token, step.name, projectPath]);
 
   /** TASK.md 就地预览/编辑（本页弹层，v3.90 起与「预览 TASK.md」入口合一——不再有「草稿」概念）：
    *  内容经 onLoadTaskMd 加载：已有编辑内容读文件，否则给模板拼装（只读展示不落盘，纯看不留痕，

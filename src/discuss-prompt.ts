@@ -68,7 +68,7 @@ export function discussOpeningPrompt(input: {
     `2. 一次只问一个问题，等我回答再问下一个。先问开放的问题（想回答什么、为什么），再顺着我的回答追问：请我举例、划边界、说反例，或指出我前后不一致的地方。\n` +
     `3. 我答不上来时，给 2–3 个具体选项，说清各自会带来什么结果、你推荐哪个、为什么。\n` +
     `4. 我答清楚了就直接写进这份任务书的「## 已定方向」小节（一行一条：问题：结论），正文里相应的说法也一起改；在同一条回复里用一句话说记下了什么，紧接着问下一个，不要停下来等我确认，我觉得不对会直接说。只有我的回答含糊、或你在我的话之外补了自己的解读时，才先问一句再写。\n` +
-    `5. 一般问 5–8 个问题就收住，我说「够了」也停。最后列出已定的几条，没定下来的记到「## 待拍板」小节，并告诉我可以回 Mesa 点「开始」。\n` +
+    `5. 一般问 5–8 个问题就收住，我说「够了」也停。最后列出已定的几条，没定下来的记到「## 待拍板」小节，并告诉我可以回 Mesa 点「开始」（照原样写「开始」带书名号，Mesa 会把它变成能点的入口）。\n` +
     `这一步可以从这些方向问起（按我的回答取舍，不必全问）：${focus.join("；")}。\n` +
     (open.length
       ? `项目规则里还有没定的全局设定，也在提问中问到：我确定一项，就把 .ccode/project.toml 的 settings 里对应那一行从「名称：（提示）」改成「名称：我的答案」，不要改这个文件的其他内容。还没定的是：${open.join("；")}。\n`
@@ -77,4 +77,23 @@ export function discussOpeningPrompt(input: {
     // 2026-10-24 HER 润色：商量时把「导入 EndNote 库、写库路径」写成了域稿的硬前置，AI 做好的 docx 又撤下
     `不要把模板里的可选事项改成开工前必须办的前置，也不要因为某个可选设置没办就让某份产物不交，除非我明确这么说。`
   );
+}
+
+// ===== 商量对话的标签复用键（2026-11-12：回复里的「开始」可点，见 discuss-step-start.ts） =====
+
+const DISCUSS_KEY_PREFIX = "discuss:";
+/** 任务书草稿恒在这个目录下（projects.rs draft_rel_path 单一出处）；Windows 项目根自带「C:」，按它切 */
+const DRAFT_DIR = ".ccode/drafts/";
+
+/** 同一步骤的任务书商量是同一个对话：StepFlow 开聊时用它当复用键，随标签持久化 */
+export function discussReuseKey(projectRoot: string, relPath: string): string {
+  return `${DISCUSS_KEY_PREFIX}${projectRoot}:${relPath}`;
+}
+
+export function parseDiscussReuseKey(key: string | null | undefined): { projectRoot: string; relPath: string } | null {
+  if (!key?.startsWith(DISCUSS_KEY_PREFIX)) return null;
+  const rest = key.slice(DISCUSS_KEY_PREFIX.length);
+  const cut = rest.lastIndexOf(`:${DRAFT_DIR}`);
+  if (cut <= 0) return null;
+  return { projectRoot: rest.slice(0, cut), relPath: rest.slice(cut + 1) };
 }

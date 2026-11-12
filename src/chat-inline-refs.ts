@@ -17,7 +17,7 @@ import {
 } from "./chat-cite.ts";
 
 /** 这些地方的字不加工：代码块、链接、公式、已经加工过的、折叠钮 */
-const SKIP = "pre, a, button, .md-math, .md-cite, .md-file-link";
+const SKIP = "pre, a, button, .md-math, .md-cite, .md-file-link, .md-step-start";
 
 function plainTextNodes(host: HTMLElement, alsoSkip = ""): Text[] {
   const out: Text[] = [];
@@ -134,6 +134,40 @@ export async function linkFileRefs(host: HTMLElement, cwd: string): Promise<void
       })),
     );
   }
+}
+
+// ---------- 商量任务书里的「开始」 ----------
+
+const STEP_START_WORD = "「开始」";
+
+/**
+ * 「跟 AI 商量一下」的对话里，AI 收尾会说「回 Mesa 点「开始」」（discuss-prompt.ts 第 5 条）：
+ * 把正文里的「开始」（连书名号）换成可点的字，点了去那一步开工（ChatMarkdown 认 .md-step-start）。
+ * 只在商量对话里调；代码、链接里的不动；幂等（已换过的在 SKIP 里）。返回这次换了几处
+ */
+export function linkStepStart(host: HTMLElement): number {
+  let made = 0;
+  for (const node of plainTextNodes(host, "code")) {
+    const text = node.nodeValue ?? "";
+    const ranges: Array<{ index: number; length: number; make: (t: string) => HTMLElement }> = [];
+    for (let at = text.indexOf(STEP_START_WORD); at >= 0; at = text.indexOf(STEP_START_WORD, at + STEP_START_WORD.length)) {
+      ranges.push({
+        index: at,
+        length: STEP_START_WORD.length,
+        make: (t) => {
+          const span = node.ownerDocument.createElement("span");
+          span.className = "md-step-start";
+          span.title = "去这一步，打开开工确认";
+          span.textContent = t;
+          return span;
+        },
+      });
+    }
+    if (!ranges.length) continue;
+    made += ranges.length;
+    wrapRanges(node, ranges);
+  }
+  return made;
 }
 
 // ---------- 文献引用 ----------

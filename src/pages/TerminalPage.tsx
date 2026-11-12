@@ -303,6 +303,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     void forkChatRef.current(tabId);
   }, []);
   const [statuses, setStatuses] = useState<Record<string, TabStatus>>({});
+  /** 没有商量复用键的标签（重启恢复、从侧栏点开的旧对话）：会话记录认出是商量任务书时给出那条记录，
+   *  聊天层回复里的「开始」照样可点（discuss-step-start.ts） */
+  const discussMetaOf = (t: Tab) => {
+    if (t.reuseKey?.startsWith("discuss:")) return undefined;
+    const st = statuses[t.id];
+    if (!st?.sessionId) return undefined;
+    const m = headSessions.find((x) => x.agent === st.agentId && x.sessionId === st.sessionId);
+    return m?.stepRole === "discuss" && m.stepName ? m : undefined;
+  };
   // 关闭守卫（关标签/关窗）在异步链路里取最新状态，避免闭包过期
   const statusesRef = useRef(statuses);
   statusesRef.current = statuses;
@@ -3760,6 +3769,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         syncState={sessionByTab[t.id]?.sync ?? "waiting"}
                         loading={sessionByTab[t.id]?.pendingReply ?? false}
                         cwd={statuses[t.id]?.cwd ?? t.initialCwd ?? null}
+                        discussKey={t.reuseKey?.startsWith("discuss:") ? t.reuseKey : null}
+                        discussStepName={t.stepName ?? discussMetaOf(t)?.stepName ?? null}
+                        discussProjectRoot={t.reuseKey?.startsWith("discuss:") ? null : (discussMetaOf(t)?.projectPath ?? null)}
                         running={statuses[t.id]?.running ?? false}
                         canResume={statuses[t.id]?.canResume ?? false}
                         attention={statuses[t.id]?.attention ?? null}

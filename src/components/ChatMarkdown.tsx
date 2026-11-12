@@ -12,7 +12,7 @@ import { hydrateMdImages } from "../md-image-hydrate";
 import { decorateMdCodeBlocks, decorateMdTables, handleMdCodeCopyClick } from "../md-code-chrome";
 import { chatMathExtensions, renderMathInto } from "../md-math";
 import { highlightCodeBlocks } from "../code-highlight";
-import { citeTipFor, decorateCitations, linkFileRefs } from "../chat-inline-refs";
+import { citeTipFor, decorateCitations, linkFileRefs, linkStepStart } from "../chat-inline-refs";
 import { HoverTip } from "./HoverTip";
 import { Collapse } from "./PageFrame";
 import ChatImageViewer from "./ChatImageViewer";
@@ -26,6 +26,8 @@ import { useFileVersion } from "../file-watch";
  * 没有提供的地方（会话浏览等只读视图）点图照旧预览 / 看大图
  */
 export const ChatImageEditContext = createContext<((absPath: string) => void) | null>(null);
+/** 商量任务书的对话里点「开始」= 去那一步开工确认（ChatSurface 只在商量对话里提供，见 discuss-step-start.ts） */
+export const ChatStepStartContext = createContext<(() => void) | null>(null);
 
 /**
  * 聊天消息 Markdown 渲染（AI 回复正文；用户气泡保持纯文本）。
@@ -64,16 +66,17 @@ chatMarked.use({
  * HTML 上屏后的就地加工（按 html 跑一次；StrictMode 双跑各函数自己幂等）：表格壳、代码高亮、公式、
  * 引用胶囊、文件链接。图片与代码头栏在每次 layout 都扫（见 MarkdownBody）
  */
-function useChatDecorations(ref: RefObject<HTMLElement | null>, html: string, cwd?: string | null) {
+function useChatDecorations(ref: RefObject<HTMLElement | null>, html: string, cwd?: string | null, stepStart = false) {
   useLayoutEffect(() => {
     const host = ref.current;
     if (!host) return;
+    if (stepStart) linkStepStart(host);
     decorateMdTables(host);
     void highlightCodeBlocks(host);
     void renderMathInto(host);
     void decorateCitations(host, cwd ?? null).then(() => (cwd ? linkFileRefs(host, cwd) : undefined));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, cwd]);
+  }, [html, cwd, stepStart]);
 }
 
 export default function ChatMarkdown({
@@ -401,6 +404,7 @@ function MarkdownBody({
   const inner = useMemo(() => ({ __html: html }), [html]);
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const editImage = useContext(ChatImageEditContext);
+  const stepStart = useContext(ChatStepStartContext);
   // resolveMdPath 按「文件所在目录」解析相对路径：传 cwd 下的伪文件名，目录即 cwd
   const baseFile = cwd ? `${cwd}/_` : null;
 
@@ -416,7 +420,7 @@ function MarkdownBody({
     // 代码块头栏（语言名 + 复制），与笔记预览同一套（2026-10-19 用户：聊天里的代码块没有复制按钮）
     decorateMdCodeBlocks(host);
   });
-  useChatDecorations(bodyRef, html, cwd);
+  useChatDecorations(bodyRef, html, cwd, Boolean(stepStart));
 
   // 引用胶囊的悬停卡片（应用内浮层，不用 WKWebView 的原生 title）
   const [citeTip, setCiteTip] = useState<{ x: number; y: number; text: string; warn: string | null } | null>(null);
@@ -454,6 +458,10 @@ function MarkdownBody({
       range.selectNode(math);
       selection.removeAllRanges();
       selection.addRange(range);
+      return;
+    }
+    if (stepStart && target.closest(".md-step-start")) {
+      stepStart();
       return;
     }
     const fileLink = target.closest<HTMLElement>(".md-file-link");

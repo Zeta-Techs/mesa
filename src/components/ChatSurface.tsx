@@ -6,7 +6,8 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
 import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
-import { ChatImageEditContext } from "./ChatMarkdown";
+import { ChatImageEditContext, ChatStepStartContext } from "./ChatMarkdown";
+import { goStartDiscussedStep } from "../discuss-step-start";
 import { relayChipText, type RelayTarget } from "../chat-relay";
 import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } from "./ChatComposer";
 import { coldCacheAt, coldCacheHint, idleLabel, lastMessageAt } from "../prompt-cache";
@@ -104,6 +105,9 @@ export default function ChatSurface({
   agentId,
   confirmDetail,
   cwd,
+  discussKey,
+  discussStepName,
+  discussProjectRoot,
   running,
   canResume,
   attention,
@@ -191,6 +195,12 @@ export default function ChatSurface({
   agentId?: string | null;
   confirmDetail?: string | null;
   cwd?: string | null;
+  /** 商量任务书的对话（标签复用键 discuss:…）：回复里的「开始」可点，去那一步开工确认（discuss-step-start.ts） */
+  discussKey?: string | null;
+  /** 标签记着的步骤名，或会话记录里的步骤名（没有复用键的旧商量对话靠它和 discussProjectRoot 认） */
+  discussStepName?: string | null;
+  /** 没有复用键、但会话记录认出是商量任务书的对话：项目根 */
+  discussProjectRoot?: string | null;
   running: boolean;
   canResume: boolean;
   attention: "done" | "working" | "confirm" | null;
@@ -376,6 +386,13 @@ export default function ChatSurface({
     if (searchRequest) { followRef.current = false; setSearchOpen(true); }
   }, [searchRequest]);
   const editImage = useCallback((absPath: string) => setSeedInsert({ text: "", paths: [], edit: absPath }), []);
+  const stepStart = useMemo(
+    () =>
+      discussKey || (discussProjectRoot && discussStepName)
+        ? () => void goStartDiscussedStep({ reuseKey: discussKey, projectRoot: discussProjectRoot, stepName: discussStepName })
+        : null,
+    [discussKey, discussProjectRoot, discussStepName],
+  );
   const [homeDir, setHomeDir] = useState("");
   const loadingOlderRef = useRef(false);
   const prevFirstKeyRef = useRef<string | null>(null);
@@ -1619,6 +1636,7 @@ export default function ChatSurface({
           ) : (
             // 点对话里的图 = 接着改：放进输入框、展开看图标注台（ChatMarkdown ChatImageEditContext）
             <ChatImageEditContext.Provider value={editImage}>
+            <ChatStepStartContext.Provider value={stepStart}>
             <ConversationView
               messages={shownMessages}
               stickToBottom={stickToBottom}
@@ -1646,6 +1664,7 @@ export default function ChatSurface({
                     : null,
               }}
             />
+            </ChatStepStartContext.Provider>
             </ChatImageEditContext.Provider>
           )}
           {livePreview.length > 0 && (
