@@ -25,10 +25,14 @@ export const MAX_IMAGES = 4;
 export function stepConsultQuestion(
   stepNo: number,
   stepName: string,
-  taskMd: "file" | "preview" | null,
+  taskMd: "file" | "preview" | "round" | null,
   pending: readonly string[] = [],
 ): string {
   const head = `第 ${stepNo} 步「${stepName}」`;
+  // 开工后（2026-11-12）：AI 已经在这一轮里做了东西，问的是做出来的哪里站不住、退回时改什么；开工前的决策项不再点名
+  if (taskMd === "round") {
+    return `${head}：照 TASK.md，这一轮已经做出来的东西里，哪些方向或判断站不住、说过头了？退回修改时最该让 AI 改哪几处？`;
+  }
   const basis =
     taskMd === "preview"
       ? "照这一步现在拟的任务书（预览，还没开工，见材料）"
@@ -50,6 +54,17 @@ const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", 
  * 研讨结论「带回商量」放进商量输入框的一段（2026-11-11）：哪场研讨、谁的结论、依据，自带一句「我认同，请据此改任务书」——
  * 连点几条时每段各自成立；人在输入框里可以改成「部分同意，改成……」再发。依据只带核对得上的（missing 的不带）
  */
+/**
+ * 开工后研讨结论「加进退回意见」（2026-11-12）的一行：开工后商量改的是项目根草稿，干活的那一轮 AI 读不到，
+ * 所以结论进评审页意见栏，随「退回修改」交给那一轮。一行写完（意见栏按行去重），请 AI 自己判断、不同意要说理由
+ */
+export function reviewCarryText(record: ConsultRecord, msg: ConsultMessage): string {
+  const who = memberOf(record, msg.member)?.name ?? "其中一位";
+  const refs = msg.refs.filter((r) => r.state !== "missing").map((r) => r.raw.trim()).filter(Boolean);
+  const basis = refs.length > 0 ? `（依据：${refs.join("；")}）` : "";
+  return `研讨「${record.meta.title}」里 ${who} 的结论：${(msg.conclusion ?? "").trim().replace(/\s*\n\s*/g, " ").replace(/[。.；;，,\s]+$/, "")}${basis}。请据此修改；不认同的在回复里说明理由`;
+}
+
 export function discussCarryText(record: ConsultRecord, msg: ConsultMessage): string {
   const who = memberOf(record, msg.member)?.name ?? "其中一位";
   const refs = msg.refs.filter((r) => r.state !== "missing").map((r) => r.raw.trim()).filter(Boolean);

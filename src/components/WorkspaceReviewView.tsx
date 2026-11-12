@@ -114,6 +114,9 @@ import type {
 import { usePolling } from "../polling";
 import { CHECK_BATCH_LEAD, checkBatchNote, checkChipText, checkConsultSeed, checkNoted, checkReviewNote, countChecks, type CheckItem, type ChecksDto } from "../research-checks";
 import ReviewAskAiMenu, { type ReviewAskAiItem } from "./ReviewAskAiMenu";
+import { readStoredNotes, REVIEW_NOTES_EVENT, storeNotes } from "../review-notes";
+import { IS_WINDOWS } from "../hotkeys";
+import { samePath } from "../path-utils";
 import CoachTip from "./CoachTip";
 import CheckList from "./CheckList";
 import OutlineCoverageCompare from "./OutlineCoverageCompare";
@@ -546,26 +549,8 @@ function ChangeTree({
   );
 }
 
-const NOTES_KEY = (worktreePath: string) => `mesa.reviewNotes:${worktreePath}`;
 /** 第一次进评审的说明气泡看过没有（每台电脑一次；点「基础检查 ⓘ」可再看） */
 const REVIEW_COACH_KEY = "mesa.reviewCoach.v1";
-
-function readStoredNotes(worktreePath: string): string {
-  try {
-    return localStorage.getItem(NOTES_KEY(worktreePath)) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function storeNotes(worktreePath: string, notes: string) {
-  try {
-    if (notes.trim()) localStorage.setItem(NOTES_KEY(worktreePath), notes);
-    else localStorage.removeItem(NOTES_KEY(worktreePath));
-  } catch {
-    /* 存不了只是关掉后不留，不影响退回 */
-  }
-}
 
 /** 跳到预览里以这个节号开头的标题（大纲的小节常写成加粗段落，不在目录里，所以连 strong 一起找） */
 function jumpToSection(host: HTMLElement | null, label: string): boolean {
@@ -1300,6 +1285,17 @@ function LiveWorkspaceReviewView({
   useEffect(() => {
     if (notesLoadedRef.current) storeNotes(notesPathRef.current, reviewNotes);
   }, [reviewNotes]);
+  // 研讨页「加进退回意见」追加到同一份存储：是这个工作副本就读回并展开意见栏
+  useEffect(() => {
+    const onAppend = (e: Event) => {
+      const path = (e as CustomEvent<string>).detail;
+      if (!path || !samePath(path, notesPathRef.current, IS_WINDOWS)) return;
+      setReviewNotes(readStoredNotes(notesPathRef.current));
+      setNotesOpen(true);
+    };
+    window.addEventListener(REVIEW_NOTES_EVENT, onAppend);
+    return () => window.removeEventListener(REVIEW_NOTES_EVENT, onAppend);
+  }, []);
   // 第一次进评审的说明气泡：0 状态标签 → 1 请 AI 看看 → 2 意见与保存；null = 不显示
   const [coachStep, setCoachStep] = useState<number | null>(null);
   // 上游漂移提醒：上游步骤晚于本步最后推进时间合并 → 产物可能过期（list_workspaces 顺带取回）
@@ -2797,6 +2793,8 @@ function LiveWorkspaceReviewView({
                 materials: existing.slice(0, CONSULT_MAX_MATERIALS).map((path) => ({ path, range: "" })),
                 readRoot,
                 readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
+                // 记下是哪一步：研讨结论可「加进退回意见」回到这里
+                step: ctx.step.name,
               });
             });
         },
@@ -2843,6 +2841,7 @@ function LiveWorkspaceReviewView({
                         materials: seed.materials.filter((m) => existing.includes(m.path)),
                         readRoot,
                         readLabel: `第 ${ctx.stepNo} 步 · ${ctx.step.name}的工作副本`,
+                        step: ctx.step.name,
                       });
                     });
                 }

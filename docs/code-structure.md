@@ -559,6 +559,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 阅读会话复用键 readerReuseKey（按篇：`reader:<项目根>\n<PDF>`，与 runs.rs reader_pdf_of_key 双端镜像）
                              # 与这篇以前的精读对话 readerSessionFor（再点精读接回它，2026-11-06）（tests/reader.test.ts）
   draft-review.ts            # 写作步评审机械红线（摘要待核实/G编号/待绘制/叠号）、划选批注追加与退回提示词
+  review-notes.ts            # 评审退回意见的本机存放（按工作副本）；研讨页「加进退回意见」追加后发事件让开着的评审页读回
   manuscript-files.ts        # 正文 vs 写作配套文件（2026-11-11）：MANUSCRIPT_HELPER_NAMES（与 mesa_checks.py / cite_check.py 同一份，fixture manuscript-helpers.json 比对）、isManuscriptHelper / isManuscriptBody、manuscriptSourcePath（按主稿名挑，不按顺序；没有正文退回 outline.md）
   md-path.ts                 # 阅读版式覆盖的 md 族（md/markdown/mdx/qmd）与 html 判定
   md-toc.ts                  # md 浮动目录：≥3 标题才出、slug/展开 details

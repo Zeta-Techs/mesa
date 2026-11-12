@@ -9,6 +9,7 @@ import {
   contrastRows,
   discussCarryText,
   estimateCost,
+  reviewCarryText,
   memberNames,
   memberOptions,
   mentionedNames,
@@ -250,6 +251,31 @@ test("步骤卡研讨问题：没有任务书文件时说预览，不提 TASK.md
   assert.ok(!pv.includes("TASK.md"), pv);
   assert.match(pv, /现在拟的任务书（预览/);
   assert.ok(!stepConsultQuestion(4, "综述初稿", null).includes("TASK.md"));
+});
+
+test("步骤卡研讨问题：开着工作副本时问这一轮做出来的东西，不再点名开工前的决策项", () => {
+  const q = stepConsultQuestion(4, "综述初稿", "round", ["章节顺序按机理还是按材料体系"]);
+  assert.match(q, /^第 4 步「综述初稿」：照 TASK\.md，这一轮已经做出来的东西里/);
+  assert.match(q, /退回修改时最该让 AI 改哪几处？$/);
+  assert.ok(!q.includes("章节顺序"), q);
+});
+
+test("加进退回意见：一行写完、依据只带核对得上的、请 AI 自己判断", () => {
+  const rec = record([]);
+  const line = reviewCarryText(
+    rec,
+    m({
+      member: "m2",
+      conclusion: "第二节证据太薄，\n先补两篇再写。",
+      refs: [
+        { raw: "notes/a.md §2", path: "notes/a.md", loc: "§2", state: "ok" },
+        { raw: "notes/gone.md", path: "notes/gone.md", loc: "", state: "missing" },
+      ],
+    }),
+  );
+  assert.equal(line, "研讨「t」里 GPT 的结论：第二节证据太薄， 先补两篇再写（依据：notes/a.md §2）。请据此修改；不认同的在回复里说明理由");
+  assert.ok(!line.includes("\n"));
+  assert.equal(reviewCarryText(rec, m({ member: "m1", conclusion: "x" })).includes("依据"), false);
 });
 
 test("步骤卡研讨问题：还有没答的决策项时点名列出、问各自怎么定；全答完退回泛问", () => {

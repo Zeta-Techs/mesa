@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, BookmarkPlus, Copy, CornerDownLeft, Library, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Copy, CornerDownLeft, Library, ListPlus, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
 import VendorIcon from "./VendorIcon";
 import RememberCard from "./RememberCard";
@@ -13,6 +13,7 @@ import {
   contrastRows,
   discussCarryText,
   memberOf,
+  reviewCarryText,
   mentionedNames,
   REF_NOTE,
   round1Messages,
@@ -27,7 +28,9 @@ import {
   type ConsultMessage,
   type ConsultRef,
 } from "../consult";
-import { AGENTS, type ProjectConfigReadDto } from "../types";
+import { AGENTS, type ProjectConfigReadDto, type WorkspaceDto } from "../types";
+import { pickStepWorkspace } from "../step-round";
+import { appendStoredNote } from "../review-notes";
 import { CATEGORY_EXAMPLES } from "../research-profile";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
@@ -222,6 +225,27 @@ export default function ConsultView({
   const stream = useMemo(() => (record ? streamMessages(record) : []), [record]);
   const rows = useMemo(() => (record ? contrastRows(record) : []), [record]);
   const liveLater = running.filter((r) => r.phase !== "r1");
+  // 发起的那一步现在开着工作副本（跑着 / 待评审 / 退回修改）吗：开着时结论「加进退回意见」交给那一轮，
+  // 没开工或已保存时「带回商量」改任务书草稿（2026-11-12：开工后商量改的是项目根草稿，那一轮 AI 读不到）
+  const metaStep = record?.meta.step ?? null;
+  const [stepRound, setStepRound] = useState<{ step: string; worktreePath: string | null } | null>(null);
+  useEffect(() => {
+    if (!metaStep) return;
+    let stale = false;
+    void Promise.all([
+      invoke<ProjectConfigReadDto>("read_project_config", { path: projectRoot }).catch(() => null),
+      invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[]),
+    ]).then(([cfg, list]) => {
+      if (stale) return;
+      const step = cfg?.config.steps.find((s) => s.name === metaStep);
+      const ws = step ? pickStepWorkspace(list, projectRoot, step) : undefined;
+      setStepRound({ step: metaStep, worktreePath: ws?.status === "active" ? ws.worktreePath : null });
+    });
+    return () => {
+      stale = true;
+    };
+  }, [metaStep, projectRoot, record?.messages.length]);
+  const roundPath = stepRound && stepRound.step === metaStep ? stepRound.worktreePath : null;
   const crossRounds = Math.max(0, ...stream.filter((m) => m.phase === "cross").map((m) => m.round));
 
   // 有新内容时贴底
@@ -312,6 +336,26 @@ export default function ConsultView({
     s.setPage("workspaces");
   }
 
+  /** 「加进退回意见」（这一步开着工作副本时）：结论写成一行追加进评审页意见栏，点「退回修改…」时随意见交给那一轮 AI；
+   *  不写任何文件，不替人退回 */
+  function addToReturnNotes(m: ConsultMessage) {
+    if (!roundPath) return;
+    appendStoredNote(roundPath, reviewCarryText(record!, m));
+    const worktreePath = roundPath;
+    toast(`已加进「${record!.meta.step}」的退回意见，评审时点「退回修改…」一起交给 AI`, "success", {
+      actions: [
+        {
+          label: "去评审",
+          onClick: () => {
+            const s = useAppStore.getState();
+            s.setWorkspaceReviewRequest({ worktreePath, runId: null, requestId: crypto.randomUUID() });
+            s.setPage("terminal");
+          },
+        },
+      ],
+    });
+  }
+
   function mention(name: string) {
     setDraft((d) => {
       const tag = `@${name} `;
@@ -343,7 +387,18 @@ export default function ConsultView({
 
   const actions = (m: ConsultMessage) => (
     <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
-      {m.conclusion && record.meta.step && (
+      {m.conclusion && record.meta.step && roundPath && (
+        <button
+          type="button"
+          onClick={() => addToReturnNotes(m)}
+          className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+          title={`「${record.meta.step}」已经开工：这条结论加进评审的退回意见，退回修改时交给干活的那一轮 AI；不替你退回`}
+        >
+          <ListPlus size={12} strokeWidth={1.8} aria-hidden="true" />
+          <span className="text-micro">加进退回意见</span>
+        </button>
+      )}
+      {m.conclusion && record.meta.step && stepRound?.step === record.meta.step && !roundPath && (
         <button
           type="button"
           onClick={() => void carryToDiscuss(m)}
