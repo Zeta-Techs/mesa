@@ -15,7 +15,8 @@ const bundle = await build({
       export {default as Conversation} from './src/components/ConversationView';
       export {default as Composer} from './src/components/ChatComposer';
       export {default as ChatSearch} from './src/components/ChatSearch';
-      export {default as Picker} from './src/components/ChatProjectPicker';`,
+      export {default as Picker} from './src/components/ChatProjectPicker';
+      export {useAppStore} from './src/store';`,
     resolveDir: process.cwd(),
     loader: "tsx",
   },
@@ -147,7 +148,7 @@ async function mount() {
     compiled,
     compiled.exports,
   );
-  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch } = compiled.exports;
+  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch, useAppStore } = compiled.exports;
   const el = dom.window.document.getElementById("root")!;
   const root = createRoot(el);
   const render = (node: unknown) => act(async () => root.render(node));
@@ -160,7 +161,7 @@ async function mount() {
   };
   const click = (text: string) => act(async () => button(text).click());
   return {
-    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch,
+    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch, useAppStore,
     close: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -521,6 +522,57 @@ test("模型菜单运行中：会写回 CLI 全局配置的切换改走重开接
     assert.match(ui.el.textContent ?? "", /正在生成，等这一轮结束再换/);
     await openModels(ui);
     assert.equal(ui.button("glm-5.2").disabled, true);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("模型菜单运行中：Agent · 配置那一行能点，列同家其他连接，确认后停下按原会话接回；生成中置灰", async () => {
+  const ui = await mount();
+  try {
+    await ui.act(async () =>
+      ui.useAppStore.setState({
+        profiles: [
+          { id: "p1", agent: "claude-code", name: "GLM", models: ["glm-5.3"] },
+          { id: "p2", agent: "claude-code", name: "Kimi", models: ["kimi-k3"] },
+          { id: "p3", agent: "codex", name: "OpenAI", models: ["gpt-6"] },
+          { id: "p4", agent: "claude-code", name: "藏起来的", models: ["x"] },
+        ],
+        settings: { ...(ui.useAppStore.getState().settings ?? {}), hiddenProfiles: ["p4"] },
+      }),
+    );
+    const switched: string[] = [];
+    const props = {
+      kind: "runtime",
+      status: status({ sessionId: "s1" }),
+      profileModels: ["glm-5.3"],
+      modelSwitch: { kind: "direct", command: "/model {model}" },
+      effort: { levels: ["low", "high"], command: "/effort {level}" },
+      submitCsiU: false,
+      onTuiCommand: () => {},
+      onSwitchConnection: (id: string) => switched.push(id),
+    };
+    await ui.render(ui.h(ui.Menu, props));
+    await ui.click("glm-5.3 · high");
+    await openModels(ui);
+    await ui.click("换配置");
+    const text = ui.el.textContent ?? "";
+    assert.match(text, /Kimi/);
+    assert.doesNotMatch(text, /OpenAI|藏起来的/, "只列同家、没隐藏的连接");
+    ui.host.confirmAnswer = true;
+    await ui.click("Kimi");
+    assert.match(String((ui.host.confirms.at(-1) as unknown[])[0]), /这条连接里没有 glm-5\.3，会改用 kimi-k3/);
+    assert.deepEqual(switched, ["p2"]);
+    // 生成中：换连接会打断这一轮
+    await ui.render(ui.h(ui.Menu, { ...props, busy: true }));
+    await ui.click("glm-5.3 · high");
+    await openModels(ui);
+    await ui.click("换配置");
+    assert.equal(ui.button("Kimi").disabled, true);
+    assert.match(ui.el.textContent ?? "", /正在回复，等这一轮结束再换/);
+    // 没传换连接（没有会话可接回）：那一行只显示
+    await ui.render(ui.h(ui.Menu, { ...props, onSwitchConnection: null }));
+    assert.ok(!Array.from(ui.el.querySelectorAll("button")).some((b) => b.textContent?.includes("换配置")));
   } finally {
     await ui.close();
   }

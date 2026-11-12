@@ -19,6 +19,7 @@ import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
 import { ChatBetaNotes, useChatBeta } from "./ChatBetaBadge";
 import RelayPicker, { AgentMark, type RelayMenuProps } from "./RelayPicker";
+import { confirmDialog } from "./ConfirmDialog";
 import type {
   LaunchPickState,
   NativePermissionMode,
@@ -87,6 +88,10 @@ type RuntimeProps = {
   onCompact?: (() => void) | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
+  /** 换同家另一条连接接着这段对话（标签动作 switchConnection：停下、换连接、按原会话接回）；没有会话可接回时不传 */
+  onSwitchConnection?: ((profileId: string) => void) | null;
+  /** 正在生成：换连接会打断这一轮，置灰（同「换权限」） */
+  busy?: boolean;
 } & SharedProps;
 
 /** 菜单最高多少（px）：大屏上也不一路拉长，名单多了在中间那段里滚 */
@@ -123,7 +128,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   }, [imgAgent, imgSession, imgTick]);
   const [open, setOpen] = useState(false);
   // 主屏只有思考强度（2026-11-05 用户：点开先只看思考档）；模型、Agent / 连接逐层点进去
-  const [view, setView] = useState<"main" | "model" | "who" | "beta" | "relay">("main");
+  const [view, setView] = useState<"main" | "model" | "who" | "beta" | "relay" | "conn">("main");
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useMenuKeyNav(menuRef, open, view);
@@ -203,6 +208,12 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const profileLabel = launch
     ? (launch.pick.profiles.find((p) => p.value === profileId)?.label ?? "选择配置")
     : (profile?.name ?? "");
+  // 运行中 / 停了可接着聊：同家其他连接（与终端「这次启动」卡同一口径：同 Agent、不是当前这条、没被隐藏）
+  const hiddenProfiles = useAppStore((s) => s.settings?.hiddenProfiles);
+  const switchConn = runtime?.onSwitchConnection ?? null;
+  const connAlternatives = switchConn
+    ? profiles.filter((p) => p.agent === agentId && p.id !== profileId && !(hiddenProfiles ?? []).includes(p.id))
+    : [];
   const beta = useChatBeta(agentId || null);
   // 连接名不再单写在底栏（2026-10-23）：芯片悬停里带上「经哪条连接」
   const via = profileLabel && profileId ? ` · 经「${profileLabel}」` : "";
@@ -690,6 +701,59 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 <RelayPicker relay={props.relay} currentAgent={agentId} onPicked={() => setOpen(false)} />
               </div>
             </>
+          ) : view === "conn" && switchConn ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setView("model")}
+                className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+              >
+                <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span className="text-xs">模型</span>
+              </button>
+              <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
+              <h4 className={`${section} shrink-0`}>{agentLabel} 的配置</h4>
+              <div ref={bodyRef} className={scrollBody}>
+                {profile && (
+                  <div className={item(true)} data-selected aria-disabled="true">
+                    <span className="min-w-0 flex-1 truncate">{profile.name}</span>
+                    {mark(true)}
+                  </div>
+                )}
+                {connAlternatives.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={runtime?.busy}
+                    className={`${item(false)} disabled:cursor-not-allowed disabled:opacity-40`}
+                    onClick={() =>
+                      void (async () => {
+                        const cur = currentModel.trim();
+                        const fallback = cur && !p.models.includes(cur) && p.models[0] ? p.models[0] : null;
+                        const ok = await confirmDialog(
+                          `换到「${p.name}」接着这段对话？\n\nMesa 会停下 ${agentLabel}，换成这条连接后接回原来这段对话，聊过的内容不会丢。${
+                            fallback ? `\n\n这条连接里没有 ${cur}，会改用 ${fallback}。` : ""
+                          }`,
+                          { confirmText: "换配置" },
+                        );
+                        if (!ok) return;
+                        setOpen(false);
+                        switchConn(p.id);
+                      })()
+                    }
+                  >
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    {p.models[0] && <span className="min-w-0 shrink truncate text-xs text-l4">{p.models[0]}</span>}
+                    {mark(false)}
+                  </button>
+                ))}
+              </div>
+              <p className={note}>
+                {runtime?.busy
+                  ? `${agentLabel} 正在回复，等这一轮结束再换。`
+                  : `会停下 ${agentLabel}，用新配置接回这段对话；要换 Agent 回上一层点「换 Agent」。`}
+              </p>
+            </>
           ) : view === "beta" ? (
             <>
               <button
@@ -809,11 +873,24 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                     <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </button>
-              ) : (
-                <div
-                  className="flex h-8 shrink-0 items-center gap-1.5 px-2 text-l1"
-                  title={props.relay?.state.available ? undefined : "换 Agent 或配置请新开一段对话"}
+              ) : connAlternatives.length > 0 ? (
+                <button
+                  type="button"
+                  className="flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left text-l1 outline-none hover:bg-hover focus-visible:bg-hover"
+                  onClick={() => setView("conn")}
+                  title="换这家的另一条连接接着这段对话"
                 >
+                  {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
+                  <AgentMark agentId={agentId} />
+                  <span className="truncate font-medium">{agentLabel}</span>
+                  {profileLabel && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}
+                  <span className="ml-auto flex shrink-0 items-center gap-0.5 text-xs text-l4">
+                    换配置
+                    <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
+                </button>
+              ) : (
+                <div className="flex h-8 shrink-0 items-center gap-1.5 px-2 text-l1">
                   {next && <span className="shrink-0 text-xs text-l4">接着聊用</span>}
                   <span className="truncate font-medium">{agentLabel}</span>
                   {profileLabel && <span className="min-w-0 truncate text-l3">{profileLabel}</span>}

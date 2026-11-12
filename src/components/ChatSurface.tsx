@@ -1481,6 +1481,9 @@ export default function ChatSurface({
         showRing={!metaSlotted}
         onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
         onRelaunch={runtime.onRelaunch}
+        // 换同家另一条连接接着聊：有会话可接回才给（标签动作 switchConnection，同终端「这次启动」卡）
+        onSwitchConnection={onSwitchConnection && runtime.status?.sessionId ? onSwitchConnection : null}
+        busy={generating}
         relay={relayMenu}
         imageKind={imageKind}
         onImageWarning={setImageWarning}
