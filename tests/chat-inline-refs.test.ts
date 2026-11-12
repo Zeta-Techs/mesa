@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import { citeTipFor, decorateCitations, linkFileRefs, linkStepStart } from "../src/chat-inline-refs.ts";
+import { citeTipFor, decorateCitations, linkFileRefs } from "../src/chat-inline-refs.ts";
 
 /** 回复渲染后的就地加工：文件路径（后端核实过的才变链接）、引用键胶囊（读 bib 换成作者年份） */
 function setup(html: string, ipc: (cmd: string, args: Record<string, unknown>) => unknown) {
@@ -90,17 +90,4 @@ test("引用键：没有会话目录（回放）只留键名胶囊，不问后�
   await decorateCitations(host, null);
   assert.equal(host.querySelector(".md-cite-item")?.textContent, "@solo");
   assert.equal(calls.length, 0);
-});
-
-test("商量对话里的「开始」：正文里的换成可点的字，代码、链接里的不动，重跑不重复套", () => {
-  const { host } = setup(
-    `<p>无「待拍板」事项。可以在 Mesa 点「开始」。</p><p><code>点「开始」</code> <a href="x">「开始」</a></p><pre><code>「开始」</code></pre>`,
-    () => [],
-  );
-  assert.equal(linkStepStart(host), 1);
-  const links = Array.from(host.querySelectorAll<HTMLElement>(".md-step-start"));
-  assert.deepEqual(links.map((l) => l.textContent), ["「开始」"]);
-  assert.equal(host.querySelector("p")!.textContent, "无「待拍板」事项。可以在 Mesa 点「开始」。");
-  assert.equal(linkStepStart(host), 0);
-  assert.equal(host.querySelectorAll(".md-step-start").length, 1);
 });

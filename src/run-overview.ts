@@ -1,4 +1,5 @@
 import type { RunBlocker } from "./run-blocker";
+import type { RailStep } from "./sidebar-chats.ts";
 import { pathWithin, samePath } from "./path-utils.ts";
 /**
  * 运行中总览（P5 聚合视图）的聚合/排序纯逻辑。
@@ -79,6 +80,8 @@ export interface RunOverviewInput {
   blocker?: RunBlocker | null;
   /** 用的哪条连接（线路体检后台复查认官方账号会话用） */
   profileId?: string | null;
+  /** 从步骤开的标签（sidebar-chats RailStep）：会话还没认出来时侧栏挂在这一步下面 */
+  railStep?: RailStep | null;
 }
 
 /** 一个标签折成 RunOverviewInput。标签刚开、TerminalView 还没上报状态时先用开标签时就知道的（Agent / 目录 / 要接的会话）：
@@ -94,6 +97,7 @@ export function tabRunInput(
     runId?: string;
     taskId?: string;
     forkSource?: { agent: string; sessionId: string };
+    railStep?: RailStep;
   },
   status:
     | {
@@ -125,6 +129,7 @@ export function tabRunInput(
     sessionId: status ? status.sessionId : (tab.resumeSessionId ?? null),
     forkOf: tab.forkSource?.sessionId ?? null,
     profileId: status?.profileId ?? null,
+    railStep: tab.railStep ?? null,
   };
 }
 

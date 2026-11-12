@@ -90,6 +90,7 @@ export async function launchRound(ws: WorkspaceDto, title: string, prompt: strin
           model: launch.model,
           initialPrompt: prompt,
           autoStart: true,
+          railStep: req.railStep,
         }
       : { ...req, title: req.title || title, resume: undefined, focusSession: undefined, initialPrompt: prompt },
   );

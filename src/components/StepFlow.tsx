@@ -1,7 +1,6 @@
 import CoachTip from "./CoachTip";
 import { consultNudgeSeen, discussNudgeSeen, markConsultNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
-import { discussOpeningPrompt, discussReuseKey } from "../discuss-prompt";
-import { toast } from "../toast";
+import { discussOpeningPrompt } from "../discuss-prompt";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -588,9 +587,12 @@ export default function StepFlow({
   stepSlotLaunch = null,
   onContinueStep,
   onContinueFresh,
+  stepIndex,
 }: {
   projectPath: string;
   step: ProjectStepDto;
+  /** 第几步（1 起）：商量的标签带上它，侧栏在会话认出来前就把标签挂到「④ 这一步」下面 */
+  stepIndex?: number;
   runStatus: StepRunStatus;
   /** 本步骤任务书草稿已起草（discuss 节点完成口径） */
   hasDraft: boolean;
@@ -1679,6 +1681,7 @@ export default function StepFlow({
       extraEnv: {},
       title: `${step.name} · 任务书`,
       stepName: step.name,
+      railStep: { name: step.name, index: stepIndex ?? null },
       ...(resume
         ? {
             agentId: resume.agentId,
@@ -1705,7 +1708,7 @@ export default function StepFlow({
             autoStart: Boolean(projectLaunch?.profileId),
           }),
       // 同一步骤的任务书讨论是同一个对话：再点切回已有标签；没有标签才按上面 resume / 新开会话
-      reuseKey: discussReuseKey(projectPath, draft.relPath),
+      reuseKey: `discuss:${projectPath}:${draft.relPath}`,
       ...(carry ? { composerInsert: carry, surface: "chat" as const } : {}),
     });
     setPage("terminal");
@@ -1722,19 +1725,6 @@ export default function StepFlow({
     // chatDraft 每次渲染重建，只按请求令牌与草稿就位翻转
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [carryReq?.token, Boolean(draft), chatBusy, step.name, projectPath]);
-
-  // 商量对话里点「开始」（2026-11-12）：项目页聚焦到这一步后在这里接住，走和右缘「开始」同一条路（开工确认弹层）。
-  // 只有这一行此刻真给「开始」时才开；已经开工 / 要恢复工作区的只聚焦，按钮就在眼前
-  const startReq = useAppStore((s) => s.stepStartReq);
-  useEffect(() => {
-    if (!startReq) return;
-    if (startReq.stepName !== step.name || !samePath(startReq.projectRoot, projectPath, IS_WINDOWS)) return;
-    useAppStore.getState().setStepStartReq(null);
-    if (runStatus === "pending" && !onRestore) onStart();
-    else toast(`「${step.name}」已经开过工了，接着看这一步的按钮`, "info");
-    // onStart 每次渲染重建，只按请求令牌翻转
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startReq?.token, step.name, projectPath]);
 
   /** TASK.md 就地预览/编辑（本页弹层，v3.90 起与「预览 TASK.md」入口合一——不再有「草稿」概念）：
    *  内容经 onLoadTaskMd 加载：已有编辑内容读文件，否则给模板拼装（只读展示不落盘，纯看不留痕，

@@ -1690,6 +1690,7 @@ export default function TaskCardsSection({
             // 换步骤就重新挂载：待获取清单、期刊、展开状态、人工事项都是按步骤读的，不带 key 会把上一步的串过来
             key={focusStepDto.name}
             bare
+            stepIndex={focusIdx >= 0 ? focusIdx + 1 : undefined}
             runId={focusRunId}
             projectLaunch={discussLaunch}
             stepSlotLaunch={

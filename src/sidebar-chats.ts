@@ -485,6 +485,23 @@ export interface OpenTabInput extends ChatRunInput {
   title: string;
   /** 开聊复用键：`reader:` 开头的是精读区的标签 */
   reuseKey?: string;
+  /** 从步骤开的标签（商量 / 干活 / 分路 / 收尾 / 开轮）：会话还没认出来时侧栏也挂在这一步下面 */
+  railStep?: RailStep | null;
+}
+
+/** 标签是从哪一步开的（开标签时就知道，不等会话落盘）：步骤名、第几步（1 起，读不到为 null）；
+ *  role 只标复用键认不出的收尾一路（它和干活同一个复用键） */
+export interface RailStep {
+  name: string;
+  index: number | null;
+  role?: "merge";
+}
+
+/** 侧栏挂在步骤组里的标签按什么角色写：商量 / 第 k 路 / 收尾 / 干活（干活这一段是首轮还是后来开的轮，分组时才定）；
+ *  other = 别的复用键（换一家复核等），同认出来后的那一行一样照写标题 */
+export interface OpenTabStep extends RailStep {
+  kind: "discuss" | "lane" | "merge" | "work" | "other";
+  laneNo: number | null;
 }
 
 export type OpenTabKind = "new" | "terminal" | "chat";
@@ -498,6 +515,27 @@ export interface OpenTabRow {
   folderKey: string | null;
   /** 分叉标签还没认出新会话时挂在哪段对话下面（`agent\nsessionId`）；不是分叉为 null */
   forkParentKey: string | null;
+  /** 从步骤开的（终端除外）：挂进那一步的组里，不放文件夹最上面；不是为 null */
+  step: OpenTabStep | null;
+}
+
+/** 从复用键和开标签时带的步骤认角色（同后端 runs.rs step_role_of）：`discuss:` 商量、`#lane-<k>` 第 k 路，
+ *  带收尾标记的是收尾，其余 `ws:` 是干活，别的复用键认不出 */
+export function openTabStep(railStep: RailStep | null | undefined, reuseKey: string | undefined): OpenTabStep | null {
+  if (!railStep?.name) return null;
+  const key = reuseKey ?? "";
+  const lane = /#lane-(\d+)$/.exec(key);
+  const laneNo = lane ? Number(lane[1]) : null;
+  const kind: OpenTabStep["kind"] = key.startsWith("discuss:")
+    ? "discuss"
+    : laneNo
+      ? "lane"
+      : railStep.role === "merge"
+        ? "merge"
+        : key.startsWith("ws:") && !key.includes("#")
+          ? "work"
+          : "other";
+  return { ...railStep, kind, laneNo: laneNo || null };
 }
 
 /**
@@ -539,6 +577,7 @@ export function openTabRows(input: {
       dot: kind === "chat" && r.running ? caretOfAttention(r.attention) : null,
       folderKey: input.folderOf(r.cwd),
       forkParentKey: r.forkOf ? `${r.agentId}\n${r.forkOf}` : null,
+      step: kind === "terminal" ? null : openTabStep(r.railStep, r.reuseKey),
     });
   }
   return out;
@@ -644,6 +683,15 @@ export interface StepChatGroup {
   lanes: { rows: StepChatRow[]; total: number; done: number } | null;
   /** 分路之后才开的行（补料轮、跟进轮…），画在分路子组下面，保持先后顺序 */
   after: StepChatRow[];
+  /** 开着、会话还没认出来的标签（2026-11-12 用户：点「与 AI 商量一下」侧栏不能立马挂到这一步下面）：
+   *  商量的放组首（head），分路与收尾进分路子组（lanes），其余放组尾（tail，认出来后也落在最后） */
+  tabs: { head: StepTabRow[]; lanes: StepTabRow[]; tail: StepTabRow[] };
+}
+
+/** 步骤组里一个还没认出会话的标签；label 同 StepChatRow（认出来后那一行写的名字，位置也不挪）；null = 照写标签标题 */
+export interface StepTabRow {
+  tab: OpenTabRow;
+  label: string | null;
 }
 
 // 「执行任务书」与「商量任务书」成对（2026-11-10 用户：「名字叫干活太草率了吧」）
@@ -666,8 +714,12 @@ export function stepRoleLabel(s: SessionMetaDto): string | null {
 }
 
 /** 项目内置顶里的流程对话按步骤分组（输入：splitProjectPinned 的 pinned 套上 ForkRow）；没有步骤名的（人手钉的）原样留在 manual。
- *  同一步里同一种角色不止一段（退回后重写、商量了两回）的，各自后面接开的日期「 · MM-DD」 */
-export function groupStepChats(rows: readonly ForkRow[]): { groups: StepChatGroup[]; manual: ForkRow[] } {
+ *  同一步里同一种角色不止一段（退回后重写、商量了两回）的，各自后面接开的日期「 · MM-DD」。
+ *  tabs：这个文件夹里开着、带步骤、会话还没认出来的标签（openTabRows 里 step 非空的），这一步还没有对话也照样建组 */
+export function groupStepChats(
+  rows: readonly ForkRow[],
+  tabs: readonly OpenTabRow[] = [],
+): { groups: StepChatGroup[]; manual: ForkRow[] } {
   const byStep = new Map<string, ForkRow[]>();
   const manual: ForkRow[] = [];
   for (const r of rows) {
@@ -677,6 +729,12 @@ export function groupStepChats(rows: readonly ForkRow[]): { groups: StepChatGrou
       continue;
     }
     byStep.set(step, [...(byStep.get(step) ?? []), r]);
+  }
+  const tabsOf = new Map<string, OpenTabRow[]>();
+  for (const t of tabs) {
+    if (!t.step) continue;
+    tabsOf.set(t.step.name, [...(tabsOf.get(t.step.name) ?? []), t]);
+    if (!byStep.has(t.step.name)) byStep.set(t.step.name, []);
   }
   const created = (r: ForkRow) => r.s.createdAt ?? r.s.updatedAt ?? "";
   const groups: StepChatGroup[] = [];
@@ -697,9 +755,28 @@ export function groupStepChats(rows: readonly ForkRow[]): { groups: StepChatGrou
     const order = (r: ForkRow) => (r.s.stepRole === "discuss" ? 0 : 1);
     rest.sort((a, b) => order(a) - order(b) || (created(a) < created(b) ? -1 : created(a) > created(b) ? 1 : 0));
     lanesRaw.sort((a, b) => (a.s.laneNo ?? 0) - (b.s.laneNo ?? 0) || (created(a) < created(b) ? -1 : 1));
-    const laneNos = new Set(lanesRaw.map((r) => r.s.laneNo));
+    const stepTabs = tabsOf.get(step) ?? [];
+    const laneTabs = stepTabs.filter((t) => t.step!.kind === "lane").sort((a, b) => a.step!.laneNo! - b.step!.laneNo!);
+    const laneNos = new Set([...lanesRaw.map((r) => r.s.laneNo), ...laneTabs.map((t) => t.step!.laneNo)]);
     const doneNos = new Set(lanesRaw.filter((r) => r.s.laneDone).map((r) => r.s.laneNo));
-    const index = list.map((r) => r.s.stepIndex).find((i): i is number => typeof i === "number") ?? null;
+    const hasLanes = laneNos.size > 0;
+    // 干活那一段：这一步还没有干活 / 分路 / 开轮的对话时是首轮「执行任务书」，之后开的认不出起因（补料 / 跟进…），先写「新一轮」
+    let worked = list.some((r) => r.s.stepRole && r.s.stepRole !== "discuss");
+    const tabRows: StepChatGroup["tabs"] = { head: [], lanes: [], tail: [] };
+    for (const t of stepTabs) {
+      const k = t.step!;
+      if (k.kind === "discuss") tabRows.head.push({ tab: t, label: ROLE_NAME.discuss });
+      else if (k.kind === "merge" && hasLanes) tabRows.lanes.push({ tab: t, label: ROLE_NAME.merge });
+      else if (k.kind === "work" || k.kind === "merge") {
+        tabRows.tail.push({ tab: t, label: worked ? "新一轮" : ROLE_NAME.work });
+        worked = true;
+      } else if (k.kind === "other") tabRows.tail.push({ tab: t, label: null });
+    }
+    tabRows.lanes.unshift(...laneTabs.map((t) => ({ tab: t, label: `第 ${t.step!.laneNo} 路` })));
+    const index =
+      list.map((r) => r.s.stepIndex).find((i): i is number => typeof i === "number") ??
+      stepTabs.map((t) => t.step!.index).find((i): i is number => typeof i === "number") ??
+      null;
     // 分路之后开的（补料轮、跟进轮…）画在分路子组下面，不然排在「分 N 路」上面，先后颠倒
     const firstLane = lanesRaw.length > 0 ? lanesRaw.map(created).sort()[0] : null;
     const isAfter = (r: ForkRow) => firstLane !== null && r.s.stepRole !== "discuss" && created(r) > firstLane;
@@ -708,10 +785,8 @@ export function groupStepChats(rows: readonly ForkRow[]): { groups: StepChatGrou
       index,
       rows: rest.filter((r) => !isAfter(r)).map(toRow),
       after: rest.filter(isAfter).map(toRow),
-      lanes:
-        lanesRaw.length > 0
-          ? { rows: [...lanesRaw, ...merges].map(toRow), total: laneNos.size, done: doneNos.size }
-          : null,
+      lanes: hasLanes ? { rows: [...lanesRaw, ...merges].map(toRow), total: laneNos.size, done: doneNos.size } : null,
+      tabs: tabRows,
     });
   }
   groups.sort((a, b) => (a.index ?? 1e9) - (b.index ?? 1e9) || a.step.localeCompare(b.step));
@@ -728,9 +803,12 @@ export function circledIndex(n: number | null): string {
 export function defaultOpenStep(
   groups: readonly StepChatGroup[],
   isHot: (s: SessionMetaDto) => boolean,
+  /** 还没认出会话的标签算不算看着 / 在跑；刚开的标签所在的组也要开着 */
+  isHotTab: (t: OpenTabRow) => boolean = () => false,
 ): string | null {
   const all = (g: StepChatGroup) => [...g.rows, ...(g.lanes?.rows ?? []), ...g.after].map((r) => r.row.s);
-  const hot = groups.find((g) => all(g).some(isHot));
+  const tabsOf = (g: StepChatGroup) => [...g.tabs.head, ...g.tabs.lanes, ...g.tabs.tail].map((t) => t.tab);
+  const hot = groups.find((g) => all(g).some(isHot) || tabsOf(g).some(isHotTab));
   if (hot) return hot.step;
   let best: { step: string; at: string } | null = null;
   for (const g of groups) {

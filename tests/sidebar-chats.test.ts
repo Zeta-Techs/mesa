@@ -588,3 +588,49 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
   assert.equal(defaultOpenStep(groups, (s) => s.sessionId === "s-w1"), "文献检索与筛选");
   assert.equal(defaultOpenStep(groups, () => false), "文献精读与笔记");
 });
+
+test("从步骤开的标签会话认出来前就挂在那一步下面（2026-11-12）", async () => {
+  const { groupStepChats, defaultOpenStep, openTabStep } = await import("../src/sidebar-chats.ts");
+  const base = { agentId: "claude-code", running: true, shell: false, attention: null, sessionId: null };
+  const folderOf = (cwd: string) => (cwd.startsWith("/repo") ? "/repo" : null);
+  const draft = { name: "综述初稿", index: 4 };
+  const tabs = openTabRows({
+    runs: [
+      { ...base, tabId: "d", cwd: "/repo", title: "综述初稿 · 任务书", reuseKey: "discuss:/repo:.ccode/drafts/x.md", railStep: draft },
+      { ...base, tabId: "w", cwd: "/repo/wt/draft", title: "综述初稿", reuseKey: "ws:/repo/wt/draft", railStep: draft },
+      { ...base, tabId: "l2", cwd: "/repo/wt/notes", title: "精读 · 第 2 路", reuseKey: "ws:/repo/wt/notes#lane-2", railStep: { name: "文献精读与笔记", index: 2 } },
+      { ...base, tabId: "l1", cwd: "/repo/wt/notes", title: "精读 · 第 1 路", reuseKey: "ws:/repo/wt/notes#lane-1", railStep: { name: "文献精读与笔记", index: 2 } },
+      { ...base, tabId: "x", cwd: "/repo/wt/draft", title: "复核：综述初稿", reuseKey: "review:/repo/wt/draft", railStep: draft },
+      { ...base, tabId: "t", cwd: "/repo", title: "终端", shell: true, running: false, railStep: draft },
+      { ...base, tabId: "plain", cwd: "/repo", title: "随手问" },
+    ],
+    listed: new Set(),
+    focusedTabId: "d",
+    folderOf,
+  });
+  // 终端、不带步骤的不进组
+  assert.deepEqual(tabs.filter((t) => t.step).map((t) => t.tabId), ["d", "w", "l2", "l1", "x"]);
+  const row = (over: Partial<SessionMetaDto>) => ({ s: session(over), depth: 0, forks: 0 });
+  const rows = [row({ sessionId: "s-w", stepName: "文献检索与筛选", stepIndex: 1, stepRole: "work", createdAt: "2026-11-09T15:20:00Z" })];
+  const { groups } = groupStepChats(rows, tabs);
+  // 这一步还没有对话也建组，步骤号取标签带的
+  assert.deepEqual(groups.map((g) => [g.index, g.step]), [[1, "文献检索与筛选"], [2, "文献精读与笔记"], [4, "综述初稿"]]);
+  const draftGroup = groups[2];
+  assert.deepEqual(draftGroup.tabs.head.map((t) => [t.tab.tabId, t.label]), [["d", "商量任务书"]]);
+  // 首轮干活写「执行任务书」，别的复用键照写标题
+  assert.deepEqual(draftGroup.tabs.tail.map((t) => [t.tab.tabId, t.label]), [["w", "执行任务书"], ["x", null]]);
+  // 分路进分路子组、按路号
+  assert.deepEqual(groups[1].tabs.lanes.map((t) => [t.tab.tabId, t.label]), [["l1", "第 1 路"], ["l2", "第 2 路"]]);
+  assert.equal(groups[1].lanes!.total, 2);
+  assert.equal(groups[1].lanes!.done, 0);
+  // 已有干活的步骤再开一段：认不出起因，先写「新一轮」
+  const later = groupStepChats(rows, [{ ...tabs[1], step: { ...tabs[1].step!, name: "文献检索与筛选", index: 1 } }]);
+  assert.deepEqual(later.groups[0].tabs.tail.map((t) => t.label), ["新一轮"]);
+  // 收尾（同干活的复用键，靠标记认）：有分路时进分路子组，排在各路后面
+  const merge = openTabStep({ name: "文献精读与笔记", index: 2, role: "merge" }, "ws:/repo/wt/notes");
+  const withMerge = groupStepChats([], [...tabs.slice(2, 4), { ...tabs[1], tabId: "m", step: merge }]);
+  assert.deepEqual(withMerge.groups[0].tabs.lanes.map((t) => t.label), ["第 1 路", "第 2 路", "收尾"]);
+  // 刚开的标签所在的组默认开着
+  assert.equal(defaultOpenStep(groups, () => false, (t) => t.tabId === "d"), "综述初稿");
+  assert.equal(openTabStep(null, "discuss:/repo:x"), null);
+});

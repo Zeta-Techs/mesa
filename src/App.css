@@ -3470,17 +3470,6 @@ select:focus-visible {
   text-decoration-style: solid;
   text-decoration-color: currentColor;
 }
-/* 商量任务书对话里的「开始」（discuss-step-start.ts）：点了去那一步开工确认；强调色 + 虚下划线，悬停转实线 */
-.md-chat .md-step-start {
-  cursor: pointer;
-  color: var(--color-cta);
-  text-decoration: underline dotted;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.22em;
-}
-.md-chat .md-step-start:hover {
-  text-decoration-style: solid;
-}
 /* 文献引用键 [@key]（chat-cite.ts）：小胶囊，悬停出作者 / 年份 / 题名；bib 里没有的键描一圈琥珀 */
 .md-chat .md-cite-item,
 .md-body .md-cite-item {

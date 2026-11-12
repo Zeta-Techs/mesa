@@ -22,6 +22,7 @@ import {
   toggleChromeHiddenState,
 } from "./nav-capsule";
 import { createSessionRefreshCoordinator } from "./session-refresh";
+import type { RailStep } from "./sidebar-chats.ts";
 import {
   dismissHelp,
   dismissInboxItem,
@@ -411,6 +412,8 @@ export interface PendingTerminal {
       claim_next_session_for_step，让会话归到该步骤（项目「对话」页按 stepName 过滤）。
       不在发起时提前登记——启动栏还可改 agent/目录，spawn 时的实时值才作数 */
   stepName?: string;
+  /** 从哪一步开的（侧栏用，不登记会话）：会话还没认出来时侧栏就把这个标签挂在那一步下面。仅内存，不进重启持久化 */
+  railStep?: RailStep;
   /** 第 1 期 Run 身份；恢复同一 Run 时带上 */
   runId?: string;
   /** 新建 Task 后预创建的 Run 所属 Task。 */
@@ -851,10 +854,6 @@ interface AppState {
    *  text 放进聊天输入框、不发送（人改了再发）。StepFlow 认步骤名消费并清空 */
   discussCarryReq: { projectRoot: string; stepName: string; text: string; token: number } | null;
   setDiscussCarryReq: (req: { projectRoot: string; stepName: string; text: string; token: number } | null) => void;
-  /** 商量任务书的对话里点「开始」（2026-11-12）：进那个项目、聚焦那一步，步骤卡照「开始」按钮打开开工确认。
-   *  StepFlow 认步骤名消费并清空；这一步已经开工了就只聚焦，不另开 */
-  stepStartReq: { projectRoot: string; stepName: string; token: number } | null;
-  setStepStartReq: (req: { projectRoot: string; stepName: string; token: number } | null) => void;
   clearConsultReq: () => void;
   /** 研讨页正打开的那一场（2026-11-11 用户：研讨放在聊天层那一格，侧栏点了就到，不再进对话管理）。
    *  侧栏研讨行、「去看看」、工作台进行中的研讨都经 showConsult 打开它并切到研讨页 */
@@ -1289,8 +1288,6 @@ export const useAppStore = create<AppState>((set, get) => {
   clearConsultReq: () => set({ consultReq: null }),
   discussCarryReq: null,
   setDiscussCarryReq: (req) => set({ discussCarryReq: req }),
-  stepStartReq: null,
-  setStepStartReq: (req) => set({ stepStartReq: req }),
   consultOpen: null,
   showConsult: (projectRoot, id) => set({ consultOpen: { projectRoot, id }, page: "consult" }),
   closeConsult: () => set({ consultOpen: null }),

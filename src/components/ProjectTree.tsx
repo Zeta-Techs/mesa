@@ -108,6 +108,7 @@ import {
   circledIndex,
   defaultOpenStep,
   type StepChatRow,
+  type StepTabRow,
   READER_CHATS_SHOWN_KEY,
   parseReaderChatsShown,
   toggleReaderChatsShown,
@@ -1470,13 +1471,16 @@ export default function ProjectTree({
   }
 
   /** 开着、但列表里还没有的一行（openTabRows）：点了切过去，行尾 × 关掉（在跑的会先问）。
-   *  新对话 / 纯终端前面带个小图标，和对话行区分开；不缩进同 renderChat */
-  function renderOpenRow(r: OpenTabRow, depth = 0, folderName?: string) {
+   *  新对话 / 纯终端前面带个小图标，和对话行区分开；不缩进同 renderChat。
+   *  stepLabel：挂在步骤组里（会话还没认出来的商量 / 干活标签）——不带图标，写角色名（null 照写标题），同组里认出来的对话行 */
+  function renderOpenRow(r: OpenTabRow, depth = 0, folderName?: string, stepLabel?: string | null) {
     const selected = page === "terminal" && r.tabId === terminalActiveTabId;
     const run = terminalRunInputs.find((x) => x.tabId === r.tabId);
     const unread = !selected && run != null && unreadSet.has(unreadKeyOf(run));
     const rowDot = withUnread(r.dot, unread);
-    const Icon = r.kind === "terminal" ? SquareTerminal : r.kind === "new" ? SquarePen : null;
+    const inStep = stepLabel !== undefined;
+    const Icon = inStep ? null : r.kind === "terminal" ? SquareTerminal : r.kind === "new" ? SquarePen : null;
+    const text = stepLabel || (r.kind === "chat" ? sidebarChatTitle(r.label, folderName) : r.label);
     return (
       <div
         key={`tab:${r.tabId}`}
@@ -1514,9 +1518,7 @@ export default function ProjectTree({
             </span>
           )}
           {/* 对话标签同对话行：去掉「MMDD|类型|」与开头重复的课题名，完整标题在悬停里 */}
-          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">
-            {r.kind === "chat" ? sidebarChatTitle(r.label, folderName) : r.label}
-          </span>
+          <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{text}</span>
         </button>
         {/* 状态列同对话行：有光标才占一格，标题不进来；悬停时 × 原地顶替光标（这种行没有 ⋯） */}
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
@@ -1527,7 +1529,7 @@ export default function ProjectTree({
           )}
           <button
             type="button"
-            aria-label={`关掉「${r.label}」`}
+            aria-label={`关掉「${text}」`}
             title={r.kind === "new" ? "不要这段新对话了" : "关掉：停下它，记录还在（在跑的会先问你）"}
             onClick={(e) => {
               noteMouseCloseChat(e.currentTarget.parentElement!.getBoundingClientRect(), "right", listRef.current);
@@ -1546,17 +1548,21 @@ export default function ProjectTree({
    *  分路收进「分 N 路 · x/N 做完」子组；人手钉的（没有步骤名）照旧一行一段、行尾图钉 */
   function renderStepGroups(
     pinnedRows: ForkRow[],
+    /** 这个课题里开着、带步骤、会话还没认出来的标签：直接挂进那一步（2026-11-12 用户：点了「与 AI 商量一下」侧栏要立马挂到这一步下面） */
+    stepTabs: OpenTabRow[],
     project: ProjectDto | null,
     name: string,
     folderKey: string,
     forkOpenOf: Map<string, OpenTabRow[]>,
   ) {
-    const { groups, manual } = groupStepChats(pinnedRows);
+    const { groups, manual } = groupStepChats(pinnedRows, stepTabs);
     const hot = (s: SessionMetaDto) => {
       const d = chatDot(s, terminalRunInputs);
       return chatKey(s) === highlightChatKey || d === "working" || d === "confirm";
     };
-    const openByDefault = defaultOpenStep(groups, hot);
+    const hotTab = (t: OpenTabRow) =>
+      (page === "terminal" && t.tabId === terminalActiveTabId) || t.dot === "working" || t.dot === "confirm";
+    const openByDefault = defaultOpenStep(groups, hot, hotTab);
     const headCls = "group/step flex h-7 w-full items-center gap-0.5 rounded-md pl-2 pr-0.5 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
     // 行尾一格（2026-11-11 用户：步骤组头、研讨、对话的字都顶格对齐，图标挪到行尾；开合箭头平时藏起来）：
     // 平时只有收着时组里最要紧的光标，悬停 / 聚焦时开合箭头原地换掉它（同对话行 ⋯ 换光标）；展开时组里各段自己报，不挂光标
@@ -1578,15 +1584,23 @@ export default function ProjectTree({
         {(forkOpenOf.get(chatKey(r.row.s)) ?? []).map((o) => renderOpenRow(o, r.row.depth + 1, name))}
       </Fragment>
     );
-    const caretOf = (rows: StepChatRow[]) =>
-      strongestCaret(rows.map((r) => withUnread(chatDot(r.row.s, terminalRunInputs), unreadSet.has(chatKey(r.row.s)))));
+    const tabLine = (t: StepTabRow) => renderOpenRow(t.tab, 0, name, t.label);
+    const tabDot = (t: StepTabRow) => {
+      const run = terminalRunInputs.find((x) => x.tabId === t.tab.tabId);
+      return withUnread(t.tab.dot, run != null && unreadSet.has(unreadKeyOf(run)));
+    };
+    const caretOf = (rows: StepChatRow[], tabs: StepTabRow[] = []) =>
+      strongestCaret([
+        ...rows.map((r) => withUnread(chatDot(r.row.s, terminalRunInputs), unreadSet.has(chatKey(r.row.s)))),
+        ...tabs.map(tabDot),
+      ]);
     return (
       <>
         {groups.map((g) => {
           const gKey = `${folderKey}\n${g.step}`;
           const open = stepOpen[gKey] ?? g.step === openByDefault;
           const all = [...g.rows, ...(g.lanes?.rows ?? []), ...g.after];
-          const dot = open ? null : caretOf(all);
+          const dot = open ? null : caretOf(all, [...g.tabs.head, ...g.tabs.lanes, ...g.tabs.tail]);
           const lKey = `${gKey}\nlanes`;
           const lanesOpen = stepOpen[lKey] ?? true;
           return (
@@ -1606,6 +1620,7 @@ export default function ProjectTree({
               </button>
               {open && (
                 <div className="space-y-[3px] pl-[1.125rem]">
+                  {g.tabs.head.map(tabLine)}
                   {g.rows.map(line)}
                   {g.lanes && (
                     <div role="group" aria-label={`分 ${g.lanes.total} 路`}>
@@ -1619,12 +1634,18 @@ export default function ProjectTree({
                         <span className="ccode-rail-text min-w-0 flex-1 truncate">
                           分 {g.lanes.total} 路 · {g.lanes.done}/{g.lanes.total} 做完
                         </span>
-                        {trail(lanesOpen, lanesOpen ? null : caretOf(g.lanes.rows))}
+                        {trail(lanesOpen, lanesOpen ? null : caretOf(g.lanes.rows, g.tabs.lanes))}
                       </button>
-                      {lanesOpen && <div className="space-y-[3px] pl-3">{g.lanes.rows.map(line)}</div>}
+                      {lanesOpen && (
+                        <div className="space-y-[3px] pl-3">
+                          {g.lanes.rows.map(line)}
+                          {g.tabs.lanes.map(tabLine)}
+                        </div>
+                      )}
                     </div>
                   )}
                   {g.after.map(line)}
+                  {g.tabs.tail.map(tabLine)}
                 </div>
               )}
             </div>
@@ -1668,7 +1689,9 @@ export default function ProjectTree({
         forkOpenOf.set(r.forkParentKey, [...(forkOpenOf.get(r.forkParentKey) ?? []), r]);
       }
     }
-    const opened = openedAll.filter((r) => !(r.forkParentKey && listedHere.has(r.forkParentKey)));
+    // 从步骤开的、会话还没认出来的标签挂进那一步的组（只课题有步骤），不放最上面
+    const stepTabs = project ? openedAll.filter((r) => r.step && !(r.forkParentKey && listedHere.has(r.forkParentKey))) : [];
+    const opened = openedAll.filter((r) => !(r.forkParentKey && listedHere.has(r.forkParentKey)) && !stepTabs.includes(r));
     const remaining = chats.length - visible.length;
     const more = remaining > 0;
     // 研讨（进行中的、最近几天的，更早的在对话管理）排在步骤组下面、普通对话上面（2026-11-11 用户：原先挂在最上面，
@@ -1686,14 +1709,14 @@ export default function ProjectTree({
         {opened.map((r) => renderOpenRow(r))}
         {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
             每行写角色（商量任务书 / 执行任务书 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
-        {pinnedRows.length > 0 && (
+        {(pinnedRows.length > 0 || stepTabs.length > 0) && (
           <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 || consultRows.length > 0 ? "pb-1.5" : ""}`}>
-            {renderStepGroups(pinnedRows, project, name, folderKey, forkOpenOf)}
+            {renderStepGroups(pinnedRows, stepTabs, project, name, folderKey, forkOpenOf)}
           </div>
         )}
         {consultRows.map((c) => renderConsultRow(c, name))}
         {chats.length === 0 ? (
-          opened.length === 0 && pinnedRows.length === 0 && consultRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
+          opened.length === 0 && pinnedRows.length === 0 && stepTabs.length === 0 && consultRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
           visible.map((r) => (
             <Fragment key={chatKey(r.s)}>

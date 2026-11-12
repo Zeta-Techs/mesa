@@ -18,6 +18,7 @@ import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-
 export { renderTaskMd };
 import { loadKickoffPermission, pickKickoffPermission, type KickoffLaunch, type KickoffPermission } from "./kickoff-launch";
 import type { PendingTerminal } from "./store";
+import type { RailStep } from "./sidebar-chats.ts";
 import type {
   ArtifactEntryDto,
   BootstrapCommitDto,
@@ -323,7 +324,13 @@ export async function startPipelineStep({
         worktreePath: ws.worktreePath,
         stepName: step.name,
         lanes: plan.lanes.length,
-        merge: { ...merge, title: `${step.name} · 收尾`, parallelLane: true },
+        merge: {
+          ...merge,
+          title: `${step.name} · 收尾`,
+          parallelLane: true,
+          // 收尾和干活同一个复用键，侧栏靠这个标记把它放进分路子组、写「收尾」
+          ...(merge.railStep ? { railStep: { ...merge.railStep, role: "merge" as const } } : {}),
+        },
         mergeStarted: false,
         createdAt: Date.now(),
         laneRequests: lanes,
@@ -456,11 +463,14 @@ export async function buildWorkspaceTerminalRequest(
   const permissionMode =
     opts?.launch?.permissionMode ??
     (opts?.autoStart ? await defaultStepPermission(ws.repoPath, resume?.agentId ?? chain.agentId) : null);
+  const railStep = await workspaceStep(ws);
   return {
     cwd: ws.worktreePath,
     extraEnv: Object.fromEntries(pairs),
     // 标签名统一用步骤名（「文献精读与笔记」），不再有时是工作区名 lit-notes、有时是步骤名
-    title: (await workspaceStepName(ws)) ?? ws.name,
+    title: railStep?.name ?? ws.name,
+    // 侧栏在会话认出来前就把这个标签挂到这一步下面（手建工作区没有步骤，照旧挂在项目最上面）
+    ...(railStep ? { railStep } : {}),
     focusSession: live ?? undefined,
     // resume 命中时以会话的 Agent 为准（TerminalPage 的 resume 分支会自选 profile/model）；
     // 同一家 Agent 时，步骤绑定的连接与模型作预填——不带模型时会落到连接名单第一个，
@@ -521,14 +531,15 @@ async function workspaceSessions(): Promise<SessionMetaDto[]> {
   }
 }
 
-/** 工作区对应的步骤名（标签名用）；读不到项目配置或手建工作区返回 null */
-async function workspaceStepName(ws: WorkspaceDto): Promise<string | null> {
+/** 工作区对应的步骤（标签名与侧栏分组用）：步骤名与第几步；读不到项目配置或手建工作区返回 null */
+async function workspaceStep(ws: WorkspaceDto): Promise<RailStep | null> {
   try {
     const read = await invoke<{ config: { steps: readonly { name: string; workspaceName: string }[] } }>(
       "read_project_config",
       { path: ws.repoPath },
     );
-    return read.config.steps.find((s) => s.workspaceName === ws.name)?.name ?? null;
+    const i = read.config.steps.findIndex((s) => s.workspaceName === ws.name);
+    return i >= 0 ? { name: read.config.steps[i].name, index: i + 1 } : null;
   } catch {
     return null;
   }

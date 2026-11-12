@@ -69,7 +69,7 @@ import type { ChecksDto } from "../research-checks";
 import { EXITED_GRACE_MS, exitedCollectPass, idleStopPass, isExitedAgentTab } from "../idle-stop";
 import { closeAsksFirst } from "../run-caret";
 import { runLayout } from "../run-layout";
-import { sidebarChatTitle } from "../sidebar-chats";
+import { sidebarChatTitle, type RailStep } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
 import { lastContextTokens, type MesaCommand } from "../composer-assist";
 import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, lanesToHeal, type FanOutPending } from "../fan-out";
@@ -223,6 +223,8 @@ interface Tab {
   /** 步骤认领（pendingTerminal.stepName 透传）：launch 时以最终 agent/cwd 登记，
       让该标签产出的会话归到该步骤。仅内存标记，不进重启持久化白名单 */
   stepName?: string;
+  /** 从哪一步开的（pendingTerminal.railStep 透传）：侧栏在会话认出来前把它挂在那一步下面。仅内存标记 */
+  railStep?: RailStep;
   runId?: string;
   taskId?: string;
   /** 递增则把已挂载标签的启动栏改成 initialAgent/Profile/Model（见 TerminalView） */
@@ -1392,6 +1394,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       reuseKey?: string;
       /** 步骤认领（pendingTerminal.stepName 透传）：launch 时登记会话归步骤 */
       stepName?: string;
+      railStep?: RailStep;
       runId?: string;
       taskId?: string;
       preview?: boolean;
@@ -1420,6 +1423,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         forkSessionId: init?.forkSessionId,
         reuseKey: init?.reuseKey,
         stepName: init?.stepName,
+        railStep: init?.railStep,
         runId: init?.runId,
         taskId: init?.taskId,
         preview: init?.preview,
@@ -1953,6 +1957,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         effort: pt.effort ?? null,
         reuseKey: pt.reuseKey,
         stepName: pt.stepName,
+        railStep: pt.railStep,
         runId: pt.runId,
         taskId: pt.taskId,
         preview: Boolean(pt.resume && pt.resumeLazy) || undefined,
@@ -3755,8 +3760,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         syncState={sessionByTab[t.id]?.sync ?? "waiting"}
                         loading={sessionByTab[t.id]?.pendingReply ?? false}
                         cwd={statuses[t.id]?.cwd ?? t.initialCwd ?? null}
-                        discussKey={t.reuseKey?.startsWith("discuss:") ? t.reuseKey : null}
-                        discussStepName={t.stepName ?? null}
                         running={statuses[t.id]?.running ?? false}
                         canResume={statuses[t.id]?.canResume ?? false}
                         attention={statuses[t.id]?.attention ?? null}

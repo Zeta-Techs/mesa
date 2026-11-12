@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DISCUSS_FOCUS, discussFocus, discussOpeningPrompt, discussReuseKey, parseDiscussReuseKey } from "../src/discuss-prompt.ts";
+import { DISCUSS_FOCUS, discussFocus, discussOpeningPrompt } from "../src/discuss-prompt.ts";
 import { PIPELINE_TEMPLATES } from "../src/pipeline-presets.ts";
 
 test("开场是苏格拉底式：一次一问、答清楚直接记下接着问、不问模板已定的流程", () => {
@@ -32,14 +32,4 @@ test("英文综述五步都有专属提问方向", () => {
     assert.ok(DISCUSS_FOCUS[step.workspaceName ?? ""], `${step.name} 缺提问方向`);
     assert.ok(discussFocus(step.workspaceName).length >= 3);
   }
-});
-
-test("商量对话复用键：拼出来的能拆回项目根与任务书路径（Windows 盘符里的冒号不碍事）；别的键认不出", () => {
-  for (const root of ["/Users/me/HER", "C:\\Users\\me\\HER", "/p/a:b"]) {
-    const key = discussReuseKey(root, ".ccode/drafts/lit-notes.md");
-    assert.deepEqual(parseDiscussReuseKey(key), { projectRoot: root, relPath: ".ccode/drafts/lit-notes.md" });
-  }
-  assert.equal(parseDiscussReuseKey("assistant-discuss:/p:123"), null);
-  assert.equal(parseDiscussReuseKey("discuss:/p/notes.md"), null);
-  assert.equal(parseDiscussReuseKey(undefined), null);
 });
