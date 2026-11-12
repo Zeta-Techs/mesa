@@ -293,8 +293,7 @@ function rememberToFetchPlace(root: string, ul: HTMLUListElement | null): void {
 
 /** 精读步「AI 干活」行下的进度（notes/index.json，工作区优先、项目根兜底）。
  *  Agent 分批写、中途提交后接着读：跑着时 20 秒重读一次，窗口回到前台也重读。 */
-function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) {
-  const [line, setLine] = useState<string | null>(null);
+function NotesProgressLine({ roots, live, onChange }: { roots: string[]; live: boolean; onChange: (line: string | null) => void }) {
   const rootsKey = roots.join("\n");
   useEffect(() => {
     let stale = false;
@@ -308,13 +307,13 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
             .then((f) => (f.truncated ? new Set<string>() : excludedIncludedIds(f.text)))
             .catch(() => new Set<string>());
           const progress = notesProgress(file.text, excluded);
-          if (!stale) setLine(progress ? notesProgressLine(progress) : null);
+          if (!stale) onChange(progress ? notesProgressLine(progress) : null);
           return;
         } catch {
           /* 这一处还没有索引，试下一处 */
         }
       }
-      if (!stale) setLine(null);
+      if (!stale) onChange(null);
     };
     void load();
     const onFocus = () => void load();
@@ -325,16 +324,8 @@ function NotesProgressLine({ roots, live }: { roots: string[]; live: boolean }) 
       window.removeEventListener("focus", onFocus);
       unpoll?.();
     };
-  }, [rootsKey, live]);
-  if (!line) return null;
-  return (
-    <p
-      className="mt-1 pl-9 text-micro tabular-nums text-l4"
-      title="按 notes/index.json 数：标成已读完的才算写完；仅摘要的篇目补到全文后再精读。只速读的是研究论文，每篇在速读表 notes/skim.md 里一行，大纲定了按章节点名精读"
-    >
-      {line}
-    </p>
-  );
+  }, [rootsKey, live, onChange]);
+  return null;
 }
 
 /** 检索 / 大纲步「AI 干活」行下的一行台账计数（同 NotesProgressLine：工作区优先、项目根兜底，跑着时 20 秒重读）。
@@ -344,21 +335,20 @@ function LedgerCountLine({
   live,
   rel,
   line,
-  title,
   read = readResearchLedger,
   refreshKey = "",
+  onChange,
 }: {
   roots: string[];
   live: boolean;
   rel: string;
   line: (text: string) => string | null | Promise<string | null>;
-  title: string;
+  onChange: (line: string | null) => void;
   /** 台账白名单外的文件（outline.md）走只读预览通道：白名单同时管写回，不为计数放宽 */
   read?: (root: string, rel: string) => Promise<{ text: string; truncated: boolean }>;
   /** 变了就重读（大纲那行：上游保存后要跟着变） */
   refreshKey?: string;
 }) {
-  const [text, setText] = useState<string | null>(null);
   const rootsKey = roots.join("\n");
   const lineRef = useRef(line);
   lineRef.current = line;
@@ -370,13 +360,13 @@ function LedgerCountLine({
           const file = await read(root, rel);
           if (file.truncated) continue;
           const out = await lineRef.current(file.text);
-          if (!stale) setText(out);
+          if (!stale) onChange(out);
           return;
         } catch {
           /* 这一处还没有这份文件，试下一处 */
         }
       }
-      if (!stale) setText(null);
+      if (!stale) onChange(null);
     };
     void load();
     const onFocus = () => void load();
@@ -387,13 +377,8 @@ function LedgerCountLine({
       window.removeEventListener("focus", onFocus);
       unpoll?.();
     };
-  }, [rootsKey, live, rel, read, refreshKey]);
-  if (!text) return null;
-  return (
-    <p className="mt-1 pl-9 text-micro tabular-nums text-l4" title={title}>
-      {text}
-    </p>
-  );
+  }, [rootsKey, live, rel, read, refreshKey, onChange]);
+  return null;
 }
 
 /** 大纲一行：定框架几问、薄几节（综述回路三期）+ 用图计划。薄节由大纲判，补料到没到由 Mesa 按笔记索引数
@@ -705,6 +690,9 @@ export default function StepFlow({
   // 原先保存后仍先读写工作副本那份旧的——后面步骤改过的看不到，回头在这里改的也永远进不了项目（2026-11-05 排查）。
   // 要交回这一步 AI 接着做的（逐条决定、许可 / 声明、引用样式）仍走工作副本：AI 在那里接着干活
   const dataWs = runStatus === "done" ? undefined : ws;
+  const [agentProgress, setAgentProgress] = useState<string | null>(null);
+  useEffect(() => setAgentProgress(null), [step.name, dataWs?.worktreePath, !!ws || runStatus === "done"]);
+  const [progressHeadline, ...progressDetails] = (agentProgress ?? "").split(" · ");
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );
@@ -2363,7 +2351,7 @@ export default function StepFlow({
                 ? human.guidance
                 : undefined
             }
-            className={`min-w-0 flex-1 truncate ${
+            className={`min-w-0 flex-1 ${node.kind === "agent" ? "" : "truncate"} ${
               dense ? "text-xs" : "text-sm"
             } ${
               // 删除线只给打勾的人工事项（清单打勾的惯例）；「AI 干活」「确定文献来源」
@@ -2379,7 +2367,10 @@ export default function StepFlow({
                     : "text-l2"
             }`}
           >
-            {node.label}
+            {node.kind === "agent" ? <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span>{node.label}</span>
+              {progressHeadline && <span data-step-progress="headline" className="text-xs tabular-nums text-l3">{progressHeadline}</span>}
+            </span> : node.label}
           </span>
           {/* 可选事项标记：不做也不影响这一步跑完。没有这个标记的话，
               一个永远不打勾的条目看起来就像没做完的必办项。
@@ -3132,6 +3123,7 @@ export default function StepFlow({
           <NotesProgressLine
             roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
             live={runStatus === "active"}
+            onChange={setAgentProgress}
           />
         )}
         {node.kind === "agent" && searchStep && (ws || runStatus === "done") && (
@@ -3140,7 +3132,7 @@ export default function StepFlow({
             live={runStatus === "active"}
             rel="papers/included.json"
             line={(text) => searchCountLineWithFiles(projectPath, text)}
-            title="按 papers/included.json 数：纳入的篇里项目 papers/ 有 PDF 的算已有全文；缺全文的精读时只能按摘要记"
+            onChange={setAgentProgress}
           />
         )}
         {/* 计数在上、回头入口在下，各步骤同一顺序（2026-11-11：大纲的计数原先排在回头入口下面） */}
@@ -3152,13 +3144,20 @@ export default function StepFlow({
             read={readResearchFile}
             line={outlineCountLine(dataWs ? [dataWs.worktreePath, projectPath] : [projectPath])}
             refreshKey={`${ledgerRefreshKey}|${nudge?.text ?? ""}`}
-            title="按 outline.md 数：「定框架记录」里人答了几问、「覆盖检查」里还有几节是薄的（要补料的点「补文献…」，Mesa 按这张表预填）；补读点名的篇精读完、为这一节补检来的新篇写好笔记，就算补料已到，够不够等大纲那一步重新判断。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
+            onChange={setAgentProgress}
           />
         )}
         {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
         {/* empty:hidden：回头入口和「做过几轮」都没有时组件渲染为空，不留一截空白 */}
-        {node.kind === "agent" && loopActions && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-9 empty:hidden">{loopActions}</div>
+        {node.kind === "agent" && (progressDetails.length > 0 || loopActions) && (
+          <div data-step-progress="details" className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-9 empty:hidden">
+            {progressDetails.length > 0 && <span className="text-micro tabular-nums text-l3" title={
+              notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
+              searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
+              "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对"
+            }>{progressDetails.join(" · ")}</span>}
+            {loopActions}
+          </div>
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。
             非当前节点的说明挂在行的 title 上（悬停可见），信息不丢。

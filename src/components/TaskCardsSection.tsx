@@ -1563,7 +1563,7 @@ export default function TaskCardsSection({
 
   return (
     <div className="mb-2">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 empty:hidden">
         {!focusStep && (
           <span className="text-xs text-l3">
             话题{cards && cards.length > 0 ? `（${cards.length}）` : ""}
@@ -1639,7 +1639,7 @@ export default function TaskCardsSection({
       {focusStep && focusStepDto ? (
         /* shadow-sm：当前步骤卡是本屏唯一「现在该干嘛」答案，微弱投影把它从画布上抬起来（v3.92 走查） */
         <div className="ccode-well mt-2 rounded-lg px-4 py-3.5 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
           {onFocusIndex && (
             <button
               type="button"
@@ -1652,7 +1652,7 @@ export default function TaskCardsSection({
               ‹
             </button>
           )}
-          <span className="text-sm font-semibold text-l1">{focusStep}</span>
+          <span className="min-w-0 break-words text-sm font-semibold text-l1">{focusStep}</span>
           {/* 角色标记（v3.89）：步骤名保留学术术语，另标「这一步轮到谁」——
               用户扫一眼就知道哪几步要自己出场，流程感来自角色交替而非序号 */}
           {focusStepDto && <RoleBadge role={focusStepDto.role} />}
