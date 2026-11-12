@@ -171,7 +171,7 @@ test("点一行看细节：编辑画差异、能跳到改动面板；命令给�
   try {
     await ui.render({ messages: MESSAGES, cwd: CWD });
     await ui.click("已工作");
-    await ui.click("LitWatchCard.tsx");
+    await ui.click("编辑LitWatchCard.tsx");
     const diff = ui.el.textContent ?? "";
     assert.match(diff, /已在流程清单 不在积累/);
     assert.match(diff, /已在流程清单，还没加入积累/);
@@ -183,6 +183,30 @@ test("点一行看细节：编辑画差异、能跳到改动面板；命令给�
     assert.match(ui.el.textContent ?? "", /\$ npm test# pass 12/);
     await ui.click("思考");
     assert.match(ui.el.textContent ?? "", /Let me look at the card first\./);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("文件名可点：聊天层传了 onOpenFile 才成链接，点了交出路径不展开；回放页不传就照旧整行展开", async () => {
+  const ui = await mount();
+  try {
+    const opened: unknown[] = [];
+    await ui.render({ messages: MESSAGES, cwd: CWD, onOpenFile: (f: unknown) => opened.push(f) });
+    await ui.click("已工作");
+    const link = ui.el.querySelector<HTMLButtonElement>('button[title^="在右侧预览打开"]');
+    assert.ok(link, "文件名应是单独的链接");
+    assert.equal(link.textContent, "LitWatchCard.tsx");
+    const row = Array.from(ui.el.querySelectorAll("button[aria-expanded]")).find((b) => b.textContent === "编辑")!;
+    assert.equal(row.getAttribute("aria-expanded"), "false");
+    await ui.click("LitWatchCard.tsx");
+    assert.deepEqual(opened, [{ path: `${CWD}/src/components/LitWatchCard.tsx`, root: CWD, line: null }]);
+    assert.equal(row.getAttribute("aria-expanded"), "false", "点文件名不展开差异");
+    await ui.click("编辑");
+    assert.equal(row.getAttribute("aria-expanded"), "true");
+
+    await ui.render({ messages: MESSAGES, cwd: CWD });
+    assert.equal(ui.el.querySelector('button[title^="在右侧预览打开"]'), null);
   } finally {
     await ui.close();
   }

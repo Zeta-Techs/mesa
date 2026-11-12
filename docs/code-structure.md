@@ -109,7 +109,7 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
   components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
-  components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下，
+  components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下（过程行文件名经 `onOpenFile` 开右侧预览，只聊天层传），
 components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯一挂载）：选 .ccode-sessions.zip → import_sessions_inspect 预览（逐条目标目录预填、按注册项目认 cwd、可逐条 EntryDecision）→ import_sessions_apply；Codex 内联 provider 会话顺带写客户端 provider 定义块（有密钥的绑定预选）；状态文案在 session-transfer.ts
                              #   展开为动作行（点行看差异 / 命令输出 / 思考），异常可直达输出；引用追问保留来源，搜索展开过程并钉住虚拟窗口；working 由聊天层传（进行中不收起）；
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
@@ -1065,7 +1065,7 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
   conversation-tools.ts      # 对话按「轮」整理：助手一轮的过程（思考 / 工具调用+结果配对 / 中途说明）收成 turn 段、过程后的正文切成回答；
                              #   turnToolEntries 保留行位置供异常定位；连着的读/搜并成「查阅」，最后一轮进行中（working 或有没回结果的调用）不切回答；时长、收起摘要（tests 同名）
                              # 2026-10-20：调用与结果按 callId 配对（没有 id 退回先后）；turnPlan / planEntries = 计划卡（各家待办参数收成一份，一轮取最后一次）
-  tool-activity.ts           # 一次工具调用 → 一行动作（编辑 文件 目录 +N −M / 运行 命令 / 搜索 …）：九家工具名归类、常见参数键取对象、
+  tool-activity.ts           # 一次工具调用 → 一行动作（编辑 文件 目录 +N −M / 运行 命令 / 搜索 …）；`activityFile` 给过程行文件名的预览路径 / 根 / 起始行：九家工具名归类、常见参数键取对象、
                              #   Codex 补丁拆文件与脚本模式取 cmd、行级差异 lineDiff、结果状态只看开头（tests/tool-activity.test.ts）
                              # 2026-10-20：commandCategory（借 vibe-kanban）——只读命令（cat / sed -n / rg / ls …）归进查阅，改文件 / 取网页 / 其余照旧算运行；
                              #   unwrapPowerShell 剥 Windows 上 Codex 的 `pwsh.exe -Command '…'` 外壳（chat-channel displayCommand 共用），

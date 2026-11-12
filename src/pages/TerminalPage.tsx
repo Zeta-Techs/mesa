@@ -2125,6 +2125,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     });
     setPreviewFiles([]);
     setPreviewDirty(false);
+    setPreviewReveal(previewReq.line && previewReq.line > 0 ? { path: previewReq.path, line: previewReq.line } : null);
   }, [visible, previewReq, setPreviewReq]);
 
   // ===== 沉浸式阅读区（批次 B1）=====

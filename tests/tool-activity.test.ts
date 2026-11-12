@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commandCategory, lineDiff, parsePatch, resultStatus, splitPath, toolActivities } from "../src/tool-activity.ts";
+import { activityFile, commandCategory, lineDiff, parsePatch, resultStatus, splitPath, toolActivities } from "../src/tool-activity.ts";
 
 const CWD = "/Users/me/proj";
 const one = (name: string | null, input: unknown) => {
@@ -236,4 +236,26 @@ test("splitPath：Windows 下工作目录内判定跨大小写/分隔符/verbati
   assert.equal(splitPath("c:/users/me/proj/a.ts", cwd).dir, "c:/users/me/proj/");
   const list = toolActivities("Read", JSON.stringify({ file_path: String.raw`c:\users\me\proj\src\a.ts` }), cwd, true);
   assert.equal(list[0].dir, "src/");
+});
+
+test("activityFile：读 / 写 / 改的文件能点开预览；项目外取文件所在目录作根；带起始行", () => {
+  const inProj = one("Read", { file_path: `${CWD}/manuscript/draft.md`, offset: 120 });
+  assert.deepEqual(activityFile(inProj, CWD), { path: `${CWD}/manuscript/draft.md`, root: CWD, line: 120 });
+  // /tmp 里的中间图：根取所在目录，后端预览按它放行
+  const tmp = one("Read", { file_path: "/tmp/view/fig3.jpg" });
+  assert.deepEqual(activityFile(tmp, CWD), { path: "/tmp/view/fig3.jpg", root: "/tmp/view", line: null });
+  // 相对路径按会话目录补全；没有会话目录就不给
+  const rel = one("Write", { file_path: "notes/a.md", content: "x" });
+  assert.equal(activityFile(rel, CWD)?.path, `${CWD}/notes/a.md`);
+  assert.equal(activityFile(rel, null), null);
+  // shell 里 cat 的文件同样能点
+  const cat = one("Bash", { command: "cat src/a.ts" });
+  assert.equal(activityFile(cat, CWD)?.path, `${CWD}/src/a.ts`);
+  // 搜索、运行、删除、没有文件的读取都不给
+  assert.equal(activityFile(one("Grep", { pattern: "x" }), CWD), null);
+  assert.equal(activityFile(one("Bash", { command: "npm test" }), CWD), null);
+  assert.equal(activityFile(one("Read", {}), CWD), null);
+  // Windows：相对路径用反斜杠补全，盘符路径原样
+  const win = toolActivities("Read", JSON.stringify({ file_path: String.raw`D:\tmp\a.png` }), String.raw`C:\proj`, true)[0];
+  assert.deepEqual(activityFile(win, String.raw`C:\proj`, true), { path: String.raw`D:\tmp\a.png`, root: String.raw`D:\tmp`, line: null });
 });

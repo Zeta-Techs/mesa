@@ -1655,6 +1655,14 @@ export default function ChatSurface({
               onForkHere={onForkFrom}
               onReportMismatch={running && onReportMismatch ? () => onReportMismatch("turn") : undefined}
               onQuote={(quote) => setSeedInsert({ text: "", paths: [], quote })}
+              onOpenFile={(file) =>
+                useAppStore.getState().setPreviewReq({
+                  path: file.path,
+                  name: file.path.split(/[\\/]/).pop() ?? file.path,
+                  root: file.root,
+                  line: file.line,
+                })
+              }
               queuedNote={{
                 ...note,
                 text: sentNowAt ? "已叫它马上处理" : note.text,

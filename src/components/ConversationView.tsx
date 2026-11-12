@@ -52,7 +52,7 @@ import {
   type ProcessItem,
   type ProcessTool,
 } from "../conversation-tools";
-import { resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
+import { activityFile, resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
 import { IS_WINDOWS } from "../hotkeys";
 import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
 import { makeChatQuote, type ChatQuote } from "../chat-navigation";
@@ -286,6 +286,7 @@ export default function ConversationView({
   onReportMismatch,
   onQuote,
   queuedNote,
+  onOpenFile,
 }: {
   messages: ChatMessageDto[];
   /** 正跟着底部（聊天层的贴底状态）：长对话只画视野附近时把那一段钉在末尾（virtual-window.ts tailWindow） */
@@ -314,6 +315,8 @@ export default function ConversationView({
     title: string;
     action?: { label: string; title: string; onClick: () => void } | null;
   };
+  /** 过程行里读 / 写 / 改的文件名点了在右侧预览打开（聊天层传；回放页不传 = 文件名不可点，会话页没有右侧预览） */
+  onOpenFile?: (file: { path: string; root: string; line: number | null }) => void;
 }) {
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -600,6 +603,8 @@ export default function ConversationView({
       searchHit?: boolean;
       /** 还在跑（进行中的一轮里没回结果的调用） */
       pending?: boolean;
+      /** 对象是文件、能打开：文件名单独成一个链接（点了在右侧预览），行的其余部分照旧展开细节 */
+      openTarget?: { title: string; open: () => void } | null;
       detail?: () => ReactNode;
     },
   ) {
@@ -609,20 +614,17 @@ export default function ConversationView({
     // 回放里悬着没结果的调用（多半是当时被打断）什么都不标
     const live = row.pending && !row.problem;
     const shimmer = live && working && !awaiting;
+    const targetCls = `min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? monoText : ""}`;
+    const verb = <span className="shrink-0 text-l3">{row.verb}</span>;
     const head = (
       <>
-        <span className="shrink-0 text-l3">{row.verb}</span>
-        {row.target && (
-          <span className={`min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? monoText : ""}`}>
-            {row.target}
-          </span>
-        )}
+        {verb}
+        {row.target && <span className={targetCls}>{row.target}</span>}
       </>
     );
-    const line = (
+    const lead = <Icon size={iconSize} strokeWidth={1.7} aria-hidden="true" className="shrink-0 text-l4" />;
+    const tail = (
       <>
-        <Icon size={iconSize} strokeWidth={1.7} aria-hidden="true" className="shrink-0 text-l4" />
-        {shimmer ? <span className="ccode-shimmer flex min-w-0 items-center gap-2">{head}</span> : head}
         {row.dir && <span className="min-w-0 shrink truncate text-l4">{row.dir}</span>}
         {row.note && (
           <span className={`min-w-0 shrink-[2] truncate text-l4 ${row.noteMono ? monoText : ""}`}>
@@ -635,7 +637,63 @@ export default function ConversationView({
         {live && awaiting && <span className="shrink-0 text-l4">等你决定</span>}
       </>
     );
+    const line = (
+      <>
+        {lead}
+        {shimmer ? <span className="ccode-shimmer flex min-w-0 items-center gap-2">{head}</span> : head}
+        {tail}
+      </>
+    );
     const rowCls = `flex min-w-0 items-center gap-2 min-h-8 py-0.5 ${rowText}`;
+    // 文件名可点时一行拆成三段：图标 + 动词（展开）、文件名（打开预览）、其余（展开）——按钮里不能再套按钮。
+    // 链接样式同回复正文里的 .md-file-link：虚下划线，悬停转实线
+    if (row.openTarget && row.target) {
+      const opener = (
+        <button
+          type="button"
+          title={row.openTarget.title}
+          onClick={row.openTarget.open}
+          className={`${targetCls} shrink rounded-sm text-left underline decoration-dotted decoration-1 underline-offset-[0.22em] decoration-current/55 hover:decoration-solid hover:decoration-current ${shimmer ? "ccode-shimmer" : ""}`}
+        >
+          {row.target}
+        </button>
+      );
+      const toggle = row.detail ? () => toggleExpand(key) : undefined;
+      const lineSplit = toggle ? (
+        <div className={`${rowCls} -mx-1.5 w-[calc(100%+0.75rem)] rounded-md px-1.5 hover:bg-hover`}>
+          <button type="button" aria-expanded={open} onClick={toggle} className="flex shrink-0 items-center gap-2 text-left">
+            {lead}
+            {shimmer ? <span className="ccode-shimmer">{verb}</span> : verb}
+          </button>
+          {opener}
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden="true"
+            onClick={toggle}
+            className="flex min-h-7 min-w-0 flex-1 items-center gap-2 self-stretch text-left"
+          >
+            {tail}
+          </button>
+        </div>
+      ) : (
+        <div className={rowCls}>
+          {lead}
+          {verb}
+          {opener}
+          {tail}
+        </div>
+      );
+      if (!row.detail) return <div key={key}>{lineSplit}</div>;
+      return (
+        <div key={key} ref={detailTarget?.key === key ? detailRef : undefined} data-search-block={row.searchHit || undefined}>
+          {lineSplit}
+          <Collapse key={detailTarget && detailTargets(detailTarget.key, key) ? detailTarget.seq : "toggle"} open={open} className="mb-2 mt-1 pl-6">
+            {row.detail()}
+          </Collapse>
+        </div>
+      );
+    }
     if (!row.detail) {
       return (
         <div key={key} className={rowCls}>
@@ -668,6 +726,7 @@ export default function ConversationView({
     // 进行中这一轮里还没回结果的调用：正在跑（或等你批准）
     const pending = live && t.result === null && a.verb !== "工具结果";
     const inCwd = Boolean(cwd && a.path && a.dir !== null && !/^[~/]|^[A-Za-z]:/.test(a.dir));
+    const file = onOpenFile ? activityFile(a, cwd ?? null, IS_WINDOWS) : null;
     const detail = () => {
       if (a.diff && a.diff.length) {
         return (
@@ -735,6 +794,7 @@ export default function ConversationView({
       forceOpen: searching && (containsSearch(a.input) || containsSearch(t.result)),
       searchHit: searching && !resultHit,
       pending,
+      openTarget: file && onOpenFile ? { title: `在右侧预览打开 ${file.path}`, open: () => onOpenFile(file) } : null,
       detail: () => <>{detail()}{searching && a.kind !== "run" && a.kind !== "other" && a.kind !== "mcp" && containsSearch(a.input) && <details open><summary>调用参数</summary><OutputView text={prettyInput(a.input)} full /></details>}</>,
     });
   }

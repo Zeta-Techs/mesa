@@ -770,8 +770,9 @@ interface AppState {
   setFocusTabReq: (tabId: string | null) => void;
   /** 工作区页资源面板「查看」/ 步骤产物 → 终端页预览的交接（绝对路径，终端页消费并清空）；
       root 可选：文本预览的后端根约束（不给则回落活动标签 cwd） */
-  previewReq: { path: string; name: string; root?: string } | null;
-  setPreviewReq: (r: { path: string; name: string; root?: string } | null) => void;
+  /** line：打开后滚到这一行（聊天过程行里带起始行的读取） */
+  previewReq: { path: string; name: string; root?: string; line?: number | null } | null;
+  setPreviewReq: (r: { path: string; name: string; root?: string; line?: number | null } | null) => void;
   /** 聊天里点到的项目文件：运行页改动面板展开这一份 diff。 */
   diffFocusReq: { cwd: string; path: string } | null;
   setDiffFocusReq: (r: { cwd: string; path: string } | null) => void;

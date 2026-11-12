@@ -7,7 +7,7 @@
  * Kimi StrReplaceFile{path,edit} …），按名字归类、按常见参数键取对象；认不出的照「调用 工具名」，原参数展开可看。
  */
 
-import { normSep, pathWithin, stripVerbatim } from "./path-utils.ts";
+import { normSep, parentDir, pathWithin, stripVerbatim } from "./path-utils.ts";
 
 export type ActivityKind =
   | "edit"
@@ -41,6 +41,8 @@ export interface ToolActivity {
   dir: string | null;
   /** 完整路径（展开时显示） */
   path: string | null;
+  /** 读取从第几行起（Read 的 offset 一类参数；没有为 null）：点文件名打开预览时滚到这里 */
+  line: number | null;
   /** 补一句：命令原文（target 用了说明时）、MCP 服务名、搜索范围 */
   note: string | null;
   added: number | null;
@@ -426,6 +428,7 @@ function base(kind: ActivityKind, toolName: string, input: string): ToolActivity
     target: "",
     dir: null,
     path: null,
+    line: null,
     note: null,
     added: null,
     removed: null,
@@ -548,8 +551,12 @@ export function toolActivities(
       const out = filePath ? withPath(a, filePath, cwd, isWindows) : { ...a, target: name };
       return [{ ...out, added: lineCount(content), removed: null, diff: content ? lineDiff("", content) : null }];
     }
+    case "read": {
+      const from = args?.offset ?? args?.line_offset ?? args?.start_line;
+      const line = typeof from === "number" && Number.isInteger(from) && from > 0 ? from : null;
+      return [filePath ? { ...withPath(a, filePath, cwd, isWindows), line } : { ...a, target: name }];
+    }
     case "delete":
-    case "read":
       return [filePath ? withPath(a, filePath, cwd, isWindows) : { ...a, target: name }];
     case "list":
       return [{ ...a, target: filePath ? shortPath(filePath, cwd, isWindows) || "." : "." }];
@@ -634,6 +641,26 @@ function lookActivity(
     note: desc ? line : null,
   };
   return file ? { ...withPath(out, file, cwd, isWindows), note: desc ?? line } : out;
+}
+
+/**
+ * 过程行里能点开的文件（读取 / 写入 / 编辑）：给右侧预览的绝对路径、根目录、起始行；别的动作为 null。
+ * 相对路径按会话目录补全；根目录取会话目录，文件在它外面（/tmp 里的中间图）就取文件所在目录——
+ * 同终端里点路径的口径：人亲手点一下才打开，越界与类型限制仍由后端预览守着
+ */
+export function activityFile(
+  a: ToolActivity,
+  cwd: string | null,
+  isWindows = false,
+): { path: string; root: string; line: number | null } | null {
+  if (a.kind !== "read" && a.kind !== "write" && a.kind !== "edit") return null;
+  if (!a.path || a.dir === null) return null;
+  const raw = stripVerbatim(a.path);
+  const absolute = raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\");
+  if (!absolute && !cwd) return null;
+  const path = absolute ? raw : `${cwd!.replace(/[\\/]+$/, "")}${isWindows ? "\\" : "/"}${raw.replace(/^\.[\\/]/, "")}`;
+  const root = cwd && pathWithin(path, cwd, isWindows) ? cwd : (parentDir(path) ?? "/");
+  return { path, root, line: a.line };
 }
 
 /** 前面那页里调用、这页只剩结果的工具（分页截断处） */
