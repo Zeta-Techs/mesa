@@ -64,6 +64,7 @@ fn is_accumulation_ledger(path: &str) -> bool {
     ) || (path.starts_with("notes/") && path.ends_with(".md"))
         || path.starts_with(".ccode/rework/")
         || path.starts_with(".ccode/consults/")
+        || path.starts_with(".ccode/versions/")
         || path.starts_with(".ccode/checks/")
         || path.starts_with(".ccode/record/")
         || path.starts_with("notes/assets/")

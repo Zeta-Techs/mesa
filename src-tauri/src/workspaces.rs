@@ -1586,6 +1586,11 @@ fn merge_impl_with_guard(
         }
         let ledger = pending.files_applied
             && crate::review_contract::record_pending_fact(&repo, &w.id, &pending.fact).is_ok();
+        let version_warning = if ledger {
+            crate::file_versions::capture_accepted(&repo, &pending.fact, &review).err()
+                .map(|error| format!("。文件已保存，但历史留存失败：{error}"))
+                .unwrap_or_default()
+        } else { String::new() };
         let mut result = WorkspaceMergeResultDto {
             merged: true,
             archived: false,
@@ -1625,6 +1630,7 @@ fn merge_impl_with_guard(
                 }
             }
         }
+        result.message.push_str(&version_warning);
         return Ok(result);
     }
     let already_merged = git_is_ancestor(&repo, &w.branch, &w.base_branch)?;
@@ -1896,6 +1902,11 @@ fn merge_impl_with_guard(
     save_delivery_pending(&w.id, &pending)?;
     let ledger = pending.files_applied
         && crate::review_contract::record_pending_fact(&repo, &w.id, &pending.fact).is_ok();
+    let version_warning = if ledger {
+        crate::file_versions::capture_accepted(&repo, &pending.fact, &review).err()
+            .map(|error| format!("。文件已保存，但历史留存失败：{error}"))
+            .unwrap_or_default()
+    } else { String::new() };
     let merged_at = crate::sessions::now_iso();
     if let Err(e) = conn.execute(
         "UPDATE workspaces SET merged_at=?1 WHERE id=?2",
@@ -1942,7 +1953,7 @@ fn merge_impl_with_guard(
             merged: true,
             archived: true,
             failed_phase: None,
-            message: format!("已合并进 {} 并归档工作区", w.base_branch),
+            message: format!("已合并进 {} 并归档工作区{version_warning}", w.base_branch),
             output: log,
             version_id: Some(version_id),
             reviewed_sha: Some(tip),
@@ -1969,7 +1980,7 @@ fn merge_impl_with_guard(
             merged: true,
             archived: false,
             failed_phase: None,
-            message,
+            message: format!("{message}{version_warning}"),
             output: log,
             version_id: Some(version_id),
             reviewed_sha: Some(tip),
@@ -3556,7 +3567,7 @@ fn read_delivery_pending(id: &str) -> Result<Option<PipelineFilePending>, String
     }
 }
 
-fn delivery_hash(path: &Path) -> Result<(u64, String), String> {
+pub(crate) fn delivery_hash(path: &Path) -> Result<(u64, String), String> {
     let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.file_type().is_symlink() {
         return Err(format!("产物不是普通文件：{}", path.display()));
@@ -3587,7 +3598,7 @@ fn same_delivery_content(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn copy_delivery_snapshot(source: &Path, dest: &Path) -> Result<(u64, String), String> {
+pub(crate) fn copy_delivery_snapshot(source: &Path, dest: &Path) -> Result<(u64, String), String> {
     let mut input = fs::File::open(source).map_err(|e| e.to_string())?;
     fs::create_dir_all(dest.parent().ok_or("冻结目录无效")?).map_err(|e| e.to_string())?;
     let mut options = fs::OpenOptions::new();
@@ -4959,6 +4970,28 @@ pub(crate) fn run_git_raw(repo: &Path, args: &[&str]) -> Result<String, String> 
     }
     if out.success {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// 同 run_git_raw，但按原始字节返回 stdout：取 Git 里旧版的 PDF / 图片等二进制文件用（文件的历史版本）
+pub(crate) fn run_git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let git = crate::agents::resolve_binary("git").ok_or("找不到 git 可执行文件，请先安装 git")?;
+    let mut cmd = crate::process::background_command(git);
+    cmd.arg("-C")
+        .arg(repo)
+        .args(["-c", "core.quotepath=false"])
+        .args(crate::git_info::PLATFORM_GIT_CONFIG)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = run_cmd_full(cmd, Duration::from_secs(30))?;
+    if out.timed_out {
+        return Err("操作超时".into());
+    }
+    if out.success {
+        Ok(out.stdout)
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }

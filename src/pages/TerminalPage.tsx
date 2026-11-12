@@ -120,6 +120,7 @@ import type {
   SurfaceMode,
 } from "../types";
 import type { PdfActionResult } from "../components/PdfPreview";
+import { FileVersionsButton } from "../components/FileVersions";
 import {
   TerminalView,
   agentLabel,
@@ -4128,6 +4129,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       >
                         {preview.name}
                       </button>
+                      <FileVersionsButton root={preview.root ?? activeCwd} path={preview.path} refreshKey={String(refreshKey)} />
                       {previewDirty && (
                         <span className="shrink-0 text-l3" title="有未保存的修改">
                           ●

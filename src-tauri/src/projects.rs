@@ -3304,6 +3304,7 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          # 综述回路：补料单与开轮起因（本机记录，不进 git；2026-11-05）\n\
          /.ccode/rework/\n\
          /.ccode/step-rounds.jsonl\n\
+         /.ccode/versions/\n\
          \n\
          # 研讨记录：几家 AI 只读研讨同一个问题（本机记录，不进 git；2026-11-11）\n\
          /.ccode/consults/\n\
@@ -3448,7 +3449,7 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     // 排除雷达/验收台账缓存（2026-10-13 双台账口径）：老项目 .gitignore 还没有忽略行，
     // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
     // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
-    const BOOTSTRAP_EXCLUDES: [&str; 13] = [
+    const BOOTSTRAP_EXCLUDES: [&str; 14] = [
         ".ccode/watch-explains.json",
         ".ccode/pending-registrations.json",
         ".ccode/acceptance-log.jsonl",
@@ -3462,6 +3463,7 @@ fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
         ".ccode/rework",
         ".ccode/step-rounds.jsonl",
         ".ccode/consults",
+        ".ccode/versions",
     ];
     // 已被 .gitignore 忽略的台账不再写 exclude：exclude 点名一个存在且已忽略的文件时，
     // git add 整条报「paths are ignored」退出 1，档案卡一次也提交不上（2026-10-22 实测：

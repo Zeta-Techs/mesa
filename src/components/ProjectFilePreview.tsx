@@ -7,10 +7,11 @@ import XlsxPreview from "./XlsxPreview";
 import ImagePreview from "./ImagePreview";
 import UnsupportedPreview from "./UnsupportedPreview";
 import SlidesPreview from "./SlidesPreview";
+import { FileVersionsButton } from "./FileVersions";
 
 const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
 
-export default function ProjectFilePreview({
+function PreviewContent({
   path,
   root,
   onOpenFile,
@@ -19,6 +20,7 @@ export default function ProjectFilePreview({
   onAnnotate,
   onDirtyChange,
   onOrganize,
+  readOnly,
 }: {
   path: string;
   root: string;
@@ -37,6 +39,7 @@ export default function ProjectFilePreview({
   onOrganize?: ComponentProps<typeof PdfContinuousView>["onOrganize"];
   /** 脏状态上报（只有文本编辑态会脏）：宿主用来在切换/关闭预览前确认丢弃 */
   onDirtyChange?: (dirty: boolean) => void;
+  readOnly?: string;
 }) {
   const kind = projectFilePreviewKind(path);
   const frame = "flex min-h-0 flex-1 flex-col";
@@ -111,8 +114,16 @@ export default function ProjectFilePreview({
           leading={leading}
           onAnnotate={onAnnotate}
           onDirtyChange={onDirtyChange}
+          readOnly={readOnly}
         />
       </Suspense>
     </div>
   );
+}
+
+export default function ProjectFilePreview(props: ComponentProps<typeof PreviewContent>) {
+  return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    {!props.readOnly && <div className="flex shrink-0 justify-end px-2"><FileVersionsButton root={props.root} path={props.path} /></div>}
+    <PreviewContent {...props} />
+  </div>;
 }

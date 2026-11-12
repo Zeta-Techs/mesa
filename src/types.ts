@@ -1,3 +1,32 @@
+import type { RoundCause } from "./step-loop";
+
+export interface FileVersion {
+  id: string;
+  path: string;
+  savedAt: string;
+  note: string;
+  source: string;
+  workspaceId: string | null;
+  sha256: string;
+  size: number;
+  gitBlob: string | null;
+  saveId: string | null;
+  round: number | null;
+  cause: RoundCause | null;
+}
+
+export interface VersionFile {
+  path: string;
+  tracked: boolean;
+  exists: boolean;
+  versions: FileVersion[];
+}
+
+export interface FileVersionsDto {
+  root: string;
+  files: VersionFile[];
+}
+
 export interface Profile {
   id: string;
   agent: string;

@@ -25,7 +25,8 @@ import { MAX_MATERIALS as CONSULT_MAX_MATERIALS, stepConsultQuestion } from "../
 import { stepAttention } from "../run-overview";
 import { toast } from "../toast";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
-import { ReworkDialog, StepRoundsSection, type ReworkFields } from "./StepLoop";
+import { ReworkDialog, type ReworkFields } from "./StepLoop";
+import { FileVersionsButton } from "./FileVersions";
 import {
   coverageReworkDrafts,
   groupCoverageDrafts,
@@ -1804,8 +1805,8 @@ export default function TaskCardsSection({
               })();
               const roundsWs = stepWorkspace(focusStepDto);
               return roundsWs ? (
-                <StepRoundsSection
-                  projectPath={projectPath}
+                <FileVersionsButton
+                  root={projectPath}
                   workspaceId={roundsWs.id}
                   refreshKey={`${focusRunStatus ?? ""}|${refreshToken}`}
                   lead={lead}

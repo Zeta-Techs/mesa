@@ -1560,6 +1560,61 @@ fn merge_without_archive_keeps_workspace_active() {
 }
 
 #[test]
+fn file_retention_does_not_change_merge_or_archive_and_keeps_accepted_versions() {
+    let Some(fixture) = Fixture::new() else { return };
+    let _config = crate::storage::redirect_config_root(&fixture.dir.join("config"));
+    sh(&fixture.repo, &["add", ".env", ".envrc"]);
+    sh(&fixture.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "env"]);
+    fs::create_dir_all(fixture.repo.join(".ccode/versions")).unwrap();
+    fs::write(fixture.repo.join(".ccode/versions/index.json"), br#"{"tracked":["feature.txt","output/result.pdf"],"versions":[]}"#).unwrap();
+    crate::projects::exclude_in_git(&fixture.repo, "/.ccode/versions/");
+    crate::projects::exclude_in_git(&fixture.repo, "/output/");
+    let workspace = create_impl(&fixture.conn, &fixture.ws_root, fixture.repo.to_str().unwrap(), "retain-files").unwrap();
+    let worktree = PathBuf::from(&workspace.worktree_path);
+    fs::write(worktree.join("feature.txt"), "accepted first").unwrap();
+    commit_all_in_worktree(&worktree, "first");
+    fs::create_dir_all(worktree.join("output")).unwrap();
+    fs::write(worktree.join("output/result.pdf"), b"accepted-pdf").unwrap();
+    let first = merge_impl(&fixture.conn, &workspace.id, false).unwrap();
+    assert!(first.merged && first.ledger_written && !first.archived, "{}", first.message);
+    let index: serde_json::Value = serde_json::from_slice(&fs::read(fixture.repo.join(".ccode/versions/index.json")).unwrap()).unwrap();
+    assert_eq!(index["versions"].as_array().unwrap().len(), 2);
+    let pdf = index["versions"].as_array().unwrap().iter().find(|version| version["path"] == "output/result.pdf").unwrap();
+    let object = fixture.repo.join(".ccode/versions/objects").join(pdf["sha256"].as_str().unwrap());
+    assert_eq!(fs::read(&object).unwrap(), b"accepted-pdf");
+    for _ in 0..5 { freeze_deliverables(&workspace, &fixture.repo).unwrap(); }
+    assert_eq!(fs::read(&object).unwrap(), b"accepted-pdf");
+    fs::write(worktree.join("feature.txt"), "accepted second").unwrap();
+    commit_all_in_worktree(&worktree, "second");
+    let second = merge_impl(&fixture.conn, &workspace.id, true).unwrap();
+    assert!(second.merged && second.ledger_written && second.archived, "{}", second.message);
+    assert_eq!(fs::read(fixture.repo.join("feature.txt")).unwrap(), b"accepted second");
+    let index: serde_json::Value = serde_json::from_slice(&fs::read(fixture.repo.join(".ccode/versions/index.json")).unwrap()).unwrap();
+    assert_eq!(index["versions"].as_array().unwrap().len(), 3);
+    assert_eq!(fs::read(object).unwrap(), b"accepted-pdf");
+}
+
+#[test]
+fn file_retention_failure_is_reported_without_blocking_acceptance() {
+    let Some(fixture) = Fixture::new() else { return };
+    let _config = crate::storage::redirect_config_root(&fixture.dir.join("config"));
+    sh(&fixture.repo, &["add", ".env", ".envrc"]);
+    sh(&fixture.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "env"]);
+    fs::create_dir_all(fixture.repo.join(".ccode/versions")).unwrap();
+    fs::write(fixture.repo.join(".ccode/versions/index.json"), b"broken").unwrap();
+    crate::projects::exclude_in_git(&fixture.repo, "/.ccode/versions/");
+    let workspace = create_impl(&fixture.conn, &fixture.ws_root, fixture.repo.to_str().unwrap(), "retain-failure").unwrap();
+    let worktree = PathBuf::from(&workspace.worktree_path);
+    fs::write(worktree.join("feature.txt"), "accepted").unwrap();
+    commit_all_in_worktree(&worktree, "done");
+    let result = merge_impl(&fixture.conn, &workspace.id, true).unwrap();
+    assert!(result.merged && result.ledger_written && result.archived);
+    assert!(result.message.contains("历史留存失败"));
+    assert_eq!(fs::read(fixture.repo.join("feature.txt")).unwrap(), b"accepted");
+    assert_eq!(fs::read(fixture.repo.join(".ccode/versions/index.json")).unwrap(), b"broken");
+}
+
+#[test]
 fn merge_pending_replay_never_merges_new_work_or_changes_original_version() {
     let Some(fx) = Fixture::new() else { return };
     sh(&fx.repo, &["add", ".env", ".envrc"]);

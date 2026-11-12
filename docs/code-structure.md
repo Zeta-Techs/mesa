@@ -244,8 +244,9 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
   components/LaunchMenu.tsx  # 启动栏下拉菜单组件：portal 到 body、分组标题、键盘导航，替代原生 select
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
-  components/StepLoop.tsx    # 综述回路二期界面（design-review-loop.md §4/§6）：ReworkDialog 补料单表单（只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数；chainOptions 补完后接着跟进的下游勾选，tests/rework-dialog-ui.test.ts）、
-                             #   StepRoundsSection「这一步做过 N 轮」只读列表 + 逐文件看这一版 / 和上一轮比（不回滚；两轮以上或有未保存的一轮才出）
+  components/StepLoop.tsx    # 综述回路补料表单（design-review-loop.md §4）：ReworkDialog 只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数；chainOptions 补完后接着跟进的下游勾选（tests/rework-dialog-ui.test.ts）
+components/FileVersions.tsx  # 文件版本短入口与按需弹层（步骤卡、项目预览、终端预览共用）：人选文件保留后续版本/手动留存、备注/确认删除、只读查看、任选两版文本比较与图片并排、另存副本；不派活、不替换现稿（tests/file-versions-ui.test.ts）
+components/ProjectFilePreview.tsx  # 项目文件预览按类型分流；普通预览接文件版本入口，历史预览传只读原因且不再嵌套版本操作
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——目标空态「套一整套流程…」打开的是另一个 TemplatePickModal（带全局设定屏）
@@ -2019,8 +2020,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   补料链：ReworkDraft.chain + .ccode/rework/chain/<id>.json（rework_chain_claim 原子认领 / skip / stop，锁里读改写）
                              #   都不进 git、合并闸门豁免；step_rounds 读验收账本（pipeline_merge + scene_ref=工作区 id）按时间窗配起因；
                              #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；每轮文件的新加 / 改了 / 删了按保存那次合并的第一父比所审版本（round_changes）；
-                             #   step_round_ledger 两版纳入清单的白话摘要（conflict_hint::ledger_change_summary）；
+                             #   step_round_ledger 两版纳入清单的白话摘要（conflict_hint::ledger_change_summary）；saved_round_origin 为文件留存提供轮次起因，旧轮次界面已撤；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
+  file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；只读预览复制到配置 tmp、文本对照脱敏、另存新路径拒绝覆盖/越界，删除按引用计数回收
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
                              #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear
                              #   2026-11-06：stale_upstream_for 按最后一次并入判（本步保存不算）；workspace_incoming 列基准侧多出的文件（HEAD...base）ed 判定工作区有文件只看工作区
@@ -2029,7 +2031,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # 计数口径与前端 step-flow.ts parseToFetchItems 双端镜像：编号/列表行都算，裸行须带「 — DOI」尾巴，说明行与「待补」不算）、import_human_deliverable
                              # 交付导入（复制落点 + 登记提货单；v3.74 起 step/title 可选 + target_override 固定落点，
                              # 无步骤语境 = papers/imports/ 检索结果导入落主仓）
-                             # 非 Git 产物冻结/带回（workspace_review_deliverables / apply_delivery_review）；workspace_delivery_skip 逐个勾掉不带回
+                             # 非 Git 产物冻结/带回（workspace_review_deliverables / apply_delivery_review）；验收记录成功后交 file_versions 留存所选文件，不改合并/归档结果；run_git_bytes 只读获取 Git 二进制；workspace_delivery_skip 逐个勾掉不带回
                              # （skipped.json 按 SHA-256 记，归档守卫对勾掉的同一版放行，见 pipeline.md）
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM
   ws_settings.rs             # .ccode/settings.toml 三层合并（用户→仓库→local）；开步自动写 quarto 渲染脚本

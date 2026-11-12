@@ -419,6 +419,17 @@ fn cause_in<'a>(starts: &'a [RoundStart], after: &str, until: Option<&str>) -> O
         .max_by(|a, b| a.at.cmp(&b.at))
 }
 
+pub(crate) fn saved_round_origin(root: &Path, workspace_id: &str, saved_at: &str) -> (usize, String) {
+    let mut saves: Vec<_> = crate::projects::read_acceptance_log_at(root).into_iter()
+        .filter(|save| save.kind == crate::review_contract::KIND_PIPELINE_MERGE && save.scene_ref.as_deref() == Some(workspace_id) && save.decided_at.as_str() <= saved_at).collect();
+    saves.sort_by(|before, after| before.decided_at.cmp(&after.decided_at));
+    let after = saves.iter().rev().nth(1).map(|save| save.decided_at.as_str()).unwrap_or("");
+    let starts: Vec<_> = read_rounds_at(root).into_iter().filter(|start| start.workspace_id == workspace_id && start.kind != "ack" && start.kind != "sync").collect();
+    let cause = cause_in(&starts, after, Some(saved_at)).map(|start| start.kind.clone())
+        .unwrap_or_else(|| if saves.len() <= 1 { "first".into() } else { "manual".into() });
+    (saves.len().max(1), cause)
+}
+
 fn step_rounds_at(root: &Path, workspace_id: &str) -> StepRoundsDto {
     let mut saves: Vec<_> = crate::projects::read_acceptance_log_at(root)
         .into_iter()

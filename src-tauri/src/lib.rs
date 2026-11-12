@@ -151,6 +151,7 @@ mod watch_review;
 mod win_snap;
 mod window_close;
 mod step_loop;
+mod file_versions;
 mod workspaces;
 mod help_requests;
 mod schedule_events;
@@ -1160,6 +1161,11 @@ pub fn run() {
             step_loop::step_round_ledger,
             step_loop::step_round_diff,
             step_loop::step_followup_scope,
+            file_versions::file_versions,
+            file_versions::file_version_update,
+            file_versions::file_version_preview,
+            file_versions::file_version_diff,
+            file_versions::file_version_export,
             fs_tree::save_research_ledger,
             journal_metrics::lookup_journal_metrics,
             journal_metrics::journal_metrics_status,

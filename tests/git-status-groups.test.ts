@@ -77,6 +77,7 @@ test("积累面台账不算「你的改动未存入历史」（与合并闸门�
     file(".ccode/rework/", "??"),
     file(".ccode/rework/r1.json", "M"),
     file(".ccode/step-rounds.jsonl", "M"),
+    file(".ccode/versions/index.json", "M"),
   ];
   assert.deepEqual(
     userDirtyFiles(clean).map((row) => row.path),
