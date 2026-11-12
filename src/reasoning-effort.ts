@@ -90,7 +90,11 @@ const EFFORT_PATTERNS: Record<string, RegExp[]> = {
     new RegExp(String.raw`\b${LEVEL}\s*·\s*/effort\b`, "gi"),
     new RegExp(String.raw`\beffort\s+level\s+to\s+${LEVEL}\b`, "gi"),
   ],
-  codex: [new RegExp(String.raw`\b(none|minimal|low|medium|high|xhigh|default)\s*·\s*${PATH_HEAD}`, "gi")],
+  codex: [
+    new RegExp(String.raw`\b(none|minimal|low|medium|high|xhigh|default)\s*·\s*${PATH_HEAD}`, "gi"),
+    // 切档回显「• Model changed to e2e-picked low for this session only」：底栏差量重绘时流里档位不挨着路径，回显这句是整句出的
+    /\bModel changed to\s+\S+\s+(none|minimal|low|medium|high|xhigh)\b/gi,
+  ],
   grok: [new RegExp(String.raw`\(${LEVEL}\)\s*·`, "gi")],
   qwen: [
     new RegExp(String.raw`➜\s+\S+\s+·\s+\S+\s+${LEVEL}\b`, "gi"),
@@ -107,7 +111,7 @@ EFFORT_PATTERNS.codebuddy = EFFORT_PATTERNS["claude-code"]!;
 const QUICK_KEYS: Record<string, string[]> = {
   "claude-code": ["effort"],
   codebuddy: ["effort"],
-  codex: ["·"],
+  codex: ["·", "Model changed"],
   grok: [")"],
   qwen: ["effort", "➜"],
   kimi: ["thinking"],
@@ -188,9 +192,23 @@ export function detectModelInOutput(text: string, agentId = "claude-code"): stri
 const MODEL_SCREEN_PATTERNS: Record<string, RegExp> = {
   // Codex 0.163 底栏「  e2e-picked high · /目录」，没设档写「default」
   codex: new RegExp(
-    String.raw`^\s*([^\s·]+)\s+(?:none|minimal|low|medium|high|xhigh|default)\s*·\s*${PATH_HEAD}`,
+    String.raw`^\s*([^\s·]+)\s+(none|minimal|low|medium|high|xhigh|default)\s*·\s*${PATH_HEAD}`,
   ),
 };
+
+/** 从可视区读底栏上的思考档（Codex 底栏「模型 档位 · 目录」）：输出流认不出差量重绘的底栏时靠它 */
+export function detectEffortOnScreen(lines: string[], agentId: string): string | null {
+  const re = MODEL_SCREEN_PATTERNS[agentId];
+  if (!re) return null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = re.exec(lines[i]!);
+    if (m && plausibleModel(m[1]!)) {
+      const level = m[2]!.toLowerCase();
+      return level === "default" ? EFFORT_SEEN_DEFAULT : level;
+    }
+  }
+  return null;
+}
 
 export function modelOnScreenSupported(agentId: string): boolean {
   return agentId in MODEL_SCREEN_PATTERNS;

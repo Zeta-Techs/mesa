@@ -5,6 +5,8 @@ import {
   detectEffortInOutput,
   detectModelInOutput,
   detectModelOnScreen,
+  detectEffortOnScreen,
+  EFFORT_SEEN_DEFAULT,
   modelOnScreenSupported,
   modelReadbackSupported,
   outputTail,
@@ -171,4 +173,12 @@ test("留给下一帧的尾巴不从转义序列中间开始", () => {
 test("Qwen Code 0.25.1 底栏写着当前思考档（/effort 之后屏上只剩一个空的 ●）", () => {
   assert.equal(detectEffortInOutput("  ➜ work · e2e-picked low", "qwen"), "low");
   assert.equal(detectEffortInOutput("  ➜ my-proj · glm-5.3 xhigh\n  ⏸ Ask permissions", "qwen"), "xhigh");
+});
+
+test("Codex 切档：回显句与可视区底栏都能认出新档位（差量重绘时流里档位不挨着路径）", () => {
+  assert.equal(detectEffortInOutput("• Model changed to e2e-picked low for this session only", "codex"), "low");
+  assert.equal(detectEffortOnScreen(["", "  e2e-picked low · /private/var/x/work", "  ? for shortcuts"], "codex"), "low");
+  assert.equal(detectEffortOnScreen(["  e2e-picked default · /work"], "codex"), EFFORT_SEEN_DEFAULT);
+  assert.equal(detectEffortOnScreen(["随便一行"], "codex"), null);
+  assert.equal(detectEffortOnScreen(["  m high · /work"], "claude-code"), null);
 });

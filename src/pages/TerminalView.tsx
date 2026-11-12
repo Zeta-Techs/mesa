@@ -115,6 +115,7 @@ import {
   detectEffortInOutput,
   detectModelInOutput,
   detectModelOnScreen,
+  detectEffortOnScreen,
   modelOnScreenSupported,
   outputTail,
 } from "../reasoning-effort";
@@ -2965,8 +2966,11 @@ export const TerminalView = memo(function TerminalView({
     footerScanTimerRef.current = window.setTimeout(() => {
       footerScanTimerRef.current = null;
       if (ptyKindRef.current !== "agent") return;
-      const seen = detectModelOnScreen(screenLines(), launchAgentRef.current);
+      const lines = screenLines();
+      const seen = detectModelOnScreen(lines, launchAgentRef.current);
       if (seen) setModelSeen((prev) => (prev === seen ? prev : seen));
+      const seenEffort = detectEffortOnScreen(lines, launchAgentRef.current);
+      if (seenEffort) setEffortSeen((prev) => (prev === seenEffort ? prev : seenEffort));
     }, 500);
   }
   function scanConnIssueSoon() {
