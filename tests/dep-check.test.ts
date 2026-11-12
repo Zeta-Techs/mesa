@@ -23,6 +23,7 @@ function dep(partial: Partial<DepCheckDto["git"]>, nodeOk = true): DepCheckDto {
     pymupdf: absent,
     pillow: absent,
     pptx: absent,
+    datasci: absent,
     channel: "brew",
     checkedAt: "2026-09-02 10:00:00",
   };
@@ -52,10 +53,12 @@ test("拼图库缺 Python：有 winget / brew / Mac 官方包才能一键补齐�
     assert.ok(canOneClickInstall("pymupdf", ch, "python"), ch);
   assert.ok(!canOneClickInstall("pillow", "none", "python"));
   assert.equal(depMissingReason({ status: "missing", path: null, prereq: "python" }), "还缺 Python 3");
-  assert.match(installButtonHint("pymupdf", "python") ?? "", /先装好 Python 3.*一起装 PyMuPDF、Pillow 和 python-pptx/);
+  assert.match(installButtonHint("pymupdf", "python") ?? "", /先装好 Python 3.*一起装 PyMuPDF、Pillow、python-pptx 和数据分析库/);
   assert.match(installButtonHint("pillow") ?? "", /一起装/);
   assert.ok(canOneClickInstall("pptx", "none"));
-  assert.match(installButtonHint("pptx") ?? "", /python-pptx 一起装/);
+  assert.ok(canOneClickInstall("datasci", "none"));
+  assert.ok(installGuidance("datasci", "none", "linux").includes("python3-matplotlib"));
+  assert.match(installButtonHint("pptx") ?? "", /数据分析库一起装/);
   assert.equal(installButtonHint("git", "python"), null);
   const win = installGuidance("pymupdf", "none", "win", "python");
   assert.ok(win.includes("python.org") && win.includes("Add python.exe to PATH"));

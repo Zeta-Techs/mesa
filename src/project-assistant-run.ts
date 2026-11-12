@@ -276,6 +276,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
           ["Node", deps.node],
           ["Quarto", deps.quarto],
           ["LaTeX", deps.tex],
+          ["数据分析库（numpy / pandas / matplotlib）", deps.datasci],
         ] as const
       ).map(([name, d]) => ({ name, status: d.status, version: d.version, note: d.note }))
     : [];

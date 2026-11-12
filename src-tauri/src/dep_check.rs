@@ -60,6 +60,8 @@ pub struct DepCheckDto {
     pub pillow: DepItemDto,
     /// 示意图出可编辑 PPTX（python-pptx，schematic-forge 技能）。缺失只展示。
     pub pptx: DepItemDto,
+    /// 数据分析与统计图（numpy、pandas、matplotlib 三个都在才算有，data-eda / figure-forge 技能）。缺失只展示。
+    pub datasci: DepItemDto,
     /// 一键安装渠道：brew | winget | xcode | none
     pub channel: String,
     /// 本地时间可读串（YYYY-MM-DD HH:MM:SS）
@@ -328,7 +330,29 @@ fn last_line(out: &str) -> Option<String> {
         .map(String::from)
 }
 
+/// 数据分析三件套：缺一个 AI 跑分析脚本就报 No module named（2026-11-12 HER：conda base 没有 matplotlib / pandas）
+const DATASCI_MODULES: &[&str] = &["numpy", "pandas", "matplotlib"];
+
+/// 全部导入成功才打印版本（取最后一个模块的），任一缺失退出码非零
+fn all_modules_script(modules: &[&str]) -> String {
+    let imports = modules
+        .iter()
+        .map(|m| format!("import {m}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let last = modules.last().copied().unwrap_or("sys");
+    format!("{imports}\nprint(getattr({last}, '__version__', ''))")
+}
+
+fn probe_python_all(modules: &[&str]) -> DepItemDto {
+    probe_python_script(&all_modules_script(modules))
+}
+
 fn probe_python_module(modules: &[&str]) -> DepItemDto {
+    probe_python_script(&module_version_script(modules))
+}
+
+fn probe_python_script(script: &str) -> DepItemDto {
     let Some(path) = usable_python() else {
         return DepItemDto {
             prereq: Some("python".into()),
@@ -337,7 +361,7 @@ fn probe_python_module(modules: &[&str]) -> DepItemDto {
     };
     // 顺带打印版本（设置页原先一律显示「版本未知」）：PIL 与新版 PyMuPDF 有 __version__，
     // 旧版 PyMuPDF 只有 VersionBind；都没有就空行，照旧算已安装
-    match run_python(&path, &module_version_script(modules)) {
+    match run_python(&path, script) {
         Some(out) => DepItemDto {
             status: "ok".into(),
             version: last_line(&out),
@@ -387,6 +411,7 @@ fn check_dependencies_sync() -> Result<DepCheckDto, String> {
     let pymupdf = probe_python_module(PYMUPDF_MODULES);
     let pillow = probe_python_module(&["PIL"]);
     let pptx = probe_python_module(&["pptx"]);
+    let datasci = probe_python_all(DATASCI_MODULES);
     let has_brew = os == HostOs::Macos && agents::resolve_binary("brew").is_some();
     let has_winget = os == HostOs::Windows && agents::resolve_binary("winget").is_some();
     Ok(DepCheckDto {
@@ -397,6 +422,7 @@ fn check_dependencies_sync() -> Result<DepCheckDto, String> {
         pymupdf,
         pillow,
         pptx,
+        datasci,
         channel: channel_for(os, has_brew, has_winget).into(),
         checked_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
     })
@@ -417,11 +443,11 @@ fn dep_key(tool: &str) -> String {
 }
 
 fn validate_tool(tool: &str) -> Result<(), String> {
-    if matches!(tool, "git" | "node" | "quarto" | "tex" | "pymupdf" | "pillow" | "pptx") {
+    if matches!(tool, "git" | "node" | "quarto" | "tex" | "pymupdf" | "pillow" | "pptx" | "datasci") {
         Ok(())
     } else {
         Err(format!(
-            "不支持安装的依赖：{tool}（仅 git / node / quarto / tex / pymupdf / pillow / pptx）"
+            "不支持安装的依赖：{tool}（仅 git / node / quarto / tex / pymupdf / pillow / pptx / datasci）"
         ))
     }
 }
@@ -484,6 +510,13 @@ fn install_spec(tool: &str) -> InstallSpec {
             apt: "python3-pptx",
             site: "pypi.org/project/python-pptx",
         },
+        "datasci" => InstallSpec {
+            brew: "",
+            brew_cask: false,
+            winget: "",
+            apt: "python3-numpy python3-pandas python3-matplotlib",
+            site: "pypi.org/project/matplotlib",
+        },
         _ => InstallSpec {
             brew: "node",
             brew_cask: false,
@@ -532,6 +565,7 @@ fn installed_after(tool: &str) -> bool {
         "pymupdf" => probe_python_module(PYMUPDF_MODULES).status == "ok",
         "pillow" => probe_python_module(&["PIL"]).status == "ok",
         "pptx" => probe_python_module(&["pptx"]).status == "ok",
+        "datasci" => probe_python_all(DATASCI_MODULES).status == "ok",
         other => probe_named(other).status == "ok",
     }
 }
@@ -546,7 +580,7 @@ fn finish_install(tool: &str, ok: bool, output: String, method: &str) -> UpdateR
     let ok = ok || present;
     let version_after = if ok && present {
         match tool {
-            "pymupdf" | "pillow" | "pptx" | "tex" => Some("已安装".into()),
+            "pymupdf" | "pillow" | "pptx" | "datasci" | "tex" => Some("已安装".into()),
             other => agents::resolve_binary(other)
                 .and_then(|p| agents::version_with_timeout(&p, agents::VERSION_QUERY_TIMEOUT))
                 .or(Some("已安装".into())),
@@ -573,8 +607,9 @@ fn install_with_brew(app: &AppHandle, tool: &str, package: &str, cask: bool) -> 
     finish_install(tool, ok, output, "brew")
 }
 
-/// 做图用的 Python 库一起装：普通用户分不清 PyMuPDF / Pillow / python-pptx，点任一行的「一键安装」都补齐三个
-const PIP_PACKAGES: [&str; 3] = ["pymupdf", "pillow", "python-pptx"];
+/// 科研用的 Python 库一起装：普通用户分不清 PyMuPDF / Pillow / python-pptx / matplotlib 这些名字，
+/// 点任一行的「一键安装」都补齐全部（2026-11-12 起含数据分析三件套）
+const PIP_PACKAGES: [&str; 6] = ["pymupdf", "pillow", "python-pptx", "numpy", "pandas", "matplotlib"];
 
 /// winget 上的 Python 包：3.12 已停出安装包，用 3.13
 const WINGET_PYTHON_ID: &str = "Python.Python.3.13";
@@ -648,7 +683,7 @@ fn install_with_pip(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, Stri
         }
     }
     if FIGURE_LIBS_BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return Err("做图用的 Python 库（PyMuPDF、Pillow、python-pptx）正在一起安装，等它装完".into());
+        return Err("科研用的 Python 库（PyMuPDF、Pillow、python-pptx、numpy、pandas、matplotlib）正在一起安装，等它装完".into());
     }
     let _busy = BusyGuard;
     let python = match usable_python() {
@@ -683,7 +718,7 @@ fn install_with_pip(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, Stri
         use tauri::Emitter;
         let _ = app.emit(
             &format!("agent-update-output-{}", dep_key(tool)),
-            "没拿到管理员确认，改装到你自己的用户目录：Mesa 能用，但 Codex 的沙箱里用不了这两个库。\n",
+            "没拿到管理员确认，改装到你自己的用户目录：Mesa 能用，但 Codex 的沙箱里用不了这些库。\n",
         );
     }
     let (ok, output) = updater::run_streaming(app, &dep_key(tool), &program, &pip_args(false));
@@ -825,7 +860,7 @@ fn install_with_winget(app: &AppHandle, tool: &str, winget_id: &str) -> UpdateRe
 }
 
 fn install_macos(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String> {
-    if matches!(tool, "pymupdf" | "pillow" | "pptx") {
+    if matches!(tool, "pymupdf" | "pillow" | "pptx" | "datasci") {
         return install_with_pip(app, tool);
     }
     let spec = install_spec(tool);
@@ -1013,7 +1048,7 @@ fn install_tex_via_quarto(app: &AppHandle, update_path: bool) -> Result<UpdateRe
 }
 
 fn install_windows(app: &AppHandle, tool: &str) -> Result<UpdateResultDto, String> {
-    if matches!(tool, "pymupdf" | "pillow" | "pptx") {
+    if matches!(tool, "pymupdf" | "pillow" | "pptx" | "datasci") {
         return install_with_pip(app, tool);
     }
     if tool == "tex" {
@@ -1170,7 +1205,7 @@ mod tests {
 
     #[test]
     fn tool_whitelist_accepts_known_deps_only() {
-        for tool in ["git", "node", "quarto", "tex", "pymupdf", "pillow", "pptx"] {
+        for tool in ["git", "node", "quarto", "tex", "pymupdf", "pillow", "pptx", "datasci"] {
             assert!(validate_tool(tool).is_ok(), "{tool}");
         }
         for bad in ["brew", "Git", "", "git;rm", "pip"] {
@@ -1248,13 +1283,13 @@ mod tests {
     #[test]
     fn pip_installs_both_figure_libs_and_handles_pep668() {
         let plain = pip_args(false);
-        assert!(plain.ends_with(&["pymupdf".to_string(), "pillow".to_string(), "python-pptx".to_string()]));
+        assert!(plain.ends_with(&PIP_PACKAGES.map(String::from)));
         assert!(!plain.contains(&"--user".to_string()));
         // PEP 668 连 --user 也拦，必须带 --break-system-packages
         let managed = pip_args(true);
         assert!(managed.contains(&"--user".to_string()));
         assert!(managed.contains(&"--break-system-packages".to_string()));
-        assert!(managed.ends_with(&["pymupdf".to_string(), "pillow".to_string(), "python-pptx".to_string()]));
+        assert!(managed.ends_with(&PIP_PACKAGES.map(String::from)));
     }
 
     /// 手动跑：真弹一次 UAC，以管理员身份对本机全机 Python 跑 pip（已装就是 Requirement already satisfied）。
@@ -1290,7 +1325,7 @@ mod tests {
         let s = elevated_pip_script(Path::new(r"C:\Users\me\AppData\Roaming\ccode\tmp\pip-elevated-x\pip.log"));
         // 路径按 JSON 字符串转义进 Python（反斜杠成对）
         assert!(s.contains(r#"open("C:\\Users\\me\\AppData\\Roaming\\ccode\\tmp\\pip-elevated-x\\pip.log""#), "{s}");
-        assert!(s.contains(r#"["-m","pip","install","--disable-pip-version-check","--no-input","pymupdf","pillow","python-pptx"]"#), "{s}");
+        assert!(s.contains(r#"["-m","pip","install","--disable-pip-version-check","--no-input","pymupdf","pillow","python-pptx","numpy","pandas","matplotlib"]"#), "{s}");
         assert!(s.contains("sys.exit(r.returncode)"));
         assert_eq!(ps_quote(r"C:\it's\python.exe"), r"'C:\it''s\python.exe'");
     }
@@ -1302,6 +1337,17 @@ mod tests {
         assert!(node.windows(2).any(|w| w == ["--scope", "machine"]));
         let git = winget_install_args("git", "Git.Git");
         assert!(!git.contains(&"--scope".to_string()));
+    }
+
+    #[test]
+    fn datasci_probe_needs_all_three_modules() {
+        let script = all_modules_script(DATASCI_MODULES);
+        assert!(script.starts_with("import numpy\nimport pandas\nimport matplotlib\n"), "{script}");
+        assert!(script.ends_with("print(getattr(matplotlib, '__version__', ''))"), "{script}");
+        for m in DATASCI_MODULES {
+            assert!(PIP_PACKAGES.contains(m), "{m} 要在一键安装那一批里");
+        }
+        assert!(linux_hint("datasci").contains("python3-matplotlib"));
     }
 
     #[test]

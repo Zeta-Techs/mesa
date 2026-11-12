@@ -4365,7 +4365,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 <DepStatusLine
                   label="PyMuPDF"
                   purpose="（综述拼图：从 PDF 里裁图）"
-                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running}
+                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running || depInstall.entries.datasci.running}
                   item={depCheck.pymupdf}
                   tool="pymupdf"
                   channel={depCheck.channel}
@@ -4375,7 +4375,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 <DepStatusLine
                   label="Pillow"
                   purpose="（综述拼图：把图排成一版）"
-                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running}
+                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running || depInstall.entries.datasci.running}
                   item={depCheck.pillow}
                   tool="pillow"
                   channel={depCheck.channel}
@@ -4385,11 +4385,21 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 <DepStatusLine
                   label="python-pptx"
                   purpose="（示意图：出能在 PPT 里改的文件）"
-                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running}
+                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running || depInstall.entries.datasci.running}
                   item={depCheck.pptx}
                   tool="pptx"
                   channel={depCheck.channel}
                   entry={depInstall.entries.pptx}
+                  onInstall={(t) => void depInstall.install(t)}
+                />
+                <DepStatusLine
+                  label="数据分析库"
+                  purpose="（numpy、pandas、matplotlib：数据分析和统计图）"
+                  busy={depInstall.entries.pymupdf.running || depInstall.entries.pillow.running || depInstall.entries.pptx.running || depInstall.entries.datasci.running}
+                  item={depCheck.datasci}
+                  tool="datasci"
+                  channel={depCheck.channel}
+                  entry={depInstall.entries.datasci}
                   onInstall={(t) => void depInstall.install(t)}
                 />
                 <div className="flex items-center gap-2 py-1 text-xs text-l4">
