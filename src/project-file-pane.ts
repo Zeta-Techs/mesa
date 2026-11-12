@@ -21,6 +21,7 @@ export interface ProjectFilePaneReq extends ProjectFilePaneFile {
   from?: string;
   /** 栏头「问 AI」（资料列表接线）：按此刻看的文件路径开商量对话；不给就不显示 */
   askAi?: (path: string) => void;
+  versions?: { root: string; workspaceId?: string };
   nonce: number;
 }
 

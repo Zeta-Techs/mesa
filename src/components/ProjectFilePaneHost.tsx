@@ -21,6 +21,7 @@ import { ghostActionClass, LoadingRows } from "./PageFrame";
 
 // 预览按需加载：App 启动包不能静态带上 pdfjs（entry-guard 守着）
 const ProjectFilePreview = lazy(() => import("./ProjectFilePreview"));
+const FileVersionsPanel = lazy(() => import("./FileVersions").then((module) => ({ default: module.FileVersionsPanel })));
 
 /** 停靠位两样都开着时，标题行里的「项目助手 / 文件」轮流切换（同一位置，不并排） */
 export function DockSwitch({ front, onSwitch }: { front: DockFront; onSwitch: (front: DockFront) => void }) {
@@ -177,7 +178,7 @@ export default function ProjectFilePaneHost() {
   const iconAction = `${ghostActionClass} w-7 px-0`;
   const actions = (
     <div className="flex shrink-0 items-center gap-0.5">
-      {total > 1 && index >= 0 && (
+      {!pane.versions && total > 1 && index >= 0 && (
         <>
           <button
             type="button"
@@ -204,12 +205,12 @@ export default function ProjectFilePaneHost() {
           </span>
         </>
       )}
-      {pane.askAi && (
+      {!pane.versions && pane.askAi && (
         <button type="button" className={ghostActionClass} onClick={() => pane.askAi?.(pane.path)}>
           问 AI
         </button>
       )}
-      <button
+      {!pane.versions && <button
         type="button"
         className={iconAction}
         onClick={openExternal}
@@ -217,8 +218,8 @@ export default function ProjectFilePaneHost() {
         aria-label="外部打开"
       >
         <ExternalLink size={14} strokeWidth={1.8} aria-hidden="true" />
-      </button>
-      {supportsImmersiveReader(pane.name) && (
+      </button>}
+      {!pane.versions && supportsImmersiveReader(pane.name) && (
         <button
           type="button"
           className={iconAction}
@@ -229,7 +230,7 @@ export default function ProjectFilePaneHost() {
           <BookOpen size={14} strokeWidth={1.8} aria-hidden="true" />
         </button>
       )}
-      {inProject && (
+      {!pane.versions && inProject && (
         <button
           type="button"
           className={iconAction}
@@ -248,8 +249,8 @@ export default function ProjectFilePaneHost() {
     <SettingsDrawerShell
       open={docked ? true : visible}
       onClose={() => void close()}
-      title={pane.name}
-      subtitle={pane.from ? `${pane.from} · ${rel}` : rel}
+      title={pane.versions ? "文件版本" : pane.name}
+      subtitle={pane.versions ? undefined : pane.from ? `${pane.from} · ${rel}` : rel}
       headerExtra={actions}
       fillBody
       docked={
@@ -270,7 +271,13 @@ export default function ProjectFilePaneHost() {
     >
       {error && <p className="mb-2 shrink-0 break-words px-2 text-micro text-err-text">{error}</p>}
       <Suspense fallback={<LoadingRows />}>
-      <ProjectFilePreview
+      {pane.versions ? <FileVersionsPanel
+        key={`${pane.versions.root}|${pane.versions.workspaceId ?? pane.path}`}
+        root={pane.versions.root}
+        path={pane.versions.workspaceId ? undefined : pane.path}
+        workspaceId={pane.versions.workspaceId}
+        onClose={(currentPath) => void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: currentPath ?? pane.path, list: pane.list })}
+      /> : <ProjectFilePreview
         key={pane.path}
         path={pane.path}
         root={pane.root}
@@ -282,7 +289,7 @@ export default function ProjectFilePaneHost() {
           setProjectFilePaneDirty(d);
           if (d !== dirty) setDirty(d);
         }}
-      />
+      />}
       </Suspense>
     </SettingsDrawerShell>
   );

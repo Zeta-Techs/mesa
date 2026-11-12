@@ -245,8 +245,9 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
   components/StepLoop.tsx    # 综述回路补料表单（design-review-loop.md §4）：ReworkDialog 只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数；chainOptions 补完后接着跟进的下游勾选（tests/rework-dialog-ui.test.ts）
-components/FileVersions.tsx  # 文件版本短入口与按需弹层（步骤卡、项目预览、终端预览共用）：人选文件保留后续版本/手动留存、备注/确认删除、只读查看、任选两版文本比较与图片并排、另存副本；不派活、不替换现稿（tests/file-versions-ui.test.ts）
-components/ProjectFilePreview.tsx  # 项目文件预览按类型分流；普通预览接文件版本入口，历史预览传只读原因且不再嵌套版本操作
+components/FileVersions.tsx  # 文件版本短入口与右侧栏内容（步骤卡、项目预览、终端预览共用）：FileSelectionTree 按目录选文件，当前内容直接预览、Git历史按需查询不以留存为门槛；人选后续保留/手动留存、备注/确认删除、只读查看/比较/另存，不派活、不替换现稿（tests/file-versions-ui.test.ts）
+components/FileTree.tsx      # 聊天文件树与共享节点；FileSelectionTree 用同一节点呈现版本清单目录树（包含已删除文件路径），只选择不读写真实目录、不挂文件操作菜单
+components/ProjectFilePreview.tsx  # 项目文件预览按类型分流；版本入口原位切换 FileVersionsPanel，未保存编辑先确认，历史预览传只读原因且不嵌套版本操作
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——目标空态「套一整套流程…」打开的是另一个 TemplatePickModal（带全局设定屏）
@@ -342,7 +343,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置，SettingsDrawerShell 的 titleIcon / footer）：顶栏小桌 + 名字 + 项目名；空状态大图小桌按时段换样子 + 三个常用问题细线列表；
                              # 回答首句经 splitAnswerLead 加粗带琥珀竖线、动作按钮经 parseAssistantAnswer；输入框钉底，连接与清空记录在下一行小字；带问题打开按 nonce 只问一次
   components/ProjectFilePaneHost.tsx # 项目页文件栏宿主（2026-11-11，App 挂一份）：读 store.projectFilePane，与项目助手同用 #ccode-assistant-dock、按 dockFront 轮流（轮到别人只藏不卸载）；
-                             # 标题行一排：↑↓ 换清单里的文件、问 AI、外部打开、沉浸阅读、在文件页签里看、「项目助手 / 文件」切换（DockSwitch，助手宿主也用）；预览 lazy 加载（启动包不带 pdfjs）
+                             # 标题行一排：↑↓ 换清单里的文件、问 AI、外部打开、沉浸阅读、在文件页签里看、「项目助手 / 文件」切换（DockSwitch，助手宿主也用）；版本请求在同一栏 lazy 挂 FileVersionsPanel，历史态不把主仓动作挂到旧版；预览 lazy 加载（启动包不带 pdfjs）
   components/ProjectAssistantHost.tsx # 项目助手唯一宿主（App 挂一份）：读 store.assistantReq，补项目条目与步骤数，按钮交 assistant-actions、派活交 assistant-dispatch；
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
@@ -644,8 +645,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
   assistant-brief.ts         # 项目助手「现在的情况」卡与按状态换的常用问题（2026-11-08，纯逻辑；reviewRoundFocus「这一轮怎么样」的重点、setReviewingStep 评审页开着哪一步）：briefLines（出错 / 等确认 / 待评审 / 核验待判断 / 目标待验收与上次打开以来的保存、完成）、quickAsks（出错→为什么、待评审→先帮你过一遍、没流程→想做什么）、reviewPrereadFocus（评审前只读看一遍的重点，评审页同用）、knowledgeDraftFocus（项目知识还是空的时提议从项目文件起草，最多五条 :::记下，人逐条点）、summaryDue / summaryFocus（聊满 10 轮提议整理定下的事，点了才调 AI）；取数在 project-assistant-run gatherBriefInput，不调 AI（tests/assistant-brief.test.ts）
-  project-file-open.ts       # 项目页打开文件的唯一入口 showProjectFile（2026-11-11）：本步文件、步骤卡、收尾包、文献雷达、资料列表都调它；有没保存的改动先问；轻模块，调用方不必拉进预览组件
-  project-file-pane.ts       # 文件栏纯逻辑：宽度 360–960、dockOccupant（与项目助手轮流谁在前）、neighborFile（↑↓）、filePaneShouldClose（只在项目页换项目时收、脏不收）（tests/project-file-pane.test.ts）
+  project-file-open.ts       # 项目页打开文件的唯一入口 showProjectFile（2026-11-11）：本步文件、步骤卡、收尾包、文献雷达、资料列表与版本入口都调它；换文件或切换版本模式有没保存的改动先问；轻模块，调用方不必拉进预览组件
+  project-file-pane.ts       # 文件栏纯逻辑：宽度 360–960、dockOccupant（与项目助手轮流谁在前）、neighborFile（↑↓）、filePaneShouldClose（只在项目页换项目时收、脏不收）；versions 请求只切展示模式不改现稿（tests/project-file-pane.test.ts）
   assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）、assistantShortcutTarget（⌘J / 命令面板问哪个项目）、assistantDayLabel / sameLocalDay（问答记录按天分隔）（tests/assistant-dock.test.ts）
   session-tail.ts            # 某一步最近那段对话里 AI 最后说的话（find_session + get_session_conversation_page 最后一页），aiReportsFailure 标出错；30 秒缓存
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
@@ -2022,7 +2023,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；每轮文件的新加 / 改了 / 删了按保存那次合并的第一父比所审版本（round_changes）；
                              #   step_round_ledger 两版纳入清单的白话摘要（conflict_hint::ledger_change_summary）；saved_round_origin 为文件留存提供轮次起因，旧轮次界面已撤；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
-  file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；只读预览复制到配置 tmp、文本对照脱敏、另存新路径拒绝覆盖/越界，删除按引用计数回收
+  file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；历史按需读验收账本+Git无需跟踪或写索引，临时标识预览/比较/另存前复核归属；只读预览复制到配置 tmp、文本对照脱敏、另存新路径拒绝覆盖/越界，删除按引用计数回收
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
                              #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear
                              #   2026-11-06：stale_upstream_for 按最后一次并入判（本步保存不算）；workspace_incoming 列基准侧多出的文件（HEAD...base）ed 判定工作区有文件只看工作区

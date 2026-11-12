@@ -29,7 +29,7 @@ export async function showProjectFile(
 ): Promise<void> {
   const st = useAppStore.getState();
   const cur = st.projectFilePane;
-  if (cur && !samePath(cur.path, input.path, IS_WINDOWS) && !(await confirmDiscardProjectFile())) return;
+  if (cur && (!samePath(cur.path, input.path, IS_WINDOWS) || !!cur.versions !== !!input.versions) && !(await confirmDiscardProjectFile())) return;
   // 读盘根：不给就用项目根；文件不在项目里（工作副本）退到它所在的文件夹
   const dir = input.path.replace(/[\\/][^\\/]*$/, "") || input.path;
   const root = input.root ?? (pathWithin(input.path, input.projectRoot, IS_WINDOWS) ? input.projectRoot : dir);

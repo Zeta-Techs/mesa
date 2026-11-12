@@ -221,7 +221,8 @@ fn content(root: &Path, version: &FileVersion) -> Result<Vec<u8>, String> {
         }
     };
     if bytes.len() as u64 != version.size
-        || format!("{:x}", Sha256::digest(&bytes)) != version.sha256
+        || (!version.id.starts_with("git:")
+            && format!("{:x}", Sha256::digest(&bytes)) != version.sha256)
     {
         return Err("这一版的内容与留存指纹不一致，未使用".into());
     }
@@ -284,12 +285,75 @@ fn new_version(path: &str, note: &str, source: &str) -> FileVersion {
     }
 }
 
+fn historical_version(
+    root: &Path,
+    save: &crate::projects::AcceptanceLogEntry,
+    path: &str,
+) -> Option<FileVersion> {
+    relative(path).ok()?;
+    let blob = blob_at(root, &save.version_id, path)?;
+    let size = crate::workspaces::run_git_raw(root, &["cat-file", "-s", &blob])
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    if size > 1024 * 1024 * 1024 {
+        return None;
+    }
+    let name = save.goal_name.split(" / ").next().unwrap_or("保存进项目");
+    let config = crate::projects::read_config_at(root).config;
+    let step = config
+        .steps
+        .iter()
+        .find(|step| step.workspace_name == name)
+        .map(|step| step.name.as_str())
+        .unwrap_or(name);
+    let mut version = new_version(path, "", step);
+    version.id = format!("git:{}:{path}", save.version_id);
+    version.saved_at = save.decided_at.clone();
+    version.workspace_id = save.scene_ref.clone();
+    version.save_id = Some(save.version_id.clone());
+    version.git_blob = Some(blob);
+    version.size = size;
+    if let Some(id) = save.scene_ref.as_deref() {
+        let (round, cause) = crate::step_loop::saved_round_origin(root, id, &save.decided_at);
+        version.round = Some(round);
+        version.cause = Some(cause);
+    }
+    Some(version)
+}
+
+fn historical_versions(root: &Path, path: &str) -> Vec<FileVersion> {
+    let mut saves: Vec<_> = crate::projects::read_acceptance_log_at(root)
+        .into_iter()
+        .filter(|save| {
+            save.kind == crate::review_contract::KIND_PIPELINE_MERGE
+                && save.paths.iter().any(|saved| saved == path)
+        })
+        .collect();
+    saves.sort_by_key(|save| save.decided_at.clone());
+    let mut versions = Vec::new();
+    let mut previous = None;
+    for save in saves {
+        let Some(version) = historical_version(root, &save, path) else {
+            continue;
+        };
+        if version.git_blob == previous {
+            continue;
+        }
+        previous = version.git_blob.clone();
+        versions.push(version);
+    }
+    versions
+}
+
 fn view(
     root: &Path,
     index: VersionIndex,
     path: Option<&str>,
     workspace: Option<&str>,
 ) -> Result<FileVersionsDto, String> {
+    let path_filter = path;
     let mut candidates = if workspace.is_none() {
         index.tracked.clone()
     } else {
@@ -325,13 +389,30 @@ fn view(
         .into_iter()
         .filter(|candidate| path.is_none_or(|path| candidate == path))
         .map(|path| {
-            let versions = index
+            let mut versions: Vec<_> = index
                 .versions
                 .iter()
                 .filter(|version| version.path == path)
                 .cloned()
                 .rev()
                 .collect();
+            if path.as_str() == path_filter.unwrap_or("") {
+                for old in historical_versions(root, &path) {
+                    if !versions
+                        .iter()
+                        .any(|saved| saved.git_blob == old.git_blob && saved.save_id == old.save_id)
+                    {
+                        versions.push(old);
+                    }
+                }
+                versions.sort_by_key(|version| {
+                    std::cmp::Reverse(
+                        chrono::DateTime::parse_from_rfc3339(&version.saved_at)
+                            .map(|time| time.timestamp_millis())
+                            .unwrap_or(0),
+                    )
+                });
+            }
             Ok(VersionFile {
                 tracked: index.tracked.contains(&path),
                 exists: safe_path(root, &path)?.is_file(),
@@ -626,6 +707,23 @@ fn update_at(
 }
 
 fn selected(root: &Path, id: &str) -> Result<FileVersion, String> {
+    if let Some(spec) = id.strip_prefix("git:") {
+        let (sha, path) = spec.split_once(':').ok_or("历史版本标识无效")?;
+        relative(path)?;
+        if !valid_hash(sha) {
+            return Err("历史版本标识无效".into());
+        }
+        let save = crate::projects::read_acceptance_log_at(root)
+            .into_iter()
+            .find(|save| {
+                save.kind == crate::review_contract::KIND_PIPELINE_MERGE
+                    && save.version_id == sha
+                    && save.paths.iter().any(|saved| saved == path)
+            })
+            .ok_or("找不到已保存的历史版本")?;
+        return historical_version(root, &save, path)
+            .ok_or_else(|| "这个文件的历史内容已不可用".into());
+    }
     load(root)?
         .versions
         .into_iter()
@@ -1069,6 +1167,32 @@ mod tests {
             content(&fixture.root, &index.versions[1]).unwrap(),
             b"second version"
         );
+    }
+
+    #[test]
+    fn git_history_is_readable_without_tracking_even_after_the_current_file_is_removed() {
+        let fixture = Fixture::new();
+        fixture.write("outline.md", b"first accepted version");
+        let first = fixture.commit("outline.md");
+        let mut first_save = save("outline.md", &first);
+        first_save.decided_at = "2026-11-11T14:00:00+08:00".into();
+        crate::projects::append_acceptance_log_at(&fixture.root, &first_save).unwrap();
+        fixture.write("outline.md", b"second accepted version");
+        let second = fixture.commit("outline.md");
+        crate::projects::append_acceptance_log_at(&fixture.root, &save("outline.md", &second)).unwrap();
+        fs::remove_file(fixture.root.join("outline.md")).unwrap();
+        let result = view(&fixture.root, load(&fixture.root).unwrap(), Some("outline.md"), Some("step")).unwrap();
+        assert!(!result.files[0].exists);
+        assert!(!result.files[0].tracked);
+        assert_eq!(result.files[0].versions.len(), 2);
+        assert!(!fixture.root.join(".ccode/versions/index.json").exists());
+        let newest = selected(&fixture.root, &result.files[0].versions[0].id).unwrap();
+        assert_eq!(content(&fixture.root, &newest).unwrap(), b"second accepted version");
+        let exported = export_at(&fixture.root, &newest.id, "outline-copy.md").unwrap();
+        assert_eq!(fs::read(exported).unwrap(), b"second accepted version");
+        assert!(!fixture.root.join(".ccode/versions/index.json").exists());
+        assert!(selected(&fixture.root, &format!("git:{second}:other.md")).is_err());
+        assert!(selected(&fixture.root, &format!("git:{second}:../outside.md")).is_err());
     }
 
     #[cfg(unix)]

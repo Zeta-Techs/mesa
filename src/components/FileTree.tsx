@@ -106,6 +106,7 @@ interface TreeNodeCtx {
   onOpenFile: (path: string, name: string, root: string, files: DirEntryDto[]) => void;
   onOpenTerminal: (path: string) => void;
   onMenu: (menu: { x: number; y: number; path: string; isDir: boolean }) => void;
+  selectionOnly?: boolean;
 }
 
 /**
@@ -125,7 +126,7 @@ const FileTreeNode = memo(function FileTreeNode({
   const rowRef = useRef<HTMLDivElement>(null);
   // 搜索定位到这一项：滚进可视区（树已逐级展开）
   useEffect(() => {
-    if (highlight === entry.path) rowRef.current?.scrollIntoView({ block: "nearest" });
+    if (highlight === entry.path) rowRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [highlight, entry.path]);
   const isOpen = expanded.has(entry.path);
   const children = cache[entry.path];
@@ -139,6 +140,27 @@ const FileTreeNode = memo(function FileTreeNode({
     <>
       <div
         ref={rowRef}
+        role={ctx.selectionOnly ? "treeitem" : undefined}
+        tabIndex={ctx.selectionOnly ? 0 : undefined}
+        aria-label={ctx.selectionOnly ? entry.name : undefined}
+        aria-level={ctx.selectionOnly ? depth + 1 : undefined}
+        aria-expanded={ctx.selectionOnly && entry.isDir ? isOpen : undefined}
+        aria-selected={ctx.selectionOnly && !entry.isDir ? highlight === entry.path : undefined}
+        onKeyDown={ctx.selectionOnly ? (event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "ArrowRight" && entry.isDir && !isOpen) { event.preventDefault(); toggle(entry.path); return; }
+          if (event.key === "ArrowLeft" && entry.isDir && isOpen) { event.preventDefault(); toggle(entry.path); return; }
+          if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+            const items = Array.from(event.currentTarget.closest('[role="tree"]')?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []);
+            const index = items.indexOf(event.currentTarget);
+            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : index + (event.key === "ArrowDown" ? 1 : -1);
+            event.preventDefault(); items[next]?.focus(); return;
+          }
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (entry.isDir) toggle(entry.path);
+          else ctx.onOpenFile(entry.path, entry.name, root, ctx.visibleFiles);
+        } : undefined}
         onClick={() =>
           entry.isDir
             ? toggle(entry.path)
@@ -148,7 +170,7 @@ const FileTreeNode = memo(function FileTreeNode({
           e.preventDefault();
           ctx.onMenu({ x: e.clientX, y: e.clientY, path: entry.path, isDir: entry.isDir });
         }}
-        title={`${entry.isDir ? `${entry.path}\n单击展开或收起；右键可在这里打开终端、新建文件夹` : `${entry.path}\n单击在右边预览；右键看更多操作`}${entry.isSystem ? "\n系统目录" : ""}`}
+        title={ctx.selectionOnly ? entry.path : `${entry.isDir ? `${entry.path}\n单击展开或收起；右键可在这里打开终端、新建文件夹` : `${entry.path}\n单击在右边预览；右键看更多操作`}${entry.isSystem ? "\n系统目录" : ""}`}
         className={`group flex cursor-pointer items-center gap-1 py-0.5 pr-2 text-xs hover:bg-hover ${
           highlight === entry.path ? "bg-white/10" : ""
         } ${entry.isSystem ? "opacity-50" : ""}`}
@@ -211,6 +233,54 @@ const FileTreeNode = memo(function FileTreeNode({
     </>
   );
 });
+
+export function FileSelectionTree({ paths, selected, onSelect }: {
+  paths: readonly string[];
+  selected: string;
+  onSelect: (path: string) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const cache = useMemo(() => {
+    const directories: Record<string, DirEntryDto[]> = { "": [] };
+    for (const file of paths) {
+      const parts = file.replace(/\\/g, "/").split("/");
+      let parent = "";
+      parts.forEach((name, index) => {
+        const path = parent ? `${parent}/${name}` : name;
+        const isDir = index < parts.length - 1;
+        directories[parent] ??= [];
+        if (!directories[parent].some((entry) => entry.path === path)) {
+          directories[parent].push({ name, path, isDir, size: 0, modified: null });
+        }
+        if (isDir) directories[path] ??= [];
+        parent = path;
+      });
+    }
+    for (const entries of Object.values(directories)) entries.sort((before, after) => Number(after.isDir) - Number(before.isDir) || before.name.localeCompare(after.name));
+    return directories;
+  }, [paths]);
+  useEffect(() => {
+    const parts = selected.replace(/\\/g, "/").split("/");
+    setExpanded((current) => {
+      const next = new Set(current);
+      for (let depth = 1; depth < parts.length; depth++) next.add(parts.slice(0, depth).join("/"));
+      return next;
+    });
+  }, [selected]);
+  const ctx: TreeNodeCtx = {
+    root: "", expanded, cache, gitMap: {}, highlight: selected, selectionOnly: true,
+    load: async () => {},
+    toggle: (path) => setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    }),
+    visibleFiles: [], onOpenFile: onSelect, onOpenTerminal: () => {}, onMenu: () => {},
+  };
+  return <div role="tree" aria-label="版本文件树" className="min-h-0 flex-1 overflow-auto">
+    {cache[""].map((entry) => <FileTreeNode key={entry.path} entry={entry} depth={0} ctx={ctx} />)}
+  </div>;
+}
 
 /** 路径归属（workspaces::path_context）：根目录落在主仓库还是工作区分支 */
 interface PathContext {

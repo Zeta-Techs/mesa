@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ComponentProps, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ComponentProps, type ReactNode } from "react";
 import { projectFilePreviewKind } from "../project-files";
 import { LoadingRows } from "./PageFrame";
 import PdfContinuousView from "./PdfContinuousView";
@@ -7,7 +7,8 @@ import XlsxPreview from "./XlsxPreview";
 import ImagePreview from "./ImagePreview";
 import UnsupportedPreview from "./UnsupportedPreview";
 import SlidesPreview from "./SlidesPreview";
-import { FileVersionsButton } from "./FileVersions";
+import { FileVersionsButton, FileVersionsPanel } from "./FileVersions";
+import { confirmDialog } from "./ConfirmDialog";
 
 const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
 
@@ -122,8 +123,16 @@ function PreviewContent({
 }
 
 export default function ProjectFilePreview(props: ComponentProps<typeof PreviewContent>) {
+  const [versionsPath, setVersionsPath] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  async function openVersions() {
+    if (dirty && !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", { danger: true, confirmText: "查看历史", focusCancel: true }))) return;
+    setDirty(false); props.onDirtyChange?.(false); setVersionsPath(props.path);
+  }
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-    {!props.readOnly && <div className="flex shrink-0 justify-end px-2"><FileVersionsButton root={props.root} path={props.path} /></div>}
-    <PreviewContent {...props} />
+    {versionsPath === props.path && !props.readOnly ? <FileVersionsPanel root={props.root} path={props.path} onClose={() => setVersionsPath(null)} /> : <>
+      {!props.readOnly && <div className="flex shrink-0 justify-end px-2"><FileVersionsButton root={props.root} path={props.path} onOpen={openVersions} /></div>}
+      <PreviewContent {...props} onDirtyChange={(value) => { setDirty(value); props.onDirtyChange?.(value); }} />
+    </>}
   </div>;
 }

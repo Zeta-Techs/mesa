@@ -121,6 +121,7 @@ import type {
 } from "../types";
 import type { PdfActionResult } from "../components/PdfPreview";
 import { FileVersionsButton } from "../components/FileVersions";
+import { FileVersionsPanel } from "../components/FileVersions";
 import {
   TerminalView,
   agentLabel,
@@ -467,6 +468,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [previewFiles, setPreviewFiles] = useState<DirEntryDto[]>([]);
   /** 预览编辑器脏状态（预览页签的脏点） */
   const [previewDirty, setPreviewDirty] = useState(false);
+  const [previewVersionsPath, setPreviewVersionsPath] = useState<string | null>(null);
   /** 终端路径点击的滚行请求。带路径绑定：打开别的文件时不串行号（2026-10-10 修）。 */
   const [previewReveal, setPreviewReveal] = useState<{
     path: string;
@@ -4299,7 +4301,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     </div>
                   }
                 >
-                  {/\.pdf$/i.test(preview.path) ? (
+                  {previewVersionsPath === preview.path ? <FileVersionsPanel root={preview.root ?? activeCwd} path={preview.path} onClose={() => setPreviewVersionsPath(null)} /> : /\.pdf$/i.test(preview.path) ? (
                     <PdfContinuousView
                       path={preview.path}
                       cwdHint={preview.root ?? activeCwd}
