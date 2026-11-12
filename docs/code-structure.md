@@ -245,9 +245,10 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
                              # （Agent/配置/模型三段共用；隐藏配置沉「已停用（可手选）」组）
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
   components/StepLoop.tsx    # 综述回路补料表单（design-review-loop.md §4）：ReworkDialog 只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数；chainOptions 补完后接着跟进的下游勾选（tests/rework-dialog-ui.test.ts）
-components/FileVersions.tsx  # 文件版本短入口与右侧栏内容（步骤卡、项目预览、终端预览共用）：FileSelectionTree 按目录选文件，当前内容直接预览、Git历史按需查询不以留存为门槛；人选后续保留/手动留存、备注/确认删除、只读查看/比较/另存，不派活、不替换现稿（tests/file-versions-ui.test.ts）
+components/FileVersions.tsx  # 文件版本短入口与右侧栏内容（步骤卡、项目预览、终端预览共用）：FileSelectionTree 按目录选文件，当前内容直接预览、Git历史按需查询不以留存为门槛；旧版另存直显、更多走标准ContextMenu，人选后续保留/手动留存、备注/确认删除、只读查看/比较/另存，不派活、不替换现稿（tests/file-versions-ui.test.ts）
 components/FileTree.tsx      # 聊天文件树与共享节点；FileSelectionTree 用同一节点呈现版本清单目录树（包含已删除文件路径），只选择不读写真实目录、不挂文件操作菜单
-components/ProjectFilePreview.tsx  # 项目文件预览按类型分流；版本入口原位切换 FileVersionsPanel，未保存编辑先确认，历史预览传只读原因且不嵌套版本操作
+components/ProjectFilePreview.tsx  # 项目文件预览按类型分流；版本入口原位切换 FileVersionsPanel，未保存编辑先确认，历史预览传只读原因且不嵌套版本操作，hideReadOnlyToolbar 交文本预览隐藏重复标题栏
+components/FilePreviewEditor.tsx  # 文件阅读与Monaco编辑；版本宿主可用 hideReadOnlyToolbar 隐藏只读阅读态工具栏，保留正文、目录和查找快捷键，可编辑预览不受影响
 components/ResearchDecisionFields.tsx  # 开工弹层「你的决定」决策字段（KickoffConfirmDialog）：逐项选状态再写一句范围，经 setDecisionAnswer 写回任务书文本（解析/格式化与 step-decisions.ts 同一出处）；证据版本变了旧 approve/prepare 标过期不沿用（tests/research-panels.test.ts）
 components/ResearchEvidencePanel.tsx  # 开工与评审共用的只读报告查看（KickoffConfirmDialog / WorkspaceReviewView）：按模式扫报告、逐节 details 展开看原文（256KB 预览通道），onFingerprint 回 evidenceFingerprint 供决策绑定证据版本；注明「状态为报告自述，未经系统质量认证」（tests/research-panels.test.ts）
 components/TemplatePicker.tsx  # 研究流程模板选择器（内联面板；ProjectGroup 空流程引导与「更换模板」共用的唯一实例）：内置 PIPELINE_TEMPLATES（每行「另存为我的版本」记 based_on）+ 我的任务（MyPacksSection），投稿与返修模板另选初稿/返修与轮次；内置选中只抛 steps（TemplatePickItem），我的任务抛整个包（onApplyPack），写回 project.toml 与覆盖确认归父组件；打开时把现在的内置经 normalize_pack_steps 归一，没改过的我的版本直接跟新版——目标空态「套一整套流程…」打开的是另一个 TemplatePickModal（带全局设定屏）

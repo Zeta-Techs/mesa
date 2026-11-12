@@ -24,13 +24,13 @@ async function mount() {
         ? "export const invoke=(command,args)=>globalThis.__versionsInvoke(command,args);"
         : args.path === "confirm" ? "export const confirmDialog=async()=>true;"
           : args.path === "open" ? "export const showProjectFile=async(args)=>globalThis.__versionsInvoke('open_sidebar',args);"
-          : "export default function Preview(props){return <div data-preview={props.path} data-readonly={props.readOnly}>历史内容</div>;}" }));
+          : "export default function Preview(props){return <div data-preview={props.path} data-readonly={props.readOnly} data-quiet-header={String(props.hideReadOnlyToolbar)}>历史内容</div>;}" }));
     } }],
   });
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
   for (const [key, value] of Object.entries({
-    window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement,
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node,
     localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     __versionsInvoke: async (command: string, args: Record<string, any>) => {
@@ -91,8 +91,8 @@ test("步骤卡只显示短入口并打开已有文件侧栏；不创建弹窗�
     const selected = mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!;
     await mounted.act(async () => mounted.setValue(selected, "new"));
     assert.ok(mounted.document.querySelector('[data-preview="/cache/new/outline.md"]'));
-    const box = mounted.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    await mounted.act(async () => box.click());
+    await mounted.act(async () => mounted.button("更多").click());
+    await mounted.act(async () => mounted.button("保留后续版本").click());
     assert.equal(mounted.calls.find((call) => call.command === "file_version_update")?.args.action, "track");
     await mounted.act(async () => mounted.setValue(mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!, "new"));
     const compare = mounted.document.querySelector<HTMLSelectElement>('select[aria-label="比较的版本"]')!;
@@ -141,13 +141,43 @@ test("原文件已删除直接显示旧版；停止跟踪与删除留存分开",
   try {
     await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsPanel, { root: "/project", path: "/project/outline.md" })));
     assert.ok(mounted.document.querySelector('[data-preview="/cache/new/outline.md"]'));
+    await mounted.act(async () => mounted.button("更多").click());
     assert.ok(mounted.button("留存当前这一版…").disabled);
-    const box = mounted.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    assert.ok(!box.disabled);
-    await mounted.act(async () => box.click());
+    assert.ok(!mounted.button("保留后续版本").disabled);
+    await mounted.act(async () => mounted.button("保留后续版本").click());
     assert.equal(mounted.file.versions.length, 2);
+    await mounted.act(async () => mounted.button("更多").click());
     await mounted.act(async () => mounted.button("删除留存…").click());
     assert.equal(mounted.file.versions.length, 1);
     assert.deepEqual(mounted.calls.filter((call) => call.command === "file_version_update").map((call) => call.args.action), ["untrack", "delete"]);
+  } finally { await mounted.cleanup(); }
+});
+
+test("版本工具栏仅保留版本选择与主要操作，菜单脱离裁切容器，旧版另存无需展开菜单", async () => {
+  const mounted = await mount();
+  try {
+    await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsPanel, { root: "/project", path: "/project/outline.md" })));
+    assert.ok(mounted.document.querySelector('[data-quiet-header="true"]'));
+    assert.equal(mounted.document.querySelector("details"), null);
+    assert.equal(mounted.document.querySelector('[role="menu"]'), null);
+    assert.equal(mounted.button("另存为副本…"), undefined);
+    await mounted.act(async () => mounted.button("更多").click());
+    const menu = mounted.document.querySelector('[role="menu"]')!;
+    const panel = mounted.document.querySelector('section[aria-label="文件版本"]')!;
+    assert.ok(menu);
+    assert.ok(!panel.contains(menu), "菜单放到 body，不能被文件栏 overflow-hidden 裁切");
+    assert.equal(mounted.button("留存当前这一版…").textContent, "留存当前这一版…");
+    await mounted.act(async () => mounted.button("留存当前这一版…").click());
+    assert.equal(mounted.document.querySelector('[role="menu"]'), null);
+    assert.ok(mounted.document.querySelector('input[aria-label="版本备注"]'));
+    await mounted.act(async () => mounted.button("取消").click());
+    const selected = mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!;
+    await mounted.act(async () => mounted.setValue(selected, "old"));
+    const exportButton = mounted.button("另存为副本…");
+    assert.ok(exportButton && !exportButton.disabled);
+    assert.equal(exportButton.closest('[role="menu"]'), null);
+    await mounted.act(async () => exportButton.click());
+    assert.ok(mounted.document.querySelector('input[aria-label="副本路径"]'));
+    assert.ok(!mounted.calls.some((call) => call.command === "file_version_update"));
   } finally { await mounted.cleanup(); }
 });

@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
 import { fieldClass, InlineNotice, secondaryActionClass } from "./PageFrame";
@@ -8,6 +9,7 @@ import { lineDiff } from "../tool-activity";
 import { roundCauseLabel, roundTime } from "../step-loop";
 import type { FileVersionsDto, VersionFile } from "../types";
 import { FileSelectionTree } from "./FileTree";
+import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 
 const ProjectFilePreview = lazy(() => import("./ProjectFilePreview"));
 const LINK = "shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-40";
@@ -69,12 +71,15 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [treeOpen, setTreeOpen] = useState(!path);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
   const paths = useMemo(() => data?.files.map((file) => file.path) ?? [], [data]);
   const version = file?.versions.find((candidate) => candidate.id === versionId);
   const compared = file?.versions.find((candidate) => candidate.id === compareId);
   const kind = projectFilePreviewKind(chosen);
   const retained = !!version && !version.id.startsWith("git:");
   const lines = useMemo(() => diff && diff.before !== diff.after ? lineDiff(diff.before, diff.after) : [], [diff]);
+  useEffect(() => setMenu(null), [chosen, versionId]);
   useEffect(() => {
     let stale = false;
     setData(null); setFile(null); setError(null);
@@ -139,6 +144,24 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
     } catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
+  function openForm(next: "snapshot" | "rename" | "export") {
+    setForm(next);
+    setValue(next === "export" ? chosen.replace(/(\.[^/.]+)?$/, "-副本$1") : next === "rename" ? version?.note ?? "" : "");
+  }
+  const menuItems: ContextMenuItem[] = file ? [
+    {
+      label: "保留后续版本",
+      checked: file.tracked,
+      disabled: busy || (!file.exists && !file.tracked),
+      title: "只决定以后留哪些版本，不影响查看已有历史；取消不删除已留存版本",
+      onSelect: () => void update(file.tracked ? "untrack" : "track"),
+    },
+    { label: "留存当前这一版…", disabled: busy || !file.exists, onSelect: () => openForm("snapshot") },
+    ...(retained ? [
+      { label: "备注…", disabled: busy, onSelect: () => openForm("rename") },
+      { label: "删除留存…", danger: true, disabled: busy, onSelect: () => void remove() },
+    ] : []),
+  ] : [];
   return <section aria-label="文件版本" className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
     <div className="flex shrink-0 items-center gap-2 px-2 pt-1">
       {!path && <button type="button" className={LINK} aria-expanded={treeOpen} onClick={() => setTreeOpen((current) => !current)}>文件树</button>}
@@ -150,40 +173,28 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
         <FileSelectionTree paths={paths} selected={chosen} onSelect={(next) => { setChosen(next); setForm(null); setNotice(null); }} />
       </aside>}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-    <div className="shrink-0 space-y-2 px-2 pt-1">
+    <div className="shrink-0 space-y-2 px-2">
       {file && <>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select aria-label="查看的版本" className={`${fieldClass} min-w-0 flex-1`} value={versionId} onChange={(event) => { setVersionId(event.target.value); setCompareId(""); setForm(null); }}>
+          <select aria-label="查看的版本" className={`${fieldClass} h-7 min-w-0 flex-1`} value={versionId} onChange={(event) => { setVersionId(event.target.value); setCompareId(""); setForm(null); }}>
             {file.exists && <option value="">当前文件</option>}
             {file.versions.map((item) => <option key={item.id} value={item.id}>{item.note || roundTime(item.savedAt)} · {item.source}</option>)}
           </select>
-          <details className="relative shrink-0">
-            <summary className={LINK}>留存与另存</summary>
-            <div className="absolute right-0 z-10 mt-1 w-48 space-y-2 rounded-md border border-hairline bg-canvas p-3 shadow-lg" onClick={(event) => {
-              const target = event.target as HTMLElement;
-              if (!target.closest?.("button")) return;
-              const menu = event.currentTarget.closest("details");
-              if (menu) menu.open = false;
-            }}>
-              <label className="flex items-center gap-1.5 text-l3" title="不影响现在能查看哪些历史；取消不删除已留存版本">
-                <input type="checkbox" checked={file.tracked} disabled={busy || (!file.exists && !file.tracked)} onChange={() => void update(file.tracked ? "untrack" : "track")} />保留后续版本
-              </label>
-              <button type="button" className={`${LINK} block`} disabled={busy || !file.exists} onClick={() => { setForm("snapshot"); setValue(""); }}>留存当前这一版…</button>
-              {version && <button type="button" className={`${LINK} block`} disabled={busy} onClick={() => { setForm("export"); setValue(chosen.replace(/(\.[^/.]+)?$/, "-副本$1")); }}>另存为副本…</button>}
-              {retained && <>
-                <button type="button" className={`${LINK} block`} disabled={busy} onClick={() => { setForm("rename"); setValue(version?.note ?? ""); }}>备注…</button>
-                <button type="button" className={`${LINK} block`} disabled={busy} onClick={() => void remove()}>删除留存…</button>
-              </>}
-            </div>
-          </details>
+          {version && <button type="button" className={`${LINK} h-7 px-1 text-l2`} disabled={busy} onClick={() => openForm("export")}>另存为副本…</button>}
+          <button ref={menuButton} type="button" className={`${LINK} h-7 px-1`} aria-haspopup="menu" aria-expanded={!!menu} disabled={busy} onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMenu((current) => current ? null : { x: rect.right, y: rect.bottom });
+          }}>更多</button>
         </div>
-        {version && <div className="flex flex-wrap items-center gap-2 text-micro text-l4">
-          <span>{version.source}{version.round ? ` · 第 ${version.round} 轮` : ""}{version.cause ? ` · ${roundCauseLabel(version.cause)}` : ""} · 只读</span>
-          {file.versions.length > 1 && (kind === "text" || kind === "image") && <select aria-label="比较的版本" className={`${fieldClass} ml-auto min-w-0 max-w-full`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>
+        <div className="flex flex-wrap items-center gap-2 text-micro text-l3">
+          <span title={versionId ? "历史版本只读；要修改请另存为副本" : "当前文件仅预览；返回文件后继续编辑"}>
+            {version ? `${version.source}${version.round ? ` · 第 ${version.round} 轮` : ""}${version.cause ? ` · ${roundCauseLabel(version.cause)}` : ""} · 只读` : "仅预览"}
+          </span>
+          {version && file.versions.length > 1 && (kind === "text" || kind === "image") && <select aria-label="比较的版本" className={`${fieldClass} ml-auto min-w-0 max-w-full`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>
             <option value="">不比较</option>
             {file.versions.filter((item) => item.id !== versionId).map((item) => <option key={item.id} value={item.id}>对比：{item.note || roundTime(item.savedAt)}</option>)}
           </select>}
-        </div>}
+        </div>
         {!file.exists && !file.versions.length && <p className="py-2 text-xs text-l4">当前路径没有文件，也没有可读取的历史；留存不能找回已清理的内容。</p>}
         {form && <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <input autoFocus aria-label={form === "export" ? "副本路径" : "版本备注"} className={`${fieldClass} min-w-0 flex-1`} maxLength={form === "export" ? undefined : 200} value={value} onChange={(event) => setValue(event.target.value)} placeholder={form === "export" ? "项目内新文件名，不覆盖已有文件" : "备注（可选）"} />
@@ -200,11 +211,12 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
     </pre>}
     {preview && <Suspense fallback={<p className="text-xs text-l4">读取中…</p>}>
       <div className={`grid min-h-0 flex-1 gap-2 ${otherPreview ? "grid-cols-2" : "grid-cols-1"}`}>
-        {otherPreview && <div className="flex min-h-0 min-w-0 flex-col"><p className="text-xs text-l3">{compared?.note || (compared && roundTime(compared.savedAt))}</p><ProjectFilePreview path={otherPreview} root={otherPreview.replace(/[/\\][^/\\]+$/, "")} readOnly="历史留存只读；要修改请另存为副本" /></div>}
-        <ProjectFilePreview key={preview} path={preview} root={versionId ? preview.replace(/[/\\][^/\\]+$/, "") : root} readOnly={versionId ? "历史版本只读；要修改请另存为副本" : "版本查看只读；返回文件后继续编辑"} />
+        {otherPreview && <div className="flex min-h-0 min-w-0 flex-col"><p className="text-xs text-l3">{compared?.note || (compared && roundTime(compared.savedAt))}</p><ProjectFilePreview path={otherPreview} root={otherPreview.replace(/[/\\][^/\\]+$/, "")} readOnly="历史留存只读；要修改请另存为副本" hideReadOnlyToolbar /></div>}
+        <ProjectFilePreview key={preview} path={preview} root={versionId ? preview.replace(/[/\\][^/\\]+$/, "") : root} readOnly={versionId ? "历史版本只读；要修改请另存为副本" : "版本查看只读；返回文件后继续编辑"} hideReadOnlyToolbar />
       </div>
     </Suspense>}
       </div>
     </div>
+    {menu && createPortal(<ContextMenu x={menu.x} y={menu.y} alignRight items={menuItems} onClose={() => { setMenu(null); menuButton.current?.focus(); }} />, document.body)}
   </section>;
 }

@@ -191,6 +191,18 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
     assert.ok(!host.querySelector(".md-body"), "双击段落后应切到编辑态");
     assert.equal(jump.reveal.at(-1), 7, "应滚到第 7 行（该段源码行）");
     assert.deepEqual(jump.pos.at(-1), { lineNumber: 7, column: 1 });
+    await act(async () => root.render(h(Preview, {
+      path: "/tree/note.md", root: "/tree", readOnly: "历史只读", hideReadOnlyToolbar: true,
+    })));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.ok(host.querySelector(".md-body"), "版本预览正文保留");
+    assert.doesNotMatch(host.textContent ?? "", /note\.md|历史只读|用系统应用打开/);
+    const scope = host.querySelector(".md-find-scope")!;
+    await act(async () => scope.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true })));
+    assert.ok(host.querySelector('input[aria-label="在这份文件里查找"]'), "隐藏重复工具栏后仍可用快捷键查找");
+    await act(async () => root.render(h(Preview, { path: "/tree/note.md", root: "/tree", hideReadOnlyToolbar: true })));
+    assert.match(host.textContent ?? "", /note\.md/);
+    assert.ok(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "编辑"), "可编辑预览不能隐藏工具栏");
   } finally {
     await act(async () => root.unmount());
     for (const [key, desc] of restore) {

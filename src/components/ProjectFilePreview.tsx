@@ -22,6 +22,7 @@ function PreviewContent({
   onDirtyChange,
   onOrganize,
   readOnly,
+  hideReadOnlyToolbar,
 }: {
   path: string;
   root: string;
@@ -41,6 +42,7 @@ function PreviewContent({
   /** 脏状态上报（只有文本编辑态会脏）：宿主用来在切换/关闭预览前确认丢弃 */
   onDirtyChange?: (dirty: boolean) => void;
   readOnly?: string;
+  hideReadOnlyToolbar?: boolean;
 }) {
   const kind = projectFilePreviewKind(path);
   const frame = "flex min-h-0 flex-1 flex-col";
@@ -116,6 +118,7 @@ function PreviewContent({
           onAnnotate={onAnnotate}
           onDirtyChange={onDirtyChange}
           readOnly={readOnly}
+          hideReadOnlyToolbar={hideReadOnlyToolbar}
         />
       </Suspense>
     </div>

@@ -778,6 +778,7 @@ function TextFilePreviewEditor({
   onAnnotate,
   annotateCopy,
   readOnly,
+  hideReadOnlyToolbar,
   hideImmersive,
   onOpenFile,
   onOpenReader,
@@ -817,6 +818,7 @@ function TextFilePreviewEditor({
   annotateCopy?: AnnotateCopy;
   /** 宿主要求只读（阅读区抽查：笔记还在工作区里等评审）：值是工具条上给人看的原因 */
   readOnly?: string;
+  hideReadOnlyToolbar?: boolean;
   /** 宿主声明「主仓库就是这份文件的正常落点」（阅读区笔记栏：笔记本来就记在项目里，属日常积累面，
    *  不进任何工作区分支）：不挂琥珀色「主仓库（非分支）」、保存不再每次弹危险确认。 */
   mainRepoIsHome?: boolean;
@@ -1682,7 +1684,7 @@ function TextFilePreviewEditor({
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
       {/* 工具条：h-8 + 底部 hairline 与阅读区三栏的顶条规格统一（栏间严丝合缝） */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
+      {(!hideReadOnlyToolbar || !readOnlyReason || mode === "edit") && <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
         {leading}
         <span className="truncate text-l3">{path.split(/[\\/]/).pop()}</span>
         {ctx?.kind === "worktree" && (
@@ -1837,7 +1839,7 @@ function TextFilePreviewEditor({
             </button>
           )}
         </div>
-      </div>
+      </div>}
       {diskChange && dirty && !mergeOpen && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-warn px-3 py-1.5 text-xs text-warn-text">
           <span className="min-w-0 flex-1">磁盘上的这份文件刚被改过（Agent 或别的程序），你这边还有没保存的修改。</span>
