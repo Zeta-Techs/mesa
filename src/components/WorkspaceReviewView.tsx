@@ -20,6 +20,8 @@ import {
 import { resolveStepReviewProfile, reviewPaneTabs, type ReviewPane } from "../step-review";
 import {
   appendReviewAnnotation,
+  type ReviewAnnotate,
+  reviewNoteQuotes,
   appendReviewLine,
   FRESH_RETURN_LEAD,
   scanWritingReview,
@@ -114,6 +116,7 @@ import type {
 import { usePolling } from "../polling";
 import { CHECK_BATCH_LEAD, checkBatchNote, checkChipText, checkConsultSeed, checkNoted, checkReviewNote, countChecks, type CheckItem, type ChecksDto } from "../research-checks";
 import ReviewAskAiMenu, { type ReviewAskAiItem } from "./ReviewAskAiMenu";
+import { ReviewQuotesContext, type ReviewQuote } from "../review-marks";
 import { readStoredNotes, REVIEW_NOTES_EVENT, storeNotes } from "../review-notes";
 import { IS_WINDOWS } from "../hotkeys";
 import { samePath } from "../path-utils";
@@ -565,6 +568,8 @@ function jumpToSection(host: HTMLElement | null, label: string): boolean {
   return true;
 }
 
+const NO_QUOTES: readonly ReviewQuote[] = [];
+
 function DeliveryReviewPane({
   root,
   paths,
@@ -572,6 +577,7 @@ function DeliveryReviewPane({
   onSelect,
   empty,
   onAnnotate,
+  quotes,
 }: {
   root: string;
   paths: readonly string[];
@@ -579,11 +585,9 @@ function DeliveryReviewPane({
   onSelect: (path: string) => void;
   empty: string;
   /** 划选文字追加到审阅意见。只在还能退回时传入。 */
-  onAnnotate?: (
-    text: string,
-    fileName: string,
-    comment: string,
-  ) => string | null;
+  onAnnotate?: ReviewAnnotate;
+  /** 意见栏里已引用过的文字：正文里把这些段落标出来 */
+  quotes?: readonly ReviewQuote[];
 }) {
   const [query, setQuery] = useState("");
   const [listOpen, setListOpen] = useState(true);
@@ -641,6 +645,7 @@ function DeliveryReviewPane({
         </aside>
       )}
       <div data-review-doc className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden overscroll-none">
+        <ReviewQuotesContext.Provider value={quotes ?? NO_QUOTES}>
         <ProjectFilePreview
           key={current}
           path={absUnderRoot(root, current)}
@@ -659,7 +664,9 @@ function DeliveryReviewPane({
             ) : null
           }
           onAnnotate={onAnnotate}
+          hideVersions
         />
+        </ReviewQuotesContext.Provider>
       </div>
     </div>
   );
@@ -1272,6 +1279,7 @@ function LiveWorkspaceReviewView({
   );
   // 退回意见：按工作副本记在本机（2026-11-11 用户：评审看了一半关掉，写的意见别丢）；退回或保存进项目后清掉
   const [reviewNotes, setReviewNotes] = useState("");
+  const reviewQuotes = useMemo(() => reviewNoteQuotes(reviewNotes), [reviewNotes]);
   // 上次退回的意见（.ccode/review-notes.md）：只读显示一行，不再预填进意见框——AI 改完再进评审时，
   // 框里还是上次那段，像没发出去、又容易原样再发一遍（2026-11-10 HER）；要沿用点「沿用」
   const [lastNotes, setLastNotes] = useState("");
@@ -1789,12 +1797,12 @@ function LiveWorkspaceReviewView({
   }
 
   /** 划选追加到意见框。不写盘，退回时才和手写意见一起落 review-notes。 */
-  const addAnnotation = useCallback(
-    (excerpt: string, fileName: string, comment: string) => {
+  const addAnnotation = useCallback<ReviewAnnotate>(
+    (excerpt, fileName, comment, markPath) => {
       const quote = excerpt.trim();
       if (!quote) return "先划一段文字";
       setReviewNotes((notes) =>
-        appendReviewAnnotation(notes, { fileName, excerpt: quote, comment }),
+        appendReviewAnnotation(notes, { fileName, excerpt: quote, comment, markPath }),
       );
       setNotesOpen(true);
       return null;
@@ -3709,6 +3717,7 @@ function LiveWorkspaceReviewView({
             onSelect={() => {}}
             empty="还没有筛选记录。"
             onAnnotate={!mergeDone ? addAnnotation : undefined}
+            quotes={reviewQuotes}
           />
         )}
         {contentReady && !showGitFiles && screeningReview && reviewPane !== "process" && researchContext?.root === worktreePath && (
@@ -3771,6 +3780,7 @@ function LiveWorkspaceReviewView({
                 : "没有稿件或笔记。"
             }
             onAnnotate={!mergeDone ? addAnnotation : undefined}
+            quotes={reviewQuotes}
           />
         )}
         <div className={`flex min-h-0 flex-1 ${showGitFiles ? "" : "hidden"}`}>

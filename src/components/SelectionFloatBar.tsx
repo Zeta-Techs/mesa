@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 
@@ -100,6 +100,7 @@ export default function SelectionFloatBar({
   containerRef,
   withinSelector,
   reserveWidth = 170,
+  pinned = false,
   children,
 }: {
   /** 相对定位的滚动容器；选区锚点必须落在其中，按钮相对它绝对定位 */
@@ -109,14 +110,34 @@ export default function SelectionFloatBar({
   withinSelector: string;
   /** 右缘预留宽度（约等于按钮条总宽），避免溢出容器右缘 */
   reserveWidth?: number;
+  /** 为 true 时条固定在原地不随选区变化而收起（审阅里正在写意见） */
+  pinned?: boolean;
   children: ReactNode;
 }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // 鼠标按着（正在拖选）：先不出条，松开后按最终选区出
+  const draggingRef = useRef(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const recheckRef = useRef<() => void>(() => {});
+  const pinnedRef = useRef(false);
+  pinnedRef.current = pinned;
+  // 点进条里的输入框：按下时选区还在、聚焦时才被输入框抢走，中间那一下 selectionchange 不能当成失选收条
+  const holdRef = useRef(false);
 
   // 选区监听：容器内选中文字 → 跟随选区末端定位；失选/收起即隐藏。
   // 点击按钮后调用方 removeAllRanges 清选区，selectionchange 会自然把本条收掉
   useEffect(() => {
     const onSelectionChange = () => {
+      // 焦点在条里的输入框时（审阅「直接写意见」），选区会被输入框抢走，别当成失选收条
+      if (holdRef.current || barRef.current?.contains(document.activeElement)) return;
+      // 正在写意见（有字没交）：划别处、点页面都不收条，写完加入或 Esc 才收
+      if (pinnedRef.current) return;
+      // 拖选中途不出条：条冒在指针前面，指针划过它时 WebKit 会把选区一下扩到段尾
+      //（2026-11-13 用户：浮条改成松开鼠标再出现）。键盘扩选不经过这里，照旧即时出
+      if (draggingRef.current) {
+        setPos(null);
+        return;
+      }
       const sel = window.getSelection();
       const scroll = containerRef.current;
       if (!sel || sel.isCollapsed || !scroll) {
@@ -145,14 +166,49 @@ export default function SelectionFloatBar({
         y: r.bottom - sr.top + scroll.scrollTop + 6,
       });
     };
+    recheckRef.current = onSelectionChange;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      // 点条里的按钮 / 输入框不算拖选
+      if ((event.target as Element | null)?.closest?.("[data-selection-float-bar]")) return;
+      draggingRef.current = true;
+    };
+    const onPointerUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      onSelectionChange();
+    };
     document.addEventListener("selectionchange", onSelectionChange);
-    return () =>
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", onPointerUp, true);
+    // 在窗口外松开、切走应用：别让「按着」卡住，条再也不出来
+    window.addEventListener("blur", onPointerUp);
+    return () => {
       document.removeEventListener("selectionchange", onSelectionChange);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("pointercancel", onPointerUp, true);
+      window.removeEventListener("blur", onPointerUp);
+    };
   }, [containerRef, withinSelector, reserveWidth]);
 
   if (!pos) return null;
   return (
     <div
+      ref={barRef}
+      // 输入框失焦后按当前选区重新判断去留（点别处 = 收条）
+      onMouseDownCapture={(event) => {
+        if ((event.target as HTMLElement).closest("input, textarea")) holdRef.current = true;
+      }}
+      onBlur={() =>
+        requestAnimationFrame(() => {
+          if (barRef.current?.contains(document.activeElement)) return;
+          holdRef.current = false;
+          recheckRef.current();
+        })
+      }
+      data-selection-float-bar
       style={{ left: pos.x, top: pos.y }}
       className="ccode-float-surface absolute z-10 flex items-center gap-0.5 rounded-lg border border-hairline p-0.5"
     >

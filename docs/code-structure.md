@@ -121,20 +121,21 @@ components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（Proje
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
                              #   schematic-forge 渲出的 PPTX：figurePreview 显示同名 PNG，PPTX 更新时标「生成时的预览」
   components/OfficePdfView.tsx # Word / 幻灯经 LibreOffice 转出的 PDF 视图（原文件改了重转）
-components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；FloatBarOverflow = 浮动条 ⋯ 溢出菜单（低频动作收这里，主条只留一个蓝色主钮）；useDistillSkill = ⋯ 里的「✦ 沉淀为技能…」项（ai_distill_skill 出草稿跳技能页预填新建）
+components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；pinned=true 时不随失选收（审阅划选后浮条里直接写意见，点进输入框选区被抢也不丢）；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；FloatBarOverflow = 浮动条 ⋯ 溢出菜单（低频动作收这里，主条只留一个蓝色主钮）；useDistillSkill = ⋯ 里的「✦ 沉淀为技能…」项（ai_distill_skill 出草稿跳技能页预填新建）
   components/NotebookPreview.tsx # Jupyter 笔记本按单元预览（Markdown / 高亮代码 / 输出文字图表格报错），「源码」切回编辑器
 components/HtmlPreview.tsx  # 本地 HTML 沙箱预览（FilePreviewEditor 唯一消费者）：消毒后进不透明源 iframe（HTML_IFRAME_SANDBOX），相对 CSS 经 read_file_preview 内联、本地图换 data URL；编辑器只读到 256KB 时另读整份再渲染（自包含报告动辄几 MB，截半排不出来）；拼装纯逻辑在 html-preview.ts
   components/MediaPreview.tsx # 音视频预览：grant_media_url 放行后经 asset 协议流式播放，放不了的编码提示系统打开
   components/UnsupportedPreview.tsx # 本来就不在 Mesa 里预览的文件（二进制 / 旧版 doc、rtf）：中性说明 + 系统打开 / 在文件夹中显示
 components/PreviewErrorState.tsx  # 文件预览统一失败态（Pdf/Docx/Xlsx/Slides/Image/Html/Notebook 预览与 FilePreviewEditor 八处共用）：原因 + 重试 + 可复制的文件类型；带路径的（二进制等无法内嵌）另给「用系统应用打开 / 在文件夹中显示」
   components/MdFrontmatterCard.tsx # md 阅读态开头 YAML 头小卡（只展示，超 6 项折叠，双击回编辑态第 1 行）
-components/MdToc.tsx  # md 阅读态浮动目录（FilePreviewEditor）：零高度 sticky 条（子 layout 父 ref 未挂，自己取 parent 当滚动容器），≥3 标题才出，MutationObserver 跟正文变化；扫描与定位在 md-toc.ts
+components/MdToc.tsx  # md 阅读态浮动目录（FilePreviewEditor）：顶部 28px sticky 条（子 layout 父 ref 未挂，自己取 parent 当滚动容器），≥3 标题才出，MutationObserver 跟正文变化；扫描与定位在 md-toc.ts
 components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePreviewEditor 唯一消费者，lazy chunk——无围栏不加载，检测在 mermaid-blocks.ts）：securityLevel strict + sanitizeMermaidSvg 二次清洗、主题随亮暗、点开 Lightbox 缩放；渲染失败留原文回退不吞源码
   components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
+components/ImageMarkDialog.tsx  # 审阅给一张图加意见的弹层（2026-11-13）：在图上拖红框（可多个）+ 一句话，加入意见时带红框的图经 exportMarkup + saveClipboardImage 存盘、路径随意见交给 AI（拼图出错这类划不了字的问题）；几何与导出沿用聊天标注同一套 image-markup.ts；审阅态点正文图（FilePreviewEditor）或图片预览「框选加意见」（ImagePreview）进
   pages/ConsultPage.tsx      # 研讨页（2026-11-11）：不在导航里的主区页，只放 store.consultOpen 那一场的 ConsultView；showConsult（侧栏研讨行、「去看看」、工作台进行中的研讨）打开它；没打开的给空态与「请几家研讨…」
   components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（只报计数、只数课题，2026-10-26 挪进滚动区、排在随手聊下面；添加入口 2026-10-27 挪到侧栏顶部「新项目」）与课题；
                              #   store 的 railSearchReq（标题栏放大镜 / ⇧⌘F 置位，挂载时也领——探出层的树比请求晚挂；2026-10-27 起树里不再占一行）开 RailSearchPalette（对话和项目一起搜，料由 searchSources 现组：置顶 / 随手聊 / 各课题的全部对话，
@@ -564,7 +565,8 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 画布像素上限 pdfCanvasOutputScale /
                              # 阅读会话复用键 readerReuseKey（按篇：`reader:<项目根>\n<PDF>`，与 runs.rs reader_pdf_of_key 双端镜像）
                              # 与这篇以前的精读对话 readerSessionFor（再点精读接回它，2026-11-06）（tests/reader.test.ts）
-  draft-review.ts            # 写作步评审机械红线（摘要待核实/G编号/待绘制/叠号）、划选批注追加与退回提示词
+  draft-review.ts            # 写作步评审机械红线（摘要待核实/G编号/待绘制/叠号）、划选批注追加（含图的标注图路径）与退回提示词
+  review-marks.ts            # 审阅「已加过意见的段落」高亮（2026-11-13）：意见栏引文（reviewNoteQuotes 解析）→ 正文 Range 反查（空白折叠、跨块补空格），CSS 自定义高亮标出、不改正文 DOM（tests/review-marks.test.ts）
   review-notes.ts            # 评审退回意见的本机存放（按工作副本）；研讨页「加进退回意见」追加后发事件让开着的评审页读回
   manuscript-files.ts        # 正文 vs 写作配套文件（2026-11-11）：MANUSCRIPT_HELPER_NAMES（与 mesa_checks.py / cite_check.py 同一份，fixture manuscript-helpers.json 比对）、isManuscriptHelper / isManuscriptBody、manuscriptSourcePath（按主稿名挑，不按顺序；没有正文退回 outline.md）
   md-path.ts                 # 阅读版式覆盖的 md 族（md/markdown/mdx/qmd）与 html 判定

@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { pdfWheelShouldZoom, pdfWheelZoomFactor } from "../reader";
 import PreviewErrorState from "./PreviewErrorState";
 import { useFileVersion } from "../file-watch";
+import type { ReviewAnnotate } from "../draft-review";
+import ImageMarkDialog from "./ImageMarkDialog";
 import { formatBytes, imageFitScale } from "../image-view";
 
 function basename(p: string): string {
@@ -23,10 +25,15 @@ const clampScale = (v: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, v));
 function ImagePreview({
   path,
   cwdHint,
+  onAnnotate,
 }: {
   path: string;
   cwdHint: string | null;
+  /** 审阅：在图上框出问题位置并加一条意见（带红框的图随意见交出去） */
+  onAnnotate?: ReviewAnnotate;
 }) {
+  const [annotating, setAnnotating] = useState(false);
+  const [annotateMsg, setAnnotateMsg] = useState<string | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [bytes, setBytes] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +51,8 @@ function ImagePreview({
   const fileVersion = useFileVersion(path);
 
   useEffect(() => {
+    setAnnotating(false);
+    setAnnotateMsg(null);
     setUrl(null);
     setNatural(null);
     setZoom("fit");
@@ -132,6 +141,19 @@ function ImagePreview({
         )}
         {url && (
           <span className="ml-auto flex shrink-0 items-center gap-1">
+            {onAnnotate && (
+              <button
+                type="button"
+                className="mr-1 rounded-sm border border-cta-bd bg-cta px-1.5 text-cta-text hover:brightness-110"
+                onClick={() => {
+                  setAnnotating(true);
+                  setAnnotateMsg(null);
+                }}
+                title="在图上拖出红框指出问题（如拼图错误），写一句意见"
+              >
+                框选加意见
+              </button>
+            )}
             <button
               type="button"
               className={`rounded-sm px-1.5 hover:bg-hover hover:text-l1 ${zoom === "fit" ? "text-l1" : "text-l3"}`}
@@ -172,6 +194,20 @@ function ImagePreview({
           </span>
         )}
       </div>
+      {annotateMsg && <p className="shrink-0 bg-strip px-3 pb-1.5 text-micro text-l3">{annotateMsg}</p>}
+      {annotating && onAnnotate && url && (
+        <ImageMarkDialog
+          url={url}
+          name={basename(path)}
+          fileName={basename(path)}
+          onAnnotate={(text, fileName, note, markPath) => {
+            const err = onAnnotate(text, fileName, note, markPath);
+            setAnnotateMsg(err ?? "已加进上面的意见");
+            return err;
+          }}
+          onClose={() => setAnnotating(false)}
+        />
+      )}
       {error ? (
         <PreviewErrorState error={error} kind="图片" path={path} onRetry={() => {
           setRetry((v) => v + 1);

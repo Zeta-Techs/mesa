@@ -129,6 +129,7 @@ function PdfContinuousView({
   maxFitMultiplier,
   annotations,
   onAddAnnotation,
+  onCaptureReview,
   onRemoveAnnotation,
   onRevealAnnotation,
   jumpReq,
@@ -160,6 +161,13 @@ function PdfContinuousView({
     blob: Blob,
     page: number,
     fileName: string,
+  ) => Promise<string | null>;
+  /** 审阅：圈选一块区域连同一句意见交出去（截图由宿主存成图，随意见交给 AI）；返回 null 成功 */
+  onCaptureReview?: (
+    blob: Blob,
+    page: number,
+    fileName: string,
+    comment: string,
   ) => Promise<string | null>;
   /** 生词高亮术语表（阅读区打开时加载一次，增删后刷新） */
   glossTerms?: readonly GlossaryEntry[];
@@ -233,7 +241,8 @@ function PdfContinuousView({
   const fileName = basename(path);
 
   // ===== 圈选截图（批次 B2）：模式开关 → 拖矩形 → 定格小条（发给 Agent / 插入笔记） =====
-  const captureSupported = Boolean(onCaptureAgent || onCaptureNote);
+  const captureSupported = Boolean(onCaptureAgent || onCaptureNote || onCaptureReview);
+  const [captureComment, setCaptureComment] = useState("");
   const [captureOn, setCaptureOn] = useState(false);
   /** 拖拽中的矩形（内容层坐标）；松手后清空 */
   const [dragRect, setDragRect] = useState<CaptureRect | null>(null);
@@ -277,10 +286,16 @@ function PdfContinuousView({
     maxScale: zoomCap,
   });
 
+  /** 定格条收掉：连同写了一半的审阅意见一起清，别带进下一次圈选 */
+  function dismissFrozen() {
+    setFrozen(null);
+    setCaptureComment("");
+  }
+
   function exitCapture() {
     setCaptureOn(false);
     setDragRect(null);
-    setFrozen(null);
+    dismissFrozen();
   }
 
   // ===== 批次 B3：划词翻译 / 生词卡 / ⌘+点击段落 / 大纲 / 进度记忆 / 术语悬停 =====
@@ -1340,7 +1355,7 @@ function PdfContinuousView({
     const wrapper = contentRef.current;
     if (!wrapper) return;
     e.preventDefault();
-    setFrozen(null); // 有定格条时起新框即丢弃
+    dismissFrozen(); // 有定格条时起新框即丢弃
     const wr = wrapper.getBoundingClientRect();
     const x0 = e.clientX - wr.left;
     const y0 = e.clientY - wr.top;
@@ -1360,19 +1375,35 @@ function PdfContinuousView({
     window.addEventListener("pointercancel", onUp);
   }
 
+  /** 圈选位置写进意见：这一页横向 / 纵向的百分之几，AI 不看图也知道指的是哪一块 */
+  function captureWithPlace(
+    comment: string,
+    region: { x: number; y: number; w: number; h: number } | null | undefined,
+  ): string {
+    if (!region) return comment;
+    const p = (v: number) => Math.round(v * 100);
+    return `${comment.trim()} 〔本页横向 ${p(region.x)}%–${p(region.x + region.w)}%、纵向 ${p(region.y)}%–${p(region.y + region.h)}%〕`.trim();
+  }
+
   /** 定格浮条两去向：成功即收条（模式保持，Esc/再点「▦ 圈选」退出） */
-  async function resolveCapture(target: "agent" | "note") {
+  async function resolveCapture(target: "agent" | "note" | "review") {
     if (!frozen || captureBusy) return;
     setCaptureBusy(true);
     try {
-      const handler = target === "agent" ? onCaptureAgent : onCaptureNote;
-      const err = await (handler?.(frozen.blob, frozen.page, fileName) ??
-        Promise.resolve("当前环境不支持截图"));
+      const call =
+        target === "review"
+          ? onCaptureReview?.(frozen.blob, frozen.page, fileName, captureWithPlace(captureComment, frozen.region))
+          : (target === "agent" ? onCaptureAgent : onCaptureNote)?.(frozen.blob, frozen.page, fileName);
+      const err = await (call ?? Promise.resolve("当前环境不支持截图"));
       showHint(
         err ??
-          (target === "agent" ? "已放进对话的输入框，检查后发送" : "已贴进笔记"),
+          (target === "agent"
+            ? "已放进对话的输入框，检查后发送"
+            : target === "review"
+              ? "已加进审阅意见"
+              : "已贴进笔记"),
       );
-      if (!err) setFrozen(null);
+      if (!err) dismissFrozen();
     } finally {
       setCaptureBusy(false);
     }
@@ -1824,12 +1855,36 @@ function PdfContinuousView({
                     4,
                     Math.min(
                       frozen.rect.x,
-                      (contentRef.current?.clientWidth ?? 400) - 260,
+                      (contentRef.current?.clientWidth ?? 400) - (onCaptureReview ? 340 : 260),
                     ),
                   ),
                   top: frozen.rect.y + frozen.rect.h + 6,
                 }}
               >
+                {onCaptureReview && (
+                  <form
+                    className="flex items-center gap-1"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void resolveCapture("review");
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={captureComment}
+                      onChange={(event) => setCaptureComment(event.target.value)}
+                      placeholder="这一块哪里不对"
+                      className="w-48 rounded-sm border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
+                    />
+                    <button
+                      type="submit"
+                      disabled={captureBusy}
+                      className="rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110 disabled:opacity-60"
+                    >
+                      加入意见
+                    </button>
+                  </form>
+                )}
                 {onCaptureAgent && (
                   <button
                     type="button"
@@ -1863,7 +1918,7 @@ function PdfContinuousView({
                         label: `p.${f.page} 圈选`,
                         region: f.region,
                       });
-                      setFrozen(null);
+                      dismissFrozen();
                     }}
                     className="rounded-sm border border-field bg-strip px-2 py-1 text-xs text-l2 hover:bg-inset hover:text-l1 disabled:opacity-60"
                   >
@@ -1873,7 +1928,7 @@ function PdfContinuousView({
                 <button
                   type="button"
                   disabled={captureBusy}
-                  onClick={() => setFrozen(null)}
+                  onClick={dismissFrozen}
                   className="flex h-6 w-6 items-center justify-center rounded-sm text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-60"
                 >
                   ×

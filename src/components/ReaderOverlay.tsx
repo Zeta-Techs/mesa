@@ -103,7 +103,6 @@ function stemOf(p: string): string {
 const SPOT_READONLY_REASON =
   "抽查时只读：笔记还在工作区里等评审，有问题划出来记进右边的问题单，交给 AI 改";
 const SPOT_ANNOTATE_COPY: AnnotateCopy = {
-  button: "记成问题",
   submit: "记下",
   placeholder: "哪里不对（可不写）",
   done: "已记进右边的问题单",

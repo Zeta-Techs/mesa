@@ -57,9 +57,9 @@ export default function MdToc({
   return (
     <div
       data-md-toc=""
-      className="pointer-events-none sticky top-0 z-20 h-0"
+      className="pointer-events-none sticky top-0 z-20 h-7"
     >
-      <div className="pointer-events-auto absolute right-2 top-2">
+      <div className="pointer-events-auto absolute right-2 top-1">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}

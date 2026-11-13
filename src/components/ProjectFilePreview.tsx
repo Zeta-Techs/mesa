@@ -1,4 +1,6 @@
 import { lazy, Suspense, useState, type ComponentProps, type ReactNode } from "react";
+import type { ReviewAnnotate } from "../draft-review";
+import { saveClipboardImage } from "../clipboard-image";
 import { projectFilePreviewKind } from "../project-files";
 import { LoadingRows } from "./PageFrame";
 import PdfContinuousView from "./PdfContinuousView";
@@ -32,17 +34,15 @@ function PreviewContent({
   /** 文本预览标题栏左侧。审阅里用来放收起后的展开按钮。 */
   leading?: ReactNode;
   /** 审阅划选：把选段和批注追加进意见框。只对 md 阅读态生效。 */
-  onAnnotate?: (
-    text: string,
-    fileName: string,
-    comment: string,
-  ) => string | null;
+  onAnnotate?: ReviewAnnotate;
   /** PDF 选段「整理为笔记」（项目文件页接线，pdf-organize.ts） */
   onOrganize?: ComponentProps<typeof PdfContinuousView>["onOrganize"];
   /** 脏状态上报（只有文本编辑态会脏）：宿主用来在切换/关闭预览前确认丢弃 */
   onDirtyChange?: (dirty: boolean) => void;
   readOnly?: string;
   hideReadOnlyToolbar?: boolean;
+  /** 审阅里不挂「文件版本」：审阅的是工作副本，历史版本在项目文件页看 */
+  hideVersions?: boolean;
 }) {
   const kind = projectFilePreviewKind(path);
   const frame = "flex min-h-0 flex-1 flex-col";
@@ -55,6 +55,18 @@ function PreviewContent({
           maxFitMultiplier={1.5}
           onOpenReader={onOpenReader}
           onOrganize={onOrganize}
+          onCaptureReview={
+            onAnnotate
+              ? async (blob, page, fileName, comment) => {
+                  try {
+                    const markPath = await saveClipboardImage(await blob.arrayBuffer(), "png");
+                    return onAnnotate(`PDF 第 ${page} 页圈选`, fileName, comment, markPath);
+                  } catch (reason) {
+                    return String(reason);
+                  }
+                }
+              : undefined
+          }
         />
       </div>
     );
@@ -76,7 +88,7 @@ function PreviewContent({
   if (kind === "image") {
     return (
       <div className={`${frame} overflow-auto overscroll-none`}>
-        <ImagePreview path={path} cwdHint={root} />
+        <ImagePreview path={path} cwdHint={root} onAnnotate={onAnnotate} />
       </div>
     );
   }
@@ -134,7 +146,7 @@ export default function ProjectFilePreview(props: ComponentProps<typeof PreviewC
   }
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
     {versionsPath === props.path && !props.readOnly ? <FileVersionsPanel root={props.root} path={props.path} onClose={() => setVersionsPath(null)} /> : <>
-      {!props.readOnly && <div className="flex shrink-0 justify-end px-2"><FileVersionsButton root={props.root} path={props.path} onOpen={openVersions} /></div>}
+      {!props.readOnly && !props.hideVersions && <div className="flex shrink-0 justify-end px-2"><FileVersionsButton root={props.root} path={props.path} onOpen={openVersions} /></div>}
       <PreviewContent {...props} onDirtyChange={(value) => { setDirty(value); props.onDirtyChange?.(value); }} />
     </>}
   </div>;

@@ -5,6 +5,8 @@ import {
   writingHitChecks,
   annotationDraftFromSelection,
   appendReviewAnnotation,
+  imageAnnotationExcerpt,
+  reviewNoteQuotes,
   scanWritingReview,
   sortWritingPreviewPaths,
   writingReturnPrompt,
@@ -96,6 +98,38 @@ test("划选批注追加进已有意见，同一段不重复", () => {
   });
   assert.match(clipped, /（draft\.md）：改成见 Fig\.1/);
   assert.ok(!clipped.includes("甲".repeat(161)));
+});
+
+test("给图加意见：引文写图名，带红框的标注图路径随意见写进同一行", () => {
+  assert.equal(imageAnnotationExcerpt("papers/figs/拼图.png"), "图 拼图.png");
+  assert.equal(imageAnnotationExcerpt("  "), "图 （无名图）");
+  const line = appendReviewAnnotation("", {
+    fileName: "draft.md",
+    excerpt: `${imageAnnotationExcerpt("papers/figs/拼图.png")}（框了 2 处）`,
+    comment: "b 和 c 顺序反了 〔框1：横向 10%–40%、纵向 20%–50%〕",
+    markPath: "/tmp/mark-1.png",
+  });
+  assert.equal(
+    line,
+    "- 「图 拼图.png（框了 2 处）」（draft.md）：b 和 c 顺序反了 〔框1：横向 10%–40%、纵向 20%–50%〕（标注图，红框处就是要改的位置：/tmp/mark-1.png）",
+  );
+});
+
+test("意见栏引文反查：逐行解析，截断的省略号去掉当短前缀；图的行照常解析（正文里找不到就不高亮）", () => {
+  const quotes = reviewNoteQuotes(
+    [
+      "- 「这段话 有问题」（draft.md）：要改",
+      "- 「开头一百六十字的段落被截过…」（outline.md）：太长了",
+      "- 「图 拼图.png（框了 1 处）」（draft.md）：图的问题",
+      "- 普通一行不解析",
+    ].join("\n"),
+  );
+  assert.deepEqual(quotes, [
+    { file: "draft.md", quote: "这段话 有问题" },
+    { file: "outline.md", quote: "开头一百六十字的段落被截过" },
+    { file: "draft.md", quote: "图 拼图.png（框了 1 处）" },
+  ]);
+  assert.deepEqual(reviewNoteQuotes(""), []);
 });
 
 test("退回提示词带上意见和红线", () => {

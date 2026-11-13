@@ -200,17 +200,14 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
     await act(async () => {
       dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
     });
-    const add = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "加进意见",
-    );
-    assert.ok(add, host.innerHTML.slice(0, 500));
-    await act(async () =>
-      add!.dispatchEvent(
-        new dom.window.MouseEvent("click", { bubbles: true }),
-      ),
-    );
+    // 新流程：划选后浮动条直接带输入框，写一句点「加入意见」一次收进意见栏。
+    // 真实交互里点进输入框那一刻先记住选段（rememberExcerpt）：之后正文重绘把选区节点换掉也不丢
     const input = host.querySelector("input");
-    assert.ok(input);
+    assert.ok(input, host.innerHTML.slice(0, 500));
+    await act(async () => {
+      input!.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true }));
+      input!.focus();
+    });
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(
         dom.window.HTMLInputElement.prototype,

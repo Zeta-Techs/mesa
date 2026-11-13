@@ -119,14 +119,41 @@ export function appendReviewLine(notes: string, line: string): string {
   return `${existing}\n${next}`;
 }
 
+/** 给图加意见时写进意见行的「引文」：图名取文件名，没有就取图注文字 */
+export function imageAnnotationExcerpt(name: string): string {
+  const base = name.trim().split(/[\\/]/).pop() ?? "";
+  return `图 ${base || "（无名图）"}`;
+}
+
+/** 审阅里「加进意见」的回调：第四个参数是带红框的标注图路径（图 / PDF 圈选才有）。返回 null = 已追加，字符串 = 提示 */
+export type ReviewAnnotate = (
+  text: string,
+  fileName: string,
+  comment: string,
+  markPath?: string,
+) => string | null;
+
 export function appendReviewAnnotation(
   notes: string,
-  input: { fileName: string; excerpt: string; comment?: string },
+  input: { fileName: string; excerpt: string; comment?: string; markPath?: string },
 ): string {
   const quote = oneLineQuote(input.excerpt);
   if (!quote) return notes;
   const comment = (input.comment ?? "").replace(/\s+/g, " ").trim() || "（待补）";
-  return appendReviewLine(notes, `- 「${quote}」（${input.fileName}）：${comment}`);
+  const image = input.markPath ? `（标注图，红框处就是要改的位置：${input.markPath}）` : "";
+  return appendReviewLine(notes, `- 「${quote}」（${input.fileName}）：${comment}${image}`);
+}
+
+/** 意见栏里每条「- 「引文」（文件）：…」的引文与文件名；被截断的引文去掉末尾省略号，当前缀用 */
+export function reviewNoteQuotes(notes: string): { file: string; quote: string }[] {
+  const out: { file: string; quote: string }[] = [];
+  for (const line of notes.split("\n")) {
+    const m = /^\s*- 「(.+?)」（(.+?)）：/.exec(line);
+    if (!m) continue;
+    const quote = m[1].replace(/…$/, "").trim();
+    if (quote) out.push({ file: m[2], quote });
+  }
+  return out;
 }
 
 /** 评审「退回修改」选了另一家：新开的一段对话不知道这一步做过什么，先交代它从哪读起 */

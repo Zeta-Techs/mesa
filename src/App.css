@@ -3143,6 +3143,22 @@ select:focus-visible {
 .md-body img {
   max-width: 100%;
 }
+/* 审阅：划字后点进输入框写意见，被划的那段继续高亮 */
+::highlight(review-pick) {
+  background-color: color-mix(in srgb, var(--color-cta) 35%, transparent);
+}
+/* 审阅：已经加过意见的段落 */
+::highlight(review-done) {
+  background-color: rgba(255, 204, 0, 0.22);
+}
+/* 审阅页：点图 = 在图上框出问题加意见 */
+.md-body-annotatable img {
+  cursor: pointer;
+}
+.md-body-annotatable img:hover {
+  outline: 2px solid var(--color-cta);
+  outline-offset: 2px;
+}
 /* 聊天字号阶梯（2026-10-21 聊天层排版）：聊天里的字一律按正文字号取比例——回答与用户气泡 = 1、
    过程行 / 计划 / 过程里的说明 = 0.94、过程里的命令输出与差异 = 0.86。设置 → 外观「聊天字号」写的
    --ccode-chat-fs（壳上变量，见 chat-style.ts）一改全跟着走；没调过时 14px（2026-10-28 用户同屏对照 Claude

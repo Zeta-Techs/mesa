@@ -133,6 +133,20 @@ export function appendMarkRef(current: string, n: number): string {
   return `${current.replace(/[ \t]+$/, "")}${current.endsWith("\n") ? "" : "\n"}${ref}`;
 }
 
+/** 框的位置写成人和 AI 都读得懂的话：占整张图横向 / 纵向的百分之几（左上角为 0%），随意见一起交给 AI */
+export function describeBoxes(marks: readonly Mark[], width: number, height: number): string {
+  const pct = (v: number, total: number) => Math.round((Math.min(total, Math.max(0, v)) / total) * 100);
+  return marks
+    .flatMap((m) =>
+      m.kind === "box"
+        ? [
+            `框${m.n}：横向 ${pct(m.x, width)}%–${pct(m.x + m.w, width)}%、纵向 ${pct(m.y, height)}%–${pct(m.y + m.h, height)}%`,
+          ]
+        : [],
+    )
+    .join("；");
+}
+
 /** 导出格式跟原图走：jpg 还是 jpg（照片体积小），其余一律 png */
 export function exportFormat(path: string): { mime: "image/png" | "image/jpeg"; ext: "png" | "jpg" } {
   return /\.jpe?g$/i.test(path) ? { mime: "image/jpeg", ext: "jpg" } : { mime: "image/png", ext: "png" };

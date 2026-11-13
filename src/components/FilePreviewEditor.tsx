@@ -6,6 +6,7 @@ import {
   memo,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -56,7 +57,9 @@ import type { PdfJumpRef } from "../reader-note";
 import { isPreviewableImagePath } from "../file-icons";
 import { isHtmlPath, isMarkdownPath } from "../md-path";
 import { hasMermaidFence } from "../mermaid-blocks";
-import { annotationDraftFromSelection } from "../draft-review";
+import { annotationDraftFromSelection, type ReviewAnnotate } from "../draft-review";
+import ImageMarkDialog from "./ImageMarkDialog";
+import { findQuoteRange, highlightPaintbox, ReviewQuotesContext } from "../review-marks";
 import {
   decorateMdCodeBlocks,
   handleMdCodeCopyClick,
@@ -150,16 +153,14 @@ interface MdViewSync {
   topLine: () => number | null;
 }
 
-/** 划选记一条的四处文案：浮条按钮 / 提交钮 / 输入框提示 / 记上后的回执 */
+/** 划选记一条的三处文案：提交钮 / 输入框提示 / 记上后的回执 */
 export interface AnnotateCopy {
-  button: string;
   submit: string;
   placeholder: string;
   done: string;
 }
 
 const REVIEW_ANNOTATE_COPY: AnnotateCopy = {
-  button: "加进意见",
   submit: "加入意见",
   placeholder: "这一处要怎么改",
   done: "已加进上面的意见",
@@ -228,11 +229,7 @@ function MarkdownView({
     send?: boolean,
   ) => string | null | Promise<string | null>;
   /** 审阅划选：把选段和批注收进意见框。返回字符串为提示；返回 null 表示已追加 */
-  onAnnotate?: (
-    text: string,
-    fileName: string,
-    comment: string,
-  ) => string | null;
+  onAnnotate?: ReviewAnnotate;
   /** 相对链接的打开去向（阅读区笔记栏原地打开）；缺省走 store previewReq 终端页预览 */
   onOpenFile?: (absPath: string) => void;
   /** 双击段落：切编辑态并定位到该块源码行（null=定位失败，只切模式）；只读/截断时宿主不传 */
@@ -376,12 +373,24 @@ function MarkdownView({
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const [hint, setHint] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [annotateDraft, setAnnotateDraft] = useState<string | null>(null);
   const [annotateComment, setAnnotateComment] = useState("");
+  const [imageMark, setImageMark] = useState<{ url: string; name: string } | null>(null);
   const pendingExcerptRef = useRef("");
+  const pendingRangeRef = useRef<Range | null>(null);
+  // 离开阅读态 / 换文件：别把高亮留在页面上
+  useEffect(
+    () => () => {
+      highlightPaintbox()?.registry.delete("review-pick");
+    },
+    [],
+  );
   useEffect(() => {
-    setAnnotateDraft(null);
     setAnnotateComment("");
+    setImageMark(null);
+    // 换文件：记住的选段与高亮指着旧文正文，一并清掉
+    pendingExcerptRef.current = "";
+    pendingRangeRef.current = null;
+    showPickedHighlight(false);
   }, [filePath]);
 
   const showHint = useCallback((msg: string) => {
@@ -412,33 +421,70 @@ function MarkdownView({
     });
   }
 
-  /** 审阅批注：按下时先记住选段。WebView 里 click 会清掉选区，那时再读就是空的。 */
+  /** 审阅批注：按下时先记住选段。WebView 里点输入框 / 按钮会清掉选区，那时再读就是空的；
+      已记住的不被后一次空读覆盖（在输入框里反复点击不丢选段）。 */
   function rememberExcerpt() {
-    pendingExcerptRef.current = annotationDraftFromSelection(
-      window.getSelection()?.toString() ?? "",
-    ) ?? "";
+    const sel = window.getSelection();
+    const picked = annotationDraftFromSelection(sel?.toString() ?? "");
+    if (!picked) return;
+    pendingExcerptRef.current = picked;
+    if (sel && sel.rangeCount > 0) pendingRangeRef.current = sel.getRangeAt(0).cloneRange();
   }
 
-  function beginAnnotate() {
-    const selected =
+  /** 点进输入框后浏览器选区会被输入框抢走、划的字不再高亮：用 CSS 自定义高亮把记住的那一段继续标出来 */
+  function showPickedHighlight(on: boolean) {
+    const paintbox = highlightPaintbox();
+    if (!paintbox) return;
+    const range = pendingRangeRef.current;
+    if (on && range) paintbox.registry.set("review-pick", new paintbox.Highlight(range));
+    else paintbox.registry.delete("review-pick");
+  }
+
+  /** 划选浮条里直接写意见、点「加入意见」（或回车）：选段 + 意见一次收进意见框 */
+  function commitAnnotate() {
+    if (!onAnnotate) return;
+    const picked =
       pendingExcerptRef.current ||
       annotationDraftFromSelection(window.getSelection()?.toString() ?? "") ||
       "";
-    pendingExcerptRef.current = "";
-    if (!selected || !onAnnotate) return;
-    setAnnotateDraft(selected);
-    setAnnotateComment("");
-    window.getSelection()?.removeAllRanges();
+    if (!picked) {
+      showHint("先划一段文字");
+      return;
+    }
+    const err = onAnnotate(picked, fileName, annotateComment);
+    showHint(err ?? annotateCopy.done);
+    if (err) return;
+    cancelAnnotate();
   }
 
-  function commitAnnotate() {
-    if (!annotateDraft || !onAnnotate) return;
-    const err = onAnnotate(annotateDraft, fileName, annotateComment);
-    if (err) showHint(err);
-    else showHint(annotateCopy.done);
-    setAnnotateDraft(null);
+  /** 写完（或 Esc 放弃）：清掉记住的选段与高亮，输入框失焦，浮条随选区消失而收起 */
+  function cancelAnnotate() {
+    pendingExcerptRef.current = "";
+    pendingRangeRef.current = null;
+    showPickedHighlight(false);
     setAnnotateComment("");
+    window.getSelection()?.removeAllRanges();
+    (document.activeElement as HTMLElement | null)?.blur?.();
   }
+
+  // 加过意见的段落：按意见栏里的引文反找正文，淡黄标出（CSS 自定义高亮，不改正文 DOM）
+  const reviewQuotes = useContext(ReviewQuotesContext);
+  useLayoutEffect(() => {
+    const paintbox = highlightPaintbox();
+    const host = bodyRef.current;
+    if (!paintbox || !host || !onAnnotate) return;
+    const ranges: Range[] = [];
+    for (const item of reviewQuotes) {
+      if (item.file !== fileName) continue;
+      const range = findQuoteRange(host, item.quote);
+      if (range) ranges.push(range);
+    }
+    if (ranges.length) paintbox.registry.set("review-done", new paintbox.Highlight(...ranges));
+    else paintbox.registry.delete("review-done");
+    return () => {
+      paintbox.registry.delete("review-done");
+    };
+  }, [reviewQuotes, fileName, html, onAnnotate]);
 
   // 每次 layout 都扫剩余 [data-md-src]：父级重绘若把 innerHTML 盖回占位，
   // deps 不变就不会进这个 effect，图会永远停在「图片加载中」。
@@ -516,6 +562,18 @@ function MarkdownView({
       onPdfRef!(ref);
       return;
     }
+    // 审阅里点一张图 = 在图上框出问题位置加意见（期刊拼图出错这类问题，划不了字）
+    const img = onAnnotate && !(e.target as HTMLElement).closest("a")
+      ? (e.target as HTMLElement).closest("img")
+      : null;
+    if (img) {
+      e.preventDefault();
+      setImageMark({
+        url: img.src,
+        name: img.dataset.ccodePath || img.getAttribute("alt") || "",
+      });
+      return;
+    }
     const a = (e.target as HTMLElement).closest("a");
     if (!a) return;
     const href = a.getAttribute("href") ?? "";
@@ -552,8 +610,8 @@ function MarkdownView({
     if (!(target instanceof Element) || target === host) return;
     // 链接/图片/代码条的双击保持原语义（单击已处理打开/复制），不抢成跳编辑
     if (target.closest("a, img, button, input, .md-code-bar, .md-pdf-ref")) return;
-    // 批注草稿表单开着时双击不跳编辑——跳转会卸载阅读态、把已输入的意见静默丢掉
-    if (annotateDraft !== null) return;
+    // 浮条里写了一半的意见时双击不跳编辑——跳转会卸载阅读态、把已输入的意见静默丢掉
+    if (annotateComment.trim()) return;
     // 双击默认选词会让划选浮条闪一帧——跳转前先清选区
     window.getSelection()?.removeAllRanges();
     let el: Element = target;
@@ -665,7 +723,7 @@ function MarkdownView({
           onDoubleClick={onJumpToSource ? onBodyDoubleClick : undefined}
           onMouseOver={onBodyOver}
           onMouseLeave={() => setCiteTip(null)}
-          className={`md-body${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""} ${
+          className={`md-body${onAnnotate ? " md-body-annotatable" : ""}${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""} ${
             large ? "mx-auto max-w-3xl px-8 py-10" : compact ? "px-4 py-3" : "px-5 py-4"
           }`}
           dangerouslySetInnerHTML={bodyHtml}
@@ -680,21 +738,52 @@ function MarkdownView({
           <SelectionFloatBar
             containerRef={scrollRef}
             withinSelector=".md-body"
-            reserveWidth={onAnnotate && onDiscuss ? 420 : onAnnotate ? 120 : 320}
+            reserveWidth={onAnnotate && onDiscuss ? 640 : onAnnotate ? 340 : 320}
+            pinned={annotateComment.trim().length > 0}
           >
             {onAnnotate && (
-              <button
-                type="button"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  rememberExcerpt();
-                }}
-                onClick={beginAnnotate}
-                // 同条有「讨论/改写」时让出唯一的蓝色主钮
-                className={onDiscuss ? FLOAT_BTN : FLOAT_BTN_PRIMARY}
-              >
-                {annotateCopy.button}
-              </button>
+              <span className="flex items-center gap-1">
+                <input
+                  value={annotateComment}
+                  onMouseDown={rememberExcerpt}
+                  onFocus={() => {
+                    rememberExcerpt();
+                    showPickedHighlight(true);
+                  }}
+                  onBlur={() => {
+                    // 已经写了字：点页面别处也不放弃，写完加入或 Esc 才收
+                    if (annotateComment.trim()) return;
+                    showPickedHighlight(false);
+                    pendingExcerptRef.current = "";
+                    pendingRangeRef.current = null;
+                  }}
+                  onChange={(event) => setAnnotateComment(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitAnnotate();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      cancelAnnotate();
+                    }
+                  }}
+                  placeholder={annotateCopy.placeholder}
+                  className="h-7 w-44 rounded-md border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
+                />
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    rememberExcerpt();
+                  }}
+                  onClick={commitAnnotate}
+                  // 同条有「讨论/改写」时让出唯一的蓝色主钮
+                  className={onDiscuss ? FLOAT_BTN : FLOAT_BTN_PRIMARY}
+                >
+                  {annotateCopy.submit}
+                </button>
+              </span>
             )}
             {onDiscuss && (
               <>
@@ -721,46 +810,18 @@ function MarkdownView({
           </SelectionFloatBar>
         )}
       </div>
-      {annotateDraft && (
-        <form
-          className="shrink-0 border-t border-hairline bg-strip px-3 py-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            commitAnnotate();
+      {imageMark && onAnnotate && (
+        <ImageMarkDialog
+          url={imageMark.url}
+          name={imageMark.name}
+          fileName={fileName}
+          onAnnotate={(text, file, note, markPath) => {
+            const err = onAnnotate(text, file, note, markPath);
+            if (!err) showHint(annotateCopy.done);
+            return err;
           }}
-        >
-          <p className="mb-1 line-clamp-2 text-micro text-l3" title={annotateDraft}>
-            「{annotateDraft.replace(/\s+/g, " ")}」
-          </p>
-          <div className="flex items-center gap-1.5">
-            <input
-              autoFocus
-              value={annotateComment}
-              onChange={(event) => setAnnotateComment(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setAnnotateDraft(null);
-                }
-              }}
-              placeholder={annotateCopy.placeholder}
-              className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
-            />
-            <button
-              type="submit"
-              className="shrink-0 rounded-sm border border-cta-bd bg-cta px-2 py-1 text-xs text-cta-text hover:brightness-110"
-            >
-              {annotateCopy.submit}
-            </button>
-            <button
-              type="button"
-              onClick={() => setAnnotateDraft(null)}
-              className="shrink-0 rounded-sm px-2 py-1 text-xs text-l3 hover:bg-hover hover:text-l1"
-            >
-              取消
-            </button>
-          </div>
-        </form>
+          onClose={() => setImageMark(null)}
+        />
       )}
     </div>
   );
@@ -814,11 +875,7 @@ function TextFilePreviewEditor({
     send?: boolean,
   ) => string | null | Promise<string | null>;
   /** 审阅划选「加进意见」：选段和批注追加到意见框 */
-  onAnnotate?: (
-    text: string,
-    fileName: string,
-    comment: string,
-  ) => string | null;
+  onAnnotate?: ReviewAnnotate;
   annotateCopy?: AnnotateCopy;
   /** 宿主要求只读（阅读区抽查：笔记还在工作区里等评审）：值是工具条上给人看的原因 */
   readOnly?: string;

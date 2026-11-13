@@ -7,6 +7,7 @@ import {
   badgeGeometry,
   circledNumber,
   cropOf,
+  describeBoxes,
   exportFormat,
   markLineWidth,
   markTooSmall,
@@ -69,6 +70,19 @@ test("编号：几张图连着编、撤销掉的号不回收；消息里另起�
   assert.equal(appendMarkRef("", 1), "① ");
   assert.equal(appendMarkRef("这张图：  ", 2), "这张图：\n② ");
   assert.equal(appendMarkRef("第一行\n", 3), "第一行\n③ ");
+});
+
+test("框位置写成人话：横纵百分比、越界夹在图内、只算框", () => {
+  const box = (n: number, x: number, y: number, w: number, h: number) => ({ kind: "box" as const, n, x, y, w, h });
+  assert.equal(describeBoxes([box(1, 100, 50, 300, 100)], 1000, 500), "框1：横向 10%–40%、纵向 10%–30%");
+  assert.equal(describeBoxes([box(2, 950, 475, 200, 100)], 1000, 500), "框2：横向 95%–100%、纵向 95%–100%", "拖出图外的夹回图内");
+  assert.equal(describeBoxes([box(1, -100, -50, 200, 100)], 1000, 500), "框1：横向 0%–10%、纵向 0%–10%");
+  assert.equal(
+    describeBoxes([box(1, 0, 0, 500, 250), { kind: "mask" as const, x: 0, y: 0, w: 10, h: 10 }], 1000, 500),
+    "框1：横向 0%–50%、纵向 0%–50%",
+    "打码这类不算框",
+  );
+  assert.equal(describeBoxes([], 1000, 500), "");
 });
 
 test("导出格式跟原图：jpg 仍是 jpg，其余 png", () => {
