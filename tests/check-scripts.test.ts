@@ -179,3 +179,53 @@ test("stat_check / num_check：--files 指定 manuscript/ 之外的报告（数�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+const hasMatplotlib = spawnSync(python, ["-c", "import matplotlib"], { encoding: "utf8" }).status === 0;
+
+test("fig_lint：对数轴次刻度重叠直接提示 NullFormatter；tight_layout 贴边 1–2 px 不误拦，真出画布仍拦下", { skip: !hasMatplotlib }, () => {
+  const root = tmp();
+  try {
+    mkdirSync(join(root, "figures"));
+    writeFileSync(
+      join(root, "figures/plot.py"),
+      [
+        "import sys, matplotlib",
+        "matplotlib.rcParams['svg.fonttype'] = 'none'",
+        "import matplotlib.pyplot as plt",
+        "from matplotlib.ticker import NullFormatter",
+        "mode = sys.argv[1]",
+        "fig, ax = plt.subplots(figsize=(89/25.4, 66/25.4), dpi=300)",
+        "ax.plot([0.2, 1.5], [10, 100])",
+        "ax.set_xscale('log')",
+        "if mode != 'clash':",
+        "    ax.xaxis.set_minor_formatter(NullFormatter())",
+        "if mode == 'edge':",
+        "    # 贴近画布底边约 1.5 px（< 2 pt 字框余量），不应判成文字出画布",
+        "    fig.text(0.5, -0.0015, 'Current density', ha='center', va='bottom', fontsize=7)",
+        "if mode == 'clip':",
+        "    fig.text(0.5, -0.08, 'Clipped label', ha='center', va='top', fontsize=8)",
+        "fig.savefig(f'figures/{mode}.svg')",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "figures/manifest.json"),
+      JSON.stringify({
+        figures: [
+          { file: "figures/clash.svg", script: "figures/plot.py", args: ["clash"] },
+          { file: "figures/edge.svg", script: "figures/plot.py", args: ["edge"] },
+          { file: "figures/clip.svg", script: "figures/plot.py", args: ["clip"] },
+        ],
+      }),
+    );
+    const r = run(skill("figure-forge", "fig_lint.py"), ["--root", root], root);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    const list = items(root, "fig-lint.jsonl");
+    const clash = byId(list, "CLASH-figures/clash.svg");
+    assert.equal(clash?.status, "blocked");
+    assert.match(clash?.title ?? "", /NullFormatter/);
+    assert.equal(byId(list, "OK-figures/edge.svg")?.status, "passed", `贴边微余量不应误杀：${JSON.stringify(list)}`);
+    assert.equal(byId(list, "CLIP-figures/clip.svg")?.status, "blocked");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

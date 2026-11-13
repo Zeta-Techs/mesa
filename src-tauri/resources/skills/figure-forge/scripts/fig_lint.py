@@ -65,15 +65,21 @@ def _audit(fig, fname, kw, before):
     r = fig.canvas.get_renderer()
     fb = fig.bbox
     # 刻度标签只算真正画出来的（坐标范围外的刻度也留着标签对象，但不画）
-    all_ticks, drawn = set(), set()
+    all_ticks, drawn, minor_ticks = set(), set(), set()
     for ax in fig.axes:
         for axis in (ax.xaxis, ax.yaxis):
-            for tick in axis.get_major_ticks() + axis.get_minor_ticks():
+            for tick in axis.get_major_ticks():
                 all_ticks.update({id(tick.label1), id(tick.label2)})
+            for tick in axis.get_minor_ticks():
+                all_ticks.update({id(tick.label1), id(tick.label2)})
+                minor_ticks.update({id(tick.label1), id(tick.label2)})
             for tick in axis._update_ticks():
                 for lab in (tick.label1, tick.label2):
+                    all_ticks.add(id(lab))
                     if tick.get_visible() and lab.get_visible():
                         drawn.add(id(lab))
+            for tick in axis.get_minor_ticks():
+                minor_ticks.update({id(tick.label1), id(tick.label2)})
     texts = []
     for t in fig.findobj(Text):
         if not t.get_visible() or not t.get_text().strip():
@@ -87,6 +93,7 @@ def _audit(fig, fname, kw, before):
         if bb.width <= 0 or bb.height <= 0:
             continue
         texts.append({"text": t.get_text()[:40], "pt": float(t.get_fontsize()), "bbox": [bb.x0, bb.y0, bb.x1, bb.y1],
+                      "minor": id(t) in minor_ticks,
                       "bold": str(t.get_fontweight()) in ("bold", "heavy", "black", "700", "800", "900")})
     msgs = [m for m in captured[before:] if re.search(r"missing from|Glyph \d+|findfont: Font family", m)]
     gray = None
@@ -205,10 +212,13 @@ def main():
                                     f"{frel} 有缺字或找不到字体：{res['msgs'][0][:120]}", frel, detail="\n".join(res["msgs"][:5])))
             texts, fb = res["texts"], res["fig"]
             if not res.get("tight"):
-                out_t = [t for t in texts if t["bbox"][0] < fb[0] - 1 or t["bbox"][1] < fb[1] - 1 or t["bbox"][2] > fb[2] + 1 or t["bbox"][3] > fb[3] + 1]
+                # tight_layout 在小尺寸或高 DPI 下常让边缘轴标题字框贴边 0.5–2 px（< 2 pt 空白字框余量，并非真裁字）
+                clip_tol = max(2.0, float(res.get("dpi") or 100) * 2.0 / 72.0)
+                out_t = [t for t in texts if t["bbox"][0] < fb[0] - clip_tol or t["bbox"][1] < fb[1] - clip_tol
+                         or t["bbox"][2] > fb[2] + clip_tol or t["bbox"][3] > fb[3] + clip_tol]
                 if out_t:
                     items.append(C.item(CHECKER, f"CLIP-{frel}", "figure_lint", "blocked",
-                                        f"{frel} 有文字出了画布（会被裁掉）：「{out_t[0]['text']}」等 {len(out_t)} 处", frel))
+                                        f"{frel} 有文字出了画布（会被裁掉）：「{out_t[0]['text']}」等 {len(out_t)} 处（加 bbox_inches='tight' 或留边距）", frel))
             small = [t for t in texts if t["pt"] < a.min_pt - 1e-6]
             if small:
                 items.append(C.item(CHECKER, f"MINPT-{frel}", "figure_lint", "blocked",
@@ -216,8 +226,11 @@ def main():
             clash = [(t1, t2) for i, t1 in enumerate(texts) for t2 in texts[i + 1:] if overlap(t1["bbox"], t2["bbox"])]
             if clash:
                 t1, t2 = clash[0]
+                minor_clash = any(x.get("minor") or y.get("minor") for x, y in clash)
+                hint = ("对数轴默认次刻度标签挤在一起时加 ax.xaxis.set_minor_formatter(NullFormatter())（或 yaxis）"
+                        if minor_clash else "刻度太密就减刻度或转角度")
                 items.append(C.item(CHECKER, f"CLASH-{frel}", "figure_lint", "blocked",
-                                    f"{frel} 有 {len(clash)} 对文字互相压住（如「{t1['text']}」与「{t2['text']}」）：刻度太密就减刻度或转角度", frel))
+                                    f"{frel} 有 {len(clash)} 对文字互相压住（如「{t1['text']}」与「{t2['text']}」）：{hint}", frel))
             labels = [t for t in texts if t["bold"] and len(t["text"].strip("() ")) == 1 and t["text"].strip("() ").isalpha()]
             if len(labels) > 1:
                 rows = []

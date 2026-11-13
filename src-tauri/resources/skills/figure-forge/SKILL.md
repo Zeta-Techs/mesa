@@ -47,7 +47,7 @@ provides: [figure-forge]
 - **物理尺寸**：单栏图宽约 8-9 cm、双栏约 17-18 cm，按目标版式设 figsize，不靠缩放凑；
 - **分辨率**：位图元素 ≥ 300 dpi（照片/热图类 600 dpi 更稳）；
 - **字体字号**：成稿字号下限 5 pt、常规 7-9 pt，全图统一字族；**文字默认可编辑**：脚本开头固定 `plt.rcParams['svg.fonttype'] = 'none'`（SVG 里是真文字，Illustrator / PPT 里能改）、`plt.rcParams['pdf.fonttype'] = 42`（PDF 嵌 TrueType，不用 Type 3）；中文用本机有的中文字体（`font.sans-serif` 里放 Arial 之后再放 PingFang SC / Microsoft YaHei / Source Han Sans SC），负号设 `axes.unicode_minus = False` 防方框；
-- **线宽与标记**：坐标轴/数据线 ≥ 0.5 pt，标记点在成稿尺寸下可分辨；
+- **线宽与标记**：坐标轴/数据线 ≥ 0.5 pt，标记点在成稿尺寸下可分辨；对数轴（`set_xscale("log")` / `set_yscale("log")`）跨度不到两个数量级时，matplotlib 默认会画出 `2×10⁻¹`、`3×10⁻¹` 等次刻度文字并在窄栏图里互相压住，显式加 `from matplotlib.ticker import NullFormatter` + `ax.xaxis.set_minor_formatter(NullFormatter())`（Y 轴同理），必要时用 `set_xticks` 给干净主刻度；`savefig` 默认带 `bbox_inches="tight"`（或 `constrained_layout=True`）防小尺寸下边缘轴标题被裁；
 - **格式**：主交付写入 `figures/` 的 SVG 或 PNG（要进 git，下一步初稿才能读到）；投稿用 PDF/EPS 副本写入本工作区 `output/figures/`（`*.pdf` 被 git 忽略，评审合并后自动进项目根同名目录）。含连续色调的位图部分用 PNG；不存 JPEG。组会 / 答辩要放进 PPT 时，装了 schematic-forge 技能就用它的 `render_figure.py --wrap figures/<图>.svg`（PPTX 里挂 SVG 原件、图注是文本框）；
 - **高频规格速查**：Nature 系单栏 89 mm/双栏 183 mm/高 ≤170 mm、面板字母 8 pt 粗体小写；ML 会议 ICML 3.25/6.75 in、NeurIPS/ICLR 5.5 in。速查与目标期刊当年作者指南冲突时，以指南为准。
 
