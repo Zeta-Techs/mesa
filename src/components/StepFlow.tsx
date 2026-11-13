@@ -2904,7 +2904,7 @@ export default function StepFlow({
           </div>
         )}
         {node.kind === "agent" && nudge && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-9" role="note">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-6" role="note">
             <span aria-hidden="true" className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" />
             <span className="min-w-0 text-xs text-l1">{nudge.text}</span>
             {nudge.action}
@@ -3170,7 +3170,7 @@ export default function StepFlow({
           </div>
         )}
         {node.kind === "agent" && agentContent && (
-          <div className="mt-1.5 pl-9">{agentContent}</div>
+          <div className="mt-1.5 pl-6">{agentContent}</div>
         )}
         {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
           <NotesProgressLine
@@ -3209,7 +3209,7 @@ export default function StepFlow({
           />
         )}
         {node.kind === "agent" && (progressHeadline || progressDetails.length > 0) && (
-          <div data-step-progress="details" className="mt-1 flex flex-wrap items-baseline gap-x-2 pl-9 text-micro tabular-nums text-l3" title={
+          <div data-step-progress="details" className="mt-1 flex flex-wrap items-baseline gap-x-1.5 pl-6 text-micro tabular-nums text-l3" title={
             notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
             searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
             draftStep ? "按稿件的章级标题数：标题下有正文才算已写，sections.json 定了、稿件里还没出现的节也算进总数；引用按出现次数数；待定标记是 [待核实] [待确认] 一类还没处理的" :
@@ -3217,16 +3217,17 @@ export default function StepFlow({
           }>
             {progressHeadline && <span data-step-progress="headline" className="font-medium text-l2">{progressHeadline}</span>}
             {progressDetails.map((d) => (
-              <span key={d} className="before:mr-2 before:text-l4 before:content-['·'] first:before:hidden">{d}</span>
+              <span key={d} className="before:mr-1.5 before:text-l4 before:content-['·'] first:before:hidden">{d}</span>
             ))}
           </div>
         )}
         {/* 统计行在上、工具行在下（2026-11-13 步骤卡统一设计稿，用户按稿核对）：统计行单独一行只读，首项是本步主进度、加粗；
-            工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接 */}
+            工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接。
+            两行 pl-6 = 序号列 w-4 + gap-2，左缘对齐「AI 干活」的字；只照稿改布局，字号保持原样（用户：字体只是参考观感） */}
         {node.kind === "agent" && (talkOnAgent || loopActions) && (
-          <div data-step-tools="row" className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-9">
+          <div data-step-tools="row" className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6">
             {talkOnAgent && talkGroup}
-            {talkOnAgent && loopActions && <span aria-hidden className="h-3.5 w-px bg-field" />}
+            {talkOnAgent && loopActions && <span aria-hidden className="h-3 w-px bg-hairline" />}
             {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
           </div>
         )}
