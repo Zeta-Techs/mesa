@@ -442,20 +442,41 @@ fn archive_checks(root: &Path, run_id: &str, items: &[CheckItem]) -> Result<(), 
     crate::storage::atomic_write(&dir.join(format!("{run_id}.jsonl")), text.as_bytes(), true)
 }
 
-/// 记一条运行事实（调用方已持 record.lock）。已记过同一 runId 的不再记。返回是否新写入。
+/// 记一条运行事实（调用方已持 record.lock）。返回是否新写入（同一 runId 的更新不算新写入）。
+/// 同一 runId 已记过时：Run 被接回后又结束（closedAt 变了）就原地换成新的一条，否则不动——
+/// 不然中途被打断记成「失败」的那一步，接回做完后记录还一直写着失败（2026-11-12 HER 综述实证）。
 pub(crate) fn append_run_record_at(root: &Path, record: &RunRecord) -> Result<bool, String> {
-    if read_records_at(root).iter().any(|r| r.run_id == record.run_id) {
-        return Ok(false);
-    }
     let line = serde_json::to_string(record).map_err(|e| e.to_string())?;
-    append_jsonl_line(&record_path(root), &line)?;
+    let existing = read_records_at(root);
+    if let Some(old) = existing.iter().find(|r| r.run_id == record.run_id) {
+        if old.closed_at == record.closed_at || record.closed_at.is_none() {
+            return Ok(false);
+        }
+        replace_run_line(&record_path(root), &record.run_id, &line)?;
+    } else {
+        append_jsonl_line(&record_path(root), &line)?;
+    }
+    let fresh = !existing.iter().any(|r| r.run_id == record.run_id);
     let records = read_records_at(root);
     crate::storage::atomic_write(
         &ai_usage_path(root),
         render_ai_usage(&records).as_bytes(),
         false,
     )?;
-    Ok(true)
+    Ok(fresh)
+}
+
+/// 把 record.jsonl 里这个 runId 的运行行换成新行，别的行（研讨成员等）原样保留
+fn replace_run_line(path: &Path, run_id: &str, line: &str) -> Result<(), String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("读研究记录失败: {e}"))?;
+    let mut out = String::with_capacity(text.len() + line.len());
+    for raw in text.lines() {
+        let same = serde_json::from_str::<RunRecord>(raw.trim())
+            .is_ok_and(|r| r.kind == "run" && r.run_id == run_id);
+        out.push_str(if same { line } else { raw });
+        out.push('\n');
+    }
+    crate::storage::atomic_write(path, out.as_bytes(), true)
 }
 
 /// 研讨结论被人采用（提升到研究档案）时记进研究记录（2026-11-11 研讨三期）：参与这场研讨、答成过的每一位一条，
@@ -535,7 +556,11 @@ fn run_models(run: &crate::runs::RunDto) -> Vec<String> {
     let Some(session) = run.session_id.as_deref() else {
         return Vec::new();
     };
-    let models = crate::usage::session_models(&run.agent, session);
+    // `<synthetic>` 是 Claude Code 自己补的报错占位（中断、出错时），不是用过的模型
+    let models: Vec<String> = crate::usage::session_models(&run.agent, session)
+        .into_iter()
+        .filter(|m| m != "<synthetic>")
+        .collect();
     if !models.is_empty() {
         return models;
     }
@@ -851,6 +876,28 @@ mod tests {
         assert!(usage.contains(
             "| 研究流程：文献检索与筛选 | Claude Code | claude-opus、claude-sonnet | 2 | 2026-11-01 至 2026-11-03 |"
         ));
+    }
+
+    /// 中途被打断记成失败、接回后再结束：同一 runId 原地换成新结果，不新增行、不动别的行
+    #[test]
+    fn resumed_run_replaces_its_record() {
+        let root = temp_root("record-resume");
+        let mut a = record("r1", "研究流程：综述初稿", "claude-code", &["claude-opus"], "2026-11-12");
+        a.status = "failed".into();
+        a.closed_at = Some("2026-11-12T15:03:06+08:00".into());
+        assert!(append_run_record_at(&root, &a).unwrap());
+        let b = record("r2", "目标", "codex", &[], "2026-11-12");
+        assert!(append_run_record_at(&root, &b).unwrap());
+        // 收尾重复调用（closedAt 没变）不动
+        assert!(!append_run_record_at(&root, &a).unwrap());
+        let mut later = a.clone();
+        later.status = "stopped".into();
+        later.closed_at = Some("2026-11-12T19:13:10+08:00".into());
+        assert!(!append_run_record_at(&root, &later).unwrap(), "更新不算新写入，统计不重复加");
+        let recs = read_records_at(&root);
+        assert_eq!(recs.len(), 2);
+        assert_eq!((recs[0].run_id.as_str(), recs[0].status.as_str()), ("r1", "stopped"));
+        assert_eq!(recs[1].run_id, "r2");
     }
 
     #[test]
