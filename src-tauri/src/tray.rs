@@ -122,7 +122,9 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
     let mut items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![Box::new(show), Box::new(pet)];
     let costs = month_costs();
     let rate = settings.rate_usd_cny.filter(|r| *r > 0.0).unwrap_or(7.2);
-    let cc_switch = crate::dirs::home_dir().is_some_and(|h| global_config::cc_switch_dir_present(&h));
+    let switchers = crate::dirs::home_dir()
+        .map(|h| global_config::other_switchers_present(&h))
+        .unwrap_or_default();
 
     for spec in agent_specs::all_agent_specs() {
         let agent = spec.id;
@@ -185,7 +187,7 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
             let line = MenuItem::with_id(
                 app,
                 format!("conflict:{agent}"),
-                conflict_line(cc_switch),
+                conflict_line(&switchers),
                 true,
                 None::<&str>,
             )
@@ -222,7 +224,7 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
             let hint = MenuItem::with_id(
                 app,
                 format!("stale:{agent}"),
-                stale_line(cc_switch),
+                stale_line(&switchers),
                 false,
                 None::<&str>,
             )
@@ -315,7 +317,7 @@ fn handle_menu(app: &AppHandle, id: &str) {
                     "info",
                     "tray",
                     &format!(
-                        "{} 设为全局「{}」被挡（检测到 cc-switch），已转到连接页确认，未写文件",
+                        "{} 设为全局「{}」被挡（检测到别的配置切换工具），已转到连接页确认，未写文件",
                         p.agent, p.name
                     ),
                 );
@@ -341,21 +343,21 @@ fn handle_menu(app: &AppHandle, id: &str) {
     });
 }
 
-/// 挡路首行：本机装着 cc-switch，或（只有 Codex）config.toml 里留着 cc-switch 的渠道。
-fn conflict_line(cc_switch_present: bool) -> &'static str {
-    if cc_switch_present {
-        "本机装了 cc-switch · 在 Mesa 里设为全局…"
+/// 挡路首行：本机装着别家切换工具（cc-switch / magpie），或（只有 Codex）config.toml 里留着 cc-switch 的渠道。
+fn conflict_line(switchers: &[&str]) -> String {
+    if switchers.is_empty() {
+        "config.toml 里有 cc-switch 的渠道 · 在 Mesa 里设为全局…".to_string()
     } else {
-        "config.toml 里有 cc-switch 的渠道 · 在 Mesa 里设为全局…"
+        format!("本机装了 {} · 在 Mesa 里设为全局…", switchers.join("、"))
     }
 }
 
-/// 外改提示：装着 cc-switch 时点名它；比对只知道文件变了，不知道是谁改的，所以说「多半」。
-fn stale_line(cc_switch_present: bool) -> &'static str {
-    if cc_switch_present {
-        "全局文件已在 Mesa 外改过，多半是 cc-switch"
+/// 外改提示：装着别家切换工具时点名它；比对只知道文件变了，不知道是谁改的，所以说「多半」。
+fn stale_line(switchers: &[&str]) -> String {
+    if switchers.is_empty() {
+        "全局文件已在 Mesa 外改过".to_string()
     } else {
-        "全局文件已在 Mesa 外改过"
+        format!("全局文件已在 Mesa 外改过，多半是 {}", switchers.join(" 或 "))
     }
 }
 
@@ -381,10 +383,12 @@ mod tests {
     }
 
     #[test]
-    fn hint_lines_name_cc_switch_only_when_present() {
-        assert!(conflict_line(true).contains("本机装了 cc-switch"));
-        assert!(conflict_line(false).contains("config.toml"));
-        assert!(stale_line(true).contains("cc-switch"));
-        assert!(!stale_line(false).contains("cc-switch"));
+    fn hint_lines_name_switchers_only_when_present() {
+        assert!(conflict_line(&["cc-switch"]).contains("本机装了 cc-switch"));
+        assert!(conflict_line(&["cc-switch", "magpie"]).contains("本机装了 cc-switch、magpie"));
+        assert!(conflict_line(&[]).contains("config.toml"));
+        assert!(stale_line(&["magpie"]).ends_with("多半是 magpie"));
+        assert!(stale_line(&["cc-switch", "magpie"]).ends_with("多半是 cc-switch 或 magpie"));
+        assert!(!stale_line(&[]).contains("多半"));
     }
 }

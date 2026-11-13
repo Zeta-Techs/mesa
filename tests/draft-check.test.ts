@@ -134,6 +134,51 @@ test("待你判断：引了只速读的（出处数和所在节）、图注出�
   assert.equal(byId("draft-plan")?.title, "大纲计划的拼图 2 在稿件里没找到");
 });
 
+test("渲染会走样的写法：下标写成 _、交叉引用前多写 Tables、手写章节号、一句堆三处原图号", () => {
+  const text = [
+    "---",
+    "number-sections: true",
+    "---",
+    "## Background {#sec-bg}",
+    "ΔG_H* near zero and η~10~ fine [@Ann2020]. Keys like @Ann_2020x and `a_b` and $x_1$ are skipped.",
+    "Values are compared in Tables @tbl-her and @tbl-oer; Section 3.3 and Sections 2.1–2.2 discuss it, @sec-bg is fine.",
+    "See Fig. 7(b) of [@Ann2020], Figs. 5(d–e) of [@Bo2021], and Fig. 2 of [@Eve2018].",
+    "Only Fig. 1 of [@Ann2020] here.",
+  ].join("\n");
+  const items = checkDraft({ kind: "writing", file: "manuscript/draft.md", text });
+  const get = (id: string) => items.find((i) => i.id === id);
+  assert.equal(get("draft-underscore")?.title, "1 处把下标写成了「_」（ΔG_H*）");
+  assert.equal(get("draft-xref-prefix")?.status, "blocked");
+  assert.equal(get("draft-xref-prefix")?.title, "交叉引用前多写了 Tables（1 处），渲染后会显示两遍");
+  assert.equal(get("draft-hand-secref")?.title, "正文手写了 2 处章节号（Section 3.3 一类），其中 3.3、2.1、2.2 对不上现在的标题");
+  assert.equal(get("draft-fig-pile")?.target?.line, 7);
+  // 没开 number-sections 不报手写章节号
+  assert.equal(checkDraft({ kind: "writing", file: "m.md", text: text.replace("number-sections: true", "toc: true") }).some((i) => i.id === "draft-hand-secref"), false);
+});
+
+test("证据面：只速读篇带数值的句子单独点出；仅摘要篇撑数值没标待核实；引用集中在一篇上", () => {
+  const index = JSON.stringify([
+    { id: "1", bibKey: "Ann2020", reviewStatus: "reviewed", fulltextStatus: "fulltext" },
+    { id: "2", bibKey: "Eve2018", reviewStatus: "pending", skimmed: true },
+    { id: "3", bibKey: "Abs2021", reviewStatus: "reviewed", fulltextStatus: "abstract-only" },
+  ]);
+  const paras = [
+    "Tafel slopes of 75–84 mV dec^−1^ were reported [@Eve2018].",
+    "Eve also studied borides broadly [@Eve2018].",
+    "It reached 75 mV at 10 mA cm^−2^ [@Abs2021].",
+    "The abstract reports 80 mV [@Abs2021].",
+    ...Array.from({ length: 40 }, (_, i) => `Point ${i} holds [@Ann2020${i < 12 ? "" : `; @K${i}`}].`.replace("[@Ann2020; ", i < 12 ? "[@Ann2020; " : "[")),
+  ];
+  const items = checkDraft({ kind: "writing", file: "m.md", text: paras.join("\n\n"), index });
+  const get = (id: string) => items.find((i) => i.id === id);
+  assert.match(get("draft-skim-Eve2018")?.title ?? "", /，1 句带数值$/);
+  assert.equal(get("draft-skim-Eve2018")?.target?.line, 1);
+  assert.equal(get("draft-abstract-num-Abs2021")?.title, "只读到摘要的 @Abs2021 撑了 1 句带数值的话，句中没标 [待核实]");
+  assert.equal(get("draft-abstract-num-Abs2021")?.target?.line, 5);
+  assert.match(get("draft-concentration")?.title ?? "", /^@Ann2020 出现在 12 段/);
+  assert.equal(get("draft-concentration")?.status, "needs_human");
+});
+
 test("定稿另拦占位；写作扫描里被取代的那两条只报一次", () => {
   const text = DRAFT.replace("[推测] Outlook.", "[推测] Outlook. Figure 4 (待绘制)");
   assert.equal(run("writing", text).some((i) => i.id === "draft-placeholder"), false);

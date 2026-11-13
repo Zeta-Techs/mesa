@@ -735,30 +735,47 @@ fn codex_other_switcher_marks_catalog_and_custom() {
 
 #[test]
 fn set_global_conflict_reason_all_agents() {
-    assert!(set_global_conflict_reason("claude-code", true, None).is_some());
-    assert!(set_global_conflict_reason("gemini", true, None).is_some());
-    assert!(set_global_conflict_reason("qwen", true, None).is_some());
-    assert!(set_global_conflict_reason("kimi", true, None).is_some());
-    assert!(set_global_conflict_reason("grok", true, None).is_some());
-    assert!(set_global_conflict_reason("claude-code", false, None).is_none());
-    assert!(set_global_conflict_reason("cursor", true, None).is_none());
+    let cc: &[&str] = &["cc-switch"];
+    for agent in ["claude-code", "gemini", "qwen", "kimi", "grok"] {
+        assert!(set_global_conflict_reason(agent, cc, None).is_some());
+    }
+    assert!(set_global_conflict_reason("claude-code", &[], None).is_none());
+    assert!(set_global_conflict_reason("cursor", cc, None).is_none());
     assert_eq!(
-        set_global_conflict_reason("codex", true, None),
+        set_global_conflict_reason("codex", cc, None).as_deref(),
         Some(CODEX_SET_GLOBAL_CONFLICT)
     );
     assert_eq!(
         set_global_conflict_reason(
             "codex",
-            false,
+            &[],
             Some("[model_providers.custom]\nbase_url = \"https://a\"\n")
-        ),
+        )
+        .as_deref(),
         Some(CODEX_SET_GLOBAL_CONFLICT)
     );
-    assert!(set_global_conflict_reason("codex", false, Some("model = \"gpt-5\"\n")).is_none());
+    assert!(set_global_conflict_reason("codex", &[], Some("model = \"gpt-5\"\n")).is_none());
     assert_eq!(
-        set_global_conflict_reason("opencode", true, None),
-        Some(SET_GLOBAL_CC_SWITCH_CONFLICT)
+        set_global_conflict_reason("opencode", cc, None),
+        Some(switcher_conflict_message(cc))
     );
+}
+
+#[test]
+fn magpie_counts_as_other_switcher() {
+    let home = tmpdir("switchers");
+    assert!(other_switchers_present(&home).is_empty());
+    std::fs::create_dir_all(home.join(".config").join("magpie")).unwrap();
+    assert_eq!(other_switchers_present(&home), vec!["magpie"]);
+    std::fs::create_dir_all(home.join(".cc-switch")).unwrap();
+    assert_eq!(other_switchers_present(&home), vec!["cc-switch", "magpie"]);
+
+    let magpie: &[&str] = &["magpie"];
+    let msg = set_global_conflict_reason("claude-code", magpie, None).unwrap();
+    assert!(msg.contains("本机检测到 magpie"));
+    // 只装 magpie：Codex 不套 cc-switch 的 custom 渠道说明
+    let codex = set_global_conflict_reason("codex", magpie, Some("model = \"gpt-5\"\n")).unwrap();
+    assert!(codex.contains("magpie") && !codex.contains("cc-switch"));
 }
 
 #[test]

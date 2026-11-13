@@ -98,13 +98,17 @@ pub const CODEX_SET_GLOBAL_CONFLICT: &str = "\
 \n\
 仍要设为全局？";
 
-/// 其他 Agent「设为全局」挡路：本机有 cc-switch。
-pub const SET_GLOBAL_CC_SWITCH_CONFLICT: &str = "\
+/// 其他 Agent「设为全局」挡路：本机装着别的配置切换工具（{tools} 处换成工具名）。
+const SET_GLOBAL_SWITCHER_CONFLICT: &str = "\
 这会把该 CLI 的默认配置切到此连接，外部终端都会走它。\n\
 \n\
-本机检测到 cc-switch。不要两边同时改同一个 Agent 的全局配置。\n\
+本机检测到 {tools}。不要两边同时改同一个 Agent 的全局配置。\n\
 \n\
 仍要设为全局？";
+
+pub(crate) fn switcher_conflict_message(tools: &[&str]) -> String {
+    SET_GLOBAL_SWITCHER_CONFLICT.replace("{tools}", &tools.join("、"))
+}
 
 /// 磁盘 Codex 配置是否像被 cc-switch（或其他 custom 渠道）占用默认位。
 pub fn codex_other_switcher_marks(config: &str) -> bool {
@@ -136,32 +140,50 @@ pub fn cc_switch_dir_present(home: &std::path::Path) -> bool {
     home.join(".cc-switch").is_dir()
 }
 
-/// 纯判定：本机有 cc-switch，或 Codex live 已被 custom/cc-switch 占用。
+/// 本机装着的别家配置切换工具（按数据目录认，卸了但目录还在的也算：它随时可能再写回来）。
+/// magpie（2026-11-13）：数据目录 `~/.config/magpie`，会改 Claude Code 等的 settings.json 并起本地网关
+pub fn other_switchers_present(home: &std::path::Path) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if cc_switch_dir_present(home) {
+        out.push("cc-switch");
+    }
+    if home.join(".config").join("magpie").is_dir() {
+        out.push("magpie");
+    }
+    out
+}
+
+/// 纯判定：本机有别家切换工具，或 Codex live 已被 custom/cc-switch 占用。
 pub fn set_global_conflict_reason(
     agent: &str,
-    cc_switch_present: bool,
+    switchers: &[&str],
     codex_live: Option<&str>,
-) -> Option<&'static str> {
+) -> Option<String> {
     match agent {
         "cursor" => None,
         "codex" => {
+            // custom 渠道名只跟 cc-switch 共用；只装了别家工具时照通用口径说
             let live_hit = codex_live.is_some_and(codex_other_switcher_marks);
-            (live_hit || cc_switch_present).then_some(CODEX_SET_GLOBAL_CONFLICT)
+            if live_hit || switchers.contains(&"cc-switch") {
+                Some(CODEX_SET_GLOBAL_CONFLICT.to_string())
+            } else {
+                (!switchers.is_empty()).then(|| switcher_conflict_message(switchers))
+            }
         }
-        _ => cc_switch_present.then_some(SET_GLOBAL_CC_SWITCH_CONFLICT),
+        _ => (!switchers.is_empty()).then(|| switcher_conflict_message(switchers)),
     }
 }
 
 /// 连接页 / 托盘共用：有冲突返回挡路文案。
 pub fn set_global_conflict_message(agent: &str) -> Option<String> {
     let home = crate::dirs::home_dir()?;
-    let cc = cc_switch_dir_present(&home);
+    let switchers = other_switchers_present(&home);
     let live = if agent == "codex" {
         fs::read_to_string(cli_dir(&home, "codex").join("config.toml")).ok()
     } else {
         None
     };
-    set_global_conflict_reason(agent, cc, live.as_deref()).map(str::to_string)
+    set_global_conflict_reason(agent, &switchers, live.as_deref())
 }
 
 #[tauri::command]

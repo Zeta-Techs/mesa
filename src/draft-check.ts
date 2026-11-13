@@ -248,13 +248,51 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
     const tier = notes.get(key)?.tier;
     if (tier !== "skim" && tier !== "pending") continue;
     const where = [...new Set(lines.map((l) => sec.at(l) || sec.title(l)).filter(Boolean))];
+    const numeric = numericSentenceLines(paras, key);
     push(items, {
       id: `draft-skim-${key}`,
       kind: "draft-tier",
       status: "needs_human",
-      title: `正文引了${tier === "skim" ? "只速读" : "还没精读"}的 @${key}（${lines.length} 处${where.length ? `，在 ${where.slice(0, 6).join("、")}` : ""}）`,
-      target: { file, line: lines[0] },
-      evidence: { detail: `${lineList(lines)}。只速读的篇只能点名、不能拿它写定量结论或机制细节；越没越界由你看。` },
+      title: `正文引了${tier === "skim" ? "只速读" : "还没精读"}的 @${key}（${lines.length} 处${where.length ? `，在 ${where.slice(0, 6).join("、")}` : ""}）${numeric.length ? `，${numeric.length} 句带数值` : ""}`,
+      target: { file, line: numeric[0] ?? lines[0] },
+      evidence: { detail: `${lineList(lines)}。${numeric.length ? `带数值的句子在${lineList(numeric)}，先看这几句。` : ""}只速读的篇只能点名、不能拿它写定量结论或机制细节；越没越界由你看。` },
+    });
+  }
+
+  // ②b 仅摘要的篇撑了数值、句子里没标 [待核实] 也没写「摘要报告」（待你判断）
+  for (const [key] of all) {
+    if (notes.get(key)?.tier !== "abstract") continue;
+    const numeric = numericSentenceLines(paras, key, ABSTRACT_HEDGE);
+    if (!numeric.length) continue;
+    push(items, {
+      id: `draft-abstract-num-${key}`,
+      kind: "draft-tier",
+      status: "needs_human",
+      title: `只读到摘要的 @${key} 撑了 ${numeric.length} 句带数值的话，句中没标 [待核实]`,
+      target: { file, line: numeric[0] },
+      evidence: { detail: `${lineList(numeric)}。仅摘要的篇写定量要标 [待核实]，或写成「该文摘要报告了…」；数值确实在摘要里的，你看过就行。` },
+    });
+  }
+
+  // ②c 引用集中在一篇上（待你判断，只列不判）：正文带引用的段落里，被引最多的一篇占比
+  const citedParas = paras.filter((p) => !p.heading && !p.text.startsWith("|") && !p.text.startsWith("!") && /@/.test(p.text));
+  const paraKeys = citedParas.map((p) => new Set(manuscriptCitations(p.text).map((c) => c.key)));
+  const perKey = new Map<string, number[]>();
+  paraKeys.forEach((ks, i) => ks.forEach((k) => perKey.set(k, [...(perKey.get(k) ?? []), citedParas[i].line])));
+  const ranked = [...perKey].sort((a, b) => b[1].length - a[1].length);
+  const top = ranked[0];
+  if (top && citedParas.length >= 30 && top[1].length >= CONCENTRATION_MIN_PARAS && top[1].length / citedParas.length >= CONCENTRATION_SHARE) {
+    const chapters = [...new Set(top[1].map((l) => (sec.at(l) || sec.title(l)).split(".")[0]).filter(Boolean))];
+    const pct = (n: number) => `${Math.round((n / citedParas.length) * 100)}%`;
+    push(items, {
+      id: "draft-concentration",
+      kind: "draft-tier",
+      status: "needs_human",
+      title: `@${top[0]} 出现在 ${top[1].length} 段（带引用段落的 ${pct(top[1].length)}），跨 ${chapters.length} 章`,
+      target: { file, line: top[1][0] },
+      evidence: {
+        detail: `其次：${ranked.slice(1, 4).map(([k, ls]) => `@${k} ${ls.length} 段`).join("、")}。只列出来，不判对错：一篇撑起中心论点时，摘要、讨论、结论的口气要和证据面对得上（「一组对照实验支持」，不写成 shown / rule）。`,
+      },
     });
   }
 
@@ -436,7 +474,102 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
       });
     }
   }
+
+  // ⑪ 渲染后会走样的写法（2026-11-13 HER 初稿实证）：下标写成 _、交叉引用前多写 Table、手写章节号、段末堆原图号
+  const body = paras.filter((p) => !p.heading && !/^<!--/.test(p.text));
+  const underscore = body.filter((p) => SUBSCRIPT_UNDERSCORE.test(proseOnly(p.text)));
+  if (underscore.length) {
+    const samples = [...new Set(underscore.flatMap((p) => [...proseOnly(p.text).matchAll(new RegExp(SUBSCRIPT_UNDERSCORE.source, "gu"))].map((m) => m[0])))];
+    push(items, {
+      id: "draft-underscore",
+      kind: "draft-render",
+      status: "needs_human",
+      title: `${underscore.length} 处把下标写成了「_」（${samples.slice(0, 3).join("、")}）`,
+      target: { file, line: underscore[0].line },
+      evidence: { detail: `${lineList(underscore.map((p) => p.line))}。Markdown 里 _ 不是下标，PDF 和 Word 会原样显示下划线；改成 Pandoc 写法 ΔG~H\\*~、η~10~。` },
+    });
+  }
+  const prefixed = body.flatMap((p) => [...p.text.matchAll(XREF_PREFIX)].map((m) => ({ line: p.line, text: m[0] })));
+  if (prefixed.length) {
+    push(items, {
+      id: "draft-xref-prefix",
+      kind: "draft-render",
+      status: "blocked",
+      title: `交叉引用前多写了 ${prefixed[0].text.replace(/\s*\[?-?@.*$/, "")}（${prefixed.length} 处），渲染后会显示两遍`,
+      target: { file, line: prefixed[0].line },
+      evidence: { detail: `${lineList([...new Set(prefixed.map((x) => x.line))])}。Quarto 会自己补上 Table / Figure / Section，「Tables @tbl-1」渲成「Tables Table 1」；删掉前面那个词。` },
+    });
+  }
+  if (/^\s*number-sections:\s*true/m.test(front)) {
+    const own = new Set(heads.map((h) => sec.at(h.line)).filter(Boolean));
+    const refs = body.flatMap((p) => [...p.text.matchAll(HAND_SECTION_REF)].map((m) => ({ line: p.line, nums: m[0].match(/\d+(?:\.\d+)*/g) ?? [] })));
+    if (refs.length) {
+      const missing = [...new Set(refs.flatMap((r) => r.nums).filter((n) => !own.has(n)))];
+      push(items, {
+        id: "draft-hand-secref",
+        kind: "draft-render",
+        status: "needs_human",
+        title: `正文手写了 ${refs.length} 处章节号（Section 3.3 一类）${missing.length ? `，其中 ${missing.slice(0, 4).join("、")} 对不上现在的标题` : ""}`,
+        target: { file, line: refs[0].line },
+        evidence: { detail: `${lineList([...new Set(refs.map((r) => r.line))])}。章节号由 Quarto 自动编，挪一节手写的号就全错位；给那一节标题加 {#sec-名}，正文写 @sec-名。${missing.length ? "对不上的是按现在的标题顺序推算的。" : ""}` },
+      });
+    }
+  }
+  const piles = body.filter((p) => !p.text.startsWith("|")).flatMap((p) =>
+    p.text
+      .split(/(?<=[.;])\s+(?=[A-Z])/)
+      .filter((s) => (s.match(FIG_OF_CITE) ?? []).length >= 3)
+      .map(() => p.line),
+  );
+  if (piles.length) {
+    push(items, {
+      id: "draft-fig-pile",
+      kind: "draft-figure",
+      status: "needs_human",
+      title: `${piles.length} 句一口气列了三处以上的原文图号（see Fig. n of [@键]…）`,
+      target: { file, line: piles[0] },
+      evidence: { detail: `${lineList([...new Set(piles)])}。原图号放在用到它的那句论断里、一处一次；没处可放的记进 figures/README.md，不在段末堆成一串。` },
+    });
+  }
   return items;
+}
+
+/** 一篇占带引用段落的比例到多少才报（2026-11-13 HER 初稿 10%、另一份定稿 4%） */
+const CONCENTRATION_SHARE = 0.08;
+const CONCENTRATION_MIN_PARAS = 10;
+/** 带单位的数值：75–84 mV、1.54 V、64 h、12%、0.06 eV */
+const NUMERIC_VALUE = /\d+(?:\.\d+)?\s*(?:[–—-]\s*\d+(?:\.\d+)?\s*)?(?:%|mV|V|mA|A|eV|meV|h|min|s|cm|nm|μm|µm|mg|g|K|°C|Ω|wt%|at%)(?![\p{L}])/u;
+const ABSTRACT_HEDGE = /\[待核实\]|\babstract\b|摘要/i;
+
+/** 引了这个键、又带数值的句子所在行（表格行不算；hedge 命中的句子不算） */
+function numericSentenceLines(paras: readonly Para[], key: string, hedge?: RegExp): number[] {
+  const out: number[] = [];
+  for (const p of paras) {
+    if (p.heading || p.text.startsWith("|")) continue;
+    for (const s of p.text.split(/(?<=[.;])\s+(?=[A-Z])/)) {
+      if (!manuscriptCitations(s).some((c) => c.key === key)) continue;
+      if (!NUMERIC_VALUE.test(proseOnly(s)) || hedge?.test(s)) continue;
+      out.push(p.line);
+      break;
+    }
+  }
+  return out;
+}
+
+/** 下标写成「_」：ΔG_H*、η_10（引用键、网址、行内代码、公式、图片路径先剥掉） */
+const SUBSCRIPT_UNDERSCORE = /(?<![\p{L}\p{N}_])\p{L}[\p{L}\p{N}]{0,3}_[\p{L}\p{N}{]+\*?/u;
+const XREF_PREFIX = /\b(?:Figures?|Figs?\.|Tables?|Tabs?\.|Sections?|Secs?\.|Equations?|Eqs?\.)\s*\[?-?@(?:fig|tbl|sec|eq)-/gi;
+const HAND_SECTION_REF = /(?:\bSections?|\bSecs?\.|§)\s*\d+(?:\.\d+)*(?:\s*(?:[–—-]|and|&|,)\s*\d+(?:\.\d+)*)*/gi;
+const FIG_OF_CITE = /\bFigs?\.\s*S?\d+[^;]*?\bof\s+\[@/g;
+
+function proseOnly(text: string): string {
+  return text
+    .replace(/`[^`]*`/g, " ")
+    .replace(/\$[^$]*\$/g, " ")
+    .replace(/\]\([^)]*\)/g, "]")
+    .replace(/\{[#.][^}]*\}/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/-?@[\p{L}\p{N}_:.#$%&\-+?<>~/]+/gu, " ");
 }
 
 /** 写作规范「术语/缩写 | 写法约定 | 首次定义位置」表里的缩写：第一格括号里的（transition metal boride (TMB)），
