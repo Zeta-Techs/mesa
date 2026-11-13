@@ -56,7 +56,7 @@ def _line_text(line: dict) -> str:
 
 
 def _caption_line(block: dict, pat: re.Pattern[str]):
-    """返回题注行的矩形和原文。正文里顺带提到 Figure N 的行不收。"""
+    """返回题注行的矩形、原文和题注所在文本块的横向范围。正文里顺带提到 Figure N 的行不收。"""
     if block.get("type") != 0:
         return None
     for line in block.get("lines", []):
@@ -64,7 +64,7 @@ def _caption_line(block: dict, pat: re.Pattern[str]):
         if pat.match(text):
             box = line.get("bbox")
             if box:
-                return box, text
+                return box, text, block.get("bbox", box)
     return None
 
 
@@ -196,23 +196,25 @@ def locate(doc, fig: int):
         for block in page.get_text("dict").get("blocks", []):
             hit = _caption_line(block, pat)
             if hit:
-                box, text = hit
-                captions.append((fitz.Rect(box), text))
+                box, text, block_box = hit
+                captions.append((fitz.Rect(box), text, (block_box[0], block_box[2])))
         if not captions:
             continue
         # 「Fig. 4 …」「Figure 4.」是题注；「Figure 4 further」是正文叙述。
         def caption_rank(item: tuple) -> tuple[int, float]:
-            rect, text = item
+            rect, text, _span = item
             titled = bool(re.match(r"^(?:fig\.|图|figure\s+\d+\s*[.:：])", text, re.I))
             return (0 if titled else 1, rect.y0)
         captions.sort(key=caption_rank)
         cap = None
         cap_text = ""
-        for candidate, text in captions:
+        cap_span = (0.0, 0.0)
+        for candidate, text, span in captions:
             if candidate.y0 < 36:
                 continue
             cap = candidate
             cap_text = text
+            cap_span = span
             break
         if cap is None:
             continue
@@ -225,9 +227,12 @@ def locate(doc, fig: int):
         below_rects = []
         for rect in _image_rects(page):
             # 短题注（“Fig. 2”）比图窄，用中心是否落在对方范围内判断同栏。
+            # 题注首行常是左对齐的一个短词（「FIGURE 6」），中心落在图左缘外面：再按整段题注的横向范围判一次
+            # （2026-11-13 HER 实证：Miao2024 Fig. 6 因此认不出，Agent 改按整页框，把下面的图注正文一起框进了拼图）
             center_in_caption = cap.x0 - 8 <= (rect.x0 + rect.x1) / 2 <= cap.x1 + 8
             caption_in_image = rect.x0 - 8 <= (cap.x0 + cap.x1) / 2 <= rect.x1 + 8
-            if not (center_in_caption or caption_in_image):
+            center_in_block = cap_span[0] - 8 <= (rect.x0 + rect.x1) / 2 <= cap_span[1] + 8
+            if not (center_in_caption or caption_in_image or center_in_block):
                 continue
             if rect.width < 40 or rect.height < 40:
                 continue

@@ -116,6 +116,31 @@ test("裁子图：--erase 只许角上的小框；--page 只配 --grid / --box�
   }
 });
 
+// 2026-11-13 HER 实证：题注首行只有左对齐的「FIGURE 6」，中心在图左缘外，按首行判同栏认不出图
+test("裁整图：题注首行是左对齐的短词时按整段题注判同栏，照样认出旁边的图", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-fig-"));
+  try {
+    const pdf = join(dir, "short.pdf");
+    const code = [
+      "import sys, io, pymupdf",
+      "from PIL import Image",
+      "im = Image.new('RGB', (400, 300), (220, 0, 0)); buf = io.BytesIO(); im.save(buf, 'PNG')",
+      "doc = pymupdf.open(); page = doc.new_page(width=595, height=842)",
+      "page.insert_image(pymupdf.Rect(147, 100, 547, 400), stream=buf.getvalue())",
+      "page.insert_text((45, 420), 'FIGURE 1\\nFour panels of the same sample, measured in 1 M KOH at room temperature.', fontsize=10)",
+      "doc.save(sys.argv[1])",
+    ].join("\n");
+    const made = spawnSync(python, ["-c", code, pdf], { encoding: "utf8" });
+    assert.equal(made.status, 0, made.stderr);
+    const out = join(dir, "f.png");
+    const r = run(["--pdf", pdf, "--fig", "1", "--dpi", "72", "--out", out]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(probe(out).center, [220, 0, 0]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // 2026-10-24 用户：系统综述一段论述可能拼 9 块。块数不设死上限，按印出来读不读得清卡
 const assemble = resolve("src-tauri/resources/skills/review-figures/scripts/assemble_panels.py");
 
