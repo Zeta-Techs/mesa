@@ -66,15 +66,41 @@ fn bump(change: impl FnOnce(&mut LocalStats)) {
     let _ = bump_at(&path, change);
 }
 
+fn apply_record_run(s: &mut LocalStats, checks: Option<crate::research_record::CheckCounts>) {
+    s.runs_recorded += 1;
+    if let Some(c) = checks {
+        s.checks_passed += c.passed as u64;
+        s.checks_blocked += c.blocked as u64;
+        s.checks_needs_human += c.needs_human as u64;
+    }
+}
+
+fn apply_replace_run_checks(
+    s: &mut LocalStats,
+    old: Option<crate::research_record::CheckCounts>,
+    next: Option<crate::research_record::CheckCounts>,
+) {
+    let o = old.unwrap_or_default();
+    let n = next.unwrap_or_default();
+    s.checks_passed = s.checks_passed.saturating_sub(o.passed as u64) + n.passed as u64;
+    s.checks_blocked = s.checks_blocked.saturating_sub(o.blocked as u64) + n.blocked as u64;
+    s.checks_needs_human =
+        s.checks_needs_human.saturating_sub(o.needs_human as u64) + n.needs_human as u64;
+}
+
 pub(crate) fn record_run(checks: Option<crate::research_record::CheckCounts>) {
-    bump(|s| {
-        s.runs_recorded += 1;
-        if let Some(c) = checks {
-            s.checks_passed += c.passed as u64;
-            s.checks_blocked += c.blocked as u64;
-            s.checks_needs_human += c.needs_human as u64;
-        }
-    });
+    bump(|s| apply_record_run(s, checks));
+}
+
+/// 同一 Run 被接回后再次收尾：运行总次数不重复加，核验三档按新旧差值原地替换
+pub(crate) fn replace_run_checks(
+    old: Option<crate::research_record::CheckCounts>,
+    next: Option<crate::research_record::CheckCounts>,
+) {
+    if old == next {
+        return;
+    }
+    bump(|s| apply_replace_run_checks(s, old, next));
 }
 
 pub(crate) fn record_accept() {
@@ -118,5 +144,31 @@ mod tests {
         let path = dir.join("local-stats.json");
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(read_at(&path), LocalStats::default());
+    }
+
+    #[test]
+    fn replace_run_checks_updates_delta_without_double_counting_runs() {
+        let dir = std::env::temp_dir().join(format!("ccode-stats-replace-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("local-stats.json");
+        bump_at(&path, |s| {
+            apply_record_run(
+                s,
+                Some(crate::research_record::CheckCounts { passed: 1, blocked: 2, needs_human: 0 }),
+            )
+        })
+        .unwrap();
+        bump_at(&path, |s| {
+            apply_replace_run_checks(
+                s,
+                Some(crate::research_record::CheckCounts { passed: 1, blocked: 2, needs_human: 0 }),
+                Some(crate::research_record::CheckCounts { passed: 4, blocked: 0, needs_human: 1 }),
+            )
+        })
+        .unwrap();
+        let got = read_at(&path);
+        assert_eq!(got.runs_recorded, 1);
+        assert_eq!((got.checks_passed, got.checks_blocked, got.checks_needs_human), (4, 0, 1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

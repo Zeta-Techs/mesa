@@ -78,6 +78,7 @@ pub async fn run_ask_aside(
         // 用它自己在用的模型（记录里认得出才用；认不出交给连接的默认）
         let model = crate::usage::session_models(&run.agent, &session)
             .into_iter()
+            .filter(|m| m != "<synthetic>" && m != crate::agents::KIMI_ENV_MODEL_ALIAS)
             .last()
             .or_else(|| crate::sessions::launch_model_of(&run.agent, &session));
         let mut cost: Option<f64> = None;

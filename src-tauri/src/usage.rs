@@ -707,7 +707,7 @@ fn last_model_of(events: Vec<UsageEvent>) -> Option<String> {
         .into_iter()
         .rev()
         .map(|e| e.model)
-        .find(|m| !m.is_empty() && m != "<synthetic>")
+        .find(|m| !m.is_empty() && m != "<synthetic>" && m != crate::agents::KIMI_ENV_MODEL_ALIAS)
 }
 
 /// 会话 → usage 事件流；普通 JSONL 与 zstd 会话均流式读取。
@@ -1279,15 +1279,84 @@ fn kimi_launch_models(conn: &Connection) -> HashMap<String, String> {
 }
 
 /// 文件里换不回真名的 Kimi 合成别名，改记启动时的模型（没记下的保持原样）
+#[cfg_attr(not(test), allow(dead_code))]
 fn fill_kimi_launch_model(events: &mut [UsageEvent], launch_model: Option<&String>) {
-    let Some(model) = launch_model else {
-        return;
-    };
+    resolve_kimi_events(events, launch_model, "", &HashMap::new());
+}
+
+/// Kimi 2.6 用量模型还原：
+/// 1) 合成别名 `__kimi_env_model__`：早于最新事件日的历史天若已在 `usage_daily` 解析出唯一真名则原样保留（防跨天续聊换模型把前几天的账覆盖成新模型），其余用启动时记下的 `launch_model`；
+/// 2) 外部终端在 `~/.kimi/config.toml` 里配的模型别名（2.6 不再写 `llm.request`），按 `[models.<别名>].model` 换回真名。
+fn resolve_kimi_events(
+    events: &mut [UsageEvent],
+    launch_model: Option<&String>,
+    config_toml: &str,
+    prior_day_models: &HashMap<String, String>,
+) {
+    let latest_day = events
+        .iter()
+        .map(|e| e.day.as_str())
+        .filter(|d| !d.is_empty())
+        .max()
+        .map(str::to_string);
     for event in events {
         if event.model == crate::agents::KIMI_ENV_MODEL_ALIAS {
-            event.model.clone_from(model);
+            let kept = latest_day
+                .as_deref()
+                .filter(|latest| !event.day.is_empty() && event.day.as_str() < *latest)
+                .and_then(|_| prior_day_models.get(&event.day));
+            if let Some(model) = kept.or(launch_model) {
+                event.model.clone_from(model);
+            }
+        } else if !config_toml.is_empty() {
+            if let Some(real) = crate::sessions::kimi_model_from_alias(&event.model, config_toml) {
+                event.model = real;
+            }
         }
     }
+}
+
+/// 读取同一 Kimi 会话在 `usage_daily` 里各天已解析出的唯一模型（不含合成别名），供跨天续聊重算时守住旧日模型
+fn kimi_prior_day_models(conn: &Connection, session_id: &str) -> HashMap<String, String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT day, model FROM usage_daily
+         WHERE agent='kimi' AND session_id=?1 AND model<>'' AND model<>?2",
+    ) else {
+        return HashMap::new();
+    };
+    let mut by_day: HashMap<String, Option<String>> = HashMap::new();
+    if let Ok(rows) = stmt.query_map(
+        params![session_id, crate::agents::KIMI_ENV_MODEL_ALIAS],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    ) {
+        for (day, model) in rows.flatten() {
+            match by_day.get(&day) {
+                None => {
+                    by_day.insert(day, Some(model));
+                }
+                Some(Some(existing)) if existing != &model => {
+                    by_day.insert(day, None);
+                }
+                _ => {}
+            }
+        }
+    }
+    by_day
+        .into_iter()
+        .filter_map(|(day, model)| model.map(|m| (day, m)))
+        .collect()
+}
+
+#[cfg(not(test))]
+fn kimi_config_toml() -> String {
+    crate::sessions::SessionRoots::current()
+        .and_then(|r| std::fs::read_to_string(r.kimi_code.join("config.toml")).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn kimi_config_toml() -> String {
+    String::new()
 }
 
 /// 官方账号（订阅制）profile id 集：重建索引时把会话档案的 profile 解析成认证方式。
@@ -1492,6 +1561,7 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
     prune_stale_provenance(&conn);
     let meta_flags = session_meta_flags(&conn);
     let kimi_models = kimi_launch_models(&conn);
+    let kimi_cfg = kimi_config_toml();
     let official_profiles = official_profile_ids();
     let scan = crate::sessions::scan_sessions();
     let mut indexed = 0usize;
@@ -1501,13 +1571,21 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         seen.insert(key.clone());
         // 快照补出的会话（alive=false）file_path 指向快照，内容稳定；
         // updated_at 缺失时用 created_at 兜底，保持 marker 恒定可跳过
-        let marker = if s.alive {
+        let base_marker = if s.alive {
             s.updated_at.clone().unwrap_or_default()
         } else {
             s.updated_at
                 .clone()
                 .or_else(|| s.created_at.clone())
                 .unwrap_or_default()
+        };
+        let marker = if s.agent == "kimi" && !base_marker.is_empty() {
+            match kimi_models.get(&s.session_id) {
+                Some(m) if !m.is_empty() => format!("{base_marker}|{m}"),
+                _ => base_marker,
+            }
+        } else {
+            base_marker
         };
         if meta_get(&conn, &key).as_deref() == Some(marker.as_str()) && !marker.is_empty() {
             continue;
@@ -1528,7 +1606,8 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         );
         let mut events = extract_events(s);
         if s.agent == "kimi" {
-            fill_kimi_launch_model(&mut events, kimi_models.get(&s.session_id));
+            let prior = kimi_prior_day_models(&conn, &s.session_id);
+            resolve_kimi_events(&mut events, kimi_models.get(&s.session_id), &kimi_cfg, &prior);
         }
         for event in &mut events {
             event.source.clone_from(&source);

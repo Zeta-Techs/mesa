@@ -386,12 +386,23 @@ pub(crate) fn render_ai_usage(records: &[RunRecord]) -> String {
             .or_default();
         row.runs += 1;
         row.models.extend(record.models.iter().cloned());
-        let day: String = record.created_at.chars().take(10).collect();
-        if row.first.is_empty() || day < row.first {
-            row.first = day.clone();
-        }
-        if day > row.last {
-            row.last = day;
+        let start_day: String = record.created_at.chars().take(10).collect();
+        let end_day: String = record
+            .closed_at
+            .as_deref()
+            .map(|s| s.chars().take(10).collect::<String>())
+            .filter(|d| d.len() == 10)
+            .unwrap_or_else(|| start_day.clone());
+        for day in [start_day, end_day] {
+            if day.is_empty() {
+                continue;
+            }
+            if row.first.is_empty() || day < row.first {
+                row.first = day.clone();
+            }
+            if day > row.last {
+                row.last = day;
+            }
         }
     }
     let mut text = String::from(
@@ -427,19 +438,24 @@ pub(crate) fn render_ai_usage(records: &[RunRecord]) -> String {
     text
 }
 
-/// 把这次 Run 的核验项存档到项目 `.ccode/checks/runs/<runId>.jsonl`（同一 Run 再结束一次就覆盖）。
+/// 把这次 Run 的核验项存档到项目 `.ccode/checks/runs/<runId>.jsonl`（同一 Run 再结束一次就覆盖；变空时清掉旧存档）。
 fn archive_checks(root: &Path, run_id: &str, items: &[CheckItem]) -> Result<(), String> {
+    let path = checks_dir(root).join("runs").join(format!("{run_id}.jsonl"));
     if items.is_empty() {
-        return Ok(());
+        return match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("清理过期核验存档失败: {e}")),
+        };
     }
     let mut text = String::new();
     for item in items {
         text.push_str(&serde_json::to_string(item).map_err(|e| e.to_string())?);
         text.push('\n');
     }
-    let dir = checks_dir(root).join("runs");
-    fs::create_dir_all(&dir).map_err(|e| format!("创建核验存档目录失败: {e}"))?;
-    crate::storage::atomic_write(&dir.join(format!("{run_id}.jsonl")), text.as_bytes(), true)
+    let dir = path.parent().expect("runs dir");
+    fs::create_dir_all(dir).map_err(|e| format!("创建核验存档目录失败: {e}"))?;
+    crate::storage::atomic_write(&path, text.as_bytes(), true)
 }
 
 /// 记一条运行事实（调用方已持 record.lock）。返回是否新写入（同一 runId 的更新不算新写入）。
@@ -556,10 +572,10 @@ fn run_models(run: &crate::runs::RunDto) -> Vec<String> {
     let Some(session) = run.session_id.as_deref() else {
         return Vec::new();
     };
-    // `<synthetic>` 是 Claude Code 自己补的报错占位（中断、出错时），不是用过的模型
+    // `<synthetic>` 是 Claude Code 自己补的报错占位，`__kimi_env_model__` 是 Kimi 启动合成别名（未解析前不算真名）
     let models: Vec<String> = crate::usage::session_models(&run.agent, session)
         .into_iter()
-        .filter(|m| m != "<synthetic>")
+        .filter(|m| m != "<synthetic>" && m != crate::agents::KIMI_ENV_MODEL_ALIAS)
         .collect();
     if !models.is_empty() {
         return models;
@@ -689,8 +705,14 @@ pub(crate) fn record_run_closed(run_id: &str) {
         let _lock = crate::storage::lock_at(&record_lock_path(&root))?;
         archive_checks(&root, &run.id, &checks)?;
         let record = build_record(&run, &root, &checks);
+        let prev_checks = read_records_at(&root)
+            .into_iter()
+            .find(|r| r.run_id == record.run_id && r.closed_at != record.closed_at && r.closed_at.is_some())
+            .map(|r| r.checks);
         if append_run_record_at(&root, &record)? {
             crate::local_stats::record_run(record.checks);
+        } else if let Some(old_checks) = prev_checks {
+            crate::local_stats::replace_run_checks(old_checks, record.checks);
         }
         Ok(())
     })();
@@ -892,12 +914,14 @@ mod tests {
         assert!(!append_run_record_at(&root, &a).unwrap());
         let mut later = a.clone();
         later.status = "stopped".into();
-        later.closed_at = Some("2026-11-12T19:13:10+08:00".into());
+        later.closed_at = Some("2026-11-13T19:13:10+08:00".into());
         assert!(!append_run_record_at(&root, &later).unwrap(), "更新不算新写入，统计不重复加");
         let recs = read_records_at(&root);
         assert_eq!(recs.len(), 2);
         assert_eq!((recs[0].run_id.as_str(), recs[0].status.as_str()), ("r1", "stopped"));
         assert_eq!(recs[1].run_id, "r2");
+        let usage = fs::read_to_string(ai_usage_path(&root)).unwrap();
+        assert!(usage.contains("2026-11-12 至 2026-11-13"), "跨天接回的结束日期计入 AI 使用声明");
     }
 
     #[test]
@@ -993,5 +1017,7 @@ mod tests {
         archive_checks(&root, "run-1", &items).unwrap();
         assert!(checks_dir(&root).join("runs").join("run-1.jsonl").is_file());
         assert!(read_checks_at(&root).items.is_empty());
+        archive_checks(&root, "run-1", &[]).unwrap();
+        assert!(!checks_dir(&root).join("runs").join("run-1.jsonl").exists(), "接回清空核验后旧存档一并清除");
     }
 }

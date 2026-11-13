@@ -758,6 +758,64 @@ fn kimi_alias_falls_back_to_launch_model() {
     let mut evs = kimi_events(&lines);
     fill_kimi_launch_model(&mut evs, models.get("k2"));
     assert_eq!(evs[0].model, "__kimi_env_model__", "启动时没记下模型的保持原样");
+
+    // 跨天续聊换模型时：历史天已解析出的唯一模型保留，最新天按当前 launch_model，外部终端别名按 config.toml 还原
+    let usage_conn = Connection::open_in_memory().unwrap();
+    ensure_usage_schema(&usage_conn).unwrap();
+    usage_conn
+        .execute_batch(
+            "INSERT INTO usage_daily(day, agent, model, project_path, session_id, input, output)
+             VALUES ('2026-07-28','kimi','kimi-k2.5','/repo','k-multi',10,2),
+                    ('2026-07-29','kimi','__kimi_env_model__','/repo','k-multi',10,2);",
+        )
+        .unwrap();
+    let prior = kimi_prior_day_models(&usage_conn, "k-multi");
+    assert_eq!(prior.get("2026-07-28").map(String::as_str), Some("kimi-k2.5"));
+    assert!(!prior.contains_key("2026-07-29"), "合成别名不算已解析模型");
+    let mut multi = vec![
+        UsageEvent {
+            day: "2026-07-28".into(),
+            model: "__kimi_env_model__".into(),
+            input: 10,
+            output: 2,
+            cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
+            source: SOURCE_CLI.into(),
+            internal: false,
+            official: false,
+        },
+        UsageEvent {
+            day: "2026-07-29".into(),
+            model: "__kimi_env_model__".into(),
+            input: 10,
+            output: 2,
+            cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
+            source: SOURCE_CLI.into(),
+            internal: false,
+            official: false,
+        },
+        UsageEvent {
+            day: "2026-07-29".into(),
+            model: "zetatechs/kimi-k3".into(),
+            input: 8,
+            output: 1,
+            cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: 0,
+            source: SOURCE_CLI.into(),
+            internal: false,
+            official: false,
+        },
+    ];
+    let next_launch = "kimi-k2.6".to_string();
+    let cfg = "[models.\"zetatechs/kimi-k3\"]\nmodel = \"kimi-k3\"\n";
+    resolve_kimi_events(&mut multi, Some(&next_launch), cfg, &prior);
+    assert_eq!(multi[0].model, "kimi-k2.5", "旧日已解析模型不因续聊换模型被覆盖");
+    assert_eq!(multi[1].model, "kimi-k2.6", "最新天按当前启动模型计");
+    assert_eq!(multi[2].model, "kimi-k3", "外部终端别名按 config.toml 还原真名");
 }
 
 #[test]

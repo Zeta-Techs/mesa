@@ -3127,7 +3127,7 @@ fn session_resume_config_at(
 /// Kimi 会话文件记的是 config.toml 里的模型别名（`zetatechs/kimi-k3`、Mesa 启动时合成的 `__kimi_env_model__`），
 /// 不是网关上的模型名——原样拿去续聊，网关报「No available channel for model zetatechs/kimi-k3」（2026-11-03 实测）。
 /// 按 `[models.<别名>].model` 换回真名；Mesa 合成的别名只活在那次启动的环境变量里，换不回给 None（调用方用启动时记下的）
-fn kimi_model_from_alias(alias: &str, config: &str) -> Option<String> {
+pub(crate) fn kimi_model_from_alias(alias: &str, config: &str) -> Option<String> {
     if alias == crate::agents::KIMI_ENV_MODEL_ALIAS {
         return None;
     }

@@ -875,6 +875,12 @@ pub(crate) fn ai_prompt_impl_full(
     };
     if let Some(id) = &lock_id {
         let _ = crate::sessions::mark_session_internal(&profile.agent, id);
+        let _ = crate::sessions::set_session_profile(
+            &profile.agent,
+            id,
+            &profile.id,
+            selected.as_deref().map(|m| (m, "")),
+        );
     }
     let oneshot = if streaming { claude_stream_args(&prompt) } else { headless_oneshot_args(&profile.agent, &prompt) };
     for a in compose_headless_args(&profile.agent, &plan.args, &oneshot) {
@@ -1275,6 +1281,9 @@ pub(crate) struct HeadlessCommand {
     pub lock_id: Option<String>,
     /// 按授权跑时这家实际落实了什么（人话，记进 Run 事件）；没授权为 None
     pub grant_summary: Option<String>,
+    /// 所属连接 id 与解析后的模型名（无头会话落盘后写入 session_meta，供 Kimi 2.6 用量计价与预算轮询）
+    pub profile_id: String,
+    pub selected_model: Option<String>,
 }
 
 /// 无头命令拼装：解析二进制、现取密钥（只进子进程 env）、注入连接、拼 plan + 无头形态参数、定工作目录。
@@ -1361,6 +1370,8 @@ pub(crate) fn build_headless_command_granted(
         host: endpoint_host(profile.base_url.as_deref()),
         lock_id,
         grant_summary: grant_plan.map(|g| g.summary),
+        profile_id: profile.id,
+        selected_model: selected,
     })
 }
 
@@ -1458,10 +1469,16 @@ pub(crate) fn run_agent_task_granted(
     existing_run_id: Option<&str>,
     grant: Option<&crate::grant::Grant>,
 ) -> Result<(String, String), String> {
-    let HeadlessCommand { mut cmd, host, lock_id, grant_summary } =
+    let HeadlessCommand { mut cmd, host, lock_id, grant_summary, profile_id, selected_model } =
         build_headless_command_granted(profile, model, prompt, cwd, true, grant)?;
     if let Some(id) = &lock_id {
         let _ = crate::sessions::mark_session_internal(&profile.agent, id);
+        let _ = crate::sessions::set_session_profile(
+            &profile.agent,
+            id,
+            &profile_id,
+            selected_model.as_deref().map(|m| (m, "")),
+        );
     }
     let default_reuse = format!("headless:ai:{}", cwd.display());
     let reuse = reuse_key.unwrap_or(&default_reuse);
@@ -1514,11 +1531,22 @@ pub(crate) fn run_agent_task_granted(
         return Err(error);
     }
     let mut seen_session = None;
+    let mut recorded_stream_session: Option<String> = None;
     let mut pending = Vec::new();
     let mut on_output = |bytes: &[u8]| feed_lines(&mut pending, bytes, &mut |line| {
         if FOLLOWUP_OUTPUT.with(|value| value.get()) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
                 if let Some(session) = value.get("session_id").or_else(|| value.get("sessionId")).or_else(|| value.get("thread_id")).and_then(|value| value.as_str()) {
+                    if recorded_stream_session.as_deref() != Some(session) {
+                        recorded_stream_session = Some(session.to_string());
+                        let _ = crate::sessions::mark_session_internal(&profile.agent, session);
+                        let _ = crate::sessions::set_session_profile(
+                            &profile.agent,
+                            session,
+                            &profile_id,
+                            selected_model.as_deref().map(|m| (m, "")),
+                        );
+                    }
                     *budget_session.lock().unwrap_or_else(|error| error.into_inner()) = Some(session.into());
                     let _ = crate::runs::attach_session_impl(&run.id, session);
                 }
@@ -1537,6 +1565,15 @@ pub(crate) fn run_agent_task_granted(
     // 会话 id 记到 Run 上（定时历史「看过程」据此打开那次后台对话）：
     // 能锁定 id 的 CLI 用启动前锁的，其余用输出里抠到的
     let session = lock_id.or(seen_session);
+    if let Some(sid) = session.as_deref() {
+        let _ = crate::sessions::mark_session_internal(&profile.agent, sid);
+        let _ = crate::sessions::set_session_profile(
+            &profile.agent,
+            sid,
+            &profile_id,
+            selected_model.as_deref().map(|m| (m, "")),
+        );
+    }
     let over_budget = budget_watch.map(BudgetWatch::finish).unwrap_or(false);
     let out = if over_budget {
         Err(format!(
@@ -1636,7 +1673,17 @@ pub(crate) fn run_goal_headless_to_exit(
         host,
         lock_id,
         grant_summary: _,
+        profile_id,
+        selected_model,
     } = job;
+    if let Some(id) = &lock_id {
+        let _ = crate::sessions::set_session_profile(
+            agent,
+            id,
+            &profile_id,
+            selected_model.as_deref().map(|m| (m, "")),
+        );
+    }
     // 锁定了会话 id 的：跑的期间登记，卡住检测据此看会话文件有没有在长（跑完即撤）
     let _session_reg = lock_id
         .as_ref()
@@ -1678,6 +1725,14 @@ pub(crate) fn run_goal_headless_to_exit(
     let out = strip_known_cli_noise(&String::from_utf8_lossy(&captured.stdout));
     let err = strip_known_cli_noise(&String::from_utf8_lossy(&captured.stderr));
     let session = lock_id.or_else(|| extract_headless_session_id(&format!("{out}\n{err}")));
+    if let Some(sid) = session.as_deref() {
+        let _ = crate::sessions::set_session_profile(
+            agent,
+            sid,
+            &profile_id,
+            selected_model.as_deref().map(|m| (m, "")),
+        );
+    }
     let code = captured.status.and_then(|status| status.code());
     if captured.cancelled {
         let reason = if crate::process::shutting_down() {
