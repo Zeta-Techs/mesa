@@ -3238,7 +3238,7 @@ export default function StepFlow({
             工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接。
             两行 pl-6 = 序号列 w-4 + gap-2，左缘对齐「AI 干活」的字；只照稿改布局，字号保持原样（用户：字体只是参考观感） */}
         {node.kind === "agent" && (talkOnAgent || loopActions) && (
-          <div data-step-tools="row" className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6">
+          <div data-step-tools="row" className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6">
             {talkOnAgent && talkGroup}
             {talkOnAgent && loopActions && <span aria-hidden className="h-3 w-px bg-hairline" />}
             {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
