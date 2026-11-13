@@ -1032,6 +1032,15 @@ function EditScheduleModal({
     }
     setBusy(true);
     setError(null);
+    const prevFollowup = schedule.followup ?? null;
+    const nextProbe = followupProbe.trim() || null;
+    const followupChanged = followupEnabled
+      ? !prevFollowup ||
+        prevFollowup.maxRounds !== followupRounds ||
+        prevFollowup.days !== followupDays ||
+        prevFollowup.budgetUsd !== followupBudget ||
+        (prevFollowup.probe ?? null) !== nextProbe
+      : prevFollowup !== null;
     try {
       await invoke("update_schedule", {
         id: schedule.id,
@@ -1041,7 +1050,12 @@ function EditScheduleModal({
           // 事件规则不按时间跑：不改周期，只改模式
           ...(schedule.event ? { eventMode, eventWeeklyCapUsd: Number(weeklyCapEdit) || 0 } : fields),
           skipIfUnreviewed,
-          ...(followupEnabled ? { followup: { maxRounds: followupRounds, days: followupDays, budgetUsd: followupBudget, probe: followupProbe.trim() || null } } : { disableFollowup: true }),
+          // 分轮跟进没改过就不进 patch，避免在跟进中/结果不明或不支持跟进的旧任务上改名字与周期被拦
+          ...(followupChanged
+            ? followupEnabled
+              ? { followup: { maxRounds: followupRounds, days: followupDays, budgetUsd: followupBudget, probe: nextProbe } }
+              : { disableFollowup: true }
+            : {}),
           timeoutMinutes,
           grant: { network: grantNetwork, budgetUsd: Number(grantBudget) > 0 ? Number(grantBudget) : null },
           // 清空运行配置/模型必须发空串：后端 Option<Option> 语义下显式 null ≡ 缺失 ≡ 不改，
@@ -1811,7 +1825,7 @@ export default function ScheduleSection({
                         已自动暂停
                       </span>
                     )}
-                    {s.followupState && <span className="text-micro text-l3" title={s.followupAbout ?? undefined}>{s.followupState === "waiting" ? "等你回答 · 未占进程" : s.followupState === "later" ? `预约复查 ${s.followupAt ?? ""}` : s.followupState === "uncertain" ? "上次结果不明，等你核对" : "正在接着跟进"}</span>}
+                    {s.followupState && <span className="text-micro text-l3" title={s.followupAbout ?? undefined}>{s.followupState === "waiting" ? "等你回答 · 未占进程" : s.followupState === "later" ? (s.followupAt ? `预约复查 ${slotLabel(s.followupAt)}` : "预约复查") : s.followupState === "uncertain" ? "上次结果不明，等你核对" : "正在接着跟进"}</span>}
                     {s.queued && !s.runningRunId && !running.has(s.id) && !needsKeywords && (
                       <span
                         className="shrink-0 text-micro text-l3"

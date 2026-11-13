@@ -722,17 +722,26 @@ export default function StepFlow({
   const dataWs = runStatus === "done" ? undefined : ws;
   // 分段：首段放标题旁，其余进明细行；由取数函数直接分好，改计数文案不会把标题和明细拆错
   // 换步骤时整张卡按 key 重新挂载，计数要等异步读完台账：先空着再补一行，工具行会被往下推一下（2026-11-13 用户：切步骤小字抖）。
-  // 记住每步上次读到的分段，挂载时直接画出来，读完有变化才换
-  const progressKey = `${projectPath}\n${step.name}\n${dataWs?.worktreePath ?? ""}\n${!!ws || runStatus === "done"}`;
-  const [progressState, setProgressState] = useState(() => ({ key: progressKey, parts: agentProgressCache.get(progressKey) ?? null }));
-  const agentProgress = progressState.key === progressKey ? progressState.parts : agentProgressCache.get(progressKey) ?? null;
+  // 记住每步上次读到的分段，挂载时直接画出来，读完有变化才换；「保存进项目」瞬间 worktreePath 变空时退回步骤级缓存防闪空
+  const hasStepProgress = !!ws || runStatus === "done";
+  const progressStepKey = `${projectPath}\n${step.name}`;
+  const progressKey = `${progressStepKey}\n${dataWs?.worktreePath ?? ""}\n${hasStepProgress}`;
+  const fallbackProgress = () =>
+    agentProgressCache.get(progressKey) ?? (hasStepProgress ? agentProgressCache.get(progressStepKey) ?? null : null);
+  const [progressState, setProgressState] = useState(() => ({ key: progressKey, parts: fallbackProgress() }));
+  const agentProgress = progressState.key === progressKey ? progressState.parts : fallbackProgress();
   const setAgentProgress = useCallback((parts: string[] | null) => {
-    if (parts) agentProgressCache.set(progressKey, parts);
-    else agentProgressCache.delete(progressKey);
+    if (parts) {
+      agentProgressCache.set(progressKey, parts);
+      agentProgressCache.set(progressStepKey, parts);
+    } else {
+      agentProgressCache.delete(progressKey);
+      agentProgressCache.delete(progressStepKey);
+    }
     setProgressState((prev) =>
       prev.key === progressKey && sameParts(prev.parts, parts) ? prev : { key: progressKey, parts },
     );
-  }, [progressKey]);
+  }, [progressKey, progressStepKey]);
   const [progressHeadline, ...progressDetails] = agentProgress ?? [];
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
@@ -2372,8 +2381,8 @@ export default function StepFlow({
                 // 起点 top-[22px] 对齐序号圆心下方：圆圈字形（①②）在 20px 行框里只占中部，
                 // 固定 top-3（12px）会冒到字形顶上方（用户实测「序号上方多出一段」）；
                 // 22px 在紧凑行（无按钮）落在序号正下方、加高行（按钮撑到 28px+）落在圆心附近，
-                // 两种行高都不会越过字形顶
-                "relative pl-1.5 before:absolute before:bottom-1 before:left-[calc(0.875rem-1px)] before:top-[22px] before:w-0.5 before:bg-cta before:content-['']"
+                // 两种行高都不会越过字形顶。走 after 叠在主干连接线（before）上方
+                "relative pl-1.5 after:pointer-events-none after:absolute after:bottom-1 after:left-[calc(0.875rem-1px)] after:top-[22px] after:w-0.5 after:bg-cta after:content-['']"
               : "pl-1.5"
         } ${
           // 还轮不到才压暗。待确认清单已经挂在这一行上，不因为检索会话还没标完成就发灰。
@@ -2396,7 +2405,7 @@ export default function StepFlow({
           {node.key === "endnote-export" || node.key === "continue-notes" || (node.kind === "human" && human) ? null : ic.cls === "is-done" ? (
             /* 完成态：中性亮灰空心小圆环——与大圆步进器同语言（实心=进行中、空心=已完成），
                与完成段链条同款 l2 亮灰；①②③ 也是空心圆族（2026-09-15 用户拍板不要绿色） */
-            <span className="ccode-well relative z-10 flex w-4 shrink-0 items-center justify-center">
+            <span className="ccode-well relative z-10 flex h-5 w-4 shrink-0 items-center justify-center">
               <span className="block size-3 rounded-full border-[1.5px] border-l2" />
             </span>
           ) : (
@@ -2405,7 +2414,7 @@ export default function StepFlow({
             </span>
           )}
           {node.key === "endnote-export" ? (
-            <span className="ccode-well relative z-10 flex shrink-0">
+            <span className="ccode-well relative z-10 flex shrink-0 rounded-sm">
             <Checkbox
               checked={endnoteChecked}
               onChange={setEndnoteChecked}
@@ -2413,7 +2422,7 @@ export default function StepFlow({
             />
             </span>
           ) : node.key === "continue-notes" ? (
-            <span className="ccode-well relative z-10 flex shrink-0">
+            <span className="ccode-well relative z-10 flex shrink-0 rounded-sm">
             <Checkbox
               checked={continueNotesChecked}
               onChange={setContinueNotesChecked}
@@ -2421,7 +2430,7 @@ export default function StepFlow({
             />
             </span>
           ) : node.kind === "human" && human ? (
-            <span className="ccode-well relative z-10 flex shrink-0">
+            <span className="ccode-well relative z-10 flex shrink-0 rounded-sm">
             <Checkbox
               checked={node.done}
               disabled={
@@ -3245,9 +3254,9 @@ export default function StepFlow({
             工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接。
             两行 pl-6 = 序号列 w-4 + gap-2，左缘对齐「AI 干活」的字；带框的「继续讨论」左移 7px（边框 1 + px-1.5），让框里的字而不是框对齐统计行的字（2026-11-13 用户：按钮行看着偏右）；只照稿改布局，字号保持原样（用户：字体只是参考观感） */}
         {node.kind === "agent" && (talkOnAgent || loopActions) && (
-          <div data-step-tools="row" className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6 [&_[data-step-tools=talk]>button:first-child]:-ml-[7px]">
+          <div data-step-tools="row" className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6 [&:not(:has([data-step-tools=talk],[data-step-tools=loop]:not(:empty)))]:hidden [&_[data-step-tools=talk]>button:first-child]:-ml-[calc(0.375rem+1px)]">
             {talkOnAgent && talkGroup}
-            {talkOnAgent && loopActions && <span aria-hidden className="h-3 w-px bg-hairline" />}
+            {talkOnAgent && loopActions && <span aria-hidden className="h-3 w-px bg-hairline [&:has(+[data-step-tools=loop]:empty)]:hidden" />}
             {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
           </div>
         )}
@@ -3710,9 +3719,9 @@ export default function StepFlow({
       ref={containerRef}
       className={bare ? "" : "ccode-well rounded-md px-2.5 py-2"}
     >
-      {/* 主干节点用左侧竖线串起来（连接线落在序号列中线上，被序号与人工事项方框的井底色盖住，1px 极淡）：
-          没有连线时三个节点像三条独立的行，读不出「这是一条流程」 */}
-      <ol className="relative space-y-3 before:absolute before:bottom-4 before:left-[calc(0.875rem-0.5px)] before:top-4 before:w-px before:bg-hairline before:content-['']">
+      {/* 主干节点用左侧竖线串起来（连接线落在序号列中线上，由前一个节点连到下一个节点圆心并被井底色盖住，1px 极淡）：
+          不画在 ol 整高上，否则末尾节点 ③ 下方有说明文字时竖线会穿过 ③ 向下悬空伸出 */}
+      <ol className="space-y-3 [&>li:not(:last-child)]:relative [&>li:not(:last-child)]:before:pointer-events-none [&>li:not(:last-child)]:before:absolute [&>li:not(:last-child)]:before:-bottom-7 [&>li:not(:last-child)]:before:left-[calc(0.875rem-0.5px)] [&>li:not(:last-child)]:before:top-4 [&>li:not(:last-child)]:before:w-px [&>li:not(:last-child)]:before:bg-hairline [&>li:not(:last-child)]:before:content-['']">
         {flow.nodes
           .filter((n) => n.section === "main")
           .map((node) => renderNode(node, false))}
@@ -3726,8 +3735,8 @@ export default function StepFlow({
         ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave)],
       ] as const).map(([title, line, nodes]) => nodes.length > 0 && (
         <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"}>
-          <div className="mt-3 flex items-center gap-2 pl-[30px]">
-            {/* pl-[30px] = 节点 pl-1.5 + 序号列 + 间距，分隔线的字与步骤名同一左缘（设计稿 .split） */}
+          <div className="mt-3 flex items-center gap-2 pl-[1.875rem]">
+            {/* pl-[1.875rem] = 节点 pl-1.5 + 序号列 w-4 + 间距 gap-2，分隔线的字与步骤名同一左缘（设计稿 .split） */}
             <span className="shrink-0 text-micro text-l4">{title}</span>
             <span className={line === "dashed" ? "min-w-0 flex-1 border-t border-dashed border-field" : "h-px min-w-0 flex-1 bg-hairline"} />
           </div>

@@ -982,8 +982,8 @@ export default function TaskCardsSection({
       if (!docxPath) return;
       const launch = await loopLaunch(step.name);
       const ws = await ensureActive(found, step.name);
-      // 已保存的步骤开新一轮要先干净；做到一半 / 待评审的就接着在这一步里处理
-      if (focusRunStatus === "done") await assertRoundable(ws, step.name);
+      // 已保存（或已归档刚恢复）的步骤开新一轮要先干净；做到一半 / 待评审的就接着在这一步里处理
+      if (focusRunStatus === "done" || found.status === "archived") await assertRoundable(ws, step.name);
       else if (stepBusy(ws)) throw new Error(`「${step.name}」的 AI 正在干活或等你确认：等它这一轮停下再导入批注。`);
       if ((await bringLatest(ws, step.name, confirmDialog, "处理意见")) === null) return;
       const got = await invoke<{ relPath: string; count: number }>("docx_comments_import", { worktree: ws.worktreePath, docxPath });
@@ -1780,7 +1780,9 @@ export default function TaskCardsSection({
                   )}
                 </span>
               );
-              if ((focusRunStatus ?? "pending") === "pending") return refreshButton ? loopRow([refreshButton]) : null;
+              if ((focusRunStatus ?? "pending") === "pending") {
+                return refreshButton || commentsButton ? loopRow([refreshButton, commentsButton]) : null;
+              }
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);

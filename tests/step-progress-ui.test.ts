@@ -110,6 +110,18 @@ test("步骤分组三行：检索、精读、大纲各用自身统计，其他�
       }
     }
     assert.deepEqual([...exercised].sort(), ["notes", "other", "outline", "search"]);
+    // 回头组子节点渲染为空（如刚开工尚无文件版本时 FileVersionsButton 返回 null）时，分隔竖线通过 CSS 选择器一并收起
+    const emptyLoopStep = PIPELINE_TEMPLATES[0].steps[0];
+    await act(async () => root.render(createElement(StepFlow, {
+      key: "empty-loop-check", projectPath: "/research/project", step: emptyLoopStep, runStatus: "active", hasDraft: true,
+      draft: { relPath: ".ccode/drafts/s.md", exists: true, text: "# 任务书\n" },
+      discussed: true, onSeed() {}, onStart() {},
+      loopActions: createElement(() => null),
+    })));
+    const emptyLoopEl = host.querySelector('[data-step-tools="loop"]')!;
+    assert.equal(emptyLoopEl.childElementCount, 0);
+    const sepEl = emptyLoopEl.previousElementSibling!;
+    assert.match(sepEl.className, /\[&:has\(\+\[data-step-tools=loop\]:empty\)\]:hidden/);
     assert.ok(!calls.some((command) => /merge_workspace|write_task_draft|shell_spawn|pty_write/.test(command)));
   } finally {
     await act(async () => root.unmount()); dom.window.close();

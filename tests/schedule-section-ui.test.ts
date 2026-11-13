@@ -286,6 +286,36 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
     const ran = commands.filter((c) => c.command === "run_schedule_now").at(-1)!;
     assert.equal(ran.args.note, "这次重点看 MoE");
 
+    // ⑥b 分轮跟进「预约复查」时间走 slotLabel 友好格式（不裸印 RFC3339），且只改名字时不误发 followup/disableFollowup
+    schedules = [
+      {
+        ...radarSchedule(),
+        followup: { maxRounds: 4, days: 7, budgetUsd: 2, probe: null },
+        followupState: "later",
+        followupAt: "2099-03-08T14:30:00",
+        followupAbout: "等脚本跑完",
+      },
+    ];
+    subsVersion = 35;
+    await render();
+    assert.match(host.textContent!, /预约复查 3月8日 14:30/);
+    assert.ok(!host.textContent!.includes("2099-03-08T14:30"), "不裸印 RFC3339 时间戳");
+    await click(allButtons().find((b) => b.getAttribute("aria-label") === "任务操作：文献雷达")! as HTMLButtonElement);
+    await click(byText("编辑任务"));
+    const nameInput = Array.from(dom.window.document.body.querySelectorAll<HTMLInputElement>("input")).find(
+      (i) => i.value === "文献雷达",
+    )!;
+    assert.ok(nameInput, "编辑弹层应有名称输入框");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(nameInput, "文献雷达（早间）");
+      nameInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await click(byText("保存"));
+    const renamed = commands.filter((c) => c.command === "update_schedule").at(-1)!;
+    assert.equal(renamed.args.patch.name, "文献雷达（早间）");
+    assert.equal(renamed.args.patch.followup, undefined, "未改动分轮跟进时不发 followup");
+    assert.equal(renamed.args.patch.disableFollowup, undefined, "未改动分轮跟进时不发 disableFollowup");
+
     // ⑦ 编程项目：空态给示例；默认新建巡检技能，种类里没有文献雷达；点示例预填描述
     schedules = [];
     workMode = "coding";
