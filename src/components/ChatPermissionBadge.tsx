@@ -141,7 +141,7 @@ export default function ChatPermissionBadge({
   readonlySupported: boolean;
   note: CliPermissionNote | null;
   editable: boolean;
-  onPermission?: (permission: Permission, mode?: NativePermissionMode | null) => void;
+  onPermission?: (permission: Permission, mode?: NativePermissionMode | null, chosen?: Tier) => void;
   /** Agent 正在运行：换权限要重开（busy = 这一轮还在生成，等它结束再换） */
   live?: { busy: boolean; onRestart: () => void } | null;
   /** 这家这个版本能在会话里直接换权限（switch-strategy inSessionPermissionSwitch）：不重开，回复中也能换；onSwitch 发命令 */
@@ -234,9 +234,10 @@ export default function ChatPermissionBadge({
       return;
     }
     if (inSession && inlineOk(id) && id !== "discuss") {
-      // 会话里直接换：不重开，完全访问照旧二次确认。能用启动参数指定的档顺带记进这次的选择（之后停下再接着聊按它启动）
+      // 会话里直接换：不重开，完全访问照旧二次确认。能用启动参数指定的档记下档名，没有对应启动参数的档（如 Kimi 请求批准）
+      // 清回 null 并把实际所选档传给记忆层，保证「换回别的档就不再带上完全访问」与停下后续聊一致
       if (!(await confirmPermissionChoice(agentLabel, id, false, remember))) return;
-      if (modes.includes(id)) onPermission?.("write_tree", id);
+      onPermission?.("write_tree", modes.includes(id) ? id : null, id);
       inSession.onSwitch(id);
       return;
     }

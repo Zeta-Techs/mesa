@@ -1850,7 +1850,13 @@ export const TerminalView = memo(function TerminalView({
     target: RelayTarget;
     prepared: RelayPrepareDto;
     message: string;
-    source: { agentId: string; profileId: string; model: string; sessionId: string };
+    source: {
+      agentId: string;
+      profileId: string;
+      model: string;
+      sessionId: string;
+      permissionMode: NativePermissionMode | null;
+    };
     early: { reRegister: () => void; retract: () => void };
     resolve: (r: ChatSendResult) => void;
   } | null>(null);
@@ -2096,19 +2102,59 @@ export const TerminalView = memo(function TerminalView({
   // 按连接记住的完全访问（chat-permission.ts）：连接定下或换了时，记过的连接带上完全访问，
   // 没记过的连接不接着用上一条连接的完全访问。重启恢复出的标签不带
   const launchFullAvailable = Boolean(launchAgentDet?.permissionModes?.includes("full"));
+  const calibratedPermKeyRef = useRef<string | null>(null);
+  function calibratePermissionFor(
+    targetAgentId: string,
+    targetProfileId: string,
+    extraPatch?: { effort?: string | null },
+  ) {
+    const det = launchAgents.find((a) => a.id === targetAgentId);
+    const fullAvailable = Boolean(det?.permissionModes?.includes("full"));
+    const curMode = permissionModeRef.current;
+    const supportedMode =
+      curMode && det && !det.permissionModes?.includes(curMode) ? null : curMode;
+    let nextMode: NativePermissionMode | null | undefined =
+      supportedMode !== curMode ? supportedMode : undefined;
+    if (!restored && targetProfileId && chatPermissionMemoryApplies(reuseKey)) {
+      const calibrated = profilePermissionMode({
+        permission: permissionRef.current ?? (readonly ? "discuss" : "write_tree"),
+        mode: supportedMode,
+        remembered: rememberedFullAccess(targetProfileId),
+        fullAvailable,
+      });
+      if (calibrated !== undefined) nextMode = calibrated;
+      calibratedPermKeyRef.current = `${targetAgentId}:${targetProfileId}:${fullAvailable ? 1 : 0}`;
+    }
+    if (nextMode !== undefined) {
+      permissionModeRef.current = nextMode;
+      onPatchLaunch?.(tabId, {
+        ...(extraPatch ?? {}),
+        permission: "write_tree",
+        permissionMode: nextMode,
+      });
+    } else if (extraPatch) {
+      onPatchLaunch?.(tabId, extraPatch);
+    }
+  }
   useEffect(() => {
-    // 跑着的进程权限已定，不改标签上的记录（否则标记写的和实际不符）
+    // 跑着的进程权限已定，不改标签上的记录（否则标记写的和实际不符）；等回落后再按当前连接校准一次
     if (restored || running || !profileId || !chatPermissionMemoryApplies(reuseKey)) return;
+    const key = `${agentId}:${profileId}:${launchFullAvailable ? 1 : 0}`;
+    if (calibratedPermKeyRef.current === key) return;
+    calibratedPermKeyRef.current = key;
     const next = profilePermissionMode({
       permission: permissionRef.current ?? (readonly ? "discuss" : "write_tree"),
       mode: permissionModeRef.current,
       remembered: rememberedFullAccess(profileId),
       fullAvailable: launchFullAvailable,
     });
-    if (next !== undefined) onPatchLaunch?.(tabId, { permission: "write_tree", permissionMode: next });
-    // 只在连接 / Agent 变了（或这家的档表读到了）时判一次；人随后手选的档不被改回
+    if (next !== undefined) {
+      permissionModeRef.current = next;
+      onPatchLaunch?.(tabId, { permission: "write_tree", permissionMode: next });
+    }
+    // 只在连接 / Agent 变了（或这家的档表读到了、或运行中换连接后刚停下）时判一次；人随后手选的档不被改回
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, agentId, launchFullAvailable]);
+  }, [profileId, agentId, launchFullAvailable, running]);
 
   const [skillCount, setSkillCount] = useState(0);
   // 当前 Agent 已启用的技能清单（技能页开关同步）；「插入」菜单一键使用
@@ -6260,6 +6306,7 @@ export const TerminalView = memo(function TerminalView({
     const cur = model.trim();
     setModel(cur && target.models.includes(cur) ? cur : (target.models[0] ?? ""));
     setModelKept(false);
+    calibratePermissionFor(agentId, id);
     switchPendingRef.current = id;
     if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
   }
@@ -6629,13 +6676,12 @@ export const TerminalView = memo(function TerminalView({
       endEarlyBubbleLaunch();
       return { error: `没能交给 ${agentLabel(target.agentId)}：${String(e)}` };
     }
-    const targetDet = launchAgents.find((a) => a.id === target.agentId);
     return new Promise<ChatSendResult>((resolve) => {
       relayJobRef.current = {
         target,
         prepared,
         message,
-        source: { agentId: source.agent, profileId, model, sessionId: source.sessionId },
+        source: { agentId: source.agent, profileId, model, sessionId: source.sessionId, permissionMode },
         early,
         resolve,
       };
@@ -6646,11 +6692,8 @@ export const TerminalView = memo(function TerminalView({
       setProfileId(target.profileId);
       setModel(target.model);
       setModelKept(false);
-      // 思考档跟着换家回到默认；接手那家没有当前这档原生权限就回到「按本机设置」
-      onPatchLaunch?.(tabId, {
-        effort: null,
-        ...(permissionMode && !targetDet?.permissionModes?.includes(permissionMode) ? { permissionMode: null } : {}),
-      });
+      // 思考档跟着换家回到默认；权限按接手那条连接的记忆重算，不把上一条连接的完全访问带过去
+      calibratePermissionFor(target.agentId, target.profileId, { effort: null });
       setRelayTick((n) => n + 1);
       // 原来那家还在跑：先停（同换连接），回落 shell 后下面的 effect 再按接手那家起
       if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
@@ -6663,6 +6706,8 @@ export const TerminalView = memo(function TerminalView({
       setAgentId(source.agentId);
       setProfileId(source.profileId);
       setModel(source.model);
+      permissionModeRef.current = source.permissionMode;
+      onPatchLaunch?.(tabId, { permissionMode: source.permissionMode });
       relayBackRef.current = source.sessionId;
       return {
         error: `${agentLabel(target.agentId)} 没起来（${why}），已回到 ${agentLabel(source.agentId)}，再发一次即可`,

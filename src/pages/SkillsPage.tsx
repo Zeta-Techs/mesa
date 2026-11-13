@@ -1797,6 +1797,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
         cwd: target.dir,
         extraEnv: {},
         title: `优化技能 ${skill.name}`,
+        reuseKey: `skill-opt:${skill.id}`,
         initialPrompt: `阅读 ${target.mdPath}，按以下意见优化它：\n${opinion}\n\n改完列一下改了哪些地方。`,
       });
       setPage("terminal");

@@ -21,6 +21,7 @@ import { projectChatLaunch, sessionProjectResumeProfileId } from "./project-agen
 import { IS_WINDOWS } from "./hotkeys";
 import { normalizeWorkMode, projectChatReuseKey } from "./work-mode";
 import { confirmDialog } from "./components/ConfirmDialog";
+import { resumeSessionReuseKey } from "./chat-permission";
 import { lastWriteIsMesas, resumeModelChoice, resumeProfileChoice } from "./terminal-resume";
 import {
   QUICK_CHAT_KEY_PREFIX,
@@ -341,7 +342,7 @@ export function resumeSessionInTerminal(
         return;
       }
     }
-    const { profiles, settings } = useAppStore.getState();
+    const { profiles, settings, agents } = useAppStore.getState();
     const choice = resumeProfileChoice({
       agentId: s.agent,
       own: s.profileId ?? run?.profileId,
@@ -353,6 +354,11 @@ export function resumeSessionInTerminal(
       hidden: settings?.hiddenProfiles,
     });
     const chosen = profiles.find((p) => p.id === (choice.profileId ?? choice.autoLaunchProfileId));
+    const reuseKey = resumeSessionReuseKey(s, run?.reuseKey);
+    const isDiscuss = run?.permission === "discuss" || s.stepRole === "discuss";
+    const isReader = Boolean(s.reader || reuseKey.startsWith("reader:"));
+    const readerAsk =
+      !isDiscuss && isReader && agents.find((a) => a.id === s.agent)?.permissionModes.includes("ask");
     setPendingTerminal({
       cwd: s.cwd ?? s.projectPath,
       extraEnv: {},
@@ -362,7 +368,9 @@ export function resumeSessionInTerminal(
         sessionId: s.sessionId,
         provider: s.provider,
       },
-      reuseKey: `resume:${s.agent}:${s.sessionId}`,
+      reuseKey,
+      ...(isDiscuss ? { permission: "discuss" as const, readonly: true } : {}),
+      ...(readerAsk ? { permissionMode: "ask" as const } : {}),
       runId: run?.id,
       taskId: run?.taskId || undefined,
       ...choice,

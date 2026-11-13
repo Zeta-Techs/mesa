@@ -1267,10 +1267,16 @@ export default function ChatSurface({
   const [fullPickSeq, setFullPickSeq] = useState(0);
   const toneFlash = useFlashOnSeq(fullPickSeq);
   const pickPermission = onPickLaunch
-    ? (permission: "discuss" | "write_tree", mode?: NativePermissionMode | null) => {
+    ? (
+        permission: "discuss" | "write_tree",
+        mode?: NativePermissionMode | null,
+        chosen?: "discuss" | NativePermissionMode,
+      ) => {
         onPickLaunch.permission(permission, mode);
-        // 人亲手选的档按连接记：完全访问记下，之后这条连接开的对话默认完全访问；换成别的档就忘掉
-        if (launchPick && launchPick.rememberPermission) rememberChatPermission(launchPick.profileId, permission, mode);
+        // 人亲手选的档按连接记：完全访问记下，之后这条连接开的对话默认完全访问；换成别的档（含会话内切回无启动参数的请求批准）就忘掉
+        if (launchPick && launchPick.rememberPermission) {
+          rememberChatPermission(launchPick.profileId, permission, chosen === "discuss" ? null : (chosen ?? mode));
+        }
         if (permission === "write_tree" && mode === "full" && permTier !== "full") setFullPickSeq((n) => n + 1);
       }
     : undefined;

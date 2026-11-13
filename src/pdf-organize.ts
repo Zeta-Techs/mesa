@@ -100,6 +100,7 @@ export async function organizePdfExcerpt(input: {
     cwd: ws.worktreePath,
     extraEnv: Object.fromEntries(pairs),
     title: ws.name,
+    reuseKey: `ws:${ws.worktreePath}`,
     agentId: chain.agentId,
     profileId: chain.profileId,
     model: chain.model,

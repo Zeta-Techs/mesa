@@ -7,6 +7,7 @@ import {
   profilePermissionMode,
   rememberChatPermission,
   rememberedFullAccess,
+  resumeSessionReuseKey,
 } from "../src/chat-permission.ts";
 
 test("权限示例按项目类型取，四档都有一句", () => {
@@ -97,4 +98,26 @@ test("只有聊天对话按连接记权限：新对话、项目新对话、接�
   assert.equal(chatPermissionMemoryApplies("ws:/w/1"), false);
   assert.equal(chatPermissionMemoryApplies("reader:/p\n/p/a.pdf"), false);
   assert.equal(chatPermissionMemoryApplies("discuss:/p:notes/a.md"), false);
+  assert.equal(chatPermissionMemoryApplies("step-resume:claude-code:s1"), false);
+  assert.equal(chatPermissionMemoryApplies("skill-opt:lit-search"), false);
+});
+
+test("接着聊派发复用键：普通聊天用 resume:，阅读、流程与带 Run 非聊天键的对话不走 resume:", () => {
+  const base = { agent: "claude-code", sessionId: "s1", projectPath: "/p/proj" };
+  assert.equal(resumeSessionReuseKey(base), "resume:claude-code:s1");
+  assert.equal(chatPermissionMemoryApplies(resumeSessionReuseKey(base)), true);
+
+  // 沉浸阅读区的精读会话：保持 reader: 键，不吃聊天完全访问记忆
+  const reader = resumeSessionReuseKey({ ...base, reader: true, readerPdf: "/p/proj/papers/a.pdf" });
+  assert.equal(reader, "reader:/p/proj\n/p/proj/papers/a.pdf");
+  assert.equal(chatPermissionMemoryApplies(reader), false);
+
+  // 流程步骤会话：没有 Run 键也落 step-resume:，不吃聊天完全访问记忆
+  const step = resumeSessionReuseKey({ ...base, stepName: "精读", stepRole: "work" });
+  assert.equal(step, "step-resume:claude-code:s1");
+  assert.equal(chatPermissionMemoryApplies(step), false);
+
+  // Run 已记下工作区键或商量键：原样沿用
+  assert.equal(resumeSessionReuseKey(base, "ws:/w/step1"), "ws:/w/step1");
+  assert.equal(resumeSessionReuseKey(base, "discuss:/p/proj:TASK.md"), "discuss:/p/proj:TASK.md");
 });

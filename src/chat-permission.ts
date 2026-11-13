@@ -11,6 +11,7 @@
  */
 import type { StarterContext } from "./chat-empty-start.ts";
 import { isNewChatKey } from "./quick-chat.ts";
+import { readerReuseKey } from "./reader.ts";
 
 export type PermissionTierId = "discuss" | "ask" | "auto" | "full";
 
@@ -108,6 +109,36 @@ export function rememberChatPermission(
 /** 这个标签算不算聊天对话（按复用键）：空白新对话、侧栏接着聊、没带键的新标签 */
 export function chatPermissionMemoryApplies(reuseKey: string | null | undefined): boolean {
   return !reuseKey || isNewChatKey(reuseKey) || reuseKey.startsWith("resume:");
+}
+
+/** 侧栏 / 对话页「接着聊」派发时的复用键：
+ *  - 原 Run 已记下非聊天复用键（`ws:` / `reader:` / `discuss:` / `lane:` / `task:` 等）：原样沿用，
+ *    既能与步骤卡 / 阅读区的标签互认，也不会把聊天连接的完全访问带进步骤或精读；
+ *  - 沉浸阅读区的精读对话（`s.reader`）：按项目 / PDF 拼 `reader:` 键（pty_spawn 靠它预放行 notes/）；
+ *  - 流程 / 工作区对话（`s.stepName` / `s.stepRole` / `s.workspace`）：`step-resume:<agent>:<sid>`；
+ *  - 普通聊天：`resume:<agent>:<sid>`。 */
+export function resumeSessionReuseKey(
+  s: {
+    agent: string;
+    sessionId: string;
+    projectPath: string;
+    reader?: boolean;
+    readerPdf?: string | null;
+    stepName?: string | null;
+    stepRole?: string | null;
+    workspace?: string | null;
+  },
+  runReuseKey?: string | null,
+): string {
+  const rk = runReuseKey?.trim() || "";
+  if (rk && !chatPermissionMemoryApplies(rk)) return rk;
+  if (s.reader) {
+    return s.readerPdf ? readerReuseKey(s.projectPath, s.readerPdf) : `reader:${s.projectPath}`;
+  }
+  if (s.stepName || s.stepRole || s.workspace) {
+    return `step-resume:${s.agent}:${s.sessionId}`;
+  }
+  return `resume:${s.agent}:${s.sessionId}`;
 }
 
 /** 连接定了 / 换了之后标签的原生档该改成什么；undefined = 不动。
