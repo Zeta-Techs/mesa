@@ -53,8 +53,14 @@ test("Monaco 面色一律给 #rrggbb：打包压缩成 #fff/#111 的令牌也要
     "editor.background": "#ffffff",
     "editor.foreground": "#111111",
     "editorLineNumber.foreground": "#525a6b",
+    "diffEditor.insertedLineBackground": "#4cc38a26",
+    "diffEditor.removedLineBackground": "#f0707026",
+    "diffEditor.insertedTextBackground": "#4cc38a4d",
+    "diffEditor.removedTextBackground": "#f070704d",
+    "diffEditorGutter.insertedLineBackground": "#4cc38a40",
+    "diffEditorGutter.removedLineBackground": "#f0707040",
   });
-  for (const v of Object.values(colors)) assert.match(v, /^#[0-9a-f]{6}$/);
+  for (const v of Object.values(colors)) assert.match(v, /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/);
 });
 
 test("App.css 里每套主题的编辑器色，原样或压缩成三位后都能给 Monaco 用", () => {
@@ -80,6 +86,21 @@ test("Monaco 主题底子跟 Mesa 主题深浅走：浅色配 vs（深色底子�
   assert.equal(monacoThemeData(CUSTOM_THEME_ID, none).base, "vs-dark");
   assert.equal(monacoThemeData("neutral-light", none).colors["editor.background"], "#ffffff");
   assert.equal(monacoThemeData("neutral", none).colors["editor.background"], "#11131a");
+});
+
+test("Monaco 差异配色与应用增删令牌同源，行与字分别有底色，浅色同样区分红绿", () => {
+  const tokens: Record<string, string> = { "--color-diff-add-fg": "#0a4", "--color-diff-del-fg": "#b24" };
+  for (const theme of ["neutral", "neutral-light", CUSTOM_THEME_ID, CUSTOM_LIGHT_THEME_ID]) {
+    const colors = monacoThemeData(theme, (name) => tokens[name] ?? "").colors;
+    assert.equal(colors["diffEditor.insertedLineBackground"], "#00aa4426");
+    assert.equal(colors["diffEditor.removedLineBackground"], "#bb224426");
+    assert.equal(colors["diffEditor.insertedTextBackground"], "#00aa444d");
+    assert.equal(colors["diffEditor.removedTextBackground"], "#bb22444d");
+    assert.notEqual(colors["diffEditor.insertedLineBackground"], colors["diffEditor.removedLineBackground"]);
+  }
+  const fallback = monacoThemeData("neutral-light", () => "").colors;
+  assert.equal(fallback["diffEditor.insertedLineBackground"], "#17724526");
+  assert.equal(fallback["diffEditor.removedLineBackground"], "#b02a4226");
 });
 
 test("normalizeCustomTheme：三色齐且合法才过", () => {

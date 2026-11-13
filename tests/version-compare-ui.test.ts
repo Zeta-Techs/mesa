@@ -56,6 +56,13 @@ test("文本对照两边只读，随容器宽度切左右或单栏，只看改�
   const mounted = await mount();
   try {
     await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.TextCompare, { before: "old words", after: "new words" })));
+    assert.ok(mounted.document.querySelector('[aria-label="文本增删对照（只读）"]'));
+    assert.match(mounted.document.body.textContent ?? "", /- old words/);
+    assert.match(mounted.document.body.textContent ?? "", /\+ new words/);
+    assert.ok(mounted.document.querySelector(".text-diff-del-fg.bg-diff-del-bg"));
+    assert.ok(mounted.document.querySelector(".text-diff-add-fg.bg-diff-add-bg"));
+    assert.equal(mounted.models.length, 0);
+    await mounted.act(async () => mounted.button("左右对照").click());
     assert.deepEqual(mounted.models, ["old words", "new words"]);
     const initial = mounted.options[0];
     assert.equal(initial.readOnly, true); assert.equal(initial.originalEditable, false); assert.equal(initial.renderMarginRevertIcon, false);
@@ -103,5 +110,29 @@ test("图片两边共用倍率和滚动位置，不同尺寸保持比例，原�
     assert.equal(left.scrollLeft, 400);
     await mounted.act(async () => left.dispatchEvent(new mounted.document.defaultView!.WheelEvent("wheel", { deltaY: 100, bubbles: true })));
     assert.equal(images[0].style.width, "1250px");
+  } finally { await mounted.cleanup(); }
+});
+
+test("默认增删视图标具体词句，筛选只去掉相同上下文，切回时保留红绿与筛选", async () => {
+  const mounted = await mount();
+  const before = "共同开头\n这个结论需要核对原文。\n共同结尾";
+  const after = "共同开头\n这个结论已经核对原文。\n共同结尾";
+  try {
+    await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.TextCompare, { before, after })));
+    const view = mounted.document.querySelector('[aria-label="文本增删对照（只读）"]')!;
+    assert.match(view.textContent ?? "", /共同开头/);
+    assert.deepEqual([...view.querySelectorAll("strong")].map((element) => element.textContent), ["需要", "已经"]);
+    const checkbox = mounted.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await mounted.act(async () => checkbox.click());
+    assert.doesNotMatch(view.textContent ?? "", /共同开头|共同结尾/);
+    assert.match(view.textContent ?? "", /- 这个结论需要/);
+    assert.match(view.textContent ?? "", /\+ 这个结论已经/);
+    await mounted.act(async () => mounted.button("左右对照").click());
+    assert.equal(mounted.options.at(-1)?.hideUnchangedRegions.enabled, true);
+    await mounted.act(async () => mounted.button("增删对照").click());
+    assert.equal(mounted.disposed(), 1);
+    assert.ok(mounted.document.querySelector(".bg-diff-del-bg.text-diff-del-fg"));
+    assert.ok(mounted.document.querySelector(".bg-diff-add-bg.text-diff-add-fg"));
+    assert.doesNotMatch(mounted.document.querySelector('[aria-label="文本增删对照（只读）"]')!.textContent ?? "", /共同开头/);
   } finally { await mounted.cleanup(); }
 });

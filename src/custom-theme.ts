@@ -134,10 +134,18 @@ export function normalizeHex(input: string | null | undefined): string | null {
  *  读不到或认不出时按深浅兜底 */
 export function monacoEditorColors(get: (name: string) => string, light = false): Record<string, string> {
   const read = (name: string, fallback: string) => normalizeHex(get(name)) ?? fallback;
+  const added = read("--color-diff-add-fg", light ? "#177245" : "#4cc38a");
+  const removed = read("--color-diff-del-fg", light ? "#b02a42" : "#f07070");
   return {
     "editor.background": read("--color-editor-bg", light ? "#ffffff" : "#11131a"),
     "editor.foreground": read("--color-editor-fg", light ? "#2a2620" : "#aeb6c6"),
     "editorLineNumber.foreground": read("--color-editor-line", light ? "#a39e93" : "#525a6b"),
+    "diffEditor.insertedLineBackground": `${added}26`,
+    "diffEditor.removedLineBackground": `${removed}26`,
+    "diffEditor.insertedTextBackground": `${added}4d`,
+    "diffEditor.removedTextBackground": `${removed}4d`,
+    "diffEditorGutter.insertedLineBackground": `${added}40`,
+    "diffEditorGutter.removedLineBackground": `${removed}40`,
   };
 }
 
