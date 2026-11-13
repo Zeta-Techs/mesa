@@ -4141,7 +4141,22 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       >
                         {preview.name}
                       </button>
-                      <FileVersionsButton root={preview.root ?? activeCwd} path={preview.path} refreshKey={String(refreshKey)} />
+                      {/* 看版本时标签上的「文件版本」原位变「返回文件」，版本面板不再另起一行放它 */}
+                      {previewVersionsPath === preview.path ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewVersionsPath(null)}
+                          title="回到这个文件的预览 / 编辑"
+                          className="shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline"
+                        >
+                          返回文件
+                        </button>
+                      ) : (
+                        <FileVersionsButton root={preview.root ?? activeCwd} path={preview.path} refreshKey={String(refreshKey)} onOpen={async () => {
+                          if (previewDirty && !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", { danger: true, confirmText: "查看历史", focusCancel: true }))) return;
+                          setPreviewDirty(false); setPreviewVersionsPath(preview.path);
+                        }} />
+                      )}
                       {previewDirty && (
                         <span className="shrink-0 text-l3" title="有未保存的修改">
                           ●
@@ -4311,7 +4326,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     </div>
                   }
                 >
-                  {previewVersionsPath === preview.path ? <FileVersionsPanel root={preview.root ?? activeCwd} path={preview.path} onClose={() => setPreviewVersionsPath(null)} /> : /\.pdf$/i.test(preview.path) ? (
+                  {previewVersionsPath === preview.path ? <FileVersionsPanel root={preview.root ?? activeCwd} path={preview.path} /> : /\.pdf$/i.test(preview.path) ? (
                     <PdfContinuousView
                       path={preview.path}
                       cwdHint={preview.root ?? activeCwd}

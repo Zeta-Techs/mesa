@@ -164,11 +164,12 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
     ] : []),
   ] : [];
   return <section aria-label="文件版本" className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-    <div className="flex shrink-0 items-center gap-2 px-2 pt-1">
+    {/* 文件固定、外面也不要「返回文件」时（对话页文件页签：标签上的「文件版本」原位变「返回文件」），这一行整个不画 */}
+    {(!path || onClose) && <div className="flex shrink-0 items-center gap-2 px-2 pt-1">
       {!path && <button type="button" className={LINK} aria-expanded={treeOpen} onClick={() => setTreeOpen((current) => !current)}>文件树</button>}
       <span className="min-w-0 truncate text-xs text-l3" title={chosen}>{chosen.split(/[\\/]/).pop()}</span>
       {onClose && <button type="button" className={`${LINK} ml-auto`} onClick={() => onClose(path ?? absolute(root, chosen))}>返回文件</button>}
-    </div>
+    </div>}
     <div className="flex min-h-0 flex-1 gap-2">
       {!path && treeOpen && <aside className="flex min-h-0 w-44 shrink-0 flex-col border-r border-hairline">
         <FileSelectionTree paths={paths} selected={chosen} onSelect={(next) => { setChosen(next); setForm(null); setNotice(null); }} />
