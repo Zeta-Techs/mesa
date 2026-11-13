@@ -2372,40 +2372,36 @@ export default function StepFlow({
         }`}
       >
         <div className="flex items-center gap-2">
-          {/* 人工事项行：复选框本身就是状态 + 控件，再画一个 ✓ 是同一件事说两遍
-              （用户实测：一行两个勾）。这里只占位保持与主干节点同列对齐 */}
-          {node.kind !== "human" && ic.cls === "is-done" ? (
+          {/* 人工事项行：复选框本身就是状态 + 控件，直接占序号那一列（2026-11-13 步骤卡统一设计稿：
+              方框即节点标记，标题与「AI 干活」同一左缘）；ccode-well 底色盖住竖向连接线 */}
+          {node.key === "endnote-export" || node.key === "continue-notes" || (node.kind === "human" && human) ? null : ic.cls === "is-done" ? (
             /* 完成态：中性亮灰空心小圆环——与大圆步进器同语言（实心=进行中、空心=已完成），
                与完成段链条同款 l2 亮灰；①②③ 也是空心圆族（2026-09-15 用户拍板不要绿色） */
             <span className="ccode-well relative z-10 flex w-4 shrink-0 items-center justify-center">
               <span className="block size-3 rounded-full border-[1.5px] border-l2" />
             </span>
           ) : (
-            <span
-              className={`ccode-well relative z-10 w-4 shrink-0 text-center text-sm ${
-                node.kind === "human" ? "" : ic.cls
-              }`}
-            >
-              {node.kind === "human" ? "" : ic.text}
+            <span className={`ccode-well relative z-10 w-4 shrink-0 text-center text-sm ${ic.cls}`}>
+              {ic.text}
             </span>
           )}
           {node.key === "endnote-export" ? (
             <Checkbox
-              className="shrink-0"
+              className="ccode-well relative z-10 shrink-0"
               checked={endnoteChecked}
               onChange={setEndnoteChecked}
               title="勾选 = 已经在 EndNote 里导入完"
             />
           ) : node.key === "continue-notes" ? (
             <Checkbox
-              className="shrink-0"
+              className="ccode-well relative z-10 shrink-0"
               checked={continueNotesChecked}
               onChange={setContinueNotesChecked}
               title="勾选 = 已经去笔记夹看过"
             />
           ) : node.kind === "human" && human ? (
             <Checkbox
-              className="shrink-0"
+              className="ccode-well relative z-10 shrink-0"
               checked={node.done}
               disabled={
                 busyTitle === human.title ||
@@ -2434,7 +2430,7 @@ export default function StepFlow({
                 ? human.guidance
                 : undefined
             }
-            className={`min-w-0 flex-1 ${node.kind === "agent" ? "" : "truncate"} ${
+            className={`min-w-0 ${node.kind === "agent" ? "" : "truncate"} ${
               dense ? "text-xs" : "text-sm"
             } ${
               // 删除线只给打勾的人工事项（清单打勾的惯例）；「AI 干活」「确定文献来源」
@@ -2514,10 +2510,12 @@ export default function StepFlow({
               可选
             </span>
           )}
+          {/* 篇数、「可选」紧跟标题，按钮由这段空白推到右缘（2026-11-13 步骤卡统一设计稿 .line / .right） */}
+          <span aria-hidden className="min-w-0 flex-1" />
           {nodeActions(node)}
         </div>
         {node.kind === "human" && isCitationStyleTask(human?.title) && ws && (
-          <div className="ml-9 mt-1.5">
+          <div className="ml-6 mt-1.5">
             <div className="flex flex-wrap items-center gap-1">
               {CITATION_STYLE_CHOICES.map((item) => (
                 <button
@@ -2672,14 +2670,14 @@ export default function StepFlow({
             node.key === "endnote-export" ||
             node.key === "continue-notes") &&
           node.hint && (
-          <p className="mt-1 pl-9 text-micro leading-5 text-l4">
+          <p className="mt-1 pl-6 text-micro leading-5 text-l4">
             {node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult)
               ? [zoteroSyncResult?.line, endnoteSyncResult].filter(Boolean).join(" ")
               : node.hint}
           </p>
         )}
         {!dense && node.key === "endnote-export" && runStatus === "done" && (
-          <div className="mt-1 ml-9">
+          <div className="mt-1 ml-6">
             <div className="flex flex-wrap items-center gap-1">
               {LIBRARY_SYNC_ATTACH.map((option) => (
                 <button
@@ -2704,7 +2702,7 @@ export default function StepFlow({
           </div>
         )}
         {!dense && node.key === "endnote-export" && endnoteLib && (
-          <p className="mt-0.5 pl-9 text-micro leading-5 text-l4">
+          <p className="mt-0.5 pl-6 text-micro leading-5 text-l4">
             {endnoteLib.path ? (
               <>
                 EndNote 库：
@@ -2739,7 +2737,7 @@ export default function StepFlow({
           </p>
         )}
         {!dense && node.key === "endnote-export" && endnoteChoices && (
-          <div className="mt-1 ml-9 flex flex-wrap items-center gap-1">
+          <div className="mt-1 ml-6 flex flex-wrap items-center gap-1">
             <span className="text-micro text-l4">选你导入题录的那个库：</span>
             {endnoteChoices.map((choice) => (
               <button
@@ -2767,7 +2765,7 @@ export default function StepFlow({
           </div>
         )}
         {node.kind === "input" && node.key.startsWith("tool:") && onSetResearchTool && tools && (
-          <div className="ml-9 mt-2.5">
+          <div className="ml-6 mt-2.5">
             {node.section === "main" && runStatus !== "pending" && toolEditing !== node.key ? (
               // 开工后收成一行（2026-11-13 步骤卡统一设计稿，同「确定文献来源」）：这一轮已按当时的写法开工，
               // 再点会改档案卡，正在跑的 AI 看不到——不摆成随手可点
@@ -2827,8 +2825,8 @@ export default function StepFlow({
           </div>
         )}
         {node.kind === "input" && node.key === "input" && onSetLitSource && (
-          // pl-9 与其余内容区（hint/agentContent）对齐到步骤名左缘，不顶到序号
-          <div className="ml-9 mt-2.5">
+          // pl-6 与其余内容区（hint/agentContent）对齐到步骤名左缘，不顶到序号
+          <div className="ml-6 mt-2.5">
             {runStatus !== "pending" && !litSourceEditing ? (
               // 开工后收成一行（2026-10-22）：这一轮的任务书已按当时的来源写好，
               // 再点选项会改主仓档案卡与任务书草稿，正在跑的 Agent 看不到——不能摆成随手可点
@@ -2915,7 +2913,7 @@ export default function StepFlow({
         {node.kind === "discuss" && runStatus !== "pending" && !settleEditing && (
           // 开工后收成一行灰字（2026-11-13 步骤卡统一设计稿，同「确定文献来源」）：这一轮的任务书已按当时写好，
           // 再改只进草稿、正在跑的 AI 看不到——不摊成随手可点；没定的开工时由 AI 在对话里问
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-9 text-xs">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-6 text-xs">
             {decisions.length > 0 && (
               <span className="text-l3">
                 {decisionGaps.length === 0
@@ -2936,7 +2934,7 @@ export default function StepFlow({
         {(node.kind === "discuss" ||
           (node.kind === "agent" && !hasDiscussNode)) &&
           !(node.kind === "discuss" && runStatus !== "pending" && !settleEditing) && (
-          <div className="mt-1.5 space-y-2 pl-9">
+          <div className="mt-1.5 space-y-2 pl-6">
             {node.kind === "discuss" && runStatus !== "pending" && (
               <p className="text-micro text-l4">
                 这一轮已经按当时的任务书开工。这里改的只写进任务书草稿，工作区里的任务书不变，「继续」「新开一轮」的 AI 都看不到；下次重新开工这一步才生效。
@@ -3242,7 +3240,7 @@ export default function StepFlow({
           isAcademicMcpTaskTitle(human.title) &&
           !node.done &&
           !dense && (
-            <div className="mt-1 flex flex-wrap items-center gap-2 pl-9">
+            <div className="mt-1 flex flex-wrap items-center gap-2 pl-6">
               {ACADEMIC_MCP_PRESETS.map((preset) => (
                 <button
                   key={preset.name}
@@ -3293,7 +3291,7 @@ export default function StepFlow({
           isPendingConfirmTaskTitle(human.title) &&
           pendingRowLive &&
           !dense && (
-            <div className="mt-1 pl-9 text-micro leading-5 text-l4">
+            <div className="mt-1 pl-6 text-micro leading-5 text-l4">
               {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走；做完了只留「文献清单」一行，
                   移出的后果点开清单才说（2026-11-13 用户：勾上了下面还铺着长说明） */}
               {(!pendingSettled || pendingListOpen) && (
@@ -3356,7 +3354,7 @@ export default function StepFlow({
           !node.done &&
           !dense &&
           (isCurrent || inlineDecisionListVisible(runStatus, agentAttention, human)) && (
-            <div className="mt-1 pl-9">
+            <div className="mt-1 pl-6">
               <ReviewDecisionList
                 worktreePath={ws?.worktreePath}
                 projectRoot={projectPath}
@@ -3380,7 +3378,7 @@ export default function StepFlow({
             </div>
           )}
         {node.kind === "human" && human && handbackNote?.title === human.title && (
-          <div className="mt-1 pl-9">
+          <div className="mt-1 pl-6">
             <InlineNotice tone="err" size="micro">{handbackNote.text}</InlineNotice>
           </div>
         )}
@@ -3389,7 +3387,7 @@ export default function StepFlow({
           !node.done &&
           editOpen === human.title &&
           handbackTask(human.title) && (
-            <div className="mt-1.5 ml-9 rounded-md border border-hairline px-2.5 py-2">
+            <div className="mt-1.5 ml-6 rounded-md border border-hairline px-2.5 py-2">
               {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
                   许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
               {handbackTask(human.title)!.panel === "permissions" ? (
@@ -3422,7 +3420,7 @@ export default function StepFlow({
             (!node.done &&
               human.timing === "after" &&
               afterReady(human))) && (
-            <div className="mt-1 pl-9 text-micro leading-5 text-l4">
+            <div className="mt-1 pl-6 text-micro leading-5 text-l4">
               {isPaywallTaskTitle(human.title) ? (
                 <p>{PAYWALL_HINT}</p>
               ) : isPendingConfirmTaskTitle(human.title) ? (
@@ -3706,7 +3704,8 @@ export default function StepFlow({
         ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave)],
       ] as const).map(([title, line, nodes]) => nodes.length > 0 && (
         <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"}>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-2 pl-[30px]">
+            {/* pl-[30px] = 节点 pl-1.5 + 序号列 + 间距，分隔线的字与步骤名同一左缘（设计稿 .split） */}
             <span className="shrink-0 text-micro text-l4">{title}</span>
             <span className={line === "dashed" ? "min-w-0 flex-1 border-t border-dashed border-field" : "h-px min-w-0 flex-1 bg-hairline"} />
           </div>
