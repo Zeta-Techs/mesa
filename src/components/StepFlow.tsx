@@ -3236,9 +3236,9 @@ export default function StepFlow({
         )}
         {/* 统计行在上、工具行在下（2026-11-13 步骤卡统一设计稿，用户按稿核对）：统计行单独一行只读，首项是本步主进度、加粗；
             工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接。
-            两行 pl-6 = 序号列 w-4 + gap-2，左缘对齐「AI 干活」的字；只照稿改布局，字号保持原样（用户：字体只是参考观感） */}
+            两行 pl-6 = 序号列 w-4 + gap-2，左缘对齐「AI 干活」的字；带框的「继续讨论」左移 7px（边框 1 + px-1.5），让框里的字而不是框对齐统计行的字（2026-11-13 用户：按钮行看着偏右）；只照稿改布局，字号保持原样（用户：字体只是参考观感） */}
         {node.kind === "agent" && (talkOnAgent || loopActions) && (
-          <div data-step-tools="row" className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6">
+          <div data-step-tools="row" className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6 [&_[data-step-tools=talk]>button:first-child]:-ml-[7px]">
             {talkOnAgent && talkGroup}
             {talkOnAgent && loopActions && <span aria-hidden className="h-3 w-px bg-hairline" />}
             {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
