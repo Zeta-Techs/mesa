@@ -24,10 +24,12 @@ export function stepKind(
   if (has(["data-clean"])) return "clean";
   if (hasArtifact(step, "results/run-manifest.json")) return "experiment";
   if (hasArtifact(step, "design.md")) return "design";
-  if (has(["figure-forge", "data-eda", "origin-plot"])) return "analysis";
   // 定稿类：引用核对 + 渲染一起（LaTeX 章节写作只有引用核对，算写作）
   if (has(["bib-check"]) && has(["quarto-render"])) return "final";
-  if (has(["research-writing", "review-writing", "proposal-writer", "rebuttal-crafter"]) || has(["bib-check"])) return "writing";
+  // 写作步可能顺带挂可选出图技能（如综述初稿挂 figure-forge 画跨文献重绘图），主身份仍是写作
+  if (has(["research-writing", "review-writing", "proposal-writer", "rebuttal-crafter"])) return "writing";
+  if (has(["figure-forge", "data-eda", "origin-plot"])) return "analysis";
+  if (has(["bib-check"])) return "writing";
   return "other";
 }
 

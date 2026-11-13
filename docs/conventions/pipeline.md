@@ -606,6 +606,7 @@
   要原始数据就追到它引的研究论文换块；要总结思路，大纲写「自绘 图N（论点）= 参考 [@键] Fig.n …」，初稿按 schematic-forge 自己画（PPTX + SVG，PNG 进正文，
   图注 Summarized from [@键]）。Mesa 大纲核对（`outline-check.ts reviewKeys`）对拼图里出现综述键的报「待你判断」，一张拼图一条；仅引用不报。
   综述初稿步挂 schematic-forge（可选技能，`requiredSkills` 不含它）。规则在大纲简报、初稿简报、review-framework / review-figures 两个技能里各一句，改一处同改。
+- **综述跨文献数据重绘综合图（2026-11-14）**：有已核验的 `notes/extraction.md`（或多篇精读笔记同口径指标）时，大纲鼓励规划 1–3 张「重绘 图N（论点）= 数据源 notes/extraction.md（指标：…；涉及 [@键]…）」，初稿按 figure-forge（挂可选技能，不入 `requiredSkills`）用脚本统一坐标系重绘并输出配对 `figures/figN.csv`（逐行含 `bibKey`、条件与原文位置）及登记 `figures/manifest.json`，图注写 `Data compiled from [@键1; @键2…]`（无需转载许可）；禁止凭眼量单篇曲线凑数。`notes-progress.ts figurePlan` 与 `draft-check.ts draft-plan` 同步统计/核对自绘与重绘计划。
 - **落地细则**（2026-11-05）：「人改过」以 `render.json` 记的输出哈希为准；示意图的身份按文件名约定认（`figures/<图名>/<图名>.png` 且同目录有
   `render.json`），前端不读文件；组图里的子图 SVG 整份以 data URI 图片嵌入（自带 `<style>` 与 id 不串块），PPTX 里图标 / 子图挂 svgBlip 原件 + PNG 后备；
   示意图技能挂上不设为必需（没装的 Agent 照常开工）；PPTX 不追求字节可重现，重建核对只比 SVG。

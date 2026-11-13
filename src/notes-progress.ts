@@ -226,10 +226,12 @@ export function searchProgressParts(p: SearchProgress): string[] {
   return parts;
 }
 
-/** 大纲 outline.md 的用图计划：初稿要拼几张图（「拼 图N」按编号去重）、几处只引原图（「仅引用 [@键] Fig」）、
- *  几张对照表（表计划「表 N（」按编号去重）。技能样例里的「凑不成则仅引用」是备选说明，不算一处。都没有返回 null。 */
+/** 大纲 outline.md 的用图计划：初稿要拼几张图（「拼 图N」按编号去重）、自绘/重绘几张（「自绘 图N」「重绘 图N」按编号去重）、
+ *  几处只引原图（「仅引用 [@键] Fig」）、几张对照表（表计划「表 N（」按编号去重）。
+ *  技能样例里的「凑不成则仅引用」是备选说明，不算一处。都没有返回 null。 */
 export interface FigurePlan {
   composites: number;
+  drawn?: number;
   citeOnly: number;
   tables: number;
 }
@@ -237,18 +239,27 @@ export interface FigurePlan {
 export function figurePlan(outlineText: string): FigurePlan | null {
   const ids = new Set<string>();
   for (const m of outlineText.matchAll(/拼\s*图\s*(\d+)/g)) ids.add(m[1]);
+  const drawnIds = new Set<string>();
+  for (const m of outlineText.matchAll(/(?:自绘|重绘)\s*图\s*(\d+)/g)) drawnIds.add(m[1]);
   let citeOnly = 0;
   for (const m of outlineText.matchAll(/(凑不成则)?仅引用\s*\[@[^\]]+\]\s*Fig/g)) {
     if (!m[1]) citeOnly += 1;
   }
   const tables = new Set<string>();
   for (const m of outlineText.matchAll(/(?:^|[^附])表\s*(\d+)\s*（/gm)) tables.add(m[1]);
-  return ids.size + citeOnly + tables.size > 0 ? { composites: ids.size, citeOnly, tables: tables.size } : null;
+  if (ids.size + drawnIds.size + citeOnly + tables.size === 0) return null;
+  return {
+    composites: ids.size,
+    ...(drawnIds.size > 0 ? { drawn: drawnIds.size } : {}),
+    citeOnly,
+    tables: tables.size,
+  };
 }
 
 export function figurePlanLine(p: FigurePlan): string {
   const parts: string[] = [];
   if (p.composites > 0) parts.push(`初稿要拼 ${p.composites} 张图`);
+  if ((p.drawn ?? 0) > 0) parts.push(`自绘/重绘 ${p.drawn} 张`);
   if (p.citeOnly > 0) parts.push(`直接引原图 ${p.citeOnly} 处`);
   if (p.tables > 0) parts.push(`对照表 ${p.tables} 张`);
   return `用图计划：${parts.join(" · ")}`;

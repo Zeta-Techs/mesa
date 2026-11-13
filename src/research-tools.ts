@@ -22,8 +22,13 @@ function stepAsksLibraryExport(step: Pick<ProjectStepDto, "skills" | "workspaceN
     || step.workspaceName === "journal-format"
     || /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
 }
-function stepTakesPlotting(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): boolean {
-  return stepFillsAnySlot(step.skills, ["figure-forge", "data-eda"], providesByName);
+function stepTakesPlotting(
+  step: { skills: readonly string[]; requiredSkills?: readonly string[] },
+  providesByName: SkillProvides,
+): boolean {
+  // 综述初稿挂 figure-forge 仅作跨文献重绘可选技能，不把整条综述流程变成要选 Python / Origin 的实验分析链
+  if (stepFillsAnySlot(step.skills, ["review-writing"], providesByName)) return false;
+  return stepFillsAnySlot(step.requiredSkills ?? step.skills, ["figure-forge", "data-eda"], providesByName);
 }
 /** 实验方式问在设计步（交 design.md 的步骤，实验室实验要从设计起就按样品与对照写），作用到设计与执行两步（交运行清单的） */
 function stepTakesExperiment(step: Pick<ProjectStepDto, "expectedArtifacts">): boolean {
@@ -88,7 +93,7 @@ export function researchToolFieldsForSteps(steps: readonly ProjectStepDto[], pro
     return stepTakesManuscript(step);
   }));
 }
-function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "expectedArtifacts">, providesByName: SkillProvides): boolean {
+function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "requiredSkills" | "expectedArtifacts">, providesByName: SkillProvides): boolean {
   if (field.key === "libraryExport") return stepAsksLibraryExport(step, providesByName);
   if (field.key === "plotting") return stepTakesPlotting(step, providesByName);
   if (field.key === "illustration") return stepTakesIllustration(step);
@@ -97,7 +102,7 @@ function stepMatchesAsk(field: ResearchToolField, step: Pick<ProjectStepDto, "na
 }
 /** 流程线上问这一项的那一步：整条流程里第一个用得上的步骤。稿件载体只问会换正式稿的步骤。 */
 export function researchToolAskFieldsForStep(
-  step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "expectedArtifacts">,
+  step: Pick<ProjectStepDto, "name" | "workspaceName" | "skills" | "requiredSkills" | "expectedArtifacts">,
   steps: readonly ProjectStepDto[],
   providesByName?: SkillProvides,
 ): ResearchToolField[] {

@@ -132,6 +132,14 @@ test("待你判断：引了只速读的（出处数和所在节）、图注出�
   assert.equal(abbr.title, "1 个缩写和写作规范对不上");
   assert.match(abbr.evidence?.detail ?? "", /SMSI：规定第 4\.3 节首次定义，第一次出现在第 2 节/);
   assert.equal(byId("draft-plan")?.title, "大纲计划的拼图 2 在稿件里没找到");
+  // 大纲计划了「自绘 图3」「重绘 图4」：已插 figures/fig3/fig3.png 与 figures/fig5-tafel.svg 的认出，缺 图4 的提示自绘/重绘
+  const planItems = checkDraft({
+    kind: "writing",
+    file: "manuscript/draft.md",
+    text: "## S1\n![m](../figures/fig3/fig3.png)\n\n![p](../figures/fig5-tafel.svg)\n",
+    outline: "- 用图：自绘 图3（机理）= 参考 [@Ann2020] Fig.1\n- 用图：重绘 图4（活性分布）= 数据源 notes/extraction.md\n- 用图：重绘 图5（Tafel 斜率）= 数据源 notes/extraction.md\n",
+  });
+  assert.equal(planItems.find((i) => i.id === "draft-plan")?.title, "大纲计划的自绘/重绘 图4 在稿件里没找到");
 });
 
 test("渲染会走样的写法：下标写成 _、交叉引用前多写 Tables、手写章节号、一句堆三处原图号", () => {

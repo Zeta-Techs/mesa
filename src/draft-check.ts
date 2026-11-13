@@ -439,13 +439,14 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
     }
   }
 
-  // ⑩ 大纲的拼图 / 表计划，稿件里插了没有
+  // ⑩ 大纲的拼图 / 自绘 / 重绘 / 表计划，稿件里插了没有
   if (input.outline) {
-    // 只认计划的写法「拼图 N（论点）= …」：「拼图 7 张 + 仅引用 2 张」这类小结不算
+    // 只认计划的写法「拼图 N（论点）= …」「自绘 图N（论点）= …」「重绘 图N（论点）= …」：「拼图 7 张 + 仅引用 2 张」这类小结不算
     const plannedFigs = new Set([...input.outline.matchAll(/拼\s*图\s*(\d+)\s*[（(=＝]/g)].map((m) => Number(m[1])));
+    const plannedDrawn = new Set([...input.outline.matchAll(/(?:自绘|重绘)\s*图\s*(\d+)\s*[（(=＝]/g)].map((m) => Number(m[1])));
     const plannedTabs = new Set([...input.outline.matchAll(/(?:^|[^附])表\s*(\d+)\s*（/gm)].map((m) => Number(m[1])));
     const figsIn = new Set<number>([
-      ...images.map((r) => Number(r.path.match(/(?:^|\/)fig(?:ure)?[-_]?(\d+)\.[a-z]+$/i)?.[1])).filter((n) => n > 0),
+      ...images.map((r) => Number(r.path.match(/(?:^|\/)fig(?:ure)?[-_]?(\d+)(?:[-_][a-z0-9_-]+)?\.[a-z]+$/i)?.[1])).filter((n) => n > 0),
       ...paras.flatMap((p) => {
         const m = p.text.match(CAPTION);
         return m && !/^tab/i.test(m[1]) && !m[2].startsWith("S") ? [Number(m[2])] : [];
@@ -459,17 +460,28 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
     );
     const mdTables = (input.text.match(/^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/gm) ?? []).length;
     const lackFig = [...plannedFigs].filter((n) => !figsIn.has(n)).sort((a, b) => a - b);
+    const lackDrawn = [...plannedDrawn].filter((n) => !figsIn.has(n)).sort((a, b) => a - b);
     const lackTab = tabsIn.size || mdTables < plannedTabs.size ? [...plannedTabs].filter((n) => !tabsIn.has(n)).sort((a, b) => a - b) : [];
-    if (lackFig.length || lackTab.length) {
+    if (lackFig.length || lackDrawn.length || lackTab.length) {
+      const missingParts = [
+        lackFig.length ? `拼图 ${lackFig.join("、")}` : "",
+        lackDrawn.length ? `自绘/重绘 图${lackDrawn.join("、")}` : "",
+        lackTab.length ? `表 ${lackTab.join("、")}` : "",
+      ].filter(Boolean);
+      const planSummary = [
+        `拼图 ${plannedFigs.size} 张`,
+        ...(plannedDrawn.size ? [`自绘/重绘 ${plannedDrawn.size} 张`] : []),
+        `表 ${plannedTabs.size} 张`,
+      ].join("、");
       push(items, {
         id: "draft-plan",
         kind: "draft-figure",
         status: "needs_human",
-        title: `大纲计划的${[lackFig.length ? `拼图 ${lackFig.join("、")}` : "", lackTab.length ? `表 ${lackTab.join("、")}` : ""].filter(Boolean).join("，")} 在稿件里没找到`,
+        title: `大纲计划的${missingParts.join("，")} 在稿件里没找到`,
         target: { file, line: 1 },
         evidence: {
           source: "outline.md",
-          detail: `大纲计划拼图 ${plannedFigs.size} 张、表 ${plannedTabs.size} 张；稿件里认到图 ${figsIn.size} 张（按 figures/figN 与图注编号）、表 ${tabsIn.size || mdTables} 张。拼不成改成「见 [@键] Fig.n」的，原因应写在 figures/README.md。`,
+          detail: `大纲计划${planSummary}；稿件里认到图 ${figsIn.size} 张（按 figures/figN 与图注编号）、表 ${tabsIn.size || mdTables} 张。拼不成或缺数据改成「见 [@键] Fig.n」的，原因应写在 figures/README.md。`,
         },
       });
     }

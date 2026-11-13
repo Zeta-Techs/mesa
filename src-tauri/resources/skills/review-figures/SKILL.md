@@ -17,7 +17,7 @@ provides: [review-figures]
 - 综述初稿按 `outline.md` 用图计划出图
 - 用户要求从已有 PDF 组文献对比图 / 机制拼图
 
-实验结果图走 figure-forge；三维示意走 blender-research。禁止用文生图重画别人的数据图（当示意图草稿可以，不能当定量 panel）。
+实验结果图与综述跨文献数据综合重绘图（基于 `notes/extraction.md` 已核验数据）走 figure-forge；机理/总结示意图走 schematic-forge；三维示意走 blender-research。禁止用文生图重画别人的数据图（当示意图草稿可以，不能当定量 panel），也禁止凭眼估曲线重描单篇原图；多篇文献已有核验过的表格/抽取数据时，鼓励按 figure-forge 用脚本统一坐标系重绘跨文献综合图。
 
 ## 一张拼图 = 一个论点（2026-10-23 用户拍板）
 
@@ -96,6 +96,14 @@ python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --input
 - schematic-forge 没装或跑不起来（缺 python-pptx 等）：不退回手写脚本，写进 `figures/README.md` 和报告，请用户在 Mesa「设置 → 依赖」补装后再画；正文暂改「见 [@键] Fig.n」，不留空占位。
 - 不含任何实验数字；图注写 schematic / 示意与 Summarized from [@键]。
 - 自绘图要作为一块拼进拼图时，块里不写 (a)(b) 字母，也不在顶上写整句标题：字母由 `assemble_panels.py` 统一加，标题进图注。块的 SVG 里自带 (a) 一类字母时拼板脚本拒绝出图。
+
+## 跨文献数据重绘综合图（重绘）
+
+高水平综述最出彩的定量图不是单篇截图拼盘，而是把十几到几十篇文献的已核验数据放在**统一坐标系**下重绘出的规律图（如跨电流过电位对比散点、不同亚结构 / 路线的 Tafel 斜率箱线或散点分布、半电池对器件槽压全局对标、稳定性时长—电流密度气泡图）。计划写「重绘 图N（论点一句话）= 数据源 notes/extraction.md（指标：…；涉及 [@键1]、[@键2]…）」时，按 figure-forge 技能由脚本生成：
+
+- **数据只取已核验台账**：每一个数据点都必须来自 `notes/extraction.md`（或精读笔记已核对原文位置的定量行），同步输出配对 `figures/figN.csv`（列含 `bibKey`、材料/体系、指标数值与单位、测试条件、原文位置页码/表号/图号），绝不凭眼量别人曲线凑数、不手抄进脚本硬编码。
+- **可复现与登记**：出 `figures/figN.svg` + `.png`（可单独成图，也可作为一块子图拼进 `assemble_panels.py`，做子图时不自带 `(a)` 字母），在 `figures/manifest.json` 登记脚本并跑 `fig_lint.py` + `fig_check.py`。
+- **条件可比与图注**：电解液、载量、温度等条件不同时分面或用标记形状区分并在图注写明，不跨条件混算排名；图注写 `Data compiled from [@键1; @键2; ...]`（综述作者基于公开数据自绘，无需转载许可）。
 
 ## 写进初稿与复查
 

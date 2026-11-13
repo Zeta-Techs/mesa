@@ -137,6 +137,16 @@ test("用图计划：拼图按编号去重，仅引用只数真引用，技能�
   const p = figurePlan(outline);
   assert.deepEqual(p, { composites: 3, citeOnly: 1, tables: 2 });
   assert.equal(figurePlanLine(p!), "用图计划：初稿要拼 3 张图 · 直接引原图 1 处 · 对照表 2 张");
+  const withDrawn = figurePlan(
+    [
+      outline,
+      "- 用图：自绘 图4（界面机理总结）= 参考 [@k1] Fig.1",
+      "- 用图：重绘 图5（跨文献 η10 vs η500 对比）= 数据源 notes/extraction.md（涉及 [@k1]、[@k2]）",
+      "- 正文再提 重绘 图5",
+    ].join("\n"),
+  );
+  assert.deepEqual(withDrawn, { composites: 3, drawn: 2, citeOnly: 1, tables: 2 });
+  assert.equal(figurePlanLine(withDrawn!), "用图计划：初稿要拼 3 张图 · 自绘/重绘 2 张 · 直接引原图 1 处 · 对照表 2 张");
   assert.equal(figurePlan("# 大纲\n没有用图计划"), null);
 });
 
