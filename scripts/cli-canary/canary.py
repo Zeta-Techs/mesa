@@ -136,6 +136,12 @@ def normalize(v):
 # ---------- 指纹 ----------
 
 HEADING = re.compile(r"^#{1,4}\s+(.+?)\s*$", re.M)
+# 标题本身是带临时目录的路径（Qwen 0.27.2 起把记忆文件路径当标题注入），每次随机，只留一个占位
+TEMP_PATH_HEADING = re.compile(r"mesa-e2e-\w+|cc-[\w-]+[\\/]work")
+
+
+def headings(text):
+    return sorted({"<临时目录下的路径>" if TEMP_PATH_HEADING.search(h) else h for h in HEADING.findall(text)})
 TAG = re.compile(r"<([a-z][a-z0-9_-]{2,40})>")
 
 
@@ -197,9 +203,9 @@ def request_fingerprint(reqs):
             "model": body.get("model"),
             "tools": tool_names(body),
             "bodyKeys": sorted(body.keys()),
-            "systemHeadings": sorted(set(HEADING.findall(system))),
+            "systemHeadings": headings(system),
             "contextTags": sorted(set(TAG.findall(context + "\n" + system))),
-            "contextHeadings": sorted(set(HEADING.findall(context))),
+            "contextHeadings": headings(context),
             "headers": headers,
         },
         "other": sorted({f'{x["path"]} tools={bool(x["body"].get("tools"))}' for x in reqs if x is not r and x not in main}),
