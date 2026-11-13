@@ -2383,13 +2383,16 @@ export default function StepFlow({
           !node.done &&
           !(isPendingConfirmTaskTitle(human.title) && pendingRowLive) &&
           !isInlineDecisionTaskTitle(human.title)
-            ? "opacity-45"
+            ? // 压暗不放整行：行一半透明，方框底下挡竖线的井底色也跟着透，线从方框里穿过去（2026-11-14 用户截图）。
+              // 改为只压暗方框本身、标题行其余部分和下面的内容，挡板保持不透明
+              "[&>*:not(:first-child)]:opacity-45 [&>:first-child>*:not(:first-child)]:opacity-45 [&>:first-child>:first-child>*]:opacity-45"
             : ""
         }`}
       >
         <div className="flex items-center gap-2">
           {/* 人工事项行：复选框本身就是状态 + 控件，直接占序号那一列（2026-11-13 步骤卡统一设计稿：
-              方框即节点标记，标题与「AI 干活」同一左缘）；ccode-well 底色盖住竖向连接线 */}
+              方框即节点标记，标题与「AI 干活」同一左缘）；外面套一层不透明的 ccode-well 挡板盖住竖向连接线——
+              勾选框 disabled 时自带 opacity-50，底色直接给它会跟着透、线穿过方框 */}
           {node.key === "endnote-export" || node.key === "continue-notes" || (node.kind === "human" && human) ? null : ic.cls === "is-done" ? (
             /* 完成态：中性亮灰空心小圆环——与大圆步进器同语言（实心=进行中、空心=已完成），
                与完成段链条同款 l2 亮灰；①②③ 也是空心圆族（2026-09-15 用户拍板不要绿色） */
@@ -2402,22 +2405,24 @@ export default function StepFlow({
             </span>
           )}
           {node.key === "endnote-export" ? (
+            <span className="ccode-well relative z-10 flex shrink-0">
             <Checkbox
-              className="ccode-well relative z-10 shrink-0"
               checked={endnoteChecked}
               onChange={setEndnoteChecked}
               title="勾选 = 已经在 EndNote 里导入完"
             />
+            </span>
           ) : node.key === "continue-notes" ? (
+            <span className="ccode-well relative z-10 flex shrink-0">
             <Checkbox
-              className="ccode-well relative z-10 shrink-0"
               checked={continueNotesChecked}
               onChange={setContinueNotesChecked}
               title="勾选 = 已经去笔记夹看过"
             />
+            </span>
           ) : node.kind === "human" && human ? (
+            <span className="ccode-well relative z-10 flex shrink-0">
             <Checkbox
-              className="ccode-well relative z-10 shrink-0"
               checked={node.done}
               disabled={
                 busyTitle === human.title ||
@@ -2439,6 +2444,7 @@ export default function StepFlow({
                     : "勾选 = 人工确认完成（系统不再追问）"
               }
             />
+            </span>
           ) : null}
           <span
             title={
