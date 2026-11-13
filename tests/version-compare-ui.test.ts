@@ -99,10 +99,10 @@ test("图片两边共用倍率和滚动位置，不同尺寸保持比例，原�
     const left = mounted.document.querySelector<HTMLDivElement>('[aria-label="左图"]')!;
     const right = mounted.document.querySelector<HTMLDivElement>('[aria-label="右图"]')!;
     for (const pane of [left, right]) {
-      Object.defineProperty(pane, "clientWidth", { value: 200 }); Object.defineProperty(pane, "clientHeight", { value: 100 });
+      Object.defineProperty(pane, "clientWidth", { value: 200, configurable: true }); Object.defineProperty(pane, "clientHeight", { value: 100, configurable: true });
     }
-    Object.defineProperty(left, "scrollWidth", { value: 1000 }); Object.defineProperty(left, "scrollHeight", { value: 500 });
-    Object.defineProperty(right, "scrollWidth", { value: 1800 }); Object.defineProperty(right, "scrollHeight", { value: 900 });
+    Object.defineProperty(left, "scrollWidth", { value: 1000, configurable: true }); Object.defineProperty(left, "scrollHeight", { value: 500, configurable: true });
+    Object.defineProperty(right, "scrollWidth", { value: 1800, configurable: true }); Object.defineProperty(right, "scrollHeight", { value: 900, configurable: true });
     left.scrollLeft = 400; left.scrollTop = 200;
     await mounted.act(async () => left.dispatchEvent(new mounted.document.defaultView!.Event("scroll")));
     assert.equal(right.scrollLeft, 800); assert.equal(right.scrollTop, 400);
@@ -110,6 +110,13 @@ test("图片两边共用倍率和滚动位置，不同尺寸保持比例，原�
     assert.equal(left.scrollLeft, 400);
     await mounted.act(async () => left.dispatchEvent(new mounted.document.defaultView!.WheelEvent("wheel", { deltaY: 100, bubbles: true })));
     assert.equal(images[0].style.width, "1250px");
+    // 单轴未溢出时纵向滚动不应把另一侧的横向位置清零
+    Object.defineProperty(left, "scrollWidth", { value: 200 });
+    left.scrollLeft = 0;
+    left.scrollTop = 300;
+    await mounted.act(async () => left.dispatchEvent(new mounted.document.defaultView!.Event("scroll")));
+    assert.equal(right.scrollLeft, 800, "左图横向未溢出时右图横向滚动位置保持不变");
+    assert.equal(right.scrollTop, 600);
   } finally { await mounted.cleanup(); }
 });
 

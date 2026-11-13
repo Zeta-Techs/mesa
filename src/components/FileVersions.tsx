@@ -75,6 +75,11 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [compareRefresh, setCompareRefresh] = useState(0);
   const menuButton = useRef<HTMLButtonElement>(null);
+  const targetRef = useRef("");
+  const versionIdRef = useRef(versionId);
+  versionIdRef.current = versionId;
+  const compareIdRef = useRef(compareId);
+  compareIdRef.current = compareId;
   const paths = useMemo(() => data?.files.map((file) => file.path) ?? [], [data]);
   const version = file?.versions.find((candidate) => candidate.id === versionId);
   const compared = file?.versions.find((candidate) => candidate.id === compareId);
@@ -94,13 +99,25 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   }, [root, path, workspaceId, revision]);
   useEffect(() => {
     let stale = false;
-    setFile(null); setPreview(null); setComparison(null); setCompareId("");
+    const targetKey = `${root}\n${workspaceId ?? ""}\n${chosen}`;
+    const sameTarget = Boolean(chosen) && targetRef.current === targetKey;
+    targetRef.current = targetKey;
+    if (!sameTarget) {
+      setFile(null); setPreview(null); setComparison(null); setVersionId(""); setCompareId("");
+    }
     if (!chosen) return;
     invoke<FileVersionsDto>("file_versions", { root, path: chosen, workspaceId: workspaceId ?? null }).then((next) => {
       if (stale) return;
       const selected = next.files[0] ?? null;
       setFile(selected);
-      setVersionId(selected?.exists ? "" : selected?.versions[0]?.id ?? "");
+      const nextVersionId = sameTarget && versionIdRef.current && selected?.versions.some((candidate) => candidate.id === versionIdRef.current)
+        ? versionIdRef.current
+        : selected?.exists ? "" : selected?.versions[0]?.id ?? "";
+      const keepCompare = Boolean(sameTarget && nextVersionId && compareIdRef.current && compareIdRef.current !== nextVersionId && (
+        compareIdRef.current === "current" ? selected?.exists : selected?.versions.some((candidate) => candidate.id === compareIdRef.current)
+      ));
+      setVersionId(nextVersionId);
+      setCompareId(keepCompare ? compareIdRef.current : "");
     }).catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
   }, [root, chosen, workspaceId, revision]);

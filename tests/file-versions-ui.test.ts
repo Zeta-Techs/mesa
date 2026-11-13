@@ -242,3 +242,26 @@ test("图片比较使用成对冻结图片，不把现稿写成新版本", async
     assert.deepEqual(mounted.calls.find((call) => call.command === "file_version_compare")?.args, { root: "/project", from: "old", to: null, image: true });
   } finally { await mounted.cleanup(); }
 });
+
+test("切换保留或修改备注刷新索引时保留正在查看与对照的版本", async () => {
+  const mounted = await mount();
+  try {
+    await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsPanel, { root: "/project", path: "/project/outline.md" })));
+    const selected = () => mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!;
+    await mounted.act(async () => mounted.setValue(selected(), "new"));
+    const compare = () => mounted.document.querySelector<HTMLSelectElement>('select[aria-label="比较的版本"]')!;
+    await mounted.act(async () => mounted.setValue(compare(), "old"));
+    assert.equal(selected().value, "new");
+    assert.equal(compare().value, "old");
+    await mounted.act(async () => mounted.button("更多").click());
+    await mounted.act(async () => mounted.button("保留后续版本").click());
+    assert.equal(selected().value, "new", "勾保留后续版本后不跳回当前文件");
+    assert.equal(compare().value, "old", "勾保留后续版本后不清空比较版本");
+    await mounted.act(async () => mounted.button("更多").click());
+    await mounted.act(async () => mounted.button("备注…").click());
+    await mounted.act(async () => mounted.setValue(mounted.document.querySelector<HTMLInputElement>('input[aria-label="版本备注"]')!, "新备注"));
+    await mounted.act(async () => mounted.button("保存").click());
+    assert.equal(selected().value, "new", "改备注后仍停留在原版本");
+    assert.equal(compare().value, "old", "改备注后仍维持对照状态");
+  } finally { await mounted.cleanup(); }
+});

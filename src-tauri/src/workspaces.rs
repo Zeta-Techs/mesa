@@ -1587,9 +1587,7 @@ fn merge_impl_with_guard(
         let ledger = pending.files_applied
             && crate::review_contract::record_pending_fact(&repo, &w.id, &pending.fact).is_ok();
         let version_warning = if ledger {
-            crate::file_versions::capture_accepted(&repo, &pending.fact, &review).err()
-                .map(|error| format!("。文件已保存，但历史留存失败：{error}；下次打开这个文件的版本时会按保存记录补上"))
-                .unwrap_or_default()
+            crate::file_versions::capture_accepted_warning(&repo, &pending.fact, &review)
         } else { String::new() };
         let mut result = WorkspaceMergeResultDto {
             merged: true,
@@ -1903,9 +1901,7 @@ fn merge_impl_with_guard(
     let ledger = pending.files_applied
         && crate::review_contract::record_pending_fact(&repo, &w.id, &pending.fact).is_ok();
     let version_warning = if ledger {
-        crate::file_versions::capture_accepted(&repo, &pending.fact, &review).err()
-            .map(|error| format!("。文件已保存，但历史留存失败：{error}；下次打开这个文件的版本时会按保存记录补上"))
-            .unwrap_or_default()
+        crate::file_versions::capture_accepted_warning(&repo, &pending.fact, &review)
     } else { String::new() };
     let merged_at = crate::sessions::now_iso();
     if let Err(e) = conn.execute(

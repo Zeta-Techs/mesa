@@ -898,6 +898,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setPreview(null);
     setPreviewFiles([]);
     setPreviewDirty(false);
+    setPreviewVersionsPath(null);
     setFilesViewPref("tree");
   }
 
@@ -1170,6 +1171,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setPreview({ path, name, root: root ?? null });
       setPreviewFiles(files ?? []);
       setPreviewDirty(false);
+      setPreviewVersionsPath(null);
     },
     [],
   );
@@ -1193,6 +1195,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (!next) return;
       setPreview({ path: next.path, name: next.name, root: preview.root });
       setPreviewDirty(false);
+      setPreviewVersionsPath(null);
     },
     [preview, previewFiles],
   );
@@ -1285,6 +1288,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setPreview(null);
     setPreviewFiles([]);
     setPreviewDirty(false);
+    setPreviewVersionsPath(null);
     return true;
   }, [preview, previewDirty]);
 
@@ -2039,6 +2043,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           root: pt.previewRoot ?? null,
         });
         setPreviewDirty(false);
+        setPreviewVersionsPath(null);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2129,6 +2134,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     });
     setPreviewFiles([]);
     setPreviewDirty(false);
+    setPreviewVersionsPath(null);
     setPreviewReveal(previewReq.line && previewReq.line > 0 ? { path: previewReq.path, line: previewReq.line } : null);
   }, [visible, previewReq, setPreviewReq]);
 
@@ -4146,7 +4152,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       {previewVersionsPath === preview.path ? (
                         <button
                           type="button"
-                          onClick={() => setPreviewVersionsPath(null)}
+                          onClick={() => {
+                            setPreviewVersionsPath(null);
+                            setFilesViewPref("preview");
+                          }}
                           title="回到这个文件的预览 / 编辑"
                           className="shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline"
                         >
@@ -4155,7 +4164,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       ) : (
                         <FileVersionsButton root={preview.root ?? activeCwd} path={preview.path} refreshKey={String(refreshKey)} onOpen={async () => {
                           if (previewDirty && !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", { danger: true, confirmText: "查看历史", focusCancel: true }))) return;
-                          setPreviewDirty(false); setPreviewVersionsPath(preview.path);
+                          setPreviewDirty(false); setPreviewVersionsPath(preview.path); setFilesViewPref("preview");
                         }} />
                       )}
                       {previewDirty && (

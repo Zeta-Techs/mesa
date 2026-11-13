@@ -29,17 +29,22 @@ export default function ImageVersionCompare({ before, after }: { before: string;
     measure(); return () => observer.disconnect();
   }, [urls]);
   const scale = zoom === "fit" ? Math.min(...sizes.map((size, index) => size ? imageFitScale(size, boxes[index] ?? { w: 0, h: 0 }, 24) : 1)) : zoom;
-  // 滚轮缩放时鼠标所在点：缩放后让这一点仍停在鼠标下，再按比例带动另一侧
-  const anchor = useRef<{ pane: HTMLDivElement; x: number; y: number; left: number; top: number; ratio: number } | null>(null);
+  // 滚轮缩放时鼠标所在点：按图片实际矩形算相对位置（兼容未溢出时 m-auto 居中），缩放后让这一点仍停在鼠标下，再按比例带动另一侧
+  const anchor = useRef<{ pane: HTMLDivElement; vx: number; vy: number; ix: number; iy: number; ratio: number } | null>(null);
   useLayoutEffect(() => {
     const point = anchor.current;
     anchor.current = null;
     if (point) {
-      const pane = point.pane, pad = 12;
+      const pane = point.pane;
+      const img = pane.querySelector("img");
+      const imgW = img ? (img.offsetWidth || Number.parseFloat(img.style.width) || 0) : 0;
+      const imgH = img ? (img.offsetHeight || Number.parseFloat(img.style.height) || 0) : 0;
+      const padX = imgW > 0 ? Math.max(12, (pane.scrollWidth - imgW) / 2) : 12;
+      const padY = imgH > 0 ? Math.max(12, (pane.scrollHeight - imgH) / 2) : 12;
       const maxX = Math.max(0, pane.scrollWidth - pane.clientWidth), maxY = Math.max(0, pane.scrollHeight - pane.clientHeight);
-      const left = Math.min(maxX, Math.max(0, (point.left + point.x - pad) * point.ratio + pad - point.x));
-      const top = Math.min(maxY, Math.max(0, (point.top + point.y - pad) * point.ratio + pad - point.y));
-      position.current = { x: maxX ? left / maxX : 0, y: maxY ? top / maxY : 0 };
+      const left = Math.min(maxX, Math.max(0, padX + point.ix * point.ratio - point.vx));
+      const top = Math.min(maxY, Math.max(0, padY + point.iy * point.ratio - point.vy));
+      position.current = { x: maxX > 0 ? left / maxX : position.current.x, y: maxY > 0 ? top / maxY : position.current.y };
     }
     for (const pane of panes.current) {
       if (!pane) continue;
@@ -49,7 +54,10 @@ export default function ImageVersionCompare({ before, after }: { before: string;
       pane.scrollLeft = left; pane.scrollTop = top;
     }
   }, [scale]);
-  function zoomTo(next: "fit" | number) { setZoom(next === "fit" ? next : Math.max(0.05, Math.min(8, next))); }
+  function zoomTo(next: "fit" | number) {
+    if (next === "fit") position.current = { x: 0, y: 0 };
+    setZoom(next === "fit" ? next : Math.max(0.05, Math.min(8, next)));
+  }
   // React 的 onWheel 是被动监听，preventDefault 拦不住触控板捏合时整页跟着缩放 / 滚动，这里挂原生非被动监听
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
@@ -61,7 +69,12 @@ export default function ImageVersionCompare({ before, after }: { before: string;
       event.preventDefault();
       const next = Math.max(0.05, Math.min(8, scaleRef.current * factor));
       const pane = event.currentTarget as HTMLDivElement, box = pane.getBoundingClientRect();
-      anchor.current = { pane, x: event.clientX - box.left, y: event.clientY - box.top, left: pane.scrollLeft, top: pane.scrollTop, ratio: next / scaleRef.current };
+      const vx = event.clientX - box.left, vy = event.clientY - box.top;
+      const imgBox = pane.querySelector("img")?.getBoundingClientRect();
+      const hasImgBox = Boolean(imgBox && (imgBox.width > 0 || imgBox.height > 0));
+      const ix = hasImgBox ? event.clientX - imgBox!.left : pane.scrollLeft + vx - 12;
+      const iy = hasImgBox ? event.clientY - imgBox!.top : pane.scrollTop + vy - 12;
+      anchor.current = { pane, vx, vy, ix, iy, ratio: next / scaleRef.current };
       setZoom(next);
     };
     const attached = panes.current.filter((pane): pane is HTMLDivElement => pane !== null);
@@ -72,8 +85,10 @@ export default function ImageVersionCompare({ before, after }: { before: string;
     const pending = pendingScroll.current.get(source);
     pendingScroll.current.delete(source);
     if (pending && Math.abs(source.scrollLeft - pending.left) < 1 && Math.abs(source.scrollTop - pending.top) < 1) return;
-    const x = source.scrollLeft / Math.max(1, source.scrollWidth - source.clientWidth);
-    const y = source.scrollTop / Math.max(1, source.scrollHeight - source.clientHeight);
+    const rangeX = source.scrollWidth - source.clientWidth;
+    const rangeY = source.scrollHeight - source.clientHeight;
+    const x = rangeX > 0 ? source.scrollLeft / rangeX : position.current.x;
+    const y = rangeY > 0 ? source.scrollTop / rangeY : position.current.y;
     if (Math.abs(x - position.current.x) < 0.0001 && Math.abs(y - position.current.y) < 0.0001) return;
     position.current = { x, y };
     for (const pane of panes.current) {

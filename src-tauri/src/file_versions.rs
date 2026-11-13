@@ -95,11 +95,69 @@ fn safe_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(cursor)
 }
 
+fn strip_dir_prefix(target: &str, base: &str) -> Option<String> {
+    let target_plain = crate::paths::strip_verbatim(PathBuf::from(target))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let base_plain = crate::paths::strip_verbatim(PathBuf::from(base))
+        .to_string_lossy()
+        .replace('\\', "/");
+    if !crate::paths::path_within(&target_plain, &base_plain) {
+        return None;
+    }
+    let t_parts: Vec<&str> = target_plain.split('/').filter(|p| !p.is_empty()).collect();
+    let b_parts: Vec<&str> = base_plain.split('/').filter(|p| !p.is_empty()).collect();
+    if t_parts.len() < b_parts.len() {
+        return None;
+    }
+    Some(t_parts[b_parts.len()..].join("/"))
+}
+
+fn relative_in_scope(raw_root: &str, scope: &Path, value: &str) -> Result<String, String> {
+    let expanded = crate::sessions::expand_tilde(value);
+    let plain = crate::paths::strip_verbatim(PathBuf::from(&expanded));
+    let is_abs = plain.is_absolute() || Path::new(&expanded).has_root();
+    let rel = if is_abs {
+        let scope_str = scope.to_string_lossy();
+        if let Some(rel) = strip_dir_prefix(&expanded, &scope_str) {
+            rel
+        } else if !raw_root
+            .replace('\\', "/")
+            .split('/')
+            .any(|p| p == "." || p == "..")
+            && strip_dir_prefix(&expanded, raw_root).is_some()
+        {
+            strip_dir_prefix(&expanded, raw_root).unwrap_or_default()
+        } else {
+            // 祖先目录经过符号链接（如 macOS /var → /private/var）时从浅到深停在命中 scope 的那一层，
+            // scope 内部的分量原样留给 safe_path 逐层拦符号链接
+            let target_path = Path::new(&expanded);
+            let ancestors: Vec<&Path> = target_path.ancestors().collect();
+            let matched = ancestors.into_iter().rev().find_map(|anc| {
+                let canon = crate::paths::canonicalize_plain(anc).ok()?;
+                if crate::paths::same_path(&canon.to_string_lossy(), &scope_str) {
+                    target_path
+                        .strip_prefix(anc)
+                        .ok()
+                        .map(|p| p.to_string_lossy().into_owned())
+                } else {
+                    None
+                }
+            });
+            matched.ok_or_else(|| "文件不在当前项目中".to_string())?
+        }
+    } else {
+        expanded
+    };
+    relative(&rel)
+}
+
 fn location(
     root: &str,
     path: Option<&str>,
 ) -> Result<(PathBuf, Option<PathBuf>, Option<String>), String> {
-    let scope = crate::paths::canonicalize_plain(Path::new(&crate::sessions::expand_tilde(root)))
+    let raw_root = crate::sessions::expand_tilde(root);
+    let scope = crate::paths::canonicalize_plain(Path::new(&raw_root))
         .map_err(|error| error.to_string())?;
     let project = if scope.join(".git").is_file() {
         let common = crate::workspaces::run_git_raw(
@@ -118,19 +176,7 @@ fn location(
         return Err("这个目录不是 Mesa 项目".into());
     }
     let rel = path
-        .map(|value| {
-            let target = PathBuf::from(value);
-            let value = if target.is_absolute() {
-                target
-                    .strip_prefix(&scope)
-                    .map_err(|_| "文件不在当前项目中")?
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                value.to_string()
-            };
-            relative(&value)
-        })
+        .map(|value| relative_in_scope(&raw_root, &scope, value))
         .transpose()?;
     let source = rel
         .as_ref()
@@ -496,70 +542,144 @@ fn with_lock<T>(root: &Path, work: impl FnOnce() -> Result<T, String>) -> Result
     work()
 }
 
-pub(crate) fn capture_accepted(
+fn capture_accepted_detail(
     root: &Path,
     save: &crate::projects::AcceptanceLogEntry,
     review: &crate::workspaces::DeliverableReviewDto,
-) -> Result<(), String> {
+) -> Result<(), (String, bool)> {
+    let any_copy_in_save = review
+        .files
+        .iter()
+        .any(|file| file.disposition == "copy" && save.paths.contains(&file.path));
     match fs::symlink_metadata(root.join(".ccode/versions/index.json")) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err((error.to_string(), any_copy_in_save)),
         Ok(_) => {}
     }
-    with_lock(root, || {
+    let mut failed_copy = false;
+    let res = with_lock(root, || {
         let mut index = load(root)?;
         let tracked = index.tracked.clone();
+        let mut errors = Vec::new();
+        let mut dirty = false;
         for path in tracked.iter().filter(|path| save.paths.contains(path)) {
             if index.versions.iter().any(|version| {
                 version.path == *path && version.save_id.as_deref() == Some(&save.version_id)
             }) {
                 continue;
             }
-            let mut version = new_version(path, "", &save_source(root, save));
-            version.saved_at = save.decided_at.clone();
-            version.workspace_id = save.scene_ref.clone();
-            version.save_id = Some(save.version_id.clone());
-            if let Some(id) = save.scene_ref.as_deref() {
-                let (round, cause) =
-                    crate::step_loop::saved_round_origin(root, id, &save.decided_at);
-                version.round = Some(round);
-                version.cause = Some(cause);
-            }
-            if let Some(file) = review
+            let is_copy = review
                 .files
                 .iter()
-                .find(|file| file.path == *path && file.disposition == "copy")
-            {
-                version = snapshot(
-                    root,
-                    &safe_path(Path::new(&review.payload_dir), path)?,
-                    version,
-                )?;
-                if file.sha256.as_deref() != Some(&version.sha256) || file.size != version.size {
-                    return Err(format!("{path} 的冻结内容与已采纳指纹不一致，未登记留存"));
+                .any(|file| file.path == *path && file.disposition == "copy");
+            let step = (|| -> Result<Option<_>, String> {
+                let mut version = new_version(path, "", &save_source(root, save));
+                version.saved_at = save.decided_at.clone();
+                version.workspace_id = save.scene_ref.clone();
+                version.save_id = Some(save.version_id.clone());
+                if let Some(id) = save.scene_ref.as_deref() {
+                    let (round, cause) =
+                        crate::step_loop::saved_round_origin(root, id, &save.decided_at);
+                    version.round = Some(round);
+                    version.cause = Some(cause);
                 }
-            } else if let Some(blob) = blob_at(root, &save.version_id, path) {
-                let bytes = git_content(root, &blob)?;
-                version.size = bytes.len() as u64;
-                version.sha256 = format!("{:x}", Sha256::digest(&bytes));
-                version.git_blob = Some(blob);
-            } else {
-                continue;
+                if let Some(file) = review
+                    .files
+                    .iter()
+                    .find(|file| file.path == *path && file.disposition == "copy")
+                {
+                    version = snapshot(
+                        root,
+                        &safe_path(Path::new(&review.payload_dir), path)?,
+                        version,
+                    )?;
+                    if file.sha256.as_deref() != Some(&version.sha256) || file.size != version.size
+                    {
+                        return Err(format!(
+                            "{path} 的冻结内容与已采纳指纹不一致，未登记留存"
+                        ));
+                    }
+                } else if let Some(blob) = blob_at(root, &save.version_id, path) {
+                    let bytes = git_content(root, &blob)?;
+                    version.size = bytes.len() as u64;
+                    version.sha256 = format!("{:x}", Sha256::digest(&bytes));
+                    version.git_blob = Some(blob);
+                } else {
+                    return Ok(None);
+                }
+                Ok(Some(version))
+            })();
+            match step {
+                Ok(Some(version)) => {
+                    if index
+                        .versions
+                        .iter()
+                        .rev()
+                        .find(|old| old.path == *path)
+                        .is_some_and(|old| old.sha256 == version.sha256)
+                    {
+                        continue;
+                    }
+                    index.versions.push(version);
+                    dirty = true;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    if is_copy {
+                        failed_copy = true;
+                    }
+                    errors.push(err);
+                }
             }
-            if index
-                .versions
-                .iter()
-                .rev()
-                .find(|old| old.path == *path)
-                .is_some_and(|old| old.sha256 == version.sha256)
-            {
-                continue;
-            }
-            index.versions.push(version);
-            persist(root, &index)?;
         }
-        Ok(())
+        if dirty {
+            if let Err(err) = persist(root, &index) {
+                if tracked.iter().any(|path| {
+                    save.paths.contains(path)
+                        && review
+                            .files
+                            .iter()
+                            .any(|file| file.path == *path && file.disposition == "copy")
+                }) {
+                    failed_copy = true;
+                }
+                errors.push(err);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("；"))
+        }
+    });
+    res.map_err(|err| {
+        let copy_affected = failed_copy || (err.starts_with("文件版本") && any_copy_in_save);
+        (err, copy_affected)
     })
+}
+
+pub(crate) fn capture_accepted(
+    root: &Path,
+    save: &crate::projects::AcceptanceLogEntry,
+    review: &crate::workspaces::DeliverableReviewDto,
+) -> Result<(), String> {
+    capture_accepted_detail(root, save, review).map_err(|(err, _)| err)
+}
+
+pub(crate) fn capture_accepted_warning(
+    root: &Path,
+    save: &crate::projects::AcceptanceLogEntry,
+    review: &crate::workspaces::DeliverableReviewDto,
+) -> String {
+    match capture_accepted_detail(root, save, review) {
+        Ok(()) => String::new(),
+        Err((error, true)) => format!(
+            "。文件已保存，但历史留存失败：{error}；未纳入 Git 的产物不会自动补登，可在文件版本里手动留存当前这一版"
+        ),
+        Err((error, false)) => {
+            format!("。文件已保存，但历史留存失败：{error}；下次打开这个文件的版本时会按保存记录补上")
+        }
+    }
 }
 
 #[tauri::command]
@@ -1693,11 +1813,55 @@ mod tests {
         std::os::unix::fs::symlink(fixture.root.join("draft.md"), fixture.root.join("link.md"))
             .unwrap();
         assert!(location(fixture.root.to_str().unwrap(), Some("link.md")).is_err());
+        // 外部符号链接指向项目根目录时，普通文件（含已删文件）能归一，但项目内符号链接仍被拒
+        let alias = fixture.root.parent().unwrap().join(format!(
+            "ccode-proj-alias-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::os::unix::fs::symlink(&fixture.root, &alias).unwrap();
+        let (_, src, rel) = location(
+            fixture.root.to_str().unwrap(),
+            Some(alias.join("draft.md").to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(rel.as_deref(), Some("draft.md"));
+        assert!(src.unwrap().is_file());
+        let (_, gone_src, gone_rel) = location(
+            fixture.root.to_str().unwrap(),
+            Some(alias.join("notes/deleted.md").to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(gone_rel.as_deref(), Some("notes/deleted.md"));
+        assert!(!gone_src.unwrap().exists());
+        assert!(location(
+            fixture.root.to_str().unwrap(),
+            Some(alias.join("link.md").to_str().unwrap()),
+        )
+        .is_err());
+        let _ = fs::remove_file(&alias);
         std::os::unix::fs::symlink(
             fixture.root.join("draft.md"),
             fixture.root.join(".ccode/versions"),
         )
         .unwrap();
         assert!(load(&fixture.root).is_err());
+    }
+
+    #[test]
+    fn capture_warning_distinguishes_non_git_copy_from_git_backfill() {
+        let fixture = Fixture::new();
+        fixture.write("figure.png", b"old");
+        fixture.update("figure.png", "track", None, "").unwrap();
+        let review = fixture.review("figure.png", b"reviewed");
+        fixture.write("frozen/figure.png", b"tampered");
+        let copy_warn = capture_accepted_warning(&fixture.root, &save("figure.png", "save-1"), &review);
+        assert!(copy_warn.contains("未纳入 Git 的产物不会自动补登"), "{copy_warn}");
+        assert!(!copy_warn.contains("按保存记录补上"), "{copy_warn}");
+
+        fixture.write(".ccode/versions/index.json", b"broken");
+        let mut empty_review = review;
+        empty_review.files.clear();
+        let git_warn = capture_accepted_warning(&fixture.root, &save("outline.md", "save-2"), &empty_review);
+        assert!(git_warn.contains("下次打开这个文件的版本时会按保存记录补上"), "{git_warn}");
     }
 }
