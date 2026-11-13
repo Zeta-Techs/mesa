@@ -169,6 +169,29 @@ test("拼板：9 块排 3×3 照常出图；一行挤太多、单栏放 3 块读
   }
 });
 
+// 2026-11-13 HER 初稿 Fig. 3：自绘块顶上自带「(a) …」标题，拼板再加 (a) 就重复了
+test("拼板：自绘块的 SVG 里自带 (a) 一类面板字母时拒绝；元素符号一类单字母不算", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-asm-own-"));
+  try {
+    const own = join(dir, "own.png");
+    const other = join(dir, "other.png");
+    const made = spawnSync(python, ["-c", "import sys; from PIL import Image; [Image.new('RGB', (600, 450), (200, 60, 60)).save(p) for p in sys.argv[1:]]", own, other], { encoding: "utf8" });
+    assert.equal(made.status, 0, made.stderr);
+    const go = () =>
+      spawnSync(python, [assemble, "--out", join(dir, "out.png"), "--width-cm", "17", "--inputs", own, other], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    writeFileSync(join(dir, "own.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="9">B</text><text x="1" y="20">0D &#8594; 2D</text></svg>');
+    let r = go();
+    assert.equal(r.status, 0, r.stderr);
+    writeFileSync(join(dir, "own.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="9"><tspan>(a)</tspan><tspan> Boron substructures</tspan></text></svg>');
+    r = go();
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /自带面板字母/);
+    assert.match(r.stderr, /\(a\) Boron substructures/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // 2026-10-24 用户：拼图是从 PDF 裁的，作者投稿前要去期刊换原图，每块从哪取的要写清
 const sourcesScript = resolve("src-tauri/resources/skills/review-figures/scripts/figure_sources.py");
 

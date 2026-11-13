@@ -95,6 +95,7 @@ python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --input
 - 动手前先定风格参照：用户点名的期刊图、项目里已有的图，或 `figures/style-profile.json`；都没有就在定档那句里问一句「照哪张图的风格」，用户说不用再按默认配色。同一篇综述的几张示意图用同一套 theme。
 - schematic-forge 没装或跑不起来（缺 python-pptx 等）：不退回手写脚本，写进 `figures/README.md` 和报告，请用户在 Mesa「设置 → 依赖」补装后再画；正文暂改「见 [@键] Fig.n」，不留空占位。
 - 不含任何实验数字；图注写 schematic / 示意与 Summarized from [@键]。
+- 自绘图要作为一块拼进拼图时，块里不写 (a)(b) 字母，也不在顶上写整句标题：字母由 `assemble_panels.py` 统一加，标题进图注。块的 SVG 里自带 (a) 一类字母时拼板脚本拒绝出图。
 
 ## 写进初稿与复查
 

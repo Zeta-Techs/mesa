@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -83,6 +85,33 @@ def check_readable(widths_px: list[int], height_px: int, dpi: int) -> None:
         problems.append(f"整张高 {height_cm:.1f} cm，超过一页能放的 {MAX_HEIGHT_CM} cm：按子论点拆成两张图")
     if problems:
         print("拼板读不清，没出图：" + "；".join(problems), file=sys.stderr)
+        sys.exit(3)
+
+
+# 自绘块旁边有同名 SVG 时查里面的字：块自己以 (a) 开头写了面板字母，拼板再加一个 (a) 就成了两个
+# （2026-11-13 HER 初稿 Fig. 3 实证：自绘示意图顶上自带「(a) Boron substructures…」）。
+# 只认带括号的：单独一个字母多半是元素符号（B、N）或坐标轴名，不算。
+OWN_LETTER = re.compile(r"^\([a-z]\)(\s|$)", re.I)
+
+
+def check_own_letters(paths: list[Path]) -> None:
+    hits = []
+    for path in paths:
+        svg = path.with_suffix(".svg")
+        if not svg.is_file():
+            continue
+        for raw in re.findall(r"<text\b[^>]*>(.*?)</text>", svg.read_text(encoding="utf-8", errors="replace"), re.S):
+            text = html.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+            if OWN_LETTER.match(text):
+                hits.append(f"{svg} 里有「{text[:40]}」")
+                break
+    if hits:
+        print(
+            "拼进来的自绘块自带面板字母，拼板还要再加 (a)(b)，会重复，没出图："
+            + "；".join(hits)
+            + "。把块里的字母去掉、标题挪进图注后重渲这一块再拼",
+            file=sys.stderr,
+        )
         sys.exit(3)
 
 
@@ -188,6 +217,7 @@ def main() -> None:
     if missing:
         print("缺少源图：" + "、".join(missing), file=sys.stderr)
         sys.exit(1)
+    check_own_letters(paths)
     if groups:
         assemble_rows(groups, a.out, a.width_cm, a.dpi, a.gap_mm)
     else:
