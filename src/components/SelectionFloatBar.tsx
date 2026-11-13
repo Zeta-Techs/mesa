@@ -153,7 +153,16 @@ export default function SelectionFloatBar({
         setPos(null);
         return;
       }
-      const r = sel.getRangeAt(0).getBoundingClientRect();
+      // 定位按选区最后一行，不按整段外框：跨行选区的外框右缘是最长那行的行尾，
+      // 条会落在末行右边老远的地方（2026-11-13 用户：意见框不在选中的旁边）
+      const range = sel.getRangeAt(0);
+      const rects = Array.from(range.getClientRects?.() ?? []).filter((x) => x.width > 0);
+      // 最后一行 = 底边最低的那些矩形，取其中最靠右的（整块选中的引用标签、文字片段各给一个矩形，顺序不可靠）
+      const bottom = Math.max(...rects.map((x) => x.bottom));
+      const lastLine = rects.filter((x) => x.bottom > bottom - x.height / 2);
+      const r = lastLine.length
+        ? lastLine.reduce((a, b) => (b.right > a.right ? b : a))
+        : range.getBoundingClientRect();
       const sr = scroll.getBoundingClientRect();
       setPos({
         x: Math.max(
