@@ -180,7 +180,7 @@ export function SpotCheckPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
         {count === 0 ? (
           <p className="text-xs leading-5 text-l4">
-            在笔记或原文里划一段，点「记成问题」。没问题就直接看下一篇。
+            在笔记或原文里划一段，点「记下」。没问题就直接看下一篇。
           </p>
         ) : (
           <ul className="flex flex-col gap-2">

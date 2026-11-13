@@ -107,7 +107,7 @@ const SPOT_ANNOTATE_COPY: AnnotateCopy = {
   placeholder: "哪里不对（可不写）",
   done: "已记进右边的问题单",
 };
-const SPOT_PDF_ASK = { label: "记成问题", done: "已记进右边的问题单，可在那里补一句哪里不对" };
+const SPOT_PDF_ASK = { label: "记下", done: "已记进右边的问题单，可在那里补一句哪里不对" };
 
 /** 顶栏图标钮（‹ › 收起/展开侧栏共用样式） */
 const topBtn =
@@ -930,7 +930,7 @@ export default function ReaderOverlay({
     setNoteFocus(null);
   }, [pdfPath, notePath]);
 
-  /** 抽查：笔记里划一段「记成问题」/ 原文里划一段「记成问题」，都进右栏问题单 */
+  /** 抽查：笔记里划一段「记下」/ 原文里划一段「记下」，都进右栏问题单 */
   const addNoteIssue = useCallback(
     (text: string, _fileName: string, comment: string): string | null => {
       spot.addIssue({ source: "note", page: null, quote: text, comment });

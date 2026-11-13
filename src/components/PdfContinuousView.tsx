@@ -147,7 +147,7 @@ function PdfContinuousView({
     fileName: string,
     send?: boolean,
   ) => string | null | Promise<string | null>;
-  /** 选段主钮改作别的用途（阅读区抽查 =「记成问题」）：换按钮字与回执，且不出「↵ 直接发送」 */
+  /** 选段主钮改作别的用途（阅读区抽查 =「记下」）：换按钮字与回执，且不出「↵ 直接发送」 */
   askAs?: { label: string; done: string };
   /** 加载失败/被白名单拒绝时错误条上的「← 返回」 */
   onBack?: () => void;

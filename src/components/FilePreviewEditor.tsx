@@ -209,7 +209,7 @@ function MarkdownView({
   /** 文件所在文件夹每变动一次加一：已上屏的本地图核一次磁盘版本（重新出图后换新图） */
   fsTick?: number;
   large?: boolean;
-  /** 划选记一条的文案（缺省 = 审阅页「加进意见」；阅读区抽查 = 「记成问题」） */
+  /** 划选记一条的文案（缺省 = 审阅页「加入意见」；阅读区抽查 = 「记下」） */
   annotateCopy?: AnnotateCopy;
   /** 窄栏排版（阅读区笔记栏）：标题字号收一档 */
   compact?: boolean;

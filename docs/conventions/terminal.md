@@ -1084,7 +1084,7 @@
   只读档：FilePreviewEditor `readOnly`、标注增删 / 圈选插笔记 / 译段存笔记 / 让 AI 起草全收；无 PDF 时中栏
   `SpotAbstractPane` 摆摘要。**核对档不派阅读会话**（readerKey 置空）：阅读会话在项目根、`Edit(./notes/**)`
   预放行改的是主仓笔记，会改错地方。右栏 = `SpotCheckPanel` 问题单：笔记划选走 FilePreviewEditor `onAnnotate` +
-  `annotateCopy`、PDF 划选走 `onAskAi` + `askAs`（不出「直接发送」），都记「记成问题」；问题单按 base 记
+  `annotateCopy`、PDF 划选走 `onAskAi` + `askAs`（不出「直接发送」），都记「记下」；问题单按 base 记
   localStorage（Esc 退出不丢，发出/勾上清）。「发给这一步的 AI」= `buildWorkspaceTerminalRequest(ws, prompt,
   {autoStart, resumeSession})`（与决策后续跑同链：活会话认回标签注入、否则 resume），关阅读区留运行页、事项不勾；
   「N 篇都没问题」三篇都看过才可点 → `set_human_task_check` + store `bumpHumanTasks`（useHumanTasks 见 tick 重取）
