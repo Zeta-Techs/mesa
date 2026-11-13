@@ -164,6 +164,19 @@ export default function SelectionFloatBar({
         ? lastLine.reduce((a, b) => (b.right > a.right ? b : a))
         : range.getBoundingClientRect();
       const sr = scroll.getBoundingClientRect();
+      const barH = barRef.current?.offsetHeight || 36;
+      const firstTop = rects.length ? Math.min(...rects.map((x) => x.top)) : r.top;
+      let y = r.bottom - sr.top + scroll.scrollTop + 6;
+      // 选区贴近视口底边时翻到选区上方，避免浮条被底边裁掉
+      if (sr.height > barH + 12 && r.bottom + barH + 6 > sr.bottom) {
+        if (firstTop - barH - 6 >= sr.top) {
+          y = firstTop - sr.top + scroll.scrollTop - barH - 6;
+        } else if (r.top - barH - 6 >= sr.top) {
+          y = r.top - sr.top + scroll.scrollTop - barH - 6;
+        } else {
+          y = scroll.scrollTop + Math.max(4, sr.height - barH - 6);
+        }
+      }
       setPos({
         x: Math.max(
           8,
@@ -172,7 +185,7 @@ export default function SelectionFloatBar({
             sr.width - reserveWidth,
           ),
         ),
-        y: r.bottom - sr.top + scroll.scrollTop + 6,
+        y,
       });
     };
     recheckRef.current = onSelectionChange;
@@ -202,12 +215,18 @@ export default function SelectionFloatBar({
     };
   }, [containerRef, withinSelector, reserveWidth]);
 
+  // 失焦后提交或取消意见使 pinned 翻回 false 时，按当前选区立刻收起浮条
+  useEffect(() => {
+    if (!pinned) recheckRef.current();
+  }, [pinned]);
+
   if (!pos) return null;
   return (
     <div
       ref={barRef}
-      // 输入框失焦后按当前选区重新判断去留（点别处 = 收条）
+      // 输入框失焦后按当前选区重新判断去留（点别处 = 收条）；仅响应主键，避免右键菜单未聚焦把 holdRef 卡死
       onMouseDownCapture={(event) => {
+        if (event.button !== 0) return;
         if ((event.target as HTMLElement).closest("input, textarea")) holdRef.current = true;
       }}
       onBlur={() =>

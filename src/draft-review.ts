@@ -150,11 +150,11 @@ export function appendReviewAnnotation(
 }
 
 /** 意见栏里每条「- 「引文」（文件）：…」的引文与文件名。「开头…结尾」原样返回（反查时按首尾找）；
- *  旧格式只留开头、以省略号收尾的去掉省略号，当前缀用 */
+ *  旧格式只留开头、以省略号收尾的去掉省略号，当前缀用。引文自身含「……」（……）时按最后一个文件括号切分 */
 export function reviewNoteQuotes(notes: string): { file: string; quote: string }[] {
   const out: { file: string; quote: string }[] = [];
   for (const line of notes.split("\n")) {
-    const m = /^\s*- 「(.+?)」（(.+?)）：/.exec(line);
+    const m = /^\s*- 「(.+)」（((?:[^「」（）\n]|（[^「」（）\n]*）)+)）：/.exec(line);
     if (!m) continue;
     const quote = m[1].replace(/…$/, "").trim();
     if (quote) out.push({ file: m[2], quote });

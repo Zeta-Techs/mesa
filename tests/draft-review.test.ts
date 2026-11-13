@@ -131,6 +131,8 @@ test("意见栏引文反查：逐行解析，截断的省略号去掉当短前�
       "- 「这段话 有问题」（draft.md）：要改",
       "- 「开头一百六十字的段落被截过…」（outline.md）：太长了",
       "- 「图 拼图.png（框了 1 处）」（draft.md）：图的问题",
+      "- 「文中写「活性位」（Fig. 2）很关键」（draft.md）：核对出处",
+      "- 「- 「概念」（English）：解释」（outline.md）：删掉这一条",
       "- 普通一行不解析",
     ].join("\n"),
   );
@@ -138,6 +140,8 @@ test("意见栏引文反查：逐行解析，截断的省略号去掉当短前�
     { file: "draft.md", quote: "这段话 有问题" },
     { file: "outline.md", quote: "开头一百六十字的段落被截过" },
     { file: "draft.md", quote: "图 拼图.png（框了 1 处）" },
+    { file: "draft.md", quote: "文中写「活性位」（Fig. 2）很关键" },
+    { file: "outline.md", quote: "- 「概念」（English）：解释" },
   ]);
   assert.deepEqual(reviewNoteQuotes(""), []);
 });

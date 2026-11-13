@@ -89,11 +89,8 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
         return this;
       }
     },
-    requestAnimationFrame: (fn: () => void) => {
-      fn();
-      return 0;
-    },
-    cancelAnimationFrame: () => {},
+    requestAnimationFrame: (fn: () => void) => setTimeout(fn, 0) as unknown as number,
+    cancelAnimationFrame: (id: number) => clearTimeout(id),
     getComputedStyle: () => ({ getPropertyValue: () => "" }),
     self: dom.window,
   })) {
@@ -216,11 +213,43 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
       setter?.call(input, "改成只在背景提一句");
       input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     });
+    // 中文输入法组词中及 compositionend 当帧的 Enter（isComposing 已翻 false）不得提前提交
+    await act(async () => {
+      input!.dispatchEvent(new dom.window.CompositionEvent("compositionstart", { bubbles: true }));
+      input!.dispatchEvent(new dom.window.CompositionEvent("compositionend", { bubbles: true }));
+      input!.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }),
+      );
+    });
+    assert.doesNotMatch(
+      host.querySelector("textarea")?.value ?? "",
+      /改成只在背景提一句/,
+      "IME 确认候选当帧的 Enter 不得误提交意见",
+    );
+    // 已写意见（pinned）期间失焦并临时划到另一段，提交仍绑定最初那段且提交后浮条立刻收起
+    const otherAnchor = findText(body, "另一段文字") ?? anchor;
+    const otherRange = dom.window.document.createRange();
+    otherRange.setStart(otherAnchor, 0);
+    otherRange.setEnd(otherAnchor, Math.min(2, otherAnchor.textContent?.length ?? 0));
+    sel.removeAllRanges();
+    sel.addRange(otherRange);
+    await act(async () => {
+      input!.blur();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
     const commit = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "加入意见",
     );
-    assert.ok(commit);
-    await act(async () => commit!.click());
+    assert.ok(commit, "写了字失焦后浮条仍保留在原处");
+    await act(async () => {
+      commit!.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      commit!.click();
+    });
+    assert.equal(
+      host.querySelector("[data-selection-float-bar]"),
+      null,
+      "失焦状态下提交后 pinned 翻回 false，浮条应立即收起",
+    );
     const opinion = host.querySelector("textarea");
     assert.match(
       opinion?.textContent ?? opinion?.value ?? "",

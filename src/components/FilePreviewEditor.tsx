@@ -35,7 +35,7 @@ import {
 import { escapeShellPath, imageExtFromMime } from "../terminal-input";
 import { saveClipboardImage } from "../clipboard-image";
 import { comboLabel, eventMatchesCombo, IS_MAC, IS_WINDOWS, READER_MODE_HOTKEY } from "../hotkeys";
-import { imeBlocksEnter } from "../ime-guard";
+import { createImeLock, imeBlocksEnter } from "../ime-guard";
 // md-math 模块作用域完成 marked 公式扩展注册（全局生效，占位=原始 $..$ 源码，未升级处观感不变）
 import { renderMathInto } from "../md-math";
 import { mdBlocks, mdChildTagOf, mdLineForChild } from "../md-block-map";
@@ -59,7 +59,7 @@ import { isHtmlPath, isMarkdownPath } from "../md-path";
 import { hasMermaidFence } from "../mermaid-blocks";
 import { annotationDraftFromSelection, type ReviewAnnotate } from "../draft-review";
 import ImageMarkDialog from "./ImageMarkDialog";
-import { findQuoteRange, highlightPaintbox, ReviewQuotesContext } from "../review-marks";
+import { findQuoteRange, ReviewQuotesContext, setReviewHighlight } from "../review-marks";
 import {
   decorateMdCodeBlocks,
   handleMdCodeCopyClick,
@@ -253,10 +253,13 @@ function MarkdownView({
       sanitizeDocumentHtml(rewriteMdImageHtml(renderMarkdownDocument(mdSource))),
     [mdSource],
   );
-  // 必须按 html 记住同一个对象：React 19 按对象身份比较 dangerouslySetInnerHTML，每次渲染新建 {__html}
-  // 就会整段重写正文——划选的选区、记住的选段 Range、页内查找标记、公式排版都跟着没了（2026-11-13：
-  // 审阅里划字后高亮时有时无、点进意见框高亮消失，就是文件夹有变动 / 轮询 / 打字触发重渲染重写了正文）
-  const bodyHtml = useMemo(() => ({ __html: html }), [html]);
+  // 必须按 html + filePath + root 记住同一个对象：React 19 按对象身份比较 dangerouslySetInnerHTML，
+  // 同文件同内容重渲染时不新建 {__html}（保住选区、页内查找与公式）；换文件或换根目录时新建以重置已水合的图片占位
+  const bodyHtml = useMemo(() => {
+    void filePath;
+    void root;
+    return { __html: html };
+  }, [html, filePath, root]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const showMermaid = useMemo(() => hasMermaidFence(text), [text]);
@@ -377,13 +380,19 @@ function MarkdownView({
   const [imageMark, setImageMark] = useState<{ url: string; name: string } | null>(null);
   const pendingExcerptRef = useRef("");
   const pendingRangeRef = useRef<Range | null>(null);
-  // 离开阅读态 / 换文件：别把高亮留在页面上
-  useEffect(
-    () => () => {
-      highlightPaintbox()?.registry.delete("review-pick");
-    },
-    [],
-  );
+  const annotateImeRef = useRef(createImeLock());
+  const highlightOwnerRef = useRef<symbol | null>(null);
+  if (!highlightOwnerRef.current) highlightOwnerRef.current = Symbol("review-preview");
+  // 离开阅读态：只清本实例登记的高亮，避免关掉放大预览时顺手清掉底下评审栏的高亮
+  useEffect(() => {
+    const owner = highlightOwnerRef.current!;
+    const ime = annotateImeRef.current;
+    return () => {
+      ime.dispose();
+      setReviewHighlight("review-pick", owner, []);
+      setReviewHighlight("review-done", owner, []);
+    };
+  }, []);
   useEffect(() => {
     setAnnotateComment("");
     setImageMark(null);
@@ -422,8 +431,9 @@ function MarkdownView({
   }
 
   /** 审阅批注：按下时先记住选段。WebView 里点输入框 / 按钮会清掉选区，那时再读就是空的；
-      已记住的不被后一次空读覆盖（在输入框里反复点击不丢选段）。 */
+      已记住的不被后一次空读覆盖；正在写意见（pinned）时也不因临时划了别处而偷换原选段。 */
   function rememberExcerpt() {
+    if (annotateComment.trim() && pendingExcerptRef.current) return;
     const sel = window.getSelection();
     const picked = annotationDraftFromSelection(sel?.toString() ?? "");
     if (!picked) return;
@@ -433,11 +443,9 @@ function MarkdownView({
 
   /** 点进输入框后浏览器选区会被输入框抢走、划的字不再高亮：用 CSS 自定义高亮把记住的那一段继续标出来 */
   function showPickedHighlight(on: boolean) {
-    const paintbox = highlightPaintbox();
-    if (!paintbox) return;
+    const owner = highlightOwnerRef.current!;
     const range = pendingRangeRef.current;
-    if (on && range) paintbox.registry.set("review-pick", new paintbox.Highlight(range));
-    else paintbox.registry.delete("review-pick");
+    setReviewHighlight("review-pick", owner, on && range ? [range] : []);
   }
 
   /** 划选浮条里直接写意见、点「加入意见」（或回车）：选段 + 意见一次收进意见框 */
@@ -467,24 +475,24 @@ function MarkdownView({
     (document.activeElement as HTMLElement | null)?.blur?.();
   }
 
-  // 加过意见的段落：按意见栏里的引文反找正文，淡蓝底标出（CSS 自定义高亮，不改正文 DOM）
+  // 加过意见的段落：按意见栏里的引文反找正文，淡蓝底标出（CSS 自定义高亮，不改正文 DOM）。
+  // 放在代码块包裹、页码链接化之后执行，并在引用胶囊与公式异步落位后重刷，避免节点替换使 Range 失效
   const reviewQuotes = useContext(ReviewQuotesContext);
-  useLayoutEffect(() => {
-    const paintbox = highlightPaintbox();
+  const applyReviewHighlights = useCallback(() => {
+    const owner = highlightOwnerRef.current!;
     const host = bodyRef.current;
-    if (!paintbox || !host || !onAnnotate) return;
+    if (!host || !onAnnotate) {
+      setReviewHighlight("review-done", owner, []);
+      return;
+    }
     const ranges: Range[] = [];
     for (const item of reviewQuotes) {
       if (item.file !== fileName) continue;
       const range = findQuoteRange(host, item.quote);
       if (range) ranges.push(range);
     }
-    if (ranges.length) paintbox.registry.set("review-done", new paintbox.Highlight(...ranges));
-    else paintbox.registry.delete("review-done");
-    return () => {
-      paintbox.registry.delete("review-done");
-    };
-  }, [reviewQuotes, fileName, html, onAnnotate]);
+    setReviewHighlight("review-done", owner, ranges);
+  }, [reviewQuotes, fileName, onAnnotate]);
 
   // 每次 layout 都扫剩余 [data-md-src]：父级重绘若把 innerHTML 盖回占位，
   // deps 不变就不会进这个 effect，图会永远停在「图片加载中」。
@@ -511,9 +519,15 @@ function MarkdownView({
   useLayoutEffect(() => {
     const host = bodyRef.current;
     if (!host) return;
-    void decorateCitations(host, parentDir(filePath) || root);
+    void decorateCitations(host, parentDir(filePath) || root).then(() => {
+      applyReviewHighlights();
+    });
     if (onPdfRef) linkifyPdfRefs(host);
   });
+
+  useLayoutEffect(() => {
+    applyReviewHighlights();
+  }, [applyReviewHighlights, bodyHtml]);
 
   // 引用胶囊的悬停卡片（应用内浮层，同聊天）
   const [citeTip, setCiteTip] = useState<{ x: number; y: number; text: string; warn: string | null } | null>(null);
@@ -546,8 +560,10 @@ function MarkdownView({
   useEffect(() => {
     const host = bodyRef.current;
     if (!host) return;
-    void renderMathInto(host);
-  }, [html]);
+    void renderMathInto(host).then(() => {
+      applyReviewHighlights();
+    });
+  }, [bodyHtml, applyReviewHighlights]);
 
   /** 链接点击（批次 B2）：锚点默认滚动；外链走系统浏览器（openUrl，webview 内跳转会破坏应用）；
       相对/绝对路径原地打开——阅读区笔记栏由 onOpenFile 接管，否则 previewReq 跳终端页预览 */
@@ -758,7 +774,13 @@ function MarkdownView({
                     pendingRangeRef.current = null;
                   }}
                   onChange={(event) => setAnnotateComment(event.target.value)}
+                  onCompositionStart={annotateImeRef.current.onCompositionStart}
+                  onCompositionEnd={annotateImeRef.current.onCompositionEnd}
                   onKeyDown={(event) => {
+                    if (annotateImeRef.current.blocksKey(event)) {
+                      if (event.key === "Escape") event.stopPropagation();
+                      return;
+                    }
                     if (event.key === "Enter") {
                       event.preventDefault();
                       commitAnnotate();

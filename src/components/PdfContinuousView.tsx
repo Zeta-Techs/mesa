@@ -3,6 +3,7 @@ import * as pdfjs from "pdfjs-dist";
 import SelectionFloatBar, { FloatBarOverflow, FLOAT_BTN, FLOAT_BTN_PRIMARY } from "./SelectionFloatBar";
 import { HoverTip } from "./HoverTip";
 import { IS_MAC } from "../hotkeys";
+import { createImeLock } from "../ime-guard";
 import {
   PdfPageView,
   loadPdfBytes,
@@ -463,16 +464,31 @@ function PdfContinuousView({
     }
   }
 
-  // Esc 退出圈选（capture 相监听 + stopPropagation：抢在 ReaderOverlay 的 Esc 关阅读区之前）
+  // Esc 退出圈选（capture 相监听 + stopPropagation：抢在 ReaderOverlay 的 Esc 关阅读区之前；
+  // 组词中或 WKWebView 刚结束组词那一帧的 Esc 是取消候选，不退出圈选）
+  const captureImeRef = useRef(createImeLock());
   useEffect(() => {
-    if (!captureOn) return;
+    const ime = captureImeRef.current;
+    if (!captureOn) {
+      ime.dispose();
+      return;
+    }
+    const onCompStart = () => ime.onCompositionStart();
+    const onCompEnd = () => ime.onCompositionEnd();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.isComposing) return;
+      if (e.key !== "Escape" || ime.blocksKey(e)) return;
       e.stopPropagation();
       exitCapture();
     };
+    window.addEventListener("compositionstart", onCompStart, true);
+    window.addEventListener("compositionend", onCompEnd, true);
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("compositionstart", onCompStart, true);
+      window.removeEventListener("compositionend", onCompEnd, true);
+      window.removeEventListener("keydown", onKey, true);
+      ime.dispose();
+    };
   }, [captureOn]);
 
   // 磁盘上换了一版（Agent 重新渲染出同名 PDF）：重载并回到原来的滚动位置、保留缩放
@@ -1866,6 +1882,8 @@ function PdfContinuousView({
                     className="flex items-center gap-1"
                     onSubmit={(event) => {
                       event.preventDefault();
+                      const bySubmitter = Boolean((event.nativeEvent as SubmitEvent | undefined)?.submitter);
+                      if (!bySubmitter && captureImeRef.current.locked) return;
                       void resolveCapture("review");
                     }}
                   >
@@ -1873,6 +1891,15 @@ function PdfContinuousView({
                       autoFocus
                       value={captureComment}
                       onChange={(event) => setCaptureComment(event.target.value)}
+                      onCompositionStart={captureImeRef.current.onCompositionStart}
+                      onCompositionEnd={captureImeRef.current.onCompositionEnd}
+                      onKeyDown={(event) => {
+                        if (!captureImeRef.current.blocksKey(event)) return;
+                        if (event.key === "Escape") event.stopPropagation();
+                        if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                          event.preventDefault();
+                        }
+                      }}
                       placeholder="这一块哪里不对"
                       className="w-48 rounded-sm border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
                     />

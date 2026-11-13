@@ -722,7 +722,7 @@ __conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore
                              # 审批卡标题 / 预览（命令 / 差异）/ 可回复的按钮、hooks 审批「屏上回到输入框 = 已答」（hooksApprovalAnswered）
                              # （tests/chat-channel.test.ts）；TerminalView 的 applyChannel 消费
   slash-commands.ts          # 聊天斜杠命令保守常用集（未全量调研的 agent 只给 /help；tests/slash-commands.test.ts）
-  ime-guard.ts               # 聊天 Enter 是否处于输入法组词（WKWebView 确认候选时 isComposing 已假；tests/ime-guard.test.ts）
+  ime-guard.ts               # 输入法组词期间 Enter / Esc 守卫与 createImeLock 跨帧锁（WKWebView 确认或取消候选时 isComposing 已假；tests/ime-guard.test.ts）
   notify.ts                  # 长任务 OS 通知（仅「待确认」跃迁 + 未聚焦 + 30s 去抖；「已回复」不通知）；
                              #   注意：通知插件桌面端无动作按钮/正文点击回调（App.tsx registerActionTypes/onAction 仅移动端生效，
                              #   2026-09-15 核对插件源码）——桌面点通知只激活窗口，「待确认」跳转由 App.tsx 窗口获焦时的

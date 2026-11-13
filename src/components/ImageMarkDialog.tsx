@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { saveClipboardImage } from "../clipboard-image";
 import { imageAnnotationExcerpt, type ReviewAnnotate } from "../draft-review";
+import { createImeLock } from "../ime-guard";
 import {
   addMark,
   clampToImage,
@@ -43,7 +44,13 @@ export default function ImageMarkDialog({
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
+  const imeRef = useRef(createImeLock());
   const [area, setArea] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    setNatural(null);
+    setError(null);
+  }, [url]);
 
   // 图随窗口大小等比铺满（窗口可拖右下角改大小）
   useEffect(() => {
@@ -62,14 +69,24 @@ export default function ImageMarkDialog({
     : null;
 
   useEffect(() => {
+    const ime = imeRef.current;
+    const onCompStart = () => ime.onCompositionStart();
+    const onCompEnd = () => ime.onCompositionEnd();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || ime.blocksKey(event)) return;
       event.preventDefault();
       event.stopPropagation();
       onClose();
     };
+    window.addEventListener("compositionstart", onCompStart, true);
+    window.addEventListener("compositionend", onCompEnd, true);
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("compositionstart", onCompStart, true);
+      window.removeEventListener("compositionend", onCompEnd, true);
+      window.removeEventListener("keydown", onKey, true);
+      ime.dispose();
+    };
   }, [onClose]);
 
   /** 指针位置 → 原图像素坐标 */
@@ -170,8 +187,8 @@ export default function ImageMarkDialog({
           height: "68vh",
           minWidth: 480,
           minHeight: 360,
-          maxWidth: "100vw",
-          maxHeight: "100vh",
+          maxWidth: "80vw",
+          maxHeight: "84vh",
           resize: "both",
         }}
       >
@@ -203,12 +220,18 @@ export default function ImageMarkDialog({
               src={url}
               alt={name}
               draggable={false}
-              onLoad={(event) =>
+              onLoad={(event) => {
+                const img = event.currentTarget;
+                setError(null);
                 setNatural({
-                  w: event.currentTarget.naturalWidth,
-                  h: event.currentTarget.naturalHeight,
-                })
-              }
+                  w: img.naturalWidth > 0 ? img.naturalWidth : 800,
+                  h: img.naturalHeight > 0 ? img.naturalHeight : 600,
+                });
+              }}
+              onError={() => {
+                setNatural(null);
+                setError("图片加载失败，无法标注");
+              }}
               className="block h-full w-full"
             />
             {natural &&
@@ -237,6 +260,8 @@ export default function ImageMarkDialog({
           className="shrink-0 border-t border-hairline px-3 py-2"
           onSubmit={(event) => {
             event.preventDefault();
+            const bySubmitter = Boolean((event.nativeEvent as SubmitEvent | undefined)?.submitter);
+            if (!bySubmitter && imeRef.current.locked) return;
             void submit();
           }}
         >
@@ -245,6 +270,15 @@ export default function ImageMarkDialog({
               autoFocus
               value={comment}
               onChange={(event) => setComment(event.target.value)}
+              onCompositionStart={imeRef.current.onCompositionStart}
+              onCompositionEnd={imeRef.current.onCompositionEnd}
+              onKeyDown={(event) => {
+                if (!imeRef.current.blocksKey(event)) return;
+                if (event.key === "Escape") event.stopPropagation();
+                if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                  event.preventDefault();
+                }
+              }}
               placeholder="哪里不对，要怎么改（多个框可以写 1 … 2 …）"
               className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
             />
