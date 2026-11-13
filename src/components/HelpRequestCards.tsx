@@ -173,8 +173,8 @@ export default function HelpRequestCards({
                 {item.answer ? (
                   <span className="text-ok-text">已答：{item.answer}</span>
                 ) : null}
-                {recorded[item.id] ? (
-                  <span className="text-l3">已记进项目知识（{recorded[item.id]}）</span>
+                {recorded[item.id] || item.remembered ? (
+                  <span className="text-l3">已记进项目知识（{recorded[item.id] ?? item.remembered}）</span>
                 ) : (
                 <label className="inline-flex items-center gap-1">
                   <input

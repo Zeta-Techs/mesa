@@ -1095,6 +1095,8 @@ export interface HelpItemDto {
   answer: string | null;
   /** 交给 Agent 的时间（「已送：」行） */
   sent: string | null;
+  /** 人点了「以后同类照此办」记进项目知识的类别 */
+  remembered?: string | null;
 }
 
 /** agent 人工请求（.ccode/help-wanted.md 约定文件，list_help_requests 返回） */

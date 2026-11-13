@@ -1,5 +1,5 @@
 // 诊断日志：进程内环形缓冲（不落盘），供设置页「诊断」分区查看
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
 
@@ -7,7 +7,7 @@ use crate::sessions::now_iso;
 
 const CAP: usize = 500;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogEntryDto {
     pub ts: String,
@@ -64,6 +64,19 @@ fn redacted(entries: Vec<LogEntryDto>) -> Vec<LogEntryDto> {
 /// 追加一条日志
 pub fn record(level: &str, source: &str, message: &str) {
     let entry = make_entry(level, source, message);
+    // 独立后台没有诊断页：日志落后台目录的文件，桌面开着时转进这里（先脱敏再落盘）
+    if crate::background_core::is_core() {
+        crate::background_core::append_log(&redacted(vec![entry.clone()])[0]);
+    }
+    if let Ok(mut q) = buf().lock() {
+        push_capped(&mut q, entry);
+    }
+}
+
+/// 收一条后台进程转来的日志；来源前加「后台·」好在诊断页分辨
+pub(crate) fn ingest_background(mut entry: LogEntryDto) {
+    entry.source = format!("后台·{}", entry.source);
+    entry.message = entry.message.chars().take(2000).collect();
     if let Ok(mut q) = buf().lock() {
         push_capped(&mut q, entry);
     }

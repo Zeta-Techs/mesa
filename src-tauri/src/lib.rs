@@ -185,7 +185,7 @@ fn shutdown_for_exit(app: &tauri::AppHandle) {
 /// Windows 上更新插件拉起安装包后直接 process::exit——两条路都等不到 ExitRequested 里的收尾线程
 #[tauri::command]
 async fn prepare_app_exit(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(background_core::stop).await.map_err(|error| error.to_string())??;
+    tauri::async_runtime::spawn_blocking(background_core::stop_for_exit).await.map_err(|error| error.to_string())??;
     if EXIT_STARTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return Ok(()); // 已在收尾（正常退出进行中或已收过）
     }
@@ -891,6 +891,7 @@ pub fn run() {
             help_requests::help_delivery_ack,
             background_core::background_core_status,
             background_core::background_core_set,
+            background_core::background_core_active_runs,
             workspaces::write_review_notes,
             workspaces::workspace_drift,
             workspaces::workspace_repair_remount,

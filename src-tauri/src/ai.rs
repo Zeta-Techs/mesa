@@ -1399,18 +1399,28 @@ pub(crate) fn followup_text(agent: &str, raw: &str) -> Result<String, String> {
     match agent {
         "claude-code" | "codex" => parse_oneshot_output(agent, raw, None, "").map(|(text, _)| text),
         "kimi" => {
+            // 只收助手说的话：stream-json 若回显用户消息，提示词里的回执示例会被误当成回执
+            fn push_content(content: Option<&serde_json::Value>, parts: &mut Vec<String>) {
+                match content {
+                    Some(serde_json::Value::String(text)) => parts.push(text.clone()),
+                    Some(serde_json::Value::Array(items)) => {
+                        for part in items {
+                            let kind = part.get("type").and_then(|value| value.as_str()).unwrap_or("text");
+                            if matches!(kind, "text" | "output_text") {
+                                if let Some(text) = part.get("text").and_then(|value| value.as_str()) { parts.push(text.to_string()); }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let mut parts = Vec::new();
             for line in raw.lines() {
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { continue };
                 if value.get("role").and_then(|value| value.as_str()) == Some("assistant") {
-                    if let Some(text) = value.get("content").and_then(|value| value.as_str()) { parts.push(text.to_string()); }
-                }
-                if let Some(text) = value.get("text").and_then(|value| value.as_str()) { parts.push(text.to_string()); }
-                if let Some(text) = value.get("content").and_then(|value| value.get("text")).and_then(|value| value.as_str()) { parts.push(text.to_string()); }
-                if value.get("type").and_then(|value| value.as_str()) == Some("assistant") {
-                    if let Some(content) = value.get("message").and_then(|value| value.get("content")).and_then(|value| value.as_array()) {
-                        for part in content { if let Some(text) = part.get("text").and_then(|value| value.as_str()) { parts.push(text.to_string()); } }
-                    }
+                    push_content(value.get("content"), &mut parts);
+                } else if value.get("type").and_then(|value| value.as_str()) == Some("assistant") {
+                    push_content(value.get("message").and_then(|value| value.get("content")), &mut parts);
                 }
             }
             if parts.is_empty() { Err("没有可读的 Kimi 回执文本".into()) } else { Ok(parts.join("")) }
@@ -4348,5 +4358,22 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(fin.contains("纠正") || fin.contains("定题"));
         assert!(fin.contains("预设说明"));
         assert!(!fin.contains("很长的助手回复"));
+    }
+}
+
+#[cfg(test)]
+mod followup_text_tests {
+    use super::followup_text;
+
+    #[test]
+    fn kimi_ignores_echoed_user_prompt() {
+        let raw = concat!(
+            "{\"role\":\"user\",\"content\":\"写完后回执 {\\\"state\\\":\\\"done\\\"}\"}\n",
+            "{\"text\":\"{\\\"state\\\":\\\"done\\\"}\"}\n",
+            "{\"role\":\"assistant\",\"content\":[{\"type\":\"think\",\"text\":\"想一想\"},{\"type\":\"text\",\"text\":\"好的\"}]}\n",
+        );
+        assert_eq!(followup_text("kimi", raw).unwrap(), "好的");
+        let only_user = "{\"role\":\"user\",\"content\":\"{\\\"state\\\":\\\"done\\\"}\"}\n";
+        assert!(followup_text("kimi", only_user).is_err());
     }
 }

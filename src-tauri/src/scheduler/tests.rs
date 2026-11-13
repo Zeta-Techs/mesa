@@ -1303,7 +1303,14 @@ fn followup_waiting_reads_real_answers_and_limits_reject_changed_authority() {
     assert!(!continuation_ready(&task));
     fs::write(&path, "- 按哪个口径\n  已答：按原口径\n").unwrap();
     assert!(continuation_ready(&task));
-    assert!(continuation_answers(&task).contains("按哪个口径 → 按原口径"));
+    let (prompt, carried) = continuation_answers(&task);
+    assert!(prompt.contains("按哪个口径 → 按原口径"));
+    assert_eq!(carried.len(), 1);
+    // 接回跑完后标「已送」：再接回时不再重复带，收件箱也不再显示「已答未送」
+    assert_eq!(crate::help_requests::mark_answers_sent(&dir, &carried).unwrap(), 1);
+    assert!(fs::read_to_string(&path).unwrap().contains("已送："));
+    assert!(continuation_answers(&task).0.is_empty());
+    fs::write(&path, "- 按哪个口径\n  已答：按原口径\n").unwrap();
     assert!(prepare_continuation(&task).unwrap());
     task.model = Some("another-model".into());
     assert!(prepare_continuation(&task).is_err());

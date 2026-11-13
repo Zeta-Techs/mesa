@@ -4124,6 +4124,20 @@ pub(crate) fn watch_run_ids_of_schedule(task_ref: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 还没收尾的定时 Run（独立后台在跑的那些；设置页关后台前据此提醒会停掉几条）。
+pub(crate) fn open_background_watch_runs() -> Result<Vec<String>, String> {
+    let conn = db()?;
+    let mut stmt = conn
+        .prepare("SELECT id FROM runs WHERE task_kind='watch' AND runtime='headless' AND closed_at IS NULL AND status IN ('starting','running')")
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
 /// 该日程还有没收尾的 Run 吗（删除日程前要先停掉，返回 run id）。
 pub(crate) fn schedule_open_run(task_ref: &str) -> Option<String> {
     let conn = db().ok()?;
@@ -4263,7 +4277,16 @@ pub async fn active_background_runs() -> Result<Vec<RunDto>, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let conn = db()?;
         let mut out = Vec::new();
-        for id in crate::process::active_capture_ids() {
+        let mut ids = crate::process::active_capture_ids();
+        // 独立后台里跑着的定时任务也算：更新 / 卸载会先停后台，同样要用户点头
+        if crate::background_core::owns_runs() {
+            for id in open_background_watch_runs()? {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        for id in ids {
             if let Some(run) = get_run_at(&conn, &id)? {
                 if run.runtime == "headless" {
                     out.push(run);
@@ -4287,7 +4310,7 @@ fn run_cancel_sync(id: String) -> Result<(), String> {
     if run.runtime != "headless" {
         return Err("交互终端请使用终端停止按钮".into());
     }
-    if crate::background_core::enabled() && !crate::process::capture_active(&id) && run.closed_at.is_none() {
+    if crate::background_core::owns_runs() && !crate::process::capture_active(&id) && run.closed_at.is_none() {
         return crate::background_core::cancel_run(&id);
     }
     crate::process::cancel_capture(&id)

@@ -44,6 +44,9 @@ pub struct HelpItemDto {
     pub answer: Option<String>,
     /// 交给 Agent 的时间（`已送：` 行）
     pub sent: Option<String>,
+    /// 人点了「以后同类照此办」记进项目知识的类别（`已记：已定 / 不做` 行）
+    #[serde(default)]
+    pub remembered: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,6 +199,10 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                     block.item.sent = Some(cap(v));
                     block.answer_lines.push(i);
                 }
+                Some(("已记", v)) => {
+                    block.item.remembered = Some(cap(v));
+                    block.answer_lines.push(i);
+                }
                 _ => {
                     if block.item.detail.len() < 8 {
                         block.item.detail.push(cap(c));
@@ -220,6 +227,7 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                 refs: None,
                 answer: None,
                 sent: None,
+                remembered: None,
             },
             last_line: i,
             answer_lines: Vec::new(),
@@ -393,6 +401,11 @@ fn known_source(root: &str) -> Result<Source, String> {
 }
 
 pub(crate) fn answer_at(root: &Path, item_id: &str, answer: &str) -> Result<HelpItemDto, String> {
+    answer_remembered_at(root, item_id, answer, None)
+}
+
+/// 同 answer_at；remember = 记进项目知识的类别，写一行 `已记：…`，交给 Agent 时据此告诉它已记下
+pub(crate) fn answer_remembered_at(root: &Path, item_id: &str, answer: &str, remember: Option<&str>) -> Result<HelpItemDto, String> {
     let _delivery_lock = crate::storage::config_lock("help-deliveries")?;
     let answer = one_line(answer);
     if answer.is_empty() {
@@ -422,11 +435,33 @@ pub(crate) fn answer_at(root: &Path, item_id: &str, answer: &str) -> Result<Help
         let mut changes: Vec<(usize, Option<String>)> =
             block.answer_lines.iter().map(|&i| (i, None)).collect();
         changes.push((block.last_line, Some(format!("  已答：{answer}"))));
+        if let Some(kind) = remember {
+            changes.push((block.last_line, Some(format!("  已记：{kind}"))));
+        }
         Ok(changes)
     })?;
     let mut item = found.expect("edit 成功即找到");
     item.answer = Some(answer);
+    item.remembered = remember.map(String::from);
     Ok(item)
+}
+
+/// 交给 Agent 的一行回答；人记进了项目知识的注明一句（以后同类照此办，不用再问）
+pub(crate) fn answer_line(question: &str, answer: &str, remembered: Option<&str>) -> String {
+    match remembered {
+        Some(kind) => format!("{question} → {answer}（人已把这条记进项目知识「{kind}」，以后同类照此办，不用再问）"),
+        None => format!("{question} → {answer}"),
+    }
+}
+
+/// 后台跟进接回时：这一轮实际带上的回答标「已送」（只标没送过、回答仍是那一句的条目）
+pub(crate) fn mark_answers_sent(root: &Path, answered: &[(String, String)]) -> Result<usize, String> {
+    if answered.is_empty() || !root.join(HELP_WANTED_FILE).exists() { return Ok(0) }
+    let secrets = crate::profiles::stored_secrets();
+    let items: Vec<DeliveryAnswer> = answered.iter().map(|(id, answer)| DeliveryAnswer {
+        id: id.clone(), question: String::new(), answer: crate::sessions::redact_sensitive_text_with(answer, &secrets), remembered: None,
+    }).collect();
+    mark_selected_sent_at(root, &items, &crate::sessions::now_iso())
 }
 
 fn mark_selected_sent_at(root: &Path, items: &[DeliveryAnswer], when: &str) -> Result<usize, String> {
@@ -458,7 +493,7 @@ pub async fn help_request_answer(
             Some(_) => Some(crate::projects::ensure_task_project_root(Path::new(&source.repo_path))?),
             None => None,
         };
-        let item = answer_at(Path::new(&source.root), &item_id, &answer)?;
+        let item = answer_remembered_at(Path::new(&source.root), &item_id, &answer, remember.as_deref().filter(|_| project.is_some()))?;
         let secrets = crate::profiles::stored_secrets();
         if let (Some(kind), Some(project)) = (remember.as_deref(), project) {
             // 问题是 Agent 写的：进项目知识前和出站同一口径脱敏（项目知识原样回到界面、进任务书）
@@ -477,6 +512,8 @@ struct DeliveryAnswer {
     id: String,
     question: String,
     answer: String,
+    #[serde(default)]
+    remembered: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -535,7 +572,7 @@ fn prepare_delivery_at(root: &Path, item_ids: &[String], run: &crate::runs::RunD
         let item = current.iter().find(|item| &item.id == id && item.sent.is_none()).ok_or("问题已经变了或已送出，刷新后再看")?;
         let answer = item.answer.as_ref().ok_or("这条问题还没有回答")?;
         if items.iter().any(|item: &DeliveryAnswer| &item.id == id) { continue }
-        items.push(DeliveryAnswer { id: id.clone(), question: crate::sessions::redact_sensitive_text_with(&item.question, &secrets), answer: crate::sessions::redact_sensitive_text_with(answer, &secrets) });
+        items.push(DeliveryAnswer { id: id.clone(), question: crate::sessions::redact_sensitive_text_with(&item.question, &secrets), answer: crate::sessions::redact_sensitive_text_with(answer, &secrets), remembered: item.remembered.clone() });
     }
     let mut deliveries = read_deliveries()?;
     if let Some(existing) = deliveries.iter_mut().find(|delivery| {
@@ -598,7 +635,7 @@ fn take_delivery_at(run: &crate::runs::RunDto) -> Result<Option<(String, String)
     }
     delivery.state = "sending".into();
     delivery.claim_run = Some(run.id.clone());
-    let lines = delivery.items.iter().map(|item| format!("{} → {}", item.question, item.answer)).collect::<Vec<_>>().join("\n");
+    let lines = delivery.items.iter().map(|item| answer_line(&item.question, &item.answer, item.remembered.as_deref())).collect::<Vec<_>>().join("\n");
     let result = (delivery.id.clone(), format!("我在 Mesa 里答了 .ccode/help-wanted.md 的问题：\n{lines}\n按回答继续：先把这些答案写进 TASK.md「已定口径」或本步报告，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样。接着做剩下的事，不重做已完成的业务，不扩大原有授权，做完照常交给我评审。"));
     write_deliveries(&deliveries)?;
     Ok(Some(result))
@@ -654,6 +691,22 @@ mod tests {
     }
 
     #[test]
+fn remembered_answer_is_kept_in_file_and_told_to_agent() {
+    let dir = std::env::temp_dir().join(format!("help-remember-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".ccode")).unwrap();
+    std::fs::write(dir.join(HELP_WANTED_FILE), "- 按哪个口径\n").unwrap();
+    let id = parse_items("- 按哪个口径\n")[0].id.clone();
+    let item = answer_remembered_at(&dir, &id, "按原口径", Some("已定")).unwrap();
+    assert_eq!(item.remembered.as_deref(), Some("已定"));
+    let text = std::fs::read_to_string(dir.join(HELP_WANTED_FILE)).unwrap();
+    let parsed = &parse_items(&text)[0];
+    assert_eq!(parsed.answer.as_deref(), Some("按原口径"));
+    assert_eq!(parsed.remembered.as_deref(), Some("已定"));
+    assert!(answer_line(&parsed.question, "按原口径", parsed.remembered.as_deref()).contains("以后同类照此办"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
     fn delivery_persists_claim_and_only_acknowledges_selected_answer() {
         let dir = std::env::temp_dir().join(format!("mesa-help-delivery-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(dir.join(".ccode")).unwrap();
@@ -783,7 +836,7 @@ mod tests {
         let text = fs::read_to_string(&file).unwrap();
         assert_eq!(text.matches("已答").count(), 1, "{text}");
         assert!(text.contains("  B：乙\r\n  已答：B （乙）\r\n- 第二问\r\n"), "{text:?}");
-        let selected = vec![DeliveryAnswer { id: id.clone(), question: item.question, answer: item.answer.unwrap() }];
+        let selected = vec![DeliveryAnswer { id: id.clone(), question: item.question, answer: item.answer.unwrap(), remembered: None }];
         assert_eq!(mark_selected_sent_at(&dir, &selected, "2026-11-02 10:00").unwrap(), 1);
         let items = parse_items(&fs::read_to_string(&file).unwrap());
         assert_eq!(items[0].sent.as_deref(), Some("2026-11-02 10:00"));

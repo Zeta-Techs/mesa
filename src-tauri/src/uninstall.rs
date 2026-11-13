@@ -122,7 +122,7 @@ fn trash_dir(path: &Path, result: &mut UninstallResultDto) {
 #[tauri::command]
 pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::background_core::stop()?;
+        crate::background_core::stop_for_exit()?;
         let roots = owned_roots();
         let webview = webview_data_dirs();
         let plans: Vec<(PathBuf, RootPlan)> = roots
