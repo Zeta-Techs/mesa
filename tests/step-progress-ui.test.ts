@@ -92,8 +92,8 @@ test("步骤分组三行：检索、精读、大纲各用自身统计，其他�
           const actions = Array.from(agent.querySelectorAll("button"));
           const discuss = actions.find((button) => button.textContent === "继续讨论");
           assert.ok(discuss, step.name);
-          // 工具行（商量 | 回头）在上，统计行（总量 + 分项）在下，总量和分项同一行
-          assert.ok(discuss!.compareDocumentPosition(detail) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+          // 统计行（总量 + 分项）在上，工具行（商量 | 回头）在下，总量和分项同一行（2026-11-13 设计稿）
+          assert.ok(discuss!.compareDocumentPosition(detail) & dom.window.Node.DOCUMENT_POSITION_PRECEDING);
           assert.ok(detail.contains(headline!));
         } else if (searchStep) {
           assert.match(headline?.textContent ?? "", /纳入 2 篇/);

@@ -752,10 +752,8 @@ export default function StepFlow({
       仅含已定方向 / 评审沉淀 / 标题的不算——那不是编辑过的 TASK.md */
   const draftHasBody =
     !!draft?.text?.trim() && !isTaskMdStub(draft.text ?? "");
-  const taskMdBtnClass = `shrink-0 rounded-sm px-1 py-0.5 text-micro disabled:opacity-50 ${
-    draftHasBody
-      ? "text-cta-pill-text hover:bg-hover"
-      : "text-l4 hover:bg-hover hover:text-l2"
+  const taskMdBtnClass = `shrink-0 font-mono text-micro underline-offset-2 hover:underline disabled:opacity-50 ${
+    draftHasBody ? "text-cta-pill-text" : "text-l3 hover:text-l1"
   }`;
   const pendingDecisions = unansweredDecisions(decisions, answered);
   const decisionGaps = decisionGate(step, draft?.text ?? "").missing;
@@ -3210,15 +3208,6 @@ export default function StepFlow({
             onChange={setAgentProgress}
           />
         )}
-        {/* 工具行与统计行（2026-11-13 步骤卡统一设计稿）：工具行 = 商量组 | 回头组，竖线隔开；
-            统计行单独一行只读，首项是本步主进度、加粗 */}
-        {node.kind === "agent" && (talkOnAgent || loopActions) && (
-          <div data-step-tools="row" className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-9">
-            {talkOnAgent && talkGroup}
-            {talkOnAgent && loopActions && <span aria-hidden className="h-3.5 w-px bg-field" />}
-            {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
-          </div>
-        )}
         {node.kind === "agent" && (progressHeadline || progressDetails.length > 0) && (
           <div data-step-progress="details" className="mt-1 flex flex-wrap items-baseline gap-x-2 pl-9 text-micro tabular-nums text-l3" title={
             notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
@@ -3230,6 +3219,15 @@ export default function StepFlow({
             {progressDetails.map((d) => (
               <span key={d} className="before:mr-2 before:text-l4 before:content-['·'] first:before:hidden">{d}</span>
             ))}
+          </div>
+        )}
+        {/* 统计行在上、工具行在下（2026-11-13 步骤卡统一设计稿，用户按稿核对）：统计行单独一行只读，首项是本步主进度、加粗；
+            工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接 */}
+        {node.kind === "agent" && (talkOnAgent || loopActions) && (
+          <div data-step-tools="row" className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-9">
+            {talkOnAgent && talkGroup}
+            {talkOnAgent && loopActions && <span aria-hidden className="h-3.5 w-px bg-field" />}
+            {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
           </div>
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。

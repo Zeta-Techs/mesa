@@ -138,8 +138,9 @@ function launchBarAgent(): string {
  */
 /** 回头组按钮（2026-11-13 步骤卡统一设计稿）：与商量组同一种小描边按钮，组内不再用「·」隔开
  *  （点和统计行的分隔符一样，读起来像同一串数）；眼下有事可做的（补读）字重一点 */
-const LOOP_TOOL = "shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50";
-const LOOP_PENDING = "shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs font-medium text-l1 hover:bg-hover disabled:opacity-50";
+// 回头组与「方案研讨」是文字链接，工具行只有进对话的「继续讨论」带描边（2026-11-13 步骤卡统一设计稿）
+const LOOP_TOOL = "shrink-0 text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-50";
+const LOOP_PENDING = "shrink-0 text-xs font-medium text-l1 underline-offset-2 hover:underline disabled:opacity-50";
 
 function loopRow(items: ReactNode[]): ReactNode {
   const list = items.filter(Boolean);
@@ -1823,9 +1824,9 @@ export default function TaskCardsSection({
                   type="button"
                   onClick={() => void openStepConsult()}
                   title="拿不准一个判断时，请几家不同模型的 AI 只读看看这一步的任务书和产物，各给意见、再互相补充；它们不改文件，记下什么由你定。只想和一家 AI 聊着改任务书，用左边的商量"
-                  className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                  className={LOOP_TOOL}
                 >
-                  {/* 2026-11-12 用户：改名「方案研讨」，样式与同一行的「继续讨论」按钮一致 */}
+                  {/* 2026-11-12 用户改名「方案研讨」；2026-11-13 按设计稿改成文字链接，描边只留给进对话的「继续讨论」 */}
                   方案研讨
                 </button>
               ) : null
