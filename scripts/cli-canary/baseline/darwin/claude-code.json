@@ -9,6 +9,7 @@
    "-",
    "running",
    "awaiting_approval",
+   "running",
    "completed"
   ]
  },
@@ -356,5 +357,5 @@
    ]
   }
  },
- "version": "2.1.319"
+ "version": "2.1.323"
 }
