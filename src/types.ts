@@ -27,6 +27,13 @@ export interface FileVersionsDto {
   files: VersionFile[];
 }
 
+export interface VersionComparison {
+  before: string | null;
+  after: string | null;
+  beforePath: string | null;
+  afterPath: string | null;
+}
+
 export interface Profile {
   id: string;
   agent: string;

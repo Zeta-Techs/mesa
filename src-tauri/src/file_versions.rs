@@ -48,9 +48,11 @@ pub struct FileVersionsDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VersionDiff {
-    before: String,
-    after: String,
+pub struct VersionComparison {
+    before: Option<String>,
+    after: Option<String>,
+    before_path: Option<String>,
+    after_path: Option<String>,
 }
 
 fn valid_hash(value: &str) -> bool {
@@ -784,34 +786,120 @@ pub async fn file_version_preview(root: String, version_id: String) -> Result<St
     .map_err(|error| error.to_string())?
 }
 
+fn comparison_at(
+    root: &Path,
+    current_root: &Path,
+    from: &str,
+    to: Option<&str>,
+    image: bool,
+) -> Result<VersionComparison, String> {
+    let before = selected(root, from)?;
+    let after = to.map(|id| selected(root, id)).transpose()?;
+    if after
+        .as_ref()
+        .is_some_and(|after| after.path != before.path)
+    {
+        return Err("请选择同一个文件的两版".into());
+    }
+    let cap = if image { 32 * 1024 * 1024 } else { 512 * 1024 };
+    if before.size > cap || after.as_ref().is_some_and(|after| after.size > cap) {
+        return Err("文件超过比较预算，请另存后用系统应用比较".into());
+    }
+    let before_bytes = content(root, &before)?;
+    let after_bytes = if let Some(after) = &after {
+        content(root, after)?
+    } else {
+        let current = safe_path(current_root, &before.path)?;
+        let metadata =
+            fs::symlink_metadata(&current).map_err(|_| "当前文件已不存在，请选择另一份历史版本")?;
+        if !metadata.is_file() || metadata.len() > cap {
+            return Err("当前文件不是普通文件或超过比较预算".into());
+        }
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        fs::File::open(&current)
+            .map_err(|error| error.to_string())?
+            .take(cap + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > cap {
+            return Err("当前文件在读取中超过比较预算".into());
+        }
+        if crate::workspaces::delivery_hash(&current)?
+            != (bytes.len() as u64, format!("{:x}", Sha256::digest(&bytes)))
+        {
+            return Err("当前文件在读取中发生变化，请刷新对照".into());
+        }
+        bytes
+    };
+    if image {
+        let ext = Path::new(&before.path)
+            .extension()
+            .map(|ext| ext.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if !matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp"
+        ) {
+            return Err("这类文件不支持图片比较".into());
+        }
+        let mut digest = Sha256::new();
+        digest.update((before_bytes.len() as u64).to_le_bytes());
+        digest.update(&before_bytes);
+        digest.update(&after_bytes);
+        let fingerprint = format!("{:x}", digest.finalize());
+        let folder = safe_path(
+            &crate::storage::config_root().ok_or("找不到比较目录")?,
+            &format!("tmp/file-versions/compare/{fingerprint}"),
+        )?;
+        let before_path = folder.join(format!("before.{ext}"));
+        let after_path = folder.join(format!("after.{ext}"));
+        let result = (|| {
+            crate::storage::atomic_write(&before_path, &before_bytes, true)?;
+            crate::storage::atomic_write(&after_path, &after_bytes, true)?;
+            Ok(VersionComparison {
+                before: None,
+                after: None,
+                before_path: Some(before_path.to_string_lossy().into_owned()),
+                after_path: Some(after_path.to_string_lossy().into_owned()),
+            })
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(folder);
+        }
+        result
+    } else {
+        let decode = |bytes: Vec<u8>| -> Result<String, String> {
+            if bytes.contains(&0) {
+                return Err("二进制文件请另存后用系统应用比较".into());
+            }
+            let text =
+                String::from_utf8(bytes).map_err(|_| "非 UTF-8 文件请另存后用系统应用比较")?;
+            Ok(crate::sessions::redact_sensitive_text(&text))
+        };
+        Ok(VersionComparison {
+            before: Some(decode(before_bytes)?),
+            after: Some(decode(after_bytes)?),
+            before_path: None,
+            after_path: None,
+        })
+    }
+}
+
 #[tauri::command]
-pub async fn file_version_diff(
+pub async fn file_version_compare(
     root: String,
     from: String,
-    to: String,
-) -> Result<VersionDiff, String> {
+    to: Option<String>,
+    image: bool,
+) -> Result<VersionComparison, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (root, _, _) = location(&root, None)?;
-        with_lock(&root, || {
-            let before = selected(&root, &from)?;
-            let after = selected(&root, &to)?;
-            if before.path != after.path {
-                return Err("请选择同一个文件的两版".into());
-            }
-            let decode = |version: &FileVersion| -> Result<String, String> {
-                if version.size > 512 * 1024 {
-                    return Err("文件超过 512 KB，请查看或另存后比较".into());
-                }
-                let bytes = content(&root, version)?;
-                if bytes.len() > 512 * 1024 || bytes.contains(&0) {
-                    return Err("这类文件请并排预览，或另存后用系统应用比较".into());
-                }
-                String::from_utf8(bytes).map_err(|_| "非 UTF-8 文件请另存后用系统应用比较".into())
-            };
-            Ok(VersionDiff {
-                before: crate::sessions::redact_sensitive_text(&decode(&before)?),
-                after: crate::sessions::redact_sensitive_text(&decode(&after)?),
-            })
+        let scope =
+            crate::paths::canonicalize_plain(Path::new(&crate::sessions::expand_tilde(&root)))
+                .map_err(|error| error.to_string())?;
+        let (project, _, _) = location(&root, None)?;
+        with_lock(&project, || {
+            comparison_at(&project, &scope, &from, to.as_deref(), image)
         })
     })
     .await
@@ -1183,6 +1271,96 @@ mod tests {
             fs::read(fixture.root.join(".ccode/versions/index.json")).unwrap(),
             b"broken"
         );
+    }
+
+    #[test]
+    fn comparison_reads_current_disk_without_saving_or_replacing_history() {
+        let fixture = Fixture::new();
+        fixture.write("draft.md", b"old paragraph");
+        fixture.update("draft.md", "snapshot", None, "old").unwrap();
+        let version = load(&fixture.root).unwrap().versions[0].clone();
+        let original_index = fs::read(fixture.root.join(".ccode/versions/index.json")).unwrap();
+        fixture.write("draft.md", b"current paragraph");
+        let comparison =
+            comparison_at(&fixture.root, &fixture.root, &version.id, None, false).unwrap();
+        assert_eq!(comparison.before.as_deref(), Some("old paragraph"));
+        assert_eq!(comparison.after.as_deref(), Some("current paragraph"));
+        assert_eq!(
+            fs::read(fixture.root.join(".ccode/versions/index.json")).unwrap(),
+            original_index
+        );
+        fixture.update("draft.md", "snapshot", None, "new").unwrap();
+        let second = load(&fixture.root).unwrap().versions[1].id.clone();
+        let comparison = comparison_at(
+            &fixture.root,
+            &fixture.root,
+            &version.id,
+            Some(&second),
+            false,
+        )
+        .unwrap();
+        assert_eq!(comparison.after.as_deref(), Some("current paragraph"));
+        assert_eq!(content(&fixture.root, &version).unwrap(), b"old paragraph");
+        assert_eq!(
+            fs::read(fixture.root.join("draft.md")).unwrap(),
+            b"current paragraph"
+        );
+        assert_ne!(
+            fs::read(fixture.root.join(".ccode/versions/index.json")).unwrap(),
+            original_index
+        );
+        fs::remove_file(fixture.root.join("draft.md")).unwrap();
+        assert!(comparison_at(&fixture.root, &fixture.root, &version.id, None, false).is_err());
+        assert!(comparison_at(
+            &fixture.root,
+            &fixture.root,
+            &version.id,
+            Some(&second),
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn comparison_limits_size_rejects_other_files_and_redacts_text() {
+        let fixture = Fixture::new();
+        fixture.write("draft.md", b"original");
+        fixture.update("draft.md", "snapshot", None, "").unwrap();
+        let id = load(&fixture.root).unwrap().versions[0].id.clone();
+        fixture.write("other.md", b"other");
+        fixture.update("other.md", "snapshot", None, "").unwrap();
+        let other = load(&fixture.root).unwrap().versions[1].id.clone();
+        assert!(comparison_at(&fixture.root, &fixture.root, &id, Some(&other), false).is_err());
+        fixture.write("draft.md", &vec![b'a'; 512 * 1024 + 1]);
+        assert!(comparison_at(&fixture.root, &fixture.root, &id, None, false).is_err());
+        fixture.write("draft.md", b"binary\0content");
+        assert!(comparison_at(&fixture.root, &fixture.root, &id, None, false).is_err());
+        fixture.write("draft.md", b"sk-abcdefghijklmnopqrstuvwxyz0123456789");
+        let comparison = comparison_at(&fixture.root, &fixture.root, &id, None, false).unwrap();
+        assert!(!comparison
+            .after
+            .unwrap()
+            .contains("sk-abcdefghijklmnopqrstuvwxyz"));
+    }
+
+    #[test]
+    fn image_comparison_freezes_both_sides_and_reuses_unchanged_pair() {
+        let fixture = Fixture::new();
+        fixture.write("figure.png", b"old\0png");
+        fixture.update("figure.png", "snapshot", None, "").unwrap();
+        let id = load(&fixture.root).unwrap().versions[0].id.clone();
+        fixture.write("figure.png", b"new\0png");
+        let first = comparison_at(&fixture.root, &fixture.root, &id, None, true).unwrap();
+        let next = comparison_at(&fixture.root, &fixture.root, &id, None, true).unwrap();
+        assert_eq!(first.before_path, next.before_path);
+        assert_eq!(first.after_path, next.after_path);
+        assert_eq!(fs::read(first.before_path.unwrap()).unwrap(), b"old\0png");
+        assert_eq!(fs::read(first.after_path.unwrap()).unwrap(), b"new\0png");
+        assert_eq!(
+            fs::read(fixture.root.join("figure.png")).unwrap(),
+            b"new\0png"
+        );
+        assert_eq!(load(&fixture.root).unwrap().versions.len(), 1);
     }
 
     #[test]

@@ -5,13 +5,14 @@ import { confirmDialog } from "./ConfirmDialog";
 import { fieldClass, InlineNotice, secondaryActionClass } from "./PageFrame";
 import { projectFilePreviewKind } from "../project-files";
 import { showProjectFile } from "../project-file-open";
-import { lineDiff } from "../tool-activity";
 import { roundCauseLabel, roundTime } from "../step-loop";
-import type { FileVersionsDto, VersionFile } from "../types";
+import type { FileVersionsDto, VersionFile, VersionComparison } from "../types";
 import { FileSelectionTree } from "./FileTree";
 import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 
 const ProjectFilePreview = lazy(() => import("./ProjectFilePreview"));
+const TextVersionCompare = lazy(() => import("./TextVersionCompare"));
+const ImageVersionCompare = lazy(() => import("./ImageVersionCompare"));
 const LINK = "shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-40";
 const absolute = (root: string, path: string) => `${root.replace(/[/\\]+$/, "")}/${path}`;
 
@@ -62,8 +63,7 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   const [versionId, setVersionId] = useState("");
   const [compareId, setCompareId] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
-  const [otherPreview, setOtherPreview] = useState<string | null>(null);
-  const [diff, setDiff] = useState<{ before: string; after: string } | null>(null);
+  const [comparison, setComparison] = useState<VersionComparison | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<"snapshot" | "rename" | null>(null);
@@ -72,13 +72,14 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   const [revision, setRevision] = useState(0);
   const [treeOpen, setTreeOpen] = useState(!path);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [compareRefresh, setCompareRefresh] = useState(0);
   const menuButton = useRef<HTMLButtonElement>(null);
   const paths = useMemo(() => data?.files.map((file) => file.path) ?? [], [data]);
   const version = file?.versions.find((candidate) => candidate.id === versionId);
   const compared = file?.versions.find((candidate) => candidate.id === compareId);
   const kind = projectFilePreviewKind(chosen);
   const retained = !!version && !version.id.startsWith("git:");
-  const lines = useMemo(() => diff && diff.before !== diff.after ? lineDiff(diff.before, diff.after) : [], [diff]);
+  const compareLabel = compared ? compared.note || roundTime(compared.savedAt) : "当前文件（磁盘已保存）";
   useEffect(() => setMenu(null), [chosen, versionId]);
   useEffect(() => {
     let stale = false;
@@ -92,7 +93,7 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   }, [root, path, workspaceId, revision]);
   useEffect(() => {
     let stale = false;
-    setFile(null); setPreview(null); setOtherPreview(null); setDiff(null); setCompareId("");
+    setFile(null); setPreview(null); setComparison(null); setCompareId("");
     if (!chosen) return;
     invoke<FileVersionsDto>("file_versions", { root, path: chosen, workspaceId: workspaceId ?? null }).then((next) => {
       if (stale) return;
@@ -104,7 +105,7 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   }, [root, chosen, workspaceId, revision]);
   useEffect(() => {
     let stale = false;
-    setPreview(null); setOtherPreview(null); setDiff(null);
+    setPreview(null); setComparison(null);
     if (!file || !data) return;
     setError(null);
     if (!versionId) {
@@ -112,15 +113,12 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
       return;
     }
     if (!version) return;
-    const request = compareId && kind !== "image"
-      ? invoke<{ before: string; after: string }>("file_version_diff", { root: data.root, from: compareId, to: version.id }).then((result) => { if (!stale) setDiff(result); })
-      : Promise.all([
-        invoke<string>("file_version_preview", { root: data.root, versionId: version.id }),
-        compareId ? invoke<string>("file_version_preview", { root: data.root, versionId: compareId }) : Promise.resolve(null),
-      ]).then(([current, other]) => { if (!stale) { setPreview(current); setOtherPreview(other); } });
+    const request = compareId
+      ? invoke<VersionComparison>("file_version_compare", { root, from: version.id, to: compareId === "current" ? null : compareId, image: kind === "image" }).then((result) => { if (!stale) setComparison(result); })
+      : invoke<string>("file_version_preview", { root: data.root, versionId: version.id }).then((current) => { if (!stale) setPreview(current); });
     request.catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
-  }, [file, data?.root, chosen, path, root, versionId, compareId, kind]);
+  }, [file, data?.root, chosen, path, root, versionId, compareId, kind, compareRefresh]);
   async function update(action: string, note = "") {
     if (!file || busy) return;
     setBusy(true); setError(null); setNotice(null);
@@ -178,7 +176,7 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
     <div className="shrink-0 space-y-2 px-2">
       {file && <>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select aria-label="查看的版本" className={`${fieldClass} h-7 min-w-0 flex-1`} value={versionId} onChange={(event) => { setVersionId(event.target.value); setCompareId(""); setForm(null); }}>
+          <select aria-label="查看的版本" className={`${fieldClass} h-7 min-w-0 flex-1`} value={versionId} onChange={(event) => { const next = event.target.value; setVersionId(next); setCompareId((current) => !next || current === next ? "" : current); setForm(null); }}>
             {file.exists && <option value="">当前文件</option>}
             {file.versions.map((item) => <option key={item.id} value={item.id}>{item.note || roundTime(item.savedAt)} · {item.source}</option>)}
           </select>
@@ -192,10 +190,16 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
           <span title={versionId ? "历史版本只读；要修改请另存为副本" : "当前文件仅预览；返回文件后继续编辑"}>
             {version ? `${version.source}${version.round ? ` · 第 ${version.round} 轮` : ""}${version.cause ? ` · ${roundCauseLabel(version.cause)}` : ""} · 只读` : "仅预览"}
           </span>
-          {version && file.versions.length > 1 && (kind === "text" || kind === "image") && <select aria-label="比较的版本" className={`${fieldClass} ml-auto min-w-0 max-w-full`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>
-            <option value="">不比较</option>
+          {version && (kind === "text" || kind === "image") && <>
+            {file.exists && !compareId && <button type="button" className={`${LINK} text-l2`} onClick={() => setCompareId("current")}>和现稿比较</button>}
+            {(compareId || file.versions.length > 1) && <select aria-label="比较的版本" className={`${fieldClass} min-w-0 max-w-full`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>
+            <option value="">选择其他版本比较…</option>
+            {file.exists && <option value="current">当前文件（磁盘已保存）</option>}
             {file.versions.filter((item) => item.id !== versionId).map((item) => <option key={item.id} value={item.id}>对比：{item.note || roundTime(item.savedAt)}</option>)}
-          </select>}
+            </select>}
+            {compareId && <button type="button" className={LINK} onClick={() => setCompareId("")}>结束比较</button>}
+            {compareId === "current" && <button type="button" className={LINK} onClick={() => setCompareRefresh((current) => current + 1)}>刷新对照</button>}
+          </>}
         </div>
         {!file.exists && !file.versions.length && <p className="py-2 text-xs text-l4">当前路径没有文件，也没有可读取的历史；留存不能找回已清理的内容。</p>}
         {form && <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
@@ -208,15 +212,16 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
       {notice && <p role="status" className="break-all text-xs text-l3">{notice}</p>}
       {!file && !error && <p className="text-xs text-l4">读取中…</p>}
     </div>
-    {diff && <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-inset p-2 font-mono text-xs text-l2">
-      {diff.before === diff.after ? "两版内容一样。" : lines.map((line, index) => <span key={index} className={`block ${line.op === "+" ? "bg-add/10 text-add" : line.op === "-" ? "bg-del/10 text-del" : ""}`}>{line.op === "~" ? "⋯" : `${line.op} ${line.text}`}</span>)}
-    </pre>}
+    {compareId && version && <div className="grid shrink-0 grid-cols-2 gap-2 px-2 text-xs text-l3"><span>左：{version.note || roundTime(version.savedAt)}</span><span>右：{compareLabel}</span></div>}
+    {comparison && <Suspense fallback={<p className="px-2 text-xs text-l3">读取对照…</p>}>
+      {comparison.beforePath && comparison.afterPath ? <ImageVersionCompare before={comparison.beforePath} after={comparison.afterPath} /> : comparison.before !== null && comparison.after !== null ? <TextVersionCompare before={comparison.before} after={comparison.after} /> : null}
+    </Suspense>}
     {preview && <Suspense fallback={<p className="text-xs text-l4">读取中…</p>}>
-      <div className={`grid min-h-0 flex-1 gap-2 ${otherPreview ? "grid-cols-2" : "grid-cols-1"}`}>
-        {otherPreview && <div className="flex min-h-0 min-w-0 flex-col"><p className="text-xs text-l3">{compared?.note || (compared && roundTime(compared.savedAt))}</p><ProjectFilePreview path={otherPreview} root={otherPreview.replace(/[/\\][^/\\]+$/, "")} readOnly="历史留存只读；要修改请另存为副本" hideReadOnlyToolbar /></div>}
+      <div className="flex min-h-0 flex-1 flex-col">
         <ProjectFilePreview key={preview} path={preview} root={versionId ? preview.replace(/[/\\][^/\\]+$/, "") : root} readOnly={versionId ? "历史版本只读；要修改请另存为副本" : "版本查看只读；返回文件后继续编辑"} hideReadOnlyToolbar />
       </div>
     </Suspense>}
+    {compareId && !comparison && !error && <p className="px-2 text-xs text-l3">读取对照…</p>}
       </div>
     </div>
     {menu && createPortal(<ContextMenu x={menu.x} y={menu.y} alignRight items={menuItems} onClose={() => { setMenu(null); menuButton.current?.focus(); }} />, document.body)}

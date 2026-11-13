@@ -20,11 +20,15 @@ async function mount() {
     plugins: [{ name: "versions-host", setup(builder) {
       builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: "invoke", namespace: "stub" }));
       builder.onResolve({ filter: /^\.\/ProjectFilePreview$/ }, () => ({ path: "preview", namespace: "stub" }));
+      builder.onResolve({ filter: /^\.\/TextVersionCompare$/ }, () => ({ path: "text-compare", namespace: "stub" }));
+      builder.onResolve({ filter: /^\.\/ImageVersionCompare$/ }, () => ({ path: "image-compare", namespace: "stub" }));
       builder.onResolve({ filter: /^\.\/ConfirmDialog$/ }, () => ({ path: "confirm", namespace: "stub" }));
       builder.onResolve({ filter: /^\.\.\/project-file-open$/ }, () => ({ path: "open", namespace: "stub" }));
       builder.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({ loader: "jsx", contents: args.path === "invoke"
         ? "export const invoke=(command,args)=>globalThis.__versionsInvoke(command,args);"
         : args.path === "confirm" ? "export const confirmDialog=async()=>true;"
+          : args.path === "text-compare" ? "export default function Compare(props){return <div data-text-compare>{'- '+props.before}{'+ '+props.after}</div>;}"
+          : args.path === "image-compare" ? "export default function Compare(props){return <div data-image-before={props.before} data-image-after={props.after}/>;}"
           : args.path === "open" ? "export const showProjectFile=async(args)=>globalThis.__versionsInvoke('open_sidebar',args);"
           : "export default function Preview(props){return <div data-preview={props.path} data-readonly={props.readOnly} data-quiet-header={String(props.hideReadOnlyToolbar)}>历史内容</div>;}" }));
     } }],
@@ -39,7 +43,9 @@ async function mount() {
       calls.push({ command, args });
       if (command === "file_versions") return { root: "/project", files: args.path ? files.filter((file) => args.path === file.path || args.path === `/project/${file.path}`) : files };
       if (command === "file_version_preview") return `/cache/${args.versionId}/outline.md`;
-      if (command === "file_version_diff") return { before: "old paragraph", after: "new paragraph" };
+      if (command === "file_version_compare") return args.image
+        ? { before: null, after: null, beforePath: "/cache/before.png", afterPath: "/cache/after.png" }
+        : { before: "old paragraph", after: "new paragraph", beforePath: null, afterPath: null };
       if (command === "file_version_export") { if (exportError) throw new Error(exportError); return exportTarget; }
       if (command === "file_version_update") {
         if (args.action === "track") file.tracked = true;
@@ -205,5 +211,34 @@ test("系统另存取消不报成功、不写版本或触发流程，失败保�
     await mounted.act(async () => mounted.button("另存为副本…").click());
     assert.match(mounted.body(), /another-folder\/result.md/);
     assert.ok(!mounted.calls.some((call) => /file_version_update|merge_workspace|pty_write/.test(call.command)));
+  } finally { await mounted.cleanup(); }
+});
+
+test("一份旧版即可和现稿比较，左右标清，可刷新或退出，不更改文件", async () => {
+  const mounted = await mount(); mounted.file.versions = mounted.file.versions.slice(0, 1);
+  try {
+    await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsPanel, { root: "/project", path: "/project/outline.md" })));
+    await mounted.act(async () => mounted.setValue(mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!, "new"));
+    assert.ok(mounted.button("和现稿比较"));
+    await mounted.act(async () => mounted.button("和现稿比较").click());
+    assert.deepEqual(mounted.calls.find((call) => call.command === "file_version_compare")?.args, { root: "/project", from: "new", to: null, image: false });
+    assert.match(mounted.body(), /左：调整第 3 节/); assert.match(mounted.body(), /右：当前文件（磁盘已保存）/);
+    await mounted.act(async () => mounted.button("刷新对照").click());
+    assert.equal(mounted.calls.filter((call) => call.command === "file_version_compare").length, 2);
+    await mounted.act(async () => mounted.button("结束比较").click());
+    assert.ok(mounted.document.querySelector('[data-preview="/cache/new/outline.md"]'));
+    assert.ok(!mounted.calls.some((call) => /file_version_update|save_file|merge_workspace/.test(call.command)));
+  } finally { await mounted.cleanup(); }
+});
+
+test("图片比较使用成对冻结图片，不把现稿写成新版本", async () => {
+  const mounted = await mount(); mounted.file.path = "figure.png";
+  for (const version of mounted.file.versions) version.path = "figure.png";
+  try {
+    await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsPanel, { root: "/project", path: "/project/figure.png" })));
+    await mounted.act(async () => mounted.setValue(mounted.document.querySelector<HTMLSelectElement>('select[aria-label="查看的版本"]')!, "old"));
+    await mounted.act(async () => mounted.button("和现稿比较").click());
+    assert.ok(mounted.document.querySelector('[data-image-before="/cache/before.png"][data-image-after="/cache/after.png"]'));
+    assert.deepEqual(mounted.calls.find((call) => call.command === "file_version_compare")?.args, { root: "/project", from: "old", to: null, image: true });
   } finally { await mounted.cleanup(); }
 });

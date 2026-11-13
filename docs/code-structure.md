@@ -246,7 +246,9 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
   components/StepEvidenceChip.tsx # 步骤卡证据徽标：读当前步骤报告，显示质量状态与未决标记计数（解析在 step-evidence.ts）
   components/StepLoop.tsx    # 综述回路补料表单（design-review-loop.md §4）：ReworkDialog 只收字段，恢复 / 并入 / 写单 / 开对话由 TaskCardsSection 编排；litTargets 分「补料」/「修改」两套说法，修改不问篇数；chainOptions 补完后接着跟进的下游勾选（tests/rework-dialog-ui.test.ts）
                              # StepFlow 分组三行：本步主要计数在节点标题旁、细项与回路入口同排；检索/精读/大纲各按既有材料取数，其他步骤无空统计（tests/step-progress-ui.test.ts）；TaskCardsSection 长标题与角色状态可换行
-components/FileVersions.tsx  # 文件版本短入口与右侧栏内容（步骤卡、项目预览、终端预览共用）：FileSelectionTree 按目录选文件，当前内容直接预览、Git历史按需查询不以留存为门槛；旧版另存直显并交后端系统保存窗口（前端不填目标路径）、更多走标准ContextMenu，人选后续保留/手动留存、备注/确认删除、只读查看/比较/另存，不派活、不替换现稿（tests/file-versions-ui.test.ts）
+components/FileVersions.tsx  # 文件版本短入口与右侧栏内容（步骤卡、项目预览、终端预览共用）：FileSelectionTree 按目录选文件，当前内容直接预览、Git历史按需查询不以留存为门槛；旧版另存直显并交后端系统保存窗口（前端不填目标路径）、更多走标准ContextMenu，人选后续保留/手动留存、备注/确认删除、只读查看/现稿优先对照（file_version_compare，历史互比/刷新可用）/另存，不派活、不替换现稿（tests/file-versions-ui.test.ts）
+components/TextVersionCompare.tsx # 文本版本只读 Monaco 对照：容器宽度切双栏/单栏、词句高亮/同步滚动/只看改动，主题同预览；不提供合并或保存（tests/version-compare-ui.test.ts）
+components/ImageVersionCompare.tsx # 冻结图片只读双栏对照：两图共用倍率、按比例同步滚动/拖动、窗口适应与100%，不改图片；字节读取沿用白名单（tests/version-compare-ui.test.ts）
 components/FileTree.tsx      # 聊天文件树与共享节点；FileSelectionTree 用同一节点呈现版本清单目录树（包含已删除文件路径），只选择不读写真实目录、不挂文件操作菜单
 components/ProjectFilePreview.tsx  # 项目文件预览按类型分流；版本入口原位切换 FileVersionsPanel，未保存编辑先确认，历史预览传只读原因且不嵌套版本操作，hideReadOnlyToolbar 交文本预览隐藏重复标题栏
 components/FilePreviewEditor.tsx  # 文件阅读与Monaco编辑；版本宿主可用 hideReadOnlyToolbar 隐藏只读阅读态工具栏，保留正文、目录和查找快捷键，可编辑预览不受影响
@@ -2030,7 +2032,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   step_round_file / step_round_diff 只读 git show / diff（sha 与相对路径白名单校验，512 KB 截断）；每轮文件的新加 / 改了 / 删了按保存那次合并的第一父比所审版本（round_changes）；
                              #   step_round_ledger 两版纳入清单的白话摘要（conflict_hint::ledger_change_summary）；saved_round_origin 为文件留存提供轮次起因，旧轮次界面已撤；
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
-  file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；历史按需读验收账本+Git无需跟踪或写索引，临时标识预览/比较/另存前复核归属；只读预览复制到配置 tmp、文本对照脱敏、另存目标由Rust系统保存窗口选出（可在项目外），拒覆盖/内部目录/保护路径，删除按引用计数回收
+  file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；历史按需读验收账本+Git无需跟踪或写索引，临时标识预览/比较/另存前复核归属；只读预览复制到配置 tmp、文本对照脱敏，file_version_compare 同时支持历史与磁盘现稿（有界/读后核验、图片双侧私有冻结缓存）、另存目标由Rust系统保存窗口选出（可在项目外），拒覆盖/内部目录/保护路径，删除按引用计数回收
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
                              #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear
                              #   2026-11-06：stale_upstream_for 按最后一次并入判（本步保存不算）；workspace_incoming 列基准侧多出的文件（HEAD...base）ed 判定工作区有文件只看工作区

@@ -1174,7 +1174,7 @@ pub fn run() {
             file_versions::file_versions,
             file_versions::file_version_update,
             file_versions::file_version_preview,
-            file_versions::file_version_diff,
+            file_versions::file_version_compare,
             file_versions::file_version_export,
             fs_tree::save_research_ledger,
             journal_metrics::lookup_journal_metrics,
