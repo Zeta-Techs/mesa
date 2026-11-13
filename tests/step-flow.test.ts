@@ -297,6 +297,26 @@ test("决策项未拍板完：discuss 节点不算完成，即使草稿已存在
   assert.equal(all.currentKey, "agent", "定方向做完，当前节点推进到 agent");
 });
 
+test("开工后：先定几件事与稿件载体收成完成，当前不停在它们上面（2026-11-13 步骤卡统一设计稿）", () => {
+  const s = step({
+    discussionSeeds: [],
+    decisions: [{ q: "综述角度怎么收", options: ["领域全景铺开", "聚焦子问题"] }],
+  });
+  const flow = buildStepFlow({
+    step: s,
+    states: [],
+    hasDraft: true,
+    runStatus: "active",
+    pendingDecisions: 1,
+    toolAsks: [{ key: "manuscript", label: "稿件载体" }],
+  });
+  const d = flow.nodes.find((n) => n.key === "discuss")!;
+  assert.equal(d.done, true, "开工即算定过，没定的由 AI 在对话里问");
+  assert.equal(d.label, "先定几件事");
+  assert.equal(flow.nodes.find((n) => n.key === "tool:manuscript")!.done, true);
+  assert.equal(flow.currentKey, "agent");
+});
+
 test("只有决策项、没有讨论种子：discuss 节点照常出现", () => {
   const flow = buildStepFlow({
     step: step({

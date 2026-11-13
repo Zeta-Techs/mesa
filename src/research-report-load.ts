@@ -5,7 +5,7 @@ import { searchPdfProbes, searchProgress, searchProgressParts } from "./notes-pr
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 import { checkNotes, type NoteFile } from "./notes-check";
-import { checkDraft, imageRefs, pickManuscript, type DraftStepKind } from "./draft-check";
+import { checkDraft, draftProgressParts, imageRefs, pickManuscript, type DraftStepKind } from "./draft-check";
 import type { CheckItem } from "./research-checks";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
@@ -179,6 +179,21 @@ export async function loadDraftCheck(roots: readonly string[], kind: DraftStepKi
     readFirst(roots, "outline.md"),
   ]);
   return checkDraft({ kind, file, text, bib, included, index, sections, styleSheet, outline, existingImages: listed ? existing : null });
+}
+
+/** 初稿步骤卡的统计行（draft-check.ts draftProgressParts 只算）：工作副本优先、项目根兜底，主稿与 sections.json 取同一处。
+ *  没有 md / qmd 主稿（Word、LaTeX 载体）返回 null，不出统计行 */
+export async function loadDraftProgress(roots: readonly string[], artifacts: readonly string[]): Promise<string[] | null> {
+  for (const root of roots) {
+    const listing = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(root, "manuscript"), showHidden: false, root }).catch(() => null);
+    if (!listing) continue;
+    const file = pickManuscript(artifacts, listing.filter((e) => !e.isDir).map((e) => `manuscript/${e.name}`));
+    if (!file) continue;
+    const text = await readFirst([root], file);
+    if (text == null) continue;
+    return draftProgressParts(text, await readFirst([root], "manuscript/sections.json"));
+  }
+  return null;
 }
 
 /** 大纲步骤卡计数行的「薄几节」：大纲里判薄的节，补料（补读点名的篇、为这一节补检来的新篇）到了的另算 */

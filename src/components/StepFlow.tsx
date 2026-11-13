@@ -57,7 +57,8 @@ import {
   type ResearchTools,
 } from "../research-tools";
 import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
-import { outlineThinWithNotes, readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
+import { loadDraftProgress, outlineThinWithNotes, readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
+import { stepKind } from "../step-kind";
 import {
   excludedIncludedIds,
   figurePlan,
@@ -378,6 +379,30 @@ function LedgerCountLine({
       unpoll?.();
     };
   }, [rootsKey, live, rel, read, refreshKey, onChange]);
+  return null;
+}
+
+/** 初稿步「AI 干活」行下的统计（同 LedgerCountLine：工作区优先、项目根兜底，跑着时 20 秒重读）。
+ *  主稿要先列 manuscript/ 才挑得出，不走单文件的 LedgerCountLine */
+function DraftProgressLine({ roots, artifacts, live, onChange }: { roots: string[]; artifacts: readonly string[]; live: boolean; onChange: (parts: string[] | null) => void }) {
+  const rootsKey = roots.join("\n");
+  const artifactsKey = artifacts.join("\n");
+  useEffect(() => {
+    let stale = false;
+    const load = async () => {
+      const parts = await loadDraftProgress(rootsKey.split("\n"), artifactsKey ? artifactsKey.split("\n") : []).catch(() => null);
+      if (!stale) onChange(parts);
+    };
+    void load();
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    const unpoll = live ? pollEvery(() => load(), 20000) : null;
+    return () => {
+      stale = true;
+      window.removeEventListener("focus", onFocus);
+      unpoll?.();
+    };
+  }, [rootsKey, artifactsKey, live, onChange]);
   return null;
 }
 
@@ -741,7 +766,10 @@ export default function StepFlow({
   // 为这个开终端太贵——真要展开讨论才走「开聊」
   // 决策区默认收起；hard_pause 的未答项由开工弹层明确拦截。
   const [decisionsOpen, setDecisionsOpen] = useState(false);
-  // 方式二折叠态（v3.90）：与方式一同款——默认收起一行，展开才露「跟 AI 商量一下」
+  // 开工后「先定几件事」收成一行；点「更改」才摊开（同「确定文献来源」的 litSourceEditing）
+  const [settleEditing, setSettleEditing] = useState(false);
+  // 开工后「稿件载体 / 实验方式」同样收成一行，点「更改」才摊开选项（记的是节点 key）
+  const [toolEditing, setToolEditing] = useState<string | null>(null);
   const [writeOwn, setWriteOwn] = useState<{
     q: string;
     text: string;
@@ -1866,6 +1894,7 @@ export default function StepFlow({
   const notesStep = stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides);
   const searchStep = stepFillsAnySlot(step.skills, ["lit-search"], skillProvides);
   const outlineStep = stepFillsAnySlot(step.skills, ["review-framework"], skillProvides);
+  const draftStep = stepKind(step, skillProvides) === "writing";
   const flow = buildStepFlow({
     step,
     states,
@@ -2739,6 +2768,38 @@ export default function StepFlow({
         )}
         {node.kind === "input" && node.key.startsWith("tool:") && onSetResearchTool && tools && (
           <div className="ml-9 mt-2.5">
+            {node.section === "main" && runStatus !== "pending" && toolEditing !== node.key ? (
+              // 开工后收成一行（2026-11-13 步骤卡统一设计稿，同「确定文献来源」）：这一轮已按当时的写法开工，
+              // 再点会改档案卡，正在跑的 AI 看不到——不摆成随手可点
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="text-l3">
+                  {RESEARCH_TOOL_FIELDS.find((field) => `tool:${field.key}` === node.key)?.options.find(
+                    ([key]) => key === tools[node.key.slice(5) as ResearchToolField["key"]],
+                  )?.[1] ?? ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setToolEditing(node.key)}
+                  className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+                  title="这一轮已按这个写法开工；改了要下次重新开工这一步才生效"
+                >
+                  更改
+                </button>
+              </div>
+            ) : (
+            <>
+            {node.section === "main" && runStatus !== "pending" && (
+              <p className="mb-1 text-micro text-l4">
+                这一轮已经按当时的写法开工。改了只写进项目设置，工作区里的任务书不变，「继续」「新开一轮」的 AI 都看不到；下次重新开工这一步才生效。
+                <button
+                  type="button"
+                  onClick={() => setToolEditing(null)}
+                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  不改了
+                </button>
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               {(RESEARCH_TOOL_FIELDS.find((field) => `tool:${field.key}` === node.key)?.options ?? []).map(([key, label]) => {
                 const on = tools[node.key.slice(5) as ResearchToolField["key"]] === key;
@@ -2747,7 +2808,9 @@ export default function StepFlow({
                     key={key}
                     type="button"
                     disabled={toolBusy}
-                    onClick={() => void onSetResearchTool(node.key.slice(5) as ResearchToolField["key"], key)}
+                    onClick={() =>
+                      void Promise.resolve(onSetResearchTool(node.key.slice(5) as ResearchToolField["key"], key)).then(() => setToolEditing(null))
+                    }
                     className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
                       on
                         ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
@@ -2759,6 +2822,8 @@ export default function StepFlow({
                 );
               })}
             </div>
+            </>
+            )}
           </div>
         )}
         {node.kind === "input" && node.key === "input" && onSetLitSource && (
@@ -2847,9 +2912,43 @@ export default function StepFlow({
         )}
         {/* 想法区与「跟 AI 商量」：discuss 节点存在时挂它，否则挂 Agent 节点（v3.89）——
             内容一字未动，只是换了落点，避免节点被隐藏时这些入口一起消失 */}
+        {node.kind === "discuss" && runStatus !== "pending" && !settleEditing && (
+          // 开工后收成一行灰字（2026-11-13 步骤卡统一设计稿，同「确定文献来源」）：这一轮的任务书已按当时写好，
+          // 再改只进草稿、正在跑的 AI 看不到——不摊成随手可点；没定的开工时由 AI 在对话里问
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-9 text-xs">
+            {decisions.length > 0 && (
+              <span className="text-l3">
+                {decisionGaps.length === 0
+                  ? `已定 ${decisions.length} 件`
+                  : `已定 ${decisions.length - decisionGaps.length} 件，${decisionGaps.length} 件开工时没定，AI 会在对话里问`}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setSettleEditing(true)}
+              className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+              title="这一轮已按当时的任务书开工；改了要下次重新开工这一步才生效"
+            >
+              {decisions.length > 0 ? "更改" : "展开"}
+            </button>
+          </div>
+        )}
         {(node.kind === "discuss" ||
-          (node.kind === "agent" && !hasDiscussNode)) && (
+          (node.kind === "agent" && !hasDiscussNode)) &&
+          !(node.kind === "discuss" && runStatus !== "pending" && !settleEditing) && (
           <div className="mt-1.5 space-y-2 pl-9">
+            {node.kind === "discuss" && runStatus !== "pending" && (
+              <p className="text-micro text-l4">
+                这一轮已经按当时的任务书开工。这里改的只写进任务书草稿，工作区里的任务书不变，「继续」「新开一轮」的 AI 都看不到；下次重新开工这一步才生效。
+                <button
+                  type="button"
+                  onClick={() => setSettleEditing(false)}
+                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                >
+                  收起
+                </button>
+              </p>
+            )}
             {/* ── 输入准备（v3.86；v3.89 升格为独立 input 节点，排在 AI 干活之前）──
                 · 决策项：答案写进任务书草稿，纯记录，给 Agent 看的合同内容
                 · 文献来源：答案写进项目配置 lit_source，要动手（导入），还会改变这一步的性质
@@ -3101,6 +3200,14 @@ export default function StepFlow({
             onChange={setAgentProgress}
           />
         )}
+        {node.kind === "agent" && draftStep && (ws || runStatus === "done") && (
+          <DraftProgressLine
+            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
+            artifacts={step.expectedArtifacts ?? []}
+            live={runStatus === "active"}
+            onChange={setAgentProgress}
+          />
+        )}
         {/* 工具行与统计行（2026-11-13 步骤卡统一设计稿）：工具行 = 商量组 | 回头组，竖线隔开；
             统计行单独一行只读，首项是本步主进度、加粗 */}
         {node.kind === "agent" && (talkOnAgent || loopActions) && (
@@ -3114,6 +3221,7 @@ export default function StepFlow({
           <div data-step-progress="details" className="mt-1 flex flex-wrap items-baseline gap-x-2 pl-9 text-micro tabular-nums text-l3" title={
             notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
             searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
+            draftStep ? "按稿件的章级标题数：标题下有正文才算已写，sections.json 定了、稿件里还没出现的节也算进总数；引用按出现次数数；待定标记是 [待核实] [待确认] 一类还没处理的" :
             "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
           }>
             {progressHeadline && <span data-step-progress="headline" className="font-medium text-l2">{progressHeadline}</span>}

@@ -99,13 +99,34 @@ function normTitle(s: string): string {
   return s.normalize("NFKC").toLowerCase().replace(/^[\s§]*\d+(\.\d+)*\.?\s*/, "").replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
+/** 章级标题的级别：最高一级只有一个时它是稿件标题，往下一级才是章 */
+function chapterLevelOf(heads: readonly Para[]): number {
+  const levels = [...new Set(heads.map((h) => h.level))].sort((a, b) => a - b);
+  const top = levels[0] ?? 1;
+  return heads.filter((h) => h.level === top).length === 1 && levels.length > 1 ? levels[1] : top;
+}
+
+/** manuscript/sections.json 定的节名（读不出返回 null） */
+function plannedSections(json: string | null | undefined): string[] | null {
+  try {
+    const v = JSON.parse(json ?? "");
+    return Array.isArray(v) ? v.map((s) => String((s as Record<string, unknown>)?.title ?? "")).filter(Boolean) : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameSection(a: string, b: string): boolean {
+  const x = normTitle(a);
+  const y = normTitle(b);
+  return x === y || (x !== "" && y !== "" && (x.includes(y) || y.includes(x)));
+}
+
 /** 每一行属于哪一节（「2.2」这种编号）：标题自带编号就用，没写就按章级标题的顺序数（摘要、参考文献一类不算）；
  *  稿件标题（只有一个最高级标题时）不算一章 */
 function sectionNumbers(paras: readonly Para[]): { at: (line: number) => string; title: (line: number) => string } {
   const heads = paras.filter((p) => p.heading);
-  const levels = [...new Set(heads.map((h) => h.level))].sort((a, b) => a - b);
-  let chapterLevel = levels[0] ?? 1;
-  if (heads.filter((h) => h.level === chapterLevel).length === 1 && levels.length > 1) chapterLevel = levels[1];
+  const chapterLevel = chapterLevelOf(heads);
   const marks: { line: number; num: string; title: string }[] = [];
   const counter: number[] = [];
   for (const h of heads) {
@@ -326,18 +347,9 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
   }
 
   // ⑧ 节的顺序、有无对 sections.json
-  const plan = (() => {
-    try {
-      const v = JSON.parse(input.sections ?? "");
-      return Array.isArray(v) ? v.map((s) => String((s as Record<string, unknown>)?.title ?? "")).filter(Boolean) : null;
-    } catch {
-      return null;
-    }
-  })();
+  const plan = plannedSections(input.sections);
   if (plan?.length) {
-    const levels = [...new Set(heads.map((h) => h.level))].sort((a, b) => a - b);
-    let chapterLevel = levels[0] ?? 1;
-    if (heads.filter((h) => h.level === chapterLevel).length === 1 && levels.length > 1) chapterLevel = levels[1];
+    const chapterLevel = chapterLevelOf(heads);
     const strip = (t: string) => t.replace(/^[\s§]*\d+(\.\d+)*\.?\s*/, "");
     const body = heads.filter((h) => h.level === chapterLevel && !NON_BODY.test(strip(h.text)) && !INTRO_OUTRO.test(strip(h.text)));
     const at = plan.map((t) => body.findIndex((h) => normTitle(h.text) === normTitle(t) || normTitle(h.text).includes(normTitle(t)) || normTitle(t).includes(normTitle(h.text))));
@@ -468,4 +480,44 @@ export function supersededWritingIds(items: readonly CheckItem[]): Set<string> {
   if (items.some((i) => i.id === "draft-placeholder")) out.add("writing-placeholder-fig");
   if (items.some((i) => i.id === "draft-heading-number")) out.add("writing-manual-numbers");
   return out;
+}
+
+/** 只占位、还没写正文的段：HTML 注释、「[待写]」「（TODO）」一类标记、TODO / TBD 起头 */
+const PLACEHOLDER_PARA = /^(<!--.*-->|[[(（【]\s*(待写|待补|待填|TODO|TBD)[^\])）】]*[\])）】]|(TODO|TBD)\b.*)$/iu;
+
+/**
+ * 初稿步骤卡统计行（2026-11-13 步骤卡统一设计稿）：Mesa 从稿件数，不靠 AI 自述。
+ * 节 = 章级标题（摘要、参考文献一类不算），标题下（含小节）有正文段才算已写；sections.json 定了、稿件里还没出标题的也算进总数
+ * （引言、结论不在 sections.json 里，出了标题才算）。引用按出现次数数（交叉引用不算），待定标记同核对 ⑦。
+ * 首项是主进度；稿件里没有章级标题返回 null。
+ */
+export function draftProgressParts(text: string, sections?: string | null): string[] | null {
+  const { paras } = readDoc(text);
+  const heads = paras.filter((p) => p.heading);
+  if (heads.length === 0) return null;
+  const level = chapterLevelOf(heads);
+  const strip = (t: string) => t.replace(/^[\s§]*\d+(\.\d+)*\.?\s*/, "");
+  const chapters: { title: string; written: boolean }[] = [];
+  let cur: { title: string; written: boolean } | null = null;
+  for (const p of paras) {
+    if (p.heading) {
+      if (p.level < level) cur = null;
+      else if (p.level === level) {
+        cur = NON_BODY.test(strip(p.text)) ? null : { title: p.text, written: false };
+        if (cur) chapters.push(cur);
+      }
+      continue;
+    }
+    if (cur && !PLACEHOLDER_PARA.test(p.text)) cur.written = true;
+  }
+  if (chapters.length === 0) return null;
+  const notYet = (plannedSections(sections) ?? []).filter((t) => !chapters.some((c) => sameSection(c.title, t))).length;
+  const total = chapters.length + notYet;
+  const written = chapters.filter((c) => c.written).length;
+  const parts = [written === total ? `已写 ${total} 节` : `已写 ${written} / ${total} 节`];
+  const cites = manuscriptCitations(text).length;
+  if (cites > 0) parts.push(`引用 ${cites} 处`);
+  const unsure = [...text.matchAll(UNSURE)].length;
+  if (unsure > 0) parts.push(`待定标记 ${unsure}`);
+  return parts;
 }

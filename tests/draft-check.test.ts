@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { checkDraft, imageRefs, manuscriptCitations, pickManuscript, styleAbbreviations, supersededWritingIds } from "../src/draft-check.ts";
+import { checkDraft, draftProgressParts, imageRefs, manuscriptCitations, pickManuscript, styleAbbreviations, supersededWritingIds } from "../src/draft-check.ts";
 
 // 精简样例（虚构的稿件、键与题名）
 const DRAFT = [
@@ -196,4 +196,26 @@ test("对照 ms_check.py：标题编号、图表编号、图注出处两边一�
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("初稿统计行：章级标题下有正文才算已写，sections.json 里还没出标题的节算进总数", () => {
+  const text = [
+    "# Mini review",
+    "## Introduction",
+    "<!-- 最后写 -->",
+    "## 1. Cathode materials",
+    "Layered oxides dominate [@smith2020; @lee2021]. See @fig-map.",
+    "### 1.1 Doping",
+    "Doping helps [待核实].",
+    "## 2. Anodes",
+    "[待写]",
+    "## References",
+    "x",
+  ].join("\n");
+  const sections = JSON.stringify([{ title: "Cathode materials" }, { title: "Anodes" }, { title: "Electrolytes" }]);
+  // 章：Introduction（只有注释）、Cathode（已写）、Anodes（只有占位）+ Electrolytes 还没出标题；References 不算
+  assert.deepEqual(draftProgressParts(text, sections), ["已写 1 / 4 节", "引用 2 处", "待定标记 1"]);
+  // 写满了只写总数；没引用、没待定标记就不列
+  assert.deepEqual(draftProgressParts("# T\n## A\ntext\n## B\nmore"), ["已写 2 节"]);
+  assert.equal(draftProgressParts("no headings here"), null);
 });

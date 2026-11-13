@@ -148,7 +148,8 @@ export function buildStepFlow(args: {
       kind: "input",
       section: "main",
       label: ask.label,
-      done: false,
+      // 开工即按当时的选择执行了：收成完成态，选择写在行尾（同「确定文献来源」，2026-11-13 步骤卡统一设计稿）
+      done: runStatus !== "pending",
       skipCurrent: true,
     });
   }
@@ -168,11 +169,12 @@ export function buildStepFlow(args: {
       key: "discuss",
       kind: "discuss",
       section: "main",
+      // 开工即算定过：没定的由 AI 在对话里问，竖线不再停在这一行（2026-11-13 步骤卡统一设计稿）
       label:
-        pendingDecisions > 0
+        pendingDecisions > 0 && runStatus === "pending"
           ? `先定几件事（还有 ${pendingDecisions} 件）`
           : "先定几件事",
-      done: hasDraft && pendingDecisions === 0,
+      done: (hasDraft && pendingDecisions === 0) || runStatus !== "pending",
     });
   }
   // 2. before 人工事项
