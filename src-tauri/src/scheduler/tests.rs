@@ -1288,7 +1288,7 @@ fn followup_task(root: &Path) -> Schedule {
         state: "waiting".into(), about: "完成剩余部分".into(), at: None, profile_id: "profile".into(), agent: "codex".into(), model: None,
         session_id: Some("session".into()), rounds: 1, spent: 0.2, deadline: (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339(),
         authority: followup_authority(&task), connection: "test".into(), isolation: root.to_string_lossy().into_owned(),
-        evidence: crate::watch_review::WatchSnapshot { run_id: "run".into(), project_root: root.to_string_lossy().into_owned(), files: Vec::new(), pdfs_initial: None, pdfs_after: None }, probe_hash: None,
+        evidence: crate::watch_review::WatchSnapshot { run_id: "00000000-0000-4000-8000-000000000001".into(), project_root: root.to_string_lossy().into_owned(), files: Vec::new(), pdfs_initial: None, pdfs_after: None }, probe_hash: None,
     });
     task
 }
@@ -1302,14 +1302,24 @@ fn followup_waiting_reads_real_answers_and_limits_reject_changed_authority() {
     let path = dir.join(crate::help_requests::HELP_WANTED_FILE);
     fs::write(&path, "- 按哪个口径\n").unwrap();
     assert!(!continuation_ready(&task));
+    let item_id = crate::help_requests::parse_items(&fs::read_to_string(&path).unwrap())[0].id.clone();
     fs::write(&path, "- 按哪个口径\n  已答：按原口径\n").unwrap();
+    // 仅在卡片上写入已答、尚未点「交给 Agent 继续」确认投递时，不抢跑拉起下一轮
+    assert!(!continuation_ready(&task));
+    crate::help_requests::confirm_headless_delivery(&dir, std::slice::from_ref(&item_id), None).unwrap();
+    assert!(continuation_ready(&task));
+    // 改写答案后须重新确认投递
+    crate::help_requests::answer_at(&dir, &item_id, "按新口径").unwrap();
+    assert!(!continuation_ready(&task));
+    crate::help_requests::confirm_headless_delivery(&dir, std::slice::from_ref(&item_id), None).unwrap();
     assert!(continuation_ready(&task));
     let (prompt, carried) = continuation_answers(&task);
-    assert!(prompt.contains("按哪个口径 → 按原口径"));
+    assert!(prompt.contains("按哪个口径 → 按新口径"));
     assert_eq!(carried.len(), 1);
-    // 接回跑完后标「已送」：再接回时不再重复带，收件箱也不再显示「已答未送」
+    // 接回跑完后标「已送」：再接回时不再重复带，收件箱也不再显示「已答未送」，且不再视为待续跑
     assert_eq!(crate::help_requests::mark_answers_sent(&dir, &carried).unwrap(), 1);
     assert!(fs::read_to_string(&path).unwrap().contains("已送："));
+    assert!(!continuation_ready(&task));
     assert!(continuation_answers(&task).0.is_empty());
     fs::write(&path, "- 按哪个口径\n  已答：按原口径\n").unwrap();
     assert!(prepare_continuation(&task).unwrap());
@@ -1318,6 +1328,18 @@ fn followup_waiting_reads_real_answers_and_limits_reject_changed_authority() {
     task.model = None;
     task.continuation.as_mut().unwrap().rounds = 4;
     assert!(prepare_continuation(&task).is_err());
+    // 中止跟进时冻结前序产物、落历史与 uncertain；人重新打开开关后清掉死延续态恢复正常调度
+    write_schedules_at(&schedules_path().unwrap(), std::slice::from_ref(&task)).unwrap();
+    let aborted = abort_continuation_before_run(&task, "跟进授权已到期".into());
+    assert_eq!(aborted.status, "error");
+    assert!(aborted.auto_paused.is_some());
+    let mut paused = read_schedules_at(&schedules_path().unwrap()).unwrap().remove(0);
+    assert!(!paused.enabled);
+    assert_eq!(paused.history.len(), 1);
+    assert_eq!(paused.continuation.as_ref().unwrap().state, "uncertain");
+    assert!(crate::watch_review::load_at(&crate::watch_review::review_dir().unwrap(), "00000000-0000-4000-8000-000000000001").is_ok());
+    reenable(&mut paused, Local::now().naive_local());
+    assert!(paused.continuation.is_none());
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1411,6 +1433,8 @@ fn followup_real_scheduler_wait_answer_resume() {
     let session = saved.continuation.as_ref().unwrap().session_id.clone();
     let items = crate::help_requests::parse_items(&fs::read_to_string(isolation.join(crate::help_requests::HELP_WANTED_FILE)).unwrap());
     crate::help_requests::answer_at(&isolation, &items[0].id, "A（原口径）").unwrap();
+    assert!(!continuation_ready(&saved));
+    crate::help_requests::confirm_headless_delivery(&isolation, std::slice::from_ref(&items[0].id), None).unwrap();
     assert!(continuation_ready(&saved));
     assert!(prepare_continuation(&saved).unwrap());
     std::env::var("MESA_FOLLOWUP_REPLY_FILE").map(|file| fs::write(file, "做完了。\n```mesa-receipt\n{\"state\":\"done\"}\n```\n").unwrap()).unwrap();

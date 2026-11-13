@@ -106,9 +106,42 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
       remember: null,
     });
     const ws = (await workspaceFor(item.worktreePath)) ?? (await workspaceFor(item.helpRoot));
-    const deliveryRun = await invoke<RunDto>("help_delivery_prepare", { root: item.helpRoot, itemIds: [saved.id], retry: false });
-    if (deliveryRun.runtime === "headless") return "回答已保存；后台按原连接与授权继续，做完照常等你评审";
-    if (!ws) return "已记下你的回答；这条来自项目根，回到那段对话里点「交给 Agent」才送得到";
+    let deliveryRun: RunDto;
+    try {
+      deliveryRun = await invoke<RunDto>("help_delivery_prepare", { root: item.helpRoot, itemIds: [saved.id], retry: false });
+    } catch (reason) {
+      return `已记下你的回答，但暂未交给 Agent：${String(reason)}`;
+    }
+    if (deliveryRun.runtime === "headless") {
+      const [help, schedules] = await Promise.all([
+        safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
+        safe(invoke<ScheduleDto[]>("list_schedules"), []),
+      ]);
+      const src = help.find((h) => samePath(h.root, item.helpRoot ?? "", IS_WINDOWS));
+      const rem = src?.items.filter((i) => !i.sent && !i.answer).length ?? 0;
+      const sched = deliveryRun.taskRef ? schedules.find((s) => s.id === deliveryRun.taskRef) : undefined;
+      if (sched?.followupState === "uncertain") return "回答已记下，但上次后台跟进已暂停，请回电脑核对定时任务产物";
+      if (rem > 0) return `回答已记下；这处后台跟进还有 ${rem} 条问题待答，全部答完后后台按原授权继续`;
+      if (sched && !sched.enabled) return "回答已保存；这条定时任务当前已暂停，在电脑上打开开关后后台才会继续";
+      return "回答已保存；后台按原连接与授权继续，做完照常等你评审";
+    }
+    if (!ws) {
+      if (item.helpRoot && !liveRunIn(item.helpRoot)) {
+        useAppStore.getState().setPendingTerminal({
+          cwd: item.helpRoot,
+          extraEnv: {},
+          title: item.where,
+          runId: deliveryRun.id,
+          taskId: deliveryRun.taskId || undefined,
+          agentId: deliveryRun.agent,
+          profileId: deliveryRun.profileId ?? undefined,
+          resume: deliveryRun.sessionId ? { agentId: deliveryRun.agent, sessionId: deliveryRun.sessionId } : undefined,
+          autoStart: Boolean(deliveryRun.profileId),
+        });
+        useAppStore.getState().setPage("terminal");
+      }
+      return `已记下，回答已排队；${item.where}的 AI 空闲时送到，送到前仍保留在待处理里`;
+    }
     if (!liveRunIn(ws.worktreePath)) {
       const request = await buildWorkspaceTerminalRequest(ws, undefined, { autoStart: true, resumeSession: true });
       request.runId = deliveryRun.id;

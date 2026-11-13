@@ -440,6 +440,24 @@ pub(crate) fn answer_remembered_at(root: &Path, item_id: &str, answer: &str, rem
         }
         Ok(changes)
     })?;
+    // 后台跟进待续跑的回答一旦被改写，撤掉该条的已确认标记，须重新点「交给 Agent 继续」才续跑
+    if let Ok(mut deliveries) = read_deliveries() {
+        let mut touched = false;
+        deliveries.retain_mut(|delivery| {
+            if crate::paths::same_path(&delivery.root, &root.to_string_lossy()) && delivery.state == "headless_ready" {
+                let before = delivery.items.len();
+                delivery.items.retain(|old| old.id != item_id);
+                if delivery.items.len() != before {
+                    touched = true;
+                }
+                return !delivery.items.is_empty();
+            }
+            true
+        });
+        if touched {
+            let _ = write_deliveries(&deliveries);
+        }
+    }
     let mut item = found.expect("edit 成功即找到");
     item.answer = Some(answer);
     item.remembered = remember.map(String::from);
@@ -454,14 +472,34 @@ pub(crate) fn answer_line(question: &str, answer: &str, remembered: Option<&str>
     }
 }
 
-/// 后台跟进接回时：这一轮实际带上的回答标「已送」（只标没送过、回答仍是那一句的条目）
+/// 后台跟进接回时：这一轮实际带上的回答标「已送」（只标没送过、回答仍是那一句的条目），并收口确认记录
 pub(crate) fn mark_answers_sent(root: &Path, answered: &[(String, String)]) -> Result<usize, String> {
     if answered.is_empty() || !root.join(HELP_WANTED_FILE).exists() { return Ok(0) }
+    let _lock = crate::storage::config_lock("help-deliveries")?;
     let secrets = crate::profiles::stored_secrets();
     let items: Vec<DeliveryAnswer> = answered.iter().map(|(id, answer)| DeliveryAnswer {
         id: id.clone(), question: String::new(), answer: crate::sessions::redact_sensitive_text_with(answer, &secrets), remembered: None,
     }).collect();
-    mark_selected_sent_at(root, &items, &crate::sessions::now_iso())
+    let sent = mark_selected_sent_at(root, &items, &crate::sessions::now_iso())?;
+    if let Ok(mut deliveries) = read_deliveries() {
+        let mut touched = false;
+        for delivery in &mut deliveries {
+            if crate::paths::same_path(&delivery.root, &root.to_string_lossy()) && delivery.state == "headless_ready" {
+                let before = delivery.items.len();
+                delivery.items.retain(|saved| !items.iter().any(|done| done.id == saved.id && done.answer == saved.answer));
+                if delivery.items.len() != before {
+                    touched = true;
+                    if delivery.items.is_empty() {
+                        delivery.state = "delivered".into();
+                    }
+                }
+            }
+        }
+        if touched {
+            let _ = write_deliveries(&deliveries);
+        }
+    }
+    Ok(sent)
 }
 
 fn mark_selected_sent_at(root: &Path, items: &[DeliveryAnswer], when: &str) -> Result<usize, String> {
@@ -608,6 +646,89 @@ fn prepare_delivery_at(root: &Path, item_ids: &[String], run: &crate::runs::RunD
     Ok(delivery)
 }
 
+/// 后台分轮跟进的人工请求投递确认：仅当用户显式点「交给 Agent 继续」或经调度台/飞书/桌宠提交后，
+/// 所选已答条目才记入 `headless_ready`；光在卡片上点选选项（可能还在答下一题或改答案）不会抢跑拉起下一轮。
+pub(crate) fn confirm_headless_delivery(
+    root: &Path,
+    item_ids: &[String],
+    run: Option<&crate::runs::RunDto>,
+) -> Result<(), String> {
+    if item_ids.is_empty() || item_ids.len() > MAX_ITEMS {
+        return Err("请选择要交给 Agent 的回答".into());
+    }
+    if let Some(run) = run {
+        if !crate::paths::same_path(&root.to_string_lossy(), &run.isolation_path) || run.permission != "write_tree" {
+            return Err("回答只能送回发问目录的可写对话".into());
+        }
+    }
+    let _lock = crate::storage::config_lock("help-deliveries")?;
+    let text = fs::read_to_string(root.join(HELP_WANTED_FILE)).map_err(|error| error.to_string())?;
+    let current = parse_items(&text);
+    let secrets = crate::profiles::stored_secrets();
+    let mut incoming = Vec::new();
+    for id in item_ids {
+        let item = current.iter().find(|item| &item.id == id && item.sent.is_none()).ok_or("问题已经变了或已送出，刷新后再看")?;
+        let answer = item.answer.as_ref().ok_or("这条问题还没有回答")?;
+        if incoming.iter().any(|saved: &DeliveryAnswer| &saved.id == id) {
+            continue;
+        }
+        incoming.push(DeliveryAnswer {
+            id: id.clone(),
+            question: crate::sessions::redact_sensitive_text_with(&item.question, &secrets),
+            answer: crate::sessions::redact_sensitive_text_with(answer, &secrets),
+            remembered: item.remembered.clone(),
+        });
+    }
+    let mut deliveries = read_deliveries()?;
+    if let Some(existing) = deliveries.iter_mut().find(|delivery| {
+        crate::paths::same_path(&delivery.root, &root.to_string_lossy()) && delivery.state == "headless_ready"
+    }) {
+        if let Some(run) = run {
+            existing.run_id = run.id.clone();
+            existing.agent = run.agent.clone();
+            existing.session_id = run.session_id.clone();
+        }
+        existing.items.retain(|old| {
+            current.iter().any(|cur| cur.id == old.id && cur.sent.is_none())
+                && !incoming.iter().any(|next| next.id == old.id)
+        });
+        existing.items.extend(incoming);
+        return write_deliveries(&deliveries);
+    }
+    deliveries.push(HelpDelivery {
+        id: uuid::Uuid::new_v4().to_string(),
+        root: root.to_string_lossy().into_owned(),
+        run_id: run.map(|r| r.id.clone()).unwrap_or_default(),
+        agent: run.map(|r| r.agent.clone()).unwrap_or_default(),
+        session_id: run.and_then(|r| r.session_id.clone()),
+        items: incoming,
+        state: "headless_ready".into(),
+        claim_run: None,
+    });
+    write_deliveries(&deliveries)
+}
+
+/// 核对 `root` 下所有尚未送达的条目是否均已作答且经显式提交确认（`headless_ready` 且答案一致）
+pub(crate) fn headless_delivery_ready(root: &Path, items: &[HelpItemDto]) -> bool {
+    let unsent: Vec<&HelpItemDto> = items.iter().filter(|item| item.sent.is_none()).collect();
+    if unsent.is_empty() || unsent.iter().any(|item| item.answer.is_none()) {
+        return false;
+    }
+    let Ok(_lock) = crate::storage::config_lock("help-deliveries") else { return false };
+    let Ok(deliveries) = read_deliveries() else { return false };
+    let Some(ready) = deliveries.iter().find(|delivery| {
+        crate::paths::same_path(&delivery.root, &root.to_string_lossy()) && delivery.state == "headless_ready"
+    }) else {
+        return false;
+    };
+    let secrets = crate::profiles::stored_secrets();
+    unsent.iter().all(|item| {
+        let Some(answer) = item.answer.as_deref() else { return false };
+        let redacted = crate::sessions::redact_sensitive_text_with(answer, &secrets);
+        ready.items.iter().any(|saved| saved.id == item.id && saved.answer == redacted)
+    })
+}
+
 #[tauri::command]
 pub async fn help_delivery_prepare(root: String, item_ids: Vec<String>, retry: bool) -> Result<crate::runs::RunDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -615,7 +736,10 @@ pub async fn help_delivery_prepare(root: String, item_ids: Vec<String>, retry: b
         let runs = crate::runs::run_list_sync(Some(source.repo_path.clone()))?;
         let run = runs.iter().filter(|run| crate::paths::same_path(&run.isolation_path, &source.root) && run.permission == "write_tree")
             .max_by_key(|run| (run.closed_at.is_none(), run.created_at.clone())).ok_or("没有找到发问的对话，请先接回原对话再交给 Agent")?;
-        if run.runtime == "headless" { return Ok(run.clone()); }
+        if run.runtime == "headless" {
+            confirm_headless_delivery(Path::new(&source.root), &item_ids, Some(run))?;
+            return Ok(run.clone());
+        }
         let _lock = crate::storage::config_lock("help-deliveries")?;
         prepare_delivery_at(Path::new(&source.root), &item_ids, run, retry)?;
         Ok(run.clone())

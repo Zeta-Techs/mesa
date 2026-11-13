@@ -2781,13 +2781,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         for (const [tabId, st] of Object.entries(statusesRef.current)) {
           if (!st?.running || st.shell || !st.runId || st.attention === "working" || st.attention === "confirm") continue;
           if (draftByTabRef.current[tabId]) continue;
-          // 你正对着它的终端层：可能在 TUI 里直接打字（聊天框草稿管不到），这一轮不送，免得粘进你没打完的那行（2026-11-03 自查）
-          if (
-            pageVisibleRef.current &&
-            tabId === focusedIdRef.current &&
-            (surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current) === "terminal"
-          )
-            continue;
           const action = tabActionsRef.current.get(tabId);
           if (!action) continue;
           let helpSent = false;
@@ -2799,6 +2792,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           ).catch((error) => `回答队列读取失败，未发送：${String(error)}`);
           if (helpError) toast(helpError, "warning");
           if (helpSent || helpError) continue;
+          // 你正对着它的终端层：可能在 TUI 里直接打字（聊天框草稿管不到），后台同伴来信先缓一轮，免得粘进你没打完的那行；
+          // 人亲手点的「交给 Agent 继续」（上方 sendHelpDelivery）是显式指令，不受终端层挡住（2026-11-14）
+          if (
+            pageVisibleRef.current &&
+            tabId === focusedIdRef.current &&
+            (surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current) === "terminal"
+          )
+            continue;
           const got = await invoke<[string[], string] | null>("mail_take", { runId: st.runId }).catch(() => null);
           if (!got) continue;
           const [ids, text] = got;

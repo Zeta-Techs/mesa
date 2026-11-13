@@ -2,13 +2,35 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct FollowupPolicy {
     pub max_rounds: u32,
     pub days: u32,
     pub budget_usd: f64,
     #[serde(default)]
     pub probe: Option<String>,
+}
+
+/// 前端新建 / 更新时的严格入参（拒绝拼错字段；落盘的 FollowupPolicy 允许前向兼容未来可选字段）
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FollowupPolicyInput {
+    pub max_rounds: u32,
+    pub days: u32,
+    pub budget_usd: f64,
+    #[serde(default)]
+    pub probe: Option<String>,
+}
+
+impl From<FollowupPolicyInput> for FollowupPolicy {
+    fn from(input: FollowupPolicyInput) -> Self {
+        Self {
+            max_rounds: input.max_rounds,
+            days: input.days,
+            budget_usd: input.budget_usd,
+            probe: input.probe,
+        }
+    }
 }
 
 impl FollowupPolicy {
@@ -120,5 +142,9 @@ mod tests {
         }
         policy.probe = None; policy.budget_usd = f64::NAN;
         assert!(policy.validate().is_err());
+        // 落盘配置允许未来版本新增可选字段，编辑入参仍严格拦截拼写错误
+        let persisted: FollowupPolicy = serde_json::from_str(r#"{"maxRounds":4,"days":7,"budgetUsd":2.0,"futureOptional":true}"#).unwrap();
+        assert_eq!(persisted.max_rounds, 4);
+        assert!(serde_json::from_str::<FollowupPolicyInput>(r#"{"maxRounds":4,"days":7,"budgetUsd":2.0,"typo":1}"#).is_err());
     }
 }

@@ -31,9 +31,9 @@ pub(crate) struct WatchSnapshot {
 }
 
 pub(crate) fn review_dir() -> Result<PathBuf, String> {
-    Ok(crate::dirs::config_dir()
+    Ok(crate::storage::config_root()
         .ok_or("无法确定配置目录")?
-        .join("ccode/watch-reviews"))
+        .join("watch-reviews"))
 }
 
 fn snapshot_path(dir: &Path, id: &str) -> Result<PathBuf, String> {

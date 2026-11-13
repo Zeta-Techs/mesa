@@ -8,7 +8,7 @@ import { buildWorkspaceTerminalRequest, resolveStepLaunchByWorkspace } from "../
 import { helpAnsweredUnsent, helpItemsSignature } from "../help-requests";
 import { confirmDialog } from "./ConfirmDialog";
 import { toast } from "../toast";
-import type { HelpRequestDto, RunDto, WorkspaceDto } from "../types";
+import type { HelpRequestDto, RunDto, ScheduleDto, WorkspaceDto } from "../types";
 
 /**
  * 人工请求卡片弹层（2026-11-02 起全局挂在 App）：工作台拍板队列、标题栏收件箱、项目页点「去回答」都原地弹出，不跳页。
@@ -73,7 +73,15 @@ export default function HelpRequestDialog() {
       }
       const workspaces = await invoke<WorkspaceDto[]>("list_workspaces");
       if (deliveryRun?.runtime === "headless") {
-        toast("回答已保存，后台按原连接与授权继续；做完照常等你评审。", "info");
+        const schedules = await invoke<ScheduleDto[]>("list_schedules").catch(() => [] as ScheduleDto[]);
+        const sched = deliveryRun.taskRef ? schedules.find((s) => s.id === deliveryRun.taskRef) : undefined;
+        if (sched?.followupState === "uncertain") {
+          toast("回答已记下，但上次跟进已暂停（结果不明或到上限）；请去定时任务核对先前产物。", "warning");
+        } else if (sched && !sched.enabled) {
+          toast("回答已保存；这条定时任务当前已暂停，打开开关后后台才会按原授权继续。", "info");
+        } else {
+          toast("回答已保存，后台按原连接与授权继续；做完照常等你评审。", "info");
+        }
         bumpHelpRefresh();
         return;
       }
@@ -122,6 +130,25 @@ export default function HelpRequestDialog() {
   if (!view) return null;
   const answeredItems = helpAnsweredUnsent(view.items);
   const answered = answeredItems.length;
+  const isHeadless = !view.workspaceId && view.workspaceName === "后台跟进";
+  const unanswered = view.items.filter((i) => !i.sent && !i.answer).length;
+  const headlessBlocked = isHeadless && (answered === 0 || unanswered > 0);
+  const submitLabel = isHeadless
+    ? answered === 0
+      ? "先在上方点选回答"
+      : unanswered > 0
+        ? `还有 ${unanswered} 条待答`
+        : `交给 Agent 继续（${answered} 条已答）`
+    : answered > 0
+      ? `交给 Agent 继续（${answered} 条已答）`
+      : "去终端回答";
+  const submitTitle = isHeadless
+    ? headlessBlocked
+      ? "后台分轮跟进需在上方把待答问题全部答完后，点此确认才续跑"
+      : "确认回答已就绪，让后台按原连接与授权续跑下一轮"
+    : answered > 0
+      ? "把回答交给这一步原来的对话，让 Agent 接着干"
+      : "打开该步骤终端，直接回答这些请求";
   return (
     <Modal
       open
@@ -144,15 +171,17 @@ export default function HelpRequestDialog() {
           </button>
           <button
             type="button"
-            title={answered > 0 ? "把回答交给这一步原来的对话，让 Agent 接着干" : "打开该步骤终端，直接回答这些请求"}
+            disabled={headlessBlocked}
+            title={submitTitle}
             onClick={() => {
+              if (headlessBlocked) return;
               const target = view;
               close();
               void openTerminal(target, answered > 0 ? answeredItems.map((item) => item.id) : undefined);
             }}
             className={primaryActionClass}
           >
-            {answered > 0 ? `交给 Agent 继续（${answered} 条已答）` : "去终端回答"}
+            {submitLabel}
           </button>
         </>
       }
