@@ -687,6 +687,7 @@ figure-composer 上游许可待独立核实（自述 Apache-2.0）。
 | jobserver | 0.1.35 | MIT OR Apache-2.0 |
 | js-sys | 0.3.103 | MIT OR Apache-2.0 |
 | json-patch | 3.0.1 | MIT/Apache-2.0 |
+| jsonc-parser | 0.34.0 | MIT |
 | jsonptr | 0.6.3 | MIT OR Apache-2.0 |
 | keyboard-types | 0.7.0 | MIT OR Apache-2.0 |
 | keyring | 3.6.3 | MIT OR Apache-2.0 |
