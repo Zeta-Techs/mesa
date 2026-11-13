@@ -843,6 +843,8 @@ export default function StepFlow({
   }, [states]);
   const pendingListRef = useRef<PendingConfirmHandle>(null);
   const [pendingMeta, setPendingMeta] = useState({ count: 0, busy: false });
+  const pendingSettled =
+    pendingMeta.count === 0 && (states ?? []).some((s) => isPendingConfirmTaskTitle(s.title) && s.done);
   /** 文献清单与待获取跟着这一步的运行状态重读（与 ReviewDecisionList 同口径） */
   const ledgerRefreshKey = `${runStatus}|${agentAttention ?? ""}`;
   const ledgerKeySeen = useRef(ledgerRefreshKey);
@@ -3293,9 +3295,12 @@ export default function StepFlow({
           pendingRowLive &&
           !dense && (
             <div className="mt-1 pl-9 text-micro leading-5 text-l4">
-              {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走，提醒移出的后果 */}
-              <p>{node.done && pendingMeta.count === 0 ? PENDING_DONE_HINT : PENDING_HINT}</p>
-              <div className="mt-1.5">
+              {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走；做完了只留「文献清单」一行，
+                  移出的后果点开清单才说（2026-11-13 用户：勾上了下面还铺着长说明） */}
+              {(!pendingSettled || pendingListOpen) && (
+                <p>{pendingSettled ? PENDING_DONE_HINT : PENDING_HINT}</p>
+              )}
+              <div className={!pendingSettled || pendingListOpen ? "mt-1.5" : undefined}>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
