@@ -2366,13 +2366,14 @@ export default function StepFlow({
             : isCurrent
               ? // 当前节点只在左侧立一道竖线，不给整块刷底色：
                 // 「定方向」内容高，整块 bg-hover 会变成一大片色板，把主动作「开始」压下去。
-                // 竖线走绝对定位压在**序号那一列**（left-[7px]，与 StepperChain 的连接线同轴），
-                // 用 border-l 会画在行最左，与序号差 7px 对不上（用户实测「框线没对上」）。
+                // 竖线走绝对定位压在**序号那一列的中线**（pl-1.5 + w-4 的一半 = 0.875rem，与主干连接线同轴），
+                // 用 border-l 会画在行最左，与序号对不上（用户实测「框线没对上」）；写死 7px 只落在列的左缘，
+                // 人工事项方框占同一列时线贴着方框左边（2026-11-14 用户截图「方块与线重合」）。
                 // 起点 top-[22px] 对齐序号圆心下方：圆圈字形（①②）在 20px 行框里只占中部，
                 // 固定 top-3（12px）会冒到字形顶上方（用户实测「序号上方多出一段」）；
                 // 22px 在紧凑行（无按钮）落在序号正下方、加高行（按钮撑到 28px+）落在圆心附近，
                 // 两种行高都不会越过字形顶
-                "relative pl-1.5 before:absolute before:bottom-1 before:left-[7px] before:top-[22px] before:w-0.5 before:bg-cta before:content-['']"
+                "relative pl-1.5 before:absolute before:bottom-1 before:left-[calc(0.875rem-1px)] before:top-[22px] before:w-0.5 before:bg-cta before:content-['']"
               : "pl-1.5"
         } ${
           // 还轮不到才压暗。待确认清单已经挂在这一行上，不因为检索会话还没标完成就发灰。
@@ -3703,9 +3704,9 @@ export default function StepFlow({
       ref={containerRef}
       className={bare ? "" : "ccode-well rounded-md px-2.5 py-2"}
     >
-      {/* 主干节点用左侧竖线串起来（连接线落在序号列正下方，1.5px 极淡）：
+      {/* 主干节点用左侧竖线串起来（连接线落在序号列中线上，被序号与人工事项方框的井底色盖住，1px 极淡）：
           没有连线时三个节点像三条独立的行，读不出「这是一条流程」 */}
-      <ol className="relative space-y-3 before:absolute before:bottom-4 before:left-[7px] before:top-4 before:w-px before:bg-hairline before:content-['']">
+      <ol className="relative space-y-3 before:absolute before:bottom-4 before:left-[calc(0.875rem-0.5px)] before:top-4 before:w-px before:bg-hairline before:content-['']">
         {flow.nodes
           .filter((n) => n.section === "main")
           .map((node) => renderNode(node, false))}
