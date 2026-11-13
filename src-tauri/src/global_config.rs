@@ -4227,5 +4227,40 @@ pub async fn has_global_backup(agent: String) -> bool {
     .unwrap_or(false)
 }
 
+/// 写进原文时，把注释留着，原地按键合并。
+fn merge_jsonc_keys(original: &str, new_content: &str) -> Result<String, String> {
+    use jsonc_parser::{parse_to_cst, JsonObject};
+    let orig_cst = parse_to_cst(original, &Default::default())
+        .map_err(|e| format!("解析原文失败: {:?}", e))?;
+    let new_val: serde_json::Value =
+        serde_json::from_str(new_content).map_err(|e| format!("新内容非 JSON: {e}"))?;
+    let Some(serde_json::Value::Object(new_map)) = Some(&new_val) else {
+        return Err("新内容不是对象".to_string());
+    };
+    let Some(orig_obj) = orig_cst.value.and_then(|v| v.as_object()) else {
+        return Err("原文不是 JSONC 对象".to_string());
+    };
+    let mut out = original.to_string();
+    let mut offsets: Vec<_> = new_map
+        .iter()
+        .filter_map(|(k, nv)| {
+            let prop = orig_obj.get(k)?;
+            let (start, end) = (prop.value.range()?.start, prop.value.range()?.end);
+            Some((start, end, serde_json::to_string(nv).unwrap()))
+        })
+        .collect();
+    offsets.sort_by_key(|(s, _, _)| *s);
+    let mut shift = 0i32;
+    for (s, e, txt) in offsets {
+        let s = (s as i32 + shift) as usize;
+        let e = (e as i32 + shift) as usize;
+        let old_len = e - s;
+        out.replace_range(s..e, &txt);
+        shift += txt.len() as i32 - old_len as i32;
+    }
+    Ok(out)
+}
+
+
 #[cfg(test)]
 mod tests;
