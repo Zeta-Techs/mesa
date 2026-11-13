@@ -501,7 +501,9 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
       evidence: { detail: `${lineList(underscore.map((p) => p.line))}。Markdown 里 _ 不是下标，PDF 和 Word 会原样显示下划线；改成 Pandoc 写法 ΔG~H\\*~、η~10~。` },
     });
   }
-  const prefixed = body.flatMap((p) => [...p.text.matchAll(XREF_PREFIX)].map((m) => ({ line: p.line, text: m[0] })));
+  const prefixed = body.flatMap((p) =>
+    [...stripCodeAndMath(p.text).matchAll(XREF_PREFIX)].map((m) => ({ line: p.line, text: m[0] })),
+  );
   if (prefixed.length) {
     push(items, {
       id: "draft-xref-prefix",
@@ -514,7 +516,16 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
   }
   if (/^\s*number-sections:\s*true/m.test(front)) {
     const own = new Set(heads.map((h) => sec.at(h.line)).filter(Boolean));
-    const refs = body.flatMap((p) => [...p.text.matchAll(HAND_SECTION_REF)].map((m) => ({ line: p.line, nums: m[0].match(/\d+(?:\.\d+)*/g) ?? [] })));
+    const refs = body.flatMap((p) => {
+      const cleaned = stripCodeAndMath(p.text);
+      return [...cleaned.matchAll(HAND_SECTION_REF)]
+        .filter((m) => {
+          const tail = cleaned.slice((m.index ?? 0) + m[0].length);
+          // 「Section 2.1 of [@Smith2020]」指被引用论文的节，不是本稿章节号
+          return !/^\s*(?:of|in)\s+(?:Refs?\.?\s*)?\[?-?@(?!sec-|fig-|tbl-|eq-)/i.test(tail);
+        })
+        .map((m) => ({ line: p.line, nums: m[0].match(/\d+(?:\.\d+)*/g) ?? [] }));
+    });
     if (refs.length) {
       const missing = [...new Set(refs.flatMap((r) => r.nums).filter((n) => !own.has(n)))];
       push(items, {
@@ -528,8 +539,7 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
     }
   }
   const piles = body.filter((p) => !p.text.startsWith("|")).flatMap((p) =>
-    p.text
-      .split(/(?<=[.;])\s+(?=[A-Z])/)
+    splitSentences(p.text)
       .filter((s) => (s.match(FIG_OF_CITE) ?? []).length >= 3)
       .map(() => p.line),
   );
@@ -549,16 +559,45 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
 /** 一篇占带引用段落的比例到多少才报（2026-11-13 HER 初稿 10%、另一份定稿 4%） */
 const CONCENTRATION_SHARE = 0.08;
 const CONCENTRATION_MIN_PARAS = 10;
-/** 带单位的数值：75–84 mV、1.54 V、64 h、12%、0.06 eV */
-const NUMERIC_VALUE = /\d+(?:\.\d+)?\s*(?:[–—-]\s*\d+(?:\.\d+)?\s*)?(?:%|mV|V|mA|A|eV|meV|h|min|s|cm|nm|μm|µm|mg|g|K|°C|Ω|wt%|at%)(?![\p{L}])/u;
+/** 带单位的数值：75–84 mV、1.54 V、64 h、12%、0.06 eV、0.5 M、1000 cycles 等常见理化单位 */
+const NUMERIC_VALUE =
+  /\d+(?:\.\d+)?\s*(?:[–—-]\s*\d+(?:\.\d+)?\s*)?(?:%|wt%|at%|ppm|ppb|cycles|mV|V|mA|A|eV|meV|kJ|J|mW|kW|W|mAh|Wh|mF|F|mmol|μmol|µmol|mol|mM|M|GPa|MPa|kPa|Pa|bar|mbar|GHz|MHz|kHz|Hz|mL|μL|µL|L|kg|mg|μg|µg|g|cm|nm|μm|µm|Å|h|min|s|K|°C|Ω)(?![\p{L}.])/u;
 const ABSTRACT_HEDGE = /\[待核实\]|\babstract\b|摘要/i;
+const ABBR_BEFORE_DOT =
+  /(?:^|[\s([{"'])(?:Figs?|Eqs?|Secs?|Tabs?|Refs?|et\s+al|vs|ca|cf|e\.g|i\.e|approx|wt|at|vol|no|Nos?|Ch|Dr|Prof|St|Jr|Sr|[A-Z])\.$/i;
+
+/** 中英文分句：兼容中文句末标点与数字 / 希腊字母 / 化学前缀开头的英文句，同时避开 Fig. / et al. 与 [@a; @b] 括号内分号 */
+function splitSentences(text: string): string[] {
+  const brackets: string[] = [];
+  const masked = text.replace(/\[[^\]\n]*\]/g, (m) => {
+    brackets.push(m);
+    return `\uE000${brackets.length - 1}\uE001`;
+  });
+  const restore = (s: string) => s.replace(/\uE000(\d+)\uE001/g, (_, idx) => brackets[Number(idx)] ?? "");
+  const out: string[] = [];
+  for (const chunk of masked.split(/[。！？；]+/)) {
+    let start = 0;
+    const re = /([.!?;])\s+(?=[A-Z\d"'“‘(\uE000\p{Script=Greek}\p{Script=Han}]|[a-z]-)/gu;
+    for (const m of chunk.matchAll(re)) {
+      const idx = m.index ?? 0;
+      const end = idx + 1;
+      if (m[1] === "." && ABBR_BEFORE_DOT.test(chunk.slice(start, end))) continue;
+      const piece = restore(chunk.slice(start, end)).trim();
+      if (piece) out.push(piece);
+      start = idx + m[0].length;
+    }
+    const tail = restore(chunk.slice(start)).trim();
+    if (tail) out.push(tail);
+  }
+  return out;
+}
 
 /** 引了这个键、又带数值的句子所在行（表格行不算；hedge 命中的句子不算） */
 function numericSentenceLines(paras: readonly Para[], key: string, hedge?: RegExp): number[] {
   const out: number[] = [];
   for (const p of paras) {
     if (p.heading || p.text.startsWith("|")) continue;
-    for (const s of p.text.split(/(?<=[.;])\s+(?=[A-Z])/)) {
+    for (const s of splitSentences(p.text)) {
       if (!manuscriptCitations(s).some((c) => c.key === key)) continue;
       if (!NUMERIC_VALUE.test(proseOnly(s)) || hedge?.test(s)) continue;
       out.push(p.line);
@@ -574,13 +613,20 @@ const XREF_PREFIX = /\b(?:Figures?|Figs?\.|Tables?|Tabs?\.|Sections?|Secs?\.|Equ
 const HAND_SECTION_REF = /(?:\bSections?|\bSecs?\.|§)\s*\d+(?:\.\d+)*(?:\s*(?:[–—-]|and|&|,)\s*\d+(?:\.\d+)*)*/gi;
 const FIG_OF_CITE = /\bFigs?\.\s*S?\d+[^;]*?\bof\s+\[@/g;
 
-function proseOnly(text: string): string {
+function stripCodeAndMath(text: string): string {
   return text
+    .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`]*`/g, " ")
-    .replace(/\$[^$]*\$/g, " ")
+    .replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$/g, " ");
+}
+
+function proseOnly(text: string): string {
+  return stripCodeAndMath(text)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\]\([^)]*\)/g, "]")
-    .replace(/\{[#.][^}]*\}/g, " ")
+    .replace(/\{[^}]*\}/g, " ")
     .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\b10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/g, " ")
     .replace(/-?@[\p{L}\p{N}_:.#$%&\-+?<>~/]+/gu, " ");
 }
 

@@ -162,6 +162,20 @@ test("渲染会走样的写法：下标写成 _、交叉引用前多写 Tables�
   assert.equal(get("draft-fig-pile")?.target?.line, 7);
   // 没开 number-sections 不报手写章节号
   assert.equal(checkDraft({ kind: "writing", file: "m.md", text: text.replace("number-sections: true", "toc: true") }).some((i) => i.id === "draft-hand-secref"), false);
+  // 块公式 $$…$$、行内代码、被引论文的 Section 2.1 of [@Ann2020]、多句中文各自提一处原图号均不误报
+  const clean = [
+    "---",
+    "number-sections: true",
+    "---",
+    "## Background {#sec-bg}",
+    "$$\\Delta G_H^* = 0$$ and `Tables @tbl-her` and `Section 9.9` and ![fig_1](figures/fig1.png){fig_align=\"center\"} are fine.",
+    "Details are given in Section 2.1 of [@Ann2020] and Sec. 4 in Ref. [@Bo2021].",
+    "第一句见 Fig. 1 of [@Ann2020]。第二句见 Fig. 2 of [@Bo2021]。第三句见 Fig. 3 of [@Eve2018]。",
+  ].join("\n");
+  const cleanItems = checkDraft({ kind: "writing", file: "m.md", text: clean });
+  for (const id of ["draft-underscore", "draft-xref-prefix", "draft-hand-secref", "draft-fig-pile"]) {
+    assert.equal(cleanItems.some((i) => i.id === id), false, `不应误报 ${id}`);
+  }
 });
 
 test("证据面：只速读篇带数值的句子单独点出；仅摘要篇撑数值没标待核实；引用集中在一篇上", () => {
@@ -185,6 +199,19 @@ test("证据面：只速读篇带数值的句子单独点出；仅摘要篇撑�
   assert.equal(get("draft-abstract-num-Abs2021")?.target?.line, 5);
   assert.match(get("draft-concentration")?.title ?? "", /^@Ann2020 出现在 12 段/);
   assert.equal(get("draft-concentration")?.status, "needs_human");
+  // 同段前句为精读篇数值、后句以数字/希腊字母/中文开头引速读篇（无数值）不串句；0.5 M / 1000 cycles 等单位能识别
+  const mixed = checkDraft({
+    kind: "writing",
+    file: "m.md",
+    index,
+    text: [
+      "Full paper measured 50 mV [@Ann2020]. η~10~ mechanism was qualitatively noted [@Eve2018].",
+      "精读篇测了 1.2 V [@Ann2020]。速读篇只顺带点名 [@Eve2018]。",
+      "Stability lasted 1000 cycles in 0.5 M KOH [@Abs2021].",
+    ].join("\n\n"),
+  });
+  assert.doesNotMatch(mixed.find((i) => i.id === "draft-skim-Eve2018")?.title ?? "", /带数值/);
+  assert.equal(mixed.find((i) => i.id === "draft-abstract-num-Abs2021")?.target?.line, 5);
 });
 
 test("定稿另拦占位；写作扫描里被取代的那两条只报一次", () => {
