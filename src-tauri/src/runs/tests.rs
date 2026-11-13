@@ -1163,6 +1163,7 @@ fn goal_headless_end_to_end_in_isolated_home() {
         ])
         .env("HOME", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("OPENCODE_CONFIG_DIR")
         .env_remove("MESA_SANDBOX_HOME")
         .env(GOAL_HEADLESS_E2E_ENV, "1")
         .output()

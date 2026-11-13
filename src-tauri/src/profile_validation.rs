@@ -379,7 +379,31 @@ pub(crate) fn validate_slot_urls(slots: &crate::profiles::ProtocolSlots) -> Resu
     Ok(())
 }
 
+fn relocation_env(var: &str) -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+fn display_config_path(home: &Path, path: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rel) => format!("~/{}", rel.to_string_lossy().replace('\\', "/")),
+        Err(_) => path.to_string_lossy().into_owned(),
+    }
+}
+
 fn local_check_at(home: &Path, profile: &Profile) -> ValidationCheckDto {
+    local_check_with_env(home, profile, &relocation_env)
+}
+
+fn local_check_with_env(
+    home: &Path,
+    profile: &Profile,
+    env: &dyn Fn(&str) -> Option<std::path::PathBuf>,
+) -> ValidationCheckDto {
     let started = Instant::now();
     let outcome = (|| -> Result<String, String> {
         let notes = validate_profile_fields(profile)?;
@@ -390,62 +414,35 @@ fn local_check_at(home: &Path, profile: &Profile) -> ValidationCheckDto {
             }
             Ok(())
         };
+        let dir = crate::agent_specs::agent_config_root_with(&profile.agent, home, env)
+            .unwrap_or_else(|| home.to_path_buf());
+        let check_json = |p: std::path::PathBuf| parse_json_file(&p, &display_config_path(home, &p));
+        let check_jsonc = |p: std::path::PathBuf| parse_jsonc_file(&p, &display_config_path(home, &p));
+        let check_toml = |p: std::path::PathBuf| parse_toml_file(&p, &display_config_path(home, &p));
         match profile.agent.as_str() {
-            "claude-code" => add(parse_json_file(
-                &home.join(".claude/settings.json"),
-                "~/.claude/settings.json",
-            ))?,
+            "claude-code" => add(check_json(dir.join("settings.json")))?,
             "codex" => {
-                add(parse_toml_file(
-                    &home.join(".codex/config.toml"),
-                    "~/.codex/config.toml",
-                ))?;
-                add(parse_json_file(
-                    &home.join(".codex/auth.json"),
-                    "~/.codex/auth.json",
-                ))?;
+                add(check_toml(dir.join("config.toml")))?;
+                add(check_json(dir.join("auth.json")))?;
             }
-            "gemini" => add(parse_jsonc_file(
-                &home.join(".gemini/settings.json"),
-                "~/.gemini/settings.json",
-            ))?,
-            "qwen" => add(parse_jsonc_file(
-                &home.join(".qwen/settings.json"),
-                "~/.qwen/settings.json",
-            ))?,
-            "codebuddy" => add(parse_json_file(
-                &home.join(".codebuddy/settings.json"),
-                "~/.codebuddy/settings.json",
-            ))?,
+            "gemini" => add(check_jsonc(dir.join("settings.json")))?,
+            "qwen" => add(check_jsonc(dir.join("settings.json")))?,
+            "codebuddy" => add(check_json(dir.join("settings.json")))?,
             // grok 主配置是 TOML（[model.<name>] 段的 base_url/env_key 线索在 profile 字段已验）
-            "grok" => add(parse_toml_file(
-                &home.join(".grok/config.toml"),
-                "~/.grok/config.toml",
-            ))?,
+            "grok" => add(check_toml(dir.join("config.toml")))?,
             // cursor 仅 AGENT_CLI_CREDENTIAL_STORE=file 时落 auth.json（默认在钥匙串）
-            "cursor" => add(parse_json_file(
-                &home.join(".cursor/auth.json"),
-                "~/.cursor/auth.json",
-            ))?,
+            "cursor" => add(check_json(dir.join("auth.json")))?,
             "opencode" => {
-                add(parse_jsonc_file(
-                    &home.join(".config/opencode/opencode.json"),
-                    "~/.config/opencode/opencode.json",
-                ))?;
-                add(parse_jsonc_file(
-                    &home.join(".config/opencode/opencode.jsonc"),
-                    "~/.config/opencode/opencode.jsonc",
-                ))?;
+                if env("OPENCODE_CONFIG_DIR").is_none() {
+                    add(check_jsonc(dir.join("config.json")))?;
+                }
+                add(check_jsonc(dir.join("opencode.json")))?;
+                add(check_jsonc(dir.join("opencode.jsonc")))?;
             }
             "kimi" => {
-                add(parse_toml_file(
-                    &home.join(".kimi-code/config.toml"),
-                    "~/.kimi-code/config.toml",
-                ))?;
-                add(parse_toml_file(
-                    &home.join(".kimi/config.toml"),
-                    "~/.kimi/config.toml",
-                ))?;
+                add(check_toml(dir.join("config.toml")))?;
+                let legacy = crate::agent_specs::kimi_legacy_root_with(home, env).join("config.toml");
+                add(check_toml(legacy))?;
             }
             _ => {}
         }
@@ -2336,6 +2333,17 @@ mod tests {
             parse_jsonc_file(&comment_only, "~/.config/opencode/opencode.jsonc").unwrap(),
             Some("~/.config/opencode/opencode.jsonc".into())
         );
+        // 设了 OPENCODE_CONFIG_DIR 时，本地体检检查搬迁目录而非写死 ~/.config/opencode
+        let moved = dir.join("custom-opencode");
+        fs::create_dir_all(&moved).unwrap();
+        fs::write(moved.join("opencode.jsonc"), "{ // ok\n \"model\": \"m1\" }\n").unwrap();
+        let mut p = profile("opencode");
+        p.base_url = Some("https://example.com/v1".into());
+        let check = local_check_with_env(&dir, &p, &|k| {
+            (k == "OPENCODE_CONFIG_DIR").then(|| moved.clone())
+        });
+        assert_eq!(check.status, "passed", "{}", check.message);
+        assert!(check.message.contains("opencode.jsonc"), "{}", check.message);
         fs::remove_dir_all(&dir).ok();
     }
 

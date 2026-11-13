@@ -1128,9 +1128,40 @@ fn home() -> Result<PathBuf, String> {
 }
 
 fn env_home(var: &str) -> Option<PathBuf> {
+    #[cfg(test)]
+    if TEST_HOME.with(|c| c.borrow().is_some()) {
+        return None;
+    }
     std::env::var_os(var)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
+}
+
+/// OpenCode MCP 目标与读候选：
+/// - 全局目录按 `config.json → opencode.json → opencode.jsonc` 合并、后者盖前者，所以写入优先落在已存在的最高优先级文件
+///   （`opencode.jsonc` > `opencode.json` > `config.json`），都不存在时建 `opencode.jsonc`；
+/// - 设了 `OPENCODE_CONFIG_DIR` 时，1.x 只读该目录下的 `opencode.json` / `opencode.jsonc`（不读 `config.json`），候选不再含 `config.json`。
+fn opencode_mcp_paths(
+    home: &Path,
+    env: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let base = crate::agent_specs::agent_config_root_with("opencode", home, env).ok_or("未知 agent")?;
+    let names: &[&str] = if env("OPENCODE_CONFIG_DIR").is_some() {
+        &["opencode.jsonc", "opencode.json"]
+    } else {
+        &["opencode.jsonc", "opencode.json", "config.json"]
+    };
+    let candidates = names.iter().map(|n| base.join(n)).collect::<Vec<_>>();
+    let write = candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| base.join("opencode.jsonc"));
+    Ok((write, candidates))
+}
+
+fn opencode_managed_dir(home: &Path, env: &dyn Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
+    crate::agent_specs::agent_config_root_with("opencode", home, env).map(|b| b.join("managed"))
 }
 
 /// 返回 (写目标, 读候选列表)——codebuddy 有回退链，其他家读=写
@@ -1159,20 +1190,8 @@ fn agent_paths(agent: &str) -> Result<(PathBuf, Vec<PathBuf>), String> {
             let p = base.join("settings.json");
             (p.clone(), vec![p])
         }
-        // 全局目录合并加载 config.json → opencode.json → opencode.jsonc：写已存在者，都不存在建 opencode.jsonc
-        "opencode" => {
-            let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
-            let candidates = ["config.json", "opencode.json", "opencode.jsonc"]
-                .iter()
-                .map(|n| base.join(n))
-                .collect::<Vec<_>>();
-            let write = candidates
-                .iter()
-                .find(|p| p.exists())
-                .cloned()
-                .unwrap_or_else(|| base.join("opencode.jsonc"));
-            (write, candidates)
-        }
+        // 全局目录合并加载 config.json → opencode.json → opencode.jsonc（后者盖前者）：优先写最高优先级的已存在文件，都不存在建 opencode.jsonc
+        "opencode" => opencode_mcp_paths(&home, &env_home)?,
         "kimi" => {
             let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("mcp.json");
@@ -1236,12 +1255,9 @@ fn check_managed_guard(agent: &str) -> Result<(), String> {
     if agent == "opencode" {
         let mut paths = Vec::new();
         if let Ok(home) = home() {
-            let base = std::env::var_os("XDG_CONFIG_HOME")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".config"))
-                .join("opencode");
-            paths.push(base.join("managed"));
+            if let Some(p) = opencode_managed_dir(&home, &env_home) {
+                paths.push(p);
+            }
         }
         #[cfg(windows)]
         if let Some(pd) = std::env::var_os("ProgramData") {
@@ -1521,6 +1537,26 @@ fn agent_entries(agent: &str) -> Result<Vec<(String, serde_json::Value)>, String
                     .collect()
             })
             .unwrap_or_default());
+    }
+    if agent == "opencode" {
+        // OpenCode 按低→高合并 config.json → opencode.json → opencode.jsonc（candidates 为高→低）：逆序合并，同名取高优先级
+        let mut merged: Vec<(String, serde_json::Value)> = Vec::new();
+        for path in candidates.into_iter().rev() {
+            if !path.exists() {
+                continue;
+            }
+            let root = jsonc_read(&path)?;
+            if let Some(obj) = root.get(top_key(agent)).and_then(|v| v.as_object()) {
+                for (k, v) in obj {
+                    if let Some(slot) = merged.iter_mut().find(|(ek, _)| ek == k) {
+                        slot.1 = v.clone();
+                    } else {
+                        merged.push((k.clone(), v.clone()));
+                    }
+                }
+            }
+        }
+        return Ok(merged);
     }
     for path in candidates {
         if !path.exists() {
@@ -2532,6 +2568,35 @@ mod tests {
         // ${VAR} → {env:VAR}
         assert_eq!(v["environment"]["TOKEN"], "{env:MY_TOKEN}");
         assert!(v.get("env").is_none(), "opencode 的字段叫 environment");
+    }
+
+    #[test]
+    fn opencode_paths_and_managed_respect_opencode_config_dir_and_priority() {
+        let root = std::env::temp_dir().join(format!("ccode-mcp-oc-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let moved = root.join("custom-oc");
+        std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+        std::fs::create_dir_all(&moved).unwrap();
+        // 默认全局目录同时有 config.json 与 opencode.jsonc：写入必须选最高优先级的 opencode.jsonc
+        std::fs::write(home.join(".config/opencode/config.json"), "{}").unwrap();
+        std::fs::write(home.join(".config/opencode/opencode.jsonc"), "{}").unwrap();
+        let none = |_: &str| None;
+        let (write, cands) = opencode_mcp_paths(&home, &none).unwrap();
+        assert_eq!(write, home.join(".config/opencode/opencode.jsonc"));
+        assert_eq!(cands.len(), 3);
+        assert_eq!(
+            opencode_managed_dir(&home, &none),
+            Some(home.join(".config/opencode/managed"))
+        );
+
+        // 设 OPENCODE_CONFIG_DIR 时：不把 config.json 当候选（1.x 在该目录下不读 config.json），managed 也随目录走
+        std::fs::write(moved.join("config.json"), "{}").unwrap();
+        let moved_env = |k: &str| (k == "OPENCODE_CONFIG_DIR").then(|| moved.clone());
+        let (write2, cands2) = opencode_mcp_paths(&home, &moved_env).unwrap();
+        assert_eq!(write2, moved.join("opencode.jsonc"));
+        assert_eq!(cands2, vec![moved.join("opencode.jsonc"), moved.join("opencode.json")]);
+        assert_eq!(opencode_managed_dir(&home, &moved_env), Some(moved.join("managed")));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

@@ -429,7 +429,7 @@ Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 
 「写入 CLI 全局默认」是绑定上的动作（一键入口不预览，见下「一键设为全局」），复用现事务写入 / 备份 / 原始快照 / 复检弹层。确认前 `preview_profile_global` 给出脱敏变更预览（文件、字段增删改、此入口带不上的策略、已开进程需新开）。成功更新「外部 CLI 上次写入」追踪，**不**改 Mesa 启动默认，也不改项目默认。无密钥网关仍禁止（`plan_writes` 现拒绝 `noAuth`，保持）。
 
-**写到 CLI 实际读的目录（2026-10-30）**：目标文件一律经 `global_config::cli_dir` = `agent_specs::agent_config_root_with` 解析，认各家搬迁变量（`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `GEMINI_CLI_HOME`〔顶替家目录〕/ `QWEN_HOME` / `XDG_CONFIG_HOME` / `KIMI_CODE_HOME` / `KIMI_SHARE_DIR` / `CODEBUDDY_CONFIG_DIR` / `GROK_HOME`），与 MCP、技能同一个函数，禁再写 `home.join(".xxx/…")`。登录 shell 导入放行这些变量（environment.md 同名条）。测试态 `relocation_env` 不读环境，防写到本机真实目录。
+**写到 CLI 实际读的目录（2026-10-30）**：目标文件一律经 `global_config::cli_dir` = `agent_specs::agent_config_root_with` 解析，认各家搬迁变量（`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `GEMINI_CLI_HOME`〔顶替家目录〕/ `QWEN_HOME` / `OPENCODE_CONFIG_DIR`〔未设时退回 `XDG_CONFIG_HOME`〕/ `KIMI_CODE_HOME` / `KIMI_SHARE_DIR` / `CODEBUDDY_CONFIG_DIR` / `GROK_HOME`），与 MCP、技能、本地体检同一个函数，禁再写 `home.join(".xxx/…")`。登录 shell 导入放行这些变量（environment.md 同名条）。测试态 `relocation_env` 不读环境，防写到本机真实目录。
 
 **设为全局挡路（v3.252 / v3.253）**：本机有 `~/.cc-switch` 时，所有支持「设为全局」的 Agent 连接页二次确认（默认焦点在取消）；托盘一点不写盘，转连接页确认（见下「托盘挡路转交」）。Codex 另认 live `config.toml` 的 cc-switch catalog / `custom` 渠道（即使卸了 cc-switch）。不挡 Codex「注册到客户端」。官方账号「设为全局」也要改 CLI 配置，与 API 绑定同样挡（连接页与托盘同口径）。
 
