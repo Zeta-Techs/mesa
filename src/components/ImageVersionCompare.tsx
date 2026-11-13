@@ -29,7 +29,18 @@ export default function ImageVersionCompare({ before, after }: { before: string;
     measure(); return () => observer.disconnect();
   }, [urls]);
   const scale = zoom === "fit" ? Math.min(...sizes.map((size, index) => size ? imageFitScale(size, boxes[index] ?? { w: 0, h: 0 }, 24) : 1)) : zoom;
+  // 滚轮缩放时鼠标所在点：缩放后让这一点仍停在鼠标下，再按比例带动另一侧
+  const anchor = useRef<{ pane: HTMLDivElement; x: number; y: number; left: number; top: number; ratio: number } | null>(null);
   useLayoutEffect(() => {
+    const point = anchor.current;
+    anchor.current = null;
+    if (point) {
+      const pane = point.pane, pad = 12;
+      const maxX = Math.max(0, pane.scrollWidth - pane.clientWidth), maxY = Math.max(0, pane.scrollHeight - pane.clientHeight);
+      const left = Math.min(maxX, Math.max(0, (point.left + point.x - pad) * point.ratio + pad - point.x));
+      const top = Math.min(maxY, Math.max(0, (point.top + point.y - pad) * point.ratio + pad - point.y));
+      position.current = { x: maxX ? left / maxX : 0, y: maxY ? top / maxY : 0 };
+    }
     for (const pane of panes.current) {
       if (!pane) continue;
       const left = position.current.x * Math.max(0, pane.scrollWidth - pane.clientWidth);
@@ -48,7 +59,10 @@ export default function ImageVersionCompare({ before, after }: { before: string;
       const factor = pdfWheelZoomFactor(event.deltaY, event.deltaMode);
       if (!factor) return;
       event.preventDefault();
-      setZoom(Math.max(0.05, Math.min(8, scaleRef.current * factor)));
+      const next = Math.max(0.05, Math.min(8, scaleRef.current * factor));
+      const pane = event.currentTarget as HTMLDivElement, box = pane.getBoundingClientRect();
+      anchor.current = { pane, x: event.clientX - box.left, y: event.clientY - box.top, left: pane.scrollLeft, top: pane.scrollTop, ratio: next / scaleRef.current };
+      setZoom(next);
     };
     const attached = panes.current.filter((pane): pane is HTMLDivElement => pane !== null);
     for (const pane of attached) pane.addEventListener("wheel", onWheel, { passive: false });
