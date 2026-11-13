@@ -3229,3 +3229,44 @@ fn step_names_must_be_nonempty_and_unique() {
     assert!(dup.is_err() && dup.unwrap_err().contains("步骤名重复"));
     assert!(validate_step_names(&[]).is_ok());
 }
+
+#[test]
+fn ensure_geminiignore_writes_negations_excludes_from_git_and_preserves_user_file() {
+    let tmp = temp_dir("geminiignore");
+    fs::create_dir_all(&tmp).unwrap();
+    // 非 Git 目录不落 .geminiignore
+    ensure_geminiignore(&tmp);
+    assert!(!tmp.join(".geminiignore").exists());
+
+    let Some(git) = crate::agents::resolve_binary("git") else {
+        let _ = fs::remove_dir_all(&tmp);
+        return;
+    };
+    let status = std::process::Command::new(&git)
+        .args(["init", "-q"])
+        .current_dir(&tmp)
+        .status();
+    if status.map(|s| !s.success()).unwrap_or(true) {
+        let _ = fs::remove_dir_all(&tmp);
+        return;
+    }
+
+    ensure_geminiignore(&tmp);
+    let gi = tmp.join(".geminiignore");
+    assert!(gi.is_file());
+    let text = fs::read_to_string(&gi).unwrap();
+    for expected in ["!TASK.md", "!/.ccode/", "!/.ccode/**", "!/artifacts/**", "!/output/**"] {
+        assert!(text.lines().any(|l| l == expected), "missing {expected}");
+    }
+    let exclude = fs::read_to_string(tmp.join(".git/info/exclude")).unwrap();
+    assert!(exclude.lines().any(|l| l.trim() == ".geminiignore"));
+    // git status 保持干净
+    let out = crate::workspaces::run_git(&tmp, &["status", "-s"], Duration::from_secs(10)).unwrap();
+    assert!(out.trim().is_empty(), "git status dirty: {out}");
+
+    // 用户手写的 .geminiignore 不被覆盖
+    fs::write(&gi, "secret.txt\n").unwrap();
+    ensure_geminiignore(&tmp);
+    assert_eq!(fs::read_to_string(&gi).unwrap(), "secret.txt\n");
+    let _ = fs::remove_dir_all(&tmp);
+}

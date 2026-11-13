@@ -3649,6 +3649,10 @@ fn is_delivery_process_file(path: &str) -> bool {
             | "zotero-sync.md"
             | ".gitignore"
             | ".gitattributes"
+            | ".geminiignore"
+            | ".qwenignore"
+            | ".aiignore"
+            | ".agentignore"
             // 积累账与开工冻结的进料快照：gitignored 台账，不参与交付
             | "reading-list.md"
             | "handoff-lit-intake.md"

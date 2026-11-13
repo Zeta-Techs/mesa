@@ -4789,6 +4789,44 @@ pub(crate) fn exclude_task_md(worktree_root: &Path) {
     exclude_in_git(worktree_root, crate::project_mail::OUTBOX_REL);
 }
 
+const GEMINIIGNORE_HEADER: &str = "# Mesa 生成：";
+const GEMINIIGNORE_CONTENT: &str = "\
+# Mesa 生成：放行工作区内被 .gitignore 忽略但需供 Gemini CLI read_file 读取的任务书、简报、预览与文献产物
+!TASK.md
+!/.ccode/
+!/.ccode/**
+!/artifacts/
+!/artifacts/**
+!/output/
+!/output/**
+!/papers/
+!/papers/**
+!/notes/
+!/notes/**
+!*.pdf
+";
+
+/// Gemini CLI 的 `read_file` 按 `FileDiscoveryService`（`.gitignore` + `.geminiignore`）拦截被忽略路径，
+/// 会拒绝读取 `.ccode/handoff-*.md`、`TASK.md`、`artifacts/` 联系表预览与 `output/` 成稿（2026-11-14 HER 实证）。
+/// 在启动 Gemini 前按需于 Git 仓/工作树根写入 `.geminiignore` 并记入 `.git/info/exclude`（不污染 git status，不覆盖用户手写文件）。
+pub(crate) fn ensure_geminiignore(worktree_root: &Path) {
+    if !worktree_root.join(".git").exists() {
+        return;
+    }
+    let path = worktree_root.join(".geminiignore");
+    if let Ok(existing) = fs::read_to_string(&path) {
+        if !existing.trim().is_empty() && !existing.starts_with(GEMINIIGNORE_HEADER) {
+            return;
+        }
+        if existing == GEMINIIGNORE_CONTENT {
+            exclude_in_git(worktree_root, ".geminiignore");
+            return;
+        }
+    }
+    exclude_in_git(worktree_root, ".geminiignore");
+    let _ = crate::profiles::atomic_write(&path, GEMINIIGNORE_CONTENT);
+}
+
 /// 往仓库的 `.git/info/exclude` 加一行（已有就不加；不是 git 仓库或失败都静默——best-effort，不阻断）。
 /// 只影响本机，不改项目的 .gitignore
 pub(crate) fn exclude_in_git(worktree_root: &Path, line: &str) {

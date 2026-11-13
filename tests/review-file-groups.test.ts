@@ -104,6 +104,7 @@ test("写作审阅默认打开 draft.md，不把 _quarto.yml 当稿件", () => {
   const files = [
     "manuscript/_quarto.yml",
     "manuscript/.gitignore",
+    ".geminiignore",
     "manuscript/draft.md",
     "manuscript/screening.md",
     "output/draft.docx",

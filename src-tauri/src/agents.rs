@@ -4278,6 +4278,9 @@ fn open_external_profiled(
     let binary =
         resolve_binary(binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?)
             .ok_or_else(|| format!("未找到 {agent_id} 的 CLI 二进制"))?;
+    if agent_id == "gemini" {
+        crate::projects::ensure_geminiignore(std::path::Path::new(cwd));
+    }
     let pref = crate::settings::read_current()
         .external_terminal
         .unwrap_or_else(|| "auto".into());

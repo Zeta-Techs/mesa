@@ -1364,6 +1364,9 @@ pub(crate) fn build_headless_command_granted(
     for (k, v) in crate::mcp::spawn_env_secrets() {
         cmd.env(k, v);
     }
+    if profile.agent == "gemini" {
+        crate::projects::ensure_geminiignore(cwd);
+    }
     cmd.current_dir(cwd);
     Ok(HeadlessCommand {
         cmd,

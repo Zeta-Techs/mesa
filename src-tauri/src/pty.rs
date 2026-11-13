@@ -1053,6 +1053,9 @@ fn pty_spawn_sync(
     if let Some(msg) = agents::gemini_interactive_blocker(&profile, key.is_some()) {
         return Err(msg);
     }
+    if agent_id == "gemini" {
+        crate::projects::ensure_geminiignore(std::path::Path::new(&cwd));
+    }
     let mut plan = agents::launch_plan_with_prompt(&profile, key, model.as_deref(), prompt)?;
     // 口径 C：原始文献（PDF/导入）允许直写主仓 papers/——从步骤工作区启动的 codex
     // 把该目录预授权进 workspace-write 沙箱（sandbox_workspace_write.writable_roots），

@@ -100,7 +100,11 @@ export function isReviewProcessFile(path: string): boolean {
     base === "help-wanted.md" ||
     base === "zotero-sync.md" ||
     base === ".gitignore" ||
-    base === ".gitattributes"
+    base === ".gitattributes" ||
+    base === ".geminiignore" ||
+    base === ".qwenignore" ||
+    base === ".aiignore" ||
+    base === ".agentignore"
   ) {
     return true;
   }

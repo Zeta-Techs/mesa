@@ -18,6 +18,8 @@ fn delivery_process_files_stay_out_of_review() {
     assert!(is_delivery_process_file("artifacts/api-cache/01b30a.json"));
     assert!(is_delivery_process_file("enrich_metadata.py"));
     assert!(is_delivery_process_file(".gitignore"));
+    assert!(is_delivery_process_file(".geminiignore"));
+    assert!(is_delivery_process_file(".qwenignore"));
     assert!(is_delivery_process_file("papers/included.json"));
     assert!(!is_delivery_process_file("papers/included.md"));
     assert!(!is_delivery_process_file("papers/to-fetch.ris"));
