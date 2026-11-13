@@ -144,6 +144,28 @@ test("裁整图：题注首行是左对齐的短词时按整段题注判同栏�
     const r = run(["--pdf", pdf, "--fig", "1", "--dpi", "72", "--out", out]);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(probe(out).center, [220, 0, 0]);
+    // 同页上方另有一张居中短题注的 Figure 1，下方 FIGURE 2 首行左对齐短词：裁 Fig. 2 不越过上方题注吞并 Fig. 1
+    const twoPdf = join(dir, "two-figs.pdf");
+    const twoCode = [
+      "import sys, io, pymupdf",
+      "from PIL import Image",
+      "b1 = io.BytesIO(); Image.new('RGB', (360, 180), (0, 170, 0)).save(b1, 'PNG')",
+      "b2 = io.BytesIO(); Image.new('RGB', (360, 180), (220, 0, 0)).save(b2, 'PNG')",
+      "doc = pymupdf.open(); page = doc.new_page(width=595, height=842)",
+      "page.insert_image(pymupdf.Rect(140, 70, 500, 250), stream=b1.getvalue())",
+      "page.insert_text((240, 270), 'Figure 1. Upper plot.', fontsize=10)",
+      "page.insert_image(pymupdf.Rect(140, 320, 500, 500), stream=b2.getvalue())",
+      "page.insert_text((45, 520), 'FIGURE 2\\nLower plot of the same sample, measured in 1 M KOH at room temperature.', fontsize=10)",
+      "doc.save(sys.argv[1])",
+    ].join("\n");
+    const madeTwo = spawnSync(python, ["-c", twoCode, twoPdf], { encoding: "utf8" });
+    assert.equal(madeTwo.status, 0, madeTwo.stderr);
+    const out2 = join(dir, "f2.png");
+    const r2 = run(["--pdf", twoPdf, "--fig", "2", "--dpi", "72", "--out", out2]);
+    assert.equal(r2.status, 0, r2.stderr);
+    const p2 = probe(out2);
+    assert.deepEqual(p2.center, [220, 0, 0]);
+    assert.ok(p2.h < 220, `只裁下半页 Fig. 2，不把上半页 Fig. 1 并进来：h=${p2.h}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -187,7 +209,10 @@ test("拼板：自绘块的 SVG 里自带 (a) 一类面板字母时拒绝；元�
     assert.equal(made.status, 0, made.stderr);
     const go = () =>
       spawnSync(python, [assemble, "--out", join(dir, "out.png"), "--width-cm", "17", "--inputs", own, other], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
-    writeFileSync(join(dir, "own.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="9">B</text><text x="1" y="20">0D &#8594; 2D</text></svg>');
+    writeFileSync(
+      join(dir, "own.svg"),
+      '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="9">B</text><text x="1" y="20">0D &#8594; 2D</text><text x="1" y="30">(111) facet</text><text x="1" y="40">(aq) 0.5 M</text></svg>',
+    );
     let r = go();
     assert.equal(r.status, 0, r.stderr);
     writeFileSync(join(dir, "own.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="9"><tspan>(a)</tspan><tspan> Boron substructures</tspan></text></svg>');
@@ -195,6 +220,17 @@ test("拼板：自绘块的 SVG 里自带 (a) 一类面板字母时拒绝；元�
     assert.equal(r.status, 3);
     assert.match(r.stderr, /自带面板字母/);
     assert.match(r.stderr, /\(a\) Boron substructures/);
+    writeFileSync(
+      join(dir, "own.svg"),
+      '<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:text id="empty"/><svg:g><svg:title>Header</svg:title></svg:g><svg:text x="1" y="9"><svg:tspan font-weight="bold">(a)</svg:tspan><svg:tspan>reaction scheme</svg:tspan></svg:text></svg:svg>',
+    );
+    r = go();
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /\(a\) reaction scheme/);
+    writeFileSync(join(dir, "own.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="9">（b）硼亚结构</text></svg>');
+    r = go();
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /（b）硼亚结构/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

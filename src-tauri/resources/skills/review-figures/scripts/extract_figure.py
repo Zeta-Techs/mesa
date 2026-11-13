@@ -55,16 +55,37 @@ def _line_text(line: dict) -> str:
     return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
+ANY_CAPTION_PAT = re.compile(r"^(?:figure|fig\.?|图)\s*(\d+)(?!\d)", re.IGNORECASE)
+
+
+def _caption_span(block: dict, start_idx: int, box) -> tuple[float, float, float]:
+    """整段题注的同栏横向范围与底边（不跨栏吞并旁栏文本，遇到下一条题注即停）。"""
+    sx0, sx1, sy1 = float(box[0]), float(box[2]), float(box[3])
+    lines = block.get("lines", [])
+    for line in lines[start_idx + 1 :]:
+        if ANY_CAPTION_PAT.match(_line_text(line)):
+            break
+        lb = line.get("bbox")
+        if not lb:
+            continue
+        if lb[2] >= sx0 - 4 and lb[0] <= sx1 + 4:
+            sx0 = min(sx0, float(lb[0]))
+            sx1 = max(sx1, float(lb[2]))
+            sy1 = max(sy1, float(lb[3]))
+    return sx0, sx1, sy1
+
+
 def _caption_line(block: dict, pat: re.Pattern[str]):
-    """返回题注行的矩形、原文和题注所在文本块的横向范围。正文里顺带提到 Figure N 的行不收。"""
+    """返回题注行的矩形、原文和题注所在同栏文本块的横向范围。正文里顺带提到 Figure N 的行不收。"""
     if block.get("type") != 0:
         return None
-    for line in block.get("lines", []):
+    for idx, line in enumerate(block.get("lines", [])):
         text = _line_text(line)
         if pat.match(text):
             box = line.get("bbox")
             if box:
-                return box, text, block.get("bbox", box)
+                sx0, sx1, sy1 = _caption_span(block, idx, box)
+                return box, text, (sx0, float(box[1]), sx1, sy1)
     return None
 
 
@@ -85,24 +106,28 @@ def _image_rects(page):
     return rects
 
 
-def _neighbor_captions(page, caption, fig: int):
+def _neighbor_captions(page, caption, fig: int, cap_span: tuple[float, float] | None = None):
     """同一栏里、这条题注上下两侧最近的其他题注边界。"""
-    pat = re.compile(r"^(?:figure|fig\.?|图)\s*(\d+)(?!\d)", re.IGNORECASE)
     above = page.rect.y0
     below = page.rect.y1
+    span_x0 = min(caption.x0, cap_span[0]) if cap_span else caption.x0
+    span_x1 = max(caption.x1, cap_span[1]) if cap_span else caption.x1
     for block in page.get_text("dict").get("blocks", []):
         if block.get("type") != 0:
             continue
-        for line in block.get("lines", []):
-            match = pat.match(_line_text(line))
+        for idx, line in enumerate(block.get("lines", [])):
+            match = ANY_CAPTION_PAT.match(_line_text(line))
             if not match or int(match.group(1)) == fig:
                 continue
-            box = line.get("bbox") or block["bbox"]
-            same_column = box[2] > caption.x0 and box[0] < caption.x1
+            box = line.get("bbox") or block.get("bbox")
+            if not box:
+                continue
+            other_x0, other_x1, other_y1 = _caption_span(block, idx, box)
+            same_column = other_x1 > span_x0 and other_x0 < span_x1
             if not same_column:
                 continue
             if box[3] <= caption.y0 + 2:
-                above = max(above, box[3])
+                above = max(above, other_y1 if other_y1 <= caption.y0 + 2 else box[3])
             elif box[1] >= caption.y1 - 2:
                 below = min(below, box[1])
     return above, below
@@ -222,7 +247,7 @@ def locate(doc, fig: int):
             # 页眉刊名。题注本身可以很短（只有 “Fig. 2”），不能按宽度滤掉。
             continue
         found_caption = True
-        above, below = _neighbor_captions(page, cap, fig)
+        above, below = _neighbor_captions(page, cap, fig, cap_span)
         above_rects = []
         below_rects = []
         for rect in _image_rects(page):

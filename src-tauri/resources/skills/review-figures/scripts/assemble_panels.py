@@ -111,7 +111,10 @@ def check_readable(widths_px: list[int], height_px: int, dpi: int, align_width: 
 # 自绘块旁边有同名 SVG 时查里面的字：块自己以 (a) 开头写了面板字母，拼板再加一个 (a) 就成了两个
 # （2026-11-13 HER 初稿 Fig. 3 实证：自绘示意图顶上自带「(a) Boron substructures…」）。
 # 只认带括号的：单独一个字母多半是元素符号（B、N）或坐标轴名，不算。
-OWN_LETTER = re.compile(r"^\([a-z]\)(\s|$)", re.I)
+OWN_LETTER = re.compile(r"^(?:\([A-Za-z]\)|（[A-Za-z]）)(?:\s|[.:：\-—]|(?=[A-Z\u4e00-\u9fff])|$)")
+SVG_TEXT_BLOCK = re.compile(r"<(?:[A-Za-z0-9_.-]+:)?text\b[^>]*?(?<!/)>(.*?)</(?:[A-Za-z0-9_.-]+:)?text>", re.S | re.I)
+CLOSE_PAREN_TSPAN = re.compile(r"([)）])\s*</(?:[A-Za-z0-9_.-]+:)?tspan\s*>", re.I)
+POSITIONED_TSPAN = re.compile(r"<(?:[A-Za-z0-9_.-]+:)?tspan\b[^>]*\b(?:x|y|dx|dy)\s*=[^>]*>", re.I)
 
 
 def check_own_letters(paths: list[Path]) -> None:
@@ -120,8 +123,9 @@ def check_own_letters(paths: list[Path]) -> None:
         svg = path.with_suffix(".svg")
         if not svg.is_file():
             continue
-        for raw in re.findall(r"<text\b[^>]*>(.*?)</text>", svg.read_text(encoding="utf-8", errors="replace"), re.S):
-            text = html.unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+        for raw in SVG_TEXT_BLOCK.findall(svg.read_text(encoding="utf-8", errors="replace")):
+            spaced = POSITIONED_TSPAN.sub(" ", CLOSE_PAREN_TSPAN.sub(r"\1 ", raw))
+            text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", spaced))).strip()
             if OWN_LETTER.match(text):
                 hits.append(f"{svg} 里有「{text[:40]}」")
                 break
