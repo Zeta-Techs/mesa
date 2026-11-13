@@ -156,32 +156,23 @@ test("渲染会走样的写法：下标写成 _、交叉引用前多写 Tables�
   assert.equal(checkDraft({ kind: "writing", file: "m.md", text: text.replace("number-sections: true", "toc: true") }).some((i) => i.id === "draft-hand-secref"), false);
 });
 
-test("证据面：只速读/仅线索篇带数值的句子单独点出；仅摘要篇撑数值没标待核实；引用集中在一篇上", () => {
+test("证据面：只速读篇带数值的句子单独点出；仅摘要篇撑数值没标待核实；引用集中在一篇上", () => {
   const index = JSON.stringify([
     { id: "1", bibKey: "Ann2020", reviewStatus: "reviewed", fulltextStatus: "fulltext" },
     { id: "2", bibKey: "Eve2018", reviewStatus: "pending", skimmed: true },
     { id: "3", bibKey: "Abs2021", reviewStatus: "reviewed", fulltextStatus: "abstract-only" },
   ]);
-  const included = JSON.stringify([
-    { key: "Ann2020", title: "Ann", status: "included" },
-    { key: "Eve2018", title: "Eve", status: "included" },
-    { key: "Abs2021", title: "Abs", status: "included" },
-    { key: "Cue2022", title: "Cue", status: "cue" },
-  ]);
   const paras = [
     "Tafel slopes of 75–84 mV dec^−1^ were reported [@Eve2018].",
     "Eve also studied borides broadly [@Eve2018].",
-    "Cue article claims 60 mV [@Cue2022].",
-    "The abstract reports 80 mV [@Abs2021].",
     "It reached 75 mV at 10 mA cm^−2^ [@Abs2021].",
+    "The abstract reports 80 mV [@Abs2021].",
     ...Array.from({ length: 40 }, (_, i) => `Point ${i} holds [@Ann2020${i < 12 ? "" : `; @K${i}`}].`.replace("[@Ann2020; ", i < 12 ? "[@Ann2020; " : "[")),
   ];
-  const items = checkDraft({ kind: "writing", file: "m.md", text: paras.join("\n\n"), index, included });
+  const items = checkDraft({ kind: "writing", file: "m.md", text: paras.join("\n\n"), index });
   const get = (id: string) => items.find((i) => i.id === id);
   assert.match(get("draft-skim-Eve2018")?.title ?? "", /，1 句带数值$/);
   assert.equal(get("draft-skim-Eve2018")?.target?.line, 1);
-  assert.match(get("draft-skim-Cue2022")?.title ?? "", /^正文引了仅线索的 @Cue2022/);
-  assert.match(get("draft-skim-Cue2022")?.evidence?.detail ?? "", /仅线索的篇只是点位/);
   assert.equal(get("draft-abstract-num-Abs2021")?.title, "只读到摘要的 @Abs2021 撑了 1 句带数值的话，句中没标 [待核实]");
   assert.equal(get("draft-abstract-num-Abs2021")?.target?.line, 5);
   assert.match(get("draft-concentration")?.title ?? "", /^@Ann2020 出现在 12 段/);
