@@ -1483,10 +1483,10 @@ src-tauri/src/
                              # 字节是请求体原样（tauri::ipc::Request，postMessage 退路收 JSON 数组）、扩展名在 x-image-ext 头，后台线程落盘；
                              # read_clipboard_files = 文件管理器复制文件的粘贴（mac NSPasteboard / win CF_HDROP / linux 空）
   sessions.rs                # 会话浏览（2026-11-10 起 SessionMetaDto 拍平带 SessionStepMeta：stepIndex 按档案卡步骤顺序 apply_step_index、；session_image_bytes（Codex 会话里内嵌图片累计字节，按文件大小与修改时间缓存）
-                             #   stepRole / laneNo / laneDone 由 runs::apply_step_runs 照 Run 复用键认；titleByUser = title_source=user）：九 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON）、session_meta、pin 快照、
+                             #   stepRole / laneNo / laneDone 由 runs::apply_step_runs 照 Run 复用键认；titleByUser = title_source=user）：十 agent 会话扫描/解析（Codex .zst、OpenCode SQLite/JSON、Antigravity CLI transcript_full.jsonl + 只读 conversation_summaries.db）、session_meta、pin 快照、
                              # 各家会话根目录唯一入口 SessionRoots（配置根经 agent_specs::agent_config_root_with 认搬迁变量，
                              #   另认 QWEN_RUNTIME_DIR / runtimeOutputDir、CURSOR_DATA_DIR；扫描、删除白名单、导入、瘦身同源，禁写 home.join(".xxx")，2026-11-01）、
-                             #   各家会话文件的解析一家一个子模块 sessions/{claude,codex,gemini,qwen,kimi,codebuddy,cursor,grok,opencode}.rs
+                             #   各家会话文件的解析一家一个子模块 sessions/{claude,codex,gemini,qwen,kimi,codebuddy,cursor,grok,opencode,agy}.rs
                              #   （2026-11-07 拆出；子模块 use super::*，父模块 use <家>::* 接回，改某家解析只开那一个文件）、
 scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_meta_cache）：sessions.rs 六张 meta 缓存表（plain/chained/claude/kimi/snapshot/kimi_snapshot）按「键＋文件指纹」整表落盘，新进程首轮扫描前 load_once 装回——指纹未变的文件一个字节不重读（实测冷扫描 3.2s→约 0.8s）。schema 演进靠 SCAN_CACHE_VER 整表作废（serde 对缺字段静默取默认值，逐行跳过拦不住，对照 usage.rs USAGE_SCHEMA_VERSION 先例；SessionMetaDTO 增删/改派生字段必须 bump）、真坏行逐行跳过自愈、app.db 打不开/写不进静默退回无落盘绝不阻塞扫描主路径；save_once 首轮扫描后落一次、out 为空不落（防把好数据清成空表）。已知局限（当日实测口径）：plain 表「每段整表替换」的既有语义使落盘只对 chained/claude/kimi 完整生效，gemini 等明文段每进程重走 seek 头窗读（亚秒级，改共享热路径不值）；opencode_db/grok_summary 不落盘（外部状态指纹、解析便宜）；消费点仅 sessions.rs 两处（首轮扫描前后）
                              # 会话连接与启动模型 / 思考档记录（set_session_profile，launch_model / launch_effort 列）与接着聊默认配置

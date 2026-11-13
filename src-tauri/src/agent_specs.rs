@@ -1688,6 +1688,7 @@ pub fn agent_config_root_with(
         "codebuddy" => moved("CODEBUDDY_CONFIG_DIR", ".codebuddy"),
         "cursor" => home.join(".cursor"),
         "grok" => moved("GROK_HOME", ".grok"),
+        "agy" => home.join(".gemini").join("antigravity-cli"),
         _ => return None,
     })
 }
@@ -1706,11 +1707,12 @@ pub fn agent_config_root(agent: &str) -> Option<std::path::PathBuf> {
     agent_config_root_with(agent, &home, &env_path)
 }
 
-/// 该 agent 的技能目录：配置目录下 `skills`（Cursor 是 `skills-cursor`），与 MCP 同源。
+/// 该 agent 的技能目录：配置目录下 `skills`（Cursor 是 `skills-cursor`，Antigravity CLI 是 `~/.gemini/config/skills`），与 MCP 同源。
 pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
     let home = crate::dirs::home_dir()?;
     match spec.id {
         "cursor" => Some(home.join(".cursor").join("skills-cursor")),
+        "agy" => Some(home.join(".gemini").join("config").join("skills")),
         id => match agent_config_root_with(id, &home, &env_path) {
             Some(root) => Some(root.join("skills")),
             None => Some(spec.skills_dir.iter().fold(home, |p, seg| p.join(seg))),

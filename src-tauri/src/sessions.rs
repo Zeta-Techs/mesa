@@ -922,6 +922,7 @@ mod codebuddy;
 mod cursor;
 mod grok;
 mod opencode;
+mod agy;
 
 pub(crate) use claude::*;
 pub(crate) use codex::*;
@@ -932,6 +933,7 @@ use codebuddy::*;
 use cursor::*;
 use grok::*;
 pub(crate) use opencode::*;
+pub(crate) use agy::*;
 
 // ===== 扫描 =====
 
@@ -1021,6 +1023,10 @@ pub(crate) struct ScanFileCache {
     /// grok 会话的 summary.json 指纹侧栏：与 chained 里 updates.jsonl 指纹分开比较，
     /// 不做 XOR 折叠（同长改动会抵消成缓存假命中）
     grok_summary: HashMap<String, Option<FileSig>>,
+    /// agy 会话缓存与外部元信息库（conversation_summaries.db / -wal / last_conversations.json）指纹
+    agy: HashMap<String, (FileSig, SessionMetaDto)>,
+    agy_meta_sig: (Option<FileSig>, Option<FileSig>, Option<FileSig>),
+    agy_meta_map: HashMap<String, AgySummaryEntry>,
 }
 
 static SCAN_FILE_CACHE: OnceLock<Mutex<ScanFileCache>> = OnceLock::new();
@@ -1149,6 +1155,9 @@ pub fn scan_sessions() -> ScanResult {
         opencode_db,
         opencode_legacy,
         grok_summary,
+        agy,
+        agy_meta_sig,
+        agy_meta_map,
     } = &mut *cache;
     // Gemini 的 slug → 项目路径映射在扫描与快照补全时都要用
     let roots = SessionRoots::current();
@@ -1446,6 +1455,31 @@ pub fn scan_sessions() -> ScanResult {
         let (reps, members) = merge_codex_chains(grok_metas);
         out.extend(reps);
         chain_members.extend(members);
+        // Antigravity CLI：brain/<id>/.system_generated/logs/transcript_full.jsonl（缺省退回 transcript.jsonl）；
+        // 工作目录与标题从 conversation_summaries.db 只读取（仅留 app_data_dir='antigravity-cli' 且排除子智能体）
+        let cur_agy_sig = agy_meta_sources_sig(&roots.agy);
+        let agy_sources_changed = *agy_meta_sig != cur_agy_sig;
+        if agy_sources_changed {
+            *agy_meta_map = agy_load_meta_map(&roots.agy);
+            *agy_meta_sig = cur_agy_sig;
+        }
+        let agy_files = agy_collect_transcripts(&roots.agy.join("brain"));
+        let mut agy_next: HashMap<String, (FileSig, SessionMetaDto)> =
+            HashMap::with_capacity(agy_files.len());
+        for (cid, f) in agy_files {
+            let Some(sig) = file_sig(&f) else { continue };
+            let key = cache_key(&f);
+            let meta = match agy.get(&key) {
+                Some((old_sig, old)) if !agy_sources_changed && *old_sig == sig => old.clone(),
+                _ => match agy_file_meta(&f, Some(&cid), true, agy_meta_map) {
+                    Some(m) => m,
+                    None => continue,
+                },
+            };
+            agy_next.insert(key, (sig, meta.clone()));
+            out.push(meta);
+        }
+        *agy = agy_next;
     }
     // pin 即保留：源文件已消失的会话从快照补齐（§6.5）
     let seen: HashSet<(String, String)> = out
@@ -1468,6 +1502,7 @@ pub fn scan_sessions() -> ScanResult {
             "codebuddy",
             "cursor",
             "grok",
+            "agy",
         ] {
             for f in snapshot_files(&dir, agent) {
                 let stem = snapshot_stem(&f);
@@ -1484,6 +1519,7 @@ pub fn scan_sessions() -> ScanResult {
                         "codebuddy" => codebuddy_file_meta(f, false),
                         "cursor" => cursor_file_meta(f, false),
                         "grok" => grok_file_meta(f, false).map(|(m, _)| m),
+                        "agy" => agy_file_meta(f, Some(&stem), false, &HashMap::new()),
                         _ => claude_file_meta(f, false),
                     };
                     meta.map(|mut m| {
@@ -2652,6 +2688,7 @@ fn tail_state_impl(agent: &str, file_path: &str) -> String {
         "codebuddy" => codebuddy_tail_state(&lines),
         "cursor" => cursor_tail_state(&lines),
         "grok" => grok_tail_state(&lines),
+        "agy" => agy_tail_state(&lines),
         _ => claude_tail_state(&lines),
     }
     .into()
@@ -3504,6 +3541,7 @@ pub(crate) fn parse_session_lines(agent: &str, lines: &[String]) -> Vec<ChatMess
         "codebuddy" => parse_codebuddy(lines),
         "cursor" => parse_cursor(lines),
         "grok" => parse_grok(lines),
+        "agy" => parse_agy(lines),
         _ => parse_claude(lines),
     }
 }
@@ -4876,6 +4914,8 @@ pub(crate) struct SessionRoots {
     pub cursor: PathBuf,
     /// `<root>/sessions/<encoded-cwd>/<session-id>/updates.jsonl`
     pub grok: PathBuf,
+    /// `<root>/brain/<conversation-id>/.system_generated/logs/transcript*.jsonl`
+    pub agy: PathBuf,
     /// OpenCode 旧版 storage（v1.2+ 的共享 SQLite 另走 `opencode_db_candidates`）
     pub opencode_legacy: PathBuf,
 }
@@ -4885,7 +4925,7 @@ impl SessionRoots {
     pub(crate) fn with(home: &Path, env: &dyn Fn(&str) -> Option<PathBuf>) -> Self {
         let root = |agent: &str| {
             crate::agent_specs::agent_config_root_with(agent, home, env)
-                .expect("九家 agent 都有配置根")
+                .expect("十家 agent 都有配置根")
         };
         let qwen_config = root("qwen");
         Self {
@@ -4900,6 +4940,7 @@ impl SessionRoots {
             //（2026.10.22 bundle `cursor-config/dist/paths.js`）
             cursor: env("CURSOR_DATA_DIR").unwrap_or_else(|| home.join(".cursor")),
             grok: root("grok"),
+            agy: root("agy"),
             opencode_legacy: home.join(".local").join("share").join("opencode").join("storage"),
         }
     }
@@ -4951,6 +4992,7 @@ impl SessionRoots {
             codebuddy: c(&self.codebuddy),
             cursor: c(&self.cursor),
             grok: c(&self.grok),
+            agy: c(&self.agy),
             opencode_legacy: c(&self.opencode_legacy),
         }
     }
@@ -5018,6 +5060,9 @@ pub(crate) fn session_data_dirs_at(roots: &SessionRoots) -> Vec<(PathBuf, bool)>
         // grok: sessions/<encoded-cwd>/<session-id>/updates.jsonl（同根的 auth.json/config.toml
         // 与 sessions 根的 session_search.sqlite 不许删 → 限定 sessions 子目录）
         (roots.grok.join("sessions"), false),
+        // agy: brain/<conversation-id>/.system_generated/logs/transcript*.jsonl（同根 settings.json
+        // 与 conversation_summaries.db 不许碰 → 限定 brain 子目录）
+        (roots.agy.join("brain"), false),
         // cursor 不进目录级白名单：~/.cursor 与 IDE 共享，projects 下也有非会话 jsonl，
         // 目录粒度太粗——由 deletable_session_file 里的 cursor_deletable 精确判定
     ]
@@ -5288,6 +5333,8 @@ pub(crate) fn delete_session_files(
                 delete_source_file_mode(file_path, permanent)?;
             }
         }
+    } else if agent == "agy" {
+        delete_agy_session_dir(file_path, &session_data_dirs(), permanent)?;
     } else {
         delete_source_file_mode(file_path, permanent)?;
         if agent == "codex" || agent == "grok" || agent == "claude-code" {
