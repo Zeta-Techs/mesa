@@ -30,7 +30,8 @@ const LIST_CAP: usize = 20;
 // 只清这三家能从会话文件重抽的行（有 seen 标记）和它们的 seen 标记，其余 agent 与重抽不回来的行不动。
 // v10（2026-10-31）：Claude Code 同一次回复拆成几行、每行带整份 usage，原先逐行相加，用量约翻倍；改为按 message.id 合一。
 // 只清 Claude Code 能从会话文件重抽的行和它的 seen 标记；文件已被 CLI 清掉的旧行重抽不回来，保持原数。
-const USAGE_SCHEMA_VERSION: &str = "12";
+// v13（2026-11-13）：Kimi 2.6 不再写 llm.request，Mesa 开的会话用量记成合成别名；改按启动记下的模型换。只清 Kimi 能重抽的行
+const USAGE_SCHEMA_VERSION: &str = "13";
 const SOURCE_CLI: &str = "cli";
 const SOURCE_CCODE_AI: &str = "ccode-ai";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -281,7 +282,8 @@ where
 {
     let mut out = Vec::new();
     // usage.record 记的是 config.toml 里的模型别名（Mesa 启动合成的 `__kimi_env_model__`、`zetatechs/kimi-k3`），
-    // 同一份文件的 llm.request 行带着 modelAlias → model 真名；不换回来，用量里就是一个查不到价的占位名（2026-11-07）
+    // 同一份文件的 llm.request 行带着 modelAlias → model 真名；不换回来，用量里就是一个查不到价的占位名（2026-11-07）。
+    // Kimi 2.6 起文件里不再写 llm.request，合成别名由建索引时按启动记下的模型换（kimi_launch_models，2026-11-13）
     let mut alias_to_model: HashMap<String, String> = HashMap::new();
     for line in lines {
         let Ok(v) = serde_json::from_str::<Value>(line.as_ref()) else {
@@ -984,11 +986,12 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         .ok();
     if current.as_deref() != Some(USAGE_SCHEMA_VERSION) {
         // 旧索引没有可靠来源，清空后由会话源重新生成，避免把历史猜测伪装成权威分类。
-        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名，v11→v12 只是 Claude Code 分出 1 小时缓存写：只清这几家能从会话文件重抽的行
+        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名，v11→v12 只是 Claude Code 分出 1 小时缓存写，v12→v13 只是 Kimi 按启动模型换别名：只清这几家能从会话文件重抽的行
         // （有 seen 标记）和它们的 seen 标记，其它 agent 已建好的日行留着，避免整库重解析；文件已不在的行重抽不回来，
         // 留着（用量历史永久保留）
         let partial: Option<&[&str]> = match current.as_deref() {
-            Some("11") => Some(&["claude-code"]),
+            Some("12") => Some(&["kimi"]),
+            Some("11") => Some(&["claude-code", "kimi"]),
             Some("10") => Some(&["claude-code", "kimi"]),
             Some("9") => Some(&["claude-code", "kimi"]),
             Some("8") => Some(&["claude-code", "codex", "gemini", "qwen", "kimi"]),
@@ -1261,6 +1264,32 @@ fn session_meta_flags(conn: &Connection) -> HashMap<(String, String), (bool, Opt
     map
 }
 
+/// Mesa 开的 Kimi 会话启动时记下的模型：session_id → 模型名。会话文件只记合成别名 `__kimi_env_model__`，
+/// Kimi 2.6 起不再写带真名的 llm.request，用量只能靠它换回真名。表或列不存在按空处理
+fn kimi_launch_models(conn: &Connection) -> HashMap<String, String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT session_id, launch_model FROM session_meta
+         WHERE agent='kimi' AND launch_model IS NOT NULL AND launch_model<>''",
+    ) else {
+        return HashMap::new();
+    };
+    stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+}
+
+/// 文件里换不回真名的 Kimi 合成别名，改记启动时的模型（没记下的保持原样）
+fn fill_kimi_launch_model(events: &mut [UsageEvent], launch_model: Option<&String>) {
+    let Some(model) = launch_model else {
+        return;
+    };
+    for event in events {
+        if event.model == crate::agents::KIMI_ENV_MODEL_ALIAS {
+            event.model.clone_from(model);
+        }
+    }
+}
+
 /// 官方账号（订阅制）profile id 集：重建索引时把会话档案的 profile 解析成认证方式。
 /// 测试环境不读本机真实配置（解析链语义由注入 meta_official 的单测覆盖）
 #[cfg(not(test))]
@@ -1462,6 +1491,7 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
     let conn = usage_db()?;
     prune_stale_provenance(&conn);
     let meta_flags = session_meta_flags(&conn);
+    let kimi_models = kimi_launch_models(&conn);
     let official_profiles = official_profile_ids();
     let scan = crate::sessions::scan_sessions();
     let mut indexed = 0usize;
@@ -1497,6 +1527,9 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
             meta_official,
         );
         let mut events = extract_events(s);
+        if s.agent == "kimi" {
+            fill_kimi_launch_model(&mut events, kimi_models.get(&s.session_id));
+        }
         for event in &mut events {
             event.source.clone_from(&source);
             event.internal = internal;

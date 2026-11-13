@@ -736,6 +736,59 @@ fn session_meta_internal_marks_usage_per_session() {
 }
 
 #[test]
+fn kimi_alias_falls_back_to_launch_model() {
+    // Kimi 2.6 起会话文件不写 llm.request：Mesa 开的会话只剩合成别名，建索引时换成启动记下的模型
+    let conn = Connection::open_in_memory().unwrap();
+    assert!(kimi_launch_models(&conn).is_empty(), "没有 session_meta 表按空处理");
+    conn.execute_batch(
+        "CREATE TABLE session_meta(agent TEXT, session_id TEXT, launch_model TEXT);
+         INSERT INTO session_meta VALUES('kimi', 'k1', 'glm-5.3'), ('kimi', 'k2', ''), ('codex', 'c1', 'gpt-5.5');",
+    )
+    .unwrap();
+    let models = kimi_launch_models(&conn);
+    assert_eq!(models.len(), 1, "只认 Kimi 且记下了模型的会话");
+    let lines = vec![
+        r#"{"type":"usage.record","model":"__kimi_env_model__","usage":{"inputOther":5,"output":1},"time":1785307071000}"#.to_string(),
+        r#"{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":5,"output":1},"time":1785307072000}"#.to_string(),
+    ];
+    let mut evs = kimi_events(&lines);
+    fill_kimi_launch_model(&mut evs, models.get("k1"));
+    assert_eq!(evs[0].model, "glm-5.3");
+    assert_eq!(evs[1].model, "kimi-k2", "文件里本来就是真名的不动");
+    let mut evs = kimi_events(&lines);
+    fill_kimi_launch_model(&mut evs, models.get("k2"));
+    assert_eq!(evs[0].model, "__kimi_env_model__", "启动时没记下模型的保持原样");
+}
+
+#[test]
+fn schema_v12_upgrade_only_resets_kimi() {
+    let conn = Connection::open_in_memory().unwrap();
+    ensure_usage_schema(&conn).unwrap();
+    conn.execute_batch(
+        "INSERT INTO usage_daily(day, agent, model, project_path, session_id, input, output, cache_read, cache_write, cache_write_1h, source, internal, workspace, official) VALUES
+           ('2026-11-12','kimi','__kimi_env_model__','/repo','s-kimi',10,2,0,0,0,'cli',0,'',0),
+           ('2026-09-01','kimi','__kimi_env_model__','/repo','s-gone',10,2,0,0,0,'cli',0,'',0),
+           ('2026-11-12','codex','gpt-5','/repo','s-codex',10,2,0,0,0,'cli',0,'',0);
+         INSERT INTO usage_meta VALUES ('seen:kimi:s-kimi:live','old'), ('seen:codex:s-codex:live','old');
+         UPDATE usage_meta SET value='12' WHERE key='schema_version';",
+    )
+    .unwrap();
+    ensure_usage_schema(&conn).unwrap();
+    assert_eq!(meta_get(&conn, "schema_version").as_deref(), Some(USAGE_SCHEMA_VERSION));
+    assert!(meta_get(&conn, "seen:kimi:s-kimi:live").is_none());
+    assert_eq!(meta_get(&conn, "seen:codex:s-codex:live").as_deref(), Some("old"));
+    let left: Vec<String> = conn
+        .prepare("SELECT agent || ':' || session_id FROM usage_daily ORDER BY 1")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    // 文件已不在的旧行重抽不回来，留着（用量历史永久保留）
+    assert_eq!(left, vec!["codex:s-codex", "kimi:s-gone"]);
+}
+
+#[test]
 fn official_provenance_session_grained_and_legacy_cutoff() {
     let conn = Connection::open_in_memory().unwrap();
     ensure_usage_schema(&conn).unwrap();
