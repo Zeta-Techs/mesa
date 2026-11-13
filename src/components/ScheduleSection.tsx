@@ -1556,6 +1556,18 @@ export default function ScheduleSection({
     }
   }
 
+  // 关着期间漏掉的事件：补跑（并进待处理，按规则档位走）/ 不用（丢掉）
+  async function missedAnswer(s: ScheduleDto, replay: boolean) {
+    setError(null);
+    try {
+      await invoke("schedule_missed_resolve", { id: s.id, replay });
+      await load();
+      onSchedulesChanged?.();
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function runNow(s: ScheduleDto, note?: string) {
     setRunning((cur) => new Set(cur).add(s.id));
     setError(null);
@@ -2024,6 +2036,27 @@ export default function ScheduleSection({
                         </button>
                       </p>
                     </div>
+                  )}
+                  {s.event && (s.missedEvents ?? 0) > 0 && (
+                    <p className="mt-0.5 flex flex-wrap items-center gap-1 pl-11 text-micro text-l3">
+                      <span>
+                        关着期间来了 {s.missedEvents} 批事件（{s.missedFiles ?? 0} 个文件），没有处理
+                        {s.enabled ? "。" : "，打开后可以补跑。"}
+                      </span>
+                      {s.enabled && (
+                        <button
+                          type="button"
+                          className={`${actionBtn} h-auto px-1.5 text-micro`}
+                          title="把这些事件按这条规则处理一次"
+                          onClick={() => void missedAnswer(s, true)}
+                        >
+                          补跑
+                        </button>
+                      )}
+                      <button type="button" className={`${actionBtn} h-auto px-1.5 text-micro`} onClick={() => void missedAnswer(s, false)}>
+                        不用
+                      </button>
+                    </p>
                   )}
                   {!s.enabled && s.pausedReason && (
                     <p className="mt-0.5 pl-11 text-micro text-warn-text">

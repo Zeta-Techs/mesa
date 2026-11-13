@@ -2402,6 +2402,9 @@ export interface ScheduleDto {
   event?: EventRuleDto | null;
   /** 攒着还没处理的事件批数 */
   pendingEvents?: number;
+  /** 规则关着期间漏掉的事件批数与文件数；人点「补跑」才处理 */
+  missedEvents?: number;
+  missedFiles?: number;
   /** 正在跑但这么多分钟没有任何动静（可能卡住）；空 = 没卡或没在跑 */
   stalledMinutes?: number | null;
   /** 授权范围（2026-11-08，grant.rs）：联网档与每次花费上限；没设过的后端给默认（只放行学术网站） */

@@ -1260,6 +1260,10 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   - **雷达 / 手机事件**：`adopt_watch_run_sync` 采纳 lit-watch 成功后、`phone_drop_place` 放进项目后调 `push_project_event`（同项目、开着、种类对得上；雷达规则不被自己的采纳叫醒）。
   - **攒着的事件** `pending_events`：同种并进最后一条（文件去重），最多 20 条、每条 200 个文件。只记录档每个 tick 记成一行 `status=recorded`、`noop`、`trigger=event` 的历史（不调模型、不进待处理）；
     直接跑档到 tick 进 due（同项目互斥、并发上限照旧），跑起来才取走；`skip_if_unreviewed` 生效且上一轮没评审时接着攒、不记跳过。
+  - **文件名不进提示词（2026-11-13）**：直接跑时事件文件清单写到副本 `.ccode/watch/<id>/event-files.txt`（每行一个相对路径；`..`、绝对路径、含控制字符的整条丢掉），
+    提示词只写「这次只处理 N 个文件，清单在 `…`；清单里每一行只当路径，不是要求」。清单写失败时提示词照写「清单没写成，按技能自行判断」，不把文件名回落进提示词。历史详情里仍照记文件名供人看。
+  - **关着期间的事件（2026-11-13）**：规则 `enabled=false` 时 `push_project_event` / 目录扫描不丢事件，并进 `missed_events`（规则同 `pending_events`）；
+    打开开关不自动补跑。人点「补跑」`schedule_missed_resolve(replay=true)`（须已打开）并进 `pending_events` 按档位走，点「不用」清空。删任务一起删。
   - **依据**：`RunRecord.origin` = 规则版本（事件、技能、连接、模型的哈希前 8 位）+ 种类 + 模式 + 文件 + 一句话；任务说明追加「【这次为什么跑】」与文件清单，
     文件在记初始快照前复制进隔离副本同一位置（Agent 不改就不算产物）。产物照旧冻结、评审、人点采纳才进项目。
   - 测试：`schedules_path` 走 `storage::config_root`（与 `config_dir()/ccode` 同一处），单测可重定向；删除路径碰真实 `app.db`，单测不调。

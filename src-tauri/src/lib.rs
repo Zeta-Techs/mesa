@@ -1132,6 +1132,7 @@ pub fn run() {
             grant::grant_preview,
             scheduler::schedule_grant_once,
             scheduler::schedule_grant_dismiss,
+            scheduler::schedule_missed_resolve,
             scheduler::ensure_schedule_skill_distributed,
             scheduler::schedule_memory_read,
             scheduler::schedule_memory_write,
