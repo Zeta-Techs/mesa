@@ -642,7 +642,7 @@ pub async fn spot_check_item(
 // ===== 批次 B2：图片通道 =====
 
 /// 图片单文件上限 20MB（笔记内嵌图远超此值基本是误操作）
-const IMAGE_CAP: u64 = 20 * 1024 * 1024;
+pub(crate) const IMAGE_CAP: u64 = 20 * 1024 * 1024;
 
 /// read_image_bytes 返回：mime 按扩展名映射 + base64 完整字节（前端拼 data URL）
 #[derive(Debug, Clone, Serialize)]

@@ -287,6 +287,19 @@ fn new_version(path: &str, note: &str, source: &str) -> FileVersion {
     }
 }
 
+/// 保存记录对应的来源名：能对上流程步骤就写步骤名，否则写工作区名。三条留版路径（保存后自动留、勾留存时补登、直接看 Git 历史）同用这一处，
+/// 同一版在下拉里不会一处叫步骤名、一处叫工作区名
+fn save_source(root: &Path, save: &crate::projects::AcceptanceLogEntry) -> String {
+    let name = save.goal_name.split(" / ").next().unwrap_or("保存进项目");
+    crate::projects::read_config_at(root)
+        .config
+        .steps
+        .iter()
+        .find(|step| step.workspace_name == name)
+        .map(|step| step.name.clone())
+        .unwrap_or_else(|| name.into())
+}
+
 fn historical_version(
     root: &Path,
     save: &crate::projects::AcceptanceLogEntry,
@@ -302,15 +315,7 @@ fn historical_version(
     if size > 1024 * 1024 * 1024 {
         return None;
     }
-    let name = save.goal_name.split(" / ").next().unwrap_or("保存进项目");
-    let config = crate::projects::read_config_at(root).config;
-    let step = config
-        .steps
-        .iter()
-        .find(|step| step.workspace_name == name)
-        .map(|step| step.name.as_str())
-        .unwrap_or(name);
-    let mut version = new_version(path, "", step);
+    let mut version = new_version(path, "", &save_source(root, save));
     version.id = format!("git:{}:{path}", save.version_id);
     version.saved_at = save.decided_at.clone();
     version.workspace_id = save.scene_ref.clone();
@@ -429,6 +434,58 @@ fn view(
     })
 }
 
+/// 按保存记录从 Git 补登这个文件缺的版本，返回是否补了。勾「保留后续版本」时补以前的；打开已留存文件的版本时再补一次，
+/// 评审保存后留版失败的那一版下次打开就能补上（只补得回进了 Git 的；不进 Git 的产物失败时提示里已说明）
+fn backfill_saves(root: &Path, index: &mut VersionIndex, path: &str) -> bool {
+    let mut previous_blob = None;
+    let mut added = false;
+    for save in crate::projects::read_acceptance_log_at(root)
+        .into_iter()
+        .filter(|save| {
+            save.kind == crate::review_contract::KIND_PIPELINE_MERGE
+                && save.paths.iter().any(|saved| saved == path)
+        })
+    {
+        let Some(blob) = blob_at(root, &save.version_id, path) else {
+            continue;
+        };
+        if previous_blob.as_deref() == Some(blob.as_str()) {
+            continue;
+        }
+        previous_blob = Some(blob.clone());
+        if index.versions.iter().any(|version| {
+            version.path == path && version.save_id.as_deref() == Some(&save.version_id)
+        }) {
+            continue;
+        }
+        let Ok(bytes) = git_content(root, &blob) else {
+            continue;
+        };
+        let mut version = new_version(path, "", &save_source(root, &save));
+        version.saved_at = save.decided_at.clone();
+        version.workspace_id = save.scene_ref.clone();
+        version.save_id = Some(save.version_id.clone());
+        version.size = bytes.len() as u64;
+        version.sha256 = format!("{:x}", Sha256::digest(&bytes));
+        version.git_blob = Some(blob);
+        if let Some(id) = save.scene_ref.as_deref() {
+            let (round, cause) = crate::step_loop::saved_round_origin(root, id, &save.decided_at);
+            version.round = Some(round);
+            version.cause = Some(cause);
+        }
+        index.versions.push(version);
+        added = true;
+    }
+    if added {
+        index.versions.sort_by_key(|version| {
+            chrono::DateTime::parse_from_rfc3339(&version.saved_at)
+                .map(|time| time.timestamp_millis())
+                .unwrap_or(0)
+        });
+    }
+    added
+}
+
 fn with_lock<T>(root: &Path, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     let _process = VERSION_LOCK.lock().map_err(|_| "文件版本锁失效")?;
     let key = format!(
@@ -458,15 +515,7 @@ pub(crate) fn capture_accepted(
             }) {
                 continue;
             }
-            let name = save.goal_name.split(" / ").next().unwrap_or("保存进项目");
-            let cfg = crate::projects::read_config_at(root).config;
-            let step = cfg
-                .steps
-                .iter()
-                .find(|step| step.workspace_name == name)
-                .map(|step| step.name.as_str())
-                .unwrap_or(name);
-            let mut version = new_version(path, "", step);
+            let mut version = new_version(path, "", &save_source(root, save));
             version.saved_at = save.decided_at.clone();
             version.workspace_id = save.scene_ref.clone();
             version.save_id = Some(save.version_id.clone());
@@ -522,9 +571,17 @@ pub async fn file_versions(
     tauri::async_runtime::spawn_blocking(move || {
         let (root, source, path) = location(&root, path.as_deref())?;
         with_lock(&root, || {
+            let mut index = load(&root)?;
+            if let Some(path) = path.as_deref() {
+                if index.tracked.iter().any(|tracked| tracked == path)
+                    && backfill_saves(&root, &mut index, path)
+                {
+                    persist(&root, &index)?;
+                }
+            }
             let mut result = view(
                 &root,
-                load(&root)?,
+                index,
                 path.as_deref(),
                 workspace_id.as_deref(),
             )?;
@@ -602,54 +659,7 @@ fn update_at(
     match action {
         "track" | "snapshot" => {
             if action == "track" && !index.tracked.contains(&path) {
-                let mut previous_blob = None;
-                for save in crate::projects::read_acceptance_log_at(root)
-                    .into_iter()
-                    .filter(|save| {
-                        save.kind == crate::review_contract::KIND_PIPELINE_MERGE
-                            && save.paths.contains(&path)
-                    })
-                {
-                    let Some(blob) = blob_at(root, &save.version_id, &path) else {
-                        continue;
-                    };
-                    if previous_blob.as_deref() == Some(blob.as_str()) {
-                        continue;
-                    }
-                    previous_blob = Some(blob.clone());
-                    if index.versions.iter().any(|version| {
-                        version.path == path && version.save_id.as_deref() == Some(&save.version_id)
-                    }) {
-                        continue;
-                    }
-                    let Ok(bytes) = git_content(root, &blob) else {
-                        continue;
-                    };
-                    let sha = format!("{:x}", Sha256::digest(&bytes));
-                    let mut version = new_version(
-                        &path,
-                        "",
-                        save.goal_name.split(" / ").next().unwrap_or("保存进项目"),
-                    );
-                    version.saved_at = save.decided_at.clone();
-                    version.workspace_id = save.scene_ref.clone();
-                    version.save_id = Some(save.version_id);
-                    version.size = bytes.len() as u64;
-                    version.sha256 = sha;
-                    version.git_blob = Some(blob);
-                    if let Some(id) = save.scene_ref.as_deref() {
-                        let (round, cause) =
-                            crate::step_loop::saved_round_origin(root, id, &save.decided_at);
-                        version.round = Some(round);
-                        version.cause = Some(cause);
-                    }
-                    index.versions.push(version);
-                }
-                index.versions.sort_by_key(|version| {
-                    chrono::DateTime::parse_from_rfc3339(&version.saved_at)
-                        .map(|time| time.timestamp_millis())
-                        .unwrap_or(0)
-                });
+                backfill_saves(root, &mut index, &path);
             }
             let mut version = snapshot(root, source, new_version(&path, note, "手动留存"))?;
             version.workspace_id = workspace_id.map(str::to_string).or_else(|| {
@@ -755,12 +765,57 @@ fn publish_copy(
         if replace {
             crate::storage::replace(&staged, dest)
         } else {
-            fs::hard_link(&staged, dest)
-                .map_err(|error| format!("另存失败，未覆盖已有文件：{error}"))
+            // create_new 由文件系统保证同名不覆盖；不用硬链接：U 盘（exFAT/FAT32）和部分网络盘不支持
+            let mut target = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .map_err(|error| format!("另存失败，未覆盖已有文件：{error}"))?;
+            let written = fs::File::open(&staged)
+                .and_then(|mut source| std::io::copy(&mut source, &mut target))
+                .and_then(|_| target.sync_all());
+            if let Err(error) = written {
+                drop(target);
+                let _ = fs::remove_file(dest);
+                return Err(format!("另存失败：{error}"));
+            }
+            Ok(())
         }
     })();
     let _ = fs::remove_file(staged);
     result
+}
+
+/// 预览副本的目录名：Git 旧版的 id 是 `git:<提交>:<路径>`，冒号在 Windows 文件名里非法、斜杠会多建几层，一律取哈希
+fn scratch_name(id: &str) -> String {
+    format!("{:x}", Sha256::digest(id.as_bytes()))[..32].into()
+}
+
+/// 预览 / 比较临时副本超过一天没动就删：每开一版都写一份完整副本，不清会一直攒在配置目录里
+fn sweep_scratch(config: &Path) {
+    sweep_scratch_older(&config.join("tmp/file-versions"), std::time::Duration::from_secs(24 * 3600));
+}
+
+fn sweep_scratch_older(base: &Path, age: std::time::Duration) {
+    let stale = |path: &Path| {
+        fs::symlink_metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.elapsed().ok())
+            .is_some_and(|elapsed| elapsed >= age)
+    };
+    for dir in [base.to_path_buf(), base.join("compare")] {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_name() == "compare" && dir == base {
+                continue;
+            }
+            if stale(&path) {
+                let _ = if path.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -774,9 +829,10 @@ pub async fn file_version_preview(root: String, version_id: String) -> Result<St
                 .ok_or("文件名无效")?
                 .to_string_lossy();
             let config = crate::storage::config_root().ok_or("找不到预览目录")?;
+            sweep_scratch(&config);
             let path = safe_path(
                 &config,
-                &format!("tmp/file-versions/{}/{}", version.id, name),
+                &format!("tmp/file-versions/{}/{}", scratch_name(&version.id), name),
             )?;
             publish_copy(&root, &version, &path, true)?;
             Ok(path.to_string_lossy().into_owned())
@@ -801,7 +857,8 @@ fn comparison_at(
     {
         return Err("请选择同一个文件的两版".into());
     }
-    let cap = if image { 32 * 1024 * 1024 } else { 512 * 1024 };
+    // 图片上限与格式同 read_image_bytes（前端靠它读图）：后端放行而前端读不了，会先说能比再报错
+    let cap = if image { crate::reader::IMAGE_CAP } else { 512 * 1024 };
     if before.size > cap || after.as_ref().is_some_and(|after| after.size > cap) {
         return Err("文件超过比较预算，请另存后用系统应用比较".into());
     }
@@ -839,7 +896,7 @@ fn comparison_at(
             .unwrap_or_default();
         if !matches!(
             ext.as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp"
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg"
         ) {
             return Err("这类文件不支持图片比较".into());
         }
@@ -848,10 +905,9 @@ fn comparison_at(
         digest.update(&before_bytes);
         digest.update(&after_bytes);
         let fingerprint = format!("{:x}", digest.finalize());
-        let folder = safe_path(
-            &crate::storage::config_root().ok_or("找不到比较目录")?,
-            &format!("tmp/file-versions/compare/{fingerprint}"),
-        )?;
+        let config = crate::storage::config_root().ok_or("找不到比较目录")?;
+        sweep_scratch(&config);
+        let folder = safe_path(&config, &format!("tmp/file-versions/compare/{fingerprint}"))?;
         let before_path = folder.join(format!("before.{ext}"));
         let after_path = folder.join(format!("after.{ext}"));
         let result = (|| {
@@ -1533,6 +1589,100 @@ mod tests {
         assert!(!fixture.root.join(".ccode/versions/index.json").exists());
         assert!(selected(&fixture.root, &format!("git:{second}:other.md")).is_err());
         assert!(selected(&fixture.root, &format!("git:{second}:../outside.md")).is_err());
+    }
+
+    #[test]
+    fn git_preview_scratch_name_is_a_plain_file_name_on_every_platform() {
+        let name = scratch_name("git:0123abcd:chapters/intro.md");
+        assert_eq!(name.len(), 32);
+        assert!(name.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(name, scratch_name("git:0123abcd:chapters/other.md"));
+        let fixture = Fixture::new();
+        fixture.write("outline.md", b"accepted");
+        let commit = fixture.commit("outline.md");
+        crate::projects::append_acceptance_log_at(&fixture.root, &save("outline.md", &commit)).unwrap();
+        let version = selected(&fixture.root, &format!("git:{commit}:outline.md")).unwrap();
+        let dest = crate::storage::config_root()
+            .unwrap()
+            .join("tmp/file-versions")
+            .join(scratch_name(&version.id))
+            .join("outline.md");
+        publish_copy(&fixture.root, &version, &dest, true).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"accepted");
+    }
+
+    #[test]
+    fn export_without_replace_never_overwrites_and_leaves_no_partial_file() {
+        let fixture = Fixture::new();
+        fixture.write("draft.md", b"kept draft");
+        fixture.update("draft.md", "snapshot", None, "").unwrap();
+        let version = load(&fixture.root).unwrap().versions.remove(0);
+        let dest = fixture.root.join("out/draft-copy.md");
+        publish_copy(&fixture.root, &version, &dest, false).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"kept draft");
+        fs::write(&dest, b"someone else").unwrap();
+        assert!(publish_copy(&fixture.root, &version, &dest, false).is_err());
+        assert_eq!(fs::read(&dest).unwrap(), b"someone else");
+        let leftovers: Vec<_> = fs::read_dir(fixture.root.join("out")).unwrap().flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp")).collect();
+        assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn a_missed_capture_is_backfilled_from_git_when_the_file_is_opened() {
+        let fixture = Fixture::new();
+        fixture.write("outline.md", b"first");
+        let first = fixture.commit("outline.md");
+        crate::projects::append_acceptance_log_at(&fixture.root, &save("outline.md", &first)).unwrap();
+        fixture.update("outline.md", "track", None, "").unwrap();
+        let before = load(&fixture.root).unwrap().versions.len();
+        // 第二次保存进了 Git 和保存记录，但 capture_accepted 失败（没登记）
+        fixture.write("outline.md", b"second");
+        let second = fixture.commit("outline.md");
+        let mut later = save("outline.md", &second);
+        later.decided_at = "2026-11-13T09:00:00+08:00".into();
+        crate::projects::append_acceptance_log_at(&fixture.root, &later).unwrap();
+        let mut index = load(&fixture.root).unwrap();
+        assert!(backfill_saves(&fixture.root, &mut index, "outline.md"));
+        assert_eq!(index.versions.len(), before + 1);
+        let added = index.versions.iter().find(|v| v.save_id.as_deref() == Some(second.as_str())).unwrap();
+        assert_eq!(content(&fixture.root, added).unwrap(), b"second");
+        assert!(!backfill_saves(&fixture.root, &mut index, "outline.md"), "补过的不重复补");
+    }
+
+    #[test]
+    fn every_capture_path_names_the_same_source() {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.root.join(".ccode/project.toml"),
+            "name = '版本测试'\n[[steps]]\nname = '综述大纲'\nworkspace_name = 'step'\n",
+        )
+        .unwrap();
+        fixture.write("outline.md", b"first");
+        let first = fixture.commit("outline.md");
+        let entry = save("outline.md", &first);
+        crate::projects::append_acceptance_log_at(&fixture.root, &entry).unwrap();
+        let viewed = historical_version(&fixture.root, &entry, "outline.md").unwrap();
+        fixture.update("outline.md", "track", None, "").unwrap();
+        let tracked = load(&fixture.root).unwrap().versions.into_iter()
+            .find(|v| v.save_id.as_deref() == Some(first.as_str())).unwrap();
+        assert_eq!(viewed.source, tracked.source);
+        assert_eq!(save_source(&fixture.root, &entry), viewed.source);
+    }
+
+    #[test]
+    fn stale_scratch_copies_are_swept_but_fresh_ones_stay() {
+        let fixture = Fixture::new();
+        let base = fixture.root.join("scratch");
+        fs::create_dir_all(base.join("compare/pair")).unwrap();
+        fs::create_dir_all(base.join("preview")).unwrap();
+        fs::write(base.join("preview/a.md"), b"x").unwrap();
+        sweep_scratch_older(&base, std::time::Duration::from_secs(3600));
+        assert!(base.join("preview").exists() && base.join("compare/pair").exists());
+        sweep_scratch_older(&base, std::time::Duration::ZERO);
+        assert!(!base.join("preview").exists());
+        assert!(!base.join("compare/pair").exists());
+        assert!(base.join("compare").exists(), "比较目录本身留着");
     }
 
     #[cfg(unix)]
