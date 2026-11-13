@@ -869,7 +869,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
                              # 聊天图片卡与 md 内嵌图共用，切回会话首帧就有图；首次读走二进制通道 read_image_raw（不经 base64）、上屏前先 decode；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
-  chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；
+  chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按连接记住完全访问（rememberChatPermission / profilePermissionMode，只管聊天对话，2026-11-13）；按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；
                              # 只讨论按家分说法（PLAN_FIRST_AGENTS：只有 Claude Code 写「先出方案，你点头再…」，2026-10-26）；
                              # 符号「界线」在 components/ChatPermissionBadge.tsx PermissionGlyph（tests/chat-permission.test.ts）
   plan-approval.ts           # 计划模式方案确认那一屏（2026-10-26，Claude / CodeBuddy / Gemini / Kimi / Qwen / OpenCode，tests/plan-approval.test.ts + fixtures/plan-screens.json）：

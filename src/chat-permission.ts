@@ -10,6 +10,7 @@
  *   Codex / Grok 这一档是只读沙箱，Cursor 没法在假网关下核实，照旧写「不…，告诉你怎么…」
  */
 import type { StarterContext } from "./chat-empty-start.ts";
+import { isNewChatKey } from "./quick-chat.ts";
 
 export type PermissionTierId = "discuss" | "ask" | "auto" | "full";
 
@@ -64,4 +65,61 @@ export function nextPermissionTier(
     if (id !== current && available(id)) return id;
   }
   return null;
+}
+
+// ===== 按连接记住完全访问（2026-11-13 用户拍板）=====
+// 聊天里亲手给某条连接选了完全访问：之后用这条连接开的对话默认就是完全访问；在这条连接上换回别的档就忘掉。
+// 换了连接 / 换了 Agent，标签带着的完全访问不跟过去（新那条也记过的除外）。只管聊天对话：
+// 步骤、阅读、商量这类入口各有自己的权限口径；重启后恢复出的标签不带（safety.md「本机原生权限档」）。
+
+const FULL_ACCESS_KEY = "ccode.chatFullAccess";
+
+function loadFullAccess(): string[] {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(FULL_ACCESS_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 这条连接记过完全访问 */
+export function rememberedFullAccess(profileId: string | null | undefined): boolean {
+  return Boolean(profileId) && loadFullAccess().includes(profileId!);
+}
+
+/** 人在聊天里亲手换档后调：完全访问记下，先出方案 / 请求批准 / 帮我批准忘掉；mode = null（回到本机设置，多是换家时自动回落）不动 */
+export function rememberChatPermission(
+  profileId: string | null | undefined,
+  permission: "discuss" | "write_tree",
+  mode: "ask" | "auto" | "full" | null | undefined,
+): void {
+  if (!profileId || (permission === "write_tree" && !mode)) return;
+  const full = permission === "write_tree" && mode === "full";
+  const list = loadFullAccess().filter((id) => id !== profileId);
+  if (full) list.push(profileId);
+  try {
+    localStorage.setItem(FULL_ACCESS_KEY, JSON.stringify(list));
+  } catch {
+    /* 记不下就每次再选 */
+  }
+}
+
+/** 这个标签算不算聊天对话（按复用键）：空白新对话、侧栏接着聊、没带键的新标签 */
+export function chatPermissionMemoryApplies(reuseKey: string | null | undefined): boolean {
+  return !reuseKey || isNewChatKey(reuseKey) || reuseKey.startsWith("resume:");
+}
+
+/** 连接定了 / 换了之后标签的原生档该改成什么；undefined = 不动。
+ *  记过的连接：按本机设置时改成完全访问，人选过别的档不动；没记过：带着的完全访问回到本机设置 */
+export function profilePermissionMode(input: {
+  permission: "discuss" | "write_tree";
+  mode: "ask" | "auto" | "full" | null;
+  remembered: boolean;
+  /** 这家有完全访问的启动参数（Agent 名单没读到时为 false：只是先不改成完全访问，不会因此忘掉） */
+  fullAvailable: boolean;
+}): "full" | null | undefined {
+  if (input.permission === "discuss") return undefined;
+  if (input.remembered) return input.mode === null && input.fullAvailable ? "full" : undefined;
+  return input.mode === "full" ? null : undefined;
 }
