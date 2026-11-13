@@ -89,8 +89,9 @@ pub fn planned_matches_live(path: &Path, planned: &str) -> bool {
         Err(_) => return false,
     };
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    if name.ends_with(".json") {
-        let planned_v = serde_json::from_str::<Value>(planned);
+    if name.ends_with(".json") || name.ends_with(".jsonc") {
+        let planned_v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(planned))
+            .or_else(|_| serde_json::from_str::<Value>(planned));
         let live_v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(&live))
             .or_else(|_| serde_json::from_str::<Value>(&live));
         match (planned_v, live_v) {
@@ -98,7 +99,7 @@ pub fn planned_matches_live(path: &Path, planned: &str) -> bool {
             _ => planned.trim() == live.trim(),
         }
     } else if name.ends_with(".toml") {
-        toml_subset_equal(planned, &live)
+        toml_subset_equal(planned, crate::mcp::strip_bom(&live))
     } else if name == ".env" || name.ends_with(".env") {
         env_subset_equal(planned, &live)
     } else {
@@ -179,6 +180,10 @@ mod tests {
         let path = dir.join("settings.json");
         std::fs::write(&path, "{\n  // c\n  \"env\": {\"A\": \"1\"},\n}\n").unwrap();
         assert!(planned_matches_live(&path, "{\"env\":{\"A\":\"1\"}}"));
+        let jsonc = dir.join("opencode.jsonc");
+        std::fs::write(&jsonc, "\u{feff}{\n  // c\n  \"model\": \"m1\",\n  \"theme\": \"dark\",\n}\n").unwrap();
+        assert!(planned_matches_live(&jsonc, "{\"model\":\"m1\"}"));
+        assert!(!planned_matches_live(&jsonc, "{\"model\":\"m2\"}"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

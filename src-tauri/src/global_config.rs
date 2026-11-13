@@ -265,6 +265,32 @@ fn parse_json_doc(existing: Option<&str>) -> Result<Value, String> {
     Ok(v)
 }
 
+/// JSONC 配置文件（Gemini / Qwen 的 settings.json、OpenCode 的 opencode.json(c) / config.json）容错解析：
+/// 去 BOM、去注释与尾逗号；空文件或只有注释的文件视为 `{}`。
+fn parse_jsonc_doc(existing: Option<&str>) -> Result<Value, String> {
+    let v: Value = match existing.map(crate::mcp::strip_jsonc) {
+        Some(t) if !t.trim().is_empty() => serde_json::from_str(&t)
+            .map_err(|e| format!("现有配置不是合法 JSON，已停止写入以免破坏: {e}"))?,
+        _ => json!({}),
+    };
+    if !v.is_object() {
+        return Err("现有配置根节点不是对象，已停止写入".into());
+    }
+    Ok(v)
+}
+
+/// 该 Agent 的这个配置文件本身支持 JSONC（注释与尾逗号）：
+/// - OpenCode：config.json / opencode.json / opencode.jsonc 全部按 JSONC 解析
+/// - Gemini / Qwen：settings.json 按 JSONC 解析
+/// - Claude Code / CodeBuddy / Codex / Cursor 的 JSON 文件只认严格 JSON，不得保留注释或尾逗号
+pub(crate) fn config_file_is_jsonc(agent: &str, tag: &str) -> bool {
+    matches!(
+        (agent, tag),
+        ("opencode", "opencode.jsonc" | "opencode.json" | "config.json")
+            | ("gemini" | "qwen", "settings.json")
+    )
+}
+
 /// 沿路径确保每一级都是对象并返回末级；遇到非对象字段时报错停止而不是覆盖
 fn ensure_obj<'a>(
     mut cur: &'a mut Value,
@@ -449,7 +475,7 @@ fn patch_qwen_settings(
     let base_url = profile.base_url.as_deref();
     let models = &profile.models;
     let model = models.first().map(String::as_str);
-    let mut v = parse_json_doc(existing)?;
+    let mut v = parse_jsonc_doc(existing)?;
     ensure_obj(&mut v, &["security", "auth"])?.insert("selectedType".into(), json!(protocol));
     let env = ensure_obj(&mut v, &["env"])?;
     // 模型条目的 envKey 指这个 Mesa 专用名：settings.json 的 env 优先级最低，项目里常见的 .env 只要有
@@ -625,11 +651,7 @@ pub(crate) fn patch_gemini_settings(
     models: &[String],
     gateway_id: Option<&str>,
 ) -> Result<String, String> {
-    let mut v = match existing {
-        Some(text) => serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(text))
-            .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?,
-        None => json!({}),
-    };
+    let mut v = parse_jsonc_doc(existing)?;
     ensure_obj(&mut v, &["security", "auth"])?
         .insert("selectedType".into(), json!("gemini-api-key"));
     if !models.is_empty() {
@@ -730,14 +752,7 @@ fn patch_gemini_extras(content: &str, profile: &Profile) -> Result<String, Strin
 /// 没选过认证方式时 Gemini 进门先问用哪种认证、再要把密钥存进钥匙串（2026-10-27 空 HOME 实录）；
 /// 选成 API Key 后它直接用 Mesa 启动时给的密钥。用户在聊天卡上点了才写（gemini_use_api_key_auth）
 pub(crate) fn patch_gemini_auth_only(existing: Option<&str>) -> Result<String, String> {
-    let mut v = match existing {
-        Some(text) if !text.trim().is_empty() => serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(text))
-            .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?,
-        _ => json!({}),
-    };
-    if !v.is_object() {
-        return Err("现有 settings.json 根节点不是对象，已停止写入".into());
-    }
+    let mut v = parse_jsonc_doc(existing)?;
     ensure_obj(&mut v, &["security", "auth"])?.insert("selectedType".into(), json!("gemini-api-key"));
     to_pretty(&v)
 }
@@ -759,14 +774,7 @@ fn patch_opencode_config(
     provider_id: &str,
     v2: bool,
 ) -> Result<String, String> {
-    let mut v = match existing.map(crate::mcp::strip_jsonc) {
-        Some(t) if !t.trim().is_empty() => serde_json::from_str::<Value>(&t)
-            .map_err(|e| format!("现有配置不是合法 JSON，已停止写入以免破坏: {e}"))?,
-        _ => json!({}),
-    };
-    if !v.is_object() {
-        return Err("现有配置根节点不是对象，已停止写入".into());
-    }
+    let mut v = parse_jsonc_doc(existing)?;
     // 1.x 写法在 provider，2.x 原生写法在 providers；两边的 Mesa 旧渠道同一口径清
     for section in ["provider", "providers"] {
         let Some(map) = v.get_mut(section).and_then(Value::as_object_mut) else {
@@ -2139,7 +2147,7 @@ fn patch_codebuddy_models_official(existing: &str, settings_key: Option<&str>) -
 /// 免费档 2026-04-15 停用后显示「No longer available」，切过去用不了；认证方式是 Mesa 写的协议名
 ///（openai / anthropic）就撤掉，Qwen 进门让用户自己选 Coding Plan 或 API Key。
 fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
-    let mut v = parse_json_doc(Some(existing))?;
+    let mut v = parse_jsonc_doc(Some(existing))?;
     let mesa_auth = v
         .pointer("/security/auth/selectedType")
         .and_then(|t| t.as_str())
@@ -2203,11 +2211,7 @@ fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
 /// 不再写死 oauth-personal（2026-10-30）：用 Vertex / 自己 AI Studio 密钥的人会被改掉，个人 Google 账号
 /// 本身也常用不了（agents gemini 认证提示）。撤掉后 Gemini 进门让用户自己选认证方式。
 fn patch_gemini_settings_official(existing: &str) -> Result<String, String> {
-    let mut v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(existing))
-        .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?;
-    if !v.is_object() {
-        return Err("现有 settings.json 根节点不是对象，已停止写入".into());
-    }
+    let mut v = parse_jsonc_doc(Some(existing))?;
     let mesa_auth = v.pointer("/security/auth/selectedType").and_then(|t| t.as_str()) == Some("gemini-api-key");
     if mesa_auth {
         if let Some(auth) = v.pointer_mut("/security/auth").and_then(|a| a.as_object_mut()) {
@@ -2386,9 +2390,9 @@ fn disk_equals_plans(plans: &[PlannedWrite]) -> bool {
         };
         let live = crate::mcp::strip_bom(&live);
         let name = p.path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if name.ends_with(".json") {
+        if name.ends_with(".json") || name.ends_with(".jsonc") {
             match (
-                serde_json::from_str::<Value>(&p.content),
+                serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(&p.content)),
                 serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(live)),
             ) {
                 (Ok(a), Ok(b)) => a == b,
@@ -2590,7 +2594,7 @@ pub async fn fix_codex_client_continuity(
         if plans.is_empty() || disk_equals_plans(&plans) {
             return Ok(Vec::new());
         }
-        apply_plans(&backups_root()?.join("codex"), &home, &plans)
+        apply_plans("codex", &backups_root()?.join("codex"), &home, &plans)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2990,19 +2994,37 @@ pub(crate) fn flatten_content(path: &Path, text: &str) -> BTreeMap<String, Strin
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if name.ends_with(".json") {
-        if let Ok(v) = serde_json::from_str::<Value>(text) {
+    if name.ends_with(".json") || name.ends_with(".jsonc") {
+        let stripped = crate::mcp::strip_jsonc(text);
+        let parsed = if stripped.trim().is_empty() {
+            Ok(json!({}))
+        } else {
+            serde_json::from_str::<Value>(&stripped)
+        };
+        if let Ok(v) = parsed {
             let mut out = BTreeMap::new();
             flatten_json(&v, "", &mut out);
             return out;
         }
+        let mut out = BTreeMap::new();
+        out.insert(
+            "(无法解析)".into(),
+            format!("（配置语法错误，已隐藏原文 · {} 字）", text.trim().chars().count()),
+        );
+        return out;
     }
     if name.ends_with(".toml") {
-        if let Ok(doc) = text.parse::<toml_edit::DocumentMut>() {
+        if let Ok(doc) = crate::mcp::strip_bom(text).parse::<toml_edit::DocumentMut>() {
             let mut out = BTreeMap::new();
             flatten_toml_item(doc.as_item(), "", &mut out);
             return out;
         }
+        let mut out = BTreeMap::new();
+        out.insert(
+            "(无法解析)".into(),
+            format!("（配置语法错误，已隐藏原文 · {} 字）", text.trim().chars().count()),
+        );
+        return out;
     }
     // 密钥文件（OpenCode {file:} 引用的那份）：只说有没有、变没变，绝不出值
     if name.ends_with(".key") {
@@ -3631,6 +3653,7 @@ pub(crate) fn write_user_edit(
 }
 
 fn apply_plans(
+    agent: &str,
     backups_dir: &Path,
     home: &Path,
     plans: &[PlannedWrite],
@@ -3638,7 +3661,7 @@ fn apply_plans(
     let actions: Vec<TxAction> = plans
         .iter()
         .map(|plan| {
-            let content = jsonc_layout_kept(plan).unwrap_or_else(|| plan.content.clone());
+            let content = jsonc_layout_kept(agent, plan).unwrap_or_else(|| plan.content.clone());
             TxAction {
                 tag: plan.tag.to_string(),
                 path: plan.path.clone(),
@@ -3649,11 +3672,12 @@ fn apply_plans(
     transact(backups_dir, home, &actions, "apply")
 }
 
-/// 磁盘上的 JSON 配置带注释或尾逗号时，返回按键原地合并后的内容（注释与顺序留着）；
+/// 磁盘上的 JSONC 配置带注释或尾逗号时，返回按键原地合并后的内容（注释与顺序留着）；
+/// 只对本身认 JSONC 的文件生效（Gemini / Qwen settings.json、OpenCode opencode.json(c) / config.json），
+/// Claude Code / CodeBuddy / Codex 等只认严格 JSON 的文件一律不保留注释或尾逗号。
 /// 预览与写入都过这一步，确认框里看到的就是写进去的。原文本就是严格 JSON、或合并失败时返回 None，照旧整份写。
-fn jsonc_layout_kept(plan: &PlannedWrite) -> Option<String> {
-    let name = plan.path.file_name()?.to_str()?;
-    if !(name.ends_with(".json") || name.ends_with(".jsonc")) {
+fn jsonc_layout_kept(agent: &str, plan: &PlannedWrite) -> Option<String> {
+    if !config_file_is_jsonc(agent, plan.tag) {
         return None;
     }
     let live = fs::read_to_string(&plan.path).ok()?;
@@ -3896,7 +3920,7 @@ fn global_preview_inputs(store: &ProfileStore, profile_id: &str) -> Result<Globa
         if profile.agent == "grok" {
             extend_grok_plans(&home, &mut plans, &store.list()?, None)?;
         }
-        keep_jsonc_layout_in_preview(&mut plans);
+        keep_jsonc_layout_in_preview(&profile.agent, &mut plans);
         return Ok((home, profile.agent, plans, Vec::new(), Vec::new()));
     }
     let skipped = skipped_policy_notes(&profile);
@@ -3916,13 +3940,13 @@ fn global_preview_inputs(store: &ProfileStore, profile_id: &str) -> Result<Globa
         extend_grok_plans(&home, &mut plans, &store.list()?, Some(&profile))?;
     }
     let overrides = override_notes_with(&profile.agent, &shell_has);
-    keep_jsonc_layout_in_preview(&mut plans);
+    keep_jsonc_layout_in_preview(&profile.agent, &mut plans);
     Ok((home, profile.agent, plans, skipped, overrides))
 }
 
-fn keep_jsonc_layout_in_preview(plans: &mut [PlannedWrite]) {
+fn keep_jsonc_layout_in_preview(agent: &str, plans: &mut [PlannedWrite]) {
     for plan in plans.iter_mut() {
-        if let Some(kept) = jsonc_layout_kept(plan) {
+        if let Some(kept) = jsonc_layout_kept(agent, plan) {
             plan.content = kept;
         }
     }
@@ -3958,7 +3982,7 @@ pub async fn apply_profile_global(
             let files = if disk_equals_plans(&plans) {
                 Vec::new()
             } else {
-                apply_plans(&backups_root()?.join(&profile.agent), &home, &plans)?
+                apply_plans(&profile.agent, &backups_root()?.join(&profile.agent), &home, &plans)?
             };
             crate::settings::record_active_global(&profile.agent, &profile.id);
             Ok(official_apply_result(files, "已切回官方账号"))
@@ -3987,7 +4011,7 @@ pub async fn apply_profile_global(
             extend_grok_plans(&home, &mut plans, &all_profiles, Some(&profile))?;
         }
         let backups_dir = backups_root()?.join(&profile.agent);
-        let files = apply_plans(&backups_dir, &home, &plans)?;
+        let files = apply_plans(&profile.agent, &backups_dir, &home, &plans)?;
         // 写成功即记录「全局生效」追踪（settings.active_global_profiles）；后面的验证
         // 失败不影响记录——文件已真实写入，验证只是体检报告
         crate::settings::record_active_global(&profile.agent, &profile.id);
@@ -4043,7 +4067,7 @@ pub(crate) fn register_codex_client_provider_named(
     };
     let plans = vec![PlannedWrite { tag: "config.toml", path: cfg_path.clone(), content }];
     let backups_dir = backups_root()?.join("codex");
-    apply_plans(&backups_dir, &home, &plans)
+    apply_plans("codex", &backups_dir, &home, &plans)
 }
 
 /// 聊天卡「设成 API Key 并启动」（2026-10-27 用户拍板）：先备份，再只改 `~/.gemini/settings.json` 的认证方式。
@@ -4070,7 +4094,7 @@ pub async fn gemini_use_api_key_auth(
             content: patch_gemini_auth_only(read_existing(&path)?.as_deref())?,
             path,
         }];
-        apply_plans(&backups_root()?.join("gemini"), &home, &plans)
+        apply_plans("gemini", &backups_root()?.join("gemini"), &home, &plans)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -4267,7 +4291,7 @@ pub(crate) fn merge_jsonc_keys(original: &str, new_content: &str) -> Result<Stri
     };
     let root = CstRootNode::parse(crate::mcp::strip_bom(original), &Default::default())
         .map_err(|e| format!("原文解析失败：{e}"))?;
-    let obj = root.object_value().ok_or("原文顶层不是对象")?;
+    let obj = root.object_value_or_create().ok_or("原文顶层不是对象")?;
     merge_cst_object(&obj, new_map);
     let out = root.to_string();
     let back: Value = serde_json::from_str(&crate::mcp::strip_jsonc(&out))

@@ -19,8 +19,7 @@ fn format_for(agent: &str, tag: &str) -> Format {
     match tag {
         ".env" => Format::Dotenv,
         t if t.ends_with(".toml") => Format::Toml,
-        "opencode.jsonc" => Format::Jsonc,
-        "settings.json" if matches!(agent, "gemini" | "qwen") => Format::Jsonc,
+        t if crate::global_config::config_file_is_jsonc(agent, t) => Format::Jsonc,
         _ => Format::Json,
     }
 }
@@ -202,6 +201,9 @@ fn validate(format: Format, text: &str) -> Result<(), String> {
                 return Err("内容是空的：要清空请写 {}".into());
             }
             let body = if format == Format::Jsonc { crate::mcp::strip_jsonc(text) } else { text.to_string() };
+            if body.trim().is_empty() {
+                return Err("只有注释没有 JSON 对象：请至少保留 {}".into());
+            }
             let v: serde_json::Value = serde_json::from_str(&body)
                 .map_err(|e| format!("不是合法的 JSON（第 {} 行第 {} 列）：{e}", e.line(), e.column()))?;
             if !v.is_object() {
@@ -409,11 +411,19 @@ mod tests {
 
     #[test]
     fn validate_by_format() {
+        assert_eq!(format_for("opencode", "opencode.json"), Format::Jsonc);
+        assert_eq!(format_for("opencode", "opencode.jsonc"), Format::Jsonc);
+        assert_eq!(format_for("opencode", "config.json"), Format::Jsonc);
+        assert_eq!(format_for("gemini", "settings.json"), Format::Jsonc);
+        assert_eq!(format_for("qwen", "settings.json"), Format::Jsonc);
+        assert_eq!(format_for("claude-code", "settings.json"), Format::Json);
+        assert_eq!(format_for("codebuddy", "settings.json"), Format::Json);
         assert!(validate(Format::Json, "{\"a\":1}").is_ok());
         assert!(validate(Format::Json, "[1]").is_err());
         assert!(validate(Format::Json, "").is_err());
         assert!(validate(Format::Json, "{ // c\n}").is_err());
         assert!(validate(Format::Jsonc, "{ // c\n \"a\": 1 }").is_ok());
+        assert!(validate(Format::Jsonc, "// only comment\n").is_err());
         assert!(validate(Format::Toml, "a = 1\n[b]\nc = \"d\"").is_ok());
         assert!(validate(Format::Toml, "a = ").is_err());
         assert!(validate(Format::Dotenv, "# c\nA=1\nexport B_2=x\n\n").is_ok());

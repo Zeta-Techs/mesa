@@ -68,7 +68,7 @@ fn flatten_structured(text: &str) -> Option<BTreeMap<String, String>> {
 fn flatten_file(text: &str) -> Option<BTreeMap<String, String>> {
     let p = Path::new(text.trim());
     let ext = p.extension()?.to_str()?.to_ascii_lowercase();
-    if !p.is_absolute() || !matches!(ext.as_str(), "json" | "toml") || !p.is_file() {
+    if !p.is_absolute() || !matches!(ext.as_str(), "json" | "jsonc" | "toml") || !p.is_file() {
         return None;
     }
     let content = std::fs::read_to_string(p).ok()?;

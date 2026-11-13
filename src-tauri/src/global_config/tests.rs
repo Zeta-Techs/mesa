@@ -524,7 +524,7 @@ fn official_plans_drop_only_api_keys_per_agent() {
     // 每家补丁幂等：写完再算一遍计划，整份比对一致
     for a in ["claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok"] {
         let plans = off(a);
-        apply_plans(&home.join("bk").join(a), &home, &plans).unwrap();
+        apply_plans(a, &home.join("bk").join(a), &home, &plans).unwrap();
         assert!(disk_equals_plans(&off(a)), "{a}");
     }
     fs::remove_dir_all(&home).ok();
@@ -537,7 +537,7 @@ fn model_picked_in_the_cli_is_the_users_choice_not_drift() {
     let p = profile("codex");
     let key = Some("sk-secret-abcdef");
     let plans = plan_writes(&home, &p, key, &p.models).unwrap();
-    apply_plans(&home.join("bk"), &home, &plans).unwrap();
+    apply_plans("codex", &home.join("bk"), &home, &plans).unwrap();
     let cfg = home.join(".codex/config.toml");
     let text = fs::read_to_string(&cfg).unwrap().replace("model = \"m1\"", "model = \"gpt-6-luna\"");
     assert!(text.contains("gpt-6-luna"));
@@ -557,7 +557,7 @@ fn codex_catalog_tail_added_by_continuity_layer_is_not_drift() {
     let p = profile("codex");
     let key = Some("sk-secret-abcdef");
     let plans = plan_writes(&home, &p, key, &p.models).unwrap();
-    apply_plans(&home.join("bk"), &home, &plans).unwrap();
+    apply_plans("codex", &home.join("bk"), &home, &plans).unwrap();
     let cat = agents::codex_global_catalog_path().unwrap();
     let mut v: Value = serde_json::from_str(&fs::read_to_string(&cat).unwrap()).unwrap();
     v["models"].as_array_mut().unwrap().push(json!({"slug": "old-thread-model"}));
@@ -578,7 +578,7 @@ fn drift_files_reports_mesa_keys_only_for_api() {
     let p = profile("codex");
     let key = Some("sk-secret-abcdef");
     let plans = plan_writes(&home, &p, key, &p.models).unwrap();
-    apply_plans(&home.join("bk"), &home, &plans).unwrap();
+    apply_plans("codex", &home.join("bk"), &home, &plans).unwrap();
     assert!(drift_files(&home, &p, key).unwrap().is_empty());
     // 外部把地址改了、又加了自己的键：只报地址，密钥不出明文
     let cfg = home.join(".codex/config.toml");
@@ -596,7 +596,7 @@ fn drift_files_reports_mesa_keys_only_for_api() {
     let mut off = profile("codex");
     off.account_type = crate::profiles::AccountType::Official;
     let plans = plan_writes(&home, &off, None, &[]).unwrap();
-    apply_plans(&home.join("bk2"), &home, &plans).unwrap();
+    apply_plans("codex", &home.join("bk2"), &home, &plans).unwrap();
     // 官方计划留着 Mesa 的全局目录引用（续聊层按需撤），这里换成别人的目录
     let text: String = fs::read_to_string(&cfg)
         .unwrap()
@@ -620,7 +620,7 @@ fn official_match_is_exact_not_subset() {
     p.account_type = crate::profiles::AccountType::Official;
     let plans = plan_writes(&home, &p, None, &[]).unwrap();
     assert!(!disk_equals_plans(&plans));
-    apply_plans(&home.join("bk"), &home, &plans).unwrap();
+    apply_plans("codex", &home.join("bk"), &home, &plans).unwrap();
     assert!(disk_equals_plans(&plan_writes(&home, &p, None, &[]).unwrap()));
     fs::remove_dir_all(&home).ok();
 }
@@ -1887,7 +1887,7 @@ fn apply_creates_backup_and_restore_brings_back_newest() {
 
     let p = profile("claude-code");
     let plans = plan_writes(&home, &p, Some("sk-secret"), &["m1".to_string()]).unwrap();
-    let written = apply_plans(&backups, &home, &plans).unwrap();
+    let written = apply_plans("claude-code", &backups, &home, &plans).unwrap();
     assert_eq!(written, vec!["~/.claude/settings.json".to_string()]);
     // 原文件被备份，新内容已写入
     let baks = list_backups(&backups, "settings.json");
@@ -1897,7 +1897,7 @@ fn apply_creates_backup_and_restore_brings_back_newest() {
     // 再改一次并重新应用：第二批清单记录 v2，restore 应按完整批次恢复它
     fs::write(&target, r#"{"v": 2}"#).unwrap();
     let plans = plan_writes(&home, &p, Some("sk-secret-2"), &["m1".to_string()]).unwrap();
-    apply_plans(&backups, &home, &plans).unwrap();
+    apply_plans("claude-code", &backups, &home, &plans).unwrap();
     let restored = restore_from(&backups, &home, "claude-code").unwrap();
     assert_eq!(restored.len(), 1);
     assert_eq!(fs::read_to_string(&target).unwrap(), r#"{"v": 2}"#);
@@ -1954,7 +1954,7 @@ fn restore_removes_file_that_did_not_exist_before_apply() {
     let target = home.join(".gemini/.env");
     let p = profile("gemini");
     let plans = plan_writes(&home, &p, Some("secret"), &["m1".to_string()]).unwrap();
-    apply_plans(&backups, &home, &plans).unwrap();
+    apply_plans("gemini", &backups, &home, &plans).unwrap();
     assert!(target.exists());
     restore_from(&backups, &home, "gemini").unwrap();
     assert!(!target.exists(), "应用前不存在的文件恢复时应被移除");
@@ -1975,7 +1975,7 @@ fn original_snapshot_survives_rotations_and_restores_first_write_state() {
     // 连续 7 次 apply：常规批次窗口（5 份）被烧穿，原始快照必须始终在场
     for _ in 0..7 {
         let plans = plan_writes(&home, &p, Some("sk-secret"), &["m1".to_string()]).unwrap();
-        apply_plans(&backups, &home, &plans).unwrap();
+        apply_plans("claude-code", &backups, &home, &plans).unwrap();
     }
     assert!(list_backups(&backups, "settings.json").len() <= 5);
     assert_eq!(
@@ -2002,7 +2002,7 @@ fn restore_original_removes_file_created_by_first_apply() {
     let target = home.join(".gemini/.env");
     let p = profile("gemini");
     let plans = plan_writes(&home, &p, Some("secret"), &["m1".to_string()]).unwrap();
-    apply_plans(&backups, &home, &plans).unwrap();
+    apply_plans("gemini", &backups, &home, &plans).unwrap();
     assert!(target.exists());
     restore_from_original(&backups, &home).unwrap();
     assert!(
@@ -2150,23 +2150,95 @@ fn merge_jsonc_keys_keeps_comments_and_order() {
     let back: Value = serde_json::from_str(&crate::mcp::strip_jsonc(&out)).unwrap();
     assert_eq!(back, serde_json::from_str::<Value>(new_content).unwrap());
     assert!(merge_jsonc_keys("[1]", new_content).is_err());
+    // 只有头部注释的空配置也能原地补出根对象并保留注释
+    let comment_only = merge_jsonc_keys("// 头部注释\n", r#"{"a":1}"#).unwrap();
+    assert!(comment_only.contains("// 头部注释"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(&comment_only)).unwrap(),
+        json!({"a": 1})
+    );
 }
 
 #[test]
 fn apply_plans_keeps_jsonc_comments_but_rewrites_strict_json() {
     let home = tmpdir("jsonc-keep");
-    let commented = home.join("a.json");
-    let strict = home.join("b.json");
+    let commented = home.join("settings.json");
+    let strict_agent = home.join("claude-settings.json");
+    let plain = home.join("opencode.json");
     fs::write(&commented, "{\n  // 留着\n  \"x\": 1,\n}\n").unwrap();
-    fs::write(&strict, "{\"x\": 1}").unwrap();
-    let plans = vec![
-        PlannedWrite { tag: "a.json", path: commented.clone(), content: r#"{"x":2}"#.into() },
-        PlannedWrite { tag: "b.json", path: strict.clone(), content: r#"{"x":2}"#.into() },
-    ];
-    apply_plans(&home.join("bk"), &home, &plans).unwrap();
+    fs::write(&strict_agent, "{\n  // Claude 不认注释\n  \"x\": 1,\n}\n").unwrap();
+    fs::write(&plain, "{\"x\": 1}").unwrap();
+    let gemini_plans = vec![PlannedWrite {
+        tag: "settings.json",
+        path: commented.clone(),
+        content: r#"{"x":2}"#.into(),
+    }];
+    apply_plans("gemini", &home.join("bk-g"), &home, &gemini_plans).unwrap();
     let a = fs::read_to_string(&commented).unwrap();
     assert!(a.contains("// 留着") && a.contains('2'));
-    assert_eq!(fs::read_to_string(&strict).unwrap(), r#"{"x":2}"#);
-    assert!(disk_equals_plans(&plans));
+    assert!(disk_equals_plans(&gemini_plans));
+
+    // Claude Code 等只认严格 JSON 的目标绝不保留注释
+    let claude_plans = vec![PlannedWrite {
+        tag: "settings.json",
+        path: strict_agent.clone(),
+        content: r#"{"x":2}"#.into(),
+    }];
+    apply_plans("claude-code", &home.join("bk-c"), &home, &claude_plans).unwrap();
+    assert_eq!(fs::read_to_string(&strict_agent).unwrap(), r#"{"x":2}"#);
+
+    let oc_plans = vec![PlannedWrite {
+        tag: "opencode.json",
+        path: plain.clone(),
+        content: r#"{"x":2}"#.into(),
+    }];
+    apply_plans("opencode", &home.join("bk-o"), &home, &oc_plans).unwrap();
+    assert_eq!(fs::read_to_string(&plain).unwrap(), r#"{"x":2}"#);
+    fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn qwen_and_preview_handle_jsonc_and_redact_secrets_per_field() {
+    let home = tmpdir("jsonc-qwen-preview");
+    let qwen_dir = home.join(".qwen");
+    fs::create_dir_all(&qwen_dir).unwrap();
+    let settings = qwen_dir.join("settings.json");
+    fs::write(
+        &settings,
+        "{\n  // 用户备注\n  \"ui\": { \"theme\": \"dark\", },\n}\n",
+    )
+    .unwrap();
+    let p = profile("qwen");
+    let mut plans = plan_writes(&home, &p, Some("custom-relay-secret-9999"), &p.models).unwrap();
+    keep_jsonc_layout_in_preview("qwen", &mut plans);
+    assert!(plans[0].content.contains("// 用户备注"));
+    let preview = preview_plans(&home, "qwen", &plans, vec![], vec![]);
+    let changes = &preview.files[0].changes;
+    assert!(
+        !changes.iter().any(|c| c.path == "(全文)"),
+        "JSONC 必须按键展开而非退回 (全文)"
+    );
+    let dumped = serde_json::to_string(&preview).unwrap();
+    assert!(
+        !dumped.contains("custom-relay-secret-9999"),
+        "非标准前缀密钥也必须按字段名脱敏: {dumped}"
+    );
+    apply_plans("qwen", &home.join("bk-q"), &home, &plans).unwrap();
+    let on_disk = fs::read_to_string(&settings).unwrap();
+    assert!(on_disk.contains("// 用户备注"));
+    let off = patch_qwen_settings_official(&on_disk).unwrap();
+    assert!(!off.contains("custom-relay-secret-9999"));
+
+    // opencode.jsonc 整份比对与按键展开同样认 .jsonc 后缀
+    let oc = home.join("opencode.jsonc");
+    fs::write(&oc, "{\n  // note\n  \"model\": \"m1\",\n}\n").unwrap();
+    let oc_plan = PlannedWrite {
+        tag: "opencode.jsonc",
+        path: oc.clone(),
+        content: "{\"model\":\"m1\"}\n".into(),
+    };
+    assert!(disk_equals_plans(&[oc_plan]));
+    let flat = flatten_content(&oc, &fs::read_to_string(&oc).unwrap());
+    assert_eq!(flat.get("model").map(String::as_str), Some("m1"));
     fs::remove_dir_all(&home).ok();
 }

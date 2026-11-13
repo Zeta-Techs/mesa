@@ -60,8 +60,25 @@ fn parse_json_file(path: &Path, label: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let text = fs::read_to_string(path).map_err(|e| format!("读取 {label} 失败: {e}"))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("{label} 不是合法 JSON: {e}"))?;
+    let value: serde_json::Value = serde_json::from_str(crate::mcp::strip_bom(&text))
+        .map_err(|e| format!("{label} 不是合法 JSON: {e}"))?;
+    if !value.is_object() {
+        return Err(format!("{label} 根节点必须是对象"));
+    }
+    Ok(Some(label.into()))
+}
+
+fn parse_jsonc_file(path: &Path, label: &str) -> Result<Option<String>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).map_err(|e| format!("读取 {label} 失败: {e}"))?;
+    let stripped = crate::mcp::strip_jsonc(&text);
+    let value: serde_json::Value = if stripped.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&stripped).map_err(|e| format!("{label} 不是合法 JSON: {e}"))?
+    };
     if !value.is_object() {
         return Err(format!("{label} 根节点必须是对象"));
     }
@@ -73,7 +90,8 @@ fn parse_toml_file(path: &Path, label: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     let text = fs::read_to_string(path).map_err(|e| format!("读取 {label} 失败: {e}"))?;
-    text.parse::<toml::Value>()
+    crate::mcp::strip_bom(&text)
+        .parse::<toml::Value>()
         .map_err(|e| format!("{label} 不是合法 TOML: {e}"))?;
     Ok(Some(label.into()))
 }
@@ -387,11 +405,11 @@ fn local_check_at(home: &Path, profile: &Profile) -> ValidationCheckDto {
                     "~/.codex/auth.json",
                 ))?;
             }
-            "gemini" => add(parse_json_file(
+            "gemini" => add(parse_jsonc_file(
                 &home.join(".gemini/settings.json"),
                 "~/.gemini/settings.json",
             ))?,
-            "qwen" => add(parse_json_file(
+            "qwen" => add(parse_jsonc_file(
                 &home.join(".qwen/settings.json"),
                 "~/.qwen/settings.json",
             ))?,
@@ -409,10 +427,16 @@ fn local_check_at(home: &Path, profile: &Profile) -> ValidationCheckDto {
                 &home.join(".cursor/auth.json"),
                 "~/.cursor/auth.json",
             ))?,
-            "opencode" => add(parse_json_file(
-                &home.join(".config/opencode/opencode.json"),
-                "~/.config/opencode/opencode.json",
-            ))?,
+            "opencode" => {
+                add(parse_jsonc_file(
+                    &home.join(".config/opencode/opencode.json"),
+                    "~/.config/opencode/opencode.json",
+                ))?;
+                add(parse_jsonc_file(
+                    &home.join(".config/opencode/opencode.jsonc"),
+                    "~/.config/opencode/opencode.jsonc",
+                ))?;
+            }
             "kimi" => {
                 add(parse_toml_file(
                     &home.join(".kimi-code/config.toml"),
@@ -2293,6 +2317,26 @@ mod tests {
         assert!(err.contains("CLI 退出码 1"));
         assert!(!err.contains("Some("));
         assert!(err.contains("not-json"));
+    }
+
+    #[test]
+    fn jsonc_config_files_pass_while_strict_json_rejects_comments() {
+        let dir = std::env::temp_dir().join(format!("ccode-pv-jsonc-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let commented = dir.join("settings.json");
+        fs::write(&commented, "\u{feff}{\n  // comment\n  \"theme\": \"dark\",\n}\n").unwrap();
+        assert_eq!(
+            parse_jsonc_file(&commented, "~/.qwen/settings.json").unwrap(),
+            Some("~/.qwen/settings.json".into())
+        );
+        assert!(parse_json_file(&commented, "~/.claude/settings.json").is_err());
+        let comment_only = dir.join("empty.jsonc");
+        fs::write(&comment_only, "// header only\n").unwrap();
+        assert_eq!(
+            parse_jsonc_file(&comment_only, "~/.config/opencode/opencode.jsonc").unwrap(),
+            Some("~/.config/opencode/opencode.jsonc".into())
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
