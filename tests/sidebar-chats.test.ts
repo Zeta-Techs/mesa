@@ -32,6 +32,7 @@ import {
   sidebarChatTitle,
   staleScratchChats,
   hasReaderChats,
+  hasStepChats,
   parseReaderChatsShown,
   toggleReaderChatsShown,
   type ChatRunInput,
@@ -540,6 +541,32 @@ test("精读对话默认不在课题下列，项目菜单打开后照列；开�
   assert.equal(hidden.length, 0);
   const shown = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showReader: (k) => k === "/repo" });
   assert.deepEqual(shown.map((r) => r.tabId), ["r"]);
+});
+
+test("模板对话（流程步骤的对话）按课题开关：关着不列、开着的步骤标签也收；菜单只在有时出（2026-11-13）", () => {
+  const sessions = [
+    session({ sessionId: "mine", updatedAt: "2026-11-13T02:00:00Z" }),
+    session({ sessionId: "step", stepName: "综述大纲", updatedAt: "2026-11-13T03:00:00Z" }),
+  ];
+  assert.deepEqual(projectChats(sessions, "/repo", [], false, new Set(), false, false).map((s) => s.sessionId), ["mine"]);
+  assert.deepEqual(
+    projectChats(sessions, "/repo", [], false, new Set(), false, true).map((s) => s.sessionId),
+    ["step", "mine"],
+  );
+  assert.equal(hasStepChats(sessions, "/repo"), true);
+  assert.equal(hasStepChats([sessions[0]], "/repo"), false);
+
+  const base = { agentId: "claude-code", running: true, shell: false, attention: null, sessionId: null };
+  const tabs = [
+    { ...base, tabId: "s", cwd: "/repo", title: "综述大纲", reuseKey: "ws:/repo/wt/outline", railStep: { name: "综述大纲", index: 3 } },
+    { ...base, tabId: "t", cwd: "/repo", title: "终端", shell: true, railStep: { name: "综述大纲", index: 3 } },
+    { ...base, tabId: "c", cwd: "/repo", title: "随便问问" },
+  ];
+  const folderOf = (cwd: string) => (cwd === "/repo" ? "/repo" : null);
+  const hidden = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showSteps: () => false });
+  assert.deepEqual(hidden.map((r) => r.tabId), ["t", "c"]);
+  const shown = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showSteps: (k) => k === "/repo" });
+  assert.deepEqual(shown.map((r) => r.tabId), ["s", "t", "c"]);
 });
 
 test("精读对话开关按课题记、坏值不炸", () => {

@@ -954,7 +954,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # （claudeFirstRunStep、claudeThemeTarget：Mac 选 Auto，Windows 按主题明暗）；一启动就退出的最后几行与原因（exitTail /
                              # launchFailureHint）；Gemini 存密钥屏 / Cursor 登录屏（specialScreenOf）、Gemini 认证方式被拦（launchBlockOf，GEMINI_AUTH_MARK 与 agents.rs 同字）。卡片画在 ChatDecisionCard ScreenCard，扫屏与替人按键在 TerminalPage（tests/terminal-wait.test.ts，样本 tests/fixtures/terminal-wait/）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
-                             # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列；精读对话默认不列，项目菜单「显示精读对话」按课题打开：READER_CHATS_SHOWN_KEY / hasReaderChats，2026-11-06）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
+                             # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列；精读对话默认不列，项目菜单「显示精读对话」按课题打开：READER_CHATS_SHOWN_KEY / hasReaderChats，2026-11-06；模板对话（stepName 非空）同口径：STEP_CHATS_SHOWN_KEY / hasStepChats，2026-11-13）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「显示更多」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、

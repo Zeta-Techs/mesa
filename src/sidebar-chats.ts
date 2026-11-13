@@ -69,12 +69,14 @@ export function projectChats(
   isWindows = false,
   openKeys: ReadonlySet<string> = new Set(),
   showReader = false,
+  showSteps = true,
 ): SessionMetaDto[] {
   const key = pathKey(root, isWindows);
   return sessions
     .filter(
       (s) =>
         (s.reader ? showReader && readerListable(s) : listedInFolder(s, openKeys)) &&
+        (showSteps || !s.stepName) &&
         (pathKey(s.projectPath, isWindows) === key ||
           worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
     )
@@ -105,6 +107,26 @@ export function hasReaderChats(
 ): boolean {
   const key = pathKey(root, isWindows);
   return sessions.some((s) => readerListable(s) && pathKey(s.projectPath, isWindows) === key);
+}
+
+/** 哪些课题在侧栏列出模板对话（流程步骤的对话，stepName 非空；项目菜单「显示模板对话」，2026-11-13 用户：
+ *  同精读对话，默认不列，按课题打开）。本机 localStorage，存课题的 pathKey；解析 / 开关同精读那一对 */
+export const STEP_CHATS_SHOWN_KEY = "ccode.projectShowStepChats";
+
+/** 某个课题有没有模板对话（项目菜单有这一项才出开关）：只认挂在课题下面会列出来的那些 */
+export function hasStepChats(
+  sessions: readonly SessionMetaDto[],
+  root: string,
+  worktrees: readonly string[] = [],
+  isWindows = false,
+): boolean {
+  const key = pathKey(root, isWindows);
+  return sessions.some(
+    (s) =>
+      !!s.stepName &&
+      listable(s) &&
+      (pathKey(s.projectPath, isWindows) === key || worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
+  );
 }
 
 /**
@@ -551,6 +573,8 @@ export function openTabRows(input: {
   folderOf: (cwd: string) => string | null;
   /** 这个文件夹列不列精读对话（showReader 同口径）；不给 = 都列。精读区开着时它的标签也不挂出来 */
   showReader?: (folderKey: string | null) => boolean;
+  /** 这个文件夹列不列模板对话（带步骤的标签）；不给 = 都列 */
+  showSteps?: (folderKey: string | null) => boolean;
 }): OpenTabRow[] {
   const out: OpenTabRow[] = [];
   for (const r of input.runs) {
@@ -558,6 +582,8 @@ export function openTabRows(input: {
     const reader = (r.reuseKey ?? "").startsWith("reader:");
     if (reader && input.showReader && !input.showReader(input.folderOf(r.cwd))) continue;
     if (!r.running && !r.shell && r.tabId !== input.focusedTabId) continue;
+    const step = r.shell ? null : openTabStep(r.railStep, r.reuseKey);
+    if (step && input.showSteps && !input.showSteps(input.folderOf(r.cwd))) continue;
     const kind: OpenTabKind = r.shell ? "terminal" : r.running || r.sessionId ? "chat" : "new";
     const title = r.title.trim();
     const label =
@@ -577,7 +603,7 @@ export function openTabRows(input: {
       dot: kind === "chat" && r.running ? caretOfAttention(r.attention) : null,
       folderKey: input.folderOf(r.cwd),
       forkParentKey: r.forkOf ? `${r.agentId}\n${r.forkOf}` : null,
-      step: kind === "terminal" ? null : openTabStep(r.railStep, r.reuseKey),
+      step,
     });
   }
   return out;

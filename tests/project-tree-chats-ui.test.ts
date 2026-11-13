@@ -1303,7 +1303,7 @@ test("项目内置顶：流程对话按步骤分组、每行写角色，组头�
       session({ sessionId: "st2", customTitle: "1101|研究|综述大纲", stepName: "综述大纲", stepIndex: 2, stepRole: "discuss", createdAt: "2026-10-02T00:00:00Z", updatedAt: "2026-10-02T00:00:00Z" }),
       session({ sessionId: "st1", customTitle: "1101|研究|文献检索", stepName: "文献检索", stepIndex: 1, stepRole: "work", createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-03T00:00:00Z" }),
     ],
-  });
+  }, undefined, { storage: { "ccode.projectShowStepChats": JSON.stringify(["/work/review"]) } });
   try {
     const titles = () =>
       Array.from(view.chatGroup("综述流程测试")!.querySelectorAll("[data-chat-key]")).map((b) => b.textContent?.trim());

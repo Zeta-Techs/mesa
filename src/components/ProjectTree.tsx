@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Columns2,
   BookOpen,
+  ListOrdered,
   Copy,
   Eraser,
   Folder,
@@ -110,9 +111,11 @@ import {
   type StepChatRow,
   type StepTabRow,
   READER_CHATS_SHOWN_KEY,
+  STEP_CHATS_SHOWN_KEY,
   parseReaderChatsShown,
   toggleReaderChatsShown,
   hasReaderChats,
+  hasStepChats,
   type ChatDot,
   type ForkRow,
   type OpenTabRow,
@@ -419,6 +422,26 @@ export default function ProjectTree({
       const next = toggleReaderChatsShown(prev, pathKey(repoPath, IS_WINDOWS));
       try {
         localStorage.setItem(READER_CHATS_SHOWN_KEY, JSON.stringify(next));
+      } catch {
+        /* 存不下只影响下次启动 */
+      }
+      return next;
+    });
+  }
+  // 列出模板对话（流程步骤的对话）的课题（STEP_CHATS_SHOWN_KEY，2026-11-13）：同精读对话，默认都不列，项目菜单逐个打开
+  const [stepShown, setStepShown] = useState<string[]>(() => {
+    try {
+      return parseReaderChatsShown(localStorage.getItem(STEP_CHATS_SHOWN_KEY));
+    } catch {
+      return [];
+    }
+  });
+  const stepShownSet = useMemo(() => new Set(stepShown), [stepShown]);
+  function toggleStepShownFor(repoPath: string) {
+    setStepShown((prev) => {
+      const next = toggleReaderChatsShown(prev, pathKey(repoPath, IS_WINDOWS));
+      try {
+        localStorage.setItem(STEP_CHATS_SHOWN_KEY, JSON.stringify(next));
       } catch {
         /* 存不下只影响下次启动 */
       }
@@ -975,11 +998,11 @@ export default function ProjectTree({
       const k = pathKey(r.repoPath, IS_WINDOWS);
       m.set(
         k,
-        projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys, readerShownSet.has(k)),
+        projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys, readerShownSet.has(k), stepShownSet.has(k)),
       );
     }
     return m;
-  }, [rows, unpinnedSessions, worktreesOf, openChatKeys, readerShownSet]);
+  }, [rows, unpinnedSessions, worktreesOf, openChatKeys, readerShownSet, stepShownSet]);
   const scratchList = useMemo(
     () => scratchChats(unpinnedSessions, projectPaths, IS_WINDOWS, openChatKeys),
     [unpinnedSessions, projectPaths, openChatKeys],
@@ -1010,13 +1033,14 @@ export default function ProjectTree({
       focusedTabId: terminalActiveTabId,
       folderOf: (cwd) => currentFolderKey(cwd, folders, projectPaths, IS_WINDOWS),
       showReader: (k) => k != null && readerShownSet.has(k),
+      showSteps: (k) => k == null || stepShownSet.has(k),
     })) {
       const list = m.get(r.folderKey) ?? [];
       list.push(r);
       m.set(r.folderKey, list);
     }
     return m;
-  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths, readerShownSet]);
+  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths, readerShownSet, stepShownSet]);
 
   // 「展开更多」点过的文件夹多列几段（只记这次打开 Mesa 期间；收起即删）
   const [chatExtra, setChatExtra] = useState<Record<string, number>>({});
@@ -1987,16 +2011,16 @@ export default function ProjectTree({
             },
           ]
         : []),
-      {
-        label: "在终端打开",
-        icon: SquareTerminal,
-        title: "在运行页开一个终端，目录就是这个课题（侧栏这个课题下多一行「终端」）",
-        onSelect: () => {
-          const st = useAppStore.getState();
-          st.setPendingTerminal({ cwd: row.repoPath, extraEnv: {}, title: row.name, shellOnly: true });
-          st.setPage("terminal");
-        },
-      },
+      ...(hasStepChats(sessions, row.repoPath, worktreesOf.get(pathKey(row.repoPath, IS_WINDOWS)) ?? [], IS_WINDOWS)
+        ? [
+            {
+              label: stepShownSet.has(pathKey(row.repoPath, IS_WINDOWS)) ? "隐藏模板对话" : "显示模板对话",
+              icon: ListOrdered,
+              title: "模板对话是流程各步骤里开的对话，平时不在这里列；回去接着做点项目页的步骤卡",
+              onSelect: () => toggleStepShownFor(row.repoPath),
+            },
+          ]
+        : []),
       {
         label: "重命名项目",
         icon: Pencil,
