@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { extractResearchSections, researchAbsolutePath, researchRelativePath, type ResearchReport, type ResearchReportKind } from "./research-report";
 import type { DirEntryDto } from "./components/FileTree";
-import { searchPdfProbes, searchProgress, searchProgressLine } from "./notes-progress";
+import { searchPdfProbes, searchProgress, searchProgressParts } from "./notes-progress";
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 import { checkNotes, type NoteFile } from "./notes-check";
@@ -37,12 +37,12 @@ async function probePapers(projectRoot: string, items: { title: string; url: str
 }
 
 /** 检索篇数一行：台账没记 pdf、但 papers/ 里已经有的也算已有全文（PDF 下在项目根，所以对照 projectRoot） */
-export async function searchCountLineWithFiles(projectRoot: string, includedText: string): Promise<string | null> {
+export async function searchCountLineWithFiles(projectRoot: string, includedText: string): Promise<string[] | null> {
   const probes = searchPdfProbes(includedText);
   const names = await probePapers(projectRoot, probes);
   const found = new Set(probes.flatMap((p, i) => (names[i] ? [p.id] : [])));
   const p = searchProgress(includedText, found);
-  return p ? searchProgressLine(p) : null;
+  return p ? searchProgressParts(p) : null;
 }
 
 /** 待获取还缺几篇：去掉已勾 ✓ 的和 papers/ 里已经有的（不是清单总条数） */

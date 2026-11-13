@@ -148,8 +148,16 @@ function shortPath(path: string, cwd: string | null, isWindows: boolean): string
   return dir + name;
 }
 
-/** 两段文本的行级差异：先去掉首尾相同的行，中间按最长公共子序列；太大就整段删 + 整段加 */
-export function lineDiff(before: string, after: string): DiffLine[] {
+/** 两段文本的行级差异：先去掉首尾相同的行，中间按最长公共子序列；太大就整段删 + 整段加。
+ *  context：首尾相同部分各留几行（Infinity = 全文，文件版本比较用）；maxCells：中段两边行数之积的上限，
+ *  超了改整段删 + 整段加，onCoarse 报给调用方（界面要提示「改动太多」） */
+export function lineDiff(
+  before: string,
+  after: string,
+  options: { context?: number; maxCells?: number; onCoarse?: () => void } = {},
+): DiffLine[] {
+  const context = options.context ?? 2;
+  const maxCells = options.maxCells ?? 250_000;
   const a = before ? before.replace(/\n$/, "").split("\n") : [];
   const b = after ? after.replace(/\n$/, "").split("\n") : [];
   let head = 0;
@@ -160,21 +168,26 @@ export function lineDiff(before: string, after: string): DiffLine[] {
   const midB = b.slice(head, b.length - tail);
   const out: DiffLine[] = [];
   // 未改动的上下文各留两行，再往外的折成「~」
-  const ctxBefore = a.slice(Math.max(0, head - 2), head);
-  if (head > 2) out.push({ op: "~", text: "" });
+  const ctxBefore = a.slice(Math.max(0, head - context), head);
+  if (head > context) out.push({ op: "~", text: "" });
   for (const t of ctxBefore) out.push({ op: " ", text: t });
-  if (midA.length * midB.length > 250_000) {
+  if (midA.length * midB.length > maxCells) {
+    options.onCoarse?.();
     for (const t of midA) out.push({ op: "-", text: t });
     for (const t of midB) out.push({ op: "+", text: t });
   } else {
     const n = midA.length;
     const m = midB.length;
-    const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+    // 一维定长表：几百万格时比二维数组省内存，也快
+    const width = m + 1;
+    const table = new Int32Array((n + 1) * width);
+    const at = (i: number, j: number) => table[i * width + j];
     for (let i = n - 1; i >= 0; i--) {
       for (let j = m - 1; j >= 0; j--) {
-        dp[i][j] = midA[i] === midB[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        table[i * width + j] = midA[i] === midB[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
       }
     }
+    const dp = { get: at };
     let i = 0;
     let j = 0;
     while (i < n || j < m) {
@@ -182,7 +195,7 @@ export function lineDiff(before: string, after: string): DiffLine[] {
         out.push({ op: " ", text: midA[i] });
         i++;
         j++;
-      } else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) {
+      } else if (i < n && (j >= m || dp.get(i + 1, j) >= dp.get(i, j + 1))) {
         // 同分时先删后加（与 git diff 一致）
         out.push({ op: "-", text: midA[i] });
         i++;
@@ -192,9 +205,9 @@ export function lineDiff(before: string, after: string): DiffLine[] {
       }
     }
   }
-  const ctxAfter = a.slice(a.length - tail, Math.min(a.length, a.length - tail + 2));
+  const ctxAfter = a.slice(a.length - tail, Math.min(a.length, a.length - tail + context));
   for (const t of ctxAfter) out.push({ op: " ", text: t });
-  if (tail > 2) out.push({ op: "~", text: "" });
+  if (tail > context) out.push({ op: "~", text: "" });
   return out;
 }
 
@@ -694,4 +707,19 @@ export function resultStatus(text: string | null, isError = false): ResultStatus
 
 export function resultStatusLabel(s: ResultStatus): string | null {
   return s === "failed" ? "失败" : s === "denied" ? "被拒绝" : s === "interrupted" ? "已中断" : null;
+}
+
+/** 只留改动行及其前后 context 行，其余连续未改行折成一个 ⋯ */
+export function foldUnchanged(lines: DiffLine[], context: number): DiffLine[] {
+  const changed = lines.map((line) => line.op === "+" || line.op === "-");
+  const keep = changed.map((_, index) => {
+    for (let at = Math.max(0, index - context); at <= Math.min(lines.length - 1, index + context); at++) if (changed[at]) return true;
+    return false;
+  });
+  const out: DiffLine[] = [];
+  lines.forEach((line, index) => {
+    if (keep[index]) out.push(line);
+    else if (out[out.length - 1]?.op !== "~") out.push({ op: "~", text: "" });
+  });
+  return out;
 }

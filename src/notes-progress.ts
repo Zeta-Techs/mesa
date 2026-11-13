@@ -101,13 +101,18 @@ export function notesProgress(
  *  只速读的篇不在分母里，单列在末尾；全都只速读时不出「0 / 0」。
  *  写满了只写「已写笔记 23 篇」：分母等于分子时「23 / 23」只是噪音（2026-11-11 项目页减法） */
 export function notesProgressLine(p: NotesProgress): string {
-  if (p.total === 0) return `只速读 ${p.skimmed} 篇，还没有要写单篇笔记的`;
+  return notesProgressParts(p).join(" · ");
+}
+
+/** 同 notesProgressLine，分段给：首段是步骤卡标题旁的主数，其余进明细行（不靠拆 " · " 字符串） */
+export function notesProgressParts(p: NotesProgress): string[] {
+  if (p.total === 0) return [`只速读 ${p.skimmed} 篇，还没有要写单篇笔记的`];
   const parts = [p.reviewed === p.total ? `已写笔记 ${p.total} 篇` : `已写笔记 ${p.reviewed} / ${p.total} 篇`];
   if (p.fulltext > 0) parts.push(`全文 ${p.fulltext}`);
   if (p.abstractOnly > 0) parts.push(`仅摘要 ${p.abstractOnly}`);
   if (p.blocked > 0) parts.push(`卡住 ${p.blocked}`);
   if (p.skimmed > 0) parts.push(`只速读 ${p.skimmed}`);
-  return parts.join(" · ");
+  return parts;
 }
 
 export interface SpotCheckPick {
@@ -210,11 +215,15 @@ export function searchPdfProbes(includedText: string): { id: string; title: stri
 
 /** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9」。没有的分项不出。 */
 export function searchProgressLine(p: SearchProgress): string {
+  return searchProgressParts(p).join(" · ");
+}
+
+export function searchProgressParts(p: SearchProgress): string[] {
   const parts = [`纳入 ${p.included} 篇${p.reviews ? `（综述 ${p.reviews}）` : ""}`];
   if (p.pending > 0) parts.push(`待确认 ${p.pending}`);
   if (p.withPdf > 0) parts.push(`已有全文 ${p.withPdf}`);
   if (p.included - p.withPdf > 0) parts.push(`缺全文 ${p.included - p.withPdf}`);
-  return parts.join(" · ");
+  return parts;
 }
 
 /** 大纲 outline.md 的用图计划：初稿要拼几张图（「拼 图N」按编号去重）、几处只引原图（「仅引用 [@键] Fig」）、

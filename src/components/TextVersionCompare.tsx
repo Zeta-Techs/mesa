@@ -3,15 +3,24 @@ import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import { MONACO_THEME, monacoThemeData } from "../themes";
 import { readEditorFont } from "../editor-font";
-import { lineDiff } from "../tool-activity";
+import { foldUnchanged, lineDiff } from "../tool-activity";
 import { pairIntraline } from "../diff-intraline";
+
+/** 逐行配对的格数上限（一维 Int32Array，约 16 MB） */
+export const COMPARE_MAX_CELLS = 4_000_000;
 
 export default function TextVersionCompare({ before, after }: { before: string; after: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneDiffEditor | null>(null);
   const [onlyChanges, setOnlyChanges] = useState(false);
   const [mode, setMode] = useState<"inline" | "side">("inline");
-  const lines = useMemo(() => lineDiff(before, after), [before, after]);
+  // 默认摊开全文；「只看改动」时只留改动行、相隔的未改段落折成 ⋯。中段太大（几千行对几千行）时逐行配对放不下，
+  // 退成整段删 + 整段加，并提示改用左右对照（Monaco 自己的差异算法顶得住）
+  const { lines, coarse } = useMemo(() => {
+    let coarse = false;
+    const full = lineDiff(before, after, { context: Infinity, maxCells: COMPARE_MAX_CELLS, onCoarse: () => { coarse = true; } });
+    return { lines: onlyChanges ? foldUnchanged(full, 0) : full, coarse };
+  }, [before, after, onlyChanges]);
   const ranges = useMemo(() => pairIntraline(lines.map((line) => line.op + line.text)), [lines]);
   const hasChanges = lines.some((line) => line.op === "+" || line.op === "-");
   useEffect(() => {
@@ -57,10 +66,10 @@ export default function TextVersionCompare({ before, after }: { before: string; 
       <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={onlyChanges} onChange={(event) => setOnlyChanges(event.target.checked)} />只看改动</label>
       <span><span className="text-diff-del-fg">− 删除</span> · <span className="text-diff-add-fg">+ 新增</span></span>
       {!hasChanges && <span role="status">{before === after ? "两版内容一样。" : "仅文件末尾换行不同。"}</span>}
+      {mode === "inline" && coarse && <span role="status">改动太多，这里只能整段对照；逐行看请切到「左右对照」。</span>}
     </div>
     {mode === "side" ? <div ref={hostRef} aria-label="文本版本对照（只读）" className="min-h-0 flex-1" /> : <pre aria-label="文本增删对照（只读）" className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-inset p-2 font-mono text-xs text-l2">
       {hasChanges && lines.map((line, index) => {
-        if (onlyChanges && line.op !== "+" && line.op !== "-") return null;
         const range = ranges.get(index);
         return <span key={index} className={`block ${line.op === "+" ? "bg-diff-add-bg text-diff-add-fg" : line.op === "-" ? "bg-diff-del-bg text-diff-del-fg" : "text-l3"}`}>
           {line.op === "~" ? "⋯" : <>{line.op} {range ? <>{line.text.slice(0, range[0])}<strong className="font-semibold underline">{line.text.slice(...range)}</strong>{line.text.slice(range[1])}</> : line.text || " "}</>}

@@ -209,3 +209,9 @@ test("精读进度：只速读的（skimmed 且没写成笔记）不进分母，
   const allSkim = JSON.stringify([{ id: "s1", reviewStatus: "pending", skimmed: true }]);
   assert.equal(notesProgressLine(notesProgress(allSkim)!), "只速读 1 篇，还没有要写单篇笔记的");
 });
+
+test("步骤卡计数分段给出：首段是主数，标题和明细不靠拆字符串", async () => {
+  const { notesProgressParts, searchProgressParts } = await import("../src/notes-progress.ts");
+  assert.deepEqual(searchProgressParts({ included: 3, pending: 1, withPdf: 1 }), ["纳入 3 篇", "待确认 1", "已有全文 1", "缺全文 2"]);
+  assert.deepEqual(notesProgressParts({ total: 0, reviewed: 0, fulltext: 0, abstractOnly: 0, blocked: 0, skimmed: 4 } as never), ["只速读 4 篇，还没有要写单篇笔记的"]);
+});

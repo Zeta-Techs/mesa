@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activityFile, commandCategory, lineDiff, parsePatch, resultStatus, splitPath, toolActivities } from "../src/tool-activity.ts";
+import { activityFile, commandCategory, foldUnchanged, lineDiff, parsePatch, resultStatus, splitPath, toolActivities } from "../src/tool-activity.ts";
 
 const CWD = "/Users/me/proj";
 const one = (name: string | null, input: unknown) => {
@@ -258,4 +258,29 @@ test("activityFile：读 / 写 / 改的文件能点开预览；项目外取文�
   // Windows：相对路径用反斜杠补全，盘符路径原样
   const win = toolActivities("Read", JSON.stringify({ file_path: String.raw`D:\tmp\a.png` }), String.raw`C:\proj`, true)[0];
   assert.deepEqual(activityFile(win, String.raw`C:\proj`, true), { path: String.raw`D:\tmp\a.png`, root: String.raw`D:\tmp`, line: null });
+});
+
+test("lineDiff：context=Infinity 摊开全文，不出 ⋯", () => {
+  const before = ["a", "b", "c", "d", "e", "f", "x", "g"].join("\n");
+  const after = ["a", "b", "c", "d", "e", "f", "y", "g"].join("\n");
+  const lines = lineDiff(before, after, { context: Infinity });
+  assert.equal(lines.some((line) => line.op === "~"), false);
+  assert.equal(lines.filter((line) => line.op === " ").length, 7);
+});
+
+test("lineDiff：中段超过 maxCells 时整段删加并报 onCoarse", () => {
+  let coarse = false;
+  const lines = lineDiff("a\nb\nc", "x\ny\nz", { maxCells: 4, onCoarse: () => { coarse = true; } });
+  assert.equal(coarse, true);
+  assert.deepEqual(lines.map((line) => line.op), ["-", "-", "-", "+", "+", "+"]);
+});
+
+test("foldUnchanged：中段未改的长串也折成一个 ⋯", () => {
+  const lines = lineDiff(
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9"].join("\n"),
+    ["X", "2", "3", "4", "5", "6", "7", "8", "Y"].join("\n"),
+    { context: Infinity },
+  );
+  const folded = foldUnchanged(lines, 1);
+  assert.deepEqual(folded.map((line) => line.op + line.text), ["-1", "+X", " 2", "~", " 8", "-9", "+Y"]);
 });

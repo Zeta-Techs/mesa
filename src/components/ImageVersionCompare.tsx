@@ -39,6 +39,21 @@ export default function ImageVersionCompare({ before, after }: { before: string;
     }
   }, [scale]);
   function zoomTo(next: "fit" | number) { setZoom(next === "fit" ? next : Math.max(0.05, Math.min(8, next))); }
+  // React 的 onWheel 是被动监听，preventDefault 拦不住触控板捏合时整页跟着缩放 / 滚动，这里挂原生非被动监听
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  useEffect(() => {
+    const onWheel = (event: WheelEvent) => {
+      if (!pdfWheelShouldZoom(event)) return;
+      const factor = pdfWheelZoomFactor(event.deltaY, event.deltaMode);
+      if (!factor) return;
+      event.preventDefault();
+      setZoom(Math.max(0.05, Math.min(8, scaleRef.current * factor)));
+    };
+    const attached = panes.current.filter((pane): pane is HTMLDivElement => pane !== null);
+    for (const pane of attached) pane.addEventListener("wheel", onWheel, { passive: false });
+    return () => { for (const pane of attached) pane.removeEventListener("wheel", onWheel); };
+  }, [urls]);
   function syncScroll(source: HTMLDivElement) {
     const pending = pendingScroll.current.get(source);
     pendingScroll.current.delete(source);
@@ -68,7 +83,6 @@ export default function ImageVersionCompare({ before, after }: { before: string;
     <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
       {urls.length === 0 ? <p className="text-xs text-l3">读取图片…</p> : urls.map((url, index) => <div key={index} ref={(pane) => { panes.current[index] = pane; }} aria-label={index === 0 ? "左图" : "右图"} className="min-h-0 overflow-auto" style={{ backgroundImage: "repeating-conic-gradient(var(--color-inset) 0% 25%, transparent 0% 50%)", backgroundSize: "16px 16px" }}
         onScroll={(event) => syncScroll(event.currentTarget)}
-        onWheel={(event) => { if (!pdfWheelShouldZoom(event)) return; const factor = pdfWheelZoomFactor(event.deltaY, event.deltaMode); if (factor) { event.preventDefault(); zoomTo(scale * factor); } }}
         onPointerDown={(event) => { if (event.button !== 0 || event.target === event.currentTarget) return; drag.current = { index, x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop }; event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerMove={(event) => { const active = drag.current; if (!active || active.index !== index) return; event.currentTarget.scrollLeft = active.left - event.clientX + active.x; event.currentTarget.scrollTop = active.top - event.clientY + active.y; syncScroll(event.currentTarget); }}
         onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>

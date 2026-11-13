@@ -63,7 +63,7 @@ import {
   figurePlan,
   figurePlanLine,
   notesProgress,
-  notesProgressLine,
+  notesProgressParts,
   outlineProgress,
   outlineProgressParts,
   spotCheckPicks,
@@ -293,7 +293,7 @@ function rememberToFetchPlace(root: string, ul: HTMLUListElement | null): void {
 
 /** 精读步「AI 干活」行下的进度（notes/index.json，工作区优先、项目根兜底）。
  *  Agent 分批写、中途提交后接着读：跑着时 20 秒重读一次，窗口回到前台也重读。 */
-function NotesProgressLine({ roots, live, onChange }: { roots: string[]; live: boolean; onChange: (line: string | null) => void }) {
+function NotesProgressLine({ roots, live, onChange }: { roots: string[]; live: boolean; onChange: (parts: string[] | null) => void }) {
   const rootsKey = roots.join("\n");
   useEffect(() => {
     let stale = false;
@@ -307,7 +307,7 @@ function NotesProgressLine({ roots, live, onChange }: { roots: string[]; live: b
             .then((f) => (f.truncated ? new Set<string>() : excludedIncludedIds(f.text)))
             .catch(() => new Set<string>());
           const progress = notesProgress(file.text, excluded);
-          if (!stale) onChange(progress ? notesProgressLine(progress) : null);
+          if (!stale) onChange(progress ? notesProgressParts(progress) : null);
           return;
         } catch {
           /* 这一处还没有索引，试下一处 */
@@ -342,8 +342,8 @@ function LedgerCountLine({
   roots: string[];
   live: boolean;
   rel: string;
-  line: (text: string) => string | null | Promise<string | null>;
-  onChange: (line: string | null) => void;
+  line: (text: string) => string[] | null | Promise<string[] | null>;
+  onChange: (parts: string[] | null) => void;
   /** 台账白名单外的文件（outline.md）走只读预览通道：白名单同时管写回，不为计数放宽 */
   read?: (root: string, rel: string) => Promise<{ text: string; truncated: boolean }>;
   /** 变了就重读（大纲那行：上游保存后要跟着变） */
@@ -391,7 +391,7 @@ const outlineCountLine = (roots: readonly string[]) => async (text: string) => {
     ...(o ? (thin ? outlineProgressParts({ ...o, thin: thin.thin }, thin.arrived) : outlineProgressParts(o)) : []),
     ...(p ? [figurePlanLine(p)] : []),
   ];
-  return parts.length ? parts.join(" · ") : null;
+  return parts.length ? parts : null;
 };
 
 /** 「抽查 3 篇笔记」就地给出三篇候选（notes/index.json，工作区优先、项目根兜底）：
@@ -690,9 +690,10 @@ export default function StepFlow({
   // 原先保存后仍先读写工作副本那份旧的——后面步骤改过的看不到，回头在这里改的也永远进不了项目（2026-11-05 排查）。
   // 要交回这一步 AI 接着做的（逐条决定、许可 / 声明、引用样式）仍走工作副本：AI 在那里接着干活
   const dataWs = runStatus === "done" ? undefined : ws;
-  const [agentProgress, setAgentProgress] = useState<string | null>(null);
+  // 分段：首段放标题旁，其余进明细行；由取数函数直接分好，改计数文案不会把标题和明细拆错
+  const [agentProgress, setAgentProgress] = useState<string[] | null>(null);
   useEffect(() => setAgentProgress(null), [step.name, dataWs?.worktreePath, !!ws || runStatus === "done"]);
-  const [progressHeadline, ...progressDetails] = (agentProgress ?? "").split(" · ");
+  const [progressHeadline, ...progressDetails] = agentProgress ?? [];
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
   );
@@ -3154,7 +3155,7 @@ export default function StepFlow({
             {progressDetails.length > 0 && <span className="text-micro tabular-nums text-l3" title={
               notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
               searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
-              "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对"
+              "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
             }>{progressDetails.join(" · ")}</span>}
             {loopActions}
           </div>
