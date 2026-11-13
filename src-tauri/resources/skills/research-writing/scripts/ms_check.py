@@ -57,7 +57,7 @@ DOUBLED = re.compile(r"\b([A-Za-z]{2,})\s+\1\b", re.I)
 DOUBLED_OK = {"that", "had", "is", "very", "bye"}
 LATIN_AFTER_IN = re.compile(r"\s*(?:situ|vivo|vitro|silico|operando)\b", re.I)
 FIXED_SLIPS = [r"\bterms of with\b", r"\bin order to to\b", r"\bdue to the fact of\b", r"\bcompared to with\b",
-               r"\bbased in on\b", r"\ba the\b", r"\bthe a\b", r"\bof of\b"]
+               r"\bbased in on\b", r"\ba the\b", r"\bthe\s+a(?![-–—/])\b", r"\bof of\b"]
 CONCLUSION = re.compile(r"\b(?:conclusions?|summary|outlook|concluding remarks|perspectives?)\b|结论|总结|展望", re.I)
 HAND_NUMBER = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[IVX]+\.)\s+\S")
 
@@ -84,12 +84,14 @@ NEG_EXPONENT = {"负号（−）": r"[A-Za-z]\s?−\s?[123]\b", "连字符（-�
 
 US_UK = [
     ("behavior", "behaviour"), ("color", "colour"), ("center", "centre"), ("fiber", "fibre"), ("analyze", "analyse"),
-    ("analyzed", "analysed"), ("characterization", "characterisation"), ("optimization", "optimisation"),
+    ("analyzed", "analysed"), ("analyzing", "analysing"), ("characterization", "characterisation"), ("optimization", "optimisation"),
     ("stabilization", "stabilisation"), ("utilization", "utilisation"), ("polarization", "polarisation"),
     ("crystallization", "crystallisation"), ("organization", "organisation"), ("modeling", "modelling"),
     ("labeled", "labelled"), ("sulfur", "sulphur"), ("aluminum", "aluminium"), ("favorable", "favourable"),
-    ("catalyze", "catalyse"), ("catalyzed", "catalysed"), ("gray", "grey"), ("liter", "litre"), ("meter", "metre"),
+    ("catalyze", "catalyse"), ("catalyzed", "catalysed"), ("catalyzing", "catalysing"), ("gray", "grey"), ("liter", "litre"), ("meter", "metre"),
 ]
+# analyses / catalyses 是名词 analysis / catalysis 的复数（美式英式同形），不按 +s 算英式动词
+NO_PLURAL_S = {"analyse", "catalyse"}
 
 
 def item(*args, **kwargs):
@@ -360,7 +362,7 @@ def check_dashes(rel, paras, items):
 def check_spelling(rel, paras, items):
     body = " ".join(p.text for p in paras).lower()
     us = {a: len(re.findall(rf"\b{a}s?\b", body)) for a, _ in US_UK}
-    uk = {b: len(re.findall(rf"\b{b}s?\b", body)) for _, b in US_UK}
+    uk = {b: len(re.findall(rf"\b{b}\b" if b in NO_PLURAL_S else rf"\b{b}s?\b", body)) for _, b in US_UK}
     us_n, uk_n = sum(us.values()), sum(uk.values())
     if us_n and uk_n:
         main, other = ("美式", "英式") if us_n >= uk_n else ("英式", "美式")

@@ -122,3 +122,45 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("非晶前缀 the a-Ni 与美式名词复数 analyses / catalyses 不误判为语病或英美混用", () => {
+  const root = mkdtempSync(join(tmpdir(), "ms-check-slip-spell-"));
+  mkdirSync(join(root, "manuscript"), { recursive: true });
+  writeFileSync(
+    join(root, "manuscript/review.md"),
+    [
+      "## Introduction",
+      "",
+      "Spectroscopic analyses and electrocatalytic catalyses reveal that the a-Ni/c-MoO2 heterointerface,",
+      "the a–b plane, and the A-site environment were systematically analyzed and optimized.",
+      "By contrast, the a catalyst phrase is a real article slip.",
+      "",
+      "## Conclusions",
+      "",
+      "Summary.",
+    ].join("\n"),
+  );
+  try {
+    const r = run(["--root", root], root);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const list = items(root);
+    const slips = find(list, "SLIP-");
+    assert.equal(slips.length, 1, `只应报真正的 'the a catalyst'，实际：${JSON.stringify(slips)}`);
+    assert.match(slips[0].evidence?.quote ?? slips[0].title, /the a catalyst/);
+    assert.equal(find(list, "SPELL-MIX")[0]?.status, "passed", "analyses / catalyses 不当成英式动词");
+
+    // 真正出现英式动词（analyse / analysing）时仍能抓出英美混用
+    writeFileSync(
+      join(root, "manuscript/review.md"),
+      "## Introduction\n\nSamples were analyzed for optimization and characterization while analysing surface states to analyse trends.\n\n## Conclusions\n\nEnd.\n",
+    );
+    const r2 = run(["--root", root], root);
+    assert.equal(r2.status, 0, r2.stderr + r2.stdout);
+    const mix = find(items(root), "SPELL-MIX")[0];
+    assert.equal(mix?.status, "needs_human");
+    assert.match(mix?.evidence?.detail ?? "", /analyse/);
+    assert.match(mix?.evidence?.detail ?? "", /analysing/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
