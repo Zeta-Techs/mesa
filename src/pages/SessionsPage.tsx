@@ -74,6 +74,7 @@ import {
   codexSessionChannelChip,
   pickResumeProfile,
 } from "../resume-profile";
+import { resumeModelChoice } from "../terminal-resume";
 import ConversationView from "../components/ConversationView";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
@@ -664,7 +665,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   /** 恢复用的兼容配置（codex 内联 provider 会话只认带 Base URL 的）；
    *  外部恢复命令需要它补 -c provider 定义（定义不含密钥） */
   function resumeProfile(s: SessionMetaDto) {
-    if (s.profileId) {
+    const hidden = appSettings?.hiddenProfiles;
+    if (s.profileId && !(hidden ?? []).includes(s.profileId)) {
       const exact = profiles.find((p) => p.id === s.profileId && p.agent === s.agent);
       if (exact) return exact;
     }
@@ -682,7 +684,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       s.agent,
       s.provider,
       wished,
-      appSettings?.hiddenProfiles,
+      hidden,
       s.agent === "codex"
         ? { officialConnected: codexOfficialConnected }
         : undefined,
@@ -693,21 +695,25 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     return resumeProfile(s)?.baseUrl ?? null;
   }
 
-  function resumeModel(s: SessionMetaDto): string | null {
+  function resumeModel(s: SessionMetaDto, sessionModel?: string | null): string | null {
+    const profile = resumeProfile(s);
+    const own = resumeModelChoice(sessionModel, profile);
+    if (own) return own;
     try {
       const last = JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "null") as
         | { agentId?: string; profileId?: string; model?: string }
         | null;
       if (
         last?.agentId === s.agent &&
-        last.model?.trim() &&
-        (!last.profileId || last.profileId === resumeProfile(s)?.id)
-      )
-        return last.model.trim();
+        (!last.profileId || last.profileId === profile?.id)
+      ) {
+        const picked = resumeModelChoice(last.model, profile);
+        if (picked) return picked;
+      }
     } catch {
       /* 损坏的本地记忆不阻断恢复 */
     }
-    return resumeProfile(s)?.models?.[0] ?? null;
+    return profile?.models?.[0] ?? null;
   }
 
   /** A2. 复制恢复命令（cc-switch 风格）：粘贴到任意终端即可恢复该会话 */
@@ -738,12 +744,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   /** A3. 在外部终端应用（Ghostty/iTerm/终端）中恢复会话 */
   async function resumeExternal(s: SessionMetaDto) {
     try {
+      const config = await invoke<{ model: string | null; effort: string | null }>("session_resume_config", {
+        agent: s.agent,
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+      }).catch(() => null);
       await invoke("resume_external_terminal", {
         agentId: s.agent,
         sessionId: s.sessionId,
         cwd: s.cwd ?? s.projectPath,
         profileId: resumeProfile(s)?.id ?? null,
-        model: resumeModel(s),
+        model: resumeModel(s, config?.model),
         provider: s.provider ?? null,
         baseUrl: resumeBaseUrl(s),
         title: tidySessionTitle(s).title,

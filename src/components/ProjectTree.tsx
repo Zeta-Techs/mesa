@@ -71,7 +71,7 @@ import RenameProjectModal from "./RenameProjectModal";
 import CoachTip, { showFloatingCoach } from "./CoachTip";
 import { noteMouseCloseChat } from "./shortcut-nudges";
 import { toast } from "../toast";
-import { AGENTS, type ProjectDto, type SessionMetaDto, type WorkspaceDto } from "../types";
+import { AGENTS, type ProjectDto, type RunDto, type SessionMetaDto, type WorkspaceDto } from "../types";
 import {
   CHAT_PINS_KEY,
   chatDot,
@@ -84,6 +84,7 @@ import {
   railNavIndex,
   toggleChatPin,
   folderDot,
+  hiddenFolderDot,
   folderOpen,
   projectChats,
   SCRATCH_FOLDER_KEY,
@@ -134,6 +135,7 @@ import { tidySessionTitle } from "../session-title";
 import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
 import { projectResumeProfileId } from "../project-agents";
 import { pickResumeProfile } from "../resume-profile";
+import { resumeModelChoice } from "../terminal-resume";
 import { startProjectChat } from "./AskAiModal";
 import { imeBlocksEnter } from "../ime-guard";
 import { relTime } from "../rel-time";
@@ -688,19 +690,72 @@ export default function ProjectTree({
     if (next === shown || (!next && !s.customTitle)) return;
     void writeChatMeta(s, { customTitle: next || null });
   }
-  /** 在外部终端继续：连接 / 模型的挑法同对话页「在外部终端继续」，窗口标题带上对话名 */
+  /** 在外部终端继续：连接 / 模型的挑法同对话页与内嵌接回，尊重已停用连接与会话原模型，窗口标题带上对话名 */
   async function resumeExternalChat(s: SessionMetaDto, project: ProjectDto | null) {
-    const wishedId = project ? projectResumeProfileId(profiles, project, s.agent) : undefined;
-    const profile =
-      profiles.find((p) => p.id === s.profileId && p.agent === s.agent) ??
-      pickResumeProfile(profiles, s.agent, s.provider, wishedId);
     try {
+      const hidden = useAppStore.getState().settings?.hiddenProfiles;
+      const [run, config, codexStatus] = await Promise.all([
+        s.profileId
+          ? Promise.resolve(null)
+          : invoke<RunDto | null>("run_find", {
+              reuseKey: null,
+              agent: s.agent,
+              sessionId: s.sessionId,
+            }).catch(() => null),
+        invoke<{ model: string | null; effort: string | null }>("session_resume_config", {
+          agent: s.agent,
+          sessionId: s.sessionId,
+          filePath: s.filePath,
+        }).catch(() => null),
+        s.agent === "codex"
+          ? invoke<{ connected: boolean }>("official_account_status", { agentId: "codex" }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      const ownId = s.profileId ?? run?.profileId;
+      const own =
+        ownId && !(hidden ?? []).includes(ownId)
+          ? profiles.find((p) => p.id === ownId && p.agent === s.agent)
+          : undefined;
+      let wishedId = project ? projectResumeProfileId(profiles, project, s.agent) : undefined;
+      if (!wishedId) {
+        wishedId = localStorage.getItem(`ccode.lastProfile.${s.agent}`) ?? undefined;
+        try {
+          const last = JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "null") as
+            | { agentId?: string; profileId?: string }
+            | null;
+          if (last?.agentId === s.agent && last.profileId) wishedId = last.profileId;
+        } catch {
+          /* 损坏的本地记忆不阻断恢复 */
+        }
+      }
+      const profile =
+        own ??
+        pickResumeProfile(
+          profiles,
+          s.agent,
+          s.provider,
+          wishedId,
+          hidden,
+          s.agent === "codex" && codexStatus ? { officialConnected: codexStatus.connected } : undefined,
+        );
+      let fallbackModel: string | undefined;
+      try {
+        const last = JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "null") as
+          | { agentId?: string; profileId?: string; model?: string }
+          | null;
+        if (last?.agentId === s.agent && (!last.profileId || last.profileId === profile?.id)) {
+          fallbackModel = resumeModelChoice(last.model, profile);
+        }
+      } catch {
+        /* 损坏的本地记忆不阻断恢复 */
+      }
+      const model = resumeModelChoice(config?.model, profile) ?? fallbackModel ?? profile?.models?.[0] ?? null;
       await invoke("resume_external_terminal", {
         agentId: s.agent,
         sessionId: s.sessionId,
         cwd: s.cwd ?? s.projectPath,
         profileId: profile?.id ?? null,
-        model: profile?.models?.[0] ?? null,
+        model,
         provider: s.provider ?? null,
         baseUrl: profile?.baseUrl ?? null,
         title: tidySessionTitle(s).title,
@@ -1949,9 +2004,9 @@ export default function ProjectTree({
     });
   }
 
-  /** 节头名字右边到行尾的空白（连同收着时的状态光标）：点了开合对话（2026-10-24 用户：「点击项目名字右边的空白区域无法展开收起」）。
+  /** 节头名字右边到行尾的空白（连同状态光标）：点了开合对话（2026-10-24 用户：「点击项目名字右边的空白区域无法展开收起」）。
    *  点名字是进项目页，点空白和最前的图标是开合。不进键盘顺序（键盘有图标钮与 ← →）；拖动排序松手那一下不算点 */
-  function renderToggleSpace(open: boolean, dot: ChatDot, onToggle: () => void) {
+  function renderToggleSpace(dot: ChatDot, onToggle: () => void) {
     return (
       <div
         aria-hidden="true"
@@ -1964,14 +2019,14 @@ export default function ProjectTree({
         }}
         className="flex h-7 min-w-0 flex-1 items-center justify-end"
       >
-        {renderHeadDot(open, dot)}
+        {renderHeadDot(dot)}
       </div>
     );
   }
 
-  /** 收着的文件夹在节头行尾报状态（展开时各段对话自己报） */
-  function renderHeadDot(open: boolean, dot: ChatDot) {
-    if (open || !dot) return null;
+  /** 节头行尾状态光标：收着时报整个文件夹，展开时若仍有被隐藏的模板/精读对话在跑或未读则代报 */
+  function renderHeadDot(dot: ChatDot) {
+    if (!dot) return null;
     // 悬停时不让位：＋ 与 ⋯ 出现在它右边。mr-2.5 = 对话行的 pr-1 + mr-1.5，平时两种行的光标竖着对齐
     return <RunCaret state={dot} className="mr-2.5" />;
   }
@@ -2030,7 +2085,7 @@ export default function ProjectTree({
             },
           ]
         : []),
-      ...(hasReaderChats(sessions, row.repoPath, IS_WINDOWS)
+      ...(hasReaderChats(sessions, row.repoPath, IS_WINDOWS, terminalRunInputs)
         ? [
             {
               label: readerShownSet.has(pathKey(row.repoPath, IS_WINDOWS)) ? "隐藏精读对话" : "显示精读对话",
@@ -2040,7 +2095,13 @@ export default function ProjectTree({
             },
           ]
         : []),
-      ...(hasStepChats(sessions, row.repoPath, worktreesOf.get(pathKey(row.repoPath, IS_WINDOWS)) ?? [], IS_WINDOWS)
+      ...(hasStepChats(
+        sessions,
+        row.repoPath,
+        worktreesOf.get(pathKey(row.repoPath, IS_WINDOWS)) ?? [],
+        IS_WINDOWS,
+        terminalRunInputs,
+      )
         ? [
             {
               label: stepShownSet.has(pathKey(row.repoPath, IS_WINDOWS)) ? "隐藏模板对话" : "显示模板对话",
@@ -2166,13 +2227,28 @@ export default function ProjectTree({
       selectedRoot != null && samePath(selectedRoot, row.repoPath, IS_WINDOWS);
     const fkey = pathKey(row.repoPath, IS_WINDOWS);
     const open = isFolderOpen(fkey);
-    // 收着、里面有跑完没看的：课题名亮到 l1（展开时各段自己亮）
-    const unreadInside = !open && folderHasUnread(fkey, chatsByRoot.get(fkey) ?? []);
-    // 收着时节头行尾报状态（这个课题里最要紧的那个：等确认 > 做完没看 > 在干活 > 闲着）
-    const dot = strongestCaret([
-      folderDot([row.repoPath, ...(worktreesOf.get(fkey) ?? [])], terminalRunInputs, IS_WINDOWS),
-      unreadInside ? "unread" : null,
-    ]);
+    const worktrees = worktreesOf.get(fkey) ?? [];
+    const hiddenDot = hiddenFolderDot({
+      root: row.repoPath,
+      worktrees,
+      runs: terminalRunInputs,
+      sessions: unpinnedSessions,
+      pinnedKeys,
+      showReader: readerShownSet.has(fkey),
+      showSteps: stepShownSet.has(fkey),
+      unread: unreadSet,
+      focusedTabId: terminalActiveTabId,
+      highlightChatKey,
+      isWindows: IS_WINDOWS,
+    });
+    // 收着时节头行尾报整个课题（等确认 > 做完没看 > 在干活 > 闲着）；展开时可见行自己报，节头只代报被隐藏的模板/精读对话
+    const dot = open
+      ? hiddenDot
+      : strongestCaret([
+          folderDot([row.repoPath, ...worktrees], terminalRunInputs, IS_WINDOWS),
+          hiddenDot,
+          folderHasUnread(fkey, chatsByRoot.get(fkey) ?? []) ? "unread" : null,
+        ]);
     const menuOpen = menu?.row.key === row.key;
     // 拖动：源节跟手；落在「原位 → 目标」之间的节各让出源那么高（节高矮不一，见 tabDragShift）
     const inSection = drag?.section === section ? drag : null;
@@ -2239,7 +2315,7 @@ export default function ProjectTree({
             <span className="ccode-rail-text min-w-0 truncate text-left font-medium">{row.name}</span>
             {pinned && <Pin size={10} strokeWidth={1.8} aria-label="已置顶" className="shrink-0 text-l4" />}
           </button>
-          {renderToggleSpace(open, dot, () => toggleFolder(fkey, open))}
+          {renderToggleSpace(dot, () => toggleFolder(fkey, open))}
           {row.project &&
             renderNewChat(
               `在「${row.name}」里开新对话`,
@@ -2274,7 +2350,7 @@ export default function ProjectTree({
   function renderScratch() {
     const open = isFolderOpen(SCRATCH_FOLDER_KEY);
     const unreadInside = !open && folderHasUnread(SCRATCH_FOLDER_KEY, scratchList);
-    const dot = strongestCaret([scratchDot(terminalRunInputs, IS_WINDOWS), unreadInside ? "unread" : null]);
+    const dot = open ? null : strongestCaret([scratchDot(terminalRunInputs, IS_WINDOWS), unreadInside ? "unread" : null]);
     const toggle = () => toggleFolder(SCRATCH_FOLDER_KEY, open);
     return (
       <div data-rail-group>
@@ -2291,7 +2367,7 @@ export default function ProjectTree({
           >
             <span className="ccode-rail-text min-w-0 truncate text-left font-medium">随手聊</span>
           </button>
-          {renderToggleSpace(open, dot, toggle)}
+          {renderToggleSpace(dot, toggle)}
           {renderNewChat("开一段新的随手聊", "开一段新的随手聊（同侧栏「新对话」）", () => void openQuickChat())}
           <button
             type="button"

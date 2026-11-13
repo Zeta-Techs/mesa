@@ -99,33 +99,49 @@ export function toggleReaderChatsShown(shown: readonly string[], folderKey: stri
   return shown.includes(folderKey) ? shown.filter((k) => k !== folderKey) : [...shown, folderKey];
 }
 
-/** 某个课题有没有精读对话（项目菜单有这一项才出开关） */
+/** 某个课题有没有精读对话（项目菜单有这一项才出开关；刚开起尚未落盘的精读标签也算） */
 export function hasReaderChats(
   sessions: readonly SessionMetaDto[],
   root: string,
   isWindows = false,
+  runs: readonly OpenTabInput[] = [],
 ): boolean {
   const key = pathKey(root, isWindows);
-  return sessions.some((s) => readerListable(s) && pathKey(s.projectPath, isWindows) === key);
+  return (
+    sessions.some((s) => readerListable(s) && pathKey(s.projectPath, isWindows) === key) ||
+    runs.some(
+      (r) => !r.shell && (r.reuseKey ?? "").startsWith("reader:") && pathWithin(r.cwd, root, isWindows),
+    )
+  );
 }
 
 /** 哪些课题在侧栏列出模板对话（流程步骤的对话，stepName 非空；项目菜单「显示模板对话」，2026-11-13 用户：
  *  同精读对话，默认不列，按课题打开）。本机 localStorage，存课题的 pathKey；解析 / 开关同精读那一对 */
 export const STEP_CHATS_SHOWN_KEY = "ccode.projectShowStepChats";
 
-/** 某个课题有没有模板对话（项目菜单有这一项才出开关）：只认挂在课题下面会列出来的那些 */
+/** 某个课题有没有模板对话（项目菜单有这一项才出开关）：挂在课题下面的会话 + 刚开起尚未落盘的步骤标签都算 */
 export function hasStepChats(
   sessions: readonly SessionMetaDto[],
   root: string,
   worktrees: readonly string[] = [],
   isWindows = false,
+  runs: readonly OpenTabInput[] = [],
 ): boolean {
   const key = pathKey(root, isWindows);
-  return sessions.some(
-    (s) =>
-      !!s.stepName &&
-      listable(s) &&
-      (pathKey(s.projectPath, isWindows) === key || worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
+  const roots = [root, ...worktrees];
+  return (
+    sessions.some(
+      (s) =>
+        !!s.stepName &&
+        listable(s) &&
+        (pathKey(s.projectPath, isWindows) === key || worktrees.some((w) => pathWithin(s.projectPath, w, isWindows))),
+    ) ||
+    runs.some(
+      (r) =>
+        !r.shell &&
+        !!openTabStep(r.railStep, r.reuseKey) &&
+        roots.some((rt) => rt && pathWithin(r.cwd, rt, isWindows)),
+    )
   );
 }
 
@@ -424,6 +440,66 @@ export function folderDot(
       .filter((r) => r.running && !r.shell && roots.some((root) => root && pathWithin(r.cwd, root, isWindows)))
       .map((r) => caretOfAttention(r.attention)),
   );
+}
+
+/**
+ * 课题下被开关收起来没列的对话（默认隐藏的模板对话 / 精读对话）最要紧的状态：
+ * 课题展开时可见的对话行自己报状态，但被隐藏的那些没有行，由课题节头行尾代报，避免 AI 在跑或等确认时侧栏毫无提示。
+ */
+export function hiddenFolderDot(input: {
+  root: string;
+  worktrees?: readonly string[];
+  runs: readonly OpenTabInput[];
+  sessions?: readonly SessionMetaDto[];
+  pinnedKeys?: ReadonlySet<string>;
+  showReader?: boolean;
+  showSteps?: boolean;
+  unread?: ReadonlySet<string>;
+  focusedTabId?: string | null;
+  highlightChatKey?: string | null;
+  isWindows?: boolean;
+}): ChatDot {
+  const showReader = input.showReader ?? false;
+  const showSteps = input.showSteps ?? false;
+  if (showReader && showSteps) return null;
+  const isWindows = input.isWindows ?? false;
+  const worktrees = input.worktrees ?? [];
+  const roots = [input.root, ...worktrees];
+  const key = pathKey(input.root, isWindows);
+  const bySession = new Map<string, SessionMetaDto>();
+  const carets: ChatDot[] = [];
+  for (const s of input.sessions ?? []) {
+    const sk = `${s.agent}\n${s.sessionId}`;
+    bySession.set(sk, s);
+    if (input.pinnedKeys?.has(sk)) continue;
+    const inRoot =
+      pathKey(s.projectPath, isWindows) === key ||
+      worktrees.some((w) => pathWithin(s.projectPath, w, isWindows));
+    if (!inRoot) continue;
+    const hiddenReader = !showReader && readerListable(s);
+    const hiddenStep = !showSteps && !s.reader && !!s.stepName && listable(s);
+    if (!hiddenReader && !hiddenStep) continue;
+    carets.push(withUnread(chatDot(s, input.runs), sk !== input.highlightChatKey && Boolean(input.unread?.has(sk))));
+  }
+  for (const r of input.runs) {
+    if (r.shell) continue;
+    const sk = r.sessionId ? `${r.agentId}\n${r.sessionId}` : null;
+    if (sk && input.pinnedKeys?.has(sk)) continue;
+    if (!roots.some((rt) => rt && pathWithin(r.cwd, rt, isWindows))) continue;
+    const meta = sk ? bySession.get(sk) : undefined;
+    const hiddenReader =
+      !showReader && ((r.reuseKey ?? "").startsWith("reader:") || Boolean(meta?.reader));
+    const hiddenStep =
+      !showSteps && (!!openTabStep(r.railStep, r.reuseKey) || Boolean(meta?.stepName));
+    if (!hiddenReader && !hiddenStep) continue;
+    carets.push(
+      withUnread(
+        r.running ? caretOfAttention(r.attention) : null,
+        r.tabId !== input.focusedTabId && Boolean(input.unread?.has(unreadKeyOf(r))),
+      ),
+    );
+  }
+  return strongestCaret(carets);
 }
 
 /** 随手聊文件夹的状态（随手聊没有固定根路径，按目录口径认） */

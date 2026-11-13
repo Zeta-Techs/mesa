@@ -562,11 +562,81 @@ test("模板对话（流程步骤的对话）按课题开关：关着不列、�
     { ...base, tabId: "t", cwd: "/repo", title: "终端", shell: true, railStep: { name: "综述大纲", index: 3 } },
     { ...base, tabId: "c", cwd: "/repo", title: "随便问问" },
   ];
+  assert.equal(hasStepChats([sessions[0]], "/repo", [], false, tabs), true, "刚开起尚未落盘的步骤标签也出菜单开关");
+  assert.equal(hasStepChats([sessions[0]], "/repo", [], false, [tabs[1], tabs[2]]), false);
   const folderOf = (cwd: string) => (cwd === "/repo" ? "/repo" : null);
   const hidden = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showSteps: () => false });
   assert.deepEqual(hidden.map((r) => r.tabId), ["t", "c"]);
   const shown = openTabRows({ runs: tabs, listed: new Set(), focusedTabId: null, folderOf, showSteps: (k) => k === "/repo" });
   assert.deepEqual(shown.map((r) => r.tabId), ["s", "t", "c"]);
+});
+
+test("hiddenFolderDot：项目展开但模板/精读对话默认收起时，运行与待确认仍由项目节头代报", async () => {
+  const { hiddenFolderDot } = await import("../src/sidebar-chats.ts");
+  const stepTab = {
+    tabId: "s1",
+    agentId: "claude-code",
+    sessionId: null,
+    cwd: "/repo/wt/outline",
+    running: true,
+    shell: false,
+    attention: "confirm" as const,
+    title: "综述大纲",
+    reuseKey: "ws:/repo/wt/outline",
+    railStep: { name: "综述大纲", index: 3 },
+  };
+  const normalTab = {
+    tabId: "c1",
+    agentId: "claude-code",
+    sessionId: "mine",
+    cwd: "/repo",
+    running: true,
+    shell: false,
+    attention: "working" as const,
+    title: "普通对话",
+  };
+  assert.equal(
+    hiddenFolderDot({
+      root: "/repo",
+      worktrees: ["/repo/wt/outline"],
+      runs: [stepTab, normalTab],
+      showSteps: false,
+      showReader: false,
+    }),
+    "confirm",
+  );
+  assert.equal(
+    hiddenFolderDot({
+      root: "/repo",
+      worktrees: ["/repo/wt/outline"],
+      runs: [stepTab, normalTab],
+      showSteps: true,
+      showReader: false,
+    }),
+    null,
+    "打开模板对话开关且无隐藏精读对话后，不再在展开的节头重复挂光标",
+  );
+  assert.equal(
+    hiddenFolderDot({
+      root: "/repo",
+      runs: [normalTab],
+      showSteps: false,
+      showReader: false,
+    }),
+    null,
+    "普通可见对话自己挂光标，不触发节头隐藏代报",
+  );
+  const finishedStep = session({ sessionId: "step-done", stepName: "初稿撰写" });
+  assert.equal(
+    hiddenFolderDot({
+      root: "/repo",
+      runs: [],
+      sessions: [finishedStep],
+      unread: new Set([`claude-code\nstep-done`]),
+      showSteps: false,
+    }),
+    "unread",
+  );
 });
 
 test("精读对话开关按课题记、坏值不炸", () => {

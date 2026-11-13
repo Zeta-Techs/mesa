@@ -4130,7 +4130,7 @@ fn write_external_wrapper(
 /// 密钥走父进程环境块经 start 继承（与 cmd 路径同口径，spawn_windows_start 注入）。
 // 运行路径仅 Windows；测试在任意宿主构造文本
 #[cfg(any(windows, test))]
-fn external_ps1_script_text(binary: &str, args: &[String]) -> String {
+fn external_ps1_script_text(binary: &str, args: &[String], title: Option<&str>) -> String {
     // 首字符必须是 UTF-8 BOM：powershell.exe（5.1）对**无 BOM** 文件按系统 ANSI 代码页
     // 解析（中文系统 = GBK936）。脚本里的中文（用户名 C:\Users\张三、项目名、prompt 参数）
     // 会被按 GBK 错位解码，把后面的引号当成汉字的 trail byte 吞掉，直接报
@@ -4138,6 +4138,15 @@ fn external_ps1_script_text(binary: &str, args: &[String]) -> String {
     // 是否触发取决于具体汉字的字节序列（「中文路径」侥幸无损、「技能张三」必炸），
     // 是数据相关的间歇故障，务必不要因为某次没复现就把 BOM 去掉。
     let mut text = String::from("\u{FEFF}$self = $PSCommandPath\nRemove-Item -LiteralPath $self -Force -ErrorAction SilentlyContinue\n");
+    if let Some(raw) = title {
+        let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+        if !clean.trim().is_empty() {
+            text.push_str(&format!(
+                "try {{ $Host.UI.RawUI.WindowTitle = '{}' }} catch {{}}\n",
+                clean.trim().replace('\'', "''")
+            ));
+        }
+    }
     text.push_str("& ");
     text.push_str(&format!("'{}'", binary.replace('\'', "''")));
     for arg in args {
@@ -4149,10 +4158,10 @@ fn external_ps1_script_text(binary: &str, args: &[String]) -> String {
 }
 
 #[cfg(windows)]
-fn write_external_wrapper(binary: &str, args: &[String]) -> Result<PathBuf, String> {
+fn write_external_wrapper(binary: &str, args: &[String], title: Option<&str>) -> Result<PathBuf, String> {
     let dir = external_wrapper_dir()?;
     let path = dir.join(format!("launch-{}.ps1", uuid::Uuid::new_v4()));
-    std::fs::write(&path, external_ps1_script_text(binary, args))
+    std::fs::write(&path, external_ps1_script_text(binary, args, title))
         .map_err(|e| format!("写入外部启动包装器失败: {e}"))?;
     schedule_wrapper_cleanup(path.clone());
     Ok(path)
@@ -4269,12 +4278,14 @@ fn open_external_profiled(
     let binary =
         resolve_binary(binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?)
             .ok_or_else(|| format!("未找到 {agent_id} 的 CLI 二进制"))?;
+    if agent_id == "gemini" {
+        crate::projects::ensure_geminiignore(std::path::Path::new(cwd));
+    }
     let pref = crate::settings::read_current()
         .external_terminal
         .unwrap_or_else(|| "auto".into());
     #[cfg(windows)]
     {
-        let _ = title; // Windows 外部终端不设窗口标题
         return open_windows_external(
             &pref,
             cwd,
@@ -4282,6 +4293,7 @@ fn open_external_profiled(
             &args,
             &env,
             &env_remove,
+            title,
         );
     }
     // macOS：终端经 launchd 拉起（open/AppleScript/已运行的 Ghostty 实例），父进程 env
@@ -4902,12 +4914,33 @@ fn cmd_outer_escape(inner: &str) -> String {
 }
 
 #[cfg(any(windows, test))]
-fn windows_start_prefix(cwd: &str) -> String {
+fn windows_start_title(title: Option<&str>) -> String {
+    // cmd /C start "<title>" 引号内不能带 `"`（提前闭引号）和 `%`（触发环境变量展开）；
+    // 空或全被洗掉时必须回落 "Mesa"，避免空标题触发旧版 libuv assert(process_title)（见下）
+    let cleaned = title
+        .map(|raw| {
+            raw.chars()
+                .filter(|c| !c.is_control() && *c != '%')
+                .map(|c| if c == '"' { '\'' } else { c })
+                .take(200)
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "Mesa".into()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_start_prefix(cwd: &str, title: Option<&str>) -> String {
     // 标题必须非空：start "" 会给新控制台留下空标题，GetConsoleTitleW 对空标题返回 0，
     // 旧版 libuv（<1.52，kimi 等自带运行时的 CLI 可能内嵌）uv_get_process_title
     // 把 0 当成功、process_title 缓存仍是 NULL，随后 assert(process_title) 直接 abort
     // （win/util.c:412，start "" 场景 100% 复现，见 nodejs/node#58695）。
-    let mut line = String::from("start \"Mesa\"");
+    let mut line = format!("start \"{}\"", windows_start_title(title));
     if !cwd.trim().is_empty() {
         line.push_str(&format!(" /D \"{}\"", cwd.replace('"', "")));
     }
@@ -4920,8 +4953,13 @@ fn windows_start_prefix(cwd: &str) -> String {
 /// 参数也要引号），cmd 会剥掉首尾两个引号把路径拆坏（`C:\Program Files (x86)\…`、
 /// `C:\Users\John Smith\…` 实证）；/S 语义固定为只剥最外一对。
 #[cfg(any(windows, test))]
-fn windows_external_start_line_cmd(cwd: &str, binary: &str, args: &[String]) -> String {
-    windows_cmd_start_line_with(cwd, "", "/K", binary, args)
+fn windows_external_start_line_cmd(
+    cwd: &str,
+    binary: &str,
+    args: &[String],
+    title: Option<&str>,
+) -> String {
+    windows_cmd_start_line_with(cwd, "", "/K", binary, args, title)
 }
 
 /// start_flags / switch 只为测试可换成 `/B /WAIT` + `/C`（不开可见窗口、跑完即退）
@@ -4932,13 +4970,14 @@ fn windows_cmd_start_line_with(
     switch: &str,
     binary: &str,
     args: &[String],
+    title: Option<&str>,
 ) -> String {
     let mut inner = cmd_quote_arg(binary);
     for a in args {
         inner.push(' ');
         inner.push_str(&cmd_quote_arg(a));
     }
-    let mut line = windows_start_prefix(cwd);
+    let mut line = windows_start_prefix(cwd, title);
     if !start_flags.is_empty() {
         line.push(' ');
         line.push_str(start_flags);
@@ -4950,19 +4989,24 @@ fn windows_cmd_start_line_with(
 /// cmd 宿主的启动行：能内联就内联；含 `%`/换行或超长时返回 None，由调用方改写批处理包装
 #[cfg(any(windows, test))]
 #[cfg_attr(not(windows), allow(dead_code))]
-fn windows_external_cmd_inline(cwd: &str, binary: &str, args: &[String]) -> Option<String> {
+fn windows_external_cmd_inline(
+    cwd: &str,
+    binary: &str,
+    args: &[String],
+    title: Option<&str>,
+) -> Option<String> {
     if cmd_inline_unsafe(binary) || args.iter().any(|a| cmd_inline_unsafe(a)) {
         return None;
     }
-    let line = windows_external_start_line_cmd(cwd, binary, args);
+    let line = windows_external_start_line_cmd(cwd, binary, args, title);
     (line.len() <= WINDOWS_START_LINE_MAX).then_some(line)
 }
 
 /// 设置「PowerShell」：可见宿主是 powershell -NoExit -File wrapper；
 /// 密钥经 start 环境块继承进会话（与 cmd 路径同口径），ps1 只含启动命令。
 #[cfg(any(windows, test))]
-fn windows_external_start_line_ps(cwd: &str, wrapper: &Path) -> String {
-    let mut line = windows_start_prefix(cwd);
+fn windows_external_start_line_ps(cwd: &str, wrapper: &Path, title: Option<&str>) -> String {
+    let mut line = windows_start_prefix(cwd, title);
     line.push_str(" powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File ");
     line.push_str(&format!(
         "\"{}\"",
@@ -5047,12 +5091,13 @@ fn open_windows_external(
     args: &[String],
     env: &[(String, String)],
     env_remove: &[String],
+    title: Option<&str>,
 ) -> Result<(), String> {
     let cwd = expand_home_path(cwd);
     if pref == "powershell" {
-        // 密钥放父进程环境块经 start 继承（与 cmd 路径同口径），ps1 只含启动命令
-        let wrapper = write_external_wrapper(binary, args)?;
-        let line = windows_external_start_line_ps(&cwd, &wrapper);
+        // 密钥放父进程环境块经 start 继承（与 cmd 路径同口径），ps1 只含启动命令与窗口标题
+        let wrapper = write_external_wrapper(binary, args, title)?;
+        let line = windows_external_start_line_ps(&cwd, &wrapper, title);
         return spawn_windows_start(&line, env, env_remove).map_err(|e| {
             let _ = std::fs::remove_file(&wrapper);
             e
@@ -5060,11 +5105,11 @@ fn open_windows_external(
     }
     // cmd / auto：密钥放在父进程环境块，start 继承进可见 cmd。不经 PowerShell，
     // 避免 5.1 当 conhost 把 TUI 卡住，也避免 AMSI 扫描每次新写的 ps1。
-    let line = match windows_external_cmd_inline(&cwd, binary, args) {
+    let line = match windows_external_cmd_inline(&cwd, binary, args, title) {
         Some(line) => line,
         None => {
             let wrapper = write_external_cmd_wrapper(binary, args)?;
-            windows_external_start_line_cmd(&cwd, &wrapper.to_string_lossy(), &[])
+            windows_external_start_line_cmd(&cwd, &wrapper.to_string_lossy(), &[], title)
         }
     };
     spawn_windows_start(&line, env, env_remove)

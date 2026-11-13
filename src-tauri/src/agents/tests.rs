@@ -2191,12 +2191,19 @@ fn api_overlay_blanks_other_providers_connection_keys() {
 
 #[test]
 fn external_ps1_script_text_carries_no_env_or_credentials() {
-    // audit P0：ps1 只含自删 + 启动命令；密钥走 start 环境块继承，不落脚本
-    let text =
-        external_ps1_script_text("C:\\tools\\claude.cmd", &["读 简报".into(), "it's".into()]);
+    // audit P0：ps1 只含自删 + 启动命令（及可选窗口标题）；密钥走 start 环境块继承，不落脚本
+    let text = external_ps1_script_text(
+        "C:\\tools\\claude.cmd",
+        &["读 简报".into(), "it's".into()],
+        Some("1114|研究|综述大纲 'A' 50%\nbad"),
+    );
     assert!(
         text.starts_with('\u{FEFF}'),
         "powershell 5.1 GBK 解码坑：BOM 不能丢"
+    );
+    assert!(
+        text.contains("$Host.UI.RawUI.WindowTitle = '1114|研究|综述大纲 ''A'' 50%bad'"),
+        "窗口标题走单引号字面量并清洗控制字符: {text}"
     );
     assert!(text.contains("& 'C:\\tools\\claude.cmd'"));
     assert!(text.contains("'it''s'"), "单引号加倍转义");
@@ -2205,6 +2212,8 @@ fn external_ps1_script_text_carries_no_env_or_credentials() {
         !text.contains("Remove-Item Env:"),
         "env_remove 也在父进程环境块完成"
     );
+    let untitled = external_ps1_script_text("C:\\tools\\claude.cmd", &[], Some(" \r\n "));
+    assert!(!untitled.contains("WindowTitle"));
 }
 
 #[test]
@@ -3282,16 +3291,33 @@ fn windows_external_cmd_host_quotes_and_skips_powershell() {
         r"C:\work\my proj",
         r"C:\tools\claude.cmd",
         &["-r".into(), "abc".into()],
+        None,
     );
     assert_eq!(
         line,
         r#"start "Mesa" /D "C:\work\my proj" cmd.exe /S /K "C:\tools\claude.cmd -r abc""#
     );
     assert!(!line.contains("powershell"));
+    let titled = windows_external_start_line_cmd(
+        r"C:\work",
+        "claude",
+        &["-r".into(), "abc".into()],
+        Some("1114|研究|综述 \"A\" %PATH%\n"),
+    );
+    assert_eq!(
+        titled,
+        r#"start "1114|研究|综述 'A' PATH" /D "C:\work" cmd.exe /S /K "claude -r abc""#
+    );
+    assert_eq!(
+        windows_start_prefix(r"C:\work", Some(" %\r\n ")),
+        r#"start "Mesa" /D "C:\work""#,
+        "标题被洗空后仍须回落非空标题 Mesa（防 libuv #58695）"
+    );
     let spaced = windows_external_start_line_cmd(
         r"C:\work",
         r"C:\Program Files\kimi\kimi.exe",
         &["-S".into(), "sid".into()],
+        None,
     );
     // /S 只剥最外一对引号：路径自己的引号完整留给内层 cmd
     assert!(spaced.ends_with(r#"cmd.exe /S /K ""C:\Program Files\kimi\kimi.exe" -S sid""#));
@@ -3309,24 +3335,25 @@ fn windows_external_cmd_escapes_outer_layer_and_routes_percent_to_wrapper() {
         r"C:\w",
         r"C:\Program Files (x86)\n\codex.cmd",
         &["a&b".into(), "plain".into()],
+        None,
     );
     assert!(
         line.ends_with(r#"/S /K ""C:\Program Files ^(x86^)\n\codex.cmd" "a^&b" plain""#),
         "{line}"
     );
     assert_eq!(
-        windows_external_cmd_inline(r"C:\w", "codex", &["-r".into(), "id".into()]),
+        windows_external_cmd_inline(r"C:\w", "codex", &["-r".into(), "id".into()], None),
         Some(r#"start "Mesa" /D "C:\w" cmd.exe /S /K "codex -r id""#.to_string())
     );
     for bad in ["100%", "%PATH%", "l1\nl2", "a\rb"] {
         assert!(
-            windows_external_cmd_inline(r"C:\w", "codex", &[bad.into()]).is_none(),
+            windows_external_cmd_inline(r"C:\w", "codex", &[bad.into()], None).is_none(),
             "{bad:?} 必须改走批处理包装"
         );
     }
-    assert!(windows_external_cmd_inline(r"C:\w", r"C:\100%\codex.cmd", &[]).is_none());
+    assert!(windows_external_cmd_inline(r"C:\w", r"C:\100%\codex.cmd", &[], None).is_none());
     let long = "x".repeat(WINDOWS_START_LINE_MAX);
-    assert!(windows_external_cmd_inline(r"C:\w", "codex", &[long]).is_none());
+    assert!(windows_external_cmd_inline(r"C:\w", "codex", &[long], None).is_none());
     let body = external_cmd_wrapper_body(r"C:\Program Files\c.cmd", &["50% off".into()]);
     assert_eq!(
         body,
@@ -3353,7 +3380,7 @@ fn windows_cmd_start_line_survives_real_cmd() {
     ]
     .map(String::from)
     .to_vec();
-    let line = windows_cmd_start_line_with(&cwd, "/B /WAIT", "/C", &echo_s, &args);
+    let line = windows_cmd_start_line_with(&cwd, "/B /WAIT", "/C", &echo_s, &args, Some("1114|研究|实测"));
     spawn_windows_start(&line, &[], &[]).unwrap();
     assert_eq!(
         std::fs::read_to_string(&out).unwrap().trim_end(),
@@ -3365,7 +3392,7 @@ fn windows_cmd_start_line_survives_real_cmd() {
     let pct: Vec<String> = ["100%", "%PATH%", "l1\nl2"].map(String::from).to_vec();
     std::fs::write(&wrapper, external_cmd_wrapper_body(&echo_s, &pct)).unwrap();
     let line =
-        windows_cmd_start_line_with(&cwd, "/B /WAIT", "/C", &wrapper.to_string_lossy(), &[]);
+        windows_cmd_start_line_with(&cwd, "/B /WAIT", "/C", &wrapper.to_string_lossy(), &[], None);
     spawn_windows_start(&line, &[], &[]).unwrap();
     assert_eq!(
         std::fs::read_to_string(&out).unwrap().trim_end(),
@@ -3379,10 +3406,11 @@ fn windows_external_powershell_host_uses_noexit_file() {
     let line = windows_external_start_line_ps(
         r"C:\work\my proj",
         Path::new(r"C:\Users\x\AppData\Roaming\ccode\external-launch\launch-1.ps1"),
+        Some("1114|问答|PS宿主"),
     );
     assert_eq!(
         line,
-        "start \"Mesa\" /D \"C:\\work\\my proj\" powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File \"C:\\Users\\x\\AppData\\Roaming\\ccode\\external-launch\\launch-1.ps1\""
+        "start \"1114|问答|PS宿主\" /D \"C:\\work\\my proj\" powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -NoExit -File \"C:\\Users\\x\\AppData\\Roaming\\ccode\\external-launch\\launch-1.ps1\""
     );
     assert!(line.contains("-NoExit"));
     assert!(!line.contains("cmd.exe /K"));
