@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { saveClipboardImage } from "../clipboard-image";
 import { imageAnnotationExcerpt, type ReviewAnnotate } from "../draft-review";
 import {
@@ -151,7 +152,8 @@ export default function ImageMarkDialog({
   const drawnBoxes = marks.filter((m): m is { kind: "box"; n: number } & Rect => m.kind === "box");
   const boxes = drag ? [...drawnBoxes, { kind: "box" as const, n: 0, ...drag }] : drawnBoxes;
 
-  return (
+  // 挂到 body：评审面板带裁切与定位上下文，弹层留在里面 fixed 只铺满面板、左半张图被裁掉（2026-11-13 用户实测）
+  return createPortal(
     <div
       className="fixed inset-0 z-50 bg-black/60"
       onMouseDown={(event) => {
@@ -264,6 +266,7 @@ export default function ImageMarkDialog({
           {error && <p className="mt-1 text-micro text-danger">{error}</p>}
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
