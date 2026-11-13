@@ -1662,7 +1662,9 @@ pub(crate) fn env_path(var: &str) -> Option<std::path::PathBuf> {
 /// - `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `QWEN_HOME` / `KIMI_CODE_HOME` / `CODEBUDDY_CONFIG_DIR` /
 ///   `GROK_HOME` 整体顶替该目录；
 /// - `GEMINI_CLI_HOME` 顶替的是**家目录**，配置仍在其下 `.gemini/`（0.66 bundle `homedir()` 实证）；
-/// - OpenCode 是 `$XDG_CONFIG_HOME/opencode`；Cursor 的 `CURSOR_CONFIG_DIR` 只搬 `cli-config.json`（Mesa 不读写），
+/// - OpenCode 是 `$OPENCODE_CONFIG_DIR`，没设才是 `$XDG_CONFIG_HOME/opencode`：2.x 拿它整体顶替全局目录，
+///   1.x 把它当最后加载的一层、其中 `opencode.json(c)` 盖过全局（v1.19.5 `config/paths.ts` / 2.x `util/src/global.ts`，
+///   2026-11-13 读源码），两版都写这里才生效；Cursor 的 `CURSOR_CONFIG_DIR` 只搬 `cli-config.json`（Mesa 不读写），
 ///   mcp / hooks / 技能写死 `~/.cursor`，这里照旧按 `~/.cursor`（2026-11-04 读 2026.10.22 bundle）。
 pub fn agent_config_root_with(
     agent: &str,
@@ -1677,9 +1679,11 @@ pub fn agent_config_root_with(
             .unwrap_or_else(|| home.to_path_buf())
             .join(".gemini"),
         "qwen" => moved("QWEN_HOME", ".qwen"),
-        "opencode" => env("XDG_CONFIG_HOME")
-            .unwrap_or_else(|| home.join(".config"))
-            .join("opencode"),
+        "opencode" => env("OPENCODE_CONFIG_DIR").unwrap_or_else(|| {
+            env("XDG_CONFIG_HOME")
+                .unwrap_or_else(|| home.join(".config"))
+                .join("opencode")
+        }),
         "kimi" => moved("KIMI_CODE_HOME", ".kimi-code"),
         "codebuddy" => moved("CODEBUDDY_CONFIG_DIR", ".codebuddy"),
         "cursor" => home.join(".cursor"),
@@ -1879,8 +1883,11 @@ mod tests {
             agent_config_root_with("gemini", &home, &env),
             Some(PathBuf::from("moved-GEMINI_CLI_HOME").join(".gemini"))
         );
+        // OPENCODE_CONFIG_DIR 优先，没设才看 XDG_CONFIG_HOME
+        assert_eq!(agent_config_root_with("opencode", &home, &env), Some(PathBuf::from("moved-OPENCODE_CONFIG_DIR")));
+        let xdg_only = |v: &str| (v == "XDG_CONFIG_HOME").then(|| PathBuf::from("moved-XDG_CONFIG_HOME"));
         assert_eq!(
-            agent_config_root_with("opencode", &home, &env),
+            agent_config_root_with("opencode", &home, &xdg_only),
             Some(PathBuf::from("moved-XDG_CONFIG_HOME").join("opencode"))
         );
         assert_eq!(kimi_legacy_root_with(&home, &env), PathBuf::from("moved-KIMI_SHARE_DIR"));
@@ -1893,7 +1900,9 @@ mod tests {
             return;
         };
         for spec in all_agent_specs() {
-            if spec.id == "opencode" && std::env::var_os("XDG_CONFIG_HOME").is_some() {
+            if spec.id == "opencode"
+                && (std::env::var_os("XDG_CONFIG_HOME").is_some() || std::env::var_os("OPENCODE_CONFIG_DIR").is_some())
+            {
                 continue;
             }
             let dir = skills_dir_for(spec).expect(spec.id);

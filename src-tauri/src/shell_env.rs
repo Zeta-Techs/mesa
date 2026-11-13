@@ -50,7 +50,7 @@ fn should_import(key: &str) -> bool {
     const RELOCATION_VARS: &[&str] = &[
         "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME",
         "KIMI_SHARE_DIR", "CODEBUDDY_CONFIG_DIR", "GROK_HOME", "OPENCODE_DB", "QWEN_RUNTIME_DIR",
-        "CURSOR_DATA_DIR",
+        "CURSOR_DATA_DIR", "OPENCODE_CONFIG_DIR",
     ];
     if RELOCATION_VARS.contains(&key) {
         return true;
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn imports_config_dir_relocation_vars() {
         // 不是凭据：设为全局 / MCP / 技能要和终端里的 CLI 认同一个配置目录
-        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME", "GROK_HOME", "OPENCODE_DB", "QWEN_RUNTIME_DIR", "CURSOR_DATA_DIR"] {
+        for key in ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GEMINI_CLI_HOME", "QWEN_HOME", "KIMI_CODE_HOME", "GROK_HOME", "OPENCODE_DB", "QWEN_RUNTIME_DIR", "CURSOR_DATA_DIR", "OPENCODE_CONFIG_DIR"] {
             assert!(should_import(key), "{key} 应该带");
         }
     }
