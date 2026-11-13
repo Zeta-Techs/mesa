@@ -3,7 +3,7 @@ import { consultNudgeSeen, discussNudgeSeen, markConsultNudgeSeen, markDiscussNu
 import { discussOpeningPrompt, discussReuseKey } from "../discuss-prompt";
 import { toast } from "../toast";
 import { sanitizeDocumentHtml } from "../document-html";
-import { useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
+import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   cachedJournalMetric,
@@ -291,6 +291,11 @@ function rememberToFetchPlace(root: string, ul: HTMLUListElement | null): void {
   const pane = ul.closest("[data-project-main-scroll]");
   if (pane instanceof HTMLElement) writeToFetchPageScroll(root, pane.scrollTop);
 }
+
+/** 每步「AI 干活」统计行上次读到的分段（键 = 项目 + 步骤 + 读哪份）。只在本次打开 Mesa 内有效，不落盘 */
+const agentProgressCache = new Map<string, string[]>();
+const sameParts = (a: readonly string[] | null, b: readonly string[] | null) =>
+  a === b || (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
 
 /** 精读步「AI 干活」行下的进度（notes/index.json，工作区优先、项目根兜底）。
  *  Agent 分批写、中途提交后接着读：跑着时 20 秒重读一次，窗口回到前台也重读。 */
@@ -716,8 +721,18 @@ export default function StepFlow({
   // 要交回这一步 AI 接着做的（逐条决定、许可 / 声明、引用样式）仍走工作副本：AI 在那里接着干活
   const dataWs = runStatus === "done" ? undefined : ws;
   // 分段：首段放标题旁，其余进明细行；由取数函数直接分好，改计数文案不会把标题和明细拆错
-  const [agentProgress, setAgentProgress] = useState<string[] | null>(null);
-  useEffect(() => setAgentProgress(null), [step.name, dataWs?.worktreePath, !!ws || runStatus === "done"]);
+  // 换步骤时整张卡按 key 重新挂载，计数要等异步读完台账：先空着再补一行，工具行会被往下推一下（2026-11-13 用户：切步骤小字抖）。
+  // 记住每步上次读到的分段，挂载时直接画出来，读完有变化才换
+  const progressKey = `${projectPath}\n${step.name}\n${dataWs?.worktreePath ?? ""}\n${!!ws || runStatus === "done"}`;
+  const [progressState, setProgressState] = useState(() => ({ key: progressKey, parts: agentProgressCache.get(progressKey) ?? null }));
+  const agentProgress = progressState.key === progressKey ? progressState.parts : agentProgressCache.get(progressKey) ?? null;
+  const setAgentProgress = useCallback((parts: string[] | null) => {
+    if (parts) agentProgressCache.set(progressKey, parts);
+    else agentProgressCache.delete(progressKey);
+    setProgressState((prev) =>
+      prev.key === progressKey && sameParts(prev.parts, parts) ? prev : { key: progressKey, parts },
+    );
+  }, [progressKey]);
   const [progressHeadline, ...progressDetails] = agentProgress ?? [];
   const setWorkspaceReviewRequest = useAppStore(
     (s) => s.setWorkspaceReviewRequest,
