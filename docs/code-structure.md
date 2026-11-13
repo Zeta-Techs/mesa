@@ -1891,14 +1891,17 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   （技能脚本）figure-forge/scripts/fig_lint.py  # 数据图画后自检（2026-11-05）：子进程里给 matplotlib savefig 挂钩子、照常跑 manifest 登记的脚本，
                              #   保存那一刻查缺字（warnings + logging 两路）、文字出界 / 相交（只算真正画出来的刻度标签）、字号下限、SVG 转曲、JPEG，
                              #   灰度预览进 .ccode/checks/fig-lint/；kind=schematic 的登记不归它（fig_check 同样跳过）
-  （技能脚本）schematic-forge/scripts/  # 科研示意图（2026-11-05，design-research-figures.md）：figlib.py 图纸读取 / 配色 / 字体库（系统字体按族名索引、缓存进临时目录）
-                             #   / 量字排版（中西文分段选字体、显式断行、4% 余量）/ 连线几何——渲染与检查共用同一份排版；
-                             #   render_figure.py 图纸 → SVG（每段 tspan 带绝对坐标，避开 usvg 整段回落）+ PPTX（python-pptx，形状按元素 id 命名、
-                             #   中文写东亚字体位、固定行距、连接线绑形状连接点、图标挂 svgBlip 原件）+ PNG / PDF（MESA_FIGURE_TOOL 先试跑 --probe，
-                             #   不认退 LibreOffice）；render.json 记输出哈希，人改过的 PPTX / SVG 拒绝覆盖（退出码 4，--force 才重出）；--wrap 单图包成一页；
-                             #   schematic_check.py 三档检查（文字相交 / 出框 / 跨框 / 字号 / 缺字 / 文字出处 / facts 关系 / ppi / 组图子图字号 / 重建一致）；
-                             #   asset_sheet.py 出图模型素材板（品红底、按格切、碰格边整板拒绝）；pptx_edit.py 人改过的 PPTX 局部改（改前备份 .history/）；
-                             #   measure_text.py / overlay.py 复刻量字号与叠图比对；style_profile.py 从已有图归纳课题组风格；icons/ 73 个矢量图元 + index.json
+  （技能脚本）schematic-forge/scripts/  # 科研示意图（2026-11-05，design-research-figures.md；2026-11-14 顶刊图层与原语升级）：figlib.py 图纸读取 /
+                             #   内置 5 套顶刊配色（PALETTES）/ 字体库（系统字体按族名索引、缓存进临时目录）/ 量字排版（中西文分段选字体、显式断行、4% 余量）/
+                             #   归一化图像锚点（hero_panel.anchors）/ 二次贝塞尔弯曲与分叉耦合反应箭头 / 参数化科学曲线（energy_steps、volcano_curve、dos_lobe）/
+                             #   3D 径向高光球（sphere）与晶格团簇阵列（lattice）/ 胶囊标题卡片（header_card、线性渐变、微投影、chevron）/ 45° 圆点引出线（callout）；
+                             #   render_figure.py 图纸 → SVG + 原生可编辑 OOXML PPTX（a:gradFill 线性与径向渐变、a:outerShdw 投影、a:quadBezTo / a:cubicBezTo 曲线、
+                             #   图标内部 id 隔离并挂 svgBlip 原件）+ PNG / PDF（MESA_FIGURE_TOOL 先试跑 --probe，不认退 LibreOffice）；render.json 记输出哈希，
+                             #   人改过的 PPTX / SVG 拒绝覆盖（退出码 4，--force 才重出）；--wrap 单图包成一页；
+                             #   schematic_check.py 三档检查（局部 WCAG / Michelson 对比度达标的浅色背板与主视觉留白区放行 CROSS / ONIMG，纯化学分子式 / 阶段号 /
+                             #   标准坐标轴免检 SOURCE，近灰度提醒合并为单条 GRAY-PAIR）；asset_sheet.py 支持无字 2.5D 主视觉底图提示词（hero）、0..1 坐标网格（grid）
+                             #   与品红底多图标素材板切分（prompt / split / key）；pptx_edit.py 人改过的 PPTX 局部改；measure_text.py / overlay.py 复刻量字号与叠图比对；
+                             #   style_profile.py 归纳课题组风格与导出顶刊预设（--preset / --list-palettes）；icons/ 89 个多层半透明科研图元 + index.json
   （技能脚本）bib-check/scripts/cite_check.py  # 引用核验固定脚本（2026-11-02，tests/cite-check.test.ts）：refs（引用键 / 重复键 / 句中点名作者对号——自解析 author 字段、
                              #   不走 bridge.parse_bibtex（TeX 重音会整库报错），整句找、离线也做；联网查 DOI 指向与
                              #   Crossref updates 撤稿更正）/ quotes（manuscript/evidence.json 的原文摘录到 PDF 全文逐字找，归一口径镜像 src/pdf-search.ts）；

@@ -572,6 +572,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "scripts/mesa_checks.py",
         include_str!("../resources/mesa_checks.py"),
     ),
+    (
+        "schematic-forge",
+        "scripts/icons/index.json",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/index.json"),
+    ),
     // ICONS-BEGIN（schematic-forge 内置图元，按 icons/ 目录逐个登记；every_bundled_skill_file_is_embedded 守着不漏）
     (
         "schematic-forge",
@@ -605,6 +610,16 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "schematic-forge",
+        "scripts/icons/bubble-cluster.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/bubble-cluster.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/built-in-efield.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/built-in-efield.svg"),
+    ),
+    (
+        "schematic-forge",
         "scripts/icons/catalyst-surface.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/catalyst-surface.svg"),
     ),
@@ -635,6 +650,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "schematic-forge",
+        "scripts/icons/core-shell-cutaway.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/core-shell-cutaway.svg"),
+    ),
+    (
+        "schematic-forge",
         "scripts/icons/core-shell-particle.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/core-shell-particle.svg"),
     ),
@@ -647,6 +667,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "schematic-forge",
         "scripts/icons/crystal-lattice.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/crystal-lattice.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/crystal-slab.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/crystal-slab.svg"),
     ),
     (
         "schematic-forge",
@@ -682,6 +707,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "schematic-forge",
         "scripts/icons/electrode-electrolyte.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/electrode-electrolyte.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/electron-arc.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/electron-arc.svg"),
     ),
     (
         "schematic-forge",
@@ -725,8 +755,13 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "schematic-forge",
-        "scripts/icons/index.json",
-        include_str!("../resources/skills/schematic-forge/scripts/icons/index.json"),
+        "scripts/icons/h2-dimer.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/h2-dimer.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/h2o-molecule.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/h2o-molecule.svg"),
     ),
     (
         "schematic-forge",
@@ -775,6 +810,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "schematic-forge",
+        "scripts/icons/mea-exploded.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/mea-exploded.svg"),
+    ),
+    (
+        "schematic-forge",
         "scripts/icons/microscope.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/microscope.svg"),
     ),
@@ -792,6 +832,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "schematic-forge",
         "scripts/icons/mof-framework.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/mof-framework.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/mof-octahedron.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/mof-octahedron.svg"),
     ),
     (
         "schematic-forge",
@@ -825,6 +870,26 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "schematic-forge",
+        "scripts/icons/ni-foam-mesh.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/ni-foam-mesh.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/oh-species.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/oh-species.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/operando-raman-cone.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/operando-raman-cone.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/orbital-hybrid.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/orbital-hybrid.svg"),
+    ),
+    (
+        "schematic-forge",
         "scripts/icons/person.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/person.svg"),
     ),
@@ -842,6 +907,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "schematic-forge",
         "scripts/icons/porous-particle.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/porous-particle.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/porous-sponge.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/porous-sponge.svg"),
     ),
     (
         "schematic-forge",
@@ -885,6 +955,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
     ),
     (
         "schematic-forge",
+        "scripts/icons/single-atom-vacancy.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/single-atom-vacancy.svg"),
+    ),
+    (
+        "schematic-forge",
         "scripts/icons/snowflake.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/snowflake.svg"),
     ),
@@ -912,6 +987,11 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         "schematic-forge",
         "scripts/icons/thin-film.svg",
         include_str!("../resources/skills/schematic-forge/scripts/icons/thin-film.svg"),
+    ),
+    (
+        "schematic-forge",
+        "scripts/icons/three-electrode-cell.svg",
+        include_str!("../resources/skills/schematic-forge/scripts/icons/three-electrode-cell.svg"),
     ),
     (
         "schematic-forge",

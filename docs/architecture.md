@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-14 · 科研示意图升级三明治图层架构与科研矢量原语
+
+用户指出 `schematic-forge` 只靠二维纯色方框加扁平小图标画出来的机理图仍像「大号彩色流程图」，拍板按五块升级并吸收开源科研绘图技能经验（AutoFigure-Edit 图文解耦、PaperBanana 配色与审稿闭环、happy-figure-skill 实体图元与箭头语义）：① 增加 `hero_panel` 三明治图层（柔和浅色背板 + `MESA_IMAGE_TOOL` 生成无字 2.5D 主视觉底图 + `asset_sheet.py hero/grid` 读归一化锚点叠矢量引出线 `callout` 与真文字），坚守「出图模型不写字、不接重型分割依赖（SAM/RMBG）」；② `figlib.py` / `render_figure.py` 双端（SVG 与可编辑 OOXML PPTX）补齐二次贝塞尔弯曲与分叉耦合箭头、自由能台阶 / 火山线 / DOS 科学曲线、3D 径向高光球与晶格/团簇阵列、胶囊标题卡片与渐变微阴影及 `chevron` 横幅；③ 内置图元扩充升级至 89 个多层半透明科研图元并内置 5 套顶刊配色；④ 放宽 `schematic_check.py` 局部对比度达标时的背板/留白叠字误拦、纯化学分子式/坐标轴/阶段号原文匹配与 `GRAY-PAIR` 刷屏，纳入多模态冷读闭环，`extract_figure.py --erase` 角落面积上限放宽到 4%。维持三档核验、不打总分。细则 pipeline.md「科研做图」、code-structure.md `schematic-forge/scripts/`。
+
 ### 2026-11-13 · 并行会话只提交自己的改动
 
 用户：「只提交自己的改动，记到规则里」。起因：初稿核验会话的 663f3465 / b707cb20 把另一个会话写到一半的 global_config.rs、tray.rs 一起提交，配套的 Cargo.toml 没进去，main 编译不过，由原作者往前补 1a929d76 修好。定：每个会话只提交自己的文件或片段，别人的（含半成品）不碰；提交走私有暂存区 + `commit-tree` / `update-ref` 防 HEAD 中途移动；提交后核对文件清单；带错了往前补、不改历史，并告诉对方会话。细则 AGENTS.md「git 提交与单人开发流程」①。

@@ -348,9 +348,9 @@ def snap_box(pix, box: tuple[float, float, float, float], snap: bool = True):
 def check_erase(box: tuple[float, float, float, float]) -> None:
     """只许抹掉原图角上的子图字母：框小、贴着左上 / 右上角。别的地方是数据，不许动。"""
     x0, y0, x1, y1 = box
-    if (x1 - x0) * (y1 - y0) > 0.02:
-        raise SystemExit("--erase 只用来抹掉原图的子图字母，框不能超过这块面积的 2%")
-    if y0 > 0.15 or not (x0 < 0.15 or x1 > 0.85):
+    if (x1 - x0) * (y1 - y0) > 0.04:
+        raise SystemExit("--erase 只用来抹掉原图的子图字母，框不能超过这块面积的 4%")
+    if y0 > 0.18 or not (x0 < 0.18 or x1 > 0.82):
         raise SystemExit("--erase 只能在左上或右上角（原图子图字母的位置）")
 
 

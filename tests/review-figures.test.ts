@@ -103,7 +103,13 @@ test("裁子图：--erase 只许角上的小框；--page 只配 --grid / --box�
     const pdf = makePdf(dir);
     let r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0.4,0.4,0.6,0.6", "--out", join(dir, "x.png")]);
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr + r.stdout, /左上或右上角|2%/);
+    assert.match(r.stderr + r.stdout, /左上或右上角|4%/);
+    // 窄子图角上较大的子图字母（约 3.2% 面积）放行，超过 4% 仍拦下
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0,0,0.18,0.18", "--dpi", "72", "--out", join(dir, "ok-erase.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0,0,0.25,0.22", "--out", join(dir, "big-erase.png")]);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr + r.stdout, /4%/);
     r = run(["--pdf", pdf, "--page", "1", "--out", join(dir, "p.png")]);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /--page 只配 --grid 或 --box/);

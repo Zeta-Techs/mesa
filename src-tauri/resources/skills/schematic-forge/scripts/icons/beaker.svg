@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-<!-- default C1=#4472C4 C3=#404040 -->
-<g stroke-linejoin="round" stroke-linecap="round"><path d="M22,10 V88 Q22,94 28,94 H72 Q78,94 78,88 V10 Z" fill="#FFFFFF" stroke="none"/><path d="M24,48 H76 V87 Q76,92 71,92 H29 Q24,92 24,87 Z" fill="@C1@"/><rect x="30" y="54" width="6" height="30" rx="3" fill="#FFFFFF" opacity="0.45"/><path d="M15,7 L22,13 V88 Q22,94 28,94 H72 Q78,94 78,88 V7" fill="none" stroke="@C3@" stroke-width="3"/><path d="M78,24 H66 M78,36 H70 M78,48 H66" fill="none" stroke="@C3@" stroke-width="3"/></g>
+<!-- default C1=#2E86C1 C2=#D35400 C3=#2C3E50 -->
+<defs><linearGradient id="liq" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="@C1@" stop-opacity="0.45"/><stop offset="100%" stop-color="@C1@" stop-opacity="0.88"/></linearGradient></defs>
+<g stroke-linejoin="round" stroke-linecap="round"><path d="M22,12 V86 Q22,93 29,93 H71 Q78,93 78,86 V12 Z" fill="#F8FBFD"/><path d="M24,46 Q38,43 50,46 T76,46 V85 Q76,91 70,91 H30 Q24,91 24,85 Z" fill="url(#liq)"/><ellipse cx="50" cy="46" rx="26" ry="3.5" fill="@C1@" fill-opacity="0.35"/><rect x="29" y="20" width="5.5" height="64" rx="2.7" fill="#FFFFFF" opacity="0.6"/><circle cx="46" cy="74" r="3" fill="@C2@" opacity="0.75"/><circle cx="58" cy="64" r="2.4" fill="@C2@" opacity="0.65"/><path d="M16,10 L22,15 V86 Q22,93 29,93 H71 Q78,93 78,86 V10" fill="none" stroke="@C3@" stroke-width="2.4"/><path d="M78,28 H68 M78,40 H71 M78,52 H68 M78,64 H71" fill="none" stroke="@C3@" stroke-width="1.8" opacity="0.7"/></g>
 </svg>

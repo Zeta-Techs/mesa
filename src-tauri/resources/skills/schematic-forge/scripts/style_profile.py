@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""课题组风格：从项目已有的图归纳常用配色、字体、字号、线宽（schematic-forge 技能随包）。
+"""课题组风格与顶刊配色库：从项目已有的图归纳常用配色、字体、字号、线宽，或直接导出内置顶刊配色（schematic-forge 技能随包）。
 
 用法（Windows 上把 python3 换成 python）：
   python3 style_profile.py figures/ [更多目录或文件…] --out figures/style-profile.json
+  python3 style_profile.py --list-palettes
+  python3 style_profile.py --preset nature-reviews [--out figures/style-profile.json]
 读 SVG 里的 fill / stroke 颜色、font-family、font-size、stroke-width（按 SVG 物理尺寸换算成 pt），
 PNG / JPG 取占面积最大的几种彩色（忽略近白、近黑、灰）。Mesa 自己渲染出的输出（同目录有 render.json 的）不算，免得自己学自己。
 输出一块能直接放进图纸 theme 的 JSON，外加依据（来自哪些文件、各值出现几次）。只是归纳，用不用由人定。
@@ -16,6 +18,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import figlib as F  # noqa: E402
 
 MM_PER_PT = 25.4 / 72
 UNIT_MM = {"mm": 1, "cm": 10, "in": 25.4, "pt": 25.4 / 72, "px": 25.4 / 96, "": 25.4 / 96}
@@ -61,10 +64,34 @@ def norm_color(v):
 def main():
     utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("paths", nargs="+")
+    ap.add_argument("paths", nargs="*")
     ap.add_argument("--out")
     ap.add_argument("--max-colors", type=int, default=6)
+    ap.add_argument("--list-palettes", action="store_true", help="列出内置的 5 套顶刊配色方案")
+    ap.add_argument("--preset", help="直接选用内置顶刊配色（如 nature-reviews / chem-rev-mineral / jacs-vibrant / cell-pastel / science-clean）")
     a = ap.parse_args()
+    if a.list_palettes:
+        for name, pal in F.PALETTES.items():
+            cols = " ".join(f"{k}={v}" for k, v in pal["colors"].items())
+            print(f"{name}\ttext={pal['text_color']}\t{cols}")
+        return 0
+    if a.preset:
+        if a.preset not in F.PALETTES:
+            print(f"✗ 不认识的预设配色 {a.preset!r}（可用：{', '.join(F.PALETTES)}）", file=sys.stderr)
+            return 2
+        pal = F.PALETTES[a.preset]
+        theme = {"palette": a.preset, "base_pt": 7, "line_pt": 0.75, "text_color": pal["text_color"], "colors": dict(pal["colors"])}
+        out = {"theme": theme, "preset": a.preset, "note": f"内置顶刊配色 {a.preset}；可在 figure.json 的 theme 里直接写 \"palette\": \"{a.preset}\""}
+        text = json.dumps(out, ensure_ascii=False, indent=2) + "\n"
+        if a.out:
+            Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(a.out).write_text(text, encoding="utf-8")
+            print(f"saved: {Path(a.out).resolve()}")
+        print(json.dumps(theme, ensure_ascii=False, indent=2))
+        return 0
+    if not a.paths:
+        print("✗ 要给参考图目录/文件，或用 --preset <配色名> / --list-palettes", file=sys.stderr)
+        return 2
     files = []
     for p in a.paths:
         p = Path(p)

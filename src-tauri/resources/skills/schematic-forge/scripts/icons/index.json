@@ -960,6 +960,210 @@
     "researcher",
     "user"
    ]
+  },
+  {
+   "name": "crystal-slab",
+   "zh": "立体多层晶面（Slab）",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "晶面",
+    "台阶面",
+    "晶体平板",
+    "slab",
+    "terrace",
+    "surface"
+   ]
+  },
+  {
+   "name": "core-shell-cutaway",
+   "zh": "核壳颗粒剖视图",
+   "domain": "材料 / 纳米 / 能源",
+   "keywords": [
+    "核壳",
+    "剖视图",
+    "纳米颗粒",
+    "包覆",
+    "core-shell",
+    "cutaway"
+   ]
+  },
+  {
+   "name": "porous-sponge",
+   "zh": "多孔海绵骨架",
+   "domain": "材料 / 纳米 / 能源",
+   "keywords": [
+    "多孔骨架",
+    "介孔",
+    "海绵",
+    "分级孔",
+    "porous sponge",
+    "mesoporous"
+   ]
+  },
+  {
+   "name": "ni-foam-mesh",
+   "zh": "泡沫镍三维骨架",
+   "domain": "材料 / 纳米 / 能源",
+   "keywords": [
+    "泡沫镍",
+    "泡沫金属",
+    "三维网",
+    "集流体",
+    "nickel foam",
+    "3D mesh"
+   ]
+  },
+  {
+   "name": "mof-octahedron",
+   "zh": "MOF 八面体配位笼",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "MOF",
+    "八面体",
+    "配位笼",
+    "ZIF",
+    "UiO-66",
+    "octahedron"
+   ]
+  },
+  {
+   "name": "single-atom-vacancy",
+   "zh": "单原子锚定空位",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "单原子",
+    "空位",
+    "氧空位",
+    "M-N4",
+    "SAC",
+    "single-atom",
+    "vacancy"
+   ]
+  },
+  {
+   "name": "h2o-molecule",
+   "zh": "3D 水分子",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "水分子",
+    "H2O",
+    "反应物",
+    "解离",
+    "water molecule"
+   ]
+  },
+  {
+   "name": "oh-species",
+   "zh": "3D 氢氧根物种",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "氢氧根",
+    "OH-",
+    "羟基",
+    "脱附",
+    "hydroxide",
+    "hydroxyl"
+   ]
+  },
+  {
+   "name": "h2-dimer",
+   "zh": "3D 氢气双原子分子",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "氢气",
+    "H2",
+    "双原子",
+    "析氢",
+    "hydrogen dimer"
+   ]
+  },
+  {
+   "name": "bubble-cluster",
+   "zh": "高光上升气泡簇",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "气泡簇",
+    "析氢气泡",
+    "析氧气泡",
+    "脱附",
+    "bubble cluster",
+    "gas evolution"
+   ]
+  },
+  {
+   "name": "built-in-efield",
+   "zh": "内建电场流线",
+   "domain": "材料 / 纳米 / 能源",
+   "keywords": [
+    "内建电场",
+    "异质结",
+    "空间电荷区",
+    "built-in electric field",
+    "BIEF"
+   ]
+  },
+  {
+   "name": "electron-arc",
+   "zh": "电子转移发光弧",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "电子转移",
+    "电荷重排",
+    "溢流",
+    "electron transfer",
+    "charge transfer"
+   ]
+  },
+  {
+   "name": "orbital-hybrid",
+   "zh": "轨道杂化纺锤体（d/p 轨道）",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "轨道杂化",
+    "d轨道",
+    "p轨道",
+    "能带",
+    "orbital hybridization",
+    "d-band"
+   ]
+  },
+  {
+   "name": "three-electrode-cell",
+   "zh": "三电极电解池剖面",
+   "domain": "材料 / 纳米 / 能源",
+   "keywords": [
+    "三电极",
+    "电解池",
+    "电催化",
+    "LSV",
+    "three-electrode cell"
+   ]
+  },
+  {
+   "name": "mea-exploded",
+   "zh": "零极距 MEA 膜电极爆炸图",
+   "domain": "材料 / 纳米 / 能源",
+   "keywords": [
+    "MEA",
+    "膜电极",
+    "AEMWE",
+    "PEMWE",
+    "电解槽",
+    "双极板",
+    "exploded stack"
+   ]
+  },
+  {
+   "name": "operando-raman-cone",
+   "zh": "原位拉曼光路锥",
+   "domain": "化学 / 催化 / 吸附",
+   "keywords": [
+    "原位拉曼",
+    "光路锥",
+    "光谱表征",
+    "operando Raman",
+    "in-situ spectroscopy"
+   ]
   }
  ]
 }

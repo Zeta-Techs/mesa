@@ -269,3 +269,114 @@ test("排版：粗体里套上下标、℃ 与圈号走中文字体不算缺字�
   assert.ok(o.left.length > 0);
   assert.deepEqual(o.ok, []);
 });
+
+test("科研原语与顶刊配色：贝塞尔弯曲/耦合箭头、自由能台阶/火山线/DOS 曲线、3D 径向球与晶格、胶囊卡片、引出线在 SVG 与 PPTX 双端可编辑", opts, () => {
+  const spec = {
+    name: "t",
+    canvas: { width_mm: 183, height_mm: 110, purpose: "journal" },
+    theme: { palette: "nature-reviews", base_pt: 6.5 },
+    elements: [
+      { id: "ch1", type: "chevron", x: 4, y: 4, w: 52, h: 9, fill: "primary", lead_in: false, text: "Stage I · Synthesis", color: "#FFFFFF", bold: true },
+      { id: "card1", type: "header_card", x: 4, y: 16, w: 52, h: 38, gradient: ["primary@10", "#FFFFFF"], shadow: "soft",
+        header: { text: "Interfacial Catalyst", fill: "primary" }, text: "Amorphous Ni cluster" },
+      { id: "lat", type: "lattice", x: 8, y: 36, w: 28, h: 14, mode: "grid", nx: 4, ny: 2, bonds: true, vacancies: [[1, 0]], dopants: { "2,1": "accent" } },
+      { id: "sp1", type: "sphere", x: 42, y: 38, w: 9, h: 9, fill: "accent", shadow: "soft" },
+      { id: "rxn", type: "arrow", from: "card1", to: [96, 34], bend: 0.26, stroke: "accent", stroke_pt: 1.1, label: "H^{*}",
+        coupled_in: [{ label: "H_{2}O + e^{-}", t: 0.32, side: -1 }],
+        coupled_out: [{ label: "OH^{-}", t: 0.68, side: 1 }] },
+      { id: "co1", type: "callout", x: 60, y: 6, w: 38, h: 9, target: [46.5, 42.5], stroke: "primary", text: "Active site" },
+      { id: "dg", type: "energy_steps", x: 104, y: 4, w: 75, h: 32, fill: "panel_bg", box_stroke: "border",
+        ylabel: "ΔG (eV)", xlabel: "Reaction coordinate", step_labels: ["H_{2}O^{*}", "TS", "H^{*}", "1/2 H_{2}"], smooth_ts: true,
+        series: [{ label: "Ni/MoO_{2}", levels: [0, 0.36, -0.08, 0], color: "accent" }],
+        barrier: { series: 0, step: 1, text: "0.36 eV" } },
+      { id: "vol", type: "volcano_curve", x: 104, y: 40, w: 75, h: 32, fill: "panel_bg", fill_under: "primary@16",
+        xlabel: "ΔG_{H*} (eV)", ylabel: "log |j| (mA cm^{-2})",
+        markers: [{ x: -0.08, y: -0.15, label: "Ni/MoO_{2}", color: "accent" }] },
+      { id: "dos", type: "dos_lobe", x: 4, y: 60, w: 94, h: 44, fill: "panel_bg",
+        xlabel: "E - E_{F} (eV)", ylabel: "DOS (a.u.)",
+        lobes: [{ center: -1.4, sigma: 0.7, amp: 0.85, color: "primary", label: "Mo 4d" }],
+        d_centers: [{ x: -1.35, color: "accent", label: "ε_{d}" }] },
+    ],
+  };
+  const root = project(spec);
+  try {
+    const r = run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg,pptx"]);
+    assert.equal(r.status, 0, r.stderr);
+    const svg = readFileSync(join(root, "figures/t/t.svg"), "utf8");
+    assert.match(svg, /<radialGradient/);
+    assert.match(svg, /<linearGradient/);
+    assert.match(svg, /<feDropShadow/);
+    assert.match(svg, /\bQ[\d., -]+/);
+    assert.match(svg, /\bC[\d., -]+/);
+    const xmlCheck = spawnSync(python, ["-c",
+      "import sys, zipfile; from pptx import Presentation\np=Presentation(sys.argv[1]); assert len(p.slides[0].shapes) >= 15\ns=zipfile.ZipFile(sys.argv[1]).read('ppt/slides/slide1.xml').decode()\nprint(all(k in s for k in ('gradFill', 'outerShdw', 'quadBezTo', 'cubicBezTo')))",
+      join(root, "figures/t/t.pptx")], { encoding: "utf8" });
+    assert.equal(xmlCheck.status, 0, xmlCheck.stderr);
+    assert.equal(xmlCheck.stdout.trim(), "True");
+
+    const palList = run(root, "style_profile.py", ["--list-palettes"]);
+    assert.equal(palList.status, 0, palList.stderr);
+    assert.match(palList.stdout, /chem-rev-mineral/);
+    const preset = run(root, "style_profile.py", ["--preset", "jacs-vibrant", "--out", "sp.json"]);
+    assert.equal(preset.status, 0, preset.stderr);
+    assert.equal(JSON.parse(readFileSync(join(root, "sp.json"), "utf8")).theme.palette, "jacs-vibrant");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("三明治图层架构与检查放宽：hero_panel 归一化锚点、纯白留白区对比度放行、化学式/阶段号/坐标轴免检原文、GRAY-PAIR 单条合并", opts, () => {
+  const root = mkdtempSync(join(tmpdir(), "hero-"));
+  try {
+    mkdirSync(join(root, "figures", "t", "assets"), { recursive: true });
+    const mkHero = spawnSync(python, ["-c", [
+      "import sys; from PIL import Image, ImageDraw",
+      "im = Image.new('RGB', (1600, 1100), (255, 255, 255))",
+      "d = ImageDraw.Draw(im); d.rounded_rectangle([380, 260, 1220, 860], radius=60, fill=(27, 79, 114))",
+      "d.ellipse([680, 420, 920, 660], fill=(211, 84, 0))",
+      "im.save(sys.argv[1])",
+    ].join("\n"), join(root, "figures/t/assets/hero.png")], { encoding: "utf8" });
+    assert.equal(mkHero.status, 0, mkHero.stderr);
+
+    const hp = run(root, "asset_sheet.py", ["hero", "--subject", "Ni cluster on MoO2 terrace", "--palette", "nature-reviews"]);
+    assert.equal(hp.status, 0, hp.stderr);
+    assert.match(hp.stdout, /ABSOLUTELY WORDLESS/);
+    writeFileSync(join(root, "figures/t/assets/hero.prompt.txt"), hp.stdout);
+
+    const gr = run(root, "asset_sheet.py", ["grid", "figures/t/assets/hero.png", "--out", "figures/t/assets/hero-grid.jpg"]);
+    assert.equal(gr.status, 0, gr.stderr);
+    assert.ok(existsSync(join(root, "figures/t/assets/hero-grid.jpg")));
+
+    const spec = {
+      name: "t",
+      canvas: { width_mm: 183, height_mm: 86, purpose: "journal" },
+      theme: { palette: "nature-reviews", base_pt: 6.5 },
+      elements: [
+        { id: "hero", type: "hero_panel", x: 4, y: 4, w: 112, h: 78, src: "assets/hero.png",
+          header: { text: "Stage I · Interfacial Catalysis", fill: "primary" },
+          hero_margin_mm: [4, 3, 4, 4],
+          anchors: { active: [0.50, 0.50], edge: [0.32, 0.55] },
+          source: { kind: "image-model", model: "gemini-3-pro-image", prompt_file: "assets/hero.prompt.txt" } },
+        // 文字落在 hero.png 顶角纯白留白区：对比度达标，不应误报 ONIMG / CROSS
+        { id: "eq", type: "text", x: 10, y: 14, w: 46, h: 6, text: "H_{2}O + e^{-} → H^{*} + OH^{-}", pt: 6.2, bold: true },
+        { id: "co", type: "callout", x: 76, y: 14, w: 34, h: 8, target: "hero@active", stroke: "accent", text: "Ni-MoO_{2} interface" },
+        { id: "sp", type: "arrow", from: "hero@edge", to: "hero@active", bend: 0.25, stroke: "accent", label: "H^{*}" },
+        // 三块相近灰度的色块：应合并为最多 1 条 GRAY-PAIR，不刷屏
+        { id: "g1", type: "box", x: 122, y: 6, w: 56, h: 16, fill: "#2E8B57", color: "#FFFFFF", text: "Alkaline HER" },
+        { id: "g2", type: "box", x: 122, y: 26, w: 56, h: 16, fill: "#D35400", color: "#FFFFFF", text: "Interfacial Catalysis" },
+        { id: "g3", type: "box", x: 122, y: 46, w: 56, h: 16, fill: "#2874A6", color: "#FFFFFF", text: "Ni-MoO_{2} interface" },
+      ],
+    };
+    writeFileSync(join(root, "figures/t/figure.json"), JSON.stringify(spec));
+    writeFileSync(join(root, "figures/t/brief.md"), "# 立意\nInterfacial Catalysis for Alkaline HER at Ni-MoO2 interface.\n");
+    writeFileSync(join(root, "figures/t/facts.md"), "- Interfacial Catalysis\n- Alkaline HER\n- Ni-MoO2 interface\n");
+
+    assert.equal(run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg,pptx"]).status, 0);
+    const chk = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(chk.status, 0, chk.stdout + chk.stderr);
+    const items = checks(root);
+    assert.equal(items.filter((i) => i.status === "blocked").length, 0, JSON.stringify(items));
+    assert.equal(items.filter((i) => i.id.startsWith("ONIMG-eq")).length, 0, JSON.stringify(items));
+    assert.equal(items.filter((i) => i.id.startsWith("CROSS-")).length, 0, JSON.stringify(items));
+    assert.equal(items.filter((i) => i.id.startsWith("GRAY-")).length, 1, JSON.stringify(items));
+    assert.equal(items.find((i) => i.id.startsWith("GRAY-"))!.id, "GRAY-PAIR");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
