@@ -12,11 +12,31 @@ use std::time::{Duration, Instant, SystemTime};
 static CORE: AtomicBool = AtomicBool::new(false);
 /// 桌面为更新 / 卸载停了后台：看门不再拉起，桌面也不接手定时（进程马上要退）
 static HELD_FOR_EXIT: AtomicBool = AtomicBool::new(false);
+/// 正在显式停止后台（例如关闭独立后台开关）：期间看门与启动入口都不重拉
+static STOPPING: AtomicBool = AtomicBool::new(false);
+static LIFECYCLE_LOCK: Mutex<()> = Mutex::new(());
+
+struct StoppingGuard;
+impl StoppingGuard {
+    fn new() -> Self {
+        STOPPING.store(true, Ordering::Release);
+        Self
+    }
+}
+impl Drop for StoppingGuard {
+    fn drop(&mut self) {
+        STOPPING.store(false, Ordering::Release);
+    }
+}
 
 /// 后台停下的最长等待：后台先停掉在跑的任务再等它们收尾（10 秒），这里留足余量
 const STOP_WAIT: Duration = Duration::from_secs(30);
 /// 手动开跑交给后台后，最多等它这么久给出「启动成功 / 没启动成」
 const MANUAL_WAIT: Duration = Duration::from_secs(8);
+/// 手动开跑回执与遗留 claimed 的保留上限
+const MANUAL_ARTIFACT_TTL: Duration = Duration::from_secs(300);
+/// 同一任务防重复排队的 claimed 有效窗口（超过视作崩溃遗留）
+const MANUAL_ACTIVE_TTL: Duration = Duration::from_secs(60);
 /// 后台日志文件超过这个大小就轮换一份
 const LOG_CAP_BYTES: u64 = 512 * 1024;
 /// 桌面没开期间攒下的事件，超过这么久就不再弹（只删）
@@ -75,33 +95,117 @@ fn sweep_cancels() {
 #[derive(Serialize, Deserialize)]
 struct ManualRequest { id: String, note: Option<String> }
 
-/// 手动「立即跑」交给后台：写请求、等后台接手，后台没启动成的原因原样带回（不再只落一个 .failed 文件）
+fn file_is_fresh(path: &std::path::Path, max_age: Duration) -> bool {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| SystemTime::now().duration_since(time).ok())
+        .is_none_or(|age| age < max_age)
+}
+
+/// 清理手动开跑遗留文件：startup=true 时把上次核心崩溃留下的 .claimed 写成 .failed，避免桌面端白等或永久阻塞后续点击
+fn sweep_manual_artifacts(startup: bool) {
+    let Ok(dir) = path("") else { return };
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("manual-") { continue; }
+        if name.ends_with(".claimed") {
+            if startup {
+                let failed = p.with_extension("failed");
+                let _ = crate::storage::atomic_write(
+                    &failed,
+                    "独立后台在启动任务途中退出，请重新点立即运行".as_bytes(),
+                    true,
+                );
+                let _ = fs::remove_file(&p);
+            } else if !file_is_fresh(&p, MANUAL_ARTIFACT_TTL) {
+                let _ = fs::remove_file(&p);
+            }
+        } else if (name.ends_with(".ok") || name.ends_with(".failed")) && !file_is_fresh(&p, MANUAL_ARTIFACT_TTL) {
+            let _ = fs::remove_file(&p);
+        }
+    }
+}
+
+/// 手动「立即跑」交给后台：每次请求使用独立文件名（manual-{id}_{token}.json），
+/// 避免超时后核心刚认领被误判为成功，或旧 .failed/.claimed 串到下一次点击。
 pub(crate) fn request_manual(id: &str, note: Option<String>) -> Result<(), String> {
+    request_manual_with_wait(id, note, MANUAL_WAIT)
+}
+
+fn request_manual_with_wait(id: &str, note: Option<String>, wait: Duration) -> Result<(), String> {
     if !crate::scheduler::schedule_id_ok(id) { return Err("定时任务编号无效".into()); }
     let dir = ensure_dir("")?;
-    let file = dir.join(format!("manual-{id}.json"));
-    let claimed = dir.join(format!("manual-{id}.claimed"));
-    let failed = dir.join(format!("manual-{id}.failed"));
+    let id_prefix = format!("manual-{id}_");
+    let legacy_json = format!("manual-{id}.json");
+    let legacy_claimed = format!("manual-{id}.claimed");
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let stem = format!("manual-{id}_{token}");
+    let file = dir.join(format!("{stem}.json"));
+    let claimed = dir.join(format!("{stem}.claimed"));
+    let failed = dir.join(format!("{stem}.failed"));
+    let ok = dir.join(format!("{stem}.ok"));
     {
-        let _lock = crate::storage::config_lock("background-core-control")?;
-        if file.exists() || claimed.exists() { return Err("这条任务已交给后台，等待启动".into()); }
-        let _ = fs::remove_file(&failed);
-        crate::storage::atomic_write(&file, &serde_json::to_vec(&ManualRequest { id: id.into(), note }).map_err(|error| error.to_string())?, true)?;
+        let _lock = crate::storage::config_lock("background-core-manual")?;
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let same_task = name == legacy_json
+                    || name == legacy_claimed
+                    || (name.starts_with(&id_prefix) && (name.ends_with(".json") || name.ends_with(".claimed")));
+                if same_task && file_is_fresh(&entry.path(), MANUAL_ACTIVE_TTL) {
+                    return Err("这条任务已交给后台，等待启动".into());
+                }
+            }
+        }
+        crate::storage::atomic_write(
+            &file,
+            &serde_json::to_vec(&ManualRequest { id: id.into(), note }).map_err(|error| error.to_string())?,
+            true,
+        )?;
     }
-    let deadline = Instant::now() + MANUAL_WAIT;
+    let poll_step = (wait / 8).clamp(Duration::from_millis(5), Duration::from_millis(100));
+    let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
         if let Ok(reason) = fs::read_to_string(&failed) {
             let _ = fs::remove_file(&failed);
             return Err(reason);
         }
-        if !file.exists() && !claimed.exists() { return Ok(()) }
-        std::thread::sleep(Duration::from_millis(100));
+        if ok.exists() {
+            let _ = fs::remove_file(&ok);
+            return Ok(());
+        }
+        std::thread::sleep(poll_step);
     }
-    // 后台一直没接手：撤回请求，免得它以后某个时刻突然开跑
-    let _lock = crate::storage::config_lock("background-core-control")?;
+    // 到期再持锁核一次：要么刚出结果，要么尚未接手可撤回，要么仍在准备环境（绝不把 .claimed 谎报成已启动）
+    let _lock = crate::storage::config_lock("background-core-manual")?;
+    if let Ok(reason) = fs::read_to_string(&failed) {
+        let _ = fs::remove_file(&failed);
+        return Err(reason);
+    }
+    if ok.exists() {
+        let _ = fs::remove_file(&ok);
+        return Ok(());
+    }
     match fs::remove_file(&file) {
         Ok(()) => Err("独立后台没有接手这次运行，已撤回；请在设置→诊断查看后台日志".into()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()), // 刚被接手
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if let Ok(reason) = fs::read_to_string(&failed) {
+                let _ = fs::remove_file(&failed);
+                return Err(reason);
+            }
+            if ok.exists() {
+                let _ = fs::remove_file(&ok);
+                return Ok(());
+            }
+            if claimed.exists() {
+                Err("独立后台已接手但仍在准备运行环境，请稍后在运行列表查看结果".into())
+            } else {
+                Err("独立后台未能确认这次运行是否启动，请在设置→诊断查看后台日志".into())
+            }
+        }
         Err(error) => Err(error.to_string()),
     }
 }
@@ -113,6 +217,7 @@ fn run_manual_requests() -> Result<(), String> {
         if !name.starts_with("manual-") || !name.ends_with(".json") { continue; }
         let claimed = entry.path().with_extension("claimed");
         let failed = entry.path().with_extension("failed");
+        let ok = entry.path().with_extension("ok");
         // 一份坏请求只废它自己：改名成 .failed 带上原因，接着处理后面的
         if let Err(error) = fs::rename(entry.path(), &claimed) {
             crate::logbuf::record("error", "background", &format!("后台没能接手请求 {name}：{error}"));
@@ -122,7 +227,10 @@ fn run_manual_requests() -> Result<(), String> {
             .and_then(|bytes| serde_json::from_slice::<ManualRequest>(&bytes).map_err(|error| format!("请求内容损坏：{error}")))
             .and_then(|request| crate::scheduler::run_schedule_now_impl(None, request.id, request.note));
         match outcome {
-            Ok(()) => { let _ = fs::remove_file(&claimed); }
+            Ok(()) => {
+                let _ = crate::storage::atomic_write(&ok, b"ok", true);
+                let _ = fs::remove_file(&claimed);
+            }
             Err(error) => {
                 crate::logbuf::record("error", "background", &format!("后台任务没能启动：{error}"));
                 let _ = crate::storage::atomic_write(&failed, error.as_bytes(), true);
@@ -216,7 +324,7 @@ static DOWN_REPORTED: AtomicBool = AtomicBool::new(false);
 /// 桌面看门：独立后台开着却没在运行（崩溃、注销后、被系统杀掉）时至多每 30 秒拉一次。
 /// 返回 true = 后台在跑，桌面不接手定时；false = 后台起不来，桌面这一轮自己跑定时。
 pub(crate) fn desktop_watchdog() -> bool {
-    if HELD_FOR_EXIT.load(Ordering::Acquire) { return true }
+    if HELD_FOR_EXIT.load(Ordering::Acquire) || STOPPING.load(Ordering::Acquire) { return true }
     if running().unwrap_or(false) {
         DOWN_REPORTED.store(false, Ordering::Release);
         return true;
@@ -268,16 +376,28 @@ fn status() -> Result<CoreStatus, String> {
     Ok(CoreStatus { enabled: enabled(), running, active })
 }
 
-pub(crate) fn start_if_enabled() -> Result<(), String> {
-    if !enabled() || HELD_FOR_EXIT.load(Ordering::Acquire) || running()? { return Ok(()) }
-    let stop = path("stop")?;
-    match fs::remove_file(stop) { Ok(()) => {}, Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}, Err(error) => return Err(error.to_string()) }
-    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-    let mut command = crate::process::background_command(executable);
-    command.arg("--mesa-core").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    #[cfg(unix)]
-    { use std::os::unix::process::CommandExt; command.process_group(0); }
-    command.spawn().map_err(|error| format!("后台没能启动：{error}"))?;
+fn start_if_enabled_locked() -> Result<(), String> {
+    if !enabled() || HELD_FOR_EXIT.load(Ordering::Acquire) || STOPPING.load(Ordering::Acquire) || running()? {
+        return Ok(());
+    }
+    {
+        let _file_lock = crate::storage::config_lock("background-core-lifecycle")?;
+        if !enabled() || HELD_FOR_EXIT.load(Ordering::Acquire) || STOPPING.load(Ordering::Acquire) || running()? {
+            return Ok(());
+        }
+        let stop = path("stop")?;
+        match fs::remove_file(stop) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let mut command = crate::process::background_command(executable);
+        command.arg("--mesa-core").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        #[cfg(unix)]
+        { use std::os::unix::process::CommandExt; command.process_group(0); }
+        command.spawn().map_err(|error| format!("后台没能启动：{error}"))?;
+    }
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         if running()? { return Ok(()) }
@@ -286,7 +406,13 @@ pub(crate) fn start_if_enabled() -> Result<(), String> {
     Err("后台启动未确认，未假装运行；请查看诊断后重试".into())
 }
 
-pub(crate) fn stop() -> Result<(), String> {
+pub(crate) fn start_if_enabled() -> Result<(), String> {
+    let _guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    start_if_enabled_locked()
+}
+
+fn stop_locked() -> Result<(), String> {
+    let _stopping = StoppingGuard::new();
     if !running()? { return Ok(()) }
     let file = path("stop")?;
     crate::storage::atomic_write(&file, b"stop", true)?;
@@ -298,10 +424,16 @@ pub(crate) fn stop() -> Result<(), String> {
     Err("后台尚未停止，未继续更新或删除；请稍后重试".into())
 }
 
+pub(crate) fn stop() -> Result<(), String> {
+    let _guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    stop_locked()
+}
+
 /// 更新 / 卸载前停后台：停成后本进程不再拉起它（新版本启动时会按开关重新拉起）
 pub(crate) fn stop_for_exit() -> Result<(), String> {
+    let _guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     HELD_FOR_EXIT.store(true, Ordering::Release);
-    let result = stop();
+    let result = stop_locked();
     if result.is_err() { HELD_FOR_EXIT.store(false, Ordering::Release); }
     result
 }
@@ -330,17 +462,22 @@ pub async fn background_core_status() -> Result<CoreStatus, String> {
 #[tauri::command]
 pub async fn background_core_set(enabled: bool) -> Result<CoreStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let _lock = crate::storage::config_lock("background-core-control")?;
+        let _guard = LIFECYCLE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let file = path("enabled")?;
         fs::create_dir_all(file.parent().ok_or("没有配置目录")?).map_err(|error| error.to_string())?;
         if enabled {
-            crate::storage::atomic_write(&file, b"enabled", true)?;
-            if let Err(error) = start_if_enabled() {
+            {
+                let _file_lock = crate::storage::config_lock("background-core-lifecycle")?;
+                crate::storage::atomic_write(&file, b"enabled", true)?;
+            }
+            if let Err(error) = start_if_enabled_locked() {
                 let _ = fs::remove_file(file);
                 return Err(error);
             }
         } else {
-            stop()?;
+            let _stopping = StoppingGuard::new();
+            stop_locked()?;
+            let _file_lock = crate::storage::config_lock("background-core-lifecycle")?;
             match fs::remove_file(file) { Ok(()) => {}, Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}, Err(error) => return Err(error.to_string()) }
         }
         status()
@@ -354,6 +491,7 @@ pub fn run() -> Result<(), String> {
     let _lock = crate::storage::lock_at(&file)?;
     if !enabled() { return Ok(()) }
     crate::logbuf::record("info", "background", "独立后台已启动");
+    sweep_manual_artifacts(true);
     if let Err(error) = crate::runs::reconcile_stale_runs() {
         crate::logbuf::record("warn", "background", &format!("收口上次未完成的运行失败：{error}"));
     }
@@ -368,7 +506,10 @@ pub fn run() -> Result<(), String> {
             }
         }
         ticks = ticks.wrapping_add(1);
-        if ticks % 240 == 0 { sweep_cancels(); } // 约每分钟
+        if ticks % 240 == 0 {
+            sweep_cancels();
+            sweep_manual_artifacts(false);
+        } // 约每分钟
         std::thread::sleep(Duration::from_millis(250));
     }
     crate::logbuf::record("info", "background", "独立后台收到停止，正在停掉在跑的任务");
@@ -429,6 +570,31 @@ mod tests {
         append_log(&serde_json::json!({ "ts": "2026-11-13T00:00:00Z", "level": "error", "source": "scheduler", "message": "后台出错样例" }));
         forward_logs();
         assert!(crate::logbuf::get_app_log(500).iter().any(|entry| entry.message == "后台出错样例" && entry.source.starts_with("后台")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stopping_guard_suppresses_watchdog_and_manual_request_uses_isolated_tokens() {
+        let dir = std::env::temp_dir().join(format!("mesa-core-race-{}", uuid::Uuid::new_v4()));
+        let _root = crate::storage::redirect_config_root(&dir);
+        let base = ensure_dir("").unwrap();
+        fs::write(base.join("enabled"), b"enabled").unwrap();
+        {
+            let _stopping = StoppingGuard::new();
+            // 正在停后台时，看门不得把后台当成崩溃去重拉或把 DOWN_REPORTED 置位
+            assert!(desktop_watchdog());
+        }
+        assert!(!STOPPING.load(Ordering::Acquire));
+
+        // 模拟核心崩溃留下的 .claimed：核心重启时转成 .failed 清掉阻塞，后续手动请求不再被永久拦下
+        fs::write(base.join("manual-ab12_oldtoken.claimed"), b"{}").unwrap();
+        sweep_manual_artifacts(true);
+        assert!(!base.join("manual-ab12_oldtoken.claimed").exists());
+        assert!(fs::read_to_string(base.join("manual-ab12_oldtoken.failed")).unwrap().contains("退出"));
+
+        // 旧请求的 .failed 不会污染同一任务的新请求：新请求无人接手时应走撤回分支而非误读旧 .failed
+        let err = request_manual_with_wait("ab12", None, Duration::from_millis(25)).unwrap_err();
+        assert!(err.contains("没有接手"), "unexpected error: {err}");
         fs::remove_dir_all(dir).unwrap();
     }
 }

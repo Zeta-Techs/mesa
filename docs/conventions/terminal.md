@@ -22,7 +22,7 @@
   `run_attach_session` / `run_cancel`）、对话元数据（`set_session_meta` / `unpin_session` / `assign_session_task` /
   `set_session_profile_command` / 两个 `claim_next_session_for_*`）、`mark_handoff` / `handoff_targets`、自定义运行时三件、
   `profile_usage_refs`、`model_db_status`、`read_project_status`（打开项目顺带回放 PDF 登记）/ `read_acceptance_log`、`run_artifacts`、
-  雷达技能草稿的列 / 提交与 `ensure_schedule_skill_distributed`（拷技能目录）、`cancel_schedule_run`、`font_status`（扫字体目录）、
+  雷达技能草稿的列 / 提交与 `ensure_schedule_skill_distributed`（拷技能目录）、`cancel_schedule_run` / `run_schedule_now` / `schedule_grant_once` / `schedule_grant_dismiss` / `schedule_missed_resolve` / `schedule_memory_read` / `schedule_memory_write`、`font_status`（扫字体目录）、
   `combo_surface_for_gateway(_batch)` / `model_capabilities`（读网关目录与能力库；2026-11-07 开发版逐帧实测：网关库点进编辑页第一帧晚到 300–440ms，挪出后 30–40ms；批量版网关文件只读一次）。
   写法统一为 async 外壳 + 同名 `_sync` 本体；**新增写 app.db 的命令默认就照这样写**，并补进守卫测试名单。
   **app.db 的轮询读不得申请写锁**：`runs::db()` 每次调用都过 `ensure_schema`，其中项目归属回填的 UPDATE 命中 0 行也要写锁，所以必须先用只读 EXISTS 判断有无可回填行

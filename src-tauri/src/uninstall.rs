@@ -117,12 +117,29 @@ fn trash_dir(path: &Path, result: &mut UninstallResultDto) {
     }
 }
 
+fn ensure_not_blocked(plans: &[(PathBuf, RootPlan)]) -> Result<(), String> {
+    let blocked: Vec<String> = plans
+        .iter()
+        .filter_map(|(root, plan)| match plan {
+            RootPlan::BlockedByTerminals(n) => Some(format!("{}（{n} 个终端）", root.display())),
+            _ => None,
+        })
+        .collect();
+    if !blocked.is_empty() {
+        return Err(format!(
+            "还有终端标签开在 Mesa 的数据目录里，Windows 不能移走正在使用的目录：{}。\
+             请先在终端页关闭这些标签再卸载，这次什么都没动",
+            blocked.join("、")
+        ));
+    }
+    Ok(())
+}
+
 /// 卸载 Mesa 本机数据。调用方必须已经让用户确认过两次。
 /// 移走过任何目录后进程都应退出，部分失败也一样：配置目录可能已经不在，继续跑会写出半套新数据。
 #[tauri::command]
 pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::background_core::stop_for_exit()?;
         let roots = owned_roots();
         let webview = webview_data_dirs();
         let plans: Vec<(PathBuf, RootPlan)> = roots
@@ -136,21 +153,9 @@ pub async fn uninstall_mesa() -> Result<UninstallResultDto, String> {
                 (root, plan)
             })
             .collect();
-        // 先整体预检再动手：配置目录一旦移走，应用不退出就会写出半套新数据，不能删一半停下
-        let blocked: Vec<String> = plans
-            .iter()
-            .filter_map(|(root, plan)| match plan {
-                RootPlan::BlockedByTerminals(n) => Some(format!("{}（{n} 个终端）", root.display())),
-                _ => None,
-            })
-            .collect();
-        if !blocked.is_empty() {
-            return Err(format!(
-                "还有终端标签开在 Mesa 的数据目录里，Windows 不能移走正在使用的目录：{}。\
-                 请先在终端页关闭这些标签再卸载，这次什么都没动",
-                blocked.join("、")
-            ));
-        }
+        // 先整体预检再动手（含停独立后台）：终端阻塞时必须真做到「这次什么都没动」
+        ensure_not_blocked(&plans)?;
+        crate::background_core::stop_for_exit()?;
         let mut result = UninstallResultDto {
             trashed: Vec::new(),
             missing: Vec::new(),
@@ -213,4 +218,14 @@ mod tests {
         assert_eq!(plan_root(true, false, 0), RootPlan::Trash);
     }
 
+    #[test]
+    fn ensure_not_blocked_rejects_live_terminals_before_side_effects() {
+        let plans = vec![
+            (PathBuf::from("C:/Users/u/ccode"), RootPlan::BlockedByTerminals(2)),
+            (PathBuf::from("C:/Users/u/AppData/Local/com.ccode.dev"), RootPlan::DeferUntilExit),
+        ];
+        let err = ensure_not_blocked(&plans).unwrap_err();
+        assert!(err.contains("2 个终端") && err.contains("这次什么都没动"));
+        assert!(ensure_not_blocked(&[(PathBuf::from("/tmp/ccode"), RootPlan::Trash)]).is_ok());
+    }
 }

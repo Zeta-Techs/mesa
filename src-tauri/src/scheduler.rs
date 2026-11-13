@@ -1869,7 +1869,13 @@ pub struct ScheduleMemoryDto {
 
 /// 读跨轮记忆：两份里较新的那份
 #[tauri::command]
-pub fn schedule_memory_read(id: String) -> Result<ScheduleMemoryDto, String> {
+pub async fn schedule_memory_read(id: String) -> Result<ScheduleMemoryDto, String> {
+    tauri::async_runtime::spawn_blocking(move || schedule_memory_read_sync(id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn schedule_memory_read_sync(id: String) -> Result<ScheduleMemoryDto, String> {
     let task = find_schedule(&id)?;
     let rel = memory_rel(&id)?;
     let root = gated_project_root(&task.project_root)?;
@@ -1902,7 +1908,13 @@ pub fn schedule_memory_read(id: String) -> Result<ScheduleMemoryDto, String> {
 
 /// 人改跨轮记忆：写项目那份，隔离目录在就一并写（下一轮从人改过的接着记）
 #[tauri::command]
-pub fn schedule_memory_write(id: String, text: String) -> Result<(), String> {
+pub async fn schedule_memory_write(id: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || schedule_memory_write_sync(id, text))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn schedule_memory_write_sync(id: String, text: String) -> Result<(), String> {
     if text.len() > 256 * 1024 {
         return Err("跨轮记忆超过 256 KB，先删掉些旧内容".into());
     }
@@ -3250,10 +3262,14 @@ fn resolve_missed(task: &mut Schedule, replay: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn schedule_missed_resolve(id: String, replay: bool) -> Result<(), String> {
-    let mut result = Ok(());
-    mutate_schedule(&id, |t| result = resolve_missed(t, replay))?;
-    result
+pub async fn schedule_missed_resolve(id: String, replay: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut result = Ok(());
+        mutate_schedule(&id, |t| result = resolve_missed(t, replay))?;
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 取走全部待处理事件，合成这次运行的依据（纯函数）
@@ -3484,19 +3500,27 @@ fn take_grant_once(id: &str) -> Option<crate::grant::Grant> {
 /// 「放宽重跑这一次」：下一次运行联网不限（预算照原授权），清掉这条请求并立刻跑一次。
 /// 人点的那一下就是批准（桌面或手机的「点一下就生效」档，assistant-ops.ts grant_once）；以后都放宽只在桌面改授权
 #[tauri::command]
-pub fn schedule_grant_once(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    mutate_schedule(&id, |t| {
-        let base = t.grant.clone().unwrap_or_default();
-        t.grant_once = Some(crate::grant::Grant { network: crate::grant::Network::Open, budget_usd: base.budget_usd });
-        t.grant_request = None;
-    })?;
-    run_schedule_now(app, id, Some("你点了「放宽重跑这一次」：这一次联网不限".into()))
+pub async fn schedule_grant_once(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        mutate_schedule(&id, |t| {
+            let base = t.grant.clone().unwrap_or_default();
+            t.grant_once = Some(crate::grant::Grant { network: crate::grant::Network::Open, budget_usd: base.budget_usd });
+            t.grant_request = None;
+        })?;
+        run_schedule_now_sync(app, id, Some("你点了「放宽重跑这一次」：这一次联网不限".into()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 「不用」：清掉这条授权请求，授权不变
 #[tauri::command]
-pub fn schedule_grant_dismiss(id: String) -> Result<(), String> {
-    mutate_schedule(&id, |t| t.grant_request = None).map(|_| ())
+pub async fn schedule_grant_dismiss(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        mutate_schedule(&id, |t| t.grant_request = None).map(|_| ())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 授权范围的一句（2026-11-08）：告诉 Agent 这次能做到哪、被拦了怎么办——不绕、记进简报
@@ -4055,7 +4079,17 @@ fn schedule_has_keywords(task: &Schedule) -> bool {
 /// 立即触发一次（不等结果）：走同一执行路径与防重入集合，结果经 scheduler-run-done 事件回前端。
 /// note = 这次的附言（只进这一轮的任务说明，不改任务本身；最长 500 字）
 #[tauri::command]
-pub fn run_schedule_now(
+pub async fn run_schedule_now(
+    app: tauri::AppHandle,
+    id: String,
+    note: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || run_schedule_now_sync(app, id, note))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn run_schedule_now_sync(
     app: tauri::AppHandle,
     id: String,
     note: Option<String>,
