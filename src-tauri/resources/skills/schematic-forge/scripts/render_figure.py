@@ -242,19 +242,37 @@ class Raster:
 # ---------- 连线与排版几何 ----------
 
 def line_curve_info(spec, el, index, image_rects=None):
-    """返回 (pts, ctrl, (n1, s1), (n2, s2), branches)"""
+    """返回 (pts, ctrl, (n1, s1), (n2, s2), branches)；支持 bend 或 curve 弧度别名，以及 curve/bezier 点列样条"""
     if el["type"] == "polyline":
-        pts = [tuple(p) for p in el["points"]]
+        pts = [tuple(float(v) for v in p) for p in el["points"]]
         return pts, None, (None, None), (None, None), []
+    if el["type"] in ("curve", "bezier") and "points" in el and "from" not in el:
+        raw_pts = [(float(p[0]), float(p[1])) for p in el["points"]]
+        if len(raw_pts) == 2:
+            p1, p2 = raw_pts[0], raw_pts[1]
+            ctrl = F.quad_ctrl(p1, p2, el.get("bend", el.get("curve", 0.22)), el.get("via"))
+            pts = F.quad_points(p1, ctrl, p2, 24) if ctrl else [p1, p2]
+            return pts, ctrl, (None, None), (None, None), []
+        if len(raw_pts) == 3:
+            p1, ctrl, p2 = raw_pts[0], raw_pts[1], raw_pts[2]
+            return F.quad_points(p1, ctrl, p2, 24), ctrl, (None, None), (None, None), []
+        if len(raw_pts) == 4 and not el.get("smooth"):
+            cmds = [("M", raw_pts[0][0], raw_pts[0][1]),
+                    ("C", raw_pts[1][0], raw_pts[1][1], raw_pts[2][0], raw_pts[2][1], raw_pts[3][0], raw_pts[3][1])]
+            return F.path_points(cmds, 24), cmds, (None, None), (None, None), []
+        cmds = F.catmull_rom_beziers(raw_pts, float(el.get("tension", 0.45)))
+        return F.path_points(cmds, 16), cmds, (None, None), (None, None), []
     (p1, n1, s1), (p2, n2, s2) = F.endpoints(el, index, image_rects)
-    ctrl = F.quad_ctrl(p1, p2, el.get("bend", 0.0), el.get("via"))
+    default_bend = 0.22 if (el["type"] in ("curve", "bezier") and "via" not in el) else 0.0
+    bend_val = el.get("bend", el.get("curve", default_bend))
+    ctrl = F.quad_ctrl(p1, p2, bend_val, el.get("via"))
     if ctrl is not None:
         pts = F.quad_points(p1, ctrl, p2, 24)
     elif el.get("route") == "elbow":
         pts = F.elbow_points(p1, p2, s1, s2) or [p1, p2]
     else:
         pts = [p1, p2]
-    branches = F.coupled_branches(spec, el, p1, ctrl, p2) if (el.get("coupled_in") or el.get("coupled_out")) else []
+    branches = F.coupled_branches(spec, el, p1, ctrl if isinstance(ctrl, tuple) else None, p2) if (el.get("coupled_in") or el.get("coupled_out")) else []
     return pts, ctrl, (n1, s1), (n2, s2), branches
 
 
@@ -305,6 +323,10 @@ def compute_layouts(spec, book, index, image_rects=None):
         elif t == "chevron" and el.get("text"):
             _, indent, tip = F.chevron_points(el)
             box = (el["x"] + indent * 0.75, el["y"], max(2.0, el["w"] - indent * 0.75 - tip * 0.65), el["h"])
+            layouts[eid] = F.layout_text(spec, el, box, book, shape=True)
+        elif t in ("polygon", "path") and el.get("text"):
+            x, y, w, h = F.bbox(el)
+            box = (x + w * 0.08, y + h * 0.08, max(2.0, w * 0.84), max(2.0, h * 0.84))
             layouts[eid] = F.layout_text(spec, el, box, book, shape=True)
         elif t == "text":
             layouts[eid] = F.layout_text(spec, el, F.bbox(el), book, shape=False)
@@ -557,6 +579,37 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
             if eid in layouts:
                 body.append(svg_text_block(layouts[eid], eid))
 
+        elif t in ("polygon", "path"):
+            if t == "polygon":
+                pts_p = [(float(p[0]), float(p[1])) for p in el["points"]]
+                cmds_p = [("M", pts_p[0][0], pts_p[0][1])] + [("L", px, py) for px, py in pts_p[1:]] + [("Z",)]
+                default_stroke = "none"
+            else:
+                cmds_p = F.parse_svg_path_d(el["d"], eid)
+                if el.get("closed") and (not cmds_p or cmds_p[-1][0] != "Z"):
+                    cmds_p.append(("Z",))
+                has_fill = bool((el.get("fill") and el.get("fill") not in ("none", "transparent")) or el.get("gradient"))
+                default_stroke = "none" if has_fill else th["text_color"]
+            fill = F.color(spec, el.get("fill", "none"))
+            grad = F.gradient_spec(spec, el)
+            shading = el.get("shading")
+            fill_attr = svg_linear_def(defs, grad) if grad else (svg_radial_def(defs, fill) if shading == "radial" and fill else svg_fill(fill))
+            stroke = F.color(spec, el.get("stroke", default_stroke))
+            pt_s = float(el.get("stroke_pt", th["line_pt"]))
+            sk = svg_stroke(stroke, pt_s, el.get("dash"), "round" if t == "path" else None)
+            flt = svg_shadow_def(defs, F.shadow_spec(el))
+            head = el.get("head", "none")
+            mk = ""
+            if head != "none" and stroke is not None and pt_s > 0:
+                mid = svg_marker(defs, stroke, pt_s)
+                if head in ("end", "both"):
+                    mk += f' marker-end="url(#{mid})"'
+                if head in ("start", "both"):
+                    mk += f' marker-start="url(#{mid})"'
+            body.append(f'<path id={quoteattr(eid)} d="{svg_cmds_d(cmds_p)}" {fill_attr} {sk} stroke-linejoin="round"{flt}{mk}/>')
+            if eid in layouts:
+                body.append(svg_text_block(layouts[eid], eid))
+
         elif t == "lattice":
             lg = F.lattice_geometry(spec, el)
             g_parts = [f'<g id={quoteattr(eid)}>']
@@ -651,7 +704,9 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
                     mk += f' marker-end="url(#{mid})"'
                 if head in ("start", "both"):
                     mk += f' marker-start="url(#{mid})"'
-            if ctrl is not None:
+            if isinstance(ctrl, list):
+                d = svg_cmds_d(ctrl)
+            elif ctrl is not None:
                 d = f"M{fmt(pts[0][0])},{fmt(pts[0][1])} Q{fmt(ctrl[0])},{fmt(ctrl[1])} {fmt(pts[-1][0])},{fmt(pts[-1][1])}"
             else:
                 d = "M" + " L".join(f"{fmt(px)},{fmt(py)}" for px, py in pts)
@@ -1019,6 +1074,30 @@ def build_pptx(spec, layouts, assets, index, out_path, image_rects=None):
                 fill_text(shp.text_frame, layouts[eid])
             shape_ids[eid] = shp
 
+        elif t in ("polygon", "path"):
+            if t == "polygon":
+                pts_p = [(float(p[0]), float(p[1])) for p in el["points"]]
+                cmds_p = [("M", pts_p[0][0], pts_p[0][1])] + [("L", px, py) for px, py in pts_p[1:]] + [("Z",)]
+                default_stroke = "none"
+            else:
+                cmds_p = F.parse_svg_path_d(el["d"], eid)
+                if el.get("closed") and (not cmds_p or cmds_p[-1][0] != "Z"):
+                    cmds_p.append(("Z",))
+                has_fill = bool((el.get("fill") and el.get("fill") not in ("none", "transparent")) or el.get("gradient"))
+                default_stroke = "none" if has_fill else th["text_color"]
+            fill = F.color(spec, el.get("fill", "none"))
+            grad = F.gradient_spec(spec, el)
+            stroke = F.color(spec, el.get("stroke", default_stroke))
+            pt_s = float(el.get("stroke_pt", th["line_pt"]))
+            head = el.get("head", "none")
+            shp = add_pptx_path(eid, cmds_p, stroke, pt_s, dash=el.get("dash"), fill=fill, grad=grad, head=head)
+            if el.get("shading") == "radial" and fill and not grad:
+                set_grad_radial(shp, fill)
+            set_shadow(shp, F.shadow_spec(el))
+            if eid in layouts:
+                fill_text(shp.text_frame, layouts[eid])
+            shape_ids[eid] = shp
+
         elif t == "lattice":
             lg = F.lattice_geometry(spec, el)
             for bi, (p1, p2, bcol, bpt) in enumerate(lg["bonds"]):
@@ -1125,7 +1204,9 @@ def build_pptx(spec, layouts, assets, index, out_path, image_rects=None):
                     tb = slide.shapes.add_textbox(emu(lx), emu(ly), emu(lw), emu(lh))
                     tb.name = f"{eid}-{br['sub_id']}-label"
                     fill_text(tb.text_frame, layouts[blid])
-            if ctrl is not None:
+            if isinstance(ctrl, list):
+                add_pptx_path(eid, ctrl, stroke, pt, dash=el.get("dash"), head=head)
+            elif ctrl is not None:
                 acmds = [("M", pts[0][0], pts[0][1]), ("Q", ctrl[0], ctrl[1], pts[-1][0], pts[-1][1])]
                 add_pptx_path(eid, acmds, stroke, pt, dash=el.get("dash"), head=head)
             elif len(pts) == 2 or (el.get("route") == "elbow" and len(pts) == 4):

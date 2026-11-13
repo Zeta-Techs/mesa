@@ -91,12 +91,12 @@ PALETTES = {
 
 SCI_CURVE_KINDS = {"energy_steps", "volcano_curve", "dos_lobe"}
 SHAPES = {
-    "box", "header_card", "ellipse", "sphere", "chevron",
+    "box", "header_card", "ellipse", "sphere", "chevron", "polygon", "path",
     "text", "image", "hero_panel", "figure",
     "lattice", "sci_curve", "energy_steps", "volcano_curve", "dos_lobe",
     "callout",
 }
-LINES = {"arrow", "coupled_arrow", "line", "polyline"}
+LINES = {"arrow", "coupled_arrow", "line", "polyline", "curve", "bezier"}
 
 CLOSING = set("，。、；：？！）》」』】〕…%,.;:?!)]}")
 
@@ -162,6 +162,33 @@ def load_spec(path):
         if eid in seen:
             raise SpecError(f"元素 id 重复：{eid}")
         seen.add(eid)
+        if t == "polygon":
+            pts = el.get("points")
+            if not isinstance(pts, list) or len(pts) < 3 or not all(
+                isinstance(p, (list, tuple)) and len(p) == 2 and all(isinstance(v, (int, float)) for v in p)
+                for p in pts
+            ):
+                raise SpecError(f"多边形 {eid} 至少要 3 个 [x, y] 顶点坐标（points）")
+            xs = [float(p[0]) for p in pts]
+            ys = [float(p[1]) for p in pts]
+            el.setdefault("x", min(xs))
+            el.setdefault("y", min(ys))
+            el.setdefault("w", max(max(xs) - min(xs), 0.2))
+            el.setdefault("h", max(max(ys) - min(ys), 0.2))
+        elif t == "path":
+            d_str = el.get("d")
+            if not isinstance(d_str, str) or not d_str.strip():
+                raise SpecError(f"路径 {eid} 缺 SVG path d 属性")
+            cmds = parse_svg_path_d(d_str, eid)
+            spts = path_points(cmds)
+            if not spts:
+                raise SpecError(f"路径 {eid} 的 d 没有可绘制的坐标")
+            xs = [p[0] for p in spts]
+            ys = [p[1] for p in spts]
+            el.setdefault("x", min(xs))
+            el.setdefault("y", min(ys))
+            el.setdefault("w", max(max(xs) - min(xs), 0.2))
+            el.setdefault("h", max(max(ys) - min(ys), 0.2))
         if t in SHAPES:
             for k in ("x", "y", "w", "h"):
                 if not isinstance(el.get(k), (int, float)):
@@ -172,6 +199,11 @@ def load_spec(path):
             raise SpecError(f"折线 {eid} 至少要两个 points")
         if t in ("arrow", "coupled_arrow", "line") and ("from" not in el or "to" not in el):
             raise SpecError(f"连线 {eid} 要有 from 和 to")
+        if t in ("curve", "bezier"):
+            has_ends = "from" in el and "to" in el
+            has_pts = isinstance(el.get("points"), list) and len(el["points"]) >= 2
+            if not has_ends and not has_pts:
+                raise SpecError(f"曲线 {eid} 要有 from/to（配 curve 弧度或 via 控制点）或至少 2 个 points")
         if t == "callout" and "target" not in el:
             raise SpecError(f"引出标注 {eid} 要有 target（目标点 [x, y] 或 hero@锚点名 / [hero_id, nx, ny]）")
         if t == "hero_panel" and not el.get("src"):
@@ -921,14 +953,207 @@ def catmull_rom_beziers(pts, tension=0.5):
     return cmds
 
 
+def _arc_to_cubics(x1, y1, rx, ry, phi_deg, fa, fs, x2, y2):
+    """标准 SVG 椭圆弧 (A/a) → 1..4 段三次贝塞尔 ('C', c1x, c1y, c2x, c2y, px, py)，供 PPTX Freeform 精确编辑"""
+    if abs(x1 - x2) < 1e-7 and abs(y1 - y2) < 1e-7:
+        return []
+    rx, ry = abs(float(rx)), abs(float(ry))
+    if rx < 1e-7 or ry < 1e-7:
+        return [("L", x2, y2)]
+    phi = math.radians(float(phi_deg) % 360.0)
+    cos_p, sin_p = math.cos(phi), math.sin(phi)
+    dx2, dy2 = (x1 - x2) / 2.0, (y1 - y2) / 2.0
+    x1p = cos_p * dx2 + sin_p * dy2
+    y1p = -sin_p * dx2 + cos_p * dy2
+    lam = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry)
+    if lam > 1.0:
+        s = math.sqrt(lam)
+        rx *= s
+        ry *= s
+    num = max(0.0, rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p)
+    den = rx * rx * y1p * y1p + ry * ry * x1p * x1p
+    coef = math.sqrt(num / den) if den > 1e-12 else 0.0
+    if bool(fa) == bool(fs):
+        coef = -coef
+    cxp = coef * (rx * y1p / ry)
+    cyp = coef * (-ry * x1p / rx)
+    cx = cos_p * cxp - sin_p * cyp + (x1 + x2) / 2.0
+    cy = sin_p * cxp + cos_p * cyp + (y1 + y2) / 2.0
+
+    def vec_ang(ux, uy, vx, vy):
+        n = math.hypot(ux, uy) * math.hypot(vx, vy)
+        ang = math.acos(max(-1.0, min(1.0, (ux * vx + uy * vy) / max(n, 1e-12))))
+        return -ang if (ux * vy - uy * vx) < 0 else ang
+
+    theta1 = vec_ang(1.0, 0.0, (x1p - cxp) / rx, (y1p - cyp) / ry)
+    dtheta = vec_ang((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry)
+    if not fs and dtheta > 0:
+        dtheta -= 2 * math.pi
+    elif fs and dtheta < 0:
+        dtheta += 2 * math.pi
+
+    segs = max(1, int(math.ceil(abs(dtheta) / (math.pi / 2.0))))
+    delta = dtheta / segs
+    alpha = (4.0 / 3.0) * math.tan(delta / 4.0)
+
+    def map_pt(ux, uy):
+        return (cx + rx * cos_p * ux - ry * sin_p * uy, cy + rx * sin_p * ux + ry * cos_p * uy)
+
+    out = []
+    for k in range(segs):
+        t1 = theta1 + k * delta
+        t2 = t1 + delta
+        c1 = map_pt(math.cos(t1) - alpha * math.sin(t1), math.sin(t1) + alpha * math.cos(t1))
+        c2 = map_pt(math.cos(t2) + alpha * math.sin(t2), math.sin(t2) - alpha * math.cos(t2))
+        p2 = map_pt(math.cos(t2), math.sin(t2))
+        out.append(("C", c1[0], c1[1], c2[0], c2[1], p2[0], p2[1]))
+    return out
+
+
+_SVG_NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+_SVG_ARITY = {"M": 2, "L": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "T": 2, "A": 7, "Z": 0}
+
+
+def parse_svg_path_d(d_str, eid=""):
+    """解析标准 SVG path d 字符串（M/L/H/V/C/S/Q/T/A/Z 大小写绝对/相对坐标，毫米）为规范指令列表"""
+    s = str(d_str or "").strip()
+    if not s:
+        raise SpecError(f"路径 {eid} 的 d 不能为空")
+    n = len(s)
+    pos = 0
+    cmds = []
+    cx = cy = sx = sy = 0.0
+    last_op = ""
+    last_ctrl = None
+
+    def skip_sep(i):
+        while i < n and (s[i].isspace() or s[i] == ","):
+            i += 1
+        return i
+
+    def read_num(i):
+        i = skip_sep(i)
+        m = _SVG_NUM_RE.match(s, i)
+        if not m:
+            raise SpecError(f"路径 {eid} 的 d 在位置 {i} 处缺少数字：{s[max(0, i - 6):i + 12]!r}")
+        return float(m.group(0)), m.end()
+
+    def read_flag(i):
+        i = skip_sep(i)
+        if i >= n or s[i] not in "01":
+            raise SpecError(f"路径 {eid} 的圆弧 A 参数在位置 {i} 处缺少 0/1 标志位")
+        return int(s[i]), i + 1
+
+    pos = skip_sep(pos)
+    cur_cmd = None
+    while pos < n:
+        if s[pos].isalpha():
+            cur_cmd = s[pos]
+            if cur_cmd.upper() not in _SVG_ARITY:
+                raise SpecError(f"路径 {eid} 的 d 含不支持的指令 {cur_cmd!r}")
+            pos = skip_sep(pos + 1)
+            if cur_cmd in ("Z", "z"):
+                cmds.append(("Z",))
+                cx, cy = sx, sy
+                last_op, last_ctrl = cur_cmd, None
+                continue
+        elif cur_cmd is None:
+            raise SpecError(f"路径 {eid} 的 d 必须以 M/m 开头")
+
+        up = cur_cmd.upper()
+        rel = cur_cmd.islower()
+        arity = _SVG_ARITY[up]
+        if up == "A":
+            rx, pos = read_num(pos)
+            ry, pos = read_num(pos)
+            rot, pos = read_num(pos)
+            fa, pos = read_flag(pos)
+            fs, pos = read_flag(pos)
+            x, pos = read_num(pos)
+            y, pos = read_num(pos)
+            nx, ny = (cx + x, cy + y) if rel else (x, y)
+            cmds.extend(_arc_to_cubics(cx, cy, rx, ry, rot, fa, fs, nx, ny))
+            cx, cy = nx, ny
+            last_op, last_ctrl = cur_cmd, None
+        else:
+            vals = []
+            for _ in range(arity):
+                v, pos = read_num(pos)
+                vals.append(v)
+            if up == "M":
+                nx, ny = (cx + vals[0], cy + vals[1]) if rel else (vals[0], vals[1])
+                cmds.append(("M", nx, ny))
+                cx, cy = sx, sy = nx, ny
+                last_op, last_ctrl = cur_cmd, None
+                cur_cmd = "l" if rel else "L"
+            elif up == "L":
+                nx, ny = (cx + vals[0], cy + vals[1]) if rel else (vals[0], vals[1])
+                cmds.append(("L", nx, ny))
+                cx, cy = nx, ny
+                last_op, last_ctrl = cur_cmd, None
+            elif up == "H":
+                nx = cx + vals[0] if rel else vals[0]
+                cmds.append(("L", nx, cy))
+                cx = nx
+                last_op, last_ctrl = cur_cmd, None
+            elif up == "V":
+                ny = cy + vals[0] if rel else vals[0]
+                cmds.append(("L", cx, ny))
+                cy = ny
+                last_op, last_ctrl = cur_cmd, None
+            elif up == "C":
+                c1x = cx + vals[0] if rel else vals[0]
+                c1y = cy + vals[1] if rel else vals[1]
+                c2x = cx + vals[2] if rel else vals[2]
+                c2y = cy + vals[3] if rel else vals[3]
+                nx = cx + vals[4] if rel else vals[4]
+                ny = cy + vals[5] if rel else vals[5]
+                cmds.append(("C", c1x, c1y, c2x, c2y, nx, ny))
+                cx, cy = nx, ny
+                last_op, last_ctrl = cur_cmd, (c2x, c2y)
+            elif up == "S":
+                if last_op in ("C", "c", "S", "s") and last_ctrl is not None:
+                    c1x, c1y = 2 * cx - last_ctrl[0], 2 * cy - last_ctrl[1]
+                else:
+                    c1x, c1y = cx, cy
+                c2x = cx + vals[0] if rel else vals[0]
+                c2y = cy + vals[1] if rel else vals[1]
+                nx = cx + vals[2] if rel else vals[2]
+                ny = cy + vals[3] if rel else vals[3]
+                cmds.append(("C", c1x, c1y, c2x, c2y, nx, ny))
+                cx, cy = nx, ny
+                last_op, last_ctrl = cur_cmd, (c2x, c2y)
+            elif up == "Q":
+                qx = cx + vals[0] if rel else vals[0]
+                qy = cy + vals[1] if rel else vals[1]
+                nx = cx + vals[2] if rel else vals[2]
+                ny = cy + vals[3] if rel else vals[3]
+                cmds.append(("Q", qx, qy, nx, ny))
+                cx, cy = nx, ny
+                last_op, last_ctrl = cur_cmd, (qx, qy)
+            elif up == "T":
+                if last_op in ("Q", "q", "T", "t") and last_ctrl is not None:
+                    qx, qy = 2 * cx - last_ctrl[0], 2 * cy - last_ctrl[1]
+                else:
+                    qx, qy = cx, cy
+                nx = cx + vals[0] if rel else vals[0]
+                ny = cy + vals[1] if rel else vals[1]
+                cmds.append(("Q", qx, qy, nx, ny))
+                cx, cy = nx, ny
+                last_op, last_ctrl = cur_cmd, (qx, qy)
+        pos = skip_sep(pos)
+    return cmds
+
+
 def path_points(cmds, steps=12):
-    """把 M/L/Q/C 路径采样成折线点列（供边界与碰撞核查）"""
+    """把 M/L/Q/C/Z 路径采样成折线点列（供边界与碰撞核查）"""
     pts = []
     cur = (0.0, 0.0)
+    sub_start = (0.0, 0.0)
     for c in cmds:
         op = c[0]
         if op == "M":
-            cur = (c[1], c[2])
+            cur = sub_start = (c[1], c[2])
             pts.append(cur)
         elif op == "L":
             cur = (c[1], c[2])
@@ -946,6 +1171,10 @@ def path_points(cmds, steps=12):
                 py = u**3 * p0[1] + 3 * u**2 * t * c1[1] + 3 * u * t**2 * c2[1] + t**3 * p3[1]
                 pts.append((px, py))
             cur = p3
+        elif op == "Z":
+            if cur != sub_start:
+                pts.append(sub_start)
+            cur = sub_start
     return pts
 
 

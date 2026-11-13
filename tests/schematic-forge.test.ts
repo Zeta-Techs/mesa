@@ -384,3 +384,60 @@ test("三明治图层架构与检查放宽：hero_panel 归一化锚点、纯白
     assert.equal(items.find((i) => i.id.startsWith("GRAY-"))!.id, "GRAY-PAIR");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("扩展原语与精准核查：polygon / curve / SVG path 转 PPTX Freeform，+e⁻ / ΔΦ = 0.06 eV / decorative 放行而编造数值仍拦下，跨面板与异色边框不误报 GRAY-PAIR", opts, () => {
+  const spec = {
+    name: "t",
+    canvas: { width_mm: 183, height_mm: 80, purpose: "journal" },
+    theme: {
+      palette: "nature-reviews", base_pt: 6.5,
+      colors: { amorph: "#6F3A96", cryst: "#4B5EAA", interface: "#4E8035", mech: "#1A79AE" },
+    },
+    elements: [
+      // 多面板 @15–@25 衬底 + 不同边框色 / 面板间距 > 20 mm：不应触发 GRAY-PAIR
+      { id: "p1", type: "box", x: 4, y: 6, w: 46, h: 32, fill: "amorph@25", stroke: "amorph", stroke_pt: 0.8, text: "0D" },
+      { id: "p2", type: "box", x: 58, y: 6, w: 46, h: 32, fill: "cryst@25", stroke: "cryst", stroke_pt: 0.8, text: "ΔΦ = 0.06 eV" },
+      { id: "p3", type: "box", x: 130, y: 6, w: 48, h: 32, fill: "#2E8B57", color: "#FFFFFF", text: "Water cleavage" },
+      { id: "p4", type: "box", x: 4, y: 44, w: 46, h: 28, fill: "#D35400", color: "#FFFFFF", text: "Spillover site" },
+      // polygon（免手写 x/y/w/h）+ SVG path（含 M/C/S/A/Z）+ arrow curve 别名 + 独立 curve 原语
+      { id: "poly", type: "polygon", points: [[62, 46], [76, 42], [88, 50], [84, 66], [66, 68]],
+        gradient: ["interface@22", "#FFFFFF"], stroke: "interface", stroke_pt: 0.8 },
+      { id: "pes", type: "path", d: "M 96 66 C 106 66, 112 44, 122 44 S 138 64, 148 58 A 8 8 0 0 1 164 58",
+        stroke: "mech", stroke_pt: 1.1, head: "end" },
+      { id: "arc1", type: "arrow", from: "p1", to: "p2", curve: 0.24, stroke: "amorph", label: "+e^{-}" },
+      { id: "curv", type: "curve", points: [[130, 46], [146, 38], [162, 42], [176, 52]], stroke: "interface", head: "end" },
+      { id: "deco", type: "text", x: 96, y: 69, w: 48, h: 6, text: "Schematic visual guide", pt: 6.0, decorative: true },
+    ],
+  };
+  const brief = "# 立意\nInterfacial water cleavage and H* spillover.\n";
+  // facts 以自然叙述写 ΔΦ 与 0.06 eV，而非逐字拷贝 "ΔΦ = 0.06 eV"
+  const facts = "- Interfacial work function difference (ΔΦ) of 0.06 eV drives electron transfer\n- Water cleavage at spillover site\n";
+  const root = project(spec, brief, facts);
+  try {
+    const r = run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg,pptx"]);
+    assert.equal(r.status, 0, r.stderr);
+    const svg = readFileSync(join(root, "figures/t/t.svg"), "utf8");
+    assert.match(svg, /id="poly"[^>]*d="M62,46 L76,42 L88,50 L84,66 L66,68 Z"/);
+    assert.match(svg, /id="pes"[^>]*d="M96,66 C/);
+    const pptxCheck = spawnSync(python, ["-c",
+      "import sys, zipfile; from pptx import Presentation\np=Presentation(sys.argv[1]); names={s.name for s in p.slides[0].shapes}\nassert {'poly','pes','arc1','curv'} <= names, names\ns=zipfile.ZipFile(sys.argv[1]).read('ppt/slides/slide1.xml').decode()\nprint('custGeom' in s and 'cubicBezTo' in s and '<a:close/>' in s)",
+      join(root, "figures/t/t.pptx")], { encoding: "utf8" });
+    assert.equal(pptxCheck.status, 0, pptxCheck.stderr);
+    assert.equal(pptxCheck.stdout.trim(), "True");
+
+    const chk = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(chk.status, 0, chk.stdout + chk.stderr);
+    const items = checks(root);
+    assert.equal(items.filter((i) => i.status === "blocked").length, 0, JSON.stringify(items));
+    assert.equal(items.filter((i) => i.id.startsWith("GRAY-")).length, 0, JSON.stringify(items));
+
+    // 若图上出现原文没有的编造数字（0.99 eV），仍必须拦下
+    const badSpec = structuredClone(spec);
+    (badSpec.elements[1] as { text: string }).text = "ΔΦ = 0.99 eV";
+    writeFileSync(join(root, "figures/t/figure.json"), JSON.stringify(badSpec));
+    assert.equal(run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg"]).status, 0);
+    const badChk = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(badChk.status, 1);
+    assert.ok(checks(root).some((i) => i.id.startsWith("SOURCE-p2") && i.status === "blocked"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

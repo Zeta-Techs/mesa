@@ -19,6 +19,7 @@ import colorsys
 import hashlib
 import importlib.util
 import json
+import math
 import re
 import shutil
 import sys
@@ -61,8 +62,14 @@ _PHASE_PREFIX = re.compile(r"^(?:[acαβγδ]-)(?=[A-Z])")
 _COEFF_PREFIX = re.compile(r"^\d+(?:/\d+)?(?:\.\d+)?\s*")
 _PHASE_SUFFIX = re.compile(r"(?:\s*\((?:s|l|g|aq|ads)\)|[↑↓])+$")
 _THERMO_TOKEN = re.compile(
-    r"^(?:[Δδ][GHEAS](?:_[A-Za-z0-9*+-]+|\([A-Za-z0-9*+-]+\))?[0-9*+-]*|E_?[Fa]|ε_?[dp]|η\d*|pH|TS\d*|IS|FS|IM\d*)$"
+    r"^(?:[Δδ][GHEASΦφW](?:_[A-Za-z0-9*+-]+|\([A-Za-z0-9*+-]+\))?[0-9*+-]*|E_?[Fa]|ε_?[dp]|η\d*|θ_[A-Za-z0-9*+-]+|[Φφ]|j_?0?|R_?ct|pH|TS\d*|IS|FS|IM\d*)$"
 )
+_STOP_UNITS = {
+    "the", "a", "an", "of", "in", "on", "at", "to", "for", "with", "by", "from", "via", "into",
+    "over", "under", "and", "or", "vs", "as", "is", "are", "per",
+    "ev", "mv", "kv", "ma", "ua", "cm", "mm", "nm", "um", "pm", "mol", "mmol", "mg", "kg",
+    "hr", "hrs", "min", "sec", "dec", "au", "arb", "wt", "at", "vol", "rhe", "she", "sce",
+}
 _STAGE_ONLY = re.compile(
     r"^(?:(?:stage|step|phase|part|panel|route|pathway)\s*(?:[ivx]+|\d+|[a-z])"
     r"|第\s*[一二三四五六七八九十\d]+\s*[步阶段期节]|(?:阶段|步骤)\s*[一二三四五六七八九十\d]+|[ivx]+\.?|\(?[a-z]\))\.?$",
@@ -90,7 +97,7 @@ def norm(s):
 
 
 def is_chem_formula_or_eq(raw_piece):
-    """严格大小写敏感地识别纯化学分子式、离子、电子、吸附中间体或反应方程式（如 H_{2}O + e^{-} → H^{*} + OH^{-}）。
+    """严格大小写敏感地识别纯化学分子式、离子、电子、吸附中间体或反应方程式（如 H_{2}O + e^{-} → H^{*} + OH^{-}、+e^{-}）。
     普通英文短语（如 'Unsourced claim here'）含小写词尾或空格散词，绝不会误判放行。"""
     plain = unicodedata.normalize("NFKC", F.plain_text(raw_piece)).strip()
     if not plain or any(F.is_cjk(ch) for ch in plain):
@@ -105,6 +112,10 @@ def is_chem_formula_or_eq(raw_piece):
         t = term.strip()
         if not t:
             return False
+        lead_sign = re.match(r"^[+−±-]\s*", t)
+        if lead_sign:
+            has_chem_marker = True
+            t = t[lead_sign.end():]
         t = _COEFF_PREFIX.sub("", t)
         if _PHASE_SUFFIX.search(t):
             has_chem_marker = True
@@ -138,10 +149,12 @@ def is_chem_formula_or_eq(raw_piece):
 
 
 def is_exempt_label(raw_piece):
-    """判断是否为免核对原文的图内通用符号：阶段序号、纯化学式/反应式、标准坐标轴物理量。"""
+    """判断是否为免核对原文的图内通用微标签：≤4 字符西文/符号编号、阶段序号、纯化学式/反应式、标准坐标轴物理量。"""
     plain = unicodedata.normalize("NFKC", F.plain_text(raw_piece)).strip()
     n = norm(raw_piece)
     if len(n) <= 2 or re.fullmatch(r"[\d.,%+\-−×/()（）↑↓]+|\(?[a-z]\)?|\(?[ivx]+\)?", n):
+        return True
+    if len(n) <= 4 and not any(F.is_cjk(ch) for ch in plain):
         return True
     if _STAGE_ONLY.fullmatch(plain):
         return True
@@ -152,8 +165,75 @@ def is_exempt_label(raw_piece):
     return False
 
 
-def source_matched(raw_piece, src_norm):
-    """检查一段图内文字是否在 brief.md / facts.md 有依据（或属于免检化学式/坐标轴/阶段号）。"""
+def _cjk_covered(chunk, src_norm):
+    """检查一段中文短语是否可由 src_norm 中出现过的 ≥2 字实词完整覆盖。"""
+    if chunk in src_norm:
+        return True
+    L = len(chunk)
+    if L < 2:
+        return chunk in src_norm
+    dp = [False] * (L + 1)
+    dp[0] = True
+    for i in range(L):
+        if not dp[i]:
+            continue
+        for j in range(i + 2, L + 1):
+            if chunk[i:j] in src_norm:
+                dp[j] = True
+    return dp[L]
+
+
+def _tokens_covered(text, src_norm, source_text):
+    """关键词 / Token + 数值覆盖核查：允许精炼视觉表达（如 'ΔΦ = 0.06 eV' 对应 facts 里的 'ΔΦ 为 0.06 eV'），
+    同时保证所有实词、物理量符号和每一个数字都在 brief.md / facts.md 中有据可查。"""
+    if not source_text:
+        return False
+    plain = unicodedata.normalize("NFKC", F.plain_text(text)).strip()
+    if not plain:
+        return True
+    src_plain = unicodedata.normalize("NFKC", F.plain_text(source_text)).lower()
+    substantive = 0
+    # 1) 图上出现的非化学式定量数字必须在原文中出现，杜绝编造数值
+    non_chem = " ".join(
+        tok for tok in plain.split()
+        if not is_chem_formula_or_eq(tok.strip("(),;[]{}"))
+    )
+    for num in re.findall(r"\d+(?:\.\d+)?", non_chem):
+        if num not in src_norm:
+            return False
+        substantive += 1
+    # 2) 西文实词按词边界核对（跳过化学分子式与介词/单位）
+    for raw_w in re.findall(r"[A-Za-z][A-Za-z0-9*+-]*", plain):
+        if is_chem_formula_or_eq(raw_w):
+            continue
+        for w in re.findall(r"[A-Za-z]{2,}", raw_w):
+            wl = w.lower()
+            if wl in _STOP_UNITS:
+                continue
+            substantive += 1
+            stem = wl[:-1] if (wl.endswith("s") and len(wl) >= 4) else wl
+            if not re.search(rf"\b(?:{re.escape(wl)}|{re.escape(stem)}(?:s|es|ed|ing)?)\b", src_plain):
+                return False
+    # 3) 希腊字母物理量符号（如 ΔΦ、η、θ、ε）
+    for g in re.findall(r"[Δδ]?[α-ωΑ-Ωℏ]+", plain):
+        gn = norm(g)
+        if gn:
+            substantive += 1
+            if gn not in src_norm:
+                return False
+    # 4) 中文实词块（剥除常见虚字后逐块覆盖）
+    for run in re.findall(r"[\u4e00-\u9fff]+", plain):
+        for ck in re.split(r"[的与及和在从向对为是于或把被将并而各其该本]", run):
+            if not ck:
+                continue
+            substantive += 1
+            if not _cjk_covered(ck, src_norm):
+                return False
+    return substantive >= 1
+
+
+def source_matched(raw_piece, src_norm, source_text=""):
+    """检查一段图内文字是否在 brief.md / facts.md 有依据（或属于免检化学式/坐标轴/阶段号/微标签）。"""
     if is_exempt_label(raw_piece):
         return True
     n = norm(raw_piece)
@@ -167,9 +247,12 @@ def source_matched(raw_piece, src_norm):
             return True
     # 复合标签按 · / | / — / ：切分子句逐段核对（如 'Volmer step: H2O + e- → H* + OH-'）
     clauses = [c.strip() for c in re.split(r"\s*(?:[·|—–]|[:：])\s*", stripped) if c.strip()]
-    if len(clauses) > 1 and all(is_exempt_label(c) or norm(c) in src_norm for c in clauses):
+    if len(clauses) > 1 and all(
+        is_exempt_label(c) or norm(c) in src_norm or _tokens_covered(c, src_norm, source_text)
+        for c in clauses
+    ):
         return True
-    return False
+    return _tokens_covered(stripped, src_norm, source_text)
 
 
 def blend_over_bg(col, bg_hex="FFFFFF"):
@@ -355,6 +438,14 @@ def main():
                 F.lattice_geometry(spec, el)
             except F.SpecError as e:
                 add(f"SPEC-{el['id']}", "schematic_spec", "blocked", str(e))
+        elif t == "path":
+            try:
+                p_cmds = F.parse_svg_path_d(el["d"], el["id"])
+                if not all(F.inside((px, py, 0, 0), canvas) for px, py in F.path_points(p_cmds)):
+                    if not any(i["id"] == f"OUT-{el['id']}" for i in items):
+                        add(f"OUT-{el['id']}", "schematic_layout", "blocked", f"路径 {el['id']} 超出画布")
+            except F.SpecError as e:
+                add(f"SPEC-{el['id']}", "schematic_spec", "blocked", str(e))
 
     # 文字块逐个查
     mp = F.min_pt(spec)
@@ -394,15 +485,16 @@ def main():
             add(f"MARKUP-{lid}", "schematic_text", "blocked",
                 f"{owner} 的标记没认出来，会原样印在图上：「{bad[0][:30]}」（粗体 **…**、下标 _{{…}}、上标 ^{{…}} 要成对）")
         n_text += 1
-        # 图上文字要有出处（放行纯化学式/离子/反应式、标准坐标轴物理量、阶段序号）
-        if source_text:
+        # 图上文字要有出处（放行 decorative 元素、≤4 字符微标签、纯化学式/离子/反应式、标准坐标轴物理量、阶段序号，并支持关键词+数值覆盖）
+        own_el = index.get(owner)
+        if source_text and not (own_el and own_el.get("decorative")):
             for piece in raw_text.split("\n"):
                 if not piece.strip():
                     continue
                 if is_exempt_label(piece):
                     continue
                 n_pieces += 1
-                if not source_matched(piece, src_norm):
+                if not source_matched(piece, src_norm, source_text):
                     n = norm(piece)
                     add(f"SOURCE-{lid}-{hashlib.sha1(n.encode()).hexdigest()[:6]}", "schematic_source", "blocked",
                         f"{owner} 的文字在 brief.md / facts.md 里找不到原文：「{F.plain_text(piece).strip()[:50]}」——先把它写进事实记录（带出处），或改成记录里的说法",
@@ -640,15 +732,33 @@ def main():
     if cv["purpose"] == "journal" and not any(abs(cv["width_mm"] - w) < 1 for w in JOURNAL_WIDTHS):
         add("WIDTH", "schematic_style", "needs_human", f"画布宽 {cv['width_mm']:g} mm 不是常见栏宽（单栏 85–90、1.5 栏 120–136、双栏 174–190）：按目标期刊作者指南核对")
 
-    fills = {}
+    def rect_distance(a, b):
+        dx = max(0.0, a[0] - (b[0] + b[2]), b[0] - (a[0] + a[2]))
+        dy = max(0.0, a[1] - (b[1] + b[3]), b[1] - (a[1] + a[3]))
+        return math.hypot(dx, dy)
+
+    def rgb_distance(h1, h2):
+        c1 = [int(h1[i:i + 2], 16) for i in (0, 2, 4)]
+        c2 = [int(h2[i:i + 2], 16) for i in (0, 2, 4)]
+        return math.sqrt(sum((a - b) ** 2 for a, b in zip(c1, c2)))
+
+    fills = {}  # hex6 -> list of (label_id, bbox, stroke_hex_or_None)
     for el in spec["elements"]:
-        if el["type"] in ("box", "header_card", "ellipse", "sphere", "chevron"):
+        if el["type"] in ("box", "header_card", "ellipse", "sphere", "chevron", "polygon", "path"):
+            r_el = F.bbox(el)
+            st_c = F.color(spec, el.get("stroke", "border" if (el["type"] == "header_card" and "border" in spec["theme"]["colors"]) else "none"))
+            st_pt = float(el.get("stroke_pt", spec["theme"]["line_pt"]))
+            st_hex = blend_over_bg(st_c, canvas_bg) if (st_c and st_pt >= 0.4 and st_c[1] >= 0.4) else None
             c = F.color(spec, el.get("fill", "none"))
-            if c and c[0] != "FFFFFF" and c[1] >= 0.35 and F.luminance(c[0]) < 208:
-                fills.setdefault(c[0], el["id"])
+            eff = blend_over_bg(c, canvas_bg) if c else None
+            if c and eff and eff != canvas_bg and c[1] >= 0.35 and F.luminance(eff) < 208:
+                fills.setdefault(eff, []).append((el["id"], r_el, st_hex))
             hd = F.header_spec(spec, el) if el["type"] in ("box", "header_card") else None
-            if hd and hd.get("fill") and hd["fill"][0] != "FFFFFF" and hd["fill"][1] >= 0.35 and F.luminance(hd["fill"][0]) < 208:
-                fills.setdefault(hd["fill"][0], el["id"] + "#header")
+            if hd and hd.get("fill"):
+                hc = hd["fill"]
+                heff = blend_over_bg(hc, canvas_bg)
+                if heff != canvas_bg and hc[1] >= 0.35 and F.luminance(heff) < 208:
+                    fills.setdefault(heff, []).append((el["id"] + "#header", (r_el[0], r_el[1], r_el[2], hd["h"]), st_hex))
 
     def hue_class(h6):
         r, g, b = (int(h6[i:i + 2], 16) / 255 for i in (0, 2, 4))
@@ -663,9 +773,23 @@ def main():
     for i, c1 in enumerate(cols):
         for c2 in cols[i + 1:]:
             redgreen = {hue_class(c1), hue_class(c2)} == {"red", "green"}
-            if abs(F.luminance(c1) - F.luminance(c2)) < 9 or redgreen:
+            if not (abs(F.luminance(c1) - F.luminance(c2)) < 9 or redgreen):
+                continue
+            # 仅对空间相邻/嵌套（间距 ≤ 20 mm）且未靠明显不同边框色（stroke）区分的色块提示
+            hit_pair = None
+            for id1, r1, st1 in fills[c1]:
+                for id2, r2, st2 in fills[c2]:
+                    if rect_distance(r1, r2) > 20.0:
+                        continue
+                    if st1 and st2 and rgb_distance(st1, st2) >= 42.0:
+                        continue
+                    hit_pair = (id1, id2)
+                    break
+                if hit_pair:
+                    break
+            if hit_pair:
                 reason = "红绿对比" if redgreen else "灰度接近"
-                gray_pairs.append(f"{fills[c1]}↔{fills[c2]}（{reason}）")
+                gray_pairs.append(f"{hit_pair[0]}↔{hit_pair[1]}（{reason}）")
     if gray_pairs:
         preview = "、".join(gray_pairs[:3]) + (f" 等 {len(gray_pairs)} 组" if len(gray_pairs) > 3 else "")
         add("GRAY-PAIR", "schematic_style", "needs_human",
