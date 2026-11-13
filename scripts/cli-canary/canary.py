@@ -723,8 +723,11 @@ def upstream_report(results, accept):
                 fresh.append((agent, key, ev))
             elif str(mine[key]).startswith("未定"):
                 pending.append((agent, key, mine[key]))
-        # 只在本平台探得到的线索（程序状态要伪终端）不算「撤了」
+        # 只在本平台探得到的线索（程序状态要伪终端）不算「撤了」；只核对 Mesa 用上的——「不接」的多是按更新日志登记、
+        # --help 里本来就没有（Claude 的 server 2026-11-07 起天天误报），不见了也不用做什么
         for key in mine:
+            if not str(mine[key]).startswith("用上"):
+                continue
             if key not in found and not (key == "program-status" and PLATFORM == "win32"):
                 gone.append((agent, key, mine[key]))
         for key, line in news:
