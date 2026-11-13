@@ -2132,3 +2132,41 @@ fn skipped_policy_notes_cover_tui_and_extra_env() {
     assert!(notes.iter().any(|n| n.contains("思考档")));
     assert!(notes.iter().any(|n| n.contains("附加环境变量")));
 }
+
+#[test]
+fn merge_jsonc_keys_keeps_comments_and_order() {
+    let original = r#"{
+  // 用户自己的主题
+  "ui": { "theme": "GitHub" },
+  /* Mesa 管的 */
+  "model": { "name": "old" },
+  "stale": 1,
+}"#;
+    let new_content = r#"{"ui":{"theme":"GitHub"},"model":{"name":"m1"},"fresh":true}"#;
+    let out = merge_jsonc_keys(original, new_content).unwrap();
+    assert!(out.contains("// 用户自己的主题") && out.contains("/* Mesa 管的 */"));
+    assert!(out.find("\"ui\"").unwrap() < out.find("\"model\"").unwrap());
+    assert!(!out.contains("stale") && out.contains("\"m1\"") && out.contains("\"fresh\""));
+    let back: Value = serde_json::from_str(&crate::mcp::strip_jsonc(&out)).unwrap();
+    assert_eq!(back, serde_json::from_str::<Value>(new_content).unwrap());
+    assert!(merge_jsonc_keys("[1]", new_content).is_err());
+}
+
+#[test]
+fn apply_plans_keeps_jsonc_comments_but_rewrites_strict_json() {
+    let home = tmpdir("jsonc-keep");
+    let commented = home.join("a.json");
+    let strict = home.join("b.json");
+    fs::write(&commented, "{\n  // 留着\n  \"x\": 1,\n}\n").unwrap();
+    fs::write(&strict, "{\"x\": 1}").unwrap();
+    let plans = vec![
+        PlannedWrite { tag: "a.json", path: commented.clone(), content: r#"{"x":2}"#.into() },
+        PlannedWrite { tag: "b.json", path: strict.clone(), content: r#"{"x":2}"#.into() },
+    ];
+    apply_plans(&home.join("bk"), &home, &plans).unwrap();
+    let a = fs::read_to_string(&commented).unwrap();
+    assert!(a.contains("// 留着") && a.contains('2'));
+    assert_eq!(fs::read_to_string(&strict).unwrap(), r#"{"x":2}"#);
+    assert!(disk_equals_plans(&plans));
+    fs::remove_dir_all(&home).ok();
+}

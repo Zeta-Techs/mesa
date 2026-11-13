@@ -76,7 +76,7 @@ resvg = { version = "0.45", default-features = false, features = ["text", "syste
 svg2pdf = { version = "0.13", default-features = false, features = ["text", "image", "filters"] }
 # 缺字回落时挑中文字体要查字形表；已是 usvg 的传递依赖，不新增下载
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
-jsonc-parser = { version = "0.34.0", features = ["cst"] }
+jsonc-parser = { version = "0.34.0", default-features = false, features = ["cst", "serde_json"] }
 
 # 单实例：再打开 Mesa 时叫回已开的窗口，不另起进程（lib.rs run 开头；macOS 由系统保证单份，不挂）
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]

@@ -3637,13 +3637,31 @@ fn apply_plans(
 ) -> Result<Vec<String>, String> {
     let actions: Vec<TxAction> = plans
         .iter()
-        .map(|plan| TxAction {
-            tag: plan.tag.to_string(),
-            path: plan.path.clone(),
-            content: Some(plan.content.as_bytes().to_vec()),
+        .map(|plan| {
+            let content = jsonc_layout_kept(plan).unwrap_or_else(|| plan.content.clone());
+            TxAction {
+                tag: plan.tag.to_string(),
+                path: plan.path.clone(),
+                content: Some(content.into_bytes()),
+            }
         })
         .collect();
     transact(backups_dir, home, &actions, "apply")
+}
+
+/// 磁盘上的 JSON 配置带注释或尾逗号时，返回按键原地合并后的内容（注释与顺序留着）；
+/// 预览与写入都过这一步，确认框里看到的就是写进去的。原文本就是严格 JSON、或合并失败时返回 None，照旧整份写。
+fn jsonc_layout_kept(plan: &PlannedWrite) -> Option<String> {
+    let name = plan.path.file_name()?.to_str()?;
+    if !(name.ends_with(".json") || name.ends_with(".jsonc")) {
+        return None;
+    }
+    let live = fs::read_to_string(&plan.path).ok()?;
+    let live = crate::mcp::strip_bom(&live);
+    if crate::mcp::strip_jsonc(live) == live {
+        return None;
+    }
+    merge_jsonc_keys(live, &plan.content).ok()
 }
 
 // ===== 「首次写入前」原始快照（永久保留，不参与 5 份轮换） =====
@@ -3878,6 +3896,7 @@ fn global_preview_inputs(store: &ProfileStore, profile_id: &str) -> Result<Globa
         if profile.agent == "grok" {
             extend_grok_plans(&home, &mut plans, &store.list()?, None)?;
         }
+        keep_jsonc_layout_in_preview(&mut plans);
         return Ok((home, profile.agent, plans, Vec::new(), Vec::new()));
     }
     let skipped = skipped_policy_notes(&profile);
@@ -3897,7 +3916,16 @@ fn global_preview_inputs(store: &ProfileStore, profile_id: &str) -> Result<Globa
         extend_grok_plans(&home, &mut plans, &store.list()?, Some(&profile))?;
     }
     let overrides = override_notes_with(&profile.agent, &shell_has);
+    keep_jsonc_layout_in_preview(&mut plans);
     Ok((home, profile.agent, plans, skipped, overrides))
+}
+
+fn keep_jsonc_layout_in_preview(plans: &mut [PlannedWrite]) {
+    for plan in plans.iter_mut() {
+        if let Some(kept) = jsonc_layout_kept(plan) {
+            plan.content = kept;
+        }
+    }
 }
 
 #[tauri::command]
@@ -4227,40 +4255,63 @@ pub async fn has_global_backup(agent: String) -> bool {
     .unwrap_or(false)
 }
 
-/// 写进原文时，把注释留着，原地按键合并。
-fn merge_jsonc_keys(original: &str, new_content: &str) -> Result<String, String> {
-    use jsonc_parser::{parse_to_cst, JsonObject};
-    let orig_cst = parse_to_cst(original, &Default::default())
-        .map_err(|e| format!("解析原文失败: {:?}", e))?;
-    let new_val: serde_json::Value =
-        serde_json::from_str(new_content).map_err(|e| format!("新内容非 JSON: {e}"))?;
-    let Some(serde_json::Value::Object(new_map)) = Some(&new_val) else {
-        return Err("新内容不是对象".to_string());
+/// 原文带注释（JSONC）时，把算好的新内容按键落回原文，注释、顺序与没变的值原样留着（2026-11-13）。
+/// 新内容里没有的键删掉、新键追加在所在对象末尾、两边都是对象的递归进去；
+/// 合并后再解析一遍与新内容逐项比对，对不上就报错，调用方照旧写严格 JSON。
+pub(crate) fn merge_jsonc_keys(original: &str, new_content: &str) -> Result<String, String> {
+    use jsonc_parser::cst::CstRootNode;
+    let new_val: Value =
+        serde_json::from_str(new_content).map_err(|e| format!("新内容不是 JSON：{e}"))?;
+    let Value::Object(new_map) = &new_val else {
+        return Err("新内容不是对象".into());
     };
-    let Some(orig_obj) = orig_cst.value.and_then(|v| v.as_object()) else {
-        return Err("原文不是 JSONC 对象".to_string());
-    };
-    let mut out = original.to_string();
-    let mut offsets: Vec<_> = new_map
-        .iter()
-        .filter_map(|(k, nv)| {
-            let prop = orig_obj.get(k)?;
-            let (start, end) = (prop.value.range()?.start, prop.value.range()?.end);
-            Some((start, end, serde_json::to_string(nv).unwrap()))
-        })
-        .collect();
-    offsets.sort_by_key(|(s, _, _)| *s);
-    let mut shift = 0i32;
-    for (s, e, txt) in offsets {
-        let s = (s as i32 + shift) as usize;
-        let e = (e as i32 + shift) as usize;
-        let old_len = e - s;
-        out.replace_range(s..e, &txt);
-        shift += txt.len() as i32 - old_len as i32;
+    let root = CstRootNode::parse(crate::mcp::strip_bom(original), &Default::default())
+        .map_err(|e| format!("原文解析失败：{e}"))?;
+    let obj = root.object_value().ok_or("原文顶层不是对象")?;
+    merge_cst_object(&obj, new_map);
+    let out = root.to_string();
+    let back: Value = serde_json::from_str(&crate::mcp::strip_jsonc(&out))
+        .map_err(|e| format!("合并结果解析失败：{e}"))?;
+    if back != new_val {
+        return Err("合并结果与新内容不一致".into());
     }
     Ok(out)
 }
 
+fn merge_cst_object(obj: &jsonc_parser::cst::CstObject, new_map: &serde_json::Map<String, Value>) {
+    for prop in obj.properties() {
+        let name = prop.name().and_then(|n| n.decoded_value().ok());
+        if name.as_deref().map_or(true, |k| !new_map.contains_key(k)) {
+            prop.remove();
+        }
+    }
+    for (k, v) in new_map {
+        match obj.get(k) {
+            Some(prop) => {
+                if let (Value::Object(sub), Some(child)) = (v, prop.object_value()) {
+                    merge_cst_object(&child, sub);
+                } else if prop.value().and_then(|n| n.to_serde_value()).as_ref() != Some(v) {
+                    prop.set_value(to_cst_input(v));
+                }
+            }
+            None => {
+                obj.append(k, to_cst_input(v));
+            }
+        }
+    }
+}
+
+fn to_cst_input(v: &Value) -> jsonc_parser::cst::CstInputValue {
+    use jsonc_parser::cst::CstInputValue as I;
+    match v {
+        Value::Null => I::Null,
+        Value::Bool(b) => I::Bool(*b),
+        Value::Number(n) => I::Number(n.to_string()),
+        Value::String(s) => I::String(s.clone()),
+        Value::Array(a) => I::Array(a.iter().map(to_cst_input).collect()),
+        Value::Object(m) => I::Object(m.iter().map(|(k, v)| (k.clone(), to_cst_input(v))).collect()),
+    }
+}
 
 #[cfg(test)]
 mod tests;
