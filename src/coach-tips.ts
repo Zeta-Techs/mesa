@@ -22,6 +22,9 @@ export const COACH_TIP_KEYS = {
    *  （2026-11-05 用户点名要，例外于「不首次即弹」与「一次打开只出一条」：行内操作平时藏在悬停里，
    *  不提示就不知道命中出来以后该干什么）。点了「加入积累」也算学会 */
   radarNext: "ccode.coachRadarNextSeen",
+  /** 写作 / 定稿步骤第一次出现「导入 Word 批注…」（保存过一次以后）时说清它干什么（2026-11-13 用户点名要，例外于
+   *  「不首次即弹」与「一次打开只出一条」：按钮名看不出是「稿子发给导师批注完再导回来」）。点了按钮也算学会 */
+  wordComments: "ccode.coachWordCommentsSeen",
 } as const;
 export type CoachTipId = keyof typeof COACH_TIP_KEYS;
 

@@ -19,6 +19,8 @@ import {
 import { Modal } from "./Modal";
 import StepEvidenceChip from "./StepEvidenceChip";
 import StepFlow from "./StepFlow";
+import CoachTip from "./CoachTip";
+import { coachTipSeen, markCoachTipSeen } from "../coach-tips";
 import FuseDraftModal from "./FuseDraftModal";
 import { useAppStore } from "../store";
 import { MAX_MATERIALS as CONSULT_MAX_MATERIALS, stepConsultQuestion } from "../consult";
@@ -314,6 +316,12 @@ export default function TaskCardsSection({
   /** 找文献 / 读文献的步骤（按技能槽认，引擎不认模板）：退回它叫「补料」，其余叫「修改」 */
   const isLitStep = (st: ProjectStepDto) => stepFillsAnySlot(st.skills, ["lit-search", "lit-notes"], skillProvides);
   const [error, setError] = useState<string | null>(null);
+  // 「导入 Word 批注…」第一次出现时的说明气泡（一次性，coach-tips wordComments）：点 × / 知道了 / 按钮本身都算看过
+  const [commentsTipOpen, setCommentsTipOpen] = useState(() => !coachTipSeen("wordComments"));
+  function dismissCommentsTip() {
+    markCoachTipSeen("wordComments");
+    setCommentsTipOpen(false);
+  }
   // 综述回路二期：补料单弹层与跟进在途（design-review-loop.md §4/§5）
   const [reworkOpen, setReworkOpen] = useState(false);
   const [reworkBusy, setReworkBusy] = useState(false);
@@ -1743,17 +1751,34 @@ export default function TaskCardsSection({
                   更新检索（已 {refresh.days} 天）…
                 </button>
               );
-              // 导入 Word 批注（科研流程补全 §4）：写作 / 定稿类步骤开过工就有
+              // 导入 Word 批注（科研流程补全 §4）：写作 / 定稿类步骤保存进项目过一次才有（2026-11-13 用户：第一轮还没有能发给导师的稿子）
               const focusKind = stepKind(focusStepDto, skillProvides);
-              const commentsButton = (focusKind === "writing" || focusKind === "final") && stepWorkspace(focusStepDto) && (
-                <button
-                  type="button"
-                  onClick={() => void importComments()}
-                  title="选一份导师 / 合作者批注过的 Word：Mesa 抽出每条批注（批注人、原文、意见）写成意见清单，这一步另开一轮逐条处理；要前面步骤做的，退回单会按清单预填"
-                  className={LOOP_TOOL}
-                >
-                  导入 Word 批注…
-                </button>
+              const commentsButton = (focusKind === "writing" || focusKind === "final") && !!stepWorkspace(focusStepDto)?.mergedAt && (
+                <span className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dismissCommentsTip();
+                      void importComments();
+                    }}
+                    title="选一份导师 / 合作者批注过的 Word：Mesa 抽出每条批注（批注人、原文、意见）写成意见清单，这一步另开一轮逐条处理；要前面步骤做的，退回单会按清单预填"
+                    className={LOOP_TOOL}
+                  >
+                    导入 Word 批注…
+                  </button>
+                  {commentsTipOpen && (
+                    <CoachTip
+                      arrow="up"
+                      arrowAt={28}
+                      title="导师批注完的 Word，从这里导回来"
+                      onClose={dismissCommentsTip}
+                      className="absolute top-full left-0 mt-2 w-80 text-xs leading-5"
+                      actions={[{ label: "知道了", onClick: dismissCommentsTip }]}
+                    >
+                      把这一步的稿子发给导师或合作者，对方在 Word 里加完批注发回来，点这里选那份 .docx。Mesa 把每条批注抽成意见清单，这一步另开一轮让 AI 逐条改；要前面步骤补的（补文献、改大纲），会标成退回交给那一步。
+                    </CoachTip>
+                  )}
+                </span>
               );
               if ((focusRunStatus ?? "pending") === "pending") return refreshButton ? loopRow([refreshButton]) : null;
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
