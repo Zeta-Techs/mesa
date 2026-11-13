@@ -121,6 +121,12 @@ import {
 } from "../reasoning-effort";
 import { QUICK_CHAT_KEY_PREFIX, codexSandboxCoversHome } from "../quick-chat";
 import {
+  chatPermissionMemoryApplies,
+  profilePermissionMode,
+  rememberChatPermission,
+  rememberedFullAccess,
+} from "../chat-permission";
+import {
   cachedConversationPage,
   cachedConversationRest,
   conversationPageFor,
@@ -525,6 +531,8 @@ export interface LaunchPickState {
   observedTier: "ask" | "auto" | "full" | null;
   /** 刚按项目默认换了 Agent / 连接（选项目时）：输入框上短暂写一句「按项目默认」，几秒后清掉 */
   autoNote: string | null;
+  /** 聊天对话：人亲手选的权限档按连接记（完全访问记下，chat-permission.ts）；步骤、阅读等入口为 false */
+  rememberPermission: boolean;
 }
 
 /** 聊天里换一家接着做：这段对话有记录才能接力；生成中换不了 */
@@ -2006,6 +2014,7 @@ export const TerminalView = memo(function TerminalView({
       permissionNote: cliPermissionNote,
       observedTier,
       autoNote: launchAutoNote,
+      rememberPermission: chatPermissionMemoryApplies(reuseKey),
     }),
     // profileMenuOptions 每次渲染新建，按其内容签名判等
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2031,6 +2040,7 @@ export const TerminalView = memo(function TerminalView({
       cliPermissionNote,
       observedTier,
       launchAutoNote,
+      reuseKey,
     ],
   );
   // 启动栏「权限」格与「这次启动」卡（2026-10-18 与聊天输入框同步）：值 = 只讨论 / 手选的原生档 /
@@ -2071,15 +2081,34 @@ export const TerminalView = memo(function TerminalView({
   );
   /** 改权限：完全访问二次确认；live = 进程在跑（换了要重开接回）。返回是否真改了 */
   async function pickLaunchPermission(id: PermissionTier, live: boolean): Promise<boolean> {
-    if (!(await confirmPermissionChoice(agentLabel(agentId), id, live))) return false;
+    if (!(await confirmPermissionChoice(agentLabel(agentId), id, live, chatPermissionMemoryApplies(reuseKey)))) return false;
     onPatchLaunch?.(
       tabId,
       id === "discuss"
         ? { permission: "discuss", permissionMode: null }
         : { permission: "write_tree", permissionMode: id },
     );
+    if (chatPermissionMemoryApplies(reuseKey)) {
+      rememberChatPermission(profileId, id === "discuss" ? "discuss" : "write_tree", id === "discuss" ? null : id);
+    }
     return true;
   }
+  // 按连接记住的完全访问（chat-permission.ts）：连接定下或换了时，记过的连接带上完全访问，
+  // 没记过的连接不接着用上一条连接的完全访问。重启恢复出的标签不带
+  const launchFullAvailable = Boolean(launchAgentDet?.permissionModes?.includes("full"));
+  useEffect(() => {
+    // 跑着的进程权限已定，不改标签上的记录（否则标记写的和实际不符）
+    if (restored || running || !profileId || !chatPermissionMemoryApplies(reuseKey)) return;
+    const next = profilePermissionMode({
+      permission: permissionRef.current ?? (readonly ? "discuss" : "write_tree"),
+      mode: permissionModeRef.current,
+      remembered: rememberedFullAccess(profileId),
+      fullAvailable: launchFullAvailable,
+    });
+    if (next !== undefined) onPatchLaunch?.(tabId, { permission: "write_tree", permissionMode: next });
+    // 只在连接 / Agent 变了（或这家的档表读到了）时判一次；人随后手选的档不被改回
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, agentId, launchFullAvailable]);
 
   const [skillCount, setSkillCount] = useState(0);
   // 当前 Agent 已启用的技能清单（技能页开关同步）；「插入」菜单一键使用
@@ -5960,7 +5989,17 @@ export const TerminalView = memo(function TerminalView({
         // 开工弹层的本次思考档覆盖（空 = 绑定逐模型策略）；后端在读绑定策略处用本值优先
         effortOverride: effortOverride?.trim() || null,
         // 聊天权限徽标选的原生权限档（只讨论时不传；null = 按本机设置）
-        permissionMode: launchPermission === "discuss" ? null : permissionMode,
+        // 起得比标签补档快（接回即启动）时，这里按连接记住的完全访问再兜一次
+        permissionMode:
+          launchPermission === "discuss"
+            ? null
+            : (permissionMode ??
+              (!restored &&
+              chatPermissionMemoryApplies(reuseKey) &&
+              launchFullAvailable &&
+              rememberedFullAccess(profileId)
+                ? "full"
+                : null)),
         // 离开了原目标的目录：不再按那个目标的复用键 / Task 登记（工作区键会被判成步骤、在主仓里写盘被拒）
         reuseKey: leftTaskDir && isTaskReuseKey(reuseKey) ? null : (reuseKey ?? null),
         runId: freshRun ? null : (runId ?? initialRunId ?? null),

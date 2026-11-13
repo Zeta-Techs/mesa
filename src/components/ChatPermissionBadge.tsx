@@ -72,13 +72,18 @@ export async function confirmPermissionChoice(
   agentLabel: string,
   id: PermissionTier,
   live: boolean,
+  /** 聊天对话：完全访问按连接记住（chat-permission.ts rememberChatPermission），话术如实说 */
+  remember = false,
 ): Promise<boolean> {
   const restartNote = live
     ? `\n\n要重开一次 ${agentLabel} 才生效，聊过的内容不会丢。`
     : "";
   if (id === "full") {
+    const scope = remember
+      ? "之后用这条连接开的对话也默认完全访问，换回别的档就不再带上"
+      : "只对这一次对话生效";
     return confirmDialog(
-      `开启完全访问？\n\n这次对话里 ${agentLabel} 删文件、装软件都不会先问你，只对这一次对话生效。不确定就选「帮我批准」。${restartNote}`,
+      `开启完全访问？\n\n这次对话里 ${agentLabel} 删文件、装软件都不会先问你，${scope}。不确定就选「帮我批准」。${restartNote}`,
       { danger: true, confirmText: "开启完全访问" },
     );
   }
@@ -123,6 +128,7 @@ export default function ChatPermissionBadge({
   context = "general",
   cycleHint = false,
   flash = false,
+  remember = false,
 }: {
   agentLabel: string;
   /** 哪一家：只讨论那一档的说法按它分（Claude Code 的只讨论是计划模式，写完方案点头就开工） */
@@ -150,6 +156,8 @@ export default function ChatPermissionBadge({
   cycleHint?: boolean;
   /** 刚切到完全访问：和输入框上沿那道细线同一次亮起、同一条曲线淡回灰字（useToneFlash） */
   flash?: boolean;
+  /** 聊天对话：选完全访问会按连接记住，确认框如实说 */
+  remember?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -227,12 +235,12 @@ export default function ChatPermissionBadge({
     }
     if (inSession && inlineOk(id) && id !== "discuss") {
       // 会话里直接换：不重开，完全访问照旧二次确认。能用启动参数指定的档顺带记进这次的选择（之后停下再接着聊按它启动）
-      if (!(await confirmPermissionChoice(agentLabel, id, false))) return;
+      if (!(await confirmPermissionChoice(agentLabel, id, false, remember))) return;
       if (modes.includes(id)) onPermission?.("write_tree", id);
       inSession.onSwitch(id);
       return;
     }
-    if (!(await confirmPermissionChoice(agentLabel, id, Boolean(live)))) return;
+    if (!(await confirmPermissionChoice(agentLabel, id, Boolean(live), remember))) return;
     if (id === "discuss") onPermission?.("discuss", null);
     else onPermission?.("write_tree", id);
     live?.onRestart();

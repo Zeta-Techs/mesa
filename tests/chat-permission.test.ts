@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextPermissionTier, permissionExample } from "../src/chat-permission.ts";
+import {
+  chatPermissionMemoryApplies,
+  nextPermissionTier,
+  permissionExample,
+  profilePermissionMode,
+  rememberChatPermission,
+  rememberedFullAccess,
+} from "../src/chat-permission.ts";
 
 test("权限示例按项目类型取，四档都有一句", () => {
   const coding = permissionExample("coding");
@@ -37,4 +44,57 @@ test("⇧Tab 轮换：按顺序走、跳过没有的档、到头回到第一档"
   assert.equal(nextPermissionTier("ask", noDiscussAuto), "full");
   assert.equal(nextPermissionTier("full", noDiscussAuto), "ask");
   assert.equal(nextPermissionTier("ask", (id) => id === "ask"), null, "只有当前一档可用：不动");
+});
+
+test("按连接记住完全访问：选了记下，换回别的档忘掉，回到本机设置不动", () => {
+  // Node 测试无 localStorage：内存桩（kickoff-launch.test 同款）
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => void store.clear(),
+    },
+  });
+  assert.equal(rememberedFullAccess("p1"), false);
+  rememberChatPermission("p1", "write_tree", "full");
+  rememberChatPermission("p2", "write_tree", "full");
+  assert.equal(rememberedFullAccess("p1"), true);
+  rememberChatPermission("p1", "write_tree", null);
+  assert.equal(rememberedFullAccess("p1"), true, "换家时自动回落到本机设置不算人改");
+  rememberChatPermission("p1", "write_tree", "auto");
+  assert.equal(rememberedFullAccess("p1"), false);
+  assert.equal(rememberedFullAccess("p2"), true, "别的连接不受影响");
+  rememberChatPermission("p2", "discuss", null);
+  assert.equal(rememberedFullAccess("p2"), false);
+  assert.equal(rememberedFullAccess(""), false);
+  store.set("ccode.chatFullAccess", "{oops");
+  assert.equal(rememberedFullAccess("p1"), false, "坏值当没记过");
+});
+
+test("连接定了 / 换了之后的权限档：记过的带上完全访问，没记过的不接着用上一条的", () => {
+  const base = { permission: "write_tree" as const, fullAvailable: true };
+  assert.equal(profilePermissionMode({ ...base, mode: null, remembered: true }), "full");
+  assert.equal(profilePermissionMode({ ...base, mode: "ask", remembered: true }), undefined, "人选过别的档不动");
+  assert.equal(profilePermissionMode({ ...base, mode: "full", remembered: false }), null);
+  assert.equal(profilePermissionMode({ ...base, mode: "auto", remembered: false }), undefined);
+  assert.equal(profilePermissionMode({ ...base, mode: null, remembered: true, fullAvailable: false }), undefined);
+  assert.equal(
+    profilePermissionMode({ ...base, mode: "full", remembered: true, fullAvailable: false }),
+    undefined,
+    "Agent 档表没读到时不忘掉",
+  );
+  assert.equal(profilePermissionMode({ permission: "discuss", mode: null, remembered: true, fullAvailable: true }), undefined);
+});
+
+test("只有聊天对话按连接记权限：新对话、项目新对话、接着聊；步骤、阅读、商量不算", () => {
+  assert.equal(chatPermissionMemoryApplies(null), true);
+  assert.equal(chatPermissionMemoryApplies("quickchat:abc"), true);
+  assert.equal(chatPermissionMemoryApplies("research:/p/proj:project:abc"), true);
+  assert.equal(chatPermissionMemoryApplies("resume:codex:s1"), true);
+  assert.equal(chatPermissionMemoryApplies("ws:/w/1"), false);
+  assert.equal(chatPermissionMemoryApplies("reader:/p\n/p/a.pdf"), false);
+  assert.equal(chatPermissionMemoryApplies("discuss:/p:notes/a.md"), false);
 });

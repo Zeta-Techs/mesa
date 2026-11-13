@@ -1180,6 +1180,7 @@ test("模型菜单开聊前：最近在这个项目用过的搭配一点四样�
       readonlySupported: true,
       permissionNote: null,
       autoNote: null,
+      rememberPermission: false,
     };
     const props = {
       kind: "launch",

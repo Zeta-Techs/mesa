@@ -26,7 +26,7 @@ import { MesaCaret, MesaMark, MesaStatusLead } from "./MesaMark";
 import ChatModelMenu from "./ChatModelMenu";
 import ChatPermissionBadge, { confirmPermissionChoice, effectivePermissionTier } from "./ChatPermissionBadge";
 import ChatProjectPicker, { type DirPick } from "./ChatProjectPicker";
-import { nextPermissionTier } from "../chat-permission";
+import { nextPermissionTier, rememberChatPermission } from "../chat-permission";
 import { readCombos, recordCombo, type LaunchCombo } from "../launch-combos";
 import type {
   ConnIssueState,
@@ -1269,6 +1269,8 @@ export default function ChatSurface({
   const pickPermission = onPickLaunch
     ? (permission: "discuss" | "write_tree", mode?: NativePermissionMode | null) => {
         onPickLaunch.permission(permission, mode);
+        // 人亲手选的档按连接记：完全访问记下，之后这条连接开的对话默认完全访问；换成别的档就忘掉
+        if (launchPick && launchPick.rememberPermission) rememberChatPermission(launchPick.profileId, permission, mode);
         if (permission === "write_tree" && mode === "full" && permTier !== "full") setFullPickSeq((n) => n + 1);
       }
     : undefined;
@@ -1279,7 +1281,7 @@ export default function ChatSurface({
       id === "discuss" ? launchPick.readonlySupported : launchPick.permissionModes.includes(id),
     );
     if (!next) return;
-    if (next === "full" && !(await confirmPermissionChoice(launchAgentLabel, "full", false))) return;
+    if (next === "full" && !(await confirmPermissionChoice(launchAgentLabel, "full", false, launchPick?.rememberPermission))) return;
     if (next === "discuss") pickPermission("discuss", null);
     else pickPermission("write_tree", next);
   }
@@ -1376,6 +1378,7 @@ export default function ChatSurface({
           modes={launchPick.permissionModes}
           readonlySupported={launchPick.readonlySupported}
           note={launchPick.permissionNote}
+          remember={launchPick.rememberPermission}
           observed={running ? launchPick.observedTier : null}
           // 开聊前、只看没接、或 Agent 停了还能接着聊：改的是下次启动的参数；运行中：换 = 重开接回
           editable={launchPickOpen || resumePickOpen || (!running && canResume)}
