@@ -136,26 +136,17 @@ function launchBarAgent(): string {
  * 行主动作 = 聊想法（未绑工作区）/ 开工（挂步骤的卡，走一键开步链路）/ 继续（已绑工作区，开终端预填 CONTINUE_STEP_PROMPT）。
  * 展开手风琴按卡片 id 记忆在本组件内——ProjectGroup 以项目 key 挂载，切项目自然清空。
  */
-/** 「AI 干活」下一行的回头入口（2026-11-10 用户：「补充文献和跟进按钮挤在一块，看着很乱」）：一律同一种文字链接、中间点隔开，
- *  不再一个下划线虚线、一个带框按钮混排；眼下有事可做的（跟进、补读）排前面、字重一点，随时可用的工具在后 */
-const LOOP_TOOL = "shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-50";
-const LOOP_PENDING = "shrink-0 rounded-sm text-xs font-medium text-l1 underline-offset-2 hover:underline disabled:opacity-50";
+/** 回头组按钮（2026-11-13 步骤卡统一设计稿）：与商量组同一种小描边按钮，组内不再用「·」隔开
+ *  （点和统计行的分隔符一样，读起来像同一串数）；眼下有事可做的（补读）字重一点 */
+const LOOP_TOOL = "shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50";
+const LOOP_PENDING = "shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs font-medium text-l1 hover:bg-hover disabled:opacity-50";
 
 function loopRow(items: ReactNode[]): ReactNode {
   const list = items.filter(Boolean);
   if (list.length === 0) return null;
   return (
-    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      {list.map((el, i) => (
-        <Fragment key={i}>
-          {i > 0 && (
-            <span aria-hidden="true" className="text-xs text-l4">
-              ·
-            </span>
-          )}
-          {el}
-        </Fragment>
-      ))}
+    <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      {list.map((el, i) => <Fragment key={i}>{el}</Fragment>)}
     </span>
   );
 }
@@ -1705,7 +1696,7 @@ export default function TaskCardsSection({
             onContinueStep={() => continueFocusedStep()}
             nudge={followNudge()}
             loopActions={(() => {
-              // 回头入口与「这一步做过几轮」同一行（2026-11-11 项目页减法）：有工作副本时由几轮那一栏把入口排在前面
+              // 回头组（2026-11-13 步骤卡统一设计稿）：退回 / 补文献 → 跟进类 → 文件版本，四类步骤同一顺序；与商量组在步骤卡里竖线隔开
               const lead = (() => {
               // 退回上一步补料（design-review-loop.md §4）：这一步开过工就有——做到一半、待评审、已保存都能回头（2026-11-06 流程贯通 §5；
               // 原先只在已保存时给，因为没并入就保存会把「待跟进」盖掉，§3 改判定后这个顾虑没了）。跟进更新（§5）只在已保存且待跟进时给
@@ -1778,9 +1769,9 @@ export default function TaskCardsSection({
                       「{live.staleUpstream}」有更新，继续时会并进来
                     </span>
                   ),
+                  reworkButton,
                   refreshButton,
                   commentsButton,
-                  reworkButton,
                 ]);
               }
               if (focusRunStatus !== "done") return null;
@@ -1798,9 +1789,9 @@ export default function TaskCardsSection({
               if (!catchUpButton && targets.length === 0 && !commentsButton) return null;
               // 已保存步骤的「跟进更新」同样在下一步提示里（followNudge）
               return loopRow([
+                reworkButton,
                 catchUpButton,
                 commentsButton,
-                reworkButton,
               ]);
               })();
               const roundsWs = stepWorkspace(focusStepDto);
@@ -1810,6 +1801,7 @@ export default function TaskCardsSection({
                   workspaceId={roundsWs.id}
                   refreshKey={`${focusRunStatus ?? ""}|${refreshToken}`}
                   lead={lead}
+                  className={LOOP_TOOL}
                 />
               ) : (
                 lead

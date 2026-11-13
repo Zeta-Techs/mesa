@@ -126,6 +126,14 @@ test("去评审：待评审必给；进行中只在出字时藏，回合结束�
   assert.equal(reviewActionVisible("done"), false);
 });
 
+test("对话开着但 AI 说完了：当前节点落到保存进项目；还在干活时仍停在 AI 那行", () => {
+  const idle = buildStepFlow({ step: step({}), states: [], hasDraft: true, runStatus: "active", agentIdle: true });
+  assert.equal(idle.nodes.find((n) => n.kind === "agent")?.done, true);
+  assert.equal(idle.currentKey, "review");
+  const busy = buildStepFlow({ step: step({}), states: [], hasDraft: true, runStatus: "active", agentIdle: false });
+  assert.equal(busy.currentKey, "agent");
+});
+
 test("runStatus 映射：review/done 都算 Agent 节点完成；评审节点只在 done 完成", () => {
   const review = buildStepFlow({
     step: step({}),
@@ -670,4 +678,19 @@ test("parseToFetchItems：开头「某天新加：第 x–y 篇」点到的篇�
   const items = parseToFetchItems(text);
   assert.equal(items.length, 5);
   assert.deepEqual(items.map((i) => i.addedOn ?? null), [null, "2026-11-10", "2026-11-10", null, "2026-11-10"]);
+});
+
+test("保存后才用得上的收尾标 afterSave，单独归进「保存后可做」；普通可选事项不标", () => {
+  const flow = buildStepFlow({
+    step: step({ skills: ["lit-notes"] }),
+    states: [ht({ title: "（可选）补一份清单", optional: true })],
+    hasDraft: true,
+    runStatus: "done",
+    continueNotes: true,
+    endnoteExport: true,
+  });
+  assert.equal(flow.nodes.find((n) => n.key === "continue-notes")?.afterSave, true);
+  assert.equal(flow.nodes.find((n) => n.key === "endnote-export")?.afterSave, true);
+  const plain = flow.nodes.filter((n) => n.section === "optional" && n.kind === "human" && n.human);
+  assert.ok(plain.every((n) => !n.afterSave));
 });

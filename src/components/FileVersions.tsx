@@ -16,13 +16,15 @@ const ImageVersionCompare = lazy(() => import("./ImageVersionCompare"));
 const LINK = "shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-40";
 const absolute = (root: string, path: string) => `${root.replace(/[/\\]+$/, "")}/${path}`;
 
-export function FileVersionsButton({ root, path, workspaceId, refreshKey = "", lead, onOpen }: {
+export function FileVersionsButton({ root, path, workspaceId, refreshKey = "", lead, onOpen, className = LINK }: {
   root: string;
   path?: string;
   workspaceId?: string;
   refreshKey?: string;
   lead?: ReactNode;
   onOpen?: () => void | Promise<void>;
+  /** 步骤卡回头组传描边按钮样式；预览栏等处默认文字链接 */
+  className?: string;
 }) {
   const [data, setData] = useState<FileVersionsDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,10 +46,9 @@ export function FileVersionsButton({ root, path, workspaceId, refreshKey = "", l
       await showProjectFile({ projectRoot: data.root, root: data.root, path: absolute(data.root, first.path), versions: { root, workspaceId }, from: "文件版本" });
     } catch (reason) { setError(String(reason)); }
   }
-  return <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+  return <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
     {lead}
-    {lead && <span aria-hidden="true" className="text-xs text-l4">·</span>}
-    <button type="button" className={LINK} onClick={() => void open()} title={error ?? "在右侧文件栏查看现稿和历史；留存只决定以后保存哪些版本"}>文件版本</button>
+    <button type="button" className={className} onClick={() => void open()} title={error ?? "在右侧文件栏查看现稿和历史；留存只决定以后保存哪些版本"}>文件版本</button>
   </span>;
 }
 

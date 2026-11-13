@@ -310,14 +310,14 @@ test("agent：「开始」始终可用，归档工作区换成「恢复工作区
   );
 });
 
-test("agent：进行中给「去终端看看」，会话跑完附完成提示", () => {
+test("agent：进行中给「去终端看看」；说完了不再另写一句完成提示（当前节点已落到保存那一行）", () => {
   assert.deepEqual(
     stepNodeAction(node("agent"), ctx({ runStatus: "active", agentAttention: "working" })),
-    { kind: "go-terminal", agentDone: false },
+    { kind: "go-terminal" },
   );
   assert.deepEqual(
     stepNodeAction(node("agent"), ctx({ runStatus: "active", agentAttention: "done" })),
-    { kind: "go-terminal", agentDone: true },
+    { kind: "go-terminal" },
   );
   // 待评审：agent 行右缘只给「回到对话」（2026-11-11 用户：点了停下找不到对话），主路径仍是评审节点；没工作区不给
   assert.deepEqual(stepNodeAction(node("agent"), ctx({ runStatus: "review", hasWorkspace: true })), { kind: "back-to-chat" });

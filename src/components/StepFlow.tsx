@@ -742,7 +742,6 @@ export default function StepFlow({
   // 决策区默认收起；hard_pause 的未答项由开工弹层明确拦截。
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   // 方式二折叠态（v3.90）：与方式一同款——默认收起一行，展开才露「跟 AI 商量一下」
-  const [chatOpen, setChatOpen] = useState(false);
   const [writeOwn, setWriteOwn] = useState<{
     q: string;
     text: string;
@@ -1877,6 +1876,8 @@ export default function StepFlow({
     toolAsks: toolAskFields.map((field) => ({ key: field.key, label: field.label })),
     endnoteExport: endnoteStep,
     continueNotes: notesStep,
+    // 对话还开着、AI 不在出字也不在等确认：轮到人评审，当前节点落到「保存进项目」（与「去评审」露出同一口径）
+    agentIdle: runStatus === "active" && agentAttention !== "working" && agentAttention !== "confirm",
   });
   const seeds = step.discussionSeeds ?? [];
 
@@ -2157,7 +2158,6 @@ export default function StepFlow({
         return (
           <span className="flex shrink-0 items-center gap-1.5">
             {askBtn}
-            {action.agentDone && <span className="text-xs text-l3">Agent 已跑完</span>}
             {!live && onContinueStep && onContinueFresh && (
               <button
                 type="button"
@@ -2235,6 +2235,59 @@ export default function StepFlow({
 
   /** 单个节点行（主干与可选区共用）：dense = 可选区的紧凑版（更小字号、不显示 hint） */
   const hasDiscussNode = flow.nodes.some((n) => n.kind === "discuss");
+  // 商量组（继续讨论 · TASK.md · 方案研讨）：没开工时挂「先定几件事」，开工后跟到「AI 干活」下的工具行，
+  // 与回头组用竖线隔开；四类步骤同一顺序（2026-11-13 步骤卡统一设计稿）
+  const talkOnAgent = !hasDiscussNode || runStatus !== "pending";
+  const talkGroup = (
+    <div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1" data-step-tools="talk">
+      <button
+        type="button"
+        disabled={!draft || chatBusy}
+        onClick={() => void chatDraft()}
+        title={
+          discussed
+            ? "接回上次商量的会话，接着改这一步的 TASK.md"
+            : "开终端跟 AI 一起过一遍任务书：它读稿提问、你拍板、它直接改稿——改的就是最终落盘的 TASK.md"
+        }
+        className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+      >
+        {chatBusy ? "准备 TASK.md…" : discussChatLabel(discussed)}
+      </button>
+      <button
+        type="button"
+        disabled={!draft}
+        onClick={() => void openDraftInline()}
+        title={
+          draftHasBody
+            ? "这一步的 TASK.md 已改过，点此查看或再改"
+            : "查看/编辑这一步的 TASK.md（没改过时是模板默认拼装，可直接改）"
+        }
+        className={taskMdBtnClass}
+      >
+        TASK.md
+      </button>
+      {discussInline}
+      {showDiscussNudge && (
+        <CoachTip
+          arrow="up"
+          arrowAt={28}
+          title="开始前，先跟 AI 聊几句？"
+          onClose={dismissDiscussNudge}
+          className="absolute top-full left-0 mt-2 w-80"
+          actions={[
+            { label: "先不了", onClick: dismissDiscussNudge },
+            { label: "跟 AI 商量一下", onClick: () => void chatDraft() },
+          ]}
+        >
+          AI 会一次问你一个问题，帮你把这一步想要什么说清楚，写进任务书；再点「开始」，做出来的东西更贴你的想法。
+          {/* 研讨是可选的一步（2026-11-11 用户）：只在这一步有「请几家研讨」时补一句，不另起气泡、不放按钮 */}
+          {nudgeWithConsult && (
+            <p className="mt-1.5">商量完还有拿不准的判断，可以再点右边的「方案研讨」（可选），听几家 AI 各自的看法，认同的结论带回商量。</p>
+          )}
+        </CoachTip>
+      )}
+    </div>
+  );
 
   function renderNode(node: StepFlowNode, dense = false) {
     const isCurrent = node.key === flow.currentKey;
@@ -2368,10 +2421,7 @@ export default function StepFlow({
                     : "text-l2"
             }`}
           >
-            {node.kind === "agent" ? <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span>{node.label}</span>
-              {progressHeadline && <span data-step-progress="headline" className="text-xs tabular-nums text-l3">{progressHeadline}</span>}
-            </span> : node.label}
+            {node.label}
           </span>
           {/* 可选事项标记：不做也不影响这一步跑完。没有这个标记的话，
               一个永远不打勾的条目看起来就像没做完的必办项。
@@ -2991,104 +3041,7 @@ export default function StepFlow({
                 「预览/编辑 TASK.md」是看结果不是第三条路——跟在本行标签后面
                 （与方式一行的「全部用推荐值」同位），不 ml-auto 拉到右缘抢「开始」。 */}
             {/* 商量引导气泡（2026-11-05 用户点名）：每个项目第一次走到没开工、没商量过的步骤时出，引导先聊再开工 */}
-            <div className="relative">
-            {decisions.length > 0 ? (
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <button
-                    type="button"
-                    onClick={() => setChatOpen((v) => !v)}
-                    aria-expanded={chatOpen}
-                    className="flex min-w-0 items-center gap-1 text-xs text-l3 hover:text-l1"
-                  >
-                    <FoldMark open={chatOpen} boxed />
-                    和 AI 商量（可选）
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!draft}
-                    onClick={() => void openDraftInline()}
-                    title={
-                      draftHasBody
-                        ? "这一步的 TASK.md 已改过，点此查看或再改"
-                        : "查看/编辑这一步的 TASK.md（没改过时是模板默认拼装，可直接改）"
-                    }
-                    className={taskMdBtnClass}
-                  >
-                    TASK.md
-                  </button>
-                  {discussInline}
-                </div>
-                {chatOpen && (
-                  <div className="flex flex-wrap items-center gap-2 pl-4">
-                    <button
-                      type="button"
-                      disabled={!draft || chatBusy}
-                      onClick={() => void chatDraft()}
-                      title={
-                        discussed
-                          ? "接回上次商量的会话，接着改这一步的 TASK.md"
-                          : "开终端跟 AI 一起过一遍任务书：它读稿提问、你拍板、它直接改稿——改的就是最终落盘的 TASK.md"
-                      }
-                      className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                    >
-                      {chatBusy ? "准备 TASK.md…" : discussChatLabel(discussed)}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* 无决策项的步骤：方式一不存在，不标「方式二」（会让人找方式一）——维持单按钮形态 */
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={!draft || chatBusy}
-                  onClick={() => void chatDraft()}
-                  title={
-                    discussed
-                      ? "接回上次商量的会话，接着改这一步的 TASK.md"
-                      : "开终端跟 AI 一起过一遍任务书：它读稿提问、你拍板、它直接改稿——改的就是最终落盘的 TASK.md"
-                  }
-                  className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                >
-                  {chatBusy ? "准备 TASK.md…" : discussChatLabel(discussed)}
-                </button>
-                <button
-                  type="button"
-                  disabled={!draft}
-                  onClick={() => void openDraftInline()}
-                  title={
-                    draftHasBody
-                      ? "这一步的 TASK.md 已改过，点此查看或再改"
-                      : "查看/编辑这一步的 TASK.md（没改过时是模板默认拼装，可直接改）"
-                  }
-                  className={taskMdBtnClass}
-                >
-                  TASK.md
-                </button>
-                {discussInline}
-              </div>
-            )}
-              {showDiscussNudge && (
-                <CoachTip
-                  arrow="up"
-                  arrowAt={28}
-                  title="开始前，先跟 AI 聊几句？"
-                  onClose={dismissDiscussNudge}
-                  className="absolute top-full left-0 mt-2 w-80"
-                  actions={[
-                    { label: "先不了", onClick: dismissDiscussNudge },
-                    { label: "跟 AI 商量一下", onClick: () => void chatDraft() },
-                  ]}
-                >
-                  AI 会一次问你一个问题，帮你把这一步想要什么说清楚，写进任务书；再点「开始」，做出来的东西更贴你的想法。
-                  {/* 研讨是可选的一步（2026-11-11 用户）：只在这一步有「请几家研讨」时补一句，不另起气泡、不放按钮 */}
-                  {nudgeWithConsult && (
-                    <p className="mt-1.5">商量完还有拿不准的判断，可以再点右边的「方案研讨」（可选），听几家 AI 各自的看法，认同的结论带回商量。</p>
-                  )}
-                </CoachTip>
-              )}
-            </div>
+            {node.kind === "discuss" && !talkOnAgent && talkGroup}
             {chatError && (
               <InlineNotice tone="err" size="micro">{chatError}</InlineNotice>
             )}
@@ -3148,16 +3101,25 @@ export default function StepFlow({
             onChange={setAgentProgress}
           />
         )}
-        {/* 回头的入口（退回补料、跟进、补读、导入批注）单独一行：步骤卡右缘只留主动作（step-panel R6） */}
-        {/* empty:hidden：回头入口和「做过几轮」都没有时组件渲染为空，不留一截空白 */}
-        {node.kind === "agent" && (progressDetails.length > 0 || loopActions) && (
-          <div data-step-progress="details" className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-9 empty:hidden">
-            {progressDetails.length > 0 && <span className="text-micro tabular-nums text-l3" title={
-              notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
-              searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
-              "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
-            }>{progressDetails.join(" · ")}</span>}
-            {loopActions}
+        {/* 工具行与统计行（2026-11-13 步骤卡统一设计稿）：工具行 = 商量组 | 回头组，竖线隔开；
+            统计行单独一行只读，首项是本步主进度、加粗 */}
+        {node.kind === "agent" && (talkOnAgent || loopActions) && (
+          <div data-step-tools="row" className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-9">
+            {talkOnAgent && talkGroup}
+            {talkOnAgent && loopActions && <span aria-hidden className="h-3.5 w-px bg-field" />}
+            {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
+          </div>
+        )}
+        {node.kind === "agent" && (progressHeadline || progressDetails.length > 0) && (
+          <div data-step-progress="details" className="mt-1 flex flex-wrap items-baseline gap-x-2 pl-9 text-micro tabular-nums text-l3" title={
+            notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
+            searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
+            "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
+          }>
+            {progressHeadline && <span data-step-progress="headline" className="font-medium text-l2">{progressHeadline}</span>}
+            {progressDetails.map((d) => (
+              <span key={d} className="before:mr-2 before:text-l4 before:content-['·'] first:before:hidden">{d}</span>
+            ))}
           </div>
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。
@@ -3624,20 +3586,21 @@ export default function StepFlow({
           .map((node) => renderNode(node, false))}
       </ol>
       {/* 可选补充：沉到分隔线下，与主干拉开层级——它们不做也能跑完这一步，
-          和「定方向 / agent 执行 / 评审」平铺在一起会让人以为样样都得做 */}
-      {flow.nodes.some((n) => n.section === "optional") && (
-        <>
+          和「定方向 / agent 执行 / 评审」平铺在一起会让人以为样样都得做。
+          保存进项目之后才用得上的收尾（继续精读、同步到文献库、导入批注）再单独放进虚线下的「保存后可做」，
+          不和可选事项混排（2026-11-13 步骤卡统一设计稿） */}
+      {([
+        ["可选", "solid", flow.nodes.filter((n) => n.section === "optional" && !n.afterSave)],
+        ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave)],
+      ] as const).map(([title, line, nodes]) => nodes.length > 0 && (
+        <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"}>
           <div className="mt-3 flex items-center gap-2">
-            <span className="shrink-0 text-micro text-l4">可选</span>
-            <span className="h-px min-w-0 flex-1 bg-hairline" />
+            <span className="shrink-0 text-micro text-l4">{title}</span>
+            <span className={line === "dashed" ? "min-w-0 flex-1 border-t border-dashed border-field" : "h-px min-w-0 flex-1 bg-hairline"} />
           </div>
-          <ol className="mt-1.5 space-y-1">
-            {flow.nodes
-              .filter((n) => n.section === "optional")
-              .map((node) => renderNode(node, false))}
-          </ol>
-        </>
-      )}
+          <ol className="mt-1.5 space-y-1">{nodes.map((node) => renderNode(node, false))}</ol>
+        </div>
+      ))}
       {note && <p className="mt-1 pl-1 text-micro text-l3">{note}</p>}
       {registerOffer && (
         <RegisterOfferRow

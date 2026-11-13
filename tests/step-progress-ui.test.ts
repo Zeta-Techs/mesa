@@ -80,10 +80,11 @@ test("步骤分组三行：检索、精读、大纲各用自身统计，其他�
         const agent = host.querySelector('[data-node-key="agent"]');
         if (!agent) continue;
         const headline = agent.querySelector('[data-step-progress="headline"]');
+        // 没有统计的步骤不留空统计行（2026-11-13 步骤卡统一设计稿）；按钮一律在工具行
         const detail = agent.querySelector('[data-step-progress="details"]')!;
-        assert.ok(detail, step.name);
-        assert.ok(detail.querySelector("[data-loop]"));
-        assert.ok(!detail.textContent?.includes("已写笔记"), "总量只显示一次，不在详情里重复");
+        assert.ok(agent.querySelector('[data-step-tools="loop"] [data-loop]'), `回头组在工具行：${step.name}`);
+        assert.ok(!detail?.querySelector("button"), "统计行不放按钮");
+        assert.ok((agent.textContent?.match(/已写笔记/g) ?? []).length <= 1, "总量只显示一次，不在详情里重复");
         if (notesStep) {
           assert.match(headline?.textContent ?? "", /已写笔记 2 篇/);
           assert.match(detail.textContent ?? "", /全文 1.*仅摘要 1.*只速读 1/);
@@ -91,8 +92,9 @@ test("步骤分组三行：检索、精读、大纲各用自身统计，其他�
           const actions = Array.from(agent.querySelectorAll("button"));
           const discuss = actions.find((button) => button.textContent === "继续讨论");
           assert.ok(discuss, step.name);
-          assert.ok(headline!.compareDocumentPosition(discuss!) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+          // 工具行（商量 | 回头）在上，统计行（总量 + 分项）在下，总量和分项同一行
           assert.ok(discuss!.compareDocumentPosition(detail) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+          assert.ok(detail.contains(headline!));
         } else if (searchStep) {
           assert.match(headline?.textContent ?? "", /纳入 2 篇/);
           assert.match(detail.textContent ?? "", /缺全文 2/);
@@ -102,6 +104,7 @@ test("步骤分组三行：检索、精读、大纲各用自身统计，其他�
           assert.doesNotMatch(agent.textContent ?? "", /已写笔记|纳入 2 篇/);
         } else {
           assert.equal(headline, null, `非文献统计步骤不加空计数：${step.name}`);
+          assert.equal(detail, null, `非文献统计步骤不留空统计行：${step.name}`);
           exercised.add("other");
         }
       }

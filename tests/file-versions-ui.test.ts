@@ -88,7 +88,7 @@ test("步骤卡只显示短入口并打开已有文件侧栏；不创建弹窗�
   const mounted = await mount();
   try {
     await mounted.act(async () => mounted.root.render(mounted.createElement(mounted.FileVersionsButton, { root: "/project", workspaceId: "step", lead: "补文献…" })));
-    assert.equal(mounted.body(), "补文献…·文件版本");
+    assert.equal(mounted.body(), "补文献…文件版本");
     assert.doesNotMatch(mounted.body(), /outline|做过.*轮|导师|历史内容/);
     await mounted.act(async () => mounted.button("文件版本").click());
     assert.equal(mounted.document.querySelector('[role="dialog"]'), null);

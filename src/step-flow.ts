@@ -46,6 +46,8 @@ export interface StepFlowNode {
   skipCurrent?: boolean;
   /** human 节点对应的人工事项（勾选/提交产物回传用） */
   human?: HumanTaskStateDto;
+  /** 保存进项目之后才用得上的收尾（同步文献库、继续精读、导入文件）：可选区里单独归到「保存后可做」 */
+  afterSave?: boolean;
 }
 
 export interface StepFlow {
@@ -111,6 +113,9 @@ export function buildStepFlow(args: {
   endnoteExport?: boolean;
   /** 精读步：保存进项目之后，EndNote 底下出现「继续精读笔记」，进沉浸阅读。不是人工事项。 */
   continueNotes?: boolean;
+  /** 这一步的对话还开着、AI 已经说完了（不在出字也不在等确认）：「AI 干活」算做完，
+   *  当前节点落到「保存进项目」——轮到人评审了，竖线不再停在 AI 那一行 */
+  agentIdle?: boolean;
 }): StepFlow {
   const { step, states, hasDraft, runStatus } = args;
   const pendingDecisions = args.pendingDecisions ?? 0;
@@ -190,7 +195,7 @@ export function buildStepFlow(args: {
     // 步骤名已在卡片头上，这里不再重复（step-panel R3）
     label: "AI 干活",
     hint: undefined,
-    done: runStatus === "review" || runStatus === "done",
+    done: runStatus === "review" || runStatus === "done" || (runStatus === "active" && args.agentIdle === true),
   });
   // 4. during 人工事项（与 Agent 并行段）
   for (const h of humans("during")) {
@@ -250,6 +255,7 @@ export function buildStepFlow(args: {
         : "先保存进项目，才会有导入文件。",
       done: h.done,
       human: h,
+      afterSave: true,
     });
   }
   if (args.endnoteExport && afterEndnote.length === 0) {
@@ -263,6 +269,7 @@ export function buildStepFlow(args: {
         : "先保存进项目，才可以同步。",
       done: false,
       skipCurrent: true,
+      afterSave: true,
     });
   }
   if (args.continueNotes) {
@@ -276,6 +283,7 @@ export function buildStepFlow(args: {
         : "保存进项目后可用。",
       done: false,
       skipCurrent: true,
+      afterSave: true,
     });
   }
   for (const ask of (args.toolAsks ?? []).filter((item) => item.key !== "manuscript" && item.key !== "experiment")) {
