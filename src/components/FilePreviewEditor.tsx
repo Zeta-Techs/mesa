@@ -256,6 +256,10 @@ function MarkdownView({
       sanitizeDocumentHtml(rewriteMdImageHtml(renderMarkdownDocument(mdSource))),
     [mdSource],
   );
+  // 必须按 html 记住同一个对象：React 19 按对象身份比较 dangerouslySetInnerHTML，每次渲染新建 {__html}
+  // 就会整段重写正文——划选的选区、记住的选段 Range、页内查找标记、公式排版都跟着没了（2026-11-13：
+  // 审阅里划字后高亮时有时无、点进意见框高亮消失，就是文件夹有变动 / 轮询 / 打字触发重渲染重写了正文）
+  const bodyHtml = useMemo(() => ({ __html: html }), [html]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const showMermaid = useMemo(() => hasMermaidFence(text), [text]);
@@ -664,7 +668,7 @@ function MarkdownView({
           className={`md-body${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""} ${
             large ? "mx-auto max-w-3xl px-8 py-10" : compact ? "px-4 py-3" : "px-5 py-4"
           }`}
-          dangerouslySetInnerHTML={{ __html: html }}
+          dangerouslySetInnerHTML={bodyHtml}
         />
         <HoverTip tip={citeTip} text={citeTip?.text ?? ""} warn={citeTip?.warn} up />
         {showMermaid && (
