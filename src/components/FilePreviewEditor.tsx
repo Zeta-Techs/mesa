@@ -467,7 +467,7 @@ function MarkdownView({
     (document.activeElement as HTMLElement | null)?.blur?.();
   }
 
-  // 加过意见的段落：按意见栏里的引文反找正文，淡黄标出（CSS 自定义高亮，不改正文 DOM）
+  // 加过意见的段落：按意见栏里的引文反找正文，淡蓝底标出（CSS 自定义高亮，不改正文 DOM）
   const reviewQuotes = useContext(ReviewQuotesContext);
   useLayoutEffect(() => {
     const paintbox = highlightPaintbox();

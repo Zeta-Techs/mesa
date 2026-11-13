@@ -86,10 +86,15 @@ export function annotationDraftFromSelection(selected: string): string | null {
   return quote ? quote : null;
 }
 
+/** 超长的选段收成「开头…结尾」：AI 照首尾认得出是哪一段，审阅高亮也能按首尾标全整段
+ *（2026-11-13 用户：只截开头时高亮只盖住前一百多字，像没选全） */
+const QUOTE_HEAD = 100;
+const QUOTE_TAIL = 50;
+
 function oneLineQuote(excerpt: string): string {
   const flat = excerpt.replace(/\s+/g, " ").trim();
   if (flat.length <= ANNOTATION_QUOTE_CAP) return flat;
-  return `${flat.slice(0, ANNOTATION_QUOTE_CAP)}…`;
+  return `${flat.slice(0, QUOTE_HEAD).trimEnd()}…${flat.slice(-QUOTE_TAIL).trimStart()}`;
 }
 
 /**
@@ -144,7 +149,8 @@ export function appendReviewAnnotation(
   return appendReviewLine(notes, `- 「${quote}」（${input.fileName}）：${comment}${image}`);
 }
 
-/** 意见栏里每条「- 「引文」（文件）：…」的引文与文件名；被截断的引文去掉末尾省略号，当前缀用 */
+/** 意见栏里每条「- 「引文」（文件）：…」的引文与文件名。「开头…结尾」原样返回（反查时按首尾找）；
+ *  旧格式只留开头、以省略号收尾的去掉省略号，当前缀用 */
 export function reviewNoteQuotes(notes: string): { file: string; quote: string }[] {
   const out: { file: string; quote: string }[] = [];
   for (const line of notes.split("\n")) {

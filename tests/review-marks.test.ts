@@ -43,3 +43,13 @@ test("找不到（正文没有、空引文、只有空白）返回 null；重复
   assert.equal(range.startContainer.parentElement, host.children[0], "取第一处");
   assert.equal(range.toString(), "同一句");
 });
+
+test("长选段收成「开头…结尾」时按首尾标出整段，结尾取开头之后最近的一处", () => {
+  const host = hostOf("<p>甲乙丙丁戊己庚辛</p><p>戊己再出现</p>");
+  const range = findQuoteRange(host, "甲乙…戊己");
+  assert.ok(range);
+  assert.equal(range!.toString(), "甲乙丙丁戊己");
+  assert.equal(findQuoteRange(host, "没有…戊己"), null, "开头找不到");
+  assert.equal(findQuoteRange(host, "庚辛…甲乙"), null, "结尾在开头之前不算");
+  assert.equal(findQuoteRange(host, "…戊己"), null, "缺开头不猜");
+});

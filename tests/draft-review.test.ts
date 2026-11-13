@@ -98,6 +98,16 @@ test("划选批注追加进已有意见，同一段不重复", () => {
   });
   assert.match(clipped, /（draft\.md）：改成见 Fig\.1/);
   assert.ok(!clipped.includes("甲".repeat(161)));
+  // 超长收成「开头…结尾」，反查时按首尾标全整段
+  const span = appendReviewAnnotation("", {
+    fileName: "draft.md",
+    excerpt: `${"头".repeat(120)}中段${"尾".repeat(60)}`,
+    comment: "改",
+  });
+  assert.ok(span.startsWith(`- 「${"头".repeat(100)}…${"尾".repeat(50)}」`));
+  assert.deepEqual(reviewNoteQuotes(span), [
+    { file: "draft.md", quote: `${"头".repeat(100)}…${"尾".repeat(50)}` },
+  ]);
 });
 
 test("给图加意见：引文写图名，带红框的标注图路径随意见写进同一行", () => {

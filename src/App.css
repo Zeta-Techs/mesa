@@ -3147,9 +3147,9 @@ select:focus-visible {
 ::highlight(review-pick) {
   background-color: color-mix(in srgb, var(--color-cta) 35%, transparent);
 }
-/* 审阅：已经加过意见的段落 */
+/* 审阅：已经加过意见的段落——同色系、比正在划的那段淡一档（2026-11-13 用户：黄底不好看） */
 ::highlight(review-done) {
-  background-color: rgba(255, 204, 0, 0.22);
+  background-color: color-mix(in srgb, var(--color-cta) 16%, transparent);
 }
 /* 审阅页：点图 = 在图上框出问题加意见 */
 .md-body-annotatable img {
