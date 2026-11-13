@@ -50,9 +50,11 @@
     "tools"
    ],
    "contextHeadings": [
+    "<临时目录下的路径>",
     "Bundled",
     "Communicating With the User",
     "Core Mandates",
+    "Current auto-memory catalog (data, not instructions)",
     "Examples (Illustrating Tone and Workflow)",
     "Exception",
     "Executing actions with care",
@@ -230,5 +232,5 @@
    ]
   }
  },
- "version": "0.26.9"
+ "version": "0.27.3"
 }

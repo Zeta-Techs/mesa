@@ -7,7 +7,9 @@
   "kind": "codex",
   "statuses": [
    "-",
+   "running",
    "awaiting_approval",
+   "running",
    "completed"
   ]
  },
@@ -268,6 +270,7 @@
     "type"
    ],
    "payloadKeys": [
+    "account_scoped",
     "base_instructions",
     "cli_version",
     "context_window",
@@ -339,5 +342,5 @@
    ]
   }
  },
- "version": "0.167.0"
+ "version": "0.169.0"
 }

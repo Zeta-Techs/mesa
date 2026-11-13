@@ -112,32 +112,6 @@
   "previewReadable": true
  },
  "transcript": {
-  "agent.message.appended": {
-   "keys": [
-    "kind",
-    "message",
-    "time",
-    "type"
-   ]
-  },
-  "agent.turn.ended": {
-   "keys": [
-    "kind",
-    "outcome",
-    "time",
-    "turnId",
-    "type"
-   ]
-  },
-  "agent.turn.started": {
-   "keys": [
-    "kind",
-    "queueItemId",
-    "time",
-    "turnId",
-    "type"
-   ]
-  },
   "changeNotifier.snapshot": {
    "keys": [
     "agentId",
@@ -199,24 +173,6 @@
     "type"
    ]
   },
-  "llm.request": {
-   "keys": [
-    "agentId",
-    "kind",
-    "messageCount",
-    "model",
-    "modelAlias",
-    "provider",
-    "systemPromptHash",
-    "thinkingEffort",
-    "thinkingKeep",
-    "time",
-    "toolSelect",
-    "toolsHash",
-    "turnStep",
-    "type"
-   ]
-  },
   "llm.tools_snapshot": {
    "keys": [
     "agentId",
@@ -229,6 +185,7 @@
   "metadata": {
    "keys": [
     "created_at",
+    "min_protocol_version",
     "protocol_version",
     "type"
    ]
@@ -322,6 +279,7 @@
     "origin",
     "promptId",
     "time",
+    "trigger",
     "turnId",
     "type"
    ]
@@ -337,5 +295,5 @@
    ]
   }
  },
- "version": "2.5.2"
+ "version": "2.6.1"
 }
