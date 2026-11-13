@@ -308,6 +308,8 @@ test("科研原语与顶刊配色：贝塞尔弯曲/耦合箭头、自由能台�
     assert.match(svg, /<feDropShadow/);
     assert.match(svg, /\bQ[\d., -]+/);
     assert.match(svg, /\bC[\d., -]+/);
+    assert.doesNotMatch(svg, /stroke-linecap="[^"]*"[^>]*stroke-linecap=/);
+    assert.match(svg, /DOS \(a\.u\.\)/);
     const xmlCheck = spawnSync(python, ["-c",
       "import sys, zipfile; from pptx import Presentation\np=Presentation(sys.argv[1]); assert len(p.slides[0].shapes) >= 15\ns=zipfile.ZipFile(sys.argv[1]).read('ppt/slides/slide1.xml').decode()\nprint(all(k in s for k in ('gradFill', 'outerShdw', 'quadBezTo', 'cubicBezTo')))",
       join(root, "figures/t/t.pptx")], { encoding: "utf8" });
@@ -355,8 +357,10 @@ test("三明治图层架构与检查放宽：hero_panel 归一化锚点、纯白
           hero_margin_mm: [4, 3, 4, 4],
           anchors: { active: [0.50, 0.50], edge: [0.32, 0.55] },
           source: { kind: "image-model", model: "gemini-3-pro-image", prompt_file: "assets/hero.prompt.txt" } },
-        // 文字落在 hero.png 顶角纯白留白区：对比度达标，不应误报 ONIMG / CROSS
+        // 文字落在 hero.png 顶角纯白留白区：对比度达标，不应误报 ONIMG / CROSS；高价离子电荷与晶相前缀免检原文
         { id: "eq", type: "text", x: 10, y: 14, w: 46, h: 6, text: "H_{2}O + e^{-} → H^{*} + OH^{-}", pt: 6.2, bold: true },
+        { id: "ions", type: "text", x: 10, y: 21, w: 46, h: 6, text: "MoO_{4}^{2-} + Ni^{2+} → a-Ni/MoO_{2}", pt: 6.0 },
+        { id: "axlbl", type: "text", x: 10, y: 28, w: 46, h: 6, text: "ΔG_{H*} (eV)", pt: 6.0 },
         { id: "co", type: "callout", x: 76, y: 14, w: 34, h: 8, target: "hero@active", stroke: "accent", text: "Ni-MoO_{2} interface" },
         { id: "sp", type: "arrow", from: "hero@edge", to: "hero@active", bend: 0.25, stroke: "accent", label: "H^{*}" },
         // 三块相近灰度的色块：应合并为最多 1 条 GRAY-PAIR，不刷屏

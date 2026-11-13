@@ -56,7 +56,8 @@ _ELEMENTS = (
 )
 _EL_TOKEN = re.compile(rf"(?:{_ELEMENTS})(?![a-z])")
 _SPECIES = re.compile(rf"^(?:[*□]|\(|\)|\[|\]|[0-9.xyδ]+|[-−+]|(?:{_ELEMENTS})(?![a-z]))+$")
-_EQ_SPLIT = re.compile(r"\s*(?:\+|→|->|⟶|⇌|↔|⇄|=)\s*")
+_EQ_SPLIT = re.compile(r"(?:\s+\+\s+|\s*(?:→|->|⟶|⇌|↔|⇄|=)\s*)")
+_PHASE_PREFIX = re.compile(r"^(?:[acαβγδ]-)(?=[A-Z])")
 _COEFF_PREFIX = re.compile(r"^\d+(?:/\d+)?(?:\.\d+)?\s*")
 _PHASE_SUFFIX = re.compile(r"(?:\s*\((?:s|l|g|aq|ads)\)|[↑↓])+$")
 _THERMO_TOKEN = re.compile(
@@ -75,11 +76,11 @@ _STAGE_PREFIX = re.compile(
 )
 _AXIS_EXEMPT = {
     "reactioncoordinate", "reactionpathway", "反应坐标", "反应路径", "反应历程",
-    "freeenergy(ev)", "gibbsfreeenergy(ev)", "δg(ev)", "Δg(ev)", "自由能(ev)", "吉布斯自由能(ev)",
+    "freeenergy(ev)", "gibbsfreeenergy(ev)", "δg(ev)", "δgh(ev)", "自由能(ev)", "吉布斯自由能(ev)",
     "dos(a.u.)", "pdos(a.u.)", "tdos(a.u.)", "dos(states/ev)", "densityofstates", "态密度", "态密度(a.u.)",
-    "e-ef(ev)", "e−ef(ev)", "energy(ev)", "能量(ev)", "bindingenergy(ev)",
+    "e-ef(ev)", "energy(ev)", "能量(ev)", "bindingenergy(ev)",
     "potential(vvs.rhe)", "u(vvs.rhe)", "e(vvs.rhe)", "overpotential(mv)", "η(mv)", "过电位(mv)",
-    "currentdensity(macm-2)", "j(macm-2)", "log|j|(macm-2)", "tafelslope(mvdec-1)",
+    "currentdensity(macm-2)", "j(macm-2)", "log|j|(macm-2)", "log|j0|(macm-2)", "log|j|", "log|j0|", "tafelslope(mvdec-1)",
 }
 
 
@@ -122,13 +123,15 @@ def is_chem_formula_or_eq(raw_piece):
         if len(parts) > 1:
             has_chem_marker = True
         for part in parts:
+            had_phase = bool(_PHASE_PREFIX.match(part))
+            part = _PHASE_PREFIX.sub("", part)
             if not part or not _SPECIES.fullmatch(part):
                 return False
             els = _EL_TOKEN.findall(part)
             if not els:
                 return False
             total_elements += len(els)
-            if re.search(r"[0-9*□+−-]", part) or len(els) >= 2:
+            if had_phase or re.search(r"[0-9*□+−-]", part) or len(els) >= 2:
                 has_chem_marker = True
     # 单个无数字无电荷的单元素词（如英文介词 In / As / No / Be）不放行，防止普通英文蒙混过关
     return total_elements >= 1 and has_chem_marker
@@ -142,7 +145,7 @@ def is_exempt_label(raw_piece):
         return True
     if _STAGE_ONLY.fullmatch(plain):
         return True
-    if n in _AXIS_EXEMPT:
+    if n.replace("−", "-") in _AXIS_EXEMPT:
         return True
     if is_chem_formula_or_eq(raw_piece):
         return True
@@ -230,7 +233,7 @@ def image_patch_clean_contrast(im, img_rect, ink, txt_hex, bg_hex="FFFFFF"):
         bg_rgb = tuple(int(bg_hex[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
         base = Image.new("RGBA", patch.size, bg_rgb)
         patch = Image.alpha_composite(base, patch.convert("RGBA")).convert("RGB")
-    pixels = list(patch.getdata())
+    pixels = list(patch.get_flattened_data() if hasattr(patch, "get_flattened_data") else patch.getdata())
     if not pixels:
         return True
     lums = sorted(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in pixels)
@@ -430,6 +433,11 @@ def main():
             if el["type"] in ("image", "figure", "hero_panel"):
                 img_r = image_rects.get(el["id"], r)
                 if F.rects_overlap(ink, img_r, 0.2):
+                    own = index.get(owner)
+                    if own and own["type"] in ("box", "header_card", "callout", "chevron", "ellipse", "sphere"):
+                        own_fill = F.color(spec, own.get("fill", "#FFFFFF" if own["type"] == "header_card" else "none"))
+                        if own_fill and own_fill[1] >= 0.85 and F.wcag_contrast(txt_hex, own_fill[0]) >= 3.5:
+                            continue
                     # 位图采样局部对比度：落在干净浅色留白区且对比度达标时不误报 ONIMG
                     if el["id"] in raster_cache:
                         im_cached = raster_cache[el["id"]][0]

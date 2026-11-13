@@ -28,6 +28,7 @@ PALETTES = {
             "primary": "#1B4F72",
             "accent": "#D35400",
             "secondary": "#2E8B57",
+            "tertiary": "#2874A6",
             "highlight": "#B7950B",
             "muted": "#5D6D7E",
             "panel_bg": "#F7F9FA",
@@ -41,6 +42,7 @@ PALETTES = {
             "accent": "#D4AC0D",
             "secondary": "#7D3C98",
             "tertiary": "#148F77",
+            "highlight": "#CA6F1E",
             "muted": "#7F8C8D",
             "panel_bg": "#F8F9F9",
             "border": "#D5D8DC",
@@ -52,6 +54,7 @@ PALETTES = {
             "primary": "#1A5276",
             "accent": "#CB4335",
             "secondary": "#117864",
+            "tertiary": "#2E86C1",
             "highlight": "#D68910",
             "muted": "#566573",
             "panel_bg": "#F4F7FA",
@@ -65,6 +68,7 @@ PALETTES = {
             "accent": "#D96B52",
             "secondary": "#459373",
             "tertiary": "#7E6BC4",
+            "highlight": "#C99A2E",
             "muted": "#7A7A7A",
             "panel_bg": "#FAF8F5",
             "border": "#E8E2D9",
@@ -76,6 +80,7 @@ PALETTES = {
             "primary": "#0F3D5E",
             "accent": "#B03A2E",
             "secondary": "#2874A6",
+            "tertiary": "#1E8449",
             "highlight": "#9A7D0A",
             "muted": "#616A6B",
             "panel_bg": "#F6F8FA",
@@ -951,18 +956,24 @@ def sci_curve_geometry(spec, el):
     x, y, w, h = bbox(el)
     axes = el.get("axes")
     show_axes = axes is not False
-    axes = axes if isinstance(axes, dict) else {}
-    pad_l = float(el.get("pad_left_mm", 7.5 if axes.get("ylabel") else (4.0 if show_axes else 2.0)))
+    axes = dict(axes) if isinstance(axes, dict) else {}
+    if not axes.get("xlabel") and el.get("xlabel"):
+        axes["xlabel"] = el["xlabel"]
+    if not axes.get("ylabel") and el.get("ylabel"):
+        axes["ylabel"] = el["ylabel"]
+    pad_l = float(el.get("pad_left_mm", 4.5 if show_axes else 2.0))
     pad_r = float(el.get("pad_right_mm", 3.0))
-    pad_t = float(el.get("pad_top_mm", 4.5 if el.get("title") else 2.8))
-    pad_b = float(el.get("pad_bottom_mm", 6.8 if (axes.get("xlabel") or el.get("step_labels")) else (3.5 if show_axes else 2.0)))
+    pad_t = float(el.get("pad_top_mm", 4.8 if (el.get("title") or axes.get("ylabel")) else 2.8))
+    both_bottom = bool(axes.get("xlabel")) and bool(el.get("step_labels"))
+    pad_b = float(el.get("pad_bottom_mm", 9.6 if both_bottom else (5.8 if (axes.get("xlabel") or el.get("step_labels")) else (3.5 if show_axes else 2.0))))
     px, py = x + pad_l, y + pad_t
     pw, ph = max(4.0, w - pad_l - pad_r), max(4.0, h - pad_t - pad_b)
 
     fills, strokes, dots, labels = [], [], [], []
     axis_col = color(spec, axes.get("color", "muted" if "muted" in th["colors"] else "#666666")) or ("666666", 1.0)
     axis_pt = float(axes.get("stroke_pt", max(0.55, th["line_pt"] * 0.85)))
-    base_pt = float(el.get("pt", max(min_pt(spec), th["base_pt"] * 0.9)))
+    sci_pt_floor = max(min_pt(spec), round(min_pt(spec) * 0.75 / SCRIPT_SCALE + 0.05, 1))
+    base_pt = float(el.get("pt", max(sci_pt_floor, th["base_pt"] * 0.96)))
 
     if el.get("title"):
         labels.append(("title", {"text": el["title"], "pt": float(el.get("title_pt", base_pt + 0.5)), "bold": True,
@@ -975,11 +986,11 @@ def sci_curve_geometry(spec, el):
         if axes.get("xlabel"):
             labels.append(("xlabel", {"text": axes["xlabel"], "pt": base_pt, "align": "center", "valign": "bottom",
                                       "color": axes.get("label_color", th["text_color"])},
-                           (px, y + h - 4.8, pw, 4.6)))
+                           (px, y + h - 4.3, pw, 4.2)))
         if axes.get("ylabel"):
             labels.append(("ylabel", {"text": axes["ylabel"], "pt": base_pt, "align": "left", "valign": "top",
                                       "color": axes.get("label_color", th["text_color"])},
-                           (x + 0.4, y + 0.4, min(28.0, w * 0.65), 4.6)))
+                           (x + 1.2, y + 0.2, min(28.0, w * 0.55), 4.2)))
 
     if kind == "energy_steps":
         series = el.get("series")
@@ -1027,15 +1038,20 @@ def sci_curve_geometry(spec, el):
             if 0 <= si < len(series):
                 lv = [float(v) for v in series[si]["levels"]]
                 ts_map = series[si].get("ts") or series[si].get("ts_peaks") or {}
+                has_mid_ts = isinstance(ts_map, dict) and (str(st_i) in ts_map or st_i in ts_map)
                 if st_i >= len(lv) - 1 and st_i > 0:
                     v0, v1 = lv[st_i - 1], lv[st_i]
-                    bx0 = px + (st_i - 1) * slot_w + plat_w * 0.7
-                    bx1 = px + st_i * slot_w + plat_w * 0.3
+                    peak_idx = st_i if v1 >= v0 else st_i - 1
                 else:
                     v0 = lv[min(st_i, len(lv) - 1)]
-                    v1 = float(ts_map.get(str(st_i), ts_map.get(st_i, lv[min(st_i + 1, len(lv) - 1)]))) if isinstance(ts_map, dict) else lv[min(st_i + 1, len(lv) - 1)]
-                    bx0 = px + st_i * slot_w + plat_w * 0.7
-                    bx1 = px + (st_i + 1) * slot_w + plat_w * 0.3
+                    v1 = float(ts_map.get(str(st_i), ts_map.get(st_i))) if has_mid_ts else lv[min(st_i + 1, len(lv) - 1)]
+                    peak_idx = min(st_i + 1, len(lv) - 1) if v1 >= v0 else st_i
+                if has_mid_ts:
+                    bx0 = px + st_i * slot_w + (slot_w + plat_w) / 2
+                    bx1 = px + (st_i + 1) * slot_w + (slot_w - plat_w) / 2
+                else:
+                    bx0 = px + peak_idx * slot_w + (slot_w - plat_w) / 2
+                    bx1 = bx0 + plat_w
                 by0, by1 = min(y_of(v0), y_of(v1)), max(y_of(v0), y_of(v1))
                 bfill = color(spec, barrier.get("fill", "accent@16"))
                 if bfill and by1 - by0 > 0.4:
@@ -1044,10 +1060,11 @@ def sci_curve_geometry(spec, el):
                 if b_txt:
                     bw_lbl = float(barrier.get("label_w", 26.0))
                     s_col_name = series[si].get("stroke") or series[si].get("color") or "accent"
-                    labels.append(("barrier", {"text": b_txt, "pt": max(min_pt(spec), base_pt - 0.3), "bold": True,
+                    cx_lbl = (bx0 + bx1) / 2
+                    labels.append(("barrier", {"text": b_txt, "pt": max(sci_pt_floor, base_pt - 0.1), "bold": True,
                                                "align": "center", "valign": "bottom",
                                                "color": barrier.get("color", s_col_name)},
-                                   ((bx0 + bx1) / 2 - bw_lbl / 2, max(y + 0.5, by0 - 4.4), bw_lbl, 4.2)))
+                                   (cx_lbl - bw_lbl / 2, max(y + 0.5, by0 - 4.3), bw_lbl, 4.2)))
 
         for si, s in enumerate(series):
             lv = [float(v) for v in s["levels"]]
@@ -1090,19 +1107,20 @@ def sci_curve_geometry(spec, el):
                     strokes.append(([("M", x0_end, y0_v), ("L", x1_start, y1_v)], scol, spt * 0.8, s.get("dash", "dash"), "none"))
             s_name = s.get("name") or s.get("label")
             if s_name:
-                lx = px + pw - float(s.get("legend_w", 24.0))
-                ly = py + 0.6 + si * 4.2
-                labels.append((f"leg{si}", {"text": s_name, "pt": max(min_pt(spec), base_pt - 0.3), "bold": True,
+                lw_leg = float(s.get("legend_w", 30.0))
+                lx = px + pw - lw_leg
+                ly = py + 0.4 + si * 4.4
+                labels.append((f"leg{si}", {"text": s_name, "pt": max(sci_pt_floor, base_pt - 0.1), "bold": True,
                                             "align": "right", "valign": "top", "color": s_stroke},
-                               (lx, ly, float(s.get("legend_w", 24.0)), 4.0)))
+                               (lx, ly, lw_leg, 4.2)))
 
         for i, sl in enumerate(el.get("step_labels") or []):
             if not sl or i >= n_steps:
                 continue
             cx_s = px + (i + 0.5) * slot_w
-            labels.append((f"step{i}", {"text": sl, "pt": max(min_pt(spec), base_pt - 0.5), "align": "center", "valign": "top",
+            labels.append((f"step{i}", {"text": sl, "pt": max(sci_pt_floor, base_pt - 0.15), "align": "center", "valign": "top",
                                         "color": th["text_color"]},
-                           (cx_s - slot_w * 0.52, py + ph + 0.5, slot_w * 1.04, 4.4)))
+                           (cx_s - slot_w * 0.52, py + ph + 0.3, slot_w * 1.04, 4.4)))
 
     elif kind == "volcano_curve":
         raw_pts = el.get("points")
@@ -1157,17 +1175,19 @@ def sci_curve_geometry(spec, el):
             dots.append((mx, my, mr, mc, mk.get("shading", "radial")))
             if mk.get("label"):
                 lw = float(mk.get("label_w", 22.0))
-                side = mk.get("place", "top" if mv > 0.72 else ("right" if mu < 0.5 else "left"))
+                side = mk.get("place", "top" if mv > 0.76 else ("left" if mu < pu else "right"))
                 if side == "top":
                     lbox = (mx - lw / 2, max(y + 0.4, my - mr - 4.4), lw, 4.2)
                     al = "center"
                 elif side == "left":
-                    lbox = (mx - mr - lw - 0.8, my - 2.1, lw, 4.2)
+                    dy_off = -3.2 if mu <= pu else -1.2
+                    lbox = (mx - mr - lw - 0.9, my + dy_off, lw, 4.2)
                     al = "right"
                 else:
-                    lbox = (mx + mr + 0.8, my - 2.1, lw, 4.2)
+                    dy_off = -3.2 if mu >= pu else -1.2
+                    lbox = (mx + mr + 0.9, my + dy_off, lw, 4.2)
                     al = "left"
-                labels.append((f"mk{mi}", {"text": mk["label"], "pt": max(min_pt(spec), base_pt - 0.3),
+                labels.append((f"mk{mi}", {"text": mk["label"], "pt": max(sci_pt_floor, base_pt - 0.1),
                                            "bold": bool(mk.get("bold", True)), "align": al, "valign": "middle",
                                            "color": mk.get("text_color", mk.get("color", th["text_color"]))}, lbox))
 
@@ -1191,15 +1211,15 @@ def sci_curve_geometry(spec, el):
             if vertical:
                 fy = py + ph - fv * ph
                 strokes.append(([("M", px, fy), ("L", px + pw, fy)], axis_col, axis_pt * 0.9, "dash", "none"))
-                labels.append(("fermi", {"text": el.get("fermi_label", "E_{F}"), "pt": max(min_pt(spec), base_pt - 0.4),
+                labels.append(("fermi", {"text": el.get("fermi_label", "E_{F}"), "pt": max(sci_pt_floor, base_pt - 0.15),
                                          "italic": True, "align": "right", "valign": "bottom", "color": th["text_color"]},
                                (px + pw - 12, fy - 4.0, 11.5, 3.8)))
             else:
                 fx = px + fv * pw
                 strokes.append(([("M", fx, py), ("L", fx, py + ph)], axis_col, axis_pt * 0.9, "dash", "none"))
-                labels.append(("fermi", {"text": el.get("fermi_label", "E_{F}"), "pt": max(min_pt(spec), base_pt - 0.4),
+                labels.append(("fermi", {"text": el.get("fermi_label", "E_{F}"), "pt": max(sci_pt_floor, base_pt - 0.15),
                                          "italic": True, "align": "left", "valign": "top", "color": th["text_color"]},
-                               (fx + 0.6, py + 0.4, 12.0, 3.8)))
+                               (fx + 0.6, py + 0.4, 12.0, 4.0)))
         for li, lb in enumerate(lobes):
             c0 = norm_e(lb.get("center", 0.48))
             raw_w = float(lb.get("width", lb.get("sigma", 0.13 if not phys_e else 0.7)))
@@ -1232,7 +1252,7 @@ def sci_curve_geometry(spec, el):
                     dy_c = py + ph - dcv * ph
                     strokes.append(([("M", px, dy_c), ("L", px + amp * pw * 0.85, dy_c)], scol, axis_pt * 1.1, "dot", "none"))
                     if lb.get("d_label"):
-                        labels.append((f"dc{li}", {"text": lb["d_label"], "pt": max(min_pt(spec), base_pt - 0.4), "bold": True,
+                        labels.append((f"dc{li}", {"text": lb["d_label"], "pt": max(sci_pt_floor, base_pt - 0.15), "bold": True,
                                                    "align": "left", "valign": "middle", "color": lb_stroke},
                                        (px + amp * pw * 0.86, dy_c - 2.0, 16.0, 4.0)))
                 else:
@@ -1240,13 +1260,13 @@ def sci_curve_geometry(spec, el):
                     strokes.append(([("M", dx_c, py + ph * (1 - amp * 0.85)), ("L", dx_c, py + ph)], scol, axis_pt * 1.1, "dot", "none"))
             if lb.get("label"):
                 if vertical:
-                    labels.append((f"lb{li}", {"text": lb["label"], "pt": max(min_pt(spec), base_pt - 0.4), "bold": True,
+                    labels.append((f"lb{li}", {"text": lb["label"], "pt": max(sci_pt_floor, base_pt - 0.15), "bold": True,
                                                "align": "left", "valign": "top", "color": lb_stroke},
                                    (px + 1.2 + li * 16.0, py + 0.5, 16.0, 4.0)))
                 else:
-                    labels.append((f"lb{li}", {"text": lb["label"], "pt": max(min_pt(spec), base_pt - 0.4), "bold": True,
+                    labels.append((f"lb{li}", {"text": lb["label"], "pt": max(sci_pt_floor, base_pt - 0.15), "bold": True,
                                                "align": "center", "valign": "bottom", "color": lb_stroke},
-                                   (px + c0 * pw - 10, max(py, py + ph - amp * ph - 4.2), 20.0, 4.0)))
+                                   (px + c0 * pw - 10, max(y + 0.3, py + ph - amp * ph - 4.2), 20.0, 4.0)))
         for di, dcm in enumerate(el.get("d_centers") or []):
             dcv = norm_e(dcm.get("x", dcm.get("pos", 0.5)))
             dcol_name = dcm.get("color", "accent")
@@ -1255,16 +1275,20 @@ def sci_curve_geometry(spec, el):
                 dy_c = py + ph - dcv * ph
                 strokes.append(([("M", px, dy_c), ("L", px + pw * 0.72, dy_c)], dcol, axis_pt * 1.15, "dot", "none"))
                 if dcm.get("label"):
-                    labels.append((f"dcm{di}", {"text": dcm["label"], "pt": max(min_pt(spec), base_pt - 0.4), "bold": True,
+                    labels.append((f"dcm{di}", {"text": dcm["label"], "pt": max(sci_pt_floor, base_pt - 0.15), "bold": True,
                                                 "align": "left", "valign": "middle", "color": dcol_name},
                                    (px + pw * 0.74, dy_c - 2.0, 14.0, 4.0)))
             else:
                 dx_c = px + dcv * pw
                 strokes.append(([("M", dx_c, py + ph * 0.22), ("L", dx_c, py + ph)], dcol, axis_pt * 1.15, "dot", "none"))
                 if dcm.get("label"):
-                    labels.append((f"dcm{di}", {"text": dcm["label"], "pt": max(min_pt(spec), base_pt - 0.4), "bold": True,
-                                                "align": "center", "valign": "bottom", "color": dcol_name},
-                                   (dx_c - 7.0, max(py, py + ph * 0.22 - 4.0), 14.0, 4.0)))
+                    place_left = dcm.get("place", "left" if dcv > 0.45 else "right") == "left"
+                    lw_dc = float(dcm.get("label_w", 16.0))
+                    lx_dc = (dx_c - lw_dc - 0.8) if place_left else (dx_c + 0.8)
+                    ly_dc = py + ph * float(dcm.get("y_frac", 0.52))
+                    labels.append((f"dcm{di}", {"text": dcm["label"], "pt": max(sci_pt_floor, base_pt - 0.15), "bold": True,
+                                                "align": "right" if place_left else "left", "valign": "middle", "color": dcol_name},
+                                   (lx_dc, ly_dc, lw_dc, 4.2)))
 
     return {"fills": fills, "strokes": strokes, "dots": dots, "labels": labels}
 
@@ -1399,10 +1423,11 @@ def callout_geometry(spec, el, index, image_rects=None):
 
 
 def chevron_points(el):
-    """色带箭头（chevron / banner_arrow）顶点列表：首段可 indent=false 平左缘，后续段内凹咬合"""
+    """色带箭头（chevron / banner_arrow）顶点列表：首段可 indent=false / lead_in=false 平左缘，后续段内凹咬合"""
     x, y, w, h = bbox(el)
     tip = float(el.get("tip_mm", min(4.6, h * 0.42, w * 0.22)))
-    indent = float(el.get("notch_mm", tip if el.get("indent", True) else 0.0))
+    has_indent = el.get("indent", el.get("lead_in", True))
+    indent = float(el.get("notch_mm", tip if has_indent else 0.0))
     pts = [(x, y), (x + w - tip, y), (x + w, y + h / 2), (x + w - tip, y + h), (x, y + h)]
     if indent > 0.05:
         pts.append((x + indent, y + h / 2))

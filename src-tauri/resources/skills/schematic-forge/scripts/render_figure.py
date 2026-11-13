@@ -355,16 +355,20 @@ def svg_fill(c):
     return f'fill="#{hexv}"' + (f' fill-opacity="{fmt(a)}"' if a < 1 else "")
 
 
-def svg_stroke(c, pt, dash):
+def svg_stroke(c, pt, dash, linecap=None):
     if c is None or pt <= 0:
         return 'stroke="none"'
     hexv, a = c
     w = pt * F.MM_PER_PT
     s = f'stroke="#{hexv}" stroke-width="{fmt(w)}"' + (f' stroke-opacity="{fmt(a)}"' if a < 1 else "")
+    cap = linecap
     if dash == "dash":
         s += f' stroke-dasharray="{fmt(w * 4)} {fmt(w * 3)}"'
     elif dash == "dot":
-        s += f' stroke-dasharray="{fmt(w)} {fmt(w * 2.2)}" stroke-linecap="round"'
+        s += f' stroke-dasharray="{fmt(w)} {fmt(w * 2.2)}"'
+        cap = cap or "round"
+    if cap:
+        s += f' stroke-linecap="{cap}"'
     return s
 
 
@@ -557,7 +561,7 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
             lg = F.lattice_geometry(spec, el)
             g_parts = [f'<g id={quoteattr(eid)}>']
             for p1, p2, bcol, bpt in lg["bonds"]:
-                g_parts.append(f'<line x1="{fmt(p1[0])}" y1="{fmt(p1[1])}" x2="{fmt(p2[0])}" y2="{fmt(p2[1])}" {svg_stroke(bcol, bpt, None)} stroke-linecap="round"/>')
+                g_parts.append(f'<line x1="{fmt(p1[0])}" y1="{fmt(p1[1])}" x2="{fmt(p2[0])}" y2="{fmt(p2[1])}" {svg_stroke(bcol, bpt, None, "round")}/>')
             for cx, cy, r_a, fc, scol, spt in lg["spheres"]:
                 f_attr = svg_radial_def(defs, fc) if el.get("shading", "radial") == "radial" else svg_fill(fc)
                 g_parts.append(f'<circle cx="{fmt(cx)}" cy="{fmt(cy)}" r="{fmt(r_a)}" {f_attr} {svg_stroke(scol, spt, None)}/>')
@@ -583,7 +587,7 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
                 if shead != "none":
                     mid = svg_marker(defs, scol, spt)
                     mk = f' marker-end="url(#{mid})"'
-                g_parts.append(f'<path d="{svg_cmds_d(cmds)}" fill="none" {svg_stroke(scol, spt, sdash)} stroke-linejoin="round" stroke-linecap="round"{mk}/>')
+                g_parts.append(f'<path d="{svg_cmds_d(cmds)}" fill="none" {svg_stroke(scol, spt, sdash, "round")} stroke-linejoin="round"{mk}/>')
             for mx, my, mr, mc, msh in sg["dots"]:
                 fa = svg_radial_def(defs, mc) if msh == "radial" else svg_fill(mc)
                 g_parts.append(f'<circle cx="{fmt(mx)}" cy="{fmt(my)}" r="{fmt(mr)}" {fa} stroke="#FFFFFF" stroke-width="0.22"/>')
@@ -598,7 +602,7 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
             cg = F.callout_geometry(spec, el, index, image_rects)
             g_parts = [f'<g id={quoteattr(eid)}>']
             d_line = "M" + " L".join(f"{fmt(px)},{fmt(py)}" for px, py in cg["pts"])
-            g_parts.append(f'<path d="{d_line}" fill="none" {svg_stroke(cg["stroke"], cg["stroke_pt"], el.get("dash"))} stroke-linejoin="round" stroke-linecap="round"/>')
+            g_parts.append(f'<path d="{d_line}" fill="none" {svg_stroke(cg["stroke"], cg["stroke_pt"], el.get("dash"), "round")} stroke-linejoin="round"/>')
             tx, ty = cg["target"]
             dr = cg["dot_r_mm"]
             if cg["halo"]:
@@ -636,7 +640,7 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
                     if br["head"] in ("end", "both"):
                         bmk += f' marker-end="url(#{bmid})"'
                 bd = f"M{fmt(br['p1'][0])},{fmt(br['p1'][1])} Q{fmt(br['ctrl'][0])},{fmt(br['ctrl'][1])} {fmt(br['p2'][0])},{fmt(br['p2'][1])}"
-                body.append(f'<path id={quoteattr(eid + "-" + br["sub_id"])} d="{bd}" fill="none" {svg_stroke(br["stroke"], br["stroke_pt"], br["dash"])} stroke-linecap="round"{bmk}/>')
+                body.append(f'<path id={quoteattr(eid + "-" + br["sub_id"])} d="{bd}" fill="none" {svg_stroke(br["stroke"], br["stroke_pt"], br["dash"], "round")}{bmk}/>')
                 blid = f"{eid}#{br['sub_id']}"
                 if blid in layouts:
                     body.append(svg_text_block(layouts[blid], f"{eid}-{br['sub_id']}"))
@@ -651,7 +655,7 @@ def build_svg(spec, layouts, assets, index, image_rects=None):
                 d = f"M{fmt(pts[0][0])},{fmt(pts[0][1])} Q{fmt(ctrl[0])},{fmt(ctrl[1])} {fmt(pts[-1][0])},{fmt(pts[-1][1])}"
             else:
                 d = "M" + " L".join(f"{fmt(px)},{fmt(py)}" for px, py in pts)
-            body.append(f'<path id={quoteattr(eid)} d="{d}" fill="none" {svg_stroke(stroke, pt, el.get("dash"))} stroke-linejoin="round" stroke-linecap="round"{mk}/>')
+            body.append(f'<path id={quoteattr(eid)} d="{d}" fill="none" {svg_stroke(stroke, pt, el.get("dash"), "round")} stroke-linejoin="round"{mk}/>')
             if eid + "#label" in layouts:
                 body.append(svg_text_block(layouts[eid + "#label"], eid + "-label"))
 
