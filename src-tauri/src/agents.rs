@@ -4067,6 +4067,7 @@ fn write_external_wrapper(
     args: &[String],
     env: &[(String, String)],
     env_remove: &[String],
+    title: Option<&str>,
 ) -> Result<PathBuf, String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -4094,6 +4095,13 @@ fn write_external_wrapper(
         text.push('=');
         text.push_str(&sh_script_quote(value));
         text.push('\n');
+    }
+    // 窗口标题：终端默认显示目录，先用 OSC 2 写成对话名（CLI 自己改标题时以 CLI 为准）
+    if let Some(title) = title {
+        let clean: String = title.chars().filter(|c| !c.is_control()).collect();
+        if !clean.trim().is_empty() {
+            text.push_str(&format!("printf '\\033]2;%s\\007' {}\n", sh_script_quote(&clean)));
+        }
     }
     text.push_str("exec ");
     text.push_str(&sh_script_quote(binary));
@@ -4238,6 +4246,7 @@ fn open_external_profiled(
     cwd: &str,
     resume_session_id: Option<&str>,
     prompt: Option<&str>,
+    title: Option<&str>,
 ) -> Result<(), String> {
     let mut profile = external_profile(store, agent_id, profile_id, provider, base_url, model)?;
     let selected_model = model
@@ -4265,6 +4274,7 @@ fn open_external_profiled(
         .unwrap_or_else(|| "auto".into());
     #[cfg(windows)]
     {
+        let _ = title; // Windows 外部终端不设窗口标题
         return open_windows_external(
             &pref,
             cwd,
@@ -4278,7 +4288,7 @@ fn open_external_profiled(
     // 到不了新窗口，密钥只能随一次性包装脚本传递（0600 + 首行自删 + 60s 兜底清理）。
     #[cfg(target_os = "macos")]
     {
-        let wrapper = write_external_wrapper(&binary.to_string_lossy(), &args, &env, &env_remove)?;
+        let wrapper = write_external_wrapper(&binary.to_string_lossy(), &args, &env, &env_remove, title)?;
         let cmd = external_wrapper_command(cwd, &wrapper);
         match open_external_terminal(&cmd, &pref, cwd, &wrapper) {
             Ok(()) => Ok(()),
@@ -4292,7 +4302,7 @@ fn open_external_profiled(
     //（与 Windows start 环境块同口径），包装脚本不含凭证。
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let wrapper = write_external_wrapper(&binary.to_string_lossy(), &args, &[], &[])?;
+        let wrapper = write_external_wrapper(&binary.to_string_lossy(), &args, &[], &[], title)?;
         let cmd = external_wrapper_command(cwd, &wrapper);
         match open_external_terminal(&cmd, &pref, cwd, &wrapper, &env, &env_remove) {
             Ok(()) => Ok(()),
@@ -4526,6 +4536,7 @@ pub async fn resume_external_terminal(
     model: Option<String>,
     provider: Option<String>,
     base_url: Option<String>,
+    title: Option<String>,
 ) -> Result<(), String> {
     open_external_off_main(app, move |store| {
         open_external_profiled(
@@ -4538,6 +4549,7 @@ pub async fn resume_external_terminal(
             &cwd,
             Some(&session_id),
             None,
+            title.as_deref(),
         )
     })
     .await
@@ -4561,6 +4573,7 @@ pub async fn new_external_terminal(
             None,
             model.as_deref(),
             &cwd,
+            None,
             None,
             None,
         )
@@ -4660,6 +4673,7 @@ pub async fn digest_external_terminal(
             &cwd,
             None,
             Some(&prompt),
+            None,
         )
     })
     .await

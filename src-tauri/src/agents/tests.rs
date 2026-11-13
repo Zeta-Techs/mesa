@@ -3210,6 +3210,7 @@ fn external_wrapper_is_private_and_contains_no_secret_in_path() {
         &["hello world".into()],
         &[("CCODE_TEST_SECRET".into(), "sk-secret".into())],
         &["NO_COLOR".into()],
+        None,
     )
     .unwrap();
     let mode = std::fs::metadata(&wrapper).unwrap().permissions().mode() & 0o777;
@@ -3223,9 +3224,30 @@ fn external_wrapper_is_private_and_contains_no_secret_in_path() {
 
 #[cfg(unix)]
 #[test]
+fn external_wrapper_sets_window_title_before_exec() {
+    let wrapper = write_external_wrapper(
+        "/usr/bin/printf",
+        &["%s".into(), "ok".into()],
+        &[],
+        &[],
+        Some("1113|调研|它'的\n标题"),
+    )
+    .unwrap();
+    let body = std::fs::read_to_string(&wrapper).unwrap();
+    assert!(body.contains("printf '\\033]2;%s\\007' "));
+    assert!(body.find("]2;").unwrap() < body.find("exec ").unwrap());
+    let out = std::process::Command::new("/bin/sh").arg(&wrapper).output().unwrap();
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(s.starts_with("\u{1b}]2;1113|调研|它'的标题\u{7}"), "{s:?}");
+    assert!(s.ends_with("ok"));
+}
+
+#[cfg(unix)]
+#[test]
 fn external_wrapper_executes_and_removes_itself_before_agent_start() {
     let wrapper =
-        write_external_wrapper("/usr/bin/printf", &["%s".into(), "ok".into()], &[], &[])
+        write_external_wrapper("/usr/bin/printf", &["%s".into(), "ok".into()], &[], &[], None)
             .unwrap();
     let out = std::process::Command::new("/bin/sh")
         .arg(&wrapper)

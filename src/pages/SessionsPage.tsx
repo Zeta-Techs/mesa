@@ -746,6 +746,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         model: resumeModel(s),
         provider: s.provider ?? null,
         baseUrl: resumeBaseUrl(s),
+        title: tidySessionTitle(s).title,
       });
     } catch (e) {
       await alertDialog(`打开外部终端失败：${e}`);

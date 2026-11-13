@@ -24,6 +24,7 @@ import {
   PinOff,
   Plus,
   Search,
+  SquareArrowOutUpRight,
   SquarePen,
   SquareTerminal,
   Trash2,
@@ -132,6 +133,7 @@ import {
 import { tidySessionTitle } from "../session-title";
 import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
 import { projectResumeProfileId } from "../project-agents";
+import { pickResumeProfile } from "../resume-profile";
 import { startProjectChat } from "./AskAiModal";
 import { imeBlocksEnter } from "../ime-guard";
 import { relTime } from "../rel-time";
@@ -686,6 +688,27 @@ export default function ProjectTree({
     if (next === shown || (!next && !s.customTitle)) return;
     void writeChatMeta(s, { customTitle: next || null });
   }
+  /** 在外部终端继续：连接 / 模型的挑法同对话页「在外部终端继续」，窗口标题带上对话名 */
+  async function resumeExternalChat(s: SessionMetaDto, project: ProjectDto | null) {
+    const wishedId = project ? projectResumeProfileId(profiles, project, s.agent) : undefined;
+    const profile =
+      profiles.find((p) => p.id === s.profileId && p.agent === s.agent) ??
+      pickResumeProfile(profiles, s.agent, s.provider, wishedId);
+    try {
+      await invoke("resume_external_terminal", {
+        agentId: s.agent,
+        sessionId: s.sessionId,
+        cwd: s.cwd ?? s.projectPath,
+        profileId: profile?.id ?? null,
+        model: profile?.models?.[0] ?? null,
+        provider: s.provider ?? null,
+        baseUrl: profile?.baseUrl ?? null,
+        title: tidySessionTitle(s).title,
+      });
+    } catch (e) {
+      toast(`打开外部终端失败：${String(e)}`, "error");
+    }
+  }
   function chatMenuItems(s: SessionMetaDto, project: ProjectDto | null): ContextMenuItem[] {
     const holder = useAppStore
       .getState()
@@ -814,6 +837,12 @@ export default function ProjectTree({
           st.setOpenSessionReq({ agent: s.agent, sessionId: s.sessionId });
           st.setPage("sessions");
         },
+      },
+      {
+        label: "在外部终端继续",
+        icon: SquareArrowOutUpRight,
+        title: "用这段对话原来的连接，在设置里选的外部终端（Ghostty / iTerm2 / 终端）里接着聊",
+        onSelect: () => void resumeExternalChat(s, project),
       },
       ...clientOpen.sessionClients(s.agent).map((c) => ({
         label: openButtonLabel(c, "session"),
