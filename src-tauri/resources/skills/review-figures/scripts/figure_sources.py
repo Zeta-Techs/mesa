@@ -74,13 +74,104 @@ def cite(fields: dict[str, str]) -> str:
     return ", ".join(p for p in parts if p) + (f" — {title}" if title else "")
 
 
-def panel_source(path: Path) -> dict:
+def resolve_panel_path(figures: Path, source: str, composite_png: Path | None = None) -> Path:
+    """拼板记的通常是工作区根相对路径（如 figures/src/x.png 或 figures/fig3/fig3.png）；
+    从工作区外跑时先拼 figures.parent，避免 figures/fig3/fig3.png 按文件名落回整张拼板 figures/fig3.png。"""
+    given = Path(source)
+    comp = composite_png.resolve() if composite_png else None
+    candidates: list[Path] = []
+    if not given.is_absolute():
+        candidates.append(figures.parent / given)
+    candidates.extend([given, figures / "src" / given.name, figures / given.name])
+    for cand in candidates:
+        if comp and cand.resolve() == comp:
+            continue
+        if cand.is_file():
+            return cand
+    return (figures.parent / given) if not given.is_absolute() else given
+
+
+def _resolve_manifest_rel(figures: Path, rel: str) -> Path:
+    p = Path(rel)
+    if p.is_absolute():
+        return p.resolve()
+    via_root = figures.parent / p
+    if via_root.exists() or p.parts[:1] == (figures.name,):
+        return via_root.resolve()
+    return (figures / p).resolve()
+
+
+def _display_rel(figures: Path, p: Path) -> str:
+    try:
+        return p.resolve().relative_to(figures.parent.resolve()).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
+def manifest_panel_info(figures: Path, path: Path) -> dict | None:
+    """识别拼板中的本综述自绘示意图（schematic-forge）或重绘数据图（figure-forge）：
+    优先查 figures/manifest.json（精确路径、outputs 或子目录同 stem 的 .svg/.pdf），
+    其次查子目录同级的 figure.json 图纸。命中则无需编造假文献 .json，也不进转载许可待申请。"""
+    target = path.resolve()
+    fig_root = figures.resolve()
+    manifest_file = figures / "manifest.json"
+    if manifest_file.is_file():
+        try:
+            raw = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except ValueError:
+            raw = {}
+        items = raw.get("figures", []) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            declared = [str(x) for x in [item.get("file"), *(item.get("outputs") or [])] if x]
+            resolved_files = [_resolve_manifest_rel(figures, x) for x in declared]
+            matched = target in resolved_files
+            if not matched and item.get("file"):
+                primary = _resolve_manifest_rel(figures, str(item["file"]))
+                if primary.stem == target.stem and (
+                    (primary.parent == target.parent and target.parent != fig_root)
+                    or primary in (target.with_suffix(".svg"), target.with_suffix(".pdf"))
+                ):
+                    matched = True
+            if matched:
+                if item.get("kind") == "schematic" or item.get("spec"):
+                    artifact = str(item.get("spec") or item.get("file") or "")
+                    return {"self_drawn": "schematic", "artifact": artifact, "entry": item}
+                script = str(item.get("script") or item.get("file") or "")
+                args = [str(a) for a in (item.get("args") or []) if str(a)]
+                artifact = f"{script} {' '.join(args)}".strip() if args else script
+                return {"self_drawn": "plot", "artifact": artifact, "entry": item}
+    if target.parent != fig_root and (target.parent / "figure.json").is_file():
+        return {
+            "self_drawn": "schematic",
+            "artifact": _display_rel(figures, target.parent / "figure.json"),
+        }
+    return None
+
+
+def panel_source(path: Path, figures: Path | None = None) -> dict:
     side = path.with_suffix(".json")
+    side_data: dict | None = None
     if side.is_file():
         try:
-            return json.loads(side.read_text(encoding="utf-8"))
+            loaded = json.loads(side.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                side_data = loaded
         except ValueError:
             pass
+    # 真从 PDF/原图裁出的块带 pdf 字段；无 pdf 字段时先看 manifest.json / figure.json 是否登记为本综述自绘/重绘
+    if side_data and side_data.get("pdf"):
+        return side_data
+    if figures is not None:
+        own = manifest_panel_info(figures, path)
+        if own is not None:
+            return own
+    if side_data is not None:
+        if side_data.get("self_drawn"):
+            kind = "schematic" if side_data["self_drawn"] == "schematic" else "plot"
+            return {"self_drawn": kind, "artifact": str(side_data.get("artifact") or side_data.get("spec") or side_data.get("script") or "")}
+        return side_data
     # 没有来源记录（脚本外裁的）：按文件名 <键>-fig3b.png 猜，页码记不上
     m = re.match(r"(.+?)-(fig|scheme|table)(\d+)([a-z]?)$", path.stem, re.I)
     if not m:
@@ -123,10 +214,15 @@ def build(figures: Path, bib: Path) -> str:
         "由 review-figures 技能的 `figure_sources.py` 按每块的裁图记录生成，重裁后重跑即更新。",
     ]
     layouts = sorted(figures.glob("fig*.json"), key=lambda p: int(re.sub(r"\D", "", p.stem) or 0))
-    if not layouts:
-        lines += ["", "（没有找到拼板记录 figN.json：先用 assemble_panels.py 拼板。）"]
+    has_layout = False
     for layout in layouts:
-        data = json.loads(layout.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(layout.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("panels"), list):
+            continue
+        has_layout = True
         n = re.sub(r"\D", "", layout.stem)
         lines += ["", f"## Figure {n}"]
         point = claim(layout.with_suffix(".md"))
@@ -134,17 +230,31 @@ def build(figures: Path, bib: Path) -> str:
             lines += ["", f"论点：{point}"]
         lines += ["", "| 新编号 | 原文 | 原图里的位置 | DOI | 本地 PDF |", "|---|---|---|---|---|"]
         for panel in data.get("panels", []):
-            # 拼板时记的是当时的相对路径（通常 figures/src/x.png）；找不到再到 figures/src/、figures/ 下按文件名找
-            given = Path(panel["source"])
-            candidates = [given, figures / "src" / given.name, figures / given.name]
-            path = next((c for c in candidates if c.is_file()), given)
-            src = panel_source(path)
+            path = resolve_panel_path(figures, str(panel["source"]), layout.with_suffix(".png"))
+            src = panel_source(path, figures)
+            if src.get("self_drawn"):
+                is_schem = src["self_drawn"] == "schematic"
+                paper_col = (
+                    "本综述自绘示意图（schematic-forge，无需转载许可）"
+                    if is_schem
+                    else "本综述重绘数据图（figure-forge，无需转载许可）"
+                )
+                artifact = src.get("artifact", "")
+                where_col = (
+                    (f"图纸 `{artifact}`" if is_schem else f"脚本 `{artifact}`")
+                    if artifact
+                    else ("本综述自绘图纸" if is_schem else "本综述重绘脚本")
+                )
+                lines.append(f"| ({panel['letter']}) | {paper_col} | {where_col} | — | — |")
+                continue
             fields = entries.get(src.get("key", ""), {})
             doi = fields.get("doi", "")
             doi_cell = f"[{doi}](https://doi.org/{doi})" if doi and doi not in PLACEHOLDERS else "（无 DOI）"
             paper = cite(fields) if fields else f"（引文库里没有键 {src.get('key', '?')}）"
             pdf = f"`{src['pdf']}`" if src.get("pdf") else "—"
             lines.append(f"| ({panel['letter']}) | {paper} [@{src.get('key', '?')}] | {where(src)} | {doi_cell} | {pdf} |")
+    if not has_layout:
+        lines += ["", "（没有找到拼板记录 figN.json：先用 assemble_panels.py 拼板。）"]
     return "\n".join(lines) + "\n"
 
 

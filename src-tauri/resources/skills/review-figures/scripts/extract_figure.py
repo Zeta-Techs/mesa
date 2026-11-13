@@ -288,6 +288,7 @@ def parse_box(text: str) -> tuple[float, float, float, float]:
 INK = 200            # 任一通道低于它算墨
 SNAP = 0.03          # 每条边在 ±3% 范围内找墨最少的那条线
 EDGE_LIMIT = 0.08    # 挪完以后某条边墨迹还超过这个比例 = 切进了内容
+NO_SNAP_EDGE_LIMIT = 0.20  # 显式 --no-snap 精确定位紧凑多联图时，0.08–0.20 打 warning 放行出图，超过 0.20 仍拒
 
 
 def _line_ink(samples, w, n, fixed: int, lo: int, hi: int, vertical: bool) -> float:
@@ -346,12 +347,14 @@ def snap_box(pix, box: tuple[float, float, float, float], snap: bool = True):
 
 
 def check_erase(box: tuple[float, float, float, float]) -> None:
-    """只许抹掉原图角上的子图字母：框小、贴着左上 / 右上角。别的地方是数据，不许动。"""
+    """只许抹掉原图四角或坐标轴内角的子图字母：框小（≤4% 面积）、不碰中间数据区。"""
     x0, y0, x1, y1 = box
-    if (x1 - x0) * (y1 - y0) > 0.04:
+    if (x1 - x0) * (y1 - y0) > 0.04 + 1e-9:
         raise SystemExit("--erase 只用来抹掉原图的子图字母，框不能超过这块面积的 4%")
-    if y0 > 0.18 or not (x0 < 0.18 or x1 > 0.82):
-        raise SystemExit("--erase 只能在左上或右上角（原图子图字母的位置）")
+    in_h_corner = (x0 <= 0.25 and x1 <= 0.36) or (x1 >= 0.75 and x0 >= 0.64)
+    in_v_corner = (y0 <= 0.25 and y1 <= 0.36) or (y1 >= 0.75 and y0 >= 0.64)
+    if not (in_h_corner and in_v_corner):
+        raise SystemExit("--erase 只能在四角（左上、右上、左下、右下）或坐标轴内角（原图子图字母的位置）")
 
 
 def sub_rect(clip, box):
@@ -442,17 +445,28 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
         if grid:
             grid_preview(pix, out)
             return
+        edge_warning: dict[str, float] | None = None
         if box:
             (bx0, by0, bx1, by1), edges = snap_box(pix, box, snap)
-            cut = {k: v for k, v in edges.items() if v > EDGE_LIMIT}
-            if cut:
-                detail = "、".join(f"{k}边 {v:.2f}" for k, v in cut.items())
+            hard_limit = EDGE_LIMIT if snap else NO_SNAP_EDGE_LIMIT
+            hard_cut = {k: v for k, v in edges.items() if v > hard_limit}
+            if hard_cut:
+                detail = "、".join(f"{k}边 {v:.2f}" for k, v in hard_cut.items())
                 print(
-                    f"裁框切进了内容（{detail}，墨迹比例超过 {EDGE_LIMIT}）：框没对准这一块。"
+                    f"裁框切进了内容（{detail}，墨迹比例超过 {hard_limit}）：框没对准这一块。"
                     "回 --grid 预览重读坐标；读不准就去掉这一块，不要硬裁",
                     file=sys.stderr,
                 )
                 sys.exit(7)
+            soft_cut = {k: v for k, v in edges.items() if v > EDGE_LIMIT}
+            if soft_cut:
+                edge_warning = {k: round(v, 3) for k, v in soft_cut.items()}
+                detail = "、".join(f"{k}边 {v:.2f}" for k, v in soft_cut.items())
+                print(
+                    f"warning: 紧凑多联图分界线附近有少量墨迹（{detail}，在 {EDGE_LIMIT}–{NO_SNAP_EDGE_LIMIT} 之间）；"
+                    "已按 --no-snap 正常出图，务必在 contact_sheet 里目检四边是否带进邻块残边或截掉本块轴标题",
+                    file=sys.stderr,
+                )
             w, h = pix.width, pix.height
             used_box = (round(bx0 / w, 3), round(by0 / h, 3), round(bx1 / w, 3), round(by1 / h, 3))
             print(f"实际裁框{'（已挪到空白缝）' if snap else '（未挪）'}：{used_box[0]:.3f},{used_box[1]:.3f},{used_box[2]:.3f},{used_box[3]:.3f}")
@@ -486,7 +500,7 @@ def extract(pdf: Path, fig: int, out: Path, dpi: int, panel: str | None,
             )
         out.parent.mkdir(parents=True, exist_ok=True)
         pix.save(str(out))
-        write_source(out, pdf, page.number + 1, fig, caption, panel, used_box, erase or [], key, label)
+        write_source(out, pdf, page.number + 1, fig, caption, panel, used_box, erase or [], key, label, edge_warning)
         print(out)
     finally:
         doc.close()
@@ -498,7 +512,8 @@ def key_from_name(out: Path) -> str:
     return m.group(1) if m else out.stem
 
 
-def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel, box, erase, key: str, label: str = "") -> None:
+def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel, box, erase, key: str, label: str = "",
+                 edge_warning: dict[str, float] | None = None) -> None:
     """每块旁边落一份来源记录 <块>.json：用户投稿前要去期刊换高清原图、申请转载许可，
     得知道这一块出自哪篇（bib 键）、原图几号哪一块、PDF 第几页、怎么裁的。figure_sources.py 汇总成 sources.md。"""
     record = {
@@ -513,6 +528,8 @@ def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel,
         "box": list(box) if box else None,
         "erase": [list(e) for e in erase],
     }
+    if edge_warning:
+        record["edge_warning"] = edge_warning
     out.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
@@ -524,8 +541,8 @@ def main() -> None:
     p.add_argument("--grid", action="store_true", help="不裁，输出叠了 0–1 坐标格的整张图预览，用来读 --box")
     p.add_argument("--box", default="", help="按比例裁一块：x0,y0,x1,y1（0–1，左上为原点），数值读自 --grid 预览")
     p.add_argument("--page", type=int, default=0, help="题注认不出（矢量图、扫描版）时按整页出 --grid / 裁 --box；页码从 1 数")
-    p.add_argument("--erase", action="append", default=[], help="抹白原图的子图字母：x0,y0,x1,y1（0–1，相对裁出的这一块），只许在左上 / 右上角的小框；邻块字母被带进来时可再给一个")
-    p.add_argument("--no-snap", action="store_true", help="--box 的边不自动挪（挪到的空白缝外面带进了邻块的字母时用），仍查边")
+    p.add_argument("--erase", action="append", default=[], help="抹白原图的子图字母：x0,y0,x1,y1（0–1，相对裁出的这一块），只许在四角或坐标轴内角的小框（≤4%% 面积）；邻块字母被带进来时可再给一个")
+    p.add_argument("--no-snap", action="store_true", help="--box 的边不自动挪（紧凑多联图已按 --grid 精确对准时用；边缘墨迹在 0.08–0.20 时打 warning 正常出图，超过 0.20 仍拒）")
     p.add_argument("--label", default="", help="原文里这一块的名字，如 \"Fig. 2(b)\"、\"Scheme 1\"：记进来源清单，用户去期刊换原图时按它找")
     p.add_argument("--key", default="", help="这块出自哪篇（references.bib 的键）；不给就按文件名 <键>-fig3b.png 取")
     p.add_argument("--out", type=Path, required=True)

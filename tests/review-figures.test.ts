@@ -103,9 +103,11 @@ test("裁子图：--erase 只许角上的小框；--page 只配 --grid / --box�
     const pdf = makePdf(dir);
     let r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0.4,0.4,0.6,0.6", "--out", join(dir, "x.png")]);
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr + r.stdout, /左上或右上角|4%/);
-    // 窄子图角上较大的子图字母（约 3.2% 面积）放行，超过 4% 仍拦下
+    assert.match(r.stderr + r.stdout, /四角|左上|4%/);
+    // 窄子图角上较大的子图字母（约 3.2% 面积）、左下角、坐标框内角都放行，超过 4% 仍拦下
     r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0,0,0.18,0.18", "--dpi", "72", "--out", join(dir, "ok-erase.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0.02,0.85,0.16,0.99", "--erase", "0.18,0.15,0.32,0.28", "--dpi", "72", "--out", join(dir, "corners-erase.png")]);
     assert.equal(r.status, 0, r.stderr);
     r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--erase", "0,0,0.25,0.22", "--out", join(dir, "big-erase.png")]);
     assert.notEqual(r.status, 0);
@@ -308,6 +310,191 @@ test("联系表：几块缩成一张 JPEG，长边有上限；--out 不是 .jpg 
     assert.ok(Number(side) <= 1600, `长边 ${side}`);
     r = spawnSync(python, [sheetScript, "--out", join(dir, "sheet.png"), ...inputs], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
     assert.notEqual(r.status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 2026-11-14 HER 实证：紧凑多联图分界线附近常有 0.08–0.20 局部轴线/短刻度墨迹，显式 --no-snap 应告警放行，超过 0.20 仍拒
+test("紧凑多联图：--no-snap 在边缘墨迹 0.08–0.20 时打印 warning 正常出图，超过 0.20 仍退出码 7", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-tight-"));
+  try {
+    const img = join(dir, "tight.png");
+    // x=200 分界线有 56/400 = 0.14 墨迹；x=250 切进主体有 260/400 = 0.65 墨迹
+    const code = [
+      "import sys; from PIL import Image, ImageDraw",
+      "im = Image.new('RGB', (400, 400), 'white'); d = ImageDraw.Draw(im)",
+      "d.rectangle([20, 40, 195, 360], fill=(40, 90, 180))",
+      "d.rectangle([205, 40, 380, 360], fill=(180, 70, 50))",
+      "d.rectangle([198, 172, 202, 227], fill=(0, 0, 0))",
+      "im.save(sys.argv[1])",
+    ].join("\n");
+    const made = spawnSync(python, ["-c", code, img], { encoding: "utf8" });
+    assert.equal(made.status, 0, made.stderr);
+
+    const outOk = join(dir, "left.png");
+    let r = run(["--pdf", img, "--box", "0,0,0.5,1", "--no-snap", "--key", "Zhang2024", "--out", outOk]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(outOk));
+    assert.match(r.stderr, /warning:.*0\.08–0\.2/);
+    const side = JSON.parse(readFileSync(join(dir, "left.json"), "utf8"));
+    assert.ok(side.edge_warning && side.edge_warning["右"] > 0.08 && side.edge_warning["右"] <= 0.2);
+
+    const outBad = join(dir, "bad.png");
+    r = run(["--pdf", img, "--box", "0,0,0.625,1", "--no-snap", "--out", outBad]);
+    assert.equal(r.status, 7);
+    assert.ok(!existsSync(outBad));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 2026-11-14 HER 实证：扁宽合成图（3.2:1）与近正方形 XRD 图（1.1:1）同排时，--align-width 按等列宽分配且垂直居中
+test("拼板：扁宽图配近方图默认等高会挤窄报错，加 --align-width 按等列宽排齐并垂直居中", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-align-w-"));
+  try {
+    const wide = join(dir, "wide.png");
+    const square = join(dir, "square.png");
+    const made = spawnSync(
+      python,
+      [
+        "-c",
+        "import sys; from PIL import Image; Image.new('RGB', (960, 300), (30, 100, 200)).save(sys.argv[1]); Image.new('RGB', (440, 400), (200, 80, 40)).save(sys.argv[2])",
+        wide,
+        square,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(made.status, 0, made.stderr);
+
+    // 12 cm 栏宽下等高模式把 1.1:1 方图挤到 ~2.9 cm（< 3.5 cm），报错并提示 --align-width
+    let r = spawnSync(python, [assemble, "--out", join(dir, "eqh.png"), "--width-cm", "12", "--inputs", wide, square], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /--align-width/);
+
+    // 加 --align-width（及别名 --grid-cells）后两列各约 5.6 cm，正常出图，扁宽块上下白底居中
+    const out = join(dir, "eqw.png");
+    r = spawnSync(python, [assemble, "--out", out, "--width-cm", "12", "--align-width", "--inputs", wide, square], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const layout = JSON.parse(readFileSync(join(dir, "eqw.json"), "utf8"));
+    assert.equal(layout.layout_mode, "align-width");
+    const check = spawnSync(
+      python,
+      [
+        "-c",
+        "import sys, json; from PIL import Image; im = Image.open(sys.argv[1]).convert('RGB'); w, h = im.size; print(json.dumps({'left_top_pad': im.getpixel((w//4, int(h*0.18))), 'left_mid': im.getpixel((w//4, int(h*0.54)))}))",
+        out,
+      ],
+      { encoding: "utf8" },
+    );
+    const px = JSON.parse(check.stdout);
+    assert.deepEqual(px.left_top_pad, [255, 255, 255], "较矮的扁宽块上方留白垂直居中");
+    assert.ok(px.left_mid[2] > 150 && px.left_mid[0] < 80, "扁宽块中部保持蓝色内容");
+
+    const outAlias = join(dir, "grid.png");
+    r = spawnSync(python, [assemble, "--out", outAlias, "--width-cm", "12", "--grid-cells", "--rows", `${wide} ${square}`], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 2026-11-14 HER 实证：拼板里混有 schematic-forge 自绘块或 figure-forge 重绘块时，自动从 manifest.json 识别，无需编假 bibKey，也不计入待申请许可
+test("来源清单与转载许可：自动从 manifest.json / figure.json 识别自绘与重绘子图，标无需申请", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-own-src-"));
+  try {
+    const pdf = makePdf(dir);
+    const figures = join(dir, "figures");
+    const src = join(figures, "src");
+    // 两块真文献裁图
+    let r = run(["--pdf", pdf, "--fig", "1", "--box", "0,0,0.5,0.5", "--label", "Fig. 1(a)", "--dpi", "72", "--out", join(src, "Open2020-fig1a.png")]);
+    assert.equal(r.status, 0, r.stderr);
+    r = run(["--pdf", pdf, "--fig", "1", "--box", "0.5,0,1,0.5", "--label", "Fig. 3(b)", "--dpi", "72", "--out", join(src, "Shut2019-fig3b.png")]);
+    assert.equal(r.status, 0, r.stderr);
+
+    // 自绘示意图 figures/fig3/fig3.png 与脚本重绘数据图 figures/fig11/fig11.png
+    const mk = spawnSync(
+      python,
+      [
+        "-c",
+        "import sys, os; from PIL import Image\nfor p in sys.argv[1:]: os.makedirs(os.path.dirname(p), exist_ok=True); Image.new('RGB', (600, 420), (80, 130, 190)).save(p)",
+        join(figures, "fig3", "fig3.png"),
+        join(figures, "fig11", "fig11.png"),
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(mk.status, 0, mk.stderr);
+    writeFileSync(join(figures, "fig3", "figure.json"), '{"canvas":{"width_mm":170,"height_mm":90},"elements":[]}');
+    // 即便历史遗留了没有 pdf 字段的假挂靠 sidecar，也以 manifest.json 登记的自绘身份为准
+    writeFileSync(join(figures, "fig3", "fig3.json"), '{"key":"Shut2019","label":"Self-drawn workaround"}');
+    writeFileSync(
+      join(figures, "manifest.json"),
+      JSON.stringify({
+        figures: [
+          {
+            file: "figures/fig3/fig3.svg",
+            spec: "figures/fig3/figure.json",
+            kind: "schematic",
+            outputs: ["figures/fig3/fig3.pptx", "figures/fig3/fig3.png"],
+          },
+          {
+            file: "figures/fig11/fig11.svg",
+            script: "figures/make_figures.py",
+            args: ["fig11a"],
+          },
+        ],
+      }),
+    );
+
+    // 在工作区根 dir 下拼板，写入相对路径 figures/fig3/fig3.png（复现从外层目录跑 figure_sources 时的路径解析）
+    r = spawnSync(python, [assemble, "--out", "figures/fig3.png", "--width-cm", "17", "--inputs", "figures/fig3/fig3.png", "figures/src/Open2020-fig1a.png"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0, r.stderr);
+    r = spawnSync(python, [assemble, "--out", "figures/fig11.png", "--width-cm", "17", "--inputs", "figures/fig11/fig11.png", "figures/src/Shut2019-fig3b.png"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0, r.stderr);
+
+    writeFileSync(
+      join(dir, "references.bib"),
+      "@article{Open2020,\n  title = {Open},\n  author = {Doe, Jane},\n  year = {2020},\n  journal = {J. Open},\n  doi = {10.1/open},\n}\n" +
+        "@article{Shut2019,\n  title = {Shut},\n  author = {Roe, Rick},\n  year = {2019},\n  journal = {J. Shut},\n  doi = {10.1/shut},\n}\n",
+    );
+
+    // 故意在仓库根（非 dir）调用 figure_sources.py，验证 figures.parent 相对路径解析不误落到整张拼板 fig3.png
+    r = spawnSync(python, [sourcesScript, "--figures", figures, "--bib", join(dir, "references.bib")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const sourcesMd = readFileSync(join(figures, "sources.md"), "utf8");
+    assert.match(sourcesMd, /\| \(a\) \| 本综述自绘示意图（schematic-forge，无需转载许可） \| 图纸 `figures\/fig3\/figure\.json` \| — \| — \|/);
+    assert.match(sourcesMd, /\| \(a\) \| 本综述重绘数据图（figure-forge，无需转载许可） \| 脚本 `figures\/make_figures\.py fig11a` \| — \| — \|/);
+    assert.doesNotMatch(sourcesMd, /Self-drawn workaround/);
+
+    const code = [
+      "import sys, importlib.util",
+      "spec = importlib.util.spec_from_file_location('fp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+      "fake = {'10.1/open': {'publisher': 'Open Press', 'license': [{'URL': 'http://creativecommons.org/licenses/by/4.0/', 'content-version': 'vor'}]},",
+      "        '10.1/shut': {'publisher': 'Shut Inc', 'license': []}}",
+      "sys.stdout.reconfigure(encoding='utf-8')",
+      "print(m.build(m.Path(sys.argv[2]), m.Path(sys.argv[3]), lambda doi: fake.get(doi, {})))",
+    ].join("\n");
+    r = spawnSync(python, ["-c", code, permScript, figures, join(dir, "references.bib")], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const permMd = r.stdout;
+    assert.match(permMd, /拼图共 4 块，其中 1 块要向出版社申请转载许可，1 块按开放获取许可注明出处即可，2 块为本综述自绘\/重绘（无需申请）。/);
+    assert.match(permMd, /\| 3\(a\) \| 本综述自绘示意图（schematic-forge） \| `figures\/fig3\/figure\.json` \| — \| 作者自绘 \| 不用申请.*\| 无需申请 \|/);
+    assert.match(permMd, /\| 11\(a\) \| 本综述重绘数据图（figure-forge） \| `figures\/make_figures\.py fig11a` \| — \| 作者自绘 \| 不用申请.*\| 无需申请 \|/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

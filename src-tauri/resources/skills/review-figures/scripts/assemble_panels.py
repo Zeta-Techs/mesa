@@ -41,7 +41,7 @@ def _font(ImageFont, dpi: int):
 
 
 def _fit_row(Image, images, width_px: int, gap: int, pad: int):
-    """按各自比例分栏宽。不再先拉成一样高再整张缩小，宽图不会把邻居压扁。"""
+    """按各自比例分栏宽（同排等高）。不再先拉成一样高再整张缩小，宽图不会把邻居压扁。"""
     aspects = [im.width / im.height for im in images]
     inner = width_px - pad * 2 - gap * (len(images) - 1)
     total_aspect = sum(aspects)
@@ -58,6 +58,21 @@ def _fit_row(Image, images, width_px: int, gap: int, pad: int):
     return fitted, height
 
 
+def _fit_row_equal_width(Image, images, width_px: int, gap: int, pad: int):
+    """按网格等列宽分配同一行宽度（不拉伸比例，高度不同时在行内垂直居中留白）。
+    适合扁宽流程图（如 3:1）与近正方形数据图（如 1:1 XRD）同排，避免等高模式下近方图被挤窄。"""
+    n = len(images)
+    inner = max(n, width_px - pad * 2 - gap * (n - 1))
+    base_w, rem = divmod(inner, n)
+    fitted = []
+    for i, im in enumerate(images):
+        col_w = max(1, base_w + (1 if i < rem else 0))
+        h = max(1, round(col_w * im.height / im.width))
+        fitted.append(im.resize((col_w, h), Image.Resampling.LANCZOS))
+    row_h = max(im.height for im in fitted)
+    return fitted, row_h
+
+
 # 块数不设死上限（系统综述一段论述拼 9 块、排 3×3 很常见），按印出来读不读得清卡：
 # 每块印出宽度不到 MIN_PANEL_CM，块里的坐标轴数字就小到读不清；整张高过 MAX_HEIGHT_CM，
 # 连图注放不进一页。两条都按 --width-cm（期刊栏宽）算，超了不出图，交给人按子论点拆成两张。
@@ -65,22 +80,27 @@ MIN_PANEL_CM = 3.5
 MAX_HEIGHT_CM = 23.0
 
 
-def write_layout(out: Path, panels: list[Path], width_cm: float) -> None:
+def write_layout(out: Path, panels: list[Path], width_cm: float, align_width: bool = False) -> None:
     """拼板旁边落 <图>.json：新编号 (a)(b)… 各是哪个子图文件。figure_sources.py 顺着它找到每块的来源记录。"""
-    record = {
+    record: dict[str, object] = {
         "width_cm": width_cm,
         "panels": [{"letter": chr(ord("a") + i), "source": str(p)} for i, p in enumerate(panels)],
     }
+    if align_width:
+        record["layout_mode"] = "align-width"
     out.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def check_readable(widths_px: list[int], height_px: int, dpi: int) -> None:
+def check_readable(widths_px: list[int], height_px: int, dpi: int, align_width: bool = False) -> None:
     narrow = [i for i, w in enumerate(widths_px) if w / dpi * 2.54 < MIN_PANEL_CM]
     height_cm = height_px / dpi * 2.54
     problems = []
     if narrow:
         letters = "、".join(f"({chr(ord('a') + i)}) {widths_px[i] / dpi * 2.54:.1f} cm" for i in narrow)
-        problems.append(f"{letters} 印出来不到 {MIN_PANEL_CM} cm 宽，字读不清：这一行少放几块（--rows 多分一行）")
+        hint = "这一行少放几块（--rows 多分一行）"
+        if not align_width:
+            hint += "，或扁宽图与近方图同排时加 --align-width 按等列宽分配"
+        problems.append(f"{letters} 印出来不到 {MIN_PANEL_CM} cm 宽，字读不清：{hint}")
     if height_cm > MAX_HEIGHT_CM:
         problems.append(f"整张高 {height_cm:.1f} cm，超过一页能放的 {MAX_HEIGHT_CM} cm：按子论点拆成两张图")
     if problems:
@@ -115,7 +135,7 @@ def check_own_letters(paths: list[Path]) -> None:
         sys.exit(3)
 
 
-def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: float) -> None:
+def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: float, align_width: bool = False) -> None:
     Image, ImageDraw, ImageFont = _need_pil()
     images = [Image.open(p).convert("RGB") for p in inputs]
     if not images:
@@ -125,24 +145,26 @@ def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: f
     pad = max(8, int(dpi * 1.6 / 25.4))
     label_h = max(18, int(dpi * 3.2 / 25.4))
     width_px = max(1, int(width_cm / 2.54 * dpi))
-    fitted, row_h = _fit_row(Image, images, width_px, gap, pad)
-    check_readable([im.width for im in fitted], row_h + pad * 2 + label_h, dpi)
+    fit = _fit_row_equal_width if align_width else _fit_row
+    fitted, row_h = fit(Image, images, width_px, gap, pad)
+    check_readable([im.width for im in fitted], row_h + pad * 2 + label_h, dpi, align_width)
     font = _font(ImageFont, dpi)
     canvas = Image.new("RGB", (width_px, row_h + pad * 2 + label_h), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
     x = pad
     letters = "abcdefghijklmnopqrstuvwxyz"
     for i, im in enumerate(fitted):
-        canvas.paste(im, (x, pad + label_h))
+        y_off = (row_h - im.height) // 2
+        canvas.paste(im, (x, pad + label_h + y_off))
         draw.text((x, pad), f"({letters[i]})", fill=(0, 0, 0), font=font)
         x += im.width + gap
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out, dpi=(dpi, dpi))
-    write_layout(out, inputs, width_cm)
+    write_layout(out, inputs, width_cm, align_width)
     print(out)
 
 
-def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, gap_mm: float) -> None:
+def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, gap_mm: float, align_width: bool = False) -> None:
     """多行拼板。一行超过 4 块时单行会矮到不可读，按行分组，字母跨行连续。"""
     Image, ImageDraw, ImageFont = _need_pil()
     if not rows or any(not row for row in rows):
@@ -158,21 +180,23 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
     letter = 0
     rendered = []
     widths = []
+    fit = _fit_row_equal_width if align_width else _fit_row
     for row in rows:
         images = [Image.open(p).convert("RGB") for p in row]
-        fitted, row_h = _fit_row(Image, images, width_px, gap, pad)
+        fitted, row_h = fit(Image, images, width_px, gap, pad)
         widths += [im.width for im in fitted]
         canvas = Image.new("RGB", (width_px, row_h + label_h), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
         x = pad
         for im in fitted:
-            canvas.paste(im, (x, label_h))
+            y_off = (row_h - im.height) // 2
+            canvas.paste(im, (x, label_h + y_off))
             draw.text((x, 0), f"({letters[letter]})", fill=(0, 0, 0), font=font)
             letter += 1
             x += im.width + gap
         rendered.append(canvas)
     sheet_h = sum(c.height for c in rendered) + row_gap * (len(rendered) - 1) + pad * 2
-    check_readable(widths, sheet_h, dpi)
+    check_readable(widths, sheet_h, dpi, align_width)
     sheet = Image.new("RGB", (width_px, sheet_h), (255, 255, 255))
     y = pad
     for canvas in rendered:
@@ -180,7 +204,7 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
         y += canvas.height + row_gap
     out.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(out, dpi=(dpi, dpi))
-    write_layout(out, [p for row in rows for p in row], width_cm)
+    write_layout(out, [p for row in rows for p in row], width_cm, align_width)
     print(out)
 
 
@@ -196,6 +220,13 @@ def main() -> None:
     p.add_argument("--width-cm", type=float, default=8.5)
     p.add_argument("--dpi", type=int, default=300)
     p.add_argument("--gap-mm", type=float, default=2.5)
+    p.add_argument(
+        "--align-width",
+        "--grid-cells",
+        dest="align_width",
+        action="store_true",
+        help="按网格等列宽分配同一行宽度（高度不同时垂直居中留白），适合扁宽图与近方图同排",
+    )
     a = p.parse_args()
     if a.rows:
         groups = []
@@ -219,9 +250,9 @@ def main() -> None:
         sys.exit(1)
     check_own_letters(paths)
     if groups:
-        assemble_rows(groups, a.out, a.width_cm, a.dpi, a.gap_mm)
+        assemble_rows(groups, a.out, a.width_cm, a.dpi, a.gap_mm, a.align_width)
     else:
-        assemble(paths, a.out, a.width_cm, a.dpi, a.gap_mm)
+        assemble(paths, a.out, a.width_cm, a.dpi, a.gap_mm, a.align_width)
 
 
 if __name__ == "__main__":

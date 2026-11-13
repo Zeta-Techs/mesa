@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from figure_sources import PLACEHOLDERS, bib_entries, cite, panel_source  # noqa: E402
+from figure_sources import PLACEHOLDERS, bib_entries, cite, panel_source, resolve_panel_path  # noqa: E402
 
 UA = "Mesa/figure-permissions (mailto:support@mesa.local)"
 
@@ -73,11 +73,42 @@ def build(figures: Path, bib: Path, lookup=crossref) -> str:
     cache: dict[str, dict] = {}
     rows = []
     for layout in sorted(figures.glob("fig*.json"), key=lambda p: int(re.sub(r"\D", "", p.stem) or 0)):
+        try:
+            data = json.loads(layout.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("panels"), list):
+            continue
         n = re.sub(r"\D", "", layout.stem)
-        for panel in json.loads(layout.read_text(encoding="utf-8")).get("panels", []):
-            given = Path(panel["source"])
-            path = next((c for c in (given, figures / "src" / given.name, figures / given.name) if c.is_file()), given)
-            src = panel_source(path)
+        for panel in data.get("panels", []):
+            path = resolve_panel_path(figures, str(panel["source"]), layout.with_suffix(".png"))
+            src = panel_source(path, figures)
+            if src.get("self_drawn"):
+                is_schem = src["self_drawn"] == "schematic"
+                artifact = src.get("artifact", "")
+                rows.append({
+                    "figure": n,
+                    "letter": panel["letter"],
+                    "paper": "本综述自绘示意图（schematic-forge）" if is_schem else "本综述重绘数据图（figure-forge）",
+                    "key": "",
+                    "label": f"`{artifact}`" if artifact else "本综述自绘",
+                    "doi": "",
+                    "publisher": "—",
+                    "licence": "作者自绘",
+                    "need": (
+                        "不用申请：本综述自绘示意图，图注注明 Summarized from [@键] 即可"
+                        if is_schem
+                        else "不用申请：基于公开文献数据重绘，图注注明 Data compiled from [@键] 即可"
+                    ),
+                    "credit": (
+                        "Summarized from [@键].（无需 With permission）"
+                        if is_schem
+                        else "Data compiled from [@键1; @键2].（无需 With permission）"
+                    ),
+                    "status": "无需申请",
+                    "self_drawn": True,
+                })
+                continue
             key = src.get("key", "")
             fields = entries.get(key, {})
             doi = fields.get("doi", "")
@@ -99,11 +130,16 @@ def build(figures: Path, bib: Path, lookup=crossref) -> str:
                 "need": need, "credit": credit(lic, key, label, year, publisher if message else ""), "status": status,
             })
     pending = sum(1 for r in rows if r["status"] == "待申请")
+    own = sum(1 for r in rows if r.get("self_drawn"))
+    oa = len(rows) - pending - own
+    summary = (
+        f"拼图共 {len(rows)} 块，其中 {pending} 块要向出版社申请转载许可，{oa} 块按开放获取许可注明出处即可"
+        + (f"，{own} 块为本综述自绘/重绘（无需申请）。" if own else "。")
+    )
     lines = [
         "# 换原图与转载许可",
         "",
-        f"拼图共 {len(rows)} 块，其中 {pending} 块要向出版社申请转载许可，{len(rows) - pending} 块按开放获取许可注明出处即可。"
-        "许可只能由作者本人申请；Mesa 和 AI 只做这张清单。",
+        summary + "许可只能由作者本人申请；Mesa 和 AI 只做这张清单。",
         "",
         "**怎么用**：",
         "1. 要申请的块：点 DOI 打开文章页，找 Request permissions / Rights and permissions（多数出版社走 RightsLink；用途选在期刊综述里改编使用图片），逐篇提交；"
