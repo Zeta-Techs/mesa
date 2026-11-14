@@ -366,6 +366,7 @@ test("要做事的提示词：带接活规矩、项目地图与能力清单，�
   });
   assert.match(prompt, /先判断这件事归哪种去向/);
   assert.match(prompt, /:::派活/);
+  assert.match(prompt, /项目工作方式是「编程」时，新活从基准开分支做、不走「新目标」/);
   assert.match(prompt, /## 项目里有什么（项目地图/);
   assert.match(prompt, /## Mesa 能用的任务和技能（能力清单）\n- 内置任务「组会汇报」/);
   assert.ok(prompt.includes("问2") && !prompt.includes("问1"), "带最近 6 轮");

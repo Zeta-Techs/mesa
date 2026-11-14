@@ -364,7 +364,19 @@ export async function gatherBriefInput(projectPath: string, since: string | null
     }),
   );
   const workMode = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS))?.workMode;
-  const goals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(workMode)).map((t) => ({ name: t.name, status: t.status, updatedAt: t.updatedAt }));
+  const latestGoalIsolation = (taskId: string): string | null => {
+    const hit = runs
+      .filter((r) => !r.internal && r.taskId === taskId && r.isolationPath && !samePath(r.isolationPath, projectPath, IS_WINDOWS))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    return hit?.isolationPath ?? null;
+  };
+  const goals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(workMode)).map((t) => ({
+    name: t.name,
+    status: t.status,
+    updatedAt: t.updatedAt,
+    isolationPath: t.workspaceCleared ? null : latestGoalIsolation(t.id),
+    outputPaths: t.outputPaths,
+  }));
   // 读不到项目知识时不提议（宁可不提，也别对已有知识的项目说「还没有」）；项目根没有约定文件也不提议（起草了也是「一条没找到」）
   const knowledgeEmpty =
     !!knowledge && knowledge.lines.length === 0 && knowledge.stale === 0 && hasKnowledgeSources(topLevel.filter((e) => !e.isDir).map((e) => e.name));
@@ -484,6 +496,29 @@ export function planAsk(
 
 const INSPECT_UNSUPPORTED = "INSPECT_UNSUPPORTED";
 
+/** 只读查看文件时一并放开访问的目录：各步骤的工作副本 + 还没清理的在跑 / 待验收 / 失败目标的隔离副本 */
+async function inspectExtraDirs(projectPath: string): Promise<string[]> {
+  const [workspaces, tasks, runs] = await Promise.all([
+    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+    safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
+    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
+  ]);
+  const out = workspaces
+    .filter((w) => w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS))
+    .map((w) => w.worktreePath);
+  for (const t of tasks) {
+    if (t.kind === "step" || t.archivedAt || t.workspaceCleared) continue;
+    if (!["running", "pending_review", "failed", "stopped"].includes(t.status)) continue;
+    const hit = runs
+      .filter((r) => !r.internal && r.taskId === t.id && r.isolationPath && !samePath(r.isolationPath, projectPath, IS_WINDOWS))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (hit && !out.some((p) => samePath(p, hit.isolationPath, IS_WINDOWS))) {
+      out.push(hit.isolationPath);
+    }
+  }
+  return out;
+}
+
 /** 问「这一轮怎么样 / 有没有问题 / 帮我看看」时看哪一步：问题里点名的，没点名就是评审页正开着的那一步。
  *  找到且开过工的，带上这一步的核验项（含 Mesa 核对）做成这次的重点，只读打开它的主要产物；找不到返回 null，照原来的问法走 */
 async function reviewAskFocus(projectPath: string, question: string): Promise<AssistantFocus | null> {
@@ -544,13 +579,7 @@ export async function askProjectAssistant(input: {
     needGuide
       ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? GUIDE_LIMIT.mixed : GUIDE_LIMIT.howto }), [])
       : Promise.resolve([] as { heading: string; text: string }[]),
-    inspect
-      ? safe(invoke<WorkspaceDto[]>("list_workspaces"), []).then((list) =>
-          list
-            .filter((w) => w.status !== "archived" && samePath(w.repoPath, input.projectPath, IS_WINDOWS))
-            .map((w) => w.worktreePath),
-        )
-      : Promise.resolve([] as string[]),
+    inspect ? inspectExtraDirs(input.projectPath) : Promise.resolve([] as string[]),
     request ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at) : Promise.resolve(null),
     request ? gatherCatalog(input.project) : Promise.resolve(null),
   ]);

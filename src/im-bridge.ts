@@ -131,13 +131,15 @@ async function ask(project: ProjectDto, question: string): Promise<void> {
   const desktopOnly = parsed.actions.filter((a) => !opAllowed(actionOp(a.kind), "phone")).map((a) => actionLabel(a.kind, a.step));
   // 补料单只在桌面发（assistant-ops rework = desktop）：手机上只说一句去哪点
   if (rework.rework && !opAllowed("rework", "phone")) desktopOnly.push(`补料单（退回第 ${rework.rework.toStep} 步）：在桌面的项目助手里点「退回去补」`);
+  const codingGoalBlocked = project.workMode === "coding" && order.order?.target === "goal";
+  if (codingGoalBlocked) desktopOnly.push("编程项目按分支开工：回桌面的项目页从基准开一条分支来做");
   await sendCard(
     answerCard({
       project: asRoute(project),
       turnAt: turn.at,
       text: phoneText(guardClaims(parsed.text).text),
       ask: clar.ask,
-      order: order.order,
+      order: codingGoalBlocked ? null : order.order,
       remembers: memo.remembers,
       desktopOnly,
     }),

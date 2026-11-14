@@ -548,6 +548,7 @@ export default function ProjectAssistantPanel({
               order={withOrder.order}
               record={turn.dispatched ?? null}
               projectPath={projectPath}
+              workMode={project?.workMode ?? null}
               onDispatch={(order) => dispatch(turn.at, order)}
             />
           )}

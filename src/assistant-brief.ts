@@ -24,6 +24,10 @@ export interface BriefGoal {
   name: string;
   status: string;
   updatedAt: string;
+  /** 目标未清理的隔离副本目录（只读先看一遍或查错时打开） */
+  isolationPath?: string | null;
+  /** 目标声明的交付路径（可省） */
+  outputPaths?: readonly string[];
 }
 
 export interface BriefInput {
@@ -126,6 +130,24 @@ export function reviewPrereadQuestion(n: number): string {
   return `第 ${n} 步交的东西，我评审时该重点看哪几处？`;
 }
 
+/** 目标待验收时「先看一遍」的只读重点：进目标隔离副本核对产出文件，列出值得人看的地方，不判能不能验收通过 */
+export function goalReviewPrereadFocus(
+  name: string,
+  where?: { isolationPath?: string | null; outputs?: readonly string[] },
+): { title: string; detail: string } {
+  const read = (where?.outputs ?? []).filter((a) => !GENERATED_ARTIFACT.test(a));
+  const skipped = (where?.outputs ?? []).filter((a) => GENERATED_ARTIFACT.test(a));
+  return {
+    title: `验收前先看一遍：目标「${name}」`,
+    detail:
+      `用户马上要验收目标「${name}」交的东西。只读打开这个目标${where?.isolationPath ? `隔离副本（${where.isolationPath}）` : "隔离副本"}里的产出文件，列出值得人看的地方：` +
+      "结论缺出处或出处对不上、数字前后或与数据不一致、要求做的事漏了哪项、产出文件缺了哪样。" +
+      "每条写到文件和位置。不判断能不能验收通过、不打分、不替人决定写不写回；没发现问题就直说没看出明显问题，并说明看了哪些文件。" +
+      `读法（两分钟内答完）：${read.length ? `优先看 ${read.join("、")}，` : ""}最多打开 5 个文件；先看主要报告或产出摘要，再用搜索定位可疑处，不整份通读；` +
+      `大的 JSON 只搜关键字段${skipped.length ? `；${skipped.join("、")} 由脚本从清单生成，不读` : "；脚本生成的清单、RIS、bib 不读"}；不读 PDF。`,
+  };
+}
+
 export function briefLines(input: BriefInput): BriefLine[] {
   const now: BriefLine[] = [];
   const changed: BriefLine[] = [];
@@ -161,7 +183,10 @@ export function briefLines(input: BriefInput): BriefLine[] {
       now.push({
         tone: "err",
         text: `目标「${g.name}」${g.status === "failed" ? "没做成" : "停下了"}`,
-        ask: { question: `目标「${g.name}」为什么${g.status === "failed" ? "没做成" : "停下了"}？我该怎么办？`, focus: { title: `目标「${g.name}」`, detail: "" } },
+        ask: {
+          question: `目标「${g.name}」为什么${g.status === "failed" ? "没做成" : "停下了"}？我该怎么办？`,
+          focus: { title: `目标「${g.name}」`, detail: g.isolationPath ? `这个目标的工作副本：${g.isolationPath}` : "" },
+        },
       });
     } else if (g.status === "completed" && after(g.updatedAt, input.since)) {
       changed.push({ tone: "ok", text: `目标「${g.name}」已验收完成` });
@@ -236,7 +261,13 @@ export function quickAsks(input: BriefInput, limit = 3): QuickAsk[] {
   const judge = input.steps.find((s) => s.needsHuman > 0 && s.state !== "saved" && s !== review);
   if (judge) out.push({ q: `${stepLabel(judge)}核验里待我判断的是什么？`, hint: "每一条要你判断什么、依据在哪" });
   const goalReview = input.goals.find((g) => g.status === "pending_review");
-  if (goalReview) out.push({ q: `目标「${goalReview.name}」做得怎么样，我验收时看哪？`, hint: "它先看一遍交的东西，列出值得你看的地方" });
+  if (goalReview) {
+    out.push({
+      q: `目标「${goalReview.name}」做得怎么样，我验收时看哪？`,
+      hint: "它先只读过一遍，列出值得你看的地方；不判通过",
+      focus: goalReviewPrereadFocus(goalReview.name, { isolationPath: goalReview.isolationPath, outputs: goalReview.outputPaths }),
+    });
+  }
   const defaults = input.hasFlow ? FLOW_DEFAULTS : input.goals.length > 0 ? GOAL_DEFAULTS : FRESH_DEFAULTS;
   for (const d of defaults) {
     if (out.length >= limit) break;

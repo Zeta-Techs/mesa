@@ -8,7 +8,8 @@ import SavePackModal from "./SavePackModal";
 import OrderScheduleRow from "./OrderScheduleRow";
 import { builtinTaskMethod, findBuiltinTask } from "../builtin-tasks";
 import { suggestPackParams, workOrderScheduleIntent, workOrderToStep } from "../work-order-pack";
-import { parseOrderPaths, type WorkOrder } from "../project-assistant";
+import { parseOrderPaths, workOrderGoalText, type WorkOrder } from "../project-assistant";
+import { toast } from "../toast";
 
 /** 可省的几栏（派活单 v2）：看的时候没写就不显示，改的时候都给框 */
 const TEXT_FIELDS: { key: "deliver" | "done" | "assumptions" | "mustAsk"; label: string }[] = [
@@ -44,12 +45,14 @@ export default function WorkOrderCard({
   order,
   record,
   projectPath,
+  workMode,
   onDispatch,
 }: {
   order: WorkOrder;
   /** 派过了的记录；没派为 null */
   record: DispatchRecord | null;
   projectPath: string | null;
+  workMode?: string | null;
   onDispatch: (order: WorkOrder) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<WorkOrder>(order);
@@ -117,6 +120,34 @@ export default function WorkOrderCard({
     s.setProjectFocusReq({ projectRoot: projectPath, focus: "schedule", token: Date.now() });
     s.setPage("workspaces");
   }
+
+  function openProjectBranch() {
+    const s = useAppStore.getState();
+    if (projectPath) s.setSelectProjectReq(projectPath);
+    s.setPage("workspaces");
+  }
+
+  async function copyGoalText() {
+    const inputs = parseOrderPaths(inputsText);
+    const text = workOrderGoalText(
+      {
+        ...draft,
+        inputs: inputs.length ? inputs : undefined,
+        deliver: draft.deliver?.trim() || undefined,
+        assumptions: draft.assumptions?.trim() || undefined,
+        mustAsk: draft.mustAsk?.trim() || undefined,
+      },
+      { method },
+    );
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("已复制任务要求", "success");
+    } catch {
+      toast("复制失败", "error");
+    }
+  }
+
+  const codingGoalBlocked = !record && workMode === "coding" && draft.target === "goal";
 
   return (
     <section className="mt-3 rounded-xl border border-hairline p-3" aria-label="派活单">
@@ -210,6 +241,7 @@ export default function WorkOrderCard({
         </div>
       )}
       {shown.schedule && !record && <p className="mt-1.5 text-xs text-l3">想定期做：{shown.schedule}。先派这一次，满意了再点「建成定时任务（先不启用）」。</p>}
+      {codingGoalBlocked && <p className="mt-1.5 text-xs text-warn-text">编程项目按分支开工，不走「新目标」——去项目页从基准开一条分支，把要求贴进去做。</p>}
       {error && <p className="mt-2 break-words text-xs text-err-text">没派出去：{error}</p>}
       <div className="mt-3 flex min-w-0 items-center gap-2">
         {record ? (
@@ -238,6 +270,18 @@ export default function WorkOrderCard({
               </div>
             )}
           </div>
+        ) : codingGoalBlocked ? (
+          <>
+            <button type="button" className={primaryActionClass} onClick={openProjectBranch}>
+              去项目页开分支
+            </button>
+            <button type="button" className={ghostActionClass} onClick={() => void copyGoalText()}>
+              复制要求
+            </button>
+            <button type="button" className={ghostActionClass} onClick={() => setEditing((v) => !v)}>
+              {editing ? "改好了" : "改一改"}
+            </button>
+          </>
         ) : (
           <>
             <button type="button" className={`${primaryActionClass} gap-1.5`} disabled={busy || !draft.task.trim()} onClick={() => void dispatch()}>

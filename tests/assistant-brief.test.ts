@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { briefLines, hasKnowledgeSources, quickAsks, reviewPrereadFocus, reviewRoundFocus, reviewingStep, setReviewingStep, type BriefInput } from "../src/assistant-brief.ts";
+import { briefLines, goalReviewPrereadFocus, hasKnowledgeSources, quickAsks, reviewPrereadFocus, reviewRoundFocus, reviewingStep, setReviewingStep, type BriefInput } from "../src/assistant-brief.ts";
 
 const base: BriefInput = { hasFlow: true, steps: [], goals: [], since: null };
 
@@ -137,4 +137,36 @@ test("评审页开着的那一步：打开设、关掉清", () => {
   assert.equal(reviewingStep()?.n, 3);
   setReviewingStep(null);
   assert.equal(reviewingStep(), null);
+});
+
+test("待验收目标常用问题：带上隔离副本与只读预读重点，失败目标也带工作副本路径", () => {
+  const asks = quickAsks({
+    ...base,
+    hasFlow: false,
+    goals: [
+      {
+        name: "第三批数据汇总",
+        status: "pending_review",
+        updatedAt: "2026-11-10T00:00:00Z",
+        isolationPath: "/iso/goal-1",
+        outputPaths: ["output/summary.md", "references.bib"],
+      },
+    ],
+  });
+  assert.equal(asks[0].q, "目标「第三批数据汇总」做得怎么样，我验收时看哪？");
+  assert.deepEqual(
+    asks[0].focus,
+    goalReviewPrereadFocus("第三批数据汇总", { isolationPath: "/iso/goal-1", outputs: ["output/summary.md", "references.bib"] }),
+  );
+  assert.match(asks[0].focus!.detail, /隔离副本（\/iso\/goal-1）/);
+  assert.match(asks[0].focus!.detail, /优先看 output\/summary\.md，/);
+  assert.match(asks[0].focus!.detail, /references\.bib 由脚本从清单生成，不读/);
+  assert.match(asks[0].focus!.detail, /不判断能不能验收通过/);
+
+  const lines = briefLines({
+    ...base,
+    hasFlow: false,
+    goals: [{ name: "重算误差", status: "failed", updatedAt: "2026-11-10T00:00:00Z", isolationPath: "/iso/goal-2" }],
+  });
+  assert.match(lines[0].ask!.focus.detail, /\/iso\/goal-2/);
 });
