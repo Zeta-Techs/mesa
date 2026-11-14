@@ -795,19 +795,40 @@ export function parseReworkOrder(answer: string, stepCount: number): { text: str
   };
 }
 
-/** 从回答里取出要记进项目知识的句子（:::记下 块）：正文去掉这些块；空的不要，每句截到 300 字。
- *  平时一次一块；起草项目知识时最多五块（remembers 全部，remember 是第一块，飞书卡片只用它） */
-export function parseRemember(answer: string): { text: string; remember: string | null; remembers: string[] } {
-  const re = /:::\s*记下\s*\n([\s\S]*?)\n\s*:::/g;
-  const remembers: string[] = [];
+export interface RememberItem {
+  text: string;
+  /** 起草项目知识时附的来源文件（如「README.md」），卡片展示用，不写进规矩正文 */
+  source?: string;
+}
+
+/** 从回答里取出要记进项目知识的句子（:::记下 块）：正文去掉这些块与紧贴在块前的「依据：…」行；空的不要，每句截到 300 字。
+ *  平时一次一块；起草项目知识时最多五块（items 带来源，remembers 是纯正文，remember 是第一块） */
+export function parseRemember(answer: string): { text: string; remember: string | null; remembers: string[]; items: RememberItem[] } {
+  const re = /(?:^[ \t]*依据[:：][ \t]*([^\n]+)\n)?:::\s*记下\s*\n([\s\S]*?)\n\s*:::/gm;
+  const items: RememberItem[] = [];
   let text = answer;
   for (const m of answer.matchAll(re)) {
     text = text.replace(m[0], "");
-    const one = m[1].replace(/\s*\n\s*/g, " ").trim().slice(0, 300);
-    if (one && !remembers.includes(one) && remembers.length < MAX_REMEMBERS) remembers.push(one);
+    const lines = m[2]
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    let source = m[1]?.trim();
+    if (!source && lines.length > 1) {
+      const srcMatch = lines[0].match(/^依据[:：]\s*(.+)$/);
+      if (srcMatch) {
+        source = srcMatch[1].trim();
+        lines.shift();
+      }
+    }
+    const one = lines.join(" ").trim().slice(0, 300);
+    if (one && !items.some((it) => it.text === one) && items.length < MAX_REMEMBERS) {
+      items.push(source ? { text: one, source: source.slice(0, 120) } : { text: one });
+    }
   }
-  if (remembers.length === 0 && text === answer) return { text: answer, remember: null, remembers };
-  return { text: text.replace(/\n{3,}/g, "\n\n").trim(), remember: remembers[0] ?? null, remembers };
+  const remembers = items.map((it) => it.text);
+  if (remembers.length === 0 && text === answer) return { text: answer, remember: null, remembers, items };
+  return { text: text.replace(/\n{3,}/g, "\n\n").trim(), remember: remembers[0] ?? null, remembers, items };
 }
 const MAX_REMEMBERS = 5;
 
@@ -917,16 +938,19 @@ export function retryIntents(basis: string | undefined, connection: string | und
 
 const CLAIM_RE =
   /就当你(已经)?点了|我(已经|已|这就|马上|现在就|会|来)?(帮你|替你|给你)?(把它|把这件活|把单子)?(派出去|派出|派给|派了|开工|启动|发出去|交给(干活|第)|让(它|他)(接着|继续|先|写)|去(盯|催))|(已经|已)(帮你|替你)(派|开工|启动|交给)/;
+/** AI 如实说明自己边界的否定句（「我不能帮你派出去」「我不会替你开工」），不算谎称已执行 */
+const DENY_CLAIM_RE = /我[^，。；！？!?\n]{0,6}(?:不能|不会|没法|无法|不替你|不能替你|没替你|没有|并没有)/;
 
 export const CLAIM_NOTE = "〔这句说的动作没有发生：项目助手只会说话。要派活点单子上的「派出去」，要接着做点「接着做」，做到哪以 Mesa 补的进展为准。〕";
 
-/** 把回答里声称自己做了动作的句子换成如实说明；flagged = 换过 */
+/** 把回答里声称自己做了动作的句子换成如实说明；保留行首列表符不打乱排版；flagged = 换过 */
 export function guardClaims(text: string): { text: string; flagged: boolean } {
   let flagged = false;
   const out = text.replace(/[^。！？!?\n]*[。！？!?]?/g, (sentence) => {
-    if (!sentence.trim() || !CLAIM_RE.test(sentence)) return sentence;
+    if (!sentence.trim() || !CLAIM_RE.test(sentence) || DENY_CLAIM_RE.test(sentence)) return sentence;
     flagged = true;
-    return CLAIM_NOTE;
+    const prefix = sentence.match(/^(\s*(?:[-*+•]|\d+[.、)])\s+)/)?.[1] ?? "";
+    return `${prefix}${CLAIM_NOTE}`;
   });
   // 连着几句都被换掉时只留一条说明
   const note = CLAIM_NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

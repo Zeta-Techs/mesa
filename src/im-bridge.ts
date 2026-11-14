@@ -72,8 +72,14 @@ async function sendText(text: string): Promise<void> {
   await invoke("feishu_send_text", { text }).catch(() => {});
 }
 
-async function sendCard(card: object): Promise<void> {
-  await invoke("feishu_send_card", { card }).catch(() => sendText("（卡片没发出去）"));
+async function sendCard(card: object): Promise<boolean> {
+  try {
+    await invoke("feishu_send_card", { card });
+    return true;
+  } catch {
+    await sendText("（卡片没发出去）");
+    return false;
+  }
 }
 
 let configCache: { at: number; cfg: FeishuConfig | null } | null = null;
@@ -132,7 +138,7 @@ async function ask(project: ProjectDto, question: string): Promise<void> {
       text: phoneText(guardClaims(parsed.text).text),
       ask: clar.ask,
       order: order.order,
-      remember: memo.remember,
+      remembers: memo.remembers,
       desktopOnly,
     }),
   );
@@ -177,12 +183,14 @@ async function handleMessage(text: string): Promise<void> {
       writeCurrent(route.project.path);
       return sendText(`已切到「${route.project.name}」，接下来直接说事就交给它。`);
     case "pick":
-      return sendCard(projectPickCard(list.map(asRoute), route.text));
+      await sendCard(projectPickCard(list.map(asRoute), route.text));
+      return;
     case "queue": {
       const groups = await Promise.all(
         (await busyProjects(list)).map(async (p) => ({ project: asRoute(p), items: await loadDesk(p.path).catch(() => [] as DeskItem[]) })),
       );
-      return sendCard(deskCard(groups));
+      await sendCard(deskCard(groups));
+      return;
     }
     case "reply": {
       const items = await loadDesk(route.project.path);
@@ -284,7 +292,9 @@ async function handleCard(value: CardValue): Promise<void> {
       return ask(project, value.v ?? "");
     case "remember": {
       const turn = await turnAnswer(project.path, value.t);
-      const line = turn ? parseRemember(turn.answer).remember : null;
+      const list = turn ? parseRemember(turn.answer).remembers : [];
+      const idx = value.v !== undefined ? Number(value.v) : 0;
+      const line = Number.isInteger(idx) && idx >= 0 ? (list[idx] ?? null) : null;
       if (!line) return sendText("那一句找不到了（问答记录可能清空了）。");
       try {
         await addProjectKnowledge(project.path, line);
@@ -361,10 +371,15 @@ export async function pushNewHelp(): Promise<void> {
       .filter((p) => fresh.some((h) => samePath(h.repoPath, p.path, IS_WINDOWS)))
       .map(async (p) => ({ project: asRoute(p), items: (await loadDesk(p.path).catch(() => [] as DeskItem[])).filter((i) => i.kind === "help") })),
   );
-  await sendCard(deskCard(groups));
-  for (const h of fresh) for (const i of h.items) pushed.push(`${h.root}:${i.id}`);
+  if (!groups.some((g) => g.items.length)) return;
+  if (!(await sendCard(deskCard(groups)))) return;
+  for (const g of groups) {
+    for (const i of g.items) {
+      if (i.helpRoot && i.helpItemId) pushed.push(`${i.helpRoot}:${i.helpItemId}`);
+    }
+  }
   try {
-    localStorage.setItem(PUSHED_KEY, JSON.stringify(pushed.slice(-500)));
+    localStorage.setItem(PUSHED_KEY, JSON.stringify([...new Set(pushed)].slice(-500)));
   } catch {
     /* 记不下最多重推一次 */
   }
@@ -390,10 +405,15 @@ export async function pushNewGrants(): Promise<void> {
       .filter((p) => fresh.some((s) => samePath(s.projectRoot, p.path, IS_WINDOWS)))
       .map(async (p) => ({ project: asRoute(p), items: (await loadDesk(p.path).catch(() => [] as DeskItem[])).filter((i) => i.kind === "grant") })),
   );
-  if (groups.some((g) => g.items.length)) await sendCard(deskCard(groups));
-  for (const s of fresh) pushed.push(`${s.id}:${s.grantRequest!.at}`);
+  if (!groups.some((g) => g.items.length)) return;
+  if (!(await sendCard(deskCard(groups)))) return;
+  for (const s of fresh) {
+    if (groups.some((g) => samePath(g.project.path, s.projectRoot, IS_WINDOWS))) {
+      pushed.push(`${s.id}:${s.grantRequest!.at}`);
+    }
+  }
   try {
-    localStorage.setItem(PUSHED_GRANT_KEY, JSON.stringify(pushed.slice(-200)));
+    localStorage.setItem(PUSHED_GRANT_KEY, JSON.stringify([...new Set(pushed)].slice(-200)));
   } catch {
     /* 记不下最多重推一次 */
   }
@@ -425,7 +445,7 @@ export async function pushStuck(): Promise<void> {
     if (items.length) groups.push({ project: asRoute(p), items });
   }
   if (!groups.length) return;
-  await sendCard(deskCard(groups));
+  if (!(await sendCard(deskCard(groups)))) return;
   for (const g of groups) for (const i of g.items) stuckPushed.add(i.key);
 }
 

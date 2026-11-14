@@ -198,6 +198,7 @@ export function deskSummary(items: readonly DeskItem[]): string {
     n("confirm") ? `等确认 ${n("confirm")}` : "",
     n("trust") ? `等信任文件夹 ${n("trust")}` : "",
     n("blocked") ? `卡住了 ${n("blocked")}` : "",
+    n("grant") ? `要扩大授权 ${n("grant")}` : "",
   ].filter(Boolean);
   return `等你的事 ${items.length} 件：${parts.join(" · ")}`;
 }

@@ -22,7 +22,7 @@ const ANSWER_MAX = 3000;
 /** 回答正文给手机看：去掉动作标记与 ::: 块（它们变成按钮或另起卡片），截短 */
 export function phoneText(answer: string): string {
   const t = answer
-    .replace(/:::[\s\S]*?\n\s*:::/g, "")
+    .replace(/(?:^[ \t]*依据[:：][ \t]*[^\n]+\n)?:::[\s\S]*?\n\s*:::/gm, "")
     .replace(/\[\[[^\]\n]{1,600}\]\]/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -50,7 +50,8 @@ export function answerCard(input: {
   text: string;
   ask: ClarifyAsk | null;
   order: WorkOrder | null;
-  remember: string | null;
+  remember?: string | null;
+  remembers?: readonly string[];
   /** 回答里只能在电脑上点的按钮（跳页、商量、报告…）的名字 */
   desktopOnly: readonly string[];
 }): object {
@@ -79,10 +80,12 @@ export function answerCard(input: {
     els.push({ tag: "action", actions: [button("派出去", { op: "dispatch", p, t: input.turnAt }, true)] });
     els.push(note("点了才开工；做完要回到电脑上评审 / 验收"));
   }
-  if (input.remember) {
-    els.push({ tag: "hr" }, { tag: "markdown", content: `**以后照这样办**\n${input.remember}` });
-    els.push({ tag: "action", actions: [button("记进项目知识", { op: "remember", p, t: input.turnAt })] });
-  }
+  const remembers = input.remembers ?? (input.remember ? [input.remember] : []);
+  remembers.forEach((line, idx) => {
+    const val: CardValue = remembers.length === 1 ? { op: "remember", p, t: input.turnAt } : { op: "remember", p, t: input.turnAt, v: String(idx) };
+    els.push({ tag: "hr" }, { tag: "markdown", content: `**以后照这样办${remembers.length > 1 ? `（${idx + 1}/${remembers.length}）` : ""}**\n${line}` });
+    els.push({ tag: "action", actions: [button("记进项目知识", val)] });
+  });
   if (input.desktopOnly.length) els.push(note(`在电脑上还可以：${input.desktopOnly.join("、")}`));
   return card(`项目助手 · ${input.project.name}`, els.length ? els : [{ tag: "markdown", content: "（没有回答内容）" }]);
 }

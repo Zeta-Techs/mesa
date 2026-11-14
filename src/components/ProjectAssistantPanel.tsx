@@ -532,8 +532,8 @@ export default function ProjectAssistantPanel({
               ) : null}
             </section>
           )}
-          {withMemo.remembers.map((r) => (
-            <RememberCard key={r} text={r} projectPath={projectPath} />
+          {withMemo.items.map((r) => (
+            <RememberCard key={r.text} text={r.text} source={r.source} projectPath={projectPath} />
           ))}
           {withRework.rework && (
             <ReworkOrderCard

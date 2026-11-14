@@ -279,11 +279,13 @@ export function petLean(dx: number, dy: number): { rotate: number; x: number; y:
 }
 
 /** 回答里要在 Mesa 里点的东西（派活单、补料单、以后照这样办、跳到某一页的按钮）：桌宠上不办，只说一句 */
-export function deskOnlyNotes(parts: { order: boolean; rework: boolean; remember: boolean; actions: number }): string[] {
+export function deskOnlyNotes(parts: { order: boolean; rework: boolean; remember: boolean | number; actions: number }): string[] {
   const out: string[] = [];
   if (parts.order) out.push("起草了一张派活单");
   if (parts.rework) out.push("起草了一张补料单");
-  if (parts.remember) out.push("起草了一条「以后照这样办」");
+  const remCount = typeof parts.remember === "number" ? parts.remember : parts.remember ? 1 : 0;
+  if (remCount === 1) out.push("起草了一条「以后照这样办」");
+  else if (remCount > 1) out.push(`起草了 ${remCount} 条「以后照这样办」`);
   if (parts.actions) out.push(`给了 ${parts.actions} 个去处按钮`);
   return out;
 }

@@ -10,7 +10,7 @@ import { addProjectKnowledge } from "../assistant-desk";
  * 你说出以后都要照办的偏好时，它起草一句；你可以改，点「记进项目知识」才写进「已定 / 不做」（project_memory_update add，
  * 与项目设置里的项目知识同一份），以后干活的 AI 和项目助手都会照着办。已经记过同一句的直接显示「已记下」。
  */
-export default function RememberCard({ text, projectPath }: { text: string; projectPath: string | null }) {
+export default function RememberCard({ text, source, projectPath }: { text: string; source?: string; projectPath: string | null }) {
   const [draft, setDraft] = useState(text);
   const [editing, setEditing] = useState(false);
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
@@ -49,6 +49,7 @@ export default function RememberCard({ text, projectPath }: { text: string; proj
       <div className="mb-1.5 flex items-center gap-2 text-xs text-l3">
         <BookmarkPlus size={13} strokeWidth={1.8} aria-hidden="true" />
         <span className="font-medium text-l2">以后照这样办</span>
+        {source && <span className="truncate text-l4">· 依据：{source}</span>}
       </div>
       {editing && state !== "done" ? (
         <textarea

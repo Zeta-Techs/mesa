@@ -91,4 +91,5 @@ test("授权请求：有被拦下的事才成一件「等你的事」，带定�
   assert.equal(items[0].scheduleId, "s1");
   assert.equal(items[0].where, "定时任务「雷达」");
   assert.deepEqual(items[0].detail, ["example.com"]);
+  assert.equal(deskSummary(items), "等你的事 1 件：要扩大授权 1");
 });

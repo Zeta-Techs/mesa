@@ -154,6 +154,7 @@ test("问小桌默认问哪个项目：上次的还在用上次的，否则最�
 
 test("回答里要回 Mesa 点的东西只说一句", () => {
   assert.deepEqual(deskOnlyNotes({ order: true, rework: false, remember: true, actions: 2 }), ["起草了一张派活单", "起草了一条「以后照这样办」", "给了 2 个去处按钮"]);
+  assert.deepEqual(deskOnlyNotes({ order: false, rework: false, remember: 3, actions: 0 }), ["起草了 3 条「以后照这样办」"]);
   assert.deepEqual(deskOnlyNotes({ order: false, rework: false, remember: false, actions: 0 }), []);
 });
 

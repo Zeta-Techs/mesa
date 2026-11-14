@@ -27,6 +27,25 @@ test("回答卡片：追问选项、派活单、记下各成按钮，按钮回�
   const text = JSON.stringify(card);
   assert.match(text, /建成定时任务要在电脑上点/);
   assert.match(text, /在电脑上还可以：去项目页/);
+
+  const multi: any = answerCard({
+    project,
+    turnAt: "2026-11-06T10:00:00+08:00",
+    text: "整理好了。",
+    ask: null,
+    order: null,
+    remembers: ["规矩一", "规矩二", "规矩三"],
+    desktopOnly: [],
+  });
+  assert.deepEqual(
+    buttons(multi).map((b: any) => b.value),
+    [
+      { op: "remember", p: "/p/a", t: "2026-11-06T10:00:00+08:00", v: "0" },
+      { op: "remember", p: "/p/a", t: "2026-11-06T10:00:00+08:00", v: "1" },
+      { op: "remember", p: "/p/a", t: "2026-11-06T10:00:00+08:00", v: "2" },
+    ],
+  );
+  assert.match(JSON.stringify(multi), /以后照这样办（2\/3）\*\*\\n规矩二/);
 });
 
 test("等你的事卡片：人工请求给选项按钮，等确认只提示回电脑；没有事时说没有", () => {

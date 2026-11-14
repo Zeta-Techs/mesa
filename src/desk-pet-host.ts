@@ -20,7 +20,9 @@ import { runAssistantAction } from "./assistant-actions";
 import { helpNotDismissed, optionAnswer } from "./help-requests";
 import { loadHelpDismissed } from "./inbox";
 import { askProjectAssistant, type AssistantTurn } from "./project-assistant-run";
-import { guardClaims, parseAssistantAnswer, parseClarify, parseRemember, parseReworkOrder, parseWorkOrder } from "./project-assistant";
+import { dispatchWorkOrder, resumeDispatchedGoal, type DispatchRecord } from "./assistant-dispatch";
+import { quickIntent } from "./im-route";
+import { guardClaims, localReply, parseAssistantAnswer, parseClarify, parseRemember, parseReworkOrder, parseWorkOrder } from "./project-assistant";
 import { briefWorking, deskOnlyNotes, petItemsFromBrief, petItemsFromDesk, type PetFeed, type PetItem, type PetOpen } from "./desk-pet";
 import type { DeskItem } from "./assistant-queue";
 import type { HelpRequestDto, ProjectDto, TaskDto, WorkspaceDto } from "./types";
@@ -77,11 +79,54 @@ async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<
   const projects = await safe(invoke<ProjectDto[]>("list_projects"), []);
   const project = projects.find((p) => samePath(p.path, a.projectPath, IS_WINDOWS)) ?? null;
   if (!project) throw new Error("这个项目已经不在 Mesa 里了");
-  const history = (await safe(invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: project.path }), [])).filter((t) => !t.echoOf);
+  const q = a.question.trim();
+  const fullLog = await safe(invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: project.path }), []);
+  const read = await safe(invoke<{ config: { steps: unknown[] } } | null>("read_project_config", { path: project.path }), null);
+  const steps = read?.config.steps.length ?? 0;
+  // 与桌面面板、手机通道一致：「派出去」「接着做」按字面办，寒暄本地直接回，不白调一次 AI
+  const quick = quickIntent(q);
+  if (quick === "dispatch") {
+    const last = [...fullLog].reverse().find((t) => !t.echoOf && t.answer.includes(":::派活"));
+    const order = last ? parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(last.answer).text).text, steps).text, steps).order : null;
+    if (!last || !order || last.dispatched) {
+      return { text: "现在没有还没派的单子。先说要做什么，起草好单子再派。", clarify: null, deskOnly: [] };
+    }
+    const result = await dispatchWorkOrder({ order, projectPath: project.path, project, confirm: null });
+    const record: DispatchRecord = {
+      at: new Date().toISOString(),
+      target: order.target,
+      step: order.step,
+      title: order.title,
+      mode: result.mode,
+      mailId: result.mailId ?? null,
+      taskId: result.taskId ?? null,
+      worktreePath: result.worktreePath ?? null,
+      note: result.note,
+    };
+    await invoke("assistant_mark_dispatched", { projectRoot: project.path, turnAt: last.at, record }).catch(() => {});
+    useAppStore.getState().bumpAssistantEchoTick();
+    return { text: result.note, clarify: null, deskOnly: [] };
+  }
+  if (quick === "resume") {
+    const last = [...fullLog].reverse().find(
+      (t) => t.dispatched?.mode === "goal" && t.dispatched.taskId && (t.dispatched.echoed === "stopped" || t.dispatched.echoed === "failed"),
+    );
+    if (!last?.dispatched?.taskId) {
+      return { text: "没有停下的、经项目助手派出去的活。", clarify: null, deskOnly: [] };
+    }
+    return { text: await resumeDispatchedGoal(project.path, project, last.dispatched.taskId), clarify: null, deskOnly: [] };
+  }
+  const canned = localReply(q, new Date().getHours());
+  if (canned) {
+    await invoke("assistant_log_append", { projectRoot: project.path, question: q, answer: canned }).catch(() => {});
+    useAppStore.getState().bumpAssistantEchoTick();
+    return { text: canned, clarify: null, deskOnly: [] };
+  }
+  const history = fullLog.filter((t) => !t.echoOf);
   const turn = await askProjectAssistant({
     projectPath: project.path,
     project,
-    question: a.question,
+    question: q,
     history,
     focus: null,
     where: "桌面上的小桌（桌宠）",
@@ -90,8 +135,6 @@ async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<
     },
   });
   useAppStore.getState().bumpAssistantEchoTick();
-  const read = await safe(invoke<{ config: { steps: unknown[] } } | null>("read_project_config", { path: project.path }), null);
-  const steps = read?.config.steps.length ?? 0;
   const memo = parseRemember(turn.answer);
   const clar = parseClarify(memo.text);
   const rework = parseReworkOrder(clar.text, steps);
@@ -100,7 +143,7 @@ async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<
   return {
     text: guardClaims(parsed.text).text,
     clarify: clar.ask,
-    deskOnly: deskOnlyNotes({ order: !!order.order, rework: !!rework.rework, remember: !!memo.remember, actions: parsed.actions.length }),
+    deskOnly: deskOnlyNotes({ order: !!order.order, rework: !!rework.rework, remember: memo.remembers.length, actions: parsed.actions.length }),
   };
 }
 

@@ -421,9 +421,17 @@ test("话与事实分开：声称自己做了动作的句子换成如实说明�
   const a = guardClaims("好，就当你点了派出去——这个活已经派出去了，你先忙别的。\n\n材料都核对过。我会让它写完先出一份草稿。我已经帮你开工了。");
   assert.equal(a.flagged, true);
   assert.equal(a.text, `${CLAIM_NOTE}\n\n材料都核对过。${CLAIM_NOTE}`, "段落留着，连着两句只留一条说明");
-  for (const ok of ["你上午派出去的周报停了，点「接着做」就能接着写。", "第 2 步的 AI 已经开工了，正在读文献。", "我去看了记录。"]) {
+  for (const ok of [
+    "你上午派出去的周报停了，点「接着做」就能接着写。",
+    "第 2 步的 AI 已经开工了，正在读文献。",
+    "我去看了记录。",
+    "我不能帮你派出去，要你点单子上的「派出去」。",
+    "我不会替你开工，也不会替你点按钮。",
+  ]) {
     assert.equal(guardClaims(ok).flagged, false, ok);
   }
+  const list = guardClaims("- 我已经帮你派出去。\n- 材料核对过了。");
+  assert.equal(list.text, `- ${CLAIM_NOTE}\n- 材料核对过了。`, "保留行首列表符");
 });
 
 test("补料单：退回到哪步、补什么、为什么都要有；退回目标要在「从」之前；正文去掉这一块", async () => {
@@ -467,15 +475,17 @@ test("补料单：退回到哪步、补什么、为什么都要有；退回目�
   }
 });
 
-test("起草项目知识时一次可记多条：最多五块，去重，飞书卡片仍只用第一块", async () => {
+test("起草项目知识时一次可记多条：最多五块，去重，块前或块内依据行收进 items、不残留正文", async () => {
   const { parseRemember } = await import("../src/project-assistant.ts");
   const blocks = ["引用一律 [@键]", "图上画原始数据点", "引用一律 [@键]", "不用方法 X", "术语 HER 首次写全称", "温度单位用 °C", "多出来的"]
-    .map((t) => `依据：README.md\n:::记下\n${t}\n:::`)
+    .map((t, i) => (i % 2 === 0 ? `依据：README.md\n:::记下\n${t}\n:::` : `:::记下\n依据：AGENTS.md\n${t}\n:::`))
     .join("\n\n");
   const r = parseRemember(`从 README 里找到这些：\n\n${blocks}`);
   assert.deepEqual(r.remembers, ["引用一律 [@键]", "图上画原始数据点", "不用方法 X", "术语 HER 首次写全称", "温度单位用 °C"]);
+  assert.equal(r.items[0].source, "README.md");
+  assert.equal(r.items[1].source, "AGENTS.md");
   assert.equal(r.remember, "引用一律 [@键]");
-  assert.ok(!r.text.includes(":::"));
+  assert.equal(r.text, "从 README 里找到这些：");
 });
 
 test("更早的相关问答：按词重合翻出，至少两个词、最多两轮，最近几轮不重复，闲聊不翻", async () => {

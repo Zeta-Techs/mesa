@@ -176,15 +176,34 @@ export function focusConfirm(item: DeskItem): void {
   s.setPage("terminal");
 }
 
-/** 记一条规矩进项目知识「已定 / 不做」（项目助手的「以后照这样办」，桌面卡片与飞书按钮共用） */
+const knowledgeQueues = new Map<string, Promise<void>>();
+
+/** 记一条规矩进项目知识「已定 / 不做」（项目助手的「以后照这样办」，桌面卡片与飞书按钮共用；按项目排队防连点多张时乐观锁撞车） */
 export async function addProjectKnowledge(projectPath: string, text: string): Promise<void> {
-  const doc = await invoke<{ revision: string }>("project_memory_read", { path: projectPath });
-  await invoke("project_memory_update", {
-    path: projectPath,
-    expectedRevision: doc.revision,
-    id: null,
-    action: "add",
-    text: text.trim(),
-    reason: `项目助手对话里由你确认（${new Date().toLocaleDateString()}）`,
+  const key = projectPath.trim();
+  const line = text.trim();
+  if (!line) return;
+  const writeOnce = async () => {
+    const doc = await invoke<{ revision: string; entries?: { text: string; meta: { state: string } }[] }>("project_memory_read", { path: projectPath });
+    if (doc.entries?.some((e) => e.meta.state === "active" && e.text.trim() === line)) return;
+    await invoke("project_memory_update", {
+      path: projectPath,
+      expectedRevision: doc.revision,
+      id: null,
+      action: "add",
+      text: line,
+      reason: `项目助手对话里由你确认（${new Date().toLocaleDateString()}）`,
+    });
+  };
+  const prev = knowledgeQueues.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(async () => {
+    try {
+      await writeOnce();
+    } catch (reason) {
+      if (!/版本已变|并发|revision|过时/i.test(String(reason))) throw reason;
+      await writeOnce();
+    }
   });
+  knowledgeQueues.set(key, next);
+  return next;
 }
