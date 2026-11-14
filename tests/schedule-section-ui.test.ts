@@ -340,3 +340,135 @@ test("定时任务列表：桥、空串清除、删除确认与创建提示", as
     }
   }
 });
+
+test("项目定时任务页：独立后台开启后收进卡片顶栏右侧，不再单独占顶部整行", async () => {
+  const bundle = await build({
+    stdin: {
+      contents: `export {createElement, act} from 'react';
+        export {createRoot} from 'react-dom/client';
+        export {default as View} from './src/components/ProjectSchedulesView';`,
+      resolveDir: process.cwd(), loader: "tsx",
+    },
+    bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
+    loader: { ".css": "empty", ".woff": "empty", ".woff2": "empty", ".ttf": "empty", ".svg": "empty", ".gif": "empty" },
+    external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
+    plugins: [{
+      name: "schedules-view-host",
+      setup(b) {
+        const stubs: Record<string, string> = {
+          "../store": `export const useAppStore = select => select(window.__scheduleViewHost.store);`,
+          "../toast": `export const toast = () => {};`,
+          "./ConfirmDialog": `export const confirmDialog = async (message) => {
+            window.__scheduleViewHost.confirms.push(message);
+            return window.__scheduleViewHost.confirmResult ?? true;
+          };`,
+          "./AskAiModal": `export const beginAskAi = () => {};`,
+          "@tauri-apps/api/event": `export const listen = async () => () => {};`,
+        };
+        b.onResolve({ filter: /.*/ }, (args) => args.path in stubs ? { path: args.path, namespace: "schedule-view-stub" } : undefined);
+        b.onResolve({ filter: /\?worker$|\?url$/ }, (args) => ({ path: args.path, namespace: "schedule-view-asset" }));
+        b.onLoad({ filter: /.*/, namespace: "schedule-view-stub" }, (args) => ({ contents: stubs[args.path], loader: "js" }));
+        b.onLoad({ filter: /.*/, namespace: "schedule-view-asset" }, () => ({ contents: "export default 'data:worker,';", loader: "js" }));
+      },
+    }],
+  });
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+  })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  let coreState = { enabled: false, running: false };
+  let activeRuns: { id: string }[] = [];
+  const data = {
+    confirms: [] as string[],
+    confirmResult: true as boolean,
+    store: {
+      profiles: [],
+      scheduleDraftReq: null,
+      setScheduleDraftReq() {},
+      setPage() {},
+      setWorkspaceReviewRequest() {},
+      setOpenSessionReq() {},
+      setSelectProjectReq() {},
+      setProjectFocusReq() {},
+    },
+  };
+  Object.assign(dom.window, {
+    __scheduleViewHost: data,
+    __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
+    __TAURI_INTERNALS__: {
+      transformCallback: () => 1,
+      unregisterCallback() {},
+      invoke: async (command: string, args?: any) => {
+        if (command === "background_core_status") return coreState;
+        if (command === "background_core_active_runs") return activeRuns;
+        if (command === "background_core_set") {
+          const enabled = Boolean(args?.enabled);
+          coreState = { enabled, running: enabled };
+          return coreState;
+        }
+        if (command === "list_schedules") return [];
+        if (command === "list_watch_skill_drafts") return [];
+        if (command === "list_skills") return [];
+        if (command === "agent_capabilities") return [];
+        throw new Error(command);
+      },
+    },
+  });
+  const compiled = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", bundle.outputFiles[0].text)(
+    createRequire(import.meta.url), compiled, compiled.exports,
+  );
+  const { createElement: h, act, createRoot, View } = compiled.exports;
+  const host = dom.window.document.getElementById("root")!;
+  const root = createRoot(host);
+  const project = {
+    path: "/project",
+    name: "Demo",
+    workMode: "coding",
+    agents: [],
+    sessionCount: 0,
+    lastActive: null,
+  };
+  const click = async (b: HTMLButtonElement) =>
+    act(async () => b.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+  try {
+    await act(async () => { root.render(h(View, { project })); });
+    const stack = () => host.firstElementChild as HTMLElement;
+    // 未开启：顶部说明条 + 定时任务卡 = 2 个顶层块
+    assert.equal(stack().children.length, 2, "未开启时保留顶部独立后台说明栏");
+    assert.match(stack().firstElementChild!.textContent!, /独立后台.*已关闭.*退出桌面后继续运行/);
+
+    const onSwitch = host.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="开启独立后台"]')!;
+    assert.ok(onSwitch);
+    await click(onSwitch);
+
+    // 开启后：顶部独立说明栏收起，只剩定时任务卡 1 个顶层块；开关与运行中胶囊进卡片标题行右侧
+    assert.equal(stack().children.length, 1, "开启后不再单独占顶部一整行");
+    assert.ok(!host.textContent!.includes("退出桌面后继续运行已授权的定时任务"), "长说明收进悬浮提示");
+    const h2 = host.querySelector("h2")!;
+    const cardHeader = h2.parentElement!;
+    const offSwitch = cardHeader.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="关闭独立后台"]')!;
+    assert.ok(offSwitch, "开启后的独立后台开关应位于定时任务卡片头部行内");
+    assert.match(cardHeader.textContent!, /独立后台.*运行中.*＋ 新建定时任务/);
+
+    // 有在跑任务时关闭仍弹二次确认
+    activeRuns = [{ id: "r1" }];
+    await click(offSwitch);
+    assert.equal(data.confirms.length, 1, "有在跑任务时关闭应弹确认");
+    assert.equal(stack().children.length, 2, "关闭后恢复顶部已关闭说明条");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of restore) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

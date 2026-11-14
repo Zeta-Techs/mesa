@@ -1388,6 +1388,7 @@ export default function ScheduleSection({
   subsVersion = 0,
   onSchedulesChanged,
   workMode,
+  headerExtra,
 }: {
   projectRoot: string;
   /** 项目工作方式：决定新建时的默认种类和空态示例；不传按科研（旧调用点） */
@@ -1399,6 +1400,8 @@ export default function ScheduleSection({
   /** 增删改（含启停/改运行配置）成功后调用：同页兄弟组件（雷达卡）靠它感知任务集变化。
    *  新建/删除不发 scheduler-run-done（那只管跑完），没有这座桥雷达空态行要切页才翻新。 */
   onSchedulesChanged?: () => void;
+  /** card 布局下插在标题行右侧（＋ 新建定时任务左侧）的附加控件，如开启后的独立后台胶囊 */
+  headerExtra?: ReactNode;
 }) {
   const isCard = layout === "card";
   const mode = workMode ? normalizeWorkMode(workMode) : "research";
@@ -1676,7 +1679,7 @@ export default function ScheduleSection({
   const addBtn = (
     <button
       type="button"
-      className={isCard ? `${secondaryActionClass} ml-auto` : actionBtn}
+      className={isCard ? secondaryActionClass : actionBtn}
       title={research ? "新建定时任务（默认文献雷达，也可以选巡检技能或新建一个）" : "新建定时任务（让 AI 按你的描述写一个巡检技能）"}
       onClick={() => openCreate()}
     >
@@ -1699,7 +1702,10 @@ export default function ScheduleSection({
               </>
             )}
           </h2>
-          {addBtn}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {headerExtra}
+            {addBtn}
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-2">

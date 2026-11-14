@@ -92,40 +92,24 @@ export default function ProjectSchedulesView({
 
   return (
     <div className="space-y-5">
-      {core && (
+      {core && !core.enabled && (
         <div
           className={`${projectWellClass} flex flex-wrap items-center gap-x-2.5 gap-y-1.5 py-2.5 text-xs`}
           title="电脑关机或睡眠时不运行；交互对话不在此范围，成果仍回桌面评审。"
         >
           <span className={coreBusy ? "pointer-events-none opacity-50" : ""}>
             <Toggle
-              checked={core.enabled}
-              label={`${core.enabled ? "关闭" : "开启"}独立后台`}
+              checked={false}
+              label="开启独立后台"
               onChange={() => void toggleBackgroundCore()}
             />
           </span>
           <span className="font-medium text-l1">独立后台</span>
-          {core.running ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-ok px-2 py-0.5 text-micro font-medium text-ok-text">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-ok-text" />
-              运行中
-            </span>
-          ) : core.enabled ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text">
-              <span aria-hidden="true" className="size-1.5 rounded-full bg-warn-text" />
-              待拉起
-            </span>
-          ) : (
-            <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l4">
-              已关闭
-            </span>
-          )}
+          <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l4">
+            已关闭
+          </span>
           <span className="min-w-0 flex-1 text-l3">
-            {core.running
-              ? "退出桌面后继续运行已授权的定时任务，成果回桌面评审。"
-              : core.enabled
-                ? "后台暂未运行，Mesa 开着时接着跑并会自动重新拉起，成果回桌面评审。"
-                : "退出桌面后继续运行已授权的定时任务（关机或睡眠时不运行，成果回桌面评审）。"}
+            退出桌面后继续运行已授权的定时任务（关机或睡眠时不运行，成果回桌面评审）。
           </span>
         </div>
       )}
@@ -146,6 +130,38 @@ export default function ProjectSchedulesView({
           subsVersion={subsVersion}
           onSchedulesChanged={() => setSchedulesVersion((v) => v + 1)}
           workMode={project.workMode}
+          headerExtra={
+            core?.enabled ? (
+              <div
+                className={`inline-flex h-8 items-center gap-2 rounded-lg border border-hairline bg-inset/65 px-2.5 text-xs ${
+                  coreBusy ? "pointer-events-none opacity-50" : ""
+                }`}
+                title={
+                  core.running
+                    ? "独立后台运行中：退出桌面后继续运行已授权的定时任务（关机或睡眠时不运行，成果回桌面评审）"
+                    : "独立后台待拉起：后台暂未运行，Mesa 开着时接着跑并会自动重新拉起（成果回桌面评审）"
+                }
+              >
+                <Toggle
+                  checked={core.enabled}
+                  label="关闭独立后台"
+                  onChange={() => void toggleBackgroundCore()}
+                />
+                <span className="font-medium text-l2">独立后台</span>
+                {core.running ? (
+                  <span className="inline-flex items-center gap-1 text-micro font-medium text-ok-text">
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-ok-text" />
+                    运行中
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-micro font-medium text-warn-text">
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-warn-text" />
+                    待拉起
+                  </span>
+                )}
+              </div>
+            ) : null
+          }
         />
       </div>
     </div>
