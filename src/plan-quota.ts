@@ -137,11 +137,7 @@ export function planWindowLabel(window: string): string {
   if (window === "five_hour") return "5 小时";
   if (window === "weekly") return "本周";
   if (window === "monthly") return "本月";
-  if (window === "agy_gemini_5h") return "Gemini 5 小时";
-  if (window === "agy_gemini_weekly") return "Gemini 本周";
-  if (window === "agy_gemini_argon_weekly") return "Gemini Argon 本周";
-  if (window === "agy_3p_5h") return "Claude / GPT 5 小时";
-  if (window === "agy_3p_weekly") return "Claude / GPT 本周";
+  if (window === "agy_argon_weekly") return "Argon 本周";
   return window;
 }
 

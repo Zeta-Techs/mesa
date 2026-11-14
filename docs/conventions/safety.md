@@ -68,10 +68,10 @@
   `MESA_IMAGE_TOOL`（helper 路径）。厂商回的图片下载地址（签名 URL）**不带任何鉴权头**，直连不通才走设置的出网代理；网关报错原文
   经 `redact_sensitive_text` 脱敏再回给 Agent / 前端。`image_gen::Target` 带 Header 值，不得派生 Debug。浏览器桥与 hook 模式仍不读密钥。
   技能 image-gen 要求不生成冒充实验观测的图、失败照实报不换模型偷偷重试。
-- **官方账号余量（2026-10-31，2026-11-15 补 Antigravity，official_quota.rs）**：订阅余量卡读 Claude Code 的钥匙串项 / `.credentials.json` 与 Codex 的
-  `auth.json` 取登录令牌，只拿去问官方用量接口（api.anthropic.com/api/oauth/usage、chatgpt.com/backend-api/wham/usage）；Antigravity CLI 先探
+- **官方账号余量（2026-10-31，2026-11-15 补 Antigravity 与 Codex 暂存回落，official_quota.rs）**：订阅余量卡读 Claude Code 的钥匙串项 / `.credentials.json` 与 Codex 的
+  `auth.json`（若 `auth.json` 因第三方直连切换被 `cc-switch` 移走，则只读回落 `~/.cc-switch/codex-login-stash.json` 的 `logins[last]`；真登出时 `last` 为空不复活）取登录令牌，只拿去问官方用量接口（api.anthropic.com/api/oauth/usage、chatgpt.com/backend-api/wham/usage）；Antigravity CLI 先探
   `~/.gemini/antigravity-cli/antigravity-oauth-token` 是否在盘（不读令牌内容、不触发钥匙串），在盘时以净空 `GEMINI_API_KEY` / `GOOGLE_GEMINI_BASE_URL` +
-  `official_outbound_env` 调 `agy --print /usage --output-format json` 取额度窗口（0 token、不建会话）。
+  `official_outbound_env` 调 `agy --print /usage --output-format json` 取自家 Gemini 额度窗口（0 token、不建会话，过滤掉 `3p-*` 第三方模型桶）。
   **只读、绝不刷新、绝不回写**（刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；Claude Code 因 `invalid_grant` 把 `claudeAiOauth` 令牌清空但保留登录痕迹时，保留官方行并提示去连接页重登而非静默隐藏；令牌不进 DTO / 日志 / 诊断包；
   钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。Codex 重置卡消费（`use_codex_reset_card`）同用卡纪律：显式命令 + 前端确认，
   先重查「此刻能用几张」，为 0 不发请求；`redeem_request_id` 每次新生成，不自动重试。

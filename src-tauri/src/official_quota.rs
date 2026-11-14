@@ -8,12 +8,14 @@
 //!   但 Claude Code 因 `invalid_grant` 把 `accessToken`/`refreshToken` 清空并置 `expiresAt=0`，仍保留该行并如实提示去连接页重登，不静默消失。
 //!   GET https://api.anthropic.com/api/oauth/usage（Bearer + `anthropic-beta: oauth-2025-04-20`）：
 //!   five_hour / seven_day 的 utilization（0-100）+ resets_at（ISO，5 小时窗没开始时为 null）。
-//! - Codex：`{CODEX_HOME|~/.codex}/auth.json` 的 tokens.access_token（+ account_id 头）；API Key 模式无此字段，不出行。
+//! - Codex：`{CODEX_HOME|~/.codex}/auth.json` 的 tokens.access_token（+ account_id 头）；若 `auth.json` 因第三方直连切换被
+//!   `cc-switch` 暂存移走（`~/.cc-switch/codex-login-stash.json` 的 `logins[last]`，用户并未退出登录），只读回落到该暂存条目；
+//!   API Key 模式无 tokens 字段，不出行。
 //!   GET https://chatgpt.com/backend-api/wham/usage：rate_limit.primary_window / secondary_window 的
 //!   used_percent + reset_at（秒）+ limit_window_seconds，按窗长归 5 小时 / 周 / 月（免费档实测只有 30 天窗）。
 //! - Antigravity CLI（agy）：不直接读钥匙串（免弹窗、免碰令牌），调官方内置 `agy --print /usage --output-format json`
 //!   （0 token、不建会话，清掉 GEMINI_API_KEY / GOOGLE_GEMINI_BASE_URL 防切到 Key 模式，带出网代理）。
-//!   解析 Gemini 组与 Claude/GPT 组的 5h / weekly 剩余比例并转为已用百分比。
+//!   仅解析其自身 Gemini 额度桶（5 小时 / 本周 / Argon 本周），不混入第三方 Claude/GPT 桶（2026-11-15 用户拍板）。
 //! - Codex 重置卡（2026-10-31）：GET wham/rate-limit-reset-credits 列卡（credits[] 的 id / status / expires_at，
 //!   不信 available_count，只数 status==available 且没过期的；cc-switch 同口径），wham/usage 的
 //!   rate_limit_reset_credits.applicable_available_count 是「此刻能用」的张数——没被限额卡住时恒 0。
@@ -195,9 +197,7 @@ fn read_claude_creds() -> Option<ClaudeCreds> {
     parse_claude_creds(&std::fs::read_to_string(path).ok()?)
 }
 
-/// Codex auth.json → 凭证；API Key 模式（只有 OPENAI_API_KEY）返回 None
-fn parse_codex_creds(text: &str) -> Option<CodexCreds> {
-    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+fn parse_codex_creds_value(v: &serde_json::Value) -> Option<CodexCreds> {
     let tokens = v.get("tokens")?;
     let token = tokens.get("access_token")?.as_str()?.trim().to_string();
     if token.is_empty() {
@@ -214,12 +214,36 @@ fn parse_codex_creds(text: &str) -> Option<CodexCreds> {
     })
 }
 
+/// Codex auth.json → 凭证；API Key 模式（只有 OPENAI_API_KEY）返回 None
+fn parse_codex_creds(text: &str) -> Option<CodexCreds> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    parse_codex_creds_value(&v)
+}
+
+/// `~/.cc-switch/codex-login-stash.json` → 凭证：直连切到第三方时 cc-switch 把原生 `auth.json` 暂存在
+/// `logins[last]`，只有真在 Codex 里退出登录时才清空 `last`（登出不复活）。只读回落，绝不回写。
+fn parse_codex_stash(text: &str) -> Option<CodexCreds> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let last = v.get("last")?.as_str()?.trim();
+    if last.is_empty() {
+        return None;
+    }
+    parse_codex_creds_value(v.get("logins")?.get(last)?)
+}
+
 fn read_codex_creds() -> Option<CodexCreds> {
     if cfg!(test) {
         return None;
     }
-    let path = crate::agent_specs::agent_config_root("codex")?.join("auth.json");
-    parse_codex_creds(&std::fs::read_to_string(path).ok()?)
+    if let Some(root) = crate::agent_specs::agent_config_root("codex") {
+        if let Ok(text) = std::fs::read_to_string(root.join("auth.json")) {
+            if let Some(creds) = parse_codex_creds(&text) {
+                return Some(creds);
+            }
+        }
+    }
+    let stash = crate::dirs::home_dir()?.join(".cc-switch/codex-login-stash.json");
+    parse_codex_stash(&std::fs::read_to_string(stash).ok()?)
 }
 
 // ===== 响应解析（纯函数） =====
@@ -438,11 +462,10 @@ async fn query_claude(creds: ClaudeCreds) -> PlanQuotaDto {
 
 fn agy_window_kind(bucket_id: &str) -> Option<(&'static str, usize)> {
     match bucket_id {
-        "gemini-5h" => Some(("agy_gemini_5h", 0)),
-        "gemini-weekly" => Some(("agy_gemini_weekly", 1)),
-        "gemini-argon-wtu-weekly" => Some(("agy_gemini_argon_weekly", 2)),
-        "3p-5h" => Some(("agy_3p_5h", 3)),
-        "3p-weekly" => Some(("agy_3p_weekly", 4)),
+        // 2026-11-15 用户拍板：仅显示自己的订阅（Gemini），不在 Antigravity 卡内混出第三方 Claude / GPT 桶
+        "gemini-5h" => Some((WINDOW_FIVE_HOUR, 0)),
+        "gemini-weekly" => Some((WINDOW_WEEKLY, 1)),
+        "gemini-argon-wtu-weekly" => Some(("agy_argon_weekly", 2)),
         _ => None,
     }
 }
@@ -727,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn agy_usage_maps_gemini_and_third_party_buckets() {
+    fn agy_usage_maps_only_own_gemini_buckets() {
         let body = serde_json::json!({
             "status": "SUCCESS",
             "command": {
@@ -738,7 +761,8 @@ mod tests {
                             "name": "Gemini Models",
                             "buckets": [
                                 {"id": "gemini-weekly", "remaining_fraction": 0.75, "reset_time": "2026-11-21T22:42:06Z"},
-                                {"id": "gemini-5h", "remaining_fraction": 1.0, "reset_time": "2026-11-15T10:00:00Z"}
+                                {"id": "gemini-5h", "remaining_fraction": 1.0, "reset_time": "2026-11-15T10:00:00Z"},
+                                {"id": "gemini-argon-wtu-weekly", "remaining_fraction": 0.6, "reset_time": "2026-11-21T22:42:06Z"}
                             ]
                         },
                         {
@@ -755,11 +779,11 @@ mod tests {
         let w = parse_agy_usage(&body).unwrap();
         assert_eq!(
             w.iter().map(|x| x.window.as_str()).collect::<Vec<_>>(),
-            ["agy_gemini_5h", "agy_gemini_weekly", "agy_3p_weekly"]
+            ["five_hour", "weekly", "agy_argon_weekly"]
         );
         assert_eq!(w[0].used_percent.round(), 0.0);
         assert_eq!(w[1].used_percent.round(), 25.0);
-        assert_eq!(w[2].used_percent.round(), 90.0);
+        assert_eq!(w[2].used_percent.round(), 40.0);
         assert!(parse_agy_usage(&serde_json::json!({"status": "ERROR"})).is_err());
     }
 
@@ -816,11 +840,22 @@ mod tests {
     }
 
     #[test]
-    fn codex_creds_skip_api_key_mode() {
+    fn codex_creds_skip_api_key_mode_and_read_login_stash() {
         let c = parse_codex_creds(r#"{"tokens":{"access_token":"a","account_id":"acc"}}"#).unwrap();
         assert_eq!(c.token, "a");
         assert_eq!(c.account_id.as_deref(), Some("acc"));
         assert!(parse_codex_creds(r#"{"OPENAI_API_KEY":"sk-x","tokens":null}"#).is_none());
+        let stashed = parse_codex_stash(
+            r#"{"last":"sub:u|account:acc","logins":{"sub:u|account:acc":{"tokens":{"access_token":"st","account_id":"acc"}}}}"#,
+        )
+        .unwrap();
+        assert_eq!(stashed.token, "st");
+        assert_eq!(stashed.account_id.as_deref(), Some("acc"));
+        // 真在 Codex 登出后 last 为空：不复活旧暂存
+        assert!(parse_codex_stash(
+            r#"{"last":null,"logins":{"sub:u|account:acc":{"tokens":{"access_token":"st"}}}}"#,
+        )
+        .is_none());
     }
 
     #[test]

@@ -83,8 +83,7 @@ test("窗口名映射与未知值透传", () => {
   assert.equal(planWindowLabel("five_hour"), "5 小时");
   assert.equal(planWindowLabel("weekly"), "本周");
   assert.equal(planWindowLabel("monthly"), "本月");
-  assert.equal(planWindowLabel("agy_gemini_weekly"), "Gemini 本周");
-  assert.equal(planWindowLabel("agy_3p_weekly"), "Claude / GPT 本周");
+  assert.equal(planWindowLabel("agy_argon_weekly"), "Argon 本周");
   assert.equal(planWindowLabel("custom-x"), "custom-x");
 });
 
