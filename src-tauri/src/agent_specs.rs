@@ -427,6 +427,26 @@ const ANTHROPIC_ENV: EnvInject = EnvInject {
     fixed_args: &[],
 };
 
+/// Antigravity CLI 官方安装器 / 自更新清单地址（install.sh / install.ps1 实抓，返回 `{"version": "1.5.8", ...}`）
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const AGY_MANIFEST_URL: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json";
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+const AGY_MANIFEST_URL: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_amd64.json";
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+const AGY_MANIFEST_URL: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/windows_arm64.json";
+#[cfg(all(target_os = "windows", not(target_arch = "aarch64")))]
+const AGY_MANIFEST_URL: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/windows_amd64.json";
+#[cfg(all(not(any(target_os = "macos", target_os = "windows")), target_arch = "aarch64"))]
+const AGY_MANIFEST_URL: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json";
+#[cfg(all(not(any(target_os = "macos", target_os = "windows")), not(target_arch = "aarch64")))]
+const AGY_MANIFEST_URL: &str =
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json";
+
 static AGENT_SPECS: &[AgentSpec] = &[
     AgentSpec {
         id: "claude-code",
@@ -1098,6 +1118,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
             install_script: Some("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
             install_script_win: Some("irm https://antigravity.google/cli/install.ps1 | iex"),
             self_update: Some(&["update"]),
+            self_update_latest: Some(AGY_MANIFEST_URL),
             update_fallback: &[UpdateChannel::SelfUpdate],
             ..NO_PACKAGING
         },

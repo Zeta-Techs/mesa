@@ -889,10 +889,12 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
         agents::invalidate_detect_cache();
         invalidate_check_cache();
     }
-    // 自更新装不了时可能只打印手动命令、照样退出 0（kimi upgrade -y 碰上它不支持的装法）：版本没变不报成功
+    // 自更新装不了时可能只打印手动命令、照样退出 0（kimi upgrade -y 碰上它不支持的装法）：
+    // 若输出明确说了已是最新（如 agy update 打印 You are already on the latest version），保持 ok = true；
+    // 否则版本没变不报成功，附手动更新提示
     if ok && method_used == "self" {
         if let (Some(before), Some(after)) = (&version_before, &version_after) {
-            if before == after {
+            if before == after && !self_update_already_latest(&output) {
                 ok = false;
                 output.push_str(&format!(
                     "\n\n命令跑完了，版本仍是 {after}。上面要是写着已经是最新，就不用管；否则照上面的提示手动更新。"
@@ -1196,7 +1198,28 @@ fn script_latest(url: &str) -> Option<String> {
     install_script_version(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// 正文只有一个版本号的查询口（kimi CDN /latest）；不是版本号就当没查到
+/// 自更新命令退出 0 且版本未变时，判断输出是否明确表示「已是最新版本」（如 agy / claude / grok / cursor 自更新）。
+/// 仅匹配明确的已最新短语；只打印手动安装命令（如 kimi upgrade -y 遇不支持装法）返回 false。
+fn self_update_already_latest(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    [
+        "already on the latest",
+        "already up to date",
+        "already up-to-date",
+        "already at the latest",
+        "already the latest",
+        "is up to date",
+        "no update available",
+        "no updates available",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        || output.contains("已是最新")
+        || output.contains("已经是最新")
+}
+
+/// 自更新渠道最新版查询口（kimi CDN `/latest` 纯版本号，或 agy 发布清单 JSON `{"version": "x.y.z"}`）；
+/// 提取不到合法版本号就当没查到
 fn plain_latest(url: &str) -> Option<String> {
     let curl = agents::resolve_binary("curl")?;
     let mut c = crate::process::background_command(curl);
@@ -1213,7 +1236,14 @@ fn plain_latest(url: &str) -> Option<String> {
 
 fn plain_version(body: &str) -> Option<String> {
     let v = body.trim();
-    (semver_token(v).as_deref() == Some(v.trim_start_matches('v'))).then(|| v.trim_start_matches('v').to_string())
+    if v.starts_with('{') {
+        let json: serde_json::Value = serde_json::from_str(v).ok()?;
+        let ver = json.get("version")?.as_str()?.trim();
+        let bare = ver.trim_start_matches('v');
+        return (semver_token(ver).as_deref() == Some(bare)).then(|| bare.to_string());
+    }
+    let bare = v.trim_start_matches('v');
+    (semver_token(v).as_deref() == Some(bare)).then(|| bare.to_string())
 }
 
 fn brew_latest(pkg: &str, cask: bool) -> Option<String> {
@@ -1652,12 +1682,39 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
     }
 
     #[test]
-    fn plain_version_accepts_bare_semver_only() {
+    fn plain_version_accepts_bare_semver_and_manifest_json() {
         assert_eq!(plain_version("2.5.1\n").as_deref(), Some("2.5.1"));
         assert_eq!(plain_version("v2.5.1").as_deref(), Some("2.5.1"));
+        // Antigravity CLI 官方发布清单 JSON
+        assert_eq!(
+            plain_version(r#"{"version":"1.5.8","url":"https://storage.googleapis.com/x.tar.gz","sha512":"abc"}"#)
+                .as_deref(),
+            Some("1.5.8")
+        );
+        assert_eq!(plain_version(r#"{"version":"latest"}"#), None);
+        assert_eq!(plain_version(r#"{"url":"https://x"}"#), None);
         // 跳转页、报错页不当版本
         assert_eq!(plain_version("<html><title>302 Found</title></html>"), None);
         assert_eq!(plain_version(""), None);
+    }
+
+    #[test]
+    fn agy_self_update_channel_and_already_latest_detection() {
+        let cmds = update_commands("agy", "self", "/Users/x/.local/bin/agy");
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].method, "self");
+        assert_eq!(cmds[0].args, vec!["update"]);
+        assert!(
+            agent_spec("agy").unwrap().packaging.self_update_latest.is_some(),
+            "agy 须配置自更新清单查询口，避免已最新时右上角仍常驻更新按钮"
+        );
+        assert!(self_update_already_latest(
+            "⟳ Checking for updates... (current version 1.5.8)\n✓ You are already on the latest version."
+        ));
+        assert!(self_update_already_latest("claude is already up to date (2.1.212)"));
+        assert!(!self_update_already_latest(
+            "Cannot auto-upgrade npm installation. Please run: npm i -g @moonshot-ai/kimi-code"
+        ));
     }
 
     #[test]

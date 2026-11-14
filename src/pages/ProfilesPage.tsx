@@ -30,7 +30,10 @@ import {
   Trash2,
   Undo2,
   Check,
+  CircleCheck,
+  CircleX,
   Plus,
+  X,
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { NAV_ICONS } from "../navigation-icons";
@@ -106,10 +109,17 @@ const ConfigFileEditorDialog = lazy(() => import("../components/ConfigFileEditor
 const MonacoField = lazy(() => import("../components/MonacoField"));
 import { collapseCarriageReturns } from "../stream-text";
 import { diagnose, installToolHelp, type AgentCmdResult } from "../agent-install";
+import {
+  agentCardHeadline,
+  agentHeaderUpdateState,
+  agentNavUpdateState,
+} from "../agent-update-ui";
+import UpdateProgressBar from "../components/UpdateProgressBar";
 import { installNotes } from "../agent-install-notes";
 
 const IS_WINDOWS_UA = /Windows/i.test(navigator.userAgent);
 import {
+  Collapse,
   NoticeBar,
   PageFrame,
   PageHeader,
@@ -3274,20 +3284,44 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       setModelDbBusy(false);
     }
   }
-  // 各 Agent 的升级/安装进行态、实时输出与最近结果（可并发操作多个 Agent）
+  // 各 Agent 的升级/安装进行态、动作类型、实时输出与最近结果（可并发操作多个 Agent）
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
+  const [cmdKind, setCmdKind] = useState<Record<string, "update" | "install">>({});
   const [liveOutput, setLiveOutput] = useState<Record<string, string>>({});
   const [updateResults, setUpdateResults] = useState<
     Record<string, AgentCmdResult>
   >({});
+  // Collapse 收起过渡（200ms）期间保留最后一次结果快照，避免收起瞬间内容跳空
+  const lastUpdateResultsRef = useRef<Record<string, AgentCmdResult>>({});
+  // 本次会话内已通过更新命令确认已是最新的版本（离线或无轻量查询口的渠道在 8s 提示收起后不再常驻「更新」）
+  const [confirmedLatest, setConfirmedLatest] = useState<Record<string, string>>({});
+  // 首次 check_agent_updates 是否已返回：未返回前不在右上角提前闪出「更新」
+  const [updateCheckReady, setUpdateCheckReady] = useState(false);
   // 更新成功提示 8s 自动收起（失败保留——输出要留着排错）；同一 Agent 的新结果覆盖旧计时
   const updateResultTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>(
     {},
   );
+  function dismissUpdateResult(agentId: string) {
+    clearTimeout(updateResultTimersRef.current[agentId]);
+    delete updateResultTimersRef.current[agentId];
+    setUpdateResults((prev) => {
+      if (!(agentId in prev)) return prev;
+      const next = { ...prev };
+      delete next[agentId];
+      return next;
+    });
+  }
   function applyUpdateResult(agentId: string, res: AgentCmdResult) {
+    lastUpdateResultsRef.current[agentId] = res;
     setUpdateResults((prev) => ({ ...prev, [agentId]: res }));
     clearTimeout(updateResultTimersRef.current[agentId]);
+    void refreshUpdateInfo();
     if (!res.ok) return;
+    const ver =
+      res.versionAfter ??
+      agents.find((a) => a.id === agentId)?.version ??
+      "ok";
+    setConfirmedLatest((prev) => ({ ...prev, [agentId]: ver }));
     updateResultTimersRef.current[agentId] = setTimeout(() => {
       setUpdateResults((prev) => {
         if (!prev[agentId]?.ok) return prev;
@@ -3309,6 +3343,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   );
 
   async function refreshUpdateInfo(force = false) {
+    if (force) setConfirmedLatest({});
     try {
       const list = await invoke<AgentUpdateInfo[]>("check_agent_updates", {
         force,
@@ -3316,6 +3351,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       setUpdateInfo(Object.fromEntries(list.map((i) => [i.id, i])));
     } catch {
       /* 检查失败（网络等）不影响页面 */
+    } finally {
+      setUpdateCheckReady(true);
     }
   }
   // 交互式自更新（kimi upgrade 等）路由到终端执行，绕过后端的缓存失效链路：
@@ -3337,10 +3374,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       void refreshUpdateInfo();
     }
   }, [visible]);
-  // 挂载查一次；更新/安装跑完（后端缓存已失效）后重查
+  // 挂载查一次（更新/安装完成时由 applyUpdateResult 直接重查，避免 8s 自动收起再次触发请求）
   useEffect(() => {
     void refreshUpdateInfo();
-  }, [updateResults]);
+  }, []);
   // 运行中 run 的交互输入（如回答 brew 的 [y/n]）
   const [cmdInput, setCmdInput] = useState<Record<string, string>>({});
   // 各 run 最近一次收到输出块的时间戳（ref 即可，渲染时按当前时间算闲置分钟数）
@@ -3365,6 +3402,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     agentId: string,
     command: "update_agent" | "install_agent",
   ) {
+    const kind = command === "install_agent" ? "install" : "update";
+    dismissUpdateResult(agentId);
+    setCmdKind((prev) => ({ ...prev, [agentId]: kind }));
     setUpdating((prev) => ({ ...prev, [agentId]: true }));
     setLiveOutput((prev) => ({ ...prev, [agentId]: "" }));
     lastChunkAtRef.current[agentId] = Date.now();
@@ -4277,7 +4317,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 const conflicted =
                   (officialStatus[agent.id]?.conflicts.length ?? 0) > 0 &&
                   conflictDismissed[agent.id] !== [...officialStatus[agent.id].conflicts].sort().join("\n");
-                const outdated = installed && !!updateInfo[agent.id]?.outdated && !updating[agent.id];
+                const navState = agentNavUpdateState({
+                  agentLabel: agent.label,
+                  installed,
+                  updating: !!updating[agent.id],
+                  cmdKind: cmdKind[agent.id],
+                  result: updateResults[agent.id],
+                  outdated: !!updateInfo[agent.id]?.outdated,
+                  latest: updateInfo[agent.id]?.latest,
+                });
                 const navDrag = dragSortStyle("navgroups", agent.id, navIndex);
                 return (
                   <div
@@ -4305,15 +4353,50 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         </span>
                       }
                       count={
-                        !installed ? (
+                        navState.kind === "running" ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-cta"
+                            title={navState.title}
+                          >
+                            <RefreshCw size={11} strokeWidth={2} className="animate-spin" aria-hidden="true" />
+                            <span>{navState.label}</span>
+                          </span>
+                        ) : navState.kind === "done-ok" ? (
+                          <span
+                            className="inline-flex items-center gap-0.5 text-ok-text animate-pulse-brief"
+                            title={navState.title}
+                          >
+                            <Check size={11} strokeWidth={2.2} aria-hidden="true" />
+                            <span>
+                              {navState.label} · {count}
+                            </span>
+                          </span>
+                        ) : navState.kind === "done-err" ? (
+                          <span
+                            role="button"
+                            className="inline-flex items-center gap-0.5 rounded-sm text-err-text hover:brightness-125 hover:underline"
+                            title={navState.title}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectPane(agent.id);
+                            }}
+                          >
+                            <X size={11} strokeWidth={2.2} aria-hidden="true" />
+                            <span>
+                              {navState.label}
+                              {installed ? ` · ${count}` : ""}
+                            </span>
+                          </span>
+                        ) : navState.kind === "uninstalled" ? (
                           "未安装"
-                        ) : outdated ? (
+                        ) : navState.kind === "outdated" ? (
                           // 导航项本身是按钮，徽标不能再套 button：span 接点击并截住冒泡（不切页两次、不触发拖动排序）；
-                          // 点了切到这个 Agent 再开始更新，进度出在右边组头下
+                          // 点了切到这个 Agent 再开始更新，左栏原地显示「更新中 → 已更新」
                           <span
                             role="button"
                             className="rounded-sm text-cta hover:brightness-125 hover:underline"
-                            title={`有新版本 ${updateInfo[agent.id]?.latest ?? ""}，点击更新`}
+                            title={navState.title}
                             onPointerDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -4368,7 +4451,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               ...shownAgents.map((agent) => {
                 const installed = !!agents.find((x) => x.id === agent.id)?.binaryPath;
                 const count = profiles.filter((p) => p.agent === agent.id && matchProfile(p)).length;
-                return { value: agent.id, label: `${agent.label} · ${installed ? count : "未安装"}` };
+                const st = agentNavUpdateState({
+                  agentLabel: agent.label,
+                  installed,
+                  updating: !!updating[agent.id],
+                  cmdKind: cmdKind[agent.id],
+                  result: updateResults[agent.id],
+                  outdated: !!updateInfo[agent.id]?.outdated,
+                  latest: updateInfo[agent.id]?.latest,
+                });
+                const suffix =
+                  st.kind === "running"
+                    ? st.label
+                    : st.kind === "done-ok" || st.kind === "done-err"
+                      ? `${st.label} · ${count}`
+                      : st.kind === "outdated"
+                        ? `新版 · ${count}`
+                        : st.kind === "uninstalled"
+                          ? "未安装"
+                          : String(count);
+                return { value: agent.id, label: `${agent.label} · ${suffix}` };
               }),
               { value: "image", label: "出图模型" },
             ]}
@@ -4573,29 +4675,66 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     >
                       ⋯
                     </button>
-                    {det?.binaryPath ? (
-                    (() => {
-                      if (updating[agent.id])
+                    {(() => {
+                      const info = updateInfo[agent.id];
+                      const headerState = agentHeaderUpdateState({
+                        installed: !!det?.binaryPath,
+                        installedVersion: det?.version,
+                        updating: !!updating[agent.id],
+                        cmdKind: cmdKind[agent.id],
+                        result: updateResults[agent.id],
+                        info,
+                        updateCheckReady,
+                        confirmedVersion: confirmedLatest[agent.id],
+                        tuiPrefill: interactiveUpdatePrefill(info),
+                        upstreamNote: info ? upstreamNoteText(info) : null,
+                        upstreamCommand: info ? upstreamCommand(info) : null,
+                      });
+                      if (headerState.kind === "install") {
                         return (
-                          <span className="text-xs text-l2">
-                            更新中…
+                          <button
+                            onClick={() => onInstall(agent.id)}
+                            disabled={headerState.running}
+                            className={`${secondaryActionClass} px-2.5`}
+                          >
+                            {headerState.running ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <RefreshCw size={12} strokeWidth={2} className="animate-spin" aria-hidden="true" />
+                                安装中…
+                              </span>
+                            ) : (
+                              "安装"
+                            )}
+                          </button>
+                        );
+                      }
+                      if (headerState.kind === "running") {
+                        return (
+                          <span className="inline-flex h-8 items-center gap-1.5 px-2 text-xs text-cta" role="status">
+                            <RefreshCw size={12} strokeWidth={2} className="animate-spin" aria-hidden="true" />
+                            <span>{headerState.label}</span>
                           </span>
                         );
-                      const info = updateInfo[agent.id];
-                      const tuiPrefill = interactiveUpdatePrefill(info);
-                      if (updateResults[agent.id]?.ok) return null;
-                      if (info && !info.outdated && info.latest) {
-                        // brew 已最新但上游 npm 更高（渠道滞后边角场景）：不再常驻一串小字
-                        // 挤组头，收成一枚安静的 ⧉ 图标钮——tooltip 承载完整说明，点击复制渠道切换命令
-                        const note = upstreamNoteText(info);
-                        const cmd = upstreamCommand(info);
-                        if (!note || !cmd) return null;
+                      }
+                      if (headerState.kind === "done-ok") {
+                        return (
+                          <span
+                            className="inline-flex h-8 items-center gap-1 px-2 text-xs text-ok-text animate-pulse-brief"
+                            role="status"
+                          >
+                            <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+                            <span>{headerState.label}</span>
+                          </span>
+                        );
+                      }
+                      if (headerState.kind === "upstream-lag") {
+                        // brew 已最新但上游 npm 更高（渠道滞后边角场景）：收成一枚安静的 ⧉ 图标钮，点击复制渠道切换命令
                         return (
                           <button
                             type="button"
-                            title={`${note}\n点击复制渠道切换命令：${cmd}\n含义：卸载 brew 版本并改装 npm 版本（之后更新走 npm 渠道，Mesa 自动按 npm 检查）`}
+                            title={`${headerState.note}\n点击复制渠道切换命令：${headerState.command}\n含义：卸载 brew 版本并改装 npm 版本（之后更新走 npm 渠道，Mesa 自动按 npm 检查）`}
                             onClick={() =>
-                              void navigator.clipboard.writeText(cmd)
+                              void navigator.clipboard.writeText(headerState.command)
                             }
                             className="flex size-6 shrink-0 items-center justify-center rounded-sm text-l4 transition-colors hover:bg-hover hover:text-cta"
                           >
@@ -4603,96 +4742,188 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           </button>
                         );
                       }
-                      if (info?.outdated)
+                      if (headerState.kind === "outdated") {
                         return (
                           <button
                             onClick={() => onUpdate(agent.id)}
                             title={
-                              tuiPrefill
-                                ? `有新版本 ${info.latest ?? ""}；交互式更新（${tuiPrefill}），将在终端中打开，需方向键选择`
-                                : `有新版本 ${info.latest ?? ""}，点击更新`
+                              headerState.tuiPrefill
+                                ? `有新版本 ${headerState.latest ?? ""}；交互式更新（${headerState.tuiPrefill}），将在终端中打开，需方向键选择`
+                                : `有新版本 ${headerState.latest ?? ""}，点击更新`
                             }
                             className="flex h-8 items-center rounded-sm px-2 text-xs text-cta hover:bg-hover hover:brightness-125"
                           >
                             新版
                           </button>
                         );
-                      return (
-                        <button
-                          onClick={() => onUpdate(agent.id)}
-                          title={
-                            tuiPrefill
-                              ? `交互式更新（${tuiPrefill}），将在终端中打开，需方向键选择`
-                              : undefined
-                          }
-                          className="flex h-8 items-center rounded-sm px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
-                        >
-                          更新
-                        </button>
-                      );
-                    })()
-                  ) : (
-                    <button
-                      onClick={() => onInstall(agent.id)}
-                      disabled={updating[agent.id]}
-                      className={`${secondaryActionClass} px-2.5`}
-                    >
-                      {updating[agent.id] ? "安装中…" : "安装"}
-                    </button>
-                    )}
+                      }
+                      if (headerState.kind === "fallback-update") {
+                        return (
+                          <button
+                            onClick={() => onUpdate(agent.id)}
+                            title={
+                              headerState.tuiPrefill
+                                ? `交互式更新（${headerState.tuiPrefill}），将在终端中打开，需方向键选择`
+                                : undefined
+                            }
+                            className="flex h-8 items-center rounded-sm px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+                          >
+                            {headerState.label}
+                          </button>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
 
                 {!isCollapsed && (
                   <div>
-                    {/* 安装/更新实时输出（全宽，行为不变） */}
-                    {updating[agent.id] && (
-                      <div className="mx-3 mt-2">
-                        <pre
-                          // callback ref：每次渲染都把滚动条钉在底部，实现跟随输出自动滚动
-                          ref={(el) => {
-                            if (el) el.scrollTop = el.scrollHeight;
-                          }}
-                          className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-t border border-hairline border-b-0 bg-canvas p-2 font-mono text-xs text-l2"
-                        >
-                          {collapseCarriageReturns(liveOutput[agent.id] ?? "") || "运行中，等待输出…"}
-                        </pre>
-                        {(() => {
-                          // 120s 无新输出给提示；新块到达（时间戳刷新）或 run 结束（整块隐藏）自动消失
-                          const last = lastChunkAtRef.current[agent.id];
-                          const idleMin = last
-                            ? Math.floor((Date.now() - last) / 60000)
-                            : 0;
-                          if (idleMin < 2) return null;
-                          return (
-                            <div className="bg-warn px-2 py-1 text-xs text-warn-text">
-                              已 {idleMin}{" "}
-                              分钟无新输出：可能是网络慢，或命令在等待输入（在下方输入行回答）。若持续异常可把当前内容发给开发者。
+                    {/* 安装/更新进度与结果统一折叠面板（0fr↔1fr 平滑展开与 8s 自动收起，避免列表跳动） */}
+                    <Collapse
+                      open={Boolean(updating[agent.id] || updateResults[agent.id])}
+                      className="mx-3 pt-2"
+                    >
+                      <div className="overflow-hidden rounded-lg ccode-well text-xs text-l2">
+                        {updating[agent.id] ? (
+                          <>
+                            <UpdateProgressBar downloaded={0} total={null} className="rounded-none" />
+                            <div className="flex items-center gap-2 px-3 py-2 text-l1">
+                              <RefreshCw
+                                size={13}
+                                strokeWidth={2}
+                                className="shrink-0 animate-spin text-cta"
+                                aria-hidden="true"
+                              />
+                              <span className="font-medium">
+                                {
+                                  agentCardHeadline({
+                                    agentLabel: agent.label,
+                                    cmdKind: cmdKind[agent.id] ?? (det?.binaryPath ? "update" : "install"),
+                                    installedVersion: det?.version,
+                                    targetVersion: updateInfo[agent.id]?.latest,
+                                  }).title
+                                }
+                              </span>
                             </div>
-                          );
-                        })()}
-                        <div className="flex items-center gap-1.5 rounded-b border border-hairline bg-canvas px-2 py-1.5">
-                          <span className="font-mono text-xs text-l4">
-                            &gt;
-                          </span>
-                          <input
-                            value={cmdInput[agent.id] ?? ""}
-                            onChange={(e) =>
-                              setCmdInput((prev) => ({
-                                ...prev,
-                                [agent.id]: e.target.value,
-                              }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter")
-                                void sendUpdaterInput(agent.id);
-                            }}
-                            placeholder="需要交互时在此输入（如 y），Enter 发送"
-                            className="flex-1 bg-transparent font-mono text-xs text-l2 outline-none placeholder:text-l4"
-                          />
-                        </div>
+                            <pre
+                              // callback ref：每次渲染都把滚动条钉在底部，实现跟随输出自动滚动
+                              ref={(el) => {
+                                if (el) el.scrollTop = el.scrollHeight;
+                              }}
+                              className="max-h-40 overflow-auto whitespace-pre-wrap break-all border-t border-hairline bg-canvas px-3 py-2 font-mono text-xs text-l2"
+                            >
+                              {collapseCarriageReturns(liveOutput[agent.id] ?? "") || "运行中，等待输出…"}
+                            </pre>
+                            {(() => {
+                              // 120s 无新输出给提示；新块到达（时间戳刷新）或 run 结束（整块隐藏）自动消失
+                              const last = lastChunkAtRef.current[agent.id];
+                              const idleMin = last
+                                ? Math.floor((Date.now() - last) / 60000)
+                                : 0;
+                              if (idleMin < 2) return null;
+                              return (
+                                <div className="border-t border-hairline bg-warn px-3 py-1.5 text-xs text-warn-text">
+                                  已 {idleMin}{" "}
+                                  分钟无新输出：可能是网络慢，或命令在等待输入（在下方输入行回答）。若持续异常可把当前内容发给开发者。
+                                </div>
+                              );
+                            })()}
+                            <div className="flex items-center gap-1.5 border-t border-hairline bg-canvas px-3 py-1.5">
+                              <span className="font-mono text-xs text-l4">
+                                &gt;
+                              </span>
+                              <input
+                                value={cmdInput[agent.id] ?? ""}
+                                onChange={(e) =>
+                                  setCmdInput((prev) => ({
+                                    ...prev,
+                                    [agent.id]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter")
+                                    void sendUpdaterInput(agent.id);
+                                }}
+                                placeholder="需要交互时在此输入（如 y），Enter 发送"
+                                className="flex-1 bg-transparent font-mono text-xs text-l2 outline-none placeholder:text-l4"
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          (() => {
+                            const r =
+                              updateResults[agent.id] ??
+                              lastUpdateResultsRef.current[agent.id];
+                            if (!r) return null;
+                            const head = agentCardHeadline({
+                              agentLabel: agent.label,
+                              cmdKind: cmdKind[agent.id] ?? "update",
+                              result: r,
+                            });
+                            const hint = r.ok
+                              ? null
+                              : diagnose(r.output, r.method, IS_WINDOWS_UA);
+                            return (
+                              <>
+                                <div className="flex items-center gap-2 px-3 py-2">
+                                  {r.ok ? (
+                                    <CircleCheck
+                                      size={14}
+                                      strokeWidth={1.9}
+                                      className="shrink-0 text-ok-text"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <CircleX
+                                      size={14}
+                                      strokeWidth={1.9}
+                                      className="shrink-0 text-err-text"
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                  <span
+                                    className={
+                                      r.ok
+                                        ? "font-medium text-l1"
+                                        : "font-medium text-err-text"
+                                    }
+                                  >
+                                    {head.title}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    aria-label="收起更新提示"
+                                    onClick={() => dismissUpdateResult(agent.id)}
+                                    className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-sm text-l4 hover:bg-hover hover:text-l1"
+                                  >
+                                    <X size={13} strokeWidth={1.8} aria-hidden="true" />
+                                  </button>
+                                </div>
+                                {r.output && (
+                                  <details
+                                    open={!r.ok}
+                                    className="border-t border-hairline px-3 py-1.5"
+                                  >
+                                    <summary className="cursor-pointer select-none text-l3 hover:text-l2">
+                                      输出
+                                    </summary>
+                                    <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-canvas p-2 font-mono text-l2">
+                                      {r.output}
+                                    </pre>
+                                  </details>
+                                )}
+                                {hint && (
+                                  <p className="border-t border-hairline px-3 py-1.5 text-xs text-l3">
+                                    ⓘ 建议：{hint}
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()
+                        )}
                       </div>
-                    )}
+                    </Collapse>
                     {agent.id === "codex" && codexContinuity && (() => {
                       const c = codexContinuity;
                       const broken = c.missingProviderThreads + c.missingModelThreads;
@@ -4722,48 +4953,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         </div>
                       );
                     })()}
-                    {updateResults[agent.id] && (
-                      <div className="mx-3 mt-2 rounded-sm ccode-well p-2 text-xs text-l2">
-                        <span
-                          className={
-                            updateResults[agent.id].ok
-                              ? "text-ok-text"
-                              : "text-err-text"
-                          }
-                        >
-                          {updateResults[agent.id].ok
-                            ? "✓ 更新完成"
-                            : "✗ 更新失败"}
-                        </span>
-                        <span>
-                          {updateResults[agent.id].method &&
-                            `（${updateResults[agent.id].method}）`}
-                          {updateResults[agent.id].versionAfter &&
-                            `：${updateResults[agent.id].versionBefore ?? "?"} → ${updateResults[agent.id].versionAfter}`}
-                        </span>
-                        {updateResults[agent.id].output && (
-                          <details className="mt-1">
-                            <summary className="cursor-pointer text-l3">
-                              输出
-                            </summary>
-                            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono">
-                              {updateResults[agent.id].output}
-                            </pre>
-                          </details>
-                        )}
-                        {(() => {
-                          const r = updateResults[agent.id];
-                          const hint = r.ok
-                            ? null
-                            : diagnose(r.output, r.method, IS_WINDOWS_UA);
-                          return hint ? (
-                            <p className="mt-1 text-xs text-l3">
-                              ⓘ 建议：{hint}
-                            </p>
-                          ) : null;
-                        })()}
-                      </div>
-                    )}
 
                     {list.length === 0 ? (
                       // 只说状态不说教：页头已有「＋ 添加连接」主按钮，入口不必每组复述一遍
